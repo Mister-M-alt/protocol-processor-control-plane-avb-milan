@@ -123,7 +123,9 @@ talker DA-validity gate (MAAP + 15 s probe freshness **or** listener registered;
 MSRP domain adopt/re-declare (§4.2.7.2.1), unsolicited notifications on all of the above
 (Table 5.22).
 **Disposition**: interface classes and the four adapters in
-[02](architecture/02_interfaces.md); status dictionary [F02.10](architecture/02_interfaces.md#fig-02-statusdict).
+[02](architecture/02_interfaces.md); status dictionary [F02.10](architecture/02_interfaces.md#fig-02-statusdict);
+the `srp` contract is served in scope by the SRP engine ([10](architecture/10_srp_engine.md),
+§6.9 REQ-SRP rows, §8 item 9).
 
 #### <a id="gap-05"></a>GAP-05 [Major] — Counters/diagnostics subsystem absent
 GET_COUNTERS is mandatory for every AVB_INTERFACE, CLOCK_DOMAIN, STREAM_INPUT and
@@ -420,7 +422,7 @@ randomized multi-controller · STORM notification storm · NVM power-cut restore
 | [GAP-01](#gap-01) | Blocker | Full command/descriptor inventory + per-command rules | [F06.14](architecture/06_aecp_engine.md#fig-06-cmdtable), §6 matrix | DIR/TOL |
 | [GAP-02](#gap-02) | Blocker | Milan-native ACMP: stateless talker + listener SM package | [05](architecture/05_acmp_engine.md) | MTXW |
 | [GAP-03](#gap-03) | Major | MVU sub-decoder + 3 command groups + feature flags | [06 §6.9](architecture/06_aecp_engine.md) | DIR |
-| [GAP-04](#gap-04) | Blocker | Interface classes A–F; SRP/MAAP, gPTP, AVTP, media-clock adapters; status dictionary | [02](architecture/02_interfaces.md) | DIR |
+| [GAP-04](#gap-04) | Blocker | Interface classes A–F; SRP/MAAP, gPTP, AVTP, media-clock adapters; status dictionary; in-scope SRP engine | [02](architecture/02_interfaces.md), [10](architecture/10_srp_engine.md) | DIR/MTXW/TOL/TIM |
 | [GAP-05](#gap-05) | Major | Counters subsystem with Milan-precedence masks | [06 §6.6](architecture/06_aecp_engine.md), [07 §4](architecture/07_memory_maps.md) | DIR |
 | [GAP-06](#gap-06) | Major | Registry + monitor + fan-out + lock manager + identify | [06 §7](architecture/06_aecp_engine.md) | RND/STORM/TIM |
 | [GAP-07](#gap-07) | Major | Master T-ID table, timer service, PRNG, budgets | [08](architecture/08_timing.md) | TIM |

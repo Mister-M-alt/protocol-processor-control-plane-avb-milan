@@ -48,7 +48,7 @@ Every normative artifact has a stable ID. IDs never change meaning; new ones are
 - Milan↔IEEE deltas only in `F01.4`; documents cite `Δn`.
 - Record/memory layouts only in 07; engine docs link to them.
 
-Scope of those rules: they bind the **architecture** documents (01–09). Three
+Scope of those rules: they bind the **architecture** documents (01–10). Three
 deliberate exceptions: the compliance review (00) quotes spec requirement text
 *including its values* — that is its job; tick-generation rates belong to the clocking
 contract (02 §2 with `F08.2`); and PDU field constants such as ADP `valid_time` belong

@@ -197,7 +197,7 @@ issuing class-B calls wherever possible.
 ### 4.1 `srp` — SRP/MSRP adapter operations
 
 This contract is served by the **in-scope SRP engine** ([10](10_srp_engine.md)) when
-`P-EN-SRP-ENGINE` = 1 (default), or by an external SRP stack when 0 — the ops, events
+`P-EN-SRP-ENGINE` selects it (the [F01.5](01_overview.md#7-parameter-master-table-f015) default), or by an external SRP stack otherwise — the ops, events
 and status signals below are identical either way; no consumer can tell the difference.
 
 | Op | Args | Result | Used by |
@@ -318,7 +318,7 @@ GET_x gather paths ([06 §6.2](06_aecp_engine.md)) cite these names.
 | `prop_delay_ns[if]` | 32 | gptp | latched at read | GET_AVB_INFO |
 | `path_count[if]` | 16 | gptp | with READ_AS_PATH burst | GET_AS_PATH |
 | `class_a_prio` / `class_a_vid` | 3 / 12 | srp | level + DOMAIN_CHANGE event | GET_AVB_INFO, talker declare |
-| `tk_decl_state[src]` | 2 | srp | {NONE, ADVERTISE, FAILED} | GET_STREAM_INFO(out), GET_TX_STATE |
+| `tk_decl_state[src]` | 2 | srp | {NONE, ADVERTISE, FAILED — self-declared, permitted but unused by this profile ([10 §6.3](10_srp_engine.md))} | GET_STREAM_INFO(out), GET_TX_STATE |
 | `lstn_reg_state[src]` | 2 | srp | {NONE, READY, READY_FAILED, ASKING_FAILED} | GET_STREAM_INFO(out) REGISTERING_FAILED, DA-gate |
 | `tk_reg_state[sink]` | 2 | srp | {NONE, ADVERTISE, FAILED} for the settled match | GET_STREAM_INFO(in), GET_RX_STATE |
 | `msrp_fail_code[x]` / `msrp_fail_bridge[x]` | 8 / 64 | srp | valid with FAILED states | GET_STREAM_INFO |

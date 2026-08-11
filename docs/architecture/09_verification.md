@@ -13,7 +13,7 @@ flowchart LR
   spec --> gen3["stimulus vectors + expected responses"]
   spec --> gen4["documentation tables (F06.14, F05.3, F08.1)"]
   gen3 --> tb["testbench: frame driver + timer control"]
-  tb --> dut["DUT (any HDL implementation of 01-08)"]
+  tb --> dut["DUT (any HDL implementation of 01-10)"]
   tb --> gen2
   dut --> cmpl["comparators: PDU-exact + normalized-transaction log"]
   gen2 --> cmpl

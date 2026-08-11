@@ -35,7 +35,9 @@ and TX arbitration. The three engines ([04](04_adp_engine.md)/[05](05_acmp_engin
 ```mermaid
 flowchart TB
   in["frame from mac_rx"] --> da{"DA = own unicast or 91-E0-F0-01-00-00?"}
-  da -- "01-80-C2-00-00-0E / -21" --> mrp["MRPDU queue → SRP engine (10, rule V9)"]
+  da -- "01-80-C2-00-00-0E / -21" --> mrpet{"EtherType 0x22EA / 0x88F5?"}
+  mrpet -- yes --> mrp["MRPDU queue → SRP engine (10, rule V9)"]
+  mrpet -- no --> notmrp["ignore (LLDP/802.1X share these DAs)"]
   da -- no --> drop1["drop (cnt: rx_da)"]
   da -- yes --> et{"EtherType 0x22F0?"}
   et -- no --> drop2["drop (cnt: rx_ethertype)"]
@@ -65,7 +67,7 @@ flowchart TB
 | V6 | AECP: `target_entity_id` ≠ own EID → drop (responses: match inflight table instead) | AECP | drop / route to originator | IEEE Fig 9-3 |
 | V7 | ACMP: responses matched on {controller EID, seq, msg_type} against inflight; unknown → ignore | ACMP | route or ignore | IEEE §8.2.1; Milan §5.5.3.1 |
 | V8 | Malformed below these gates is **never fatal**: drop + count, no state change | all | per-drop counters (trace-visible) | design rule |
-| V9 | With `P-EN-SRP-ENGINE`: DA `01-80-C2-00-00-0E` + EtherType `0x22EA` (MSRP) and DA `01-80-C2-00-00-21` + EtherType `0x88F5` (MVRP) bypass the 1722.1 pipeline into the SRP engine's MRPDU queue; its own tolerance rules apply ([10 §3](10_srp_engine.md)) | MRP | route | Milan §4.2.7 |
+| V9 | With `P-EN-SRP-ENGINE`: DA `01-80-C2-00-00-0E` + EtherType `0x22EA` (MSRP) and DA `01-80-C2-00-00-21` + EtherType `0x88F5` (MVRP) bypass the 1722.1 pipeline into the SRP engine's MRPDU queue; its own tolerance rules apply ([10 §3](10_srp_engine.md)); DA alone is NOT sufficient — LLDP (0x88CC) and 802.1X share these group DAs | MRP | route | 802.1Q Table 10-1/10-2, §35.2.2.1 (constants); Milan §4.2.7 (shall support) |
 
 Field extraction uses the offset tables of the PDU reg figures
 ([F03.4](#fig-03-header), [F04.5](04_adp_engine.md#fig-04-adpdu),
