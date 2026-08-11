@@ -17,7 +17,11 @@ mined from the consumer's own git history (its 1722.1 plane is the direct compar
 then an independent adversarial verification pass over every number. Figures that
 exist only in the consumer's internal build-campaign records (not in its tracked
 documents) are marked *(internal measurement)*. Every figure for a block that does not
-yet exist is an **ESTIMATE** and names its measured anchor. Date of record: 2026-08-11.
+yet exist is an **ESTIMATE** and names its measured anchor. Date of record:
+2026-08-11. The block-by-block inventory covers documents 01–09; the SRP engine
+([10](architecture/10_srp_engine.md)) was added to the architecture the same day
+and is priced as its own phase (P4b, §5) against the consumer's shipping lwSRP
+plane rather than through that inventory.
 
 ---
 
@@ -26,12 +30,19 @@ yet exist is an **ESTIMATE** and names its measured anchor. Date of record: 2026
 | Scenario | Net LUT | BRAM | Slices | Effort (person-days*) | Verdict |
 |---|---|---|---|---|---|
 | **A — adopt as written** (bolt this architecture's shared infrastructure onto the consumer, keep its engines) | **≈ +3,000** (cost) | ~0 | ~0 | ~140–350 | Do not. Shares what is already shared; unshippable density |
-| **B — full replacement** (P0–P5: build everything here, swap behind a build parameter) | **−2,750 … +4,550**, central ≈ **+800** (cost) | +206…+284 kbit | ~0 | **325–807** | Not worth it for area: central lands *past* the conformance cliff, in a density bin that has closed 0 of 7 attempts |
+| **B — full replacement** (P0–P5 incl. the SRP engine, P4b: build everything here, swap behind a build parameter) | **≈ −3,250 … +11,150**, central ≈ **+3,000** (cost) | +134…+284 kbit | ~0 | **373–949** | Not worth it for area: central lands on scenario A's number — past the conformance cliff — and the pessimistic end does not fit the die |
 | **C — retargeted µ-coded engine** (aim the µCPU at the emit-engine mass, keep everything else) | **−350 … −3,400**, central ≈ **−1,900** (saving) | +103…+136 kbit | ~0 | **131–321** | The only version that saves. Unproven until a 1–2-day out-of-context synthesis of the µCPU skeleton |
 | **D — consumer-side fixes only** (registry→16, FIFO 1→4 KiB, wire-form fixes, tier-0 deletes, constant-table serialisation) | **−1,030** (measured-anchored) | ~0 | ~0 | **12–25** | Best return per person-day by an order of magnitude. Needs no submodule and none of this architecture |
 
 \* A "person-day" is an **AI-agent-assisted lane-day** at the velocity mined from the
 consumer's history (single developer + agent lanes, §8) — *not* a human-team day.
+
+**SRP moved into scope after the inventory, and it is the one engine the consumer
+has already built.** Its lwSRP plane is shipping and silicon-validated; what
+[10](architecture/10_srp_engine.md) proposes is not new function but a different
+*compute model* — 2 + N + M discrete FSMs in place of one shared walker over a
+context table. That swap is a cost at every shape (§5, P4b): **≈ −500 … +6,600
+LUT, central ≈ +2,200**. It is the whole of scenario B's change above.
 
 **In slices the answer is ~0 in every scenario** — see §2. **Timing-closure risk is a
 separate, non-linear cost** in every scenario that changes the shipped netlist, and it
@@ -128,6 +139,27 @@ included), reached before this document set existed. And its stateless talker
 responder matches [05 §5](architecture/05_acmp_engine.md) exactly, including both
 documented reference-implementation traps.
 
+**SRP is the third structural agreement — and the one place the two designs
+disagree with a measurement attached.** The consumer's lwSRP already implements
+what [10](architecture/10_srp_engine.md) specifies, in the same reading of the same
+clauses: the Δ13 registrar rule, Domain adopt-and-re-declare with revert on
+link-down only, the exact three-parameter {stream_id, DA, VLAN} match of Milan
+§5.3.8.9, and "stream iff Advertise ∧ (Ready ∨ ReadyFailed)" — each reached before
+this document set existed. **MVRP is already there too**: the MVRP DA/EtherType
+pair is demuxed at ingress, an MVRP MRPDU carrying the operational SR VID is
+transmitted, and MVRP LeaveAll is scoped to its own participant. What differs is
+the compute model, and the consumer's module banner states its decision in the
+words [10 §4](architecture/10_srp_engine.md) reverses: *one shared state machine
+plus per-attribute context storage, never per-attribute module replication*. Its
+cost model prices the shared engine's marginal at **191 LUT per attribute row**
+(+97 per talker bandwidth slot) — a yosys out-of-context, deliberately safe-side
+figure (ESTIMATE) — and a discrete per-stream FSM cannot realistically beat that
+marginal, because it still owes the same 124-bit exact match the shared model
+amortizes. Two things the spec engine does **not** replace: `KL_lwsrp_bw_gate`
+(564 LUT measured) — FQTSS/CBS is a [10 §1](architecture/10_srp_engine.md)
+non-goal and the `srp` contract publishes no granted slope (§9, NC-5) — and the
+MRPDU ingress path, which exists on both sides.
+
 ---
 
 ## 4. Scenario A — adoption as written: ≈ +3,000 LUT, do not
@@ -157,20 +189,33 @@ every removal P1 justifies lives inside blocks only P3/P4 delete.
 | **P2** — ADP engine | [04](architecture/04_adp_engine.md); consumer's ADP is nearly all wire-format (whole plane ≈ 200 LUT) | **+80…+480**, pt ≈ +280 | ~0 | 19–45 |
 | **P3** — ACMP engine | [05](architecture/05_acmp_engine.md); first net saving: deletes both consumer ACMP context blocks (−3,420 measured, their LUTRAM *included*), adds ROM-driven executor (+1,600…+2,200; the consumer measured +1,738 when this SM moved into fabric) + talker responder + BACKOFF arc (+800…+1,000) | **−1,020…−220**, pt ≈ −620 | +18…+36 | 46–107 |
 | **P4** — AECP µCPU + toolchain | [06](architecture/06_aecp_engine.md) + [07](architecture/07_memory_maps.md) + the F09.1 single-source model, assembler, ROM builder, golden model. Removals −6,202 (5,785 mass + front-end residue share); additions +3,150…+7,000, dominated by the µCPU (§6) | **−3,050…+800**, pt ≈ −1,130 | +103…+136 used (+166…+203 allocated at tile granularity) | 122–306 |
+| **P4b** — SRP engine | [10](architecture/10_srp_engine.md); replaces the consumer's shipping lwSRP plane — removable 5,758…6,358 LUT (`walker` 2,938 + `ctx` 1,615 + `ctx_tx` 505 MEASURED; below-cutoff residue ESTIMATE bounded by the consumer's whole-plane 1×1 cost-model row, 1,523 LUT; **less** `bw_gate` 564 which this engine does not replace). Adds a vector decoder (anchor: `KL_lwsrp_walker` less its per-lane marginal ≈ 2,200), the 2 + N + M FSM array (200…500 LUT each — floor: the 191-LUT shared-model marginal, safe-side ESTIMATE; ceiling: `KL_maap` 621 MEASURED, a whole standalone SM), encoder + join aggregation (+600…+1,100), MVRP refcount gate, V9 filter rule, and the 66 → 89 deadline-slot widening | **≈ −500…+6,600**, pt ≈ **+2,200** | −72…0 ‡ | 48–142 |
 | **P5** — consumer integration | submodule pin, parameter, side-port→CSR bridge, adapter shims, suites, silicon soak | +150…+400 (ON), **0 OFF** | — | 43–90 |
 
 † P1's BRAM includes a trace ring **ASSUMED at 256 × 128 b** — this spec states no
 trace-ring geometry (§9, missing width #4).
 
-**Totals (parameter ON, all corrected):** net LUT **−2,742 … +4,558**, central
-**≈ +800** — i.e. 53,964 LUT = 85.12 %, density 3.41 ± 0.015: the 0-of-7 bin at
-nominal, reaching the 28 % bin only at the directive band's favourable edge, and
-**~220 LUT past the conformance cliff either way**. The optimistic end (50,414 =
-79.52 %, density 3.18) is genuinely good; the pessimistic end (57,714 = 91.03 %,
-density 3.64) is above the highest density that has ever closed. The spread is
-owned by two unmeasured numbers: how fat P1's new infrastructure lands, and the
-µCPU's size (§6). Effort: **325–807 person-days**; at the mined 3–5 concurrent
-lanes, 9–38 calendar weeks, **plus** the closure lottery (§8).
+‡ P4b's BRAM is a small *return*: the consumer's `KL_lwsrp_ctx` row carries two
+RAMB36 that an all-flop FSM array gives back — contingent on the array actually
+being all-flop, and a shared read path over a flop array is exactly the +894-LUT
+failure mode §6 warns about. The deadline RAM's growth to 89 slots
+([08 §5](architecture/08_timing.md)) costs **no tile at all** — 89 × 40 b = 3,560
+bits against a RAMB18's 18,432, the same single tile the 66-slot baseline used.
+
+**Totals (parameter ON, all corrected, P4b included):** net LUT
+**≈ −3,250 … +11,150**, central **≈ +3,000** — i.e. 56,156 LUT = 88.57 %, density
+3.54 ± 0.015. That is scenario A's arithmetic exactly: the 10 %-closure bin,
+**2,411 LUT past the conformance cliff**. The optimistic end (≈ 49,900 = 78.7 %,
+density 3.15) is genuinely good; the pessimistic end is now ≈ 64,300 LUT =
+**101.4 % — it does not fit the die**, which is not a hypothetical failure mode on
+this consumer: one of its own rounds measured 66,290 LUT-as-logic against 63,400
+sites and every seed died at DRC (`docs/design/AREA_BUDGET.md`). The spread is
+owned by three unmeasured numbers: how fat P1's new infrastructure lands, the
+µCPU's size (§6), and the per-stream FSM cost in P4b. Effort: **373–949
+person-days**; at the mined 3–5 concurrent lanes, 11–45 calendar weeks, **plus**
+the closure lottery (§8). Without P4b (SRP left exactly as the consumer ships it),
+the subtotal is −2,742 … +4,558, central ≈ +800 — 53,956 LUT = 85.12 %, density
+3.41 ± 0.015, still past the cliff and out of the 28 % bin at nominal.
 
 **Verdict: not worth it for area.** The honest central case spends 325+ person-days
 to land *past* the cliff in a bin never observed to close. What survives of B is its
@@ -185,7 +230,11 @@ against churn); the plain-IEEE profile ROM column is pure cost with no Milan ret
 (a product decision, not an architecture default); and the ADP cadence /
 `available_index` semantics differ from the consumer's controller-validated
 behaviour — adjudicate against live controllers (la_avdecc, Hive) *before* landing,
-not after (§9).
+not after (§9). And P4b is the only phase that *deletes a shipping,
+silicon-validated plane* — one whose LeaveAll scoping, Domain adoption and
+registrar rules were each corrected against live bridges — while its replacement
+publishes no granted bandwidth, so the consumer's CBS slope MUX and its Σ-limit
+admission decision would have no source under this contract (§9, NC-5).
 
 ---
 
@@ -210,6 +259,8 @@ data … whatever part is a pure function of a descriptor index is a ROM".
   structurally the closest analog to a micro-sequencer, the µCPU should not exceed
   it. (PicoRV32-class ≈ 1,500 LUT is an *external public analog*, not a measurement,
   and not directly comparable — this µCPU needs a 16 × 64-bit operand file.)
+  Scenario C touches none of the walker's block: it keeps the consumer's lwSRP
+  plane exactly as it ships, and `P-EN-SRP-ENGINE` has no bearing on C.
 - **The regfile warning:** the 16 × 64 operand file must land in LUTRAM/BRAM, never
   flops — as a flop array with a 16:1 × 64-bit read mux it alone consumes most of
   the µCPU budget. The consumer measured this exact failure mode at **+894 LUT**
@@ -290,6 +341,13 @@ Where latency **is** at risk, in order:
 3. **The per-frame plane must not move.** Counter *accumulation* is per-frame and
    stays fabric; the µCPU serves and latches counters, it is never in the
    accumulation path.
+4. **SRP is not a latency argument for fabric — with one exception.** Its fastest
+   deadline is MRP joinTime at 200 ms ([08 F08.1](architecture/08_timing.md)),
+   which places the whole engine on the far side of the consumer's own "100 ms
+   razor" (`docs/design/AREA_80_CAMPAIGN.md`), alongside AECP. The one sub-100 ms
+   surface in that plane is the per-frame admission gate and CBS slope grant — and
+   [10 §1](architecture/10_srp_engine.md) declares FQTSS/CBS a non-goal, so that
+   block stays where it is either way.
 
 ---
 
@@ -305,7 +363,7 @@ own 1722.1 control plane:
 | AECP chain | 12 + pkg | 9,081 | 11,490 | 2,773 | 147 | 31 days | 27 |
 | ACMP SMs | 4 + pkg | 2,859 | 4,105 | 843 | 38 | 29 days | 18 |
 | ADP | 3 + pkg | 1,084 | 2,055 | 739 | 21 | 39 days | 12 |
-| lwSRP engine (cleanest greenfield) | 11 + pkg | 3,949 | 3,898 | 933 | 40 | 27 days | 16 |
+| lwSRP engine (cleanest greenfield — **the direct comparable for P4b**; churn 1.14 mined, the lowest in the set) | 11 + pkg | 3,949 | 3,898 | 933 | 40 | 27 days | 16 |
 | CSR plane (the seam) | 1 file | 2,693 | 2,329 | 851 | 126 | 41 days | 32 |
 | Fuzz/cosim layer | — | — | 3,330 | 3,378 | 8 | 16 days | 5 |
 
@@ -373,12 +431,14 @@ its own gates cannot currently catch any of them.
    gate never reaches them. Add both checks; add REQ rows for the empty GAPs.
    Install `@mermaid-js/mermaid-cli` so `make lint` stops passing vacuously when
    `mmdc` is absent.
-7. **Four missing widths** (the only sizing statements the architecture's central
-   bet needs, none stated): the **µop width** (P-UCODE-ROM-DEPTH = 2048 × *unstated*
+7. **Five missing widths** (the only sizing statements the architecture's central
+   bets need, none stated): the **µop width** (P-UCODE-ROM-DEPTH = 2048 × *unstated*
    is the single most consequential missing number in the set), the dispatch-ROM
-   entry width, the ACMP transition-ROM entry width, and the trace-ring record
+   entry width, the ACMP transition-ROM entry width, the trace-ring record
    width × depth ([02 §7](architecture/02_interfaces.md) gives only an address
-   window).
+   window), and the **MRPDU RX queue** geometry ([10 §4](architecture/10_srp_engine.md)
+   names the queue and never sizes it — an MRPDU carrying aggregated vectors is not
+   a fixed-size frame).
 8. **µISA count consistency.** The [06 §8](architecture/06_aecp_engine.md) table
    lists 29 operations across its 8 groups; the prose says "~24". Decode width is a
    first-order µCPU term — state one number.
@@ -407,7 +467,35 @@ its own gates cannot currently catch any of them.
     dynamic overlay (the consumer's split — live-HW fields overlaid at read, AECP
     settables stored — is cheaper: no second RAM, no merge in the read path), and
     its per-record crc16 (weaker than the consumer's whole-image CRC-32 atomic
-    reject, whose torn-slot rejection is structural).
+    reject, whose torn-slot rejection is structural). The SRP verification added
+    two more of the consumer's defects where this spec is right: its leavealltimer
+    is a fixed free-running 10 s divider — no 10–15 s randomisation, no restart or
+    Passive behaviour on a received LeaveAll (802.1Q Table 10-5) — where
+    [08 F08.1](architecture/08_timing.md) is correct; and on a Domain-VID edge it
+    re-declares the new VID immediately with no Leave of the old and no backoff,
+    retagging live streams, where [10 §6.2](architecture/10_srp_engine.md)'s
+    frozen-VID refcount rule is correct (Milan Table 5.3, §4.3.2).
+12. **NC-5 — the `srp` contract cannot drive a credit-based shaper.**
+    [10 §1](architecture/10_srp_engine.md) correctly scopes FQTSS/CBS out, but
+    neither [02 §4.1](architecture/02_interfaces.md)'s ops nor
+    [F02.10](architecture/02_interfaces.md#fig-02-statusdict)'s class-D fields
+    publish a granted bandwidth or `operIdleSlope`. IEEE 802.1Q §34.3(c)/(d) is
+    explicit that when SRP is in operation the administered slope has no effect and
+    the shaper runs on `operIdleSlope` (quoted verbatim in the consumer's
+    `docs/design/AREA_80_CAMPAIGN.md`). The consumer resolves this in 564 measured
+    LUT (`KL_lwsrp_bw_gate`: Σ-slope against a 75 % port-rate ceiling, and the
+    resulting per-queue idleSlope). Add a class-D publication — the non-goal is
+    right, the silence is not. Until then, [02 §4.1](architecture/02_interfaces.md)'s
+    claim that no consumer can tell the internal engine from an external stack is
+    false the moment a shaper needs a granted slope.
+13. **`P-EN-SRP-ENGINE` = 0 is a seam, not a choice, on the only platform this
+    document set names.** There is no external SRP stack on the reference platform —
+    the engine *is* the stack; the contract's real consumers there are fabric
+    surfaces (per-talker admission, the class-A slope MUX, the ACMP
+    listener-observed hook); and its records place the plane in fabric by owner
+    directive despite MRP's 200 ms cadence sitting above the "100 ms razor". Record
+    the parameter in the class of `P-EN-REDUNDANCY` — a reserved seam — or state
+    what an external stack must drive and how it is verified.
 
 ---
 
@@ -432,4 +520,10 @@ its own gates cannot currently catch any of them.
 **Do not:** adopt the shared-infrastructure layer as written (scenario A); land any
 phase incrementally on the shipping build; port this spec's GDI list, its
 IDENTIFY_NOTIFICATION status, its overlay structure, or its per-record CRC into an
-implementation; or quote a slice delta for any block-scale change, in any scenario.
+implementation; replace the consumer's lwSRP plane with the
+[10](architecture/10_srp_engine.md) engine on resource grounds — the swap costs LUT
+at every shape (≈ −500 … +6,600, central ≈ +2,200), and its per-stream compute
+model is the one that platform's own measurements rejected; what *is* worth porting
+from doc 10 is its join aggregation (the consumer emits single-value vectors only)
+and the explicit-EndMark rule. And never quote a slice delta for any block-scale
+change, in any scenario.

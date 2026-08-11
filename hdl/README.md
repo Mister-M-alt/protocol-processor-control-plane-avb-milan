@@ -16,6 +16,7 @@ here. The HDL is authored here and only *consumed* there — never copied.
 | `hdl/adp/` | ADP discovery engine | [`04_adp_engine.md`](../docs/architecture/04_adp_engine.md) |
 | `hdl/acmp/` | Milan ACMP binding/probing engine | [`05_acmp_engine.md`](../docs/architecture/05_acmp_engine.md) |
 | `hdl/aecp/` | AECP/AEM micro-coded engine + controller registry | [`06_aecp_engine.md`](../docs/architecture/06_aecp_engine.md) |
+| `hdl/srp/` | MSRP/MVRP endpoint participant: Domain + VLAN FSMs, per-stream FSMs, vector codec | [`10_srp_engine.md`](../docs/architecture/10_srp_engine.md) |
 | `hdl/common/` | primitives shared across engines (timers, CDC, memories) | [`02_interfaces.md`](../docs/architecture/02_interfaces.md), [`07_memory_maps.md`](../docs/architecture/07_memory_maps.md) |
 | `hdl/top/` | `protocol_processor_top` — the one instantiation boundary | [`01_overview.md`](../docs/architecture/01_overview.md) |
 | `tb/` | one self-checking Verilator suite per module (exit 0 = PASS) | [`09_verification.md`](../docs/architecture/09_verification.md) |
