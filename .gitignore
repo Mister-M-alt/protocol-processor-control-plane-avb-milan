@@ -16,3 +16,7 @@ obj_dir/
 obj_*/
 *.vcd
 *.fst
+# HDL sim/synth generated artifacts
+ucode.hex
+*.rpt
+*.log
