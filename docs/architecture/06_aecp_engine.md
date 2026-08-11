@@ -170,7 +170,7 @@ rule that satisfies IEEE §9.3.5.3.3 for **every** opcode 0x0000–0x0068).
 | 0x0023 | STOP_STREAMING | shall | **input only** (Δ11) | STREAM_CFG | yes | — | — | yes | 28 B |
 | 0x0024 | REGISTER_UNSOLICITED_NOTIFICATION | shall | §7; accepts 2013 no-flags form | REGISTRY_OP | no | — | — | — | 28 B (w/ flags) |
 | 0x0025 | DEREGISTER_UNSOLICITED_NOTIFICATION | shall | §7 | REGISTRY_OP | no | — | — | auto-deregister → targeted | 24 B |
-| 0x0026 | IDENTIFY_NOTIFICATION | unsolicited-only | as command → `BAD_ARGUMENTS` | — | — | — | — | is one | 28 B |
+| 0x0026 | IDENTIFY_NOTIFICATION | unsolicited-only | as command → `BAD_ARGUMENTS` (IEEE §7.4.39.2, the opcode-specific rule — it governs over §9.3.5.3.3's fallback) | — | — | — | — | is one | 28 B |
 | 0x0027 | GET_AVB_INFO | shall | gather §6.2 | RO | — | **no** | **yes** | async triggers | 44 + msrp mappings |
 | 0x0028 | GET_AS_PATH | shall | gather §6.2 | RO | — | **no** | **yes** | async trigger | 28 + 8·count |
 | 0x0029 | GET_COUNTERS | shall | §6.6 | RO | — | yes | — | async (`T-CTR-NOTIF`) | 160 B |
@@ -181,7 +181,13 @@ rule that satisfies IEEE §9.3.5.3.3 for **every** opcode 0x0000–0x0068).
 | MVU 0x0000 | GET_MILAN_INFO | shall | §6.9 | RO | — | — | — | — | 44 B |
 | MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended (`P-EN-MVU-SUID`) | §6.9 | CLOCK_CFG-like (global key) | yes/— | — | — | yes/— | 40 B |
 | MVU 0x0003/0x0004 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO | recommended (`P-EN-MVU-MCR`) | §6.9 | CLOCK_CFG | yes/— | — | — | yes/— | 104 B |
-| all others 0x0005–0x0068, 0x3FFF | — | n/i | — | — | — | — | — | — | echo, `NOT_IMPLEMENTED` |
+| 0x000B | GET_VIDEO_FORMAT | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
+| 0x000D | GET_SENSOR_FORMAT | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
+| 0x0013 | GET_ASSOCIATION_ID | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
+| 0x001D | GET_SIGNAL_SELECTOR | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
+| 0x0048 | GET_MEMORY_OBJECT_LENGTH | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
+| 0x004A | GET_STREAM_BACKUP | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
+| all others 0x0005–0x0068, 0x3FFF | — | n/i | — | — | — | — | — | — | echo, `NOT_IMPLEMENTED` (GDI flag **clear**: any of these inside a batch ⇒ `BAD_ARGUMENTS`, §7.4.76.2) |
 
 ### 6.1 READ_DESCRIPTOR
 
@@ -275,7 +281,17 @@ response is never a torn mix of two states.
 
 ### 6.5 Audio-map operations (Milan §5.4.2.26–.28)
 
-- Channel space of each stream port is **partitioned at model-build time** into fixed
+- **A Stream Port Output that HAS AUDIO_MAP descriptor(s)** (`number_of_maps`
+  > 0 in its STREAM_PORT_OUTPUT descriptor — a static map) **answers all three
+  commands with `NOT_SUPPORTED`** (Milan §5.4.2.26/.27/.28). Every Stream Port
+  Input, and every Stream Port Output with no Audio Map, shall implement all
+  three — Milan §5.3.3.7 forbids AUDIO_MAPs on STREAM_PORT_INPUT precisely
+  because inputs must support dynamic mapping, and IEEE §7.2.13's dynamic-map
+  convention is `number_of_maps` = 0. The check is the **first `CHECK_ARG` in
+  the §6.4 validation chain**, reading the addressed descriptor's type and
+  `number_of_maps` from the model store at execute time (a per-opcode
+  dispatch-ROM bit cannot express a per-descriptor condition).
+- Channel space of each **dynamically mapped** stream port is **partitioned at model-build time** into fixed
   subsets ≤ `P-MAP-SUBSET-CH-MAX`; `number_of_maps` always reports the partition
   count N regardless of dynamic content; `GET_AUDIO_MAP(map_index = P)` returns all and
   only the dynamic mappings of subset P.
@@ -326,8 +342,8 @@ descriptor by `T-CTR-NOTIF`.
 
 ```mermaid
 flowchart TB
-  s["parse tuples: len(2) rsv(2) status(1) rsv(1) cmd(2) data - end by cdl"] --> scan{"pre-scan: every cmd GDI-allowed in dispatch ROM?"}
-  scan -- no --> ba["respond BAD_ARGUMENTS - process nothing"]
+  s["parse tuples: len(2) rsv(2) status(1) rsv(1) cmd(2) data - end by cdl"] --> scan{"pre-scan: every cmd in the 13 of IEEE 7.4.76.2?"}
+  scan -- no --> ba["respond BAD_ARGUMENTS - process nothing (a non-member opcode, never an unimplemented member)"]
   scan -- yes --> loop["for each tuple: dispatch its µprogram in sub-command mode"]
   loop --> app{"appending this element exceeds cdl 524?"}
   app -- yes --> skip["skip element (not appended) - continue"]
@@ -338,10 +354,17 @@ flowchart TB
   nxt -- no --> tx["respond (never oversize, never IN_PROGRESS)"]
 ```
 
-GDI-allowed set is a dispatch-ROM flag (fixed-size GETs only: GET_CONFIGURATION,
-GET_STREAM_FORMAT, GET_STREAM_INFO, GET_NAME, GET_SAMPLING_RATE, GET_CLOCK_SOURCE,
-GET_COUNTERS, …); GET_CONTROL, GET_AVB_INFO, GET_AS_PATH, GET_AUDIO_MAP are
-variable-size ⇒ excluded.
+GDI-allowed set is a dispatch-ROM flag carrying **exactly the 13 commands IEEE
+1722.1-2021 §7.4.76.2 enumerates** — GET_CONFIGURATION, GET_STREAM_FORMAT,
+GET_VIDEO_FORMAT, GET_SENSOR_FORMAT, GET_STREAM_INFO, GET_NAME,
+GET_ASSOCIATION_ID, GET_SAMPLING_RATE, GET_CLOCK_SOURCE, GET_SIGNAL_SELECTOR,
+GET_COUNTERS, GET_MEMORY_OBJECT_LENGTH, GET_STREAM_BACKUP — and **the gate is
+list membership, not implementation**: a batch whose every command is in this
+list is ACCEPTED even when some members are not implemented by this profile;
+each unimplemented member is answered with a per-element `info_status` of
+`NOT_SUPPORTED` (§7.4.76.1). Only a command **outside** the list (GET_CONTROL,
+GET_AVB_INFO, GET_AS_PATH, GET_AUDIO_MAP and every other variable-size or
+non-GET opcode) makes the whole batch `BAD_ARGUMENTS`.
 
 ### 6.8 ACQUIRE / LOCK
 
@@ -472,12 +495,19 @@ sequenceDiagram
 
 ## 8. µcode architecture
 
-Dispatch ROM entry (per opcode): {µPC entry, hazard class + key extractor, min-cdl,
-response-size id, lock flag, GDI flag, notif flag, per-profile valid}. µCPU: µPC,
-µcode ROM (`P-UCODE-ROM-DEPTH`), 16 × 64-bit operand registers, response/iteration
-cursors, 32-bit ALU / 64-bit moves, status register.
+Dispatch ROM entry (per opcode), **48 bits** (`P-DISPATCH-ROM-W`, F01.5): {µPC
+entry 11, hazard class 4 + key-extractor select 4, min-cdl 11, response-size id
+7, lock flag 1, GDI flag 1, notif flag 1, per-profile valid 2, reserved 6}.
+µCPU: µPC, µcode ROM (`P-UCODE-ROM-DEPTH` × `P-UCODE-ROM-W` = 2048 × **48 b**
+— measured as 3 RAMB36 with the full datapath at 1,068 LUT, `syn/ooc/`),
+16 × 64-bit operand registers, response/iteration cursors, 32-bit ALU / 64-bit
+moves, status register. **FAIL_SAFE entry**: a fixed µPC holds the
+forced-respond arm (`SET_STATUS` best-current → `BUILD_HEADER` →
+`SEND_RESPONSE` → `END`); the deadline engine preempts a running µprogram by
+redirecting the sequencer there, so a command retires with a response in every
+outcome ([03 §6](03_packet_engine.md) rule (e), IEEE §9.3.2.6).
 
-**µISA (~24 operations)** — revised from the original document
+**µISA (29 operations)** — revised from the original document
 ([review §4](../00_MILAN_COMPLIANCE_REVIEW.md); dropped ops targeted objects that do
 not exist in a Milan PAAD):
 
@@ -518,7 +548,7 @@ GET_DYNAMIC_INFO:
   SEND_RESPONSE; END
 ```
 
-Sizing: ~35 programs × ~25 µops ⇒ `P-UCODE-ROM-DEPTH` = 2048 with ~2× margin.
+Sizing: ~35 programs × ~25 µops ⇒ `P-UCODE-ROM-DEPTH` = 2048 with ~2× margin, at `P-UCODE-ROM-W` = 48 b per µop (encoding: `hdl/aecp/ucpu_pkg.sv`).
 The dispatch ROM + response-size ROM + µcode are the artifacts generated from the
 single-source command model ([09 §1](09_verification.md)).
 

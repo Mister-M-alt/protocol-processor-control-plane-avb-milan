@@ -133,7 +133,7 @@ stateDiagram-v2
     EXECUTING --> RETIRED: no response (e.g. dropped probe response, ADP rx)
     RESP_BUILD --> TX_QUEUED: slot serialized
     TX_QUEUED --> RETIRED: eof on wire (slot freed)
-    EXECUTING --> RETIRED: deadline kill (count + trace, never half-committed)
+    EXECUTING --> RESP_BUILD: deadline expiry / forced FAIL_SAFE respond (06 §8) - count + trace, never half-committed, never silent
 ```
 
 Pool sizing: transactions in flight ≤ `P-RX-SLOTS` + queue depths; the deadline-kill
@@ -197,7 +197,15 @@ Ordering rules:
 - **(c)** the unsolicited stream is an independent per-controller sequence
   ([06 §7](06_aecp_engine.md)).
 - **(d)** NVM commits are asynchronous and never delay responses.
-- **(e)** a deadline kill releases the key without partial commit.
+- **(e)** a deadline expiry **forces a response, never a silent drop** (IEEE
+  1722.1-2021 §9.3.2.6: "Entities shall respond to all ATDECC commands within
+  240 milliseconds"): the transaction is redirected to the FAIL_SAFE µprogram
+  ([06 §8](06_aecp_engine.md)), which emits a correctly-addressed response
+  carrying the best current status; the serialization key is released only
+  after that response is queued, and no partial commit survives the kill. The
+  AECP deadline is **armed at `T-BUDGET-AECP-WC`**, leaving ≥ 140 ms of the
+  `T-AECP-RESP` line for the FAIL_SAFE build and TX serialization — the forced
+  response is on the wire inside 240 ms, not merely started at it.
 
 ## 7. Response building and buffers
 

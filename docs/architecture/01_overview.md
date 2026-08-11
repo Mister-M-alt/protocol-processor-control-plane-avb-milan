@@ -156,6 +156,11 @@ values; other documents reference `P-…` IDs.
 | P-CA-POOL | 4 | — | concurrent CONTROLLER_AVAILABLE probes |
 | P-TIMER-SLOTS | formula | allocation formula owned by [08 §5](08_timing.md) (baseline examples: 66; 89 with the SRP engine) | deadline RAM |
 | P-UCODE-ROM-DEPTH | 2048 | ~35 programs × ~25 µops + margin | AECP µcode |
+| P-UCODE-ROM-W | 48 | µop width (encoding `hdl/aecp/ucpu_pkg.sv`; 2048 × 48 measured 3 RAMB36 + 1,068-LUT datapath, `syn/ooc/`) | AECP µcode |
+| P-DISPATCH-ROM-W | 48 | dispatch-ROM entry width (field layout [06 §8](06_aecp_engine.md)) | AECP dispatch |
+| P-ACMP-TROM-W | 32 | ACMP transition-ROM entry width (112 cells per profile column, [F05.3](05_acmp_engine.md#fig-05-listener-matrix)) | ACMP executor |
+| P-TRACE-RING | 256 × 128 | trace-ring records × record bits ([02 §7](02_interfaces.md) window) | trace ring |
+| P-MRPDU-QUEUE-BYTES | 2048 | SRP MRPDU RX queue: one max-size frame + headroom ([10 §4](10_srp_engine.md)) | SRP engine |
 | P-CLK-HZ | 100 MHz | any; prescaler retuned | timebase |
 | P-INTERNAL-INGRESS-DELAY-NS | product | added to reported input latency (Milan §5.4.2.10.1) | GET_STREAM_INFO |
 | P-PT-OFFSET-DEFAULT-NS | 2 000 000 | 0..0x7FFFFFFF (Milan §5.3.7.6) | presentation time |

@@ -198,7 +198,14 @@ issuing class-B calls wherever possible.
 
 This contract is served by the **in-scope SRP engine** ([10](10_srp_engine.md)) when
 `P-EN-SRP-ENGINE` selects it (the [F01.5](01_overview.md#7-parameter-master-table-f015) default), or by an external SRP stack otherwise — the ops, events
-and status signals below are identical either way; no consumer can tell the difference.
+and status signals below are identical either way; no consumer can tell the
+difference. That includes the shaper: the contract publishes the granted
+per-source idleSlope and admission (class-D) because IEEE 802.1Q §34.6.1 runs
+the credit-based shaper on `operIdleSlope` ("used by the credit-based shaper
+algorithm (8.6.8.2) as its idleSlope"), §34.3(c) makes SRP the source of that
+value whenever SRP is in operation, and §34.6.1.1 defines the per-stream
+idleSlope this field carries — an external stack must publish the same two
+fields or it cannot serve this contract.
 
 | Op | Args | Result | Used by |
 |---|---|---|---|
@@ -322,6 +329,8 @@ GET_x gather paths ([06 §6.2](06_aecp_engine.md)) cite these names.
 | `lstn_reg_state[src]` | 2 | srp | {NONE, READY, READY_FAILED, ASKING_FAILED} | GET_STREAM_INFO(out) REGISTERING_FAILED, DA-gate |
 | `tk_reg_state[sink]` | 2 | srp | {NONE, ADVERTISE, FAILED} for the settled match | GET_STREAM_INFO(in), GET_RX_STATE |
 | `msrp_fail_code[x]` / `msrp_fail_bridge[x]` | 8 / 64 | srp | valid with FAILED states | GET_STREAM_INFO |
+| `granted_slope_bps[src]` | 32 | srp | per-stream granted idleSlope while `sr_admitted[src]` = 1, else 0 (802.1Q §34.6.1.1) | CBS slope MUX, per-talker gate |
+| `sr_admitted[src]` | 1 | srp | reservation admitted against the Σ-slope port ceiling | AVTP per-talker gate |
 | `acc_latency[sink]` | 32 | srp | registered talker attr value | GET_STREAM_INFO(in) (+ P-INTERNAL-INGRESS-DELAY-NS) |
 | `streaming[src]` | 1 | avtp | level | GET_STREAM_INFO(out) derivation |
 | `mc_locked[domain]` | 1 | mclk | level + events | counters |
@@ -369,7 +378,7 @@ Address windows (word offsets; full map in [07 §5.5](07_memory_maps.md)):
 | `0x10000` | RO | dynamic-overlay debug view |
 | `0x20000` | RO | registry + counters snapshot |
 | `0x30000` | RW | control/status: `entity_enable`, `shutdown_req`, boot status, profile select |
-| `0x40000` | RO | trace ring (class-A framing reused) |
+| `0x40000` | RO | trace ring (class-A framing reused; shape `P-TRACE-RING`, [F01.5](01_overview.md#7-parameter-master-table-f015)) |
 | `0x50000` | RW | firmware mailbox (only if `P-EN-FIRMWARE-ASSIST`; [GAP-13](../00_MILAN_COMPLIANCE_REVIEW.md#gap-13)) |
 
 Lock interaction: side-port writes that mirror ATDECC state changes (names, sampling

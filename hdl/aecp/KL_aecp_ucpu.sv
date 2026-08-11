@@ -145,6 +145,7 @@ module KL_aecp_ucpu
   logic  [3:0] eseq_r;                     // beat counter inside one op
   logic        copy_go_r;                  // COPY_BUFFER length loaded
   logic [15:0] copy_left_r;                // COPY_BUFFER bytes remaining
+  logic [12:0] copy_idx_r;                 // 64-bit lanes already copied
   logic [63:0] copy_lane_r;                // held 64-bit lane during copy
 
   uop_t uop_d_w;
@@ -300,7 +301,7 @@ module KL_aecp_ucpu
           st_req_o  = copy_go_r && (copy_left_r != 16'd0) &&
                       (eseq_r == 4'd0);
           st_addr_o = desc_base_r + uop_e_r.imm[19:0] +
-                      20'({4'd0, copy_left_r} >> 3);
+                      {4'd0, copy_idx_r, 3'd0};
         end
         default: ;
       endcase
@@ -426,6 +427,7 @@ module KL_aecp_ucpu
       eseq_r      <= '0;
       copy_go_r   <= 1'b0;
       copy_left_r <= '0;
+      copy_idx_r  <= '0;
       copy_lane_r <= '0;
       rom_q_r     <= '0;
       uop_e_r     <= '0;
@@ -505,6 +507,7 @@ module KL_aecp_ucpu
                 if (!copy_go_r) begin
                   copy_go_r   <= 1'b1;
                   copy_left_r <= opa_e_r[15:0];
+                  copy_idx_r  <= '0;
                 end else if ((eseq_r == 4'd0) && st_rvalid_i &&
                              (copy_left_r != 16'd0)) begin
                   copy_lane_r <= st_rdata_i;
@@ -519,6 +522,7 @@ module KL_aecp_ucpu
                   resp_len_r  <= resp_len_r + 11'd4;
                   copy_left_r <= (copy_left_r > 16'd8)
                                ? copy_left_r - 16'd8 : 16'd0;
+                  copy_idx_r  <= copy_idx_r + 13'd1;
                 end
               end
               default: eseq_r <= 4'd0;

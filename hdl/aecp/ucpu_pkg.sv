@@ -100,14 +100,14 @@ package ucpu_pkg;
   localparam logic [3:0] REL_IN_C = 4'd4;  // set-membership via gather-side rom
 
   // ---- AECP status codes carried by the 5-bit status register ------------
-  // (values = IEEE 1722.1-2021 Table 7-127 low codes; the full 8-bit wire
+  // (values = IEEE 1722.1-2021 Table 7-141 low codes; the full 8-bit wire
   //  status is formed by the response builder header stage)
   localparam logic [4:0] ST_SUCCESS_C        = 5'd0;
   localparam logic [4:0] ST_NOT_IMPLEMENTED_C = 5'd1;
   localparam logic [4:0] ST_NO_SUCH_DESC_C   = 5'd2;
   localparam logic [4:0] ST_LOCKED_C         = 5'd3;
-  localparam logic [4:0] ST_NOT_SUPPORTED_C  = 5'd6;
-  localparam logic [4:0] ST_BAD_ARGUMENTS_C  = 5'd13;
+  localparam logic [4:0] ST_BAD_ARGUMENTS_C  = 5'd7;
+  localparam logic [4:0] ST_NOT_SUPPORTED_C  = 5'd11;
 
   // ---- response buffer geometry (Milan §5.4.2.5: 524-byte payload cap) ---
   localparam int unsigned RESP_BYTES_C = 576;   // one TX slot, 03 §2

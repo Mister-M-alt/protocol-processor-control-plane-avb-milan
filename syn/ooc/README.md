@@ -19,17 +19,17 @@ vivado -mode batch -source <repo>/syn/ooc/ucpu_ooc.tcl -nojournal -log ooc.log
 
 | Metric | Value |
 |---|---|
-| Slice LUTs | **1,042** (910 logic + 132 as distributed RAM) |
-| Registers | 478 |
+| Slice LUTs | **1,068** (936 logic + 132 as distributed RAM) |
+| Registers | 491 |
 | Block RAM | 3 × RAMB36 (the 2048 × 48 µcode ROM) |
 | DSP | 0 |
-| WNS at 100 MHz (`P-CLK-HZ`), OOC | **+2.263 ns** (0 failing endpoints) |
+| WNS at 100 MHz (`P-CLK-HZ`), OOC | **+2.541 ns** (0 failing endpoints) |
 
 Sanity held: the register file inferred as distributed RAM (not the +894-LUT
 flop-mirror failure mode), the ROM as block RAM (its contents cannot be
 constant-folded into the decode), and the only synthesis warnings are the two
 constant-1 strobe bits that are true by construction. The functional suite
-(`tb/ucpu/`, 37 checks, mutation-proven) ran green on the same RTL and the
+(`tb/ucpu/`, 92 checks, mutation-proven) ran green on the same RTL and the
 same ROM image before synthesis.
 
 The number is a **skeleton** measurement: dispatch handshake, hazard-key

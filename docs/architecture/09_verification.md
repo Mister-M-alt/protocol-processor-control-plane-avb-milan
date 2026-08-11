@@ -66,13 +66,15 @@ reports uncovered REQ-IDs as failures.
 | h ≠ 0 / version ≠ 0 / unknown subtype | dropped (V8) |
 | unknown AEM opcode (each reserved range sampled) | echo + `NOT_IMPLEMENTED`, correctly sized |
 | MVU wrong protocol_id / unknown MVU type | VU `NOT_IMPLEMENTED` echo |
-| GET_DYNAMIC_INFO with a variable-size GET inside | `BAD_ARGUMENTS`, nothing processed |
+| GET_DYNAMIC_INFO with a **non-§7.4.76.2** command inside (variable-size GET or non-GET) | `BAD_ARGUMENTS`, nothing processed |
+| GET_DYNAMIC_INFO batching **all 13** §7.4.76.2 commands | accepted; unimplemented members answered per-element `NOT_SUPPORTED`, implemented ones with data |
 | GET_DYNAMIC_INFO batch overflowing 524 cdl | overflowing elements skipped, rest answered |
 | oversize READ_DESCRIPTOR response path | > 524-cdl frame emitted correctly (Δ8) |
 | ACMP responses with mismatched {controller, seq} | silently ignored |
-| IDENTIFY_NOTIFICATION received as a command | `BAD_ARGUMENTS` |
+| IDENTIFY_NOTIFICATION received as a command | `BAD_ARGUMENTS`, correctly sized (IEEE §7.4.39.2) |
 | duplicate BIND_RX (same seq) replay | idempotent / cached response |
 | MRPDU with a malformed vector attribute mid-PDU | prefix processed; rest of that list + subsequent messages discarded (V9, Milan §4.2.7.1.2) |
+| deadline expiry mid-command (TIM, compressed timers) | forced FAIL_SAFE response emitted — never a silent retire (03 §6 rule (e)) |
 
 ## 4. Reference-model contract
 

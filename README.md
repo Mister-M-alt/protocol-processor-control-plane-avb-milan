@@ -5,8 +5,19 @@ Hardware architecture for a compact, deterministic **IEEE 1722.1-2021 (ATDECC) p
 processor** implementing the control plane of a **non-redundant Milan v1.2 PAAD**
 (Professional Audio AVB Device): ADP discovery, Milan ACMP binding/probing, and
 AECP/AEM + Milan Vendor Unique command execution — as reusable, HDL-agnostic
-architecture documentation. No RTL yet: this repository is the specification a
-VHDL/SystemVerilog/other implementation is written against.
+architecture documentation, plus the beginning of its SystemVerilog
+implementation under `hdl/`.
+
+**Architecture revision 2.0** (2026-08-11): the post-review,
+implementation-backed architecture — P0 conformance corrections adversarially
+verified against the standards PDFs, the in-scope SRP engine
+([10](docs/architecture/10_srp_engine.md)), every sizing width stated
+([F01.5](docs/architecture/01_overview.md)), and the first measured RTL (the
+1,068-LUT µCPU skeleton, [`syn/ooc/`](syn/ooc/README.md)). Revision 1.x is the
+original concept document, retained below as reviewed input. The reference
+platform consumes this repository as a git submodule and cuts over by direct
+substitution at parity (owner decision 10,
+[review §8](docs/00_MILAN_COMPLIANCE_REVIEW.md)).
 
 ## Contents
 

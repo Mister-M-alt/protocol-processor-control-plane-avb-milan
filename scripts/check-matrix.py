@@ -8,6 +8,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REVIEW = os.path.join(ROOT, "docs", "00_MILAN_COMPLIANCE_REVIEW.md")
 VER_VOCAB = {"DIR", "MTXW", "TOL", "TIM", "RND", "STORM", "NVM", "—", "lint"}
+MAND_VOCAB = {"shall", "should", "may", "rec", "design", "—"}
 REQ_ROW = re.compile(r"^\|\s*(REQ-[A-Z]+-\d{3})\s*\|(.*)$", re.M)
 GAP_DEF = re.compile(r'<a id="(gap-\d+)">')
 GAP_REF = re.compile(r"\(#(gap-\d+)\)")
@@ -16,6 +17,7 @@ GAP_REF = re.compile(r"\(#(gap-\d+)\)")
 def main() -> int:
     body = open(REVIEW, encoding="utf-8").read()
     problems, seen = [], {}
+    req_gaps = set()
 
     for req, rest in REQ_ROW.findall(body):
         cols = [c.strip() for c in rest.split("|")]
@@ -26,9 +28,17 @@ def main() -> int:
         if len(cols) < 8:
             problems.append(f"{req}: only {len(cols)} columns")
             continue
-        for idx, label in ((0, "clause"), (1, "requirement"), (5, "arch"), (6, "doc")):
+        for idx, label in ((0, "clause"), (1, "requirement"), (2, "mandate"),
+                           (3, "coverage"), (5, "arch"), (6, "doc")):
             if not cols[idx]:
                 problems.append(f"{req}: empty {label}")
+        mand = cols[2].split("(")[0].strip()
+        if mand and mand.split()[0] not in MAND_VOCAB:
+            problems.append(f"{req}: unknown Mand '{cols[2]}'")
+        cov = cols[3].strip()
+        if cov and cov[0] not in "CPAI":
+            problems.append(f"{req}: unknown Cov '{cols[3]}'")
+        req_gaps.update(GAP_REF.findall(cols[4]))
         ver = cols[7].strip()
         if ver and ver not in VER_VOCAB:
             problems.append(f"{req}: unknown Ver category '{ver}'")
@@ -39,6 +49,8 @@ def main() -> int:
         problems.append(f"{gap}: referenced but never defined")
     for gap in sorted(defined - referenced):
         problems.append(f"{gap}: defined but never referenced (needs a disposition row)")
+    for gap in sorted(defined - req_gaps):
+        problems.append(f"{gap}: no REQ row covers it (the release gate never reaches it)")
 
     for line in problems:
         print(f"MATRIX FAIL: {line}")

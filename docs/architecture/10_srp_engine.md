@@ -23,7 +23,7 @@ streams never pair inputs with outputs inside the reservation protocol.
 
 | Responsibilities | Non-goals |
 |---|---|
-| MRPDU encode/decode (MSRP + MVRP), vector packing | bridge behavior: no attribute propagation, no registrar-per-port sets, no FQTSS/CBS (stays in the AVTP/TSN engine) |
+| MRPDU encode/decode (MSRP + MVRP), vector packing; Σ-slope admission + granted-idleSlope publication ([F02.10](02_interfaces.md#fig-02-statusdict)) | bridge behavior: no attribute propagation, no registrar-per-port sets, no FQTSS/CBS shaping itself (stays in the AVTP/TSN engine) |
 | Domain declare/adopt, single-VID membership | SR Class B (undefined by Milan) |
 | Talker Advertise declarations gated by [F05.12](05_acmp_engine.md#fig-05-dagate) | MAAP (separate `maap` instance, external) |
 | Listener Ready declarations + talker/listener registration tracking | multiple VLANs / multiple domains |
@@ -42,7 +42,9 @@ streams never pair inputs with outputs inside the reservation protocol.
   `LISTENER_REG_CHANGE{source}`, `DOMAIN_CHANGE{class}`.
 - **Publishes** (class-D, [F02.10](02_interfaces.md#fig-02-statusdict)):
   `class_a_prio`, `class_a_vid`, `tk_decl_state[src]`, `lstn_reg_state[src]`,
-  `tk_reg_state[sink]`, `msrp_fail_code/bridge[x]`, `acc_latency[sink]`.
+  `tk_reg_state[sink]`, `msrp_fail_code/bridge[x]`, `acc_latency[sink]`,
+  `granted_slope_bps[src]`, `sr_admitted[src]` (the shaper's per-stream
+  idleSlope source — 802.1Q §34.6.1.1).
 - **Consumes**: `LINK_UP/DOWN{if}` (Domain defaults reset, re-declarations), timer
   expiries `T-MRP-*`.
 
@@ -85,7 +87,7 @@ within the AttributeList").
 | Application | AttributeType | FirstValue | Used by |
 |---|---|---|---|
 | MSRP | 1 Talker Advertise | 25 B ([F10.7](#fig-10-talkerfv)) | talker declare (TX); sink matcher (RX) |
-| MSRP | 2 Talker Failed | 34 B (= Advertise + FailureInformation: system_id 8 + failure_code 1; the system identifier may be a bridge id **or** an end-station MAC, 802.1Q §35.2.2.8.7) | sink matcher (RX); TX permitted but unused by this profile (§6.3) |
+| MSRP | 2 Talker Failed | 34 B (= Advertise + FailureInformation: system_id 8 + failure_code 1; the system identifier may be a bridge id **or** an end-station MAC, 802.1Q §35.2.2.8.7) | sink matcher (RX); TX on local admission failure only (§6.3) |
 | MSRP | 3 Listener | 8 B stream_id + FourPackedEvents {Ignore, AskingFailed, Ready, ReadyFailed} | listener declare (TX); source tracker (RX) |
 | MSRP | 4 Domain | 4 B {SRclassID = 6 (A), SRclassPriority, SRclassVID} | Domain FSM |
 | MVRP | 1 VID | 2 B | VLAN FSM |
@@ -166,6 +168,11 @@ flowchart LR
   tfsm -- "LISTENER_REG_CHANGE" --> evr
   dom -- "DOMAIN_CHANGE + class-D" --> evr
 ```
+
+The MRPDU RX queue is sized by `P-MRPDU-QUEUE-BYTES`
+([F01.5](01_overview.md#7-parameter-master-table-f015)): an MRPDU carrying
+aggregated vectors is frame-sized, so the queue holds one maximum frame plus
+headroom, and V9's own tolerance rules apply on the way in.
 
 Applicant/registrar note: each declared or tracked attribute carries a standard MRP
 applicant + registrar pair (802.1Q §10.7 is normative for the event-by-event tables);
@@ -248,14 +255,23 @@ In every state the FSM registers incoming **Listener** attributes for its stream
 `LISTENER_REG_CHANGE`. The talker streams **iff** declaring Advertise ∧ registering
 Ready or ReadyFailed (Milan §5.3.7.3, Δ14 — exported as a level to the AVTP engine);
 `GET_TX_STATE`'s REGISTERING_FAILED reports the AskingFailed case
-([F05.11](05_acmp_engine.md#fig-05-talker)). This profile only ever *declares*
-Talker Advertise — it has no internal admission failure to report. That is a
-profile scoping, not a standards rule: 802.1Q §35.1.2.1 and Milan §5.3.7.2/.4
-permit an end station to declare Talker Failed (the FailureInformation system
-identifier may be an end-station MAC, §35.2.2.8.7), and Milan §5.4.2.10.2 requires
-GET_STREAM_INFO on a Stream Output to report a *self-declared* failure — so the
-class-D `msrp_fail_code/bridge[x]` publication is defined for sources as well as
-sinks, reserved against a future self-declared Failed.
+([F05.11](05_acmp_engine.md#fig-05-talker)). The streaming level additionally
+requires admission: ACTIVE(src) = declaring Advertise ∧ registering
+Ready/ReadyFailed ∧ `sr_admitted[src]` — the engine computes Σ-slope admission
+against the port ceiling and publishes `granted_slope_bps[src]`
+([F02.10](02_interfaces.md#fig-02-statusdict)); the shaper consumes it, never
+computes it. **Local admission can fail**, and that failure is reported the
+way the standards already provide: the source withdraws its Advertise and
+declares **Talker Failed with failure code 1 (insufficient bandwidth)**, its
+own MAC as the FailureInformation system identifier (802.1Q §35.1.2.1,
+§35.2.2.8.7), and `msrp_fail_code/bridge[src]` is published for
+GET_STREAM_INFO (Milan §5.4.2.10.2). Talker Failed is declared by this profile in exactly one case — local
+Σ-slope admission failure (above); there is no other internal failure source.
+802.1Q §35.1.2.1 and Milan §5.3.7.2/.4 permit it, §35.2.2.8.7 lets the
+FailureInformation system identifier be an end-station MAC, and Milan
+§5.4.2.10.2 requires GET_STREAM_INFO on a Stream Output to report the
+self-declared failure — the class-D `msrp_fail_code/bridge[x]` publication
+covers sources for that path.
 
 ### 6.4 Listener-side stream FSM (×N)
 

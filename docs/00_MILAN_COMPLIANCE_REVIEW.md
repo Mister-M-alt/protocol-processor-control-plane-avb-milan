@@ -257,10 +257,12 @@ pipeline origins {RX, TIMER, SELF, MGMT} [03 §4](architecture/03_packet_engine.
 <a id="fig-00-matrix"></a>
 Column key — **Cov**: original-document coverage (C = Covered, P = Partial, A = Absent,
 I = Incorrect). **Mand**: shall / should / may / rec (Milan "recommendation, future
-requirement"). **Arch**: element of the new architecture. **Doc**: architecture document
+requirement") / design (architecture-imposed) / — (informative). **Arch**: element of the new architecture. **Doc**: architecture document
 section. **Ver**: verification category per [09 §3](architecture/09_verification.md)
 (DIR directed · MTXW matrix walker · TOL malformed/tolerance · TIM timing · RND
-randomized multi-controller · STORM notification storm · NVM power-cut restore).
+randomized multi-controller · STORM notification storm · NVM power-cut restore ·
+lint = CI gate, [09 §7](architecture/09_verification.md) · — = no dynamic
+verification).
 
 ### 6.1 Discovery (ADP)
 
@@ -413,6 +415,18 @@ randomized multi-controller · STORM notification storm · NVM power-cut restore
 | REQ-SCP-002 | Milan Table 5.20 | GET_MILAN_INFO REDUNDANCY flag = 0 | shall | A | [GAP-12](#gap-12) | F06.11 | 06 §6.9 | DIR |
 | REQ-SCP-003 | Milan §5.3.4.2, §8 | Keep per-interface keying (registry, ADP, counters) parameterized as the redundancy seam | design | A | [GAP-12](#gap-12) | P-N-AVB-INTERFACES | 01 §7 | DIR |
 
+### 6.11 Reusability, verification and process requirements
+
+| REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
+|---|---|---|---|---|---|---|---|---|
+| REQ-REU-001 | project charter | Bus-agnostic interface contracts: every external contract is a signal table with a handshake class (A–F) | design | A | [GAP-10](#gap-10) | interface classes | 02 §1–§8 | — |
+| REQ-REU-002 | project charter | One parameter master table with defaults and consumers; derived values referenced by ID, never copied | design | A | [GAP-10](#gap-10) | F01.5 + single-source rules | 01 §7, docs/README §2 | lint |
+| REQ-REU-003 | project charter | One core clock domain; MAC boundaries cross via dual-clock FIFOs with frame-atomic handoff | design | A | [GAP-10](#gap-10) | clocking contract | 02 §2 | — |
+| REQ-VER-001 | project charter | Requirement↔verification traceability: every REQ row names its Ver category or an explicit non-dynamic marker; release gate = the categories of 09 §3 + the CI gates of 09 §7 | design | A | [GAP-11](#gap-11) | verification plan | 09 §3, 09 §7 | — |
+| REQ-VER-002 | project charter | Single-source generation: ROMs, golden model, stimulus vectors and doc tables all derive from one command model | design | A | [GAP-11](#gap-11) | F09.1 | 09 §1 | lint |
+| REQ-FWX-001 | IEEE §9.3.5.3.3 (outside Milan's mandatory command set; IEEE Annex D is informative) | No firmware update, REBOOT, MEMORY_OBJECT operations or AEM checksum; those opcodes take the unknown-opcode path → `NOT_IMPLEMENTED` echo | shall | A | [GAP-13](#gap-13) | dispatch default | 06 §6 | DIR |
+| REQ-DOC-001 | project charter | Every figure an editable artifact (Mermaid/WaveDrom/draw.io) with committed exports, regeneration and staleness gates | design | A | [GAP-14](#gap-14) | Makefile gates | docs/README §3 | lint |
+
 ## 7. Disposition of findings (F00.2)
 
 <a id="fig-00-disposition"></a>
@@ -450,3 +464,4 @@ randomized multi-controller · STORM notification storm · NVM power-cut restore
 | 7 | IN_PROGRESS vs GET_DYNAMIC_INFO | Never emit IN_PROGRESS; hard ≤240 ms response budget | 06 §5, 08 §4 |
 | 8 | Milan-vs-IEEE STREAM_OUTPUT counter masks | Milan masks in Milan profile (Δ-tagged); IEEE masks in plain-IEEE profile ROM | 06 §6.6 |
 | 9 | SRP location (originally out of scope per the reviewed doc's §21) | Owner decision 2026-08-11: SRP endpoint (MSRP/MVRP participant) moved **in scope** as doc 10 — 1 Domain FSM, 1 VLAN FSM (Class A, single VID), N + M stream FSMs; MAAP stays external; external-stack alternative retained (`P-EN-SRP-ENGINE`) | [10](architecture/10_srp_engine.md), §6.9 |
+| 10 | Implementation strategy for the reference platform | Owner decision 2026-08-11: full implementation (scenario B of [docs/10](10_RESOURCE_AND_EFFORT.md)) proceeds in this repository; the reference platform cuts over by **direct substitution at parity** — the superseded planes are deleted, never parameterized (git history preserves them); the area verdict is accepted with eyes open, the architecture/conformance value is the goal | [docs/10](10_RESOURCE_AND_EFFORT.md) §5/§10 |

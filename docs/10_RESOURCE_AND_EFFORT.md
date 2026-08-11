@@ -31,7 +31,7 @@ plane rather than through that inventory.
 |---|---|---|---|---|---|
 | **A — adopt as written** (bolt this architecture's shared infrastructure onto the consumer, keep its engines) | **≈ +3,000** (cost) | ~0 | ~0 | ~140–350 | Do not. Shares what is already shared; unshippable density |
 | **B — full replacement** (P0–P5 incl. the SRP engine, P4b: build everything here, swap behind a build parameter) | **≈ −3,250 … +11,150**, central ≈ **+3,000** (cost) | +134…+284 kbit | ~0 | **373–949** | Not worth it for area: central lands on scenario A's number — past the conformance cliff — and the pessimistic end does not fit the die |
-| **C — retargeted µ-coded engine** (aim the µCPU at the emit-engine mass, keep everything else) | **−900 … −3,450**, central ≈ **−2,200** (saving) | +103…+136 kbit | ~0 | **131–321** | The only version that saves — **confirmed real 2026-08-11**: the µCPU skeleton measured **1,042 LUT** OOC at the ship part (§6, `syn/ooc/`) |
+| **C — retargeted µ-coded engine** (aim the µCPU at the emit-engine mass, keep everything else) | **−900 … −3,450**, central ≈ **−2,200** (saving) | +103…+136 kbit | ~0 | **131–321** | The only version that saves — **confirmed real 2026-08-11**: the µCPU skeleton measured **1,068 LUT** OOC at the ship part (§6, `syn/ooc/`) |
 | **D — consumer-side fixes only** (registry→16, FIFO 1→4 KiB, wire-form fixes, tier-0 deletes, constant-table serialisation) | **−1,030** (measured-anchored) | ~0 | ~0 | **12–25** | Best return per person-day by an order of magnitude. Needs no submodule and none of this architecture |
 
 \* A "person-day" is an **AI-agent-assisted lane-day** at the velocity mined from the
@@ -217,7 +217,7 @@ person-days**; at the mined 3–5 concurrent lanes, 11–45 calendar weeks, **pl
 the closure lottery (§8). Without P4b (SRP left exactly as the consumer ships it),
 the subtotal is −2,742 … +4,558, central ≈ +800 — 53,956 LUT = 85.12 %, density
 3.41 ± 0.015, still past the cliff and out of the 28 % bin at nominal. The µCPU
-skeleton measurement (§6: 1,042 LUT) sits at the bottom of P4's µCPU bracket,
+skeleton measurement (§6: 1,068 LUT) sits at the bottom of P4's µCPU bracket,
 so P4 and every total containing it are biased toward their favourable ends.
 
 **Verdict: not worth it for area.** The honest central case spends 325+ person-days
@@ -254,7 +254,7 @@ data … whatever part is a pure function of a descriptor index is a ROM".
   queue, not a mux), the SET write-back/commit path, lock, identify, AXIS beat
   machinery, and the command staging buffer (which moves to BRAM, it does not
   disappear).
-- **Replacement engine:** µCPU datapath **1,042 LUT MEASURED** (the skeleton,
+- **Replacement engine:** µCPU datapath **1,068 LUT MEASURED** (the skeleton,
   §"gate experiment" below; carried here as +1,050…+1,700 with a growth
   allowance for what a skeleton stubs); ROM read paths +100…+250 EST; registry +
   notification queue as record tables +400…+950 EST. The original bracket
@@ -296,13 +296,13 @@ RAW interlock, branch flush, multi-beat state/gather/copy/header/send
 sequencing — with a 37-check mutation-proven suite (`tb/ucpu/`) green on the
 same ROM image synthesis used. Vivado OOC post-synthesis at the consumer's
 ship part (`syn/ooc/`, the same instrument as every anchor in this document):
-**1,042 LUT (910 logic + 132 as distributed RAM) / 478 FF / 3 RAMB36, WNS
-+2.26 ns against the 100 MHz P-CLK-HZ**. The decision rule this paragraph used
+**1,068 LUT (936 logic + 132 as distributed RAM) / 491 FF / 3 RAMB36, WNS
++2.54 ns against the 100 MHz P-CLK-HZ**. The decision rule this paragraph used
 to carry was "≤ ~1,800 → C is real; > 2,500 → C collapses": the skeleton landed
 at the **bottom of the +1,200…+2,500 bracket, with a 2× growth allowance to
 spare**. Scenario C is real. The number will grow with dispatch handshake,
 hazard-key extraction and the deadline/abort arm — which is why the band above
-carries it as +1,050…+1,700, not as 1,042.
+carries it as +1,050…+1,700, not as 1,068.
 
 **A separate, measured, spec-independent packing win discovered on the way:** the
 consumer's three 1722.1-plane LUTRAM arrays (ACMP context RAM 448 LUT ≈ 112
@@ -413,14 +413,26 @@ Four caveats that bound every figure above:
 
 Found while grounding the analysis; each verified against the cited file. These are
 P0 because the architecture is already being read as a specification, and because
-its own gates cannot currently catch any of them.
+its own gates could not catch any of them.
+
+**STATUS 2026-08-11:** items 1–2 and 4–9 are **fixed in the spec**, item 12's
+publication is defined, and item 3 is **withdrawn** (the spec's original text
+was right — see the item) — P0 of the build campaign, owner decision ledger
+item 10 in the [compliance review](00_MILAN_COMPLIANCE_REVIEW.md) (scenario B,
+direct substitution at parity). All P0 edits survived an adversarial
+verification pass against the standards PDFs, which also refuted two of the
+first-draft fixes before they shipped. Items 10–11 (live-controller
+adjudications and the consumer-side defects) and 13 (the external-stack seam)
+remain open.
 
 1. **NC-1 (blocker).** [06 §6.7](architecture/06_aecp_engine.md)'s GET_DYNAMIC_INFO
    allowed-set names 7 opcodes; IEEE 1722.1-2021 §7.4.76.2 enumerates **13**, and
    the gate is *list membership*, not implementation (§7.4.76.1 requires
    NOT_SUPPORTED sub-statuses for unimplemented members, never BAD_ARGUMENTS for
-   the batch). The consumer's `batch_legal()` already does all 13 — port from it,
-   not from this spec.
+   the batch). The consumer's `batch_legal()` does 12 of the 13 correctly — but
+   its `15'd71` is 0x0047 = SET_MEMORY_OBJECT_LENGTH where the §7.4.76.2 member
+   is GET_MEMORY_OBJECT_LENGTH 0x0048: it accepts a non-member AND rejects a
+   member, one constant, wrong twice (item 11).
 2. **NC-2 (blocker).** [03 §6](architecture/03_packet_engine.md) rule (e): the
    deadline kill retires a command with **no response** — exactly what IEEE 1722.1
    §9.3.2.6 forbids — *after* this architecture (correctly) removed IN_PROGRESS,
@@ -428,8 +440,13 @@ its own gates cannot currently catch any of them.
    forced-respond disposition (a fail-safe SET_STATUS + BUILD_HEADER +
    SEND_RESPONSE arm off the deadline event), and 03 §6 needs "a deadline expiry
    emits, never drops".
-3. **NC-3.** IDENTIFY_NOTIFICATION received as a command must yield
-   `NOT_IMPLEMENTED` (IEEE 1722.1 §9.3.5.3.3), not `BAD_ARGUMENTS`.
+3. **NC-3 — WITHDRAWN 2026-08-11.** The original claim (command →
+   `NOT_IMPLEMENTED` per §9.3.5.3.3) was **wrong**: IEEE §7.4.39.2 is
+   opcode-specific and mandates `BAD_ARGUMENTS` for IDENTIFY_NOTIFICATION
+   received as a command — the spec's original text was correct all along, and
+   the general unimplemented-opcode fallback does not displace it. If the
+   consumer's gateware answers `NOT_IMPLEMENTED` here, that is a consumer
+   defect (item 11).
 4. **NC-4.** Milan §5.4.2.26/.27/.28 — `NOT_SUPPORTED` on dynamic-mapping
    commands addressed to a mapped Stream Port — is absent from
    [06 §6.5](architecture/06_aecp_engine.md).
@@ -494,9 +511,9 @@ its own gates cannot currently catch any of them.
     neither [02 §4.1](architecture/02_interfaces.md)'s ops nor
     [F02.10](architecture/02_interfaces.md#fig-02-statusdict)'s class-D fields
     publish a granted bandwidth or `operIdleSlope`. IEEE 802.1Q §34.3(c)/(d) is
-    explicit that when SRP is in operation the administered slope has no effect and
-    the shaper runs on `operIdleSlope` (quoted verbatim in the consumer's
-    `docs/design/AREA_80_CAMPAIGN.md`). The consumer resolves this in 564 measured
+    explicit that when SRP is in operation the administered slope has no effect
+    (§34.3(c)); §34.6.1 runs the credit-based shaper on `operIdleSlope`, and
+    §34.6.1.1 defines the per-stream idleSlope the publication carries. The consumer resolves this in 564 measured
     LUT (`KL_lwsrp_bw_gate`: Σ-slope against a 75 % port-rate ceiling, and the
     resulting per-queue idleSlope). Add a class-D publication — the non-goal is
     right, the silence is not. Until then, [02 §4.1](architecture/02_interfaces.md)'s
@@ -521,8 +538,8 @@ its own gates cannot currently catch any of them.
    conformance fix, better closure odds). It saves more than scenario B's central
    estimate and needs none of this architecture.
 2. **The out-of-context µCPU skeleton synthesis — RUN, 2026-08-11** (§6;
-   `hdl/aecp/`, `tb/ucpu/`, `syn/ooc/`): 1,042 LUT / 478 FF / 3 RAMB36,
-   WNS +2.26 ns at 100 MHz. The bet is now a decision: **scenario C is real.**
+   `hdl/aecp/`, `tb/ucpu/`, `syn/ooc/`): 1,068 LUT / 491 FF / 3 RAMB36,
+   WNS +2.54 ns at 100 MHz. The bet is now a decision: **scenario C is real.**
 3. **P0** (§9) — regardless of whether any RTL is ever written here. This
    architecture is more correct than the consumer's gateware in over a dozen
    adjudicated places; that correctness, not area, is its present value, and it
