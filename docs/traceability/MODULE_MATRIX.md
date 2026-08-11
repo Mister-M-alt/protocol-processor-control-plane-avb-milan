@@ -4,6 +4,11 @@
 | Module | File | Suites |
 |---|---|---|
 | `KL_aecp_ucpu` | `hdl/aecp/KL_aecp_ucpu.sv` | ucpu |
+| `KL_pp_prng` | `hdl/common/KL_pp_prng.sv` | prng |
+| `KL_pp_rx_slots` | `hdl/packet_engine/KL_pp_rx_slots.sv` | rx_slots |
+| `KL_pp_timer_service` | `hdl/common/KL_pp_timer_service.sv` | timer_service |
+| `KL_pp_tx_slots` | `hdl/packet_engine/KL_pp_tx_slots.sv` | tx_slots |
+| `pp_pkg` | `hdl/common/pp_pkg.sv` | timer_service |
 | `ucpu_pkg` | `hdl/aecp/ucpu_pkg.sv` | ucpu |
 
-Modules: 2 · untested: 0 (budget: 0)
+Modules: 7 · untested: 0 (budget: 0)

@@ -4,9 +4,9 @@
 # The tops array is the authoritative list — extend it with every new top.
 set -eu
 cd "$(dirname "$0")/../.."
-tops=(KL_aecp_ucpu)
+tops=(KL_aecp_ucpu KL_pp_timer_service KL_pp_prng KL_pp_rx_slots KL_pp_tx_slots)
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
-sv2v hdl/aecp/ucpu_pkg.sv $(find hdl -name '*.sv' ! -name '*_pkg.sv' | sort) > "$work/all.v"
+sv2v $(find hdl -name '*_pkg.sv' | sort) $(find hdl -name '*.sv' ! -name '*_pkg.sv' | sort) > "$work/all.v"
 ( cd hdl/aecp/ucode && python3 gen_ucode.py -o "$work/ucode.hex" >/dev/null )
 cd "$work"
 for t in "${tops[@]}"; do
