@@ -1,0 +1,96 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="datapath" name="shared-datapath">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="rxf" value="mac_rx&lt;br&gt;async FIFO" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="40" y="80" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="prs" value="filter + parser&lt;br&gt;+ validator" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="200" y="80" width="140" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="slots" value="RX slot RAM&lt;br&gt;(P-RX-SLOTS × 576 B)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=12;" vertex="1" parent="1">
+          <mxGeometry x="380" y="60" width="140" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="nrm" value="normalizer" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="560" y="80" width="110" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="qadp" value="ADP q" style="shape=delay;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="720" y="40" width="90" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="qacmp" value="ACMP q" style="shape=delay;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="720" y="100" width="90" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="qaecp" value="AECP q" style="shape=delay;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="720" y="160" width="90" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="sb" value="scoreboard&lt;br&gt;(class / key admission)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="850" y="90" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="eng" value="ADP · ACMP · AECP&lt;br&gt;engines (04 / 05 / 06)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="70" width="190" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="inj" value="injection ports:&lt;br&gt;TIMER · SELF · MGMT" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="560" y="190" width="140" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="orig" value="originator&lt;br&gt;+ inflight table" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="230" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="evr" value="event router&lt;br&gt;(sticky events)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="850" y="230" width="140" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ramgrp" value="state-RAM complex (single-ported RAMs + priority muxes)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;verticalAlign=top;fontStyle=2;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="200" y="360" width="820" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="ram1" value="descriptor image&lt;br&gt;+ overlay" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;size=12;" vertex="1" parent="1">
+          <mxGeometry x="230" y="410" width="150" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ram2" value="dynamic state&lt;br&gt;(sink / source records)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;size=12;" vertex="1" parent="1">
+          <mxGeometry x="430" y="410" width="160" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ram3" value="controller&lt;br&gt;registry" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;size=12;" vertex="1" parent="1">
+          <mxGeometry x="640" y="410" width="140" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ram4" value="counter&lt;br&gt;banks" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;size=12;" vertex="1" parent="1">
+          <mxGeometry x="830" y="410" width="140" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="resp" value="response builders&lt;br&gt;+ TX slots (4×576 B + 1×1600 B)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="380" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="txa" value="TX arbiter&lt;br&gt;(frame-atomic, prio + aging)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="500" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="txf" value="mac_tx&lt;br&gt;async FIFO" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="620" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="tmr" value="timer service + PRNG&lt;br&gt;(expiry event bus)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="560" y="600" width="180" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="adap" value="adapter events (srp / maap / gptp / avtp / mclk)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="200" y="600" width="300" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="d1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="rxf" target="prs"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d2" value="payload" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="prs" target="slots"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d3" value="handle + fields" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="slots" target="nrm"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="nrm" target="qadp"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="nrm" target="qacmp"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="nrm" target="qaecp"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d7" value="TIMER / SELF / MGMT records" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="inj" target="qaecp"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="qadp" target="sb"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="qacmp" target="sb"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="qaecp" target="sb"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d11" value="admit" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="sb" target="eng"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d12" value="RAM ports" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.8;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="eng" target="ramgrp"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1020" y="150" /><mxPoint x="1020" y="340" /><mxPoint x="610" y="340" /></Array></mxGeometry></mxCell>
+        <mxCell id="d13" value="probe / CA / unsol / identify / ADP tx" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="eng" target="orig"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d14" value="serialize" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="orig" target="resp"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="resp" target="txa"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="txa" target="txf"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d17" value="response match" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=1;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="prs" target="orig"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="360" y="30" /><mxPoint x="1320" y="30" /><mxPoint x="1320" y="220" /></Array></mxGeometry></mxCell>
+        <mxCell id="d18" value="expiry events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="tmr" target="evr"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d19" value="sticky events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="adap" target="evr"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="530" y="570" /><mxPoint x="810" y="570" /></Array></mxGeometry></mxCell>
+        <mxCell id="d20" value="to SMs / counters / notif" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="evr" target="eng"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="920" y="200" /><mxPoint x="1145" y="200" /></Array></mxGeometry></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
