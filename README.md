@@ -16,6 +16,8 @@ VHDL/SystemVerilog/other implementation is written against.
 | [`docs/README.md`](docs/README.md) | Conventions, reading order, audiences — **start here** |
 | [`docs/00_MILAN_COMPLIANCE_REVIEW.md`](docs/00_MILAN_COMPLIANCE_REVIEW.md) | Review of the original document against Milan v1.2 (gap register + compliance matrix) |
 | [`docs/architecture/`](docs/architecture/) | The architecture: overview, interfaces, packet engine, ADP/ACMP/AECP engines, memory, timing, verification |
+| [`docs/10_RESOURCE_AND_EFFORT.md`](docs/10_RESOURCE_AND_EFFORT.md) | Resource-savings and implementation-effort analysis against the reference platform (measured anchors, four scenarios, phase plan) |
+| [`hdl/`](hdl/README.md) | Home of the SystemVerilog implementation; consumed by the reference platform as a git submodule (layout, rules, consumption contract) |
 | [`docs/diagrams/`](docs/diagrams/) | Editable diagram sources (draw.io) and committed SVG exports |
 | [`Makefile`](Makefile) | `make diagrams` regenerates all draw.io and WaveDrom SVGs; `make check` validates figures, links and the compliance matrix |
 
