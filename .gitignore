@@ -10,3 +10,9 @@
 *.bkp
 *.dtmp
 .venv-wavedrom/
+
+# HDL simulation build artifacts (see hdl/README.md)
+obj_dir/
+obj_*/
+*.vcd
+*.fst
