@@ -1,0 +1,125 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="toplevel" name="top-level">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="960" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="dom-rx" value="MAC RX clock domain" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;verticalAlign=top;fontStyle=2;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="20" y="60" width="180" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="dom-core" value="core clock domain" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;verticalAlign=top;fontStyle=2;opacity=50;" vertex="1" parent="1">
+          <mxGeometry x="220" y="40" width="940" height="880" as="geometry" />
+        </mxCell>
+        <mxCell id="dom-tx" value="MAC TX clock domain" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;verticalAlign=top;fontStyle=2;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="60" width="200" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="rxfifo" value="MAC RX&lt;br&gt;async FIFO" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="40" y="90" width="140" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="parser" value="RX filter + parser&lt;br&gt;+ validator&lt;br&gt;(DA · 0x22F0 · FA/FB/FC · cdl+12)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="250" y="80" width="200" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="rxslots" value="RX slots" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="480" y="90" width="100" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="norm" value="Normalizer&lt;br&gt;(DECODE)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="610" y="90" width="130" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="score" value="Scoreboard&lt;br&gt;(hazard classes)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="770" y="90" width="140" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="adp" value="&lt;b&gt;ADP engine&lt;/b&gt;&lt;br&gt;advertise SM ×IF&lt;br&gt;talker-discovery SM ×sink&lt;br&gt;available_index" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="250" y="230" width="190" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="acmp" value="&lt;b&gt;ACMP engine&lt;/b&gt;&lt;br&gt;stateless talker responder&lt;br&gt;listener-SM executor ×sink&lt;br&gt;probe inflight" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="480" y="230" width="210" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="aecp" value="&lt;b&gt;AECP engine (µCPU)&lt;/b&gt;&lt;br&gt;AEM + MVU decode/dispatch&lt;br&gt;µcode · validation · gather" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="720" y="230" width="210" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="model" value="Entity-model store&lt;br&gt;static image + overlay + names" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="250" y="400" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="lock" value="Lock&lt;br&gt;manager" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="480" y="400" width="100" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="registry" value="Controller registry&lt;br&gt;+ monitor + notification fan-out" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="610" y="400" width="210" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ctrs" value="Counters&lt;br&gt;subsystem" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="850" y="400" width="110" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ident" value="Identify&lt;br&gt;handler" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="990" y="400" width="100" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="timers" value="Timer service&lt;br&gt;+ PRNG" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="250" y="540" width="150" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="router" value="Event router" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="430" y="540" width="130" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="orig" value="Originator&lt;br&gt;+ inflight table" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="590" y="540" width="150" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="boot" value="Boot/init sequencer&lt;br&gt;config/ID regs + profile ROMs" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="770" y="540" width="210" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="builders" value="Response builders&lt;br&gt;TX slots (std + oversize)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="970" y="90" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="txarb" value="TX arbiter" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="230" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="txfifo" value="MAC TX&lt;br&gt;async FIFO" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="90" width="150" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="adapters" value="External-engine adapters" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;fontStyle=2;opacity=50;" vertex="1" parent="1">
+          <mxGeometry x="250" y="660" width="740" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="a-gptp" value="gPTP&lt;br&gt;adapter" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="270" y="690" width="120" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="a-srp" value="SRP/MAAP&lt;br&gt;adapter" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="430" y="690" width="120" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="a-avtp" value="AVTP&lt;br&gt;adapter" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="590" y="690" width="120" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="a-mclk" value="Media-clock&lt;br&gt;adapter" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="750" y="690" width="120" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="nvmmgr" value="NVM manager&lt;br&gt;(journal + restore)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="660" width="140" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="sideport" value="Management side-port&lt;br&gt;(bus-agnostic)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="790" width="160" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="f1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="rxfifo" target="parser"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="parser" target="rxslots"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="rxslots" target="norm"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="norm" target="score"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="score" target="adp"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="score" target="acmp"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="score" target="aecp"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f8" value="tk events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="adp" target="acmp"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="adp" target="model"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="acmp" target="lock"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="aecp" target="model"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="aecp" target="registry"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="aecp" target="ctrs"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="aecp" target="builders"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="builders" target="txarb"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="txarb" target="txfifo"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f17" value="probe / CA / unsolicited / identify" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="orig" target="txarb"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="acmp" target="orig"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="registry" target="orig"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f20" value="expiry events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="timers" target="router"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f21" value="adapter + SM events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="adapters" target="router"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="router" target="ctrs"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f23" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="model" target="nvmmgr"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="350" y="635" /><mxPoint x="1090" y="635" /></Array></mxGeometry></mxCell>
+        <mxCell id="f24" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="sideport" target="nvmmgr"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f25" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="sideport" target="model"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
