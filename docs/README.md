@@ -61,9 +61,17 @@ to their field-sourcing table. `make check` enforces the rest.
   lower-kebab node IDs; no HTML labels; `stateDiagram-v2` for FSMs, `sequenceDiagram`
   for on-the-wire flows, `flowchart` for datapaths/decision trees, `classDiagram` only
   for the descriptor tree.
-- **WaveDrom** (waveforms and PDU/register bit layouts): fenced ` ```wavedrom ` blocks in
-  **strict JSON** (double-quoted keys — machine-lintable). Waveforms MSB-left; `reg`
-  field names carry the byte offset or mask where ambiguity is dangerous.
+- **WaveDrom** (waveforms and PDU/register bit layouts): GitHub does **not** render
+  WaveDrom natively, so every block appears as a committed SVG
+  (`docs/diagrams/wavedrom/<anchor>.svg`, rendered by `make wavedrom` via the Python
+  `wavedrom` package) with the fenced ` ```wavedrom ` source — still the single
+  editable artifact — collapsed in a `<details>` block directly below the image.
+  Sources are **strict JSON** (double-quoted keys). `reg` conventions: fields listed in
+  wire order render **bottom lane first** (standard bitfield layout — every caption
+  says so); field names carry the byte offset (`@n`) or mask where ambiguity is
+  dangerous; keep fields ≤ 64 bits (wider fields leave unlabeled middle lanes); `head`/
+  `foot` text is signal-format-only — for `reg`, put it in the caption. Editing a block
+  without re-rendering fails `make check` (`wavedrom-check`).
 - **draw.io** (the three richest pictures only): source `docs/diagrams/src/<name>.drawio`,
   committed export `docs/diagrams/<name>.svg`, embedded via `![…](../diagrams/<name>.svg)`.
   Regenerate with `make diagrams` (see `docs/diagrams/README.md`).
@@ -113,7 +121,7 @@ into one story:
 | To change… | Do |
 |---|---|
 | A block/FSM/sequence figure | edit the ` ```mermaid ` fence in place; `make lint` |
-| A waveform or bit layout | edit the ` ```wavedrom ` JSON in place; `make lint` |
+| A waveform or bit layout | expand the `<details>` under the image, edit the ` ```wavedrom ` JSON in place, run `make wavedrom` (re-renders the SVG); `make check` |
 | A top-level picture | edit `docs/diagrams/src/*.drawio` in the draw.io app; `make diagrams`; commit source **and** SVG |
 | A timing value | edit `F08.1` only; consumers reference `T-…` IDs |
 | A parameter default | edit `F01.5` only |

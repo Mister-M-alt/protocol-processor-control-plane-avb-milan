@@ -117,6 +117,11 @@ and EtherType 0x22F0 when the external MAC can filter; the parser re-checks rega
 
 <a id="fig-02-rxwave"></a>**F02.3 — RX stream: backpressure + end of frame**
 
+![fig-02-rxwave](../diagrams/wavedrom/fig-02-rxwave.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
+
 ```wavedrom
 {"signal": [
   {"name": "clk",      "wave": "p.........."},
@@ -131,7 +136,14 @@ and EtherType 0x22F0 when the external MAC can filter; the parser re-checks rega
  "foot": {"text": "err would assert together with eof to poison the frame"}}
 ```
 
+</details>
+
 <a id="fig-02-txwave"></a>**F02.4 — TX stream with arbiter grant (no mid-frame regrant)**
+
+![fig-02-txwave](../diagrams/wavedrom/fig-02-txwave.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
 
 ```wavedrom
 {"signal": [
@@ -149,6 +161,8 @@ and EtherType 0x22F0 when the external MAC can filter; the parser re-checks rega
  "head": {"text": "grant is frame-atomic: gnt_a holds until eof, then arbiter moves to b"}}
 ```
 
+</details>
+
 ## 4. Class B — engine request/response APIs
 
 One template contract for all five instances: **single outstanding request per
@@ -158,6 +172,11 @@ non-blocking for the engines: the AECP gather path snapshots class-D status inst
 issuing class-B calls wherever possible.
 
 <a id="fig-02-apiwave"></a>**F02.5 — Engine-API template (all class-B instances)**
+
+![fig-02-apiwave](../diagrams/wavedrom/fig-02-apiwave.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
 
 ```wavedrom
 {"signal": [
@@ -172,6 +191,8 @@ issuing class-B calls wherever possible.
 ],
  "head": {"text": "single outstanding: next req only after rsp_valid"}}
 ```
+
+</details>
 
 ### 4.1 `srp` — SRP/MSRP adapter operations
 
@@ -243,6 +264,11 @@ observation tick, [06 §6.6](06_aecp_engine.md)).
 
 <a id="fig-02-evtwave"></a>**F02.6 — Event pulse with ack**
 
+![fig-02-evtwave](../diagrams/wavedrom/fig-02-evtwave.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
+
 ```wavedrom
 {"signal": [
   {"name": "clk",      "wave": "p........."},
@@ -253,6 +279,8 @@ observation tick, [06 §6.6](06_aecp_engine.md)).
 ],
  "head": {"text": "evt holds with its arg until evt_ack; re-fire before ack sets evt_lost"}}
 ```
+
+</details>
 
 Event catalog (routed by the event router to the listed consumers):
 
@@ -310,6 +338,11 @@ JTAG/testbench) maps 1:1 onto it. Word addressed, 32-bit data.
 
 <a id="fig-02-memwave"></a>**F02.7 — Side-port: write, then read with one wait state**
 
+![fig-02-memwave](../diagrams/wavedrom/fig-02-memwave.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
+
 ```wavedrom
 {"signal": [
   {"name": "clk",    "wave": "p........"},
@@ -321,6 +354,8 @@ JTAG/testbench) maps 1:1 onto it. Word addressed, 32-bit data.
   {"name": "prdata", "wave": "x.....=x.", "data": ["Q1"]}
 ]}
 ```
+
+</details>
 
 Address windows (word offsets; full map in [07 §5.5](07_memory_maps.md)):
 
@@ -354,6 +389,11 @@ free. Long busy periods expected; commits are asynchronous to protocol responses
 
 <a id="fig-02-nvmwave"></a>**F02.8 — NVM commit (broken axis over the busy period)**
 
+![fig-02-nvmwave](../diagrams/wavedrom/fig-02-nvmwave.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
+
 ```wavedrom
 {"signal": [
   {"name": "clk",      "wave": "p....|...."},
@@ -365,6 +405,8 @@ free. Long busy periods expected; commits are asynchronous to protocol responses
 ],
  "head": {"text": "err instead of done triggers bounded retry then side-port alarm"}}
 ```
+
+</details>
 
 Boot restore is the mirror image (`we = 0`): the boot sequencer reads every record,
 CRC-validates, falls back to vendor defaults on failure, **then** releases

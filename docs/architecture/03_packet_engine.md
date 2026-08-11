@@ -69,7 +69,13 @@ Field extraction uses the offset tables of the PDU reg figures
 ([F03.4](#fig-03-header), [F04.5](04_adp_engine.md#fig-04-adpdu),
 [F05.13](05_acmp_engine.md#fig-05-acmpdu), [F06.10](06_aecp_engine.md#fig-06-aecpdu)).
 
-<a id="fig-03-header"></a>**F03.4 — Common control header (wire order; `@n` = byte offset)**
+<a id="fig-03-header"></a>**F03.4 — Common control header** (lanes bottom→top = wire
+order; `@n` byte offsets are authoritative, lane bit indices are diagram-local)
+
+![fig-03-header](../diagrams/wavedrom/fig-03-header.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
 
 ```wavedrom
 {"reg": [
@@ -80,9 +86,10 @@ Field extraction uses the offset tables of the PDU reg figures
   {"bits": 5,  "name": "status / valid_time @2[7:3]"},
   {"bits": 11, "name": "control_data_length @2[2:0],@3"},
   {"bits": 64, "name": "entity_id / stream_id / target_entity_id @4..@11"}
-], "config": {"bits": 96, "lanes": 3, "hspace": 950},
- "head": {"text": "read fields in listed order = wire order; @n byte offsets are authoritative, lane bit indices are diagram-local"}}
+], "config": {"bits": 96, "lanes": 3, "hspace": 950}}
 ```
+
+</details>
 
 ## 4. Normalized transaction
 

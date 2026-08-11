@@ -5,7 +5,19 @@ Three figures are rich enough to warrant free-form drawing; they are draw.io sou
 with committed SVG exports. **Everything else** (Mermaid, WaveDrom) lives as editable
 text inside the host Markdown documents — see `docs/README.md` §3.
 
-## Inventory
+Rendering support differs per format, which drives the storage pattern:
+
+| Format | GitHub renders it? | Pattern |
+|---|---|---|
+| Mermaid | yes, natively | fenced source only |
+| WaveDrom | **no** | committed SVG in `wavedrom/` + fenced source collapsed in `<details>` under the image; `make wavedrom` keeps them in sync (bootstraps `.venv-wavedrom/` with the Python `wavedrom` package on first run) |
+| draw.io | no | committed SVG here + `.drawio` source in `src/` |
+
+`wavedrom/*.svg` files are named after the figure anchor of their source block
+(`fig-04-adpdu.svg` ← `<a id="fig-04-adpdu">`); the render script derives this
+automatically — never hand-edit those SVGs.
+
+## Inventory (draw.io)
 
 | Source (`src/`) | Export | Figure | Host document |
 |---|---|---|---|
@@ -19,8 +31,11 @@ SVG is older than its `.drawio`.
 ## Commands
 
 ```sh
-# regenerate all exports (from repository root)
+# regenerate all exports: drawio -> svg AND every wavedrom block -> svg (from repo root)
 make diagrams
+
+# wavedrom only (after editing a ```wavedrom block in any doc)
+make wavedrom
 
 # one file, manually
 drawio -x -f svg --crop -o docs/diagrams/01-top-level.svg docs/diagrams/src/01-top-level.drawio

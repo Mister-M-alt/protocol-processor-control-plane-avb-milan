@@ -22,7 +22,14 @@ ops for applied settings.
 
 ## 3. PDU handling
 
-<a id="fig-06-aecpdu"></a>**F06.10 — AECPDU + AEM header (wire order, `@n` = byte offset)**
+<a id="fig-06-aecpdu"></a>**F06.10 — AECPDU + AEM header** (`u` = 1 only on unsolicited
+responses; `cr` = 1 implies `u` = 1 — entity-requests-controller, unused here; lanes
+bottom→top = wire order, `@n` byte offsets authoritative)
+
+![fig-06-aecpdu](../diagrams/wavedrom/fig-06-aecpdu.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
 
 ```wavedrom
 {"reg": [
@@ -38,16 +45,27 @@ ops for applied settings.
   {"bits": 1,  "name": "u @22 (0x80)"},
   {"bits": 1,  "name": "cr (0x40)"},
   {"bits": 14, "name": "command_type @22[5:0],@23"}
-], "config": {"bits": 192, "lanes": 6, "hspace": 950},
- "head": {"text": "u=1 only on unsolicited responses; cr=1 implies u=1 (entity requests controller, unused here)"}}
+], "config": {"bits": 192, "lanes": 6, "hspace": 950}}
 ```
 
-<a id="fig-06-mvu"></a>**F06.11 — MVU header + GET_MILAN_INFO response (wire order)**
+</details>
+
+<a id="fig-06-mvu"></a>**F06.11 — MVU header + GET_MILAN_INFO response** (MVU commands:
+0x0000 GET_MILAN_INFO, 0x0001/2 SET/GET_SYSTEM_UNIQUE_ID, 0x0003/4
+SET/GET_MEDIA_CLOCK_REFERENCE_INFO; padding never counted in cdl; lanes bottom→top =
+wire order, `@n` byte offsets authoritative)
+
+![fig-06-mvu](../diagrams/wavedrom/fig-06-mvu.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
 
 ```wavedrom
 {"reg": [
-  {"bits": 96, "name": "common AECP header @0..@11 (message_type 6/7)"},
-  {"bits": 64, "name": "controller_entity_id @12 + sequence_id @20 (as F06.10)", "type": 2},
+  {"bits": 32, "name": "subtype 0xFB / msg_type 6-7 / status / cdl @0..@3"},
+  {"bits": 64, "name": "target_entity_id @4"},
+  {"bits": 64, "name": "controller_entity_id @12", "type": 2},
+  {"bits": 16, "name": "sequence_id @20", "type": 2},
   {"bits": 48, "name": "protocol_id @22 = 00-1B-C5-0A-C1-00"},
   {"bits": 1,  "name": "r=0"},
   {"bits": 15, "name": "mvu_command_type @28[6:0],@29"},
@@ -55,9 +73,10 @@ ops for applied settings.
   {"bits": 32, "name": "protocol_version @32 = 1"},
   {"bits": 32, "name": "features_flags @36 (REDUNDANCY 0x1 = 0, TALKER_DYN_MAPPINGS 0x2)"},
   {"bits": 32, "name": "certification_version @40 (0 if uncertified)"}
-], "config": {"bits": 336, "lanes": 7, "hspace": 950},
- "head": {"text": "MVU commands 0x0000 GET_MILAN_INFO, 0x0001/2 SET/GET_SYSTEM_UNIQUE_ID, 0x0003/4 SET/GET_MEDIA_CLOCK_REFERENCE_INFO; padding never counted in cdl"}}
+], "config": {"bits": 352, "lanes": 11, "hspace": 950}}
 ```
+
+</details>
 
 Oversize rule (Δ8): responses of READ_DESCRIPTOR, GET_AVB_INFO, GET_AS_PATH,
 GET_AUDIO_MAP, ADD/REMOVE_AUDIO_MAPPINGS may exceed cdl 524 up to a full frame —
@@ -174,7 +193,14 @@ status (`NO_SUCH_DESCRIPTOR` / `BAD_ARGUMENTS` for a bad config index) with the 
 
 ### 6.2 GET_STREAM_INFO — the Milan 80-byte response and its data lineage
 
-<a id="fig-06-streaminfo"></a>**F06.12 — Response payload @24..@79 (Milan Fig 5.1; renames Δ6)**
+<a id="fig-06-streaminfo"></a>**F06.12 — Response payload @24..@79** (Milan Fig 5.1,
+renames Δ6; legacy controllers ignore @72+, Milan controllers detect the extension via
+`control_data_length`; lanes bottom→top = wire order, `@n` byte offsets authoritative)
+
+![fig-06-streaminfo](../diagrams/wavedrom/fig-06-streaminfo.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
 
 ```wavedrom
 {"reg": [
@@ -194,9 +220,10 @@ status (`NO_SUCH_DESCRIPTOR` / `BAD_ARGUMENTS` for a bad config index) with the 
   {"bits": 3,  "name": "pbsta @76[7:5]"},
   {"bits": 5,  "name": "acmpsta @76[4:0]"},
   {"bits": 24, "name": "reserved @77"}
-], "config": {"bits": 448, "lanes": 14, "hspace": 950},
- "head": {"text": "legacy controllers ignore @72+; Milan controllers detect the extension via control_data_length"}}
+], "config": {"bits": 448, "lanes": 14, "hspace": 950}}
 ```
+
+</details>
 
 > ⚠ Bit tables in Milan and IEEE 1722.1 are **MSB-first** (bit 31 ⇔ mask `0x00000001`).
 > The **hex mask column is authoritative**; never derive shifts from bit-number columns.

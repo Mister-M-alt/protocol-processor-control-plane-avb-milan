@@ -24,7 +24,13 @@ Produces: ADP TX requests to the originator; `EVT_TK_DISCOVERED{sink}` /
 
 ## 3. PDU handling
 
-<a id="fig-04-adpdu"></a>**F04.5 — ADPDU (68 B, cdl = 56; wire order, `@n` = byte offset)**
+<a id="fig-04-adpdu"></a>**F04.5 — ADPDU** (68 B, cdl = 56, IEEE Fig 6-1; lanes
+bottom→top = wire order; `@n` byte offsets authoritative)
+
+![fig-04-adpdu](../diagrams/wavedrom/fig-04-adpdu.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
 
 ```wavedrom
 {"reg": [
@@ -51,9 +57,10 @@ Produces: ADP TX requests to the originator; `EVT_TK_DISCOVERED{sink}` /
   {"bits": 16, "name": "interface_index @54"},
   {"bits": 64, "name": "association_id @56 = 0"},
   {"bits": 32, "name": "reserved @64"}
-], "config": {"bits": 544, "lanes": 17, "hspace": 950},
- "head": {"text": "fields in wire order; @n byte offsets authoritative (IEEE Fig 6-1)"}}
+], "config": {"bits": 544, "lanes": 17, "hspace": 950}}
 ```
+
+</details>
 
 Message types: 0 ENTITY_AVAILABLE · 1 ENTITY_DEPARTING · 2 ENTITY_DISCOVER.
 `valid_time` = 0 in DEPARTING/DISCOVER (IEEE §6.2.2.5).

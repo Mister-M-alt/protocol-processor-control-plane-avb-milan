@@ -69,6 +69,11 @@ flowchart LR
 
 <a id="fig-08-budget"></a>**F08.3 — AECP/MVU response window (schematic, ms axis)**
 
+![fig-08-budget](../diagrams/wavedrom/fig-08-budget.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
+
 ```wavedrom
 {"signal": [
   {"name": "command rx",      "wave": "10.........", "node": ".a........."},
@@ -81,6 +86,8 @@ flowchart LR
  "edge": ["a~>b execution window"],
  "head": {"text": "t0 = completion of command reception; no IN_PROGRESS extension exists in this design"}}
 ```
+
+</details>
 
 | Protocol | Hard limit | Design budget | Rationale |
 |---|---|---|---|

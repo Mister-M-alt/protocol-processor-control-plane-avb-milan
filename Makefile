@@ -6,13 +6,21 @@ DRAWIO      ?= drawio
 DRAWIO_SRC  := $(wildcard docs/diagrams/src/*.drawio)
 DRAWIO_SVG  := $(patsubst docs/diagrams/src/%.drawio,docs/diagrams/%.svg,$(DRAWIO_SRC))
 
-.PHONY: all check diagrams lint links matrix stale
+.PHONY: all check diagrams wavedrom wavedrom-check lint links matrix stale
 all: diagrams check
 
 # everything CI should enforce (see docs/architecture/09_verification.md section 7)
-check: lint links matrix stale
+check: lint wavedrom-check links matrix stale
 
-diagrams: $(DRAWIO_SVG)
+diagrams: $(DRAWIO_SVG) wavedrom
+
+# render every embedded ```wavedrom block to its committed SVG (GitHub cannot
+# render WaveDrom natively; bootstraps .venv-wavedrom on first run)
+wavedrom:
+	@python3 scripts/render-wavedrom.py
+
+wavedrom-check:
+	@python3 scripts/render-wavedrom.py --check
 
 docs/diagrams/%.svg: docs/diagrams/src/%.drawio
 	@$(DRAWIO) -x -f svg --crop -o $@ $< 2>/dev/null \

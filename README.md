@@ -17,7 +17,7 @@ VHDL/SystemVerilog/other implementation is written against.
 | [`docs/00_MILAN_COMPLIANCE_REVIEW.md`](docs/00_MILAN_COMPLIANCE_REVIEW.md) | Review of the original document against Milan v1.2 (gap register + compliance matrix) |
 | [`docs/architecture/`](docs/architecture/) | The architecture: overview, interfaces, packet engine, ADP/ACMP/AECP engines, memory, timing, verification |
 | [`docs/diagrams/`](docs/diagrams/) | Editable diagram sources (draw.io) and committed SVG exports |
-| [`Makefile`](Makefile) | `make diagrams` regenerates draw.io exports; `make check` validates figures, links and the compliance matrix |
+| [`Makefile`](Makefile) | `make diagrams` regenerates all draw.io and WaveDrom SVGs; `make check` validates figures, links and the compliance matrix |
 
 All diagrams are editable text: Mermaid and WaveDrom sources are embedded in the
 Markdown; the three richest pictures are draw.io files under `docs/diagrams/src/`.

@@ -124,7 +124,13 @@ index) order + an **index map** per configuration (type → base pointer + count
 
 ## 4. Dynamic state records
 
-<a id="fig-07-sinkrec"></a>**F07.6 — ACMP sink record (48 B core; fields defined in [05 §5](05_acmp_engine.md))**
+<a id="fig-07-sinkrec"></a>**F07.6 — ACMP sink record** (48 B core; fields defined in
+[05 §5](05_acmp_engine.md); lanes bottom→top = record order)
+
+![fig-07-sinkrec](../diagrams/wavedrom/fig-07-sinkrec.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
 
 ```wavedrom
 {"reg": [
@@ -149,10 +155,18 @@ index) order + an **index map** per configuration (type → base pointer + count
 ], "config": {"bits": 384, "lanes": 12, "hspace": 950}}
 ```
 
+</details>
+
 Plus per sink: SRP failure registers {code 8, bridge_id 64} held in the `srp` adapter;
 NVM shadow ≈ 20 B ({valid, talker EID, unique_id, controller EID, started}).
 
-<a id="fig-07-regrec"></a>**F07.7 — Controller-registry entry (28 B; Δ12 tuple)**
+<a id="fig-07-regrec"></a>**F07.7 — Controller-registry entry** (28 B; Δ12 tuple; lanes
+bottom→top = record order)
+
+![fig-07-regrec](../diagrams/wavedrom/fig-07-regrec.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
 
 ```wavedrom
 {"reg": [
@@ -166,6 +180,8 @@ NVM shadow ≈ 20 B ({valid, talker EID, unique_id, controller EID, started}).
   {"bits": 32, "name": "time-limited deadline (T-NOTIF-TIMELIMITED)"}
 ], "config": {"bits": 224, "lanes": 7, "hspace": 950}}
 ```
+
+</details>
 
 <a id="fig-07-ctrmap"></a>**F07.10 — Counter banks** (full-bank form; compressed
 option = only-implemented-offsets with an index ROM):
@@ -190,7 +206,14 @@ Event→address mapping and masks: [F06.15](06_aecp_engine.md#fig-06-counters).
 
 ### 5.2 NVM record layout
 
-<a id="fig-07-nvmrec"></a>**F07.8 — Record framing (device-agnostic)**
+<a id="fig-07-nvmrec"></a>**F07.8 — Record framing** (device-agnostic; one record per
+item group and index — a partial update never rewrites unrelated records; lanes
+bottom→top = record order)
+
+![fig-07-nvmrec](../diagrams/wavedrom/fig-07-nvmrec.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
 
 ```wavedrom
 {"reg": [
@@ -199,10 +222,12 @@ Event→address mapping and masks: [F06.15](06_aecp_engine.md#fig-06-counters).
   {"bits": 8,  "name": "record_id"},
   {"bits": 16, "name": "payload_length"},
   {"bits": 16, "name": "crc16 (header+payload)"},
-  {"bits": 64, "name": "payload ... (per-record structs, little groups: RATE, FMT_IN[i], FMT_OUT[i], PT_OFS[i], BINDING[i], MAPS_IN[p], MAPS_OUT[p], CLKSRC[d], NAMES[n], CFG_IDX, SUID, MCR[d])", "type": 3}
-], "config": {"bits": 128, "lanes": 4, "hspace": 950},
- "head": {"text": "one record per item group and index - partial update never rewrites unrelated records"}}
+  {"bits": 32, "name": "payload ... record structs: RATE, FMT_IN/OUT[i], PT_OFS[i], BINDING[i]", "type": 3},
+  {"bits": 32, "name": "... MAPS_IN/OUT[p], CLKSRC[d], NAMES[n], CFG_IDX, SUID, MCR[d]", "type": 3}
+], "config": {"bits": 128, "lanes": 4, "hspace": 950}}
 ```
+
+</details>
 
 ### 5.3 Commit / restore flows
 

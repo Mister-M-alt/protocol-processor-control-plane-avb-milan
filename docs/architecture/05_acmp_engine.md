@@ -27,7 +27,14 @@ triggers on every committed state change.
 
 ## 3. PDU handling
 
-<a id="fig-05-acmpdu"></a>**F05.13 — Milan truncated ACMPDU (56 B, wire order, `@n` = byte offset)**
+<a id="fig-05-acmpdu"></a>**F05.13 — Milan truncated ACMPDU** (56 B; Milan sends and
+accepts this form, longer IEEE forms accepted with the missing tail read as 0 — V3;
+lanes bottom→top = wire order, `@n` byte offsets authoritative)
+
+![fig-05-acmpdu](../diagrams/wavedrom/fig-05-acmpdu.svg)
+
+<details>
+<summary>WaveDrom source (editable)</summary>
 
 ```wavedrom
 {"reg": [
@@ -49,9 +56,10 @@ triggers on every committed state change.
   {"bits": 16, "name": "flags @50"},
   {"bits": 16, "name": "stream_vlan_id @52"},
   {"bits": 16, "name": "connected_listeners_entries @54 (reserved, CL_ENTRIES_VALID=0)"}
-], "config": {"bits": 448, "lanes": 14, "hspace": 950},
- "head": {"text": "Milan sends and accepts this 56-B form; longer IEEE forms accepted, missing tail reads as 0 (V3)"}}
+], "config": {"bits": 448, "lanes": 14, "hspace": 950}}
 ```
+
+</details>
 
 Message types (Milan names, IEEE names in parentheses — Δ1): 0/1 PROBE_TX cmd/resp
 (CONNECT_TX) · 2/3 DISCONNECT_TX cmd/resp · 4/5 GET_TX_STATE · 6/7 BIND_RX
