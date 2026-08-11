@@ -27,11 +27,8 @@ drawio -x -f svg --crop -o docs/diagrams/01-top-level.svg docs/diagrams/src/01-t
 # headless fallback (no display):
 xvfb-run -a drawio --no-sandbox -x -f svg --crop -o <out.svg> <in.drawio>
 
-# lint every embedded mermaid/wavedrom block in docs/ and README.md
-make lint
-
-# check exports are newer than sources
-make stale
+# full documentation gate: mermaid/wavedrom lint + links + compliance matrix + SVG freshness
+make check
 ```
 
 ## Style guide

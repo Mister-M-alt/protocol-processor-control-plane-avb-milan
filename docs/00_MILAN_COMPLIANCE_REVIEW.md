@@ -66,7 +66,7 @@ built from clause extraction, not from a published proforma.
 | Shared packet engine + normalized transaction (§2, §4, §5) | [03 §2–§5](architecture/03_packet_engine.md), record extended with `origin` |
 | Compute gradation: ADP tiny / ACMP medium / AECP µcoded (§1, §3, §23) | [04](architecture/04_adp_engine.md)/[05](architecture/05_acmp_engine.md)/[06](architecture/06_aecp_engine.md); ACMP refined to table-driven record executor |
 | 4-stage pipeline, variable-latency EXECUTE (§5) | [03 §4](architecture/03_packet_engine.md) with three amendments |
-| Command scoreboard / "deterministic safe parallelism" (§13) | [03 §6](architecture/03_packet_engine.md), classes re-grounded ([F06.3](architecture/06_aecp_engine.md#fig-06-scoreboard)) |
+| Command scoreboard / "deterministic safe parallelism" (§13) | [03 §6](architecture/03_packet_engine.md), classes re-grounded ([F03.7](architecture/03_packet_engine.md#fig-03-hazards)) |
 | Deadline engine, deadline from command reception (§20) | [08](architecture/08_timing.md) timer service + PRNG |
 | TX arbiter merging all sources (§16) | [03 §8](architecture/03_packet_engine.md) |
 | Control-plane-only boundary (§21) | [01 §2](architecture/01_overview.md); the "Hardware API" is now four concrete adapters ([02 §4](architecture/02_interfaces.md)) |

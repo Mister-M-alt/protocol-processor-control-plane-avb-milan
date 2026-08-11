@@ -46,6 +46,12 @@ Every normative artifact has a stable ID. IDs never change meaning; new ones are
 - Milan↔IEEE deltas only in `F01.4`; documents cite `Δn`.
 - Record/memory layouts only in 07; engine docs link to them.
 
+Scope of those rules: they bind the **architecture** documents (01–09). Three
+deliberate exceptions: the compliance review (00) quotes spec requirement text
+*including its values* — that is its job; tick-generation rates belong to the clocking
+contract (02 §2 with `F08.2`); and PDU field constants such as ADP `valid_time` belong
+to their field-sourcing table. `make check` enforces the rest.
+
 ## 3. Figures: one source, one home
 
 - Every figure exists in **exactly one** host document, preceded by an explicit anchor:
@@ -111,4 +117,4 @@ into one story:
 | A top-level picture | edit `docs/diagrams/src/*.drawio` in the draw.io app; `make diagrams`; commit source **and** SVG |
 | A timing value | edit `F08.1` only; consumers reference `T-…` IDs |
 | A parameter default | edit `F01.5` only |
-| Anything | `make lint stale` must pass before commit |
+| Anything | `make check` (lint + links + matrix + stale) must pass before commit |

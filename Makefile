@@ -6,8 +6,11 @@ DRAWIO      ?= drawio
 DRAWIO_SRC  := $(wildcard docs/diagrams/src/*.drawio)
 DRAWIO_SVG  := $(patsubst docs/diagrams/src/%.drawio,docs/diagrams/%.svg,$(DRAWIO_SRC))
 
-.PHONY: all diagrams lint stale
-all: diagrams lint stale
+.PHONY: all check diagrams lint links matrix stale
+all: diagrams check
+
+# everything CI should enforce (see docs/architecture/09_verification.md section 7)
+check: lint links matrix stale
 
 diagrams: $(DRAWIO_SVG)
 
@@ -18,6 +21,12 @@ docs/diagrams/%.svg: docs/diagrams/src/%.drawio
 
 lint:
 	@./scripts/lint-diagrams.sh
+
+links:
+	@python3 scripts/check-links.py
+
+matrix:
+	@python3 scripts/check-matrix.py
 
 stale:
 	@fail=0; \

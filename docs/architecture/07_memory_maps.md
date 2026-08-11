@@ -254,7 +254,7 @@ Baseline: 1 configuration, 1 AVB interface, 2 in + 2 out streams, F = 6 formats 
 
 | Region | Formula | Bytes |
 |---|---|---|
-| Static image | 312 + (74+4·10) + (144+4·3) + 4·(136+48) + 102 + 2·86 + 4·20 + 8·90 + (8+64) + (104+9) + (76+4) + index maps ≈ | **≈ 2.9 K** → `P-DESCR-IMAGE-BYTES` 16 K default is comfortable |
+| Static image | 312 + (74+4·10) + (144+4·3) + 4·(136+48) + 102 + 2·86 + 4·20 + 8·90 + (8+64) + (104+9) + (76+4) + index maps ≈ | **≈ 2.9 K** — comfortably inside the `P-DESCR-IMAGE-BYTES` default |
 | Overlay + names | ≈ 20 named × 64 + currents + maps | ≈ 1.6 K |
 | Sink/source records | 2×48 + 2×16 (source DA gates) | 128 |
 | Registry | 16 × 28 | 448 |

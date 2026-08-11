@@ -160,8 +160,9 @@ turns the Table 5.22 subset into triggers.
 
 ## 6. Scoreboard: hazard classes and ordering
 
-<a id="fig-03-hazards"></a>Admission control per class/key — the load-bearing role is
-**cross-engine interlock** (the AECP µCPU is single-issue anyway):
+<a id="fig-03-hazards"></a>**F03.7 — Hazard classes and serialization keys.** Admission
+control per class/key — the load-bearing role is **cross-engine interlock** (the AECP
+µCPU is single-issue anyway):
 
 | Class | Members | Key | Rule |
 |---|---|---|---|
@@ -171,7 +172,7 @@ turns the Table 5.22 subset into triggers.
 | MAP_CFG | ADD/REMOVE_AUDIO_MAPPINGS, GET_AUDIO_MAP (write side) | stream port | serialized per key **and** cross-locked with STREAM_CFG of referenced streams (format↔mapping validation pair) |
 | CLOCK_CFG | SET_SAMPLING_RATE, SET_CLOCK_SOURCE, MVU SET_MCR_INFO | audio unit / clock domain | serialized per key |
 | NAME_WR | SET_NAME | descriptor | serialized per key |
-| LOCK_OP | LOCK_ENTITY + 60 s expiry event | global | serialized vs every lock-protected member (incl. ACMP BIND/UNBIND and MGMT writes) |
+| LOCK_OP | LOCK_ENTITY + `T-LOCK-UNLOCK` expiry event | global | serialized vs every lock-protected member (incl. ACMP BIND/UNBIND and MGMT writes) |
 | REGISTRY_OP | REGISTER/DEREGISTER, monitor removals, TIME_LIMITED expiry | registry | serialized on the registry |
 | IDENTIFY | SET_CONTROL(identify), notification bursts | identify | serialized |
 
@@ -220,9 +221,9 @@ flowchart LR
 
 | Rule | Detail |
 |---|---|
-| Priorities | ACMP (200 ms budget, tightest) > AECP solicited + originator commands > notification bursts > ADP periodic |
+| Priorities | ACMP (tightest budget, `T-BUDGET-ACMP-RESP`) > AECP solicited + originator commands > notification bursts > ADP periodic |
 | Frame-atomic | grant holds sof→eof ([F02.4](02_interfaces.md#fig-02-txwave)); no preemption |
-| Starvation guard | aging promotes any requester older than 10 ms to priority 1 |
+| Starvation guard | aging promotes any requester older than `T-TX-AGING` to priority 1 |
 | Notification pacing | fan-out engine spaces bursts so ≥ 1 slot/frame-time remains for solicited traffic; counters class additionally rate-limited ≤ 1/descriptor/s |
 | Destination addressing | AECP: unicast to `src_mac` (or registry MAC for unsolicited). ACMP: **all** responses multicast `91-E0-F0-01-00-00`. ADP: multicast `91-E0-F0-01-00-00`. Identify: multicast `91-E0-F0-01-00-01` (IEEE Annex B) |
 

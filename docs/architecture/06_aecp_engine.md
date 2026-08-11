@@ -110,9 +110,9 @@ stateDiagram-v2
 
 Policies:
 
-- **Never `IN_PROGRESS`** — every command completes within `T-AECP-RESP` (240 ms); this
+- **Never `IN_PROGRESS`** — every command completes within `T-AECP-RESP`; this
   is mandatory for GET_DYNAMIC_INFO coexistence (IEEE §7.4.76.2) and deletes the
-  120 ms re-send machinery ([review §8](../00_MILAN_COMPLIANCE_REVIEW.md) item 7).
+  `T-AECP-INPROG` re-send machinery ([review §8](../00_MILAN_COMPLIANCE_REVIEW.md) item 7).
 - Duplicate `sequence_id` from the same controller: commands are idempotently
   re-executed (safe: reads) or answered from the last-response cache for state-changing
   classes — one cached response per controller suffices with single-issue execution.
@@ -154,7 +154,7 @@ rule that satisfies IEEE §9.3.5.3.3 for **every** opcode 0x0000–0x0068).
 | 0x0026 | IDENTIFY_NOTIFICATION | unsolicited-only | as command → `BAD_ARGUMENTS` | — | — | — | — | is one | 28 B |
 | 0x0027 | GET_AVB_INFO | shall | gather §6.2 | RO | — | **no** | **yes** | async triggers | 44 + msrp mappings |
 | 0x0028 | GET_AS_PATH | shall | gather §6.2 | RO | — | **no** | **yes** | async trigger | 28 + 8·count |
-| 0x0029 | GET_COUNTERS | shall | §6.6 | RO | — | yes | — | async ≤1/desc/s | 160 B |
+| 0x0029 | GET_COUNTERS | shall | §6.6 | RO | — | yes | — | async (`T-CTR-NOTIF`) | 160 B |
 | 0x002B | GET_AUDIO_MAP | shall (dynamic ports) | §6.5 | RO | — | **no** | **yes** | — | 32 + 8·N |
 | 0x002C | ADD_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | — | **yes** | yes | 28 + 8·N |
 | 0x002D | REMOVE_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | — | **yes** | yes | 28 + 8·N |
@@ -249,7 +249,7 @@ response is never a torn mix of two states.
 ### 6.5 Audio-map operations (Milan §5.4.2.26–.28)
 
 - Channel space of each stream port is **partitioned at model-build time** into fixed
-  subsets ≤ `P-MAP-SUBSET-CH-MAX` (176); `number_of_maps` always reports the partition
+  subsets ≤ `P-MAP-SUBSET-CH-MAX`; `number_of_maps` always reports the partition
   count N regardless of dynamic content; `GET_AUDIO_MAP(map_index = P)` returns all and
   only the dynamic mappings of subset P.
 - `ADD_AUDIO_MAPPINGS`: **all-or-nothing** — any invalid mapping ⇒ `BAD_ARGUMENTS`,
@@ -266,8 +266,7 @@ response is never a torn mix of two states.
 
 Response: `descriptor_type @24`, `descriptor_index @26`, `counters_valid @28`,
 32 × u32 block @32 (cdl 148). `counters_valid` bit N (MSB-first) ⇔ block offset 4·N.
-Counters are 32-bit wrapping; interval-latched events sample at `T-CTR-OBSERVE`
-(≤ 1 s); adapters accumulate ticks so nothing is lost between observations.
+Counters are 32-bit wrapping; interval-latched events sample at `T-CTR-OBSERVE`; adapters accumulate ticks so nothing is lost between observations.
 
 <a id="fig-06-counters"></a>**F06.15 — Mandatory counter banks**
 
@@ -291,8 +290,8 @@ Counters are 32-bit wrapping; interval-latched events sample at `T-CTR-OBSERVE`
 | | TIMESTAMP_UNCERTAIN | **0x08** (Δ9) | resets on stream start |
 | | FRAMES_TX | **0x10** (Δ9) | resets on stream start |
 
-Any counter update arms the per-descriptor GET_COUNTERS notification, rate-limited to
-one per descriptor per second (`T-CTR-NOTIF`).
+Any counter update arms the per-descriptor GET_COUNTERS notification, rate-limited per
+descriptor by `T-CTR-NOTIF`.
 
 ### 6.7 GET_DYNAMIC_INFO iterator
 
@@ -329,7 +328,7 @@ variable-size ⇒ excluded.
 
 ```mermaid
 stateDiagram-v2
-    UNLOCKED --> LOCKED: LOCK(flags=0) desc=ENTITY / locked_id = controller, arm T-LOCK-UNLOCK (60 s)
+    UNLOCKED --> LOCKED: LOCK(flags=0) desc=ENTITY / locked_id = controller, arm T-LOCK-UNLOCK
     LOCKED --> LOCKED: LOCK by owner / re-arm (keep-alive); respond locked_id
     LOCKED --> UNLOCKED: LOCK(UNLOCK 0x1) by owner / respond
     LOCKED --> LOCKED: LOCK by other / respond ENTITY_LOCKED + locked_id
@@ -367,7 +366,7 @@ volatile** (cleared by power cycle) — Δ12.
 
 ```mermaid
 stateDiagram-v2
-    EMPTY --> REGISTERED: REGISTER cmd / dup-check, seq=0, arm T-NOTIF-MONITOR (30-60 s rnd) + T-NOTIF-TIMELIMITED (300 s) if flag
+    EMPTY --> REGISTERED: REGISTER cmd / dup-check, seq=0, arm T-NOTIF-MONITOR + T-NOTIF-TIMELIMITED if flag
     REGISTERED --> REGISTERED: any valid AECP cmd from this controller / re-arm T-NOTIF-MONITOR
     REGISTERED --> REGISTERED: TIME_LIMITED re-REGISTER / re-arm both
     REGISTERED --> PROBING: T-NOTIF-MONITOR expiry / originate CONTROLLER_AVAILABLE (1 retry)
@@ -397,7 +396,7 @@ sequenceDiagram
     NOTIF->>NOTIF: coalesce same-key pending triggers
     NOTIF-->>CTRLB: unsolicited response u=1, seq = B.seq++, unicast B.mac on B.port
     NOTIF-->>CTRLC: unsolicited response u=1, seq = C.seq++, unicast C.mac on C.port
-    Note over NOTIF: counters-class triggers additionally gated by T-CTR-NOTIF (1/desc/s)
+    Note over NOTIF: counters-class triggers additionally gated by T-CTR-NOTIF
 ```
 
 Trigger classes: (1) every successful state-changing command (regenerated as the
@@ -405,7 +404,7 @@ corresponding response, requester excluded); (2) MGMT/front-panel-equivalent cha
 while unlocked — read-only objects use the GET_ form (IEEE §7.5.2); (3) async
 Table 5.22 set: GET_STREAM_INFO field changes (input/output splits per F06.13),
 GET_AVB_INFO (GM, prop delay, domain, asCapable, class-A prio/VID), GET_AS_PATH,
-GET_COUNTERS (rate-limited), LOCK_ENTITY auto-unlock, targeted DEREGISTER.
+GET_COUNTERS (`T-CTR-NOTIF`-limited), LOCK_ENTITY auto-unlock, targeted DEREGISTER.
 Coalescing merges same-key pending triggers (safe: notifications carry current full
 state); LOCK/DEREGISTER events are never coalesced. Ordering: notification after
 commit and after the solicited response ([03 §6](03_packet_engine.md) rule a).
@@ -417,7 +416,7 @@ sequenceDiagram
     participant NOTIF
     participant ORIG as originator
     participant CTRLB as CTRL B
-    Note over NOTIF: T-NOTIF-MONITOR(B) expires (30-60 s of silence)
+    Note over NOTIF: T-NOTIF-MONITOR(B) expires after controller silence
     NOTIF->>ORIG: CONTROLLER_AVAILABLE -> B (inflight, T-AECP-TIMEOUT)
     ORIG->>CTRLB: CONTROLLER_AVAILABLE
     Note over ORIG: timeout - one retry (exact duplicate)
@@ -440,7 +439,7 @@ sequenceDiagram
     Note over AECP: value stays 255 until SET_CONTROL 0 (reset default 0)
     Note over AECP,DEV: button variant (P-EN-IDENTIFY-NOTIFICATION)
     DEV->>AECP: identify_button pressed
-    AECP->>AECP: IDENTIFY_NOTIFICATION x3 @ T-IDENT-BURST (150 ms), re-arm T-IDENT-REARM (1 s) while held
+    AECP->>AECP: IDENTIFY_NOTIFICATION x3 @ T-IDENT-BURST, re-arm T-IDENT-REARM while held
     Note over AECP: multicast 91-E0-F0-01-00-01, controller_entity_id 90-E0-F0-FF-FE-01-00-01, identifySequenceID++
 ```
 
@@ -498,7 +497,7 @@ single-source command model ([09 §1](09_verification.md)).
 
 ## 9. Timing
 
-Owns `T-AECP-RESP` (240 ms respond budget — hard, no IN_PROGRESS), `T-NOTIF-MONITOR`,
+Owns `T-AECP-RESP`, `T-NOTIF-MONITOR`,
 `T-NOTIF-TIMELIMITED`, `T-LOCK-UNLOCK`, `T-CTR-OBSERVE`, `T-CTR-NOTIF`,
 `T-IDENT-BURST`, `T-IDENT-REARM`; the originator applies `T-AECP-TIMEOUT` to
 CONTROLLER_AVAILABLE inflight. Values: [F08.1](08_timing.md#fig-08-constants);

@@ -50,7 +50,7 @@ reports uncovered REQ-IDs as failures.
 | **DIR** | directed per-command tests from generated vectors (valid + each error status) | every F06.14 row, every status code reachable |
 | **MTXW** | **matrix walker**: drive every cell of [F05.3](05_acmp_engine.md#fig-05-listener-matrix) (state × event, incl. `—`/`ign` cells proven inert) and both ADP SMs | 100 % cells + FSM arcs |
 | **TOL** | malformed/tolerance suite ([F09.4](#fig-09-malformed)) | every V-rule of [F03.6](03_packet_engine.md#fig-03-valrules) |
-| **TIM** | compressed-timer runs (prescaler factor): advertise cadence, 200 ms × 2 + 4 s probing, 10 s NOTK, 30–60 s monitors, 60 s lock, 300 s TIME_LIMITED, 15 s DA freshness; response-budget assertions (T-BUDGET-*) | every F08.1 row exercised + budget histograms |
+| **TIM** | compressed-timer runs (prescaler factor) over every [F08.1](08_timing.md#fig-08-constants) row: advertise cadence, probe attempts + backoff, settle timeout, controller monitors, lock auto-unlock, TIME_LIMITED expiry, DA freshness; plus response-budget assertions (`T-BUDGET-*`) | every F08.1 row exercised + budget histograms |
 | **RND** | randomized multi-controller sessions (16+ controllers: register/deregister churn, concurrent SETs, lock contention, GDI batches) against the reference model | scoreboard classes interleaved; no divergence |
 | **STORM** | notification stress: counter churn at rate limit, fan-out to full registry, TX-arbiter starvation probes | pacing + ≤1/desc/s verified; no solicited deadline miss |
 | **NVM** | power-cut/restore: cut at randomized commit points, verify CRC fallback + restored bindings enter `PRB_W_AVAIL`; persisted-set completeness per REQ-PER-001 | every record type cut ≥ once |
@@ -104,8 +104,15 @@ against at least two independent controller implementations.
 
 ## 7. Documentation-sync regression
 
-CI equivalent of the local `Makefile`: `make lint` (every mermaid/wavedrom block
-parses), `make stale` (drawio SVGs fresh), link/anchor check across `docs/`, and a
-consistency script asserting: no literal time values outside F08.1, no parameter
-values outside F01.5, every REQ-ID in 00 §6 referenced by at least one architecture
-document or test tag.
+`make check` is the CI gate, and runs today:
+
+| Target | Script | Asserts |
+|---|---|---|
+| `lint` | `scripts/lint-diagrams.sh` | every embedded mermaid block renders (`mmdc`); every wavedrom block is strict JSON |
+| `links` | `scripts/check-links.py` | every relative link resolves; every `#anchor` exists in its target (code-block examples excluded) |
+| `matrix` | `scripts/check-matrix.py` | REQ-IDs unique and fully populated; `Ver` values ∈ the §3 vocabulary; every GAP defined ↔ dispositioned |
+| `stale` | `Makefile` | each committed `.svg` is newer than its `.drawio` source |
+
+To add once the implementation and tests exist: REQ-ID ↔ test-tag coverage (§2), and a
+single-source scan (no timing values outside F08.1, no parameter values outside F01.5)
+per the scope rules in [docs/README §2](../README.md).

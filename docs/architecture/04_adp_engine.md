@@ -62,7 +62,7 @@ Message types: 0 ENTITY_AVAILABLE · 1 ENTITY_DEPARTING · 2 ENTITY_DISCOVER.
 
 | Field | Source | Rule |
 |---|---|---|
-| `valid_time` | constant | **10** (2-s units → 20 s validity; advertise every 5 s) — Δ5 |
+| `valid_time` | constant | **10** (2-s units ⇒ 20 s validity; cadence `T-ADP-ADV`) — Δ5 |
 | `entity_id`, `entity_model_id` | config/ID registers | model id ≠ 0/≠ all-1s; changes on structural model change (Milan §5.3.1) |
 | `entity_capabilities` | constant | [F04.6](#fig-04-caps) |
 | `talker_stream_sources` / `listener_stream_sinks` | model metadata | **max across all configurations** (Milan §5.3.3.1) |
@@ -131,9 +131,9 @@ ENTITY_DEPARTING — IEEE §6.2.2.9), one timer handle. Per sink: discovery SM s
 ```mermaid
 stateDiagram-v2
     [*] --> DOWN: reset, link down
-    [*] --> DELAY: reset, link up / arm T-ADP-DELAY-START (0-2 s)
-    DOWN --> DELAY: LINK_UP / arm T-ADP-DELAY (0-4 s)
-    DELAY --> WAITING: T-ADP-DELAY expiry / send ENTITY_AVAILABLE, available_index++, arm T-ADP-ADV (5 s)
+    [*] --> DELAY: reset, link up / arm T-ADP-DELAY-START
+    DOWN --> DELAY: LINK_UP / arm T-ADP-DELAY
+    DELAY --> WAITING: T-ADP-DELAY expiry / send ENTITY_AVAILABLE, available_index++, arm T-ADP-ADV
     WAITING --> DELAY: T-ADP-ADV expiry / arm T-ADP-DELAY
     WAITING --> DELAY: RCV_ADP_DISCOVER (eid 0 or own) / stop T-ADP-ADV, arm T-ADP-DELAY
     WAITING --> DELAY: GM_CHANGE / arm T-ADP-DELAY
@@ -145,7 +145,7 @@ stateDiagram-v2
 
 | Rule | Note |
 |---|---|
-| Startup delay is **T-ADP-DELAY-START (0–2 s)**, every later delay **T-ADP-DELAY (0–4 s)** | two distinct constants — single-constant implementations are a known bug class (review §8 item 5) |
+| Startup delay is **T-ADP-DELAY-START**, every later delay **T-ADP-DELAY** | two distinct constants — single-constant implementations are a known bug class (review §8 item 5) |
 | ENTITY_DEPARTING **only** on SHUTDOWN; never on link-down | Milan §5.6.3.5.6/.10 |
 | GM change ⇒ re-advertise (through DELAY) | Milan §5.6.3.5.7; also ticks GPTP_GM_CHANGED |
 | DOWN ignores DISCOVER/GM_CHANGE/SHUTDOWN; DELAY ignores DISCOVER/GM_CHANGE | Table 5.51 |
@@ -184,9 +184,9 @@ sequenceDiagram
     participant ADP
     participant TALKER
     CTRL->>ADP: ENTITY_DISCOVER (entity_id = 0)
-    Note over ADP: WAITING -> DELAY (T-ADP-DELAY 0-4 s)
+    Note over ADP: WAITING -> DELAY (T-ADP-DELAY)
     ADP-->>CTRL: ENTITY_AVAILABLE (available_index = n)
-    Note over ADP: every T-ADP-ADV (5 s)
+    Note over ADP: every T-ADP-ADV
     TALKER-->>ADP: ENTITY_AVAILABLE (avail_idx = 41, GM matches)
     Note over ADP: sink discovery SM: EVT_TK_DISCOVERED -> ACMP
     TALKER-->>ADP: ENTITY_AVAILABLE (avail_idx = 2)
@@ -205,7 +205,7 @@ Owns `T-ADP-ADV`, `T-ADP-DELAY`, `T-ADP-DELAY-START`, `T-ADP-NOADP` — values o
 
 ## 9. Milan deltas
 
-> **Δ5 — Milan overrides IEEE:** fixed valid_time = 10 / 5 s advertise cadence and the
+> **Δ5 — Milan overrides IEEE:** the fixed `valid_time` and `T-ADP-ADV` cadence and the
 > DOWN/WAITING/DELAY SM with GM_CHANGE re-advertise replace IEEE's
 > `valid_time/2` reannounce and millisecond-scale `randomDeviceDelay`
 > (IEEE §6.2.4; Milan §5.6.2–5.6.3).

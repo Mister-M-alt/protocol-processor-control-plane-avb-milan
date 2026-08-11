@@ -204,7 +204,7 @@ notification triggers of [§11-x](#10-milan-deltas) via the global commit rule):
 | A9 | disarm discovery SM |
 | A10 | clear binding; NVM clear; pbsta←DISABLED, acmpsta←0 |
 | A11 | stop the active SM timer |
-| A12 | arm `T-ACMP-DELAY` (random 0–1 s); pbsta←ACTIVE, acmpsta←0 |
+| A12 | arm `T-ACMP-DELAY`; pbsta←ACTIVE, acmpsta←0 |
 | A13 | re-send **exact duplicate** probe (regenerated from record, same `probe_seq`); arm `T-ACMP-CMD`; `retried`←1 |
 | A14(s) | arm `T-ACMP-RETRY`; acmpsta←s (received status, or 7 on double timeout) |
 | A15 | latch {stream_id, dest MAC, VLAN} from response; `avtp.INPUT_CONFIGURE` + `INPUT_ENABLE`; start SRP listen (adapter declares Listener READY when a matching talker attribute registers — Milan §5.3.8.5); arm `T-ACMP-NOTK`; pbsta←COMPLETED, acmpsta←0 |
@@ -227,15 +227,15 @@ A divergent talker attribute (params ≠ settled values) never generates
 
 ```mermaid
 stateDiagram-v2
-    PRB_W_AVAIL --> PRB_W_DELAY: EVT_TK_DISCOVERED / A12 (0-1 s anti-storm)
+    PRB_W_AVAIL --> PRB_W_DELAY: EVT_TK_DISCOVERED / A12 anti-storm delay
     PRB_W_DELAY --> PRB_W_RESP: T-ACMP-DELAY / A5 probe #1
-    PRB_W_RESP --> PRB_W_RESP2: T-ACMP-CMD (200 ms) / A13 exact duplicate
+    PRB_W_RESP --> PRB_W_RESP2: T-ACMP-CMD / A13 exact duplicate
     PRB_W_RESP --> SETTLED_NO_RSV: PROBE_RESP ok / A11 A15
     PRB_W_RESP2 --> SETTLED_NO_RSV: PROBE_RESP ok / A11 A15
     PRB_W_RESP --> PRB_W_RETRY: PROBE_RESP err / A11 A14(status)
     PRB_W_RESP2 --> PRB_W_RETRY: PROBE_RESP err / A11 A14(status)
     PRB_W_RESP2 --> PRB_W_RETRY: T-ACMP-CMD / A14(LISTENER_TALKER_TIMEOUT)
-    PRB_W_RETRY --> PRB_W_DELAY: T-ACMP-RETRY (4 s), talker discovered / A12
+    PRB_W_RETRY --> PRB_W_DELAY: T-ACMP-RETRY, talker discovered / A12
     PRB_W_RETRY --> PRB_W_AVAIL: T-ACMP-RETRY, talker gone / A17
 ```
 
@@ -249,7 +249,7 @@ probing continues — the error is *visible* but probing never gives up while bo
 ```mermaid
 stateDiagram-v2
     SETTLED_NO_RSV --> SETTLED_RSV_OK: EVT_TK_REGISTERED (exact match stream_id+DA+VLAN) / A11
-    SETTLED_NO_RSV --> PRB_W_DELAY: T-ACMP-NOTK (10 s), talker discovered / A8 A12
+    SETTLED_NO_RSV --> PRB_W_DELAY: T-ACMP-NOTK, talker discovered / A8 A12
     SETTLED_NO_RSV --> PRB_W_AVAIL: T-ACMP-NOTK, talker gone / A8 A17
     SETTLED_RSV_OK --> PRB_W_DELAY: EVT_TK_UNREGISTERED, talker discovered / A8 A12
     SETTLED_RSV_OK --> PRB_W_AVAIL: EVT_TK_UNREGISTERED, talker gone / A8 A17
@@ -297,7 +297,7 @@ flowchart TB
   v1 -- no --> r1["PROBE_TX_RESPONSE TALKER_UNKNOWN_ID"]
   v1 -- yes --> v2{"ingress interface = the output's AVB interface?"}
   v2 -- no --> r2["silently ignore, or INCOMPATIBLE_REQUEST (impl choice)"]
-  v2 -- yes --> ping["ping T-SRP-DAFRESH (15 s) freshness timer for this output"]
+  v2 -- yes --> ping["ping T-SRP-DAFRESH freshness timer for this output"]
   ping --> v3{"DA valid? (MAAP allocated AND no conflict)"}
   v3 -- no --> r3["PROBE_TX_RESPONSE TALKER_DEST_MAC_FAILED"]
   v3 -- yes --> r4["SUCCESS: cc=0, echo FAST_CONNECT+STREAMING_WAIT, RF=0, stream_id/DA/VLAN of this source"]
@@ -326,14 +326,14 @@ stateDiagram-v2
 ```
 
 This is Milan's mechanism against advertising unwanted streams: a talker declares only
-while someone probed it in the last 15 s **or** a listener is registered.
+while someone probed it within `T-SRP-DAFRESH` **or** a listener is registered.
 
 ## 7. µcode / dispatch
 
 n/a — transition-ROM + hardwired action primitives (A1–A17). The ROM column is the
 Milan/IEEE profile seam ([01 §7](01_overview.md)); the plain-IEEE column (optional,
 `P-EN-PLAIN-IEEE-PROFILE`) restores IEEE §8.2.4 listener behavior, IEEE timeouts
-(2000/4500/500/200 ms) and an optional talker connection table — none of which exist
+([F08.1](08_timing.md#fig-08-constants) profile column) and an optional talker connection table — none of which exist
 in Milan builds.
 
 ## 8. Canonical sequences
@@ -374,7 +374,7 @@ sequenceDiagram
     SRP-->>ACMP: EVT_TK_REGISTERED (Failed attr matches)
     Note over ACMP: SETTLED_RSV_OK - REGISTERING_FAILED=1, failure code+bridge exposed (GET_STREAM_INFO / GET_RX_STATE)
     CTRL->>ACMP: PROBE path variant - PROBE_TX_RESPONSE status=TALKER_NO_BANDWIDTH
-    Note over ACMP: A14: PRB_W_RETRY, acmpsta=5, retry every T-ACMP-RETRY (4 s) - visible but never gives up
+    Note over ACMP: A14: PRB_W_RETRY, acmpsta=5, retry every T-ACMP-RETRY - visible but never gives up
 ```
 
 <a id="fig-05-seq-restart"></a>**F05.9 — Talker departure vs talker restart**
@@ -421,7 +421,7 @@ in [F08.1](08_timing.md#fig-08-constants). Response budget: `T-BUDGET-ACMP-RESP`
 
 ## 10. Milan deltas
 
-Δ1 (renames) · Δ2 (56-B PDU) · Δ3 (all 200 ms) · Δ4 (stateless talker) ·
+Δ1 (renames) · Δ2 (56-B PDU) · Δ3 (uniform ACMP timeout) · Δ4 (stateless talker) ·
 Δ14 (STREAMING_WAIT outputs) · Δ15 (listener SM + persistent binding) — master table
 [F01.4](01_overview.md#fig-01-deltas).
 

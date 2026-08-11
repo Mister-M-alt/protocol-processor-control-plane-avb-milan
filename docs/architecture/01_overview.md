@@ -78,7 +78,7 @@ once in [F02.10](02_interfaces.md#fig-02-statusdict).
 | ACMP engine | stateless talker responder; listener SM executor ×sink; inflight | [05](05_acmp_engine.md) |
 | AECP engine (µCPU) | AEM+MVU decode/dispatch/µcode; validation chains; response assembly | [06](06_aecp_engine.md) |
 | Controller registry + monitor + notification fan-out | registration tuples; liveness; unsolicited generation + rate limits | [06 §7](06_aecp_engine.md) |
-| Lock manager | ENTITY lock, 60 s auto-unlock, lock checks for AECP/ACMP/side-port | [06 §6.8](06_aecp_engine.md) |
+| Lock manager | ENTITY lock, `T-LOCK-UNLOCK` auto-unlock, lock checks for AECP/ACMP/side-port | [06 §6.8](06_aecp_engine.md) |
 | Counters subsystem | per-descriptor banks, invariants, observation latching | [06 §6.6](06_aecp_engine.md), [07 §4](07_memory_maps.md) |
 | Identify handler | identify value/output; notification bursts | [06 §7](06_aecp_engine.md) |
 | Entity-model store | static image + dynamic overlay + names; descriptor assembly | [07 §3](07_memory_maps.md) |
@@ -116,9 +116,9 @@ are defined in [docs/README.md](../README.md). Deltas are cited as `Δn` everywh
 |---|---|---|
 | Δ1 | Renames: `BIND_RX`=CONNECT_RX, `UNBIND_RX`=DISCONNECT_RX, `PROBE_TX`=CONNECT_TX | §5.5.2.2 |
 | Δ2 | ACMPDU truncated to 56 B; shall send and accept this form | §5.5.2.2 |
-| Δ3 | All five ACMP command timeouts = 200 ms (IEEE: 2000/4500/500/200) | Table 5.26 |
+| Δ3 | All five ACMP command timeouts collapse to a single value (`T-ACMP-CMD`), replacing IEEE's four different per-command timeouts | Table 5.26 |
 | Δ4 | Talker stateless: PROBE_TX pure query; DISCONNECT_TX → SUCCESS no-op; GET_TX_CONNECTION → NOT_SUPPORTED | §5.5.2.7, §5.5.4 |
-| Δ5 | ADP: valid_time = 10, advertise every 5 s, fixed advertise SM with GM_CHANGE re-advertise; replaces IEEE reannounce (valid_time/2) + randomDeviceDelay | §5.6.2, §5.6.3 |
+| Δ5 | ADP: fixed `valid_time` and advertise cadence (`T-ADP-ADV`) plus the DOWN/WAITING/DELAY SM with GM_CHANGE re-advertise, replacing IEEE's reannounce (valid_time/2) + randomDeviceDelay model | §5.6.2, §5.6.3 |
 | Δ6 | GET_STREAM_INFO: 80-B extended response (`flags_ex`, `pbsta`, `acmpsta`); CONNECTED→`BOUND`, TALKER_FAILED→`REGISTERING_FAILED` | §5.4.2.10 |
 | Δ7 | ACQUIRE_ENTITY shall never succeed → `NOT_SUPPORTED` | §5.4.2.1 |
 | Δ8 | Responses may exceed the 524-octet cdl cap for READ_DESCRIPTOR, GET_AVB_INFO, GET_AS_PATH, GET_AUDIO_MAP, ADD/REMOVE_AUDIO_MAPPINGS | §5.4.1 |
@@ -165,7 +165,7 @@ values; other documents reference `P-…` IDs.
 | P-EN-REDUNDANCY | 0 | reserved seam — must stay 0 (this spec) | GET_MILAN_INFO flag |
 
 **Profile mechanism** — a profile is a *selection of ROM columns*, not scattered
-`if`s: timing-constant column (Milan 200 ms ×5 vs IEEE 2000/4500/500/200; ADP constants),
+`if`s: timing-constant column ([F08.1](08_timing.md#fig-08-constants) profile column),
 ACMP listener transition ROM, AECP dispatch validity column, STREAM_OUTPUT counter-mask
 table (Δ9). Baseline = Milan; `P-EN-PLAIN-IEEE-PROFILE` swaps columns without touching
 datapaths.
