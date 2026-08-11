@@ -1,0 +1,914 @@
+// SPDX-License-Identifier: CERN-OHL-W-2.0
+// pp_top suite — END-TO-END wire truth through the WHOLE processor top:
+// one MAC byte stream in, one MAC byte stream out. Every expectation is an
+// independent C++ frame builder/parser working from the doc byte offsets
+// (F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDUs) — never
+// DUT logic. Scenarios: boot restore over a blank NVM device; entity enable
+// -> byte-exact 82 B ADPDU inside the T-ADP-DELAY-START window + the 5 s
+// re-advertise cadence with available_index++; ENTITY_DISCOVER -> delayed
+// byte-exact response; BIND_RX -> byte-exact BIND_RX_RESPONSE, talker
+// ENTITY_AVAILABLE -> discovery -> byte-exact PROBE_TX_COMMAND (trace ring
+// + status snapshot cross-checked); DECLARE_TALKER (svc) -> Σ-slope
+// admission (independent Milan §4.3.3.2 model) -> byte-exact Talker
+// Advertise + MVRP VID New; TX interleave of ADP + ACMP + SRP frames, each
+// byte-exact, no truncation; certified two-class Domain adoption -> Lv+New
+// re-declaration; listener READY end-to-end; NVM debounce commit of the
+// captured binding (F07.8 framing spot-checked at the device face).
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <deque>
+#include <vector>
+#include "Vpp_top_wrap.h"
+#include "verilated.h"
+
+static int checks = 0, fails = 0;
+#define CHECK(cond, ...) do { \
+  ++checks; \
+  if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
+} while (0)
+
+// ---------------------------------------------------------------------------
+// TB shape
+// ---------------------------------------------------------------------------
+static const int      MS_CYC = 100;                  // wrap: 1 ms = 100 clk
+static const uint64_t OWN_MAC = 0x0A0B0C0D0E0FULL;
+static const uint64_t EID     = 0x123456789ABCDEF0ULL;
+static const uint64_t EMID    = 0x00E0DECAFB0B0001ULL;
+static const uint16_t TKSRC = 0x0008, TKCAP = 0x6001;
+static const uint16_t LSNK  = 0x0008, LSCAP = 0x4801;
+static const uint16_t CFGIX = 0x0000, IDIX = 0x0005;
+static const uint64_t GM0  = 0xA1A2A3A4A5A6A7A8ULL;
+static const uint8_t  DOM0 = 0x00;
+static const uint32_t RATE    = 100000000u;          // 100 Mb/s port
+static const uint64_t LIMIT   = 75000000ull;         // 75 % ceiling
+static const uint32_t ACC_LAT = 0x000186A0u;
+static const uint64_t CTLR_MAC  = 0x0202DEADBEEFULL;
+static const uint64_t CTLR_EID  = 0x7777000000000042ULL;
+static const uint64_t CTLR2_EID = 0x7777000000000043ULL;
+static const uint64_t T1_EID  = 0xAAAA00000000AAA1ULL;
+static const uint64_t T1_MAC  = 0x020200000AA1ULL;
+static const uint16_t T1_UID  = 3;
+static const uint64_t ACMP_MC = 0x91E0F0010000ULL;
+static const uint64_t MSRP_DA = 0x0180C200000EULL;
+static const uint64_t MVRP_DA = 0x0180C2000021ULL;
+
+// MRP attribute events (802.1Q §35.2.2.7.2) + Listener declarations
+enum { EV_NEW = 0, EV_JOININ = 1, EV_IN = 2, EV_JOINMT = 3, EV_MT = 4,
+       EV_LV = 5 };
+enum { DECL_IGNORE = 0, DECL_ASKFAIL = 1, DECL_READY = 2, DECL_READYFAIL = 3 };
+// svc face ops / status (KL_srp_top class-B contract)
+enum { OP_DECL_TK = 0, OP_WDRW_TK = 1, OP_DECL_LS = 2, OP_WDRW_LS = 3,
+       OP_GET_DOM = 4 };
+enum { ST_OK = 0, ST_FAIL = 1, ST_UNSUP = 2 };
+
+// ---------------------------------------------------------------------------
+// byte helpers
+// ---------------------------------------------------------------------------
+static void putbe(uint8_t* p, uint64_t v, int n) {
+  for (int i = 0; i < n; ++i) p[i] = uint8_t(v >> (8 * (n - 1 - i)));
+}
+static void put16(std::vector<uint8_t>& b, uint16_t v) {
+  b.push_back(v >> 8); b.push_back(v & 0xFF);
+}
+static void put_mac(std::vector<uint8_t>& b, uint64_t m) {
+  for (int i = 5; i >= 0; i--) b.push_back((m >> (8 * i)) & 0xFF);
+}
+
+// ---------------------------------------------------------------------------
+// independent F04.5 ADPDU model (doc byte offsets)
+// ---------------------------------------------------------------------------
+static std::vector<uint8_t> adp_frame(uint8_t msg, uint64_t src_mac,
+                                      uint64_t eid, uint8_t vt,
+                                      uint32_t aidx, uint64_t gm,
+                                      uint8_t dom, uint64_t emid,
+                                      uint16_t tksrc, uint16_t tkcap,
+                                      uint16_t lsnk, uint16_t lscap,
+                                      uint32_t ecaps, uint16_t cfg,
+                                      uint16_t idix) {
+  std::vector<uint8_t> f(82, 0);
+  putbe(&f[0], ACMP_MC, 6);
+  putbe(&f[6], src_mac, 6);
+  putbe(&f[12], 0x22F0, 2);
+  f[14] = 0xFA;
+  f[15] = msg & 0x0F;
+  f[16] = uint8_t((vt << 3) | 0);
+  f[17] = 56;
+  putbe(&f[18], eid, 8);
+  putbe(&f[26], emid, 8);
+  putbe(&f[34], ecaps, 4);
+  putbe(&f[38], tksrc, 2);
+  putbe(&f[40], tkcap, 2);
+  putbe(&f[42], lsnk, 2);
+  putbe(&f[44], lscap, 2);
+  putbe(&f[46], 0, 4);
+  putbe(&f[50], aidx, 4);
+  putbe(&f[54], gm, 8);
+  f[62] = dom;
+  putbe(&f[64], cfg, 2);
+  putbe(&f[66], idix, 2);
+  return f;
+}
+// our own expected AVAILABLE (F04.6 entity_capabilities = 0x0000C588)
+static std::vector<uint8_t> own_avail(uint32_t aidx) {
+  return adp_frame(0, OWN_MAC, EID, 10, aidx, GM0, DOM0, EMID,
+                   TKSRC, TKCAP, LSNK, LSCAP, 0x0000C588u, CFGIX, IDIX);
+}
+
+// ---------------------------------------------------------------------------
+// independent F05.13 Milan ACMPDU model (56 B PDU + Ethernet header)
+// ---------------------------------------------------------------------------
+static std::vector<uint8_t> acmp_frame(uint64_t src_mac, uint8_t msg,
+                                       uint8_t status, uint64_t sid,
+                                       uint64_t ctlr, uint64_t tkeid,
+                                       uint64_t lseid, uint16_t tkuid,
+                                       uint16_t luid, uint64_t da,
+                                       uint16_t cc, uint16_t seq,
+                                       uint16_t flags, uint16_t vlan) {
+  std::vector<uint8_t> f(70, 0);
+  putbe(&f[0], ACMP_MC, 6);
+  putbe(&f[6], src_mac, 6);
+  putbe(&f[12], 0x22F0, 2);
+  f[14] = 0xFC;
+  f[15] = msg & 0x0F;
+  f[16] = uint8_t((status << 3) | 0);   // cdl = 44 -> [10:8] = 0
+  f[17] = 44;
+  putbe(&f[18], sid, 8);
+  putbe(&f[26], ctlr, 8);
+  putbe(&f[34], tkeid, 8);
+  putbe(&f[42], lseid, 8);
+  putbe(&f[50], tkuid, 2);
+  putbe(&f[52], luid, 2);
+  putbe(&f[54], da, 6);
+  putbe(&f[60], cc, 2);
+  putbe(&f[62], seq, 2);
+  putbe(&f[64], flags, 2);
+  putbe(&f[66], vlan, 2);
+  return f;
+}
+
+// ---------------------------------------------------------------------------
+// independent Σ-slope admission model (Milan v1.2 §4.3.3.2)
+// ---------------------------------------------------------------------------
+static uint64_t slope_bps(uint32_t mfs, uint32_t mif) {
+  uint64_t f = (uint64_t)mfs + 22;
+  if (f < 68) f = 68;
+  return (f + 20) * mif * 8000ull * 8ull;
+}
+
+// ---------------------------------------------------------------------------
+// independent MRPDU builder/parser (802.1Q §10.8.1.2 BNF, §35.2.2)
+// ---------------------------------------------------------------------------
+struct Vec {
+  bool la = false;
+  int nov = 1;
+  std::vector<uint8_t> fv;
+  std::vector<int> ev;
+  std::vector<int> fp;
+};
+struct Msg { int type; int alen; bool listener; std::vector<Vec> vecs; };
+
+static std::vector<uint8_t> vec_bytes(const Vec& v, bool listener) {
+  std::vector<uint8_t> b;
+  b.push_back((v.la ? 0x20 : 0x00) | ((v.nov >> 8) & 0x1F));
+  b.push_back(v.nov & 0xFF);
+  b.insert(b.end(), v.fv.begin(), v.fv.end());
+  for (int i = 0; i < v.nov; i += 3) {
+    int e[3] = {0, 0, 0};
+    for (int j = 0; j < 3 && i + j < v.nov; j++) e[j] = v.ev[i + j];
+    b.push_back((uint8_t)(((e[0] * 6) + e[1]) * 6 + e[2]));
+  }
+  if (listener) {
+    for (int i = 0; i < v.nov; i += 4) {
+      int p[4] = {0, 0, 0, 0};
+      for (int j = 0; j < 4 && i + j < v.nov; j++) p[j] = v.fp[i + j];
+      b.push_back((uint8_t)(p[0] * 64 + p[1] * 16 + p[2] * 4 + p[3]));
+    }
+  }
+  return b;
+}
+static std::vector<uint8_t> mrpdu_frame(bool msrp, uint64_t src_mac,
+                                        const std::vector<Msg>& ms) {
+  std::vector<uint8_t> b;
+  put_mac(b, msrp ? MSRP_DA : MVRP_DA);
+  put_mac(b, src_mac);
+  put16(b, msrp ? 0x22EA : 0x88F5);
+  b.push_back(0x00);                    // ProtocolVersion
+  for (const Msg& m : ms) {
+    b.push_back((uint8_t)m.type);
+    b.push_back((uint8_t)m.alen);
+    std::vector<uint8_t> body;
+    for (const Vec& v : m.vecs) {
+      auto vb = vec_bytes(v, m.listener);
+      body.insert(body.end(), vb.begin(), vb.end());
+    }
+    if (msrp) put16(b, (uint16_t)(body.size() + 2));
+    b.insert(b.end(), body.begin(), body.end());
+    put16(b, 0x0000);
+  }
+  put16(b, 0x0000);
+  return b;
+}
+static std::vector<uint8_t> fv_talker(uint64_t sid, uint64_t da, uint16_t vid,
+                                      uint16_t mfs, uint16_t mif, int prio,
+                                      int rank, uint32_t lat) {
+  std::vector<uint8_t> b;
+  for (int i = 7; i >= 0; i--) b.push_back((sid >> (8 * i)) & 0xFF);
+  put_mac(b, da);
+  put16(b, vid); put16(b, mfs); put16(b, mif);
+  b.push_back((uint8_t)((prio << 5) | (rank << 4)));
+  for (int i = 3; i >= 0; i--) b.push_back((lat >> (8 * i)) & 0xFF);
+  return b;
+}
+static std::vector<uint8_t> fv_sid(uint64_t sid) {
+  std::vector<uint8_t> b;
+  for (int i = 7; i >= 0; i--) b.push_back((sid >> (8 * i)) & 0xFF);
+  return b;
+}
+static std::vector<uint8_t> fv_domain(uint8_t cid, uint8_t prio,
+                                      uint16_t vid) {
+  std::vector<uint8_t> b{cid, prio};
+  put16(b, vid);
+  return b;
+}
+static std::vector<uint8_t> fv_vid(uint16_t vid) {
+  std::vector<uint8_t> b;
+  put16(b, vid);
+  return b;
+}
+
+// structure-walking parser for set-style checks
+struct PVec { int type; bool la; int nov; std::vector<uint8_t> fv;
+              std::vector<int> ev; };
+struct PFrame { bool ok = false; bool msrp = false; std::vector<PVec> vecs; };
+static PFrame parse_mrpdu(const std::vector<uint8_t>& f) {
+  PFrame r;
+  if (f.size() < 17) return r;
+  uint16_t et = (f[12] << 8) | f[13];
+  if (et == 0x22EA) r.msrp = true;
+  else if (et == 0x88F5) r.msrp = false;
+  else return r;
+  size_t i = 14;
+  if (f[i++] != 0x00) return r;
+  while (i + 1 < f.size()) {
+    if (f[i] == 0x00 && f[i + 1] == 0x00) { i += 2; r.ok = true; break; }
+    int type = f[i++];
+    if (i >= f.size()) return r;
+    int alen = f[i++];
+    if (r.msrp) { if (i + 2 > f.size()) return r; i += 2; }
+    for (;;) {
+      if (i + 2 > f.size()) return r;
+      if (f[i] == 0x00 && f[i + 1] == 0x00) { i += 2; break; }
+      PVec v; v.type = type;
+      v.la  = (f[i] & 0xE0) != 0;
+      v.nov = ((f[i] & 0x1F) << 8) | f[i + 1];
+      i += 2;
+      if (i + (size_t)alen > f.size()) return r;
+      v.fv.assign(f.begin() + i, f.begin() + i + alen);
+      i += alen;
+      int n3 = (v.nov + 2) / 3;
+      if (i + (size_t)n3 > f.size()) return r;
+      for (int k = 0; k < n3; k++) {
+        int b = f[i + k];
+        v.ev.push_back(b / 36); v.ev.push_back((b / 6) % 6);
+        v.ev.push_back(b % 6);
+      }
+      i += n3;
+      if (r.msrp && type == 3) i += (v.nov + 3) / 4;
+      if (i > f.size()) return r;
+      v.ev.resize(v.nov);
+      r.vecs.push_back(v);
+    }
+  }
+  return r;
+}
+static uint64_t fv_u64(const std::vector<uint8_t>& fv, int off, int n) {
+  uint64_t v = 0;
+  for (int i = 0; i < n; i++) v = (v << 8) | fv[off + i];
+  return v;
+}
+static bool frame_has(const std::vector<uint8_t>& f, bool msrp, int type,
+                      uint64_t key, int ev) {
+  auto p = parse_mrpdu(f);
+  if (p.msrp != msrp) return false;
+  for (auto& v : p.vecs) {
+    if (v.type != type) continue;
+    uint64_t k = 0;
+    if (!msrp)          k = fv_u64(v.fv, 0, 2);
+    else if (type == 4) k = v.fv[0];
+    else                k = fv_u64(v.fv, 0, 8);
+    if (k == key && !v.ev.empty() && v.ev[0] == ev) return true;
+  }
+  return false;
+}
+
+static void dump(const char* tag, const std::vector<uint8_t>& f) {
+  printf("  %s (%zu B):", tag, f.size());
+  for (uint8_t c : f) printf(" %02x", c);
+  printf("\n");
+}
+
+// ---------------------------------------------------------------------------
+// harness
+// ---------------------------------------------------------------------------
+struct NvmOp { int op; uint8_t region; uint16_t off, len;
+               std::vector<uint8_t> wr; };
+
+struct H {
+  Vpp_top_wrap* d;
+  vluint64_t t = 0;
+  // MAC TX capture
+  bool in_frame = false;
+  std::vector<uint8_t> cur;
+  std::deque<std::vector<uint8_t>> q_adp, q_acmp, q_msrp, q_mvrp;
+  int tx_frames = 0;
+  int adp_avail_seen = 0;    // AVAILABLE frames captured (aidx oracle)
+  uint32_t la_msrp_ms = 0;   // last MSRP LeaveAllEvent seen (ms)
+  // NVM device model (blank flash: reads answer 0xFF)
+  enum { NV_IDLE, NV_READ, NV_WRITE, NV_ERASE } nv_st = NV_IDLE;
+  uint16_t nv_left = 0;
+  int      nv_done_lag = 0;
+  NvmOp    nv_cur;
+  std::vector<NvmOp> nvm_ops;
+
+  explicit H(Vpp_top_wrap* dd) : d(dd) {}
+
+  void step() {
+    d->clk_i = 0; d->eval();
+
+    // ---- MAC TX capture (always ready this suite) ----
+    d->tx_ready_i = 1;
+    if (d->tx_valid_o) {
+      if (d->tx_sof_o) { cur.clear(); in_frame = true; }
+      if (in_frame) cur.push_back(d->tx_data_o);
+      if (d->tx_eof_o && in_frame) {
+        in_frame = false;
+        tx_frames++;
+        uint16_t et = cur.size() > 13 ? ((cur[12] << 8) | cur[13]) : 0;
+        if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFA) {
+          if ((cur[15] & 0x0F) == 0) adp_avail_seen++;
+          q_adp.push_back(cur);
+        } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFC) {
+          q_acmp.push_back(cur);
+        } else if (et == 0x22EA) {
+          auto p = parse_mrpdu(cur);
+          for (auto& v : p.vecs) {
+            if (v.la) la_msrp_ms = d->dbg_now_ms_o;
+          }
+          q_msrp.push_back(cur);
+        } else if (et == 0x88F5) {
+          q_mvrp.push_back(cur);
+        }
+      }
+    }
+
+    // ---- NVM device model ----
+    d->nvm_dev_gnt_i = 0;
+    d->nvm_dev_rvalid_i = 0;
+    d->nvm_dev_wready_i = 0;
+    d->nvm_dev_done_i = 0;
+    d->nvm_dev_err_i = 0;
+    d->nvm_dev_busy_i = (nv_st != NV_IDLE);
+    if (nv_st == NV_IDLE) {
+      if (d->nvm_dev_req_o) {
+        d->nvm_dev_gnt_i = 1;
+        nv_cur = NvmOp{ (int)d->nvm_dev_op_o, (uint8_t)d->nvm_dev_region_o,
+                        (uint16_t)d->nvm_dev_offset_o,
+                        (uint16_t)d->nvm_dev_len_o, {} };
+        nv_left = nv_cur.len;
+        nv_done_lag = 2;
+        if (nv_cur.op == 0)      nv_st = NV_READ;    // NVMP_OP_READ_C
+        else if (nv_cur.op == 1) nv_st = NV_WRITE;
+        else                     nv_st = NV_ERASE;
+      }
+    } else if (nv_st == NV_READ) {
+      if (nv_left) {
+        d->nvm_dev_rvalid_i = 1;
+        d->nvm_dev_rdata_i = 0xFF;                   // blank flash
+        if (d->nvm_dev_rready_o) nv_left--;
+      } else if (--nv_done_lag <= 0) {
+        d->nvm_dev_done_i = 1;
+        nvm_ops.push_back(nv_cur);
+        nv_st = NV_IDLE;
+      }
+    } else if (nv_st == NV_WRITE) {
+      if (nv_left) {
+        d->nvm_dev_wready_i = 1;
+        if (d->nvm_dev_wvalid_o) {
+          nv_cur.wr.push_back((uint8_t)d->nvm_dev_wdata_o);
+          nv_left--;
+        }
+      } else if (--nv_done_lag <= 0) {
+        d->nvm_dev_done_i = 1;
+        nvm_ops.push_back(nv_cur);
+        nv_st = NV_IDLE;
+      }
+    } else {                                         // ERASE
+      if (--nv_done_lag <= 0) {
+        d->nvm_dev_done_i = 1;
+        nvm_ops.push_back(nv_cur);
+        nv_st = NV_IDLE;
+      }
+    }
+
+    d->clk_i = 1; d->eval();
+    t++;
+  }
+  void idle(int n) { for (int i = 0; i < n; i++) step(); }
+  void run_ms(int ms) { idle(ms * MS_CYC); }
+  uint32_t now_ms() { return d->dbg_now_ms_o; }
+
+  void reset() {
+    d->rst_n = 0;
+    d->entity_id_i = EID; d->entity_model_id_i = EMID;
+    d->own_mac_i = OWN_MAC;
+    d->talker_sources_i = TKSRC; d->talker_caps_i = TKCAP;
+    d->listener_sinks_i = LSNK;  d->listener_caps_i = LSCAP;
+    d->current_cfg_i = CFGIX;    d->identify_index_i = IDIX;
+    d->entity_enable_i = 0; d->link_up_i = 0; d->gm_change_i = 0;
+    d->gm_id_i = GM0; d->gptp_domain_i = DOM0;
+    d->p2p_i = 1; d->cfg_rank_i = 1;
+    d->cfg_acc_lat_ns_i = ACC_LAT; d->port_rate_bps_i = RATE;
+    d->cfg_tspec_max_frame_i = 1024;
+    d->rx_valid_i = 0; d->rx_data_i = 0; d->rx_last_i = 0;
+    d->tx_ready_i = 1;
+    d->aecp_txn_ready_i = 0;              // P4 uCPU seam: defined tie-off
+    d->restore_go_i = 0;
+    d->nvm_dev_gnt_i = 0; d->nvm_dev_wready_i = 0;
+    d->nvm_dev_rvalid_i = 0; d->nvm_dev_rdata_i = 0;
+    d->nvm_dev_busy_i = 0; d->nvm_dev_done_i = 0; d->nvm_dev_err_i = 0;
+    d->host_req_valid_i = 0; d->host_we_i = 0;
+    d->host_addr_i = 0; d->host_wdata_i = 0;
+    d->svc_valid_i = 0; d->svc_op_i = 0; d->svc_index_i = 0;
+    d->svc_stream_id_i = 0; d->svc_da_i = 0; d->svc_vid_i = 0;
+    d->svc_max_frame_i = 0; d->svc_lstn_state_i = 0;
+    idle(20);
+    d->rst_n = 1;
+    idle(10);
+  }
+
+  // feed one whole wire frame into the MAC RX trunk, one byte per cycle
+  void feed(const std::vector<uint8_t>& f) {
+    for (size_t i = 0; i < f.size(); i++) {
+      d->rx_valid_i = 1;
+      d->rx_data_i = f[i];
+      d->rx_last_i = (i + 1 == f.size()) ? 1 : 0;
+      step();
+    }
+    d->rx_valid_i = 0;
+    d->rx_last_i = 0;
+    idle(4);
+  }
+
+  // side-port host access: {rdata, err}
+  struct HostRsp { uint32_t data; bool err; bool got; };
+  HostRsp host(bool we, uint32_t addr, uint32_t wdata = 0) {
+    d->host_req_valid_i = 1;
+    d->host_we_i = we ? 1 : 0;
+    d->host_addr_i = addr;
+    d->host_wdata_i = wdata;
+    HostRsp r{0, false, false};
+    for (int i = 0; i < 1000; i++) {
+      step();
+      if (d->host_rvalid_o) {
+        r.data = d->host_rdata_o; r.err = d->host_err_o != 0; r.got = true;
+        break;
+      }
+    }
+    d->host_req_valid_i = 0;
+    step();
+    return r;
+  }
+  uint32_t snap(int word) { return host(false, 0x20000u + word).data; }
+  uint32_t trace_lane(int rec, int lane) {
+    return host(false, 0x40000u + (uint32_t)rec * 4 + lane).data;
+  }
+
+  // svc face op: {status, data}
+  struct SvcRsp { int status; uint32_t data; bool got; };
+  SvcRsp svc(int op, int idx, uint64_t sid = 0, uint64_t da = 0, int vid = 0,
+             int mfs = 0, int lstn = 0) {
+    int guard = 200000;
+    while (!d->svc_ready_o && guard--) step();
+    d->svc_valid_i = 1;
+    d->svc_op_i = op; d->svc_index_i = idx;
+    d->svc_stream_id_i = sid; d->svc_da_i = da; d->svc_vid_i = vid;
+    d->svc_max_frame_i = mfs; d->svc_lstn_state_i = lstn;
+    step();
+    d->svc_valid_i = 0;
+    SvcRsp r{-1, 0, false};
+    for (int i = 0; i < 400000; i++) {
+      if (d->svc_rsp_valid_o) {
+        r.status = d->svc_rsp_status_o; r.data = d->svc_rsp_data_o;
+        r.got = true;
+        step();
+        break;
+      }
+      step();
+    }
+    return r;
+  }
+
+  template <typename P>
+  std::vector<uint8_t> wait_frame(std::deque<std::vector<uint8_t>>& q,
+                                  int timeout_ms, P pred) {
+    long budget = (long)timeout_ms * MS_CYC;
+    for (;;) {
+      while (!q.empty()) {
+        auto f = q.front(); q.pop_front();
+        if (pred(f)) return f;
+      }
+      if (budget-- <= 0) return {};
+      step();
+    }
+  }
+  std::vector<uint8_t> wait_any(std::deque<std::vector<uint8_t>>& q,
+                                int timeout_ms) {
+    return wait_frame(q, timeout_ms,
+                      [](const std::vector<uint8_t>&) { return true; });
+  }
+  // align into a clean slot of the 200 ms MRP join cadence (see srp_top
+  // suite): actions taken here drain alone at the next join tick
+  void sync_join() {
+    for (;;) {
+      uint32_t ph = now_ms() % 1000u;
+      if (ph >= 250 && ph <= 350) break;
+      step();
+    }
+    q_msrp.clear(); q_mvrp.clear();
+  }
+  void flush_all() { q_adp.clear(); q_acmp.clear();
+                     q_msrp.clear(); q_mvrp.clear(); }
+  // MSRP byte-exact checks need a LeaveAll-free window: if the PRNG-drawn
+  // 10-15 s leavealltimer is close, let it fire (MSRP always has periodic
+  // traffic once the Domain is declared), then start clean
+  void la_guard() {
+    if (now_ms() - la_msrp_ms >= 8000) {
+      (void)wait_frame(q_msrp, 18000, [](const std::vector<uint8_t>& fr) {
+        auto p = parse_mrpdu(fr);
+        for (auto& v : p.vecs) if (v.la) return true;
+        return false;
+      });
+      run_ms(50);
+    }
+    q_msrp.clear(); q_mvrp.clear();
+  }
+};
+
+int main(int argc, char** argv) {
+  Verilated::commandArgs(argc, argv);
+  auto* d = new Vpp_top_wrap;
+  H h(d);
+  h.reset();
+
+  // ==== R. boot restore over blank NVM (07 §5.3) ==========================
+  {
+    d->restore_go_i = 1;
+    h.idle(5);
+    d->restore_go_i = 0;
+    int guard = 400000;
+    while (!d->restore_done_o && guard--) h.step();
+    CHECK(d->restore_done_o == 1, "R: restore_done");
+    CHECK(d->restore_fail_o == 0, "R: no restore_fail on a blank device");
+    int reads = 0;
+    for (auto& o : h.nvm_ops) if (o.op == 0) reads++;
+    CHECK(reads >= 8, "R: all 8 BINDING regions read, got %d", reads);
+    CHECK(d->nvm_alarm_o == 0, "R: no commit alarm");
+  }
+
+  // ==== S0. link up, pre-enable quiescence + snapshot identity ============
+  {
+    CHECK(h.snap(0) == 0x4B4C5050u, "S0: snapshot magic KLPP");
+    CHECK(h.snap(1) == 0x08080404u, "S0: shape word {SI,SO,RX,TX}");
+    d->link_up_i = 1;
+    h.idle(50);
+    uint32_t f = h.snap(3);
+    CHECK((f & 0x7) == 0x6, "S0: flags {seeded, link, !enable}, got 0x%x", f);
+    uint32_t m0 = h.snap(2);
+    h.run_ms(20);
+    uint32_t m1 = h.snap(2);
+    CHECK(m1 >= m0 + 15 && m1 <= m0 + 30,
+          "S0: now_ms advances at the compressed rate (%u -> %u)", m0, m1);
+    CHECK(h.q_adp.empty() && h.q_acmp.empty(),
+          "S0: no 1722.1 TX before entity enable");
+  }
+
+  // ==== S1. SRP bring-up: Domain default declaration byte-exact ===========
+  {
+    auto f = h.wait_any(h.q_msrp, 1200);
+    CHECK(!f.empty(), "S1: first MSRP frame within 1.2 s of link");
+    Msg m{4, 4, false, {Vec{false, 1, fv_domain(6, 3, 2), {EV_NEW}, {}}}};
+    auto exp = mrpdu_frame(true, OWN_MAC, {m});
+    CHECK(f == exp, "S1: Domain New {6,3,2} byte-exact");
+    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+    uint32_t w10 = h.snap(10);
+    CHECK(((w10 >> 16) & 7) == 3 && (w10 & 0xFFF) == 2,
+          "S1: class-D domain defaults via snapshot, got 0x%08x", w10);
+    CHECK((h.snap(3) & 0x8) == 0, "S1: DEFAULTS state (not adopted)");
+    CHECK(h.snap(4) == 0 && h.snap(5) == 0 && h.snap(6) == 0,
+          "S1: no RX front-end drops");
+  }
+
+  // ==== S2. DECLARE_TALKER (svc) -> admission -> Advertise byte-exact =====
+  // (early on purpose: the first MVRP join must precede the first PRNG-
+  //  drawn 10-15 s LeaveAll for the byte-exact check to be deterministic)
+  const uint64_t SID0 = (OWN_MAC << 16) | 0x0001;
+  const uint64_t DA0  = 0x91E0F00A0B01ULL;
+  {
+    h.sync_join();
+    auto r = h.svc(OP_DECL_TK, 0, SID0, DA0, 2, 256, 0);
+    CHECK(r.got && r.status == ST_OK, "S2: DECLARE_TALKER src 0 OK");
+    uint64_t sum_model = slope_bps(256, 1);
+    h.run_ms(250);
+    uint32_t w12 = h.snap(12);
+    CHECK(((w12 >> 24) & 1) == 1, "S2: src 0 admitted");
+    CHECK(h.snap(11) == (uint32_t)sum_model,
+          "S2: sum slope matches the Milan model (%u vs %llu)",
+          h.snap(11), (unsigned long long)sum_model);
+    CHECK(h.snap(30) == (uint32_t)sum_model, "S2: granted slope for src 0");
+    CHECK(((h.snap(3) >> 4) & 1) == 0, "S2: no over_limit");
+    CHECK(((h.snap(13) >> 16) & 3) == 1, "S2: tk_decl_state ADVERTISE");
+    auto fv = fv_talker(SID0, DA0, 2, 256, 1, 3, 1, ACC_LAT);
+    auto exp = mrpdu_frame(true, OWN_MAC,
+                           {Msg{1, 25, false,
+                                {Vec{false, 1, fv, {EV_NEW}, {}}}}});
+    auto f = h.wait_frame(h.q_msrp, 800, [&](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 1, SID0, EV_NEW);
+    });
+    CHECK(f == exp, "S2: Talker Advertise New byte-exact");
+    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+    auto expv = mrpdu_frame(false, OWN_MAC,
+                            {Msg{1, 2, false,
+                                 {Vec{false, 1, fv_vid(2), {EV_NEW}, {}}}}});
+    auto g = h.wait_frame(h.q_mvrp, 800, [&](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, false, 1, 2, EV_NEW);
+    });
+    CHECK(g == expv, "S2: MVRP VID 2 New byte-exact");
+    if (!g.empty() && g != expv) { dump("got", g); dump("exp", expv); }
+  }
+
+  // ==== S3. entity enable -> ADPDU in the advertise window + cadence ======
+  // (cadence law on the wire: T-ADP-ADV 5 s re-arm + the 0-4 s pre-
+  //  advertise anti-storm draw of F04.2 -> inter-frame gap in [5, 9] s)
+  {
+    h.flush_all();
+    uint32_t t0 = h.now_ms();
+    d->entity_enable_i = 1;
+    auto f = h.wait_any(h.q_adp, 2600);
+    uint32_t adv1_ms = h.now_ms();
+    CHECK(!f.empty(), "S3: ADPDU within the T-ADP-DELAY-START window");
+    CHECK(f.size() == 82, "S3: 82-byte wire frame, got %zu", f.size());
+    auto exp = own_avail(0);
+    CHECK(f == exp, "S3: ENTITY_AVAILABLE #1 byte-exact (aidx 0)");
+    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+    CHECK(adv1_ms - t0 <= 2200,
+          "S3: first advertise inside 0..2 s + margin (%u ms)", adv1_ms - t0);
+    CHECK((f.size() == 82) && ((f[16] >> 3) == 10),
+          "S3: valid_time 10 (Milan 20 s validity)");
+    auto f2 = h.wait_any(h.q_adp, 9800);
+    uint32_t adv2_ms = h.now_ms();
+    CHECK(!f2.empty(), "S3: re-advertise arrives");
+    auto exp2 = own_avail(1);
+    CHECK(f2 == exp2, "S3: ENTITY_AVAILABLE #2 byte-exact (aidx 1)");
+    if (!f2.empty() && f2 != exp2) { dump("got", f2); dump("exp", exp2); }
+    uint32_t gap = adv2_ms - adv1_ms;
+    CHECK(gap >= 4800 && gap <= 9500,
+          "S3: T-ADP-ADV 5 s + 0-4 s anti-storm, measured %u ms", gap);
+  }
+
+  // ==== S4. ENTITY_DISCOVER -> delayed byte-exact response ================
+  {
+    h.flush_all();
+    uint32_t t0 = h.now_ms();
+    int a0 = h.adp_avail_seen;
+    auto disc = adp_frame(2, CTLR_MAC, 0, 0, 0, 0, 0, 0,
+                          0, 0, 0, 0, 0, 0, 0);
+    h.feed(disc);
+    auto f = h.wait_any(h.q_adp, 4600);
+    CHECK(!f.empty(), "S4: DISCOVER answered");
+    auto exp = own_avail((uint32_t)a0);
+    CHECK(f == exp, "S4: response byte-exact at the running available_index");
+    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+    CHECK(h.now_ms() - t0 <= 4500,
+          "S4: inside the T-ADP-DELAY window (%u ms)", h.now_ms() - t0);
+    CHECK(h.snap(4) == 0 && h.snap(5) == 0 && h.snap(6) == 0,
+          "S4: DISCOVER dropped nothing at the front end");
+    CHECK(((h.snap(7) >> 24) & 0xFF) == 0, "S4: ADP queue drained");
+  }
+
+  // ==== S5. side-port host face: ctrl scratch, flags, trace, fw err =======
+  {
+    auto w = h.host(true, 0x30000u, 0xC0DEC0DEu);
+    CHECK(w.got && !w.err, "S5: ctrl scratch write completes");
+    auto r = h.host(false, 0x30000u);
+    CHECK(r.got && r.data == 0xC0DEC0DEu, "S5: ctrl scratch reads back");
+    auto fl = h.host(false, 0x30001u);
+    CHECK(fl.got && (fl.data & 0xF) == 0x5,
+          "S5: ctrl word 1 {done, enable}, got 0x%x", fl.data);
+    auto fw = h.host(false, 0x50000u);
+    CHECK(fw.got && fw.err, "S5: firmware window errors when disabled");
+    CHECK((h.snap(15) & 0xFFFF) > 0, "S5: trace ring has records");
+    auto s = h.host(false, 0x20000u);
+    CHECK(s.got && !s.err, "S5: snapshot window read clean");
+  }
+
+  // ==== S6. BIND_RX -> response; ENTITY_AVAILABLE -> discovery -> probe ===
+  {
+    h.flush_all();
+    auto bind = acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID,
+                           T1_UID, 0, 0, 0, 0x1234, 0, 0);
+    h.feed(bind);
+    auto f = h.wait_any(h.q_acmp, 400);
+    CHECK(!f.empty(), "S6: BIND_RX answered");
+    auto expr = acmp_frame(OWN_MAC, 7, 0, 0, CTLR_EID, T1_EID, EID,
+                           T1_UID, 0, 0, 1, 0x1234, 0, 0);
+    CHECK(f == expr, "S6: BIND_RX_RESPONSE SUCCESS byte-exact");
+    if (!f.empty() && f != expr) { dump("got", f); dump("exp", expr); }
+    CHECK(((h.snap(28) >> 24) & 0xFF) == 0x01,
+          "S6: discovery armed for sink 0 (binding view)");
+
+    // the bound talker appears on the network
+    uint32_t t0 = h.now_ms();
+    auto avail = adp_frame(0, T1_MAC, T1_EID, 10, 0, GM0, DOM0,
+                           0xBBB0000000000001ULL, 8, TKCAP, 0, 0,
+                           0x0000C588u, 0, 0);
+    h.feed(avail);
+    auto p = h.wait_any(h.q_acmp, 1600);
+    CHECK(!p.empty(), "S6: PROBE_TX after discovery + T-ACMP-DELAY");
+    auto expp = acmp_frame(OWN_MAC, 0, 0, 0, CTLR_EID, T1_EID, EID,
+                           T1_UID, 0, 0, 0, 0x0000, 0x0002, 0);
+    CHECK(p == expp, "S6: PROBE_TX_COMMAND byte-exact (FAST_CONNECT, seq 0)");
+    if (!p.empty() && p != expp) { dump("got", p); dump("exp", expp); }
+    CHECK(h.now_ms() - t0 <= 1500,
+          "S6: probe inside the T-ACMP-DELAY window (%u ms)",
+          h.now_ms() - t0);
+    // trace ring carries the routed EVT_TK_DISCOVERED{sink 0}. The probe
+    // can legally RACE the event (a short bind-armed T-ACMP-DELAY draw vs
+    // the discovery walk), so the trace gets a bounded settle window.
+    bool disc_traced = false;
+    for (int tries = 0; tries < 50 && !disc_traced; tries++) {
+      int n = (int)(h.snap(15) & 0xFFFF);
+      for (int k = 1; k <= 24 && n - k >= 0; k++) {
+        uint32_t lane1 = h.trace_lane((n - k) & 0xFF, 1);
+        if (((lane1 >> 24) & 0xFF) == 16 && (lane1 & 0xFFFF) == 0) {
+          disc_traced = true;
+          break;
+        }
+      }
+      if (!disc_traced) h.run_ms(10);
+    }
+    CHECK(disc_traced, "S6: trace ring holds the TK_DISCOVERED{0} event");
+    CHECK((h.snap(26) >> 16) >= 2,
+          "S6: ACMP TX lane granted twice (response + probe)");
+  }
+
+  // ==== S7. TX interleave: ADP + ACMP + SRP, byte-exact each ==============
+  {
+    h.la_guard();
+    h.sync_join();
+    h.flush_all();
+    uint32_t g_acmp0 = h.snap(26) >> 16;
+    uint32_t g_adp0  = h.snap(26) & 0xFFFF;
+    uint32_t g_srp0  = h.snap(27) >> 16;
+    const uint64_t SID1 = (OWN_MAC << 16) | 0x0002;
+    const uint64_t DA1  = 0x91E0F00A0B11ULL;
+    // three producers pushed together: ACMP GET_RX_STATE, SRP declare,
+    // ADP DISCOVER
+    auto getrx = acmp_frame(CTLR_MAC, 10, 0, 0, CTLR2_EID, 0, EID,
+                            0, 0, 0, 0, 0x4444, 0, 0);
+    h.feed(getrx);
+    auto r = h.svc(OP_DECL_TK, 1, SID1, DA1, 2, 100, 0);
+    CHECK(r.got && r.status == ST_OK, "S7: DECLARE_TALKER src 1 OK");
+    int a0 = h.adp_avail_seen;
+    auto disc = adp_frame(2, CTLR_MAC, EID, 0, 0, 0, 0, 0,
+                          0, 0, 0, 0, 0, 0, 0);
+    h.feed(disc);
+
+    // ACMP: GET_RX_STATE of the bound (not settled) sink 0
+    auto fa = h.wait_any(h.q_acmp, 400);
+    CHECK(!fa.empty(), "S7: GET_RX_STATE answered");
+    auto expa = acmp_frame(OWN_MAC, 11, 0, 0, CTLR2_EID, T1_EID, EID,
+                           T1_UID, 0, 0, 1, 0x4444, 0x0002, 0);
+    CHECK(fa == expa, "S7: GET_RX_STATE_RESPONSE byte-exact");
+    if (!fa.empty() && fa != expa) { dump("got", fa); dump("exp", expa); }
+    // SRP: Talker Advertise New for src 1 at the next join tick
+    auto fv1 = fv_talker(SID1, DA1, 2, 100, 1, 3, 1, ACC_LAT);
+    auto exps = mrpdu_frame(true, OWN_MAC,
+                            {Msg{1, 25, false,
+                                 {Vec{false, 1, fv1, {EV_NEW}, {}}}}});
+    auto fs = h.wait_frame(h.q_msrp, 900, [&](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 1, SID1, EV_NEW);
+    });
+    CHECK(fs == exps, "S7: src 1 Talker Advertise New byte-exact");
+    if (!fs.empty() && fs != exps) { dump("got", fs); dump("exp", exps); }
+    // ADP: the delayed DISCOVER response (running aidx oracle; the pending
+    // cadence advertise carries the same image either way)
+    auto fd = h.wait_any(h.q_adp, 4600);
+    CHECK(!fd.empty(), "S7: DISCOVER answered among the interleave");
+    auto expd = own_avail((uint32_t)a0);
+    CHECK(fd == expd, "S7: ADP response byte-exact, no truncation");
+    if (!fd.empty() && fd != expd) { dump("got", fd); dump("exp", expd); }
+    CHECK((h.snap(26) >> 16) > g_acmp0 && (h.snap(26) & 0xFFFF) > g_adp0
+          && (h.snap(27) >> 16) > g_srp0,
+          "S7: all three TX lanes took grants");
+    CHECK(fa.size() == 70 && fd.size() == 82 && parse_mrpdu(fs).ok,
+          "S7: every frame whole on the wire");
+  }
+
+  // ==== S8. certified two-class Domain adoption + listener READY ==========
+  {
+    // clear the talkers first so the re-declaration drains alone
+    auto r0 = h.svc(OP_WDRW_TK, 0);
+    auto r1 = h.svc(OP_WDRW_TK, 1);
+    CHECK(r0.got && r0.status == ST_OK && r1.got && r1.status == ST_OK,
+          "S8: withdrawals OK");
+    h.run_ms(700);
+    h.la_guard();
+    h.sync_join();
+    // FirstValue {5, 2, VID 5}, NumberOfValues 2 — class A is value 1
+    Msg dom{4, 4, false, {Vec{false, 2, fv_domain(5, 2, 5),
+                              {EV_JOININ, EV_JOININ}, {}}}};
+    h.feed(mrpdu_frame(true, T1_MAC, {dom}));
+    h.run_ms(20);
+    uint32_t w10 = h.snap(10);
+    CHECK(((w10 >> 16) & 7) == 3 && (w10 & 0xFFF) == 5,
+          "S8: adopted {prio 3, vid 5}, got 0x%08x", w10);
+    CHECK((h.snap(3) & 0x8) != 0, "S8: ADOPTED state");
+    auto rd = h.svc(OP_GET_DOM, 6);
+    CHECK(rd.got && rd.status == ST_OK && (rd.data & 0xFFF) == 5,
+          "S8: GET_DOMAIN via svc face reports the adopted VID");
+    Msg re{4, 4, false, {Vec{false, 1, fv_domain(6, 3, 2), {EV_LV}, {}},
+                         Vec{false, 1, fv_domain(6, 3, 5), {EV_NEW}, {}}}};
+    auto expd = mrpdu_frame(true, OWN_MAC, {re});
+    auto f = h.wait_frame(h.q_msrp, 900, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 4, 6, EV_LV);
+    });
+    CHECK(f == expd, "S8: Domain Lv+New re-declaration byte-exact");
+    if (!f.empty() && f != expd) { dump("got", f); dump("exp", expd); }
+
+    // listener sink 2 READY end-to-end over the adopted domain
+    const uint64_t SIDX = 0x1122334455660001ULL;
+    const uint64_t DAX  = 0x91E0F0112233ULL;
+    auto rl = h.svc(OP_DECL_LS, 2, SIDX, DAX, 5, 0, DECL_READY);
+    CHECK(rl.got && rl.status == ST_OK, "S8: DECLARE_LISTENER sink 2 OK");
+    h.sync_join();
+    Msg adv{1, 25, false, {Vec{false, 1,
+            fv_talker(SIDX, DAX, 5, 0x0100, 1, 3, 1, 0x00012345),
+            {EV_JOININ}, {}}}};
+    h.feed(mrpdu_frame(true, T1_MAC, {adv}));
+    h.run_ms(20);
+    CHECK(((h.snap(12) >> 4) & 3) == 1,
+          "S8: tk_reg_state[2] ADVERTISE in class-D");
+    CHECK(h.snap(16 + 2) == 0x00012345u,
+          "S8: acc_latency[2] latched, got 0x%08x", h.snap(16 + 2));
+    CHECK(((h.snap(14) >> 20) & 3) == 2,
+          "S8: lstn_decl_state[2] READY in class-D");
+    Msg lsn{3, 8, true, {Vec{false, 1, fv_sid(SIDX),
+                             {EV_NEW}, {DECL_READY}}}};
+    auto expl = mrpdu_frame(true, OWN_MAC, {lsn});
+    auto fl = h.wait_frame(h.q_msrp, 900, [&](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 3, SIDX, EV_NEW);
+    });
+    CHECK(fl == expl, "S8: Listener Ready New byte-exact");
+    if (!fl.empty() && fl != expl) { dump("got", fl); dump("exp", expl); }
+    // the registration reached the ACMP listener through the router: the
+    // trace holds a TK_ATTR_REGISTERED{sink 2} record (source 2)
+    int n = (int)(h.snap(15) & 0xFFFF);
+    bool reg_traced = false;
+    for (int k = 1; k <= 16 && n - k >= 0; k++) {
+      uint32_t lane1 = h.trace_lane((n - k) & 0xFF, 1);
+      if (((lane1 >> 24) & 0xFF) == 2 && (lane1 & 0xFF) == 2) {
+        reg_traced = true;
+        break;
+      }
+    }
+    CHECK(reg_traced, "S8: trace holds TK_ATTR_REGISTERED{sink 2}");
+  }
+
+  // ==== S9. NVM debounce commit of the S6 binding ==========================
+  {
+    h.run_ms(700);                       // > T-NVM-DEBOUNCE at 1 ms ticks
+    const NvmOp* wr = nullptr;
+    for (auto& o : h.nvm_ops) {
+      if (o.op == 1 && o.region == 0x20) wr = &o;   // keep the LAST one
+    }
+    CHECK(wr != nullptr, "S9: BINDING[0] commit reached the device");
+    bool hdr_ok = false, eid_ok = false, len_ok = false;
+    if (wr) {
+      len_ok = (wr->len > 8) && (wr->wr.size() == wr->len);
+      hdr_ok = wr->wr.size() >= 2 && wr->wr[0] == 0x17 && wr->wr[1] == 0x22;
+      const uint8_t pat[8] = {0xAA, 0xAA, 0x00, 0x00, 0x00, 0x00, 0xAA, 0xA1};
+      for (size_t i = 0; i + 8 <= wr->wr.size(); i++) {
+        if (!memcmp(&wr->wr[i], pat, 8)) { eid_ok = true; break; }
+      }
+    }
+    CHECK(len_ok, "S9: framed record streamed whole (8 B header + payload)");
+    CHECK(hdr_ok, "S9: F07.8 magic 0x1722 leads the record");
+    CHECK(eid_ok, "S9: committed record carries the bound talker EID");
+    CHECK(d->nvm_alarm_o == 0, "S9: no commit alarm");
+  }
+
+  printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
+  delete d;
+  return fails ? 1 : 0;
+}
