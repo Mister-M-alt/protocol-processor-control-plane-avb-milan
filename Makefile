@@ -36,11 +36,21 @@ links:
 matrix:
 	@python3 scripts/check-matrix.py
 
+# Staleness must be meaningful on a fresh checkout too: git does not preserve
+# mtimes, so committed files are compared by last-commit time; the mtime test
+# only applies when the SOURCE has uncommitted edits (where mtime is truth).
 stale:
 	@fail=0; \
 	for src in $(DRAWIO_SRC); do \
 	  svg="docs/diagrams/$$(basename $${src%.drawio}).svg"; \
-	  if [ ! -f "$$svg" ] || [ "$$src" -nt "$$svg" ]; then \
-	    echo "STALE: $$svg (regenerate from $$src)"; fail=1; \
+	  if [ ! -f "$$svg" ]; then echo "STALE: $$svg (missing)"; fail=1; continue; fi; \
+	  if git diff --quiet -- "$$src" 2>/dev/null; then \
+	    st=$$(git log -1 --format=%ct -- "$$src"); \
+	    gt=$$(git log -1 --format=%ct -- "$$svg"); \
+	    if [ -n "$$st" ] && [ -n "$$gt" ] && [ "$$st" -gt "$$gt" ]; then \
+	      echo "STALE: $$svg (source committed after the export)"; fail=1; \
+	    fi; \
+	  elif [ "$$src" -nt "$$svg" ]; then \
+	    echo "STALE: $$svg (uncommitted source edit newer than the export)"; fail=1; \
 	  fi; \
 	done; exit $$fail
