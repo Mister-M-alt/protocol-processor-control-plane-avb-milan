@@ -20,3 +20,4 @@ obj_*/
 ucode.hex
 *.rpt
 *.log
+ltn_rom.hex
