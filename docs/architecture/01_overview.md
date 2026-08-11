@@ -152,7 +152,7 @@ values; other documents reference `P-…` IDs.
 | P-TX-OVERSIZE-BYTES | 1600 | ≥ max frame (Δ8) | oversize responses |
 | P-NOTIF-QUEUE-DEPTH | 16 | — | notification triggers |
 | P-CA-POOL | 4 | — | concurrent CONTROLLER_AVAILABLE probes |
-| P-TIMER-SLOTS | formula | 2·IF + 2·SI + 2·SO + 2·CTRL·IF + CA + 5 ([08 §5](08_timing.md)) | deadline RAM |
+| P-TIMER-SLOTS | formula | allocation formula owned by [08 §5](08_timing.md) (baseline example: 66) | deadline RAM |
 | P-UCODE-ROM-DEPTH | 2048 | ~35 programs × ~25 µops + margin | AECP µcode |
 | P-CLK-HZ | 100 MHz | any; prescaler retuned | timebase |
 | P-INTERNAL-INGRESS-DELAY-NS | product | added to reported input latency (Milan §5.4.2.10.1) | GET_STREAM_INFO |
