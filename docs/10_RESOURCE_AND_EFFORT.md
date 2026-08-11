@@ -31,7 +31,7 @@ plane rather than through that inventory.
 |---|---|---|---|---|---|
 | **A — adopt as written** (bolt this architecture's shared infrastructure onto the consumer, keep its engines) | **≈ +3,000** (cost) | ~0 | ~0 | ~140–350 | Do not. Shares what is already shared; unshippable density |
 | **B — full replacement** (P0–P5 incl. the SRP engine, P4b: build everything here, swap behind a build parameter) | **≈ −3,250 … +11,150**, central ≈ **+3,000** (cost) | +134…+284 kbit | ~0 | **373–949** | Not worth it for area: central lands on scenario A's number — past the conformance cliff — and the pessimistic end does not fit the die |
-| **C — retargeted µ-coded engine** (aim the µCPU at the emit-engine mass, keep everything else) | **−350 … −3,400**, central ≈ **−1,900** (saving) | +103…+136 kbit | ~0 | **131–321** | The only version that saves. Unproven until a 1–2-day out-of-context synthesis of the µCPU skeleton |
+| **C — retargeted µ-coded engine** (aim the µCPU at the emit-engine mass, keep everything else) | **−900 … −3,450**, central ≈ **−2,200** (saving) | +103…+136 kbit | ~0 | **131–321** | The only version that saves — **confirmed real 2026-08-11**: the µCPU skeleton measured **1,042 LUT** OOC at the ship part (§6, `syn/ooc/`) |
 | **D — consumer-side fixes only** (registry→16, FIFO 1→4 KiB, wire-form fixes, tier-0 deletes, constant-table serialisation) | **−1,030** (measured-anchored) | ~0 | ~0 | **12–25** | Best return per person-day by an order of magnitude. Needs no submodule and none of this architecture |
 
 \* A "person-day" is an **AI-agent-assisted lane-day** at the velocity mined from the
@@ -48,10 +48,11 @@ LUT, central ≈ +2,200**. It is the whole of scenario B's change above.
 separate, non-linear cost** in every scenario that changes the shipped netlist, and it
 is never included in a person-day figure (§8).
 
-The recommendation that falls out (§10): take **D** now in the consumer; run the
-**1–2-day µCPU skeleton experiment** that decides whether **C** is real; do **P0**
-(fix this spec's own defects, §9) regardless, because this document set is being read
-as a specification today; and do not pursue **A** or **B** for resources — the
+The recommendation that falls out (§10): take **D** now in the consumer; the
+**µCPU skeleton experiment is run and C is confirmed real** (§6) — what remains
+is the decision to commit its 131–321 person-days; do **P0** (fix this spec's own
+defects, §9) regardless, because this document set is being read as a
+specification today; and do not pursue **A** or **B** for resources — the
 architecture's value is conformance correctness, not area.
 
 ---
@@ -215,7 +216,9 @@ owned by three unmeasured numbers: how fat P1's new infrastructure lands, the
 person-days**; at the mined 3–5 concurrent lanes, 11–45 calendar weeks, **plus**
 the closure lottery (§8). Without P4b (SRP left exactly as the consumer ships it),
 the subtotal is −2,742 … +4,558, central ≈ +800 — 53,956 LUT = 85.12 %, density
-3.41 ± 0.015, still past the cliff and out of the 28 % bin at nominal.
+3.41 ± 0.015, still past the cliff and out of the 28 % bin at nominal. The µCPU
+skeleton measurement (§6: 1,042 LUT) sits at the bottom of P4's µCPU bracket,
+so P4 and every total containing it are biased toward their favourable ends.
 
 **Verdict: not worth it for area.** The honest central case spends 325+ person-days
 to land *past* the cliff in a bin never observed to close. What survives of B is its
@@ -251,9 +254,11 @@ data … whatever part is a pure function of a descriptor index is a ROM".
   queue, not a mux), the SET write-back/commit path, lock, identify, AXIS beat
   machinery, and the command staging buffer (which moves to BRAM, it does not
   disappear).
-- **Replacement engine (EST):** µCPU datapath +1,200…+2,500; ROM read paths
-  +100…+250; registry + notification queue as record tables +400…+950. Bracket
-  anchors, both measured on the consumer: a complete protocol SM with timers and
+- **Replacement engine:** µCPU datapath **1,042 LUT MEASURED** (the skeleton,
+  §"gate experiment" below; carried here as +1,050…+1,700 with a growth
+  allowance for what a skeleton stubs); ROM read paths +100…+250 EST; registry +
+  notification queue as record tables +400…+950 EST. The original bracket
+  anchors, both measured on the consumer, now bound it from both sides: a complete protocol SM with timers and
   PDU build costs 621 LUT (`KL_maap`) — the µCPU cannot plausibly be smaller; a
   table walker with wide parallel compares costs 2,938 LUT (`KL_lwsrp_walker`) —
   structurally the closest analog to a micro-sequencer, the µCPU should not exceed
@@ -266,9 +271,10 @@ data … whatever part is a pure function of a descriptor index is a ROM".
   the µCPU budget. The consumer measured this exact failure mode at **+894 LUT**
   when a counter mirror landed as flops, because Vivado does not read-replicate a
   multi-column array into LUTRAM.
-- **Net ceiling: −350 … −3,400 LUT, central ≈ −1,900** — 51,256 LUT = 80.85 %,
-  density 3.23: below every bin in the closure table, cliff margin +2,489. **Every
-  point in the band improves closure odds; none worsens them.** That is the
+- **Net ceiling: −900 … −3,450 LUT, central ≈ −2,200** (tightened from
+  −350…−3,400 by the measured µCPU) — 50,956 LUT = 80.37 %, density 3.22: below
+  every bin in the closure table, cliff margin +2,789. **Every point in the band
+  improves closure odds; none worsens them.** That is the
   qualitative difference from scenarios A/B. Absolute upper reference: deleting the
   plane to software entirely was priced at 6,206 LUT + 9 RAMB36 on the consumer —
   the ceiling of ceilings, foreclosed there by an explicit product decision that
@@ -282,15 +288,21 @@ data … whatever part is a pure function of a descriptor index is a ROM".
 - **Effort: 131–321 person-days** (P0 + scaffolding + retargeted P4 + narrowed P5),
   ≈ 4–15 calendar weeks at 3–5 lanes, plus the closure lottery.
 
-**The gate experiment — do this first.** The entire band above hangs on one
-unmeasured number the spec never states: the µCPU's LUT cost (its µop width is
-unstated, so nothing is derivable). **1–2 person-days** buys the answer: write the
-µCPU skeleton (µPC, µcode-ROM read port, 16 × 64 regfile as LUTRAM/BRAM, 32-bit ALU,
-64-bit move path, decode for the µISA, cursors, status) and synthesize it
-**out of context in Vivado** at the consumer's ship shape; read
-`report_utilization -hierarchical`. Yosys cannot be the instrument (§2.4). If the
-skeleton lands ≤ ~1,800 LUT, scenario C is real; if it lands fat (> 2,500), C
-collapses toward zero and the correct decision is scenario D plus nothing.
+**The gate experiment — RUN, 2026-08-11.** The skeleton exists and is real RTL:
+`hdl/aecp/KL_aecp_ucpu.sv` + `ucpu_pkg.sv` — 4-stage F/D/E/W, decode for all 29
+µISA operations, the 16 × 64 operand file in distributed RAM, the 2048 × 48
+µcode ROM (a concrete 48-bit µop proposal for the width 06 §8 leaves unstated),
+RAW interlock, branch flush, multi-beat state/gather/copy/header/send
+sequencing — with a 37-check mutation-proven suite (`tb/ucpu/`) green on the
+same ROM image synthesis used. Vivado OOC post-synthesis at the consumer's
+ship part (`syn/ooc/`, the same instrument as every anchor in this document):
+**1,042 LUT (910 logic + 132 as distributed RAM) / 478 FF / 3 RAMB36, WNS
++2.26 ns against the 100 MHz P-CLK-HZ**. The decision rule this paragraph used
+to carry was "≤ ~1,800 → C is real; > 2,500 → C collapses": the skeleton landed
+at the **bottom of the +1,200…+2,500 bracket, with a 2× growth allowance to
+spare**. Scenario C is real. The number will grow with dispatch handshake,
+hazard-key extraction and the deadline/abort arm — which is why the band above
+carries it as +1,050…+1,700, not as 1,042.
 
 **A separate, measured, spec-independent packing win discovered on the way:** the
 consumer's three 1722.1-plane LUTRAM arrays (ACMP context RAM 448 LUT ≈ 112
@@ -433,7 +445,9 @@ its own gates cannot currently catch any of them.
    `mmdc` is absent.
 7. **Five missing widths** (the only sizing statements the architecture's central
    bets need, none stated): the **µop width** (P-UCODE-ROM-DEPTH = 2048 × *unstated*
-   is the single most consequential missing number in the set), the dispatch-ROM
+   is the single most consequential missing number in the set — the skeleton in
+   `hdl/aecp/ucpu_pkg.sv` now implements a concrete 48-bit proposal, measured at
+   3 RAMB36; the spec must still state it normatively), the dispatch-ROM
    entry width, the ACMP transition-ROM entry width, the trace-ring record
    width × depth ([02 §7](architecture/02_interfaces.md) gives only an address
    window), and the **MRPDU RX queue** geometry ([10 §4](architecture/10_srp_engine.md)
@@ -506,13 +520,14 @@ its own gates cannot currently catch any of them.
 1. **Scenario D in the consumer** (12–25 person-days, −1,030 LUT, every live
    conformance fix, better closure odds). It saves more than scenario B's central
    estimate and needs none of this architecture.
-2. **The 1–2-day out-of-context µCPU skeleton synthesis** (§6). It converts
-   scenario C from a bet into a decision, and it gates 131–321 person-days.
+2. **The out-of-context µCPU skeleton synthesis — RUN, 2026-08-11** (§6;
+   `hdl/aecp/`, `tb/ucpu/`, `syn/ooc/`): 1,042 LUT / 478 FF / 3 RAMB36,
+   WNS +2.26 ns at 100 MHz. The bet is now a decision: **scenario C is real.**
 3. **P0** (§9) — regardless of whether any RTL is ever written here. This
    architecture is more correct than the consumer's gateware in over a dozen
    adjudicated places; that correctness, not area, is its present value, and it
    currently ships with defects its own gates cannot see.
-4. If (2) lands lean: **scenario C**, built in this repository per
+4. Since (2) landed lean: **scenario C**, built in this repository per
    [`../hdl/README.md`](../hdl/README.md), consumed behind a **default-OFF**
    elaboration parameter, integrated all-at-once — never P1 or P1+P2 alone, which
    land in the 0-of-7 density bin.
