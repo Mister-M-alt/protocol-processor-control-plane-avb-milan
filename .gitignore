@@ -1,0 +1,11 @@
+# Copyrighted standards documents (IEEE / AVnu) — never commit
+*.pdf
+
+# Editor / OS noise
+*.swp
+*~
+.DS_Store
+
+# Diagram build intermediates
+*.bkp
+*.dtmp
