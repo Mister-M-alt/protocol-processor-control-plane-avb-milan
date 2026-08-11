@@ -29,7 +29,7 @@
         <mxCell id="gptp" value="gPTP engine&#10;(802.1AS-2011)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="380" y="650" width="150" height="70" as="geometry" />
         </mxCell>
-        <mxCell id="srp" value="SRP stack&#10;MSRP &#183; MVRP &#183; MAAP" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+        <mxCell id="srp" value="MAAP allocator&#10;(+ SRP stack only if external)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="560" y="650" width="160" height="70" as="geometry" />
         </mxCell>
         <mxCell id="avtp" value="AVTP streaming engine&#10;(1722-2016, CBS)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">

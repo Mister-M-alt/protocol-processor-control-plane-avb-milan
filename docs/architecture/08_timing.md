@@ -32,7 +32,11 @@ plain-IEEE build where different; blank = same).
 | T-CTR-OBSERVE | ≤ 1 s tick | counters | observation-interval latch | Milan §5.3.8.10 | |
 | T-CTR-NOTIF | 1 s | notif engine | ≥ 1 s between GET_COUNTERS notifications per descriptor | Milan Table 5.22 | |
 | T-SRP-DAFRESH | 15 s | talker DA gate | PROBE_TX freshness window for DA validity | Milan §4.3.3.1 | — |
-| T-SRP-LEAVEALL2 | 2 × LeaveAll ≈ 20–30 s | talker DA gate | backoff after MAAP conflict / PCP change (LeaveAll 10–15 s) | Milan Table 5.3, Table 4.3 | — |
+| T-SRP-LEAVEALL2 | 2 × T-MRP-LEAVEALL ≈ 20–30 s | talker DA gate | backoff after MAAP conflict / PCP change | Milan Table 5.3 | — |
+| T-MRP-JOIN | 200 ms (180–240) | SRP engine (10) | MRP joinTime — join tx cadence + vector aggregation window | Milan Table 4.3 | |
+| T-MRP-LEAVE | 5000 ms (4500–7500) | SRP engine (10) | MRP LeaveTime — registrar LV expiry during LeaveAll (Δ13 removes the rLv path) | Milan Table 4.3 | |
+| T-MRP-LEAVEALL | random 10–15 s | SRP engine (10) | leavealltimer per participant | Milan Table 4.3 | |
+| T-MRP-PERIODIC | 1000 ms (900–1500) | SRP engine (10) | periodictimer — periodic re-join transmissions | Milan Table 4.3 | |
 | T-NVM-DEBOUNCE | ≈ 500 ms (design) | NVM mgr | commit coalescing | design | |
 | T-TX-AGING | 10 ms (design) | TX arbiter | starvation promotion | design | |
 | T-BUDGET-ACMP-RESP | ≤ 50 ms (design) | budgets | see §4 | design | |
@@ -109,11 +113,13 @@ flowchart LR
 | T-NOTIF-MONITOR + T-NOTIF-TIMELIMITED | per registry entry | 2 × CTRL × IF |
 | T-AECP-TIMEOUT (CA inflight) | pool | P-CA-POOL |
 | T-LOCK-UNLOCK, T-IDENT-BURST, T-IDENT-REARM, T-CTR-OBSERVE, T-NVM-DEBOUNCE | singletons | 5 |
+| T-MRP-{JOIN, LEAVEALL} × 2 participants + T-MRP-PERIODIC + registrar-leave pool (T-MRP-LEAVE, active only during LeaveAll) | per interface, when `P-EN-SRP-ENGINE` | (5 + SI + SO) × IF |
 
-`P-TIMER-SLOTS = IF + SI + SI + SO + 2·CTRL·IF + P-CA-POOL + 5`
+`P-TIMER-SLOTS = IF + SI + SI + SO + 2·CTRL·IF + P-CA-POOL + 5 [+ (5 + SI + SO)·IF with the SRP engine]`
 (+`T-CTR-NOTIF` implemented as a per-descriptor last-sent timestamp, not a timer slot).
 Baseline example (1 IF, 8 + 8 streams, 16 controllers, CA pool 4):
-`1 + 8 + 8 + 8 + 32 + 4 + 5 = 66` slots — one 66 × 40-bit deadline RAM.
+`1 + 8 + 8 + 8 + 32 + 4 + 5 = 66`, plus the SRP engine's `5 + 8 + 8 = 21` → **87**
+slots — one 87 × 40-bit deadline RAM.
 
 ## 6. Cross-references
 

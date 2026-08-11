@@ -44,7 +44,7 @@ flowchart LR
 |---|---|---|---|---|---|
 | `mac_rx` | A | in | MAC-RX → core (async FIFO) | packet engine | one per AVB interface (P-N-AVB-INTERFACES) |
 | `mac_tx` | A | out | core → MAC-TX (async FIFO) | TX arbiter | one per AVB interface |
-| `srp` | B+C+D | both | core | ACMP, AECP gather, counters, NOTIF | talker/listener attribute ops |
+| `srp` | B+C+D | both | core | ACMP, AECP gather, counters, NOTIF | talker/listener attribute ops; served by the internal SRP engine ([10](10_srp_engine.md)) or an external stack (`P-EN-SRP-ENGINE`) |
 | `maap` | B+C | both | core | talker DA management | allocation + conflict events |
 | `gptp` | B+C+D | both | core | ADP, AECP gather, counters | GM/domain/asCapable/path |
 | `avtp` | B+C+D | both | core | ACMP settle, AECP, counters | per-stream control + health events |
@@ -195,6 +195,10 @@ issuing class-B calls wherever possible.
 </details>
 
 ### 4.1 `srp` — SRP/MSRP adapter operations
+
+This contract is served by the **in-scope SRP engine** ([10](10_srp_engine.md)) when
+`P-EN-SRP-ENGINE` = 1 (default), or by an external SRP stack when 0 — the ops, events
+and status signals below are identical either way; no consumer can tell the difference.
 
 | Op | Args | Result | Used by |
 |---|---|---|---|

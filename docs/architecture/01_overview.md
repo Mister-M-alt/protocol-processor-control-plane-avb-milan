@@ -33,7 +33,8 @@ Vendor Unique execution, unsolicited notifications, counters, and persistence.
 |---|---|
 | ADP / ACMP / AECP+MVU protocol execution | Ethernet MAC/PHY, frame filtering below DA/EtherType |
 | Controller registry, notifications, lock, counters, identify | gPTP time sync datapath (802.1AS-2011 profile) |
-| Entity-model storage and descriptor assembly | MSRP/MVRP/MAAP protocol machines (SRP stack) |
+| Entity-model storage and descriptor assembly | MAAP address allocation (external `maap` engine) |
+| SRP endpoint participant — MSRP + MVRP, Class A/single-VID ([10](10_srp_engine.md); `P-EN-SRP-ENGINE` keeps an external-stack alternative) | full SRP bridge behavior (attribute propagation, per-port registrar sets) |
 | Timers/deadlines, PRNG, persistence orchestration | AVTP streaming datapath, CBS shaping, media clocking |
 | Management side-port | NVM physical device (behind the NVM port) |
 
@@ -85,7 +86,8 @@ once in [F02.10](02_interfaces.md#fig-02-statusdict).
 | Originator + inflight table | entity-initiated PDUs; response routing back to owners | [03 §5](03_packet_engine.md) |
 | Response builders + TX slots + TX arbiter | PDU serialization; standard + oversize slots; priority merge | [03 §7–§8](03_packet_engine.md) |
 | Timer service + PRNG | tick generation, deadline RAM, randomized draws | [08 §3](08_timing.md) |
-| SRP/MAAP · gPTP · AVTP · media-clock adapters | the four external-engine contracts | [02 §4](02_interfaces.md) |
+| SRP/MAAP · gPTP · AVTP · media-clock adapters | the four engine contracts (srp served internally by default) | [02 §4](02_interfaces.md) |
+| SRP engine | MSRP/MVRP endpoint participant: 1 Domain FSM + 1 VLAN FSM + N+M stream FSMs | [10](10_srp_engine.md) |
 | NVM manager | persistence journal; boot restore | [07 §5](07_memory_maps.md) |
 | Management side-port | image load, debug, NVM backing, optional firmware assist | [02 §7](02_interfaces.md) |
 | Boot/init sequencer + config/ID registers + profile ROMs | bring-up ordering; identity; profile selection | this doc §5, [§7](#7-parameter-master-table-f015) |
@@ -161,6 +163,7 @@ values; other documents reference `P-…` IDs.
 | P-EN-TALKER-DYN-MAPPINGS-RUNNING | 0 | sets GET_MILAN_INFO feature 0x2 | mapping validation |
 | P-EN-IDENTIFY-NOTIFICATION | 1 | "should" (Milan §5.4.5.4) | identify handler |
 | P-EN-ADDRESS-ACCESS / P-EN-FIRMWARE-ASSIST | 0 / 0 | IEEE-optional ([GAP-13](../00_MILAN_COMPLIANCE_REVIEW.md#gap-13)) | side-port features |
+| P-EN-SRP-ENGINE | 1 | 1 = internal SRP engine ([10](10_srp_engine.md)) serves the `srp` contract; 0 = external stack | SRP engine, MRP timers, V9 filter |
 | P-EN-PLAIN-IEEE-PROFILE | 0 | selects IEEE ROM columns (below) | profiles |
 | P-EN-REDUNDANCY | 0 | reserved seam — must stay 0 (this spec) | GET_MILAN_INFO flag |
 
@@ -202,11 +205,15 @@ flowchart TB
   subgraph doc08 ["08 timing"]
     timers["timer service + prng"]
   end
+  subgraph doc10 ["10 srp"]
+    srpe["msrp/mvrp endpoint (2 + N + M FSMs)"]
+  end
   subgraph doc02 ["02 interfaces"]
     adapters["srp/maap · gptp · avtp · mclk adapters · side-port · nvm port"]
   end
   disp --> adv & talk & lsm & ucpu
   tdisc -- "tk events" --> lsm
+  srpe -- "tk attr events" --> lsm
   lsm -- "probe tx" --> orig
   notif -- "unsolicited / ca" --> orig
   adv -- "adp tx" --> txarb

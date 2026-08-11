@@ -387,12 +387,23 @@ randomized multi-controller · STORM notification storm · NVM power-cut restore
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
 |---|---|---|---|---|---|---|---|---|
 | REQ-NET-001 | Milan §5.3.6.1 | Track per interface: gPTP GM ID, path sequence, domain, propagation delay (GET_AVB_INFO/GET_AS_PATH + notifications) | shall | A | [GAP-04](#gap-04) | gPTP adapter | 02 §4 | DIR |
-| REQ-NET-002 | Milan §5.3.6.2, §4.2.7.2.1 | Track MSRP domain params (Class A priority 3, default VID 2); adopt + re-declare on differing Domain declaration; notify on change | shall | A | [GAP-04](#gap-04) | SRP adapter | 02 §4 | DIR |
-| REQ-NET-003 | Milan §5.3.7.2–.4, §5.3.8.8/.9 | Track SRP talker declaration + listener registration states, failure code + bridge ID, accumulated latency | shall | A | [GAP-04](#gap-04) | SRP adapter | 02 §4 | DIR |
+| REQ-NET-002 | Milan §5.3.6.2, §4.2.7.2.1 | Track MSRP domain params (Class A priority 3, default VID 2); adopt + re-declare on differing Domain declaration; notify on change | shall | A | [GAP-04](#gap-04) | `srp` contract; SRP engine | 02 §4, 10 §6.1 | DIR |
+| REQ-NET-003 | Milan §5.3.7.2–.4, §5.3.8.8/.9 | Track SRP talker declaration + listener registration states, failure code + bridge ID, accumulated latency | shall | A | [GAP-04](#gap-04) | `srp` contract; SRP engine | 02 §4, 10 §6.3/.4 | DIR |
 | REQ-NET-004 | Milan Tables 5.1/5.13 | LINK_UP/LINK_DOWN counter invariant; GPTP_GM_CHANGED counter | shall | A | [GAP-05](#gap-05) | counters | 06 §6.6 | DIR |
 | REQ-NET-005 | Milan §4.4.2.2 | Listener discards AVTPDUs not matching configured input format (enforced in AVTP engine; control plane configures) | shall | A | [GAP-04](#gap-04) | AVTP adapter | 02 §4 | DIR |
 
-### 6.9 Non-redundant scoping
+### 6.9 SRP endpoint engine (in scope by owner decision — §8 item 9)
+
+| REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
+|---|---|---|---|---|---|---|---|---|
+| REQ-SRP-001 | Milan Table 4.3 | MRP timers: joinTime 200 ms (180–240), LeaveTime 5000 ms (4500–7500), leavealltimer 10–15 s, periodictimer 1000 ms (900–1500) | shall | A | [GAP-04](#gap-04) | T-MRP-* | 10 §9, 08 §2 | TIM |
+| REQ-SRP-002 | Milan §4.2.7.1.2 | Malformed MRPDU: may process up to the bad field, then discard the rest of that vector-attribute list and all subsequent messages in the PDU | shall | A | [GAP-04](#gap-04) | decoder tolerance | 10 §3 | TOL |
+| REQ-SRP-003 | Milan §4.2.7.1.3 | EndMark transmitted as explicit 0x0000 when padding follows | shall | A | [GAP-04](#gap-04) | vector encoder | 10 §3 | DIR |
+| REQ-SRP-004 | Milan §4.2.7.2.1 | Class A Domain: priority 3 / default VID 2 at startup and link-up; adopt received params + re-declare on differing declaration; Domain TX independent of gPTP port state | shall | A | [GAP-04](#gap-04) | Domain FSM F10.2 | 10 §6.1 | DIR |
+| REQ-SRP-005 | Milan §4.2.7.2.2 | Registrar `IN → MT` immediately on rLv (no leavetimer) outside the LeaveAll cycle (Δ13) | shall | A | [GAP-04](#gap-04) | registrar rule F10.9 | 10 §6.5 | MTXW |
+| REQ-SRP-006 | Milan §4.2.7.3, §4.3.2, §4.4.1 | MVRP: talker joins the VLAN before sending any stream frames; listener declares the VID of its settled sinks | shall | A | [GAP-04](#gap-04) | VLAN FSM F10.3 | 10 §6.2 | DIR |
+
+### 6.10 Non-redundant scoping
 
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
 |---|---|---|---|---|---|---|---|---|
@@ -436,3 +447,4 @@ randomized multi-controller · STORM notification storm · NVM power-cut restore
 | 6 | talker/listener_capabilities bits unconstrained by Milan | Set per IEEE Table 6-3/6-4 (IMPLEMENTED + AUDIO/MEDIA_CLOCK as per product) | 04 §3 |
 | 7 | IN_PROGRESS vs GET_DYNAMIC_INFO | Never emit IN_PROGRESS; hard ≤240 ms response budget | 06 §5, 08 §4 |
 | 8 | Milan-vs-IEEE STREAM_OUTPUT counter masks | Milan masks in Milan profile (Δ-tagged); IEEE masks in plain-IEEE profile ROM | 06 §6.6 |
+| 9 | SRP location (originally out of scope per the reviewed doc's §21) | Owner decision 2026-08-11: SRP endpoint (MSRP/MVRP participant) moved **in scope** as doc 10 — 1 Domain FSM, 1 VLAN FSM (Class A, single VID), N + M stream FSMs; MAAP stays external; external-stack alternative retained (`P-EN-SRP-ENGINE`) | [10](architecture/10_srp_engine.md), §6.9 |
