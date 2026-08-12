@@ -272,6 +272,35 @@ module protocol_processor_top
     //! decide an entity restarted.
     output logic [31:0]                  adp_next_avail_index_o,  //! available_index the NEXT ENTITY_AVAILABLE will carry
 
+    //! ---- maap face (02 §4.2) — THE ADDRESS ALLOCATOR SEAM --------------
+    //! This processor implements no MAAP: 01 §3 puts address allocation
+    //! OUTSIDE it, in the integrating fabric (the consumer already ships a
+    //! KL_maap engine). Nothing else can open the talker DA gate, because
+    //! GS_DECLARING is reachable only through GS_DA_OK and GS_DA_OK is
+    //! written only on an ALLOC_DA success (KL_acmp_talker EVC_GRANT): with
+    //! this face unconnected acmp_declaring_o above is STRUCTURALLY stuck at
+    //! 0 and no source ever declares a Talker attribute to SRP either. So it
+    //! is published rather than tied off — a processor whose talker half is
+    //! dead by construction is not a contract a fabric can integrate.
+    //!
+    //! Single-outstanding: one ALLOC_DA / RELEASE_DA at a time, req held
+    //! until ready, exactly one rsp per accepted req, conflicts as a sticky
+    //! event acked combinationally. An absent allocator is a LEGAL wiring —
+    //! ready may sit at 0 — because the request is abandoned after
+    //! KL_acmp_talker's P-MAAP-ACCEPT-CYC window and the source degrades to
+    //! "no DA" (PROBE_TX then answers TALKER_DEST_MAC_FAILED, which is the
+    //! honest answer) instead of wedging the talker walker.
+    output logic                         maap_req_valid_o,      //! ALLOC/RELEASE request, held until ready or the accept window
+    input  wire                          maap_req_ready_i,      //! allocator accepts the request (tie 0 = no allocator)
+    output logic                         maap_req_release_o,    //! 0 = ALLOC_DA, 1 = RELEASE_DA
+    output logic [SRC_IDX_W_C-1:0]       maap_req_src_o,        //! source index of the request
+    input  wire                          maap_rsp_valid_i,      //! exactly one response per accepted request
+    input  wire                          maap_rsp_ok_i,         //! ALLOC_DA succeeded (ignored on RELEASE_DA)
+    input  wire  [47:0]                  maap_rsp_da_i,         //! allocated stream destination MAC (with ok)
+    input  wire                          maap_conflict_valid_i, //! MAAP_CONFLICT{source} event, sticky until acked
+    input  wire  [SRC_IDX_W_C-1:0]       maap_conflict_src_i,   //! conflicted source
+    output logic                         maap_conflict_ack_o,   //! event ack (combinational)
+
     //! ---- observability ----
     output logic [31:0] dbg_now_ms_o           //! absolute ms timebase
 );
@@ -1227,9 +1256,6 @@ module protocol_processor_top
                tkr_resp_seq_w, tkr_resp_flags_w, tkr_resp_vlan_w;
   logic [47:0] tkr_resp_da_w;
   logic [1:0]  tkr_resp_if_nc_w;
-  logic        tkr_maap_req_valid_nc_w, tkr_maap_req_release_nc_w;
-  logic [2:0]  tkr_maap_req_src_nc_w;
-  logic        tkr_maap_conflict_ack_nc_w;
   logic [N_STREAM_OUT_P-1:0] tkr_declaring_w;
   logic        tkr_gate_open_w, tkr_gate_close_w;
   //! CLAMPED to match KL_acmp_talker's own SRC_W_C (:95-96). A fixed [2:0]
@@ -1310,16 +1336,18 @@ module protocol_processor_top
       .resp_flags_o          (tkr_resp_flags_w),
       .resp_vlan_id_o        (tkr_resp_vlan_w),
       .resp_if_index_o       (tkr_resp_if_nc_w),
-      .maap_req_valid_o      (tkr_maap_req_valid_nc_w),  // MAAP engine: future
-      .maap_req_ready_i      (1'b0),
-      .maap_req_release_o    (tkr_maap_req_release_nc_w),
-      .maap_req_src_o        (tkr_maap_req_src_nc_w),
-      .maap_rsp_valid_i      (1'b0),
-      .maap_rsp_ok_i         (1'b0),
-      .maap_rsp_da_i         (48'd0),
-      .maap_conflict_valid_i (1'b0),
-      .maap_conflict_src_i   (3'd0),
-      .maap_conflict_ack_o   (tkr_maap_conflict_ack_nc_w),
+      // the maap face is the top's own port group (see its banner): pure
+      // pass-through, the allocator lives in the integrating fabric
+      .maap_req_valid_o      (maap_req_valid_o),
+      .maap_req_ready_i      (maap_req_ready_i),
+      .maap_req_release_o    (maap_req_release_o),
+      .maap_req_src_o        (maap_req_src_o),
+      .maap_rsp_valid_i      (maap_rsp_valid_i),
+      .maap_rsp_ok_i         (maap_rsp_ok_i),
+      .maap_rsp_da_i         (maap_rsp_da_i),
+      .maap_conflict_valid_i (maap_conflict_valid_i),
+      .maap_conflict_src_i   (maap_conflict_src_i),
+      .maap_conflict_ack_o   (maap_conflict_ack_o),
       .declaring_o           (tkr_declaring_w),
       .gate_open_o           (tkr_gate_open_w),
       .gate_close_o          (tkr_gate_close_w),

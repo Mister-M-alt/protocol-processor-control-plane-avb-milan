@@ -13,11 +13,15 @@
 // Advertise + MVRP VID New; TX interleave of ADP + ACMP + SRP frames, each
 // byte-exact, no truncation; certified two-class Domain adoption -> Lv+New
 // re-declaration; listener READY end-to-end; NVM debounce commit of the
-// captured binding (F07.8 framing spot-checked at the device face).
+// captured binding (F07.8 framing spot-checked at the device face); and the
+// maap face both ways — with no allocator the talker still answers (the
+// walker must not wedge on an unaccepted request), with one the granted
+// address reaches acmp_declaring_o, the ACMP answer and the SRP wire.
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <utility>
 #include <vector>
 #include "Vpp_top_wrap.h"
 #include "verilated.h"
@@ -330,6 +334,24 @@ struct H {
   int      nv_done_lag = 0;
   NvmOp    nv_cur;
   std::vector<NvmOp> nvm_ops;
+  // MAAP allocator model (02 §4.2). OFF by default: the processor ships
+  // with the allocator in the integrating fabric, and "no allocator wired
+  // yet" must be a survivable wiring, not a wedge.
+  bool maap_on = false, maap_grant_ok = true;
+  int  maap_offers = 0, maap_hold_cur = 0, maap_hold_last = 0, maap_da_seq = 0;
+  int  maap_rsp_cnt = 0;
+  uint64_t maap_rsp_da = 0;
+  std::vector<std::pair<int, bool>> maap_reqs;      // {src, release}
+  // acmp_declaring_o edge log: the gate LEVEL must be seen MOVING
+  uint8_t decl_prev = 0;
+  std::vector<std::pair<int, bool>> decl_edges;     // {src, rising}
+
+  static uint64_t maap_da(int n) { return 0x91E0F0AABB00ULL + unsigned(n); }
+  bool saw_decl_edge(int src, bool rising) const {
+    for (const auto& e : decl_edges)
+      if (e.first == src && e.second == rising) return true;
+    return false;
+  }
 
   explicit H(Vpp_top_wrap* dd) : d(dd) {}
 
@@ -360,6 +382,34 @@ struct H {
           q_mvrp.push_back(cur);
         }
       }
+    }
+
+    // ---- MAAP allocator model (02 §4.2) ----
+    d->maap_req_ready_i = maap_on ? 1 : 0;
+    d->maap_rsp_valid_i = 0;
+    if (maap_rsp_cnt > 0 && --maap_rsp_cnt == 0) {
+      d->maap_rsp_valid_i = 1;
+      d->maap_rsp_ok_i = maap_grant_ok ? 1 : 0;
+      d->maap_rsp_da_i = maap_rsp_da;
+    }
+    if (d->maap_req_valid_o) {
+      if (maap_hold_cur == 0) maap_offers++;
+      maap_hold_cur++;
+    } else if (maap_hold_cur) {
+      maap_hold_last = maap_hold_cur; maap_hold_cur = 0;
+    }
+    if (d->maap_req_valid_o && d->maap_req_ready_i) {
+      bool rel = d->maap_req_release_o != 0;
+      maap_reqs.push_back({(int)d->maap_req_src_o, rel});
+      maap_rsp_cnt = 3;
+      maap_rsp_da = (rel || !maap_grant_ok) ? 0 : maap_da(maap_da_seq++);
+    }
+    if ((uint8_t)d->acmp_declaring_o != decl_prev) {
+      uint8_t now = (uint8_t)d->acmp_declaring_o;
+      for (int s = 0; s < 8; s++)
+        if (((now ^ decl_prev) >> s) & 1)
+          decl_edges.push_back({s, bool((now >> s) & 1)});
+      decl_prev = now;
     }
 
     // ---- NVM device model ----
@@ -442,6 +492,9 @@ struct H {
     d->svc_valid_i = 0; d->svc_op_i = 0; d->svc_index_i = 0;
     d->svc_stream_id_i = 0; d->svc_da_i = 0; d->svc_vid_i = 0;
     d->svc_max_frame_i = 0; d->svc_lstn_state_i = 0;
+    d->maap_req_ready_i = 0; d->maap_rsp_valid_i = 0; d->maap_rsp_ok_i = 0;
+    d->maap_rsp_da_i = 0;
+    d->maap_conflict_valid_i = 0; d->maap_conflict_src_i = 0;
     idle(20);
     d->rst_n = 1;
     idle(10);
@@ -906,6 +959,89 @@ int main(int argc, char** argv) {
     CHECK(hdr_ok, "S9: F07.8 magic 0x1722 leads the record");
     CHECK(eid_ok, "S9: committed record carries the bound talker EID");
     CHECK(d->nvm_alarm_o == 0, "S9: no commit alarm");
+  }
+
+  // ==== S10. the maap face: the DA gate no fabric can open by itself ======
+  // 01 §3 puts address allocation OUTSIDE this processor, so the talker DA
+  // gate (and with it every Talker declaration into SRP) can ONLY be opened
+  // from the top's maap port. Two halves: with no allocator the processor
+  // must DEGRADE (answer honestly, never wedge), and with one the granted
+  // address must reach the gate, the ACMP answers and the SRP wire.
+  {
+    const uint64_t SID_T0 = (OWN_MAC << 16) | 0x0000;   // wrap: sid[k]={mac,k}
+    const uint16_t VID_ADOPTED = 5;                     // S8 adopted {3, 5}
+    h.flush_all();
+
+    // (a) the whole run so far has had NO allocator: the port is driven,
+    //     nothing was accepted, and no source declares
+    CHECK(h.maap_offers > 0,
+          "S10: the top OFFERED maap requests with no allocator (%d)",
+          h.maap_offers);
+    CHECK(h.maap_reqs.empty(), "S10: nothing accepted without an allocator");
+    CHECK(d->acmp_declaring_o == 0, "S10: no source declares without a DA");
+
+    // (b) THE REGRESSION: the talker walker still serves commands. Before
+    //     the accept window existed, one unaccepted allocation parked the
+    //     walker forever and this GET_TX_STATE was never answered.
+    auto gts = acmp_frame(CTLR_MAC, 4, 0, 0, CTLR_EID, EID, 0,
+                          0, 0, 0, 0, 0x5150, 0, 0);
+    h.feed(gts);
+    auto f = h.wait_any(h.q_acmp, 400);
+    CHECK(!f.empty(), "S10: GET_TX_STATE answered with maap absent");
+    auto expf = acmp_frame(OWN_MAC, 5, 0, SID_T0, CTLR_EID, EID, 0,
+                           0, 0, 0, 0, 0x5150, 0, VID_ADOPTED);
+    CHECK(f == expf, "S10: GET_TX_STATE_RESPONSE byte-exact, DA 0");
+    if (!f.empty() && f != expf) { dump("got", f); dump("exp", expf); }
+
+    // (c) a probe with no DA is answered TALKER_DEST_MAC_FAILED — the
+    //     honest degrade — and asks the (now present) allocator again
+    h.maap_on = true;
+    auto prb = acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID,
+                          0, 7, 0, 0, 0x5151, 0x000A, 0);
+    h.feed(prb);
+    auto p = h.wait_any(h.q_acmp, 400);
+    CHECK(!p.empty(), "S10: PROBE_TX answered");
+    auto expp = acmp_frame(OWN_MAC, 1, 3, 0, CTLR_EID, EID, T1_EID,
+                           0, 7, 0, 0, 0x5151, 0x000A, 0);
+    CHECK(p == expp, "S10: PROBE_TX_RESPONSE DEST_MAC_FAILED byte-exact");
+    if (!p.empty() && p != expp) { dump("got", p); dump("exp", expp); }
+
+    // (d) the grant travels: maap -> DA gate -> the published level
+    for (int i = 0; i < 200 && !(d->acmp_declaring_o & 1); i++) h.idle(10);
+    CHECK(h.saw_decl_edge(0, true),
+          "S10: acmp_declaring_o[0] OBSERVED 0 -> 1 on the MAAP grant");
+    CHECK(h.maap_reqs.size() == 1 && h.maap_reqs[0].first == 0
+          && !h.maap_reqs[0].second, "S10: exactly one ALLOC_DA, source 0");
+    const uint64_t DA_G0 = H::maap_da(0);
+
+    // (e) ... and reaches the ACMP answer
+    auto gts2 = acmp_frame(CTLR_MAC, 4, 0, 0, CTLR_EID, EID, 0,
+                           0, 0, 0, 0, 0x5152, 0, 0);
+    h.feed(gts2);
+    auto f2 = h.wait_any(h.q_acmp, 400);
+    auto expf2 = acmp_frame(OWN_MAC, 5, 0, SID_T0, CTLR_EID, EID, 0,
+                            0, 0, DA_G0, 0, 0x5152, 0, VID_ADOPTED);
+    CHECK(f2 == expf2, "S10: the granted DA is what GET_TX_STATE answers");
+    if (!f2.empty() && f2 != expf2) { dump("got", f2); dump("exp", expf2); }
+
+    // (f) ... and reaches the SRP wire as the declared dest MAC. THIS is
+    //     what the tied-off face silenced: the talker half of SRP.
+    std::vector<uint8_t> fvgot;
+    auto ta = h.wait_frame(h.q_msrp, 2500,
+                           [&](const std::vector<uint8_t>& fr) {
+      auto pp = parse_mrpdu(fr);
+      for (auto& v : pp.vecs)
+        if (v.type == 1 && v.fv.size() >= 14 && fv_u64(v.fv, 0, 8) == SID_T0) {
+          fvgot = v.fv;
+          return true;
+        }
+      return false;
+    });
+    CHECK(!ta.empty(), "S10: the gate reached SRP (Talker Advertise, src 0)");
+    CHECK(fvgot.size() >= 14 && fv_u64(fvgot, 8, 6) == DA_G0,
+          "S10: the declared dest MAC is the MAAP-granted address");
+    CHECK(fvgot.size() >= 16 && fv_u64(fvgot, 14, 2) == VID_ADOPTED,
+          "S10: declared on the adopted SR-class VID");
   }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);

@@ -115,6 +115,22 @@ module pp_top_wrap (
     output logic [1:0]  svc_rsp_status_o,
     output logic [31:0] svc_rsp_data_o,
 
+    // maap face (02 §4.2): this processor implements no allocator — the
+    // C++ harness plays one, INCLUDING the "no allocator at all" wiring
+    output logic        maap_req_valid_o,
+    input  wire         maap_req_ready_i,
+    output logic        maap_req_release_o,
+    output logic [2:0]  maap_req_src_o,
+    input  wire         maap_rsp_valid_i,
+    input  wire         maap_rsp_ok_i,
+    input  wire  [47:0] maap_rsp_da_i,
+    input  wire         maap_conflict_valid_i,
+    input  wire  [2:0]  maap_conflict_src_i,
+    output logic        maap_conflict_ack_o,
+
+    // the per-source DA gate a fabric ANDs with its own stream enable
+    output logic [7:0]  acmp_declaring_o,
+
     // observability
     output logic [31:0] dbg_now_ms_o,
     // suite taps (cross-module refs into the DUT; observe-only)
@@ -238,6 +254,17 @@ module pp_top_wrap (
       .svc_rsp_valid_o       (svc_rsp_valid_o),
       .svc_rsp_status_o      (svc_rsp_status_o),
       .svc_rsp_data_o        (svc_rsp_data_o),
+      .maap_req_valid_o      (maap_req_valid_o),
+      .maap_req_ready_i      (maap_req_ready_i),
+      .maap_req_release_o    (maap_req_release_o),
+      .maap_req_src_o        (maap_req_src_o),
+      .maap_rsp_valid_i      (maap_rsp_valid_i),
+      .maap_rsp_ok_i         (maap_rsp_ok_i),
+      .maap_rsp_da_i         (maap_rsp_da_i),
+      .maap_conflict_valid_i (maap_conflict_valid_i),
+      .maap_conflict_src_i   (maap_conflict_src_i),
+      .maap_conflict_ack_o   (maap_conflict_ack_o),
+      .acmp_declaring_o      (acmp_declaring_o),
       .dbg_now_ms_o          (dbg_now_ms_o)
   );
 

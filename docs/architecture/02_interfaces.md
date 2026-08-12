@@ -231,6 +231,24 @@ exact match per Milan §5.3.8.9, matching done in the adapter),
 Events: `MAAP_CONFLICT{source}` → drives the withdraw → 2×LeaveAll → re-alloc →
 re-declare flow ([05 §6bis](05_acmp_engine.md), backoff `T-SRP-LEAVEALL2`).
 
+This face is a **processor-top port group**, not an internal seam: no MAAP engine
+exists inside this processor ([01 §3](01_overview.md)), and `GS_DECLARING` is
+reachable only through `GS_DA_OK`, which is only ever written on an `ALLOC_DA`
+success. An unconnected face therefore pins the published talker DA gate at 0 and
+stops every engine-driven `DECLARE_TALKER` — the processor's talker half would be
+dead by construction.
+
+**Degrade rule.** An allocator that is absent or slow is a legal wiring: the
+request is offered for `P-MAAP-ACCEPT-CYC` (1024 cycles, ≈10 µs at `P-CLK-HZ`,
+well inside `T-BUDGET-ACMP-RESP`) and then **abandoned**, leaving the source in
+the same state a refused `ALLOC_DA` leaves it in — no DA, no declaration,
+`PROBE_TX` answered `TALKER_DEST_MAC_FAILED`, retried on the next stimulus. The
+window covers the request HANDSHAKE only; the allocation itself (an `ALLOC_DA`
+response may legitimately take seconds of MAAP probing) is never timed out. The
+rule exists because one event-serialized walker serves the DA gates AND every
+talker command of every source: without it, a single unaccepted request wedges
+the talker half of both ACMP and SRP.
+
 ### 4.3 `gptp` — time-sync data
 
 | Op | Args | Result |

@@ -336,6 +336,12 @@ stateDiagram-v2
 This is Milan's mechanism against advertising unwanted streams: a talker declares only
 while someone probed it within `T-SRP-DAFRESH` **or** a listener is registered.
 
+`NO_DA` is also where a source lands when the allocator never accepts the request:
+the `maap` face abandons an unaccepted request after `P-MAAP-ACCEPT-CYC` and the
+source degrades exactly as on a refused `ALLOC_DA` ([02 §4.2](02_interfaces.md#42-maap-address-allocation)).
+The alternative — waiting forever on `ready` — would stall the one event-serialized
+walker that also answers PROBE_TX / DISCONNECT_TX / GET_TX_STATE for every source.
+
 ## 7. µcode / dispatch
 
 n/a — transition-ROM + hardwired action primitives (A1–A17). The ROM column is the

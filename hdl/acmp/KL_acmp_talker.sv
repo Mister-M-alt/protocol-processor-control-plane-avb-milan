@@ -65,6 +65,17 @@
 //                target DA_OK; the alloc round-trip is the same arc split
 //                over the maap response).
 //
+//                An ABSENT maap must DEGRADE, never deadlock. The request
+//                face is a held valid/ready handshake, so a shim that never
+//                asserts ready would otherwise park the single walker in
+//                S_EV_MAAP forever — and that walker also serves PROBE_TX /
+//                DISCONNECT_TX / GET_TX_STATE for EVERY source, so one
+//                un-accepted allocation would silence the whole talker half
+//                of ACMP (and, through the gate strobes, of SRP). The
+//                request is therefore ABANDONED after P-MAAP-ACCEPT-CYC
+//                cycles; the source is left in exactly the state a REFUSED
+//                allocation leaves it in (see the S_EV_MAAP arm).
+//
 //                Storage: one 1W1R sync-read record RAM (gstate, da_valid,
 //                pinged, ping_ts, da — the 16 B/source of 07 §6), walked by
 //                a single event-serialized FSM — never a flop mirror + wide
@@ -91,6 +102,17 @@ module KL_acmp_talker
     parameter int unsigned TMR_OWNER_BASE_P = 32'h50,
     //! T-SRP-DAFRESH in ms (F08.1: 15 s)
     parameter int unsigned DAFRESH_MS_P    = 15000,
+    //! P-MAAP-ACCEPT-CYC: cycles a maap request is held before it is
+    //! ABANDONED. Bounded from both sides. Lower bound: the face is a
+    //! ready handshake into an adjacent fabric block, so even a maap engine
+    //! that is busy with another source's allocation asserts ready in tens
+    //! of cycles — 1024 never cuts a live shim short. Upper bound: this is
+    //! the worst case a talker COMMAND waits behind an allocation, and at
+    //! P-CLK-HZ = 100 MHz 1024 cycles is 10.24 us, ~5000x inside the 50 ms
+    //! T-BUDGET-ACMP-RESP of 08 §4. NOTE it times the request HANDSHAKE
+    //! only — the allocation itself (maap_rsp_valid_i, legitimately seconds
+    //! of MAAP probing) is never timed out.
+    parameter int unsigned MAAP_ACCEPT_CYC_P = 1024,
     //! derived source-index width — do not override
     localparam int unsigned SRC_W_C = (N_STREAM_OUT_P > 32'd1)
                                       ? $clog2(N_STREAM_OUT_P) : 32'd1,
@@ -102,7 +124,10 @@ module KL_acmp_talker
     localparam int unsigned RXL_W_C = $clog2(RX_SLOT_BYTES_P + 1),
     //! derived timer slot-index width — do not override
     localparam int unsigned TMR_AW_C = (TMR_SLOTS_P > 32'd1)
-                                       ? $clog2(TMR_SLOTS_P) : 32'd1
+                                       ? $clog2(TMR_SLOTS_P) : 32'd1,
+    //! derived maap-accept counter width — do not override
+    localparam int unsigned MTMO_W_C = (MAAP_ACCEPT_CYC_P > 32'd1)
+                                       ? $clog2(MAAP_ACCEPT_CYC_P) : 32'd1
 ) (
     input  wire                          clk_i,   //! core clock (P-CLK-HZ)
     input  wire                          rst_n,   //! sync active-low reset
@@ -150,7 +175,7 @@ module KL_acmp_talker
     output logic [1:0]                   resp_if_index_o,       //! egress = ingress interface
 
     //! ---- maap face (02 §4.2: single-outstanding ALLOC/RELEASE + conflict event) ----
-    output logic                         maap_req_valid_o,   //! request strobe (held until ready)
+    output logic                         maap_req_valid_o,   //! request strobe (held until ready, or P-MAAP-ACCEPT-CYC)
     input  wire                          maap_req_ready_i,   //! maap accepts the request
     output logic                         maap_req_release_o, //! 0 = ALLOC_DA, 1 = RELEASE_DA
     output logic [SRC_W_C-1:0]           maap_req_src_o,     //! source index of the request
@@ -411,7 +436,13 @@ module KL_acmp_talker
   logic [31:0]        arm_deadline_r;
   logic [SRC_W_C-1:0] mreq_src_r;
   logic               mreq_rel_r;
+  logic [MTMO_W_C-1:0] mreq_tmo_r;   // cycles the request has been offered
   logic [SRC_W_C:0]   init_ix_r;
+
+  //! the offered request has waited P-MAAP-ACCEPT-CYC cycles: abandon it
+  logic maap_tmo_w;
+  assign maap_tmo_w = (state_r == S_EV_MAAP)
+                      && (mreq_tmo_r == MTMO_W_C'(MAAP_ACCEPT_CYC_P - 32'd1));
 
   // ------------------------------------------------------ dispatch picker
   typedef enum logic [1:0] { DK_NONE = 2'd0, DK_TXN = 2'd1, DK_EV = 2'd2 }
@@ -674,6 +705,7 @@ module KL_acmp_talker
       arm_deadline_r <= 32'd0;
       mreq_src_r     <= '0;
       mreq_rel_r     <= 1'b0;
+      mreq_tmo_r     <= '0;
       init_ix_r      <= '0;
     end else begin
       unique case (state_r)
@@ -748,6 +780,7 @@ module KL_acmp_talker
           end else if (ev_to_maap_w) begin
             mreq_src_r <= ev_src_r;
             mreq_rel_r <= ev_maap_rel_w;
+            mreq_tmo_r <= '0;
             state_r    <= S_EV_MAAP;
           end else begin
             state_r <= S_IDLE;
@@ -773,7 +806,17 @@ module KL_acmp_talker
         end
 
         default: begin  // S_EV_MAAP
-          if (maap_req_ready_i) begin
+          // The request is offered until maap accepts it OR the accept
+          // window closes. Abandoning is SAFE without touching the record:
+          // every path into this state has already written the source's
+          // record to GS_NO_DA — EVC_OFF resets the whole record before
+          // asking for RELEASE_DA, and EVC_INIT only asks for ALLOC_DA from
+          // GS_NO_DA — so a dropped request leaves the source exactly where
+          // a refused allocation leaves it, with no DA and no declaration.
+          // The retry is stimulus-driven (probe / listener change / timer),
+          // identical to the refused-ALLOC path of the maap tracker below.
+          mreq_tmo_r <= mreq_tmo_r + MTMO_W_C'(1);
+          if (maap_req_ready_i || maap_tmo_w) begin
             state_r <= S_IDLE;
           end
         end

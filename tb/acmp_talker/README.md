@@ -5,7 +5,7 @@ Proves the ACMP stateless talker responder + per-source DA-gate
 (`hdl/acmp/KL_acmp_talker.sv`) against
 [05 §6bis](../../docs/architecture/05_acmp_engine.md) (F05.11 decision tree +
 F05.12 DA-gate) and the 08 §2/§5 timer contract: `make` = build + run, exit 0 =
-PASS, 480 checks. `make lint` runs the repo's zero-warning gate (no width
+PASS, 631 checks. `make lint` runs the repo's zero-warning gate (no width
 waivers).
 
 The C++ harness is an independent model, never DUT logic: every expected
@@ -38,6 +38,23 @@ independence (src2's answer unchanged by src0/1/3 churn); and the stateless
 property twice (identical query around interleaved traffic = byte-identical
 response, compared as whole structs).
 
+Two things the port `declaring_o` and the maap face own, checked on the PORTS:
+
+- **The gate IS the grant.** `declaring_o` is sampled every cycle and its
+  EDGES are logged, so the level is proven MOVING (0 -> 1 at B1/I4/J7, 1 -> 0
+  at D2/J1) rather than read once at its reset value. A REFUSED `ALLOC_DA`
+  leaves it shut even with a Listener registered — i.e. the refusal, not the
+  gate predicate, is what holds it — and the following grant opens it.
+- **An absent maap DEGRADES, it does not wedge (section J).** With
+  `maap_req_ready_i` tied 0 the request is offered for exactly
+  P-MAAP-ACCEPT-CYC = 1024 cycles and then abandoned; the source lands in the
+  refused-alloc state (PROBE_TX answers TALKER_DEST_MAC_FAILED, still pinging
+  freshness), every following command is still consumed and answered, each
+  new stimulus re-offers, and when maap returns the source recovers to
+  DECLARING. This is the regression test for the deadlock the single walker
+  had: S_EV_MAAP was the only state with no exit but ready, and the same
+  walker serves every source and every talker command.
+
 Known limit: the harness drives `now_ms_i` directly and injects expiries, so
 it cannot catch a prescaler-level defect — that is `tb/timer_service`'s job.
 
@@ -47,3 +64,11 @@ Mutation-proven 2026-08-11 (backup/sed/run/restore):
 - M2 backoff halved (`now + draw` instead of `now + 2*draw`): fails 4 of 480
   (E1/F2 leaveall2 arm deadlines).
 - M3 GET_TX_STATE RF no longer live (forced 0): fails 2 of 480 (B3, B5).
+
+Mutation-proven 2026-08-12 (the maap-degrade round):
+- M4 the S_EV_MAAP timeout exit removed (`maap_req_ready_i || maap_tmo_w` ->
+  `maap_req_ready_i`, i.e. the deadlock restored): fails 27 (the whole J
+  section — the walker never consumes another command).
+- M6 the ALLOC refusal ignored (`!maap_rel_r && maap_rsp_ok_i` ->
+  `!maap_rel_r`, a refusal treated as a grant of DA 0): fails 10 (I3/I4/J7 —
+  the gate opens on a refusal and every later DA is off by one grant).

@@ -14,10 +14,16 @@
 // backoff that KEEPS the DA; T-SRP-DAFRESH freshness expiry; the V3
 // truncated-PDU zero-fill; per-source independence; and the stateless
 // property (identical query twice around interleaved traffic = identical
-// response bytes).
+// response bytes). Sections I/J own the maap face: the gate level
+// declaring_o is watched for EDGES (a refused ALLOC_DA keeps it shut even
+// with a Listener registered, the following grant opens it), and an ABSENT
+// maap must degrade — the request is abandoned after P-MAAP-ACCEPT-CYC and
+// the walker keeps answering, which is the regression test for the
+// S_EV_MAAP deadlock.
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 #include <vector>
 #include "VKL_acmp_talker.h"
 #include "verilated.h"
@@ -63,6 +69,10 @@ static const int N_SRC = 8;
 static const int TMR_BASE = 17;        // IF + 2*SI (08 §5 F08.4 order)
 static const int OWNER_BASE = 0x50;
 static const uint32_t T_DAFRESH = 15000;
+// P-MAAP-ACCEPT-CYC: the documented accept window of the maap request face
+// (KL_acmp_talker MAAP_ACCEPT_CYC_P default). Written here as the contract,
+// not read from the DUT.
+static const int MAAP_TMO = 1024;
 
 static const uint64_t OWN_EID = 0x0102030405060708ull;
 static uint64_t sid_of(int s)  { return 0xAB00000000000000ull | unsigned(s); }
@@ -89,6 +99,15 @@ struct Hn {
   // maap auto-responder
   int  mrsp_cnt = 0; bool mrsp_ok = true, mrsp_rel = false; uint64_t mrsp_da = 0;
   bool auto_grant = true; int da_seq = 0;
+  bool grant_ok = true;              // false = the allocator REFUSES the alloc
+  // request-face observation (works with ready low, where no request is ever
+  // accepted and the mreqs log below stays empty)
+  int  offers = 0;                   // rising edges of maap_req_valid_o
+  int  hold_cur = 0, hold_last = 0;  // cycles a request was offered
+  // declaring_o edge log: the gate LEVEL must be seen MOVING, not read once
+  uint32_t decl_prev = 0;
+  std::vector<std::pair<int, bool>> decl_edges;   // {src, rising}
+  int last_send_cyc = 0;
   // prng responder
   int  draw_cnt = 0; uint16_t draw_val = 10000; bool prng_busy = false;
   std::vector<int> draws;
@@ -147,12 +166,27 @@ struct Hn {
       arms.push_back({int(d->tmr_arm_slot_o), int(d->tmr_arm_owner_o),
                       uint32_t(d->tmr_arm_deadline_ms_o),
                       bool(d->tmr_arm_cancel_o)});
+    if (d->maap_req_valid_o) {
+      if (hold_cur == 0) ++offers;
+      ++hold_cur;
+    } else if (hold_cur != 0) {
+      hold_last = hold_cur; hold_cur = 0;
+    }
     if (d->maap_req_valid_o && d->maap_req_ready_i) {
       MReq m{int(d->maap_req_src_o), bool(d->maap_req_release_o)};
       mreqs.push_back(m);
       if (auto_grant) {
-        mrsp_cnt = 3; mrsp_ok = true; mrsp_rel = m.rel;
-        mrsp_da = m.rel ? 0 : da_pool(da_seq++);
+        mrsp_cnt = 3; mrsp_ok = grant_ok; mrsp_rel = m.rel;
+        mrsp_da = (m.rel || !grant_ok) ? 0 : da_pool(da_seq++);
+      }
+    }
+    {
+      uint32_t dcl = uint32_t(d->declaring_o);
+      if (dcl != decl_prev) {
+        for (int s = 0; s < N_SRC; ++s)
+          if (((dcl ^ decl_prev) >> s) & 1)
+            decl_edges.push_back({s, bool((dcl >> s) & 1)});
+        decl_prev = dcl;
       }
     }
     if (d->prng_draw_req_o) {
@@ -200,11 +234,24 @@ struct Hn {
 
     int before = consumed;
     d->txn_valid_i = 1;
-    for (int i = 0; i < 400 && consumed == before; ++i) tick();
+    // budget > P-MAAP-ACCEPT-CYC on purpose: a command offered while a maap
+    // request is outstanding must still be served once that window closes
+    int i = 0;
+    for (; i < 4 * MAAP_TMO && consumed == before; ++i) tick();
+    last_send_cyc = i;
     d->txn_valid_i = 0;
     tick();
     return consumed != before;
   }
+
+  // ---- declaring_o (the per-source DA gate LEVEL) ----
+  uint32_t decl_mask() const { return uint32_t(d->declaring_o); }
+  bool saw_edge(int src, bool rising) const {
+    for (const auto& e : decl_edges)
+      if (e.first == src && e.second == rising) return true;
+    return false;
+  }
+  void clear_edges() { decl_edges.clear(); }
 
   // ---- pop-checkers ----
   Resp pop_resp(const char* tag) {
@@ -340,6 +387,8 @@ int main(int argc, char** argv) {
   h.run(8);
   h.expect_arm("B1 dafresh", 3, t1 + T_DAFRESH, false);
   h.expect_open("B1 declare", 3, da[3]);
+  CHECK(h.saw_edge(3, true), "B1 declaring_o[3] OBSERVED 0 -> 1");
+  CHECK(h.decl_mask() == 0x08u, "B1 gate level, got 0x%02x", h.decl_mask());
   {
     Resp e = echo(MT_PROBE, ST_OK, 3, C1, 0x100, L1, 7);
     e.sid = sid_of(3); e.da = da[3]; e.vlan = VID;
@@ -437,9 +486,13 @@ int main(int argc, char** argv) {
   h.set_lsn(3, LSN_NONE);                     // gate now rests on freshness
   CHECK(h.gates.empty(), "D1 still fresh: no withdraw on listener loss");
   d->now_ms_i = t2 + T_DAFRESH + 1;           // window of B4 has lapsed
+  h.clear_edges();
   h.fire_expiry(3);
   h.run(8);
   h.expect_close("D2 freshness lapse", 3);
+  CHECK(h.saw_edge(3, false), "D2 declaring_o[3] OBSERVED 1 -> 0");
+  CHECK(h.decl_mask() == 0x01u,               // src0 (C6) is untouched
+        "D2 only src3's gate closed, got 0x%02x", h.decl_mask());
   {
     CHECK(h.send(MT_GTXS, 3, C1, 0x121, 0, 0, 0), "D3 consumed");
     Resp e = echo(MT_GTXS, ST_OK, 3, C1, 0x121, 0, 0);
@@ -587,6 +640,119 @@ int main(int argc, char** argv) {
     h.expect_resp("H2 disabled source", e);
   }
   h.drained("H");
+
+  // ---- I: the gate IS the maap grant — a refusal keeps it shut ---------
+  // F05.12 makes GS_DECLARING reachable only through GS_DA_OK, and GS_DA_OK
+  // only through an ALLOC_DA success. Both halves are proven on the PORT:
+  // the level must be seen MOVING, not read once at its reset value.
+  CHECK(h.decl_mask() == 0x3Au, "I0 gates carried in from A-H, got 0x%02x",
+        h.decl_mask());                       // src 1,3,4,5 declaring
+  h.grant_ok = false;                         // the allocator REFUSES
+  h.clear_edges();
+  d->cfg_src_en_i = 0xFF;                     // src6 returns to the config
+  h.run(60);
+  h.expect_mreq("I1 alloc on re-enable", 6, false);
+  CHECK(((h.decl_mask() >> 6) & 1) == 0, "I1 refused alloc: gate stays shut");
+  CHECK(!h.saw_edge(6, true), "I1 no declare edge on a refusal");
+  CHECK(h.gates.empty(), "I1 no DECLARE_TALKER on a refusal");
+  {
+    CHECK(h.send(MT_GTXS, 6, C1, 0x170, 0, 0, 0), "I2 consumed");
+    Resp e = echo(MT_GTXS, ST_OK, 6, C1, 0x170, 0, 0);
+    e.sid = sid_of(6); e.da = 0; e.vlan = VID;   // no DA to answer with
+    h.expect_resp("I2 refused source answers with no DA", e);
+  }
+  // a Listener registers: the gate's OTHER term is now true, so only the
+  // missing DA can still hold it shut — and the allocator refuses again
+  h.set_lsn(6, LSN_READY);
+  h.run(40);
+  h.expect_mreq("I3 listener retries the alloc", 6, false);
+  CHECK(((h.decl_mask() >> 6) & 1) == 0,
+        "I3 listener registered + alloc REFUSED: the gate is still shut");
+  CHECK(!h.saw_edge(6, true), "I3 no declare edge on the second refusal");
+  CHECK(h.gates.empty(), "I3 no DECLARE_TALKER without a DA");
+  // the allocator answers: NOW the gate opens, on the grant alone
+  h.grant_ok = true;
+  uint32_t t7b = 210000; d->now_ms_i = t7b;
+  {
+    CHECK(h.send(MT_PROBE, 6, C1, 0x171, L1, 3, FL_SW), "I4 consumed");
+    h.run(40);
+    Resp e = echo(MT_PROBE, ST_DMAC_FAIL, 6, C1, 0x171, L1, 3);
+    e.flags = FL_SW;                          // answered before the grant
+    h.expect_resp("I4 no DA yet at answer time", e);
+    h.expect_arm("I4 ping", 6, t7b + T_DAFRESH, false);
+    h.expect_mreq("I4 retry alloc", 6, false);
+    const uint64_t da6 = da_pool(10);         // eleventh GRANT overall
+    h.expect_open("I4 grant declares", 6, da6);
+    CHECK(h.saw_edge(6, true),
+          "I4 declaring_o[6] OBSERVED 0 -> 1 on the grant");
+    CHECK(h.decl_mask() == 0x7Au, "I4 only src6 moved, got 0x%02x",
+          h.decl_mask());
+  }
+  h.drained("I");
+
+  // ---- J: an ABSENT maap must DEGRADE, never wedge the walker ----------
+  // The request face is a held valid/ready handshake and ONE walker serves
+  // every source and every command, so a shim that never asserts ready would
+  // silence the whole talker half of ACMP (and of SRP through the gate
+  // strobes). The regression: with maap gone, commands are still answered.
+  d->maap_req_ready_i = 0;                    // the allocator is GONE
+  h.clear_edges();
+  const int off0 = h.offers;
+  d->cfg_src_en_i = 0xEF;                     // src4 (declaring) leaves
+  h.run(8);
+  h.expect_close("J1 withdraw on removal", 4);
+  h.expect_arm("J1 cancel shared slot", 4, 0, true);
+  CHECK(h.saw_edge(4, false), "J1 declaring_o[4] OBSERVED 1 -> 0");
+  CHECK(d->maap_req_valid_o == 1 && d->maap_req_release_o == 1
+        && int(d->maap_req_src_o) == 4,
+        "J2 RELEASE_DA offered and unaccepted");
+  CHECK(h.send(MT_GTXS, 2, C1, 0x180, 0, 0, 0),
+        "J3 THE REGRESSION: a command is still consumed with maap hung");
+  CHECK(h.last_send_cyc <= MAAP_TMO + 64,
+        "J3 served inside the accept window (%d cycles)", h.last_send_cyc);
+  {
+    Resp e = echo(MT_GTXS, ST_OK, 2, C1, 0x180, 0, 0);
+    e.sid = sid_of(2); e.da = da[2]; e.vlan = VID;
+    h.expect_resp("J3 answer unaffected by the hung request", e);
+  }
+  CHECK(h.hold_last == MAAP_TMO,
+        "J4 request abandoned after exactly %d cycles, got %d",
+        MAAP_TMO, h.hold_last);
+  d->cfg_src_en_i = 0xFF;                     // src4 returns, maap still gone
+  h.run(MAAP_TMO + 80);
+  uint32_t t8 = 300000; d->now_ms_i = t8;
+  {
+    CHECK(h.send(MT_PROBE, 4, C1, 0x181, L1, 5, FL_FC), "J5 consumed");
+    h.run(8);
+    Resp e = echo(MT_PROBE, ST_DMAC_FAIL, 4, C1, 0x181, L1, 5);
+    e.flags = FL_FC;
+    h.expect_resp("J5 abandoned alloc = the refused-alloc state", e);
+    h.expect_arm("J5 ping still arms freshness", 4, t8 + T_DAFRESH, false);
+    CHECK(((h.decl_mask() >> 4) & 1) == 0, "J5 no gate without a DA");
+  }
+  h.run(MAAP_TMO + 80);                       // the probe's retry times out too
+  CHECK(h.offers == off0 + 3,
+        "J6 every stimulus re-offers (release, re-enable, probe), got %d",
+        h.offers - off0);
+  CHECK(h.mreqs.empty(), "J6 nothing was ever accepted while maap was gone");
+  d->maap_req_ready_i = 1;                    // the allocator comes back
+  uint32_t t9 = 320000; d->now_ms_i = t9;
+  h.clear_edges();
+  {
+    CHECK(h.send(MT_PROBE, 4, C1, 0x182, L1, 5, FL_FC), "J7 consumed");
+    h.run(60);
+    Resp e = echo(MT_PROBE, ST_DMAC_FAIL, 4, C1, 0x182, L1, 5);
+    e.flags = FL_FC;
+    h.expect_resp("J7 still no DA at answer time", e);
+    h.expect_arm("J7 ping", 4, t9 + T_DAFRESH, false);
+    h.expect_mreq("J7 alloc accepted once maap returns", 4, false);
+    const uint64_t da4b = da_pool(11);
+    h.expect_open("J7 grant re-declares", 4, da4b);
+    CHECK(h.saw_edge(4, true),
+          "J7 declaring_o[4] OBSERVED 0 -> 1: the source recovered");
+    CHECK(h.decl_mask() == 0x7Au, "J7 final gates, got 0x%02x", h.decl_mask());
+  }
+  h.drained("J");
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   delete d;

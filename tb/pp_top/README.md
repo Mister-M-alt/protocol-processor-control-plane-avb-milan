@@ -16,7 +16,7 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make` — exit 0 = PASS; tally `73 checks: 73 PASS, 0 FAIL`.
+`make` — exit 0 = PASS; tally `86 checks: 86 PASS, 0 FAIL`.
 
 ## What it proves
 
@@ -48,6 +48,18 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
 - **S9** the S6 binding commits through the debounced NVM shadow: framed
   F07.8 record (magic 0x1722) carrying the bound talker EID at the device
   face.
+- **S10** the `maap` face (02 §4.2), which the top publishes because 01 §3
+  puts address allocation in the integrating fabric. Run in two halves. With
+  NO allocator (`maap_req_ready_i` 0 for the whole run above): the port is
+  seen OFFERING requests, nothing is accepted, `acmp_declaring_o` is 0, and —
+  the regression — a GET_TX_STATE_COMMAND is still answered byte-exact, plus
+  a PROBE_TX answered byte-exact TALKER_DEST_MAC_FAILED. Before the accept
+  window existed, one unaccepted allocation parked the single talker walker
+  forever and neither answer ever came. With the allocator on: the ALLOC_DA
+  is accepted for source 0, `acmp_declaring_o[0]` is observed rising 0 -> 1,
+  the granted address is what the next GET_TX_STATE_RESPONSE carries, and the
+  same address appears as the dest MAC of the Talker Advertise on the MSRP
+  wire — MAAP -> DA gate -> ACMP answer -> SRP declaration, end to end.
 
 ## Snapshot window map (side port 0x20000, implemented by the top)
 
@@ -78,8 +90,10 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M1 | `KL_mrp_strip` strips 13 bytes instead of 14 (`body_w` compare 4'd14→4'd13) | 9 FAIL — S8 Domain adoption, listener READY, class-D: the SRP RX seam is load-bearing |
 | M2 | ACMP prepend shim EtherType 0x22F0→0x22F1 | 8 FAIL — S6/S7 every ACMP wire check: the prepended header is what the wire sees |
 | M3 | steer prefetch reads the addressed EID at PDU offset 27 instead of 28 | 16 FAIL — S6/S7/S9 the listener silently ignores mis-addressed heads (and the binding never commits): the target_eid rewrite is the real multicast discriminator |
+| M4 | `KL_acmp_talker` S_EV_MAAP loses its timeout exit (the deadlock restored) | 5 FAIL — S10: with no allocator the talker walker never consumes another command, so neither ACMP answer reaches the wire |
+| M5 | the top re-ties `.maap_req_ready_i (1'b0)` on the talker instance | 6 FAIL — S10: no grant, no gate, no declared DA on the SRP wire. The port is load-bearing, not decoration |
 
-All three bite; originals restored; suite back to 73/73.
+All five bite; originals restored; suite back to 86/86.
 
 ## Recorded seams and honest limits
 
@@ -101,6 +115,11 @@ All three bite; originals restored; suite back to 73/73.
   opportunity — there is no clean later window by construction.
 - The AECP pop face is tied `ready = 0` (P4 µCPU seam); AEM frames would
   park in the dispatch queue and are deliberately not sent.
+- The S10 allocator is a harness model of the 02 §4.2 op semantics only
+  (accept a request, answer once, hand back an address). It proves the FACE
+  and the address flow through this processor — never MAAP itself: the
+  probe/defend/announce state machine of IEEE 1722 Annex B lives in the
+  integrating fabric, outside this repo.
 - The NVM device model is blank flash (reads answer 0xFF): a record failing
   the F07.8 magic/layout check is SKIPPED by the shadow, which is the
   documented no-saved-binding path. Torn-stream restore aborts are covered
