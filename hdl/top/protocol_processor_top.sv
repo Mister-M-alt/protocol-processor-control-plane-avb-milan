@@ -263,7 +263,14 @@ module protocol_processor_top
     output logic [N_STREAM_IN_P*64-1:0]  acmp_bound_sid_o,        //! per-sink bound stream_id
     output logic [N_STREAM_IN_P*48-1:0]  acmp_bound_dmac_o,       //! per-sink bound stream destination MAC
     output logic [N_STREAM_IN_P*12-1:0]  acmp_bound_vlan_o,       //! per-sink bound stream VLAN id
-    output logic [15:0]                  adp_next_avail_index_o,  //! available_index the NEXT ENTITY_AVAILABLE will carry
+    //! 32 BITS, not 16. KL_adp_engine keeps a 32-bit counter and puts all
+    //! 32 on the wire, and the AEM ENTITY descriptor's available_index is a
+    //! 32-bit field that is visible in every READ_DESCRIPTOR response.
+    //! Truncating here would wrap the CSR and the AEM readback at 65536
+    //! advertisements while the ADPDU kept counting — a controller would see
+    //! available_index step BACKWARDS, which is exactly the signal it uses to
+    //! decide an entity restarted.
+    output logic [31:0]                  adp_next_avail_index_o,  //! available_index the NEXT ENTITY_AVAILABLE will carry
 
     //! ---- observability ----
     output logic [31:0] dbg_now_ms_o           //! absolute ms timebase
@@ -381,8 +388,8 @@ module protocol_processor_top
 
   //! The ADP engine's dbg_avail_index is the PRE-INCREMENT value — the index
   //! the next ENTITY_AVAILABLE will actually carry, which is what a consumer
-  //! wants to publish. It is 32 bits internally and 16 on the wire.
-  assign adp_next_avail_index_o = adp_dbg_aidx_nc_w[15:0];
+  //! wants to publish. Full width: see the port comment.
+  assign adp_next_avail_index_o = adp_dbg_aidx_nc_w;
 
   logic        prng_req_w;
   logic [2:0]  prng_kind_w;
@@ -980,6 +987,15 @@ module protocol_processor_top
       end
       if (lstn_disc_disarm_w) begin
         bound_r[lstn_act_sink_w] <= 1'b0;
+        //! CLEAR THE STREAM IDENTITY WITH THE BINDING. Leaving it behind is
+        //! not a harmless stale debug value: acmp_bound_o is DEBOUNCED, so
+        //! across an unbind+rebind it can stay high while these still name
+        //! the PREVIOUS stream — and a fabric arms its RX filter, stream
+        //! table and CRF receiver from them. Stale stream-X parameters must
+        //! never describe stream Y (Milan §5.3.8.9).
+        bound_sid_r [lstn_act_sink_w] <= 64'd0;
+        bound_dmac_r[lstn_act_sink_w] <= 48'd0;
+        bound_vlan_r[lstn_act_sink_w] <= 12'd0;
       end
     end
   end
