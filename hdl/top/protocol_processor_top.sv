@@ -255,6 +255,14 @@ module protocol_processor_top
     //! engine's own edge detector, which must keep seeing it.
     output logic [N_STREAM_IN_P-1:0]     acmp_bound_o,
     output logic [N_STREAM_IN_P*64-1:0]  acmp_bound_eid_o,        //! per-sink bound talker entity_id, valid with acmp_bound_o
+    //! The bound stream's IDENTITY ON THE WIRE. entity_id above says WHO the
+    //! talker is; these say WHICH STREAM to receive and on WHAT address — an
+    //! integrating fabric needs them to arm its RX filter and its stream
+    //! table, and cannot derive either from the entity_id. Latched at A15
+    //! settle, held while acmp_bound_o.
+    output logic [N_STREAM_IN_P*64-1:0]  acmp_bound_sid_o,        //! per-sink bound stream_id
+    output logic [N_STREAM_IN_P*48-1:0]  acmp_bound_dmac_o,       //! per-sink bound stream destination MAC
+    output logic [N_STREAM_IN_P*12-1:0]  acmp_bound_vlan_o,       //! per-sink bound stream VLAN id
     output logic [15:0]                  adp_next_avail_index_o,  //! available_index the NEXT ENTITY_AVAILABLE will carry
 
     //! ---- observability ----
@@ -366,7 +374,10 @@ module protocol_processor_top
     else                           bound_hold_r <= bound_hold_r | bound_r;
   end
   assign acmp_bound_o     = bound_hold_r;
-  assign acmp_bound_eid_o = bound_eid_r;
+  assign acmp_bound_eid_o  = bound_eid_r;
+  assign acmp_bound_sid_o  = bound_sid_r;
+  assign acmp_bound_dmac_o = bound_dmac_r;
+  assign acmp_bound_vlan_o = bound_vlan_r;
 
   //! The ADP engine's dbg_avail_index is the PRE-INCREMENT value — the index
   //! the next ENTITY_AVAILABLE will actually carry, which is what a consumer
@@ -934,6 +945,9 @@ module protocol_processor_top
   // ---- binding view (07 §4): realized as top-held registers driven by the
   // listener's A4/A9 discovery strobes, read as levels by the ADP engine.
   logic [N_STREAM_IN_P-1:0]        bound_r;
+  logic [N_STREAM_IN_P-1:0][63:0]  bound_sid_r;
+  logic [N_STREAM_IN_P-1:0][47:0]  bound_dmac_r;
+  logic [N_STREAM_IN_P-1:0][11:0]  bound_vlan_r;
   logic [N_STREAM_IN_P-1:0][63:0]  bound_eid_r;
 
   logic        lstn_disc_arm_w, lstn_disc_disarm_w;
@@ -946,12 +960,23 @@ module protocol_processor_top
 
   always_ff @(posedge clk_i) begin : binding_view
     if (!rst_n) begin
-      bound_r     <= '0;
-      bound_eid_r <= '0;
+      bound_r      <= '0;
+      bound_eid_r  <= '0;
+      bound_sid_r  <= '0;
+      bound_dmac_r <= '0;
+      bound_vlan_r <= '0;
     end else begin
       if (lstn_disc_arm_w) begin
         bound_r[lstn_act_sink_w]     <= 1'b1;
         bound_eid_r[lstn_act_sink_w] <= lstn_disc_eid_w;
+      end
+      //! The A15 settle carries the stream's wire identity. Latch it beside
+      //! the entity_id so a fabric can arm an RX filter from one coherent
+      //! view instead of reconstructing it from the ACMPDU itself.
+      if (lstn_act_settle_w) begin
+        bound_sid_r [lstn_act_sink_w] <= lstn_act_settle_sid_w;
+        bound_dmac_r[lstn_act_sink_w] <= lstn_act_settle_da_w;
+        bound_vlan_r[lstn_act_sink_w] <= lstn_act_settle_vlan_w;
       end
       if (lstn_disc_disarm_w) begin
         bound_r[lstn_act_sink_w] <= 1'b0;
