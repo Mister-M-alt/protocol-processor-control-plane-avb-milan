@@ -404,7 +404,7 @@ module protocol_processor_top
   //! while the executor is idle. bound_r itself is untouched — KL_adp_engine
   //! edge-detects it and that behaviour must not change.
   logic [N_STREAM_IN_P-1:0] bound_hold_r;
-  always_ff @(posedge clk_i or negedge rst_n) begin : bound_debounce
+  always_ff @(posedge clk_i) begin : bound_debounce
     if (!rst_n)                    bound_hold_r <= '0;
     else if (!lstn_dbg_busy_nc_w)  bound_hold_r <= bound_r;   // idle: track
     else                           bound_hold_r <= bound_hold_r | bound_r;

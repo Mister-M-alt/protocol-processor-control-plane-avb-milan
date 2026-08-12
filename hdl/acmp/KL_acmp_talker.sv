@@ -288,7 +288,7 @@ module KL_acmp_talker
   assign rec_wdata_s = tk_rec_t'(rec_wdata_w);
 
   logic [N_STREAM_OUT_P-1:0] declaring_r;
-  always_ff @(posedge clk_i or negedge rst_n) begin : declaring_mirror
+  always_ff @(posedge clk_i) begin : declaring_mirror
     if (!rst_n) begin
       declaring_r <= '0;
     end else if (rec_we_w) begin

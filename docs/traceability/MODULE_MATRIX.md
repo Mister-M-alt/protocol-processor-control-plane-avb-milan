@@ -3,12 +3,12 @@
 
 | Module | File | Suites |
 |---|---|---|
-| `KL_pp_acmp_listener` | `hdl/acmp/KL_pp_acmp_listener.sv` | acmp_listener, acmp_nvm, pp_top |
 | `KL_acmp_nvm_shadow` | `hdl/acmp/KL_acmp_nvm_shadow.sv` | acmp_nvm, pp_top |
 | `KL_acmp_talker` | `hdl/acmp/KL_acmp_talker.sv` | acmp_talker, pp_top |
 | `KL_adp_engine` | `hdl/adp/KL_adp_engine.sv` | adp_engine, pp_top |
 | `KL_aecp_ucpu` | `hdl/aecp/KL_aecp_ucpu.sv` | ucpu |
 | `KL_mrp_strip` | `hdl/top/KL_mrp_strip.sv` | pp_top |
+| `KL_pp_acmp_listener` | `hdl/acmp/KL_pp_acmp_listener.sv` | acmp_listener, acmp_nvm, pp_top |
 | `KL_pp_dispatch` | `hdl/packet_engine/KL_pp_dispatch.sv` | dispatch, pp_top |
 | `KL_pp_dispatch_fifo` | `hdl/packet_engine/KL_pp_dispatch.sv` | dispatch, pp_top |
 | `KL_pp_event_router` | `hdl/packet_engine/KL_pp_event_router.sv` | event_router, pp_top |
