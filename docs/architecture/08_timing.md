@@ -122,6 +122,29 @@ Baseline example (1 IF, 8 + 8 streams, 16 controllers, CA pool 4):
 slots — one 89 × 40-bit deadline RAM (89 × 40 b = 3,560 bits: still the same single
 RAMB18 the 66-slot baseline used).
 
+### 5.1 The map: order is the contract, spacing is the shape
+
+The **row order** above is normative — engines are parameterized with a base slot
+and index it as `base + instance`, so moving a group renumbers everything after it.
+The **sizes** are not: each group's extent depends on `SI` / `SO` / `IF` / `CTRL`, so
+every base is the running sum of the extents before it, computed once in
+`pp_pkg::pp_timer_map()` and read from there by `protocol_processor_top`. Written as
+literals the map is correct at exactly one shape: at `SI = SO = 9` the 8-stream
+literals put ACMP listener sink 8 on the talker base and SRP talker 8 on the SRP
+listener base. The first is a **lost** deadline (the ACMP engines filter expiries by
+owner tag, and theirs differ); the second is a **misdelivered** one (ADP and SRP
+filter by slot, with no owner discrimination). Neither raises an error or moves a
+counter. The 02 §5 event-router source map has the same shape-dependence and the same
+cure (`pp_pkg::pp_evr_map()`), with no owner tag at all to fall back on.
+
+The expiry bus carries `{slot, owner}` in a **fixed** 8-bit owner space
+(`pp_pkg PP_OWN_*`: listener `0x20`, SRP talker `0x40`, ACMP talker `0x50`, SRP
+listener `0x60`, SRP cadence `0x80`; ADP publishes its slot *as* its owner tag). That
+space does not scale with the shape, so it is not re-spaced — it is **bounded**: an
+elaboration guard in the top refuses to build a shape whose owner ranges would
+overlap. The current allocation admits up to 16 sources and 31 sinks. Both maps and
+the guard are graded by the `timer_map` suite ([09 §3](09_verification.md)).
+
 ## 6. Cross-references
 
 Consumed by every engine (§9 sections of [04](04_adp_engine.md)/[05](05_acmp_engine.md)/

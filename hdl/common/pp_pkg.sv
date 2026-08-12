@@ -132,6 +132,75 @@ package pp_pkg;
   //
   //   baseline (IF=1, SI=SO=8, CTRL=16, CA=4): 1+8+8+8+32+4+5      = 66
   //   with the SRP engine:                      66 + (7 + 8 + 8)    = 89
+  //
+  // F01.5 shape defaults, named once so nothing below restates them. Every
+  // consumer of the map derives from these or from its own shape — a copied
+  // literal is exactly the defect the map function exists to prevent.
+  localparam int unsigned PP_N_IF_C         = 1;   // P-N-AVB-INTERFACES
+  localparam int unsigned PP_N_STREAM_IN_C  = 8;   // P-N-STREAM-IN
+  localparam int unsigned PP_N_STREAM_OUT_C = 8;   // P-N-STREAM-OUT
+  localparam int unsigned PP_N_CTRL_C       = 16;  // P-N-CONTROLLERS
+  localparam int unsigned PP_CA_POOL_C      = 4;   // P-CA-POOL
+
+  // ---- F08.4 SLOT MAP, derived — never literals --------------------------
+  // The 08 §5 order above is a CONTRACT: the groups appear in exactly that
+  // sequence. Their SIZES are shape-dependent (SI/SO/IF/CTRL/CA), so every
+  // base is the running sum of the group extents before it. This struct is
+  // the single place that arithmetic exists; protocol_processor_top reads
+  // its bases and KL_pp_timer_service is sized from `srp_end`.
+  //
+  // Why this is not a style preference: the ACMP listener and talker filter
+  // timer expiries BY OWNER TAG while ADP and SRP filter BY SLOT, so an
+  // aliased slot fails two different silent ways — a lost deadline where the
+  // owners differ, and a MISDELIVERED expiry (one engine acting on another's
+  // deadline) where they do not. Neither raises an error or moves a counter.
+  typedef struct packed {
+    int unsigned adp_adv;    // T-ADP-ADV / T-ADP-DELAY, IF slots
+    int unsigned adp_noadp;  // T-ADP-NOADP, SI slots
+    int unsigned lstn;       // ACMP listener shared SM slot, SI slots
+    int unsigned tkr;        // T-SRP-DAFRESH / LEAVEALL2, SO slots
+    int unsigned regmon;     // registry monitors, 2*CTRL*IF slots (P4)
+    int unsigned capool;     // T-AECP-TIMEOUT inflight pool, CA slots (P4)
+    int unsigned single;     // 5 singleton timers (P4)
+    int unsigned base_end;   // total WITHOUT the SRP engine
+    int unsigned srp_cad;    // MRP cadence, 5 + the 2 fixed registrar-leave
+    int unsigned srp_tk;     // SRP talker registrar-leave, SO slots
+    int unsigned srp_ls;     // SRP listener registrar-leave, SI slots
+    int unsigned srp_end;    // total WITH the SRP engine
+  } pp_timer_map_t;
+
+  //! The SRP block's fixed head: T-MRP-{JOIN,LEAVEALL} x 2 participants +
+  //! T-MRP-PERIODIC (5 cadence slots) followed by the Domain and MVRP VID
+  //! registrar-leave slots (2) — the "7" of the (7 + SI + SO) term.
+  localparam int unsigned PP_SRP_CAD_SLOTS_C = 7;
+  //! LOCK-UNLOCK, IDENT-BURST, IDENT-REARM, CTR-OBSERVE, NVM-DEBOUNCE.
+  localparam int unsigned PP_SINGLETON_SLOTS_C = 5;
+
+  function automatic pp_timer_map_t pp_timer_map(
+      input int unsigned n_if,     // P-N-AVB-INTERFACES
+      input int unsigned si,       // P-N-STREAM-IN
+      input int unsigned so,       // P-N-STREAM-OUT
+      input int unsigned n_ctrl,   // P-N-CONTROLLERS
+      input int unsigned ca_pool   // P-CA-POOL
+  );
+    pp_timer_map_t m;
+    m.adp_adv   = 32'd0;
+    m.adp_noadp = m.adp_adv   + n_if;
+    m.lstn      = m.adp_noadp + si;
+    m.tkr       = m.lstn      + si;
+    m.regmon    = m.tkr       + so;
+    m.capool    = m.regmon    + (32'd2 * n_ctrl * n_if);
+    m.single    = m.capool    + ca_pool;
+    m.base_end  = m.single    + PP_SINGLETON_SLOTS_C;
+    // the SRP block, replicated per interface by F08.4; the bases below are
+    // interface 0's (the RTL instantiates exactly one KL_srp_top today).
+    m.srp_cad   = m.base_end;
+    m.srp_tk    = m.srp_cad + PP_SRP_CAD_SLOTS_C;
+    m.srp_ls    = m.srp_tk  + so;
+    m.srp_end   = m.srp_cad + ((PP_SRP_CAD_SLOTS_C + si + so) * n_if);
+    return m;
+  endfunction
+
   function automatic int unsigned pp_timer_slots(
       input int unsigned n_if,     // P-N-AVB-INTERFACES
       input int unsigned si,       // P-N-STREAM-IN
@@ -140,15 +209,67 @@ package pp_pkg;
       input int unsigned ca_pool,  // P-CA-POOL
       input bit          en_srp    // P-EN-SRP-ENGINE
   );
-    return n_if + si + si + so + (32'd2 * n_ctrl * n_if) + ca_pool + 32'd5
-         + (en_srp ? ((32'd7 + si + so) * n_if) : 32'd0);
+    pp_timer_map_t m;
+    m = pp_timer_map(n_if, si, so, n_ctrl, ca_pool);
+    return en_srp ? m.srp_end : m.base_end;
   endfunction
 
   // F01.5 defaults through the formula — never restated as literals.
   localparam int unsigned PP_TIMER_SLOTS_BASE_C =
-      pp_timer_slots(1, 8, 8, 16, 4, 1'b0);                    // = 66
+      pp_timer_slots(PP_N_IF_C, PP_N_STREAM_IN_C, PP_N_STREAM_OUT_C,
+                     PP_N_CTRL_C, PP_CA_POOL_C, 1'b0);         // = 66
   localparam int unsigned PP_TIMER_SLOTS_C =
-      pp_timer_slots(1, 8, 8, 16, 4, 1'b1);                    // = 89
+      pp_timer_slots(PP_N_IF_C, PP_N_STREAM_IN_C, PP_N_STREAM_OUT_C,
+                     PP_N_CTRL_C, PP_CA_POOL_C, 1'b1);         // = 89
+
+  // ---- owner-tag space (08 §5; the shared expiry bus is 8 bits) ----------
+  // The expiry bus carries {slot, owner}. ADP and SRP filter by SLOT; the
+  // ACMP listener and talker filter by OWNER TAG, so their per-index owner
+  // ranges must not overlap ANY other engine's. Unlike the slot map these
+  // bases are a FIXED allocation of a fixed 8-bit space, so they are stated
+  // once here and BOUNDED by an elaboration guard in the top rather than
+  // re-spaced per shape (re-spacing them would silently move the tags a
+  // landed engine's default parameters already publish).
+  localparam logic [7:0] PP_OWN_LSTN_C    = 8'h20;  // + sink   (KL_pp_acmp_listener)
+  localparam logic [7:0] PP_OWN_SRP_TK_C  = 8'h40;  // + source (KL_srp_talker_fsm)
+  localparam logic [7:0] PP_OWN_TKR_C     = 8'h50;  // + source (KL_acmp_talker)
+  localparam logic [7:0] PP_OWN_SRP_LS_C  = 8'h60;  // + sink   (KL_srp_listener_fsm)
+  localparam logic [7:0] PP_OWN_SRP_CAD_C = 8'h80;  // + 0..6   (KL_srp_top cadence)
+
+  // ---- 02 §5 event-router SOURCE MAP, derived — never literals -----------
+  // The router presents ONE source index per event and carries no owner tag,
+  // so two groups landing on the same index are indistinguishable at the
+  // consumer: the ACMP listener's kind decode is a pure range compare on the
+  // index. Same failure shape as the timer map, same cure — the ORDER is the
+  // contract, the SIZES are the shape.
+  typedef struct packed {
+    int unsigned tk_reg;    // SRP TK_ATTR_REGISTERED{sink},   SI sources
+    int unsigned tk_unreg;  // SRP TK_ATTR_UNREGISTERED{sink}, SI sources
+    int unsigned adp_disc;  // ADP EVT_TK_DISCOVERED{sink}
+    int unsigned adp_dep;   // ADP EVT_TK_DEPARTED{sink}
+    int unsigned domain;    // SRP DOMAIN_CHANGE
+    int unsigned lsn_chg;   // SRP LISTENER_REG_CHANGE{source}, SO sources
+    int unsigned gm_chg;    // gPTP GM_CHANGE
+    int unsigned link;      // interface LINK edge
+    int unsigned n_src;     // total sources (= 29 at the 8x8 default)
+  } pp_evr_map_t;
+
+  function automatic pp_evr_map_t pp_evr_map(
+      input int unsigned si,   // P-N-STREAM-IN
+      input int unsigned so    // P-N-STREAM-OUT
+  );
+    pp_evr_map_t m;
+    m.tk_reg   = 32'd0;
+    m.tk_unreg = m.tk_reg   + si;
+    m.adp_disc = m.tk_unreg + si;
+    m.adp_dep  = m.adp_disc + 32'd1;
+    m.domain   = m.adp_dep  + 32'd1;
+    m.lsn_chg  = m.domain   + 32'd1;
+    m.gm_chg   = m.lsn_chg  + so;
+    m.link     = m.gm_chg   + 32'd1;
+    m.n_src    = m.link     + 32'd1;
+    return m;
+  endfunction
 
 endpackage : pp_pkg
 `default_nettype wire

@@ -78,10 +78,16 @@ module KL_adp_engine
     //! KL_pp_tx_slots geometry — must match the instantiated pool
     parameter int unsigned TX_STD_SLOTS_P = 4,
     parameter int unsigned TX_OVERSIZE_BYTES_P = 1600,
+    //! P-TIMER-SLOTS of the attached KL_pp_timer_service (index width only).
+    //! Parameterized, not read from pp_pkg: the F08.4 slot map is derived
+    //! from the SHAPE (08 §5), so a top elaborated at more than the F01.5
+    //! default streams sizes a larger timer and this width must follow it.
+    parameter int unsigned TMR_SLOTS_P = pp_pkg::PP_TIMER_SLOTS_C,
     //! derived widths — do not override
     localparam int unsigned IF_W_C  = (N_IF_P > 1) ? $clog2(N_IF_P) : 1,
     localparam int unsigned SNK_W_C = (N_SINK_P > 1) ? $clog2(N_SINK_P) : 1,
-    localparam int unsigned TMR_AW_C = $clog2(pp_pkg::PP_TIMER_SLOTS_C),
+    localparam int unsigned TMR_AW_C = (TMR_SLOTS_P > 32'd1)
+                                       ? $clog2(TMR_SLOTS_P) : 32'd1,
     localparam int unsigned RXS_SLOT_W_C = (RX_SLOTS_P > 1) ? $clog2(RX_SLOTS_P) : 1,
     localparam int unsigned RXS_ADDR_W_C = $clog2(RX_BYTES_P),
     localparam int unsigned TXS_SLOT_W_C = $clog2(TX_STD_SLOTS_P + 1),

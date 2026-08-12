@@ -86,7 +86,17 @@ module protocol_processor_top
     //! ACMP listener transition-ROM image (rom/gen_ltn_rom.py output)
     parameter string       TROM_HEX_P          = "ltn_rom.hex",
     //! derived — do not override
-    localparam int unsigned TMR_AW_C     = $clog2(PP_TIMER_SLOTS_C),        // 7
+    //! F08.4 timer-slot map for THIS shape. Every base below is the running
+    //! sum of the group extents before it (pp_pkg::pp_timer_map is the ONE
+    //! place that arithmetic exists), so the map is correct at any
+    //! P-N-STREAM-IN / P-N-STREAM-OUT — see the banner at the bases.
+    localparam pp_timer_map_t TMR_MAP_C =
+        pp_timer_map(PP_N_IF_C, N_STREAM_IN_P, N_STREAM_OUT_P,
+                     PP_N_CTRL_C, PP_CA_POOL_C),
+    //! P-TIMER-SLOTS for this shape (= pp_timer_slots(..., en_srp = 1)).
+    //! At the F01.5 default shape this is exactly PP_TIMER_SLOTS_C = 89.
+    localparam int unsigned TMR_SLOTS_C  = TMR_MAP_C.srp_end,
+    localparam int unsigned TMR_AW_C     = $clog2(TMR_SLOTS_C),             // 7 at 8x8
     localparam int unsigned RXS_W_C      = (RX_SLOTS_P > 1) ? $clog2(RX_SLOTS_P) : 1,
     //! Sink/source index widths, CLAMPED exactly as the engines clamp their
     //! own (KL_pp_acmp_listener SINK_W_C :76, KL_acmp_talker SRC_W_C :95).
@@ -306,23 +316,84 @@ module protocol_processor_top
 );
 
   // ---- F08.4 timer-slot allocation (08 §5 order; bases are the contract) --
-  localparam int unsigned TMR_ADP_ADV_BASE_C   = 0;   // 1 slot  (IF = 1)
-  localparam int unsigned TMR_ADP_NOADP_BASE_C = 1;   // 8 slots
-  localparam int unsigned TMR_LSTN_BASE_C      = 9;   // 8 slots (shared SM)
-  localparam int unsigned TMR_TKR_BASE_C       = 17;  // 8 slots (DAFRESH/LA2)
-  // 25..56 registry monitors (P4), 57..60 CA pool (originator), 61..65
-  // singletons (P4) — reserved, unused this phase
-  localparam int unsigned TMR_SRP_CAD_BASE_C   = 66;  // 5 cadence slots
-  localparam int unsigned TMR_SRP_TK_BASE_C    = 73;  // 8 registrar-leave
-  localparam int unsigned TMR_SRP_LS_BASE_C    = 81;  // 8 registrar-leave
+  //! DERIVED, never literals. The 08 §5 ORDER is the contract; the SIZES are
+  //! the shape. A literal map is only correct at the F01.5 default shape:
+  //! with SI = SO = 9 (the reference platform's 8x8 build, where the CRF
+  //! Media Clock Output is itself a source and a sink) the old literals
+  //! aliased listener sink 8 onto the talker base and SRP talker 8 onto the
+  //! SRP listener base — the first SILENTLY LOSES a deadline (distinct owner
+  //! tags, and the ACMP engines filter by owner) and the second MISDELIVERS
+  //! one (ADP and SRP filter by slot, so SRP listener 0 would act on SRP
+  //! talker 8's expiry). Neither raises an error or moves a counter; on
+  //! silicon they read as an intermittent ACMP timeout and a reservation
+  //! that leaves at the wrong moment. The guard below is what makes an
+  //! over-large shape fail LOUDLY instead.
+  localparam int unsigned TMR_ADP_ADV_BASE_C   = TMR_MAP_C.adp_adv;    // IF slots
+  localparam int unsigned TMR_ADP_NOADP_BASE_C = TMR_MAP_C.adp_noadp;  // SI slots
+  localparam int unsigned TMR_LSTN_BASE_C      = TMR_MAP_C.lstn;       // SI (shared SM)
+  localparam int unsigned TMR_TKR_BASE_C       = TMR_MAP_C.tkr;        // SO (DAFRESH/LA2)
+  // TMR_MAP_C.regmon (2*CTRL*IF registry monitors, P4), .capool (CA pool,
+  // originator) and .single (5 singletons, P4) are reserved and unused this
+  // phase — but they are SPACED, so landing them cannot move anything below.
+  localparam int unsigned TMR_SRP_CAD_BASE_C   = TMR_MAP_C.srp_cad;    // 5 cadence + 2 fixed
+  localparam int unsigned TMR_SRP_TK_BASE_C    = TMR_MAP_C.srp_tk;     // SO registrar-leave
+  localparam int unsigned TMR_SRP_LS_BASE_C    = TMR_MAP_C.srp_ls;     // SI registrar-leave
 
   // owner tags must be disjoint across the shared expiry bus: the listener
-  // (32..39) and talker (0x50..0x57) filter BY OWNER; ADP and SRP filter by
-  // slot. KL_srp_top's default cadence owner base 0x20 collides with the
-  // listener's range, so it is moved to 0x80 here.
-  localparam logic [7:0] SRP_CAD_OWNER_C = 8'h80;
-  localparam logic [7:0] SRP_TK_OWNER_C  = 8'h40;
-  localparam logic [7:0] SRP_LS_OWNER_C  = 8'h60;
+  // (0x20 + sink) and talker (0x50 + source) filter BY OWNER; ADP and SRP
+  // filter by slot. KL_srp_top's default cadence owner base 0x20 collides
+  // with the listener's range, so it is moved to 0x80 here. Unlike the slot
+  // map these are a fixed allocation of a fixed 8-bit space (pp_pkg), so the
+  // shape is BOUNDED against them by the guard below rather than re-spacing
+  // tags that landed engines already publish as their defaults.
+  localparam logic [7:0] SRP_CAD_OWNER_C = PP_OWN_SRP_CAD_C;
+  localparam logic [7:0] SRP_TK_OWNER_C  = PP_OWN_SRP_TK_C;
+  localparam logic [7:0] SRP_LS_OWNER_C  = PP_OWN_SRP_LS_C;
+
+  // ---- elaboration guard: the map must FIT and stay DISJOINT -------------
+  //! The numbers above can be re-derived by hand; what nothing did before is
+  //! NOTICE when they collide. These are IEEE 1800 §20.11 elaboration system
+  //! tasks: an over-large shape stops the build here instead of aliasing a
+  //! timer slot or an owner tag in silence.
+  //!
+  //! ADP publishes its SLOT as its owner tag (KL_adp_engine tmr_arm_owner_o
+  //! is a zero-extension of tmr_arm_slot_o), so the ADP group constrains the
+  //! owner space as well as the slot space.
+  localparam int unsigned OWN_ADP_END_C   = TMR_MAP_C.lstn;                        // ADP owners = ADP slots
+  localparam int unsigned OWN_LSTN_END_C  = 32'(PP_OWN_LSTN_C)   + N_STREAM_IN_P;
+  localparam int unsigned OWN_SRPTK_END_C = 32'(PP_OWN_SRP_TK_C) + N_STREAM_OUT_P;
+  localparam int unsigned OWN_TKR_END_C   = 32'(PP_OWN_TKR_C)    + N_STREAM_OUT_P;
+  localparam int unsigned OWN_SRPLS_END_C = 32'(PP_OWN_SRP_LS_C) + N_STREAM_IN_P;
+  localparam int unsigned OWN_SRPCAD_END_C = 32'(PP_OWN_SRP_CAD_C) + PP_SRP_CAD_SLOTS_C;
+
+  if (TMR_SLOTS_C > (32'd1 << TMR_AW_C)) begin : gen_g_tmr_aw
+    $error("F08.4: TMR_AW_C=%0d cannot index P-TIMER-SLOTS=%0d",
+           TMR_AW_C, TMR_SLOTS_C);
+  end
+  if (TMR_MAP_C.srp_ls + N_STREAM_IN_P > TMR_SLOTS_C) begin : gen_g_tmr_fit
+    $error("F08.4: slot map ends at %0d but P-TIMER-SLOTS=%0d",
+           TMR_MAP_C.srp_ls + N_STREAM_IN_P, TMR_SLOTS_C);
+  end
+  if ((TMR_ADP_NOADP_BASE_C < TMR_ADP_ADV_BASE_C + PP_N_IF_C)
+      || (TMR_LSTN_BASE_C    < TMR_ADP_NOADP_BASE_C + N_STREAM_IN_P)
+      || (TMR_TKR_BASE_C     < TMR_LSTN_BASE_C      + N_STREAM_IN_P)
+      || (TMR_MAP_C.regmon   < TMR_TKR_BASE_C       + N_STREAM_OUT_P)
+      || (TMR_SRP_CAD_BASE_C < TMR_MAP_C.base_end)
+      || (TMR_SRP_TK_BASE_C  < TMR_SRP_CAD_BASE_C   + PP_SRP_CAD_SLOTS_C)
+      || (TMR_SRP_LS_BASE_C  < TMR_SRP_TK_BASE_C    + N_STREAM_OUT_P))
+  begin : gen_g_tmr_overlap
+    $error("F08.4: timer-slot groups OVERLAP at SI=%0d SO=%0d",
+           N_STREAM_IN_P, N_STREAM_OUT_P);
+  end
+  if ((OWN_ADP_END_C   > 32'(PP_OWN_LSTN_C))
+      || (OWN_LSTN_END_C  > 32'(PP_OWN_SRP_TK_C))
+      || (OWN_SRPTK_END_C > 32'(PP_OWN_TKR_C))
+      || (OWN_TKR_END_C   > 32'(PP_OWN_SRP_LS_C))
+      || (OWN_SRPLS_END_C > 32'(PP_OWN_SRP_CAD_C))
+      || (OWN_SRPCAD_END_C > 32'd256)) begin : gen_g_owner_overlap
+    $error("F08.4: owner tags OVERLAP at SI=%0d SO=%0d (8-bit expiry bus)",
+           N_STREAM_IN_P, N_STREAM_OUT_P);
+  end
 
   // ---- 08 §4 class budgets fed to the normalizer --------------------------
   localparam logic [15:0] BUDGET_ADP_MS_C  = 16'd4000;  // T-ADP-DELAY bound
@@ -352,7 +423,7 @@ module protocol_processor_top
 
   KL_pp_timer_service #(
       .CLK_HZ_P (CLK_HZ_P),
-      .SLOTS_P  (PP_TIMER_SLOTS_C),
+      .SLOTS_P  (TMR_SLOTS_C),
       .DIV_US_P (TIM_DIV_US_P),
       .DIV_MS_P (TIM_DIV_MS_P)
   ) u_timer (
@@ -508,7 +579,9 @@ module protocol_processor_top
   logic [7:0]  org_rsp_ign_nc_w;
   logic [11:0] org_busy_nc_w;
 
-  KL_pp_originator u_originator (
+  KL_pp_originator #(
+      .TMR_SLOTS_P (TMR_SLOTS_C)
+  ) u_originator (
       .clk_i                 (clk_i),
       .rst_n                 (rst_n),
       .iss_valid_i           (1'b0),
@@ -1046,7 +1119,7 @@ module protocol_processor_top
   logic [TXS_W_C-1:0] adp_txreq_slot_w;
   logic [0:0]  adp_txreq_if_nc_w;
   logic        adp_evt_valid_w, adp_evt_departed_w;
-  logic [2:0]  adp_evt_sink_w;
+  logic [SINK_IDX_W_C-1:0] adp_evt_sink_w;  //! CLAMPED (KL_adp_engine SNK_W_C)
   logic [0:0]  adp_gm_tick_nc_w;
   logic [1:0]  adp_dbg_adv_state_w;
   //! not "nc" any more: this is the live available_index, published below.
@@ -1058,6 +1131,7 @@ module protocol_processor_top
   KL_adp_engine #(
       .N_IF_P                (1),
       .N_SINK_P              (N_STREAM_IN_P),
+      .TMR_SLOTS_P           (TMR_SLOTS_C),
       .TMR_SLOT_ADV_BASE_P   (TMR_ADP_ADV_BASE_C),
       .TMR_SLOT_NOADP_BASE_P (TMR_ADP_NOADP_BASE_C),
       .RX_SLOTS_P            (RX_SLOTS_P),
@@ -1138,7 +1212,7 @@ module protocol_processor_top
   logic [63:0] pre_talker_eid_w, pre_ctlr_eid_w;
   logic        pre_sw_w, pre_started_w;
   logic        lstn_arm_valid_w, lstn_arm_cancel_w;
-  logic [6:0]  lstn_arm_slot_w;
+  logic [TMR_AW_C-1:0] lstn_arm_slot_w;
   logic [PP_TIMER_OWNER_W_C-1:0] lstn_arm_owner_w;
   logic [31:0] lstn_arm_deadline_w;
   logic        lstn_draw_req_w;
@@ -1297,7 +1371,7 @@ module protocol_processor_top
       .N_STREAM_OUT_P   (N_STREAM_OUT_P),
       .RX_SLOTS_P       (RX_SLOTS_P),
       .RX_SLOT_BYTES_P  (RX_SLOT_BYTES_P),
-      .TMR_SLOTS_P      (PP_TIMER_SLOTS_C),
+      .TMR_SLOTS_P      (TMR_SLOTS_C),
       .TMR_SLOT_BASE_P  (TMR_TKR_BASE_C),
       .TMR_OWNER_BASE_P (32'h50)
   ) u_talker (
@@ -1412,7 +1486,7 @@ module protocol_processor_top
   logic [TXS_W_C-1:0] srp_txreq_slot_w;
   logic        srp_txreq_ready_w;
   logic        srp_arm_valid_w, srp_arm_cancel_w;
-  logic [6:0]  srp_arm_slot_w;
+  logic [TMR_AW_C-1:0] srp_arm_slot_w;
   logic [7:0]  srp_arm_owner_w;
   logic [31:0] srp_arm_deadline_w;
   logic        srp_draw_req_w;
@@ -1566,7 +1640,7 @@ module protocol_processor_top
           st_tk_vld_r <= 1'b1;
           st_tk_r     <= '{from_svc: 1'b0,
                            op:    tkr_gate_open_w ? 3'd0 : 3'd1,
-                           index: {5'd0, tkr_gate_src_w},
+                           index: 8'(tkr_gate_src_w),
                            sid:   tkr_gate_sid_w,
                            da:    tkr_gate_da_w,
                            vid:   tkr_gate_vlan_w,
@@ -1581,8 +1655,7 @@ module protocol_processor_top
           st_ls_vld_r <= 1'b1;
           st_ls_r     <= '{from_svc: 1'b0,
                            op:    lstn_act_settle_w ? 3'd2 : 3'd3,
-                           index: {{(8-SINK_IDX_W_C){1'b0}},
-                                   lstn_act_sink_w},
+                           index: 8'(lstn_act_sink_w),
                            sid:   lstn_act_settle_sid_w,
                            da:    lstn_act_settle_da_w,
                            vid:   lstn_act_settle_vlan_w,
@@ -1877,16 +1950,39 @@ module protocol_processor_top
   // =========================================================================
   // event router + consumer split (02 §5 catalog)
   // =========================================================================
-  // Source map (banner): 0..7 SRP TK_ATTR_REGISTERED{sink} (payload bit 15 =
-  // Talker Failed at strobe time), 8..15 SRP TK_ATTR_UNREGISTERED{sink},
-  // 16/17 ADP EVT_TK_DISCOVERED/DEPARTED{sink}, 18 DOMAIN_CHANGE, 19..26
-  // LISTENER_REG_CHANGE{src}, 27 GM_CHANGE, 28 LINK edge. TK sources
-  // (0..17) present to the ACMP listener's evt face; every acked event is
-  // traced; non-TK sources trace-and-ack immediately.
-  logic [31:0]        evr_strobe_w;
-  logic [31:0][15:0]  evr_payload_w;
-  logic               evr_valid_w;
-  logic [4:0]         evr_src_w;
+  // Source map (banner), in this ORDER — which is the contract; the SIZES
+  // are the shape, so every base below is DERIVED exactly like the F08.4
+  // timer map. At the F01.5 8x8 default this is the historical numbering:
+  // 0..7 SRP TK_ATTR_REGISTERED{sink} (payload bit 15 = Talker Failed at
+  // strobe time), 8..15 SRP TK_ATTR_UNREGISTERED{sink}, 16/17 ADP
+  // EVT_TK_DISCOVERED/DEPARTED{sink}, 18 DOMAIN_CHANGE, 19..26
+  // LISTENER_REG_CHANGE{src}, 27 GM_CHANGE, 28 LINK edge — 29 sources. TK
+  // sources (0..ADP_DEP) present to the ACMP listener's evt face; every
+  // acked event is traced; non-TK sources trace-and-ack immediately.
+  //
+  // With literal indices this map aliased exactly as the timer map did: at
+  // 9 sinks TK_ATTR_UNREGISTERED{sink 7} lands on the literal 16 that ADP
+  // EVT_TK_DISCOVERED owns, and the router has no owner tag to tell them
+  // apart — the ACMP listener would be handed a DISCOVERED it must treat as
+  // an UNREGISTERED.
+  localparam pp_evr_map_t EVR_MAP_C = pp_evr_map(N_STREAM_IN_P,
+                                                 N_STREAM_OUT_P);
+  localparam int unsigned EVR_TKREG_BASE_C  = EVR_MAP_C.tk_reg;    // SI sources
+  localparam int unsigned EVR_TKUNR_BASE_C  = EVR_MAP_C.tk_unreg;  // SI sources
+  localparam int unsigned EVR_ADP_DISC_C    = EVR_MAP_C.adp_disc;
+  localparam int unsigned EVR_ADP_DEP_C     = EVR_MAP_C.adp_dep;
+  localparam int unsigned EVR_DOMAIN_C      = EVR_MAP_C.domain;
+  localparam int unsigned EVR_LSNCHG_BASE_C = EVR_MAP_C.lsn_chg;   // SO sources
+  localparam int unsigned EVR_GM_C          = EVR_MAP_C.gm_chg;
+  localparam int unsigned EVR_LINK_C        = EVR_MAP_C.link;
+  localparam int unsigned EVR_N_SRC_C       = EVR_MAP_C.n_src;     // = 29 at 8x8
+  localparam int unsigned EVR_SRC_W_C       = (EVR_N_SRC_C > 1)
+                                              ? $clog2(EVR_N_SRC_C) : 1;
+
+  logic [EVR_N_SRC_C-1:0]       evr_strobe_w;
+  logic [EVR_N_SRC_C-1:0][15:0] evr_payload_w;
+  logic                         evr_valid_w;
+  logic [EVR_SRC_W_C-1:0]       evr_src_w;
   logic [15:0]        evr_pay_w;
   logic               evr_lost_w;
   logic               evr_ack_w;
@@ -1901,33 +1997,33 @@ module protocol_processor_top
     evr_strobe_w  = '0;
     evr_payload_w = '0;
     for (int unsigned k = 0; k < N_STREAM_IN_P; k++) begin
-      evr_strobe_w[k]      = srp_evt_tk_reg_w[k];
-      evr_payload_w[k]     = {(srp_tk_reg_state_w[k] == 2'd2),
-                              7'd0, 8'(k)};
-      evr_strobe_w[8 + k]  = srp_evt_tk_unreg_w[k];
-      evr_payload_w[8 + k] = {8'd0, 8'(k)};
+      evr_strobe_w[EVR_TKREG_BASE_C + k]  = srp_evt_tk_reg_w[k];
+      evr_payload_w[EVR_TKREG_BASE_C + k] = {(srp_tk_reg_state_w[k] == 2'd2),
+                                             7'd0, 8'(k)};
+      evr_strobe_w[EVR_TKUNR_BASE_C + k]  = srp_evt_tk_unreg_w[k];
+      evr_payload_w[EVR_TKUNR_BASE_C + k] = {8'd0, 8'(k)};
     end
-    evr_strobe_w[16]  = adp_evt_valid_w && !adp_evt_departed_w;
-    evr_payload_w[16] = {13'd0, adp_evt_sink_w};
-    evr_strobe_w[17]  = adp_evt_valid_w && adp_evt_departed_w;
-    evr_payload_w[17] = {13'd0, adp_evt_sink_w};
-    evr_strobe_w[18]  = srp_evt_domain_change_w;
-    evr_payload_w[18] = {4'd0, srp_class_a_vid_w};
+    evr_strobe_w[EVR_ADP_DISC_C]  = adp_evt_valid_w && !adp_evt_departed_w;
+    evr_payload_w[EVR_ADP_DISC_C] = 16'(adp_evt_sink_w);
+    evr_strobe_w[EVR_ADP_DEP_C]   = adp_evt_valid_w && adp_evt_departed_w;
+    evr_payload_w[EVR_ADP_DEP_C]  = 16'(adp_evt_sink_w);
+    evr_strobe_w[EVR_DOMAIN_C]    = srp_evt_domain_change_w;
+    evr_payload_w[EVR_DOMAIN_C]   = {4'd0, srp_class_a_vid_w};
     for (int unsigned k = 0; k < N_STREAM_OUT_P; k++) begin
-      evr_strobe_w[19 + k]  = srp_lstn_reg_change_w[k];
-      evr_payload_w[19 + k] = {8'd0, 8'(k)};
+      evr_strobe_w[EVR_LSNCHG_BASE_C + k]  = srp_lstn_reg_change_w[k];
+      evr_payload_w[EVR_LSNCHG_BASE_C + k] = {8'd0, 8'(k)};
     end
-    evr_strobe_w[27]  = gm_change_i;
-    evr_payload_w[27] = 16'd0;
-    evr_strobe_w[28]  = link_up_i != link_q_r;
-    evr_payload_w[28] = {15'd0, link_up_i};
+    evr_strobe_w[EVR_GM_C]    = gm_change_i;
+    evr_payload_w[EVR_GM_C]   = 16'd0;
+    evr_strobe_w[EVR_LINK_C]  = link_up_i != link_q_r;
+    evr_payload_w[EVR_LINK_C] = {15'd0, link_up_i};
   end
 
-  logic [4:0]  evr_lost_src_w;
-  logic [7:0]  evr_lost_cnt_nc_w;
+  logic [EVR_SRC_W_C-1:0] evr_lost_src_w;
+  logic [7:0]             evr_lost_cnt_nc_w;
 
   KL_pp_event_router #(
-      .N_SRC_P     (32),
+      .N_SRC_P     (EVR_N_SRC_C),
       .PAYLOAD_W_P (16)
   ) u_event_router (
       .clk_i         (clk_i),
@@ -1946,16 +2042,22 @@ module protocol_processor_top
   assign evr_lost_src_w = evr_src_w;   // thin: read the presented source
 
   logic evr_tk_sel_w;
-  assign evr_tk_sel_w = evr_valid_w && (evr_src_w <= 5'd17);
+  assign evr_tk_sel_w = evr_valid_w
+                        && (evr_src_w <= EVR_SRC_W_C'(EVR_ADP_DEP_C));
 
   assign lstn_evt_tk_valid_w = evr_tk_sel_w;
   assign lstn_evt_tk_sink_w  = {8'd0, evr_pay_w[7:0]};
   assign lstn_evt_tk_failed_w = evr_pay_w[15];
   always_comb begin : evt_kind_map
-    if (evr_src_w < 5'd8)       lstn_evt_tk_kind_w = pp_acmp_pkg::TK_KIND_REG_C;
-    else if (evr_src_w < 5'd16) lstn_evt_tk_kind_w = pp_acmp_pkg::TK_KIND_UNREG_C;
-    else if (evr_src_w == 5'd16) lstn_evt_tk_kind_w = pp_acmp_pkg::TK_KIND_DISC_C;
-    else                        lstn_evt_tk_kind_w = pp_acmp_pkg::TK_KIND_DEP_C;
+    if (evr_src_w < EVR_SRC_W_C'(EVR_TKUNR_BASE_C)) begin
+      lstn_evt_tk_kind_w = pp_acmp_pkg::TK_KIND_REG_C;
+    end else if (evr_src_w < EVR_SRC_W_C'(EVR_ADP_DISC_C)) begin
+      lstn_evt_tk_kind_w = pp_acmp_pkg::TK_KIND_UNREG_C;
+    end else if (evr_src_w == EVR_SRC_W_C'(EVR_ADP_DISC_C)) begin
+      lstn_evt_tk_kind_w = pp_acmp_pkg::TK_KIND_DISC_C;
+    end else begin
+      lstn_evt_tk_kind_w = pp_acmp_pkg::TK_KIND_DEP_C;
+    end
   end
 
   assign evr_ack_w = evr_tk_sel_w ? lstn_evt_tk_ready_w
@@ -1964,7 +2066,7 @@ module protocol_processor_top
   // trace record: [127:96] now_ms, [95:88] source, [87:80] flags (bit 0 =
   // evt_lost), [79:64] payload, [63:0] reserved 0
   assign trc_wr_valid_w = evr_valid_w && evr_ack_w;
-  assign trc_wr_data_w  = {now_ms_w, {3'd0, evr_src_w},
+  assign trc_wr_data_w  = {now_ms_w, 8'(evr_src_w),
                            {7'd0, evr_lost_w}, evr_pay_w, 64'd0};
 
   // =========================================================================
@@ -2541,7 +2643,10 @@ module protocol_processor_top
         6'd10: sp_snap_rdata_r <= {13'd0, srp_class_a_prio_w, 4'd0,
                                    srp_class_a_vid_w};
         6'd11: sp_snap_rdata_r <= srp_sum_slope_w;
-        6'd12: sp_snap_rdata_r <= {srp_sr_admitted_w, srp_active_w,
+        //! The snapshot window is a FIXED 32-bit register map (07 §5),
+        //! so each field keeps its documented lane: sources beyond 8 are
+        //! not observable here, they are on the per-source class-D ports.
+        6'd12: sp_snap_rdata_r <= {8'(srp_sr_admitted_w), 8'(srp_active_w),
                                    16'(srp_tk_reg_state_w)};
         6'd13: sp_snap_rdata_r <= {16'(srp_tk_decl_state_w),
                                    16'(srp_lstn_reg_state_w)};
