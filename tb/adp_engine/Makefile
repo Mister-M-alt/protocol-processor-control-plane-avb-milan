@@ -10,7 +10,7 @@ VFLAGS = --cc --exe --build -j 0 \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDPARAM \
          -CFLAGS "-std=c++17 -O2 -I$(CURDIR)"
 
-SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/adp/adp_pkg.sv \
+SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/adp/pp_adp_pkg.sv \
        $(HDL)/common/KL_pp_prng.sv $(HDL)/adp/KL_adp_engine.sv \
        tb_adp_top.sv
 CPP  = sim_main.cpp

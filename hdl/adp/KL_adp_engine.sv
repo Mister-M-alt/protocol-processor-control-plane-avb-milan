@@ -61,7 +61,7 @@
 
 module KL_adp_engine
   import pp_pkg::*;
-  import adp_pkg::*;
+  import pp_adp_pkg::*;
 #(
     //! P-N-AVB-INTERFACES (F01.5 default 1) — advertise SM instances
     parameter int unsigned N_IF_P = 1,

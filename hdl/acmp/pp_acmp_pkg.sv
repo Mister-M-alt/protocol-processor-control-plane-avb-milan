@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: CERN-OHL-W-2.0
  */
 //---------------------------------------------------------------------------//
-//  File        : acmp_pkg.sv
+//  File        : pp_acmp_pkg.sv
 //  Project     : IEEE 1722.1 protocol processor (docs/architecture/05)
 //
 //  Description : ACMP listener types shared by the executor
-//                (KL_acmp_listener.sv), the transition-ROM generator
+//                (KL_pp_acmp_listener.sv), the transition-ROM generator
 //                contract (rom/gen_ltn_rom.py) and the suite
 //                (tb/acmp_listener): the 8 listener SM states and the 14
 //                matrix events of F05.3 — the enum codes ARE the ROM
@@ -28,7 +28,7 @@
 //---------------------------------------------------------------------------//
 `default_nettype none
 
-package acmp_pkg;
+package pp_acmp_pkg;
 
   // ---- listener SM states (05 §6.1; F05.3 column key order) --------------
   typedef enum logic [2:0] {
@@ -172,5 +172,5 @@ package acmp_pkg;
 
   localparam int unsigned ACMP_REC_W_C = $bits(acmp_rec_t);  // 384 (F07.6)
 
-endpackage : acmp_pkg
+endpackage : pp_acmp_pkg
 `default_nettype wire

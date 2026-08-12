@@ -13,7 +13,7 @@
 //                between them:
 //                  RX: trunk -> KL_pp_rx_validator (+ KL_pp_rx_slots pool)
 //                      -> parsed-header beat -> KL_pp_normalizer ->
-//                      KL_pp_dispatch -> {KL_adp_engine, KL_acmp_listener +
+//                      KL_pp_dispatch -> {KL_adp_engine, KL_pp_acmp_listener +
 //                      KL_acmp_talker by message-type steer, AECP pop as a
 //                      TOP-LEVEL face for the P4 uCPU}.
 //                  V9 seam: the validator's MRP pass-through emits the whole
@@ -34,7 +34,7 @@
 //                Seams recorded as glue here (each bannered at its block):
 //                  - hdr-beat latch: the validator's one-cycle parsed-header
 //                    beat vs the normalizer's held-until-ready producer face;
-//                  - ACMP Ethernet prepend: KL_acmp_listener (and the talker
+//                  - ACMP Ethernet prepend: KL_pp_acmp_listener (and the talker
 //                    response builder) commit 56-byte ACMPDUs while ADP/SRP
 //                    commit whole wire frames — TX lanes 2/5 get the 14-byte
 //                    header injected on the way to the MAC;
@@ -979,11 +979,11 @@ module protocol_processor_top
   logic        lstn_dbg_busy_nc_w;
   logic        lstn_recwr_w;
   logic [$clog2(N_STREAM_IN_P)-1:0] lstn_recwr_sink_w;
-  logic [acmp_pkg::ACMP_REC_W_C-1:0] lstn_recwr_rec_w;
+  logic [pp_acmp_pkg::ACMP_REC_W_C-1:0] lstn_recwr_rec_w;
   logic        lstn_txs_gnt_w;
   logic [TXS_W_C-1:0] lstn_txs_gnt_slot_w;
 
-  KL_acmp_listener #(
+  KL_pp_acmp_listener #(
       .N_SINKS_P           (N_STREAM_IN_P),
       .TROM_HEX_P          (TROM_HEX_P),
       .RX_SLOTS_P          (RX_SLOTS_P),
@@ -1768,10 +1768,10 @@ module protocol_processor_top
   assign lstn_evt_tk_sink_w  = {8'd0, evr_pay_w[7:0]};
   assign lstn_evt_tk_failed_w = evr_pay_w[15];
   always_comb begin : evt_kind_map
-    if (evr_src_w < 5'd8)       lstn_evt_tk_kind_w = acmp_pkg::TK_KIND_REG_C;
-    else if (evr_src_w < 5'd16) lstn_evt_tk_kind_w = acmp_pkg::TK_KIND_UNREG_C;
-    else if (evr_src_w == 5'd16) lstn_evt_tk_kind_w = acmp_pkg::TK_KIND_DISC_C;
-    else                        lstn_evt_tk_kind_w = acmp_pkg::TK_KIND_DEP_C;
+    if (evr_src_w < 5'd8)       lstn_evt_tk_kind_w = pp_acmp_pkg::TK_KIND_REG_C;
+    else if (evr_src_w < 5'd16) lstn_evt_tk_kind_w = pp_acmp_pkg::TK_KIND_UNREG_C;
+    else if (evr_src_w == 5'd16) lstn_evt_tk_kind_w = pp_acmp_pkg::TK_KIND_DISC_C;
+    else                        lstn_evt_tk_kind_w = pp_acmp_pkg::TK_KIND_DEP_C;
   end
 
   assign evr_ack_w = evr_tk_sel_w ? lstn_evt_tk_ready_w

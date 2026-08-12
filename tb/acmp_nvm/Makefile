@@ -11,8 +11,8 @@ VFLAGS = --cc --exe --build -j 0 \
          -GDEB_TICKS_P=50 \
          -CFLAGS "-std=c++17 -O2 -I$(CURDIR)"
 
-SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/acmp/acmp_pkg.sv \
-       $(HDL)/acmp/KL_acmp_listener.sv \
+SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/acmp/pp_acmp_pkg.sv \
+       $(HDL)/acmp/KL_pp_acmp_listener.sv \
        $(HDL)/acmp/KL_acmp_nvm_shadow.sv \
        $(HDL)/packet_engine/KL_pp_nvm_port.sv \
        acmp_nvm_wrap.sv

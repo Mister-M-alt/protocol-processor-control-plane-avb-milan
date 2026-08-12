@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: CERN-OHL-W-2.0
  */
 //---------------------------------------------------------------------------//
-//  File        : adp_pkg.sv
+//  File        : pp_adp_pkg.sv
 //  Project     : IEEE 1722.1 protocol processor (docs/architecture/04, 08 §2)
 //
 //  Description : ADP engine constants — the F04.5 ADPDU geometry (68-byte
@@ -20,7 +20,7 @@
 //---------------------------------------------------------------------------//
 `default_nettype none
 
-package adp_pkg;
+package pp_adp_pkg;
 
   // ---- ADP message types (IEEE 1722.1-2021 Table 6-1; 04 §3) -------------
   localparam logic [3:0] ADP_MSG_AVAILABLE_C = 4'd0;
@@ -72,5 +72,5 @@ package adp_pkg;
     return 32'(vt) * 32'd2000;
   endfunction
 
-endpackage : adp_pkg
+endpackage : pp_adp_pkg
 `default_nettype wire

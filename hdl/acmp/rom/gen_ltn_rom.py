@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: CERN-OHL-W-2.0
-"""Listener transition-ROM image generator for KL_acmp_listener
+"""Listener transition-ROM image generator for KL_pp_acmp_listener
 (docs/architecture/05 §6.3, figure F05.3).
 
 Emits 128 lines of 8 hex digits (32-bit entries = P-ACMP-TROM-W), addressed
@@ -15,7 +15,7 @@ line-by-line. The independent check is tb/acmp_listener/sim_main.cpp, whose
 C++ matrix model is transcribed from the same doc table WITHOUT this file:
 the two transcriptions must agree through the DUT's behavior (MTXW).
 
-Entry encoding (hdl/acmp/acmp_pkg.sv):
+Entry encoding (hdl/acmp/pp_acmp_pkg.sv):
     [2:0]  next_state          [19:3] A1..A17 action bitmap (bit i-1 = Ai)
     [20]   VALID (0 = em-dash) [21]   IGN ('ign' / 'note only': inert)
     [22]   COND_TK (dagger cells: the ROM carries the tk arm {next, A12};
@@ -24,7 +24,7 @@ Entry encoding (hdl/acmp/acmp_pkg.sv):
 """
 import argparse
 
-# F05.3 column key order = lsm_state_e codes (acmp_pkg.sv)
+# F05.3 column key order = lsm_state_e codes (pp_acmp_pkg.sv)
 STATES = ["UNB", "PWA", "PWD", "PWR", "PW2", "PWT", "SNR", "SOK"]
 ST = {name: i for i, name in enumerate(STATES)}
 
@@ -97,7 +97,7 @@ MATRIX = [
     ("TK_UNREG", ["-", "-", "-", "-", "-", "-", "-", "cond/A8"]),
 ]
 
-# Entry encoding constants — MUST match acmp_pkg.sv
+# Entry encoding constants — MUST match pp_acmp_pkg.sv
 ACT_LSB, VALID_B, IGN_B, COND_B = 3, 20, 21, 22
 
 

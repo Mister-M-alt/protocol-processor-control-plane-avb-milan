@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
-# KL_acmp_listener MTXW suite — exit 0 = PASS.
+# KL_pp_acmp_listener MTXW suite — exit 0 = PASS.
 VERILATOR ?= verilator
 HDL        = ../../hdl
-TOP        = KL_acmp_listener
+TOP        = KL_pp_acmp_listener
 
 VFLAGS = --cc --exe --build -j 0 \
          --top-module $(TOP) \
@@ -10,8 +10,8 @@ VFLAGS = --cc --exe --build -j 0 \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDPARAM \
          -CFLAGS "-std=c++17 -O2 -I$(CURDIR)"
 
-SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/acmp/acmp_pkg.sv \
-       $(HDL)/acmp/KL_acmp_listener.sv
+SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/acmp/pp_acmp_pkg.sv \
+       $(HDL)/acmp/KL_pp_acmp_listener.sv
 CPP  = sim_main.cpp
 
 run: ltn_rom.hex

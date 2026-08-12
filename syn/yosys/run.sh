@@ -7,7 +7,7 @@ cd "$(dirname "$0")/../.."
 tops=(KL_aecp_ucpu KL_pp_timer_service KL_pp_prng KL_pp_rx_slots KL_pp_tx_slots
       KL_pp_rx_validator KL_pp_normalizer KL_pp_dispatch KL_pp_scoreboard
       KL_pp_event_router KL_pp_originator KL_pp_tx_arbiter KL_pp_trace_ring
-      KL_pp_side_port KL_pp_nvm_port KL_adp_engine KL_acmp_listener
+      KL_pp_side_port KL_pp_nvm_port KL_adp_engine KL_pp_acmp_listener
       KL_acmp_talker KL_srp_decoder KL_srp_encoder KL_srp_domain KL_srp_vlan
       KL_srp_talker_fsm KL_srp_listener_fsm)
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT

@@ -9,7 +9,7 @@
 //
 //  Description : Integration wrap for the KL_acmp_nvm_shadow suite: the
 //                shadow, the REAL KL_pp_nvm_port and the REAL
-//                KL_acmp_listener wired at their landed faces — the
+//                KL_pp_acmp_listener wired at their landed faces — the
 //                shadow's capture face on the listener's record write
 //                port, the shadow's pre_* driving the listener's preload
 //                face, the shadow's class-F face on the port's manager
@@ -29,7 +29,7 @@
 
 module acmp_nvm_wrap
   import pp_pkg::*;
-  import acmp_pkg::*;
+  import pp_acmp_pkg::*;
 #(
     parameter int unsigned  N_SINKS_P     = 8,
     parameter logic [7:0]   REC_ID_BASE_P = 8'h20,
@@ -208,7 +208,7 @@ module acmp_nvm_wrap
   // A droppable TK event (sink out of range) parks on the event face while
   // evt_block_i holds, which deasserts pre_ready (X_IDLE priority order) —
   // the suite's preload-backpressure lever.
-  KL_acmp_listener #(
+  KL_pp_acmp_listener #(
       .N_SINKS_P (N_SINKS_P),
       .TROM_HEX_P(TROM_HEX_P)
   ) u_listener (

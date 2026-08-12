@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: CERN-OHL-W-2.0
 // KL_acmp_nvm_shadow suite — persistence shadow against an INDEPENDENT
-// record model, with the REAL KL_pp_nvm_port and the REAL KL_acmp_listener
+// record model, with the REAL KL_pp_nvm_port and the REAL KL_pp_acmp_listener
 // in the loop (face compatibility by elaboration, not transcription).
 //
 // The harness plays the physical NVM (a region-store device model behind

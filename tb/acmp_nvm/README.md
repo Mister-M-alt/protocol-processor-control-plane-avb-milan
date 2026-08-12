@@ -9,7 +9,7 @@ exit 0 = PASS, 73 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
 timing mirrors (tick_i is held high, so window = 50 cycles).
 
 The wrap compiles the shadow together with the REAL `KL_pp_nvm_port` (class-F
-manager face) and the REAL `KL_acmp_listener` (capture from its record write
+manager face) and the REAL `KL_pp_acmp_listener` (capture from its record write
 port, boot replay into its `pre_*` preload face) — face compatibility is
 proven by elaboration, not transcription. The harness plays the physical NVM
 behind the port's device face (region store, grant/completion delays,

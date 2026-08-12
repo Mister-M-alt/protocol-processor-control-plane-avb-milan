@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: CERN-OHL-W-2.0
  */
 //---------------------------------------------------------------------------//
-//  File        : KL_acmp_listener.sv
+//  File        : KL_pp_acmp_listener.sv
 //  Project     : IEEE 1722.1 protocol processor (docs/architecture/05 §4,
 //                §5, §6, §6.7; records 07 §4 F07.6; timing 08 §2/§5 F08.1;
 //                verification 09 §3 MTXW)
@@ -51,9 +51,9 @@
 //---------------------------------------------------------------------------//
 `default_nettype none
 
-module KL_acmp_listener
+module KL_pp_acmp_listener
   import pp_pkg::*;
-  import acmp_pkg::*;
+  import pp_acmp_pkg::*;
 #(
     //! P-N-STREAM-IN (F01.5): sink records / listener SMs
     parameter int unsigned N_SINKS_P           = 8,
@@ -1133,5 +1133,5 @@ module KL_acmp_listener
     end
   end
 
-endmodule : KL_acmp_listener
+endmodule : KL_pp_acmp_listener
 `default_nettype wire

@@ -14,7 +14,7 @@
 //                full multi-record NVM manager lands in P4; this block IS
 //                the manager for the ACMP binding group). Three faces:
 //                (a) CAPTURE — watches the listener executor's record
-//                write port (KL_acmp_listener dbg_recwr_*) and projects
+//                write port (KL_pp_acmp_listener dbg_recwr_*) and projects
 //                each written F07.6 record onto the persisted field set
 //                {valid=bound, started, streaming_wait, talker_eid,
 //                talker_uid, bind_ctlr_eid}; (b) PRELOAD — after boot
@@ -67,7 +67,7 @@
 `default_nettype none
 
 module KL_acmp_nvm_shadow
-  import acmp_pkg::*;
+  import pp_acmp_pkg::*;
 #(
     //! P-N-STREAM-IN (F01.5): one shadow row per sink
     parameter int unsigned N_SINKS_P     = 8,
@@ -93,12 +93,12 @@ module KL_acmp_nvm_shadow
     output logic                       restore_fail_o, //! level: torn read-back aborted the WHOLE restore
     output logic                       alarm_o,        //! sticky: commit retries exhausted (side-port alarm)
 
-    //! ---- (a) capture face (KL_acmp_listener dbg_recwr_* shadow) ---------
+    //! ---- (a) capture face (KL_pp_acmp_listener dbg_recwr_* shadow) ---------
     input  wire                        cap_wr_i,       //! record write this cycle
     input  wire  [SINK_W_C-1:0]        cap_sink_i,     //! written sink
     input  wire  [ACMP_REC_W_C-1:0]    cap_rec_i,      //! written F07.6 record image
 
-    //! ---- (b) preload face out (KL_acmp_listener pre_* exact) ------------
+    //! ---- (b) preload face out (KL_pp_acmp_listener pre_* exact) ------------
     output logic                       pre_valid_o,    //! preload request (boot restore)
     output logic [15:0]                pre_sink_o,     //! sink index
     output logic [63:0]                pre_talker_eid_o,//! restored talker EID

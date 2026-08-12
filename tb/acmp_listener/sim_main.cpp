@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: CERN-OHL-W-2.0
-// KL_acmp_listener suite — THE MTXW WALK (docs/architecture/09 §3).
+// KL_pp_acmp_listener suite — THE MTXW WALK (docs/architecture/09 §3).
 //
 // Every one of the 112 cells of F05.3 (14 events x 8 states) is driven
 // against an INDEPENDENT C++ matrix model transcribed from the doc table

@@ -11,7 +11,7 @@ VFLAGS = --cc --exe --build -j 0 \
          -CFLAGS "-std=c++17 -O2 -I$(CURDIR)"
 
 SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
-       $(HDL)/acmp/acmp_pkg.sv $(HDL)/adp/adp_pkg.sv \
+       $(HDL)/acmp/pp_acmp_pkg.sv $(HDL)/adp/pp_adp_pkg.sv \
        $(HDL)/common/KL_pp_prng.sv $(HDL)/common/KL_pp_timer_service.sv \
        $(HDL)/packet_engine/KL_pp_rx_validator.sv \
        $(HDL)/packet_engine/KL_pp_rx_slots.sv \
@@ -26,7 +26,7 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
        $(HDL)/packet_engine/KL_pp_side_port.sv \
        $(HDL)/packet_engine/KL_pp_nvm_port.sv \
        $(HDL)/adp/KL_adp_engine.sv \
-       $(HDL)/acmp/KL_acmp_listener.sv $(HDL)/acmp/KL_acmp_talker.sv \
+       $(HDL)/acmp/KL_pp_acmp_listener.sv $(HDL)/acmp/KL_acmp_talker.sv \
        $(HDL)/acmp/KL_acmp_nvm_shadow.sv \
        $(HDL)/srp/KL_srp_decoder.sv $(HDL)/srp/KL_srp_domain.sv \
        $(HDL)/srp/KL_srp_vlan.sv $(HDL)/srp/KL_srp_admission.sv \

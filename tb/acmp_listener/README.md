@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
-# acmp_listener — KL_acmp_listener MTXW suite
+# acmp_listener — KL_pp_acmp_listener MTXW suite
 
 Proves the ROM-driven Milan listener-SM executor
-(`hdl/acmp/KL_acmp_listener.sv`) against the full F05.3 transition matrix of
+(`hdl/acmp/KL_pp_acmp_listener.sv`) against the full F05.3 transition matrix of
 [05 §6.3](../../docs/architecture/05_acmp_engine.md): `make` = generate the
 ROM + build + run, exit 0 = PASS, 2458 checks.
 
