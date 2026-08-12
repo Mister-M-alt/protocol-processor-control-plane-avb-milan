@@ -88,6 +88,12 @@ module protocol_processor_top
     //! derived — do not override
     localparam int unsigned TMR_AW_C     = $clog2(PP_TIMER_SLOTS_C),        // 7
     localparam int unsigned RXS_W_C      = (RX_SLOTS_P > 1) ? $clog2(RX_SLOTS_P) : 1,
+    //! Sink/source index widths, CLAMPED exactly as the engines clamp their
+    //! own (KL_pp_acmp_listener SINK_W_C :76, KL_acmp_talker SRC_W_C :95).
+    //! Without the clamp a 1-stream shape declares [-1:0], and the consumer
+    //! elaborates this processor at N_STREAMS = 1 on its shipping board.
+    localparam int unsigned SINK_IDX_W_C = (N_STREAM_IN_P  > 1) ? $clog2(N_STREAM_IN_P)  : 1,
+    localparam int unsigned SRC_IDX_W_C  = (N_STREAM_OUT_P > 1) ? $clog2(N_STREAM_OUT_P) : 1,
     localparam int unsigned RXA_W_C      = $clog2(RX_SLOT_BYTES_P),
     localparam int unsigned RXL_W_C      = $clog2(RX_SLOT_BYTES_P + 1),
     localparam int unsigned TXS_W_C      = $clog2(TX_STD_SLOTS_P + 1),      // 3
@@ -197,6 +203,51 @@ module protocol_processor_top
     output logic [1:0]  svc_rsp_status_o,      //! 0 OK / 1 FAIL / 2 UNSUPPORTED
     output logic [31:0] svc_rsp_data_o,        //! GET_DOMAIN answer
 
+    //! ---- class-D status levels (02 §6, F02.10) — THE FABRIC FACE --------
+    //! Everything this engine knows used to be reachable only through a
+    //! side-port READ TRANSACTION. That is a software-paced path, and the
+    //! integrating fabric consumes this state as WIRES, every clock: the
+    //! consumer's AAF talker gate is a per-cycle AND of the talker-active and
+    //! stream-gate terms, and its CBS slope MUX needs the granted idleSlope.
+    //! Publishing nothing here is exactly the NC-5 defect the resource study
+    //! called out — "its replacement publishes no granted bandwidth, so the
+    //! consumer's CBS slope MUX and its Σ-limit admission decision would have
+    //! no source under this contract". These ports are that source.
+    //!
+    //! Per-index vectors are FLAT packed bit-vectors, index s at [W*s +: W] —
+    //! the cfg_stream_id_i / cfg_src_iface_i convention already used above.
+    //! All are combinational reads of clk_i-domain registers: a consumer in
+    //! another clock domain owns its own 2FF synchroniser.
+    output logic [2:0]                   srp_class_a_prio_o,      //! SRclassPriority, DEFAULTS until adopted
+    output logic [11:0]                  srp_class_a_vid_o,       //! SRclassVID, DEFAULTS until adopted
+    output logic                         srp_domain_adopted_o,    //! F10.2: 1 = ADOPTED a bridge Domain, 0 = still DEFAULTS
+    output logic                         srp_domain_change_o,     //! one-cycle DOMAIN_CHANGE, pairs with the two levels above
+    output logic [N_STREAM_OUT_P*2-1:0]  srp_tk_decl_state_o,     //! per-source self-declared {0 NONE, 1 ADVERTISE, 2 FAILED}
+    output logic [N_STREAM_OUT_P*2-1:0]  srp_lstn_reg_state_o,    //! per-source registered Listener attr (srp_pkg::srp_decl_e)
+    //! THE AVTP transmit gate: declaring AND not failed AND a listener is
+    //! READY AND admitted. Use THIS — never rebuild it from the terms below,
+    //! which carry an optimistic window (see srp_sr_admitted_o).
+    output logic [N_STREAM_OUT_P-1:0]    srp_active_o,
+    //! RAW Σ-slope verdict. It lags srp_active_o by up to three admission
+    //! rounds after a fresh declare, because the FSM admits optimistically
+    //! (KL_srp_top: sr_adm_fsm = opt_r | adm_admitted). A consumer that gates
+    //! on this instead of srp_active_o mutes a legal stream for those rounds.
+    output logic [N_STREAM_OUT_P-1:0]    srp_sr_admitted_o,
+    output logic [N_STREAM_OUT_P*32-1:0] srp_granted_slope_bps_o, //! per-source granted idleSlope, 0 when not admitted (802.1Q §34.6.1.1); same optimistic lag
+    output logic [N_STREAM_OUT_P*8-1:0]  srp_src_fail_code_o,     //! per-source SELF-declared Failed code; valid only with tk_decl_state == FAILED
+    output logic [N_STREAM_OUT_P*64-1:0] srp_src_fail_bridge_o,   //! per-source SELF-declared FailureInformation; same validity
+    output logic [31:0]                  srp_sum_slope_bps_o,     //! Σ granted idleSlope over admitted sources — the CBS slope-MUX value
+    output logic                         srp_over_limit_o,        //! at least one source was refused against the port ceiling
+    output logic [N_STREAM_IN_P*2-1:0]   srp_tk_reg_state_o,      //! per-sink registered Talker attr {0 NONE, 1 ADVERTISE, 2 FAILED}
+    output logic [N_STREAM_IN_P*2-1:0]   srp_lstn_decl_state_o,   //! per-sink OUR Listener declaration
+    output logic [N_STREAM_IN_P*32-1:0]  srp_acc_latency_o,       //! per-sink registered accumulated_latency, ns, RAW — the consumer adds its own ingress delay
+    output logic [N_STREAM_IN_P*8-1:0]   srp_snk_fail_code_o,     //! per-sink registered Failed code; valid only with tk_reg_state == FAILED
+
+    //! ---- class-D ACMP / ADP status levels --------------------------------
+    output logic [N_STREAM_IN_P-1:0]     acmp_bound_o,            //! per-sink: a talker binding is installed
+    output logic [N_STREAM_IN_P*64-1:0]  acmp_bound_eid_o,        //! per-sink bound talker entity_id, valid with acmp_bound_o
+    output logic [15:0]                  adp_next_avail_index_o,  //! available_index the NEXT ENTITY_AVAILABLE will carry
+
     //! ---- observability ----
     output logic [31:0] dbg_now_ms_o           //! absolute ms timebase
 );
@@ -267,6 +318,39 @@ module protocol_processor_top
   );
 
   assign dbg_now_ms_o = now_ms_w;
+
+  // =========================================================================
+  //  class-D fabric face (02 §6). Flat packing: index s at [W*s +: W].
+  // =========================================================================
+  //! These are plain reads of state this engine already maintains. The only
+  //! reason they did not exist is that the interface published none of it —
+  //! see the port banner. A `assign flat = packed;` of a [N-1:0][W-1:0] array
+  //! onto a [N*W-1:0] vector is bit-exact in this element order.
+  assign srp_class_a_prio_o      = srp_class_a_prio_w;
+  assign srp_class_a_vid_o       = srp_class_a_vid_w;
+  assign srp_domain_adopted_o    = srp_domain_adopted_w;
+  assign srp_domain_change_o     = srp_evt_domain_change_w;
+  assign srp_tk_decl_state_o     = srp_tk_decl_state_w;
+  assign srp_lstn_reg_state_o    = srp_lstn_reg_state_w;
+  assign srp_active_o            = srp_active_w;
+  assign srp_sr_admitted_o       = srp_sr_admitted_w;
+  assign srp_granted_slope_bps_o = srp_granted_slope_w;
+  assign srp_src_fail_code_o     = srp_src_fail_code_nc_w;
+  assign srp_src_fail_bridge_o   = srp_src_fail_bridge_nc_w;
+  assign srp_sum_slope_bps_o     = srp_sum_slope_w;
+  assign srp_over_limit_o        = srp_over_limit_w;
+  assign srp_tk_reg_state_o      = srp_tk_reg_state_w;
+  assign srp_lstn_decl_state_o   = srp_lstn_decl_state_w;
+  assign srp_acc_latency_o       = srp_acc_latency_w;
+  assign srp_snk_fail_code_o     = srp_snk_fail_code_w;
+
+  assign acmp_bound_o     = bound_r;
+  assign acmp_bound_eid_o = bound_eid_r;
+
+  //! The ADP engine's dbg_avail_index is the PRE-INCREMENT value — the index
+  //! the next ENTITY_AVAILABLE will actually carry, which is what a consumer
+  //! wants to publish. It is 32 bits internally and 16 on the wire.
+  assign adp_next_avail_index_o = adp_dbg_aidx_nc_w[15:0];
 
   logic        prng_req_w;
   logic [2:0]  prng_kind_w;
@@ -833,7 +917,11 @@ module protocol_processor_top
 
   logic        lstn_disc_arm_w, lstn_disc_disarm_w;
   logic [63:0] lstn_disc_eid_w;
-  logic [$clog2(N_STREAM_IN_P)-1:0] lstn_act_sink_w;
+  //! CLAMPED like the engine's own SINK_W_C (KL_pp_acmp_listener.sv:76):
+  //! at N_STREAM_IN_P = 1, $clog2(1) = 0 and a bare $clog2-1:0 declares
+  //! [-1:0]. The consumer elaborates this processor at N_STREAMS = 1 on the
+  //! shipping AX7101 shape, so that is not a hypothetical corner.
+  logic [SINK_IDX_W_C-1:0] lstn_act_sink_w;
 
   always_ff @(posedge clk_i) begin : binding_view
     if (!rst_n) begin
@@ -870,6 +958,7 @@ module protocol_processor_top
   logic [2:0]  adp_evt_sink_w;
   logic [0:0]  adp_gm_tick_nc_w;
   logic [1:0]  adp_dbg_adv_state_w;
+  //! not "nc" any more: this is the live available_index, published below.
   logic [31:0] adp_dbg_aidx_nc_w;
   logic [N_STREAM_IN_P-1:0] adp_dbg_tkdisc_nc_w;
   logic        adp_txs_gnt_w;
@@ -978,7 +1067,7 @@ module protocol_processor_top
   logic        lstn_act_nvm_nc_w, lstn_act_nvm_set_nc_w, lstn_act_notify_nc_w;
   logic        lstn_dbg_busy_nc_w;
   logic        lstn_recwr_w;
-  logic [$clog2(N_STREAM_IN_P)-1:0] lstn_recwr_sink_w;
+  logic [SINK_IDX_W_C-1:0] lstn_recwr_sink_w;  //! CLAMPED (see SINK_IDX_W_C)
   logic [pp_acmp_pkg::ACMP_REC_W_C-1:0] lstn_recwr_rec_w;
   logic        lstn_txs_gnt_w;
   logic [TXS_W_C-1:0] lstn_txs_gnt_slot_w;
@@ -1080,7 +1169,10 @@ module protocol_processor_top
   logic [2:0]  tkr_maap_req_src_nc_w;
   logic        tkr_maap_conflict_ack_nc_w;
   logic        tkr_gate_open_w, tkr_gate_close_w;
-  logic [2:0]  tkr_gate_src_w;
+  //! CLAMPED to match KL_acmp_talker's own SRC_W_C (:95-96). A fixed [2:0]
+  //! only happens to be right at N_STREAM_OUT_P = 8; at any other shape it
+  //! is a width mismatch against the engine port it connects to.
+  logic [SRC_IDX_W_C-1:0] tkr_gate_src_w;
   logic [63:0] tkr_gate_sid_w;
   logic [47:0] tkr_gate_da_w;
   logic [11:0] tkr_gate_vlan_w;
@@ -1397,7 +1489,7 @@ module protocol_processor_top
           st_ls_vld_r <= 1'b1;
           st_ls_r     <= '{from_svc: 1'b0,
                            op:    lstn_act_settle_w ? 3'd2 : 3'd3,
-                           index: {{(8-$clog2(N_STREAM_IN_P)){1'b0}},
+                           index: {{(8-SINK_IDX_W_C){1'b0}},
                                    lstn_act_sink_w},
                            sid:   lstn_act_settle_sid_w,
                            da:    lstn_act_settle_da_w,

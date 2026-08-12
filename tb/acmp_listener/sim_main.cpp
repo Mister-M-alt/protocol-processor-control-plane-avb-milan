@@ -22,7 +22,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
-#include "VKL_acmp_listener.h"
+#include "VKL_pp_acmp_listener.h"
 #include "verilated.h"
 
 static int checks = 0, fails = 0;
@@ -423,7 +423,7 @@ struct Col {
 };
 
 struct Harness {
-  VKL_acmp_listener* d;
+  VKL_pp_acmp_listener* d;
   Rec shadow[N_SINKS];
   Col col;
   uint8_t rxmem[4][576] = {};
@@ -440,7 +440,7 @@ struct Harness {
   int next_rx_slot = 0;
   uint32_t last_arm_deadline[N_SINKS] = {};
 
-  explicit Harness(VKL_acmp_listener* dut) : d(dut) {}
+  explicit Harness(VKL_pp_acmp_listener* dut) : d(dut) {}
 
   void tick() {
     // inputs for this cycle (face responses to LAST cycle's outputs)
@@ -647,7 +647,7 @@ static void chk_cell(const char* tag, Harness& h, int sink, const Exp& e) {
 // ==========================================================================
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
-  auto* d = new VKL_acmp_listener;
+  auto* d = new VKL_pp_acmp_listener;
   Harness h(d);
   Model m;
 
