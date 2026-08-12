@@ -65,16 +65,29 @@
 //                target DA_OK; the alloc round-trip is the same arc split
 //                over the maap response).
 //
-//                An ABSENT maap must DEGRADE, never deadlock. The request
-//                face is a held valid/ready handshake, so a shim that never
-//                asserts ready would otherwise park the single walker in
-//                S_EV_MAAP forever — and that walker also serves PROBE_TX /
-//                DISCONNECT_TX / GET_TX_STATE for EVERY source, so one
-//                un-accepted allocation would silence the whole talker half
-//                of ACMP (and, through the gate strobes, of SRP). The
-//                request is therefore ABANDONED after P-MAAP-ACCEPT-CYC
-//                cycles; the source is left in exactly the state a REFUSED
-//                allocation leaves it in (see the S_EV_MAAP arm).
+//                A BROKEN maap must DEGRADE, never strand. Both halves of
+//                the face are bounded, because both can hang:
+//                  - a request never ACCEPTED parks the single walker in
+//                    S_EV_MAAP, and that walker also serves PROBE_TX /
+//                    DISCONNECT_TX / GET_TX_STATE for EVERY source, so one
+//                    un-accepted allocation would silence the whole talker
+//                    half of ACMP (and, through the gate strobes, of SRP).
+//                    Bounded by P-MAAP-ACCEPT-CYC (see the S_EV_MAAP arm).
+//                  - a request accepted and never ANSWERED is worse and
+//                    quieter: maap_busy_r is a single GLOBAL tracker, so it
+//                    stops allocation for every source at once. Nothing
+//                    reaches GS_DA_OK, so no DA gate opens, so there is no
+//                    talker egress AND no SRP DECLARE_TALKER — while the
+//                    processor stays perfectly responsive, because
+//                    transaction dispatch outranks the pending-init flag.
+//                    Bounded by P-MAAP-RSP-MS, whose value is derived from
+//                    the IEEE 1722-2016 Annex B claim walk at its
+//                    declaration.
+//                Both abandons leave the source in exactly the state a
+//                REFUSED allocation leaves it in, and retry is stimulus
+//                driven. A response that arrives after an abandon is
+//                SWALLOWED: it can never install a DA (see the abort policy
+//                at the maap tracker).
 //
 //                Storage: one 1W1R sync-read record RAM (gstate, da_valid,
 //                pinged, ping_ts, da — the 16 B/source of 07 §6), walked by
@@ -113,6 +126,46 @@ module KL_acmp_talker
     //! only — the allocation itself (maap_rsp_valid_i, legitimately seconds
     //! of MAAP probing) is never timed out.
     parameter int unsigned MAAP_ACCEPT_CYC_P = 1024,
+    //! P-MAAP-RSP-MS: milliseconds an ACCEPTED maap request may go
+    //! unanswered before it is ABANDONED. Distinct from P-MAAP-ACCEPT-CYC
+    //! above, which bounds the request HANDSHAKE: this bounds the
+    //! ALLOCATION ITSELF. Without it one accepted-but-never-answered
+    //! request strands allocation for EVERY source forever — maap_busy_r is
+    //! a single GLOBAL tracker and maap_avail_w gates every source's
+    //! ALLOC_DA, so nothing reaches GS_DA_OK, no DA gate ever opens, and
+    //! there is neither talker egress nor an SRP DECLARE_TALKER. It does
+    //! not wedge: transaction dispatch outranks the pending-init flag, so
+    //! PROBE_TX / GET_TX_STATE keep answering normally and every liveness
+    //! signal stays healthy while no stream can ever start.
+    //!
+    //! Bounded from both sides. ALLOC_DA maps onto a real MAAP claim walk,
+    //! so the LOWER bound comes from IEEE Std 1722-2016 Annex B:
+    //!   - Table B.8: MAAP_PROBE_RETRANSMITS = 3,
+    //!     MAAP_PROBE_INTERVAL_BASE = 500 ms,
+    //!     MAAP_PROBE_INTERVAL_VARIATION = 100 ms.
+    //!   - B.3.4.2: probe_timer is a random T with
+    //!     MAAP_PROBE_INTERVAL_BASE < T < BASE + VARIATION, i.e. T < 600 ms.
+    //!   - Table B.7: ReserveAddress! sends the first sProbe and starts
+    //!     probe_timer with maap_probe_count = 3; each probetimer! sends
+    //!     another sProbe and decrements; probeCount! (count <= 0) stops
+    //!     probe_timer, starts announce_timer, sAnnounce, DEFEND. The
+    //!     address is therefore ACQUIRED after exactly 3 probe intervals:
+    //!     <= 3 x 600 ms = 1800 ms.
+    //!   - B.3.5.3 Restart!: a conflicting rProbe!/rDefend!/rAnnounce! whose
+    //!     compare_MAC (B.3.6.4) returns FALSE restarts the walk with a
+    //!     fresh address — another <= 1800 ms per restart.
+    //! 10 s covers a clean acquisition plus FOUR conflict-driven restarts
+    //! (5 x 1800 = 9000 ms) with a second of shim margin. NOTE the 30 s
+    //! MAAP_ANNOUNCE_INTERVAL_BASE is NOT in this bound: the address is
+    //! acquired on entry to DEFEND, before the first announce_timer expiry.
+    //!
+    //! The UPPER bound is T-SRP-DAFRESH (DAFRESH_MS_P, 15 s). An allocation
+    //! is requested by a stimulus — normally the PROBE_TX that pinged the
+    //! source — and a grant landing after that ping has gone stale cannot
+    //! open the gate anyway (fresh_f is false, and a Listener attribute may
+    //! not be registered). Waiting past T-SRP-DAFRESH buys nothing and only
+    //! lengthens the strand, so the bound must stay below it: 10 s < 15 s.
+    parameter int unsigned MAAP_RSP_MS_P = 32'd10_000,
     //! derived source-index width — do not override
     localparam int unsigned SRC_W_C = (N_STREAM_OUT_P > 32'd1)
                                       ? $clog2(N_STREAM_OUT_P) : 32'd1,
@@ -376,12 +429,36 @@ module KL_acmp_talker
   logic               maap_busy_r;
   logic [SRC_W_C-1:0] maap_src_r;
   logic               maap_rel_r;
+  logic [31:0]        maap_t0_r;     // ms at which the request was ACCEPTED
   logic               gp_valid_r;
   logic [SRC_W_C-1:0] gp_src_r;
   logic [47:0]        gp_da_r;
 
+  //! Responses owed for requests this engine has ABANDONED. A shim that
+  //! accepted a request will answer it eventually; that answer is STALE and
+  //! must never install a DA, because the source it was for has moved on and
+  //! maap_src_r may already name a different one — installing it would give
+  //! two sources the same stream destination address. Responses are matched
+  //! FIFO: while a credit is outstanding the next response is swallowed.
+  //!
+  //! Under the 02 §4.2 single-outstanding contract at most ONE can ever be
+  //! owed (the shim will not assert ready again until it has answered), so
+  //! one credit is exact; the counter is 2 bits so a shim that accepts
+  //! anyway degrades gracefully, and maap_avail_w below PAUSES rather than
+  //! wrapping — pausing costs an allocation, mis-attributing costs a wrong
+  //! address on the wire.
+  localparam int unsigned MAAP_STALE_W_C = 2;
+  logic [MAAP_STALE_W_C-1:0] maap_stale_r;
+  logic                      maap_stale_full_w;
+  assign maap_stale_full_w = &maap_stale_r;
+
+  logic maap_swallow_w;   // this response belongs to an abandoned request
+  logic maap_rsp_live_w;  // this response answers the tracked request
+  logic maap_rsp_tmo_w;   // P-MAAP-RSP-MS elapsed with no answer
+  logic maap_accept_w;    // the request handshake completed this cycle
+
   logic maap_avail_w;
-  assign maap_avail_w = !maap_busy_r && !gp_valid_r;
+  assign maap_avail_w = !maap_busy_r && !gp_valid_r && !maap_stale_full_w;
 
   // timer expiry -> source match (slot AND owner tag must agree)
   logic               exp_hit_w;
@@ -443,6 +520,17 @@ module KL_acmp_talker
   logic maap_tmo_w;
   assign maap_tmo_w = (state_r == S_EV_MAAP)
                       && (mreq_tmo_r == MTMO_W_C'(MAAP_ACCEPT_CYC_P - 32'd1));
+
+  //! response-face events, ordered so a response always outranks its own
+  //! deadline: one landing exactly at the bound is LIVE, not stale.
+  assign maap_swallow_w  = maap_rsp_valid_i && (maap_stale_r != '0);
+  assign maap_rsp_live_w = maap_rsp_valid_i && maap_busy_r && !maap_swallow_w;
+  //! wrap-safe mod-2^32 elapsed compare, exactly as fresh_f does it
+  assign maap_rsp_tmo_w  = maap_busy_r && !maap_rsp_live_w
+                           && ((now_ms_i - maap_t0_r) >= 32'(MAAP_RSP_MS_P));
+  //! an accept requires maap_avail_w, so busy was 0 — it can never coincide
+  //! with a live response or with the abandon
+  assign maap_accept_w   = (state_r == S_EV_MAAP) && maap_req_ready_i;
 
   // ------------------------------------------------------ dispatch picker
   typedef enum logic [1:0] { DK_NONE = 2'd0, DK_TXN = 2'd1, DK_EV = 2'd2 }
@@ -825,27 +913,65 @@ module KL_acmp_talker
   end
 
   // ------------------------------------------------- maap tracker + grant
+  //! ABORT POLICY on a response timeout (see MAAP_RSP_MS_P):
+  //!   - the source lands in exactly the REFUSED-ALLOC state, and does so
+  //!     WITHOUT a record write. Every path into S_EV_MAAP has already put
+  //!     the source at GS_NO_DA with da_valid = 0: EVC_OFF resets the whole
+  //!     record before asking for RELEASE_DA, and EVC_INIT only asks for
+  //!     ALLOC_DA from GS_NO_DA. So PROBE_TX answers TALKER_DEST_MAC_FAILED
+  //!     and declaring_o stays shut — the same honest degradation the
+  //!     P-MAAP-ACCEPT-CYC abandon already produces.
+  //!   - NO automatic retry and NO backoff: the retry is stimulus-driven,
+  //!     identical to a refused ALLOC. A self-retry would be worse than
+  //!     useless here — the walker picks pending events by ffs_f (lowest
+  //!     index first), so a source that re-armed itself every timeout would
+  //!     hold the single global tracker for one full bound per round and
+  //!     starve every higher-index source. A controller's own PROBE_TX
+  //!     re-arms the allocation (txn_initset_w) at exactly the rate it
+  //!     actually needs the stream, which is the honest pacing.
+  //!   - a LATE response is IGNORED and cannot install a DA: the abandon
+  //!     leaves a stale credit, and while a credit is outstanding the next
+  //!     response is swallowed before it can be read as an answer to
+  //!     whatever request is tracked by then.
   always_ff @(posedge clk_i) begin : maap_track
     if (!rst_n) begin
-      maap_busy_r <= 1'b0;
-      maap_src_r  <= '0;
-      maap_rel_r  <= 1'b0;
-      gp_valid_r  <= 1'b0;
-      gp_src_r    <= '0;
-      gp_da_r     <= 48'd0;
+      maap_busy_r  <= 1'b0;
+      maap_src_r   <= '0;
+      maap_rel_r   <= 1'b0;
+      maap_t0_r    <= 32'd0;
+      maap_stale_r <= '0;
+      gp_valid_r   <= 1'b0;
+      gp_src_r     <= '0;
+      gp_da_r      <= 48'd0;
     end else begin
-      if ((state_r == S_EV_MAAP) && maap_req_ready_i) begin
+      // the tracked request: armed by an accept, retired by its answer or
+      // by the response bound
+      if (maap_accept_w) begin
         maap_busy_r <= 1'b1;
         maap_src_r  <= mreq_src_r;
         maap_rel_r  <= mreq_rel_r;
-      end else if (maap_busy_r && maap_rsp_valid_i) begin
+        maap_t0_r   <= now_ms_i;
+      end else if (maap_rsp_live_w || maap_rsp_tmo_w) begin
         maap_busy_r <= 1'b0;
-        if (!maap_rel_r && maap_rsp_ok_i) begin
-          gp_valid_r <= 1'b1;      // a failed ALLOC retries on next stimulus
-          gp_src_r   <= maap_src_r;
-          gp_da_r    <= maap_rsp_da_i;
-        end
       end
+
+      // the grant: only ever from a LIVE ALLOC response
+      if (maap_rsp_live_w && !maap_rel_r && maap_rsp_ok_i) begin
+        gp_valid_r <= 1'b1;        // a failed ALLOC retries on next stimulus
+        gp_src_r   <= maap_src_r;
+        gp_da_r    <= maap_rsp_da_i;
+      end
+
+      // stale credits. Both can happen in one cycle — a stale response
+      // landing exactly as the tracked request times out — and then the
+      // credit count is unchanged, which is right: one owed answer arrived
+      // and one more became owed.
+      if (maap_rsp_tmo_w && !maap_swallow_w) begin
+        maap_stale_r <= maap_stale_r + MAAP_STALE_W_C'(1);
+      end else if (maap_swallow_w && !maap_rsp_tmo_w) begin
+        maap_stale_r <= maap_stale_r - MAAP_STALE_W_C'(1);
+      end
+
       if ((state_r == S_EV_ACT) && (ev_code_r == EVC_GRANT)) begin
         gp_valid_r <= 1'b0;
       end

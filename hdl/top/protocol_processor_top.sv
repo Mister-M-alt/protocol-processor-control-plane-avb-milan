@@ -295,11 +295,16 @@ module protocol_processor_top
     //!
     //! Single-outstanding: one ALLOC_DA / RELEASE_DA at a time, req held
     //! until ready, exactly one rsp per accepted req, conflicts as a sticky
-    //! event acked combinationally. An absent allocator is a LEGAL wiring —
-    //! ready may sit at 0 — because the request is abandoned after
-    //! KL_acmp_talker's P-MAAP-ACCEPT-CYC window and the source degrades to
-    //! "no DA" (PROBE_TX then answers TALKER_DEST_MAC_FAILED, which is the
-    //! honest answer) instead of wedging the talker walker.
+    //! event acked combinationally. An absent OR BROKEN allocator is a LEGAL
+    //! wiring, because BOTH halves are bounded in KL_acmp_talker: ready may
+    //! sit at 0 (abandoned after P-MAAP-ACCEPT-CYC), and an accepted request
+    //! may go unanswered (abandoned after P-MAAP-RSP-MS, a bound derived
+    //! from the IEEE 1722-2016 Annex B claim walk). Either way the source
+    //! degrades to "no DA" — PROBE_TX then answers TALKER_DEST_MAC_FAILED,
+    //! which is the honest answer — instead of wedging the talker walker or,
+    //! for the second case, stranding allocation for EVERY source while the
+    //! processor keeps answering commands normally. A response arriving
+    //! after an abandon is swallowed and can never install a DA.
     output logic                         maap_req_valid_o,      //! ALLOC/RELEASE request, held until ready or the accept window
     input  wire                          maap_req_ready_i,      //! allocator accepts the request (tie 0 = no allocator)
     output logic                         maap_req_release_o,    //! 0 = ALLOC_DA, 1 = RELEASE_DA

@@ -54,9 +54,30 @@ Two things the port `declaring_o` and the maap face own, checked on the PORTS:
   DECLARING. This is the regression test for the deadlock the single walker
   had: S_EV_MAAP was the only state with no exit but ready, and the same
   walker serves every source and every talker command.
+- **An UNANSWERED accept must not strand every source (section K).** The
+  other half of the face, and the quieter failure: `maap_busy_r` is a single
+  GLOBAL tracker, so one request the allocator accepts and never answers
+  stops allocation for *every* source — nothing reaches `GS_DA_OK`, no DA
+  gate opens, and there is no SRP `DECLARE_TALKER` either. It never wedges:
+  transaction dispatch outranks the pending-init flag, so PROBE_TX and
+  GET_TX_STATE keep answering and every liveness signal stays healthy while
+  no stream can start. Section K accepts src 6's `ALLOC_DA` and goes quiet,
+  then proves in order: src 2 cannot even OFFER a request (K2 — the defect);
+  the waiting source still answers TALKER_DEST_MAC_FAILED and arms freshness
+  (K3); nothing is re-offered one millisecond before P-MAAP-RSP-MS (K4); at
+  the bound src 2 allocates again (K5 — the regression); src 6's LATE
+  response, carrying a poison address, is swallowed and installs nothing on
+  the source that is now tracked (K6); src 2's own response then completes
+  normally with its own DA (K7); and the abandoned source recovers on its
+  next stimulus with a fresh DA, never the poison one (K8).
 
-Known limit: the harness drives `now_ms_i` directly and injects expiries, so
+Known limits: the harness drives `now_ms_i` directly and injects expiries, so
 it cannot catch a prescaler-level defect — that is `tb/timer_service`'s job.
+And P-MAAP-RSP-MS is checked as a *boundary* (nothing at bound-1, abandon at
+bound); the suite pins the number the RTL declares but cannot prove that
+number is the right one — that argument is the IEEE 1722-2016 Annex B
+derivation at `MAAP_RSP_MS_P`, and only a real MAAP shim on silicon can
+falsify it.
 
 Mutation-proven 2026-08-11 (backup/sed/run/restore):
 - M1 PROBE flag law inverted (RF ored live into the PROBE response, the
@@ -72,3 +93,13 @@ Mutation-proven 2026-08-12 (the maap-degrade round):
 - M6 the ALLOC refusal ignored (`!maap_rel_r && maap_rsp_ok_i` ->
   `!maap_rel_r`, a refusal treated as a grant of DA 0): fails 10 (I3/I4/J7 —
   the gate opens on a refusal and every later DA is off by one grant).
+
+Mutation-proven 2026-08-12 (the unanswered-accept round, 723 checks):
+- M7 the response bound never fires (`maap_rsp_tmo_w` -> `1'b0`, i.e. the
+  defect restored): fails 11 (K5 onward — allocation never resumes, and the
+  late response is then taken as live).
+- M8 the stale-credit swallow removed (`maap_swallow_w` -> `1'b0`): fails 6
+  — and the failure text is the hazard itself, `dest_mac got deadbeefcafe`:
+  the abandoned request's answer installs its address on a DIFFERENT source.
+- M9 the bound shortened to 5 s: fails 1 (K4 — the request is abandoned
+  before the window the Annex B walk needs).

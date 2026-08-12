@@ -238,16 +238,40 @@ success. An unconnected face therefore pins the published talker DA gate at 0 an
 stops every engine-driven `DECLARE_TALKER` — the processor's talker half would be
 dead by construction.
 
-**Degrade rule.** An allocator that is absent or slow is a legal wiring: the
-request is offered for `P-MAAP-ACCEPT-CYC` (1024 cycles, ≈10 µs at `P-CLK-HZ`,
-well inside `T-BUDGET-ACMP-RESP`) and then **abandoned**, leaving the source in
-the same state a refused `ALLOC_DA` leaves it in — no DA, no declaration,
-`PROBE_TX` answered `TALKER_DEST_MAC_FAILED`, retried on the next stimulus. The
-window covers the request HANDSHAKE only; the allocation itself (an `ALLOC_DA`
-response may legitimately take seconds of MAAP probing) is never timed out. The
-rule exists because one event-serialized walker serves the DA gates AND every
-talker command of every source: without it, a single unaccepted request wedges
-the talker half of both ACMP and SRP.
+**Degrade rule.** An allocator that is absent, slow or broken is a legal wiring.
+**Both** halves of the transaction are bounded, because both can hang and they
+hang differently:
+
+| half | bound | what an unbounded version costs |
+|---|---|---|
+| request never ACCEPTED | `P-MAAP-ACCEPT-CYC` (1024 cycles, ≈10 µs at `P-CLK-HZ`, well inside `T-BUDGET-ACMP-RESP`) | the one event-serialized walker parks in the request state — and it also answers `PROBE_TX` / `DISCONNECT_TX` / `GET_TX_STATE` for every source, so the talker half of ACMP *and* SRP goes silent |
+| request accepted, never ANSWERED | `P-MAAP-RSP-MS` (10 s) | the single-outstanding tracker is GLOBAL, so allocation stops for **every** source: no `GS_DA_OK`, no DA gate, no `DECLARE_TALKER`. Nothing wedges — dispatch outranks the pending-init flag, so the processor answers normally forever while no stream can start |
+
+Both abandons leave the source exactly where a refused `ALLOC_DA` leaves it — no
+DA, no declaration, `PROBE_TX` answered `TALKER_DEST_MAC_FAILED` — and the retry
+is stimulus-driven, never self-scheduled (a self-retry would hold the global
+tracker for one bound per round and starve every higher-index source, since
+pending events are picked lowest-index-first).
+
+`P-MAAP-RSP-MS` is derived from **IEEE Std 1722-2016 Annex B**, because
+`ALLOC_DA` maps onto a real MAAP claim walk. Table B.8 gives
+`MAAP_PROBE_RETRANSMITS` = 3 and a `probe_timer` (B.3.4.2) drawn from
+`MAAP_PROBE_INTERVAL_BASE` (500 ms) < T < BASE + `MAAP_PROBE_INTERVAL_VARIATION`
+(600 ms); the Table B.7 walk acquires the address after exactly 3 probe
+intervals, so ≤ **1800 ms** per attempt, and a conflicting probe/defend/announce
+restarts it (B.3.5.3) for another ≤ 1800 ms. 10 s covers a clean acquisition plus
+four conflict restarts. It must also stay **below `T-SRP-DAFRESH`** (15 s): a
+grant arriving after the `PROBE_TX` that triggered it has gone stale cannot open
+the gate anyway. The 30 s `MAAP_ANNOUNCE_INTERVAL_BASE` is *not* in the bound —
+the address is acquired on entry to `DEFEND`, before the first announce.
+
+**Stale responses.** A shim that accepted a request will answer it even after the
+processor abandoned it. That answer must never install a DA: the source it was
+for has moved on, and the tracker may already name a different one — installing
+it would give two sources the same stream destination address. Responses are
+therefore matched FIFO against a stale credit taken at each abandon, and swallowed
+while one is outstanding. Under the single-outstanding rule above at most one can
+ever be owed.
 
 ### 4.3 `gptp` — time-sync data
 

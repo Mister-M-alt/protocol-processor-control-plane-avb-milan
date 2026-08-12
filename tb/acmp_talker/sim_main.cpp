@@ -73,6 +73,13 @@ static const uint32_t T_DAFRESH = 15000;
 // (KL_acmp_talker MAAP_ACCEPT_CYC_P default). Written here as the contract,
 // not read from the DUT.
 static const int MAAP_TMO = 1024;
+// P-MAAP-RSP-MS: the documented response bound of an ACCEPTED maap request
+// (KL_acmp_talker MAAP_RSP_MS_P default). Written here as the contract, not
+// read from the DUT. Its lower bound is the IEEE 1722-2016 Annex B claim
+// walk (3 x probe_timer, each < MAAP_PROBE_INTERVAL_BASE +
+// MAAP_PROBE_INTERVAL_VARIATION = 600 ms, so <= 1800 ms per attempt); its
+// upper bound is T-SRP-DAFRESH.
+static const uint32_t MAAP_RSP_MS = 10000;
 
 static const uint64_t OWN_EID = 0x0102030405060708ull;
 static uint64_t sid_of(int s)  { return 0xAB00000000000000ull | unsigned(s); }
@@ -205,6 +212,14 @@ struct Hn {
   }
 
   void run(int n) { for (int i = 0; i < n; ++i) tick(); }
+
+  // hand-drive ONE maap response on the next tick. Used where the timing of
+  // the response relative to the bound is the thing under test, so the
+  // auto-responder (which always answers 3 cycles after an accept) cannot
+  // be used.
+  void inject_rsp(bool ok, uint64_t dda, bool rel = false) {
+    mrsp_cnt = 1; mrsp_ok = ok; mrsp_da = dda; mrsp_rel = rel;
+  }
 
   // one talker command through the dispatch-in face + RX slot model
   bool send(int mt, uint16_t uid, uint64_t ctlr, uint16_t seq,
@@ -753,6 +768,122 @@ int main(int argc, char** argv) {
     CHECK(h.decl_mask() == 0x7Au, "J7 final gates, got 0x%02x", h.decl_mask());
   }
   h.drained("J");
+
+  // ---- K: an ACCEPTED maap request that is never ANSWERED --------------
+  // P-MAAP-ACCEPT-CYC (section J) covers a request never TAKEN. This covers
+  // the other half, which is quieter and worse: maap_busy_r is a SINGLE
+  // GLOBAL tracker and maap_avail_w gates every source's ALLOC_DA, so one
+  // unanswered accept stops allocation for EVERY source — no source reaches
+  // GS_DA_OK, no DA gate opens, and there is no DECLARE_TALKER for SRP
+  // either. It does not wedge: dispatch outranks the pending-init flag, so
+  // every liveness signal stays healthy while no stream can ever start.
+  uint32_t tk0 = 400000; d->now_ms_i = tk0;
+  h.clear_edges();
+
+  // src 2 and src 6 leave the configuration ONE AT A TIME, so each DA is
+  // released cleanly while the allocator is still answering and both land at
+  // GS_NO_DA. (Removing them together would drop the second RELEASE_DA:
+  // EVC_OFF only asks for one while the single-outstanding face is free.)
+  d->cfg_src_en_i = 0xFB;                     // src 2 out
+  h.run(120);
+  h.expect_arm("K0 cancel src2 slot", 2, 0, true);
+  h.expect_mreq("K0 src2 release", 2, true);
+  d->cfg_src_en_i = 0xBB;                     // src 6 out
+  h.run(120);
+  h.expect_close("K0 withdraw on removal", 6);
+  h.expect_arm("K0 cancel src6 slot", 6, 0, true);
+  h.expect_mreq("K0 src6 release", 6, true);
+  CHECK(h.decl_mask() == 0x3Au, "K0 gates after removal, got 0x%02x",
+        h.decl_mask());
+  h.drained("K0");
+
+  // the allocator now ACCEPTS and goes quiet
+  h.auto_grant = false;
+  const int offK = h.offers;
+
+  d->cfg_src_en_i = 0xFB;                     // src 6 returns: ALLOC_DA
+  h.run(60);
+  h.expect_mreq("K1 src6 alloc ACCEPTED", 6, false);
+  CHECK(h.offers == offK + 1, "K1 exactly one request offered, got %d",
+        h.offers - offK);
+
+  h.set_lsn(2, LSN_READY);   // src 2's OTHER gate term, armed at GS_NO_DA
+  d->cfg_src_en_i = 0xFF;                     // src 2 returns too
+  h.run(400);
+  CHECK(h.mreqs.empty(),
+        "K2 THE DEFECT: src2's allocation is stranded by src6's unanswered "
+        "request (%zu accepted)", h.mreqs.size());
+  CHECK(h.offers == offK + 1,
+        "K2 src2's request is never even OFFERED, got %d offers",
+        h.offers - offK);
+  CHECK(h.decl_mask() == 0x3Au, "K2 no gate can open, got 0x%02x",
+        h.decl_mask());
+
+  // the processor stays perfectly responsive while stranded — which is
+  // exactly why this defect is invisible from outside
+  {
+    CHECK(h.send(MT_PROBE, 6, C1, 0x190, L1, 9, FL_FC), "K3 consumed");
+    h.run(8);
+    Resp e = echo(MT_PROBE, ST_DMAC_FAIL, 6, C1, 0x190, L1, 9);
+    e.flags = FL_FC;
+    h.expect_resp("K3 the waiting source degrades honestly", e);
+    h.expect_arm("K3 ping still arms freshness", 6, tk0 + T_DAFRESH, false);
+    CHECK(((h.decl_mask() >> 6) & 1) == 0, "K3 no gate without a DA");
+  }
+
+  // one millisecond short of the bound: still stranded
+  d->now_ms_i = tk0 + MAAP_RSP_MS - 1;
+  h.run(200);
+  CHECK(h.mreqs.empty() && h.offers == offK + 1,
+        "K4 the bound has NOT elapsed: nothing may be re-offered yet");
+
+  // at the bound the request is abandoned and allocation RESUMES —
+  // src 2 dispatches first (lowest pending index)
+  d->now_ms_i = tk0 + MAAP_RSP_MS;
+  h.run(200);
+  h.expect_mreq("K5 THE REGRESSION: another source allocates again", 2,
+                false);
+  CHECK(((h.decl_mask() >> 2) & 1) == 0,
+        "K5 accepted is not granted: src2's gate is still shut");
+
+  // src 6's abandoned response arrives LATE, with a poison address. It must
+  // be swallowed: src 2 is the tracked request now, and installing this
+  // would hand two sources the same stream destination MAC.
+  const uint64_t POISON = 0x0DEADBEEFCAFEull;
+  h.inject_rsp(true, POISON);
+  h.run(30);
+  CHECK(h.gates.empty(),
+        "K6 a STALE response must not open any gate (%zu strobes)",
+        h.gates.size());
+  CHECK(h.decl_mask() == 0x3Au,
+        "K6 stale response changed the gate level to 0x%02x", h.decl_mask());
+  {
+    CHECK(h.send(MT_GTXS, 2, C1, 0x191, 0, 0, 0), "K6 consumed");
+    Resp e = echo(MT_GTXS, ST_OK, 2, C1, 0x191, 0, 0);
+    e.sid = sid_of(2); e.da = 0; e.vlan = VID;   // NOT the poison address
+    e.flags = 0;                                 // Listener READY, not FAILED
+    h.expect_resp("K6 src2 answers with NO DA, not the stale one", e);
+  }
+
+  // src 2's OWN response now completes normally: the swallow consumed
+  // exactly one credit and the face is live again
+  const uint64_t DA2 = 0x91E0F00001AAull;
+  h.inject_rsp(true, DA2);
+  h.run(30);
+  h.expect_open("K7 src2 declares with ITS OWN DA", 2, DA2);
+  CHECK(h.saw_edge(2, true), "K7 declaring_o[2] OBSERVED 0 -> 1");
+  CHECK(h.decl_mask() == 0x3Eu, "K7 gates, got 0x%02x", h.decl_mask());
+
+  // and the source that was abandoned recovers on its next stimulus, with a
+  // DA of its own — never the poison one
+  const uint64_t DA6 = 0x91E0F00001BBull;
+  h.run(60);
+  h.expect_mreq("K8 the abandoned source retries", 6, false);
+  h.inject_rsp(true, DA6);
+  h.run(30);
+  h.expect_open("K8 abandoned source recovers with a FRESH DA", 6, DA6);
+  CHECK(h.decl_mask() == 0x7Eu, "K8 final gates, got 0x%02x", h.decl_mask());
+  h.drained("K");
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   delete d;
