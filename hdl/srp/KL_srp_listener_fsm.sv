@@ -693,12 +693,16 @@ module KL_srp_listener_fsm
         if (ctl_acc_w && (ctl_sink_i == SNK_W_C'(s))) begin
           if (reg_r[s] == R_LV_C) tpend_r[s] <= T_CANCEL_C;
           reg_r[s] <= R_MT_C;
-          if (ctl_settle_i) begin
-            rtype_r[s]  <= 1'b0;
-            lat_r[s]    <= 32'd0;
-            fcode_r[s]  <= 8'd0;
-            fsysid_r[s] <= 64'd0;
-          end
+          //! Clear the registration's DATA on BOTH arms, not just A15.
+          //! reg_r goes to R_MT_C either way — the registration is gone — so
+          //! leaving lat_r/fcode_r/fsysid_r behind on the A8 teardown arm
+          //! publishes the accumulated latency of a registration that no
+          //! longer exists. acc_latency_o is ungated, so a fabric reading it
+          //! would size its presentation offset from a stale value.
+          rtype_r[s]  <= 1'b0;
+          lat_r[s]    <= 32'd0;
+          fcode_r[s]  <= 8'd0;
+          fsysid_r[s] <= 64'd0;
         end
       end
     end

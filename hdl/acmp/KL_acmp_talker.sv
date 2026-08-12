@@ -162,6 +162,12 @@ module KL_acmp_talker
     output logic                         maap_conflict_ack_o,   //! event ack
 
     //! ---- srp talker-face gate strobes (02 §4.1 DECLARE/WITHDRAW_TALKER) ----
+    //! LEVEL: per-source DA gate is open (record gstate == GS_DECLARING).
+    //! The gate_open_o/gate_close_o strobes below cannot be integrated into
+    //! this by a consumer, because their predicates carry a da_valid term the
+    //! level does not — which is why this is published rather than inferred.
+    //! An integrating fabric gates stream egress on it every clock.
+    output logic [N_STREAM_OUT_P-1:0]    declaring_o,
     output logic                         gate_open_o,      //! one-cycle: DECLARE_TALKER{src, sid, da, vid}
     output logic                         gate_close_o,     //! one-cycle: WITHDRAW_TALKER{src}
     output logic [SRC_W_C-1:0]           gate_src_o,       //! source index of the strobe
@@ -244,6 +250,27 @@ module KL_acmp_talker
       rec_ram_r[rec_waddr_w] <= rec_wdata_w;
     end
   end
+
+  //! Flop mirror of the record RAM's gstate, published as declaring_o. The
+  //! RAM is 1W1R sync-read, so a consumer cannot see all N gates at once —
+  //! but an integrating fabric needs every gate every clock. Mirroring on the
+  //! write port keeps this exactly in step with the RAM (same address, same
+  //! cycle, one writer) at the cost of N flops, and the RAM stays the single
+  //! source of gate truth for everything inside this engine.
+  //! a field select directly on a cast is not parseable here, so name the
+  //! view: this is rec_wdata_w read as the record it is about to become.
+  tk_rec_t rec_wdata_s;
+  assign rec_wdata_s = tk_rec_t'(rec_wdata_w);
+
+  logic [N_STREAM_OUT_P-1:0] declaring_r;
+  always_ff @(posedge clk_i or negedge rst_n) begin : declaring_mirror
+    if (!rst_n) begin
+      declaring_r <= '0;
+    end else if (rec_we_w) begin
+      declaring_r[rec_waddr_w] <= (rec_wdata_s.gstate == GS_DECLARING_C);
+    end
+  end
+  assign declaring_o = declaring_r;
 
   always_ff @(posedge clk_i) begin : rec_ram_read
     if (rec_re_w) begin

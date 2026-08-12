@@ -244,7 +244,16 @@ module protocol_processor_top
     output logic [N_STREAM_IN_P*8-1:0]   srp_snk_fail_code_o,     //! per-sink registered Failed code; valid only with tk_reg_state == FAILED
 
     //! ---- class-D ACMP / ADP status levels --------------------------------
-    output logic [N_STREAM_IN_P-1:0]     acmp_bound_o,            //! per-sink: a talker binding is installed
+    //! per-source DA gate open. THE talker egress gate a fabric ANDs with its
+    //! own stream enable every clock.
+    output logic [N_STREAM_OUT_P-1:0]    acmp_declaring_o,
+    //! per-sink binding installed, DEBOUNCED. The internal binding register
+    //! dips 1->0->1 inside a single executor transaction on every re-bind
+    //! (the F05.3 BIND_NEW row runs an unbind action before the bind action),
+    //! so the raw register is not safe for a fabric to edge-detect. This port
+    //! holds through the transaction; the raw one still drives the ADP
+    //! engine's own edge detector, which must keep seeing it.
+    output logic [N_STREAM_IN_P-1:0]     acmp_bound_o,
     output logic [N_STREAM_IN_P*64-1:0]  acmp_bound_eid_o,        //! per-sink bound talker entity_id, valid with acmp_bound_o
     output logic [15:0]                  adp_next_avail_index_o,  //! available_index the NEXT ENTITY_AVAILABLE will carry
 
@@ -344,7 +353,19 @@ module protocol_processor_top
   assign srp_acc_latency_o       = srp_acc_latency_w;
   assign srp_snk_fail_code_o     = srp_snk_fail_code_w;
 
-  assign acmp_bound_o     = bound_r;
+  assign acmp_declaring_o = tkr_declaring_w;
+
+  //! Debounced binding view. bound_r dips 1->0->1 within ONE executor
+  //! transaction on a re-bind, so it is republished held: it may only fall
+  //! while the executor is idle. bound_r itself is untouched — KL_adp_engine
+  //! edge-detects it and that behaviour must not change.
+  logic [N_STREAM_IN_P-1:0] bound_hold_r;
+  always_ff @(posedge clk_i or negedge rst_n) begin : bound_debounce
+    if (!rst_n)                    bound_hold_r <= '0;
+    else if (!lstn_dbg_busy_nc_w)  bound_hold_r <= bound_r;   // idle: track
+    else                           bound_hold_r <= bound_hold_r | bound_r;
+  end
+  assign acmp_bound_o     = bound_hold_r;
   assign acmp_bound_eid_o = bound_eid_r;
 
   //! The ADP engine's dbg_avail_index is the PRE-INCREMENT value — the index
@@ -1168,6 +1189,7 @@ module protocol_processor_top
   logic        tkr_maap_req_valid_nc_w, tkr_maap_req_release_nc_w;
   logic [2:0]  tkr_maap_req_src_nc_w;
   logic        tkr_maap_conflict_ack_nc_w;
+  logic [N_STREAM_OUT_P-1:0] tkr_declaring_w;
   logic        tkr_gate_open_w, tkr_gate_close_w;
   //! CLAMPED to match KL_acmp_talker's own SRC_W_C (:95-96). A fixed [2:0]
   //! only happens to be right at N_STREAM_OUT_P = 8; at any other shape it
@@ -1257,6 +1279,7 @@ module protocol_processor_top
       .maap_conflict_valid_i (1'b0),
       .maap_conflict_src_i   (3'd0),
       .maap_conflict_ack_o   (tkr_maap_conflict_ack_nc_w),
+      .declaring_o           (tkr_declaring_w),
       .gate_open_o           (tkr_gate_open_w),
       .gate_close_o          (tkr_gate_close_w),
       .gate_src_o            (tkr_gate_src_w),
