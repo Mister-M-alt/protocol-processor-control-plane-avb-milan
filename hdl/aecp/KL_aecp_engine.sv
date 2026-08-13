@@ -345,11 +345,14 @@ module KL_aecp_engine
   //! ceilings. The slot arm can only be read once `rxs_rd_slot_o` names this
   //! command's slot (`slot_len_o` is indexed by `rd_slot_i`), so it is applied
   //! on the first walk cycle rather than at pop.
+  //! An RX slot holds the AVTPDU, NOT the Ethernet frame: KL_pp_rx_validator
+  //! starts writing at frame byte 14, so slot byte k IS AECPDU byte k and the
+  //! payload begins at slot byte 24.
   logic [10:0] cdl_pld_w, slot_pld_w, pld_cap_w, pld_trim_w;
   assign cdl_pld_w  = (txn_w.cdl > 11'd12) ? (txn_w.cdl - 11'd12) : 11'd0;
   assign pld_cap_w  = (cdl_pld_w > 11'(PLD_MAX_C)) ? 11'(PLD_MAX_C) : cdl_pld_w;
-  assign slot_pld_w = (32'(rxs_slot_len_i) > 32'(FRAME_HDR_C))
-                      ? 11'(32'(rxs_slot_len_i) - 32'(FRAME_HDR_C)) : 11'd0;
+  assign slot_pld_w = (32'(rxs_slot_len_i) > 32'(AECP_HDR_C))
+                      ? 11'(32'(rxs_slot_len_i) - 32'(AECP_HDR_C)) : 11'd0;
   assign pld_trim_w = (pld_r > slot_pld_w) ? slot_pld_w : pld_r;
 
   // ---- the µCPU ------------------------------------------------------------
@@ -527,7 +530,13 @@ module KL_aecp_engine
     endcase
   end
 
-  assign rd_byte_addr_w = 10'd12 + (bidx_r[9:0] - 10'(FRAME_HDR_C));
+  //! payload byte n of the response lives at buffer address 12 + n; the guard
+  //! keeps the index inside the buffer while the header bytes are streaming
+  //! (the value is unused there, but an out-of-range RAM index is not a thing
+  //! to leave to chance)
+  assign rd_byte_addr_w = (bidx_r >= 11'(FRAME_HDR_C))
+                          ? (10'd12 + (bidx_r[9:0] - 10'(FRAME_HDR_C)))
+                          : 10'd12;
 
   logic [7:0] frame_byte_w;
   always_comb begin : frame_byte
@@ -537,10 +546,10 @@ module KL_aecp_engine
   end
 
   // ---- RX payload walk -----------------------------------------------------
-  //! the walk starts at AECPDU @22 so bytes @22..@23 are captured verbatim;
-  //! payload byte n is walk index n+2
+  //! the walk starts at AECPDU @22 (= slot byte 22) so bytes @22..@23 are
+  //! captured verbatim; payload byte n is walk index n+2
   assign rxs_rd_slot_o = cmd_r.rx_slot[RXS_W_C-1:0];
-  assign rxs_rd_addr_o = RXA_W_C'(32'(ETH_HDR_C) + 32'd22 + 32'(walk_r));
+  assign rxs_rd_addr_o = RXA_W_C'(32'd22 + 32'(walk_r));
   assign rxs_rd_en_o   = (a_st_r == A_PLD) && (walk_r < (pld_r + 11'd2));
 
   assign txn_ready_o     = (a_st_r == A_IDLE);
@@ -612,7 +621,6 @@ module KL_aecp_engine
               pld_r     <= pld_cap_w;
               cfg_ix_r  <= 16'd0;
               desc_ty_r <= 16'd0;
-              desc_ix_r <= 16'd0;
               desc_ix_r <= 16'd0;
               raw_ct_r  <= 16'd0;
               walk_r    <= 11'd0;

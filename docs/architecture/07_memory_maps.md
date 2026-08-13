@@ -107,6 +107,66 @@ index) order + an **index map** per configuration (type → base pointer + count
 `DESC_ADDR`. READ_DESCRIPTOR assembles: image bytes, then overlay patches
 (current values, names), then the Annex C tail with R = 0.
 
+#### 3.3.1 Realization — the image lives in MAIN MEMORY, not on chip
+
+`hdl/aecp/KL_aecp_desc_store.sv`. A ROM was priced and rejected: the reference
+consumer's generated model is 22,561 B at the 8×8 shape (~5 RAMB36) *before* the
+§3.4 overlay and the 64-B-per-descriptor name table, it grows with every stream,
+descriptor and localized string, and the reference part (xc7a100t, 135 block-RAM
+tiles) measured 131 tiles used. So the image sits in the integrator's main memory —
+DDR3 on the reference board — behind a **vendor-neutral read-only master** on
+`protocol_processor_top` (`desc_mem_*`: byte address + 64-bit beat count out, an
+in-order response stream back). This repository does not know what that memory is.
+
+Every address is an **elaboration parameter** (`DESC_BASE_P`), never a register and
+never a CSR: the memory map is fixed when the bitstream is built, so a runtime base
+would only buy a port and the flops behind it. The failure it removes ("base points
+at nothing") is replaced by a likelier one — *software has not loaded the image yet*,
+or loaded a truncated one — and uninitialised DRAM is not a recognisable zero. The
+image therefore opens with a **magic + layout-version + checksum header** and nothing
+is served until all three agree: every locate answers `st_err` → `NO_SUCH_DESCRIPTOR`
+→ a well-formed AECP response. A locate while invalid re-arms the header probe, so a
+late load heals with no reset.
+
+Latency is the design problem (the reference SoC measures ~1424 ns on a miss to main
+memory), so: the **index map is walked once into an on-chip table** — it is consulted
+on every locate, and at 16 B per (configuration, type) caching it is cheap exactly
+where caching the image is not — and a located descriptor is fetched **once, as a
+single burst**, into a `LINE_BYTES_P` line buffer that every subsequent `READ_STATE` /
+`COPY_BUFFER` beat reads on chip. One command pays one memory latency, not one per
+byte. `LINE_BYTES_P` defaults to 576 = the largest descriptor §3.2 can produce
+(STREAM_INPUT/OUTPUT at the Milan Annex C cap, 136 + 8·47 = 512 B, plus the R = 0
+tail) rounded to the [03 §2](03_packet_engine.md) slot size; a descriptor longer than
+the line is refused at load time (header `desc_max_len`) and at locate time, never
+truncated.
+
+<a id="fig-07-image"></a>**F07.4 — flat image layout** (generator:
+`hdl/aecp/desc/gen_desc_image.py`; all fields big-endian)
+
+| Region | Field | Notes |
+|---|---|---|
+| header @0x00 (32 B) | `magic` u32 = `"AEMI"` · `layout_version` u16 = 1 · `n_config` u16 | |
+| | `n_entries` u16 · `n_names` u16 · `index_off` u32 | |
+| | `names_off` u32 · `image_bytes` u32 | |
+| | `desc_max_len` u16 · reserved u16 · `checksum` u32 | the eight u32 words sum to `0xFFFFFFFF` |
+| index map @`index_off` | `n_entries` × 16 B, sorted by (configuration, type): `config_index` u16 · `descriptor_type` u16 · `count` u16 · `elem_len` u16 · `elem_off` u32 · `name_base` u16 · `elem_stride` u16 | locate = `elem_off + index·elem_stride`, length `elem_len` |
+| descriptors | concatenated in (configuration, type, index) order at `elem_stride` spacing | |
+| name table @`names_off` | `n_names` × 64 B — the §3.4 overlay's initial content | |
+
+Layout-version-1 constraints, enforced by the generator (it refuses an input that
+violates them) and re-checked by the store at locate time: every descriptor of one
+(configuration, type) has the same `elem_len`, and `elem_stride` is `elem_len` rounded
+up to 8 so index > 0 never starts mid-beat. Milan §6.3/§6.4 rate-completeness and
+configuration-uniformity already force the uniform length for the stream descriptors.
+
+The µCPU's `st_*` face reaches all of this through a region nibble on `st_addr[19:16]`
+— 0x0 descriptor data, 0xC the located descriptor's `name_base`, 0xD
+`configurations_count` (so a µprogram can answer `BAD_ARGUMENTS` for a bad
+configuration index per [06 §6.1](06_aecp_engine.md), not `NO_SUCH_DESCRIPTOR`), 0xE
+its length, 0xF LOCATE with the 48-bit key on `st_wdata` — because a 20-bit address
+cannot carry {configuration, type, index} and [06 §8](06_aecp_engine.md) leaves the
+encoding open.
+
 ### 3.4 Dynamic overlay
 
 | Overlaid field | Width | NVM? |

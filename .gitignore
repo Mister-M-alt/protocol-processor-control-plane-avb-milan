@@ -21,3 +21,5 @@ ucode.hex
 *.rpt
 *.log
 ltn_rom.hex
+image.bin
+image.map

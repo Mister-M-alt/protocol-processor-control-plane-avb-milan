@@ -306,6 +306,140 @@ static bool frame_has(const std::vector<uint8_t>& f, bool msrp, int type,
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// independent IEEE 1722.1-2021 §9.3.1/§7.4 AECPDU model + the 07 §3.3 image
+// ---------------------------------------------------------------------------
+// cdl is the offset-from-@12 length this architecture uses throughout (F06.14
+// "GET_COUNTERS 160 B, cdl 148"), so an AEM PDU of 24 + payload has
+// cdl = 12 + payload.
+static const uint16_t AEM_READ_DESCRIPTOR = 0x0004;
+static const uint16_t AEM_GET_SAMPLING_RATE = 0x0015;
+static const uint16_t AEM_IDENTIFY_NOTIF  = 0x0026;
+enum { AECP_SUCCESS = 0, AECP_NOT_IMPLEMENTED = 1, AECP_NO_SUCH_DESCRIPTOR = 2,
+       AECP_BAD_ARGUMENTS = 7 };
+
+static std::vector<uint8_t> aecp_frame(uint64_t da, uint64_t sa,
+                                       uint8_t msg_type, uint8_t status,
+                                       uint64_t target_eid, uint64_t ctlr_eid,
+                                       uint16_t seq, uint16_t cmd_type,
+                                       const std::vector<uint8_t>& payload,
+                                       bool pad60 = true) {
+  size_t n = 38 + payload.size();
+  std::vector<uint8_t> f(n, 0);
+  putbe(&f[0], da, 6);
+  putbe(&f[6], sa, 6);
+  putbe(&f[12], 0x22F0, 2);
+  f[14] = 0xFB;                                   // AVTP subtype AECP
+  f[15] = uint8_t(msg_type & 0x0F);               // sv = 0, version = 0
+  uint16_t cdl = uint16_t(12 + payload.size());
+  f[16] = uint8_t(((status & 0x1F) << 3) | ((cdl >> 8) & 0x07));
+  f[17] = uint8_t(cdl & 0xFF);
+  putbe(&f[18], target_eid, 8);
+  putbe(&f[26], ctlr_eid, 8);
+  putbe(&f[34], seq, 2);
+  putbe(&f[36], cmd_type & 0x7FFF, 2);            // u = 0
+  for (size_t i = 0; i < payload.size(); ++i) f[38 + i] = payload[i];
+  if (pad60 && f.size() < 60) f.resize(60, 0);
+  return f;
+}
+
+// ---- descriptor bodies, straight from the IEEE §7.2 field offsets ----------
+static std::vector<uint8_t> entity_descriptor() {
+  std::vector<uint8_t> d(312, 0);                 // §7.2.1, 07 §3.2 = 312 B
+  putbe(&d[0],   0x0000, 2);                      // descriptor_type
+  putbe(&d[2],   0x0000, 2);                      // descriptor_index
+  putbe(&d[4],   EID, 8);                         // entity_id
+  putbe(&d[12],  EMID, 8);                        // entity_model_id
+  putbe(&d[20],  0x0000C588u, 4);                 // entity_capabilities
+  putbe(&d[24],  TKSRC, 2);                       // talker_stream_sources
+  putbe(&d[26],  TKCAP, 2);                       // talker_capabilities
+  putbe(&d[28],  LSNK, 2);                        // listener_stream_sinks
+  putbe(&d[30],  LSCAP, 2);                       // listener_capabilities
+  putbe(&d[32],  0, 4);                           // controller_capabilities
+  putbe(&d[36],  0, 4);                           // available_index
+  putbe(&d[40],  0, 8);                           // association_id
+  const char* nm = "PP Reference Entity";         // entity_name @48, 64 B
+  memcpy(&d[48], nm, strlen(nm));
+  putbe(&d[112], 0, 2);                           // vendor_name_string
+  putbe(&d[114], 1, 2);                           // model_name_string
+  const char* fw = "2.0.0";                       // firmware_version @116
+  memcpy(&d[116], fw, strlen(fw));
+  const char* gn = "Milan Endpoints";             // group_name @180
+  memcpy(&d[180], gn, strlen(gn));
+  const char* sn = "PP-0000-0002";                // serial_number @244
+  memcpy(&d[244], sn, strlen(sn));
+  putbe(&d[308], 1, 2);                           // configurations_count
+  putbe(&d[310], CFGIX, 2);                       // current_configuration
+  return d;
+}
+static std::vector<uint8_t> clock_domain_descriptor() {
+  // §7.2.32: 76 fixed + 2 x clock_sources. 78 is NOT a multiple of 8, which is
+  // the case COPY_BUFFER has to stop mid-lane on.
+  std::vector<uint8_t> d(78, 0);
+  putbe(&d[0],  0x0024, 2);
+  putbe(&d[2],  0x0000, 2);
+  const char* nm = "Clock Domain 0";
+  memcpy(&d[4], nm, strlen(nm));                  // object_name @4, 64 B
+  putbe(&d[68], 0xFFFF, 2);                       // localized_description
+  putbe(&d[70], 0x0000, 2);                       // clock_source_index
+  putbe(&d[72], 76, 2);                           // clock_sources_offset
+  putbe(&d[74], 1, 2);                            // clock_sources_count
+  putbe(&d[76], 0, 2);                            // clock_source_0
+  return d;
+}
+
+// ---- the flat memory image (gen_desc_image.py layout, built independently) --
+struct ImgEnt { uint16_t cfg, type, count, len, nbase, stride; uint32_t off; };
+
+static std::vector<uint8_t> build_image(
+    std::vector<ImgEnt>& ents,
+    const std::vector<std::vector<uint8_t>>& bodies,
+    const std::vector<const char*>& names, uint16_t n_cfg) {
+  uint32_t idx_off = 32;
+  uint32_t cur = idx_off + 16u * uint32_t(ents.size());
+  cur = (cur + 7u) & ~7u;
+  std::vector<uint32_t> where;
+  for (auto& e : ents) {
+    e.off = cur;
+    for (uint16_t k = 0; k < e.count; ++k) { where.push_back(cur);
+                                             cur += e.stride; }
+  }
+  uint32_t nm_off = cur;
+  cur += 64u * uint32_t(names.size());
+  uint32_t total = (cur + 7u) & ~7u;
+
+  std::vector<uint8_t> b(total, 0);
+  for (size_t i = 0; i < bodies.size() && i < where.size(); ++i)
+    memcpy(&b[where[i]], bodies[i].data(), bodies[i].size());
+  for (size_t i = 0; i < names.size(); ++i)
+    memcpy(&b[nm_off + 64 * i], names[i], strlen(names[i]));
+
+  uint16_t dmax = 0;
+  for (auto& e : ents) if (e.len > dmax) dmax = e.len;
+  putbe(&b[0], 0x41454D49u, 4);                   // "AEMI"
+  putbe(&b[4], 1, 2);
+  putbe(&b[6], n_cfg, 2);
+  putbe(&b[8], uint16_t(ents.size()), 2);
+  putbe(&b[10], uint16_t(names.size()), 2);
+  putbe(&b[12], idx_off, 4);
+  putbe(&b[16], nm_off, 4);
+  putbe(&b[20], total, 4);
+  putbe(&b[24], dmax, 2);
+  for (size_t i = 0; i < ents.size(); ++i) {
+    uint8_t* e = &b[idx_off + 16 * i];
+    putbe(&e[0], ents[i].cfg, 2);   putbe(&e[2], ents[i].type, 2);
+    putbe(&e[4], ents[i].count, 2); putbe(&e[6], ents[i].len, 2);
+    putbe(&e[8], ents[i].off, 4);   putbe(&e[12], ents[i].nbase, 2);
+    putbe(&e[14], ents[i].stride, 2);
+  }
+  uint32_t sum = 0;
+  for (int i = 0; i < 7; ++i)
+    sum += (uint32_t(b[4*i]) << 24) | (uint32_t(b[4*i+1]) << 16) |
+           (uint32_t(b[4*i+2]) << 8) | b[4*i+3];
+  putbe(&b[28], 0xFFFFFFFFu - sum, 4);
+  return b;
+}
+
 static void dump(const char* tag, const std::vector<uint8_t>& f) {
   printf("  %s (%zu B):", tag, f.size());
   for (uint8_t c : f) printf(" %02x", c);
@@ -345,6 +479,26 @@ struct H {
   // acmp_declaring_o edge log: the gate LEVEL must be seen MOVING
   uint8_t decl_prev = 0;
   std::vector<std::pair<int, bool>> decl_edges;     // {src, rising}
+  // descriptor-image DRAM model at DESC_BASE_P. NON-ZERO latency by default:
+  // the reference SoC measures ~1424 ns on a miss to main memory, and a store
+  // that only ever sees zero-latency answers is untested against the thing
+  // that makes it hard.
+  std::vector<uint8_t> dram;
+  int  dram_lat = 31;
+  bool dram_busy = false;
+  uint32_t dram_addr = 0;
+  int dram_beats = 0, dram_idx = 0, dram_wait = 0;
+  uint64_t dram_reqs = 0;
+  std::deque<std::vector<uint8_t>> q_aecp;
+
+  uint64_t dram_rd64(uint32_t a) const {
+    uint64_t v = 0;
+    for (int i = 0; i < 8; ++i) {
+      uint32_t k = a + uint32_t(i);
+      v = (v << 8) | ((k < dram.size()) ? dram[k] : 0xA5);
+    }
+    return v;
+  }
 
   static uint64_t maap_da(int n) { return 0x91E0F0AABB00ULL + unsigned(n); }
   bool saw_decl_edge(int src, bool rising) const {
@@ -372,6 +526,8 @@ struct H {
           q_adp.push_back(cur);
         } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFC) {
           q_acmp.push_back(cur);
+        } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFB) {
+          q_aecp.push_back(cur);
         } else if (et == 0x22EA) {
           auto p = parse_mrpdu(cur);
           for (auto& v : p.vecs) {
@@ -382,6 +538,33 @@ struct H {
           q_mvrp.push_back(cur);
         }
       }
+    }
+
+    // ---- descriptor-image DRAM model (07 §3.3) ----
+    d->desc_mem_req_ready_i = dram_busy ? 0 : 1;
+    d->desc_mem_rsp_valid_i = 0;
+    d->desc_mem_rsp_data_i  = 0;
+    d->desc_mem_rsp_last_i  = 0;
+    d->desc_mem_rsp_err_i   = 0;
+    if (dram_busy && dram_wait == 0 && dram_idx < dram_beats) {
+      d->desc_mem_rsp_valid_i = 1;
+      d->desc_mem_rsp_data_i =
+          dram_rd64(dram_addr - 0x20000000u + uint32_t(8 * dram_idx));
+      d->desc_mem_rsp_last_i = (dram_idx == dram_beats - 1) ? 1 : 0;
+    }
+    if (!dram_busy) {
+      if (d->desc_mem_req_valid_o) {
+        dram_busy  = true;
+        dram_addr  = d->desc_mem_req_addr_o;
+        dram_beats = d->desc_mem_req_beats_o;
+        dram_idx   = 0;
+        dram_wait  = dram_lat;
+        ++dram_reqs;
+      }
+    } else if (dram_wait > 0) {
+      --dram_wait;
+    } else if (d->desc_mem_rsp_valid_i && d->desc_mem_rsp_ready_o) {
+      if (++dram_idx >= dram_beats) dram_busy = false;
     }
 
     // ---- MAAP allocator model (02 §4.2) ----
@@ -495,6 +678,10 @@ struct H {
     d->maap_req_ready_i = 0; d->maap_rsp_valid_i = 0; d->maap_rsp_ok_i = 0;
     d->maap_rsp_da_i = 0;
     d->maap_conflict_valid_i = 0; d->maap_conflict_src_i = 0;
+    d->desc_mem_req_ready_i = 0; d->desc_mem_rsp_valid_i = 0;
+    d->desc_mem_rsp_data_i = 0; d->desc_mem_rsp_last_i = 0;
+    d->desc_mem_rsp_err_i = 0;
+    dram_busy = false; dram_wait = 0;
     idle(20);
     d->rst_n = 1;
     idle(10);
@@ -612,6 +799,21 @@ int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   auto* d = new Vpp_top_wrap;
   H h(d);
+
+  // The entity model lives in the integrator's main memory (07 §3.3): load it
+  // BEFORE reset, exactly as software does before entity_enable. The image is
+  // built here from the IEEE §7.2 field offsets and the documented header /
+  // index-map layout — nothing in it comes from the DUT or from the
+  // generator's output.
+  std::vector<ImgEnt> img_ents = {
+    {CFGIX, 0x0000, 1, 312, 0, 312, 0},          // ENTITY
+    {CFGIX, 0x0024, 1,  78, 1,  80, 0},          // CLOCK_DOMAIN (not %8)
+  };
+  std::vector<uint8_t> desc_entity = entity_descriptor();
+  std::vector<uint8_t> desc_clkdom = clock_domain_descriptor();
+  h.dram = build_image(img_ents, {desc_entity, desc_clkdom},
+                       {"PP Reference Entity", "Clock Domain 0"}, 1);
+
   h.reset();
 
   // ==== R. boot restore over blank NVM (07 §5.3) ==========================
@@ -1042,6 +1244,190 @@ int main(int argc, char** argv) {
           "S10: the declared dest MAC is the MAAP-granted address");
     CHECK(fvgot.size() >= 16 && fv_u64(fvgot, 14, 2) == VID_ADOPTED,
           "S10: declared on the adopted SR-class VID");
+  }
+
+  // ==== A. READ_DESCRIPTOR end to end (06 §6.1, 07 §3.3) ==================
+  // A real AEM command on the MAC byte stream must come back as a BYTE-EXACT
+  // AECPDU carrying the descriptor that lives in main memory. Before this
+  // landed the command reached a pop face nobody popped and nothing came out.
+  {
+    auto cmd = [&](uint16_t op, const std::vector<uint8_t>& pl, uint16_t seq,
+                   uint64_t target = EID, uint8_t mt = 0) {
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, mt, 0, target, CTLR_EID, seq, op,
+                        pl));
+      return h.wait_any(h.q_aecp, 200);
+    };
+    auto rdesc_pl = [](uint16_t cfg, uint16_t ty, uint16_t ix) {
+      std::vector<uint8_t> p(8, 0);
+      putbe(&p[0], cfg, 2); putbe(&p[4], ty, 2); putbe(&p[6], ix, 2);
+      return p;
+    };
+    auto expect = [&](uint8_t status, uint16_t op, uint16_t seq,
+                      const std::vector<uint8_t>& pl) {
+      return aecp_frame(CTLR_MAC, OWN_MAC, 1, status, EID, CTLR_EID, seq, op,
+                        pl);
+    };
+
+    CHECK(d->dbg_img_valid_o == 1,
+          "A0: descriptor image validated out of DRAM (fault %u)",
+          (unsigned)d->dbg_img_fault_o);
+    //! snapshot word 25 = {13'd0, rx_slots_free[15:0], tx_slots_free[2:0]}.
+    //! The TX pool is NOT idle here — SRP keeps committed frames in flight —
+    //! so A11 demands no REGRESSION against this baseline rather than a fixed
+    //! count, while the RX pool must come back whole.
+    uint32_t tx_free_before = h.snap(25) & 0x7u;
+
+    // ---- A1: the ENTITY descriptor, byte-exact on the wire ---------------
+    uint16_t cmd0 = d->dbg_aecp_cmd_o, rsp0 = d->dbg_aecp_resp_o;
+    uint64_t mem0 = h.dram_reqs;
+    auto got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0000, 0), 0x1111);
+    std::vector<uint8_t> pl;
+    pl.resize(4, 0);
+    putbe(&pl[0], CFGIX, 2);
+    pl.insert(pl.end(), desc_entity.begin(), desc_entity.end());
+    auto want = expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0x1111, pl);
+    CHECK(!got.empty(), "A1: no READ_DESCRIPTOR response came back");
+    CHECK(got.size() == want.size(), "A1: response is %zu B, want %zu",
+          got.size(), want.size());
+    CHECK(got == want, "A1: READ_DESCRIPTOR response is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+    CHECK(d->dbg_aecp_cmd_o == cmd0 + 1 && d->dbg_aecp_resp_o == rsp0 + 1,
+          "A1: command/response counters moved once");
+    // ONE burst per command: the whole point of the line buffer is that a
+    // descriptor costs one memory latency, not one per byte
+    CHECK(h.dram_reqs == mem0 + 1,
+          "A1: %llu memory bursts for one descriptor, want 1",
+          (unsigned long long)(h.dram_reqs - mem0));
+
+    // ---- A2: a bad descriptor_index is NO_SUCH_DESCRIPTOR + the §7.4.5 stub
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0000, 5), 0x2222);
+    want = expect(AECP_NO_SUCH_DESCRIPTOR, AEM_READ_DESCRIPTOR, 0x2222,
+                  rdesc_pl(CFGIX, 0x0000, 5));
+    CHECK(!got.empty(), "A2: no response to a bad descriptor_index");
+    CHECK(got == want, "A2: NO_SUCH_DESCRIPTOR response is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+
+    // an unknown descriptor_type answers the same way
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0099, 0), 0x2233);
+    want = expect(AECP_NO_SUCH_DESCRIPTOR, AEM_READ_DESCRIPTOR, 0x2233,
+                  rdesc_pl(CFGIX, 0x0099, 0));
+    CHECK(got == want, "A2b: unknown descriptor_type is not byte-exact");
+
+    // ---- A3: a bad configuration_index is BAD_ARGUMENTS (06 §6.1) --------
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(3, 0x0000, 0), 0x3333);
+    want = expect(AECP_BAD_ARGUMENTS, AEM_READ_DESCRIPTOR, 0x3333,
+                  rdesc_pl(3, 0x0000, 0));
+    CHECK(!got.empty(), "A3: no response to a bad configuration_index");
+    CHECK(got == want, "A3: BAD_ARGUMENTS response is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+
+    // ---- A4: a descriptor whose length is NOT a multiple of 8 ------------
+    // COPY_BUFFER reads 8-byte lanes; if it advanced by the lane instead of
+    // the residual, this response would carry 2 bytes of the next descriptor
+    // and lie about control_data_length
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0024, 0), 0x4444);
+    pl.assign(4, 0);
+    putbe(&pl[0], CFGIX, 2);
+    pl.insert(pl.end(), desc_clkdom.begin(), desc_clkdom.end());
+    want = expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0x4444, pl);
+    CHECK(!got.empty(), "A4: no CLOCK_DOMAIN response");
+    CHECK(got.size() == 38 + 4 + 78,
+          "A4: CLOCK_DOMAIN response is %zu B, want %d", got.size(),
+          38 + 4 + 78);
+    CHECK(got == want, "A4: 78-byte descriptor response is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+
+    // ---- A5: an opcode this build does not implement ---------------------
+    // NOT_IMPLEMENTED with the command echoed (F06.14 / IEEE §9.3.5.3.3) —
+    // never silence, never a malformed frame
+    std::vector<uint8_t> sr_pl(4, 0);
+    putbe(&sr_pl[0], 0x0002, 2);                        // AUDIO_UNIT, index 0
+    got = cmd(AEM_GET_SAMPLING_RATE, sr_pl, 0x5555);
+    want = expect(AECP_NOT_IMPLEMENTED, AEM_GET_SAMPLING_RATE, 0x5555, sr_pl);
+    CHECK(!got.empty(), "A5: an unimplemented opcode answered with silence");
+    CHECK(got == want, "A5: NOT_IMPLEMENTED echo is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+
+    // ---- A6: IDENTIFY_NOTIFICATION as a COMMAND (IEEE §7.4.39.2) ---------
+    std::vector<uint8_t> id_pl(4, 0);
+    putbe(&id_pl[0], 0x001A, 2);
+    got = cmd(AEM_IDENTIFY_NOTIF, id_pl, 0x6666);
+    want = expect(AECP_BAD_ARGUMENTS, AEM_IDENTIFY_NOTIF, 0x6666, id_pl);
+    CHECK(!got.empty(), "A6: IDENTIFY_NOTIFICATION command got no answer");
+    CHECK(got == want, "A6: the opcode-specific BAD_ARGUMENTS is not "
+          "byte-exact");
+
+    // ---- A7: a truncated READ_DESCRIPTOR is BAD_ARGUMENTS ----------------
+    // it must NOT locate whatever zeros happened to follow the header
+    std::vector<uint8_t> short_pl(4, 0);
+    got = cmd(AEM_READ_DESCRIPTOR, short_pl, 0x7777);
+    want = expect(AECP_BAD_ARGUMENTS, AEM_READ_DESCRIPTOR, 0x7777, short_pl);
+    CHECK(!got.empty(), "A7: a truncated READ_DESCRIPTOR got no answer");
+    CHECK(got == want, "A7: truncated-command answer is not byte-exact");
+
+    // ---- A8: a command for another entity is dropped (F06.2) -------------
+    uint16_t drop0 = d->dbg_aecp_drop_o;
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID ^ 0xFFULL, CTLR_EID,
+                      0x8888, AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0, 0)));
+    h.run_ms(20);
+    CHECK(h.q_aecp.empty(),
+          "A8: answered a command addressed to another entity_id");
+    CHECK(d->dbg_aecp_drop_o == drop0 + 1, "A8: the drop was counted");
+
+    // ---- A9: an AEM RESPONSE arriving as input is never answered ---------
+    drop0 = d->dbg_aecp_drop_o;
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 1, 0, EID, CTLR_EID, 0x9999,
+                      AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0, 0)));
+    h.run_ms(20);
+    CHECK(h.q_aecp.empty(), "A9: answered an AECP RESPONSE (storm hazard)");
+    CHECK(d->dbg_aecp_drop_o == drop0 + 1, "A9: the response drop was counted");
+
+    // ---- A10: back-to-back commands, sequence_id echoed each time --------
+    for (uint16_t k = 0; k < 3; ++k) {
+      uint16_t sq = uint16_t(0xA000 + k);
+      got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0000, 0), sq);
+      pl.assign(4, 0);
+      putbe(&pl[0], CFGIX, 2);
+      pl.insert(pl.end(), desc_entity.begin(), desc_entity.end());
+      want = expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, sq, pl);
+      CHECK(got == want, "A10: repeat %u is not byte-exact", k);
+    }
+
+    // ---- A11: no slot is silted up by the AECP path ----------------------
+    // the engine owns the RX slot from pop to free and the TX slot from alloc
+    // to serialize. A one-slot-per-command leak would strand the RX pool
+    // (4 slots) inside eight commands and the responses would simply stop, so
+    // drive well past it and then demand BOTH pools back — sampled after a
+    // quiet window, since ADP/SRP frames of their own may be mid-flight.
+    for (uint16_t k = 0; k < 8; ++k) {
+      got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0024, 0),
+                uint16_t(0xB000 + k));
+      CHECK(!got.empty() && got.size() == 38 + 4 + 78,
+            "A11: command %u of the leak run went unanswered", k);
+    }
+    h.run_ms(60);
+    uint32_t pools = h.snap(25);
+    CHECK(((pools >> 3) & 0xFFFFu) == 4u,
+          "A11: %u of 4 RX slots free after the AECP traffic",
+          (pools >> 3) & 0xFFFFu);
+    //! the TX pool breathes with SRP's own 200 ms cadence, so poll for the
+    //! baseline to come back instead of sampling one instant; a leak would
+    //! never return it (and would have stalled the eight commands above)
+    uint32_t tx_free_after = pools & 0x7u;
+    for (int q = 0; q < 12 && tx_free_after < tx_free_before; ++q) {
+      h.run_ms(40);
+      tx_free_after = h.snap(25) & 0x7u;
+    }
+    CHECK(tx_free_after >= tx_free_before,
+          "A11: TX slots free never came back: %u -> %u",
+          tx_free_before, tx_free_after);
+    CHECK((h.snap(32) >> 16) == d->dbg_aecp_cmd_o,
+          "A11: the snapshot window publishes the command counter");
+    CHECK((h.snap(34) & 1u) == 1u,
+          "A11: the snapshot window publishes image-valid");
   }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);

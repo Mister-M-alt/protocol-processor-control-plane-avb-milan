@@ -552,6 +552,44 @@ Sizing: ~35 programs × ~25 µops ⇒ `P-UCODE-ROM-DEPTH` = 2048 with ~2× margi
 The dispatch ROM + response-size ROM + µcode are the artifacts generated from the
 single-source command model ([09 §1](09_verification.md)).
 
+### 8.1 Realization status (`hdl/aecp/KL_aecp_engine.sv`)
+
+`KL_aecp_engine` pops the AECP dispatch queue, runs `KL_aecp_ucpu` against
+`KL_aecp_desc_store` ([07 §3.3](07_memory_maps.md)) and emits the response on TX lane
+0. What it answers **today**:
+
+| Opcode | Answer |
+|---|---|
+| 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor; `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
+| 0x0026 IDENTIFY_NOTIFICATION | `BAD_ARGUMENTS` (§7.4.39.2 — the opcode-specific rule over §9.3.5.3.3) |
+| everything else, all message types | `NOT_IMPLEMENTED` with the command **echoed** (F06.14 / §9.3.5.3.3) |
+
+Δ7's ACQUIRE_ENTITY (`NOT_SUPPORTED` with `owner_id` = 0) is therefore **not yet**
+distinguished from the generic echo — the exemplar µprogram exists (`E_ACQ`) but the
+response must zero `owner_id` rather than echo it, so it is not wired.
+
+**Dispatch decision (this section specifies a ROM; the tree ships none).** §4 names a
+dispatch ROM and §8 fixes its 48-bit entry, but no ROM and no generator for it exist,
+and the only field with a consumer today is the µPC entry. The engine therefore uses a
+**direct opcode decode** — three constant-folded arms — and says so in its banner. A
+ROM becomes the right shape once the hazard class, min-cdl, response-size id,
+lock/GDI/notify flags and per-profile valid bits have consumers; until then it would be
+a generated artifact with one live field. When it lands it replaces the decode and
+nothing else.
+
+**Header ownership.** `BUILD_HEADER` writes a compact {target_eid, seq, status} record
+into response bytes 0..11 and the cursor starts at 12; that record is *not* the 24-byte
+AECPDU header. The engine synthesises the wire header from the [03 §4](03_packet_engine.md)
+transaction plus `resp_status_o`, so response byte 12+k is AECPDU byte 24+k and
+`resp_len - 12` is the payload length. `control_data_length` is 12 + payload — the
+offset-from-@12 convention F06.14 uses throughout ("GET_COUNTERS 160 B, cdl 148").
+
+**Response-buffer byte order** (unstated above, and it has to be stated): `rb_wdata`
+carries a field value right-justified with a low-contiguous `rb_wstrb` giving its
+width, and those bytes are placed **big-endian** at `rb_addr`, the 1722.1 wire order of
+every AEM field. The rule must live in the buffer because the µISA has no byte-swap
+operation.
+
 ## 9. Timing
 
 Owns `T-AECP-RESP`, `T-NOTIF-MONITOR`,

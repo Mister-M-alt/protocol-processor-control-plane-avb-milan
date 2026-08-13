@@ -6,7 +6,9 @@
 | `KL_acmp_nvm_shadow` | `hdl/acmp/KL_acmp_nvm_shadow.sv` | acmp_nvm, pp_top |
 | `KL_acmp_talker` | `hdl/acmp/KL_acmp_talker.sv` | acmp_talker, pp_top |
 | `KL_adp_engine` | `hdl/adp/KL_adp_engine.sv` | adp_engine, pp_top |
-| `KL_aecp_ucpu` | `hdl/aecp/KL_aecp_ucpu.sv` | ucpu |
+| `KL_aecp_desc_store` | `hdl/aecp/KL_aecp_desc_store.sv` | desc_store, pp_top |
+| `KL_aecp_engine` | `hdl/aecp/KL_aecp_engine.sv` | pp_top |
+| `KL_aecp_ucpu` | `hdl/aecp/KL_aecp_ucpu.sv` | pp_top, ucpu |
 | `KL_mrp_strip` | `hdl/top/KL_mrp_strip.sv` | pp_top |
 | `KL_pp_acmp_listener` | `hdl/acmp/KL_pp_acmp_listener.sv` | acmp_listener, acmp_nvm, pp_top |
 | `KL_pp_dispatch` | `hdl/packet_engine/KL_pp_dispatch.sv` | dispatch, pp_top |
@@ -34,9 +36,9 @@
 | `KL_srp_vlan` | `hdl/srp/KL_srp_vlan.sv` | pp_top, srp_encoder, srp_top |
 | `pp_acmp_pkg` | `hdl/acmp/pp_acmp_pkg.sv` | acmp_listener, acmp_nvm, pp_top |
 | `pp_adp_pkg` | `hdl/adp/pp_adp_pkg.sv` | adp_engine, pp_top |
-| `pp_pkg` | `hdl/common/pp_pkg.sv` | acmp_listener, acmp_nvm, acmp_talker, adp_engine, dispatch, originator, pp_top, rx_validator, scoreboard, srp_decoder, srp_encoder, srp_stream_fsms, srp_top, timer_service, tx_arbiter |
+| `pp_pkg` | `hdl/common/pp_pkg.sv` | acmp_listener, acmp_nvm, acmp_talker, adp_engine, dispatch, originator, pp_top, rx_validator, scoreboard, srp_decoder, srp_encoder, srp_stream_fsms, srp_top, timer_map, timer_service, tx_arbiter |
 | `protocol_processor_top` | `hdl/top/protocol_processor_top.sv` | pp_top |
 | `srp_pkg` | `hdl/srp/srp_pkg.sv` | pp_top, srp_decoder, srp_stream_fsms, srp_top |
-| `ucpu_pkg` | `hdl/aecp/ucpu_pkg.sv` | ucpu |
+| `ucpu_pkg` | `hdl/aecp/ucpu_pkg.sv` | pp_top, ucpu |
 
-Modules: 35 · untested: 0 (budget: 0)
+Modules: 37 · untested: 0 (budget: 0)

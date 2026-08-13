@@ -66,9 +66,21 @@ module pp_top_wrap (
     output logic        tx_eof_o,
     input  wire         tx_ready_i,
 
-    // AECP pop face (tied consumer: the P4 uCPU seam)
+    // AECP pop face (kept live: an integrator may still observe/drain it)
     output logic        aecp_txn_valid_o,
     input  wire         aecp_txn_ready_i,
+
+    // descriptor-image memory master (07 §3.3) — the C++ harness plays a
+    // latency-injecting DRAM behind it
+    output logic        desc_mem_req_valid_o,
+    input  wire         desc_mem_req_ready_i,
+    output logic [31:0] desc_mem_req_addr_o,
+    output logic  [8:0] desc_mem_req_beats_o,
+    input  wire         desc_mem_rsp_valid_i,
+    output logic        desc_mem_rsp_ready_o,
+    input  wire  [63:0] desc_mem_rsp_data_i,
+    input  wire         desc_mem_rsp_last_i,
+    input  wire         desc_mem_rsp_err_i,
 
     // NVM restore + device face
     input  wire         restore_go_i,
@@ -145,7 +157,12 @@ module pp_top_wrap (
     output logic        dbg_trc_wr_o,
     output logic        dbg_adp_evt_o,
     output logic        dbg_evt_tk_v_o,
-    output logic        dbg_evt_tk_rdy_o
+    output logic        dbg_evt_tk_rdy_o,
+    output logic        dbg_img_valid_o,
+    output logic  [3:0] dbg_img_fault_o,
+    output logic [15:0] dbg_aecp_cmd_o,
+    output logic [15:0] dbg_aecp_resp_o,
+    output logic [15:0] dbg_aecp_drop_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 89-slot sweep (91 cycles) fits inside
@@ -171,7 +188,8 @@ module pp_top_wrap (
   protocol_processor_top #(
       .TIM_DIV_US_P (TB_DIV_US_C),
       .TIM_DIV_MS_P (TB_DIV_MS_C),
-      .TROM_HEX_P   ("ltn_rom.hex")
+      .TROM_HEX_P   ("ltn_rom.hex"),
+      .UCODE_HEX_P  ("ucode.hex")
   ) u_dut (
       .clk_i                 (clk_i),
       .rst_n                 (rst_n),
@@ -215,6 +233,15 @@ module pp_top_wrap (
       .aecp_rxs_slot_len_o   (aecp_slot_len_nc_w),
       .aecp_rxs_free_i       (1'b0),
       .aecp_rxs_free_slot_i  (2'd0),
+      .desc_mem_req_valid_o  (desc_mem_req_valid_o),
+      .desc_mem_req_ready_i  (desc_mem_req_ready_i),
+      .desc_mem_req_addr_o   (desc_mem_req_addr_o),
+      .desc_mem_req_beats_o  (desc_mem_req_beats_o),
+      .desc_mem_rsp_valid_i  (desc_mem_rsp_valid_i),
+      .desc_mem_rsp_ready_o  (desc_mem_rsp_ready_o),
+      .desc_mem_rsp_data_i   (desc_mem_rsp_data_i),
+      .desc_mem_rsp_last_i   (desc_mem_rsp_last_i),
+      .desc_mem_rsp_err_i    (desc_mem_rsp_err_i),
       .restore_go_i          (restore_go_i),
       .restore_busy_o        (restore_busy_o),
       .restore_done_o        (restore_done_o),
@@ -280,6 +307,11 @@ module pp_top_wrap (
   assign dbg_adp_evt_o    = u_dut.adp_evt_valid_w;
   assign dbg_evt_tk_v_o   = u_dut.lstn_evt_tk_valid_w;
   assign dbg_evt_tk_rdy_o = u_dut.lstn_evt_tk_ready_w;
+  assign dbg_img_valid_o  = u_dut.aecp_dbg_img_valid_w;
+  assign dbg_img_fault_o  = u_dut.aecp_dbg_fault_w;
+  assign dbg_aecp_cmd_o   = u_dut.aecp_dbg_cmd_w;
+  assign dbg_aecp_resp_o  = u_dut.aecp_dbg_resp_w;
+  assign dbg_aecp_drop_o  = u_dut.aecp_dbg_drop_w;
 
 endmodule : pp_top_wrap
 `default_nettype wire

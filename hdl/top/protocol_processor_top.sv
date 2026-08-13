@@ -85,6 +85,32 @@ module protocol_processor_top
     parameter int unsigned TIM_DIV_MS_P        = 1000,
     //! ACMP listener transition-ROM image (rom/gen_ltn_rom.py output)
     parameter string       TROM_HEX_P          = "ltn_rom.hex",
+    //! AECP µcode ROM image (hdl/aecp/ucode/gen_ucode.py output). Same trap as
+    //! TROM_HEX_P: a RELATIVE name resolves against the TOOL'S RUN DIRECTORY,
+    //! which is why the parameter exists at all — an integrator hands over an
+    //! absolute path.
+    parameter string       UCODE_HEX_P         = "ucode.hex",
+    //! ---- descriptor image in the integrator's MAIN MEMORY (07 §3.3) ------
+    //! The entity model does NOT live on chip: the reference consumer's is
+    //! 22,561 bytes at the 8x8 shape and the reference part measured 131 of
+    //! 135 block-RAM tiles used. It lives in DDR3 on the reference board,
+    //! reached through the vendor-neutral read-only master below.
+    //!
+    //! Every address is a COMPILE-TIME parameter — the DRAM map is fixed when
+    //! the bitstream is built, so a runtime base would only buy a 32-bit port
+    //! and the flops behind it. Software loads the image at DESC_BASE_P before
+    //! entity_enable; if it has not (or loaded a truncated one), the store's
+    //! magic + version + checksum header check fails and every READ_DESCRIPTOR
+    //! answers NO_SUCH_DESCRIPTOR — never a garbage descriptor on the wire.
+    parameter logic [31:0] DESC_BASE_P         = 32'h2000_0000,
+    //! on-chip line buffer for ONE located descriptor (07 §3.2 worst case)
+    parameter int unsigned DESC_LINE_BYTES_P   = 576,
+    //! cached index-map entries, one per (configuration, descriptor_type)
+    parameter int unsigned DESC_IDX_ENTRIES_P  = 32,
+    //! 64-byte name-table entries held on chip (07 §3.4 overlay)
+    parameter int unsigned DESC_NAME_ENTRIES_P = 16,
+    //! no-progress watchdog on the descriptor memory face, in clocks
+    parameter int unsigned DESC_MEM_TMO_CYC_P  = 4096,
     //! derived — do not override
     //! F08.4 timer-slot map for THIS shape. Every base below is the running
     //! sum of the group extents before it (pp_pkg::pp_timer_map is the ONE
@@ -154,10 +180,34 @@ module protocol_processor_top
     output logic        tx_eof_o,              //! final byte of the frame
     input  wire         tx_ready_i,            //! downstream MAC FIFO consumes
 
-    //! ---- AECP pop face (P4 uCPU seam; tie ready 0 until it lands) ----
+    //! ---- descriptor-image memory master (07 §3.3; READ-ONLY) -------------
+    //! The AECP engine's entity model lives in the integrator's main memory at
+    //! DESC_BASE_P. Vendor-neutral by contract (hdl/README rule 1): the
+    //! integrator bridges this to whatever it has — this repository does not
+    //! know it is DDR3. ONE outstanding request, responses IN ORDER,
+    //! `rsp_last` marks the final beat, and a beat carries its lowest byte
+    //! address in bits [63:56] (1722.1 wire order). Leaving `req_ready` tied 0
+    //! is a LEGAL wiring: the store's watchdog degrades every locate to
+    //! NO_SUCH_DESCRIPTOR instead of hanging the µCPU.
+    output logic        desc_mem_req_valid_o,  //! request, held until ready
+    input  wire         desc_mem_req_ready_i,  //! bridge accepts the request
+    output logic [31:0] desc_mem_req_addr_o,   //! byte address, 8-byte aligned
+    output logic  [8:0] desc_mem_req_beats_o,  //! 64-bit beats in this burst
+    input  wire         desc_mem_rsp_valid_i,  //! response beat present
+    output logic        desc_mem_rsp_ready_o,  //! processor consumes the beat
+    input  wire  [63:0] desc_mem_rsp_data_i,   //! beat data (big-endian lane)
+    input  wire         desc_mem_rsp_last_i,   //! final beat of the burst
+    input  wire         desc_mem_rsp_err_i,    //! read failed — abort the burst
+
+    //! ---- AECP pop face --------------------------------------------------
+    //! NO LONGER THE ONLY CONSUMER: KL_aecp_engine below pops this queue and
+    //! answers on TX lane 0. These ports stay because an integrator may want
+    //! to observe the head (or drain it itself), but `aecp_txn_ready_i` is now
+    //! an ADDITIONAL drain OR-ed with the engine's — tie it 0 unless you mean
+    //! to steal records from the engine.
     output logic                    aecp_txn_valid_o, //! head record valid
     output logic [PP_TXN_W_C-1:0]   aecp_txn_o,       //! head pp_txn_t record
-    input  wire                     aecp_txn_ready_i, //! consumer pops the head
+    input  wire                     aecp_txn_ready_i, //! extra consumer pops the head
     input  wire  [RXS_W_C-1:0]      aecp_rxs_rd_slot_i, //! payload slot to read
     input  wire  [RXA_W_C-1:0]      aecp_rxs_rd_addr_i, //! byte address in the slot
     input  wire                     aecp_rxs_rd_en_i,   //! sync-read enable
@@ -701,34 +751,37 @@ module protocol_processor_top
   localparam int unsigned RXF_ADP_C  = 0;
   localparam int unsigned RXF_LSTN_C = 1;
   localparam int unsigned RXF_TKR_C  = 2;
-  localparam int unsigned RXF_AECP_C = 3;
+  localparam int unsigned RXF_AECP_C = 3;   // the TOP-LEVEL pop face
+  localparam int unsigned RXF_UCPU_C = 4;   // KL_aecp_engine
+  localparam int unsigned RXF_N_C    = 5;
 
-  logic [3:0]              rxf_vld_r;
-  logic [3:0][RXS_W_C-1:0] rxf_slot_r;
-  logic [15:0]             rxf_drop_r;
-  logic                    rxf_free_w;
-  logic [RXS_W_C-1:0]      rxf_free_slot_w;
-  logic [1:0]              rxf_pick_ix_w;
-  logic [3:0]              rxf_req_w;
-  logic [3:0][RXS_W_C-1:0] rxf_req_slot_w;
+  logic [RXF_N_C-1:0]              rxf_vld_r;
+  logic [RXF_N_C-1:0][RXS_W_C-1:0] rxf_slot_r;
+  logic [15:0]                     rxf_drop_r;
+  logic                            rxf_free_w;
+  logic [RXS_W_C-1:0]              rxf_free_slot_w;
+  logic [2:0]                      rxf_pick_ix_w;
+  logic [RXF_N_C-1:0]              rxf_req_w;
+  logic [RXF_N_C-1:0][RXS_W_C-1:0] rxf_req_slot_w;
 
-  logic adp_rxs_free_w,  lstn_rxs_free_w,  tkr_rxs_free_w;
+  logic adp_rxs_free_w,  lstn_rxs_free_w,  tkr_rxs_free_w, aecp_rxs_free_w;
   logic [RXS_W_C-1:0] adp_rxs_free_slot_w, lstn_rxs_free_slot_w,
-                      tkr_rxs_free_slot_w;
+                      tkr_rxs_free_slot_w, aecp_rxs_free_slot_w;
 
-  assign rxf_req_w      = {aecp_rxs_free_i, tkr_rxs_free_w,
+  assign rxf_req_w      = {aecp_rxs_free_w, aecp_rxs_free_i, tkr_rxs_free_w,
                            lstn_rxs_free_w, adp_rxs_free_w};
-  assign rxf_req_slot_w = {aecp_rxs_free_slot_i, tkr_rxs_free_slot_w,
+  assign rxf_req_slot_w = {aecp_rxs_free_slot_w, aecp_rxs_free_slot_i,
+                           tkr_rxs_free_slot_w,
                            lstn_rxs_free_slot_w, adp_rxs_free_slot_w};
 
   always_comb begin : rxf_pick
     rxf_free_w      = 1'b0;
-    rxf_pick_ix_w   = 2'd0;
+    rxf_pick_ix_w   = 3'd0;
     rxf_free_slot_w = '0;
-    for (int unsigned i = 0; i < 4; i++) begin
+    for (int unsigned i = 0; i < RXF_N_C; i++) begin
       if (!rxf_free_w && rxf_vld_r[i]) begin
         rxf_free_w      = 1'b1;
-        rxf_pick_ix_w   = 2'(i);
+        rxf_pick_ix_w   = 3'(i);
         rxf_free_slot_w = rxf_slot_r[i];
       end
     end
@@ -746,9 +799,9 @@ module protocol_processor_top
       end
       // capture new frees (a later assignment wins: a same-cycle refill of
       // the drained entry lands correctly)
-      for (int unsigned i = 0; i < 4; i++) begin
+      for (int unsigned i = 0; i < RXF_N_C; i++) begin
         if (rxf_req_w[i]) begin
-          if (rxf_vld_r[i] && !(rxf_free_w && (rxf_pick_ix_w == 2'(i)))) begin
+          if (rxf_vld_r[i] && !(rxf_free_w && (rxf_pick_ix_w == 3'(i)))) begin
             if (rxf_drop_r != 16'hFFFF) rxf_drop_r <= rxf_drop_r + 16'd1;
           end else begin
             rxf_vld_r[i]  <= 1'b1;
@@ -764,20 +817,26 @@ module protocol_processor_top
   localparam int unsigned RXP_ADP_C   = 0;
   localparam int unsigned RXP_LSTN_C  = 1;
   localparam int unsigned RXP_TKR_C   = 2;
-  localparam int unsigned RXP_AECP_C  = 3;
+  localparam int unsigned RXP_AECP_C  = 3;   // the TOP-LEVEL pop face
   localparam int unsigned RXP_STEER_C = 4;
+  //! KL_aecp_engine gets its OWN replica rather than sharing the pop face's:
+  //! two readers on one port would silently interleave addresses mid-payload
+  //! (the file banner's rule), and the pop face must keep working for an
+  //! integrator that still uses it.
+  localparam int unsigned RXP_UCPU_C  = 5;
+  localparam int unsigned RXP_N_C     = 6;
 
-  logic [4:0]              rxp_alloc_gnt_w;
-  logic [4:0][RXS_W_C-1:0] rxp_alloc_slot_w;
-  logic [4:0][RXS_W_C-1:0] rxp_rd_slot_w;
-  logic [4:0][RXA_W_C-1:0] rxp_rd_addr_w;
-  logic [4:0]              rxp_rd_en_w;
-  logic [4:0][7:0]         rxp_rd_data_w;
-  logic [4:0][RXL_W_C-1:0] rxp_slot_len_w;
-  logic [4:0][$clog2(RX_SLOTS_P+1)-1:0] rxp_slots_free_w;
-  logic [4:0][15:0]        rxp_overrun_w;
+  logic [RXP_N_C-1:0]              rxp_alloc_gnt_w;
+  logic [RXP_N_C-1:0][RXS_W_C-1:0] rxp_alloc_slot_w;
+  logic [RXP_N_C-1:0][RXS_W_C-1:0] rxp_rd_slot_w;
+  logic [RXP_N_C-1:0][RXA_W_C-1:0] rxp_rd_addr_w;
+  logic [RXP_N_C-1:0]              rxp_rd_en_w;
+  logic [RXP_N_C-1:0][7:0]         rxp_rd_data_w;
+  logic [RXP_N_C-1:0][RXL_W_C-1:0] rxp_slot_len_w;
+  logic [RXP_N_C-1:0][$clog2(RX_SLOTS_P+1)-1:0] rxp_slots_free_w;
+  logic [RXP_N_C-1:0][15:0]        rxp_overrun_w;
 
-  for (genvar g = 0; g < 5; g++) begin : g_rx_pool
+  for (genvar g = 0; g < RXP_N_C; g++) begin : g_rx_pool
     KL_pp_rx_slots #(
         .SLOTS_P (RX_SLOTS_P),
         .BYTES_P (RX_SLOT_BYTES_P)
@@ -963,7 +1022,9 @@ module protocol_processor_top
       .acmp_txn_ready_i   (acmp_txn_ready_w),
       .aecp_txn_valid_o   (aecp_txn_valid_o),
       .aecp_txn_o         (aecp_txn_o),
-      .aecp_txn_ready_i   (aecp_txn_ready_i),
+      //! the engine drains the queue; the top-level face is an ADDITIONAL
+      //! consumer (see its port banner)
+      .aecp_txn_ready_i   (aecp_txn_ready_i || aecp_eng_ready_w),
       .adp_level_o        (disp_adp_level_w),
       .acmp_level_o       (disp_acmp_level_w),
       .aecp_level_o       (disp_aecp_level_w),
@@ -2183,6 +2244,105 @@ module protocol_processor_top
   end
 
   // =========================================================================
+  // AECP: the µCPU on the dispatch head + its descriptor store (06)
+  // =========================================================================
+  //! The seam this block closes: the AECP head used to be handed OUT through a
+  //! pop face that nothing popped, so a validated, normalized AEM command
+  //! reached the end of the pipeline and stopped there. KL_aecp_engine pops
+  //! it, runs the 06 §8 µCPU against the 07 §3.3 model store in main memory,
+  //! and puts a byte-exact AECPDU on TX lane 0 (LANE_AECP_SOL_C).
+  logic                    aecp_eng_ready_w;
+  logic [RXS_W_C-1:0]      aecp_eng_free_slot_w;
+  logic                    aecp_txs_alloc_req_w, aecp_txs_oversize_w;
+  logic [TXS_W_C-1:0]      aecp_txs_wr_slot_w;
+  logic [TXA_W_C-1:0]      aecp_txs_wr_addr_w, aecp_txs_wr_len_w;
+  logic                    aecp_txs_wr_valid_w, aecp_txs_wr_commit_w;
+  logic [7:0]              aecp_txs_wr_data_w;
+  logic                    aecp_txreq_valid_w, aecp_txreq_ready_w;
+  logic [TXS_W_C-1:0]      aecp_txreq_slot_w;
+  logic                    aecp_txs_gnt_w;
+  logic [TXS_W_C-1:0]      aecp_txs_gnt_slot_w;
+  logic                    aecp_eff_commit_nc_w, aecp_eff_nvm_stb_nc_w;
+  logic [7:0]              aecp_eff_nvm_mark_nc_w;
+  logic [3:0]              aecp_eff_notify_cls_nc_w;
+  logic                    aecp_eff_notify_stb_nc_w;
+  logic                    aecp_dbg_busy_nc_w, aecp_dbg_img_valid_w;
+  logic [15:0]             aecp_dbg_cmd_w, aecp_dbg_resp_w, aecp_dbg_drop_w;
+  logic [15:0]             aecp_dbg_miss_w;
+  logic  [3:0]             aecp_dbg_fault_w;
+  logic  [4:0]             aecp_dbg_status_w;
+  logic [10:0]             aecp_dbg_len_w;
+
+  KL_aecp_engine #(
+      .UCODE_HEX_P         (UCODE_HEX_P),
+      .DESC_BASE_P         (DESC_BASE_P),
+      .LINE_BYTES_P        (DESC_LINE_BYTES_P),
+      .IDX_ENTRIES_P       (DESC_IDX_ENTRIES_P),
+      .NAME_ENTRIES_P      (DESC_NAME_ENTRIES_P),
+      .MEM_TIMEOUT_CYC_P   (DESC_MEM_TMO_CYC_P),
+      .RX_SLOTS_P          (RX_SLOTS_P),
+      .RX_SLOT_BYTES_P     (RX_SLOT_BYTES_P),
+      .TX_STD_SLOTS_P      (TX_STD_SLOTS_P),
+      .TX_STD_BYTES_P      (576),
+      .TX_OVERSIZE_BYTES_P (TX_OVERSIZE_BYTES_P)
+  ) u_aecp (
+      .clk_i              (clk_i),
+      .rst_n              (rst_n),
+      .entity_id_i        (entity_id_i),
+      .own_mac_i          (own_mac_i),
+      .txn_valid_i        (aecp_txn_valid_o),
+      .txn_i              (aecp_txn_o),
+      .txn_ready_o        (aecp_eng_ready_w),
+      .rxs_rd_slot_o      (rxp_rd_slot_w[RXP_UCPU_C]),
+      .rxs_rd_addr_o      (rxp_rd_addr_w[RXP_UCPU_C]),
+      .rxs_rd_en_o        (rxp_rd_en_w[RXP_UCPU_C]),
+      .rxs_rd_data_i      (rxp_rd_data_w[RXP_UCPU_C]),
+      .rxs_slot_len_i     (rxp_slot_len_w[RXP_UCPU_C]),
+      .rxs_free_o         (aecp_rxs_free_w),
+      .rxs_free_slot_o    (aecp_eng_free_slot_w),
+      .txs_alloc_req_o    (aecp_txs_alloc_req_w),
+      .txs_oversize_o     (aecp_txs_oversize_w),
+      .txs_alloc_gnt_i    (aecp_txs_gnt_w),
+      .txs_alloc_slot_i   (aecp_txs_gnt_slot_w),
+      .txs_wr_slot_o      (aecp_txs_wr_slot_w),
+      .txs_wr_addr_o      (aecp_txs_wr_addr_w),
+      .txs_wr_valid_o     (aecp_txs_wr_valid_w),
+      .txs_wr_data_o      (aecp_txs_wr_data_w),
+      .txs_wr_commit_o    (aecp_txs_wr_commit_w),
+      .txs_wr_len_o       (aecp_txs_wr_len_w),
+      .txreq_valid_o      (aecp_txreq_valid_w),
+      .txreq_slot_o       (aecp_txreq_slot_w),
+      .txreq_ready_i      (aecp_txreq_ready_w),
+      .mem_req_valid_o    (desc_mem_req_valid_o),
+      .mem_req_ready_i    (desc_mem_req_ready_i),
+      .mem_req_addr_o     (desc_mem_req_addr_o),
+      .mem_req_beats_o    (desc_mem_req_beats_o),
+      .mem_rsp_valid_i    (desc_mem_rsp_valid_i),
+      .mem_rsp_ready_o    (desc_mem_rsp_ready_o),
+      .mem_rsp_data_i     (desc_mem_rsp_data_i),
+      .mem_rsp_last_i     (desc_mem_rsp_last_i),
+      .mem_rsp_err_i      (desc_mem_rsp_err_i),
+      .lock_held_i        (1'b0),               // lock manager: P4
+      .lock_ctlr_i        (64'd0),
+      .eff_commit_o       (aecp_eff_commit_nc_w),
+      .eff_nvm_mark_o     (aecp_eff_nvm_mark_nc_w),
+      .eff_nvm_stb_o      (aecp_eff_nvm_stb_nc_w),
+      .eff_notify_class_o (aecp_eff_notify_cls_nc_w),
+      .eff_notify_stb_o   (aecp_eff_notify_stb_nc_w),
+      .dbg_busy_o         (aecp_dbg_busy_nc_w),
+      .dbg_cmd_cnt_o      (aecp_dbg_cmd_w),
+      .dbg_resp_cnt_o     (aecp_dbg_resp_w),
+      .dbg_drop_cnt_o     (aecp_dbg_drop_w),
+      .dbg_status_o       (aecp_dbg_status_w),
+      .dbg_len_o          (aecp_dbg_len_w),
+      .dbg_img_valid_o    (aecp_dbg_img_valid_w),
+      .dbg_img_fault_o    (aecp_dbg_fault_w),
+      .dbg_locate_miss_o  (aecp_dbg_miss_w)
+  );
+
+  assign aecp_rxs_free_slot_w = aecp_eng_free_slot_w;
+
+  // =========================================================================
   // TX slot pool + pool-access arbiter (banner)
   // =========================================================================
   // ONE alloc+write port, four builders (ADP / listener / SRP / talker
@@ -2197,44 +2357,51 @@ module protocol_processor_top
   localparam int unsigned TXC_LSTN_C = 1;
   localparam int unsigned TXC_SRP_C  = 2;
   localparam int unsigned TXC_TKB_C  = 3;
+  localparam int unsigned TXC_AECP_C = 4;   // KL_aecp_engine
+  localparam int unsigned TXC_N_C    = 5;
 
-  logic [3:0] txc_req_w;
-  logic [3:0] txc_pend_r;
-  logic [1:0] txc_owner_r;
+  logic [TXC_N_C-1:0] txc_req_w;
+  logic [TXC_N_C-1:0] txc_pend_r;
+  logic [2:0] txc_owner_r;
   logic       txc_locked_r;
-  logic       pool_alloc_req_w;
+  logic       pool_alloc_req_w, pool_oversize_w;
   logic       pool_alloc_gnt_w;
   logic [TXS_W_C-1:0] pool_alloc_slot_w;
   logic       pool_wr_valid_w, pool_wr_commit_w;
   logic [TXS_W_C-1:0] pool_wr_slot_w;
   logic [TXA_W_C-1:0] pool_wr_addr_w, pool_wr_len_w;
   logic [7:0] pool_wr_data_w;
-  logic [3:0] txc_commit_w;
+  logic [TXC_N_C-1:0] txc_commit_w;
 
-  assign txc_req_w = {tkb_alloc_req_w, srp_txs_alloc_req_w,
+  assign txc_req_w = {aecp_txs_alloc_req_w, tkb_alloc_req_w,
+                      srp_txs_alloc_req_w,
                       lstn_txs_alloc_req_w, adp_txs_alloc_req_w};
-  assign txc_commit_w = {(tkb_st_r == TKB_COMMIT), srp_txs_wr_commit_w,
+  assign txc_commit_w = {aecp_txs_wr_commit_w, (tkb_st_r == TKB_COMMIT),
+                         srp_txs_wr_commit_w,
                          lstn_txs_wr_commit_w, adp_txs_wr_commit_w};
 
   always_ff @(posedge clk_i) begin : txc_arbiter
     if (!rst_n) begin
       txc_pend_r   <= '0;
-      txc_owner_r  <= 2'd0;
+      txc_owner_r  <= 3'd0;
       txc_locked_r <= 1'b0;
     end else begin
-      for (int unsigned i = 0; i < 4; i++) begin
+      for (int unsigned i = 0; i < TXC_N_C; i++) begin
         if (txc_req_w[i]) txc_pend_r[i] <= 1'b1;
       end
       if (!txc_locked_r) begin
-        // fixed priority: listener (ACMP budget) > talker builder > SRP > ADP
+        //! fixed priority, 03 §8 order: listener (the 50 ms ACMP budget) >
+        //! talker builder > AECP solicited (100 ms) > SRP > ADP periodic
         if (txc_pend_r[TXC_LSTN_C] || txc_req_w[TXC_LSTN_C]) begin
-          txc_owner_r <= 2'(TXC_LSTN_C); txc_locked_r <= 1'b1;
+          txc_owner_r <= 3'(TXC_LSTN_C); txc_locked_r <= 1'b1;
         end else if (txc_pend_r[TXC_TKB_C] || txc_req_w[TXC_TKB_C]) begin
-          txc_owner_r <= 2'(TXC_TKB_C);  txc_locked_r <= 1'b1;
+          txc_owner_r <= 3'(TXC_TKB_C);  txc_locked_r <= 1'b1;
+        end else if (txc_pend_r[TXC_AECP_C] || txc_req_w[TXC_AECP_C]) begin
+          txc_owner_r <= 3'(TXC_AECP_C); txc_locked_r <= 1'b1;
         end else if (txc_pend_r[TXC_SRP_C] || txc_req_w[TXC_SRP_C]) begin
-          txc_owner_r <= 2'(TXC_SRP_C);  txc_locked_r <= 1'b1;
+          txc_owner_r <= 3'(TXC_SRP_C);  txc_locked_r <= 1'b1;
         end else if (txc_pend_r[TXC_ADP_C] || txc_req_w[TXC_ADP_C]) begin
-          txc_owner_r <= 2'(TXC_ADP_C);  txc_locked_r <= 1'b1;
+          txc_owner_r <= 3'(TXC_ADP_C);  txc_locked_r <= 1'b1;
         end
       end else begin
         if (pool_alloc_gnt_w) txc_pend_r[txc_owner_r] <= 1'b0;
@@ -2242,6 +2409,11 @@ module protocol_processor_top
       end
     end
   end
+
+  //! only the AECP engine can need the Δ8 oversize slot (READ_DESCRIPTOR is
+  //! the one response in this build that may exceed a standard 576-byte slot)
+  assign pool_oversize_w = txc_locked_r && (txc_owner_r == 3'(TXC_AECP_C))
+                         && aecp_txs_oversize_w;
 
   always_comb begin : txc_mux
     pool_alloc_req_w = 1'b0;
@@ -2253,7 +2425,16 @@ module protocol_processor_top
     pool_wr_len_w    = '0;
     if (txc_locked_r) begin
       unique case (txc_owner_r)
-        2'(TXC_ADP_C): begin
+        3'(TXC_AECP_C): begin
+          pool_alloc_req_w = aecp_txs_alloc_req_w;
+          pool_wr_valid_w  = aecp_txs_wr_valid_w;
+          pool_wr_commit_w = aecp_txs_wr_commit_w;
+          pool_wr_slot_w   = aecp_txs_wr_slot_w;
+          pool_wr_addr_w   = aecp_txs_wr_addr_w;
+          pool_wr_data_w   = aecp_txs_wr_data_w;
+          pool_wr_len_w    = aecp_txs_wr_len_w;
+        end
+        3'(TXC_ADP_C): begin
           pool_alloc_req_w = adp_txs_alloc_req_w;
           pool_wr_valid_w  = adp_txs_wr_valid_w;
           pool_wr_commit_w = adp_txs_wr_commit_w;
@@ -2262,7 +2443,7 @@ module protocol_processor_top
           pool_wr_data_w   = adp_txs_wr_data_w;
           pool_wr_len_w    = adp_txs_wr_len_w;
         end
-        2'(TXC_LSTN_C): begin
+        3'(TXC_LSTN_C): begin
           pool_alloc_req_w = lstn_txs_alloc_req_w;
           pool_wr_valid_w  = lstn_txs_wr_valid_w;
           pool_wr_commit_w = lstn_txs_wr_commit_w;
@@ -2271,7 +2452,7 @@ module protocol_processor_top
           pool_wr_data_w   = lstn_txs_wr_data_w;
           pool_wr_len_w    = lstn_txs_wr_len_w;
         end
-        2'(TXC_SRP_C): begin
+        3'(TXC_SRP_C): begin
           pool_alloc_req_w = srp_txs_alloc_req_w;
           pool_wr_valid_w  = srp_txs_wr_valid_w;
           pool_wr_commit_w = srp_txs_wr_commit_w;
@@ -2293,18 +2474,21 @@ module protocol_processor_top
     end
   end
 
-  assign adp_txs_gnt_w  = txc_locked_r && (txc_owner_r == 2'(TXC_ADP_C))
+  assign adp_txs_gnt_w  = txc_locked_r && (txc_owner_r == 3'(TXC_ADP_C))
                         && pool_alloc_gnt_w;
-  assign lstn_txs_gnt_w = txc_locked_r && (txc_owner_r == 2'(TXC_LSTN_C))
+  assign lstn_txs_gnt_w = txc_locked_r && (txc_owner_r == 3'(TXC_LSTN_C))
                         && pool_alloc_gnt_w;
-  assign srp_txs_gnt_w  = txc_locked_r && (txc_owner_r == 2'(TXC_SRP_C))
+  assign srp_txs_gnt_w  = txc_locked_r && (txc_owner_r == 3'(TXC_SRP_C))
                         && pool_alloc_gnt_w;
-  assign tkb_gnt_w      = txc_locked_r && (txc_owner_r == 2'(TXC_TKB_C))
+  assign tkb_gnt_w      = txc_locked_r && (txc_owner_r == 3'(TXC_TKB_C))
+                        && pool_alloc_gnt_w;
+  assign aecp_txs_gnt_w = txc_locked_r && (txc_owner_r == 3'(TXC_AECP_C))
                         && pool_alloc_gnt_w;
   assign adp_txs_gnt_slot_w  = pool_alloc_slot_w;
   assign lstn_txs_gnt_slot_w = pool_alloc_slot_w;
   assign srp_txs_gnt_slot_w  = pool_alloc_slot_w;
   assign tkb_gnt_slot_w      = pool_alloc_slot_w;
+  assign aecp_txs_gnt_slot_w = pool_alloc_slot_w;
 
   logic        ser_req_w, ser_valid_w, ser_last_w, ser_ready_w;
   logic [TXS_W_C-1:0] ser_slot_w;
@@ -2320,7 +2504,7 @@ module protocol_processor_top
       .clk_i         (clk_i),
       .rst_n         (rst_n),
       .alloc_req_i   (pool_alloc_req_w),
-      .oversize_i    (1'b0),               // no oversize builder until P4 Δ8
+      .oversize_i    (pool_oversize_w),    // Δ8: READ_DESCRIPTOR only
       .alloc_gnt_o   (pool_alloc_gnt_w),
       .alloc_slot_o  (pool_alloc_slot_w),
       .wr_slot_i     (pool_wr_slot_w),
@@ -2391,19 +2575,20 @@ module protocol_processor_top
     end
   end
 
-  assign arb_req_w[LANE_AECP_SOL_C] = 1'b0;             // P4 uCPU
+  assign arb_req_w[LANE_AECP_SOL_C] = aecp_txreq_valid_w;
   assign arb_req_w[LANE_AECP_UNS_C] = 1'b0;             // P4 notifications
   assign arb_req_w[LANE_ACMP_C]     = laneq_acmp_cnt_r != 4'd0;
   assign arb_req_w[LANE_ADP_C]      = laneq_adp_cnt_r != 4'd0;
   assign arb_req_w[LANE_SRP_C]      = srp_txreq_valid_w;
   assign arb_req_w[LANE_TKRSP_C]    = tkb_lane_valid_r;
-  assign arb_slot_w[LANE_AECP_SOL_C] = PP_SLOT_NULL_C;
+  assign arb_slot_w[LANE_AECP_SOL_C] = aecp_txreq_slot_w;
   assign arb_slot_w[LANE_AECP_UNS_C] = PP_SLOT_NULL_C;
   assign arb_slot_w[LANE_ACMP_C]     = laneq_acmp_r[0];
   assign arb_slot_w[LANE_ADP_C]      = laneq_adp_r[0];
   assign arb_slot_w[LANE_SRP_C]      = srp_txreq_slot_w;
   assign arb_slot_w[LANE_TKRSP_C]    = tkb_slot_r;
-  assign srp_txreq_ready_w = arb_gnt_w[LANE_SRP_C];
+  assign srp_txreq_ready_w  = arb_gnt_w[LANE_SRP_C];
+  assign aecp_txreq_ready_w = arb_gnt_w[LANE_AECP_SOL_C];
   assign tkb_lane_gnt_w    = arb_gnt_w[LANE_TKRSP_C];
 
   logic        arb_tx_valid_w, arb_tx_sof_w, arb_tx_eof_w, arb_tx_ready_w;
@@ -2673,6 +2858,11 @@ module protocol_processor_top
                                    srp_snk_fail_code_w[0]};
         6'd30: sp_snap_rdata_r <= srp_granted_slope_w[0];
         6'd31: sp_snap_rdata_r <= {30'd0, adp_dbg_adv_state_w};
+        //! AECP engine + descriptor store (06, 07 §3.3)
+        6'd32: sp_snap_rdata_r <= {aecp_dbg_cmd_w, aecp_dbg_resp_w};
+        6'd33: sp_snap_rdata_r <= {aecp_dbg_drop_w, aecp_dbg_miss_w};
+        6'd34: sp_snap_rdata_r <= {11'd0, aecp_dbg_len_w, aecp_dbg_status_w,
+                                   aecp_dbg_fault_w, aecp_dbg_img_valid_w};
         default: sp_snap_rdata_r <= 32'd0;
       endcase
     end

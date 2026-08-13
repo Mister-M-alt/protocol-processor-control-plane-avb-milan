@@ -25,6 +25,8 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
        $(HDL)/packet_engine/KL_pp_trace_ring.sv \
        $(HDL)/packet_engine/KL_pp_side_port.sv \
        $(HDL)/packet_engine/KL_pp_nvm_port.sv \
+       $(HDL)/aecp/ucpu_pkg.sv $(HDL)/aecp/KL_aecp_ucpu.sv \
+       $(HDL)/aecp/KL_aecp_desc_store.sv $(HDL)/aecp/KL_aecp_engine.sv \
        $(HDL)/adp/KL_adp_engine.sv \
        $(HDL)/acmp/KL_pp_acmp_listener.sv $(HDL)/acmp/KL_acmp_talker.sv \
        $(HDL)/acmp/KL_acmp_nvm_shadow.sv \
@@ -36,14 +38,17 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
        pp_top_wrap.sv
 CPP  = sim_main.cpp
 
-run: ltn_rom.hex
+run: ltn_rom.hex ucode.hex
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vpp_top_sim
 	./obj_dir/Vpp_top_sim
 
 ltn_rom.hex: $(HDL)/acmp/rom/gen_ltn_rom.py
 	python3 $< -o $@
 
+ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
+	python3 $< -o $@
+
 clean:
-	rm -rf obj_dir ltn_rom.hex
+	rm -rf obj_dir ltn_rom.hex ucode.hex
 
 .PHONY: run clean

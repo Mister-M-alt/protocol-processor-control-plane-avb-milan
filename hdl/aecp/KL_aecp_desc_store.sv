@@ -295,14 +295,18 @@ module KL_aecp_desc_store #(
   logic               mem_busy_r;
 
   logic beat_w, accept_w, tmo_hit_w;
-  assign beat_w    = mem_rsp_valid_i && mem_rsp_ready_o;
+  //! a beat only COUNTS while a burst of ours is outstanding, but the store is
+  //! always able to SINK one: a bridge that delivers after the watchdog
+  //! abandoned a burst — or across a reset that only reached this side — must
+  //! be drained, not stalled against a dead ready, or it wedges forever.
+  assign beat_w    = mem_rsp_valid_i && mem_busy_r;
   assign accept_w  = mreq_valid_r && mem_req_ready_i;
   assign tmo_hit_w = (tmo_r == TMO_W_C'(MEM_TIMEOUT_CYC_P));
 
   assign mem_req_valid_o = mreq_valid_r;
   assign mem_req_addr_o  = mreq_addr_r;
   assign mem_req_beats_o = mreq_beats_r;
-  assign mem_rsp_ready_o = mem_busy_r;
+  assign mem_rsp_ready_o = 1'b1;
 
   // ---- the request being served ------------------------------------------
   logic [15:0] key_cfg_r, key_type_r, key_index_r;
@@ -484,19 +488,33 @@ module KL_aecp_desc_store #(
             mreq_beats_r <= 9'(HDR_BEATS_C);
             cksum_r      <= 32'd0;
           end
+          //! the watchdog covers the REQUEST too: a bridge that never raises
+          //! ready is exactly the "no memory at all" wiring, and it must
+          //! degrade to a clean fault rather than park here forever
           if (accept_w) st_r <= S_HDR_RSP;
+          else if (tmo_hit_w) begin
+            fault_r      <= FAULT_TIMEOUT_C;
+            mreq_valid_r <= 1'b0;
+            tmo_r        <= '0;
+            st_r         <= S_BAD;
+          end
         end
         S_HDR_RSP: begin
           if (beat_w) begin
             cksum_r <= cksum_r + mem_rsp_data_i[63:32] + mem_rsp_data_i[31:0];
+            //! header bytes, big-endian, 8 per beat (gen_desc_image.py):
+            //!  beat 0 @0x00 magic(4) version(2) n_config(2)
+            //!  beat 1 @0x08 n_entries(2) n_names(2) index_off(4)
+            //!  beat 2 @0x10 names_off(4) image_bytes(4)
+            //!  beat 3 @0x18 desc_max_len(2) reserved(2) checksum(4)
             unique case (beat_ix_r[1:0])
               2'd0: begin
-                hdr_b0_r        <= mem_rsp_data_i;
-                hdr_n_config_r  <= mem_rsp_data_i[31:16];
-                hdr_n_entries_r <= mem_rsp_data_i[15:0];
+                hdr_b0_r       <= mem_rsp_data_i;
+                hdr_n_config_r <= mem_rsp_data_i[15:0];
               end
               2'd1: begin
-                hdr_n_names_r   <= mem_rsp_data_i[63:48];
+                hdr_n_entries_r <= mem_rsp_data_i[63:48];
+                hdr_n_names_r   <= mem_rsp_data_i[47:32];
                 hdr_index_off_r <= mem_rsp_data_i[31:0];
               end
               2'd2: hdr_names_off_r <= mem_rsp_data_i[63:32];
@@ -511,6 +529,7 @@ module KL_aecp_desc_store #(
           end else if (tmo_hit_w) begin
             fault_r    <= FAULT_TIMEOUT_C;
             mem_busy_r <= 1'b0;
+            tmo_r      <= '0;
             st_r       <= S_BAD;
           end
         end
@@ -526,6 +545,12 @@ module KL_aecp_desc_store #(
               mreq_beats_r <= 9'(hdr_n_entries_r << 1);
             end
             if (accept_w) st_r <= S_IDX_RSP;
+            else if (tmo_hit_w) begin
+              fault_r      <= FAULT_TIMEOUT_C;
+              mreq_valid_r <= 1'b0;
+              tmo_r        <= '0;
+              st_r         <= S_BAD;
+            end
           end
         end
         S_IDX_RSP: begin
@@ -538,6 +563,7 @@ module KL_aecp_desc_store #(
           end else if (tmo_hit_w) begin
             fault_r    <= FAULT_TIMEOUT_C;
             mem_busy_r <= 1'b0;
+            tmo_r      <= '0;
             st_r       <= S_BAD;
           end
         end
@@ -554,6 +580,12 @@ module KL_aecp_desc_store #(
               mreq_beats_r <= 9'(hdr_n_names_r << 3);
             end
             if (accept_w) st_r <= S_NAM_RSP;
+            else if (tmo_hit_w) begin
+              fault_r      <= FAULT_TIMEOUT_C;
+              mreq_valid_r <= 1'b0;
+              tmo_r        <= '0;
+              st_r         <= S_BAD;
+            end
           end
         end
         S_NAM_RSP: begin
@@ -567,6 +599,7 @@ module KL_aecp_desc_store #(
           end else if (tmo_hit_w) begin
             fault_r    <= FAULT_TIMEOUT_C;
             mem_busy_r <= 1'b0;
+            tmo_r      <= '0;
             st_r       <= S_BAD;
           end
         end
@@ -598,21 +631,28 @@ module KL_aecp_desc_store #(
                 //! not loaded, or loaded wrong: answer the honest miss AND
                 //! re-arm the probe, so a late software load heals with no
                 //! reset and no garbage descriptor in between
-                ans_err_r  <= 1'b1;
-                ans_data_r <= 64'd0;
-                rd_pipe_r  <= 1'b0;
+                ans_err_r    <= 1'b1;
+                ans_data_r   <= 64'd0;
+                rd_pipe_r    <= 1'b0;
+                desc_len_r   <= 16'd0;
+                desc_nbase_r <= NAME_NONE_C;
                 if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
                 st_r <= S_ANSWER;
               end
             end else begin
               rd_pipe_r <= 1'b1;
               unique case (region_w)
+                //! an unvalidated image reports NOTHING, not the garbage its
+                //! header walk happened to read
                 RGN_NBASE_C: begin rd_kind_r <= 2'd2;
-                                   rd_reg_r  <= {48'd0, desc_nbase_r}; end
+                                   rd_reg_r  <= img_valid_r
+                                                ? {48'd0, desc_nbase_r} : 64'd0; end
                 RGN_NCFG_C:  begin rd_kind_r <= 2'd2;
-                                   rd_reg_r  <= {48'd0, hdr_n_config_r}; end
+                                   rd_reg_r  <= img_valid_r
+                                                ? {48'd0, hdr_n_config_r} : 64'd0; end
                 RGN_LEN_C:   begin rd_kind_r <= 2'd2;
-                                   rd_reg_r  <= {48'd0, desc_len_r}; end
+                                   rd_reg_r  <= img_valid_r
+                                                ? {48'd0, desc_len_r} : 64'd0; end
                 default:     rd_kind_r <= 2'd0;             // RGN_DATA_C
               endcase
               st_r <= S_ANSWER;
@@ -633,16 +673,20 @@ module KL_aecp_desc_store #(
                 desc_off_r   <= e_off_w + (32'(e_strd_w) * 32'(key_index_r));
                 st_r         <= S_FET_REQ;
               end else begin
-                ans_err_r  <= 1'b1;
-                ans_data_r <= 64'd0;
-                rd_pipe_r  <= 1'b0;
+                ans_err_r    <= 1'b1;
+                ans_data_r   <= 64'd0;
+                rd_pipe_r    <= 1'b0;
+                desc_len_r   <= 16'd0;
+                desc_nbase_r <= NAME_NONE_C;
                 if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
                 st_r <= S_ANSWER;
               end
             end else if ((scan_cmp_r + 16'd1) >= hdr_n_entries_r) begin
-              ans_err_r  <= 1'b1;
-              ans_data_r <= 64'd0;
-              rd_pipe_r  <= 1'b0;
+              ans_err_r    <= 1'b1;
+              ans_data_r   <= 64'd0;
+              rd_pipe_r    <= 1'b0;
+              desc_len_r   <= 16'd0;
+              desc_nbase_r <= NAME_NONE_C;
               if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
               st_r <= S_ANSWER;
             end
@@ -659,13 +703,25 @@ module KL_aecp_desc_store #(
           if (accept_w) begin
             if (fetch_cnt_r != 16'hFFFF) fetch_cnt_r <= fetch_cnt_r + 16'd1;
             st_r <= S_FET_RSP;
+          end else if (tmo_hit_w) begin
+            mreq_valid_r <= 1'b0;
+            tmo_r        <= '0;
+            ans_err_r    <= 1'b1;
+            ans_data_r   <= 64'd0;
+            rd_pipe_r    <= 1'b0;
+            desc_len_r   <= 16'd0;
+            desc_nbase_r <= NAME_NONE_C;
+            if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
+            st_r <= S_ANSWER;
           end
         end
         S_FET_RSP: begin
           if (beat_w && mem_rsp_err_i) begin
-            ans_err_r  <= 1'b1;
-            ans_data_r <= 64'd0;
-            rd_pipe_r  <= 1'b0;
+            ans_err_r    <= 1'b1;
+            ans_data_r   <= 64'd0;
+            rd_pipe_r    <= 1'b0;
+            desc_len_r   <= 16'd0;
+            desc_nbase_r <= NAME_NONE_C;
             if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
             st_r <= S_ANSWER;
           end else if (beat_w && mem_rsp_last_i) begin
@@ -674,10 +730,12 @@ module KL_aecp_desc_store #(
             rd_pipe_r  <= 1'b0;
             st_r       <= S_ANSWER;
           end else if (tmo_hit_w) begin
-            ans_err_r  <= 1'b1;
-            ans_data_r <= 64'd0;
-            rd_pipe_r  <= 1'b0;
-            mem_busy_r <= 1'b0;
+            ans_err_r    <= 1'b1;
+            ans_data_r   <= 64'd0;
+            rd_pipe_r    <= 1'b0;
+            mem_busy_r   <= 1'b0;
+            desc_len_r   <= 16'd0;
+            desc_nbase_r <= NAME_NONE_C;
             if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
             st_r <= S_ANSWER;
           end

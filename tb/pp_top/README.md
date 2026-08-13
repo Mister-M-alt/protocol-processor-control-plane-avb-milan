@@ -7,8 +7,8 @@ listener/talker + SRP engine behind `KL_mrp_strip` + TX pool/arbiter + the
 ACMP Ethernet-prepend shim + timer/PRNG muxes + scoreboard, event router,
 originator, trace ring, side port, NVM shadow + port) under `pp_top_wrap`
 and drives it ONLY through the top's external contract: one MAC byte stream
-in, one MAC byte stream out, the side-port host face, the SRP service face
-and the NVM device face. Time is compressed to 1 ms = 100 clk (the 89-slot
+in, one MAC byte stream out, the side-port host face, the SRP service face,
+the NVM device face and the descriptor-image memory master. Time is compressed to 1 ms = 100 clk (the 89-slot
 deadline sweep still fits a ms tick), so every window measured below is the
 REAL timer/PRNG path.
 
@@ -16,10 +16,37 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make` — exit 0 = PASS; tally `86 checks: 86 PASS, 0 FAIL`.
+`make` — exit 0 = PASS; tally `125 checks: 125 PASS, 0 FAIL`.
 
 ## What it proves
 
+- **A** **READ_DESCRIPTOR end to end** (06 §6.1, 07 §3.3) — the seam this
+  suite used to stop at. A real AEM command on the MAC byte stream comes back
+  as a byte-exact AECPDU carrying a descriptor that lives in MAIN MEMORY,
+  fetched over the top's read-only memory master from a latency-injecting
+  DRAM model (31-clock first-word latency, never zero):
+  - **A1** ENTITY descriptor, whole 354-byte frame byte-exact against an
+    independent IEEE §7.2.1 builder; command/response counters move once; and
+    **exactly ONE memory burst per command** — the line buffer's whole purpose
+    is that a descriptor costs one memory latency, not one per byte.
+  - **A2** a bad `descriptor_index` and an unknown `descriptor_type` answer
+    `NO_SUCH_DESCRIPTOR` with the 4-byte {type, index} stub of IEEE §7.4.5.
+  - **A3** a bad `configuration_index` answers `BAD_ARGUMENTS` (06 §6.1), not
+    `NO_SUCH_DESCRIPTOR`.
+  - **A4** a 78-byte CLOCK_DOMAIN — a length that is NOT a multiple of 8, so
+    `COPY_BUFFER` has to stop mid-lane; a whole-lane advance would put 2 bytes
+    of the next descriptor on the wire and lie about `control_data_length`.
+  - **A5/A6/A7** an unimplemented opcode answers `NOT_IMPLEMENTED` with the
+    command ECHOED (F06.14 / IEEE §9.3.5.3.3) — never silence, never a
+    malformed frame; IDENTIFY_NOTIFICATION as a COMMAND answers
+    `BAD_ARGUMENTS` (IEEE §7.4.39.2 beats §9.3.5.3.3); a truncated
+    READ_DESCRIPTOR answers `BAD_ARGUMENTS` rather than locating whatever
+    followed the header.
+  - **A8/A9** a command addressed to another `entity_id` and an AECP RESPONSE
+    arriving as input are both dropped and counted — answering a response is
+    how a control plane builds a storm.
+  - **A10/A11** three back-to-back commands each echo their own
+    `sequence_id`; the snapshot window publishes the counters and image-valid.
 - **R** boot restore over a blank NVM device: all 8 BINDING regions read,
   `restore_done` without `restore_fail`.
 - **S0/S1** quiescence + snapshot identity; SRP bring-up: the FIRST MSRP
@@ -113,8 +140,16 @@ All five bite; originals restored; suite back to 86/86.
   MVRP byte-exact check runs early (before the first LeaveAll) because an
   idle MVRP participant latches an expired LeaveAll until its next tx
   opportunity — there is no clean later window by construction.
-- The AECP pop face is tied `ready = 0` (P4 µCPU seam); AEM frames would
-  park in the dispatch queue and are deliberately not sent.
+- The AECP pop face is still exposed and still tied `ready = 0` here: the
+  AECP head is now drained by `KL_aecp_engine` INSIDE the top, and the port
+  is an additional, optional consumer (see its banner).
+- Scenario A is the only one that touches the descriptor memory. The image is
+  loaded into the DRAM model BEFORE reset, exactly as software does before
+  `entity_enable`; the "software has not loaded it" and "no bridge at all"
+  arms live in the `desc_store` suite, which owns that face.
+- The `A` expectations are byte builders from the IEEE §9.3.1 AECPDU and
+  §7.2 descriptor field offsets plus the documented image layout — nothing in
+  them comes from the DUT or from `gen_desc_image.py`'s output.
 - The S10 allocator is a harness model of the 02 §4.2 op semantics only
   (accept a request, answer once, hand back an address). It proves the FACE
   and the address flow through this processor — never MAAP itself: the
@@ -126,3 +161,16 @@ All five bite; originals restored; suite back to 86/86.
   by the `acmp_nvm` suite, not here.
 - The wrap exposes observe-only cross-module taps (`dbg_*`) used during
   bring-up; the checks themselves read only wire frames + the host face.
+
+## Mutation-proven 2026-08-13 (scenario A)
+
+| Break | Went red |
+|---|---|
+| `COPY_BUFFER` advances by the whole 8-byte lane instead of the residual | **10** of 125 |
+| response buffer places fields little-endian instead of big-endian | **8** of 125 |
+| unimplemented opcodes fall through to the READ_DESCRIPTOR µprogram | **1** of 125 |
+
+The `COPY_BUFFER` one is the interesting result: it goes red HERE and stays
+green in `tb/ucpu` (0 of 92), because that suite's µprogram only ever copies a
+whole number of 8-byte lanes. A descriptor whose length is not a multiple of 8
+is a thing only the end-to-end suite sees.
