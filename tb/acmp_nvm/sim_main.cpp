@@ -396,6 +396,12 @@ int main(int argc, char** argv) {
   CHECK(h.run_until([&] { return h.restore_done(); }, 5000),
         "A1 restore completes on an empty NVM");
   CHECK(!top->restore_fail_o, "A2 empty NVM is defaults, not a failure");
+  // ...but "not a failure" is not "a restore happened". Milan 5.3.8.2 makes
+  // the bound state reportable, and done is set on THIS path exactly as it is
+  // on a walk that put every sink back, so an integrator reading done alone
+  // cannot tell the two apart. restore_blank_o is the pin that can.
+  CHECK(top->restore_blank_o,
+        "A2b an empty NVM reports BLANK: done, but zero records validated");
   CHECK(!h.pre_valid_seen, "A3 no preload driven from an empty NVM");
   CHECK(h.count_ops(OP_READ) == N_SINKS,
         "A4 walk = one header read per sink (got %d)", h.count_ops(OP_READ));
@@ -513,6 +519,11 @@ int main(int argc, char** argv) {
         "F3 restore completes");
   h.run(5);              // let the listener's last X_PRELOAD strobes land
   CHECK(!top->restore_fail_o, "F4 per-record defaults never abort the restore");
+  // the counter-case to A2b: three regions held framed, crc-clean records, so
+  // the media ANSWERED and this walk is not blank even though five of the
+  // eight sinks fell back to the vendor default.
+  CHECK(!top->restore_blank_o,
+        "F4b a walk that validated records is NOT reported blank");
   CHECK(h.accepts.size() == 3,
         "F5 exactly the three valid bindings preload (got %zu)",
         h.accepts.size());
@@ -561,6 +572,11 @@ int main(int argc, char** argv) {
   CHECK(!h.pre_valid_seen,
         "G3 atomic reject: not ONE preload was driven (sinks 0..2 included)");
   CHECK(top->dbg_valid_o == 0, "G4 the whole image is discarded");
+  // three records were already validated before the tear; the atomic reject
+  // throws them away, so the blank level has to follow the image and not the
+  // history, or a torn walk would report records it no longer holds.
+  CHECK(top->restore_blank_o,
+        "G4b the atomic reject leaves the walk reporting ZERO records");
   CHECK(h.count_ops(OP_READ, REC_BASE + 4) == 0,
         "G5 the walk stops at the tear");
   h.disarm_err();

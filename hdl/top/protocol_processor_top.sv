@@ -278,6 +278,11 @@ module protocol_processor_top
     output logic        restore_busy_o,        //! restore walk running
     output logic        restore_done_o,        //! level: restore complete
     output logic        restore_fail_o,        //! level: torn read-back aborted restore
+    //! done says the walk SEQUENCED; blank says it validated nothing. An
+    //! integrator whose device face is unbacked or whose media is erased sees
+    //! done with no fail on every path, so this is the only pin that tells it
+    //! apart from a walk that actually put Milan 5.3.8.2/5.3.8.3 state back.
+    output logic        restore_blank_o,       //! level: completed walk validated ZERO records
     output logic        nvm_alarm_o,           //! sticky: commit retries exhausted
 
     //! ---- NVM device face (external backend; KL_pp_nvm_port initiator) ----
@@ -1853,6 +1858,7 @@ module protocol_processor_top
       .restore_busy_o   (restore_busy_o),
       .restore_done_o   (restore_done_o),
       .restore_fail_o   (restore_fail_o),
+      .restore_blank_o  (restore_blank_o),
       .alarm_o          (nvm_alarm_o),
       .cap_wr_i         (lstn_recwr_w),
       .cap_sink_i       (lstn_recwr_sink_w),

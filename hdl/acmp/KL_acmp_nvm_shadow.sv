@@ -63,6 +63,21 @@
 //                Captures during the post-reset init sweep are dropped
 //                (both sweeps write zeros); flushes are gated behind
 //                restore completion (07 §5.3 boot-before-enable order).
+//
+//  Blank arm   : restore_done_o is SEQUENCING, not a verdict. Every path in
+//                (a) and (b) above ends the walk with done and no fail, so
+//                done alone cannot separate a restore that put bindings back
+//                from one that read blank or unframed media and applied
+//                vendor defaults to every sink. Milan v1.2 5.3.8.2/5.3.8.3
+//                make that difference reportable state (the bound state and
+//                the binding parameters either came back or did not), so
+//                restore_blank_o carries it: it is done AND no record was
+//                ever validated off the media this walk. A record that is
+//                framed, crc-clean and carries valid=0 (a saved UNBIND,
+//                5.3.8.3's "cleared when the Stream Input gets unbound") is
+//                NOT blank - the media answered. A torn walk is not blank
+//                either by accident: the atomic reject discards every record
+//                it had already taken, so the count it reports is zero.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -91,6 +106,7 @@ module KL_acmp_nvm_shadow
     output logic                       restore_busy_o, //! restore walk/replay running
     output logic                       restore_done_o, //! level: restore sequencing complete
     output logic                       restore_fail_o, //! level: torn read-back aborted the WHOLE restore
+    output logic                       restore_blank_o,//! level: the completed walk validated ZERO records (blank or invalid media)
     output logic                       alarm_o,        //! sticky: commit retries exhausted (side-port alarm)
 
     //! ---- (a) capture face (KL_pp_acmp_listener dbg_recwr_* shadow) ---------
@@ -517,6 +533,11 @@ module KL_acmp_nvm_shadow
 
   // ---- restore result levels ----------------------------------------------
   logic done_r, fail_r;
+  //! set by the ONE event that proves the media answered: a fully framed
+  //! record that passed crc, layout_version, record_id and length. Cleared
+  //! when a walk starts and again by the atomic reject, so it is never a
+  //! leftover from the previous walk.
+  logic any_rec_r;
 
   // ---- the engine ---------------------------------------------------------
   always_ff @(posedge clk_i) begin : engine
@@ -548,6 +569,7 @@ module KL_acmp_nvm_shadow
       fl_retry_r   <= 32'd0;
       done_r       <= 1'b0;
       fail_r       <= 1'b0;
+      any_rec_r    <= 1'b0;
       nvm_req_o       <= 1'b0;
       nvm_we_o        <= 1'b0;
       nvm_record_id_o <= 8'd0;
@@ -573,6 +595,7 @@ module KL_acmp_nvm_shadow
           if (go_take_w) begin
             go_pend_r <= 1'b0;
             rs_k_r    <= '0;
+            any_rec_r <= 1'b0;
             hs_r      <= H_RS_REQ;
           end
         end
@@ -618,9 +641,10 @@ module KL_acmp_nvm_shadow
             rbcnt_r <= rbcnt_r + 17'd1;
           end
           if (rs_torn_w) begin
-            fail_r <= 1'b1;                    // atomic reject, no preload
-            done_r <= 1'b1;
-            hs_r   <= H_RUN;
+            fail_r    <= 1'b1;                 // atomic reject, no preload
+            done_r    <= 1'b1;
+            any_rec_r <= 1'b0;                 // nothing taken survives it
+            hs_r      <= H_RUN;
           end else if (rs_empty_w || (rs_complete_w && !rrec_ok_w)) begin
             // per-record vendor default (valid cleared in flags_ff)
             if (rs_k_r == SINK_W_C'(N_SINKS_P - 1)) begin
@@ -631,7 +655,8 @@ module KL_acmp_nvm_shadow
               hs_r   <= H_RS_REQ;
             end
           end else if (rs_complete_w) begin
-            hs_r <= H_RS_STORE;
+            any_rec_r <= 1'b1;                 // the media answered
+            hs_r      <= H_RS_STORE;
           end
         end
 
@@ -788,8 +813,9 @@ module KL_acmp_nvm_shadow
                         || (hs_r == H_RS_STORE) || (hs_r == H_RP_RD)
                         || (hs_r == H_RP_LATCH) || (hs_r == H_RP_DRIVE)
                         || (hs_r == H_FIN);
-  assign restore_done_o = done_r;
-  assign restore_fail_o = fail_r;
+  assign restore_done_o  = done_r;
+  assign restore_fail_o  = fail_r;
+  assign restore_blank_o = done_r && !any_rec_r;
   assign alarm_o        = alarm_r;
   assign dbg_dirty_o    = dirty_r;
   assign dbg_valid_o    = valid_r;

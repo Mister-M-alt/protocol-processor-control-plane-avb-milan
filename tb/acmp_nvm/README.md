@@ -5,7 +5,7 @@ Proves the ACMP binding NVM shadow (`hdl/acmp/KL_acmp_nvm_shadow.sv`,
 [05 §5](../../docs/architecture/05_acmp_engine.md) ≈20 B/sink shadow +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8/F07.9 +
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8): `make` = build + run,
-exit 0 = PASS, 73 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
+exit 0 = PASS, 76 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
 timing mirrors (tick_i is held high, so window = 50 cycles).
 
 The wrap compiles the shadow together with the REAL `KL_pp_nvm_port` (class-F
@@ -27,6 +27,10 @@ coalescing (three changes in one window → one ERASE+WRITE burst of two
 records, byte-exact against the model, then quiescence); unbind rewrites the
 record with a valid=0 payload; bounded commit retry (recovered error never
 alarms) then the sticky side-port alarm with the engine still serviceable;
+`restore_blank_o` separating a walk that validated records from one that
+read blank or unframed media (`restore_done_o` is set on BOTH, which is
+why the pin exists) and following the image rather than the history when
+a tear discards records already taken;
 boot replay driving `pre_*` for exactly the valid sinks in ascending order —
 fields checked at the accept AND against the PRB_W_AVAIL record the listener
 then writes (started/sw/eids exact, discovery armed per A4, replay
@@ -60,3 +64,8 @@ Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
 - **M4** change detection dropped (`c1_wr_w = c1_v_r`): fails 4 of 73
   (C2 volatile churn, D3 op count, F16/F17 replay must not re-dirty).
 - **M5** atomic reject keeps the restored valid bits: fails 1 of 73 (G4).
+
+Mutation-proven 2026-08-13 for the blank arm:
+- **M6** `restore_blank_o` hard-wired to `1'b0`: fails 2 of 76 (A2b empty
+  NVM, G4b atomic reject), and 1 more in the consumer suite
+  (milan-fpga `tb/verilator/pp_shadow`, `PP_STAT[7]`).

@@ -203,6 +203,13 @@ Word address = 0x30000 + N.
 a partial set of bindings is never preloaded. A blank device is not a failure: a record
 that fails its framing check is skipped, and that sink simply starts unbound.
 
+**Do not read restore done as restore succeeded.** It says the walk reached its end,
+which every skipped record also does, so a device whose NVM is blank — or whose
+integrator never wired a backend at all — publishes the same two bits as one that
+restored every sink. `restore_blank_o` is the third pin: set when the completed walk
+validated zero records. Whether there is any media behind the device face is a fact
+only the integrating fabric holds, and it has to publish that too.
+
 ## 7. The trace ring
 
 Word address = 0x40000 + N, where bits 1 and 0 of N select the 32-bit lane and bits 9

@@ -47,6 +47,7 @@ module acmp_nvm_wrap
     output logic                     restore_busy_o,  //! restore running
     output logic                     restore_done_o,  //! restore complete level
     output logic                     restore_fail_o,  //! whole-restore abort level
+    output logic                     restore_blank_o, //! completed walk validated ZERO records
     output logic                     alarm_o,         //! commit-retry alarm
 
     //! ---- harness capture injection (behind the listener's writes) ------
@@ -140,6 +141,7 @@ module acmp_nvm_wrap
       .restore_busy_o  (restore_busy_o),
       .restore_done_o  (restore_done_o),
       .restore_fail_o  (restore_fail_o),
+      .restore_blank_o (restore_blank_o),
       .alarm_o         (alarm_o),
       .cap_wr_i        (cap_wr_w),
       .cap_sink_i      (cap_sink_w),
