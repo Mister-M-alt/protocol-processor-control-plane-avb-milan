@@ -98,6 +98,15 @@ Rules (behavioral — no vendor primitives):
 
 ## 3. Class A — packet streaming
 
+> ⚠ **The landed top does not implement this class as specified below, and the RTL is
+> authoritative.** `protocol_processor_top` presents a **byte** stream in each direction:
+> `rx_valid_i` / `rx_data_i[7:0]` / `rx_last_i` inbound with **no `ready` and no
+> backpressure at all**, and `tx_valid_o` / `tx_sof_o` / `tx_data_o[7:0]` / `tx_eof_o` /
+> `tx_ready_i` outbound. There is no `empty` and no `err` on either side. Wire against
+> the [integrator guide](../guides/integrator.md#3-the-mac-faces), which documents the
+> landed face; the 32-bit word contract below, and the `ready`/`err` signals in F02.3, are
+> a specification the implementation did not take.
+
 Word-oriented stream, `DATA_W` = 32 (parameterizable), MSB-first byte lanes, `empty`
 gives the unused byte count in the `eof` word. `err` with `eof` invalidates the frame
 (RX: drop; TX: MAC aborts with bad FCS).

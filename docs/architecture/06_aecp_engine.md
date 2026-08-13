@@ -499,7 +499,8 @@ Dispatch ROM entry (per opcode), **48 bits** (`P-DISPATCH-ROM-W`, F01.5): {µPC
 entry 11, hazard class 4 + key-extractor select 4, min-cdl 11, response-size id
 7, lock flag 1, GDI flag 1, notif flag 1, per-profile valid 2, reserved 6}.
 µCPU: µPC, µcode ROM (`P-UCODE-ROM-DEPTH` × `P-UCODE-ROM-W` = 2048 × **48 b**
-— measured as 3 RAMB36 with the full datapath at 1,068 LUT, `syn/ooc/`),
+— measured as 3 RAMB36; the datapath LUT count is re-measured per change and
+lives in [`syn/ooc/README.md`](../../syn/ooc/README.md), not here),
 16 × 64-bit operand registers, response/iteration cursors, 32-bit ALU / 64-bit
 moves, status register. **FAIL_SAFE entry**: a fixed µPC holds the
 forced-respond arm (`SET_STATUS` best-current → `BUILD_HEADER` →

@@ -148,7 +148,7 @@ values; other documents reference `P-…` IDs.
 | P-N-FORMATS-MAX | 16 | ≤47 (Milan Annex C) | descriptor assembly, format tables |
 | P-MAP-SUBSET-CH-MAX | 176 | =176 (Milan §5.4.2.26) | audio-map partitioning |
 | P-N-MAP-ENTRIES | product | per port | map RAM |
-| P-DESCR-IMAGE-BYTES | 16384 | ≥ worked size ([07 §6](07_memory_maps.md)) | image RAM |
+| P-DESCR-IMAGE-BYTES | 16384 | ≥ worked size ([07 §6](07_memory_maps.md)) | **no RTL consumer** — the image moved to main memory at `DESC_BASE_P` ([07 §3.3](07_memory_maps.md)); retained as the sizing budget only |
 | P-RX-SLOTS × P-RX-SLOT-BYTES | 4 × 576 | slot ≥ 536 (max command PDU) | RX buffering |
 | P-TX-STD-SLOTS × 576 | 4 | — | response buffering |
 | P-TX-OVERSIZE-BYTES | 1600 | ≥ max frame (Δ8) | oversize responses |
@@ -156,7 +156,7 @@ values; other documents reference `P-…` IDs.
 | P-CA-POOL | 4 | — | concurrent CONTROLLER_AVAILABLE probes |
 | P-TIMER-SLOTS | formula | allocation formula owned by [08 §5](08_timing.md) (baseline examples: 66; 89 with the SRP engine) | deadline RAM |
 | P-UCODE-ROM-DEPTH | 2048 | ~35 programs × ~25 µops + margin | AECP µcode |
-| P-UCODE-ROM-W | 48 | µop width (encoding `hdl/aecp/ucpu_pkg.sv`; 2048 × 48 measured 3 RAMB36 + 1,068-LUT datapath, `syn/ooc/`) | AECP µcode |
+| P-UCODE-ROM-W | 48 | µop width (encoding `hdl/aecp/ucpu_pkg.sv`; 2048 × 48 measured 3 RAMB36, datapath LUT count in [`syn/ooc/`](../../syn/ooc/README.md)) | AECP µcode |
 | P-DISPATCH-ROM-W | 48 | dispatch-ROM entry width (field layout [06 §8](06_aecp_engine.md)) | AECP dispatch |
 | P-ACMP-TROM-W | 32 | ACMP transition-ROM entry width (112 cells per profile column, [F05.3](05_acmp_engine.md#fig-05-listener-matrix)) | ACMP executor |
 | P-TRACE-RING | 256 × 128 | trace-ring records × record bits ([02 §7](02_interfaces.md) window) | trace ring |

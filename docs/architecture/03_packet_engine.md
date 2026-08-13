@@ -15,6 +15,12 @@ and TX arbitration. The three engines ([04](04_adp_engine.md)/[05](05_acmp_engin
 
 ![F03.1 Shared datapath](../diagrams/03-shared-datapath.svg)
 
+> This export **predates** the move of the descriptor image and the AECP response buffer
+> into the integrator's main memory, so its "state-RAM complex" still shows the image on
+> chip. The current shape is [`20-rtl-dataflow.svg`](../diagrams/20-rtl-dataflow.svg) and
+> [`22-aecp-descriptor-fetch.svg`](../diagrams/22-aecp-descriptor-fetch.svg); the
+> component table below is correct.
+
 | Component | Notes |
 |---|---|
 | RX async FIFO + filter/parser/validator | one per AVB interface; frame-atomic |
@@ -22,7 +28,7 @@ and TX arbitration. The three engines ([04](04_adp_engine.md)/[05](05_acmp_engin
 | Transaction normalizer | builds the record of [§4](#4-normalized-transaction) |
 | Per-engine dispatch FIFOs | ADP / ACMP / AECP queues + the TIMER/SELF/MGMT injection ports |
 | Scoreboard | admission control per hazard class/key ([§6](#6-scoreboard-hazard-classes-and-ordering)) |
-| State-RAM port arbiters | descriptor image+overlay, dynamic state, registry, counters — each RAM single-ported with a small priority mux (engines never stall the RX path) |
+| State-RAM port arbiters | overlay, dynamic state, registry, counters — each RAM single-ported with a small priority mux (engines never stall the RX path). The **descriptor image is not among them**: it lives in the integrator's main memory ([07 §3.3](07_memory_maps.md)), and only a one-descriptor line buffer and the cached index map are on chip |
 | Response builders + TX slot RAM | `P-TX-STD-SLOTS` standard + 1 oversize slot ([§7](#7-response-building-and-buffers)) |
 | Originator + inflight table | entity-initiated PDUs; response matching ([§5](#5-origins-originator-and-event-router)) |
 | TX arbiter → TX async FIFO | frame-atomic priority merge ([§8](#8-tx-arbitration)) |

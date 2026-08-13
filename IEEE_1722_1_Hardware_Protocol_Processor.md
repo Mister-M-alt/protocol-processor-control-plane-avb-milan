@@ -1,6 +1,28 @@
 # IEEE 1722.1 Hardware Protocol Processor
 ## Generalized architecture for ADP, ACMP, AECP/AEM and Milan
 
+> ## ⚠ Historical document — superseded, kept as the reviewed input
+>
+> This is the **original concept sketch**. It was reviewed clause by clause in
+> [`docs/00_MILAN_COMPLIANCE_REVIEW.md`](docs/00_MILAN_COMPLIANCE_REVIEW.md) and replaced
+> by the architecture under [`docs/architecture/`](docs/architecture/), which is the
+> specification of record. It is kept because the review credits its surviving ideas and
+> cites it, not because it describes the tree.
+>
+> **Do not design against this file.** The parts that no longer match the implementation
+> include, at least:
+>
+> | This document says | The tree does |
+> |---|---|
+> | the processor should not contain SRP (§21) | it contains a full MSRP/MVRP endpoint participant — [`hdl/srp/`](hdl/srp/), [10](docs/architecture/10_srp_engine.md) |
+> | a micro-ISA with `READ_MEMORY`, `WRITE_DESCRIPTOR`, `CHECK_ACQUIRE`, `ALLOCATE_CONNECTION`, `SEND_UNSOLICITED` and others (§9) | a different 29-operation ISA in [`hdl/aecp/ucpu_pkg.sv`](hdl/aecp/ucpu_pkg.sv); [06 §8](docs/architecture/06_aecp_engine.md) records which sketch operations were dropped and why |
+> | descriptor, state and response **RAM** interfaces (§12, §19) | two main-memory masters with compile-time bases; nothing is a RAM port — [integrator guide](docs/guides/integrator.md) |
+> | ACMP talker state, `connection_count`, an "ACMP µEngine" (§7) | Milan makes the talker **stateless**, and the listener is a transition-ROM walker, not a microcoded engine — [05](docs/architecture/05_acmp_engine.md) |
+> | an ADP entity table with aging (§6) | discovery is per bound sink, with no cached entity database — [04](docs/architecture/04_adp_engine.md) |
+> | a single 187.5 ms response target (§20) | per-class budgets — [08 §4](docs/architecture/08_timing.md) |
+>
+> For where to start instead, see [`docs/guides/`](docs/guides/README.md).
+
 ## 1. Objective
 
 The original concept was to implement a small **AECP processor in HDL** using a pipelined architecture:

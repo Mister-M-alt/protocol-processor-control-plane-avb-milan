@@ -13,8 +13,13 @@ and the management side-port map. Other documents link here for every layout.
 
 ```mermaid
 flowchart LR
-  subgraph rams ["single-ported RAMs behind priority muxes (F03.1)"]
-    img[("descriptor image P-DESCR-IMAGE-BYTES")]
+  subgraph mainmem ["integrator main memory, at compile-time bases (3.3.1, 3.3.2)"]
+    img[("descriptor image at DESC-BASE")]
+    rsp[("AECP response buffer at RESP-BASE")]
+  end
+  subgraph rams ["on-chip single-ported RAMs behind priority muxes (F03.1)"]
+    line[("one located-descriptor line buffer")]
+    idx[("cached index map")]
     ovl[("dynamic overlay")]
     names[("name table 64 B x N_NAMED")]
     dyn[("sink/source records")]
@@ -24,13 +29,21 @@ flowchart LR
     txs[("TX slots std + oversize")]
     ucr[["µcode + dispatch + resp-size + transition ROMs"]]
   end
-  aecp["AECP µCPU"] --> img & ovl & names & dyn & reg & ctr
+  aecp["AECP µCPU"] --> line & ovl & names & dyn & reg & ctr
+  aecp --> rsp
+  store["descriptor store"] --> img
+  store --> line & idx
   acmp["ACMP executor"] --> dyn
   adp["ADP engine"] --> dyn
   pkt["packet engine"] --> rxs & txs
-  side["mgmt side-port"] -. "image load pre-enable, RO debug windows" .-> img & ovl & reg & ctr
+  side["mgmt side-port"] -. "RO debug windows" .-> ovl & reg & ctr
   nvmm["NVM manager"] <--> ovl & dyn & names
 ```
+
+The two regions in main memory are reached over separate vendor-neutral masters and are
+the integrator's to reserve — see the
+[integrator guide](../guides/integrator.md#5-what-you-must-reserve-in-your-memory-map)
+and [diagram 22](../diagrams/22-aecp-descriptor-fetch.svg).
 
 Access-rights rule: exactly one writer class per region at runtime (µCPU for
 overlay/names, ACMP executor for sink records, counters subsystem for banks); the
@@ -101,11 +114,15 @@ toolchain — [09 §1](09_verification.md)):
 
 ### 3.3 Static image
 
-Read-only at runtime; loaded via side-port window `0x00000` before `entity_enable`
-(or synthesized as ROM). Layout = concatenated descriptors in (configuration, type,
+Read-only at runtime. Layout = concatenated descriptors in (configuration, type,
 index) order + an **index map** per configuration (type → base pointer + count) used by
 `DESC_ADDR`. READ_DESCRIPTOR assembles: image bytes, then overlay patches
 (current values, names), then the Annex C tail with R = 0.
+
+Software loads it into the integrator's main memory at `DESC_BASE_P` before
+`entity_enable` — **not** through the side-port window, and not as a synthesized ROM.
+Both alternatives were priced and rejected in §3.3.1 below, and neither is what the RTL
+does.
 
 #### 3.3.1 Realization — the image lives in MAIN MEMORY, not on chip
 
@@ -332,22 +349,29 @@ contract.
 
 ### 5.5 Side-port address map (detail of [02 §7](02_interfaces.md))
 
-The `0x30000` status window's snapshot words 32–36 publish the AECP engine, the
-descriptor store and the response buffer: command/response/drop/locate-miss counters,
-the last response's status and length, the image-valid flag and its fault code, and —
-words 35 and 36 — the count of responses voided by the response memory, the lanes
-written to it and the last fault code on that master. The wire only ever shows
-`ENTITY_MISBEHAVING` when that bridge fails; this window is where an integrator sees
-which channel failed and how often.
+| Window (word addr) | Access | Contents | State in the landed top |
+|---|---|---|---|
+| 0x00000–0x0FFFF | W pre-enable | descriptor image, index maps, identity registers (entity_id, model_id, MACs, capabilities), profile select | reserved seam — reads 0; the image is loaded into main memory at `DESC_BASE_P` instead (§3.3.1 above) |
+| 0x10000–0x1FFFF | RO | overlay + name table debug view | reserved seam — reads 0 |
+| 0x20000–0x2FFFF | RO | registry entries, counter banks, sink records (snapshot) | **implemented** — the F02.10 class-D dictionary plus front-end counters |
+| 0x30000–0x300FF | RW | control/status: entity_enable, boot state, NVM alarm, version/build id | word 0 scratch, word 1 boot state |
+| 0x40000–0x4FFFF | RO | trace ring (class-A framing) | **implemented** |
+| 0x50000–0x5FFFF | RW | firmware mailbox (`P-EN-FIRMWARE-ASSIST` only) | disabled — every access refused |
 
-| Window (word addr) | Access | Contents |
-|---|---|---|
-| 0x00000–0x0FFFF | W pre-enable | descriptor image, index maps, identity registers (entity_id, model_id, MACs, capabilities), profile select |
-| 0x10000–0x1FFFF | RO | overlay + name table debug view |
-| 0x20000–0x2FFFF | RO | registry entries, counter banks, sink records (snapshot) |
-| 0x30000–0x300FF | RW | control/status: entity_enable, shutdown_req, boot state, NVM alarm, version/build id |
-| 0x40000–0x4FFFF | RO | trace ring (class-A framing) |
-| 0x50000–0x5FFFF | RW | firmware mailbox (`P-EN-FIRMWARE-ASSIST` only) |
+The **snapshot window at `0x20000`** is the observability surface. Its words 32–36 publish
+the AECP engine, the descriptor store and the response buffer: command, response, drop and
+locate-miss counters, the last response's status and length, the image-valid flag and its
+fault code, and — words 35 and 36 — the count of responses voided by the response memory,
+the lanes written to it and the last fault code on that master. The wire only ever shows
+`ENTITY_MISBEHAVING` when that bridge fails; this window is where an integrator sees which
+channel failed and how often.
+
+The word-by-word map, with bit positions, is in the
+[operator guide](../guides/operator.md#5-the-snapshot-window-word-by-word). Refused
+accesses — a write to a read-only window, an image write after `entity_enable`, or any
+unmapped address — answer with the error flag one cycle later and are never forwarded;
+the enforcement lives in
+[`KL_pp_side_port`](../../hdl/packet_engine/KL_pp_side_port.sv), not with the host.
 
 ## 6. Sizing roll-up (worked example)
 
@@ -357,7 +381,7 @@ Baseline: 1 configuration, 1 AVB interface, 2 in + 2 out streams, F = 6 formats 
 
 | Region | Formula | Bytes |
 |---|---|---|
-| Static image | 312 + (74+4·10) + (144+4·3) + 4·(136+48) + 102 + 2·86 + 4·20 + 8·90 + (8+64) + (104+9) + (76+4) + index maps ≈ | **≈ 2.9 K** — comfortably inside the `P-DESCR-IMAGE-BYTES` default |
+| Static image (**main memory**, not block RAM) | 312 + (74+4·10) + (144+4·3) + 4·(136+48) + 102 + 2·86 + 4·20 + 8·90 + (8+64) + (104+9) + (76+4) + index maps ≈ | **≈ 2.9 K** at this small baseline; the reference consumer's model at its shipping shape is an order of magnitude larger, which is why §3.3.1 moved it off chip |
 | Overlay + names | ≈ 20 named × 64 + currents + maps | ≈ 1.6 K |
 | Sink/source records | 2×48 + 2×16 (source DA gates) | 128 |
 | Registry | 16 × 28 | 448 |
@@ -366,7 +390,10 @@ Baseline: 1 configuration, 1 AVB interface, 2 in + 2 out streams, F = 6 formats 
 | NVM image | Σ records ≈ | ≈ 2.5 K |
 
 Total block RAM well under 32 KB for the baseline — the architecture scales linearly
-via the [F01.5](01_overview.md#fig-01-params) parameters.
+via the [F01.5](01_overview.md#fig-01-params) parameters. Note that the first and largest
+row is **not** block RAM in the landed implementation: the static image and the AECP
+response buffer both live in the integrator's main memory (§3.3.1, §3.3.2), which is what
+makes the on-chip total fit at all on the reference part.
 
 ## 7. Cross-references
 
