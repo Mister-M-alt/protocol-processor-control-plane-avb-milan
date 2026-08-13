@@ -111,6 +111,16 @@ module protocol_processor_top
     parameter int unsigned DESC_NAME_ENTRIES_P = 16,
     //! no-progress watchdog on the descriptor memory face, in clocks
     parameter int unsigned DESC_MEM_TMO_CYC_P  = 4096,
+    //! ---- AECP response buffer in the integrator's MAIN MEMORY (03 §7) ---
+    //! The response an AECP command builds is up to 592 bytes and it does not
+    //! live on chip either. Held as fabric state it measured 5,079 flip-flops
+    //! on the reference part and was the state the placer could not pack on a
+    //! die whose block RAM was already 100 % used. Same rule as the image
+    //! above: a COMPILE-TIME base, never a register. UNLIKE the image this
+    //! region is WRITTEN by the processor, so the integrator must reserve
+    //! `16 + DESC_LINE_BYTES_P` bytes there that nothing else writes, and it
+    //! must not overlap `DESC_BASE_P`.
+    parameter logic [31:0] RESP_BASE_P         = 32'h2010_0000,
     //! derived — do not override
     //! F08.4 timer-slot map for THIS shape. Every base below is the running
     //! sum of the group extents before it (pp_pkg::pp_timer_map is the ONE
@@ -198,6 +208,53 @@ module protocol_processor_top
     input  wire  [63:0] desc_mem_rsp_data_i,   //! beat data (big-endian lane)
     input  wire         desc_mem_rsp_last_i,   //! final beat of the burst
     input  wire         desc_mem_rsp_err_i,    //! read failed — abort the burst
+
+    //! ---- AECP response-buffer memory master (03 §7; READ + WRITE) -------
+    //! A SECOND, independent main-memory master, dedicated to the AECP
+    //! response buffer at RESP_BASE_P. It is separate from the descriptor face
+    //! above ON PURPOSE: both are watchdog-bounded clients with one
+    //! outstanding transaction each, and sharing one channel would mean an
+    //! arbiter whose grant has to be released correctly on every timeout arm
+    //! of both. The integrator's memory system already arbitrates.
+    //!
+    //! READ channel — identical contract to `desc_mem_*` above (one
+    //! outstanding request, responses IN ORDER, `rsp_last` on the final beat,
+    //! a beat carries its lowest byte address in bits [63:56]) with ONE
+    //! difference that matters: `rsp_ready` here is REAL backpressure. The
+    //! buffer accepts a beat only once the frame builder has consumed the
+    //! previous one, so the bridge SHALL hold a beat until it is taken.
+    //!
+    //! WRITE channel — ONE outstanding single-beat write. `wr_data` is a
+    //! 64-bit lane in the same big-endian byte order as a read beat (byte
+    //! `addr + n` is bits [63-8n -: 8]); `wr_strb` bit n enables that byte and
+    //! a byte whose strobe is 0 SHALL NOT be modified. `wr_done` is a
+    //! one-cycle pulse when the write is COMMITTED — same cycle as `wr_ready`
+    //! for a posted bridge, any later cycle for an acknowledged one — and the
+    //! processor issues no further write until it arrives.
+    //!
+    //! ORDERING — a read request accepted after a write reported done SHALL
+    //! observe that write. Nothing else in this processor addresses the
+    //! region, so no further rule is needed.
+    //!
+    //! Leaving `req_ready` and `wr_ready` tied 0 is a LEGAL wiring, exactly as
+    //! it is for the descriptor face: the buffer's watchdog voids the response
+    //! and the engine answers ENTITY_MISBEHAVING instead of hanging.
+    output logic        resp_mem_req_valid_o,  //! read request, held until ready
+    input  wire         resp_mem_req_ready_i,  //! bridge accepts the request
+    output logic [31:0] resp_mem_req_addr_o,   //! byte address, 8-byte aligned
+    output logic  [8:0] resp_mem_req_beats_o,  //! 64-bit beats in this burst
+    input  wire         resp_mem_rsp_valid_i,  //! response beat present
+    output logic        resp_mem_rsp_ready_o,  //! processor consumes the beat
+    input  wire  [63:0] resp_mem_rsp_data_i,   //! beat data (big-endian lane)
+    input  wire         resp_mem_rsp_last_i,   //! final beat of the burst
+    input  wire         resp_mem_rsp_err_i,    //! read failed — abort the burst
+    output logic        resp_mem_wr_valid_o,   //! write presented, held until ready
+    input  wire         resp_mem_wr_ready_i,   //! bridge accepts the write
+    output logic [31:0] resp_mem_wr_addr_o,    //! byte address, 8-byte aligned
+    output logic [63:0] resp_mem_wr_data_o,    //! lane data (big-endian lane)
+    output logic  [7:0] resp_mem_wr_strb_o,    //! per-byte enable, bit n = byte n
+    input  wire         resp_mem_wr_done_i,    //! write committed (one-cycle pulse)
+    input  wire         resp_mem_wr_err_i,     //! ... and it failed
 
     //! ---- AECP pop face --------------------------------------------------
     //! NO LONGER THE ONLY CONSUMER: KL_aecp_engine below pops this queue and
@@ -2272,10 +2329,13 @@ module protocol_processor_top
   logic  [3:0]             aecp_dbg_fault_w;
   logic  [4:0]             aecp_dbg_status_w;
   logic [10:0]             aecp_dbg_len_w;
+  logic  [2:0]             aecp_dbg_rfault_w;
+  logic [15:0]             aecp_dbg_rerr_w, aecp_dbg_rlane_w;
 
   KL_aecp_engine #(
       .UCODE_HEX_P         (UCODE_HEX_P),
       .DESC_BASE_P         (DESC_BASE_P),
+      .RESP_BASE_P         (RESP_BASE_P),
       .LINE_BYTES_P        (DESC_LINE_BYTES_P),
       .IDX_ENTRIES_P       (DESC_IDX_ENTRIES_P),
       .NAME_ENTRIES_P      (DESC_NAME_ENTRIES_P),
@@ -2322,6 +2382,22 @@ module protocol_processor_top
       .mem_rsp_data_i     (desc_mem_rsp_data_i),
       .mem_rsp_last_i     (desc_mem_rsp_last_i),
       .mem_rsp_err_i      (desc_mem_rsp_err_i),
+      .rmem_req_valid_o   (resp_mem_req_valid_o),
+      .rmem_req_ready_i   (resp_mem_req_ready_i),
+      .rmem_req_addr_o    (resp_mem_req_addr_o),
+      .rmem_req_beats_o   (resp_mem_req_beats_o),
+      .rmem_rsp_valid_i   (resp_mem_rsp_valid_i),
+      .rmem_rsp_ready_o   (resp_mem_rsp_ready_o),
+      .rmem_rsp_data_i    (resp_mem_rsp_data_i),
+      .rmem_rsp_last_i    (resp_mem_rsp_last_i),
+      .rmem_rsp_err_i     (resp_mem_rsp_err_i),
+      .rmem_wr_valid_o    (resp_mem_wr_valid_o),
+      .rmem_wr_ready_i    (resp_mem_wr_ready_i),
+      .rmem_wr_addr_o     (resp_mem_wr_addr_o),
+      .rmem_wr_data_o     (resp_mem_wr_data_o),
+      .rmem_wr_strb_o     (resp_mem_wr_strb_o),
+      .rmem_wr_done_i     (resp_mem_wr_done_i),
+      .rmem_wr_err_i      (resp_mem_wr_err_i),
       .lock_held_i        (1'b0),               // lock manager: P4
       .lock_ctlr_i        (64'd0),
       .eff_commit_o       (aecp_eff_commit_nc_w),
@@ -2337,7 +2413,10 @@ module protocol_processor_top
       .dbg_len_o          (aecp_dbg_len_w),
       .dbg_img_valid_o    (aecp_dbg_img_valid_w),
       .dbg_img_fault_o    (aecp_dbg_fault_w),
-      .dbg_locate_miss_o  (aecp_dbg_miss_w)
+      .dbg_locate_miss_o  (aecp_dbg_miss_w),
+      .dbg_resp_fault_o   (aecp_dbg_rfault_w),
+      .dbg_resp_err_o     (aecp_dbg_rerr_w),
+      .dbg_resp_lane_o    (aecp_dbg_rlane_w)
   );
 
   assign aecp_rxs_free_slot_w = aecp_eng_free_slot_w;
@@ -2863,6 +2942,12 @@ module protocol_processor_top
         6'd33: sp_snap_rdata_r <= {aecp_dbg_drop_w, aecp_dbg_miss_w};
         6'd34: sp_snap_rdata_r <= {11'd0, aecp_dbg_len_w, aecp_dbg_status_w,
                                    aecp_dbg_fault_w, aecp_dbg_img_valid_w};
+        //! AECP response buffer in main memory (03 §7). A bridge that is
+        //! absent, wedged or erroring voids every response the µCPU builds,
+        //! and the wire only shows ENTITY_MISBEHAVING — this window is where
+        //! an integrator sees WHICH channel failed and how often.
+        6'd35: sp_snap_rdata_r <= {aecp_dbg_rerr_w, aecp_dbg_rlane_w};
+        6'd36: sp_snap_rdata_r <= {29'd0, aecp_dbg_rfault_w};
         default: sp_snap_rdata_r <= 32'd0;
       endcase
     end

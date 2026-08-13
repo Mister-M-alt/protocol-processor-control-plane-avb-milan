@@ -207,6 +207,13 @@ module KL_srp_encoder #(
   localparam int unsigned MSRP_EW_C = 285;
   localparam int unsigned MVRP_EW_C = 19;   // {event[2:0], vid[15:0]}
 
+  // DISTRIBUTED, NOT BLOCK — the same wide-and-shallow trap KL_pp_dispatch
+  // documents: DEPTH_P (12) x 285 bits is 3,420 bits of data, but the 285-bit
+  // port made the synthesiser band 4 RAMB36 together and leave 97 % of them
+  // empty. Measured on the reference part (xc7a100t, Vivado 2026.1,
+  // post-synthesis out-of-context, 1-stream shape). A synthesis attribute,
+  // not a primitive: a tool that does not know it ignores it.
+  (* ram_style = "distributed" *)
   logic [MSRP_EW_C-1:0] msrp_ram_r [0:DEPTH_P-1];
   logic [MVRP_EW_C-1:0] mvrp_ram_r [0:DEPTH_P-1];
   logic [MSRP_EW_C-1:0] msrp_q_r;

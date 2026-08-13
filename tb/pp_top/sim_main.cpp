@@ -36,6 +36,10 @@ static int checks = 0, fails = 0;
 // TB shape
 // ---------------------------------------------------------------------------
 static const int      MS_CYC = 100;                  // wrap: 1 ms = 100 clk
+//! the wrap's compile-time memory map (07 §3.3 image, 03 §7 response buffer)
+static const uint32_t DESC_BASE  = 0x20000000u;
+static const uint32_t RESP_BASE  = 0x20100000u;
+static const uint32_t RESP_BYTES = 592u;             // 16 + DESC_LINE_BYTES_P
 static const uint64_t OWN_MAC = 0x0A0B0C0D0E0FULL;
 static const uint64_t EID     = 0x123456789ABCDEF0ULL;
 static const uint64_t EMID    = 0x00E0DECAFB0B0001ULL;
@@ -489,7 +493,31 @@ struct H {
   uint32_t dram_addr = 0;
   int dram_beats = 0, dram_idx = 0, dram_wait = 0;
   uint64_t dram_reqs = 0;
+  // AECP response-buffer memory at RESP_BASE_P (03 §7). READ + WRITE, and
+  // NON-ZERO latency on BOTH channels by default — a buffer tested only
+  // against zero-latency memory is untested against the thing that makes it
+  // hard. `rmem_off` ties the whole master off, which the contract says is a
+  // legal wiring the processor must DEGRADE against, not hang on.
+  std::vector<uint8_t> rmem = std::vector<uint8_t>(RESP_BYTES, 0xC3);
+  int  rmem_rlat = 23, rmem_wlat = 17;
+  bool rmem_off = false, rmem_werr = false, rmem_rerr = false;
+  bool rm_busy = false, rm_wbusy = false;
+  uint32_t rm_addr = 0, rm_waddr = 0;
+  uint64_t rm_wdata = 0;
+  uint8_t  rm_wstrb = 0;
+  int  rm_beats = 0, rm_idx = 0, rm_wait = 0, rm_wcnt = 0;
+  uint64_t rm_reqs = 0, rm_writes = 0;
+  vluint64_t aecp_rx_t = 0;
   std::deque<std::vector<uint8_t>> q_aecp;
+
+  uint64_t rmem_rd64(uint32_t a) const {
+    uint64_t v = 0;
+    for (int i = 0; i < 8; ++i) {
+      uint32_t k = a + uint32_t(i);
+      v = (v << 8) | ((k < rmem.size()) ? rmem[k] : 0x5Cu);
+    }
+    return v;
+  }
 
   uint64_t dram_rd64(uint32_t a) const {
     uint64_t v = 0;
@@ -528,6 +556,7 @@ struct H {
           q_acmp.push_back(cur);
         } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFB) {
           q_aecp.push_back(cur);
+          aecp_rx_t = t;                       // for the response-cost check
         } else if (et == 0x22EA) {
           auto p = parse_mrpdu(cur);
           for (auto& v : p.vecs) {
@@ -549,7 +578,7 @@ struct H {
     if (dram_busy && dram_wait == 0 && dram_idx < dram_beats) {
       d->desc_mem_rsp_valid_i = 1;
       d->desc_mem_rsp_data_i =
-          dram_rd64(dram_addr - 0x20000000u + uint32_t(8 * dram_idx));
+          dram_rd64(dram_addr - DESC_BASE + uint32_t(8 * dram_idx));
       d->desc_mem_rsp_last_i = (dram_idx == dram_beats - 1) ? 1 : 0;
     }
     if (!dram_busy) {
@@ -565,6 +594,62 @@ struct H {
       --dram_wait;
     } else if (d->desc_mem_rsp_valid_i && d->desc_mem_rsp_ready_o) {
       if (++dram_idx >= dram_beats) dram_busy = false;
+    }
+
+    // ---- AECP response-buffer memory model (03 §7) ----
+    d->resp_mem_req_ready_i = (!rm_busy && !rmem_off) ? 1 : 0;
+    d->resp_mem_rsp_valid_i = 0;
+    d->resp_mem_rsp_data_i  = 0;
+    d->resp_mem_rsp_last_i  = 0;
+    d->resp_mem_rsp_err_i   = 0;
+    if (rm_busy && rm_wait == 0 && rm_idx < rm_beats) {
+      d->resp_mem_rsp_valid_i = 1;
+      d->resp_mem_rsp_data_i =
+          rmem_rd64(rm_addr - RESP_BASE + uint32_t(8 * rm_idx));
+      d->resp_mem_rsp_last_i = (rm_idx == rm_beats - 1) ? 1 : 0;
+      d->resp_mem_rsp_err_i  = rmem_rerr ? 1 : 0;
+    }
+    if (!rm_busy) {
+      if (d->resp_mem_req_valid_o && !rmem_off) {
+        rm_busy  = true;
+        rm_addr  = d->resp_mem_req_addr_o;
+        rm_beats = d->resp_mem_req_beats_o;
+        rm_idx   = 0;
+        rm_wait  = rmem_rlat;
+        ++rm_reqs;
+      }
+    } else if (rm_wait > 0) {
+      --rm_wait;
+    } else if (d->resp_mem_rsp_valid_i && d->resp_mem_rsp_ready_o) {
+      if (rmem_rerr || ++rm_idx >= rm_beats) rm_busy = false;
+    }
+
+    d->resp_mem_wr_ready_i = (!rm_wbusy && !rmem_off) ? 1 : 0;
+    d->resp_mem_wr_done_i  = 0;
+    d->resp_mem_wr_err_i   = 0;
+    if (!rm_wbusy) {
+      if (d->resp_mem_wr_valid_o && !rmem_off) {
+        rm_wbusy = true;
+        rm_waddr = d->resp_mem_wr_addr_o;
+        rm_wdata = d->resp_mem_wr_data_o;
+        rm_wstrb = d->resp_mem_wr_strb_o;
+        rm_wcnt  = rmem_wlat;
+      }
+    } else if (--rm_wcnt <= 0) {
+      // byte n of the lane is bits [63-8n -: 8]; a byte whose strobe is 0 is
+      // NOT modified — the model enforces the contract it documents
+      if (!rmem_werr) {
+        for (int i = 0; i < 8; ++i) {
+          if ((rm_wstrb >> i) & 1) {
+            uint32_t k = rm_waddr - RESP_BASE + uint32_t(i);
+            if (k < rmem.size()) rmem[k] = uint8_t(rm_wdata >> (56 - 8 * i));
+          }
+        }
+      }
+      d->resp_mem_wr_done_i = 1;
+      d->resp_mem_wr_err_i  = rmem_werr ? 1 : 0;
+      rm_wbusy = false;
+      ++rm_writes;
     }
 
     // ---- MAAP allocator model (02 §4.2) ----
@@ -681,7 +766,12 @@ struct H {
     d->desc_mem_req_ready_i = 0; d->desc_mem_rsp_valid_i = 0;
     d->desc_mem_rsp_data_i = 0; d->desc_mem_rsp_last_i = 0;
     d->desc_mem_rsp_err_i = 0;
+    d->resp_mem_req_ready_i = 0; d->resp_mem_rsp_valid_i = 0;
+    d->resp_mem_rsp_data_i = 0; d->resp_mem_rsp_last_i = 0;
+    d->resp_mem_rsp_err_i = 0; d->resp_mem_wr_ready_i = 0;
+    d->resp_mem_wr_done_i = 0; d->resp_mem_wr_err_i = 0;
     dram_busy = false; dram_wait = 0;
+    rm_busy = false; rm_wbusy = false; rm_wait = 0; rm_wcnt = 0;
     idle(20);
     d->rst_n = 1;
     idle(10);
@@ -1428,6 +1518,218 @@ int main(int argc, char** argv) {
           "A11: the snapshot window publishes the command counter");
     CHECK((h.snap(34) & 1u) == 1u,
           "A11: the snapshot window publishes image-valid");
+  }
+
+
+  // ==== B. the response buffer lives in MAIN MEMORY (03 §7) ===============
+  // The 592-byte response buffer used to be fabric state — 5,079 flip-flops
+  // inside KL_aecp_engine, and the instances the placer could not pack on the
+  // reference part. It is now KL_aecp_resp_buf over the resp_mem_* master, and
+  // these checks prove the move is INVISIBLE on the wire, VISIBLE in memory,
+  // and SAFE when the memory is not there. The BFM injects non-zero latency on
+  // both channels by default (23 clocks read, 17 write).
+  {
+    auto cmd = [&](uint16_t op, const std::vector<uint8_t>& pl, uint16_t seq) {
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, seq, op, pl));
+      return h.wait_any(h.q_aecp, 400);
+    };
+    auto rdesc_pl = [](uint16_t cfg, uint16_t ty, uint16_t ix) {
+      std::vector<uint8_t> p(8, 0);
+      putbe(&p[0], cfg, 2); putbe(&p[4], ty, 2); putbe(&p[6], ix, 2);
+      return p;
+    };
+
+    // ---- B1: one response = one read burst + exactly the lanes it wrote --
+    h.rmem.assign(RESP_BYTES, 0xC3);
+    uint64_t rq0 = h.rm_reqs, rw0 = h.rm_writes;
+    uint32_t lane0 = d->dbg_resp_lane_o;
+    vluint64_t t0 = h.t;
+    auto got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0024, 0), 0xC001);
+    size_t pld  = 4 + desc_clkdom.size();
+    // COPY_BUFFER writes whole 32-bit words, so the µCPU touches the 4-byte
+    // prefix plus the descriptor rounded UP to its 8-byte lanes; the lane
+    // holding buffer byte 11 + that many bytes is the last one written
+    size_t wrote = 4 + ((desc_clkdom.size() + 7) / 8) * 8;
+    size_t lanes = (11 + wrote) >> 3;
+    CHECK(!got.empty() && got.size() == 38 + pld,
+          "B1: CLOCK_DOMAIN response is %zu B, want %zu", got.size(),
+          38 + pld);
+    CHECK(h.rm_reqs == rq0 + 1,
+          "B1: %llu response-memory read bursts for one response, want 1",
+          (unsigned long long)(h.rm_reqs - rq0));
+    CHECK(h.rm_writes - rw0 == lanes,
+          "B1: %llu lane writes, want %zu",
+          (unsigned long long)(h.rm_writes - rw0), lanes);
+    CHECK(uint32_t(d->dbg_resp_lane_o - lane0) == uint32_t(lanes),
+          "B1: the block counted %u lane writes, the memory saw %zu",
+          uint32_t(d->dbg_resp_lane_o - lane0), lanes);
+    CHECK(d->dbg_resp_fault_o == 0 && d->dbg_resp_err_o == 0,
+          "B1: a clean response reported fault %u", (unsigned)d->dbg_resp_fault_o);
+
+    // ---- B2: the bytes on the wire ARE the bytes in main memory ----------
+    // an independent observation: the payload is compared against the model's
+    // own memory image, not against the DUT's account of it
+    bool same = !got.empty();
+    for (size_t i = 0; i < pld && same; ++i)
+      if (h.rmem[12 + i] != got[38 + i]) same = false;
+    CHECK(same, "B2: the emitted payload is not the image left in main memory");
+
+    // ---- B3: a zero-strobe byte is never modified ------------------------
+    // buffer bytes 8..11 belong to the first lane but to the µCPU's discarded
+    // header record, so they carry no strobe and must survive untouched
+    CHECK(h.rmem[8] == 0xC3 && h.rmem[9] == 0xC3 && h.rmem[10] == 0xC3 &&
+          h.rmem[11] == 0xC3,
+          "B3: a byte whose write strobe was 0 was modified in memory "
+          "(%02x %02x %02x %02x)", h.rmem[8], h.rmem[9], h.rmem[10],
+          h.rmem[11]);
+
+    // ---- B4: the measured cost of the worst response we can build --------
+    // IEEE 1722.1 §9.2.1.1 gives a command 100 ms; P-CLK-HZ is 100 MHz, so the
+    // budget is 10,000,000 clocks. Measure, do not assume.
+    h.rmem.assign(RESP_BYTES, 0xC3);
+    t0 = h.t;
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0000, 0), 0xC002);
+    vluint64_t cost = h.aecp_rx_t - t0;
+    std::vector<uint8_t> epl(4, 0);
+    putbe(&epl[0], CFGIX, 2);
+    epl.insert(epl.end(), desc_entity.begin(), desc_entity.end());
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                            0xC002, AEM_READ_DESCRIPTOR, epl),
+          "B4: the 312-byte descriptor response is not byte-exact");
+    printf("  [B4] command byte 0 -> response byte 0: %llu clocks "
+           "(%.3f %% of the 10,000,000-clock AECP budget)\n",
+           (unsigned long long)cost, 100.0 * double(cost) / 10.0e6);
+    CHECK(cost < 10000000ull,
+          "B4: %llu clocks blows the 100 ms AECP budget",
+          (unsigned long long)cost);
+    CHECK(cost < 40000ull,
+          "B4: %llu clocks — the memory-backed response path regressed",
+          (unsigned long long)cost);
+
+    // ---- B4b: the same, at the REFERENCE SoC's measured memory latency ---
+    // docs/architecture/07 §3.3 records ~1424 ns on a miss to main memory,
+    // which is 143 clocks at P-CLK-HZ = 100 MHz. This is the number the
+    // "latency is free" claim actually rests on, so it is measured here
+    // rather than argued.
+    h.rmem.assign(RESP_BYTES, 0xC3);
+    h.rmem_rlat = 143; h.rmem_wlat = 143;
+    uint64_t rw1 = h.rm_writes;
+    t0 = h.t;
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0000, 0), 0xC002);
+    vluint64_t cost143 = h.aecp_rx_t - t0;
+    uint64_t lanes143 = h.rm_writes - rw1;
+    h.rmem_rlat = 23; h.rmem_wlat = 17;
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                            0xC002, AEM_READ_DESCRIPTOR, epl),
+          "B4b: the response is not byte-exact at 1424 ns memory latency");
+    printf("  [B4b] at 143 clocks (~1424 ns) per access: %llu clocks for a "
+           "%zu-byte payload over %llu lane writes (%.3f %% of budget)\n",
+           (unsigned long long)cost143, epl.size(),
+           (unsigned long long)lanes143, 100.0 * double(cost143) / 10.0e6);
+    CHECK(cost143 < 10000000ull,
+          "B4b: %llu clocks blows the 100 ms AECP budget",
+          (unsigned long long)cost143);
+
+    // ---- B5: an ECHOED payload never touches the response memory ---------
+    // §9.3.5.3.3's echo is the command verbatim and the command is still in
+    // its RX slot: staging it through main memory would be pure waste
+    rq0 = h.rm_reqs; rw0 = h.rm_writes;
+    std::vector<uint8_t> sr_pl(4, 0);
+    putbe(&sr_pl[0], 0x0002, 2);
+    got = cmd(AEM_GET_SAMPLING_RATE, sr_pl, 0xC003);
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_NOT_IMPLEMENTED, EID,
+                            CTLR_EID, 0xC003, AEM_GET_SAMPLING_RATE, sr_pl),
+          "B5: the echoed NOT_IMPLEMENTED response is not byte-exact");
+    CHECK(h.rm_reqs == rq0,
+          "B5: an echoed payload cost %llu response-memory read bursts",
+          (unsigned long long)(h.rm_reqs - rq0));
+    CHECK(h.rm_writes == rw0,
+          "B5: an echoed payload cost %llu response-memory writes",
+          (unsigned long long)(h.rm_writes - rw0));
+
+    // ---- B6: a TIED-OFF response master is a legal wiring ----------------
+    // the contract says so, so the failure must be a well-formed
+    // ENTITY_MISBEHAVING answer (IEEE §7.4 status 10) — never silence, never a
+    // SUCCESS carrying bytes nobody read, never a leaked slot
+    uint32_t rerr0 = d->dbg_resp_err_o;
+    uint16_t rsp0  = d->dbg_aecp_resp_o;
+    h.rmem_off = true;
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0024, 0), 0xC004);
+    h.rmem_off = false;
+    CHECK(!got.empty(), "B6: a dead response memory answered with silence");
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, 10, EID, CTLR_EID, 0xC004,
+                            AEM_READ_DESCRIPTOR, {}),
+          "B6: the ENTITY_MISBEHAVING answer is not byte-exact");
+    if (!got.empty() &&
+        got != aecp_frame(CTLR_MAC, OWN_MAC, 1, 10, EID, CTLR_EID, 0xC004,
+                          AEM_READ_DESCRIPTOR, {})) dump("got ", got);
+    CHECK(d->dbg_resp_err_o == rerr0 + 1,
+          "B6: the voided response was not counted (%u -> %u)", rerr0,
+          (unsigned)d->dbg_resp_err_o);
+    CHECK(d->dbg_resp_fault_o != 0,
+          "B6: no fault code for a memory that never answered");
+    CHECK(d->dbg_aecp_resp_o == rsp0 + 1,
+          "B6: the response counter did not move");
+    // the wire only ever says ENTITY_MISBEHAVING; the snapshot window is
+    // where an integrator learns WHICH channel of the bridge failed
+    CHECK((h.snap(36) & 7u) == (uint32_t)d->dbg_resp_fault_o,
+          "B6: snapshot word 36 does not publish the fault code");
+    CHECK((h.snap(35) >> 16) == (uint32_t)d->dbg_resp_err_o,
+          "B6: snapshot word 35 does not publish the voided-response count");
+
+    // ---- B7: it heals with no reset --------------------------------------
+    h.rmem.assign(RESP_BYTES, 0xC3);
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0000, 0), 0xC005);
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                            0xC005, AEM_READ_DESCRIPTOR, epl),
+          "B7: the next response after a memory fault is not byte-exact");
+    CHECK(d->dbg_resp_fault_o == 0,
+          "B7: the fault code stuck across responses");
+
+    // ---- B8: a bridge that reports a WRITE error voids the response too --
+    rerr0 = d->dbg_resp_err_o;
+    h.rmem_werr = true;
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0024, 0), 0xC006);
+    h.rmem_werr = false;
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, 10, EID, CTLR_EID, 0xC006,
+                            AEM_READ_DESCRIPTOR, {}),
+          "B8: a write error did not degrade to ENTITY_MISBEHAVING");
+    CHECK(d->dbg_resp_err_o == rerr0 + 1, "B8: the write error was not counted");
+
+    // ---- B9: a bridge that reports a READ error, likewise ----------------
+    rerr0 = d->dbg_resp_err_o;
+    h.rmem_rerr = true;
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0024, 0), 0xC007);
+    h.rmem_rerr = false;
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, 10, EID, CTLR_EID, 0xC007,
+                            AEM_READ_DESCRIPTOR, {}),
+          "B9: a read error did not degrade to ENTITY_MISBEHAVING");
+    CHECK(d->dbg_resp_err_o == rerr0 + 1, "B9: the read error was not counted");
+
+    // ---- B10: none of that silted up a slot ------------------------------
+    h.rmem.assign(RESP_BYTES, 0xC3);
+    for (uint16_t k = 0; k < 6; ++k) {
+      got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0024, 0),
+                uint16_t(0xC010 + k));
+      CHECK(!got.empty() && got.size() == 38 + pld,
+            "B10: command %u after the fault run went unanswered", k);
+    }
+    h.run_ms(60);
+    CHECK(((h.snap(25) >> 3) & 0xFFFFu) == 4u,
+          "B10: %u of 4 RX slots free after the fault run",
+          (h.snap(25) >> 3) & 0xFFFFu);
+
+    // ---- B11: a slow memory only costs TIME ------------------------------
+    // the same command against a bridge four times slower must produce the
+    // same bytes: latency is not a correctness parameter
+    h.rmem.assign(RESP_BYTES, 0xC3);
+    h.rmem_rlat = 97; h.rmem_wlat = 71;
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0000, 0), 0xC020);
+    h.rmem_rlat = 23; h.rmem_wlat = 17;
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                            0xC020, AEM_READ_DESCRIPTOR, epl),
+          "B11: a slower memory changed the bytes on the wire");
   }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);

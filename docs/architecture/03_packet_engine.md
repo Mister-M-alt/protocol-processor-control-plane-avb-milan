@@ -220,6 +220,55 @@ Ordering rules:
   `NOT_IMPLEMENTED` responses are correctly sized (IEEE §9.3.5.3.3;
   [06 §6](06_aecp_engine.md)).
 
+### 7.1 Realization — the AECP response buffer lives in MAIN MEMORY
+
+`hdl/aecp/KL_aecp_resp_buf.sv`. The buffer a µprogram builds its response in is
+`16 + LINE_BYTES_P` = 592 B at the shipping shape — the §3.2 worst-case descriptor
+plus the 06 §8 header record and the 4-byte `{configuration_index, reserved}` prefix.
+Held as fabric state inside `KL_aecp_engine` it measured **5,079 flip-flops and 3,495
+LUTs** (xc7a100t, Vivado 2026.1, post-synthesis out-of-context at the 1-stream shape)
+and it was those instances the placer could not pack on a die whose 135 block-RAM
+tiles were already 100 % used. It is not a cache, it is never read while it is
+written, and only the frame builder reads it — so it went the same way the entity
+model did ([07 §3.3.1](07_memory_maps.md)): into the integrator's main memory, behind
+a second **vendor-neutral master** on `protocol_processor_top` (`resp_mem_*`) at the
+compile-time `RESP_BASE_P`. Unlike the image this region is **written** by the
+processor, so the integrator must reserve it and it must not overlap `DESC_BASE_P`.
+
+The master is READ **and** WRITE, and it is deliberately a *second* master rather
+than a widening of `desc_mem_*`: both clients are watchdog-bounded with one
+outstanding transaction each, and sharing one channel would buy an arbiter whose
+grant has to be released correctly on every timeout arm of both. The integrator's
+memory system already arbitrates.
+
+Three rules make it work:
+
+- **Write order.** Byte addresses arrive non-decreasing from byte 12 upward within
+  one response (06 §8: `BUILD_HEADER` owns 0..11, the cursor starts at 12 and every
+  `BUILD_FIELD`/`APPEND`/`COPY_BUFFER` advances it), so the block holds exactly ONE
+  open 64-bit lane and writes it out the moment a byte for a different lane arrives.
+  Writes below byte 12 are accepted and dropped: that record is not the wire header
+  and has no reader.
+- **Flow control.** `rb_ready` is new on the µCPU's response-buffer face and
+  `wr_ready_o` is a **register**: every write is captured into a one-deep skid and
+  absorbed a byte per cycle from there, so the ready never depends on `wr_addr`.
+  Driving it from the address instead puts the µCPU's stall path through this block's
+  lane arithmetic and back into the µcode-ROM address — measured at 18 logic levels
+  and ~1 ns of WNS on the reference part.
+- **An echoed payload never touches memory.** IEEE §9.3.5.3.3's echo is the command
+  verbatim and the command is still in its RX slot until the engine frees it, so the
+  frame builder reads those bytes straight out of the slot.
+
+Latency is free here for the same reason it is in 07 §3.3.1: IEEE §9.2.1.1 gives an
+AECP command **100 ms**, which is 10,000,000 clocks at `P-CLK-HZ`. `tb/pp_top`
+measures the whole path — MAC command byte 0 to MAC response byte 0 — at **7,244
+clocks** for a 316-byte payload with every access costing the reference SoC's measured
+~1424 ns (143 clocks), i.e. **0.07 %** of the budget; the 592-byte worst case adds 33
+more lane writes and stays under 0.13 %. A bridge that never answers is a legal
+wiring: the watchdog voids the response and the engine emits a well-formed
+`ENTITY_MISBEHAVING` (IEEE §7.4 status 10) rather than silence, a leaked TX slot or a
+`SUCCESS` carrying bytes it never read.
+
 ## 8. TX arbitration
 
 <a id="fig-03-txflow"></a>**F03.5 — TX path**

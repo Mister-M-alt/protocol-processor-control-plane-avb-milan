@@ -73,11 +73,17 @@ module KL_aecp_ucpu
     input  wire         lock_held_i,
     input  wire  [63:0] lock_ctlr_i,
 
-    //! response buffer: one TX slot, 32-bit write lane + strobes
+    //! response buffer: 32-bit write lane + strobes, FLOW CONTROLLED.
+    //! `rb_ready_i` low HOLDS the E stage with the write still presented, so
+    //! the buffer may live anywhere — including the integrator's main memory
+    //! (KL_aecp_resp_buf), where a lane flush costs a memory round trip. A
+    //! buffer that is always able to take a write ties it high and nothing
+    //! about this pipeline changes.
     output logic        rb_we_o,
     output logic  [9:0] rb_addr_o,
     output logic [31:0] rb_wdata_o,
     output logic  [3:0] rb_wstrb_o,
+    input  wire         rb_ready_i,
 
     //! respond / effects
     output logic        resp_send_o,
@@ -248,6 +254,14 @@ module KL_aecp_ucpu
   assign is_q_field_w = (uop_e_r.op inside {OP_BUILD_FLD, OP_APPEND}) &&
                         (uop_e_r.fmt == FMT_Q_C) && !append_skip_w;
 
+  //! the response buffer refused the write presented this cycle: hold the
+  //! whole E stage — operand registers, `eseq_r`, cursor and status all keep
+  //! their value and the SAME write is re-presented next cycle. This is the
+  //! one back-pressure the µISA has to honour for a buffer that is not
+  //! guaranteed single-cycle (06 §8 never said it was).
+  logic rb_hold_w;
+  assign rb_hold_w = rb_we_o && !rb_ready_i;
+
   // ---- E-stage control outcomes ----------------------------------------
   logic stall_e_w;
   logic br_taken_w;
@@ -284,6 +298,7 @@ module KL_aecp_ucpu
       endcase
       if ((uop_e_r.op == OP_MAP_VALID) && gx_valid_i && !gx_data_i[0])
         br_taken_w = 1'b1;
+      if (rb_hold_w) stall_e_w = 1'b1;
     end
   end
 
@@ -499,8 +514,11 @@ module KL_aecp_ucpu
             end
           end
 
-          // ---------------- E: per-beat sequencing (runs under stall) ---
-          if (vld_e_r) begin
+          // ---------------- E: per-beat sequencing (runs under stall, but
+          // NOT while the response buffer is refusing the write: the beat
+          // counter is what selects the write, so advancing it would lose
+          // the very byte the buffer just declined) --------------------
+          if (vld_e_r && !rb_hold_w) begin
             unique case (uop_e_r.op)
               OP_BUILD_HDR: begin
                 eseq_r <= (eseq_r == 4'd2) ? 4'd0 : eseq_r + 4'd1;

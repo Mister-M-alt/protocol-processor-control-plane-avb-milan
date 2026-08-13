@@ -82,6 +82,24 @@ module pp_top_wrap (
     input  wire         desc_mem_rsp_last_i,
     input  wire         desc_mem_rsp_err_i,
 
+    // AECP response-buffer memory master (03 §7, read/write)
+    output logic        resp_mem_req_valid_o,
+    input  wire         resp_mem_req_ready_i,
+    output logic [31:0] resp_mem_req_addr_o,
+    output logic  [8:0] resp_mem_req_beats_o,
+    input  wire         resp_mem_rsp_valid_i,
+    output logic        resp_mem_rsp_ready_o,
+    input  wire  [63:0] resp_mem_rsp_data_i,
+    input  wire         resp_mem_rsp_last_i,
+    input  wire         resp_mem_rsp_err_i,
+    output logic        resp_mem_wr_valid_o,
+    input  wire         resp_mem_wr_ready_i,
+    output logic [31:0] resp_mem_wr_addr_o,
+    output logic [63:0] resp_mem_wr_data_o,
+    output logic  [7:0] resp_mem_wr_strb_o,
+    input  wire         resp_mem_wr_done_i,
+    input  wire         resp_mem_wr_err_i,
+
     // NVM restore + device face
     input  wire         restore_go_i,
     output logic        restore_busy_o,
@@ -162,7 +180,10 @@ module pp_top_wrap (
     output logic  [3:0] dbg_img_fault_o,
     output logic [15:0] dbg_aecp_cmd_o,
     output logic [15:0] dbg_aecp_resp_o,
-    output logic [15:0] dbg_aecp_drop_o
+    output logic [15:0] dbg_aecp_drop_o,
+    output logic  [2:0] dbg_resp_fault_o,
+    output logic [15:0] dbg_resp_err_o,
+    output logic [15:0] dbg_resp_lane_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 89-slot sweep (91 cycles) fits inside
@@ -242,6 +263,22 @@ module pp_top_wrap (
       .desc_mem_rsp_data_i   (desc_mem_rsp_data_i),
       .desc_mem_rsp_last_i   (desc_mem_rsp_last_i),
       .desc_mem_rsp_err_i    (desc_mem_rsp_err_i),
+      .resp_mem_req_valid_o  (resp_mem_req_valid_o),
+      .resp_mem_req_ready_i  (resp_mem_req_ready_i),
+      .resp_mem_req_addr_o   (resp_mem_req_addr_o),
+      .resp_mem_req_beats_o  (resp_mem_req_beats_o),
+      .resp_mem_rsp_valid_i  (resp_mem_rsp_valid_i),
+      .resp_mem_rsp_ready_o  (resp_mem_rsp_ready_o),
+      .resp_mem_rsp_data_i   (resp_mem_rsp_data_i),
+      .resp_mem_rsp_last_i   (resp_mem_rsp_last_i),
+      .resp_mem_rsp_err_i    (resp_mem_rsp_err_i),
+      .resp_mem_wr_valid_o   (resp_mem_wr_valid_o),
+      .resp_mem_wr_ready_i   (resp_mem_wr_ready_i),
+      .resp_mem_wr_addr_o    (resp_mem_wr_addr_o),
+      .resp_mem_wr_data_o    (resp_mem_wr_data_o),
+      .resp_mem_wr_strb_o    (resp_mem_wr_strb_o),
+      .resp_mem_wr_done_i    (resp_mem_wr_done_i),
+      .resp_mem_wr_err_i     (resp_mem_wr_err_i),
       .restore_go_i          (restore_go_i),
       .restore_busy_o        (restore_busy_o),
       .restore_done_o        (restore_done_o),
@@ -312,6 +349,9 @@ module pp_top_wrap (
   assign dbg_aecp_cmd_o   = u_dut.aecp_dbg_cmd_w;
   assign dbg_aecp_resp_o  = u_dut.aecp_dbg_resp_w;
   assign dbg_aecp_drop_o  = u_dut.aecp_dbg_drop_w;
+  assign dbg_resp_fault_o = u_dut.aecp_dbg_rfault_w;
+  assign dbg_resp_err_o   = u_dut.aecp_dbg_rerr_w;
+  assign dbg_resp_lane_o  = u_dut.aecp_dbg_rlane_w;
 
 endmodule : pp_top_wrap
 `default_nettype wire

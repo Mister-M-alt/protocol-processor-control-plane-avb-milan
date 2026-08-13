@@ -40,11 +40,11 @@
 //                NOT_IMPLEMENTED IS AN ANSWER, NOT SILENCE. Every opcode this
 //                block does not implement is ECHOED back with
 //                message_type + 1 and status NOT_IMPLEMENTED (F06.14 "echo
-//                command", IEEE §9.3.5.3.3): the command payload is copied out
-//                of the RX slot into the response buffer BEFORE the µprogram
-//                runs, and the emitted payload length is the command's. So an
-//                unimplemented opcode produces a well-formed, correctly-sized
-//                AECPDU — never a dropped frame and never a malformed one.
+//                command", IEEE §9.3.5.3.3): the emitted payload is the
+//                command's own, read straight back out of its RX slot, and the
+//                emitted length is the command's. So an unimplemented opcode
+//                produces a well-formed, correctly-sized AECPDU — never a
+//                dropped frame and never a malformed one.
 //
 //                WHO OWNS THE WIRE HEADER. The µCPU's BUILD_HEADER writes a
 //                compact {target_eid, seq, status} record into response bytes
@@ -56,17 +56,38 @@
 //                24+k and `resp_len_o - 12` is the payload length. Response
 //                bytes 0..11 are ignored.
 //
-//                RESPONSE-BUFFER BYTE ORDER. The `rb_*` face carries a field
-//                VALUE right-justified in `rb_wdata_o` with a low-contiguous
-//                `rb_wstrb_o` giving its WIDTH (1/2/4 bytes). Those m bytes are
-//                placed BIG-ENDIAN at `rb_addr_o` here, which is the IEEE
-//                1722.1 wire order of every AEM field. The placement rule has
-//                to live in the buffer because the µISA has no byte-swap
-//                operation — 06 §8 never states an order, and tb/ucpu's C++
-//                buffer model uses the opposite (little-endian) convention for
-//                its own convenience. A 64-bit field arrives as two 4-byte
-//                writes, high word first, so it comes out big-endian too, and
-//                COPY_BUFFER lanes arrive in wire order from the store.
+//                WHERE THE RESPONSE BUFFER LIVES. Not here. The µCPU's `rb_*`
+//                writes go to KL_aecp_resp_buf, which gathers them into
+//                64-bit lanes and holds them in the integrator's MAIN MEMORY
+//                at the compile-time `RESP_BASE_P`; the frame builder streams
+//                the payload back out of it. As fabric state this buffer
+//                measured 5,079 flip-flops and 3,495 LUTs on the reference
+//                part and was the thing the placer could not pack. The
+//                BIG-ENDIAN placement rule (a field VALUE right-justified in
+//                `rb_wdata_o`, its WIDTH given by a low-contiguous
+//                `rb_wstrb_o`, those m bytes laid out from `rb_addr_o` upward)
+//                moved with it — the rule has to live in the buffer because
+//                the µISA has no byte-swap operation, 06 §8 never states an
+//                order, and tb/ucpu's C++ model uses the opposite convention
+//                for its own convenience.
+//
+//                AN ECHOED PAYLOAD NEVER TOUCHES MEMORY. §9.3.5.3.3's echo is
+//                a verbatim copy of the command payload, and the command is
+//                still sitting in its RX slot until this block frees it — so
+//                the frame builder reads those bytes straight out of the slot
+//                (slot byte 24+n IS payload byte n) instead of staging them
+//                through the response buffer. Only a µprogram-BUILT payload
+//                is worth a memory round trip.
+//
+//                WHEN THE RESPONSE MEMORY FAILS. A wedged or absent bridge
+//                raises `err_o` on the buffer. The TX slot is already
+//                allocated by then and KL_pp_tx_slots has no abort arc — an
+//                uncommitted slot is leaked and a zero-length commit hangs the
+//                arbiter — so the builder REWRITES the frame in place as a
+//                60-byte ENTITY_MISBEHAVING response (IEEE §7.4 status 10)
+//                with an empty payload, built entirely from registers. Never a
+//                leak, never a hang, and never a SUCCESS carrying bytes this
+//                block did not read.
 //
 //                ADDRESSING (03 §8): an AECP response is UNICAST back to the
 //                requester's src_mac. A frame shorter than the 60-octet
@@ -93,6 +114,9 @@ module KL_aecp_engine
     parameter string       UCODE_HEX_P       = "ucode.hex",
     //! descriptor-image base in the integrator's memory map (compile time)
     parameter logic [31:0] DESC_BASE_P       = 32'h2000_0000,
+    //! response-buffer base in the integrator's memory map (compile time).
+    //! WRITTEN by this processor — it must not overlap the descriptor image.
+    parameter logic [31:0] RESP_BASE_P       = 32'h2010_0000,
     parameter int unsigned LINE_BYTES_P      = 576,
     parameter int unsigned IDX_ENTRIES_P     = 32,
     parameter int unsigned NAME_ENTRIES_P    = 16,
@@ -159,6 +183,24 @@ module KL_aecp_engine
     input  wire         mem_rsp_last_i,
     input  wire         mem_rsp_err_i,
 
+    //! ---- response-buffer memory master (read/write; see KL_aecp_resp_buf) ----
+    output logic        rmem_req_valid_o,
+    input  wire         rmem_req_ready_i,
+    output logic [31:0] rmem_req_addr_o,
+    output logic  [8:0] rmem_req_beats_o,
+    input  wire         rmem_rsp_valid_i,
+    output logic        rmem_rsp_ready_o,
+    input  wire  [63:0] rmem_rsp_data_i,
+    input  wire         rmem_rsp_last_i,
+    input  wire         rmem_rsp_err_i,
+    output logic        rmem_wr_valid_o,
+    input  wire         rmem_wr_ready_i,
+    output logic [31:0] rmem_wr_addr_o,
+    output logic [63:0] rmem_wr_data_o,
+    output logic  [7:0] rmem_wr_strb_o,
+    input  wire         rmem_wr_done_i,
+    input  wire         rmem_wr_err_i,
+
     //! ---- lock context (06 §6.4; the lock manager is P4 — tie 0) ----
     input  wire         lock_held_i,
     input  wire  [63:0] lock_ctlr_i,
@@ -179,7 +221,10 @@ module KL_aecp_engine
     output logic [10:0] dbg_len_o,           //! AECPDU length of the last response
     output logic        dbg_img_valid_o,     //! store: header validated
     output logic  [3:0] dbg_img_fault_o,     //! store: why not
-    output logic [15:0] dbg_locate_miss_o    //! store: locates answered err
+    output logic [15:0] dbg_locate_miss_o,   //! store: locates answered err
+    output logic  [2:0] dbg_resp_fault_o,    //! response buffer: last fault code
+    output logic [15:0] dbg_resp_err_o,      //! responses voided by that memory
+    output logic [15:0] dbg_resp_lane_o      //! response lanes written to memory
 );
 
   // ---- IEEE 1722.1-2021 AEM opcodes this block decodes --------------------
@@ -199,10 +244,8 @@ module KL_aecp_engine
   localparam int unsigned ETH_MIN_C    = 60;
   //! response buffer: the µCPU's 12 header bytes + the 4-byte
   //! {configuration_index, reserved} prefix + one whole descriptor, rounded to
-  //! a 4-byte bank stride
+  //! the 8-byte lane the memory face moves
   localparam int unsigned RESP_BUF_C   = ((16 + LINE_BYTES_P) + 15) & ~32'd15;
-  localparam int unsigned BANK_D_C     = RESP_BUF_C / 4;
-  localparam int unsigned BANK_AW_C    = $clog2(BANK_D_C);
   localparam int unsigned PLD_MAX_C    = RESP_BUF_C - 12;
   localparam int unsigned FRAME_MAX_C  = FRAME_HDR_C + PLD_MAX_C;
 
@@ -214,83 +257,19 @@ module KL_aecp_engine
   pp_txn_t txn_w;
   assign txn_w = pp_txn_t'(txn_i);
 
-  // =======================================================================
-  // the response buffer: four byte banks, one per address[1:0]
-  // =======================================================================
-  //! A µCPU write covers at most 4 CONSECUTIVE byte addresses, so it touches
-  //! each bank at most once — which is what makes a 4-bank split legal for an
-  //! unaligned strobed write (BUILD_FIELD writes a byte field at any cursor).
-  logic [7:0] rbuf_r [0:3][0:BANK_D_C-1];
-  logic [3:0]              bw_en_w;
-  logic [3:0][BANK_AW_C-1:0] bw_addr_w;
-  logic [3:0][7:0]         bw_data_w;
-
-  always_ff @(posedge clk_i) begin : resp_buffer
-    for (int unsigned b = 0; b < 4; b++) begin
-      if (bw_en_w[b]) rbuf_r[b][bw_addr_w[b]] <= bw_data_w[b];
-    end
-  end
-
-  // ---- µCPU response-buffer face ------------------------------------------
+  // ---- µCPU response-buffer face (served by KL_aecp_resp_buf below) -------
   logic        rb_we_w;
   logic  [9:0] rb_addr_w;
   logic [31:0] rb_wdata_w;
   logic  [3:0] rb_wstrb_w;
+  logic        rb_ready_w;
 
-  logic [2:0] rb_m_w;                    // strobed width in bytes (0/1/2/4)
-  always_comb begin : strobe_width
-    if      (rb_wstrb_w[3]) rb_m_w = 3'd4;
-    else if (rb_wstrb_w[1]) rb_m_w = 3'd2;
-    else if (rb_wstrb_w[0]) rb_m_w = 3'd1;
-    else                    rb_m_w = 3'd0;
-  end
-
-  // ---- the engine's own byte write (echo pre-load) ------------------------
-  logic       ebw_en_r;
-  logic [9:0] ebw_addr_r;
-  logic [7:0] ebw_data_r;
-
-  always_comb begin : buffer_write_mux
-    logic  [1:0] j;
-    logic [10:0] a;
-    j         = 2'd0;
-    a         = 11'd0;
-    bw_en_w   = 4'd0;
-    bw_addr_w = '0;
-    bw_data_w = '0;
-    if (rb_we_w) begin
-      for (int unsigned b = 0; b < 4; b++) begin
-        //! j = the lane of this write that lands in bank b; a write spans at
-        //! most 4 CONSECUTIVE addresses, so each bank is touched at most once
-        j = 2'(b) - rb_addr_w[1:0];
-        a = {1'b0, rb_addr_w} + {9'd0, j};
-        if (({1'b0, j} < rb_m_w) && (a < 11'(RESP_BUF_C))) begin
-          bw_en_w[b]   = 1'b1;
-          bw_addr_w[b] = BANK_AW_C'(a >> 2);
-          //! BIG-ENDIAN placement of the m strobed bytes (see the banner)
-          unique case (rb_m_w)
-            3'd1: bw_data_w[b] = rb_wdata_w[7:0];
-            3'd2: bw_data_w[b] = (j == 2'd0) ? rb_wdata_w[15:8]
-                                             : rb_wdata_w[7:0];
-            default: unique case (j)
-                       2'd0:    bw_data_w[b] = rb_wdata_w[31:24];
-                       2'd1:    bw_data_w[b] = rb_wdata_w[23:16];
-                       2'd2:    bw_data_w[b] = rb_wdata_w[15:8];
-                       default: bw_data_w[b] = rb_wdata_w[7:0];
-                     endcase
-          endcase
-        end
-      end
-    end else if (ebw_en_r && (ebw_addr_r < 10'(RESP_BUF_C))) begin
-      bw_en_w[ebw_addr_r[1:0]]   = 1'b1;
-      bw_addr_w[ebw_addr_r[1:0]] = BANK_AW_C'(ebw_addr_r >> 2);
-      bw_data_w[ebw_addr_r[1:0]] = ebw_data_r;
-    end
-  end
-
-  logic  [9:0] rd_byte_addr_w;
-  logic  [7:0] rd_byte_w;
-  assign rd_byte_w = rbuf_r[rd_byte_addr_w[1:0]][BANK_AW_C'(rd_byte_addr_w >> 2)];
+  // ---- response-buffer lifecycle + payload read stream --------------------
+  logic        rsp_open_w, rsp_seal_w;
+  logic [10:0] rsp_seal_len_w;
+  logic        rsp_rd_valid_w, rsp_rd_take_w;
+  logic  [7:0] rsp_rd_data_w;
+  logic        rsp_err_w, rsp_busy_w;
 
   // =======================================================================
   // the command machine
@@ -311,8 +290,9 @@ module KL_aecp_engine
   logic [4:0]  status_r;
   logic [10:0] bidx_r;                   // frame byte being written
   logic [10:0] frame_len_r;
+  logic        err_mode_r;               // rebuilding as ENTITY_MISBEHAVING
   logic [TXS_W_C-1:0] tx_slot_r;
-  logic [15:0] cmd_cnt_r, resp_cnt_r, drop_cnt_r;
+  logic [15:0] cmd_cnt_r, resp_cnt_r, drop_cnt_r, rerr_cnt_r;
 
   // ---- opcode decode = the dispatch step (see the banner) -----------------
   logic [10:0] upc_w;
@@ -418,6 +398,7 @@ module KL_aecp_engine
       .rb_addr_o          (rb_addr_w),
       .rb_wdata_o         (rb_wdata_w),
       .rb_wstrb_o         (rb_wstrb_w),
+      .rb_ready_i         (rb_ready_w),
       .resp_send_o        (resp_send_w),
       .resp_len_o         (resp_len_w),
       .resp_status_o      (resp_status_w),
@@ -472,6 +453,50 @@ module KL_aecp_engine
       .dbg_fetch_cnt_o   (store_fetch_nc_w),
       .dbg_ro_write_o    (store_rowr_nc_w),
       .dbg_desc_len_o    (store_dlen_nc_w)
+  );
+
+  logic [15:0] resp_burst_nc_w, resp_drop_nc_w;
+
+  KL_aecp_resp_buf #(
+      .RESP_BASE_P       (RESP_BASE_P),
+      .RESP_BYTES_P      (RESP_BUF_C),
+      .MEM_TIMEOUT_CYC_P (MEM_TIMEOUT_CYC_P)
+  ) u_resp (
+      .clk_i           (clk_i),
+      .rst_n           (rst_n),
+      .open_i          (rsp_open_w),
+      .seal_i          (rsp_seal_w),
+      .seal_len_i      (rsp_seal_len_w),
+      .wr_we_i         (rb_we_w),
+      .wr_addr_i       (rb_addr_w),
+      .wr_wdata_i      (rb_wdata_w),
+      .wr_wstrb_i      (rb_wstrb_w),
+      .wr_ready_o      (rb_ready_w),
+      .rd_valid_o      (rsp_rd_valid_w),
+      .rd_data_o       (rsp_rd_data_w),
+      .rd_take_i       (rsp_rd_take_w),
+      .mem_req_valid_o (rmem_req_valid_o),
+      .mem_req_ready_i (rmem_req_ready_i),
+      .mem_req_addr_o  (rmem_req_addr_o),
+      .mem_req_beats_o (rmem_req_beats_o),
+      .mem_rsp_valid_i (rmem_rsp_valid_i),
+      .mem_rsp_ready_o (rmem_rsp_ready_o),
+      .mem_rsp_data_i  (rmem_rsp_data_i),
+      .mem_rsp_last_i  (rmem_rsp_last_i),
+      .mem_rsp_err_i   (rmem_rsp_err_i),
+      .mem_wr_valid_o  (rmem_wr_valid_o),
+      .mem_wr_ready_i  (rmem_wr_ready_i),
+      .mem_wr_addr_o   (rmem_wr_addr_o),
+      .mem_wr_data_o   (rmem_wr_data_o),
+      .mem_wr_strb_o   (rmem_wr_strb_o),
+      .mem_wr_done_i   (rmem_wr_done_i),
+      .mem_wr_err_i    (rmem_wr_err_i),
+      .busy_o          (rsp_busy_w),
+      .err_o           (rsp_err_w),
+      .dbg_fault_o     (dbg_resp_fault_o),
+      .dbg_lane_wr_o   (dbg_resp_lane_o),
+      .dbg_burst_o     (resp_burst_nc_w),
+      .dbg_drop_o      (resp_drop_nc_w)
   );
 
   // =======================================================================
@@ -530,34 +555,57 @@ module KL_aecp_engine
     endcase
   end
 
-  //! payload byte n of the response lives at buffer address 12 + n; the guard
-  //! keeps the index inside the buffer while the header bytes are streaming
-  //! (the value is unused there, but an out-of-range RAM index is not a thing
-  //! to leave to chance)
-  assign rd_byte_addr_w = (bidx_r >= 11'(FRAME_HDR_C))
-                          ? (10'd12 + (bidx_r[9:0] - 10'(FRAME_HDR_C)))
-                          : 10'd12;
+  //! payload byte `bidx_r - FRAME_HDR_C` comes from the RX slot for an echoed
+  //! response (§9.3.5.3.3 copies the command verbatim and the slot still holds
+  //! it) and from the memory-backed response buffer for a µprogram-built one
+  logic pay_w;
+  assign pay_w = (bidx_r >= 11'(FRAME_HDR_C))
+                 && (bidx_r < (11'(FRAME_HDR_C) + pld_r));
 
   logic [7:0] frame_byte_w;
   always_comb begin : frame_byte
-    if (bidx_r < 11'(FRAME_HDR_C))                 frame_byte_w = hdr_byte_w;
-    else if (bidx_r < (11'(FRAME_HDR_C) + pld_r))  frame_byte_w = rd_byte_w;
-    else                                           frame_byte_w = 8'd0; // pad
+    if (bidx_r < 11'(FRAME_HDR_C))  frame_byte_w = hdr_byte_w;
+    else if (pay_w)                 frame_byte_w = echo_r ? rxs_rd_data_i
+                                                          : rsp_rd_data_w;
+    else                            frame_byte_w = 8'd0;   // pad
   end
 
-  // ---- RX payload walk -----------------------------------------------------
-  //! the walk starts at AECPDU @22 (= slot byte 22) so bytes @22..@23 are
-  //! captured verbatim; payload byte n is walk index n+2
-  assign rxs_rd_slot_o = cmd_r.rx_slot[RXS_W_C-1:0];
-  assign rxs_rd_addr_o = RXA_W_C'(32'd22 + 32'(walk_r));
-  assign rxs_rd_en_o   = (a_st_r == A_PLD) && (walk_r < (pld_r + 11'd2));
+  //! the builder advances only when the byte it is about to write EXISTS: the
+  //! response buffer's read burst paces itself against main memory
+  logic byte_ok_w;
+  assign byte_ok_w = !pay_w || echo_r || rsp_rd_valid_w;
+  assign rsp_rd_take_w = (a_st_r == A_WR) && pay_w && !echo_r
+                         && rsp_rd_valid_w;
 
-  assign txn_ready_o     = (a_st_r == A_IDLE);
+  // ---- RX payload walk -----------------------------------------------------
+  //! A_PLD: the walk starts at AECPDU @22 (= slot byte 22) so bytes @22..@23
+  //! are captured verbatim; the parsed fields sit at walk indices 2..9.
+  //! A_WR: the same port PREFETCHES the echo payload one byte ahead — the pool
+  //! answers a cycle after `rd_en`, and payload byte n is slot byte 24 + n.
+  logic [10:0] pref_ix_w;
+  logic        pref_en_w;
+  assign pref_ix_w = bidx_r + 11'd1 - 11'(FRAME_HDR_C);
+  assign pref_en_w = (a_st_r == A_WR) && echo_r
+                     && ((bidx_r + 11'd1) >= 11'(FRAME_HDR_C))
+                     && ((bidx_r + 11'd1) < (11'(FRAME_HDR_C) + pld_r));
+
+  assign rxs_rd_slot_o = cmd_r.rx_slot[RXS_W_C-1:0];
+  assign rxs_rd_addr_o = (a_st_r == A_WR)
+                         ? RXA_W_C'(32'd24 + 32'(pref_ix_w))
+                         : RXA_W_C'(32'd22 + 32'(walk_r));
+  assign rxs_rd_en_o   = ((a_st_r == A_PLD) && (walk_r < (pld_r + 11'd2)))
+                         || pref_en_w;
+
+  //! a command is only taken once the PREVIOUS response has let go of main
+  //! memory: `open_i` re-arms the buffer, and re-arming it under a burst that
+  //! is still in flight would leave the bridge holding a beat nobody sinks.
+  //! The buffer's watchdog bounds this wait, so it can never become a hang.
+  assign txn_ready_o     = (a_st_r == A_IDLE) && !rsp_busy_w;
   assign txs_alloc_req_o = (a_st_r == A_ALLOC);
   assign txs_oversize_o  = (frame_len_r > 11'(TX_STD_BYTES_P));
   assign txs_wr_slot_o   = tx_slot_r;
   assign txs_wr_addr_o   = TXA_W_C'(bidx_r);
-  assign txs_wr_valid_o  = (a_st_r == A_WR);
+  assign txs_wr_valid_o  = (a_st_r == A_WR) && byte_ok_w;
   assign txs_wr_data_o   = frame_byte_w;
   assign txs_wr_commit_o = (a_st_r == A_CMT);
   assign txs_wr_len_o    = TXA_W_C'(frame_len_r);
@@ -573,10 +621,29 @@ module KL_aecp_engine
   assign dbg_drop_cnt_o = drop_cnt_r;
   assign dbg_status_o   = status_r;
   assign dbg_len_o      = frame_len_r;
+  assign dbg_resp_err_o = rerr_cnt_r;
 
   logic [10:0] pad_len_w;
   assign pad_len_w = (11'(FRAME_HDR_C) + pld_r < 11'(ETH_MIN_C))
                      ? 11'(ETH_MIN_C) : (11'(FRAME_HDR_C) + pld_r);
+
+  // ---- the response-buffer lifecycle strobes -------------------------------
+  //! opened when a command is accepted, sealed when its µprogram retires. An
+  //! echoed payload never entered the buffer, so it is sealed with length 0
+  //! and costs no read burst at all.
+  assign rsp_open_w     = (a_st_r == A_IDLE) && txn_valid_i && !drop_w
+                          && !rsp_busy_w;
+  //! only a µprogram that actually SENT a response is worth sealing: a
+  //! retirement without SEND_RESPONSE emits no frame, so it must not leave a
+  //! read burst in flight for the next command's `open_i` to trample
+  assign rsp_seal_w     = (a_st_r == A_RUN) && ucpu_done_w
+                          && (sent_r || resp_send_w);
+  assign rsp_seal_len_w = echo_r ? 11'd0 : pld_r;
+
+  //! the response memory failed under a frame that is already half written:
+  //! rebuild it in place as a bare ENTITY_MISBEHAVING answer (see the banner)
+  logic rsp_fail_w;
+  assign rsp_fail_w = rsp_err_w && !err_mode_r && !echo_r;
 
   always_ff @(posedge clk_i) begin : command_machine
     if (!rst_n) begin
@@ -594,18 +661,15 @@ module KL_aecp_engine
       status_r     <= 5'd0;
       bidx_r       <= 11'd0;
       frame_len_r  <= 11'd0;
+      err_mode_r   <= 1'b0;
       tx_slot_r    <= '0;
       disp_valid_r <= 1'b0;
-      ebw_en_r     <= 1'b0;
-      ebw_addr_r   <= 10'd0;
-      ebw_data_r   <= 8'd0;
       sent_r       <= 1'b0;
       cmd_cnt_r    <= 16'd0;
       resp_cnt_r   <= 16'd0;
       drop_cnt_r   <= 16'd0;
+      rerr_cnt_r   <= 16'd0;
     end else begin
-      ebw_en_r <= 1'b0;
-
       unique case (a_st_r)
         A_IDLE: begin
           if (txn_valid_i) begin
@@ -615,10 +679,16 @@ module KL_aecp_engine
               a_st_r <= A_FREE;
             end else begin
               if (cmd_cnt_r != 16'hFFFF) cmd_cnt_r <= cmd_cnt_r + 16'd1;
-              upc_r     <= upc_w;
-              echo_r    <= echo_w;
-              pld_cmd_r <= pld_cap_w;
-              pld_r     <= pld_cap_w;
+              upc_r      <= upc_w;
+              echo_r     <= echo_w;
+              err_mode_r <= 1'b0;
+              //! an echo with no RX slot has NO payload to echo: emitting
+              //! `cdl - 12` bytes of whatever the slot pool last held would put
+              //! another command's bytes on the wire
+              pld_cmd_r <= (txn_w.rx_slot == PP_SLOT_NULL_C) ? 11'd0
+                                                             : pld_cap_w;
+              pld_r     <= (txn_w.rx_slot == PP_SLOT_NULL_C) ? 11'd0
+                                                             : pld_cap_w;
               cfg_ix_r  <= 16'd0;
               desc_ty_r <= 16'd0;
               desc_ix_r <= 16'd0;
@@ -655,11 +725,6 @@ module KL_aecp_engine
               11'd9: desc_ix_r[7:0]  <= rxs_rd_data_i;
               default: ;
             endcase
-            if ((walk_r - 11'd1) >= 11'd2) begin
-              ebw_en_r   <= 1'b1;
-              ebw_addr_r <= 10'd12 + 10'(walk_r - 11'd3);
-              ebw_data_r <= rxs_rd_data_i;
-            end
           end
         end
 
@@ -700,15 +765,34 @@ module KL_aecp_engine
         end
 
         A_ALLOC: begin
-          if (txs_alloc_gnt_i) begin
+          if (rsp_fail_w) begin
+            err_mode_r  <= 1'b1;
+            status_r    <= ST_ENTITY_MISBEHAVING_C;
+            pld_r       <= 11'd0;
+            frame_len_r <= 11'(ETH_MIN_C);
+            bidx_r      <= 11'd0;
+            if (rerr_cnt_r != 16'hFFFF) rerr_cnt_r <= rerr_cnt_r + 16'd1;
+          end else if (txs_alloc_gnt_i) begin
             tx_slot_r <= txs_alloc_slot_i;
             a_st_r    <= A_WR;
           end
         end
 
         A_WR: begin
-          if (bidx_r + 11'd1 >= frame_len_r) a_st_r <= A_CMT;
-          bidx_r <= bidx_r + 11'd1;
+          //! the response memory died under a frame that is already partly
+          //! written — rewrite it from byte 0 as a bare error answer built
+          //! entirely from registers (see the banner)
+          if (rsp_fail_w) begin
+            err_mode_r  <= 1'b1;
+            status_r    <= ST_ENTITY_MISBEHAVING_C;
+            pld_r       <= 11'd0;
+            frame_len_r <= 11'(ETH_MIN_C);
+            bidx_r      <= 11'd0;
+            if (rerr_cnt_r != 16'hFFFF) rerr_cnt_r <= rerr_cnt_r + 16'd1;
+          end else if (byte_ok_w) begin
+            if (bidx_r + 11'd1 >= frame_len_r) a_st_r <= A_CMT;
+            bidx_r <= bidx_r + 11'd1;
+          end
         end
 
         A_CMT: begin

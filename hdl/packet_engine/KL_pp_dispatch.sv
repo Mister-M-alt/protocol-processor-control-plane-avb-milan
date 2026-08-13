@@ -250,6 +250,20 @@ module KL_pp_dispatch_fifo
   // sync read, 1W1R; deliberately NO reset on the array or the read
   // register — a reset here breaks RAM inference (the justified exception
   // to the sync-reset rule, same as KL_pp_rx_slots / KL_pp_tx_slots).
+  //
+  // DISTRIBUTED, NOT BLOCK. This array is WIDE and SHALLOW — DEPTH_P (4) x
+  // PP_TXN_W_C (393) = 1,572 bits, and it is the WIDTH that decides the
+  // mapping: a synthesiser handed a 393-bit port bands enough block-RAM tiles
+  // side by side to reach it and leaves 99 % of each tile empty. Measured on
+  // the reference part (xc7a100t, Vivado 2026.1, post-synthesis
+  // out-of-context, 1-stream shape) the three queues of KL_pp_dispatch took
+  // 14 RAMB36 + 3 RAMB18 between them — 42 % of this processor's whole
+  // block-RAM budget for 4,716 bits of data, on a die that had none left. The
+  // hint costs LUTs, which this design has, and returns the tiles, which it
+  // does not. It is a synthesis attribute, not a primitive: a tool that does
+  // not know it ignores it (hdl/README rule 1), and KL_aecp_ucpu's operand
+  // file already carries the same one.
+  (* ram_style = "distributed" *)
   logic [PP_TXN_W_C-1:0] mem_r [0:DEPTH_P-1];
   logic [PP_TXN_W_C-1:0] out_data_r;
 

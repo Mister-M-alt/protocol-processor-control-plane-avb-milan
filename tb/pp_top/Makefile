@@ -26,7 +26,7 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
        $(HDL)/packet_engine/KL_pp_side_port.sv \
        $(HDL)/packet_engine/KL_pp_nvm_port.sv \
        $(HDL)/aecp/ucpu_pkg.sv $(HDL)/aecp/KL_aecp_ucpu.sv \
-       $(HDL)/aecp/KL_aecp_desc_store.sv $(HDL)/aecp/KL_aecp_engine.sv \
+       $(HDL)/aecp/KL_aecp_desc_store.sv $(HDL)/aecp/KL_aecp_engine.sv $(HDL)/aecp/KL_aecp_resp_buf.sv \
        $(HDL)/adp/KL_adp_engine.sv \
        $(HDL)/acmp/KL_pp_acmp_listener.sv $(HDL)/acmp/KL_acmp_talker.sv \
        $(HDL)/acmp/KL_acmp_nvm_shadow.sv \

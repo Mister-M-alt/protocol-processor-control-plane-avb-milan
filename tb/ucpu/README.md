@@ -3,13 +3,18 @@
 
 Proves the µCPU skeleton (`hdl/aecp/KL_aecp_ucpu.sv`) actually executes the
 [06 §8](../../docs/architecture/06_aecp_engine.md) µISA before anyone quotes its
-area: `make` = build + run, exit 0 = PASS, 92 checks.
+area: `make` = build + run, exit 0 = PASS, 164 checks.
 
 The C++ harness is an independent model, never DUT logic: it implements the
 state port (2-cycle read latency, locate mapping, forced miss), the gather port
 (2-cycle latency, selector-keyed data), a reluctant TX (3 stall cycles before
 `tx_ready`), and the lock context — then checks the exact response-buffer bytes,
 length, status and send count each µprogram must produce.
+
+The response-buffer face is **flow controlled** and the harness holds it off by
+default (`rb_stall` = 2): the buffer lives in the integrator's main memory
+(`KL_aecp_resp_buf`), where closing a lane costs a memory round trip, so every
+check below already runs against a buffer that pushes back.
 
 Covered per program (µcode from `hdl/aecp/ucode/gen_ucode.py`, shared with
 synthesis): the GET_SAMPLING_RATE exemplar success + locate-miss fail path;
@@ -26,6 +31,19 @@ of 70 elements fit, the rest skip, iteration continues), Table 7-141 status
 codes on the wire header, write-strobe formats B/W/Q, truncating moves, 64-bit
 compares, the unknown-opcode NOT_IMPLEMENTED path, the ACQUIRE_ENTITY Milan Δ7
 exemplar, and the §9.3.2.6 FAIL_SAFE arm preserving the best current status.
+
+Covered by P16 — **the µCPU is invariant to how hard the buffer pushes back**.
+Nine µprograms are run twice, at zero stall and at a 9-cycle stall per write,
+and must produce identical bytes, length, status and send count; the number of
+writes the buffer ACCEPTS must be identical too (a stalled write that is
+duplicated or lost changes it); a REFUSED write must be re-presented
+byte-for-byte identically while it is held; and the zero-stall run must be
+held zero cycles, so the invariance is not vacuous.
+
+Mutation-proven 2026-08-13: advancing the E-stage beat counter while the buffer
+refuses the write (the one thing `rb_ready` must gate) fails **58 of 164** —
+the beat counter is what selects the write, so advancing it loses the byte the
+buffer just declined.
 
 Mutation-proven 2026-08-11: RAW interlock off fails 11 of 92; branch flush
 removed fails 2; the 524 cap widened fails 4; the COMMIT strobe killed fails 1.

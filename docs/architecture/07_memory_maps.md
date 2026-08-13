@@ -140,6 +140,16 @@ tail) rounded to the [03 §2](03_packet_engine.md) slot size; a descriptor longe
 the line is refused at load time (header `desc_max_len`) and at locate time, never
 truncated.
 
+#### 3.3.2 The other main-memory region — the AECP response buffer
+
+The image is read-only and the store never writes it, but it is not the only region
+this processor addresses. The AECP **response buffer** ([03 §7.1](03_packet_engine.md))
+lives in main memory too, at its own compile-time `RESP_BASE_P`, behind a second
+vendor-neutral master (`resp_mem_*`) that is READ **and** WRITE. The integrator
+reserves `16 + LINE_BYTES_P` bytes there; unlike the image it is written by the
+processor, so an overlap with `DESC_BASE_P` is silent corruption of the entity model
+and neither base may be a register.
+
 <a id="fig-07-image"></a>**F07.4 — flat image layout** (generator:
 `hdl/aecp/desc/gen_desc_image.py`; all fields big-endian)
 
@@ -321,6 +331,14 @@ management (write coalescing beyond `T-NVM-DEBOUNCE`) is device-dependent and ou
 contract.
 
 ### 5.5 Side-port address map (detail of [02 §7](02_interfaces.md))
+
+The `0x30000` status window's snapshot words 32–36 publish the AECP engine, the
+descriptor store and the response buffer: command/response/drop/locate-miss counters,
+the last response's status and length, the image-valid flag and its fault code, and —
+words 35 and 36 — the count of responses voided by the response memory, the lanes
+written to it and the last fault code on that master. The wire only ever shows
+`ENTITY_MISBEHAVING` when that bridge fails; this window is where an integrator sees
+which channel failed and how often.
 
 | Window (word addr) | Access | Contents |
 |---|---|---|

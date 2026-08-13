@@ -107,6 +107,11 @@ package ucpu_pkg;
   localparam logic [4:0] ST_NO_SUCH_DESC_C   = 5'd2;
   localparam logic [4:0] ST_LOCKED_C         = 5'd3;
   localparam logic [4:0] ST_BAD_ARGUMENTS_C  = 5'd7;
+  //! IEEE 1722.1-2021 §7.4 status 10: the entity detected an internal error.
+  //! KL_aecp_engine answers with it when the response memory fails under a
+  //! frame it has already started building — never a SUCCESS carrying bytes
+  //! nobody read.
+  localparam logic [4:0] ST_ENTITY_MISBEHAVING_C = 5'd10;
   localparam logic [4:0] ST_NOT_SUPPORTED_C  = 5'd11;
 
   // ---- response buffer geometry (Milan §5.4.2.5: 524-byte payload cap) ---

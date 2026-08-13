@@ -57,6 +57,15 @@ struct Harness {
   uint64_t gx_data_next = 0;
   int      tx_wait = 0;
   bool     lock_scenario = false;
+  // response-buffer backpressure model — NON-ZERO by default
+  int      rb_stall = 2;
+  int      rb_hold  = 2;
+  int      rb_accepts = 0;      // writes the buffer actually took
+  int      rb_held_cycles = 0;  // cycles a presented write was refused
+  int      rb_mutations = 0;    // a HELD write whose payload changed: a defect
+  bool     rb_have_held = false;
+  uint32_t rb_h_addr = 0, rb_h_data = 0;
+  uint8_t  rb_h_strb = 0;
 
   explicit Harness(VKL_aecp_ucpu* d) : dut(d) { memset(buf, 0, sizeof buf); }
 
@@ -110,14 +119,36 @@ struct Harness {
     // settle combinational logic with this cycle's inputs
     dut->clk_i = 0; dut->eval();
 
+    // ---- response-buffer backpressure (KL_aecp_resp_buf is not single
+    // cycle: a lane flush is a main-memory round trip). Refuse each write
+    // for `rb_stall` cycles, then take it.
+    dut->rb_ready_i = 1;
+    if (dut->rb_we_o && rb_hold > 0) { dut->rb_ready_i = 0; --rb_hold; }
+    dut->eval();
+
     // observe combinational outputs PRE-EDGE (what the registers see)
-    if (dut->rb_we_o) {
+    if (dut->rb_we_o && !dut->rb_ready_i) {
+      // a REFUSED write must be re-presented byte-for-byte identically —
+      // that is the whole contract a memory-backed buffer relies on
+      ++rb_held_cycles;
+      if (rb_have_held && (rb_h_addr != (uint32_t)dut->rb_addr_o ||
+                           rb_h_data != (uint32_t)dut->rb_wdata_o ||
+                           rb_h_strb != (uint8_t)dut->rb_wstrb_o))
+        ++rb_mutations;
+      rb_have_held = true;
+      rb_h_addr = dut->rb_addr_o; rb_h_data = dut->rb_wdata_o;
+      rb_h_strb = dut->rb_wstrb_o;
+    }
+    if (dut->rb_we_o && dut->rb_ready_i) {
       uint32_t a = dut->rb_addr_o, d = dut->rb_wdata_o;
       uint8_t  s = dut->rb_wstrb_o;
       if (d == 0xBAD) bad_write = true;
       for (int i = 0; i < 4; ++i)
         if ((s >> i) & 1 && a + i < sizeof buf)
           buf[a + i] = uint8_t(d >> (8 * i));
+      ++rb_accepts;
+      rb_hold = rb_stall;
+      rb_have_held = false;
     }
     if (dut->st_req_o && dut->st_we_o && dut->st_ready_i)
       stw.push_back({(bool)dut->st_name_o, (uint32_t)dut->st_addr_o,
@@ -138,9 +169,11 @@ struct Harness {
            uint32_t(buf[a+2]) << 16 | uint32_t(buf[a+3]) << 24;
   }
 
-  bool run(uint16_t upc, uint64_t opd0, bool lock, int max_cycles = 400) {
+  bool run(uint16_t upc, uint64_t opd0, bool lock, int max_cycles = 2000) {
     memset(buf, 0, sizeof buf);
     bad_write = false; sends = 0; lock_scenario = lock;
+    rb_accepts = 0; rb_held_cycles = 0; rb_have_held = false;
+    rb_hold = rb_stall;
     stw.clear(); commits = 0; nvm_marks.clear(); notify_classes.clear();
     tx_wait = 3;
     dut->disp_upc_i = upc;
@@ -321,6 +354,51 @@ int main(int argc, char** argv) {
   // P15b: the arm itself, dispatched clean -> SUCCESS response
   CHECK(h.run(E_FAILSAFE, 0, false), "P15b completes");
   CHECK(h.last_status == ST_OK && h.last_len == 12, "P15b clean arm");
+
+  // ---- P16: the response-buffer face is FLOW CONTROLLED ---------------
+  // Every program above ran against a 2-cycle stall. These prove the µCPU is
+  // INVARIANT to how hard the buffer pushes back: a buffer in main memory can
+  // refuse for a whole memory round trip, and the bytes, the length, the
+  // status and the number of writes must all be identical to a buffer that
+  // never refuses at all.
+  {
+    struct Prog { const char* name; uint16_t upc; uint64_t opd0; };
+    static const Prog progs[] = {
+      {"GETSR", E_GETSR, IDX_OK}, {"ALU", E_ALU, 0}, {"ITER", E_ITER, 0},
+      {"GATHER", E_GATHER, 0},    {"COPY", E_COPY, IDX_OK},
+      {"FMT", E_FMT, 0},          {"OVF", E_OVF, 0},
+      {"ACQ", E_ACQ, 0},          {"NOTIMPL", E_NOTIMPL, 0},
+    };
+    for (const auto& p : progs) {
+      h.rb_stall = 0;
+      bool ok0 = h.run(p.upc, p.opd0, false);
+      std::vector<uint8_t> img0(h.buf, h.buf + sizeof h.buf);
+      uint32_t len0 = h.last_len, st0 = h.last_status;
+      int snd0 = h.sends, acc0 = h.rb_accepts, held0 = h.rb_held_cycles;
+
+      h.rb_stall = 9;
+      bool ok9 = h.run(p.upc, p.opd0, false);
+      std::vector<uint8_t> img9(h.buf, h.buf + sizeof h.buf);
+
+      CHECK(ok0 && ok9, "P16 %s retires at both stalls", p.name);
+      CHECK(held0 == 0, "P16 %s: zero-stall run held %d cycles", p.name, held0);
+      CHECK(h.rb_held_cycles == 9 * acc0,
+            "P16 %s: %d held cycles for %d writes, want %d", p.name,
+            h.rb_held_cycles, acc0, 9 * acc0);
+      CHECK(img0 == img9, "P16 %s: the response bytes changed under stall",
+            p.name);
+      CHECK(h.last_len == len0 && h.last_status == st0,
+            "P16 %s: len/status %u/%u vs %u/%u", p.name, h.last_len,
+            h.last_status, len0, st0);
+      CHECK(h.sends == snd0, "P16 %s: %d sends vs %d", p.name, h.sends, snd0);
+      CHECK(h.rb_accepts == acc0,
+            "P16 %s: %d writes accepted under stall vs %d — a stalled write "
+            "was duplicated or lost", p.name, h.rb_accepts, acc0);
+      CHECK(h.rb_mutations == 0,
+            "P16 %s: a REFUSED write changed while it was held", p.name);
+    }
+    h.rb_stall = 2;
+  }
 
   h.tick();
   CHECK(dut->disp_ready_o == 1, "ready again after all programs");

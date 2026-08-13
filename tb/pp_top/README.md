@@ -16,7 +16,7 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make` — exit 0 = PASS; tally `125 checks: 125 PASS, 0 FAIL`.
+`make` — exit 0 = PASS; tally `161 checks: 161 PASS, 0 FAIL`.
 
 ## What it proves
 
@@ -162,6 +162,25 @@ All five bite; originals restored; suite back to 86/86.
 - The wrap exposes observe-only cross-module taps (`dbg_*`) used during
   bring-up; the checks themselves read only wire frames + the host face.
 
+## Section B — the response buffer lives in main memory (03 §7.1)
+
+The 592-byte AECP response buffer is no longer fabric state; it is
+`KL_aecp_resp_buf` over the `resp_mem_*` master, and the model behind that
+master injects **non-zero latency on both channels by default** (23 clocks
+read, 17 write). B1 demands one read burst and exactly the lane writes the
+write pattern implies; B2 compares the payload on the wire against the model's
+own memory image, not against the DUT's account of it; B3 proves a byte whose
+write strobe is 0 is never modified; B4/B4b measure the whole path — MAC
+command byte 0 to MAC response byte 0 — and check it against the IEEE §9.2.1.1
+100 ms budget (10,000,000 clocks at `P-CLK-HZ`), once at the suite's latency
+and once at the reference SoC's measured ~1424 ns (143 clocks) per access;
+B5 proves an echoed payload costs the response memory **nothing** (it comes
+straight out of the RX slot); B6–B9 tie the master off, fail its writes and
+fail its reads, and demand a well-formed 60-byte `ENTITY_MISBEHAVING` answer
+plus the counters and the snapshot window that name the fault; B10 demands the
+slot pools back afterwards; B11 proves a four-times-slower bridge only costs
+time.
+
 ## Mutation-proven 2026-08-13 (scenario A)
 
 | Break | Went red |
@@ -169,6 +188,7 @@ All five bite; originals restored; suite back to 86/86.
 | `COPY_BUFFER` advances by the whole 8-byte lane instead of the residual | **10** of 125 |
 | response buffer places fields little-endian instead of big-endian | **8** of 125 |
 | unimplemented opcodes fall through to the READ_DESCRIPTOR µprogram | **1** of 125 |
+| the frame builder ignores whether the payload byte has arrived from memory yet | **58** of 161 |
 
 The `COPY_BUFFER` one is the interesting result: it goes red HERE and stays
 green in `tb/ucpu` (0 of 92), because that suite's µprogram only ever copies a

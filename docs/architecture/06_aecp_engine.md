@@ -590,6 +590,18 @@ width, and those bytes are placed **big-endian** at `rb_addr`, the 1722.1 wire o
 every AEM field. The rule must live in the buffer because the µISA has no byte-swap
 operation.
 
+**The response-buffer face is flow controlled**: `rb_ready` low HOLDS the E stage
+with the same write still presented — operand registers, the beat counter `eseq`, the
+cursor and the status all keep their value, and the beat counter in particular must
+NOT advance, because it is what selects the write the buffer just declined. This is
+what lets the buffer live anywhere, including the integrator's main memory
+([03 §7.1](03_packet_engine.md)), where closing a lane costs a memory round trip. A
+buffer that can always take a write ties `rb_ready` high and nothing about the
+pipeline changes. Write addresses are **non-decreasing from byte 12** within one
+response — `BUILD_HEADER` owns 0..11 and every `BUILD_FIELD`/`APPEND`/`COPY_BUFFER`
+advances the cursor — and a memory-backed buffer relies on that to keep one open lane
+instead of the whole 592 bytes.
+
 ## 9. Timing
 
 Owns `T-AECP-RESP`, `T-NOTIF-MONITOR`,
