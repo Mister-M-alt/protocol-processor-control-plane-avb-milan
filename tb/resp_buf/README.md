@@ -3,7 +3,7 @@
 
 Proves the [03 §7](../../docs/architecture/03_packet_engine.md) AECP response
 buffer now that it lives in the integrator's **main memory** instead of the
-fabric: `make` = build + run, exit 0 = PASS, **60 checks**.
+fabric: `make` = build + run, exit 0 = PASS, **61 checks**.
 
 ## Why the block exists
 

@@ -2,7 +2,7 @@
 # desc_store — KL_aecp_desc_store suite
 
 Proves the [07 §3.3](../../docs/architecture/07_memory_maps.md) entity-model
-store: `make` = build + run, exit 0 = PASS, **375 checks**.
+store: `make` = build + run, exit 0 = PASS, **489 checks**.
 
 The store keeps the descriptor image in the integrator's **main memory** (DDR3
 on the reference board) and serves the µCPU's `st_*` face from an on-chip line

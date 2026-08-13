@@ -8,6 +8,7 @@
 | `KL_adp_engine` | `hdl/adp/KL_adp_engine.sv` | adp_engine, pp_top |
 | `KL_aecp_desc_store` | `hdl/aecp/KL_aecp_desc_store.sv` | desc_store, pp_top |
 | `KL_aecp_engine` | `hdl/aecp/KL_aecp_engine.sv` | pp_top |
+| `KL_aecp_resp_buf` | `hdl/aecp/KL_aecp_resp_buf.sv` | pp_top, resp_buf |
 | `KL_aecp_ucpu` | `hdl/aecp/KL_aecp_ucpu.sv` | pp_top, ucpu |
 | `KL_mrp_strip` | `hdl/top/KL_mrp_strip.sv` | pp_top |
 | `KL_pp_acmp_listener` | `hdl/acmp/KL_pp_acmp_listener.sv` | acmp_listener, acmp_nvm, pp_top |
@@ -41,4 +42,4 @@
 | `srp_pkg` | `hdl/srp/srp_pkg.sv` | pp_top, srp_decoder, srp_stream_fsms, srp_top |
 | `ucpu_pkg` | `hdl/aecp/ucpu_pkg.sv` | pp_top, ucpu |
 
-Modules: 37 · untested: 0 (budget: 0)
+Modules: 38 · untested: 0 (budget: 0)

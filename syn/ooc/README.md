@@ -29,8 +29,9 @@ Sanity held: the register file inferred as distributed RAM (not the +894-LUT
 flop-mirror failure mode), the ROM as block RAM (its contents cannot be
 constant-folded into the decode), and the only synthesis warnings are the two
 constant-1 strobe bits that are true by construction. The functional suite
-(`tb/ucpu/`, 92 checks, mutation-proven) ran green on the same RTL and the
-same ROM image before synthesis.
+(`tb/ucpu/`, mutation-proven; 92 checks at that date, and it has grown since —
+run the suite rather than trusting this number) ran green on the same RTL and
+the same ROM image before synthesis.
 
 ## Re-measured 2026-08-13 — after the flow-controlled response buffer
 

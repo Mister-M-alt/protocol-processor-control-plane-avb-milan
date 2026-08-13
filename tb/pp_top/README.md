@@ -90,22 +90,12 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
 
 ## Snapshot window map (side port 0x20000, implemented by the top)
 
-| word | content |
-|---|---|
-| 0 | magic 0x4B4C5050 "KLPP" |
-| 1 | shape {SI, SO, RX slots, TX slots} |
-| 2 | now_ms |
-| 3 | flags {…, nvm_alarm, over_limit, adopted, seeded, link, enable} |
-| 4-6 | RX front-end drop counters + pool overrun |
-| 7-9 | dispatch levels + stall counters + hdr-latch drops |
-| 10 | class A {prio, vid} |
-| 11 | Σ granted slope bps |
-| 12 | {sr_admitted, active, tk_reg_state} |
-| 13 | {tk_decl_state, lstn_reg_state} |
-| 14 | {lstn_decl_state, vid_active} |
-| 15 | {scoreboard holds/full/barrier, trace wr_count} |
-| 16-23 | acc_latency[sink] |
-| 24-31 | arm/mrp/txreq drop counters, slots free, lane grant counts, bound mask, granted[0], adv SM |
+The map moved out of this file. It is a product contract, not a testbench note, and it is
+now maintained word by word and bit by bit in the
+[operator guide](../../docs/guides/operator.md#5-the-snapshot-window-word-by-word), with
+the window list in [07 §5.5](../../docs/architecture/07_memory_maps.md). This suite reads
+words 0, 3, 32, 33 and 34 as part of scenarios S5 and A11, and words 35 and 36 in B6
+through B9.
 
 Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 {source, flags, payload} (event-router consumer glue).
@@ -120,7 +110,9 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M4 | `KL_acmp_talker` S_EV_MAAP loses its timeout exit (the deadlock restored) | 5 FAIL — S10: with no allocator the talker walker never consumes another command, so neither ACMP answer reaches the wire |
 | M5 | the top re-ties `.maap_req_ready_i (1'b0)` on the talker instance | 6 FAIL — S10: no grant, no gate, no declared DA on the SRP wire. The port is load-bearing, not decoration |
 
-All five bite; originals restored; suite back to 86/86.
+All five bite; originals restored; suite back to green. The counts above were
+taken when the suite stood at 86 checks; scenario A and section B have since
+been added, so re-run a mutation before quoting its blast radius.
 
 ## Recorded seams and honest limits
 
@@ -185,12 +177,12 @@ time.
 
 | Break | Went red |
 |---|---|
-| `COPY_BUFFER` advances by the whole 8-byte lane instead of the residual | **10** of 125 |
-| response buffer places fields little-endian instead of big-endian | **8** of 125 |
-| unimplemented opcodes fall through to the READ_DESCRIPTOR µprogram | **1** of 125 |
-| the frame builder ignores whether the payload byte has arrived from memory yet | **58** of 161 |
+| `COPY_BUFFER` advances by the whole 8-byte lane instead of the residual | **10** red |
+| response buffer places fields little-endian instead of big-endian | **8** red |
+| unimplemented opcodes fall through to the READ_DESCRIPTOR µprogram | **1** red |
+| the frame builder ignores whether the payload byte has arrived from memory yet | **58** red |
 
 The `COPY_BUFFER` one is the interesting result: it goes red HERE and stays
-green in `tb/ucpu` (0 of 92), because that suite's µprogram only ever copies a
+green in `tb/ucpu` (0 checks red there), because that suite's µprogram only copies a
 whole number of 8-byte lanes. A descriptor whose length is not a multiple of 8
 is a thing only the end-to-end suite sees.
