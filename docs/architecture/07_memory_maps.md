@@ -83,7 +83,7 @@ toolchain — [09 §1](09_verification.md)):
 | L1 | Every descriptor except ENTITY/CONFIGURATION has exactly one parent; no cross-subtree sharing | Milan §5.3.2 |
 | L2 | Indices dense, restart at 0 per configuration, IEEE ordering for multi-level types | IEEE §7.2 |
 | L3 | ≥1 STREAM_INPUT or STREAM_OUTPUT per configuration; each with a Base format (talker §6.3 / listener §6.4 incl. rate-completeness + configuration-uniformity) | Milan §5.3.3.4, §6.3/§6.4 |
-| L4 | STREAM_INPUT `buffer_length` ≥ 2 126 000 ns; CLASS_A flag set; CRF and AAF never mixed in one format list; `current_format` ∈ list; N formats ≤ 47 | Milan §5.3.3.4, Annex C |
+| L4 | STREAM_INPUT `buffer_length` ≥ 2 126 000 ns; CLASS_A flag set; CRF and AAF never mixed in one format list; `current_format` ∈ list; N formats ≤ 47 | Milan §5.3.3.4; IEEE 1722.1-2021 Table 7-8 (the N cap) |
 | L5 | Same AVB_INTERFACE index for the same physical port in every configuration | Milan §5.3.3.5 |
 | L6 | CLOCK_SOURCE construction: one INPUT_STREAM per CRF-capable input (or the single AAF input when no CRF input exists); ≥1 INTERNAL if any output; ≥1 CLOCK_SOURCE per CLOCK_DOMAIN; gPTP-as-media-clock chain only in non-redundant single-interface models | Milan §5.3.3.6, §7.5 |
 | L7 | STREAM_PORT_INPUT owns no AUDIO_MAP; ≤1 static mapping per output stream channel; AUDIO_CLUSTER `channel_count` = 1 | Milan §5.3.3.7–.9 |
@@ -92,14 +92,14 @@ toolchain — [09 §1](09_verification.md)):
 
 ### 3.2 Descriptor sizing
 
-<a id="fig-07-sizing"></a>**F07.3 — Fixed sizes + variable parts (IEEE §7.2; Milan Annex C for streams)**
+<a id="fig-07-sizing"></a>**F07.3 — Fixed sizes + variable parts (IEEE Std 1722.1-2021 §7.2)**
 
 | Descriptor | Type | Fixed B | Variable part |
 |---|---|---|---|
 | ENTITY | 0x0000 | 312 | — |
 | CONFIGURATION | 0x0001 | 74 | + 4·descriptor_counts |
 | AUDIO_UNIT | 0x0002 | 144 | + 4·sampling_rates |
-| STREAM_INPUT / OUTPUT | 0x0005/6 | 136 | + 8·F formats (F ≤ 47, `formats_offset` = 136) + redundancy tail `redundant_offset` = 136+8F, **R = 0 emitted** (Annex C layout for all entities) |
+| STREAM_INPUT / OUTPUT | 0x0005/6 | 138 | + 8·F formats (F ≤ 47, `formats_offset` = 138) + redundancy tail `redundant_offset` = 138+8F, **R = 0 emitted** (Table 7-8; see the Δ note) |
 | AVB_INTERFACE | 0x0009 | 102 | — |
 | CLOCK_SOURCE | 0x000A | 86 | — |
 | STREAM_PORT_IN/OUT | 0x000E/F | 20 | — (no name field) |
@@ -108,16 +108,34 @@ toolchain — [09 §1](09_verification.md)):
 | CONTROL (identify) | 0x001A | 104 | + values (LINEAR_UINT8: 1×{min,max,step,default,current…}) |
 | CLOCK_DOMAIN | 0x0024 | 76 | + 2·clock_sources |
 
-> Δ note: IEEE-2021 defines `timing @136` in stream descriptors; Milan Annex C places
-> `formats` at 136 — **Annex C takes precedence** for Milan builds (profile ROM swaps
-> the assembly template if a plain-IEEE build ever needs `timing`).
+> Δ note — two stream layouts exist; **IEEE Std 1722.1-2021 Table 7-8 is the one this
+> design emits**. Table 7-8 (§7.2.6) places `redundant_offset` at 132,
+> `number_of_redundant_streams` at 134, `timing` at 136 and `formats` at 138, for
+> 138+8F+2R octets. Milan v1.2 §5.3.3.4 binds the descriptor to it: these descriptors
+> "shall have the format specified in [ATDECC, Clause 7.2.6]". Milan v1.2 clause 2
+> (References) defines [ATDECC] as IEEE Std 1722.1-2021.
+>
+> Milan v1.2 Annex C Table C.1 is a second normative layout: `formats` at 136, no
+> `timing` field, 136+8F+2R octets. It is **optional here**. §5.3.3.4 says "A PAAD-AE
+> may use the extension ... for any of its Streams and shall use it for the Streams
+> that are part of the redundant pair". This design declares no redundant pair (R = 0),
+> so the *shall* never fires and Table 7-8 governs unmodified. A previous revision of
+> this note claimed Annex C "takes precedence for Milan builds". That read the **may**
+> as a **shall**, and no shipping descriptor was ever assembled that way.
+>
+> One artifact still carries Annex C deliberately: the test vector
+> [`hdl/aecp/desc/example_milan_8.json`](../../hdl/aecp/desc/example_milan_8.json),
+> labelled as such in its own header. It disagrees with the shipping packer on purpose,
+> because §3.3 below takes each descriptor's length from the index map and never reads a
+> descriptor's interior. It is not a compliance reference and must not be copied into an
+> entity model.
 
 ### 3.3 Static image
 
 Read-only at runtime. Layout = concatenated descriptors in (configuration, type,
 index) order + an **index map** per configuration (type → base pointer + count) used by
 `DESC_ADDR`. READ_DESCRIPTOR assembles: image bytes, then overlay patches
-(current values, names), then the Annex C tail with R = 0.
+(current values, names), then the Table 7-8 redundancy tail with R = 0.
 
 Software loads it into the integrator's main memory at `DESC_BASE_P` before
 `entity_enable` — **not** through the side-port window, and not as a synthesized ROM.
@@ -151,9 +169,11 @@ on every locate, and at 16 B per (configuration, type) caching it is cheap exact
 where caching the image is not — and a located descriptor is fetched **once, as a
 single burst**, into a `LINE_BYTES_P` line buffer that every subsequent `READ_STATE` /
 `COPY_BUFFER` beat reads on chip. One command pays one memory latency, not one per
-byte. `LINE_BYTES_P` defaults to 576 = the largest descriptor §3.2 can produce
-(STREAM_INPUT/OUTPUT at the Milan Annex C cap, 136 + 8·47 = 512 B, plus the R = 0
-tail) rounded to the [03 §2](03_packet_engine.md) slot size; a descriptor longer than
+byte. `LINE_BYTES_P` defaults to 576 = the largest descriptor §3.2 can produce, rounded
+to the [03 §2](03_packet_engine.md) slot size. That worst case is a
+STREAM_INPUT/OUTPUT at Table 7-8's caps of F ≤ 47 formats and R ≤ 8 redundant streams:
+138 + 8·47 + 2·8 = 530 B. The Annex C layout of the Δ note is 2 B shorter at the same
+caps (528 B), so 576 covers a model assembled either way. A descriptor longer than
 the line is refused at load time (header `desc_max_len`) and at locate time, never
 truncated.
 
@@ -381,7 +401,7 @@ Baseline: 1 configuration, 1 AVB interface, 2 in + 2 out streams, F = 6 formats 
 
 | Region | Formula | Bytes |
 |---|---|---|
-| Static image (**main memory**, not block RAM) | 312 + (74+4·10) + (144+4·3) + 4·(136+48) + 102 + 2·86 + 4·20 + 8·90 + (8+64) + (104+9) + (76+4) + index maps ≈ | **≈ 2.9 K** at this small baseline; the reference consumer's model at its shipping shape is an order of magnitude larger, which is why §3.3.1 moved it off chip |
+| Static image (**main memory**, not block RAM) | 312 + (74+4·10) + (144+4·3) + 4·(138+48) + 102 + 2·86 + 4·20 + 8·90 + (8+64) + (104+9) + (76+4) + index maps ≈ | **≈ 2.9 K** at this small baseline; the reference consumer's model at its shipping shape is an order of magnitude larger, which is why §3.3.1 moved it off chip |
 | Overlay + names | ≈ 20 named × 64 + currents + maps | ≈ 1.6 K |
 | Sink/source records | 2×48 + 2×16 (source DA gates) | 128 |
 | Registry | 16 × 28 | 448 |

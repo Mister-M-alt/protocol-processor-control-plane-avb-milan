@@ -21,6 +21,16 @@ buffer, so the harness is two independent models — never DUT logic:
    (`example_milan_8.json` → `image.bin`), so generator and RTL are proven to
    agree on the *format* rather than merely on each other.
 
+   That worked example is a **test vector, not a compliance reference**. Its
+   stream descriptors deliberately use the Milan v1.2 Annex C Table C.1 layout
+   (`formats_offset` = 136), which is *not* what ships: shipping descriptors
+   come from the consuming repository's `avdecc/gen_aem_store.py` in the IEEE
+   1722.1-2021 Table 7-8 layout (`formats_offset` = 138), as Milan v1.2
+   §5.3.3.4 requires. The disagreement is the point. The store takes every
+   length from the index map and never reads a descriptor's interior, so this
+   is the one image here whose `formats_offset` contradicts the length its
+   index map declares. See the header of `example_milan_8.json`.
+
 ## What it proves
 
 | Group | Checks |

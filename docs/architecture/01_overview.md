@@ -145,7 +145,7 @@ values; other documents reference `P-…` IDs.
 | P-N-CONTROLLERS | 16 | ≥16 per interface (Milan §5.3.4.2) | registry, monitor timers, fan-out |
 | P-N-CONFIGURATIONS | 1 | ≥1 | index maps, image size |
 | P-N-AUDIO-UNITS / P-N-CLOCK-DOMAINS / P-N-CLOCK-SOURCES | 1 / 1 / 2 | model-driven (≥1 CD, ≥1 CS/CD) | overlay, counters, MVU MCR |
-| P-N-FORMATS-MAX | 16 | ≤47 (Milan Annex C) | descriptor assembly, format tables |
+| P-N-FORMATS-MAX | 16 | ≤47 (IEEE 1722.1-2021 Table 7-8) | descriptor assembly, format tables |
 | P-MAP-SUBSET-CH-MAX | 176 | =176 (Milan §5.4.2.26) | audio-map partitioning |
 | P-N-MAP-ENTRIES | product | per port | map RAM |
 | P-DESCR-IMAGE-BYTES | 16384 | ≥ worked size ([07 §6](07_memory_maps.md)) | **no RTL consumer** — the image moved to main memory at `DESC_BASE_P` ([07 §3.3](07_memory_maps.md)); retained as the sizing budget only |

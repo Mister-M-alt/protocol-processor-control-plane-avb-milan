@@ -66,11 +66,17 @@
 //                command pays one memory latency, not one per byte.
 //
 //                LINE BUFFER SIZE. `LINE_BYTES_P` defaults to 576 = the
-//                largest descriptor 07 §3.2 can produce (STREAM_INPUT/OUTPUT
-//                at the Milan Annex C cap: 136 + 8·47 formats = 512 B, plus
-//                the R = 0 redundancy tail) rounded up to this repository's
-//                03 §2 slot size — which is also the response-buffer size, so
-//                a descriptor that fits the line always fits the response. A
+//                largest descriptor 07 §3.2 can produce, rounded up to this
+//                repository's 03 §2 slot size — which is also the
+//                response-buffer size, so a descriptor that fits the line
+//                always fits the response. The worst case is a
+//                STREAM_INPUT/OUTPUT, and the layout Milan v1.2 §5.3.3.4
+//                mandates for it is IEEE 1722.1-2021 Table 7-8 (§7.2.6):
+//                138 + 8·N + 2·R with N capped at 47 formats and R at 8
+//                redundant streams, so 530 B. Milan v1.2 Annex C Table C.1 is
+//                a permitted alternative layout (§5.3.3.4 "may", mandatory
+//                only for a redundant pair) and is 2 B shorter at the same
+//                caps, 528 B. 576 covers a model assembled either way. A
 //                descriptor LONGER than the line cannot be served: its locate
 //                answers `st_err_o` (NO_SUCH_DESCRIPTOR) rather than a
 //                truncated descriptor, and the header's `desc_max_len` is

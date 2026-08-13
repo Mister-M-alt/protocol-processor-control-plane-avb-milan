@@ -407,6 +407,11 @@ static Image synth_two_of_a_type() {
 // 1722.1-2021 §7.2.6 sizes each stream descriptor by its own
 // number_of_formats, and Milan §5.3.3.4 forbids one stream carrying both AAF
 // and CRF, so this is not a corner case - it is the ordinary shape.
+//
+// The ABSOLUTE lengths are arbitrary and not Table 7-8's (which would make
+// these 138+8*2 = 154 and 138+8*1 = 146). Only the 8-byte DIFFERENCE of one
+// format carries meaning here: the store reads no descriptor field, so what is
+// under test is the index map's run arithmetic, never a layout.
 static Image synth_mixed_lengths() {
   std::vector<Entry> ents = {
     {0, 0x0000, 1, 40,  0,         40,  0},

@@ -167,8 +167,10 @@ service + PRNG [08 §3](architecture/08_timing.md), budgets [08 §4](architectur
 
 #### <a id="gap-08"></a>GAP-08 [Major] — Entity-model memory architecture undefined
 "Descriptor RAM" is named but not designed. Needed: static descriptor image + dynamic
-overlay split; Milan **Annex C** STREAM descriptor layout (formats_offset = 136, N ≤ 47
-formats, redundancy tail emitted with R = 0 even when non-redundant); name table for all
+overlay split; **IEEE 1722.1-2021 Table 7-8** STREAM descriptor layout (formats_offset =
+138, N ≤ 47 formats, redundancy tail emitted with R = 0 even when non-redundant, per
+Milan §5.3.3.4 which binds the descriptor to [ATDECC, Clause 7.2.6] and leaves Annex C
+Table C.1 a **may**); name table for all
 named descriptors; per-configuration index maps; audio-map storage with fixed ≤ 176-channel
 partitioning and all-or-nothing ADD validation (§5.4.2.26–.28); READ_DESCRIPTOR assembly
 incl. the 4-byte failure stub (IEEE §7.4.5). Response buffering must anticipate Milan
@@ -203,7 +205,8 @@ notification-storm and NVM power-cut tests, doc-sync regression.
 
 #### <a id="gap-12"></a>GAP-12 [Minor] — Non-redundant scoping not explicit
 The document never states the redundancy position. For a non-redundant PAAD: Milan ch. 8
-excluded; GET_MILAN_INFO `REDUNDANCY` flag = 0; Annex C descriptors emitted with R = 0;
+excluded; GET_MILAN_INFO `REDUNDANCY` flag = 0; STREAM descriptors emitted with R = 0 and
+Annex C Table C.1 declined (§5.3.3.4 makes it a **may** absent a redundant pair);
 per-interface keying kept parameterized as the redundancy seam; gPTP-as-media-clock
 (§7.5) is *only* legal non-redundant single-AVB_INTERFACE.
 **Disposition**: [01 §1/§7](architecture/01_overview.md).
@@ -368,7 +371,7 @@ verification).
 |---|---|---|---|---|---|---|---|---|
 | REQ-MDL-001 | Milan §5.3.2 | Descriptor subset + cardinalities (AVB_INTERFACE ≥1, CLOCK_DOMAIN ≥1, CLOCK_SOURCE ≥1/domain); exactly one parent per descriptor | shall | A | [GAP-08](#gap-08) | F07.2 | 07 §3 | DIR |
 | REQ-MDL-002 | Milan §5.3.3.4 | STREAM: buffer_length ≥ 2 126 000 ns; CLASS_A flag; no CRF+AAF mix in one format list; current_format ∈ list | shall | A | [GAP-08](#gap-08) | model lint | 07 §3 | DIR |
-| REQ-MDL-003 | Milan Annex C | STREAM descriptors in Annex C layout: formats_offset 136, N ≤ 47, redundancy tail with R = 0 | shall (layout) | A | [GAP-08](#gap-08) | descriptor assembly | 07 §3 | DIR |
+| REQ-MDL-003 | Milan §5.3.3.4 → IEEE 1722.1-2021 §7.2.6 | STREAM descriptors in Table 7-8 layout: formats_offset 138, N ≤ 47, `timing` at 136, redundancy tail `redundant_offset` = 138+8N with R = 0. Milan Annex C Table C.1 (formats at 136, no `timing`) is a **may** for any Stream and a shall only for a redundant pair; this PAAD declares none, so it is not emitted | shall (layout) | A | [GAP-08](#gap-08) | descriptor assembly | 07 §3 | DIR |
 | REQ-MDL-004 | Milan §5.3.3.5 | Same AVB_INTERFACE index for the same physical port in all configurations | shall | A | [GAP-12](#gap-12) | index maps | 07 §3 | DIR |
 | REQ-MDL-005 | Milan §5.3.3.6 | CLOCK_SOURCE construction: one INPUT_STREAM per CRF-capable input (or the single AAF input); ≥1 INTERNAL if any output; gPTP-as-MC only non-redundant single-interface | shall | A | [GAP-08](#gap-08) | model lint | 07 §3 | DIR |
 | REQ-MDL-006 | Milan §5.3.3.7 | STREAM_PORT_INPUT has **no** static AUDIO_MAP (dynamic input mappings mandatory) | shall | A | [GAP-08](#gap-08) | model lint | 07 §3 | DIR |
@@ -440,7 +443,7 @@ verification).
 | [GAP-05](#gap-05) | Major | Counters subsystem with Milan-precedence masks | [06 §6.6](architecture/06_aecp_engine.md), [07 §4](architecture/07_memory_maps.md) | DIR |
 | [GAP-06](#gap-06) | Major | Registry + monitor + fan-out + lock manager + identify | [06 §7](architecture/06_aecp_engine.md) | RND/STORM/TIM |
 | [GAP-07](#gap-07) | Major | Master T-ID table, timer service, PRNG, budgets | [08](architecture/08_timing.md) | TIM |
-| [GAP-08](#gap-08) | Major | Entity-model store (image+overlay), Annex C assembly, oversize TX slot | [07 §3](architecture/07_memory_maps.md), [03 §7](architecture/03_packet_engine.md) | DIR |
+| [GAP-08](#gap-08) | Major | Entity-model store (image+overlay), Table 7-8 stream assembly, oversize TX slot | [07 §3](architecture/07_memory_maps.md), [03 §7](architecture/03_packet_engine.md) | DIR |
 | [GAP-09](#gap-09) | Major | NVM manager, records, commit/restore flows | [07 §5](architecture/07_memory_maps.md) | NVM |
 | [GAP-10](#gap-10) | Major | CDC/reset, interface contracts, parameter table, profiles, grounded hazards | [01](architecture/01_overview.md)/[02](architecture/02_interfaces.md)/[03](architecture/03_packet_engine.md) | DIR |
 | [GAP-11](#gap-11) | Minor | Verification strategy + traceability | [09](architecture/09_verification.md) | — |
