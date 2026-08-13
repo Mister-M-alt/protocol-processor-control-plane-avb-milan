@@ -224,6 +224,21 @@ module KL_aecp_ucpu
     endcase
   end
 
+  //! COPY_BUFFER advances the cursor by the bytes it actually COPIES, not by
+  //! the 8-byte lane it reads. A descriptor length is not a multiple of 8
+  //! (07 §3.2: CONFIGURATION 74+4n, AVB_INTERFACE 102, CLOCK_SOURCE 86), so
+  //! rounding the last lane up would put 1..7 bytes of the NEXT descriptor on
+  //! the wire and lie about `control_data_length`. The final lane still writes
+  //! a whole 32-bit word into the response buffer — those bytes sit past
+  //! `resp_len_o` and are never emitted.
+  logic [3:0] copy_adv1_w, copy_adv2_w;
+  always_comb begin : copy_residual
+    copy_adv1_w = (copy_left_r > 16'd4) ? 4'd4 : 4'(copy_left_r[3:0]);
+    if (copy_left_r <= 16'd4)      copy_adv2_w = 4'd0;
+    else if (copy_left_r > 16'd8)  copy_adv2_w = 4'd4;
+    else                           copy_adv2_w = 4'(copy_left_r[3:0] - 4'd4);
+  end
+
   logic append_skip_w;
   assign append_skip_w = (uop_e_r.op == OP_APPEND) &&
                          (({1'b0, cursor_r} + {7'd0, fld_len_w}) >
@@ -514,12 +529,12 @@ module KL_aecp_ucpu
                   eseq_r      <= 4'd1;
                 end else if (eseq_r == 4'd1) begin
                   eseq_r     <= 4'd2;
-                  cursor_r   <= cursor_r + 10'd4;
-                  resp_len_r <= resp_len_r + 11'd4;
+                  cursor_r   <= cursor_r + {6'd0, copy_adv1_w};
+                  resp_len_r <= resp_len_r + {7'd0, copy_adv1_w};
                 end else if (eseq_r == 4'd2) begin
                   eseq_r      <= 4'd0;
-                  cursor_r    <= cursor_r + 10'd4;
-                  resp_len_r  <= resp_len_r + 11'd4;
+                  cursor_r    <= cursor_r + {6'd0, copy_adv2_w};
+                  resp_len_r  <= resp_len_r + {7'd0, copy_adv2_w};
                   copy_left_r <= (copy_left_r > 16'd8)
                                ? copy_left_r - 16'd8 : 16'd0;
                   copy_idx_r  <= copy_idx_r + 13'd1;

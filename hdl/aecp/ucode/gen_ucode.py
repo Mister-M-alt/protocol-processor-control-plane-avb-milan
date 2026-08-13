@@ -29,6 +29,16 @@ OPS = {
 }
 FMT_B, FMT_W, FMT_D, FMT_Q = 0, 1, 2, 3
 ST_OK, ST_NIMPL, ST_BADARG, ST_NSUPP = 0, 1, 7, 11
+REL_EQ, REL_NE, REL_LT, REL_GE = 0, 1, 2, 3
+
+# KL_aecp_desc_store state-port regions (see its banner): the µISA cannot put a
+# 48-bit locate key on a 20-bit address, so the region nibble selects what a
+# state access MEANS and the key rides st_wdata (= rf[ra]).
+RGN_DATA   = 0x00000   # the located descriptor's bytes
+RGN_NBASE  = 0xC0000   # name-table entry of the located descriptor
+RGN_NCFG   = 0xD0000   # configurations_count
+RGN_LEN    = 0xE0000   # located descriptor length
+RGN_LOCATE = 0xF0000   # perform a locate
 
 ROM_DEPTH = 2048
 
@@ -58,6 +68,9 @@ E_FMT     = 512
 E_NOTIMPL = 560      # unknown-opcode path (IEEE §9.3.5.3.3, REQ-FWX-001)
 E_ACQ     = 576      # ACQUIRE_ENTITY exemplar (Milan Δ7: NOT_SUPPORTED)
 E_STPRE   = 592      # status preservation through FAIL_SAFE
+E_RDESC   = 640      # READ_DESCRIPTOR (06 §6.1) — KL_aecp_engine dispatches here
+E_RDSTUB  = 672      # its IEEE §7.4.5 failure stub
+E_BADARG  = 704      # echo + BAD_ARGUMENTS (IEEE §7.4.39.2 opcode rule)
 
 rom = [0] * ROM_DEPTH
 
@@ -287,6 +300,56 @@ place(E_ACQ, [
 place(E_STPRE, [
     u('SET_STATUS', imm=ST_BADARG),
     u('BRANCH', imm=E_FAILSAFE),
+])
+
+# --- READ_DESCRIPTOR (06 §6.1) ----------------------------------------------
+# The one AEM command this processor really answers. Register contract, set by
+# KL_aecp_engine at dispatch (the µISA has no shift, so every field a µprogram
+# emits has to arrive right-justified in some register):
+#   r15 = controller_entity_id
+#   r14 = {--, descriptor_index, descriptor_type, configuration_index}
+#         -> [15:0] is the configuration_index emitted at @24
+#         -> [47:0] is the store's locate key on st_wdata
+#   r13 = {--, descriptor_type, descriptor_index}
+#         -> the 4-byte {type, index} stub of IEEE §7.4.5 as one dword
+# Response payload: configuration_index(2) reserved(2) descriptor(N), so the
+# AECPDU is 28 + N (F06.14). A bad configuration_index is BAD_ARGUMENTS and a
+# missing descriptor is NO_SUCH_DESCRIPTOR — both answer the 4-byte stub.
+place(E_RDESC, [
+    u('MOVE', rd=12, ra=0, imm=0),               # r12 = 0 (the reserved field)
+    u('READ_ST', rd=9, imm=RGN_NCFG),            # r9 = configurations_count
+    u('CHECK_ARG', ra=14, rb=9, fmt=FMT_W,       # cfg < count, else BAD_ARGS
+      cnd=REL_LT, imm=E_RDSTUB),
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+    u('READ_ST', rd=8, imm=RGN_LEN),             # r8 = descriptor length
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
+    u('COPY_BUF', ra=8, imm=RGN_DATA),           # the descriptor @28..
+    u('SEND_RESP'),
+    u('END'),
+])
+place(E_RDSTUB, [
+    u('MOVE', rd=12, ra=0, imm=0),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # {type, index} stub @28
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- BAD_ARGUMENTS with the command echoed (IEEE §7.4.39.2) ------------------
+# IDENTIFY_NOTIFICATION as a COMMAND, and a truncated READ_DESCRIPTOR. The
+# engine pre-loads the command payload and keeps its length, so this is the
+# command frame back with message_type + 1 and status 7.
+place(E_BADARG, [
+    u('SET_STATUS', imm=ST_BADARG),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
 ])
 
 # --- deterministic non-degenerate fill ---------------------------------------
