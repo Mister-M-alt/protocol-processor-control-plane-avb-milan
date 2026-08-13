@@ -34,13 +34,20 @@ def anchors_of(path: str) -> set:
     return found
 
 
+SKIP_DIRS = {".git", ".venv-wavedrom", "node_modules", "__pycache__"}
+
+
 def md_files() -> list:
+    """Every markdown file in the repository — docs/, the root, hdl/, tb/, syn/.
+
+    The navigation is only coherent if the links OUT of the code trees are checked
+    too: hdl/README.md and the tb/ suite notes point into docs/, and the guides
+    point back at individual .sv modules.
+    """
     out = []
-    for base, _dirs, files in os.walk(os.path.join(ROOT, "docs")):
+    for base, dirs, files in os.walk(ROOT):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith("obj_")]
         out += [os.path.join(base, f) for f in files if f.endswith(".md")]
-    readme = os.path.join(ROOT, "README.md")
-    if os.path.exists(readme):
-        out.append(readme)
     return sorted(out)
 
 

@@ -113,9 +113,33 @@ against at least two independent controller implementations.
 |---|---|---|
 | `lint` | `scripts/lint-diagrams.sh` | every embedded mermaid block renders (`mmdc`); every wavedrom block is strict JSON |
 | `links` | `scripts/check-links.py` | every relative link resolves; every `#anchor` exists in its target (code-block examples excluded) |
+| `wavedrom-check` | `scripts/render-wavedrom.py --check` | every committed WaveDrom SVG matches the fenced source it was rendered from |
 | `matrix` | `scripts/check-matrix.py` | REQ-IDs unique and fully populated; `Ver` values ∈ the §3 vocabulary; every GAP defined ↔ dispositioned |
+| `modmatrix` | `scripts/gen_matrix.py --check` | `docs/traceability/MODULE_MATRIX.md` is not stale, and no module is without a suite (budget zero) |
 | `stale` | `Makefile` | each committed `.svg` is newer than its `.drawio` source |
 
-To add once the implementation and tests exist: REQ-ID ↔ test-tag coverage (§2), and a
+## 8. The suites that exist today
+
+The single-source generated environment of [F09.1](#fig-09-env) is still the target
+shape. What the tree actually carries is one hand-written, self-checking Verilator suite
+per module under `tb/`, each with an **independent** C++ reference model built from the
+document byte offsets — never from DUT logic.
+
+| Command | Runs |
+|---|---|
+| `./scripts/run_suites.sh` | every suite under `tb/`, globbed rather than listed; exit code = number of failing suites, and exit 90 if a passing suite's tally line cannot be read |
+| `cd tb/<suite> && make` | one suite; exit 0 = PASS |
+| `./scripts/lint_hdl.sh` | Verilator `--lint-only` over every module elaborated as a top, zero warnings tolerated |
+
+Do not quote a check total here — run `./scripts/run_suites.sh` and read the summary line.
+Each `tb/<suite>/README.md` states what its suite proves, its recorded limits, and where
+one exists a **mutation record**: deliberate breakages and how many checks each turned
+red. That table is the evidence a suite has teeth.
+
+Neither `run_suites.sh` nor `lint_hdl.sh` is wired into `make check`, which is the
+documentation gate only; they are run separately before a submodule pin moves. See the
+[HDL engineer guide](../guides/hdl-engineer.md#6-running-the-testbenches).
+
+To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)
 per the scope rules in [docs/README §2](../README.md).
