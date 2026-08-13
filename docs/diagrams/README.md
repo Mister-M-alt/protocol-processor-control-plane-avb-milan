@@ -12,6 +12,7 @@ Rendering support differs per format, which drives the storage pattern:
 | Mermaid | yes, natively | fenced source only |
 | WaveDrom | **no** | committed SVG in `wavedrom/` + fenced source collapsed in `<details>` under the image; `make wavedrom` keeps them in sync (bootstraps `.venv-wavedrom/` with the Python `wavedrom` package on first run) |
 | draw.io | no | committed SVG here + `.drawio` source in `src/` |
+| hand-authored SVG | yes | the SVG **is** the source; validate a change by rendering it to PNG and looking at it (below) |
 
 `wavedrom/*.svg` files are named after the figure anchor of their source block
 (`fig-04-adpdu.svg` ← `<a id="fig-04-adpdu">`); the render script derives this
@@ -27,6 +28,38 @@ automatically — never hand-edit those SVGs.
 
 Rule: **source and export are committed together**; `make stale` fails the tree if an
 SVG is older than its `.drawio`.
+
+## Inventory (hand-authored SVG)
+
+These five are written directly as SVG and have **no `.drawio` source**. They are drawn
+against the landed RTL rather than against the specification, and they are the entry
+figures of the [persona guides](../guides/README.md).
+
+| File | Figure | Host document |
+|---|---|---|
+| `20-rtl-dataflow.svg` | every module in `protocol_processor_top`, and how a frame moves through them | [HDL engineer guide](../guides/hdl-engineer.md), [integrator guide](../guides/integrator.md) |
+| `21-integration-faces.svg` | the complete external contract, with tie-off behaviour | [integrator guide](../guides/integrator.md) |
+| `22-aecp-descriptor-fetch.svg` | READ_DESCRIPTOR through the integrator's main memory | [HDL engineer guide](../guides/hdl-engineer.md), [integrator guide](../guides/integrator.md) |
+| `23-bringup-decision.svg` | the bring-up ladder and the counter to read at each failure | [operator guide](../guides/operator.md) |
+| `24-adp-acmp-states.svg` | the advertise and listener-binding machines, as an operator sees them | [operator guide](../guides/operator.md) |
+
+**Why no draw.io source for these:** the draw.io CLI does not complete headless on the
+development machine used here — it hangs rather than exporting, including under
+`xvfb-run`, and ignores a shell timeout. A `.drawio` file that cannot be rendered is not a
+diagram anyone can see, so these are authored as clean, hand-written SVG instead, which is
+both the editable source and the published artifact. If draw.io export is ever fixed on
+your machine, the three files in `src/` still export normally with `make diagrams`.
+
+**Editing rule for these five:** after any change, render to PNG and *look at the result*.
+Overlap, clipped text and lines running through boxes are invisible in the XML.
+
+```sh
+rsvg-convert -w 1500 -o /tmp/check.png docs/diagrams/20-rtl-dataflow.svg
+```
+
+Check for overlapping text, labels escaping their box, arrows landing on the wrong block,
+and legibility at normal size. Every one of these carries an opaque light background so it
+reads on both light and dark page themes.
 
 ## Commands
 
