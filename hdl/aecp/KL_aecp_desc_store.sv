@@ -319,6 +319,18 @@ module KL_aecp_desc_store #(
   logic [IDX_AW_C-1:0] scan_rd_r;           // index-RAM read pointer
   logic [15:0]         scan_cmp_r;          // entry currently in idx_q_r
   logic                scan_rdy_r;
+  //! Running first-index of the entry being compared, within its (cfg, type).
+  //! One descriptor type is NOT always one index entry: a type whose members
+  //! differ in length is emitted as several entries, one per run of equal
+  //! length, contiguous and in ascending index order (a Milan station puts a
+  //! 148-byte AAF sink and a 140-byte CRF sink both under STREAM_INPUT, and
+  //! 1722.1 §7.2.6 sizes each by its own number_of_formats). Every entry stays
+  //! internally uniform, so a hit is still elem_off + stride*i with no second
+  //! indirection - only the `i` is now relative to where this run starts.
+  //! Accumulating the counts walked past is what recovers that start, and it
+  //! costs one register instead of a wider image entry. A uniform type emits
+  //! one entry and this stays zero, so the uniform path is unchanged.
+  logic [15:0]         scan_base_r;
 
   // decoded fields of the scanned entry
   logic [15:0] e_cfg_w, e_type_w, e_cnt_w, e_len_w, e_nbase_w, e_strd_w;
@@ -338,6 +350,15 @@ module KL_aecp_desc_store #(
   logic e_usable_w;
   assign e_usable_w = (e_len_w != 16'd0) && (32'(e_len_w) <= 32'(LINE_BYTES_P))
                       && (e_strd_w >= e_len_w) && (e_strd_w[2:0] == 3'd0);
+
+  //! scan helpers. `rel_w` is the LOCATE key relative to the start of the run
+  //! this entry describes (see scan_base_r); `last_w` marks the final table
+  //! entry, which is what turns "not found yet" into a miss.
+  logic type_hit_w, last_w;
+  logic [15:0] rel_w;
+  assign type_hit_w = (e_cfg_w == key_cfg_r) && (e_type_w == key_type_r);
+  assign rel_w      = key_index_r - scan_base_r;
+  assign last_w     = ((scan_cmp_r + 16'd1) >= hdr_n_entries_r);
 
   logic [3:0] region_w;
   assign region_w = st_addr_i[19:16];
@@ -456,6 +477,7 @@ module KL_aecp_desc_store #(
       scan_rd_r       <= '0;
       scan_cmp_r      <= 16'd0;
       scan_rdy_r      <= 1'b0;
+      scan_base_r     <= 16'd0;
     end else begin
       // a read is claimed until its answer leaves
       if (take_rd_w)   req_seen_r <= 1'b1;
@@ -623,9 +645,10 @@ module KL_aecp_desc_store #(
               key_type_r  <= st_wdata_i[31:16];
               key_index_r <= st_wdata_i[47:32];
               if (img_valid_r) begin
-                scan_rd_r  <= '0;
-                scan_cmp_r <= 16'd0;
-                scan_rdy_r <= 1'b0;
+                scan_rd_r   <= '0;
+                scan_cmp_r  <= 16'd0;
+                scan_rdy_r  <= 1'b0;
+                scan_base_r <= 16'd0;
                 st_r       <= S_SCAN;
               end else begin
                 //! not loaded, or loaded wrong: answer the honest miss AND
@@ -666,22 +689,30 @@ module KL_aecp_desc_store #(
           scan_rdy_r <= 1'b1;
           if (scan_rdy_r) begin
             scan_cmp_r <= scan_cmp_r + 16'd1;
-            if ((e_cfg_w == key_cfg_r) && (e_type_w == key_type_r)) begin
-              if ((key_index_r < e_cnt_w) && e_usable_w) begin
-                desc_len_r   <= e_len_w;
-                desc_nbase_r <= e_nbase_w;
-                desc_off_r   <= e_off_w + (32'(e_strd_w) * 32'(key_index_r));
-                st_r         <= S_FET_REQ;
-              end else begin
-                ans_err_r    <= 1'b1;
-                ans_data_r   <= 64'd0;
-                rd_pipe_r    <= 1'b0;
-                desc_len_r   <= 16'd0;
-                desc_nbase_r <= NAME_NONE_C;
-                if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
-                st_r <= S_ANSWER;
-              end
-            end else if ((scan_cmp_r + 16'd1) >= hdr_n_entries_r) begin
+            //! HIT. `rel_w` is the key relative to the start of this entry's
+            //! run. A key below the run cannot be served here - the run that
+            //! owns it came earlier and would already have hit - so the
+            //! `>= scan_base_r` guard is what stops the 16-bit wrap of the
+            //! subtraction from landing inside `e_cnt_w` and serving the
+            //! wrong descriptor.
+            if (type_hit_w && e_usable_w
+                && (key_index_r >= scan_base_r) && (rel_w < e_cnt_w)) begin
+              desc_len_r   <= e_len_w;
+              desc_nbase_r <= e_nbase_w;
+              desc_off_r   <= e_off_w + (32'(e_strd_w) * 32'(rel_w));
+              st_r         <= S_FET_REQ;
+            //! RIGHT TYPE, EARLIER RUN. Step the running base over this run and
+            //! keep scanning: a later entry of the same type may own the key.
+            //! Only the end of the table can turn this into a miss, so this
+            //! arm requires there to BE a later entry.
+            end else if (type_hit_w && e_usable_w && !last_w) begin
+              scan_base_r <= scan_base_r + e_cnt_w;
+            //! MISS. Either the table is exhausted, or this entry matched the
+            //! type but its geometry is unusable. The unusable case must miss
+            //! HERE rather than scan on: its count cannot be trusted, so
+            //! stepping the base over it would misalign every later run of the
+            //! same type and serve a plausible wrong descriptor.
+            end else if (last_w || (type_hit_w && !e_usable_w)) begin
               ans_err_r    <= 1'b1;
               ans_data_r   <= 64'd0;
               rd_pipe_r    <= 1'b0;

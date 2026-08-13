@@ -17,6 +17,7 @@
 //
 // The suite also loads the generator's own example image, so generator and RTL
 // are proven to agree on the format rather than merely on each other.
+#include <map>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -324,8 +325,18 @@ static uint64_t img64(const std::vector<uint8_t>& b, uint32_t at) {
 // walk every descriptor of an image and check the served bytes, byte-exactly
 // ---------------------------------------------------------------------------
 static void check_all_descriptors(H& h, const Image& img, const char* tag) {
+  // A descriptor type may occupy SEVERAL entries - one per run of equal-length
+  // descriptors - so an entry's members are not indices 0..count-1 but
+  // first..first+count-1, where `first` is the number of indices the earlier
+  // runs of the same (cfg, type) already covered. Tracked here independently
+  // of the DUT, which is the point: if the RTL's own running base drifts, the
+  // absolute index this asks for stops matching the bytes it gets.
+  std::map<std::pair<uint16_t, uint16_t>, uint16_t> first;
   for (const Entry& e : img.ents) {
-    for (uint16_t ix = 0; ix < e.count; ++ix) {
+    const uint16_t run0 = first[{e.cfg, e.type}];
+    first[{e.cfg, e.type}] = uint16_t(run0 + e.count);
+    for (uint16_t k = 0; k < e.count; ++k) {
+      const uint16_t ix = uint16_t(run0 + k);
       CHECK(h.locate(e.cfg, e.type, ix), "%s locate cfg %u type 0x%04X ix %u "
             "never answered", tag, e.cfg, e.type, ix);
       CHECK(!h.err, "%s locate cfg %u type 0x%04X ix %u errored",
@@ -341,7 +352,10 @@ static void check_all_descriptors(H& h, const Image& img, const char* tag) {
             tag, e.type, (unsigned long long)h.rdata, e.nbase);
 
       uint32_t lanes = (e.len + 7u) / 8u;
-      uint32_t base = e.off + uint32_t(e.stride) * ix;
+      // `e.off` is the offset of this RUN's first member, so the stride
+      // multiplies the run-relative index. Using the absolute one would read
+      // past the run whenever an earlier run of the same type exists.
+      uint32_t base = e.off + uint32_t(e.stride) * k;
       for (uint32_t l = 0; l < lanes; ++l) {
         uint64_t want = img64(img.b, base + 8 * l);
         CHECK(h.rd(RGN_DATA + 8 * l, false, 0) && h.rdata == want,
@@ -379,6 +393,45 @@ static Image synth_two_of_a_type() {
   bodies.push_back(mk(0x0024, 0, 78));
   Image im;
   im.build(ents, bodies, {"entity", "cluster0", "cluster1"}, 1);
+  return im;
+}
+
+// The shape a real Milan station has and the uniform-stride assumption could
+// not express: ONE descriptor type whose members differ in length. STREAM_INPUT
+// 0 is a 148-byte AAF sink (two formats), STREAM_INPUT 1 a 140-byte CRF sink
+// (one), STREAM_INPUT 2 a second AAF sink - so the type splits into THREE runs
+// and index 2 is only reachable by accumulating the two before it. Strides
+// differ between runs (152 vs 144) and the third run repeats an earlier
+// length, which a "remember the last length" shortcut would get wrong.
+//
+// 1722.1-2021 §7.2.6 sizes each stream descriptor by its own
+// number_of_formats, and Milan §5.3.3.4 forbids one stream carrying both AAF
+// and CRF, so this is not a corner case - it is the ordinary shape.
+static Image synth_mixed_lengths() {
+  std::vector<Entry> ents = {
+    {0, 0x0000, 1, 40,  0,         40,  0},
+    {0, 0x0005, 1, 148, NAME_NONE, 152, 0},   // index 0     AAF, N=2
+    {0, 0x0005, 1, 140, NAME_NONE, 144, 0},   // index 1     CRF, N=1
+    {0, 0x0005, 1, 148, NAME_NONE, 152, 0},   // index 2     AAF, N=2
+    {0, 0x0024, 1, 78,  NAME_NONE, 80,  0},
+  };
+  std::vector<std::vector<uint8_t>> bodies;
+  auto mk = [](uint16_t type, uint16_t ix, size_t len) {
+    std::vector<uint8_t> v(len, 0);
+    v[0] = uint8_t(type >> 8); v[1] = uint8_t(type);
+    v[2] = uint8_t(ix >> 8);   v[3] = uint8_t(ix);
+    // keyed on the index so a run mix-up shows up as wrong BYTES, not merely
+    // as a wrong length - two runs here share a length
+    for (size_t k = 4; k < len; ++k) v[k] = uint8_t((type + ix * 31 + k) & 0xFF);
+    return v;
+  };
+  bodies.push_back(mk(0x0000, 0, 40));
+  bodies.push_back(mk(0x0005, 0, 148));
+  bodies.push_back(mk(0x0005, 1, 140));
+  bodies.push_back(mk(0x0005, 2, 148));
+  bodies.push_back(mk(0x0024, 0, 78));
+  Image im;
+  im.build(ents, bodies, {"entity"}, 1);
   return im;
 }
 
@@ -669,6 +722,37 @@ int main(int argc, char** argv) {
           (unsigned)dut->dbg_fault_o);
     check_all_descriptors(h, syn, "S1");
     CHECK(h.locate(0, 0x0014, 2) && h.err, "S1 cluster index 2 served");
+  }
+
+  // ---- S4: ONE TYPE, SEVERAL RUNS (the AAF + CRF stream shape) -------------
+  // The scan must accumulate the counts of the runs it walks past, or index 1
+  // is served from the run that owns index 0 and every controller reads the
+  // wrong stream. Byte-exact, so a right-length-wrong-run answer still fails.
+  {
+    Image syn = synth_mixed_lengths();
+    CHECK(h.boot(syn), "S4 boot of the mixed-length model");
+    CHECK(dut->dbg_img_valid_o == 1, "S4 mixed-length model rejected: fault %u",
+          (unsigned)dut->dbg_fault_o);
+    check_all_descriptors(h, syn, "S4");
+
+    // the lengths must come back PER INDEX, not per type: this is the check
+    // the uniform-stride layout could not have passed
+    const uint16_t want_len[3] = {148, 140, 148};
+    for (uint16_t ix = 0; ix < 3; ++ix) {
+      CHECK(h.locate(0, 0x0005, ix) && !h.err, "S4 STREAM_INPUT %u missed", ix);
+      CHECK(h.rd(RGN_LEN, false, 0) && h.rdata == want_len[ix],
+            "S4 STREAM_INPUT %u length got %llu want %u", ix,
+            (unsigned long long)h.rdata, want_len[ix]);
+      // byte 3 of every body is its own index - proof the run arithmetic
+      // landed on the right descriptor and not merely on the right length
+      CHECK(h.rd(RGN_DATA, false, 0) && ((h.rdata >> 32) & 0xFFFF) == ix,
+            "S4 STREAM_INPUT %u served descriptor_index %llu", ix,
+            (unsigned long long)((h.rdata >> 32) & 0xFFFF));
+    }
+    // one past the last run must still MISS: accumulating must not run away
+    CHECK(h.locate(0, 0x0005, 3) && h.err, "S4 STREAM_INPUT 3 was served");
+    // and a later type must remain reachable past the split
+    CHECK(h.locate(0, 0x0024, 0) && !h.err, "S4 type after the split missed");
   }
 
   // ---- S2: an entry whose stride is inconsistent must not be served -------

@@ -215,22 +215,44 @@ def build(model, line_bytes=576):
         if want != list(range(len(want))):
             raise ImageError(f"cfg {cfg} type 0x{typ:04X} indices are not "
                              f"dense from 0: {want} (07 §3.1 rule L2)")
-        lens = {len(members[i][0]) for i in want}
-        if len(lens) != 1:
-            raise ImageError(
-                f"cfg {cfg} type 0x{typ:04X} mixes descriptor lengths {sorted(lens)} "
-                f"— layout version 1 addresses a type with a uniform stride")
-        elem_len = lens.pop()
-        if elem_len > line_bytes:
-            raise ImageError(
-                f"cfg {cfg} type 0x{typ:04X} is {elem_len} bytes, over the "
-                f"{line_bytes}-byte store line buffer — the store would answer "
-                f"NO_SUCH_DESCRIPTOR for it")
-        name_base = members[0][1]
-        entries.append({"cfg": cfg, "type": typ, "count": len(want),
-                        "elem_len": elem_len, "name_base": name_base,
-                        "stride": (elem_len + 7) & ~7,
-                        "bodies": [members[i][0] for i in want]})
+        # A type does NOT have to be one uniform run. A Milan end-station puts
+        # its media sink and its CRF sink both under STREAM_INPUT, and 07
+        # §3.2's format list makes them different lengths (AAF advertising two
+        # formats is 148 bytes, CRF advertising one is 140) — so REFUSING a
+        # mixed-length type refused every real build of this device, not a
+        # corner case. It is also not a model defect to fix upstream: 1722.1
+        # §7.2.6 sizes a stream descriptor by its own number_of_formats, and a
+        # CRF sink cannot advertise AAF formats to pad itself level.
+        #
+        # The layout is unchanged and still version 1. A type with mixed
+        # lengths is emitted as SEVERAL index entries, one per maximal run of
+        # equal-length descriptors, in ascending index order — each internally
+        # uniform, so the "locate = elem_off + i*stride, no second
+        # indirection" property survives intact. What absorbs the split is the
+        # SCAN: entries for one (cfg, type) are contiguous and ordered, so the
+        # store accumulates the counts it has walked past and subtracts that
+        # running base from the key. A type that is uniform emits exactly one
+        # entry and the running base stays zero — byte-identical to before,
+        # which is why no version bump is owed and old images still load.
+        runs = []
+        for i in want:
+            body, nidx = members[i]
+            if runs and len(runs[-1]["bodies"][0]) == len(body):
+                runs[-1]["bodies"].append(body)
+            else:
+                runs.append({"first": i, "name_base": nidx, "bodies": [body]})
+        for run in runs:
+            elem_len = len(run["bodies"][0])
+            if elem_len > line_bytes:
+                raise ImageError(
+                    f"cfg {cfg} type 0x{typ:04X} index {run['first']} is "
+                    f"{elem_len} bytes, over the {line_bytes}-byte store line "
+                    f"buffer — the store would answer NO_SUCH_DESCRIPTOR for it")
+            entries.append({"cfg": cfg, "type": typ, "count": len(run["bodies"]),
+                            "elem_len": elem_len, "name_base": run["name_base"],
+                            "stride": (elem_len + 7) & ~7,
+                            "first": run["first"],
+                            "bodies": run["bodies"]})
 
     names = [str(n) for n in model.get("names", [])]
     n_config = len({e["cfg"] for e in entries})
@@ -288,11 +310,15 @@ def build(model, line_bytes=576):
         f"image_bytes {image_bytes}  desc_max_len {desc_max}",
         f"checksum 0x{checksum:08X}",
         "",
-        "  cfg  type    count  elem_len  stride  elem_off   name_base",
+        # `first` is printed because a mixed-length type occupies several rows
+        # and two rows with the same cfg+type would otherwise read as a
+        # duplicate entry rather than as the index ranges they are.
+        "  cfg  type    first  count  elem_len  stride  elem_off   name_base",
     ]
     for ent in entries:
         nm = "-" if ent["name_base"] == NAME_NONE else str(ent["name_base"])
         report.append(f"  {ent['cfg']:>3}  0x{ent['type']:04X}  "
+                      f"{ent['first']:>5}  "
                       f"{ent['count']:>5}  {ent['elem_len']:>8}  "
                       f"{ent['stride']:>6}  "
                       f"0x{ent['elem_off']:06X}  {nm:>9}")
