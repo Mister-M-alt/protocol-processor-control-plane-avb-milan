@@ -2,8 +2,17 @@
 # Documentation Guide — Conventions, Reading Order, Audiences
 
 This directory specifies the architecture of an IEEE 1722.1-2021 protocol processor
-implementing the control plane of a **non-redundant Milan v1.2 PAAD**. Read this page
-first: it defines the conventions every other document relies on.
+implementing the control plane of a **non-redundant Milan v1.2 PAAD**.
+
+> **Looking for a place to start reading, not a place to start writing?**
+> Go to [`guides/`](guides/README.md) — three task-shaped entry points, one for someone
+> [modifying a module](guides/hdl-engineer.md), one for someone
+> [integrating the top into an SoC](guides/integrator.md), and one for someone
+> [bringing a board up](guides/operator.md). They index into the architecture documents
+> below.
+
+This page is for **authors**: it defines the conventions every architecture document
+relies on. Read it before editing anything under `architecture/`.
 
 ## 1. Reading order
 

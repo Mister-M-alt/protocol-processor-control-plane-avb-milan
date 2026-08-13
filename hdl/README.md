@@ -17,11 +17,26 @@ here. The HDL is authored here and only *consumed* there — never copied.
 | `hdl/acmp/` | Milan ACMP binding/probing engine | [`05_acmp_engine.md`](../docs/architecture/05_acmp_engine.md) |
 | `hdl/aecp/` | AECP/AEM micro-coded engine + controller registry | [`06_aecp_engine.md`](../docs/architecture/06_aecp_engine.md) |
 | `hdl/srp/` | MSRP/MVRP endpoint participant: Domain + VLAN FSMs, per-stream FSMs, vector codec | [`10_srp_engine.md`](../docs/architecture/10_srp_engine.md) |
-| `hdl/common/` | primitives shared across engines (timers, CDC, memories) | [`02_interfaces.md`](../docs/architecture/02_interfaces.md), [`07_memory_maps.md`](../docs/architecture/07_memory_maps.md) |
-| `hdl/top/` | `protocol_processor_top` — the one instantiation boundary | [`01_overview.md`](../docs/architecture/01_overview.md) |
-| `tb/` | one self-checking Verilator suite per module (exit 0 = PASS) | [`09_verification.md`](../docs/architecture/09_verification.md) |
+| `hdl/common/` | shared across engines: the timer service, the PRNG, and `pp_pkg` — the cross-cutting types, hazard classes and derived timer-slot map | [`02_interfaces.md`](../docs/architecture/02_interfaces.md), [`08_timing.md`](../docs/architecture/08_timing.md) |
+| `hdl/top/` | `protocol_processor_top` — the one instantiation boundary — and `KL_mrp_strip`, the recorded RX seam | [`01_overview.md`](../docs/architecture/01_overview.md) |
+| `../tb/` | one self-checking Verilator suite per module (exit 0 = PASS) | [`09_verification.md`](../docs/architecture/09_verification.md) |
 
-Directories appear as their first module lands; none are created empty.
+Directories appear as their first module lands; none are created empty. There is **no CDC
+primitive and no memory primitive** in this tree: every clock crossing is the integrator's
+(see the [integrator guide](../docs/guides/integrator.md)), and memories are inferred, not
+instantiated.
+
+The generated module ↔ testbench matrix is
+[`docs/traceability/MODULE_MATRIX.md`](../docs/traceability/MODULE_MATRIX.md); regenerate
+it with `python3 scripts/gen_matrix.py`.
+
+## Which guide you want
+
+| | |
+|---|---|
+| Changing a module | [HDL engineer guide](../docs/guides/hdl-engineer.md) |
+| Instantiating the top | [Integrator guide](../docs/guides/integrator.md) |
+| Debugging a live board | [Operator guide](../docs/guides/operator.md) |
 
 ## Rules of this directory
 
