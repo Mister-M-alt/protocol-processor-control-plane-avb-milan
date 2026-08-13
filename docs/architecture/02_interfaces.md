@@ -274,6 +274,25 @@ grant arriving after the `PROBE_TX` that triggered it has gone stale cannot open
 the gate anyway. The 30 s `MAAP_ANNOUNCE_INTERVAL_BASE` is *not* in the bound —
 the address is acquired on entry to `DEFEND`, before the first announce.
 
+**`RELEASE_DA` is owed, not attempted.** The degrade rule above applies to
+`ALLOC_DA` only. An allocation that cannot reach the face is safe to drop because
+the stimulus that asked for it comes again (a probe, a listener, a timer); a
+release has no such stimulus, and the DA-gate record naming the address is wiped
+by the same event that asks for the release. So a release skipped because the
+single-outstanding face was busy (the *normal* state for seconds at a time,
+since `ALLOC_DA` is a real claim walk) leaves the address allocated with nothing
+left to notice. The processor therefore books the debt per source and retries
+until the face **accepts** it, which also covers the `P-MAAP-ACCEPT-CYC` abandon
+(the flag is cleared by the accept, never by the offer). **IEEE Std 1722-2016**
+permits the delay and forbids the loss: B.3.5.2 attaches no deadline to
+`Release!`, Table B.7 leaves the machine legally in DEFEND (announcing and
+defending an address it still holds) until the event arrives, and footnote c
+makes the range free only once `Release!` has reached INITIAL. Releases are
+ordered **ahead of** allocations, so a source that leaves and rejoins hands back
+its old address before it asks for a new one. The teardown itself never waits:
+`WITHDRAW_TALKER`, the record wipe and the timer cancel all land in the removal
+event's own cycle whatever the face is doing.
+
 **Stale responses.** A shim that accepted a request will answer it even after the
 processor abandoned it. That answer must never install a DA: the source it was
 for has moved on, and the tracker may already name a different one — installing

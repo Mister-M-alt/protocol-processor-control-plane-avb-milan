@@ -347,6 +347,13 @@ waiting forever on the response strands the GLOBAL allocation tracker so that no
 source anywhere reaches `DA_OK` — while the processor keeps answering every
 command normally.
 
+The `source removed` arc is the one that must not degrade the same way. It wipes
+the record naming the address, so the `RELEASE_DA` it asks for is the only chance
+that address ever gets to come back: it is booked per source and retried until the
+face accepts it, ahead of any `ALLOC_DA`, while the withdraw and the timer cancel
+land immediately ([02 §4.2](02_interfaces.md#42-maap-address-allocation) for the
+IEEE Std 1722-2016 Annex B reading that permits the delay and forbids the loss).
+
 ## 7. µcode / dispatch
 
 n/a — transition-ROM + hardwired action primitives (A1–A17). The ROM column is the

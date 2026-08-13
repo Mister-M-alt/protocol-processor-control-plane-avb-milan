@@ -5,7 +5,7 @@ Proves the ACMP stateless talker responder + per-source DA-gate
 (`hdl/acmp/KL_acmp_talker.sv`) against
 [05 §6bis](../../docs/architecture/05_acmp_engine.md) (F05.11 decision tree +
 F05.12 DA-gate) and the 08 §2/§5 timer contract: `make` = build + run, exit 0 =
-PASS, 723 checks. `make lint` runs the repo's zero-warning gate (no width
+PASS, 807 checks. `make lint` runs the repo's zero-warning gate (no width
 waivers).
 
 The C++ harness is an independent model, never DUT logic: every expected
@@ -70,6 +70,30 @@ Two things the port `declaring_o` and the maap face own, checked on the PORTS:
   the source that is now tracked (K6); src 2's own response then completes
   normally with its own DA (K7); and the abandoned source recovers on its
   next stimulus with a fresh DA, never the poison one (K8).
+- **A RELEASE_DA is OWED, never attempted (section L).** An `ALLOC_DA` that
+  cannot reach the face is safe to drop, because the stimulus that asked for
+  it comes again; a `RELEASE_DA` has no such stimulus, and `EVC_OFF` wipes the
+  record naming the address in the same cycle it asks. So a release skipped
+  because the single-outstanding face happened to be busy left the address
+  allocated forever with nothing left to notice, and BUSY is the normal
+  state for seconds at a time, because an `ALLOC_DA` maps onto a real MAAP
+  claim walk (IEEE Std 1722-2016 Table B.7 driven by Table B.8: three probe
+  intervals of up to 600 ms each per attempt, B.3.4.2). Annex B permits the
+  delay (B.3.5.2 attaches no deadline to `Release!` and the machine sits
+  legally in DEFEND until it arrives) but not the loss: footnote c to
+  Table B.7 makes the range free only once `Release!` has reached INITIAL.
+  Section L parks the face on an unanswered claim walk and proves, in order:
+  the teardown itself is never delayed by it (WITHDRAW_TALKER, timer cancel
+  and the TALKER_UNKNOWN_ID answer all land at once, L1); nothing is even
+  offered while the face is busy (L1); the release survives the busy window
+  and goes out when the face frees (L2); it is offered exactly once and a
+  taken release is never re-offered (L2/L3); and three teardowns behind one
+  busy face yield three releases, lowest index first, and no fourth (L4).
+  K0 removes two sources in the SAME cycle, which is the race in its
+  shortest form, and J6/J7 cover the other drop path: a release abandoned at
+  P-MAAP-ACCEPT-CYC is re-offered by the engine (nothing else would), and
+  when the allocator returns the owed release is taken BEFORE the rejoined
+  source's new allocation.
 
 Known limits: the harness drives `now_ms_i` directly and injects expiries, so
 it cannot catch a prescaler-level defect — that is `tb/timer_service`'s job.
@@ -103,3 +127,14 @@ Mutation-proven 2026-08-12 (the unanswered-accept round, 723 checks):
   the abandoned request's answer installs its address on a DIFFERENT source.
 - M9 the bound shortened to 5 s: fails 1 (K4 — the request is abandoned
   before the window the Annex B walk needs).
+
+Mutation-proven 2026-08-13 (the owed-release round, 807 checks):
+- M10 the release is never BOOKED (`ev_relset_w = rec_w.da_valid` -> `1'b0`,
+  i.e. the recorded defect restored): fails 38 (K0 and all of L: the second
+  and third teardowns behind a busy face hand nothing back).
+- M11 the debt discharged on the OFFER instead of the ACCEPT
+  (`maap_accept_w && mreq_rel_r` -> `(state_r == S_EV_MAAP) && mreq_rel_r`):
+  fails 50. The P-MAAP-ACCEPT-CYC abandon silently eats the release again.
+- M12 `EVC_REL` demoted below `EVC_INIT` in the dispatcher: fails 47 (J7 and
+  L4: a source that leaves and rejoins releases the address its rejoin was
+  just granted).

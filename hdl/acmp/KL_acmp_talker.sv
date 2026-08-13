@@ -89,6 +89,17 @@
 //                SWALLOWED: it can never install a DA (see the abort policy
 //                at the maap tracker).
 //
+//                A RELEASE_DA is OWED, not attempted. An allocation may be
+//                dropped because the stimulus that asked for it will come
+//                again (a probe, a listener, a timer); a release has no
+//                such stimulus, and the record that named the address is
+//                wiped by the same event that asks for it, so a dropped
+//                release leaks the address with nothing left to notice.
+//                EVC_OFF therefore books the debt in pe_rel_r and EVC_REL
+//                settles it when the face is free. The teardown itself
+//                never waits: withdraw, record wipe and timer cancel all
+//                land in EVC_OFF's single cycle whatever the face is doing.
+//
 //                Storage: one 1W1R sync-read record RAM (gstate, da_valid,
 //                pinged, ping_ts, da — the 16 B/source of 07 §6), walked by
 //                a single event-serialized FSM — never a flop mirror + wide
@@ -421,6 +432,12 @@ module KL_acmp_talker
   logic [N_STREAM_OUT_P-1:0] pe_lsn_r;
   logic [N_STREAM_OUT_P-1:0] pe_init_r;
   logic [N_STREAM_OUT_P-1:0] pe_off_r;
+  //! RELEASE_DA owed for a source whose record has already been wiped. Set
+  //! by EVC_OFF for every source that held a DA, cleared ONLY when the face
+  //! accepts the request, so both drop paths are covered by one flag: the
+  //! face busy at EVC_OFF time, and the P-MAAP-ACCEPT-CYC accept window
+  //! closing on an offered release.
+  logic [N_STREAM_OUT_P-1:0] pe_rel_r;
 
   logic [N_STREAM_OUT_P*2-1:0] lsn_q_r;   // edge detector
   logic [N_STREAM_OUT_P-1:0]   en_q_r;    // edge detector
@@ -498,7 +515,8 @@ module KL_acmp_talker
     EVC_PCP      = 3'd3,
     EVC_TMR      = 3'd4,
     EVC_LSN      = 3'd5,
-    EVC_INIT     = 3'd6
+    EVC_INIT     = 3'd6,
+    EVC_REL      = 3'd7
   } evc_e;
 
   state_e             state_r;
@@ -565,6 +583,13 @@ module KL_acmp_talker
       end else if (|pe_lsn_r) begin
         disp_kind_w = DK_EV;  disp_code_w = EVC_LSN;
         disp_src_w  = ffs_f(pe_lsn_r);
+      end else if (|pe_rel_r) begin
+        //! ABOVE EVC_INIT so a source that leaves and rejoins releases its
+        //! old address before it asks for a new one: the face is
+        //! single-outstanding, and the other order would release the
+        //! address the rejoin had just been granted.
+        disp_kind_w = DK_EV;  disp_code_w = EVC_REL;
+        disp_src_w  = ffs_f(pe_rel_r);
       end else if (|pe_init_r) begin
         disp_kind_w = DK_EV;  disp_code_w = EVC_INIT;
         disp_src_w  = ffs_f(pe_init_r);
@@ -642,6 +667,7 @@ module KL_acmp_talker
   logic    ev_arm_fresh_w;   // re-arm DAFRESH to ping_ts + T (backoff exit)
   logic    ev_cancel_w;      // cancel the shared slot (source removed)
   logic    ev_initset_w;
+  logic    ev_relset_w;
   logic    ev_to_draw_w;
   logic    ev_to_maap_w;
   logic    ev_maap_rel_w;
@@ -657,6 +683,7 @@ module KL_acmp_talker
     ev_arm_fresh_w = 1'b0;
     ev_cancel_w    = 1'b0;
     ev_initset_w   = 1'b0;
+    ev_relset_w    = 1'b0;
     ev_to_draw_w   = 1'b0;
     ev_to_maap_w   = 1'b0;
     ev_maap_rel_w  = 1'b0;
@@ -688,6 +715,13 @@ module KL_acmp_talker
                         ping_ts: 32'd0, da: 48'd0};
         ev_we_w     = 1'b1;
         ev_cancel_w = 1'b1;
+        //! The debt is booked whether or not the face can take it now. The
+        //! record write above has already forgotten the address, and no
+        //! later stimulus asks for a release, so a release skipped here
+        //! used to be a release lost, and the address stayed allocated
+        //! silently, for as long as another source's claim walk ran
+        //! (seconds: IEEE Std 1722-2016 Table B.8, 3 probe intervals).
+        ev_relset_w = rec_w.da_valid;
         if (rec_w.da_valid && maap_avail_w) begin
           ev_to_maap_w  = 1'b1;
           ev_maap_rel_w = 1'b1;
@@ -763,6 +797,24 @@ module KL_acmp_talker
           ev_we_w          = 1'b1;
         end else if (rec_w.gstate == GS_NO_DA_C) begin
           ev_initset_w = 1'b1;    // a listener appeared: retry allocation
+        end
+      end
+
+      EVC_REL: begin
+        //! The owed RELEASE_DA. It touches nothing: EVC_OFF already wiped
+        //! the record, cancelled the timer and withdrew the declaration, so
+        //! this event exists only to reach the face. Delaying a release is
+        //! conformant: IEEE Std 1722-2016 B.3.5.2 attaches no deadline to
+        //! Release!, and Table B.7 leaves the machine legally in DEFEND,
+        //! announcing and defending an address it still holds, until the
+        //! event arrives. Dropping it is not: footnote c makes the range
+        //! free only AFTER Release! reaches INITIAL.
+        //! Unlike EVC_INIT this does not re-set its own flag: pe_rel_r is
+        //! cleared by the ACCEPT, not by the dispatch, so a busy face
+        //! simply re-dispatches the still-set bit.
+        if (maap_avail_w) begin
+          ev_to_maap_w  = 1'b1;
+          ev_maap_rel_w = 1'b1;
         end
       end
 
@@ -980,8 +1032,9 @@ module KL_acmp_talker
 
   // ------------------------------------------------------- pending events
   logic [N_STREAM_OUT_P-1:0] set_conflict_w, set_pcp_w, set_tmr_w;
-  logic [N_STREAM_OUT_P-1:0] set_lsn_w, set_init_w, set_off_w;
+  logic [N_STREAM_OUT_P-1:0] set_lsn_w, set_init_w, set_off_w, set_rel_w;
   logic [N_STREAM_OUT_P-1:0] clr_disp_w;
+  logic [N_STREAM_OUT_P-1:0] clr_relq_w;
   logic [N_STREAM_OUT_P-1:0] clr_arm_w;
   logic [31:0]               arm_rel_w;
 
@@ -992,7 +1045,9 @@ module KL_acmp_talker
     set_lsn_w      = '0;
     set_init_w     = '0;
     set_off_w      = '0;
+    set_rel_w      = '0;
     clr_disp_w     = '0;
+    clr_relq_w     = '0;
 
     if (maap_conflict_valid_i) begin
       set_conflict_w[maap_conflict_src_i] = 1'b1;
@@ -1013,6 +1068,13 @@ module KL_acmp_talker
     // walker-requested allocation retries
     if ((state_r == S_TXN_ACT) && txn_initset_w) set_init_w[tsrc_w]   = 1'b1;
     if ((state_r == S_EV_ACT)  && ev_initset_w)  set_init_w[ev_src_r] = 1'b1;
+
+    // the owed release: booked at EVC_OFF, discharged by the ACCEPT and by
+    // nothing else. Clearing on dispatch instead would re-open the
+    // P-MAAP-ACCEPT-CYC hole, where the request is offered, never taken and
+    // then abandoned with the flag already gone.
+    if ((state_r == S_EV_ACT) && ev_relset_w)    set_rel_w[ev_src_r]  = 1'b1;
+    if (maap_accept_w && mreq_rel_r)             clr_relq_w[mreq_src_r] = 1'b1;
 
     // the dispatched event bit is consumed
     if ((state_r == S_IDLE) && (disp_kind_w == DK_EV)) begin
@@ -1038,6 +1100,7 @@ module KL_acmp_talker
       pe_lsn_r      <= '0;
       pe_init_r     <= '0;
       pe_off_r      <= '0;
+      pe_rel_r      <= '0;
       lsn_q_r       <= '0;
       en_q_r        <= '0;
     end else begin
@@ -1060,6 +1123,8 @@ module KL_acmp_talker
       pe_off_r      <= (pe_off_r
                         & ~((disp_code_w == EVC_OFF) ? clr_disp_w : '0))
                        | set_off_w;
+      //! the only pending vector NOT cleared by its dispatch: see pe_sets
+      pe_rel_r      <= (pe_rel_r & ~clr_relq_w) | set_rel_w;
       lsn_q_r       <= srp_lsn_reg_state_i;
       en_q_r        <= cfg_src_en_i;
     end

@@ -110,6 +110,11 @@ struct Hn {
   // request-face observation (works with ready low, where no request is ever
   // accepted and the mreqs log below stays empty)
   int  offers = 0;                   // rising edges of maap_req_valid_o
+  // offers split by kind. A RELEASE_DA has no stimulus that can ask for it
+  // twice (the record naming the address is wiped by the same event that
+  // asks for it), so "was it re-offered after an abandon" is the only
+  // observation that can tell a held release from a lost one.
+  int  offers_rel = 0, offers_alloc = 0;
   int  hold_cur = 0, hold_last = 0;  // cycles a request was offered
   // declaring_o edge log: the gate LEVEL must be seen MOVING, not read once
   uint32_t decl_prev = 0;
@@ -174,7 +179,10 @@ struct Hn {
                       uint32_t(d->tmr_arm_deadline_ms_o),
                       bool(d->tmr_arm_cancel_o)});
     if (d->maap_req_valid_o) {
-      if (hold_cur == 0) ++offers;
+      if (hold_cur == 0) {
+        ++offers;
+        if (d->maap_req_release_o) ++offers_rel; else ++offers_alloc;
+      }
       ++hold_cur;
     } else if (hold_cur != 0) {
       hold_last = hold_cur; hold_cur = 0;
@@ -712,7 +720,7 @@ int main(int argc, char** argv) {
   // strobes). The regression: with maap gone, commands are still answered.
   d->maap_req_ready_i = 0;                    // the allocator is GONE
   h.clear_edges();
-  const int off0 = h.offers;
+  const int relo0 = h.offers_rel;
   d->cfg_src_en_i = 0xEF;                     // src4 (declaring) leaves
   h.run(8);
   h.expect_close("J1 withdraw on removal", 4);
@@ -746,26 +754,47 @@ int main(int argc, char** argv) {
     CHECK(((h.decl_mask() >> 4) & 1) == 0, "J5 no gate without a DA");
   }
   h.run(MAAP_TMO + 80);                       // the probe's retry times out too
-  CHECK(h.offers == off0 + 3,
-        "J6 every stimulus re-offers (release, re-enable, probe), got %d",
-        h.offers - off0);
+  // An ALLOC_DA abandoned at the accept window is retried by its next
+  // stimulus; a RELEASE_DA has none, so it is retried by the engine. The
+  // owed release for src 4 must therefore still be on the face here: this
+  // is the accept-window half of the lost-release defect.
+  CHECK(h.offers_rel - relo0 >= 2,
+        "J6 the owed RELEASE is re-offered after the abandon, got %d offers",
+        h.offers_rel - relo0);
+  CHECK(d->maap_req_valid_o == 1 && d->maap_req_release_o == 1
+        && int(d->maap_req_src_o) == 4,
+        "J6 and it is still src 4's release that is owed");
   CHECK(h.mreqs.empty(), "J6 nothing was ever accepted while maap was gone");
   d->maap_req_ready_i = 1;                    // the allocator comes back
-  uint32_t t9 = 320000; d->now_ms_i = t9;
   h.clear_edges();
+  h.run(60);
+  // The DEBT settles before the re-allocation. src 4 rejoined the
+  // configuration while its old address was still owed, and the face is
+  // single-outstanding: the other order would hand back the address the
+  // rejoin had just been granted.
+  const uint64_t da4b = da_pool(11);
+  h.expect_mreq("J7 the owed RELEASE is taken FIRST", 4, true);
+  h.expect_mreq("J7 ...and only then does the rejoin allocate", 4, false);
+  h.expect_open("J7 grant re-declares", 4, da4b);
+  CHECK(h.saw_edge(4, true),
+        "J7 declaring_o[4] OBSERVED 0 -> 1: the source recovered");
+  CHECK(h.decl_mask() == 0x7Au, "J7 final gates, got 0x%02x", h.decl_mask());
+  uint32_t t9 = 320000; d->now_ms_i = t9;
   {
-    CHECK(h.send(MT_PROBE, 4, C1, 0x182, L1, 5, FL_FC), "J7 consumed");
-    h.run(60);
-    Resp e = echo(MT_PROBE, ST_DMAC_FAIL, 4, C1, 0x182, L1, 5);
-    e.flags = FL_FC;
-    h.expect_resp("J7 still no DA at answer time", e);
-    h.expect_arm("J7 ping", 4, t9 + T_DAFRESH, false);
-    h.expect_mreq("J7 alloc accepted once maap returns", 4, false);
-    const uint64_t da4b = da_pool(11);
-    h.expect_open("J7 grant re-declares", 4, da4b);
-    CHECK(h.saw_edge(4, true),
-          "J7 declaring_o[4] OBSERVED 0 -> 1: the source recovered");
-    CHECK(h.decl_mask() == 0x7Au, "J7 final gates, got 0x%02x", h.decl_mask());
+    CHECK(h.send(MT_PROBE, 4, C1, 0x182, L1, 5, FL_FC), "J7b consumed");
+    h.run(8);
+    Resp e = echo(MT_PROBE, ST_OK, 4, C1, 0x182, L1, 5);
+    e.sid = sid_of(4); e.da = da4b; e.vlan = VID; e.flags = FL_FC;
+    h.expect_resp("J7b the recovered source answers with its NEW DA", e);
+    h.expect_arm("J7b ping", 4, t9 + T_DAFRESH, false);
+  }
+  // and the settled debt is settled ONCE: no second release for src 4
+  {
+    const int rel_end = h.offers_rel;
+    h.run(400);
+    CHECK(h.offers_rel == rel_end,
+          "J8 a TAKEN release is never re-offered, got %d more",
+          h.offers_rel - rel_end);
   }
   h.drained("J");
 
@@ -780,19 +809,17 @@ int main(int argc, char** argv) {
   uint32_t tk0 = 400000; d->now_ms_i = tk0;
   h.clear_edges();
 
-  // src 2 and src 6 leave the configuration ONE AT A TIME, so each DA is
-  // released cleanly while the allocator is still answering and both land at
-  // GS_NO_DA. (Removing them together would drop the second RELEASE_DA:
-  // EVC_OFF only asks for one while the single-outstanding face is free.)
-  d->cfg_src_en_i = 0xFB;                     // src 2 out
-  h.run(120);
+  // src 2 and src 6 leave the configuration in the SAME cycle. That is the
+  // race: the first EVC_OFF takes the single-outstanding face, so the second
+  // one meets it BUSY. Both releases must still reach the allocator: the
+  // second is owed and settled when the face frees, not dropped.
+  d->cfg_src_en_i = 0xBB;                     // src 2 and src 6 out together
+  h.run(200);
   h.expect_arm("K0 cancel src2 slot", 2, 0, true);
   h.expect_mreq("K0 src2 release", 2, true);
-  d->cfg_src_en_i = 0xBB;                     // src 6 out
-  h.run(120);
   h.expect_close("K0 withdraw on removal", 6);
   h.expect_arm("K0 cancel src6 slot", 6, 0, true);
-  h.expect_mreq("K0 src6 release", 6, true);
+  h.expect_mreq("K0 src6 release settled behind the busy face", 6, true);
   CHECK(h.decl_mask() == 0x3Au, "K0 gates after removal, got 0x%02x",
         h.decl_mask());
   h.drained("K0");
@@ -884,6 +911,97 @@ int main(int argc, char** argv) {
   h.expect_open("K8 abandoned source recovers with a FRESH DA", 6, DA6);
   CHECK(h.decl_mask() == 0x7Eu, "K8 final gates, got 0x%02x", h.decl_mask());
   h.drained("K");
+
+  // ---- L: a teardown while the maap face is BUSY -------------------------
+  // The face is single-outstanding and an ALLOC_DA maps onto a real MAAP
+  // claim walk, so BUSY is the normal state for seconds at a time (IEEE Std
+  // 1722-2016 Table B.7 with Table B.8: three probe intervals of up to
+  // 600 ms each per attempt, B.3.4.2). A source torn down in that window
+  // must still hand its address back. EVC_OFF wipes the record that names
+  // the address in the same cycle it asks for the release, and no later
+  // stimulus ever asks again, so a release skipped here is an address
+  // allocated forever with nothing left to notice it. Annex B permits the
+  // DELAY (B.3.5.2 attaches no deadline to Release!, and the machine sits
+  // legally in DEFEND until it arrives) but not the LOSS: footnote c to
+  // Table B.7 makes the range free only once Release! has reached INITIAL.
+  uint32_t tl0 = 500000; d->now_ms_i = tl0;
+  h.clear_edges();
+
+  // park the face on a claim walk that will not answer: src 7 leaves (its
+  // release is taken and answered) and rejoins, and the rejoin's ALLOC_DA
+  // sits on the face exactly as a real probe walk does
+  d->cfg_src_en_i = 0x7F;                     // src 7 out
+  h.run(30);
+  h.expect_arm("L0 cancel src7 slot", 7, 0, true);
+  h.expect_mreq("L0 src7 release", 7, true);
+  h.inject_rsp(false, 0);                     // release answered: face free
+  h.run(20);
+  d->cfg_src_en_i = 0xFF;                     // src 7 back
+  h.run(40);
+  h.expect_mreq("L0 src7 ALLOC now PARKS the face", 7, false);
+  h.drained("L0");
+
+  // L1: the teardown itself never waits on the allocator
+  const int rel_l = h.offers_rel;
+  d->cfg_src_en_i = 0xFD;                     // src 1, declaring, leaves
+  h.run(40);
+  h.expect_close("L1 WITHDRAW_TALKER is not delayed by the busy face", 1);
+  h.expect_arm("L1 cancel src1 slot", 1, 0, true);
+  CHECK(((h.decl_mask() >> 1) & 1) == 0, "L1 the gate is shut in that cycle");
+  CHECK(h.mreqs.empty(),
+        "L1 and nothing can be accepted while the claim walk holds the face");
+  {
+    CHECK(h.send(MT_PROBE, 1, C1, 0x1A0, L1, 4, FL_FC), "L1 consumed");
+    Resp e = echo(MT_PROBE, ST_TK_UNKNOWN, 1, C1, 0x1A0, L1, 4);
+    e.flags = FL_FC;
+    h.expect_resp("L1 the removed source answers at once", e);
+  }
+  CHECK(h.offers_rel == rel_l,
+        "L1 nothing may be OFFERED while the face is busy either, got %d",
+        h.offers_rel - rel_l);
+
+  // L2: THE DEFECT, the release survives the busy window
+  h.inject_rsp(false, 0);                     // the parked walk finally fails
+  h.run(80);
+  h.expect_mreq("L2 THE DEFECT: src1's RELEASE_DA survived a busy face", 1,
+                true);
+  CHECK(h.offers_rel == rel_l + 1,
+        "L2 offered exactly once, got %d", h.offers_rel - rel_l);
+  h.inject_rsp(false, 0);                     // the release is answered
+  h.run(80);
+
+  // L3: settled exactly once, a taken release is never re-offered
+  CHECK(h.offers_rel == rel_l + 1,
+        "L3 a TAKEN release is never re-offered, got %d",
+        h.offers_rel - rel_l);
+  CHECK(h.mreqs.empty(), "L3 no second request for src 1");
+
+  // L4: several teardowns behind one busy face, every address comes back
+  d->cfg_src_en_i = 0xFC;                     // src 0 leaves (src 1 stays out)
+  h.run(40);
+  h.expect_arm("L4 cancel src0 slot", 0, 0, true);
+  h.expect_mreq("L4 src0 release takes the free face", 0, true);
+  //   ...and now, with that release still unanswered, two more sources go
+  d->cfg_src_en_i = 0xD4;                     // src 3 and src 5 leave together
+  h.run(60);
+  h.expect_close("L4 src3 withdraws at once", 3);
+  h.expect_arm("L4 cancel src3 slot", 3, 0, true);
+  h.expect_close("L4 src5 withdraws at once", 5);
+  h.expect_arm("L4 cancel src5 slot", 5, 0, true);
+  CHECK(h.mreqs.empty(), "L4 both are owed, neither is accepted yet");
+  h.inject_rsp(false, 0);                     // src0's release is answered
+  h.run(80);
+  h.expect_mreq("L4 src3's owed release, lowest index first", 3, true);
+  h.inject_rsp(false, 0);
+  h.run(80);
+  h.expect_mreq("L4 src5's owed release follows", 5, true);
+  h.inject_rsp(false, 0);
+  h.run(200);
+  CHECK(h.mreqs.empty(),
+        "L4 three teardowns, three releases, no fourth (%zu extra)",
+        h.mreqs.size());
+  CHECK(h.decl_mask() == 0x54u, "L4 final gates, got 0x%02x", h.decl_mask());
+  h.drained("L");
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   delete d;
