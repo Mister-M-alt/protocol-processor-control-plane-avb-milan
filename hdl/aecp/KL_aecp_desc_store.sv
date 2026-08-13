@@ -1,0 +1,709 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Kebag Logic
+ * SPDX-License-Identifier: CERN-OHL-W-2.0
+ */
+//---------------------------------------------------------------------------//
+//  File        : KL_aecp_desc_store.sv
+//  Project     : IEEE 1722.1 protocol processor
+//                (docs/architecture/07 §3.3 static image + index map,
+//                 07 §3.4 name table, 06 §6.1 READ_DESCRIPTOR,
+//                 06 §8 DESC_ADDR / READ_STATE / NAME_RD / COPY_BUFFER)
+//
+//  Description : The entity model behind the µCPU's `st_*` state port. It
+//                LOCATEs a descriptor by (configuration_index,
+//                descriptor_type, descriptor_index) through the 07 §3.3 index
+//                map, fetches that ONE descriptor into an on-chip line buffer
+//                and serves every subsequent µCPU read from there.
+//
+//                WHERE THE IMAGE LIVES — and why it is not a ROM. The
+//                reference consumer's generated model is already 22,561 bytes
+//                at the 8x8 shape (~5 RAMB36) BEFORE the 07 §3.4 overlay and
+//                the 64-B-per-descriptor name table, and it grows with every
+//                stream, descriptor and localized string. The reference part
+//                (xc7a100t, 135 block-RAM tiles) measured 131 tiles used on a
+//                recent build. So the image lives in the INTEGRATOR'S MAIN
+//                MEMORY — DDR3 on the reference board — reached through the
+//                vendor-neutral read-only master below. This module knows
+//                nothing about what that memory is: it issues a byte address
+//                plus a 64-bit beat count and consumes an in-order response
+//                stream.
+//
+//                WHERE THE ADDRESSES COME FROM. Every address is an
+//                ELABORATION PARAMETER (`DESC_BASE_P`), never a register and
+//                never a CSR: the memory map is fixed when the bitstream is
+//                built, so a runtime base would only buy a 32-bit port and the
+//                flops behind it on a die that has none to spare. Arithmetic
+//                against a constant base constant-folds away.
+//
+//                WHAT REPLACES "the base points at nothing". With a constant
+//                base that failure is impossible — a likelier one takes its
+//                place: the region exists and SOFTWARE HAS NOT LOADED THE
+//                IMAGE YET, or loaded a truncated or wrong one. Uninitialised
+//                DRAM is not a recognisable zero. So the image opens with a
+//                magic + layout-version + checksum header
+//                (hdl/aecp/desc/gen_desc_image.py) and NOTHING is served until
+//                all three agree: every locate answers `st_err_o`, the µCPU
+//                turns that into NO_SUCH_DESCRIPTOR, and a well-formed AECP
+//                response goes out. A locate while invalid also RE-ARMS the
+//                header probe, so a late software load heals without a reset.
+//                The store never returns a descriptor from an image whose
+//                header it has not validated — "not ready yet" and "silently
+//                wrong" are different answers here.
+//
+//                LATENCY IS THE DESIGN PROBLEM. The reference SoC measures
+//                ~1424 ns on a miss to main memory. Fetching a ~300-byte
+//                descriptor one byte at a time at that latency would cost
+//                ~430 µs and hold the µCPU for all of it. So: (1) the INDEX
+//                MAP is walked ONCE after reset into an on-chip table — it is
+//                consulted on EVERY locate, and a DRAM round trip per locate
+//                is precisely the cost being avoided; at 16 B per
+//                (configuration, type) it is ~128 B for the 07 §3.1 tree
+//                against ~22 KB for the image, so caching the map is cheap
+//                exactly where caching the image is not; (2) a located
+//                descriptor is fetched ONCE, as a single burst, into
+//                `LINE_BYTES_P` of line buffer, and every `READ_STATE` /
+//                `COPY_BUFFER` beat after that is an on-chip read. One
+//                command pays one memory latency, not one per byte.
+//
+//                LINE BUFFER SIZE. `LINE_BYTES_P` defaults to 576 = the
+//                largest descriptor 07 §3.2 can produce (STREAM_INPUT/OUTPUT
+//                at the Milan Annex C cap: 136 + 8·47 formats = 512 B, plus
+//                the R = 0 redundancy tail) rounded up to this repository's
+//                03 §2 slot size — which is also the response-buffer size, so
+//                a descriptor that fits the line always fits the response. A
+//                descriptor LONGER than the line cannot be served: its locate
+//                answers `st_err_o` (NO_SUCH_DESCRIPTOR) rather than a
+//                truncated descriptor, and the header's `desc_max_len` is
+//                checked against `LINE_BYTES_P` at load time so the whole
+//                image is refused up front. `gen_desc_image.py` refuses to
+//                emit such an image at all; the run-time arms exist so a
+//                mismatched image cannot put a lie on the wire.
+//
+//                THE STATE-PORT ADDRESS MAP (`st_addr_i[19:16]` = region).
+//                The µISA cannot carry a 48-bit locate key on a 20-bit
+//                address and 06 §8 leaves the encoding open, so:
+//                  region 0x0  descriptor DATA — the located descriptor's
+//                              bytes; `st_addr_i[15:3]` selects the 64-bit
+//                              lane and byte n sits in bit [63-8n -: 8] (wire
+//                              order, so COPY_BUFFER hands the lane straight
+//                              to the response buffer unswapped). A lane past
+//                              the descriptor's length reads 0.
+//                  region 0xC  read: {48'd0, name_base of the located
+//                              descriptor} (0xFFFF = unnamed) — where a
+//                              GET_NAME/SET_NAME µprogram finds its entry.
+//                  region 0xD  read: {48'd0, configurations_count} — lets a
+//                              µprogram range-check configuration_index and
+//                              answer BAD_ARGUMENTS (06 §6.1) instead of
+//                              NO_SUCH_DESCRIPTOR.
+//                  region 0xE  read: {48'd0, located descriptor length}.
+//                  region 0xF  LOCATE. The key rides `st_wdata_i[47:0]` =
+//                              {descriptor_index, descriptor_type,
+//                              configuration_index} — the µCPU drives rf[ra]
+//                              onto `st_wdata_o` on EVERY state-port cycle and
+//                              it is the only 64-bit lane the face has. The
+//                              answer is `st_rdata_o` = 0 (the line-buffer
+//                              origin) or `st_err_o` on a miss.
+//                `st_name_i` selects the 07 §3.4 name table in any region:
+//                `st_addr_i[15:3]` is the 64-bit lane, so [15:6] is the
+//                64-byte entry. It is the ONE writable region — names are
+//                overlay, not image — and it is initialised from the image's
+//                name table by the same boot walk.
+//
+//                Because every LOCATE answers 0, the µCPU's `desc_base_r` is
+//                invariantly 0 in this system, so a µprogram addresses the
+//                region pseudo-registers directly.
+//
+//                A write to any region other than the name table is DROPPED
+//                and counted (`dbg_ro_write_o`): the static image is read-only
+//                at run time (07 §2 access-rights rule).
+//---------------------------------------------------------------------------//
+`default_nettype none
+
+module KL_aecp_desc_store #(
+    //! Byte address of the image header in the integrator's memory map.
+    //! COMPILE TIME by contract — see the banner. Must be 8-byte aligned.
+    parameter logic [31:0] DESC_BASE_P       = 32'h2000_0000,
+    //! On-chip line buffer for ONE located descriptor (banner: 576 = the
+    //! 07 §3.2 worst case rounded to the 03 §2 slot size).
+    parameter int unsigned LINE_BYTES_P      = 576,
+    //! Cached 07 §3.3 index-map entries — one per (configuration, type).
+    parameter int unsigned IDX_ENTRIES_P     = 32,
+    //! 64-byte name-table entries held on chip (07 §3.4, writable overlay).
+    parameter int unsigned NAME_ENTRIES_P    = 16,
+    //! No-progress watchdog on the memory face, in clocks. An absent or wedged
+    //! bridge must degrade to NO_SUCH_DESCRIPTOR, never hang the µCPU: the
+    //! default 4096 is 41 µs at P-CLK-HZ = 100 MHz, far inside T-AECP-RESP.
+    parameter int unsigned MEM_TIMEOUT_CYC_P = 4096,
+    //! derived — do not override
+    localparam int unsigned LINE_LANES_C = LINE_BYTES_P / 8,
+    localparam int unsigned LINE_AW_C    = $clog2(LINE_LANES_C),
+    localparam int unsigned NAME_LANES_C = NAME_ENTRIES_P * 8,
+    localparam int unsigned NAME_AW_C    = $clog2(NAME_LANES_C),
+    localparam int unsigned IDX_AW_C     = $clog2(IDX_ENTRIES_P),
+    localparam int unsigned TMO_W_C      = $clog2(MEM_TIMEOUT_CYC_P + 1)
+) (
+    input  wire         clk_i,             //! core clock (P-CLK-HZ domain)
+    input  wire         rst_n,             //! synchronous active-low reset
+
+    //! ---- µCPU state port (slave side of KL_aecp_ucpu's st_*, 06 §8) ----
+    input  wire         st_req_i,          //! request, held until rvalid/ready
+    input  wire         st_we_i,           //! 1 = write (name region only)
+    input  wire         st_name_i,         //! name-region select (07 §3.4)
+    input  wire  [19:0] st_addr_i,         //! [19:16] region, [15:0] byte offset
+    input  wire  [63:0] st_wdata_i,        //! write data / LOCATE key
+    input  wire   [7:0] st_wstrb_i,        //! per-byte write enables
+    output logic        st_ready_o,        //! write accepted this cycle
+    output logic        st_rvalid_o,       //! one-cycle read / locate answer
+    output logic [63:0] st_rdata_o,        //! read data (0 on a locate hit)
+    output logic        st_err_o,          //! locate MISS -> NO_SUCH_DESCRIPTOR
+
+    //! ---- read-only memory master (vendor-neutral; the integrator bridges it
+    //! to whatever memory system it has — DDR3 on the reference board).
+    //! ONE outstanding request; responses IN ORDER; `mem_rsp_last_i` marks the
+    //! final beat; a beat carries its lowest byte address in bits [63:56].
+    output logic        mem_req_valid_o,   //! request presented, held until ready
+    input  wire         mem_req_ready_i,   //! bridge accepts the request
+    output logic [31:0] mem_req_addr_o,    //! byte address, 8-byte aligned
+    output logic  [8:0] mem_req_beats_o,   //! 64-bit beats in this burst (>= 1)
+    input  wire         mem_rsp_valid_i,   //! response beat present
+    output logic        mem_rsp_ready_o,   //! store consumes the beat
+    input  wire  [63:0] mem_rsp_data_i,    //! beat data (big-endian byte lane)
+    input  wire         mem_rsp_last_i,    //! final beat of the burst
+    input  wire         mem_rsp_err_i,     //! read failed — abort the burst
+
+    //! ---- observability (07 §2 debug window / suite taps) ----
+    output logic        dbg_img_valid_o,   //! header validated, model servable
+    output logic  [3:0] dbg_fault_o,       //! why not (FAULT_*_C below)
+    output logic [15:0] dbg_locate_miss_o, //! locates answered with st_err_o
+    output logic [15:0] dbg_fetch_cnt_o,   //! descriptor bursts issued
+    output logic [15:0] dbg_ro_write_o,    //! writes dropped on a read-only region
+    output logic [15:0] dbg_desc_len_o     //! length of the located descriptor
+);
+
+  // ---- image header constants (hdl/aecp/desc/gen_desc_image.py) -----------
+  localparam logic [31:0] IMG_MAGIC_C   = 32'h4145_4D49;  // "AEMI"
+  localparam logic [15:0] IMG_VERSION_C = 16'd1;
+  localparam logic [15:0] NAME_NONE_C   = 16'hFFFF;
+  localparam int unsigned HDR_BEATS_C   = 4;              // 32-byte header
+
+  // ---- fault codes (dbg_fault_o) -----------------------------------------
+  localparam logic [3:0] FAULT_NONE_C    = 4'd0;
+  localparam logic [3:0] FAULT_MAGIC_C   = 4'd1;
+  localparam logic [3:0] FAULT_VERSION_C = 4'd2;
+  localparam logic [3:0] FAULT_CKSUM_C   = 4'd3;
+  localparam logic [3:0] FAULT_NIDX_C    = 4'd4;  // 0, or more than cached
+  localparam logic [3:0] FAULT_NNAME_C   = 4'd5;  // more names than cached
+  localparam logic [3:0] FAULT_DESCLEN_C = 4'd6;  // a descriptor over the line
+  localparam logic [3:0] FAULT_MEMERR_C  = 4'd7;
+  localparam logic [3:0] FAULT_TIMEOUT_C = 4'd8;
+
+  // ---- state-port regions (see the banner) --------------------------------
+  localparam logic [3:0] RGN_DATA_C   = 4'h0;
+  localparam logic [3:0] RGN_NBASE_C  = 4'hC;
+  localparam logic [3:0] RGN_NCFG_C   = 4'hD;
+  localparam logic [3:0] RGN_LEN_C    = 4'hE;
+  localparam logic [3:0] RGN_LOCATE_C = 4'hF;
+
+  // ---- elaboration guards -------------------------------------------------
+  if ((LINE_BYTES_P % 8) != 0) begin : gen_g_line_align
+    $error("LINE_BYTES_P=%0d must be a multiple of 8 (64-bit lanes)",
+           LINE_BYTES_P);
+  end
+  if ((LINE_LANES_C > 511) || ((IDX_ENTRIES_P * 2) > 511)
+      || (NAME_LANES_C > 511)) begin : gen_g_beats
+    $error("a burst exceeds the 9-bit mem_req_beats_o field");
+  end
+  if (DESC_BASE_P[2:0] != 3'd0) begin : gen_g_base_align
+    $error("DESC_BASE_P=%08h must be 8-byte aligned", DESC_BASE_P);
+  end
+
+  // =======================================================================
+  // memories
+  // =======================================================================
+  //! 07 §3.3 index map, one entry per (configuration, type), walked once into
+  //! this table. The 16-byte image entry lands here VERBATIM, both beats
+  //! concatenated: {cfg, type, count, elem_len, elem_off, name_base, stride}.
+  //! The stride is separate from the length because a descriptor length is
+  //! rarely a multiple of 8 — see gen_desc_image.py.
+  localparam int unsigned IDX_W_C = 128;
+  logic [IDX_W_C-1:0]  idx_r [0:IDX_ENTRIES_P-1];
+  logic [IDX_W_C-1:0]  idx_q_r;
+  logic [IDX_AW_C-1:0] idx_waddr_w, idx_raddr_w;
+  logic                idx_we_w;
+  logic [IDX_W_C-1:0]  idx_wdata_w;
+
+  always_ff @(posedge clk_i) begin : idx_ram
+    if (idx_we_w) idx_r[idx_waddr_w] <= idx_wdata_w;
+    idx_q_r <= idx_r[idx_raddr_w];
+  end
+
+  //! the ONE located descriptor, wire order preserved
+  logic [63:0]          line_r [0:LINE_LANES_C-1];
+  logic [63:0]          line_q_r;
+  logic [LINE_AW_C-1:0] line_waddr_w, line_raddr_w;
+  logic                 line_we_w;
+
+  always_ff @(posedge clk_i) begin : line_ram
+    if (line_we_w) line_r[line_waddr_w] <= mem_rsp_data_i;
+    line_q_r <= line_r[line_raddr_w];
+  end
+
+  //! 07 §3.4 name table — the writable overlay region
+  logic [63:0]          name_r [0:NAME_LANES_C-1];
+  logic [63:0]          name_q_r;
+  logic [NAME_AW_C-1:0] name_waddr_w, name_raddr_w;
+  logic                 name_we_w;
+  logic [63:0]          name_wdata_w;
+  logic  [7:0]          name_wstrb_w;
+
+  always_ff @(posedge clk_i) begin : name_ram
+    if (name_we_w) begin
+      for (int unsigned b = 0; b < 8; b++) begin
+        if (name_wstrb_w[b]) begin
+          name_r[name_waddr_w][8*b +: 8] <= name_wdata_w[8*b +: 8];
+        end
+      end
+    end
+    name_q_r <= name_r[name_raddr_w];
+  end
+
+  // =======================================================================
+  // header shadow, walk/serve machine
+  // =======================================================================
+  logic [15:0] hdr_n_config_r, hdr_n_entries_r, hdr_n_names_r, hdr_desc_max_r;
+  logic [31:0] hdr_index_off_r, hdr_names_off_r;
+  logic [31:0] cksum_r;
+  logic [63:0] hdr_b0_r;      // header beat 0: magic | version | n_config | n_entries
+  logic [63:0] idx_b0_r;      // index-entry beat 0: cfg | type | count | elem_len
+
+  typedef enum logic [3:0] {
+    S_HDR_REQ, S_HDR_RSP, S_IDX_REQ, S_IDX_RSP, S_NAM_REQ, S_NAM_RSP,
+    S_READY, S_BAD, S_SCAN, S_FET_REQ, S_FET_RSP, S_ANSWER
+  } st_e;
+  st_e st_r;
+
+  logic        img_valid_r;
+  logic  [3:0] fault_r;
+  logic [15:0] miss_cnt_r, fetch_cnt_r, rowr_cnt_r;
+
+  // ---- memory sequencing --------------------------------------------------
+  logic [31:0]        mreq_addr_r;
+  logic  [8:0]        mreq_beats_r;
+  logic               mreq_valid_r;
+  logic  [8:0]        beat_ix_r;
+  logic [TMO_W_C-1:0] tmo_r;
+  logic               mem_busy_r;
+
+  logic beat_w, accept_w, tmo_hit_w;
+  assign beat_w    = mem_rsp_valid_i && mem_rsp_ready_o;
+  assign accept_w  = mreq_valid_r && mem_req_ready_i;
+  assign tmo_hit_w = (tmo_r == TMO_W_C'(MEM_TIMEOUT_CYC_P));
+
+  assign mem_req_valid_o = mreq_valid_r;
+  assign mem_req_addr_o  = mreq_addr_r;
+  assign mem_req_beats_o = mreq_beats_r;
+  assign mem_rsp_ready_o = mem_busy_r;
+
+  // ---- the request being served ------------------------------------------
+  logic [15:0] key_cfg_r, key_type_r, key_index_r;
+  logic [15:0] desc_len_r, desc_nbase_r;
+  logic [31:0] desc_off_r;
+  logic        ans_err_r;
+  logic [63:0] ans_data_r, rd_reg_r;
+  logic        ans_pend_r, rd_pipe_r, req_seen_r;
+  logic  [1:0] rd_kind_r;                   // 0 line, 1 name, 2 pseudo-register
+  logic [IDX_AW_C-1:0] scan_rd_r;           // index-RAM read pointer
+  logic [15:0]         scan_cmp_r;          // entry currently in idx_q_r
+  logic                scan_rdy_r;
+
+  // decoded fields of the scanned entry
+  logic [15:0] e_cfg_w, e_type_w, e_cnt_w, e_len_w, e_nbase_w, e_strd_w;
+  logic [31:0] e_off_w;
+  assign e_cfg_w   = idx_q_r[127:112];
+  assign e_type_w  = idx_q_r[111:96];
+  assign e_cnt_w   = idx_q_r[95:80];
+  assign e_len_w   = idx_q_r[79:64];
+  assign e_off_w   = idx_q_r[63:32];
+  assign e_nbase_w = idx_q_r[31:16];
+  assign e_strd_w  = idx_q_r[15:0];
+
+  //! an entry is only usable if its geometry is self-consistent: a stride that
+  //! is shorter than the descriptor, or not 8-aligned, would place index > 0
+  //! mid-beat and byte-shift the whole line buffer. Refuse it rather than
+  //! serve a shifted descriptor.
+  logic e_usable_w;
+  assign e_usable_w = (e_len_w != 16'd0) && (32'(e_len_w) <= 32'(LINE_BYTES_P))
+                      && (e_strd_w >= e_len_w) && (e_strd_w[2:0] == 3'd0);
+
+  logic [3:0] region_w;
+  assign region_w = st_addr_i[19:16];
+
+  //! writes are accepted in one cycle, but never while the boot walk owns the
+  //! name RAM (the walk is watchdog-bounded, so this can never hang)
+  assign st_ready_o = (st_r == S_READY) || (st_r == S_BAD);
+
+  //! the µCPU HOLDS st_req_o through its stall, so a read is taken once and
+  //! `req_seen_r` is released by the answer — back-to-back state ops (whose
+  //! st_req_o never falls between them) must each be taken
+  logic take_rd_w, take_wr_w;
+  assign take_rd_w = st_req_i && !st_we_i && !req_seen_r && st_ready_o;
+  assign take_wr_w = st_req_i &&  st_we_i && st_ready_o;
+
+  assign st_rvalid_o = ans_pend_r && !rd_pipe_r && (st_r == S_ANSWER);
+  assign st_rdata_o  = ans_data_r;
+  assign st_err_o    = ans_err_r;
+
+  assign dbg_img_valid_o   = img_valid_r;
+  assign dbg_fault_o       = fault_r;
+  assign dbg_locate_miss_o = miss_cnt_r;
+  assign dbg_fetch_cnt_o   = fetch_cnt_r;
+  assign dbg_ro_write_o    = rowr_cnt_r;
+  assign dbg_desc_len_o    = desc_len_r;
+
+  logic [15:0] len_lanes_w;                 // ceil(desc_len/8)
+  assign len_lanes_w = (desc_len_r + 16'd7) >> 3;
+
+  // ---- RAM port muxes -----------------------------------------------------
+  always_comb begin : ram_ports
+    idx_we_w     = (st_r == S_IDX_RSP) && beat_w && beat_ix_r[0];
+    idx_waddr_w  = IDX_AW_C'(beat_ix_r >> 1);
+    // the 16-byte image entry, both beats verbatim
+    idx_wdata_w  = {idx_b0_r, mem_rsp_data_i};
+    idx_raddr_w  = scan_rd_r;
+
+    line_we_w    = (st_r == S_FET_RSP) && beat_w;
+    line_waddr_w = LINE_AW_C'(beat_ix_r);
+    line_raddr_w = LINE_AW_C'(st_addr_i[15:3]);
+
+    name_raddr_w = NAME_AW_C'(st_addr_i[15:3]);
+    if ((st_r == S_NAM_RSP) && beat_w) begin
+      name_we_w    = 1'b1;
+      name_waddr_w = NAME_AW_C'(beat_ix_r);
+      name_wdata_w = mem_rsp_data_i;
+      name_wstrb_w = 8'hFF;
+    end else begin
+      name_we_w    = take_wr_w && st_name_i;
+      name_waddr_w = NAME_AW_C'(st_addr_i[15:3]);
+      name_wdata_w = st_wdata_i;
+      name_wstrb_w = st_wstrb_i;
+    end
+  end
+
+  // ---- header validation of the four collected beats ----------------------
+  logic       hdr_ok_w;
+  logic [3:0] hdr_fault_w;
+  always_comb begin : header_check
+    hdr_ok_w    = 1'b0;
+    hdr_fault_w = FAULT_NONE_C;
+    if (hdr_b0_r[63:32] != IMG_MAGIC_C)              hdr_fault_w = FAULT_MAGIC_C;
+    else if (hdr_b0_r[31:16] != IMG_VERSION_C)       hdr_fault_w = FAULT_VERSION_C;
+    else if (cksum_r != 32'hFFFF_FFFF)               hdr_fault_w = FAULT_CKSUM_C;
+    else if ((hdr_n_entries_r == 16'd0)
+             || (hdr_n_config_r == 16'd0)
+             || (32'(hdr_n_entries_r) > 32'(IDX_ENTRIES_P)))
+                                                     hdr_fault_w = FAULT_NIDX_C;
+    else if (32'(hdr_n_names_r) > 32'(NAME_ENTRIES_P))
+                                                     hdr_fault_w = FAULT_NNAME_C;
+    else if ((hdr_desc_max_r == 16'd0)
+             || (32'(hdr_desc_max_r) > 32'(LINE_BYTES_P)))
+                                                     hdr_fault_w = FAULT_DESCLEN_C;
+    else                                             hdr_ok_w = 1'b1;
+  end
+
+  // =======================================================================
+  // the machine
+  // =======================================================================
+  always_ff @(posedge clk_i) begin : core
+    if (!rst_n) begin
+      st_r            <= S_HDR_REQ;
+      img_valid_r     <= 1'b0;
+      fault_r         <= FAULT_NONE_C;
+      miss_cnt_r      <= 16'd0;
+      fetch_cnt_r     <= 16'd0;
+      rowr_cnt_r      <= 16'd0;
+      mreq_valid_r    <= 1'b0;
+      mreq_addr_r     <= 32'd0;
+      mreq_beats_r    <= 9'd0;
+      mem_busy_r      <= 1'b0;
+      beat_ix_r       <= 9'd0;
+      tmo_r           <= '0;
+      hdr_b0_r        <= 64'd0;
+      idx_b0_r        <= 64'd0;
+      hdr_n_config_r  <= 16'd0;
+      hdr_n_entries_r <= 16'd0;
+      hdr_n_names_r   <= 16'd0;
+      hdr_desc_max_r  <= 16'd0;
+      hdr_index_off_r <= 32'd0;
+      hdr_names_off_r <= 32'd0;
+      cksum_r         <= 32'd0;
+      key_cfg_r       <= 16'd0;
+      key_type_r      <= 16'd0;
+      key_index_r     <= 16'd0;
+      desc_len_r      <= 16'd0;
+      desc_nbase_r    <= NAME_NONE_C;
+      desc_off_r      <= 32'd0;
+      ans_err_r       <= 1'b0;
+      ans_data_r      <= 64'd0;
+      rd_reg_r        <= 64'd0;
+      ans_pend_r      <= 1'b0;
+      rd_pipe_r       <= 1'b0;
+      req_seen_r      <= 1'b0;
+      rd_kind_r       <= 2'd0;
+      scan_rd_r       <= '0;
+      scan_cmp_r      <= 16'd0;
+      scan_rdy_r      <= 1'b0;
+    end else begin
+      // a read is claimed until its answer leaves
+      if (take_rd_w)   req_seen_r <= 1'b1;
+      if (st_rvalid_o) req_seen_r <= 1'b0;
+
+      // ---------------- memory request / response bookkeeping -------------
+      if (accept_w) begin
+        mreq_valid_r <= 1'b0;
+        mem_busy_r   <= 1'b1;
+        beat_ix_r    <= 9'd0;
+        tmo_r        <= '0;
+      end
+      if (beat_w) begin
+        beat_ix_r <= beat_ix_r + 9'd1;
+        tmo_r     <= '0;
+        if (mem_rsp_last_i || mem_rsp_err_i) mem_busy_r <= 1'b0;
+      end
+      //! no-progress watchdog: an absent or wedged bridge must DEGRADE to
+      //! NO_SUCH_DESCRIPTOR, never hang the µCPU
+      if ((mreq_valid_r || mem_busy_r) && !beat_w && !tmo_hit_w) begin
+        tmo_r <= tmo_r + TMO_W_C'(1);
+      end
+
+      unique case (st_r)
+        // ---------------- boot walk: header -------------------------------
+        S_HDR_REQ: begin
+          if (!mreq_valid_r && !mem_busy_r) begin
+            mreq_valid_r <= 1'b1;
+            mreq_addr_r  <= DESC_BASE_P;
+            mreq_beats_r <= 9'(HDR_BEATS_C);
+            cksum_r      <= 32'd0;
+          end
+          if (accept_w) st_r <= S_HDR_RSP;
+        end
+        S_HDR_RSP: begin
+          if (beat_w) begin
+            cksum_r <= cksum_r + mem_rsp_data_i[63:32] + mem_rsp_data_i[31:0];
+            unique case (beat_ix_r[1:0])
+              2'd0: begin
+                hdr_b0_r        <= mem_rsp_data_i;
+                hdr_n_config_r  <= mem_rsp_data_i[31:16];
+                hdr_n_entries_r <= mem_rsp_data_i[15:0];
+              end
+              2'd1: begin
+                hdr_n_names_r   <= mem_rsp_data_i[63:48];
+                hdr_index_off_r <= mem_rsp_data_i[31:0];
+              end
+              2'd2: hdr_names_off_r <= mem_rsp_data_i[63:32];
+              default: hdr_desc_max_r <= mem_rsp_data_i[63:48];
+            endcase
+          end
+          if (beat_w && mem_rsp_err_i) begin
+            fault_r <= FAULT_MEMERR_C;
+            st_r    <= S_BAD;
+          end else if (beat_w && mem_rsp_last_i) begin
+            st_r <= S_IDX_REQ;
+          end else if (tmo_hit_w) begin
+            fault_r    <= FAULT_TIMEOUT_C;
+            mem_busy_r <= 1'b0;
+            st_r       <= S_BAD;
+          end
+        end
+        // ---------------- boot walk: index map ----------------------------
+        S_IDX_REQ: begin
+          if (!hdr_ok_w) begin
+            fault_r <= hdr_fault_w;
+            st_r    <= S_BAD;
+          end else begin
+            if (!mreq_valid_r && !mem_busy_r) begin
+              mreq_valid_r <= 1'b1;
+              mreq_addr_r  <= DESC_BASE_P + hdr_index_off_r;
+              mreq_beats_r <= 9'(hdr_n_entries_r << 1);
+            end
+            if (accept_w) st_r <= S_IDX_RSP;
+          end
+        end
+        S_IDX_RSP: begin
+          if (beat_w && !beat_ix_r[0]) idx_b0_r <= mem_rsp_data_i;
+          if (beat_w && mem_rsp_err_i) begin
+            fault_r <= FAULT_MEMERR_C;
+            st_r    <= S_BAD;
+          end else if (beat_w && mem_rsp_last_i) begin
+            st_r <= S_NAM_REQ;
+          end else if (tmo_hit_w) begin
+            fault_r    <= FAULT_TIMEOUT_C;
+            mem_busy_r <= 1'b0;
+            st_r       <= S_BAD;
+          end
+        end
+        // ---------------- boot walk: name table (07 §3.4) ------------------
+        S_NAM_REQ: begin
+          if (hdr_n_names_r == 16'd0) begin
+            img_valid_r <= 1'b1;
+            fault_r     <= FAULT_NONE_C;
+            st_r        <= S_READY;
+          end else begin
+            if (!mreq_valid_r && !mem_busy_r) begin
+              mreq_valid_r <= 1'b1;
+              mreq_addr_r  <= DESC_BASE_P + hdr_names_off_r;
+              mreq_beats_r <= 9'(hdr_n_names_r << 3);
+            end
+            if (accept_w) st_r <= S_NAM_RSP;
+          end
+        end
+        S_NAM_RSP: begin
+          if (beat_w && mem_rsp_err_i) begin
+            fault_r <= FAULT_MEMERR_C;
+            st_r    <= S_BAD;
+          end else if (beat_w && mem_rsp_last_i) begin
+            img_valid_r <= 1'b1;
+            fault_r     <= FAULT_NONE_C;
+            st_r        <= S_READY;
+          end else if (tmo_hit_w) begin
+            fault_r    <= FAULT_TIMEOUT_C;
+            mem_busy_r <= 1'b0;
+            st_r       <= S_BAD;
+          end
+        end
+
+        // ---------------- serving -----------------------------------------
+        S_READY, S_BAD: begin
+          //! the static image is read-only at run time (07 §2): only the name
+          //! overlay takes a write, everything else is dropped and counted
+          if (take_wr_w && !st_name_i && (rowr_cnt_r != 16'hFFFF)) begin
+            rowr_cnt_r <= rowr_cnt_r + 16'd1;
+          end
+          if (take_rd_w) begin
+            ans_pend_r <= 1'b1;
+            ans_err_r  <= 1'b0;
+            if (st_name_i) begin
+              rd_pipe_r <= 1'b1;
+              rd_kind_r <= 2'd1;
+              st_r      <= S_ANSWER;
+            end else if (region_w == RGN_LOCATE_C) begin
+              key_cfg_r   <= st_wdata_i[15:0];
+              key_type_r  <= st_wdata_i[31:16];
+              key_index_r <= st_wdata_i[47:32];
+              if (img_valid_r) begin
+                scan_rd_r  <= '0;
+                scan_cmp_r <= 16'd0;
+                scan_rdy_r <= 1'b0;
+                st_r       <= S_SCAN;
+              end else begin
+                //! not loaded, or loaded wrong: answer the honest miss AND
+                //! re-arm the probe, so a late software load heals with no
+                //! reset and no garbage descriptor in between
+                ans_err_r  <= 1'b1;
+                ans_data_r <= 64'd0;
+                rd_pipe_r  <= 1'b0;
+                if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
+                st_r <= S_ANSWER;
+              end
+            end else begin
+              rd_pipe_r <= 1'b1;
+              unique case (region_w)
+                RGN_NBASE_C: begin rd_kind_r <= 2'd2;
+                                   rd_reg_r  <= {48'd0, desc_nbase_r}; end
+                RGN_NCFG_C:  begin rd_kind_r <= 2'd2;
+                                   rd_reg_r  <= {48'd0, hdr_n_config_r}; end
+                RGN_LEN_C:   begin rd_kind_r <= 2'd2;
+                                   rd_reg_r  <= {48'd0, desc_len_r}; end
+                default:     rd_kind_r <= 2'd0;             // RGN_DATA_C
+              endcase
+              st_r <= S_ANSWER;
+            end
+          end
+        end
+
+        // ---------------- locate: scan the cached index map ----------------
+        S_SCAN: begin
+          scan_rd_r  <= scan_rd_r + IDX_AW_C'(1);
+          scan_rdy_r <= 1'b1;
+          if (scan_rdy_r) begin
+            scan_cmp_r <= scan_cmp_r + 16'd1;
+            if ((e_cfg_w == key_cfg_r) && (e_type_w == key_type_r)) begin
+              if ((key_index_r < e_cnt_w) && e_usable_w) begin
+                desc_len_r   <= e_len_w;
+                desc_nbase_r <= e_nbase_w;
+                desc_off_r   <= e_off_w + (32'(e_strd_w) * 32'(key_index_r));
+                st_r         <= S_FET_REQ;
+              end else begin
+                ans_err_r  <= 1'b1;
+                ans_data_r <= 64'd0;
+                rd_pipe_r  <= 1'b0;
+                if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
+                st_r <= S_ANSWER;
+              end
+            end else if ((scan_cmp_r + 16'd1) >= hdr_n_entries_r) begin
+              ans_err_r  <= 1'b1;
+              ans_data_r <= 64'd0;
+              rd_pipe_r  <= 1'b0;
+              if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
+              st_r <= S_ANSWER;
+            end
+          end
+        end
+
+        // ---------------- locate: ONE burst for the whole descriptor -------
+        S_FET_REQ: begin
+          if (!mreq_valid_r && !mem_busy_r) begin
+            mreq_valid_r <= 1'b1;
+            mreq_addr_r  <= DESC_BASE_P + {desc_off_r[31:3], 3'd0};
+            mreq_beats_r <= 9'(len_lanes_w);
+          end
+          if (accept_w) begin
+            if (fetch_cnt_r != 16'hFFFF) fetch_cnt_r <= fetch_cnt_r + 16'd1;
+            st_r <= S_FET_RSP;
+          end
+        end
+        S_FET_RSP: begin
+          if (beat_w && mem_rsp_err_i) begin
+            ans_err_r  <= 1'b1;
+            ans_data_r <= 64'd0;
+            rd_pipe_r  <= 1'b0;
+            if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
+            st_r <= S_ANSWER;
+          end else if (beat_w && mem_rsp_last_i) begin
+            ans_err_r  <= 1'b0;
+            ans_data_r <= 64'd0;          // base = the line-buffer origin
+            rd_pipe_r  <= 1'b0;
+            st_r       <= S_ANSWER;
+          end else if (tmo_hit_w) begin
+            ans_err_r  <= 1'b1;
+            ans_data_r <= 64'd0;
+            rd_pipe_r  <= 1'b0;
+            mem_busy_r <= 1'b0;
+            if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
+            st_r <= S_ANSWER;
+          end
+        end
+
+        // ---------------- the one-cycle answer ------------------------------
+        S_ANSWER: begin
+          if (rd_pipe_r) begin
+            rd_pipe_r <= 1'b0;
+            unique case (rd_kind_r)
+              2'd1:    ans_data_r <= name_q_r;
+              2'd2:    ans_data_r <= rd_reg_r;
+              default: ans_data_r <= (32'(st_addr_i[15:3]) < 32'(len_lanes_w))
+                                     ? line_q_r : 64'd0;
+            endcase
+          end else begin
+            ans_pend_r <= 1'b0;
+            //! an invalid image re-probes its header after every locate
+            st_r       <= img_valid_r ? S_READY : S_HDR_REQ;
+          end
+        end
+
+        default: st_r <= S_BAD;
+      endcase
+    end
+  end
+
+endmodule : KL_aecp_desc_store
+`default_nettype wire
