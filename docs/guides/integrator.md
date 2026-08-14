@@ -210,11 +210,20 @@ property, not an accident, and it is regression-tested.
 | SRP service | `svc_*` | nothing declares through the configuration plane. |
 | AECP pop face | `aecp_txn_*`, `aecp_rxs_*` | **tie `aecp_txn_ready_i` low.** The internal AECP engine already drains this queue; this face is an *additional* observer. Driving it steals records from the engine. |
 
-**This processor implements no MAAP.** Address allocation is placed outside it, in the
-integrating fabric, by design. The face is published rather than tied off internally
-precisely because a processor whose talker half is dead by construction is not a contract
-anyone can integrate. The claim/defend/announce machine of IEEE 1722-2016 Annex B is
-yours to provide.
+**MAAP is yours to place.** With `cfg_maap_internal_i` tied 0 (the default) this
+processor implements no MAAP: address allocation stays outside it, in the integrating
+fabric, and the face is published rather than tied off internally precisely because a
+processor whose talker half is dead by construction is not a contract anyone can
+integrate — the claim/defend/announce machine of IEEE 1722-2016 Annex B is yours to
+provide. Tie `cfg_maap_internal_i` to 1 (quasi-static, set before `entity_enable_i`)
+and the in-scope `KL_pp_maap` engine
+([11](../architecture/11_maap_engine.md)) provides it instead: give it
+`cfg_maap_count_i` (block size; `N_STREAM_OUT_P` covers one DA per source) and
+optionally a persistence seed (`cfg_maap_seed_offset_i` + `cfg_maap_seed_valid_i`),
+gate talker egress on `maap_addr_valid_o`, read source s's DA as `maap_addr_o + s`
+(`maap_state_o`/`maap_conflicts_o`/`maap_defends_o` are the observability trio), leave
+the whole external `maap_*` port group unconnected — it is quiesced — and retire your
+allocator.
 
 ---
 
