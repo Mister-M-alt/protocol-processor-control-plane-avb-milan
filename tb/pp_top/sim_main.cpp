@@ -1439,6 +1439,55 @@ int main(int argc, char** argv) {
     CHECK(got == want, "A5: NOT_IMPLEMENTED echo is not byte-exact");
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
 
+    // ---- A5b: a NOT_IMPLEMENTED response is sized by ITS COMMAND ----------
+    // IEEE §9.3.5.3.3 demands "a correctly sized response", and the reflected-
+    // command reading is the one the reference stack implements on BOTH sides:
+    // la_avdecc answers an unhandled command by reflecting it
+    // (localEntityImpl.ipp "Reflect back the command, and return a
+    // NotImplemented error code") and its controller checks a NOT_IMPLEMENTED
+    // payload for EQUALITY with the command's length
+    // (protocolAemPayloads.cpp checkResponsePayload). So control_data_length
+    // must be 12 + the command's payload at every length, and the payload
+    // bytes must be the command's own.
+    //
+    // A5 alone proves one 4-byte case, which a length stuck at 4, an echo of
+    // zeros, or a length left over from the previous command all survive. A
+    // live Hive 4.3.1 session (2026-08-14) reported "Incorrect payload size"
+    // against exactly this class, so it is swept: empty, 4, 8, 16, and one
+    // past the 60-octet Ethernet floor where padding can no longer hide a
+    // wrong length. 0x7FFD/0x7FFE are unassigned in Table 7-140 and stay
+    // NOT_IMPLEMENTED whatever else this engine grows.
+    struct { uint16_t op; size_t n; const char* what; } nisz[] = {
+      {0x7FFE,  0, "unassigned opcode, empty payload"},
+      {0x004D,  4, "GET_MAX_TRANSIT_TIME (§7.4.78.1, the Hive 4.3.1 case)"},
+      {0x002B,  8, "GET_AUDIO_MAP (§7.4.44.1)"},
+      {0x0000, 16, "ACQUIRE_ENTITY (§7.4.1.1)"},
+      {0x7FFD, 72, "unassigned opcode, past the 60-octet floor"},
+      {0x004D,  4, "GET_MAX_TRANSIT_TIME again, after a 72-byte command"},
+    };
+    uint16_t niseq = 0x5560;
+    for (auto& c : nisz) {
+      std::vector<uint8_t> p(c.n);
+      //! never zeros: an echo that emitted the right COUNT of the wrong bytes
+      //! would pass a zero-filled payload
+      for (size_t i = 0; i < c.n; ++i) p[i] = uint8_t(0xA0 + i);
+      got = cmd(c.op, p, ++niseq);
+      want = expect(AECP_NOT_IMPLEMENTED, c.op, niseq, p);
+      CHECK(got == want, "A5b: %s: the response is not the echoed command",
+            c.what);
+      if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+      //! control_data_length read off the wire rather than compared to the
+      //! model: a builder that shared the bug would agree with the DUT and
+      //! prove nothing
+      uint16_t cdl = got.size() > 17
+                     ? uint16_t(((got[16] & 0x07) << 8) | got[17]) : 0xFFFFu;
+      CHECK(cdl == 12 + c.n, "A5b: %s: cdl %u, want %zu", c.what,
+            (unsigned)cdl, 12 + c.n);
+      size_t wlen = (38 + c.n < 60) ? 60 : 38 + c.n;
+      CHECK(got.size() == wlen, "A5b: %s: %zu B on the wire, want %zu",
+            c.what, got.size(), wlen);
+    }
+
     // ---- A6: IDENTIFY_NOTIFICATION as a COMMAND (IEEE §7.4.39.2) ---------
     std::vector<uint8_t> id_pl(4, 0);
     putbe(&id_pl[0], 0x001A, 2);

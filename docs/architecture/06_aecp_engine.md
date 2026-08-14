@@ -563,6 +563,7 @@ single-source command model ([09 §1](09_verification.md)).
 |---|---|
 | 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor; `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
 | 0x0026 IDENTIFY_NOTIFICATION | `BAD_ARGUMENTS` (§7.4.39.2 — the opcode-specific rule over §9.3.5.3.3) |
+| MVU 0x0000 GET_MILAN_INFO | real: SUCCESS + the Figure 5.4 body — `protocol_version` 1, `features_flags` 0, `certification_version` 0 (§6.9 and the honesty note below); AECPDU 44 B, cdl 32 |
 | everything else, all message types | `NOT_IMPLEMENTED` with the command **echoed** (F06.14 / §9.3.5.3.3) |
 
 Δ7's ACQUIRE_ENTITY (`NOT_SUPPORTED` with `owner_id` = 0) is therefore **not yet**
@@ -577,6 +578,43 @@ ROM becomes the right shape once the hazard class, min-cdl, response-size id,
 lock/GDI/notify flags and per-profile valid bits have consumers; until then it would be
 a generated artifact with one live field. When it lands it replaces the decode and
 nothing else.
+
+**The MVU sub-decode is a SECOND decode, and it has to be.** §4's block diagram draws
+the MVU sub-decoder beside the AEM decoder, both feeding the dispatch ROM, which reads
+as though one lookup at pop could serve both. It cannot. A Milan Vendor Unique command
+carries no AEM `command_type`: Milan §5.4.3.2 puts a 48-bit `protocol_id` at @22..@27
+and the MVU `command_type` at @28..@29, so the [03 §4](03_packet_engine.md) record's
+`opcode` — which `KL_pp_rx_validator` fills from @22..@23 — holds the first two bytes of
+that protocol_id and *nothing that identifies the command*. The bytes that do identify it
+are read by the engine's payload walk, so the pop-time decode stands (an MVU command
+starts out heading for the generic echo) and the walk's exit overrides it once
+`protocol_id`, the r field and `command_type` are all settled. The match demands the
+whole 48-bit id: the Avnu OUI-36 is shared with any future Avnu protocol, and only the
+low 16 bits separate MVU's 0x100 from them.
+
+Cost of that second decode, measured rather than asserted (yosys 0.66,
+`synth_xilinx -family xc7 -flatten`, `KL_aecp_engine` out of context): **+9 LUT, +2
+flops** against the same instrument before the change. Two flops because the walk keeps
+the two byte COMPARISONS of @26..@27, not the two bytes — which is also what makes a
+walk that stops early unable to look like a match.
+
+**GET_MILAN_INFO's `features_flags` is 0 and that is a claim, not a default.**
+Milan Table 5.20 defines exactly two bits. REDUNDANCY (0x00000001) asserts Milan §8
+seamless redundancy, which needs a second AVB interface this PAAD does not have
+(`P-N-AVB-INTERFACES` = 1, one AVB_INTERFACE descriptor).
+TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING (0x00000002) asserts §5.3.9.1 map changes while a
+Stream Output streams, and this build answers ADD/REMOVE_AUDIO_MAPPINGS with
+`NOT_IMPLEMENTED` — it cannot change a mapping at all. `certification_version` is 0
+because §5.4.4.1 reserves it for a Milan certification actually passed. An overclaimed
+flag sends a controller down a path the gateware cannot serve; the flag moves when
+`P-EN-TALKER-DYN-MAPPINGS-RUNNING` does, in the one line of
+`hdl/aecp/ucode/gen_ucode.py` that states it.
+
+**What GET_MILAN_INFO does NOT yet honour.** §6.9's per-configuration compliance gate
+(§5.4.4.1's recommendation that a PAAD-AE whose active configuration is non-compliant
+should not reply at all) is not implemented: this build always replies. The model
+metadata that would carry the flag does not exist, and §5.4.4.1 marks the behaviour a
+recommendation "in a future revision".
 
 **Header ownership.** `BUILD_HEADER` writes a compact {target_eid, seq, status} record
 into response bytes 0..11 and the cursor starts at 12; that record is *not* the 24-byte
@@ -602,6 +640,73 @@ pipeline changes. Write addresses are **non-decreasing from byte 12** within one
 response — `BUILD_HEADER` owns 0..11 and every `BUILD_FIELD`/`APPEND`/`COPY_BUFFER`
 advances the cursor — and a memory-backed buffer relies on that to keep one open lane
 instead of the whole 592 bytes.
+
+### 8.2 How a NOT_IMPLEMENTED response is sized, and who decides
+
+§9.3.5.3.3 says an unimplemented command "shall be responded to with a correctly sized
+response", and never says which size. Two readings exist: the length of the command
+being answered, or the length the standard gives that opcode's own RESPONSE
+(§7.4.78.2's GET_MAX_TRANSIT_TIME response is 12 octets where its command is 4).
+
+**This engine reflects the command**, so `control_data_length` is 12 + the command's
+payload, the payload is the command's own bytes read back out of its RX slot, and a
+frame under the 60-octet Ethernet minimum is zero padded without touching the length
+field. The reflected reading is the one the reference stack implements on BOTH sides:
+la_avdecc answers an unhandled command by reflecting it verbatim (`localEntityImpl.ipp`,
+"Reflect back the command, and return a NotImplemented error code"), and its controller
+checks a NOT_IMPLEMENTED payload for EQUALITY with the command's length
+(`protocolAemPayloads.cpp` `checkResponsePayload`). The response reading also fails on
+its own terms: it would make a NOT_IMPLEMENTED GET_COUNTERS 136 octets, which that same
+controller rejects, and it needs a per-opcode response-size table for opcodes the
+engine by definition does not implement.
+
+Measured on the AX7101 on 2026-08-14, 17 opcodes spanning command payloads of 0, 4, 8
+and 16 octets: every answer carried exactly 12 + the command's payload, the command's
+own bytes, and 60 octets on the wire. `tb/pp_top` A5b holds that (and is
+mutation-proven against a self-consistent wrong length).
+
+**Auditing this is a length sweep, not an opcode table.** The emitted length comes from
+the received `control_data_length` trimmed by the committed RX slot, and never from the
+opcode, so "is opcode X sized correctly" has one answer for all of them and the only
+axis worth sweeping is length. §9.2.2.6 caps `control_data_length` at 524, so the
+largest legal command payload is 512; the response-buffer ceiling here is 580 and the
+RX-slot ceiling is 552 (`RX_SLOT_BYTES_P` 576 less the 24-octet AECPDU header), both
+above it, so no legal command can be trimmed. Measured on the board: 72, 256 and 512
+octet commands all came back reflected exactly (`control_data_length` 84, 268, 524), and
+so did an over-legal 520. At the other end the arithmetic saturates rather than wraps:
+a command whose `control_data_length` is 11, below the 12-octet AEM floor, is answered
+with 12 and no payload (a length that low is malformed on arrival and a controller
+rejects it on its own deserialization), and 0 or 4 never reach this block at all because
+the validator drops them.
+
+**Where a controller still complains, and why the wire does not move.** Hive 4.3.1
+logged `Received an invalid non-success GET_MAX_TRANSIT_TIME AEM response (Incorrect
+payload size)` against a correct 4-octet reflection. The cause is in the controller: for
+GET_MAX_TRANSIT_TIME la_avdecc passes `AecpAemSetMaxTransitTimeCommandPayloadSize` (12)
+where its own check wants the GET command's length (4, §7.4.78.1). It is a class and not
+one opcode. The same substitution puts a SET command's length into the GET check for
+GET_CONFIGURATION, GET_STREAM_FORMAT, GET_NAME, GET_SAMPLING_RATE, GET_CLOCK_SOURCE,
+GET_MEMORY_OBJECT_LENGTH and GET_MAX_TRANSIT_TIME, and a MIN size is compared with `!=`
+for GET_DYNAMIC_INFO, SET_CONTROL, ADD/REMOVE_AUDIO_MAPPINGS and START_OPERATION. Eight
+of those were reproduced on the wire against this DUT. Hive only trips over
+GET_MAX_TRANSIT_TIME while enumerating because it takes formats, names, rates and clock
+sources from descriptors instead of commands, and it processes the answer anyway (its
+build sets `IGNORE_INVALID_NON_SUCCESS_AEM_RESPONSES`). Emitting 12 octets for that one
+opcode would please this controller, break the rule for the nine opcodes it currently
+accepts, and cost a response-size table on a part with 17 free slices.
+
+**The same question for a descriptor tail.** Hive also logged `Remaining bytes in buffer
+for READ_AVB_INTERFACE_DESCRIPTOR RESPONSE: 4` against the 102-octet AVB_INTERFACE this
+device serves. IEEE 1722.1-2021 Table 7-13 ends that descriptor at `base_control`, offset
+100, length 2, so 102 is the 2021 length, and Milan v1.2 §5.3.3.5 requires exactly
+"the format specified in [ATDECC, Clause 7.2.8]" with no length carve-out.
+la_avdecc stops at `port_number`
+(`AecpAemReadAvbInterfaceDescriptorResponsePayloadSize` = 8 + 94), which is the 2013
+length, and the read still reports Success because the trailing 4 octets are surplus
+rather than missing. We are right and the controller lags: the descriptor does not
+change. This is not the AUDIO_CLUSTER case (`gen_aem_store.py`), where 2021 §7.2.16 made
+the descriptor SHORTER by dropping the `aes3_*` tail and the truncation moved TO the
+current standard, not away from it.
 
 ## 9. Timing
 

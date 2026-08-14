@@ -16,7 +16,7 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make` — exit 0 = PASS; tally `161 checks: 161 PASS, 0 FAIL`.
+`make` — exit 0 = PASS; tally `179 checks: 179 PASS, 0 FAIL`.
 
 ## What it proves
 
@@ -42,6 +42,16 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
     `BAD_ARGUMENTS` (IEEE §7.4.39.2 beats §9.3.5.3.3); a truncated
     READ_DESCRIPTOR answers `BAD_ARGUMENTS` rather than locating whatever
     followed the header.
+  - **A5b** the NOT_IMPLEMENTED response is sized by ITS OWN command, swept
+    over payloads of 0, 4, 8, 16 and 72 octets and two opcodes Table 7-140
+    leaves unassigned: `control_data_length` is read off the wire (not
+    compared to the builder, which would share any bug) and must be 12 + the
+    command's payload, the echoed bytes are a non-zero pattern, and the frame
+    is the padded 60 octets only where the payload is genuinely short. A5
+    alone proves one 4-byte case, which a length stuck at 4, an echo of zeros
+    or a length held over from the previous command all survive; a live Hive
+    4.3.1 session reported "Incorrect payload size" against exactly this
+    class (see 06 §8.1 for who was right).
   - **A8/A9** a command addressed to another `entity_id` and an AECP RESPONSE
     arriving as input are both dropped and counted — answering a response is
     how a control plane builds a storm.
@@ -181,6 +191,21 @@ time.
 | response buffer places fields little-endian instead of big-endian | **8** red |
 | unimplemented opcodes fall through to the READ_DESCRIPTOR µprogram | **1** red |
 | the frame builder ignores whether the payload byte has arrived from memory yet | **58** red |
+
+## Mutation-proven 2026-08-14 (A5b, response sizing)
+
+| Break | Went red |
+|---|---|
+| `control_data_length` pinned at 16 (12 + 4) instead of 12 + payload | **23** red, **8** of them A5b |
+| the echoed payload capped at 8 octets, with `control_data_length` following it down | **5** red, **all** A5b |
+
+The second one is the result that justifies the block. It produces an
+INTERNALLY CONSISTENT frame (the length field matches the bytes actually
+emitted, and it still pads to 60), so every pre-existing check stays green:
+before A5b the suite could not tell a response sized by its command from one
+sized by something else, which is precisely what a controller complains about.
+The first row also leaves A5 itself green, because 16 is the right answer for
+the one 4-byte payload A5 sends.
 
 The `COPY_BUFFER` one is the interesting result: it goes red HERE and stays
 green in `tb/ucpu` (0 checks red there), because that suite's µprogram only copies a
