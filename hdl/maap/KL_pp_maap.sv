@@ -291,8 +291,12 @@ module KL_pp_maap
   pstate_e     pstate_r;
   logic [15:0] offset_r;       //! claimed pool offset (base = POOL_HI + offset)
   logic [1:0]  probe_left_r;   //! maap_probe_count (Table B.4)
-  logic        seed_used_r;    //! footnote-a seed consumed this engage
-  logic        noseed_r;       //! conflict restart: never reuse the seed
+  logic        seed_used_r;    //! footnote-a seed consumed this engage — also
+                               //! the no-reuse-on-conflict guard: a Restart!
+                               //! can only run after the first walk consumed
+                               //! the seed, and only a Release!/engage fall
+                               //! re-arms it, so a conflicted seed is never
+                               //! probed again within one engagement
   logic [7:0]  conflicts_r;    //! re-address events (saturating)
   logic [7:0]  defends_r;      //! DEFENDs sent (saturating)
 
@@ -509,7 +513,6 @@ module KL_pp_maap
       offset_r         <= 16'd0;
       probe_left_r     <= 2'd0;
       seed_used_r      <= 1'b0;
-      noseed_r         <= 1'b0;
       conflicts_r      <= 8'd0;
       defends_r        <= 8'd0;
       eng_q_r          <= 1'b0;
@@ -557,8 +560,7 @@ module KL_pp_maap
           pstate_r <= P_INITIAL;
           if (eng_w && !eng_q_r) begin
             // Begin!/PortOperational!: generate_address + ReserveAddress!
-            noseed_r <= 1'b0;
-            w_st_r   <= W_ADDR;
+            w_st_r <= W_ADDR;
           end
         end
 
@@ -566,7 +568,7 @@ module KL_pp_maap
         W_ADDR: begin
           if (!eng_w) begin
             w_st_r <= W_OFF;                       // nothing armed yet
-          end else if (cfg_seed_valid_i && !seed_used_r && !noseed_r) begin
+          end else if (cfg_seed_valid_i && !seed_used_r) begin
             // footnote a: a provisioned range skips generate_address; the
             // clamp keeps a mis-provisioned block inside the pool
             offset_r <= (cfg_seed_offset_i > (POOL_SIZE_C - {8'd0, cfg_count_i}))
@@ -742,7 +744,6 @@ module KL_pp_maap
               if (pstate_r == P_DEFEND) pend_ann_exp_r <= 1'b0;
               else                      pend_probe_exp_r <= 1'b0;
               pstate_r    <= P_INITIAL;
-              noseed_r    <= 1'b1;                 // a conflicted range is known-bad
               conflicts_r <= (&conflicts_r) ? conflicts_r
                                             : conflicts_r + 8'd1;
               w_st_r      <= W_ADDR;
