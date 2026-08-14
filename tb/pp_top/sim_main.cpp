@@ -1569,6 +1569,173 @@ int main(int argc, char** argv) {
           "A11: the snapshot window publishes image-valid");
   }
 
+  // ==== M. MVU GET_MILAN_INFO (Milan v1.2 §5.4.4.1) =======================
+  // The command a Milan controller sends FIRST, before it reads a single
+  // descriptor, and the one whose answer decides whether it treats this device
+  // as a PAAD-AE at all. It is NOT an AEM opcode: Milan §5.4.3.2 puts a 48-bit
+  // protocol_id at @22..@27 and the MVU command_type at @28..@29, so the field
+  // the 03 §4 record calls `opcode` holds the first two bytes of the
+  // protocol_id — the whole point of the MVU sub-decode is that the bytes
+  // which identify the command are ones only the payload walk reads.
+  {
+    // Milan §5.4.3.2.1: Avnu OUI-36 00-1B-C5-0A-C + MVU's 0x100.
+    const uint16_t MVU_PID_HI  = 0x001B;          // @22..@23
+    const uint32_t MVU_PID_LO  = 0xC50AC100u;     // @24..@27
+    const uint16_t MVU_INFO    = 0x0000;          // Table 5.18 GET_MILAN_INFO
+    const uint8_t  VU_COMMAND  = 6, VU_RESPONSE = 7;
+
+    // Figure 5.3: protocol_id, r + command_type, reserved — an 8-byte payload
+    // counted from @24, so control_data_length is 20.
+    auto mvu_cmd_pl = [&](uint32_t pid_lo, uint16_t ct, size_t bytes) {
+      std::vector<uint8_t> p(bytes, 0);
+      if (bytes >= 4) putbe(&p[0], pid_lo, 4);
+      if (bytes >= 6) putbe(&p[4], ct, 2);
+      return p;
+    };
+    auto mvu = [&](uint32_t pid_lo, uint16_t ct, uint16_t seq,
+                   size_t bytes = 8) {
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, VU_COMMAND, 0, EID, CTLR_EID, seq,
+                        MVU_PID_HI, mvu_cmd_pl(pid_lo, ct, bytes)));
+      return h.wait_any(h.q_aecp, 200);
+    };
+    auto mvu_expect = [&](uint8_t status, uint16_t seq,
+                          const std::vector<uint8_t>& pl) {
+      return aecp_frame(CTLR_MAC, OWN_MAC, VU_RESPONSE, status, EID, CTLR_EID,
+                        seq, MVU_PID_HI, pl);
+    };
+
+    // ---- M1: the Figure 5.4 response, byte-exact --------------------------
+    // 20 payload bytes from @24, so the AECPDU is 44 B and cdl is 32; the
+    // frame still leaves the wire at the 60-byte Ethernet minimum.
+    std::vector<uint8_t> info_pl(20, 0);
+    putbe(&info_pl[0],  MVU_PID_LO, 4);           // protocol_id @24..@27
+    putbe(&info_pl[4],  MVU_INFO, 2);             // r = 0 + command_type @28
+    putbe(&info_pl[6],  0u, 2);                   // reserved @30
+    putbe(&info_pl[8],  1u, 4);                   // protocol_version @32
+    putbe(&info_pl[12], 0u, 4);                   // features_flags @36
+    putbe(&info_pl[16], 0u, 4);                   // certification_version @40
+
+    uint16_t mcmd0 = d->dbg_aecp_cmd_o, mrsp0 = d->dbg_aecp_resp_o;
+    auto got = mvu(MVU_PID_LO, MVU_INFO, 0xC001);
+    auto want = mvu_expect(AECP_SUCCESS, 0xC001, info_pl);
+    CHECK(!got.empty(), "M1: GET_MILAN_INFO answered with silence");
+    CHECK(got == want, "M1: GET_MILAN_INFO response is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+    CHECK(d->dbg_aecp_cmd_o == mcmd0 + 1 && d->dbg_aecp_resp_o == mrsp0 + 1,
+          "M1: command/response counters moved once");
+    if (got.size() >= 60) {
+      CHECK((got[15] & 0x0F) == VU_RESPONSE,
+            "M1: message_type is %u, want VENDOR_UNIQUE_RESPONSE",
+            got[15] & 0x0F);
+      // Milan Table 5.19 / IEEE Table 9-6: MVU SUCCESS is 0, the same code the
+      // AEM path uses, so the status register needs no remapping
+      CHECK((got[16] >> 3) == 0, "M1: MVU status is %u, want SUCCESS",
+            got[16] >> 3);
+      CHECK(((((got[16] & 0x07) << 8) | got[17]) == 32),
+            "M1: control_data_length is %u, want 32",
+            ((got[16] & 0x07) << 8) | got[17]);
+      CHECK(std::equal(got.begin() + 36, got.begin() + 42,
+                       std::vector<uint8_t>{0x00, 0x1B, 0xC5, 0x0A, 0xC1,
+                                            0x00}.begin()),
+            "M1: the response protocol_id is not 00-1B-C5-0A-C1-00");
+    }
+
+    // ---- M2: the three fields a controller actually records ---------------
+    // Decoded from the wire rather than inferred from M1's compare, because
+    // this is the content the whole command exists for. features_flags is 0
+    // ON PURPOSE: Table 5.20's REDUNDANCY would claim Milan §8 on a
+    // single-interface PAAD, and TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING would
+    // claim map changes while streaming from a build that answers
+    // ADD/REMOVE_AUDIO_MAPPINGS with NOT_IMPLEMENTED.
+    if (got.size() >= 60) {
+      uint32_t pv = 0, ff = 0, cv = 0;
+      for (int i = 0; i < 4; ++i) {
+        pv = (pv << 8) | got[46 + i];             // AECPDU @32
+        ff = (ff << 8) | got[50 + i];             // AECPDU @36
+        cv = (cv << 8) | got[54 + i];             // AECPDU @40
+      }
+      CHECK(pv == 1u, "M2: protocol_version is %u, want 1 (Milan §4.2.4)", pv);
+      CHECK(ff == 0u, "M2: features_flags is 0x%08x, want 0 — this PAAD "
+            "implements neither Table 5.20 feature", ff);
+      CHECK(cv == 0u, "M2: certification_version is 0x%08x, want 0 — no "
+            "Milan certification has been passed", cv);
+    }
+
+    // ---- M3: a FOREIGN protocol_id is still NOT_IMPLEMENTED ---------------
+    // Same Avnu OUI-36, different 12-bit protocol identifier. Nothing above
+    // @26 tells these two apart, so this is what proves the whole 48-bit id is
+    // compared and not just its head (06 §6.9: wrong protocol_id -> VU
+    // response echoing the protocol_id, NOT_IMPLEMENTED).
+    auto foreign = mvu_cmd_pl(0xC50AC101u, MVU_INFO, 8);
+    got = mvu(0xC50AC101u, MVU_INFO, 0xC002);
+    want = mvu_expect(AECP_NOT_IMPLEMENTED, 0xC002, foreign);
+    CHECK(!got.empty(), "M3: a foreign vendor-unique protocol got silence");
+    CHECK(got == want, "M3: the foreign-protocol_id echo is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+
+    // ---- M4: an MVU command_type this build does not implement -------------
+    // GET_SYSTEM_UNIQUE_ID (Table 5.18 0x0002) is a Milan RECOMMENDATION this
+    // build does not serve: MVU status 1 with the command echoed, never
+    // silence and never a Figure 5.4 body it cannot fill.
+    auto suid = mvu_cmd_pl(MVU_PID_LO, 0x0002, 8);
+    got = mvu(MVU_PID_LO, 0x0002, 0xC003);
+    want = mvu_expect(AECP_NOT_IMPLEMENTED, 0xC003, suid);
+    CHECK(!got.empty(), "M4: an unimplemented MVU command_type got silence");
+    CHECK(got == want, "M4: the unimplemented-MVU echo is not byte-exact");
+
+    // ---- M5: the r field is compared, the reserved field is not -----------
+    // Milan §5.4.3.2.2 requires r = 0 in every MVU message and gives the
+    // receiver no leave to ignore it; §5.4.4.1's reserved field, by contrast,
+    // is explicitly "ignored by the receiver". So r = 1 is not this command
+    // (echo), while a junk reserved field still gets the real answer with a
+    // reserved field of 0 — the response must never forward it.
+    auto rset = mvu_cmd_pl(MVU_PID_LO, 0x8000, 8);
+    got = mvu(MVU_PID_LO, 0x8000, 0xC004);
+    want = mvu_expect(AECP_NOT_IMPLEMENTED, 0xC004, rset);
+    CHECK(got == want, "M5: r = 1 was not echoed as NOT_IMPLEMENTED");
+
+    auto junk = mvu_cmd_pl(MVU_PID_LO, MVU_INFO, 8);
+    junk[6] = 0xDE; junk[7] = 0xAD;                // reserved @30..@31
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, VU_COMMAND, 0, EID, CTLR_EID, 0xC005,
+                      MVU_PID_HI, junk));
+    got = h.wait_any(h.q_aecp, 200);
+    want = mvu_expect(AECP_SUCCESS, 0xC005, info_pl);
+    CHECK(got == want,
+          "M5b: a junk reserved field changed the answer (it must be ignored "
+          "on the command and zero in the response)");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+
+    // ---- M6: a truncated MVU command ---------------------------------------
+    // 6 payload bytes stop at @29, so the reserved field never arrived and the
+    // command is not the Figure 5.3 one: echo it rather than answer a
+    // GET_MILAN_INFO assembled from bytes nobody read.
+    auto trunc = mvu_cmd_pl(MVU_PID_LO, MVU_INFO, 6);
+    got = mvu(MVU_PID_LO, MVU_INFO, 0xC006, 6);
+    want = mvu_expect(AECP_NOT_IMPLEMENTED, 0xC006, trunc);
+    CHECK(!got.empty(), "M6: a truncated MVU command got silence");
+    CHECK(got == want, "M6: the truncated-MVU echo is not byte-exact");
+
+    // ---- M7: the descriptor path is untouched ------------------------------
+    // Hive enumerating is the biggest thing this processor does; an MVU
+    // command must not leave the engine, the response buffer or the RX pool in
+    // a state the next READ_DESCRIPTOR trips over.
+    std::vector<uint8_t> rcmd_pl(8, 0);
+    putbe(&rcmd_pl[0], CFGIX, 2);                 // ENTITY, index 0
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0xC007,
+                      AEM_READ_DESCRIPTOR, rcmd_pl));
+    got = h.wait_any(h.q_aecp, 400);
+    std::vector<uint8_t> rpl(4, 0);
+    putbe(&rpl[0], CFGIX, 2);
+    rpl.insert(rpl.end(), desc_entity.begin(), desc_entity.end());
+    want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                      0xC007, AEM_READ_DESCRIPTOR, rpl);
+    CHECK(got == want,
+          "M7: READ_DESCRIPTOR regressed after an MVU exchange");
+  }
+
 
   // ==== B. the response buffer lives in MAIN MEMORY (03 §7) ===============
   // The 592-byte response buffer used to be fabric state — 5,079 flip-flops

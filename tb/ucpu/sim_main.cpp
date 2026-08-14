@@ -27,7 +27,7 @@ enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
        E_CHKARG = 192, E_LOCK = 224, E_GATHER = 256, E_SETSR = 288,
        E_NAME = 320, E_COPY = 352, E_MAPV = 384, E_MAPVF = 400,
        E_OVF = 416, E_FMT = 512, E_NOTIMPL = 560, E_ACQ = 576,
-       E_STPRE = 592 };
+       E_STPRE = 592, E_MVUINFO = 736 };
 
 // IEEE 1722.1-2021 Table 7-141
 enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
@@ -355,6 +355,33 @@ int main(int argc, char** argv) {
   CHECK(h.run(E_FAILSAFE, 0, false), "P15b completes");
   CHECK(h.last_status == ST_OK && h.last_len == 12, "P15b clean arm");
 
+  // ---- P17: MVU GET_MILAN_INFO (Milan v1.2 §5.4.4.1, Figure 5.4) ------
+  // The µprogram builds the whole 20-byte payload from constants: the tail of
+  // the 48-bit protocol_id, r + command_type, the reserved word the sender
+  // must zero, then the three 32-bit fields. Checked FIELD BY FIELD rather
+  // than as a length, because a wrong protocol_version or an overclaimed
+  // features_flags is a lie a controller believes.
+  {
+    auto w16 = [&](uint32_t a) {
+      return uint32_t(h.buf[a]) | uint32_t(h.buf[a + 1]) << 8;
+    };
+    CHECK(h.run(E_MVUINFO, 0, false), "P17 completes");
+    CHECK(h.last_status == ST_OK, "P17 SUCCESS got %u", h.last_status);
+    //! 12 header bytes + 20 payload = AECPDU 44 B, control_data_length 32
+    CHECK(h.last_len == 32, "P17 len got %u, want 32", h.last_len);
+    CHECK(w16(12) == 0xC50A && w16(14) == 0xC100,
+          "P17 protocol_id tail %04x%04x, want C50AC100", w16(12), w16(14));
+    CHECK(w16(16) == 0x0000, "P17 r+command_type got %04x, want 0000",
+          w16(16));
+    CHECK(w16(18) == 0x0000, "P17 reserved got %04x, want 0000", w16(18));
+    CHECK(h.w32(20) == 1u, "P17 protocol_version got %u, want 1 "
+          "(Milan §4.2.4)", h.w32(20));
+    CHECK(h.w32(24) == 0u, "P17 features_flags got %08x — Table 5.20's two "
+          "flags are both unimplemented here", h.w32(24));
+    CHECK(h.w32(28) == 0u, "P17 certification_version got %08x, want 0",
+          h.w32(28));
+  }
+
   // ---- P16: the response-buffer face is FLOW CONTROLLED ---------------
   // Every program above ran against a 2-cycle stall. These prove the µCPU is
   // INVARIANT to how hard the buffer pushes back: a buffer in main memory can
@@ -368,6 +395,7 @@ int main(int argc, char** argv) {
       {"GATHER", E_GATHER, 0},    {"COPY", E_COPY, IDX_OK},
       {"FMT", E_FMT, 0},          {"OVF", E_OVF, 0},
       {"ACQ", E_ACQ, 0},          {"NOTIMPL", E_NOTIMPL, 0},
+      {"MVUINFO", E_MVUINFO, 0},
     };
     for (const auto& p : progs) {
       h.rb_stall = 0;

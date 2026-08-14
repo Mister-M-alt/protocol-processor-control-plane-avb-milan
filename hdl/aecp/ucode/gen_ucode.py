@@ -71,6 +71,30 @@ E_STPRE   = 592      # status preservation through FAIL_SAFE
 E_RDESC   = 640      # READ_DESCRIPTOR (06 §6.1) — KL_aecp_engine dispatches here
 E_RDSTUB  = 672      # its IEEE §7.4.5 failure stub
 E_BADARG  = 704      # echo + BAD_ARGUMENTS (IEEE §7.4.39.2 opcode rule)
+E_MVUINFO = 736      # MVU GET_MILAN_INFO (Milan v1.2 §5.4.4.1, Figure 5.4)
+
+# --- what this device reports in GET_MILAN_INFO -----------------------------
+# Milan v1.2 §4.2.4 and §5.4.4.1: "A PAAD shall set the value of the
+# protocol_version field in the GET_MILAN_INFO response to 1."
+MILAN_PROTOCOL_VERSION = 1
+# Table 5.20 has exactly two flags and this device is entitled to NEITHER.
+# REDUNDANCY (0x00000001) is a claim to implement Milan §8 seamless redundancy;
+# this is a single-AVB-interface PAAD (P-N-AVB-INTERFACES = 1) with one
+# AVB_INTERFACE descriptor, so there is no second stream to be seamless with.
+# TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING (0x00000002) is a claim to accept map
+# changes while a Stream Output streams (§5.3.9.1); this build answers
+# ADD/REMOVE_AUDIO_MAPPINGS with NOT_IMPLEMENTED, so it cannot change a mapping
+# at all. An overclaimed flag makes a controller take a path the gateware
+# cannot serve — the same class of defect as reporting a restore that never
+# happened. When P-EN-TALKER-DYN-MAPPINGS-RUNNING becomes real (06 §6.9), this
+# is the one line that moves.
+MILAN_FEATURES_FLAGS = 0x00000000
+# §5.4.4.1: four dot-separated 8-bit numbers, "set to 0 if the PAAD-AE has not
+# passed any Milan certification". This device has passed none.
+MILAN_CERT_VERSION = 0x00000000
+# Table 5.18 command_type, in the @28..@29 word whose top bit is the r field
+# that §5.4.3.2.2 requires to be zero.
+MVU_GET_MILAN_INFO = 0x0000
 
 rom = [0] * ROM_DEPTH
 
@@ -352,6 +376,43 @@ place(E_BADARG, [
     u('END'),
 ])
 
+# --- MVU GET_MILAN_INFO (Milan v1.2 §5.4.4.1, Figure 5.4) --------------------
+# The answer a Milan controller asks for FIRST and the one that decides whether
+# it treats this device as a PAAD-AE at all: with NOT_IMPLEMENTED it records
+# protocol_version 0 / features_flags 0x0 and stops there.
+#
+# The response payload starts at AECPDU @24 = response-buffer byte 12, so the
+# cursor lays down, in order: protocol_id[31:0] (@24, the tail of the 48-bit
+# id whose first two bytes the engine echoes in the header word), r +
+# command_type (@28), reserved (@30), then Figure 5.4's three 32-bit fields.
+# That is 20 bytes, so the AECPDU is 44 B and control_data_length is 32.
+#
+# Every one of those fields is RESTATED from a constant rather than echoed out
+# of the command. §5.4.4.1 says the reserved field "shall be set to 0 by the
+# sender", and echoing would forward whatever a controller happened to put
+# there; the µISA has no byte-swap and no shift, so each field arrives
+# right-justified in its own register (06 §8).
+place(E_MVUINFO, [
+    u('MOVE', rd=1, imm=0x00C50A),                # protocol_id @24..@25
+    u('MOVE', rd=2, imm=0x00C100),                # protocol_id @26..@27
+    u('MOVE', rd=3, imm=MVU_GET_MILAN_INFO),      # r = 0 + command_type @28
+    u('MOVE', rd=4, imm=0),                       # reserved @30 (sender = 0)
+    u('MOVE', rd=5, imm=MILAN_PROTOCOL_VERSION),
+    u('MOVE', rd=6, imm=MILAN_FEATURES_FLAGS),
+    u('MOVE', rd=7, imm=MILAN_CERT_VERSION),
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=1, fmt=FMT_W),
+    u('BUILD_FLD', ra=2, fmt=FMT_W),
+    u('BUILD_FLD', ra=3, fmt=FMT_W),
+    u('BUILD_FLD', ra=4, fmt=FMT_W),
+    u('BUILD_FLD', ra=5, fmt=FMT_D),              # protocol_version @32
+    u('BUILD_FLD', ra=6, fmt=FMT_D),              # features_flags @36
+    u('BUILD_FLD', ra=7, fmt=FMT_D),              # certification_version @40
+    u('SEND_RESP'),
+    u('END'),
+])
+
 # --- deterministic non-degenerate fill ---------------------------------------
 for i in range(ROM_DEPTH):
     if rom[i] == 0 and i not in (0,):
@@ -365,4 +426,4 @@ if __name__ == '__main__':
     with open(a.out, 'w') as f:
         for w in rom:
             f.write(f"{w:012x}\n")
-    print(f"{a.out}: {ROM_DEPTH} words, 18 programs")
+    print(f"{a.out}: {ROM_DEPTH} words, 19 programs")

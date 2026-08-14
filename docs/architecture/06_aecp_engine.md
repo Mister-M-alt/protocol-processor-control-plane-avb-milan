@@ -592,11 +592,29 @@ starts out heading for the generic echo) and the walk's exit overrides it once
 whole 48-bit id: the Avnu OUI-36 is shared with any future Avnu protocol, and only the
 low 16 bits separate MVU's 0x100 from them.
 
-Cost of that second decode, measured rather than asserted (yosys 0.66,
-`synth_xilinx -family xc7 -flatten`, `KL_aecp_engine` out of context): **+9 LUT, +2
-flops** against the same instrument before the change. Two flops because the walk keeps
-the two byte COMPARISONS of @26..@27, not the two bytes — which is also what makes a
-walk that stops early unable to look like a match.
+**What it cost, measured.** The instrument of record for this project is Vivado
+post-synthesis hierarchical utilization ([10 §2](../10_RESOURCE_AND_EFFORT.md)), and
+this measurement is NOT it — it is yosys 0.66, `synth_xilinx -family xc7 -flatten`,
+`KL_aecp_engine` out of context, taken on the same tree immediately before and after the
+change. On that second instrument the whole feature — sub-decode, µPC entry and
+µprogram — costs **+31 estimated logic cells (2,014 → 2,045), +7 flip-flops (1,789 →
+1,796) and ZERO additional block RAM (5 RAMB36 before and after)**. Re-take it on
+Vivado before quoting it in an area record.
+
+Two of those seven flops are the design's own new state: the walk keeps the two byte
+COMPARISONS of @26..@27 rather than the two bytes, and rebuilding the same tree with
+`pid_lo_r` deleted moves the count by exactly 2. That choice is not only smaller — it is
+what makes a walk that stops early *unable* to look like a match, where two stale bytes
+could. The block-RAM zero is the reason the whole thing is affordable at 99.9 % slice
+occupancy: the µprogram lands in the 2048 × 48 ROM that was already instantiated with
+about 1,290 words unused, so a new command costs microcode, not memory.
+
+The raw LUT counts moved in the OTHER direction (2,618 → 2,586 LUT cells alongside
+119 → 116 MUXF7), and that is a mapping artefact, not a saving: adding two arms to the
+payload walk's `unique case` re-balanced the whole decode between LUTs and the slice's
+dedicated F7/F8 muxes. A variant built with `pid_lo_r` removed lands at 2,658 LUT cells
+and 160 MUXF7 — higher than either. This is exactly why the logic-cell estimate is
+quoted above and the LUT column is not.
 
 **GET_MILAN_INFO's `features_flags` is 0 and that is a claim, not a default.**
 Milan Table 5.20 defines exactly two bits. REDUNDANCY (0x00000001) asserts Milan §8
@@ -608,7 +626,11 @@ Stream Output streams, and this build answers ADD/REMOVE_AUDIO_MAPPINGS with
 because §5.4.4.1 reserves it for a Milan certification actually passed. An overclaimed
 flag sends a controller down a path the gateware cannot serve; the flag moves when
 `P-EN-TALKER-DYN-MAPPINGS-RUNNING` does, in the one line of
-`hdl/aecp/ucode/gen_ucode.py` that states it.
+`hdl/aecp/ucode/gen_ucode.py` that states it. All three fields are microcode constants
+today rather than §6.9's `certification_version` *register*: a register buys a runtime
+write path for a value that changes when the bitstream does, and the profile parameters
+that would drive `features_flags` are elaboration-time by the same rule the rest of the
+shape follows.
 
 **What GET_MILAN_INFO does NOT yet honour.** §6.9's per-configuration compliance gate
 (§5.4.4.1's recommendation that a PAAD-AE whose active configuration is non-compliant

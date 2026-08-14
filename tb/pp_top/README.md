@@ -16,7 +16,7 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make` — exit 0 = PASS; tally `179 checks: 179 PASS, 0 FAIL`.
+`make` — exit 0 = PASS; tally `198 checks: 198 PASS, 0 FAIL`.
 
 ## What it proves
 
@@ -57,6 +57,33 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
     how a control plane builds a storm.
   - **A10/A11** three back-to-back commands each echo their own
     `sequence_id`; the snapshot window publishes the counters and image-valid.
+- **M** **MVU GET_MILAN_INFO end to end** (Milan v1.2 §5.4.4.1) — the command a
+  Milan controller sends FIRST, before a single descriptor, and the one whose
+  answer decides whether it treats this device as a PAAD-AE at all. It is not
+  an AEM opcode: §5.4.3.2 puts a 48-bit `protocol_id` at @22..@27 and the MVU
+  `command_type` at @28..@29, so the field the 03 §4 record calls `opcode`
+  holds the head of the protocol_id and nothing that names the command.
+  - **M1/M2** the Figure 5.4 response byte-exact (44-byte AECPDU, cdl 32,
+    message_type VENDOR_UNIQUE_RESPONSE, protocol_id intact), and the three
+    fields decoded OFF THE WIRE: `protocol_version` 1 (§4.2.4),
+    `features_flags` 0 and `certification_version` 0. The last two are checked
+    by name because Table 5.20's REDUNDANCY would claim Milan §8 on a
+    single-interface PAAD and TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING would claim
+    map changes from a build that answers ADD/REMOVE_AUDIO_MAPPINGS with
+    `NOT_IMPLEMENTED`.
+  - **M3/M4** a FOREIGN vendor-unique protocol (same Avnu OUI-36, protocol id
+    0x101) and an MVU `command_type` this build does not serve
+    (GET_SYSTEM_UNIQUE_ID) both come back echoed with MVU status 1. M3 is what
+    proves the whole 48 bits are compared: nothing above @26 tells the two
+    protocols apart.
+  - **M5** the r field is compared and the reserved field is not — §5.4.3.2.2
+    requires r = 0 and gives the receiver no leave to ignore it, while
+    §5.4.4.1's reserved field is explicitly "ignored by the receiver". So r = 1
+    is echoed, and a junk reserved field still gets the real answer with a
+    reserved field of 0.
+  - **M6/M7** a truncated MVU command is echoed rather than answered from bytes
+    nobody read; and a READ_DESCRIPTOR after the MVU traffic is still
+    byte-exact, because Hive enumerating is worth more than the gap this closes.
 - **R** boot restore over a blank NVM device: all 8 BINDING regions read,
   `restore_done` without `restore_fail`.
 - **S0/S1** quiescence + snapshot identity; SRP bring-up: the FIRST MSRP
@@ -206,6 +233,23 @@ before A5b the suite could not tell a response sized by its command from one
 sized by something else, which is precisely what a controller complains about.
 The first row also leaves A5 itself green, because 16 is the right answer for
 the one 4-byte payload A5 sends.
+
+## Mutation-proven 2026-08-14 (M, GET_MILAN_INFO)
+
+| Break | Went red |
+|---|---|
+| `MILAN_PROTOCOL_VERSION` 1 -> 2 in `gen_ucode.py` | **3** red (M1, M2, M5b) |
+| `MILAN_FEATURES_FLAGS` 0 -> 0x2, claiming a feature this build cannot serve | **3** red (M1, M2, M5b) |
+| the protocol_id tail compare (@26..@27) dropped from the sub-decode | **1** red, M3 |
+| the MVU `command_type` compare dropped from the sub-decode | **2** red, M4 and M5 |
+| the Figure 5.3 length guard dropped (`pld_cmd_r >= 8` -> `>= 0`) | **1** red, M6 |
+
+Every one of these produces a WELL-FORMED frame of the right length — the first
+two are a correct Figure 5.4 response carrying a false claim, and the last three
+answer SUCCESS to a command that was never GET_MILAN_INFO. None of them is
+visible to a check that only counts bytes, which is why M2 decodes the three
+fields by name and M3 uses a protocol id that differs from MVU's in its last
+16 bits alone.
 
 The `COPY_BUFFER` one is the interesting result: it goes red HERE and stays
 green in `tb/ucpu` (0 checks red there), because that suite's µprogram only copies a

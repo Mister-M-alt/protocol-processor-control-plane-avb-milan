@@ -3,7 +3,7 @@
 
 Proves the µCPU skeleton (`hdl/aecp/KL_aecp_ucpu.sv`) actually executes the
 [06 §8](../../docs/architecture/06_aecp_engine.md) µISA before anyone quotes its
-area: `make` = build + run, exit 0 = PASS, 164 checks.
+area: `make` = build + run, exit 0 = PASS, 181 checks.
 
 The C++ harness is an independent model, never DUT logic: it implements the
 state port (2-cycle read latency, locate mapping, forced miss), the gather port
@@ -32,13 +32,28 @@ codes on the wire header, write-strobe formats B/W/Q, truncating moves, 64-bit
 compares, the unknown-opcode NOT_IMPLEMENTED path, the ACQUIRE_ENTITY Milan Δ7
 exemplar, and the §9.3.2.6 FAIL_SAFE arm preserving the best current status.
 
+Covered by P17 — the **MVU GET_MILAN_INFO** body of Milan v1.2 Figure 5.4
+(`E_MVUINFO`). The µprogram builds all 20 payload bytes from constants: the
+tail of the 48-bit protocol_id, r + command_type, the reserved word §5.4.4.1
+requires the sender to zero, then protocol_version, features_flags and
+certification_version. Each is checked as a FIELD rather than as a length,
+because a wrong protocol_version or an overclaimed Table 5.20 flag is a lie a
+controller believes — see [06 §8.1](../../docs/architecture/06_aecp_engine.md)
+for why this device reports 1 / 0 / 0.
+
 Covered by P16 — **the µCPU is invariant to how hard the buffer pushes back**.
-Nine µprograms are run twice, at zero stall and at a 9-cycle stall per write,
+Ten µprograms are run twice, at zero stall and at a 9-cycle stall per write,
 and must produce identical bytes, length, status and send count; the number of
 writes the buffer ACCEPTS must be identical too (a stalled write that is
 duplicated or lost changes it); a REFUSED write must be re-presented
 byte-for-byte identically while it is held; and the zero-stall run must be
 held zero cycles, so the invariance is not vacuous.
+
+Mutation-proven 2026-08-14 (P17): `MILAN_PROTOCOL_VERSION` 1 -> 2 in
+`gen_ucode.py` fails 1 of 181; `MILAN_FEATURES_FLAGS` 0 -> 0x2 (claiming
+TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING this build cannot serve) fails 1 of 181.
+Both mutants are internally consistent frames of the right length, which is
+exactly why the fields are checked one by one.
 
 Mutation-proven 2026-08-13: advancing the E-stage beat counter while the buffer
 refuses the write (the one thing `rb_ready` must gate) fails **58 of 164** —

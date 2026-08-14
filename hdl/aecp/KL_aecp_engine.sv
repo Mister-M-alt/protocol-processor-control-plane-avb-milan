@@ -37,6 +37,30 @@
 //                against a generator that does not exist. When the ROM lands
 //                it replaces `upc_w`/`echo_w` here and nothing else.
 //
+//                THE MVU SUB-DECODE (06 §4 "MVU sub-decoder (protocol_id
+//                match)") CANNOT RUN AT POP, and that is why it is a second
+//                decode rather than a fourth arm above. A Milan Vendor Unique
+//                command carries no AEM command_type: Milan v1.2 §5.4.3.2 puts
+//                a 48-bit protocol_id at @22..@27 and the MVU command_type at
+//                @28..@29, so the 03 §4 record's `opcode` field — which the
+//                validator fills from @22..@23 — holds the first two bytes of
+//                that protocol_id and nothing that identifies the command. The
+//                bytes that do identify it are read by the payload walk, so
+//                the pop-time decode stands (an MVU command starts out heading
+//                for the generic echo) and A_PLD OVERRIDES it once every byte
+//                is settled:
+//
+//                  msg_type 6 + protocol_id 00-1B-C5-0A-C1-00
+//                             + r 0 + command_type 0x0000
+//                             + a Figure 5.3 payload (8 B)  -> UPC_MVUINFO_C
+//
+//                Anything else with message_type 6 — a foreign protocol_id, an
+//                MVU command_type this build does not implement, a truncated
+//                one — keeps the echo and answers MVU status 1
+//                NOT_IMPLEMENTED (Milan Table 5.19 = IEEE Table 9-6, which is
+//                the same code the AEM path uses, so the status register needs
+//                no remapping).
+//
 //                NOT_IMPLEMENTED IS AN ANSWER, NOT SILENCE. Every opcode this
 //                block does not implement is ECHOED back with
 //                message_type + 1 and status NOT_IMPLEMENTED (F06.14 "echo
@@ -231,10 +255,29 @@ module KL_aecp_engine
   localparam logic [15:0] OP_READ_DESCRIPTOR_C = 16'h0004;
   localparam logic [15:0] OP_IDENTIFY_NOTIF_C  = 16'h0026;
 
+  // ---- Milan Vendor Unique (Milan v1.2 §5.4.3.2, §5.4.4.1) ---------------
+  //! protocol_id is the Avnu OUI-36 00-1B-C5-0A-C appended with MVU's 12-bit
+  //! protocol unique identifier 0x100 (§5.4.3.2.1) = 00-1B-C5-0A-C1-00. It
+  //! spans @22..@27, so its first two bytes land in `raw_ct_r` (the field an
+  //! AEM command calls command_type) and its last four in the payload walk.
+  localparam logic [15:0] MVU_PID_HI_C = 16'h001B;   // @22..@23
+  localparam logic [15:0] MVU_PID_MD_C = 16'hC50A;   // @24..@25
+  localparam logic  [7:0] MVU_PID_L1_C = 8'hC1;      // @26
+  localparam logic  [7:0] MVU_PID_L0_C = 8'h00;      // @27
+  //! the @28..@29 word: r = 0 (§5.4.3.2.2) + Table 5.18 command_type 0x0000
+  localparam logic [15:0] MVU_GET_MILAN_INFO_C = 16'h0000;
+  //! Figure 5.3 fixes the command at protocol_id + r/command_type + reserved,
+  //! so its payload is 8 bytes. The walk captures index n from @22+n and the
+  //! LAST capture lands in the same cycle the walk exits, so demanding the
+  //! whole Figure 5.3 payload is also what guarantees @28..@29 is settled by
+  //! the time the sub-decode below reads it.
+  localparam logic [10:0] MVU_CMD_PLD_C = 11'd8;
+
   // ---- µPC entry points (hdl/aecp/ucode/gen_ucode.py) ---------------------
   localparam logic [10:0] UPC_NOTIMPL_C = 11'd560;   // E_NOTIMPL
   localparam logic [10:0] UPC_RDESC_C   = 11'd640;   // E_RDESC
   localparam logic [10:0] UPC_BADARG_C  = 11'd704;   // E_BADARG
+  localparam logic [10:0] UPC_MVUINFO_C = 11'd736;   // E_MVUINFO
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -285,6 +328,7 @@ module KL_aecp_engine
   logic [10:0] pld_cmd_r;                // command payload bytes
   logic [10:0] pld_r;                    // payload bytes to emit
   logic [10:0] walk_r;                   // payload walk index
+  logic  [1:0] pid_lo_r;                 // AECPDU @26,@27 matched MVU's tail
   logic        echo_r, sent_r;
   logic [10:0] upc_r;
   logic [4:0]  status_r;
@@ -318,6 +362,20 @@ module KL_aecp_engine
   //! F06.2 MATCHED arc + the response-storm guard (see the banner)
   logic drop_w;
   assign drop_w = txn_w.msg_type[0] || (txn_w.target_eid != entity_id_i);
+
+  //! the MVU sub-decode (see the banner): read at the A_PLD exit, where the
+  //! four captured words below are settled. `pid_lo_r` is the only new state
+  //! the match needs — @22..@25 and @28..@29 already have registers, held for
+  //! the header echo and for READ_DESCRIPTOR's operands — and it is two
+  //! comparison RESULTS rather than the two bytes, so a walk that stops before
+  //! @27 leaves it 0 and cannot look like a match.
+  logic mvu_get_milan_info_w;
+  assign mvu_get_milan_info_w = (cmd_r.protocol == PP_PROTO_MVU)
+                                && (pld_cmd_r  >= MVU_CMD_PLD_C)
+                                && (raw_ct_r   == MVU_PID_HI_C)
+                                && (cfg_ix_r   == MVU_PID_MD_C)
+                                && (pid_lo_r   == 2'b11)
+                                && (desc_ty_r  == MVU_GET_MILAN_INFO_C);
 
   // ---- payload sizing ------------------------------------------------------
   //! cdl is the offset-from-@12 length (F06.14), so the command payload is
@@ -656,6 +714,7 @@ module KL_aecp_engine
       pld_cmd_r    <= 11'd0;
       pld_r        <= 11'd0;
       walk_r       <= 11'd0;
+      pid_lo_r     <= 2'b00;
       echo_r       <= 1'b0;
       upc_r        <= 11'd0;
       status_r     <= 5'd0;
@@ -694,6 +753,7 @@ module KL_aecp_engine
               desc_ix_r <= 16'd0;
               raw_ct_r  <= 16'd0;
               walk_r    <= 11'd0;
+              pid_lo_r  <= 2'b00;
               sent_r    <= 1'b0;
               a_st_r    <= (txn_w.rx_slot == PP_SLOT_NULL_C) ? A_DISP : A_PLD;
             end
@@ -709,6 +769,12 @@ module KL_aecp_engine
           if (walk_r < (pld_r + 11'd2)) begin
             walk_r <= walk_r + 11'd1;
           end else begin
+            //! the MVU sub-decode, now that @22..@29 are settled: an MVU
+            //! GET_MILAN_INFO leaves the generic echo for its own µprogram
+            if (mvu_get_milan_info_w) begin
+              upc_r  <= UPC_MVUINFO_C;
+              echo_r <= 1'b0;
+            end
             a_st_r <= A_DISP;
           end
           //! the RX pool answers one cycle after rd_en: byte for index
@@ -719,6 +785,10 @@ module KL_aecp_engine
               11'd1: raw_ct_r[7:0]   <= rxs_rd_data_i;
               11'd2: cfg_ix_r[15:8]  <= rxs_rd_data_i;
               11'd3: cfg_ix_r[7:0]   <= rxs_rd_data_i;
+              //! @26..@27 are READ_DESCRIPTOR's reserved field and MVU's
+              //! protocol_id tail: keep the COMPARISON, not the bytes
+              11'd4: pid_lo_r[1]     <= (rxs_rd_data_i == MVU_PID_L1_C);
+              11'd5: pid_lo_r[0]     <= (rxs_rd_data_i == MVU_PID_L0_C);
               11'd6: desc_ty_r[15:8] <= rxs_rd_data_i;
               11'd7: desc_ty_r[7:0]  <= rxs_rd_data_i;
               11'd8: desc_ix_r[15:8] <= rxs_rd_data_i;
