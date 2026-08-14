@@ -328,12 +328,30 @@ int main(int argc, char** argv) {
           "U5: defended, nothing yielded");
   }
 
+  // ---- U5b: a probe from BELOW our base — the max() term of B.3.6.6 -----
+  // requested [base-4, base+3]: the FIRST ALLOCATED address in conflict is
+  // our base, not the requested start; count = 4 overlapping addresses
+  {
+    size_t n0 = h.tx.size();
+    const uint64_t their_mac = 0x0A0000000002ull;
+    h.rx(1, their_mac, base - 4, 8);
+    CHECK(h.wait_frames(n0 + 1, 100), "U5b: DEFEND sent");
+    if (h.tx.size() > n0) {
+      Bytes def_exp = maap_frame(their_mac, OWN_MAC, 2, base - 4, 8,
+                                 base, 4);
+      CHECK(h.tx[n0].b == def_exp,
+            "U5b: conflict_start is the first ALLOCATED address (B.3.6.6)");
+      if (h.tx[n0].b != def_exp) { dump("got", h.tx[n0].b); dump("exp", def_exp); }
+    }
+    CHECK(d->defends_o == 2 && d->addr_valid_o, "U5b: defended, claim kept");
+  }
+
   // ---- U6: a PROBE with no overlap is ignored (footnote b) --------------
   {
     size_t n0 = h.tx.size();
     h.rx(1, 0x0A0000000001ull, base + COUNT, 4);   // starts past our block
     h.run_ms(50);
-    CHECK(h.tx.size() == n0 && d->defends_o == 1,
+    CHECK(h.tx.size() == n0 && d->defends_o == 2,
           "U6: non-overlapping PROBE ignored");
   }
 
