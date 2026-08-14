@@ -342,7 +342,18 @@ static std::vector<uint8_t> aecp_frame(uint64_t da, uint64_t sa,
   putbe(&f[18], target_eid, 8);
   putbe(&f[26], ctlr_eid, 8);
   putbe(&f[34], seq, 2);
-  putbe(&f[36], cmd_type & 0x7FFF, 2);            // u = 0
+  // @22..@23 IS NOT ALWAYS A command_type. This masked bit 15 unconditionally
+  // with the comment "u = 0", which is right for an AEM AECPDU (1722.1-2021
+  // 9.2.1.7 puts `u` in the top bit of command_type) and wrong for every other
+  // message_type. 9.6.2 Figure 9-12 gives a VENDOR_UNIQUE AECPDU a 48-bit
+  // protocol_id at @22..@27 with no u bit in it, and 9.4 gives an
+  // ADDRESS_ACCESS AECPDU a tlv_count there. Masking regardless meant the
+  // harness could not put an OUI with bit 7 set ONTO the wire at all, so no
+  // check written with it could ever grade what the DUT did with one - a
+  // testbench that quietly agreed with the DUT about a byte neither of them
+  // was allowed to disagree on.
+  const bool aem_like = (msg_type == 0) || (msg_type == 1);
+  putbe(&f[36], aem_like ? (uint16_t)(cmd_type & 0x7FFF) : cmd_type, 2);
   for (size_t i = 0; i < payload.size(); ++i) f[38 + i] = payload[i];
   if (pad60 && f.size() < 60) f.resize(60, 0);
   return f;
@@ -1791,6 +1802,97 @@ int main(int argc, char** argv) {
                       0xC007, AEM_READ_DESCRIPTOR, rpl);
     CHECK(got == want,
           "M7: READ_DESCRIPTOR regressed after an MVU exchange");
+
+    // ---- M8: the WHOLE protocol_id decides, all 48 bits --------------------
+    // M3 sends one foreign protocol_id and it differs from MVU's in its LAST
+    // BYTE ONLY, so it exercises one comparison term out of four. Deleting
+    // either of the @22..@23 or @24..@25 comparisons, or weakening the @26
+    // one, left both suites fully green: 40 of the 48 bits the design compares
+    // were guarded by nothing.
+    //
+    // ONE CASE PER OCTET, not per comparison. The design compares in four
+    // terms - @22..@23, @24..@25, then @26 and @27 one byte at a time - but a
+    // regression does not have to respect those boundaries, and a first draft
+    // of this table that moved TWO bytes at once still let a weakened @26
+    // term through, because @27 alone was enough to reject the frame. Six
+    // cases, each differing from Milan's identifier in exactly one octet, is
+    // the granularity at which no single term can stop being made unnoticed.
+    struct VuCase { uint16_t hi; uint32_t lo; const char* what; };
+    const VuCase VU_FOREIGN[] = {
+      {0xFF1B, 0xC50AC100u, "foreign in @22 (OUI octet 1)"},
+      {0x00FF, 0xC50AC100u, "foreign in @23 (OUI octet 2)"},
+      {0x001B, 0xFF0AC100u, "foreign in @24 (OUI octet 3)"},
+      {0x001B, 0xC5FFC100u, "foreign in @25 (OUI-36 nibble + protocol)"},
+      {0x001B, 0xC50AFF00u, "foreign in @26 (protocol number, high)"},
+      {0x001B, 0xC50AC1FFu, "foreign in @27 (protocol number, low)"},
+      {0x001B, 0xC50AC101u, "one BIT from MVU, in the last octet"},
+    };
+    for (const VuCase& c : VU_FOREIGN) {
+      auto fpl = mvu_cmd_pl(c.lo, MVU_INFO, 8);
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, VU_COMMAND, 0, EID, CTLR_EID,
+                        0xC010, c.hi, fpl));
+      got = h.wait_any(h.q_aecp, 200);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, VU_RESPONSE, AECP_NOT_IMPLEMENTED,
+                        EID, CTLR_EID, 0xC010, c.hi, fpl);
+      CHECK(!got.empty(), "M8: %s got silence", c.what);
+      CHECK(got == want, "M8: %s was not echoed as NOT_IMPLEMENTED", c.what);
+      if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+    }
+
+    // ---- M8b: a vendor's protocol_id survives the echo, BIT FOR BIT --------
+    // 1722.1-2021 9.6.2 Figure 9-12 gives a VENDOR_UNIQUE AECPDU a 48-bit
+    // protocol_id at @22..@27 with NO u bit anywhere in it. The header
+    // emitter used to clear bit 7 of @22 for every message type, on the
+    // reasoning that @22's top bit is always `u`, and that is only true of an
+    // AEM AECPDU (9.2.1.7). Every OUI with bit 7 set came back mangled.
+    //
+    // MVU could never have shown it: Avnu's 00-1B-C5 has bit 7 clear, so the
+    // whole M-section, the live board probes and every fuzz seed were immune
+    // by construction. These two identifiers are chosen for that bit alone.
+    const VuCase VU_HIGHBIT[] = {
+      {0xFC1B, 0xC50AC100u, "an OUI with bit 7 of @22 SET (0xFC)"},
+      {0x801B, 0xC50AC100u, "an OUI that is bit 7 and nothing else (0x80)"},
+    };
+    for (const VuCase& c : VU_HIGHBIT) {
+      auto fpl = mvu_cmd_pl(c.lo, MVU_INFO, 8);
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, VU_COMMAND, 0, EID, CTLR_EID,
+                        0xC011, c.hi, fpl));
+      got = h.wait_any(h.q_aecp, 200);
+      CHECK(!got.empty(), "M8b: %s got silence", c.what);
+      if (got.size() >= 24) {
+        // @22 is frame byte 36: the ONE byte the old mask touched.
+        CHECK(got[36] == (uint8_t)(c.hi >> 8),
+              "M8b: %s: protocol_id[47:40] came back 0x%02X, want 0x%02X",
+              c.what, got[36], (uint8_t)(c.hi >> 8));
+      }
+      want = aecp_frame(CTLR_MAC, OWN_MAC, VU_RESPONSE, AECP_NOT_IMPLEMENTED,
+                        EID, CTLR_EID, 0xC011, c.hi, fpl);
+      CHECK(got == want, "M8b: %s: the echo is not byte-exact", c.what);
+      if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+    }
+
+    // ---- M8c: ...and an AEM command still clears its u bit -----------------
+    // The fix is a discriminator, not a deletion, so the other side of it
+    // needs a check too. 9.2.1.7: `u` is the top bit of an AEM AECPDU's
+    // command_type and a SOLICITED response carries it clear. A controller
+    // that sent an AEM command with the bit set (it should not, but the field
+    // is on the wire) must still get a solicited response back.
+    std::vector<uint8_t> upl(8, 0);
+    putbe(&upl[0], CFGIX, 2);                     // ENTITY, index 0
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0xC012,
+                      (uint16_t)(0x8000u | AEM_READ_DESCRIPTOR), upl));
+    got = h.wait_any(h.q_aecp, 400);
+    CHECK(!got.empty(), "M8c: an AEM command with u set got silence");
+    if (got.size() >= 24) {
+      CHECK((got[36] & 0x80) == 0,
+            "M8c: the AEM response kept u set (byte @22 = 0x%02X)", got[36]);
+      CHECK((((unsigned)got[36] << 8) | got[37]) == AEM_READ_DESCRIPTOR,
+            "M8c: command_type is 0x%04X, want 0x%04X",
+            ((unsigned)got[36] << 8) | got[37], AEM_READ_DESCRIPTOR);
+    }
   }
 
 

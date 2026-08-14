@@ -365,10 +365,10 @@ int main(int argc, char** argv) {
     auto w16 = [&](uint32_t a) {
       return uint32_t(h.buf[a]) | uint32_t(h.buf[a + 1]) << 8;
     };
-    CHECK(h.run(E_MVUINFO, 0, false), "P18 completes");
+    CHECK(h.run(E_MVUINFO, 0, false), "P17 completes");
     CHECK(h.last_status == ST_OK, "P17 SUCCESS got %u", h.last_status);
     //! 12 header bytes + 20 payload = AECPDU 44 B, control_data_length 32
-    CHECK(h.last_len == 32, "P18 len got %u, want 32", h.last_len);
+    CHECK(h.last_len == 32, "P17 len got %u, want 32", h.last_len);
     CHECK(w16(12) == 0xC50A && w16(14) == 0xC100,
           "P17 protocol_id tail %04x%04x, want C50AC100", w16(12), w16(14));
     CHECK(w16(16) == 0x0000, "P17 r+command_type got %04x, want 0000",

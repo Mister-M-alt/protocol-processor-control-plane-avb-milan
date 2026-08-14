@@ -347,10 +347,15 @@ FRAMES_RX), served **for each Stream Input** of the current configuration with n
 CRF exemption; la_avdecc's controller checks exactly that set
 (`s_MilanMandatoryStreamInputCounters`) and drops the Milan compatibility flag
 when a STREAM_INPUT answer misses one bit of it. TIMESTAMP_VALID and
-TIMESTAMP_NOT_VALID (bits 6 and 7, block offsets 24 and 28) are Milan 1.3's
-addition and sit outside that gate, so a sink that keeps them claims `0x00000FFF`
-and one that does not claims `0x00000F3F` — two honest answers, not one blanket
-one.
+TIMESTAMP_NOT_VALID (bits 6 and 7, block offsets 24 and 28) are **IEEE
+1722.1-2021's**, not Milan's: they are Table 7-156 bits #25 and #24 at Table
+7-157 offsets 24 and 28, and la_avdecc's Milan mandatory set — whose own
+comment cites Milan 1.3 clause 5.3.8.10 — omits them. They are an IEEE counter
+pair Milan declines to compel, so they sit outside that gate either way: a sink
+that keeps them claims `0x00000FFF` and one that does not claims `0x00000F3F`,
+two honest answers rather than one blanket one. (An earlier revision of this
+paragraph called them "Milan 1.3's addition", which reads as though a later
+Milan revision would make them mandatory. Nothing in Milan asks for them.)
 
 ### 6.7 GET_DYNAMIC_INFO iterator
 
@@ -724,7 +729,18 @@ instead of the whole 592 bytes.
 ### 8.2 How a NOT_IMPLEMENTED response is sized, and who decides
 
 §9.3.5.3.3 says an unimplemented command "shall be responded to with a correctly sized
-response", and never says which size. Two readings exist: the length of the command
+response", and never says which size. (§9.3.5.3.3 is `processCommand`, and its own
+opening sentence scopes it to "an AEM Command other than ACQUIRE_ENTITY and
+LOCK_ENTITY". It is cited throughout this section as the SIZING rule, which is what it
+gives; it does not govern those two opcodes' behaviour, and nothing here should be read
+as saying it does.)
+
+**Three mandatory opcodes are unanswered, not one.** Table 7-140's closing note is
+broader than the ENTITY_AVAILABLE line this document used to single out: "An ATDECC
+Talker or Listener shall implement and respond to the ACQUIRE_ENTITY, LOCK_ENTITY, and
+ENTITY_AVAILABLE commands." All three answer NOT_IMPLEMENTED on this build. Measured on
+the AX7101: 0x0000 and 0x0002 by direct probe, 0x0000 and 0x0001 in the Hive 4.3.1 log.
+Answering them correctly-sized is not answering them. Two readings exist: the length of the command
 being answered, or the length the standard gives that opcode's own RESPONSE
 (§7.4.78.2's GET_MAX_TRANSIT_TIME response is 12 octets where its command is 4).
 
@@ -784,9 +800,18 @@ la_avdecc stops at `port_number`
 (`AecpAemReadAvbInterfaceDescriptorResponsePayloadSize` = 8 + 94), which is the 2013
 length, and the read still reports Success because the trailing 4 octets are surplus
 rather than missing. We are right and the controller lags: the descriptor does not
-change. This is not the AUDIO_CLUSTER case (`gen_aem_store.py`), where 2021 §7.2.16 made
-the descriptor SHORTER by dropping the `aes3_*` tail and the truncation moved TO the
-current standard, not away from it.
+change.
+
+The AUDIO_CLUSTER descriptor is **not** a parallel case, and an earlier revision of
+this paragraph got it backwards in a way worth recording, because the wrong version
+turned an open defect into a correctness argument. 1722.1-2013 Table 7.27 ends
+AUDIO_CLUSTER at `format`, offset 86 length 1, for 87 octets. 1722.1-2021 Table 7-27
+**adds** `aes3_data_type_reference` (offset 87, length 1) and `aes3_data_type`
+(offset 88, length 2), for **90**. 2021 made it LONGER. The board serves 87, which is
+the 2013 length, and la_avdecc's constant agrees with 87 only because it is also
+2013. So AVB_INTERFACE is a controller lagging the standard while AUDIO_CLUSTER is
+this device lagging it: opposite directions, and only the first of them is
+somebody else's to fix.
 
 ## 9. Timing
 

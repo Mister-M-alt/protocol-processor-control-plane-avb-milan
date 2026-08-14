@@ -48,10 +48,12 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
     compared to the builder, which would share any bug) and must be 12 + the
     command's payload, the echoed bytes are a non-zero pattern, and the frame
     is the padded 60 octets only where the payload is genuinely short. A5
-    alone proves one 4-byte case, which a length stuck at 4, an echo of zeros
-    or a length held over from the previous command all survive; a live Hive
-    4.3.1 session reported "Incorrect payload size" against exactly this
-    class (see 06 §8.1 for who was right).
+    alone proves one 4-byte case, which a length stuck at 4 or a length held
+    over from the previous command both survive. (An echo of ZEROS does not:
+    A5 grades the echo byte for byte and catches it. An earlier revision of
+    this list said otherwise.) A live Hive 4.3.1 session reported "Incorrect
+    payload size" against exactly this class - see 06 §8.2 for who was right,
+    which was us.
   - **A8/A9** a command addressed to another `entity_id` and an AECP RESPONSE
     arriving as input are both dropped and counted — answering a response is
     how a control plane builds a storm.

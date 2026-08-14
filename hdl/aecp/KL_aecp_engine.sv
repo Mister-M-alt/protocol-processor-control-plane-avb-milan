@@ -726,9 +726,30 @@ module KL_aecp_engine
       6'd33: hdr_byte_w = cmd_r.controller_eid[7:0];
       6'd34: hdr_byte_w = cmd_r.sequence_id[15:8];
       6'd35: hdr_byte_w = cmd_r.sequence_id[7:0];
-      //! u = 0 (solicited); the rest of command_type is echoed from the wire,
-      //! which keeps a VENDOR_UNIQUE response's protocol_id bytes intact
-      6'd36: hdr_byte_w = {1'b0, raw_ct_r[14:8]};
+      //! @22, AND ONLY AN AEM MESSAGE HAS A u BIT THERE. 1722.1-2021 9.2.1.7
+      //! puts `u` in the top bit of an AEM AECPDU's command_type field, and a
+      //! solicited response clears it. Every other message_type defines @22
+      //! for itself: 9.6.2 Figure 9-12 gives a VENDOR_UNIQUE AECPDU a 48-bit
+      //! protocol_id running @22..@27 with NO u bit in it, so @22 there is
+      //! protocol_id[47:40] whole.
+      //!
+      //! This used to clear bit 7 unconditionally, under a comment claiming
+      //! it "keeps a VENDOR_UNIQUE response's protocol_id bytes intact". It
+      //! did the opposite. MEASURED on the AX7101 before the fix, by driving
+      //! four vendor-unique commands and reading back the NOT_IMPLEMENTED
+      //! echo:
+      //!     sent 00-1B-C5-0A-C1-00 -> echoed 00 1b c5 0a c1 00   intact
+      //!     sent 7F-1B-C5-0A-C1-00 -> echoed 7f 1b c5 0a c1 00   intact
+      //!     sent FC-1B-C5-0A-C1-00 -> echoed 7c 1b c5 0a c1 00   CORRUPT
+      //!     sent 80-1B-C5-0A-C1-00 -> echoed 00 1b c5 0a c1 00   CORRUPT
+      //! Every OUI whose first octet has bit 7 set - half of the space - got
+      //! a mangled protocol_id back, so a vendor could not match our refusal
+      //! to the protocol it asked about. Milan's own 00-1B-C5 has bit 7
+      //! clear, which is why GET_MILAN_INFO never showed it and why nothing
+      //! in the suite caught it: every protocol_id ever tested was immune.
+      6'd36: hdr_byte_w = (cmd_r.protocol == PP_PROTO_AEM)
+                          ? {1'b0, raw_ct_r[14:8]}   // AEM: u = 0, solicited
+                          : raw_ct_r[15:8];          // everything else: verbatim
       6'd37: hdr_byte_w = raw_ct_r[7:0];
       default: hdr_byte_w = 8'd0;
     endcase
