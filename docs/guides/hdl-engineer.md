@@ -24,6 +24,7 @@ hdl/adp/            discovery
 hdl/acmp/           Milan binding and probing, plus the binding persistence shadow
 hdl/aecp/           the micro-coded AEM engine, descriptor store, response buffer
 hdl/srp/            the MSRP/MVRP endpoint participant
+hdl/maap/           the IEEE 1722-2016 Annex B address-claim engine
 hdl/top/            protocol_processor_top and the one recorded RX seam
 tb/                 one self-checking Verilator suite per module
 ```
@@ -136,6 +137,7 @@ Allocation order and the slot budget are owned by
 | ACMP | [`KL_pp_acmp_listener`](../../hdl/acmp/KL_pp_acmp_listener.sv), [`KL_acmp_talker`](../../hdl/acmp/KL_acmp_talker.sv), [`KL_acmp_nvm_shadow`](../../hdl/acmp/KL_acmp_nvm_shadow.sv) | [05](../architecture/05_acmp_engine.md) | [F05.3 the authoritative transition matrix](../architecture/05_acmp_engine.md#fig-05-listener-matrix) |
 | AECP | [`hdl/aecp/`](../../hdl/aecp/) | [06](../architecture/06_aecp_engine.md) | [F06.14 command table](../architecture/06_aecp_engine.md#fig-06-cmdtable) |
 | SRP | [`hdl/srp/`](../../hdl/srp/) | [10](../architecture/10_srp_engine.md) | [F10.1 internals](../architecture/10_srp_engine.md#fig-10-blocks) |
+| MAAP | [`KL_pp_maap`](../../hdl/maap/KL_pp_maap.sv) | [11](../architecture/11_maap_engine.md) | the Table B.7 conflict matrix ([11 §6](../architecture/11_maap_engine.md)) |
 
 ### The ACMP listener is a ROM walker, not hand-written arcs
 
