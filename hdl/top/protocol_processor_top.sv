@@ -2223,9 +2223,18 @@ module protocol_processor_top
           armq_r[i][2] <= armq_r[i][3];
         end
         // the push write goes past the shifted survivors: later assignment
-        // to the same index wins, which is exactly the append position
-        if (armq_push_ok_w[i]) begin
-          armq_r[i][armq_mid_w[i][1:0]] <= armq_in_w[i];
+        // to the same index wins, which is exactly the append position.
+        // DECODED, not indexed: `armq_r[i][armq_mid_w[i][1:0]] <= ...` is a
+        // dynamic part-write into the flattened queue vector, which yosys
+        // lowers as a read-modify-write barrel shift over ALL of armq_r —
+        // measured at 13,045 techmap $_MUX_ (about 7,400 mapped LUTs) the
+        // cycle the sixth client landed. The equality-decoded write is the
+        // same behavior as a 4-way enable per entry and costs a comparator
+        // per entry instead.
+        for (int unsigned e = 0; e < 4; e++) begin
+          if (armq_push_ok_w[i] && (armq_mid_w[i][1:0] == 2'(e))) begin
+            armq_r[i][e] <= armq_in_w[i];
+          end
         end
         if (armq_in_vld_w[i] && !armq_push_ok_w[i]) begin
           if (arm_drop_r != 16'hFFFF) arm_drop_r <= arm_drop_r + 16'd1;
