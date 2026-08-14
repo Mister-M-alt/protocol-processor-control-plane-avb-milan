@@ -57,6 +57,57 @@ architecture's value is conformance correctness, not area.
 
 ---
 
+## 1b. MEASURED ON SILICON: what the substitution actually cost and saved
+
+Every number in sections 4 to 6 is an ESTIMATE made before the work. This
+section is the outcome, measured after it, and it supersedes the estimates
+wherever the two disagree.
+
+Both builds below are the same board (ALINX AX7101, `xc7a100t-fgg484-2`), the
+same shape (`endstation_ax7101_1x1_tdm8`, 1x1 AAF 8-channel plus two CRF
+streams), the same Vivado 2026.1 and the same place directive
+(`AltSpreadLogic_high`). Comparing across directives or across shapes is not a
+comparison, which is why this table pins all three.
+
+| | before: legacy control plane | after: this processor | delta |
+|---|---:|---:|---:|
+| Slice LUTs, post-synthesis | 56,779 | **53,320** | **−3,459** |
+| Slice LUTs, post-place | 53,304 | **50,385** | **−2,919** |
+| Slice Registers, post-place | 55,023 | 58,312 | +3,289 |
+| Block RAM tiles | 109 | 125 | +16 |
+
+`before` is build `ax7101_asl_v0043b`, the last shipping bitstream whose
+1722.1 control plane was the local RTL. `after` is `ax7101_asl_dfigate`, the
+current shipping bitstream, in which that plane is deleted and this processor
+serves ADP, ACMP, AECP and SRP.
+
+**The LUT saving is real and it is the point.** 3,459 LUTs is 5.5 % of the
+part's 63,400, on a design that closes timing about one seed in three and has
+run as low as 17 free slices. That headroom is what the substitution buys.
+
+**The register and block-RAM costs are real too, and they are the honest other
+side.** Registers went UP by 3,289 and block RAM by 16 tiles. Both are
+affordable here for a specific reason: this part is SLICE-bound, not
+LUT-bound, and registers sit at about 46 % against slices at about 99.9 %, so
+flops are the slack resource and LUTs are not. On a differently-shaped part
+that trade could invert, and an integrator should re-measure rather than
+inherit this conclusion.
+
+**The block-RAM number is not a fixed property of the design.** It moved
+during integration and it moved a long way. The first substitution build hit
+**135 of 135 tiles** and failed `place_design`; moving the AECP response buffer
+and the descriptor image into main memory took it to 125 and let the design
+place. Section 6's advice to keep memory-shaped state off-chip is therefore
+not theory: it is the difference between a build that fits and one that does
+not. See the consumer's `docs/findings/PP_SHADOW_AREA_0812.md` for that
+sequence.
+
+**What is NOT in these numbers.** They price the whole SoC, not the processor
+in isolation, so they net this block's cost against the plane it replaced.
+They are also a 1x1 shape; the 8x8 shape was never built with the processor,
+and its descriptor image alone is 23,216 bytes against 5,520 here. Do not
+scale this delta linearly.
+
 ## 2. Measurement discipline (read before quoting any number)
 
 The reference platform's area records enforce rules that this analysis inherits.
