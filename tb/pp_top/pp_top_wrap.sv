@@ -70,6 +70,16 @@ module pp_top_wrap (
     output logic        aecp_txn_valid_o,
     input  wire         aecp_txn_ready_i,
 
+    // GET_COUNTERS read face (06 §6.6) — the C++ harness plays the
+    // integrator's counter store behind it, so the counter VALUES this suite
+    // checks are the model's and never the DUT's own
+    output logic        ctr_req_o,
+    output logic [15:0] ctr_desc_type_o,
+    output logic [15:0] ctr_desc_index_o,
+    output logic  [5:0] ctr_word_o,
+    input  wire  [31:0] ctr_data_i,
+    input  wire         ctr_wait_i,
+
     // descriptor-image memory master (07 §3.3) — the C++ harness plays a
     // latency-injecting DRAM behind it
     output logic        desc_mem_req_valid_o,
@@ -255,6 +265,12 @@ module pp_top_wrap (
       .aecp_rxs_slot_len_o   (aecp_slot_len_nc_w),
       .aecp_rxs_free_i       (1'b0),
       .aecp_rxs_free_slot_i  (2'd0),
+      .ctr_req_o             (ctr_req_o),
+      .ctr_desc_type_o       (ctr_desc_type_o),
+      .ctr_desc_index_o      (ctr_desc_index_o),
+      .ctr_word_o            (ctr_word_o),
+      .ctr_data_i            (ctr_data_i),
+      .ctr_wait_i            (ctr_wait_i),
       .desc_mem_req_valid_o  (desc_mem_req_valid_o),
       .desc_mem_req_ready_i  (desc_mem_req_ready_i),
       .desc_mem_req_addr_o   (desc_mem_req_addr_o),

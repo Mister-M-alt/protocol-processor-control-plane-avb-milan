@@ -27,7 +27,7 @@ enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
        E_CHKARG = 192, E_LOCK = 224, E_GATHER = 256, E_SETSR = 288,
        E_NAME = 320, E_COPY = 352, E_MAPV = 384, E_MAPVF = 400,
        E_OVF = 416, E_FMT = 512, E_NOTIMPL = 560, E_ACQ = 576,
-       E_STPRE = 592, E_MVUINFO = 736 };
+       E_STPRE = 592, E_MVUINFO = 736, E_GCTRS = 768 };
 
 // IEEE 1722.1-2021 Table 7-141
 enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
@@ -365,10 +365,10 @@ int main(int argc, char** argv) {
     auto w16 = [&](uint32_t a) {
       return uint32_t(h.buf[a]) | uint32_t(h.buf[a + 1]) << 8;
     };
-    CHECK(h.run(E_MVUINFO, 0, false), "P17 completes");
+    CHECK(h.run(E_MVUINFO, 0, false), "P18 completes");
     CHECK(h.last_status == ST_OK, "P17 SUCCESS got %u", h.last_status);
     //! 12 header bytes + 20 payload = AECPDU 44 B, control_data_length 32
-    CHECK(h.last_len == 32, "P17 len got %u, want 32", h.last_len);
+    CHECK(h.last_len == 32, "P18 len got %u, want 32", h.last_len);
     CHECK(w16(12) == 0xC50A && w16(14) == 0xC100,
           "P17 protocol_id tail %04x%04x, want C50AC100", w16(12), w16(14));
     CHECK(w16(16) == 0x0000, "P17 r+command_type got %04x, want 0000",
@@ -426,6 +426,42 @@ int main(int argc, char** argv) {
             "P16 %s: a REFUSED write changed while it was held", p.name);
     }
     h.rb_stall = 2;
+  }
+
+  // ---- P18: GET_COUNTERS lays out IEEE §7.4.42.2's block, all 32 quadlets
+  // The response is fixed-size on every status: descriptor_type, then
+  // descriptor_index, then counters_valid, then THIRTY-TWO quadlets. A short
+  // block is a deserialize error at the controller (Hive 4.3.1 reports exactly
+  // that shape of defect as "Incorrect payload size"), so the length is a check
+  // in its own right, and so is every quadlet's selector: quadlet n must come
+  // from gather selector {n>>2, n&3} and from nowhere else, because that
+  // mapping is the whole reason the block needs no decoder.
+  //
+  // Byte order here is the TB buffer's own little-endian convenience, not the
+  // wire's — KL_aecp_resp_buf owns the 1722.1 big-endian placement and tb/pp_top
+  // grades it against real AECPDU bytes.
+  {
+    const uint16_t DESC_STREAM_INPUT = 0x0005;
+    CHECK(h.run(E_GCTRS, DESC_STREAM_INPUT, false), "P18 completes");
+    CHECK(h.last_status == ST_OK, "P18 status got %u", h.last_status);
+    // 12 header + type 2 + index 2 + counters_valid 4 + 32 x 4 = 148, which is
+    // the control_data_length of a 160-byte GET_COUNTERS response (F06.14)
+    CHECK(h.last_len == 148, "P18 len got %u, want 148", h.last_len);
+    CHECK(h.sends == 1, "P18 one send got %d", h.sends);
+    CHECK(h.w32(12) == ((uint32_t)(OPD1 & 0xFFFF) << 16) | DESC_STREAM_INPUT,
+          "P18 {type, index} got %08x", h.w32(12));
+    CHECK(h.w32(16) == (uint32_t)Harness::gxval(0x80),
+          "P18 counters_valid comes from selector 0x80, got %08x", h.w32(16));
+    int bad_q = -1;
+    for (int n = 0; n < 32; ++n) {
+      uint8_t sel = uint8_t(((n >> 2) << 4) | (n & 3));
+      if (h.w32(20 + 4 * n) != (uint32_t)Harness::gxval(sel)) { bad_q = n; break; }
+    }
+    CHECK(bad_q < 0, "P18 quadlet %d is not what selector 0x%02x answered",
+          bad_q, bad_q < 0 ? 0 : (((bad_q >> 2) << 4) | (bad_q & 3)));
+    CHECK(h.w32(148) == 0, "P18 wrote past the 32-quadlet block");
+    CHECK(h.commits == 0 && h.nvm_marks.empty() && h.notify_classes.empty(),
+          "P18 a GET has no effects");
   }
 
   h.tick();

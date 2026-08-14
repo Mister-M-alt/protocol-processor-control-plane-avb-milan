@@ -327,6 +327,27 @@ Events (per sink, feed the STREAM_INPUT counter bank and Table 5.22 notification
 `TIMESTAMP_UNCERTAIN`, `UNSUPPORTED_FORMAT`, `LATE/EARLY_TIMESTAMP`, `FRAMES_RX_TICK`;
 per source: `STREAM_START/STOP`, `MEDIA_RESET`, `TIMESTAMP_UNCERTAIN`, `FRAMES_TX_TICK`.
 
+**Landed shape of the counter read (`ctr_*` on `protocol_processor_top`).** The
+event list above is how a complete implementation would *feed* a counter bank
+inside the processor; the tree ships the other direction, because the counters
+already exist in the integrator's datapath and mirroring them here would cost a
+second copy of every tally. GET_COUNTERS therefore READS:
+
+| Signal | Dir | Meaning |
+|---|---|---|
+| `ctr_req_o` | out | a quadlet of a GET_COUNTERS response is being asked for |
+| `ctr_desc_type_o` / `ctr_desc_index_o` | out | the object, straight off AECPDU @24 / @26 |
+| `ctr_word_o` | out | 0..31 = `counters_block` quadlet at block byte 4·n (IEEE Table 7-157 for STREAM_INPUT); 32 = the `counters_valid` word itself |
+| `ctr_data_i` | in | that quadlet, 32-bit unsigned, wrapping |
+| `ctr_wait_i` | in | **HOLD** the beat; 0 means the answer is on `ctr_data_i` now |
+
+The hold polarity is the contract's safety property: an integrator who leaves the
+face unwired drives 0, every quadlet reads 0, `counters_valid` reads 0, and the
+response says "this entity keeps no counters for that object" — which is what
+§7.4.42.2 means by a clear valid bit. Claiming a bit whose quadlet never moves
+is the one answer the face must never be able to produce by accident. A face
+that holds forever is bounded by `MEM_TIMEOUT_CYC_P` ([06 §8.1](06_aecp_engine.md)).
+
 ### 4.5 `mclk` — media clocking
 
 | Op | Args | Result |

@@ -273,6 +273,25 @@ module protocol_processor_top
     input  wire                     aecp_rxs_free_i,    //! return the consumed slot
     input  wire  [RXS_W_C-1:0]      aecp_rxs_free_slot_i, //! which slot
 
+    //! ---- GET_COUNTERS read face (06 §6.6; IEEE §7.4.42, Milan §5.4.2.25) ----
+    //! The processor parses the command and lays out §7.4.42.2's 32-quadlet
+    //! block; the INTEGRATOR owns what the numbers mean, because the events
+    //! Milan Table 5.6 counts happen in its stream datapath. One quadlet is
+    //! asked for at a time: `ctr_word_o` 0..31 is the block quadlet at block
+    //! byte 4·n and `ctr_word_o` = 32 is the counters_valid mask itself, so
+    //! there is one place to say what this build actually measures.
+    //!
+    //! LEAVING IT UNWIRED IS SAFE AND HONEST, by the polarity of the hold: an
+    //! undriven `ctr_wait_i` is 0, every quadlet answers 0 immediately, and a
+    //! counters_valid of 0 is §7.4.42.2's own way of saying "no counter here".
+    //! What it must never be is a mask of ones over a block that never moves.
+    output logic        ctr_req_o,            //! a quadlet is being asked for
+    output logic [15:0] ctr_desc_type_o,      //! AECPDU @24
+    output logic [15:0] ctr_desc_index_o,     //! AECPDU @26
+    output logic  [5:0] ctr_word_o,           //! 0..31 = block quadlet, 32 = counters_valid
+    input  wire  [31:0] ctr_data_i,           //! that quadlet
+    input  wire         ctr_wait_i,           //! HOLD the beat (not a ready)
+
     //! ---- NVM boot restore + alarm (07 §5.3) ----
     input  wire         restore_go_i,          //! start boot restore
     output logic        restore_busy_o,        //! restore walk running
@@ -2404,6 +2423,12 @@ module protocol_processor_top
       .rmem_wr_strb_o     (resp_mem_wr_strb_o),
       .rmem_wr_done_i     (resp_mem_wr_done_i),
       .rmem_wr_err_i      (resp_mem_wr_err_i),
+      .ctr_req_o          (ctr_req_o),
+      .ctr_desc_type_o    (ctr_desc_type_o),
+      .ctr_desc_index_o   (ctr_desc_index_o),
+      .ctr_word_o         (ctr_word_o),
+      .ctr_data_i         (ctr_data_i),
+      .ctr_wait_i         (ctr_wait_i),
       .lock_held_i        (1'b0),               // lock manager: P4
       .lock_ctlr_i        (64'd0),
       .eff_commit_o       (aecp_eff_commit_nc_w),

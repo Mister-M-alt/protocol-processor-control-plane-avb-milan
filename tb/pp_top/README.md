@@ -16,7 +16,7 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make` — exit 0 = PASS; tally `198 checks: 198 PASS, 0 FAIL`.
+`make` — exit 0 = PASS; tally `219 checks: 219 PASS, 0 FAIL`.
 
 ## What it proves
 
@@ -255,3 +255,40 @@ The `COPY_BUFFER` one is the interesting result: it goes red HERE and stays
 green in `tb/ucpu` (0 checks red there), because that suite's µprogram only copies a
 whole number of 8-byte lanes. A descriptor whose length is not a multiple of 8
 is a thing only the end-to-end suite sees.
+
+## Section K — GET_COUNTERS (06 §6.6; IEEE §7.4.42, Milan §5.4.2.25)
+
+The harness plays the **integrator's counter store**, never the DUT's: it decides
+what a quadlet means and which of them exist, and the suite then demands the
+processor carry that answer onto the wire unchanged. Two masks on purpose —
+`0x00000FFF` for an AAF sink that keeps the tv-bit tallies, Milan v1.2 Table
+5.16's `0x00000F3F` for a CRF Media Clock Input that does not — so a processor
+that substituted a mask of its own would be caught rather than flattered. The
+store holds every beat for two cycles by default, because a face that answers in
+the same cycle never exercises the hold.
+
+K1 demands the byte-exact 174-byte frame (Figure 7-67's block runs to byte 156,
+so the AECPDU is 160 and `control_data_length` 148 — a short one is what Hive
+4.3.1 reports as "Incorrect payload size"); K2 demands the Milan mandatory set
+la_avdecc gates the badge on; K3 asks for STREAM_INPUT **1** and demands a
+different object's answer, which is the whole point of reading `descriptor_index`
+from @26 rather than @30, and demands zero bytes behind a clear mask bit; K4
+demands SUCCESS with an EMPTY mask and a full-size block for ENTITY; K5 makes a
+truncated command `BAD_ARGUMENTS`; K6 runs the same command at zero hold and at
+an 11-cycle hold per quadlet and demands identical bytes; K7 wedges the store
+outright and demands a bounded `ENTITY_MISBEHAVING` **and a working
+READ_DESCRIPTOR immediately afterwards**; K8 demands the store be asked for the
+mask and then quadlets 0..31 in order, consecutive repeats folded away — a
+repeat under back-pressure is free, an index that MOVES under it is a lost beat.
+
+| Break | Went red |
+|---|---|
+| `descriptor_index` read at the READ_DESCRIPTOR offset instead of §7.4.42.1's @26 | **3** red |
+| the block stops after 12 quadlets instead of 32 | **9** red |
+| a voided response is still sealed with its intended payload length | **2** red |
+| the counters-face watchdog never fires | **5** red |
+| `counters_valid` is a constant `0xFFF` instead of what the store returns | **6** red |
+
+The last one is the one worth keeping: it is the advertised-zero lie in its
+purest form — a full mask over a block the fabric never fills — and it must not
+be able to pass.

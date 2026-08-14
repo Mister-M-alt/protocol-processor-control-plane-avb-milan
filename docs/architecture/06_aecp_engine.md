@@ -336,6 +336,22 @@ Counters are 32-bit wrapping; interval-latched events sample at `T-CTR-OBSERVE`;
 Any counter update arms the per-descriptor GET_COUNTERS notification, rate-limited per
 descriptor by `T-CTR-NOTIF`.
 
+**Who decides the mask.** The masks above are what a *complete* PAAD-AE owes;
+what a given build may claim is what its fabric measures, and the engine carries
+whatever `counters_valid` the integrator's `ctr_*` face returns rather than a
+constant of its own. The bar that matters for the Milan badge is
+Milan v1.2 §5.3.8.10 with Table 5.16 (mask `0x00000F3F`: MEDIA_LOCKED,
+MEDIA_UNLOCKED, STREAM_INTERRUPTED, SEQ_NUM_MISMATCH, MEDIA_RESET,
+TIMESTAMP_UNCERTAIN, UNSUPPORTED_FORMAT, LATE_TIMESTAMP, EARLY_TIMESTAMP,
+FRAMES_RX), served **for each Stream Input** of the current configuration with no
+CRF exemption; la_avdecc's controller checks exactly that set
+(`s_MilanMandatoryStreamInputCounters`) and drops the Milan compatibility flag
+when a STREAM_INPUT answer misses one bit of it. TIMESTAMP_VALID and
+TIMESTAMP_NOT_VALID (bits 6 and 7, block offsets 24 and 28) are Milan 1.3's
+addition and sit outside that gate, so a sink that keeps them claims `0x00000FFF`
+and one that does not claims `0x00000F3F` — two honest answers, not one blanket
+one.
+
 ### 6.7 GET_DYNAMIC_INFO iterator
 
 <a id="fig-06-gdi"></a>**F06.7 — Two-pass execution (IEEE §7.4.76)**
@@ -562,9 +578,51 @@ single-source command model ([09 §1](09_verification.md)).
 | Opcode | Answer |
 |---|---|
 | 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor; `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
+| 0x0029 GET_COUNTERS | real: SUCCESS + `descriptor_type`/`descriptor_index`/`counters_valid` + all 32 quadlets (payload 136, cdl 148), the values coming from the integrator's counter face; `BAD_ARGUMENTS` on a command short of §7.4.42.1's four bytes |
 | 0x0026 IDENTIFY_NOTIFICATION | `BAD_ARGUMENTS` (§7.4.39.2 — the opcode-specific rule over §9.3.5.3.3) |
 | MVU 0x0000 GET_MILAN_INFO | real: SUCCESS + the Figure 5.4 body — `protocol_version` 1, `features_flags` 0, `certification_version` 0 (§6.9 and the honesty note below); AECPDU 44 B, cdl 32 |
 | everything else, all message types | `NOT_IMPLEMENTED` with the command **echoed** (F06.14 / §9.3.5.3.3) |
+
+**GET_COUNTERS keeps no counters, and that is the design.** The events Milan
+Table 5.6 counts happen in the integrator's stream datapath, so the engine owns
+the §7.4.42.2 block layout and asks a `ctr_*` read face for one quadlet at a
+time: `ctr_word_o` 0..31 is the block quadlet at block byte 4·n, and
+`ctr_word_o` = 32 is `counters_valid` itself, so one face carries both the
+values and the claim about them. The µprogram (`E_GCTRS`) is branch-free — 16
+µops, no status arm — because §7.4.42.2 already gives the honest answer for an
+object this build measures nothing for: `counters_valid` = 0 means "no quadlet
+here", where a mask of ones over a block of zeros would be a lie. ENTITY is
+that case by the standard itself (Table 7-150 has nothing but ENTITY_SPECIFIC
+bits, none Milan-mandatory).
+
+`ctr_wait_i` is asserted to **hold**, not to grant, so an unwired face answers 0
+immediately and the response carries an empty mask rather than hanging. A face
+that holds forever is bounded by `MEM_TIMEOUT_CYC_P` and voids the response
+through the ENTITY_MISBEHAVING rebuild: the µCPU it would otherwise stall is the
+same one READ_DESCRIPTOR runs on, and losing the descriptor path is worse than
+losing a counter read.
+
+Measured cost of the whole opcode inside `KL_aecp_engine`, yosys 0.66
+`synth_xilinx -family xc7 -flatten`, against the commit it lands on:
+**+174 LUT, +17 flip-flops**, with block RAM, distributed RAM and CARRY4
+essentially unchanged — the 2048-word µcode ROM absorbed `E_GCTRS` in its fill,
+so the 32-quadlet block costs no memory at all.
+
+The flip-flop figure is exact and accounted for: a 13-bit timeout counter, its
+sticky fault bit and the per-command "this is a counters command" bit are 15 of
+the 17. Tying `ctr_wait_i` to a constant — an integrator whose counters answer
+combinationally — folds the timeout counter away entirely; **measured**, the same
+build drops to 1,799 flops.
+
+The LUT figure deserves less confidence than that, and the reason is measured
+rather than asserted: on the same instrument the preceding GET_MILAN_INFO change
+measured **−32 LUT** (a functional addition that came out smaller), and this same
+GET_COUNTERS change measured **+70** when applied to the tree before it. Read it
+as "of order a hundred", not as a number. Vivado —
+[`syn/ooc`](../../syn/ooc/README.md)'s instrument of record, which put
+`KL_aecp_ucpu` at 1,070 LUT where yosys puts it at 1,122 — has not been run
+against this change, and at the shipping build's occupancy a three-seed sweep is
+the only thing that settles whether it fits.
 
 Δ7's ACQUIRE_ENTITY (`NOT_SUPPORTED` with `owner_id` = 0) is therefore **not yet**
 distinguished from the generic echo — the exemplar µprogram exists (`E_ACQ`) but the

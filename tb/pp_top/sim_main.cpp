@@ -319,6 +319,7 @@ static bool frame_has(const std::vector<uint8_t>& f, bool msrp, int type,
 static const uint16_t AEM_READ_DESCRIPTOR = 0x0004;
 static const uint16_t AEM_GET_SAMPLING_RATE = 0x0015;
 static const uint16_t AEM_IDENTIFY_NOTIF  = 0x0026;
+static const uint16_t AEM_GET_COUNTERS    = 0x0029;
 enum { AECP_SUCCESS = 0, AECP_NOT_IMPLEMENTED = 1, AECP_NO_SUCH_DESCRIPTOR = 2,
        AECP_BAD_ARGUMENTS = 7 };
 
@@ -509,6 +510,41 @@ struct H {
   uint64_t rm_reqs = 0, rm_writes = 0;
   vluint64_t aecp_rx_t = 0;
   std::deque<std::vector<uint8_t>> q_aecp;
+
+  // ---- the integrator's counter store (06 §6.6) ------------------------
+  // This model is the INTEGRATOR, not the DUT: the processor lays out IEEE
+  // §7.4.42.2's block and asks {descriptor_type, descriptor_index, quadlet};
+  // what a quadlet MEANS is decided here, exactly as it is decided in the
+  // fabric. Two different masks on purpose — Milan v1.2 Table 5.16's ten for
+  // a CRF Media Clock Input that keeps no tv-bit tallies, those ten plus
+  // TIMESTAMP_VALID/NOT_VALID for an AAF sink that does — so the suite proves
+  // the processor carries whatever mask it is given rather than one blanket
+  // answer. Nothing behind a CLEAR mask bit is ever non-zero here: a value
+  // under an unset bit would make the wire check pass for the wrong reason.
+  static const uint32_t CTR_MASK_AAF = 0x00000FFFu;
+  static const uint32_t CTR_MASK_CRF = 0x00000F3Fu;
+  int  ctr_hold = 2;          // cycles the store makes the engine wait
+  bool ctr_stuck = false;     // a face that never answers at all
+  int  ctr_hold_cur = 0;
+  uint64_t ctr_reads = 0;
+  //! the quadlets asked for, consecutive repeats folded away. The face is a
+  //! LEVEL: while the response buffer refuses a write the same quadlet is
+  //! asked again, which is free and harmless — what must never happen is the
+  //! index MOVING under that back-pressure, because then a held beat writes
+  //! the wrong quadlet
+  std::vector<uint8_t> ctr_seq;
+  static uint32_t ctr_mask(uint16_t ty, uint16_t ix) {
+    if (ty != 0x0005) return 0;              // only STREAM_INPUT is backed
+    if (ix == 0) return CTR_MASK_AAF;
+    if (ix == 1) return CTR_MASK_CRF;
+    return 0;
+  }
+  static uint32_t ctr_value(uint16_t ty, uint16_t ix, uint8_t w) {
+    uint32_t m = ctr_mask(ty, ix);
+    if (w == 32) return m;
+    if (w > 31 || !((m >> w) & 1u)) return 0;
+    return 0xC0000000u | (uint32_t(ty) << 16) | (uint32_t(ix) << 8) | w;
+  }
 
   uint64_t rmem_rd64(uint32_t a) const {
     uint64_t v = 0;
@@ -728,6 +764,27 @@ struct H {
         nv_st = NV_IDLE;
       }
     }
+
+    // ---- GET_COUNTERS store (06 §6.6): the face pushes back by DEFAULT,
+    // because a store that answers in the same cycle never exercises the hold
+    d->ctr_wait_i = 0;
+    d->ctr_data_i = 0;
+    if (d->ctr_req_o) {
+      if (ctr_stuck || ctr_hold_cur < ctr_hold) {
+        d->ctr_wait_i = 1;
+        ++ctr_hold_cur;
+      } else {
+        uint8_t w = (uint8_t)d->ctr_word_o;
+        d->ctr_data_i = ctr_value((uint16_t)d->ctr_desc_type_o,
+                                  (uint16_t)d->ctr_desc_index_o, w);
+        ctr_hold_cur = 0;
+        ++ctr_reads;
+        if (ctr_seq.empty() || ctr_seq.back() != w) ctr_seq.push_back(w);
+      }
+    } else {
+      ctr_hold_cur = 0;
+    }
+    d->eval();
 
     d->clk_i = 1; d->eval();
     t++;
@@ -1946,6 +2003,170 @@ int main(int argc, char** argv) {
     CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
                             0xC020, AEM_READ_DESCRIPTOR, epl),
           "B11: a slower memory changed the bytes on the wire");
+  }
+
+  // ==== K. GET_COUNTERS end to end (06 §6.6; IEEE §7.4.42, Milan §5.4.2.25)
+  // Milan v1.2 §5.3.8.10 makes the Table 5.6 counters mandatory "for each
+  // Stream Input", §5.4.2.25 makes GET_COUNTERS the way to read them, and
+  // la_avdecc's s_MilanMandatoryStreamInputCounters (Milan 1.3 Clause 5.3.8.10
+  // in its own comment) is that set exactly: MEDIA_LOCKED, MEDIA_UNLOCKED,
+  // STREAM_INTERRUPTED, SEQ_NUM_MISMATCH, MEDIA_RESET, TIMESTAMP_UNCERTAIN,
+  // UNSUPPORTED_FORMAT, LATE_TIMESTAMP, EARLY_TIMESTAMP, FRAMES_RX — mask
+  // 0x00000F3F. A STREAM_INPUT answer missing one bit of it costs the entity
+  // its Milan compatibility flag, so that mask is a check of its own below.
+  {
+    const uint16_t DT_ENTITY = 0x0000, DT_STREAM_INPUT = 0x0005;
+    const uint32_t MILAN_MANDATORY_SI = 0x00000F3Fu;
+
+    auto cmd = [&](uint16_t op, const std::vector<uint8_t>& pl, uint16_t seq) {
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, seq, op, pl));
+      return h.wait_any(h.q_aecp, 400);
+    };
+    auto ctr_pl = [](uint16_t ty, uint16_t ix) {
+      std::vector<uint8_t> p(4, 0);
+      putbe(&p[0], ty, 2); putbe(&p[2], ix, 2);
+      return p;
+    };
+    //! the model's own §7.4.42.2 payload: descriptor_type, descriptor_index,
+    //! counters_valid, then THIRTY-TWO quadlets, built from the store the
+    //! harness plays — never from anything the DUT emitted
+    auto ctr_expect_pl = [&](uint16_t ty, uint16_t ix) {
+      std::vector<uint8_t> p(136, 0);
+      putbe(&p[0], ty, 2);
+      putbe(&p[2], ix, 2);
+      putbe(&p[4], H::ctr_mask(ty, ix), 4);
+      for (int n = 0; n < 32; ++n)
+        putbe(&p[8 + 4 * n], H::ctr_value(ty, ix, uint8_t(n)), 4);
+      return p;
+    };
+    auto expect = [&](uint8_t status, uint16_t op, uint16_t seq,
+                      const std::vector<uint8_t>& pl) {
+      return aecp_frame(CTLR_MAC, OWN_MAC, 1, status, EID, CTLR_EID, seq, op,
+                        pl);
+    };
+    auto valid_mask_of = [](const std::vector<uint8_t>& f) {
+      return (f.size() < 46) ? 0u
+           : (uint32_t(f[42]) << 24 | uint32_t(f[43]) << 16 |
+              uint32_t(f[44]) << 8  | uint32_t(f[45]));
+    };
+
+    // ---- K1: STREAM_INPUT 0, byte-exact, and the size the figure fixes ----
+    auto got = cmd(AEM_GET_COUNTERS, ctr_pl(DT_STREAM_INPUT, 0), 0xD001);
+    auto want = expect(AECP_SUCCESS, AEM_GET_COUNTERS, 0xD001,
+                       ctr_expect_pl(DT_STREAM_INPUT, 0));
+    CHECK(!got.empty(), "K1: no GET_COUNTERS response came back");
+    // Figure 7-67 runs the block to byte 156, so the AECPDU is 160 B and the
+    // frame 174 B; Hive reports a short one as "Incorrect payload size"
+    CHECK(got.size() == 38 + 136, "K1: response is %zu B, want %d",
+          got.size(), 38 + 136);
+    CHECK(got == want, "K1: GET_COUNTERS response is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+    CHECK(got.size() > 17 && ((got[16] & 0x07) << 8 | got[17]) == 148,
+          "K1: control_data_length is %u, want 148",
+          got.size() > 17 ? ((got[16] & 0x07) << 8 | got[17]) : 0);
+
+    // ---- K2: the Milan mandatory set is PRESENT (the la_avdecc gate) ------
+    CHECK((valid_mask_of(got) & MILAN_MANDATORY_SI) == MILAN_MANDATORY_SI,
+          "K2: STREAM_INPUT 0 counters_valid 0x%08x misses Milan Table 5.16",
+          valid_mask_of(got));
+
+    // ---- K3: index 1 is a DIFFERENT object, read from AECPDU @26 ---------
+    // §7.4.42.1 puts descriptor_index at @26 where READ_DESCRIPTOR puts a
+    // reserved field; reading the wrong offset answers index 0's counters for
+    // every index, which is the failure this check exists to catch
+    got = cmd(AEM_GET_COUNTERS, ctr_pl(DT_STREAM_INPUT, 1), 0xD002);
+    want = expect(AECP_SUCCESS, AEM_GET_COUNTERS, 0xD002,
+                  ctr_expect_pl(DT_STREAM_INPUT, 1));
+    CHECK(got == want, "K3: STREAM_INPUT 1 response is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+    CHECK(valid_mask_of(got) == H::CTR_MASK_CRF,
+          "K3: mask 0x%08x, want the store's 0x%08x — the processor must "
+          "carry the mask it is given, not one of its own",
+          valid_mask_of(got), H::CTR_MASK_CRF);
+    CHECK((valid_mask_of(got) & MILAN_MANDATORY_SI) == MILAN_MANDATORY_SI,
+          "K3: STREAM_INPUT 1 misses Milan Table 5.16");
+    // TIMESTAMP_VALID / TIMESTAMP_NOT_VALID are block quadlets 6 and 7; this
+    // object keeps neither, so both the mask bits and the quadlets are 0
+    CHECK(got.size() >= 174 &&
+          (valid_mask_of(got) & 0x000000C0u) == 0 &&
+          got[46 + 24] == 0 && got[46 + 28] == 0,
+          "K3: an unclaimed counter still put bytes in the block");
+
+    // ---- K4: ENTITY — SUCCESS with an EMPTY mask, still full size ---------
+    // IEEE Table 7-150 gives the ENTITY descriptor nothing but ENTITY_SPECIFIC
+    // bits and Milan makes none of them mandatory, so the honest answer is
+    // "no counters here" (§7.4.42.2: a SET bit means the quadlet is valid) —
+    // not a mask of ones over a block that never moves
+    got = cmd(AEM_GET_COUNTERS, ctr_pl(DT_ENTITY, 0), 0xD003);
+    want = expect(AECP_SUCCESS, AEM_GET_COUNTERS, 0xD003,
+                  ctr_expect_pl(DT_ENTITY, 0));
+    CHECK(got == want, "K4: ENTITY GET_COUNTERS is not byte-exact");
+    CHECK(got.size() == 38 + 136,
+          "K4: an empty mask still owes the full block, got %zu B", got.size());
+    CHECK(valid_mask_of(got) == 0, "K4: ENTITY claimed counters it has none of");
+
+    // ---- K5: a truncated GET_COUNTERS is BAD_ARGUMENTS -------------------
+    // §7.4.42.1's command is descriptor_type + descriptor_index; answering
+    // ENTITY-index-0 out of the zeros that follow a short header is a silent
+    // misinterpretation, exactly as it is for a truncated READ_DESCRIPTOR
+    std::vector<uint8_t> short_pl(2, 0);
+    got = cmd(AEM_GET_COUNTERS, short_pl, 0xD004);
+    want = expect(AECP_BAD_ARGUMENTS, AEM_GET_COUNTERS, 0xD004, short_pl);
+    CHECK(!got.empty(), "K5: a truncated GET_COUNTERS got no answer");
+    CHECK(got == want, "K5: truncated-command answer is not byte-exact");
+
+    // ---- K6: the store's back-pressure is not a correctness parameter ----
+    int hold0 = h.ctr_hold;
+    h.ctr_hold = 0;
+    auto fast = cmd(AEM_GET_COUNTERS, ctr_pl(DT_STREAM_INPUT, 0), 0xD005);
+    h.ctr_hold = 11;
+    auto slow = cmd(AEM_GET_COUNTERS, ctr_pl(DT_STREAM_INPUT, 0), 0xD005);
+    h.ctr_hold = hold0;
+    CHECK(!fast.empty() && fast == slow,
+          "K6: an 11-cycle hold per quadlet changed the bytes on the wire");
+    CHECK(fast == expect(AECP_SUCCESS, AEM_GET_COUNTERS, 0xD005,
+                         ctr_expect_pl(DT_STREAM_INPUT, 0)),
+          "K6: the zero-hold run is not byte-exact either");
+
+    // ---- K7: a WEDGED store must not take the descriptor path with it ----
+    // ctr_wait_i held forever is the one way this face can stop a command
+    // retiring, and the µCPU it stops is the same one READ_DESCRIPTOR runs on
+    uint16_t rerr0 = d->dbg_resp_err_o;
+    h.ctr_stuck = true;
+    got = cmd(AEM_GET_COUNTERS, ctr_pl(DT_STREAM_INPUT, 0), 0xD006);
+    h.ctr_stuck = false;
+    CHECK(!got.empty(), "K7: a wedged counter store hung the AECP engine");
+    CHECK(got == expect(10 /* ENTITY_MISBEHAVING, §7.4 status 10 */,
+                        AEM_GET_COUNTERS, 0xD006, {}),
+          "K7: the voided response is not the bare ENTITY_MISBEHAVING answer");
+    CHECK(d->dbg_resp_err_o == uint16_t(rerr0 + 1),
+          "K7: the voided response was not counted");
+    // and the crown jewel still works
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2); putbe(&rd[6], 0, 2);
+    got = cmd(AEM_READ_DESCRIPTOR, rd, 0xD007);
+    std::vector<uint8_t> epl(4, 0);
+    putbe(&epl[0], CFGIX, 2);
+    epl.insert(epl.end(), desc_entity.begin(), desc_entity.end());
+    CHECK(got == expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0xD007, epl),
+          "K7: READ_DESCRIPTOR regressed after a counters-face timeout");
+
+    // ---- K8: every quadlet, once, in order, and none under back-pressure --
+    // The counters_valid word first (it is emitted at @28, before the block),
+    // then quadlets 0..31 in Table 7-157 offset order. Folding consecutive
+    // repeats is deliberate: the face is a level and a held write re-asks the
+    // same word, which is harmless — a MOVING index under a held write is not,
+    // and is exactly what a beat counter that advances while the buffer says
+    // no would produce
+    h.ctr_seq.clear();
+    got = cmd(AEM_GET_COUNTERS, ctr_pl(DT_STREAM_INPUT, 0), 0xD008);
+    std::vector<uint8_t> want_seq;
+    want_seq.push_back(32);
+    for (int n = 0; n < 32; ++n) want_seq.push_back(uint8_t(n));
+    CHECK(!got.empty() && h.ctr_seq == want_seq,
+          "K8: the store was asked for %zu distinct quadlets in this order, "
+          "want the mask then 0..31", h.ctr_seq.size());
   }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);

@@ -3,7 +3,7 @@
 
 Proves the µCPU skeleton (`hdl/aecp/KL_aecp_ucpu.sv`) actually executes the
 [06 §8](../../docs/architecture/06_aecp_engine.md) µISA before anyone quotes its
-area: `make` = build + run, exit 0 = PASS, 181 checks.
+area: `make` = build + run, exit 0 = PASS, 190 checks.
 
 The C++ harness is an independent model, never DUT logic: it implements the
 state port (2-cycle read latency, locate mapping, forced miss), the gather port
@@ -40,6 +40,14 @@ certification_version. Each is checked as a FIELD rather than as a length,
 because a wrong protocol_version or an overclaimed Table 5.20 flag is a lie a
 controller believes — see [06 §8.1](../../docs/architecture/06_aecp_engine.md)
 for why this device reports 1 / 0 / 0.
+
+Covered by P18 — **GET_COUNTERS lays out all of IEEE §7.4.42.2's block**: the
+response is 148 bytes (12 header + descriptor_type + descriptor_index +
+counters_valid + THIRTY-TWO quadlets), quadlet n comes from gather selector
+`{n>>2, n&3}` and from nowhere else, the `counters_valid` word comes from
+selector `0x80`, and nothing is written past the block. The selector mapping is
+checked rather than the values, because that mapping is the reason the 32-quadlet
+block needs no decoder in the datapath.
 
 Covered by P16 — **the µCPU is invariant to how hard the buffer pushes back**.
 Ten µprograms are run twice, at zero stall and at a 9-cycle stall per write,

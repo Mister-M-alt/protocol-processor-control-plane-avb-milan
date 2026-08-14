@@ -95,14 +95,30 @@ MILAN_CERT_VERSION = 0x00000000
 # Table 5.18 command_type, in the @28..@29 word whose top bit is the r field
 # that §5.4.3.2.2 requires to be zero.
 MVU_GET_MILAN_INFO = 0x0000
+E_GCTRS   = 768      # GET_COUNTERS (06 §6.6, IEEE §7.4.42) — Milan 5.4.2.25
+
+# --- gather selectors the counters face answers (06 §6.6) --------------------
+# gx_sel is {cnd, imm[3:0]} for GATHER_EXT and {cnd, beat} for READ_CTRS, so the
+# 32 counters_block quadlets need cnd 0..7 x 4 beats and the counters_valid word
+# needs a selector OUTSIDE that range. Bit 7 of the selector is what separates
+# them, which is why the mask sits at cnd 8: KL_aecp_engine reads sel[7] alone.
+GX_CTR_MASK_CND = 8    # -> sel 0x80
+GX_CTR_BLOCK_CND = range(8)   # -> sel 0x00..0x03, 0x10..0x13, ... 0x70..0x73
 
 rom = [0] * ROM_DEPTH
+
+
+#! the program count is COUNTED, never restated: three tracks add µprograms to
+#! this file in parallel and a hand-maintained total is the one line they all
+#! collide on and the first one to go stale
+placed = []
 
 
 def place(at, words):
     for i, w in enumerate(words):
         assert rom[at + i] == 0, f"overlap at {at + i}"
         rom[at + i] = w
+    placed.append(at)
 
 
 # --- FAIL_SAFE: respond with the best current status, always ----------------
@@ -413,6 +429,44 @@ place(E_MVUINFO, [
     u('END'),
 ])
 
+# --- GET_COUNTERS (IEEE 1722.1-2021 §7.4.42, Milan v1.2 §5.4.2.25) ----------
+# The command Milan makes mandatory for every AVB Interface, Clock Domain,
+# Stream Input and Stream Output of the current configuration, and the one
+# la_avdecc gates the Milan badge on: its s_MilanMandatoryStreamInputCounters is
+# Milan Table 5.16 exactly (mask 0x00000F3F), and a STREAM_INPUT answer missing
+# one bit of it costs the entity the Milan compatibility flag.
+#
+# Figure 7-67 fixes the response: descriptor_type @24, descriptor_index @26,
+# counters_valid @28, then a block of THIRTY-TWO quadlets @32..@156. The block
+# is fixed-size on every status, so the payload is 136 B, the AECPDU 160 B and
+# control_data_length 148 — the offset-from-@12 convention (F06.14).
+#
+# There is NO branch and NO status arm in this program, and that is a decision.
+# counters_valid bit n means "quadlet n exists and is valid" (§7.4.42.2), so a
+# descriptor this build keeps no counters for is answered SUCCESS with a mask of
+# zero: honest ("I have none") rather than a mask of ones over a block of zeros,
+# which is the advertised-zero lie the campaign has already had to remove twice.
+# ENTITY is that case by the standard itself — Table 7-150 has nothing but
+# ENTITY_SPECIFIC bits, none of them Milan-mandatory.
+#
+# The register contract, set by KL_aecp_engine at dispatch:
+#   r14[15:0] = descriptor_type   (AECPDU @24)
+#   r13[15:0] = descriptor_index  (AECPDU @26)
+# The µISA has no shift, so each field arrives right-justified in its own
+# register; the 32 quadlets never touch a register at all, READ_CTRS moving them
+# gather-port-to-response-buffer one beat at a time.
+place(E_GCTRS, [
+    u('GATHER_EXT', rd=1, cnd=GX_CTR_MASK_CND, imm=0),   # counters_valid
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # descriptor_type   @24
+    u('BUILD_FLD', ra=13, fmt=FMT_W),            # descriptor_index  @26
+    u('BUILD_FLD', ra=1,  fmt=FMT_D),            # counters_valid    @28
+] + [u('READ_CTRS', cnd=c) for c in GX_CTR_BLOCK_CND] + [   # 32 quadlets @32
+    u('SEND_RESP'),
+    u('END'),
+])
+
 # --- deterministic non-degenerate fill ---------------------------------------
 for i in range(ROM_DEPTH):
     if rom[i] == 0 and i not in (0,):
@@ -426,4 +480,4 @@ if __name__ == '__main__':
     with open(a.out, 'w') as f:
         for w in rom:
             f.write(f"{w:012x}\n")
-    print(f"{a.out}: {ROM_DEPTH} words, 19 programs")
+    print(f"{a.out}: {ROM_DEPTH} words, {len(placed)} programs")

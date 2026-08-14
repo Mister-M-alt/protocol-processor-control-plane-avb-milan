@@ -23,12 +23,46 @@
 //                DIRECT OPCODE DECODE — three arms, constant-folded, no ROM:
 //
 //                  0x0004 READ_DESCRIPTOR      -> UPC_RDESC_C  (real answer)
+//                  0x0029 GET_COUNTERS         -> UPC_GCTRS_C  (real answer)
 //                  0x0026 IDENTIFY_NOTIFICATION-> UPC_BADARG_C (IEEE §7.4.39.2:
 //                                                 as a COMMAND it is
 //                                                 BAD_ARGUMENTS — the
 //                                                 opcode-specific rule beats
 //                                                 §9.3.5.3.3's fallback)
 //                  everything else             -> UPC_NOTIMPL_C
+//
+//                WHERE GET_COUNTERS PUTS ITS ARGUMENTS. §7.4.42.1 puts
+//                descriptor_type at @24 and descriptor_index at @26, where
+//                §7.4.5's READ_DESCRIPTOR puts configuration_index and a
+//                reserved field. The payload walk therefore captures @26..@27
+//                into `desc_ix_r` for a counters command and @28..@31 for
+//                everything else, so the SAME two operand registers serve both
+//                shapes and neither costs a register of its own. A counters
+//                command whose control_data_length is short of the §7.4.42.1
+//                four bytes is BAD_ARGUMENTS, on the same reasoning as the
+//                truncated READ_DESCRIPTOR: answering ENTITY-index-0 out of
+//                whatever zeros happened to be there is a silent
+//                misinterpretation, not an answer.
+//
+//                THE COUNTERS FACE IS NOT A COUNTER. This block holds no
+//                counters and never will: the events Milan Table 5.6 counts
+//                (media lock, sequence mismatch, late/early presentation time)
+//                happen in the integrator's stream datapath, cycles and clock
+//                domains away from an AEM command parser. So `ctr_*` is a READ
+//                face — {descriptor_type, descriptor_index, quadlet} in,
+//                32 bits out — and the integrator serves it however its
+//                counters already exist: combinationally from flops, or out of
+//                the context RAM they already live in, where the quadlet index
+//                IS the RAM address and the mux costs nothing.
+//
+//                `ctr_wait_i` IS ASSERTED TO HOLD, and the polarity is the
+//                point: an integrator who has not wired this face leaves it 0,
+//                the gather beat completes immediately with `ctr_data_i` = 0,
+//                and quadlet 32 — the counters_valid word — reads 0. That is
+//                SUCCESS with an EMPTY mask: "this entity keeps no counters for
+//                that object", which §7.4.42.2 defines exactly ("a bit that is
+//                set means the associated quadlet exists and is valid"). Never
+//                a hang, and never a block of zeros advertised as valid.
 //
 //                A ROM is the right shape once the hazard class, min-cdl,
 //                response-size id, lock/GDI/notify flags and per-profile valid
@@ -102,6 +136,16 @@
 //                (slot byte 24+n IS payload byte n) instead of staging them
 //                through the response buffer. Only a µprogram-BUILT payload
 //                is worth a memory round trip.
+//
+//                WHEN THE COUNTERS FACE WEDGES. `ctr_wait_i` held forever is
+//                the one way this face can stop a command retiring, and a
+//                stalled µCPU stops READ_DESCRIPTOR too — the descriptor path
+//                is the thing that must not regress. So the wait is bounded by
+//                MEM_TIMEOUT_CYC_P, the same budget the descriptor and response
+//                bridges use, and expiry VOIDS the response through the
+//                ENTITY_MISBEHAVING rebuild below rather than letting zeros out
+//                under a mask that was already emitted. A face that answers
+//                (including one that answers 0) never arms it.
 //
 //                WHEN THE RESPONSE MEMORY FAILS. A wedged or absent bridge
 //                raises `err_o` on the buffer. The TX slot is already
@@ -225,6 +269,21 @@ module KL_aecp_engine
     input  wire         rmem_wr_done_i,
     input  wire         rmem_wr_err_i,
 
+    //! ---- GET_COUNTERS read face (06 §6.6; IEEE §7.4.42, Milan §5.4.2.25) ----
+    //! Asked once per quadlet of the response. `ctr_word_o` 0..31 is the
+    //! counters_block quadlet at block byte 4·n; `ctr_word_o` = 32 is the
+    //! counters_valid word itself, so ONE face carries the mask and the data
+    //! and the integrator has one place to be honest about what it measures.
+    output logic        ctr_req_o,            //! a quadlet is being asked for
+    output logic [15:0] ctr_desc_type_o,      //! AECPDU @24 (ENTITY, STREAM_INPUT, …)
+    output logic [15:0] ctr_desc_index_o,     //! AECPDU @26
+    output logic  [5:0] ctr_word_o,           //! 0..31 = block quadlet, 32 = counters_valid
+    input  wire  [31:0] ctr_data_i,           //! that quadlet, 1722.1 value order
+    //! HOLD, not ready: 0 means "answer is on ctr_data_i now", so an unwired
+    //! face answers 0 and the response carries an empty counters_valid mask
+    //! rather than hanging or advertising zeros (see the banner)
+    input  wire         ctr_wait_i,
+
     //! ---- lock context (06 §6.4; the lock manager is P4 — tie 0) ----
     input  wire         lock_held_i,
     input  wire  [63:0] lock_ctlr_i,
@@ -254,6 +313,7 @@ module KL_aecp_engine
   // ---- IEEE 1722.1-2021 AEM opcodes this block decodes --------------------
   localparam logic [15:0] OP_READ_DESCRIPTOR_C = 16'h0004;
   localparam logic [15:0] OP_IDENTIFY_NOTIF_C  = 16'h0026;
+  localparam logic [15:0] OP_GET_COUNTERS_C    = 16'h0029;
 
   // ---- Milan Vendor Unique (Milan v1.2 §5.4.3.2, §5.4.4.1) ---------------
   //! protocol_id is the Avnu OUI-36 00-1B-C5-0A-C appended with MVU's 12-bit
@@ -278,6 +338,7 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_RDESC_C   = 11'd640;   // E_RDESC
   localparam logic [10:0] UPC_BADARG_C  = 11'd704;   // E_BADARG
   localparam logic [10:0] UPC_MVUINFO_C = 11'd736;   // E_MVUINFO
+  localparam logic [10:0] UPC_GCTRS_C   = 11'd768;   // E_GCTRS
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -330,6 +391,7 @@ module KL_aecp_engine
   logic [10:0] walk_r;                   // payload walk index
   logic  [1:0] pid_lo_r;                 // AECPDU @26,@27 matched MVU's tail
   logic        echo_r, sent_r;
+  logic        ctrs_r;                   // this command is a GET_COUNTERS
   logic [10:0] upc_r;
   logic [4:0]  status_r;
   logic [10:0] bidx_r;                   // frame byte being written
@@ -340,17 +402,30 @@ module KL_aecp_engine
 
   // ---- opcode decode = the dispatch step (see the banner) -----------------
   logic [10:0] upc_w;
-  logic        echo_w, short_w;
+  logic        echo_w, short_w, short_ct_w, ctrs_w;
   //! a READ_DESCRIPTOR must carry configuration_index + reserved +
   //! descriptor_type + descriptor_index; a shorter one is BAD_ARGUMENTS, never
   //! a locate of whatever zeros happened to be there
   assign short_w = (txn_w.cdl < 11'd20);
+  //! §7.4.42.1's command payload is descriptor_type + descriptor_index and
+  //! nothing else, so cdl 16 is the whole command (F06.14's offset-from-@12)
+  assign short_ct_w = (txn_w.cdl < 11'd16);
+  //! and it must really BE an AEM command: the 03 §4 record fills `opcode`
+  //! from AECPDU @22..@23, which on a VENDOR_UNIQUE message is the first two
+  //! bytes of a 48-bit protocol_id, not a command_type at all
+  assign ctrs_w = (txn_w.protocol == PP_PROTO_AEM)
+                  && (txn_w.opcode == OP_GET_COUNTERS_C) && !short_ct_w;
   always_comb begin : dispatch_decode
     if ((txn_w.opcode == OP_READ_DESCRIPTOR_C) && !short_w) begin
       upc_w  = UPC_RDESC_C;
       echo_w = 1'b0;
+    end else if (ctrs_w) begin
+      upc_w  = UPC_GCTRS_C;
+      echo_w = 1'b0;
     end else if ((txn_w.opcode == OP_IDENTIFY_NOTIF_C)
-                 || ((txn_w.opcode == OP_READ_DESCRIPTOR_C) && short_w)) begin
+                 || ((txn_w.opcode == OP_READ_DESCRIPTOR_C) && short_w)
+                 || ((txn_w.protocol == PP_PROTO_AEM)
+                     && (txn_w.opcode == OP_GET_COUNTERS_C) && short_ct_w)) begin
       upc_w  = UPC_BADARG_C;
       echo_w = 1'b1;
     end else begin
@@ -407,6 +482,10 @@ module KL_aecp_engine
   //! 4-byte {type, index} stub IEEE §7.4.5 wants on a failed READ_DESCRIPTOR
   //! (the µISA has no shift, so every field a µprogram emits has to arrive
   //! right-justified in some register).
+  //! GET_COUNTERS reuses both without a mux: §7.4.42.1 has descriptor_type at
+  //! @24 and descriptor_index at @26, the walk below puts them in `cfg_ix_r`
+  //! and `desc_ix_r`, and `desc_ty_r` stays 0 — so r14[15:0] is the type it
+  //! emits at @24 and r13[15:0] is the index it emits at @26.
   assign opd0_w = {16'd0, desc_ix_r, desc_ty_r, cfg_ix_r};
   assign opd1_w = {32'd0, desc_ty_r, desc_ix_r};
 
@@ -415,8 +494,9 @@ module KL_aecp_engine
   logic [63:0] st_wdata_w, st_rdata_w;
   logic  [7:0] st_wstrb_w;
   logic        st_ready_w, st_rvalid_w, st_err_w;
-  logic        gx_req_nc_w;
-  logic  [7:0] gx_sel_nc_w;
+  logic        gx_req_w, gx_valid_w;
+  logic  [7:0] gx_sel_w;
+  logic [63:0] gx_data_w;
   logic        ucpu_ovf_nc_w;
   logic [10:0] ucpu_upc_nc_w;
   logic  [4:0] ucpu_st_nc_w;
@@ -442,14 +522,13 @@ module KL_aecp_engine
       .st_rvalid_i        (st_rvalid_w),
       .st_rdata_i         (st_rdata_w),
       .st_err_i           (st_err_w),
-      .gx_req_o           (gx_req_nc_w),
-      .gx_sel_o           (gx_sel_nc_w),
-      //! the 06 §6.2/§6.6 gather bus has no sources this phase: every
-      //! µprogram that would use it is NOT_IMPLEMENTED, so an always-valid
-      //! zero answer can never reach a response — and a never-valid one
-      //! would hang the µCPU instead of retiring the command.
-      .gx_valid_i         (1'b1),
-      .gx_data_i          (64'd0),
+      //! the 06 §6.6 gather bus, now with ONE source: the GET_COUNTERS read
+      //! face. §6.2's GET_STREAM_INFO gather has none, and no µprogram that
+      //! would use it is dispatched, so nothing else can reach `ctr_data_i`.
+      .gx_req_o           (gx_req_w),
+      .gx_sel_o           (gx_sel_w),
+      .gx_valid_i         (gx_valid_w),
+      .gx_data_i          (gx_data_w),
       .lock_held_i        (lock_held_i),
       .lock_ctlr_i        (lock_ctlr_i),
       .rb_we_o            (rb_we_w),
@@ -556,6 +635,48 @@ module KL_aecp_engine
       .dbg_burst_o     (resp_burst_nc_w),
       .dbg_drop_o      (resp_drop_nc_w)
   );
+
+  // =======================================================================
+  // the GET_COUNTERS read face (06 §6.6)
+  // =======================================================================
+  //! Selector-to-quadlet, and it is pure wiring on purpose. READ_CTRS drives
+  //! gx_sel = {cnd, beat} with beat 0..3, and the µprogram walks cnd 0..7, so
+  //! {cnd[2:0], beat[1:0]} IS the counters_block quadlet index 0..31 and
+  //! sel[7] is free to mean "the counters_valid word instead" (GATHER_EXT
+  //! cnd = 8). No decoder, no per-word ROM, no state.
+  assign ctr_req_o        = gx_req_w;
+  assign ctr_desc_type_o  = cfg_ix_r;
+  assign ctr_desc_index_o = desc_ix_r;
+  assign ctr_word_o       = gx_sel_w[7] ? 6'd32
+                                        : {1'b0, gx_sel_w[6:4], gx_sel_w[1:0]};
+
+  //! bounded wait (see the banner): expiry unsticks the µCPU with a zero and
+  //! marks the response void, because by then the counters_valid word is
+  //! already in the buffer and zeros behind a set bit are the one answer worse
+  //! than no answer
+  localparam int unsigned CTO_W_C = $clog2(MEM_TIMEOUT_CYC_P + 1);
+  logic [CTO_W_C-1:0] ctr_tmo_r;
+  logic               ctr_fail_r;
+  logic               ctr_hold_w;
+  assign ctr_hold_w = gx_req_w && ctr_wait_i && !ctr_fail_r;
+
+  assign gx_valid_w = !ctr_hold_w;
+  assign gx_data_w  = ctr_fail_r ? 64'd0 : {32'd0, ctr_data_i};
+
+  always_ff @(posedge clk_i) begin : counters_watchdog
+    if (!rst_n) begin
+      ctr_tmo_r  <= '0;
+      ctr_fail_r <= 1'b0;
+    end else if (a_st_r == A_IDLE) begin
+      ctr_tmo_r  <= '0;
+      ctr_fail_r <= 1'b0;
+    end else if (ctr_hold_w) begin
+      if (ctr_tmo_r == CTO_W_C'(MEM_TIMEOUT_CYC_P)) ctr_fail_r <= 1'b1;
+      else                                          ctr_tmo_r  <= ctr_tmo_r + CTO_W_C'(1);
+    end else begin
+      ctr_tmo_r <= '0;
+    end
+  end
 
   // =======================================================================
   // frame assembly: byte `bidx_r` of the response
@@ -696,12 +817,17 @@ module KL_aecp_engine
   //! read burst in flight for the next command's `open_i` to trample
   assign rsp_seal_w     = (a_st_r == A_RUN) && ucpu_done_w
                           && (sent_r || resp_send_w);
-  assign rsp_seal_len_w = echo_r ? 11'd0 : pld_r;
+  //! ... and a response the counters face already voided has no payload to
+  //! read back either: sealing it with its INTENDED length would start a
+  //! 136-byte read burst that the builder — now emitting a bare 60-byte
+  //! ENTITY_MISBEHAVING frame — never consumes, and the buffer would sit in
+  //! its read state until its own watchdog fired, holding the next command out
+  assign rsp_seal_len_w = (echo_r || ctr_fail_r) ? 11'd0 : pld_r;
 
   //! the response memory failed under a frame that is already half written:
   //! rebuild it in place as a bare ENTITY_MISBEHAVING answer (see the banner)
   logic rsp_fail_w;
-  assign rsp_fail_w = rsp_err_w && !err_mode_r && !echo_r;
+  assign rsp_fail_w = (rsp_err_w || ctr_fail_r) && !err_mode_r && !echo_r;
 
   always_ff @(posedge clk_i) begin : command_machine
     if (!rst_n) begin
@@ -716,6 +842,7 @@ module KL_aecp_engine
       walk_r       <= 11'd0;
       pid_lo_r     <= 2'b00;
       echo_r       <= 1'b0;
+      ctrs_r       <= 1'b0;
       upc_r        <= 11'd0;
       status_r     <= 5'd0;
       bidx_r       <= 11'd0;
@@ -740,6 +867,7 @@ module KL_aecp_engine
               if (cmd_cnt_r != 16'hFFFF) cmd_cnt_r <= cmd_cnt_r + 16'd1;
               upc_r      <= upc_w;
               echo_r     <= echo_w;
+              ctrs_r     <= ctrs_w;
               err_mode_r <= 1'b0;
               //! an echo with no RX slot has NO payload to echo: emitting
               //! `cdl - 12` bytes of whatever the slot pool last held would put
@@ -778,21 +906,36 @@ module KL_aecp_engine
             a_st_r <= A_DISP;
           end
           //! the RX pool answers one cycle after rd_en: byte for index
-          //! walk_r-1 lands now
+          //! walk_r-1 lands now.
+          //! §7.4.42.1 and §7.4.5 disagree about what lives where, so the two
+          //! shapes are captured into the SAME registers under `ctrs_r`:
+          //! a counters command has {type @24, index @26} and stops there,
+          //! a READ_DESCRIPTOR has {configuration_index @24, reserved @26,
+          //! type @28, index @30}. Guarding both directions matters — a
+          //! counters command padded past @27 must not walk on into
+          //! `desc_ty_r` and change the descriptor it is asked about.
           if (walk_r != 11'd0) begin
             unique case (walk_r - 11'd1)
               11'd0: raw_ct_r[15:8]  <= rxs_rd_data_i;
               11'd1: raw_ct_r[7:0]   <= rxs_rd_data_i;
               11'd2: cfg_ix_r[15:8]  <= rxs_rd_data_i;
               11'd3: cfg_ix_r[7:0]   <= rxs_rd_data_i;
-              //! @26..@27 are READ_DESCRIPTOR's reserved field and MVU's
-              //! protocol_id tail: keep the COMPARISON, not the bytes
-              11'd4: pid_lo_r[1]     <= (rxs_rd_data_i == MVU_PID_L1_C);
-              11'd5: pid_lo_r[0]     <= (rxs_rd_data_i == MVU_PID_L0_C);
-              11'd6: desc_ty_r[15:8] <= rxs_rd_data_i;
-              11'd7: desc_ty_r[7:0]  <= rxs_rd_data_i;
-              11'd8: desc_ix_r[15:8] <= rxs_rd_data_i;
-              11'd9: desc_ix_r[7:0]  <= rxs_rd_data_i;
+              //! @26..@27 carry THREE different things and each arm takes
+              //! only its own: MVU's protocol_id tail (kept as the COMPARISON,
+              //! not the bytes), GET_COUNTERS' descriptor_index, and
+              //! READ_DESCRIPTOR's reserved field, which nobody keeps
+              11'd4: begin
+                pid_lo_r[1] <= (rxs_rd_data_i == MVU_PID_L1_C);
+                if (ctrs_r) desc_ix_r[15:8] <= rxs_rd_data_i;
+              end
+              11'd5: begin
+                pid_lo_r[0] <= (rxs_rd_data_i == MVU_PID_L0_C);
+                if (ctrs_r) desc_ix_r[7:0]  <= rxs_rd_data_i;
+              end
+              11'd6: if (!ctrs_r) desc_ty_r[15:8] <= rxs_rd_data_i;
+              11'd7: if (!ctrs_r) desc_ty_r[7:0]  <= rxs_rd_data_i;
+              11'd8: if (!ctrs_r) desc_ix_r[15:8] <= rxs_rd_data_i;
+              11'd9: if (!ctrs_r) desc_ix_r[7:0]  <= rxs_rd_data_i;
               default: ;
             endcase
           end
