@@ -24,6 +24,9 @@
 //
 //                  0x0004 READ_DESCRIPTOR      -> UPC_RDESC_C  (real answer)
 //                  0x0029 GET_COUNTERS         -> UPC_GCTRS_C  (real answer)
+//                  0x002B GET_AUDIO_MAP        -> UPC_GAMAP_C  (real answer,
+//                                                 STREAM_PORT_INPUT only -
+//                                                 see the audio-map note)
 //                  0x0026 IDENTIFY_NOTIFICATION-> UPC_BADARG_C (IEEE §7.4.39.2:
 //                                                 as a COMMAND it is
 //                                                 BAD_ARGUMENTS — the
@@ -44,6 +47,17 @@
 //                whatever zeros happened to be there is a silent
 //                misinterpretation, not an answer.
 //
+//                GET_AUDIO_MAP IS A THIRD SHAPE IN THE SAME REGISTERS.
+//                §7.4.44.1 puts descriptor_type at @24, descriptor_index at
+//                @26, map_index at @28 and a reserved word at @30, so an
+//                `amap_r` command captures @26..@27 into `desc_ix_r` like a
+//                counters command and @28..@29 into `desc_ty_r` - which for
+//                this one command MEANS map_index - while @30..@31 is walked
+//                and kept by nobody (without the guard the reserved word
+//                would trample `desc_ix_r` through READ_DESCRIPTOR's arms).
+//                A command short of the §7.4.44.1 eight bytes is
+//                BAD_ARGUMENTS, same reasoning as above.
+//
 //                THE COUNTERS FACE IS NOT A COUNTER. This block holds no
 //                counters and never will: the events Milan Table 5.6 counts
 //                (media lock, sequence mismatch, late/early presentation time)
@@ -63,6 +77,36 @@
 //                that object", which §7.4.42.2 defines exactly ("a bit that is
 //                set means the associated quadlet exists and is valid"). Never
 //                a hang, and never a block of zeros advertised as valid.
+//
+//                THE AUDIO-MAP FACE IS THE SAME BARGAIN (06 §6.5; IEEE
+//                §7.4.44, Milan §5.4.2.26). The dynamic mappings live in the
+//                integrator's routing fabric - for the reference platform,
+//                the render crossbar's map RAM - so `amap_*` is a second READ
+//                face on the same gather bus: {descriptor_type,
+//                descriptor_index, map_index, record ordinal} in, a
+//                geometry word or one §7.4.44.2.1 record out. The bus is
+//                routed BY COMMAND (`amap_r`), never by selector value, so
+//                the two faces own disjoint commands and the whole selector
+//                space each. Milan §5.4.2.26 puts the partition law on the
+//                integrator ("disjoint subsets whose size does not exceed
+//                176 ... fixed for a given Configuration"), and §7.4.44.1's
+//                page rule is the µprogram's: map_index >= number_of_maps is
+//                BAD_ARGUMENTS. An unwired face answers number_of_maps 0 for
+//                every port, which the µprogram reads as NO_SUCH_DESCRIPTOR
+//                only when the descriptor store AGREES the port is absent -
+//                the store, not the face, is the existence authority, so
+//                GET_AUDIO_MAP refuses exactly the indices READ_DESCRIPTOR
+//                refuses.
+//
+//                ONLY STREAM_PORT_INPUT IS DISPATCHED. Milan §5.4.2.26 also
+//                demands GET_AUDIO_MAP on every Stream Port Output with no
+//                static map; this build's talker-side mappings live in a
+//                differently-shaped store (the capture mux's source buckets,
+//                not a cluster-indexed RAM), and serving them is a RECORDED
+//                GAP, not an oversight: a command naming any other
+//                descriptor_type keeps the NOT_IMPLEMENTED echo, decided at
+//                the A_PLD exit exactly like the MVU sub-decode - the type
+//                field is walked, not trusted at pop.
 //
 //                A ROM is the right shape once the hazard class, min-cdl,
 //                response-size id, lock/GDI/notify flags and per-profile valid
@@ -137,15 +181,17 @@
 //                through the response buffer. Only a µprogram-BUILT payload
 //                is worth a memory round trip.
 //
-//                WHEN THE COUNTERS FACE WEDGES. `ctr_wait_i` held forever is
-//                the one way this face can stop a command retiring, and a
-//                stalled µCPU stops READ_DESCRIPTOR too — the descriptor path
-//                is the thing that must not regress. So the wait is bounded by
-//                MEM_TIMEOUT_CYC_P, the same budget the descriptor and response
-//                bridges use, and expiry VOIDS the response through the
-//                ENTITY_MISBEHAVING rebuild below rather than letting zeros out
-//                under a mask that was already emitted. A face that answers
-//                (including one that answers 0) never arms it.
+//                WHEN A GATHER FACE WEDGES. `ctr_wait_i` or `amap_wait_i`
+//                held forever is the one way either face can stop a command
+//                retiring, and a stalled µCPU stops READ_DESCRIPTOR too - the
+//                descriptor path is the thing that must not regress. So ONE
+//                shared watchdog bounds whichever face the in-flight command
+//                routed to, budgeted at MEM_TIMEOUT_CYC_P like the descriptor
+//                and response bridges, and expiry VOIDS the response through
+//                the ENTITY_MISBEHAVING rebuild below rather than letting
+//                zeros out under a mask or a mapping count that was already
+//                emitted. A face that answers (including one that answers 0)
+//                never arms it.
 //
 //                WHEN THE RESPONSE MEMORY FAILS. A wedged or absent bridge
 //                raises `err_o` on the buffer. The TX slot is already
@@ -284,6 +330,30 @@ module KL_aecp_engine
     //! rather than hanging or advertising zeros (see the banner)
     input  wire         ctr_wait_i,
 
+    //! ---- GET_AUDIO_MAP read face (06 §6.5; IEEE §7.4.44, Milan §5.4.2.26) ----
+    //! The integrator's dynamic-mapping store, asked one word at a time while
+    //! a GET_AUDIO_MAP is in flight. `amap_sel_o` names the word:
+    //!   0 NMAPS  - {16'd0, number_of_maps}: the addressed port's fixed
+    //!              Milan §5.4.2.26 partition count; 0 = no such port here
+    //!   1 GEOM   - {16'd0, number_of_maps, number_of_mappings}: the page
+    //!              named by amap_map_index_o; number_of_mappings MUST read 0
+    //!              for a page the store has no data for (unknown port,
+    //!              map_index out of range) - the wrong-object guard
+    //!   2 RECORD - mapping record `amap_rec_o` of that page as ONE
+    //!              big-endian qword {stream_index, stream_channel,
+    //!              cluster_offset, cluster_channel} (§7.4.44.2.1)
+    //! `amap_wait_i` is the same HOLD `ctr_wait_i` is: an unwired face
+    //! answers number_of_maps 0, and the µprogram turns that into
+    //! NO_SUCH_DESCRIPTOR only where the descriptor store agrees.
+    output logic        amap_req_o,           //! a word is being asked for
+    output logic [15:0] amap_desc_type_o,     //! AECPDU @24 (STREAM_PORT_INPUT)
+    output logic [15:0] amap_desc_index_o,    //! AECPDU @26
+    output logic [15:0] amap_map_index_o,     //! AECPDU @28 - the page
+    output logic  [1:0] amap_sel_o,           //! 0 NMAPS, 1 GEOM, 2 RECORD
+    output logic  [7:0] amap_rec_o,           //! record ordinal within the page
+    input  wire  [63:0] amap_data_i,          //! the word (upper 32 zero unless RECORD)
+    input  wire         amap_wait_i,          //! HOLD the beat (not a ready)
+
     //! ---- lock context (06 §6.4; the lock manager is P4 — tie 0) ----
     input  wire         lock_held_i,
     input  wire  [63:0] lock_ctlr_i,
@@ -314,6 +384,10 @@ module KL_aecp_engine
   localparam logic [15:0] OP_READ_DESCRIPTOR_C = 16'h0004;
   localparam logic [15:0] OP_IDENTIFY_NOTIF_C  = 16'h0026;
   localparam logic [15:0] OP_GET_COUNTERS_C    = 16'h0029;
+  localparam logic [15:0] OP_GET_AUDIO_MAP_C   = 16'h002B;
+  //! Table 7-1: the one descriptor type the audio-map µprogram serves (see
+  //! the banner - every other type keeps the NOT_IMPLEMENTED echo)
+  localparam logic [15:0] DT_STREAM_PORT_IN_C  = 16'h000E;
 
   // ---- Milan Vendor Unique (Milan v1.2 §5.4.3.2, §5.4.4.1) ---------------
   //! protocol_id is the Avnu OUI-36 00-1B-C5-0A-C appended with MVU's 12-bit
@@ -339,6 +413,7 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_BADARG_C  = 11'd704;   // E_BADARG
   localparam logic [10:0] UPC_MVUINFO_C = 11'd736;   // E_MVUINFO
   localparam logic [10:0] UPC_GCTRS_C   = 11'd768;   // E_GCTRS
+  localparam logic [10:0] UPC_GAMAP_C   = 11'd800;   // E_GAMAP
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -392,6 +467,8 @@ module KL_aecp_engine
   logic  [1:0] pid_lo_r;                 // AECPDU @26,@27 matched MVU's tail
   logic        echo_r, sent_r;
   logic        ctrs_r;                   // this command is a GET_COUNTERS
+  logic        amap_r;                   // this command is a GET_AUDIO_MAP
+  logic  [7:0] amap_rec_r;               // records handed out this command
   logic [10:0] upc_r;
   logic [4:0]  status_r;
   logic [10:0] bidx_r;                   // frame byte being written
@@ -402,7 +479,7 @@ module KL_aecp_engine
 
   // ---- opcode decode = the dispatch step (see the banner) -----------------
   logic [10:0] upc_w;
-  logic        echo_w, short_w, short_ct_w, ctrs_w;
+  logic        echo_w, short_w, short_ct_w, short_am_w, ctrs_w, amap_w;
   //! a READ_DESCRIPTOR must carry configuration_index + reserved +
   //! descriptor_type + descriptor_index; a shorter one is BAD_ARGUMENTS, never
   //! a locate of whatever zeros happened to be there
@@ -410,11 +487,16 @@ module KL_aecp_engine
   //! §7.4.42.1's command payload is descriptor_type + descriptor_index and
   //! nothing else, so cdl 16 is the whole command (F06.14's offset-from-@12)
   assign short_ct_w = (txn_w.cdl < 11'd16);
+  //! §7.4.44.1's command runs through the reserved word at @30, so cdl 20 is
+  //! the whole command; shorter never reached map_index and is BAD_ARGUMENTS
+  assign short_am_w = (txn_w.cdl < 11'd20);
   //! and it must really BE an AEM command: the 03 §4 record fills `opcode`
   //! from AECPDU @22..@23, which on a VENDOR_UNIQUE message is the first two
   //! bytes of a 48-bit protocol_id, not a command_type at all
   assign ctrs_w = (txn_w.protocol == PP_PROTO_AEM)
                   && (txn_w.opcode == OP_GET_COUNTERS_C) && !short_ct_w;
+  assign amap_w = (txn_w.protocol == PP_PROTO_AEM)
+                  && (txn_w.opcode == OP_GET_AUDIO_MAP_C) && !short_am_w;
   always_comb begin : dispatch_decode
     if ((txn_w.opcode == OP_READ_DESCRIPTOR_C) && !short_w) begin
       upc_w  = UPC_RDESC_C;
@@ -422,10 +504,15 @@ module KL_aecp_engine
     end else if (ctrs_w) begin
       upc_w  = UPC_GCTRS_C;
       echo_w = 1'b0;
+    end else if (amap_w) begin
+      upc_w  = UPC_GAMAP_C;
+      echo_w = 1'b0;
     end else if ((txn_w.opcode == OP_IDENTIFY_NOTIF_C)
                  || ((txn_w.opcode == OP_READ_DESCRIPTOR_C) && short_w)
                  || ((txn_w.protocol == PP_PROTO_AEM)
-                     && (txn_w.opcode == OP_GET_COUNTERS_C) && short_ct_w)) begin
+                     && (txn_w.opcode == OP_GET_COUNTERS_C) && short_ct_w)
+                 || ((txn_w.protocol == PP_PROTO_AEM)
+                     && (txn_w.opcode == OP_GET_AUDIO_MAP_C) && short_am_w)) begin
       upc_w  = UPC_BADARG_C;
       echo_w = 1'b1;
     end else begin
@@ -486,8 +573,18 @@ module KL_aecp_engine
   //! @24 and descriptor_index at @26, the walk below puts them in `cfg_ix_r`
   //! and `desc_ix_r`, and `desc_ty_r` stays 0 — so r14[15:0] is the type it
   //! emits at @24 and r13[15:0] is the index it emits at @26.
-  assign opd0_w = {16'd0, desc_ix_r, desc_ty_r, cfg_ix_r};
-  assign opd1_w = {32'd0, desc_ty_r, desc_ix_r};
+  //! GET_AUDIO_MAP is the one shape that needs a mux, because its µprogram
+  //! consumes the registers TWO ways at once: r14 is the store's locate key
+  //! ({index, type, cfg} - GET_AUDIO_MAP names no configuration_index and
+  //! configuration 0 is current by construction, SET_CONFIGURATION being
+  //! unimplemented), and r13 packs {descriptor_index, map_index} so ONE
+  //! FMT_D BUILD_FLD lays @26..@29 in wire order while r13[15:0] is the
+  //! right-justified map_index CHECK_ARG compares (the µISA has no shift).
+  //! `desc_ty_r` holds map_index for this command - see the payload walk.
+  assign opd0_w = amap_r ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
+                         : {16'd0, desc_ix_r, desc_ty_r, cfg_ix_r};
+  assign opd1_w = amap_r ? {32'd0, desc_ix_r, desc_ty_r}
+                         : {32'd0, desc_ty_r, desc_ix_r};
 
   logic        st_req_w, st_we_w, st_name_w;
   logic [19:0] st_addr_w;
@@ -522,9 +619,10 @@ module KL_aecp_engine
       .st_rvalid_i        (st_rvalid_w),
       .st_rdata_i         (st_rdata_w),
       .st_err_i           (st_err_w),
-      //! the 06 §6.6 gather bus, now with ONE source: the GET_COUNTERS read
-      //! face. §6.2's GET_STREAM_INFO gather has none, and no µprogram that
-      //! would use it is dispatched, so nothing else can reach `ctr_data_i`.
+      //! the 06 §6.6/§6.5 gather bus, with TWO sources routed by command:
+      //! the GET_COUNTERS read face and the GET_AUDIO_MAP read face (see
+      //! the gather-faces section below). §6.2's GET_STREAM_INFO gather has
+      //! none, and no µprogram that would use it is dispatched.
       .gx_req_o           (gx_req_w),
       .gx_sel_o           (gx_sel_w),
       .gx_valid_i         (gx_valid_w),
@@ -637,45 +735,76 @@ module KL_aecp_engine
   );
 
   // =======================================================================
-  // the GET_COUNTERS read face (06 §6.6)
+  // the gather faces: GET_COUNTERS (06 §6.6) + GET_AUDIO_MAP (06 §6.5)
   // =======================================================================
-  //! Selector-to-quadlet, and it is pure wiring on purpose. READ_CTRS drives
+  //! ONE bus, routed BY COMMAND: `amap_r` is the only discriminator, so each
+  //! face owns the whole 8-bit selector space while its command is in flight
+  //! and neither can ever see the other's query (a GET_COUNTERS and a
+  //! GET_AUDIO_MAP are never in flight together - the engine runs one
+  //! command at a time by construction).
+  //!
+  //! Counters selector-to-quadlet is pure wiring on purpose. READ_CTRS drives
   //! gx_sel = {cnd, beat} with beat 0..3, and the µprogram walks cnd 0..7, so
   //! {cnd[2:0], beat[1:0]} IS the counters_block quadlet index 0..31 and
   //! sel[7] is free to mean "the counters_valid word instead" (GATHER_EXT
   //! cnd = 8). No decoder, no per-word ROM, no state.
-  assign ctr_req_o        = gx_req_w;
+  assign ctr_req_o        = gx_req_w && !amap_r;
   assign ctr_desc_type_o  = cfg_ix_r;
   assign ctr_desc_index_o = desc_ix_r;
   assign ctr_word_o       = gx_sel_w[7] ? 6'd32
                                         : {1'b0, gx_sel_w[6:4], gx_sel_w[1:0]};
 
-  //! bounded wait (see the banner): expiry unsticks the µCPU with a zero and
-  //! marks the response void, because by then the counters_valid word is
-  //! already in the buffer and zeros behind a set bit are the one answer worse
-  //! than no answer
+  //! ...and the audio-map selectors are three points of it (gen_ucode.py
+  //! AM_NMAPS 0x00 / AM_GEOM 0x01 / AM_REC 0x10): sel[4] alone separates a
+  //! record fetch from the two geometry words, sel[0] the two geometry words
+  //! from each other. `desc_ty_r` HOLDS map_index for this command (see the
+  //! payload walk), which is why the page rides it here.
+  assign amap_req_o        = gx_req_w && amap_r;
+  assign amap_desc_type_o  = cfg_ix_r;
+  assign amap_desc_index_o = desc_ix_r;
+  assign amap_map_index_o  = desc_ty_r;
+  assign amap_sel_o        = gx_sel_w[4] ? 2'd2 : {1'b0, gx_sel_w[0]};
+  assign amap_rec_o        = amap_rec_r;
+
+  //! bounded wait (see the banner), shared by both faces: expiry unsticks the
+  //! µCPU with a zero and marks the response void, because by then the
+  //! counters_valid word - or the mapping count - is already in the buffer,
+  //! and zeros behind an emitted claim are the one answer worse than none
   localparam int unsigned CTO_W_C = $clog2(MEM_TIMEOUT_CYC_P + 1);
-  logic [CTO_W_C-1:0] ctr_tmo_r;
-  logic               ctr_fail_r;
-  logic               ctr_hold_w;
-  assign ctr_hold_w = gx_req_w && ctr_wait_i && !ctr_fail_r;
+  logic [CTO_W_C-1:0] gxf_tmo_r;
+  logic               gxf_fail_r;
+  logic               ctr_hold_w, amap_hold_w;
+  assign ctr_hold_w  = gx_req_w && !amap_r && ctr_wait_i  && !gxf_fail_r;
+  assign amap_hold_w = gx_req_w &&  amap_r && amap_wait_i && !gxf_fail_r;
 
-  assign gx_valid_w = !ctr_hold_w;
-  assign gx_data_w  = ctr_fail_r ? 64'd0 : {32'd0, ctr_data_i};
+  assign gx_valid_w = !(ctr_hold_w || amap_hold_w);
+  assign gx_data_w  = gxf_fail_r ? 64'd0
+                    : amap_r     ? amap_data_i
+                                 : {32'd0, ctr_data_i};
 
-  always_ff @(posedge clk_i) begin : counters_watchdog
+  always_ff @(posedge clk_i) begin : gather_watchdog
     if (!rst_n) begin
-      ctr_tmo_r  <= '0;
-      ctr_fail_r <= 1'b0;
+      gxf_tmo_r  <= '0;
+      gxf_fail_r <= 1'b0;
     end else if (a_st_r == A_IDLE) begin
-      ctr_tmo_r  <= '0;
-      ctr_fail_r <= 1'b0;
-    end else if (ctr_hold_w) begin
-      if (ctr_tmo_r == CTO_W_C'(MEM_TIMEOUT_CYC_P)) ctr_fail_r <= 1'b1;
-      else                                          ctr_tmo_r  <= ctr_tmo_r + CTO_W_C'(1);
+      gxf_tmo_r  <= '0;
+      gxf_fail_r <= 1'b0;
+    end else if (ctr_hold_w || amap_hold_w) begin
+      if (gxf_tmo_r == CTO_W_C'(MEM_TIMEOUT_CYC_P)) gxf_fail_r <= 1'b1;
+      else                                          gxf_tmo_r  <= gxf_tmo_r + CTO_W_C'(1);
     end else begin
-      ctr_tmo_r <= '0;
+      gxf_tmo_r <= '0;
     end
+  end
+
+  //! the record ordinal: one per COMPLETED record gather, so the loop's k-th
+  //! GATHER_EXT asks for record k and the face stays stateless. Reset with
+  //! the command, like the watchdog.
+  always_ff @(posedge clk_i) begin : amap_record_ordinal
+    if (!rst_n)                 amap_rec_r <= 8'd0;
+    else if (a_st_r == A_IDLE)  amap_rec_r <= 8'd0;
+    else if (amap_req_o && gx_sel_w[4] && gx_valid_w
+             && (amap_rec_r != 8'hFF)) amap_rec_r <= amap_rec_r + 8'd1;
   end
 
   // =======================================================================
@@ -838,17 +967,17 @@ module KL_aecp_engine
   //! read burst in flight for the next command's `open_i` to trample
   assign rsp_seal_w     = (a_st_r == A_RUN) && ucpu_done_w
                           && (sent_r || resp_send_w);
-  //! ... and a response the counters face already voided has no payload to
+  //! ... and a response a gather face already voided has no payload to
   //! read back either: sealing it with its INTENDED length would start a
   //! 136-byte read burst that the builder — now emitting a bare 60-byte
   //! ENTITY_MISBEHAVING frame — never consumes, and the buffer would sit in
   //! its read state until its own watchdog fired, holding the next command out
-  assign rsp_seal_len_w = (echo_r || ctr_fail_r) ? 11'd0 : pld_r;
+  assign rsp_seal_len_w = (echo_r || gxf_fail_r) ? 11'd0 : pld_r;
 
   //! the response memory failed under a frame that is already half written:
   //! rebuild it in place as a bare ENTITY_MISBEHAVING answer (see the banner)
   logic rsp_fail_w;
-  assign rsp_fail_w = (rsp_err_w || ctr_fail_r) && !err_mode_r && !echo_r;
+  assign rsp_fail_w = (rsp_err_w || gxf_fail_r) && !err_mode_r && !echo_r;
 
   always_ff @(posedge clk_i) begin : command_machine
     if (!rst_n) begin
@@ -864,6 +993,7 @@ module KL_aecp_engine
       pid_lo_r     <= 2'b00;
       echo_r       <= 1'b0;
       ctrs_r       <= 1'b0;
+      amap_r       <= 1'b0;
       upc_r        <= 11'd0;
       status_r     <= 5'd0;
       bidx_r       <= 11'd0;
@@ -889,6 +1019,7 @@ module KL_aecp_engine
               upc_r      <= upc_w;
               echo_r     <= echo_w;
               ctrs_r     <= ctrs_w;
+              amap_r     <= amap_w;
               err_mode_r <= 1'b0;
               //! an echo with no RX slot has NO payload to echo: emitting
               //! `cdl - 12` bytes of whatever the slot pool last held would put
@@ -924,39 +1055,57 @@ module KL_aecp_engine
               upc_r  <= UPC_MVUINFO_C;
               echo_r <= 1'b0;
             end
+            //! ...and the audio-map TYPE gate at the same seam, for the same
+            //! reason: descriptor_type is at @24 and cannot be judged at pop.
+            //! Milan §5.4.2.26 also asks for Stream Port OUTPUT service; this
+            //! build's talker-side map store has a different shape and the
+            //! honest refusal for it - and for any other type - is the
+            //! NOT_IMPLEMENTED echo, a RECORDED gap (see the banner).
+            //! `amap_r` stays set: E_NOTIMPL runs no gathers, so the gx
+            //! routing it selects is never consulted on this arm.
+            if (amap_r && (cfg_ix_r != DT_STREAM_PORT_IN_C)) begin
+              upc_r  <= UPC_NOTIMPL_C;
+              echo_r <= 1'b1;
+            end
             a_st_r <= A_DISP;
           end
           //! the RX pool answers one cycle after rd_en: byte for index
           //! walk_r-1 lands now.
-          //! §7.4.42.1 and §7.4.5 disagree about what lives where, so the two
-          //! shapes are captured into the SAME registers under `ctrs_r`:
+          //! §7.4.42.1, §7.4.44.1 and §7.4.5 disagree about what lives where,
+          //! so the three shapes are captured into the SAME registers under
+          //! `ctrs_r`/`amap_r`:
           //! a counters command has {type @24, index @26} and stops there,
+          //! an audio-map command has {type @24, index @26, map_index @28,
+          //! reserved @30} - `desc_ty_r` MEANS map_index for it - and
           //! a READ_DESCRIPTOR has {configuration_index @24, reserved @26,
           //! type @28, index @30}. Guarding both directions matters — a
           //! counters command padded past @27 must not walk on into
-          //! `desc_ty_r` and change the descriptor it is asked about.
+          //! `desc_ty_r` and change the descriptor it is asked about, and an
+          //! audio-map command's reserved word at @30 must not trample the
+          //! `desc_ix_r` it captured at @26.
           if (walk_r != 11'd0) begin
             unique case (walk_r - 11'd1)
               11'd0: raw_ct_r[15:8]  <= rxs_rd_data_i;
               11'd1: raw_ct_r[7:0]   <= rxs_rd_data_i;
               11'd2: cfg_ix_r[15:8]  <= rxs_rd_data_i;
               11'd3: cfg_ix_r[7:0]   <= rxs_rd_data_i;
-              //! @26..@27 carry THREE different things and each arm takes
+              //! @26..@27 carry FOUR different things and each arm takes
               //! only its own: MVU's protocol_id tail (kept as the COMPARISON,
-              //! not the bytes), GET_COUNTERS' descriptor_index, and
-              //! READ_DESCRIPTOR's reserved field, which nobody keeps
+              //! not the bytes), GET_COUNTERS' and GET_AUDIO_MAP's
+              //! descriptor_index, and READ_DESCRIPTOR's reserved field,
+              //! which nobody keeps
               11'd4: begin
                 pid_lo_r[1] <= (rxs_rd_data_i == MVU_PID_L1_C);
-                if (ctrs_r) desc_ix_r[15:8] <= rxs_rd_data_i;
+                if (ctrs_r || amap_r) desc_ix_r[15:8] <= rxs_rd_data_i;
               end
               11'd5: begin
                 pid_lo_r[0] <= (rxs_rd_data_i == MVU_PID_L0_C);
-                if (ctrs_r) desc_ix_r[7:0]  <= rxs_rd_data_i;
+                if (ctrs_r || amap_r) desc_ix_r[7:0]  <= rxs_rd_data_i;
               end
               11'd6: if (!ctrs_r) desc_ty_r[15:8] <= rxs_rd_data_i;
               11'd7: if (!ctrs_r) desc_ty_r[7:0]  <= rxs_rd_data_i;
-              11'd8: if (!ctrs_r) desc_ix_r[15:8] <= rxs_rd_data_i;
-              11'd9: if (!ctrs_r) desc_ix_r[7:0]  <= rxs_rd_data_i;
+              11'd8: if (!ctrs_r && !amap_r) desc_ix_r[15:8] <= rxs_rd_data_i;
+              11'd9: if (!ctrs_r && !amap_r) desc_ix_r[7:0]  <= rxs_rd_data_i;
               default: ;
             endcase
           end

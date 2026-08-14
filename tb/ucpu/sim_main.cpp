@@ -27,7 +27,7 @@ enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
        E_CHKARG = 192, E_LOCK = 224, E_GATHER = 256, E_SETSR = 288,
        E_NAME = 320, E_COPY = 352, E_MAPV = 384, E_MAPVF = 400,
        E_OVF = 416, E_FMT = 512, E_NOTIMPL = 560, E_ACQ = 576,
-       E_STPRE = 592, E_MVUINFO = 736, E_GCTRS = 768 };
+       E_STPRE = 592, E_MVUINFO = 736, E_GCTRS = 768, E_GAMAP = 800 };
 
 // IEEE 1722.1-2021 Table 7-141
 enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
@@ -67,9 +67,47 @@ struct Harness {
   uint32_t rb_h_addr = 0, rb_h_data = 0;
   uint8_t  rb_h_strb = 0;
 
+  // the program being run + its dispatch operands: the gather model below is
+  // PER-PROGRAM, because the engine routes the gather bus by command - two
+  // faces legitimately claim the same selector values (gen_ucode.py's
+  // audio-map note), so one flat sel->value table cannot model both.
+  uint16_t cur_upc = 0;
+  uint64_t cur_opd0 = 0, cur_opd1 = 0;
+  int      amap_recs = 0;                 // RECORD gathers completed this run
+  std::vector<uint8_t> gx_sels;           // every completed gather's selector
+
   explicit Harness(VKL_aecp_ucpu* d) : dut(d) { memset(buf, 0, sizeof buf); }
 
-  static uint64_t gxval(uint8_t sel) {
+  // ---- the GET_AUDIO_MAP integrator model (06 §6.5 face semantics) ----
+  // Fixed partition of 3 pages; page 0 deliberately EMPTY (the 0-trip arm),
+  // page 1 carries 3 records, page 2 carries 1. An unknown port (the 0x0BAD
+  // index) answers 0 everywhere; an out-of-range page answers 0 mappings
+  // under the real number_of_maps - the wrong-object guard the RTL face must
+  // also implement.
+  static const int AM_NMAPS_C = 3;
+  int am_index()  const { return int((cur_opd0 >> 32) & 0xFFFF); }
+  int am_page()   const { return int(cur_opd1 & 0xFFFF); }
+  int am_nmaps()  const { return am_index() == 0x0BAD ? 0 : AM_NMAPS_C; }
+  int am_count()  const {
+    if (am_nmaps() == 0 || am_page() >= am_nmaps()) return 0;
+    return am_page() == 1 ? 3 : (am_page() == 2 ? 1 : 0);
+  }
+  // record k of the served page: four distinct 16-bit fields so a permuted
+  // or repeated record cannot pass
+  static uint64_t am_rec(int k) {
+    return (uint64_t(0x1100 | k) << 48) | (uint64_t(0x2200 | k) << 32) |
+           (uint64_t(0x3300 | k) << 16) |  uint64_t(0x4400 | k);
+  }
+
+  uint64_t gxval(uint8_t sel) {
+    if (cur_upc == E_GAMAP) {
+      if (sel == 0x00) return uint64_t(am_nmaps());
+      if (sel == 0x01) return (uint64_t(am_nmaps()) << 16)
+                            |  uint64_t(am_count());
+      if (sel == 0x10) return (amap_recs < am_count()) ? am_rec(amap_recs)
+                                                       : 0;
+      return 0;
+    }
     if (sel == 0x25) return 0x1111222233334444ull;
     if (sel == 0x30) return 1;                     // MAP_VALIDATE pass
     if (sel == 0x40) return 0;                     // MAP_VALIDATE fail
@@ -77,9 +115,15 @@ struct Harness {
     return 0x5A5A5A5A00000000ull | sel;
   }
 
-  uint64_t st_read(uint32_t a, bool name, bool* err) {
+  uint64_t st_read(uint32_t a, bool name, uint64_t wdata, bool* err) {
     *err = false;
     if (name) return name_store;                   // name region, any offset
+    // the RGN_LOCATE region (0xF0000): the key rides st_wdata as
+    // {index[47:32], type[31:16], cfg[15:0]} - E_GAMAP's shape. Its cfg half
+    // is 0, so the XORed address is the bare region; hit/miss must come from
+    // the key itself, exactly as the real store decides.
+    if ((a & 0xF0000u) == 0xF0000u)
+      { *err = (((wdata >> 32) & 0xFFFFu) == 0x0BADu); return 0x500; }
     if (a == (0x100u ^ 0x0003u)) return 0x500;     // locate hit -> base
     if (a == (0x100u ^ 0x0BADu)) { *err = true; return 0; }
     if (a == 0x508u) return 0xBB80;                // current_rate
@@ -98,7 +142,8 @@ struct Harness {
     if (dut->st_req_o && !dut->st_we_o) {
       if (st_lat == 0) {
         bool err = false;
-        st_data_next = st_read(dut->st_addr_o, dut->st_name_o, &err);
+        st_data_next = st_read(dut->st_addr_o, dut->st_name_o,
+                               dut->st_wdata_o, &err);
         st_err_next = err;
         st_lat = 2;
       } else if (--st_lat == 0) {
@@ -109,7 +154,12 @@ struct Harness {
     } else st_lat = 0;
 
     if (dut->gx_req_o) {
-      if (gx_lat == 0) { gx_data_next = gxval(dut->gx_sel_o); gx_lat = 2; }
+      if (gx_lat == 0) {
+        gx_data_next = gxval(dut->gx_sel_o);
+        gx_sels.push_back(dut->gx_sel_o);
+        if (cur_upc == E_GAMAP && dut->gx_sel_o == 0x10) ++amap_recs;
+        gx_lat = 2;
+      }
       else if (--gx_lat == 0) { dut->gx_valid_i = 1; dut->gx_data_i = gx_data_next; }
     } else gx_lat = 0;
 
@@ -169,17 +219,20 @@ struct Harness {
            uint32_t(buf[a+2]) << 16 | uint32_t(buf[a+3]) << 24;
   }
 
-  bool run(uint16_t upc, uint64_t opd0, bool lock, int max_cycles = 2000) {
+  bool run(uint16_t upc, uint64_t opd0, bool lock, int max_cycles = 2000,
+           uint64_t opd1 = OPD1) {
     memset(buf, 0, sizeof buf);
     bad_write = false; sends = 0; lock_scenario = lock;
     rb_accepts = 0; rb_held_cycles = 0; rb_have_held = false;
     rb_hold = rb_stall;
     stw.clear(); commits = 0; nvm_marks.clear(); notify_classes.clear();
+    cur_upc = upc; cur_opd0 = opd0; cur_opd1 = opd1;
+    amap_recs = 0; gx_sels.clear();
     tx_wait = 3;
     dut->disp_upc_i = upc;
     dut->disp_ctlr_eid_i = CTLR;
     dut->disp_opd0_i = opd0;
-    dut->disp_opd1_i = OPD1;
+    dut->disp_opd1_i = opd1;
     dut->disp_valid_i = 1;
     tick();
     dut->disp_valid_i = 0;
@@ -389,23 +442,28 @@ int main(int argc, char** argv) {
   // status and the number of writes must all be identical to a buffer that
   // never refuses at all.
   {
-    struct Prog { const char* name; uint16_t upc; uint64_t opd0; };
+    struct Prog { const char* name; uint16_t upc; uint64_t opd0;
+                  uint64_t opd1; };
     static const Prog progs[] = {
-      {"GETSR", E_GETSR, IDX_OK}, {"ALU", E_ALU, 0}, {"ITER", E_ITER, 0},
-      {"GATHER", E_GATHER, 0},    {"COPY", E_COPY, IDX_OK},
-      {"FMT", E_FMT, 0},          {"OVF", E_OVF, 0},
-      {"ACQ", E_ACQ, 0},          {"NOTIMPL", E_NOTIMPL, 0},
-      {"MVUINFO", E_MVUINFO, 0},
+      {"GETSR", E_GETSR, IDX_OK, OPD1}, {"ALU", E_ALU, 0, OPD1},
+      {"ITER", E_ITER, 0, OPD1},
+      {"GATHER", E_GATHER, 0, OPD1},    {"COPY", E_COPY, IDX_OK, OPD1},
+      {"FMT", E_FMT, 0, OPD1},          {"OVF", E_OVF, 0, OPD1},
+      {"ACQ", E_ACQ, 0, OPD1},          {"NOTIMPL", E_NOTIMPL, 0, OPD1},
+      {"MVUINFO", E_MVUINFO, 0, OPD1},
+      // the audio-map success shape: index 2, page 1 -> 3 appended records,
+      // so the stall sweep covers its GATHER + APPEND loop too
+      {"GAMAP", E_GAMAP, 0x00000002000E0000ull, 0x0000000000020001ull},
     };
     for (const auto& p : progs) {
       h.rb_stall = 0;
-      bool ok0 = h.run(p.upc, p.opd0, false);
+      bool ok0 = h.run(p.upc, p.opd0, false, 2000, p.opd1);
       std::vector<uint8_t> img0(h.buf, h.buf + sizeof h.buf);
       uint32_t len0 = h.last_len, st0 = h.last_status;
       int snd0 = h.sends, acc0 = h.rb_accepts, held0 = h.rb_held_cycles;
 
       h.rb_stall = 9;
-      bool ok9 = h.run(p.upc, p.opd0, false);
+      bool ok9 = h.run(p.upc, p.opd0, false, 2000, p.opd1);
       std::vector<uint8_t> img9(h.buf, h.buf + sizeof h.buf);
 
       CHECK(ok0 && ok9, "P16 %s retires at both stalls", p.name);
@@ -450,18 +508,112 @@ int main(int argc, char** argv) {
     CHECK(h.sends == 1, "P18 one send got %d", h.sends);
     CHECK(h.w32(12) == ((uint32_t)(OPD1 & 0xFFFF) << 16) | DESC_STREAM_INPUT,
           "P18 {type, index} got %08x", h.w32(12));
-    CHECK(h.w32(16) == (uint32_t)Harness::gxval(0x80),
+    CHECK(h.w32(16) == (uint32_t)h.gxval(0x80),
           "P18 counters_valid comes from selector 0x80, got %08x", h.w32(16));
     int bad_q = -1;
     for (int n = 0; n < 32; ++n) {
       uint8_t sel = uint8_t(((n >> 2) << 4) | (n & 3));
-      if (h.w32(20 + 4 * n) != (uint32_t)Harness::gxval(sel)) { bad_q = n; break; }
+      if (h.w32(20 + 4 * n) != (uint32_t)h.gxval(sel)) { bad_q = n; break; }
     }
     CHECK(bad_q < 0, "P18 quadlet %d is not what selector 0x%02x answered",
           bad_q, bad_q < 0 ? 0 : (((bad_q >> 2) << 4) | (bad_q & 3)));
     CHECK(h.w32(148) == 0, "P18 wrote past the 32-quadlet block");
     CHECK(h.commits == 0 && h.nvm_marks.empty() && h.notify_classes.empty(),
           "P18 a GET has no effects");
+  }
+
+  // ---- P19: GET_AUDIO_MAP lays out IEEE §7.4.44.2's response --------------
+  // Fixed part {descriptor_type, descriptor_index, map_index, number_of_maps,
+  // number_of_mappings, reserved} then 8-byte records, so the payload is
+  // 12 + 8·M and resp_len 24 + 8·M. The register contract is the engine's:
+  // r14 = the locate key {index, STREAM_PORT_INPUT, cfg 0} and r13 =
+  // {descriptor_index, map_index}; the harness's face model partitions into
+  // 3 pages with page 0 EMPTY, page 1 = 3 records, page 2 = 1 (mirrors
+  // gen_ucode.py's E_GAMAP note). Byte order is the TB buffer's little-endian
+  // convenience - tb/pp_top grades the real wire bytes.
+  {
+    auto w16 = [&](uint32_t a) {
+      return uint32_t(h.buf[a]) | uint32_t(h.buf[a + 1]) << 8;
+    };
+    const uint64_t AM_IDX2 = 0x00000002000E0000ull;   // index 2, hit
+    const uint64_t AM_MISS = 0x00000BAD000E0000ull;   // the store-miss index
+    auto am_opd1 = [](uint16_t index, uint16_t page) {
+      return (uint64_t(index) << 16) | page;
+    };
+    auto count_sel = [&](uint8_t sel) {
+      int n = 0;
+      for (uint8_t s : h.gx_sels) if (s == sel) ++n;
+      return n;
+    };
+
+    // P19a: page 1 of a 3-page port - SUCCESS with all three records
+    CHECK(h.run(E_GAMAP, AM_IDX2, false, 2000, am_opd1(2, 1)),
+          "P19a completes");
+    CHECK(h.last_status == ST_OK, "P19a status got %u", h.last_status);
+    CHECK(h.last_len == 24 + 8 * 3, "P19a len got %u, want 48", h.last_len);
+    CHECK(h.sends == 1, "P19a one send got %d", h.sends);
+    CHECK(w16(12) == 0x000E, "P19a descriptor_type got %04x, want 000E "
+          "(Table 7-1 STREAM_PORT_INPUT)", w16(12));
+    CHECK(h.w32(14) == 0x00020001u,
+          "P19a {descriptor_index, map_index} got %08x", h.w32(14));
+    CHECK(h.w32(18) == 0x00030003u,
+          "P19a {number_of_maps, number_of_mappings} got %08x", h.w32(18));
+    CHECK(w16(22) == 0, "P19a reserved got %04x", w16(22));
+    int bad_r = -1;
+    for (int k = 0; k < 3; ++k) {
+      uint64_t r = Harness::am_rec(k);
+      if (h.w32(24 + 8 * k) != uint32_t(r >> 32) ||
+          h.w32(28 + 8 * k) != uint32_t(r)) { bad_r = k; break; }
+    }
+    CHECK(bad_r < 0, "P19a record %d is not the face's record %d", bad_r,
+          bad_r);
+    CHECK(h.w32(48) == 0, "P19a wrote past the last record");
+    CHECK(count_sel(0x00) == 1 && count_sel(0x01) == 1,
+          "P19a NMAPS/GEOM asked once each, got %d/%d",
+          count_sel(0x00), count_sel(0x01));
+    CHECK(count_sel(0x10) == 3,
+          "P19a exactly 3 RECORD gathers, got %d", count_sel(0x10));
+    CHECK(h.commits == 0 && h.nvm_marks.empty() && h.notify_classes.empty(),
+          "P19a a GET has no effects");
+
+    // P19b: page 0 is EMPTY - SUCCESS, number_of_mappings 0, ZERO records.
+    // This is the 0-trip loop arm: an iterator tested after its body would
+    // append a phantom record here.
+    CHECK(h.run(E_GAMAP, AM_IDX2, false, 2000, am_opd1(2, 0)),
+          "P19b completes");
+    CHECK(h.last_status == ST_OK, "P19b status got %u", h.last_status);
+    CHECK(h.last_len == 24, "P19b len got %u, want 24", h.last_len);
+    CHECK(h.w32(18) == 0x00030000u,
+          "P19b {number_of_maps, 0} got %08x", h.w32(18));
+    CHECK(h.w32(24) == 0, "P19b a record was appended to an empty page");
+    CHECK(count_sel(0x10) == 0,
+          "P19b the face was asked for %d records of an empty page",
+          count_sel(0x10));
+
+    // P19c: map_index = number_of_maps - §7.4.44.1's BAD_ARGUMENT, and the
+    // response still carries the full fixed part with the REAL
+    // number_of_maps (Milan §5.4.2.26: always N) over an empty page
+    CHECK(h.run(E_GAMAP, AM_IDX2, false, 2000, am_opd1(2, 3)),
+          "P19c completes");
+    CHECK(h.last_status == ST_BADARG, "P19c BAD_ARGUMENTS=7 got %u",
+          h.last_status);
+    CHECK(h.last_len == 24, "P19c len got %u, want 24", h.last_len);
+    CHECK(h.w32(14) == 0x00020003u,
+          "P19c {descriptor_index, map_index} echoed, got %08x", h.w32(14));
+    CHECK(h.w32(18) == 0x00030000u,
+          "P19c {number_of_maps real, mappings 0} got %08x", h.w32(18));
+    CHECK(count_sel(0x10) == 0, "P19c records fetched on a refused page");
+
+    // P19d: the store misses the locate - NO_SUCH_DESCRIPTOR from DESC_ADDR
+    // itself (no SET_STATUS in that arm), fixed part all-zero geometry
+    CHECK(h.run(E_GAMAP, AM_MISS, false, 2000, am_opd1(0x0BAD, 0)),
+          "P19d completes");
+    CHECK(h.last_status == ST_NOSUCH, "P19d NO_SUCH_DESCRIPTOR=2 got %u",
+          h.last_status);
+    CHECK(h.last_len == 24, "P19d len got %u, want 24", h.last_len);
+    CHECK(h.w32(18) == 0, "P19d geometry not zero on a miss: %08x",
+          h.w32(18));
+    CHECK(count_sel(0x10) == 0, "P19d records fetched for a missing port");
   }
 
   h.tick();

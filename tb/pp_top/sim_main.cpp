@@ -404,6 +404,26 @@ static std::vector<uint8_t> clock_domain_descriptor() {
   return d;
 }
 
+static std::vector<uint8_t> stream_port_input_descriptor(uint16_t ix,
+                                                         uint16_t clusters,
+                                                         uint16_t base_cluster) {
+  // §7.2.13 Table 7-23: 20 bytes, no object_name. number_of_maps = 0 is the
+  // DYNAMIC-mapping declaration (§7.2.13's convention, restated by Milan
+  // §5.3.3.9), which is exactly the shape GET_AUDIO_MAP exists to serve.
+  std::vector<uint8_t> d(20, 0);
+  putbe(&d[0],  0x000E, 2);                       // descriptor_type
+  putbe(&d[2],  ix, 2);                           // descriptor_index
+  putbe(&d[4],  0x0000, 2);                       // clock_domain_index
+  putbe(&d[6],  0x0000, 2);                       // port_flags
+  putbe(&d[8],  0x0000, 2);                       // number_of_controls
+  putbe(&d[10], 0x0000, 2);                       // base_control
+  putbe(&d[12], clusters, 2);                     // number_of_clusters
+  putbe(&d[14], base_cluster, 2);                 // base_cluster
+  putbe(&d[16], 0x0000, 2);                       // number_of_maps: dynamic
+  putbe(&d[18], 0x0000, 2);                       // base_map (ignored)
+  return d;
+}
+
 // ---- the flat memory image (gen_desc_image.py layout, built independently) --
 struct ImgEnt { uint16_t cfg, type, count, len, nbase, stride; uint32_t off; };
 
@@ -555,6 +575,47 @@ struct H {
     if (w == 32) return m;
     if (w > 31 || !((m >> w) & 1u)) return 0;
     return 0xC0000000u | (uint32_t(ty) << 16) | (uint32_t(ix) << 8) | w;
+  }
+
+  // ---- the GET_AUDIO_MAP store (06 §6.5): what a port's dynamic mappings
+  // ARE is decided here, exactly as milan_datapath decides it from its render
+  // map RAM. Two ports on purpose: port 0 has ONE page holding 2 mappings,
+  // port 1 has THREE pages (0 empty, 1 with 3, 2 with 1) so the §7.4.44.1
+  // paging is proved against pages that really differ. Everything out of
+  // range answers zero - the wrong-object guard the fabric must mirror.
+  int  amap_hold = 2;          // cycles the store makes the engine wait
+  bool amap_stuck = false;     // a face that never answers at all
+  int  amap_hold_cur = 0;
+  uint64_t amap_reads = 0;
+  //! every completed query, folded like ctr_seq: {sel, rec} pairs
+  std::vector<std::pair<uint8_t, uint8_t>> amap_seq;
+  static uint16_t amap_nmaps(uint16_t ty, uint16_t ix) {
+    if (ty != 0x000E) return 0;              // only STREAM_PORT_INPUT backed
+    if (ix == 0) return 1;
+    if (ix == 1) return 3;
+    return 0;
+  }
+  static uint16_t amap_count(uint16_t ty, uint16_t ix, uint16_t page) {
+    if (page >= amap_nmaps(ty, ix)) return 0;
+    if (ix == 0) return 2;
+    return page == 1 ? 3 : (page == 2 ? 1 : 0);
+  }
+  //! record k of (port, page): four distinct 16-bit fields keyed on all
+  //! three coordinates, so a record served for the wrong port, page or
+  //! ordinal cannot match
+  static uint64_t amap_rec(uint16_t ix, uint16_t page, uint8_t k) {
+    uint16_t tag = uint16_t((ix << 12) | (page << 8) | k);
+    return (uint64_t(0x1000 | tag) << 48) | (uint64_t(0x2000 | tag) << 32) |
+           (uint64_t(0x3000 | tag) << 16) |  uint64_t(0x4000 | tag);
+  }
+  static uint64_t amap_value(uint16_t ty, uint16_t ix, uint16_t page,
+                             uint8_t sel, uint8_t rec) {
+    if (sel == 0) return amap_nmaps(ty, ix);
+    if (sel == 1) return (uint64_t(amap_nmaps(ty, ix)) << 16)
+                       |  amap_count(ty, ix, page);
+    if (sel == 2) return (rec < amap_count(ty, ix, page))
+                       ? amap_rec(ix, page, rec) : 0;
+    return 0;
   }
 
   uint64_t rmem_rd64(uint32_t a) const {
@@ -795,6 +856,27 @@ struct H {
     } else {
       ctr_hold_cur = 0;
     }
+
+    // ---- GET_AUDIO_MAP store (06 §6.5): same reluctant default ----
+    d->amap_wait_i = 0;
+    d->amap_data_i = 0;
+    if (d->amap_req_o) {
+      if (amap_stuck || amap_hold_cur < amap_hold) {
+        d->amap_wait_i = 1;
+        ++amap_hold_cur;
+      } else {
+        uint8_t sel = (uint8_t)d->amap_sel_o, rec = (uint8_t)d->amap_rec_o;
+        d->amap_data_i = amap_value((uint16_t)d->amap_desc_type_o,
+                                    (uint16_t)d->amap_desc_index_o,
+                                    (uint16_t)d->amap_map_index_o, sel, rec);
+        amap_hold_cur = 0;
+        ++amap_reads;
+        if (amap_seq.empty() || amap_seq.back() != std::make_pair(sel, rec))
+          amap_seq.push_back({sel, rec});
+      }
+    } else {
+      amap_hold_cur = 0;
+    }
     d->eval();
 
     d->clk_i = 1; d->eval();
@@ -966,10 +1048,19 @@ int main(int argc, char** argv) {
   std::vector<ImgEnt> img_ents = {
     {CFGIX, 0x0000, 1, 312, 0, 312, 0},          // ENTITY
     {CFGIX, 0x0024, 1,  78, 1,  80, 0},          // CLOCK_DOMAIN (not %8)
+    //! the two STREAM_PORT_INPUTs the audio-map store models: the image is
+    //! the EXISTENCE authority (E_GAMAP's DESC_ADDR locate), so an index
+    //! past these two must answer NO_SUCH_DESCRIPTOR whatever the face says
+    {CFGIX, 0x000E, 2,  20, 1,  24, 0},          // STREAM_PORT_INPUT x2
   };
   std::vector<uint8_t> desc_entity = entity_descriptor();
   std::vector<uint8_t> desc_clkdom = clock_domain_descriptor();
-  h.dram = build_image(img_ents, {desc_entity, desc_clkdom},
+  //! geometry consistent with H::amap_*: port 0 = 8 clusters at base 0 (one
+  //! page of 8), port 1 = 24 clusters at base 8 (three pages of 8)
+  std::vector<uint8_t> desc_spi0 = stream_port_input_descriptor(0, 8, 0);
+  std::vector<uint8_t> desc_spi1 = stream_port_input_descriptor(1, 24, 8);
+  h.dram = build_image(img_ents,
+                       {desc_entity, desc_clkdom, desc_spi0, desc_spi1},
                        {"PP Reference Entity", "Clock Domain 0"}, 1);
 
   h.reset();
@@ -1525,10 +1616,15 @@ int main(int argc, char** argv) {
     // past the 60-octet Ethernet floor where padding can no longer hide a
     // wrong length. 0x7FFD/0x7FFE are unassigned in Table 7-140 and stay
     // NOT_IMPLEMENTED whatever else this engine grows.
+    //! 0x002B GET_AUDIO_MAP left this sweep when it became a real answer -
+    //! its refusals are graded in section Q, including the non-input-port
+    //! echo this entry used to cover by accident (payload 0xA0A1... is not
+    //! a STREAM_PORT_INPUT type). 0x002C ADD_AUDIO_MAPPINGS holds the
+    //! same-payload-shape slot and stays NOT_IMPLEMENTED (the recorded gap).
     struct { uint16_t op; size_t n; const char* what; } nisz[] = {
       {0x7FFE,  0, "unassigned opcode, empty payload"},
       {0x004D,  4, "GET_MAX_TRANSIT_TIME (§7.4.78.1, the Hive 4.3.1 case)"},
-      {0x002B,  8, "GET_AUDIO_MAP (§7.4.44.1)"},
+      {0x002C,  8, "ADD_AUDIO_MAPPINGS (§7.4.45.1)"},
       {0x0000, 16, "ACQUIRE_ENTITY (§7.4.1.1)"},
       {0x7FFD, 72, "unassigned opcode, past the 60-octet floor"},
       {0x004D,  4, "GET_MAX_TRANSIT_TIME again, after a 72-byte command"},
@@ -2269,6 +2365,184 @@ int main(int argc, char** argv) {
     CHECK(!got.empty() && h.ctr_seq == want_seq,
           "K8: the store was asked for %zu distinct quadlets in this order, "
           "want the mask then 0..31", h.ctr_seq.size());
+  }
+
+  // ==== Q. GET_AUDIO_MAP end to end (06 §6.5; IEEE §7.4.44, Milan §5.4.2.26)
+  // Milan v1.2 §5.3.3.9 forbids AUDIO_MAP descriptors on every Stream Port
+  // Input ("The Stream Port Input of a Configuration shall not contain any
+  // AUDIO_MAP descriptor"), so a Milan input's mappings are ONLY reachable
+  // through this command - a strict controller that reads NOT_IMPLEMENTED
+  // here sees no mappings at all and fails enumeration. §5.4.2.26 fixes the
+  // paging ("The PAAD-AE shall always return N in the number_of_maps field
+  // ... no matter the actual count of dynamic mappings") and §7.4.44.1 the
+  // page bound ("If the map_index is beyond the range of available maps then
+  // it returns a BAD_ARGUMENT status").
+  {
+    const uint16_t AEM_GET_AUDIO_MAP = 0x002B;
+    const uint16_t DT_SPI = 0x000E, DT_SPO = 0x000F;
+
+    auto cmd = [&](uint16_t op, const std::vector<uint8_t>& pl, uint16_t seq) {
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, seq, op, pl));
+      return h.wait_any(h.q_aecp, 400);
+    };
+    auto am_pl = [](uint16_t ty, uint16_t ix, uint16_t page,
+                    uint16_t rsvd = 0) {
+      std::vector<uint8_t> p(8, 0);
+      putbe(&p[0], ty, 2); putbe(&p[2], ix, 2);
+      putbe(&p[4], page, 2); putbe(&p[6], rsvd, 2);
+      return p;
+    };
+    //! the model's own §7.4.44.2 payload, built from the store the harness
+    //! plays - never from anything the DUT emitted
+    auto am_expect_pl = [&](uint16_t ty, uint16_t ix, uint16_t page,
+                            uint16_t nmaps, uint16_t cnt) {
+      std::vector<uint8_t> p(12 + 8 * size_t(cnt), 0);
+      putbe(&p[0], ty, 2);  putbe(&p[2], ix, 2);
+      putbe(&p[4], page, 2); putbe(&p[6], nmaps, 2);
+      putbe(&p[8], cnt, 2);                        // reserved @10 stays 0
+      for (uint16_t k = 0; k < cnt; ++k)
+        putbe(&p[12 + 8 * size_t(k)], H::amap_rec(ix, page, uint8_t(k)), 8);
+      return p;
+    };
+    auto expect = [&](uint8_t status, uint16_t seq,
+                      const std::vector<uint8_t>& pl) {
+      return aecp_frame(CTLR_MAC, OWN_MAC, 1, status, EID, CTLR_EID, seq,
+                        AEM_GET_AUDIO_MAP, pl);
+    };
+
+    // ---- Q1: port 0's one page, byte-exact with both records --------------
+    auto got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 0, 0), 0xE001);
+    auto want = expect(AECP_SUCCESS, 0xE001,
+                       am_expect_pl(DT_SPI, 0, 0, 1, 2));
+    CHECK(!got.empty(), "Q1: no GET_AUDIO_MAP response came back");
+    CHECK(got == want, "Q1: GET_AUDIO_MAP response is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+    CHECK(got.size() > 17 && ((got[16] & 0x07) << 8 | got[17]) == 24 + 16,
+          "Q1: control_data_length is %u, want 40",
+          got.size() > 17 ? ((got[16] & 0x07) << 8 | got[17]) : 0);
+
+    // ---- Q2: the §5.4.2.26 partition - three pages, each its own content --
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 1, 1), 0xE002);
+    want = expect(AECP_SUCCESS, 0xE002, am_expect_pl(DT_SPI, 1, 1, 3, 3));
+    CHECK(got == want, "Q2: page 1 of port 1 is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 1, 2), 0xE003);
+    want = expect(AECP_SUCCESS, 0xE003, am_expect_pl(DT_SPI, 1, 2, 3, 1));
+    CHECK(got == want, "Q2: page 2 of port 1 is not byte-exact");
+    //! an EMPTY page is SUCCESS with number_of_mappings 0 and the full fixed
+    //! part - §5.4.2.26: "will return 0 mapping ... if there is no dynamic
+    //! mapping referencing the Audio Clusters' channels which are in subset P"
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 1, 0), 0xE004);
+    want = expect(AECP_SUCCESS, 0xE004, am_expect_pl(DT_SPI, 1, 0, 3, 0));
+    CHECK(got == want, "Q2: the EMPTY page 0 is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+
+    // ---- Q3: map_index = N is BAD_ARGUMENTS, with the REAL N still told ---
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 1, 3), 0xE005);
+    want = expect(AECP_BAD_ARGUMENTS, 0xE005,
+                  am_expect_pl(DT_SPI, 1, 3, 3, 0));
+    CHECK(got == want, "Q3: page N answer is not the BAD_ARGUMENTS stub");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+
+    // ---- Q4: an index past the image is NO_SUCH_DESCRIPTOR ----------------
+    // The IMAGE is the existence authority (E_GAMAP locates the descriptor
+    // in the same store READ_DESCRIPTOR serves), so GET_AUDIO_MAP refuses
+    // exactly the indices READ_DESCRIPTOR refuses
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 2, 0), 0xE006);
+    want = expect(AECP_NO_SUCH_DESCRIPTOR, 0xE006,
+                  am_expect_pl(DT_SPI, 2, 0, 0, 0));
+    CHECK(got == want, "Q4: index-past-the-image answer is not the "
+          "NO_SUCH_DESCRIPTOR stub");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+
+    // ---- Q5: STREAM_PORT_OUTPUT keeps the NOT_IMPLEMENTED echo ------------
+    // The RECORDED gap (Milan §5.4.2.26 also wants outputs with no static
+    // map served; this build's talker-side store has a different shape).
+    // The refusal is the §9.3.5.3.3 echo - byte-exact, sized by the command
+    auto spo_pl = am_pl(DT_SPO, 0, 0);
+    got = cmd(AEM_GET_AUDIO_MAP, spo_pl, 0xE007);
+    want = expect(AECP_NOT_IMPLEMENTED, 0xE007, spo_pl);
+    CHECK(got == want, "Q5: the non-input-port refusal is not the echo");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+
+    // ---- Q6: a truncated command is BAD_ARGUMENTS -------------------------
+    // §7.4.44.1's command runs through the reserved word; shorter never
+    // carried map_index, and answering page 0 out of residual zeros would be
+    // a silent misinterpretation (the K5 reasoning)
+    std::vector<uint8_t> short_pl(6, 0);
+    putbe(&short_pl[0], DT_SPI, 2); putbe(&short_pl[2], 0, 2);
+    got = cmd(AEM_GET_AUDIO_MAP, short_pl, 0xE008);
+    want = expect(AECP_BAD_ARGUMENTS, 0xE008, short_pl);
+    CHECK(!got.empty(), "Q6: a truncated GET_AUDIO_MAP got no answer");
+    CHECK(got == want, "Q6: truncated-command answer is not byte-exact");
+
+    // ---- Q7: the reserved word must not become the port -------------------
+    // §7.4.44.1 @30..@31 is reserved; the engine's payload walk shares its
+    // registers with READ_DESCRIPTOR's shape, whose @30 IS descriptor_index,
+    // so an unguarded walk would answer about port 0xBEEF while the
+    // controller asked about port 1 - same class as the K-series padded-
+    // command guard, and the check that makes the walk guard load-bearing
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 1, 2, 0xBEEF), 0xE009);
+    want = expect(AECP_SUCCESS, 0xE009, am_expect_pl(DT_SPI, 1, 2, 3, 1));
+    CHECK(got == want,
+          "Q7: a nonzero reserved word changed the addressed port");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+
+    // ---- Q8: the store's back-pressure is not a correctness parameter -----
+    int hold0 = h.amap_hold;
+    h.amap_hold = 0;
+    auto fast = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 1, 1), 0xE00A);
+    h.amap_hold = 11;
+    auto slow = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 1, 1), 0xE00A);
+    h.amap_hold = hold0;
+    CHECK(!fast.empty() && fast == slow,
+          "Q8: an 11-cycle hold per word changed the bytes on the wire");
+    CHECK(fast == expect(AECP_SUCCESS, 0xE00A,
+                         am_expect_pl(DT_SPI, 1, 1, 3, 3)),
+          "Q8: the zero-hold run is not byte-exact either");
+
+    // ---- Q9: a WEDGED store must not take the descriptor path with it -----
+    uint16_t rerr0 = d->dbg_resp_err_o;
+    h.amap_stuck = true;
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 0, 0), 0xE00B);
+    h.amap_stuck = false;
+    CHECK(!got.empty(), "Q9: a wedged audio-map store hung the AECP engine");
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, 10 /* ENTITY_MISBEHAVING */,
+                            EID, CTLR_EID, 0xE00B, AEM_GET_AUDIO_MAP, {}),
+          "Q9: the voided response is not the bare ENTITY_MISBEHAVING answer");
+    CHECK(d->dbg_resp_err_o == uint16_t(rerr0 + 1),
+          "Q9: the voided response was not counted");
+    // the crown jewel still works - and so does the audio map after it
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x000E, 2); putbe(&rd[6], 1, 2);
+    got = cmd(AEM_READ_DESCRIPTOR, rd, 0xE00C);
+    std::vector<uint8_t> epl(4, 0);
+    putbe(&epl[0], CFGIX, 2);
+    epl.insert(epl.end(), desc_spi1.begin(), desc_spi1.end());
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                            CTLR_EID, 0xE00C, AEM_READ_DESCRIPTOR, epl),
+          "Q9: READ_DESCRIPTOR regressed after an audio-map-face timeout");
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 0, 0), 0xE00D);
+    CHECK(got == expect(AECP_SUCCESS, 0xE00D, am_expect_pl(DT_SPI, 0, 0, 1, 2)),
+          "Q9: GET_AUDIO_MAP itself regressed after its own face timeout");
+
+    // ---- Q10: the query order and the record ordinal ----------------------
+    // NMAPS then GEOM then records 0..count-1, and the ordinal RESTARTS per
+    // command - a counter that survived a command would serve page 1's third
+    // record as the next command's first
+    h.amap_seq.clear();
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 1, 1), 0xE00E);
+    std::vector<std::pair<uint8_t, uint8_t>> want_q =
+        {{0, 0}, {1, 0}, {2, 0}, {2, 1}, {2, 2}};
+    CHECK(!got.empty() && h.amap_seq == want_q,
+          "Q10: %zu distinct store queries, want NMAPS, GEOM, then records "
+          "0..2", h.amap_seq.size());
+    h.amap_seq.clear();
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPI, 0, 0), 0xE00F);
+    want_q = {{0, 0}, {1, 0}, {2, 0}, {2, 1}};
+    CHECK(!got.empty() && h.amap_seq == want_q,
+          "Q10: the record ordinal did not restart with the command");
   }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);

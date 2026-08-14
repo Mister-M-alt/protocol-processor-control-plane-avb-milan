@@ -96,6 +96,11 @@ MILAN_CERT_VERSION = 0x00000000
 # that §5.4.3.2.2 requires to be zero.
 MVU_GET_MILAN_INFO = 0x0000
 E_GCTRS   = 768      # GET_COUNTERS (06 §6.6, IEEE §7.4.42) — Milan 5.4.2.25
+E_GAMAP   = 800      # GET_AUDIO_MAP (06 §6.5, IEEE §7.4.44) - Milan 5.4.2.26
+# 1722.1-2021 Table 7-1: the one descriptor type this program is dispatched
+# for (KL_aecp_engine refuses every other type back to the NOT_IMPLEMENTED
+# echo before dispatch, so the constant emitted at @24 is also a guarantee).
+DT_STREAM_PORT_INPUT = 0x000E
 
 # --- gather selectors the counters face answers (06 §6.6) --------------------
 # gx_sel is {cnd, imm[3:0]} for GATHER_EXT and {cnd, beat} for READ_CTRS, so the
@@ -104,6 +109,29 @@ E_GCTRS   = 768      # GET_COUNTERS (06 §6.6, IEEE §7.4.42) — Milan 5.4.2.25
 # them, which is why the mask sits at cnd 8: KL_aecp_engine reads sel[7] alone.
 GX_CTR_MASK_CND = 8    # -> sel 0x80
 GX_CTR_BLOCK_CND = range(8)   # -> sel 0x00..0x03, 0x10..0x13, ... 0x70..0x73
+
+# --- gather selectors the audio-map face answers (06 §6.5) -------------------
+# The SAME 8-bit sel space, and the overlap with the counter selectors above is
+# deliberate: KL_aecp_engine routes the gather bus BY COMMAND (its `amap_r`
+# discriminator), never by selector value, so each face owns the whole space
+# while its command is in flight. The engine maps these three to amap_sel_o:
+#   sel 0x00 NMAPS  -> number_of_maps of the addressed port, right-justified
+#                      ({48'd0, N}); 0 = the fabric knows no such port
+#   sel 0x01 GEOM   -> {32'd0, number_of_maps[15:0], number_of_mappings[15:0]}:
+#                      one FMT_D BUILD_FLD emits @30..@33 in wire order, and
+#                      [15:0] doubles as the ITER_OPEN count. The face answers
+#                      number_of_mappings = 0 for any page it has no data for
+#                      (unknown port, map_index out of range) - the wrong-object
+#                      guard, so an error stub emits an empty page by the same
+#                      wire the success path uses.
+#   sel 0x10 RECORD -> the 8-byte §7.4.44.2.1 record
+#                      {stream_index, stream_channel, cluster_offset,
+#                       cluster_channel} as one big-endian qword; the record
+#                      ordinal rides amap_rec_o, an engine-side counter that
+#                      increments per completed RECORD gather.
+AM_NMAPS = dict(cnd=0, imm=0)   # -> sel 0x00
+AM_GEOM = dict(cnd=0, imm=1)    # -> sel 0x01
+AM_REC = dict(cnd=1, imm=0)     # -> sel 0x10
 
 rom = [0] * ROM_DEPTH
 
@@ -464,6 +492,75 @@ place(E_GCTRS, [
     u('BUILD_FLD', ra=1,  fmt=FMT_D),            # counters_valid    @28
 ] + [u('READ_CTRS', cnd=c) for c in GX_CTR_BLOCK_CND] + [   # 32 quadlets @32
     u('SEND_RESP'),
+    u('END'),
+])
+
+# --- GET_AUDIO_MAP (IEEE 1722.1-2021 §7.4.44, Milan v1.2 §5.4.2.26) ----------
+# The command a strict controller (la_avdecc without the
+# IGNORE_NEITHER_STATIC_NOR_DYNAMIC_MAPPINGS workaround) needs answered before
+# it will finish enumerating a device whose Stream Port Inputs carry
+# number_of_maps = 0 - which Milan §5.3.3.9 makes every Milan Stream Port
+# Input ("The Stream Port Input of a Configuration shall not contain any
+# AUDIO_MAP descriptor").
+#
+# Response payload (§7.4.44.2, offsets are AECPDU bytes): descriptor_type @24,
+# descriptor_index @26, map_index @28, number_of_maps @30,
+# number_of_mappings @32, reserved @34, then 8-byte mapping records @36. So
+# the AECPDU is 36 + 8·M and cdl is 24 + 8·M (offset-from-@12, F06.14).
+#
+# WHO DECIDES WHAT (the 06 §6.5 split):
+#   - EXISTENCE is the DESCRIPTOR STORE's: DESC_ADDR locates
+#     STREAM_PORT_INPUT[index] in the same image READ_DESCRIPTOR serves, so
+#     GET_AUDIO_MAP answers NO_SUCH_DESCRIPTOR for exactly the indices
+#     READ_DESCRIPTOR answers it for - one authority, no drift.
+#   - PAGE LAW is the µprogram's: §7.4.44.1 "If the map_index is beyond the
+#     range of available maps then it returns a BAD_ARGUMENT status", so
+#     CHECK_ARG demands map_index < number_of_maps.
+#   - GEOMETRY and CONTENT are the INTEGRATOR's, through the amap_* gather
+#     face: Milan §5.4.2.26 fixes the partition per Configuration and the
+#     mappings live in the integrator's routing fabric, cycles away from this
+#     parser. The face's number_of_mappings answers 0 for any page it has no
+#     data for, which is what makes ONE emit path serve success and both
+#     error stubs (an error response still carries the full 12-byte fixed
+#     part - a controller that deserializes on every status gets a
+#     well-formed frame, never a truncated one).
+#
+# Register contract, set by KL_aecp_engine at dispatch:
+#   r14 = {16'd0, descriptor_index, descriptor_type, 16'd0} - the store's
+#         locate key ({index, type, cfg 0} on st_wdata; GET_AUDIO_MAP names
+#         no configuration_index, and configuration 0 is current by
+#         construction - SET_CONFIGURATION is not implemented)
+#   r13 = {32'd0, descriptor_index, map_index} - one FMT_D BUILD_FLD emits
+#         @26..@29 in wire order, and [15:0] is the CHECK_ARG operand
+#         (the µISA has no shift, so the engine packs each field where a
+#         µop can reach it)
+# The descriptor_type emitted at @24 is a MOVE constant: the engine only
+# dispatches this program for STREAM_PORT_INPUT (everything else keeps the
+# NOT_IMPLEMENTED echo - the recorded Stream Port OUTPUT gap), so the
+# constant is the captured value by guarantee, and r14[15:0] - where the
+# other programs keep the @24 field - is the locate key's cfg half instead.
+place(E_GAMAP, [
+    u('MOVE', rd=12, ra=0, imm=0),                    # reserved @34
+    u('MOVE', rd=8, ra=0, imm=DT_STREAM_PORT_INPUT),  # descriptor_type @24
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
+    u('GATHER_EXT', rd=5, **AM_NMAPS),           # r5 = number_of_maps
+    u('GATHER_EXT', rd=6, **AM_GEOM),            # r6 = {nmaps, nmappings}
+    u('BR_STATUS', cnd=0, imm=E_GAMAP + 8),      # NSD: skip to the emit
+    u('SET_STATUS', imm=ST_OK),
+    u('CHECK_ARG', ra=13, rb=5, fmt=FMT_W,       # map_index < number_of_maps
+      cnd=REL_LT, imm=E_GAMAP + 8),              # else BAD_ARGUMENTS (§7.4.44.1)
+    u('BUILD_HDR', ra=15, rb=13),                # emit (all three statuses):
+    u('BUILD_FLD', ra=8, fmt=FMT_W),             # descriptor_type       @24
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # descriptor_index @26 + map_index @28
+    u('BUILD_FLD', ra=6, fmt=FMT_D),             # number_of_maps @30 + number_of_mappings @32
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved              @34
+    u('ITER_OPEN', ra=6),                        # count = number_of_mappings
+    u('BR_STATUS', cnd=1, imm=E_GAMAP + 19),     # loop: 0-trip safe (test FIRST)
+    u('GATHER_EXT', rd=7, **AM_REC),             # record amap_rec_o, 8 B
+    u('APPEND', ra=7, fmt=FMT_Q),
+    u('ITER_NEXT'),
+    u('BRANCH', imm=E_GAMAP + 14),
+    u('SEND_RESP'),                              # out:
     u('END'),
 ])
 

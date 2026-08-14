@@ -292,6 +292,31 @@ module protocol_processor_top
     input  wire  [31:0] ctr_data_i,           //! that quadlet
     input  wire         ctr_wait_i,           //! HOLD the beat (not a ready)
 
+    //! ---- GET_AUDIO_MAP read face (06 §6.5; IEEE §7.4.44, Milan §5.4.2.26) ----
+    //! The processor parses the command, enforces §7.4.44.1's page rule and
+    //! lays out §7.4.44.2's response; the INTEGRATOR owns the dynamic
+    //! mappings and the Milan §5.4.2.26 partition, because they live in its
+    //! routing fabric. One word is asked for at a time: `amap_sel_o` 0 is
+    //! the addressed port's number_of_maps (0 = no such port in the fabric -
+    //! turned into NO_SUCH_DESCRIPTOR only where the descriptor image
+    //! agrees), 1 is {number_of_maps, number_of_mappings} for the page
+    //! `amap_map_index_o` (a page the fabric has no data for MUST answer 0
+    //! mappings - the wrong-object guard), and 2 is mapping record
+    //! `amap_rec_o` of that page as one big-endian §7.4.44.2.1 qword
+    //! {stream_index, stream_channel, cluster_offset, cluster_channel}.
+    //!
+    //! LEAVING IT UNWIRED IS SAFE AND HONEST, same polarity as the counters
+    //! face: an undriven `amap_wait_i` is 0, number_of_maps answers 0, and
+    //! every GET_AUDIO_MAP resolves against the descriptor image alone.
+    output logic        amap_req_o,           //! a word is being asked for
+    output logic [15:0] amap_desc_type_o,     //! AECPDU @24 (STREAM_PORT_INPUT)
+    output logic [15:0] amap_desc_index_o,    //! AECPDU @26
+    output logic [15:0] amap_map_index_o,     //! AECPDU @28 - the page
+    output logic  [1:0] amap_sel_o,           //! 0 NMAPS, 1 GEOM, 2 RECORD
+    output logic  [7:0] amap_rec_o,           //! record ordinal within the page
+    input  wire  [63:0] amap_data_i,          //! the word (upper 32 zero unless RECORD)
+    input  wire         amap_wait_i,          //! HOLD the beat (not a ready)
+
     //! ---- NVM boot restore + alarm (07 §5.3) ----
     input  wire         restore_go_i,          //! start boot restore
     output logic        restore_busy_o,        //! restore walk running
@@ -2429,6 +2454,14 @@ module protocol_processor_top
       .ctr_word_o         (ctr_word_o),
       .ctr_data_i         (ctr_data_i),
       .ctr_wait_i         (ctr_wait_i),
+      .amap_req_o         (amap_req_o),
+      .amap_desc_type_o   (amap_desc_type_o),
+      .amap_desc_index_o  (amap_desc_index_o),
+      .amap_map_index_o   (amap_map_index_o),
+      .amap_sel_o         (amap_sel_o),
+      .amap_rec_o         (amap_rec_o),
+      .amap_data_i        (amap_data_i),
+      .amap_wait_i        (amap_wait_i),
       .lock_held_i        (1'b0),               // lock manager: P4
       .lock_ctlr_i        (64'd0),
       .eff_commit_o       (aecp_eff_commit_nc_w),

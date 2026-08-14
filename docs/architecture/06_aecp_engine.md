@@ -584,6 +584,7 @@ single-source command model ([09 §1](09_verification.md)).
 |---|---|
 | 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor; `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
 | 0x0029 GET_COUNTERS | real: SUCCESS + `descriptor_type`/`descriptor_index`/`counters_valid` + all 32 quadlets (payload 136, cdl 148), the values coming from the integrator's counter face; `BAD_ARGUMENTS` on a command short of §7.4.42.1's four bytes |
+| 0x002B GET_AUDIO_MAP | real, **STREAM_PORT_INPUT only**: SUCCESS + the §7.4.44.2 fixed part + 8-byte records (payload 12 + 8·M, cdl 24 + 8·M), geometry and records from the integrator's audio-map face; `BAD_ARGUMENTS` on `map_index` ≥ `number_of_maps` (§7.4.44.1) or a command short of §7.4.44.1's eight bytes; `NO_SUCH_DESCRIPTOR` where the descriptor store misses the locate; any other descriptor_type keeps the NOT_IMPLEMENTED echo - the recorded STREAM_PORT_OUTPUT gap |
 | 0x0026 IDENTIFY_NOTIFICATION | `BAD_ARGUMENTS` (§7.4.39.2 — the opcode-specific rule over §9.3.5.3.3) |
 | MVU 0x0000 GET_MILAN_INFO | real: SUCCESS + the Figure 5.4 body — `protocol_version` 1, `features_flags` 0, `certification_version` 0 (§6.9 and the honesty note below); AECPDU 44 B, cdl 32 |
 | everything else, all message types | `NOT_IMPLEMENTED` with the command **echoed** (F06.14 / §9.3.5.3.3) |
@@ -628,6 +629,79 @@ as "of order a hundred", not as a number. Vivado —
 `KL_aecp_ucpu` at 1,070 LUT where yosys puts it at 1,122 — has not been run
 against this change, and at the shipping build's occupancy a three-seed sweep is
 the only thing that settles whether it fits.
+
+**GET_AUDIO_MAP keeps no mappings, and that is the same design.** Milan §5.3.3.9
+makes every Milan Stream Port Input dynamic ("The Stream Port Input of a
+Configuration shall not contain any AUDIO_MAP descriptor"), so a controller can
+ONLY see an input's mappings through 0x002B - a NOT_IMPLEMENTED there is "no
+mappings at all" to a strict la_avdecc, which then fails enumeration of a
+device whose STREAM_PORT_INPUTs carry `number_of_maps` = 0. The mappings
+themselves live in the integrator's routing fabric (on the reference platform,
+the render crossbar's map RAM), so the engine owns §7.4.44.2's layout and asks
+an `amap_*` read face - the counters bargain again - one word at a time:
+`amap_sel_o` 0 is the port's `number_of_maps`, 1 is
+`{number_of_maps, number_of_mappings}` for the page `amap_map_index_o`, 2 is
+mapping record `amap_rec_o` of that page as one big-endian §7.4.44.2.1 qword.
+Both faces share ONE gather bus routed **by command** (`amap_r`), never by
+selector value, so each owns the whole selector space while its command is in
+flight.
+
+The authority split is the honest part (`E_GAMAP`, 21 µops):
+
+- **Existence is the descriptor store's.** The µprogram opens with a
+  `DESC_ADDR` locate of `STREAM_PORT_INPUT[index]` in the same image
+  READ_DESCRIPTOR serves, so GET_AUDIO_MAP answers `NO_SUCH_DESCRIPTOR` for
+  exactly the indices READ_DESCRIPTOR answers it for - one authority, no
+  drift between the image and the fabric's idea of its ports.
+- **The page rule is the µprogram's.** §7.4.44.1: "If the map_index is beyond
+  the range of available maps then it returns a BAD_ARGUMENT status" - one
+  `CHECK_ARG map_index < number_of_maps`, the bound coming from the face.
+- **The partition and the records are the integrator's.** Milan §5.4.2.26
+  fixes the partition per Configuration ("disjoint subsets whose size does
+  not exceed 176 ... This partitioning shall be fixed for a given
+  Configuration") and demands "always return N in the number_of_maps field
+  ... no matter the actual count of dynamic mappings" - the face serves N,
+  each page's count, and each record; the µprogram's ITER/APPEND loop (0-trip
+  safe: tested before the body) emits exactly `number_of_mappings` records.
+
+There is ONE emit path for all three statuses, and the face's wrong-object
+guard is what makes that possible: a page the store has no data for (unknown
+port, out-of-range map_index) answers `number_of_mappings` = 0, so the
+BAD_ARGUMENTS and NO_SUCH_DESCRIPTOR stubs carry the full 12-byte fixed part
+over an empty page by the same wire the success path uses - a controller that
+deserializes on every status gets a well-formed frame at every status. The
+record ordinal (`amap_rec_o`) is an engine-side counter, one increment per
+completed record gather, reset with the command, so the face stays a
+stateless {port, page, ordinal} → record lookup.
+
+`amap_wait_i` is the same HOLD `ctr_wait_i` is, bounded by the same (now
+shared) watchdog with the same ENTITY_MISBEHAVING void on expiry, and an
+unwired face is the same safe state: `number_of_maps` answers 0 and every
+GET_AUDIO_MAP resolves against the descriptor image alone.
+
+**The STREAM_PORT_OUTPUT gap is recorded, not hidden.** Milan §5.4.2.26 also
+demands GET_AUDIO_MAP on every Stream Port Output with no static map (and
+`NOT_SUPPORTED` on one WITH static maps - the §6.5 store-side check). This
+build's talker-side mappings live in a differently-shaped store (the capture
+mux's source buckets, not a cluster-indexed RAM), so a 0x002B naming any
+descriptor_type but STREAM_PORT_INPUT keeps the NOT_IMPLEMENTED echo, decided
+at the payload-walk exit like the MVU sub-decode (the type field is at @24 and
+cannot be judged at pop). ADD_AUDIO_MAPPINGS (0x002C) and
+REMOVE_AUDIO_MAPPINGS (0x002D) also keep the echo: the write path must reuse
+the same acceptance the fabric's own map-write port applies - never a second
+validation law - and that lands with them, not before.
+
+Measured cost of the whole opcode inside `KL_aecp_engine`, yosys 0.66
+`synth_xilinx -family xc7 -flatten`, against the commit it lands on:
+**+70 LUT, +9 flip-flops** (2,727 → 2,797 LUT; 1,813 → 1,822 FF), with block
+RAM (5 RAMB36E1), distributed RAM (54 RAM32M) and the MUXF7/F8 counts
+unchanged and CARRY4 moving 192 → 194 - the µcode ROM absorbed `E_GAMAP` in
+its fill, so the 21-µop program costs no memory. The flop figure is exact and
+accounted for: the 8-bit record ordinal plus the `amap_r` discriminator ARE
+the 9; the shared watchdog reuses the counters timeout counter, so the wedge
+guard costs nothing new. Read the LUT figure as "of order a hundred" for the
+reasons the GET_COUNTERS paragraph above already measured; Vivado has not
+been run against this change.
 
 Δ7's ACQUIRE_ENTITY (`NOT_SUPPORTED` with `owner_id` = 0) is therefore **not yet**
 distinguished from the generic echo — the exemplar µprogram exists (`E_ACQ`) but the

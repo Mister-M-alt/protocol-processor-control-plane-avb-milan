@@ -80,6 +80,18 @@ module pp_top_wrap (
     input  wire  [31:0] ctr_data_i,
     input  wire         ctr_wait_i,
 
+    // GET_AUDIO_MAP read face (06 §6.5) - same bargain: the harness plays
+    // the integrator's dynamic-mapping store, so every geometry word and
+    // every record this suite checks on the wire is the model's
+    output logic        amap_req_o,
+    output logic [15:0] amap_desc_type_o,
+    output logic [15:0] amap_desc_index_o,
+    output logic [15:0] amap_map_index_o,
+    output logic  [1:0] amap_sel_o,
+    output logic  [7:0] amap_rec_o,
+    input  wire  [63:0] amap_data_i,
+    input  wire         amap_wait_i,
+
     // descriptor-image memory master (07 §3.3) — the C++ harness plays a
     // latency-injecting DRAM behind it
     output logic        desc_mem_req_valid_o,
@@ -271,6 +283,14 @@ module pp_top_wrap (
       .ctr_word_o            (ctr_word_o),
       .ctr_data_i            (ctr_data_i),
       .ctr_wait_i            (ctr_wait_i),
+      .amap_req_o            (amap_req_o),
+      .amap_desc_type_o      (amap_desc_type_o),
+      .amap_desc_index_o     (amap_desc_index_o),
+      .amap_map_index_o      (amap_map_index_o),
+      .amap_sel_o            (amap_sel_o),
+      .amap_rec_o            (amap_rec_o),
+      .amap_data_i           (amap_data_i),
+      .amap_wait_i           (amap_wait_i),
       .desc_mem_req_valid_o  (desc_mem_req_valid_o),
       .desc_mem_req_ready_i  (desc_mem_req_ready_i),
       .desc_mem_req_addr_o   (desc_mem_req_addr_o),
