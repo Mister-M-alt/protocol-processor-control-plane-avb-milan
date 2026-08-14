@@ -9,15 +9,19 @@
 //                 03 §5 four producers -> per-engine queues, F03.3
 //                 DECODED->DISPATCHED arc)
 //
-//  Description : Per-engine dispatch queues — three independent FIFOs
-//                (ADP / ACMP / AECP) of 03 §4 records, fed by the single
-//                normalized stream from KL_pp_normalizer (the producer
-//                merge and its fixed RX > TIMER > SELF > MGMT priority
-//                live there). Routing is by the record's protocol field:
-//                ADP -> ADP queue, ACMP -> ACMP queue, AEM/MVU/AA (and,
-//                defensively, any unknown code) -> AECP queue. Each engine
-//                pops its queue over a valid/ready port; the presented
-//                head record holds bit-stable through a stall.
+//  Description : Per-engine dispatch queues — four independent FIFOs
+//                (ADP / ACMP / AECP / MAAP) of 03 §4 records, fed by the
+//                single normalized stream from KL_pp_normalizer (the
+//                producer merge and its fixed RX > TIMER > SELF > MGMT
+//                priority live there). Routing is by the record's protocol
+//                field: ADP -> ADP queue, ACMP -> ACMP queue, MAAP -> MAAP
+//                queue, AEM/MVU/AA (and, defensively, any unknown code) ->
+//                AECP queue. Each engine pops its queue over a valid/ready
+//                port; the presented head record holds bit-stable through
+//                a stall. The MAAP queue is SHALLOWER by default (2 + the
+//                head): Annex B traffic is a handful of frames per claim
+//                walk and its engine drains a record in tens of cycles, so
+//                depth buys nothing but distributed RAM.
 //
 //                Full policy: producers STALL, never drop — F03.3 has no
 //                drop arc after the RX-slot gate (F03.2 drop6 is the LAST
@@ -49,7 +53,9 @@ module KL_pp_dispatch
     //! ACMP queue depth (RAM entries; +1 presented head)
     parameter int unsigned ACMP_DEPTH_P = 4,
     //! AECP queue depth (RAM entries; +1 presented head)
-    parameter int unsigned AECP_DEPTH_P = 4
+    parameter int unsigned AECP_DEPTH_P = 4,
+    //! MAAP queue depth (RAM entries; +1 presented head)
+    parameter int unsigned MAAP_DEPTH_P = 2
 ) (
     input  wire                    clk_i,             //! core clock (P-CLK-HZ domain)
     input  wire                    rst_n,             //! synchronous active-low reset
@@ -74,30 +80,40 @@ module KL_pp_dispatch
     output logic [PP_TXN_W_C-1:0]  aecp_txn_o,        //! head record (stable through a stall)
     input  wire                    aecp_txn_ready_i,  //! engine consumes the head this cycle
 
+    //! ---- MAAP engine pop port ----
+    output logic                   maap_txn_valid_o,  //! head record valid
+    output logic [PP_TXN_W_C-1:0]  maap_txn_o,        //! head record (stable through a stall)
+    input  wire                    maap_txn_ready_i,  //! engine consumes the head this cycle
+
     //! ---- observability ----
     output logic [7:0]             adp_level_o,       //! ADP records in flight (RAM + head)
     output logic [7:0]             acmp_level_o,      //! ACMP records in flight (RAM + head)
     output logic [7:0]             aecp_level_o,      //! AECP records in flight (RAM + head)
+    output logic [7:0]             maap_level_o,      //! MAAP records in flight (RAM + head)
     output logic [15:0]            adp_stall_count_o, //! cycles a record stalled on full ADP (saturates)
     output logic [15:0]            acmp_stall_count_o,//! cycles a record stalled on full ACMP (saturates)
-    output logic [15:0]            aecp_stall_count_o //! cycles a record stalled on full AECP (saturates)
+    output logic [15:0]            aecp_stall_count_o,//! cycles a record stalled on full AECP (saturates)
+    output logic [15:0]            maap_stall_count_o //! cycles a record stalled on full MAAP (saturates)
 );
 
   localparam logic [15:0] STALL_MAX_C = 16'hFFFF;
 
   // ------------------------------------------------------------- routing
   pp_txn_t enq_txn_w;
-  logic    sel_adp_w, sel_acmp_w, sel_aecp_w;
+  logic    sel_adp_w, sel_acmp_w, sel_maap_w, sel_aecp_w;
 
   assign enq_txn_w  = pp_txn_t'(enq_txn_i);
   assign sel_adp_w  = (enq_txn_w.protocol == PP_PROTO_ADP);
   assign sel_acmp_w = (enq_txn_w.protocol == PP_PROTO_ACMP);
-  assign sel_aecp_w = !sel_adp_w && !sel_acmp_w;  // AEM / MVU / AA + unknown
+  assign sel_maap_w = (enq_txn_w.protocol == PP_PROTO_MAAP);
+  assign sel_aecp_w = !sel_adp_w && !sel_acmp_w
+                    && !sel_maap_w;               // AEM / MVU / AA + unknown
 
-  logic adp_full_w, acmp_full_w, aecp_full_w;
+  logic adp_full_w, acmp_full_w, aecp_full_w, maap_full_w;
 
   assign enq_ready_o = (sel_adp_w  && !adp_full_w)
                      || (sel_acmp_w && !acmp_full_w)
+                     || (sel_maap_w && !maap_full_w)
                      || (sel_aecp_w && !aecp_full_w);
 
   // ------------------------------------------------------- the three FIFOs
@@ -143,15 +159,30 @@ module KL_pp_dispatch
       .level_o     (aecp_level_o)
   );
 
+  KL_pp_dispatch_fifo #(
+      .DEPTH_P (MAAP_DEPTH_P)
+  ) u_maap_q (
+      .clk_i       (clk_i),
+      .rst_n       (rst_n),
+      .push_i      (enq_valid_i && sel_maap_w),
+      .wdata_i     (enq_txn_i),
+      .full_o      (maap_full_w),
+      .pop_valid_o (maap_txn_valid_o),
+      .pop_data_o  (maap_txn_o),
+      .pop_ready_i (maap_txn_ready_i),
+      .level_o     (maap_level_o)
+  );
+
   // ------------------------------------------- stall-cycle counters (V8-
   // style trace evidence: a stall is counted, a record is never dropped)
-  logic [15:0] adp_stall_r, acmp_stall_r, aecp_stall_r;
+  logic [15:0] adp_stall_r, acmp_stall_r, aecp_stall_r, maap_stall_r;
 
   always_ff @(posedge clk_i) begin : stall_counters
     if (!rst_n) begin
       adp_stall_r  <= '0;
       acmp_stall_r <= '0;
       aecp_stall_r <= '0;
+      maap_stall_r <= '0;
     end else begin
       if (enq_valid_i && sel_adp_w && adp_full_w
           && (adp_stall_r != STALL_MAX_C)) begin
@@ -165,12 +196,17 @@ module KL_pp_dispatch
           && (aecp_stall_r != STALL_MAX_C)) begin
         aecp_stall_r <= aecp_stall_r + 16'd1;
       end
+      if (enq_valid_i && sel_maap_w && maap_full_w
+          && (maap_stall_r != STALL_MAX_C)) begin
+        maap_stall_r <= maap_stall_r + 16'd1;
+      end
     end
   end
 
   assign adp_stall_count_o  = adp_stall_r;
   assign acmp_stall_count_o = acmp_stall_r;
   assign aecp_stall_count_o = aecp_stall_r;
+  assign maap_stall_count_o = maap_stall_r;
 
 endmodule : KL_pp_dispatch
 

@@ -168,8 +168,9 @@ module pp_top_wrap (
     output logic [1:0]  svc_rsp_status_o,
     output logic [31:0] svc_rsp_data_o,
 
-    // maap face (02 §4.2): this processor implements no allocator — the
-    // C++ harness plays one, INCLUDING the "no allocator at all" wiring
+    // maap face (02 §4.2): with cfg_maap_internal_i = 0 the C++ harness
+    // plays the allocator, INCLUDING the "no allocator at all" wiring; with
+    // 1 the internal KL_pp_maap engine answers and this group is quiesced
     output logic        maap_req_valid_o,
     input  wire         maap_req_ready_i,
     output logic        maap_req_release_o,
@@ -180,6 +181,17 @@ module pp_top_wrap (
     input  wire         maap_conflict_valid_i,
     input  wire  [2:0]  maap_conflict_src_i,
     output logic        maap_conflict_ack_o,
+
+    // internal MAAP engine (11): quasi-static config + the published claim
+    input  wire         cfg_maap_internal_i,
+    input  wire  [7:0]  cfg_maap_count_i,
+    input  wire  [15:0] cfg_maap_seed_offset_i,
+    input  wire         cfg_maap_seed_valid_i,
+    output logic [47:0] maap_addr_o,
+    output logic        maap_addr_valid_o,
+    output logic [1:0]  maap_state_o,
+    output logic [7:0]  maap_conflicts_o,
+    output logic [7:0]  maap_defends_o,
 
     // the per-source DA gate a fabric ANDs with its own stream enable
     output logic [7:0]  acmp_declaring_o,
@@ -209,7 +221,7 @@ module pp_top_wrap (
     output logic [15:0] dbg_resp_lane_o
 );
 
-  // 1 ms = 2 x 50 = 100 clk; the 89-slot sweep (91 cycles) fits inside
+  // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
   localparam int unsigned TB_DIV_US_C = 2;
   localparam int unsigned TB_DIV_MS_C = 50;
 
@@ -366,6 +378,15 @@ module pp_top_wrap (
       .maap_conflict_valid_i (maap_conflict_valid_i),
       .maap_conflict_src_i   (maap_conflict_src_i),
       .maap_conflict_ack_o   (maap_conflict_ack_o),
+      .cfg_maap_internal_i   (cfg_maap_internal_i),
+      .cfg_maap_count_i      (cfg_maap_count_i),
+      .cfg_maap_seed_offset_i (cfg_maap_seed_offset_i),
+      .cfg_maap_seed_valid_i (cfg_maap_seed_valid_i),
+      .maap_addr_o           (maap_addr_o),
+      .maap_addr_valid_o     (maap_addr_valid_o),
+      .maap_state_o          (maap_state_o),
+      .maap_conflicts_o      (maap_conflicts_o),
+      .maap_defends_o        (maap_defends_o),
       .acmp_declaring_o      (acmp_declaring_o),
       .dbg_now_ms_o          (dbg_now_ms_o)
   );

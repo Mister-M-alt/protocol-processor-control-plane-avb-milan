@@ -439,15 +439,24 @@ module protocol_processor_top
     output logic [31:0]                  adp_next_avail_index_o,  //! available_index the NEXT ENTITY_AVAILABLE will carry
 
     //! ---- maap face (02 §4.2) — THE ADDRESS ALLOCATOR SEAM --------------
-    //! This processor implements no MAAP: 01 §3 puts address allocation
-    //! OUTSIDE it, in the integrating fabric (the consumer already ships a
-    //! KL_maap engine). Nothing else can open the talker DA gate, because
+    //! Two legal answers now exist. With cfg_maap_internal_i = 0 (the
+    //! default and the landed behaviour, byte-identical) this processor
+    //! implements no MAAP: address allocation lives OUTSIDE it, in the
+    //! integrating fabric (the consumer ships a KL_maap engine behind
+    //! KL_pp_maap_shim), and the port group below IS the seam. With
+    //! cfg_maap_internal_i = 1 the in-scope KL_pp_maap engine (11, IEEE
+    //! 1722-2016 Annex B) answers the talker internally under the SAME
+    //! contract, the port group is quiesced (req_valid held 0, every input
+    //! ignored), and the claim is published on the maap_addr_o group below
+    //! so the fabric can gate talker egress and retire its own allocator.
+    //! Either way, nothing else can open the talker DA gate, because
     //! GS_DECLARING is reachable only through GS_DA_OK and GS_DA_OK is
     //! written only on an ALLOC_DA success (KL_acmp_talker EVC_GRANT): with
-    //! this face unconnected acmp_declaring_o above is STRUCTURALLY stuck at
-    //! 0 and no source ever declares a Talker attribute to SRP either. So it
-    //! is published rather than tied off — a processor whose talker half is
-    //! dead by construction is not a contract a fabric can integrate.
+    //! this face unconnected AND the internal engine disabled,
+    //! acmp_declaring_o above is STRUCTURALLY stuck at 0 and no source ever
+    //! declares a Talker attribute to SRP either. So it is published rather
+    //! than tied off — a processor whose talker half is dead by
+    //! construction is not a contract a fabric can integrate.
     //!
     //! Single-outstanding: one ALLOC_DA / RELEASE_DA at a time, req held
     //! until ready, exactly one rsp per accepted req, conflicts as a sticky
@@ -471,6 +480,25 @@ module protocol_processor_top
     input  wire                          maap_conflict_valid_i, //! MAAP_CONFLICT{source} event, sticky until acked
     input  wire  [SRC_IDX_W_C-1:0]       maap_conflict_src_i,   //! conflicted source
     output logic                         maap_conflict_ack_o,   //! event ack (combinational)
+
+    //! ---- internal MAAP engine (11; IEEE 1722-2016 Annex B) --------------
+    //! Quasi-static (02 §2 rule 4: set before entity_enable, stable after).
+    //! 0 = the landed behaviour above, byte-identical; 1 = KL_pp_maap owns
+    //! the whole-entity block claim and answers the talker's ALLOC/RELEASE
+    //! internally under the shim's exact contract.
+    input  wire                          cfg_maap_internal_i,    //! 1 = internal allocator
+    input  wire  [7:0]                   cfg_maap_count_i,       //! block size to claim (>= 1)
+    input  wire  [15:0]                  cfg_maap_seed_offset_i, //! footnote-a provisioning: preferred pool offset
+    input  wire                          cfg_maap_seed_valid_i,  //! 1 = first walk probes the seed
+    //! The claim, published for the integrating fabric (KL_maap's
+    //! addr_o/addr_valid_o naming so the substitution is mechanical): gate
+    //! talker egress on maap_addr_valid_o, read source s's DA as
+    //! maap_addr_o + s. All-zero while cfg_maap_internal_i = 0.
+    output logic [47:0]                  maap_addr_o,        //! claimed base DMAC (source 0)
+    output logic                         maap_addr_valid_o,  //! 1 = Annex B DEFEND state (claim held)
+    output logic [1:0]                   maap_state_o,       //! 0 INITIAL / 1 PROBE / 2 DEFEND
+    output logic [7:0]                   maap_conflicts_o,   //! re-address events (saturating)
+    output logic [7:0]                   maap_defends_o,     //! DEFEND frames sent (saturating)
 
     //! ---- observability ----
     output logic [31:0] dbg_now_ms_o           //! absolute ms timebase
@@ -496,6 +524,7 @@ module protocol_processor_top
   // TMR_MAP_C.regmon (2*CTRL*IF registry monitors, P4), .capool (CA pool,
   // originator) and .single (5 singletons, P4) are reserved and unused this
   // phase — but they are SPACED, so landing them cannot move anything below.
+  localparam int unsigned TMR_MAAP_BASE_C      = TMR_MAP_C.maap;       // 2: probe + announce
   localparam int unsigned TMR_SRP_CAD_BASE_C   = TMR_MAP_C.srp_cad;    // 5 cadence + 2 fixed
   localparam int unsigned TMR_SRP_TK_BASE_C    = TMR_MAP_C.srp_tk;     // SO registrar-leave
   localparam int unsigned TMR_SRP_LS_BASE_C    = TMR_MAP_C.srp_ls;     // SI registrar-leave
@@ -526,6 +555,7 @@ module protocol_processor_top
   localparam int unsigned OWN_TKR_END_C   = 32'(PP_OWN_TKR_C)    + N_STREAM_OUT_P;
   localparam int unsigned OWN_SRPLS_END_C = 32'(PP_OWN_SRP_LS_C) + N_STREAM_IN_P;
   localparam int unsigned OWN_SRPCAD_END_C = 32'(PP_OWN_SRP_CAD_C) + PP_SRP_CAD_SLOTS_C;
+  localparam int unsigned OWN_MAAP_END_C   = 32'(PP_OWN_MAAP_C) + PP_MAAP_SLOTS_C;
 
   if (TMR_SLOTS_C > (32'd1 << TMR_AW_C)) begin : gen_g_tmr_aw
     $error("F08.4: TMR_AW_C=%0d cannot index P-TIMER-SLOTS=%0d",
@@ -539,6 +569,8 @@ module protocol_processor_top
       || (TMR_LSTN_BASE_C    < TMR_ADP_NOADP_BASE_C + N_STREAM_IN_P)
       || (TMR_TKR_BASE_C     < TMR_LSTN_BASE_C      + N_STREAM_IN_P)
       || (TMR_MAP_C.regmon   < TMR_TKR_BASE_C       + N_STREAM_OUT_P)
+      || (TMR_MAAP_BASE_C    < TMR_MAP_C.single     + PP_SINGLETON_SLOTS_C)
+      || (TMR_MAP_C.base_end < TMR_MAAP_BASE_C      + PP_MAAP_SLOTS_C)
       || (TMR_SRP_CAD_BASE_C < TMR_MAP_C.base_end)
       || (TMR_SRP_TK_BASE_C  < TMR_SRP_CAD_BASE_C   + PP_SRP_CAD_SLOTS_C)
       || (TMR_SRP_LS_BASE_C  < TMR_SRP_TK_BASE_C    + N_STREAM_OUT_P))
@@ -551,7 +583,8 @@ module protocol_processor_top
       || (OWN_SRPTK_END_C > 32'(PP_OWN_TKR_C))
       || (OWN_TKR_END_C   > 32'(PP_OWN_SRP_LS_C))
       || (OWN_SRPLS_END_C > 32'(PP_OWN_SRP_CAD_C))
-      || (OWN_SRPCAD_END_C > 32'd256)) begin : gen_g_owner_overlap
+      || (OWN_SRPCAD_END_C > 32'(PP_OWN_MAAP_C))
+      || (OWN_MAAP_END_C   > 32'd256)) begin : gen_g_owner_overlap
     $error("F08.4: owner tags OVERLAP at SI=%0d SO=%0d (8-bit expiry bus)",
            N_STREAM_IN_P, N_STREAM_OUT_P);
   end
@@ -568,6 +601,8 @@ module protocol_processor_top
   localparam int unsigned LANE_ADP_C      = 3;  // whole 82 B frames
   localparam int unsigned LANE_SRP_C      = 4;  // whole MRPDU frames
   localparam int unsigned LANE_TKRSP_C    = 5;  // talker response PDUs (56 B)
+  localparam int unsigned LANE_MAAP_C     = 6;  // whole 60 B MAAP frames (11)
+  localparam int unsigned LANE_N_C        = 7;
 
   // =========================================================================
   // shared services: timer, PRNG, scoreboard, trace ring, originator
@@ -859,7 +894,8 @@ module protocol_processor_top
   localparam int unsigned RXF_TKR_C  = 2;
   localparam int unsigned RXF_AECP_C = 3;   // the TOP-LEVEL pop face
   localparam int unsigned RXF_UCPU_C = 4;   // KL_aecp_engine
-  localparam int unsigned RXF_N_C    = 5;
+  localparam int unsigned RXF_MAAP_C = 5;   // KL_pp_maap (free-only: records are self-contained)
+  localparam int unsigned RXF_N_C    = 6;
 
   logic [RXF_N_C-1:0]              rxf_vld_r;
   logic [RXF_N_C-1:0][RXS_W_C-1:0] rxf_slot_r;
@@ -873,10 +909,14 @@ module protocol_processor_top
   logic adp_rxs_free_w,  lstn_rxs_free_w,  tkr_rxs_free_w, aecp_rxs_free_w;
   logic [RXS_W_C-1:0] adp_rxs_free_slot_w, lstn_rxs_free_slot_w,
                       tkr_rxs_free_slot_w, aecp_rxs_free_slot_w;
+  logic        maapeng_rxs_free_w;
+  logic [2:0]  maapeng_rxs_free_slot_w;   // pp_pkg handle space (engine port)
 
-  assign rxf_req_w      = {aecp_rxs_free_w, aecp_rxs_free_i, tkr_rxs_free_w,
+  assign rxf_req_w      = {maapeng_rxs_free_w,
+                           aecp_rxs_free_w, aecp_rxs_free_i, tkr_rxs_free_w,
                            lstn_rxs_free_w, adp_rxs_free_w};
-  assign rxf_req_slot_w = {aecp_rxs_free_slot_w, aecp_rxs_free_slot_i,
+  assign rxf_req_slot_w = {maapeng_rxs_free_slot_w[RXS_W_C-1:0],
+                           aecp_rxs_free_slot_w, aecp_rxs_free_slot_i,
                            tkr_rxs_free_slot_w,
                            lstn_rxs_free_slot_w, adp_rxs_free_slot_w};
 
@@ -1111,8 +1151,12 @@ module protocol_processor_top
   logic                  adp_txn_valid_w, acmp_txn_valid_w;
   logic [PP_TXN_W_C-1:0] adp_txn_w, acmp_txn_w;
   logic                  adp_txn_ready_w, acmp_txn_ready_w;
+  logic                  maap_txn_valid_w, maap_txn_ready_w;
+  logic [PP_TXN_W_C-1:0] maap_txn_w;
   logic [7:0]  disp_adp_level_w, disp_acmp_level_w, disp_aecp_level_w;
+  logic [7:0]  disp_maap_level_nc_w;
   logic [15:0] disp_adp_stall_w, disp_acmp_stall_w, disp_aecp_stall_w;
+  logic [15:0] disp_maap_stall_nc_w;
 
   KL_pp_dispatch u_dispatch (
       .clk_i              (clk_i),
@@ -1131,12 +1175,17 @@ module protocol_processor_top
       //! the engine drains the queue; the top-level face is an ADDITIONAL
       //! consumer (see its port banner)
       .aecp_txn_ready_i   (aecp_txn_ready_i || aecp_eng_ready_w),
+      .maap_txn_valid_o   (maap_txn_valid_w),
+      .maap_txn_o         (maap_txn_w),
+      .maap_txn_ready_i   (maap_txn_ready_w),
       .adp_level_o        (disp_adp_level_w),
       .acmp_level_o       (disp_acmp_level_w),
       .aecp_level_o       (disp_aecp_level_w),
+      .maap_level_o       (disp_maap_level_nc_w),
       .adp_stall_count_o  (disp_adp_stall_w),
       .acmp_stall_count_o (disp_acmp_stall_w),
-      .aecp_stall_count_o (disp_aecp_stall_w)
+      .aecp_stall_count_o (disp_aecp_stall_w),
+      .maap_stall_count_o (disp_maap_stall_nc_w)
   );
 
   // ---- ACMP pop steer (RECORDED SEAM): talker commands {0,2,4,12} to the
@@ -1519,6 +1568,17 @@ module protocol_processor_top
   logic [2:0]  tkr_draw_kind_w;
   logic        tkr_draw_busy_w, tkr_draw_valid_w;
 
+  // talker-side maap face (steered below between the top ports and the
+  // internal engine; 02 SS4.2 / 11)
+  logic                    tkr_maap_req_valid_w, tkr_maap_req_ready_w;
+  logic                    tkr_maap_req_release_w;
+  logic [SRC_IDX_W_C-1:0]  tkr_maap_req_src_w;
+  logic                    tkr_maap_rsp_valid_w, tkr_maap_rsp_ok_w;
+  logic [47:0]             tkr_maap_rsp_da_w;
+  logic                    tkr_maap_confl_valid_w;
+  logic [SRC_IDX_W_C-1:0]  tkr_maap_confl_src_w;
+  logic                    tkr_maap_confl_ack_w;
+
   // SRP class-D lanes consumed by the talker + snapshot
   logic [2:0]  srp_class_a_prio_w;
   logic [11:0] srp_class_a_vid_w;
@@ -1582,18 +1642,19 @@ module protocol_processor_top
       .resp_flags_o          (tkr_resp_flags_w),
       .resp_vlan_id_o        (tkr_resp_vlan_w),
       .resp_if_index_o       (tkr_resp_if_nc_w),
-      // the maap face is the top's own port group (see its banner): pure
-      // pass-through, the allocator lives in the integrating fabric
-      .maap_req_valid_o      (maap_req_valid_o),
-      .maap_req_ready_i      (maap_req_ready_i),
-      .maap_req_release_o    (maap_req_release_o),
-      .maap_req_src_o        (maap_req_src_o),
-      .maap_rsp_valid_i      (maap_rsp_valid_i),
-      .maap_rsp_ok_i         (maap_rsp_ok_i),
-      .maap_rsp_da_i         (maap_rsp_da_i),
-      .maap_conflict_valid_i (maap_conflict_valid_i),
-      .maap_conflict_src_i   (maap_conflict_src_i),
-      .maap_conflict_ack_o   (maap_conflict_ack_o),
+      // the maap face steers by cfg_maap_internal_i (port-group banner):
+      // 0 = the top's own port group (the allocator lives in the fabric),
+      // 1 = the internal KL_pp_maap engine under the same contract
+      .maap_req_valid_o      (tkr_maap_req_valid_w),
+      .maap_req_ready_i      (tkr_maap_req_ready_w),
+      .maap_req_release_o    (tkr_maap_req_release_w),
+      .maap_req_src_o        (tkr_maap_req_src_w),
+      .maap_rsp_valid_i      (tkr_maap_rsp_valid_w),
+      .maap_rsp_ok_i         (tkr_maap_rsp_ok_w),
+      .maap_rsp_da_i         (tkr_maap_rsp_da_w),
+      .maap_conflict_valid_i (tkr_maap_confl_valid_w),
+      .maap_conflict_src_i   (tkr_maap_confl_src_w),
+      .maap_conflict_ack_o   (tkr_maap_confl_ack_w),
       .declaring_o           (tkr_declaring_w),
       .gate_open_o           (tkr_gate_open_w),
       .gate_close_o          (tkr_gate_close_w),
@@ -1616,6 +1677,130 @@ module protocol_processor_top
       .prng_draw_valid_i     (tkr_draw_valid_w),
       .prng_draw_ms_i        (prng_ms_w)
   );
+
+  // =========================================================================
+  // internal MAAP engine (11; IEEE 1722-2016 Annex B) + the seam steer
+  // =========================================================================
+  //! The engine always runs its RX pop (a parked queue would wedge the
+  //! shared normalizer head — its banner), but its claim walk engages only
+  //! while cfg_maap_internal_i (AND link) holds, so the disabled build
+  //! transmits nothing and answers nothing: byte-identical to the landed
+  //! external-only top.
+  logic        maapeng_prng_req_w;
+  logic [2:0]  maapeng_prng_kind_w;
+  logic        maapeng_prng_busy_w, maapeng_prng_valid_w;
+  logic        maapeng_arm_valid_w, maapeng_arm_cancel_w;
+  logic [TMR_AW_C-1:0] maapeng_arm_slot_w;
+  logic [PP_TIMER_OWNER_W_C-1:0] maapeng_arm_owner_w;
+  logic [31:0] maapeng_arm_deadline_w;
+  logic        maapeng_txs_alloc_req_w, maapeng_txs_oversize_nc_w;
+  logic        maapeng_txs_gnt_w;
+  logic [TXS_W_C-1:0] maapeng_txs_gnt_slot_w;
+  logic [TXS_W_C-1:0] maapeng_txs_wr_slot_w;
+  logic [TXA_W_C-1:0] maapeng_txs_wr_addr_w, maapeng_txs_wr_len_w;
+  logic        maapeng_txs_wr_valid_w, maapeng_txs_wr_commit_w;
+  logic [7:0]  maapeng_txs_wr_data_w;
+  logic        maapeng_txreq_valid_w, maapeng_txreq_ready_w;
+  logic [TXS_W_C-1:0] maapeng_txreq_slot_w;
+  logic        maapeng_alloc_valid_w, maapeng_alloc_ready_w;
+  logic        maapeng_rsp_valid_w, maapeng_rsp_ok_w;
+  logic [47:0] maapeng_rsp_da_w;
+  logic        maapeng_confl_valid_w;
+  logic [SRC_IDX_W_C-1:0] maapeng_confl_src_w;
+  logic        maapeng_confl_ack_w;
+
+  KL_pp_maap #(
+      .N_SRC_P             (N_STREAM_OUT_P),
+      .RX_SLOTS_P          (RX_SLOTS_P),
+      .TMR_SLOTS_P         (TMR_SLOTS_C),
+      .TMR_SLOT_BASE_P     (TMR_MAAP_BASE_C),
+      .TMR_OWNER_BASE_P    (PP_OWN_MAAP_C),
+      .TX_STD_SLOTS_P      (TX_STD_SLOTS_P),
+      .TX_OVERSIZE_BYTES_P (TX_OVERSIZE_BYTES_P)
+  ) u_maap (
+      .clk_i               (clk_i),
+      .rst_n               (rst_n),
+      .cfg_en_i            (cfg_maap_internal_i),
+      .cfg_count_i         (cfg_maap_count_i),
+      .cfg_seed_offset_i   (cfg_maap_seed_offset_i),
+      .cfg_seed_valid_i    (cfg_maap_seed_valid_i),
+      .own_mac_i           (own_mac_i),
+      .link_up_i           (link_up_i),
+      .txn_valid_i         (maap_txn_valid_w),
+      .txn_i               (maap_txn_w),
+      .txn_ready_o         (maap_txn_ready_w),
+      .rxs_free_o          (maapeng_rxs_free_w),
+      .rxs_free_slot_o     (maapeng_rxs_free_slot_w),
+      .prng_draw_req_o     (maapeng_prng_req_w),
+      .prng_draw_kind_o    (maapeng_prng_kind_w),
+      .prng_draw_busy_i    (maapeng_prng_busy_w),
+      .prng_draw_valid_i   (maapeng_prng_valid_w),
+      .prng_draw_ms_i      (prng_ms_w),
+      .now_ms_i            (now_ms_w),
+      .tmr_arm_valid_o     (maapeng_arm_valid_w),
+      .tmr_arm_cancel_o    (maapeng_arm_cancel_w),
+      .tmr_arm_slot_o      (maapeng_arm_slot_w),
+      .tmr_arm_owner_o     (maapeng_arm_owner_w),
+      .tmr_arm_deadline_ms_o (maapeng_arm_deadline_w),
+      .tmr_exp_valid_i     (exp_valid_w),
+      .tmr_exp_slot_i      (exp_slot_w),
+      .tmr_exp_owner_i     (exp_owner_w),
+      .txs_alloc_req_o     (maapeng_txs_alloc_req_w),
+      .txs_oversize_o      (maapeng_txs_oversize_nc_w),
+      .txs_alloc_gnt_i     (maapeng_txs_gnt_w),
+      .txs_alloc_slot_i    (maapeng_txs_gnt_slot_w),
+      .txs_wr_slot_o       (maapeng_txs_wr_slot_w),
+      .txs_wr_addr_o       (maapeng_txs_wr_addr_w),
+      .txs_wr_valid_o      (maapeng_txs_wr_valid_w),
+      .txs_wr_data_o       (maapeng_txs_wr_data_w),
+      .txs_wr_commit_o     (maapeng_txs_wr_commit_w),
+      .txs_wr_len_o        (maapeng_txs_wr_len_w),
+      .txreq_valid_o       (maapeng_txreq_valid_w),
+      .txreq_slot_o        (maapeng_txreq_slot_w),
+      .txreq_ready_i       (maapeng_txreq_ready_w),
+      .alloc_req_valid_i   (maapeng_alloc_valid_w),
+      .alloc_req_ready_o   (maapeng_alloc_ready_w),
+      .alloc_req_release_i (tkr_maap_req_release_w),
+      .alloc_req_src_i     (tkr_maap_req_src_w),
+      .alloc_rsp_valid_o   (maapeng_rsp_valid_w),
+      .alloc_rsp_ok_o      (maapeng_rsp_ok_w),
+      .alloc_rsp_da_o      (maapeng_rsp_da_w),
+      .conflict_valid_o    (maapeng_confl_valid_w),
+      .conflict_src_o      (maapeng_confl_src_w),
+      .conflict_ack_i      (maapeng_confl_ack_w),
+      .addr_o              (maap_addr_o),
+      .addr_valid_o        (maap_addr_valid_o),
+      .state_o             (maap_state_o),
+      .conflicts_o         (maap_conflicts_o),
+      .defends_o           (maap_defends_o)
+  );
+
+  //! the seam steer (quasi-static select, 02 SS2 rule 4): with the internal
+  //! engine the top's port group is QUIESCED — req_valid 0, ack 0, every
+  //! input ignored — so an external allocator left wired can neither answer
+  //! nor ack on behalf of the engine
+  assign tkr_maap_req_ready_w  = cfg_maap_internal_i ? maapeng_alloc_ready_w
+                                                     : maap_req_ready_i;
+  assign tkr_maap_rsp_valid_w  = cfg_maap_internal_i ? maapeng_rsp_valid_w
+                                                     : maap_rsp_valid_i;
+  assign tkr_maap_rsp_ok_w     = cfg_maap_internal_i ? maapeng_rsp_ok_w
+                                                     : maap_rsp_ok_i;
+  assign tkr_maap_rsp_da_w     = cfg_maap_internal_i ? maapeng_rsp_da_w
+                                                     : maap_rsp_da_i;
+  assign tkr_maap_confl_valid_w = cfg_maap_internal_i ? maapeng_confl_valid_w
+                                                      : maap_conflict_valid_i;
+  assign tkr_maap_confl_src_w  = cfg_maap_internal_i ? maapeng_confl_src_w
+                                                     : maap_conflict_src_i;
+  assign maapeng_alloc_valid_w = cfg_maap_internal_i ? tkr_maap_req_valid_w
+                                                     : 1'b0;
+  assign maapeng_confl_ack_w   = cfg_maap_internal_i ? tkr_maap_confl_ack_w
+                                                     : 1'b0;
+  assign maap_req_valid_o      = cfg_maap_internal_i ? 1'b0
+                                                     : tkr_maap_req_valid_w;
+  assign maap_req_release_o    = tkr_maap_req_release_w;
+  assign maap_req_src_o        = tkr_maap_req_src_w;
+  assign maap_conflict_ack_o   = cfg_maap_internal_i ? 1'b0
+                                                     : tkr_maap_confl_ack_w;
 
   // =========================================================================
   // SRP engine + KL_mrp_strip (THE RECORDED SEAM)
@@ -1967,13 +2152,14 @@ module protocol_processor_top
   // =========================================================================
   // timer arm-port priority mux (banner)
   // =========================================================================
-  // Five engine arm faces feed ONE always-accepting arm port. Arms are
+  // Six engine arm faces feed ONE always-accepting arm port. Arms are
   // one-cycle strobes with no ready, so each face gets a 4-deep queue and a
-  // fixed-priority drain: listener > talker > ADP > SRP > originator (SM
-  // correctness first, cadence last). Per-face order is preserved (each
-  // engine owns disjoint slot ranges, so cross-face order is free); a queue
-  // overrun drops the NEWEST arm and counts — never silent.
-  localparam int unsigned ARM_N_C = 5;
+  // fixed-priority drain: listener > talker > ADP > SRP > originator > MAAP
+  // (SM correctness first, cadence last; MAAP's ms-scale timers tolerate
+  // any drain latency). Per-face order is preserved (each engine owns
+  // disjoint slot ranges, so cross-face order is free); a queue overrun
+  // drops the NEWEST arm and counts — never silent.
+  localparam int unsigned ARM_N_C = 6;
   localparam int unsigned ARM_W_C = 1 + TMR_AW_C + PP_TIMER_OWNER_W_C + 32;
 
   logic [ARM_N_C-1:0]              armq_in_vld_w;
@@ -1982,7 +2168,8 @@ module protocol_processor_top
   logic [ARM_N_C-1:0][2:0]         armq_cnt_r;
   logic [15:0]                     arm_drop_r;
 
-  assign armq_in_vld_w = {org_arm_valid_w, srp_arm_valid_w, adp_arm_valid_w,
+  assign armq_in_vld_w = {maapeng_arm_valid_w,
+                          org_arm_valid_w, srp_arm_valid_w, adp_arm_valid_w,
                           tkr_arm_valid_w, lstn_arm_valid_w};
   assign armq_in_w[0] = {lstn_arm_cancel_w, lstn_arm_slot_w,
                          lstn_arm_owner_w, lstn_arm_deadline_w};
@@ -1994,6 +2181,8 @@ module protocol_processor_top
                          srp_arm_owner_w, srp_arm_deadline_w};
   assign armq_in_w[4] = {org_arm_cancel_w, org_arm_slot_w,
                          org_arm_owner_w, org_arm_deadline_w};
+  assign armq_in_w[5] = {maapeng_arm_cancel_w, maapeng_arm_slot_w,
+                         maapeng_arm_owner_w, maapeng_arm_deadline_w};
 
   logic [ARM_N_C-1:0]      armq_pop_w;
   logic [ARM_N_C-1:0][2:0] armq_mid_w;    // count after the pop
@@ -2050,27 +2239,27 @@ module protocol_processor_top
   // =========================================================================
   // PRNG draw-port owner mux (banner)
   // =========================================================================
-  // Four clients; a broadcast draw_valid would complete the WRONG client's
+  // Five clients; a broadcast draw_valid would complete the WRONG client's
   // draw, so the mux latches one pending request per client, serves them by
-  // fixed priority (listener > talker > ADP > SRP), and routes draw_valid
-  // exclusively to the owner. The shared busy shown to every client is
-  // "some draw pending or in flight" — each client's own protocol (issue on
-  // not-busy, then wait for valid) remains exactly what its own suite
-  // proved.
-  localparam int unsigned PRNG_N_C = 4;
+  // fixed priority (listener > talker > ADP > SRP > MAAP), and routes
+  // draw_valid exclusively to the owner. The shared busy shown to every
+  // client is "some draw pending or in flight" — each client's own protocol
+  // (issue on not-busy, then wait for valid) remains exactly what its own
+  // suite proved.
+  localparam int unsigned PRNG_N_C = 5;
 
   logic [PRNG_N_C-1:0]      pr_pend_r;
   logic [PRNG_N_C-1:0][2:0] pr_kind_r;
   logic                     pr_inflight_r;
-  logic [1:0]               pr_owner_r;
+  logic [2:0]               pr_owner_r;
   logic [PRNG_N_C-1:0]      pr_req_w;
   logic [PRNG_N_C-1:0][2:0] pr_kind_w;
   logic                     pr_any_pend_w;
   logic                     pr_busy_shared_w;
 
-  assign pr_req_w  = {srp_draw_req_w, adp_prng_req_w,
+  assign pr_req_w  = {maapeng_prng_req_w, srp_draw_req_w, adp_prng_req_w,
                       tkr_draw_req_w, lstn_draw_req_w};
-  assign pr_kind_w = {srp_draw_kind_w, adp_prng_kind_w,
+  assign pr_kind_w = {maapeng_prng_kind_w, srp_draw_kind_w, adp_prng_kind_w,
                       tkr_draw_kind_w, lstn_draw_kind_w};
   assign pr_any_pend_w    = |pr_pend_r;
   assign pr_busy_shared_w = pr_inflight_r || pr_any_pend_w || prng_busy_w;
@@ -2079,18 +2268,20 @@ module protocol_processor_top
   assign tkr_draw_busy_w  = pr_busy_shared_w;
   assign adp_prng_busy_w  = pr_busy_shared_w;
   assign srp_draw_busy_w  = pr_busy_shared_w;
+  assign maapeng_prng_busy_w = pr_busy_shared_w;
 
-  assign lstn_draw_valid_w = prng_valid_w && pr_inflight_r && (pr_owner_r == 2'd0);
-  assign tkr_draw_valid_w  = prng_valid_w && pr_inflight_r && (pr_owner_r == 2'd1);
-  assign adp_prng_valid_w  = prng_valid_w && pr_inflight_r && (pr_owner_r == 2'd2);
-  assign srp_draw_valid_w  = prng_valid_w && pr_inflight_r && (pr_owner_r == 2'd3);
+  assign lstn_draw_valid_w = prng_valid_w && pr_inflight_r && (pr_owner_r == 3'd0);
+  assign tkr_draw_valid_w  = prng_valid_w && pr_inflight_r && (pr_owner_r == 3'd1);
+  assign adp_prng_valid_w  = prng_valid_w && pr_inflight_r && (pr_owner_r == 3'd2);
+  assign srp_draw_valid_w  = prng_valid_w && pr_inflight_r && (pr_owner_r == 3'd3);
+  assign maapeng_prng_valid_w = prng_valid_w && pr_inflight_r && (pr_owner_r == 3'd4);
 
   always_ff @(posedge clk_i) begin : prng_mux
     if (!rst_n) begin
       pr_pend_r     <= '0;
       pr_kind_r     <= '0;
       pr_inflight_r <= 1'b0;
-      pr_owner_r    <= 2'd0;
+      pr_owner_r    <= 3'd0;
       prng_req_w    <= 1'b0;
       prng_kind_w   <= 3'd0;
     end else begin
@@ -2099,7 +2290,7 @@ module protocol_processor_top
       // in-flight draw must not queue a phantom second draw
       for (int unsigned i = 0; i < PRNG_N_C; i++) begin
         if (pr_req_w[i]
-            && !(pr_inflight_r && (pr_owner_r == 2'(i)))) begin
+            && !(pr_inflight_r && (pr_owner_r == 3'(i)))) begin
           pr_pend_r[i] <= 1'b1;
           pr_kind_r[i] <= pr_kind_w[i];
         end
@@ -2111,7 +2302,7 @@ module protocol_processor_top
           if (!pr_inflight_r && pr_pend_r[i]) begin
             prng_req_w    <= 1'b1;
             prng_kind_w   <= pr_kind_r[i];
-            pr_owner_r    <= 2'(i);
+            pr_owner_r    <= 3'(i);
             pr_pend_r[i]  <= 1'b0;
             pr_inflight_r <= 1'b1;
           end
@@ -2501,7 +2692,8 @@ module protocol_processor_top
   localparam int unsigned TXC_SRP_C  = 2;
   localparam int unsigned TXC_TKB_C  = 3;
   localparam int unsigned TXC_AECP_C = 4;   // KL_aecp_engine
-  localparam int unsigned TXC_N_C    = 5;
+  localparam int unsigned TXC_MAAP_C = 5;   // KL_pp_maap (11)
+  localparam int unsigned TXC_N_C    = 6;
 
   logic [TXC_N_C-1:0] txc_req_w;
   logic [TXC_N_C-1:0] txc_pend_r;
@@ -2516,10 +2708,12 @@ module protocol_processor_top
   logic [7:0] pool_wr_data_w;
   logic [TXC_N_C-1:0] txc_commit_w;
 
-  assign txc_req_w = {aecp_txs_alloc_req_w, tkb_alloc_req_w,
+  assign txc_req_w = {maapeng_txs_alloc_req_w,
+                      aecp_txs_alloc_req_w, tkb_alloc_req_w,
                       srp_txs_alloc_req_w,
                       lstn_txs_alloc_req_w, adp_txs_alloc_req_w};
-  assign txc_commit_w = {aecp_txs_wr_commit_w, (tkb_st_r == TKB_COMMIT),
+  assign txc_commit_w = {maapeng_txs_wr_commit_w,
+                         aecp_txs_wr_commit_w, (tkb_st_r == TKB_COMMIT),
                          srp_txs_wr_commit_w,
                          lstn_txs_wr_commit_w, adp_txs_wr_commit_w};
 
@@ -2545,6 +2739,8 @@ module protocol_processor_top
           txc_owner_r <= 3'(TXC_SRP_C);  txc_locked_r <= 1'b1;
         end else if (txc_pend_r[TXC_ADP_C] || txc_req_w[TXC_ADP_C]) begin
           txc_owner_r <= 3'(TXC_ADP_C);  txc_locked_r <= 1'b1;
+        end else if (txc_pend_r[TXC_MAAP_C] || txc_req_w[TXC_MAAP_C]) begin
+          txc_owner_r <= 3'(TXC_MAAP_C); txc_locked_r <= 1'b1;
         end
       end else begin
         if (pool_alloc_gnt_w) txc_pend_r[txc_owner_r] <= 1'b0;
@@ -2604,6 +2800,15 @@ module protocol_processor_top
           pool_wr_data_w   = srp_txs_wr_data_w;
           pool_wr_len_w    = srp_txs_wr_len_w;
         end
+        3'(TXC_MAAP_C): begin
+          pool_alloc_req_w = maapeng_txs_alloc_req_w;
+          pool_wr_valid_w  = maapeng_txs_wr_valid_w;
+          pool_wr_commit_w = maapeng_txs_wr_commit_w;
+          pool_wr_slot_w   = maapeng_txs_wr_slot_w;
+          pool_wr_addr_w   = maapeng_txs_wr_addr_w;
+          pool_wr_data_w   = maapeng_txs_wr_data_w;
+          pool_wr_len_w    = maapeng_txs_wr_len_w;
+        end
         default: begin  // TXC_TKB_C
           pool_alloc_req_w = tkb_alloc_req_w;
           pool_wr_valid_w  = (tkb_st_r == TKB_WR);
@@ -2627,11 +2832,14 @@ module protocol_processor_top
                         && pool_alloc_gnt_w;
   assign aecp_txs_gnt_w = txc_locked_r && (txc_owner_r == 3'(TXC_AECP_C))
                         && pool_alloc_gnt_w;
+  assign maapeng_txs_gnt_w = txc_locked_r && (txc_owner_r == 3'(TXC_MAAP_C))
+                        && pool_alloc_gnt_w;
   assign adp_txs_gnt_slot_w  = pool_alloc_slot_w;
   assign lstn_txs_gnt_slot_w = pool_alloc_slot_w;
   assign srp_txs_gnt_slot_w  = pool_alloc_slot_w;
   assign tkb_gnt_slot_w      = pool_alloc_slot_w;
   assign aecp_txs_gnt_slot_w = pool_alloc_slot_w;
+  assign maapeng_txs_gnt_slot_w = pool_alloc_slot_w;
 
   logic        ser_req_w, ser_valid_w, ser_last_w, ser_ready_w;
   logic [TXS_W_C-1:0] ser_slot_w;
@@ -2674,10 +2882,10 @@ module protocol_processor_top
   logic [3:0]              laneq_adp_mid_w, laneq_acmp_mid_w;
   logic                    laneq_adp_push_w, laneq_acmp_push_w;
 
-  logic [5:0]              arb_req_w;
-  logic [5:0][TXS_W_C-1:0] arb_slot_w;
-  logic [5:0]              arb_gnt_w;
-  logic [5:0][15:0]        arb_gnt_cnt_w;
+  logic [LANE_N_C-1:0]              arb_req_w;
+  logic [LANE_N_C-1:0][TXS_W_C-1:0] arb_slot_w;
+  logic [LANE_N_C-1:0]              arb_gnt_w;
+  logic [LANE_N_C-1:0][15:0]        arb_gnt_cnt_w;
 
   // count after this cycle's pop; a push appends at that position (a queue
   // deeper than the 5 physical slots can never overflow — see banner)
@@ -2724,12 +2932,15 @@ module protocol_processor_top
   assign arb_req_w[LANE_ADP_C]      = laneq_adp_cnt_r != 4'd0;
   assign arb_req_w[LANE_SRP_C]      = srp_txreq_valid_w;
   assign arb_req_w[LANE_TKRSP_C]    = tkb_lane_valid_r;
+  assign arb_req_w[LANE_MAAP_C]     = maapeng_txreq_valid_w;
   assign arb_slot_w[LANE_AECP_SOL_C] = aecp_txreq_slot_w;
   assign arb_slot_w[LANE_AECP_UNS_C] = PP_SLOT_NULL_C;
   assign arb_slot_w[LANE_ACMP_C]     = laneq_acmp_r[0];
   assign arb_slot_w[LANE_ADP_C]      = laneq_adp_r[0];
   assign arb_slot_w[LANE_SRP_C]      = srp_txreq_slot_w;
   assign arb_slot_w[LANE_TKRSP_C]    = tkb_slot_r;
+  assign arb_slot_w[LANE_MAAP_C]     = maapeng_txreq_slot_w;
+  assign maapeng_txreq_ready_w = arb_gnt_w[LANE_MAAP_C];
   assign srp_txreq_ready_w  = arb_gnt_w[LANE_SRP_C];
   assign aecp_txreq_ready_w = arb_gnt_w[LANE_AECP_SOL_C];
   assign tkb_lane_gnt_w    = arb_gnt_w[LANE_TKRSP_C];
@@ -2738,7 +2949,13 @@ module protocol_processor_top
   logic [7:0]  arb_tx_data_w;
 
   KL_pp_tx_arbiter #(
-      .TX_STD_SLOTS_P (TX_STD_SLOTS_P)
+      //! lane 6 = MAAP (11): background class like the ADP periodic lane —
+      //! Annex B attaches no response deadline to any MAAP PDU, and the
+      //! T-TX-AGING guard still bounds its wait under load
+      .N_REQ_P          (LANE_N_C),
+      .PRIO_MAP_P       ({2'd3, 2'd1, 2'd2, 2'd3, 2'd0, 2'd2, 2'd1}),
+      .SOLICITED_MASK_P (7'b0100101),
+      .TX_STD_SLOTS_P   (TX_STD_SLOTS_P)
   ) u_tx_arbiter (
       .clk_i       (clk_i),
       .rst_n       (rst_n),

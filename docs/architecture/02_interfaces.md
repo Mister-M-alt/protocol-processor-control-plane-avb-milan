@@ -45,7 +45,7 @@ flowchart LR
 | `mac_rx` | A | in | MAC-RX → core (async FIFO) | packet engine | one per AVB interface (P-N-AVB-INTERFACES) |
 | `mac_tx` | A | out | core → MAC-TX (async FIFO) | TX arbiter | one per AVB interface |
 | `srp` | B+C+D | both | core | ACMP, AECP gather, counters, NOTIF | talker/listener attribute ops; served by the internal SRP engine ([10](10_srp_engine.md)) or an external stack (`P-EN-SRP-ENGINE`) |
-| `maap` | B+C | both | core | talker DA management | allocation + conflict events |
+| `maap` | B+C | both | core | talker DA management | allocation + conflict events; served internally by [11](11_maap_engine.md) when `cfg_maap_internal_i` = 1 |
 | `gptp` | B+C+D | both | core | ADP, AECP gather, counters | GM/domain/asCapable/path |
 | `avtp` | B+C+D | both | core | ACMP settle, AECP, counters | per-stream control + health events |
 | `mclk` | B+C+D | both | core | AECP (clock source, MVU MCR), counters | per clock domain |
@@ -240,12 +240,16 @@ exact match per Milan §5.3.8.9, matching done in the adapter),
 Events: `MAAP_CONFLICT{source}` → drives the withdraw → 2×LeaveAll → re-alloc →
 re-declare flow ([05 §6bis](05_acmp_engine.md), backoff `T-SRP-LEAVEALL2`).
 
-This face is a **processor-top port group**, not an internal seam: no MAAP engine
-exists inside this processor ([01 §3](01_overview.md)), and `GS_DECLARING` is
+This face is a **processor-top port group** by default, and — since the MAAP
+engine landed ([11](11_maap_engine.md)) — also an internal seam: the quasi-static
+`cfg_maap_internal_i` selects whether the fabric's allocator answers through the
+port group (0, the landed default, byte-identical) or `KL_pp_maap` answers
+internally under this same contract with the port group quiesced and the claim
+published on `maap_addr_o`/`maap_addr_valid_o`. Either way `GS_DECLARING` is
 reachable only through `GS_DA_OK`, which is only ever written on an `ALLOC_DA`
-success. An unconnected face therefore pins the published talker DA gate at 0 and
-stops every engine-driven `DECLARE_TALKER` — the processor's talker half would be
-dead by construction.
+success. An unconnected face with the internal engine disabled therefore pins the
+published talker DA gate at 0 and stops every engine-driven `DECLARE_TALKER` — the
+processor's talker half would be dead by construction.
 
 **Degrade rule.** An allocator that is absent, slow or broken is a legal wiring.
 **Both** halves of the transaction are bounded, because both can hang and they

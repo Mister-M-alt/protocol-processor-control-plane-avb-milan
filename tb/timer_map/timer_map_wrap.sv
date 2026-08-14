@@ -40,6 +40,7 @@ module timer_map_probe
     output logic [31:0] regmon_o,
     output logic [31:0] capool_o,
     output logic [31:0] single_o,
+    output logic [31:0] maap_o,
     output logic [31:0] base_end_o,
     output logic [31:0] srp_cad_o,
     output logic [31:0] srp_tk_o,
@@ -70,6 +71,7 @@ module timer_map_probe
   assign regmon_o    = 32'(M_C.regmon);
   assign capool_o    = 32'(M_C.capool);
   assign single_o    = 32'(M_C.single);
+  assign maap_o      = 32'(M_C.maap);
   assign base_end_o  = 32'(M_C.base_end);
   assign srp_cad_o   = 32'(M_C.srp_cad);
   assign srp_tk_o    = 32'(M_C.srp_tk);
@@ -98,7 +100,7 @@ module timer_map_wrap
 (
     output logic [31:0] si_o    [0:9],
     output logic [31:0] so_o    [0:9],
-    output logic [31:0] map_o   [0:9][0:12],
+    output logic [31:0] map_o   [0:9][0:13],
     output logic [31:0] evr_o   [0:9][0:9]
 );
   localparam int unsigned N_SHAPE_C = 10;
@@ -117,12 +119,13 @@ module timer_map_wrap
         .regmon_o       (map_o[g][4]),
         .capool_o       (map_o[g][5]),
         .single_o       (map_o[g][6]),
-        .base_end_o     (map_o[g][7]),
-        .srp_cad_o      (map_o[g][8]),
-        .srp_tk_o       (map_o[g][9]),
-        .srp_ls_o       (map_o[g][10]),
-        .srp_end_o      (map_o[g][11]),
-        .slot_aw_o      (map_o[g][12]),
+        .maap_o         (map_o[g][7]),
+        .base_end_o     (map_o[g][8]),
+        .srp_cad_o      (map_o[g][9]),
+        .srp_tk_o       (map_o[g][10]),
+        .srp_ls_o       (map_o[g][11]),
+        .srp_end_o      (map_o[g][12]),
+        .slot_aw_o      (map_o[g][13]),
         .evr_tk_reg_o   (evr_o[g][0]),
         .evr_tk_unreg_o (evr_o[g][1]),
         .evr_adp_disc_o (evr_o[g][2]),
@@ -145,6 +148,7 @@ module timer_map_wrap
   localparam logic [7:0] OWN_TKR_C     = PP_OWN_TKR_C;
   localparam logic [7:0] OWN_SRP_LS_C  = PP_OWN_SRP_LS_C;
   localparam logic [7:0] OWN_SRP_CAD_C = PP_OWN_SRP_CAD_C;
+  localparam logic [7:0] OWN_MAAP_C    = PP_OWN_MAAP_C;
   // verilator lint_on UNUSEDPARAM
 endmodule
 

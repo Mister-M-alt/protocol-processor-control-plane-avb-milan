@@ -38,13 +38,14 @@ package pp_pkg;
     PP_ORIGIN_MGMT  = 2'd3
   } pp_origin_e;
 
-  // ---- protocols (03 §4: ADP / ACMP / AEM / MVU / AA) --------------------
+  // ---- protocols (03 §4: ADP / ACMP / AEM / MVU / AA / MAAP) -------------
   typedef enum logic [2:0] {
     PP_PROTO_ADP  = 3'd0,
     PP_PROTO_ACMP = 3'd1,
     PP_PROTO_AEM  = 3'd2,
     PP_PROTO_MVU  = 3'd3,
-    PP_PROTO_AA   = 3'd4
+    PP_PROTO_AA   = 3'd4,
+    PP_PROTO_MAAP = 3'd5   // IEEE 1722-2016 Annex B, subtype 0xFE (11)
   } pp_protocol_e;
 
   // ---- the NINE hazard classes of 03 §6 (F03.7 row order) ----------------
@@ -126,12 +127,14 @@ package pp_pkg;
   //         + CA_POOL                  (T-AECP-TIMEOUT inflight pool)
   //         + 5                        (LOCK, IDENT-BURST, IDENT-REARM,
   //                                     CTR-OBSERVE, NVM-DEBOUNCE singletons)
+  //         + 2                        (MAAP probe_timer + announce_timer,
+  //                                     11 / IEEE 1722-2016 B.3.4)
   //         [+ (7 + SI + SO)*IF with the SRP engine: T-MRP-{JOIN,LEAVEALL}
   //            x 2 participants + T-MRP-PERIODIC + registrar-leave pool
   //            (SI + SO streams + Domain + MVRP VID)]
   //
-  //   baseline (IF=1, SI=SO=8, CTRL=16, CA=4): 1+8+8+8+32+4+5      = 66
-  //   with the SRP engine:                      66 + (7 + 8 + 8)    = 89
+  //   baseline (IF=1, SI=SO=8, CTRL=16, CA=4): 1+8+8+8+32+4+5+2    = 68
+  //   with the SRP engine:                      68 + (7 + 8 + 8)    = 91
   //
   // F01.5 shape defaults, named once so nothing below restates them. Every
   // consumer of the map derives from these or from its own shape — a copied
@@ -162,6 +165,7 @@ package pp_pkg;
     int unsigned regmon;     // registry monitors, 2*CTRL*IF slots (P4)
     int unsigned capool;     // T-AECP-TIMEOUT inflight pool, CA slots (P4)
     int unsigned single;     // 5 singleton timers (P4)
+    int unsigned maap;       // MAAP probe + announce timers, 2 slots (11)
     int unsigned base_end;   // total WITHOUT the SRP engine
     int unsigned srp_cad;    // MRP cadence, 5 + the 2 fixed registrar-leave
     int unsigned srp_tk;     // SRP talker registrar-leave, SO slots
@@ -175,6 +179,11 @@ package pp_pkg;
   localparam int unsigned PP_SRP_CAD_SLOTS_C = 7;
   //! LOCK-UNLOCK, IDENT-BURST, IDENT-REARM, CTR-OBSERVE, NVM-DEBOUNCE.
   localparam int unsigned PP_SINGLETON_SLOTS_C = 5;
+  //! MAAP probe_timer (+0) and announce_timer (+1) — IEEE 1722-2016 B.3.4.
+  //! One SM instance per entity (one block claim), so the group is fixed at
+  //! two slots regardless of shape. Appended AFTER the singletons so every
+  //! pre-MAAP base above stays where landed engines' defaults already point.
+  localparam int unsigned PP_MAAP_SLOTS_C = 2;
 
   function automatic pp_timer_map_t pp_timer_map(
       input int unsigned n_if,     // P-N-AVB-INTERFACES
@@ -191,7 +200,8 @@ package pp_pkg;
     m.regmon    = m.tkr       + so;
     m.capool    = m.regmon    + (32'd2 * n_ctrl * n_if);
     m.single    = m.capool    + ca_pool;
-    m.base_end  = m.single    + PP_SINGLETON_SLOTS_C;
+    m.maap      = m.single    + PP_SINGLETON_SLOTS_C;
+    m.base_end  = m.maap      + PP_MAAP_SLOTS_C;
     // the SRP block, replicated per interface by F08.4; the bases below are
     // interface 0's (the RTL instantiates exactly one KL_srp_top today).
     m.srp_cad   = m.base_end;
@@ -217,10 +227,10 @@ package pp_pkg;
   // F01.5 defaults through the formula — never restated as literals.
   localparam int unsigned PP_TIMER_SLOTS_BASE_C =
       pp_timer_slots(PP_N_IF_C, PP_N_STREAM_IN_C, PP_N_STREAM_OUT_C,
-                     PP_N_CTRL_C, PP_CA_POOL_C, 1'b0);         // = 66
+                     PP_N_CTRL_C, PP_CA_POOL_C, 1'b0);         // = 68
   localparam int unsigned PP_TIMER_SLOTS_C =
       pp_timer_slots(PP_N_IF_C, PP_N_STREAM_IN_C, PP_N_STREAM_OUT_C,
-                     PP_N_CTRL_C, PP_CA_POOL_C, 1'b1);         // = 89
+                     PP_N_CTRL_C, PP_CA_POOL_C, 1'b1);         // = 91
 
   // ---- owner-tag space (08 §5; the shared expiry bus is 8 bits) ----------
   // The expiry bus carries {slot, owner}. ADP and SRP filter by SLOT; the
@@ -235,6 +245,7 @@ package pp_pkg;
   localparam logic [7:0] PP_OWN_TKR_C     = 8'h50;  // + source (KL_acmp_talker)
   localparam logic [7:0] PP_OWN_SRP_LS_C  = 8'h60;  // + sink   (KL_srp_listener_fsm)
   localparam logic [7:0] PP_OWN_SRP_CAD_C = 8'h80;  // + 0..6   (KL_srp_top cadence)
+  localparam logic [7:0] PP_OWN_MAAP_C    = 8'h90;  // + 0 probe / 1 announce (KL_pp_maap)
 
   // ---- 02 §5 event-router SOURCE MAP, derived — never literals -----------
   // The router presents ONE source index per event and carries no owner tag,

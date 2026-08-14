@@ -19,7 +19,8 @@ module tb_dispatch_top
 #(
     parameter int unsigned ADP_DEPTH_P  = 4,
     parameter int unsigned ACMP_DEPTH_P = 4,
-    parameter int unsigned AECP_DEPTH_P = 4
+    parameter int unsigned AECP_DEPTH_P = 4,
+    parameter int unsigned MAAP_DEPTH_P = 2
 ) (
     input  wire                    clk_i,
     input  wire                    rst_n,
@@ -71,13 +72,18 @@ module tb_dispatch_top
     output logic                   aecp_txn_valid_o,
     output logic [PP_TXN_W_C-1:0]  aecp_txn_o,
     input  wire                    aecp_txn_ready_i,
+    output logic                   maap_txn_valid_o,
+    output logic [PP_TXN_W_C-1:0]  maap_txn_o,
+    input  wire                    maap_txn_ready_i,
 
     output logic [7:0]             adp_level_o,
     output logic [7:0]             acmp_level_o,
     output logic [7:0]             aecp_level_o,
+    output logic [7:0]             maap_level_o,
     output logic [15:0]            adp_stall_count_o,
     output logic [15:0]            acmp_stall_count_o,
-    output logic [15:0]            aecp_stall_count_o
+    output logic [15:0]            aecp_stall_count_o,
+    output logic [15:0]            maap_stall_count_o
 );
 
   logic                   n2d_valid_w;
@@ -129,7 +135,8 @@ module tb_dispatch_top
   KL_pp_dispatch #(
       .ADP_DEPTH_P  (ADP_DEPTH_P),
       .ACMP_DEPTH_P (ACMP_DEPTH_P),
-      .AECP_DEPTH_P (AECP_DEPTH_P)
+      .AECP_DEPTH_P (AECP_DEPTH_P),
+      .MAAP_DEPTH_P (MAAP_DEPTH_P)
   ) u_disp (
       .clk_i              (clk_i),
       .rst_n              (rst_n),
@@ -145,12 +152,17 @@ module tb_dispatch_top
       .aecp_txn_valid_o   (aecp_txn_valid_o),
       .aecp_txn_o         (aecp_txn_o),
       .aecp_txn_ready_i   (aecp_txn_ready_i),
+      .maap_txn_valid_o   (maap_txn_valid_o),
+      .maap_txn_o         (maap_txn_o),
+      .maap_txn_ready_i   (maap_txn_ready_i),
       .adp_level_o        (adp_level_o),
       .acmp_level_o       (acmp_level_o),
       .aecp_level_o       (aecp_level_o),
+      .maap_level_o       (maap_level_o),
       .adp_stall_count_o  (adp_stall_count_o),
       .acmp_stall_count_o (acmp_stall_count_o),
-      .aecp_stall_count_o (aecp_stall_count_o)
+      .aecp_stall_count_o (aecp_stall_count_o),
+      .maap_stall_count_o (maap_stall_count_o)
   );
 
 endmodule : tb_dispatch_top

@@ -541,6 +541,8 @@ struct H {
   uint64_t rm_reqs = 0, rm_writes = 0;
   vluint64_t aecp_rx_t = 0;
   std::deque<std::vector<uint8_t>> q_aecp;
+  //! MAAP frames (subtype 0xFE) with their eof-time compressed ms
+  std::deque<std::pair<std::vector<uint8_t>, uint32_t>> q_maap;
 
   // ---- the integrator's counter store (06 §6.6) ------------------------
   // This model is the INTEGRATOR, not the DUT: the processor lays out IEEE
@@ -665,6 +667,8 @@ struct H {
         } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFB) {
           q_aecp.push_back(cur);
           aecp_rx_t = t;                       // for the response-cost check
+        } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFE) {
+          q_maap.push_back({cur, uint32_t(d->dbg_now_ms_o)});
         } else if (et == 0x22EA) {
           auto p = parse_mrpdu(cur);
           for (auto& v : p.vecs) {
@@ -2543,6 +2547,172 @@ int main(int argc, char** argv) {
     want_q = {{0, 0}, {1, 0}, {2, 0}, {2, 1}};
     CHECK(!got.empty() && h.amap_seq == want_q,
           "Q10: the record ordinal did not restart with the command");
+  }
+
+  // ==== MP. the INTERNAL MAAP engine (11; IEEE 1722-2016 Annex B) =========
+  // A SECOND DUT instance runs the same processor with cfg_maap_internal_i
+  // = 1 from reset — the quasi-static select is a pre-enable decision, so
+  // flipping it mid-run on the first instance would test a wiring no
+  // integration ever has. Everything above ran with 0 and proved the landed
+  // external-seam behaviour byte-identical; this section proves the
+  // internal answer end to end: the Annex B claim walk on the real MAC
+  // stream through the real lane arbiter, the dispatch route into the
+  // engine, the DEFEND path, the talker granted from the internal claim
+  // with the external port group quiesced, the conflict fan-out closing the
+  // DA gate, and an AECP descriptor read regression while all of it runs.
+  // Self-contained: fresh DUT, fresh harness, local helpers only.
+  {
+    auto* d2 = new Vpp_top_wrap;
+    H h2(d2);
+    h2.dram = h.dram;                       // the same 07 SS3.3 image
+    d2->cfg_maap_internal_i = 1;
+    d2->cfg_maap_count_i = 8;
+    d2->cfg_maap_seed_offset_i = 0;
+    d2->cfg_maap_seed_valid_i = 0;
+    h2.reset();
+
+    // Annex B frame builder (Figure B.1; 42 real bytes padded to 60)
+    auto maap_frame = [](uint64_t da, uint64_t sa, int msg, uint64_t req_s,
+                         uint16_t req_c, uint64_t con_s, uint16_t con_c) {
+      std::vector<uint8_t> f;
+      for (int i = 5; i >= 0; --i) f.push_back(uint8_t(da >> (8 * i)));
+      for (int i = 5; i >= 0; --i) f.push_back(uint8_t(sa >> (8 * i)));
+      f.push_back(0x22); f.push_back(0xF0);
+      f.push_back(0xFE); f.push_back(uint8_t(msg & 0x0F));
+      f.push_back(0x08); f.push_back(0x10);            // maap_ver 1, cdl 16
+      for (int i = 0; i < 8; ++i) f.push_back(0x00);   // stream_id
+      for (int i = 5; i >= 0; --i) f.push_back(uint8_t(req_s >> (8 * i)));
+      f.push_back(uint8_t(req_c >> 8)); f.push_back(uint8_t(req_c));
+      for (int i = 5; i >= 0; --i) f.push_back(uint8_t(con_s >> (8 * i)));
+      f.push_back(uint8_t(con_c >> 8)); f.push_back(uint8_t(con_c));
+      while (f.size() < 60) f.push_back(0x00);
+      return f;
+    };
+    auto wait_maap = [&](size_t count, int budget_ms) {
+      long cyc = long(budget_ms) * MS_CYC;
+      while (h2.q_maap.size() < count && cyc-- > 0) h2.step();
+      return h2.q_maap.size() >= count;
+    };
+
+    // ---- MP1: link up -> the whole Table B.7 acquisition on the wire ----
+    // The claim needs no entity_enable: addresses are owned before the
+    // entity advertises, so the talker's very first ALLOC can be granted.
+    d2->link_up_i = 1;
+    CHECK(wait_maap(5, 4 * 700),
+          "MP1: 4 PROBEs + ANNOUNCE within four probe intervals");
+    const uint64_t base = d2->maap_addr_o;
+    CHECK((base >> 16) == 0x91E0F000ull && (base & 0xFFFFu) <= 0xFE00u - 8u,
+          "MP1: claim inside the Table B.9 pool (got %012llx)",
+          (unsigned long long)base);
+    if (h2.q_maap.size() >= 5) {
+      auto pexp = maap_frame(0x91E0F000FF00ull, OWN_MAC, 1, base, 8, 0, 0);
+      auto aexp = maap_frame(0x91E0F000FF00ull, OWN_MAC, 3, base, 8, 0, 0);
+      for (int k = 0; k < 4; ++k) {
+        CHECK(h2.q_maap[size_t(k)].first == pexp,
+              "MP1: PROBE %d byte-exact on the MAC stream", k + 1);
+        if (h2.q_maap[size_t(k)].first != pexp) {
+          dump("got", h2.q_maap[size_t(k)].first); dump("exp", pexp);
+        }
+      }
+      CHECK(h2.q_maap[4].first == aexp, "MP1: first ANNOUNCE byte-exact");
+      for (int k = 1; k < 4; ++k) {
+        long dt = long(h2.q_maap[size_t(k)].second)
+                - long(h2.q_maap[size_t(k) - 1].second);
+        CHECK(dt >= 500 && dt <= 601,
+              "MP1: probe interval %d = %ld ms outside (500, 600)", k, dt);
+      }
+      long dta = long(h2.q_maap[4].second) - long(h2.q_maap[3].second);
+      CHECK(dta <= 50, "MP1: probeCount! announces immediately (%ld ms)", dta);
+    }
+    CHECK(d2->maap_addr_valid_o && d2->maap_state_o == 2,
+          "MP1: claim published valid in DEFEND");
+    CHECK(h2.maap_offers == 0,
+          "MP1: the external maap port group stayed quiet (%d offers)",
+          h2.maap_offers);
+
+    // ---- MP2: a conflicting PROBE arrives -> DEFEND, byte-exact ---------
+    const uint64_t prober = 0x0A1122334455ull;
+    h2.q_maap.clear();
+    h2.feed(maap_frame(0x91E0F000FF00ull, prober, 1, base + 4, 8, 0, 0));
+    CHECK(wait_maap(1, 200), "MP2: DEFEND sent");
+    if (!h2.q_maap.empty()) {
+      auto dexp = maap_frame(prober, OWN_MAC, 2, base + 4, 8, base + 4, 4);
+      CHECK(h2.q_maap[0].first == dexp,
+            "MP2: DEFEND byte-exact (echo + B.3.6.6 overlap), unicast");
+      if (h2.q_maap[0].first != dexp) {
+        dump("got", h2.q_maap[0].first); dump("exp", dexp);
+      }
+    }
+    CHECK(d2->maap_defends_o == 1 && d2->maap_addr_valid_o,
+          "MP2: defended, claim kept");
+
+    // ---- MP3: the talker is granted from the INTERNAL claim -------------
+    d2->entity_enable_i = 1;
+    h2.run_ms(20);
+    const uint64_t SID_T0 = (OWN_MAC << 16);       // wrap: sid[k] = {mac, k}
+    auto prb = acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID,
+                          0, 7, 0, 0, 0x6001, 0x000A, 0);
+    h2.feed(prb);
+    auto p = h2.wait_any(h2.q_acmp, 400);
+    // no DA is installed yet at the answer instant: the honest first answer
+    auto expp = acmp_frame(OWN_MAC, 1, 3, 0, CTLR_EID, EID, T1_EID,
+                           0, 7, 0, 0, 0x6001, 0x000A, 0);
+    CHECK(p == expp, "MP3: first PROBE_TX_RESPONSE DEST_MAC_FAILED");
+    for (int i = 0; i < 200 && !(d2->acmp_declaring_o & 1); i++) h2.idle(10);
+    CHECK(h2.saw_decl_edge(0, true),
+          "MP3: the internal grant opened acmp_declaring_o[0]");
+    auto gts = acmp_frame(CTLR_MAC, 4, 0, 0, CTLR_EID, EID, 0,
+                          0, 0, 0, 0, 0x6002, 0, 0);
+    h2.feed(gts);
+    auto f2 = h2.wait_any(h2.q_acmp, 400);
+    auto expf2 = acmp_frame(OWN_MAC, 5, 0, SID_T0, CTLR_EID, EID, 0,
+                            0, 0, base, 0, 0x6002, 0, 2 /* default VID */);
+    CHECK(f2 == expf2,
+          "MP3: GET_TX_STATE answers the internally granted base + 0");
+    if (!f2.empty() && f2 != expf2) { dump("got", f2); dump("exp", expf2); }
+    CHECK(h2.maap_offers == 0 && h2.maap_reqs.empty(),
+          "MP3: no request ever left the top (%d offers)", h2.maap_offers);
+
+    // ---- MP4: a conflicting ANNOUNCE from a rev-lower peer -> yield -----
+    h2.q_maap.clear();
+    const uint64_t winner = 0x010000000001ull;     // reversed-octet lower
+    h2.feed(maap_frame(0x91E0F000FF00ull, winner, 3, base, 8, 0, 0));
+    for (int i = 0; i < 200 && (d2->acmp_declaring_o & 1); i++) h2.idle(10);
+    CHECK(h2.saw_decl_edge(0, false),
+          "MP4: the conflict fan-out closed the DA gate");
+    CHECK(!d2->maap_addr_valid_o || d2->maap_addr_o != base,
+          "MP4: the contested claim was withdrawn");
+    CHECK(d2->maap_conflicts_o == 1, "MP4: one re-address counted");
+    CHECK(wait_maap(5, 5 * 700), "MP4: fresh walk completed");
+    const uint64_t base2 = d2->maap_addr_o;
+    CHECK(d2->maap_addr_valid_o && base2 != base,
+          "MP4: re-claimed on a fresh range (%012llx)",
+          (unsigned long long)base2);
+
+    // ---- MP5: MAAP on the AVDECC multicast DA is not for us -------------
+    h2.q_maap.clear();
+    h2.feed(maap_frame(0x91E0F0010000ull, prober, 1, base2, 8, 0, 0));
+    h2.run_ms(60);
+    CHECK(h2.q_maap.empty() && d2->maap_defends_o == 1,
+          "MP5: mis-addressed PROBE dropped at the DA-qualified subtype gate");
+
+    // ---- MP6: the descriptor path is untouched (the M7 regression) ------
+    {
+      h2.q_aecp.clear();
+      std::vector<uint8_t> rd(8, 0);
+      putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2); putbe(&rd[6], 0, 2);
+      h2.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x6003,
+                         AEM_READ_DESCRIPTOR, rd));
+      auto got = h2.wait_any(h2.q_aecp, 400);
+      std::vector<uint8_t> epl(4, 0);
+      putbe(&epl[0], CFGIX, 2);
+      epl.insert(epl.end(), desc_entity.begin(), desc_entity.end());
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x6003, AEM_READ_DESCRIPTOR, epl);
+      CHECK(!got.empty(), "MP6: READ_DESCRIPTOR answered with MAAP running");
+      CHECK(got == want, "MP6: READ_DESCRIPTOR byte-exact with MAAP running");
+    }
+    delete d2;
   }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);

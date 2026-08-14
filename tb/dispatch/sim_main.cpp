@@ -79,7 +79,7 @@ enum {
 
 // origins / protocols / dispositions (pp_pkg encodings, from the doc)
 enum { O_RX = 0, O_TIMER = 1, O_SELF = 2, O_MGMT = 3 };
-enum { P_ADP = 0, P_ACMP = 1, P_AEM = 2, P_MVU = 3, P_AA = 4 };
+enum { P_ADP = 0, P_ACMP = 1, P_AEM = 2, P_MVU = 3, P_AA = 4, P_MAAP = 5 };
 enum { D_UNI = 0, D_ACMP_MC = 1 };
 static const unsigned SLOT_NULL = 7;
 static const unsigned DEPTH = 4;           // wrapper default per queue
@@ -149,7 +149,7 @@ static Rec makeInjected(uint8_t origin, uint8_t proto, uint16_t seq,
 struct Hn {
   Vtb_dispatch_top* d;
   Budgets bud;
-  std::deque<Rec> exp[3];                  // per-queue expected pop order
+  std::deque<Rec> exp[4];                  // per-queue expected pop order
 
   explicit Hn(Vtb_dispatch_top* dd) : d(dd) {}
 
@@ -161,6 +161,7 @@ struct Hn {
     d->rx_valid_i = 0; d->tmr_valid_i = 0; d->self_valid_i = 0;
     d->mgmt_valid_i = 0;
     d->adp_txn_ready_i = 0; d->acmp_txn_ready_i = 0; d->aecp_txn_ready_i = 0;
+    d->maap_txn_ready_i = 0;
   }
   void idle(int n = 1) { clearIn(); for (int i = 0; i < n; ++i) cycle(); }
 
@@ -170,31 +171,37 @@ struct Hn {
   }
 
   static int queueOf(uint8_t proto) {
-    return (proto == P_ADP) ? 0 : (proto == P_ACMP) ? 1 : 2;
+    return (proto == P_ADP) ? 0 : (proto == P_ACMP) ? 1
+         : (proto == P_MAAP) ? 3 : 2;
   }
   uint8_t qValid(int q) {
     return q == 0 ? d->adp_txn_valid_o
-         : q == 1 ? d->acmp_txn_valid_o : d->aecp_txn_valid_o;
+         : q == 1 ? d->acmp_txn_valid_o
+         : q == 3 ? d->maap_txn_valid_o : d->aecp_txn_valid_o;
   }
   void qReady(int q, int v) {
     if (q == 0) d->adp_txn_ready_i = v;
     else if (q == 1) d->acmp_txn_ready_i = v;
+    else if (q == 3) d->maap_txn_ready_i = v;
     else d->aecp_txn_ready_i = v;
   }
   Rec qRec(int q) {
     Rec r;
     for (int i = 0; i < REC_WORDS; ++i)
       r.w[i] = (q == 0) ? d->adp_txn_o[i]
-             : (q == 1) ? d->acmp_txn_o[i] : d->aecp_txn_o[i];
+             : (q == 1) ? d->acmp_txn_o[i]
+             : (q == 3) ? d->maap_txn_o[i] : d->aecp_txn_o[i];
     return r;
   }
   unsigned qLevel(int q) {
     return q == 0 ? d->adp_level_o
-         : q == 1 ? d->acmp_level_o : d->aecp_level_o;
+         : q == 1 ? d->acmp_level_o
+         : q == 3 ? d->maap_level_o : d->aecp_level_o;
   }
   unsigned qStall(int q) {
     return q == 0 ? d->adp_stall_count_o
-         : q == 1 ? d->acmp_stall_count_o : d->aecp_stall_count_o;
+         : q == 1 ? d->acmp_stall_count_o
+         : q == 3 ? d->maap_stall_count_o : d->aecp_stall_count_o;
   }
 
   void loadRxPorts(const RxBeat& b, uint32_t now) {
@@ -328,8 +335,8 @@ int main(int argc, char** argv) {
   // ---- T3: one RX beat per protocol — routing + full record integrity --
   // covers: origin/arrival stamping, per-class budget selection (ADP 4000 /
   // ACMP 50 / AEM+MVU+AA 100), disposition derivation, tx_slot = NULL
-  const uint8_t protos[5] = { P_ADP, P_ACMP, P_AEM, P_MVU, P_AA };
-  for (int k = 0; k < 5; ++k) {
+  const uint8_t protos[6] = { P_ADP, P_ACMP, P_AEM, P_MVU, P_AA, P_MAAP };
+  for (int k = 0; k < 6; ++k) {
     RxBeat b;
     b.proto = protos[k]; b.if_ix = uint8_t(k & 3); b.msg_type = uint8_t(k);
     b.status = uint8_t(0x11 + k); b.cdl = uint16_t(56 + 100 * k);
@@ -342,8 +349,8 @@ int main(int argc, char** argv) {
     uint32_t now = 5000 + uint32_t(k) * 17;
     h.driveRx(b, now, "T3 drive");
     int q = Hn::queueOf(b.proto);
-    // the two other queues must NOT receive it
-    for (int oq = 0; oq < 3; ++oq) {
+    // the three other queues must NOT receive it
+    for (int oq = 0; oq < 4; ++oq) {
       if (oq == q) continue;
       h.settle();
       CHECK(h.exp[oq].empty() && !h.qValid(oq),
@@ -547,6 +554,45 @@ int main(int argc, char** argv) {
     CHECK(h.qLevel(0) == 0 && h.qLevel(1) == 0 && h.qLevel(2) == 0,
           "T10 all empty at end got %u %u %u",
           h.qLevel(0), h.qLevel(1), h.qLevel(2));
+    h.edge();
+  }
+
+  // ---- T9: the MAAP queue is real — depth 2 + head, stall-not-drop -----
+  // Three MAAP records fill RAM (2) + head (1); the fourth stalls the
+  // normalizer (stall counter moves, nothing dropped) until a pop frees
+  // room, and every record pops in order and bit-exact.
+  {
+    h.idle(4);
+    RxBeat mb;
+    mb.proto = P_MAAP; mb.msg_type = 1; mb.status = 1; mb.cdl = 16;
+    mb.src_mac = 0x525400AAAA00ull;
+    mb.ctlr = 0x91E0F00040000008ull;     // requested_start + count lane
+    mb.operands = 0;                     // conflict lane (a PROBE carries 0)
+    for (int k = 0; k < 3; ++k) {
+      mb.seq = uint16_t(k);              // seq is 0 on the wire; used as a tag
+      mb.tgt = uint64_t(k);
+      h.driveRx(mb, 9000 + unsigned(k), "T9 fill");
+      h.idle(2);
+    }
+    h.settle();
+    CHECK(h.qLevel(3) == 3, "T9 level got %u want 3", h.qLevel(3));
+    unsigned st0 = h.qStall(3);
+    // the fourth is accepted into the NORMALIZER's 1-deep stage (its own
+    // contract) but the full MAAP queue refuses the handoff: the stall
+    // counter must move and the record must NOT be dropped
+    mb.seq = 3; mb.tgt = 3;
+    h.driveRx(mb, 9010, "T9 fourth");
+    for (int i = 0; i < 6; ++i) { h.settle(); h.edge(); }
+    CHECK(h.qStall(3) > st0, "T9 stall counter moved (got %u then %u)",
+          st0, h.qStall(3));
+    h.settle();
+    CHECK(h.qLevel(3) == 3, "T9 still 3 in flight, got %u", h.qLevel(3));
+    h.edge();
+    // pop all four in order and bit-exact — the stalled one lands last
+    for (int k = 0; k < 4; ++k) h.popExpect(3, "T9 pop");
+    h.idle(4);                     // let the head/skid settle after the pops
+    h.settle();
+    CHECK(h.qLevel(3) == 0 && !h.qValid(3), "T9 drained");
     h.edge();
   }
 

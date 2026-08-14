@@ -44,14 +44,17 @@ static const unsigned SRP_CAD_SLOTS = 7;   // JOIN x2 + LEAVEALL x2 + PERIODIC
                                            // + Domain and MVRP VID registrars
 static const unsigned SINGLETONS = 5;      // LOCK, IDENT-BURST, IDENT-REARM,
                                            // CTR-OBSERVE, NVM-DEBOUNCE
+static const unsigned MAAP_SLOTS = 2;      // MAAP probe + announce (11,
+                                           // IEEE 1722-2016 B.3.4)
 
 // ---- 08 §5 F08.4 owner-tag allocation ----------------------------------
 static const unsigned OWN_LSTN = 0x20, OWN_SRP_TK = 0x40, OWN_TKR = 0x50,
-                      OWN_SRP_LS = 0x60, OWN_SRP_CAD = 0x80;
+                      OWN_SRP_LS = 0x60, OWN_SRP_CAD = 0x80, OWN_MAAP = 0x90;
 
 // map field order, mirroring the wrap's port order
 enum { M_ADV, M_NOADP, M_LSTN, M_TKR, M_REGMON, M_CAPOOL, M_SINGLE,
-       M_BASE_END, M_SRP_CAD, M_SRP_TK, M_SRP_LS, M_SRP_END, M_SLOT_AW };
+       M_MAAP, M_BASE_END, M_SRP_CAD, M_SRP_TK, M_SRP_LS, M_SRP_END,
+       M_SLOT_AW };
 enum { E_TKREG, E_TKUNR, E_DISC, E_DEP, E_DOMAIN, E_LSNCHG, E_GM, E_LINK,
        E_NSRC, E_SRCW };
 
@@ -101,7 +104,8 @@ int main(int argc, char** argv) {
     const unsigned e_regmon = e_tkr    + so;
     const unsigned e_capool = e_regmon + 2 * N_CTRL * N_IF;
     const unsigned e_single = e_capool + CA_POOL;
-    const unsigned e_bend   = e_single + SINGLETONS;
+    const unsigned e_maap   = e_single + SINGLETONS;
+    const unsigned e_bend   = e_maap   + MAAP_SLOTS;
     const unsigned e_cad    = e_bend;
     const unsigned e_srptk  = e_cad    + SRP_CAD_SLOTS;
     const unsigned e_srpls  = e_srptk  + so;
@@ -115,6 +119,7 @@ int main(int argc, char** argv) {
     CHECK(m[M_REGMON]   == e_regmon, "%s regmon %u want %u",     tag, m[M_REGMON], e_regmon);
     CHECK(m[M_CAPOOL]   == e_capool, "%s capool %u want %u",     tag, m[M_CAPOOL], e_capool);
     CHECK(m[M_SINGLE]   == e_single, "%s single %u want %u",     tag, m[M_SINGLE], e_single);
+    CHECK(m[M_MAAP]     == e_maap,   "%s maap %u want %u",       tag, m[M_MAAP], e_maap);
     CHECK(m[M_BASE_END] == e_bend,   "%s base_end %u want %u",   tag, m[M_BASE_END], e_bend);
     CHECK(m[M_SRP_CAD]  == e_cad,    "%s srp_cad %u want %u",    tag, m[M_SRP_CAD], e_cad);
     CHECK(m[M_SRP_TK]   == e_srptk,  "%s srp_tk %u want %u",     tag, m[M_SRP_TK], e_srptk);
@@ -130,6 +135,7 @@ int main(int argc, char** argv) {
         {"regmon",    m[M_REGMON],  2 * N_CTRL * N_IF},
         {"capool",    m[M_CAPOOL],  CA_POOL},
         {"single",    m[M_SINGLE],  SINGLETONS},
+        {"maap",      m[M_MAAP],    MAAP_SLOTS},
         {"srp_cad",   m[M_SRP_CAD], SRP_CAD_SLOTS},
         {"srp_tk",    m[M_SRP_TK],  so},
         {"srp_ls",    m[M_SRP_LS],  si}});
@@ -185,7 +191,8 @@ int main(int argc, char** argv) {
                         && (OWN_SRP_TK + so <= OWN_TKR)
                         && (OWN_TKR + so <= OWN_SRP_LS)
                         && (OWN_SRP_LS + si <= OWN_SRP_CAD)
-                        && (OWN_SRP_CAD + SRP_CAD_SLOTS <= 256);
+                        && (OWN_SRP_CAD + SRP_CAD_SLOTS <= OWN_MAAP)
+                        && (OWN_MAAP + MAAP_SLOTS <= 256);
     CHECK(own_ok, "%s owner tags overlap on the 8-bit expiry bus", tag);
     if (own_ok) {
       check_disjoint(tag, {
@@ -194,7 +201,8 @@ int main(int argc, char** argv) {
           {"own srp_tk",  OWN_SRP_TK,  so},
           {"own tkr",     OWN_TKR,     so},
           {"own srp_ls",  OWN_SRP_LS,  si},
-          {"own srp_cad", OWN_SRP_CAD, SRP_CAD_SLOTS}});
+          {"own srp_cad", OWN_SRP_CAD, SRP_CAD_SLOTS},
+          {"own maap",    OWN_MAAP,    MAAP_SLOTS}});
     }
   }
 
@@ -202,13 +210,20 @@ int main(int argc, char** argv) {
   CHECK(ix_8x8 >= 0, "the 8x8 default shape is not in the table");
   if (ix_8x8 >= 0) {
     const uint32_t* m = &d->map_o[ix_8x8][0];
-    const unsigned want[12] = {0, 1, 9, 17, 25, 57, 61, 66, 66, 73, 81, 89};
-    static const char* nm[12] = {"adp_adv", "adp_noadp", "lstn", "tkr",
-                                 "regmon", "capool", "single", "base_end",
-                                 "srp_cad", "srp_tk", "srp_ls", "srp_end"};
-    for (int k = 0; k < 12; ++k)
-      CHECK(m[k] == want[k], "8x8 %s moved: %u want %u (the literal map that "
-            "shipped)", nm[k], m[k], want[k]);
+    // adp_adv..single are the historical literals that shipped and MUST NOT
+    // move (landed engines' default parameters point at them); the MAAP
+    // group (11) then EXTENDS the map — maap 66, base_end 68, and the SRP
+    // block shifts up by exactly PP_MAAP_SLOTS_C = 2 (66/73/81/89 became
+    // 68/75/83/91). Deliberate, documented in 08 SS5; this row is the record.
+    const unsigned want[13] = {0, 1, 9, 17, 25, 57, 61, 66, 68,
+                               68, 75, 83, 91};
+    static const char* nm[13] = {"adp_adv", "adp_noadp", "lstn", "tkr",
+                                 "regmon", "capool", "single", "maap",
+                                 "base_end", "srp_cad", "srp_tk", "srp_ls",
+                                 "srp_end"};
+    for (int k = 0; k < 13; ++k)
+      CHECK(m[k] == want[k], "8x8 %s moved: %u want %u (the documented map)",
+            nm[k], m[k], want[k]);
     CHECK(m[M_SLOT_AW] == 7, "8x8 slot width %u want 7", m[M_SLOT_AW]);
     const uint32_t* e = &d->evr_o[ix_8x8][0];
     const unsigned ewant[9] = {0, 8, 16, 17, 18, 19, 27, 28, 29};
@@ -247,7 +262,7 @@ int main(int argc, char** argv) {
           "with ADP EVT_TK_DISCOVERED at %u", si - 1, e[E_TKUNR] + si - 1,
           e[E_DISC]);
     // and the whole 9x9 map still fits an addressable timer
-    CHECK(m[M_SRP_END] == 94, "9x9 P-TIMER-SLOTS %u want 94", m[M_SRP_END]);
+    CHECK(m[M_SRP_END] == 96, "9x9 P-TIMER-SLOTS %u want 96", m[M_SRP_END]);
     CHECK(m[M_SLOT_AW] == 7, "9x9 slot width %u want 7", m[M_SLOT_AW]);
     CHECK(e[E_NSRC] == 32, "9x9 event sources %u want 32", e[E_NSRC]);
   }
@@ -256,6 +271,9 @@ int main(int argc, char** argv) {
   // The talker owner base is 0x50 and SRP's listener base 0x60, so 16 is the
   // last legal P-N-STREAM-OUT; the listener base is 0x20 and ADP publishes
   // its slot as its owner, so IF + SI must stay under 0x20.
+  CHECK(OWN_SRP_CAD + SRP_CAD_SLOTS <= OWN_MAAP,
+        "the SRP cadence tags must stay under the MAAP tags");
+  CHECK(OWN_MAAP + MAAP_SLOTS <= 256, "the MAAP tags must fit the bus");
   CHECK(OWN_TKR + 16 <= OWN_SRP_LS, "16 sources must be legal");
   CHECK(OWN_TKR + 17 > OWN_SRP_LS, "17 sources must be the first refused");
   CHECK(N_IF + 31 <= OWN_LSTN, "31 sinks must fit under the listener tags");

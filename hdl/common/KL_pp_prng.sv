@@ -14,6 +14,15 @@
 //                  kind 2 : 0..4000  ms  T-ADP-DELAY         (Milan §5.6.3.5.3-.7)
 //                  kind 3 : 10000..15000 ms  T-MRP-LEAVEALL  (Milan Table 4.3)
 //                  kind 4 : 30000..60000 ms  T-NOTIF-MONITOR (Milan §5.4.5.3)
+//                  kind 5 : 501..599 ms  MAAP probe_timer    (1722 B.3.4.2:
+//                           strictly 500 < T < 600, so both bounds excluded)
+//                  kind 6 : 30001..31999 ms  MAAP announce_timer (1722
+//                           B.3.4.1: strictly 30 s < T < 32 s)
+//                  kind 7 : 0..0xFDFF  MAAP pool offset — NOT milliseconds:
+//                           a uniform draw over the whole Table B.9 dynamic
+//                           allocation pool (B.3.6.1); the MAAP engine
+//                           rejection-retries values past POOL - count so
+//                           the block fit keeps the distribution uniform
 //
 //                Polynomial x^64 + x^63 + x^61 + x^60 + 1 (primitive),
 //                right-shift Galois form: period 2^64-1, state never zero.
@@ -59,10 +68,10 @@ module KL_pp_prng (
     input  wire         link_up_i,    //! link status; the FIRST rise latches the seed
 
     input  wire         draw_req_i,   //! one-cycle draw request (ignored while draw_busy_o)
-    input  wire   [2:0] draw_kind_i,  //! F08.2 range select 0..4 (reserved codes alias kind 0)
+    input  wire   [2:0] draw_kind_i,  //! F08.2 range select 0..7 (all codes assigned)
     output logic        draw_busy_o,  //! draw in progress (high while rejection retries run)
     output logic        draw_valid_o, //! one-cycle strobe: draw_ms_o holds the result
-    output logic [15:0] draw_ms_o,    //! drawn value in ms (max 60000, fits 16 bits)
+    output logic [15:0] draw_ms_o,    //! drawn value: ms for kinds 0..6, a pool offset for kind 7
 
     output logic [63:0] dbg_lfsr_o,   //! raw LFSR state — observability for the TB stream check
     output logic        dbg_seeded_o  //! seed latched (first link-up rise consumed)
@@ -146,7 +155,9 @@ module KL_pp_prng (
       3'd2:    begin mask_w = 16'h0FFF; limit_w = 16'd4000;  base_w = 16'd0;     end // T-ADP-DELAY
       3'd3:    begin mask_w = 16'h1FFF; limit_w = 16'd5000;  base_w = 16'd10000; end // T-MRP-LEAVEALL
       3'd4:    begin mask_w = 16'h7FFF; limit_w = 16'd30000; base_w = 16'd30000; end // T-NOTIF-MONITOR
-      default: begin mask_w = 16'h03FF; limit_w = 16'd1000;  base_w = 16'd0;     end // reserved -> kind 0
+      3'd5:    begin mask_w = 16'h007F; limit_w = 16'd98;    base_w = 16'd501;   end // MAAP probe_timer
+      3'd6:    begin mask_w = 16'h07FF; limit_w = 16'd1998;  base_w = 16'd30001; end // MAAP announce_timer
+      default: begin mask_w = 16'hFFFF; limit_w = 16'hFDFF;  base_w = 16'd0;     end // 7: MAAP pool offset
     endcase
   end
 

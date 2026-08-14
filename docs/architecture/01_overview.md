@@ -32,8 +32,9 @@ Vendor Unique execution, unsolicited notifications, counters, and persistence.
 | In scope (this processor) | Out of scope (external engines it commands/observes) |
 |---|---|
 | ADP / ACMP / AECP+MVU protocol execution | Ethernet MAC/PHY, frame filtering below DA/EtherType |
+| MAAP block claim (IEEE 1722-2016 Annex B, [11](11_maap_engine.md)) — opt-in via `cfg_maap_internal_i`; default 0 keeps the seam external | external `maap` allocator (the default wiring; the fabric's own engine answers the seam) |
 | Controller registry, notifications, lock, counters, identify | gPTP time sync datapath (802.1AS-2011 profile) |
-| Entity-model storage and descriptor assembly | MAAP address allocation (external `maap` engine) |
+| Entity-model storage and descriptor assembly | media transport below the control plane |
 | SRP endpoint participant — MSRP + MVRP, Class A/single-VID ([10](10_srp_engine.md); `P-EN-SRP-ENGINE` keeps an external-stack alternative) | full SRP bridge behavior (attribute propagation, per-port registrar sets) |
 | Timers/deadlines, PRNG, persistence orchestration | AVTP streaming datapath, CBS shaping, media clocking |
 | Management side-port | NVM physical device (behind the NVM port) |
@@ -88,6 +89,7 @@ once in [F02.10](02_interfaces.md#fig-02-statusdict).
 | Timer service + PRNG | tick generation, deadline RAM, randomized draws | [08 §3](08_timing.md) |
 | SRP/MAAP · gPTP · AVTP · media-clock adapters | the four engine contracts (srp served internally by default) | [02 §4](02_interfaces.md) |
 | SRP engine | MSRP/MVRP endpoint participant: 1 Domain FSM + 1 VLAN FSM + N+M stream FSMs | [10](10_srp_engine.md) |
+| MAAP engine | Annex B block claim: probe/announce/defend SM, the internal allocator-seam server, claim publication | [11](11_maap_engine.md) |
 | NVM manager | persistence journal; boot restore | [07 §5](07_memory_maps.md) |
 | Management side-port | image load, debug, NVM backing, optional firmware assist | [02 §7](02_interfaces.md) |
 | Boot/init sequencer + config/ID registers + profile ROMs | bring-up ordering; identity; profile selection | this doc §5, [§7](#7-parameter-master-table-f015) |
@@ -213,10 +215,15 @@ flowchart TB
   subgraph doc10 ["10 srp"]
     srpe["msrp/mvrp endpoint (2 + N + M FSMs)"]
   end
+  subgraph doc11 ["11 maap"]
+    maape["annex-b block claim + allocator seam"]
+  end
   subgraph doc02 ["02 interfaces"]
     adapters["srp/maap · gptp · avtp · mclk adapters · side-port · nvm port"]
   end
-  disp --> adv & talk & lsm & ucpu
+  disp --> adv & talk & lsm & ucpu & maape
+  maape -- "alloc answers + conflicts" --> talk
+  maape --> txarb
   tdisc -- "tk events" --> lsm
   srpe -- "tk attr events" --> lsm
   lsm -- "probe tx" --> orig

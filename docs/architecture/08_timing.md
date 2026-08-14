@@ -33,6 +33,8 @@ plain-IEEE build where different; blank = same).
 | T-CTR-NOTIF | 1 s | notif engine | ≥ 1 s between GET_COUNTERS notifications per descriptor | Milan Table 5.22 | |
 | T-SRP-DAFRESH | 15 s | talker DA gate | PROBE_TX freshness window for DA validity | Milan §4.3.3.1 | — |
 | T-SRP-LEAVEALL2 | 2 × T-MRP-LEAVEALL ≈ 20–30 s | talker DA gate | backoff after MAAP conflict / PCP change | Milan Table 5.3 | — |
+| T-MAAP-PROBE | random, strictly 500 ms < T < 600 ms | MAAP engine (11) | probe_timer — a fresh draw at every start | 1722-2016 B.3.4.2, Table B.8 | |
+| T-MAAP-ANNOUNCE | random, strictly 30 s < T < 32 s | MAAP engine (11) | announce_timer — a fresh draw at every start | 1722-2016 B.3.4.1, Table B.8 | |
 | T-MRP-JOIN | 200 ms (180–240) | SRP engine (10) | MRP joinTime — join tx cadence + vector aggregation window | Milan Table 4.3 | |
 | T-MRP-LEAVE | 5000 ms (4500–7500) | SRP engine (10) | MRP LeaveTime — registrar LV expiry during LeaveAll (Δ13 removes the rLv path) | Milan Table 4.3 | 600–1000 ms (802.1Q Table 10-7) — coupled to Δ13: change both or neither |
 | T-MRP-LEAVEALL | random 10–15 s | SRP engine (10) | leavealltimer per participant | Milan Table 4.3 | |
@@ -54,7 +56,7 @@ flowchart LR
   clk["core clock P-CLK-HZ"] --> ps["prescaler -> 1 µs tick -> 1 ms tick"]
   ps --> ramsweep["deadline RAM sweep @1 ms: P-TIMER-SLOTS x {armed, owner tag, deadline_ms}"]
   ramsweep --> evb["expiry event bus -> event router (owner-tagged)"]
-  prng["PRNG 64-bit (LFSR/xoshiro class)"] --> draw["range draw: 0-1 s / 0-2 s / 0-4 s / 10-15 s (T-MRP-LEAVEALL) / 30-60 s"]
+  prng["PRNG 64-bit (LFSR/xoshiro class)"] --> draw["range draw: 0-1 s / 0-2 s / 0-4 s / 10-15 s (T-MRP-LEAVEALL) / 30-60 s / 501-599 ms + 30.001-31.999 s + pool offset (MAAP kinds 5-7)"]
   seed["seed = entity_id XOR free-running counter latched at first link-up"] --> prng
   draw --> ramsweep
   obs["T-CTR-OBSERVE tick"] --> ctrs["counters latch"]
@@ -113,14 +115,17 @@ flowchart LR
 | T-NOTIF-MONITOR + T-NOTIF-TIMELIMITED | per registry entry | 2 × CTRL × IF |
 | T-AECP-TIMEOUT (CA inflight) | pool | P-CA-POOL |
 | T-LOCK-UNLOCK, T-IDENT-BURST, T-IDENT-REARM, T-CTR-OBSERVE, T-NVM-DEBOUNCE | singletons | 5 |
+| T-MAAP-PROBE + T-MAAP-ANNOUNCE | one SM per entity (one block claim, [11](11_maap_engine.md)) | 2 |
 | T-MRP-{JOIN, LEAVEALL} × 2 participants + T-MRP-PERIODIC + registrar-leave pool (T-MRP-LEAVE, active only during LeaveAll: SI + SO stream registrars + the Domain and MVRP VID registrars) | per interface, when `P-EN-SRP-ENGINE` | (7 + SI + SO) × IF |
 
-`P-TIMER-SLOTS = IF + SI + SI + SO + 2·CTRL·IF + P-CA-POOL + 5 [+ (7 + SI + SO)·IF with the SRP engine]`
+`P-TIMER-SLOTS = IF + SI + SI + SO + 2·CTRL·IF + P-CA-POOL + 5 + 2 [+ (7 + SI + SO)·IF with the SRP engine]`
 (+`T-CTR-NOTIF` implemented as a per-descriptor last-sent timestamp, not a timer slot).
-Baseline example (1 IF, 8 + 8 streams, 16 controllers, CA pool 4):
-`1 + 8 + 8 + 8 + 32 + 4 + 5 = 66`, plus the SRP engine's `7 + 8 + 8 = 23` → **89**
-slots — one 89 × 40-bit deadline RAM (89 × 40 b = 3,560 bits: still the same single
-RAMB18 the 66-slot baseline used).
+The MAAP pair was **appended after the singletons** so every earlier base — the ones
+landed engines' default parameters already point at — stays put; only `base_end` and
+the SRP block moved, by exactly 2. Baseline example (1 IF, 8 + 8 streams, 16
+controllers, CA pool 4): `1 + 8 + 8 + 8 + 32 + 4 + 5 + 2 = 68`, plus the SRP
+engine's `7 + 8 + 8 = 23` → **91** slots — one 91 × 40-bit deadline RAM (3,640 bits:
+still the same single RAMB18 the 66-slot baseline used).
 
 ### 5.1 The map: order is the contract, spacing is the shape
 
@@ -139,7 +144,8 @@ cure (`pp_pkg::pp_evr_map()`), with no owner tag at all to fall back on.
 
 The expiry bus carries `{slot, owner}` in a **fixed** 8-bit owner space
 (`pp_pkg PP_OWN_*`: listener `0x20`, SRP talker `0x40`, ACMP talker `0x50`, SRP
-listener `0x60`, SRP cadence `0x80`; ADP publishes its slot *as* its owner tag). That
+listener `0x60`, SRP cadence `0x80`, MAAP `0x90`; ADP publishes its slot *as* its
+owner tag). That
 space does not scale with the shape, so it is not re-spaced — it is **bounded**: an
 elaboration guard in the top refuses to build a shape whose owner ranges would
 overlap. The current allocation admits up to 16 sources and 31 sinks. Both maps and

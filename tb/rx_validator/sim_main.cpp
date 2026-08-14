@@ -30,11 +30,12 @@ typedef std::vector<uint8_t> Bytes;
 
 static const uint64_t OWN_MAC   = 0x02AABBCCDDEEull;
 static const uint64_t DA_AVDECC = 0x91E0F0010000ull;
+static const uint64_t DA_MAAP   = 0x91E0F000FF00ull;  // 1722-2016 Table B.10
 static const uint64_t DA_MSRP   = 0x0180C200000Eull;
 static const uint64_t DA_MVRP   = 0x0180C2000021ull;
 
 // pp_pkg protocol codes
-enum { P_ADP = 0, P_ACMP = 1, P_AEM = 2, P_MVU = 3, P_AA = 4 };
+enum { P_ADP = 0, P_ACMP = 1, P_AEM = 2, P_MVU = 3, P_AA = 4, P_MAAP = 5 };
 
 // ---- independent frame model (spec offsets, not DUT logic) ---------------
 struct Hdr {
@@ -69,7 +70,7 @@ static Expect classify(const Bytes& f, bool pool_ok) {
     }
     return e;
   }
-  if (da != OWN_MAC && da != DA_AVDECC) { e.da = 1; return e; }
+  if (da != OWN_MAC && da != DA_AVDECC && da != DA_MAAP) { e.da = 1; return e; }
   if (n < 14) { e.et = 1; return e; }                // EtherType never completed
   uint16_t et = uint16_t(f[12]) << 8 | f[13];
   if (et != 0x22F0) { e.et = 1; return e; }
@@ -77,7 +78,12 @@ static Expect classify(const Bytes& f, bool pool_ok) {
   e.alloc = true;
   if (!pool_ok) return e;                            // pool counts rx_overrun
   uint8_t sub = f[14];
-  if (sub != 0xFA && sub != 0xFB && sub != 0xFC) { e.sub = 1; e.abort_ = true; return e; }
+  // DA-qualified subtype demux: 1722.1 subtypes on own/AVDECC DAs; MAAP
+  // (0xFE) on own (a unicast DEFEND, Annex B B.2.1) or the MAAP DA
+  bool sub_ok = ((sub == 0xFA || sub == 0xFB || sub == 0xFC)
+                 && (da == OWN_MAC || da == DA_AVDECC))
+             || (sub == 0xFE && (da == OWN_MAC || da == DA_MAAP));
+  if (!sub_ok) { e.sub = 1; e.abort_ = true; return e; }
   if (n >= 16 && (f[15] & 0xF0)) { e.ver = 1; e.abort_ = true; return e; }  // V8
   size_t pl = n - 14;
   if (pl < 4) { e.len = 1; e.abort_ = true; return e; }
@@ -101,6 +107,10 @@ static Expect classify(const Bytes& f, bool pool_ok) {
   h.target   = r64(4);
   if (sub == 0xFA) {                                 // ADP (F04.5)
     h.protocol = P_ADP; h.opcode = h.msg_type;
+  } else if (sub == 0xFE) {                          // MAAP (Figure B.1)
+    h.protocol = P_MAAP; h.opcode = h.msg_type;
+    h.ctlr = r64(12);                                // requested_start+count
+    h.operands = r64(20);                            // conflict_start+count
   } else if (sub == 0xFC) {                          // ACMP (F05.13)
     h.protocol = P_ACMP; h.opcode = h.msg_type;
     h.ctlr = r64(12); h.seq = r16(48);
@@ -447,6 +457,64 @@ int main(int argc, char** argv) {
   // ---- F21: a good frame still parses after everything above ------------
   run_case(h, "F21", f1);
   check_hdr(h, "F21", classify(f1, true).hdr);
+
+  // ---- F22: MAAP (IEEE 1722-2016 Annex B, subtype 0xFE) ------------------
+  // a strict Annex B PROBE to the Table B.10 multicast DA: 42 real bytes,
+  // cdl 16 (B.2.1), padded to the 60-byte Ethernet minimum; V2 stores
+  // exactly cdl+12 = 28 bytes and the record carries requested_* in the
+  // controller_eid lane, zeros in the conflict lane
+  auto maap_pdu = [&](uint64_t da, uint8_t msg, uint16_t cdl,
+                      uint64_t req_start, uint16_t req_cnt,
+                      uint64_t con_start, uint16_t con_cnt,
+                      uint8_t vernib = 0x00) {
+    Bytes f = eth(da, 0x5254001A2B3Cull, 0x22F0);
+    f.push_back(0xFE);
+    f.push_back(uint8_t(vernib | (msg & 0x0F)));     // sv/ver | message_type
+    f.push_back(uint8_t((1u << 3) | ((cdl >> 8) & 7)));  // maap_version 1
+    f.push_back(uint8_t(cdl & 0xFF));
+    put64(f, 0);                                     // stream_id = 0 (B.2.4)
+    put_mac(f, req_start); put16(f, req_cnt);
+    put_mac(f, con_start); put16(f, con_cnt);
+    while (f.size() < 60) f.push_back(0x00);         // Ethernet minimum pad
+    return f;
+  };
+  Bytes f22 = maap_pdu(DA_MAAP, 1, 16, 0x91E0F0004000ull, 8, 0, 0);
+  run_case(h, "F22", f22);
+  check_hdr(h, "F22", classify(f22, true).hdr);
+  CHECK(h.hg.protocol == P_MAAP && h.hg.ctlr == 0x91E0F00040000008ull
+        && h.hg.operands == 0,
+        "F22 MAAP lanes: requested rides ctlr_eid, conflicts zero");
+
+  // ---- F23: a DEFEND unicast to our MAC (B.2.1) with conflict fields ----
+  Bytes f23 = maap_pdu(OWN_MAC, 2, 16, 0x91E0F0004000ull, 8,
+                       0x91E0F0004004ull, 4);
+  run_case(h, "F23", f23);
+  check_hdr(h, "F23", classify(f23, true).hdr);
+  CHECK(h.hg.operands == 0x91E0F00040040004ull,
+        "F23 conflict_start+count ride the operands lane");
+
+  // ---- F24: the DA qualification both ways ------------------------------
+  // MAAP on the AVDECC multicast DA: Annex B sends MAAP only to the MAAP DA
+  // (or unicast), so this is an unknown subtype FOR THAT DA class
+  run_case(h, "F24a", maap_pdu(DA_AVDECC, 3, 16, 0x91E0F0000000ull, 8, 0, 0));
+  // ...and ADP on the MAAP DA is equally out of place
+  Bytes f24b = eth(DA_MAAP, 0x5254001A2B3Cull, 0x22F0);
+  f24b.push_back(0xFA); f24b.push_back(0x00);
+  f24b.push_back(0x00); f24b.push_back(56);
+  fill_pat(f24b, 14 + 68, 0x60);
+  run_case(h, "F24b", f24b);
+
+  // ---- F25: the fabric peer's reference-contract frame (cdl 28) ---------
+  // KL_maap transmits the pipewire reference's length 28; V1 stores 40
+  // payload bytes and the Annex B fields sit at the same offsets, so the
+  // strict engine interoperates without a special case
+  Bytes f25 = maap_pdu(DA_MAAP, 3, 28, 0x91E0F0009900ull, 8, 0, 0);
+  run_case(h, "F25", f25);
+  check_hdr(h, "F25", classify(f25, true).hdr);
+
+  // ---- F26: V8 still owns the sv/version nibble on MAAP frames ----------
+  run_case(h, "F26", maap_pdu(DA_MAAP, 1, 16, 0x91E0F0004000ull, 8, 0, 0,
+                              /*vernib=*/0x20));
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   delete d;

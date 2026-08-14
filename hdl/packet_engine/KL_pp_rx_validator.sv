@@ -9,14 +9,22 @@
 //  Description : Shared RX front end — the filter/parser/validator of F03.1,
 //                implementing the F03.2 validate/decode flow, the front-end
 //                F03.6 rules, and the F03.4 common-header extraction:
-//                  - DA gate {own unicast, 91-E0-F0-01-00-00} (cnt rx_da)
+//                  - DA gate {own unicast, 91-E0-F0-01-00-00, and the MAAP
+//                    multicast 91-E0-F0-00-FF-00 of 1722-2016 Table B.10}
+//                    (cnt rx_da)
 //                  - V9: DA 01-80-C2-00-00-0E + EtherType 0x22EA (MSRP) and
 //                    DA 01-80-C2-00-00-21 + 0x88F5 (MVRP) bypass the 1722.1
 //                    pipeline byte-exactly onto mrp_*_o; LLDP/802.1X frames
 //                    sharing those group DAs (wrong EtherType) are ignored
 //                    with no count — DA alone is never sufficient
 //                  - EtherType 0x22F0 gate (cnt rx_ethertype)
-//                  - subtype FA/FB/FC demux (cnt rx_subtype)
+//                  - subtype FA/FB/FC/FE demux, DA-QUALIFIED (cnt
+//                    rx_subtype): FA/FB/FC are only meaningful to the own
+//                    unicast or the AVDECC multicast DA, FE (MAAP) only to
+//                    the own unicast (a DEFEND answers the probe's SA,
+//                    Annex B B.2.1) or the MAAP multicast DA — a subtype
+//                    on a DA it is never sent to is an unknown subtype
+//                    for that DA class and drops with one count
 //                  - V8: h = 0 and version = 0 (cnt rx_version), and every
 //                    malformed drop is drop + count, never fatal
 //                  - V1/V2: total PDU = cdl + 12; padding excluded from cdl,
@@ -96,18 +104,18 @@ module KL_pp_rx_validator
 
     //! ---- parsed-header beat (one per accepted frame, to the normalizer) ----
     output logic                hdr_valid_o,         //! fields + rx_slot valid (with wr_commit_o)
-    output logic          [2:0] hdr_protocol_o,      //! pp_protocol_e: ADP/ACMP/AEM/MVU/AA
+    output logic          [2:0] hdr_protocol_o,      //! pp_protocol_e: ADP/ACMP/AEM/MVU/AA/MAAP
     output logic          [3:0] hdr_msg_type_o,      //! header message_type (@1[3:0])
-    output logic          [4:0] hdr_status_o,        //! status / valid_time (@2[7:3])
+    output logic          [4:0] hdr_status_o,        //! status / valid_time / maap_version (@2[7:3])
     output logic         [10:0] hdr_cdl_o,           //! validated control_data_length (V1/V2)
     output logic         [47:0] hdr_src_mac_o,       //! Ethernet SA (response addressing)
-    output logic         [63:0] hdr_controller_eid_o,//! controller_entity_id @12 (AECP/ACMP; 0 for ADP)
+    output logic         [63:0] hdr_controller_eid_o,//! controller_entity_id @12 (AECP/ACMP; 0 for ADP; MAAP: requested_start_address+requested_count @12..@19)
     output logic         [63:0] hdr_target_eid_o,    //! entity_id / stream_id / target_entity_id @4
-    output logic         [15:0] hdr_sequence_id_o,   //! AECP @20 / ACMP @48 (0 for ADP)
+    output logic         [15:0] hdr_sequence_id_o,   //! AECP @20 / ACMP @48 (0 for ADP/MAAP)
     output logic                hdr_u_o,             //! AECP u bit (@22 bit 7)
     output logic                hdr_cr_o,            //! AECP cr bit (@22 bit 6)
-    output logic         [15:0] hdr_opcode_o,        //! AEM/MVU command_type; ACMP/ADP message_type
-    output pp_operands_t        hdr_operands_o,      //! desc_type/index (AECP), unique_id (ACMP)
+    output logic         [15:0] hdr_opcode_o,        //! AEM/MVU command_type; ACMP/ADP/MAAP message_type
+    output pp_operands_t        hdr_operands_o,      //! desc_type/index (AECP), unique_id (ACMP), conflict_start+count (MAAP)
     output logic          [2:0] hdr_rx_slot_o,       //! committed slot handle (pp_pkg code space)
 
     //! ---- per-rule drop counters (F03.2 cnt names; 16-bit saturating) ----
@@ -120,6 +128,8 @@ module KL_pp_rx_validator
 
   // ------------------------------------------------------------- constants
   localparam logic [47:0] DA_AVDECC_C = 48'h91_E0_F0_01_00_00;
+  //! 1722-2016 Table B.10: the one reserved MAAP multicast address
+  localparam logic [47:0] DA_MAAP_C   = 48'h91_E0_F0_00_FF_00;
   localparam logic [47:0] DA_MSRP_C   = 48'h01_80_C2_00_00_0E;
   localparam logic [47:0] DA_MVRP_C   = 48'h01_80_C2_00_00_21;
   localparam logic [15:0] ET_1722_C   = 16'h22F0;
@@ -128,6 +138,7 @@ module KL_pp_rx_validator
   localparam logic [7:0]  SUB_ADP_C   = 8'hFA;
   localparam logic [7:0]  SUB_AECP_C  = 8'hFB;
   localparam logic [7:0]  SUB_ACMP_C  = 8'hFC;
+  localparam logic [7:0]  SUB_MAAP_C  = 8'hFE;
   localparam logic [15:0] CNT_MAX_C   = 16'hFFFF;
 
   typedef enum logic [1:0] { FR_HDR, FR_PDU, FR_SINK } fr_st_e;
@@ -143,7 +154,7 @@ module KL_pp_rx_validator
   // ------------------------------------------------------ frame-cadence state
   fr_st_e              fr_st_r;
   logic [10:0]         idx_r;        // wire byte index, saturates at 2047
-  logic                da_own_r, da_mcast_r, da_msrp_r, da_mvrp_r;
+  logic                da_own_r, da_mcast_r, da_maap_r, da_msrp_r, da_mvrp_r;
   logic [7:0]          et_hi_r;      // EtherType high byte (@12)
   logic                vpushed_r;    // MRP verdict pushed for this frame
   logic                alloc_req_r;  // one-cycle alloc pulse
@@ -192,7 +203,7 @@ module KL_pp_rx_validator
   logic        acc_w;
   logic        end_w;
   logic [10:0] pidx_w;
-  logic        da_own_a_w, da_mcast_a_w, da_msrp_a_w, da_mvrp_a_w;
+  logic        da_own_a_w, da_mcast_a_w, da_maap_a_w, da_msrp_a_w, da_mvrp_a_w;
   logic        da_1722_a_w, da_mrp_a_w;
   logic [15:0] et_w;
   logic        et_1722_ok_w, et_mrp_ok_w;
@@ -212,17 +223,19 @@ module KL_pp_rx_validator
   always_comb begin : da_fold
     da_own_a_w   = da_own_r;
     da_mcast_a_w = da_mcast_r;
+    da_maap_a_w  = da_maap_r;
     da_msrp_a_w  = da_msrp_r;
     da_mvrp_a_w  = da_mvrp_r;
     if (acc_w && (fr_st_r == FR_HDR) && (idx_r <= 11'd5)) begin
       if (rx_data_i != mac_byte_f(own_mac_i,  idx_r)) da_own_a_w   = 1'b0;
       if (rx_data_i != mac_byte_f(DA_AVDECC_C, idx_r)) da_mcast_a_w = 1'b0;
+      if (rx_data_i != mac_byte_f(DA_MAAP_C,  idx_r)) da_maap_a_w  = 1'b0;
       if (rx_data_i != mac_byte_f(DA_MSRP_C,  idx_r)) da_msrp_a_w  = 1'b0;
       if (rx_data_i != mac_byte_f(DA_MVRP_C,  idx_r)) da_mvrp_a_w  = 1'b0;
     end
   end
 
-  assign da_1722_a_w = da_own_a_w | da_mcast_a_w;
+  assign da_1722_a_w = da_own_a_w | da_mcast_a_w | da_maap_a_w;
   assign da_mrp_a_w  = da_msrp_a_w | da_mvrp_a_w;
 
   assign et_w         = {et_hi_r, rx_data_i};              // valid at idx 13
@@ -237,10 +250,16 @@ module KL_pp_rx_validator
   // per-byte 1722.1 rule checks — only with a secured slot (see banner)
   assign pdu_byte_w = acc_w && (fr_st_r == FR_PDU) && (idx_r >= 11'd14)
                       && slot_now_w;
+  //! the subtype is DA-QUALIFIED (banner): 1722.1 subtypes belong to the
+  //! own-unicast/AVDECC-multicast DA class, MAAP to the own-unicast (a
+  //! unicast DEFEND, B.2.1) or the Table B.10 MAAP multicast DA class
   assign sub_fail_w = pdu_byte_w && (pidx_w == 11'd0)
-                      && (rx_data_i != SUB_ADP_C)
-                      && (rx_data_i != SUB_AECP_C)
-                      && (rx_data_i != SUB_ACMP_C);
+                      && !(((rx_data_i == SUB_ADP_C)
+                            || (rx_data_i == SUB_AECP_C)
+                            || (rx_data_i == SUB_ACMP_C))
+                           && (da_own_r | da_mcast_r))
+                      && !((rx_data_i == SUB_MAAP_C)
+                           && (da_own_r | da_maap_r));
   assign ver_fail_w = pdu_byte_w && (pidx_w == 11'd1)
                       && (rx_data_i[7:4] != 4'h0);         // h and version (V8)
   assign fail_now_w = sub_fail_w | ver_fail_w;
@@ -275,6 +294,7 @@ module KL_pp_rx_validator
       idx_r        <= '0;
       da_own_r     <= 1'b1;
       da_mcast_r   <= 1'b1;
+      da_maap_r    <= 1'b1;
       da_msrp_r    <= 1'b1;
       da_mvrp_r    <= 1'b1;
       et_hi_r      <= '0;
@@ -362,6 +382,7 @@ module KL_pp_rx_validator
           if (idx_r <= 11'd5) begin
             da_own_r   <= da_own_a_w;
             da_mcast_r <= da_mcast_a_w;
+            da_maap_r  <= da_maap_a_w;
             da_msrp_r  <= da_msrp_a_w;
             da_mvrp_r  <= da_mvrp_a_w;
             if ((idx_r == 11'd5) && !(da_1722_a_w | da_mrp_a_w))
@@ -423,6 +444,21 @@ module KL_pp_rx_validator
               if (pidx_w == 11'd48) seq_r[15:8]  <= rx_data_i;
               if (pidx_w == 11'd49) seq_r[7:0]   <= rx_data_i;
             end
+            //! MAAP (Figure B.1): requested_start+count @12..@19 already ride
+            //! the shared @12..@19 capture above (the record's controller_eid
+            //! lane); conflict_start (@20..@25) + conflict_count (@26..@27)
+            //! land in the four operand halves, so the whole PDU rides the
+            //! record and the MAAP engine never reads the payload slot
+            if (subtype_r == SUB_MAAP_C) begin
+              if (pidx_w == 11'd20) desc_type_r[15:8]  <= rx_data_i;
+              if (pidx_w == 11'd21) desc_type_r[7:0]   <= rx_data_i;
+              if (pidx_w == 11'd22) desc_index_r[15:8] <= rx_data_i;
+              if (pidx_w == 11'd23) desc_index_r[7:0]  <= rx_data_i;
+              if (pidx_w == 11'd24) tuid_r[15:8]       <= rx_data_i;
+              if (pidx_w == 11'd25) tuid_r[7:0]        <= rx_data_i;
+              if (pidx_w == 11'd26) luid_r[15:8]       <= rx_data_i;
+              if (pidx_w == 11'd27) luid_r[7:0]        <= rx_data_i;
+            end
           end
           if (fail_now_w) fr_st_r <= FR_SINK;   // cnt rx_subtype / rx_version
         end
@@ -434,6 +470,7 @@ module KL_pp_rx_validator
           fr_st_r    <= FR_HDR;
           da_own_r   <= 1'b1;
           da_mcast_r <= 1'b1;
+          da_maap_r  <= 1'b1;
           da_msrp_r  <= 1'b1;
           da_mvrp_r  <= 1'b1;
           vpushed_r  <= 1'b0;
@@ -466,6 +503,16 @@ module KL_pp_rx_validator
             hdr_protocol_r <= 3'(PP_PROTO_ADP);
             hdr_opcode_r   <= {12'd0, msg_type_r};
             hdr_operands_r <= '0;
+          end else if (subtype_r == SUB_MAAP_C) begin
+            //! Annex B record: controller_eid = requested_start(48)+count(16)
+            //! (the shared @12..@19 capture), operands = conflict_start(48)
+            //! folded over {desc_type, desc_index, config_index} + count in
+            //! unique_id; status_in already carries maap_version (@2[7:3])
+            hdr_protocol_r <= 3'(PP_PROTO_MAAP);
+            hdr_opcode_r   <= {12'd0, msg_type_r};
+            hdr_operands_r <= '{desc_type: desc_type_r,
+                                desc_index: desc_index_r,
+                                config_index: tuid_r, unique_id: luid_r};
           end else if (subtype_r == SUB_ACMP_C) begin
             hdr_protocol_r <= 3'(PP_PROTO_ACMP);
             hdr_opcode_r   <= {12'd0, msg_type_r};

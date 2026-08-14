@@ -410,6 +410,18 @@ verification).
 | REQ-SRP-005 | Milan §4.2.7.2.2 | Registrar `IN → MT` immediately on rLv (no leavetimer) outside the LeaveAll cycle (Δ13) | shall | A | [GAP-04](#gap-04) | registrar rule F10.9 | 10 §6.5 | MTXW |
 | REQ-SRP-006 | Milan §4.2.7.3, §4.3.2, §4.4.1 | MVRP: talker joins the VLAN before sending any stream frames; listener declares the VID of its settled sinks | shall | A | [GAP-04](#gap-04) | VLAN FSM F10.3 | 10 §6.2 | DIR |
 
+### 6.9b MAAP engine (in scope as the opt-in internal allocator — §8 item 11)
+
+| REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
+|---|---|---|---|---|---|---|---|---|
+| REQ-MAAP-001 | 1722-2016 B.1 + Table B.9 | Dynamic-pool addresses only via MAAP; the block drawn uniformly from 91:E0:F0:00:00:00..91:E0:F0:00:FD:FF with the whole block inside the pool | shall | A | [GAP-04](#gap-04) | generate_address + fit clamp | [11](architecture/11_maap_engine.md) §6 | RND |
+| REQ-MAAP-002 | 1722-2016 B.2 (Figure B.1, Tables B.1/B.10) | PDU byte layout with cdl 16 and stream_id 0; PROBE/ANNOUNCE to 91:E0:F0:00:FF:00, DEFEND unicast to the probe's SA; higher maap_version with a known type interpreted, reserved types ignored | shall | A | [GAP-04](#gap-04) | frame builder + DA-qualified validator demux | [11](architecture/11_maap_engine.md) §3 | DIR |
+| REQ-MAAP-003 | 1722-2016 Table B.7 + Table B.8 | The initial PROBE plus MAAP_PROBE_RETRANSMITS = 3 retransmits, the first ANNOUNCE immediately at probeCount!, the claim valid only in DEFEND | shall | A | [GAP-04](#gap-04) | walker | [11](architecture/11_maap_engine.md) §6 | MTXW |
+| REQ-MAAP-004 | 1722-2016 B.3.4 | probe_timer strictly inside (500, 600) ms and announce_timer strictly inside (30, 32) s, drawn fresh at every start | shall | A | [GAP-04](#gap-04) | T-MAAP-* via PRNG kinds 5/6 | 08 §2, [11](architecture/11_maap_engine.md) §8 | TIM |
+| REQ-MAAP-005 | 1722-2016 B.3.5.5–.7 + Table B.7 + B.3.6.4 | The conflict matrix: rProbe! defended in DEFEND without tie-break; compare_MAC (octet-wise reversed, TRUE = no action) in PROBE/rProbe! and DEFEND/rDefend!+rAnnounce!; every yield re-randomizes | shall | A | [GAP-04](#gap-04) | row decode | [11](architecture/11_maap_engine.md) §6 | MTXW |
+| REQ-MAAP-006 | 1722-2016 B.3.6.6 + B.2.7/B.2.8 | DEFEND echoes the probe's requested_*; conflict_start = first allocated conflicting address, conflict_count from it; both fields 0 in PROBE/ANNOUNCE | shall | A | [GAP-04](#gap-04) | defend fields | [11](architecture/11_maap_engine.md) §3 | DIR |
+| REQ-MAAP-007 | 1722-2016 B.3.5.2 + Table B.7 footnote c | Release! is a local event: stop timers, INITIAL, no PDU on the wire | shall | A | [GAP-04](#gap-04) | engage-fall arc | [11](architecture/11_maap_engine.md) §6 | DIR |
+
 ### 6.10 Non-redundant scoping
 
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
@@ -467,4 +479,5 @@ verification).
 | 7 | IN_PROGRESS vs GET_DYNAMIC_INFO | Never emit IN_PROGRESS; hard ≤240 ms response budget | 06 §5, 08 §4 |
 | 8 | Milan-vs-IEEE STREAM_OUTPUT counter masks | Milan masks in Milan profile (Δ-tagged); IEEE masks in plain-IEEE profile ROM | 06 §6.6 |
 | 9 | SRP location (originally out of scope per the reviewed doc's §21) | Owner decision 2026-08-11: SRP endpoint (MSRP/MVRP participant) moved **in scope** as doc 10 — 1 Domain FSM, 1 VLAN FSM (Class A, single VID), N + M stream FSMs; MAAP stays external; external-stack alternative retained (`P-EN-SRP-ENGINE`) | [10](architecture/10_srp_engine.md), §6.9 |
+| 11 | MAAP location (item 9 recorded "MAAP stays external") | The seam grew an internal server: `KL_pp_maap` ([11](architecture/11_maap_engine.md)) answers the 02 §4.2 contract when the quasi-static `cfg_maap_internal_i` = 1 and publishes the claim for the fabric; the DEFAULT stays 0 = external, byte-identical to the landed integrations, so item 9's shipping wiring is unchanged until the integrator flips the input | [11](architecture/11_maap_engine.md), §6.9b |
 | 10 | Implementation strategy for the reference platform | Owner decision 2026-08-11: full implementation (scenario B of [docs/10](10_RESOURCE_AND_EFFORT.md)) proceeds in this repository; the reference platform cuts over by **direct substitution at parity** — the superseded planes are deleted, never parameterized (git history preserves them); the area verdict is accepted with eyes open, the architecture/conformance value is the goal | [docs/10](10_RESOURCE_AND_EFFORT.md) §5/§10 |

@@ -56,10 +56,16 @@ struct Model {
 };
 
 // F08.2 ranges (F08.1 rows: T-ACMP-DELAY, T-ADP-DELAY-START, T-ADP-DELAY,
-// T-MRP-LEAVEALL, T-NOTIF-MONITOR). MASK = next power of two above the span.
-static const uint16_t MASK[5]  = {0x03FF, 0x07FF, 0x0FFF, 0x1FFF, 0x7FFF};
-static const uint16_t LIMIT[5] = {1000, 2000, 4000, 5000, 30000};
-static const uint16_t BASE[5]  = {0, 0, 0, 10000, 30000};
+// T-MRP-LEAVEALL, T-NOTIF-MONITOR; then the MAAP kinds of 11 — probe_timer
+// strictly inside (500, 600) ms and announce_timer strictly inside
+// (30, 32) s per IEEE 1722-2016 B.3.4, and the kind-7 pool-offset draw
+// uniform over the whole Table B.9 pool 0..0xFDFF). MASK = next power of
+// two above the span.
+static const uint16_t MASK[8]  = {0x03FF, 0x07FF, 0x0FFF, 0x1FFF, 0x7FFF,
+                                  0x007F, 0x07FF, 0xFFFF};
+static const uint16_t LIMIT[8] = {1000, 2000, 4000, 5000, 30000,
+                                  98, 1998, 0xFDFF};
+static const uint16_t BASE[8]  = {0, 0, 0, 10000, 30000, 501, 30001, 0};
 
 struct Tb {
   VKL_pp_prng* dut;
@@ -174,10 +180,10 @@ int main(int argc, char** argv) {
   CHECK(tb.stream_mismatch == 0, "D: stream bit-exact across the link flap");
 
   // ---- E: range draws --------------------------------------------------
-  const int NDRAW[5] = {6000, 9000, 12000, 2200, 2200};
+  const int NDRAW[8] = {6000, 9000, 12000, 2200, 2200, 4000, 6000, 2200};
   long total_reqs = 0;
-  long rej_frac_pct[5] = {0, 0, 0, 0, 0};
-  for (int k = 0; k < 5; ++k) {
+  long rej_frac_pct[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+  for (int k = 0; k < 8; ++k) {
     long bad_bounds = 0, bad_val = 0, bad_lat = 0, rejected_draws = 0;
     uint32_t mn = 0xFFFFFFFFu, mx = 0;
     double sum = 0.0;
@@ -202,7 +208,7 @@ int main(int argc, char** argv) {
     const double mean = sum / NDRAW[k];
     CHECK(std::fabs(mean - mid) < LIMIT[k] * 0.05,
           "E k%d: mean %.1f vs midpoint %.1f", k, mean, mid);
-    if (k <= 2) {  // small ranges: both endpoints must actually be drawn
+    if (k <= 2 || k == 5) {  // small ranges: both endpoints must be drawn
       CHECK(mn == BASE[k], "E k%d: min endpoint %u never drawn, min %u",
             k, BASE[k], mn);
       CHECK(mx == (uint32_t)BASE[k] + LIMIT[k],
@@ -226,6 +232,12 @@ int main(int argc, char** argv) {
   // ...and mostly does not where the mask is tight (kind 0: 23/1024 = 2.2 %)
   CHECK(rej_frac_pct[0] < 10, "E: kind0 rejection fraction %ld%% >= 10%%",
         rej_frac_pct[0]);
+  // kind 5 span 99 vs mask 128 -> per-attempt reject p = 29/128 = 23 %:
+  // the B.3.4.2 bounds are EXCLUSIVE, so a draw of exactly 500 or 600 ms
+  // must be structurally impossible (the bounds check above already graded
+  // every draw against 501..599)
+  CHECK(rej_frac_pct[5] > 5, "E: kind5 rejection fraction %ld%% <= 5%%",
+        rej_frac_pct[5]);
 
   // busy visible during a pending draw, clears with valid
   dut->draw_req_i = 1; dut->draw_kind_i = 3;

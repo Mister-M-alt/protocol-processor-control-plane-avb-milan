@@ -24,14 +24,15 @@ docs/README.md (this page)
                   └─► 03_packet_engine.md  shared RX/TX datapath
                        └─► 04_adp_engine.md ─► 05_acmp_engine.md   (04 before 05: ACMP
                             └─► 10_srp_engine.md                    consumes ADP events;
-                                 └─► 06_aecp_engine.md              10 with/after 05 — it
-                                      └─► 07_memory_maps.md         serves 05's srp calls)
+                                 └─► 11_maap_engine.md              10/11 with/after 05 —
+                                 └─► 06_aecp_engine.md              they serve 05's srp
+                                      └─► 07_memory_maps.md         and maap calls)
                                            └─► 08_timing.md ─► 09_verification.md
 ```
 
 | Role | Path |
 |---|---|
-| Implementer (RTL) | 01 → 02 → 03 → 04 → 05 → 10 → 06 → 07 → 08 (00 on second pass) |
+| Implementer (RTL) | 01 → 02 → 03 → 04 → 05 → 10 → 11 → 06 → 07 → 08 (00 on second pass) |
 | Verifier | 00 §6 matrix → 01 → 08 → 09 → the F05.3 / F06.14 behavior tables |
 | System integrator | 01 → 02 → 07 §5 (persistence) → 02 §7 (side-port) |
 | Compliance reviewer | 00 only, following its links into the architecture |
