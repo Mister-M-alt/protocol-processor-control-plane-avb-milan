@@ -122,15 +122,16 @@
 //                GET_AUDIO_MAP refuses exactly the indices READ_DESCRIPTOR
 //                refuses.
 //
-//                ONLY STREAM_PORT_INPUT IS DISPATCHED. Milan §5.4.2.26 also
-//                demands GET_AUDIO_MAP on every Stream Port Output with no
-//                static map; this build's talker-side mappings live in a
-//                differently-shaped store (the capture mux's source buckets,
-//                not a cluster-indexed RAM), and serving them is a RECORDED
-//                GAP, not an oversight: a command naming any other
-//                descriptor_type keeps the NOT_IMPLEMENTED echo, decided at
-//                the A_PLD exit exactly like the MVU sub-decode - the type
-//                field is walked, not trusted at pop.
+//                BOTH STREAM PORT DIRECTIONS ARE DISPATCHED. Milan §5.4.2.26
+//                demands GET_AUDIO_MAP on every Stream Port Input AND every
+//                Stream Port Output with no static map; the OUTPUT side
+//                re-dispatches to a two-word stub that swaps the emitted
+//                type constant and falls into the same µprogram, and the
+//                integrator's face routes on amap_desc_type_o to whichever
+//                map store owns that direction. Any OTHER descriptor_type
+//                keeps the NOT_IMPLEMENTED echo, decided at the A_PLD exit
+//                exactly like the MVU sub-decode - the type field is
+//                walked, not trusted at pop.
 //
 //                A ROM is the right shape once the hazard class, min-cdl,
 //                response-size id, lock/GDI/notify flags and per-profile valid
@@ -502,9 +503,10 @@ module KL_aecp_engine
   localparam logic [15:0] OP_GET_AVB_INFO_C    = 16'h0027;
   localparam logic [15:0] OP_GET_AS_PATH_C     = 16'h0028;
   localparam logic [15:0] DT_AVB_INTERFACE_C   = 16'h0009;
-  //! Table 7-1: the one descriptor type the audio-map µprogram serves (see
-  //! the banner - every other type keeps the NOT_IMPLEMENTED echo)
+  //! Table 7-1: the two descriptor types the audio-map µprograms serve -
+  //! every other type keeps the NOT_IMPLEMENTED echo
   localparam logic [15:0] DT_STREAM_PORT_IN_C  = 16'h000E;
+  localparam logic [15:0] DT_STREAM_PORT_OUT_C = 16'h000F;
 
   // ---- Milan Vendor Unique (Milan v1.2 §5.4.3.2, §5.4.4.1) ---------------
   //! protocol_id is the Avnu OUI-36 00-1B-C5-0A-C appended with MVU's 12-bit
@@ -541,6 +543,7 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_GSTRI_C   = 11'd912;   // E_GSTRI
   localparam logic [10:0] UPC_GAVB_C    = 11'd944;   // E_GAVB
   localparam logic [10:0] UPC_GASP_C    = 11'd976;   // E_GASP
+  localparam logic [10:0] UPC_GAMAPO_C  = 11'd996;   // E_GAMAPO
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -1393,13 +1396,16 @@ module KL_aecp_engine
             end
             //! ...and the audio-map TYPE gate at the same seam, for the same
             //! reason: descriptor_type is at @24 and cannot be judged at pop.
-            //! Milan §5.4.2.26 also asks for Stream Port OUTPUT service; this
-            //! build's talker-side map store has a different shape and the
-            //! honest refusal for it - and for any other type - is the
-            //! NOT_IMPLEMENTED echo, a RECORDED gap (see the banner).
-            //! `amap_r` stays set: E_NOTIMPL runs no gathers, so the gx
-            //! routing it selects is never consulted on this arm.
-            if (amap_r && (cfg_ix_r != DT_STREAM_PORT_IN_C)) begin
+            //! BOTH Milan §5.4.2.26 halves are served now - the OUTPUT side
+            //! re-dispatches to the two-word E_GAMAPO stub that swaps the
+            //! type constant and falls into E_GAMAP's tail, and the
+            //! integrator's face routes on amap_desc_type_o to its capture-
+            //! side map store. Any other type keeps the NOT_IMPLEMENTED
+            //! echo (`amap_r` stays set: E_NOTIMPL runs no gathers, so the
+            //! gx routing it selects is never consulted on that arm).
+            if (amap_r && (cfg_ix_r == DT_STREAM_PORT_OUT_C)) begin
+              upc_r <= UPC_GAMAPO_C;
+            end else if (amap_r && (cfg_ix_r != DT_STREAM_PORT_IN_C)) begin
               upc_r  <= UPC_NOTIMPL_C;
               echo_r <= 1'b1;
             end

@@ -315,7 +315,7 @@ module protocol_processor_top
     //! face: an undriven `amap_wait_i` is 0, number_of_maps answers 0, and
     //! every GET_AUDIO_MAP resolves against the descriptor image alone.
     output logic        amap_req_o,           //! a word is being asked for
-    output logic [15:0] amap_desc_type_o,     //! AECPDU @24 (STREAM_PORT_INPUT)
+    output logic [15:0] amap_desc_type_o,     //! AECPDU @24 (STREAM_PORT_INPUT or _OUTPUT - route on it)
     output logic [15:0] amap_desc_index_o,    //! AECPDU @26
     output logic [15:0] amap_map_index_o,     //! AECPDU @28 - the page
     output logic  [1:0] amap_sel_o,           //! 0 NMAPS, 1 GEOM, 2 RECORD

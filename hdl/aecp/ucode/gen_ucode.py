@@ -109,10 +109,12 @@ E_LOCKUNS = 896      # unsolicited LOCK_ENTITY (Table 5.22 + 7.5.2)
 E_GSTRI   = 912      # GET_STREAM_INFO (Milan 5.4.2.10 80-byte response)
 E_GAVB    = 944      # GET_AVB_INFO (IEEE 7.4.40, Milan 5.4.2.23)
 E_GASP    = 976      # GET_AS_PATH (IEEE 7.4.41, Milan 5.4.2.24)
+E_GAMAPO  = 996      # GET_AUDIO_MAP on a Stream Port OUTPUT (Milan 5.4.2.26)
 # 1722.1-2021 Table 7-1: the one descriptor type this program is dispatched
 # for (KL_aecp_engine refuses every other type back to the NOT_IMPLEMENTED
 # echo before dispatch, so the constant emitted at @24 is also a guarantee).
 DT_STREAM_PORT_INPUT = 0x000E
+DT_STREAM_PORT_OUTPUT = 0x000F
 
 # --- gather selectors the counters face answers (06 §6.6) --------------------
 # gx_sel is {cnd, imm[3:0]} for GATHER_EXT and {cnd, beat} for READ_CTRS, so the
@@ -552,8 +554,10 @@ place(E_GCTRS, [
 # constant is the captured value by guarantee, and r14[15:0] - where the
 # other programs keep the @24 field - is the locate key's cfg half instead.
 place(E_GAMAP, [
-    u('MOVE', rd=12, ra=0, imm=0),                    # reserved @34
+    #! the type constant loads FIRST so E_GAMAPO below can override it and
+    #! fall into the shared tail - one program, two Table 7-1 types
     u('MOVE', rd=8, ra=0, imm=DT_STREAM_PORT_INPUT),  # descriptor_type @24
+    u('MOVE', rd=12, ra=0, imm=0),                    # reserved @34
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
     u('GATHER_EXT', rd=5, **AM_NMAPS),           # r5 = number_of_maps
     u('GATHER_EXT', rd=6, **AM_GEOM),            # r6 = {nmaps, nmappings}
@@ -831,6 +835,18 @@ place(E_GASP, [
     u('BRANCH', imm=E_GASP + 8),
     u('SEND_RESP'),                              # out:
     u('END'),
+])
+
+# --- GET_AUDIO_MAP, Stream Port OUTPUT (Milan §5.4.2.26's second half) -------
+# "the PAAD-AE shall implement the GET_AUDIO_MAP command ... for each Stream
+# Port Output of the currently set Configuration" - the half that was a
+# recorded gap while the capture-side map RAM had no readback. The program IS
+# E_GAMAP with the other Table 7-1 type constant: the engine dispatches by
+# the walked descriptor_type, the locate key already carries it, and the
+# integrator's face routes on amap_desc_type_o to the capture-side store.
+place(E_GAMAPO, [
+    u('MOVE', rd=8, ra=0, imm=DT_STREAM_PORT_OUTPUT),
+    u('BRANCH', imm=E_GAMAP + 1),
 ])
 
 # --- deterministic non-degenerate fill ---------------------------------------

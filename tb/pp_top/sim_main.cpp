@@ -405,14 +405,14 @@ static std::vector<uint8_t> clock_domain_descriptor() {
   return d;
 }
 
-static std::vector<uint8_t> stream_port_input_descriptor(uint16_t ix,
-                                                         uint16_t clusters,
-                                                         uint16_t base_cluster) {
+static std::vector<uint8_t> stream_port_descriptor(uint16_t ty, uint16_t ix,
+                                                   uint16_t clusters,
+                                                   uint16_t base_cluster) {
   // §7.2.13 Table 7-23: 20 bytes, no object_name. number_of_maps = 0 is the
   // DYNAMIC-mapping declaration (§7.2.13's convention, restated by Milan
   // §5.3.3.9), which is exactly the shape GET_AUDIO_MAP exists to serve.
   std::vector<uint8_t> d(20, 0);
-  putbe(&d[0],  0x000E, 2);                       // descriptor_type
+  putbe(&d[0],  ty, 2);                           // descriptor_type
   putbe(&d[2],  ix, 2);                           // descriptor_index
   putbe(&d[4],  0x0000, 2);                       // clock_domain_index
   putbe(&d[6],  0x0000, 2);                       // port_flags
@@ -630,21 +630,32 @@ struct H {
   //! every completed query, folded like ctr_seq: {sel, rec} pairs
   std::vector<std::pair<uint8_t, uint8_t>> amap_seq;
   static uint16_t amap_nmaps(uint16_t ty, uint16_t ix) {
-    if (ty != 0x000E) return 0;              // only STREAM_PORT_INPUT backed
-    if (ix == 0) return 1;
-    if (ix == 1) return 3;
+    if (ty == 0x000E) {                      // render-side map RAM
+      if (ix == 0) return 1;
+      if (ix == 1) return 3;
+      return 0;
+    }
+    if (ty == 0x000F) {                      // capture-side map RAM (0x0017)
+      if (ix == 0) return 2;
+      if (ix == 1) return 1;
+      return 0;
+    }
     return 0;
   }
   static uint16_t amap_count(uint16_t ty, uint16_t ix, uint16_t page) {
     if (page >= amap_nmaps(ty, ix)) return 0;
+    if (ty == 0x000F) return page == 0 ? 4 : 1;
     if (ix == 0) return 2;
     return page == 1 ? 3 : (page == 2 ? 1 : 0);
   }
   //! record k of (port, page): four distinct 16-bit fields keyed on all
   //! three coordinates, so a record served for the wrong port, page or
   //! ordinal cannot match
-  static uint64_t amap_rec(uint16_t ix, uint16_t page, uint8_t k) {
-    uint16_t tag = uint16_t((ix << 12) | (page << 8) | k);
+  static uint64_t amap_rec(uint16_t ty, uint16_t ix, uint16_t page,
+                           uint8_t k) {
+    //! ty bit 0 separates the render-side and capture-side stores, so a
+    //! record served for the wrong DIRECTION cannot match either
+    uint16_t tag = uint16_t(((ty & 1) << 15) | (ix << 12) | (page << 8) | k);
     return (uint64_t(0x1000 | tag) << 48) | (uint64_t(0x2000 | tag) << 32) |
            (uint64_t(0x3000 | tag) << 16) |  uint64_t(0x4000 | tag);
   }
@@ -654,7 +665,7 @@ struct H {
     if (sel == 1) return (uint64_t(amap_nmaps(ty, ix)) << 16)
                        |  amap_count(ty, ix, page);
     if (sel == 2) return (rec < amap_count(ty, ix, page))
-                       ? amap_rec(ix, page, rec) : 0;
+                       ? amap_rec(ty, ix, page, rec) : 0;
     return 0;
   }
 
@@ -1172,18 +1183,21 @@ int main(int argc, char** argv) {
     {CFGIX, 0x0005, 2, 140, 1, 144, 0},          // STREAM_INPUT x2
     {CFGIX, 0x0006, 2, 140, 1, 144, 0},          // STREAM_OUTPUT x2
     {CFGIX, 0x0009, 1,  98, 1, 104, 0},          // AVB_INTERFACE
+    {CFGIX, 0x000F, 2,  20, 1,  24, 0},          // STREAM_PORT_OUTPUT x2
   };
   std::vector<uint8_t> desc_entity = entity_descriptor();
   std::vector<uint8_t> desc_clkdom = clock_domain_descriptor();
   //! geometry consistent with H::amap_*: port 0 = 8 clusters at base 0 (one
   //! page of 8), port 1 = 24 clusters at base 8 (three pages of 8)
-  std::vector<uint8_t> desc_spi0 = stream_port_input_descriptor(0, 8, 0);
-  std::vector<uint8_t> desc_spi1 = stream_port_input_descriptor(1, 24, 8);
+  std::vector<uint8_t> desc_spi0 = stream_port_descriptor(0x000E, 0, 8, 0);
+  std::vector<uint8_t> desc_spi1 = stream_port_descriptor(0x000E, 1, 24, 8);
   h.dram = build_image(img_ents,
                        {desc_entity, desc_clkdom, desc_spi0, desc_spi1,
                         stream_descriptor(0x0005, 0), stream_descriptor(0x0005, 1),
                         stream_descriptor(0x0006, 0), stream_descriptor(0x0006, 1),
-                        avb_interface_descriptor(0)},
+                        avb_interface_descriptor(0),
+                        stream_port_descriptor(0x000F, 0, 8, 0),
+                        stream_port_descriptor(0x000F, 1, 8, 8)},
                        {"PP Reference Entity", "Clock Domain 0"}, 1);
 
   h.reset();
@@ -2527,7 +2541,7 @@ int main(int argc, char** argv) {
       putbe(&p[4], page, 2); putbe(&p[6], nmaps, 2);
       putbe(&p[8], cnt, 2);                        // reserved @10 stays 0
       for (uint16_t k = 0; k < cnt; ++k)
-        putbe(&p[12 + 8 * size_t(k)], H::amap_rec(ix, page, uint8_t(k)), 8);
+        putbe(&p[12 + 8 * size_t(k)], H::amap_rec(ty, ix, page, uint8_t(k)), 8);
       return p;
     };
     auto expect = [&](uint8_t status, uint16_t seq,
@@ -2581,14 +2595,31 @@ int main(int argc, char** argv) {
           "NO_SUCH_DESCRIPTOR stub");
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
 
-    // ---- Q5: STREAM_PORT_OUTPUT keeps the NOT_IMPLEMENTED echo ------------
-    // The RECORDED gap (Milan §5.4.2.26 also wants outputs with no static
-    // map served; this build's talker-side store has a different shape).
-    // The refusal is the §9.3.5.3.3 echo - byte-exact, sized by the command
-    auto spo_pl = am_pl(DT_SPO, 0, 0);
-    got = cmd(AEM_GET_AUDIO_MAP, spo_pl, 0xE007);
-    want = expect(AECP_NOT_IMPLEMENTED, 0xE007, spo_pl);
-    CHECK(got == want, "Q5: the non-input-port refusal is not the echo");
+    // ---- Q5: STREAM_PORT_OUTPUT is served off the capture-side store ------
+    // Milan §5.4.2.26's second half ("for each Stream Port Output of the
+    // currently set Configuration"), un-gapped now that the capture map RAM
+    // has a readback: same paging law, same stubs, records keyed to the
+    // OUTPUT direction so a render-side answer cannot pass.
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPO, 0, 0), 0xE007);
+    want = expect(AECP_SUCCESS, 0xE007, am_expect_pl(DT_SPO, 0, 0, 2, 4));
+    CHECK(got == want, "Q5: OUTPUT port 0 page 0 is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPO, 0, 1), 0xE00B);
+    want = expect(AECP_SUCCESS, 0xE00B, am_expect_pl(DT_SPO, 0, 1, 2, 1));
+    CHECK(got == want, "Q5b: OUTPUT port 0 page 1 is not byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPO, 0, 2), 0xE00C);
+    want = expect(AECP_BAD_ARGUMENTS, 0xE00C, am_expect_pl(DT_SPO, 0, 2, 2, 0));
+    CHECK(got == want, "Q5c: OUTPUT page law still §7.4.44.1");
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPO, 2, 0), 0xE00D);
+    want = expect(AECP_NO_SUCH_DESCRIPTOR, 0xE00D,
+                  am_expect_pl(DT_SPO, 2, 0, 0, 0));
+    CHECK(got == want, "Q5d: OUTPUT existence still the image's");
+    //! ...and a type that is NEITHER port direction keeps the echo
+    auto ju_pl = am_pl(0x0002, 0, 0);            // AUDIO_UNIT
+    got = cmd(AEM_GET_AUDIO_MAP, ju_pl, 0xE00E);
+    want = expect(AECP_NOT_IMPLEMENTED, 0xE00E, ju_pl);
+    CHECK(got == want, "Q5e: a non-port type keeps the NOT_IMPLEMENTED echo");
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
 
     // ---- Q6: a truncated command is BAD_ARGUMENTS -------------------------

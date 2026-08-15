@@ -297,6 +297,14 @@ response is never a torn mix of two states.
 
 ### 6.5 Audio-map operations (Milan §5.4.2.26–.28)
 
+**Realization status (2026-08-15)** — GET_AUDIO_MAP now serves BOTH directions:
+the STREAM_PORT_OUTPUT half re-dispatches to `E_GAMAPO` (a two-word stub swapping
+the emitted type constant into `E_GAMAP`'s shared tail), and the integrator's
+`amap_*` face routes on `amap_desc_type_o` — the render-side map RAM answers the
+input direction, the capture-side readback (the 0x0017 round) the output
+direction. Same paging law, same stubs, same existence authority (the image).
+ADD/REMOVE_AUDIO_MAPPINGS stay NOT_IMPLEMENTED (recorded).
+
 - **A Stream Port Output that HAS AUDIO_MAP descriptor(s)** (`number_of_maps`
   > 0 in its STREAM_PORT_OUTPUT descriptor — a static map) **answers all three
   commands with `NOT_SUPPORTED`** (Milan §5.4.2.26/.27/.28). Every Stream Port
