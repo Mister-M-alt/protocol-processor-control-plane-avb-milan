@@ -249,7 +249,7 @@ module pp_top_wrap (
       //! TIME_LIMITED expiry and 7.4.2's 60 s lock expiry, not wait 30
       //! million compressed cycles for them
       .REG_TL_TIMEOUT_MS_P (400),
-      .LOCK_TIMEOUT_MS_P   (150),
+      .LOCK_TIMEOUT_MS_P   (400),
       .TROM_HEX_P   ("ltn_rom.hex"),
       .UCODE_HEX_P  ("ucode.hex")
   ) u_dut (

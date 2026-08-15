@@ -455,6 +455,17 @@ module KL_aecp_engine
   //! deepen. Their bit-0 difference is also the rgy op code.
   localparam logic [15:0] OP_REG_UNSOL_C       = 16'h0024;
   localparam logic [15:0] OP_DEREG_UNSOL_C     = 16'h0025;
+  //! §7.4.1/§7.4.2 - same registered A_PLD-exit re-dispatch as the pair
+  //! above. Milan §5.4.2.1 rules ACQUIRE_ENTITY "shall not reply SUCCESS
+  //! ... It should reply with the NOT_SUPPORTED error code", and the
+  //! response format IS the command's own bytes (flags echoed, owner_id 0
+  //! echoed - a command carries owner_id 0 by §7.4.1.1 - descriptor echoed),
+  //! so ACQUIRE rides the echo path with one status. LOCK_ENTITY is real:
+  //! Milan §5.4.2.2 with the UNLOCK flag, ENTITY-descriptor-only
+  //! (NOT_SUPPORTED otherwise), and the §7.4.2 60 s expiry - the state
+  //! lives in KL_aecp_notify behind the rgy face.
+  localparam logic [15:0] OP_ACQUIRE_C         = 16'h0000;
+  localparam logic [15:0] OP_LOCK_C            = 16'h0001;
   //! Table 7-1: the one descriptor type the audio-map µprogram serves (see
   //! the banner - every other type keeps the NOT_IMPLEMENTED echo)
   localparam logic [15:0] DT_STREAM_PORT_IN_C  = 16'h000E;
@@ -488,6 +499,9 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_DEREG_C   = 11'd844;   // E_DEREG
   localparam logic [10:0] UPC_UNSOK_C   = 11'd852;   // E_UNSOK
   localparam logic [10:0] UPC_NOSEND_C  = 11'd858;   // E_NOSEND
+  localparam logic [10:0] UPC_NSUPPE_C  = 11'd864;   // E_NSUPPE
+  localparam logic [10:0] UPC_LOCKEN_C  = 11'd872;   // E_LOCKEN
+  localparam logic [10:0] UPC_LOCKUNS_C = 11'd896;   // E_LOCKUNS
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -543,6 +557,9 @@ module KL_aecp_engine
   logic        ctrs_r;                   // this command is a GET_COUNTERS
   logic        amap_r;                   // this command is a GET_AUDIO_MAP
   logic        regun_r;                  // ... a REGISTER/DEREGISTER_UNSOL
+  logic        acq_r;                    // ... an ACQUIRE_ENTITY
+  logic        lockc_r;                  // ... a LOCK_ENTITY
+  logic        lock_ent_ok_r;            // its target walked as ENTITY[0]
   logic        uns_r;                    // engine-originated unsolicited job
   logic  [7:0] amap_rec_r;               // records handed out this command
   logic [10:0] upc_r;
@@ -605,10 +622,14 @@ module KL_aecp_engine
   //! amap_w but feeding only its own flop, the walk-capture enables and the
   //! A_PLD-exit re-dispatch, never the pop-time µPC mux (the timing rule in
   //! the opcode table above)
-  logic regun_w;
+  logic regun_w, acq_w, lockc_w;
   assign regun_w = (txn_w.protocol == PP_PROTO_AEM)
                    && ((txn_w.opcode == OP_REG_UNSOL_C)
                        || (txn_w.opcode == OP_DEREG_UNSOL_C));
+  assign acq_w   = (txn_w.protocol == PP_PROTO_AEM)
+                   && (txn_w.opcode == OP_ACQUIRE_C);
+  assign lockc_w = (txn_w.protocol == PP_PROTO_AEM)
+                   && (txn_w.opcode == OP_LOCK_C);
 
   //! ---- unsolicited job synthesis (06 §6.7) -------------------------------
   //! kind -> {command_type, µPC}. A kind whose µprogram has not landed maps
@@ -618,8 +639,9 @@ module KL_aecp_engine
   logic [10:0] uns_upc_w;
   always_comb begin : uns_kind_map
     unique case (uns_kind_i)
-      PP_UNS_DEREG_C: begin uns_ct_w = OP_DEREG_UNSOL_C; uns_upc_w = UPC_UNSOK_C;  end
-      default:        begin uns_ct_w = 16'd0;            uns_upc_w = UPC_NOSEND_C; end
+      PP_UNS_DEREG_C: begin uns_ct_w = OP_DEREG_UNSOL_C; uns_upc_w = UPC_UNSOK_C;   end
+      PP_UNS_LOCK_C:  begin uns_ct_w = OP_LOCK_C;        uns_upc_w = UPC_LOCKUNS_C; end
+      default:        begin uns_ct_w = 16'd0;            uns_upc_w = UPC_NOSEND_C;  end
     endcase
   end
 
@@ -684,8 +706,9 @@ module KL_aecp_engine
   //! the dispatch strobe (stage-0 pipeline: operand shaping must reach the
   //! µCPU's register file from flops, never as a live mux cone - the walk
   //! registers are settled a full state earlier, so the latch costs nothing)
-  assign opd0_w = amap_r ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
-                         : {16'd0, desc_ix_r, desc_ty_r, cfg_ix_r};
+  assign opd0_w = amap_r  ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
+                : lockc_r ? {32'd0, cfg_ix_r, desc_ix_r}
+                          : {16'd0, desc_ix_r, desc_ty_r, cfg_ix_r};
   assign opd1_w = amap_r ? {32'd0, desc_ix_r, desc_ty_r}
                          : {32'd0, desc_ty_r, desc_ix_r};
 
@@ -866,9 +889,12 @@ module KL_aecp_engine
   //! `desc_ix_r`; a 2013-format command (§7.4.37.1 "with or without the new
   //! flags field") never walked that byte, so the cdl term keeps stray slot
   //! bytes from becoming a flag.
-  assign rgy_req_o   = gx_req_w && regun_r;
+  assign rgy_req_o   = gx_req_w && (regun_r || lockc_r);
   assign rgy_state_o = gx_sel_w[0];
-  assign rgy_op_o    = {1'b0, cmd_r.opcode[0]};
+  //! LOCK rides op[1]; op[0] is UNLOCK for it (flags bit 0, walked into
+  //! `desc_ix_r` exactly like TIME_LIMITED) and DEREGISTER for the pair
+  assign rgy_op_o    = lockc_r ? {1'b1, desc_ix_r[0]}
+                               : {1'b0, cmd_r.opcode[0]};
   assign rgy_eid_o   = cmd_r.controller_eid;
   assign rgy_mac_o   = cmd_r.src_mac;
   assign rgy_tl_o    = (cmd_r.cdl >= 11'd16) && desc_ix_r[0];
@@ -893,10 +919,11 @@ module KL_aecp_engine
   logic [CTO_W_C-1:0] gxf_tmo_r;
   logic               gxf_fail_r;
   logic               ctr_hold_w, amap_hold_w, rgy_hold_w;
-  assign ctr_hold_w  = gx_req_w && !amap_r && !regun_r
+  assign ctr_hold_w  = gx_req_w && !amap_r && !regun_r && !lockc_r
                        && ctr_wait_i  && !gxf_fail_r;
   assign amap_hold_w = gx_req_w &&  amap_r && amap_wait_i && !gxf_fail_r;
-  assign rgy_hold_w  = gx_req_w &&  regun_r && rgy_wait_i && !gxf_fail_r;
+  assign rgy_hold_w  = gx_req_w && (regun_r || lockc_r)
+                       && rgy_wait_i && !gxf_fail_r;
 
   //! REGISTERED gather answer - the stage-0 pipeline cut. The integrator's
   //! wait/data cone (ctr_wait_i / amap_wait_i arrive combinationally from
@@ -919,10 +946,10 @@ module KL_aecp_engine
     end else begin
       gxr_valid_r <= gx_req_w && !(ctr_hold_w || amap_hold_w || rgy_hold_w)
                      && !gxr_valid_r;
-      gxr_data_r  <= gxf_fail_r ? 64'd0
-                   : amap_r     ? amap_data_i
-                   : regun_r    ? rgy_data_i
-                                : {32'd0, ctr_data_i};
+      gxr_data_r  <= gxf_fail_r          ? 64'd0
+                   : amap_r              ? amap_data_i
+                   : (regun_r || lockc_r) ? rgy_data_i
+                                          : {32'd0, ctr_data_i};
     end
   end
 
@@ -1152,6 +1179,9 @@ module KL_aecp_engine
       ctrs_r       <= 1'b0;
       amap_r       <= 1'b0;
       regun_r      <= 1'b0;
+      acq_r        <= 1'b0;
+      lockc_r      <= 1'b0;
+      lock_ent_ok_r <= 1'b0;
       uns_r        <= 1'b0;
       upc_r        <= 11'd0;
       status_r     <= 5'd0;
@@ -1187,6 +1217,9 @@ module KL_aecp_engine
               ctrs_r     <= ctrs_w;
               amap_r     <= amap_w;
               regun_r    <= regun_w;
+              acq_r      <= acq_w;
+              lockc_r    <= lockc_w;
+              lock_ent_ok_r <= 1'b1;
               uns_r      <= 1'b0;
               err_mode_r <= 1'b0;
               //! an echo with no RX slot has NO payload to echo: emitting
@@ -1227,7 +1260,13 @@ module KL_aecp_engine
             echo_r     <= 1'b0;
             ctrs_r     <= 1'b0;
             amap_r     <= 1'b0;
-            regun_r    <= 1'b0;
+            //! the LOCK notification's microprogram reads the holder off the
+            //! rgy face, so the job routes the gather bus there; a state
+            //! read runs no op in KL_aecp_notify
+            regun_r    <= (uns_kind_i == PP_UNS_LOCK_C);
+            acq_r      <= 1'b0;
+            lockc_r    <= 1'b0;
+            lock_ent_ok_r <= 1'b1;
             uns_r      <= 1'b1;
             err_mode_r <= 1'b0;
             pld_cmd_r  <= 11'd0;
@@ -1278,6 +1317,23 @@ module KL_aecp_engine
             if (regun_r) begin
               upc_r <= cmd_r.opcode[0] ? UPC_DEREG_C : UPC_REGUN_C;
             end
+            //! ACQUIRE_ENTITY: always the echo with NOT_SUPPORTED (Milan
+            //! §5.4.2.1 - see the opcode table). LOCK_ENTITY: a §7.4.2
+            //! command short of its 16-byte payload is BAD_ARGUMENTS (the
+            //! truncated-READ_DESCRIPTOR reasoning); a non-ENTITY target is
+            //! NOT_SUPPORTED with the command echoed; the real thing runs
+            //! E_LOCKEN against the rgy face.
+            if (acq_r) begin
+              upc_r <= UPC_NSUPPE_C;
+            end
+            if (lockc_r) begin
+              if (cmd_r.cdl < 11'd28)     upc_r <= UPC_BADARG_C;
+              else if (!lock_ent_ok_r)    upc_r <= UPC_NSUPPE_C;
+              else begin
+                upc_r  <= UPC_LOCKEN_C;
+                echo_r <= 1'b0;
+              end
+            end
             a_st_r <= A_DISP;
           end
           //! the RX pool answers one cycle after rd_en: byte for index
@@ -1310,16 +1366,33 @@ module KL_aecp_engine
               //! holds the flags' low half for the rgy face to read
               11'd4: begin
                 pid_lo_r[1] <= (rxs_rd_data_i == MVU_PID_L1_C);
-                if (ctrs_r || amap_r || regun_r) desc_ix_r[15:8] <= rxs_rd_data_i;
+                if (ctrs_r || amap_r || regun_r || lockc_r)
+                  desc_ix_r[15:8] <= rxs_rd_data_i;
               end
               11'd5: begin
                 pid_lo_r[0] <= (rxs_rd_data_i == MVU_PID_L0_C);
-                if (ctrs_r || amap_r || regun_r) desc_ix_r[7:0]  <= rxs_rd_data_i;
+                if (ctrs_r || amap_r || regun_r || lockc_r)
+                  desc_ix_r[7:0]  <= rxs_rd_data_i;
               end
               11'd6: if (!ctrs_r) desc_ty_r[15:8] <= rxs_rd_data_i;
               11'd7: if (!ctrs_r) desc_ty_r[7:0]  <= rxs_rd_data_i;
-              11'd8: if (!ctrs_r && !amap_r) desc_ix_r[15:8] <= rxs_rd_data_i;
-              11'd9: if (!ctrs_r && !amap_r) desc_ix_r[7:0]  <= rxs_rd_data_i;
+              //! ...and the registration/lock shapes guard BACKWARD like the
+              //! counters shape does: a LOCK's locked_id bytes at @30..@31
+              //! (or a long REGISTER's padding) must not trample the flags
+              //! captured at @26..@27 - the UNLOCK/TIME_LIMITED bit lives
+              //! there (found by the pp_top L5 check: UNLOCK re-locked)
+              11'd8: if (!ctrs_r && !amap_r && !regun_r && !lockc_r)
+                       desc_ix_r[15:8] <= rxs_rd_data_i;
+              11'd9: if (!ctrs_r && !amap_r && !regun_r && !lockc_r)
+                       desc_ix_r[7:0]  <= rxs_rd_data_i;
+              //! LOCK_ENTITY's descriptor_type/index live at @36..@39, past
+              //! every capture register - but the CHECK is all Milan
+              //! §5.4.2.2 needs ("shall not allow locking another
+              //! descriptor than the ENTITY descriptor"), and ENTITY[0] is
+              //! four zero bytes, so the walk keeps the comparison RESULT
+              //! in one flop instead of the four bytes
+              11'd14, 11'd15, 11'd16, 11'd17:
+                if (lockc_r && (rxs_rd_data_i != 8'd0)) lock_ent_ok_r <= 1'b0;
               default: ;
             endcase
           end

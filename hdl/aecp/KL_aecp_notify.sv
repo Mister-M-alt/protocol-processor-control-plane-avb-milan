@@ -263,7 +263,12 @@ module KL_aecp_notify
   } n_st_e;
   n_st_e n_st_r;
 
-  logic               req_q_r;          // rgy_req_i edge detect
+  //! once-per-request latch, NOT an edge detector: a request withdrawn-from
+  //! in N_EMIT_WAIT must still be serviceable when the FSM reaches N_IDLE a
+  //! cycle later, and a plain edge detector consumed the edge on the way -
+  //! the engine's gather then starved into its watchdog (found by the
+  //! pp_top L2b check: the lock notification answered ENTITY_MISBEHAVING)
+  logic               req_done_r;
   logic [CIX_W_C-1:0] wk_ix_r;          // walk index (op + emit + drain)
   logic               wk_match_r;
   logic [CIX_W_C-1:0] wk_match_ix_r;
@@ -308,7 +313,7 @@ module KL_aecp_notify
   //! rgy op decode: a new op starts on the request's rising edge only (see
   //! the banner's once-per-edge rule)
   logic rgy_new_w;
-  assign rgy_new_w = rgy_req_i && !req_q_r;
+  assign rgy_new_w = rgy_req_i && !req_done_r;
 
   //! lock op outcomes, combinational from current state
   logic lk_is_holder_w;
@@ -441,7 +446,7 @@ module KL_aecp_notify
       dh_eid_r    <= 64'd0;
       dh_mac_r    <= 48'd0;
       dh_seq_r    <= 16'd0;
-      req_q_r     <= 1'b0;
+      req_done_r  <= 1'b0;
       wk_ix_r     <= '0;
       wk_match_r  <= 1'b0;
       wk_match_ix_r  <= '0;
@@ -476,7 +481,7 @@ module KL_aecp_notify
     end else begin
       wr_en_r         <= 1'b0;
       tmr_arm_valid_o <= 1'b0;
-      req_q_r         <= rgy_req_i;
+      if (!rgy_req_i) req_done_r <= 1'b0;
 
       // ---- event intake (independent of the FSM) -------------------------
       for (int unsigned s = 0; s < N_STREAM_IN_P; s++) begin
@@ -515,6 +520,7 @@ module KL_aecp_notify
           wk_match_r <= 1'b0;
           wk_free_r  <= 1'b0;
           if (rgy_new_w) begin
+            req_done_r <= 1'b1;
             result_q_r <= rgy_state_i;
             if (rgy_state_i) begin
               //! lock-holder query: no op, no walk (rgy_data_o routes the

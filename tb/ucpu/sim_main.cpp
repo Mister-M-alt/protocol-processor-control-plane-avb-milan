@@ -28,7 +28,8 @@ enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
        E_NAME = 320, E_COPY = 352, E_MAPV = 384, E_MAPVF = 400,
        E_OVF = 416, E_FMT = 512, E_NOTIMPL = 560, E_ACQ = 576,
        E_STPRE = 592, E_MVUINFO = 736, E_GCTRS = 768, E_GAMAP = 800,
-       E_REGUN = 832, E_DEREG = 844, E_UNSOK = 852, E_NOSEND = 858 };
+       E_REGUN = 832, E_DEREG = 844, E_UNSOK = 852, E_NOSEND = 858,
+       E_NSUPPE = 864, E_LOCKEN = 872, E_LOCKUNS = 896 };
 
 // IEEE 1722.1-2021 Table 7-141
 enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
@@ -104,10 +105,13 @@ struct Harness {
   // the in-flight command's op; the value below is what KL_aecp_notify
   // would answer (0 = done, 1 = table full / denied)
   uint64_t rgy_result = 0;
+  uint64_t rgy_holder = 0;   // sel 0xA1: the lock holder's eid (0 = free)
 
   uint64_t gxval(uint8_t sel) {
-    if (cur_upc == E_REGUN || cur_upc == E_DEREG) {
+    if (cur_upc == E_REGUN || cur_upc == E_DEREG ||
+        cur_upc == E_LOCKEN || cur_upc == E_LOCKUNS) {
       if (sel == 0xA0) return rgy_result;
+      if (sel == 0xA1) return rgy_holder;
       return 0;
     }
     if (cur_upc == E_GAMAP) {
@@ -670,6 +674,46 @@ int main(int argc, char** argv) {
 
   CHECK(h.run(E_NOSEND, 0, false), "N5 no-send arm completes");
   CHECK(h.sends == 0, "N5 emits NO frame, got %d", h.sends);
+
+  // ---- L: LOCK_ENTITY + the NOT_SUPPORTED echo + the notification --------
+  // (Milan SS5.4.2.1/SS5.4.2.2, IEEE SS7.4.1/SS7.4.2; gen_ucode.py E_NSUPPE
+  //  / E_LOCKEN / E_LOCKUNS. r14[31:0] carries the command's flags word.)
+  h.rgy_result = 2;                          // took the lock (changed)
+  h.rgy_holder = 0x1111222233334444ull;
+  CHECK(h.run(E_LOCKEN, 0x0000000000000001ull, false), "L1 LOCK ok completes");
+  CHECK(h.last_status == ST_OK, "L1 SUCCESS got %u", h.last_status);
+  CHECK(h.w32(12) == 1, "L1 flags echoed at @24, got %08x", h.w32(12));
+  CHECK(h.w32(16) == 0x11112222u && h.w32(20) == 0x33334444u,
+        "L1 locked_id = the holder (%08x %08x)", h.w32(16), h.w32(20));
+  CHECK(h.w32(24) == 0, "L1 ENTITY[0] echo");
+  CHECK(h.last_len == 28, "L1 len 28 got %u", h.last_len);
+  {
+    int op = 0, st = 0;
+    for (uint8_t v : h.gx_sels) { if (v == 0xA0) ++op; if (v == 0xA1) ++st; }
+    CHECK(op == 1 && st == 1, "L1 one op + one state gather (%d, %d)", op, st);
+  }
+
+  h.rgy_result = 1;                          // held by another controller
+  h.rgy_holder = 0x9999888877776666ull;
+  CHECK(h.run(E_LOCKEN, 0, false), "L2 LOCK denied completes");
+  CHECK(h.last_status == ST_LOCKED,
+        "L2 ENTITY_LOCKED (Table 7-141 code 3) got %u", h.last_status);
+  CHECK(h.w32(16) == 0x99998888u && h.w32(20) == 0x77776666u,
+        "L2 the denial names the holder");
+
+  h.rgy_holder = 0xAAAABBBBCCCCDDDDull;
+  CHECK(h.run(E_LOCKUNS, 0, false), "L3 unsolicited LOCK completes");
+  CHECK(h.last_status == ST_OK && h.last_len == 28,
+        "L3 SUCCESS, full 16-byte body (st %u len %u)",
+        h.last_status, h.last_len);
+  CHECK(h.w32(12) == 0, "L3 flags 0");
+  CHECK(h.w32(16) == 0xAAAABBBBu && h.w32(20) == 0xCCCCDDDDu,
+        "L3 locked_id = the current holder");
+
+  CHECK(h.run(E_NSUPPE, 0, false), "L4 NOT_SUPPORTED echo completes");
+  CHECK(h.last_status == ST_NSUPP && h.last_len == 12 && h.sends == 1,
+        "L4 NOT_SUPPORTED, echo-sized (st %u len %u sends %d)",
+        h.last_status, h.last_len, h.sends);
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   delete dut;

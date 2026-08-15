@@ -17,6 +17,7 @@
 // maap face both ways — with no allocator the talker still answers (the
 // walker must not wedge on an unaccepted request), with one the granted
 // address reaches acmp_declaring_o, the ACMP answer and the SRP wire.
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -1629,7 +1630,9 @@ int main(int argc, char** argv) {
       {0x7FFE,  0, "unassigned opcode, empty payload"},
       {0x004D,  4, "GET_MAX_TRANSIT_TIME (§7.4.78.1, the Hive 4.3.1 case)"},
       {0x002C,  8, "ADD_AUDIO_MAPPINGS (§7.4.45.1)"},
-      {0x0000, 16, "ACQUIRE_ENTITY (§7.4.1.1)"},
+      //! 0x0000 ACQUIRE_ENTITY left this sweep when Milan §5.4.2.1's
+      //! NOT_SUPPORTED answer landed - its echo is graded in section L
+      {0x7FFC, 16, "unassigned opcode, 16-byte payload"},
       {0x7FFD, 72, "unassigned opcode, past the 60-octet floor"},
       {0x004D,  4, "GET_MAX_TRANSIT_TIME again, after a 72-byte command"},
     };
@@ -2683,6 +2686,226 @@ int main(int argc, char** argv) {
     h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x700A,
                       0x0025, {}));
     h.wait_any(h.q_aecp, 400);
+  }
+
+  // ==== L. ACQUIRE_ENTITY + LOCK_ENTITY (Milan SS5.4.2.1/SS5.4.2.2) =======
+  // (IEEE SS7.4.1/SS7.4.2: ACQUIRE never SUCCESS -> NOT_SUPPORTED echo; LOCK
+  //  is real - one holder, UNLOCK flag, ENTITY[0] only, 60 s expiry
+  //  compressed to 400 ms by the wrap - and every lock-state CHANGE goes out
+  //  as an unsolicited LOCK_ENTITY response to the registered controllers
+  //  except the requester, per-entry sequence_id counting up.)
+  {
+    h.flush_all();
+    h.q_aecp.clear();
+    const uint64_t C2_MAC = 0x0202C2C2C2C2ull;
+    auto lockpld = [](uint32_t flags, uint16_t ty, uint16_t ix) {
+      std::vector<uint8_t> b(16, 0);
+      putbe(&b[0], flags, 4); putbe(&b[12], ty, 2); putbe(&b[14], ix, 2);
+      return b;
+    };
+    auto lockresp = [&](uint64_t mac, uint64_t eid, uint16_t seq,
+                        uint8_t status, uint32_t flags, uint64_t holder) {
+      std::vector<uint8_t> b(16, 0);
+      putbe(&b[0], flags, 4); putbe(&b[4], holder, 8);
+      return aecp_frame(mac, OWN_MAC, 1, status, EID, eid, seq, 0x0001, b);
+    };
+
+    // ---- L1: ACQUIRE_ENTITY -> NOT_SUPPORTED with the command echoed ----
+    {
+      std::vector<uint8_t> acq(16, 0);          // flags 0, owner 0, ENTITY[0]
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7301,
+                        0x0000, acq));
+      auto f = h.wait_any(h.q_aecp, 400);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, 11, EID, CTLR_EID, 0x7301,
+                             0x0000, acq);
+      CHECK(!f.empty() && f == want,
+            "L1: ACQUIRE answers NOT_SUPPORTED, command echoed (Milan 5.4.2.1)");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+      //! ...and the PERSISTENT flag changes nothing (the blanket refusal)
+      std::vector<uint8_t> acq_p = acq; acq_p[3] = 0x01;
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7302,
+                        0x0000, acq_p));
+      f = h.wait_any(h.q_aecp, 400);
+      CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == 11,
+            "L1b: PERSISTENT ACQUIRE refused the same way");
+    }
+
+    // ---- L2: C2 registers; C1 locks; C2 gets the u=1 notification -------
+    {
+      std::vector<uint8_t> fl0(4, 0);
+      h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7303,
+                        0x0024, fl0));
+      h.wait_any(h.q_aecp, 400);
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7304,
+                        0x0001, lockpld(0, 0, 0)));
+      auto f = h.wait_any(h.q_aecp, 400);
+      auto want = lockresp(CTLR_MAC, CTLR_EID, 0x7304, 0, 0, CTLR_EID);
+      CHECK(!f.empty() && f == want,
+            "L2: LOCK SUCCESS, locked_id = the taker");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+      auto uns = h.wait_any(h.q_aecp, 400);
+      auto wantu = lockresp(C2_MAC, CTLR2_EID, 0x0000, 0, 0, CTLR_EID);
+      wantu[36] |= 0x80;
+      CHECK(!uns.empty() && uns == wantu,
+            "L2b: registered C2 told u=1, seq 0, locked_id = holder");
+      if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
+    }
+
+    // ---- L3: a foreign LOCK is denied naming the holder; no notification
+    {
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7305,
+                        0x0001, lockpld(0, 0, 0)));
+      auto f = h.wait_any(h.q_aecp, 400);
+      auto want = lockresp(C2_MAC, CTLR2_EID, 0x7305, 3, 0, CTLR_EID);
+      CHECK(!f.empty() && f == want,
+            "L3: ENTITY_LOCKED naming the holder");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+      //! the silence budget stays well inside the 400 ms lock window - the
+      //! sections up to L5 must run under a HELD lock
+      auto more = h.wait_any(h.q_aecp, 150);
+      CHECK(more.empty(), "L3b: a denied lock changes nothing, notifies nobody");
+    }
+
+    // ---- L4: the ACMP listener reads the SAME lock (Milan 5.5.2.4) ------
+    {
+      h.q_acmp.clear();
+      // sink 2, from the NON-holder: CONTROLLER_NOT_AUTHORIZED (13)
+      auto bind2 = acmp_frame(C2_MAC, 6, 0, 0, CTLR2_EID, T1_EID, EID,
+                              T1_UID, 2, 0, 0, 0x4321, 0, 0);
+      h.feed(bind2);
+      auto f = h.wait_any(h.q_acmp, 400);
+      CHECK(!f.empty(), "L4: locked BIND_RX from a foreign controller answered");
+      CHECK(!f.empty() && (f[15] & 0x0F) == 7
+            && ((f[16] >> 3) & 0x1F) == 13
+            && f.size() > 53 && ((f[52] << 8) | f[53]) == 2,
+            "L4b: CONTROLLER_NOT_AUTHORIZED for sink 2 (msg %d st %d)",
+            f.empty() ? -1 : (f[15] & 0x0F),
+            f.empty() ? -1 : ((f[16] >> 3) & 0x1F));
+      // ...and the HOLDER may bind: SUCCESS
+      auto bind1 = acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID,
+                              T1_UID, 2, 0, 0, 0x4322, 0, 0);
+      h.feed(bind1);
+      f = h.wait_any(h.q_acmp, 400);
+      auto wantb = acmp_frame(OWN_MAC, 7, 0, 0, CTLR_EID, T1_EID, EID,
+                              T1_UID, 2, 0, 1, 0x4322, 0, 0);
+      CHECK(!f.empty() && f == wantb,
+            "L4c: the locking controller binds through its own lock");
+      if (!f.empty() && f != wantb) { dump("got", f); dump("exp", wantb); }
+      // unbind to leave sink 2 clean (from the holder)
+      h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                        T1_UID, 2, 0, 0, 0x4323, 0, 0));
+      h.wait_any(h.q_acmp, 400);
+    }
+
+    // ---- L5: UNLOCK by the holder -> notification seq INCREMENTS --------
+    {
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7306,
+                        0x0001, lockpld(1, 0, 0)));      // UNLOCK flag
+      auto f = h.wait_any(h.q_aecp, 400);
+      auto want = lockresp(CTLR_MAC, CTLR_EID, 0x7306, 0, 1, 0);
+      CHECK(!f.empty() && f == want,
+            "L5: UNLOCK SUCCESS, locked_id 0");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+      auto uns = h.wait_any(h.q_aecp, 400);
+      auto wantu = lockresp(C2_MAC, CTLR2_EID, 0x0001, 0, 0, 0);
+      wantu[36] |= 0x80;
+      CHECK(!uns.empty() && uns == wantu,
+            "L5b: C2's second notification carries sequence_id 1 (Milan 5.4.5.1)");
+      if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
+      //! the already-unlocked query: SUCCESS, no change, no notification
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7307,
+                        0x0001, lockpld(1, 0, 0)));
+      f = h.wait_any(h.q_aecp, 400);
+      CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == 0 && f[36] == 0 &&
+            std::all_of(f.begin() + 42, f.begin() + 50,
+                        [](uint8_t b) { return b == 0; }),
+            "L5c: UNLOCK-as-query on a free entity: SUCCESS, locked_id 0");
+      auto more = h.wait_any(h.q_aecp, 150);
+      CHECK(more.empty(), "L5d: the query changed nothing, notified nobody");
+    }
+
+    // ---- L6: keep-alive re-lock re-arms the 60 s window -----------------
+    {
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7308,
+                        0x0001, lockpld(0, 0, 0)));
+      h.wait_any(h.q_aecp, 400);        // SUCCESS
+      h.wait_any(h.q_aecp, 400);        // C2's notification (seq 2)
+      h.run_ms(150);
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7309,
+                        0x0001, lockpld(0, 0, 0)));      // keep-alive
+      auto f = h.wait_any(h.q_aecp, 400);
+      CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == 0,
+            "L6: the holder's re-lock answers SUCCESS");
+      auto more = h.wait_any(h.q_aecp, 150);
+      CHECK(more.empty(), "L6b: a keep-alive changes nothing, notifies nobody");
+      h.run_ms(150);                    // past the ORIGINAL 400 ms deadline
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x730A,
+                        0x0001, lockpld(0, 0, 0)));
+      f = h.wait_any(h.q_aecp, 400);
+      CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == 3,
+            "L6c: still locked past the original deadline (re-armed)");
+      h.q_aecp.clear();
+      auto uns = h.wait_any(h.q_aecp, 700);   // the refreshed deadline fires
+      auto wantu = lockresp(C2_MAC, CTLR2_EID, 0x0003, 0, 0, 0);
+      wantu[36] |= 0x80;
+      CHECK(!uns.empty() && uns == wantu,
+            "L6d: 60 s auto-unlock notifies (Milan Table 5.22), locked_id 0, seq 3");
+      if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
+    }
+
+    // ---- L7: LOCK on a non-ENTITY target -> NOT_SUPPORTED echo ----------
+    {
+      h.q_aecp.clear();
+      auto pld = lockpld(0, 0x0005, 0);        // STREAM_INPUT[0]
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x730B,
+                        0x0001, pld));
+      auto f = h.wait_any(h.q_aecp, 400);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, 11, EID, CTLR_EID, 0x730B,
+                             0x0001, pld);
+      CHECK(!f.empty() && f == want,
+            "L7: locking STREAM_INPUT refuses NOT_SUPPORTED (Milan 5.4.2.2)");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+    }
+
+    // ---- L8: a truncated LOCK is BAD_ARGUMENTS --------------------------
+    {
+      std::vector<uint8_t> shortp(8, 0);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x730C,
+                        0x0001, shortp));
+      auto f = h.wait_any(h.q_aecp, 400);
+      CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == 7,
+            "L8: an 8-byte LOCK payload answers BAD_ARGUMENTS");
+    }
+
+    // ---- L9: reads stay open to everyone while locked -------------------
+    {
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x730D,
+                        0x0001, lockpld(0, 0, 0)));
+      h.wait_any(h.q_aecp, 400);
+      h.q_aecp.clear();
+      std::vector<uint8_t> rd(8, 0);
+      putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2);
+      h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x730E,
+                        AEM_READ_DESCRIPTOR, rd));
+      auto got = h.wait_any(h.q_aecp, 400);
+      CHECK(!got.empty() && ((got[16] >> 3) & 0x1F) == 0,
+            "L9: READ_DESCRIPTOR from a non-holder answers while locked");
+      // unlock + deregister: leave the entity clean
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x730F,
+                        0x0001, lockpld(1, 0, 0)));
+      h.wait_any(h.q_aecp, 400);
+      h.wait_any(h.q_aecp, 400);        // C2's notification
+      h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7310,
+                        0x0025, {}));
+      h.wait_any(h.q_aecp, 400);
+    }
   }
 
   // ==== MP. the INTERNAL MAAP engine (11; IEEE 1722-2016 Annex B) =========

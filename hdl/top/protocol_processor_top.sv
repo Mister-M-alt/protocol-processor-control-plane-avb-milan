@@ -1530,8 +1530,10 @@ module protocol_processor_top
       .txs_wr_len_o          (lstn_txs_wr_len_w),
       .txreq_valid_o         (lstn_txreq_valid_w),
       .txreq_slot_o          (lstn_txreq_slot_w),
-      .lock_held_i           (1'b0),                 // lock manager: P4
-      .lock_ctlr_i           (64'd0),
+      //! the 5.5.2.4 lock check reads the SAME lock KL_aecp_notify keeps
+      //! for the AECP path - one holder, two gates
+      .lock_held_i           (ntfy_lock_held_w),
+      .lock_ctlr_i           (ntfy_lock_ctlr_w),
       .act_settle_o          (lstn_act_settle_w),
       .act_settle_sid_o      (lstn_act_settle_sid_w),
       .act_settle_da_o       (lstn_act_settle_da_w),
@@ -2711,8 +2713,8 @@ module protocol_processor_top
       .amap_rec_o         (amap_rec_o),
       .amap_data_i        (amap_data_i),
       .amap_wait_i        (amap_wait_i),
-      .lock_held_i        (1'b0),               // lock manager: P4
-      .lock_ctlr_i        (64'd0),
+      .lock_held_i        (ntfy_lock_held_w),
+      .lock_ctlr_i        (ntfy_lock_ctlr_w),
       .eff_commit_o       (aecp_eff_commit_nc_w),
       .eff_nvm_mark_o     (aecp_eff_nvm_mark_nc_w),
       .eff_nvm_stb_o      (aecp_eff_nvm_stb_nc_w),

@@ -309,7 +309,7 @@ verification).
 | REQ-ACMP-017 | Milan §5.3.8.9 | Settled SRP params must equal last PROBE_TX_RESPONSE; divergent talker attr ignored → re-probe | shall | A | [GAP-02](#gap-02) | F05.5 guard | 05 §6.5 | DIR |
 | REQ-ACMP-018 | Milan §5.3.8.5 | Declare Listener Ready iff matching Talker Advertise registered; Asking Failed optional | shall | A | [GAP-04](#gap-04) | SRP adapter ops | 02 §4 | DIR |
 | REQ-ACMP-019 | Milan §5.5.3.5.41/.47 | Talker departure while settled ⇒ note only (keep reservation) | shall | A | [GAP-02](#gap-02) | matrix cells | 05 §6.3 | MTXW |
-| REQ-ACMP-020 | Milan §5.5.2.4/.5 | BIND/UNBIND from non-lock-owner ⇒ CONTROLLER_NOT_AUTHORIZED | shall | A | [GAP-06](#gap-06) | lock manager | 06 §6.8 | DIR |
+| REQ-ACMP-020 | Milan §5.5.2.4/.5 | BIND/UNBIND from non-lock-owner ⇒ CONTROLLER_NOT_AUTHORIZED | shall | C | [GAP-06](#gap-06) | listener A1 on the notify lock (landed) | 06 §6.8 | DIR |
 | REQ-ACMP-021 | Milan §5.3.8.2/.3, §5.5.3.5.2 | Binding (talker EID, source idx, controller EID, started) persists; boot with saved binding → PRB_W_AVAIL | shall | A | [GAP-09](#gap-09) | NVM records | 07 §5 | NVM |
 | REQ-ACMP-022 | Milan §5.5.3.5.4 etc. | GET_RX_STATE always SUCCESS; three content forms (unbound/probing/settled) | shall | A | [GAP-02](#gap-02) | F05.14 | 05 §6.7 | DIR |
 | REQ-ACMP-023 | Milan §5.3.8.6 | pbsta (3-bit) / acmpsta (5-bit; valid only while PROBING_ACTIVE) exposure | shall | A | [GAP-02](#gap-02) | sink record | 05 §5, 07 §4 | DIR |
@@ -319,8 +319,8 @@ verification).
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
 |---|---|---|---|---|---|---|---|---|
 | REQ-AEM-001 | Milan §5.4.1 | Responses may exceed the 524-octet cdl cap (READ_DESCRIPTOR, GET_AVB_INFO, GET_AS_PATH, GET_AUDIO_MAP, ADD/REMOVE_AUDIO_MAPPINGS) up to a max Ethernet frame | may | A | [GAP-08](#gap-08) | oversize TX slot | 03 §7 | DIR |
-| REQ-AEM-002 | Milan §5.4.2.1 | ACQUIRE_ENTITY implemented but never SUCCESS; respond NOT_SUPPORTED | shall | I | [GAP-15](#gap-15) | 3-µop program | 06 §6.8 | DIR |
-| REQ-AEM-003 | Milan §5.4.2.2 | LOCK_ENTITY: UNLOCK flag; ENTITY descriptor only; 60 s auto-unlock ⇒ unsolicited | shall | P | [GAP-06](#gap-06) | lock manager | 06 §6.8 | TIM |
+| REQ-AEM-002 | Milan §5.4.2.1 | ACQUIRE_ENTITY implemented but never SUCCESS; respond NOT_SUPPORTED | shall | C | [GAP-15](#gap-15) | E_NSUPPE echo (landed) | 06 §6.8 | DIR |
+| REQ-AEM-003 | Milan §5.4.2.2 | LOCK_ENTITY: UNLOCK flag; ENTITY descriptor only; 60 s auto-unlock ⇒ unsolicited | shall | C | [GAP-06](#gap-06) | KL_aecp_notify lock (landed) | 06 §6.8 | TIM |
 | REQ-AEM-004 | Milan §5.4.2.3 / IEEE §7.4.3 | ENTITY_AVAILABLE: 2021 response with flags + acquired/locked IDs | shall | A | [GAP-01](#gap-01) | F06.14 row | 06 §6 | DIR |
 | REQ-AEM-005 | Milan §5.4.2.21/§5.4.5.3 | Entity originates CONTROLLER_AVAILABLE (overflow probing + monitor) with one retry | shall | A | [GAP-17](#gap-17) | originator + inflight | 03 §5, 06 §7 | RND |
 | REQ-AEM-006 | Milan §5.4.2.4 / IEEE §7.4.5 | READ_DESCRIPTOR: allowed while locked/acquired; 4-byte stub on failure | shall | P | [GAP-01](#gap-01) | model store assembly | 07 §3 | DIR |

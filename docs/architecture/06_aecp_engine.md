@@ -389,6 +389,21 @@ non-GET opcode) makes the whole batch `BAD_ARGUMENTS`.
 
 ### 6.8 ACQUIRE / LOCK
 
+**Realization status (2026-08-15)** — LANDED per the Milan rulings: ACQUIRE_ENTITY
+answers NOT_SUPPORTED with the command echoed (Milan §5.4.2.1's systematic refusal;
+the echo IS §7.4.1.1's response, since a command carries owner_id 0 and a
+never-acquirable PAAD answers owner_id 0 — `E_NSUPPE`). LOCK_ENTITY is real
+(`E_LOCKEN` + the lock half of `KL_aecp_notify`): one holder eid + held bit + one
+shared-timer slot; UNLOCK flag (a query when free — SUCCESS/locked_id 0 — and
+ENTITY_LOCKED naming the holder from anyone else, which is the same answer a foreign
+LOCK gets); non-ENTITY targets refuse NOT_SUPPORTED off a walk-time all-zero check of
+@36..@39 (the bytes live past the capture registers, so the walk keeps the comparison,
+not the bytes); truncated commands refuse BAD_ARGUMENTS; the 60 s window re-arms on
+the holder's re-lock and expiry auto-unlocks with the Table 5.22 notification. The
+ACMP listener's 5.5.2.4 gate and the engine's CHECK_LOCK read the SAME published
+lock state. State-change notifications (took/released/expired) go to registered
+controllers except the requester, per-entry sequence_id incrementing.
+
 - **ACQUIRE_ENTITY (Δ7)**: a 3-µop constant program — echo fields, `owner_id` = 0,
   status `NOT_SUPPORTED`. No acquire state, no CONTROLLER_AVAILABLE contention flow,
   no PERSISTENT handling. (`CONTROLLER_AVAILABLE` origination exists solely for the

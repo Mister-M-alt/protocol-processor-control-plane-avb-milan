@@ -30,6 +30,7 @@ OPS = {
 FMT_B, FMT_W, FMT_D, FMT_Q = 0, 1, 2, 3
 ST_OK, ST_NIMPL, ST_BADARG, ST_NSUPP = 0, 1, 7, 11
 ST_NORES = 8          # Table 7-141 NO_RESOURCES (Milan SS5.4.2.21's refusal)
+ST_LOCKED = 3         # Table 7-141 ENTITY_LOCKED (the LOCK denial arm)
 REL_EQ, REL_NE, REL_LT, REL_GE = 0, 1, 2, 3
 
 # KL_aecp_desc_store state-port regions (see its banner): the µISA cannot put a
@@ -102,6 +103,9 @@ E_REGUN   = 832      # REGISTER_UNSOLICITED_NOTIFICATION (Milan 5.4.2.21)
 E_DEREG   = 844      # DEREGISTER_UNSOLICITED_NOTIFICATION (Milan 5.4.2.22)
 E_UNSOK   = 852      # payload-less unsolicited response (auto-DEREGISTER)
 E_NOSEND  = 858      # a job whose response type has no program yet: no frame
+E_NSUPPE  = 864      # echo + NOT_SUPPORTED (ACQUIRE, LOCK on non-ENTITY)
+E_LOCKEN  = 872      # LOCK_ENTITY (Milan 5.4.2.2, IEEE 7.4.2)
+E_LOCKUNS = 896      # unsolicited LOCK_ENTITY (Table 5.22 + 7.5.2)
 # 1722.1-2021 Table 7-1: the one descriptor type this program is dispatched
 # for (KL_aecp_engine refuses every other type back to the NOT_IMPLEMENTED
 # echo before dispatch, so the constant emitted at @24 is also a guarantee).
@@ -637,6 +641,68 @@ place(E_UNSOK, [
 # NO frame (the engine counts it as a drop): a GET_STREAM_INFO notification
 # with an invented empty body would be worse than none.
 place(E_NOSEND, [
+    u('END'),
+])
+
+# --- echo + NOT_SUPPORTED ----------------------------------------------------
+# ACQUIRE_ENTITY (Milan §5.4.2.1: "The PAAD-AE shall not reply SUCCESS to an
+# ACQUIRE_ENTITY command. It should reply with the NOT_SUPPORTED error code")
+# and a LOCK_ENTITY naming any target but ENTITY[0] (Milan §5.4.2.2:
+# "NOT_SUPPORTED shall be returned in this case"). The response is the
+# command's own payload echoed: for ACQUIRE that IS §7.4.1.1's response
+# layout, because a command carries flags + owner_id 0 + the descriptor, and
+# a PAAD that can never be acquired answers owner_id 0.
+place(E_NSUPPE, [
+    u('SET_STATUS', imm=ST_NSUPP),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- LOCK_ENTITY (IEEE §7.4.2, Milan §5.4.2.2) -------------------------------
+# The op and the readback both ride the rgy face (KL_aecp_notify owns the
+# state): RG_OP performs LOCK or UNLOCK - the engine derives which from flags
+# bit 0, the §7.4.2.1 UNLOCK flag - and answers {bit1 changed, bit0 denied};
+# RG_STATE reads the holder AFTER the op, which is exactly §7.4.2.1's
+# locked_id ("set to the Entity ID of the ATDECC Controller that is holding
+# the lock in a response", 0 when free). Denied maps to ENTITY_LOCKED - the
+# refusal that names the holder is also the answer to Milan's UNLOCK-as-query
+# note. Register contract: r14[31:0] = the command's flags word (engine-
+# packed, emitted verbatim at @24); the descriptor echo is constant 0 because
+# only ENTITY[0] ever reaches this program (the engine's walk gate).
+# The MOVE between the two gathers is also the once-per-edge gap the notify
+# face requires.
+place(E_LOCKEN, [
+    u('GATHER_EXT', rd=1, **RG_OP),              # the lock/unlock op
+    u('MOVE', rd=12, ra=0, imm=0),               # r12 = 0 (+ the gather gap)
+    u('GATHER_EXT', rd=3, **RG_STATE),           # locked_id, post-op
+    u('COMPARE', ra=1, fmt=FMT_D, imm=1),        # z = denied
+    u('BR_STATUS', cnd=2, imm=E_LOCKEN + 7),     # denied ->
+    u('SET_STATUS', imm=ST_OK),
+    u('BRANCH', imm=E_LOCKEN + 8),
+    u('SET_STATUS', imm=ST_LOCKED),              # denied: ENTITY_LOCKED
+    u('BUILD_HDR', ra=15, rb=13),                # emit (both statuses):
+    u('BUILD_FLD', ra=14, fmt=FMT_D),            # flags echo          @24
+    u('BUILD_FLD', ra=3,  fmt=FMT_Q),            # locked_id           @28
+    u('BUILD_FLD', ra=12, fmt=FMT_D),            # ENTITY[0] echo      @36
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- unsolicited LOCK_ENTITY (IEEE §7.5.2 list + Milan Table 5.22) -----------
+# Sent on every lock-state CHANGE (took, released, 60 s auto-unlock) to every
+# registered controller except the requester. The body reports CURRENT state:
+# flags 0, locked_id = the holder now (0 after an unlock or the timeout - the
+# Table 5.22 row is exactly "the entity automatically unlocks itself").
+place(E_LOCKUNS, [
+    u('GATHER_EXT', rd=3, **RG_STATE),           # the holder right now
+    u('MOVE', rd=12, ra=0, imm=0),
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=12, fmt=FMT_D),            # flags               @24
+    u('BUILD_FLD', ra=3,  fmt=FMT_Q),            # locked_id           @28
+    u('BUILD_FLD', ra=12, fmt=FMT_D),            # ENTITY[0]           @36
+    u('SEND_RESP'),
     u('END'),
 ])
 
