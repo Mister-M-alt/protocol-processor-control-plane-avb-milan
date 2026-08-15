@@ -246,6 +246,20 @@ package pp_pkg;
   localparam logic [7:0] PP_OWN_SRP_LS_C  = 8'h60;  // + sink   (KL_srp_listener_fsm)
   localparam logic [7:0] PP_OWN_SRP_CAD_C = 8'h80;  // + 0..6   (KL_srp_top cadence)
   localparam logic [7:0] PP_OWN_MAAP_C    = 8'h90;  // + 0 probe / 1 announce (KL_pp_maap)
+  localparam logic [7:0] PP_OWN_NTFY_C    = 8'hA0;  // + entry  (KL_aecp_notify TL registry)
+  localparam logic [7:0] PP_OWN_LOCK_C    = 8'hB0;  // the ENTITY lock singleton (KL_aecp_notify)
+  // 0xC0..0xCF is KL_pp_originator's TMR_TAG_P nibble - see its parameter
+
+  // ---- unsolicited-notification job kinds (06 SS6.7) ---------------------
+  // KL_aecp_notify names the RESPONSE TYPE of a job; KL_aecp_engine maps the
+  // kind onto {command_type, uPC entry}. A kind whose microprogram has not
+  // landed maps to the no-send program - never a well-formed frame with an
+  // empty body.
+  localparam logic [2:0] PP_UNS_DEREG_C = 3'd0;  // DEREGISTER_UNSOLICITED_NOTIFICATION
+  localparam logic [2:0] PP_UNS_LOCK_C  = 3'd1;  // LOCK_ENTITY
+  localparam logic [2:0] PP_UNS_STRI_C  = 3'd2;  // GET_STREAM_INFO
+  localparam logic [2:0] PP_UNS_AVB_C   = 3'd3;  // GET_AVB_INFO
+  localparam logic [2:0] PP_UNS_ASP_C   = 3'd4;  // GET_AS_PATH
 
   // ---- 02 §5 event-router SOURCE MAP, derived — never literals -----------
   // The router presents ONE source index per event and carries no owner tag,

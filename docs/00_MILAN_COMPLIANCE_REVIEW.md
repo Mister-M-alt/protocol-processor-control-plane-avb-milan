@@ -152,7 +152,7 @@ registrations with 300 s expiry (IEEE §7.4.37.2). The original conflates lock o
 with this table: the **lock manager** is a separate object (ENTITY scope only, UNLOCK
 flag, 60 s auto-unlock → notification; §5.4.2.2). Identify machinery (CONTROL 0/255,
 multicast notification 3× @150 ms; §5.3.12, §5.4.5.4, IEEE §7.5.1) is absent.
-**Disposition**: [06 §7](architecture/06_aecp_engine.md); records in [07 §4](architecture/07_memory_maps.md).
+**Disposition**: [06 §7](architecture/06_aecp_engine.md); records in [07 §4](architecture/07_memory_maps.md).\n**Landed 2026-08-15**: registry (16 rows, duplicates refreshed, NO_RESOURCES on overflow), TIME_LIMITED 300 s expiry with the targeted u=1 DEREGISTER, and the per-entry-sequence emission walk (`KL_aecp_notify` + engine unsolicited jobs on LANE_AECP_UNS). Still open here: the §5.4.5.3 CONTROLLER_AVAILABLE monitor and eviction probing (needs the originator TX path), the counters notification class, identify machinery.
 
 #### <a id="gap-07"></a>GAP-07 [Major] — Timing model incomplete
 Original §20 has one AECP number (250 ms, with a 187.5 ms internal target). The real
@@ -333,8 +333,8 @@ verification).
 | REQ-AEM-013 | Milan §5.4.2.15/.16 | SET/GET_CLOCK_SOURCE per Clock Domain; persisted | shall | A | [GAP-09](#gap-09) | CLOCK_CFG class | 06 §6, 07 §5 | NVM |
 | REQ-AEM-014 | Milan §5.4.2.17/.18, §5.3.12 | SET/GET_CONTROL for Identify (0 / 255; reset default 0) | shall | A | [GAP-06](#gap-06) | identify handler | 06 §7 | DIR |
 | REQ-AEM-015 | Milan §5.4.2.19/.20 | START/STOP_STREAMING: INPUT only (OUTPUT → NOT_SUPPORTED); bound+stopped→started semantics; persisted | shall | A | [GAP-01](#gap-01) | F06.14 rows | 06 §6.3 | DIR |
-| REQ-AEM-016 | Milan §5.4.2.21, §5.3.4.2 | REGISTER_UNSOLICITED: tuple {EID, MAC, port}, no duplicates, ≥16/interface, seq init 0; overflow ⇒ probe then NO_RESOURCES; never deregister a responder | shall | P | [GAP-06](#gap-06) | registry | 06 §7, 07 §4 | RND |
-| REQ-AEM-017 | IEEE §7.4.37.2 | TIME_LIMITED flag: 300 s expiry ⇒ auto-DEREGISTER unsolicited to that controller; accept 2013 no-flags form | shall | A | [GAP-06](#gap-06) | registry timers | 06 §7 | TIM |
+| REQ-AEM-016 | Milan §5.4.2.21, §5.3.4.2 | REGISTER_UNSOLICITED: tuple {EID, MAC, port}, no duplicates, ≥16/interface, seq init 0; overflow ⇒ NO_RESOURCES (eviction probe is a MAY — not attempted); never deregister a responder | shall | C | [GAP-06](#gap-06) | KL_aecp_notify registry (landed) | 06 §7, 07 §4 | RND |
+| REQ-AEM-017 | IEEE §7.4.37.2 | TIME_LIMITED flag: 300 s expiry ⇒ auto-DEREGISTER unsolicited to that controller; accept 2013 no-flags form | shall | C | [GAP-06](#gap-06) | KL_aecp_notify TL timers (landed) | 06 §7 | TIM |
 | REQ-AEM-018 | Milan §5.4.2.25 | GET_COUNTERS for every AVB_INTERFACE/CLOCK_DOMAIN/STREAM_IN/STREAM_OUT of current config; Milan mask set takes precedence over IEEE for STREAM_OUTPUT | shall | A | [GAP-05](#gap-05) | counters subsystem | 06 §6.6 | DIR |
 | REQ-AEM-019 | Milan Tables 5.1/5.4/5.6/5.7 | Counter semantics: invariant pairs; ≤1 s observation intervals; input bank reset on not-bound→bound; output MEDIA_RESET/TS_UNCERTAIN/FRAMES_TX reset on stream start | shall | A | [GAP-05](#gap-05) | counter banks | 06 §6.6, 07 §4 | DIR |
 | REQ-AEM-020 | Milan §5.4.2.26 | GET_AUDIO_MAP: fixed partition, subsets ≤176 channels, number_of_maps = N always | shall | A | [GAP-08](#gap-08) | map partitioner | 06 §6.5, 07 §3 | DIR |

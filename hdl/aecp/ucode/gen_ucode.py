@@ -29,6 +29,7 @@ OPS = {
 }
 FMT_B, FMT_W, FMT_D, FMT_Q = 0, 1, 2, 3
 ST_OK, ST_NIMPL, ST_BADARG, ST_NSUPP = 0, 1, 7, 11
+ST_NORES = 8          # Table 7-141 NO_RESOURCES (Milan SS5.4.2.21's refusal)
 REL_EQ, REL_NE, REL_LT, REL_GE = 0, 1, 2, 3
 
 # KL_aecp_desc_store state-port regions (see its banner): the µISA cannot put a
@@ -97,6 +98,10 @@ MILAN_CERT_VERSION = 0x00000000
 MVU_GET_MILAN_INFO = 0x0000
 E_GCTRS   = 768      # GET_COUNTERS (06 §6.6, IEEE §7.4.42) — Milan 5.4.2.25
 E_GAMAP   = 800      # GET_AUDIO_MAP (06 §6.5, IEEE §7.4.44) - Milan 5.4.2.26
+E_REGUN   = 832      # REGISTER_UNSOLICITED_NOTIFICATION (Milan 5.4.2.21)
+E_DEREG   = 844      # DEREGISTER_UNSOLICITED_NOTIFICATION (Milan 5.4.2.22)
+E_UNSOK   = 852      # payload-less unsolicited response (auto-DEREGISTER)
+E_NOSEND  = 858      # a job whose response type has no program yet: no frame
 # 1722.1-2021 Table 7-1: the one descriptor type this program is dispatched
 # for (KL_aecp_engine refuses every other type back to the NOT_IMPLEMENTED
 # echo before dispatch, so the constant emitted at @24 is also a guarantee).
@@ -561,6 +566,77 @@ place(E_GAMAP, [
     u('ITER_NEXT'),
     u('BRANCH', imm=E_GAMAP + 14),
     u('SEND_RESP'),                              # out:
+    u('END'),
+])
+
+# --- gather selectors the registry/lock face answers (06 §6.4/§6.7) ----------
+# The SAME command-routed 8-bit sel space as the other faces. Engine mapping:
+# sel bit 0 = rgy_state_o (1 = read the lock holder, no op); everything else
+# ignored - the op itself comes from the command's opcode/flags, never the
+# selector. RULE (KL_aecp_notify's once-per-edge contract): two consecutive
+# rgy gathers must be separated by a non-gather microop, or the second would
+# ride the first's still-high request; every program below obeys by testing
+# the first result before gathering again.
+RG_OP = dict(cnd=0xA, imm=0)      # -> sel 0xA0: perform the command's op
+RG_STATE = dict(cnd=0xA, imm=1)   # -> sel 0xA1: read locked_id (P2)
+
+# --- REGISTER_UNSOLICITED_NOTIFICATION (IEEE §7.4.37, Milan §5.4.2.21) -------
+# THE named Milan 1.3 5.4.2.21 demotion in the reference controller's log.
+# The op walks the Milan §5.3.4.2 list in KL_aecp_notify; result 0 = entry
+# created or refreshed, 1 = table full. Milan §5.4.2.21: "if the PAAD-AE
+# still has not enough resources to create a new entry in the list of
+# registered controllers, it shall return the NO_RESOURCES error code" (the
+# CONTROLLER_AVAILABLE eviction probe of the same clause is a MAY - not
+# attempted, recorded in the notify banner).
+#
+# The response payload is the ENGINE'S ECHO of the command's own bytes:
+# §7.4.37.1's command and response "share the same AECPDU format", and the
+# entity "shall accept [the] command both with or without the new flags
+# field" - echoing returns a 2021 command's flags and a 2013 command's
+# nothing, each in its own format. So this program emits no field of its own.
+place(E_REGUN, [
+    u('GATHER_EXT', rd=1, **RG_OP),              # the registry op
+    u('COMPARE', ra=1, fmt=FMT_D, imm=0),        # z = created/refreshed
+    u('BR_STATUS', cnd=2, imm=E_REGUN + 5),      # (also the gather gap)
+    u('SET_STATUS', imm=ST_NORES),               # full -> NO_RESOURCES
+    u('BRANCH', imm=E_REGUN + 6),
+    u('SET_STATUS', imm=ST_OK),                  # ok:
+    u('BUILD_HDR', ra=15, rb=13),                # emit: the flags echo rides
+    u('SEND_RESP'),                              # the engine's echo path
+    u('END'),
+])
+
+# --- DEREGISTER_UNSOLICITED_NOTIFICATION (IEEE §7.4.38, Milan §5.4.2.22) -----
+# Always SUCCESS: removing an absent registration is idempotent - neither
+# clause defines an error arm, and §7.4.38.1's command_specific_data is zero
+# length so the echo emits nothing.
+place(E_DEREG, [
+    u('GATHER_EXT', rd=1, **RG_OP),              # the removal op
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- payload-less unsolicited response ---------------------------------------
+# The automatic DEREGISTER_UNSOLICITED_NOTIFICATION of IEEE §7.4.37.2 ("the
+# ATDECC Entity shall send a DEREGISTER_UNSOLICITED_NOTIFICATION unsolicited
+# response for the ATDECC Controller and remove the registration") and Milan
+# Table 5.22 ("sent only to this controller"). The engine synthesizes the
+# whole header - controller, MAC, per-entry sequence_id, u = 1 - so the
+# program is just "SUCCESS, no payload".
+place(E_UNSOK, [
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- the no-send arm ---------------------------------------------------------
+# An unsolicited job kind whose response program has not landed retires with
+# NO frame (the engine counts it as a drop): a GET_STREAM_INFO notification
+# with an invented empty body would be worse than none.
+place(E_NOSEND, [
     u('END'),
 ])
 

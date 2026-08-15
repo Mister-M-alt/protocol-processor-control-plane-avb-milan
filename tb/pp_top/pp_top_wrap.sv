@@ -244,6 +244,12 @@ module pp_top_wrap (
   protocol_processor_top #(
       .TIM_DIV_US_P (TB_DIV_US_C),
       .TIM_DIV_MS_P (TB_DIV_MS_C),
+      //! TIM compression for the registration/lock deadlines, same reason
+      //! as the DIV overrides: the suite must SEE IEEE 7.4.37.2's 300 s
+      //! TIME_LIMITED expiry and 7.4.2's 60 s lock expiry, not wait 30
+      //! million compressed cycles for them
+      .REG_TL_TIMEOUT_MS_P (400),
+      .LOCK_TIMEOUT_MS_P   (150),
       .TROM_HEX_P   ("ltn_rom.hex"),
       .UCODE_HEX_P  ("ucode.hex")
   ) u_dut (

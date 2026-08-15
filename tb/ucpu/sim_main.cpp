@@ -27,11 +27,12 @@ enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
        E_CHKARG = 192, E_LOCK = 224, E_GATHER = 256, E_SETSR = 288,
        E_NAME = 320, E_COPY = 352, E_MAPV = 384, E_MAPVF = 400,
        E_OVF = 416, E_FMT = 512, E_NOTIMPL = 560, E_ACQ = 576,
-       E_STPRE = 592, E_MVUINFO = 736, E_GCTRS = 768, E_GAMAP = 800 };
+       E_STPRE = 592, E_MVUINFO = 736, E_GCTRS = 768, E_GAMAP = 800,
+       E_REGUN = 832, E_DEREG = 844, E_UNSOK = 852, E_NOSEND = 858 };
 
 // IEEE 1722.1-2021 Table 7-141
 enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
-       ST_BADARG = 7, ST_NSUPP = 11 };
+       ST_BADARG = 7, ST_NORES = 8, ST_NSUPP = 11 };
 
 static const uint64_t CTLR = 0xC0FFEE00DEADBEEFull;
 static const uint64_t OPD1 = 0x0000000000001234ull;
@@ -99,7 +100,16 @@ struct Harness {
            (uint64_t(0x3300 | k) << 16) |  uint64_t(0x4400 | k);
   }
 
+  // the registry/lock op face result (06 SS6.4/SS6.7): sel 0xA0 performs
+  // the in-flight command's op; the value below is what KL_aecp_notify
+  // would answer (0 = done, 1 = table full / denied)
+  uint64_t rgy_result = 0;
+
   uint64_t gxval(uint8_t sel) {
+    if (cur_upc == E_REGUN || cur_upc == E_DEREG) {
+      if (sel == 0xA0) return rgy_result;
+      return 0;
+    }
     if (cur_upc == E_GAMAP) {
       if (sel == 0x00) return uint64_t(am_nmaps());
       if (sel == 0x01) return (uint64_t(am_nmaps()) << 16)
@@ -618,6 +628,48 @@ int main(int argc, char** argv) {
 
   h.tick();
   CHECK(dut->disp_ready_o == 1, "ready again after all programs");
+
+  // ---- N: the registration pair + the unsolicited stubs ----------------
+  // (Milan SS5.4.2.21/SS5.4.2.22; gen_ucode.py E_REGUN/E_DEREG/E_UNSOK/
+  //  E_NOSEND). The op itself lives in KL_aecp_notify - here the face is
+  //  modeled, so what is proved is the microprogram's status law and that
+  //  exactly ONE op gather is issued per command (the once-per-edge rule).
+  h.rgy_result = 0;
+  CHECK(h.run(E_REGUN, 0, false), "N1 REGISTER ok-arm completes");
+  CHECK(h.last_status == ST_OK, "N1 status SUCCESS got %u", h.last_status);
+  CHECK(h.last_len == 12, "N1 header-only buffer (flags ride the echo), got %u",
+        h.last_len);
+  CHECK(h.sends == 1, "N1 one send");
+  {
+    int ops = 0;
+    for (uint8_t v : h.gx_sels) if (v == 0xA0) ++ops;
+    CHECK(ops == 1, "N1 exactly one registry op gather, got %d", ops);
+  }
+
+  h.rgy_result = 1;
+  CHECK(h.run(E_REGUN, 0, false), "N2 REGISTER full-arm completes");
+  CHECK(h.last_status == ST_NORES,
+        "N2 status NO_RESOURCES (Milan SS5.4.2.21) got %u", h.last_status);
+  CHECK(h.sends == 1, "N2 still answers");
+
+  h.rgy_result = 0;
+  CHECK(h.run(E_DEREG, 0, false), "N3 DEREGISTER completes");
+  CHECK(h.last_status == ST_OK, "N3 status SUCCESS got %u", h.last_status);
+  CHECK(h.sends == 1, "N3 one send");
+  {
+    int ops = 0;
+    for (uint8_t v : h.gx_sels) if (v == 0xA0) ++ops;
+    CHECK(ops == 1, "N3 exactly one registry op gather, got %d", ops);
+  }
+
+  CHECK(h.run(E_UNSOK, 0, false), "N4 unsolicited-ok completes");
+  CHECK(h.last_status == ST_OK && h.last_len == 12 && h.sends == 1,
+        "N4 SUCCESS, empty payload, one send (st %u len %u sends %d)",
+        h.last_status, h.last_len, h.sends);
+  CHECK(h.gx_sels.empty(), "N4 no gathers");
+
+  CHECK(h.run(E_NOSEND, 0, false), "N5 no-send arm completes");
+  CHECK(h.sends == 0, "N5 emits NO frame, got %d", h.sends);
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   delete dut;

@@ -111,6 +111,12 @@ module protocol_processor_top
     parameter int unsigned DESC_NAME_ENTRIES_P = 16,
     //! no-progress watchdog on the descriptor memory face, in clocks
     parameter int unsigned DESC_MEM_TMO_CYC_P  = 4096,
+    //! IEEE §7.4.37.2's 300 s TIME_LIMITED registration window and IEEE
+    //! §7.4.2's 60 s lock, in ms of the (possibly TIM-compressed) timebase.
+    //! Parameters for the same reason TIM_DIV_* are: a suite that needs to
+    //! SEE the expiry cannot wait 30 million compressed cycles for it.
+    parameter int unsigned REG_TL_TIMEOUT_MS_P = 300_000,
+    parameter int unsigned LOCK_TIMEOUT_MS_P   = 60_000,
     //! ---- AECP response buffer in the integrator's MAIN MEMORY (03 §7) ---
     //! The response an AECP command builds is up to 592 bytes and it does not
     //! live on chip either. Held as fabric state it measured 5,079 flip-flops
@@ -584,6 +590,9 @@ module protocol_processor_top
       || (OWN_TKR_END_C   > 32'(PP_OWN_SRP_LS_C))
       || (OWN_SRPLS_END_C > 32'(PP_OWN_SRP_CAD_C))
       || (OWN_SRPCAD_END_C > 32'(PP_OWN_MAAP_C))
+      || (OWN_MAAP_END_C   > 32'(PP_OWN_NTFY_C))
+      || (32'(PP_OWN_NTFY_C) + PP_N_CTRL_C > 32'(PP_OWN_LOCK_C))
+      || (32'(PP_OWN_LOCK_C) + 32'd1 > 32'h0000_00C0)  // originator tag nibble
       || (OWN_MAAP_END_C   > 32'd256)) begin : gen_g_owner_overlap
     $error("F08.4: owner tags OVERLAP at SI=%0d SO=%0d (8-bit expiry bus)",
            N_STREAM_IN_P, N_STREAM_OUT_P);
@@ -2155,11 +2164,12 @@ module protocol_processor_top
   // Six engine arm faces feed ONE always-accepting arm port. Arms are
   // one-cycle strobes with no ready, so each face gets a 4-deep queue and a
   // fixed-priority drain: listener > talker > ADP > SRP > originator > MAAP
-  // (SM correctness first, cadence last; MAAP's ms-scale timers tolerate
-  // any drain latency). Per-face order is preserved (each engine owns
+  // > notify (SM correctness first, cadence last; MAAP's ms-scale timers and
+  // the notify block's 300 s / 60 s deadlines tolerate any drain latency).
+  // Per-face order is preserved (each engine owns
   // disjoint slot ranges, so cross-face order is free); a queue overrun
   // drops the NEWEST arm and counts — never silent.
-  localparam int unsigned ARM_N_C = 6;
+  localparam int unsigned ARM_N_C = 7;
   localparam int unsigned ARM_W_C = 1 + TMR_AW_C + PP_TIMER_OWNER_W_C + 32;
 
   logic [ARM_N_C-1:0]              armq_in_vld_w;
@@ -2168,7 +2178,7 @@ module protocol_processor_top
   logic [ARM_N_C-1:0][2:0]         armq_cnt_r;
   logic [15:0]                     arm_drop_r;
 
-  assign armq_in_vld_w = {maapeng_arm_valid_w,
+  assign armq_in_vld_w = {ntfy_arm_valid_w, maapeng_arm_valid_w,
                           org_arm_valid_w, srp_arm_valid_w, adp_arm_valid_w,
                           tkr_arm_valid_w, lstn_arm_valid_w};
   assign armq_in_w[0] = {lstn_arm_cancel_w, lstn_arm_slot_w,
@@ -2183,6 +2193,8 @@ module protocol_processor_top
                          org_arm_owner_w, org_arm_deadline_w};
   assign armq_in_w[5] = {maapeng_arm_cancel_w, maapeng_arm_slot_w,
                          maapeng_arm_owner_w, maapeng_arm_deadline_w};
+  assign armq_in_w[6] = {ntfy_arm_cancel_w, ntfy_arm_slot_w,
+                         ntfy_arm_owner_w, ntfy_arm_deadline_w};
 
   logic [ARM_N_C-1:0]      armq_pop_w;
   logic [ARM_N_C-1:0][2:0] armq_mid_w;    // count after the pop
@@ -2566,9 +2578,28 @@ module protocol_processor_top
   logic                    aecp_txs_wr_valid_w, aecp_txs_wr_commit_w;
   logic [7:0]              aecp_txs_wr_data_w;
   logic                    aecp_txreq_valid_w, aecp_txreq_ready_w;
+  logic                    aecp_txreq_uns_valid_w, aecp_txreq_uns_ready_w;
   logic [TXS_W_C-1:0]      aecp_txreq_slot_w;
   logic                    aecp_txs_gnt_w;
   logic [TXS_W_C-1:0]      aecp_txs_gnt_slot_w;
+  // registry/lock face + unsolicited job face (engine <-> KL_aecp_notify)
+  logic        aecp_rgy_req_w, aecp_rgy_state_w, aecp_rgy_tl_w, aecp_rgy_wait_w;
+  logic [1:0]  aecp_rgy_op_w;
+  logic [63:0] aecp_rgy_eid_w, aecp_rgy_data_w;
+  logic [47:0] aecp_rgy_mac_w;
+  logic        uns_valid_w, uns_done_w;
+  logic [2:0]  uns_kind_w;
+  logic [15:0] uns_dt_w, uns_di_w, uns_seq_w;
+  logic [63:0] uns_eid_w;
+  logic [47:0] uns_mac_w;
+  logic        ntfy_lock_held_w;
+  logic [63:0] ntfy_lock_ctlr_w;
+  logic        ntfy_arm_valid_w, ntfy_arm_cancel_w;
+  logic [TMR_AW_C-1:0] ntfy_arm_slot_w;
+  logic [PP_TIMER_OWNER_W_C-1:0] ntfy_arm_owner_w;
+  logic [31:0] ntfy_arm_deadline_w;
+  logic [7:0]  ntfy_reg_cnt_nc_w, ntfy_coalesce_nc_w;
+  logic [15:0] ntfy_uns_cnt_nc_w;
   logic                    aecp_eff_commit_nc_w, aecp_eff_nvm_stb_nc_w;
   logic [7:0]              aecp_eff_nvm_mark_nc_w;
   logic [3:0]              aecp_eff_notify_cls_nc_w;
@@ -2623,6 +2654,24 @@ module protocol_processor_top
       .txreq_valid_o      (aecp_txreq_valid_w),
       .txreq_slot_o       (aecp_txreq_slot_w),
       .txreq_ready_i      (aecp_txreq_ready_w),
+      .rgy_req_o          (aecp_rgy_req_w),
+      .rgy_state_o        (aecp_rgy_state_w),
+      .rgy_op_o           (aecp_rgy_op_w),
+      .rgy_eid_o          (aecp_rgy_eid_w),
+      .rgy_mac_o          (aecp_rgy_mac_w),
+      .rgy_tl_o           (aecp_rgy_tl_w),
+      .rgy_data_i         (aecp_rgy_data_w),
+      .rgy_wait_i         (aecp_rgy_wait_w),
+      .uns_valid_i        (uns_valid_w),
+      .uns_kind_i         (uns_kind_w),
+      .uns_desc_type_i    (uns_dt_w),
+      .uns_desc_index_i   (uns_di_w),
+      .uns_ctlr_eid_i     (uns_eid_w),
+      .uns_mac_i          (uns_mac_w),
+      .uns_seq_i          (uns_seq_w),
+      .uns_done_o         (uns_done_w),
+      .txreq_uns_valid_o  (aecp_txreq_uns_valid_w),
+      .txreq_uns_ready_i  (aecp_txreq_uns_ready_w),
       .mem_req_valid_o    (desc_mem_req_valid_o),
       .mem_req_ready_i    (desc_mem_req_ready_i),
       .mem_req_addr_o     (desc_mem_req_addr_o),
@@ -2684,6 +2733,67 @@ module protocol_processor_top
   );
 
   assign aecp_rxs_free_slot_w = aecp_eng_free_slot_w;
+
+  // =========================================================================
+  // AECP notifications: the registered-controller list + ENTITY lock (06)
+  // =========================================================================
+  //! The Milan §5.3.4.2 list, the §5.3.4.1 lock and the §5.4.5 emission walk
+  //! in one block beside the engine. Event classes whose response programs
+  //! have not landed are tied 0 here and come alive with their stages -
+  //! wiring an event before its µprogram exists would emit nothing anyway
+  //! (the engine's no-send arm), but the tie says so at the seam.
+  KL_aecp_notify #(
+      .N_CTRL_P          (PP_N_CTRL_C),
+      .N_STREAM_IN_P     (N_STREAM_IN_P),
+      .N_STREAM_OUT_P    (N_STREAM_OUT_P),
+      .TL_TIMEOUT_MS_P   (REG_TL_TIMEOUT_MS_P),
+      .LOCK_TIMEOUT_MS_P (LOCK_TIMEOUT_MS_P),
+      .TMR_SLOTS_P       (TMR_SLOTS_C),
+      //! F08.4: rows own the FIRST half of the registry-monitor group (the
+      //! second half stays reserved for the Milan §5.4.5.3 CA monitor);
+      //! the lock owns the first singleton (pp_pkg: "LOCK, IDENT-BURST, ...")
+      .TMR_REGMON_BASE_P (TMR_MAP_C.regmon),
+      .TMR_LOCK_SLOT_P   (TMR_MAP_C.single)
+  ) u_notify (
+      .clk_i                 (clk_i),
+      .rst_n                 (rst_n),
+      .rgy_req_i             (aecp_rgy_req_w),
+      .rgy_state_i           (aecp_rgy_state_w),
+      .rgy_op_i              (aecp_rgy_op_w),
+      .rgy_eid_i             (aecp_rgy_eid_w),
+      .rgy_mac_i             (aecp_rgy_mac_w),
+      .rgy_tl_i              (aecp_rgy_tl_w),
+      .rgy_data_o            (aecp_rgy_data_w),
+      .rgy_wait_o            (aecp_rgy_wait_w),
+      //! stream-info / AVB-info / AS-path notification classes arm with
+      //! their stages (P3/P4) - see the block banner
+      .ev_stri_in_i          ({N_STREAM_IN_P{1'b0}}),
+      .ev_stri_out_i         ({N_STREAM_OUT_P{1'b0}}),
+      .ev_avb_i              (1'b0),
+      .ev_asp_i              (1'b0),
+      .uns_valid_o           (uns_valid_w),
+      .uns_kind_o            (uns_kind_w),
+      .uns_desc_type_o       (uns_dt_w),
+      .uns_desc_index_o      (uns_di_w),
+      .uns_ctlr_eid_o        (uns_eid_w),
+      .uns_mac_o             (uns_mac_w),
+      .uns_seq_o             (uns_seq_w),
+      .uns_done_i            (uns_done_w),
+      .lock_held_o           (ntfy_lock_held_w),
+      .lock_ctlr_o           (ntfy_lock_ctlr_w),
+      .tmr_arm_valid_o       (ntfy_arm_valid_w),
+      .tmr_arm_cancel_o      (ntfy_arm_cancel_w),
+      .tmr_arm_slot_o        (ntfy_arm_slot_w),
+      .tmr_arm_owner_o       (ntfy_arm_owner_w),
+      .tmr_arm_deadline_ms_o (ntfy_arm_deadline_w),
+      .now_ms_i              (now_ms_w),
+      .tmr_exp_valid_i       (exp_valid_w),
+      .tmr_exp_slot_i        (exp_slot_w),
+      .tmr_exp_owner_i       (exp_owner_w),
+      .dbg_reg_cnt_o         (ntfy_reg_cnt_nc_w),
+      .dbg_uns_cnt_o         (ntfy_uns_cnt_nc_w),
+      .dbg_coalesce_o        (ntfy_coalesce_nc_w)
+  );
 
   // =========================================================================
   // TX slot pool + pool-access arbiter (banner)
@@ -2936,14 +3046,14 @@ module protocol_processor_top
   end
 
   assign arb_req_w[LANE_AECP_SOL_C] = aecp_txreq_valid_w;
-  assign arb_req_w[LANE_AECP_UNS_C] = 1'b0;             // P4 notifications
+  assign arb_req_w[LANE_AECP_UNS_C] = aecp_txreq_uns_valid_w;
   assign arb_req_w[LANE_ACMP_C]     = laneq_acmp_cnt_r != 4'd0;
   assign arb_req_w[LANE_ADP_C]      = laneq_adp_cnt_r != 4'd0;
   assign arb_req_w[LANE_SRP_C]      = srp_txreq_valid_w;
   assign arb_req_w[LANE_TKRSP_C]    = tkb_lane_valid_r;
   assign arb_req_w[LANE_MAAP_C]     = maapeng_txreq_valid_w;
   assign arb_slot_w[LANE_AECP_SOL_C] = aecp_txreq_slot_w;
-  assign arb_slot_w[LANE_AECP_UNS_C] = PP_SLOT_NULL_C;
+  assign arb_slot_w[LANE_AECP_UNS_C] = aecp_txreq_slot_w;
   assign arb_slot_w[LANE_ACMP_C]     = laneq_acmp_r[0];
   assign arb_slot_w[LANE_ADP_C]      = laneq_adp_r[0];
   assign arb_slot_w[LANE_SRP_C]      = srp_txreq_slot_w;
@@ -2952,6 +3062,7 @@ module protocol_processor_top
   assign maapeng_txreq_ready_w = arb_gnt_w[LANE_MAAP_C];
   assign srp_txreq_ready_w  = arb_gnt_w[LANE_SRP_C];
   assign aecp_txreq_ready_w = arb_gnt_w[LANE_AECP_SOL_C];
+  assign aecp_txreq_uns_ready_w = arb_gnt_w[LANE_AECP_UNS_C];
   assign tkb_lane_gnt_w    = arb_gnt_w[LANE_TKRSP_C];
 
   logic        arb_tx_valid_w, arb_tx_sof_w, arb_tx_eof_w, arb_tx_ready_w;

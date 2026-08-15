@@ -428,6 +428,24 @@ Milan §5.4.2.x "in any other way").
 
 ## 7. Registry, notifications, liveness, identify
 
+**Realization status (2026-08-15, `hdl/aecp/KL_aecp_notify.sv`)** — the registry, the
+ENTITY lock and the emission walk are LANDED as one block beside the engine: 16-row
+LUTRAM table {EID, MAC, seq} + valid/TL flags, walked one row per cycle (single
+comparator, never a bank); REGISTER refresh preserves the row's sequence_id (Milan
+§5.4.2.21 initializes it "if a new entry is created"); overflow answers `NO_RESOURCES`
+directly — the CONTROLLER_AVAILABLE **eviction probe of the same clause is a MAY and is
+not attempted**. TIME_LIMITED expiry (300 s, timer-service slots `regmon + i`) removes
+the row and emits the targeted DEREGISTER notification with u = 1 and the entry's own
+sequence_id. The F06.5 arcs through PROBING — the §5.4.5.3 random 30–60 s monitor with
+CONTROLLER_AVAILABLE + one retry — are **NOT landed** (they need the AECP originator TX
+path; the `regmon` group's second half and the CA pool stay reserved): a
+non-TIME_LIMITED registration whose controller vanishes silently persists until power
+cycle, bounded by the 16-row table refusing further registrations. Emission jobs run
+through the engine one at a time (same µprograms, buffer and builder as solicited
+answers; `LANE_AECP_UNS`); event classes arm as their response programs land, and the
+counters class stays unarmed (the counters live behind the integrator's pull-only
+face). Identify machinery: still absent.
+
 Registry entry ([F07.7](07_memory_maps.md#fig-07-regrec)): {controller EID, MAC, port,
 next unsolicited `sequence_id` (init 0), TIME_LIMITED deadline, monitor deadline,
 probe state}. **No duplicate {EID, MAC, port} tuples; ≥ 16 entries per AVB interface;

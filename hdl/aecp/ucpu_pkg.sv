@@ -107,6 +107,9 @@ package ucpu_pkg;
   localparam logic [4:0] ST_NO_SUCH_DESC_C   = 5'd2;
   localparam logic [4:0] ST_LOCKED_C         = 5'd3;
   localparam logic [4:0] ST_BAD_ARGUMENTS_C  = 5'd7;
+  //! Table 7-141 status 8: Milan §5.4.2.21's refusal when the registered-
+  //! controller list is full (E_REGUN's failure arm)
+  localparam logic [4:0] ST_NO_RESOURCES_C   = 5'd8;
   //! IEEE 1722.1-2021 §7.4 status 10: the entity detected an internal error.
   //! KL_aecp_engine answers with it when the response memory fails under a
   //! frame it has already started building — never a SUCCESS carrying bytes

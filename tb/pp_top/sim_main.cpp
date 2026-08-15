@@ -2549,6 +2549,142 @@ int main(int argc, char** argv) {
           "Q10: the record ordinal did not restart with the command");
   }
 
+  // ==== U. REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION ===================
+  // (IEEE 1722.1-2021 SS7.4.37/SS7.4.38, Milan v1.2 SS5.4.2.21/SS5.4.2.22 +
+  //  SS5.3.4.2's 16-controller list; the SS7.4.37.2 TIME_LIMITED expiry with
+  //  its automatic DEREGISTER notification, u = 1, per-entry sequence_id -
+  //  Milan Table 5.22 "sent only to this controller". The wrap compresses
+  //  the 300 s window to 400 ms.)
+  {
+    h.flush_all();
+    h.q_aecp.clear();
+    std::vector<uint8_t> fl0(4, 0);
+
+    // ---- U1: 2021-format REGISTER (flags 0) -> SUCCESS, flags echoed ----
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7001,
+                      0x0024, fl0));
+    auto f = h.wait_any(h.q_aecp, 400);
+    auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                           0x7001, 0x0024, fl0);
+    CHECK(!f.empty(), "U1: REGISTER answered");
+    CHECK(f == want, "U1: SUCCESS byte-exact, 2021 format (flags echoed)");
+    if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+    // ---- U2: 2013-format REGISTER (SS7.4.37.1: no flags field) ----------
+    const uint64_t C2_MAC = 0x0202C2C2C2C2ull;
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7002,
+                      0x0024, {}));
+    f = h.wait_any(h.q_aecp, 400);
+    want = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR2_EID,
+                      0x7002, 0x0024, {});
+    CHECK(!f.empty() && f == want,
+          "U2: 2013-format REGISTER accepted and answered in its own format");
+    if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+    // ---- U3: DEREGISTER -> SUCCESS; removing an absent one stays SUCCESS
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7003,
+                      0x0025, {}));
+    f = h.wait_any(h.q_aecp, 400);
+    want = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR2_EID,
+                      0x7003, 0x0025, {});
+    CHECK(!f.empty() && f == want, "U3: DEREGISTER SUCCESS byte-exact");
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7004,
+                      0x0025, {}));
+    f = h.wait_any(h.q_aecp, 400);
+    CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == AECP_SUCCESS,
+          "U3b: dereg of an absent registration is idempotent SUCCESS");
+
+    // ---- U4: Milan SS5.3.4.2's capacity: 16 rows, the 17th refuses ------
+    int ok_regs = 0;
+    for (int k = 0; k < 15; ++k) {   // U1's controller still holds one row
+      uint64_t mac = 0x020200BB0000ull + unsigned(k);
+      uint64_t eid = 0x8888000000000100ull + unsigned(k);
+      h.feed(aecp_frame(OWN_MAC, mac, 0, 0, EID, eid,
+                        uint16_t(0x7100 + k), 0x0024, fl0));
+      auto r = h.wait_any(h.q_aecp, 400);
+      if (!r.empty() && ((r[16] >> 3) & 0x1F) == AECP_SUCCESS) ++ok_regs;
+    }
+    CHECK(ok_regs == 15, "U4: 16 controllers register (fillers ok: %d/15)",
+          ok_regs);
+    h.feed(aecp_frame(OWN_MAC, 0x020200BBFFFFull, 0, 0, EID,
+                      0x888800000000FFFFull, 0x71FF, 0x0024, fl0));
+    f = h.wait_any(h.q_aecp, 400);
+    CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == 8,
+          "U4b: the 17th refuses NO_RESOURCES (Milan SS5.4.2.21), status %d",
+          f.empty() ? -1 : ((f[16] >> 3) & 0x1F));
+
+    // ---- U4c: a duplicate re-register while full REFRESHES, never full --
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7005,
+                      0x0024, fl0));
+    f = h.wait_any(h.q_aecp, 400);
+    CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == AECP_SUCCESS,
+          "U4c: duplicate {eid, mac} refreshes its row while the table is full");
+
+    for (int k = 0; k < 15; ++k) {
+      uint64_t mac = 0x020200BB0000ull + unsigned(k);
+      uint64_t eid = 0x8888000000000100ull + unsigned(k);
+      h.feed(aecp_frame(OWN_MAC, mac, 0, 0, EID, eid,
+                        uint16_t(0x7200 + k), 0x0025, {}));
+      h.wait_any(h.q_aecp, 400);
+    }
+
+    // ---- U5: TIME_LIMITED -> 300 s (compressed 400 ms) -> the automatic
+    //          DEREGISTER notification, u = 1, seq 0, this controller only
+    std::vector<uint8_t> fl_tl(4, 0);
+    fl_tl[3] = 0x01;                       // Table 7-147 TIME_LIMITED
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7006,
+                      0x0024, fl_tl));
+    f = h.wait_any(h.q_aecp, 400);
+    CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == AECP_SUCCESS,
+          "U5: TIME_LIMITED REGISTER accepted");
+    h.q_aecp.clear();
+    auto uns = h.wait_any(h.q_aecp, 700);
+    auto exp_uns = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                              CTLR2_EID, 0x0000, 0x0025, {});
+    exp_uns[36] |= 0x80;                   // SS9.2.1.7: u = 1
+    CHECK(!uns.empty(), "U5b: the expiry notification arrives");
+    CHECK(uns == exp_uns,
+          "U5c: unsolicited DEREGISTER byte-exact (u=1, entry seq 0)");
+    if (!uns.empty() && uns != exp_uns) { dump("got", uns); dump("exp", exp_uns); }
+    auto more = h.wait_any(h.q_aecp, 300);
+    CHECK(more.empty(),
+          "U5d: sent only to this controller, once (Milan Table 5.22)");
+
+    // ---- U6: re-registration re-arms the window (SS7.4.37.2) ------------
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7007,
+                      0x0024, fl_tl));
+    h.wait_any(h.q_aecp, 400);
+    h.run_ms(250);
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7008,
+                      0x0024, fl_tl));
+    h.wait_any(h.q_aecp, 400);
+    h.q_aecp.clear();
+    h.run_ms(300);                         // past the ORIGINAL deadline
+    CHECK(h.q_aecp.empty(), "U6: the refresh re-armed the 300 s window");
+    auto uns2 = h.wait_any(h.q_aecp, 400); // the refreshed deadline fires
+    CHECK(!uns2.empty() && (uns2[36] & 0x80) != 0,
+          "U6b: the refreshed deadline expires with u = 1");
+
+    // ---- U7: the M7-style READ_DESCRIPTOR regression --------------------
+    h.q_aecp.clear();
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2); putbe(&rd[6], 0, 2);
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7009,
+                      AEM_READ_DESCRIPTOR, rd));
+    auto got = h.wait_any(h.q_aecp, 400);
+    std::vector<uint8_t> epl(4, 0);
+    putbe(&epl[0], CFGIX, 2);
+    epl.insert(epl.end(), desc_entity.begin(), desc_entity.end());
+    auto want_rd = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                              CTLR_EID, 0x7009, AEM_READ_DESCRIPTOR, epl);
+    CHECK(!got.empty() && got == want_rd,
+          "U7: READ_DESCRIPTOR byte-exact with registrations live");
+
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x700A,
+                      0x0025, {}));
+    h.wait_any(h.q_aecp, 400);
+  }
+
   // ==== MP. the INTERNAL MAAP engine (11; IEEE 1722-2016 Annex B) =========
   // A SECOND DUT instance runs the same processor with cfg_maap_internal_i
   // = 1 from reset — the quasi-static select is a pre-enable decision, so

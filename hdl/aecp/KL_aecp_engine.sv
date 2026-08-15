@@ -34,6 +34,30 @@
 //                                                 §9.3.5.3.3's fallback)
 //                  everything else             -> UPC_NOTIMPL_C
 //
+//                COMMANDS LANDED AFTER THE TIMING FINDING RESOLVE ONE STATE
+//                LATER. The pop-time decode above is the measured critical
+//                cone into the µcode ROM's address register, so 0x0024
+//                REGISTER_UNSOLICITED_NOTIFICATION and 0x0025 DEREGISTER
+//                (Milan §5.4.2.21/§5.4.2.22) keep the NOT_IMPLEMENTED echo
+//                at pop and are re-dispatched at the A_PLD exit exactly
+//                like the MVU sub-decode — a REGISTERED re-dispatch off a
+//                discriminator flop, adding zero levels at pop. Their ops
+//                run on the rgy face against KL_aecp_notify (the Milan
+//                §5.3.4.2 registered-controller list), and their responses
+//                ride the echo path: §7.4.37.1's response "share[s] the
+//                same AECPDU format" as the command, so echoing the
+//                command's own flags field (or nothing, for the 2013 format
+//                the same clause obliges us to accept) IS the layout.
+//
+//                UNSOLICITED RESPONSES ARE ENGINE-ORIGINATED JOBS. The
+//                `uns_*` face accepts one {kind, descriptor, controller,
+//                mac, seq} job at a time from KL_aecp_notify, synthesizes
+//                the 03 §4 record a command would have carried, runs the
+//                SAME µprogram the solicited answer uses, and emits on
+//                LANE_AECP_UNS with the §9.2.1.7 u bit set and the entry's
+//                own sequence_id (Milan §5.4.5.1). A solicited head always
+//                wins the A_IDLE arbitration.
+//
 //                WHERE GET_COUNTERS PUTS ITS ARGUMENTS. §7.4.42.1 puts
 //                descriptor_type at @24 and descriptor_index at @26, where
 //                §7.4.5's READ_DESCRIPTOR puts configuration_index and a
@@ -354,7 +378,46 @@ module KL_aecp_engine
     input  wire  [63:0] amap_data_i,          //! the word (upper 32 zero unless RECORD)
     input  wire         amap_wait_i,          //! HOLD the beat (not a ready)
 
-    //! ---- lock context (06 §6.4; the lock manager is P4 — tie 0) ----
+    //! ---- registry/lock op face (06 §6.4/§6.7; served by KL_aecp_notify) ----
+    //! A GATHER-routed MUTATION face: while a REGISTER_UNSOLICITED_
+    //! NOTIFICATION / DEREGISTER / LOCK_ENTITY command is in flight, its
+    //! µprogram's gathers ride here instead of the counter/audio-map faces,
+    //! and the op arguments are the COMMAND'S OWN identity - controller_eid
+    //! and src_mac from the 03 §4 record, exactly the Milan §5.3.4.2 tuple.
+    //! `rgy_wait_i` is the same HOLD the other faces use and the same gxf
+    //! watchdog bounds it; the op executes once per request edge, which the
+    //! µprograms guarantee by separating consecutive gathers with the
+    //! COMPARE that tests the result (see KL_aecp_notify's banner).
+    output logic        rgy_req_o,           //! an op / state query is presented
+    output logic        rgy_state_o,         //! 1 = read the lock holder, no op
+    output logic [1:0]  rgy_op_o,            //! 0 REG / 1 DEREG / 2 LOCK / 3 UNLOCK
+    output logic [63:0] rgy_eid_o,           //! requesting controller entity_id
+    output logic [47:0] rgy_mac_o,           //! its source MAC
+    output logic        rgy_tl_o,            //! REGISTER: TIME_LIMITED flag
+    input  wire  [63:0] rgy_data_i,          //! result word
+    input  wire         rgy_wait_i,          //! HOLD the beat (not a ready)
+
+    //! ---- unsolicited job face (06 §6.7; producer is KL_aecp_notify) ----
+    //! One job = one AECPDU to ONE controller, run through the SAME
+    //! µprograms, response buffer and frame builder as a solicited answer -
+    //! the only differences are the synthesized 03 §4 record (no RX slot,
+    //! no payload walk), the u bit, and the TX lane. A job is taken only
+    //! when no solicited head is waiting, so notifications can never starve
+    //! the command path; the producer holds `uns_valid_i` until `uns_done_o`.
+    input  wire         uns_valid_i,         //! job presented, held until done
+    input  wire  [2:0]  uns_kind_i,          //! pp_pkg PP_UNS_* response kind
+    input  wire  [15:0] uns_desc_type_i,     //! response descriptor_type
+    input  wire  [15:0] uns_desc_index_i,    //! response descriptor_index
+    input  wire  [63:0] uns_ctlr_eid_i,      //! target controller entity_id
+    input  wire  [47:0] uns_mac_i,           //! target unicast MAC
+    input  wire  [15:0] uns_seq_i,           //! the entry's sequence_id
+    output logic        uns_done_o,          //! one-cycle: job retired (sent or voided)
+
+    //! ---- TX arbiter lane (F03.5 LANE_AECP_UNS); held until granted ----
+    output logic        txreq_uns_valid_o,
+    input  wire         txreq_uns_ready_i,
+
+    //! ---- lock context (06 §6.4; KL_aecp_notify's published lock state) ----
     input  wire         lock_held_i,
     input  wire  [63:0] lock_ctlr_i,
 
@@ -385,6 +448,13 @@ module KL_aecp_engine
   localparam logic [15:0] OP_IDENTIFY_NOTIF_C  = 16'h0026;
   localparam logic [15:0] OP_GET_COUNTERS_C    = 16'h0029;
   localparam logic [15:0] OP_GET_AUDIO_MAP_C   = 16'h002B;
+  //! §7.4.37/§7.4.38 - the registration pair. NOT pop-time dispatch arms:
+  //! both resolve through the REGISTERED A_PLD-exit re-dispatch (the MVU
+  //! pattern), because the pop-time opcode-to-µPC cone is the measured
+  //! critical path into the µcode ROM's address register and must never
+  //! deepen. Their bit-0 difference is also the rgy op code.
+  localparam logic [15:0] OP_REG_UNSOL_C       = 16'h0024;
+  localparam logic [15:0] OP_DEREG_UNSOL_C     = 16'h0025;
   //! Table 7-1: the one descriptor type the audio-map µprogram serves (see
   //! the banner - every other type keeps the NOT_IMPLEMENTED echo)
   localparam logic [15:0] DT_STREAM_PORT_IN_C  = 16'h000E;
@@ -414,6 +484,10 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_MVUINFO_C = 11'd736;   // E_MVUINFO
   localparam logic [10:0] UPC_GCTRS_C   = 11'd768;   // E_GCTRS
   localparam logic [10:0] UPC_GAMAP_C   = 11'd800;   // E_GAMAP
+  localparam logic [10:0] UPC_REGUN_C   = 11'd832;   // E_REGUN
+  localparam logic [10:0] UPC_DEREG_C   = 11'd844;   // E_DEREG
+  localparam logic [10:0] UPC_UNSOK_C   = 11'd852;   // E_UNSOK
+  localparam logic [10:0] UPC_NOSEND_C  = 11'd858;   // E_NOSEND
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -468,6 +542,8 @@ module KL_aecp_engine
   logic        echo_r, sent_r;
   logic        ctrs_r;                   // this command is a GET_COUNTERS
   logic        amap_r;                   // this command is a GET_AUDIO_MAP
+  logic        regun_r;                  // ... a REGISTER/DEREGISTER_UNSOL
+  logic        uns_r;                    // engine-originated unsolicited job
   logic  [7:0] amap_rec_r;               // records handed out this command
   logic [10:0] upc_r;
   logic [4:0]  status_r;
@@ -524,6 +600,29 @@ module KL_aecp_engine
   //! F06.2 MATCHED arc + the response-storm guard (see the banner)
   logic drop_w;
   assign drop_w = txn_w.msg_type[0] || (txn_w.target_eid != entity_id_i);
+
+  //! the registration pair's DISCRIMINATOR - latched at pop like ctrs_w /
+  //! amap_w but feeding only its own flop, the walk-capture enables and the
+  //! A_PLD-exit re-dispatch, never the pop-time µPC mux (the timing rule in
+  //! the opcode table above)
+  logic regun_w;
+  assign regun_w = (txn_w.protocol == PP_PROTO_AEM)
+                   && ((txn_w.opcode == OP_REG_UNSOL_C)
+                       || (txn_w.opcode == OP_DEREG_UNSOL_C));
+
+  //! ---- unsolicited job synthesis (06 §6.7) -------------------------------
+  //! kind -> {command_type, µPC}. A kind whose µprogram has not landed maps
+  //! to E_NOSEND: the job retires without a frame (counted as a drop) rather
+  //! than emitting a well-formed response with an invented empty body.
+  logic [15:0] uns_ct_w;
+  logic [10:0] uns_upc_w;
+  always_comb begin : uns_kind_map
+    unique case (uns_kind_i)
+      PP_UNS_DEREG_C: begin uns_ct_w = OP_DEREG_UNSOL_C; uns_upc_w = UPC_UNSOK_C;  end
+      default:        begin uns_ct_w = 16'd0;            uns_upc_w = UPC_NOSEND_C; end
+    endcase
+  end
+
 
   //! the MVU sub-decode (see the banner): read at the A_PLD exit, where the
   //! four captured words below are settled. `pid_lo_r` is the only new state
@@ -754,11 +853,25 @@ module KL_aecp_engine
   //! {cnd[2:0], beat[1:0]} IS the counters_block quadlet index 0..31 and
   //! sel[7] is free to mean "the counters_valid word instead" (GATHER_EXT
   //! cnd = 8). No decoder, no per-word ROM, no state.
-  assign ctr_req_o        = gx_req_w && !amap_r;
+  assign ctr_req_o        = gx_req_w && !amap_r && !regun_r;
   assign ctr_desc_type_o  = cfg_ix_r;
   assign ctr_desc_index_o = desc_ix_r;
   assign ctr_word_o       = gx_sel_w[7] ? 6'd32
                                         : {1'b0, gx_sel_w[6:4], gx_sel_w[1:0]};
+
+  //! ...and the registry/lock face is the third command-routed client. The
+  //! op code needs no register of its own: REGISTER/DEREGISTER differ in
+  //! opcode bit 0 (0x0024/0x0025) and the LOCK pair rides op[1] (P2). The
+  //! TIME_LIMITED flag is payload flags bit 0, which the walk left in
+  //! `desc_ix_r`; a 2013-format command (§7.4.37.1 "with or without the new
+  //! flags field") never walked that byte, so the cdl term keeps stray slot
+  //! bytes from becoming a flag.
+  assign rgy_req_o   = gx_req_w && regun_r;
+  assign rgy_state_o = gx_sel_w[0];
+  assign rgy_op_o    = {1'b0, cmd_r.opcode[0]};
+  assign rgy_eid_o   = cmd_r.controller_eid;
+  assign rgy_mac_o   = cmd_r.src_mac;
+  assign rgy_tl_o    = (cmd_r.cdl >= 11'd16) && desc_ix_r[0];
 
   //! ...and the audio-map selectors are three points of it (gen_ucode.py
   //! AM_NMAPS 0x00 / AM_GEOM 0x01 / AM_REC 0x10): sel[4] alone separates a
@@ -779,9 +892,11 @@ module KL_aecp_engine
   localparam int unsigned CTO_W_C = $clog2(MEM_TIMEOUT_CYC_P + 1);
   logic [CTO_W_C-1:0] gxf_tmo_r;
   logic               gxf_fail_r;
-  logic               ctr_hold_w, amap_hold_w;
-  assign ctr_hold_w  = gx_req_w && !amap_r && ctr_wait_i  && !gxf_fail_r;
+  logic               ctr_hold_w, amap_hold_w, rgy_hold_w;
+  assign ctr_hold_w  = gx_req_w && !amap_r && !regun_r
+                       && ctr_wait_i  && !gxf_fail_r;
   assign amap_hold_w = gx_req_w &&  amap_r && amap_wait_i && !gxf_fail_r;
+  assign rgy_hold_w  = gx_req_w &&  regun_r && rgy_wait_i && !gxf_fail_r;
 
   //! REGISTERED gather answer - the stage-0 pipeline cut. The integrator's
   //! wait/data cone (ctr_wait_i / amap_wait_i arrive combinationally from
@@ -802,9 +917,11 @@ module KL_aecp_engine
       gxr_valid_r <= 1'b0;
       gxr_data_r  <= 64'd0;
     end else begin
-      gxr_valid_r <= gx_req_w && !(ctr_hold_w || amap_hold_w) && !gxr_valid_r;
+      gxr_valid_r <= gx_req_w && !(ctr_hold_w || amap_hold_w || rgy_hold_w)
+                     && !gxr_valid_r;
       gxr_data_r  <= gxf_fail_r ? 64'd0
                    : amap_r     ? amap_data_i
+                   : regun_r    ? rgy_data_i
                                 : {32'd0, ctr_data_i};
     end
   end
@@ -819,7 +936,7 @@ module KL_aecp_engine
     end else if (a_st_r == A_IDLE) begin
       gxf_tmo_r  <= '0;
       gxf_fail_r <= 1'b0;
-    end else if (ctr_hold_w || amap_hold_w) begin
+    end else if (ctr_hold_w || amap_hold_w || rgy_hold_w) begin
       if (gxf_tmo_r == CTO_W_C'(MEM_TIMEOUT_CYC_P)) gxf_fail_r <= 1'b1;
       else                                          gxf_tmo_r  <= gxf_tmo_r + CTO_W_C'(1);
     end else begin
@@ -906,8 +1023,11 @@ module KL_aecp_engine
       //! to the protocol it asked about. Milan's own 00-1B-C5 has bit 7
       //! clear, which is why GET_MILAN_INFO never showed it and why nothing
       //! in the suite caught it: every protocol_id ever tested was immune.
+      //! ...and an unsolicited response is the ONE sender of u = 1 (IEEE
+      //! §9.2.1.7 via the 9.3.5.4 UNSOLICITED RESPONSE arc): `uns_r` is set
+      //! only for engine-originated jobs, which are AEM by construction
       6'd36: hdr_byte_w = (cmd_r.protocol == PP_PROTO_AEM)
-                          ? {1'b0, raw_ct_r[14:8]}   // AEM: u = 0, solicited
+                          ? {uns_r, raw_ct_r[14:8]}  // AEM: u = solicited?0:1
                           : raw_ct_r[15:8];          // everything else: verbatim
       6'd37: hdr_byte_w = raw_ct_r[7:0];
       default: hdr_byte_w = 8'd0;
@@ -968,11 +1088,17 @@ module KL_aecp_engine
   assign txs_wr_data_o   = frame_byte_w;
   assign txs_wr_commit_o = (a_st_r == A_CMT);
   assign txs_wr_len_o    = TXA_W_C'(frame_len_r);
-  assign txreq_valid_o   = (a_st_r == A_TXW);
-  assign txreq_slot_o    = tx_slot_r;
+  //! one slot register, two lanes: a solicited response requests
+  //! LANE_AECP_SOL, an unsolicited one LANE_AECP_UNS - the F03.5 priority
+  //! split without a second builder or a second slot path
+  assign txreq_valid_o     = (a_st_r == A_TXW) && !uns_r;
+  assign txreq_uns_valid_o = (a_st_r == A_TXW) && uns_r;
+  assign txreq_slot_o      = tx_slot_r;
   assign rxs_free_o      = (a_st_r == A_FREE)
                            && (cmd_r.rx_slot != PP_SLOT_NULL_C);
   assign rxs_free_slot_o = cmd_r.rx_slot[RXS_W_C-1:0];
+  //! the job retirement strobe: sent, voided or no-send all pass A_FREE
+  assign uns_done_o      = (a_st_r == A_FREE) && uns_r;
 
   assign dbg_busy_o     = (a_st_r != A_IDLE) || ucpu_busy_w;
   assign dbg_cmd_cnt_o  = cmd_cnt_r;
@@ -990,8 +1116,9 @@ module KL_aecp_engine
   //! opened when a command is accepted, sealed when its µprogram retires. An
   //! echoed payload never entered the buffer, so it is sealed with length 0
   //! and costs no read burst at all.
-  assign rsp_open_w     = (a_st_r == A_IDLE) && txn_valid_i && !drop_w
-                          && !rsp_busy_w;
+  assign rsp_open_w     = (a_st_r == A_IDLE) && !rsp_busy_w
+                          && ((txn_valid_i && !drop_w)
+                              || (!txn_valid_i && uns_valid_i));
   //! only a µprogram that actually SENT a response is worth sealing: a
   //! retirement without SEND_RESPONSE emits no frame, so it must not leave a
   //! read burst in flight for the next command's `open_i` to trample
@@ -1024,6 +1151,8 @@ module KL_aecp_engine
       echo_r       <= 1'b0;
       ctrs_r       <= 1'b0;
       amap_r       <= 1'b0;
+      regun_r      <= 1'b0;
+      uns_r        <= 1'b0;
       upc_r        <= 11'd0;
       status_r     <= 5'd0;
       bidx_r       <= 11'd0;
@@ -1041,7 +1170,12 @@ module KL_aecp_engine
     end else begin
       unique case (a_st_r)
         A_IDLE: begin
-          if (txn_valid_i) begin
+          //! !rsp_busy_w now guards the TAKE, not just the handshake: the
+          //! pop only happens when txn_ready_o is high, so advancing while
+          //! the previous response's memory burst still held the buffer
+          //! would process the un-popped head TWICE and double-free its RX
+          //! slot. The same guard arms the unsolicited path.
+          if (txn_valid_i && !rsp_busy_w) begin
             cmd_r <= txn_w;
             if (drop_w) begin
               if (drop_cnt_r != 16'hFFFF) drop_cnt_r <= drop_cnt_r + 16'd1;
@@ -1052,6 +1186,8 @@ module KL_aecp_engine
               echo_r     <= echo_w;
               ctrs_r     <= ctrs_w;
               amap_r     <= amap_w;
+              regun_r    <= regun_w;
+              uns_r      <= 1'b0;
               err_mode_r <= 1'b0;
               //! an echo with no RX slot has NO payload to echo: emitting
               //! `cdl - 12` bytes of whatever the slot pool last held would put
@@ -1069,6 +1205,41 @@ module KL_aecp_engine
               sent_r    <= 1'b0;
               a_st_r    <= (txn_w.rx_slot == PP_SLOT_NULL_C) ? A_DISP : A_PLD;
             end
+          end else if (uns_valid_i && !rsp_busy_w) begin
+            //! the unsolicited job: a phantom 03 §4 record with no RX slot
+            //! and no payload walk - the solicited head always outranks it,
+            //! so notifications can never starve the command path. Only the
+            //! fields the response path CONSUMES are loaded (src_mac is the
+            //! DESTINATION, sequence_id is the ENTRY's - Milan §5.4.5.1);
+            //! muxing the whole 393-bit record for them measured about a
+            //! hundred LUTs of pure waste
+            cmd_r.origin         <= PP_ORIGIN_SELF;
+            cmd_r.protocol       <= PP_PROTO_AEM;
+            cmd_r.msg_type       <= 4'd0;        // built as its RESPONSE (+1)
+            cmd_r.cdl            <= 11'd12;
+            cmd_r.src_mac        <= uns_mac_i;
+            cmd_r.controller_eid <= uns_ctlr_eid_i;
+            cmd_r.target_eid     <= entity_id_i;
+            cmd_r.sequence_id    <= uns_seq_i;
+            cmd_r.opcode         <= uns_ct_w;
+            cmd_r.rx_slot        <= PP_SLOT_NULL_C;
+            upc_r      <= uns_upc_w;
+            echo_r     <= 1'b0;
+            ctrs_r     <= 1'b0;
+            amap_r     <= 1'b0;
+            regun_r    <= 1'b0;
+            uns_r      <= 1'b1;
+            err_mode_r <= 1'b0;
+            pld_cmd_r  <= 11'd0;
+            pld_r      <= 11'd0;
+            cfg_ix_r   <= uns_desc_type_i;
+            desc_ix_r  <= uns_desc_index_i;
+            desc_ty_r  <= 16'd0;
+            raw_ct_r   <= uns_ct_w;
+            walk_r     <= 11'd0;
+            pid_lo_r   <= 2'b00;
+            sent_r     <= 1'b0;
+            a_st_r     <= A_DISP;
           end
         end
 
@@ -1099,6 +1270,14 @@ module KL_aecp_engine
               upc_r  <= UPC_NOTIMPL_C;
               echo_r <= 1'b1;
             end
+            //! ...and the registration pair re-dispatches HERE, off its
+            //! registered discriminator - the pop decode left it on the
+            //! NOT_IMPLEMENTED echo, which is also why `echo_r` is already
+            //! the 1 both programs want (the REGISTER response's flags field
+            //! is the command's own, §7.4.37.1 "share the same format")
+            if (regun_r) begin
+              upc_r <= cmd_r.opcode[0] ? UPC_DEREG_C : UPC_REGUN_C;
+            end
             a_st_r <= A_DISP;
           end
           //! the RX pool answers one cycle after rd_en: byte for index
@@ -1126,13 +1305,16 @@ module KL_aecp_engine
               //! not the bytes), GET_COUNTERS' and GET_AUDIO_MAP's
               //! descriptor_index, and READ_DESCRIPTOR's reserved field,
               //! which nobody keeps
+              //! ...a REGISTER command's flags[15:0] land here too: the
+              //! TIME_LIMITED bit is @27 bit 0 (Table 7-147), so `desc_ix_r`
+              //! holds the flags' low half for the rgy face to read
               11'd4: begin
                 pid_lo_r[1] <= (rxs_rd_data_i == MVU_PID_L1_C);
-                if (ctrs_r || amap_r) desc_ix_r[15:8] <= rxs_rd_data_i;
+                if (ctrs_r || amap_r || regun_r) desc_ix_r[15:8] <= rxs_rd_data_i;
               end
               11'd5: begin
                 pid_lo_r[0] <= (rxs_rd_data_i == MVU_PID_L0_C);
-                if (ctrs_r || amap_r) desc_ix_r[7:0]  <= rxs_rd_data_i;
+                if (ctrs_r || amap_r || regun_r) desc_ix_r[7:0]  <= rxs_rd_data_i;
               end
               11'd6: if (!ctrs_r) desc_ty_r[15:8] <= rxs_rd_data_i;
               11'd7: if (!ctrs_r) desc_ty_r[7:0]  <= rxs_rd_data_i;
@@ -1222,7 +1404,9 @@ module KL_aecp_engine
           a_st_r <= A_TXW;
         end
 
-        A_TXW: if (txreq_ready_i) a_st_r <= A_FREE;
+        A_TXW: if (uns_r ? txreq_uns_ready_i : txreq_ready_i) begin
+          a_st_r <= A_FREE;
+        end
 
         A_FREE: a_st_r <= A_IDLE;
 
