@@ -537,13 +537,21 @@ int main(int argc, char** argv) {
   // grades it against real AECPDU bytes.
   {
     const uint16_t DESC_STREAM_INPUT = 0x0005;
-    CHECK(h.run(E_GCTRS, DESC_STREAM_INPUT, false), "P18 completes");
+    //! the locate-first contract (this round): r14 is the store key
+    //! {index, type, cfg 0} and r13 = {type, index} for the one FMT_D emit
+    const uint64_t CT_KEY  = 0x0000000700050000ull;   // STREAM_INPUT[7], hit
+    const uint64_t CT_TYIX = 0x0000000000050007ull;
+    CHECK(h.run(E_GCTRS, CT_KEY, false, 2000, CT_TYIX), "P18 completes");
     CHECK(h.last_status == ST_OK, "P18 status got %u", h.last_status);
     // 12 header + type 2 + index 2 + counters_valid 4 + 32 x 4 = 148, which is
     // the control_data_length of a 160-byte GET_COUNTERS response (F06.14)
     CHECK(h.last_len == 148, "P18 len got %u, want 148", h.last_len);
     CHECK(h.sends == 1, "P18 one send got %d", h.sends);
-    CHECK(h.w32(12) == ((uint32_t)(OPD1 & 0xFFFF) << 16) | DESC_STREAM_INPUT,
+    //! the old form of this check was an operator-precedence TAUTOLOGY
+    //! ((a == b) | DESC_STREAM_INPUT: always nonzero) - found when the
+    //! locate-first landing changed the layout and it stayed green.
+    //! Parenthesized now, and graded against the FMT_D {type, index} emit.
+    CHECK(h.w32(12) == (uint32_t)(CT_TYIX & 0xFFFFFFFFu),
           "P18 {type, index} got %08x", h.w32(12));
     CHECK(h.w32(16) == (uint32_t)h.gxval(0x80),
           "P18 counters_valid comes from selector 0x80, got %08x", h.w32(16));
@@ -557,6 +565,30 @@ int main(int argc, char** argv) {
     CHECK(h.w32(148) == 0, "P18 wrote past the 32-quadlet block");
     CHECK(h.commits == 0 && h.nvm_marks.empty() && h.notify_classes.empty(),
           "P18 a GET has no effects");
+  }
+
+  // ---- P18b: the locate miss answers NO_SUCH_DESCRIPTOR, zero body --------
+  // (this round's first strictness rule: Table 7-141 "A descriptor with the
+  //  descriptor_type and descriptor_index specified does not exist" - and
+  //  the fixed Figure 7-67 body still emits, all zero, with the gather face
+  //  NEVER consulted: the store, not the face, is the existence authority)
+  {
+    const uint64_t CT_MISS = 0x00000BAD00050000ull;   // the store-miss index
+    const uint64_t CT_TYIX = 0x0000000000050BADull;
+    CHECK(h.run(E_GCTRS, CT_MISS, false, 4000, CT_TYIX), "P18b completes");
+    CHECK(h.last_status == ST_NOSUCH,
+          "P18b status NO_SUCH_DESCRIPTOR got %u", h.last_status);
+    CHECK(h.last_len == 148, "P18b the fixed body still emits, len %u",
+          h.last_len);
+    CHECK(h.w32(12) == 0x00050BADu, "P18b {type, index} echoed, got %08x",
+          h.w32(12));
+    CHECK(h.w32(16) == 0, "P18b counters_valid ZERO, got %08x", h.w32(16));
+    int nz = 0;
+    for (int n = 0; n < 32; ++n) if (h.w32(20 + 4 * n) != 0) ++nz;
+    CHECK(nz == 0, "P18b %d nonzero quadlets in a NO_SUCH_DESCRIPTOR body", nz);
+    CHECK(h.gx_sels.empty(),
+          "P18b the face was asked %zu times about a nonexistent object",
+          h.gx_sels.size());
   }
 
   // ---- P19: GET_AUDIO_MAP lays out IEEE §7.4.44.2's response --------------

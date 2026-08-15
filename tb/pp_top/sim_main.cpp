@@ -2430,18 +2430,62 @@ int main(int argc, char** argv) {
           got[46 + 24] == 0 && got[46 + 28] == 0,
           "K3: an unclaimed counter still put bytes in the block");
 
-    // ---- K4: ENTITY — SUCCESS with an EMPTY mask, still full size ---------
-    // IEEE Table 7-150 gives the ENTITY descriptor nothing but ENTITY_SPECIFIC
-    // bits and Milan makes none of them mandatory, so the honest answer is
-    // "no counters here" (§7.4.42.2: a SET bit means the quadlet is valid) —
-    // not a mask of ones over a block that never moves
-    got = cmd(AEM_GET_COUNTERS, ctr_pl(DT_ENTITY, 0), 0xD003);
-    want = expect(AECP_SUCCESS, AEM_GET_COUNTERS, 0xD003,
-                  ctr_expect_pl(DT_ENTITY, 0));
-    CHECK(got == want, "K4: ENTITY GET_COUNTERS is not byte-exact");
-    CHECK(got.size() == 38 + 136,
-          "K4: an empty mask still owes the full block, got %zu B", got.size());
-    CHECK(valid_mask_of(got) == 0, "K4: ENTITY claimed counters it has none of");
+    // ---- K4: ENTITY — NOT_SUPPORTED, command echoed (this round) ----------
+    // The bench probe's second strictness rule upgraded the old SUCCESS-
+    // empty-mask answer: IEEE Table 7-150 gives the ENTITY descriptor
+    // nothing but ENTITY_SPECIFIC bits, Milan makes none of them mandatory,
+    // and Table 7-141's NOT_SUPPORTED ("the command is implemented but the
+    // target of the command is not supported") says that plainly instead of
+    // succeeding over a mask of zeros. The supported set is exactly
+    // {STREAM_INPUT, AVB_INTERFACE, CLOCK_DOMAIN}.
+    {
+      auto e_pl = ctr_pl(DT_ENTITY, 0);
+      got = cmd(AEM_GET_COUNTERS, e_pl, 0xD003);
+      want = expect(11, AEM_GET_COUNTERS, 0xD003, e_pl);
+      CHECK(got == want,
+            "K4: ENTITY GET_COUNTERS is not the NOT_SUPPORTED echo");
+      if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+    }
+    // ...and STREAM_OUTPUT refuses the same way even though its DESCRIPTOR
+    // exists in the image: the gate is the supported-counter SET, not
+    // existence (this build keeps no output counters - recorded)
+    {
+      auto o_pl = ctr_pl(0x0006, 0);
+      got = cmd(AEM_GET_COUNTERS, o_pl, 0xD00B);
+      want = expect(11, AEM_GET_COUNTERS, 0xD00B, o_pl);
+      CHECK(got == want,
+            "K4b: STREAM_OUTPUT counters refuse NOT_SUPPORTED (recorded gap)");
+    }
+    // ...while the OTHER two supported types keep their old answers - this
+    // TB's face backs only STREAM_INPUT, so both come back SUCCESS with an
+    // empty mask over a real, located object (the parent's [CTRS2] proves
+    // the real masks)
+    {
+      got = cmd(AEM_GET_COUNTERS, ctr_pl(0x0009, 0), 0xD00C);
+      want = expect(AECP_SUCCESS, AEM_GET_COUNTERS, 0xD00C,
+                    ctr_expect_pl(0x0009, 0));
+      CHECK(got == want, "K4c: AVB_INTERFACE 0 stays SUCCESS (empty here)");
+      got = cmd(AEM_GET_COUNTERS, ctr_pl(0x0024, 0), 0xD00D);
+      want = expect(AECP_SUCCESS, AEM_GET_COUNTERS, 0xD00D,
+                    ctr_expect_pl(0x0024, 0));
+      CHECK(got == want, "K4d: CLOCK_DOMAIN 0 stays SUCCESS (empty here)");
+    }
+    // ---- K4e: a NONEXISTENT index refuses NO_SUCH_DESCRIPTOR --------------
+    // (the probe's first strictness rule: Table 7-141 "A descriptor with the
+    //  descriptor_type and descriptor_index specified does not exist"). The
+    //  fixed Figure 7-67 body still emits, all zero, and the counters face
+    //  is NEVER consulted about an object the store refused.
+    {
+      uint64_t reads0 = h.ctr_reads;
+      got = cmd(AEM_GET_COUNTERS, ctr_pl(DT_STREAM_INPUT, 2), 0xD00E);
+      want = expect(AECP_NO_SUCH_DESCRIPTOR, AEM_GET_COUNTERS, 0xD00E,
+                    ctr_expect_pl(DT_STREAM_INPUT, 2));
+      CHECK(got == want,
+            "K4e: index 2 is NO_SUCH_DESCRIPTOR with the zero-flagged body");
+      if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+      CHECK(h.ctr_reads == reads0,
+            "K4e: the face was asked about a nonexistent object");
+    }
 
     // ---- K5: a truncated GET_COUNTERS is BAD_ARGUMENTS -------------------
     // §7.4.42.1's command is descriptor_type + descriptor_index; answering

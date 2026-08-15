@@ -331,6 +331,21 @@ ADD/REMOVE_AUDIO_MAPPINGS stay NOT_IMPLEMENTED (recorded).
 
 ### 6.6 GET_COUNTERS and the counters subsystem
 
+**Strictness upgrade (2026-08-15, the bench probe round)** — the SUCCESS-empty-mask
+answer is now said only about a REAL object of a SUPPORTED type: `E_GCTRS` opens
+with the store locate (the same RGN_LOCATE `E_GAMAP` opens with), so a
+descriptor_index the image lacks refuses Table 7-141's NO_SUCH_DESCRIPTOR ("A
+descriptor with the descriptor_type and descriptor_index specified does not exist")
+carrying the fixed Figure 7-67 body all-zero, with the counters face never
+consulted; and a descriptor_type outside the supported set {STREAM_INPUT,
+AVB_INTERFACE, CLOCK_DOMAIN} refuses NOT_SUPPORTED ("the command is implemented
+but the target of the command is not supported") with the command echoed, off the
+registered A_PLD-exit re-dispatch. ENTITY (Table 7-150: nothing but
+ENTITY_SPECIFIC bits) and STREAM_OUTPUT (this build keeps no output counters —
+recorded) both land on that arm. The integrator's wrong-object guard on the face
+stays as the second line of defense. §7.4.42 defines no separate error form, so
+every status carries the fixed 160-byte response.
+
 Response: `descriptor_type @24`, `descriptor_index @26`, `counters_valid @28`,
 32 × u32 block @32 (cdl 148). `counters_valid` bit N (MSB-first) ⇔ block offset 4·N.
 Counters are 32-bit wrapping; interval-latched events sample at `T-CTR-OBSERVE`; adapters accumulate ticks so nothing is lost between observations.

@@ -102,6 +102,20 @@
 //                set means the associated quadlet exists and is valid"). Never
 //                a hang, and never a block of zeros advertised as valid.
 //
+//                ...AND THE EMPTY MASK IS ONLY EVER SAID ABOUT A REAL OBJECT
+//                (the bench probe's two strictness rules): E_GCTRS opens with
+//                the store locate, so a descriptor_index the image lacks
+//                answers NO_SUCH_DESCRIPTOR with the fixed body zeroed and
+//                the face never asked — the store, not the face, is the
+//                existence authority, exactly as it is for GET_AUDIO_MAP.
+//                And a descriptor_type this build keeps no counters for
+//                (anything outside STREAM_INPUT / AVB_INTERFACE /
+//                CLOCK_DOMAIN — ENTITY included, whose Table 7-150 has
+//                nothing but ENTITY_SPECIFIC bits) refuses NOT_SUPPORTED at
+//                the registered A_PLD-exit re-dispatch, command echoed. The
+//                integrator's wrong-object guard on the face stays as the
+//                second line, never the answer.
+//
 //                THE AUDIO-MAP FACE IS THE SAME BARGAIN (06 §6.5; IEEE
 //                §7.4.44, Milan §5.4.2.26). The dynamic mappings live in the
 //                integrator's routing fabric - for the reference platform,
@@ -503,6 +517,7 @@ module KL_aecp_engine
   localparam logic [15:0] OP_GET_AVB_INFO_C    = 16'h0027;
   localparam logic [15:0] OP_GET_AS_PATH_C     = 16'h0028;
   localparam logic [15:0] DT_AVB_INTERFACE_C   = 16'h0009;
+  localparam logic [15:0] DT_CLOCK_DOMAIN_C    = 16'h0024;
   //! Table 7-1: the two descriptor types the audio-map µprograms serve -
   //! every other type keeps the NOT_IMPLEMENTED echo
   localparam logic [15:0] DT_STREAM_PORT_IN_C  = 16'h000E;
@@ -748,10 +763,10 @@ module KL_aecp_engine
   //! 4-byte {type, index} stub IEEE §7.4.5 wants on a failed READ_DESCRIPTOR
   //! (the µISA has no shift, so every field a µprogram emits has to arrive
   //! right-justified in some register).
-  //! GET_COUNTERS reuses both without a mux: §7.4.42.1 has descriptor_type at
-  //! @24 and descriptor_index at @26, the walk below puts them in `cfg_ix_r`
-  //! and `desc_ix_r`, and `desc_ty_r` stays 0 — so r14[15:0] is the type it
-  //! emits at @24 and r13[15:0] is the index it emits at @26.
+  //! GET_COUNTERS rides the SAME two shapes as GET_STREAM_INFO now that its
+  //! program opens with the store locate: r14 is the locate key and r13
+  //! packs {descriptor_type, descriptor_index} so one FMT_D BUILD_FLD lays
+  //! @24..@27 in wire order.
   //! GET_AUDIO_MAP is the one shape that needs a mux, because its µprogram
   //! consumes the registers TWO ways at once: r14 is the store's locate key
   //! ({index, type, cfg} - GET_AUDIO_MAP names no configuration_index and
@@ -764,13 +779,14 @@ module KL_aecp_engine
   //! the dispatch strobe (stage-0 pipeline: operand shaping must reach the
   //! µCPU's register file from flops, never as a live mux cone - the walk
   //! registers are settled a full state earlier, so the latch costs nothing)
-  assign opd0_w = (amap_r || gstri_r || gavb_r)
+  assign opd0_w = (amap_r || gstri_r || gavb_r || ctrs_r)
                             ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
                 : gasp_r    ? {16'd0, cfg_ix_r, DT_AVB_INTERFACE_C, 16'd0}
                 : lockc_r   ? {32'd0, cfg_ix_r, desc_ix_r}
                             : {16'd0, desc_ix_r, desc_ty_r, cfg_ix_r};
   assign opd1_w = amap_r               ? {32'd0, desc_ix_r, desc_ty_r}
-                : (gstri_r || gavb_r)  ? {32'd0, cfg_ix_r, desc_ix_r}
+                : (gstri_r || gavb_r || ctrs_r)
+                                       ? {32'd0, cfg_ix_r, desc_ix_r}
                 : gasp_r               ? {48'd0, cfg_ix_r}
                                        : {32'd0, desc_ty_r, desc_ix_r};
 
@@ -1433,6 +1449,21 @@ module KL_aecp_engine
                 upc_r  <= UPC_LOCKEN_C;
                 echo_r <= 1'b0;
               end
+            end
+            //! GET_COUNTERS' type gate, at the same registered seam (the
+            //! bench probe's second strictness rule): §7.4.42.2 admits five
+            //! target types and this build keeps counters for three -
+            //! STREAM_INPUT, AVB_INTERFACE, CLOCK_DOMAIN. Any other type is
+            //! Table 7-141's NOT_SUPPORTED ("the command is implemented but
+            //! the target of the command is not supported") with the
+            //! command echoed - never SUCCESS over an empty mask. `ctrs_r`
+            //! stays set: E_NSUPPE runs no gathers, so the gx routing it
+            //! selects is never consulted on this arm.
+            if (ctrs_r && (cfg_ix_r != DT_STREAM_INPUT_C)
+                && (cfg_ix_r != DT_AVB_INTERFACE_C)
+                && (cfg_ix_r != DT_CLOCK_DOMAIN_C)) begin
+              upc_r  <= UPC_NSUPPE_C;
+              echo_r <= 1'b1;
             end
             //! GET_STREAM_INFO: §7.4.16.1's command is descriptor_type +
             //! descriptor_index and nothing else, so cdl 16 is the whole

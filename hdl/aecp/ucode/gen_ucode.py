@@ -478,34 +478,56 @@ place(E_MVUINFO, [
 # Milan Table 5.16 exactly (mask 0x00000F3F), and a STREAM_INPUT answer missing
 # one bit of it costs the entity the Milan compatibility flag.
 #
-# Figure 7-67 fixes the response: descriptor_type @24, descriptor_index @26,
-# counters_valid @28, then a block of THIRTY-TWO quadlets @32..@156. The block
-# is fixed-size on every status, so the payload is 136 B, the AECPDU 160 B and
-# control_data_length 148 — the offset-from-@12 convention (F06.14).
+# Figure 7-67 fixes ONE response for every status: descriptor_type @24,
+# descriptor_index @26, counters_valid @28, then a block of THIRTY-TWO
+# quadlets @32..@156 - payload 136 B, AECPDU 160 B, control_data_length 148
+# (the offset-from-@12 convention, F06.14). §7.4.42 defines no separate error
+# form, so an error answer carries the same fixed body with counters_valid 0
+# and a zero block - nothing exists, nothing claimed.
 #
-# There is NO branch and NO status arm in this program, and that is a decision.
-# counters_valid bit n means "quadlet n exists and is valid" (§7.4.42.2), so a
-# descriptor this build keeps no counters for is answered SUCCESS with a mask of
-# zero: honest ("I have none") rather than a mask of ones over a block of zeros,
-# which is the advertised-zero lie the campaign has already had to remove twice.
-# ENTITY is that case by the standard itself — Table 7-150 has nothing but
-# ENTITY_SPECIFIC bits, none of them Milan-mandatory.
+# EXISTENCE IS THE STORE'S, the bench probe's first strictness rule: the
+# program opens with the same RGN_LOCATE E_GAMAP opens with, so a
+# descriptor_index the image lacks answers Table 7-141's NO_SUCH_DESCRIPTOR
+# ("A descriptor with the descriptor_type and descriptor_index specified does
+# not exist") for exactly the indices READ_DESCRIPTOR refuses - never SUCCESS
+# over an empty mask. The MISS arm emits the fixed zero body WITHOUT touching
+# the gather face at all: the integrator's wrong-object guard stays as the
+# second line of defense, not the answer. (The type gate - GET_COUNTERS on a
+# type this build keeps no counters for answers NOT_SUPPORTED - lives in
+# KL_aecp_engine's registered A_PLD-exit re-dispatch, not here: the refused
+# command never dispatches this program.)
 #
-# The register contract, set by KL_aecp_engine at dispatch:
-#   r14[15:0] = descriptor_type   (AECPDU @24)
-#   r13[15:0] = descriptor_index  (AECPDU @26)
-# The µISA has no shift, so each field arrives right-justified in its own
-# register; the 32 quadlets never touch a register at all, READ_CTRS moving them
-# gather-port-to-response-buffer one beat at a time.
+# The register contract, set by KL_aecp_engine at dispatch (now the same
+# shape as E_GSTRI's):
+#   r14 = {16'd0, descriptor_index, descriptor_type, 16'd0} - the store's
+#         locate key on st_wdata ({index, type, cfg 0})
+#   r13 = {32'd0, descriptor_type, descriptor_index} - one FMT_D BUILD_FLD
+#         lays @24..@27 in wire order
+# The 32 quadlets never touch a register, READ_CTRS moving them gather-port-
+# to-response-buffer one beat at a time; the MISS arm's 33 zero dwords ride
+# the APPEND iterator instead.
 place(E_GCTRS, [
-    u('GATHER_EXT', rd=1, cnd=GX_CTR_MASK_CND, imm=0),   # counters_valid
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),               # miss -> NSD
+    u('BR_STATUS', cnd=0, imm=E_GCTRS + 17),             # miss: the zero body
     u('SET_STATUS', imm=ST_OK),
+    u('GATHER_EXT', rd=1, cnd=GX_CTR_MASK_CND, imm=0),   # counters_valid
     u('BUILD_HDR', ra=15, rb=13),
-    u('BUILD_FLD', ra=14, fmt=FMT_W),            # descriptor_type   @24
-    u('BUILD_FLD', ra=13, fmt=FMT_W),            # descriptor_index  @26
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
     u('BUILD_FLD', ra=1,  fmt=FMT_D),            # counters_valid    @28
 ] + [u('READ_CTRS', cnd=c) for c in GX_CTR_BLOCK_CND] + [   # 32 quadlets @32
     u('SEND_RESP'),
+    u('END'),
+    # miss arm (E_GCTRS + 17): the same fixed body, all zero, no gathers
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('MOVE', rd=6, ra=0, imm=33),               # mask dword + 32 quadlets
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('ITER_OPEN', ra=6),
+    u('BR_STATUS', cnd=1, imm=E_GCTRS + 26),     # loop: test FIRST
+    u('APPEND', ra=2, fmt=FMT_D),
+    u('ITER_NEXT'),
+    u('BRANCH', imm=E_GCTRS + 22),
+    u('SEND_RESP'),                              # out:
     u('END'),
 ])
 
