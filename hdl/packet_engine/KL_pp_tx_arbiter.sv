@@ -128,20 +128,38 @@ module KL_pp_tx_arbiter
   end
 
   // ------------------------------------------------------------ selection
+  //! REGISTERED slot-side qualification (stage-0 pipeline cut). The
+  //! tx_slot_i buses arrive from engine slot registers across the whole
+  //! processor, and the != NULL compare used to feed the selection loop and
+  //! from there the aging/grant counter enables combinationally - measured
+  //! on the reference part as a 16-level, 4-carry failing path
+  //! (tx_slot_r -> cnt_r). The qualification now lands in pend_r first;
+  //! every request is held until grant by contract (the banner's
+  //! precondition), so one cycle of arbitration latency changes which
+  //! CYCLE a frame starts, never whether it starts.
+  logic [N_REQ_P-1:0]    pend_r;
   logic [N_REQ_P-1:0]    pend_w;
   logic                  sol_pend_w;
   logic [N_REQ_P-1:0]    elig_w;
   logic                  pick_ok_w;
   logic [REQ_IX_W_C-1:0] pick_w;
 
+  always_ff @(posedge clk_i) begin : slot_qualify
+    if (!rst_n) begin
+      pend_r <= '0;
+    end else begin
+      for (int i = 0; i < int'(N_REQ_P); i++) begin
+        pend_r[i] <= req_valid_i[i]
+                     && (tx_slot_i[i] != SLOT_W_C'(PP_SLOT_NULL_C));
+      end
+    end
+  end
+
   always_comb begin : selection
     logic [2:0] key_w, best_w;
     // a PP_SLOT_NULL_C handle means "no payload" (pp_pkg): never a grant.
     // The cast is identity at the F01.5 shape (SLOT_W_C = 3 = handle width).
-    pend_w = '0;
-    for (int i = 0; i < int'(N_REQ_P); i++)
-      pend_w[i] = req_valid_i[i]
-                  && (tx_slot_i[i] != SLOT_W_C'(PP_SLOT_NULL_C));
+    pend_w = pend_r;
     sol_pend_w = |(pend_w & SOLICITED_MASK_P);
     // pacing first (03 §8): after a non-solicited frame, only solicited
     // requesters are eligible while any wait — pacing outranks aging

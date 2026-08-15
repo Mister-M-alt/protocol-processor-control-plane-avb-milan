@@ -581,10 +581,16 @@ module KL_aecp_engine
   //! FMT_D BUILD_FLD lays @26..@29 in wire order while r13[15:0] is the
   //! right-justified map_index CHECK_ARG compares (the µISA has no shift).
   //! `desc_ty_r` holds map_index for this command - see the payload walk.
+  //! The muxes below land in opd0_r/opd1_r on the A_DISP cycle that raises
+  //! the dispatch strobe (stage-0 pipeline: operand shaping must reach the
+  //! µCPU's register file from flops, never as a live mux cone - the walk
+  //! registers are settled a full state earlier, so the latch costs nothing)
   assign opd0_w = amap_r ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
                          : {16'd0, desc_ix_r, desc_ty_r, cfg_ix_r};
   assign opd1_w = amap_r ? {32'd0, desc_ix_r, desc_ty_r}
                          : {32'd0, desc_ty_r, desc_ix_r};
+
+  logic [63:0] opd0_r, opd1_r;
 
   logic        st_req_w, st_we_w, st_name_w;
   logic [19:0] st_addr_w;
@@ -607,8 +613,8 @@ module KL_aecp_engine
       .disp_ready_o       (disp_ready_w),
       .disp_upc_i         (upc_r),
       .disp_ctlr_eid_i    (cmd_r.controller_eid),
-      .disp_opd0_i        (opd0_w),
-      .disp_opd1_i        (opd1_w),
+      .disp_opd0_i        (opd0_r),
+      .disp_opd1_i        (opd1_r),
       .st_req_o           (st_req_w),
       .st_we_o            (st_we_w),
       .st_name_o          (st_name_w),
@@ -777,10 +783,34 @@ module KL_aecp_engine
   assign ctr_hold_w  = gx_req_w && !amap_r && ctr_wait_i  && !gxf_fail_r;
   assign amap_hold_w = gx_req_w &&  amap_r && amap_wait_i && !gxf_fail_r;
 
-  assign gx_valid_w = !(ctr_hold_w || amap_hold_w);
-  assign gx_data_w  = gxf_fail_r ? 64'd0
-                    : amap_r     ? amap_data_i
-                                 : {32'd0, ctr_data_i};
+  //! REGISTERED gather answer - the stage-0 pipeline cut. The integrator's
+  //! wait/data cone (ctr_wait_i / amap_wait_i arrive combinationally from
+  //! OUTSIDE this processor) used to run through gx_valid_w into the µCPU's
+  //! E-stage stall and from there into the µcode ROM's address-register
+  //! enable: measured on the reference part as the failing 12-plus-level
+  //! path into u_ucpu upc_r (ENARDEN/ADDRARDADDR). The answer is now
+  //! latched HERE, so the µCPU's stall sees one flop. `!gxr_valid_r` in the
+  //! arm makes the valid a one-cycle pulse per answered beat - without it a
+  //! multi-beat READ_CTRS would take beat n's registered data a second time
+  //! while the selector was still moving to beat n+1. One extra cycle per
+  //! gather beat, invisible at AECP rates.
+  logic        gxr_valid_r;
+  logic [63:0] gxr_data_r;
+
+  always_ff @(posedge clk_i) begin : gather_answer
+    if (!rst_n) begin
+      gxr_valid_r <= 1'b0;
+      gxr_data_r  <= 64'd0;
+    end else begin
+      gxr_valid_r <= gx_req_w && !(ctr_hold_w || amap_hold_w) && !gxr_valid_r;
+      gxr_data_r  <= gxf_fail_r ? 64'd0
+                   : amap_r     ? amap_data_i
+                                : {32'd0, ctr_data_i};
+    end
+  end
+
+  assign gx_valid_w = gxr_valid_r;
+  assign gx_data_w  = gxr_data_r;
 
   always_ff @(posedge clk_i) begin : gather_watchdog
     if (!rst_n) begin
@@ -1001,6 +1031,8 @@ module KL_aecp_engine
       err_mode_r   <= 1'b0;
       tx_slot_r    <= '0;
       disp_valid_r <= 1'b0;
+      opd0_r       <= 64'd0;
+      opd1_r       <= 64'd0;
       sent_r       <= 1'b0;
       cmd_cnt_r    <= 16'd0;
       resp_cnt_r   <= 16'd0;
@@ -1112,6 +1144,13 @@ module KL_aecp_engine
         end
 
         A_DISP: begin
+          //! stage-0 operand latch: the strobe rises one cycle into A_DISP,
+          //! so the operand muxes settle into flops before the µCPU's
+          //! preload (S_PRE1/S_PRE0) ever reads them
+          if (!disp_valid_r) begin
+            opd0_r <= opd0_w;
+            opd1_r <= opd1_w;
+          end
           disp_valid_r <= 1'b1;
           if (disp_valid_r && disp_ready_w) begin
             disp_valid_r <= 1'b0;

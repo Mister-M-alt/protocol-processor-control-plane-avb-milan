@@ -101,6 +101,14 @@ struct Eng {
   long e_onehot = 0, e_pulse = 0, e_gnt_midframe = 0, e_stall = 0, e_alloc = 0;
   int  idle_wait = 0;
   bool prev_gnt = false;
+  // The DUT registers its slot-side qualification (stage-0 pipeline: the
+  // != NULL compare on the far-traveling slot buses lands in pend_r before
+  // the selection loop sees it), so every arbitration decision - grant pick,
+  // aging, pacing - is made on the PREVIOUS cycle's pending set. The model
+  // mirrors that with this one-cycle-delayed view; requests are held until
+  // grant by contract, so the delay changes which cycle a frame starts,
+  // never which frame.
+  uint32_t pend_q = 0;
 
   explicit Eng(Vtx_arbiter_harness* d) : dut(d) { memset(img, 0, sizeof img); }
 
@@ -167,13 +175,13 @@ struct Eng {
       if (prev_gnt)    e_pulse++;
       int w = __builtin_ctz(g);
       if (in_service)  e_gnt_midframe++;
-      int exp = ref.decide(pend_pre);
+      int exp = ref.decide(pend_q);
       if (exp != w) {
         e_gnt_mismatch++;
         printf("  gnt mismatch: dut=%d model=%d pend=%02x pace=%d\n",
-               w, exp, pend_pre, int(ref.pace_nonsol));
+               w, exp, pend_q, int(ref.pace_nonsol));
       }
-      ref.edge(w, pend_pre, tick_pre);     // DUT-history bookkeeping
+      ref.edge(w, pend_q, tick_pre);       // DUT-history bookkeeping
       // frame capture from the model's own image of the presented slot
       srv_req  = w;
       srv_slot = slot_field[w];
@@ -184,7 +192,7 @@ struct Eng {
       req_mask &= ~(1u << w);              // requester drops after grant
       idle_wait = 0;
     } else {
-      ref.edge(-1, pend_pre, tick_pre);
+      ref.edge(-1, pend_q, tick_pre);
       if (pend_pre != 0 && !in_service) {
         if (++idle_wait > 80) { e_stall++; idle_wait = 0; }
       } else {
@@ -192,6 +200,7 @@ struct Eng {
       }
     }
     prev_gnt = (g != 0);
+    pend_q = pend_pre;
   }
 
   void run(int n) { for (int i = 0; i < n; ++i) step(); }
