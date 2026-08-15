@@ -199,6 +199,22 @@ status (`NO_SUCH_DESCRIPTOR` / `BAD_ARGUMENTS` for a bad config index) with the 
 
 ### 6.2 GET_STREAM_INFO — the Milan 80-byte response and its data lineage
 
+**Realization status (2026-08-15, `E_GSTRI` + the `gsi_*` face)** — LANDED for
+STREAM_INPUT and STREAM_OUTPUT: the Milan §5.4.2.10 80-byte response (cdl 68) with
+flags_ex and the pbsta/acmpsta byte. Existence is the descriptor store's (a locate
+miss answers NO_SUCH_DESCRIPTOR carrying the full, zero-flagged body); every VALUE
+and VALIDITY FLAG rides the shared Milan-info gather face (`gsi_kind` 0, word
+selectors 0..7 = flags / stream_format / stream_id / msrp_accumulated_latency /
+{dest_mac, failure_code} / failure_bridge_id / {vlan, flags_ex} / {pbsta, acmpsta}),
+because the truth lives in the integrator's binding view, SRP registrars, format
+registers and probing state — an unwired face answers all-zero flags: every field
+honestly absent. Non-stream targets refuse NOT_SUPPORTED with the command echoed;
+short commands BAD_ARGUMENTS; a wedged face voids to ENTITY_MISBEHAVING. The Table
+5.22 notification class is live for the events the fabric observes: sink bound /
+settled / torn-down and registered-Talker-attribute changes, source declaration
+open/close and registered-Listener changes. NOT observed (recorded): started/stopped
+(no START/STOP_STREAMING implementation — a bound input is always started).
+
 <a id="fig-06-streaminfo"></a>**F06.12 — Response payload @24..@79** (Milan Fig 5.1,
 renames Δ6; legacy controllers ignore @72+, Milan controllers detect the extension via
 `control_data_length`; lanes bottom→top = wire order, `@n` byte offsets authoritative)

@@ -327,7 +327,7 @@ verification).
 | REQ-AEM-007 | Milan §5.4.2.5 | SET_CONFIGURATION rejected with STREAM_IS_RUNNING if any input bound or output streaming; lock-protected | shall | A | [GAP-01](#gap-01) | CFG_BARRIER + guard | 03 §6, 06 §6.4 | DIR |
 | REQ-AEM-008 | Milan §5.4.2.7 | SET_STREAM_FORMAT: STREAM_IS_RUNNING / BAD_ARGUMENTS (mapping refs channel absent in new format) | shall | A | [GAP-01](#gap-01) | validation chain | 06 §6.4 | DIR |
 | REQ-AEM-009 | Milan §5.4.2.9 | SET_STREAM_INFO: OUTPUT only (INPUT → NOT_SUPPORTED); MSRP_ACC_LAT_VALID sets presentation offset 0..0x7FFFFFFF ns; any unsupported sub-flag ⇒ whole command NOT_SUPPORTED | shall | A | [GAP-01](#gap-01) | F06.14 row | 06 §6.3 | DIR |
-| REQ-AEM-010 | Milan §5.4.2.10 | GET_STREAM_INFO: Milan 80-B extended response (flags_ex, pbsta, acmpsta); renamed flags; full validity matrix | shall | A | [GAP-01](#gap-01) | F06.12/F06.13 | 06 §6.2 | DIR |
+| REQ-AEM-010 | Milan §5.4.2.10 | GET_STREAM_INFO: Milan 80-B extended response (flags_ex, pbsta, acmpsta); renamed flags; full validity matrix | shall | C | [GAP-01](#gap-01) | E_GSTRI + gsi face (landed; validity matrix = integrator serving the face) | 06 §6.2 | DIR |
 | REQ-AEM-011 | Milan §5.4.2.11/.12 | SET/GET_NAME for all names of implemented descriptors; persisted | shall | A | [GAP-09](#gap-09) | name table + NVM | 07 §3/§5 | NVM |
 | REQ-AEM-012 | Milan §5.4.2.13/.14 | SET/GET_SAMPLING_RATE per Audio Unit; may NOT_SUPPORTED when mappings mismatch and no SRC ("UNSUPPORTED" in spec text is a typo) | shall | A | [GAP-01](#gap-01) | validation chain | 06 §6.4 | DIR |
 | REQ-AEM-013 | Milan §5.4.2.15/.16 | SET/GET_CLOCK_SOURCE per Clock Domain; persisted | shall | A | [GAP-09](#gap-09) | CLOCK_CFG class | 06 §6, 07 §5 | NVM |

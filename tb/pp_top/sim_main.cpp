@@ -425,6 +425,25 @@ static std::vector<uint8_t> stream_port_input_descriptor(uint16_t ix,
   return d;
 }
 
+static std::vector<uint8_t> stream_descriptor(uint16_t ty, uint16_t ix) {
+  // SS7.2.6 Table 7-8: fixed part through buffer_length @128..131 plus one
+  // 8-byte format = 140 B. Existence is all GET_STREAM_INFO's locate needs;
+  // the VALUES it answers come from the integrator's face, never from here.
+  std::vector<uint8_t> d(140, 0);
+  putbe(&d[0], ty, 2);
+  putbe(&d[2], ix, 2);
+  snprintf(reinterpret_cast<char*>(&d[4]), 60, "Stream %u.%u", ty & 0xF, ix);
+  putbe(&d[68], 0xFFFF, 2);                       // localized_description
+  putbe(&d[70], 0x0000, 2);                       // clock_domain_index
+  putbe(&d[72], 0x0000, 2);                       // stream_flags
+  putbe(&d[74], 0x00A0020140000800ull, 8);        // current_format (AAF)
+  putbe(&d[82], 132, 2);                          // formats_offset
+  putbe(&d[84], 1, 2);                            // number_of_formats
+  putbe(&d[128], 192, 4);                         // buffer_length
+  putbe(&d[132], 0x00A0020140000800ull, 8);       // format 0
+  return d;
+}
+
 // ---- the flat memory image (gen_desc_image.py layout, built independently) --
 struct ImgEnt { uint16_t cfg, type, count, len, nbase, stride; uint32_t off; };
 
@@ -618,6 +637,39 @@ struct H {
                        |  amap_count(ty, ix, page);
     if (sel == 2) return (rec < amap_count(ty, ix, page))
                        ? amap_rec(ix, page, rec) : 0;
+    return 0;
+  }
+
+  // ---- the Milan-info face model (06 SS6.2/SS6.10): the INTEGRATOR ----
+  // What a word MEANS is decided here exactly as milan_datapath decides it
+  // from its binding view and SRP registrars; the suite proves the processor
+  // lays out whatever the face answers, byte-exact, and that unknown indices
+  // answer zeros (absent, never invented). Values are keyed on all three
+  // coordinates so a word served for the wrong kind, index or selector
+  // cannot match.
+  int  gsi_hold = 2;
+  bool gsi_stuck = false;
+  int  gsi_hold_cur = 0;
+  uint64_t gsi_reads = 0;
+  static uint64_t gsi_value(uint8_t kind, uint16_t ty, uint16_t ix,
+                            uint8_t sel, uint8_t ord) {
+    if (kind == 0) {                      // GET_STREAM_INFO words
+      if (ty != 0x0005 && ty != 0x0006) return 0;
+      if (ix >= 2) return 0;              // fabric knows sinks/sources 0..1
+      uint64_t tag = (uint64_t(ty) << 8) | ix;
+      switch (sel) {
+        case 0: return 0x80000000u | (uint32_t(ty) << 8) | ix;   // flags
+        case 1: return 0x00A0'0000'0000'0000ull | (tag << 16) | 1;
+        case 2: return 0x00B0'0000'0000'0000ull | (tag << 16) | 2;
+        case 3: return 0x000C'0000ull | tag;                     // latency
+        case 4: return 0x91E0'F00D'0000'0000ull | (tag << 8);    // dmac+fc
+        case 5: return 0x00D0'0000'0000'0000ull | (tag << 16) | 5;
+        case 6: return (0x0002ull << 48) | 0x0000'0001ull | (tag << 16);
+        case 7: return (uint64_t(0x60u | (ix & 0x1F)) << 24);    // pbsta byte
+        default: return 0;
+      }
+    }
+    (void)ord;
     return 0;
   }
 
@@ -882,6 +934,26 @@ struct H {
     } else {
       amap_hold_cur = 0;
     }
+
+    // ---- Milan-info face (06 SS6.2/SS6.10) ----
+    d->gsi_wait_i = 0;
+    d->gsi_data_i = 0;
+    if (d->gsi_req_o) {
+      if (gsi_stuck || gsi_hold_cur < gsi_hold) {
+        d->gsi_wait_i = 1;
+        ++gsi_hold_cur;
+      } else {
+        d->gsi_data_i = gsi_value((uint8_t)d->gsi_kind_o,
+                                  (uint16_t)d->gsi_desc_type_o,
+                                  (uint16_t)d->gsi_desc_index_o,
+                                  (uint8_t)d->gsi_sel_o,
+                                  (uint8_t)d->gsi_ord_o);
+        gsi_hold_cur = 0;
+        ++gsi_reads;
+      }
+    } else {
+      gsi_hold_cur = 0;
+    }
     d->eval();
 
     d->clk_i = 1; d->eval();
@@ -1057,6 +1129,11 @@ int main(int argc, char** argv) {
     //! the EXISTENCE authority (E_GAMAP's DESC_ADDR locate), so an index
     //! past these two must answer NO_SUCH_DESCRIPTOR whatever the face says
     {CFGIX, 0x000E, 2,  20, 1,  24, 0},          // STREAM_PORT_INPUT x2
+    //! GET_STREAM_INFO existence targets: the store is the authority, so
+    //! index 2+ of either type must answer NO_SUCH_DESCRIPTOR whatever the
+    //! Milan-info face would say
+    {CFGIX, 0x0005, 2, 140, 1, 144, 0},          // STREAM_INPUT x2
+    {CFGIX, 0x0006, 2, 140, 1, 144, 0},          // STREAM_OUTPUT x2
   };
   std::vector<uint8_t> desc_entity = entity_descriptor();
   std::vector<uint8_t> desc_clkdom = clock_domain_descriptor();
@@ -1065,7 +1142,9 @@ int main(int argc, char** argv) {
   std::vector<uint8_t> desc_spi0 = stream_port_input_descriptor(0, 8, 0);
   std::vector<uint8_t> desc_spi1 = stream_port_input_descriptor(1, 24, 8);
   h.dram = build_image(img_ents,
-                       {desc_entity, desc_clkdom, desc_spi0, desc_spi1},
+                       {desc_entity, desc_clkdom, desc_spi0, desc_spi1,
+                        stream_descriptor(0x0005, 0), stream_descriptor(0x0005, 1),
+                        stream_descriptor(0x0006, 0), stream_descriptor(0x0006, 1)},
                        {"PP Reference Entity", "Clock Domain 0"}, 1);
 
   h.reset();
@@ -2730,6 +2809,50 @@ int main(int argc, char** argv) {
             "L1b: PERSISTENT ACQUIRE refused the same way");
     }
 
+    // ---- L4: the ACMP listener reads the SAME lock (Milan 5.5.2.4) ------
+    //! runs BEFORE any controller registers: a bind is a Table 5.22
+    //! GET_STREAM_INFO trigger since the P3 stage, and this block's job is
+    //! the lock gate, not the notification stream (section G proves that)
+    {
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7320,
+                        0x0001, lockpld(0, 0, 0)));
+      auto fl = h.wait_any(h.q_aecp, 400);
+      CHECK(!fl.empty() && ((fl[16] >> 3) & 0x1F) == 0,
+            "L4a: the gate test's own lock takes");
+      h.q_acmp.clear();
+      // sink 2, from the NON-holder: CONTROLLER_NOT_AUTHORIZED (13)
+      auto bind2 = acmp_frame(C2_MAC, 6, 0, 0, CTLR2_EID, T1_EID, EID,
+                              T1_UID, 2, 0, 0, 0x4321, 0, 0);
+      h.feed(bind2);
+      auto f = h.wait_any(h.q_acmp, 400);
+      CHECK(!f.empty(), "L4: locked BIND_RX from a foreign controller answered");
+      CHECK(!f.empty() && (f[15] & 0x0F) == 7
+            && ((f[16] >> 3) & 0x1F) == 13
+            && f.size() > 53 && ((f[52] << 8) | f[53]) == 2,
+            "L4b: CONTROLLER_NOT_AUTHORIZED for sink 2 (msg %d st %d)",
+            f.empty() ? -1 : (f[15] & 0x0F),
+            f.empty() ? -1 : ((f[16] >> 3) & 0x1F));
+      // ...and the HOLDER may bind: SUCCESS
+      auto bind1 = acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID,
+                              T1_UID, 2, 0, 0, 0x4322, 0, 0);
+      h.feed(bind1);
+      f = h.wait_any(h.q_acmp, 400);
+      auto wantb = acmp_frame(OWN_MAC, 7, 0, 0, CTLR_EID, T1_EID, EID,
+                              T1_UID, 2, 0, 1, 0x4322, 0, 0);
+      CHECK(!f.empty() && f == wantb,
+            "L4c: the locking controller binds through its own lock");
+      if (!f.empty() && f != wantb) { dump("got", f); dump("exp", wantb); }
+      // unbind to leave sink 2 clean, then unlock (from the holder)
+      h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                        T1_UID, 2, 0, 0, 0x4323, 0, 0));
+      h.wait_any(h.q_acmp, 400);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7321,
+                        0x0001, lockpld(1, 0, 0)));
+      h.wait_any(h.q_aecp, 400);
+      h.q_aecp.clear();
+    }
+
+
     // ---- L2: C2 registers; C1 locks; C2 gets the u=1 notification -------
     {
       std::vector<uint8_t> fl0(4, 0);
@@ -2766,37 +2889,6 @@ int main(int argc, char** argv) {
       //! sections up to L5 must run under a HELD lock
       auto more = h.wait_any(h.q_aecp, 150);
       CHECK(more.empty(), "L3b: a denied lock changes nothing, notifies nobody");
-    }
-
-    // ---- L4: the ACMP listener reads the SAME lock (Milan 5.5.2.4) ------
-    {
-      h.q_acmp.clear();
-      // sink 2, from the NON-holder: CONTROLLER_NOT_AUTHORIZED (13)
-      auto bind2 = acmp_frame(C2_MAC, 6, 0, 0, CTLR2_EID, T1_EID, EID,
-                              T1_UID, 2, 0, 0, 0x4321, 0, 0);
-      h.feed(bind2);
-      auto f = h.wait_any(h.q_acmp, 400);
-      CHECK(!f.empty(), "L4: locked BIND_RX from a foreign controller answered");
-      CHECK(!f.empty() && (f[15] & 0x0F) == 7
-            && ((f[16] >> 3) & 0x1F) == 13
-            && f.size() > 53 && ((f[52] << 8) | f[53]) == 2,
-            "L4b: CONTROLLER_NOT_AUTHORIZED for sink 2 (msg %d st %d)",
-            f.empty() ? -1 : (f[15] & 0x0F),
-            f.empty() ? -1 : ((f[16] >> 3) & 0x1F));
-      // ...and the HOLDER may bind: SUCCESS
-      auto bind1 = acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID,
-                              T1_UID, 2, 0, 0, 0x4322, 0, 0);
-      h.feed(bind1);
-      f = h.wait_any(h.q_acmp, 400);
-      auto wantb = acmp_frame(OWN_MAC, 7, 0, 0, CTLR_EID, T1_EID, EID,
-                              T1_UID, 2, 0, 1, 0x4322, 0, 0);
-      CHECK(!f.empty() && f == wantb,
-            "L4c: the locking controller binds through its own lock");
-      if (!f.empty() && f != wantb) { dump("got", f); dump("exp", wantb); }
-      // unbind to leave sink 2 clean (from the holder)
-      h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
-                        T1_UID, 2, 0, 0, 0x4323, 0, 0));
-      h.wait_any(h.q_acmp, 400);
     }
 
     // ---- L5: UNLOCK by the holder -> notification seq INCREMENTS --------
@@ -2888,7 +2980,8 @@ int main(int argc, char** argv) {
     {
       h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x730D,
                         0x0001, lockpld(0, 0, 0)));
-      h.wait_any(h.q_aecp, 400);
+      h.wait_any(h.q_aecp, 400);        // the response
+      h.wait_any(h.q_aecp, 400);        // C2's notification (seq 4)
       h.q_aecp.clear();
       std::vector<uint8_t> rd(8, 0);
       putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2);
@@ -2905,6 +2998,151 @@ int main(int argc, char** argv) {
       h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7310,
                         0x0025, {}));
       h.wait_any(h.q_aecp, 400);
+    }
+  }
+
+  // ==== G. GET_STREAM_INFO (IEEE SS7.4.16, Milan SS5.4.2.10) ==============
+  // (the Milan 80-byte response: flags_ex + pbsta/acmpsta; every value and
+  //  every validity flag is the INTEGRATOR's through the gsi face - the
+  //  harness above IS that integrator - while existence is the descriptor
+  //  store's, so index 2 refuses NO_SUCH_DESCRIPTOR with a zero-flagged
+  //  body whatever the face would answer.)
+  {
+    h.flush_all();
+    h.q_aecp.clear();
+    auto gsi_body = [&](uint16_t ty, uint16_t ix, bool known) {
+      std::vector<uint8_t> b(56, 0);
+      putbe(&b[0], ty, 2);
+      putbe(&b[2], ix, 2);
+      if (known) {
+        putbe(&b[4],  (uint32_t)H::gsi_value(0, ty, ix, 0, 0), 4);
+        putbe(&b[8],  H::gsi_value(0, ty, ix, 1, 0), 8);
+        putbe(&b[16], H::gsi_value(0, ty, ix, 2, 0), 8);
+        putbe(&b[24], (uint32_t)H::gsi_value(0, ty, ix, 3, 0), 4);
+        putbe(&b[28], H::gsi_value(0, ty, ix, 4, 0), 8);
+        putbe(&b[36], H::gsi_value(0, ty, ix, 5, 0), 8);
+        putbe(&b[44], H::gsi_value(0, ty, ix, 6, 0), 8);
+        putbe(&b[52], (uint32_t)H::gsi_value(0, ty, ix, 7, 0), 4);
+      }
+      return b;
+    };
+    auto gsi_cmd = [&](uint16_t ty, uint16_t ix, uint16_t seq) {
+      std::vector<uint8_t> p2(4, 0);
+      putbe(&p2[0], ty, 2); putbe(&p2[2], ix, 2);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, seq,
+                        0x000F, p2));
+      return h.wait_any(h.q_aecp, 500);
+    };
+
+    // ---- G1/G2: byte-exact Milan responses, input + output side ---------
+    auto f = gsi_cmd(0x0005, 0, 0x7401);
+    auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                           0x7401, 0x000F, gsi_body(0x0005, 0, true));
+    CHECK(!f.empty() && f == want,
+          "G1: STREAM_INPUT[0] Milan 80-byte response byte-exact (cdl 68)");
+    if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+    f = gsi_cmd(0x0006, 1, 0x7402);
+    want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                      0x7402, 0x000F, gsi_body(0x0006, 1, true));
+    CHECK(!f.empty() && f == want,
+          "G2: STREAM_OUTPUT[1] Milan response byte-exact");
+    if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+    // ---- G3: existence is the store's: index 2 -> NO_SUCH_DESCRIPTOR ----
+    f = gsi_cmd(0x0005, 2, 0x7403);
+    want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_NO_SUCH_DESCRIPTOR, EID,
+                      CTLR_EID, 0x7403, 0x000F, gsi_body(0x0005, 2, false));
+    CHECK(!f.empty() && f == want,
+          "G3: unknown index refuses NO_SUCH_DESCRIPTOR, zero-flagged body");
+    if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+    // ---- G4: a truncated command is BAD_ARGUMENTS -----------------------
+    {
+      std::vector<uint8_t> shortp(2, 0);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7404,
+                        0x000F, shortp));
+      f = h.wait_any(h.q_aecp, 400);
+      CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == AECP_BAD_ARGUMENTS,
+            "G4: a 2-byte GET_STREAM_INFO payload answers BAD_ARGUMENTS");
+    }
+
+    // ---- G5: a non-stream target refuses NOT_SUPPORTED ------------------
+    f = gsi_cmd(0x0024, 0, 0x7405);          // CLOCK_DOMAIN exists, wrong verb
+    {
+      std::vector<uint8_t> p2(4, 0);
+      putbe(&p2[0], 0x0024, 2);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, 11, EID, CTLR_EID, 0x7405,
+                        0x000F, p2);
+      CHECK(!f.empty() && f == want,
+            "G5: GET_STREAM_INFO on CLOCK_DOMAIN echoes NOT_SUPPORTED");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+    }
+
+    // ---- G6: a wedged face voids honestly, then recovers ----------------
+    {
+      h.gsi_stuck = true;
+      f = gsi_cmd(0x0005, 1, 0x7406);
+      CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == 10 && f.size() == 60,
+            "G6: face wedge -> bare ENTITY_MISBEHAVING, never zeros under SUCCESS");
+      h.gsi_stuck = false;
+      f = gsi_cmd(0x0005, 1, 0x7407);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                        0x7407, 0x000F, gsi_body(0x0005, 1, true));
+      CHECK(!f.empty() && f == want, "G6b: next command answers clean");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+    }
+
+    // ---- G7: the Table 5.22 notification on a binding event -------------
+    {
+      std::vector<uint8_t> fl0(4, 0);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7408,
+                        0x0024, fl0));
+      h.wait_any(h.q_aecp, 400);
+      h.q_aecp.clear();
+      // bind sink 1 -> the fabric's bound state changes -> unsolicited
+      // GET_STREAM_INFO for STREAM_INPUT[1] to the registered controller
+      h.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID,
+                        T1_UID, 1, 0, 0, 0x7409, 0, 0));
+      auto uns = h.wait_any(h.q_aecp, 500);
+      auto wantu = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                              CTLR_EID, 0x0000, 0x000F,
+                              gsi_body(0x0005, 1, true));
+      wantu[36] |= 0x80;
+      CHECK(!uns.empty() && uns == wantu,
+            "G7: bind emits the u=1 GET_STREAM_INFO for that sink (seq 0)");
+      if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
+      // unbind: a second notification, sequence_id counting up
+      h.q_aecp.clear();
+      h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                        T1_UID, 1, 0, 0, 0x740A, 0, 0));
+      uns = h.wait_any(h.q_aecp, 500);
+      wantu = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                         CTLR_EID, 0x0001, 0x000F, gsi_body(0x0005, 1, true));
+      wantu[36] |= 0x80;
+      CHECK(!uns.empty() && uns == wantu,
+            "G7b: unbind notifies again, sequence_id 1");
+      if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
+      // deregister: leave the table clean
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x740B,
+                        0x0025, {}));
+      h.wait_any(h.q_aecp, 400);
+    }
+
+    // ---- G8: the M7-style READ_DESCRIPTOR regression --------------------
+    {
+      h.q_aecp.clear();
+      std::vector<uint8_t> rd(8, 0);
+      putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x740C,
+                        AEM_READ_DESCRIPTOR, rd));
+      auto got2 = h.wait_any(h.q_aecp, 400);
+      std::vector<uint8_t> epl(4, 0);
+      putbe(&epl[0], CFGIX, 2);
+      epl.insert(epl.end(), desc_entity.begin(), desc_entity.end());
+      auto want2 = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                              CTLR_EID, 0x740C, AEM_READ_DESCRIPTOR, epl);
+      CHECK(!got2.empty() && got2 == want2,
+            "G8: READ_DESCRIPTOR byte-exact after the stream-info paths");
     }
   }
 

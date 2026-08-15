@@ -378,6 +378,28 @@ module KL_aecp_engine
     input  wire  [63:0] amap_data_i,          //! the word (upper 32 zero unless RECORD)
     input  wire         amap_wait_i,          //! HOLD the beat (not a ready)
 
+    //! ---- Milan-info gather face (06 §6.2/§6.10; IEEE §7.4.16/§7.4.40/
+    //! §7.4.41, Milan §5.4.2.10/§5.4.2.23/§5.4.2.24) ----
+    //! ONE face for the three read-only Milan info commands, selector-coded
+    //! like the counters face: the INTEGRATOR owns every answer word because
+    //! the truth lives in its binding view, SRP registrars and gPTP plane -
+    //! this parser only lays the words out. `gsi_kind_o` names the command
+    //! family (0 GET_STREAM_INFO, 1 GET_AVB_INFO, 2 GET_AS_PATH), the
+    //! selector the word (docs/architecture/06 §6.2/§6.10 tables), and
+    //! `gsi_ord_o` the array ordinal for GET_AS_PATH's path_sequence.
+    //! `gsi_wait_i` is the same HOLD the other faces use; an unwired face
+    //! answers zeros, which every response carries honestly as cleared
+    //! validity flags, a zero path count and zero fields - absent, never
+    //! invented.
+    output logic        gsi_req_o,           //! a word is being asked for
+    output logic [1:0]  gsi_kind_o,          //! 0 STRI / 1 AVB / 2 ASP
+    output logic [15:0] gsi_desc_type_o,     //! AECPDU @24 (STRI: 0x0005/0x0006)
+    output logic [15:0] gsi_desc_index_o,    //! the addressed descriptor_index
+    output logic  [3:0] gsi_sel_o,           //! word selector within the kind
+    output logic  [7:0] gsi_ord_o,           //! ASP path entry ordinal
+    input  wire  [63:0] gsi_data_i,          //! the word (see the doc tables)
+    input  wire         gsi_wait_i,          //! HOLD the beat (not a ready)
+
     //! ---- registry/lock op face (06 §6.4/§6.7; served by KL_aecp_notify) ----
     //! A GATHER-routed MUTATION face: while a REGISTER_UNSOLICITED_
     //! NOTIFICATION / DEREGISTER / LOCK_ENTITY command is in flight, its
@@ -466,6 +488,13 @@ module KL_aecp_engine
   //! lives in KL_aecp_notify behind the rgy face.
   localparam logic [15:0] OP_ACQUIRE_C         = 16'h0000;
   localparam logic [15:0] OP_LOCK_C            = 16'h0001;
+  //! §7.4.16 - Milan §5.4.2.10 replaces the IEEE response with the 80-byte
+  //! Milan layout (Figure 5.1: flags_ex + pbsta/acmpsta). Same registered
+  //! A_PLD-exit re-dispatch; STREAM_INPUT/STREAM_OUTPUT are the only
+  //! §7.4.16 targets and anything else refuses NOT_SUPPORTED.
+  localparam logic [15:0] OP_GET_STREAM_INFO_C = 16'h000F;
+  localparam logic [15:0] DT_STREAM_INPUT_C    = 16'h0005;
+  localparam logic [15:0] DT_STREAM_OUTPUT_C   = 16'h0006;
   //! Table 7-1: the one descriptor type the audio-map µprogram serves (see
   //! the banner - every other type keeps the NOT_IMPLEMENTED echo)
   localparam logic [15:0] DT_STREAM_PORT_IN_C  = 16'h000E;
@@ -502,6 +531,7 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_NSUPPE_C  = 11'd864;   // E_NSUPPE
   localparam logic [10:0] UPC_LOCKEN_C  = 11'd872;   // E_LOCKEN
   localparam logic [10:0] UPC_LOCKUNS_C = 11'd896;   // E_LOCKUNS
+  localparam logic [10:0] UPC_GSTRI_C   = 11'd912;   // E_GSTRI
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -559,6 +589,7 @@ module KL_aecp_engine
   logic        regun_r;                  // ... a REGISTER/DEREGISTER_UNSOL
   logic        acq_r;                    // ... an ACQUIRE_ENTITY
   logic        lockc_r;                  // ... a LOCK_ENTITY
+  logic        gstri_r;                  // ... a GET_STREAM_INFO
   logic        lock_ent_ok_r;            // its target walked as ENTITY[0]
   logic        uns_r;                    // engine-originated unsolicited job
   logic  [7:0] amap_rec_r;               // records handed out this command
@@ -630,6 +661,9 @@ module KL_aecp_engine
                    && (txn_w.opcode == OP_ACQUIRE_C);
   assign lockc_w = (txn_w.protocol == PP_PROTO_AEM)
                    && (txn_w.opcode == OP_LOCK_C);
+  logic gstri_w;
+  assign gstri_w = (txn_w.protocol == PP_PROTO_AEM)
+                   && (txn_w.opcode == OP_GET_STREAM_INFO_C);
 
   //! ---- unsolicited job synthesis (06 §6.7) -------------------------------
   //! kind -> {command_type, µPC}. A kind whose µprogram has not landed maps
@@ -641,6 +675,8 @@ module KL_aecp_engine
     unique case (uns_kind_i)
       PP_UNS_DEREG_C: begin uns_ct_w = OP_DEREG_UNSOL_C; uns_upc_w = UPC_UNSOK_C;   end
       PP_UNS_LOCK_C:  begin uns_ct_w = OP_LOCK_C;        uns_upc_w = UPC_LOCKUNS_C; end
+      PP_UNS_STRI_C:  begin uns_ct_w = OP_GET_STREAM_INFO_C;
+                            uns_upc_w = UPC_GSTRI_C;   end
       default:        begin uns_ct_w = 16'd0;            uns_upc_w = UPC_NOSEND_C;  end
     endcase
   end
@@ -706,11 +742,12 @@ module KL_aecp_engine
   //! the dispatch strobe (stage-0 pipeline: operand shaping must reach the
   //! µCPU's register file from flops, never as a live mux cone - the walk
   //! registers are settled a full state earlier, so the latch costs nothing)
-  assign opd0_w = amap_r  ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
-                : lockc_r ? {32'd0, cfg_ix_r, desc_ix_r}
-                          : {16'd0, desc_ix_r, desc_ty_r, cfg_ix_r};
-  assign opd1_w = amap_r ? {32'd0, desc_ix_r, desc_ty_r}
-                         : {32'd0, desc_ty_r, desc_ix_r};
+  assign opd0_w = (amap_r || gstri_r) ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
+                : lockc_r             ? {32'd0, cfg_ix_r, desc_ix_r}
+                                      : {16'd0, desc_ix_r, desc_ty_r, cfg_ix_r};
+  assign opd1_w = amap_r  ? {32'd0, desc_ix_r, desc_ty_r}
+                : gstri_r ? {32'd0, cfg_ix_r, desc_ix_r}
+                          : {32'd0, desc_ty_r, desc_ix_r};
 
   logic [63:0] opd0_r, opd1_r;
 
@@ -876,7 +913,13 @@ module KL_aecp_engine
   //! {cnd[2:0], beat[1:0]} IS the counters_block quadlet index 0..31 and
   //! sel[7] is free to mean "the counters_valid word instead" (GATHER_EXT
   //! cnd = 8). No decoder, no per-word ROM, no state.
-  assign ctr_req_o        = gx_req_w && !amap_r && !regun_r;
+  //! ONE registered-one-hot "not the counters face" term: the routing depth
+  //! stays constant as commands land, and the counters face can never see a
+  //! spurious query while another command's gather is in flight
+  logic gx_alt_w;
+  assign gx_alt_w = amap_r | regun_r | lockc_r | gstri_r;
+
+  assign ctr_req_o        = gx_req_w && !gx_alt_w;
   assign ctr_desc_type_o  = cfg_ix_r;
   assign ctr_desc_index_o = desc_ix_r;
   assign ctr_word_o       = gx_sel_w[7] ? 6'd32
@@ -889,6 +932,15 @@ module KL_aecp_engine
   //! `desc_ix_r`; a 2013-format command (§7.4.37.1 "with or without the new
   //! flags field") never walked that byte, so the cdl term keeps stray slot
   //! bytes from becoming a flag.
+  //! ...the Milan-info face: selector low nibble forwarded, the kind from
+  //! the discriminators, the ordinal from the shared record counter below
+  assign gsi_req_o        = gx_req_w && gstri_r;
+  assign gsi_kind_o       = 2'd0;
+  assign gsi_desc_type_o  = cfg_ix_r;
+  assign gsi_desc_index_o = desc_ix_r;
+  assign gsi_sel_o        = gx_sel_w[3:0];
+  assign gsi_ord_o        = amap_rec_r;
+
   assign rgy_req_o   = gx_req_w && (regun_r || lockc_r);
   assign rgy_state_o = gx_sel_w[0];
   //! LOCK rides op[1]; op[0] is UNLOCK for it (flags bit 0, walked into
@@ -919,11 +971,13 @@ module KL_aecp_engine
   logic [CTO_W_C-1:0] gxf_tmo_r;
   logic               gxf_fail_r;
   logic               ctr_hold_w, amap_hold_w, rgy_hold_w;
-  assign ctr_hold_w  = gx_req_w && !amap_r && !regun_r && !lockc_r
+  logic gsi_hold_w;
+  assign ctr_hold_w  = gx_req_w && !gx_alt_w
                        && ctr_wait_i  && !gxf_fail_r;
   assign amap_hold_w = gx_req_w &&  amap_r && amap_wait_i && !gxf_fail_r;
   assign rgy_hold_w  = gx_req_w && (regun_r || lockc_r)
                        && rgy_wait_i && !gxf_fail_r;
+  assign gsi_hold_w  = gx_req_w &&  gstri_r && gsi_wait_i && !gxf_fail_r;
 
   //! REGISTERED gather answer - the stage-0 pipeline cut. The integrator's
   //! wait/data cone (ctr_wait_i / amap_wait_i arrive combinationally from
@@ -944,11 +998,13 @@ module KL_aecp_engine
       gxr_valid_r <= 1'b0;
       gxr_data_r  <= 64'd0;
     end else begin
-      gxr_valid_r <= gx_req_w && !(ctr_hold_w || amap_hold_w || rgy_hold_w)
-                     && !gxr_valid_r;
-      gxr_data_r  <= gxf_fail_r          ? 64'd0
-                   : amap_r              ? amap_data_i
+      gxr_valid_r <= gx_req_w && !gxr_valid_r
+                     && !(ctr_hold_w || amap_hold_w || rgy_hold_w
+                          || gsi_hold_w);
+      gxr_data_r  <= gxf_fail_r           ? 64'd0
+                   : amap_r               ? amap_data_i
                    : (regun_r || lockc_r) ? rgy_data_i
+                   : gstri_r              ? gsi_data_i
                                           : {32'd0, ctr_data_i};
     end
   end
@@ -963,7 +1019,7 @@ module KL_aecp_engine
     end else if (a_st_r == A_IDLE) begin
       gxf_tmo_r  <= '0;
       gxf_fail_r <= 1'b0;
-    end else if (ctr_hold_w || amap_hold_w || rgy_hold_w) begin
+    end else if (ctr_hold_w || amap_hold_w || rgy_hold_w || gsi_hold_w) begin
       if (gxf_tmo_r == CTO_W_C'(MEM_TIMEOUT_CYC_P)) gxf_fail_r <= 1'b1;
       else                                          gxf_tmo_r  <= gxf_tmo_r + CTO_W_C'(1);
     end else begin
@@ -1181,6 +1237,7 @@ module KL_aecp_engine
       regun_r      <= 1'b0;
       acq_r        <= 1'b0;
       lockc_r      <= 1'b0;
+      gstri_r      <= 1'b0;
       lock_ent_ok_r <= 1'b0;
       uns_r        <= 1'b0;
       upc_r        <= 11'd0;
@@ -1219,6 +1276,7 @@ module KL_aecp_engine
               regun_r    <= regun_w;
               acq_r      <= acq_w;
               lockc_r    <= lockc_w;
+              gstri_r    <= gstri_w;
               lock_ent_ok_r <= 1'b1;
               uns_r      <= 1'b0;
               err_mode_r <= 1'b0;
@@ -1266,6 +1324,7 @@ module KL_aecp_engine
             regun_r    <= (uns_kind_i == PP_UNS_LOCK_C);
             acq_r      <= 1'b0;
             lockc_r    <= 1'b0;
+            gstri_r    <= (uns_kind_i == PP_UNS_STRI_C);
             lock_ent_ok_r <= 1'b1;
             uns_r      <= 1'b1;
             err_mode_r <= 1'b0;
@@ -1334,6 +1393,21 @@ module KL_aecp_engine
                 echo_r <= 1'b0;
               end
             end
+            //! GET_STREAM_INFO: §7.4.16.1's command is descriptor_type +
+            //! descriptor_index and nothing else, so cdl 16 is the whole
+            //! command; §7.4.16 acts on STREAM_INPUT or STREAM_OUTPUT and
+            //! anything else refuses NOT_SUPPORTED with the command echoed
+            //! (the Milan §5.4.2.2 non-ENTITY precedent).
+            if (gstri_r) begin
+              if (cmd_r.cdl < 11'd16)                upc_r <= UPC_BADARG_C;
+              else if ((cfg_ix_r != DT_STREAM_INPUT_C)
+                       && (cfg_ix_r != DT_STREAM_OUTPUT_C))
+                                                     upc_r <= UPC_NSUPPE_C;
+              else begin
+                upc_r  <= UPC_GSTRI_C;
+                echo_r <= 1'b0;
+              end
+            end
             a_st_r <= A_DISP;
           end
           //! the RX pool answers one cycle after rd_en: byte for index
@@ -1366,12 +1440,12 @@ module KL_aecp_engine
               //! holds the flags' low half for the rgy face to read
               11'd4: begin
                 pid_lo_r[1] <= (rxs_rd_data_i == MVU_PID_L1_C);
-                if (ctrs_r || amap_r || regun_r || lockc_r)
+                if (ctrs_r || amap_r || regun_r || lockc_r || gstri_r)
                   desc_ix_r[15:8] <= rxs_rd_data_i;
               end
               11'd5: begin
                 pid_lo_r[0] <= (rxs_rd_data_i == MVU_PID_L0_C);
-                if (ctrs_r || amap_r || regun_r || lockc_r)
+                if (ctrs_r || amap_r || regun_r || lockc_r || gstri_r)
                   desc_ix_r[7:0]  <= rxs_rd_data_i;
               end
               11'd6: if (!ctrs_r) desc_ty_r[15:8] <= rxs_rd_data_i;
@@ -1381,9 +1455,11 @@ module KL_aecp_engine
               //! (or a long REGISTER's padding) must not trample the flags
               //! captured at @26..@27 - the UNLOCK/TIME_LIMITED bit lives
               //! there (found by the pp_top L5 check: UNLOCK re-locked)
-              11'd8: if (!ctrs_r && !amap_r && !regun_r && !lockc_r)
+              11'd8: if (!ctrs_r && !amap_r && !regun_r && !lockc_r
+                          && !gstri_r)
                        desc_ix_r[15:8] <= rxs_rd_data_i;
-              11'd9: if (!ctrs_r && !amap_r && !regun_r && !lockc_r)
+              11'd9: if (!ctrs_r && !amap_r && !regun_r && !lockc_r
+                          && !gstri_r)
                        desc_ix_r[7:0]  <= rxs_rd_data_i;
               //! LOCK_ENTITY's descriptor_type/index live at @36..@39, past
               //! every capture register - but the CHECK is all Milan

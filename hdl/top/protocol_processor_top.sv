@@ -323,6 +323,29 @@ module protocol_processor_top
     input  wire  [63:0] amap_data_i,          //! the word (upper 32 zero unless RECORD)
     input  wire         amap_wait_i,          //! HOLD the beat (not a ready)
 
+    //! ---- Milan-info gather face (06 §6.2/§6.10; IEEE §7.4.16/§7.4.40/
+    //! §7.4.41, Milan §5.4.2.10/§5.4.2.23/§5.4.2.24) ----
+    //! The processor parses GET_STREAM_INFO / GET_AVB_INFO / GET_AS_PATH and
+    //! lays out their responses; the INTEGRATOR owns every word, because the
+    //! truth lives in its binding view, SRP registrars, format registers and
+    //! gPTP plane. One word at a time: `gsi_kind_o` names the command family
+    //! (0 STRI / 1 AVB / 2 ASP), `gsi_sel_o` the word, `gsi_ord_o` the
+    //! GET_AS_PATH array ordinal. Word tables: docs/architecture/06
+    //! §6.2/§6.10.
+    //!
+    //! LEAVING IT UNWIRED IS SAFE AND HONEST, same polarity as the other
+    //! faces: an undriven `gsi_wait_i` is 0, every word answers 0, and the
+    //! responses carry cleared validity flags, zero fields and a zero path
+    //! count - absent, never invented.
+    output logic        gsi_req_o,            //! a word is being asked for
+    output logic [1:0]  gsi_kind_o,           //! 0 STRI / 1 AVB / 2 ASP
+    output logic [15:0] gsi_desc_type_o,      //! addressed descriptor_type
+    output logic [15:0] gsi_desc_index_o,     //! addressed descriptor_index
+    output logic  [3:0] gsi_sel_o,            //! word selector within the kind
+    output logic  [7:0] gsi_ord_o,            //! ASP path entry ordinal
+    input  wire  [63:0] gsi_data_i,           //! the word
+    input  wire         gsi_wait_i,           //! HOLD the beat (not a ready)
+
     //! ---- NVM boot restore + alarm (07 §5.3) ----
     input  wire         restore_go_i,          //! start boot restore
     output logic        restore_busy_o,        //! restore walk running
@@ -2602,6 +2625,25 @@ module protocol_processor_top
   logic [31:0] ntfy_arm_deadline_w;
   logic [7:0]  ntfy_reg_cnt_nc_w, ntfy_coalesce_nc_w;
   logic [15:0] ntfy_uns_cnt_nc_w;
+  logic [N_STREAM_IN_P-1:0]  ntfy_stri_in_w;
+  logic [N_STREAM_OUT_P-1:0] ntfy_stri_out_w;
+
+  always_comb begin : stri_events
+    ntfy_stri_in_w  = '0;
+    ntfy_stri_out_w = '0;
+    for (int unsigned k = 0; k < N_STREAM_IN_P; k++) begin
+      ntfy_stri_in_w[k] =
+          (32'(lstn_act_sink_w) == k
+           && (lstn_disc_arm_w || lstn_disc_disarm_w
+               || lstn_act_settle_w || lstn_act_teardown_w))
+          || srp_evt_tk_reg_w[k] || srp_evt_tk_unreg_w[k];
+    end
+    for (int unsigned k = 0; k < N_STREAM_OUT_P; k++) begin
+      ntfy_stri_out_w[k] =
+          (32'(tkr_gate_src_w) == k && (tkr_gate_open_w || tkr_gate_close_w))
+          || srp_lstn_reg_change_w[k];
+    end
+  end
   logic                    aecp_eff_commit_nc_w, aecp_eff_nvm_stb_nc_w;
   logic [7:0]              aecp_eff_nvm_mark_nc_w;
   logic [3:0]              aecp_eff_notify_cls_nc_w;
@@ -2713,6 +2755,14 @@ module protocol_processor_top
       .amap_rec_o         (amap_rec_o),
       .amap_data_i        (amap_data_i),
       .amap_wait_i        (amap_wait_i),
+      .gsi_req_o          (gsi_req_o),
+      .gsi_kind_o         (gsi_kind_o),
+      .gsi_desc_type_o    (gsi_desc_type_o),
+      .gsi_desc_index_o   (gsi_desc_index_o),
+      .gsi_sel_o          (gsi_sel_o),
+      .gsi_ord_o          (gsi_ord_o),
+      .gsi_data_i         (gsi_data_i),
+      .gsi_wait_i         (gsi_wait_i),
       .lock_held_i        (ntfy_lock_held_w),
       .lock_ctlr_i        (ntfy_lock_ctlr_w),
       .eff_commit_o       (aecp_eff_commit_nc_w),
@@ -2767,10 +2817,15 @@ module protocol_processor_top
       .rgy_tl_i              (aecp_rgy_tl_w),
       .rgy_data_o            (aecp_rgy_data_w),
       .rgy_wait_o            (aecp_rgy_wait_w),
-      //! stream-info / AVB-info / AS-path notification classes arm with
-      //! their stages (P3/P4) - see the block banner
-      .ev_stri_in_i          ({N_STREAM_IN_P{1'b0}}),
-      .ev_stri_out_i         ({N_STREAM_OUT_P{1'b0}}),
+      //! Table 5.22 GET_STREAM_INFO triggers this fabric OBSERVES: for a
+      //! sink, bound-state changes (arm/disarm), the settled parameters
+      //! (settle/teardown - also the probing-status edges) and the
+      //! registered Talker attribute events; for a source, its declaration
+      //! opening/closing and the registered Listener attribute changes.
+      //! What the fabric cannot see, it cannot notify about - the honest
+      //! remainder is recorded in 06 §7.
+      .ev_stri_in_i          (ntfy_stri_in_w),
+      .ev_stri_out_i         (ntfy_stri_out_w),
       .ev_avb_i              (1'b0),
       .ev_asp_i              (1'b0),
       .uns_valid_o           (uns_valid_w),

@@ -29,7 +29,7 @@ enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
        E_OVF = 416, E_FMT = 512, E_NOTIMPL = 560, E_ACQ = 576,
        E_STPRE = 592, E_MVUINFO = 736, E_GCTRS = 768, E_GAMAP = 800,
        E_REGUN = 832, E_DEREG = 844, E_UNSOK = 852, E_NOSEND = 858,
-       E_NSUPPE = 864, E_LOCKEN = 872, E_LOCKUNS = 896 };
+       E_NSUPPE = 864, E_LOCKEN = 872, E_LOCKUNS = 896, E_GSTRI = 912 };
 
 // IEEE 1722.1-2021 Table 7-141
 enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
@@ -120,6 +120,13 @@ struct Harness {
                             |  uint64_t(am_count());
       if (sel == 0x10) return (amap_recs < am_count()) ? am_rec(amap_recs)
                                                        : 0;
+      return 0;
+    }
+    if (cur_upc == E_GSTRI) {
+      // the Milan-info face: distinct per-selector words (06 SS6.2)
+      if ((sel & 0xF0) == 0xB0)
+        return 0xB000'0000'0000'0000ull | (uint64_t(sel & 0x0F) << 32) |
+               (0x00C0'0000ull | (sel & 0x0F));
       return 0;
     }
     if (sel == 0x25) return 0x1111222233334444ull;
@@ -714,6 +721,47 @@ int main(int argc, char** argv) {
   CHECK(h.last_status == ST_NSUPP && h.last_len == 12 && h.sends == 1,
         "L4 NOT_SUPPORTED, echo-sized (st %u len %u sends %d)",
         h.last_status, h.last_len, h.sends);
+
+  // ---- G: GET_STREAM_INFO (Milan SS5.4.2.10 Figure 5.1 layout) -----------
+  // r14 = the locate key {index, type, cfg 0}; r13 = {type, index} for the
+  // @24 dword. Every value word comes from the face model above; what is
+  // proved here is the LAYOUT - each selector's word lands at its Figure 5.1
+  // offset - and that a locate miss keeps NO_SUCH_DESCRIPTOR while still
+  // emitting the full 56-byte body the face answered.
+  {
+    const uint64_t KEY_OK  = 0x0000000300050000ull;   // STREAM_INPUT[3]
+    const uint64_t TYIX    = 0x0000000000050003ull;
+    CHECK(h.run(E_GSTRI, KEY_OK, false, 4000, TYIX), "G1 completes");
+    CHECK(h.last_status == ST_OK, "G1 SUCCESS got %u", h.last_status);
+    CHECK(h.last_len == 68, "G1 len 12+56 got %u", h.last_len);
+    CHECK(h.w32(12) == 0x00050003u, "G1 type+index @24, got %08x", h.w32(12));
+    CHECK(h.w32(16) == 0x00C00000u, "G1 flags = face word 0 low, got %08x",
+          h.w32(16));
+    CHECK(h.w32(20) == 0xB0000001u && h.w32(24) == 0x00C00001u,
+          "G1 stream_format = face word 1 (%08x %08x)", h.w32(20), h.w32(24));
+    CHECK(h.w32(28) == 0xB0000002u && h.w32(32) == 0x00C00002u,
+          "G1 stream_id = face word 2");
+    CHECK(h.w32(36) == 0x00C00003u, "G1 latency = word 3 low");
+    CHECK(h.w32(40) == 0xB0000004u && h.w32(44) == 0x00C00004u,
+          "G1 dmac+failcode = word 4");
+    CHECK(h.w32(48) == 0xB0000005u && h.w32(52) == 0x00C00005u,
+          "G1 bridge_id = word 5");
+    CHECK(h.w32(56) == 0xB0000006u && h.w32(60) == 0x00C00006u,
+          "G1 vlan+flags_ex = word 6");
+    CHECK(h.w32(64) == 0x00C00007u, "G1 pbsta dword = word 7 low");
+    {
+      int n = 0;
+      for (uint8_t v : h.gx_sels) if ((v & 0xF0) == 0xB0) ++n;
+      CHECK(n == 8, "G1 exactly eight face words asked, got %d", n);
+    }
+
+    const uint64_t KEY_BAD = 0x00000BAD00050000ull;
+    CHECK(h.run(E_GSTRI, KEY_BAD, false, 4000, TYIX), "G2 completes");
+    CHECK(h.last_status == ST_NOSUCH,
+          "G2 locate miss keeps NO_SUCH_DESCRIPTOR, got %u", h.last_status);
+    CHECK(h.last_len == 68, "G2 the full body still emits, len %u",
+          h.last_len);
+  }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   delete dut;

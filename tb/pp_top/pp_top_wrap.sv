@@ -92,6 +92,16 @@ module pp_top_wrap (
     input  wire  [63:0] amap_data_i,
     input  wire         amap_wait_i,
 
+    // Milan-info gather face (06 SS6.2/SS6.10) - the harness is the integrator
+    output logic        gsi_req_o,
+    output logic [1:0]  gsi_kind_o,
+    output logic [15:0] gsi_desc_type_o,
+    output logic [15:0] gsi_desc_index_o,
+    output logic  [3:0] gsi_sel_o,
+    output logic  [7:0] gsi_ord_o,
+    input  wire  [63:0] gsi_data_i,
+    input  wire         gsi_wait_i,
+
     // descriptor-image memory master (07 §3.3) — the C++ harness plays a
     // latency-injecting DRAM behind it
     output logic        desc_mem_req_valid_o,
@@ -309,6 +319,14 @@ module pp_top_wrap (
       .amap_rec_o            (amap_rec_o),
       .amap_data_i           (amap_data_i),
       .amap_wait_i           (amap_wait_i),
+      .gsi_req_o             (gsi_req_o),
+      .gsi_kind_o            (gsi_kind_o),
+      .gsi_desc_type_o       (gsi_desc_type_o),
+      .gsi_desc_index_o      (gsi_desc_index_o),
+      .gsi_sel_o             (gsi_sel_o),
+      .gsi_ord_o             (gsi_ord_o),
+      .gsi_data_i            (gsi_data_i),
+      .gsi_wait_i            (gsi_wait_i),
       .desc_mem_req_valid_o  (desc_mem_req_valid_o),
       .desc_mem_req_ready_i  (desc_mem_req_ready_i),
       .desc_mem_req_addr_o   (desc_mem_req_addr_o),

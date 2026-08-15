@@ -106,6 +106,7 @@ E_NOSEND  = 858      # a job whose response type has no program yet: no frame
 E_NSUPPE  = 864      # echo + NOT_SUPPORTED (ACQUIRE, LOCK on non-ENTITY)
 E_LOCKEN  = 872      # LOCK_ENTITY (Milan 5.4.2.2, IEEE 7.4.2)
 E_LOCKUNS = 896      # unsolicited LOCK_ENTITY (Table 5.22 + 7.5.2)
+E_GSTRI   = 912      # GET_STREAM_INFO (Milan 5.4.2.10 80-byte response)
 # 1722.1-2021 Table 7-1: the one descriptor type this program is dispatched
 # for (KL_aecp_engine refuses every other type back to the NOT_IMPLEMENTED
 # echo before dispatch, so the constant emitted at @24 is also a guarantee).
@@ -702,6 +703,68 @@ place(E_LOCKUNS, [
     u('BUILD_FLD', ra=12, fmt=FMT_D),            # flags               @24
     u('BUILD_FLD', ra=3,  fmt=FMT_Q),            # locked_id           @28
     u('BUILD_FLD', ra=12, fmt=FMT_D),            # ENTITY[0]           @36
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- gather selectors the Milan-info face answers (06 §6.2/§6.10) ------------
+# cnd 0xB carries the face's word selector in imm[3:0]; the engine forwards
+# the low nibble on gsi_sel_o and the KIND on gsi_kind_o, so the three
+# commands own disjoint word tables behind one port group. GET_STREAM_INFO's
+# words, each one BUILD_FLD wide (offsets are AECPDU bytes of Milan v1.2
+# Figure 5.1):
+#   0 FLAGS   {32'0, flags}                                     -> @28 dword
+#   1 FMT     stream_format                                     -> @32 qword
+#   2 SID     stream_id                                         -> @40 qword
+#   3 LAT     {32'0, msrp_accumulated_latency}                  -> @48 dword
+#   4 DMACFC  {stream_dest_mac, msrp_failure_code, 8'0}         -> @52 qword
+#   5 BRIDGE  msrp_failure_bridge_id                            -> @60 qword
+#   6 VLANEX  {stream_vlan_id, 16'0, flags_ex}                  -> @68 qword
+#   7 PBSTA   {32'0, {pbsta[2:0], acmpsta[4:0]}, 24'0}          -> @76 dword
+def GSI(n):
+    return dict(cnd=0xB, imm=n)
+
+# --- GET_STREAM_INFO (IEEE §7.4.16, Milan §5.4.2.10) -------------------------
+# Milan replaces §7.4.15.1's response with the 80-byte Figure 5.1 layout:
+# the IEEE body through stream_vlan_id, a reserved word, flags_ex, and the
+# pbsta/acmpsta byte (§5.3.8.6: a 3-bit probing status and the 5-bit ACMP
+# status). Payload 56, cdl 68 - "a 1722.1 controller ... will use the
+# control_data_length field ... to determine if the new fields are present".
+#
+# WHO DECIDES WHAT (the §6.2 split): EXISTENCE is the descriptor store's
+# (DESC_ADDR against the same image READ_DESCRIPTOR serves - a miss answers
+# NO_SUCH_DESCRIPTOR with the full, zero-flagged body); every VALUE and every
+# VALIDITY FLAG is the integrator's, through the gsi face - the binding view,
+# SRP registrars, probing state and formats live there, and Milan's validity
+# matrix (Tables 5.9-5.12) is exactly "which of the integrator's registers
+# hold truth right now", which no parser can second-guess. An unwired face
+# answers all-zero flags: every field honestly absent.
+#
+# Register contract (engine at dispatch): r14 = the locate key
+# {index, type, cfg 0}; r13 = {32'0, descriptor_type, descriptor_index} so
+# one FMT_D BUILD_FLD lays @24..@27 in wire order.
+place(E_GSTRI, [
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=E_GSTRI + 3),      # (status survives the skip)
+    u('SET_STATUS', imm=ST_OK),
+    u('GATHER_EXT', rd=1, **GSI(0)),             # flags
+    u('GATHER_EXT', rd=2, **GSI(1)),             # stream_format
+    u('GATHER_EXT', rd=3, **GSI(2)),             # stream_id
+    u('GATHER_EXT', rd=4, **GSI(3)),             # msrp_accumulated_latency
+    u('GATHER_EXT', rd=5, **GSI(4)),             # dmac + failure_code
+    u('GATHER_EXT', rd=6, **GSI(5)),             # failure_bridge_id
+    u('GATHER_EXT', rd=7, **GSI(6)),             # vlan + flags_ex
+    u('GATHER_EXT', rd=8, **GSI(7)),             # pbsta/acmpsta
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type + index          @24
+    u('BUILD_FLD', ra=1,  fmt=FMT_D),            # flags                 @28
+    u('BUILD_FLD', ra=2,  fmt=FMT_Q),            # stream_format         @32
+    u('BUILD_FLD', ra=3,  fmt=FMT_Q),            # stream_id             @40
+    u('BUILD_FLD', ra=4,  fmt=FMT_D),            # msrp_acc_latency      @48
+    u('BUILD_FLD', ra=5,  fmt=FMT_Q),            # dmac + fail_code      @52
+    u('BUILD_FLD', ra=6,  fmt=FMT_Q),            # failure_bridge_id     @60
+    u('BUILD_FLD', ra=7,  fmt=FMT_Q),            # vlan + resv + flags_ex @68
+    u('BUILD_FLD', ra=8,  fmt=FMT_D),            # pbsta/acmpsta + resv  @76
     u('SEND_RESP'),
     u('END'),
 ])
