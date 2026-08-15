@@ -686,6 +686,71 @@ int main(int argc, char** argv) {
           "U8 healed descriptor bytes wrong");
   }
 
+  // ---- U9: HEAL BEFORE ANSWER - the silicon arrangement -------------------
+  // (r49a/w3a evidence: the store parks at boot against empty memory, the
+  //  loader lands the image later, and the FIRST wire command used to miss
+  //  because the re-arm came after the answer. The first locate after the
+  //  load must now trigger the walk, stall through it, and SERVE.)
+  {
+    h.dram.refuse = true;                     // pre-handover: memory absent
+    h.reset();
+    bool parked = false;
+    for (int i = 0; i < 4 * int(MEM_TIMEOUT) + 200 && !parked; ++i) {
+      h.tick();
+      if (dut->dbg_fault_o != F_NONE) parked = true;
+    }
+    CHECK(parked, "U9 the boot walk did not park against absent memory");
+    CHECK(dut->dbg_img_valid_o == 0, "U9 parked but image claims valid");
+    h.dram.refuse = false;                    // handover: memory appears
+    h.dram.mem = gen.b;                       // ...with the image loaded
+    CHECK(h.locate(0, gen.ents.front().type, 0),
+          "U9 the first post-load locate never answered");
+    CHECK(!h.err,
+          "U9 THE FIRST post-load locate missed - the answer preceded the heal");
+    CHECK(dut->dbg_img_valid_o == 1, "U9 the heal walk did not validate");
+    CHECK(h.rd(RGN_DATA, false, 0) &&
+          h.rdata == img64(gen.b, gen.ents.front().off),
+          "U9 the first-served descriptor bytes are wrong");
+    CHECK(h.locate(0, gen.ents.front().type, 0) && !h.err,
+          "U9 the second command must serve too");
+    //! ...and a first locate for a descriptor the fresh image genuinely
+    //! lacks is the honest miss FROM THE WALKED image, not the parked state
+    h.dram.refuse = true;
+    h.reset();
+    parked = false;
+    for (int i = 0; i < 4 * int(MEM_TIMEOUT) + 200 && !parked; ++i) {
+      h.tick();
+      if (dut->dbg_fault_o != F_NONE) parked = true;
+    }
+    h.dram.refuse = false;
+    h.dram.mem = gen.b;
+    CHECK(h.locate(0, 0x0099, 0) && h.err,
+          "U9 a genuinely absent descriptor must still miss after the heal");
+    CHECK(dut->dbg_img_valid_o == 1,
+          "U9 ...with the image validated by that same walk");
+
+    //! ...and the RGN_NCFG pseudo-register heals the same way: it is the
+    //! register E_RDESC range-checks BEFORE it ever locates, so a parked 0
+    //! here is exactly the w3a silicon race (first READ_DESCRIPTOR answered
+    //! BAD_ARGUMENTS) - the first read after the handover must answer the
+    //! walked configurations_count, not the parked zero
+    h.dram.refuse = true;
+    h.reset();
+    parked = false;
+    for (int i = 0; i < 4 * int(MEM_TIMEOUT) + 200 && !parked; ++i) {
+      h.tick();
+      if (dut->dbg_fault_o != F_NONE) parked = true;
+    }
+    CHECK(parked, "U9c the second park never settled");
+    h.dram.refuse = false;
+    h.dram.mem = gen.b;
+    CHECK(h.rd(RGN_NCFG, false, 0),
+          "U9c the first post-load NCFG read never answered");
+    CHECK(!h.err && (h.rdata & 0xFFFFu) == gen.n_config,
+          "U9c the FIRST NCFG read answered %u, want the walked %u",
+          (unsigned)(h.rdata & 0xFFFFu), (unsigned)gen.n_config);
+  }
+
   // ---- M1: a bridge that never accepts a request --------------------------
   {
     h.dram.refuse = true;

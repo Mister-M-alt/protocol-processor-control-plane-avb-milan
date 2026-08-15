@@ -160,8 +160,13 @@ at nothing") is replaced by a likelier one — *software has not loaded the imag
 or loaded a truncated one — and uninitialised DRAM is not a recognisable zero. The
 image therefore opens with a **magic + layout-version + checksum header** and nothing
 is served until all three agree: every locate answers `st_err` → `NO_SUCH_DESCRIPTOR`
-→ a well-formed AECP response. A locate while invalid re-arms the header probe, so a
-late load heals with no reset.
+→ a well-formed AECP response. A locate — or an RGN_NCFG read, the register
+READ_DESCRIPTOR range-checks before it ever locates — arriving while invalid
+TRIGGERS the header probe and stalls through it, answering from the walk's
+outcome (heal BEFORE answer, the r49a/w3a silicon round: the old
+answer-then-re-arm order sacrificed the first wire command after every late
+image load). A late load therefore heals with no reset and no lost command;
+an absent bridge still degrades inside the memory watchdog.
 
 Latency is the design problem (the reference SoC measures ~1424 ns on a miss to main
 memory), so: the **index map is walked once into an on-chip table** — it is consulted

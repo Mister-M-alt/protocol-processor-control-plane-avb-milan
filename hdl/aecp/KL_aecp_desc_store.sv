@@ -42,13 +42,28 @@
 //                DRAM is not a recognisable zero. So the image opens with a
 //                magic + layout-version + checksum header
 //                (hdl/aecp/desc/gen_desc_image.py) and NOTHING is served until
-//                all three agree: every locate answers `st_err_o`, the µCPU
-//                turns that into NO_SUCH_DESCRIPTOR, and a well-formed AECP
-//                response goes out. A locate while invalid also RE-ARMS the
-//                header probe, so a late software load heals without a reset.
-//                The store never returns a descriptor from an image whose
-//                header it has not validated — "not ready yet" and "silently
-//                wrong" are different answers here.
+//                all three agree.
+//
+//                HEAL BEFORE ANSWER (silicon r49a/w3a evidence, 2026-08-15).
+//                A locate arriving while the image is invalid used to answer
+//                its miss FROM THE PARKED STATE and re-arm the header probe
+//                after - so on hardware, where the loader lands the image in
+//                DRAM long after the store's boot walk parked against empty
+//                memory, the FIRST wire command always missed (measured: a
+//                first READ_DESCRIPTOR answering BAD_ARGUMENTS, a first
+//                GET_COUNTERS answering NO_SUCH_DESCRIPTOR) and only the
+//                SECOND was served. The order is now walk-then-answer: an
+//                invalid-image locate TRIGGERS the header probe and stalls
+//                through it - the µCPU already holds `st_req` through state
+//                stalls, and every walk burst is bounded by the memory
+//                watchdog, so an absent bridge still degrades to the fault
+//                answer in bounded time, never a hang - and the locate is
+//                answered from the walk's OUTCOME: served when the freshly
+//                validated image has the descriptor, the honest miss only
+//                when the re-walked image genuinely lacks it or is itself
+//                still invalid. The store never returns a descriptor from an
+//                image whose header it has not validated — "not ready yet"
+//                and "silently wrong" are different answers here.
 //
 //                LATENCY IS THE DESIGN PROBLEM. The reference SoC measures
 //                ~1424 ns on a miss to main memory. Fetching a ~300-byte
@@ -337,6 +352,15 @@ module KL_aecp_desc_store #(
   //! costs one register instead of a wider image entry. A uniform type emits
   //! one entry and this stays zero, so the uniform path is unchanged.
   logic [15:0]         scan_base_r;
+  //! a read took while the image was invalid: the walk now in flight owes
+  //! it an answer (the heal-before-answer order - see the banner). Kind 0 =
+  //! a LOCATE (owed a scan or the honest miss); kind 1 = an RGN_NCFG read
+  //! (owed configurations_count - the register E_RDESC range-checks BEFORE
+  //! it ever locates, which is exactly how the w3a silicon race answered
+  //! BAD_ARGUMENTS instead of serving: the parked count reads 0 and no
+  //! locate ever runs to trigger the old locate-only re-arm).
+  logic                heal_pend_r;
+  logic                heal_kind_r;
 
   // decoded fields of the scanned entry
   logic [15:0] e_cfg_w, e_type_w, e_cnt_w, e_len_w, e_nbase_w, e_strd_w;
@@ -484,6 +508,8 @@ module KL_aecp_desc_store #(
       scan_cmp_r      <= 16'd0;
       scan_rdy_r      <= 1'b0;
       scan_base_r     <= 16'd0;
+      heal_pend_r     <= 1'b0;
+      heal_kind_r     <= 1'b0;
     end else begin
       // a read is claimed until its answer leaves
       if (take_rd_w)   req_seen_r <= 1'b1;
@@ -600,7 +626,20 @@ module KL_aecp_desc_store #(
           if (hdr_n_names_r == 16'd0) begin
             img_valid_r <= 1'b1;
             fault_r     <= FAULT_NONE_C;
-            st_r        <= S_READY;
+            if (heal_pend_r && !heal_kind_r) begin
+              heal_pend_r <= 1'b0;
+              scan_rd_r   <= '0;
+              scan_cmp_r  <= 16'd0;
+              scan_rdy_r  <= 1'b0;
+              scan_base_r <= 16'd0;
+              st_r        <= S_SCAN;
+            end else if (heal_pend_r) begin
+              heal_pend_r <= 1'b0;
+              ans_err_r   <= 1'b0;
+              ans_data_r  <= {48'd0, hdr_n_config_r};
+              rd_pipe_r   <= 1'b0;
+              st_r        <= S_ANSWER;
+            end else st_r <= S_READY;
           end else begin
             if (!mreq_valid_r && !mem_busy_r) begin
               mreq_valid_r <= 1'b1;
@@ -623,7 +662,20 @@ module KL_aecp_desc_store #(
           end else if (beat_w && mem_rsp_last_i) begin
             img_valid_r <= 1'b1;
             fault_r     <= FAULT_NONE_C;
-            st_r        <= S_READY;
+            if (heal_pend_r && !heal_kind_r) begin
+              heal_pend_r <= 1'b0;
+              scan_rd_r   <= '0;
+              scan_cmp_r  <= 16'd0;
+              scan_rdy_r  <= 1'b0;
+              scan_base_r <= 16'd0;
+              st_r        <= S_SCAN;
+            end else if (heal_pend_r) begin
+              heal_pend_r <= 1'b0;
+              ans_err_r   <= 1'b0;
+              ans_data_r  <= {48'd0, hdr_n_config_r};
+              rd_pipe_r   <= 1'b0;
+              st_r        <= S_ANSWER;
+            end else st_r <= S_READY;
           end else if (tmo_hit_w) begin
             fault_r    <= FAULT_TIMEOUT_C;
             mem_busy_r <= 1'b0;
@@ -634,6 +686,25 @@ module KL_aecp_desc_store #(
 
         // ---------------- serving -----------------------------------------
         S_READY, S_BAD: begin
+          //! a heal walk that ended in a fault still owes its locate the
+          //! honest miss - answered HERE, from the walk's outcome, never
+          //! from the parked state it started in
+          if (heal_pend_r) begin
+            heal_pend_r  <= 1'b0;
+            ans_pend_r   <= 1'b1;
+            //! a LOCATE is owed the honest miss; an RGN_NCFG read is owed a
+            //! plain 0 (pseudo-register reads never err) - the walked truth
+            //! either way
+            ans_err_r    <= !heal_kind_r;
+            ans_data_r   <= 64'd0;
+            rd_pipe_r    <= 1'b0;
+            if (!heal_kind_r) begin
+              desc_len_r   <= 16'd0;
+              desc_nbase_r <= NAME_NONE_C;
+              if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
+            end
+            st_r <= S_ANSWER;
+          end
           //! the static image is read-only at run time (07 §2): only the name
           //! overlay takes a write, everything else is dropped and counted
           if (take_wr_w && !st_name_i && (rowr_cnt_r != 16'hFFFF)) begin
@@ -657,17 +728,24 @@ module KL_aecp_desc_store #(
                 scan_base_r <= 16'd0;
                 st_r       <= S_SCAN;
               end else begin
-                //! not loaded, or loaded wrong: answer the honest miss AND
-                //! re-arm the probe, so a late software load heals with no
-                //! reset and no garbage descriptor in between
-                ans_err_r    <= 1'b1;
-                ans_data_r   <= 64'd0;
-                rd_pipe_r    <= 1'b0;
-                desc_len_r   <= 16'd0;
-                desc_nbase_r <= NAME_NONE_C;
-                if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
-                st_r <= S_ANSWER;
+                //! not loaded, or loaded wrong: HEAL BEFORE ANSWER (banner).
+                //! The key is already latched; the walk runs now and the
+                //! answer comes from its outcome, so a first command after a
+                //! late software load is SERVED, not sacrificed to re-arm
+                //! the probe for the second.
+                heal_pend_r <= 1'b1;
+                heal_kind_r <= 1'b0;
+                st_r        <= S_HDR_REQ;
               end
+            end else if ((region_w == RGN_NCFG_C) && !img_valid_r) begin
+              //! configurations_count while invalid: HEAL FIRST (see the
+              //! heal_kind_r note - this is the register E_RDESC checks
+              //! before it ever locates, the w3a race's actual entry). The
+              //! answer comes from the walked header, or 0 only when the
+              //! walk itself still fails.
+              heal_pend_r <= 1'b1;
+              heal_kind_r <= 1'b1;
+              st_r        <= S_HDR_REQ;
             end else begin
               rd_pipe_r <= 1'b1;
               unique case (region_w)
@@ -677,8 +755,7 @@ module KL_aecp_desc_store #(
                                    rd_reg_r  <= img_valid_r
                                                 ? {48'd0, desc_nbase_r} : 64'd0; end
                 RGN_NCFG_C:  begin rd_kind_r <= 2'd2;
-                                   rd_reg_r  <= img_valid_r
-                                                ? {48'd0, hdr_n_config_r} : 64'd0; end
+                                   rd_reg_r  <= {48'd0, hdr_n_config_r}; end
                 RGN_LEN_C:   begin rd_kind_r <= 2'd2;
                                    rd_reg_r  <= img_valid_r
                                                 ? {48'd0, desc_len_r} : 64'd0; end
