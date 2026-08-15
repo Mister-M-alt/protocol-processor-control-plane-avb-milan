@@ -110,6 +110,7 @@ E_GSTRI   = 912      # GET_STREAM_INFO (Milan 5.4.2.10 80-byte response)
 E_GAVB    = 944      # GET_AVB_INFO (IEEE 7.4.40, Milan 5.4.2.23)
 E_GASP    = 976      # GET_AS_PATH (IEEE 7.4.41, Milan 5.4.2.24)
 E_GAMAPO  = 996      # GET_AUDIO_MAP on a Stream Port OUTPUT (Milan 5.4.2.26)
+E_GCTRSNS = 796      # GET_COUNTERS on a type with no counters: NOT_SUPPORTED
 # 1722.1-2021 Table 7-1: the one descriptor type this program is dispatched
 # for (KL_aecp_engine refuses every other type back to the NOT_IMPLEMENTED
 # echo before dispatch, so the constant emitted at @24 is also a guarantee).
@@ -529,6 +530,23 @@ place(E_GCTRS, [
     u('BRANCH', imm=E_GCTRS + 22),
     u('SEND_RESP'),                              # out:
     u('END'),
+])
+
+# --- GET_COUNTERS on a counter-less type (the la_avdecc size law) ------------
+# Table 7-141's NOT_SUPPORTED for a target outside the kept set - carried in
+# the FULL fixed Figure 7-67 body, because the reference stack sizes every
+# non-success AEM response except NOT_IMPLEMENTED against the RESPONSE length:
+# la_avdecc protocolAemPayloads.cpp checkResponsePayload reflects ONLY
+# NotImplemented at command length ("If status is NotImplemented, we expect a
+# reflected message (using Command length)") and demands
+# >= AecpAemGetCountersResponsePayloadSize (136) for everything else - a
+# command-sized NOT_SUPPORTED echo is exactly the "Incorrect payload size"
+# complaint the r49a bench probe logged. Two words: set the status, fall into
+# E_GCTRS's zero-body emitter (type/index echoed, zero mask, zero block,
+# cdl 148, no gathers).
+place(E_GCTRSNS, [
+    u('SET_STATUS', imm=ST_NSUPP),
+    u('BRANCH', imm=E_GCTRS + 17),
 ])
 
 # --- GET_AUDIO_MAP (IEEE 1722.1-2021 §7.4.44, Milan v1.2 §5.4.2.26) ----------

@@ -30,7 +30,7 @@ enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
        E_STPRE = 592, E_MVUINFO = 736, E_GCTRS = 768, E_GAMAP = 800,
        E_REGUN = 832, E_DEREG = 844, E_UNSOK = 852, E_NOSEND = 858,
        E_NSUPPE = 864, E_LOCKEN = 872, E_LOCKUNS = 896, E_GSTRI = 912,
-       E_GAVB = 944, E_GASP = 976 };
+       E_GAVB = 944, E_GASP = 976, E_GCTRSNS = 796 };
 
 // IEEE 1722.1-2021 Table 7-141
 enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
@@ -588,6 +588,24 @@ int main(int argc, char** argv) {
     CHECK(nz == 0, "P18b %d nonzero quadlets in a NO_SUCH_DESCRIPTOR body", nz);
     CHECK(h.gx_sels.empty(),
           "P18b the face was asked %zu times about a nonexistent object",
+          h.gx_sels.size());
+  }
+
+  // ---- P18c: the counter-less-type refusal is the FULL body ---------------
+  // (the la_avdecc size law: only NOT_IMPLEMENTED reflects at command
+  //  length; NOT_SUPPORTED must carry the fixed 160-byte response form)
+  {
+    const uint64_t CT_KEY  = 0x0000000000000000ull;   // never located
+    const uint64_t CT_TYIX = 0x0000000000000000ull;   // ENTITY 0
+    CHECK(h.run(E_GCTRSNS, CT_KEY, false, 4000, CT_TYIX), "P18c completes");
+    CHECK(h.last_status == ST_NSUPP,
+          "P18c status NOT_SUPPORTED got %u", h.last_status);
+    CHECK(h.last_len == 148, "P18c the fixed body still emits, len %u",
+          h.last_len);
+    CHECK(h.w32(12) == 0, "P18c ENTITY 0 echoed, got %08x", h.w32(12));
+    CHECK(h.w32(16) == 0, "P18c counters_valid ZERO, got %08x", h.w32(16));
+    CHECK(h.gx_sels.empty(),
+          "P18c the face was asked %zu times about a counter-less type",
           h.gx_sels.size());
   }
 

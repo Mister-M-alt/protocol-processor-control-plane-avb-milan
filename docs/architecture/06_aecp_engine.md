@@ -339,12 +339,29 @@ descriptor with the descriptor_type and descriptor_index specified does not exis
 carrying the fixed Figure 7-67 body all-zero, with the counters face never
 consulted; and a descriptor_type outside the supported set {STREAM_INPUT,
 AVB_INTERFACE, CLOCK_DOMAIN} refuses NOT_SUPPORTED ("the command is implemented
-but the target of the command is not supported") with the command echoed, off the
-registered A_PLD-exit re-dispatch. ENTITY (Table 7-150: nothing but
-ENTITY_SPECIFIC bits) and STREAM_OUTPUT (this build keeps no output counters —
-recorded) both land on that arm. The integrator's wrong-object guard on the face
-stays as the second line of defense. §7.4.42 defines no separate error form, so
-every status carries the fixed 160-byte response.
+but the target of the command is not supported"), off the registered A_PLD-exit
+re-dispatch. ENTITY (Table 7-150: nothing but ENTITY_SPECIFIC bits) and
+STREAM_OUTPUT (this build keeps no output counters — recorded) both land on that
+arm. The integrator's wrong-object guard on the face stays as the second line of
+defense. §7.4.42 defines no separate error form, so every status carries the
+fixed 160-byte response — **including NOT_SUPPORTED** (the r49a bench round): the
+reference stack reflects ONLY NOT_IMPLEMENTED at command length ("If status is
+NotImplemented, we expect a reflected message (using Command length)" —
+la_avdecc protocolAemPayloads.cpp checkResponsePayload) and sizes every other
+non-success answer against the response form, so the earlier command-sized
+NOT_SUPPORTED echo here was exactly its "Incorrect payload size" complaint.
+`E_GCTRSNS` sets the status and falls into the miss arm's zero-body emitter.
+The NOT_IMPLEMENTED echo stays command-sized, as both texts want.
+
+**Heal before answer (same round, silicon r49a/w3a).** The store used to answer
+an invalid-image locate from the parked state and re-arm its header probe after,
+so the first wire command after a late image load was always sacrificed (a first
+READ_DESCRIPTOR answering BAD_ARGUMENTS through the parked configurations_count,
+a first GET_COUNTERS answering NO_SUCH_DESCRIPTOR through the parked locate).
+The order is now walk-then-answer for both entries — the locate AND the
+RGN_NCFG pseudo-register read — with the µCPU stalled through the bounded walk;
+an absent bridge still degrades to the fault answer inside the memory watchdog.
+See KL_aecp_desc_store's banner.
 
 Response: `descriptor_type @24`, `descriptor_index @26`, `counters_valid @28`,
 32 × u32 block @32 (cdl 148). `counters_valid` bit N (MSB-first) ⇔ block offset 4·N.

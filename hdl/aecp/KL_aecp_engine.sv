@@ -559,6 +559,7 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_GAVB_C    = 11'd944;   // E_GAVB
   localparam logic [10:0] UPC_GASP_C    = 11'd976;   // E_GASP
   localparam logic [10:0] UPC_GAMAPO_C  = 11'd996;   // E_GAMAPO
+  localparam logic [10:0] UPC_GCTRSNS_C = 11'd796;   // E_GCTRSNS
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -1455,15 +1456,19 @@ module KL_aecp_engine
             //! target types and this build keeps counters for three -
             //! STREAM_INPUT, AVB_INTERFACE, CLOCK_DOMAIN. Any other type is
             //! Table 7-141's NOT_SUPPORTED ("the command is implemented but
-            //! the target of the command is not supported") with the
-            //! command echoed - never SUCCESS over an empty mask. `ctrs_r`
-            //! stays set: E_NSUPPE runs no gathers, so the gx routing it
+            //! the target of the command is not supported") - carried in
+            //! the FULL fixed body, because the reference stack reflects
+            //! only NOT_IMPLEMENTED at command length and sizes every other
+            //! non-success answer against the response form (la_avdecc
+            //! checkResponsePayload; the r49a "Incorrect payload size"
+            //! probe complaint was the old command-sized echo here).
+            //! E_GCTRSNS runs no gathers, so the ctr routing `ctrs_r`
             //! selects is never consulted on this arm.
             if (ctrs_r && (cfg_ix_r != DT_STREAM_INPUT_C)
                 && (cfg_ix_r != DT_AVB_INTERFACE_C)
                 && (cfg_ix_r != DT_CLOCK_DOMAIN_C)) begin
-              upc_r  <= UPC_NSUPPE_C;
-              echo_r <= 1'b1;
+              upc_r  <= UPC_GCTRSNS_C;
+              echo_r <= 1'b0;
             end
             //! GET_STREAM_INFO: §7.4.16.1's command is descriptor_type +
             //! descriptor_index and nothing else, so cdl 16 is the whole

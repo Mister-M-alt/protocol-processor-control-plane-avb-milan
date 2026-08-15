@@ -2430,31 +2430,36 @@ int main(int argc, char** argv) {
           got[46 + 24] == 0 && got[46 + 28] == 0,
           "K3: an unclaimed counter still put bytes in the block");
 
-    // ---- K4: ENTITY — NOT_SUPPORTED, command echoed (this round) ----------
-    // The bench probe's second strictness rule upgraded the old SUCCESS-
-    // empty-mask answer: IEEE Table 7-150 gives the ENTITY descriptor
-    // nothing but ENTITY_SPECIFIC bits, Milan makes none of them mandatory,
-    // and Table 7-141's NOT_SUPPORTED ("the command is implemented but the
-    // target of the command is not supported") says that plainly instead of
-    // succeeding over a mask of zeros. The supported set is exactly
+    // ---- K4: ENTITY — NOT_SUPPORTED in the FULL fixed body ----------------
+    // Table 7-150 gives the ENTITY descriptor nothing but ENTITY_SPECIFIC
+    // bits and Milan makes none mandatory, so the target refuses Table
+    // 7-141's NOT_SUPPORTED - carried in the full Figure 7-67 body (zero
+    // mask, zero block, cdl 148), because the reference stack reflects ONLY
+    // NOT_IMPLEMENTED at command length and sizes every other non-success
+    // answer against the response form (la_avdecc checkResponsePayload;
+    // the r49a probe's "Incorrect payload size" complaint was the old
+    // command-sized echo here). The supported set stays exactly
     // {STREAM_INPUT, AVB_INTERFACE, CLOCK_DOMAIN}.
     {
-      auto e_pl = ctr_pl(DT_ENTITY, 0);
-      got = cmd(AEM_GET_COUNTERS, e_pl, 0xD003);
-      want = expect(11, AEM_GET_COUNTERS, 0xD003, e_pl);
+      got = cmd(AEM_GET_COUNTERS, ctr_pl(DT_ENTITY, 0), 0xD003);
+      want = expect(11, AEM_GET_COUNTERS, 0xD003,
+                    ctr_expect_pl(DT_ENTITY, 0));
       CHECK(got == want,
-            "K4: ENTITY GET_COUNTERS is not the NOT_SUPPORTED echo");
+            "K4: ENTITY refuses NOT_SUPPORTED in the full zero-flagged body");
       if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+      CHECK(got.size() == 38 + 136,
+            "K4: the refusal still owes the fixed 160-byte AECPDU, got %zu B",
+            got.size());
     }
     // ...and STREAM_OUTPUT refuses the same way even though its DESCRIPTOR
     // exists in the image: the gate is the supported-counter SET, not
     // existence (this build keeps no output counters - recorded)
     {
-      auto o_pl = ctr_pl(0x0006, 0);
-      got = cmd(AEM_GET_COUNTERS, o_pl, 0xD00B);
-      want = expect(11, AEM_GET_COUNTERS, 0xD00B, o_pl);
+      got = cmd(AEM_GET_COUNTERS, ctr_pl(0x0006, 0), 0xD00B);
+      want = expect(11, AEM_GET_COUNTERS, 0xD00B, ctr_expect_pl(0x0006, 0));
       CHECK(got == want,
-            "K4b: STREAM_OUTPUT counters refuse NOT_SUPPORTED (recorded gap)");
+            "K4b: STREAM_OUTPUT refuses NOT_SUPPORTED, full body (recorded gap)");
+      if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
     }
     // ...while the OTHER two supported types keep their old answers - this
     // TB's face backs only STREAM_INPUT, so both come back SUCCESS with an
