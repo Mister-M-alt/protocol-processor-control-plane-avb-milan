@@ -29,7 +29,8 @@ enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
        E_OVF = 416, E_FMT = 512, E_NOTIMPL = 560, E_ACQ = 576,
        E_STPRE = 592, E_MVUINFO = 736, E_GCTRS = 768, E_GAMAP = 800,
        E_REGUN = 832, E_DEREG = 844, E_UNSOK = 852, E_NOSEND = 858,
-       E_NSUPPE = 864, E_LOCKEN = 872, E_LOCKUNS = 896, E_GSTRI = 912 };
+       E_NSUPPE = 864, E_LOCKEN = 872, E_LOCKUNS = 896, E_GSTRI = 912,
+       E_GAVB = 944, E_GASP = 976 };
 
 // IEEE 1722.1-2021 Table 7-141
 enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
@@ -76,6 +77,8 @@ struct Harness {
   uint16_t cur_upc = 0;
   uint64_t cur_opd0 = 0, cur_opd1 = 0;
   int      amap_recs = 0;                 // RECORD gathers completed this run
+  int      gsi_recs = 0;                  // Milan-info record gathers (sel 0xB8)
+  int      gasp_count = 3;                // GET_AS_PATH path length served
   std::vector<uint8_t> gx_sels;           // every completed gather's selector
 
   explicit Harness(VKL_aecp_ucpu* d) : dut(d) { memset(buf, 0, sizeof buf); }
@@ -120,6 +123,18 @@ struct Harness {
                             |  uint64_t(am_count());
       if (sel == 0x10) return (amap_recs < am_count()) ? am_rec(amap_recs)
                                                        : 0;
+      return 0;
+    }
+    if (cur_upc == E_GAVB) {
+      if (sel == 0xB0) return 0x1112131415161718ull;          // gm
+      if (sel == 0xB1) return (0x0000'0BADull << 32) | (0x00ull << 24)
+                            | (0x07ull << 16) | 2;            // count 2
+      if (sel == 0xB8) return 0x0603'0002ull + uint64_t(gsi_recs) * 0x01000000ull;
+      return 0;
+    }
+    if (cur_upc == E_GASP) {
+      if (sel == 0xB0) return uint64_t(gasp_count);
+      if (sel == 0xB8) return 0xAB00'0000'0000'0000ull | unsigned(gsi_recs);
       return 0;
     }
     if (cur_upc == E_GSTRI) {
@@ -179,6 +194,7 @@ struct Harness {
         gx_data_next = gxval(dut->gx_sel_o);
         gx_sels.push_back(dut->gx_sel_o);
         if (cur_upc == E_GAMAP && dut->gx_sel_o == 0x10) ++amap_recs;
+        if (dut->gx_sel_o == 0xB8) ++gsi_recs;
         gx_lat = 2;
       }
       else if (--gx_lat == 0) { dut->gx_valid_i = 1; dut->gx_data_i = gx_data_next; }
@@ -248,7 +264,7 @@ struct Harness {
     rb_hold = rb_stall;
     stw.clear(); commits = 0; nvm_marks.clear(); notify_classes.clear();
     cur_upc = upc; cur_opd0 = opd0; cur_opd1 = opd1;
-    amap_recs = 0; gx_sels.clear();
+    amap_recs = 0; gsi_recs = 0; gx_sels.clear();
     tx_wait = 3;
     dut->disp_upc_i = upc;
     dut->disp_ctlr_eid_i = CTLR;
@@ -761,6 +777,41 @@ int main(int argc, char** argv) {
           "G2 locate miss keeps NO_SUCH_DESCRIPTOR, got %u", h.last_status);
     CHECK(h.last_len == 68, "G2 the full body still emits, len %u",
           h.last_len);
+  }
+
+  // ---- V: GET_AVB_INFO + GET_AS_PATH (IEEE SS7.4.40/SS7.4.41) ------------
+  {
+    const uint64_t KEY  = 0x0000000300050000ull;   // any locate hit
+    const uint64_t TYIX = 0x0000000000090000ull;   // {type 9, index 0}
+    CHECK(h.run(E_GAVB, KEY, false, 4000, TYIX), "V1 AVB_INFO completes");
+    CHECK(h.last_status == ST_OK && h.last_len == 12 + 28,
+          "V1 SUCCESS, 20 fixed + 2x4 mappings (st %u len %u)",
+          h.last_status, h.last_len);
+    CHECK(h.w32(12) == 0x00090000u, "V1 type+index @24");
+    CHECK(h.w32(16) == 0x11121314u && h.w32(20) == 0x15161718u,
+          "V1 grandmaster @28");
+    CHECK(h.w32(24) == 0x00000BADu, "V1 propagation_delay @36");
+    CHECK(h.w32(28) == 0x00070002u, "V1 domain+flags+count @40, got %08x",
+          h.w32(28));
+    CHECK(h.w32(32) == 0x06030002u && h.w32(36) == 0x07030002u,
+          "V1 mappings in ordinal order (%08x %08x)", h.w32(32), h.w32(36));
+
+    h.gasp_count = 3;
+    CHECK(h.run(E_GASP, KEY, false, 4000, 0x0000000000000000ull),
+          "V2 AS_PATH completes");
+    CHECK(h.last_status == ST_OK && h.last_len == 12 + 4 + 24,
+          "V2 SUCCESS, count 3 (st %u len %u)", h.last_status, h.last_len);
+    CHECK(h.w32(12) == 0x00030000u,
+          "V2 index @24 + count @26 (le-view %08x)", h.w32(12));
+    CHECK(h.w32(16) == 0xAB000000u && h.w32(20) == 0x00000000u,
+          "V2 entry 0 @28");
+    CHECK(h.w32(32) == 0xAB000000u && h.w32(36) == 0x00000002u,
+          "V2 entry 2 at @44 (%08x %08x)", h.w32(32), h.w32(36));
+
+    h.gasp_count = 0;
+    CHECK(h.run(E_GASP, KEY, false, 4000, 0), "V3 empty path completes");
+    CHECK(h.last_status == ST_OK && h.last_len == 16,
+          "V3 count 0 emits an empty list, len %u", h.last_len);
   }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);

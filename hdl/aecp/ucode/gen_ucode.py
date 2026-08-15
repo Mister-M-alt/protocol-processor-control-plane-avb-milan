@@ -107,6 +107,8 @@ E_NSUPPE  = 864      # echo + NOT_SUPPORTED (ACQUIRE, LOCK on non-ENTITY)
 E_LOCKEN  = 872      # LOCK_ENTITY (Milan 5.4.2.2, IEEE 7.4.2)
 E_LOCKUNS = 896      # unsolicited LOCK_ENTITY (Table 5.22 + 7.5.2)
 E_GSTRI   = 912      # GET_STREAM_INFO (Milan 5.4.2.10 80-byte response)
+E_GAVB    = 944      # GET_AVB_INFO (IEEE 7.4.40, Milan 5.4.2.23)
+E_GASP    = 976      # GET_AS_PATH (IEEE 7.4.41, Milan 5.4.2.24)
 # 1722.1-2021 Table 7-1: the one descriptor type this program is dispatched
 # for (KL_aecp_engine refuses every other type back to the NOT_IMPLEMENTED
 # echo before dispatch, so the constant emitted at @24 is also a guarantee).
@@ -766,6 +768,68 @@ place(E_GSTRI, [
     u('BUILD_FLD', ra=7,  fmt=FMT_Q),            # vlan + resv + flags_ex @68
     u('BUILD_FLD', ra=8,  fmt=FMT_D),            # pbsta/acmpsta + resv  @76
     u('SEND_RESP'),
+    u('END'),
+])
+
+# --- GET_AVB_INFO (IEEE §7.4.40, Milan §5.4.2.23) ----------------------------
+# Response (Figure 7-63, AECPDU offsets): descriptor_type @24, index @26,
+# gptp_grandmaster_id @28, propagation_delay @36, gptp_domain_number @40,
+# flags @41, msrp_mappings_count @42, then 4-byte {traffic_class, priority,
+# vlan_id} mappings @44. The gPTP words and the mapping list are the
+# INTEGRATOR's through the Milan-info face (kind 1):
+#   sel 0 -> gptp_grandmaster_id (qword)
+#   sel 1 -> {propagation_delay[31:0], domain[7:0], flags[7:0], count[15:0]}
+#            - one qword lays @36..@43 in wire order, and [15:0] doubles as
+#            the ITER_OPEN count exactly like the audio-map GEOM word
+#   sel 8 -> mapping record ordinal gsi_ord_o (record-class: bit 3)
+# A face that answers count 0 emits an EMPTY list and cdl 32 - absent, never
+# invented; propagation_delay 0 is likewise the honest "not measured" (the
+# reference fabric's gPTP plane does not export pDelay - recorded in 06 §7).
+place(E_GAVB, [
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=E_GAVB + 3),
+    u('SET_STATUS', imm=ST_OK),
+    u('GATHER_EXT', rd=1, cnd=0xB, imm=0),       # grandmaster_id
+    u('GATHER_EXT', rd=2, cnd=0xB, imm=1),       # {pdelay, domain, flags, count}
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type + index          @24
+    u('BUILD_FLD', ra=1,  fmt=FMT_Q),            # gptp_grandmaster_id   @28
+    u('BUILD_FLD', ra=2,  fmt=FMT_Q),            # pdelay+domain+flags+count @36
+    u('ITER_OPEN', ra=2),                        # count = r2[7:0]
+    u('BR_STATUS', cnd=1, imm=E_GAVB + 15),      # loop: 0-trip safe
+    u('GATHER_EXT', rd=3, cnd=0xB, imm=8),       # mapping[gsi_ord]
+    u('APPEND', ra=3, fmt=FMT_D),                # {tc, prio, vid} @44 + 4k
+    u('ITER_NEXT'),
+    u('BRANCH', imm=E_GAVB + 10),
+    u('SEND_RESP'),                              # out:
+    u('END'),
+])
+
+# --- GET_AS_PATH (IEEE §7.4.41, Milan §5.4.2.24) -----------------------------
+# "The path_sequence field is set to pathSequence of the latest IEEE Std
+# 802.1AS-2020 Announce message PathTrace TLV" - which of the path a leaf
+# device KNOWS is the integrator's affair: the reference fabric carries only
+# the elected grandmaster's identity, so its face answers count 1 with that
+# one ClockIdentity (count 0 with no GM) - the conformant minimal answer,
+# recorded in 06 §7. The command carries the INDEX at @24 (§7.4.41.1 - no
+# type field), so r13[15:0] is the index and the locate key is engine-packed
+# with the AVB_INTERFACE constant. Face words (kind 2): sel 0 -> {48'0,
+# count}; sel 8 -> path entry gsi_ord_o (record-class).
+place(E_GASP, [
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=E_GASP + 3),
+    u('SET_STATUS', imm=ST_OK),
+    u('GATHER_EXT', rd=2, cnd=0xB, imm=0),       # count
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_W),            # descriptor_index      @24
+    u('BUILD_FLD', ra=2,  fmt=FMT_W),            # count                 @26
+    u('ITER_OPEN', ra=2),
+    u('BR_STATUS', cnd=1, imm=E_GASP + 13),      # loop: 0-trip safe
+    u('GATHER_EXT', rd=3, cnd=0xB, imm=8),       # path_sequence[gsi_ord]
+    u('APPEND', ra=3, fmt=FMT_Q),                # ClockIdentity @28 + 8k
+    u('ITER_NEXT'),
+    u('BRANCH', imm=E_GASP + 8),
+    u('SEND_RESP'),                              # out:
     u('END'),
 ])
 

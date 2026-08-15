@@ -457,6 +457,40 @@ Milan §5.4.2.x "in any other way").
 | any other MVU type | VU response, MVU status 1 `NOT_IMPLEMENTED` |
 | wrong `protocol_id` | VU response echoing the protocol_id, status `NOT_IMPLEMENTED` |
 
+### 6.10 GET_AVB_INFO / GET_AS_PATH and the Milan-info face
+
+**Realization status (2026-08-15, `E_GAVB`/`E_GASP` + the shared `gsi_*` face).**
+The two gPTP read commands ride the SAME selector-coded gather face GET_STREAM_INFO
+introduced (`gsi_kind` 1 and 2), because the answers are integrator truth: the
+elected grandmaster, asCapable, the SRP class-A domain and the link state live in
+the fabric, not in a command parser. Word tables (each one `BUILD_FLD` wide):
+
+| kind | sel | word | lands at |
+|---|---|---|---|
+| 1 AVB | 0 | gptp_grandmaster_id (qword) | @28 |
+| 1 AVB | 1 | {propagation_delay[31:0], domain[7:0], flags[7:0], msrp_mappings_count[15:0]} | @36..@43 |
+| 1 AVB | 8 | msrp_mapping[`gsi_ord`] {traffic_class, priority, vlan_id} (dword) | @44 + 4k |
+| 2 ASP | 0 | {48'0, path count} | @26 |
+| 2 ASP | 8 | path_sequence[`gsi_ord`] ClockIdentity (qword) | @28 + 8k |
+
+Selector bit 3 marks the record-class words; the engine's shared ordinal counter
+(the audio-map record counter, reused) numbers them. Existence comes from the
+descriptor store's AVB_INTERFACE locate — GET_AS_PATH's command carries only the
+index (§7.4.41.1), so the engine packs the locate key with the AVB_INTERFACE
+constant. Both emit count-many records: a zero-count face answers an EMPTY list
+(cdl 32 / 16) — absent, never invented.
+
+**Honesty ledger** (what the reference fabric's face can and cannot say):
+propagation_delay is NOT exported by the gPTP plane — the face answers 0, the
+IEEE-permitted "as reported" value of a measurement this box does not surface;
+GET_AS_PATH answers count 1 = {gptp_grandmaster_id} (count 0 with no GM) — the
+pathSequence a leaf directly under its GM would see, an APPROXIMATION whenever
+bridges sit between (the full PathTrace TLV never reaches the fabric); asCapable
+and the class-A {priority 3, VID 2, SRclassID 6} mapping are live fabric state.
+Notification triggers observed: GM change, SRP domain change, link edges, plus the
+integrator's `gsi_avb_chg_i` strobe for face-word changes (asCapable) the processor
+cannot see itself; GET_AS_PATH notifies on GM change.
+
 ## 7. Registry, notifications, liveness, identify
 
 **Realization status (2026-08-15, `hdl/aecp/KL_aecp_notify.sv`)** — the registry, the

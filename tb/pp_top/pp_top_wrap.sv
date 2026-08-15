@@ -327,6 +327,9 @@ module pp_top_wrap (
       .gsi_ord_o             (gsi_ord_o),
       .gsi_data_i            (gsi_data_i),
       .gsi_wait_i            (gsi_wait_i),
+      //! the harness triggers AVB-info notifications through gm_change_i;
+      //! the integrator-side word-change strobe stays quiet here
+      .gsi_avb_chg_i         (1'b0),
       .desc_mem_req_valid_o  (desc_mem_req_valid_o),
       .desc_mem_req_ready_i  (desc_mem_req_ready_i),
       .desc_mem_req_addr_o   (desc_mem_req_addr_o),

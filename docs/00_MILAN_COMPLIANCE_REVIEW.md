@@ -361,7 +361,7 @@ verification).
 |---|---|---|---|---|---|---|---|---|
 | REQ-NOT-001 | Milan §5.4.5.1 | Fan-out: one message per registered controller excluding requester; per-entry DA/EID/seq on recorded port; seq +1 after handing to stack | shall | A | [GAP-06](#gap-06) | F06.4 | 06 §7 | STORM |
 | REQ-NOT-002 | Milan §5.4.5.2 | Triggers: every successful state-changing command; equivalent non-ATDECC changes while unlocked | shall | A | [GAP-06](#gap-06) | NOTIFY_ENQ | 06 §7 | RND |
-| REQ-NOT-003 | Milan Table 5.22 | Async triggers: GET_STREAM_INFO/GET_AVB_INFO/GET_AS_PATH field changes; GET_COUNTERS ≤1/descriptor/s; LOCK auto-unlock; auto-DEREGISTER | shall | A | [GAP-06](#gap-06) | trigger router | 06 §7 | STORM |
+| REQ-NOT-003 | Milan Table 5.22 | Async triggers: GET_STREAM_INFO/GET_AVB_INFO/GET_AS_PATH field changes; GET_COUNTERS ≤1/descriptor/s; LOCK auto-unlock; auto-DEREGISTER | shall | P | [GAP-06](#gap-06) | KL_aecp_notify (landed for the observed trigger set; GET_COUNTERS class open - pull-only face) | 06 §7 | STORM |
 | REQ-NOT-004 | Milan §5.4.5.3 | Departing-controller detection: per-controller random 30–60 s; CONTROLLER_AVAILABLE + retry; any-status reply re-arms; silence ⇒ remove + targeted DEREGISTER | shall | A | [GAP-06](#gap-06) | monitor engine | 06 §7 | TIM |
 | REQ-NOT-005 | Milan §5.3.4.2 | Registry cleared by power cycle | shall | A | [GAP-09](#gap-09) | volatile policy | 07 §5 | NVM |
 
@@ -393,7 +393,7 @@ verification).
 
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
 |---|---|---|---|---|---|---|---|---|
-| REQ-NET-001 | Milan §5.3.6.1 | Track per interface: gPTP GM ID, path sequence, domain, propagation delay (GET_AVB_INFO/GET_AS_PATH + notifications) | shall | A | [GAP-04](#gap-04) | gPTP adapter | 02 §4 | DIR |
+| REQ-NET-001 | Milan §5.3.6.1 | Track per interface: gPTP GM ID, path sequence, domain, propagation delay (GET_AVB_INFO/GET_AS_PATH + notifications) | shall | P | [GAP-04](#gap-04) | E_GAVB/E_GASP + gsi face (landed; pdelay unmeasured -> 0, path = {gm} - 06 SS6.10 ledger) | 02 §4, 06 §6.10 | DIR |
 | REQ-NET-002 | Milan §5.3.6.2, §4.2.7.2.1 | Track MSRP domain params (Class A priority 3, default VID 2); adopt + re-declare on differing Domain declaration; notify on change | shall | A | [GAP-04](#gap-04) | `srp` contract; SRP engine | 02 §4, 10 §6.1 | DIR |
 | REQ-NET-003 | Milan §5.3.7.2–.4, §5.3.8.8/.9 | Track SRP talker declaration + listener registration states, failure code + bridge ID, accumulated latency | shall | A | [GAP-04](#gap-04) | `srp` contract; SRP engine | 02 §4, 10 §6.3/.4 | DIR |
 | REQ-NET-004 | Milan Tables 5.1/5.13 | LINK_UP/LINK_DOWN counter invariant; GPTP_GM_CHANGED counter | shall | A | [GAP-05](#gap-05) | counters | 06 §6.6 | DIR |

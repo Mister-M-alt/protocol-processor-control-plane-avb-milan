@@ -345,6 +345,12 @@ module protocol_processor_top
     output logic  [7:0] gsi_ord_o,            //! ASP path entry ordinal
     input  wire  [63:0] gsi_data_i,           //! the word
     input  wire         gsi_wait_i,           //! HOLD the beat (not a ready)
+    //! one-cycle strobe: a face-served GET_AVB_INFO word changed outside
+    //! this processor's sight (asCapable, propagation delay). The gm/domain/
+    //! link triggers are derived internally; this pin covers the remainder,
+    //! and tying it 0 just narrows the Table 5.22 trigger set to what the
+    //! processor sees itself.
+    input  wire         gsi_avb_chg_i,
 
     //! ---- NVM boot restore + alarm (07 §5.3) ----
     input  wire         restore_go_i,          //! start boot restore
@@ -2826,8 +2832,13 @@ module protocol_processor_top
       //! remainder is recorded in 06 §7.
       .ev_stri_in_i          (ntfy_stri_in_w),
       .ev_stri_out_i         (ntfy_stri_out_w),
-      .ev_avb_i              (1'b0),
-      .ev_asp_i              (1'b0),
+      //! Table 5.22 GET_AVB_INFO triggers: the grandmaster changed, the
+      //! SRP domain (class A priority/VID) changed, the link state flipped
+      //! (AVTP_DOWN), or the integrator strobed a face-word change.
+      //! GET_AS_PATH: the path follows the grandmaster here (06 §7).
+      .ev_avb_i              (gm_change_i || srp_evt_domain_change_w
+                              || (link_up_i != link_q_r) || gsi_avb_chg_i),
+      .ev_asp_i              (gm_change_i),
       .uns_valid_o           (uns_valid_w),
       .uns_kind_o            (uns_kind_w),
       .uns_desc_type_o       (uns_dt_w),

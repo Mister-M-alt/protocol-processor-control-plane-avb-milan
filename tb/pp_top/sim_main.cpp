@@ -444,6 +444,24 @@ static std::vector<uint8_t> stream_descriptor(uint16_t ty, uint16_t ix) {
   return d;
 }
 
+static std::vector<uint8_t> avb_interface_descriptor(uint16_t ix) {
+  // SS7.2.8: fixed 98 B. Existence feeds GET_AVB_INFO/GET_AS_PATH's locate.
+  std::vector<uint8_t> d(98, 0);
+  putbe(&d[0], 0x0009, 2);
+  putbe(&d[2], ix, 2);
+  snprintf(reinterpret_cast<char*>(&d[4]), 60, "AVB Interface %u", ix);
+  putbe(&d[68], 0xFFFF, 2);                       // localized_description
+  putbe(&d[70], OWN_MAC, 6);                      // mac_address
+  putbe(&d[76], 0x0007, 2);                       // interface_flags (gPTP+AS)
+  putbe(&d[78], EID, 8);                          // clock_identity
+  d[86] = 250; d[87] = 248;                       // priority1, clock_class
+  putbe(&d[88], 0x4100, 2);                       // offset_scaled_log_variance
+  d[90] = 0x21; d[91] = 247; d[92] = 0;           // accuracy, prio2, domain
+  d[93] = 0xFD; d[94] = 0; d[95] = 0xFD;          // log intervals
+  putbe(&d[96], 1, 2);                            // port_number
+  return d;
+}
+
 // ---- the flat memory image (gen_desc_image.py layout, built independently) --
 struct ImgEnt { uint16_t cfg, type, count, len, nbase, stride; uint32_t off; };
 
@@ -668,6 +686,25 @@ struct H {
         case 7: return (uint64_t(0x60u | (ix & 0x1F)) << 24);    // pbsta byte
         default: return 0;
       }
+    }
+    if (kind == 1) {                      // GET_AVB_INFO words
+      if (ty != 0x0009 || ix != 0) return 0;
+      switch (sel) {
+        case 0: return 0xA1A2'A3A4'A5A6'A7A8ull;             // gm id
+        case 1: return (0x0000'1234ull << 32)                // pdelay
+                     | (0x00ull << 24) | (0x07ull << 16)     // domain, flags
+                     | 2;                                     // 2 mappings
+        case 8: return (ord == 0) ? 0x0603'0002ull           // {tc 6, prio 3, vid 2}
+              :        (ord == 1) ? 0x0502'0002ull           // {tc 5, prio 2, vid 2}
+              :                     0;
+        default: return 0;
+      }
+    }
+    if (kind == 2) {                      // GET_AS_PATH words
+      if (ix != 0) return 0;
+      if (sel == 0) return 3;             // three ClockIdentities
+      if (sel == 8) return (ord < 3) ? (0xC1D1'0000'0000'0000ull | ord) : 0;
+      return 0;
     }
     (void)ord;
     return 0;
@@ -1134,6 +1171,7 @@ int main(int argc, char** argv) {
     //! Milan-info face would say
     {CFGIX, 0x0005, 2, 140, 1, 144, 0},          // STREAM_INPUT x2
     {CFGIX, 0x0006, 2, 140, 1, 144, 0},          // STREAM_OUTPUT x2
+    {CFGIX, 0x0009, 1,  98, 1, 104, 0},          // AVB_INTERFACE
   };
   std::vector<uint8_t> desc_entity = entity_descriptor();
   std::vector<uint8_t> desc_clkdom = clock_domain_descriptor();
@@ -1144,7 +1182,8 @@ int main(int argc, char** argv) {
   h.dram = build_image(img_ents,
                        {desc_entity, desc_clkdom, desc_spi0, desc_spi1,
                         stream_descriptor(0x0005, 0), stream_descriptor(0x0005, 1),
-                        stream_descriptor(0x0006, 0), stream_descriptor(0x0006, 1)},
+                        stream_descriptor(0x0006, 0), stream_descriptor(0x0006, 1),
+                        avb_interface_descriptor(0)},
                        {"PP Reference Entity", "Clock Domain 0"}, 1);
 
   h.reset();
@@ -3143,6 +3182,140 @@ int main(int argc, char** argv) {
                               CTLR_EID, 0x740C, AEM_READ_DESCRIPTOR, epl);
       CHECK(!got2.empty() && got2 == want2,
             "G8: READ_DESCRIPTOR byte-exact after the stream-info paths");
+    }
+  }
+
+  // ==== V. GET_AVB_INFO + GET_AS_PATH (Milan SS5.4.2.23/SS5.4.2.24) =======
+  // (IEEE SS7.4.40/SS7.4.41; the gPTP words and both arrays are the
+  //  INTEGRATOR's through the Milan-info face kinds 1 and 2 - count-many
+  //  records emitted, zero-count faces emit empty lists honestly.)
+  {
+    h.flush_all();
+    h.q_aecp.clear();
+
+    // ---- V1: GET_AVB_INFO byte-exact (2 msrp_mappings -> cdl 40) --------
+    {
+      std::vector<uint8_t> p2(4, 0);
+      putbe(&p2[0], 0x0009, 2);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7501,
+                        0x0027, p2));
+      auto f = h.wait_any(h.q_aecp, 500);
+      std::vector<uint8_t> body(28, 0);
+      putbe(&body[0],  0x0009, 2);                    // type
+      putbe(&body[2],  0, 2);                         // index
+      putbe(&body[4],  0xA1A2A3A4A5A6A7A8ull, 8);     // gm
+      putbe(&body[12], 0x00001234u, 4);               // propagation_delay
+      body[16] = 0x00; body[17] = 0x07;               // domain, flags
+      putbe(&body[18], 2, 2);                         // count
+      putbe(&body[20], 0x06030002u, 4);               // mapping 0
+      putbe(&body[24], 0x05020002u, 4);               // mapping 1
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x7501, 0x0027, body);
+      CHECK(!f.empty() && f == want,
+            "V1: GET_AVB_INFO byte-exact, both mappings in order");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+    }
+
+    // ---- V2: GET_AS_PATH byte-exact (count 3 -> cdl 40) -----------------
+    {
+      std::vector<uint8_t> p2(4, 0);                  // index 0 + reserved
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7502,
+                        0x0028, p2));
+      auto f = h.wait_any(h.q_aecp, 500);
+      std::vector<uint8_t> body(28, 0);
+      putbe(&body[0], 0, 2);                          // descriptor_index
+      putbe(&body[2], 3, 2);                          // count
+      putbe(&body[4],  0xC1D1000000000000ull, 8);
+      putbe(&body[12], 0xC1D1000000000001ull, 8);
+      putbe(&body[20], 0xC1D1000000000002ull, 8);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x7502, 0x0028, body);
+      CHECK(!f.empty() && f == want,
+            "V2: GET_AS_PATH byte-exact, the path in order");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+    }
+
+    // ---- V3: existence still rules: AVB_INTERFACE[1] does not exist -----
+    {
+      std::vector<uint8_t> p2(4, 0);
+      putbe(&p2[0], 0x0009, 2); putbe(&p2[2], 1, 2);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7503,
+                        0x0027, p2));
+      auto f = h.wait_any(h.q_aecp, 500);
+      CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == AECP_NO_SUCH_DESCRIPTOR,
+            "V3: GET_AVB_INFO on a missing interface refuses NO_SUCH_DESCRIPTOR");
+      std::vector<uint8_t> p3(4, 0);
+      putbe(&p3[0], 1, 2);                            // AS_PATH index 1
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7504,
+                        0x0028, p3));
+      f = h.wait_any(h.q_aecp, 500);
+      CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == AECP_NO_SUCH_DESCRIPTOR,
+            "V3b: GET_AS_PATH likewise");
+    }
+
+    // ---- V4: truncated commands are BAD_ARGUMENTS -----------------------
+    {
+      std::vector<uint8_t> p2(2, 0);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7505,
+                        0x0027, p2));
+      auto f = h.wait_any(h.q_aecp, 400);
+      CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == AECP_BAD_ARGUMENTS,
+            "V4: short GET_AVB_INFO answers BAD_ARGUMENTS");
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7506,
+                        0x0028, {}));
+      f = h.wait_any(h.q_aecp, 400);
+      CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == AECP_BAD_ARGUMENTS,
+            "V4b: empty GET_AS_PATH answers BAD_ARGUMENTS");
+    }
+
+    // ---- V5: GET_AVB_INFO on a non-interface type -----------------------
+    {
+      std::vector<uint8_t> p2(4, 0);
+      putbe(&p2[0], 0x0024, 2);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7507,
+                        0x0027, p2));
+      auto f = h.wait_any(h.q_aecp, 400);
+      CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == 11,
+            "V5: GET_AVB_INFO on CLOCK_DOMAIN echoes NOT_SUPPORTED");
+    }
+
+    // ---- V6: a grandmaster change notifies BOTH kinds -------------------
+    {
+      std::vector<uint8_t> fl0(4, 0);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7508,
+                        0x0024, fl0));
+      h.wait_any(h.q_aecp, 400);
+      h.q_aecp.clear();
+      d->gm_change_i = 1;
+      h.step();
+      d->gm_change_i = 0;
+      // GET_AVB_INFO outranks GET_AS_PATH in the emission pick
+      auto u1 = h.wait_any(h.q_aecp, 500);
+      auto u2 = h.wait_any(h.q_aecp, 500);
+      CHECK(!u1.empty() && !u2.empty(),
+            "V6: both gPTP notifications arrive on a GM change");
+      bool k1 = !u1.empty() && u1.size() > 37 && (u1[36] & 0x80)
+                && u1[37] == 0x27 && ((u1[34] << 8) | u1[35]) == 0;
+      bool k2 = !u2.empty() && u2.size() > 37 && (u2[36] & 0x80)
+                && u2[37] == 0x28 && ((u2[34] << 8) | u2[35]) == 1;
+      CHECK(k1, "V6b: first the u=1 GET_AVB_INFO, entry seq 0");
+      CHECK(k2, "V6c: then the u=1 GET_AS_PATH, entry seq 1");
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7509,
+                        0x0025, {}));
+      h.wait_any(h.q_aecp, 400);
+    }
+
+    // ---- V7: the M7-style READ_DESCRIPTOR regression --------------------
+    {
+      h.q_aecp.clear();
+      std::vector<uint8_t> rd(8, 0);
+      putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x750A,
+                        AEM_READ_DESCRIPTOR, rd));
+      auto got2 = h.wait_any(h.q_aecp, 400);
+      CHECK(!got2.empty() && ((got2[16] >> 3) & 0x1F) == 0
+            && got2.size() == 38 + 4 + 312,
+            "V7: READ_DESCRIPTOR intact after the gPTP paths");
     }
   }
 
