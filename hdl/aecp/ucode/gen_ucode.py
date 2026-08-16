@@ -1529,8 +1529,14 @@ place(E_SCFGEMT, [
 
 
 # --- deterministic non-degenerate fill ---------------------------------------
+#! `occupied`, NOT `rom[i] == 0`, for the same reason place() uses it: a bare
+#! `u('NOP')` encodes as all-zero, so testing the contents cannot tell a word a
+#! program placed from unallocated fill. There IS such a word (inside E_GSRATE),
+#! and the first cut of this loop rewrote it — harmless there only because the
+#! index happened to select another NOP, but two thirds of addresses select a
+#! MOVE, which would drop a register write into the middle of a program.
 for i in range(ROM_DEPTH):
-    if rom[i] == 0 and i not in (0,):
+    if i not in occupied and i not in (0,):
         rom[i] = u('MOVE', rd=(i % 13) + 1, imm=(i * 2654435761) & 0xFFFFFF) \
             if (i % 3) else u('NOP', imm=i & 0xFFFFFF)
 

@@ -435,13 +435,14 @@ static std::vector<uint8_t> audio_unit_descriptor(uint16_t ix,
 //! second guard is a canonical-312-length test. With no 312-byte descriptor of
 //! any other type in the image, the length test alone bounced everything, so
 //! widening `desc_ty_r == DT_ENTITY_C` to always-true was invisible — a review
-//! mutated it with every check still green. MATRIX (Table 7-1 type 0x0022) is
-//! served by no command here, so the row costs nothing but the locate.
-static std::vector<uint8_t> matrix312_descriptor(uint16_t ix) {
+//! mutated it with every check still green. SIGNAL_MULTIPLEXER (Table 7-1
+//! type 0x0022) is served by no command here, so the row costs nothing but the
+//! locate — any non-ENTITY type of exactly 312 bytes would do.
+static std::vector<uint8_t> sigmux312_descriptor(uint16_t ix) {
   std::vector<uint8_t> d(312, 0);
   putbe(&d[0], 0x0022, 2);
   putbe(&d[2], ix, 2);
-  const char* nm = "Matrix312";
+  const char* nm = "SigMux312";
   memcpy(&d[4], nm, strlen(nm));                  // object_name @4, 64 B
   //! the tail is what the overlay would clobber, so make it a value neither
   //! the dynamic store nor the image's current_configuration can produce
@@ -1271,7 +1272,7 @@ int main(int argc, char** argv) {
     //! IDENTIFY control exist in every configuration at the same index
     {CFGIX, 0x001A, 1, 112, 0, 112, 0},          // CONTROL (Identify)
     //! E_RDESCENT's type gate: 312 bytes, NOT an ENTITY (see the builder)
-    {CFGIX, 0x0022, 1, 312, 0, 312, 0},          // MATRIX
+    {CFGIX, 0x0022, 1, 312, 0, 312, 0},          // SIGNAL_MULTIPLEXER
   };
   std::vector<uint8_t> desc_entity = entity_descriptor();
   std::vector<uint8_t> desc_clkdom = clock_domain_descriptor();
@@ -1288,7 +1289,7 @@ int main(int argc, char** argv) {
                         stream_port_descriptor(0x000F, 1, 8, 8),
                         audio_unit_descriptor(0, 96000u),
                         control_descriptor(0),
-                        matrix312_descriptor(0)},
+                        sigmux312_descriptor(0)},
                        //! TWO configurations, so SET_CONFIGURATION has a
                        //! legal non-zero index to be tested with. Only
                        //! configuration 0 carries descriptors, which is a
@@ -3668,6 +3669,34 @@ int main(int argc, char** argv) {
         CHECK(r.size() >= 42 && (((unsigned)r[40] << 8) | r[41]) == 0x0007,
               "W3c4: ...and that arm echoes the image's value too — got %u",
               r.size() >= 42 ? (((unsigned)r[40] << 8) | r[41]) : 999u);
+
+        //! ---- W3d: E_RDESCENT's IMAGE arm ----------------------------
+        //! READ_DESCRIPTOR(ENTITY) overlays current_configuration from the
+        //! dynamic store, and falls back to the image when no controller has
+        //! written it. EVERY other ENTITY read in this bench runs after a
+        //! successful SET, so the valid bit is armed and the fallback is
+        //! never taken — leaving store 0, image 0 and a hardcoded 0
+        //! indistinguishable. This poke window is the only place the arm is
+        //! reachable with a distinguishing value, and 06 §6.4 asserts the
+        //! behaviour in prose, so something has to grade it.
+        std::vector<uint8_t> rd(8, 0);
+        putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2);
+        auto e = ask(AEM_READ_DESCRIPTOR, rd, 0x760A);
+        CHECK(!e.empty() && st(e) == AECP_SUCCESS && cdl(e) == 12 + 4 + 312,
+              "W3d: READ_DESCRIPTOR(ENTITY) answered before any SET");
+        CHECK(e.size() >= 42 + 312
+              && (((unsigned)e[42 + 310] << 8) | e[42 + 311]) == 0x0007,
+              "W3d2: ...and current_configuration comes from the IMAGE while "
+              "the store is unwritten — got %u",
+              e.size() >= 42 + 312
+                ? (((unsigned)e[42 + 310] << 8) | e[42 + 311]) : 999u);
+        //! and the two views agree at this instant too — 7.4.8.2's whole
+        //! point, graded where the divergence would first appear
+        auto gc = ask(AEM_GET_CONFIGURATION, {}, 0x760B);
+        CHECK(!gc.empty() && gc.size() >= 42
+              && (((unsigned)gc[40] << 8) | gc[41])
+                 == (((unsigned)e[42 + 310] << 8) | e[42 + 311]),
+              "W3d3: ...and GET_CONFIGURATION agrees with it (7.4.8.2)");
       }
 
       h.dram[ent_off + 310] = save_hi; h.dram[ent_off + 311] = save_lo;
@@ -4425,8 +4454,8 @@ int main(int argc, char** argv) {
     // reached by a type gate. A review widened that gate to always-true with
     // every check still green, because the program's second guard — a
     // canonical 312-byte length — bounced every other descriptor on its own.
-    // The image now carries a 312-byte NON-ENTITY (MATRIX) whose tail is
-    // 0xBEEF, so the length guard cannot stand in for the type guard.
+    // The image now carries a 312-byte NON-ENTITY (SIGNAL_MULTIPLEXER) whose
+    // tail is 0xBEEF, so the length guard cannot stand in for the type guard.
     {
       std::vector<uint8_t> rd(8, 0);
       putbe(&rd[0], CFGIX, 2);
