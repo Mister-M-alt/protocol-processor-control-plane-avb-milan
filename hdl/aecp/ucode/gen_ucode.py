@@ -116,10 +116,17 @@ E_GCTRSNS = 796      # GET_COUNTERS on a type with no counters: NOT_SUPPORTED
 # it on 16-word boundaries so a program can grow by a few words without
 # renumbering its neighbours.
 E_EAVL    = 1008     # ENTITY_AVAILABLE (Milan 5.4.2.3, IEEE 7.4.3)
+# The read-side programs moved to 32-word slots at VERSION 0x004C: each grew
+# an OVERLAY ARM (read the dynamic-state store's valid flag, branch, take the
+# setting or the image) and no longer fits a 16-word pitch. The slots are 32
+# so the SET family's validation arms can grow into them without another
+# renumbering; 1,000 words of the ROM are still free.
 E_GCFG    = 1024     # GET_CONFIGURATION (Milan 5.4.2.6, IEEE 7.4.8)
-E_GSFMT   = 1040     # GET_STREAM_FORMAT (Milan 5.4.2.8, IEEE 7.4.10)
-E_GSRATE  = 1056     # GET_SAMPLING_RATE (Milan 5.4.2.14, IEEE 7.4.22)
-E_GCLKS   = 1072     # GET_CLOCK_SOURCE (Milan 5.4.2.16, IEEE 7.4.24)
+E_GSFMT   = 1056     # GET_STREAM_FORMAT (Milan 5.4.2.8, IEEE 7.4.10)
+E_GSRATE  = 1088     # GET_SAMPLING_RATE (Milan 5.4.2.14, IEEE 7.4.22)
+E_GCLKS   = 1120     # GET_CLOCK_SOURCE (Milan 5.4.2.16, IEEE 7.4.24)
+E_SSRATE2 = 1152     # SET_SAMPLING_RATE (Milan 5.4.2.13, IEEE 7.4.21)
+E_SCLKS   = 1184     # SET_CLOCK_SOURCE (Milan 5.4.2.15, IEEE 7.4.23)
 # ...and the two wrong-target refusals they share. Table 7-141's NOT_SUPPORTED
 # ("the command is implemented but the target of the command is not
 # supported") has to carry the FULL response body, not a command-sized echo -
@@ -127,8 +134,25 @@ E_GCLKS   = 1072     # GET_CLOCK_SOURCE (Milan 5.4.2.16, IEEE 7.4.24)
 # checkResponsePayload is the reason. A zero-valued body is the same wire bytes
 # for GET_SAMPLING_RATE (rate 0) and GET_CLOCK_SOURCE (index 0 + reserved 0),
 # so ONE stub serves both and the engine grows two µPC arms, not five.
-E_TIZ8NS  = 1088     # {type, index} + 8 zero bytes, NOT_SUPPORTED
-E_TIZ4NS  = 1096     # {type, index} + 4 zero bytes, NOT_SUPPORTED
+E_TIZ8NS  = 1216     # {type, index} + 8 zero bytes, NOT_SUPPORTED
+E_TIZ4NS  = 1224     # {type, index} + 4 zero bytes, NOT_SUPPORTED
+E_LOCKED4 = 1232     # {type, index} + 4 zero bytes, ENTITY_LOCKED
+E_BADARG4 = 1240     # {type, index} + 4 zero bytes, BAD_ARGUMENTS
+
+# --- the dynamic-state store's regions and field selectors -------------------
+# KL_aecp_dyn_state.sv owns these; the address carries the FIELD and the
+# descriptor index rides its own port, because the state-port address is an
+# immediate and nothing else. Region 0x1 is the value, 0x2 the valid flag.
+RGN_DYN  = 0x10000
+RGN_DYNV = 0x20000
+SEL_CFG    = 0 * 8
+SEL_RATE   = 1 * 8
+SEL_CLKSRC = 2 * 8
+SEL_FMTIN  = 3 * 8
+SEL_FMTOUT = 4 * 8
+SEL_PTOFF  = 5 * 8
+SEL_START  = 6 * 8
+SEL_IDENT  = 7 * 8
 # 1722.1-2021 Table 7-1: the one descriptor type this program is dispatched
 # for (KL_aecp_engine refuses every other type back to the NOT_IMPLEMENTED
 # echo before dispatch, so the constant emitted at @24 is also a guarantee).
@@ -1039,20 +1063,99 @@ place(E_GSFMT, [
 # instead. That splits the emitter in two: the hit arm copies four bytes out of
 # the image, the miss arm emits four zero bytes, and both fall into one
 # SEND_RESP so the response form is identical either way.
+# THE OVERLAY ARM, and it is the same three instructions in every GET below.
+# A controller that has issued SET_SAMPLING_RATE owns this value; until then
+# the descriptor image does. So: read the dynamic store's VALID flag for this
+# field and descriptor, compare it against zero, and branch to the image arm
+# when it is clear. Reading the store unconditionally would report a
+# controller's setting that nobody made (every row reads zero-and-invalid out
+# of reset); reading the image unconditionally would lose the setting.
 place(E_GSRATE, [
-    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # existence is the image's
     u('MOVE', rd=8, ra=0, imm=4),                # COPY_BUF length
     u('MOVE', rd=2, ra=0, imm=0),                # the miss arm's zero rate
-    u('BR_STATUS', cnd=0, imm=E_GSRATE + 9),
+    u('BR_STATUS', cnd=0, imm=E_GSRATE + 16),    # miss -> NO_SUCH_DESCRIPTOR
+    u('SET_STATUS', imm=ST_OK),
+    u('READ_ST', rd=3, imm=RGN_DYNV + SEL_RATE), # has a controller set it?
+    u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_GSRATE + 11),    # z = unset -> the image
+    u('READ_ST', rd=2, imm=RGN_DYN + SEL_RATE),  # the controller's value
+    u('BRANCH', imm=E_GSRATE + 16),              # ...and emit it as a dword
+    u('NOP'),
+    u('BUILD_HDR', ra=15, rb=13),                # E_GSRATE + 11: the image arm
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('COPY_BUF', ra=8, imm=RGN_DATA + AU_RATE_OFF),   # sampling_rate  @28
+    u('SEND_RESP'),
+    u('END'),
+    u('BUILD_HDR', ra=15, rb=13),                # E_GSRATE + 16: value in r2
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_D),             # the rate, or zero on a miss
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- SET_SAMPLING_RATE (Milan §5.4.2.13, IEEE §7.4.21.1, Figure 7-45) -------
+# "For each Audio Unit of the currently set Configuration, the PAAD-AE shall
+# implement the SET_SAMPLING_RATE command". Command and response share the
+# figure, so the response is the same 8-byte body the getter emits and it
+# carries the value now in force.
+#
+# THE LOCK IS THE FIRST THING CHECKED, before the locate and before the write:
+# Milan repeats in every SET clause that a locked PAAD "shall not accept a
+# <CMD> command from a different controller". CHECK_LOCK branches when the
+# entity is held by somebody other than r15's controller, and sets
+# ENTITY_LOCKED on the way out.
+#
+# The rate/mapping-mismatch refusal of §5.4.2.13 is a MAY, not a SHALL, and is
+# deliberately not implemented — grading a MAY as a SHALL would refuse rates
+# this device can actually serve.
+place(E_SSRATE2, [
+    u('MOVE', rd=2, ra=0, imm=0),                # the refusal arms' zero body
+    u('CHECK_LOCK', ra=15, imm=E_LOCKED4),       # held by another controller?
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the Audio Unit exist?
+    u('BR_STATUS', cnd=0, imm=E_SSRATE2 + 12),   # no -> NO_SUCH_DESCRIPTOR
+    u('WRITE_ST', ra=12, fmt=FMT_D, imm=RGN_DYN + SEL_RATE),
+    u('NVM_MARK', imm=1),                        # §5.3.5.1: persist it
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
-    u('COPY_BUF', ra=8, imm=RGN_DATA + AU_RATE_OFF),   # sampling_rate  @28
-    u('BRANCH', imm=E_GSRATE + 12),
-    u('BUILD_HDR', ra=15, rb=13),                # E_GSRATE + 9: the miss body
+    u('BUILD_FLD', ra=12, fmt=FMT_D),            # the rate now in force @28
+    u('SEND_RESP'),
+    u('END'),
+    u('BUILD_HDR', ra=15, rb=13),                # E_SSRATE2 + 12: the refusal
+    u('BUILD_FLD', ra=13, fmt=FMT_D),
+    u('BUILD_FLD', ra=2, fmt=FMT_D),
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- SET_CLOCK_SOURCE (Milan §5.4.2.15, IEEE §7.4.23.1, Figure 7-47) --------
+# "For each Clock Domain, the PAAD-AE shall implement the SET_CLOCK_SOURCE
+# command." Same shape as the setter above; the response body is
+# clock_source_index @28 + reserved @30.
+#
+# THIS ONE IS LOAD-BEARING BEYOND ITS OWN CLAUSE. It is the only writer of the
+# live clock_source_index, which is why the CRF media clock could never be
+# selected and why KL_mmcm_drp_servo and the packet-grid NCO were
+# structurally off: nothing could move the index off 0 = INTERNAL.
+place(E_SCLKS, [
+    u('MOVE', rd=2, ra=0, imm=0),                # reserved @30, and the refusals
+    u('CHECK_LOCK', ra=15, imm=E_LOCKED4),
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the Clock Domain exist?
+    u('BR_STATUS', cnd=0, imm=E_SCLKS + 13),
+    u('WRITE_ST', ra=12, fmt=FMT_W, imm=RGN_DYN + SEL_CLKSRC),
+    u('NVM_MARK', imm=1),                        # §5.3.11.1: persist it
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
-    u('BUILD_FLD', ra=2, fmt=FMT_D),             # sampling_rate 0      @28
-    u('SEND_RESP'),                              # E_GSRATE + 12
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # clock_source_index   @28
+    u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved             @30
+    u('SEND_RESP'),
+    u('END'),
+    u('BUILD_HDR', ra=15, rb=13),                # E_SCLKS + 13: the refusal
+    u('BUILD_FLD', ra=13, fmt=FMT_D),
+    u('BUILD_FLD', ra=2, fmt=FMT_D),             # index 0 + reserved 0
+    u('SEND_RESP'),
     u('END'),
 ])
 
@@ -1067,13 +1170,18 @@ place(E_GSRATE, [
 # the truth — milan_datapath pins clock_source_index at 0 for the life of the
 # build, so this is a report, not a claim that the field is settable.
 place(E_GCLKS, [
-    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # existence is the image's
     u('MOVE', rd=2, ra=0, imm=0),                # @30 reserved
     u('MOVE', rd=1, ra=0, imm=0),                # the miss arm's zero index
-    u('BR_STATUS', cnd=0, imm=E_GCLKS + 6),
-    u('READ_ST', rd=1, imm=RGN_DATA + CD_SRCIDX_LANE),
+    u('BR_STATUS', cnd=0, imm=E_GCLKS + 11),     # miss -> NO_SUCH_DESCRIPTOR
     u('SET_STATUS', imm=ST_OK),
-    u('BUILD_HDR', ra=15, rb=13),                # E_GCLKS + 6
+    u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CLKSRC),   # set by a controller?
+    u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_GCLKS + 10),     # z = unset -> the image
+    u('READ_ST', rd=1, imm=RGN_DYN + SEL_CLKSRC),    # the controller's value
+    u('BRANCH', imm=E_GCLKS + 11),
+    u('READ_ST', rd=1, imm=RGN_DATA + CD_SRCIDX_LANE),   # E_GCLKS + 10
+    u('BUILD_HDR', ra=15, rb=13),                # E_GCLKS + 11
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
     u('BUILD_FLD', ra=1, fmt=FMT_W),             # clock_source_index   @28
     u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved             @30
@@ -1105,6 +1213,32 @@ place(E_TIZ4NS, [
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
     u('BUILD_FLD', ra=2, fmt=FMT_D),             # 4 zero bytes         @28
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- the SET family's two refusals, in the same full-body form --------------
+# Milan makes the lock refusal a SHALL in every SET clause, and the end-station
+# test plan's es-4.18 checks that the ENTITY_LOCKED response still carries the
+# CURRENT value rather than the rejected one. Zero is what these stubs carry,
+# which is correct for the refusal arms that reach them: a locked entity has
+# not located anything, so it has no current value to report and inventing one
+# would be worse than reporting none.
+place(E_LOCKED4, [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('SET_STATUS', imm=ST_LOCKED),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_D),             # 4 zero bytes         @28
+    u('SEND_RESP'),
+    u('END'),
+])
+place(E_BADARG4, [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('SET_STATUS', imm=ST_BADARG),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),
+    u('BUILD_FLD', ra=2, fmt=FMT_D),
     u('SEND_RESP'),
     u('END'),
 ])

@@ -330,6 +330,8 @@ static const uint16_t AEM_GET_CONFIGURATION = 0x0007;
 static const uint16_t AEM_GET_STREAM_FORMAT = 0x0009;
 static const uint16_t AEM_GET_SAMPLING_RATE = 0x0015;
 static const uint16_t AEM_GET_CLOCK_SOURCE = 0x0017;
+static const uint16_t AEM_SET_SAMPLING_RATE = 0x0014;
+static const uint16_t AEM_SET_CLOCK_SOURCE = 0x0016;
 static const uint16_t AEM_IDENTIFY_NOTIF  = 0x0026;
 static const uint16_t AEM_GET_COUNTERS    = 0x0029;
 enum { AECP_SUCCESS = 0, AECP_NOT_IMPLEMENTED = 1, AECP_NO_SUCH_DESCRIPTOR = 2,
@@ -3683,6 +3685,94 @@ int main(int argc, char** argv) {
         auto f = ask(op, shortpl, uint16_t(0x7650 + op));
         CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
               "W7: a truncated %04x answers BAD_ARGUMENTS", op);
+      }
+    }
+
+    // ---- W9: SET_SAMPLING_RATE, and the overlay it creates --------------
+    // Milan 5.4.2.13 / IEEE 7.4.21.1: the command and its response share
+    // Figure 7-45, so the answer is the same 8-byte body the getter emits and
+    // it carries the value now in force. The check that matters is the one
+    // AFTER: a GET must stop reading the image and start reading the setting.
+    {
+      std::vector<uint8_t> pl(8, 0);
+      putbe(&pl[0], 0x0002, 2); putbe(&pl[2], 0, 2);
+      putbe(&pl[4], 48000u, 4);                 // the image says 96000
+      auto f = ask(AEM_SET_SAMPLING_RATE, pl, 0x7670);
+      std::vector<uint8_t> body(8, 0);
+      putbe(&body[0], 0x0002, 2); putbe(&body[2], 0, 2);
+      putbe(&body[4], 48000u, 4);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x7670, AEM_SET_SAMPLING_RATE, body);
+      CHECK(!f.empty() && f == want,
+            "W9: SET_SAMPLING_RATE byte-exact, echoing the value it stored");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // THE POINT OF THE WHOLE ROUND: the getter must now answer the
+      // CONTROLLER'S value, not the image's 96000. A GET that still read
+      // 96000 would mean the overlay arm never fired; one that read 0 would
+      // mean it fired but the store did not keep the write.
+      auto g = ask(AEM_GET_SAMPLING_RATE, ti(0x0002, 0), 0x7671);
+      CHECK(!g.empty() && st(g) == AECP_SUCCESS && cdl(g) == 20,
+            "W9b: GET_SAMPLING_RATE answered SUCCESS at cdl 20");
+      if (g.size() >= 46) {
+        const unsigned long got = ((unsigned long)g[42] << 24)
+                                | ((unsigned long)g[43] << 16)
+                                | ((unsigned long)g[44] << 8) | g[45];
+        CHECK(got == 48000ul,
+              "W9b2: GET_SAMPLING_RATE reads %lu, the SET stored 48000", got);
+      }
+    }
+
+    // ---- W10: SET_CLOCK_SOURCE, the only writer of the live index --------
+    {
+      std::vector<uint8_t> pl(8, 0);
+      putbe(&pl[0], 0x0024, 2); putbe(&pl[2], 0, 2);
+      putbe(&pl[4], 0x0002, 2);                 // reserved stays 0
+      auto f = ask(AEM_SET_CLOCK_SOURCE, pl, 0x7672);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 20,
+            "W10: SET_CLOCK_SOURCE answered SUCCESS at cdl 20");
+      if (f.size() >= 48) {
+        CHECK((((unsigned)f[42] << 8) | f[43]) == 0x0002,
+              "W10b: the response carries the index it stored");
+        CHECK((((unsigned)f[44] << 8) | f[45]) == 0,
+              "W10c: reserved @30 is zero");
+      }
+      auto g = ask(AEM_GET_CLOCK_SOURCE, ti(0x0024, 0), 0x7673);
+      if (g.size() >= 46) {
+        CHECK((((unsigned)g[42] << 8) | g[43]) == 0x0002,
+              "W10d: GET_CLOCK_SOURCE reads %u, the SET stored 2",
+              (((unsigned)g[42] << 8) | g[43]));
+      }
+    }
+
+    // ---- W11: a SET's refusals ------------------------------------------
+    // A short command never reached its argument, and storing whatever the
+    // slot held would be worse than refusing. A wrong target is Table 7-141's
+    // NOT_SUPPORTED, in the full body like every other refusal here.
+    {
+      std::vector<uint8_t> shortpl(4, 0);
+      putbe(&shortpl[0], 0x0002, 2);
+      auto f = ask(AEM_SET_SAMPLING_RATE, shortpl, 0x7674);
+      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
+            "W11: a SET_SAMPLING_RATE short of its value is BAD_ARGUMENTS");
+      CHECK(cdl(f) == 20, "W11b: ...in the full body, cdl %d", cdl(f));
+
+      std::vector<uint8_t> wrong(8, 0);
+      putbe(&wrong[0], 0x0005, 2);          // a STREAM_INPUT, not an Audio Unit
+      putbe(&wrong[4], 48000u, 4);
+      f = ask(AEM_SET_SAMPLING_RATE, wrong, 0x7675);
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED,
+            "W11c: a SET on the wrong descriptor type is NOT_SUPPORTED");
+      CHECK(cdl(f) == 20, "W11d: ...in the full body, cdl %d", cdl(f));
+
+      // ...and neither refusal may have moved the stored value
+      auto g = ask(AEM_GET_SAMPLING_RATE, ti(0x0002, 0), 0x7676);
+      if (g.size() >= 46) {
+        const unsigned long got = ((unsigned long)g[42] << 24)
+                                | ((unsigned long)g[43] << 16)
+                                | ((unsigned long)g[44] << 8) | g[45];
+        CHECK(got == 48000ul,
+              "W11e: a refused SET changed the stored rate to %lu", got);
       }
     }
 

@@ -555,6 +555,14 @@ module KL_aecp_engine
   localparam logic [15:0] OP_GET_SAMP_RATE_C   = 16'h0015;
   localparam logic [15:0] OP_GET_CLOCK_SRC_C   = 16'h0017;
   localparam logic [15:0] DT_AUDIO_UNIT_C      = 16'h0002;
+  //! ---- the SET family (Milan §5.4.2.13 / §5.4.2.15) -------------------
+  //! Each shares its GET's response form (IEEE Figures 7-45 and 7-47 are
+  //! command-and-response figures), carries its value at @28, and is
+  //! lock-protected: Milan repeats "shall not accept a <CMD> command from a
+  //! different controller" in every one of these clauses, which is what
+  //! CHECK_LOCK enforces at the top of each µprogram.
+  localparam logic [15:0] OP_SET_SAMP_RATE_C   = 16'h0014;
+  localparam logic [15:0] OP_SET_CLOCK_SRC_C   = 16'h0016;
   //! Table 7-1: the two descriptor types the audio-map µprograms serve -
   //! every other type keeps the NOT_IMPLEMENTED echo
   localparam logic [15:0] DT_STREAM_PORT_IN_C  = 16'h000E;
@@ -599,15 +607,19 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_GCTRSNS_C = 11'd796;   // E_GCTRSNS
   localparam logic [10:0] UPC_EAVL_C    = 11'd1008;  // E_EAVL
   localparam logic [10:0] UPC_GCFG_C    = 11'd1024;  // E_GCFG
-  localparam logic [10:0] UPC_GSFMT_C   = 11'd1040;  // E_GSFMT
-  localparam logic [10:0] UPC_GSRATE_C  = 11'd1056;  // E_GSRATE
-  localparam logic [10:0] UPC_GCLKS_C   = 11'd1072;  // E_GCLKS
+  localparam logic [10:0] UPC_GSFMT_C   = 11'd1056;  // E_GSFMT
+  localparam logic [10:0] UPC_GSRATE_C  = 11'd1088;  // E_GSRATE
+  localparam logic [10:0] UPC_GCLKS_C   = 11'd1120;  // E_GCLKS
+  localparam logic [10:0] UPC_SSRATE_C  = 11'd1152;  // E_SSRATE2
+  localparam logic [10:0] UPC_SCLKS_C   = 11'd1184;  // E_SCLKS
   //! ...and the two shared full-body NOT_SUPPORTED refusals: a wrong target
   //! may not answer at command length (only NOT_IMPLEMENTED may), and a
   //! zero-valued body is the same wire bytes for a rate and for a
   //! {clock_source_index, reserved} pair, so three type gates need two stubs
-  localparam logic [10:0] UPC_TIZ8NS_C  = 11'd1088;  // E_TIZ8NS
-  localparam logic [10:0] UPC_TIZ4NS_C  = 11'd1096;  // E_TIZ4NS
+  localparam logic [10:0] UPC_TIZ8NS_C  = 11'd1216;  // E_TIZ8NS
+  localparam logic [10:0] UPC_TIZ4NS_C  = 11'd1224;  // E_TIZ4NS
+  localparam logic [10:0] UPC_LOCKED4_C = 11'd1232;  // E_LOCKED4
+  localparam logic [10:0] UPC_BADARG4_C = 11'd1240;  // E_BADARG4
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -673,6 +685,15 @@ module KL_aecp_engine
   logic        gsfmt_r;                  // ... a GET_STREAM_FORMAT
   logic        gsrate_r;                 // ... a GET_SAMPLING_RATE
   logic        gclks_r;                  // ... a GET_CLOCK_SOURCE
+  logic        ssrate_r;                 // ... a SET_SAMPLING_RATE
+  logic        sclks_r;                  // ... a SET_CLOCK_SOURCE
+  logic        setc_r;                   // ... any SET_* that carries a value
+  //! the SET family's argument, walked out of @28..@35. Every settable field
+  //! Milan v1.2 names fits in these eight bytes: a sampling rate is 4
+  //! (§7.4.21.1), a clock source index is 2 (§7.4.23.1) and a stream format
+  //! is 8 (§7.4.9.1). It is captured RIGHT-JUSTIFIED per command width by the
+  //! walk below, because the µISA has no shift to justify it later.
+  logic [63:0] setval_r;
   logic        lock_ent_ok_r;            // its target walked as ENTITY[0]
   logic        uns_r;                    // engine-originated unsolicited job
   logic  [7:0] amap_rec_r;               // records handed out this command
@@ -763,6 +784,15 @@ module KL_aecp_engine
                     && (txn_w.opcode == OP_GET_SAMP_RATE_C);
   assign gclks_w  = (txn_w.protocol == PP_PROTO_AEM)
                     && (txn_w.opcode == OP_GET_CLOCK_SRC_C);
+  //! ...and the SET pair. `setc_w` is the shared "this command carries a
+  //! value at @28" term the payload walk keys on, so a command joining the
+  //! family is one name here and one arm at the A_PLD exit.
+  logic ssrate_w, sclks_w, setc_w;
+  assign ssrate_w = (txn_w.protocol == PP_PROTO_AEM)
+                    && (txn_w.opcode == OP_SET_SAMP_RATE_C);
+  assign sclks_w  = (txn_w.protocol == PP_PROTO_AEM)
+                    && (txn_w.opcode == OP_SET_CLOCK_SRC_C);
+  assign setc_w   = ssrate_w | sclks_w;
 
   //! ---- unsolicited job synthesis (06 §6.7) -------------------------------
   //! kind -> {command_type, µPC}. A kind whose µprogram has not landed maps
@@ -851,9 +881,10 @@ module KL_aecp_engine
   //! command joining the shape is one name in one place rather than the same
   //! OR chain re-spelled in four - and the chain is built once instead of
   //! four times, which is the reason it exists and not just how it reads.
+  logic [63:0] opd2_w;
   logic tix_w;
   assign tix_w = ctrs_r | amap_r | gstri_r | gavb_r
-                 | gsfmt_r | gsrate_r | gclks_r;
+                 | gsfmt_r | gsrate_r | gclks_r | setc_r;
   assign opd0_w = tix_w       ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
                 : gasp_r      ? {16'd0, cfg_ix_r, DT_AVB_INTERFACE_C, 16'd0}
                 : lockc_r     ? {32'd0, cfg_ix_r, desc_ix_r}
@@ -863,7 +894,16 @@ module KL_aecp_engine
                 : gasp_r                 ? {48'd0, cfg_ix_r}
                                          : {32'd0, desc_ty_r, desc_ix_r};
 
-  logic [63:0] opd0_r, opd1_r;
+  //! r12, the SET argument, re-justified per command. `setval_r` holds
+  //! @28..@35 big-endian, so an 8-byte field is already right-justified and a
+  //! narrower one has to be taken from the TOP. This is the one place that
+  //! knows a rate is four bytes and a clock-source index is two, and it is
+  //! here rather than in the µcode because the µISA has no shift.
+  assign opd2_w = ssrate_r ? {32'd0, setval_r[63:32]}
+                : sclks_r  ? {48'd0, setval_r[63:48]}
+                           : setval_r;
+
+  logic [63:0] opd0_r, opd1_r, opd2_r;
 
   logic        st_req_w, st_we_w, st_name_w;
   logic [19:0] st_addr_w;
@@ -924,6 +964,7 @@ module KL_aecp_engine
       .disp_ctlr_eid_i    (cmd_r.controller_eid),
       .disp_opd0_i        (opd0_r),
       .disp_opd1_i        (opd1_r),
+      .disp_opd2_i        (opd2_r),
       .st_req_o           (st_req_w),
       .st_we_o            (st_we_w),
       .st_name_o          (st_name_w),
@@ -1449,6 +1490,11 @@ module KL_aecp_engine
       gsfmt_r      <= 1'b0;
       gsrate_r     <= 1'b0;
       gclks_r      <= 1'b0;
+      ssrate_r     <= 1'b0;
+      sclks_r      <= 1'b0;
+      setc_r       <= 1'b0;
+      setval_r     <= 64'd0;
+      opd2_r       <= 64'd0;
       lock_ent_ok_r <= 1'b0;
       uns_r        <= 1'b0;
       upc_r        <= 11'd0;
@@ -1495,6 +1541,10 @@ module KL_aecp_engine
               gsfmt_r    <= gsfmt_w;
               gsrate_r   <= gsrate_w;
               gclks_r    <= gclks_w;
+              ssrate_r   <= ssrate_w;
+              sclks_r    <= sclks_w;
+              setc_r     <= setc_w;
+              setval_r   <= 64'd0;
               lock_ent_ok_r <= 1'b1;
               uns_r      <= 1'b0;
               err_mode_r <= 1'b0;
@@ -1554,6 +1604,9 @@ module KL_aecp_engine
             gsfmt_r    <= 1'b0;
             gsrate_r   <= 1'b0;
             gclks_r    <= 1'b0;
+            ssrate_r   <= 1'b0;
+            sclks_r    <= 1'b0;
+            setc_r     <= 1'b0;
             lock_ent_ok_r <= 1'b1;
             uns_r      <= 1'b1;
             err_mode_r <= 1'b0;
@@ -1729,6 +1782,25 @@ module KL_aecp_engine
                 echo_r <= 1'b0;
               end
             end
+            //! ---- the SET pair (Milan §5.4.2.13 / §5.4.2.15) ------------
+            //! Their command carries a VALUE, so the length floor is the full
+            //! §7.4.21.1 / §7.4.23.1 body (cdl 20), not the 16 a getter
+            //! needs: a short SET never reached its argument, and storing
+            //! whatever the slot happened to hold is the one outcome worse
+            //! than refusing. The wrong-target refusal is the same full-body
+            //! NOT_SUPPORTED the getters use.
+            if (ssrate_r) begin
+              if (cmd_r.cdl < 11'd20)               upc_r <= UPC_BADARG4_C;
+              else if (cfg_ix_r != DT_AUDIO_UNIT_C) upc_r <= UPC_TIZ4NS_C;
+              else                                  upc_r <= UPC_SSRATE_C;
+              echo_r <= 1'b0;
+            end
+            if (sclks_r) begin
+              if (cmd_r.cdl < 11'd20)                 upc_r <= UPC_BADARG4_C;
+              else if (cfg_ix_r != DT_CLOCK_DOMAIN_C) upc_r <= UPC_TIZ4NS_C;
+              else                                    upc_r <= UPC_SCLKS_C;
+              echo_r <= 1'b0;
+            end
             a_st_r <= A_DISP;
           end
           //! the RX pool answers one cycle after rd_en: byte for index
@@ -1769,17 +1841,38 @@ module KL_aecp_engine
                 if (tix_w || regun_r || lockc_r)
                   desc_ix_r[7:0]  <= rxs_rd_data_i;
               end
-              11'd6: if (!ctrs_r) desc_ty_r[15:8] <= rxs_rd_data_i;
-              11'd7: if (!ctrs_r) desc_ty_r[7:0]  <= rxs_rd_data_i;
+              11'd6: begin
+                if (!ctrs_r) desc_ty_r[15:8] <= rxs_rd_data_i;
+                //! ...and the SET family's argument starts here, at @28. It
+                //! is shifted in BIG-ENDIAN so an 8-byte stream format lands
+                //! already right-justified; the narrower fields are
+                //! re-justified once, at the operand mux, where the engine
+                //! knows which command it is holding.
+                if (setc_r) setval_r[63:56] <= rxs_rd_data_i;
+              end
+              11'd7: begin
+                if (!ctrs_r) desc_ty_r[7:0]  <= rxs_rd_data_i;
+                if (setc_r) setval_r[55:48] <= rxs_rd_data_i;
+              end
               //! ...and the registration/lock shapes guard BACKWARD like the
               //! counters shape does: a LOCK's locked_id bytes at @30..@31
               //! (or a long REGISTER's padding) must not trample the flags
               //! captured at @26..@27 - the UNLOCK/TIME_LIMITED bit lives
               //! there (found by the pp_top L5 check: UNLOCK re-locked)
-              11'd8: if (!tix_w && !regun_r && !lockc_r && !gasp_r)
-                       desc_ix_r[15:8] <= rxs_rd_data_i;
-              11'd9: if (!tix_w && !regun_r && !lockc_r && !gasp_r)
-                       desc_ix_r[7:0]  <= rxs_rd_data_i;
+              11'd8: begin
+                if (!tix_w && !regun_r && !lockc_r && !gasp_r)
+                  desc_ix_r[15:8] <= rxs_rd_data_i;
+                if (setc_r) setval_r[47:40] <= rxs_rd_data_i;
+              end
+              11'd9: begin
+                if (!tix_w && !regun_r && !lockc_r && !gasp_r)
+                  desc_ix_r[7:0]  <= rxs_rd_data_i;
+                if (setc_r) setval_r[39:32] <= rxs_rd_data_i;
+              end
+              11'd10: if (setc_r) setval_r[31:24] <= rxs_rd_data_i;
+              11'd11: if (setc_r) setval_r[23:16] <= rxs_rd_data_i;
+              11'd12: if (setc_r) setval_r[15:8]  <= rxs_rd_data_i;
+              11'd13: if (setc_r) setval_r[7:0]   <= rxs_rd_data_i;
               //! LOCK_ENTITY's descriptor_type/index live at @36..@39, past
               //! every capture register - but the CHECK is all Milan
               //! §5.4.2.2 needs ("shall not allow locking another
@@ -1800,6 +1893,7 @@ module KL_aecp_engine
           if (!disp_valid_r) begin
             opd0_r <= opd0_w;
             opd1_r <= opd1_w;
+            opd2_r <= opd2_w;
           end
           disp_valid_r <= 1'b1;
           if (disp_valid_r && disp_ready_w) begin

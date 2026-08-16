@@ -50,6 +50,13 @@ module KL_aecp_ucpu
     input  wire  [63:0] disp_ctlr_eid_i,   //! -> r15
     input  wire  [63:0] disp_opd0_i,       //! -> r14 (desc type|index|arg)
     input  wire  [63:0] disp_opd1_i,       //! -> r13
+    //! -> r12, the SET family's ARGUMENT. The three registers above carry the
+    //! locate key, the {type, index} echo and the controller id, which is
+    //! everything a GET needs; a SET also has to carry the VALUE it was asked
+    //! to store, and the µISA has no shift to dig it out of a packed field.
+    //! Preloading it is a register write in a state that already exists, and
+    //! it is what lets one µprogram serve any settable field.
+    input  wire  [63:0] disp_opd2_i,       //! -> r12 (the SET argument)
 
     //! state port: descriptor image + overlay + names (07 §3), 1RW
     output logic        st_req_o,
@@ -126,7 +133,7 @@ module KL_aecp_ucpu
 
   // ------------------------------------------------------- machine state
   typedef enum logic [2:0] {
-    S_IDLE, S_PRE2, S_PRE1, S_PRE0, S_RUN
+    S_IDLE, S_PRE3, S_PRE2, S_PRE1, S_PRE0, S_RUN
   } mstate_e;
   mstate_e ms_r;
 
@@ -425,6 +432,8 @@ module KL_aecp_ucpu
     rf_waddr_w = wb_rd_r;
     rf_wdata_w = wb_data_r;
     unique case (ms_r)
+      S_PRE3: begin rf_we_w = 1'b1; rf_waddr_w = 4'd12;
+                    rf_wdata_w = disp_opd2_i; end
       S_PRE2: begin rf_we_w = 1'b1; rf_waddr_w = 4'd15;
                     rf_wdata_w = disp_ctlr_eid_i; end
       S_PRE1: begin rf_we_w = 1'b1; rf_waddr_w = 4'd14;
@@ -474,7 +483,7 @@ module KL_aecp_ucpu
           vld_d_r <= 1'b0;
           vld_e_r <= 1'b0;
           if (disp_valid_i) begin
-            ms_r        <= S_PRE2;
+            ms_r        <= S_PRE3;
             upc_r       <= disp_upc_i;
             status_r    <= ST_SUCCESS_C;
             z_r         <= 1'b0;
@@ -489,6 +498,7 @@ module KL_aecp_ucpu
             copy_left_r <= '0;
           end
         end
+        S_PRE3: ms_r <= S_PRE2;
         S_PRE2: ms_r <= S_PRE1;
         S_PRE1: ms_r <= S_PRE0;
         S_PRE0: ms_r <= S_RUN;
