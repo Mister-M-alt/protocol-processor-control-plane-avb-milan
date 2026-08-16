@@ -438,6 +438,12 @@ static std::vector<uint8_t> audio_unit_descriptor(uint16_t ix,
 //! mutated it with every check still green. SIGNAL_MULTIPLEXER (Table 7-1
 //! type 0x0022) is served by no command here, so the row costs nothing but the
 //! locate — any non-ENTITY type of exactly 312 bytes would do.
+//!
+//! NOT A MODEL OF THE DESCRIPTOR. IEEE §7.2.30 makes a real
+//! SIGNAL_MULTIPLEXER 76 octets; this fixture is 312 because 312 is the point
+//! — it has to collide with the ENTITY length the overlay's second guard
+//! tests. Nothing reads its body, and no command in this bench serves the
+//! type, so the shape is a test vector rather than a claim about the type.
 static std::vector<uint8_t> sigmux312_descriptor(uint16_t ix) {
   std::vector<uint8_t> d(312, 0);
   putbe(&d[0], 0x0022, 2);
@@ -4329,6 +4335,20 @@ int main(int argc, char** argv) {
       f = ask(AEM_SET_CONFIGURATION, bad, 0x76A6);
       CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
             "W18d: SET_CONFIGURATION(0xFFFF) is BAD_ARGUMENTS, got %d", st(f));
+      //! THE BOUNDARY, not just a far-out value. 0xFFFF would be refused by
+      //! any range test at all, including a wrong one; index ==
+      //! configurations_count is the one argument that separates `<` from
+      //! `<=`. The image declares 2, so 2 is the first illegal index.
+      std::vector<uint8_t> edge(4, 0);
+      putbe(&edge[2], 0x0002, 2);
+      auto b = ask(AEM_SET_CONFIGURATION, edge, 0x76A9);
+      CHECK(!b.empty() && st(b) == AECP_BAD_ARGUMENTS,
+            "W18d2: ...and so is index == configurations_count (2), got %d",
+            st(b));
+      CHECK(b.size() >= 42 && (((unsigned)b[40] << 8) | b[41]) == 0x0001,
+            "W18d3: ...echoing the current configuration 1, not the rejected "
+            "2 — got %u",
+            b.size() >= 42 ? (((unsigned)b[40] << 8) | b[41]) : 999u);
       CHECK(cdl(f) == 16, "W18e: ...at cdl 16, got %d", cdl(f));
       //! IEEE 7.4.7.1: "The response always contains the current value ... the
       //! OLD value if it fails." Not the rejected one.
