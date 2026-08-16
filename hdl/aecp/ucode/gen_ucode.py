@@ -477,9 +477,9 @@ place(E_STPRE, [
 ])
 
 # --- READ_DESCRIPTOR (06 §6.1) ----------------------------------------------
-# The one AEM command this processor really answers. Register contract, set by
-# KL_aecp_engine at dispatch (the µISA has no shift, so every field a µprogram
-# emits has to arrive right-justified in some register):
+# READ_DESCRIPTOR's register contract, set by KL_aecp_engine at dispatch (the
+# µISA has no shift, so every field a µprogram emits has to arrive
+# right-justified in some register):
 #   r15 = controller_entity_id
 #   r14 = {--, descriptor_index, descriptor_type, configuration_index}
 #         -> [15:0] is the configuration_index emitted at @24
