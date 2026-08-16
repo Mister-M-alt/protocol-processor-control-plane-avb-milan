@@ -217,6 +217,13 @@ module pp_top_wrap (
     output logic        dbg_evr_valid_o,
     output logic [4:0]  dbg_evr_src_o,
     output logic        dbg_evr_ack_o,
+    //! the STREAM_IS_RUNNING predicate, OBSERVED not driven: the bind and the
+    //! SRP declaration are made the real way (an ACMP BIND_RX and a talker
+    //! declaration), and these two only let the bench prove the cause took
+    //! effect before it grades the refusal. Forcing them would test the
+    //! dispatch arm against a fiction.
+    output logic        dbg_bound0_o,
+    output logic        dbg_streaming0_o,
     output logic        dbg_trc_wr_o,
     output logic        dbg_adp_evt_o,
     output logic        dbg_evt_tk_v_o,
@@ -426,6 +433,8 @@ module pp_top_wrap (
   assign dbg_evr_valid_o  = u_dut.evr_valid_w;
   assign dbg_evr_src_o    = u_dut.evr_src_w;
   assign dbg_evr_ack_o    = u_dut.evr_ack_w;
+  assign dbg_bound0_o     = u_dut.bound_hold_r[0];
+  assign dbg_streaming0_o = u_dut.aecp_streaming_w[0];
   assign dbg_trc_wr_o     = u_dut.trc_wr_valid_w;
   assign dbg_adp_evt_o    = u_dut.adp_evt_valid_w;
   assign dbg_evt_tk_v_o   = u_dut.lstn_evt_tk_valid_w;

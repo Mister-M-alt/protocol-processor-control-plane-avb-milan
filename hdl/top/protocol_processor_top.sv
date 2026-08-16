@@ -2680,6 +2680,28 @@ module protocol_processor_top
   logic  [2:0]             aecp_dbg_rfault_w;
   logic [15:0]             aecp_dbg_rerr_w, aecp_dbg_rlane_w;
 
+  //! ---- the STREAM_IS_RUNNING reduction (Milan §5.3.7.3) ----------------
+  //! §5.3.7.3, verbatim: "As long as a PAAD is declaring a Talker Advertise
+  //! attribute and receiving a Listener Ready or Listener Ready Failed
+  //! attribute for a Stream Output, it shall be streaming AVTP packets."
+  //!
+  //! So BOTH halves are required, and the Listener half admits two of the
+  //! four srp_pkg::srp_decl_e codes — READY (2) and READY_FAILED (3), which
+  //! share bit 1, so the test is one bit rather than two compares. The Talker
+  //! half is ADVERTISE (1) alone: a Talker FAILED (2) is declaring, but it is
+  //! not streaming, and treating it as such would refuse a reconfiguration
+  //! the standard permits.
+  //!
+  //! The reduction lives HERE rather than in the AECP engine because this is
+  //! where the SRP records are; the engine consumes a sentence, not a state
+  //! machine.
+  logic [N_STREAM_OUT_P-1:0] aecp_streaming_w;
+  always_comb begin : streaming_reduce
+    for (int unsigned s = 0; s < N_STREAM_OUT_P; s++)
+      aecp_streaming_w[s] = (srp_tk_decl_state_w[s] == 2'd1)
+                            && srp_lstn_reg_state_w[s][1];
+  end
+
   KL_aecp_engine #(
       .UCODE_HEX_P         (UCODE_HEX_P),
       .DESC_BASE_P         (DESC_BASE_P),
@@ -2791,6 +2813,8 @@ module protocol_processor_top
       .gsi_ord_o          (gsi_ord_o),
       .gsi_data_i         (gsi_data_i),
       .gsi_wait_i         (gsi_wait_i),
+      .strm_bound_i       (bound_hold_r),
+      .strm_streaming_i   (aecp_streaming_w),
       .lock_held_i        (ntfy_lock_held_w),
       .lock_ctlr_i        (ntfy_lock_ctlr_w),
       .eff_commit_o       (aecp_eff_commit_nc_w),

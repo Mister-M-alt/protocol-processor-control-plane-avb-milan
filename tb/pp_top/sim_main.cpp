@@ -334,6 +334,10 @@ static const uint16_t AEM_SET_SAMPLING_RATE = 0x0014;
 static const uint16_t AEM_SET_CLOCK_SOURCE = 0x0016;
 static const uint16_t AEM_SET_CONTROL = 0x0018;
 static const uint16_t AEM_GET_CONTROL = 0x0019;
+static const uint16_t AEM_SET_CONFIGURATION = 0x0006;
+static const uint16_t AEM_START_STREAMING = 0x0022;
+static const uint16_t AEM_STOP_STREAMING = 0x0023;
+enum { AECP_STREAM_IS_RUNNING = 12 };
 static const uint16_t AEM_IDENTIFY_NOTIF  = 0x0026;
 static const uint16_t AEM_GET_COUNTERS    = 0x0029;
 enum { AECP_SUCCESS = 0, AECP_NOT_IMPLEMENTED = 1, AECP_NO_SUCH_DESCRIPTOR = 2,
@@ -3861,6 +3865,96 @@ int main(int argc, char** argv) {
       f = ask(AEM_GET_CONTROL, ti(0x0002, 0), 0x7687);
       CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 17,
             "W13d: GET_CONTROL on an AUDIO_UNIT is NOT_SUPPORTED at cdl 17");
+    }
+
+    // ---- W14: START / STOP_STREAMING (Milan 5.4.2.19/.20) ---------------
+    // Body is {descriptor_type, descriptor_index} and nothing else — payload
+    // 4, cdl 16. A Stream OUTPUT must refuse NOT_SUPPORTED; that refusal is
+    // an inverted gate in es-4.11, so implementing it as SUCCESS fails.
+    {
+      auto f = ask(AEM_START_STREAMING, ti(0x0005, 0), 0x7690);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 16,
+            "W14: START_STREAMING on a Stream Input is SUCCESS at cdl 16");
+      CHECK(f.size() >= 42 && (((unsigned)f[38] << 8) | f[39]) == 0x0005
+            && (((unsigned)f[40] << 8) | f[41]) == 0,
+            "W14b: ...and echoes the {type, index} it acted on");
+
+      f = ask(AEM_STOP_STREAMING, ti(0x0005, 0), 0x7691);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 16,
+            "W14c: STOP_STREAMING on a Stream Input is SUCCESS");
+
+      // the inverted gate: a Stream OUTPUT is NOT_SUPPORTED, both ways
+      f = ask(AEM_START_STREAMING, ti(0x0006, 0), 0x7692);
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 16,
+            "W14d: START_STREAMING on a Stream Output is NOT_SUPPORTED");
+      f = ask(AEM_STOP_STREAMING, ti(0x0006, 0), 0x7693);
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 16,
+            "W14e: STOP_STREAMING on a Stream Output is NOT_SUPPORTED");
+
+      // 5.4.2.19's note: an input that does not exist still answers, and it
+      // answers NO_SUCH_DESCRIPTOR rather than pretending
+      f = ask(AEM_START_STREAMING, ti(0x0005, 9), 0x7694);
+      CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR,
+            "W14f: START_STREAMING on a missing sink is NO_SUCH_DESCRIPTOR");
+    }
+
+    // ---- W15: SET_CONFIGURATION and the STREAM_IS_RUNNING reduction ------
+    // Milan 5.4.2.5: "shall not accept a SET_CONFIGURATION command if ONE OF
+    // the Stream Input is bound or ONE OF the Stream Output is streaming".
+    //
+    // THE BIND IS MADE THE REAL WAY. Section S6 bound sink 0 with an actual
+    // ACMP BIND_RX and this bench observes dbg_bound0_o rather than forcing
+    // it, so the refusal below is graded against a stream that is genuinely
+    // bound. A test that forced the predicate would prove only that the
+    // dispatch arm reads its own input.
+    {
+      CHECK(h.d->dbg_bound0_o == 1,
+            "W15: sink 0 is genuinely bound (S6's ACMP BIND_RX) before the "
+            "refusal is graded");
+
+      std::vector<uint8_t> pl(4, 0);
+      putbe(&pl[2], 0x0000, 2);                 // reserved @24, cfg index @26
+      auto f = ask(AEM_SET_CONFIGURATION, pl, 0x7695);
+      CHECK(!f.empty() && st(f) == AECP_STREAM_IS_RUNNING,
+            "W15b: SET_CONFIGURATION refuses STREAM_IS_RUNNING while a sink "
+            "is bound, got status %d", st(f));
+      CHECK(cdl(f) == 16, "W15c: ...in the 4-byte response form, cdl %d",
+            cdl(f));
+      CHECK(f.size() >= 42 && (((unsigned)f[38] << 8) | f[39]) == 0,
+            "W15d: reserved @24 is zero in the refusal");
+
+      // and GET_CONFIGURATION is read-only, so it is correctly exempt
+      auto g = ask(AEM_GET_CONFIGURATION, {}, 0x7696);
+      CHECK(!g.empty() && st(g) == AECP_SUCCESS,
+            "W15e: GET_CONFIGURATION is read-only and stays SUCCESS while "
+            "bound");
+    }
+
+    // ---- W16: unbind, and the same command now succeeds -------------------
+    // The other half of the gate. A refusal that never lifts is as wrong as
+    // one that never fires, and this is the check that tells them apart.
+    {
+      auto unbind = acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                               T1_UID, 0, 0, 0, 0x1234, 0, 0);
+      h.feed(unbind);
+      h.wait_any(h.q_acmp, 600);
+      h.idle(200);
+      CHECK(h.d->dbg_bound0_o == 0, "W16: UNBIND_RX cleared the bound state");
+
+      std::vector<uint8_t> pl(4, 0);
+      putbe(&pl[2], 0x0000, 2);
+      auto f = ask(AEM_SET_CONFIGURATION, pl, 0x7697);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 16,
+            "W16b: SET_CONFIGURATION succeeds once nothing is running, got "
+            "status %d", st(f));
+      CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0000,
+            "W16c: ...echoing the configuration_index it stored");
+
+      // ...and the getter reads the setting back out of the dynamic store
+      auto g = ask(AEM_GET_CONFIGURATION, {}, 0x7698);
+      CHECK(!g.empty() && st(g) == AECP_SUCCESS && g.size() >= 42
+            && (((unsigned)g[40] << 8) | g[41]) == 0x0000,
+            "W16d: GET_CONFIGURATION reads the value SET_CONFIGURATION stored");
     }
 
     // ---- W8: READ_DESCRIPTOR still intact after the whole section -------

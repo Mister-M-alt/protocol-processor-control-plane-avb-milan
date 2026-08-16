@@ -464,6 +464,23 @@ module KL_aecp_engine
     input  wire         txreq_uns_ready_i,
 
     //! ---- lock context (06 §6.4; KL_aecp_notify's published lock state) ----
+    //! ---- the STREAM_IS_RUNNING predicate (Milan §5.3.7.3 / §5.3.8.2) ---
+    //! Milan spells "running" two different ways and they are NOT
+    //! interchangeable, so both arrive as their own vector:
+    //!
+    //!   * a Stream INPUT is **bound** — the pure ACMP bind level. §5.3.8.2
+    //!     is explicit that bound "does not necessarily mean that data is
+    //!     flowing", so this is neither reservation nor started.
+    //!   * a Stream OUTPUT is **streaming** — §5.3.7.3: "As long as a PAAD is
+    //!     declaring a Talker Advertise attribute AND receiving a Listener
+    //!     Ready or Listener Ready Failed attribute for a Stream Output, it
+    //!     shall be streaming AVTP packets."
+    //!
+    //! The integrator reduces its SRP state to that sentence; this block only
+    //! consumes the answer, because the reduction belongs where the SRP
+    //! records live and not in a command decoder.
+    input  wire [N_STREAM_IN_P-1:0]  strm_bound_i,
+    input  wire [N_STREAM_OUT_P-1:0] strm_streaming_i,
     input  wire         lock_held_i,
     input  wire  [63:0] lock_ctlr_i,
 
@@ -570,6 +587,14 @@ module KL_aecp_engine
   localparam logic [15:0] OP_SET_CONTROL_C      = 16'h0018;
   localparam logic [15:0] OP_GET_CONTROL_C      = 16'h0019;
   localparam logic [15:0] DT_CONTROL_C          = 16'h001A;
+  //! ---- the streaming-state family (Milan §5.4.2.5/.19/.20) -------------
+  //! START/STOP_STREAMING carry §7.4.35.1's {type, index} and nothing else,
+  //! so they ride the tix shape with no new walk work. SET_CONFIGURATION
+  //! carries §7.4.7.1's {reserved, configuration_index} — its @24 word is
+  //! NOT a descriptor type, which is why it gets its own operand packing.
+  localparam logic [15:0] OP_SET_CONFIG_C      = 16'h0006;
+  localparam logic [15:0] OP_START_STREAM_C    = 16'h0022;
+  localparam logic [15:0] OP_STOP_STREAM_C     = 16'h0023;
   //! Table 7-1: the two descriptor types the audio-map µprograms serve -
   //! every other type keeps the NOT_IMPLEMENTED echo
   localparam logic [15:0] DT_STREAM_PORT_IN_C  = 16'h000E;
@@ -632,6 +657,11 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_LOCKED1_C = 11'd1312;  // E_LOCKED1
   localparam logic [10:0] UPC_BADARG1_C = 11'd1320;  // E_BADARG1
   localparam logic [10:0] UPC_NSUPP1_C  = 11'd1328;  // E_NSUPP1
+  localparam logic [10:0] UPC_STRMRUN4_C = 11'd1336; // E_STRMRUN4
+  localparam logic [10:0] UPC_SCFG_C     = 11'd1344; // E_SCFG
+  localparam logic [10:0] UPC_SCFGRUN_C  = 11'd1376; // E_SCFGRUN
+  localparam logic [10:0] UPC_STRMW_C    = 11'd1392; // E_STRMW
+  localparam logic [10:0] UPC_STRMWNS_C  = 11'd1424; // E_STRMWNS
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -701,6 +731,9 @@ module KL_aecp_engine
   logic        sclks_r;                  // ... a SET_CLOCK_SOURCE
   logic        gctrl_r;                  // ... a GET_CONTROL
   logic        sctrl_r;                  // ... a SET_CONTROL
+  logic        scfg_r;                   // ... a SET_CONFIGURATION
+  logic        strmw_r;                  // ... a START/STOP_STREAMING
+  logic        startw_r;                 // ... START rather than STOP
   logic        setc_r;                   // ... any SET_* that carries a value
   //! the SET family's argument, walked out of @28..@35. Every settable field
   //! Milan v1.2 names fits in these eight bytes: a sampling rate is 4
@@ -812,6 +845,14 @@ module KL_aecp_engine
   assign sctrl_w  = (txn_w.protocol == PP_PROTO_AEM)
                     && (txn_w.opcode == OP_SET_CONTROL_C);
   assign setc_w   = ssrate_w | sclks_w | sctrl_w;
+  logic scfg_w, startw_w, stopw_w, strmw_w;
+  assign scfg_w   = (txn_w.protocol == PP_PROTO_AEM)
+                    && (txn_w.opcode == OP_SET_CONFIG_C);
+  assign startw_w = (txn_w.protocol == PP_PROTO_AEM)
+                    && (txn_w.opcode == OP_START_STREAM_C);
+  assign stopw_w  = (txn_w.protocol == PP_PROTO_AEM)
+                    && (txn_w.opcode == OP_STOP_STREAM_C);
+  assign strmw_w  = startw_w | stopw_w;
 
   //! ---- unsolicited job synthesis (06 §6.7) -------------------------------
   //! kind -> {command_type, µPC}. A kind whose µprogram has not landed maps
@@ -901,9 +942,33 @@ module KL_aecp_engine
   //! OR chain re-spelled in four - and the chain is built once instead of
   //! four times, which is the reason it exists and not just how it reads.
   logic [63:0] opd2_w;
+  //! ---- the running predicate, reduced (Milan §5.3.7.3 / §5.3.8.2) -----
+  //! `tgt_running_w` answers "is the descriptor THIS command names running",
+  //! and `any_running_w` answers §5.4.2.5's "one of the Stream Input is bound
+  //! or one of the Stream Output is streaming" — a reduction over EVERY
+  //! stream, not a test of index 0. Both are combinational off registered
+  //! walk fields, so they are settled a whole state before the A_PLD exit
+  //! reads them.
+  //!
+  //! An index past the shape reduces to NOT running, which is correct and not
+  //! merely safe: a stream that does not exist is not streaming, and the
+  //! locate refuses it a moment later with NO_SUCH_DESCRIPTOR.
+  logic tgt_running_w, any_running_w;
+  logic in_bound_w, out_streaming_w;
+  assign in_bound_w      = (desc_ix_r < 16'(N_STREAM_IN_P))
+                           && strm_bound_i[desc_ix_r[$clog2(
+                                (N_STREAM_IN_P > 1) ? N_STREAM_IN_P : 2)-1:0]];
+  assign out_streaming_w = (desc_ix_r < 16'(N_STREAM_OUT_P))
+                           && strm_streaming_i[desc_ix_r[$clog2(
+                                (N_STREAM_OUT_P > 1) ? N_STREAM_OUT_P : 2)-1:0]];
+  assign tgt_running_w   = ((cfg_ix_r == DT_STREAM_INPUT_C)  && in_bound_w)
+                        || ((cfg_ix_r == DT_STREAM_OUTPUT_C) && out_streaming_w);
+  assign any_running_w   = (|strm_bound_i) || (|strm_streaming_i);
+
   logic tix_w;
   assign tix_w = ctrs_r | amap_r | gstri_r | gavb_r
-                 | gsfmt_r | gsrate_r | gclks_r | setc_r | gctrl_r;
+                 | gsfmt_r | gsrate_r | gclks_r | setc_r | gctrl_r
+                 | strmw_r;
   assign opd0_w = tix_w       ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
                 : gasp_r      ? {16'd0, cfg_ix_r, DT_AVB_INTERFACE_C, 16'd0}
                 : lockc_r     ? {32'd0, cfg_ix_r, desc_ix_r}
@@ -911,6 +976,7 @@ module KL_aecp_engine
   assign opd1_w = amap_r                 ? {32'd0, desc_ix_r, desc_ty_r}
                 : tix_w                  ? {32'd0, cfg_ix_r, desc_ix_r}
                 : gasp_r                 ? {48'd0, cfg_ix_r}
+                : scfg_r                 ? {48'd0, desc_ix_r}
                                          : {32'd0, desc_ty_r, desc_ix_r};
 
   //! r12, the SET argument, re-justified per command. `setval_r` holds
@@ -918,9 +984,16 @@ module KL_aecp_engine
   //! narrower one has to be taken from the TOP. This is the one place that
   //! knows a rate is four bytes and a clock-source index is two, and it is
   //! here rather than in the µcode because the µISA has no shift.
+  //! SET_CONFIGURATION's argument is not at @28 like the rest of the family:
+  //! §7.4.7.1 puts `reserved` at @24 and `configuration_index` at @26, so the
+  //! value is what the walk already captured into `desc_ix_r` and there is
+  //! nothing to justify. START/STOP_STREAMING carry no value at all — the bit
+  //! to store IS the opcode, so it is packed here rather than walked.
   assign opd2_w = ssrate_r ? {32'd0, setval_r[63:32]}
                 : sclks_r  ? {48'd0, setval_r[63:48]}
                 : sctrl_r  ? {56'd0, setval_r[63:56]}
+                : scfg_r   ? {48'd0, desc_ix_r}
+                : strmw_r  ? {63'd0, startw_r}
                            : setval_r;
 
   logic [63:0] opd0_r, opd1_r, opd2_r;
@@ -1514,6 +1587,9 @@ module KL_aecp_engine
       sclks_r      <= 1'b0;
       gctrl_r      <= 1'b0;
       sctrl_r      <= 1'b0;
+      scfg_r       <= 1'b0;
+      strmw_r      <= 1'b0;
+      startw_r     <= 1'b0;
       setc_r       <= 1'b0;
       setval_r     <= 64'd0;
       opd2_r       <= 64'd0;
@@ -1567,6 +1643,9 @@ module KL_aecp_engine
               sclks_r    <= sclks_w;
               gctrl_r    <= gctrl_w;
               sctrl_r    <= sctrl_w;
+              scfg_r     <= scfg_w;
+              strmw_r    <= strmw_w;
+              startw_r   <= startw_w;
               setc_r     <= setc_w;
               setval_r   <= 64'd0;
               lock_ent_ok_r <= 1'b1;
@@ -1632,6 +1711,9 @@ module KL_aecp_engine
             sclks_r    <= 1'b0;
             gctrl_r    <= 1'b0;
             sctrl_r    <= 1'b0;
+            scfg_r     <= 1'b0;
+            strmw_r    <= 1'b0;
+            startw_r   <= 1'b0;
             setc_r     <= 1'b0;
             lock_ent_ok_r <= 1'b1;
             uns_r      <= 1'b1;
@@ -1842,6 +1924,35 @@ module KL_aecp_engine
               if (cmd_r.cdl < 11'd17)            upc_r <= UPC_BADARG1_C;
               else if (cfg_ix_r != DT_CONTROL_C) upc_r <= UPC_NSUPP1_C;
               else                               upc_r <= UPC_SCTRL_C;
+              echo_r <= 1'b0;
+            end
+            //! ---- START / STOP_STREAMING (Milan §5.4.2.19/.20) ----------
+            //! "The PAAD-AE shall not support the START_STREAMING command for
+            //! a Stream Output (NOT_SUPPORTED shall be returned)" — and the
+            //! same sentence for STOP. So a Stream INPUT is the only target
+            //! that reaches the µprogram; a Stream OUTPUT refuses, and any
+            //! other descriptor type refuses for the same reason.
+            //!
+            //! There is deliberately NO running gate here. §5.4.2.19's note
+            //! makes an unbound or already-started input a SUCCESS that
+            //! changes nothing, not a refusal — this pair CHANGES the running
+            //! state rather than being blocked by it.
+            if (strmw_r) begin
+              if (cmd_r.cdl < 11'd16)                upc_r <= UPC_BADARG_C;
+              else if (cfg_ix_r != DT_STREAM_INPUT_C) upc_r <= UPC_STRMWNS_C;
+              else                                    upc_r <= UPC_STRMW_C;
+              echo_r <= 1'b0;
+            end
+            //! ---- SET_CONFIGURATION (Milan §5.4.2.5) --------------------
+            //! The refusal is the reduction over EVERY stream, not a test of
+            //! the descriptor named: "shall not accept ... if ONE OF the
+            //! Stream Input is bound or ONE OF the Stream Output is
+            //! streaming". §7.4.8.1's command is 4 bytes, so cdl 16 is the
+            //! whole thing.
+            if (scfg_r) begin
+              if (cmd_r.cdl < 11'd16)  upc_r <= UPC_BADARG_C;
+              else if (any_running_w)  upc_r <= UPC_SCFGRUN_C;
+              else                     upc_r <= UPC_SCFG_C;
               echo_r <= 1'b0;
             end
             a_st_r <= A_DISP;

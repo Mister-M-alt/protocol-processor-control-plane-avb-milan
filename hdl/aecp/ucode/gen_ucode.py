@@ -31,6 +31,9 @@ FMT_B, FMT_W, FMT_D, FMT_Q = 0, 1, 2, 3
 ST_OK, ST_NIMPL, ST_BADARG, ST_NSUPP = 0, 1, 7, 11
 ST_NORES = 8          # Table 7-141 NO_RESOURCES (Milan SS5.4.2.21's refusal)
 ST_LOCKED = 3         # Table 7-141 ENTITY_LOCKED (the LOCK denial arm)
+ST_STRMRUN = 12       # Table 7-141 STREAM_IS_RUNNING — Milan's refusal for a
+                      # SET aimed at a bound Stream Input or a streaming
+                      # Stream Output (SS5.4.2.5 / SS5.4.2.7 / SS5.4.2.9)
 REL_EQ, REL_NE, REL_LT, REL_GE = 0, 1, 2, 3
 
 # KL_aecp_desc_store state-port regions (see its banner): the µISA cannot put a
@@ -147,6 +150,11 @@ E_BADARG4 = 1240     # {type, index} + 4 zero bytes, BAD_ARGUMENTS
 E_LOCKED1 = 1312     # {type, index} + 1 zero byte, ENTITY_LOCKED
 E_BADARG1 = 1320     # {type, index} + 1 zero byte, BAD_ARGUMENTS
 E_NSUPP1  = 1328     # {type, index} + 1 zero byte, NOT_SUPPORTED
+E_STRMRUN4 = 1336    # {type, index} + 4 zero bytes, STREAM_IS_RUNNING
+E_SCFG    = 1344     # SET_CONFIGURATION (Milan 5.4.2.5, IEEE 7.4.7)
+E_SCFGRUN = 1376     # SET_CONFIGURATION's STREAM_IS_RUNNING refusal
+E_STRMW   = 1392     # START/STOP_STREAMING (Milan 5.4.2.19/.20, IEEE 7.4.35/36)
+E_STRMWNS = 1424     # ...its NOT_SUPPORTED refusal ({type, index}, cdl 16)
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
@@ -1346,6 +1354,109 @@ place(E_NSUPP1, [
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=13, fmt=FMT_D),
     u('BUILD_FLD', ra=2, fmt=FMT_B),
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- START_STREAMING / STOP_STREAMING (Milan §5.4.2.19/.20) ------------------
+# IEEE §7.4.35.1 / §7.4.36.1, Figure 7-59: the command and response are
+# {descriptor_type, descriptor_index} and nothing else — payload 4, cdl 16, the
+# same shape a getter uses, so the engine's tix walk already captures it.
+#
+# ONE PROGRAM SERVES BOTH. The bit to write arrives in r12, which the engine
+# packs from the opcode rather than from the payload: §7.4.35.1's command has
+# no value field at all, and START and STOP differ only in which state they
+# ask for. That keeps the ROM cost of the pair at one program.
+#
+# THE "NO EFFECT" SENTENCE IS NOT AN ERROR PATH. Milan:
+#
+#   "A PAAD-AE receiving START_STREAMING on a bound and stopped Stream Input
+#    shall change the state of the Sream Input to started. Note: this command
+#    has no effect on a Stream Input that is not already bound or already
+#    started."
+#
+# So an unbound or already-started input answers SUCCESS and changes nothing.
+# The write below is unconditional because the dynamic store's started bit is
+# only ever CONSULTED for a bound sink — writing it on an unbound one is the
+# "no effect" the note describes, not a state change. The Stream OUTPUT
+# refusal is the engine's, at dispatch (§5.4.2.19: "shall not support ... for
+# a Stream Output").
+place(E_STRMW, [
+    u('MOVE', rd=2, ra=0, imm=0),                # the miss arm's zero body
+    u('CHECK_LOCK', ra=15, imm=E_LOCKED4),       # held by another controller?
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the Stream Input exist?
+    u('BR_STATUS', cnd=0, imm=E_STRMW + 9),      # no -> NO_SUCH_DESCRIPTOR
+    u('WRITE_ST', ra=12, fmt=FMT_B, imm=RGN_DYN + SEL_START),
+    u('NVM_MARK', imm=1),                        # §5.3.8.7: persist it
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('SEND_RESP'),                              # E_STRMW + 9 lands here too
+    u('END'),
+])
+
+# ...and its NOT_SUPPORTED refusal, in the 4-byte response form (cdl 16).
+place(E_STRMWNS, [
+    u('SET_STATUS', imm=ST_NSUPP),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # the refused {type, index}
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- SET_CONFIGURATION (Milan §5.4.2.5, IEEE §7.4.7.1, Figure 7-33) ---------
+# Body: reserved @24, configuration_index @26 — payload 4, cdl 16. Its @24
+# word is a RESERVED field and not a descriptor type, which is why the engine
+# packs r13 for it separately from every other command here.
+#
+# THE REFUSAL IS A REDUCTION OVER EVERY STREAM, not a per-descriptor test:
+#
+#   "The PAAD-AE shall not accept a SET_CONFIGURATION command if ONE OF the
+#    Stream Input is bound or ONE OF the Stream Output is streaming. In this
+#    case, the STREAM_IS_RUNNING error code shall be returned."
+#
+# The engine computes that reduction (`any_running_w`) and refuses at
+# dispatch, so this program runs only when the entity is genuinely idle.
+place(E_SCFG, [
+    u('MOVE', rd=2, ra=0, imm=0),                # the @24 reserved field
+    u('CHECK_LOCK', ra=15, imm=E_SCFGRUN + 8),   # locked -> ENTITY_LOCKED
+    u('WRITE_ST', ra=12, fmt=FMT_W, imm=RGN_DYN + SEL_CFG),
+    u('NVM_MARK', imm=1),                        # es-5.1 item 1: persist it
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved            @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # configuration_index @26
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# SET_CONFIGURATION's two refusals share one emitter: the body is the same
+# {reserved, configuration_index} either way and only the status differs. The
+# echoed index is the one that was REFUSED, so a controller can tell which
+# request bounced.
+place(E_SCFGRUN, [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('SET_STATUS', imm=ST_STRMRUN),
+    u('BUILD_HDR', ra=15, rb=13),                # E_SCFGRUN + 2
+    u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved            @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # configuration_index @26
+    u('SEND_RESP'),
+    u('END'),
+    u('NOP'),
+    u('MOVE', rd=2, ra=0, imm=0),                # E_SCFGRUN + 8: the lock arm
+    u('SET_STATUS', imm=ST_LOCKED),
+    u('BRANCH', imm=E_SCFGRUN + 2),
+])
+
+# --- the shared STREAM_IS_RUNNING refusal ({type, index} + 4 zero bytes) -----
+# For SET_STREAM_FORMAT and SET_SAMPLING_RATE-shaped commands, whose response
+# form is 8 bytes and cdl 20.
+place(E_STRMRUN4, [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('SET_STATUS', imm=ST_STRMRUN),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_D),             # 4 zero bytes         @28
     u('SEND_RESP'),
     u('END'),
 ])
