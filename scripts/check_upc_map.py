@@ -77,7 +77,7 @@ def main() -> int:
             problems.append(
                 f"  {name} = {addr} is never a place() target. It names an "
                 f"address INSIDE some other program, so an instruction added "
-                f"above it moves the code and leaves this constant behind — "
+                f"above it moves the code and leaves this constant behind; "
                 f"and this gate cannot see that. Give it its own place().")
 
     for name, addr in sorted(engine.items()):

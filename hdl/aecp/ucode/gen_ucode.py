@@ -1462,12 +1462,12 @@ place(E_SCFG, [
 #
 # WHY THE OVERLAY IS DUPLICATED RATHER THAN SHARED. The first cut read
 # `RGN_DYN + SEL_CFG` raw, which answers 0 until some controller has written the
-# store — so before the first successful SET, every refusal echoed 0 instead of
+# store, so before the first successful SET, every refusal echoed 0 instead of
 # the image's ENTITY.current_configuration. E_GCFG has the valid-bit arm that
 # fixes this; the refusal emitter did not. Sharing one copy is not expressible
 # here: the arm's status has to be applied AFTER the overlay, because the image
 # arm's miss guard is `BR_STATUS cnd=0`, which tests `status != SUCCESS` and
-# would fire on the refusal itself — and SET_STATUS takes an immediate, so the
+# would fire on the refusal itself, and SET_STATUS takes an immediate, so the
 # arm cannot be carried through a shared tail in a register. The ROM holds three
 # copies; `_scfg_cur()` below is the single source they are generated from, so
 # they cannot drift apart. tb/pp_top W3c grades two of the three.
@@ -1476,7 +1476,7 @@ def _scfg_cur(base):
 
     `base` is the address of the FIRST of the ten, so the two internal branch
     targets stay correct wherever the block is placed. Runs with the status
-    register clean — see the SET_STATUS(ST_OK) prologue on the two arms that
+    register clean; see the SET_STATUS(ST_OK) prologue on the two arms that
     are entered from a checking op.
     """
     return [
@@ -1493,7 +1493,7 @@ def _scfg_cur(base):
     ]
 
 #! Dispatch lands here, so this is the one arm the engine did not already give a
-#! status to — hence no SET_STATUS(ST_OK) prologue.
+#! status to, hence no SET_STATUS(ST_OK) prologue.
 place(E_SCFGRUN, _scfg_cur(E_SCFGRUN) + [
     u('SET_STATUS', imm=ST_STRMRUN),
     u('BRANCH', imm=E_SCFGEMT),

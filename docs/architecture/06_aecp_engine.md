@@ -152,7 +152,7 @@ rule that satisfies IEEE §9.3.5.3.3 for **every** opcode 0x0000–0x0068).
 | 0x0002 | ENTITY_AVAILABLE | shall | — | RO | — | — | — | — | 44 B (2021 form w/ flags + acquired/locked IDs) |
 | 0x0003 | CONTROLLER_AVAILABLE | responder: n/i (not a controller); **originator**: §7 | — | — | — | — | — | — | 24 B echo |
 | 0x0004 | READ_DESCRIPTOR | shall | allowed while locked | RO | no | — | **yes** | — | 28 + descriptor (4-B stub on failure) |
-| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER *(architectural class; the current single AECP engine serializes AEM commands while the dispatch scoreboard remains unwired)* | yes | — | — | yes *(open, #69)* | 28 B |
+| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER *(architectural class; the current single AECP engine serializes AEM commands while the dispatch scoreboard remains unwired)* | yes | - | - | yes *(open, #69)* | 28 B |
 | 0x0007 | GET_CONFIGURATION | shall | — | RO | — | yes | — | — | 28 B |
 | 0x0008 | SET_STREAM_FORMAT | shall | §6.4 chain | STREAM_CFG | yes | — | — | yes | 40 B |
 | 0x0009 | GET_STREAM_FORMAT | shall | — | RO | — | yes | — | — | 40 B |
@@ -166,8 +166,8 @@ rule that satisfies IEEE §9.3.5.3.3 for **every** opcode 0x0000–0x0068).
 | 0x0017 | GET_CLOCK_SOURCE | shall | — | RO | — | yes | — | — | 36 B |
 | 0x0018 | SET_CONTROL | shall (identify) | value 0/255 | IDENTIFY | yes | — | — | yes | 28 + values |
 | 0x0019 | GET_CONTROL | shall (identify) | — | RO | — | **no** (variable) | — | — | 28 + values |
-| 0x0022 | START_STREAMING | shall | **input only** (Δ11) | STREAM_CFG | yes | — | — | yes | 28 B |
-| 0x0023 | STOP_STREAMING | shall | **input only** (Δ11) | STREAM_CFG | yes | — | — | yes | 28 B |
+| 0x0022 | START_STREAMING | shall, **n/i today** | **input only** (Δ11) | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x0023 | STOP_STREAMING | shall, **n/i today** | **input only** (Δ11) | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | 0x0024 | REGISTER_UNSOLICITED_NOTIFICATION | shall | §7; accepts 2013 no-flags form | REGISTRY_OP | no | — | — | — | 28 B (w/ flags) |
 | 0x0025 | DEREGISTER_UNSOLICITED_NOTIFICATION | shall | §7 | REGISTRY_OP | no | — | — | auto-deregister → targeted | 24 B |
 | 0x0026 | IDENTIFY_NOTIFICATION | unsolicited-only | as command → `BAD_ARGUMENTS` (IEEE §7.4.39.2, the opcode-specific rule — it governs over §9.3.5.3.3's fallback) | — | — | — | — | is one | 28 B |
@@ -289,7 +289,7 @@ response is never a torn mix of two states.
 
 | Command | Chain |
 |---|---|
-| SET_CONFIGURATION | any input bound ∨ any output streaming ⇒ `STREAM_IS_RUNNING` (**at dispatch, so it outranks the lock** — see below) → lock → index valid ⇒ commit → NVM mark (review §8 item 1). **No scoreboard barrier is drained today**: the current top admits a new AEM transaction only when its single AECP engine is idle, which orders SET_CONFIGURATION against both configuration read views. A future parallel AEM execution path must select `PP_HZ_CFG_BARRIER` before it can preserve that property. |
+| SET_CONFIGURATION | any input bound ∨ any output streaming ⇒ `STREAM_IS_RUNNING` (**at dispatch, so it outranks the lock** - see below) → lock → index valid ⇒ commit → NVM mark (review §8 item 1). **No scoreboard barrier is drained today**: the current top admits a new AEM transaction only when its single AECP engine is idle, which orders SET_CONFIGURATION against both configuration read views. A future parallel AEM execution path must select `PP_HZ_CFG_BARRIER` before it can preserve that property. |
 | SET_STREAM_FORMAT | lock → sink bound ∨ source streaming ⇒ `STREAM_IS_RUNNING` → format ∈ descriptor list → every existing static+dynamic mapping still references an existing channel, else `BAD_ARGUMENTS` → commit + `avtp.SET_*_FORMAT` + NVM |
 | SET_SAMPLING_RATE | lock → rate ∈ AUDIO_UNIT list → mappings whose stream rate ≠ new rate while port has neither SRC bit ⇒ may `NOT_SUPPORTED` (Milan §5.4.2.13 — "UNSUPPORTED" typo, review §8 item 3) → commit + NVM |
 | SET_CLOCK_SOURCE | lock → source ∈ CLOCK_DOMAIN list → `mclk.SET_CLOCK_SOURCE` → commit + NVM |
@@ -726,14 +726,14 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x0001 LOCK_ENTITY | real lock, unlock, owner query, keep-alive, and expiry behavior |
 | 0x0002 ENTITY_AVAILABLE | real flags and current owner state |
 | 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor; `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
-| 0x0006 SET_CONFIGURATION | real lock-protected **store**, with `STREAM_IS_RUNNING` while any Stream Input is bound or Stream Output is streaming. The value is recorded and republished; it does not yet re-point the served descriptor set — see the note under §6.4 |
+| 0x0006 SET_CONFIGURATION | real lock-protected **store**, with `STREAM_IS_RUNNING` while any Stream Input is bound or Stream Output is streaming. The value is recorded and republished; it does not yet re-point the served descriptor set - see the note under §6.4 |
 | 0x0007 GET_CONFIGURATION | real current configuration read |
 | 0x0009 GET_STREAM_FORMAT | real current Stream Input or Stream Output format read |
 | 0x000F GET_STREAM_INFO | real Milan Figure 5.1 response from the integrator state face |
 | 0x0014 / 0x0015 SET/GET_SAMPLING_RATE | real lock-protected per-Audio Unit dynamic state |
 | 0x0016 / 0x0017 SET/GET_CLOCK_SOURCE | real lock-protected per-Clock Domain dynamic state |
 | 0x0018 / 0x0019 SET/GET_CONTROL | real volatile Identify control with values 0 and 255 |
-| 0x0022 / 0x0023 START/STOP_STREAMING | **NOT IMPLEMENTED** — the NOT_IMPLEMENTED echo. Built and then withdrawn: started/stopped already has a home in the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is persisted by the NVM shadow, and a second copy in the dynamic store would be neither. The work is preserved on branch `78-start-stop-streaming` behind that decision |
+| 0x0022 / 0x0023 START/STOP_STREAMING | **NOT IMPLEMENTED** - the NOT_IMPLEMENTED echo. Built and then withdrawn: started/stopped already has a home in the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is persisted by the NVM shadow, and a second copy in the dynamic store would be neither. The work is preserved on branch `78-start-stop-streaming` behind that decision |
 | 0x0024 / 0x0025 REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION | real bounded controller registry |
 | 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face |
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |

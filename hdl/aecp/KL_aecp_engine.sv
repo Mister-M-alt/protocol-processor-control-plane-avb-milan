@@ -923,7 +923,7 @@ module KL_aecp_engine
   //! descriptor so GET_CONFIGURATION and the descriptor agree. This key is
   //! still a literal 0, so on a multi-configuration image THIS command would
   //! stay pinned to configuration 0 while both of those expose the active
-  //! index — the next thing to revisit when a second configuration ships),
+  //! index, the next thing to revisit when a second configuration ships),
   //! and r13 packs
   //! {descriptor_index, map_index} so ONE
   //! FMT_D BUILD_FLD lays @26..@29 in wire order while r13[15:0] is the
@@ -1937,7 +1937,7 @@ module KL_aecp_engine
             //! the descriptor named: "shall not accept ... if ONE OF the
             //! Stream Input is bound or ONE OF the Stream Output is
             //! streaming". §7.4.7.1's command is 4 bytes, so cdl 16 is the
-            //! whole thing — §7.4.8.1, GET_CONFIGURATION's, is zero.
+            //! whole thing; §7.4.8.1, GET_CONFIGURATION's, is zero.
             if (scfg_r) begin
               if (cmd_r.cdl < 11'd16)  upc_r <= UPC_SCFGBAD_C;
               else if (any_running_w)  upc_r <= UPC_SCFGRUN_C;

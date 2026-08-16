@@ -3616,7 +3616,7 @@ int main(int argc, char** argv) {
       // ---- W3c: THE SAME FALSIFIER, ON THE REFUSAL PATH ---------------
       // The refusal body is bound by IEEE 7.4.7.1 exactly as the success body
       // is: it carries the CURRENT value. "Current" before any controller has
-      // written the dynamic store is the IMAGE's — which the first cut of the
+      // written the dynamic store is the IMAGE's, which the first cut of the
       // refusal emitter did not read. It took `RGN_DYN + SEL_CFG` raw, so
       // every refusal echoed 0 until the first successful SET set the valid
       // bit, and no check could see it because the store's reset value and
@@ -3633,18 +3633,18 @@ int main(int argc, char** argv) {
               "W3c: a truncated SET_CONFIGURATION is BAD_ARGUMENTS");
         CHECK(b.size() >= 42 && (((unsigned)b[40] << 8) | b[41]) == 0x0007,
               "W3c2: ...and the refusal echoes the IMAGE's current "
-              "configuration, not the unwritten store's 0 — got %u",
+              "configuration, not the unwritten store's 0; got %u",
               b.size() >= 42 ? (((unsigned)b[40] << 8) | b[41]) : 999u);
 
         //! sink 0 is still bound from S6, so a well-formed command takes the
-        //! STREAM_IS_RUNNING arm — a different program, same overlay
+        //! STREAM_IS_RUNNING arm: a different program, same overlay
         std::vector<uint8_t> full(4, 0);
         auto r = ask(AEM_SET_CONFIGURATION, full, 0x7609);
         CHECK(!r.empty() && st(r) == AECP_STREAM_IS_RUNNING,
               "W3c3: a well-formed one is STREAM_IS_RUNNING (S6's bind is "
               "still live), got %d", st(r));
         CHECK(r.size() >= 42 && (((unsigned)r[40] << 8) | r[41]) == 0x0007,
-              "W3c4: ...and that arm echoes the image's value too — got %u",
+              "W3c4: ...and that arm echoes the image's value too; got %u",
               r.size() >= 42 ? (((unsigned)r[40] << 8) | r[41]) : 999u);
       }
 
@@ -3971,7 +3971,7 @@ int main(int argc, char** argv) {
 
       //! ---- W16a: the ENTITY_LOCKED arm's IMAGE path -------------------
       //! This is the only window in the run where nothing is running AND the
-      //! dynamic store is still unwritten — the two conditions that make the
+      //! dynamic store is still unwritten; the two conditions that make the
       //! locked arm reach its image fallback. W3c could not get here because
       //! sink 0 was still bound, so the refusal was taken at dispatch before
       //! CHECK_LOCK ran. Poke the image the way W3b does, so the arm's answer
@@ -3996,7 +3996,7 @@ int main(int argc, char** argv) {
               st(x));
         CHECK(x.size() >= 42 && (((unsigned)x[40] << 8) | x[41]) == 0x0007,
               "W16a3: ...and that arm falls back to the IMAGE's current "
-              "configuration, not the unwritten store's 0 — got %u",
+              "configuration, not the unwritten store's 0; got %u",
               x.size() >= 42 ? (((unsigned)x[40] << 8) | x[41]) : 999u);
         CHECK(cdl(x) == 16, "W16a4: ...at cdl 16, got %d", cdl(x));
 
@@ -4022,13 +4022,13 @@ int main(int argc, char** argv) {
             "W16d: GET_CONFIGURATION reads the value SET_CONFIGURATION stored");
     }
 
-    // ---- W17: the OTHER half of the predicate — a STREAMING OUTPUT -------
+    // ---- W17: the OTHER predicate half, a STREAMING OUTPUT ---------------
     // Milan 5.3.7.3 makes a Stream Output "streaming" only when BOTH halves
     // hold: this talker declares Advertise AND a downstream Listener has
     // registered Ready (or Ready Failed) for it. W15/W16 graded the Stream
     // Input half (bound). Without this section the `|| (|strm_streaming_i)`
     // term of the reduction could be deleted outright and every check in
-    // this bench would still pass — half the gate, unverified.
+    // this bench would still pass, leaving half the gate unverified.
     //
     // NOTHING IS FORCED. src 0 has been declaring Advertise since S10 opened
     // the MAAP DA gate; the missing half arrives as a real inbound MSRP
@@ -4038,7 +4038,7 @@ int main(int argc, char** argv) {
       const uint64_t SID_T0 = (OWN_MAC << 16) | 0x0000;
 
       CHECK(h.d->dbg_bound0_o == 0,
-            "W17: no Stream Input is bound — the input half cannot be what "
+            "W17: no Stream Input is bound; the input half cannot be what "
             "refuses below");
       CHECK(((h.snap(13) >> 16) & 3) == 1,
             "W17a: src 0 still declares Talker Advertise (S10's MAAP grant)");
@@ -4048,7 +4048,7 @@ int main(int argc, char** argv) {
             "W17c: no Listener has registered yet, so lstn_reg_state[0] is 0");
       CHECK(h.d->dbg_streaming0_o == 0,
             "W17d: Advertise WITHOUT a registered Listener is not streaming "
-            "— both halves are required");
+            "both halves are required");
       {
         std::vector<uint8_t> pl(4, 0);
         putbe(&pl[2], 0x0000, 2);
@@ -4069,7 +4069,7 @@ int main(int argc, char** argv) {
             "W17f: the inbound Listener Ready registered, lstn_reg_state[0] "
             "is READY, got %u", h.snap(13) & 3);
       CHECK(h.d->dbg_streaming0_o == 1,
-            "W17g: Advertise AND a registered Listener — Stream Output 0 is "
+            "W17g: Advertise AND a registered Listener; Stream Output 0 is "
             "STREAMING per 5.3.7.3");
 
       std::vector<uint8_t> pl(4, 0);
@@ -4081,16 +4081,16 @@ int main(int argc, char** argv) {
       CHECK(cdl(f) == 16, "W17i: ...in the 4-byte response form, cdl %d",
             cdl(f));
       //! IEEE 7.4.7.1 again: the refusal carries the CURRENT configuration,
-      //! which W16 left at 0 — not the 1 that was just rejected.
+      //! which W16 left at 0, not the 1 that was just rejected.
       CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0000,
             "W17j: the refusal echoes the current configuration 0, not the "
-            "rejected 1 — got %u",
+            "rejected 1; got %u",
             f.size() >= 42 ? (((unsigned)f[40] << 8) | f[41]) : 999u);
 
       //! PRECEDENCE, recorded because nothing orders it. The refusal above
       //! is taken at DISPATCH, before the program runs, so a foreign
       //! controller hitting a locked entity that also has a running stream
-      //! gets STREAM_IS_RUNNING rather than ENTITY_LOCKED — E_SCFG's
+      //! gets STREAM_IS_RUNNING rather than ENTITY_LOCKED; E_SCFG's
       //! CHECK_LOCK is never reached. Milan 5.4.2.5 and IEEE 7.4.7.2 both
       //! state their refusal without ordering it against the other, so
       //! either answer conforms; this check exists so the choice is a
@@ -4104,7 +4104,7 @@ int main(int argc, char** argv) {
                           AEM_SET_CONFIGURATION, pl));
         auto x = h.wait_any(h.q_aecp, 600);
         CHECK(!x.empty() && st(x) == AECP_STREAM_IS_RUNNING,
-              "W17n: locked AND running, from a foreign controller — the "
+              "W17n: locked AND running, from a foreign controller; the "
               "dispatch-level STREAM_IS_RUNNING wins over ENTITY_LOCKED, "
               "got %d", st(x));
         CHECK(cdl(x) == 16, "W17o: ...still at the full response cdl 16");
@@ -4122,7 +4122,7 @@ int main(int argc, char** argv) {
       h.feed(mrpdu_frame(true, T1_MAC, {lv}));
       h.run_ms(30);
       CHECK(h.d->dbg_streaming0_o == 0,
-            "W17k: the Listener left — Stream Output 0 stops streaming");
+            "W17k: the Listener left; Stream Output 0 stops streaming");
       auto g = ask(AEM_SET_CONFIGURATION, pl, 0x769C);
       CHECK(!g.empty() && st(g) == AECP_SUCCESS,
             "W17l: ...and SET_CONFIGURATION is accepted again, got status %d",
@@ -4136,9 +4136,9 @@ int main(int argc, char** argv) {
     // ---- W17b: the TALKER half of 5.3.7.3, graded ------------------------
     // W17 proved a registered Listener is necessary. It did NOT prove the
     // Talker term is doing any work: a review mutated the reduction three
-    // ways — deleting the Talker term, widening it to `!= NONE` so a Talker
+    // ways: deleting the Talker term, widening it to `!= NONE` so a Talker
     // FAILED counts, and widening the Listener test to any non-zero
-    // registration so ASKING_FAILED counts — and all 449 checks stayed green.
+    // registration so ASKING_FAILED counts, and all 449 checks stayed green.
     // Half of an AND was defended. These two cases close it.
     //
     //   Milan 5.3.7.3 wants ADVERTISE specifically, and READY (or READY
@@ -4159,7 +4159,7 @@ int main(int argc, char** argv) {
       CHECK(((h.snap(13) >> 16) & 3) == 1,
             "W17b2: ...while src 0 still declares Advertise");
       CHECK(h.d->dbg_streaming0_o == 0,
-            "W17b3: ASKING_FAILED is not READY — the Stream Output is NOT "
+            "W17b3: ASKING_FAILED is not READY; the Stream Output is NOT "
             "streaming");
       {
         std::vector<uint8_t> pl(4, 0);
@@ -4179,18 +4179,18 @@ int main(int argc, char** argv) {
       h.feed(mrpdu_frame(true, T1_MAC, {rdy}));
       h.run_ms(30);
       CHECK(h.d->dbg_streaming0_o == 1,
-            "W17b5: back to Advertise + Listener Ready — streaming again "
+            "W17b5: back to Advertise + Listener Ready; streaming again "
             "(the control for what follows)");
 
       //! The re-declaration resets the stream record and takes the Listener
       //! registration with it, so the Listener has to arrive AFTER the
-      //! talker is failed — otherwise this section grades 0 && 0 and proves
+      //! talker is failed; otherwise this section grades 0 && 0 and proves
       //! nothing about which term did the work.
       auto rf = h.svc(OP_DECL_TK, 0, SID_T0, H::maap_da(0), 5, 1500, 0);
       CHECK(rf.got, "W17b6: the over-ceiling re-declaration was answered");
       h.run_ms(300);
       CHECK(((h.snap(3) >> 4) & 1) == 1,
-            "W17b7: admission refused it — over_limit is set");
+            "W17b7: admission refused it; over_limit is set");
       CHECK(((h.snap(13) >> 16) & 3) == 2,
             "W17b8: src 0 publishes Talker FAILED, tk_decl_state[0] is 2, "
             "got %u", (h.snap(13) >> 16) & 3);
@@ -4201,7 +4201,7 @@ int main(int argc, char** argv) {
             "W17b9: ...and a Listener registers READY on it anyway, got %u",
             h.snap(13) & 3);
       CHECK(h.d->dbg_streaming0_o == 0,
-            "W17b10: a Talker FAILED is declaring but NOT streaming — "
+            "W17b10: a Talker FAILED is declaring but NOT streaming; "
             "5.3.7.3 wants ADVERTISE, not any declaration");
       {
         std::vector<uint8_t> pl(4, 0);
@@ -4293,7 +4293,7 @@ int main(int argc, char** argv) {
       //! DELIBERATELY NOT PUT BACK. W19 below grades the ENTITY_LOCKED
       //! refusal's echo, and that arm has its own copy of the current-value
       //! overlay. With the store at 0 its store arm, its image arm and a
-      //! hardcoded zero are three indistinguishable answers — which is how a
+      //! hardcoded zero are three indistinguishable answers, which is how a
       //! review mutated that arm's base address, and deleted the arm outright,
       //! with all 468 checks still green. Leaving the store at 1 while the
       //! image reads 0 separates them.
@@ -4318,8 +4318,8 @@ int main(int argc, char** argv) {
 
       //! the store holds 1 (W18) and the image holds 0, so the echo below
       //! tells the locked arm's overlay apart from a raw read and from a
-      //! hardcoded zero. Send 0 — a value that is BOTH the image's and NOT
-      //! the current one — so echoing the argument is also distinguishable.
+      //! hardcoded zero. Send 0, a value that is BOTH the image's and NOT
+      //! the current one, so echoing the argument is also distinguishable.
       auto gpre = ask(AEM_GET_CONFIGURATION, {}, 0x76B3);
       CHECK(!gpre.empty() && gpre.size() >= 42
             && (((unsigned)gpre[40] << 8) | gpre[41]) == 0x0001,
@@ -4334,12 +4334,12 @@ int main(int argc, char** argv) {
       //! The refusal is still a SET_CONFIGURATION response, so 7.4.7.1 binds
       //! it as much as it binds BAD_ARGUMENTS: full response size, carrying
       //! the CURRENT value. Grading only the status byte let a refusal that
-      //! echoed the rejected index — or answered at command length — pass.
+      //! echoed the rejected index, or answered at command length, pass.
       CHECK(cdl(f) == 16, "W19g2: ...at the full response cdl 16, got %d",
             cdl(f));
       CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0001,
-            "W19g3: ...echoing the CURRENT configuration 1 — not the rejected "
-            "0, not the image's 0, not a hardcoded 0 — got %u",
+            "W19g3: ...echoing the CURRENT configuration 1, not the rejected "
+            "0, not the image's 0, not a hardcoded 0; got %u",
             f.size() >= 42 ? (((unsigned)f[40] << 8) | f[41]) : 999u);
       auto g = ask(AEM_GET_CONFIGURATION, {}, 0x76B5);
       CHECK(!g.empty() && g.size() >= 42
