@@ -304,17 +304,14 @@ program's `CHECK_LOCK`. Milan §5.4.2.5 and IEEE §7.4.7.2 each state their
 refusal without ordering it against the other, so either answer conforms. The
 order is pinned by a check (`tb/pp_top`, W17n) so it cannot drift silently.
 
-*What "current configuration" means today.* The command **stores** the index and
-`GET_CONFIGURATION` (§7.4.8) overlays the store, but `READ_DESCRIPTOR` still
-serves the ENTITY descriptor straight from the image, whose
-`current_configuration` field is whatever the image was built with. IEEE
-§7.4.8.2 calls the two fields equivalent, so on a **multi-configuration** image
-they can disagree. They cannot disagree on the shipping image, which declares
-`configurations_count = 1`: the range check in `E_SCFG` admits only index 0, and
-the image already carries 0. The divergence is real on the bench's two-config
-image and is tracked separately — it needs `E_RDESC` to overlay the last field
-of the ENTITY descriptor, which is a change to the most-exercised program in the
-engine and does not belong in a SET_CONFIGURATION change.
+*One current-configuration source.* The command **stores** the index, and both
+`GET_CONFIGURATION` (§7.4.8) and `READ_DESCRIPTOR(ENTITY)` overlay that dynamic
+value. This preserves §7.4.8.2 equivalence on multi-configuration images as well
+as on the shipping one-configuration image. The descriptor image remains
+read-only: `E_RDESCENT` copies the first 310 ENTITY bytes unchanged and appends
+the dynamic `current_configuration` word. Before the first successful SET, the
+word comes from the image. The W18 regression grades both a successful non-zero
+SET and a rejected SET, including the GET and READ_DESCRIPTOR views.
 
 ### 6.5 Audio-map operations (Milan §5.4.2.26–.28)
 

@@ -4206,9 +4206,25 @@ int main(int argc, char** argv) {
 
       // and the getter must read the store, not the static image
       auto g = ask(AEM_GET_CONFIGURATION, {}, 0x76A5);
+      const unsigned get_cfg = g.size() >= 42
+                             ? (((unsigned)g[40] << 8) | g[41]) : 999u;
       CHECK(!g.empty() && g.size() >= 42
-            && (((unsigned)g[40] << 8) | g[41]) == 0x0001,
+            && get_cfg == 0x0001,
             "W18c: GET_CONFIGURATION reads 1 back — the round trip exists");
+
+      // IEEE 1722.1-2021 §7.4.8.2 calls that value equivalent to the
+      // ENTITY descriptor's current_configuration. The field is the final
+      // word of the 312-byte descriptor, at response-frame bytes 352..353.
+      std::vector<uint8_t> rdent(8, 0);
+      putbe(&rdent[0], CFGIX, 2);                // configuration_index
+      putbe(&rdent[4], 0x0000, 2);               // ENTITY
+      auto e = ask(AEM_READ_DESCRIPTOR, rdent, 0x76A9);
+      CHECK(!e.empty() && st(e) == AECP_SUCCESS && e.size() >= 354,
+            "W18c2: READ_DESCRIPTOR(ENTITY) succeeds after SET_CONFIGURATION");
+      const unsigned ent_cfg = e.size() >= 354
+                             ? (((unsigned)e[352] << 8) | e[353]) : 998u;
+      CHECK(e.size() >= 354 && ent_cfg == get_cfg,
+            "W18c3: ENTITY.current_configuration equals GET_CONFIGURATION");
 
       // out of range must NOT be a false success
       std::vector<uint8_t> bad(4, 0);
@@ -4226,9 +4242,16 @@ int main(int argc, char** argv) {
 
       // ...and the refusal changed nothing
       g = ask(AEM_GET_CONFIGURATION, {}, 0x76A7);
+      const unsigned get_after_bad = g.size() >= 42
+                                   ? (((unsigned)g[40] << 8) | g[41]) : 999u;
       CHECK(!g.empty() && g.size() >= 42
-            && (((unsigned)g[40] << 8) | g[41]) == 0x0001,
+            && get_after_bad == 0x0001,
             "W18g: the refused SET left the configuration at 1");
+      e = ask(AEM_READ_DESCRIPTOR, rdent, 0x76AA);
+      const unsigned ent_after_bad = e.size() >= 354
+                                   ? (((unsigned)e[352] << 8) | e[353]) : 998u;
+      CHECK(e.size() >= 354 && ent_after_bad == get_after_bad,
+            "W18h: GET and ENTITY still agree after the refused SET");
 
       // put it back
       std::vector<uint8_t> zero(4, 0);

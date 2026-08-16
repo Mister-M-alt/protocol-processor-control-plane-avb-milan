@@ -571,6 +571,7 @@ module KL_aecp_engine
   localparam logic [15:0] OP_GET_STREAM_FMT_C  = 16'h0009;
   localparam logic [15:0] OP_GET_SAMP_RATE_C   = 16'h0015;
   localparam logic [15:0] OP_GET_CLOCK_SRC_C   = 16'h0017;
+  localparam logic [15:0] DT_ENTITY_C          = 16'h0000;
   localparam logic [15:0] DT_AUDIO_UNIT_C      = 16'h0002;
   //! ---- the SET family (Milan §5.4.2.13 / §5.4.2.15) -------------------
   //! Each shares its GET's response form (IEEE Figures 7-45 and 7-47 are
@@ -664,6 +665,7 @@ module KL_aecp_engine
   //! at all) under-sizes them to a bare header — both are 9.3.5.3.3 defects.
   //! ...and SET_CONFIGURATION's out-of-range arm, inside E_SCFGRUN's slot
   localparam logic [10:0] UPC_SCFGBAD_C  = 11'd1513; // E_SCFGBAD
+  localparam logic [10:0] UPC_RDESCENT_C = 11'd1568; // E_RDESCENT
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -1733,6 +1735,19 @@ module KL_aecp_engine
             //! GET_MILAN_INFO leaves the generic echo for its own µprogram
             if (mvu_get_milan_info_w) begin
               upc_r  <= UPC_MVUINFO_C;
+              echo_r <= 1'b0;
+            end
+            //! READ_DESCRIPTOR(ENTITY) overlays current_configuration from
+            //! the same dynamic state GET_CONFIGURATION reads. IEEE
+            //! §7.4.8.2 calls the two values equivalent, so the static image
+            //! cannot remain the response source after SET_CONFIGURATION.
+            //! Descriptor type is available only after this registered walk;
+            //! all non-ENTITY reads retain the generic byte-exact program.
+            if ((cmd_r.protocol == PP_PROTO_AEM)
+                && (cmd_r.opcode == OP_READ_DESCRIPTOR_C)
+                && (cmd_r.cdl >= 11'd20)
+                && (desc_ty_r == DT_ENTITY_C)) begin
+              upc_r  <= UPC_RDESCENT_C;
               echo_r <= 1'b0;
             end
             //! ...and the audio-map TYPE gate at the same seam, for the same
