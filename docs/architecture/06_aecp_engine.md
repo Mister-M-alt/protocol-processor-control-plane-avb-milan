@@ -152,7 +152,7 @@ rule that satisfies IEEE §9.3.5.3.3 for **every** opcode 0x0000–0x0068).
 | 0x0002 | ENTITY_AVAILABLE | shall | — | RO | — | — | — | — | 44 B (2021 form w/ flags + acquired/locked IDs) |
 | 0x0003 | CONTROLLER_AVAILABLE | responder: n/i (not a controller); **originator**: §7 | — | — | — | — | — | — | 24 B echo |
 | 0x0004 | READ_DESCRIPTOR | shall | allowed while locked | RO | no | — | **yes** | — | 28 + descriptor (4-B stub on failure) |
-| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER | yes | — | — | yes | 28 B |
+| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER *(designed; `PP_HZ_CFG_BARRIER` is defined but nothing selects it — the command is classed `RO_SNAPSHOT` today)* | yes | — | — | yes *(open, #69)* | 28 B |
 | 0x0007 | GET_CONFIGURATION | shall | — | RO | — | yes | — | — | 28 B |
 | 0x0008 | SET_STREAM_FORMAT | shall | §6.4 chain | STREAM_CFG | yes | — | — | yes | 40 B |
 | 0x0009 | GET_STREAM_FORMAT | shall | — | RO | — | yes | — | — | 40 B |
@@ -289,7 +289,7 @@ response is never a torn mix of two states.
 
 | Command | Chain |
 |---|---|
-| SET_CONFIGURATION | any input bound ∨ any output streaming ⇒ `STREAM_IS_RUNNING` (**at dispatch, so it outranks the lock** — see below) → lock → index valid ⇒ commit (CFG_BARRIER drained) → NVM mark (review §8 item 1) |
+| SET_CONFIGURATION | any input bound ∨ any output streaming ⇒ `STREAM_IS_RUNNING` (**at dispatch, so it outranks the lock** — see below) → lock → index valid ⇒ commit → NVM mark (review §8 item 1). **No barrier is drained today**: `protocol_processor_top` classes this command `PP_HZ_RO_SNAPSHOT`, and `PP_HZ_CFG_BARRIER` — defined in `pp_pkg.sv` — is selected by nothing. It is safe only because the command stores a value the descriptor-serving path does not yet read (#82) |
 | SET_STREAM_FORMAT | lock → sink bound ∨ source streaming ⇒ `STREAM_IS_RUNNING` → format ∈ descriptor list → every existing static+dynamic mapping still references an existing channel, else `BAD_ARGUMENTS` → commit + `avtp.SET_*_FORMAT` + NVM |
 | SET_SAMPLING_RATE | lock → rate ∈ AUDIO_UNIT list → mappings whose stream rate ≠ new rate while port has neither SRC bit ⇒ may `NOT_SUPPORTED` (Milan §5.4.2.13 — "UNSUPPORTED" typo, review §8 item 3) → commit + NVM |
 | SET_CLOCK_SOURCE | lock → source ∈ CLOCK_DOMAIN list → `mclk.SET_CLOCK_SOURCE` → commit + NVM |

@@ -3969,6 +3969,43 @@ int main(int argc, char** argv) {
       h.idle(200);
       CHECK(h.d->dbg_bound0_o == 0, "W16: UNBIND_RX cleared the bound state");
 
+      //! ---- W16a: the ENTITY_LOCKED arm's IMAGE path -------------------
+      //! This is the only window in the run where nothing is running AND the
+      //! dynamic store is still unwritten — the two conditions that make the
+      //! locked arm reach its image fallback. W3c could not get here because
+      //! sink 0 was still bound, so the refusal was taken at dispatch before
+      //! CHECK_LOCK ran. Poke the image the way W3b does, so the arm's answer
+      //! is a value neither the store nor a hardcoded zero can produce.
+      {
+        uint32_t ent_off = 0;
+        for (auto& e : img_ents) if (e.type == 0x0000) ent_off = e.off;
+        uint8_t hi = h.dram[ent_off + 310], lo = h.dram[ent_off + 311];
+        h.dram[ent_off + 310] = 0x00; h.dram[ent_off + 311] = 0x07;
+
+        std::vector<uint8_t> lk(16, 0);              // flags 0 = LOCK
+        auto l = ask(0x0001, lk, 0x7690);
+        CHECK(!l.empty() && st(l) == AECP_SUCCESS,
+              "W16a: the bench holds the lock, nothing running, store unwritten");
+        std::vector<uint8_t> q(4, 0);
+        putbe(&q[2], 0x0001, 2);
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR2_EID, 0x7691,
+                          AEM_SET_CONFIGURATION, q));
+        auto x = h.wait_any(h.q_aecp, 600);
+        CHECK(!x.empty() && st(x) == AECP_ENTITY_LOCKED,
+              "W16a2: a foreign controller is refused ENTITY_LOCKED, got %d",
+              st(x));
+        CHECK(x.size() >= 42 && (((unsigned)x[40] << 8) | x[41]) == 0x0007,
+              "W16a3: ...and that arm falls back to the IMAGE's current "
+              "configuration, not the unwritten store's 0 — got %u",
+              x.size() >= 42 ? (((unsigned)x[40] << 8) | x[41]) : 999u);
+        CHECK(cdl(x) == 16, "W16a4: ...at cdl 16, got %d", cdl(x));
+
+        std::vector<uint8_t> ul(16, 0);
+        putbe(&ul[2], 1, 2);                         // flags = UNLOCK
+        ask(0x0001, ul, 0x7692);
+        h.dram[ent_off + 310] = hi; h.dram[ent_off + 311] = lo;
+      }
+
       std::vector<uint8_t> pl(4, 0);
       putbe(&pl[2], 0x0000, 2);
       auto f = ask(AEM_SET_CONFIGURATION, pl, 0x7697);
@@ -4253,9 +4290,13 @@ int main(int argc, char** argv) {
       CHECK(e.size() >= 354 && ent_after_bad == get_after_bad,
             "W18h: GET and ENTITY still agree after the refused SET");
 
-      // put it back
-      std::vector<uint8_t> zero(4, 0);
-      ask(AEM_SET_CONFIGURATION, zero, 0x76A8);
+      //! DELIBERATELY NOT PUT BACK. W19 below grades the ENTITY_LOCKED
+      //! refusal's echo, and that arm has its own copy of the current-value
+      //! overlay. With the store at 0 its store arm, its image arm and a
+      //! hardcoded zero are three indistinguishable answers — which is how a
+      //! review mutated that arm's base address, and deleted the arm outright,
+      //! with all 468 checks still green. Leaving the store at 1 while the
+      //! image reads 0 separates them.
     }
 
     // ---- W19: the lock outranks these commands too ------------------------
@@ -4275,8 +4316,17 @@ int main(int argc, char** argv) {
         return h.wait_any(h.q_aecp, 600);
       };
 
+      //! the store holds 1 (W18) and the image holds 0, so the echo below
+      //! tells the locked arm's overlay apart from a raw read and from a
+      //! hardcoded zero. Send 0 — a value that is BOTH the image's and NOT
+      //! the current one — so echoing the argument is also distinguishable.
+      auto gpre = ask(AEM_GET_CONFIGURATION, {}, 0x76B3);
+      CHECK(!gpre.empty() && gpre.size() >= 42
+            && (((unsigned)gpre[40] << 8) | gpre[41]) == 0x0001,
+            "W19a: the store still holds 1 going into the locked refusal");
+
       std::vector<uint8_t> pl(4, 0);
-      putbe(&pl[2], 0x0001, 2);
+      putbe(&pl[2], 0x0000, 2);
       auto f = ask2(AEM_SET_CONFIGURATION, pl, 0x76B4);
       CHECK(!f.empty() && st(f) == AECP_ENTITY_LOCKED,
             "W19g: SET_CONFIGURATION from a foreign controller is "
@@ -4287,19 +4337,21 @@ int main(int argc, char** argv) {
       //! echoed the rejected index — or answered at command length — pass.
       CHECK(cdl(f) == 16, "W19g2: ...at the full response cdl 16, got %d",
             cdl(f));
-      CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0000,
-            "W19g3: ...echoing the CURRENT configuration 0, not the rejected "
-            "1 — got %u",
+      CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0001,
+            "W19g3: ...echoing the CURRENT configuration 1 — not the rejected "
+            "0, not the image's 0, not a hardcoded 0 — got %u",
             f.size() >= 42 ? (((unsigned)f[40] << 8) | f[41]) : 999u);
       auto g = ask(AEM_GET_CONFIGURATION, {}, 0x76B5);
       CHECK(!g.empty() && g.size() >= 42
-            && (((unsigned)g[40] << 8) | g[41]) == 0x0000,
+            && (((unsigned)g[40] << 8) | g[41]) == 0x0001,
             "W19h: ...and it did not change the configuration");
 
-      // release
+      // release, then restore the store for the sections after this one
       std::vector<uint8_t> ul(16, 0);
       putbe(&ul[2], 1, 2);                          // flags = UNLOCK
       ask(0x0001, ul, 0x76B6);
+      std::vector<uint8_t> zero(4, 0);
+      ask(AEM_SET_CONFIGURATION, zero, 0x76B7);
     }
 
     // ---- W20: the miss and short-command paths are correctly SIZED --------
