@@ -926,10 +926,10 @@ module KL_aecp_engine
   //! consumes the registers TWO ways at once: r14 is the store's locate key
   //! ({index, type, cfg} - GET_AUDIO_MAP names no configuration_index, and
   //! the locate keys on 0 because the shipping image declares ONE
-  //! configuration. That used to be justified by SET_CONFIGURATION being
-  //! unimplemented; it now stores an index, so on a multi-configuration image
-  //! this key would go stale with the rest of the descriptor-serving path -
-  //! the same divergence tracked as issue #82), and r13 packs
+  //! configuration. SET_CONFIGURATION now stores an index, so on a
+  //! multi-configuration image this command would remain fixed to
+  //! configuration 0 even though GET_CONFIGURATION and the ENTITY descriptor
+  //! expose the active index), and r13 packs
   //! {descriptor_index, map_index} so ONE
   //! FMT_D BUILD_FLD lays @26..@29 in wire order while r13[15:0] is the
   //! right-justified map_index CHECK_ARG compares (the µISA has no shift).
