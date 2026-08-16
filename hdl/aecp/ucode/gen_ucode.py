@@ -246,11 +246,18 @@ rom = [0] * ROM_DEPTH
 #! this file in parallel and a hand-maintained total is the one line they all
 #! collide on and the first one to go stale
 placed = []
+#! Occupancy is tracked SEPARATELY from the ROM contents. Testing `rom[x] == 0`
+#! looks equivalent and is not: a bare `u('NOP')` encodes as all-zero, so a word
+#! a program legitimately placed is indistinguishable from unallocated fill, and
+#! a later program laid over it would pass the check silently. A review found
+#! the hole; there is a real NOP inside E_GSRATE that would sit in it.
+occupied = set()
 
 
 def place(at, words):
     for i, w in enumerate(words):
-        assert rom[at + i] == 0, f"overlap at {at + i}"
+        assert (at + i) not in occupied, f"overlap at {at + i}"
+        occupied.add(at + i)
         rom[at + i] = w
     placed.append(at)
 

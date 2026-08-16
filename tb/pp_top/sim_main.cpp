@@ -430,6 +430,25 @@ static std::vector<uint8_t> audio_unit_descriptor(uint16_t ix,
   putbe(&d[148], 96000u, 4);
   return d;
 }
+//! A 312-byte NON-ENTITY descriptor. It exists only to grade E_RDESCENT's type
+//! gate: that program overlays the LAST TWO BYTES of what it serves, and its
+//! second guard is a canonical-312-length test. With no 312-byte descriptor of
+//! any other type in the image, the length test alone bounced everything, so
+//! widening `desc_ty_r == DT_ENTITY_C` to always-true was invisible — a review
+//! mutated it with every check still green. MATRIX (Table 7-1 type 0x0022) is
+//! served by no command here, so the row costs nothing but the locate.
+static std::vector<uint8_t> matrix312_descriptor(uint16_t ix) {
+  std::vector<uint8_t> d(312, 0);
+  putbe(&d[0], 0x0022, 2);
+  putbe(&d[2], ix, 2);
+  const char* nm = "Matrix312";
+  memcpy(&d[4], nm, strlen(nm));                  // object_name @4, 64 B
+  //! the tail is what the overlay would clobber, so make it a value neither
+  //! the dynamic store nor the image's current_configuration can produce
+  putbe(&d[310], 0xBEEF, 2);
+  return d;
+}
+
 static std::vector<uint8_t> control_descriptor(uint16_t ix) {
   // IEEE 7.2.22 Table 7-28, the Milan "Identify" CONTROL (5.3.3.10). Only the
   // locate has to hit for GET/SET_CONTROL: the VALUE is volatile state in the
@@ -1251,6 +1270,8 @@ int main(int argc, char** argv) {
     //! GET_CONTROL / SET_CONTROL's target: Milan 5.3.3.10 makes the primary
     //! IDENTIFY control exist in every configuration at the same index
     {CFGIX, 0x001A, 1, 112, 0, 112, 0},          // CONTROL (Identify)
+    //! E_RDESCENT's type gate: 312 bytes, NOT an ENTITY (see the builder)
+    {CFGIX, 0x0022, 1, 312, 0, 312, 0},          // MATRIX
   };
   std::vector<uint8_t> desc_entity = entity_descriptor();
   std::vector<uint8_t> desc_clkdom = clock_domain_descriptor();
@@ -1266,7 +1287,8 @@ int main(int argc, char** argv) {
                         stream_port_descriptor(0x000F, 0, 8, 0),
                         stream_port_descriptor(0x000F, 1, 8, 8),
                         audio_unit_descriptor(0, 96000u),
-                        control_descriptor(0)},
+                        control_descriptor(0),
+                        matrix312_descriptor(0)},
                        //! TWO configurations, so SET_CONFIGURATION has a
                        //! legal non-zero index to be tested with. Only
                        //! configuration 0 carries descriptors, which is a
@@ -4050,8 +4072,13 @@ int main(int argc, char** argv) {
             "W17d: Advertise WITHOUT a registered Listener is not streaming "
             "— both halves are required");
       {
+        //! 1, NOT 0. This SET is what separates the STREAM_IS_RUNNING arm's
+        //! two sources for W17j below: the image holds 0, so a store left at 0
+        //! would make the store arm, the image arm and a hardcoded zero three
+        //! indistinguishable answers — and a review mutated that arm to take
+        //! the image path always, with all 476 checks still green.
         std::vector<uint8_t> pl(4, 0);
-        putbe(&pl[2], 0x0000, 2);
+        putbe(&pl[2], 0x0001, 2);
         auto f = ask(AEM_SET_CONFIGURATION, pl, 0x769A);
         CHECK(!f.empty() && st(f) == AECP_SUCCESS,
               "W17e: ...and SET_CONFIGURATION is accepted in that state, got "
@@ -4072,8 +4099,11 @@ int main(int argc, char** argv) {
             "W17g: Advertise AND a registered Listener — Stream Output 0 is "
             "STREAMING per 5.3.7.3");
 
+      //! ask for 0: it is the IMAGE's value and NOT the current one, so the
+      //! echo below separates the store arm from the image arm and from an
+      //! echo of the argument, all three at once
       std::vector<uint8_t> pl(4, 0);
-      putbe(&pl[2], 0x0001, 2);
+      putbe(&pl[2], 0x0000, 2);
       auto f = ask(AEM_SET_CONFIGURATION, pl, 0x769B);
       CHECK(!f.empty() && st(f) == AECP_STREAM_IS_RUNNING,
             "W17h: SET_CONFIGURATION refuses STREAM_IS_RUNNING while a "
@@ -4081,10 +4111,11 @@ int main(int argc, char** argv) {
       CHECK(cdl(f) == 16, "W17i: ...in the 4-byte response form, cdl %d",
             cdl(f));
       //! IEEE 7.4.7.1 again: the refusal carries the CURRENT configuration,
-      //! which W16 left at 0 — not the 1 that was just rejected.
-      CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0000,
-            "W17j: the refusal echoes the current configuration 0, not the "
-            "rejected 1 — got %u",
+      //! which W17e just moved to 1 — not the 0 that was rejected, and not
+      //! the image's 0 either.
+      CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0001,
+            "W17j: the refusal echoes the current configuration 1 — not the "
+            "rejected 0, not the image's 0 — got %u",
             f.size() >= 42 ? (((unsigned)f[40] << 8) | f[41]) : 999u);
 
       //! PRECEDENCE, recorded because nothing orders it. The refusal above
@@ -4369,11 +4400,46 @@ int main(int argc, char** argv) {
 
     // ---- W8: READ_DESCRIPTOR still intact after the whole section -------
     {
+      //! move the store away from the image's 0 first, so the ENTITY read
+      //! below distinguishes the overlay from the static bytes. Nothing in
+      //! this section runs after W8c, and MP is a second DUT instance.
+      std::vector<uint8_t> one(4, 0);
+      putbe(&one[2], 0x0001, 2);
+      ask(AEM_SET_CONFIGURATION, one, 0x765F);
+
       std::vector<uint8_t> rd(8, 0);
       putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2);
       auto f = ask(AEM_READ_DESCRIPTOR, rd, 0x7660);
       CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 12 + 4 + 312,
             "W8: READ_DESCRIPTOR intact after the read-side set");
+      CHECK(f.size() >= 42 + 312
+            && (((unsigned)f[42 + 310] << 8) | f[42 + 311]) == 0x0001,
+            "W8b: ...with current_configuration overlaid from the store, not "
+            "the image's 0 — got %u",
+            f.size() >= 42 + 312
+              ? (((unsigned)f[42 + 310] << 8) | f[42 + 311]) : 999u);
+    }
+
+    // ---- W8c: the overlay is ENTITY-ONLY -------------------------------
+    // E_RDESCENT rewrites the LAST TWO BYTES of what it serves, and it is
+    // reached by a type gate. A review widened that gate to always-true with
+    // every check still green, because the program's second guard — a
+    // canonical 312-byte length — bounced every other descriptor on its own.
+    // The image now carries a 312-byte NON-ENTITY (MATRIX) whose tail is
+    // 0xBEEF, so the length guard cannot stand in for the type guard.
+    {
+      std::vector<uint8_t> rd(8, 0);
+      putbe(&rd[0], CFGIX, 2);
+      putbe(&rd[4], 0x0022, 2); putbe(&rd[6], 0x0000, 2);
+      auto f = ask(AEM_READ_DESCRIPTOR, rd, 0x7661);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 12 + 4 + 312,
+            "W8c: a 312-byte NON-ENTITY descriptor is served whole");
+      CHECK(f.size() >= 42 + 312
+            && (((unsigned)f[42 + 310] << 8) | f[42 + 311]) == 0xBEEF,
+            "W8d: ...and its last two bytes are ITS OWN — the ENTITY overlay "
+            "did not follow the length, got %#06x",
+            f.size() >= 42 + 312
+              ? (((unsigned)f[42 + 310] << 8) | f[42 + 311]) : 0);
     }
   }
 
