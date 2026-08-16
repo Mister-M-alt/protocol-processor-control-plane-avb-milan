@@ -1921,8 +1921,8 @@ module KL_aecp_engine
             //! The refusal is the reduction over EVERY stream, not a test of
             //! the descriptor named: "shall not accept ... if ONE OF the
             //! Stream Input is bound or ONE OF the Stream Output is
-            //! streaming". §7.4.8.1's command is 4 bytes, so cdl 16 is the
-            //! whole thing.
+            //! streaming". §7.4.7.1's command is 4 bytes, so cdl 16 is the
+            //! whole thing — §7.4.8.1, GET_CONFIGURATION's, is zero.
             if (scfg_r) begin
               if (cmd_r.cdl < 11'd16)  upc_r <= UPC_SCFGBAD_C;
               else if (any_running_w)  upc_r <= UPC_SCFGRUN_C;

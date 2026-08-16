@@ -4015,6 +4015,32 @@ int main(int argc, char** argv) {
             "rejected 1 — got %u",
             f.size() >= 42 ? (((unsigned)f[40] << 8) | f[41]) : 999u);
 
+      //! PRECEDENCE, recorded because nothing orders it. The refusal above
+      //! is taken at DISPATCH, before the program runs, so a foreign
+      //! controller hitting a locked entity that also has a running stream
+      //! gets STREAM_IS_RUNNING rather than ENTITY_LOCKED — E_SCFG's
+      //! CHECK_LOCK is never reached. Milan 5.4.2.5 and IEEE 7.4.7.2 both
+      //! state their refusal without ordering it against the other, so
+      //! either answer conforms; this check exists so the choice is a
+      //! decision on the record instead of an accident of dispatch order.
+      {
+        std::vector<uint8_t> lk(16, 0);                 // flags 0 = LOCK
+        auto l = ask(0x0001, lk, 0x76C0);
+        CHECK(!l.empty() && st(l) == AECP_SUCCESS,
+              "W17m: the bench takes the lock while the output streams");
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR2_EID, 0x76C1,
+                          AEM_SET_CONFIGURATION, pl));
+        auto x = h.wait_any(h.q_aecp, 600);
+        CHECK(!x.empty() && st(x) == AECP_STREAM_IS_RUNNING,
+              "W17n: locked AND running, from a foreign controller — the "
+              "dispatch-level STREAM_IS_RUNNING wins over ENTITY_LOCKED, "
+              "got %d", st(x));
+        CHECK(cdl(x) == 16, "W17o: ...still at the full response cdl 16");
+        std::vector<uint8_t> ul(16, 0);
+        putbe(&ul[2], 1, 2);                            // flags = UNLOCK
+        ask(0x0001, ul, 0x76C2);
+      }
+
       // and it LIFTS: the Listener leaves, the output stops streaming, the
       // same command is accepted. A gate that never opens is as wrong as one
       // that never closes.
@@ -4033,6 +4059,96 @@ int main(int argc, char** argv) {
       std::vector<uint8_t> z(4, 0);
       putbe(&z[2], 0x0000, 2);
       ask(AEM_SET_CONFIGURATION, z, 0x769D);
+    }
+
+    // ---- W17b: the TALKER half of 5.3.7.3, graded ------------------------
+    // W17 proved a registered Listener is necessary. It did NOT prove the
+    // Talker term is doing any work: a review mutated the reduction three
+    // ways — deleting the Talker term, widening it to `!= NONE` so a Talker
+    // FAILED counts, and widening the Listener test to any non-zero
+    // registration so ASKING_FAILED counts — and all 449 checks stayed green.
+    // Half of an AND was defended. These two cases close it.
+    //
+    //   Milan 5.3.7.3 wants ADVERTISE specifically, and READY (or READY
+    //   FAILED) specifically. Declaring is not streaming; asking is not ready.
+    {
+      const uint64_t SID_T0 = (OWN_MAC << 16) | 0x0000;
+
+      // (a) ASKING_FAILED registers, but it is not Ready. A reduction that
+      //     tests `|lstn_reg_state[s]` instead of bit 1 calls this streaming.
+      h.sync_join();
+      Msg af{3, 8, true, {Vec{false, 1, fv_sid(SID_T0),
+                              {EV_JOININ}, {DECL_ASKFAIL}}}};
+      h.feed(mrpdu_frame(true, T1_MAC, {af}));
+      h.run_ms(30);
+      CHECK((h.snap(13) & 3) == 1,
+            "W17b: an ASKING_FAILED Listener registered, lstn_reg_state[0] "
+            "is 1, got %u", h.snap(13) & 3);
+      CHECK(((h.snap(13) >> 16) & 3) == 1,
+            "W17b2: ...while src 0 still declares Advertise");
+      CHECK(h.d->dbg_streaming0_o == 0,
+            "W17b3: ASKING_FAILED is not READY — the Stream Output is NOT "
+            "streaming");
+      {
+        std::vector<uint8_t> pl(4, 0);
+        auto f = ask(AEM_SET_CONFIGURATION, pl, 0x769E);
+        CHECK(!f.empty() && st(f) == AECP_SUCCESS,
+              "W17b4: ...so SET_CONFIGURATION is accepted, got status %d",
+              st(f));
+      }
+
+      // (b) a Talker FAILED is DECLARING but not streaming. Getting there
+      //     honestly: re-declare src 0 at a frame size whose Σ-slope busts
+      //     the 75 % class ceiling, so admission refuses and the declaration
+      //     publishes as MSRP Talker Failed. Nothing is forced.
+      h.sync_join();
+      Msg rdy{3, 8, true, {Vec{false, 1, fv_sid(SID_T0),
+                               {EV_JOININ}, {DECL_READY}}}};
+      h.feed(mrpdu_frame(true, T1_MAC, {rdy}));
+      h.run_ms(30);
+      CHECK(h.d->dbg_streaming0_o == 1,
+            "W17b5: back to Advertise + Listener Ready — streaming again "
+            "(the control for what follows)");
+
+      //! The re-declaration resets the stream record and takes the Listener
+      //! registration with it, so the Listener has to arrive AFTER the
+      //! talker is failed — otherwise this section grades 0 && 0 and proves
+      //! nothing about which term did the work.
+      auto rf = h.svc(OP_DECL_TK, 0, SID_T0, H::maap_da(0), 5, 1500, 0);
+      CHECK(rf.got, "W17b6: the over-ceiling re-declaration was answered");
+      h.run_ms(300);
+      CHECK(((h.snap(3) >> 4) & 1) == 1,
+            "W17b7: admission refused it — over_limit is set");
+      CHECK(((h.snap(13) >> 16) & 3) == 2,
+            "W17b8: src 0 publishes Talker FAILED, tk_decl_state[0] is 2, "
+            "got %u", (h.snap(13) >> 16) & 3);
+      h.sync_join();
+      h.feed(mrpdu_frame(true, T1_MAC, {rdy}));
+      h.run_ms(30);
+      CHECK((h.snap(13) & 3) == 2,
+            "W17b9: ...and a Listener registers READY on it anyway, got %u",
+            h.snap(13) & 3);
+      CHECK(h.d->dbg_streaming0_o == 0,
+            "W17b10: a Talker FAILED is declaring but NOT streaming — "
+            "5.3.7.3 wants ADVERTISE, not any declaration");
+      {
+        std::vector<uint8_t> pl(4, 0);
+        auto f = ask(AEM_SET_CONFIGURATION, pl, 0x769F);
+        CHECK(!f.empty() && st(f) == AECP_SUCCESS,
+              "W17b11: ...so SET_CONFIGURATION is accepted, got status %d",
+              st(f));
+      }
+
+      // put SRP back: the Listener leaves and src 0 re-declares within the
+      // ceiling, so the sections after this one start from a quiet plane
+      h.sync_join();
+      Msg lv{3, 8, true, {Vec{false, 1, fv_sid(SID_T0),
+                              {EV_LV}, {DECL_READY}}}};
+      h.feed(mrpdu_frame(true, T1_MAC, {lv}));
+      h.svc(OP_DECL_TK, 0, SID_T0, H::maap_da(0), 5, 256, 0);
+      h.run_ms(300);
+      CHECK(h.d->dbg_streaming0_o == 0,
+            "W17b12: the plane is quiet again before the next section");
     }
 
     // ---- W18: SET_CONFIGURATION with a NON-ZERO index --------------------
