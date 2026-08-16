@@ -481,10 +481,10 @@ module protocol_processor_top
 
     //! ---- maap face (02 §4.2) — THE ADDRESS ALLOCATOR SEAM --------------
     //! Two legal answers now exist. With cfg_maap_internal_i = 0 (the
-    //! default and the landed behaviour, byte-identical) this processor
-    //! implements no MAAP: address allocation lives OUTSIDE it, in the
-    //! integrating fabric (the consumer ships a KL_maap engine behind
-    //! KL_pp_maap_shim), and the port group below IS the seam. With
+    //! default and the landed behaviour, byte-identical), the processor
+    //! disables its internal allocator and selects the external seam.
+    //! Address allocation then lives in the integrating fabric (the consumer
+    //! ships a KL_maap engine behind KL_pp_maap_shim). With
     //! cfg_maap_internal_i = 1 the in-scope KL_pp_maap engine (11, IEEE
     //! 1722-2016 Annex B) answers the talker internally under the SAME
     //! contract, the port group is quiesced (req_valid held 0, every input

@@ -833,17 +833,14 @@ shared) watchdog with the same ENTITY_MISBEHAVING void on expiry, and an
 unwired face is the same safe state: `number_of_maps` answers 0 and every
 GET_AUDIO_MAP resolves against the descriptor image alone.
 
-**The STREAM_PORT_OUTPUT gap is recorded, not hidden.** Milan §5.4.2.26 also
-demands GET_AUDIO_MAP on every Stream Port Output with no static map (and
-`NOT_SUPPORTED` on one WITH static maps - the §6.5 store-side check). This
-build's talker-side mappings live in a differently-shaped store (the capture
-mux's source buckets, not a cluster-indexed RAM), so a 0x002B naming any
-descriptor_type but STREAM_PORT_INPUT keeps the NOT_IMPLEMENTED echo, decided
-at the payload-walk exit like the MVU sub-decode (the type field is at @24 and
-cannot be judged at pop). ADD_AUDIO_MAPPINGS (0x002C) and
-REMOVE_AUDIO_MAPPINGS (0x002D) also keep the echo: the write path must reuse
-the same acceptance the fabric's own map-write port applies - never a second
-validation law - and that lands with them, not before.
+**Both Stream Port directions are served.** Milan §5.4.2.26 requires
+GET_AUDIO_MAP on every Stream Port Input and Stream Port Output with no static
+map. STREAM_PORT_INPUT enters `E_GAMAP` directly. The registered type gate
+sends STREAM_PORT_OUTPUT through `E_GAMAPO`, which substitutes the output type
+and joins the same response program. The integrator selects its mapping store
+from `amap_desc_type_o`. Any other descriptor type keeps the NOT_IMPLEMENTED
+echo. ADD_AUDIO_MAPPINGS (0x002C) and REMOVE_AUDIO_MAPPINGS (0x002D) also keep
+the echo until their write path can reuse the fabric's mapping acceptance law.
 
 Measured cost of the whole opcode inside `KL_aecp_engine`, yosys 0.66
 `synth_xilinx -family xc7 -flatten`, against the commit it lands on:
@@ -857,18 +854,19 @@ guard costs nothing new. Read the LUT figure as "of order a hundred" for the
 reasons the GET_COUNTERS paragraph above already measured; Vivado has not
 been run against this change.
 
-Δ7's ACQUIRE_ENTITY (`NOT_SUPPORTED` with `owner_id` = 0) is therefore **not yet**
-distinguished from the generic echo — the exemplar µprogram exists (`E_ACQ`) but the
-response must zero `owner_id` rather than echo it, so it is not wired.
+Delta 7 ACQUIRE_ENTITY is distinguished from the generic fallback. It returns
+`NOT_SUPPORTED`, preserves the command form, and carries the required zero
+`owner_id`. LOCK_ENTITY and ENTITY_AVAILABLE take their own registered paths.
 
 **Dispatch decision (this section specifies a ROM; the tree ships none).** §4 names a
-dispatch ROM and §8 fixes its 48-bit entry, but no ROM and no generator for it exist,
-and the only field with a consumer today is the µPC entry. The engine therefore uses a
-**direct opcode decode** — three constant-folded arms — and says so in its banner. A
-ROM becomes the right shape once the hazard class, min-cdl, response-size id,
-lock/GDI/notify flags and per-profile valid bits have consumers; until then it would be
-a generated artifact with one live field. When it lands it replaces the decode and
-nothing else.
+dispatch ROM and §8 fixes its 48-bit entry, but no ROM and no generator for it exist.
+The engine therefore uses a two-stage direct decode. The timing-sensitive pop stage
+selects READ_DESCRIPTOR, GET_COUNTERS, GET_AUDIO_MAP, and opcode-specific
+BAD_ARGUMENTS paths. Registered discriminator bits select the remaining implemented
+AEM programs at the payload-walk exit, after all operand bytes have settled. A ROM
+becomes the right shape once the hazard class, minimum length, response-size id,
+lock/GDI/notify flags and per-profile valid bits have consumers. When it lands it
+replaces both decode stages and nothing else.
 
 **The MVU sub-decode is a SECOND decode, and it has to be.** §4's block diagram draws
 the MVU sub-decoder beside the AEM decoder, both feeding the dispatch ROM, which reads
@@ -963,14 +961,15 @@ LOCK_ENTITY". It is cited throughout this section as the SIZING rule, which is w
 gives; it does not govern those two opcodes' behaviour, and nothing here should be read
 as saying it does.)
 
-**Three mandatory opcodes are unanswered, not one.** Table 7-140's closing note is
-broader than the ENTITY_AVAILABLE line this document used to single out: "An ATDECC
-Talker or Listener shall implement and respond to the ACQUIRE_ENTITY, LOCK_ENTITY, and
-ENTITY_AVAILABLE commands." All three answer NOT_IMPLEMENTED on this build. Measured on
-the AX7101: 0x0000 and 0x0002 by direct probe, 0x0000 and 0x0001 in the Hive 4.3.1 log.
-Answering them correctly-sized is not answering them. Two readings exist: the length of the command
-being answered, or the length the standard gives that opcode's own RESPONSE
-(§7.4.78.2's GET_MAX_TRANSIT_TIME response is 12 octets where its command is 4).
+**The mandatory core trio is answered.** ACQUIRE_ENTITY returns the Milan Delta 7
+`NOT_SUPPORTED` response with zero `owner_id`. LOCK_ENTITY implements the ENTITY-only
+lock, unlock, competing-controller refusal, and timeout behavior through
+`KL_aecp_notify`. ENTITY_AVAILABLE builds the 2021 response form with flags plus the
+acquired and locked controller IDs. The generic NOT_IMPLEMENTED sizing below applies
+only to commands outside the served inventory. For those commands, two readings exist:
+the length of the command being answered, or the length the standard gives that
+opcode's own RESPONSE (§7.4.78.2's GET_MAX_TRANSIT_TIME response is 12 octets where
+its command is 4).
 
 **This engine reflects the command**, so `control_data_length` is 12 + the command's
 payload, the payload is the command's own bytes read back out of its RX slot, and a

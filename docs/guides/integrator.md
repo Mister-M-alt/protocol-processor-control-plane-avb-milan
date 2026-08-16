@@ -210,12 +210,11 @@ property, not an accident, and it is regression-tested.
 | SRP service | `svc_*` | nothing declares through the configuration plane. |
 | AECP pop face | `aecp_txn_*`, `aecp_rxs_*` | **tie `aecp_txn_ready_i` low.** The internal AECP engine already drains this queue; this face is an *additional* observer. Driving it steals records from the engine. |
 
-**MAAP is yours to place.** With `cfg_maap_internal_i` tied 0 (the default) this
-processor implements no MAAP: address allocation stays outside it, in the integrating
-fabric, and the face is published rather than tied off internally precisely because a
-processor whose talker half is dead by construction is not a contract anyone can
-integrate — the claim/defend/announce machine of IEEE 1722-2016 Annex B is yours to
-provide. Tie `cfg_maap_internal_i` to 1 (quasi-static, set before `entity_enable_i`)
+**MAAP is yours to place.** With `cfg_maap_internal_i` tied 0 (the default), the
+processor disables its internal allocator and selects the external allocation seam.
+Address allocation then stays in the integrating fabric, which must provide the
+claim/defend/announce machine from IEEE 1722-2016 Annex B. Tie
+`cfg_maap_internal_i` to 1 (quasi-static, set before `entity_enable_i`)
 and the in-scope `KL_pp_maap` engine
 ([11](../architecture/11_maap_engine.md)) provides it instead: give it
 `cfg_maap_count_i` (block size; `N_STREAM_OUT_P` covers one DA per source) and

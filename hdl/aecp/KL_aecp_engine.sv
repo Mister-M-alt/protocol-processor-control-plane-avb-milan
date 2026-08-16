@@ -18,21 +18,13 @@
 //                THE DISPATCH DECISION (06 §4 specifies a dispatch ROM per
 //                opcode; 06 §8 fixes its 48-bit entry shape but the tree ships
 //                no ROM and no generator for it, so this is a documented
-//                CHOICE, not an implementation of a written table). What is
-//                actually needed today is the µPC entry, so this block uses a
-//                DIRECT OPCODE DECODE — three arms, constant-folded, no ROM:
-//
-//                  0x0004 READ_DESCRIPTOR      -> UPC_RDESC_C  (real answer)
-//                  0x0029 GET_COUNTERS         -> UPC_GCTRS_C  (real answer)
-//                  0x002B GET_AUDIO_MAP        -> UPC_GAMAP_C  (real answer,
-//                                                 STREAM_PORT_INPUT only -
-//                                                 see the audio-map note)
-//                  0x0026 IDENTIFY_NOTIFICATION-> UPC_BADARG_C (IEEE §7.4.39.2:
-//                                                 as a COMMAND it is
-//                                                 BAD_ARGUMENTS — the
-//                                                 opcode-specific rule beats
-//                                                 §9.3.5.3.3's fallback)
-//                  everything else             -> UPC_NOTIMPL_C
+//                CHOICE, not an implementation of a written table). The
+//                pop-time cone directly selects READ_DESCRIPTOR,
+//                GET_COUNTERS, GET_AUDIO_MAP, and opcode-specific
+//                BAD_ARGUMENTS paths. Other implemented AEM commands latch
+//                discriminator bits and take a registered A_PLD-exit
+//                re-dispatch after their operand bytes settle. Unsupported
+//                opcodes retain the correctly sized NOT_IMPLEMENTED echo.
 //
 //                COMMANDS LANDED AFTER THE TIMING FINDING RESOLVE ONE STATE
 //                LATER. The pop-time decode above is the measured critical
