@@ -23,3 +23,7 @@ ucode.hex
 ltn_rom.hex
 image.bin
 image.map
+
+# Python bytecode from the generators (gen_ucode.py, gen_desc_image.py)
+__pycache__/
+*.pyc

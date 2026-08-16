@@ -715,7 +715,7 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x0014 / 0x0015 SET/GET_SAMPLING_RATE | real lock-protected per-Audio Unit dynamic state |
 | 0x0016 / 0x0017 SET/GET_CLOCK_SOURCE | real lock-protected per-Clock Domain dynamic state |
 | 0x0018 / 0x0019 SET/GET_CONTROL | real volatile Identify control with values 0 and 255 |
-| 0x0022 / 0x0023 START/STOP_STREAMING | real lock-protected Stream Input state; Stream Output targets refuse `NOT_SUPPORTED` |
+| 0x0022 / 0x0023 START/STOP_STREAMING | **NOT IMPLEMENTED** — the NOT_IMPLEMENTED echo. Built and then withdrawn: started/stopped already has a home in the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is persisted by the NVM shadow, and a second copy in the dynamic store would be neither. The work is preserved on branch `78-start-stop-streaming` behind that decision |
 | 0x0024 / 0x0025 REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION | real bounded controller registry |
 | 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face |
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |

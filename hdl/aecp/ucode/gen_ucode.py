@@ -1410,10 +1410,8 @@ place(E_SCFG, [
     u('END'),
 ])
 
-# SET_CONFIGURATION's two refusals share one emitter: the body is the same
-# {reserved, configuration_index} either way and only the status differs. The
-# echoed index is the one that was REFUSED, so a controller can tell which
-# request bounced.
+# SET_CONFIGURATION's three refusals share one emitter: the body is the same
+# {reserved, configuration_index} either way and only the status differs.
 # IEEE §7.4.7.1: "The response always contains the current value, that is it
 # contains the new value if the command succeeds or THE OLD VALUE IF IT FAILS."
 # So a refusal echoes the configuration the entity is STILL in, never the one
