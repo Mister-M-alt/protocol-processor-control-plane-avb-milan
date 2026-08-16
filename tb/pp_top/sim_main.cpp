@@ -3613,6 +3613,41 @@ int main(int argc, char** argv) {
             "W3b: GET_CONFIGURATION follows the image, it does not invent");
       if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
 
+      // ---- W3c: THE SAME FALSIFIER, ON THE REFUSAL PATH ---------------
+      // The refusal body is bound by IEEE 7.4.7.1 exactly as the success body
+      // is: it carries the CURRENT value. "Current" before any controller has
+      // written the dynamic store is the IMAGE's — which the first cut of the
+      // refusal emitter did not read. It took `RGN_DYN + SEL_CFG` raw, so
+      // every refusal echoed 0 until the first successful SET set the valid
+      // bit, and no check could see it because the store's reset value and
+      // the image's value were both 0.
+      //
+      // This runs HERE, before any SET_CONFIGURATION has succeeded, which is
+      // the only window where the fallback arm is reachable. The image still
+      // reads 0x0007 from W3b above.
+      {
+        //! truncated -> BAD_ARGUMENTS, taken at dispatch on cdl alone
+        std::vector<uint8_t> shortpl(2, 0);
+        auto b = ask(AEM_SET_CONFIGURATION, shortpl, 0x7608);
+        CHECK(!b.empty() && st(b) == AECP_BAD_ARGUMENTS,
+              "W3c: a truncated SET_CONFIGURATION is BAD_ARGUMENTS");
+        CHECK(b.size() >= 42 && (((unsigned)b[40] << 8) | b[41]) == 0x0007,
+              "W3c2: ...and the refusal echoes the IMAGE's current "
+              "configuration, not the unwritten store's 0 — got %u",
+              b.size() >= 42 ? (((unsigned)b[40] << 8) | b[41]) : 999u);
+
+        //! sink 0 is still bound from S6, so a well-formed command takes the
+        //! STREAM_IS_RUNNING arm — a different program, same overlay
+        std::vector<uint8_t> full(4, 0);
+        auto r = ask(AEM_SET_CONFIGURATION, full, 0x7609);
+        CHECK(!r.empty() && st(r) == AECP_STREAM_IS_RUNNING,
+              "W3c3: a well-formed one is STREAM_IS_RUNNING (S6's bind is "
+              "still live), got %d", st(r));
+        CHECK(r.size() >= 42 && (((unsigned)r[40] << 8) | r[41]) == 0x0007,
+              "W3c4: ...and that arm echoes the image's value too — got %u",
+              r.size() >= 42 ? (((unsigned)r[40] << 8) | r[41]) : 999u);
+      }
+
       h.dram[ent_off + 310] = save_hi; h.dram[ent_off + 311] = save_lo;
     }
 
@@ -3969,7 +4004,7 @@ int main(int argc, char** argv) {
             "W17: no Stream Input is bound — the input half cannot be what "
             "refuses below");
       CHECK(((h.snap(13) >> 16) & 3) == 1,
-            "W17b: src 0 still declares Talker Advertise (S10's MAAP grant)");
+            "W17a: src 0 still declares Talker Advertise (S10's MAAP grant)");
 
       // one half is not enough: Advertise alone is NOT streaming (5.3.7.3)
       CHECK((h.snap(13) & 3) == 0,

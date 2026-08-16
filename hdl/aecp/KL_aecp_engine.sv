@@ -663,7 +663,7 @@ module KL_aecp_engine
   //! the eight-byte stubs over-sizes them and falling to E_BADARG (no field
   //! at all) under-sizes them to a bare header — both are 9.3.5.3.3 defects.
   //! ...and SET_CONFIGURATION's out-of-range arm, inside E_SCFGRUN's slot
-  localparam logic [10:0] UPC_SCFGBAD_C  = 11'd1499; // E_SCFGBAD
+  localparam logic [10:0] UPC_SCFGBAD_C  = 11'd1513; // E_SCFGBAD
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -976,8 +976,7 @@ module KL_aecp_engine
   //! SET_CONFIGURATION's argument is not at @28 like the rest of the family:
   //! §7.4.7.1 puts `reserved` at @24 and `configuration_index` at @26, so the
   //! value is what the walk already captured into `desc_ix_r` and there is
-  //! nothing to justify. START/STOP_STREAMING carry no value at all — the bit
-  //! to store IS the opcode, so it is packed here rather than walked.
+  //! nothing to justify.
   assign opd2_w = ssrate_r ? {32'd0, setval_r[63:32]}
                 : sclks_r  ? {48'd0, setval_r[63:48]}
                 : sctrl_r  ? {56'd0, setval_r[63:56]}

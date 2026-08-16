@@ -155,11 +155,12 @@ E_NSUPP1  = 1328     # {type, index} + 1 zero byte, NOT_SUPPORTED
 # to E_BADARG, which carries no field at all (under-sized to a bare header).
 # A refusal has to be the size of the response it refuses.
 E_SCFG    = 1456     # SET_CONFIGURATION (Milan 5.4.2.5, IEEE 7.4.7)
-E_SCFGRUN = 1488     # SET_CONFIGURATION's refusal emitter (all three statuses)
-E_SCFGBAD = 1499     # ...its out-of-range arm, E_SCFGRUN + 11. Named rather
-                     # than left as arithmetic in the engine so
-                     # scripts/check_upc_map.py can verify it: an interior
-                     # address the gate cannot see is an address that can drift.
+E_SCFGRUN = 1488     # SET_CONFIGURATION's STREAM_IS_RUNNING arm (dispatch lands
+                     # here, so it is the one arm whose status is not already set
+                     # by the checking op that branched)
+E_SCFGLK  = 1500     # ...its ENTITY_LOCKED arm
+E_SCFGBAD = 1513     # ...its BAD_ARGUMENTS arm
+E_SCFGEMT = 1526     # ...the body all three share
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
@@ -1392,7 +1393,7 @@ place(E_NSUPP1, [
 # dispatch, so this program runs only when the entity is genuinely idle.
 place(E_SCFG, [
     u('MOVE', rd=2, ra=0, imm=0),                # the @24 reserved field
-    u('CHECK_LOCK', ra=15, imm=E_SCFGRUN + 8),   # locked -> ENTITY_LOCKED
+    u('CHECK_LOCK', ra=15, imm=E_SCFGLK),        # locked -> ENTITY_LOCKED
     #! the index has to be IN RANGE before it is stored. Without this a
     #! SET_CONFIGURATION(0xFFFF) answers SUCCESS while the dynamic store drops
     #! the write on the floor — a false success. RGN_NCFG is the image's
@@ -1410,29 +1411,70 @@ place(E_SCFG, [
     u('END'),
 ])
 
-# SET_CONFIGURATION's three refusals share one emitter: the body is the same
-# {reserved, configuration_index} either way and only the status differs.
-# IEEE §7.4.7.1: "The response always contains the current value, that is it
-# contains the new value if the command succeeds or THE OLD VALUE IF IT FAILS."
-# So a refusal echoes the configuration the entity is STILL in, never the one
-# that was rejected — the same rule es-4.18 checks for the SET family's locked
-# arm. r1 comes from the dynamic store; an unwritten store reads 0, which IS
-# the current configuration until somebody changes it.
-place(E_SCFGRUN, [
-    u('MOVE', rd=2, ra=0, imm=0),
+# SET_CONFIGURATION's three refusals share one BODY, and each runs its own copy
+# of the current-value overlay. IEEE §7.4.7.1: "The response always contains the
+# current value, that is it contains the new value if the command succeeds or
+# THE OLD VALUE IF IT FAILS." So a refusal echoes the configuration the entity is
+# STILL in, never the one that was rejected.
+#
+# WHY THE OVERLAY IS DUPLICATED RATHER THAN SHARED. The first cut read
+# `RGN_DYN + SEL_CFG` raw, which answers 0 until some controller has written the
+# store — so before the first successful SET, every refusal echoed 0 instead of
+# the image's ENTITY.current_configuration. E_GCFG has the valid-bit arm that
+# fixes this; the refusal emitter did not. Sharing one copy is not expressible
+# here: the arm's status has to be applied AFTER the overlay, because the image
+# arm's miss guard is `BR_STATUS cnd=0`, which tests `status != SUCCESS` and
+# would fire on the refusal itself — and SET_STATUS takes an immediate, so the
+# arm cannot be carried through a shared tail in a register. The ROM holds three
+# copies; `_scfg_cur()` below is the single source they are generated from, so
+# they cannot drift apart. tb/pp_top W3c grades two of the three.
+def _scfg_cur(base):
+    """The 10 words that leave r1 = the CURRENT configuration and r2 = 0.
+
+    `base` is the address of the FIRST of the ten, so the two internal branch
+    targets stay correct wherever the block is placed. Runs with the status
+    register clean — see the SET_STATUS(ST_OK) prologue on the two arms that
+    are entered from a checking op.
+    """
+    return [
+        u('MOVE', rd=2, ra=0, imm=0),                 # ENTITY[0] key AND @24
+        u('MOVE', rd=1, ra=0, imm=0),                 # a miss reads 0
+        u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CFG),   # has a controller set it?
+        u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+        u('BR_STATUS', cnd=2, imm=base + 7),          # z = unset -> the image
+        u('READ_ST', rd=1, imm=RGN_DYN + SEL_CFG),    # the controller's value
+        u('BRANCH', imm=base + 10),
+        u('DESC_ADDR', ra=2, imm=RGN_LOCATE),         # base + 7: the image arm
+        u('BR_STATUS', cnd=0, imm=base + 10),         # miss -> r1 stays 0
+        u('READ_ST', rd=1, imm=RGN_DATA + ENT_CURCFG_LANE),
+    ]
+
+#! Dispatch lands here, so this is the one arm the engine did not already give a
+#! status to — hence no SET_STATUS(ST_OK) prologue.
+place(E_SCFGRUN, _scfg_cur(E_SCFGRUN) + [
     u('SET_STATUS', imm=ST_STRMRUN),
-    u('READ_ST', rd=1, imm=RGN_DYN + SEL_CFG),   # E_SCFGRUN + 2: the CURRENT
+    u('BRANCH', imm=E_SCFGEMT),
+])
+
+#! CHECK_LOCK has ALREADY written ENTITY_LOCKED by the time it branches here, and
+#! CHECK_ARG likewise writes BAD_ARGUMENTS. Both arms clear it before the overlay
+#! and re-apply it after, because the overlay's miss guard reads the status.
+place(E_SCFGLK, [u('SET_STATUS', imm=ST_OK)] + _scfg_cur(E_SCFGLK + 1) + [
+    u('SET_STATUS', imm=ST_LOCKED),
+    u('BRANCH', imm=E_SCFGEMT),
+])
+
+place(E_SCFGBAD, [u('SET_STATUS', imm=ST_OK)] + _scfg_cur(E_SCFGBAD + 1) + [
+    u('SET_STATUS', imm=ST_BADARG),
+    u('BRANCH', imm=E_SCFGEMT),
+])
+
+place(E_SCFGEMT, [
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved            @24
     u('BUILD_FLD', ra=1, fmt=FMT_W),             # configuration_index @26
     u('SEND_RESP'),
     u('END'),
-    u('MOVE', rd=2, ra=0, imm=0),                # E_SCFGRUN + 8: the lock arm
-    u('SET_STATUS', imm=ST_LOCKED),
-    u('BRANCH', imm=E_SCFGRUN + 2),
-    u('SET_STATUS', imm=ST_BADARG),              # E_SCFGBAD: out of range
-    u('MOVE', rd=2, ra=0, imm=0),
-    u('BRANCH', imm=E_SCFGRUN + 2),
 ])
 
 
