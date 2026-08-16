@@ -289,11 +289,32 @@ response is never a torn mix of two states.
 
 | Command | Chain |
 |---|---|
-| SET_CONFIGURATION | lock → any input bound ∨ any output streaming ⇒ `STREAM_IS_RUNNING` → index valid ⇒ commit (CFG_BARRIER drained) → NVM mark (review §8 item 1) |
+| SET_CONFIGURATION | any input bound ∨ any output streaming ⇒ `STREAM_IS_RUNNING` (**at dispatch, so it outranks the lock** — see below) → lock → index valid ⇒ commit (CFG_BARRIER drained) → NVM mark (review §8 item 1) |
 | SET_STREAM_FORMAT | lock → sink bound ∨ source streaming ⇒ `STREAM_IS_RUNNING` → format ∈ descriptor list → every existing static+dynamic mapping still references an existing channel, else `BAD_ARGUMENTS` → commit + `avtp.SET_*_FORMAT` + NVM |
 | SET_SAMPLING_RATE | lock → rate ∈ AUDIO_UNIT list → mappings whose stream rate ≠ new rate while port has neither SRC bit ⇒ may `NOT_SUPPORTED` (Milan §5.4.2.13 — "UNSUPPORTED" typo, review §8 item 3) → commit + NVM |
 | SET_CLOCK_SOURCE | lock → source ∈ CLOCK_DOMAIN list → `mclk.SET_CLOCK_SOURCE` → commit + NVM |
 | SET_NAME | lock → descriptor named → commit + NVM |
+
+**Two notes on SET_CONFIGURATION, both decisions rather than accidents.**
+
+*Precedence.* The `STREAM_IS_RUNNING` reduction is taken at **dispatch**, before
+`E_SCFG` runs, so a foreign controller addressing a locked entity that also has
+a running stream is answered `STREAM_IS_RUNNING` and never reaches the
+program's `CHECK_LOCK`. Milan §5.4.2.5 and IEEE §7.4.7.2 each state their
+refusal without ordering it against the other, so either answer conforms. The
+order is pinned by a check (`tb/pp_top`, W17n) so it cannot drift silently.
+
+*What "current configuration" means today.* The command **stores** the index and
+`GET_CONFIGURATION` (§7.4.8) overlays the store, but `READ_DESCRIPTOR` still
+serves the ENTITY descriptor straight from the image, whose
+`current_configuration` field is whatever the image was built with. IEEE
+§7.4.8.2 calls the two fields equivalent, so on a **multi-configuration** image
+they can disagree. They cannot disagree on the shipping image, which declares
+`configurations_count = 1`: the range check in `E_SCFG` admits only index 0, and
+the image already carries 0. The divergence is real on the bench's two-config
+image and is tracked separately — it needs `E_RDESC` to overlay the last field
+of the ENTITY descriptor, which is a change to the most-exercised program in the
+engine and does not belong in a SET_CONFIGURATION change.
 
 ### 6.5 Audio-map operations (Milan §5.4.2.26–.28)
 
@@ -708,7 +729,7 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x0001 LOCK_ENTITY | real lock, unlock, owner query, keep-alive, and expiry behavior |
 | 0x0002 ENTITY_AVAILABLE | real flags and current owner state |
 | 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor; `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
-| 0x0006 SET_CONFIGURATION | real lock-protected update, with `STREAM_IS_RUNNING` while any Stream Input is bound or Stream Output is streaming |
+| 0x0006 SET_CONFIGURATION | real lock-protected **store**, with `STREAM_IS_RUNNING` while any Stream Input is bound or Stream Output is streaming. The value is recorded and republished; it does not yet re-point the served descriptor set — see the note under §6.4 |
 | 0x0007 GET_CONFIGURATION | real current configuration read |
 | 0x0009 GET_STREAM_FORMAT | real current Stream Input or Stream Output format read |
 | 0x000F GET_STREAM_INFO | real Milan Figure 5.1 response from the integrator state face |
