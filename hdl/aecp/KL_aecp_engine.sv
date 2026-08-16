@@ -660,10 +660,12 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_NSUPP1_C  = 11'd1328;  // E_NSUPP1
   localparam logic [10:0] UPC_SCFG_C     = 11'd1456; // E_SCFG
   localparam logic [10:0] UPC_SCFGRUN_C  = 11'd1488; // E_SCFGRUN
-  //! START/STOP's own-form refusals: four payload bytes, cdl 16. Borrowing
-  //! the eight-byte stubs over-sizes them and falling to E_BADARG (no field
-  //! at all) under-sizes them to a bare header — both are 9.3.5.3.3 defects.
-  //! ...and SET_CONFIGURATION's out-of-range arm, inside E_SCFGRUN's slot
+  //! SET_CONFIGURATION's out-of-range arm. Its OWN program, not an offset
+  //! into E_SCFGRUN's: an address that names an instruction inside another
+  //! program drifts the moment a word is inserted above it, and
+  //! scripts/check_upc_map.py now refuses a name that is not a place() target
+  //! for exactly that reason. The refusal answers the four-byte body of
+  //! §7.4.7.1 at cdl 16, like the other two arms.
   localparam logic [10:0] UPC_SCFGBAD_C  = 11'd1513; // E_SCFGBAD
   localparam logic [10:0] UPC_RDESCENT_C = 11'd1568; // E_RDESCENT
 
@@ -922,9 +924,13 @@ module KL_aecp_engine
   //! @24..@27 in wire order.
   //! GET_AUDIO_MAP is the one shape that needs a mux, because its µprogram
   //! consumes the registers TWO ways at once: r14 is the store's locate key
-  //! ({index, type, cfg} - GET_AUDIO_MAP names no configuration_index and
-  //! configuration 0 is current by construction, SET_CONFIGURATION being
-  //! unimplemented), and r13 packs {descriptor_index, map_index} so ONE
+  //! ({index, type, cfg} - GET_AUDIO_MAP names no configuration_index, and
+  //! the locate keys on 0 because the shipping image declares ONE
+  //! configuration. That used to be justified by SET_CONFIGURATION being
+  //! unimplemented; it now stores an index, so on a multi-configuration image
+  //! this key would go stale with the rest of the descriptor-serving path -
+  //! the same divergence tracked as issue #82), and r13 packs
+  //! {descriptor_index, map_index} so ONE
   //! FMT_D BUILD_FLD lays @26..@29 in wire order while r13[15:0] is the
   //! right-justified map_index CHECK_ARG compares (the µISA has no shift).
   //! `desc_ty_r` holds map_index for this command - see the payload walk.

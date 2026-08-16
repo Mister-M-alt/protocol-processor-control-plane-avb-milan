@@ -150,10 +150,8 @@ E_BADARG4 = 1240     # {type, index} + 4 zero bytes, BAD_ARGUMENTS
 E_LOCKED1 = 1312     # {type, index} + 1 zero byte, ENTITY_LOCKED
 E_BADARG1 = 1320     # {type, index} + 1 zero byte, BAD_ARGUMENTS
 E_NSUPP1  = 1328     # {type, index} + 1 zero byte, NOT_SUPPORTED
-# START/STOP_STREAMING answer a FOUR-byte body (7.4.35.1 Figure 7-59), so
-# their refusals cannot borrow the eight-byte stubs above (over-sized) nor fall
-# to E_BADARG, which carries no field at all (under-sized to a bare header).
-# A refusal has to be the size of the response it refuses.
+# A refusal has to be the size of the response it refuses: the stubs above are
+# {type, index} shaped and cannot serve a command whose body is not.
 E_SCFG    = 1456     # SET_CONFIGURATION (Milan 5.4.2.5, IEEE 7.4.7)
 E_SCFGRUN = 1488     # SET_CONFIGURATION's STREAM_IS_RUNNING arm (dispatch lands
                      # here, so it is the one arm whose status is not already set
