@@ -386,7 +386,7 @@ module KL_aecp_engine
     //! answers number_of_maps 0, and the µprogram turns that into
     //! NO_SUCH_DESCRIPTOR only where the descriptor store agrees.
     output logic        amap_req_o,           //! a word is being asked for
-    output logic [15:0] amap_desc_type_o,     //! AECPDU @24 (STREAM_PORT_INPUT)
+    output logic [15:0] amap_desc_type_o,     //! AECPDU @24 (STREAM_PORT_INPUT or STREAM_PORT_OUTPUT)
     output logic [15:0] amap_desc_index_o,    //! AECPDU @26
     output logic [15:0] amap_map_index_o,     //! AECPDU @28 - the page
     output logic  [1:0] amap_sel_o,           //! 0 NMAPS, 1 GEOM, 2 RECORD
@@ -1756,8 +1756,8 @@ module KL_aecp_engine
             //! BOTH Milan §5.4.2.26 halves are served now - the OUTPUT side
             //! re-dispatches to the two-word E_GAMAPO stub that swaps the
             //! type constant and falls into E_GAMAP's tail, and the
-            //! integrator's face routes on amap_desc_type_o to its capture-
-            //! side map store. Any other type keeps the NOT_IMPLEMENTED
+            //! integrator's face routes on amap_desc_type_o to the map store
+            //! for that direction. Any other type keeps the NOT_IMPLEMENTED
             //! echo (`amap_r` stays set: E_NOTIMPL runs no gathers, so the
             //! gx routing it selects is never consulted on that arm).
             if (amap_r && (cfg_ix_r == DT_STREAM_PORT_OUT_C)) begin

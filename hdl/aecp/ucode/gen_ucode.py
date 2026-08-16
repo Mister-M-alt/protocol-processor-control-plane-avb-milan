@@ -697,8 +697,8 @@ place(E_GCTRSNS, [
 # the AECPDU is 36 + 8·M and cdl is 24 + 8·M (offset-from-@12, F06.14).
 #
 # WHO DECIDES WHAT (the 06 §6.5 split):
-#   - EXISTENCE is the DESCRIPTOR STORE's: DESC_ADDR locates
-#     STREAM_PORT_INPUT[index] in the same image READ_DESCRIPTOR serves, so
+#   - EXISTENCE is the DESCRIPTOR STORE's: DESC_ADDR locates the addressed
+#     STREAM_PORT_INPUT or STREAM_PORT_OUTPUT in the READ_DESCRIPTOR image, so
 #     GET_AUDIO_MAP answers NO_SUCH_DESCRIPTOR for exactly the indices
 #     READ_DESCRIPTOR answers it for - one authority, no drift.
 #   - PAGE LAW is the µprogram's: §7.4.44.1 "If the map_index is beyond the
@@ -715,18 +715,18 @@ place(E_GCTRSNS, [
 #
 # Register contract, set by KL_aecp_engine at dispatch:
 #   r14 = {16'd0, descriptor_index, descriptor_type, 16'd0} - the store's
-#         locate key ({index, type, cfg 0} on st_wdata; GET_AUDIO_MAP names
-#         no configuration_index, and configuration 0 is current by
-#         construction - SET_CONFIGURATION is not implemented)
+#         locate key ({index, type, cfg 0} on st_wdata; GET_AUDIO_MAP names no
+#         configuration_index, and the shipping image has one configuration.
+#         This literal key must change before a multi-configuration image ships)
 #   r13 = {32'd0, descriptor_index, map_index} - one FMT_D BUILD_FLD emits
 #         @26..@29 in wire order, and [15:0] is the CHECK_ARG operand
 #         (the µISA has no shift, so the engine packs each field where a
 #         µop can reach it)
-# The descriptor_type emitted at @24 is a MOVE constant: the engine only
-# dispatches this program for STREAM_PORT_INPUT (everything else keeps the
-# NOT_IMPLEMENTED echo - the recorded Stream Port OUTPUT gap), so the
-# constant is the captured value by guarantee, and r14[15:0] - where the
-# other programs keep the @24 field - is the locate key's cfg half instead.
+# The descriptor_type emitted at @24 is a MOVE constant. STREAM_PORT_INPUT
+# enters here, STREAM_PORT_OUTPUT enters through E_GAMAPO and overrides the
+# constant, and every other descriptor type keeps the NOT_IMPLEMENTED echo.
+# r14[15:0], where other programs keep the @24 field, is the locate key's cfg
+# half instead.
 place(E_GAMAP, [
     #! the type constant loads FIRST so E_GAMAPO below can override it and
     #! fall into the shared tail - one program, two Table 7-1 types
@@ -1017,7 +1017,7 @@ place(E_GASP, [
 # recorded gap while the capture-side map RAM had no readback. The program IS
 # E_GAMAP with the other Table 7-1 type constant: the engine dispatches by
 # the walked descriptor_type, the locate key already carries it, and the
-# integrator's face routes on amap_desc_type_o to the capture-side store.
+# integrator's face routes on amap_desc_type_o to the store for that direction.
 place(E_GAMAPO, [
     u('MOVE', rd=8, ra=0, imm=DT_STREAM_PORT_OUTPUT),
     u('BRANCH', imm=E_GAMAP + 1),
