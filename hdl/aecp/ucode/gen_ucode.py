@@ -154,16 +154,12 @@ E_NSUPP1  = 1328     # {type, index} + 1 zero byte, NOT_SUPPORTED
 # their refusals cannot borrow the eight-byte stubs above (over-sized) nor fall
 # to E_BADARG, which carries no field at all (under-sized to a bare header).
 # A refusal has to be the size of the response it refuses.
-E_TILOCK  = 1336     # {type, index}, ENTITY_LOCKED
-E_TIBADA  = 1344     # {type, index}, BAD_ARGUMENTS
 E_SCFG    = 1456     # SET_CONFIGURATION (Milan 5.4.2.5, IEEE 7.4.7)
 E_SCFGRUN = 1488     # SET_CONFIGURATION's refusal emitter (all three statuses)
 E_SCFGBAD = 1499     # ...its out-of-range arm, E_SCFGRUN + 11. Named rather
                      # than left as arithmetic in the engine so
                      # scripts/check_upc_map.py can verify it: an interior
                      # address the gate cannot see is an address that can drift.
-E_STRMW   = 1392     # START/STOP_STREAMING (Milan 5.4.2.19/.20, IEEE 7.4.35/36)
-E_STRMWNS = 1424     # ...its NOT_SUPPORTED refusal ({type, index}, cdl 16)
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
@@ -1377,78 +1373,6 @@ place(E_NSUPP1, [
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=13, fmt=FMT_D),
     u('BUILD_FLD', ra=2, fmt=FMT_B),
-    u('SEND_RESP'),
-    u('END'),
-])
-
-# --- START_STREAMING / STOP_STREAMING (Milan §5.4.2.19/.20) ------------------
-# IEEE §7.4.35.1 / §7.4.36.1, Figure 7-59: the command and response are
-# {descriptor_type, descriptor_index} and nothing else — payload 4, cdl 16, the
-# same shape a getter uses, so the engine's tix walk already captures it.
-#
-# ONE PROGRAM SERVES BOTH. The bit to write arrives in r12, which the engine
-# packs from the opcode rather than from the payload: §7.4.35.1's command has
-# no value field at all, and START and STOP differ only in which state they
-# ask for. That keeps the ROM cost of the pair at one program.
-#
-# THE "NO EFFECT" SENTENCE IS NOT AN ERROR PATH. Milan:
-#
-#   "A PAAD-AE receiving START_STREAMING on a bound and stopped Stream Input
-#    shall change the state of the Sream Input to started. Note: this command
-#    has no effect on a Stream Input that is not already bound or already
-#    started."
-#
-# So an unbound or already-started input answers SUCCESS and changes nothing.
-# The write below is unconditional because the dynamic store's started bit is
-# only ever CONSULTED for a bound sink — writing it on an unbound one is the
-# "no effect" the note describes, not a state change. The Stream OUTPUT
-# refusal is the engine's, at dispatch (§5.4.2.19: "shall not support ... for
-# a Stream Output").
-place(E_STRMW, [
-    u('MOVE', rd=2, ra=0, imm=0),                # (kept for arm symmetry)
-    #! E_TILOCK, not E_LOCKED4: Figure 7-59's body is FOUR bytes, and the
-    #! eight-byte stub would over-size the refusal.
-    u('CHECK_LOCK', ra=15, imm=E_TILOCK),        # held by another controller?
-    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the Stream Input exist?
-    #! to +7 (BUILD_HDR), NOT +9 (SEND_RESP): branching past the builders
-    #! emits a bare 12-byte header for a NO_SUCH_DESCRIPTOR, and only
-    #! NOT_IMPLEMENTED may answer under the response form's size.
-    u('BR_STATUS', cnd=0, imm=E_STRMW + 7),      # no -> NO_SUCH_DESCRIPTOR
-    u('WRITE_ST', ra=12, fmt=FMT_B, imm=RGN_DYN + SEL_START),
-    u('NVM_MARK', imm=1),                        # §5.3.8.7: persist it
-    u('SET_STATUS', imm=ST_OK),
-    u('BUILD_HDR', ra=15, rb=13),                # E_STRMW + 7: BOTH arms
-    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
-    u('SEND_RESP'),
-    u('END'),
-])
-
-# ...and its NOT_SUPPORTED refusal, in the 4-byte response form (cdl 16).
-# IEEE §7.4.35.2/§7.4.36.2: "If the ATDECC Entity is locked or acquired by
-# another ATDECC Controller then the ATDECC Entity responds with an
-# ENTITY_LOCKED", and Milan §5.4.2.19/.20 repeat it. The lock outranks the
-# wrong-target refusal, so it is tested HERE and not only on the accept path.
-place(E_STRMWNS, [
-    u('CHECK_LOCK', ra=15, imm=E_TILOCK),
-    u('SET_STATUS', imm=ST_NSUPP),
-    u('BUILD_HDR', ra=15, rb=13),
-    u('BUILD_FLD', ra=13, fmt=FMT_D),            # the refused {type, index}
-    u('SEND_RESP'),
-    u('END'),
-])
-
-# --- the {type, index} refusals, in START/STOP's own response form ----------
-place(E_TILOCK, [
-    u('SET_STATUS', imm=ST_LOCKED),
-    u('BUILD_HDR', ra=15, rb=13),
-    u('BUILD_FLD', ra=13, fmt=FMT_D),            # the refused {type, index}
-    u('SEND_RESP'),
-    u('END'),
-])
-place(E_TIBADA, [
-    u('SET_STATUS', imm=ST_BADARG),
-    u('BUILD_HDR', ra=15, rb=13),
-    u('BUILD_FLD', ra=13, fmt=FMT_D),
     u('SEND_RESP'),
     u('END'),
 ])

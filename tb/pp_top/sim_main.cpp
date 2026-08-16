@@ -335,8 +335,6 @@ static const uint16_t AEM_SET_CLOCK_SOURCE = 0x0016;
 static const uint16_t AEM_SET_CONTROL = 0x0018;
 static const uint16_t AEM_GET_CONTROL = 0x0019;
 static const uint16_t AEM_SET_CONFIGURATION = 0x0006;
-static const uint16_t AEM_START_STREAMING = 0x0022;
-static const uint16_t AEM_STOP_STREAMING = 0x0023;
 enum { AECP_STREAM_IS_RUNNING = 12, AECP_ENTITY_LOCKED = 3 };
 static const uint16_t AEM_IDENTIFY_NOTIF  = 0x0026;
 static const uint16_t AEM_GET_COUNTERS    = 0x0029;
@@ -3874,37 +3872,6 @@ int main(int argc, char** argv) {
             "W13d: GET_CONTROL on an AUDIO_UNIT is NOT_SUPPORTED at cdl 17");
     }
 
-    // ---- W14: START / STOP_STREAMING (Milan 5.4.2.19/.20) ---------------
-    // Body is {descriptor_type, descriptor_index} and nothing else — payload
-    // 4, cdl 16. A Stream OUTPUT must refuse NOT_SUPPORTED; that refusal is
-    // an inverted gate in es-4.11, so implementing it as SUCCESS fails.
-    {
-      auto f = ask(AEM_START_STREAMING, ti(0x0005, 0), 0x7690);
-      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 16,
-            "W14: START_STREAMING on a Stream Input is SUCCESS at cdl 16");
-      CHECK(f.size() >= 42 && (((unsigned)f[38] << 8) | f[39]) == 0x0005
-            && (((unsigned)f[40] << 8) | f[41]) == 0,
-            "W14b: ...and echoes the {type, index} it acted on");
-
-      f = ask(AEM_STOP_STREAMING, ti(0x0005, 0), 0x7691);
-      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 16,
-            "W14c: STOP_STREAMING on a Stream Input is SUCCESS");
-
-      // the inverted gate: a Stream OUTPUT is NOT_SUPPORTED, both ways
-      f = ask(AEM_START_STREAMING, ti(0x0006, 0), 0x7692);
-      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 16,
-            "W14d: START_STREAMING on a Stream Output is NOT_SUPPORTED");
-      f = ask(AEM_STOP_STREAMING, ti(0x0006, 0), 0x7693);
-      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 16,
-            "W14e: STOP_STREAMING on a Stream Output is NOT_SUPPORTED");
-
-      // 5.4.2.19's note: an input that does not exist still answers, and it
-      // answers NO_SUCH_DESCRIPTOR rather than pretending
-      f = ask(AEM_START_STREAMING, ti(0x0005, 9), 0x7694);
-      CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR,
-            "W14f: START_STREAMING on a missing sink is NO_SUCH_DESCRIPTOR");
-    }
-
     // ---- W15: SET_CONFIGURATION and the STREAM_IS_RUNNING reduction ------
     // Milan 5.4.2.5: "shall not accept a SET_CONFIGURATION command if ONE OF
     // the Stream Input is bound or ONE OF the Stream Output is streaming".
@@ -3962,41 +3929,6 @@ int main(int argc, char** argv) {
       CHECK(!g.empty() && st(g) == AECP_SUCCESS && g.size() >= 42
             && (((unsigned)g[40] << 8) | g[41]) == 0x0000,
             "W16d: GET_CONFIGURATION reads the value SET_CONFIGURATION stored");
-    }
-
-    // ---- W17: the state the commands exist to change ---------------------
-    // A review of the first cut of this section found that DELETING the store
-    // write from START/STOP left every check green: the tests asserted status
-    // codes and nothing else, so the commands were provably "implemented" and
-    // provably did nothing. These checks read the bit back.
-    {
-      // start sink 0, and prove sink 1 is untouched
-      auto f = ask(AEM_START_STREAMING, ti(0x0005, 0), 0x76A0);
-      CHECK(!f.empty() && st(f) == AECP_SUCCESS, "W17: START sink 0 SUCCESS");
-      CHECK((h.d->dbg_started_o & 1u) == 1u,
-            "W17b: sink 0's started bit is SET after START_STREAMING");
-      CHECK(((h.d->dbg_started_o >> 1) & 1u) == 0u,
-            "W17c: starting sink 0 did NOT start sink 1");
-
-      // ...now sink 1, and prove sink 0 survives
-      f = ask(AEM_START_STREAMING, ti(0x0005, 1), 0x76A1);
-      CHECK(!f.empty() && st(f) == AECP_SUCCESS, "W17d: START sink 1 SUCCESS");
-      CHECK(((h.d->dbg_started_o >> 1) & 1u) == 1u,
-            "W17e: sink 1's started bit is SET");
-      CHECK((h.d->dbg_started_o & 1u) == 1u,
-            "W17f: starting sink 1 did NOT stop sink 0");
-
-      // STOP has to actually stop, and only its own sink
-      f = ask(AEM_STOP_STREAMING, ti(0x0005, 0), 0x76A2);
-      CHECK(!f.empty() && st(f) == AECP_SUCCESS, "W17g: STOP sink 0 SUCCESS");
-      CHECK((h.d->dbg_started_o & 1u) == 0u,
-            "W17h: sink 0's started bit is CLEAR after STOP_STREAMING");
-      CHECK(((h.d->dbg_started_o >> 1) & 1u) == 1u,
-            "W17i: stopping sink 0 did NOT stop sink 1");
-
-      f = ask(AEM_STOP_STREAMING, ti(0x0005, 1), 0x76A3);
-      CHECK(!f.empty() && st(f) == AECP_SUCCESS, "W17j: STOP sink 1 SUCCESS");
-      CHECK(h.d->dbg_started_o == 0, "W17k: both sinks stopped");
     }
 
     // ---- W18: SET_CONFIGURATION with a NON-ZERO index --------------------
@@ -4065,28 +3997,9 @@ int main(int argc, char** argv) {
         return h.wait_any(h.q_aecp, 600);
       };
 
-      auto f = ask2(AEM_START_STREAMING, ti(0x0005, 0), 0x76B1);
-      CHECK(!f.empty() && st(f) == AECP_ENTITY_LOCKED,
-            "W19b: START_STREAMING from a foreign controller is ENTITY_LOCKED,"
-            " got %d", st(f));
-      CHECK(cdl(f) == 16, "W19c: ...at cdl 16 (Figure 7-59), got %d", cdl(f));
-      CHECK((h.d->dbg_started_o & 1u) == 0u,
-            "W19d: ...and it did NOT start the stream");
-
-      f = ask2(AEM_STOP_STREAMING, ti(0x0005, 0), 0x76B2);
-      CHECK(!f.empty() && st(f) == AECP_ENTITY_LOCKED,
-            "W19e: STOP_STREAMING from a foreign controller is ENTITY_LOCKED");
-
-      //! the wrong-TARGET refusal must not outrank the lock: IEEE 7.4.35.2
-      //! puts ENTITY_LOCKED first, so a Stream Output from a foreign
-      //! controller is LOCKED, not NOT_SUPPORTED
-      f = ask2(AEM_START_STREAMING, ti(0x0006, 0), 0x76B3);
-      CHECK(!f.empty() && st(f) == AECP_ENTITY_LOCKED,
-            "W19f: the lock outranks the wrong-target refusal, got %d", st(f));
-
       std::vector<uint8_t> pl(4, 0);
       putbe(&pl[2], 0x0001, 2);
-      f = ask2(AEM_SET_CONFIGURATION, pl, 0x76B4);
+      auto f = ask2(AEM_SET_CONFIGURATION, pl, 0x76B4);
       CHECK(!f.empty() && st(f) == AECP_ENTITY_LOCKED,
             "W19g: SET_CONFIGURATION from a foreign controller is "
             "ENTITY_LOCKED, got %d", st(f));
@@ -4106,28 +4019,12 @@ int main(int argc, char** argv) {
     // first cut branched past the body builders on the miss path and emitted
     // a bare 12-byte header for a NO_SUCH_DESCRIPTOR.
     {
-      auto f = ask(AEM_START_STREAMING, ti(0x0005, 9), 0x76C0);
-      CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR,
-            "W20: a missing sink is NO_SUCH_DESCRIPTOR");
-      CHECK(cdl(f) == 16, "W20b: ...at cdl 16, not a bare header, got %d",
-            cdl(f));
-      CHECK(f.size() >= 42 && (((unsigned)f[38] << 8) | f[39]) == 0x0005,
-            "W20c: ...echoing the type it was asked about");
-
       std::vector<uint8_t> shortpl(2, 0);
-      f = ask(AEM_START_STREAMING, shortpl, 0x76C1);
-      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
-            "W20d: a truncated START_STREAMING is BAD_ARGUMENTS");
-      CHECK(cdl(f) == 16, "W20e: ...at cdl 16, got %d", cdl(f));
-
-      f = ask(AEM_SET_CONFIGURATION, shortpl, 0x76C2);
+      auto f = ask(AEM_SET_CONFIGURATION, shortpl, 0x76C2);
       CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
             "W20f: a truncated SET_CONFIGURATION is BAD_ARGUMENTS");
       CHECK(cdl(f) == 16, "W20g: ...at cdl 16, got %d", cdl(f));
 
-      f = ask(AEM_STOP_STREAMING, ti(0x0006, 0), 0x76C3);
-      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 16,
-            "W20h: a Stream Output refusal is cdl 16 too");
     }
 
     // ---- W8: READ_DESCRIPTOR still intact after the whole section -------
