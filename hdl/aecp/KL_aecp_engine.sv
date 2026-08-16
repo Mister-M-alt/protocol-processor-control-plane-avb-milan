@@ -657,11 +657,17 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_LOCKED1_C = 11'd1312;  // E_LOCKED1
   localparam logic [10:0] UPC_BADARG1_C = 11'd1320;  // E_BADARG1
   localparam logic [10:0] UPC_NSUPP1_C  = 11'd1328;  // E_NSUPP1
-  localparam logic [10:0] UPC_STRMRUN4_C = 11'd1336; // E_STRMRUN4
-  localparam logic [10:0] UPC_SCFG_C     = 11'd1344; // E_SCFG
-  localparam logic [10:0] UPC_SCFGRUN_C  = 11'd1376; // E_SCFGRUN
+  localparam logic [10:0] UPC_SCFG_C     = 11'd1456; // E_SCFG
+  localparam logic [10:0] UPC_SCFGRUN_C  = 11'd1488; // E_SCFGRUN
   localparam logic [10:0] UPC_STRMW_C    = 11'd1392; // E_STRMW
   localparam logic [10:0] UPC_STRMWNS_C  = 11'd1424; // E_STRMWNS
+  //! START/STOP's own-form refusals: four payload bytes, cdl 16. Borrowing
+  //! the eight-byte stubs over-sizes them and falling to E_BADARG (no field
+  //! at all) under-sizes them to a bare header — both are 9.3.5.3.3 defects.
+  localparam logic [10:0] UPC_TILOCK_C   = 11'd1336; // E_TILOCK
+  localparam logic [10:0] UPC_TIBADA_C   = 11'd1344; // E_TIBADA
+  //! ...and SET_CONFIGURATION's out-of-range arm, inside E_SCFGRUN's slot
+  localparam logic [10:0] UPC_SCFGBAD_C  = 11'd1499; // E_SCFGBAD
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -942,33 +948,28 @@ module KL_aecp_engine
   //! OR chain re-spelled in four - and the chain is built once instead of
   //! four times, which is the reason it exists and not just how it reads.
   logic [63:0] opd2_w;
-  //! ---- the running predicate, reduced (Milan §5.3.7.3 / §5.3.8.2) -----
-  //! `tgt_running_w` answers "is the descriptor THIS command names running",
-  //! and `any_running_w` answers §5.4.2.5's "one of the Stream Input is bound
-  //! or one of the Stream Output is streaming" — a reduction over EVERY
-  //! stream, not a test of index 0. Both are combinational off registered
-  //! walk fields, so they are settled a whole state before the A_PLD exit
-  //! reads them.
-  //!
-  //! An index past the shape reduces to NOT running, which is correct and not
-  //! merely safe: a stream that does not exist is not streaming, and the
-  //! locate refuses it a moment later with NO_SUCH_DESCRIPTOR.
-  logic tgt_running_w, any_running_w;
-  logic in_bound_w, out_streaming_w;
-  assign in_bound_w      = (desc_ix_r < 16'(N_STREAM_IN_P))
-                           && strm_bound_i[desc_ix_r[$clog2(
-                                (N_STREAM_IN_P > 1) ? N_STREAM_IN_P : 2)-1:0]];
-  assign out_streaming_w = (desc_ix_r < 16'(N_STREAM_OUT_P))
-                           && strm_streaming_i[desc_ix_r[$clog2(
-                                (N_STREAM_OUT_P > 1) ? N_STREAM_OUT_P : 2)-1:0]];
-  assign tgt_running_w   = ((cfg_ix_r == DT_STREAM_INPUT_C)  && in_bound_w)
-                        || ((cfg_ix_r == DT_STREAM_OUTPUT_C) && out_streaming_w);
-  assign any_running_w   = (|strm_bound_i) || (|strm_streaming_i);
+  //! ---- the running predicate, reduced (Milan §5.3.7.3) ---------------
+  //! §5.4.2.5's refusal is a REDUCTION over every stream — "if ONE OF the
+  //! Stream Input is bound or ONE OF the Stream Output is streaming" — not a
+  //! test of the descriptor a command names. That is the only form this round
+  //! needs. The per-descriptor form belongs to SET_STREAM_FORMAT, and it
+  //! arrives WITH that command rather than sitting here unread.
+  logic any_running_w;
+  assign any_running_w = (|strm_bound_i) || (|strm_streaming_i);
 
+  //! the @26..@27 capture set. `tix_w` is the {type @24, index @26} SHAPE;
+  //! SET_CONFIGURATION is not that shape (§7.4.7.1 puts `reserved` at @24) but
+  //! it DOES take its argument from @26, so it joins the capture without
+  //! joining the shape. Conflating the two is what made the first cut of this
+  //! command store configuration 0 forever: `scfg_r` was in neither guard, so
+  //! @26 was never captured AND a padded command walked @30 into the same
+  //! register.
+  logic ix26_w;
   logic tix_w;
   assign tix_w = ctrs_r | amap_r | gstri_r | gavb_r
                  | gsfmt_r | gsrate_r | gclks_r | setc_r | gctrl_r
                  | strmw_r;
+  assign ix26_w = tix_w | regun_r | lockc_r | scfg_r;
   assign opd0_w = tix_w       ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
                 : gasp_r      ? {16'd0, cfg_ix_r, DT_AVB_INTERFACE_C, 16'd0}
                 : lockc_r     ? {32'd0, cfg_ix_r, desc_ix_r}
@@ -1162,7 +1163,14 @@ module KL_aecp_engine
       .st_ready_o      (dyn_ready_w),
       .st_rvalid_o     (dyn_rvalid_w),
       .st_rdata_o      (dyn_rdata_w),
-      .desc_index_i    (desc_ix_r),
+      //! `desc_ix_r` means DESCRIPTOR index for every command here except
+      //! SET_CONFIGURATION, whose @26 field is a CONFIGURATION index — a
+      //! different namespace that happens to land in the same walk register.
+      //! current_configuration is an ENTITY-level singleton with no descriptor
+      //! index at all, so it must address row 0. Passing the configuration
+      //! index through made the store drop the write as out-of-range for any
+      //! configuration but 0, and the command answered SUCCESS anyway.
+      .desc_index_i    (scfg_r ? 16'd0 : desc_ix_r),
       .cur_config_o    (dyn_cur_config_o),
       .identify_o      (dyn_identify_o),
       .clk_src_index_o (dyn_clk_src_index_o),
@@ -1938,7 +1946,11 @@ module KL_aecp_engine
             //! changes nothing, not a refusal — this pair CHANGES the running
             //! state rather than being blocked by it.
             if (strmw_r) begin
-              if (cmd_r.cdl < 11'd16)                upc_r <= UPC_BADARG_C;
+              //! UPC_TIBADA_C, not UPC_BADARG_C: this arm clears `echo_r`, so
+              //! the generic BAD_ARGUMENTS stub — which carries no field and
+              //! relies on the engine replaying the command payload — would
+              //! emit a bare 12-byte header for a non-NOT_IMPLEMENTED status.
+              if (cmd_r.cdl < 11'd16)                 upc_r <= UPC_TIBADA_C;
               else if (cfg_ix_r != DT_STREAM_INPUT_C) upc_r <= UPC_STRMWNS_C;
               else                                    upc_r <= UPC_STRMW_C;
               echo_r <= 1'b0;
@@ -1950,7 +1962,7 @@ module KL_aecp_engine
             //! streaming". §7.4.8.1's command is 4 bytes, so cdl 16 is the
             //! whole thing.
             if (scfg_r) begin
-              if (cmd_r.cdl < 11'd16)  upc_r <= UPC_BADARG_C;
+              if (cmd_r.cdl < 11'd16)  upc_r <= UPC_SCFGBAD_C;
               else if (any_running_w)  upc_r <= UPC_SCFGRUN_C;
               else                     upc_r <= UPC_SCFG_C;
               echo_r <= 1'b0;
@@ -1987,13 +1999,11 @@ module KL_aecp_engine
               //! holds the flags' low half for the rgy face to read
               11'd4: begin
                 pid_lo_r[1] <= (rxs_rd_data_i == MVU_PID_L1_C);
-                if (tix_w || regun_r || lockc_r)
-                  desc_ix_r[15:8] <= rxs_rd_data_i;
+                if (ix26_w) desc_ix_r[15:8] <= rxs_rd_data_i;
               end
               11'd5: begin
                 pid_lo_r[0] <= (rxs_rd_data_i == MVU_PID_L0_C);
-                if (tix_w || regun_r || lockc_r)
-                  desc_ix_r[7:0]  <= rxs_rd_data_i;
+                if (ix26_w) desc_ix_r[7:0]  <= rxs_rd_data_i;
               end
               11'd6: begin
                 if (!ctrs_r) desc_ty_r[15:8] <= rxs_rd_data_i;
@@ -2014,13 +2024,11 @@ module KL_aecp_engine
               //! captured at @26..@27 - the UNLOCK/TIME_LIMITED bit lives
               //! there (found by the pp_top L5 check: UNLOCK re-locked)
               11'd8: begin
-                if (!tix_w && !regun_r && !lockc_r && !gasp_r)
-                  desc_ix_r[15:8] <= rxs_rd_data_i;
+                if (!ix26_w && !gasp_r) desc_ix_r[15:8] <= rxs_rd_data_i;
                 if (setc_r) setval_r[47:40] <= rxs_rd_data_i;
               end
               11'd9: begin
-                if (!tix_w && !regun_r && !lockc_r && !gasp_r)
-                  desc_ix_r[7:0]  <= rxs_rd_data_i;
+                if (!ix26_w && !gasp_r) desc_ix_r[7:0]  <= rxs_rd_data_i;
                 if (setc_r) setval_r[39:32] <= rxs_rd_data_i;
               end
               11'd10: if (setc_r) setval_r[31:24] <= rxs_rd_data_i;

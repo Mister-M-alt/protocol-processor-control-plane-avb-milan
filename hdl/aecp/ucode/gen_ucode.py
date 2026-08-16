@@ -128,7 +128,7 @@ E_GCFG    = 1024     # GET_CONFIGURATION (Milan 5.4.2.6, IEEE 7.4.8)
 E_GSFMT   = 1056     # GET_STREAM_FORMAT (Milan 5.4.2.8, IEEE 7.4.10)
 E_GSRATE  = 1088     # GET_SAMPLING_RATE (Milan 5.4.2.14, IEEE 7.4.22)
 E_GCLKS   = 1120     # GET_CLOCK_SOURCE (Milan 5.4.2.16, IEEE 7.4.24)
-E_SSRATE2 = 1152     # SET_SAMPLING_RATE (Milan 5.4.2.13, IEEE 7.4.21)
+E_SSRATE = 1152     # SET_SAMPLING_RATE (Milan 5.4.2.13, IEEE 7.4.21)
 E_SCLKS   = 1184     # SET_CLOCK_SOURCE (Milan 5.4.2.15, IEEE 7.4.23)
 # ...and the two wrong-target refusals they share. Table 7-141's NOT_SUPPORTED
 # ("the command is implemented but the target of the command is not
@@ -150,9 +150,18 @@ E_BADARG4 = 1240     # {type, index} + 4 zero bytes, BAD_ARGUMENTS
 E_LOCKED1 = 1312     # {type, index} + 1 zero byte, ENTITY_LOCKED
 E_BADARG1 = 1320     # {type, index} + 1 zero byte, BAD_ARGUMENTS
 E_NSUPP1  = 1328     # {type, index} + 1 zero byte, NOT_SUPPORTED
-E_STRMRUN4 = 1336    # {type, index} + 4 zero bytes, STREAM_IS_RUNNING
-E_SCFG    = 1344     # SET_CONFIGURATION (Milan 5.4.2.5, IEEE 7.4.7)
-E_SCFGRUN = 1376     # SET_CONFIGURATION's STREAM_IS_RUNNING refusal
+# START/STOP_STREAMING answer a FOUR-byte body (7.4.35.1 Figure 7-59), so
+# their refusals cannot borrow the eight-byte stubs above (over-sized) nor fall
+# to E_BADARG, which carries no field at all (under-sized to a bare header).
+# A refusal has to be the size of the response it refuses.
+E_TILOCK  = 1336     # {type, index}, ENTITY_LOCKED
+E_TIBADA  = 1344     # {type, index}, BAD_ARGUMENTS
+E_SCFG    = 1456     # SET_CONFIGURATION (Milan 5.4.2.5, IEEE 7.4.7)
+E_SCFGRUN = 1488     # SET_CONFIGURATION's refusal emitter (all three statuses)
+E_SCFGBAD = 1499     # ...its out-of-range arm, E_SCFGRUN + 11. Named rather
+                     # than left as arithmetic in the engine so
+                     # scripts/check_upc_map.py can verify it: an interior
+                     # address the gate cannot see is an address that can drift.
 E_STRMW   = 1392     # START/STOP_STREAMING (Milan 5.4.2.19/.20, IEEE 7.4.35/36)
 E_STRMWNS = 1424     # ...its NOT_SUPPORTED refusal ({type, index}, cdl 16)
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
@@ -1032,14 +1041,28 @@ place(E_EAVL, [
 # ENTITY[0] key by the A_IDLE zeroing. The key is built explicitly anyway: a
 # malformed command claiming a longer cdl DOES walk @24.. into cfg_ix_r, and a
 # locate must not follow whatever that put there.
+# THE OVERLAY ARM MATTERS MORE HERE THAN ANYWHERE ELSE. SET_CONFIGURATION
+# writes the dynamic store; without this arm GET_CONFIGURATION goes on reading
+# the ENTITY descriptor's STATIC current_configuration and the round trip does
+# not exist — a controller sets 1 and reads back 0 forever. The first cut of
+# this pair shipped exactly that way, and the test could not see it because
+# both sources read 0 at reset and the test only ever used index 0.
 place(E_GCFG, [
     u('MOVE', rd=2, ra=0, imm=0),                # ENTITY[0] key AND @24 reserved
     u('MOVE', rd=1, ra=0, imm=0),                # configuration_index, miss = 0
-    u('DESC_ADDR', ra=2, imm=RGN_LOCATE),        # {index 0, type 0, cfg 0}
-    u('BR_STATUS', cnd=0, imm=E_GCFG + 6),       # no image: NO_SUCH_DESCRIPTOR
+    u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CFG),  # has a controller set it?
+    u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_GCFG + 7),       # z = unset -> the image
+    u('READ_ST', rd=1, imm=RGN_DYN + SEL_CFG),   # the controller's value
+    u('BRANCH', imm=E_GCFG + 11),
+    u('DESC_ADDR', ra=2, imm=RGN_LOCATE),        # E_GCFG + 7: the image arm
+    #! to +12, NOT +11: +11 is SET_STATUS ST_OK, and landing on it would
+    #! overwrite the NO_SUCH_DESCRIPTOR that DESC_ADDR just set with SUCCESS.
+    u('BR_STATUS', cnd=0, imm=E_GCFG + 12),
     u('READ_ST', rd=1, imm=RGN_DATA + ENT_CURCFG_LANE),
-    u('SET_STATUS', imm=ST_OK),
-    u('BUILD_HDR', ra=15, rb=13),                # E_GCFG + 6
+    u('NOP', imm=1),
+    u('SET_STATUS', imm=ST_OK),                  # E_GCFG + 11
+    u('BUILD_HDR', ra=15, rb=13),                # E_GCFG + 12
     u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved            @24
     u('BUILD_FLD', ra=1, fmt=FMT_W),             # configuration_index @26
     u('SEND_RESP'),
@@ -1127,11 +1150,11 @@ place(E_GSRATE, [
 # The rate/mapping-mismatch refusal of §5.4.2.13 is a MAY, not a SHALL, and is
 # deliberately not implemented — grading a MAY as a SHALL would refuse rates
 # this device can actually serve.
-place(E_SSRATE2, [
+place(E_SSRATE, [
     u('MOVE', rd=2, ra=0, imm=0),                # the refusal arms' zero body
     u('CHECK_LOCK', ra=15, imm=E_LOCKED4),       # held by another controller?
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the Audio Unit exist?
-    u('BR_STATUS', cnd=0, imm=E_SSRATE2 + 12),   # no -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=E_SSRATE + 12),   # no -> NO_SUCH_DESCRIPTOR
     u('WRITE_ST', ra=12, fmt=FMT_D, imm=RGN_DYN + SEL_RATE),
     u('NVM_MARK', imm=1),                        # §5.3.5.1: persist it
     u('SET_STATUS', imm=ST_OK),
@@ -1140,7 +1163,7 @@ place(E_SSRATE2, [
     u('BUILD_FLD', ra=12, fmt=FMT_D),            # the rate now in force @28
     u('SEND_RESP'),
     u('END'),
-    u('BUILD_HDR', ra=15, rb=13),                # E_SSRATE2 + 12: the refusal
+    u('BUILD_HDR', ra=15, rb=13),                # E_SSRATE + 12: the refusal
     u('BUILD_FLD', ra=13, fmt=FMT_D),
     u('BUILD_FLD', ra=2, fmt=FMT_D),
     u('SEND_RESP'),
@@ -1382,24 +1405,50 @@ place(E_NSUPP1, [
 # refusal is the engine's, at dispatch (§5.4.2.19: "shall not support ... for
 # a Stream Output").
 place(E_STRMW, [
-    u('MOVE', rd=2, ra=0, imm=0),                # the miss arm's zero body
-    u('CHECK_LOCK', ra=15, imm=E_LOCKED4),       # held by another controller?
+    u('MOVE', rd=2, ra=0, imm=0),                # (kept for arm symmetry)
+    #! E_TILOCK, not E_LOCKED4: Figure 7-59's body is FOUR bytes, and the
+    #! eight-byte stub would over-size the refusal.
+    u('CHECK_LOCK', ra=15, imm=E_TILOCK),        # held by another controller?
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the Stream Input exist?
-    u('BR_STATUS', cnd=0, imm=E_STRMW + 9),      # no -> NO_SUCH_DESCRIPTOR
+    #! to +7 (BUILD_HDR), NOT +9 (SEND_RESP): branching past the builders
+    #! emits a bare 12-byte header for a NO_SUCH_DESCRIPTOR, and only
+    #! NOT_IMPLEMENTED may answer under the response form's size.
+    u('BR_STATUS', cnd=0, imm=E_STRMW + 7),      # no -> NO_SUCH_DESCRIPTOR
     u('WRITE_ST', ra=12, fmt=FMT_B, imm=RGN_DYN + SEL_START),
     u('NVM_MARK', imm=1),                        # §5.3.8.7: persist it
     u('SET_STATUS', imm=ST_OK),
-    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_HDR', ra=15, rb=13),                # E_STRMW + 7: BOTH arms
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
-    u('SEND_RESP'),                              # E_STRMW + 9 lands here too
+    u('SEND_RESP'),
     u('END'),
 ])
 
 # ...and its NOT_SUPPORTED refusal, in the 4-byte response form (cdl 16).
+# IEEE §7.4.35.2/§7.4.36.2: "If the ATDECC Entity is locked or acquired by
+# another ATDECC Controller then the ATDECC Entity responds with an
+# ENTITY_LOCKED", and Milan §5.4.2.19/.20 repeat it. The lock outranks the
+# wrong-target refusal, so it is tested HERE and not only on the accept path.
 place(E_STRMWNS, [
+    u('CHECK_LOCK', ra=15, imm=E_TILOCK),
     u('SET_STATUS', imm=ST_NSUPP),
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # the refused {type, index}
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- the {type, index} refusals, in START/STOP's own response form ----------
+place(E_TILOCK, [
+    u('SET_STATUS', imm=ST_LOCKED),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # the refused {type, index}
+    u('SEND_RESP'),
+    u('END'),
+])
+place(E_TIBADA, [
+    u('SET_STATUS', imm=ST_BADARG),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),
     u('SEND_RESP'),
     u('END'),
 ])
@@ -1420,6 +1469,13 @@ place(E_STRMWNS, [
 place(E_SCFG, [
     u('MOVE', rd=2, ra=0, imm=0),                # the @24 reserved field
     u('CHECK_LOCK', ra=15, imm=E_SCFGRUN + 8),   # locked -> ENTITY_LOCKED
+    #! the index has to be IN RANGE before it is stored. Without this a
+    #! SET_CONFIGURATION(0xFFFF) answers SUCCESS while the dynamic store drops
+    #! the write on the floor — a false success. RGN_NCFG is the image's
+    #! configurations_count, the authority READ_DESCRIPTOR already checks.
+    u('READ_ST', rd=9, imm=RGN_NCFG),
+    u('CHECK_ARG', ra=12, rb=9, fmt=FMT_W,
+      cnd=REL_LT, imm=E_SCFGBAD),
     u('WRITE_ST', ra=12, fmt=FMT_W, imm=RGN_DYN + SEL_CFG),
     u('NVM_MARK', imm=1),                        # es-5.1 item 1: persist it
     u('SET_STATUS', imm=ST_OK),
@@ -1434,32 +1490,29 @@ place(E_SCFG, [
 # {reserved, configuration_index} either way and only the status differs. The
 # echoed index is the one that was REFUSED, so a controller can tell which
 # request bounced.
+# IEEE §7.4.7.1: "The response always contains the current value, that is it
+# contains the new value if the command succeeds or THE OLD VALUE IF IT FAILS."
+# So a refusal echoes the configuration the entity is STILL in, never the one
+# that was rejected — the same rule es-4.18 checks for the SET family's locked
+# arm. r1 comes from the dynamic store; an unwritten store reads 0, which IS
+# the current configuration until somebody changes it.
 place(E_SCFGRUN, [
     u('MOVE', rd=2, ra=0, imm=0),
     u('SET_STATUS', imm=ST_STRMRUN),
-    u('BUILD_HDR', ra=15, rb=13),                # E_SCFGRUN + 2
+    u('READ_ST', rd=1, imm=RGN_DYN + SEL_CFG),   # E_SCFGRUN + 2: the CURRENT
+    u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved            @24
-    u('BUILD_FLD', ra=12, fmt=FMT_W),            # configuration_index @26
+    u('BUILD_FLD', ra=1, fmt=FMT_W),             # configuration_index @26
     u('SEND_RESP'),
     u('END'),
-    u('NOP'),
     u('MOVE', rd=2, ra=0, imm=0),                # E_SCFGRUN + 8: the lock arm
     u('SET_STATUS', imm=ST_LOCKED),
     u('BRANCH', imm=E_SCFGRUN + 2),
+    u('SET_STATUS', imm=ST_BADARG),              # E_SCFGBAD: out of range
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('BRANCH', imm=E_SCFGRUN + 2),
 ])
 
-# --- the shared STREAM_IS_RUNNING refusal ({type, index} + 4 zero bytes) -----
-# For SET_STREAM_FORMAT and SET_SAMPLING_RATE-shaped commands, whose response
-# form is 8 bytes and cdl 20.
-place(E_STRMRUN4, [
-    u('MOVE', rd=2, ra=0, imm=0),
-    u('SET_STATUS', imm=ST_STRMRUN),
-    u('BUILD_HDR', ra=15, rb=13),
-    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
-    u('BUILD_FLD', ra=2, fmt=FMT_D),             # 4 zero bytes         @28
-    u('SEND_RESP'),
-    u('END'),
-])
 
 # --- deterministic non-degenerate fill ---------------------------------------
 for i in range(ROM_DEPTH):

@@ -6,6 +6,16 @@
 set -u
 cd "$(dirname "$0")/.."
 fails=0; unreadable=0; total=0
+
+# The uPC map is written down twice (gen_ucode.py's entry points and the
+# engine's UPC_*_C localparams) and a mismatch does NOT fail to elaborate: the
+# uCPU starts in the ROM fill and answers a well-formed response carrying
+# garbage. Gate it before any suite runs, because every suite would pass.
+if ! python3 scripts/check_upc_map.py; then
+  echo "FAIL check_upc_map (the engine dispatches where no program lives)"
+  exit 1
+fi
+
 for d in tb/*/; do
   [ -f "$d/Makefile" ] || continue
   name=$(basename "$d")

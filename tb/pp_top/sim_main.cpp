@@ -337,7 +337,7 @@ static const uint16_t AEM_GET_CONTROL = 0x0019;
 static const uint16_t AEM_SET_CONFIGURATION = 0x0006;
 static const uint16_t AEM_START_STREAMING = 0x0022;
 static const uint16_t AEM_STOP_STREAMING = 0x0023;
-enum { AECP_STREAM_IS_RUNNING = 12 };
+enum { AECP_STREAM_IS_RUNNING = 12, AECP_ENTITY_LOCKED = 3 };
 static const uint16_t AEM_IDENTIFY_NOTIF  = 0x0026;
 static const uint16_t AEM_GET_COUNTERS    = 0x0029;
 enum { AECP_SUCCESS = 0, AECP_NOT_IMPLEMENTED = 1, AECP_NO_SUCH_DESCRIPTOR = 2,
@@ -404,7 +404,7 @@ static std::vector<uint8_t> entity_descriptor() {
   memcpy(&d[180], gn, strlen(gn));
   const char* sn = "PP-0000-0002";                // serial_number @244
   memcpy(&d[244], sn, strlen(sn));
-  putbe(&d[308], 1, 2);                           // configurations_count
+  putbe(&d[308], 2, 2);                           // configurations_count
   putbe(&d[310], CFGIX, 2);                       // current_configuration
   return d;
 }
@@ -1268,7 +1268,14 @@ int main(int argc, char** argv) {
                         stream_port_descriptor(0x000F, 1, 8, 8),
                         audio_unit_descriptor(0, 96000u),
                         control_descriptor(0)},
-                       {"PP Reference Entity", "Clock Domain 0"}, 1);
+                       //! TWO configurations, so SET_CONFIGURATION has a
+                       //! legal non-zero index to be tested with. Only
+                       //! configuration 0 carries descriptors, which is a
+                       //! legitimate shape and makes configuration 1 a clean
+                       //! NO_SUCH_DESCRIPTOR target for READ_DESCRIPTOR.
+                       //! A3's out-of-range probe uses index 3 and is
+                       //! unaffected.
+                       {"PP Reference Entity", "Clock Domain 0"}, 2);
 
   h.reset();
 
@@ -3955,6 +3962,172 @@ int main(int argc, char** argv) {
       CHECK(!g.empty() && st(g) == AECP_SUCCESS && g.size() >= 42
             && (((unsigned)g[40] << 8) | g[41]) == 0x0000,
             "W16d: GET_CONFIGURATION reads the value SET_CONFIGURATION stored");
+    }
+
+    // ---- W17: the state the commands exist to change ---------------------
+    // A review of the first cut of this section found that DELETING the store
+    // write from START/STOP left every check green: the tests asserted status
+    // codes and nothing else, so the commands were provably "implemented" and
+    // provably did nothing. These checks read the bit back.
+    {
+      // start sink 0, and prove sink 1 is untouched
+      auto f = ask(AEM_START_STREAMING, ti(0x0005, 0), 0x76A0);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS, "W17: START sink 0 SUCCESS");
+      CHECK((h.d->dbg_started_o & 1u) == 1u,
+            "W17b: sink 0's started bit is SET after START_STREAMING");
+      CHECK(((h.d->dbg_started_o >> 1) & 1u) == 0u,
+            "W17c: starting sink 0 did NOT start sink 1");
+
+      // ...now sink 1, and prove sink 0 survives
+      f = ask(AEM_START_STREAMING, ti(0x0005, 1), 0x76A1);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS, "W17d: START sink 1 SUCCESS");
+      CHECK(((h.d->dbg_started_o >> 1) & 1u) == 1u,
+            "W17e: sink 1's started bit is SET");
+      CHECK((h.d->dbg_started_o & 1u) == 1u,
+            "W17f: starting sink 1 did NOT stop sink 0");
+
+      // STOP has to actually stop, and only its own sink
+      f = ask(AEM_STOP_STREAMING, ti(0x0005, 0), 0x76A2);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS, "W17g: STOP sink 0 SUCCESS");
+      CHECK((h.d->dbg_started_o & 1u) == 0u,
+            "W17h: sink 0's started bit is CLEAR after STOP_STREAMING");
+      CHECK(((h.d->dbg_started_o >> 1) & 1u) == 1u,
+            "W17i: stopping sink 0 did NOT stop sink 1");
+
+      f = ask(AEM_STOP_STREAMING, ti(0x0005, 1), 0x76A3);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS, "W17j: STOP sink 1 SUCCESS");
+      CHECK(h.d->dbg_started_o == 0, "W17k: both sinks stopped");
+    }
+
+    // ---- W18: SET_CONFIGURATION with a NON-ZERO index --------------------
+    // The first cut of this command never captured configuration_index at all
+    // — it stored and echoed 0 forever — and the tests could not see it
+    // because they only ever sent 0, which is simultaneously the request, the
+    // reset value and the correct answer. A no-op was indistinguishable from
+    // a correct implementation. Every check here uses a non-zero value.
+    {
+      // the image declares 2 configurations for this bench, so 1 is legal
+      std::vector<uint8_t> pl(4, 0);
+      putbe(&pl[2], 0x0001, 2);
+      auto f = ask(AEM_SET_CONFIGURATION, pl, 0x76A4);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 16,
+            "W18: SET_CONFIGURATION(1) is SUCCESS at cdl 16, got status %d",
+            st(f));
+      CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0001,
+            "W18b: the response echoes the index it was ASKED for, got %u",
+            f.size() >= 42 ? (((unsigned)f[40] << 8) | f[41]) : 999u);
+
+      // and the getter must read the store, not the static image
+      auto g = ask(AEM_GET_CONFIGURATION, {}, 0x76A5);
+      CHECK(!g.empty() && g.size() >= 42
+            && (((unsigned)g[40] << 8) | g[41]) == 0x0001,
+            "W18c: GET_CONFIGURATION reads 1 back — the round trip exists");
+
+      // out of range must NOT be a false success
+      std::vector<uint8_t> bad(4, 0);
+      putbe(&bad[2], 0xFFFF, 2);
+      f = ask(AEM_SET_CONFIGURATION, bad, 0x76A6);
+      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
+            "W18d: SET_CONFIGURATION(0xFFFF) is BAD_ARGUMENTS, got %d", st(f));
+      CHECK(cdl(f) == 16, "W18e: ...at cdl 16, got %d", cdl(f));
+      //! IEEE 7.4.7.1: "The response always contains the current value ... the
+      //! OLD value if it fails." Not the rejected one.
+      CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0001,
+            "W18f: a refusal echoes the CURRENT configuration (1), not the "
+            "rejected 0xFFFF — got %u",
+            f.size() >= 42 ? (((unsigned)f[40] << 8) | f[41]) : 999u);
+
+      // ...and the refusal changed nothing
+      g = ask(AEM_GET_CONFIGURATION, {}, 0x76A7);
+      CHECK(!g.empty() && g.size() >= 42
+            && (((unsigned)g[40] << 8) | g[41]) == 0x0001,
+            "W18g: the refused SET left the configuration at 1");
+
+      // put it back
+      std::vector<uint8_t> zero(4, 0);
+      ask(AEM_SET_CONFIGURATION, zero, 0x76A8);
+    }
+
+    // ---- W19: the lock outranks these commands too ------------------------
+    // Milan repeats in every SET clause that a locked PAAD "shall not accept a
+    // <CMD> command from a different controller", and IEEE 7.4.35.2/7.4.36.2
+    // put ENTITY_LOCKED ahead of the wrong-target refusal. Deleting CHECK_LOCK
+    // from either program left the first cut of this suite green.
+    {
+      std::vector<uint8_t> lk(16, 0);              // flags 0 = LOCK, ENTITY[0]
+      auto l = ask(0x0001, lk, 0x76B0);
+      CHECK(!l.empty() && st(l) == AECP_SUCCESS, "W19: the bench holds the lock");
+
+      //! a DIFFERENT controller now tries each command. `ask2` reuses the
+      //! transactor with a foreign controller_entity_id.
+      auto ask2 = [&](uint16_t op, const std::vector<uint8_t>& p, uint16_t sq) {
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR2_EID, sq, op, p));
+        return h.wait_any(h.q_aecp, 600);
+      };
+
+      auto f = ask2(AEM_START_STREAMING, ti(0x0005, 0), 0x76B1);
+      CHECK(!f.empty() && st(f) == AECP_ENTITY_LOCKED,
+            "W19b: START_STREAMING from a foreign controller is ENTITY_LOCKED,"
+            " got %d", st(f));
+      CHECK(cdl(f) == 16, "W19c: ...at cdl 16 (Figure 7-59), got %d", cdl(f));
+      CHECK((h.d->dbg_started_o & 1u) == 0u,
+            "W19d: ...and it did NOT start the stream");
+
+      f = ask2(AEM_STOP_STREAMING, ti(0x0005, 0), 0x76B2);
+      CHECK(!f.empty() && st(f) == AECP_ENTITY_LOCKED,
+            "W19e: STOP_STREAMING from a foreign controller is ENTITY_LOCKED");
+
+      //! the wrong-TARGET refusal must not outrank the lock: IEEE 7.4.35.2
+      //! puts ENTITY_LOCKED first, so a Stream Output from a foreign
+      //! controller is LOCKED, not NOT_SUPPORTED
+      f = ask2(AEM_START_STREAMING, ti(0x0006, 0), 0x76B3);
+      CHECK(!f.empty() && st(f) == AECP_ENTITY_LOCKED,
+            "W19f: the lock outranks the wrong-target refusal, got %d", st(f));
+
+      std::vector<uint8_t> pl(4, 0);
+      putbe(&pl[2], 0x0001, 2);
+      f = ask2(AEM_SET_CONFIGURATION, pl, 0x76B4);
+      CHECK(!f.empty() && st(f) == AECP_ENTITY_LOCKED,
+            "W19g: SET_CONFIGURATION from a foreign controller is "
+            "ENTITY_LOCKED, got %d", st(f));
+      auto g = ask(AEM_GET_CONFIGURATION, {}, 0x76B5);
+      CHECK(!g.empty() && g.size() >= 42
+            && (((unsigned)g[40] << 8) | g[41]) == 0x0000,
+            "W19h: ...and it did not change the configuration");
+
+      // release
+      std::vector<uint8_t> ul(16, 0);
+      putbe(&ul[2], 1, 2);                          // flags = UNLOCK
+      ask(0x0001, ul, 0x76B6);
+    }
+
+    // ---- W20: the miss and short-command paths are correctly SIZED --------
+    // Only NOT_IMPLEMENTED may answer under the response form's size. The
+    // first cut branched past the body builders on the miss path and emitted
+    // a bare 12-byte header for a NO_SUCH_DESCRIPTOR.
+    {
+      auto f = ask(AEM_START_STREAMING, ti(0x0005, 9), 0x76C0);
+      CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR,
+            "W20: a missing sink is NO_SUCH_DESCRIPTOR");
+      CHECK(cdl(f) == 16, "W20b: ...at cdl 16, not a bare header, got %d",
+            cdl(f));
+      CHECK(f.size() >= 42 && (((unsigned)f[38] << 8) | f[39]) == 0x0005,
+            "W20c: ...echoing the type it was asked about");
+
+      std::vector<uint8_t> shortpl(2, 0);
+      f = ask(AEM_START_STREAMING, shortpl, 0x76C1);
+      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
+            "W20d: a truncated START_STREAMING is BAD_ARGUMENTS");
+      CHECK(cdl(f) == 16, "W20e: ...at cdl 16, got %d", cdl(f));
+
+      f = ask(AEM_SET_CONFIGURATION, shortpl, 0x76C2);
+      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
+            "W20f: a truncated SET_CONFIGURATION is BAD_ARGUMENTS");
+      CHECK(cdl(f) == 16, "W20g: ...at cdl 16, got %d", cdl(f));
+
+      f = ask(AEM_STOP_STREAMING, ti(0x0006, 0), 0x76C3);
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 16,
+            "W20h: a Stream Output refusal is cdl 16 too");
     }
 
     // ---- W8: READ_DESCRIPTOR still intact after the whole section -------

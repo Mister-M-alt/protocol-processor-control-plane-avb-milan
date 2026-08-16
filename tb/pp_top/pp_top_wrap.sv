@@ -224,6 +224,11 @@ module pp_top_wrap (
     //! dispatch arm against a fiction.
     output logic        dbg_bound0_o,
     output logic        dbg_streaming0_o,
+    //! the started/stopped bits START and STOP_STREAMING write. Without a
+    //! read-back the commands are only status replies: a review of this suite
+    //! showed that DELETING the store write left every check green, because
+    //! nothing observed the state the commands exist to change.
+    output logic  [1:0] dbg_started_o,
     output logic        dbg_trc_wr_o,
     output logic        dbg_adp_evt_o,
     output logic        dbg_evt_tk_v_o,
@@ -435,6 +440,7 @@ module pp_top_wrap (
   assign dbg_evr_ack_o    = u_dut.evr_ack_w;
   assign dbg_bound0_o     = u_dut.bound_hold_r[0];
   assign dbg_streaming0_o = u_dut.aecp_streaming_w[0];
+  assign dbg_started_o    = u_dut.aecp_strm_started_o[1:0];
   assign dbg_trc_wr_o     = u_dut.trc_wr_valid_w;
   assign dbg_adp_evt_o    = u_dut.adp_evt_valid_w;
   assign dbg_evt_tk_v_o   = u_dut.lstn_evt_tk_valid_w;
