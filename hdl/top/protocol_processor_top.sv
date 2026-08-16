@@ -72,6 +72,12 @@ module protocol_processor_top
     parameter int unsigned N_STREAM_IN_P       = 8,
     //! P-N-STREAM-OUT (F01.5): sources / talker gates
     parameter int unsigned N_STREAM_OUT_P      = 8,
+    //! the rest of the shape the AECP dynamic-state store rows on: Milan
+    //! v1.2 keeps one setting per Audio Unit (§5.3.5.1), per Clock Domain
+    //! (§5.3.11.1) and per IDENTIFY CONTROL (§5.3.12)
+    parameter int unsigned N_AUDIO_UNIT_P      = 1,
+    parameter int unsigned N_CLK_DOMAIN_P      = 1,
+    parameter int unsigned N_CONTROL_P         = 1,
     //! P-RX-SLOTS x P-RX-SLOT-BYTES (F01.5)
     parameter int unsigned RX_SLOTS_P          = 4,
     parameter int unsigned RX_SLOT_BYTES_P     = 576,
@@ -534,6 +540,17 @@ module protocol_processor_top
     output logic [1:0]                   maap_state_o,       //! 0 INITIAL / 1 PROBE / 2 DEFEND
     output logic [7:0]                   maap_conflicts_o,   //! re-address events (saturating)
     output logic [7:0]                   maap_defends_o,     //! DEFEND frames sent (saturating)
+
+    //! ---- the AECP dynamic state a controller has SET (Milan §5.3.x) ----
+    //! The settings face. Each reads its reset default until a controller
+    //! writes it, so an integrator that leaves these unconnected behaves
+    //! exactly as it did before the store existed.
+    output logic [15:0]                  aecp_cur_config_o,   //! current_configuration
+    output logic  [7:0]                  aecp_identify_o,     //! IDENTIFY, 0 or 255
+    output logic [15:0]                  aecp_clk_src_index_o,//! clock_source_index
+    output logic [N_STREAM_IN_P-1:0]     aecp_strm_started_o, //! 1 = started
+    output logic [31:0]                  aecp_pt_offset_o,    //! presentation offset
+    output logic                         aecp_dyn_dirty_o,    //! a persisted field moved
 
     //! ---- observability ----
     output logic [31:0] dbg_now_ms_o           //! absolute ms timebase
@@ -2671,6 +2688,11 @@ module protocol_processor_top
       .IDX_ENTRIES_P       (DESC_IDX_ENTRIES_P),
       .NAME_ENTRIES_P      (DESC_NAME_ENTRIES_P),
       .MEM_TIMEOUT_CYC_P   (DESC_MEM_TMO_CYC_P),
+      .N_STREAM_IN_P       (N_STREAM_IN_P),
+      .N_STREAM_OUT_P      (N_STREAM_OUT_P),
+      .N_AUDIO_UNIT_P      (N_AUDIO_UNIT_P),
+      .N_CLK_DOMAIN_P      (N_CLK_DOMAIN_P),
+      .N_CONTROL_P         (N_CONTROL_P),
       .RX_SLOTS_P          (RX_SLOTS_P),
       .RX_SLOT_BYTES_P     (RX_SLOT_BYTES_P),
       .TX_STD_SLOTS_P      (TX_STD_SLOTS_P),
@@ -2787,7 +2809,13 @@ module protocol_processor_top
       .dbg_locate_miss_o  (aecp_dbg_miss_w),
       .dbg_resp_fault_o   (aecp_dbg_rfault_w),
       .dbg_resp_err_o     (aecp_dbg_rerr_w),
-      .dbg_resp_lane_o    (aecp_dbg_rlane_w)
+      .dbg_resp_lane_o    (aecp_dbg_rlane_w),
+      .dyn_cur_config_o   (aecp_cur_config_o),
+      .dyn_identify_o     (aecp_identify_o),
+      .dyn_clk_src_index_o(aecp_clk_src_index_o),
+      .dyn_strm_started_o (aecp_strm_started_o),
+      .dyn_pt_offset_o    (aecp_pt_offset_o),
+      .dyn_dirty_o        (aecp_dyn_dirty_o)
   );
 
   assign aecp_rxs_free_slot_w = aecp_eng_free_slot_w;

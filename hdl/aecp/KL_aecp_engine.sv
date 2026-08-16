@@ -274,6 +274,15 @@ module KL_aecp_engine
     parameter int unsigned IDX_ENTRIES_P     = 32,
     parameter int unsigned NAME_ENTRIES_P    = 16,
     parameter int unsigned MEM_TIMEOUT_CYC_P = 4096,
+    //! ---- the shape the dynamic-state store is sized from ---------------
+    //! Milan v1.2 makes one setting per Audio Unit, per Clock Domain, per
+    //! Stream Input and per Stream Output, so the store's row map is derived
+    //! from the elaborated shape rather than fixed (07 §3.2's shape law).
+    parameter int unsigned N_STREAM_IN_P     = 8,
+    parameter int unsigned N_STREAM_OUT_P    = 8,
+    parameter int unsigned N_AUDIO_UNIT_P    = 1,
+    parameter int unsigned N_CLK_DOMAIN_P    = 1,
+    parameter int unsigned N_CONTROL_P       = 1,
     //! RX/TX pool geometry (03 §2) — mirrors protocol_processor_top
     parameter int unsigned RX_SLOTS_P          = 4,
     parameter int unsigned RX_SLOT_BYTES_P     = 576,
@@ -477,7 +486,21 @@ module KL_aecp_engine
     output logic [15:0] dbg_locate_miss_o,   //! store: locates answered err
     output logic  [2:0] dbg_resp_fault_o,    //! response buffer: last fault code
     output logic [15:0] dbg_resp_err_o,      //! responses voided by that memory
-    output logic [15:0] dbg_resp_lane_o      //! response lanes written to memory
+    output logic [15:0] dbg_resp_lane_o,     //! response lanes written to memory
+
+    //! ---- the dynamic state a controller has SET (Milan §5.3.x) ---------
+    //! Published continuously so the fabric acts on a setting rather than
+    //! being told about it: the started bits gate the listener, the clock
+    //! source selects the media clock, the presentation offset feeds the
+    //! talker. Every one of them reads its reset default until a controller
+    //! writes it, so an integrator that ignores these ports sees exactly the
+    //! behaviour it had before the store existed.
+    output logic [15:0] dyn_cur_config_o,    //! ENTITY.current_configuration
+    output logic  [7:0] dyn_identify_o,      //! IDENTIFY value, 0 or 255
+    output logic [15:0] dyn_clk_src_index_o, //! CLOCK_DOMAIN[0] clock source
+    output logic [N_STREAM_IN_P-1:0] dyn_strm_started_o, //! 1 = started
+    output logic [31:0] dyn_pt_offset_o,     //! STREAM_OUTPUT[0] pres. offset
+    output logic        dyn_dirty_o          //! a persisted field was written
 );
 
   // ---- IEEE 1722.1-2021 AEM opcodes this block decodes --------------------
@@ -847,6 +870,42 @@ module KL_aecp_engine
   logic [63:0] st_wdata_w, st_rdata_w;
   logic  [7:0] st_wstrb_w;
   logic        st_ready_w, st_rvalid_w, st_err_w;
+
+  //! ---- the state port has TWO slaves now (06 §8) ------------------------
+  //! Regions 0x1 and 0x2 are the dynamic-state store's value and valid-flag
+  //! views; everything else — RGN_DATA 0x0, NBASE 0xC, NCFG 0xD, LEN 0xE,
+  //! LOCATE 0xF — is the descriptor store's. The select is combinational off
+  //! the address, and that is safe because the µCPU HOLDS a request until its
+  //! answer, so the address cannot move between request and response.
+  //!
+  //! `st_name_i` OUTRANKS the region: the name table is selected in any
+  //! region (07 §3.4), so a NAME_RD/NAME_WR always belongs to the descriptor
+  //! store even though its region nibble may read 0x1.
+  //!
+  //! The request is GATED rather than broadcast, because the descriptor
+  //! store's region decode treats every unmapped code as RGN_DATA — an
+  //! ungated dynamic-state read would come back as a descriptor-line read of
+  //! whatever lane the field selector happened to alias.
+  localparam logic [3:0] RGN_DYN_C  = 4'h1;
+  localparam logic [3:0] RGN_DYNV_C = 4'h2;
+
+  logic        dyn_sel_w;
+  logic        dyn_ready_w, dyn_rvalid_w;
+  logic [63:0] dyn_rdata_w;
+  logic        store_ready_w, store_rvalid_w, store_err_w;
+  logic [63:0] store_rdata_w;
+
+  assign dyn_sel_w = !st_name_w
+                     && ((st_addr_w[19:16] == RGN_DYN_C)
+                         || (st_addr_w[19:16] == RGN_DYNV_C));
+
+  assign st_ready_w  = dyn_sel_w ? dyn_ready_w  : store_ready_w;
+  assign st_rvalid_w = dyn_sel_w ? dyn_rvalid_w : store_rvalid_w;
+  assign st_rdata_w  = dyn_sel_w ? dyn_rdata_w  : store_rdata_w;
+  //! the dynamic store has no locate and therefore no miss: an out-of-range
+  //! index answers a CLEAR valid flag, not NO_SUCH_DESCRIPTOR, because
+  //! existence is the descriptor image's ruling and never a setting's
+  assign st_err_w    = dyn_sel_w ? 1'b0         : store_err_w;
   logic        gx_req_w, gx_valid_w;
   logic  [7:0] gx_sel_w;
   logic [63:0] gx_data_w;
@@ -919,16 +978,16 @@ module KL_aecp_engine
   ) u_store (
       .clk_i             (clk_i),
       .rst_n             (rst_n),
-      .st_req_i          (st_req_w),
+      .st_req_i          (st_req_w && !dyn_sel_w),
       .st_we_i           (st_we_w),
       .st_name_i         (st_name_w),
       .st_addr_i         (st_addr_w),
       .st_wdata_i        (st_wdata_w),
       .st_wstrb_i        (st_wstrb_w),
-      .st_ready_o        (st_ready_w),
-      .st_rvalid_o       (st_rvalid_w),
-      .st_rdata_o        (st_rdata_w),
-      .st_err_o          (st_err_w),
+      .st_ready_o        (store_ready_w),
+      .st_rvalid_o       (store_rvalid_w),
+      .st_rdata_o        (store_rdata_w),
+      .st_err_o          (store_err_w),
       .mem_req_valid_o   (mem_req_valid_o),
       .mem_req_ready_i   (mem_req_ready_i),
       .mem_req_addr_o    (mem_req_addr_o),
@@ -944,6 +1003,40 @@ module KL_aecp_engine
       .dbg_fetch_cnt_o   (store_fetch_nc_w),
       .dbg_ro_write_o    (store_rowr_nc_w),
       .dbg_desc_len_o    (store_dlen_nc_w)
+  );
+
+  //! ---- the dynamic-state store (Milan §5.3.5/.7/.8/.11/.12) -------------
+  //! Where every SET_* puts its argument and every GET_* looks first. The
+  //! descriptor index it rows on is `desc_ix_r`, the SAME registered walk
+  //! field that already addresses the counters, audio-map and Milan-info
+  //! faces — see the module banner for why the index cannot ride the address.
+  logic [15:0] dyn_writes_nc_w, dyn_oob_nc_w;
+
+  KL_aecp_dyn_state #(
+      .N_STREAM_IN_P  (N_STREAM_IN_P),
+      .N_STREAM_OUT_P (N_STREAM_OUT_P),
+      .N_AUDIO_UNIT_P (N_AUDIO_UNIT_P),
+      .N_CLK_DOMAIN_P (N_CLK_DOMAIN_P),
+      .N_CONTROL_P    (N_CONTROL_P)
+  ) u_dyn (
+      .clk_i           (clk_i),
+      .rst_n           (rst_n),
+      .st_req_i        (st_req_w && dyn_sel_w),
+      .st_we_i         (st_we_w),
+      .st_addr_i       (st_addr_w),
+      .st_wdata_i      (st_wdata_w),
+      .st_ready_o      (dyn_ready_w),
+      .st_rvalid_o     (dyn_rvalid_w),
+      .st_rdata_o      (dyn_rdata_w),
+      .desc_index_i    (desc_ix_r),
+      .cur_config_o    (dyn_cur_config_o),
+      .identify_o      (dyn_identify_o),
+      .clk_src_index_o (dyn_clk_src_index_o),
+      .strm_started_o  (dyn_strm_started_o),
+      .pt_offset_o     (dyn_pt_offset_o),
+      .dirty_o         (dyn_dirty_o),
+      .dbg_writes_o    (dyn_writes_nc_w),
+      .dbg_oob_o       (dyn_oob_nc_w)
   );
 
   logic [15:0] resp_burst_nc_w, resp_drop_nc_w;
