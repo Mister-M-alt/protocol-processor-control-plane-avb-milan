@@ -312,6 +312,15 @@ module pp_top_wrap (
       .aecp_rxs_slot_len_o   (aecp_slot_len_nc_w),
       .aecp_rxs_free_i       (1'b0),
       .aecp_rxs_free_slot_i  (2'd0),
+      //! Dynamic state is verified through AECP response traffic here. Keep
+      //! every unused publication explicit so newly added state cannot leave
+      //! a silent harness integration gap.
+      .aecp_cur_config_o     (),
+      .aecp_identify_o       (),
+      .aecp_clk_src_index_o  (),
+      .aecp_strm_started_o   (),
+      .aecp_pt_offset_o      (),
+      .aecp_dyn_dirty_o      (),
       .ctr_req_o             (ctr_req_o),
       .ctr_desc_type_o       (ctr_desc_type_o),
       .ctr_desc_index_o      (ctr_desc_index_o),

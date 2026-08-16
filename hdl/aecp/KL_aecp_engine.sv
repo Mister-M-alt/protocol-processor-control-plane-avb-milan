@@ -109,8 +109,8 @@
 //                the face never asked — the store, not the face, is the
 //                existence authority, exactly as it is for GET_AUDIO_MAP.
 //                And a descriptor_type this build keeps no counters for
-//                (anything outside STREAM_INPUT / AVB_INTERFACE /
-//                CLOCK_DOMAIN — ENTITY included, whose Table 7-150 has
+//                (anything outside STREAM_INPUT / STREAM_OUTPUT /
+//                AVB_INTERFACE / CLOCK_DOMAIN, ENTITY included, whose Table 7-150 has
 //                nothing but ENTITY_SPECIFIC bits) refuses NOT_SUPPORTED at
 //                the registered A_PLD-exit re-dispatch, command echoed. The
 //                integrator's wrong-object guard on the face stays as the
@@ -1789,8 +1789,9 @@ module KL_aecp_engine
             end
             //! GET_COUNTERS' type gate, at the same registered seam (the
             //! bench probe's second strictness rule): §7.4.42.2 admits five
-            //! target types and this build keeps counters for three -
-            //! STREAM_INPUT, AVB_INTERFACE, CLOCK_DOMAIN. Any other type is
+            //! target types and this build keeps counters for four:
+            //! STREAM_INPUT, STREAM_OUTPUT, AVB_INTERFACE, CLOCK_DOMAIN.
+            //! Any other type is
             //! Table 7-141's NOT_SUPPORTED ("the command is implemented but
             //! the target of the command is not supported") - carried in
             //! the FULL fixed body, because the reference stack reflects
@@ -1801,6 +1802,7 @@ module KL_aecp_engine
             //! E_GCTRSNS runs no gathers, so the ctr routing `ctrs_r`
             //! selects is never consulted on this arm.
             if (ctrs_r && (cfg_ix_r != DT_STREAM_INPUT_C)
+                && (cfg_ix_r != DT_STREAM_OUTPUT_C)
                 && (cfg_ix_r != DT_AVB_INTERFACE_C)
                 && (cfg_ix_r != DT_CLOCK_DOMAIN_C)) begin
               upc_r  <= UPC_GCTRSNS_C;

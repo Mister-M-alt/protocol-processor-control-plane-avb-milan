@@ -264,10 +264,11 @@ The harness plays the **integrator's counter store**, never the DUT's: it decide
 what a quadlet means and which of them exist, and the suite then demands the
 processor carry that answer onto the wire unchanged. Two masks on purpose —
 `0x00000FFF` for an AAF sink that keeps the tv-bit tallies, Milan v1.2 Table
-5.16's `0x00000F3F` for a CRF Media Clock Input that does not — so a processor
-that substituted a mask of its own would be caught rather than flattered. The
-store holds every beat for two cycles by default, because a face that answers in
-the same cycle never exercises the hold.
+5.16's `0x00000F3F` for a CRF Media Clock Input that does not, and Milan Table
+5.17's compact `0x0000001F` for a Stream Output. A processor that substituted a
+mask of its own would therefore be caught. The store holds every beat for two
+cycles by default, because a face that answers in the same cycle never exercises
+the hold.
 
 K1 demands the byte-exact 174-byte frame (Figure 7-67's block runs to byte 156,
 so the AECPDU is 160 and `control_data_length` 148 — a short one is what Hive
