@@ -3950,6 +3950,91 @@ int main(int argc, char** argv) {
             "W16d: GET_CONFIGURATION reads the value SET_CONFIGURATION stored");
     }
 
+    // ---- W17: the OTHER half of the predicate — a STREAMING OUTPUT -------
+    // Milan 5.3.7.3 makes a Stream Output "streaming" only when BOTH halves
+    // hold: this talker declares Advertise AND a downstream Listener has
+    // registered Ready (or Ready Failed) for it. W15/W16 graded the Stream
+    // Input half (bound). Without this section the `|| (|strm_streaming_i)`
+    // term of the reduction could be deleted outright and every check in
+    // this bench would still pass — half the gate, unverified.
+    //
+    // NOTHING IS FORCED. src 0 has been declaring Advertise since S10 opened
+    // the MAAP DA gate; the missing half arrives as a real inbound MSRP
+    // Listener attribute on the wire. Sink 0 is UNBOUND here (W16 unbound
+    // it), so a refusal below can only come from the output half.
+    {
+      const uint64_t SID_T0 = (OWN_MAC << 16) | 0x0000;
+
+      CHECK(h.d->dbg_bound0_o == 0,
+            "W17: no Stream Input is bound — the input half cannot be what "
+            "refuses below");
+      CHECK(((h.snap(13) >> 16) & 3) == 1,
+            "W17b: src 0 still declares Talker Advertise (S10's MAAP grant)");
+
+      // one half is not enough: Advertise alone is NOT streaming (5.3.7.3)
+      CHECK((h.snap(13) & 3) == 0,
+            "W17c: no Listener has registered yet, so lstn_reg_state[0] is 0");
+      CHECK(h.d->dbg_streaming0_o == 0,
+            "W17d: Advertise WITHOUT a registered Listener is not streaming "
+            "— both halves are required");
+      {
+        std::vector<uint8_t> pl(4, 0);
+        putbe(&pl[2], 0x0000, 2);
+        auto f = ask(AEM_SET_CONFIGURATION, pl, 0x769A);
+        CHECK(!f.empty() && st(f) == AECP_SUCCESS,
+              "W17e: ...and SET_CONFIGURATION is accepted in that state, got "
+              "status %d", st(f));
+      }
+
+      // now the second half arrives on the wire: a peer declares Listener
+      // Ready for the stream this talker advertises
+      h.sync_join();
+      Msg lsn{3, 8, true, {Vec{false, 1, fv_sid(SID_T0),
+                               {EV_JOININ}, {DECL_READY}}}};
+      h.feed(mrpdu_frame(true, T1_MAC, {lsn}));
+      h.run_ms(30);
+      CHECK((h.snap(13) & 3) == 2,
+            "W17f: the inbound Listener Ready registered, lstn_reg_state[0] "
+            "is READY, got %u", h.snap(13) & 3);
+      CHECK(h.d->dbg_streaming0_o == 1,
+            "W17g: Advertise AND a registered Listener — Stream Output 0 is "
+            "STREAMING per 5.3.7.3");
+
+      std::vector<uint8_t> pl(4, 0);
+      putbe(&pl[2], 0x0001, 2);
+      auto f = ask(AEM_SET_CONFIGURATION, pl, 0x769B);
+      CHECK(!f.empty() && st(f) == AECP_STREAM_IS_RUNNING,
+            "W17h: SET_CONFIGURATION refuses STREAM_IS_RUNNING while a "
+            "Stream Output is streaming, got status %d", st(f));
+      CHECK(cdl(f) == 16, "W17i: ...in the 4-byte response form, cdl %d",
+            cdl(f));
+      //! IEEE 7.4.7.1 again: the refusal carries the CURRENT configuration,
+      //! which W16 left at 0 — not the 1 that was just rejected.
+      CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0000,
+            "W17j: the refusal echoes the current configuration 0, not the "
+            "rejected 1 — got %u",
+            f.size() >= 42 ? (((unsigned)f[40] << 8) | f[41]) : 999u);
+
+      // and it LIFTS: the Listener leaves, the output stops streaming, the
+      // same command is accepted. A gate that never opens is as wrong as one
+      // that never closes.
+      h.sync_join();
+      Msg lv{3, 8, true, {Vec{false, 1, fv_sid(SID_T0),
+                              {EV_LV}, {DECL_READY}}}};
+      h.feed(mrpdu_frame(true, T1_MAC, {lv}));
+      h.run_ms(30);
+      CHECK(h.d->dbg_streaming0_o == 0,
+            "W17k: the Listener left — Stream Output 0 stops streaming");
+      auto g = ask(AEM_SET_CONFIGURATION, pl, 0x769C);
+      CHECK(!g.empty() && st(g) == AECP_SUCCESS,
+            "W17l: ...and SET_CONFIGURATION is accepted again, got status %d",
+            st(g));
+      // put the store back where W18 expects to find it
+      std::vector<uint8_t> z(4, 0);
+      putbe(&z[2], 0x0000, 2);
+      ask(AEM_SET_CONFIGURATION, z, 0x769D);
+    }
+
     // ---- W18: SET_CONFIGURATION with a NON-ZERO index --------------------
     // The first cut of this command never captured configuration_index at all
     // — it stored and echoed 0 forever — and the tests could not see it
@@ -4022,6 +4107,16 @@ int main(int argc, char** argv) {
       CHECK(!f.empty() && st(f) == AECP_ENTITY_LOCKED,
             "W19g: SET_CONFIGURATION from a foreign controller is "
             "ENTITY_LOCKED, got %d", st(f));
+      //! The refusal is still a SET_CONFIGURATION response, so 7.4.7.1 binds
+      //! it as much as it binds BAD_ARGUMENTS: full response size, carrying
+      //! the CURRENT value. Grading only the status byte let a refusal that
+      //! echoed the rejected index — or answered at command length — pass.
+      CHECK(cdl(f) == 16, "W19g2: ...at the full response cdl 16, got %d",
+            cdl(f));
+      CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0000,
+            "W19g3: ...echoing the CURRENT configuration 0, not the rejected "
+            "1 — got %u",
+            f.size() >= 42 ? (((unsigned)f[40] << 8) | f[41]) : 999u);
       auto g = ask(AEM_GET_CONFIGURATION, {}, 0x76B5);
       CHECK(!g.empty() && g.size() >= 42
             && (((unsigned)g[40] << 8) | g[41]) == 0x0000,
