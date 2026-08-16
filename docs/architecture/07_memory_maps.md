@@ -159,10 +159,12 @@ would only buy a port and the flops behind it. The failure it removes ("base poi
 at nothing") is replaced by a likelier one — *software has not loaded the image yet*,
 or loaded a truncated one — and uninitialised DRAM is not a recognisable zero. The
 image therefore opens with a **magic + layout-version + checksum header** and nothing
-is served until all three agree: every locate answers `st_err` → `NO_SUCH_DESCRIPTOR`
-→ a well-formed AECP response. A locate — or an RGN_NCFG read, the register
-READ_DESCRIPTOR range-checks before it ever locates — arriving while invalid
-TRIGGERS the header probe and stalls through it, answering from the walk's
+is served until all three agree. While the image is invalid, an RGN_NCFG read reports
+zero configurations, so `READ_DESCRIPTOR` returns `BAD_ARGUMENTS` before it locates.
+A command that starts with a direct locate instead receives `st_err` and returns
+`NO_SUCH_DESCRIPTOR`. Neither path can put descriptor bytes on the wire. A locate or
+an RGN_NCFG read arriving while invalid TRIGGERS the header probe and stalls through
+it, answering from the walk's
 outcome (heal BEFORE answer, the r49a/w3a silicon round: the old
 answer-then-re-arm order sacrificed the first wire command after every late
 image load). A late load therefore heals with no reset and no lost command;

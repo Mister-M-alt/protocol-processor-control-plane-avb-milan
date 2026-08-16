@@ -106,8 +106,9 @@ module protocol_processor_top
     //! the bitstream is built, so a runtime base would only buy a 32-bit port
     //! and the flops behind it. Software loads the image at DESC_BASE_P before
     //! entity_enable; if it has not (or loaded a truncated one), the store's
-    //! magic + version + checksum header check fails and every READ_DESCRIPTOR
-    //! answers NO_SUCH_DESCRIPTOR — never a garbage descriptor on the wire.
+    //! magic + version + checksum header check fails and reports zero
+    //! configurations. READ_DESCRIPTOR then answers BAD_ARGUMENTS before
+    //! locate, never a garbage descriptor on the wire.
     parameter logic [31:0] DESC_BASE_P         = 32'h2000_0000,
     //! on-chip line buffer for ONE located descriptor (07 §3.2 worst case)
     parameter int unsigned DESC_LINE_BYTES_P   = 576,
@@ -209,8 +210,9 @@ module protocol_processor_top
     //! know it is DDR3. ONE outstanding request, responses IN ORDER,
     //! `rsp_last` marks the final beat, and a beat carries its lowest byte
     //! address in bits [63:56] (1722.1 wire order). Leaving `req_ready` tied 0
-    //! is a LEGAL wiring: the store's watchdog degrades every locate to
-    //! NO_SUCH_DESCRIPTOR instead of hanging the µCPU.
+    //! is a LEGAL wiring: the store's watchdog degrades every direct locate to
+    //! NO_SUCH_DESCRIPTOR instead of hanging the µCPU. READ_DESCRIPTOR first
+    //! sees zero configurations and answers BAD_ARGUMENTS.
     output logic        desc_mem_req_valid_o,  //! request, held until ready
     input  wire         desc_mem_req_ready_i,  //! bridge accepts the request
     output logic [31:0] desc_mem_req_addr_o,   //! byte address, 8-byte aligned

@@ -44,7 +44,7 @@ Two things it deliberately does **not** do, and which you should not go looking 
 | Controller action | What this device answers |
 |---|---|
 | Discovery | the entity appears within one advertise cadence, with a monotonically rising `available_index` |
-| Reading the model | descriptors served out of the integrator's main memory. If the image was never loaded, **every** descriptor answers `NO_SUCH_DESCRIPTOR` — never a garbage descriptor |
+| Reading the model | descriptors served out of the integrator's main memory. If the image was never loaded, every `READ_DESCRIPTOR` answers `BAD_ARGUMENTS` because the store reports zero configurations, never a garbage descriptor |
 | An unimplemented command | `NOT_IMPLEMENTED` with the command **echoed back**, correctly sized. Never silence, never a malformed frame |
 | `IDENTIFY_NOTIFICATION` sent as a command | `BAD_ARGUMENTS` — the opcode-specific rule of IEEE 1722.1-2021 §7.4.39.2 beats the general fallback of §9.3.5.3.3 |
 | `ACQUIRE_ENTITY` | `NOT_SUPPORTED`. Milan §5.4.2.1 says acquisition shall never succeed |
@@ -256,7 +256,8 @@ silence. Recognising these four saves a lot of time.
 
 | On the wire | Means |
 |---|---|
-| `NO_SUCH_DESCRIPTOR` for everything | the descriptor image is missing, truncated or corrupt — snapshot word 34 bit 0 |
+| `BAD_ARGUMENTS` for every `READ_DESCRIPTOR` | the descriptor image is missing, truncated or corrupt; its zero configuration count fails before locate. Check snapshot word 34 bit 0 |
+| `NO_SUCH_DESCRIPTOR` from a direct-locate command | the image is invalid, or the loaded model does not contain that descriptor. Check snapshot word 34 bit 0 |
 | `ENTITY_MISBEHAVING`, 60 bytes | the response-memory bridge failed — snapshot words 35 and 36 |
 | `TALKER_DEST_MAC_FAILED` from PROBE_TX | this source has no allocated stream address, because the MAAP allocator in the fabric is absent or did not answer |
 | `NOT_IMPLEMENTED` with the command echoed | that opcode is genuinely not implemented yet. It is a correct answer, not a fault |

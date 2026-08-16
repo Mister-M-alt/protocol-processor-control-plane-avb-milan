@@ -283,7 +283,7 @@ response is never a torn mix of two states.
 | Command | Stream Input | Stream Output |
 |---|---|---|
 | SET_STREAM_INFO | `NOT_SUPPORTED` (params come from PROBE_TX_RESPONSE) | per IEEE §7.4.15 subset: **MSRP_ACC_LAT_VALID must be supported** → writes presentation-time offset (0..0x7FFFFFFF ns, else `BAD_ARGUMENTS`); **any unsupported sub-flag ⇒ whole command `NOT_SUPPORTED`**; `STREAM_IS_RUNNING` while streaming; success echoes the flag + value |
-| START/STOP_STREAMING | bound ∧ stopped → started (and inverse); no effect otherwise; persisted | `NOT_SUPPORTED` (a talker streams whenever reserved — Δ14) |
+| START/STOP_STREAMING | **not implemented today**: `NOT_IMPLEMENTED` echo. Required future behavior is bound and stopped to started (and inverse), with no effect otherwise, reconciled with the persisted ACMP binding record | **not implemented today**: `NOT_IMPLEMENTED` echo. Required future behavior is `NOT_SUPPORTED` because a talker streams whenever reserved (Δ14) |
 
 ### 6.4 Validation chains (order matters; first failure responds)
 
