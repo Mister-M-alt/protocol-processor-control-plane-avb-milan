@@ -332,6 +332,8 @@ static const uint16_t AEM_GET_SAMPLING_RATE = 0x0015;
 static const uint16_t AEM_GET_CLOCK_SOURCE = 0x0017;
 static const uint16_t AEM_SET_SAMPLING_RATE = 0x0014;
 static const uint16_t AEM_SET_CLOCK_SOURCE = 0x0016;
+static const uint16_t AEM_SET_CONTROL = 0x0018;
+static const uint16_t AEM_GET_CONTROL = 0x0019;
 static const uint16_t AEM_IDENTIFY_NOTIF  = 0x0026;
 static const uint16_t AEM_GET_COUNTERS    = 0x0029;
 enum { AECP_SUCCESS = 0, AECP_NOT_IMPLEMENTED = 1, AECP_NO_SUCH_DESCRIPTOR = 2,
@@ -424,6 +426,24 @@ static std::vector<uint8_t> audio_unit_descriptor(uint16_t ix,
   putbe(&d[142], 2, 2);                           // sampling_rates_count
   putbe(&d[144], 48000u, 4);
   putbe(&d[148], 96000u, 4);
+  return d;
+}
+static std::vector<uint8_t> control_descriptor(uint16_t ix) {
+  // IEEE 7.2.22 Table 7-28, the Milan "Identify" CONTROL (5.3.3.10). Only the
+  // locate has to hit for GET/SET_CONTROL: the VALUE is volatile state in the
+  // dynamic store, never the image (Milan 5.3.12), so nothing in these bytes
+  // is read by the command under test. control_type is the Identify UUID from
+  // IEEE Table 7-98.
+  std::vector<uint8_t> d(112, 0);
+  putbe(&d[0],  0x001A, 2);
+  putbe(&d[2],  ix, 2);
+  const char* nm = "Identify";
+  memcpy(&d[4], nm, strlen(nm));                  // object_name @4, 64 B
+  putbe(&d[68], 0xFFFF, 2);                       // localized_description
+  putbe(&d[80], 0x0000, 2);                       // CONTROL_LINEAR_UINT8
+  putbe(&d[82], 0x90E0F00000000001ull, 8);        // control_type = IDENTIFY
+  putbe(&d[94], 104, 2);                          // values_offset
+  putbe(&d[96], 1, 2);                            // number_of_values
   return d;
 }
 static std::vector<uint8_t> clock_domain_descriptor() {
@@ -1225,6 +1245,9 @@ int main(int argc, char** argv) {
     //! hardcoded answer would most plausibly be, so a program that invents
     //! the value instead of copying it out of the image fails section W.
     {CFGIX, 0x0002, 1, 152, 0, 152, 0},          // AUDIO_UNIT
+    //! GET_CONTROL / SET_CONTROL's target: Milan 5.3.3.10 makes the primary
+    //! IDENTIFY control exist in every configuration at the same index
+    {CFGIX, 0x001A, 1, 112, 0, 112, 0},          // CONTROL (Identify)
   };
   std::vector<uint8_t> desc_entity = entity_descriptor();
   std::vector<uint8_t> desc_clkdom = clock_domain_descriptor();
@@ -1239,7 +1262,8 @@ int main(int argc, char** argv) {
                         avb_interface_descriptor(0),
                         stream_port_descriptor(0x000F, 0, 8, 0),
                         stream_port_descriptor(0x000F, 1, 8, 8),
-                        audio_unit_descriptor(0, 96000u)},
+                        audio_unit_descriptor(0, 96000u),
+                        control_descriptor(0)},
                        {"PP Reference Entity", "Clock Domain 0"}, 1);
 
   h.reset();
@@ -3774,6 +3798,69 @@ int main(int argc, char** argv) {
         CHECK(got == 48000ul,
               "W11e: a refused SET changed the stored rate to %lu", got);
       }
+    }
+
+    // ---- W12: the IDENTIFY control (Milan 5.4.2.17/.18, 5.3.12) ---------
+    // The response body is FIVE bytes, not eight: IEEE 7.3.5.2 gives the
+    // Identify control one CONTROL_LINEAR_UINT8 value, so cdl is 17. Getting
+    // that wrong is the whole class of bug the 0x004A round was about.
+    {
+      auto g = ask(AEM_GET_CONTROL, ti(0x001A, 0), 0x7680);
+      CHECK(!g.empty() && st(g) == AECP_SUCCESS,
+            "W12: GET_CONTROL answered SUCCESS");
+      CHECK(cdl(g) == 17, "W12b: cdl is 17 (5 payload bytes), got %d", cdl(g));
+      CHECK(g.size() > 42 && g[42] == 0,
+            "W12c: Milan 5.3.12 makes the reset value 0, got %u",
+            g.size() > 42 ? (unsigned)g[42] : 999u);
+
+      // 255 = identifying (5.3.12), and the response carries what is now in
+      // force. A device that stored it but answered the old value would pass
+      // a naive echo check and fail a controller's read-back.
+      std::vector<uint8_t> pl(5, 0);
+      putbe(&pl[0], 0x001A, 2); putbe(&pl[2], 0, 2);
+      pl[4] = 255;
+      auto f = ask(AEM_SET_CONTROL, pl, 0x7681);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 17,
+            "W12d: SET_CONTROL answered SUCCESS at cdl 17");
+      CHECK(f.size() > 42 && f[42] == 255,
+            "W12e: the response carries the value it stored");
+
+      g = ask(AEM_GET_CONTROL, ti(0x001A, 0), 0x7682);
+      CHECK(g.size() > 42 && g[42] == 255,
+            "W12f: GET_CONTROL now reads 255, got %u",
+            g.size() > 42 ? (unsigned)g[42] : 999u);
+
+      // ...and back to 0
+      pl[4] = 0;
+      f = ask(AEM_SET_CONTROL, pl, 0x7683);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS,
+            "W12g: SET_CONTROL back to 0 accepted");
+      g = ask(AEM_GET_CONTROL, ti(0x001A, 0), 0x7684);
+      CHECK(g.size() > 42 && g[42] == 0, "W12h: ...and reads back 0");
+    }
+
+    // ---- W13: only 0 and 255 are legal ----------------------------------
+    // IEEE 7.3.5.2 gives the Identify control minimum 0, maximum 255 and STEP
+    // 255, so the step alone admits exactly two values; 7.4.25 makes anything
+    // else BAD_ARGUMENTS. 128 is the value a device that only range-checked
+    // min/max would wrongly accept.
+    {
+      std::vector<uint8_t> pl(5, 0);
+      putbe(&pl[0], 0x001A, 2); putbe(&pl[2], 0, 2);
+      pl[4] = 128;
+      auto f = ask(AEM_SET_CONTROL, pl, 0x7685);
+      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
+            "W13: SET_CONTROL 128 is BAD_ARGUMENTS (step 255)");
+      CHECK(cdl(f) == 17, "W13b: ...in the CONTROL body, cdl %d", cdl(f));
+
+      auto g = ask(AEM_GET_CONTROL, ti(0x001A, 0), 0x7686);
+      CHECK(g.size() > 42 && g[42] == 0,
+            "W13c: the refused SET did not change the value");
+
+      // a wrong descriptor type refuses NOT_SUPPORTED, still at cdl 17
+      f = ask(AEM_GET_CONTROL, ti(0x0002, 0), 0x7687);
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 17,
+            "W13d: GET_CONTROL on an AUDIO_UNIT is NOT_SUPPORTED at cdl 17");
     }
 
     // ---- W8: READ_DESCRIPTOR still intact after the whole section -------

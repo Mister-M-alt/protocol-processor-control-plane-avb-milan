@@ -563,6 +563,13 @@ module KL_aecp_engine
   //! CHECK_LOCK enforces at the top of each µprogram.
   localparam logic [15:0] OP_SET_SAMP_RATE_C   = 16'h0014;
   localparam logic [15:0] OP_SET_CLOCK_SRC_C   = 16'h0016;
+  //! §7.4.25/§7.4.26 — Milan §5.4.2.17/.18 scope both to the "Identify"
+  //! CONTROL, and §7.3.5.2 gives that control one CONTROL_LINEAR_UINT8 value,
+  //! so the response body is 5 bytes and the cdl 17 rather than the 20 the
+  //! rest of this family uses. Its refusals need their own shaped stubs.
+  localparam logic [15:0] OP_SET_CONTROL_C      = 16'h0018;
+  localparam logic [15:0] OP_GET_CONTROL_C      = 16'h0019;
+  localparam logic [15:0] DT_CONTROL_C          = 16'h001A;
   //! Table 7-1: the two descriptor types the audio-map µprograms serve -
   //! every other type keeps the NOT_IMPLEMENTED echo
   localparam logic [15:0] DT_STREAM_PORT_IN_C  = 16'h000E;
@@ -620,6 +627,11 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_TIZ4NS_C  = 11'd1224;  // E_TIZ4NS
   localparam logic [10:0] UPC_LOCKED4_C = 11'd1232;  // E_LOCKED4
   localparam logic [10:0] UPC_BADARG4_C = 11'd1240;  // E_BADARG4
+  localparam logic [10:0] UPC_GCTRL_C   = 11'd1248;  // E_GCTRL
+  localparam logic [10:0] UPC_SCTRL_C   = 11'd1280;  // E_SCTRL
+  localparam logic [10:0] UPC_LOCKED1_C = 11'd1312;  // E_LOCKED1
+  localparam logic [10:0] UPC_BADARG1_C = 11'd1320;  // E_BADARG1
+  localparam logic [10:0] UPC_NSUPP1_C  = 11'd1328;  // E_NSUPP1
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -687,6 +699,8 @@ module KL_aecp_engine
   logic        gclks_r;                  // ... a GET_CLOCK_SOURCE
   logic        ssrate_r;                 // ... a SET_SAMPLING_RATE
   logic        sclks_r;                  // ... a SET_CLOCK_SOURCE
+  logic        gctrl_r;                  // ... a GET_CONTROL
+  logic        sctrl_r;                  // ... a SET_CONTROL
   logic        setc_r;                   // ... any SET_* that carries a value
   //! the SET family's argument, walked out of @28..@35. Every settable field
   //! Milan v1.2 names fits in these eight bytes: a sampling rate is 4
@@ -792,7 +806,12 @@ module KL_aecp_engine
                     && (txn_w.opcode == OP_SET_SAMP_RATE_C);
   assign sclks_w  = (txn_w.protocol == PP_PROTO_AEM)
                     && (txn_w.opcode == OP_SET_CLOCK_SRC_C);
-  assign setc_w   = ssrate_w | sclks_w;
+  logic gctrl_w, sctrl_w;
+  assign gctrl_w  = (txn_w.protocol == PP_PROTO_AEM)
+                    && (txn_w.opcode == OP_GET_CONTROL_C);
+  assign sctrl_w  = (txn_w.protocol == PP_PROTO_AEM)
+                    && (txn_w.opcode == OP_SET_CONTROL_C);
+  assign setc_w   = ssrate_w | sclks_w | sctrl_w;
 
   //! ---- unsolicited job synthesis (06 §6.7) -------------------------------
   //! kind -> {command_type, µPC}. A kind whose µprogram has not landed maps
@@ -884,7 +903,7 @@ module KL_aecp_engine
   logic [63:0] opd2_w;
   logic tix_w;
   assign tix_w = ctrs_r | amap_r | gstri_r | gavb_r
-                 | gsfmt_r | gsrate_r | gclks_r | setc_r;
+                 | gsfmt_r | gsrate_r | gclks_r | setc_r | gctrl_r;
   assign opd0_w = tix_w       ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
                 : gasp_r      ? {16'd0, cfg_ix_r, DT_AVB_INTERFACE_C, 16'd0}
                 : lockc_r     ? {32'd0, cfg_ix_r, desc_ix_r}
@@ -901,6 +920,7 @@ module KL_aecp_engine
   //! here rather than in the µcode because the µISA has no shift.
   assign opd2_w = ssrate_r ? {32'd0, setval_r[63:32]}
                 : sclks_r  ? {48'd0, setval_r[63:48]}
+                : sctrl_r  ? {56'd0, setval_r[63:56]}
                            : setval_r;
 
   logic [63:0] opd0_r, opd1_r, opd2_r;
@@ -1492,6 +1512,8 @@ module KL_aecp_engine
       gclks_r      <= 1'b0;
       ssrate_r     <= 1'b0;
       sclks_r      <= 1'b0;
+      gctrl_r      <= 1'b0;
+      sctrl_r      <= 1'b0;
       setc_r       <= 1'b0;
       setval_r     <= 64'd0;
       opd2_r       <= 64'd0;
@@ -1543,6 +1565,8 @@ module KL_aecp_engine
               gclks_r    <= gclks_w;
               ssrate_r   <= ssrate_w;
               sclks_r    <= sclks_w;
+              gctrl_r    <= gctrl_w;
+              sctrl_r    <= sctrl_w;
               setc_r     <= setc_w;
               setval_r   <= 64'd0;
               lock_ent_ok_r <= 1'b1;
@@ -1606,6 +1630,8 @@ module KL_aecp_engine
             gclks_r    <= 1'b0;
             ssrate_r   <= 1'b0;
             sclks_r    <= 1'b0;
+            gctrl_r    <= 1'b0;
+            sctrl_r    <= 1'b0;
             setc_r     <= 1'b0;
             lock_ent_ok_r <= 1'b1;
             uns_r      <= 1'b1;
@@ -1799,6 +1825,23 @@ module KL_aecp_engine
               if (cmd_r.cdl < 11'd20)                 upc_r <= UPC_BADARG4_C;
               else if (cfg_ix_r != DT_CLOCK_DOMAIN_C) upc_r <= UPC_TIZ4NS_C;
               else                                    upc_r <= UPC_SCLKS_C;
+              echo_r <= 1'b0;
+            end
+            //! ---- the IDENTIFY pair (Milan §5.4.2.17/.18) ---------------
+            //! Both are scoped to a CONTROL descriptor and both answer in the
+            //! 5-byte §7.3.5.2 body, so their refusals use the cdl-17 stubs
+            //! rather than the cdl-20 ones the rest of the family shares.
+            //! SET_CONTROL's floor is cdl 17, the whole Figure 7-49 command.
+            if (gctrl_r) begin
+              if (cmd_r.cdl < 11'd16)            upc_r <= UPC_BADARG1_C;
+              else if (cfg_ix_r != DT_CONTROL_C) upc_r <= UPC_NSUPP1_C;
+              else                               upc_r <= UPC_GCTRL_C;
+              echo_r <= 1'b0;
+            end
+            if (sctrl_r) begin
+              if (cmd_r.cdl < 11'd17)            upc_r <= UPC_BADARG1_C;
+              else if (cfg_ix_r != DT_CONTROL_C) upc_r <= UPC_NSUPP1_C;
+              else                               upc_r <= UPC_SCTRL_C;
               echo_r <= 1'b0;
             end
             a_st_r <= A_DISP;

@@ -134,10 +134,20 @@ E_SCLKS   = 1184     # SET_CLOCK_SOURCE (Milan 5.4.2.15, IEEE 7.4.23)
 # checkResponsePayload is the reason. A zero-valued body is the same wire bytes
 # for GET_SAMPLING_RATE (rate 0) and GET_CLOCK_SOURCE (index 0 + reserved 0),
 # so ONE stub serves both and the engine grows two µPC arms, not five.
+E_GCTRL   = 1248     # GET_CONTROL (Milan 5.4.2.18, IEEE 7.4.26)
+E_SCTRL   = 1280     # SET_CONTROL (Milan 5.4.2.17, IEEE 7.4.25)
 E_TIZ8NS  = 1216     # {type, index} + 8 zero bytes, NOT_SUPPORTED
 E_TIZ4NS  = 1224     # {type, index} + 4 zero bytes, NOT_SUPPORTED
 E_LOCKED4 = 1232     # {type, index} + 4 zero bytes, ENTITY_LOCKED
 E_BADARG4 = 1240     # {type, index} + 4 zero bytes, BAD_ARGUMENTS
+# ...and the same two refusals in the CONTROL response FORM. A refusal has to
+# be the size of the response it refuses (only NOT_IMPLEMENTED may answer at
+# command length), and a Milan IDENTIFY control carries ONE value byte, so its
+# body is 5 and its cdl 17 where the others are 8 and 20.
+E_LOCKED1 = 1312     # {type, index} + 1 zero byte, ENTITY_LOCKED
+E_BADARG1 = 1320     # {type, index} + 1 zero byte, BAD_ARGUMENTS
+E_NSUPP1  = 1328     # {type, index} + 1 zero byte, NOT_SUPPORTED
+DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
 # KL_aecp_dyn_state.sv owns these; the address carries the FIELD and the
@@ -1239,6 +1249,103 @@ place(E_BADARG4, [
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=13, fmt=FMT_D),
     u('BUILD_FLD', ra=2, fmt=FMT_D),
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- GET_CONTROL (Milan §5.4.2.18, IEEE §7.4.26.2, Figure 7-49) -------------
+# "For the 'Identify' Control, the PAAD-AE shall implement the GET_CONTROL
+# command." Response: descriptor_type @24, descriptor_index @26, then the
+# control's values. A Milan IDENTIFY control is one CONTROL_LINEAR_UINT8
+# (IEEE §7.3.5.2), so V = 1, the payload is 5 and the cdl is 17.
+#
+# THE VALUE COMES FROM THE DYNAMIC STORE ALONE, with no image arm, and that is
+# the clause rather than a shortcut: Milan §5.3.12 makes the IDENTIFY value
+# VOLATILE with 0 ("not identifying") as its state after reset, and §5.3.4
+# lists it among the three things a power cycle clears. An unwritten row reads
+# exactly 0, so the store IS the reset default. (The image's copy sits at
+# CONTROL offset 108, which is mid-lane and unreachable to a µISA with no
+# shift — but even if it were reachable, reading it would be wrong the moment
+# SET_CONTROL moved the value.)
+place(E_GCTRL, [
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # existence is the image's
+    u('MOVE', rd=2, ra=0, imm=0),                # the miss arm's zero value
+    u('BR_STATUS', cnd=0, imm=E_GCTRL + 5),      # miss -> NO_SUCH_DESCRIPTOR
+    u('SET_STATUS', imm=ST_OK),
+    u('READ_ST', rd=2, imm=RGN_DYN + SEL_IDENT),
+    u('BUILD_HDR', ra=15, rb=13),                # E_GCTRL + 5
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_B),             # the value @28, ONE byte
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- SET_CONTROL (Milan §5.4.2.17, IEEE §7.4.25.1, Figure 7-49) -------------
+# "For the 'Identify' Control, the PAAD-AE shall implement the SET_CONTROL
+# command as specified in [ATDECC, Clause 7.4.25] and [ATDECC, Clause
+# 7.3.5.2]." Lock-protected like every SET.
+#
+# ONLY 0 AND 255 ARE LEGAL. §7.3.5.2 gives the Identify control minimum 0,
+# maximum 255 and STEP 255, so the step alone admits exactly two values, and
+# Milan §5.3.12 names them: 0 = not identifying, 255 = identifying. Anything
+# else is IEEE §7.4.25's out-of-range BAD_ARGUMENTS. The µISA has no
+# "not equal" branch, so the test is two equality compares that jump to the
+# accept and a fall-through that refuses — which also reads in the order the
+# clause is written.
+#
+# No NVM_MARK: §5.3.12 keeps this value volatile, so committing it to flash
+# would both violate the clause and burn erase cycles on a blinking front
+# panel.
+place(E_SCTRL, [
+    u('MOVE', rd=2, ra=0, imm=0),                # the refusal arms' zero body
+    u('CHECK_LOCK', ra=15, imm=E_LOCKED1),       # held by another controller?
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the CONTROL exist?
+    u('BR_STATUS', cnd=0, imm=E_SCTRL + 16),     # no -> NO_SUCH_DESCRIPTOR
+    u('COMPARE', ra=12, fmt=FMT_B, imm=0),       # value == 0 ?
+    u('BR_STATUS', cnd=2, imm=E_SCTRL + 9),
+    u('COMPARE', ra=12, fmt=FMT_B, imm=255),     # value == 255 ?
+    u('BR_STATUS', cnd=2, imm=E_SCTRL + 9),
+    u('BRANCH', imm=E_BADARG1),                  # neither: out of range
+    u('WRITE_ST', ra=12, fmt=FMT_B,              # E_SCTRL + 9: accept
+      imm=RGN_DYN + SEL_IDENT),
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=12, fmt=FMT_B),            # the value now in force @28
+    u('SEND_RESP'),
+    u('END'),
+    u('BUILD_HDR', ra=15, rb=13),                # E_SCTRL + 16: the miss arm
+    u('BUILD_FLD', ra=13, fmt=FMT_D),
+    u('BUILD_FLD', ra=2, fmt=FMT_B),
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- the CONTROL-shaped refusals (cdl 17) -----------------------------------
+place(E_LOCKED1, [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('SET_STATUS', imm=ST_LOCKED),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),
+    u('BUILD_FLD', ra=2, fmt=FMT_B),
+    u('SEND_RESP'),
+    u('END'),
+])
+place(E_BADARG1, [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('SET_STATUS', imm=ST_BADARG),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),
+    u('BUILD_FLD', ra=2, fmt=FMT_B),
+    u('SEND_RESP'),
+    u('END'),
+])
+place(E_NSUPP1, [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('SET_STATUS', imm=ST_NSUPP),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),
+    u('BUILD_FLD', ra=2, fmt=FMT_B),
     u('SEND_RESP'),
     u('END'),
 ])
