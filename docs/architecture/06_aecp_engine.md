@@ -338,11 +338,10 @@ descriptor_index the image lacks refuses Table 7-141's NO_SUCH_DESCRIPTOR ("A
 descriptor with the descriptor_type and descriptor_index specified does not exist")
 carrying the fixed Figure 7-67 body all-zero, with the counters face never
 consulted; and a descriptor_type outside the supported set {STREAM_INPUT,
-AVB_INTERFACE, CLOCK_DOMAIN} refuses NOT_SUPPORTED ("the command is implemented
+STREAM_OUTPUT, AVB_INTERFACE, CLOCK_DOMAIN} refuses NOT_SUPPORTED ("the command is implemented
 but the target of the command is not supported"), off the registered A_PLD-exit
-re-dispatch. ENTITY (Table 7-150: nothing but ENTITY_SPECIFIC bits) and
-STREAM_OUTPUT (this build keeps no output counters — recorded) both land on that
-arm. The integrator's wrong-object guard on the face stays as the second line of
+re-dispatch. ENTITY (Table 7-150: nothing but ENTITY_SPECIFIC bits) lands on
+that arm. The integrator's wrong-object guard on the face stays as the second line of
 defense. §7.4.42 defines no separate error form, so every status carries the
 fixed 160-byte response — **including NOT_SUPPORTED** (the r49a bench round): the
 reference stack reflects ONLY NOT_IMPLEMENTED at command length ("If status is
@@ -389,8 +388,8 @@ Counters are 32-bit wrapping; interval-latched events sample at `T-CTR-OBSERVE`;
 | | TIMESTAMP_UNCERTAIN | **0x08** (Δ9) | resets on stream start |
 | | FRAMES_TX | **0x10** (Δ9) | resets on stream start |
 
-Any counter update arms the per-descriptor GET_COUNTERS notification, rate-limited per
-descriptor by `T-CTR-NOTIF`.
+The integrator exposes per-descriptor counter-update pulses. Connecting those
+pulses to the rate-limited `T-CTR-NOTIF` scheduler is tracked separately.
 
 **Who decides the mask.** The masks above are what a *complete* PAAD-AE owes;
 what a given build may claim is what its fabric measures, and the engine carries
@@ -705,11 +704,25 @@ single-source command model ([09 §1](09_verification.md)).
 
 | Opcode | Answer |
 |---|---|
+| 0x0000 ACQUIRE_ENTITY | Milan refusal: `NOT_SUPPORTED`, owner zero, and the full command response form |
+| 0x0001 LOCK_ENTITY | real lock, unlock, owner query, keep-alive, and expiry behavior |
+| 0x0002 ENTITY_AVAILABLE | real flags and current owner state |
 | 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor; `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
-| 0x0029 GET_COUNTERS | real: SUCCESS + `descriptor_type`/`descriptor_index`/`counters_valid` + all 32 quadlets (payload 136, cdl 148), the values coming from the integrator's counter face; `BAD_ARGUMENTS` on a command short of §7.4.42.1's four bytes |
-| 0x002B GET_AUDIO_MAP | real, **STREAM_PORT_INPUT only**: SUCCESS + the §7.4.44.2 fixed part + 8-byte records (payload 12 + 8·M, cdl 24 + 8·M), geometry and records from the integrator's audio-map face; `BAD_ARGUMENTS` on `map_index` ≥ `number_of_maps` (§7.4.44.1) or a command short of §7.4.44.1's eight bytes; `NO_SUCH_DESCRIPTOR` where the descriptor store misses the locate; any other descriptor_type keeps the NOT_IMPLEMENTED echo - the recorded STREAM_PORT_OUTPUT gap |
-| 0x0026 IDENTIFY_NOTIFICATION | `BAD_ARGUMENTS` (§7.4.39.2 — the opcode-specific rule over §9.3.5.3.3) |
-| MVU 0x0000 GET_MILAN_INFO | real: SUCCESS + the Figure 5.4 body — `protocol_version` 1, `features_flags` 0, `certification_version` 0 (§6.9 and the honesty note below); AECPDU 44 B, cdl 32 |
+| 0x0006 SET_CONFIGURATION | real lock-protected update, with `STREAM_IS_RUNNING` while any Stream Input is bound or Stream Output is streaming |
+| 0x0007 GET_CONFIGURATION | real current configuration read |
+| 0x0009 GET_STREAM_FORMAT | real current Stream Input or Stream Output format read |
+| 0x000F GET_STREAM_INFO | real Milan Figure 5.1 response from the integrator state face |
+| 0x0014 / 0x0015 SET/GET_SAMPLING_RATE | real lock-protected per-Audio Unit dynamic state |
+| 0x0016 / 0x0017 SET/GET_CLOCK_SOURCE | real lock-protected per-Clock Domain dynamic state |
+| 0x0018 / 0x0019 SET/GET_CONTROL | real volatile Identify control with values 0 and 255 |
+| 0x0022 / 0x0023 START/STOP_STREAMING | real lock-protected Stream Input state; Stream Output targets refuse `NOT_SUPPORTED` |
+| 0x0024 / 0x0025 REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION | real bounded controller registry |
+| 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face |
+| 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |
+| 0x0029 GET_COUNTERS | real for STREAM_INPUT, STREAM_OUTPUT, AVB_INTERFACE and CLOCK_DOMAIN: SUCCESS + `descriptor_type`/`descriptor_index`/`counters_valid` + all 32 quadlets (payload 136, cdl 148), the values coming from the integrator's counter face; `BAD_ARGUMENTS` on a command short of §7.4.42.1's four bytes |
+| 0x002B GET_AUDIO_MAP | real for both Stream Port directions: SUCCESS + the §7.4.44.2 fixed part + 8-byte records (payload 12 + 8·M, cdl 24 + 8·M), geometry and records from the integrator's audio-map face; `BAD_ARGUMENTS` on `map_index` ≥ `number_of_maps` (§7.4.44.1) or a command short of §7.4.44.1's eight bytes; `NO_SUCH_DESCRIPTOR` where the descriptor store misses the locate |
+| 0x0026 IDENTIFY_NOTIFICATION | `BAD_ARGUMENTS`, using the opcode-specific §7.4.39.2 rule over §9.3.5.3.3 |
+| MVU 0x0000 GET_MILAN_INFO | real: SUCCESS + the Figure 5.4 body, `protocol_version` 1, `features_flags` 0, `certification_version` 0 (§6.9 and the honesty note below); AECPDU 44 B, cdl 32 |
 | everything else, all message types | `NOT_IMPLEMENTED` with the command **echoed** (F06.14 / §9.3.5.3.3) |
 
 **GET_COUNTERS keeps no counters, and that is the design.** The events Milan

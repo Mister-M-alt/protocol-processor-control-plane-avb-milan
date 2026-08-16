@@ -653,6 +653,7 @@ struct H {
   // under an unset bit would make the wire check pass for the wrong reason.
   static const uint32_t CTR_MASK_AAF = 0x00000FFFu;
   static const uint32_t CTR_MASK_CRF = 0x00000F3Fu;
+  static const uint32_t CTR_MASK_SOUT = 0x0000001Fu;
   int  ctr_hold = 2;          // cycles the store makes the engine wait
   bool ctr_stuck = false;     // a face that never answers at all
   int  ctr_hold_cur = 0;
@@ -664,9 +665,9 @@ struct H {
   //! the wrong quadlet
   std::vector<uint8_t> ctr_seq;
   static uint32_t ctr_mask(uint16_t ty, uint16_t ix) {
-    if (ty != 0x0005) return 0;              // only STREAM_INPUT is backed
-    if (ix == 0) return CTR_MASK_AAF;
-    if (ix == 1) return CTR_MASK_CRF;
+    if (ty == 0x0005 && ix == 0) return CTR_MASK_AAF;
+    if (ty == 0x0005 && ix == 1) return CTR_MASK_CRF;
+    if (ty == 0x0006 && ix <= 1) return CTR_MASK_SOUT;
     return 0;
   }
   static uint32_t ctr_value(uint16_t ty, uint16_t ix, uint8_t w) {
@@ -2514,7 +2515,7 @@ int main(int argc, char** argv) {
     // answer against the response form (la_avdecc checkResponsePayload;
     // the r49a probe's "Incorrect payload size" complaint was the old
     // command-sized echo here). The supported set stays exactly
-    // {STREAM_INPUT, AVB_INTERFACE, CLOCK_DOMAIN}.
+    // {STREAM_INPUT, STREAM_OUTPUT, AVB_INTERFACE, CLOCK_DOMAIN}.
     {
       got = cmd(AEM_GET_COUNTERS, ctr_pl(DT_ENTITY, 0), 0xD003);
       want = expect(11, AEM_GET_COUNTERS, 0xD003,
@@ -2526,15 +2527,22 @@ int main(int argc, char** argv) {
             "K4: the refusal still owes the fixed 160-byte AECPDU, got %zu B",
             got.size());
     }
-    // ...and STREAM_OUTPUT refuses the same way even though its DESCRIPTOR
-    // exists in the image: the gate is the supported-counter SET, not
-    // existence (this build keeps no output counters - recorded)
+    // ...and STREAM_OUTPUT is a supported target. Milan Table 5.17 compacts
+    // its five counters into quadlets 0..4, so the integrator's mask is 0x1F.
     {
-      got = cmd(AEM_GET_COUNTERS, ctr_pl(0x0006, 0), 0xD00B);
-      want = expect(11, AEM_GET_COUNTERS, 0xD00B, ctr_expect_pl(0x0006, 0));
-      CHECK(got == want,
-            "K4b: STREAM_OUTPUT refuses NOT_SUPPORTED, full body (recorded gap)");
-      if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+      for (uint16_t ix = 0; ix < 2; ix++) {
+        got = cmd(AEM_GET_COUNTERS, ctr_pl(0x0006, ix), 0xD00B + ix);
+        want = expect(AECP_SUCCESS, AEM_GET_COUNTERS, 0xD00B + ix,
+                      ctr_expect_pl(0x0006, ix));
+        CHECK(got == want,
+              "K4b: STREAM_OUTPUT %u carries its byte-exact block", ix);
+        if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+        CHECK(valid_mask_of(got) == H::CTR_MASK_SOUT,
+              "K4b: STREAM_OUTPUT %u mask 0x%08x, want 0x%08x",
+              ix, valid_mask_of(got), H::CTR_MASK_SOUT);
+        CHECK(got.size() >= 174 && got[46] == 0xC0 && got[62] == 0xC0,
+              "K4b: output %u keeps START and FRAMES_TX at quadlets 0 and 4", ix);
+      }
     }
     // ...while the OTHER two supported types keep their old answers - this
     // TB's face backs only STREAM_INPUT, so both come back SUCCESS with an
@@ -2565,6 +2573,17 @@ int main(int argc, char** argv) {
       if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
       CHECK(h.ctr_reads == reads0,
             "K4e: the face was asked about a nonexistent object");
+    }
+    {
+      uint64_t reads0 = h.ctr_reads;
+      got = cmd(AEM_GET_COUNTERS, ctr_pl(0x0006, 2), 0xD00F);
+      want = expect(AECP_NO_SUCH_DESCRIPTOR, AEM_GET_COUNTERS, 0xD00F,
+                    ctr_expect_pl(0x0006, 2));
+      CHECK(got == want,
+            "K4f: Stream Output 2 is NO_SUCH_DESCRIPTOR with the full body");
+      if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
+      CHECK(h.ctr_reads == reads0,
+            "K4f: the face was asked about a nonexistent Stream Output");
     }
 
     // ---- K5: a truncated GET_COUNTERS is BAD_ARGUMENTS -------------------
