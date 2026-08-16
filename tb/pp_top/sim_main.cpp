@@ -318,11 +318,22 @@ static bool frame_has(const std::vector<uint8_t>& f, bool msrp, int type,
 // "GET_COUNTERS 160 B, cdl 148"), so an AEM PDU of 24 + payload has
 // cdl = 12 + payload.
 static const uint16_t AEM_READ_DESCRIPTOR = 0x0004;
+//! the NOT_IMPLEMENTED probe. It used to be GET_SAMPLING_RATE, which stopped
+//! being unimplemented when Milan §5.4.2.14 landed; WRITE_DESCRIPTOR is the
+//! durable replacement, because the descriptor store is read-only at run time
+//! by construction (KL_aecp_desc_store: "A write to any region other than the
+//! name table is DROPPED") and Milan requires no such command. If a future
+//! round ever implements it, MOVE THIS PROBE - do not weaken the check.
+static const uint16_t AEM_WRITE_DESCRIPTOR = 0x0005;
+static const uint16_t AEM_ENTITY_AVAILABLE = 0x0002;
+static const uint16_t AEM_GET_CONFIGURATION = 0x0007;
+static const uint16_t AEM_GET_STREAM_FORMAT = 0x0009;
 static const uint16_t AEM_GET_SAMPLING_RATE = 0x0015;
+static const uint16_t AEM_GET_CLOCK_SOURCE = 0x0017;
 static const uint16_t AEM_IDENTIFY_NOTIF  = 0x0026;
 static const uint16_t AEM_GET_COUNTERS    = 0x0029;
 enum { AECP_SUCCESS = 0, AECP_NOT_IMPLEMENTED = 1, AECP_NO_SUCH_DESCRIPTOR = 2,
-       AECP_BAD_ARGUMENTS = 7 };
+       AECP_BAD_ARGUMENTS = 7, AECP_NOT_SUPPORTED = 11 };
 
 static std::vector<uint8_t> aecp_frame(uint64_t da, uint64_t sa,
                                        uint8_t msg_type, uint8_t status,
@@ -387,6 +398,30 @@ static std::vector<uint8_t> entity_descriptor() {
   memcpy(&d[244], sn, strlen(sn));
   putbe(&d[308], 1, 2);                           // configurations_count
   putbe(&d[310], CFGIX, 2);                       // current_configuration
+  return d;
+}
+static std::vector<uint8_t> audio_unit_descriptor(uint16_t ix,
+                                                  uint32_t rate) {
+  // §7.2.3 Table 7-5: the fixed part runs to 144, with current_sampling_rate
+  // at 136, sampling_rates_offset at 140 and sampling_rates_count at 142.
+  // That 136 is the offset GET_SAMPLING_RATE's COPY_BUF addresses, and it is
+  // a multiple of 8 — the field opens its lane, which is why it can be copied
+  // at all (a lane read would deliver it in bits [63:32], and the µISA has no
+  // shift). Two rates here, so 152 B total.
+  std::vector<uint8_t> d(152, 0);
+  putbe(&d[0],   0x0002, 2);                      // descriptor_type
+  putbe(&d[2],   ix, 2);                          // descriptor_index
+  const char* nm = "Audio Unit 0";
+  memcpy(&d[4], nm, strlen(nm));                  // object_name @4, 64 B
+  putbe(&d[68],  0xFFFF, 2);                      // localized_description
+  putbe(&d[70],  0x0000, 2);                      // clock_domain_index
+  putbe(&d[72],  1, 2); putbe(&d[74], 0, 2);      // stream input ports
+  putbe(&d[76],  1, 2); putbe(&d[78], 0, 2);      // stream output ports
+  putbe(&d[136], rate, 4);                        // current_sampling_rate
+  putbe(&d[140], 144, 2);                         // sampling_rates_offset
+  putbe(&d[142], 2, 2);                           // sampling_rates_count
+  putbe(&d[144], 48000u, 4);
+  putbe(&d[148], 96000u, 4);
   return d;
 }
 static std::vector<uint8_t> clock_domain_descriptor() {
@@ -1184,6 +1219,10 @@ int main(int argc, char** argv) {
     {CFGIX, 0x0006, 2, 140, 1, 144, 0},          // STREAM_OUTPUT x2
     {CFGIX, 0x0009, 1,  98, 1, 104, 0},          // AVB_INTERFACE
     {CFGIX, 0x000F, 2,  20, 1,  24, 0},          // STREAM_PORT_OUTPUT x2
+    //! GET_SAMPLING_RATE's target. The rate is 96000, NOT the 48000 a
+    //! hardcoded answer would most plausibly be, so a program that invents
+    //! the value instead of copying it out of the image fails section W.
+    {CFGIX, 0x0002, 1, 152, 0, 152, 0},          // AUDIO_UNIT
   };
   std::vector<uint8_t> desc_entity = entity_descriptor();
   std::vector<uint8_t> desc_clkdom = clock_domain_descriptor();
@@ -1197,7 +1236,8 @@ int main(int argc, char** argv) {
                         stream_descriptor(0x0006, 0), stream_descriptor(0x0006, 1),
                         avb_interface_descriptor(0),
                         stream_port_descriptor(0x000F, 0, 8, 0),
-                        stream_port_descriptor(0x000F, 1, 8, 8)},
+                        stream_port_descriptor(0x000F, 1, 8, 8),
+                        audio_unit_descriptor(0, 96000u)},
                        {"PP Reference Entity", "Clock Domain 0"}, 1);
 
   h.reset();
@@ -1729,8 +1769,8 @@ int main(int argc, char** argv) {
     // never silence, never a malformed frame
     std::vector<uint8_t> sr_pl(4, 0);
     putbe(&sr_pl[0], 0x0002, 2);                        // AUDIO_UNIT, index 0
-    got = cmd(AEM_GET_SAMPLING_RATE, sr_pl, 0x5555);
-    want = expect(AECP_NOT_IMPLEMENTED, AEM_GET_SAMPLING_RATE, 0x5555, sr_pl);
+    got = cmd(AEM_WRITE_DESCRIPTOR, sr_pl, 0x5555);
+    want = expect(AECP_NOT_IMPLEMENTED, AEM_WRITE_DESCRIPTOR, 0x5555, sr_pl);
     CHECK(!got.empty(), "A5: an unimplemented opcode answered with silence");
     CHECK(got == want, "A5: NOT_IMPLEMENTED echo is not byte-exact");
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
@@ -2247,9 +2287,9 @@ int main(int argc, char** argv) {
     rq0 = h.rm_reqs; rw0 = h.rm_writes;
     std::vector<uint8_t> sr_pl(4, 0);
     putbe(&sr_pl[0], 0x0002, 2);
-    got = cmd(AEM_GET_SAMPLING_RATE, sr_pl, 0xC003);
+    got = cmd(AEM_WRITE_DESCRIPTOR, sr_pl, 0xC003);
     CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_NOT_IMPLEMENTED, EID,
-                            CTLR_EID, 0xC003, AEM_GET_SAMPLING_RATE, sr_pl),
+                            CTLR_EID, 0xC003, AEM_WRITE_DESCRIPTOR, sr_pl),
           "B5: the echoed NOT_IMPLEMENTED response is not byte-exact");
     CHECK(h.rm_reqs == rq0,
           "B5: an echoed payload cost %llu response-memory read bursts",
@@ -3396,6 +3436,263 @@ int main(int argc, char** argv) {
       CHECK(!got2.empty() && ((got2[16] >> 3) & 0x1F) == 0
             && got2.size() == 38 + 4 + 312,
             "V7: READ_DESCRIPTOR intact after the gPTP paths");
+    }
+  }
+
+  // ==== W. the read-side command set ======================================
+  // ENTITY_AVAILABLE (Milan §5.4.2.3), GET_CONFIGURATION (§5.4.2.6),
+  // GET_STREAM_FORMAT (§5.4.2.8), GET_SAMPLING_RATE (§5.4.2.14) and
+  // GET_CLOCK_SOURCE (§5.4.2.16) — the five SHALLs that answered the
+  // NOT_IMPLEMENTED echo before this round, and five of the commands the
+  // Milan end-station test plan hard-gates (es-4.2, es-4.3, es-4.4, es-4.8,
+  // es-4.9). Every check is byte-exact against a payload this file builds
+  // from the IEEE figure, never from the DUT's own answer.
+  //
+  // THE FALSIFIERS MATTER MORE THAN THE HAPPY PATHS here, because four of
+  // these five commands could be faked by a program that emits a plausible
+  // constant. So: the sampling rate in the image is 96000 and not 48000; the
+  // stream format is the per-{type,index} value only the Milan-info face
+  // knows; and the configuration index and clock source index are each read
+  // twice with the IMAGE PATCHED IN BETWEEN, so a constant cannot survive.
+  {
+    h.q_aecp.clear();
+    auto st = [](const std::vector<uint8_t>& f) {
+      return f.empty() ? 0xFF : ((f[16] >> 3) & 0x1F);
+    };
+    //! the RESPONSE SIZE has to be read off control_data_length, never off
+    //! the frame: every payload in this section is under the 60-octet
+    //! Ethernet minimum, so all five commands pad to exactly 60 B on the wire
+    //! and a frame-length check would pass on any of them
+    auto cdl = [](const std::vector<uint8_t>& f) {
+      return f.size() < 18 ? -1
+                           : int(((f[16] & 0x07) << 8) | f[17]);
+    };
+    auto ask = [&](uint16_t op, const std::vector<uint8_t>& pl, uint16_t seq) {
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, seq, op, pl));
+      return h.wait_any(h.q_aecp, 600);
+    };
+    auto ti = [](uint16_t ty, uint16_t ix) {
+      std::vector<uint8_t> p(4, 0);
+      putbe(&p[0], ty, 2); putbe(&p[2], ix, 2);
+      return p;
+    };
+
+    // ---- W1: ENTITY_AVAILABLE, unlocked (§7.4.3.2, Figure 7-29) ---------
+    // payload 20 -> cdl 32. Both controller-id fields zero: this entity can
+    // never be acquired (Milan Δ7), and section L left it unlocked.
+    {
+      auto f = ask(AEM_ENTITY_AVAILABLE, {}, 0x7601);
+      std::vector<uint8_t> body(20, 0);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x7601, AEM_ENTITY_AVAILABLE, body);
+      CHECK(!f.empty() && f == want,
+            "W1: ENTITY_AVAILABLE byte-exact, flags 0, both ids 0");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+    }
+
+    // ---- W2: ENTITY_AVAILABLE reports the lock (Table 7-144) ------------
+    // ENTITY_LOCKED is 0x00000002 — Table 7-144 numbers its bits with 0 = MSB,
+    // so its "Bit 30" is the second-least-significant bit. The holder eid is
+    // read off the registry face with rgy_state = 1, which is a query and not
+    // an operation: the lock must still be held afterwards.
+    {
+      std::vector<uint8_t> lk(16, 0);                 // flags 0 = LOCK
+      putbe(&lk[12], 0x0000, 2); putbe(&lk[14], 0, 2);   // ENTITY[0]
+      auto l = ask(0x0001, lk, 0x7602);
+      CHECK(!l.empty() && st(l) == AECP_SUCCESS, "W2: LOCK_ENTITY granted");
+
+      auto f = ask(AEM_ENTITY_AVAILABLE, {}, 0x7603);
+      std::vector<uint8_t> body(20, 0);
+      putbe(&body[0], 0x00000002u, 4);                // ENTITY_LOCKED
+      putbe(&body[12], CTLR_EID, 8);                  // locked_controller_id
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x7603, AEM_ENTITY_AVAILABLE, body);
+      CHECK(!f.empty() && f == want,
+            "W2b: ENTITY_AVAILABLE carries ENTITY_LOCKED + the holder eid");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // the query must not have released it: a LOCK from the holder re-arms
+      // and still answers SUCCESS, and the UNLOCK below is what clears it
+      std::vector<uint8_t> ul(16, 0);
+      putbe(&ul[2], 1, 2);                            // flags = UNLOCK
+      auto u = ask(0x0001, ul, 0x7604);
+      CHECK(!u.empty() && st(u) == AECP_SUCCESS, "W2c: UNLOCK accepted");
+
+      f = ask(AEM_ENTITY_AVAILABLE, {}, 0x7605);
+      CHECK(!f.empty() && cdl(f) == 32
+            && f[38] == 0 && f[39] == 0 && f[40] == 0 && f[41] == 0,
+            "W2d: after UNLOCK the flags are clear again");
+    }
+
+    // ---- W3: GET_CONFIGURATION (§7.4.8.2, Figure 7-33) ------------------
+    // reserved @24 + configuration_index @26, payload 4 -> cdl 16. The value
+    // is the ENTITY descriptor's current_configuration at offset 310, read
+    // through the same store READ_DESCRIPTOR uses.
+    {
+      auto f = ask(AEM_GET_CONFIGURATION, {}, 0x7606);
+      std::vector<uint8_t> body(4, 0);
+      putbe(&body[2], CFGIX, 2);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x7606, AEM_GET_CONFIGURATION, body);
+      CHECK(!f.empty() && f == want, "W3: GET_CONFIGURATION byte-exact");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+    }
+
+    // ---- W3b: THE FALSIFIER — patch the image, the answer must follow ---
+    // CFGIX is zero, so W3 alone cannot tell a real read from a hardcoded
+    // zero. Poke current_configuration in the DRAM model and ask again: the
+    // store re-fetches per locate, so a program that reads answers 0x0007 and
+    // a program that invents still answers 0.
+    {
+      uint32_t ent_off = 0;                           // ENTITY body offset
+      for (auto& e : img_ents) if (e.type == 0x0000) ent_off = e.off;
+      CHECK(ent_off != 0, "W3b: the ENTITY entry was located in the image");
+      uint8_t save_hi = h.dram[ent_off + 310], save_lo = h.dram[ent_off + 311];
+      h.dram[ent_off + 310] = 0x00; h.dram[ent_off + 311] = 0x07;
+
+      auto f = ask(AEM_GET_CONFIGURATION, {}, 0x7607);
+      std::vector<uint8_t> body(4, 0);
+      putbe(&body[2], 0x0007, 2);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x7607, AEM_GET_CONFIGURATION, body);
+      CHECK(!f.empty() && f == want,
+            "W3b: GET_CONFIGURATION follows the image, it does not invent");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      h.dram[ent_off + 310] = save_hi; h.dram[ent_off + 311] = save_lo;
+    }
+
+    // ---- W4: GET_STREAM_FORMAT (§7.4.10.2, Figure 7-34) -----------------
+    // type @24, index @26, stream_format @28: payload 12 -> cdl 24. The value
+    // is the INTEGRATOR's (Milan-info face kind 0 selector 1), the same word
+    // GET_STREAM_INFO publishes — §7.4.10.2's "current stream format" is
+    // current after a bind adapts it, which no static image can know.
+    for (uint16_t ty : {uint16_t(0x0005), uint16_t(0x0006)}) {
+      for (uint16_t ix = 0; ix < 2; ++ix) {
+        auto f = ask(AEM_GET_STREAM_FORMAT, ti(ty, ix),
+                     uint16_t(0x7610 + (ty << 4) + ix));
+        std::vector<uint8_t> body(12, 0);
+        putbe(&body[0], ty, 2); putbe(&body[2], ix, 2);
+        putbe(&body[4], H::gsi_value(0, ty, ix, 1, 0), 8);
+        auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                               CTLR_EID, uint16_t(0x7610 + (ty << 4) + ix),
+                               AEM_GET_STREAM_FORMAT, body);
+        CHECK(!f.empty() && f == want,
+              "W4: GET_STREAM_FORMAT byte-exact for type %04x index %u",
+              ty, ix);
+        if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+      }
+    }
+
+    // ---- W4b: existence is the STORE's, not the face's ------------------
+    // The face answers zero for index 2+, but a zero format is a claim. The
+    // store has two of each, so index 2 is NO_SUCH_DESCRIPTOR — carried in
+    // the full 12-byte body, because only NOT_IMPLEMENTED may answer at
+    // command length.
+    {
+      auto f = ask(AEM_GET_STREAM_FORMAT, ti(0x0005, 2), 0x7620);
+      CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR,
+            "W4b: STREAM_INPUT[2] refuses NO_SUCH_DESCRIPTOR");
+      CHECK(cdl(f) == 12 + 12,
+            "W4b2: the refusal still carries the full 12-byte body, cdl %d",
+            cdl(f));
+    }
+
+    // ---- W4c: a wrong target is NOT_SUPPORTED in the full body ----------
+    {
+      auto f = ask(AEM_GET_STREAM_FORMAT, ti(0x0024, 0), 0x7621);
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED,
+            "W4c: GET_STREAM_FORMAT on CLOCK_DOMAIN refuses NOT_SUPPORTED");
+      CHECK(cdl(f) == 12 + 12,
+            "W4c2: ...in the full response body, cdl %d", cdl(f));
+      CHECK(f.size() > 41 && f[38] == 0x00 && f[39] == 0x24,
+            "W4c3: ...with the refused type echoed");
+    }
+
+    // ---- W5: GET_SAMPLING_RATE (§7.4.22.2, Figure 7-45) -----------------
+    // type @24, index @26, sampling_rate @28: payload 8 -> cdl 20. 96000 is
+    // in the image and 48000 is the value a hardcoded answer would pick.
+    {
+      auto f = ask(AEM_GET_SAMPLING_RATE, ti(0x0002, 0), 0x7630);
+      std::vector<uint8_t> body(8, 0);
+      putbe(&body[0], 0x0002, 2); putbe(&body[2], 0, 2);
+      putbe(&body[4], 96000u, 4);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x7630, AEM_GET_SAMPLING_RATE, body);
+      CHECK(!f.empty() && f == want,
+            "W5: GET_SAMPLING_RATE byte-exact, 96000 out of the image");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+    }
+
+    // ---- W5b: a missing unit and a wrong target -------------------------
+    {
+      auto f = ask(AEM_GET_SAMPLING_RATE, ti(0x0002, 1), 0x7631);
+      CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR && cdl(f) == 20,
+            "W5b: AUDIO_UNIT[1] refuses NO_SUCH_DESCRIPTOR in the full body");
+      f = ask(AEM_GET_SAMPLING_RATE, ti(0x0005, 0), 0x7632);
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 20,
+            "W5c: a STREAM_INPUT target refuses NOT_SUPPORTED, full body");
+    }
+
+    // ---- W6: GET_CLOCK_SOURCE (§7.4.24.2, Figure 7-47) ------------------
+    // type @24, index @26, clock_source_index @28, reserved @30: payload 8
+    // -> cdl 20. clock_source_index ENDS its 64-bit lane, so it is the one
+    // field of the three that a plain lane read delivers right-justified.
+    {
+      auto f = ask(AEM_GET_CLOCK_SOURCE, ti(0x0024, 0), 0x7640);
+      std::vector<uint8_t> body(8, 0);
+      putbe(&body[0], 0x0024, 2); putbe(&body[2], 0, 2);
+      putbe(&body[4], 0x0000, 2);                     // the image's value
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x7640, AEM_GET_CLOCK_SOURCE, body);
+      CHECK(!f.empty() && f == want, "W6: GET_CLOCK_SOURCE byte-exact");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+    }
+
+    // ---- W6b: THE FALSIFIER, again by patching the image ----------------
+    {
+      uint32_t cd_off = 0;
+      for (auto& e : img_ents) if (e.type == 0x0024) cd_off = e.off;
+      CHECK(cd_off != 0, "W6b: the CLOCK_DOMAIN entry was located");
+      uint8_t s_hi = h.dram[cd_off + 70], s_lo = h.dram[cd_off + 71];
+      h.dram[cd_off + 70] = 0x00; h.dram[cd_off + 71] = 0x02;
+
+      auto f = ask(AEM_GET_CLOCK_SOURCE, ti(0x0024, 0), 0x7641);
+      std::vector<uint8_t> body(8, 0);
+      putbe(&body[0], 0x0024, 2); putbe(&body[2], 0, 2);
+      putbe(&body[4], 0x0002, 2);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x7641, AEM_GET_CLOCK_SOURCE, body);
+      CHECK(!f.empty() && f == want,
+            "W6b: GET_CLOCK_SOURCE follows the image, it does not invent");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      h.dram[cd_off + 70] = s_hi; h.dram[cd_off + 71] = s_lo;
+    }
+
+    // ---- W7: the three {type, index} reads gate their length ------------
+    // §7.4.42.1's shape is 4 payload bytes, so cdl 16 is the whole command
+    // and anything shorter never reached descriptor_index. The two
+    // payload-less commands have NO such floor — §7.4.3.1 and §7.4.8.1 both
+    // say "the command_specific_data field is zero length", so cdl 12 is
+    // correct for them and must not be refused.
+    {
+      std::vector<uint8_t> shortpl(2, 0);
+      for (uint16_t op : {AEM_GET_STREAM_FORMAT, AEM_GET_SAMPLING_RATE,
+                          AEM_GET_CLOCK_SOURCE}) {
+        auto f = ask(op, shortpl, uint16_t(0x7650 + op));
+        CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
+              "W7: a truncated %04x answers BAD_ARGUMENTS", op);
+      }
+    }
+
+    // ---- W8: READ_DESCRIPTOR still intact after the whole section -------
+    {
+      std::vector<uint8_t> rd(8, 0);
+      putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2);
+      auto f = ask(AEM_READ_DESCRIPTOR, rd, 0x7660);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 12 + 4 + 312,
+            "W8: READ_DESCRIPTOR intact after the read-side set");
     }
   }
 

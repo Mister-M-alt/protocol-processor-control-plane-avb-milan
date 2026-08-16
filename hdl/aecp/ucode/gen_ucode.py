@@ -111,11 +111,54 @@ E_GAVB    = 944      # GET_AVB_INFO (IEEE 7.4.40, Milan 5.4.2.23)
 E_GASP    = 976      # GET_AS_PATH (IEEE 7.4.41, Milan 5.4.2.24)
 E_GAMAPO  = 996      # GET_AUDIO_MAP on a Stream Port OUTPUT (Milan 5.4.2.26)
 E_GCTRSNS = 796      # GET_COUNTERS on a type with no counters: NOT_SUPPORTED
+# --- the read-side command set (Milan 5.4.2.3/.6/.8/.14/.16) -----------------
+# Words 998..2047 were one contiguous free run; these five take the front of
+# it on 16-word boundaries so a program can grow by a few words without
+# renumbering its neighbours.
+E_EAVL    = 1008     # ENTITY_AVAILABLE (Milan 5.4.2.3, IEEE 7.4.3)
+E_GCFG    = 1024     # GET_CONFIGURATION (Milan 5.4.2.6, IEEE 7.4.8)
+E_GSFMT   = 1040     # GET_STREAM_FORMAT (Milan 5.4.2.8, IEEE 7.4.10)
+E_GSRATE  = 1056     # GET_SAMPLING_RATE (Milan 5.4.2.14, IEEE 7.4.22)
+E_GCLKS   = 1072     # GET_CLOCK_SOURCE (Milan 5.4.2.16, IEEE 7.4.24)
+# ...and the two wrong-target refusals they share. Table 7-141's NOT_SUPPORTED
+# ("the command is implemented but the target of the command is not
+# supported") has to carry the FULL response body, not a command-sized echo -
+# the 0x0049/0x004A GET_COUNTERS round is the precedent and la_avdecc's
+# checkResponsePayload is the reason. A zero-valued body is the same wire bytes
+# for GET_SAMPLING_RATE (rate 0) and GET_CLOCK_SOURCE (index 0 + reserved 0),
+# so ONE stub serves both and the engine grows two µPC arms, not five.
+E_TIZ8NS  = 1088     # {type, index} + 8 zero bytes, NOT_SUPPORTED
+E_TIZ4NS  = 1096     # {type, index} + 4 zero bytes, NOT_SUPPORTED
 # 1722.1-2021 Table 7-1: the one descriptor type this program is dispatched
 # for (KL_aecp_engine refuses every other type back to the NOT_IMPLEMENTED
 # echo before dispatch, so the constant emitted at @24 is also a guarantee).
 DT_STREAM_PORT_INPUT = 0x000E
 DT_STREAM_PORT_OUTPUT = 0x000F
+
+# --- descriptor field offsets the read-side programs address -----------------
+# The state port's RGN_DATA reads a 64-bit LANE (st_addr[15:3] picks it) and
+# hands it over in WIRE order — byte n of the lane at bit [63-8n -: 8]. The
+# µISA has no shift, so a field is only reachable by BUILD_FLD if it ends the
+# lane (right-justified), and otherwise has to ride COPY_BUF, which starts at
+# the lane boundary. Each offset below is therefore quoted with the lane it
+# lives in and how it is taken. Verified against the image the store actually
+# serves — avdecc/gen_aem_store.py, not against a reading of the tables.
+#
+#   ENTITY.current_configuration      @310, lane 304..311, lane bytes 6..7
+#                                     -> [15:0], BUILD_FLD FMT_W
+#   AUDIO_UNIT.current_sampling_rate  @136, lane 136..143, lane bytes 0..3
+#                                     -> lane head, COPY_BUF 4 bytes
+#   CLOCK_DOMAIN.clock_source_index   @70,  lane 64..71,   lane bytes 6..7
+#                                     -> [15:0], BUILD_FLD FMT_W
+ENT_CURCFG_LANE = 304     # ENTITY: gen_aem_store.py d_entity, total 312 B
+AU_RATE_OFF = 136         # AUDIO_UNIT: `assert len(b) == 144` after the count
+CD_SRCIDX_LANE = 64       # CLOCK_DOMAIN: wb["CLOCK_SRC_IDX"] = base + 70
+
+# IEEE 1722.1-2021 Table 7-144 (ENTITY_AVAILABLE flags). The table numbers its
+# bits with 0 = MSB, so its "Bit 31" is the LSB — the same convention Table
+# 5.16's counters_valid mask 0x00000F3F already pins in this file.
+EA_ENTITY_ACQUIRED = 0x00000001   # never set: ACQUIRE_ENTITY is refused (Δ7)
+EA_ENTITY_LOCKED = 0x00000002
 
 # --- gather selectors the counters face answers (06 §6.6) --------------------
 # gx_sel is {cnd, imm[3:0]} for GATHER_EXT and {cnd, beat} for READ_CTRS, so the
@@ -887,6 +930,183 @@ place(E_GASP, [
 place(E_GAMAPO, [
     u('MOVE', rd=8, ra=0, imm=DT_STREAM_PORT_OUTPUT),
     u('BRANCH', imm=E_GAMAP + 1),
+])
+
+# =============================================================================
+# The read-side command set: five commands Milan v1.2 §5.4.2 makes a SHALL and
+# this engine answered with the NOT_IMPLEMENTED echo until now.
+#
+# All five are pure reads. None of them changes entity state, so none needs the
+# lock check, the NVM mark or a notification — which is exactly why they land
+# together and ahead of the SET family. Three read the descriptor image the
+# store already serves READ_DESCRIPTOR from, one reads the integrator's
+# GET_STREAM_INFO face, one reads the lock holder off the registry face.
+#
+# EXISTENCE IS THE STORE'S in every one of them, the rule GET_COUNTERS and
+# GET_AUDIO_MAP already follow: a {type, index} the image lacks answers
+# NO_SUCH_DESCRIPTOR carried in the FULL fixed response body, zero-valued.
+# la_avdecc's checkResponsePayload reflects only NOT_IMPLEMENTED at command
+# length and sizes every other status against the RESPONSE form, so a
+# short error body is an "Incorrect payload size" complaint, not an answer.
+# =============================================================================
+
+# --- ENTITY_AVAILABLE (Milan §5.4.2.3, IEEE §7.4.3.2, Figure 7-29) -----------
+# "The PAAD-AE shall implement the ENTITY_AVAILABLE command as specified in
+# [ATDECC, Clause 7.4.3]" — the liveness probe every controller leans on, and
+# the 2021 response is no longer payload-less: flags @24, acquired_controller_id
+# @28, locked_controller_id @36. Payload 20, cdl 32.
+#
+# acquired_controller_id is INVARIANTLY zero and ENTITY_ACQUIRED is invariantly
+# clear, because Milan Δ7 forbids this entity ever granting ACQUIRE_ENTITY
+# (§5.4.2.1, the E_NSUPPE arm). The lock half is real: the holder eid comes off
+# the registry face with rgy_state = 1, which KL_aecp_notify answers with the
+# holder and NO walk and NO op — so this command can never disturb the
+# registry it reads. A zero holder IS "not locked" (§7.4.2's own convention),
+# so one 64-bit COMPARE decides the flag.
+place(E_EAVL, [
+    u('MOVE', rd=2, ra=0, imm=0),                # acquired_controller_id = 0
+    u('MOVE', rd=3, ra=0, imm=0),                # flags = 0 (not locked)
+    u('GATHER_EXT', rd=1, cnd=0, imm=1),         # r1 = lock holder (sel[0]=1)
+    u('COMPARE', ra=1, fmt=FMT_Q, imm=0),        # z = holder is zero
+    u('BR_STATUS', cnd=2, imm=E_EAVL + 6),       # unlocked: keep flags 0
+    u('MOVE', rd=3, ra=0, imm=EA_ENTITY_LOCKED),
+    u('SET_STATUS', imm=ST_OK),                  # E_EAVL + 6
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=3, fmt=FMT_D),             # flags                  @24
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # acquired_controller_id @28
+    u('BUILD_FLD', ra=1, fmt=FMT_Q),             # locked_controller_id   @36
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- GET_CONFIGURATION (Milan §5.4.2.6, IEEE §7.4.8.2, Figure 7-33) ----------
+# Response payload: reserved @24, configuration_index @26. Payload 4, cdl 16.
+# §7.4.8.2: "set to descriptor_index of the current configuration. This is
+# equivalent to the current_configuration field in the ENTITY descriptor" — so
+# the ENTITY descriptor IS the source, read from the same image READ_DESCRIPTOR
+# serves rather than from a second copy that could disagree with it.
+#
+# The command carries no payload, so nothing walks and r14 would already be the
+# ENTITY[0] key by the A_IDLE zeroing. The key is built explicitly anyway: a
+# malformed command claiming a longer cdl DOES walk @24.. into cfg_ix_r, and a
+# locate must not follow whatever that put there.
+place(E_GCFG, [
+    u('MOVE', rd=2, ra=0, imm=0),                # ENTITY[0] key AND @24 reserved
+    u('MOVE', rd=1, ra=0, imm=0),                # configuration_index, miss = 0
+    u('DESC_ADDR', ra=2, imm=RGN_LOCATE),        # {index 0, type 0, cfg 0}
+    u('BR_STATUS', cnd=0, imm=E_GCFG + 6),       # no image: NO_SUCH_DESCRIPTOR
+    u('READ_ST', rd=1, imm=RGN_DATA + ENT_CURCFG_LANE),
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),                # E_GCFG + 6
+    u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved            @24
+    u('BUILD_FLD', ra=1, fmt=FMT_W),             # configuration_index @26
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- GET_STREAM_FORMAT (Milan §5.4.2.8, IEEE §7.4.10.2, Figure 7-34) ---------
+# Response payload: descriptor_type @24, descriptor_index @26, stream_format
+# @28. Payload 12, cdl 24.
+#
+# The VALUE is the integrator's, not the image's. §7.4.10.2 calls stream_format
+# "the current stream format", and current means after any SET_STREAM_FORMAT
+# and after the Milan §5.5 binding handshake has adapted a listener — the
+# image's current_format is only the power-on default. The gsi face already
+# publishes exactly this qword as GET_STREAM_INFO's sel 1, so this command
+# reuses the face rather than opening a second, divergeable path to the same
+# fact. EXISTENCE stays the store's, as in E_GSTRI.
+place(E_GSFMT, [
+    u('MOVE', rd=2, ra=0, imm=0),                # the miss arm's zero format
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=E_GSFMT + 5),      # miss: zero body, no gather
+    u('SET_STATUS', imm=ST_OK),
+    u('GATHER_EXT', rd=2, **GSI(1)),             # stream_format
+    u('BUILD_HDR', ra=15, rb=13),                # E_GSFMT + 5
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # stream_format        @28
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- GET_SAMPLING_RATE (Milan §5.4.2.14, IEEE §7.4.22.2, Figure 7-45) --------
+# "For each Audio Unit, the PAAD-AE shall implement the GET_SAMPLING_RATE
+# command". Response payload: descriptor_type @24, descriptor_index @26,
+# sampling_rate @28. Payload 8, cdl 20.
+#
+# current_sampling_rate opens its lane (offset 136, and the generator's own
+# `assert len(b) == 144` two fields later is what pins that), so it cannot be
+# taken right-justified into a register and rides COPY_BUF from the lane head
+# instead. That splits the emitter in two: the hit arm copies four bytes out of
+# the image, the miss arm emits four zero bytes, and both fall into one
+# SEND_RESP so the response form is identical either way.
+place(E_GSRATE, [
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
+    u('MOVE', rd=8, ra=0, imm=4),                # COPY_BUF length
+    u('MOVE', rd=2, ra=0, imm=0),                # the miss arm's zero rate
+    u('BR_STATUS', cnd=0, imm=E_GSRATE + 9),
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('COPY_BUF', ra=8, imm=RGN_DATA + AU_RATE_OFF),   # sampling_rate  @28
+    u('BRANCH', imm=E_GSRATE + 12),
+    u('BUILD_HDR', ra=15, rb=13),                # E_GSRATE + 9: the miss body
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_D),             # sampling_rate 0      @28
+    u('SEND_RESP'),                              # E_GSRATE + 12
+    u('END'),
+])
+
+# --- GET_CLOCK_SOURCE (Milan §5.4.2.16, IEEE §7.4.24.2, Figure 7-47) ---------
+# "For each Clock Domain, the PAAD-AE shall implement the GET_CLOCK_SOURCE
+# command". Response payload: descriptor_type @24, descriptor_index @26,
+# clock_source_index @28, reserved @30. Payload 8, cdl 20.
+#
+# clock_source_index ENDS its lane, so one READ_ST puts it right-justified and
+# no COPY_BUF is needed. Note what this answers today: the index is read from
+# the image, and until SET_CLOCK_SOURCE lands the image's 0 (INTERNAL) is also
+# the truth — milan_datapath pins clock_source_index at 0 for the life of the
+# build, so this is a report, not a claim that the field is settable.
+place(E_GCLKS, [
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
+    u('MOVE', rd=2, ra=0, imm=0),                # @30 reserved
+    u('MOVE', rd=1, ra=0, imm=0),                # the miss arm's zero index
+    u('BR_STATUS', cnd=0, imm=E_GCLKS + 6),
+    u('READ_ST', rd=1, imm=RGN_DATA + CD_SRCIDX_LANE),
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),                # E_GCLKS + 6
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=1, fmt=FMT_W),             # clock_source_index   @28
+    u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved             @30
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- the shared wrong-target refusals (Table 7-141 NOT_SUPPORTED) ------------
+# §7.4.10/§7.4.22/§7.4.24 each name the descriptor types their command acts on,
+# and this PAAD implements one of each: STREAM_INPUT/STREAM_OUTPUT for a
+# format, AUDIO_UNIT for a rate, CLOCK_DOMAIN for a clock source. A command
+# naming anything else is Table 7-141's NOT_SUPPORTED, and the engine's type
+# gate re-dispatches HERE rather than to the command-sized E_NSUPPE echo,
+# because only NOT_IMPLEMENTED may be command-sized (see the 0x004A round).
+# The type and index are echoed so a controller can tell WHICH target was
+# refused; every value is zero, because nothing exists to report.
+place(E_TIZ8NS, [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('SET_STATUS', imm=ST_NSUPP),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # 8 zero bytes         @28
+    u('SEND_RESP'),
+    u('END'),
+])
+place(E_TIZ4NS, [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('SET_STATUS', imm=ST_NSUPP),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_D),             # 4 zero bytes         @28
+    u('SEND_RESP'),
+    u('END'),
 ])
 
 # --- deterministic non-degenerate fill ---------------------------------------

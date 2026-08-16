@@ -518,6 +518,20 @@ module KL_aecp_engine
   localparam logic [15:0] OP_GET_AS_PATH_C     = 16'h0028;
   localparam logic [15:0] DT_AVB_INTERFACE_C   = 16'h0009;
   localparam logic [15:0] DT_CLOCK_DOMAIN_C    = 16'h0024;
+  //! §7.4.3/§7.4.8/§7.4.10/§7.4.22/§7.4.24 - the read-side set Milan §5.4.2.3,
+  //! .6, .8, .14 and .16 each make a SHALL. All five re-dispatch at the A_PLD
+  //! exit like everything above them; none may be added to the pop-time µPC
+  //! mux. ENTITY_AVAILABLE and GET_CONFIGURATION carry NO command payload
+  //! (§7.4.3.1, §7.4.8.1 both say "the command_specific_data field is zero
+  //! length"), so neither has a length gate and neither walks a byte; the
+  //! other three carry §7.4.42.1's {descriptor_type, descriptor_index} shape
+  //! and share its cdl-16 floor and its walk-capture arms.
+  localparam logic [15:0] OP_ENTITY_AVAIL_C    = 16'h0002;
+  localparam logic [15:0] OP_GET_CONFIG_C      = 16'h0007;
+  localparam logic [15:0] OP_GET_STREAM_FMT_C  = 16'h0009;
+  localparam logic [15:0] OP_GET_SAMP_RATE_C   = 16'h0015;
+  localparam logic [15:0] OP_GET_CLOCK_SRC_C   = 16'h0017;
+  localparam logic [15:0] DT_AUDIO_UNIT_C      = 16'h0002;
   //! Table 7-1: the two descriptor types the audio-map µprograms serve -
   //! every other type keeps the NOT_IMPLEMENTED echo
   localparam logic [15:0] DT_STREAM_PORT_IN_C  = 16'h000E;
@@ -560,6 +574,17 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_GASP_C    = 11'd976;   // E_GASP
   localparam logic [10:0] UPC_GAMAPO_C  = 11'd996;   // E_GAMAPO
   localparam logic [10:0] UPC_GCTRSNS_C = 11'd796;   // E_GCTRSNS
+  localparam logic [10:0] UPC_EAVL_C    = 11'd1008;  // E_EAVL
+  localparam logic [10:0] UPC_GCFG_C    = 11'd1024;  // E_GCFG
+  localparam logic [10:0] UPC_GSFMT_C   = 11'd1040;  // E_GSFMT
+  localparam logic [10:0] UPC_GSRATE_C  = 11'd1056;  // E_GSRATE
+  localparam logic [10:0] UPC_GCLKS_C   = 11'd1072;  // E_GCLKS
+  //! ...and the two shared full-body NOT_SUPPORTED refusals: a wrong target
+  //! may not answer at command length (only NOT_IMPLEMENTED may), and a
+  //! zero-valued body is the same wire bytes for a rate and for a
+  //! {clock_source_index, reserved} pair, so three type gates need two stubs
+  localparam logic [10:0] UPC_TIZ8NS_C  = 11'd1088;  // E_TIZ8NS
+  localparam logic [10:0] UPC_TIZ4NS_C  = 11'd1096;  // E_TIZ4NS
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -620,6 +645,11 @@ module KL_aecp_engine
   logic        gstri_r;                  // ... a GET_STREAM_INFO
   logic        gavb_r;                   // ... a GET_AVB_INFO
   logic        gasp_r;                   // ... a GET_AS_PATH
+  logic        eavl_r;                   // ... an ENTITY_AVAILABLE
+  logic        gcfg_r;                   // ... a GET_CONFIGURATION
+  logic        gsfmt_r;                  // ... a GET_STREAM_FORMAT
+  logic        gsrate_r;                 // ... a GET_SAMPLING_RATE
+  logic        gclks_r;                  // ... a GET_CLOCK_SOURCE
   logic        lock_ent_ok_r;            // its target walked as ENTITY[0]
   logic        uns_r;                    // engine-originated unsolicited job
   logic  [7:0] amap_rec_r;               // records handed out this command
@@ -698,6 +728,18 @@ module KL_aecp_engine
                    && (txn_w.opcode == OP_GET_AVB_INFO_C);
   assign gasp_w  = (txn_w.protocol == PP_PROTO_AEM)
                    && (txn_w.opcode == OP_GET_AS_PATH_C);
+  //! ...and the read-side set's five, on the same terms
+  logic eavl_w, gcfg_w, gsfmt_w, gsrate_w, gclks_w;
+  assign eavl_w   = (txn_w.protocol == PP_PROTO_AEM)
+                    && (txn_w.opcode == OP_ENTITY_AVAIL_C);
+  assign gcfg_w   = (txn_w.protocol == PP_PROTO_AEM)
+                    && (txn_w.opcode == OP_GET_CONFIG_C);
+  assign gsfmt_w  = (txn_w.protocol == PP_PROTO_AEM)
+                    && (txn_w.opcode == OP_GET_STREAM_FMT_C);
+  assign gsrate_w = (txn_w.protocol == PP_PROTO_AEM)
+                    && (txn_w.opcode == OP_GET_SAMP_RATE_C);
+  assign gclks_w  = (txn_w.protocol == PP_PROTO_AEM)
+                    && (txn_w.opcode == OP_GET_CLOCK_SRC_C);
 
   //! ---- unsolicited job synthesis (06 §6.7) -------------------------------
   //! kind -> {command_type, µPC}. A kind whose µprogram has not landed maps
@@ -780,16 +822,23 @@ module KL_aecp_engine
   //! the dispatch strobe (stage-0 pipeline: operand shaping must reach the
   //! µCPU's register file from flops, never as a live mux cone - the walk
   //! registers are settled a full state earlier, so the latch costs nothing)
-  assign opd0_w = (amap_r || gstri_r || gavb_r || ctrs_r)
-                            ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
-                : gasp_r    ? {16'd0, cfg_ix_r, DT_AVB_INTERFACE_C, 16'd0}
-                : lockc_r   ? {32'd0, cfg_ix_r, desc_ix_r}
-                            : {16'd0, desc_ix_r, desc_ty_r, cfg_ix_r};
-  assign opd1_w = amap_r               ? {32'd0, desc_ix_r, desc_ty_r}
-                : (gstri_r || gavb_r || ctrs_r)
-                                       ? {32'd0, cfg_ix_r, desc_ix_r}
-                : gasp_r               ? {48'd0, cfg_ix_r}
-                                       : {32'd0, desc_ty_r, desc_ix_r};
+  //! ONE registered term for the §7.4.42.1 {descriptor_type @24,
+  //! descriptor_index @26} command shape, which is now seven commands wide.
+  //! It selects the operand packing below AND the walk-capture arms, so a
+  //! command joining the shape is one name in one place rather than the same
+  //! OR chain re-spelled in four - and the chain is built once instead of
+  //! four times, which is the reason it exists and not just how it reads.
+  logic tix_w;
+  assign tix_w = ctrs_r | amap_r | gstri_r | gavb_r
+                 | gsfmt_r | gsrate_r | gclks_r;
+  assign opd0_w = tix_w       ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
+                : gasp_r      ? {16'd0, cfg_ix_r, DT_AVB_INTERFACE_C, 16'd0}
+                : lockc_r     ? {32'd0, cfg_ix_r, desc_ix_r}
+                              : {16'd0, desc_ix_r, desc_ty_r, cfg_ix_r};
+  assign opd1_w = amap_r                 ? {32'd0, desc_ix_r, desc_ty_r}
+                : tix_w                  ? {32'd0, cfg_ix_r, desc_ix_r}
+                : gasp_r                 ? {48'd0, cfg_ix_r}
+                                         : {32'd0, desc_ty_r, desc_ix_r};
 
   logic [63:0] opd0_r, opd1_r;
 
@@ -958,9 +1007,22 @@ module KL_aecp_engine
   //! ONE registered-one-hot "not the counters face" term: the routing depth
   //! stays constant as commands land, and the counters face can never see a
   //! spurious query while another command's gather is in flight
-  logic gx_alt_w, gsi_any_w;
-  assign gsi_any_w = gstri_r | gavb_r | gasp_r;
-  assign gx_alt_w  = amap_r | regun_r | lockc_r | gsi_any_w;
+  //! GET_STREAM_FORMAT joins the Milan-info face rather than opening a second
+  //! path to the same fact: §7.4.10.2's stream_format IS §7.4.16's, the face
+  //! already publishes it as kind 0 selector 1, and two readers of one
+  //! register can never disagree the way two registers can. ENTITY_AVAILABLE
+  //! joins the registry face for the lock holder (rgy_state 1 = read, no op).
+  //! GET_CONFIGURATION, GET_SAMPLING_RATE and GET_CLOCK_SOURCE read only the
+  //! descriptor store, run no gather at all, and so need no routing term.
+  //! ONE term per face, used by the request enable AND the answer mux below,
+  //! so a command joining a face cannot reach it in one direction and not the
+  //! other - which is exactly the bug ENTITY_AVAILABLE hit on its first run
+  //! (rgy_req_o gated on it, the gxr_data_r mux did not, so the query was
+  //! asked and the counters answer came back)
+  logic gx_alt_w, gsi_any_w, rgy_any_w;
+  assign gsi_any_w = gstri_r | gavb_r | gasp_r | gsfmt_r;
+  assign rgy_any_w = regun_r | lockc_r | eavl_r;
+  assign gx_alt_w  = amap_r | rgy_any_w | gsi_any_w;
 
   assign ctr_req_o        = gx_req_w && !gx_alt_w;
   assign ctr_desc_type_o  = cfg_ix_r;
@@ -978,13 +1040,14 @@ module KL_aecp_engine
   //! ...the Milan-info face: selector low nibble forwarded, the kind from
   //! the discriminators, the ordinal from the shared record counter below
   assign gsi_req_o        = gx_req_w && gsi_any_w;
-  assign gsi_kind_o       = gstri_r ? 2'd0 : (gavb_r ? 2'd1 : 2'd2);
+  assign gsi_kind_o       = (gstri_r || gsfmt_r) ? 2'd0
+                                                 : (gavb_r ? 2'd1 : 2'd2);
   assign gsi_desc_type_o  = cfg_ix_r;
   assign gsi_desc_index_o = desc_ix_r;
   assign gsi_sel_o        = gx_sel_w[3:0];
   assign gsi_ord_o        = amap_rec_r;
 
-  assign rgy_req_o   = gx_req_w && (regun_r || lockc_r);
+  assign rgy_req_o   = gx_req_w && rgy_any_w;
   assign rgy_state_o = gx_sel_w[0];
   //! LOCK rides op[1]; op[0] is UNLOCK for it (flags bit 0, walked into
   //! `desc_ix_r` exactly like TIME_LIMITED) and DEREGISTER for the pair
@@ -1046,7 +1109,7 @@ module KL_aecp_engine
                           || gsi_hold_w);
       gxr_data_r  <= gxf_fail_r           ? 64'd0
                    : amap_r               ? amap_data_i
-                   : (regun_r || lockc_r) ? rgy_data_i
+                   : rgy_any_w            ? rgy_data_i
                    : gsi_any_w            ? gsi_data_i
                                           : {32'd0, ctr_data_i};
     end
@@ -1288,6 +1351,11 @@ module KL_aecp_engine
       gstri_r      <= 1'b0;
       gavb_r       <= 1'b0;
       gasp_r       <= 1'b0;
+      eavl_r       <= 1'b0;
+      gcfg_r       <= 1'b0;
+      gsfmt_r      <= 1'b0;
+      gsrate_r     <= 1'b0;
+      gclks_r      <= 1'b0;
       lock_ent_ok_r <= 1'b0;
       uns_r        <= 1'b0;
       upc_r        <= 11'd0;
@@ -1329,6 +1397,11 @@ module KL_aecp_engine
               gstri_r    <= gstri_w;
               gavb_r     <= gavb_w;
               gasp_r     <= gasp_w;
+              eavl_r     <= eavl_w;
+              gcfg_r     <= gcfg_w;
+              gsfmt_r    <= gsfmt_w;
+              gsrate_r   <= gsrate_w;
+              gclks_r    <= gclks_w;
               lock_ent_ok_r <= 1'b1;
               uns_r      <= 1'b0;
               err_mode_r <= 1'b0;
@@ -1379,6 +1452,15 @@ module KL_aecp_engine
             gstri_r    <= (uns_kind_i == PP_UNS_STRI_C);
             gavb_r     <= (uns_kind_i == PP_UNS_AVB_C);
             gasp_r     <= (uns_kind_i == PP_UNS_ASP_C);
+            //! no unsolicited job carries a read-side opcode (Table 5.22 lists
+            //! none of the five), so their discriminators are cleared rather
+            //! than muxed - an unsolicited GET_STREAM_FORMAT would otherwise
+            //! route the Milan-info face off a stale flop
+            eavl_r     <= 1'b0;
+            gcfg_r     <= 1'b0;
+            gsfmt_r    <= 1'b0;
+            gsrate_r   <= 1'b0;
+            gclks_r    <= 1'b0;
             lock_ent_ok_r <= 1'b1;
             uns_r      <= 1'b1;
             err_mode_r <= 1'b0;
@@ -1503,6 +1585,57 @@ module KL_aecp_engine
                 echo_r <= 1'b0;
               end
             end
+            //! ---- the read-side set (Milan §5.4.2.3/.6/.8/.14/.16) --------
+            //! ENTITY_AVAILABLE and GET_CONFIGURATION carry no payload at all
+            //! (§7.4.3.1, §7.4.8.1), so there is no length to gate and no type
+            //! to judge: cdl 12 IS the whole command. A controller that pads
+            //! one is still answered - the walk stops at pld_trim and the
+            //! programs build their own operands rather than trusting the
+            //! capture registers.
+            if (eavl_r) begin
+              upc_r  <= UPC_EAVL_C;
+              echo_r <= 1'b0;
+            end
+            if (gcfg_r) begin
+              upc_r  <= UPC_GCFG_C;
+              echo_r <= 1'b0;
+            end
+            //! ...and the three {type, index} reads gate on both, exactly like
+            //! GET_STREAM_INFO above them. A wrong target draws the FULL-body
+            //! NOT_SUPPORTED, never the command-sized E_NSUPPE echo: only
+            //! NOT_IMPLEMENTED may answer at command length (§9.3.5.3.3 vs
+            //! la_avdecc's checkResponsePayload, the 0x004A finding).
+            if (gsfmt_r) begin
+              if (cmd_r.cdl < 11'd16)                upc_r <= UPC_BADARG_C;
+              else if ((cfg_ix_r != DT_STREAM_INPUT_C)
+                       && (cfg_ix_r != DT_STREAM_OUTPUT_C)) begin
+                upc_r  <= UPC_TIZ8NS_C;
+                echo_r <= 1'b0;
+              end else begin
+                upc_r  <= UPC_GSFMT_C;
+                echo_r <= 1'b0;
+              end
+            end
+            if (gsrate_r) begin
+              if (cmd_r.cdl < 11'd16)              upc_r <= UPC_BADARG_C;
+              else if (cfg_ix_r != DT_AUDIO_UNIT_C) begin
+                upc_r  <= UPC_TIZ4NS_C;
+                echo_r <= 1'b0;
+              end else begin
+                upc_r  <= UPC_GSRATE_C;
+                echo_r <= 1'b0;
+              end
+            end
+            if (gclks_r) begin
+              if (cmd_r.cdl < 11'd16)                upc_r <= UPC_BADARG_C;
+              else if (cfg_ix_r != DT_CLOCK_DOMAIN_C) begin
+                upc_r  <= UPC_TIZ4NS_C;
+                echo_r <= 1'b0;
+              end else begin
+                upc_r  <= UPC_GCLKS_C;
+                echo_r <= 1'b0;
+              end
+            end
             a_st_r <= A_DISP;
           end
           //! the RX pool answers one cycle after rd_en: byte for index
@@ -1535,14 +1668,12 @@ module KL_aecp_engine
               //! holds the flags' low half for the rgy face to read
               11'd4: begin
                 pid_lo_r[1] <= (rxs_rd_data_i == MVU_PID_L1_C);
-                if (ctrs_r || amap_r || regun_r || lockc_r || gstri_r
-                    || gavb_r)
+                if (tix_w || regun_r || lockc_r)
                   desc_ix_r[15:8] <= rxs_rd_data_i;
               end
               11'd5: begin
                 pid_lo_r[0] <= (rxs_rd_data_i == MVU_PID_L0_C);
-                if (ctrs_r || amap_r || regun_r || lockc_r || gstri_r
-                    || gavb_r)
+                if (tix_w || regun_r || lockc_r)
                   desc_ix_r[7:0]  <= rxs_rd_data_i;
               end
               11'd6: if (!ctrs_r) desc_ty_r[15:8] <= rxs_rd_data_i;
@@ -1552,11 +1683,9 @@ module KL_aecp_engine
               //! (or a long REGISTER's padding) must not trample the flags
               //! captured at @26..@27 - the UNLOCK/TIME_LIMITED bit lives
               //! there (found by the pp_top L5 check: UNLOCK re-locked)
-              11'd8: if (!ctrs_r && !amap_r && !regun_r && !lockc_r
-                          && !gstri_r && !gavb_r && !gasp_r)
+              11'd8: if (!tix_w && !regun_r && !lockc_r && !gasp_r)
                        desc_ix_r[15:8] <= rxs_rd_data_i;
-              11'd9: if (!ctrs_r && !amap_r && !regun_r && !lockc_r
-                          && !gstri_r && !gavb_r && !gasp_r)
+              11'd9: if (!tix_w && !regun_r && !lockc_r && !gasp_r)
                        desc_ix_r[7:0]  <= rxs_rd_data_i;
               //! LOCK_ENTITY's descriptor_type/index live at @36..@39, past
               //! every capture register - but the CHECK is all Milan
