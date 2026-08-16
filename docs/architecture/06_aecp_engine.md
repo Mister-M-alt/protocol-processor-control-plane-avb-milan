@@ -145,6 +145,10 @@ class per [03 §6](03_packet_engine.md); GDI = allowed inside GET_DYNAMIC_INFO;
 n/i = not implemented → echo command, status `NOT_IMPLEMENTED` — the response-size
 rule that satisfies IEEE §9.3.5.3.3 for **every** opcode 0x0000–0x0068).
 
+This table records both the target contract and current realization. A row
+marked **n/i today** is not dispatched by the current engine and returns the
+`NOT_IMPLEMENTED` echo. Section 8.1 is the authoritative realized inventory.
+
 | Opcode | Command | Mandate | Scope rule | Class | Lock-prot. | GDI | Oversize | Notif | Resp. size |
 |---|---|---|---|---|---|---|---|---|---|
 | 0x0000 | ACQUIRE_ENTITY | shall, **never succeeds** (Δ7) | any | — | — | — | — | — | 40 B echo, `NOT_SUPPORTED` |
@@ -154,12 +158,12 @@ rule that satisfies IEEE §9.3.5.3.3 for **every** opcode 0x0000–0x0068).
 | 0x0004 | READ_DESCRIPTOR | shall | allowed while locked | RO | no | — | **yes** | — | 28 + descriptor (4-B stub on failure) |
 | 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER *(architectural class; the current single AECP engine serializes AEM commands while the dispatch scoreboard remains unwired)* | yes | - | - | yes *(open, #69)* | 28 B |
 | 0x0007 | GET_CONFIGURATION | shall | — | RO | — | yes | — | — | 28 B |
-| 0x0008 | SET_STREAM_FORMAT | shall | §6.4 chain | STREAM_CFG | yes | — | — | yes | 40 B |
+| 0x0008 | SET_STREAM_FORMAT | shall, **n/i today** | target: §6.4 chain | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | 0x0009 | GET_STREAM_FORMAT | shall | — | RO | — | yes | — | — | 40 B |
-| 0x000E | SET_STREAM_INFO | shall | **output only** (Δ11); §6.3 | STREAM_CFG | yes | — | — | yes | 80 B |
+| 0x000E | SET_STREAM_INFO | shall, **n/i today** | target: **output only** (Δ11); §6.3 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | 0x000F | GET_STREAM_INFO | shall | Milan 80-B form §6.2 | RO | — | yes | — | async triggers | 80 B |
-| 0x0010 | SET_NAME | shall | all names | NAME_WR | yes | — | — | yes | 48 B |
-| 0x0011 | GET_NAME | shall | — | RO | — | yes | — | — | 48 B |
+| 0x0010 | SET_NAME | shall, **n/i today** | target: all names | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x0011 | GET_NAME | shall, **n/i today** | target: all names | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | 0x0014 | SET_SAMPLING_RATE | shall | per AUDIO_UNIT; §6.4 | CLOCK_CFG | yes | — | — | yes | 36 B |
 | 0x0015 | GET_SAMPLING_RATE | shall | — | RO | — | yes | — | — | 36 B |
 | 0x0016 | SET_CLOCK_SOURCE | shall | per CLOCK_DOMAIN | CLOCK_CFG | yes | — | — | yes | 36 B |
@@ -175,12 +179,12 @@ rule that satisfies IEEE §9.3.5.3.3 for **every** opcode 0x0000–0x0068).
 | 0x0028 | GET_AS_PATH | shall | gather §6.2 | RO | — | **no** | **yes** | async trigger | 28 + 8·count |
 | 0x0029 | GET_COUNTERS | shall | §6.6 | RO | — | yes | — | async (`T-CTR-NOTIF`) | 160 B |
 | 0x002B | GET_AUDIO_MAP | shall (dynamic ports) | §6.5 | RO | — | **no** | **yes** | — | 32 + 8·N |
-| 0x002C | ADD_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | — | **yes** | yes | 28 + 8·N |
-| 0x002D | REMOVE_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | — | **yes** | yes | 28 + 8·N |
-| 0x004B | GET_DYNAMIC_INFO | shall | iterator §6.7 | RO (per element) | — | n/a | **no** | — | ≤ 536 B |
+| 0x002C | ADD_AUDIO_MAPPINGS | shall, **n/i today** (dynamic ports) | target: §6.5 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x002D | REMOVE_AUDIO_MAPPINGS | shall, **n/i today** (dynamic ports) | target: §6.5 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x004B | GET_DYNAMIC_INFO | shall, **n/i today** | target: iterator §6.7 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | MVU 0x0000 | GET_MILAN_INFO | shall | §6.9 | RO | — | — | — | — | 44 B |
-| MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended (`P-EN-MVU-SUID`) | §6.9 | CLOCK_CFG-like (global key) | yes/— | — | — | yes/— | 40 B |
-| MVU 0x0003/0x0004 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO | recommended (`P-EN-MVU-MCR`) | §6.9 | CLOCK_CFG | yes/— | — | — | yes/— | 104 B |
+| MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended, **n/i today** (`P-EN-MVU-SUID`) | target: §6.9 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| MVU 0x0003/0x0004 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO | recommended, **n/i today** (`P-EN-MVU-MCR`) | target: §6.9 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | 0x000B | GET_VIDEO_FORMAT | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
 | 0x000D | GET_SENSOR_FORMAT | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
 | 0x0013 | GET_ASSOCIATION_ID | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
@@ -282,7 +286,7 @@ response is never a torn mix of two states.
 
 | Command | Stream Input | Stream Output |
 |---|---|---|
-| SET_STREAM_INFO | `NOT_SUPPORTED` (params come from PROBE_TX_RESPONSE) | per IEEE §7.4.15 subset: **MSRP_ACC_LAT_VALID must be supported** → writes presentation-time offset (0..0x7FFFFFFF ns, else `BAD_ARGUMENTS`); **any unsupported sub-flag ⇒ whole command `NOT_SUPPORTED`**; `STREAM_IS_RUNNING` while streaming; success echoes the flag + value |
+| SET_STREAM_INFO (target; n/i today) | `NOT_SUPPORTED` (params come from PROBE_TX_RESPONSE) | per IEEE §7.4.15 subset: **MSRP_ACC_LAT_VALID must be supported**; writes presentation-time offset (0..0x7FFFFFFF ns, else `BAD_ARGUMENTS`); **any unsupported sub-flag means whole command `NOT_SUPPORTED`**; `STREAM_IS_RUNNING` while streaming; success echoes the flag + value |
 | START/STOP_STREAMING | **not implemented today**: `NOT_IMPLEMENTED` echo. Required future behavior is bound and stopped to started (and inverse), with no effect otherwise, reconciled with the persisted ACMP binding record | **not implemented today**: `NOT_IMPLEMENTED` echo. Required future behavior is `NOT_SUPPORTED` because a talker streams whenever reserved (Δ14) |
 
 ### 6.4 Validation chains (order matters; first failure responds)
@@ -290,10 +294,10 @@ response is never a torn mix of two states.
 | Command | Chain |
 |---|---|
 | SET_CONFIGURATION | any input bound ∨ any output streaming ⇒ `STREAM_IS_RUNNING` (**at dispatch, so it outranks the lock** - see below) → lock → index valid ⇒ commit → NVM mark (review §8 item 1). **No scoreboard barrier is drained today**: the current top admits a new AEM transaction only when its single AECP engine is idle, which orders SET_CONFIGURATION against both configuration read views. A future parallel AEM execution path must select `PP_HZ_CFG_BARRIER` before it can preserve that property. |
-| SET_STREAM_FORMAT | lock → sink bound ∨ source streaming ⇒ `STREAM_IS_RUNNING` → format ∈ descriptor list → every existing static+dynamic mapping still references an existing channel, else `BAD_ARGUMENTS` → commit + `avtp.SET_*_FORMAT` + NVM |
+| SET_STREAM_FORMAT (target; n/i today) | lock then sink bound or source streaming gives `STREAM_IS_RUNNING`; require format in the descriptor list and every static or dynamic mapping to reference an existing channel; otherwise `BAD_ARGUMENTS`; then commit, update AVTP format state, and mark NVM |
 | SET_SAMPLING_RATE | lock → rate ∈ AUDIO_UNIT list → mappings whose stream rate ≠ new rate while port has neither SRC bit ⇒ may `NOT_SUPPORTED` (Milan §5.4.2.13 — "UNSUPPORTED" typo, review §8 item 3) → commit + NVM |
 | SET_CLOCK_SOURCE | lock → source ∈ CLOCK_DOMAIN list → `mclk.SET_CLOCK_SOURCE` → commit + NVM |
-| SET_NAME | lock → descriptor named → commit + NVM |
+| SET_NAME (target; n/i today) | lock, require a named descriptor, commit, and mark NVM |
 
 **Two notes on SET_CONFIGURATION, both decisions rather than accidents.**
 
@@ -686,7 +690,8 @@ not exist in a Milan PAAD):
 
 Dropped from the original sketch: `ALLOCATE/RELEASE_CONNECTION`,
 `UPDATE_ENTITY_TABLE`, `WRITE_DESCRIPTOR`, `CHECK_ACQUIRE` (no such objects/flows in
-Milan). Exemplar µprograms:
+Milan). These are target exemplars; only commands listed as real in Section 8.1
+are current µprograms:
 
 ```text
 GET_SAMPLING_RATE:                    SET_SAMPLING_RATE:
@@ -702,7 +707,7 @@ ACQUIRE_ENTITY:                         BUILD_HEADER; BUILD_FIELD
   BUILD_HEADER (echo, owner_id=0)       NOTIFY_ENQ  {resp, excl=requester}
   SEND_RESPONSE; END                    END
 
-GET_DYNAMIC_INFO:
+GET_DYNAMIC_INFO (target; n/i today):
   ITER_OPEN tuples            ; pre-scan pass: GDI flags, else BAD_ARGUMENTS-all
   loop: ITER_NEXT -> sub      ; dispatch sub-µprogram in sub-command mode
   APPEND_RESP (skip if > 524) ; per-element info_status written
