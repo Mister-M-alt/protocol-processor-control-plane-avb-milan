@@ -161,6 +161,7 @@ E_SCFGRUN = 1488     # SET_CONFIGURATION's STREAM_IS_RUNNING arm (dispatch lands
 E_SCFGLK  = 1500     # ...its ENTITY_LOCKED arm
 E_SCFGBAD = 1513     # ...its BAD_ARGUMENTS arm
 E_SCFGEMT = 1526     # ...the body all three share
+E_RDESCENT = 1568    # READ_DESCRIPTOR(ENTITY) with current_configuration overlay
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
@@ -199,6 +200,7 @@ DT_STREAM_PORT_OUTPUT = 0x000F
 #   CLOCK_DOMAIN.clock_source_index   @70,  lane 64..71,   lane bytes 6..7
 #                                     -> [15:0], BUILD_FLD FMT_W
 ENT_CURCFG_LANE = 304     # ENTITY: gen_aem_store.py d_entity, total 312 B
+ENT_DESC_LEN = 312        # IEEE 1722.1-2021 §7.2.1 ENTITY descriptor size
 AU_RATE_OFF = 136         # AUDIO_UNIT: `assert len(b) == 144` after the count
 CD_SRCIDX_LANE = 64       # CLOCK_DOMAIN: wb["CLOCK_SRC_IDX"] = base + 70
 
@@ -511,6 +513,49 @@ place(E_RDSTUB, [
     u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
     u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # {type, index} stub @28
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- READ_DESCRIPTOR(ENTITY) dynamic current_configuration overlay ---------
+# IEEE 1722.1-2021 §7.4.8.2 makes GET_CONFIGURATION.configuration_index
+# equivalent to ENTITY.current_configuration. SET_CONFIGURATION writes the
+# dynamic-state store, so returning all 312 static ENTITY bytes after a SET
+# makes the two commands disagree. The engine re-dispatches only ENTITY reads
+# here after the payload walk has captured descriptor_type.
+#
+# The overlay is deliberately an assembly operation, not a write into the
+# descriptor image: the image remains read-only, other descriptor reads remain
+# byte-exact, and a failed SET cannot leak its rejected argument. COPY_BUF
+# accepts the 310-byte residual exactly; its final partial lane writes bytes
+# beyond resp_len, which are never emitted. A noncanonical ENTITY length falls
+# back to E_RDESC so this overlay cannot truncate an image it does not
+# understand.
+place(E_RDESCENT, [
+    u('MOVE', rd=12, ra=0, imm=0),               # reserved @26
+    u('READ_ST', rd=9, imm=RGN_NCFG),            # configurations_count
+    u('CHECK_ARG', ra=14, rb=9, fmt=FMT_W,
+      cnd=REL_LT, imm=E_RDSTUB),
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # requested ENTITY[index]
+    u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+    u('READ_ST', rd=8, imm=RGN_LEN),
+    u('COMPARE', ra=8, fmt=FMT_W, imm=ENT_DESC_LEN),
+    u('BR_STATUS', cnd=2, imm=E_RDESCENT + 9),   # canonical 312-byte ENTITY
+    u('BRANCH', imm=E_RDESC),                    # preserve unknown layouts
+    u('MOVE', rd=8, ra=0, imm=ENT_DESC_LEN - 2), # static prefix length
+    u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CFG),  # controller-set value valid?
+    u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_RDESCENT + 15),  # unset -> image default
+    u('READ_ST', rd=1, imm=RGN_DYN + SEL_CFG),
+    u('BRANCH', imm=E_RDESCENT + 17),
+    u('READ_ST', rd=1, imm=RGN_DATA + ENT_CURCFG_LANE),
+    u('NOP', imm=1),                             # image-read writeback seam
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
+    u('COPY_BUF', ra=8, imm=RGN_DATA),           # ENTITY bytes 0..309
+    u('BUILD_FLD', ra=1, fmt=FMT_W),             # current_configuration
     u('SEND_RESP'),
     u('END'),
 ])
