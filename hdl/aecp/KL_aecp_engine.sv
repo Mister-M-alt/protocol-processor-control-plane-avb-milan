@@ -780,6 +780,16 @@ module KL_aecp_engine
   //! AEM-scoped, so it is this engine's convention that carries the refusals
   //! for VENDOR_UNIQUE, AVC and EXTENDED.
   //!
+  //! AND ONE SILENCE, recorded for the same reason: NOT_IMPLEMENTED is an
+  //! explicit, table-backed status for message types 2, 4, 6 and 8, but
+  //! Table 9-1's reserved 10..13 band and EXTENDED_COMMAND (14) have no PDU
+  //! format, no state machine and no status table anywhere in the standard.
+  //! Answering them 11/13/15 + NOT_IMPLEMENTED is UNSPECIFIED rather than
+  //! conformant-by-clause. It is the only coherent thing to do with a type
+  //! that has no definition, and far better than the mis-dispatch it
+  //! replaces, but the tests below pin it as this engine's contract, not as
+  //! the standard's.
+  //!
   //! KNOWN DEVIATION, recorded rather than hidden: §9.7.4 says an HDCP APM
   //! refusal sets hdcp_apm_length to zero and sends nothing after
   //! hdcp_apm_fragment_offset. This engine echoes message_type 8 whole like
@@ -792,7 +802,7 @@ module KL_aecp_engine
   //! AEM AND NOTHING ELSE. `PP_PROTO_AEM` is the RX validator's RESIDUAL
   //! bucket (KL_pp_rx_validator.sv: 6/7 -> MVU, 2/3 -> AA, everything else
   //! here), so it also carries AVC_COMMAND (4), HDCP_APM_COMMAND (8), the
-  //! reserved 10/12 and EXTENDED_COMMAND (14) -- Table 9-1 message types that
+  //! reserved 10..13 band and EXTENDED_COMMAND (14) -- Table 9-1 types that
   //! have no command_type at @22..@23 at all. Figure 9-9 puts `avc_length`
   //! there, and an ordinary AV/C length of 20 is OP_SET_SAMP_RATE_C: guarding
   //! on the bucket alone let an AV/C command WRITE THE SAMPLING RATE and
@@ -1450,7 +1460,10 @@ module KL_aecp_engine
       6'd34: hdr_byte_w = cmd_r.sequence_id[15:8];
       6'd35: hdr_byte_w = cmd_r.sequence_id[7:0];
       //! @22, AND ONLY AN AEM MESSAGE HAS A u BIT THERE. 1722.1-2021 9.3.2.1
-      //! puts `u` in the top bit of an AEM AECPDU's command_type field, and a
+      //! makes `u` its own 1-bit field ahead of `cr` and a 14-bit
+      //! command_type -- the 2013 edition's "top bit of command_type" framing
+      //! is what this comment used to say, and it is why `cr` must survive the
+      //! rewrite below. A
       //! solicited response clears it. Every other message_type defines @22
       //! for itself: 9.6.2 Figure 9-12 gives a VENDOR_UNIQUE AECPDU a 48-bit
       //! protocol_id running @22..@27 with NO u bit in it, so @22 there is
