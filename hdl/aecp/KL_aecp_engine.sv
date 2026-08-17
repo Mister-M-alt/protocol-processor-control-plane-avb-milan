@@ -784,9 +784,11 @@ module KL_aecp_engine
   logic [TXS_W_C-1:0] tx_slot_r;
   logic [15:0] cmd_cnt_r, resp_cnt_r, drop_cnt_r, rerr_cnt_r;
 
-  //! ADD/REMOVE_AUDIO_MAPPINGS can carry up to 68 records in the 576-byte RX
-  //! slot. Keep a full byte-written copy so validation and commit walk the
-  //! identical record set without rereading or releasing the command slot.
+  //! An ADD/REMOVE_AUDIO_MAPPINGS command can carry at most 63 records:
+  //! IEEE 1722.1-2021 9.2.2.6 caps command control_data_length at 524, and
+  //! Figure 7-71 uses 20 + 8*N octets. Milan v1.2 5.4.1 lifts that limit for
+  //! responses only. Keep a full byte-written copy so validation and commit
+  //! walk the identical record set without rereading or releasing the slot.
   //! The 256-entry address space matches the µCPU iterator width and leaves
   //! the port contract independent of the configured RX slot size.
   (* ram_style = "block" *) logic [63:0] amap_stage_r [0:255];
@@ -2054,6 +2056,7 @@ module KL_aecp_engine
               if (({8'd0, cmd_r.cdl}
                    != (19'd20 + ({3'd0, desc_ty_r} << 3)))
                   || (cmd_r.cdl < 11'd20)
+                  || (cmd_r.cdl > 11'd524)
                   || (pld_cmd_r != (cmd_r.cdl - 11'd12))) begin
                 upc_r  <= UPC_BADARG_C;
                 echo_r <= 1'b1;

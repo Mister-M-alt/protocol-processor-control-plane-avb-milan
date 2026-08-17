@@ -83,6 +83,11 @@ GET_AUDIO_MAP, ADD/REMOVE_AUDIO_MAPPINGS may exceed cdl 524 up to a full frame �
 these serialize into the oversize TX slot ([03 §7](03_packet_engine.md)). Everything
 else, including GET_DYNAMIC_INFO, is capped at cdl 524.
 
+The exception is response-only. IEEE 1722.1-2021 9.2.2.6 still caps every
+command at cdl 524. An ADD/REMOVE_AUDIO_MAPPINGS command uses 20 + 8N octets,
+so N is at most 63; a 64-record command returns `BAD_ARGUMENTS` without a
+store mutation.
+
 ## 4. Internal blocks
 
 <a id="fig-06-blocks"></a>**F06.1 — AECP engine internals**
