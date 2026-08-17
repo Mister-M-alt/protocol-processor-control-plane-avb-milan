@@ -764,9 +764,9 @@ module KL_aecp_engine
   //! and it must really BE an AEM command: the 03 §4 record fills `opcode`
   //! from AECPDU @22..@23, which on a VENDOR_UNIQUE message is the first two
   //! bytes of a 48-bit protocol_id, not a command_type at all
-  assign ctrs_w = (txn_w.protocol == PP_PROTO_AEM)
+  assign ctrs_w = aem_w
                   && (txn_w.opcode == OP_GET_COUNTERS_C) && !short_ct_w;
-  assign amap_w = (txn_w.protocol == PP_PROTO_AEM)
+  assign amap_w = aem_w
                   && (txn_w.opcode == OP_GET_AUDIO_MAP_C) && !short_am_w;
   //! THE GUARD BELONGS ON EVERY ARM, and for a long time it was on only some.
   //! `opcode` is AECPDU @22..@23, which on a VENDOR_UNIQUE message is the first
@@ -774,12 +774,22 @@ module KL_aecp_engine
   //! vendor protocol_id of 00-04-xx-xx-xx-xx collided with it and was answered
   //! with a 354-byte VENDOR_UNIQUE_RESPONSE carrying our ENTITY descriptor,
   //! its protocol_id partly overwritten by READ_DESCRIPTOR's own fields.
-  //! IEEE 1722.1-2021 §9.3.5.3.3 and §9.6.2 want NOT_IMPLEMENTED with the
-  //! command echoed. 00:04:xx is a densely assigned OUI block, so this was
-  //! reachable on a real network, and it is a CLASS: 0x0002, 0x0006 and 0x0024
-  //! collide with ENTITY_AVAILABLE, SET_CONFIGURATION and IDENTIFY_NOTIFICATION
-  //! the same way. Issue #83.
-  assign aem_w  = (txn_w.protocol == PP_PROTO_AEM);
+  //! §9.3.5.3.3 asks for "a correctly sized response and a status of
+  //! NOT_IMPLEMENTED"; echoing the command WHOLE is this engine's choice, not
+  //! a mandate — Clause 9 has no echo language, and where 1722.1 does spell one
+  //! out (HDCP APM, §9.7.4) it truncates. 00:04:xx is a densely assigned OUI
+  //! block, so this was reachable on a real link. It is a CLASS, and the class
+  //! is this dispatch's own opcode list: 0x0026 IDENTIFY_NOTIFICATION, 0x0029
+  //! GET_COUNTERS and 0x002B GET_AUDIO_MAP collide the same way. Issue #83.
+  //! AEM AND NOTHING ELSE. `PP_PROTO_AEM` is the RX validator's RESIDUAL
+  //! bucket (KL_pp_rx_validator.sv: 6/7 -> MVU, 2/3 -> AA, everything else
+  //! here), so it also carries AVC_COMMAND (4), HDCP_APM_COMMAND (8), the
+  //! reserved 10/12 and EXTENDED_COMMAND (14) -- Table 9-1 message types that
+  //! have no command_type at @22..@23 at all. Figure 9-9 puts `avc_length`
+  //! there, and an ordinary AV/C length of 20 is OP_SET_SAMP_RATE_C: guarding
+  //! on the bucket alone let an AV/C command WRITE THE SAMPLING RATE and
+  //! answer SUCCESS. Guarding on message_type 0 is the actual question.
+  assign aem_w  = (txn_w.protocol == PP_PROTO_AEM) && (txn_w.msg_type == 4'd0);
   always_comb begin : dispatch_decode
     if (aem_w && (txn_w.opcode == OP_READ_DESCRIPTOR_C) && !short_w) begin
       upc_w  = UPC_RDESC_C;
@@ -812,48 +822,48 @@ module KL_aecp_engine
   //! A_PLD-exit re-dispatch, never the pop-time µPC mux (the timing rule in
   //! the opcode table above)
   logic regun_w, acq_w, lockc_w;
-  assign regun_w = (txn_w.protocol == PP_PROTO_AEM)
+  assign regun_w = aem_w
                    && ((txn_w.opcode == OP_REG_UNSOL_C)
                        || (txn_w.opcode == OP_DEREG_UNSOL_C));
-  assign acq_w   = (txn_w.protocol == PP_PROTO_AEM)
+  assign acq_w   = aem_w
                    && (txn_w.opcode == OP_ACQUIRE_C);
-  assign lockc_w = (txn_w.protocol == PP_PROTO_AEM)
+  assign lockc_w = aem_w
                    && (txn_w.opcode == OP_LOCK_C);
   logic gstri_w, gavb_w, gasp_w;
-  assign gstri_w = (txn_w.protocol == PP_PROTO_AEM)
+  assign gstri_w = aem_w
                    && (txn_w.opcode == OP_GET_STREAM_INFO_C);
-  assign gavb_w  = (txn_w.protocol == PP_PROTO_AEM)
+  assign gavb_w  = aem_w
                    && (txn_w.opcode == OP_GET_AVB_INFO_C);
-  assign gasp_w  = (txn_w.protocol == PP_PROTO_AEM)
+  assign gasp_w  = aem_w
                    && (txn_w.opcode == OP_GET_AS_PATH_C);
   //! ...and the read-side set's five, on the same terms
   logic eavl_w, gcfg_w, gsfmt_w, gsrate_w, gclks_w;
-  assign eavl_w   = (txn_w.protocol == PP_PROTO_AEM)
+  assign eavl_w   = aem_w
                     && (txn_w.opcode == OP_ENTITY_AVAIL_C);
-  assign gcfg_w   = (txn_w.protocol == PP_PROTO_AEM)
+  assign gcfg_w   = aem_w
                     && (txn_w.opcode == OP_GET_CONFIG_C);
-  assign gsfmt_w  = (txn_w.protocol == PP_PROTO_AEM)
+  assign gsfmt_w  = aem_w
                     && (txn_w.opcode == OP_GET_STREAM_FMT_C);
-  assign gsrate_w = (txn_w.protocol == PP_PROTO_AEM)
+  assign gsrate_w = aem_w
                     && (txn_w.opcode == OP_GET_SAMP_RATE_C);
-  assign gclks_w  = (txn_w.protocol == PP_PROTO_AEM)
+  assign gclks_w  = aem_w
                     && (txn_w.opcode == OP_GET_CLOCK_SRC_C);
   //! ...and the SET pair. `setc_w` is the shared "this command carries a
   //! value at @28" term the payload walk keys on, so a command joining the
   //! family is one name here and one arm at the A_PLD exit.
   logic ssrate_w, sclks_w, setc_w;
-  assign ssrate_w = (txn_w.protocol == PP_PROTO_AEM)
+  assign ssrate_w = aem_w
                     && (txn_w.opcode == OP_SET_SAMP_RATE_C);
-  assign sclks_w  = (txn_w.protocol == PP_PROTO_AEM)
+  assign sclks_w  = aem_w
                     && (txn_w.opcode == OP_SET_CLOCK_SRC_C);
   logic gctrl_w, sctrl_w;
-  assign gctrl_w  = (txn_w.protocol == PP_PROTO_AEM)
+  assign gctrl_w  = aem_w
                     && (txn_w.opcode == OP_GET_CONTROL_C);
-  assign sctrl_w  = (txn_w.protocol == PP_PROTO_AEM)
+  assign sctrl_w  = aem_w
                     && (txn_w.opcode == OP_SET_CONTROL_C);
   assign setc_w   = ssrate_w | sclks_w | sctrl_w;
   logic scfg_w;
-  assign scfg_w   = (txn_w.protocol == PP_PROTO_AEM)
+  assign scfg_w   = aem_w
                     && (txn_w.opcode == OP_SET_CONFIG_C);
 
   //! ---- unsolicited job synthesis (06 §6.7) -------------------------------
@@ -1455,7 +1465,11 @@ module KL_aecp_engine
       //! ...and an unsolicited response is the ONE sender of u = 1 (IEEE
       //! §9.2.1.7 via the 9.3.5.4 UNSOLICITED RESPONSE arc): `uns_r` is set
       //! only for engine-originated jobs, which are AEM by construction
+      //! `PP_PROTO_AEM` is the RX validator's RESIDUAL bucket, so message_type
+      //! is what actually says "this word has a u bit in it". AVC_COMMAND and
+      //! the rest land in the same bucket and carry a length there.
       6'd36: hdr_byte_w = (cmd_r.protocol == PP_PROTO_AEM)
+                          && (cmd_r.msg_type == 4'd0)
                           ? {uns_r, raw_ct_r[14:8]}  // AEM: u = solicited?0:1
                           : raw_ct_r[15:8];          // everything else: verbatim
       6'd37: hdr_byte_w = raw_ct_r[7:0];
@@ -1756,6 +1770,7 @@ module KL_aecp_engine
             //! Descriptor type is available only after this registered walk;
             //! all non-ENTITY reads retain the generic byte-exact program.
             if ((cmd_r.protocol == PP_PROTO_AEM)
+                && (cmd_r.msg_type == 4'd0)
                 && (cmd_r.opcode == OP_READ_DESCRIPTOR_C)
                 && (cmd_r.cdl >= 11'd20)
                 && (desc_ty_r == DT_ENTITY_C)) begin

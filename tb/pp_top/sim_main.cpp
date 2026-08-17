@@ -2243,13 +2243,28 @@ int main(int argc, char** argv) {
       //! `bytes` is the payload length: the short-command arms are only
       //! reachable below their clause's minimum cdl, so 0x0029 and 0x002B are
       //! sent short on purpose.
-      struct Col { uint16_t hi; size_t bytes; const char* what; };
+      //! `mt` too, because VENDOR_UNIQUE is only ONE of the message types
+      //! whose @22..@23 is not a command_type. The RX validator buckets AECP
+      //! as 6/7 -> MVU, 2/3 -> ADDRESS_ACCESS and EVERYTHING ELSE -> AEM, so
+      //! AVC_COMMAND (4), HDCP_APM_COMMAND (8), the reserved 10/12 and
+      //! EXTENDED_COMMAND (14) arrive in the AEM bucket carrying an
+      //! `avc_length` (Figure 9-9) where the dispatch reads an opcode. A
+      //! review measured mt=4 with avc_length 0x0004 drawing our 312-octet
+      //! ENTITY descriptor, and avc_length 0x0014 -- an ordinary AV/C length,
+      //! and also OP_SET_SAMP_RATE_C -- WRITING THE SAMPLING RATE and
+      //! answering SUCCESS. Guarding the protocol bucket alone was not enough.
+      struct Col { uint8_t mt; uint16_t hi; size_t bytes; const char* what; };
       const Col cols[] = {
-        {0x0004,  8, "READ_DESCRIPTOR"},
-        {0x0004,  2, "READ_DESCRIPTOR, short -> the BAD_ARGUMENTS arm"},
-        {0x0026,  8, "IDENTIFY_NOTIFICATION"},
-        {0x0029,  2, "GET_COUNTERS, short"},
-        {0x002B,  2, "GET_AUDIO_MAP, short"},
+        {6, 0x0004,  8, "VENDOR_UNIQUE / READ_DESCRIPTOR"},
+        {6, 0x0004,  2, "VENDOR_UNIQUE / READ_DESCRIPTOR short -> BAD_ARGS"},
+        {6, 0x0026,  8, "VENDOR_UNIQUE / IDENTIFY_NOTIFICATION"},
+        {6, 0x0029,  2, "VENDOR_UNIQUE / GET_COUNTERS short"},
+        {6, 0x002B,  2, "VENDOR_UNIQUE / GET_AUDIO_MAP short"},
+        {2, 0x0004,  8, "ADDRESS_ACCESS: @22..@23 is tlv_count (9.4.2.1)"},
+        {4, 0x0004,  8, "AVC_COMMAND: @22..@23 is avc_length (Figure 9-9)"},
+        {4, 0x0014,  8, "AVC_COMMAND whose length collides with SET_SAMPLING_RATE"},
+        {8, 0x0004,  8, "HDCP_APM_COMMAND"},
+        {14, 0x0004, 8, "EXTENDED_COMMAND"},
       };
       uint16_t sq = 0xC020;
       for (const auto& c : cols) {
@@ -2259,16 +2274,17 @@ int main(int argc, char** argv) {
         std::vector<uint8_t> pl(c.bytes, 0);
         if (c.bytes >= 4) putbe(&pl[0], 0xAABBCCDDu, 4);  // protocol_id @24..
         h.q_aecp.clear();
-        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 6, 0, EID, CTLR_EID, sq,
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, c.mt, 0, EID, CTLR_EID, sq,
                           c.hi, pl));
         auto r = h.wait_any(h.q_aecp, 400);
-        auto want = aecp_frame(CTLR_MAC, OWN_MAC, 7, AECP_NOT_IMPLEMENTED,
+        auto want = aecp_frame(CTLR_MAC, OWN_MAC, (uint8_t)(c.mt | 1),
+                               AECP_NOT_IMPLEMENTED,
                                EID, CTLR_EID, sq, c.hi, pl);
-        CHECK(!r.empty(), "M9: VENDOR_UNIQUE OUI %04X (collides with %s) got "
-              "silence", c.hi, c.what);
+        CHECK(!r.empty(), "M9: mt=%u word %04X (%s) got silence",
+              c.mt, c.hi, c.what);
         CHECK(r == want,
-              "M9: VENDOR_UNIQUE OUI %04X must be NOT_IMPLEMENTED with the "
-              "command echoed WHOLE, not answered as %s", c.hi, c.what);
+              "M9: mt=%u word %04X must be NOT_IMPLEMENTED with the command "
+              "echoed WHOLE (%s)", c.mt, c.hi, c.what);
         if (!r.empty() && r != want) { dump("got ", r); dump("want", want); }
         //! the protocol_id is the byte a wrong answer corrupts, so grade it
         //! explicitly rather than relying on the byte-exact compare alone
@@ -2276,9 +2292,32 @@ int main(int argc, char** argv) {
               && (((unsigned)r[36] << 8) | r[37]) == c.hi
               && (c.bytes < 4 || (r[38] == 0xAA && r[39] == 0xBB
                                   && r[40] == 0xCC && r[41] == 0xDD)),
-              "M9: ...and every protocol_id byte survives the echo (OUI "
-              "%04X, %zu-byte payload)", c.hi, c.bytes);
+              "M9: ...and every echoed byte survives (mt=%u word %04X, "
+              "%zu-byte payload)", c.mt, c.hi, c.bytes);
         sq++;
+      }
+
+      //! AND IT MUST NOT HAVE CHANGED ANYTHING. The status byte alone would
+      //! not have caught the worst of this: mt=4 with avc_length 0x0014
+      //! reached SET_SAMPLING_RATE's microprogram and WROTE the rate, then
+      //! answered SUCCESS. Read the rate back through the command that serves
+      //! it, because a refusal that still moved state is not a refusal.
+      {
+        std::vector<uint8_t> rp(4, 0);
+        putbe(&rp[0], 0x0002, 2);                 // AUDIO_UNIT, index 0
+        h.q_aecp.clear();
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0xC030,
+                          AEM_GET_SAMPLING_RATE, rp));
+        auto g = h.wait_any(h.q_aecp, 400);
+        unsigned rate = (g.size() >= 46)
+                        ? (((unsigned)g[42] << 24) | ((unsigned)g[43] << 16)
+                           | ((unsigned)g[44] << 8) | g[45]) : 0u;
+        CHECK(!g.empty() && g.size() >= 46 && ((g[16] >> 3) & 0x1F) == 0,
+              "M9b: GET_SAMPLING_RATE still answers SUCCESS after the storm");
+        CHECK(rate == 96000u,
+              "M9b2: ...and the rate is UNMOVED at 96000 - an AV/C length "
+              "that collides with SET_SAMPLING_RATE must not write it, got %u",
+              rate);
       }
 
       //! THE CONTROL: an OUI that collides with nothing must behave the same,
