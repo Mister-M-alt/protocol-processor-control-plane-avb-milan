@@ -326,6 +326,14 @@ module KL_pp_acmp_listener
   //! exactly the two paths that move the bit under a live binding: the AECP
   //! request, and §5.5.3.5.6 step 2's re-bind with STREAMING_WAIT flipped.
   logic                bnd_was_r;
+  //! ...and whether this walk RE-BOUND the sink. A BIND_NEW onto a sink that
+  //! is already bound runs `A1 A11 A9 A2 A3 A4 A5` - no A10, so `f_bound`
+  //! never drops while A2 rewrites `f_started` from the new flags. That is a
+  //! third path changing the bit under a live binding, and it already pushes
+  //! from A4's discovery arm, so raising the started/stopped trigger beside
+  //! it puts a second GET_STREAM_INFO frame on the wire for one event - the
+  //! same duplicate this trigger was narrowed to avoid on a fresh bind.
+  logic                bind_act_r;
 
   // fetched ACMPDU fields (zeroed at accept; big-endian shift-in)
   logic [63:0]         tk_eid_f_r;     // talker_entity_id @20
@@ -814,6 +822,7 @@ module KL_pp_acmp_listener
       dbg_strq_drop_r   <= 16'd0;
       strt_was_r        <= 1'b0;
       bnd_was_r         <= 1'b0;
+      bind_act_r        <= 1'b0;
       act_strt_chg_o    <= 1'b0;
       tk_eid_f_r    <= 64'd0;
       tk_uid_f_r    <= 16'd0;
@@ -890,6 +899,7 @@ module KL_pp_acmp_listener
 
         // ---------------------------------------------------------- X_IDLE
         X_IDLE: begin
+          bind_act_r <= 1'b0;
           errflow_r <= 1'b0;
           cellmut_r <= 1'b0;
           apend_r   <= 17'd0;
@@ -1138,6 +1148,7 @@ module KL_pp_acmp_listener
                 cellmut_r         <= 1'b1;
               end
               5'(ACT_A2_C): begin        // store binding + NVM mark
+                bind_act_r          <= 1'b1;
                 rec_r.talker_eid    <= tk_eid_f_r;
                 rec_r.talker_uid    <= tk_uid_f_r;
                 rec_r.bind_ctlr_eid <= ctlr_x_r;
@@ -1375,8 +1386,12 @@ module KL_pp_acmp_listener
           //! and pushes nothing, which is what the clause asks ("when one of
           //! these pieces of information CHANGES"); a re-bind that flips
           //! STREAMING_WAIT pushes, which keying on the AECP request alone
-          //! did not.
+          //! did not. `bind_act_r` excludes the walks that RE-BIND, because
+          //! those already push from their own discovery/teardown terms; the
+          //! paths left are the AECP request and §5.5.3.5.6 step 2's
+          //! short-circuit, which runs A6 and no A2.
           act_strt_chg_o <= cellmut_r && bnd_was_r && rec_r.f_bound
+                            && !bind_act_r
                             && (rec_r.f_started != strt_was_r);
           xs_r         <= X_CONSUME;
         end

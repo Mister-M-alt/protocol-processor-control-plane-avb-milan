@@ -1290,6 +1290,29 @@ int main(int argc, char** argv) {
             tops_collided, tops_alone);
     }
 
+    // RV8: a BIND_NEW onto an ALREADY BOUND sink changes started/stopped
+    // without ever unbinding (its cell is A1 A11 A9 A2 A3 A4 A5 - no A10),
+    // and it already pushes from A4's discovery arm. It must NOT also raise
+    // the started/stopped trigger, or one event puts two GET_STREAM_INFO
+    // frames on the wire - the duplicate this trigger was narrowed to avoid.
+    {
+      const int rvb = 2;
+      Stim ba = S_bind(TK_A, TKUID_A, CTL1, false); ba.uid = uint16_t(rvb);
+      step(rvb, ba, false, "RV8");             // bound + started
+      h.wait_idle();
+      CHECK(started_bit(rvb) == 1, "RV8pre: bound to talker A and started");
+
+      h.col.clear();
+      Stim bb = S_bind(TK_B, TKUID_B, CTL1, true); bb.uid = uint16_t(rvb);
+      step(rvb, bb, false, "RV8");             // different talker, SW set
+      h.wait_idle();
+      CHECK(started_bit(rvb) == 0,
+            "RV8: the re-bind landed STOPPED (got %u)", started_bit(rvb));
+      CHECK(h.col.strt_chgs == 0,
+            "RV8b: ...and raised NO started/stopped trigger beside the "
+            "bind's own notification (got %d)", h.col.strt_chgs);
+    }
+
     // an unbound sink ignores the request entirely (5.4.2.19's Note)
     Stim u3 = S_unbind(); u3.uid = uint16_t(sk);
     step(sk, u3, false, "S1");
