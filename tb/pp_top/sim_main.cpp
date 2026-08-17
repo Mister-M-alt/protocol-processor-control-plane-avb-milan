@@ -2219,6 +2219,81 @@ int main(int argc, char** argv) {
             "M8c: command_type is 0x%04X, want 0x%04X",
             ((unsigned)got[36] << 8) | got[37], AEM_READ_DESCRIPTOR);
     }
+
+    // ---- M9: an OUI that COLLIDES with an AEM opcode (issue #83) ----------
+    // The dispatch reads AECPDU @22..@23 as `opcode`, and on a VENDOR_UNIQUE
+    // message those two bytes are the head of a 48-bit protocol_id. Some
+    // discriminators guarded on message_type and some did not, so a vendor
+    // whose OUI began 00-04 was answered by READ_DESCRIPTOR: a 354-byte
+    // VENDOR_UNIQUE_RESPONSE carrying OUR entity descriptor, with the caller's
+    // protocol_id partly overwritten by @24..@27 of the AEM body.
+    //
+    // IT IS A CLASS, NOT AN INSTANCE. Every AEM opcode the dispatch names is
+    // an OUI head that can collide, so all four are sent here rather than the
+    // one that was found. 00:04:xx and 00:24:xx are densely assigned blocks;
+    // this was reachable on a real link, not a curiosity.
+    {
+      //! THE OUI HEADS THAT COLLIDE ARE THE DISPATCH'S OPCODES, and getting
+      //! that list from the engine rather than from memory matters: a first
+      //! cut of this test used 0x0024, which is CLOCK_DOMAIN's *descriptor
+      //! type*, not IDENTIFY_NOTIFICATION's opcode (0x0026). It therefore
+      //! probed a value that collides with nothing and missed one that does,
+      //! and a mutation restoring the second arm's guard survived it.
+      //!
+      //! `bytes` is the payload length: the short-command arms are only
+      //! reachable below their clause's minimum cdl, so 0x0029 and 0x002B are
+      //! sent short on purpose.
+      struct Col { uint16_t hi; size_t bytes; const char* what; };
+      const Col cols[] = {
+        {0x0004,  8, "READ_DESCRIPTOR"},
+        {0x0004,  2, "READ_DESCRIPTOR, short -> the BAD_ARGUMENTS arm"},
+        {0x0026,  8, "IDENTIFY_NOTIFICATION"},
+        {0x0029,  2, "GET_COUNTERS, short"},
+        {0x002B,  2, "GET_AUDIO_MAP, short"},
+      };
+      uint16_t sq = 0xC020;
+      for (const auto& c : cols) {
+        //! a full 48-bit protocol_id: the colliding head plus a nonzero tail,
+        //! so a response that overwrites @24..@27 is visible as well as one
+        //! that answers with the wrong body
+        std::vector<uint8_t> pl(c.bytes, 0);
+        if (c.bytes >= 4) putbe(&pl[0], 0xAABBCCDDu, 4);  // protocol_id @24..
+        h.q_aecp.clear();
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 6, 0, EID, CTLR_EID, sq,
+                          c.hi, pl));
+        auto r = h.wait_any(h.q_aecp, 400);
+        auto want = aecp_frame(CTLR_MAC, OWN_MAC, 7, AECP_NOT_IMPLEMENTED,
+                               EID, CTLR_EID, sq, c.hi, pl);
+        CHECK(!r.empty(), "M9: VENDOR_UNIQUE OUI %04X (collides with %s) got "
+              "silence", c.hi, c.what);
+        CHECK(r == want,
+              "M9: VENDOR_UNIQUE OUI %04X must be NOT_IMPLEMENTED with the "
+              "command echoed WHOLE, not answered as %s", c.hi, c.what);
+        if (!r.empty() && r != want) { dump("got ", r); dump("want", want); }
+        //! the protocol_id is the byte a wrong answer corrupts, so grade it
+        //! explicitly rather than relying on the byte-exact compare alone
+        CHECK(r.size() >= 38 + c.bytes
+              && (((unsigned)r[36] << 8) | r[37]) == c.hi
+              && (c.bytes < 4 || (r[38] == 0xAA && r[39] == 0xBB
+                                  && r[40] == 0xCC && r[41] == 0xDD)),
+              "M9: ...and every protocol_id byte survives the echo (OUI "
+              "%04X, %zu-byte payload)", c.hi, c.bytes);
+        sq++;
+      }
+
+      //! THE CONTROL: an OUI that collides with nothing must behave the same,
+      //! so a green above cannot come from refusing every vendor command
+      std::vector<uint8_t> pl(8, 0);
+      putbe(&pl[0], 0xC50AC101u, 4);
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 6, 0, EID, CTLR_EID, sq,
+                        MVU_PID_HI, pl));
+      auto r = h.wait_any(h.q_aecp, 400);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 7, AECP_NOT_IMPLEMENTED,
+                             EID, CTLR_EID, sq, MVU_PID_HI, pl);
+      CHECK(r == want,
+            "M9c: a non-colliding vendor OUI still round-trips whole");
+    }
   }
 
 

@@ -750,7 +750,7 @@ module KL_aecp_engine
 
   // ---- opcode decode = the dispatch step (see the banner) -----------------
   logic [10:0] upc_w;
-  logic        echo_w, short_w, short_ct_w, short_am_w, ctrs_w, amap_w;
+  logic        echo_w, short_w, short_ct_w, short_am_w, ctrs_w, amap_w, aem_w;
   //! a READ_DESCRIPTOR must carry configuration_index + reserved +
   //! descriptor_type + descriptor_index; a shorter one is BAD_ARGUMENTS, never
   //! a locate of whatever zeros happened to be there
@@ -768,8 +768,20 @@ module KL_aecp_engine
                   && (txn_w.opcode == OP_GET_COUNTERS_C) && !short_ct_w;
   assign amap_w = (txn_w.protocol == PP_PROTO_AEM)
                   && (txn_w.opcode == OP_GET_AUDIO_MAP_C) && !short_am_w;
+  //! THE GUARD BELONGS ON EVERY ARM, and for a long time it was on only some.
+  //! `opcode` is AECPDU @22..@23, which on a VENDOR_UNIQUE message is the first
+  //! two bytes of a 48-bit protocol_id. OP_READ_DESCRIPTOR_C is 0x0004, so a
+  //! vendor protocol_id of 00-04-xx-xx-xx-xx collided with it and was answered
+  //! with a 354-byte VENDOR_UNIQUE_RESPONSE carrying our ENTITY descriptor,
+  //! its protocol_id partly overwritten by READ_DESCRIPTOR's own fields.
+  //! IEEE 1722.1-2021 §9.3.5.3.3 and §9.6.2 want NOT_IMPLEMENTED with the
+  //! command echoed. 00:04:xx is a densely assigned OUI block, so this was
+  //! reachable on a real network, and it is a CLASS: 0x0002, 0x0006 and 0x0024
+  //! collide with ENTITY_AVAILABLE, SET_CONFIGURATION and IDENTIFY_NOTIFICATION
+  //! the same way. Issue #83.
+  assign aem_w  = (txn_w.protocol == PP_PROTO_AEM);
   always_comb begin : dispatch_decode
-    if ((txn_w.opcode == OP_READ_DESCRIPTOR_C) && !short_w) begin
+    if (aem_w && (txn_w.opcode == OP_READ_DESCRIPTOR_C) && !short_w) begin
       upc_w  = UPC_RDESC_C;
       echo_w = 1'b0;
     end else if (ctrs_w) begin
@@ -778,12 +790,11 @@ module KL_aecp_engine
     end else if (amap_w) begin
       upc_w  = UPC_GAMAP_C;
       echo_w = 1'b0;
-    end else if ((txn_w.opcode == OP_IDENTIFY_NOTIF_C)
-                 || ((txn_w.opcode == OP_READ_DESCRIPTOR_C) && short_w)
-                 || ((txn_w.protocol == PP_PROTO_AEM)
-                     && (txn_w.opcode == OP_GET_COUNTERS_C) && short_ct_w)
-                 || ((txn_w.protocol == PP_PROTO_AEM)
-                     && (txn_w.opcode == OP_GET_AUDIO_MAP_C) && short_am_w)) begin
+    end else if (aem_w
+                 && ((txn_w.opcode == OP_IDENTIFY_NOTIF_C)
+                     || ((txn_w.opcode == OP_READ_DESCRIPTOR_C) && short_w)
+                     || ((txn_w.opcode == OP_GET_COUNTERS_C) && short_ct_w)
+                     || ((txn_w.opcode == OP_GET_AUDIO_MAP_C) && short_am_w))) begin
       upc_w  = UPC_BADARG_C;
       echo_w = 1'b1;
     end else begin
