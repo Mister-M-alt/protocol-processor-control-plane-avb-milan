@@ -2868,7 +2868,7 @@ module protocol_processor_top
       .dyn_identify_o     (aecp_identify_o),
       .dyn_clk_src_index_o(aecp_clk_src_index_o),
       .strm_set_valid_o   (strm_set_valid_w),
-      .strm_set_index_o    (strm_set_index_w),
+      .strm_set_index_o   (strm_set_index_w),
       .strm_set_val_o     (strm_set_val_w),
       .strm_set_ready_i   (strm_set_ready_w),
       .dyn_pt_offset_o    (aecp_pt_offset_o),

@@ -170,8 +170,8 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x0017 | GET_CLOCK_SOURCE | shall | — | RO | — | yes | — | — | 36 B |
 | 0x0018 | SET_CONTROL | shall (identify) | value 0/255 | IDENTIFY | yes | — | — | yes | 28 + values |
 | 0x0019 | GET_CONTROL | shall (identify) | — | RO | — | **no** (variable) | — | — | 28 + values |
-| 0x0022 | START_STREAMING | shall | **input only** (Δ11) | E_STRT 1600 | E_STRMNS 1664 | E_STRMBAD 1696 | via locate | CHECK_LOCK | cdl 16, `{type, index}` |
-| 0x0023 | STOP_STREAMING | shall | **input only** (Δ11) | E_STOP 1632 | E_STRMNS 1664 | E_STRMBAD 1696 | via locate | CHECK_LOCK | cdl 16, `{type, index}` |
+| 0x0022 | START_STREAMING | shall | **input only** (Δ11); every other type `NOT_SUPPORTED` | STREAM_CFG | yes | — | — | yes (Table 5.22 started/stopped) | 28 B (`{type, index}`, cdl 16 on every arm) |
+| 0x0023 | STOP_STREAMING | shall | **input only** (Δ11); every other type `NOT_SUPPORTED` | STREAM_CFG | yes | — | — | yes (Table 5.22 started/stopped) | 28 B (`{type, index}`, cdl 16 on every arm) |
 | 0x0024 | REGISTER_UNSOLICITED_NOTIFICATION | shall | §7; accepts 2013 no-flags form | REGISTRY_OP | no | — | — | — | 28 B (w/ flags) |
 | 0x0025 | DEREGISTER_UNSOLICITED_NOTIFICATION | shall | §7 | REGISTRY_OP | no | — | — | auto-deregister → targeted | 24 B |
 | 0x0026 | IDENTIFY_NOTIFICATION | unsolicited-only | as command → `BAD_ARGUMENTS` (IEEE §7.4.39.2, the opcode-specific rule — it governs over §9.3.5.3.3's fallback) | — | — | — | — | is one | 28 B |
@@ -291,7 +291,7 @@ response is never a torn mix of two states.
 | Command | Stream Input | Stream Output |
 |---|---|---|
 | SET_STREAM_INFO (target; n/i today) | `NOT_SUPPORTED` (params come from PROBE_TX_RESPONSE) | per IEEE §7.4.15 subset: **MSRP_ACC_LAT_VALID must be supported**; writes presentation-time offset (0..0x7FFFFFFF ns, else `BAD_ARGUMENTS`); **any unsupported sub-flag means whole command `NOT_SUPPORTED`**; `STREAM_IS_RUNNING` while streaming; success echoes the flag + value |
-| START/STOP_STREAMING | **not implemented today**: `NOT_IMPLEMENTED` echo. Required future behavior is bound and stopped to started (and inverse), with no effect otherwise, reconciled with the persisted ACMP binding record | **not implemented today**: `NOT_IMPLEMENTED` echo. Required future behavior is `NOT_SUPPORTED` because a talker streams whenever reserved (Δ14) |
+| START/STOP_STREAMING | **implemented** (issue #78): a bound and stopped input goes to started, and the inverse; no effect when unbound or already in that state, and the state lives on the ACMP binding record rather than a second copy | **implemented**: `NOT_SUPPORTED`, because a talker streams whenever reserved (Δ14) and Section 5.3.7.3 excludes stopping a Stream Output. Every non-input type takes the same arm |
 
 ### 6.4 Validation chains (order matters; first failure responds)
 
