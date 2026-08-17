@@ -2126,10 +2126,10 @@ module KL_aecp_engine
             //! target is not supported" first is the more specific reading of
             //! Milan's "shall not support ... for a Stream Output".
             if (strm_r) begin
-              if (cmd_r.cdl < 11'd16)              upc_r <= UPC_STRMBAD_C;
+              if (cmd_r.cdl < 11'd16)                 upc_r <= UPC_STRMBAD_C;
               else if (cfg_ix_r != DT_STREAM_INPUT_C) upc_r <= UPC_STRMNS_C;
-              else if (strt_r)                     upc_r <= UPC_STRT_C;
-              else                                 upc_r <= UPC_STOP_C;
+              else if (strt_r)                        upc_r <= UPC_STRT_C;
+              else                                    upc_r <= UPC_STOP_C;
               echo_r <= 1'b0;
             end
             a_st_r <= A_DISP;
