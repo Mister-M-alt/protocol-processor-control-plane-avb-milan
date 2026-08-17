@@ -4723,6 +4723,86 @@ int main(int argc, char** argv) {
             "W21t: ...and it did NOT start an unbound Stream Input "
             "(started=0x%02X)", sb);
 
+      // W21cc: the request must survive a BUSY record walker. The AECP
+      // µprogram settles the status (locate, lock) and only then issues the
+      // write, so if that write were fire-and-forget it would be DROPPED
+      // whenever the ACMP walker happened to be mid-transaction - and the
+      // controller would hold a SUCCESS for a change that never happened.
+      // Overlap them deliberately: start the AECP command, then push ACMP
+      // work in behind it so the walker is occupied when the write lands.
+      {
+        // ensure a known starting point: started
+        (void)ask(OP_START, ti(DT_STREAM_INPUT, 0), 0x7A20);
+        CHECK((started() & 1u) == 1u, "W21cc: precondition, sink 0 started");
+
+        h.q_acmp.clear();
+        h.q_aecp.clear();
+        //! BRACKET the AECP command with ACMP work rather than queue it
+        //! before or after: the write lands tens of cycles into the
+        //! µprogram, and a burst on only one side of it finishes (or has not
+        //! started) by then. Frames ahead of it put the walker mid-
+        //! transaction; frames behind it keep it there.
+        for (int i = 0; i < 6; ++i)
+          h.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR2_EID, 0, EID,
+                            0, 0, 0, 0, uint16_t(0x7A30 + i), 0, 0));
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7A21,
+                          OP_STOP, ti(DT_STREAM_INPUT, 0)));
+        for (int i = 0; i < 6; ++i)
+          h.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR2_EID, 0, EID,
+                            0, 0, 0, 0, uint16_t(0x7A40 + i), 0, 0));
+        auto rf = h.wait_any(h.q_aecp, 900);
+        CHECK(!rf.empty() && st(rf) == AECP_SUCCESS,
+              "W21dd: the overlapped STOP_STREAMING answered SUCCESS (st=%d)",
+              rf.empty() ? -1 : st(rf));
+        unsigned sb2 = started();
+        CHECK((sb2 & 1u) == 0u,
+              "W21ee: ...and the record MOVED despite the busy walker "
+              "(started=0x%02X) - a SUCCESS whose effect was dropped is the "
+              "defect this handshake exists to prevent", sb2);
+      }
+
+      // W21w: Milan 5.4.2.19/.20 - "If the PAAD-AE is locked by a
+      // controller, it shall not accept a START_STREAMING command from a
+      // DIFFERENT controller". Lock as CTLR_EID, then command as CTLR2_EID.
+      {
+        std::vector<uint8_t> lk(16, 0);          // flags = 0 -> LOCK
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7A10,
+                          0x0001, lk));
+        auto lr = h.wait_any(h.q_aecp, 600);
+        CHECK(!lr.empty() && ((lr[16] >> 3) & 0x1F) == 0,
+              "W21w: the block's own LOCK_ENTITY took (status=%d)",
+              lr.size() > 16 ? ((lr[16] >> 3) & 0x1F) : -1);
+
+        unsigned before = started();
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR2_EID, 0x7A11,
+                          OP_STOP, ti(DT_STREAM_INPUT, 0)));
+        auto lf = h.wait_any(h.q_aecp, 600);
+        CHECK(!lf.empty() && st(lf) == AECP_ENTITY_LOCKED,
+              "W21x: STOP_STREAMING from a different controller is "
+              "ENTITY_LOCKED (st=%d)", lf.empty() ? -1 : st(lf));
+        CHECK(cdl(lf) == 16, "W21y: ...at cdl 16, got %d", cdl(lf));
+        unsigned after = started();
+        CHECK(after == before,
+              "W21z: a locked-out STOP_STREAMING moved the record anyway "
+              "(0x%02X -> 0x%02X)", before, after);
+
+        // ...and the SAME controller is still served
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7A12,
+                          OP_STOP, ti(DT_STREAM_INPUT, 0)));
+        auto ok = h.wait_any(h.q_aecp, 600);
+        CHECK(!ok.empty() && st(ok) == AECP_SUCCESS,
+              "W21za: the LOCK HOLDER is still served (st=%d)",
+              ok.empty() ? -1 : st(ok));
+        CHECK((started() & 1u) == 0u,
+              "W21zb: ...and its STOP reached the record");
+
+        std::vector<uint8_t> ul(16, 0);
+        putbe(&ul[2], 1, 2);                     // flags = UNLOCK
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7A13,
+                          0x0001, ul));
+        (void)h.wait_any(h.q_aecp, 600);
+      }
+
       // W21u: unbind is the lifecycle owner - Milan 5.3.8.7 calls the state
       // "undefined when the Stream Input is not bound", so the bit goes with
       // the binding. This ALSO restores what this block changed: a bound
