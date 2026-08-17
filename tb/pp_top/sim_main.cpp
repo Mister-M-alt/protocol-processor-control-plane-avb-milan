@@ -362,7 +362,8 @@ static std::vector<uint8_t> aecp_frame(uint64_t da, uint64_t sa,
   putbe(&f[34], seq, 2);
   // @22..@23 IS NOT ALWAYS A command_type. This masked bit 15 unconditionally
   // with the comment "u = 0", which is right for an AEM AECPDU (1722.1-2021
-  // 9.2.1.7 puts `u` in the top bit of command_type) and wrong for every other
+  // 9.3.2.1 makes `u` a 1-bit field ahead of `cr` and a 14-bit
+  // command_type) and wrong for every other
   // message_type. 9.6.2 Figure 9-12 gives a VENDOR_UNIQUE AECPDU a 48-bit
   // protocol_id at @22..@27 with no u bit in it, and 9.4 gives an
   // ADDRESS_ACCESS AECPDU a tlv_count there. Masking regardless meant the
@@ -2170,8 +2171,9 @@ int main(int argc, char** argv) {
     // 1722.1-2021 9.6.2 Figure 9-12 gives a VENDOR_UNIQUE AECPDU a 48-bit
     // protocol_id at @22..@27 with NO u bit anywhere in it. The header
     // emitter used to clear bit 7 of @22 for every message type, on the
-    // reasoning that @22's top bit is always `u`, and that is only true of an
-    // AEM AECPDU (9.2.1.7). Every OUI with bit 7 set came back mangled.
+    // reasoning that @22's top bit is always `u`. Per 9.3.2 that bit is a
+    // field of its own ahead of `cr`, and it exists only on an
+    // AEM AECPDU (9.3.2.1). Every OUI with bit 7 set came back mangled.
     //
     // MVU could never have shown it: Avnu's 00-1B-C5 has bit 7 clear, so the
     // whole M-section, the live board probes and every fuzz seed were immune
@@ -2201,7 +2203,7 @@ int main(int argc, char** argv) {
 
     // ---- M8c: ...and an AEM command still clears its u bit -----------------
     // The fix is a discriminator, not a deletion, so the other side of it
-    // needs a check too. 9.2.1.7: `u` is the top bit of an AEM AECPDU's
+    // needs a check too. 9.3.2.1: `u` is a 1-bit field of an AEM AECPDU's
     // command_type and a SOLICITED response carries it clear. A controller
     // that sent an AEM command with the bit set (it should not, but the field
     // is on the wire) must still get a solicited response back.
@@ -2218,6 +2220,169 @@ int main(int argc, char** argv) {
       CHECK((((unsigned)got[36] << 8) | got[37]) == AEM_READ_DESCRIPTOR,
             "M8c: command_type is 0x%04X, want 0x%04X",
             ((unsigned)got[36] << 8) | got[37], AEM_READ_DESCRIPTOR);
+    }
+
+    // ---- M9: an OUI that COLLIDES with an AEM opcode (issue #83) ----------
+    // The dispatch reads AECPDU @22..@23 as `opcode`, and on a VENDOR_UNIQUE
+    // message those two bytes are the head of a 48-bit protocol_id. Some
+    // discriminators guarded on message_type and some did not, so a vendor
+    // whose OUI began 00-04 was answered by READ_DESCRIPTOR: a 354-byte
+    // VENDOR_UNIQUE_RESPONSE carrying OUR entity descriptor, with the caller's
+    // protocol_id partly overwritten by @24..@27 of the AEM body.
+    //
+    // IT IS A CLASS, NOT AN INSTANCE. Every AEM opcode the dispatch names is
+    // an OUI head that can collide, so all four are sent here rather than the
+    // one that was found. 00:04:xx and 00:24:xx are densely assigned blocks;
+    // this was reachable on a real link, not a curiosity.
+    {
+      //! THE OUI HEADS THAT COLLIDE ARE THE DISPATCH'S OPCODES, and getting
+      //! that list from the engine rather than from memory matters: a first
+      //! cut of this test used 0x0024 believing it to be
+      //! IDENTIFY_NOTIFICATION, which is 0x0026. 0x0024 is
+      //! REGISTER_UNSOLICITED_NOTIFICATION -- an opcode, and a colliding one,
+      //! but not the arm that was broken -- so the probe missed the arm it was
+      //! aimed at and a mutation restoring that arm's guard survived it. The
+      //! list below is extracted from the engine's OP_*_C localparams.
+      //!
+      //! `bytes` is the payload length: the short-command arms are only
+      //! reachable below their clause's minimum cdl, so 0x0029 and 0x002B are
+      //! sent short on purpose.
+      //! `mt` too, because VENDOR_UNIQUE is only ONE of the message types
+      //! whose @22..@23 is not a command_type. The RX validator buckets AECP
+      //! as 6/7 -> MVU, 2/3 -> ADDRESS_ACCESS and EVERYTHING ELSE -> AEM, so
+      //! AVC_COMMAND (4), HDCP_APM_COMMAND (8), the reserved 10/12 and
+      //! EXTENDED_COMMAND (14) arrive in the AEM bucket carrying an
+      //! `avc_length` (Figure 9-9) where the dispatch reads an opcode. A
+      //! review measured mt=4 with avc_length 0x0004 drawing our 312-octet
+      //! ENTITY descriptor, and avc_length 0x0014 -- an ordinary AV/C length,
+      //! and also OP_SET_SAMP_RATE_C -- WRITING THE SAMPLING RATE and
+      //! answering SUCCESS. Guarding the protocol bucket alone was not enough.
+      //! EVERY opcode the engine names, against EVERY non-AEM message type.
+      //! A review found the previous cut swept four of twenty-one, so removing
+      //! the guard from any of the other seventeen arms -- SET_CONFIGURATION,
+      //! SET_CLOCK_SOURCE, SET_CONTROL, ACQUIRE, LOCK, all state-changing --
+      //! passed the whole suite. The comment above it already claimed the list
+      //! came from the dispatch. It does now.
+      static const uint16_t kOpcodes[] = {
+        0x0000, 0x0001, 0x0002, 0x0004, 0x0006, 0x0007, 0x0009, 0x000F,
+        0x0014, 0x0015, 0x0016, 0x0017, 0x0018, 0x0019, 0x0024, 0x0025,
+        0x0026, 0x0027, 0x0028, 0x0029, 0x002B,
+      };
+      //! the residual bucket in full (KL_pp_rx_validator: 6/7 MVU, 2/3 AA,
+      //! everything else AEM), plus AA itself
+      static const uint8_t kMsgTypes[] = {2, 4, 6, 8, 10, 12, 14};
+
+      struct Col { uint8_t mt; uint16_t hi; size_t bytes; const char* what; };
+      std::vector<Col> cols;
+      for (uint8_t mt : kMsgTypes)
+        for (uint16_t op : kOpcodes)
+          cols.push_back({mt, op, 8, "non-AEM message carrying an AEM opcode"});
+      //! the short-command arms, which need a cdl below their clause minimum
+      cols.push_back({6, 0x0004,  2, "VENDOR_UNIQUE / READ_DESCRIPTOR short"});
+      cols.push_back({6, 0x0029,  2, "VENDOR_UNIQUE / GET_COUNTERS short"});
+      cols.push_back({6, 0x002B,  2, "VENDOR_UNIQUE / GET_AUDIO_MAP short"});
+      //! and bit 15 set, which the u-bit ternary at the 6'd36 header byte is
+      //! the only thing standing between and a corrupted protocol_id
+      cols.push_back({6, 0x8004,  8, "VENDOR_UNIQUE, OUI with bit 15 set"});
+      cols.push_back({4, 0x8004,  8, "AVC_COMMAND, length word with bit 15 set"});
+      //! TWO ARMS RE-DISPATCH ON THE PAYLOAD, so for those the filler body is
+      //! not enough: a `AA-BB-CC-DD` @24..@25 is neither a descriptor type nor
+      //! a stream-port type, so under a broken guard the frame lands on a
+      //! type-invalid stub whose refusal is BYTE-IDENTICAL to the correct one.
+      //! The row then passes whether or not the guard exists.
+      //!
+      //! Both are given a real body below, in the payload override. A review
+      //! found the SET_SAMPLING_RATE one first and I fixed only that; the
+      //! GET_AUDIO_MAP arm had the same hole and a second review found it
+      //! still open. They are listed together here so the next one is not
+      //! missed: if an arm keys on payload CONTENT, the sweep's filler cannot
+      //! test it.
+
+      uint16_t sq = 0xC020;
+      for (const auto& c : cols) {
+        //! a full 48-bit protocol_id: the colliding head plus a nonzero tail,
+        //! so a response that overwrites @24..@27 is visible as well as one
+        //! that answers with the wrong body
+        std::vector<uint8_t> pl(c.bytes, 0);
+        if (c.bytes >= 4) putbe(&pl[0], 0xAABBCCDDu, 4);  // protocol_id @24..
+        //! ...except the SET_SAMPLING_RATE-shaped row, which needs a real
+        //! AUDIO_UNIT descriptor and a real rate to be able to write anything
+        if (c.mt == 4 && c.hi == 0x0014 && c.bytes == 8) {
+          putbe(&pl[0], 0x0002, 2);                 // AUDIO_UNIT
+          putbe(&pl[2], 0x0000, 2);                 // index 0
+          putbe(&pl[4], 48000u, 4);                 // a rate that is NOT 96000
+        }
+        //! GET_AUDIO_MAP re-dispatches on @24..@25 too (STREAM_PORT_IN/OUT),
+        //! so give it a real one or the guard on `amap_w` is untested
+        if (c.hi == 0x002B && c.bytes == 8) {
+          putbe(&pl[0], 0x000E, 2);                 // STREAM_PORT_INPUT
+          putbe(&pl[2], 0x0000, 2);                 // index 0
+          putbe(&pl[4], 0u, 4);                     // map_index 0
+        }
+        h.q_aecp.clear();
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, c.mt, 0, EID, CTLR_EID, sq,
+                          c.hi, pl));
+        auto r = h.wait_any(h.q_aecp, 400);
+        auto want = aecp_frame(CTLR_MAC, OWN_MAC, (uint8_t)(c.mt | 1),
+                               AECP_NOT_IMPLEMENTED,
+                               EID, CTLR_EID, sq, c.hi, pl);
+        CHECK(!r.empty(), "M9: mt=%u word %04X (%s) got silence",
+              c.mt, c.hi, c.what);
+        CHECK(r == want,
+              "M9: mt=%u word %04X must be NOT_IMPLEMENTED with the command "
+              "echoed WHOLE (%s)", c.mt, c.hi, c.what);
+        if (!r.empty() && r != want) { dump("got ", r); dump("want", want); }
+        //! the protocol_id is the byte a wrong answer corrupts, so grade it
+        //! explicitly rather than relying on the byte-exact compare alone
+        //! compare against what was SENT, not against a constant: one row
+        //! carries an AUDIO_UNIT body instead of the AA-BB-CC-DD filler
+        bool echoed = r.size() >= 38 + c.bytes
+                      && (((unsigned)r[36] << 8) | r[37]) == c.hi;
+        for (size_t i = 0; echoed && i < c.bytes; ++i)
+          echoed = (r[38 + i] == pl[i]);
+        CHECK(echoed,
+              "M9: ...and every echoed byte survives (mt=%u word %04X, "
+              "%zu-byte payload)", c.mt, c.hi, c.bytes);
+        sq++;
+      }
+
+      //! AND IT MUST NOT HAVE CHANGED ANYTHING. The status byte alone would
+      //! not have caught the worst of this: mt=4 with avc_length 0x0014
+      //! reached SET_SAMPLING_RATE's microprogram and WROTE the rate, then
+      //! answered SUCCESS. Read the rate back through the command that serves
+      //! it, because a refusal that still moved state is not a refusal.
+      {
+        std::vector<uint8_t> rp(4, 0);
+        putbe(&rp[0], 0x0002, 2);                 // AUDIO_UNIT, index 0
+        h.q_aecp.clear();
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0xC030,
+                          AEM_GET_SAMPLING_RATE, rp));
+        auto g = h.wait_any(h.q_aecp, 400);
+        unsigned rate = (g.size() >= 46)
+                        ? (((unsigned)g[42] << 24) | ((unsigned)g[43] << 16)
+                           | ((unsigned)g[44] << 8) | g[45]) : 0u;
+        CHECK(!g.empty() && g.size() >= 46 && ((g[16] >> 3) & 0x1F) == 0,
+              "M9b: GET_SAMPLING_RATE still answers SUCCESS after the storm");
+        CHECK(rate == 96000u,
+              "M9b2: ...and the rate is UNMOVED at 96000 - an AV/C length "
+              "that collides with SET_SAMPLING_RATE must not write it, got %u",
+              rate);
+      }
+
+      //! A NON-COLLIDING OUI, for symmetry. Note this is NOT the control that
+      //! rules out "refuses every vendor command" -- it expects the same
+      //! NOT_IMPLEMENTED echo as the rows above, so it cannot tell the two
+      //! apart. M1 is that control: GET_MILAN_INFO byte-exact at SUCCESS.
+      std::vector<uint8_t> pl(8, 0);
+      putbe(&pl[0], 0xC50AC101u, 4);
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 6, 0, EID, CTLR_EID, sq,
+                        MVU_PID_HI, pl));
+      auto r = h.wait_any(h.q_aecp, 400);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 7, AECP_NOT_IMPLEMENTED,
+                             EID, CTLR_EID, sq, MVU_PID_HI, pl);
+      CHECK(r == want,
+            "M9c: a non-colliding vendor OUI still round-trips whole");
     }
   }
 
@@ -2951,7 +3116,7 @@ int main(int argc, char** argv) {
     auto uns = h.wait_any(h.q_aecp, 700);
     auto exp_uns = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                               CTLR2_EID, 0x0000, 0x0025, {});
-    exp_uns[36] |= 0x80;                   // SS9.2.1.7: u = 1
+    exp_uns[36] |= 0x80;                   // SS9.3.2.1: u = 1
     CHECK(!uns.empty(), "U5b: the expiry notification arrives");
     CHECK(uns == exp_uns,
           "U5c: unsolicited DEREGISTER byte-exact (u=1, entry seq 0)");
