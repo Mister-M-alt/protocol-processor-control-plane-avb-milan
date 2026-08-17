@@ -18,21 +18,13 @@
 //                THE DISPATCH DECISION (06 §4 specifies a dispatch ROM per
 //                opcode; 06 §8 fixes its 48-bit entry shape but the tree ships
 //                no ROM and no generator for it, so this is a documented
-//                CHOICE, not an implementation of a written table). What is
-//                actually needed today is the µPC entry, so this block uses a
-//                DIRECT OPCODE DECODE — three arms, constant-folded, no ROM:
-//
-//                  0x0004 READ_DESCRIPTOR      -> UPC_RDESC_C  (real answer)
-//                  0x0029 GET_COUNTERS         -> UPC_GCTRS_C  (real answer)
-//                  0x002B GET_AUDIO_MAP        -> UPC_GAMAP_C  (real answer,
-//                                                 STREAM_PORT_INPUT only -
-//                                                 see the audio-map note)
-//                  0x0026 IDENTIFY_NOTIFICATION-> UPC_BADARG_C (IEEE §7.4.39.2:
-//                                                 as a COMMAND it is
-//                                                 BAD_ARGUMENTS — the
-//                                                 opcode-specific rule beats
-//                                                 §9.3.5.3.3's fallback)
-//                  everything else             -> UPC_NOTIMPL_C
+//                CHOICE, not an implementation of a written table). The
+//                pop-time cone directly selects READ_DESCRIPTOR,
+//                GET_COUNTERS, GET_AUDIO_MAP, and opcode-specific
+//                BAD_ARGUMENTS paths. Other implemented AEM commands latch
+//                discriminator bits and take a registered A_PLD-exit
+//                re-dispatch after their operand bytes settle. Unsupported
+//                opcodes retain the correctly sized NOT_IMPLEMENTED echo.
 //
 //                COMMANDS LANDED AFTER THE TIMING FINDING RESOLVE ONE STATE
 //                LATER. The pop-time decode above is the measured critical
@@ -394,7 +386,7 @@ module KL_aecp_engine
     //! answers number_of_maps 0, and the µprogram turns that into
     //! NO_SUCH_DESCRIPTOR only where the descriptor store agrees.
     output logic        amap_req_o,           //! a word is being asked for
-    output logic [15:0] amap_desc_type_o,     //! AECPDU @24 (STREAM_PORT_INPUT)
+    output logic [15:0] amap_desc_type_o,     //! AECPDU @24 (STREAM_PORT_INPUT or STREAM_PORT_OUTPUT)
     output logic [15:0] amap_desc_index_o,    //! AECPDU @26
     output logic [15:0] amap_map_index_o,     //! AECPDU @28 - the page
     output logic  [1:0] amap_sel_o,           //! 0 NMAPS, 1 GEOM, 2 RECORD
@@ -571,6 +563,7 @@ module KL_aecp_engine
   localparam logic [15:0] OP_GET_STREAM_FMT_C  = 16'h0009;
   localparam logic [15:0] OP_GET_SAMP_RATE_C   = 16'h0015;
   localparam logic [15:0] OP_GET_CLOCK_SRC_C   = 16'h0017;
+  localparam logic [15:0] DT_ENTITY_C          = 16'h0000;
   localparam logic [15:0] DT_AUDIO_UNIT_C      = 16'h0002;
   //! ---- the SET family (Milan §5.4.2.13 / §5.4.2.15) -------------------
   //! Each shares its GET's response form (IEEE Figures 7-45 and 7-47 are
@@ -659,11 +652,14 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_NSUPP1_C  = 11'd1328;  // E_NSUPP1
   localparam logic [10:0] UPC_SCFG_C     = 11'd1456; // E_SCFG
   localparam logic [10:0] UPC_SCFGRUN_C  = 11'd1488; // E_SCFGRUN
-  //! START/STOP's own-form refusals: four payload bytes, cdl 16. Borrowing
-  //! the eight-byte stubs over-sizes them and falling to E_BADARG (no field
-  //! at all) under-sizes them to a bare header — both are 9.3.5.3.3 defects.
-  //! ...and SET_CONFIGURATION's out-of-range arm, inside E_SCFGRUN's slot
-  localparam logic [10:0] UPC_SCFGBAD_C  = 11'd1499; // E_SCFGBAD
+  //! SET_CONFIGURATION's out-of-range arm. Its OWN program, not an offset
+  //! into E_SCFGRUN's: an address that names an instruction inside another
+  //! program drifts the moment a word is inserted above it, and
+  //! scripts/check_upc_map.py now refuses a name that is not a place() target
+  //! for exactly that reason. The refusal answers the four-byte body of
+  //! §7.4.7.1 at cdl 16, like the other two arms.
+  localparam logic [10:0] UPC_SCFGBAD_C  = 11'd1513; // E_SCFGBAD
+  localparam logic [10:0] UPC_RDESCENT_C = 11'd1568; // E_RDESCENT
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -920,9 +916,16 @@ module KL_aecp_engine
   //! @24..@27 in wire order.
   //! GET_AUDIO_MAP is the one shape that needs a mux, because its µprogram
   //! consumes the registers TWO ways at once: r14 is the store's locate key
-  //! ({index, type, cfg} - GET_AUDIO_MAP names no configuration_index and
-  //! configuration 0 is current by construction, SET_CONFIGURATION being
-  //! unimplemented), and r13 packs {descriptor_index, map_index} so ONE
+  //! ({index, type, cfg} - GET_AUDIO_MAP names no configuration_index, and
+  //! the locate keys on 0 because the shipping image declares ONE
+  //! configuration. That used to be justified by SET_CONFIGURATION being
+  //! unimplemented; it now stores an index, and E_RDESCENT overlays the ENTITY
+  //! descriptor so GET_CONFIGURATION and the descriptor agree. This key is
+  //! still a literal 0, so on a multi-configuration image THIS command would
+  //! stay pinned to configuration 0 while both of those expose the active
+  //! index, the next thing to revisit when a second configuration ships),
+  //! and r13 packs
+  //! {descriptor_index, map_index} so ONE
   //! FMT_D BUILD_FLD lays @26..@29 in wire order while r13[15:0] is the
   //! right-justified map_index CHECK_ARG compares (the µISA has no shift).
   //! `desc_ty_r` holds map_index for this command - see the payload walk.
@@ -976,8 +979,7 @@ module KL_aecp_engine
   //! SET_CONFIGURATION's argument is not at @28 like the rest of the family:
   //! §7.4.7.1 puts `reserved` at @24 and `configuration_index` at @26, so the
   //! value is what the walk already captured into `desc_ix_r` and there is
-  //! nothing to justify. START/STOP_STREAMING carry no value at all — the bit
-  //! to store IS the opcode, so it is packed here rather than walked.
+  //! nothing to justify.
   assign opd2_w = ssrate_r ? {32'd0, setval_r[63:32]}
                 : sclks_r  ? {48'd0, setval_r[63:48]}
                 : sctrl_r  ? {56'd0, setval_r[63:56]}
@@ -1736,13 +1738,26 @@ module KL_aecp_engine
               upc_r  <= UPC_MVUINFO_C;
               echo_r <= 1'b0;
             end
+            //! READ_DESCRIPTOR(ENTITY) overlays current_configuration from
+            //! the same dynamic state GET_CONFIGURATION reads. IEEE
+            //! §7.4.8.2 calls the two values equivalent, so the static image
+            //! cannot remain the response source after SET_CONFIGURATION.
+            //! Descriptor type is available only after this registered walk;
+            //! all non-ENTITY reads retain the generic byte-exact program.
+            if ((cmd_r.protocol == PP_PROTO_AEM)
+                && (cmd_r.opcode == OP_READ_DESCRIPTOR_C)
+                && (cmd_r.cdl >= 11'd20)
+                && (desc_ty_r == DT_ENTITY_C)) begin
+              upc_r  <= UPC_RDESCENT_C;
+              echo_r <= 1'b0;
+            end
             //! ...and the audio-map TYPE gate at the same seam, for the same
             //! reason: descriptor_type is at @24 and cannot be judged at pop.
             //! BOTH Milan §5.4.2.26 halves are served now - the OUTPUT side
             //! re-dispatches to the two-word E_GAMAPO stub that swaps the
             //! type constant and falls into E_GAMAP's tail, and the
-            //! integrator's face routes on amap_desc_type_o to its capture-
-            //! side map store. Any other type keeps the NOT_IMPLEMENTED
+            //! integrator's face routes on amap_desc_type_o to the map store
+            //! for that direction. Any other type keeps the NOT_IMPLEMENTED
             //! echo (`amap_r` stays set: E_NOTIMPL runs no gathers, so the
             //! gx routing it selects is never consulted on that arm).
             if (amap_r && (cfg_ix_r == DT_STREAM_PORT_OUT_C)) begin
@@ -1921,8 +1936,8 @@ module KL_aecp_engine
             //! The refusal is the reduction over EVERY stream, not a test of
             //! the descriptor named: "shall not accept ... if ONE OF the
             //! Stream Input is bound or ONE OF the Stream Output is
-            //! streaming". §7.4.8.1's command is 4 bytes, so cdl 16 is the
-            //! whole thing.
+            //! streaming". §7.4.7.1's command is 4 bytes, so cdl 16 is the
+            //! whole thing; §7.4.8.1, GET_CONFIGURATION's, is zero.
             if (scfg_r) begin
               if (cmd_r.cdl < 11'd16)  upc_r <= UPC_SCFGBAD_C;
               else if (any_running_w)  upc_r <= UPC_SCFGRUN_C;

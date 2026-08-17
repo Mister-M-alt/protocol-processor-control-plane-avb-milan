@@ -41,14 +41,24 @@ RE_ENGINE = re.compile(
     r"localparam\s+logic\s*\[10:0\]\s+UPC_([A-Z0-9_]+)_C\s*=\s*11'd(\d+)\s*;")
 
 
+RE_PLACED = re.compile(r"place\((E_[A-Z0-9_]+)\s*,")
+
 def main() -> int:
     for path in (UCODE, ENGINE):
         if not os.path.exists(path):
             print(f"UPC MAP GATE: cannot read {path}", file=sys.stderr)
             return 1
 
+    usrc = open(UCODE, encoding="utf-8").read()
     ucode = {m.group(1): int(m.group(2))
-             for m in RE_UCODE.finditer(open(UCODE, encoding="utf-8").read())}
+             for m in RE_UCODE.finditer(usrc)}
+    #! An address that is only a NUMBER is an address that can drift: if a name
+    #! points INTO another program's instruction list rather than at its own
+    #! place() target, inserting one word above it moves the instruction and
+    #! leaves the constant behind, and comparing two hand-written numbers still
+    #! says PASS. A review demonstrated exactly that. Requiring every name to be
+    #! a place() target is what makes the comparison below mean something.
+    placed = set(RE_PLACED.findall(usrc))
     engine = {m.group(1): int(m.group(2))
               for m in RE_ENGINE.finditer(open(ENGINE, encoding="utf-8").read())}
 
@@ -62,6 +72,14 @@ def main() -> int:
     #! never named by a localparam. So every ENGINE constant must have a
     #! matching program, but not every program needs a constant.
     problems = []
+    for name, addr in sorted(ucode.items()):
+        if name not in placed:
+            problems.append(
+                f"  {name} = {addr} is never a place() target. It names an "
+                f"address INSIDE some other program, so an instruction added "
+                f"above it moves the code and leaves this constant behind; "
+                f"and this gate cannot see that. Give it its own place().")
+
     for name, addr in sorted(engine.items()):
         want = ucode.get("E_" + name)
         if want is None:

@@ -145,6 +145,10 @@ class per [03 §6](03_packet_engine.md); GDI = allowed inside GET_DYNAMIC_INFO;
 n/i = not implemented → echo command, status `NOT_IMPLEMENTED` — the response-size
 rule that satisfies IEEE §9.3.5.3.3 for **every** opcode 0x0000–0x0068).
 
+This table records both the target contract and current realization. A row
+marked **n/i today** is not dispatched by the current engine and returns the
+`NOT_IMPLEMENTED` echo. Section 8.1 is the authoritative realized inventory.
+
 | Opcode | Command | Mandate | Scope rule | Class | Lock-prot. | GDI | Oversize | Notif | Resp. size |
 |---|---|---|---|---|---|---|---|---|---|
 | 0x0000 | ACQUIRE_ENTITY | shall, **never succeeds** (Δ7) | any | — | — | — | — | — | 40 B echo, `NOT_SUPPORTED` |
@@ -152,22 +156,22 @@ rule that satisfies IEEE §9.3.5.3.3 for **every** opcode 0x0000–0x0068).
 | 0x0002 | ENTITY_AVAILABLE | shall | — | RO | — | — | — | — | 44 B (2021 form w/ flags + acquired/locked IDs) |
 | 0x0003 | CONTROLLER_AVAILABLE | responder: n/i (not a controller); **originator**: §7 | — | — | — | — | — | — | 24 B echo |
 | 0x0004 | READ_DESCRIPTOR | shall | allowed while locked | RO | no | — | **yes** | — | 28 + descriptor (4-B stub on failure) |
-| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER | yes | — | — | yes | 28 B |
+| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER *(architectural class; the current single AECP engine serializes AEM commands while the dispatch scoreboard remains unwired)* | yes | - | - | yes *(open, #69)* | 28 B |
 | 0x0007 | GET_CONFIGURATION | shall | — | RO | — | yes | — | — | 28 B |
-| 0x0008 | SET_STREAM_FORMAT | shall | §6.4 chain | STREAM_CFG | yes | — | — | yes | 40 B |
+| 0x0008 | SET_STREAM_FORMAT | shall, **n/i today** | target: §6.4 chain | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | 0x0009 | GET_STREAM_FORMAT | shall | — | RO | — | yes | — | — | 40 B |
-| 0x000E | SET_STREAM_INFO | shall | **output only** (Δ11); §6.3 | STREAM_CFG | yes | — | — | yes | 80 B |
+| 0x000E | SET_STREAM_INFO | shall, **n/i today** | target: **output only** (Δ11); §6.3 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | 0x000F | GET_STREAM_INFO | shall | Milan 80-B form §6.2 | RO | — | yes | — | async triggers | 80 B |
-| 0x0010 | SET_NAME | shall | all names | NAME_WR | yes | — | — | yes | 48 B |
-| 0x0011 | GET_NAME | shall | — | RO | — | yes | — | — | 48 B |
+| 0x0010 | SET_NAME | shall, **n/i today** | target: all names | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x0011 | GET_NAME | shall, **n/i today** | target: all names | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | 0x0014 | SET_SAMPLING_RATE | shall | per AUDIO_UNIT; §6.4 | CLOCK_CFG | yes | — | — | yes | 36 B |
 | 0x0015 | GET_SAMPLING_RATE | shall | — | RO | — | yes | — | — | 36 B |
 | 0x0016 | SET_CLOCK_SOURCE | shall | per CLOCK_DOMAIN | CLOCK_CFG | yes | — | — | yes | 36 B |
 | 0x0017 | GET_CLOCK_SOURCE | shall | — | RO | — | yes | — | — | 36 B |
 | 0x0018 | SET_CONTROL | shall (identify) | value 0/255 | IDENTIFY | yes | — | — | yes | 28 + values |
 | 0x0019 | GET_CONTROL | shall (identify) | — | RO | — | **no** (variable) | — | — | 28 + values |
-| 0x0022 | START_STREAMING | shall | **input only** (Δ11) | STREAM_CFG | yes | — | — | yes | 28 B |
-| 0x0023 | STOP_STREAMING | shall | **input only** (Δ11) | STREAM_CFG | yes | — | — | yes | 28 B |
+| 0x0022 | START_STREAMING | shall, **n/i today** | **input only** (Δ11) | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x0023 | STOP_STREAMING | shall, **n/i today** | **input only** (Δ11) | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | 0x0024 | REGISTER_UNSOLICITED_NOTIFICATION | shall | §7; accepts 2013 no-flags form | REGISTRY_OP | no | — | — | — | 28 B (w/ flags) |
 | 0x0025 | DEREGISTER_UNSOLICITED_NOTIFICATION | shall | §7 | REGISTRY_OP | no | — | — | auto-deregister → targeted | 24 B |
 | 0x0026 | IDENTIFY_NOTIFICATION | unsolicited-only | as command → `BAD_ARGUMENTS` (IEEE §7.4.39.2, the opcode-specific rule — it governs over §9.3.5.3.3's fallback) | — | — | — | — | is one | 28 B |
@@ -175,12 +179,12 @@ rule that satisfies IEEE §9.3.5.3.3 for **every** opcode 0x0000–0x0068).
 | 0x0028 | GET_AS_PATH | shall | gather §6.2 | RO | — | **no** | **yes** | async trigger | 28 + 8·count |
 | 0x0029 | GET_COUNTERS | shall | §6.6 | RO | — | yes | — | async (`T-CTR-NOTIF`) | 160 B |
 | 0x002B | GET_AUDIO_MAP | shall (dynamic ports) | §6.5 | RO | — | **no** | **yes** | — | 32 + 8·N |
-| 0x002C | ADD_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | — | **yes** | yes | 28 + 8·N |
-| 0x002D | REMOVE_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | — | **yes** | yes | 28 + 8·N |
-| 0x004B | GET_DYNAMIC_INFO | shall | iterator §6.7 | RO (per element) | — | n/a | **no** | — | ≤ 536 B |
+| 0x002C | ADD_AUDIO_MAPPINGS | shall, **n/i today** (dynamic ports) | target: §6.5 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x002D | REMOVE_AUDIO_MAPPINGS | shall, **n/i today** (dynamic ports) | target: §6.5 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x004B | GET_DYNAMIC_INFO | shall, **n/i today** | target: iterator §6.7 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | MVU 0x0000 | GET_MILAN_INFO | shall | §6.9 | RO | — | — | — | — | 44 B |
-| MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended (`P-EN-MVU-SUID`) | §6.9 | CLOCK_CFG-like (global key) | yes/— | — | — | yes/— | 40 B |
-| MVU 0x0003/0x0004 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO | recommended (`P-EN-MVU-MCR`) | §6.9 | CLOCK_CFG | yes/— | — | — | yes/— | 104 B |
+| MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended, **n/i today** (`P-EN-MVU-SUID`) | target: §6.9 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| MVU 0x0003/0x0004 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO | recommended, **n/i today** (`P-EN-MVU-MCR`) | target: §6.9 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | 0x000B | GET_VIDEO_FORMAT | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
 | 0x000D | GET_SENSOR_FORMAT | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
 | 0x0013 | GET_ASSOCIATION_ID | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
@@ -282,18 +286,36 @@ response is never a torn mix of two states.
 
 | Command | Stream Input | Stream Output |
 |---|---|---|
-| SET_STREAM_INFO | `NOT_SUPPORTED` (params come from PROBE_TX_RESPONSE) | per IEEE §7.4.15 subset: **MSRP_ACC_LAT_VALID must be supported** → writes presentation-time offset (0..0x7FFFFFFF ns, else `BAD_ARGUMENTS`); **any unsupported sub-flag ⇒ whole command `NOT_SUPPORTED`**; `STREAM_IS_RUNNING` while streaming; success echoes the flag + value |
-| START/STOP_STREAMING | bound ∧ stopped → started (and inverse); no effect otherwise; persisted | `NOT_SUPPORTED` (a talker streams whenever reserved — Δ14) |
+| SET_STREAM_INFO (target; n/i today) | `NOT_SUPPORTED` (params come from PROBE_TX_RESPONSE) | per IEEE §7.4.15 subset: **MSRP_ACC_LAT_VALID must be supported**; writes presentation-time offset (0..0x7FFFFFFF ns, else `BAD_ARGUMENTS`); **any unsupported sub-flag means whole command `NOT_SUPPORTED`**; `STREAM_IS_RUNNING` while streaming; success echoes the flag + value |
+| START/STOP_STREAMING | **not implemented today**: `NOT_IMPLEMENTED` echo. Required future behavior is bound and stopped to started (and inverse), with no effect otherwise, reconciled with the persisted ACMP binding record | **not implemented today**: `NOT_IMPLEMENTED` echo. Required future behavior is `NOT_SUPPORTED` because a talker streams whenever reserved (Δ14) |
 
 ### 6.4 Validation chains (order matters; first failure responds)
 
 | Command | Chain |
 |---|---|
-| SET_CONFIGURATION | lock → any input bound ∨ any output streaming ⇒ `STREAM_IS_RUNNING` → index valid ⇒ commit (CFG_BARRIER drained) → NVM mark (review §8 item 1) |
-| SET_STREAM_FORMAT | lock → sink bound ∨ source streaming ⇒ `STREAM_IS_RUNNING` → format ∈ descriptor list → every existing static+dynamic mapping still references an existing channel, else `BAD_ARGUMENTS` → commit + `avtp.SET_*_FORMAT` + NVM |
+| SET_CONFIGURATION | any input bound ∨ any output streaming ⇒ `STREAM_IS_RUNNING` (**at dispatch, so it outranks the lock** - see below) → lock → index valid ⇒ commit → NVM mark (review §8 item 1). **No scoreboard barrier is drained today**: the current top admits a new AEM transaction only when its single AECP engine is idle, which orders SET_CONFIGURATION against both configuration read views. A future parallel AEM execution path must select `PP_HZ_CFG_BARRIER` before it can preserve that property. |
+| SET_STREAM_FORMAT (target; n/i today) | lock then sink bound or source streaming gives `STREAM_IS_RUNNING`; require format in the descriptor list and every static or dynamic mapping to reference an existing channel; otherwise `BAD_ARGUMENTS`; then commit, update AVTP format state, and mark NVM |
 | SET_SAMPLING_RATE | lock → rate ∈ AUDIO_UNIT list → mappings whose stream rate ≠ new rate while port has neither SRC bit ⇒ may `NOT_SUPPORTED` (Milan §5.4.2.13 — "UNSUPPORTED" typo, review §8 item 3) → commit + NVM |
 | SET_CLOCK_SOURCE | lock → source ∈ CLOCK_DOMAIN list → `mclk.SET_CLOCK_SOURCE` → commit + NVM |
-| SET_NAME | lock → descriptor named → commit + NVM |
+| SET_NAME (target; n/i today) | lock, require a named descriptor, commit, and mark NVM |
+
+**Two notes on SET_CONFIGURATION, both decisions rather than accidents.**
+
+*Precedence.* The `STREAM_IS_RUNNING` reduction is taken at **dispatch**, before
+`E_SCFG` runs, so a foreign controller addressing a locked entity that also has
+a running stream is answered `STREAM_IS_RUNNING` and never reaches the
+program's `CHECK_LOCK`. Milan §5.4.2.5 and IEEE §7.4.7.2 each state their
+refusal without ordering it against the other, so either answer conforms. The
+order is pinned by a check (`tb/pp_top`, W17n) so it cannot drift silently.
+
+*One current-configuration source.* The command **stores** the index, and both
+`GET_CONFIGURATION` (§7.4.8) and `READ_DESCRIPTOR(ENTITY)` overlay that dynamic
+value. This preserves §7.4.8.2 equivalence on multi-configuration images as well
+as on the shipping one-configuration image. The descriptor image remains
+read-only: `E_RDESCENT` copies the first 310 ENTITY bytes unchanged and appends
+the dynamic `current_configuration` word. Before the first successful SET, the
+word comes from the image. The W18 regression grades both a successful non-zero
+SET and a rejected SET, including the GET and READ_DESCRIPTOR views.
 
 ### 6.5 Audio-map operations (Milan §5.4.2.26–.28)
 
@@ -668,7 +690,8 @@ not exist in a Milan PAAD):
 
 Dropped from the original sketch: `ALLOCATE/RELEASE_CONNECTION`,
 `UPDATE_ENTITY_TABLE`, `WRITE_DESCRIPTOR`, `CHECK_ACQUIRE` (no such objects/flows in
-Milan). Exemplar µprograms:
+Milan). These are target exemplars; only commands listed as real in Section 8.1
+are current µprograms:
 
 ```text
 GET_SAMPLING_RATE:                    SET_SAMPLING_RATE:
@@ -684,7 +707,7 @@ ACQUIRE_ENTITY:                         BUILD_HEADER; BUILD_FIELD
   BUILD_HEADER (echo, owner_id=0)       NOTIFY_ENQ  {resp, excl=requester}
   SEND_RESPONSE; END                    END
 
-GET_DYNAMIC_INFO:
+GET_DYNAMIC_INFO (target; n/i today):
   ITER_OPEN tuples            ; pre-scan pass: GDI flags, else BAD_ARGUMENTS-all
   loop: ITER_NEXT -> sub      ; dispatch sub-µprogram in sub-command mode
   APPEND_RESP (skip if > 524) ; per-element info_status written
@@ -708,14 +731,14 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x0001 LOCK_ENTITY | real lock, unlock, owner query, keep-alive, and expiry behavior |
 | 0x0002 ENTITY_AVAILABLE | real flags and current owner state |
 | 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor; `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
-| 0x0006 SET_CONFIGURATION | real lock-protected update, with `STREAM_IS_RUNNING` while any Stream Input is bound or Stream Output is streaming |
+| 0x0006 SET_CONFIGURATION | real lock-protected **store**, with `STREAM_IS_RUNNING` while any Stream Input is bound or Stream Output is streaming. The value is recorded and republished; it does not yet re-point the served descriptor set - see the note under §6.4 |
 | 0x0007 GET_CONFIGURATION | real current configuration read |
 | 0x0009 GET_STREAM_FORMAT | real current Stream Input or Stream Output format read |
 | 0x000F GET_STREAM_INFO | real Milan Figure 5.1 response from the integrator state face |
 | 0x0014 / 0x0015 SET/GET_SAMPLING_RATE | real lock-protected per-Audio Unit dynamic state |
 | 0x0016 / 0x0017 SET/GET_CLOCK_SOURCE | real lock-protected per-Clock Domain dynamic state |
 | 0x0018 / 0x0019 SET/GET_CONTROL | real volatile Identify control with values 0 and 255 |
-| 0x0022 / 0x0023 START/STOP_STREAMING | real lock-protected Stream Input state; Stream Output targets refuse `NOT_SUPPORTED` |
+| 0x0022 / 0x0023 START/STOP_STREAMING | **NOT IMPLEMENTED** - the NOT_IMPLEMENTED echo. Built and then withdrawn: started/stopped already has a home in the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is persisted by the NVM shadow, and a second copy in the dynamic store would be neither. The work is preserved on branch `78-start-stop-streaming` behind that decision |
 | 0x0024 / 0x0025 REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION | real bounded controller registry |
 | 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face |
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |
@@ -815,17 +838,14 @@ shared) watchdog with the same ENTITY_MISBEHAVING void on expiry, and an
 unwired face is the same safe state: `number_of_maps` answers 0 and every
 GET_AUDIO_MAP resolves against the descriptor image alone.
 
-**The STREAM_PORT_OUTPUT gap is recorded, not hidden.** Milan §5.4.2.26 also
-demands GET_AUDIO_MAP on every Stream Port Output with no static map (and
-`NOT_SUPPORTED` on one WITH static maps - the §6.5 store-side check). This
-build's talker-side mappings live in a differently-shaped store (the capture
-mux's source buckets, not a cluster-indexed RAM), so a 0x002B naming any
-descriptor_type but STREAM_PORT_INPUT keeps the NOT_IMPLEMENTED echo, decided
-at the payload-walk exit like the MVU sub-decode (the type field is at @24 and
-cannot be judged at pop). ADD_AUDIO_MAPPINGS (0x002C) and
-REMOVE_AUDIO_MAPPINGS (0x002D) also keep the echo: the write path must reuse
-the same acceptance the fabric's own map-write port applies - never a second
-validation law - and that lands with them, not before.
+**Both Stream Port directions are served.** Milan §5.4.2.26 requires
+GET_AUDIO_MAP on every Stream Port Input and Stream Port Output with no static
+map. STREAM_PORT_INPUT enters `E_GAMAP` directly. The registered type gate
+sends STREAM_PORT_OUTPUT through `E_GAMAPO`, which substitutes the output type
+and joins the same response program. The integrator selects its mapping store
+from `amap_desc_type_o`. Any other descriptor type keeps the NOT_IMPLEMENTED
+echo. ADD_AUDIO_MAPPINGS (0x002C) and REMOVE_AUDIO_MAPPINGS (0x002D) also keep
+the echo until their write path can reuse the fabric's mapping acceptance law.
 
 Measured cost of the whole opcode inside `KL_aecp_engine`, yosys 0.66
 `synth_xilinx -family xc7 -flatten`, against the commit it lands on:
@@ -839,18 +859,19 @@ guard costs nothing new. Read the LUT figure as "of order a hundred" for the
 reasons the GET_COUNTERS paragraph above already measured; Vivado has not
 been run against this change.
 
-Δ7's ACQUIRE_ENTITY (`NOT_SUPPORTED` with `owner_id` = 0) is therefore **not yet**
-distinguished from the generic echo — the exemplar µprogram exists (`E_ACQ`) but the
-response must zero `owner_id` rather than echo it, so it is not wired.
+Delta 7 ACQUIRE_ENTITY is distinguished from the generic fallback. It returns
+`NOT_SUPPORTED`, preserves the command form, and carries the required zero
+`owner_id`. LOCK_ENTITY and ENTITY_AVAILABLE take their own registered paths.
 
 **Dispatch decision (this section specifies a ROM; the tree ships none).** §4 names a
-dispatch ROM and §8 fixes its 48-bit entry, but no ROM and no generator for it exist,
-and the only field with a consumer today is the µPC entry. The engine therefore uses a
-**direct opcode decode** — three constant-folded arms — and says so in its banner. A
-ROM becomes the right shape once the hazard class, min-cdl, response-size id,
-lock/GDI/notify flags and per-profile valid bits have consumers; until then it would be
-a generated artifact with one live field. When it lands it replaces the decode and
-nothing else.
+dispatch ROM and §8 fixes its 48-bit entry, but no ROM and no generator for it exist.
+The engine therefore uses a two-stage direct decode. The timing-sensitive pop stage
+selects READ_DESCRIPTOR, GET_COUNTERS, GET_AUDIO_MAP, and opcode-specific
+BAD_ARGUMENTS paths. Registered discriminator bits select the remaining implemented
+AEM programs at the payload-walk exit, after all operand bytes have settled. A ROM
+becomes the right shape once the hazard class, minimum length, response-size id,
+lock/GDI/notify flags and per-profile valid bits have consumers. When it lands it
+replaces both decode stages and nothing else.
 
 **The MVU sub-decode is a SECOND decode, and it has to be.** §4's block diagram draws
 the MVU sub-decoder beside the AEM decoder, both feeding the dispatch ROM, which reads
@@ -945,14 +966,15 @@ LOCK_ENTITY". It is cited throughout this section as the SIZING rule, which is w
 gives; it does not govern those two opcodes' behaviour, and nothing here should be read
 as saying it does.)
 
-**Three mandatory opcodes are unanswered, not one.** Table 7-140's closing note is
-broader than the ENTITY_AVAILABLE line this document used to single out: "An ATDECC
-Talker or Listener shall implement and respond to the ACQUIRE_ENTITY, LOCK_ENTITY, and
-ENTITY_AVAILABLE commands." All three answer NOT_IMPLEMENTED on this build. Measured on
-the AX7101: 0x0000 and 0x0002 by direct probe, 0x0000 and 0x0001 in the Hive 4.3.1 log.
-Answering them correctly-sized is not answering them. Two readings exist: the length of the command
-being answered, or the length the standard gives that opcode's own RESPONSE
-(§7.4.78.2's GET_MAX_TRANSIT_TIME response is 12 octets where its command is 4).
+**The mandatory core trio is answered.** ACQUIRE_ENTITY returns the Milan Delta 7
+`NOT_SUPPORTED` response with zero `owner_id`. LOCK_ENTITY implements the ENTITY-only
+lock, unlock, competing-controller refusal, and timeout behavior through
+`KL_aecp_notify`. ENTITY_AVAILABLE builds the 2021 response form with flags plus the
+acquired and locked controller IDs. The generic NOT_IMPLEMENTED sizing below applies
+only to commands outside the served inventory. For those commands, two readings exist:
+the length of the command being answered, or the length the standard gives that
+opcode's own RESPONSE (§7.4.78.2's GET_MAX_TRANSIT_TIME response is 12 octets where
+its command is 4).
 
 **This engine reflects the command**, so `control_data_length` is 12 + the command's
 payload, the payload is the command's own bytes read back out of its RX slot, and a

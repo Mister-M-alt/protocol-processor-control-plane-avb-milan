@@ -158,11 +158,12 @@ of both. Your memory system already arbitrates — let it.
 Both are 8-byte aligned, and `RESP_BASE_P` must not overlap `DESC_BASE_P`.
 
 The image opens with a magic, a layout version and a checksum. Until all three agree,
-nothing is served and every `READ_DESCRIPTOR` answers `NO_SUCH_DESCRIPTOR` — never a
-garbage descriptor on the wire. Uninitialised memory is not a recognisable zero, which is
-exactly why the header check exists. A **late** load heals it: the next locate re-arms the
-header probe, so software that loads the image after reset does not need a reset to
-recover.
+the store reports zero configurations. `READ_DESCRIPTOR` validates the requested
+configuration before it locates a descriptor, so every request against an invalid or
+unloaded image answers `BAD_ARGUMENTS`, never a garbage descriptor on the wire.
+Uninitialised memory is not a recognisable zero, which is exactly why the header check
+exists. A **late** load heals it: the next locate re-arms the header probe, so software
+that loads the image after reset does not need a reset to recover.
 
 Layout of the image itself, and its generator, are in
 [`07_memory_maps.md` §3](../architecture/07_memory_maps.md).
@@ -203,19 +204,18 @@ property, not an accident, and it is regression-tested.
 | Face | Ports | Tie it off and… |
 |---|---|---|
 | MAAP allocation | `maap_req_valid_o`, `maap_req_release_o`, `maap_req_src_o`, `maap_conflict_ack_o` / `maap_req_ready_i`, `maap_rsp_valid_i`, `maap_rsp_ok_i`, `maap_rsp_da_i[47:0]`, `maap_conflict_valid_i`, `maap_conflict_src_i` | **no source ever declares.** `acmp_declaring_o` is structurally 0 and PROBE_TX answers `TALKER_DEST_MAC_FAILED`. Commands are still answered normally. |
-| Descriptor memory | `desc_mem_*` | every locate answers `NO_SUCH_DESCRIPTOR` after the watchdog. |
+| Descriptor memory | `desc_mem_*` | the failed header probe leaves zero configurations, so every `READ_DESCRIPTOR` answers `BAD_ARGUMENTS` after the watchdog. |
 | Response memory | `resp_mem_*` | every built response becomes a well-formed 60-byte `ENTITY_MISBEHAVING`. |
 | NVM device | `nvm_dev_*`, plus `restore_go_i`, `restore_busy_o`, `restore_done_o`, `restore_fail_o`, `restore_blank_o`, `nvm_alarm_o` | bindings do not survive a power cycle. Nothing else changes **in this plane** — but your status register must not report otherwise: a walk over an unbacked face raises `restore_done_o` with no `restore_fail_o`, exactly like a successful one. Publish `restore_blank_o` beside them, and report not-successful when you know there is no media. |
 | Management side port | `host_*` | you lose all diagnostics. The plane still runs. |
 | SRP service | `svc_*` | nothing declares through the configuration plane. |
 | AECP pop face | `aecp_txn_*`, `aecp_rxs_*` | **tie `aecp_txn_ready_i` low.** The internal AECP engine already drains this queue; this face is an *additional* observer. Driving it steals records from the engine. |
 
-**MAAP is yours to place.** With `cfg_maap_internal_i` tied 0 (the default) this
-processor implements no MAAP: address allocation stays outside it, in the integrating
-fabric, and the face is published rather than tied off internally precisely because a
-processor whose talker half is dead by construction is not a contract anyone can
-integrate — the claim/defend/announce machine of IEEE 1722-2016 Annex B is yours to
-provide. Tie `cfg_maap_internal_i` to 1 (quasi-static, set before `entity_enable_i`)
+**MAAP is yours to place.** With `cfg_maap_internal_i` tied 0 (the default), the
+processor disables its internal allocator and selects the external allocation seam.
+Address allocation then stays in the integrating fabric, which must provide the
+claim/defend/announce machine from IEEE 1722-2016 Annex B. Tie
+`cfg_maap_internal_i` to 1 (quasi-static, set before `entity_enable_i`)
 and the in-scope `KL_pp_maap` engine
 ([11](../architecture/11_maap_engine.md)) provides it instead: give it
 `cfg_maap_count_i` (block size; `N_STREAM_OUT_P` covers one DA per source) and

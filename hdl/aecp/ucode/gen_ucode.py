@@ -150,16 +150,16 @@ E_BADARG4 = 1240     # {type, index} + 4 zero bytes, BAD_ARGUMENTS
 E_LOCKED1 = 1312     # {type, index} + 1 zero byte, ENTITY_LOCKED
 E_BADARG1 = 1320     # {type, index} + 1 zero byte, BAD_ARGUMENTS
 E_NSUPP1  = 1328     # {type, index} + 1 zero byte, NOT_SUPPORTED
-# START/STOP_STREAMING answer a FOUR-byte body (7.4.35.1 Figure 7-59), so
-# their refusals cannot borrow the eight-byte stubs above (over-sized) nor fall
-# to E_BADARG, which carries no field at all (under-sized to a bare header).
-# A refusal has to be the size of the response it refuses.
+# A refusal has to be the size of the response it refuses: the stubs above are
+# {type, index} shaped and cannot serve a command whose body is not.
 E_SCFG    = 1456     # SET_CONFIGURATION (Milan 5.4.2.5, IEEE 7.4.7)
-E_SCFGRUN = 1488     # SET_CONFIGURATION's refusal emitter (all three statuses)
-E_SCFGBAD = 1499     # ...its out-of-range arm, E_SCFGRUN + 11. Named rather
-                     # than left as arithmetic in the engine so
-                     # scripts/check_upc_map.py can verify it: an interior
-                     # address the gate cannot see is an address that can drift.
+E_SCFGRUN = 1488     # SET_CONFIGURATION's STREAM_IS_RUNNING arm (dispatch lands
+                     # here, so it is the one arm whose status is not already set
+                     # by the checking op that branched)
+E_SCFGLK  = 1500     # ...its ENTITY_LOCKED arm
+E_SCFGBAD = 1513     # ...its BAD_ARGUMENTS arm
+E_SCFGEMT = 1526     # ...the body all three share
+E_RDESCENT = 1568    # READ_DESCRIPTOR(ENTITY) with current_configuration overlay
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
@@ -198,6 +198,7 @@ DT_STREAM_PORT_OUTPUT = 0x000F
 #   CLOCK_DOMAIN.clock_source_index   @70,  lane 64..71,   lane bytes 6..7
 #                                     -> [15:0], BUILD_FLD FMT_W
 ENT_CURCFG_LANE = 304     # ENTITY: gen_aem_store.py d_entity, total 312 B
+ENT_DESC_LEN = 312        # IEEE 1722.1-2021 §7.2.1 ENTITY descriptor size
 AU_RATE_OFF = 136         # AUDIO_UNIT: `assert len(b) == 144` after the count
 CD_SRCIDX_LANE = 64       # CLOCK_DOMAIN: wb["CLOCK_SRC_IDX"] = base + 70
 
@@ -239,6 +240,7 @@ AM_GEOM = dict(cnd=0, imm=1)    # -> sel 0x01
 AM_REC = dict(cnd=1, imm=0)     # -> sel 0x10
 
 rom = [0] * ROM_DEPTH
+occupied = set()
 
 
 #! the program count is COUNTED, never restated: three tracks add µprograms to
@@ -249,7 +251,8 @@ placed = []
 
 def place(at, words):
     for i, w in enumerate(words):
-        assert rom[at + i] == 0, f"overlap at {at + i}"
+        assert (at + i) not in occupied, f"overlap at {at + i}"
+        occupied.add(at + i)
         rom[at + i] = w
     placed.append(at)
 
@@ -476,9 +479,9 @@ place(E_STPRE, [
 ])
 
 # --- READ_DESCRIPTOR (06 §6.1) ----------------------------------------------
-# The one AEM command this processor really answers. Register contract, set by
-# KL_aecp_engine at dispatch (the µISA has no shift, so every field a µprogram
-# emits has to arrive right-justified in some register):
+# READ_DESCRIPTOR's register contract, set by KL_aecp_engine at dispatch (the
+# µISA has no shift, so every field a µprogram emits has to arrive
+# right-justified in some register):
 #   r15 = controller_entity_id
 #   r14 = {--, descriptor_index, descriptor_type, configuration_index}
 #         -> [15:0] is the configuration_index emitted at @24
@@ -510,6 +513,49 @@ place(E_RDSTUB, [
     u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
     u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # {type, index} stub @28
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- READ_DESCRIPTOR(ENTITY) dynamic current_configuration overlay ---------
+# IEEE 1722.1-2021 §7.4.8.2 makes GET_CONFIGURATION.configuration_index
+# equivalent to ENTITY.current_configuration. SET_CONFIGURATION writes the
+# dynamic-state store, so returning all 312 static ENTITY bytes after a SET
+# makes the two commands disagree. The engine re-dispatches only ENTITY reads
+# here after the payload walk has captured descriptor_type.
+#
+# The overlay is deliberately an assembly operation, not a write into the
+# descriptor image: the image remains read-only, other descriptor reads remain
+# byte-exact, and a failed SET cannot leak its rejected argument. COPY_BUF
+# accepts the 310-byte residual exactly; its final partial lane writes bytes
+# beyond resp_len, which are never emitted. A noncanonical ENTITY length falls
+# back to E_RDESC so this overlay cannot truncate an image it does not
+# understand.
+place(E_RDESCENT, [
+    u('MOVE', rd=12, ra=0, imm=0),               # reserved @26
+    u('READ_ST', rd=9, imm=RGN_NCFG),            # configurations_count
+    u('CHECK_ARG', ra=14, rb=9, fmt=FMT_W,
+      cnd=REL_LT, imm=E_RDSTUB),
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # requested ENTITY[index]
+    u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+    u('READ_ST', rd=8, imm=RGN_LEN),
+    u('COMPARE', ra=8, fmt=FMT_W, imm=ENT_DESC_LEN),
+    u('BR_STATUS', cnd=2, imm=E_RDESCENT + 9),   # canonical 312-byte ENTITY
+    u('BRANCH', imm=E_RDESC),                    # preserve unknown layouts
+    u('MOVE', rd=8, ra=0, imm=ENT_DESC_LEN - 2), # static prefix length
+    u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CFG),  # controller-set value valid?
+    u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_RDESCENT + 15),  # unset -> image default
+    u('READ_ST', rd=1, imm=RGN_DYN + SEL_CFG),
+    u('BRANCH', imm=E_RDESCENT + 17),
+    u('READ_ST', rd=1, imm=RGN_DATA + ENT_CURCFG_LANE),
+    u('NOP', imm=1),                             # image-read writeback seam
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
+    u('COPY_BUF', ra=8, imm=RGN_DATA),           # ENTITY bytes 0..309
+    u('BUILD_FLD', ra=1, fmt=FMT_W),             # current_configuration
     u('SEND_RESP'),
     u('END'),
 ])
@@ -653,8 +699,8 @@ place(E_GCTRSNS, [
 # the AECPDU is 36 + 8·M and cdl is 24 + 8·M (offset-from-@12, F06.14).
 #
 # WHO DECIDES WHAT (the 06 §6.5 split):
-#   - EXISTENCE is the DESCRIPTOR STORE's: DESC_ADDR locates
-#     STREAM_PORT_INPUT[index] in the same image READ_DESCRIPTOR serves, so
+#   - EXISTENCE is the DESCRIPTOR STORE's: DESC_ADDR locates the addressed
+#     STREAM_PORT_INPUT or STREAM_PORT_OUTPUT in the READ_DESCRIPTOR image, so
 #     GET_AUDIO_MAP answers NO_SUCH_DESCRIPTOR for exactly the indices
 #     READ_DESCRIPTOR answers it for - one authority, no drift.
 #   - PAGE LAW is the µprogram's: §7.4.44.1 "If the map_index is beyond the
@@ -671,18 +717,18 @@ place(E_GCTRSNS, [
 #
 # Register contract, set by KL_aecp_engine at dispatch:
 #   r14 = {16'd0, descriptor_index, descriptor_type, 16'd0} - the store's
-#         locate key ({index, type, cfg 0} on st_wdata; GET_AUDIO_MAP names
-#         no configuration_index, and configuration 0 is current by
-#         construction - SET_CONFIGURATION is not implemented)
+#         locate key ({index, type, cfg 0} on st_wdata; GET_AUDIO_MAP names no
+#         configuration_index, and the shipping image has one configuration.
+#         This literal key must change before a multi-configuration image ships)
 #   r13 = {32'd0, descriptor_index, map_index} - one FMT_D BUILD_FLD emits
 #         @26..@29 in wire order, and [15:0] is the CHECK_ARG operand
 #         (the µISA has no shift, so the engine packs each field where a
 #         µop can reach it)
-# The descriptor_type emitted at @24 is a MOVE constant: the engine only
-# dispatches this program for STREAM_PORT_INPUT (everything else keeps the
-# NOT_IMPLEMENTED echo - the recorded Stream Port OUTPUT gap), so the
-# constant is the captured value by guarantee, and r14[15:0] - where the
-# other programs keep the @24 field - is the locate key's cfg half instead.
+# The descriptor_type emitted at @24 is a MOVE constant. STREAM_PORT_INPUT
+# enters here, STREAM_PORT_OUTPUT enters through E_GAMAPO and overrides the
+# constant, and every other descriptor type keeps the NOT_IMPLEMENTED echo.
+# r14[15:0], where other programs keep the @24 field, is the locate key's cfg
+# half instead.
 place(E_GAMAP, [
     #! the type constant loads FIRST so E_GAMAPO below can override it and
     #! fall into the shared tail - one program, two Table 7-1 types
@@ -973,7 +1019,7 @@ place(E_GASP, [
 # recorded gap while the capture-side map RAM had no readback. The program IS
 # E_GAMAP with the other Table 7-1 type constant: the engine dispatches by
 # the walked descriptor_type, the locate key already carries it, and the
-# integrator's face routes on amap_desc_type_o to the capture-side store.
+# integrator's face routes on amap_desc_type_o to the store for that direction.
 place(E_GAMAPO, [
     u('MOVE', rd=8, ra=0, imm=DT_STREAM_PORT_OUTPUT),
     u('BRANCH', imm=E_GAMAP + 1),
@@ -1392,7 +1438,7 @@ place(E_NSUPP1, [
 # dispatch, so this program runs only when the entity is genuinely idle.
 place(E_SCFG, [
     u('MOVE', rd=2, ra=0, imm=0),                # the @24 reserved field
-    u('CHECK_LOCK', ra=15, imm=E_SCFGRUN + 8),   # locked -> ENTITY_LOCKED
+    u('CHECK_LOCK', ra=15, imm=E_SCFGLK),        # locked -> ENTITY_LOCKED
     #! the index has to be IN RANGE before it is stored. Without this a
     #! SET_CONFIGURATION(0xFFFF) answers SUCCESS while the dynamic store drops
     #! the write on the floor — a false success. RGN_NCFG is the image's
@@ -1410,37 +1456,77 @@ place(E_SCFG, [
     u('END'),
 ])
 
-# SET_CONFIGURATION's two refusals share one emitter: the body is the same
-# {reserved, configuration_index} either way and only the status differs. The
-# echoed index is the one that was REFUSED, so a controller can tell which
-# request bounced.
-# IEEE §7.4.7.1: "The response always contains the current value, that is it
-# contains the new value if the command succeeds or THE OLD VALUE IF IT FAILS."
-# So a refusal echoes the configuration the entity is STILL in, never the one
-# that was rejected — the same rule es-4.18 checks for the SET family's locked
-# arm. r1 comes from the dynamic store; an unwritten store reads 0, which IS
-# the current configuration until somebody changes it.
-place(E_SCFGRUN, [
-    u('MOVE', rd=2, ra=0, imm=0),
+# SET_CONFIGURATION's three refusals share one BODY, and each runs its own copy
+# of the current-value overlay. IEEE §7.4.7.1: "The response always contains the
+# current value, that is it contains the new value if the command succeeds or
+# THE OLD VALUE IF IT FAILS." So a refusal echoes the configuration the entity is
+# STILL in, never the one that was rejected.
+#
+# WHY THE OVERLAY IS DUPLICATED RATHER THAN SHARED. The first cut read
+# `RGN_DYN + SEL_CFG` raw, which answers 0 until some controller has written the
+# store, so before the first successful SET, every refusal echoed 0 instead of
+# the image's ENTITY.current_configuration. E_GCFG has the valid-bit arm that
+# fixes this; the refusal emitter did not. Sharing one copy is not expressible
+# here: the arm's status has to be applied AFTER the overlay, because the image
+# arm's miss guard is `BR_STATUS cnd=0`, which tests `status != SUCCESS` and
+# would fire on the refusal itself, and SET_STATUS takes an immediate, so the
+# arm cannot be carried through a shared tail in a register. The ROM holds three
+# copies; `_scfg_cur()` below is the single source they are generated from, so
+# they cannot drift apart. tb/pp_top W3c grades two of the three.
+def _scfg_cur(base):
+    """The 10 words that leave r1 = the CURRENT configuration and r2 = 0.
+
+    `base` is the address of the FIRST of the ten, so the two internal branch
+    targets stay correct wherever the block is placed. Runs with the status
+    register clean; see the SET_STATUS(ST_OK) prologue on the two arms that
+    are entered from a checking op.
+    """
+    return [
+        u('MOVE', rd=2, ra=0, imm=0),                 # ENTITY[0] key AND @24
+        u('MOVE', rd=1, ra=0, imm=0),                 # a miss reads 0
+        u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CFG),   # has a controller set it?
+        u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+        u('BR_STATUS', cnd=2, imm=base + 7),          # z = unset -> the image
+        u('READ_ST', rd=1, imm=RGN_DYN + SEL_CFG),    # the controller's value
+        u('BRANCH', imm=base + 10),
+        u('DESC_ADDR', ra=2, imm=RGN_LOCATE),         # base + 7: the image arm
+        u('BR_STATUS', cnd=0, imm=base + 10),         # miss -> r1 stays 0
+        u('READ_ST', rd=1, imm=RGN_DATA + ENT_CURCFG_LANE),
+    ]
+
+#! Dispatch lands here, so this is the one arm the engine did not already give a
+#! status to, hence no SET_STATUS(ST_OK) prologue.
+place(E_SCFGRUN, _scfg_cur(E_SCFGRUN) + [
     u('SET_STATUS', imm=ST_STRMRUN),
-    u('READ_ST', rd=1, imm=RGN_DYN + SEL_CFG),   # E_SCFGRUN + 2: the CURRENT
+    u('BRANCH', imm=E_SCFGEMT),
+])
+
+#! CHECK_LOCK has ALREADY written ENTITY_LOCKED by the time it branches here, and
+#! CHECK_ARG likewise writes BAD_ARGUMENTS. Both arms clear it before the overlay
+#! and re-apply it after, because the overlay's miss guard reads the status.
+place(E_SCFGLK, [u('SET_STATUS', imm=ST_OK)] + _scfg_cur(E_SCFGLK + 1) + [
+    u('SET_STATUS', imm=ST_LOCKED),
+    u('BRANCH', imm=E_SCFGEMT),
+])
+
+place(E_SCFGBAD, [u('SET_STATUS', imm=ST_OK)] + _scfg_cur(E_SCFGBAD + 1) + [
+    u('SET_STATUS', imm=ST_BADARG),
+    u('BRANCH', imm=E_SCFGEMT),
+])
+
+place(E_SCFGEMT, [
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved            @24
     u('BUILD_FLD', ra=1, fmt=FMT_W),             # configuration_index @26
     u('SEND_RESP'),
     u('END'),
-    u('MOVE', rd=2, ra=0, imm=0),                # E_SCFGRUN + 8: the lock arm
-    u('SET_STATUS', imm=ST_LOCKED),
-    u('BRANCH', imm=E_SCFGRUN + 2),
-    u('SET_STATUS', imm=ST_BADARG),              # E_SCFGBAD: out of range
-    u('MOVE', rd=2, ra=0, imm=0),
-    u('BRANCH', imm=E_SCFGRUN + 2),
 ])
 
 
 # --- deterministic non-degenerate fill ---------------------------------------
 for i in range(ROM_DEPTH):
-    if rom[i] == 0 and i not in (0,):
+    # A placed NOP encodes as zero, so contents cannot prove availability.
+    if i not in occupied and i not in (0,):
         rom[i] = u('MOVE', rd=(i % 13) + 1, imm=(i * 2654435761) & 0xFFFFFF) \
             if (i % 3) else u('NOP', imm=i & 0xFFFFFF)
 

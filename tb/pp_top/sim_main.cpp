@@ -430,6 +430,18 @@ static std::vector<uint8_t> audio_unit_descriptor(uint16_t ix,
   putbe(&d[148], 96000u, 4);
   return d;
 }
+//! Test-only 312-byte non-ENTITY descriptor. A real SIGNAL_MULTIPLEXER is
+//! 76 bytes, but this deliberately matches the ENTITY length so the
+//! E_RDESCENT type gate cannot be masked by its canonical-length guard.
+static std::vector<uint8_t> non_entity_312_descriptor(uint16_t ix) {
+  std::vector<uint8_t> d(312, 0);
+  putbe(&d[0], 0x0022, 2);                         // SIGNAL_MULTIPLEXER
+  putbe(&d[2], ix, 2);
+  const char* nm = "NonEntity312";
+  memcpy(&d[4], nm, strlen(nm));                  // object_name @4, 64 B
+  putbe(&d[310], 0xBEEF, 2);                      // overlay tripwire
+  return d;
+}
 static std::vector<uint8_t> control_descriptor(uint16_t ix) {
   // IEEE 7.2.22 Table 7-28, the Milan "Identify" CONTROL (5.3.3.10). Only the
   // locate has to hit for GET/SET_CONTROL: the VALUE is volatile state in the
@@ -1251,6 +1263,8 @@ int main(int argc, char** argv) {
     //! GET_CONTROL / SET_CONTROL's target: Milan 5.3.3.10 makes the primary
     //! IDENTIFY control exist in every configuration at the same index
     {CFGIX, 0x001A, 1, 112, 0, 112, 0},          // CONTROL (Identify)
+    //! Test-only shape that makes E_RDESCENT's type guard load-bearing.
+    {CFGIX, 0x0022, 1, 312, 0, 312, 0},          // SIGNAL_MULTIPLEXER
   };
   std::vector<uint8_t> desc_entity = entity_descriptor();
   std::vector<uint8_t> desc_clkdom = clock_domain_descriptor();
@@ -1266,7 +1280,8 @@ int main(int argc, char** argv) {
                         stream_port_descriptor(0x000F, 0, 8, 0),
                         stream_port_descriptor(0x000F, 1, 8, 8),
                         audio_unit_descriptor(0, 96000u),
-                        control_descriptor(0)},
+                        control_descriptor(0),
+                        non_entity_312_descriptor(0)},
                        //! TWO configurations, so SET_CONFIGURATION has a
                        //! legal non-zero index to be tested with. Only
                        //! configuration 0 carries descriptors, which is a
@@ -3613,6 +3628,60 @@ int main(int argc, char** argv) {
             "W3b: GET_CONFIGURATION follows the image, it does not invent");
       if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
 
+      // ---- W3c: THE SAME FALSIFIER, ON THE REFUSAL PATH ---------------
+      // The refusal body is bound by IEEE 7.4.7.1 exactly as the success body
+      // is: it carries the CURRENT value. "Current" before any controller has
+      // written the dynamic store is the IMAGE's, which the first cut of the
+      // refusal emitter did not read. It took `RGN_DYN + SEL_CFG` raw, so
+      // every refusal echoed 0 until the first successful SET set the valid
+      // bit, and no check could see it because the store's reset value and
+      // the image's value were both 0.
+      //
+      // This runs HERE, before any SET_CONFIGURATION has succeeded, which is
+      // the only window where the fallback arm is reachable. The image still
+      // reads 0x0007 from W3b above.
+      {
+        //! truncated -> BAD_ARGUMENTS, taken at dispatch on cdl alone
+        std::vector<uint8_t> shortpl(2, 0);
+        auto b = ask(AEM_SET_CONFIGURATION, shortpl, 0x7608);
+        CHECK(!b.empty() && st(b) == AECP_BAD_ARGUMENTS,
+              "W3c: a truncated SET_CONFIGURATION is BAD_ARGUMENTS");
+        CHECK(b.size() >= 42 && (((unsigned)b[40] << 8) | b[41]) == 0x0007,
+              "W3c2: ...and the refusal echoes the IMAGE's current "
+              "configuration, not the unwritten store's 0; got %u",
+              b.size() >= 42 ? (((unsigned)b[40] << 8) | b[41]) : 999u);
+
+        //! sink 0 is still bound from S6, so a well-formed command takes the
+        //! STREAM_IS_RUNNING arm: a different program, same overlay
+        std::vector<uint8_t> full(4, 0);
+        auto r = ask(AEM_SET_CONFIGURATION, full, 0x7609);
+        CHECK(!r.empty() && st(r) == AECP_STREAM_IS_RUNNING,
+              "W3c3: a well-formed one is STREAM_IS_RUNNING (S6's bind is "
+              "still live), got %d", st(r));
+        CHECK(r.size() >= 42 && (((unsigned)r[40] << 8) | r[41]) == 0x0007,
+              "W3c4: ...and that arm echoes the image's value too; got %u",
+              r.size() >= 42 ? (((unsigned)r[40] << 8) | r[41]) : 999u);
+
+        //! READ_DESCRIPTOR(ENTITY) must use the same image fallback before
+        //! the dynamic configuration store has been written.
+        std::vector<uint8_t> rd(8, 0);
+        putbe(&rd[0], CFGIX, 2);
+        putbe(&rd[4], 0x0000, 2);
+        auto e = ask(AEM_READ_DESCRIPTOR, rd, 0x760A);
+        CHECK(!e.empty() && st(e) == AECP_SUCCESS && cdl(e) == 12 + 4 + 312,
+              "W3d: READ_DESCRIPTOR(ENTITY) answered before any SET");
+        CHECK(e.size() >= 42 + 312
+              && (((unsigned)e[42 + 310] << 8) | e[42 + 311]) == 0x0007,
+              "W3d2: current_configuration comes from the image; got %u",
+              e.size() >= 42 + 312
+                ? (((unsigned)e[42 + 310] << 8) | e[42 + 311]) : 999u);
+        auto gc = ask(AEM_GET_CONFIGURATION, {}, 0x760B);
+        CHECK(!gc.empty() && gc.size() >= 42
+              && (((unsigned)gc[40] << 8) | gc[41])
+                 == (((unsigned)e[42 + 310] << 8) | e[42 + 311]),
+              "W3d3: GET_CONFIGURATION agrees with READ_DESCRIPTOR");
+      }
+
       h.dram[ent_off + 310] = save_hi; h.dram[ent_off + 311] = save_lo;
     }
 
@@ -3934,6 +4003,43 @@ int main(int argc, char** argv) {
       h.idle(200);
       CHECK(h.d->dbg_bound0_o == 0, "W16: UNBIND_RX cleared the bound state");
 
+      //! ---- W16a: the ENTITY_LOCKED arm's IMAGE path -------------------
+      //! This is the only window in the run where nothing is running AND the
+      //! dynamic store is still unwritten; the two conditions that make the
+      //! locked arm reach its image fallback. W3c could not get here because
+      //! sink 0 was still bound, so the refusal was taken at dispatch before
+      //! CHECK_LOCK ran. Poke the image the way W3b does, so the arm's answer
+      //! is a value neither the store nor a hardcoded zero can produce.
+      {
+        uint32_t ent_off = 0;
+        for (auto& e : img_ents) if (e.type == 0x0000) ent_off = e.off;
+        uint8_t hi = h.dram[ent_off + 310], lo = h.dram[ent_off + 311];
+        h.dram[ent_off + 310] = 0x00; h.dram[ent_off + 311] = 0x07;
+
+        std::vector<uint8_t> lk(16, 0);              // flags 0 = LOCK
+        auto l = ask(0x0001, lk, 0x7690);
+        CHECK(!l.empty() && st(l) == AECP_SUCCESS,
+              "W16a: the bench holds the lock, nothing running, store unwritten");
+        std::vector<uint8_t> q(4, 0);
+        putbe(&q[2], 0x0001, 2);
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR2_EID, 0x7691,
+                          AEM_SET_CONFIGURATION, q));
+        auto x = h.wait_any(h.q_aecp, 600);
+        CHECK(!x.empty() && st(x) == AECP_ENTITY_LOCKED,
+              "W16a2: a foreign controller is refused ENTITY_LOCKED, got %d",
+              st(x));
+        CHECK(x.size() >= 42 && (((unsigned)x[40] << 8) | x[41]) == 0x0007,
+              "W16a3: ...and that arm falls back to the IMAGE's current "
+              "configuration, not the unwritten store's 0; got %u",
+              x.size() >= 42 ? (((unsigned)x[40] << 8) | x[41]) : 999u);
+        CHECK(cdl(x) == 16, "W16a4: ...at cdl 16, got %d", cdl(x));
+
+        std::vector<uint8_t> ul(16, 0);
+        putbe(&ul[2], 1, 2);                         // flags = UNLOCK
+        ask(0x0001, ul, 0x7692);
+        h.dram[ent_off + 310] = hi; h.dram[ent_off + 311] = lo;
+      }
+
       std::vector<uint8_t> pl(4, 0);
       putbe(&pl[2], 0x0000, 2);
       auto f = ask(AEM_SET_CONFIGURATION, pl, 0x7697);
@@ -3948,6 +4054,206 @@ int main(int argc, char** argv) {
       CHECK(!g.empty() && st(g) == AECP_SUCCESS && g.size() >= 42
             && (((unsigned)g[40] << 8) | g[41]) == 0x0000,
             "W16d: GET_CONFIGURATION reads the value SET_CONFIGURATION stored");
+    }
+
+    // ---- W17: the OTHER predicate half, a STREAMING OUTPUT ---------------
+    // Milan 5.3.7.3 makes a Stream Output "streaming" only when BOTH halves
+    // hold: this talker declares Advertise AND a downstream Listener has
+    // registered Ready (or Ready Failed) for it. W15/W16 graded the Stream
+    // Input half (bound). Without this section the `|| (|strm_streaming_i)`
+    // term of the reduction could be deleted outright and every check in
+    // this bench would still pass, leaving half the gate unverified.
+    //
+    // NOTHING IS FORCED. src 0 has been declaring Advertise since S10 opened
+    // the MAAP DA gate; the missing half arrives as a real inbound MSRP
+    // Listener attribute on the wire. Sink 0 is UNBOUND here (W16 unbound
+    // it), so a refusal below can only come from the output half.
+    {
+      const uint64_t SID_T0 = (OWN_MAC << 16) | 0x0000;
+
+      CHECK(h.d->dbg_bound0_o == 0,
+            "W17: no Stream Input is bound; the input half cannot be what "
+            "refuses below");
+      CHECK(((h.snap(13) >> 16) & 3) == 1,
+            "W17a: src 0 still declares Talker Advertise (S10's MAAP grant)");
+
+      // one half is not enough: Advertise alone is NOT streaming (5.3.7.3)
+      CHECK((h.snap(13) & 3) == 0,
+            "W17c: no Listener has registered yet, so lstn_reg_state[0] is 0");
+      CHECK(h.d->dbg_streaming0_o == 0,
+            "W17d: Advertise WITHOUT a registered Listener is not streaming "
+            "both halves are required");
+      {
+        std::vector<uint8_t> pl(4, 0);
+        putbe(&pl[2], 0x0001, 2);
+        auto f = ask(AEM_SET_CONFIGURATION, pl, 0x769A);
+        CHECK(!f.empty() && st(f) == AECP_SUCCESS,
+              "W17e: ...and SET_CONFIGURATION is accepted in that state, got "
+              "status %d", st(f));
+      }
+
+      // now the second half arrives on the wire: a peer declares Listener
+      // Ready for the stream this talker advertises
+      h.sync_join();
+      Msg lsn{3, 8, true, {Vec{false, 1, fv_sid(SID_T0),
+                               {EV_JOININ}, {DECL_READY}}}};
+      h.feed(mrpdu_frame(true, T1_MAC, {lsn}));
+      h.run_ms(30);
+      CHECK((h.snap(13) & 3) == 2,
+            "W17f: the inbound Listener Ready registered, lstn_reg_state[0] "
+            "is READY, got %u", h.snap(13) & 3);
+      CHECK(h.d->dbg_streaming0_o == 1,
+            "W17g: Advertise AND a registered Listener; Stream Output 0 is "
+            "STREAMING per 5.3.7.3");
+
+      std::vector<uint8_t> pl(4, 0);
+      putbe(&pl[2], 0x0000, 2);
+      auto f = ask(AEM_SET_CONFIGURATION, pl, 0x769B);
+      CHECK(!f.empty() && st(f) == AECP_STREAM_IS_RUNNING,
+            "W17h: SET_CONFIGURATION refuses STREAM_IS_RUNNING while a "
+            "Stream Output is streaming, got status %d", st(f));
+      CHECK(cdl(f) == 16, "W17i: ...in the 4-byte response form, cdl %d",
+            cdl(f));
+      //! IEEE 7.4.7.1 again: the refusal carries the CURRENT configuration,
+      //! which W17e moved to 1, not the image or rejected value of 0.
+      CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0001,
+            "W17j: the refusal echoes current configuration 1, not 0; got %u",
+            f.size() >= 42 ? (((unsigned)f[40] << 8) | f[41]) : 999u);
+
+      //! PRECEDENCE, recorded because nothing orders it. The refusal above
+      //! is taken at DISPATCH, before the program runs, so a foreign
+      //! controller hitting a locked entity that also has a running stream
+      //! gets STREAM_IS_RUNNING rather than ENTITY_LOCKED; E_SCFG's
+      //! CHECK_LOCK is never reached. Milan 5.4.2.5 and IEEE 7.4.7.2 both
+      //! state their refusal without ordering it against the other, so
+      //! either answer conforms; this check exists so the choice is a
+      //! decision on the record instead of an accident of dispatch order.
+      {
+        std::vector<uint8_t> lk(16, 0);                 // flags 0 = LOCK
+        auto l = ask(0x0001, lk, 0x76C0);
+        CHECK(!l.empty() && st(l) == AECP_SUCCESS,
+              "W17m: the bench takes the lock while the output streams");
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR2_EID, 0x76C1,
+                          AEM_SET_CONFIGURATION, pl));
+        auto x = h.wait_any(h.q_aecp, 600);
+        CHECK(!x.empty() && st(x) == AECP_STREAM_IS_RUNNING,
+              "W17n: locked AND running, from a foreign controller; the "
+              "dispatch-level STREAM_IS_RUNNING wins over ENTITY_LOCKED, "
+              "got %d", st(x));
+        CHECK(cdl(x) == 16, "W17o: ...still at the full response cdl 16");
+        std::vector<uint8_t> ul(16, 0);
+        putbe(&ul[2], 1, 2);                            // flags = UNLOCK
+        ask(0x0001, ul, 0x76C2);
+      }
+
+      // and it LIFTS: the Listener leaves, the output stops streaming, the
+      // same command is accepted. A gate that never opens is as wrong as one
+      // that never closes.
+      h.sync_join();
+      Msg lv{3, 8, true, {Vec{false, 1, fv_sid(SID_T0),
+                              {EV_LV}, {DECL_READY}}}};
+      h.feed(mrpdu_frame(true, T1_MAC, {lv}));
+      h.run_ms(30);
+      CHECK(h.d->dbg_streaming0_o == 0,
+            "W17k: the Listener left; Stream Output 0 stops streaming");
+      auto g = ask(AEM_SET_CONFIGURATION, pl, 0x769C);
+      CHECK(!g.empty() && st(g) == AECP_SUCCESS,
+            "W17l: ...and SET_CONFIGURATION is accepted again, got status %d",
+            st(g));
+      // put the store back where W18 expects to find it
+      std::vector<uint8_t> z(4, 0);
+      putbe(&z[2], 0x0000, 2);
+      ask(AEM_SET_CONFIGURATION, z, 0x769D);
+    }
+
+    // ---- W17b: the TALKER half of 5.3.7.3, graded ------------------------
+    // W17 proved a registered Listener is necessary. It did NOT prove the
+    // Talker term is doing any work: a review mutated the reduction three
+    // ways: deleting the Talker term, widening it to `!= NONE` so a Talker
+    // FAILED counts, and widening the Listener test to any non-zero
+    // registration so ASKING_FAILED counts, and all 449 checks stayed green.
+    // Half of an AND was defended. These two cases close it.
+    //
+    //   Milan 5.3.7.3 wants ADVERTISE specifically, and READY (or READY
+    //   FAILED) specifically. Declaring is not streaming; asking is not ready.
+    {
+      const uint64_t SID_T0 = (OWN_MAC << 16) | 0x0000;
+
+      // (a) ASKING_FAILED registers, but it is not Ready. A reduction that
+      //     tests `|lstn_reg_state[s]` instead of bit 1 calls this streaming.
+      h.sync_join();
+      Msg af{3, 8, true, {Vec{false, 1, fv_sid(SID_T0),
+                              {EV_JOININ}, {DECL_ASKFAIL}}}};
+      h.feed(mrpdu_frame(true, T1_MAC, {af}));
+      h.run_ms(30);
+      CHECK((h.snap(13) & 3) == 1,
+            "W17b: an ASKING_FAILED Listener registered, lstn_reg_state[0] "
+            "is 1, got %u", h.snap(13) & 3);
+      CHECK(((h.snap(13) >> 16) & 3) == 1,
+            "W17b2: ...while src 0 still declares Advertise");
+      CHECK(h.d->dbg_streaming0_o == 0,
+            "W17b3: ASKING_FAILED is not READY; the Stream Output is NOT "
+            "streaming");
+      {
+        std::vector<uint8_t> pl(4, 0);
+        auto f = ask(AEM_SET_CONFIGURATION, pl, 0x769E);
+        CHECK(!f.empty() && st(f) == AECP_SUCCESS,
+              "W17b4: ...so SET_CONFIGURATION is accepted, got status %d",
+              st(f));
+      }
+
+      // (b) a Talker FAILED is DECLARING but not streaming. Getting there
+      //     honestly: re-declare src 0 at a frame size whose Σ-slope busts
+      //     the 75 % class ceiling, so admission refuses and the declaration
+      //     publishes as MSRP Talker Failed. Nothing is forced.
+      h.sync_join();
+      Msg rdy{3, 8, true, {Vec{false, 1, fv_sid(SID_T0),
+                               {EV_JOININ}, {DECL_READY}}}};
+      h.feed(mrpdu_frame(true, T1_MAC, {rdy}));
+      h.run_ms(30);
+      CHECK(h.d->dbg_streaming0_o == 1,
+            "W17b5: back to Advertise + Listener Ready; streaming again "
+            "(the control for what follows)");
+
+      //! The re-declaration resets the stream record and takes the Listener
+      //! registration with it, so the Listener has to arrive AFTER the
+      //! talker is failed; otherwise this section grades 0 && 0 and proves
+      //! nothing about which term did the work.
+      auto rf = h.svc(OP_DECL_TK, 0, SID_T0, H::maap_da(0), 5, 1500, 0);
+      CHECK(rf.got, "W17b6: the over-ceiling re-declaration was answered");
+      h.run_ms(300);
+      CHECK(((h.snap(3) >> 4) & 1) == 1,
+            "W17b7: admission refused it; over_limit is set");
+      CHECK(((h.snap(13) >> 16) & 3) == 2,
+            "W17b8: src 0 publishes Talker FAILED, tk_decl_state[0] is 2, "
+            "got %u", (h.snap(13) >> 16) & 3);
+      h.sync_join();
+      h.feed(mrpdu_frame(true, T1_MAC, {rdy}));
+      h.run_ms(30);
+      CHECK((h.snap(13) & 3) == 2,
+            "W17b9: ...and a Listener registers READY on it anyway, got %u",
+            h.snap(13) & 3);
+      CHECK(h.d->dbg_streaming0_o == 0,
+            "W17b10: a Talker FAILED is declaring but NOT streaming; "
+            "5.3.7.3 wants ADVERTISE, not any declaration");
+      {
+        std::vector<uint8_t> pl(4, 0);
+        auto f = ask(AEM_SET_CONFIGURATION, pl, 0x769F);
+        CHECK(!f.empty() && st(f) == AECP_SUCCESS,
+              "W17b11: ...so SET_CONFIGURATION is accepted, got status %d",
+              st(f));
+      }
+
+      // put SRP back: the Listener leaves and src 0 re-declares within the
+      // ceiling, so the sections after this one start from a quiet plane
+      h.sync_join();
+      Msg lv{3, 8, true, {Vec{false, 1, fv_sid(SID_T0),
+                              {EV_LV}, {DECL_READY}}}};
+      h.feed(mrpdu_frame(true, T1_MAC, {lv}));
+      h.svc(OP_DECL_TK, 0, SID_T0, H::maap_da(0), 5, 256, 0);
+      h.run_ms(300);
+      CHECK(h.d->dbg_streaming0_o == 0,
+            "W17b12: the plane is quiet again before the next section");
     }
 
     // ---- W18: SET_CONFIGURATION with a NON-ZERO index --------------------
@@ -3970,9 +4276,25 @@ int main(int argc, char** argv) {
 
       // and the getter must read the store, not the static image
       auto g = ask(AEM_GET_CONFIGURATION, {}, 0x76A5);
+      const unsigned get_cfg = g.size() >= 42
+                             ? (((unsigned)g[40] << 8) | g[41]) : 999u;
       CHECK(!g.empty() && g.size() >= 42
-            && (((unsigned)g[40] << 8) | g[41]) == 0x0001,
+            && get_cfg == 0x0001,
             "W18c: GET_CONFIGURATION reads 1 back — the round trip exists");
+
+      // IEEE 1722.1-2021 §7.4.8.2 calls that value equivalent to the
+      // ENTITY descriptor's current_configuration. The field is the final
+      // word of the 312-byte descriptor, at response-frame bytes 352..353.
+      std::vector<uint8_t> rdent(8, 0);
+      putbe(&rdent[0], CFGIX, 2);                // configuration_index
+      putbe(&rdent[4], 0x0000, 2);               // ENTITY
+      auto e = ask(AEM_READ_DESCRIPTOR, rdent, 0x76A9);
+      CHECK(!e.empty() && st(e) == AECP_SUCCESS && e.size() >= 354,
+            "W18c2: READ_DESCRIPTOR(ENTITY) succeeds after SET_CONFIGURATION");
+      const unsigned ent_cfg = e.size() >= 354
+                             ? (((unsigned)e[352] << 8) | e[353]) : 998u;
+      CHECK(e.size() >= 354 && ent_cfg == get_cfg,
+            "W18c3: ENTITY.current_configuration equals GET_CONFIGURATION");
 
       // out of range must NOT be a false success
       std::vector<uint8_t> bad(4, 0);
@@ -3980,6 +4302,17 @@ int main(int argc, char** argv) {
       f = ask(AEM_SET_CONFIGURATION, bad, 0x76A6);
       CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
             "W18d: SET_CONFIGURATION(0xFFFF) is BAD_ARGUMENTS, got %d", st(f));
+      //! Index equal to configurations_count distinguishes a correct `<`
+      //! bound from `<=` or a fixed wider limit. The image declares two.
+      std::vector<uint8_t> edge(4, 0);
+      putbe(&edge[2], 0x0002, 2);
+      auto b = ask(AEM_SET_CONFIGURATION, edge, 0x76AB);
+      CHECK(!b.empty() && st(b) == AECP_BAD_ARGUMENTS,
+            "W18d2: configurations_count boundary is BAD_ARGUMENTS, got %d",
+            st(b));
+      CHECK(b.size() >= 42 && (((unsigned)b[40] << 8) | b[41]) == 0x0001,
+            "W18d3: boundary refusal echoes current configuration 1; got %u",
+            b.size() >= 42 ? (((unsigned)b[40] << 8) | b[41]) : 999u);
       CHECK(cdl(f) == 16, "W18e: ...at cdl 16, got %d", cdl(f));
       //! IEEE 7.4.7.1: "The response always contains the current value ... the
       //! OLD value if it fails." Not the rejected one.
@@ -3990,13 +4323,24 @@ int main(int argc, char** argv) {
 
       // ...and the refusal changed nothing
       g = ask(AEM_GET_CONFIGURATION, {}, 0x76A7);
+      const unsigned get_after_bad = g.size() >= 42
+                                   ? (((unsigned)g[40] << 8) | g[41]) : 999u;
       CHECK(!g.empty() && g.size() >= 42
-            && (((unsigned)g[40] << 8) | g[41]) == 0x0001,
+            && get_after_bad == 0x0001,
             "W18g: the refused SET left the configuration at 1");
+      e = ask(AEM_READ_DESCRIPTOR, rdent, 0x76AA);
+      const unsigned ent_after_bad = e.size() >= 354
+                                   ? (((unsigned)e[352] << 8) | e[353]) : 998u;
+      CHECK(e.size() >= 354 && ent_after_bad == get_after_bad,
+            "W18h: GET and ENTITY still agree after the refused SET");
 
-      // put it back
-      std::vector<uint8_t> zero(4, 0);
-      ask(AEM_SET_CONFIGURATION, zero, 0x76A8);
+      //! DELIBERATELY NOT PUT BACK. W19 below grades the ENTITY_LOCKED
+      //! refusal's echo, and that arm has its own copy of the current-value
+      //! overlay. With the store at 0 its store arm, its image arm and a
+      //! hardcoded zero are three indistinguishable answers, which is how a
+      //! review mutated that arm's base address, and deleted the arm outright,
+      //! with all 468 checks still green. Leaving the store at 1 while the
+      //! image reads 0 separates them.
     }
 
     // ---- W19: the lock outranks these commands too ------------------------
@@ -4016,21 +4360,42 @@ int main(int argc, char** argv) {
         return h.wait_any(h.q_aecp, 600);
       };
 
+      //! the store holds 1 (W18) and the image holds 0, so the echo below
+      //! tells the locked arm's overlay apart from a raw read and from a
+      //! hardcoded zero. Send 0, a value that is BOTH the image's and NOT
+      //! the current one, so echoing the argument is also distinguishable.
+      auto gpre = ask(AEM_GET_CONFIGURATION, {}, 0x76B3);
+      CHECK(!gpre.empty() && gpre.size() >= 42
+            && (((unsigned)gpre[40] << 8) | gpre[41]) == 0x0001,
+            "W19a: the store still holds 1 going into the locked refusal");
+
       std::vector<uint8_t> pl(4, 0);
-      putbe(&pl[2], 0x0001, 2);
+      putbe(&pl[2], 0x0000, 2);
       auto f = ask2(AEM_SET_CONFIGURATION, pl, 0x76B4);
       CHECK(!f.empty() && st(f) == AECP_ENTITY_LOCKED,
             "W19g: SET_CONFIGURATION from a foreign controller is "
             "ENTITY_LOCKED, got %d", st(f));
+      //! The refusal is still a SET_CONFIGURATION response, so 7.4.7.1 binds
+      //! it as much as it binds BAD_ARGUMENTS: full response size, carrying
+      //! the CURRENT value. Grading only the status byte let a refusal that
+      //! echoed the rejected index, or answered at command length, pass.
+      CHECK(cdl(f) == 16, "W19g2: ...at the full response cdl 16, got %d",
+            cdl(f));
+      CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0001,
+            "W19g3: ...echoing the CURRENT configuration 1, not the rejected "
+            "0, not the image's 0, not a hardcoded 0; got %u",
+            f.size() >= 42 ? (((unsigned)f[40] << 8) | f[41]) : 999u);
       auto g = ask(AEM_GET_CONFIGURATION, {}, 0x76B5);
       CHECK(!g.empty() && g.size() >= 42
-            && (((unsigned)g[40] << 8) | g[41]) == 0x0000,
+            && (((unsigned)g[40] << 8) | g[41]) == 0x0001,
             "W19h: ...and it did not change the configuration");
 
-      // release
+      // release, then restore the store for the sections after this one
       std::vector<uint8_t> ul(16, 0);
       putbe(&ul[2], 1, 2);                          // flags = UNLOCK
       ask(0x0001, ul, 0x76B6);
+      std::vector<uint8_t> zero(4, 0);
+      ask(AEM_SET_CONFIGURATION, zero, 0x76B7);
     }
 
     // ---- W20: the miss and short-command paths are correctly SIZED --------
@@ -4048,11 +4413,35 @@ int main(int argc, char** argv) {
 
     // ---- W8: READ_DESCRIPTOR still intact after the whole section -------
     {
+      std::vector<uint8_t> one(4, 0);
+      putbe(&one[2], 0x0001, 2);
+      ask(AEM_SET_CONFIGURATION, one, 0x765F);
+
       std::vector<uint8_t> rd(8, 0);
       putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2);
       auto f = ask(AEM_READ_DESCRIPTOR, rd, 0x7660);
       CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 12 + 4 + 312,
             "W8: READ_DESCRIPTOR intact after the read-side set");
+      CHECK(f.size() >= 42 + 312
+            && (((unsigned)f[42 + 310] << 8) | f[42 + 311]) == 0x0001,
+            "W8b: ENTITY overlay follows the dynamic store; got %u",
+            f.size() >= 42 + 312
+              ? (((unsigned)f[42 + 310] << 8) | f[42 + 311]) : 999u);
+    }
+
+    // ---- W8c: the ENTITY overlay is type-gated --------------------------
+    {
+      std::vector<uint8_t> rd(8, 0);
+      putbe(&rd[0], CFGIX, 2);
+      putbe(&rd[4], 0x0022, 2);
+      auto f = ask(AEM_READ_DESCRIPTOR, rd, 0x7661);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 12 + 4 + 312,
+            "W8c: test-only 312-byte non-ENTITY descriptor is served");
+      CHECK(f.size() >= 42 + 312
+            && (((unsigned)f[42 + 310] << 8) | f[42 + 311]) == 0xBEEF,
+            "W8d: non-ENTITY tail remains unchanged; got %#06x",
+            f.size() >= 42 + 312
+              ? (((unsigned)f[42 + 310] << 8) | f[42 + 311]) : 0);
     }
   }
 
