@@ -195,7 +195,12 @@ module KL_pp_acmp_listener
     output logic                         dbg_busy_o,      //! executor not idle
     //! started/stopped requests accepted and dropped for an out-of-range
     //! sink. Should read a permanent 0; non-zero means the descriptor image
-    //! and this processor's shape disagree.
+    //! and this processor's shape disagree. OBSERVABLE AT THIS PORT, and in
+    //! simulation - it is deliberately NOT plumbed to a CSR, because that
+    //! would be a register-map change for a counter whose only legitimate
+    //! value is zero. The point of counting rather than dropping quietly is
+    //! that the arm is REACHABLE in a testbench and graded there; a
+    //! controller cannot read it.
     output logic [15:0]                  dbg_strq_drop_o,
     //! one pulse per COMMITTED started/stopped transition, with `act_sink_o`
     //! naming the sink. Milan Table 5.22 lists "Started/stopped state (Stream
@@ -286,6 +291,17 @@ module KL_pp_acmp_listener
   //! just this command. Every other µCPU face is bounded (the gather port by
   //! `gxf_tmo_r`, the descriptor store by MEM_TIMEOUT_CYC_P); this one was
   //! the exception and should not have been.
+  //!
+  //! HOW FAR THIS GOES, precisely: the wait is DEFERRED, not bounded. One
+  //! request is absorbed whatever the walker is doing, and the drain runs at
+  //! top priority so ordinary ACMP load cannot starve it. A SECOND request
+  //! arriving while the first is still pending still waits on
+  //! `strm_set_ready_o`, and if the walker were wedged forever that wait is
+  //! forever - the same shape as before, one request further out. It is left
+  //! there deliberately: the alternative is dropping a request whose command
+  //! has already answered SUCCESS, and a wedged ACMP walker is a device that
+  //! has stopped answering ACMP anyway. Do not describe this face as
+  //! bounded; it is one deep.
   logic                strq_pend_r;
   logic [15:0]         strq_sink_r;
   logic                strq_val_r;
@@ -299,6 +315,17 @@ module KL_pp_acmp_listener
   //! Comparing against the loaded value catches every cause instead of
   //! naming them, which is what a trigger keyed on the request alone missed.
   logic                strt_was_r;
+  //! ...and whether it was BOUND then. Milan §5.3.8.7 calls started/stopped
+  //! "undefined when the Stream Input is not bound", so a bind (undefined ->
+  //! started) and an unbind (started -> undefined) are not started/stopped
+  //! CHANGES and must not push Table 5.22's trigger. They also already pulse
+  //! the same per-sink event level from their own terms upstream, so firing
+  //! here as well put TWO unsolicited GET_STREAM_INFO frames on the wire per
+  //! bind - which is not just noise: it shifted every later response in the
+  //! suite by one frame. Requiring bound-before AND bound-after leaves
+  //! exactly the two paths that move the bit under a live binding: the AECP
+  //! request, and §5.5.3.5.6 step 2's re-bind with STREAMING_WAIT flipped.
+  logic                bnd_was_r;
 
   // fetched ACMPDU fields (zeroed at accept; big-endian shift-in)
   logic [63:0]         tk_eid_f_r;     // talker_entity_id @20
@@ -414,7 +441,15 @@ module KL_pp_acmp_listener
   assign txn_ready_o    = (xs_r == X_IDLE);
   assign evt_tk_ready_o = (xs_r == X_IDLE) && !txn_valid_i && !pend_any_w;
   assign strm_set_ready_o = !strq_pend_r;
-  assign pre_ready_o    = (xs_r == X_IDLE) && !txn_valid_i && !pend_any_w
+  //! ...and it must reflect the holder arm too. `KL_acmp_nvm_shadow` treats
+  //! `pre_ready_i` as ACCEPTANCE and advances to the next sink on it, so a
+  //! ready raised while the walker is about to take the started/stopped job
+  //! instead loses that sink's restored binding AND its discovery arm, with
+  //! nothing to say it happened - the same silent-drop class this change
+  //! exists to remove. Every other higher-priority arm was already in this
+  //! term; the new one was not.
+  assign pre_ready_o    = (xs_r == X_IDLE) && !strq_pend_r
+                          && !txn_valid_i && !pend_any_w
                           && !evt_tk_valid_i;
 
   // ------------------------------------------------------------- slot fetch
@@ -762,6 +797,7 @@ module KL_pp_acmp_listener
       strq_val_r        <= 1'b0;
       dbg_strq_drop_r   <= 16'd0;
       strt_was_r        <= 1'b0;
+      bnd_was_r         <= 1'b0;
       act_strt_chg_o    <= 1'b0;
       tk_eid_f_r    <= 64'd0;
       tk_uid_f_r    <= 16'd0;
@@ -958,6 +994,7 @@ module KL_pp_acmp_listener
         X_STRT_AP: begin
           rec_r      <= rec_rd_w;
           strt_was_r <= rec_rd_w.f_started;
+          bnd_was_r  <= rec_rd_w.f_bound;
           if (rec_rd_w.f_bound && (rec_rd_w.f_started != strtL_val_r)) begin
             rec_r.f_started <= strtL_val_r;
             cellmut_r       <= 1'b1;
@@ -976,6 +1013,7 @@ module KL_pp_acmp_listener
         X_LATCH: begin
           rec_r      <= acmp_rec_t'(rec_rdata_r);
           strt_was_r <= rec_rd_w.f_started;
+          bnd_was_r  <= rec_rd_w.f_bound;
           if (src_txn_r && (msg_x_r != AMSG_GET_RX_STATE_CMD_C)
               && slot_ok_w) begin
             xs_r <= X_FETCH;
@@ -1312,7 +1350,8 @@ module KL_pp_acmp_listener
           //! these pieces of information CHANGES"); a re-bind that flips
           //! STREAMING_WAIT pushes, which keying on the AECP request alone
           //! did not.
-          act_strt_chg_o <= cellmut_r && (rec_r.f_started != strt_was_r);
+          act_strt_chg_o <= cellmut_r && bnd_was_r && rec_r.f_bound
+                            && (rec_r.f_started != strt_was_r);
           xs_r         <= X_CONSUME;
         end
 

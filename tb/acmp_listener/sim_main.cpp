@@ -1204,6 +1204,22 @@ int main(int argc, char** argv) {
     // an unbound sink ignores the request entirely (5.4.2.19's Note)
     Stim u3 = S_unbind(); u3.uid = uint16_t(sk);
     step(sk, u3, false, "S1");
+    // S1n: an out-of-range sink index is accepted (the engine already
+    // answered) and DROPPED - counted, not silent. The shape gate ties the
+    // descriptor count to N_SINKS_P so this should be unreachable in a real
+    // build; a stale descriptor image shipped beside the bitstream is how it
+    // would stop being unreachable, and then the command answers SUCCESS and
+    // lands nowhere. Driving it here is what makes that arm exist.
+    {
+      const int before = (int)d->dbg_strq_drop_o;
+      post_started(N_SINKS + 3, 1);
+      CHECK((int)d->dbg_strq_drop_o == before + 1,
+            "S1n: an out-of-range started/stopped request is COUNTED "
+            "(%d -> %d)", before, (int)d->dbg_strq_drop_o);
+      CHECK(d->strm_set_ready_o == 1,
+            "S1n2: ...and the face is free again afterwards");
+    }
+
     post_started(sk, 1);
     CHECK(started_bit(sk) == 0,
           "S1h: START on an UNBOUND sink changed nothing (got %u)",

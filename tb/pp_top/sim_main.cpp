@@ -3520,7 +3520,57 @@ int main(int argc, char** argv) {
       CHECK(!uns.empty() && uns == wantu,
             "G7b: unbind notifies again, sequence_id 1");
       if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
-      // deregister: leave the table clean
+      // ---- G7c: a STOP_STREAMING pushes ONE unsolicited GET_STREAM_INFO,
+      // and a bind/unbind pushes exactly one (not two). Milan Table 5.22
+      // lists "Started/stopped state (Stream Input only)"; 5.3.8.7 calls the
+      // state undefined while unbound, so a bind and an unbind are NOT
+      // started/stopped changes and must not add a second frame beside the
+      // one G7/G7b already grade. This block is what catches a trigger that
+      // fires too widely: an extra frame per bind shifts every later
+      // response in this suite by one, which is a cascade, not a nit.
+      h.q_acmp.clear(); h.q_aecp.clear();
+      h.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID,
+                        T1_UID, 1, 0, 0, 0x740C, 0, 0));
+      auto ub = h.wait_any(h.q_acmp, 400);
+      CHECK(!ub.empty() && ((ub[16] >> 3) & 0x1F) == 0,
+            "G7c: re-bound sink 1 for the started/stopped notification");
+      // the bind's own notification (seq 2), then NOTHING else for it
+      auto n1 = h.wait_any(h.q_aecp, 500);
+      CHECK(!n1.empty(), "G7c2: the bind notified once");
+      auto extra = h.wait_any(h.q_aecp, 300);
+      CHECK(extra.empty(),
+            "G7d: the bind pushed exactly ONE notification, not two "
+            "(a started/stopped trigger that fires on bind duplicates it)");
+
+      // now a real started/stopped change, under a live binding
+      h.q_aecp.clear();
+      std::vector<uint8_t> sti(4, 0);
+      putbe(&sti[0], 0x0005, 2); putbe(&sti[2], 1, 2);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x740D,
+                        0x0023, sti));
+      auto rsp = h.wait_any(h.q_aecp, 600);      // the solicited response
+      CHECK(!rsp.empty() && ((rsp[16] >> 3) & 0x1F) == 0,
+            "G7e: STOP_STREAMING on the bound sink answered SUCCESS");
+      auto push = h.wait_any(h.q_aecp, 600);     // ...then the unsolicited
+      CHECK(!push.empty() && push.size() > 37
+            && ((push[36] & 0x80) != 0)
+            && (((push[36] & 0x7F) << 8) | push[37]) == 0x000F,
+            "G7f: ...and a STOP_STREAMING pushes the u=1 GET_STREAM_INFO "
+            "Table 5.22 asks for");
+      auto push2 = h.wait_any(h.q_aecp, 300);
+      CHECK(push2.empty(), "G7g: ...exactly one, not two");
+
+      // deregister: leave the table clean. The unbind below ALSO pushes its
+      // own notification (G7b grades that behaviour) - drain it here rather
+      // than leave it in the queue, or the next section reads this block's
+      // leftover frame and every byte-exact check after it shifts by one.
+      h.q_acmp.clear();
+      h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                        T1_UID, 1, 0, 0, 0x740E, 0, 0));
+      h.wait_any(h.q_acmp, 400);
+      (void)h.wait_any(h.q_aecp, 500);          // the unbind's notification
+      h.idle(200);
+      h.q_aecp.clear();
       h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x740B,
                         0x0025, {}));
       h.wait_any(h.q_aecp, 400);
@@ -4778,15 +4828,24 @@ int main(int argc, char** argv) {
 
         h.q_acmp.clear();
         h.q_aecp.clear();
-        //! TWO commands, bracketed by ACMP work. One alone no longer proves
-        //! anything: the request is a POSTED write into a one-deep holder,
-        //! so a single one is taken instantly whatever the walker is doing.
-        //! The engine's `strm_set_ready_i` is load-bearing exactly when that
-        //! holder is FULL - a second START/STOP arriving while the walker is
-        //! still busy with the first. If the engine ignored ready there, the
-        //! second would be overwritten and lost, and its SUCCESS would be a
-        //! lie. Frames ahead put the walker mid-transaction; frames behind
-        //! keep it there while both commands run.
+        //! TWO commands under ACMP load, and what this DOES and does NOT
+        //! prove, because the answer changed when the holder landed.
+        //!
+        //! PROVES: two START/STOP commands issued back to back while the
+        //! ACMP walker is mid-transaction BOTH take effect, in order - the
+        //! second is not overwritten by the first still draining, and
+        //! neither is lost to the walker being busy.
+        //!
+        //! DOES NOT PROVE: that the engine honours `strm_set_ready_i`.
+        //! Mutating `st_ready_w` for region 3 to a constant 1 leaves this
+        //! suite fully green, and that is not a gap in the rows below - it is
+        //! unreachable from the wire. The holder is one deep and drains at
+        //! TOP priority, so by the time a second command's WRITE_ST issues
+        //! (a whole response later, single-threaded µCPU) the holder is
+        //! empty and ready is high regardless. The listener-side property -
+        //! ready DROPS while a request is pending - is graded directly in
+        //! tb/acmp_listener (S1c2), where the request can be posted by hand.
+        //! Recorded rather than left as an implied claim.
         // LEAD
         for (int i = 0; i < 3; ++i)
           h.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR2_EID, 0, EID,
