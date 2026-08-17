@@ -572,6 +572,7 @@ module protocol_processor_top
     output logic [N_STREAM_IN_P-1:0]     aecp_strm_started_o, //! 1 = started
     output logic [31:0]                  aecp_pt_offset_o,    //! presentation offset
     output logic                         aecp_dyn_dirty_o,    //! a persisted field moved
+    output logic                         aecp_lock_held_o,    //! LOCK_ENTITY ownership is live
 
     //! ---- observability ----
     output logic [31:0] dbg_now_ms_o           //! absolute ms timebase
@@ -2685,6 +2686,10 @@ module protocol_processor_top
   logic [15:0] ntfy_uns_cnt_nc_w;
   logic [N_STREAM_IN_P-1:0]  ntfy_stri_in_w;
   logic [N_STREAM_OUT_P-1:0] ntfy_stri_out_w;
+
+  //! Publish the notification block's authoritative lock level so local
+  //! non-ATDECC mapping paths can enforce Milan 5.4.2.27 and 5.4.2.28.
+  assign aecp_lock_held_o = ntfy_lock_held_w;
 
   always_comb begin : stri_events
     ntfy_stri_in_w  = '0;
