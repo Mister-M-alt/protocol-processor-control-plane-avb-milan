@@ -193,6 +193,12 @@ control per class/key — the load-bearing role is **cross-engine interlock** (t
 | REGISTRY_OP | REGISTER/DEREGISTER, monitor removals, TIME_LIMITED expiry | registry | serialized on the registry |
 | IDENTIFY | SET_CONTROL(identify), notification bursts | identify | serialized |
 
+The current top-level classifier maps every ACMP transaction to `STREAM_CFG`
+and maps AECP opcodes `0x002C` and `0x002D` to `MAP_CFG`. The scoreboard uses
+the documented class-wide exclusion, so an ACMP stream-state transition cannot
+enter after mapping commit-begin and before the mapping response releases its
+hold.
+
 Ordering rules:
 
 - **(a)** commit → solicited-response enqueue → notification-trigger enqueue

@@ -89,8 +89,9 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
 - **Audio-map edit transaction**: ADD/REMOVE_AUDIO_MAPPINGS cover atomic
   validation and commit, duplicate-safe removal, static-port refusal,
   running-output refusal, success notifications including idempotent ADD,
-  normalized Figure 7-71 responses, reserved-field clearing, and timeout
-  behavior after the phase-1 reservation point.
+  normalized Figure 7-71 responses, reserved-field clearing, timeout behavior
+  after the phase-1 reservation point, and MAP_CFG exclusion of an ACMP
+  STREAM_CFG transaction parked behind a reserved mapping write.
 - **R** boot restore over a blank NVM device: all 8 BINDING regions read,
   `restore_done` without `restore_fail`.
 - **S0/S1** quiescence + snapshot identity; SRP bring-up: the FIRST MSRP
