@@ -362,7 +362,8 @@ static std::vector<uint8_t> aecp_frame(uint64_t da, uint64_t sa,
   putbe(&f[34], seq, 2);
   // @22..@23 IS NOT ALWAYS A command_type. This masked bit 15 unconditionally
   // with the comment "u = 0", which is right for an AEM AECPDU (1722.1-2021
-  // 9.3.2.1 puts `u` in the top bit of command_type) and wrong for every other
+  // 9.3.2.1 makes `u` a 1-bit field ahead of `cr` and a 14-bit
+  // command_type) and wrong for every other
   // message_type. 9.6.2 Figure 9-12 gives a VENDOR_UNIQUE AECPDU a 48-bit
   // protocol_id at @22..@27 with no u bit in it, and 9.4 gives an
   // ADDRESS_ACCESS AECPDU a tlv_count there. Masking regardless meant the
@@ -2170,7 +2171,8 @@ int main(int argc, char** argv) {
     // 1722.1-2021 9.6.2 Figure 9-12 gives a VENDOR_UNIQUE AECPDU a 48-bit
     // protocol_id at @22..@27 with NO u bit anywhere in it. The header
     // emitter used to clear bit 7 of @22 for every message type, on the
-    // reasoning that @22's top bit is always `u`, and that is only true of an
+    // reasoning that @22's top bit is always `u`. Per 9.3.2 that bit is a
+    // field of its own ahead of `cr`, and it exists only on an
     // AEM AECPDU (9.3.2.1). Every OUI with bit 7 set came back mangled.
     //
     // MVU could never have shown it: Avnu's 00-1B-C5 has bit 7 clear, so the
@@ -2201,7 +2203,7 @@ int main(int argc, char** argv) {
 
     // ---- M8c: ...and an AEM command still clears its u bit -----------------
     // The fix is a discriminator, not a deletion, so the other side of it
-    // needs a check too. 9.3.2.1: `u` is the top bit of an AEM AECPDU's
+    // needs a check too. 9.3.2.1: `u` is a 1-bit field of an AEM AECPDU's
     // command_type and a SOLICITED response carries it clear. A controller
     // that sent an AEM command with the bit set (it should not, but the field
     // is on the wire) must still get a solicited response back.
@@ -2367,8 +2369,10 @@ int main(int argc, char** argv) {
               rate);
       }
 
-      //! THE CONTROL: an OUI that collides with nothing must behave the same,
-      //! so a green above cannot come from refusing every vendor command
+      //! A NON-COLLIDING OUI, for symmetry. Note this is NOT the control that
+      //! rules out "refuses every vendor command" -- it expects the same
+      //! NOT_IMPLEMENTED echo as the rows above, so it cannot tell the two
+      //! apart. M1 is that control: GET_MILAN_INFO byte-exact at SUCCESS.
       std::vector<uint8_t> pl(8, 0);
       putbe(&pl[0], 0xC50AC101u, 4);
       h.q_aecp.clear();

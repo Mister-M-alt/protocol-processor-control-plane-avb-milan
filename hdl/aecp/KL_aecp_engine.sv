@@ -783,7 +783,9 @@ module KL_aecp_engine
   //! AND ONE SILENCE, recorded for the same reason: NOT_IMPLEMENTED is an
   //! explicit, table-backed status for message types 2, 4, 6 and 8, but
   //! Table 9-1's reserved 10..13 band and EXTENDED_COMMAND (14) have no PDU
-  //! format, no state machine and no status table anywhere in the standard.
+  //! format, no state machine and no per-type status table (Table 9-2 gives
+  //! NOT_IMPLEMENTED on the common header, but Table 9-1 lists 11 and 13 as
+  //! RESERVED, not as response types).
   //! Answering them 11/13/15 + NOT_IMPLEMENTED is UNSPECIFIED rather than
   //! conformant-by-clause. It is the only coherent thing to do with a type
   //! that has no definition, and far better than the mis-dispatch it
@@ -795,10 +797,24 @@ module KL_aecp_engine
   //! hdcp_apm_fragment_offset. This engine echoes message_type 8 whole like
   //! every other refusal. NOT_IMPLEMENTED is the right status (Table 9-8) and
   //! a uniform echo is a large improvement on the mis-dispatch it replaces,
-  //! but the body shape is not what §9.7.4 specifies. 00:04:xx is a densely assigned OUI
-  //! block, so this was reachable on a real link. It is a CLASS, and the class
-  //! is this dispatch's own opcode list: 0x0026 IDENTIFY_NOTIFICATION, 0x0029
-  //! GET_COUNTERS and 0x002B GET_AUDIO_MAP collide the same way. Issue #83.
+  //! but the body shape is not what §9.7.4 specifies.
+  //!
+  //! 00:04:xx is a densely assigned OUI block, so this was reachable on a real
+  //! link. It is a CLASS, and the class is this dispatch's own opcode list:
+  //! 0x0026 IDENTIFY_NOTIFICATION, 0x0029 GET_COUNTERS and 0x002B
+  //! GET_AUDIO_MAP collide the same way. Issue #83.
+  //!
+  //! WHY THE TESTS FOR THIS ARE HARD TO GET RIGHT, and why the class is now
+  //! bounded rather than hoped about. Two arms re-dispatch on payload CONTENT,
+  //! so a sweep that sends filler bytes cannot reach them and their guards go
+  //! untested — that cost two review rounds, once for SET_SAMPLING_RATE and
+  //! again for GET_AUDIO_MAP. The bound: `UPC_NOTIMPL_C` is assigned at
+  //! exactly TWO places, the pop-time default below and the audio-map
+  //! wrong-type arm, so only the latter can emit a refusal byte-identical to
+  //! the correct one. Every other type-invalid stub differs on the wire and is
+  //! therefore visible to the sweep. If a third such stub is ever added, its
+  //! arm needs a real payload in tb/pp_top's M9 table.
+  //!
   //! AEM AND NOTHING ELSE. `PP_PROTO_AEM` is the RX validator's RESIDUAL
   //! bucket (KL_pp_rx_validator.sv: 6/7 -> MVU, 2/3 -> AA, everything else
   //! here), so it also carries AVC_COMMAND (4), HDCP_APM_COMMAND (8), the
