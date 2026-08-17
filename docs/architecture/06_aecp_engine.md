@@ -170,8 +170,8 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x0017 | GET_CLOCK_SOURCE | shall | — | RO | — | yes | — | — | 36 B |
 | 0x0018 | SET_CONTROL | shall (identify) | value 0/255 | IDENTIFY | yes | — | — | yes | 28 + values |
 | 0x0019 | GET_CONTROL | shall (identify) | — | RO | — | **no** (variable) | — | — | 28 + values |
-| 0x0022 | START_STREAMING | shall, **n/i today** | **input only** (Δ11) | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
-| 0x0023 | STOP_STREAMING | shall, **n/i today** | **input only** (Δ11) | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x0022 | START_STREAMING | shall | **input only** (Δ11) | E_STRT 1600 | E_STRMNS 1664 | E_STRMBAD 1696 | via locate | CHECK_LOCK | cdl 16, `{type, index}` |
+| 0x0023 | STOP_STREAMING | shall | **input only** (Δ11) | E_STOP 1632 | E_STRMNS 1664 | E_STRMBAD 1696 | via locate | CHECK_LOCK | cdl 16, `{type, index}` |
 | 0x0024 | REGISTER_UNSOLICITED_NOTIFICATION | shall | §7; accepts 2013 no-flags form | REGISTRY_OP | no | — | — | — | 28 B (w/ flags) |
 | 0x0025 | DEREGISTER_UNSOLICITED_NOTIFICATION | shall | §7 | REGISTRY_OP | no | — | — | auto-deregister → targeted | 24 B |
 | 0x0026 | IDENTIFY_NOTIFICATION | unsolicited-only | as command → `BAD_ARGUMENTS` (IEEE §7.4.39.2, the opcode-specific rule — it governs over §9.3.5.3.3's fallback) | — | — | — | — | is one | 28 B |
@@ -216,8 +216,12 @@ honestly absent. Non-stream targets refuse NOT_SUPPORTED with the command echoed
 short commands BAD_ARGUMENTS; a wedged face voids to ENTITY_MISBEHAVING. The Table
 5.22 notification class is live for the events the fabric observes: sink bound /
 settled / torn-down and registered-Talker-attribute changes, source declaration
-open/close and registered-Listener changes. NOT observed (recorded): started/stopped
-(no START/STOP_STREAMING implementation — a bound input is always started).
+open/close and registered-Listener changes. Started/stopped IS observed since
+issue #78: `KL_pp_acmp_listener` raises `act_strt_chg_o` on a committed change
+under a live binding, and `protocol_processor_top` ORs it into the per-sink
+STREAM_INPUT event level. It is deliberately narrow — a repeat that changes
+nothing pushes none, and a walk that re-binds pushes from its own discovery
+term instead, so one event never yields two frames.
 
 <a id="fig-06-streaminfo"></a>**F06.12 — Response payload @24..@79** (Milan Fig 5.1,
 renames Δ6; legacy controllers ignore @72+, Milan controllers detect the extension via
@@ -738,7 +742,7 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x0014 / 0x0015 SET/GET_SAMPLING_RATE | real lock-protected per-Audio Unit dynamic state |
 | 0x0016 / 0x0017 SET/GET_CLOCK_SOURCE | real lock-protected per-Clock Domain dynamic state |
 | 0x0018 / 0x0019 SET/GET_CONTROL | real volatile Identify control with values 0 and 255 |
-| 0x0022 / 0x0023 START/STOP_STREAMING | **NOT IMPLEMENTED** - the NOT_IMPLEMENTED echo. Built and then withdrawn: started/stopped already has a home in the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is persisted by the NVM shadow, and a second copy in the dynamic store would be neither. The work is preserved on branch `78-start-stop-streaming` behind that decision |
+| 0x0022 / 0x0023 START/STOP_STREAMING | real started/stopped state on the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is projected by the NVM shadow. The dynamic store's selector 6 is RETIRED rather than reused, so there is no second copy; the commands reach the record through a write-only request region that stores nothing. A Stream Output, and every other descriptor type, answers `NOT_SUPPORTED` per Milan Section 5.4.2.19/.20. **Residue:** IEEE Section 7.5.2's unsolicited *response* for these opcodes is not sent — the Table 5.22 GET_STREAM_INFO push on the state change is (issue #69) |
 | 0x0024 / 0x0025 REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION | real bounded controller registry |
 | 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face |
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |

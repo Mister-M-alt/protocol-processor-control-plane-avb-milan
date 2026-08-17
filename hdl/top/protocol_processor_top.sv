@@ -1521,6 +1521,14 @@ module protocol_processor_top
   logic [15:0] strm_set_index_w;
   //! out-of-range started/stopped requests dropped by the record walker.
   //! Reads a permanent 0 unless the descriptor image and this shape disagree.
+  //!
+  //! IT STOPS HERE, deliberately, and that is a limitation not a feature:
+  //! nothing at this level reads it, so on silicon it is unreadable - not by
+  //! a CSR, not by a bring-up probe. The arm it counts is driven and graded
+  //! in tb/acmp_listener (S1n), which is what makes it more than a comment;
+  //! carrying it to a register would be a register-map change for a counter
+  //! whose only legitimate value is zero. If that arm ever fires on real
+  //! hardware, this is the wire to bring out.
   logic [15:0] lstn_strq_drop_w;
   //! Milan Table 5.22: a started/stopped change pushes a GET_STREAM_INFO
   //! unsolicited notification. Issue #69 owns the trigger SET; this is the

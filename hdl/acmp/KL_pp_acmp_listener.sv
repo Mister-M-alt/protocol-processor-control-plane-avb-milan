@@ -315,6 +315,15 @@ module KL_pp_acmp_listener
   //! Comparing against the loaded value catches every cause instead of
   //! naming them, which is what a trigger keyed on the request alone missed.
   logic                strt_was_r;
+  //! BELT AND BRACES, and said so rather than left to be discovered: with
+  //! `bind_act_r` below covering every ROM cell that binds, and X_STRT_AP
+  //! requiring `f_bound` before it changes anything, no walk today can reach
+  //! X_WB with `bnd_was_r` low and the bit changed - removing this term
+  //! leaves both suites green. It is kept because it states the CLAUSE's
+  //! condition directly ("undefined when the Stream Input is not bound")
+  //! rather than relying on the ROM's current action lists to imply it, and
+  //! a future cell that binds without A2 would otherwise slip through.
+  //!
   //! ...and whether it was BOUND then. Milan §5.3.8.7 calls started/stopped
   //! "undefined when the Stream Input is not bound", so a bind (undefined ->
   //! started) and an unbind (started -> undefined) are not started/stopped
