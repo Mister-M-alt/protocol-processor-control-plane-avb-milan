@@ -240,6 +240,7 @@ AM_GEOM = dict(cnd=0, imm=1)    # -> sel 0x01
 AM_REC = dict(cnd=1, imm=0)     # -> sel 0x10
 
 rom = [0] * ROM_DEPTH
+occupied = set()
 
 
 #! the program count is COUNTED, never restated: three tracks add µprograms to
@@ -250,7 +251,8 @@ placed = []
 
 def place(at, words):
     for i, w in enumerate(words):
-        assert rom[at + i] == 0, f"overlap at {at + i}"
+        assert (at + i) not in occupied, f"overlap at {at + i}"
+        occupied.add(at + i)
         rom[at + i] = w
     placed.append(at)
 
@@ -1523,7 +1525,8 @@ place(E_SCFGEMT, [
 
 # --- deterministic non-degenerate fill ---------------------------------------
 for i in range(ROM_DEPTH):
-    if rom[i] == 0 and i not in (0,):
+    # A placed NOP encodes as zero, so contents cannot prove availability.
+    if i not in occupied and i not in (0,):
         rom[i] = u('MOVE', rd=(i % 13) + 1, imm=(i * 2654435761) & 0xFFFFFF) \
             if (i % 3) else u('NOP', imm=i & 0xFFFFFF)
 

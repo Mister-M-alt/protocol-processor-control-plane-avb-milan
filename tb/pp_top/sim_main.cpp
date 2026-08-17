@@ -430,6 +430,18 @@ static std::vector<uint8_t> audio_unit_descriptor(uint16_t ix,
   putbe(&d[148], 96000u, 4);
   return d;
 }
+//! Test-only 312-byte non-ENTITY descriptor. A real SIGNAL_MULTIPLEXER is
+//! 76 bytes, but this deliberately matches the ENTITY length so the
+//! E_RDESCENT type gate cannot be masked by its canonical-length guard.
+static std::vector<uint8_t> non_entity_312_descriptor(uint16_t ix) {
+  std::vector<uint8_t> d(312, 0);
+  putbe(&d[0], 0x0022, 2);                         // SIGNAL_MULTIPLEXER
+  putbe(&d[2], ix, 2);
+  const char* nm = "NonEntity312";
+  memcpy(&d[4], nm, strlen(nm));                  // object_name @4, 64 B
+  putbe(&d[310], 0xBEEF, 2);                      // overlay tripwire
+  return d;
+}
 static std::vector<uint8_t> control_descriptor(uint16_t ix) {
   // IEEE 7.2.22 Table 7-28, the Milan "Identify" CONTROL (5.3.3.10). Only the
   // locate has to hit for GET/SET_CONTROL: the VALUE is volatile state in the
@@ -1251,6 +1263,8 @@ int main(int argc, char** argv) {
     //! GET_CONTROL / SET_CONTROL's target: Milan 5.3.3.10 makes the primary
     //! IDENTIFY control exist in every configuration at the same index
     {CFGIX, 0x001A, 1, 112, 0, 112, 0},          // CONTROL (Identify)
+    //! Test-only shape that makes E_RDESCENT's type guard load-bearing.
+    {CFGIX, 0x0022, 1, 312, 0, 312, 0},          // SIGNAL_MULTIPLEXER
   };
   std::vector<uint8_t> desc_entity = entity_descriptor();
   std::vector<uint8_t> desc_clkdom = clock_domain_descriptor();
@@ -1266,7 +1280,8 @@ int main(int argc, char** argv) {
                         stream_port_descriptor(0x000F, 0, 8, 0),
                         stream_port_descriptor(0x000F, 1, 8, 8),
                         audio_unit_descriptor(0, 96000u),
-                        control_descriptor(0)},
+                        control_descriptor(0),
+                        non_entity_312_descriptor(0)},
                        //! TWO configurations, so SET_CONFIGURATION has a
                        //! legal non-zero index to be tested with. Only
                        //! configuration 0 carries descriptors, which is a
@@ -3646,6 +3661,25 @@ int main(int argc, char** argv) {
         CHECK(r.size() >= 42 && (((unsigned)r[40] << 8) | r[41]) == 0x0007,
               "W3c4: ...and that arm echoes the image's value too; got %u",
               r.size() >= 42 ? (((unsigned)r[40] << 8) | r[41]) : 999u);
+
+        //! READ_DESCRIPTOR(ENTITY) must use the same image fallback before
+        //! the dynamic configuration store has been written.
+        std::vector<uint8_t> rd(8, 0);
+        putbe(&rd[0], CFGIX, 2);
+        putbe(&rd[4], 0x0000, 2);
+        auto e = ask(AEM_READ_DESCRIPTOR, rd, 0x760A);
+        CHECK(!e.empty() && st(e) == AECP_SUCCESS && cdl(e) == 12 + 4 + 312,
+              "W3d: READ_DESCRIPTOR(ENTITY) answered before any SET");
+        CHECK(e.size() >= 42 + 312
+              && (((unsigned)e[42 + 310] << 8) | e[42 + 311]) == 0x0007,
+              "W3d2: current_configuration comes from the image; got %u",
+              e.size() >= 42 + 312
+                ? (((unsigned)e[42 + 310] << 8) | e[42 + 311]) : 999u);
+        auto gc = ask(AEM_GET_CONFIGURATION, {}, 0x760B);
+        CHECK(!gc.empty() && gc.size() >= 42
+              && (((unsigned)gc[40] << 8) | gc[41])
+                 == (((unsigned)e[42 + 310] << 8) | e[42 + 311]),
+              "W3d3: GET_CONFIGURATION agrees with READ_DESCRIPTOR");
       }
 
       h.dram[ent_off + 310] = save_hi; h.dram[ent_off + 311] = save_lo;
@@ -4051,7 +4085,7 @@ int main(int argc, char** argv) {
             "both halves are required");
       {
         std::vector<uint8_t> pl(4, 0);
-        putbe(&pl[2], 0x0000, 2);
+        putbe(&pl[2], 0x0001, 2);
         auto f = ask(AEM_SET_CONFIGURATION, pl, 0x769A);
         CHECK(!f.empty() && st(f) == AECP_SUCCESS,
               "W17e: ...and SET_CONFIGURATION is accepted in that state, got "
@@ -4073,7 +4107,7 @@ int main(int argc, char** argv) {
             "STREAMING per 5.3.7.3");
 
       std::vector<uint8_t> pl(4, 0);
-      putbe(&pl[2], 0x0001, 2);
+      putbe(&pl[2], 0x0000, 2);
       auto f = ask(AEM_SET_CONFIGURATION, pl, 0x769B);
       CHECK(!f.empty() && st(f) == AECP_STREAM_IS_RUNNING,
             "W17h: SET_CONFIGURATION refuses STREAM_IS_RUNNING while a "
@@ -4081,10 +4115,9 @@ int main(int argc, char** argv) {
       CHECK(cdl(f) == 16, "W17i: ...in the 4-byte response form, cdl %d",
             cdl(f));
       //! IEEE 7.4.7.1 again: the refusal carries the CURRENT configuration,
-      //! which W16 left at 0, not the 1 that was just rejected.
-      CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0000,
-            "W17j: the refusal echoes the current configuration 0, not the "
-            "rejected 1; got %u",
+      //! which W17e moved to 1, not the image or rejected value of 0.
+      CHECK(f.size() >= 42 && (((unsigned)f[40] << 8) | f[41]) == 0x0001,
+            "W17j: the refusal echoes current configuration 1, not 0; got %u",
             f.size() >= 42 ? (((unsigned)f[40] << 8) | f[41]) : 999u);
 
       //! PRECEDENCE, recorded because nothing orders it. The refusal above
@@ -4269,6 +4302,17 @@ int main(int argc, char** argv) {
       f = ask(AEM_SET_CONFIGURATION, bad, 0x76A6);
       CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
             "W18d: SET_CONFIGURATION(0xFFFF) is BAD_ARGUMENTS, got %d", st(f));
+      //! Index equal to configurations_count distinguishes a correct `<`
+      //! bound from `<=` or a fixed wider limit. The image declares two.
+      std::vector<uint8_t> edge(4, 0);
+      putbe(&edge[2], 0x0002, 2);
+      auto b = ask(AEM_SET_CONFIGURATION, edge, 0x76AB);
+      CHECK(!b.empty() && st(b) == AECP_BAD_ARGUMENTS,
+            "W18d2: configurations_count boundary is BAD_ARGUMENTS, got %d",
+            st(b));
+      CHECK(b.size() >= 42 && (((unsigned)b[40] << 8) | b[41]) == 0x0001,
+            "W18d3: boundary refusal echoes current configuration 1; got %u",
+            b.size() >= 42 ? (((unsigned)b[40] << 8) | b[41]) : 999u);
       CHECK(cdl(f) == 16, "W18e: ...at cdl 16, got %d", cdl(f));
       //! IEEE 7.4.7.1: "The response always contains the current value ... the
       //! OLD value if it fails." Not the rejected one.
@@ -4369,11 +4413,35 @@ int main(int argc, char** argv) {
 
     // ---- W8: READ_DESCRIPTOR still intact after the whole section -------
     {
+      std::vector<uint8_t> one(4, 0);
+      putbe(&one[2], 0x0001, 2);
+      ask(AEM_SET_CONFIGURATION, one, 0x765F);
+
       std::vector<uint8_t> rd(8, 0);
       putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2);
       auto f = ask(AEM_READ_DESCRIPTOR, rd, 0x7660);
       CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 12 + 4 + 312,
             "W8: READ_DESCRIPTOR intact after the read-side set");
+      CHECK(f.size() >= 42 + 312
+            && (((unsigned)f[42 + 310] << 8) | f[42 + 311]) == 0x0001,
+            "W8b: ENTITY overlay follows the dynamic store; got %u",
+            f.size() >= 42 + 312
+              ? (((unsigned)f[42 + 310] << 8) | f[42 + 311]) : 999u);
+    }
+
+    // ---- W8c: the ENTITY overlay is type-gated --------------------------
+    {
+      std::vector<uint8_t> rd(8, 0);
+      putbe(&rd[0], CFGIX, 2);
+      putbe(&rd[4], 0x0022, 2);
+      auto f = ask(AEM_READ_DESCRIPTOR, rd, 0x7661);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 12 + 4 + 312,
+            "W8c: test-only 312-byte non-ENTITY descriptor is served");
+      CHECK(f.size() >= 42 + 312
+            && (((unsigned)f[42 + 310] << 8) | f[42 + 311]) == 0xBEEF,
+            "W8d: non-ENTITY tail remains unchanged; got %#06x",
+            f.size() >= 42 + 312
+              ? (((unsigned)f[42 + 310] << 8) | f[42 + 311]) : 0);
     }
   }
 
