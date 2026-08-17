@@ -858,7 +858,14 @@ module KL_pp_acmp_listener
             //! else: accepted and dropped. The engine has already answered,
             //! and it answered NO_SUCH_DESCRIPTOR unless the image holds the
             //! descriptor, so an index past the record RAM cannot reach here
-            //! with a SUCCESS behind it.
+            //! with a SUCCESS behind it. That holds because the descriptor
+            //! set and this RAM are sized from the SAME number: the
+            //! superproject's scripts/check_entity_shape.py gate ties
+            //! ACMP_SINKS_C to ADP_LISTENER_SINK_C and fails unless the
+            //! config declares exactly that many STREAM_INPUT descriptors.
+            //! If those two ever came apart, a START on the extra index
+            //! would answer SUCCESS and land nowhere - so the gate is what
+            //! keeps this arm unreachable, not an assumption about configs.
           end
         end
 
