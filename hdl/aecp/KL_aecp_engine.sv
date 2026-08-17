@@ -1387,7 +1387,7 @@ module KL_aecp_engine
           && (bidx_r < 11'(FRAME_HDR_C) + pld_r)
           && (((bidx_r - 11'(FRAME_HDR_C + 7)) & 11'd7) == 0)) begin
         amap_stage_q_r <= amap_stage_r[
-            (bidx_r - 11'(FRAME_HDR_C + 7)) >> 3];
+            8'((bidx_r - 11'(FRAME_HDR_C + 7)) >> 3)];
       end
     end else if (!gx_req_w || !amap_edit_r
                  || (amap_edit_phase_o < 3'd4)) begin
@@ -2200,7 +2200,7 @@ module KL_aecp_engine
             //! Byte enables let synthesis infer a single block RAM while the
             //! record stays in wire order for the transaction face.
             if (amap_edit_r && (walk_r >= 11'd11)) begin
-              amap_stage_r[(walk_r - 11'd11) >> 3]
+              amap_stage_r[8'((walk_r - 11'd11) >> 3)]
                           [63 - (8 * ((walk_r - 11'd11) & 11'd7)) -: 8]
                 <= rxs_rd_data_i;
             end
