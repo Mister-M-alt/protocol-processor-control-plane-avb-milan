@@ -2253,19 +2253,42 @@ int main(int argc, char** argv) {
       //! ENTITY descriptor, and avc_length 0x0014 -- an ordinary AV/C length,
       //! and also OP_SET_SAMP_RATE_C -- WRITING THE SAMPLING RATE and
       //! answering SUCCESS. Guarding the protocol bucket alone was not enough.
-      struct Col { uint8_t mt; uint16_t hi; size_t bytes; const char* what; };
-      const Col cols[] = {
-        {6, 0x0004,  8, "VENDOR_UNIQUE / READ_DESCRIPTOR"},
-        {6, 0x0004,  2, "VENDOR_UNIQUE / READ_DESCRIPTOR short -> BAD_ARGS"},
-        {6, 0x0026,  8, "VENDOR_UNIQUE / IDENTIFY_NOTIFICATION"},
-        {6, 0x0029,  2, "VENDOR_UNIQUE / GET_COUNTERS short"},
-        {6, 0x002B,  2, "VENDOR_UNIQUE / GET_AUDIO_MAP short"},
-        {2, 0x0004,  8, "ADDRESS_ACCESS: @22..@23 is tlv_count (9.4.2.1)"},
-        {4, 0x0004,  8, "AVC_COMMAND: @22..@23 is avc_length (Figure 9-9)"},
-        {4, 0x0014,  8, "AVC_COMMAND whose length collides with SET_SAMPLING_RATE"},
-        {8, 0x0004,  8, "HDCP_APM_COMMAND"},
-        {14, 0x0004, 8, "EXTENDED_COMMAND"},
+      //! EVERY opcode the engine names, against EVERY non-AEM message type.
+      //! A review found the previous cut swept four of twenty-one, so removing
+      //! the guard from any of the other seventeen arms -- SET_CONFIGURATION,
+      //! SET_CLOCK_SOURCE, SET_CONTROL, ACQUIRE, LOCK, all state-changing --
+      //! passed the whole suite. The comment above it already claimed the list
+      //! came from the dispatch. It does now.
+      static const uint16_t kOpcodes[] = {
+        0x0000, 0x0001, 0x0002, 0x0004, 0x0006, 0x0007, 0x0009, 0x000F,
+        0x0014, 0x0015, 0x0016, 0x0017, 0x0018, 0x0019, 0x0024, 0x0025,
+        0x0026, 0x0027, 0x0028, 0x0029, 0x002B,
       };
+      //! the residual bucket in full (KL_pp_rx_validator: 6/7 MVU, 2/3 AA,
+      //! everything else AEM), plus AA itself
+      static const uint8_t kMsgTypes[] = {2, 4, 6, 8, 10, 12, 14};
+
+      struct Col { uint8_t mt; uint16_t hi; size_t bytes; const char* what; };
+      std::vector<Col> cols;
+      for (uint8_t mt : kMsgTypes)
+        for (uint16_t op : kOpcodes)
+          cols.push_back({mt, op, 8, "non-AEM message carrying an AEM opcode"});
+      //! the short-command arms, which need a cdl below their clause minimum
+      cols.push_back({6, 0x0004,  2, "VENDOR_UNIQUE / READ_DESCRIPTOR short"});
+      cols.push_back({6, 0x0029,  2, "VENDOR_UNIQUE / GET_COUNTERS short"});
+      cols.push_back({6, 0x002B,  2, "VENDOR_UNIQUE / GET_AUDIO_MAP short"});
+      //! and bit 15 set, which the u-bit ternary at the 6'd36 header byte is
+      //! the only thing standing between and a corrupted protocol_id
+      cols.push_back({6, 0x8004,  8, "VENDOR_UNIQUE, OUI with bit 15 set"});
+      cols.push_back({4, 0x8004,  8, "AVC_COMMAND, length word with bit 15 set"});
+      //! THE ONE THAT ACTUALLY REACHES THE WRITE. The generic rows carry an
+      //! AA-BB-CC-DD body, whose @24..@25 is not a descriptor type, so under a
+      //! broken guard they land on the type-invalid stub and never get near
+      //! E_SSRATE. A review showed M9b2 therefore could not fail for the very
+      //! mutation it was written for. This row is AUDIO_UNIT-shaped: it is the
+      //! frame that moved the sampling rate.
+      cols.push_back({4, 0x0014,  8, "AVC length 0x0014 with an AUDIO_UNIT body"});
+
       uint16_t sq = 0xC020;
       for (const auto& c : cols) {
         //! a full 48-bit protocol_id: the colliding head plus a nonzero tail,
@@ -2273,6 +2296,13 @@ int main(int argc, char** argv) {
         //! that answers with the wrong body
         std::vector<uint8_t> pl(c.bytes, 0);
         if (c.bytes >= 4) putbe(&pl[0], 0xAABBCCDDu, 4);  // protocol_id @24..
+        //! ...except the SET_SAMPLING_RATE-shaped row, which needs a real
+        //! AUDIO_UNIT descriptor and a real rate to be able to write anything
+        if (c.mt == 4 && c.hi == 0x0014 && c.bytes == 8) {
+          putbe(&pl[0], 0x0002, 2);                 // AUDIO_UNIT
+          putbe(&pl[2], 0x0000, 2);                 // index 0
+          putbe(&pl[4], 48000u, 4);                 // a rate that is NOT 96000
+        }
         h.q_aecp.clear();
         h.feed(aecp_frame(OWN_MAC, CTLR_MAC, c.mt, 0, EID, CTLR_EID, sq,
                           c.hi, pl));
@@ -2288,10 +2318,13 @@ int main(int argc, char** argv) {
         if (!r.empty() && r != want) { dump("got ", r); dump("want", want); }
         //! the protocol_id is the byte a wrong answer corrupts, so grade it
         //! explicitly rather than relying on the byte-exact compare alone
-        CHECK(r.size() >= 38 + c.bytes
-              && (((unsigned)r[36] << 8) | r[37]) == c.hi
-              && (c.bytes < 4 || (r[38] == 0xAA && r[39] == 0xBB
-                                  && r[40] == 0xCC && r[41] == 0xDD)),
+        //! compare against what was SENT, not against a constant: one row
+        //! carries an AUDIO_UNIT body instead of the AA-BB-CC-DD filler
+        bool echoed = r.size() >= 38 + c.bytes
+                      && (((unsigned)r[36] << 8) | r[37]) == c.hi;
+        for (size_t i = 0; echoed && i < c.bytes; ++i)
+          echoed = (r[38 + i] == pl[i]);
+        CHECK(echoed,
               "M9: ...and every echoed byte survives (mt=%u word %04X, "
               "%zu-byte payload)", c.mt, c.hi, c.bytes);
         sq++;

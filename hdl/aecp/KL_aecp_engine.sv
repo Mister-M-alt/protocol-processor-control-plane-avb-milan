@@ -46,7 +46,7 @@
 //                mac, seq} job at a time from KL_aecp_notify, synthesizes
 //                the 03 §4 record a command would have carried, runs the
 //                SAME µprogram the solicited answer uses, and emits on
-//                LANE_AECP_UNS with the §9.2.1.7 u bit set and the entry's
+//                LANE_AECP_UNS with the §9.3.2.1 u bit set and the entry's
 //                own sequence_id (Milan §5.4.5.1). A solicited head always
 //                wins the A_IDLE arbitration.
 //
@@ -776,8 +776,16 @@ module KL_aecp_engine
   //! its protocol_id partly overwritten by READ_DESCRIPTOR's own fields.
   //! §9.3.5.3.3 asks for "a correctly sized response and a status of
   //! NOT_IMPLEMENTED"; echoing the command WHOLE is this engine's choice, not
-  //! a mandate — Clause 9 has no echo language, and where 1722.1 does spell one
-  //! out (HDCP APM, §9.7.4) it truncates. 00:04:xx is a densely assigned OUI
+  //! a mandate — Clause 9 has no echo language, and §9.3.5.3.3 is itself
+  //! AEM-scoped, so it is this engine's convention that carries the refusals
+  //! for VENDOR_UNIQUE, AVC and EXTENDED.
+  //!
+  //! KNOWN DEVIATION, recorded rather than hidden: §9.7.4 says an HDCP APM
+  //! refusal sets hdcp_apm_length to zero and sends nothing after
+  //! hdcp_apm_fragment_offset. This engine echoes message_type 8 whole like
+  //! every other refusal. NOT_IMPLEMENTED is the right status (Table 9-8) and
+  //! a uniform echo is a large improvement on the mis-dispatch it replaces,
+  //! but the body shape is not what §9.7.4 specifies. 00:04:xx is a densely assigned OUI
   //! block, so this was reachable on a real link. It is a CLASS, and the class
   //! is this dispatch's own opcode list: 0x0026 IDENTIFY_NOTIFICATION, 0x0029
   //! GET_COUNTERS and 0x002B GET_AUDIO_MAP collide the same way. Issue #83.
@@ -1441,7 +1449,7 @@ module KL_aecp_engine
       6'd33: hdr_byte_w = cmd_r.controller_eid[7:0];
       6'd34: hdr_byte_w = cmd_r.sequence_id[15:8];
       6'd35: hdr_byte_w = cmd_r.sequence_id[7:0];
-      //! @22, AND ONLY AN AEM MESSAGE HAS A u BIT THERE. 1722.1-2021 9.2.1.7
+      //! @22, AND ONLY AN AEM MESSAGE HAS A u BIT THERE. 1722.1-2021 9.3.2.1
       //! puts `u` in the top bit of an AEM AECPDU's command_type field, and a
       //! solicited response clears it. Every other message_type defines @22
       //! for itself: 9.6.2 Figure 9-12 gives a VENDOR_UNIQUE AECPDU a 48-bit
@@ -1463,7 +1471,7 @@ module KL_aecp_engine
       //! clear, which is why GET_MILAN_INFO never showed it and why nothing
       //! in the suite caught it: every protocol_id ever tested was immune.
       //! ...and an unsolicited response is the ONE sender of u = 1 (IEEE
-      //! §9.2.1.7 via the 9.3.5.4 UNSOLICITED RESPONSE arc): `uns_r` is set
+      //! §9.3.2.1 via the 9.3.5.4 UNSOLICITED RESPONSE arc): `uns_r` is set
       //! only for engine-originated jobs, which are AEM by construction
       //! `PP_PROTO_AEM` is the RX validator's RESIDUAL bucket, so message_type
       //! is what actually says "this word has a u bit in it". AVC_COMMAND and
