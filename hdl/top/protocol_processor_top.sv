@@ -334,7 +334,10 @@ module protocol_processor_top
     //! ---- ADD/REMOVE_AUDIO_MAPPINGS transaction face --------------------
     //! The processor has already checked exact wire length, lock ownership
     //! and descriptor existence. The integrator validates every record before
-    //! phase 5 can write one, which makes a rejected command all-or-nothing.
+    //! phase 5 can write one. Accepting phase 1 reserves the complete commit;
+    //! phases 5 and 2 must then complete without back-pressure, and the
+    //! processor ignores `amap_edit_wait_i` on those phases. Refuse phase 1
+    //! if that guarantee cannot be made.
     output logic        amap_edit_req_o,
     output logic  [2:0] amap_edit_phase_o,
     output logic        amap_edit_remove_o,

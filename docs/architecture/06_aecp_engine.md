@@ -179,8 +179,8 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x0028 | GET_AS_PATH | shall | gather §6.2 | RO | — | **no** | **yes** | async trigger | 28 + 8·count |
 | 0x0029 | GET_COUNTERS | shall | §6.6 | RO | — | yes | — | async (`T-CTR-NOTIF`) | 160 B |
 | 0x002B | GET_AUDIO_MAP | shall (dynamic ports) | §6.5 | RO | — | **no** | **yes** | — | 32 + 8·N |
-| 0x002C | ADD_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | changed state, excluding requester | mirrors request |
-| 0x002D | REMOVE_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | changed state, excluding requester | mirrors request |
+| 0x002C | ADD_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | success, excluding requester | mirrors request |
+| 0x002D | REMOVE_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | success, excluding requester | mirrors request |
 | 0x004B | GET_DYNAMIC_INFO | shall, **n/i today** | target: iterator §6.7 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | MVU 0x0000 | GET_MILAN_INFO | shall | §6.9 | RO | — | — | — | — | 44 B |
 | MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended, **n/i today** (`P-EN-MVU-SUID`) | target: §6.9 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
@@ -352,10 +352,15 @@ at commit, and use the root transaction face to update the live map atomically.
 - `REMOVE_AUDIO_MAPPINGS`: ignores duplicate rows in one command, refuses an
   absent mapping, and applies the streaming-output restriction above.
 - Input maps are changeable **any time, even while bound** (Milan §5.3.10.1).
-- A changed commit marks the mapping persistence class dirty and sends the same
-  unsolicited response to every registered controller except the requester.
-  Idempotent ADD succeeds without a notification. The current NVM backend does
-  not retain the dirty class across reset; issue #70 tracks that remaining work.
+- Every successful ADD or REMOVE sends the same unsolicited response to every
+  registered controller except the requester. A changed commit also marks the
+  mapping persistence class dirty. The current NVM backend does not retain the
+  dirty class across reset; issue #70 tracks that remaining work.
+- Phase 1 acceptance is the commit reservation and point of no return. The
+  integrator must reserve every resource needed for the complete transaction
+  before accepting it. Phase 5 record writes and phase 2 finish then complete
+  without back-pressure; `amap_edit_wait_i` is ignored on those phases. This
+  prevents a watchdog expiry between live writes from exposing a partial map.
 
 ### 6.6 GET_COUNTERS and the counters subsystem
 

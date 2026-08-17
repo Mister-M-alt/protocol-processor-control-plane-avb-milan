@@ -1571,9 +1571,9 @@ place(E_AMADD, [
     u('COMMIT'),
     u('SET_STATUS', imm=ST_OK),
     u('COMPARE', ra=3, fmt=FMT_B, imm=0),
-    u('BR_STATUS', cnd=2, imm=E_AMADD + 24),     # idempotent ADD: no notification
+    u('BR_STATUS', cnd=2, imm=E_AMADD + 23),     # unchanged: skip NVM only
     u('NVM_MARK', imm=6),                        # persist changed map state
-    u('NOTIFY_ENQ', imm=6),                      # audio-map change class
+    u('NOTIFY_ENQ', imm=6),                      # every successful command
     u('BUILD_HDR', ra=15, rb=13),
     u('SEND_RESP'),
     u('END'),

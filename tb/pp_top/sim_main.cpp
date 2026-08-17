@@ -478,10 +478,11 @@ static std::vector<uint8_t> clock_domain_descriptor() {
 
 static std::vector<uint8_t> stream_port_descriptor(uint16_t ty, uint16_t ix,
                                                    uint16_t clusters,
-                                                   uint16_t base_cluster) {
-  // §7.2.13 Table 7-23: 20 bytes, no object_name. number_of_maps = 0 is the
-  // DYNAMIC-mapping declaration (§7.2.13's convention, restated by Milan
-  // §5.3.3.9), which is exactly the shape GET_AUDIO_MAP exists to serve.
+                                                   uint16_t base_cluster,
+                                                   uint16_t maps = 0,
+                                                   uint16_t base_map = 0) {
+  // §7.2.13 Table 7-23: 20 bytes, no object_name. number_of_maps = 0 declares
+  // dynamic mapping; a nonzero value names the port's static AUDIO_MAPs.
   std::vector<uint8_t> d(20, 0);
   putbe(&d[0],  ty, 2);                           // descriptor_type
   putbe(&d[2],  ix, 2);                           // descriptor_index
@@ -491,8 +492,20 @@ static std::vector<uint8_t> stream_port_descriptor(uint16_t ty, uint16_t ix,
   putbe(&d[10], 0x0000, 2);                       // base_control
   putbe(&d[12], clusters, 2);                     // number_of_clusters
   putbe(&d[14], base_cluster, 2);                 // base_cluster
-  putbe(&d[16], 0x0000, 2);                       // number_of_maps: dynamic
-  putbe(&d[18], 0x0000, 2);                       // base_map (ignored)
+  putbe(&d[16], maps, 2);                         // number_of_maps
+  putbe(&d[18], base_map, 2);                     // base_map
+  return d;
+}
+
+static std::vector<uint8_t> audio_map_descriptor(uint16_t ix,
+                                                  uint64_t mapping) {
+  // §7.2.19 Table 7-32: one static mapping, starting at byte 8.
+  std::vector<uint8_t> d(16, 0);
+  putbe(&d[0], 0x0017, 2);                        // AUDIO_MAP
+  putbe(&d[2], ix, 2);
+  putbe(&d[4], 8, 2);                             // mappings_offset
+  putbe(&d[6], 1, 2);                             // number_of_mappings
+  putbe(&d[8], mapping, 8);
   return d;
 }
 
@@ -709,6 +722,7 @@ struct H {
   // late invalid row cannot leave an earlier write behind.
   int  amap_edit_hold = 0;
   bool amap_edit_stuck = false;
+  bool amap_edit_postcommit_wait = false;
   bool amap_edit_reject_commit = false;
   int  amap_edit_hold_cur = 0;
   bool amap_edit_seen = false;
@@ -719,7 +733,8 @@ struct H {
   uint16_t amap_edit_type = 0, amap_edit_index = 0, amap_edit_count = 0;
   uint64_t amap_edit_mutations = 0;
   bool amap_edit_mode = false;
-  std::vector<uint64_t> amap_edit_in0, amap_edit_out0, amap_edit_out1;
+  std::vector<uint64_t> amap_edit_in0, amap_edit_in1;
+  std::vector<uint64_t> amap_edit_out0, amap_edit_out1;
   std::vector<uint64_t> amap_edit_claims;
   std::vector<std::pair<uint8_t, uint8_t>> amap_edit_seq;
 
@@ -742,7 +757,7 @@ struct H {
     return false;
   }
   std::vector<uint64_t>& amap_edit_live(uint16_t ty, uint16_t ix) {
-    if (ty == 0x000E) return amap_edit_in0;
+    if (ty == 0x000E) return ix == 0 ? amap_edit_in0 : amap_edit_in1;
     return ix == 0 ? amap_edit_out0 : amap_edit_out1;
   }
   bool amap_edit_context() const {
@@ -780,9 +795,9 @@ struct H {
       amap_edit_index = uint16_t(d->amap_edit_desc_index_o);
       amap_edit_count = uint16_t(d->amap_edit_count_o);
       amap_edit_remove = d->amap_edit_remove_o != 0;
-      amap_edit_active = (amap_edit_type == 0x000E && amap_edit_index == 0)
-                         || (amap_edit_type == 0x000F
-                             && amap_edit_index < 2);
+      amap_edit_active = ((amap_edit_type == 0x000E
+                           || amap_edit_type == 0x000F)
+                          && amap_edit_index < 2);
       amap_edit_changed = false;
       amap_edit_claims.clear();
       amap_edit_reply = amap_edit_active ? 1 : 0;
@@ -1196,12 +1211,16 @@ struct H {
     d->amap_edit_wait_i = 0;
     d->amap_edit_data_i = 0;
     if (d->amap_edit_req_o) {
-      if (amap_edit_stuck || amap_edit_hold_cur < amap_edit_hold) {
+      uint8_t phase = uint8_t(d->amap_edit_phase_o);
+      uint8_t rec = uint8_t(d->amap_edit_rec_o);
+      bool postcommit = phase == 2 || phase == 5;
+      if (!postcommit
+          && (amap_edit_stuck || amap_edit_hold_cur < amap_edit_hold)) {
         d->amap_edit_wait_i = 1;
         ++amap_edit_hold_cur;
       } else {
-        uint8_t phase = uint8_t(d->amap_edit_phase_o);
-        uint8_t rec = uint8_t(d->amap_edit_rec_o);
+        if (postcommit && amap_edit_postcommit_wait)
+          d->amap_edit_wait_i = 1;
         if (!amap_edit_seen || amap_edit_seen_phase != phase
                             || amap_edit_seen_rec != rec) {
           amap_edit_seen = true;
@@ -1283,7 +1302,8 @@ struct H {
     amap_edit_hold_cur = 0; amap_edit_seen = false;
     amap_edit_active = false; amap_edit_changed = false;
     amap_edit_finish_changed = false; amap_edit_mutations = 0;
-    amap_edit_in0.clear(); amap_edit_out0.clear(); amap_edit_claims.clear();
+    amap_edit_in0.clear(); amap_edit_in1.clear(); amap_edit_out0.clear();
+    amap_edit_claims.clear();
     amap_edit_seq.clear();
     idle(20);
     d->rst_n = 1;
@@ -1421,7 +1441,8 @@ int main(int argc, char** argv) {
     {CFGIX, 0x0005, 2, 140, 1, 144, 0},          // STREAM_INPUT x2
     {CFGIX, 0x0006, 2, 140, 1, 144, 0},          // STREAM_OUTPUT x2
     {CFGIX, 0x0009, 1,  98, 1, 104, 0},          // AVB_INTERFACE
-    {CFGIX, 0x000F, 2,  20, 1,  24, 0},          // STREAM_PORT_OUTPUT x2
+    {CFGIX, 0x000F, 3,  20, 1,  24, 0},          // two dynamic, one static
+    {CFGIX, 0x0017, 1,  16, 0,  16, 0},          // static output AUDIO_MAP
     //! GET_SAMPLING_RATE's target. The rate is 96000, NOT the 48000 a
     //! hardcoded answer would most plausibly be, so a program that invents
     //! the value instead of copying it out of the image fails section W.
@@ -1445,6 +1466,8 @@ int main(int argc, char** argv) {
                         avb_interface_descriptor(0),
                         stream_port_descriptor(0x000F, 0, 8, 0),
                         stream_port_descriptor(0x000F, 1, 8, 8),
+                        stream_port_descriptor(0x000F, 2, 8, 16, 1, 0),
+                        audio_map_descriptor(0, 0),
                         audio_unit_descriptor(0, 96000u),
                         control_descriptor(0),
                         non_entity_312_descriptor(0)},
@@ -2932,9 +2955,9 @@ int main(int argc, char** argv) {
     got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPO, 0, 2), 0xE00C);
     want = expect(AECP_BAD_ARGUMENTS, 0xE00C, am_expect_pl(DT_SPO, 0, 2, 2, 0));
     CHECK(got == want, "Q5c: OUTPUT page law still §7.4.44.1");
-    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPO, 2, 0), 0xE00D);
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPO, 3, 0), 0xE00D);
     want = expect(AECP_NO_SUCH_DESCRIPTOR, 0xE00D,
-                  am_expect_pl(DT_SPO, 2, 0, 0, 0));
+                  am_expect_pl(DT_SPO, 3, 0, 0, 0));
     CHECK(got == want, "Q5d: OUTPUT existence still the image's");
     //! ...and a type that is NEITHER port direction keeps the echo
     auto ju_pl = am_pl(0x0002, 0, 0);            // AUDIO_UNIT
@@ -3025,7 +3048,7 @@ int main(int argc, char** argv) {
   // ==== R. ADD/REMOVE_AUDIO_MAPPINGS =====================================
   // IEEE 1722.1-2021 7.4.45 and 7.4.46 require an exact reflected body,
   // whole-command validation before any write, duplicate-safe removal, lock
-  // ordering, and a notification only when state actually changes.
+  // ordering, and a notification after every successful command.
   {
     const uint16_t GET = 0x002B, ADD = 0x002C, REMOVE = 0x002D;
     const uint16_t DT_SPI = 0x000E, DT_SPO = 0x000F;
@@ -3176,8 +3199,12 @@ int main(int argc, char** argv) {
 
     p = edit_pl(DT_SPI, 1, {});
     got = cmd(ADD, 0xE116, p);
-    CHECK(got == expect(AECP_NOT_SUPPORTED, ADD, 0xE116, p),
-          "R11: static Stream Port did not return NOT_SUPPORTED");
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE116, p),
+          "R11a: required dynamic Stream Port Input was not supported");
+    p = edit_pl(DT_SPO, 2, {});
+    got = cmd(ADD, 0xE122, p);
+    CHECK(got == expect(AECP_NOT_SUPPORTED, ADD, 0xE122, p),
+          "R11b: static Stream Port Output did not return NOT_SUPPORTED");
 
     p = edit_pl(DT_SPI, 0, {row(0, 0, 0)});
     putbe(&p[4], 2, 2);                    // count says two, body carries one
@@ -3218,18 +3245,22 @@ int main(int argc, char** argv) {
           "R15: changed ADD did not notify only C2 with the reflected body");
 
     got = cmd(ADD, 0xE11E, p);
-    uns = h.wait_any(h.q_aecp, 120);
-    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE11E, p) && uns.empty(),
-          "R16: idempotent ADD emitted an unsolicited notification");
+    uns = h.wait_any(h.q_aecp, 400);
+    want_uns = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                          CTLR2_EID, 1, ADD, p);
+    want_uns[36] |= 0x80;
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE11E, p)
+          && uns == want_uns,
+          "R16: idempotent ADD did not emit the required notification");
 
     got = cmd(REMOVE, 0xE11F, p);
     uns = h.wait_any(h.q_aecp, 400);
     want_uns = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
-                          CTLR2_EID, 1, REMOVE, p);
+                          CTLR2_EID, 2, REMOVE, p);
     want_uns[36] |= 0x80;
     CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE11F, p)
           && uns == want_uns,
-          "R17: changed REMOVE did not notify C2 with sequence 1");
+          "R17: changed REMOVE did not notify C2 with sequence 2");
     cmd_from(C2_MAC, CTLR2_EID, 0x0025, 0xE120, {});
 
     p = edit_pl(DT_SPI, 0, {});
@@ -3239,6 +3270,21 @@ int main(int argc, char** argv) {
     CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, 10, EID, CTLR_EID,
                             0xE121, ADD, {}),
           "R18: wedged edit store did not return bare ENTITY_MISBEHAVING");
+
+    std::vector<uint64_t> reserved = {row(0, 3, 3), row(0, 4, 4)};
+    p = edit_pl(DT_SPI, 0, reserved);
+    uint64_t before = h.amap_edit_mutations;
+    h.amap_edit_postcommit_wait = true;
+    got = cmd(ADD, 0xE123, p);
+    h.amap_edit_postcommit_wait = false;
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE123, p),
+          "R19: post-reservation wait poisoned the successful response");
+    CHECK(map_rows(DT_SPI, 0, 0, 0xE124) == reserved
+          && h.amap_edit_mutations == before + 2,
+          "R19: reserved transaction did not commit both records exactly");
+    got = cmd(REMOVE, 0xE125, p);
+    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE125, p),
+          "R19: post-reservation regression cleanup failed");
   }
 
   // ==== U. REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION ===================

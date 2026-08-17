@@ -401,8 +401,11 @@ module KL_aecp_engine
     //! it projects into the live map RAM. `amap_edit_phase_o` is:
     //!   0 begin validation, 1 begin commit, 2 finish, 3 abort,
     //!   4 validate one record, 5 commit one record.
-    //! A begin/validate reply returns `amap_edit_data_i[0]` = accepted. A
-    //! finish reply returns bit 0 = at least one mapping changed. The future
+    //! A begin/validate reply returns `amap_edit_data_i[0]` = accepted. Phase
+    //! 1 acceptance reserves the complete transaction and is the point of no
+    //! return: phases 5 and 2 must then complete without back-pressure, and
+    //! the processor ignores `amap_edit_wait_i` on those phases. A finish
+    //! reply returns bit 0 = at least one mapping changed. The future
     //! SET_STREAM_FORMAT survival query uses the same value lane instead of
     //! opening a second map authority.
     output logic        amap_edit_req_o,
@@ -1353,8 +1356,9 @@ module KL_aecp_engine
   //! 0x20 begin validation, 0x30 begin commit, 0x22 finish, 0x23 abort,
   //! 0x40 validate one record and 0x50 commit one record. Record phases wait
   //! one cycle for the synchronous staging RAM read before reaching the
-  //! integrator. The request then follows the same HOLD contract as every
-  //! other gather face.
+  //! integrator. External HOLD applies only before phase 1 has accepted the
+  //! commit. After that reservation point, commit records and finish cannot
+  //! time out between live writes.
   always_comb begin : amap_edit_phase_decode
     unique case (gx_sel_w)
       8'h20: amap_edit_phase_o = 3'd0;
@@ -1413,7 +1417,9 @@ module KL_aecp_engine
   assign amap_edit_hold_w = gx_req_w && amap_edit_r && !gxf_fail_r
                             && (((amap_edit_phase_o >= 3'd4)
                                  && !amap_stage_ready_r)
-                                || (amap_edit_req_o && amap_edit_wait_i));
+                                || (amap_edit_req_o && amap_edit_wait_i
+                                    && (amap_edit_phase_o != 3'd2)
+                                    && (amap_edit_phase_o != 3'd5)));
   assign rgy_hold_w  = gx_req_w && (regun_r || lockc_r)
                        && rgy_wait_i && !gxf_fail_r;
   assign gsi_hold_w  = gx_req_w &&  gsi_any_w && gsi_wait_i && !gxf_fail_r;
