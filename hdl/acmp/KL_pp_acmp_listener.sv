@@ -1343,6 +1343,16 @@ module KL_pp_acmp_listener
         // ------------------------------------------------------------ X_WB
         X_WB: begin
           act_notify_o <= cellmut_r;     // committed change -> trigger
+          //! WHY `strt_was_r`/`bnd_was_r` are never stale here. X_WB has three
+          //! entries: the inert-cell arm and the action-walk exit, both of
+          //! which come through X_LATCH, and X_STRT_AP, which loads them
+          //! itself. Every one of the thirteen `cellmut_r <= 1'b1` sites is
+          //! inside X_STEP's action handlers or X_STRT_AP, so a walk that
+          //! reaches X_WB without loading them (the error/builder flow)
+          //! necessarily arrives with `cellmut_r` clear and cannot raise the
+          //! pulse on a stale comparison. A future path into X_WB that can
+          //! set `cellmut_r` must load them too.
+          //!
           //! ...and the Table 5.22 started/stopped trigger, on a REAL change
           //! of the bit rather than on the kind of walk that made it. A
           //! repeat START on an already started input leaves the value equal
