@@ -3472,22 +3472,30 @@ int main(int argc, char** argv) {
     CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE125, p),
           "R19: post-reservation regression cleanup failed");
 
-    // Milan 5.4.1 lifts the ordinary 524-octet cdl ceiling for mapping
-    // commands. Sixty-eight records exactly fill this engine's 576-byte RX
-    // slot after the AECP common and fixed mapping-command fields. Repeating
-    // one ADD row also proves that every staged ordinal is read without
-    // inventing a conflict or truncating the reflected response.
-    std::vector<uint64_t> full_slot(68, row(0, 6, 6));
+    // IEEE 1722.1-2021 9.2.2.6 caps command cdl at 524 octets. Figure 7-71
+    // uses 20 + 8*N, so 63 records is the exact command maximum. Milan 5.4.1
+    // lifts the ceiling for responses only. Repeating one ADD row proves that
+    // every legal staged ordinal is read without inventing a conflict.
+    std::vector<uint64_t> full_slot(63, row(0, 6, 6));
     p = edit_pl(DT_SPI, 0, full_slot);
     got = cmd(ADD, 0xE129, p);
     CHECK(got == expect(AECP_SUCCESS, ADD, 0xE129, p)
           && map_rows(DT_SPI, 0, 0, 0xE12A)
              == std::vector<uint64_t>{row(0, 6, 6)},
-          "R20: 68-record cap-lift command was truncated or misapplied");
+          "R20: 63-record maximum command was truncated or misapplied");
+    std::vector<uint64_t> over_limit(64, row(0, 7, 7));
+    p = edit_pl(DT_SPI, 0, over_limit);
+    before = h.amap_edit_mutations;
+    got = cmd(ADD, 0xE12B, p);
+    CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE12B, p)
+          && h.amap_edit_mutations == before
+          && map_rows(DT_SPI, 0, 0, 0xE12C)
+             == std::vector<uint64_t>{row(0, 6, 6)},
+          "R20: 64-record over-limit command changed the map");
     p = edit_pl(DT_SPI, 0, {row(0, 6, 6)});
-    got = cmd(REMOVE, 0xE12B, p);
-    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE12B, p),
-          "R20: cap-lift regression cleanup failed");
+    got = cmd(REMOVE, 0xE12D, p);
+    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE12D, p),
+          "R20: command-bound regression cleanup failed");
   }
 
   // ==== U. REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION ===================
