@@ -2116,6 +2116,15 @@ module KL_aecp_engine
             //! instance of that, not a case beside it, so a Stream Output and
             //! a CLOCK_DOMAIN take the same NOT_SUPPORTED arm.
             //! §7.4.35.1's command is 4 bytes, so cdl 16 is the whole of it.
+            //! ORDER, stated rather than inherited from code layout: the type
+            //! refusal runs BEFORE the µprogram's locate and lock check, so a
+            //! Stream Output named with a nonexistent index answers
+            //! NOT_SUPPORTED rather than NO_SUCH_DESCRIPTOR, and a foreign
+            //! controller naming a Stream Output under lock gets
+            //! NOT_SUPPORTED rather than ENTITY_LOCKED. Neither standard
+            //! orders these checks against each other, and answering "this
+            //! target is not supported" first is the more specific reading of
+            //! Milan's "shall not support ... for a Stream Output".
             if (strm_r) begin
               if (cmd_r.cdl < 11'd16)              upc_r <= UPC_STRMBAD_C;
               else if (cfg_ix_r != DT_STREAM_INPUT_C) upc_r <= UPC_STRMNS_C;

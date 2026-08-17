@@ -107,6 +107,14 @@ module KL_pp_acmp_listener
     output logic                         pre_ready_o,     //! accept on valid AND ready
 
     //! ---- started/stopped face (Milan §5.4.2.19/.20 -> §5.3.8.7) ---------
+    //! NOTE on the OTHER STREAMING_WAIT. `f_sw` is the flag the BIND carried
+    //! and it is deliberately NOT re-derived from `f_started` here: Milan
+    //! Table 5.37 says the ACMP GET_RX_STATE_RESPONSE reports STREAMING_WAIT
+    //! as the "value copied from the saved binding parameters", so it is a
+    //! record of what the binding asked for. AECP's GET_STREAM_INFO reports
+    //! the LIVE state instead (Table 5.9 bit 28, "1 if the Stream Input is
+    //! bound and stopped"). Two different questions with two different
+    //! answers; making them agree would break the ACMP one.
     //! START/STOP_STREAMING lands here because this record is the ONE place
     //! started/stopped has a lifecycle: §5.3.8.7 calls the state "undefined
     //! when the Stream Input is not bound", A10 clears it on unbind, and the
@@ -924,11 +932,14 @@ module KL_pp_acmp_listener
         //! that is not already bound or already started" — so an unbound sink
         //! is left alone entirely (no write-back, no notification), and a
         //! request for the state the record is already in commits nothing.
-        //! `cellmut_r` is what makes X_WB raise `act_notify_o`, which is the
-        //! trigger IEEE §7.4.35's "on success this command also sends an
-        //! unsolicited notification" needs; gating it on a REAL transition is
-        //! what keeps a no-op from emitting a notification that says nothing
-        //! changed. Issue #69 owns the trigger set itself.
+        //! `cellmut_r` gates BOTH the generic record-change `act_notify_o`
+        //! and the started/stopped `act_strt_chg_o` this change adds, and the
+        //! second is the one Milan Table 5.22 asks for ("Started/stopped
+        //! state (Stream Input only)") and IEEE §7.4.35 restates from the
+        //! command's side. Gating on a REAL transition is what keeps a repeat
+        //! from pushing a notification that says nothing changed. Issue #69
+        //! owns the rest of the trigger SET; this one is here because it did
+        //! not exist to be triggered until this command landed.
         X_STRT_AP: begin
           rec_r <= rec_rd_w;
           if (rec_rd_w.f_bound && (rec_rd_w.f_started != strtL_val_r)) begin

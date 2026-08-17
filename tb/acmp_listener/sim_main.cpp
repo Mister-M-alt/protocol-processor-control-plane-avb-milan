@@ -743,6 +743,11 @@ int main(int argc, char** argv) {
     d->strm_set_val_i   = uint8_t(val);
     int guard = 64;
     while (guard-- > 0 && !d->strm_set_ready_o) h.tick();
+    //! grade the handshake at EVERY site, not just the first: a request that
+    //! was never accepted leaves the bit where it was, and at more than one
+    //! call site below that is exactly the value the caller expects.
+    CHECK(d->strm_set_ready_o == 1,
+          "post_started(%d,%d): the face offered ready", sink, val);
     h.tick();                       // the accepting edge
     d->strm_set_valid_i = 0;
     guard = 64;
