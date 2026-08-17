@@ -3071,7 +3071,7 @@ int main(int argc, char** argv) {
       h.q_aecp.clear();
       h.feed(aecp_frame(OWN_MAC, mac, 0, 0, EID, eid,
                         seq, op, p));
-      return h.wait_any(h.q_aecp, 400);
+      return h.wait_any(h.q_aecp, 4000);
     };
     auto cmd = [&](uint16_t op, uint16_t seq,
                    const std::vector<uint8_t>& p) {
@@ -3212,6 +3212,28 @@ int main(int argc, char** argv) {
     auto normalized = edit_pl(DT_SPI, 0, {row(0, 0, 0)});
     CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE117, normalized),
           "R12: malformed response did not name its one contained record");
+
+    // IEEE 1722.1-2021 9.2.2.6 caps control_data_length at 524 bytes.
+    // Figure 7-71 therefore fits 63 records, while a 64th makes the command
+    // malformed. The error response must remain legal and cannot commit data.
+    std::vector<uint64_t> max_rows(63, c0);
+    std::vector<uint64_t> oversized_rows(64, c0);
+    p = edit_pl(DT_SPI, 0, oversized_rows);
+    got = cmd(ADD, 0xE129, p);
+    CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE129,
+                        edit_pl(DT_SPI, 0, max_rows))
+          && h.amap_edit_in0.empty(),
+          "R12c: 64 records escaped the 524-byte AECP ceiling");
+    p = edit_pl(DT_SPI, 0, max_rows);
+    got = cmd(ADD, 0xE12A, p);
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE12A, p)
+          && h.amap_edit_in0 == std::vector<uint64_t>{c0},
+          "R12d: the legal 63-record boundary was not accepted");
+    p = edit_pl(DT_SPI, 0, {c0});
+    got = cmd(REMOVE, 0xE12B, p);
+    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE12B, p)
+          && h.amap_edit_in0.empty(),
+          "R12d: boundary cleanup did not restore the empty map");
 
     std::vector<uint8_t> short_edit(4, 0);
     putbe(&short_edit[0], DT_SPI, 2); putbe(&short_edit[2], 0, 2);

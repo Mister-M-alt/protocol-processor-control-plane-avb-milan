@@ -23,8 +23,9 @@ done
 # Elaboration alone does not prove that inferred memories map onto the target
 # FPGA. KL_aecp_engine contains the largest mixed-control RAM in this block, so
 # carry it through the complete Xilinx memory-mapping flow as a regression gate.
-# Six RAMB36 is the current engine budget: five existing stores plus exactly
-# one staging store. Byte-lane expansion raises this to thirteen and must fail.
-yosys -q -p "read_verilog all.v; hierarchy -check -top KL_aecp_engine; synth_xilinx -family xc7 -flatten -top KL_aecp_engine; select -assert-max 6 t:RAMB36E1" \
+# Six RAMB36 is the current engine shape: five existing stores plus exactly
+# one staging store. Assert both facts so losing inference and expanding byte
+# lanes fail in opposite directions.
+yosys -q -p "read_verilog all.v; hierarchy -check -top KL_aecp_engine; synth_xilinx -family xc7 -flatten -top KL_aecp_engine; select -module KL_aecp_engine; select -assert-count 1 c:amap_stage_r* t:RAMB36E1 %i; select -assert-count 6 t:RAMB36E1" \
   && echo "YOSYS XILINX OK  KL_aecp_engine" \
   || { echo "YOSYS XILINX FAIL KL_aecp_engine"; exit 1; }

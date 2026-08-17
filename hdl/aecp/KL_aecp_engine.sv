@@ -706,6 +706,12 @@ module KL_aecp_engine
   localparam int unsigned RESP_BUF_C   = ((16 + LINE_BYTES_P) + 15) & ~32'd15;
   localparam int unsigned PLD_MAX_C    = RESP_BUF_C - 12;
   localparam int unsigned FRAME_MAX_C  = FRAME_HDR_C + PLD_MAX_C;
+  //! IEEE 1722.1-2021 9.2.2.6 caps control_data_length at 524 bytes. The
+  //! Figure 7-71 fixed body consumes 20 bytes, leaving room for at most 63
+  //! eight-byte mappings in one ADD/REMOVE_AUDIO_MAPPINGS AECPDU.
+  localparam int unsigned AECP_CDL_MAX_C = 524;
+  localparam int unsigned AMAP_EDIT_MAX_RECORDS_C =
+      (AECP_CDL_MAX_C - 20) / 8;
 
   if (FRAME_MAX_C > TX_OVERSIZE_BYTES_P) begin : gen_g_frame_fit
     $error("a maximum AECP response (%0d B) exceeds the oversize slot (%0d B)",
@@ -784,9 +790,10 @@ module KL_aecp_engine
   logic [TXS_W_C-1:0] tx_slot_r;
   logic [15:0] cmd_cnt_r, resp_cnt_r, drop_cnt_r, rerr_cnt_r;
 
-  //! ADD/REMOVE_AUDIO_MAPPINGS can carry up to 68 records in the 576-byte RX
-  //! slot. Keep a full byte-written copy so validation and commit walk the
-  //! identical record set without rereading or releasing the command slot.
+  //! ADD/REMOVE_AUDIO_MAPPINGS can carry up to 63 records under the AECP
+  //! control_data_length ceiling. Keep a full byte-written copy so validation
+  //! and commit walk the identical record set without rereading or releasing
+  //! the command slot.
   //! The 256-entry address space matches the µCPU iterator width and leaves
   //! the port contract independent of the configured RX slot size.
   (* ram_style = "block" *) logic [63:0] amap_stage_r [0:255];
@@ -794,6 +801,7 @@ module KL_aecp_engine
   logic [63:0] amap_stage_assem_r;
   logic        amap_stage_ready_r;
   logic  [7:0] amap_rsp_count_r;
+  logic  [7:0] amap_rx_complete_count_w;
   logic  [7:0] amap_rx_count_w;
   logic [10:0] amap_edit_pld_w;
   logic        amap_stage_ser_w, amap_stage_ser_load_w;
@@ -804,8 +812,14 @@ module KL_aecp_engine
   //! 7-71 requires the response count to describe the records actually put on
   //! the wire, never the untrusted command count. A short fixed part yields a
   //! well-formed eight-byte response body with zero records.
-  assign amap_rx_count_w = (pld_cmd_r >= 11'd8)
-                           ? 8'((pld_cmd_r - 11'd8) >> 3) : 8'd0;
+  assign amap_rx_complete_count_w = (pld_cmd_r >= 11'd8)
+                                    ? 8'((pld_cmd_r - 11'd8) >> 3) : 8'd0;
+  //! A malformed oversized command may contain more complete records than a
+  //! legal response can carry. Retain the first 63 and describe exactly those
+  //! records instead of emitting another oversized AECPDU.
+  assign amap_rx_count_w =
+      (amap_rx_complete_count_w > 8'(AMAP_EDIT_MAX_RECORDS_C))
+      ? 8'(AMAP_EDIT_MAX_RECORDS_C) : amap_rx_complete_count_w;
   assign amap_edit_pld_w = 11'd8 + ({3'd0, amap_rsp_count_r} << 3);
 
   // ---- opcode decode = the dispatch step (see the banner) -----------------
@@ -1991,6 +2005,7 @@ module KL_aecp_engine
               if (({8'd0, cmd_r.cdl}
                    != (19'd20 + ({3'd0, desc_ty_r} << 3)))
                   || (cmd_r.cdl < 11'd20)
+                  || (cmd_r.cdl > 11'(AECP_CDL_MAX_C))
                   || (pld_cmd_r != (cmd_r.cdl - 11'd12))) begin
                 upc_r  <= UPC_BADARG_C;
                 echo_r <= 1'b1;
