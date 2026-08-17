@@ -57,6 +57,11 @@ module KL_aecp_ucpu
     //! Preloading it is a register write in a state that already exists, and
     //! it is what lets one µprogram serve any settable field.
     input  wire  [63:0] disp_opd2_i,       //! -> r12 (the SET argument)
+    //! GET_DYNAMIC_INFO executes an ordinary getter against an aggregate
+    //! response already in progress. In that mode BUILD_HEADER is suppressed
+    //! and fields begin at the supplied absolute response-buffer cursor.
+    input  wire         disp_batch_i,
+    input  wire   [9:0] disp_resp_base_i,
 
     //! state port: descriptor image + overlay + names (07 §3), 1RW
     output logic        st_req_o,
@@ -153,6 +158,7 @@ module KL_aecp_ucpu
   logic  [7:0] iter_cnt_r, iter_idx_r;
   logic  [9:0] cursor_r;
   logic [10:0] resp_len_r;
+  logic        batch_r;
 
   // multi-cycle E sequencing
   logic  [3:0] eseq_r;                     // beat counter inside one op
@@ -380,7 +386,7 @@ module KL_aecp_ucpu
     if (vld_e_r) begin
       unique case (uop_e_r.op)
         OP_BUILD_HDR: begin
-          rb_we_o    = 1'b1;
+          rb_we_o    = !batch_r;
           rb_addr_o  = {4'd0, eseq_r[1:0], 4'd0} >> 2;  // 0, 4, 8
           rb_wdata_o = hdr_word_w;
         end
@@ -463,6 +469,7 @@ module KL_aecp_ucpu
       iter_idx_r  <= '0;
       cursor_r    <= '0;
       resp_len_r  <= '0;
+      batch_r     <= 1'b0;
       eseq_r      <= '0;
       copy_go_r   <= 1'b0;
       copy_left_r <= '0;
@@ -489,8 +496,9 @@ module KL_aecp_ucpu
             z_r         <= 1'b0;
             lt_r        <= 1'b0;
             ovf_r       <= 1'b0;
-            cursor_r    <= 10'd12;      // header words own bytes 0..11
-            resp_len_r  <= 11'd12;
+            batch_r     <= disp_batch_i;
+            cursor_r    <= disp_batch_i ? disp_resp_base_i : 10'd12;
+            resp_len_r  <= disp_batch_i ? {1'b0, disp_resp_base_i} : 11'd12;
             iter_cnt_r  <= '0;
             iter_idx_r  <= '0;
             eseq_r      <= '0;

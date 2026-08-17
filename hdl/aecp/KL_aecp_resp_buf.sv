@@ -47,14 +47,16 @@
 //                is written BY THE PROCESSOR, so an overlap with the image is
 //                silent corruption of the entity model.
 //
-//                WRITE ORDER — the one rule the µCPU must obey. Byte
-//                addresses arrive NON-DECREASING from byte 12 upward within
-//                one response (06 §8: BUILD_HEADER owns bytes 0..11, the
-//                cursor starts at 12 and every BUILD_FIELD / APPEND /
-//                COPY_BUFFER advances it). A lane is written out the moment a
-//                byte for a DIFFERENT lane arrives, so a backward address
-//                would write one lane twice and lose the first pass. Writes
-//                below byte 12 are ACCEPTED AND DROPPED: 06 §8's 12-byte
+//                WRITE ORDER. Ordinary µCPU fields arrive non-decreasing from
+//                byte 12 upward. GET_DYNAMIC_INFO adds one deliberate
+//                exception: after an ordinary getter has produced a record,
+//                the engine revisits that record header to patch its final
+//                info_status byte, then resumes at the next record. This is
+//                safe because lane writes are serialized, the memory face has
+//                byte strobes, and a reopened lane writes only the patched
+//                byte. The response-buffer suite exercises the backward patch
+//                and the following forward write as a byte-exact contract.
+//                Writes below byte 12 are ACCEPTED AND DROPPED: 06 §8's 12-byte
 //                header record is not the wire header (KL_aecp_engine
 //                synthesises the real 24-byte AECPDU header from the 03 §4
 //                transaction), so those bytes have no reader and are not worth

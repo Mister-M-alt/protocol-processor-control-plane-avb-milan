@@ -16,7 +16,7 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make` — exit 0 = PASS; tally `219 checks: 219 PASS, 0 FAIL`.
+`make` reports `957 checks: 957 PASS, 0 FAIL` and exits zero on success.
 
 ## What it proves
 
@@ -295,3 +295,21 @@ repeat under back-pressure is free, an index that MOVES under it is a lost beat.
 The last one is the one worth keeping: it is the advertised-zero lie in its
 purest form — a full mask over a block the fabric never fills — and it must not
 be able to pass.
+
+## Section W8: GET_DYNAMIC_INFO
+
+The suite sends `0x004B` through the complete MAC, RX slot, dispatch, AECP
+engine, response memory, and TX path. Its expected bytes are built from the
+standard's record layout and the harness models, not from standalone DUT
+responses.
+
+W8 covers two implemented getters in one byte-exact aggregate, a missing
+descriptor that changes only one record status, whole-command `BAD_ARGUMENTS`
+for a forbidden `GET_AUDIO_MAP` with proof that no earlier record reached the
+descriptor store, silent overflow omission followed by successful processing
+of a later record, the Milan 56-byte `GET_STREAM_INFO` body, and
+record-level `NOT_SUPPORTED` with exact command-data copy for a permitted but
+unimplemented `GET_NAME`. It also covers an empty batch, truncated and
+overrunning records, rejection of a non-SUCCESS command record, preservation
+of the full 16-bit record command discriminator, every member of the exact
+13-command whitelist, and retention at the exact cdl 524 boundary.

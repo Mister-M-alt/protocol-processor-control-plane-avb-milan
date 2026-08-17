@@ -181,7 +181,7 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x002B | GET_AUDIO_MAP | shall (dynamic ports) | §6.5 | RO | — | **no** | **yes** | — | 32 + 8·N |
 | 0x002C | ADD_AUDIO_MAPPINGS | shall, **n/i today** (dynamic ports) | target: §6.5 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | 0x002D | REMOVE_AUDIO_MAPPINGS | shall, **n/i today** (dynamic ports) | target: §6.5 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
-| 0x004B | GET_DYNAMIC_INFO | shall, **n/i today** | target: iterator §6.7 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x004B | GET_DYNAMIC_INFO | shall | two-pass iterator §6.7 | RO per record | - | exactly the 13 fixed getters | - | - | cdl at most 524 |
 | MVU 0x0000 | GET_MILAN_INFO | shall | §6.9 | RO | — | — | — | — | 44 B |
 | MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended, **n/i today** (`P-EN-MVU-SUID`) | target: §6.9 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | MVU 0x0003/0x0004 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO | recommended, **n/i today** (`P-EN-MVU-MCR`) | target: §6.9 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
@@ -464,6 +464,15 @@ each unimplemented member is answered with a per-element `info_status` of
 GET_AVB_INFO, GET_AS_PATH, GET_AUDIO_MAP and every other variable-size or
 non-GET opcode) makes the whole batch `BAD_ARGUMENTS`.
 
+**Realization status (2026-08-17): implemented.** `KL_aecp_engine` retains the
+RX slot and performs the required full-list pre-scan before dispatching any
+record. Implemented members run the same getter µprogram used by their
+standalone command, with `KL_aecp_ucpu` starting at the aggregate response
+cursor and suppressing its private header. Permitted but unimplemented members
+copy their command-specific data with record status `NOT_SUPPORTED`. A result
+that would take the aggregate cdl above 524 is omitted, and scanning continues
+with the next input record. The engine never emits `IN_PROGRESS`.
+
 ### 6.8 ACQUIRE / LOCK
 
 **Realization status (2026-08-15)** — LANDED per the Milan rulings: ACQUIRE_ENTITY
@@ -707,12 +716,14 @@ ACQUIRE_ENTITY:                         BUILD_HEADER; BUILD_FIELD
   BUILD_HEADER (echo, owner_id=0)       NOTIFY_ENQ  {resp, excl=requester}
   SEND_RESPONSE; END                    END
 
-GET_DYNAMIC_INFO (target; n/i today):
-  ITER_OPEN tuples            ; pre-scan pass: GDI flags, else BAD_ARGUMENTS-all
-  loop: ITER_NEXT -> sub      ; dispatch sub-µprogram in sub-command mode
-  APPEND_RESP (skip if > 524) ; per-element info_status written
-  BRANCH loop until end
-  SEND_RESPONSE; END
+GET_DYNAMIC_INFO (as built):
+  pre-scan every tuple        ; exact 13-command whitelist
+  reject whole list           ; BAD_ARGUMENTS, no getter processed
+  load one complete tuple     ; command data remains in the retained RX slot
+  dispatch ordinary getter    ; aggregate cursor, private header suppressed
+  patch per-record status     ; same status the standalone getter produced
+  skip if result exceeds 524  ; continue with the following tuple
+  seal one aggregate response ; never IN_PROGRESS
 ```
 
 Sizing: ~35 programs × ~25 µops ⇒ `P-UCODE-ROM-DEPTH` = 2048 with ~2× margin, at `P-UCODE-ROM-W` = 48 b per µop (encoding: `hdl/aecp/ucpu_pkg.sv`).
@@ -744,6 +755,7 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |
 | 0x0029 GET_COUNTERS | real for STREAM_INPUT, STREAM_OUTPUT, AVB_INTERFACE and CLOCK_DOMAIN: SUCCESS + `descriptor_type`/`descriptor_index`/`counters_valid` + all 32 quadlets (payload 136, cdl 148), the values coming from the integrator's counter face; `BAD_ARGUMENTS` on a command short of §7.4.42.1's four bytes |
 | 0x002B GET_AUDIO_MAP | real for both Stream Port directions: SUCCESS + the §7.4.44.2 fixed part + 8-byte records (payload 12 + 8·M, cdl 24 + 8·M), geometry and records from the integrator's audio-map face; `BAD_ARGUMENTS` on `map_index` ≥ `number_of_maps` (§7.4.44.1) or a command short of §7.4.44.1's eight bytes; `NO_SUCH_DESCRIPTOR` where the descriptor store misses the locate |
+| 0x004B GET_DYNAMIC_INFO | real two-pass batch execution: exact fixed-get whitelist, whole-command `BAD_ARGUMENTS` before processing on a forbidden member, ordinary getter results with per-record status, `NOT_SUPPORTED` plus copied command data for legal unimplemented members, and silent skip with continued processing when a result would exceed cdl 524 |
 | 0x0026 IDENTIFY_NOTIFICATION | `BAD_ARGUMENTS`, using the opcode-specific §7.4.39.2 rule over §9.3.5.3.3 |
 | MVU 0x0000 GET_MILAN_INFO | real: SUCCESS + the Figure 5.4 body, `protocol_version` 1, `features_flags` 0, `certification_version` 0 (§6.9 and the honesty note below); AECPDU 44 B, cdl 32 |
 | everything else, all message types | `NOT_IMPLEMENTED` with the command **echoed** (F06.14 / §9.3.5.3.3) |
