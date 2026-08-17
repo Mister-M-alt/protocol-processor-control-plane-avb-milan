@@ -200,12 +200,21 @@ module KL_pp_acmp_listener
     //! one pulse per COMMITTED started/stopped transition, with `act_sink_o`
     //! naming the sink. Milan Table 5.22 lists "Started/stopped state (Stream
     //! Input only)" among the changes that must push a GET_STREAM_INFO
-    //! unsolicited notification, and IEEE §7.4.35/§7.4.36 say the same from
-    //! the command's side ("on success this command also sends an unsolicited
-    //! notification"). It is SEPARATE from `act_notify_o`, which fires for
-    //! every committed record change - the bind and settle events already
-    //! have their own terms upstream, and re-triggering on those would push
-    //! duplicates.
+    //! unsolicited notification, and this is that trigger.
+    //!
+    //! It is NOT the other obligation, and the two are easy to conflate:
+    //! IEEE §7.5.2 makes START_STREAMING and STOP_STREAMING themselves
+    //! unsolicited-response commands ("when an ATDECC Entity sends a response
+    //! to one of the commands below with a status code of SUCCESS then it
+    //! also sends an unsolicited response"), which Milan §5.4.5.2 restates.
+    //! That response is NOT sent: the engine's unsolicited-kind map has no
+    //! entry for these opcodes, exactly as it has none for the SET_* family.
+    //! It is the same systemic gap, tracked as issue #69, and it is named
+    //! here so this trigger is not mistaken for covering it.
+    //!
+    //! SEPARATE from `act_notify_o`, which fires for every committed record
+    //! change - the bind and settle events already have their own terms
+    //! upstream, and re-triggering on those would push duplicates.
     output logic                         act_strt_chg_o,
     output logic                         dbg_recwr_o,     //! record write this cycle
     output logic [SINK_W_C-1:0]          dbg_recwr_sink_o,//! written sink
@@ -1099,11 +1108,23 @@ module KL_pp_acmp_listener
               5'(ACT_A6_C): begin        // v1.2 re-bind short-circuit
                 rec_r.bind_ctlr_eid <= ctlr_x_r;
                 rec_r.f_sw          <= |(flags_f_r & AFLG_STREAMING_WAIT_C);
-                //! §5.5.3.5.19 re-binds by UPDATING the binding parameters
-                //! with the new command's STREAMING_WAIT, so the started
-                //! state follows it here exactly as it does on a fresh bind.
-                //! Leaving it alone would let a re-bind asking for stopped be
-                //! answered SUCCESS while the stream kept flowing.
+                //! §5.5.3.5.6 step 2 (and its twins in .12/.26/.33/.39/.45):
+                //! on a re-bind naming the SAME talker, "update the binding
+                //! parameters with the controller entity_id and
+                //! STREAMING_WAIT fields". Leaving the started state alone
+                //! would let a re-bind asking for stopped be answered SUCCESS
+                //! while the stream kept flowing.
+                //!
+                //! INFERENCE, stated as one: the clause says the saved
+                //! PARAMETERS are updated; it does not say the live state
+                //! follows. It is read that way here because §5.3.8.7 makes
+                //! the state a property of the binding, so a binding whose
+                //! STREAMING_WAIT now reads 1 describing a started sink would
+                //! be self-contradictory - and Table 5.9 bit 28 would then
+                //! disagree with the ACMP answer. The consequence worth
+                //! knowing: a controller re-binding to take ownership with
+                //! the flag clear RESTARTS a sink another controller had
+                //! stopped. That transition does raise Table 5.22's push.
                 rec_r.f_started     <= ~|(flags_f_r & AFLG_STREAMING_WAIT_C);
                 cellmut_r           <= 1'b1;
               end

@@ -377,8 +377,8 @@ struct Model {
           r.acmpsta = 0; e.frames.push_back(f_probe(sink));
           e.tops.push_back({false, NOW + T_CMD}); mut = true; break;
         case 6:
-          // 5.5.3.5.19 re-bind: the binding parameters are UPDATED with the
-          // new command's STREAMING_WAIT, so started follows it here too
+          // 5.5.3.5.6 step 2 re-bind: the binding parameters are UPDATED
+          // with the new command's STREAMING_WAIT, so started follows
           r.bind_ctlr = s.ctlr; r.sw = (s.flags >> 3) & 1;
           r.started = !((s.flags >> 3) & 1); mut = true; break;
         case 7: e.frames.push_back(f_unbind(s)); break;
