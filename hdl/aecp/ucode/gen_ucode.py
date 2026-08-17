@@ -87,12 +87,9 @@ MILAN_PROTOCOL_VERSION = 1
 # this is a single-AVB-interface PAAD (P-N-AVB-INTERFACES = 1) with one
 # AVB_INTERFACE descriptor, so there is no second stream to be seamless with.
 # TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING (0x00000002) is a claim to accept map
-# changes while a Stream Output streams (§5.3.9.1); this build answers
-# ADD/REMOVE_AUDIO_MAPPINGS with NOT_IMPLEMENTED, so it cannot change a mapping
-# at all. An overclaimed flag makes a controller take a path the gateware
-# cannot serve — the same class of defect as reporting a restore that never
-# happened. When P-EN-TALKER-DYN-MAPPINGS-RUNNING becomes real (06 §6.9), this
-# is the one line that moves.
+# changes while a Stream Output streams (§5.3.9.1). The mapping commands are
+# implemented, but this optional behavior is not: an addressed running Stream
+# Output is refused. The flag therefore remains clear.
 MILAN_FEATURES_FLAGS = 0x00000000
 # §5.4.4.1: four dot-separated 8-bit numbers, "set to 0 if the PAAD-AE has not
 # passed any Milan certification". This device has passed none.
@@ -160,6 +157,8 @@ E_SCFGLK  = 1500     # ...its ENTITY_LOCKED arm
 E_SCFGBAD = 1513     # ...its BAD_ARGUMENTS arm
 E_SCFGEMT = 1526     # ...the body all three share
 E_RDESCENT = 1568    # READ_DESCRIPTOR(ENTITY) with current_configuration overlay
+E_AMADD   = 1632     # ADD_AUDIO_MAPPINGS (Milan 5.4.2.27, IEEE 7.4.45)
+E_AMREMOVE = 1680    # REMOVE_AUDIO_MAPPINGS (Milan 5.4.2.28, IEEE 7.4.46)
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
@@ -238,6 +237,19 @@ GX_CTR_BLOCK_CND = range(8)   # -> sel 0x00..0x03, 0x10..0x13, ... 0x70..0x73
 AM_NMAPS = dict(cnd=0, imm=0)   # -> sel 0x00
 AM_GEOM = dict(cnd=0, imm=1)    # -> sel 0x01
 AM_REC = dict(cnd=1, imm=0)     # -> sel 0x10
+
+# ADD/REMOVE_AUDIO_MAPPINGS use a transactional face. Validation completes
+# for every record before the first commit request, which is the all-or-none
+# rule in IEEE 7.4.45 and 7.4.46. The engine stages the command records, so
+# both passes see the same bytes. Phase selectors are decoded by the engine:
+#   0x20 begin validation, 0x30 begin commit, 0x22 finish, 0x23 abort
+#   0x40 validate record, 0x50 commit record
+AME_BEGIN = dict(cnd=2, imm=0)
+AME_COMMIT_BEGIN_CND = 3
+AME_FINISH = dict(cnd=2, imm=2)
+AME_ABORT = dict(cnd=2, imm=3)
+AME_VALIDATE_CND = 4
+AME_COMMIT_REC = dict(cnd=5, imm=0)
 
 rom = [0] * ROM_DEPTH
 occupied = set()
@@ -703,9 +715,10 @@ place(E_GCTRSNS, [
 #     STREAM_PORT_INPUT or STREAM_PORT_OUTPUT in the READ_DESCRIPTOR image, so
 #     GET_AUDIO_MAP answers NO_SUCH_DESCRIPTOR for exactly the indices
 #     READ_DESCRIPTOR answers it for - one authority, no drift.
-#   - PAGE LAW is the µprogram's: §7.4.44.1 "If the map_index is beyond the
-#     range of available maps then it returns a BAD_ARGUMENT status", so
-#     CHECK_ARG demands map_index < number_of_maps.
+#   - SCOPE and PAGE LAW are the µprogram's. Milan 5.4.2.26 requires
+#     NOT_SUPPORTED for an existing Stream Port Output with static Audio Maps;
+#     the integrator identifies that case with number_of_maps = 0. Otherwise
+#     §7.4.44.1 requires BAD_ARGUMENTS when map_index is out of range.
 #   - GEOMETRY and CONTENT are the INTEGRATOR's, through the amap_* gather
 #     face: Milan §5.4.2.26 fixes the partition per Configuration and the
 #     mappings live in the integrator's routing fabric, cycles away from this
@@ -737,21 +750,23 @@ place(E_GAMAP, [
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
     u('GATHER_EXT', rd=5, **AM_NMAPS),           # r5 = number_of_maps
     u('GATHER_EXT', rd=6, **AM_GEOM),            # r6 = {nmaps, nmappings}
-    u('BR_STATUS', cnd=0, imm=E_GAMAP + 8),      # NSD: skip to the emit
+    u('BR_STATUS', cnd=0, imm=E_GAMAP + 9),      # NSD: skip to the emit
     u('SET_STATUS', imm=ST_OK),
+    u('CHECK_ARG', ra=5, rb=12, fmt=FMT_W,       # number_of_maps != 0;
+      cnd=8 | REL_NE, imm=E_GAMAP + 9),          # zero -> NOT_SUPPORTED
     u('CHECK_ARG', ra=13, rb=5, fmt=FMT_W,       # map_index < number_of_maps
-      cnd=REL_LT, imm=E_GAMAP + 8),              # else BAD_ARGUMENTS (§7.4.44.1)
+      cnd=REL_LT, imm=E_GAMAP + 9),              # else BAD_ARGUMENTS (§7.4.44.1)
     u('BUILD_HDR', ra=15, rb=13),                # emit (all three statuses):
     u('BUILD_FLD', ra=8, fmt=FMT_W),             # descriptor_type       @24
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # descriptor_index @26 + map_index @28
     u('BUILD_FLD', ra=6, fmt=FMT_D),             # number_of_maps @30 + number_of_mappings @32
     u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved              @34
     u('ITER_OPEN', ra=6),                        # count = number_of_mappings
-    u('BR_STATUS', cnd=1, imm=E_GAMAP + 19),     # loop: 0-trip safe (test FIRST)
+    u('BR_STATUS', cnd=1, imm=E_GAMAP + 20),     # loop: 0-trip safe (test FIRST)
     u('GATHER_EXT', rd=7, **AM_REC),             # record amap_rec_o, 8 B
     u('APPEND', ra=7, fmt=FMT_Q),
     u('ITER_NEXT'),
-    u('BRANCH', imm=E_GAMAP + 14),
+    u('BRANCH', imm=E_GAMAP + 15),
     u('SEND_RESP'),                              # out:
     u('END'),
 ])
@@ -1520,6 +1535,64 @@ place(E_SCFGEMT, [
     u('BUILD_FLD', ra=1, fmt=FMT_W),             # configuration_index @26
     u('SEND_RESP'),
     u('END'),
+])
+
+
+# --- ADD/REMOVE_AUDIO_MAPPINGS ----------------------------------------------
+# The command and response share Figure 7-71's exact variable body, so the
+# engine echoes the staged RX payload and this program only establishes the
+# response status. Framing, the exact cdl = 20 + 8*N equation and target-type
+# gating are complete before dispatch.
+#
+# r14 is the descriptor-store locate key, r12 is number_of_mappings. The
+# integrator owns geometry, current mappings, conflict detection, streaming
+# restrictions and the final writes. A rejected begin means the target is a
+# static or otherwise unsupported map and maps to NOT_SUPPORTED. A rejected
+# record means BAD_ARGUMENTS. Both paths abort the transaction before reply.
+place(E_AMADD, [
+    u('CHECK_LOCK', ra=15, imm=E_AMADD + 31),    # another controller owns lock
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # descriptor existence
+    u('BR_STATUS', cnd=0, imm=E_AMADD + 31),     # miss keeps NO_SUCH_DESCRIPTOR
+    u('GATHER_EXT', rd=1, **AME_BEGIN),          # supported and start validation
+    u('MOVE', rd=2, ra=0, imm=1),
+    u('CHECK_ARG', ra=1, rb=2, fmt=FMT_B,
+      cnd=8 | REL_EQ, imm=E_AMADD + 27),          # rejected -> NOT_SUPPORTED
+    u('ITER_OPEN', ra=12),
+    u('BR_STATUS', cnd=1, imm=E_AMADD + 11),     # validation loop, zero safe
+    u('MAP_VALID', cnd=AME_VALIDATE_CND,
+      imm=E_AMADD + 27),                         # rejected -> BAD_ARGUMENTS
+    u('ITER_NEXT'),
+    u('BRANCH', imm=E_AMADD + 7),
+    u('MAP_VALID', cnd=AME_COMMIT_BEGIN_CND,
+      imm=E_AMADD + 27),                         # recheck before first write
+    u('ITER_OPEN', ra=12),
+    u('BR_STATUS', cnd=1, imm=E_AMADD + 17),     # commit loop, zero safe
+    u('GATHER_EXT', rd=7, **AME_COMMIT_REC),
+    u('ITER_NEXT'),
+    u('BRANCH', imm=E_AMADD + 13),
+    u('GATHER_EXT', rd=3, **AME_FINISH),         # bit 0 = state changed
+    u('COMMIT'),
+    u('SET_STATUS', imm=ST_OK),
+    u('COMPARE', ra=3, fmt=FMT_B, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_AMADD + 23),     # unchanged: skip NVM only
+    u('NVM_MARK', imm=6),                        # persist changed map state
+    u('NOTIFY_ENQ', imm=6),                      # every successful command
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+    u('GATHER_EXT', rd=1, **AME_ABORT),          # validation refusal cleanup
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+    u('BUILD_HDR', ra=15, rb=13),                # lock or descriptor refusal
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# Removal has identical ordering and wire behavior. The engine's registered
+# command discriminator tells the transaction face which operation is active.
+place(E_AMREMOVE, [
+    u('BRANCH', imm=E_AMADD),
 ])
 
 
