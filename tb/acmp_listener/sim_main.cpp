@@ -728,6 +728,24 @@ int main(int argc, char** argv) {
     return (unsigned)((d->strm_started_o >> sink) & 1u);
   };
 
+  //! Drive the AECP request face. The write is POSTED - the engine's side
+  //! completes as soon as the one-deep holder takes it, and this walker
+  //! services it a cycle or more later - so a caller that checked the record
+  //! straight after the handshake would read the PREVIOUS value and call it
+  //! agreement. Wait for the walker to pick the job up AND retire it.
+  auto post_started = [&](int sink, int val) {
+    d->strm_set_valid_i = 1;
+    d->strm_set_sink_i  = uint16_t(sink);
+    d->strm_set_val_i   = uint8_t(val);
+    int guard = 64;
+    while (guard-- > 0 && !d->strm_set_ready_o) h.tick();
+    h.tick();                       // the accepting edge
+    d->strm_set_valid_i = 0;
+    guard = 64;
+    while (guard-- > 0 && !d->dbg_busy_o) h.tick();   // picked up
+    h.wait_idle();                                    // ...and retired
+  };
+
   auto goto_state = [&](int sink, int st, const char* tag) {
     Stim b = S_bind(TK_A, TKUID_A, CTL1, false); b.uid = uint16_t(sink);
     Stim u = S_unbind(); u.uid = uint16_t(sink);
@@ -1068,22 +1086,15 @@ int main(int argc, char** argv) {
 
     // the AECP request face: stop it
     h.wait_idle();
-    d->strm_set_valid_i = 1; d->strm_set_sink_i = sk; d->strm_set_val_i = 0;
-    for (int i = 0; i < 40 && !d->strm_set_ready_o; ++i) h.tick();
-    CHECK(d->strm_set_ready_o == 1, "S1c: the request face offered ready");
-    h.tick();
-    d->strm_set_valid_i = 0;
-    h.wait_idle();
+    CHECK(d->strm_set_ready_o == 1,
+          "S1c: the request face offers ready without waiting on the walker");
+    post_started(sk, 0);
     CHECK(started_bit(sk) == 0,
           "S1d: STOP through the request face cleared the bit (got %u)",
           started_bit(sk));
 
     // ...and start it again
-    d->strm_set_valid_i = 1; d->strm_set_sink_i = sk; d->strm_set_val_i = 1;
-    for (int i = 0; i < 40 && !d->strm_set_ready_o; ++i) h.tick();
-    h.tick();
-    d->strm_set_valid_i = 0;
-    h.wait_idle();
+    post_started(sk, 1);
     CHECK(started_bit(sk) == 1,
           "S1e: START through the request face set the bit (got %u)",
           started_bit(sk));
@@ -1105,11 +1116,7 @@ int main(int argc, char** argv) {
     // an unbound sink ignores the request entirely (5.4.2.19's Note)
     Stim u3 = S_unbind(); u3.uid = uint16_t(sk);
     step(sk, u3, false, "S1");
-    d->strm_set_valid_i = 1; d->strm_set_sink_i = sk; d->strm_set_val_i = 1;
-    for (int i = 0; i < 40 && !d->strm_set_ready_o; ++i) h.tick();
-    h.tick();
-    d->strm_set_valid_i = 0;
-    h.wait_idle();
+    post_started(sk, 1);
     CHECK(started_bit(sk) == 0,
           "S1h: START on an UNBOUND sink changed nothing (got %u)",
           started_bit(sk));

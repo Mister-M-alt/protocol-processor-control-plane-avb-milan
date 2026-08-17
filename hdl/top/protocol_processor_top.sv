@@ -1519,6 +1519,9 @@ module protocol_processor_top
   //! START/STOP_STREAMING µprogram, KL_pp_acmp_listener owns the bit.
   logic        strm_set_valid_w, strm_set_val_w, strm_set_ready_w;
   logic [15:0] strm_set_index_w;
+  //! out-of-range started/stopped requests dropped by the record walker.
+  //! Reads a permanent 0 unless the descriptor image and this shape disagree.
+  logic [15:0] lstn_strq_drop_w;
 
   KL_pp_acmp_listener #(
       .N_SINKS_P           (N_STREAM_IN_P),
@@ -1555,6 +1558,7 @@ module protocol_processor_top
       .strm_set_val_i        (strm_set_val_w),
       .strm_set_ready_o      (strm_set_ready_w),
       .strm_started_o        (aecp_strm_started_o),
+      .dbg_strq_drop_o       (lstn_strq_drop_w),
       .pre_ready_o           (pre_ready_w),
       .now_ms_i              (now_ms_w),
       .tmr_arm_valid_o       (lstn_arm_valid_w),

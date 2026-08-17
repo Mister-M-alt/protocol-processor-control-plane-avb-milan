@@ -185,6 +185,10 @@ module KL_pp_acmp_listener
 
     //! ---- observability (suite shadow of the record RAM write port) ------
     output logic                         dbg_busy_o,      //! executor not idle
+    //! started/stopped requests accepted and dropped for an out-of-range
+    //! sink. Should read a permanent 0; non-zero means the descriptor image
+    //! and this processor's shape disagree.
+    output logic [15:0]                  dbg_strq_drop_o,
     output logic                         dbg_recwr_o,     //! record write this cycle
     output logic [SINK_W_C-1:0]          dbg_recwr_sink_o,//! written sink
     output logic [ACMP_REC_W_C-1:0]      dbg_recwr_rec_o  //! written record image
@@ -246,6 +250,19 @@ module KL_pp_acmp_listener
   logic                preL_sw_r;
   logic                preL_started_r;
   logic                strtL_val_r;    // the bit a START/STOP asked for
+  //! ---- the started/stopped POSTED-WRITE holder ------------------------
+  //! One deep. It exists so `strm_set_ready_o` does NOT depend on this
+  //! walker being idle: the AECP µCPU stalls its whole E stage on
+  //! `!st_ready_i` with no watchdog, so tying that to "the ACMP walker
+  //! happens to be free" made a busy or wedged walker able to freeze the
+  //! ENTIRE AECP plane - every READ_DESCRIPTOR, LOCK and GET_* with it, not
+  //! just this command. Every other µCPU face is bounded (the gather port by
+  //! `gxf_tmo_r`, the descriptor store by MEM_TIMEOUT_CYC_P); this one was
+  //! the exception and should not have been.
+  logic                strq_pend_r;
+  logic [15:0]         strq_sink_r;
+  logic                strq_val_r;
+  logic [15:0]         dbg_strq_drop_r;
 
   // fetched ACMPDU fields (zeroed at accept; big-endian shift-in)
   logic [63:0]         tk_eid_f_r;     // talker_entity_id @20
@@ -360,8 +377,7 @@ module KL_pp_acmp_listener
   // txn > pending expiry > TK event > preload)
   assign txn_ready_o    = (xs_r == X_IDLE);
   assign evt_tk_ready_o = (xs_r == X_IDLE) && !txn_valid_i && !pend_any_w;
-  assign strm_set_ready_o = (xs_r == X_IDLE) && !txn_valid_i && !pend_any_w
-                            && !evt_tk_valid_i && !pre_valid_i;
+  assign strm_set_ready_o = !strq_pend_r;
   assign pre_ready_o    = (xs_r == X_IDLE) && !txn_valid_i && !pend_any_w
                           && !evt_tk_valid_i;
 
@@ -640,6 +656,7 @@ module KL_pp_acmp_listener
   end
 
   assign dbg_busy_o       = (xs_r != X_IDLE);
+  assign dbg_strq_drop_o  = dbg_strq_drop_r;
   assign dbg_recwr_o      = recwr_en_w;
   assign dbg_recwr_sink_o = recwr_addr_w;
   assign dbg_recwr_rec_o  = recwr_data_w;
@@ -704,6 +721,10 @@ module KL_pp_acmp_listener
       preL_sw_r         <= 1'b0;
       preL_started_r    <= 1'b0;
       strtL_val_r       <= 1'b0;
+      strq_pend_r       <= 1'b0;
+      strq_sink_r       <= 16'd0;
+      strq_val_r        <= 1'b0;
+      dbg_strq_drop_r   <= 16'd0;
       tk_eid_f_r    <= 64'd0;
       tk_uid_f_r    <= 16'd0;
       flags_f_r     <= 16'd0;
@@ -789,7 +810,30 @@ module KL_pp_acmp_listener
           sid_f_r    <= 64'd0;
           da_f_r     <= 48'd0;
           vlan_f_r   <= 16'd0;
-          if (txn_valid_i) begin
+          //! The holder drains FIRST, ahead of ACMP RX and the timer queue.
+          //! It is a two-state job, so it delays an ACMP command by a handful
+          //! of cycles; in exchange a sustained ACMP burst can no longer
+          //! starve a START/STOP the AECP µCPU is already stalled on.
+          //! §5.4.2.19/.20 carry no RX slot of their own - the AECP command
+          //! that caused this owns its slot and answers from the µprogram -
+          //! so this walk is told there is none to free.
+          if (strq_pend_r) begin
+            src_txn_r   <= 1'b0;
+            src_tmr_r   <= 1'b0;
+            rxslot_r    <= PP_SLOT_NULL_C;
+            sink_r      <= SINK_W_C'(strq_sink_r);
+            strtL_val_r <= strq_val_r;
+            strq_pend_r <= 1'b0;
+            if (32'(strq_sink_r) < N_SINKS_P) begin
+              xs_r <= X_STRT_RD;
+            end else begin
+              //! accepted and dropped - COUNTED, never silent. A stale
+              //! descriptor image shipped beside the bitstream is how this
+              //! arm stops being unreachable, and then the command would
+              //! answer SUCCESS and land nowhere.
+              dbg_strq_drop_r <= dbg_strq_drop_r + 16'd1;
+            end
+          end else if (txn_valid_i) begin
             src_txn_r  <= 1'b1;
             src_tmr_r  <= 1'b0;
             msg_x_r    <= txn_i.msg_type;
@@ -843,29 +887,6 @@ module KL_pp_acmp_listener
             if (32'(pre_sink_i) < N_SINKS_P) begin
               xs_r <= X_PRELOAD;
             end
-          end else if (strm_set_valid_i) begin
-            //! §5.4.2.19/.20 carry no RX slot of their own - the AECP command
-            //! that caused this owns its slot and answers from the µprogram -
-            //! so this walk must be told there is none to free.
-            src_txn_r   <= 1'b0;
-            src_tmr_r   <= 1'b0;
-            rxslot_r    <= PP_SLOT_NULL_C;
-            sink_r      <= SINK_W_C'(strm_set_sink_i);
-            strtL_val_r <= strm_set_val_i;
-            if (32'(strm_set_sink_i) < N_SINKS_P) begin
-              xs_r <= X_STRT_RD;
-            end
-            //! else: accepted and dropped. The engine has already answered,
-            //! and it answered NO_SUCH_DESCRIPTOR unless the image holds the
-            //! descriptor, so an index past the record RAM cannot reach here
-            //! with a SUCCESS behind it. That holds because the descriptor
-            //! set and this RAM are sized from the SAME number: the
-            //! superproject's scripts/check_entity_shape.py gate ties
-            //! ACMP_SINKS_C to ADP_LISTENER_SINK_C and fails unless the
-            //! config declares exactly that many STREAM_INPUT descriptors.
-            //! If those two ever came apart, a START on the extra index
-            //! would answer SUCCESS and land nowhere - so the gate is what
-            //! keeps this arm unreachable, not an assumption about configs.
           end
         end
 
@@ -1241,6 +1262,19 @@ module KL_pp_acmp_listener
 
         default: xs_r <= X_IDLE;
       endcase
+
+      //! ---- the posted-write capture (outside the state walk) -----------
+      //! It runs in EVERY state, which is the whole point: the engine's
+      //! write completes the moment the holder is free, not when this
+      //! walker happens to be idle. Capture cannot collide with the X_IDLE
+      //! drain above - `strm_set_ready_o` is `!strq_pend_r`, so while a
+      //! request is pending no second one can be accepted, and the drain
+      //! cycle still reads pending, so ready is low for it too.
+      if (strm_set_valid_i && strm_set_ready_o) begin
+        strq_pend_r <= 1'b1;
+        strq_sink_r <= strm_set_sink_i;
+        strq_val_r  <= strm_set_val_i;
+      end
     end
   end
 
