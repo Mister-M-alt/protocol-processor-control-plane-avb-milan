@@ -1201,6 +1201,95 @@ int main(int argc, char** argv) {
             h.col.strt_chgs);
     }
 
+    // ---- RV: the holder arm sits at the TOP of the X_IDLE priority chain,
+    // so EVERY acceptor has to exclude it. On the cycle the holder drains,
+    // this walker is leaving X_IDLE - and a source still told "ready" on
+    // that cycle is consumed by its producer and never serviced. Fixing only
+    // `pre_ready_o` left three others, and the `txn_ready_o` one silently
+    // drops an ACMP command AND leaks one of four shared RX slots for good.
+    // These rows post a request by hand and inspect ready on the drain cycle.
+    {
+      const int rvs = 6;                       // a sink this walk left alone
+      d->strm_set_valid_i = 1;
+      d->strm_set_sink_i  = uint16_t(rvs);
+      d->strm_set_val_i   = 1;
+      int g = 64;
+      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
+      h.tick();                                // accepted: holder FULL
+      d->strm_set_valid_i = 0;
+      d->eval();
+      CHECK(d->strm_set_ready_o == 0, "RV0: precondition, a request is pending");
+      CHECK(d->txn_ready_o == 0,
+            "RV3: txn_ready_o is LOW while a started/stopped request is "
+            "pending - otherwise KL_pp_dispatch pops an ACMP command that "
+            "this walk will never service, and its RX slot leaks");
+      CHECK(d->evt_tk_ready_o == 0,
+            "RV5: evt_tk_ready_o is LOW on the same cycle - the event router "
+            "acks on it, so a talker event would be dropped");
+      CHECK(d->pre_ready_o == 0,
+            "RV6: pre_ready_o is LOW on the same cycle - the NVM shadow "
+            "treats it as acceptance and would advance past a restored sink");
+      g = 64;
+      while (g-- > 0 && !d->dbg_busy_o) h.tick();
+      h.wait_idle();
+      d->eval();
+      CHECK(d->txn_ready_o == 1,
+            "RV7: ...and every acceptor is free again once it has drained");
+    }
+
+    // RV4: a timer expiry pending at the same moment as a started/stopped
+    // request must still be SERVICED. `pend_clr_pop_w` clears the pendexp
+    // bit, so if it fires on the drain cycle the expiry is consumed by
+    // nothing - and a lost T-ACMP-CMD leaves the sink in PB_ACTIVE with no
+    // retry. Park a probing sink, then collide the two.
+    {
+      const int rvt = 4;
+      goto_state(rvt, S_PWR, "RV4");          // a sink with a live timer
+      h.wait_idle();
+      h.col.clear();
+
+      // post the request, then raise the expiry while the holder is FULL
+      d->strm_set_valid_i = 1;
+      d->strm_set_sink_i  = uint16_t(rvt);
+      d->strm_set_val_i   = 1;
+      int g = 64;
+      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
+      //! BOTH on the same edge. Raising the expiry a cycle later misses the
+      //! window entirely: the walker has already left X_IDLE for the holder
+      //! job by then, and `pend_clr_pop_w` needs `xs_r == X_IDLE`. The bug
+      //! only exists on the ONE cycle where the drain and a pending expiry
+      //! are both true.
+      h.inj_exp = true; h.inj_exp_sink = uint8_t(rvt);
+      h.tick();                               // holder captured + pendexp set
+      d->strm_set_valid_i = 0;
+      for (int i = 0; i < 200; ++i) h.tick();
+      h.wait_idle();
+
+      const size_t tops_collided = h.col.tops.size();
+
+      // CONTROL: the same expiry with NO request beside it. Without this the
+      // row above has no scale - "some timer op happened" passes for many
+      // reasons, and a check whose expected value is "not zero" is the trap
+      // this suite exists to avoid.
+      goto_state(rvt, S_PWR, "RV4");
+      h.wait_idle();
+      h.col.clear();
+      h.inj_exp = true; h.inj_exp_sink = uint8_t(rvt);
+      h.tick();
+      for (int i = 0; i < 200; ++i) h.tick();
+      h.wait_idle();
+      const size_t tops_alone = h.col.tops.size();
+
+      CHECK(tops_alone > 0,
+            "RV4pre: the control leg's expiry IS serviced (%zu timer ops) - "
+            "without this the comparison below means nothing", tops_alone);
+      CHECK(tops_collided == tops_alone,
+            "RV4: an expiry raised beside a started/stopped request is "
+            "serviced exactly as it is alone (collided %zu vs alone %zu) - "
+            "a pop that fires on the drain cycle loses it",
+            tops_collided, tops_alone);
+    }
+
     // an unbound sink ignores the request entirely (5.4.2.19's Note)
     Stim u3 = S_unbind(); u3.uid = uint16_t(sk);
     step(sk, u3, false, "S1");

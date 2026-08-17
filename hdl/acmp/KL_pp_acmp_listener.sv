@@ -438,16 +438,28 @@ module KL_pp_acmp_listener
 
   // handshakes (05 §2 serialization: one work item at a time; priority
   // txn > pending expiry > TK event > preload)
-  assign txn_ready_o    = (xs_r == X_IDLE);
-  assign evt_tk_ready_o = (xs_r == X_IDLE) && !txn_valid_i && !pend_any_w;
+  //! EVERY acceptor on this walker has to exclude the holder arm, not just
+  //! the one that was noticed first. `strq_pend_r` went in at the TOP of the
+  //! X_IDLE priority chain, so on the cycle the holder drains this state
+  //! machine is leaving X_IDLE for X_STRT_RD - and any source still being
+  //! told "ready" on that cycle is CONSUMED BY ITS PRODUCER and never
+  //! serviced. `txn_ready_o` is the expensive one: KL_pp_dispatch feeds it
+  //! straight to the pop side of the command FIFO, so an ACMP command at the
+  //! head is popped and dropped, its controller times out, and its RX slot
+  //! is never freed (only X_CONSUME frees, and this walk never gets there) -
+  //! a permanent leak out of a four-slot pool shared with ADP, MAAP, the
+  //! talker and AECP.
+  assign txn_ready_o    = (xs_r == X_IDLE) && !strq_pend_r;
+  assign evt_tk_ready_o = (xs_r == X_IDLE) && !strq_pend_r
+                          && !txn_valid_i && !pend_any_w;
   assign strm_set_ready_o = !strq_pend_r;
-  //! ...and it must reflect the holder arm too. `KL_acmp_nvm_shadow` treats
+  //! ...and the preload face likewise. `KL_acmp_nvm_shadow` treats
   //! `pre_ready_i` as ACCEPTANCE and advances to the next sink on it, so a
   //! ready raised while the walker is about to take the started/stopped job
   //! instead loses that sink's restored binding AND its discovery arm, with
   //! nothing to say it happened - the same silent-drop class this change
-  //! exists to remove. Every other higher-priority arm was already in this
-  //! term; the new one was not.
+  //! exists to remove. See the note on `txn_ready_o` above: all four
+  //! acceptors need the term, and fixing only this one left the other three.
   assign pre_ready_o    = (xs_r == X_IDLE) && !strq_pend_r
                           && !txn_valid_i && !pend_any_w
                           && !evt_tk_valid_i;
@@ -749,7 +761,11 @@ module KL_pp_acmp_listener
 
   assign pend_clr_a11_w = (xs_r == X_STEP) && (cur_act_w == 5'(ACT_A11_C))
                           && apend_r[ACT_A11_C];
-  assign pend_clr_pop_w = (xs_r == X_IDLE) && !txn_valid_i && pend_any_w;
+  //! ...and the timer-expiry pop, for the same reason: clearing the pendexp
+  //! bit on a cycle the walker spends going to X_STRT_RD loses the expiry,
+  //! and a lost T-ACMP-CMD leaves the sink in PB_ACTIVE with no retry.
+  assign pend_clr_pop_w = (xs_r == X_IDLE) && !strq_pend_r
+                          && !txn_valid_i && pend_any_w;
 
   always_ff @(posedge clk_i) begin : pendexp
     if (!rst_n) begin
