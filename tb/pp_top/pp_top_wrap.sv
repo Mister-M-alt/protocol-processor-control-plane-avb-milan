@@ -270,6 +270,7 @@ module pp_top_wrap (
   logic [pp_pkg::PP_TXN_W_C-1:0] aecp_txn_nc_w;
   logic [7:0]                    aecp_rd_data_nc_w;
   logic [9:0]                    aecp_slot_len_nc_w;
+  logic                          aecp_lock_held_nc_w;
 
   protocol_processor_top #(
       .TIM_DIV_US_P (TB_DIV_US_C),
@@ -334,6 +335,7 @@ module pp_top_wrap (
       .aecp_strm_started_o   (),
       .aecp_pt_offset_o      (),
       .aecp_dyn_dirty_o      (),
+      .aecp_lock_held_o      (aecp_lock_held_nc_w),
       .ctr_req_o             (ctr_req_o),
       .ctr_desc_type_o       (ctr_desc_type_o),
       .ctr_desc_index_o      (ctr_desc_index_o),
