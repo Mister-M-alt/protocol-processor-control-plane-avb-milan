@@ -4735,30 +4735,49 @@ int main(int argc, char** argv) {
         (void)ask(OP_START, ti(DT_STREAM_INPUT, 0), 0x7A20);
         CHECK((started() & 1u) == 1u, "W21cc: precondition, sink 0 started");
 
+        // Make it STOP first, so the pair below starts from a known 0.
+        (void)ask(OP_STOP, ti(DT_STREAM_INPUT, 0), 0x7A1F);
+        CHECK((started() & 1u) == 0u, "W21cc2: ...and stopped for the pair");
+
         h.q_acmp.clear();
         h.q_aecp.clear();
-        //! BRACKET the AECP command with ACMP work rather than queue it
-        //! before or after: the write lands tens of cycles into the
-        //! µprogram, and a burst on only one side of it finishes (or has not
-        //! started) by then. Frames ahead of it put the walker mid-
-        //! transaction; frames behind it keep it there.
-        for (int i = 0; i < 6; ++i)
+        //! TWO commands, bracketed by ACMP work. One alone no longer proves
+        //! anything: the request is a POSTED write into a one-deep holder,
+        //! so a single one is taken instantly whatever the walker is doing.
+        //! The engine's `strm_set_ready_i` is load-bearing exactly when that
+        //! holder is FULL - a second START/STOP arriving while the walker is
+        //! still busy with the first. If the engine ignored ready there, the
+        //! second would be overwritten and lost, and its SUCCESS would be a
+        //! lie. Frames ahead put the walker mid-transaction; frames behind
+        //! keep it there while both commands run.
+        // LEAD
+        for (int i = 0; i < 3; ++i)
           h.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR2_EID, 0, EID,
                             0, 0, 0, 0, uint16_t(0x7A30 + i), 0, 0));
+        // ENDLEAD
         h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7A21,
+                          OP_START, ti(DT_STREAM_INPUT, 0)));
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7A22,
                           OP_STOP, ti(DT_STREAM_INPUT, 0)));
-        for (int i = 0; i < 6; ++i)
-          h.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR2_EID, 0, EID,
-                            0, 0, 0, 0, uint16_t(0x7A40 + i), 0, 0));
         auto rf = h.wait_any(h.q_aecp, 900);
         CHECK(!rf.empty() && st(rf) == AECP_SUCCESS,
-              "W21dd: the overlapped STOP_STREAMING answered SUCCESS (st=%d)",
+              "W21dd: the first overlapped command answered SUCCESS (st=%d)",
               rf.empty() ? -1 : st(rf));
+        //! a LONGER window than the first: the second command's WRITE_ST is
+        //! exactly the one that meets a full holder, so it stalls until the
+        //! walker drains it - which the trailing ACMP burst deliberately
+        //! delays. That stall IS the mechanism under test, so the timeout has
+        //! to outlast it or the test fails on its own premise.
+        auto rf2 = h.wait_any(h.q_aecp, 4000);
+        CHECK(!rf2.empty() && st(rf2) == AECP_SUCCESS,
+              "W21dd2: ...and so did the second (st=%d)",
+              rf2.empty() ? -1 : st(rf2));
         unsigned sb2 = started();
         CHECK((sb2 & 1u) == 0u,
-              "W21ee: ...and the record MOVED despite the busy walker "
-              "(started=0x%02X) - a SUCCESS whose effect was dropped is the "
-              "defect this handshake exists to prevent", sb2);
+              "W21ee: the SECOND command's effect survived a busy walker "
+              "(started=0x%02X) - START then STOP must end STOPPED; a "
+              "SUCCESS whose effect was overwritten is the defect the "
+              "holder's ready line exists to prevent", sb2);
       }
 
       // W21w: Milan 5.4.2.19/.20 - "If the PAAD-AE is locked by a

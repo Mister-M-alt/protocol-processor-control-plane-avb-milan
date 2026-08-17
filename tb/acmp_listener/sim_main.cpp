@@ -1088,7 +1088,32 @@ int main(int argc, char** argv) {
     h.wait_idle();
     CHECK(d->strm_set_ready_o == 1,
           "S1c: the request face offers ready without waiting on the walker");
-    post_started(sk, 0);
+    // S1c2: the holder's BACKPRESSURE. `strm_set_ready_o` must drop while a
+    // request is pending, because the engine's WRITE_ST completes on it: if
+    // it were tied high, a second START/STOP arriving before this walker
+    // drained the first would OVERWRITE it, and the overwritten command has
+    // already answered SUCCESS. That window is only a couple of cycles from
+    // the wire (the drain runs at top priority), which is exactly why the
+    // property is graded HERE, where the request can be posted directly,
+    // rather than inferred from frame timing in pp_top.
+    {
+      d->strm_set_valid_i = 1;
+      d->strm_set_sink_i  = uint16_t(sk);
+      d->strm_set_val_i   = 0;
+      int g = 64;
+      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
+      h.tick();                       // accepted: the holder is now FULL
+      d->strm_set_valid_i = 0;
+      d->eval();
+      CHECK(d->strm_set_ready_o == 0,
+            "S1c2: ready DROPS while a posted request is still pending");
+      g = 64;
+      while (g-- > 0 && !d->dbg_busy_o) h.tick();
+      h.wait_idle();
+      d->eval();
+      CHECK(d->strm_set_ready_o == 1,
+            "S1c3: ...and comes back once the walker has drained it");
+    }
     CHECK(started_bit(sk) == 0,
           "S1d: STOP through the request face cleared the bit (got %u)",
           started_bit(sk));
