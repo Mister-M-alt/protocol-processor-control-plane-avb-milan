@@ -1159,19 +1159,31 @@ module protocol_processor_top
     end
   end
 
-  // dispatch-ROM stub (banner): hazard class from a protocol-keyed default
-  // until the P4 dispatch ROM lands — ACMP serializes per stream class,
-  // everything else reads-only. The key spreads protocols apart so classes
-  // never serialize across protocols by accident.
+  // dispatch-ROM stub (banner): hazard class from protocol and the AECP
+  // opcode until the P4 dispatch ROM lands. ACMP serializes as STREAM_CFG;
+  // ADD/REMOVE_AUDIO_MAPPINGS serialize as MAP_CFG so the scoreboard applies
+  // its class-wide MAP_CFG x STREAM_CFG exclusion. Other commands remain
+  // read-only snapshots. The key spreads protocols apart where the hazard
+  // matrix intentionally permits parallel execution.
   logic        hz_valid_nc_w;
   logic [2:0]  hz_protocol_w;
-  logic [15:0] hz_opcode_nc_w;
+  logic [15:0] hz_opcode_w;
   logic [3:0]  hz_class_w;
   logic [15:0] hz_key_w;
+
+  localparam logic [15:0] HZ_OP_ADD_AUDIO_MAP_C    = 16'h002C;
+  localparam logic [15:0] HZ_OP_REMOVE_AUDIO_MAP_C = 16'h002D;
 
   always_comb begin : hz_stub
     unique case (hz_protocol_w)
       3'(PP_PROTO_ACMP): hz_class_w = 4'(PP_HZ_STREAM_CFG);
+      3'(PP_PROTO_AEM): begin
+        if ((hz_opcode_w == HZ_OP_ADD_AUDIO_MAP_C)
+            || (hz_opcode_w == HZ_OP_REMOVE_AUDIO_MAP_C))
+          hz_class_w = 4'(PP_HZ_MAP_CFG);
+        else
+          hz_class_w = 4'(PP_HZ_RO_SNAPSHOT);
+      end
       default:           hz_class_w = 4'(PP_HZ_RO_SNAPSHOT);
     endcase
     hz_key_w = {13'd0, hz_protocol_w};
@@ -1207,7 +1219,7 @@ module protocol_processor_top
       .rx_slot_i           (hdr_rx_slot_r),
       .hz_valid_o          (hz_valid_nc_w),
       .hz_protocol_o       (hz_protocol_w),
-      .hz_opcode_o         (hz_opcode_nc_w),
+      .hz_opcode_o         (hz_opcode_w),
       .hz_class_i          (hz_class_w),
       .hz_key_i            (hz_key_w),
       .tmr_valid_i         (1'b0),                 // TIMER producer: P4

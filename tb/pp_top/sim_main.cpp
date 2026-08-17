@@ -3470,6 +3470,36 @@ int main(int argc, char** argv) {
     CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE125, p),
           "R19: post-reservation regression cleanup failed");
 
+    // Keep an output edit parked after its first write, then inject an ACMP
+    // STREAM_CFG transaction. The mapping hold must exclude ACMP until the
+    // solicited mapping response can complete. This covers the race where a
+    // Stream Output could otherwise become streaming after commit-begin and
+    // before the remaining phase-5 writes.
+    uint64_t serialized_out = row(0, 2, 17);
+    p = edit_pl(DT_SPO, 0, {serialized_out});
+    before = h.amap_edit_mutations;
+    h.q_aecp.clear(); h.q_acmp.clear();
+    h.amap_edit_postcommit_wait = true;
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID,
+                      0xE12E, ADD, p));
+    for (int i = 0; i < 400 && h.amap_edit_mutations == before; ++i) h.step();
+    auto gts_during_map = acmp_frame(CTLR_MAC, 4, 0, 0, CTLR_EID, EID, 0,
+                                     0, 0, 0, 0, 0xE12F, 0, 0);
+    h.feed(gts_during_map);
+    CHECK(h.amap_edit_mutations == before + 1 && h.q_acmp.empty(),
+          "R19a: STREAM_CFG was admitted during a reserved MAP_CFG write");
+    h.amap_edit_postcommit_wait = false;
+    got = h.wait_any(h.q_aecp, 400);
+    auto gts_after_map = h.wait_any(h.q_acmp, 400);
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE12E, p)
+          && !gts_after_map.empty()
+          && (gts_after_map[15] & 0x0F) == 5
+          && H::amap_has(h.amap_edit_out0, serialized_out),
+          "R19a: serialized MAP_CFG or deferred STREAM_CFG did not complete");
+    got = cmd(REMOVE, 0xE130, p);
+    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE130, p),
+          "R19a: serialized output-map cleanup failed");
+
     // IEEE 1722.1-2021 9.2.2.6 caps command cdl at 524 octets. Figure 7-71
     // uses 20 + 8*N, so 63 records is the exact command maximum. Milan 5.4.1
     // lifts the ceiling for responses only. Repeating one ADD row proves that
