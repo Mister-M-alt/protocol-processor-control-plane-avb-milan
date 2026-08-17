@@ -1132,14 +1132,17 @@ module KL_aecp_engine
                       && (st_addr_w[19:16] == RGN_STRQ_C);
   //! WHY THE REGION NIBBLE SURVIVES THE LOCATE. `WRITE_ST` addresses as
   //! `desc_base_r + imm`, and these µprograms run a DESC_ADDR first (that is
-  //! the existence check), so the base is non-zero by the time the write
-  //! issues. It cannot reach [19:16]: KL_aecp_desc_store's port contract
-  //! declares `st_addr_i` as "[19:16] region, [15:0] byte offset", so a
-  //! locate result is a 16-bit offset by construction and the carry cannot
-  //! happen. If that address format ever widens, this decode has to move
-  //! with it - a base that reached the region nibble would send the request
-  //! to the descriptor store instead, dropping it, and the command would
-  //! answer SUCCESS for a change that never landed.
+  //! the existence check), so it is fair to ask what the base holds by the
+  //! time the write issues. The answer is ZERO: KL_aecp_desc_store answers a
+  //! locate with `st_rdata_o = 0` (its port comment says so in as many
+  //! words - "read data (0 on a locate hit)"), and `desc_base_r` is loaded
+  //! from exactly that, so the sum is the immediate. That is the invariant
+  //! this decode rests on, and it is stronger than "the offset is 16 bits" -
+  //! a 16-bit NON-ZERO base would still be safe here only by accident of
+  //! RGN_STRQ's low bits being clear. If the store ever answers a locate
+  //! with a real address, this decode has to move with it: a base reaching
+  //! [19:16] would divert the request to the descriptor store, drop it, and
+  //! leave the command answering SUCCESS for a change that never landed.
 
   //! The request channel answers its own write in the same cycle it is
   //! selected. It has nothing to wait for — the pulse below is the whole of
