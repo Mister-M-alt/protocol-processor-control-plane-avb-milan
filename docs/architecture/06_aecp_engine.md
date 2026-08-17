@@ -334,18 +334,19 @@ at commit, and use the root transaction face to update the live map atomically.
   Input, and every Stream Port Output with no Audio Map, shall implement all
   three — Milan §5.3.3.7 forbids AUDIO_MAPs on STREAM_PORT_INPUT precisely
   because inputs must support dynamic mapping, and IEEE §7.2.13's dynamic-map
-  convention is `number_of_maps` = 0. The check is the **first `CHECK_ARG` in
-  the §6.4 validation chain**, reading the addressed descriptor's type and
-  `number_of_maps` from the model store at execute time (a per-opcode
-  dispatch-ROM bit cannot express a per-descriptor condition).
+  convention is `number_of_maps` = 0. The root integrator owns this decision at
+  transaction phase 0. Its generated dynamic-port masks come from the same
+  entity shape that emits each descriptor's `number_of_maps`, so the processor
+  cannot accept an edit for a port that the model advertises as static. The
+  processor's descriptor store is not the authority for this integration rule.
 - Channel space of each **dynamically mapped** stream port is **partitioned at model-build time** into fixed
   subsets ≤ `P-MAP-SUBSET-CH-MAX`; `number_of_maps` always reports the partition
   count N regardless of dynamic content; `GET_AUDIO_MAP(map_index = P)` returns all and
   only the dynamic mappings of subset P.
 - `ADD_AUDIO_MAPPINGS`: **all-or-nothing**. Any invalid mapping returns
   `BAD_ARGUMENTS` and adds nothing (`MAP_VALID` primitive). Invalid means it references a channel absent from
-  the current format; or (without `P-EN-TALKER-DYN-MAPPINGS-RUNNING`) references a
-  streaming output; input-port conflict rule: same cluster channel from two different
+  the current format; or references a streaming output under the reference
+  integrator's phase-4 validation law; input-port conflict rule: same cluster channel from two different
   stream channels in one command ⇒ `BAD_ARGUMENTS`; conflict with an *existing* mapping
   may be rejected the same way or accepted with an automatic REMOVE notification sent
   **before** the ADD response.
@@ -361,6 +362,11 @@ at commit, and use the root transaction face to update the live map atomically.
   before accepting it. Phase 5 record writes and phase 2 finish then complete
   without back-pressure; `amap_edit_wait_i` is ignored on those phases. This
   prevents a watchdog expiry between live writes from exposing a partial map.
+- Every solicited response is rebuilt in Figure 7-71 form. Its reserved word is
+  zero, its `number_of_mappings` names the complete records actually emitted,
+  and even an `ENTITY_MISBEHAVING` timeout retains at least the eight-byte fixed
+  body. A malformed command count is never reflected as though it described
+  records that are absent from the response.
 
 ### 6.6 GET_COUNTERS and the counters subsystem
 
@@ -755,6 +761,8 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |
 | 0x0029 GET_COUNTERS | real for STREAM_INPUT, STREAM_OUTPUT, AVB_INTERFACE and CLOCK_DOMAIN: SUCCESS + `descriptor_type`/`descriptor_index`/`counters_valid` + all 32 quadlets (payload 136, cdl 148), the values coming from the integrator's counter face; `BAD_ARGUMENTS` on a command short of §7.4.42.1's four bytes |
 | 0x002B GET_AUDIO_MAP | real for both Stream Port directions: SUCCESS + the §7.4.44.2 fixed part + 8-byte records (payload 12 + 8·M, cdl 24 + 8·M), geometry and records from the integrator's audio-map face; `BAD_ARGUMENTS` on `map_index` ≥ `number_of_maps` (§7.4.44.1) or a command short of §7.4.44.1's eight bytes; `NO_SUCH_DESCRIPTOR` where the descriptor store misses the locate |
+| 0x002C ADD_AUDIO_MAPPINGS | real atomic whole-command validation and commit for dynamic Stream Port Input and Output targets; static targets return `NOT_SUPPORTED`; every success emits the required unsolicited response |
+| 0x002D REMOVE_AUDIO_MAPPINGS | real atomic whole-command validation and commit with duplicate-safe removal; static targets return `NOT_SUPPORTED`; every success emits the required unsolicited response |
 | 0x0026 IDENTIFY_NOTIFICATION | `BAD_ARGUMENTS`, using the opcode-specific §7.4.39.2 rule over §9.3.5.3.3 |
 | MVU 0x0000 GET_MILAN_INFO | real: SUCCESS + the Figure 5.4 body, `protocol_version` 1, `features_flags` 0, `certification_version` 0 (§6.9 and the honesty note below); AECPDU 44 B, cdl 32 |
 | everything else, all message types | `NOT_IMPLEMENTED` with the command **echoed** (F06.14 / §9.3.5.3.3) |
@@ -931,8 +939,8 @@ Stream Output streams. This build keeps that flag clear and refuses ADD or REMOV
 against a running Stream Output. `certification_version` is 0
 because §5.4.4.1 reserves it for a Milan certification actually passed. An overclaimed
 flag sends a controller down a path the gateware cannot serve; the flag moves when
-`P-EN-TALKER-DYN-MAPPINGS-RUNNING` does, in the one line of
-`hdl/aecp/ucode/gen_ucode.py` that states it. All three fields are microcode constants
+the root integrator's running-output policy changes, together with the
+corresponding microcode feature constant. All three fields are microcode constants
 today rather than §6.9's `certification_version` *register*: a register buys a runtime
 write path for a value that changes when the bitstream does, and the profile parameters
 that would drive `features_flags` are elaboration-time by the same rule the rest of the

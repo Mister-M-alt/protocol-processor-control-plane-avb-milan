@@ -3209,8 +3209,28 @@ int main(int argc, char** argv) {
     p = edit_pl(DT_SPI, 0, {row(0, 0, 0)});
     putbe(&p[4], 2, 2);                    // count says two, body carries one
     got = cmd(ADD, 0xE117, p);
-    CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE117, p),
-          "R12: count and control_data_length mismatch was accepted");
+    auto normalized = edit_pl(DT_SPI, 0, {row(0, 0, 0)});
+    CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE117, normalized),
+          "R12: malformed response did not name its one contained record");
+
+    std::vector<uint8_t> short_edit(4, 0);
+    putbe(&short_edit[0], DT_SPI, 2); putbe(&short_edit[2], 0, 2);
+    got = cmd(ADD, 0xE128, short_edit);
+    CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE128,
+                        edit_pl(DT_SPI, 0, {})),
+          "R12a: short edit response omitted Figure 7-71's fixed body");
+
+    // Reserved command bytes are ignored on receipt and zero on transmission.
+    p = edit_pl(DT_SPI, 0, {row(0, 5, 5)});
+    p[6] = 0xA5; p[7] = 0x5A;
+    normalized = p; normalized[6] = 0; normalized[7] = 0;
+    got = cmd(ADD, 0xE126, p);
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE126, normalized)
+          && H::amap_has(h.amap_edit_in0, row(0, 5, 5)),
+          "R12b: response retransmitted nonzero reserved command bytes");
+    got = cmd(REMOVE, 0xE127, normalized);
+    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE127, normalized),
+          "R12b: reserved-field regression cleanup failed");
 
     p = edit_pl(0x0002, 0, {});            // AUDIO_UNIT is not a Stream Port
     got = cmd(ADD, 0xE118, p);
@@ -3267,9 +3287,8 @@ int main(int argc, char** argv) {
     h.amap_edit_stuck = true;
     got = cmd(ADD, 0xE121, p);
     h.amap_edit_stuck = false;
-    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, 10, EID, CTLR_EID,
-                            0xE121, ADD, {}),
-          "R18: wedged edit store did not return bare ENTITY_MISBEHAVING");
+    CHECK(got == expect(10, ADD, 0xE121, p),
+          "R18: wedged edit store omitted the fixed mapping response body");
 
     std::vector<uint64_t> reserved = {row(0, 3, 3), row(0, 4, 4)};
     p = edit_pl(DT_SPI, 0, reserved);

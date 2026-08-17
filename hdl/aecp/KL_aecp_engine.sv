@@ -791,7 +791,22 @@ module KL_aecp_engine
   //! the port contract independent of the configured RX slot size.
   (* ram_style = "block" *) logic [63:0] amap_stage_r [0:255];
   logic [63:0] amap_stage_q_r;
+  logic [63:0] amap_stage_assem_r;
   logic        amap_stage_ready_r;
+  logic  [7:0] amap_rsp_count_r;
+  logic  [7:0] amap_rx_count_w;
+  logic [10:0] amap_edit_pld_w;
+  logic        amap_stage_ser_w, amap_stage_ser_load_w;
+  logic        amap_stage_edit_load_w, amap_stage_rd_en_w;
+  logic  [7:0] amap_stage_raddr_w;
+
+  //! A malformed command can still carry complete mapping records. Figure
+  //! 7-71 requires the response count to describe the records actually put on
+  //! the wire, never the untrusted command count. A short fixed part yields a
+  //! well-formed eight-byte response body with zero records.
+  assign amap_rx_count_w = (pld_cmd_r >= 11'd8)
+                           ? 8'((pld_cmd_r - 11'd8) >> 3) : 8'd0;
+  assign amap_edit_pld_w = 11'd8 + ({3'd0, amap_rsp_count_r} << 3);
 
   // ---- opcode decode = the dispatch step (see the banner) -----------------
   logic [10:0] upc_w;
@@ -1381,24 +1396,57 @@ module KL_aecp_engine
   assign amap_edit_record_o     = amap_stage_q_r;
   assign amap_edit_value_o      = setval_r;
 
+  //! One syntactic read port is required for Xilinx block-RAM inference. The
+  //! response serializer and the transaction face are mutually exclusive, so
+  //! they share one address mux without changing either consumer's latency.
+  assign amap_stage_ser_w = (amap_uns_r || amap_edit_r) && (a_st_r == A_WR);
+  assign amap_stage_ser_load_w = amap_stage_ser_w
+      && (bidx_r >= 11'(FRAME_HDR_C + 7))
+      && (bidx_r < 11'(FRAME_HDR_C) + pld_r)
+      && (((bidx_r - 11'(FRAME_HDR_C + 7)) & 11'd7) == 0);
+  assign amap_stage_edit_load_w = !amap_stage_ser_w && gx_req_w && amap_edit_r
+                                  && (amap_edit_phase_o >= 3'd4)
+                                  && !amap_stage_ready_r;
+  assign amap_stage_rd_en_w = amap_stage_ser_load_w
+                              || amap_stage_edit_load_w;
+  assign amap_stage_raddr_w = amap_stage_ser_w
+      ? 8'((bidx_r - 11'(FRAME_HDR_C + 7)) >> 3) : amap_rec_r;
+
   always_ff @(posedge clk_i) begin : amap_stage_read
     if (!rst_n) begin
       amap_stage_q_r     <= 64'd0;
       amap_stage_ready_r <= 1'b0;
-    end else if (amap_uns_r && (a_st_r == A_WR)) begin
-      amap_stage_ready_r <= 1'b0;
-      if ((bidx_r >= 11'(FRAME_HDR_C + 7))
-          && (bidx_r < 11'(FRAME_HDR_C) + pld_r)
-          && (((bidx_r - 11'(FRAME_HDR_C + 7)) & 11'd7) == 0)) begin
-        amap_stage_q_r <= amap_stage_r[
-            8'((bidx_r - 11'(FRAME_HDR_C + 7)) >> 3)];
+    end else begin
+      if (amap_stage_ser_w) begin
+        amap_stage_ready_r <= 1'b0;
+      end else if (!gx_req_w || !amap_edit_r
+                   || (amap_edit_phase_o < 3'd4)) begin
+        amap_stage_ready_r <= 1'b0;
+      end else if (!amap_stage_ready_r) begin
+        amap_stage_ready_r <= 1'b1;
       end
-    end else if (!gx_req_w || !amap_edit_r
-                 || (amap_edit_phase_o < 3'd4)) begin
-      amap_stage_ready_r <= 1'b0;
-    end else if (!amap_stage_ready_r) begin
-      amap_stage_q_r     <= amap_stage_r[amap_rec_r];
-      amap_stage_ready_r <= 1'b1;
+      if (amap_stage_rd_en_w) begin
+        amap_stage_q_r <= amap_stage_r[amap_stage_raddr_w];
+      end
+    end
+  end
+
+  //! RX arrives one byte per cycle. Assemble a complete Figure 7-71 record in
+  //! flops, then perform one 64-bit RAM write. A per-byte RAM write enable
+  //! maps this 256x64 store into eight block memories under Yosys/Xilinx;
+  //! the full-word template maps it into one while preserving wire order.
+  always_ff @(posedge clk_i) begin : amap_stage_write
+    if (!rst_n) begin
+      amap_stage_assem_r <= 64'd0;
+    end else if (a_st_r == A_IDLE) begin
+      amap_stage_assem_r <= 64'd0;
+    end else if ((a_st_r == A_PLD) && amap_edit_r
+                 && (walk_r >= 11'd11)) begin
+      amap_stage_assem_r <= {amap_stage_assem_r[55:0], rxs_rd_data_i};
+      if (((walk_r - 11'd11) & 11'd7) == 11'd7) begin
+        amap_stage_r[8'((walk_r - 11'd11) >> 3)]
+          <= {amap_stage_assem_r[55:0], rxs_rd_data_i};
+      end
     end
   end
 
@@ -1583,6 +1631,9 @@ module KL_aecp_engine
   logic [7:0] frame_byte_w;
   logic [10:0] amap_uns_pidx_w;
   logic [7:0] amap_uns_byte_w;
+  logic [15:0] amap_emit_count_w;
+  assign amap_emit_count_w = amap_uns_r ? desc_ty_r
+                                        : {8'd0, amap_rsp_count_r};
   always_comb begin : amap_uns_payload
     amap_uns_pidx_w = bidx_r - 11'(FRAME_HDR_C);
     unique case (amap_uns_pidx_w)
@@ -1590,8 +1641,8 @@ module KL_aecp_engine
       11'd1: amap_uns_byte_w = cfg_ix_r[7:0];
       11'd2: amap_uns_byte_w = desc_ix_r[15:8];
       11'd3: amap_uns_byte_w = desc_ix_r[7:0];
-      11'd4: amap_uns_byte_w = desc_ty_r[15:8];
-      11'd5: amap_uns_byte_w = desc_ty_r[7:0];
+      11'd4: amap_uns_byte_w = amap_emit_count_w[15:8];
+      11'd5: amap_uns_byte_w = amap_emit_count_w[7:0];
       11'd6, 11'd7: amap_uns_byte_w = 8'd0;
       default: amap_uns_byte_w = amap_stage_q_r[
           63 - (8 * ((amap_uns_pidx_w - 11'd8) & 11'd7)) -: 8];
@@ -1599,7 +1650,7 @@ module KL_aecp_engine
   end
   always_comb begin : frame_byte
     if (bidx_r < 11'(FRAME_HDR_C))  frame_byte_w = hdr_byte_w;
-    else if (pay_w)                 frame_byte_w = amap_uns_r
+    else if (pay_w)                 frame_byte_w = (amap_uns_r || amap_edit_r)
                                       ? amap_uns_byte_w
                                       : echo_r ? rxs_rd_data_i
                                                : rsp_rd_data_w;
@@ -1609,9 +1660,10 @@ module KL_aecp_engine
   //! the builder advances only when the byte it is about to write EXISTS: the
   //! response buffer's read burst paces itself against main memory
   logic byte_ok_w;
-  assign byte_ok_w = !pay_w || amap_uns_r || echo_r || rsp_rd_valid_w;
+  assign byte_ok_w = !pay_w || amap_uns_r || amap_edit_r || echo_r
+                     || rsp_rd_valid_w;
   assign rsp_rd_take_w = (a_st_r == A_WR) && pay_w && !echo_r
-                         && rsp_rd_valid_w;
+                         && !amap_edit_r && rsp_rd_valid_w;
 
   // ---- RX payload walk -----------------------------------------------------
   //! A_PLD: the walk starts at AECPDU @22 (= slot byte 22) so bytes @22..@23
@@ -1622,6 +1674,7 @@ module KL_aecp_engine
   logic        pref_en_w;
   assign pref_ix_w = bidx_r + 11'd1 - 11'(FRAME_HDR_C);
   assign pref_en_w = (a_st_r == A_WR) && echo_r && !amap_uns_r
+                     && !amap_edit_r
                      && ((bidx_r + 11'd1) >= 11'(FRAME_HDR_C))
                      && ((bidx_r + 11'd1) < (11'(FRAME_HDR_C) + pld_r));
 
@@ -1687,13 +1740,14 @@ module KL_aecp_engine
                           && (sent_r || resp_send_w);
   //! ... and a response a gather face already voided has no payload to
   //! read back either: sealing it with its INTENDED length would start a
-  //! 136-byte read burst that the builder — now emitting a bare 60-byte
-  //! ENTITY_MISBEHAVING frame — never consumes, and the buffer would sit in
-  //! its read state until its own watchdog fired, holding the next command out
-  assign rsp_seal_len_w = (echo_r || gxf_fail_r) ? 11'd0 : pld_r;
+  //! read burst that the register-only error builder never consumes. Mapping
+  //! edits retain their staged Figure 7-71 body, but that body also bypasses
+  //! the response buffer entirely.
+  assign rsp_seal_len_w = (echo_r || amap_edit_r || gxf_fail_r)
+                          ? 11'd0 : pld_r;
 
-  //! the response memory failed under a frame that is already half written:
-  //! rebuild it in place as a bare ENTITY_MISBEHAVING answer (see the banner)
+  //! A response source failed under a frame that is already partly written.
+  //! Rebuild it from registers; mapping edits also retain their staged body.
   logic rsp_fail_w;
   assign rsp_fail_w = (rsp_err_w || gxf_fail_r) && !err_mode_r
                       && (!echo_r || amap_edit_r);
@@ -1708,6 +1762,7 @@ module KL_aecp_engine
       desc_ix_r    <= 16'd0;
       pld_cmd_r    <= 11'd0;
       pld_r        <= 11'd0;
+      amap_rsp_count_r <= 8'd0;
       walk_r       <= 11'd0;
       pid_lo_r     <= 2'b00;
       echo_r       <= 1'b0;
@@ -1801,6 +1856,7 @@ module KL_aecp_engine
                                                              : pld_cap_w;
               pld_r     <= (txn_w.rx_slot == PP_SLOT_NULL_C) ? 11'd0
                                                              : pld_cap_w;
+              amap_rsp_count_r <= 8'd0;
               cfg_ix_r  <= 16'd0;
               desc_ty_r <= 16'd0;
               desc_ix_r <= 16'd0;
@@ -1866,6 +1922,7 @@ module KL_aecp_engine
                           ? 11'd8 + (11'(uns_amap_count_i) << 3) : 11'd0;
             pld_r      <= (uns_kind_i == PP_UNS_AMAP_C)
                           ? 11'd8 + (11'(uns_amap_count_i) << 3) : 11'd0;
+            amap_rsp_count_r <= 8'd0;
             cfg_ix_r   <= (uns_kind_i == PP_UNS_ASP_C) ? uns_desc_index_i
                                                         : uns_desc_type_i;
             desc_ix_r  <= uns_desc_index_i;
@@ -1930,6 +1987,7 @@ module KL_aecp_engine
             //! The two Milan Stream Port types are the implemented scope;
             //! every other existing descriptor type is NOT_SUPPORTED.
             if (amap_edit_r) begin
+              amap_rsp_count_r <= amap_rx_count_w;
               if (({8'd0, cmd_r.cdl}
                    != (19'd20 + ({3'd0, desc_ty_r} << 3)))
                   || (cmd_r.cdl < 11'd20)
@@ -2202,14 +2260,6 @@ module KL_aecp_engine
               default: ;
             endcase
 
-            //! Mapping records begin at AECPDU @32, payload-walk byte 10.
-            //! Byte enables let synthesis infer a single block RAM while the
-            //! record stays in wire order for the transaction face.
-            if (amap_edit_r && (walk_r >= 11'd11)) begin
-              amap_stage_r[8'((walk_r - 11'd11) >> 3)]
-                          [63 - (8 * ((walk_r - 11'd11) & 11'd7)) -: 8]
-                <= rxs_rd_data_i;
-            end
           end
         end
 
@@ -2235,7 +2285,9 @@ module KL_aecp_engine
             status_r <= resp_status_w;
             //! the µCPU owns the payload for a command it really answers; an
             //! echoed one keeps the command's own length (§9.3.5.3.3)
-            if (!echo_r) begin
+            if (amap_edit_r) begin
+              pld_r <= amap_edit_pld_w;
+            end else if (!echo_r) begin
               pld_r <= (resp_len_w > 11'd12)
                        ? ((resp_len_w - 11'd12) > 11'(PLD_MAX_C)
                           ? 11'(PLD_MAX_C) : (resp_len_w - 11'd12))
@@ -2261,8 +2313,13 @@ module KL_aecp_engine
           if (rsp_fail_w) begin
             err_mode_r  <= 1'b1;
             status_r    <= ST_ENTITY_MISBEHAVING_C;
-            pld_r       <= 11'd0;
-            frame_len_r <= 11'(ETH_MIN_C);
+            pld_r       <= amap_edit_r ? amap_edit_pld_w : 11'd0;
+            frame_len_r <= amap_edit_r
+                           ? ((11'(FRAME_HDR_C) + amap_edit_pld_w
+                               < 11'(ETH_MIN_C))
+                              ? 11'(ETH_MIN_C)
+                              : 11'(FRAME_HDR_C) + amap_edit_pld_w)
+                           : 11'(ETH_MIN_C);
             bidx_r      <= 11'd0;
             if (rerr_cnt_r != 16'hFFFF) rerr_cnt_r <= rerr_cnt_r + 16'd1;
           end else if (txs_alloc_gnt_i) begin
@@ -2272,14 +2329,19 @@ module KL_aecp_engine
         end
 
         A_WR: begin
-          //! the response memory died under a frame that is already partly
-          //! written — rewrite it from byte 0 as a bare error answer built
-          //! entirely from registers (see the banner)
+          //! The response memory died under a frame that is already partly
+          //! written. Rewrite it from byte 0 using only registered state.
+          //! Mapping edits retain Figure 7-71's fixed body and staged records.
           if (rsp_fail_w) begin
             err_mode_r  <= 1'b1;
             status_r    <= ST_ENTITY_MISBEHAVING_C;
-            pld_r       <= 11'd0;
-            frame_len_r <= 11'(ETH_MIN_C);
+            pld_r       <= amap_edit_r ? amap_edit_pld_w : 11'd0;
+            frame_len_r <= amap_edit_r
+                           ? ((11'(FRAME_HDR_C) + amap_edit_pld_w
+                               < 11'(ETH_MIN_C))
+                              ? 11'(ETH_MIN_C)
+                              : 11'(FRAME_HDR_C) + amap_edit_pld_w)
+                           : 11'(ETH_MIN_C);
             bidx_r      <= 11'd0;
             if (rerr_cnt_r != 16'hFFFF) rerr_cnt_r <= rerr_cnt_r + 16'd1;
           end else if (byte_ok_w) begin

@@ -16,7 +16,7 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make` — exit 0 = PASS; tally `219 checks: 219 PASS, 0 FAIL`.
+`make`: exit 0 = PASS; the executable prints its exact check tally.
 
 ## What it proves
 
@@ -71,8 +71,8 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
     `features_flags` 0 and `certification_version` 0. The last two are checked
     by name because Table 5.20's REDUNDANCY would claim Milan §8 on a
     single-interface PAAD and TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING would claim
-    map changes from a build that answers ADD/REMOVE_AUDIO_MAPPINGS with
-    `NOT_IMPLEMENTED`.
+    map changes while a Stream Output is running, which the root integrator
+    deliberately refuses.
   - **M3/M4** a FOREIGN vendor-unique protocol (same Avnu OUI-36, protocol id
     0x101) and an MVU `command_type` this build does not serve
     (GET_SYSTEM_UNIQUE_ID) both come back echoed with MVU status 1. M3 is what
@@ -86,6 +86,11 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
   - **M6/M7** a truncated MVU command is echoed rather than answered from bytes
     nobody read; and a READ_DESCRIPTOR after the MVU traffic is still
     byte-exact, because Hive enumerating is worth more than the gap this closes.
+- **Audio-map edit transaction**: ADD/REMOVE_AUDIO_MAPPINGS cover atomic
+  validation and commit, duplicate-safe removal, static-port refusal,
+  running-output refusal, success notifications including idempotent ADD,
+  normalized Figure 7-71 responses, reserved-field clearing, and timeout
+  behavior after the phase-1 reservation point.
 - **R** boot restore over a blank NVM device: all 8 BINDING regions read,
   `restore_done` without `restore_fail`.
 - **S0/S1** quiescence + snapshot identity; SRP bring-up: the FIRST MSRP
