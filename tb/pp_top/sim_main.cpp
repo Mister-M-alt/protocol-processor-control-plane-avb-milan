@@ -4505,7 +4505,7 @@ int main(int argc, char** argv) {
                       uint8_t info_status = 0) {
         std::vector<uint8_t> r(8, 0);
         putbe(&r[0], data.size(), 2);
-        r[4] = uint8_t(info_status & 0x1F);
+        r[4] = info_status;
         putbe(&r[6], op, 2);
         r.insert(r.end(), data.begin(), data.end());
         return r;
@@ -4667,6 +4667,21 @@ int main(int argc, char** argv) {
                         CTLR_EID, 0x7669, AEM_GET_DYNAMIC_INFO, req);
       CHECK(!f.empty() && f == want,
             "W8j: a non-SUCCESS command record rejects the list");
+
+      // info_status occupies the complete byte. A high bit is not reserved
+      // padding, and a malformed later record must stop an earlier valid
+      // getter from executing during the pre-scan.
+      req.clear();
+      append(req, direc(AEM_GET_CONFIGURATION, {}));
+      append(req, direc(AEM_GET_CONFIGURATION, {}, 0x20));
+      mem_before = h.dram_reqs;
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x766E);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_BAD_ARGUMENTS, EID,
+                        CTLR_EID, 0x766E, AEM_GET_DYNAMIC_INFO, req);
+      CHECK(!f.empty() && f == want,
+            "W8j2: a high info_status bit rejects the complete list");
+      CHECK(h.dram_reqs == mem_before,
+            "W8j3: high-bit rejection processed no earlier record");
 
       // The discriminator is the complete 16-bit info_command_type. The
       // high bit must not be treated as the outer AEM u bit and masked away.

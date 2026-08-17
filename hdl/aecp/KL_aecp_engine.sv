@@ -2276,7 +2276,7 @@ module KL_aecp_engine
                 //! A response status supplied in a command makes the record
                 //! malformed, so reject the complete list before any getter
                 //! can run.
-                if (rxs_rd_data_i[4:0] != ST_SUCCESS_C) begin
+                if (rxs_rd_data_i != 8'h00) begin
                   upc_r   <= UPC_BADARG_C;
                   echo_r  <= 1'b1;
                   gdi_r   <= 1'b0;
