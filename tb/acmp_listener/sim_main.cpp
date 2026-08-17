@@ -424,6 +424,9 @@ struct Model {
 struct ATop { bool cancel; uint8_t slot, owner; uint32_t deadline; };
 struct Col {
   int wrotes = 0, frees = 0, notifies = 0;
+  //! Milan Table 5.22's started/stopped trigger, counted separately from the
+  //! generic record-change notify so a no-op can be told from a transition.
+  int strt_chgs = 0;
   std::vector<Pdu> frames;
   std::vector<ATop> tops;
   bool settle = false, teardown = false, disc_arm = false;
@@ -511,6 +514,7 @@ struct Harness {
     if (d->act_disc_disarm_o) col.disc_disarm = true;
     if (d->act_nvm_o) { col.nvm = true; col.nvm_set = d->act_nvm_set_o; }
     if (d->act_notify_o) col.notifies++;
+    if (d->act_strt_chg_o) col.strt_chgs++;
     if (d->dbg_recwr_o) {
       col.wrotes++;
       shadow[d->dbg_recwr_sink_o] = unpack(&d->dbg_recwr_rec_o[0]);
@@ -1131,6 +1135,24 @@ int main(int argc, char** argv) {
     CHECK(started_bit(sk) == 1,
           "S1e: START through the request face set the bit (got %u)",
           started_bit(sk));
+
+    // Table 5.22 + IEEE 7.4.35: a REAL transition pushes exactly one
+    // GET_STREAM_INFO unsolicited notification...
+    h.col.clear();
+    post_started(sk, 0);
+    CHECK(h.col.strt_chgs == 1,
+          "S1i: a real STOP raises the Table 5.22 trigger once (got %d)",
+          h.col.strt_chgs);
+    // ...and repeating it changes nothing, so it must push NOTHING. A
+    // notification saying "the state you already knew about" is worse than
+    // none: it is indistinguishable on the wire from a real change.
+    h.col.clear();
+    post_started(sk, 0);
+    CHECK(h.col.strt_chgs == 0,
+          "S1j: a repeated STOP raises NO trigger (got %d)",
+          h.col.strt_chgs);
+    CHECK(started_bit(sk) == 0, "S1j2: ...and the bit is still clear");
+    post_started(sk, 1);
 
     // 5.3.8.7: unbind clears it, and a rebind does not resurrect it
     Stim u2 = S_unbind(); u2.uid = uint16_t(sk);

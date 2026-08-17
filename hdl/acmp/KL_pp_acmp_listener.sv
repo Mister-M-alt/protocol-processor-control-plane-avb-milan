@@ -189,6 +189,16 @@ module KL_pp_acmp_listener
     //! sink. Should read a permanent 0; non-zero means the descriptor image
     //! and this processor's shape disagree.
     output logic [15:0]                  dbg_strq_drop_o,
+    //! one pulse per COMMITTED started/stopped transition, with `act_sink_o`
+    //! naming the sink. Milan Table 5.22 lists "Started/stopped state (Stream
+    //! Input only)" among the changes that must push a GET_STREAM_INFO
+    //! unsolicited notification, and IEEE §7.4.35/§7.4.36 say the same from
+    //! the command's side ("on success this command also sends an unsolicited
+    //! notification"). It is SEPARATE from `act_notify_o`, which fires for
+    //! every committed record change - the bind and settle events already
+    //! have their own terms upstream, and re-triggering on those would push
+    //! duplicates.
+    output logic                         act_strt_chg_o,
     output logic                         dbg_recwr_o,     //! record write this cycle
     output logic [SINK_W_C-1:0]          dbg_recwr_sink_o,//! written sink
     output logic [ACMP_REC_W_C-1:0]      dbg_recwr_rec_o  //! written record image
@@ -263,6 +273,7 @@ module KL_pp_acmp_listener
   logic [15:0]         strq_sink_r;
   logic                strq_val_r;
   logic [15:0]         dbg_strq_drop_r;
+  logic                strq_job_r;     // this walk came from the holder
 
   // fetched ACMPDU fields (zeroed at accept; big-endian shift-in)
   logic [63:0]         tk_eid_f_r;     // talker_entity_id @20
@@ -725,6 +736,8 @@ module KL_pp_acmp_listener
       strq_sink_r       <= 16'd0;
       strq_val_r        <= 1'b0;
       dbg_strq_drop_r   <= 16'd0;
+      strq_job_r        <= 1'b0;
+      act_strt_chg_o    <= 1'b0;
       tk_eid_f_r    <= 64'd0;
       tk_uid_f_r    <= 16'd0;
       flags_f_r     <= 16'd0;
@@ -785,6 +798,7 @@ module KL_pp_acmp_listener
       act_disc_disarm_o <= 1'b0;
       act_nvm_o         <= 1'b0;
       act_notify_o      <= 1'b0;
+      act_strt_chg_o    <= 1'b0;
       f_cap_v_r         <= 1'b0;
 
       unique case (xs_r)
@@ -799,6 +813,7 @@ module KL_pp_acmp_listener
 
         // ---------------------------------------------------------- X_IDLE
         X_IDLE: begin
+          strq_job_r <= 1'b0;
           errflow_r <= 1'b0;
           cellmut_r <= 1'b0;
           apend_r   <= 17'd0;
@@ -825,6 +840,7 @@ module KL_pp_acmp_listener
             strtL_val_r <= strq_val_r;
             strq_pend_r <= 1'b0;
             if (32'(strq_sink_r) < N_SINKS_P) begin
+              strq_job_r <= 1'b1;
               xs_r <= X_STRT_RD;
             end else begin
               //! accepted and dropped - COUNTED, never silent. A stale
@@ -1249,6 +1265,12 @@ module KL_pp_acmp_listener
         // ------------------------------------------------------------ X_WB
         X_WB: begin
           act_notify_o <= cellmut_r;     // committed change -> trigger
+          //! ...and the Table 5.22 started/stopped trigger, narrowed to a
+          //! REAL transition on a holder job: a repeat START on an already
+          //! started input commits nothing (`cellmut_r` stays clear), and
+          //! Table 5.22 asks for a push when the state CHANGES, not when a
+          //! controller re-asserts it.
+          act_strt_chg_o <= cellmut_r && strq_job_r;
           xs_r         <= X_CONSUME;
         end
 

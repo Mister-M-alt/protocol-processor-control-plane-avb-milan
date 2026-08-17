@@ -1522,6 +1522,10 @@ module protocol_processor_top
   //! out-of-range started/stopped requests dropped by the record walker.
   //! Reads a permanent 0 unless the descriptor image and this shape disagree.
   logic [15:0] lstn_strq_drop_w;
+  //! Milan Table 5.22: a started/stopped change pushes a GET_STREAM_INFO
+  //! unsolicited notification. Issue #69 owns the trigger SET; this is the
+  //! one trigger that only exists because START/STOP_STREAMING landed.
+  logic        lstn_act_strt_chg_w;
 
   KL_pp_acmp_listener #(
       .N_SINKS_P           (N_STREAM_IN_P),
@@ -1559,6 +1563,7 @@ module protocol_processor_top
       .strm_set_ready_o      (strm_set_ready_w),
       .strm_started_o        (aecp_strm_started_o),
       .dbg_strq_drop_o       (lstn_strq_drop_w),
+      .act_strt_chg_o        (lstn_act_strt_chg_w),
       .pre_ready_o           (pre_ready_w),
       .now_ms_i              (now_ms_w),
       .tmr_arm_valid_o       (lstn_arm_valid_w),
@@ -2674,7 +2679,8 @@ module protocol_processor_top
       ntfy_stri_in_w[k] =
           (32'(lstn_act_sink_w) == k
            && (lstn_disc_arm_w || lstn_disc_disarm_w
-               || lstn_act_settle_w || lstn_act_teardown_w))
+               || lstn_act_settle_w || lstn_act_teardown_w
+               || lstn_act_strt_chg_w))
           || srp_evt_tk_reg_w[k] || srp_evt_tk_unreg_w[k];
     end
     for (int unsigned k = 0; k < N_STREAM_OUT_P; k++) begin
