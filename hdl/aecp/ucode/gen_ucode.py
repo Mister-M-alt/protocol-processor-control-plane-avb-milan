@@ -87,12 +87,9 @@ MILAN_PROTOCOL_VERSION = 1
 # this is a single-AVB-interface PAAD (P-N-AVB-INTERFACES = 1) with one
 # AVB_INTERFACE descriptor, so there is no second stream to be seamless with.
 # TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING (0x00000002) is a claim to accept map
-# changes while a Stream Output streams (§5.3.9.1); this build answers
-# ADD/REMOVE_AUDIO_MAPPINGS with NOT_IMPLEMENTED, so it cannot change a mapping
-# at all. An overclaimed flag makes a controller take a path the gateware
-# cannot serve — the same class of defect as reporting a restore that never
-# happened. When P-EN-TALKER-DYN-MAPPINGS-RUNNING becomes real (06 §6.9), this
-# is the one line that moves.
+# changes while a Stream Output streams (§5.3.9.1). The mapping commands are
+# implemented, but this optional behavior is not: an addressed running Stream
+# Output is refused. The flag therefore remains clear.
 MILAN_FEATURES_FLAGS = 0x00000000
 # §5.4.4.1: four dot-separated 8-bit numbers, "set to 0 if the PAAD-AE has not
 # passed any Milan certification". This device has passed none.
@@ -160,6 +157,8 @@ E_SCFGLK  = 1500     # ...its ENTITY_LOCKED arm
 E_SCFGBAD = 1513     # ...its BAD_ARGUMENTS arm
 E_SCFGEMT = 1526     # ...the body all three share
 E_RDESCENT = 1568    # READ_DESCRIPTOR(ENTITY) with current_configuration overlay
+E_AMADD   = 1632     # ADD_AUDIO_MAPPINGS (Milan 5.4.2.27, IEEE 7.4.45)
+E_AMREMOVE = 1680    # REMOVE_AUDIO_MAPPINGS (Milan 5.4.2.28, IEEE 7.4.46)
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
@@ -238,6 +237,19 @@ GX_CTR_BLOCK_CND = range(8)   # -> sel 0x00..0x03, 0x10..0x13, ... 0x70..0x73
 AM_NMAPS = dict(cnd=0, imm=0)   # -> sel 0x00
 AM_GEOM = dict(cnd=0, imm=1)    # -> sel 0x01
 AM_REC = dict(cnd=1, imm=0)     # -> sel 0x10
+
+# ADD/REMOVE_AUDIO_MAPPINGS use a transactional face. Validation completes
+# for every record before the first commit request, which is the all-or-none
+# rule in IEEE 7.4.45 and 7.4.46. The engine stages the command records, so
+# both passes see the same bytes. Phase selectors are decoded by the engine:
+#   0x20 begin validation, 0x30 begin commit, 0x22 finish, 0x23 abort
+#   0x40 validate record, 0x50 commit record
+AME_BEGIN = dict(cnd=2, imm=0)
+AME_COMMIT_BEGIN_CND = 3
+AME_FINISH = dict(cnd=2, imm=2)
+AME_ABORT = dict(cnd=2, imm=3)
+AME_VALIDATE_CND = 4
+AME_COMMIT_REC = dict(cnd=5, imm=0)
 
 rom = [0] * ROM_DEPTH
 occupied = set()
@@ -1520,6 +1532,64 @@ place(E_SCFGEMT, [
     u('BUILD_FLD', ra=1, fmt=FMT_W),             # configuration_index @26
     u('SEND_RESP'),
     u('END'),
+])
+
+
+# --- ADD/REMOVE_AUDIO_MAPPINGS ----------------------------------------------
+# The command and response share Figure 7-71's exact variable body, so the
+# engine echoes the staged RX payload and this program only establishes the
+# response status. Framing, the exact cdl = 20 + 8*N equation and target-type
+# gating are complete before dispatch.
+#
+# r14 is the descriptor-store locate key, r12 is number_of_mappings. The
+# integrator owns geometry, current mappings, conflict detection, streaming
+# restrictions and the final writes. A rejected begin means the target is a
+# static or otherwise unsupported map and maps to NOT_SUPPORTED. A rejected
+# record means BAD_ARGUMENTS. Both paths abort the transaction before reply.
+place(E_AMADD, [
+    u('CHECK_LOCK', ra=15, imm=E_AMADD + 31),    # another controller owns lock
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # descriptor existence
+    u('BR_STATUS', cnd=0, imm=E_AMADD + 31),     # miss keeps NO_SUCH_DESCRIPTOR
+    u('GATHER_EXT', rd=1, **AME_BEGIN),          # supported and start validation
+    u('MOVE', rd=2, ra=0, imm=1),
+    u('CHECK_ARG', ra=1, rb=2, fmt=FMT_B,
+      cnd=8 | REL_EQ, imm=E_AMADD + 27),          # rejected -> NOT_SUPPORTED
+    u('ITER_OPEN', ra=12),
+    u('BR_STATUS', cnd=1, imm=E_AMADD + 11),     # validation loop, zero safe
+    u('MAP_VALID', cnd=AME_VALIDATE_CND,
+      imm=E_AMADD + 27),                         # rejected -> BAD_ARGUMENTS
+    u('ITER_NEXT'),
+    u('BRANCH', imm=E_AMADD + 7),
+    u('MAP_VALID', cnd=AME_COMMIT_BEGIN_CND,
+      imm=E_AMADD + 27),                         # recheck before first write
+    u('ITER_OPEN', ra=12),
+    u('BR_STATUS', cnd=1, imm=E_AMADD + 17),     # commit loop, zero safe
+    u('GATHER_EXT', rd=7, **AME_COMMIT_REC),
+    u('ITER_NEXT'),
+    u('BRANCH', imm=E_AMADD + 13),
+    u('GATHER_EXT', rd=3, **AME_FINISH),         # bit 0 = state changed
+    u('COMMIT'),
+    u('SET_STATUS', imm=ST_OK),
+    u('COMPARE', ra=3, fmt=FMT_B, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_AMADD + 24),     # idempotent ADD: no notification
+    u('NVM_MARK', imm=6),                        # persist changed map state
+    u('NOTIFY_ENQ', imm=6),                      # audio-map change class
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+    u('GATHER_EXT', rd=1, **AME_ABORT),          # validation refusal cleanup
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+    u('BUILD_HDR', ra=15, rb=13),                # lock or descriptor refusal
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# Removal has identical ordering and wire behavior. The engine's registered
+# command discriminator tells the transaction face which operation is active.
+place(E_AMREMOVE, [
+    u('BRANCH', imm=E_AMADD),
 ])
 
 

@@ -331,6 +331,22 @@ module protocol_processor_top
     input  wire  [63:0] amap_data_i,          //! the word (upper 32 zero unless RECORD)
     input  wire         amap_wait_i,          //! HOLD the beat (not a ready)
 
+    //! ---- ADD/REMOVE_AUDIO_MAPPINGS transaction face --------------------
+    //! The processor has already checked exact wire length, lock ownership
+    //! and descriptor existence. The integrator validates every record before
+    //! phase 5 can write one, which makes a rejected command all-or-nothing.
+    output logic        amap_edit_req_o,
+    output logic  [2:0] amap_edit_phase_o,
+    output logic        amap_edit_remove_o,
+    output logic [15:0] amap_edit_desc_type_o,
+    output logic [15:0] amap_edit_desc_index_o,
+    output logic [15:0] amap_edit_count_o,
+    output logic  [7:0] amap_edit_rec_o,
+    output logic [63:0] amap_edit_record_o,
+    output logic [63:0] amap_edit_value_o,
+    input  wire  [63:0] amap_edit_data_i,
+    input  wire         amap_edit_wait_i,
+
     //! ---- Milan-info gather face (06 §6.2/§6.10; IEEE §7.4.16/§7.4.40/
     //! §7.4.41, Milan §5.4.2.10/§5.4.2.23/§5.4.2.24) ----
     //! The processor parses GET_STREAM_INFO / GET_AVB_INFO / GET_AS_PATH and
@@ -2640,6 +2656,8 @@ module protocol_processor_top
   logic        uns_valid_w, uns_done_w;
   logic [2:0]  uns_kind_w;
   logic [15:0] uns_dt_w, uns_di_w, uns_seq_w;
+  logic        uns_amap_remove_w, ntfy_amap_busy_w;
+  logic [15:0] uns_amap_count_w;
   logic [63:0] uns_eid_w;
   logic [47:0] uns_mac_w;
   logic        ntfy_lock_held_w;
@@ -2765,6 +2783,9 @@ module protocol_processor_top
       .uns_ctlr_eid_i     (uns_eid_w),
       .uns_mac_i          (uns_mac_w),
       .uns_seq_i          (uns_seq_w),
+      .uns_amap_remove_i  (uns_amap_remove_w),
+      .uns_amap_count_i   (uns_amap_count_w),
+      .amap_notify_busy_i (ntfy_amap_busy_w),
       .uns_done_o         (uns_done_w),
       .txreq_uns_valid_o  (aecp_txreq_uns_valid_w),
       .txreq_uns_ready_i  (aecp_txreq_uns_ready_w),
@@ -2807,6 +2828,17 @@ module protocol_processor_top
       .amap_rec_o         (amap_rec_o),
       .amap_data_i        (amap_data_i),
       .amap_wait_i        (amap_wait_i),
+      .amap_edit_req_o    (amap_edit_req_o),
+      .amap_edit_phase_o  (amap_edit_phase_o),
+      .amap_edit_remove_o (amap_edit_remove_o),
+      .amap_edit_desc_type_o(amap_edit_desc_type_o),
+      .amap_edit_desc_index_o(amap_edit_desc_index_o),
+      .amap_edit_count_o  (amap_edit_count_o),
+      .amap_edit_rec_o    (amap_edit_rec_o),
+      .amap_edit_record_o (amap_edit_record_o),
+      .amap_edit_value_o  (amap_edit_value_o),
+      .amap_edit_data_i   (amap_edit_data_i),
+      .amap_edit_wait_i   (amap_edit_wait_i),
       .gsi_req_o          (gsi_req_o),
       .gsi_kind_o         (gsi_kind_o),
       .gsi_desc_type_o    (gsi_desc_type_o),
@@ -2893,6 +2925,13 @@ module protocol_processor_top
       .ev_avb_i              (gm_change_i || srp_evt_domain_change_w
                               || (link_up_i != link_q_r) || gsi_avb_chg_i),
       .ev_asp_i              (gm_change_i),
+      .ev_amap_i             (aecp_eff_notify_stb_nc_w
+                              && (aecp_eff_notify_cls_nc_w == 4'd6)),
+      .ev_amap_remove_i      (amap_edit_remove_o),
+      .ev_amap_type_i        (amap_edit_desc_type_o),
+      .ev_amap_index_i       (amap_edit_desc_index_o),
+      .ev_amap_count_i       (amap_edit_count_o),
+      .ev_amap_excl_eid_i    (aecp_rgy_eid_w),
       .uns_valid_o           (uns_valid_w),
       .uns_kind_o            (uns_kind_w),
       .uns_desc_type_o       (uns_dt_w),
@@ -2900,7 +2939,10 @@ module protocol_processor_top
       .uns_ctlr_eid_o        (uns_eid_w),
       .uns_mac_o             (uns_mac_w),
       .uns_seq_o             (uns_seq_w),
+      .uns_amap_remove_o     (uns_amap_remove_w),
+      .uns_amap_count_o      (uns_amap_count_w),
       .uns_done_i            (uns_done_w),
+      .amap_busy_o           (ntfy_amap_busy_w),
       .lock_held_o           (ntfy_lock_held_w),
       .lock_ctlr_o           (ntfy_lock_ctlr_w),
       .tmr_arm_valid_o       (ntfy_arm_valid_w),

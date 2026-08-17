@@ -179,8 +179,8 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x0028 | GET_AS_PATH | shall | gather §6.2 | RO | — | **no** | **yes** | async trigger | 28 + 8·count |
 | 0x0029 | GET_COUNTERS | shall | §6.6 | RO | — | yes | — | async (`T-CTR-NOTIF`) | 160 B |
 | 0x002B | GET_AUDIO_MAP | shall (dynamic ports) | §6.5 | RO | — | **no** | **yes** | — | 32 + 8·N |
-| 0x002C | ADD_AUDIO_MAPPINGS | shall, **n/i today** (dynamic ports) | target: §6.5 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
-| 0x002D | REMOVE_AUDIO_MAPPINGS | shall, **n/i today** (dynamic ports) | target: §6.5 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x002C | ADD_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | changed state, excluding requester | mirrors request |
+| 0x002D | REMOVE_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | changed state, excluding requester | mirrors request |
 | 0x004B | GET_DYNAMIC_INFO | shall, **n/i today** | target: iterator §6.7 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | MVU 0x0000 | GET_MILAN_INFO | shall | §6.9 | RO | — | — | — | — | 44 B |
 | MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended, **n/i today** (`P-EN-MVU-SUID`) | target: §6.9 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
@@ -319,13 +319,14 @@ SET and a rejected SET, including the GET and READ_DESCRIPTOR views.
 
 ### 6.5 Audio-map operations (Milan §5.4.2.26–.28)
 
-**Realization status (2026-08-15)** — GET_AUDIO_MAP now serves BOTH directions:
+**Realization status (2026-08-17).** GET_AUDIO_MAP serves both directions:
 the STREAM_PORT_OUTPUT half re-dispatches to `E_GAMAPO` (a two-word stub swapping
 the emitted type constant into `E_GAMAP`'s shared tail), and the integrator's
-`amap_*` face routes on `amap_desc_type_o` — the render-side map RAM answers the
+`amap_*` face routes on `amap_desc_type_o`. The render-side map RAM answers the
 input direction, the capture-side readback (the 0x0017 round) the output
 direction. Same paging law, same stubs, same existence authority (the image).
-ADD/REMOVE_AUDIO_MAPPINGS stay NOT_IMPLEMENTED (recorded).
+ADD/REMOVE_AUDIO_MAPPINGS stage every row, validate the whole command, recheck
+at commit, and use the root transaction face to update the live map atomically.
 
 - **A Stream Port Output that HAS AUDIO_MAP descriptor(s)** (`number_of_maps`
   > 0 in its STREAM_PORT_OUTPUT descriptor — a static map) **answers all three
@@ -341,15 +342,20 @@ ADD/REMOVE_AUDIO_MAPPINGS stay NOT_IMPLEMENTED (recorded).
   subsets ≤ `P-MAP-SUBSET-CH-MAX`; `number_of_maps` always reports the partition
   count N regardless of dynamic content; `GET_AUDIO_MAP(map_index = P)` returns all and
   only the dynamic mappings of subset P.
-- `ADD_AUDIO_MAPPINGS`: **all-or-nothing** — any invalid mapping ⇒ `BAD_ARGUMENTS`,
-  nothing added (`MAP_VALIDATE` primitive). Invalid = references a channel absent from
+- `ADD_AUDIO_MAPPINGS`: **all-or-nothing**. Any invalid mapping returns
+  `BAD_ARGUMENTS` and adds nothing (`MAP_VALID` primitive). Invalid means it references a channel absent from
   the current format; or (without `P-EN-TALKER-DYN-MAPPINGS-RUNNING`) references a
   streaming output; input-port conflict rule: same cluster channel from two different
   stream channels in one command ⇒ `BAD_ARGUMENTS`; conflict with an *existing* mapping
   may be rejected the same way or accepted with an automatic REMOVE notification sent
   **before** the ADD response.
-- `REMOVE_AUDIO_MAPPINGS`: ignores duplicates; streaming-output restriction as above.
+- `REMOVE_AUDIO_MAPPINGS`: ignores duplicate rows in one command, refuses an
+  absent mapping, and applies the streaming-output restriction above.
 - Input maps are changeable **any time, even while bound** (Milan §5.3.10.1).
+- A changed commit marks the mapping persistence class dirty and sends the same
+  unsolicited response to every registered controller except the requester.
+  Idempotent ADD succeeds without a notification. The current NVM backend does
+  not retain the dirty class across reset; issue #70 tracks that remaining work.
 
 ### 6.6 GET_COUNTERS and the counters subsystem
 
@@ -844,8 +850,9 @@ map. STREAM_PORT_INPUT enters `E_GAMAP` directly. The registered type gate
 sends STREAM_PORT_OUTPUT through `E_GAMAPO`, which substitutes the output type
 and joins the same response program. The integrator selects its mapping store
 from `amap_desc_type_o`. Any other descriptor type keeps the NOT_IMPLEMENTED
-echo. ADD_AUDIO_MAPPINGS (0x002C) and REMOVE_AUDIO_MAPPINGS (0x002D) also keep
-the echo until their write path can reuse the fabric's mapping acceptance law.
+echo. ADD_AUDIO_MAPPINGS (0x002C) and REMOVE_AUDIO_MAPPINGS (0x002D) reuse the
+same descriptor type gate, then stage a full-page transaction through the
+fabric's mapping acceptance law.
 
 Measured cost of the whole opcode inside `KL_aecp_engine`, yosys 0.66
 `synth_xilinx -family xc7 -flatten`, against the commit it lands on:
@@ -915,8 +922,8 @@ Milan Table 5.20 defines exactly two bits. REDUNDANCY (0x00000001) asserts Milan
 seamless redundancy, which needs a second AVB interface this PAAD does not have
 (`P-N-AVB-INTERFACES` = 1, one AVB_INTERFACE descriptor).
 TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING (0x00000002) asserts §5.3.9.1 map changes while a
-Stream Output streams, and this build answers ADD/REMOVE_AUDIO_MAPPINGS with
-`NOT_IMPLEMENTED` — it cannot change a mapping at all. `certification_version` is 0
+Stream Output streams. This build keeps that flag clear and refuses ADD or REMOVE
+against a running Stream Output. `certification_version` is 0
 because §5.4.4.1 reserves it for a Milan certification actually passed. An overclaimed
 flag sends a controller down a path the gateware cannot serve; the flag moves when
 `P-EN-TALKER-DYN-MAPPINGS-RUNNING` does, in the one line of

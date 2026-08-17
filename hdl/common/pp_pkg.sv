@@ -260,6 +260,7 @@ package pp_pkg;
   localparam logic [2:0] PP_UNS_STRI_C  = 3'd2;  // GET_STREAM_INFO
   localparam logic [2:0] PP_UNS_AVB_C   = 3'd3;  // GET_AVB_INFO
   localparam logic [2:0] PP_UNS_ASP_C   = 3'd4;  // GET_AS_PATH
+  localparam logic [2:0] PP_UNS_AMAP_C  = 3'd5;  // ADD/REMOVE_AUDIO_MAPPINGS
 
   // ---- 02 §5 event-router SOURCE MAP, derived — never literals -----------
   // The router presents ONE source index per event and carries no owner tag,
