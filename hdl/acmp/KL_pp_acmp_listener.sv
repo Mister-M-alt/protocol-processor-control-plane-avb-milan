@@ -106,6 +106,23 @@ module KL_pp_acmp_listener
     input  wire                          pre_started_i,   //! restored started flag
     output logic                         pre_ready_o,     //! accept on valid AND ready
 
+    //! ---- started/stopped face (Milan §5.4.2.19/.20 -> §5.3.8.7) ---------
+    //! START/STOP_STREAMING lands here because this record is the ONE place
+    //! started/stopped has a lifecycle: §5.3.8.7 calls the state "undefined
+    //! when the Stream Input is not bound", A10 clears it on unbind, and the
+    //! NVM shadow captures and restores it. It is a HANDSHAKE, not a pulse -
+    //! the engine holds its state-port write until `strm_set_ready_o`, so a
+    //! request that arrives while this walker is busy is delayed rather than
+    //! dropped. A dropped one would be a false SUCCESS: the µprogram has
+    //! already settled the status by the time the write is issued.
+    input  wire                          strm_set_valid_i,//! request present
+    input  wire  [15:0]                  strm_set_sink_i, //! Stream Input index
+    input  wire                          strm_set_val_i,  //! 1 = started
+    output logic                         strm_set_ready_o,//! accept this cycle
+
+    //! per-sink started/stopped, mirrored off the record RAM's own write bus
+    output logic [N_SINKS_P-1:0]         strm_started_o,
+
     //! ---- timer-service face (KL_pp_timer_service arm/expiry ports) ------
     input  wire  [31:0]                  now_ms_i,        //! absolute ms timebase
     output logic                         tmr_arm_valid_o, //! arm/cancel strobe
@@ -191,7 +208,9 @@ module KL_pp_acmp_listener
     X_BLD_COMMIT = 5'd13,  // commit + length
     X_BLD_REQ    = 5'd14,  // TX request handle (+ probe T-ACMP-CMD arm)
     X_WB         = 5'd15,  // record write-back + notify
-    X_CONSUME    = 5'd16   // RX slot free, work item retired
+    X_CONSUME    = 5'd16,  // RX slot free, work item retired
+    X_STRT_RD    = 5'd17,  // started/stopped request: record RAM read issue
+    X_STRT_AP    = 5'd18   // ...apply to f_started if the sink is bound
   } xstate_e;
 
   // builder PDU kinds
@@ -226,6 +245,7 @@ module KL_pp_acmp_listener
   logic [63:0]         preL_ctlr_eid_r;
   logic                preL_sw_r;
   logic                preL_started_r;
+  logic                strtL_val_r;    // the bit a START/STOP asked for
 
   // fetched ACMPDU fields (zeroed at accept; big-endian shift-in)
   logic [63:0]         tk_eid_f_r;     // talker_entity_id @20
@@ -265,6 +285,11 @@ module KL_pp_acmp_listener
   // its read register (BRAM inference; the X_INIT sweep zeroes content).
   logic [ACMP_REC_W_C-1:0] rec_ram_r [0:N_SINKS_P-1];
   logic [ACMP_REC_W_C-1:0] rec_rdata_r;
+  //! typed views of the record RAM's read and write buses. A field select
+  //! cannot be taken off a cast expression directly, and naming them once
+  //! keeps the write mirror reading the SAME bus the RAM is written from.
+  acmp_rec_t               rec_rd_w;
+  acmp_rec_t               recwr_rec_w;
 
   logic                    recwr_en_w;
   logic [SINK_W_C-1:0]     recwr_addr_w;
@@ -335,6 +360,8 @@ module KL_pp_acmp_listener
   // txn > pending expiry > TK event > preload)
   assign txn_ready_o    = (xs_r == X_IDLE);
   assign evt_tk_ready_o = (xs_r == X_IDLE) && !txn_valid_i && !pend_any_w;
+  assign strm_set_ready_o = (xs_r == X_IDLE) && !txn_valid_i && !pend_any_w
+                            && !evt_tk_valid_i && !pre_valid_i;
   assign pre_ready_o    = (xs_r == X_IDLE) && !txn_valid_i && !pend_any_w
                           && !evt_tk_valid_i;
 
@@ -591,10 +618,26 @@ module KL_pp_acmp_listener
 
   assign recwr_en_w   = ((xs_r == X_INIT) && (init_cnt_r < (SINK_W_C+1)'(N_SINKS_P)))
                       || (xs_r == X_PRELOAD) || (xs_r == X_WB);
+  assign rec_rd_w     = acmp_rec_t'(rec_rdata_r);
+  assign recwr_rec_w  = acmp_rec_t'(recwr_data_w);
   assign recwr_addr_w = (xs_r == X_INIT) ? init_cnt_r[SINK_W_C-1:0] : sink_r;
   assign recwr_data_w = (xs_r == X_INIT) ? '0
                       : (xs_r == X_PRELOAD) ? ACMP_REC_W_C'(pre_rec_w)
                                             : ACMP_REC_W_C'(wb_rec_w);
+
+  //! The per-sink view the fabric admission gate reads. It is written from
+  //! the record RAM's OWN write bus, in the same cycle and from the same data,
+  //! so it cannot drift from the records it reports: there is one write and
+  //! two destinations, not two writers. That covers every path without naming
+  //! any of them — the X_INIT zero sweep, the boot preload, A10's unbind
+  //! clear and X_STRT_AP alike.
+  always_ff @(posedge clk_i) begin : started_mirror
+    if (!rst_n) begin
+      strm_started_o <= '0;
+    end else if (recwr_en_w) begin
+      strm_started_o[recwr_addr_w] <= recwr_rec_w.f_started;
+    end
+  end
 
   assign dbg_busy_o       = (xs_r != X_IDLE);
   assign dbg_recwr_o      = recwr_en_w;
@@ -660,6 +703,7 @@ module KL_pp_acmp_listener
       preL_ctlr_eid_r   <= 64'd0;
       preL_sw_r         <= 1'b0;
       preL_started_r    <= 1'b0;
+      strtL_val_r       <= 1'b0;
       tk_eid_f_r    <= 64'd0;
       tk_uid_f_r    <= 16'd0;
       flags_f_r     <= 16'd0;
@@ -799,6 +843,22 @@ module KL_pp_acmp_listener
             if (32'(pre_sink_i) < N_SINKS_P) begin
               xs_r <= X_PRELOAD;
             end
+          end else if (strm_set_valid_i) begin
+            //! §5.4.2.19/.20 carry no RX slot of their own - the AECP command
+            //! that caused this owns its slot and answers from the µprogram -
+            //! so this walk must be told there is none to free.
+            src_txn_r   <= 1'b0;
+            src_tmr_r   <= 1'b0;
+            rxslot_r    <= PP_SLOT_NULL_C;
+            sink_r      <= SINK_W_C'(strm_set_sink_i);
+            strtL_val_r <= strm_set_val_i;
+            if (32'(strm_set_sink_i) < N_SINKS_P) begin
+              xs_r <= X_STRT_RD;
+            end
+            //! else: accepted and dropped. The engine has already answered,
+            //! and it answered NO_SUCH_DESCRIPTOR unless the image holds the
+            //! descriptor, so an index past the record RAM cannot reach here
+            //! with a SUCCESS behind it.
           end
         end
 
@@ -808,6 +868,32 @@ module KL_pp_acmp_listener
           act_disc_arm_o        <= 1'b1;
           act_disc_talker_eid_o <= preL_talker_eid_r;
           xs_r                  <= X_IDLE;
+        end
+
+        // ------------------------------------------------------- X_STRT_RD
+        X_STRT_RD: begin
+          xs_r <= X_STRT_AP;             // rec_rdata_r valid next cycle
+        end
+
+        // ------------------------------------------------------- X_STRT_AP
+        //! Milan §5.4.2.19: "this command has no effect on a Stream Input
+        //! that is not already bound or already started" — so an unbound sink
+        //! is left alone entirely (no write-back, no notification), and a
+        //! request for the state the record is already in commits nothing.
+        //! `cellmut_r` is what makes X_WB raise `act_notify_o`, which is the
+        //! trigger IEEE §7.4.35's "on success this command also sends an
+        //! unsolicited notification" needs; gating it on a REAL transition is
+        //! what keeps a no-op from emitting a notification that says nothing
+        //! changed. Issue #69 owns the trigger set itself.
+        X_STRT_AP: begin
+          rec_r <= rec_rd_w;
+          if (rec_rd_w.f_bound && (rec_rd_w.f_started != strtL_val_r)) begin
+            rec_r.f_started <= strtL_val_r;
+            cellmut_r       <= 1'b1;
+            xs_r            <= X_WB;
+          end else begin
+            xs_r <= X_IDLE;
+          end
         end
 
         // --------------------------------------------------------- X_RDREC
@@ -930,6 +1016,18 @@ module KL_pp_acmp_listener
                 rec_r.talker_uid    <= tk_uid_f_r;
                 rec_r.bind_ctlr_eid <= ctlr_x_r;
                 rec_r.f_sw          <= |(flags_f_r & AFLG_STREAMING_WAIT_C);
+                //! Milan §5.3.8.7 leaves started/stopped "undefined when the
+                //! Stream Input is not bound", so BINDING is what defines it,
+                //! and the BIND_RX_COMMAND says which: IEEE §7.4.35 describes
+                //! START_STREAMING as starting "an already connected stream
+                //! that was connected via ACMP with the STREAMING_WAIT flag
+                //! set", i.e. a bind carrying the flag lands STOPPED and a
+                //! bind without it lands STARTED. Deriving it here rather
+                //! than leaving f_started at its reset 0 is what keeps the
+                //! ordinary bind streaming: the fabric admission gate reads
+                //! this bit, so a bind that never set it would connect a
+                //! stream that discards every frame.
+                rec_r.f_started     <= ~|(flags_f_r & AFLG_STREAMING_WAIT_C);
                 rec_r.f_bound       <= 1'b1;
                 act_nvm_o           <= 1'b1;
                 act_nvm_set_o       <= 1'b1;
@@ -938,6 +1036,12 @@ module KL_pp_acmp_listener
               5'(ACT_A6_C): begin        // v1.2 re-bind short-circuit
                 rec_r.bind_ctlr_eid <= ctlr_x_r;
                 rec_r.f_sw          <= |(flags_f_r & AFLG_STREAMING_WAIT_C);
+                //! §5.5.3.5.19 re-binds by UPDATING the binding parameters
+                //! with the new command's STREAMING_WAIT, so the started
+                //! state follows it here exactly as it does on a fresh bind.
+                //! Leaving it alone would let a re-bind asking for stopped be
+                //! answered SUCCESS while the stream kept flowing.
+                rec_r.f_started     <= ~|(flags_f_r & AFLG_STREAMING_WAIT_C);
                 cellmut_r           <= 1'b1;
               end
               5'(ACT_A10_C): begin       // clear binding + NVM clear

@@ -358,6 +358,15 @@ struct Model {
         case 2:
           r.talker_eid = s.tk_eid; r.talker_uid = s.tk_uid;
           r.bind_ctlr = s.ctlr; r.sw = (s.flags >> 3) & 1; r.bound = true;
+          // Milan 5.3.8.7 leaves started/stopped undefined while unbound, so
+          // the bind is what defines it, and IEEE 7.4.35 says which way:
+          // START_STREAMING starts a stream "connected via ACMP with the
+          // STREAMING_WAIT flag SET", so a bind carrying the flag lands
+          // stopped and a bind without it lands started. Table 5.9 bit 28
+          // agrees from the other side - it reports 1 only for a sink that
+          // is "bound and stopped", and ACMP reports the SAVED flag, so the
+          // two answers would contradict each other any other way.
+          r.started = !((s.flags >> 3) & 1);
           e.nvm = true; e.nvm_set = true; mut = true; break;
         case 3: e.frames.push_back(f_bind(s)); break;
         case 4:
@@ -368,7 +377,10 @@ struct Model {
           r.acmpsta = 0; e.frames.push_back(f_probe(sink));
           e.tops.push_back({false, NOW + T_CMD}); mut = true; break;
         case 6:
-          r.bind_ctlr = s.ctlr; r.sw = (s.flags >> 3) & 1; mut = true; break;
+          // 5.5.3.5.19 re-bind: the binding parameters are UPDATED with the
+          // new command's STREAMING_WAIT, so started follows it here too
+          r.bind_ctlr = s.ctlr; r.sw = (s.flags >> 3) & 1;
+          r.started = !((s.flags >> 3) & 1); mut = true; break;
         case 7: e.frames.push_back(f_unbind(s)); break;
         case 8:
           e.teardown = true; r.sid = 0; r.da = 0; r.vlan = 0;
@@ -707,6 +719,15 @@ int main(int argc, char** argv) {
     Stim s; s.k = Stim::TK; s.tk_kind = kind; s.tk_fail = fail; return s;
   };
 
+  // ---- the exported started/stopped view (Milan 5.3.8.7) ----------------
+  // The fabric admission gate reads this vector, NOT the record RAM, so a
+  // record that says started while the vector says stopped would discard
+  // every frame of a stream the controller was told is running. It is
+  // written off the record RAM's own write bus, and this is what proves it.
+  auto started_bit = [&](int sink) {
+    return (unsigned)((d->strm_started_o >> sink) & 1u);
+  };
+
   auto goto_state = [&](int sink, int st, const char* tag) {
     Stim b = S_bind(TK_A, TKUID_A, CTL1, false); b.uid = uint16_t(sink);
     Stim u = S_unbind(); u.uid = uint16_t(sink);
@@ -1028,6 +1049,71 @@ int main(int argc, char** argv) {
   // B12: cross-sink isolation — the parked sink was never touched
   CHECK(h.shadow[7] == park7 && m.rec[7] == park7,
         "B12: parked sink 7 record untouched through the whole walk");
+
+  // ---- S1: the started/stopped face (Milan 5.3.8.7, 5.4.2.19/.20) -------
+  {
+    const int sk = 5;                       // a sink this walk left alone
+    Stim u = S_unbind(); u.uid = uint16_t(sk);
+    step(sk, u, false, "S1");
+    CHECK(started_bit(sk) == 0,
+          "S1a: an unbound sink reports stopped (got %u)", started_bit(sk));
+
+    // a bind with STREAMING_WAIT CLEAR lands STARTED (IEEE 7.4.35's premise:
+    // START_STREAMING exists for a stream connected WITH the flag set)
+    Stim b0 = S_bind(TK_A, TKUID_A, CTL1, false); b0.uid = uint16_t(sk);
+    step(sk, b0, false, "S1");
+    CHECK(started_bit(sk) == 1,
+          "S1b: a bind with STREAMING_WAIT clear lands STARTED (got %u)",
+          started_bit(sk));
+
+    // the AECP request face: stop it
+    h.wait_idle();
+    d->strm_set_valid_i = 1; d->strm_set_sink_i = sk; d->strm_set_val_i = 0;
+    for (int i = 0; i < 40 && !d->strm_set_ready_o; ++i) h.tick();
+    CHECK(d->strm_set_ready_o == 1, "S1c: the request face offered ready");
+    h.tick();
+    d->strm_set_valid_i = 0;
+    h.wait_idle();
+    CHECK(started_bit(sk) == 0,
+          "S1d: STOP through the request face cleared the bit (got %u)",
+          started_bit(sk));
+
+    // ...and start it again
+    d->strm_set_valid_i = 1; d->strm_set_sink_i = sk; d->strm_set_val_i = 1;
+    for (int i = 0; i < 40 && !d->strm_set_ready_o; ++i) h.tick();
+    h.tick();
+    d->strm_set_valid_i = 0;
+    h.wait_idle();
+    CHECK(started_bit(sk) == 1,
+          "S1e: START through the request face set the bit (got %u)",
+          started_bit(sk));
+
+    // 5.3.8.7: unbind clears it, and a rebind does not resurrect it
+    Stim u2 = S_unbind(); u2.uid = uint16_t(sk);
+    step(sk, u2, false, "S1");
+    CHECK(started_bit(sk) == 0,
+          "S1f: unbind cleared the started bit (got %u)", started_bit(sk));
+
+    // a bind WITH STREAMING_WAIT set lands STOPPED - the other half of the
+    // rule, and the row that keeps S1b from passing on a constant 1
+    Stim b1 = S_bind(TK_A, TKUID_A, CTL1, true); b1.uid = uint16_t(sk);
+    step(sk, b1, false, "S1");
+    CHECK(started_bit(sk) == 0,
+          "S1g: a bind WITH STREAMING_WAIT lands STOPPED (got %u)",
+          started_bit(sk));
+
+    // an unbound sink ignores the request entirely (5.4.2.19's Note)
+    Stim u3 = S_unbind(); u3.uid = uint16_t(sk);
+    step(sk, u3, false, "S1");
+    d->strm_set_valid_i = 1; d->strm_set_sink_i = sk; d->strm_set_val_i = 1;
+    for (int i = 0; i < 40 && !d->strm_set_ready_o; ++i) h.tick();
+    h.tick();
+    d->strm_set_valid_i = 0;
+    h.wait_idle();
+    CHECK(started_bit(sk) == 0,
+          "S1h: START on an UNBOUND sink changed nothing (got %u)",
+          started_bit(sk));
+  }
 
   h.wait_idle();
   CHECK(d->txn_ready_o == 1, "idle at the end");
