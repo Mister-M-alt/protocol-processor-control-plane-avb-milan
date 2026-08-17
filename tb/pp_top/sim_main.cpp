@@ -3470,32 +3470,48 @@ int main(int argc, char** argv) {
     CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE125, p),
           "R19: post-reservation regression cleanup failed");
 
-    // Keep an output edit parked after its first write, then inject an ACMP
-    // STREAM_CFG transaction. The mapping hold must exclude ACMP until the
-    // solicited mapping response can complete. This covers the race where a
-    // Stream Output could otherwise become streaming after commit-begin and
-    // before the remaining phase-5 writes.
+    // Park an output edit at its phase-1 streaming recheck, then inject a
+    // state-changing PROBE_TX for source 1. The live MAP_CFG hold must keep
+    // STREAM_CFG in the dispatch queue until the complete mapping command
+    // retires. Before the scoreboard was wired this probe reached the talker,
+    // requested a MAAP address, and opened its declaration while the mapping
+    // command was still between validation and write-back.
     uint64_t serialized_out = row(0, 2, 17);
     p = edit_pl(DT_SPO, 0, {serialized_out});
     before = h.amap_edit_mutations;
     h.q_aecp.clear(); h.q_acmp.clear();
-    h.amap_edit_postcommit_wait = true;
+    h.decl_edges.clear();
     h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID,
                       0xE12E, ADD, p));
-    for (int i = 0; i < 400 && h.amap_edit_mutations == before; ++i) h.step();
-    auto gts_during_map = acmp_frame(CTLR_MAC, 4, 0, 0, CTLR_EID, EID, 0,
-                                     0, 0, 0, 0, 0xE12F, 0, 0);
-    h.feed(gts_during_map);
-    CHECK(h.amap_edit_mutations == before + 1 && h.q_acmp.empty(),
-          "R19a: STREAM_CFG was admitted during a reserved MAP_CFG write");
-    h.amap_edit_postcommit_wait = false;
+    bool at_recheck = false;
+    for (int i = 0; i < 400; ++i) {
+      if (d->amap_edit_req_o && d->amap_edit_phase_o == 1) {
+        at_recheck = true;
+        h.amap_edit_hold = 200;
+        break;
+      }
+      h.step();
+    }
+    CHECK(at_recheck, "R19a: output edit did not reach phase-1 recheck");
+    auto probe_during_map = acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID,
+                                       T1_EID, 1, 7, 0, 0, 0xE12F,
+                                       0x000A, 0);
+    h.feed(probe_during_map);
+    CHECK(((h.snap(15) >> 24) & 0xFF) != 0,
+          "R19a: MAP_CFG did not own a live scoreboard hold");
+    CHECK(h.amap_edit_mutations == before && h.q_acmp.empty()
+          && !h.saw_decl_edge(1, true),
+          "R19a: STREAM_CFG crossed the held MAP_CFG recheck");
+    h.amap_edit_hold = 0;
     got = h.wait_any(h.q_aecp, 400);
-    auto gts_after_map = h.wait_any(h.q_acmp, 400);
+    auto probe_after_map = h.wait_any(h.q_acmp, 400);
+    for (int i = 0; i < 400 && !h.saw_decl_edge(1, true); ++i) h.step();
     CHECK(got == expect(AECP_SUCCESS, ADD, 0xE12E, p)
-          && !gts_after_map.empty()
-          && (gts_after_map[15] & 0x0F) == 5
+          && !probe_after_map.empty()
+          && (probe_after_map[15] & 0x0F) == 1
+          && h.saw_decl_edge(1, true)
           && H::amap_has(h.amap_edit_out0, serialized_out),
-          "R19a: serialized MAP_CFG or deferred STREAM_CFG did not complete");
+          "R19a: deferred MAP_CFG then STREAM_CFG did not complete in order");
     got = cmd(REMOVE, 0xE130, p);
     CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE130, p),
           "R19a: serialized output-map cleanup failed");
