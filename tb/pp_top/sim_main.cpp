@@ -4713,7 +4713,44 @@ int main(int argc, char** argv) {
 
       // W21s: an unbound sink is a no-op that still answers SUCCESS -
       // 5.4.2.19's Note, and 5.3.8.7 calls the state undefined while unbound
-      // (the image holds STREAM_INPUT 0 and 1; only 0 is bound, by S6)
+      // W21idx: the command's INDEX has to reach the record. Bind sink 1 as
+      // well, stop THAT one, and require sink 0 to be untouched. Without a
+      // second BOUND sink every request in the suite targets index 0, so
+      // `strm_set_index_o = 16'd0` is a mutation nothing can see - a
+      // controller stopping sink 3 would stop sink 0 instead.
+      {
+        h.q_acmp.clear();
+        h.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID,
+                          T1_UID + 1, 1, 0, 0, 0x7A50, 0, 0));
+        auto b1 = h.wait_any(h.q_acmp, 400);
+        CHECK(!b1.empty() && b1.size() > 16 && ((b1[16] >> 3) & 0x1F) == 0,
+              "W21idx: BIND_RX of sink 1 succeeded (status=%d)",
+              b1.size() > 16 ? ((b1[16] >> 3) & 0x1F) : -1);
+        unsigned both = started();
+        CHECK((both & 0x3u) == 0x3u,
+              "W21idx2: both sinks are bound and started (started=0x%02X)",
+              both);
+
+        f = ask(OP_STOP, ti(DT_STREAM_INPUT, 1), 0x7A51);
+        CHECK(!f.empty() && st(f) == AECP_SUCCESS,
+              "W21idx3: STOP on sink 1 is SUCCESS (st=%d)",
+              f.empty() ? -1 : st(f));
+        unsigned after1 = started();
+        CHECK((after1 & 0x2u) == 0u,
+              "W21idx4: ...sink 1 STOPPED (started=0x%02X)", after1);
+        CHECK((after1 & 0x1u) == 1u,
+              "W21idx5: ...and sink 0 was NOT touched (started=0x%02X) - "
+              "this is the row that proves the index reaches the record",
+              after1);
+
+        // put sink 1 back the way it was found
+        h.q_acmp.clear();
+        h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                          T1_UID + 1, 1, 0, 0, 0x7A52, 0, 0));
+        (void)h.wait_any(h.q_acmp, 400);
+      }
+
+      // (the image holds STREAM_INPUT 0 and 1; sink 1 is unbound again here)
       f = ask(OP_START, ti(DT_STREAM_INPUT, 1), 0x7707);
       CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 16,
             "W21s: START_STREAMING on an UNBOUND sink is SUCCESS (st=%d)",
@@ -4784,6 +4821,14 @@ int main(int argc, char** argv) {
       // controller, it shall not accept a START_STREAMING command from a
       // DIFFERENT controller". Lock as CTLR_EID, then command as CTLR2_EID.
       {
+        // The refused command below is graded on its EFFECT as well as its
+        // status, so the bit must not already be at the value a refusal
+        // would leave it at. START first: now a lock check that failed to
+        // fire is visible as the bit going 1 -> 0.
+        (void)ask(OP_START, ti(DT_STREAM_INPUT, 0), 0x7A0F);
+        CHECK((started() & 1u) == 1u,
+              "W21w0: precondition, sink 0 started before the lock rows");
+
         std::vector<uint8_t> lk(16, 0);          // flags = 0 -> LOCK
         h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7A10,
                           0x0001, lk));
@@ -4801,9 +4846,10 @@ int main(int argc, char** argv) {
               "ENTITY_LOCKED (st=%d)", lf.empty() ? -1 : st(lf));
         CHECK(cdl(lf) == 16, "W21y: ...at cdl 16, got %d", cdl(lf));
         unsigned after = started();
-        CHECK(after == before,
+        CHECK(after == before && (after & 1u) == 1u,
               "W21z: a locked-out STOP_STREAMING moved the record anyway "
-              "(0x%02X -> 0x%02X)", before, after);
+              "(0x%02X -> 0x%02X) - the sink was STARTED going in, so a "
+              "missing lock check shows up here as a 1 -> 0", before, after);
 
         // ...and the SAME controller is still served
         h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7A12,
@@ -4827,6 +4873,9 @@ int main(int argc, char** argv) {
       // the binding. This ALSO restores what this block changed: a bound
       // sink makes SET_CONFIGURATION refuse with STREAM_IS_RUNNING
       // (5.4.2.5), which the read-side rows further down depend on.
+      (void)ask(OP_START, ti(DT_STREAM_INPUT, 0), 0x7A00);
+      CHECK((started() & 1u) == 1u,
+            "W21u0: precondition, sink 0 started before the unbind");
       h.q_acmp.clear();
       h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
                         T1_UID, 0, 0, 0, 0x7A01, 0, 0));

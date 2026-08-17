@@ -1024,6 +1024,14 @@ int main(int argc, char** argv) {
     chk_rec("B10 preload", h.shadow[2], r);
     CHECK(h.col.disc_arm && h.col.disc_eid == TK_A,
           "B10: A4 discovery arm with the restored talker");
+    // The restored bit must reach the ADMISSION VIEW, not just the record.
+    // The mirror claims "one write, two destinations" over every path
+    // including X_PRELOAD, and this is the only place that path is taken:
+    // without this row, a mirror that ignored the preload would leave a
+    // rebooted device reporting a started sink while discarding every frame.
+    CHECK(started_bit(2) == 1,
+          "B10: the RESTORED started bit reached the admission view (got %u)",
+          started_bit(2));
     CHECK(h.col.wrotes == 1 && h.col.notifies == 0,
           "B10: one record write, no notification at boot");
   }
