@@ -4726,6 +4726,19 @@ int main(int argc, char** argv) {
       CHECK(!f.empty() && f == want && cdl(f) == 524,
             "W8m: an exact cdl 524 response is retained");
       if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // IEEE 1722.1-2021 9.2.2.6 still caps commands at cdl 524. Milan 5.4.1
+      // lifts that limit only for responses. This 525-byte command must be
+      // rejected before its single oversized result can be skipped and leave
+      // the aggregate length pointing at unwritten response-buffer bytes.
+      name_arg.assign(505, 0);
+      req = direc(0x0011, name_arg);
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x766D);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_BAD_ARGUMENTS, EID,
+                        CTLR_EID, 0x766D, AEM_GET_DYNAMIC_INFO, req);
+      CHECK(!f.empty() && f == want && cdl(f) == 525,
+            "W8n: an oversized cdl 525 command is rejected exactly");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
     }
 
     // ---- W9: SET_SAMPLING_RATE, and the overlay it creates --------------

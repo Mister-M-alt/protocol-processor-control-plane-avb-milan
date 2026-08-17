@@ -2205,13 +2205,24 @@ module KL_aecp_engine
         // ---- GET_DYNAMIC_INFO pass 1: validate every record -------------
         A_GSCAN: begin
           if (!g_scan_started_r) begin
-            g_scan_started_r <= 1'b1;
-            g_total_r        <= pld_trim_w;
-            pld_r            <= pld_trim_w;
-            pld_cmd_r        <= pld_trim_w;
-            g_rd_pos_r       <= 11'd0;
-            g_hdr_ix_r       <= 3'd0;
-            g_rd_pending_r   <= 1'b0;
+            //! IEEE 1722.1-2021 9.2.2.6 caps an AEM command cdl at 524.
+            //! Milan 5.4.1 removes that ceiling only for responses. Refuse
+            //! an oversized command before its record lengths can influence
+            //! the aggregate response length or expose unwritten buffer RAM.
+            if (cmd_r.cdl > 11'd524) begin
+              upc_r   <= UPC_BADARG_C;
+              echo_r  <= 1'b1;
+              gdi_r   <= 1'b0;
+              a_st_r  <= A_DISP;
+            end else begin
+              g_scan_started_r <= 1'b1;
+              g_total_r        <= pld_trim_w;
+              pld_r            <= pld_trim_w;
+              pld_cmd_r        <= pld_trim_w;
+              g_rd_pos_r       <= 11'd0;
+              g_hdr_ix_r       <= 3'd0;
+              g_rd_pending_r   <= 1'b0;
+            end
           end else if (!g_rd_pending_r) begin
             if (g_rd_pos_r >= g_total_r) begin
               if (g_hdr_ix_r != 3'd0) begin
@@ -2224,6 +2235,10 @@ module KL_aecp_engine
                 status_r <= ST_SUCCESS_C;
                 a_st_r  <= A_GDONE;
               end else begin
+                //! The response starts with no dynamic_info records. Its
+                //! length is owned by successful appends, never by the
+                //! command payload retained for the validation pass.
+                pld_r           <= 11'd0;
                 g_rd_pos_r     <= 11'd0;
                 g_hdr_ix_r     <= 3'd0;
                 g_load_data_r  <= 1'b0;

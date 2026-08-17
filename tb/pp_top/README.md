@@ -321,4 +321,5 @@ record-level `NOT_SUPPORTED` with exact command-data copy for a permitted but
 unimplemented `GET_NAME`. It also covers an empty batch, truncated and
 overrunning records, rejection of a non-SUCCESS command record, preservation
 of the full 16-bit record command discriminator, every member of the exact
-13-command whitelist, and retention at the exact cdl 524 boundary.
+13-command whitelist, retention at the exact cdl 524 response boundary, and
+rejection of an oversized cdl 525 command before record processing.
