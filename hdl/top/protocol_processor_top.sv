@@ -785,25 +785,37 @@ module protocol_processor_top
       .dbg_seeded_o (prng_seeded_w)
   );
 
-  // scoreboard: instantiated per contract; the admission port is exercised
-  // by the P4 AECP engine — until then the faces are DEFINED-idle and only
-  // the status lanes feed the snapshot window.
-  logic       sb_gnt_nc_w;
-  logic [2:0] sb_id_nc_w;
+  // One admission port arbitrates the live ACMP and AECP dispatch heads.
+  // Each single-issue engine keeps its granted hold until it returns the RX
+  // slot, which occurs only after its response is committed or after a
+  // standards-permitted silent retirement.
+  logic       sb_adm_req_w, sb_gnt_w;
+  logic [3:0] sb_adm_class_w;
+  logic [15:0] sb_adm_key_w;
+  logic [2:0] sb_id_w;
+  logic       sb_rel_valid_w;
+  logic [2:0] sb_rel_id_w;
   logic       sb_kill_ack_nc_w;
   logic [7:0] sb_holds_w;
   logic       sb_full_w, sb_barrier_w;
+  logic       acmp_sb_grant_w, aecp_sb_grant_w;
+  logic       acmp_sb_active_r, aecp_sb_active_r;
+  logic       acmp_sb_done_pending_r, aecp_sb_done_pending_r;
+  logic       sb_prefer_aecp_r;
+  logic [2:0] acmp_sb_id_r, aecp_sb_id_r;
+  logic [RXS_W_C-1:0] acmp_sb_slot_r, aecp_sb_slot_r;
+  logic       aecp_eng_ready_w;
 
   KL_pp_scoreboard #(.MAX_HOLDS_P(8)) u_scoreboard (
       .clk_i              (clk_i),
       .rst_n              (rst_n),
-      .adm_req_i          (1'b0),
-      .adm_class_i        (4'd0),
-      .adm_key_i          (16'd0),
-      .adm_gnt_o          (sb_gnt_nc_w),
-      .adm_id_o           (sb_id_nc_w),
-      .rel_valid_i        (1'b0),
-      .rel_id_i           (3'd0),
+      .adm_req_i          (sb_adm_req_w),
+      .adm_class_i        (sb_adm_class_w),
+      .adm_key_i          (sb_adm_key_w),
+      .adm_gnt_o          (sb_gnt_w),
+      .adm_id_o           (sb_id_w),
+      .rel_valid_i        (sb_rel_valid_w),
+      .rel_id_i           (sb_rel_id_w),
       .kill_valid_i       (1'b0),
       .kill_id_i          (3'd0),
       .kill_resp_queued_i (1'b0),
@@ -1240,6 +1252,8 @@ module protocol_processor_top
   logic                  adp_txn_valid_w, acmp_txn_valid_w;
   logic [PP_TXN_W_C-1:0] adp_txn_w, acmp_txn_w;
   logic                  adp_txn_ready_w, acmp_txn_ready_w;
+  logic                  aecp_txn_valid_w, aecp_txn_ready_w;
+  logic [PP_TXN_W_C-1:0] aecp_txn_w;
   logic                  maap_txn_valid_w, maap_txn_ready_w;
   logic [PP_TXN_W_C-1:0] maap_txn_w;
   logic [7:0]  disp_adp_level_w, disp_acmp_level_w, disp_aecp_level_w;
@@ -1259,11 +1273,11 @@ module protocol_processor_top
       .acmp_txn_valid_o   (acmp_txn_valid_w),
       .acmp_txn_o         (acmp_txn_w),
       .acmp_txn_ready_i   (acmp_txn_ready_w),
-      .aecp_txn_valid_o   (aecp_txn_valid_o),
-      .aecp_txn_o         (aecp_txn_o),
-      //! the engine drains the queue; the top-level face is an ADDITIONAL
-      //! consumer (see its port banner)
-      .aecp_txn_ready_i   (aecp_txn_ready_i || aecp_eng_ready_w),
+      .aecp_txn_valid_o   (aecp_txn_valid_w),
+      .aecp_txn_o         (aecp_txn_w),
+      //! The live scoreboard grants before either the engine or the optional
+      //! top-level drain can pop this head.
+      .aecp_txn_ready_i   (aecp_txn_ready_w),
       .maap_txn_valid_o   (maap_txn_valid_w),
       .maap_txn_o         (maap_txn_w),
       .maap_txn_ready_i   (maap_txn_ready_w),
@@ -1276,6 +1290,9 @@ module protocol_processor_top
       .aecp_stall_count_o (disp_aecp_stall_w),
       .maap_stall_count_o (disp_maap_stall_nc_w)
   );
+
+  assign aecp_txn_valid_o = aecp_txn_valid_w && aecp_sb_grant_w;
+  assign aecp_txn_o       = aecp_txn_w;
 
   // ---- ACMP pop steer (RECORDED SEAM): talker commands {0,2,4,12} to the
   // talker, everything else (BIND/UNBIND/GET_RX + probe responses) to the
@@ -1307,7 +1324,7 @@ module protocol_processor_top
 
   // engines see the head only once the prefetch stands; their level-high
   // idle readies pop the dispatch head exactly at their consume cycle
-  assign acmp_txn_ready_w = pf_ready_w
+  assign acmp_txn_ready_w = acmp_sb_grant_w && pf_ready_w
                           && (acmp_is_tkr_w ? tkr_txn_ready_w
                                             : lstn_txn_ready_w);
 
@@ -1561,7 +1578,7 @@ module protocol_processor_top
       .clk_i                 (clk_i),
       .rst_n                 (rst_n),
       .entity_id_i           (entity_id_i),
-      .txn_valid_i           (acmp_txn_valid_w && pf_ready_w
+      .txn_valid_i           (acmp_txn_valid_w && acmp_sb_grant_w && pf_ready_w
                               && !acmp_is_tkr_w),
       .txn_i                 (steer_txn_w),
       .txn_ready_o           (lstn_txn_ready_w),
@@ -1707,7 +1724,7 @@ module protocol_processor_top
       .srp_lsn_reg_state_i   (srp_lstn_reg_state_w),
       .srp_class_vid_i       (srp_class_a_vid_w),
       .srp_pcp_change_i      (srp_evt_domain_change_w),
-      .txn_valid_i           (acmp_txn_valid_w && pf_ready_w
+      .txn_valid_i           (acmp_txn_valid_w && acmp_sb_grant_w && pf_ready_w
                               && acmp_is_tkr_w),
       .txn_i                 (PP_TXN_W_C'(steer_txn_w)),
       .txn_ready_o           (tkr_txn_ready_w),
@@ -2652,7 +2669,6 @@ module protocol_processor_top
   //! reached the end of the pipeline and stopped there. KL_aecp_engine pops
   //! it, runs the 06 §8 µCPU against the 07 §3.3 model store in main memory,
   //! and puts a byte-exact AECPDU on TX lane 0 (LANE_AECP_SOL_C).
-  logic                    aecp_eng_ready_w;
   logic [RXS_W_C-1:0]      aecp_eng_free_slot_w;
   logic                    aecp_txs_alloc_req_w, aecp_txs_oversize_w;
   logic [TXS_W_C-1:0]      aecp_txs_wr_slot_w;
@@ -2742,6 +2758,114 @@ module protocol_processor_top
                             && srp_lstn_reg_state_w[s][1];
   end
 
+  // ---- live dispatch admission and release ------------------------------
+  // A refused head stays in its dispatch queue and is not shown to either
+  // engine. Round-robin choice between two ready heads prevents a sustained
+  // ACMP load from starving a conflicting AECP write. MAP_CFG and STREAM_CFG
+  // therefore use the scoreboard's class-wide cross-lock for their complete
+  // transaction lifetimes.
+  pp_txn_t aecp_head_w;
+  logic acmp_sb_candidate_w, aecp_sb_candidate_w;
+  logic sb_pick_acmp_w, sb_pick_aecp_w;
+  logic acmp_sb_accept_w, aecp_sb_accept_w;
+  logic acmp_sb_done_w, aecp_sb_done_w;
+  logic sb_rel_acmp_w, sb_rel_aecp_w;
+
+  assign aecp_head_w = pp_txn_t'(aecp_txn_w);
+  assign acmp_sb_candidate_w = acmp_txn_valid_w && pf_ready_w
+                             && !acmp_sb_active_r
+                             && (acmp_is_tkr_w ? tkr_txn_ready_w
+                                               : lstn_txn_ready_w);
+  assign aecp_sb_candidate_w = aecp_txn_valid_w && !aecp_sb_active_r
+                             && (aecp_eng_ready_w || aecp_txn_ready_i);
+  assign sb_pick_aecp_w = aecp_sb_candidate_w
+                        && (!acmp_sb_candidate_w || sb_prefer_aecp_r);
+  assign sb_pick_acmp_w = acmp_sb_candidate_w && !sb_pick_aecp_w;
+
+  always_comb begin : scoreboard_admission_mux
+    sb_adm_req_w   = sb_pick_acmp_w || sb_pick_aecp_w;
+    sb_adm_class_w = 4'(PP_HZ_RO_SNAPSHOT);
+    sb_adm_key_w   = 16'd0;
+    if (sb_pick_acmp_w) begin
+      sb_adm_class_w = 4'(acmp_head_w.hazard_class);
+      sb_adm_key_w   = acmp_head_w.hazard_key;
+    end else if (sb_pick_aecp_w) begin
+      sb_adm_class_w = 4'(aecp_head_w.hazard_class);
+      sb_adm_key_w   = aecp_head_w.hazard_key;
+    end
+  end
+
+  assign acmp_sb_grant_w = sb_pick_acmp_w && sb_gnt_w;
+  assign aecp_sb_grant_w = sb_pick_aecp_w && sb_gnt_w;
+  assign acmp_sb_accept_w = acmp_sb_grant_w && acmp_sb_candidate_w;
+  assign aecp_sb_accept_w = aecp_sb_grant_w && aecp_sb_candidate_w;
+  assign aecp_txn_ready_w = aecp_sb_grant_w
+                          && (aecp_eng_ready_w || aecp_txn_ready_i);
+
+  // RX-slot return is the common retirement event for commands with a
+  // response and commands that are permitted to retire silently. Match the
+  // slot so an optional external AECP drain cannot release the engine's hold.
+  assign acmp_sb_done_w = acmp_sb_active_r
+                        && ((lstn_rxs_free_w
+                             && (lstn_rxs_free_slot_w == acmp_sb_slot_r))
+                         || (tkr_rxs_free_w
+                             && (tkr_rxs_free_slot_w == acmp_sb_slot_r)));
+  assign aecp_sb_done_w = aecp_sb_active_r
+                        && ((aecp_rxs_free_w
+                             && (aecp_rxs_free_slot_w == aecp_sb_slot_r))
+                         || (aecp_rxs_free_i
+                             && (aecp_rxs_free_slot_i == aecp_sb_slot_r)));
+
+  // The scoreboard has one release port. If both engines retire together,
+  // ACMP releases now and AECP's pending bit releases it on the next cycle.
+  assign sb_rel_acmp_w = acmp_sb_active_r
+                       && (acmp_sb_done_pending_r || acmp_sb_done_w);
+  assign sb_rel_aecp_w = !sb_rel_acmp_w && aecp_sb_active_r
+                       && (aecp_sb_done_pending_r || aecp_sb_done_w);
+  assign sb_rel_valid_w = sb_rel_acmp_w || sb_rel_aecp_w;
+  assign sb_rel_id_w    = sb_rel_acmp_w ? acmp_sb_id_r : aecp_sb_id_r;
+
+  always_ff @(posedge clk_i) begin : scoreboard_owners
+    if (!rst_n) begin
+      acmp_sb_active_r       <= 1'b0;
+      aecp_sb_active_r       <= 1'b0;
+      acmp_sb_done_pending_r <= 1'b0;
+      aecp_sb_done_pending_r <= 1'b0;
+      sb_prefer_aecp_r       <= 1'b0;
+      acmp_sb_id_r           <= 3'd0;
+      aecp_sb_id_r           <= 3'd0;
+      acmp_sb_slot_r         <= '0;
+      aecp_sb_slot_r         <= '0;
+    end else begin
+      if (acmp_sb_accept_w) begin
+        acmp_sb_active_r       <= 1'b1;
+        acmp_sb_done_pending_r <= 1'b0;
+        sb_prefer_aecp_r       <= 1'b1;
+        acmp_sb_id_r           <= sb_id_w;
+        acmp_sb_slot_r         <= acmp_head_w.rx_slot[RXS_W_C-1:0];
+      end else if (acmp_sb_done_w) begin
+        acmp_sb_done_pending_r <= 1'b1;
+      end
+      if (aecp_sb_accept_w) begin
+        aecp_sb_active_r       <= 1'b1;
+        aecp_sb_done_pending_r <= 1'b0;
+        sb_prefer_aecp_r       <= 1'b0;
+        aecp_sb_id_r           <= sb_id_w;
+        aecp_sb_slot_r         <= aecp_head_w.rx_slot[RXS_W_C-1:0];
+      end else if (aecp_sb_done_w) begin
+        aecp_sb_done_pending_r <= 1'b1;
+      end
+      if (sb_rel_acmp_w) begin
+        acmp_sb_active_r       <= 1'b0;
+        acmp_sb_done_pending_r <= 1'b0;
+      end
+      if (sb_rel_aecp_w) begin
+        aecp_sb_active_r       <= 1'b0;
+        aecp_sb_done_pending_r <= 1'b0;
+      end
+    end
+  end
+
   KL_aecp_engine #(
       .UCODE_HEX_P         (UCODE_HEX_P),
       .DESC_BASE_P         (DESC_BASE_P),
@@ -2765,8 +2889,8 @@ module protocol_processor_top
       .rst_n              (rst_n),
       .entity_id_i        (entity_id_i),
       .own_mac_i          (own_mac_i),
-      .txn_valid_i        (aecp_txn_valid_o),
-      .txn_i              (aecp_txn_o),
+      .txn_valid_i        (aecp_txn_valid_w && aecp_sb_grant_w),
+      .txn_i              (aecp_txn_w),
       .txn_ready_o        (aecp_eng_ready_w),
       .rxs_rd_slot_o      (rxp_rd_slot_w[RXP_UCPU_C]),
       .rxs_rd_addr_o      (rxp_rd_addr_w[RXP_UCPU_C]),

@@ -209,7 +209,7 @@ struct Hn {
       prng_busy = true; draw_cnt = 2;
     }
     if (d->rxs_free_o) ++frees;
-    if (d->txn_ready_o) ++consumed;
+    if (d->txn_ready_o && d->txn_valid_i) ++consumed;
     pend_rd = d->rxs_rd_en_o; pend_slot = d->rxs_rd_slot_o & 3;
     pend_addr = d->rxs_rd_addr_o;
 
@@ -256,6 +256,7 @@ struct Hn {
     for (int i = 0; i < REC_WORDS; ++i) d->txn_i[i] = r.w[i];
 
     int before = consumed;
+    int free_before = frees;
     d->txn_valid_i = 1;
     // budget > P-MAAP-ACCEPT-CYC on purpose: a command offered while a maap
     // request is outstanding must still be served once that window closes
@@ -263,7 +264,10 @@ struct Hn {
     for (; i < 4 * MAAP_TMO && consumed == before; ++i) tick();
     last_send_cyc = i;
     d->txn_valid_i = 0;
-    tick();
+    // txn_ready_o marks input acceptance. Keep the historical synchronous
+    // helper contract by waiting for this command's RX slot retirement before
+    // the caller grades its response and action strobes.
+    for (int j = 0; j < 4 * MAAP_TMO && frees == free_before; ++j) tick();
     return consumed != before;
   }
 

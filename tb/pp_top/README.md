@@ -90,8 +90,11 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
   validation and commit, duplicate-safe removal, static-port refusal,
   running-output refusal, success notifications including idempotent ADD,
   normalized Figure 7-71 responses, reserved-field clearing, timeout behavior
-  after the phase-1 reservation point, and MAP_CFG exclusion of an ACMP
-  STREAM_CFG transaction parked behind a reserved mapping write.
+  after the phase-1 reservation point, and live scoreboard ownership. R19a
+  parks MAP_CFG at the output streaming recheck, injects a state-changing
+  source-1 PROBE_TX, proves the scoreboard hold is nonzero and the ACMP response
+  and declaration edge are absent, then releases the map and grades both
+  transactions in order.
 - **R** boot restore over a blank NVM device: all 8 BINDING regions read,
   `restore_done` without `restore_fail`.
 - **S0/S1** quiescence + snapshot identity; SRP bring-up: the FIRST MSRP
