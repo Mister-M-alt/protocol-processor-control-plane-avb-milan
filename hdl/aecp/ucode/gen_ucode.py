@@ -715,9 +715,10 @@ place(E_GCTRSNS, [
 #     STREAM_PORT_INPUT or STREAM_PORT_OUTPUT in the READ_DESCRIPTOR image, so
 #     GET_AUDIO_MAP answers NO_SUCH_DESCRIPTOR for exactly the indices
 #     READ_DESCRIPTOR answers it for - one authority, no drift.
-#   - PAGE LAW is the µprogram's: §7.4.44.1 "If the map_index is beyond the
-#     range of available maps then it returns a BAD_ARGUMENT status", so
-#     CHECK_ARG demands map_index < number_of_maps.
+#   - SCOPE and PAGE LAW are the µprogram's. Milan 5.4.2.26 requires
+#     NOT_SUPPORTED for an existing Stream Port Output with static Audio Maps;
+#     the integrator identifies that case with number_of_maps = 0. Otherwise
+#     §7.4.44.1 requires BAD_ARGUMENTS when map_index is out of range.
 #   - GEOMETRY and CONTENT are the INTEGRATOR's, through the amap_* gather
 #     face: Milan §5.4.2.26 fixes the partition per Configuration and the
 #     mappings live in the integrator's routing fabric, cycles away from this
@@ -749,21 +750,23 @@ place(E_GAMAP, [
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
     u('GATHER_EXT', rd=5, **AM_NMAPS),           # r5 = number_of_maps
     u('GATHER_EXT', rd=6, **AM_GEOM),            # r6 = {nmaps, nmappings}
-    u('BR_STATUS', cnd=0, imm=E_GAMAP + 8),      # NSD: skip to the emit
+    u('BR_STATUS', cnd=0, imm=E_GAMAP + 9),      # NSD: skip to the emit
     u('SET_STATUS', imm=ST_OK),
+    u('CHECK_ARG', ra=5, rb=12, fmt=FMT_W,       # number_of_maps != 0;
+      cnd=8 | REL_NE, imm=E_GAMAP + 9),          # zero -> NOT_SUPPORTED
     u('CHECK_ARG', ra=13, rb=5, fmt=FMT_W,       # map_index < number_of_maps
-      cnd=REL_LT, imm=E_GAMAP + 8),              # else BAD_ARGUMENTS (§7.4.44.1)
+      cnd=REL_LT, imm=E_GAMAP + 9),              # else BAD_ARGUMENTS (§7.4.44.1)
     u('BUILD_HDR', ra=15, rb=13),                # emit (all three statuses):
     u('BUILD_FLD', ra=8, fmt=FMT_W),             # descriptor_type       @24
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # descriptor_index @26 + map_index @28
     u('BUILD_FLD', ra=6, fmt=FMT_D),             # number_of_maps @30 + number_of_mappings @32
     u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved              @34
     u('ITER_OPEN', ra=6),                        # count = number_of_mappings
-    u('BR_STATUS', cnd=1, imm=E_GAMAP + 19),     # loop: 0-trip safe (test FIRST)
+    u('BR_STATUS', cnd=1, imm=E_GAMAP + 20),     # loop: 0-trip safe (test FIRST)
     u('GATHER_EXT', rd=7, **AM_REC),             # record amap_rec_o, 8 B
     u('APPEND', ra=7, fmt=FMT_Q),
     u('ITER_NEXT'),
-    u('BRANCH', imm=E_GAMAP + 14),
+    u('BRANCH', imm=E_GAMAP + 15),
     u('SEND_RESP'),                              # out:
     u('END'),
 ])

@@ -3469,6 +3469,23 @@ int main(int argc, char** argv) {
     got = cmd(REMOVE, 0xE125, p);
     CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE125, p),
           "R19: post-reservation regression cleanup failed");
+
+    // Milan 5.4.1 lifts the ordinary 524-octet cdl ceiling for mapping
+    // commands. Sixty-eight records exactly fill this engine's 576-byte RX
+    // slot after the AECP common and fixed mapping-command fields. Repeating
+    // one ADD row also proves that every staged ordinal is read without
+    // inventing a conflict or truncating the reflected response.
+    std::vector<uint64_t> full_slot(68, row(0, 6, 6));
+    p = edit_pl(DT_SPI, 0, full_slot);
+    got = cmd(ADD, 0xE129, p);
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE129, p)
+          && map_rows(DT_SPI, 0, 0, 0xE12A)
+             == std::vector<uint64_t>{row(0, 6, 6)},
+          "R20: 68-record cap-lift command was truncated or misapplied");
+    p = edit_pl(DT_SPI, 0, {row(0, 6, 6)});
+    got = cmd(REMOVE, 0xE12B, p);
+    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE12B, p),
+          "R20: cap-lift regression cleanup failed");
   }
 
   // ==== U. REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION ===================
