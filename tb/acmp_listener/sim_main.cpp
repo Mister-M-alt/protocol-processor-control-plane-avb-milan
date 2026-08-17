@@ -1173,6 +1173,34 @@ int main(int argc, char** argv) {
           "S1g: a bind WITH STREAMING_WAIT lands STOPPED (got %u)",
           started_bit(sk));
 
+    // S1k: a RE-BIND that flips STREAMING_WAIT moves started/stopped with no
+    // START/STOP_STREAMING in sight (Milan 5.5.3.5.6 step 2 updates the
+    // binding parameters, STREAMING_WAIT among them). Table 5.22 asks for a
+    // push when the state CHANGES, not when a particular command caused it -
+    // a trigger keyed on the AECP request alone missed this path entirely.
+    {
+      Stim b_on = S_bind(TK_A, TKUID_A, CTL1, false); b_on.uid = uint16_t(sk);
+      step(sk, b_on, false, "S1");            // -> bound + started
+      CHECK(started_bit(sk) == 1, "S1k0: precondition, re-bound and started");
+
+      h.col.clear();
+      Stim b_off = S_bind(TK_A, TKUID_A, CTL1, true); b_off.uid = uint16_t(sk);
+      step(sk, b_off, false, "S1");           // same talker -> A6 short-circuit
+      CHECK(started_bit(sk) == 0,
+            "S1k: a re-bind WITH STREAMING_WAIT stops the sink (got %u)",
+            started_bit(sk));
+      CHECK(h.col.strt_chgs == 1,
+            "S1l: ...and it raises the Table 5.22 trigger (got %d)",
+            h.col.strt_chgs);
+
+      h.col.clear();
+      Stim b_same = S_bind(TK_A, TKUID_A, CTL1, true); b_same.uid = uint16_t(sk);
+      step(sk, b_same, false, "S1");          // same flag: nothing changes
+      CHECK(h.col.strt_chgs == 0,
+            "S1m: a re-bind that changes nothing raises no trigger (got %d)",
+            h.col.strt_chgs);
+    }
+
     // an unbound sink ignores the request entirely (5.4.2.19's Note)
     Stim u3 = S_unbind(); u3.uid = uint16_t(sk);
     step(sk, u3, false, "S1");

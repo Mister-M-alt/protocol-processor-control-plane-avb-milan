@@ -281,7 +281,15 @@ module KL_pp_acmp_listener
   logic [15:0]         strq_sink_r;
   logic                strq_val_r;
   logic [15:0]         dbg_strq_drop_r;
-  logic                strq_job_r;     // this walk came from the holder
+  //! `f_started` as it stood when this walk loaded the record. Milan Table
+  //! 5.22 asks for a push when the started/stopped state CHANGES, and the
+  //! walk that changes it is not always the AECP one: 5.5.3.5.6 step 2's
+  //! re-bind short-circuit updates the binding parameters - STREAMING_WAIT
+  //! among them - so a controller re-binding the same talker with the flag
+  //! flipped moves the state without a START/STOP_STREAMING in sight.
+  //! Comparing against the loaded value catches every cause instead of
+  //! naming them, which is what a trigger keyed on the request alone missed.
+  logic                strt_was_r;
 
   // fetched ACMPDU fields (zeroed at accept; big-endian shift-in)
   logic [63:0]         tk_eid_f_r;     // talker_entity_id @20
@@ -744,7 +752,7 @@ module KL_pp_acmp_listener
       strq_sink_r       <= 16'd0;
       strq_val_r        <= 1'b0;
       dbg_strq_drop_r   <= 16'd0;
-      strq_job_r        <= 1'b0;
+      strt_was_r        <= 1'b0;
       act_strt_chg_o    <= 1'b0;
       tk_eid_f_r    <= 64'd0;
       tk_uid_f_r    <= 16'd0;
@@ -821,7 +829,6 @@ module KL_pp_acmp_listener
 
         // ---------------------------------------------------------- X_IDLE
         X_IDLE: begin
-          strq_job_r <= 1'b0;
           errflow_r <= 1'b0;
           cellmut_r <= 1'b0;
           apend_r   <= 17'd0;
@@ -848,7 +855,6 @@ module KL_pp_acmp_listener
             strtL_val_r <= strq_val_r;
             strq_pend_r <= 1'b0;
             if (32'(strq_sink_r) < N_SINKS_P) begin
-              strq_job_r <= 1'b1;
               xs_r <= X_STRT_RD;
             end else begin
               //! accepted and dropped - COUNTED, never silent. A stale
@@ -941,7 +947,8 @@ module KL_pp_acmp_listener
         //! owns the rest of the trigger SET; this one is here because it did
         //! not exist to be triggered until this command landed.
         X_STRT_AP: begin
-          rec_r <= rec_rd_w;
+          rec_r      <= rec_rd_w;
+          strt_was_r <= rec_rd_w.f_started;
           if (rec_rd_w.f_bound && (rec_rd_w.f_started != strtL_val_r)) begin
             rec_r.f_started <= strtL_val_r;
             cellmut_r       <= 1'b1;
@@ -958,7 +965,8 @@ module KL_pp_acmp_listener
 
         // --------------------------------------------------------- X_LATCH
         X_LATCH: begin
-          rec_r <= acmp_rec_t'(rec_rdata_r);
+          rec_r      <= acmp_rec_t'(rec_rdata_r);
+          strt_was_r <= rec_rd_w.f_started;
           if (src_txn_r && (msg_x_r != AMSG_GET_RX_STATE_CMD_C)
               && slot_ok_w) begin
             xs_r <= X_FETCH;
@@ -1276,12 +1284,14 @@ module KL_pp_acmp_listener
         // ------------------------------------------------------------ X_WB
         X_WB: begin
           act_notify_o <= cellmut_r;     // committed change -> trigger
-          //! ...and the Table 5.22 started/stopped trigger, narrowed to a
-          //! REAL transition on a holder job: a repeat START on an already
-          //! started input commits nothing (`cellmut_r` stays clear), and
-          //! Table 5.22 asks for a push when the state CHANGES, not when a
-          //! controller re-asserts it.
-          act_strt_chg_o <= cellmut_r && strq_job_r;
+          //! ...and the Table 5.22 started/stopped trigger, on a REAL change
+          //! of the bit rather than on the kind of walk that made it. A
+          //! repeat START on an already started input leaves the value equal
+          //! and pushes nothing, which is what the clause asks ("when one of
+          //! these pieces of information CHANGES"); a re-bind that flips
+          //! STREAMING_WAIT pushes, which keying on the AECP request alone
+          //! did not.
+          act_strt_chg_o <= cellmut_r && (rec_r.f_started != strt_was_r);
           xs_r         <= X_CONSUME;
         end
 
