@@ -105,7 +105,6 @@ module KL_aecp_dyn_state #(
     output logic [15:0] cur_config_o,      //! ENTITY.current_configuration
     output logic  [7:0] identify_o,        //! the IDENTIFY CONTROL's value
     output logic [15:0] clk_src_index_o,   //! CLOCK_DOMAIN[0].clock_source_index
-    output logic [N_STREAM_IN_P-1:0]  strm_started_o, //! per input, 1 = started
     output logic [31:0] pt_offset_o,       //! STREAM_OUTPUT[0] presentation off
     output logic        dirty_o,           //! a persisted field was written
 
@@ -121,7 +120,16 @@ module KL_aecp_dyn_state #(
   localparam int unsigned SEL_FMTIN_C  = 3;  //! current_format, Stream Inputs
   localparam int unsigned SEL_FMTOUT_C = 4;  //! current_format, Stream Outputs
   localparam int unsigned SEL_PTOFF_C  = 5;  //! presentation-time offset
-  localparam int unsigned SEL_START_C  = 6;  //! started/stopped, Stream Inputs
+  //! selector 6 was SEL_START_C, started/stopped per Stream Input. RETIRED at
+  //! issue #78: Milan §5.3.8.7 makes the state a property of the BINDING ("the
+  //! started/stopped state is undefined when the Stream Input is not bound"),
+  //! and only the ACMP binding record has that lifecycle — it is cleared on
+  //! unbind, captured by KL_acmp_nvm_shadow and restored through `pre_started_i`.
+  //! A copy here had the writer and no lifecycle, so the two could disagree
+  //! with nothing to say which was right. START/STOP_STREAMING now reach the
+  //! record through the engine's write-only request region (0x3); nothing is
+  //! stored in this block. The NUMBER is left unused rather than recycled, so a
+  //! µprogram still naming selector 6 misses instead of landing on a live field.
   localparam int unsigned SEL_IDENT_C  = 7;  //! the IDENTIFY CONTROL's value
 
   localparam logic [3:0] RGN_DYN_C  = 4'h1;  //! region: the value
@@ -144,7 +152,6 @@ module KL_aecp_dyn_state #(
   logic [63:0] fmtin_r  [N_STREAM_IN_P];   logic [N_STREAM_IN_P-1:0]  fmtin_v_r;
   logic [63:0] fmtout_r [N_STREAM_OUT_P];  logic [N_STREAM_OUT_P-1:0] fmtout_v_r;
   logic [31:0] ptoff_r  [N_STREAM_OUT_P];  logic [N_STREAM_OUT_P-1:0] ptoff_v_r;
-  logic [N_STREAM_IN_P-1:0] start_r;       logic [N_STREAM_IN_P-1:0]  start_v_r;
   logic  [7:0] ident_r  [N_CONTROL_P];     logic [N_CONTROL_P-1:0]    ident_v_r;
 
   logic [15:0] wr_cnt_r, oob_cnt_r;
@@ -166,7 +173,6 @@ module KL_aecp_dyn_state #(
       13'(SEL_FMTIN_C):  count_w = 16'(N_STREAM_IN_P);
       13'(SEL_FMTOUT_C): count_w = 16'(N_STREAM_OUT_P);
       13'(SEL_PTOFF_C):  count_w = 16'(N_STREAM_OUT_P);
-      13'(SEL_START_C):  count_w = 16'(N_STREAM_IN_P);
       13'(SEL_IDENT_C):  count_w = 16'(N_CONTROL_P);
       default:           count_w = 16'd0;   // an unmapped selector owns none
     endcase
@@ -202,8 +208,6 @@ module KL_aecp_dyn_state #(
                                  vld_w = {63'd0, fmtout_v_r[so_ix_w]}; end
         13'(SEL_PTOFF_C):  begin val_w = {32'd0, ptoff_r[so_ix_w]};
                                  vld_w = {63'd0, ptoff_v_r[so_ix_w]}; end
-        13'(SEL_START_C):  begin val_w = {63'd0, start_r[si_ix_w]};
-                                 vld_w = {63'd0, start_v_r[si_ix_w]}; end
         13'(SEL_IDENT_C):  begin val_w = {56'd0, ident_r[ct_ix_w]};
                                  vld_w = {63'd0, ident_v_r[ct_ix_w]}; end
         default: ;
@@ -234,7 +238,6 @@ module KL_aecp_dyn_state #(
       fmtin_v_r  <= '0;
       fmtout_v_r <= '0;
       ptoff_v_r  <= '0;
-      start_r    <= '0;     start_v_r  <= '0;
       ident_v_r  <= '0;
       rd_pend_r  <= 1'b0;
       rd_data_r  <= 64'd0;
@@ -278,8 +281,6 @@ module KL_aecp_dyn_state #(
                                    fmtout_v_r[so_ix_w]<= 1'b1; end
           13'(SEL_PTOFF_C):  begin ptoff_r[so_ix_w]   <= st_wdata_i[31:0];
                                    ptoff_v_r[so_ix_w] <= 1'b1; end
-          13'(SEL_START_C):  begin start_r[si_ix_w]   <= st_wdata_i[0];
-                                   start_v_r[si_ix_w] <= 1'b1; end
           13'(SEL_IDENT_C):  begin ident_r[ct_ix_w]   <= st_wdata_i[7:0];
                                    ident_v_r[ct_ix_w] <= 1'b1; end
           default: ;
@@ -292,7 +293,6 @@ module KL_aecp_dyn_state #(
   assign cur_config_o    = cfg_r;
   assign identify_o      = ident_r[0];
   assign clk_src_index_o = clksrc_r[0];
-  assign strm_started_o  = start_r;
   assign pt_offset_o     = ptoff_r[0];
   assign dbg_writes_o    = wr_cnt_r;
   assign dbg_oob_o       = oob_cnt_r;

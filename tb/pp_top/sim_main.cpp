@@ -2451,9 +2451,14 @@ int main(int argc, char** argv) {
       //! came from the dispatch. It does now.
       static const uint16_t kOpcodes[] = {
         0x0000, 0x0001, 0x0002, 0x0004, 0x0006, 0x0007, 0x0009, 0x000F,
-        0x0014, 0x0015, 0x0016, 0x0017, 0x0018, 0x0019, 0x0024, 0x0025,
-        0x0026, 0x0027, 0x0028, 0x0029, 0x002B,
+        0x0014, 0x0015, 0x0016, 0x0017, 0x0018, 0x0019, 0x0022, 0x0023,
+        0x0024, 0x0025, 0x0026, 0x0027, 0x0028, 0x0029, 0x002B,
       };
+      //! 0x0022/0x0023 (START/STOP_STREAMING) joined this sweep with issue
+      //! #78. Every opcode the engine decodes has to be here, or the #83
+      //! guard - "the dispatch is on message_type, not on the residual
+      //! protocol bucket" - is simply untested for the newest arm, which is
+      //! exactly the one nobody has looked at yet.
       //! the residual bucket in full (KL_pp_rx_validator: 6/7 MVU, 2/3 AA,
       //! everything else AEM), plus AA itself
       static const uint8_t kMsgTypes[] = {2, 4, 6, 8, 10, 12, 14};
@@ -4033,7 +4038,57 @@ int main(int argc, char** argv) {
       CHECK(!uns.empty() && uns == wantu,
             "G7b: unbind notifies again, sequence_id 1");
       if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
-      // deregister: leave the table clean
+      // ---- G7c: a STOP_STREAMING pushes ONE unsolicited GET_STREAM_INFO,
+      // and a bind/unbind pushes exactly one (not two). Milan Table 5.22
+      // lists "Started/stopped state (Stream Input only)"; 5.3.8.7 calls the
+      // state undefined while unbound, so a bind and an unbind are NOT
+      // started/stopped changes and must not add a second frame beside the
+      // one G7/G7b already grade. This block is what catches a trigger that
+      // fires too widely: an extra frame per bind shifts every later
+      // response in this suite by one, which is a cascade, not a nit.
+      h.q_acmp.clear(); h.q_aecp.clear();
+      h.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID,
+                        T1_UID, 1, 0, 0, 0x740C, 0, 0));
+      auto ub = h.wait_any(h.q_acmp, 400);
+      CHECK(!ub.empty() && ((ub[16] >> 3) & 0x1F) == 0,
+            "G7c: re-bound sink 1 for the started/stopped notification");
+      // the bind's own notification (seq 2), then NOTHING else for it
+      auto n1 = h.wait_any(h.q_aecp, 500);
+      CHECK(!n1.empty(), "G7c2: the bind notified once");
+      auto extra = h.wait_any(h.q_aecp, 300);
+      CHECK(extra.empty(),
+            "G7d: the bind pushed exactly ONE notification, not two "
+            "(a started/stopped trigger that fires on bind duplicates it)");
+
+      // now a real started/stopped change, under a live binding
+      h.q_aecp.clear();
+      std::vector<uint8_t> sti(4, 0);
+      putbe(&sti[0], 0x0005, 2); putbe(&sti[2], 1, 2);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x740D,
+                        0x0023, sti));
+      auto rsp = h.wait_any(h.q_aecp, 600);      // the solicited response
+      CHECK(!rsp.empty() && ((rsp[16] >> 3) & 0x1F) == 0,
+            "G7e: STOP_STREAMING on the bound sink answered SUCCESS");
+      auto push = h.wait_any(h.q_aecp, 600);     // ...then the unsolicited
+      CHECK(!push.empty() && push.size() > 37
+            && ((push[36] & 0x80) != 0)
+            && (((push[36] & 0x7F) << 8) | push[37]) == 0x000F,
+            "G7f: ...and a STOP_STREAMING pushes the u=1 GET_STREAM_INFO "
+            "Table 5.22 asks for");
+      auto push2 = h.wait_any(h.q_aecp, 300);
+      CHECK(push2.empty(), "G7g: ...exactly one, not two");
+
+      // deregister: leave the table clean. The unbind below ALSO pushes its
+      // own notification (G7b grades that behaviour) - drain it here rather
+      // than leave it in the queue, or the next section reads this block's
+      // leftover frame and every byte-exact check after it shifts by one.
+      h.q_acmp.clear();
+      h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                        T1_UID, 1, 0, 0, 0x740E, 0, 0));
+      h.wait_any(h.q_acmp, 400);
+      (void)h.wait_any(h.q_aecp, 500);          // the unbind's notification
+      h.idle(200);
+      h.q_aecp.clear();
       h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x740B,
                         0x0025, {}));
       h.wait_any(h.q_aecp, 400);
@@ -5092,6 +5147,323 @@ int main(int argc, char** argv) {
             "W20f: a truncated SET_CONFIGURATION is BAD_ARGUMENTS");
       CHECK(cdl(f) == 16, "W20g: ...at cdl 16, got %d", cdl(f));
 
+    }
+
+    // ---- W21: START/STOP_STREAMING (Milan 5.4.2.19 / 5.4.2.20) ----------
+    // IEEE Figure 7-59 makes command and response the SAME shape - four
+    // bytes, {descriptor_type @24, descriptor_index @26} - so every arm
+    // here, success and refusal alike, is cdl 16 and echoes what it was
+    // asked about. A refusal that shortened the body would be a wire defect
+    // no status check could see.
+    //
+    // Sink 0 is BOUND by section S6 above, and Milan 5.3.8.7 makes the
+    // started/stopped state a property of that binding.
+    {
+      const uint16_t DT_STREAM_INPUT = 0x0005, DT_STREAM_OUTPUT = 0x0006;
+      const uint16_t OP_START = 0x0022, OP_STOP = 0x0023;
+      //! The ACMP walker BUILDS AND SENDS its response before it writes the
+      //! record back (X_BLD_* run ahead of X_WB), and the AECP response is
+      //! likewise emitted by the µprogram that requested the change. So the
+      //! frame arriving is NOT proof the record moved - settle first, or
+      //! this block grades the previous value and calls it agreement.
+      //! 400 compressed cycles: the walker has an RX-slot fetch, a 16-step
+      //! action walk and a write-back to get through, and this suite runs at
+      //! 1 ms = 100 clk. Read it ONCE into a local at each site - calling a
+      //! settling reader twice (condition, then printf) would settle twice
+      //! and report a value the assertion never saw.
+      auto started = [&]() { h.idle(400); return (unsigned)d->aecp_strm_started_o; };
+
+      // W21bind: establish the precondition IN THIS BLOCK rather than lean
+      // on section S6 far above - the sections between it and here bind and
+      // unbind sinks, so inheriting that state would make this block's
+      // result depend on test ORDER. BIND_RX with flags = 0, i.e.
+      // STREAMING_WAIT clear.
+      h.q_acmp.clear();
+      h.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID,
+                        T1_UID, 0, 0, 0, 0x7A00, 0, 0));
+      auto bindrsp = h.wait_any(h.q_acmp, 400);
+      // never discard the answer to a step a later assertion depends on:
+      // a refused bind would make every row below grade an unbound sink
+      CHECK(!bindrsp.empty() && bindrsp.size() > 16
+            && ((bindrsp[16] >> 3) & 0x1F) == 0,
+            "W21bind: BIND_RX for the block's own precondition SUCCEEDED "
+            "(status=%d)",
+            bindrsp.size() > 16 ? ((bindrsp[16] >> 3) & 0x1F) : -1);
+
+      // W21pre: the PRECONDITION, asserted rather than assumed. Sink 0 was
+      // bound by S6 with STREAMING_WAIT clear, so Milan 5.3.8.7 + IEEE
+      // 7.4.35 make it STARTED. Without this row, W21d below ("STOP cleared
+      // the bit") passes just as well when the bit was never set - the
+      // expected value would coincide with the reset value and the check
+      // could not fail.
+      unsigned sb = started();
+      CHECK((sb & 1u) == 1u,
+            "W21pre: a bind with STREAMING_WAIT clear leaves sink 0 STARTED "
+            "(started=0x%02X)", sb);
+
+      // W21a: STOP on the bound sink succeeds, echoing its own descriptor
+      auto f = ask(OP_STOP, ti(DT_STREAM_INPUT, 0), 0x7700);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS,
+            "W21a: STOP_STREAMING on a bound Stream Input is SUCCESS (st=%d)",
+            f.empty() ? -1 : st(f));
+      CHECK(cdl(f) == 16, "W21b: ...at cdl 16, got %d", cdl(f));
+      CHECK(f.size() >= 42 && ((f[38] << 8) | f[39]) == DT_STREAM_INPUT
+            && ((f[40] << 8) | f[41]) == 0,
+            "W21c: ...echoing {STREAM_INPUT, 0} at @24");
+
+      // W21d: and it REACHED the record - the started view must now be clear.
+      // Reading the fabric-facing bit is the point: a response that says
+      // SUCCESS while the bit never moved is the false success this whole
+      // ticket exists to make impossible.
+      sb = started();
+      CHECK((sb & 1u) == 0u,
+            "W21d: STOP_STREAMING did not clear the started bit "
+            "(started=0x%02X)", sb);
+
+      // W21e: repeating it is still SUCCESS and still changes nothing
+      f = ask(OP_STOP, ti(DT_STREAM_INPUT, 0), 0x7701);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 16,
+            "W21e: a repeated STOP_STREAMING is SUCCESS (5.4.2.20's Note)");
+      sb = started();
+      CHECK((sb & 1u) == 0u,
+            "W21f: ...and the bit is still clear (started=0x%02X)", sb);
+
+      // W21g: START puts it back
+      f = ask(OP_START, ti(DT_STREAM_INPUT, 0), 0x7702);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 16,
+            "W21g: START_STREAMING on a bound, stopped Stream Input");
+      sb = started();
+      CHECK((sb & 1u) == 1u,
+            "W21h: START_STREAMING did not set the started bit "
+            "(started=0x%02X)", sb);
+
+      // W21i: a Stream OUTPUT is NOT_SUPPORTED - Milan 5.4.2.19 says so in
+      // as many words, and 5.3.7.3 excludes a stopped Stream Output entirely
+      f = ask(OP_START, ti(DT_STREAM_OUTPUT, 0), 0x7703);
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED,
+            "W21i: START_STREAMING on a Stream Output is NOT_SUPPORTED "
+            "(st=%d)", f.empty() ? -1 : st(f));
+      CHECK(cdl(f) == 16, "W21j: ...at cdl 16, got %d", cdl(f));
+      CHECK(f.size() >= 42 && ((f[38] << 8) | f[39]) == DT_STREAM_OUTPUT,
+            "W21k: ...echoing the type it refused");
+      sb = started();
+      CHECK((sb & 1u) == 1u,
+            "W21l: a refused Stream Output command moved a Stream Input bit "
+            "(started=0x%02X)", sb);
+
+      // W21m: so is any other type. A locate on {ENTITY, 0} HITS, so this is
+      // the row that proves the type is checked BEFORE the write and not
+      // left to the descriptor lookup.
+      f = ask(OP_STOP, ti(0x0000, 0), 0x7704);
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 16,
+            "W21m: STOP_STREAMING on ENTITY is NOT_SUPPORTED (st=%d)",
+            f.empty() ? -1 : st(f));
+      sb = started();
+      CHECK((sb & 1u) == 1u,
+            "W21n: ...and it did not stop sink 0 on the way past "
+            "(started=0x%02X)", sb);
+
+      // W21o: an index the image does not hold is NO_SUCH_DESCRIPTOR
+      f = ask(OP_START, ti(DT_STREAM_INPUT, 0x00FF), 0x7705);
+      CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR,
+            "W21o: a nonexistent Stream Input is NO_SUCH_DESCRIPTOR (st=%d)",
+            f.empty() ? -1 : st(f));
+      CHECK(cdl(f) == 16, "W21p: ...at cdl 16, got %d", cdl(f));
+
+      // W21q: too short to carry Figure 7-59's four bytes
+      std::vector<uint8_t> shortpl(2, 0);
+      f = ask(OP_START, shortpl, 0x7706);
+      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
+            "W21q: a truncated START_STREAMING is BAD_ARGUMENTS (st=%d)",
+            f.empty() ? -1 : st(f));
+      CHECK(cdl(f) == 16,
+            "W21r: ...still at the response form's cdl 16, got %d", cdl(f));
+
+      // W21s: an unbound sink is a no-op that still answers SUCCESS -
+      // 5.4.2.19's Note, and 5.3.8.7 calls the state undefined while unbound
+      // W21idx: the command's INDEX has to reach the record. Bind sink 1 as
+      // well, stop THAT one, and require sink 0 to be untouched. Without a
+      // second BOUND sink every request in the suite targets index 0, so
+      // `strm_set_index_o = 16'd0` is a mutation nothing can see - a
+      // controller stopping sink 3 would stop sink 0 instead.
+      {
+        h.q_acmp.clear();
+        h.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID,
+                          T1_UID + 1, 1, 0, 0, 0x7A50, 0, 0));
+        auto b1 = h.wait_any(h.q_acmp, 400);
+        CHECK(!b1.empty() && b1.size() > 16 && ((b1[16] >> 3) & 0x1F) == 0,
+              "W21idx: BIND_RX of sink 1 succeeded (status=%d)",
+              b1.size() > 16 ? ((b1[16] >> 3) & 0x1F) : -1);
+        unsigned both = started();
+        CHECK((both & 0x3u) == 0x3u,
+              "W21idx2: both sinks are bound and started (started=0x%02X)",
+              both);
+
+        f = ask(OP_STOP, ti(DT_STREAM_INPUT, 1), 0x7A51);
+        CHECK(!f.empty() && st(f) == AECP_SUCCESS,
+              "W21idx3: STOP on sink 1 is SUCCESS (st=%d)",
+              f.empty() ? -1 : st(f));
+        unsigned after1 = started();
+        CHECK((after1 & 0x2u) == 0u,
+              "W21idx4: ...sink 1 STOPPED (started=0x%02X)", after1);
+        CHECK((after1 & 0x1u) == 1u,
+              "W21idx5: ...and sink 0 was NOT touched (started=0x%02X) - "
+              "this is the row that proves the index reaches the record",
+              after1);
+
+        // put sink 1 back the way it was found
+        h.q_acmp.clear();
+        h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                          T1_UID + 1, 1, 0, 0, 0x7A52, 0, 0));
+        (void)h.wait_any(h.q_acmp, 400);
+      }
+
+      // (the image holds STREAM_INPUT 0 and 1; sink 1 is unbound again here)
+      f = ask(OP_START, ti(DT_STREAM_INPUT, 1), 0x7707);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 16,
+            "W21s: START_STREAMING on an UNBOUND sink is SUCCESS (st=%d)",
+            f.empty() ? -1 : st(f));
+      sb = started();
+      CHECK(((sb >> 1) & 1u) == 0u,
+            "W21t: ...and it did NOT start an unbound Stream Input "
+            "(started=0x%02X)", sb);
+
+      // W21cc: the request must survive a BUSY record walker. The AECP
+      // µprogram settles the status (locate, lock) and only then issues the
+      // write, so if that write were fire-and-forget it would be DROPPED
+      // whenever the ACMP walker happened to be mid-transaction - and the
+      // controller would hold a SUCCESS for a change that never happened.
+      // Overlap them deliberately: start the AECP command, then push ACMP
+      // work in behind it so the walker is occupied when the write lands.
+      {
+        // ensure a known starting point: started
+        (void)ask(OP_START, ti(DT_STREAM_INPUT, 0), 0x7A20);
+        CHECK((started() & 1u) == 1u, "W21cc: precondition, sink 0 started");
+
+        // Make it STOP first, so the pair below starts from a known 0.
+        (void)ask(OP_STOP, ti(DT_STREAM_INPUT, 0), 0x7A1F);
+        CHECK((started() & 1u) == 0u, "W21cc2: ...and stopped for the pair");
+
+        h.q_acmp.clear();
+        h.q_aecp.clear();
+        //! TWO commands under ACMP load, and what this DOES and does NOT
+        //! prove, because the answer changed when the holder landed.
+        //!
+        //! PROVES: two START/STOP commands issued back to back while the
+        //! ACMP walker is mid-transaction BOTH take effect, in order - the
+        //! second is not overwritten by the first still draining, and
+        //! neither is lost to the walker being busy.
+        //!
+        //! DOES NOT PROVE: that the engine honours `strm_set_ready_i`.
+        //! Mutating `st_ready_w` for region 3 to a constant 1 leaves this
+        //! suite fully green, and that is not a gap in the rows below - it is
+        //! unreachable from the wire. The holder is one deep and drains at
+        //! TOP priority, so by the time a second command's WRITE_ST issues
+        //! (a whole response later, single-threaded µCPU) the holder is
+        //! empty and ready is high regardless. The listener-side property -
+        //! ready DROPS while a request is pending - is graded directly in
+        //! tb/acmp_listener (S1c2), where the request can be posted by hand.
+        //! Recorded rather than left as an implied claim.
+        // LEAD
+        for (int i = 0; i < 3; ++i)
+          h.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR2_EID, 0, EID,
+                            0, 0, 0, 0, uint16_t(0x7A30 + i), 0, 0));
+        // ENDLEAD
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7A21,
+                          OP_START, ti(DT_STREAM_INPUT, 0)));
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7A22,
+                          OP_STOP, ti(DT_STREAM_INPUT, 0)));
+        auto rf = h.wait_any(h.q_aecp, 900);
+        CHECK(!rf.empty() && st(rf) == AECP_SUCCESS,
+              "W21dd: the first overlapped command answered SUCCESS (st=%d)",
+              rf.empty() ? -1 : st(rf));
+        //! a LONGER window than the first: the second command's WRITE_ST is
+        //! exactly the one that meets a full holder, so it stalls until the
+        //! walker drains it - which the trailing ACMP burst deliberately
+        //! delays. That stall IS the mechanism under test, so the timeout has
+        //! to outlast it or the test fails on its own premise.
+        auto rf2 = h.wait_any(h.q_aecp, 4000);
+        CHECK(!rf2.empty() && st(rf2) == AECP_SUCCESS,
+              "W21dd2: ...and so did the second (st=%d)",
+              rf2.empty() ? -1 : st(rf2));
+        unsigned sb2 = started();
+        CHECK((sb2 & 1u) == 0u,
+              "W21ee: the SECOND command's effect survived a busy walker "
+              "(started=0x%02X) - START then STOP must end STOPPED; a "
+              "SUCCESS whose effect was overwritten is the defect the "
+              "holder's ready line exists to prevent", sb2);
+      }
+
+      // W21w: Milan 5.4.2.19/.20 - "If the PAAD-AE is locked by a
+      // controller, it shall not accept a START_STREAMING command from a
+      // DIFFERENT controller". Lock as CTLR_EID, then command as CTLR2_EID.
+      {
+        // The refused command below is graded on its EFFECT as well as its
+        // status, so the bit must not already be at the value a refusal
+        // would leave it at. START first: now a lock check that failed to
+        // fire is visible as the bit going 1 -> 0.
+        (void)ask(OP_START, ti(DT_STREAM_INPUT, 0), 0x7A0F);
+        CHECK((started() & 1u) == 1u,
+              "W21w0: precondition, sink 0 started before the lock rows");
+
+        std::vector<uint8_t> lk(16, 0);          // flags = 0 -> LOCK
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7A10,
+                          0x0001, lk));
+        auto lr = h.wait_any(h.q_aecp, 600);
+        CHECK(!lr.empty() && ((lr[16] >> 3) & 0x1F) == 0,
+              "W21w: the block's own LOCK_ENTITY took (status=%d)",
+              lr.size() > 16 ? ((lr[16] >> 3) & 0x1F) : -1);
+
+        unsigned before = started();
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR2_EID, 0x7A11,
+                          OP_STOP, ti(DT_STREAM_INPUT, 0)));
+        auto lf = h.wait_any(h.q_aecp, 600);
+        CHECK(!lf.empty() && st(lf) == AECP_ENTITY_LOCKED,
+              "W21x: STOP_STREAMING from a different controller is "
+              "ENTITY_LOCKED (st=%d)", lf.empty() ? -1 : st(lf));
+        CHECK(cdl(lf) == 16, "W21y: ...at cdl 16, got %d", cdl(lf));
+        unsigned after = started();
+        CHECK(after == before && (after & 1u) == 1u,
+              "W21z: a locked-out STOP_STREAMING moved the record anyway "
+              "(0x%02X -> 0x%02X) - the sink was STARTED going in, so a "
+              "missing lock check shows up here as a 1 -> 0", before, after);
+
+        // ...and the SAME controller is still served
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7A12,
+                          OP_STOP, ti(DT_STREAM_INPUT, 0)));
+        auto ok = h.wait_any(h.q_aecp, 600);
+        CHECK(!ok.empty() && st(ok) == AECP_SUCCESS,
+              "W21za: the LOCK HOLDER is still served (st=%d)",
+              ok.empty() ? -1 : st(ok));
+        CHECK((started() & 1u) == 0u,
+              "W21zb: ...and its STOP reached the record");
+
+        std::vector<uint8_t> ul(16, 0);
+        putbe(&ul[2], 1, 2);                     // flags = UNLOCK
+        h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7A13,
+                          0x0001, ul));
+        (void)h.wait_any(h.q_aecp, 600);
+      }
+
+      // W21u: unbind is the lifecycle owner - Milan 5.3.8.7 calls the state
+      // "undefined when the Stream Input is not bound", so the bit goes with
+      // the binding. This ALSO restores what this block changed: a bound
+      // sink makes SET_CONFIGURATION refuse with STREAM_IS_RUNNING
+      // (5.4.2.5), which the read-side rows further down depend on.
+      (void)ask(OP_START, ti(DT_STREAM_INPUT, 0), 0x7A00);
+      CHECK((started() & 1u) == 1u,
+            "W21u0: precondition, sink 0 started before the unbind");
+      h.q_acmp.clear();
+      h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                        T1_UID, 0, 0, 0, 0x7A01, 0, 0));
+      auto unb = h.wait_any(h.q_acmp, 400);
+      CHECK(!unb.empty() && unb.size() > 16
+            && ((unb[16] >> 3) & 0x1F) == 0,
+            "W21u: UNBIND_RX succeeded (status=%d)",
+            unb.size() > 16 ? ((unb[16] >> 3) & 0x1F) : -1);
+      sb = started();
+      CHECK((sb & 1u) == 0u,
+            "W21v: unbind cleared the started bit (started=0x%02X)", sb);
     }
 
     // ---- W8: READ_DESCRIPTOR still intact after the whole section -------

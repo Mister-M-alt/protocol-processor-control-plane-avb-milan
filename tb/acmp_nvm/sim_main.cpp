@@ -80,7 +80,7 @@ static std::vector<uint8_t> payload_of(const Bind& b) {
 }
 
 static std::vector<uint8_t> frame(uint8_t rid, const std::vector<uint8_t>& pl,
-                                  uint8_t ver = 0x01, int force_plen = -1) {
+                                  uint8_t ver = 0x02, int force_plen = -1) {
   uint16_t plen = (force_plen >= 0) ? uint16_t(force_plen)
                                     : uint16_t(pl.size());
   std::vector<uint8_t> f;
@@ -492,7 +492,13 @@ int main(int argc, char** argv) {
     auto c = frame(uint8_t(REC_BASE + 6), payload_of(f0));
     c[15] ^= 0x40;
     h.seed_region(6, c);
-    h.seed_region(1, frame(uint8_t(REC_BASE + 1), payload_of(f3), 0x02));
+    //! a version this build does NOT accept. It was 0x02 while the shadow
+    //! was at 0x01; issue #78 moved the shadow to 0x02 (the record's bytes
+    //! are unchanged but `started` means something now), which would have
+    //! quietly turned this negative case into a valid record - the "wrong
+    //! version is refused" property would then have been passing on a
+    //! record the RTL accepts.
+    h.seed_region(1, frame(uint8_t(REC_BASE + 1), payload_of(f3), 0x03));
     auto pl24 = payload_of(f7); pl24.resize(24, 0);
     h.seed_region(2, frame(uint8_t(REC_BASE + 2), pl24));
   }

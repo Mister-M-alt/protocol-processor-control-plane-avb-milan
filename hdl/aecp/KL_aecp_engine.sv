@@ -501,6 +501,18 @@ module KL_aecp_engine
     //! consumes the answer, because the reduction belongs where the SRP
     //! records live and not in a command decoder.
     input  wire [N_STREAM_IN_P-1:0]  strm_bound_i,
+
+    //! ---- started/stopped request out (Milan §5.4.2.19 / §5.4.2.20) -----
+    //! One pulse per accepted START/STOP_STREAMING, aimed at the ACMP
+    //! binding record that owns the bit. There is deliberately no answer
+    //! back: the command's status is settled by the µprogram (locate, lock)
+    //! before the pulse is raised, and "no effect when not bound" is not a
+    //! refusal — Milan §5.4.2.19 calls it out as a Note, and the response is
+    //! SUCCESS either way.
+    output logic                     strm_set_valid_o,
+    output logic [15:0]              strm_set_index_o,
+    output logic                     strm_set_val_o,   //! 1 = started
+    input  wire                      strm_set_ready_i, //! record took it
     input  wire [N_STREAM_OUT_P-1:0] strm_streaming_i,
     input  wire         lock_held_i,
     input  wire  [63:0] lock_ctlr_i,
@@ -536,7 +548,6 @@ module KL_aecp_engine
     output logic [15:0] dyn_cur_config_o,    //! ENTITY.current_configuration
     output logic  [7:0] dyn_identify_o,      //! IDENTIFY value, 0 or 255
     output logic [15:0] dyn_clk_src_index_o, //! CLOCK_DOMAIN[0] clock source
-    output logic [N_STREAM_IN_P-1:0] dyn_strm_started_o, //! 1 = started
     output logic [31:0] dyn_pt_offset_o,     //! STREAM_OUTPUT[0] pres. offset
     output logic        dyn_dirty_o          //! a persisted field was written
 );
@@ -619,6 +630,15 @@ module KL_aecp_engine
   //! their own branch behind issue #78 (started/stopped has two candidate
   //! homes and the choice is not this PR's to make).
   localparam logic [15:0] OP_SET_CONFIG_C      = 16'h0006;
+  //! ---- START/STOP_STREAMING (Milan §5.4.2.19 / §5.4.2.20) --------------
+  //! IEEE Figure 7-59 gives both the {type @24, index @26} shape and nothing
+  //! else, so they join `tix_w` and their response is four bytes long — the
+  //! command's own length, cdl 16, for the success arm and every refusal
+  //! alike. Milan narrows IEEE §7.4.35's "STREAM_INPUT or STREAM_OUTPUT" to
+  //! Stream Inputs only; a Stream Output is answered NOT_SUPPORTED, which is
+  //! one instance of the wrong-type rule below rather than a case of its own.
+  localparam logic [15:0] OP_START_STRM_C      = 16'h0022;
+  localparam logic [15:0] OP_STOP_STRM_C       = 16'h0023;
   //! Table 7-1: the two descriptor types the audio-map µprograms serve -
   //! every other type keeps the NOT_IMPLEMENTED echo
   localparam logic [15:0] DT_STREAM_PORT_IN_C  = 16'h000E;
@@ -691,8 +711,15 @@ module KL_aecp_engine
   //! §7.4.7.1 at cdl 16, like the other two arms.
   localparam logic [10:0] UPC_SCFGBAD_C  = 11'd1513; // E_SCFGBAD
   localparam logic [10:0] UPC_RDESCENT_C = 11'd1568; // E_RDESCENT
-  localparam logic [10:0] UPC_AMADD_C    = 11'd1632; // E_AMADD
-  localparam logic [10:0] UPC_AMREMOVE_C = 11'd1680; // E_AMREMOVE
+  localparam logic [10:0] UPC_STRT_C     = 11'd1600; // E_STRT
+  localparam logic [10:0] UPC_STOP_C     = 11'd1632; // E_STOP
+  localparam logic [10:0] UPC_STRMNS_C   = 11'd1664; // E_STRMNS
+  localparam logic [10:0] UPC_STRMBAD_C  = 11'd1696; // E_STRMBAD
+  //! MOVED with their microprograms: E_AMADD spans 34 words, so at 1632 it
+  //! overlapped both E_STOP and E_STRMNS above. check_upc_map.py gates these
+  //! against gen_ucode.py, so the two cannot drift apart again silently.
+  localparam logic [10:0] UPC_AMADD_C    = 11'd1712; // E_AMADD
+  localparam logic [10:0] UPC_AMREMOVE_C = 11'd1760; // E_AMREMOVE
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -766,6 +793,9 @@ module KL_aecp_engine
   logic        gctrl_r;                  // ... a GET_CONTROL
   logic        sctrl_r;                  // ... a SET_CONTROL
   logic        scfg_r;                   // ... a SET_CONFIGURATION
+  logic        strt_r;                   // ... a START_STREAMING
+  logic        stop_r;                   // ... a STOP_STREAMING
+  logic        strm_r;                   // ... either of the two
   logic        setc_r;                   // ... any SET_* that carries a value
   //! the SET family's argument, walked out of @28..@35. Every settable field
   //! Milan v1.2 names fits in these eight bytes: a sampling rate is 4
@@ -970,6 +1000,15 @@ module KL_aecp_engine
   logic scfg_w;
   assign scfg_w   = aem_w
                     && (txn_w.opcode == OP_SET_CONFIG_C);
+  //! Milan §5.4.2.19/.20. `strm_w` is the shared "this command moves the
+  //! started/stopped bit" term; the two are told apart only where the
+  //! direction matters, so a third such command would be one name here.
+  logic strt_w, stop_w, strm_w;
+  assign strt_w   = aem_w
+                    && (txn_w.opcode == OP_START_STRM_C);
+  assign stop_w   = aem_w
+                    && (txn_w.opcode == OP_STOP_STRM_C);
+  assign strm_w   = strt_w | stop_w;
 
   //! ---- unsolicited job synthesis (06 §6.7) -------------------------------
   //! kind -> {command_type, µPC}. A kind whose µprogram has not landed maps
@@ -1089,7 +1128,8 @@ module KL_aecp_engine
   logic ix26_w;
   logic tix_w;
   assign tix_w = ctrs_r | amap_r | amap_edit_r | gstri_r | gavb_r
-                 | gsfmt_r | gsrate_r | gclks_r | setc_r | gctrl_r;
+                 | gsfmt_r | gsrate_r | gclks_r | setc_r | gctrl_r
+                 | strm_r;
   assign ix26_w = tix_w | regun_r | lockc_r | scfg_r;
   assign opd0_w = tix_w       ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
                 : gasp_r      ? {16'd0, cfg_ix_r, DT_AVB_INTERFACE_C, 16'd0}
@@ -1140,10 +1180,22 @@ module KL_aecp_engine
   //! store's region decode treats every unmapped code as RGN_DATA — an
   //! ungated dynamic-state read would come back as a descriptor-line read of
   //! whatever lane the field selector happened to alias.
+  //! Region 0x3 is the started/stopped REQUEST channel (Milan §5.4.2.19/.20).
+  //! It is WRITE-ONLY and backs no storage: a WRITE_ST here becomes one pulse
+  //! to the ACMP listener, which owns `f_started` in the binding record. The
+  //! dynamic-state store used to hold a copy (selector 6) and it is retired,
+  //! because two writable copies of one bit disagree silently — both answer a
+  //! plausible 0 or 1, and Milan §5.3.8.7 makes the state a property of the
+  //! BINDING ("undefined when the Stream Input is not bound"), which only the
+  //! record has. A read of this region is not a thing: it is gated to writes
+  //! below, so a µprogram that tries to read it back gets the descriptor
+  //! store's answer and not a stale bit that looks authoritative.
   localparam logic [3:0] RGN_DYN_C  = 4'h1;
   localparam logic [3:0] RGN_DYNV_C = 4'h2;
+  localparam logic [3:0] RGN_STRQ_C = 4'h3;
 
   logic        dyn_sel_w;
+  logic        strq_sel_w;
   logic        dyn_ready_w, dyn_rvalid_w;
   logic [63:0] dyn_rdata_w;
   logic        store_ready_w, store_rvalid_w, store_err_w;
@@ -1152,10 +1204,52 @@ module KL_aecp_engine
   assign dyn_sel_w = !st_name_w
                      && ((st_addr_w[19:16] == RGN_DYN_C)
                          || (st_addr_w[19:16] == RGN_DYNV_C));
+  //! `st_we_w` is part of the select, not a qualifier applied later: without
+  //! it a READ of region 3 would be claimed by a channel that never answers
+  //! and the µCPU would hang waiting for an rvalid that cannot come.
+  assign strq_sel_w = !st_name_w && st_we_w
+                      && (st_addr_w[19:16] == RGN_STRQ_C);
+  //! WHY THE REGION NIBBLE SURVIVES THE LOCATE. `WRITE_ST` addresses as
+  //! `desc_base_r + imm`, and these µprograms run a DESC_ADDR first (that is
+  //! the existence check), so it is fair to ask what the base holds by the
+  //! time the write issues. The answer is ZERO: KL_aecp_desc_store answers a
+  //! locate with `st_rdata_o = 0` (its port comment says so in as many
+  //! words - "read data (0 on a locate hit)"), and `desc_base_r` is loaded
+  //! from exactly that, so the sum is the immediate. That is the invariant
+  //! this decode rests on, and it is stronger than "the offset is 16 bits" -
+  //! a 16-bit NON-ZERO base would still be safe here only by accident of
+  //! RGN_STRQ's low bits being clear. If the store ever answers a locate
+  //! with a real address, this decode has to move with it: a base reaching
+  //! [19:16] would divert the request to the descriptor store, drop it, and
+  //! leave the command answering SUCCESS for a change that never landed.
 
-  assign st_ready_w  = dyn_sel_w ? dyn_ready_w  : store_ready_w;
-  assign st_rvalid_w = dyn_sel_w ? dyn_rvalid_w : store_rvalid_w;
+  //! The request channel answers its own write in the same cycle it is
+  //! selected. It has nothing to wait for — the pulse below is the whole of
+  //! the side effect — and leaving it to the descriptor store would BOTH
+  //! deadlock (the store never sees a request it was not given) and let the
+  //! store's region decode read the write as a descriptor line.
+  //! The request channel completes the µprogram's WRITE_ST only when the
+  //! record has TAKEN it. Answering ready unconditionally would drop the
+  //! request whenever the listener's walker happened to be busy, and the
+  //! µprogram has already settled SUCCESS by then — a false success that no
+  //! response-shape check can see, because the response is correct and only
+  //! the effect is missing.
+  assign st_ready_w  = strq_sel_w ? strm_set_ready_i
+                     : dyn_sel_w  ? dyn_ready_w  : store_ready_w;
+  assign st_rvalid_w = strq_sel_w ? 1'b0
+                     : dyn_sel_w  ? dyn_rvalid_w : store_rvalid_w;
   assign st_rdata_w  = dyn_sel_w ? dyn_rdata_w  : store_rdata_w;
+
+  //! ---- the started/stopped pulse (Milan §5.4.2.19 / §5.4.2.20) -----------
+  //! One cycle, on the beat the µprogram's WRITE_ST is accepted, carrying the
+  //! descriptor index the command named and the bit it asked for. The listener
+  //! decides whether it applies: §5.4.2.19's "this command has no effect on a
+  //! Stream Input that is not already bound" is the RECORD's rule, and asking
+  //! the engine to test boundness first would give it a second copy of exactly
+  //! the state this change exists to keep in one place.
+  assign strm_set_valid_o = strq_sel_w && st_req_w;
+  assign strm_set_index_o = desc_ix_r;
+  assign strm_set_val_o   = st_wdata_w[0];
   //! the dynamic store has no locate and therefore no miss: an out-of-range
   //! index answers a CLEAR valid flag, not NO_SUCH_DESCRIPTOR, because
   //! existence is the descriptor image's ruling and never a setting's
@@ -1233,7 +1327,7 @@ module KL_aecp_engine
   ) u_store (
       .clk_i             (clk_i),
       .rst_n             (rst_n),
-      .st_req_i          (st_req_w && !dyn_sel_w),
+      .st_req_i          (st_req_w && !dyn_sel_w && !strq_sel_w),
       .st_we_i           (st_we_w),
       .st_name_i         (st_name_w),
       .st_addr_i         (st_addr_w),
@@ -1294,7 +1388,6 @@ module KL_aecp_engine
       .cur_config_o    (dyn_cur_config_o),
       .identify_o      (dyn_identify_o),
       .clk_src_index_o (dyn_clk_src_index_o),
-      .strm_started_o  (dyn_strm_started_o),
       .pt_offset_o     (dyn_pt_offset_o),
       .dirty_o         (dyn_dirty_o),
       .dbg_writes_o    (dyn_writes_nc_w),
@@ -1851,6 +1944,9 @@ module KL_aecp_engine
       gctrl_r      <= 1'b0;
       sctrl_r      <= 1'b0;
       scfg_r       <= 1'b0;
+      strt_r       <= 1'b0;
+      stop_r       <= 1'b0;
+      strm_r       <= 1'b0;
       setc_r       <= 1'b0;
       setval_r     <= 64'd0;
       opd2_r       <= 64'd0;
@@ -1908,6 +2004,9 @@ module KL_aecp_engine
               gctrl_r    <= gctrl_w;
               sctrl_r    <= sctrl_w;
               scfg_r     <= scfg_w;
+              strt_r     <= strt_w;
+              stop_r     <= stop_w;
+              strm_r     <= strm_w;
               setc_r     <= setc_w;
               setval_r   <= 64'd0;
               lock_ent_ok_r <= 1'b1;
@@ -1978,6 +2077,9 @@ module KL_aecp_engine
             gctrl_r    <= 1'b0;
             sctrl_r    <= 1'b0;
             scfg_r     <= 1'b0;
+            strt_r     <= 1'b0;
+            stop_r     <= 1'b0;
+            strm_r     <= 1'b0;
             setc_r     <= 1'b0;
             lock_ent_ok_r <= 1'b1;
             uns_r      <= 1'b1;
@@ -2245,6 +2347,32 @@ module KL_aecp_engine
               if (cmd_r.cdl < 11'd16)  upc_r <= UPC_SCFGBAD_C;
               else if (any_running_w)  upc_r <= UPC_SCFGRUN_C;
               else                     upc_r <= UPC_SCFG_C;
+              echo_r <= 1'b0;
+            end
+            //! ---- START/STOP_STREAMING (Milan §5.4.2.19 / §5.4.2.20) ----
+            //! The TYPE is settled here rather than in the µprogram because
+            //! the µprogram's only existence test is the DESC_ADDR locate,
+            //! and a locate on a descriptor that is not a Stream Input can
+            //! HIT — {ENTITY, 0} does. Routing a wrong type into the write
+            //! path would move started state for a descriptor that has none.
+            //! Milan's "shall not support ... for a Stream Output" is one
+            //! instance of that, not a case beside it, so a Stream Output and
+            //! a CLOCK_DOMAIN take the same NOT_SUPPORTED arm.
+            //! §7.4.35.1's command is 4 bytes, so cdl 16 is the whole of it.
+            //! ORDER, stated rather than inherited from code layout: the type
+            //! refusal runs BEFORE the µprogram's locate and lock check, so a
+            //! Stream Output named with a nonexistent index answers
+            //! NOT_SUPPORTED rather than NO_SUCH_DESCRIPTOR, and a foreign
+            //! controller naming a Stream Output under lock gets
+            //! NOT_SUPPORTED rather than ENTITY_LOCKED. Neither standard
+            //! orders these checks against each other, and answering "this
+            //! target is not supported" first is the more specific reading of
+            //! Milan's "shall not support ... for a Stream Output".
+            if (strm_r) begin
+              if (cmd_r.cdl < 11'd16)                 upc_r <= UPC_STRMBAD_C;
+              else if (cfg_ix_r != DT_STREAM_INPUT_C) upc_r <= UPC_STRMNS_C;
+              else if (strt_r)                        upc_r <= UPC_STRT_C;
+              else                                    upc_r <= UPC_STOP_C;
               echo_r <= 1'b0;
             end
             a_st_r <= A_DISP;

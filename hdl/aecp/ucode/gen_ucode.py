@@ -157,8 +157,21 @@ E_SCFGLK  = 1500     # ...its ENTITY_LOCKED arm
 E_SCFGBAD = 1513     # ...its BAD_ARGUMENTS arm
 E_SCFGEMT = 1526     # ...the body all three share
 E_RDESCENT = 1568    # READ_DESCRIPTOR(ENTITY) with current_configuration overlay
-E_AMADD   = 1632     # ADD_AUDIO_MAPPINGS (Milan 5.4.2.27, IEEE 7.4.45)
-E_AMREMOVE = 1680    # REMOVE_AUDIO_MAPPINGS (Milan 5.4.2.28, IEEE 7.4.46)
+# --- START/STOP_STREAMING (Milan §5.4.2.19/.20, IEEE §7.4.35/.36) ------------
+# 32-word slots in the free tail, so each can grow an arm without renumbering
+# its neighbour.
+E_STRT    = 1600     # START_STREAMING on a STREAM_INPUT
+E_STOP    = 1632     # STOP_STREAMING on a STREAM_INPUT
+E_STRMNS  = 1664     # ...either, on any other descriptor type: NOT_SUPPORTED
+E_STRMBAD = 1696     # ...either, too short to carry Figure 7-59's four bytes
+# --- ADD/REMOVE_AUDIO_MAPPINGS ----------------------------------------------
+# MOVED from 1632/1680 when START/STOP_STREAMING landed on those words:
+# E_AMADD spans 34 words, so at 1632 it overlapped BOTH E_STOP (1632..1641)
+# and E_STRMNS (1664..1668). `place()` asserts on overlap, so the collision
+# could not have shipped silently - it fails at ROM generation - but it had to
+# move. 1712 and 1760 sit in the contiguous free run above E_STRMBAD's block.
+E_AMADD   = 1712     # ADD_AUDIO_MAPPINGS (Milan 5.4.2.27, IEEE 7.4.45)
+E_AMREMOVE = 1760    # REMOVE_AUDIO_MAPPINGS (Milan 5.4.2.28, IEEE 7.4.46)
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
@@ -173,8 +186,30 @@ SEL_CLKSRC = 2 * 8
 SEL_FMTIN  = 3 * 8
 SEL_FMTOUT = 4 * 8
 SEL_PTOFF  = 5 * 8
-SEL_START  = 6 * 8
+#! selector 6 was SEL_START, the started/stopped bit. It is RETIRED, not moved:
+#! Milan §5.3.8.7 says the state is "undefined when the Stream Input is not
+#! bound", so it is a property of the BINDING, and the ACMP binding record's
+#! `f_started` is the one place that has the lifecycle (cleared on unbind,
+#! captured by the NVM shadow, restored through `pre_started_i`). A second
+#! writable copy here could disagree with it, and the disagreement would be
+#! invisible: both answer a plausible 0 or 1. See RGN_STRQ below for how the
+#! write reaches the record now. Do not re-use the number for something else -
+#! a stale µprogram naming selector 6 must miss, not land on a live field.
 SEL_IDENT  = 7 * 8
+
+# --- the started/stopped REQUEST channel (Milan §5.4.2.19 / §5.4.2.20) -------
+# Region 0x3 is WRITE-ONLY and stores NOTHING. A WRITE_ST here is decoded by
+# KL_aecp_engine (which already gates the state port by region) into a one-cycle
+# pulse carrying {the descriptor index in flight, the bit} to the ACMP listener,
+# which applies it to `f_started` if that sink is bound. Modelling it as a
+# request rather than a field is the whole point: a field would be a second
+# source of truth, and this cannot be read back, so it cannot become one.
+#
+# It costs no opcode. The op field is 5 bits with 29..31 unused, but a dedicated
+# START/STOP op would have to be decoded, tested and kept in step with WRITE_ST
+# for no behaviour WRITE_ST does not already have.
+RGN_STRQ = 0x30000
+SEL_STRQ = 0 * 8
 # 1722.1-2021 Table 7-1: the one descriptor type this program is dispatched
 # for (KL_aecp_engine refuses every other type back to the NOT_IMPLEMENTED
 # echo before dispatch, so the constant emitted at @24 is also a guarantee).
@@ -1594,6 +1629,72 @@ place(E_AMADD, [
 place(E_AMREMOVE, [
     u('BRANCH', imm=E_AMADD),
 ])
+
+# --- START/STOP_STREAMING (Milan §5.4.2.19 / §5.4.2.20) ----------------------
+# IEEE Figure 7-59 makes command and response THE SAME shape - descriptor_type
+# @24, descriptor_index @26 and nothing else - so every arm here emits the same
+# four bytes and differs only in the status it carries. cdl is 16 on all of
+# them, including the refusals: only NOT_IMPLEMENTED may answer at command
+# length, and these are all implemented.
+#
+# The two programs are byte-identical apart from the bit they request, and they
+# are deliberately NOT folded into one with a shared tail. Folding would need
+# the bit in a register the engine sets, which puts the START/STOP distinction
+# in the engine's dispatch instead of in the program the dispatch names - and
+# the µPC map gate (scripts/check_upc_map.py) can then no longer tell them
+# apart. Twenty ROM words is not a saving worth that: the ROM is a fixed
+# 2048-word array, so an unused word costs exactly what a used one does.
+#
+# WHY THE TYPE IS NOT CHECKED HERE. `DESC_ADDR` answers NO_SUCH_DESCRIPTOR for
+# an index the image does not hold, which is the whole of the index check. It
+# cannot be the whole of the TYPE check: a locate on {ENTITY, 0} HITS, so a
+# command naming a descriptor that is not a Stream Input would sail past this
+# and write started state for it. The engine refuses every other type into
+# E_STRMNS before dispatch (Milan's "shall not support ... for a Stream Output"
+# is one instance of that rule, not a special case of it).
+def _strm(base, bit):
+    return [
+        u('DESC_ADDR', ra=14, imm=RGN_LOCATE),   # miss -> NO_SUCH_DESCRIPTOR
+        u('BR_STATUS', cnd=0, imm=base + 6),     # ...and it survives the skip
+        u('CHECK_LOCK', ra=15, imm=base + 6),    # a different controller holds
+        u('MOVE', rd=1, ra=0, imm=bit),          # the started/stopped bit
+        u('WRITE_ST', ra=1, fmt=FMT_B, imm=RGN_STRQ + SEL_STRQ),
+        u('SET_STATUS', imm=ST_OK),
+        u('BUILD_HDR', ra=15, rb=13),            # base + 6: every arm lands here
+        u('BUILD_FLD', ra=13, fmt=FMT_D),        # type + index          @24
+        u('SEND_RESP'),
+        u('END'),
+    ]
+
+#! Both refusal branches jump PAST the SET_STATUS(ST_OK), so the status the
+#! checking op wrote is the one that reaches the wire; the success path falls
+#! through it. Getting that backwards answers SUCCESS to a locked controller.
+place(E_STRT, _strm(E_STRT, 1))
+place(E_STOP, _strm(E_STOP, 0))
+
+#! Milan §5.4.2.19/.20: "The PAAD-AE shall not support the START_STREAMING
+#! command for a Stream Output (NOT_SUPPORTED shall be returned)." Table 7-141's
+#! NOT_SUPPORTED is "the command is implemented but the target of the command is
+#! not supported", which is exactly this, and it carries the full response body
+#! like every other arm.
+#! Both of these carry the FULL Figure 7-59 body, four bytes, cdl 16 — the
+#! same length as the success arm. Reusing E_BADARG1/E_NSUPP1, which are the
+#! shapes the SET_CONTROL family refuses in, would have been one constant
+#! instead of two programs and would have emitted FIVE body bytes: those arms
+#! append §7.4.25.1's one-byte value after the {type, index} word. A refusal
+#! whose length disagrees with its own command's figure is a wire defect that
+#! no status-code check would catch.
+def _strm_refuse(status):
+    return [
+        u('SET_STATUS', imm=status),
+        u('BUILD_HDR', ra=15, rb=13),
+        u('BUILD_FLD', ra=13, fmt=FMT_D),        # type + index          @24
+        u('SEND_RESP'),
+        u('END'),
+    ]
+
+place(E_STRMNS, _strm_refuse(ST_NSUPP))
+place(E_STRMBAD, _strm_refuse(ST_BADARG))
 
 
 # --- deterministic non-degenerate fill ---------------------------------------

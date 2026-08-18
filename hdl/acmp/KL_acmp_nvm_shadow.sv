@@ -89,7 +89,15 @@ module KL_acmp_nvm_shadow
     //! BINDING[i] record id base (07 §5.2 allocation — not doc-pinned)
     parameter logic [7:0]  REC_ID_BASE_P = 8'h20,
     //! F07.8 layout_version this shadow writes and accepts
-    parameter logic [7:0]  LAYOUT_VER_P  = 8'h01,
+    //! 0x02 (issue #78): the record's BYTES did not change, but the meaning
+    //! of `started` did. Until #78 nothing ever set it, so every record any
+    //! shipped firmware persisted carries started = 0 - and started = 0 now
+    //! gates the media path. Accepting those records on upgrade would fast-
+    //! connect a binding that reports bound, reserves bandwidth, answers
+    //! GET_STREAM_INFO with STREAMING_WAIT set, and plays nothing until a
+    //! controller happens to send START_STREAMING. Refusing them costs one
+    //! re-bind and cannot be silent.
+    parameter logic [7:0]  LAYOUT_VER_P  = 8'h02,
     //! T-NVM-DEBOUNCE in tick_i units (F08.1: ≈500 ms at a 1 ms tick)
     parameter int unsigned DEB_TICKS_P   = 500,
     //! bounded commit retries before the side-port alarm (F07.9)
