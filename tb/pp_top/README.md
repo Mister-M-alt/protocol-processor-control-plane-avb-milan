@@ -16,7 +16,7 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make` — exit 0 = PASS; tally `219 checks: 219 PASS, 0 FAIL`.
+`make`: exit 0 = PASS; the executable prints its exact check tally.
 
 ## What it proves
 
@@ -71,8 +71,8 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
     `features_flags` 0 and `certification_version` 0. The last two are checked
     by name because Table 5.20's REDUNDANCY would claim Milan §8 on a
     single-interface PAAD and TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING would claim
-    map changes from a build that answers ADD/REMOVE_AUDIO_MAPPINGS with
-    `NOT_IMPLEMENTED`.
+    map changes while a Stream Output is running, which the root integrator
+    deliberately refuses.
   - **M3/M4** a FOREIGN vendor-unique protocol (same Avnu OUI-36, protocol id
     0x101) and an MVU `command_type` this build does not serve
     (GET_SYSTEM_UNIQUE_ID) both come back echoed with MVU status 1. M3 is what
@@ -86,6 +86,15 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
   - **M6/M7** a truncated MVU command is echoed rather than answered from bytes
     nobody read; and a READ_DESCRIPTOR after the MVU traffic is still
     byte-exact, because Hive enumerating is worth more than the gap this closes.
+- **Audio-map edit transaction**: ADD/REMOVE_AUDIO_MAPPINGS cover atomic
+  validation and commit, duplicate-safe removal, static-port refusal,
+  running-output refusal, success notifications including idempotent ADD,
+  normalized Figure 7-71 responses, reserved-field clearing, timeout behavior
+  after the phase-1 reservation point, and live scoreboard ownership. R19a
+  parks MAP_CFG at the output streaming recheck, injects a state-changing
+  source-1 PROBE_TX, proves the scoreboard hold is nonzero and the ACMP response
+  and declaration edge are absent, then releases the map and grades both
+  transactions in order.
 - **R** boot restore over a blank NVM device: all 8 BINDING regions read,
   `restore_done` without `restore_fail`.
 - **S0/S1** quiescence + snapshot identity; SRP bring-up: the FIRST MSRP
@@ -295,3 +304,27 @@ repeat under back-pressure is free, an index that MOVES under it is a lost beat.
 The last one is the one worth keeping: it is the advertised-zero lie in its
 purest form — a full mask over a block the fabric never fills — and it must not
 be able to pass.
+
+## Section W8: GET_DYNAMIC_INFO
+
+The suite sends `0x004B` through the complete MAC, RX slot, dispatch, AECP
+engine, response memory, and TX path. Its expected bytes are built from the
+standard's record layout and the harness models, not from standalone DUT
+responses.
+
+W8 covers two implemented getters in one byte-exact aggregate, a missing
+descriptor that changes only one record status, whole-command `BAD_ARGUMENTS`
+for a forbidden `GET_AUDIO_MAP` with proof that no earlier record reached the
+descriptor store, silent overflow omission followed by successful processing
+of a later record, the Milan 56-byte `GET_STREAM_INFO` body, and
+record-level `NOT_SUPPORTED` with exact command-data copy for a permitted but
+unimplemented `GET_NAME`. It also covers an empty batch, truncated and
+overrunning records, per-record `BAD_ARGUMENTS` for a non-SUCCESS command
+status, preservation of the full 16-bit record command discriminator, every
+member of the exact 13-command whitelist, retention at the exact cdl 524
+response boundary, and rejection of an oversized cdl 525 command before record
+processing. The batch-only falsifiers use distinct overflow targets,
+non-zero unsupported data, a non-zero image configuration, full-body
+wrong-target refusals, and sampling-rate image hits both before another record
+and at the end of the aggregate. The final hit also verifies that the word
+after its four-byte body remains untouched.

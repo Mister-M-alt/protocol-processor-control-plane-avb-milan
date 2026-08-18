@@ -394,6 +394,32 @@ module KL_aecp_engine
     input  wire  [63:0] amap_data_i,          //! the word (upper 32 zero unless RECORD)
     input  wire         amap_wait_i,          //! HOLD the beat (not a ready)
 
+    //! ---- ADD/REMOVE_AUDIO_MAPPINGS transaction face --------------------
+    //! The command engine owns framing, descriptor existence, lock ordering,
+    //! exact-length validation and the two-pass walk. The integrator owns the
+    //! routing store and therefore decides whether a record is valid and how
+    //! it projects into the live map RAM. `amap_edit_phase_o` is:
+    //!   0 begin validation, 1 begin commit, 2 finish, 3 abort,
+    //!   4 validate one record, 5 commit one record.
+    //! A begin/validate reply returns `amap_edit_data_i[0]` = accepted. Phase
+    //! 1 acceptance reserves the complete transaction and is the point of no
+    //! return: phases 5 and 2 must then complete without back-pressure, and
+    //! the processor ignores `amap_edit_wait_i` on those phases. A finish
+    //! reply returns bit 0 = at least one mapping changed. The future
+    //! SET_STREAM_FORMAT survival query uses the same value lane instead of
+    //! opening a second map authority.
+    output logic        amap_edit_req_o,
+    output logic  [2:0] amap_edit_phase_o,
+    output logic        amap_edit_remove_o,
+    output logic [15:0] amap_edit_desc_type_o,
+    output logic [15:0] amap_edit_desc_index_o,
+    output logic [15:0] amap_edit_count_o,
+    output logic  [7:0] amap_edit_rec_o,
+    output logic [63:0] amap_edit_record_o,
+    output logic [63:0] amap_edit_value_o,
+    input  wire  [63:0] amap_edit_data_i,
+    input  wire         amap_edit_wait_i,
+
     //! ---- Milan-info gather face (06 §6.2/§6.10; IEEE §7.4.16/§7.4.40/
     //! §7.4.41, Milan §5.4.2.10/§5.4.2.23/§5.4.2.24) ----
     //! ONE face for the three read-only Milan info commands, selector-coded
@@ -449,6 +475,9 @@ module KL_aecp_engine
     input  wire  [63:0] uns_ctlr_eid_i,      //! target controller entity_id
     input  wire  [47:0] uns_mac_i,           //! target unicast MAC
     input  wire  [15:0] uns_seq_i,           //! the entry's sequence_id
+    input  wire         uns_amap_remove_i,
+    input  wire  [15:0] uns_amap_count_i,
+    input  wire         amap_notify_busy_i,
     output logic        uns_done_o,          //! one-cycle: job retired (sent or voided)
 
     //! ---- TX arbiter lane (F03.5 LANE_AECP_UNS); held until granted ----
@@ -527,6 +556,20 @@ module KL_aecp_engine
   localparam logic [15:0] OP_IDENTIFY_NOTIF_C  = 16'h0026;
   localparam logic [15:0] OP_GET_COUNTERS_C    = 16'h0029;
   localparam logic [15:0] OP_GET_AUDIO_MAP_C   = 16'h002B;
+  localparam logic [15:0] OP_GET_DYNAMIC_INFO_C = 16'h004B;
+  //! IEEE 1722.1-2021 7.4.76.2 permits exactly these fixed-size getters in
+  //! a dynamic_info list. Membership and implementation are separate:
+  //! permitted getters that this profile does not serve receive a record
+  //! status of NOT_SUPPORTED instead of rejecting the whole command.
+  localparam logic [15:0] GDI_GET_VIDEO_FMT_C   = 16'h000B;
+  localparam logic [15:0] GDI_GET_SENSOR_FMT_C  = 16'h000D;
+  localparam logic [15:0] GDI_GET_NAME_C        = 16'h0011;
+  localparam logic [15:0] GDI_GET_ASSOC_ID_C    = 16'h0013;
+  localparam logic [15:0] GDI_GET_SIGNAL_SEL_C  = 16'h001D;
+  localparam logic [15:0] GDI_GET_MEM_LEN_C     = 16'h0048;
+  localparam logic [15:0] GDI_GET_STREAM_BKUP_C = 16'h004A;
+  localparam logic [15:0] OP_ADD_AUDIO_MAP_C   = 16'h002C;
+  localparam logic [15:0] OP_REMOVE_AUDIO_MAP_C = 16'h002D;
   //! §7.4.37/§7.4.38 - the registration pair. NOT pop-time dispatch arms:
   //! both resolve through the REGISTERED A_PLD-exit re-dispatch (the MVU
   //! pattern), because the pop-time opcode-to-µPC cone is the measured
@@ -683,6 +726,11 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_STOP_C     = 11'd1632; // E_STOP
   localparam logic [10:0] UPC_STRMNS_C   = 11'd1664; // E_STRMNS
   localparam logic [10:0] UPC_STRMBAD_C  = 11'd1696; // E_STRMBAD
+  //! MOVED with their microprograms: E_AMADD spans 34 words, so at 1632 it
+  //! overlapped both E_STOP and E_STRMNS above. check_upc_map.py gates these
+  //! against gen_ucode.py, so the two cannot drift apart again silently.
+  localparam logic [10:0] UPC_AMADD_C    = 11'd1712; // E_AMADD
+  localparam logic [10:0] UPC_AMREMOVE_C = 11'd1760; // E_AMREMOVE
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -702,6 +750,11 @@ module KL_aecp_engine
            FRAME_MAX_C, TX_OVERSIZE_BYTES_P);
   end
 
+  if (RESP_BUF_C < ucpu_pkg::RESP_CAP_C) begin : gen_g_resp_cap_fit
+    $error("response buffer (%0d B) is smaller than GET_DYNAMIC_INFO limit (%0d B)",
+           RESP_BUF_C, ucpu_pkg::RESP_CAP_C);
+  end
+
   pp_txn_t txn_w;
   assign txn_w = pp_txn_t'(txn_i);
 
@@ -711,6 +764,10 @@ module KL_aecp_engine
   logic [31:0] rb_wdata_w;
   logic  [3:0] rb_wstrb_w;
   logic        rb_ready_w;
+  logic        urb_we_w, g_rb_we_w;
+  logic  [9:0] urb_addr_w, g_rb_addr_w;
+  logic [31:0] urb_wdata_w, g_rb_wdata_w;
+  logic  [3:0] urb_wstrb_w, g_rb_wstrb_w;
 
   // ---- response-buffer lifecycle + payload read stream --------------------
   logic        rsp_open_w, rsp_seal_w;
@@ -723,7 +780,8 @@ module KL_aecp_engine
   // the command machine
   // =======================================================================
   typedef enum logic [3:0] {
-    A_IDLE, A_PLD, A_DISP, A_RUN, A_ALLOC, A_WR, A_CMT, A_TXW, A_FREE
+    A_IDLE, A_PLD, A_DISP, A_RUN, A_ALLOC, A_WR, A_CMT, A_TXW, A_FREE,
+    A_GSCAN, A_GLOAD, A_GDEC, A_GHDR, A_GCOPY, A_GPATCH, A_GDONE
   } a_st_e;
   a_st_e a_st_r;
 
@@ -737,6 +795,9 @@ module KL_aecp_engine
   logic        echo_r, sent_r;
   logic        ctrs_r;                   // this command is a GET_COUNTERS
   logic        amap_r;                   // this command is a GET_AUDIO_MAP
+  logic        amap_edit_r;              // this command edits the audio map
+  logic        amap_remove_r;            // 0 ADD, 1 REMOVE
+  logic        amap_uns_r;               // unsolicited reflection of staged edit
   logic        regun_r;                  // ... a REGISTER/DEREGISTER_UNSOL
   logic        acq_r;                    // ... an ACQUIRE_ENTITY
   logic        lockc_r;                  // ... a LOCK_ENTITY
@@ -757,6 +818,7 @@ module KL_aecp_engine
   logic        stop_r;                   // ... a STOP_STREAMING
   logic        strm_r;                   // ... either of the two
   logic        setc_r;                   // ... any SET_* that carries a value
+  logic        gdi_r;                    // ... outer GET_DYNAMIC_INFO command
   //! the SET family's argument, walked out of @28..@35. Every settable field
   //! Milan v1.2 names fits in these eight bytes: a sampling rate is 4
   //! (§7.4.21.1), a clock source index is 2 (§7.4.23.1) and a stream format
@@ -774,9 +836,148 @@ module KL_aecp_engine
   logic [TXS_W_C-1:0] tx_slot_r;
   logic [15:0] cmd_cnt_r, resp_cnt_r, drop_cnt_r, rerr_cnt_r;
 
+  // ---- GET_DYNAMIC_INFO two-pass iterator -------------------------------
+  //! Pass 1 validates the complete record list before a getter runs. Pass 2
+  //! loads one record, executes a supported getter through the same µprogram
+  //! used by its standalone command, and appends the result. The RX slot is
+  //! retained until the aggregate response is complete, so no duplicate
+  //! payload RAM is required.
+  logic        g_scan_started_r, g_rd_pending_r, g_load_data_r;
+  logic  [2:0] g_hdr_ix_r;
+  logic  [1:0] g_wr_phase_r;
+  logic [10:0] g_total_r, g_rd_pos_r, g_data_ix_r;
+  logic [10:0] g_data_start_r, g_next_pos_r;
+  logic [10:0] g_out_r, g_rec_rlen_r, g_sub_end_r;
+  logic [15:0] g_scan_len_r;
+  logic  [7:0] g_scan_cmd_hi_r;
+  logic [15:0] g_rec_len_r, g_rec_cmd_r;
+  logic  [7:0] g_rec_cmd_status_r;
+  logic [63:0] g_data_head_r;
+  logic        g_rec_exec_r;
+  logic  [4:0] g_rec_status_r;
+  logic        g_shape_fault_r;
+
+  function automatic logic gdi_allowed(input logic [15:0] command_type);
+    unique case (command_type)
+      OP_GET_CONFIG_C, OP_GET_STREAM_FMT_C, GDI_GET_VIDEO_FMT_C,
+      GDI_GET_SENSOR_FMT_C, OP_GET_STREAM_INFO_C, GDI_GET_NAME_C,
+      GDI_GET_ASSOC_ID_C, OP_GET_SAMP_RATE_C, OP_GET_CLOCK_SRC_C,
+      GDI_GET_SIGNAL_SEL_C, OP_GET_COUNTERS_C, GDI_GET_MEM_LEN_C,
+      GDI_GET_STREAM_BKUP_C: gdi_allowed = 1'b1;
+      default:              gdi_allowed = 1'b0;
+    endcase
+  endfunction
+
+  logic        g_sub_exec_w;
+  logic [10:0] g_sub_rlen_w, g_sub_upc_w;
+  logic  [4:0] g_sub_status_w;
+  logic [15:0] g_sub_type_w;
+  assign g_sub_type_w = g_data_head_r[63:48];
+
+  //! A malformed fixed getter is represented exactly as its standalone
+  //! BAD_ARGUMENTS echo: the record status changes and its supplied command
+  //! data is copied. Wrong-target fixed responses retain the full response
+  //! shape where the standalone command does.
+  always_comb begin : gdi_subcommand_decode
+    g_sub_exec_w   = 1'b0;
+    g_sub_rlen_w   = 11'(g_rec_len_r);
+    g_sub_upc_w    = UPC_NOTIMPL_C;
+    g_sub_status_w = ST_NOT_SUPPORTED_C;
+    unique case (g_rec_cmd_r)
+      OP_GET_CONFIG_C: begin
+        g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd4;
+        g_sub_upc_w = UPC_GCFG_C;
+      end
+      OP_GET_STREAM_FMT_C: begin
+        if (g_rec_len_r < 16'd4) g_sub_status_w = ST_BAD_ARGUMENTS_C;
+        else begin
+          g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd12;
+          g_sub_upc_w = ((g_sub_type_w == DT_STREAM_INPUT_C)
+                         || (g_sub_type_w == DT_STREAM_OUTPUT_C))
+                        ? UPC_GSFMT_C : UPC_TIZ8NS_C;
+        end
+      end
+      OP_GET_STREAM_INFO_C: begin
+        if (g_rec_len_r < 16'd4) g_sub_status_w = ST_BAD_ARGUMENTS_C;
+        else if ((g_sub_type_w != DT_STREAM_INPUT_C)
+                 && (g_sub_type_w != DT_STREAM_OUTPUT_C)) begin
+          g_sub_status_w = ST_NOT_SUPPORTED_C;
+        end else begin
+          g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd56;
+          g_sub_upc_w = UPC_GSTRI_C;
+        end
+      end
+      OP_GET_SAMP_RATE_C: begin
+        if (g_rec_len_r < 16'd4) g_sub_status_w = ST_BAD_ARGUMENTS_C;
+        else begin
+          g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd8;
+          g_sub_upc_w = (g_sub_type_w == DT_AUDIO_UNIT_C)
+                        ? UPC_GSRATE_C : UPC_TIZ4NS_C;
+        end
+      end
+      OP_GET_CLOCK_SRC_C: begin
+        if (g_rec_len_r < 16'd4) g_sub_status_w = ST_BAD_ARGUMENTS_C;
+        else begin
+          g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd8;
+          g_sub_upc_w = (g_sub_type_w == DT_CLOCK_DOMAIN_C)
+                        ? UPC_GCLKS_C : UPC_TIZ4NS_C;
+        end
+      end
+      OP_GET_COUNTERS_C: begin
+        if (g_rec_len_r < 16'd4) g_sub_status_w = ST_BAD_ARGUMENTS_C;
+        else begin
+          g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd136;
+          g_sub_upc_w = ((g_sub_type_w == DT_STREAM_INPUT_C)
+                         || (g_sub_type_w == DT_STREAM_OUTPUT_C)
+                         || (g_sub_type_w == DT_AVB_INTERFACE_C)
+                         || (g_sub_type_w == DT_CLOCK_DOMAIN_C))
+                        ? UPC_GCTRS_C : UPC_GCTRSNS_C;
+        end
+      end
+      default: ;
+    endcase
+    //! info_status is a record field, not a structural delimiter. A command
+    //! must supply SUCCESS, but a bad value leaves the following record
+    //! parseable. IEEE 1722.1-2021 7.4.76.1 says every element is handled as
+    //! an independent command, so contain this error to the record and copy
+    //! its command data in the BAD_ARGUMENTS response.
+    if (g_rec_cmd_status_r != 8'd0) begin
+      g_sub_exec_w   = 1'b0;
+      g_sub_rlen_w   = 11'(g_rec_len_r);
+      g_sub_upc_w    = UPC_NOTIMPL_C;
+      g_sub_status_w = ST_BAD_ARGUMENTS_C;
+    end
+  end
+  //! An ADD/REMOVE_AUDIO_MAPPINGS command can carry at most 63 records:
+  //! IEEE 1722.1-2021 9.2.2.6 caps command control_data_length at 524, and
+  //! Figure 7-71 uses 20 + 8*N octets. Milan v1.2 5.4.1 lifts that limit for
+  //! responses only. Keep a full byte-written copy so validation and commit
+  //! walk the identical record set without rereading or releasing the slot.
+  //! The 256-entry address space matches the µCPU iterator width and leaves
+  //! the port contract independent of the configured RX slot size.
+  (* ram_style = "block" *) logic [63:0] amap_stage_r [0:255];
+  logic [63:0] amap_stage_q_r;
+  logic [63:0] amap_stage_assem_r;
+  logic        amap_stage_ready_r;
+  logic  [7:0] amap_rsp_count_r;
+  logic  [7:0] amap_rx_count_w;
+  logic [10:0] amap_edit_pld_w;
+  logic        amap_stage_ser_w, amap_stage_ser_load_w;
+  logic        amap_stage_edit_load_w, amap_stage_rd_en_w;
+  logic  [7:0] amap_stage_raddr_w;
+
+  //! A malformed command can still carry complete mapping records. Figure
+  //! 7-71 requires the response count to describe the records actually put on
+  //! the wire, never the untrusted command count. A short fixed part yields a
+  //! well-formed eight-byte response body with zero records.
+  assign amap_rx_count_w = (pld_cmd_r >= 11'd8)
+                           ? 8'((pld_cmd_r - 11'd8) >> 3) : 8'd0;
+  assign amap_edit_pld_w = 11'd8 + ({3'd0, amap_rsp_count_r} << 3);
+
   // ---- opcode decode = the dispatch step (see the banner) -----------------
   logic [10:0] upc_w;
   logic        echo_w, short_w, short_ct_w, short_am_w, ctrs_w, amap_w, aem_w;
+  logic        gdi_w, amap_edit_w, amap_remove_w;
   //! a READ_DESCRIPTOR must carry configuration_index + reserved +
   //! descriptor_type + descriptor_index; a shorter one is BAD_ARGUMENTS, never
   //! a locate of whatever zeros happened to be there
@@ -794,6 +995,14 @@ module KL_aecp_engine
                   && (txn_w.opcode == OP_GET_COUNTERS_C) && !short_ct_w;
   assign amap_w = aem_w
                   && (txn_w.opcode == OP_GET_AUDIO_MAP_C) && !short_am_w;
+  assign gdi_w  = aem_w && (txn_w.opcode == OP_GET_DYNAMIC_INFO_C);
+  //! The editing pair is re-dispatched after the payload walk, when the
+  //! descriptor type, record count and exact variable length are registered.
+  //! Keeping it out of this pop-time mux preserves the measured ROM-address
+  //! timing rule used by every other variable-shape command.
+  assign amap_edit_w = aem_w
+                       && ((txn_w.opcode == OP_ADD_AUDIO_MAP_C)
+                           || (txn_w.opcode == OP_REMOVE_AUDIO_MAP_C));
   //! THE GUARD BELONGS ON EVERY ARM, and for a long time it was on only some.
   //! `opcode` is AECPDU @22..@23, which on a VENDOR_UNIQUE message is the first
   //! two bytes of a 48-bit protocol_id. OP_READ_DESCRIPTOR_C is 0x0004, so a
@@ -850,6 +1059,7 @@ module KL_aecp_engine
   //! on the bucket alone let an AV/C command WRITE THE SAMPLING RATE and
   //! answer SUCCESS. Guarding on message_type 0 is the actual question.
   assign aem_w  = (txn_w.protocol == PP_PROTO_AEM) && (txn_w.msg_type == 4'd0);
+  assign amap_remove_w = aem_w && (txn_w.opcode == OP_REMOVE_AUDIO_MAP_C);
   always_comb begin : dispatch_decode
     if (aem_w && (txn_w.opcode == OP_READ_DESCRIPTOR_C) && !short_w) begin
       upc_w  = UPC_RDESC_C;
@@ -951,6 +1161,10 @@ module KL_aecp_engine
                             uns_upc_w = UPC_GAVB_C;    end
       PP_UNS_ASP_C:   begin uns_ct_w = OP_GET_AS_PATH_C;
                             uns_upc_w = UPC_GASP_C;    end
+      PP_UNS_AMAP_C:  begin uns_ct_w = uns_amap_remove_i
+                                         ? OP_REMOVE_AUDIO_MAP_C
+                                         : OP_ADD_AUDIO_MAP_C;
+                            uns_upc_w = UPC_UNSOK_C;   end
       default:        begin uns_ct_w = 16'd0;            uns_upc_w = UPC_NOSEND_C;  end
     endcase
   end
@@ -1048,7 +1262,7 @@ module KL_aecp_engine
   //! register.
   logic ix26_w;
   logic tix_w;
-  assign tix_w = ctrs_r | amap_r | gstri_r | gavb_r
+  assign tix_w = ctrs_r | amap_r | amap_edit_r | gstri_r | gavb_r
                  | gsfmt_r | gsrate_r | gclks_r | setc_r | gctrl_r
                  | strm_r;
   assign ix26_w = tix_w | regun_r | lockc_r | scfg_r;
@@ -1071,7 +1285,8 @@ module KL_aecp_engine
   //! §7.4.7.1 puts `reserved` at @24 and `configuration_index` at @26, so the
   //! value is what the walk already captured into `desc_ix_r` and there is
   //! nothing to justify.
-  assign opd2_w = ssrate_r ? {32'd0, setval_r[63:32]}
+  assign opd2_w = amap_edit_r ? {48'd0, desc_ty_r}
+                : ssrate_r ? {32'd0, setval_r[63:32]}
                 : sclks_r  ? {48'd0, setval_r[63:48]}
                 : sctrl_r  ? {56'd0, setval_r[63:56]}
                 : scfg_r   ? {48'd0, desc_ix_r}
@@ -1194,6 +1409,8 @@ module KL_aecp_engine
       .disp_opd0_i        (opd0_r),
       .disp_opd1_i        (opd1_r),
       .disp_opd2_i        (opd2_r),
+      .disp_batch_i       (gdi_r),
+      .disp_resp_base_i   (10'(g_out_r + 11'd8)),
       .st_req_o           (st_req_w),
       .st_we_o            (st_we_w),
       .st_name_o          (st_name_w),
@@ -1214,10 +1431,10 @@ module KL_aecp_engine
       .gx_data_i          (gx_data_w),
       .lock_held_i        (lock_held_i),
       .lock_ctlr_i        (lock_ctlr_i),
-      .rb_we_o            (rb_we_w),
-      .rb_addr_o          (rb_addr_w),
-      .rb_wdata_o         (rb_wdata_w),
-      .rb_wstrb_o         (rb_wstrb_w),
+      .rb_we_o            (urb_we_w),
+      .rb_addr_o          (urb_addr_w),
+      .rb_wdata_o         (urb_wdata_w),
+      .rb_wstrb_o         (urb_wstrb_w),
       .rb_ready_i         (rb_ready_w),
       .resp_send_o        (resp_send_w),
       .resp_len_o         (resp_len_w),
@@ -1317,6 +1534,43 @@ module KL_aecp_engine
 
   logic [15:0] resp_burst_nc_w, resp_drop_nc_w;
 
+  //! The aggregate iterator writes record headers and copies the command data
+  //! of permitted but unsupported getters. Getter data itself still comes
+  //! from the µCPU. The final one-byte status patch is deliberately allowed
+  //! to revisit the record-header lane after the getter has run; the response
+  //! buffer serializes partial writes and preserves every other byte.
+  always_comb begin : gdi_response_write
+    g_rb_we_w    = 1'b0;
+    g_rb_addr_w  = 10'(g_out_r);
+    g_rb_wdata_w = 32'd0;
+    g_rb_wstrb_w = 4'hF;
+    if (a_st_r == A_GHDR) begin
+      g_rb_we_w = 1'b1;
+      if (g_wr_phase_r == 2'd0) begin
+        g_rb_wdata_w = {5'd0, g_rec_rlen_r, 16'd0};
+      end else begin
+        g_rb_addr_w  = 10'(g_out_r + 11'd4);
+        g_rb_wdata_w = {3'd0, g_rec_exec_r ? 5'd0 : g_rec_status_r,
+                        8'd0, g_rec_cmd_r};
+      end
+    end else if ((a_st_r == A_GCOPY) && g_rd_pending_r) begin
+      g_rb_we_w    = 1'b1;
+      g_rb_addr_w  = 10'(g_out_r + 11'd8 + g_data_ix_r);
+      g_rb_wdata_w = {24'd0, rxs_rd_data_i};
+      g_rb_wstrb_w = 4'h1;
+    end else if (a_st_r == A_GPATCH) begin
+      g_rb_we_w    = 1'b1;
+      g_rb_addr_w  = 10'(g_out_r + 11'd4);
+      g_rb_wdata_w = {24'd0, 3'd0, g_rec_status_r};
+      g_rb_wstrb_w = 4'h1;
+    end
+  end
+
+  assign rb_we_w    = g_rb_we_w ? 1'b1        : urb_we_w;
+  assign rb_addr_w  = g_rb_we_w ? g_rb_addr_w : urb_addr_w;
+  assign rb_wdata_w = g_rb_we_w ? g_rb_wdata_w : urb_wdata_w;
+  assign rb_wstrb_w = g_rb_we_w ? g_rb_wstrb_w : urb_wstrb_w;
+
   KL_aecp_resp_buf #(
       .RESP_BASE_P       (RESP_BASE_P),
       .RESP_BYTES_P      (RESP_BUF_C),
@@ -1391,7 +1645,7 @@ module KL_aecp_engine
   logic gx_alt_w, gsi_any_w, rgy_any_w;
   assign gsi_any_w = gstri_r | gavb_r | gasp_r | gsfmt_r;
   assign rgy_any_w = regun_r | lockc_r | eavl_r;
-  assign gx_alt_w  = amap_r | rgy_any_w | gsi_any_w;
+  assign gx_alt_w  = amap_r | amap_edit_r | rgy_any_w | gsi_any_w;
 
   assign ctr_req_o        = gx_req_w && !gx_alt_w;
   assign ctr_desc_type_o  = cfg_ix_r;
@@ -1438,6 +1692,89 @@ module KL_aecp_engine
   assign amap_sel_o        = gx_sel_w[4] ? 2'd2 : {1'b0, gx_sel_w[0]};
   assign amap_rec_o        = amap_rec_r;
 
+  //! The edit selectors are private to the command-routed gather space:
+  //! 0x20 begin validation, 0x30 begin commit, 0x22 finish, 0x23 abort,
+  //! 0x40 validate one record and 0x50 commit one record. Record phases wait
+  //! one cycle for the synchronous staging RAM read before reaching the
+  //! integrator. External HOLD applies only before phase 1 has accepted the
+  //! commit. After that reservation point, commit records and finish cannot
+  //! time out between live writes.
+  always_comb begin : amap_edit_phase_decode
+    unique case (gx_sel_w)
+      8'h20: amap_edit_phase_o = 3'd0;
+      8'h30: amap_edit_phase_o = 3'd1;
+      8'h22: amap_edit_phase_o = 3'd2;
+      8'h23: amap_edit_phase_o = 3'd3;
+      8'h40: amap_edit_phase_o = 3'd4;
+      8'h50: amap_edit_phase_o = 3'd5;
+      default: amap_edit_phase_o = 3'd3;
+    endcase
+  end
+  assign amap_edit_req_o = gx_req_w && amap_edit_r
+                           && ((amap_edit_phase_o < 3'd4)
+                               || amap_stage_ready_r);
+  assign amap_edit_remove_o     = amap_remove_r;
+  assign amap_edit_desc_type_o  = cfg_ix_r;
+  assign amap_edit_desc_index_o = desc_ix_r;
+  assign amap_edit_count_o      = desc_ty_r;
+  assign amap_edit_rec_o        = amap_rec_r;
+  assign amap_edit_record_o     = amap_stage_q_r;
+  assign amap_edit_value_o      = setval_r;
+
+  //! One syntactic read port is required for Xilinx block-RAM inference. The
+  //! response serializer and the transaction face are mutually exclusive, so
+  //! they share one address mux without changing either consumer's latency.
+  assign amap_stage_ser_w = (amap_uns_r || amap_edit_r) && (a_st_r == A_WR);
+  assign amap_stage_ser_load_w = amap_stage_ser_w
+      && (bidx_r >= 11'(FRAME_HDR_C + 7))
+      && (bidx_r < 11'(FRAME_HDR_C) + pld_r)
+      && (((bidx_r - 11'(FRAME_HDR_C + 7)) & 11'd7) == 0);
+  assign amap_stage_edit_load_w = !amap_stage_ser_w && gx_req_w && amap_edit_r
+                                  && (amap_edit_phase_o >= 3'd4)
+                                  && !amap_stage_ready_r;
+  assign amap_stage_rd_en_w = amap_stage_ser_load_w
+                              || amap_stage_edit_load_w;
+  assign amap_stage_raddr_w = amap_stage_ser_w
+      ? 8'((bidx_r - 11'(FRAME_HDR_C + 7)) >> 3) : amap_rec_r;
+
+  always_ff @(posedge clk_i) begin : amap_stage_read
+    if (!rst_n) begin
+      amap_stage_q_r     <= 64'd0;
+      amap_stage_ready_r <= 1'b0;
+    end else begin
+      if (amap_stage_ser_w) begin
+        amap_stage_ready_r <= 1'b0;
+      end else if (!gx_req_w || !amap_edit_r
+                   || (amap_edit_phase_o < 3'd4)) begin
+        amap_stage_ready_r <= 1'b0;
+      end else if (!amap_stage_ready_r) begin
+        amap_stage_ready_r <= 1'b1;
+      end
+      if (amap_stage_rd_en_w) begin
+        amap_stage_q_r <= amap_stage_r[amap_stage_raddr_w];
+      end
+    end
+  end
+
+  //! RX arrives one byte per cycle. Assemble a complete Figure 7-71 record in
+  //! flops, then perform one 64-bit RAM write. A per-byte RAM write enable
+  //! maps this 256x64 store into eight block memories under Yosys/Xilinx;
+  //! the full-word template maps it into one while preserving wire order.
+  always_ff @(posedge clk_i) begin : amap_stage_write
+    if (!rst_n) begin
+      amap_stage_assem_r <= 64'd0;
+    end else if (a_st_r == A_IDLE) begin
+      amap_stage_assem_r <= 64'd0;
+    end else if ((a_st_r == A_PLD) && amap_edit_r
+                 && (walk_r >= 11'd11)) begin
+      amap_stage_assem_r <= {amap_stage_assem_r[55:0], rxs_rd_data_i};
+      if (((walk_r - 11'd11) & 11'd7) == 11'd7) begin
+        amap_stage_r[8'((walk_r - 11'd11) >> 3)]
+          <= {amap_stage_assem_r[55:0], rxs_rd_data_i};
+      end
+    end
+  end
+
   //! bounded wait (see the banner), shared by both faces: expiry unsticks the
   //! µCPU with a zero and marks the response void, because by then the
   //! counters_valid word - or the mapping count - is already in the buffer,
@@ -1445,11 +1782,17 @@ module KL_aecp_engine
   localparam int unsigned CTO_W_C = $clog2(MEM_TIMEOUT_CYC_P + 1);
   logic [CTO_W_C-1:0] gxf_tmo_r;
   logic               gxf_fail_r;
-  logic               ctr_hold_w, amap_hold_w, rgy_hold_w;
+  logic               ctr_hold_w, amap_hold_w, amap_edit_hold_w, rgy_hold_w;
   logic gsi_hold_w;
   assign ctr_hold_w  = gx_req_w && !gx_alt_w
                        && ctr_wait_i  && !gxf_fail_r;
   assign amap_hold_w = gx_req_w &&  amap_r && amap_wait_i && !gxf_fail_r;
+  assign amap_edit_hold_w = gx_req_w && amap_edit_r && !gxf_fail_r
+                            && (((amap_edit_phase_o >= 3'd4)
+                                 && !amap_stage_ready_r)
+                                || (amap_edit_req_o && amap_edit_wait_i
+                                    && (amap_edit_phase_o != 3'd2)
+                                    && (amap_edit_phase_o != 3'd5)));
   assign rgy_hold_w  = gx_req_w && (regun_r || lockc_r)
                        && rgy_wait_i && !gxf_fail_r;
   assign gsi_hold_w  = gx_req_w &&  gsi_any_w && gsi_wait_i && !gxf_fail_r;
@@ -1474,10 +1817,12 @@ module KL_aecp_engine
       gxr_data_r  <= 64'd0;
     end else begin
       gxr_valid_r <= gx_req_w && !gxr_valid_r
-                     && !(ctr_hold_w || amap_hold_w || rgy_hold_w
+                     && !(ctr_hold_w || amap_hold_w || amap_edit_hold_w
+                          || rgy_hold_w
                           || gsi_hold_w);
       gxr_data_r  <= gxf_fail_r           ? 64'd0
                    : amap_r               ? amap_data_i
+                   : amap_edit_r          ? amap_edit_data_i
                    : rgy_any_w            ? rgy_data_i
                    : gsi_any_w            ? gsi_data_i
                                           : {32'd0, ctr_data_i};
@@ -1494,7 +1839,8 @@ module KL_aecp_engine
     end else if (a_st_r == A_IDLE) begin
       gxf_tmo_r  <= '0;
       gxf_fail_r <= 1'b0;
-    end else if (ctr_hold_w || amap_hold_w || rgy_hold_w || gsi_hold_w) begin
+    end else if (ctr_hold_w || amap_hold_w || amap_edit_hold_w
+                 || rgy_hold_w || gsi_hold_w) begin
       if (gxf_tmo_r == CTO_W_C'(MEM_TIMEOUT_CYC_P)) gxf_fail_r <= 1'b1;
       else                                          gxf_tmo_r  <= gxf_tmo_r + CTO_W_C'(1);
     end else begin
@@ -1512,7 +1858,10 @@ module KL_aecp_engine
   always_ff @(posedge clk_i) begin : amap_record_ordinal
     if (!rst_n)                 amap_rec_r <= 8'd0;
     else if (a_st_r == A_IDLE)  amap_rec_r <= 8'd0;
+    else if (amap_edit_req_o && gx_valid_w
+             && (amap_edit_phase_o <= 3'd1)) amap_rec_r <= 8'd0;
     else if (((amap_req_o && gx_sel_w[4])
+              || (amap_edit_req_o && (amap_edit_phase_o >= 3'd4))
               || (gsi_req_o && gx_sel_w[3])) && gx_valid_w
              && (amap_rec_r != 8'hFF)) amap_rec_r <= amap_rec_r + 8'd1;
   end
@@ -1612,19 +1961,41 @@ module KL_aecp_engine
                  && (bidx_r < (11'(FRAME_HDR_C) + pld_r));
 
   logic [7:0] frame_byte_w;
+  logic [10:0] amap_uns_pidx_w;
+  logic [7:0] amap_uns_byte_w;
+  logic [15:0] amap_emit_count_w;
+  assign amap_emit_count_w = amap_uns_r ? desc_ty_r
+                                        : {8'd0, amap_rsp_count_r};
+  always_comb begin : amap_uns_payload
+    amap_uns_pidx_w = bidx_r - 11'(FRAME_HDR_C);
+    unique case (amap_uns_pidx_w)
+      11'd0: amap_uns_byte_w = cfg_ix_r[15:8];
+      11'd1: amap_uns_byte_w = cfg_ix_r[7:0];
+      11'd2: amap_uns_byte_w = desc_ix_r[15:8];
+      11'd3: amap_uns_byte_w = desc_ix_r[7:0];
+      11'd4: amap_uns_byte_w = amap_emit_count_w[15:8];
+      11'd5: amap_uns_byte_w = amap_emit_count_w[7:0];
+      11'd6, 11'd7: amap_uns_byte_w = 8'd0;
+      default: amap_uns_byte_w = amap_stage_q_r[
+          63 - (8 * ((amap_uns_pidx_w - 11'd8) & 11'd7)) -: 8];
+    endcase
+  end
   always_comb begin : frame_byte
     if (bidx_r < 11'(FRAME_HDR_C))  frame_byte_w = hdr_byte_w;
-    else if (pay_w)                 frame_byte_w = echo_r ? rxs_rd_data_i
-                                                          : rsp_rd_data_w;
+    else if (pay_w)                 frame_byte_w = (amap_uns_r || amap_edit_r)
+                                      ? amap_uns_byte_w
+                                      : echo_r ? rxs_rd_data_i
+                                               : rsp_rd_data_w;
     else                            frame_byte_w = 8'd0;   // pad
   end
 
   //! the builder advances only when the byte it is about to write EXISTS: the
   //! response buffer's read burst paces itself against main memory
   logic byte_ok_w;
-  assign byte_ok_w = !pay_w || echo_r || rsp_rd_valid_w;
+  assign byte_ok_w = !pay_w || amap_uns_r || amap_edit_r || echo_r
+                     || rsp_rd_valid_w;
   assign rsp_rd_take_w = (a_st_r == A_WR) && pay_w && !echo_r
-                         && rsp_rd_valid_w;
+                         && !amap_edit_r && rsp_rd_valid_w;
 
   // ---- RX payload walk -----------------------------------------------------
   //! A_PLD: the walk starts at AECPDU @22 (= slot byte 22) so bytes @22..@23
@@ -1634,22 +2005,32 @@ module KL_aecp_engine
   logic [10:0] pref_ix_w;
   logic        pref_en_w;
   assign pref_ix_w = bidx_r + 11'd1 - 11'(FRAME_HDR_C);
-  assign pref_en_w = (a_st_r == A_WR) && echo_r
+  assign pref_en_w = (a_st_r == A_WR) && echo_r && !amap_uns_r
+                     && !amap_edit_r
                      && ((bidx_r + 11'd1) >= 11'(FRAME_HDR_C))
                      && ((bidx_r + 11'd1) < (11'(FRAME_HDR_C) + pld_r));
 
   assign rxs_rd_slot_o = cmd_r.rx_slot[RXS_W_C-1:0];
-  assign rxs_rd_addr_o = (a_st_r == A_WR)
-                         ? RXA_W_C'(32'd24 + 32'(pref_ix_w))
-                         : RXA_W_C'(32'd22 + 32'(walk_r));
+  assign rxs_rd_addr_o = (a_st_r inside {A_GSCAN, A_GLOAD, A_GCOPY})
+                         ? RXA_W_C'(32'd24 + 32'(g_rd_pos_r))
+                         : (a_st_r == A_WR)
+                           ? RXA_W_C'(32'd24 + 32'(pref_ix_w))
+                           : RXA_W_C'(32'd22 + 32'(walk_r));
   assign rxs_rd_en_o   = ((a_st_r == A_PLD) && (walk_r < (pld_r + 11'd2)))
-                         || pref_en_w;
+                         || pref_en_w
+                         || ((a_st_r == A_GSCAN) && g_scan_started_r
+                             && !g_rd_pending_r && (g_rd_pos_r < g_total_r))
+                         || ((a_st_r == A_GLOAD) && !g_rd_pending_r
+                             && (g_rd_pos_r < g_total_r))
+                         || ((a_st_r == A_GCOPY) && !g_rd_pending_r
+                             && (g_data_ix_r < 11'(g_rec_len_r)));
 
   //! a command is only taken once the PREVIOUS response has let go of main
   //! memory: `open_i` re-arms the buffer, and re-arming it under a burst that
   //! is still in flight would leave the bridge holding a beat nobody sinks.
   //! The buffer's watchdog bounds this wait, so it can never become a hang.
-  assign txn_ready_o     = (a_st_r == A_IDLE) && !rsp_busy_w;
+  assign txn_ready_o     = (a_st_r == A_IDLE) && !rsp_busy_w
+                           && !amap_notify_busy_i;
   assign txs_alloc_req_o = (a_st_r == A_ALLOC);
   assign txs_oversize_o  = (frame_len_r > 11'(TX_STD_BYTES_P));
   assign txs_wr_slot_o   = tx_slot_r;
@@ -1687,24 +2068,30 @@ module KL_aecp_engine
   //! echoed payload never entered the buffer, so it is sealed with length 0
   //! and costs no read burst at all.
   assign rsp_open_w     = (a_st_r == A_IDLE) && !rsp_busy_w
-                          && ((txn_valid_i && !drop_w)
-                              || (!txn_valid_i && uns_valid_i));
+                          && ((txn_valid_i && !drop_w
+                               && !amap_notify_busy_i)
+                              || (uns_valid_i
+                                  && (!txn_valid_i
+                                      || amap_notify_busy_i)));
   //! only a µprogram that actually SENT a response is worth sealing: a
   //! retirement without SEND_RESPONSE emits no frame, so it must not leave a
   //! read burst in flight for the next command's `open_i` to trample
-  assign rsp_seal_w     = (a_st_r == A_RUN) && ucpu_done_w
-                          && (sent_r || resp_send_w);
+  assign rsp_seal_w     = (((a_st_r == A_RUN) && !gdi_r && ucpu_done_w
+                            && (sent_r || resp_send_w))
+                           || (a_st_r == A_GDONE));
   //! ... and a response a gather face already voided has no payload to
   //! read back either: sealing it with its INTENDED length would start a
-  //! 136-byte read burst that the builder — now emitting a bare 60-byte
-  //! ENTITY_MISBEHAVING frame — never consumes, and the buffer would sit in
-  //! its read state until its own watchdog fired, holding the next command out
-  assign rsp_seal_len_w = (echo_r || gxf_fail_r) ? 11'd0 : pld_r;
+  //! read burst that the register-only error builder never consumes. Mapping
+  //! edits retain their staged Figure 7-71 body, but that body also bypasses
+  //! the response buffer entirely.
+  assign rsp_seal_len_w = (echo_r || amap_edit_r || gxf_fail_r)
+                          ? 11'd0 : pld_r;
 
-  //! the response memory failed under a frame that is already half written:
-  //! rebuild it in place as a bare ENTITY_MISBEHAVING answer (see the banner)
+  //! A response source failed under a frame that is already partly written.
+  //! Rebuild it from registers; mapping edits also retain their staged body.
   logic rsp_fail_w;
-  assign rsp_fail_w = (rsp_err_w || gxf_fail_r) && !err_mode_r && !echo_r;
+  assign rsp_fail_w = (rsp_err_w || gxf_fail_r) && !err_mode_r
+                      && (!echo_r || amap_edit_r);
 
   always_ff @(posedge clk_i) begin : command_machine
     if (!rst_n) begin
@@ -1716,11 +2103,15 @@ module KL_aecp_engine
       desc_ix_r    <= 16'd0;
       pld_cmd_r    <= 11'd0;
       pld_r        <= 11'd0;
+      amap_rsp_count_r <= 8'd0;
       walk_r       <= 11'd0;
       pid_lo_r     <= 2'b00;
       echo_r       <= 1'b0;
       ctrs_r       <= 1'b0;
       amap_r       <= 1'b0;
+      amap_edit_r  <= 1'b0;
+      amap_remove_r <= 1'b0;
+      amap_uns_r   <= 1'b0;
       regun_r      <= 1'b0;
       acq_r        <= 1'b0;
       lockc_r      <= 1'b0;
@@ -1741,6 +2132,7 @@ module KL_aecp_engine
       stop_r       <= 1'b0;
       strm_r       <= 1'b0;
       setc_r       <= 1'b0;
+      gdi_r        <= 1'b0;
       setval_r     <= 64'd0;
       opd2_r       <= 64'd0;
       lock_ent_ok_r <= 1'b0;
@@ -1759,6 +2151,28 @@ module KL_aecp_engine
       resp_cnt_r   <= 16'd0;
       drop_cnt_r   <= 16'd0;
       rerr_cnt_r   <= 16'd0;
+      g_scan_started_r <= 1'b0;
+      g_rd_pending_r   <= 1'b0;
+      g_load_data_r    <= 1'b0;
+      g_hdr_ix_r       <= 3'd0;
+      g_wr_phase_r     <= 2'd0;
+      g_total_r        <= 11'd0;
+      g_rd_pos_r       <= 11'd0;
+      g_data_ix_r      <= 11'd0;
+      g_data_start_r   <= 11'd0;
+      g_next_pos_r     <= 11'd0;
+      g_out_r          <= 11'd12;
+      g_rec_rlen_r     <= 11'd0;
+      g_sub_end_r      <= 11'd0;
+      g_scan_len_r     <= 16'd0;
+      g_scan_cmd_hi_r  <= 8'd0;
+      g_rec_len_r      <= 16'd0;
+      g_rec_cmd_r      <= 16'd0;
+      g_rec_cmd_status_r <= 8'd0;
+      g_data_head_r    <= 64'd0;
+      g_rec_exec_r     <= 1'b0;
+      g_rec_status_r   <= ST_SUCCESS_C;
+      g_shape_fault_r  <= 1'b0;
     end else begin
       unique case (a_st_r)
         A_IDLE: begin
@@ -1767,7 +2181,7 @@ module KL_aecp_engine
           //! the previous response's memory burst still held the buffer
           //! would process the un-popped head TWICE and double-free its RX
           //! slot. The same guard arms the unsolicited path.
-          if (txn_valid_i && !rsp_busy_w) begin
+          if (txn_valid_i && !rsp_busy_w && !amap_notify_busy_i) begin
             cmd_r <= txn_w;
             if (drop_w) begin
               if (drop_cnt_r != 16'hFFFF) drop_cnt_r <= drop_cnt_r + 16'd1;
@@ -1778,6 +2192,9 @@ module KL_aecp_engine
               echo_r     <= echo_w;
               ctrs_r     <= ctrs_w;
               amap_r     <= amap_w;
+              amap_edit_r <= amap_edit_w;
+              amap_remove_r <= amap_remove_w;
+              amap_uns_r <= 1'b0;
               regun_r    <= regun_w;
               acq_r      <= acq_w;
               lockc_r    <= lockc_w;
@@ -1798,6 +2215,7 @@ module KL_aecp_engine
               stop_r     <= stop_w;
               strm_r     <= strm_w;
               setc_r     <= setc_w;
+              gdi_r      <= gdi_w;
               setval_r   <= 64'd0;
               lock_ent_ok_r <= 1'b1;
               uns_r      <= 1'b0;
@@ -1809,14 +2227,30 @@ module KL_aecp_engine
                                                              : pld_cap_w;
               pld_r     <= (txn_w.rx_slot == PP_SLOT_NULL_C) ? 11'd0
                                                              : pld_cap_w;
+              amap_rsp_count_r <= 8'd0;
               cfg_ix_r  <= 16'd0;
               desc_ty_r <= 16'd0;
               desc_ix_r <= 16'd0;
-              raw_ct_r  <= 16'd0;
+              raw_ct_r  <= gdi_w ? txn_w.opcode : 16'd0;
               walk_r    <= 11'd0;
               pid_lo_r  <= 2'b00;
               sent_r    <= 1'b0;
-              a_st_r    <= (txn_w.rx_slot == PP_SLOT_NULL_C) ? A_DISP : A_PLD;
+              g_scan_started_r <= 1'b0;
+              g_rd_pending_r   <= 1'b0;
+              g_load_data_r    <= 1'b0;
+              g_hdr_ix_r       <= 3'd0;
+              g_wr_phase_r     <= 2'd0;
+              g_total_r        <= 11'd0;
+              g_rd_pos_r       <= 11'd0;
+              g_data_ix_r      <= 11'd0;
+              g_out_r          <= 11'd12;
+              g_rec_rlen_r     <= 11'd0;
+              g_sub_end_r      <= 11'd0;
+              g_rec_cmd_status_r <= 8'd0;
+              g_shape_fault_r  <= 1'b0;
+              g_data_head_r    <= 64'd0;
+              a_st_r    <= gdi_w ? A_GSCAN
+                          : (txn_w.rx_slot == PP_SLOT_NULL_C) ? A_DISP : A_PLD;
             end
           end else if (uns_valid_i && !rsp_busy_w) begin
             //! the unsolicited job: a phantom 03 §4 record with no RX slot
@@ -1837,9 +2271,12 @@ module KL_aecp_engine
             cmd_r.opcode         <= uns_ct_w;
             cmd_r.rx_slot        <= PP_SLOT_NULL_C;
             upc_r      <= uns_upc_w;
-            echo_r     <= 1'b0;
+            echo_r     <= (uns_kind_i == PP_UNS_AMAP_C);
             ctrs_r     <= 1'b0;
             amap_r     <= 1'b0;
+            amap_edit_r <= 1'b0;
+            amap_remove_r <= uns_amap_remove_i;
+            amap_uns_r <= (uns_kind_i == PP_UNS_AMAP_C);
             //! the LOCK notification's microprogram reads the holder off the
             //! rgy face, so the job routes the gather bus there; a state
             //! read runs no op in KL_aecp_notify
@@ -1867,21 +2304,296 @@ module KL_aecp_engine
             stop_r     <= 1'b0;
             strm_r     <= 1'b0;
             setc_r     <= 1'b0;
+            gdi_r      <= 1'b0;
+            g_shape_fault_r <= 1'b0;
             lock_ent_ok_r <= 1'b1;
             uns_r      <= 1'b1;
             err_mode_r <= 1'b0;
-            pld_cmd_r  <= 11'd0;
-            pld_r      <= 11'd0;
+            pld_cmd_r  <= (uns_kind_i == PP_UNS_AMAP_C)
+                          ? 11'd8 + (11'(uns_amap_count_i) << 3) : 11'd0;
+            pld_r      <= (uns_kind_i == PP_UNS_AMAP_C)
+                          ? 11'd8 + (11'(uns_amap_count_i) << 3) : 11'd0;
+            amap_rsp_count_r <= 8'd0;
             cfg_ix_r   <= (uns_kind_i == PP_UNS_ASP_C) ? uns_desc_index_i
                                                         : uns_desc_type_i;
             desc_ix_r  <= uns_desc_index_i;
-            desc_ty_r  <= 16'd0;
+            desc_ty_r  <= (uns_kind_i == PP_UNS_AMAP_C)
+                          ? uns_amap_count_i : 16'd0;
             raw_ct_r   <= uns_ct_w;
             walk_r     <= 11'd0;
             pid_lo_r   <= 2'b00;
             sent_r     <= 1'b0;
             a_st_r     <= A_DISP;
           end
+        end
+
+        // ---- GET_DYNAMIC_INFO pass 1: validate every record -------------
+        A_GSCAN: begin
+          if (!g_scan_started_r) begin
+            //! IEEE 1722.1-2021 9.2.2.6 caps an AEM command cdl at 524.
+            //! Milan 5.4.1 removes that ceiling only for responses. Refuse
+            //! an oversized command before its record lengths can influence
+            //! the aggregate response length or expose unwritten buffer RAM.
+            if (cmd_r.cdl > 11'(ucpu_pkg::RESP_CAP_C)) begin
+              upc_r   <= UPC_BADARG_C;
+              echo_r  <= 1'b1;
+              gdi_r   <= 1'b0;
+              a_st_r  <= A_DISP;
+            end else begin
+              g_scan_started_r <= 1'b1;
+              g_total_r        <= pld_trim_w;
+              pld_r            <= pld_trim_w;
+              pld_cmd_r        <= pld_trim_w;
+              g_rd_pos_r       <= 11'd0;
+              g_hdr_ix_r       <= 3'd0;
+              g_rd_pending_r   <= 1'b0;
+            end
+          end else if (!g_rd_pending_r) begin
+            if (g_rd_pos_r >= g_total_r) begin
+              if (g_hdr_ix_r != 3'd0) begin
+                upc_r   <= UPC_BADARG_C;
+                echo_r  <= 1'b1;
+                gdi_r   <= 1'b0;
+                a_st_r  <= A_DISP;
+              end else if (g_total_r == 11'd0) begin
+                pld_r   <= 11'd0;
+                status_r <= ST_SUCCESS_C;
+                a_st_r  <= A_GDONE;
+              end else begin
+                //! The response starts with no dynamic_info records. Its
+                //! length is owned by successful appends, never by the
+                //! command payload retained for the validation pass.
+                pld_r           <= 11'd0;
+                g_rd_pos_r     <= 11'd0;
+                g_hdr_ix_r     <= 3'd0;
+                g_load_data_r  <= 1'b0;
+                g_data_head_r  <= 64'd0;
+                a_st_r         <= A_GLOAD;
+              end
+            end else if ((g_hdr_ix_r == 3'd0)
+                         && ((g_total_r - g_rd_pos_r) < 11'd8)) begin
+              upc_r   <= UPC_BADARG_C;
+              echo_r  <= 1'b1;
+              gdi_r   <= 1'b0;
+              a_st_r  <= A_DISP;
+            end else begin
+              g_rd_pending_r <= 1'b1;
+            end
+          end else begin
+            g_rd_pending_r <= 1'b0;
+            unique case (g_hdr_ix_r)
+              3'd0: begin
+                g_scan_len_r[15:8] <= rxs_rd_data_i;
+                g_hdr_ix_r <= 3'd1;
+                g_rd_pos_r <= g_rd_pos_r + 11'd1;
+              end
+              3'd1: begin
+                g_scan_len_r[7:0] <= rxs_rd_data_i;
+                g_hdr_ix_r <= 3'd2;
+                g_rd_pos_r <= g_rd_pos_r + 11'd1;
+              end
+              3'd2, 3'd3, 3'd5: begin
+                g_hdr_ix_r <= g_hdr_ix_r + 3'd1;
+                g_rd_pos_r <= g_rd_pos_r + 11'd1;
+              end
+              3'd4: begin
+                //! SUCCESS is the required command value, but this byte does
+                //! not affect record boundaries or whitelist membership. It
+                //! is judged independently during pass 2.
+                g_hdr_ix_r <= 3'd5;
+                g_rd_pos_r <= g_rd_pos_r + 11'd1;
+              end
+              3'd6: begin
+                g_scan_cmd_hi_r <= rxs_rd_data_i;
+                g_hdr_ix_r <= 3'd7;
+                g_rd_pos_r <= g_rd_pos_r + 11'd1;
+              end
+              default: begin
+                if (!gdi_allowed({g_scan_cmd_hi_r, rxs_rd_data_i})
+                    || ((17'(g_rd_pos_r) + 17'd1
+                         + 17'(g_scan_len_r)) > 17'(g_total_r))) begin
+                  upc_r   <= UPC_BADARG_C;
+                  echo_r  <= 1'b1;
+                  gdi_r   <= 1'b0;
+                  a_st_r  <= A_DISP;
+                end else begin
+                  g_rd_pos_r <= g_rd_pos_r + 11'd1 + 11'(g_scan_len_r);
+                  g_hdr_ix_r <= 3'd0;
+                end
+              end
+            endcase
+          end
+        end
+
+        // ---- GET_DYNAMIC_INFO pass 2: load one complete record ----------
+        A_GLOAD: begin
+          if (!g_rd_pending_r) begin
+            g_rd_pending_r <= 1'b1;
+          end else begin
+            g_rd_pending_r <= 1'b0;
+            if (!g_load_data_r) begin
+              unique case (g_hdr_ix_r)
+                3'd0: g_rec_len_r[15:8] <= rxs_rd_data_i;
+                3'd1: g_rec_len_r[7:0]  <= rxs_rd_data_i;
+                3'd4: g_rec_cmd_status_r <= rxs_rd_data_i;
+                3'd6: g_rec_cmd_r[15:8] <= rxs_rd_data_i;
+                3'd7: begin
+                  g_rec_cmd_r[7:0] <= rxs_rd_data_i;
+                  g_data_start_r   <= g_rd_pos_r + 11'd1;
+                  g_next_pos_r     <= g_rd_pos_r + 11'd1
+                                      + 11'(g_rec_len_r);
+                  g_data_ix_r      <= 11'd0;
+                  g_data_head_r    <= 64'd0;
+                  g_load_data_r    <= (g_rec_len_r != 16'd0);
+                  if (g_rec_len_r == 16'd0) a_st_r <= A_GDEC;
+                end
+                default: ;
+              endcase
+              g_rd_pos_r <= g_rd_pos_r + 11'd1;
+              if (g_hdr_ix_r != 3'd7) g_hdr_ix_r <= g_hdr_ix_r + 3'd1;
+            end else begin
+              unique case (g_data_ix_r[2:0])
+                3'd0: if (g_data_ix_r < 11'd8)
+                        g_data_head_r[63:56] <= rxs_rd_data_i;
+                3'd1: if (g_data_ix_r < 11'd8)
+                        g_data_head_r[55:48] <= rxs_rd_data_i;
+                3'd2: if (g_data_ix_r < 11'd8)
+                        g_data_head_r[47:40] <= rxs_rd_data_i;
+                3'd3: if (g_data_ix_r < 11'd8)
+                        g_data_head_r[39:32] <= rxs_rd_data_i;
+                3'd4: if (g_data_ix_r < 11'd8)
+                        g_data_head_r[31:24] <= rxs_rd_data_i;
+                3'd5: if (g_data_ix_r < 11'd8)
+                        g_data_head_r[23:16] <= rxs_rd_data_i;
+                3'd6: if (g_data_ix_r < 11'd8)
+                        g_data_head_r[15:8] <= rxs_rd_data_i;
+                default: if (g_data_ix_r < 11'd8)
+                           g_data_head_r[7:0] <= rxs_rd_data_i;
+              endcase
+              g_rd_pos_r  <= g_rd_pos_r + 11'd1;
+              g_data_ix_r <= g_data_ix_r + 11'd1;
+              if ((g_data_ix_r + 11'd1) >= 11'(g_rec_len_r)) begin
+                g_load_data_r <= 1'b0;
+                a_st_r        <= A_GDEC;
+              end
+            end
+          end
+        end
+
+        // ---- decide response shape, including silent overflow skip -------
+        A_GDEC: begin
+          if ((g_out_r + 11'd8 + g_sub_rlen_w)
+              > 11'(ucpu_pkg::RESP_CAP_C)) begin
+            g_rd_pos_r      <= g_next_pos_r;
+            g_hdr_ix_r      <= 3'd0;
+            g_load_data_r   <= 1'b0;
+            g_data_head_r   <= 64'd0;
+            g_rd_pending_r  <= 1'b0;
+            a_st_r          <= (g_next_pos_r >= g_total_r) ? A_GDONE : A_GLOAD;
+          end else begin
+            g_rec_exec_r   <= g_sub_exec_w;
+            g_rec_rlen_r   <= g_sub_rlen_w;
+            g_rec_status_r <= g_sub_status_w;
+            g_wr_phase_r   <= 2'd0;
+            upc_r          <= g_sub_upc_w;
+            cfg_ix_r       <= g_data_head_r[63:48];
+            desc_ix_r      <= g_data_head_r[47:32];
+            desc_ty_r      <= 16'd0;
+            ctrs_r         <= g_sub_exec_w && (g_rec_cmd_r == OP_GET_COUNTERS_C);
+            amap_r         <= 1'b0;
+            regun_r        <= 1'b0;
+            acq_r          <= 1'b0;
+            lockc_r        <= 1'b0;
+            gstri_r        <= g_sub_exec_w
+                              && (g_rec_cmd_r == OP_GET_STREAM_INFO_C);
+            gavb_r         <= 1'b0;
+            gasp_r         <= 1'b0;
+            eavl_r         <= 1'b0;
+            gcfg_r         <= g_sub_exec_w && (g_rec_cmd_r == OP_GET_CONFIG_C);
+            gsfmt_r        <= g_sub_exec_w
+                              && (g_rec_cmd_r == OP_GET_STREAM_FMT_C);
+            gsrate_r       <= g_sub_exec_w
+                              && (g_rec_cmd_r == OP_GET_SAMP_RATE_C);
+            gclks_r        <= g_sub_exec_w
+                              && (g_rec_cmd_r == OP_GET_CLOCK_SRC_C);
+            ssrate_r       <= 1'b0;
+            sclks_r        <= 1'b0;
+            gctrl_r        <= 1'b0;
+            sctrl_r        <= 1'b0;
+            scfg_r         <= 1'b0;
+            setc_r         <= 1'b0;
+            echo_r         <= 1'b0;
+            a_st_r         <= A_GHDR;
+          end
+        end
+
+        // ---- emit the record header before its command-specific data -----
+        A_GHDR: begin
+          if (rb_ready_w) begin
+            if (g_wr_phase_r == 2'd0) begin
+              g_wr_phase_r <= 2'd1;
+            end else begin
+              g_wr_phase_r <= 2'd0;
+              if (g_rec_exec_r) begin
+                a_st_r <= A_DISP;
+              end else if (g_rec_len_r != 16'd0) begin
+                g_rd_pos_r      <= g_data_start_r;
+                g_data_ix_r     <= 11'd0;
+                g_rd_pending_r  <= 1'b0;
+                a_st_r          <= A_GCOPY;
+              end else begin
+                g_out_r <= g_out_r + 11'd8 + g_rec_rlen_r;
+                pld_r   <= g_out_r + g_rec_rlen_r - 11'd4;
+                g_rd_pos_r     <= g_next_pos_r;
+                g_hdr_ix_r     <= 3'd0;
+                g_data_head_r  <= 64'd0;
+                a_st_r <= (g_next_pos_r >= g_total_r) ? A_GDONE : A_GLOAD;
+              end
+            end
+          end
+        end
+
+        // ---- copy legal but unsupported command data unchanged -----------
+        A_GCOPY: begin
+          if (!g_rd_pending_r) begin
+            g_rd_pending_r <= 1'b1;
+          end else if (rb_ready_w) begin
+            g_rd_pending_r <= 1'b0;
+            g_rd_pos_r     <= g_rd_pos_r + 11'd1;
+            g_data_ix_r    <= g_data_ix_r + 11'd1;
+            if ((g_data_ix_r + 11'd1) >= 11'(g_rec_len_r)) begin
+              g_out_r <= g_out_r + 11'd8 + g_rec_rlen_r;
+              pld_r   <= g_out_r + g_rec_rlen_r - 11'd4;
+              g_rd_pos_r     <= g_next_pos_r;
+              g_hdr_ix_r     <= 3'd0;
+              g_data_head_r  <= 64'd0;
+              a_st_r <= (g_next_pos_r >= g_total_r) ? A_GDONE : A_GLOAD;
+            end
+          end
+        end
+
+        // ---- patch the status returned by the ordinary getter ------------
+        A_GPATCH: begin
+          if (rb_ready_w) begin
+            g_out_r <= g_sub_end_r;
+            pld_r   <= g_sub_end_r - 11'd12;
+            g_rd_pos_r     <= g_next_pos_r;
+            g_hdr_ix_r     <= 3'd0;
+            g_data_head_r  <= 64'd0;
+            g_rd_pending_r <= 1'b0;
+            a_st_r <= (g_next_pos_r >= g_total_r) ? A_GDONE : A_GLOAD;
+          end
+        end
+
+        // ---- one aggregate response after every record has retired -------
+        A_GDONE: begin
+          status_r    <= g_shape_fault_r ? ST_ENTITY_MISBEHAVING_C
+                                         : ST_SUCCESS_C;
+          echo_r      <= 1'b0;
+          sent_r      <= 1'b1;
+          bidx_r      <= 11'd0;
+          frame_len_r <= pad_len_w;
+          a_st_r      <= A_ALLOC;
         end
 
         // ---- copy the command payload out of the RX slot -----------------
@@ -1927,6 +2639,31 @@ module KL_aecp_engine
             end else if (amap_r && (cfg_ix_r != DT_STREAM_PORT_IN_C)) begin
               upc_r  <= UPC_NOTIMPL_C;
               echo_r <= 1'b1;
+            end
+            //! ADD/REMOVE_AUDIO_MAPPINGS has a variable body. The record
+            //! count at @28 is authoritative only when cdl describes exactly
+            //! that many 8-byte records and the committed RX slot contains
+            //! the whole declared payload. This gate runs after the payload
+            //! walk so a truncated command can never stage stale slot bytes.
+            //! The two Milan Stream Port types are the implemented scope;
+            //! every other existing descriptor type is NOT_SUPPORTED.
+            if (amap_edit_r) begin
+              amap_rsp_count_r <= amap_rx_count_w;
+              if (({8'd0, cmd_r.cdl}
+                   != (19'd20 + ({3'd0, desc_ty_r} << 3)))
+                  || (cmd_r.cdl < 11'd20)
+                  || (cmd_r.cdl > 11'd524)
+                  || (pld_cmd_r != (cmd_r.cdl - 11'd12))) begin
+                upc_r  <= UPC_BADARG_C;
+                echo_r <= 1'b1;
+              end else if ((cfg_ix_r != DT_STREAM_PORT_IN_C)
+                           && (cfg_ix_r != DT_STREAM_PORT_OUT_C)) begin
+                upc_r  <= UPC_NSUPPE_C;
+                echo_r <= 1'b1;
+              end else begin
+                upc_r  <= amap_remove_r ? UPC_AMREMOVE_C : UPC_AMADD_C;
+                echo_r <= 1'b1;
+              end
             end
             //! ...and the registration pair re-dispatches HERE, off its
             //! registered discriminator - the pop decode left it on the
@@ -2210,6 +2947,7 @@ module KL_aecp_engine
                 if (lockc_r && (rxs_rd_data_i != 8'd0)) lock_ent_ok_r <= 1'b0;
               default: ;
             endcase
+
           end
         end
 
@@ -2231,28 +2969,51 @@ module KL_aecp_engine
 
         A_RUN: begin
           if (resp_send_w) begin
-            sent_r   <= 1'b1;
-            status_r <= resp_status_w;
-            //! the µCPU owns the payload for a command it really answers; an
-            //! echoed one keeps the command's own length (§9.3.5.3.3)
-            if (!echo_r) begin
-              pld_r <= (resp_len_w > 11'd12)
-                       ? ((resp_len_w - 11'd12) > 11'(PLD_MAX_C)
-                          ? 11'(PLD_MAX_C) : (resp_len_w - 11'd12))
-                       : 11'd0;
+            if (gdi_r) begin
+              g_rec_status_r <= resp_status_w;
+              g_sub_end_r    <= resp_len_w;
             end else begin
-              pld_r <= pld_cmd_r;
+              sent_r   <= 1'b1;
+              status_r <= resp_status_w;
+              //! the µCPU owns the payload for a command it really answers;
+              //! an echoed one keeps the command's own length (§9.3.5.3.3).
+              if (amap_edit_r) begin
+                pld_r <= amap_edit_pld_w;
+              end else if (!echo_r) begin
+                pld_r <= (resp_len_w > 11'd12)
+                         ? ((resp_len_w - 11'd12) > 11'(PLD_MAX_C)
+                            ? 11'(PLD_MAX_C) : (resp_len_w - 11'd12))
+                         : 11'd0;
+              end else begin
+                pld_r <= pld_cmd_r;
+              end
             end
           end
           if (ucpu_done_w) begin
-            bidx_r      <= 11'd0;
-            frame_len_r <= pad_len_w;
-            //! a µprogram that retired without SEND_RESPONSE has no response
-            //! to emit — free the slot rather than send a frame built from
-            //! whatever the previous command left behind
-            a_st_r      <= (sent_r || resp_send_w) ? A_ALLOC : A_FREE;
-            if (!(sent_r || resp_send_w) && (drop_cnt_r != 16'hFFFF)) begin
-              drop_cnt_r <= drop_cnt_r + 16'd1;
+            if (gdi_r) begin
+              //! g_rec_rlen_r is the shape selected before dispatch, while
+              //! resp_len_w is the getter's actual cursor. A future getter
+              //! edit must not silently misalign every following record or
+              //! expose stale response memory. Void the aggregate if the two
+              //! authorities disagree.
+              if ((resp_send_w ? resp_len_w : g_sub_end_r)
+                  != (g_out_r + 11'd8 + g_rec_rlen_r)) begin
+                g_shape_fault_r <= 1'b1;
+                pld_r           <= 11'd0;
+                echo_r          <= 1'b0;
+                a_st_r          <= A_GDONE;
+              end else begin
+                a_st_r <= A_GPATCH;
+              end
+            end else begin
+              bidx_r      <= 11'd0;
+              frame_len_r <= pad_len_w;
+              //! a µprogram that retired without SEND_RESPONSE has no
+              //! response to emit; free the slot instead.
+              a_st_r      <= (sent_r || resp_send_w) ? A_ALLOC : A_FREE;
+              if (!(sent_r || resp_send_w) && (drop_cnt_r != 16'hFFFF)) begin
+                drop_cnt_r <= drop_cnt_r + 16'd1;
+              end
             end
           end
         end
@@ -2261,8 +3022,13 @@ module KL_aecp_engine
           if (rsp_fail_w) begin
             err_mode_r  <= 1'b1;
             status_r    <= ST_ENTITY_MISBEHAVING_C;
-            pld_r       <= 11'd0;
-            frame_len_r <= 11'(ETH_MIN_C);
+            pld_r       <= amap_edit_r ? amap_edit_pld_w : 11'd0;
+            frame_len_r <= amap_edit_r
+                           ? ((11'(FRAME_HDR_C) + amap_edit_pld_w
+                               < 11'(ETH_MIN_C))
+                              ? 11'(ETH_MIN_C)
+                              : 11'(FRAME_HDR_C) + amap_edit_pld_w)
+                           : 11'(ETH_MIN_C);
             bidx_r      <= 11'd0;
             if (rerr_cnt_r != 16'hFFFF) rerr_cnt_r <= rerr_cnt_r + 16'd1;
           end else if (txs_alloc_gnt_i) begin
@@ -2272,14 +3038,19 @@ module KL_aecp_engine
         end
 
         A_WR: begin
-          //! the response memory died under a frame that is already partly
-          //! written — rewrite it from byte 0 as a bare error answer built
-          //! entirely from registers (see the banner)
+          //! The response memory died under a frame that is already partly
+          //! written. Rewrite it from byte 0 using only registered state.
+          //! Mapping edits retain Figure 7-71's fixed body and staged records.
           if (rsp_fail_w) begin
             err_mode_r  <= 1'b1;
             status_r    <= ST_ENTITY_MISBEHAVING_C;
-            pld_r       <= 11'd0;
-            frame_len_r <= 11'(ETH_MIN_C);
+            pld_r       <= amap_edit_r ? amap_edit_pld_w : 11'd0;
+            frame_len_r <= amap_edit_r
+                           ? ((11'(FRAME_HDR_C) + amap_edit_pld_w
+                               < 11'(ETH_MIN_C))
+                              ? 11'(ETH_MIN_C)
+                              : 11'(FRAME_HDR_C) + amap_edit_pld_w)
+                           : 11'(ETH_MIN_C);
             bidx_r      <= 11'd0;
             if (rerr_cnt_r != 16'hFFFF) rerr_cnt_r <= rerr_cnt_r + 16'd1;
           end else if (byte_ok_w) begin

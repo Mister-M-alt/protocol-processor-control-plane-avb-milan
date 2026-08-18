@@ -498,9 +498,10 @@ remain open.
    the general unimplemented-opcode fallback does not displace it. If the
    consumer's gateware answers `NOT_IMPLEMENTED` here, that is a consumer
    defect (item 11).
-4. **NC-4.** Milan §5.4.2.26/.27/.28 — `NOT_SUPPORTED` on dynamic-mapping
-   commands addressed to a mapped Stream Port — is absent from
-   [06 §6.5](architecture/06_aecp_engine.md).
+4. **NC-4 resolved 2026-08-17.** Milan §5.4.2.26/.27/.28 requires
+   `NOT_SUPPORTED` on dynamic-mapping commands addressed to a statically mapped
+   Stream Port. The descriptor and generated direction masks now enforce that
+   gate before any transaction starts.
 5. **F09.4 needs corrections, not deletions.** The two
    [09 §3](architecture/09_verification.md) cases that encode NC-1 and NC-3 as
    *expected* results must be rewritten (all 13 §7.4.76.2 opcodes accepted inside a

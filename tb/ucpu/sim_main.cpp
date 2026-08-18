@@ -279,6 +279,8 @@ struct Harness {
     dut->disp_ctlr_eid_i = CTLR;
     dut->disp_opd0_i = opd0;
     dut->disp_opd1_i = opd1;
+    dut->disp_batch_i = 0;
+    dut->disp_resp_base_i = 12;
     dut->disp_valid_i = 1;
     tick();
     dut->disp_valid_i = 0;
@@ -300,6 +302,7 @@ int main(int argc, char** argv) {
   Harness h(dut);
 
   dut->rst_n = 0; dut->disp_valid_i = 0;
+  dut->disp_batch_i = 0; dut->disp_resp_base_i = 12;
   for (int i = 0; i < 4; ++i) h.tick();
   dut->rst_n = 1;
   h.tick();

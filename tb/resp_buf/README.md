@@ -3,7 +3,7 @@
 
 Proves the [03 §7](../../docs/architecture/03_packet_engine.md) AECP response
 buffer now that it lives in the integrator's **main memory** instead of the
-fabric: `make` = build + run, exit 0 = PASS, **61 checks**.
+fabric: `make` = build + run, exit 0 = PASS, **64 checks**.
 
 ## Why the block exists
 
@@ -42,6 +42,7 @@ few hundred clocks; the BFM's latencies stay well inside it.
 | R1 | a whole response round-trips: the streamed bytes and the memory image both equal the contract model, in **one** read burst and exactly the lane writes the write pattern implies |
 | R2 | the 06 §8 header record is **dropped**, and bytes 8..11 — which share lane 1 with byte 12 — are never clobbered |
 | R3 | a 4-byte field that **straddles a lane boundary** survives on both sides (the one-byte-per-cycle absorb is what makes this need no special case) |
+| R3b | a GET_DYNAMIC_INFO status byte can patch an earlier record-header lane, then resume forward, without corrupting either pass |
 | R4 | the write face is **flow controlled**: a lane-closing write is held for at least the write latency, one inside the open lane is not, and back-pressure does not change a byte |
 | R5 | latency is not a correctness parameter — fast, default and slow memory give identical payloads |
 | R6 | `rsp_ready` is real back-pressure: a builder taking a byte every six cycles still gets every byte, in order, exactly once |

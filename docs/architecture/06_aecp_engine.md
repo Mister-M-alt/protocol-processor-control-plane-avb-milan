@@ -83,6 +83,11 @@ GET_AUDIO_MAP, ADD/REMOVE_AUDIO_MAPPINGS may exceed cdl 524 up to a full frame �
 these serialize into the oversize TX slot ([03 §7](03_packet_engine.md)). Everything
 else, including GET_DYNAMIC_INFO, is capped at cdl 524.
 
+The exception is response-only. IEEE 1722.1-2021 9.2.2.6 still caps every
+command at cdl 524. An ADD/REMOVE_AUDIO_MAPPINGS command uses 20 + 8N octets,
+so N is at most 63; a 64-record command returns `BAD_ARGUMENTS` without a
+store mutation.
+
 ## 4. Internal blocks
 
 <a id="fig-06-blocks"></a>**F06.1 — AECP engine internals**
@@ -179,9 +184,9 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x0028 | GET_AS_PATH | shall | gather §6.2 | RO | — | **no** | **yes** | async trigger | 28 + 8·count |
 | 0x0029 | GET_COUNTERS | shall | §6.6 | RO | — | yes | — | async (`T-CTR-NOTIF`) | 160 B |
 | 0x002B | GET_AUDIO_MAP | shall (dynamic ports) | §6.5 | RO | — | **no** | **yes** | — | 32 + 8·N |
-| 0x002C | ADD_AUDIO_MAPPINGS | shall, **n/i today** (dynamic ports) | target: §6.5 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
-| 0x002D | REMOVE_AUDIO_MAPPINGS | shall, **n/i today** (dynamic ports) | target: §6.5 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
-| 0x004B | GET_DYNAMIC_INFO | shall, **n/i today** | target: iterator §6.7 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x002C | ADD_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | success, excluding requester | mirrors request |
+| 0x002D | REMOVE_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | success, excluding requester | mirrors request |
+| 0x004B | GET_DYNAMIC_INFO | shall | two-pass iterator §6.7 | RO per record | - | exactly the 13 fixed getters | - | - | cdl at most 524 |
 | MVU 0x0000 | GET_MILAN_INFO | shall | §6.9 | RO | — | — | — | — | 44 B |
 | MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended, **n/i today** (`P-EN-MVU-SUID`) | target: §6.9 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | MVU 0x0003/0x0004 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO | recommended, **n/i today** (`P-EN-MVU-MCR`) | target: §6.9 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
@@ -323,13 +328,14 @@ SET and a rejected SET, including the GET and READ_DESCRIPTOR views.
 
 ### 6.5 Audio-map operations (Milan §5.4.2.26–.28)
 
-**Realization status (2026-08-15)** — GET_AUDIO_MAP now serves BOTH directions:
+**Realization status (2026-08-17).** GET_AUDIO_MAP serves both directions:
 the STREAM_PORT_OUTPUT half re-dispatches to `E_GAMAPO` (a two-word stub swapping
 the emitted type constant into `E_GAMAP`'s shared tail), and the integrator's
-`amap_*` face routes on `amap_desc_type_o` — the render-side map RAM answers the
+`amap_*` face routes on `amap_desc_type_o`. The render-side map RAM answers the
 input direction, the capture-side readback (the 0x0017 round) the output
 direction. Same paging law, same stubs, same existence authority (the image).
-ADD/REMOVE_AUDIO_MAPPINGS stay NOT_IMPLEMENTED (recorded).
+ADD/REMOVE_AUDIO_MAPPINGS stage every row, validate the whole command, recheck
+at commit, and use the root transaction face to update the live map atomically.
 
 - **A Stream Port Output that HAS AUDIO_MAP descriptor(s)** (`number_of_maps`
   > 0 in its STREAM_PORT_OUTPUT descriptor — a static map) **answers all three
@@ -337,23 +343,39 @@ ADD/REMOVE_AUDIO_MAPPINGS stay NOT_IMPLEMENTED (recorded).
   Input, and every Stream Port Output with no Audio Map, shall implement all
   three — Milan §5.3.3.7 forbids AUDIO_MAPs on STREAM_PORT_INPUT precisely
   because inputs must support dynamic mapping, and IEEE §7.2.13's dynamic-map
-  convention is `number_of_maps` = 0. The check is the **first `CHECK_ARG` in
-  the §6.4 validation chain**, reading the addressed descriptor's type and
-  `number_of_maps` from the model store at execute time (a per-opcode
-  dispatch-ROM bit cannot express a per-descriptor condition).
+  convention is `number_of_maps` = 0. The root integrator owns this decision at
+  transaction phase 0. Its generated dynamic-port masks come from the same
+  entity shape that emits each descriptor's `number_of_maps`, so the processor
+  cannot accept an edit for a port that the model advertises as static. The
+  processor's descriptor store is not the authority for this integration rule.
 - Channel space of each **dynamically mapped** stream port is **partitioned at model-build time** into fixed
   subsets ≤ `P-MAP-SUBSET-CH-MAX`; `number_of_maps` always reports the partition
   count N regardless of dynamic content; `GET_AUDIO_MAP(map_index = P)` returns all and
   only the dynamic mappings of subset P.
-- `ADD_AUDIO_MAPPINGS`: **all-or-nothing** — any invalid mapping ⇒ `BAD_ARGUMENTS`,
-  nothing added (`MAP_VALIDATE` primitive). Invalid = references a channel absent from
-  the current format; or (without `P-EN-TALKER-DYN-MAPPINGS-RUNNING`) references a
-  streaming output; input-port conflict rule: same cluster channel from two different
+- `ADD_AUDIO_MAPPINGS`: **all-or-nothing**. Any invalid mapping returns
+  `BAD_ARGUMENTS` and adds nothing (`MAP_VALID` primitive). Invalid means it references a channel absent from
+  the current format; or references a streaming output under the reference
+  integrator's phase-4 validation law; input-port conflict rule: same cluster channel from two different
   stream channels in one command ⇒ `BAD_ARGUMENTS`; conflict with an *existing* mapping
   may be rejected the same way or accepted with an automatic REMOVE notification sent
   **before** the ADD response.
-- `REMOVE_AUDIO_MAPPINGS`: ignores duplicates; streaming-output restriction as above.
+- `REMOVE_AUDIO_MAPPINGS`: ignores duplicate rows in one command, refuses an
+  absent mapping, and applies the streaming-output restriction above.
 - Input maps are changeable **any time, even while bound** (Milan §5.3.10.1).
+- Every successful ADD or REMOVE sends the same unsolicited response to every
+  registered controller except the requester. A changed commit also marks the
+  mapping persistence class dirty. The current NVM backend does not retain the
+  dirty class across reset; issue #70 tracks that remaining work.
+- Phase 1 acceptance is the commit reservation and point of no return. The
+  integrator must reserve every resource needed for the complete transaction
+  before accepting it. Phase 5 record writes and phase 2 finish then complete
+  without back-pressure; `amap_edit_wait_i` is ignored on those phases. This
+  prevents a watchdog expiry between live writes from exposing a partial map.
+- Every solicited response is rebuilt in Figure 7-71 form. Its reserved word is
+  zero, its `number_of_mappings` names the complete records actually emitted,
+  and even an `ENTITY_MISBEHAVING` timeout retains at least the eight-byte fixed
+  body. A malformed command count is never reflected as though it described
+  records that are absent from the response.
 
 ### 6.6 GET_COUNTERS and the counters subsystem
 
@@ -467,6 +489,28 @@ each unimplemented member is answered with a per-element `info_status` of
 `NOT_SUPPORTED` (§7.4.76.1). Only a command **outside** the list (GET_CONTROL,
 GET_AVB_INFO, GET_AS_PATH, GET_AUDIO_MAP and every other variable-size or
 non-GET opcode) makes the whole batch `BAD_ARGUMENTS`.
+
+**Realization status (2026-08-17): implemented.** `KL_aecp_engine` retains the
+RX slot and performs the required full-list pre-scan before dispatching any
+record. Implemented members run the same getter µprogram used by their
+standalone command, with `KL_aecp_ucpu` starting at the aggregate response
+cursor and suppressing its private header. Permitted but unimplemented members
+copy their command-specific data with record status `NOT_SUPPORTED`. A result
+that would take the aggregate cdl above 524 is omitted, and scanning continues
+with the next input record. A command-side `info_status` other than `SUCCESS`
+is a per-record `BAD_ARGUMENTS`; it is not a whole-list error because the field
+does not prevent the next record from being parsed. The only whole-list
+rejections are structural truncation, record overrun, an oversized command,
+and a command type outside the fixed-get whitelist.
+
+The response length selected by the batch decoder is checked against the
+getter's actual response cursor before the record status is patched. A mismatch
+voids the aggregate with `ENTITY_MISBEHAVING`, preventing a later getter edit
+from shifting following records or exposing stale response memory. Four-byte
+`COPY_BUF` operations write only their first word, so a sampling-rate image hit
+cannot touch the next record header. The engine and µCPU share
+`ucpu_pkg::RESP_CAP_C`, and elaboration fails if the configured response buffer
+is smaller than that limit. The engine never emits `IN_PROGRESS`.
 
 ### 6.8 ACQUIRE / LOCK
 
@@ -711,12 +755,14 @@ ACQUIRE_ENTITY:                         BUILD_HEADER; BUILD_FIELD
   BUILD_HEADER (echo, owner_id=0)       NOTIFY_ENQ  {resp, excl=requester}
   SEND_RESPONSE; END                    END
 
-GET_DYNAMIC_INFO (target; n/i today):
-  ITER_OPEN tuples            ; pre-scan pass: GDI flags, else BAD_ARGUMENTS-all
-  loop: ITER_NEXT -> sub      ; dispatch sub-µprogram in sub-command mode
-  APPEND_RESP (skip if > 524) ; per-element info_status written
-  BRANCH loop until end
-  SEND_RESPONSE; END
+GET_DYNAMIC_INFO (as built):
+  pre-scan every tuple        ; exact 13-command whitelist
+  reject whole list           ; BAD_ARGUMENTS, no getter processed
+  load one complete tuple     ; command data remains in the retained RX slot
+  dispatch ordinary getter    ; aggregate cursor, private header suppressed
+  patch per-record status     ; same status the standalone getter produced
+  skip if result exceeds 524  ; continue with the following tuple
+  seal one aggregate response ; never IN_PROGRESS
 ```
 
 Sizing: ~35 programs × ~25 µops ⇒ `P-UCODE-ROM-DEPTH` = 2048 with ~2× margin, at `P-UCODE-ROM-W` = 48 b per µop (encoding: `hdl/aecp/ucpu_pkg.sv`).
@@ -748,6 +794,9 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |
 | 0x0029 GET_COUNTERS | real for STREAM_INPUT, STREAM_OUTPUT, AVB_INTERFACE and CLOCK_DOMAIN: SUCCESS + `descriptor_type`/`descriptor_index`/`counters_valid` + all 32 quadlets (payload 136, cdl 148), the values coming from the integrator's counter face; `BAD_ARGUMENTS` on a command short of §7.4.42.1's four bytes |
 | 0x002B GET_AUDIO_MAP | real for both Stream Port directions: SUCCESS + the §7.4.44.2 fixed part + 8-byte records (payload 12 + 8·M, cdl 24 + 8·M), geometry and records from the integrator's audio-map face; `BAD_ARGUMENTS` on `map_index` ≥ `number_of_maps` (§7.4.44.1) or a command short of §7.4.44.1's eight bytes; `NO_SUCH_DESCRIPTOR` where the descriptor store misses the locate |
+| 0x002C ADD_AUDIO_MAPPINGS | real atomic whole-command validation and commit for dynamic Stream Port Input and Output targets; static targets return `NOT_SUPPORTED`; every success emits the required unsolicited response |
+| 0x002D REMOVE_AUDIO_MAPPINGS | real atomic whole-command validation and commit with duplicate-safe removal; static targets return `NOT_SUPPORTED`; every success emits the required unsolicited response |
+| 0x004B GET_DYNAMIC_INFO | real two-pass batch execution: exact fixed-get whitelist, whole-command `BAD_ARGUMENTS` before processing on a forbidden member, ordinary getter results with per-record status, `NOT_SUPPORTED` plus copied command data for legal unimplemented members, and silent skip with continued processing when a result would exceed cdl 524 |
 | 0x0026 IDENTIFY_NOTIFICATION | `BAD_ARGUMENTS`, using the opcode-specific §7.4.39.2 rule over §9.3.5.3.3 |
 | MVU 0x0000 GET_MILAN_INFO | real: SUCCESS + the Figure 5.4 body, `protocol_version` 1, `features_flags` 0, `certification_version` 0 (§6.9 and the honesty note below); AECPDU 44 B, cdl 32 |
 | everything else, all message types | `NOT_IMPLEMENTED` with the command **echoed** (F06.14 / §9.3.5.3.3) |
@@ -848,8 +897,9 @@ map. STREAM_PORT_INPUT enters `E_GAMAP` directly. The registered type gate
 sends STREAM_PORT_OUTPUT through `E_GAMAPO`, which substitutes the output type
 and joins the same response program. The integrator selects its mapping store
 from `amap_desc_type_o`. Any other descriptor type keeps the NOT_IMPLEMENTED
-echo. ADD_AUDIO_MAPPINGS (0x002C) and REMOVE_AUDIO_MAPPINGS (0x002D) also keep
-the echo until their write path can reuse the fabric's mapping acceptance law.
+echo. ADD_AUDIO_MAPPINGS (0x002C) and REMOVE_AUDIO_MAPPINGS (0x002D) reuse the
+same descriptor type gate, then stage a full-page transaction through the
+fabric's mapping acceptance law.
 
 Measured cost of the whole opcode inside `KL_aecp_engine`, yosys 0.66
 `synth_xilinx -family xc7 -flatten`, against the commit it lands on:
@@ -919,12 +969,12 @@ Milan Table 5.20 defines exactly two bits. REDUNDANCY (0x00000001) asserts Milan
 seamless redundancy, which needs a second AVB interface this PAAD does not have
 (`P-N-AVB-INTERFACES` = 1, one AVB_INTERFACE descriptor).
 TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING (0x00000002) asserts §5.3.9.1 map changes while a
-Stream Output streams, and this build answers ADD/REMOVE_AUDIO_MAPPINGS with
-`NOT_IMPLEMENTED` — it cannot change a mapping at all. `certification_version` is 0
+Stream Output streams. This build keeps that flag clear and refuses ADD or REMOVE
+against a running Stream Output. `certification_version` is 0
 because §5.4.4.1 reserves it for a Milan certification actually passed. An overclaimed
 flag sends a controller down a path the gateware cannot serve; the flag moves when
-`P-EN-TALKER-DYN-MAPPINGS-RUNNING` does, in the one line of
-`hdl/aecp/ucode/gen_ucode.py` that states it. All three fields are microcode constants
+the root integrator's running-output policy changes, together with the
+corresponding microcode feature constant. All three fields are microcode constants
 today rather than §6.9's `certification_version` *register*: a register buys a runtime
 write path for a value that changes when the bitstream does, and the profile parameters
 that would drive `features_flags` are elaboration-time by the same rule the rest of the
