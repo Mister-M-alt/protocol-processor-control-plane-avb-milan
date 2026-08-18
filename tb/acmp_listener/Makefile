@@ -6,6 +6,7 @@ TOP        = KL_pp_acmp_listener
 
 VFLAGS = --cc --exe --build -j 0 \
          --top-module $(TOP) \
+         -GSTRM_TIMEOUT_CYC_P=32 \
          -Wall -Wno-fatal -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDPARAM \
          -CFLAGS "-std=c++17 -O2 -I$(CURDIR)"

@@ -474,16 +474,15 @@ module KL_aecp_engine
     input  wire [N_STREAM_IN_P-1:0]  strm_bound_i,
 
     //! ---- started/stopped request out (Milan §5.4.2.19 / §5.4.2.20) -----
-    //! One pulse per accepted START/STOP_STREAMING, aimed at the ACMP
-    //! binding record that owns the bit. There is deliberately no answer
-    //! back: the command's status is settled by the µprogram (locate, lock)
-    //! before the pulse is raised, and "no effect when not bound" is not a
-    //! refusal — Milan §5.4.2.19 calls it out as a Note, and the response is
-    //! SUCCESS either way.
+    //! One held request per START/STOP_STREAMING, aimed at the ACMP binding
+    //! record that owns the bit. Completion means the record has committed
+    //! or the required no-op check has examined it. A bounded walker failure
+    //! is reported so the command can return ENTITY_MISBEHAVING.
     output logic                     strm_set_valid_o,
     output logic [15:0]              strm_set_index_o,
     output logic                     strm_set_val_o,   //! 1 = started
-    input  wire                      strm_set_ready_i, //! record took it
+    input  wire                      strm_set_ready_i, //! record completed it
+    input  wire                      strm_set_error_i, //! completion failed
     input  wire [N_STREAM_OUT_P-1:0] strm_streaming_i,
     input  wire         lock_held_i,
     input  wire  [63:0] lock_ctlr_i,
@@ -1174,7 +1173,8 @@ module KL_aecp_engine
   //! the dynamic store has no locate and therefore no miss: an out-of-range
   //! index answers a CLEAR valid flag, not NO_SUCH_DESCRIPTOR, because
   //! existence is the descriptor image's ruling and never a setting's
-  assign st_err_w    = dyn_sel_w ? 1'b0         : store_err_w;
+  assign st_err_w    = strq_sel_w ? strm_set_error_i
+                     : dyn_sel_w  ? 1'b0 : store_err_w;
   logic        gx_req_w, gx_valid_w;
   logic  [7:0] gx_sel_w;
   logic [63:0] gx_data_w;

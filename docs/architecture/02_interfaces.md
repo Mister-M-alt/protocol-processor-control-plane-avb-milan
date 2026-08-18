@@ -321,7 +321,7 @@ GET_AVB_INFO notification), `AS_CAPABLE_CHANGE{interface}`,
 |---|---|---|
 | `INPUT_CONFIGURE` | sink idx, {stream_id, dest MAC, VLAN} | OK — also arms RX filtering to the configured format (Milan §4.4.2.2) |
 | `INPUT_ENABLE` / `INPUT_DISABLE` | sink idx | OK — start/stop listening (settle / teardown) |
-| `INPUT_START` / `INPUT_STOP` | sink idx | OK — STREAMING_WAIT control (START/STOP_STREAMING) |
+| `INPUT_START` / `INPUT_STOP` | sink idx | OK after binding-record commit or confirmed no-op; timeout or invalid index reports failure |
 | `SET_INPUT_FORMAT` / `SET_OUTPUT_FORMAT` | idx, format (8 B) | OK/FAIL |
 | `OUTPUT_SET_PT_OFFSET` | source idx, offset ns | OK (0..0x7FFFFFFF) |
 | `OUTPUT_STATUS` | source idx | {streaming} |

@@ -72,6 +72,8 @@ module KL_pp_acmp_listener
     parameter int unsigned TMR_BASE_SLOT_P     = 9,
     //! owner-tag base for the expiry bus (router-assigned range)
     parameter int unsigned TMR_OWNER_BASE_P    = 32,
+    //! maximum cycles a started/stopped request may wait for the walker
+    parameter int unsigned STRM_TIMEOUT_CYC_P  = 4096,
     //! derived — do not override
     localparam int unsigned SINK_W_C     = (N_SINKS_P > 1) ? $clog2(N_SINKS_P) : 1,
     localparam int unsigned RXS_SLOT_W_C = (RX_SLOTS_P > 1) ? $clog2(RX_SLOTS_P) : 1,
@@ -121,12 +123,13 @@ module KL_pp_acmp_listener
     //! NVM shadow captures and restores it. It is a HANDSHAKE, not a pulse -
     //! the engine holds its state-port write until `strm_set_ready_o`, so a
     //! request that arrives while this walker is busy is delayed rather than
-    //! dropped. A dropped one would be a false SUCCESS: the µprogram has
-    //! already settled the status by the time the write is issued.
+    //! dropped. Ready means the record commit or required no-op check is
+    //! complete, not merely that the local holder accepted the request.
     input  wire                          strm_set_valid_i,//! request present
     input  wire  [15:0]                  strm_set_sink_i, //! Stream Input index
     input  wire                          strm_set_val_i,  //! 1 = started
-    output logic                         strm_set_ready_o,//! accept this cycle
+    output logic                         strm_set_ready_o,//! completed this cycle
+    output logic                         strm_set_error_o,//! bounded wait expired
 
     //! per-sink started/stopped, mirrored off the record RAM's own write bus
     output logic [N_SINKS_P-1:0]         strm_started_o,
@@ -264,6 +267,7 @@ module KL_pp_acmp_listener
   // accepted work item
   logic                src_txn_r;      // 1 = dispatch txn, 0 = timer/TK event
   logic                src_tmr_r;
+  logic                src_strq_r;
   logic [3:0]          msg_x_r;        // ACMP message_type
   logic [4:0]          status_x_r;     // header status (probe responses)
   logic [63:0]         ctlr_x_r;       // controller_entity_id
@@ -282,27 +286,20 @@ module KL_pp_acmp_listener
   logic                preL_sw_r;
   logic                preL_started_r;
   logic                strtL_val_r;    // the bit a START/STOP asked for
-  //! ---- the started/stopped POSTED-WRITE holder ------------------------
-  //! One deep. It exists so `strm_set_ready_o` does NOT depend on this
-  //! walker being idle: the AECP µCPU stalls its whole E stage on
-  //! `!st_ready_i` with no watchdog, so tying that to "the ACMP walker
-  //! happens to be free" made a busy or wedged walker able to freeze the
-  //! ENTIRE AECP plane - every READ_DESCRIPTOR, LOCK and GET_* with it, not
-  //! just this command. Every other µCPU face is bounded (the gather port by
-  //! `gxf_tmo_r`, the descriptor store by MEM_TIMEOUT_CYC_P); this one was
-  //! the exception and should not have been.
-  //!
-  //! HOW FAR THIS GOES, precisely: the wait is DEFERRED, not bounded. One
-  //! request is absorbed whatever the walker is doing, and the drain runs at
-  //! top priority so ordinary ACMP load cannot starve it. A SECOND request
-  //! arriving while the first is still pending still waits on
-  //! `strm_set_ready_o`, and if the walker were wedged forever that wait is
-  //! forever - the same shape as before, one request further out. It is left
-  //! there deliberately: the alternative is dropping a request whose command
-  //! has already answered SUCCESS, and a wedged ACMP walker is a device that
-  //! has stopped answering ACMP anyway. Do not describe this face as
-  //! bounded; it is one deep.
+  //! ---- the started/stopped request holder ------------------------------
+  //! One deep. Capture is internal and deliberately separate from the
+  //! interface completion handshake. This lets a request wait while the
+  //! walker is busy, but the AECP microprogram cannot emit SUCCESS until the
+  //! record commit or no-op examination has finished. A pending request has
+  //! a bounded wait. If the current walk does not retire in time, the holder
+  //! is discarded before it reaches the record and completion reports an
+  //! error. Once this job starts its record read, it has no resource waits.
   logic                strq_pend_r;
+  logic                strq_busy_r;
+  logic                strq_done_r;
+  logic                strq_fail_r;
+  localparam int unsigned STRQ_TMO_W_C = $clog2(STRM_TIMEOUT_CYC_P + 1);
+  logic [STRQ_TMO_W_C-1:0] strq_tmo_r;
   logic [15:0]         strq_sink_r;
   logic                strq_val_r;
   logic [15:0]         dbg_strq_drop_r;
@@ -343,6 +340,11 @@ module KL_pp_acmp_listener
   //! it puts a second GET_STREAM_INFO frame on the wire for one event - the
   //! same duplicate this trigger was narrowed to avoid on a fresh bind.
   logic                bind_act_r;
+
+  initial begin : parameter_checks
+    if (STRM_TIMEOUT_CYC_P == 0)
+      $fatal(1, "STRM_TIMEOUT_CYC_P must be greater than zero");
+  end
 
   // fetched ACMPDU fields (zeroed at accept; big-endian shift-in)
   logic [63:0]         tk_eid_f_r;     // talker_entity_id @20
@@ -469,7 +471,8 @@ module KL_pp_acmp_listener
   assign txn_ready_o    = (xs_r == X_IDLE) && !strq_pend_r;
   assign evt_tk_ready_o = (xs_r == X_IDLE) && !strq_pend_r
                           && !txn_valid_i && !pend_any_w;
-  assign strm_set_ready_o = !strq_pend_r;
+  assign strm_set_ready_o = strq_done_r;
+  assign strm_set_error_o = strq_fail_r;
   //! ...and the preload face likewise. `KL_acmp_nvm_shadow` treats
   //! `pre_ready_i` as ACCEPTANCE and advances to the next sink on it, so a
   //! ready raised while the walker is about to take the started/stopped job
@@ -809,6 +812,7 @@ module KL_pp_acmp_listener
       init_cnt_r    <= '0;
       src_txn_r     <= 1'b0;
       src_tmr_r     <= 1'b0;
+      src_strq_r    <= 1'b0;
       msg_x_r       <= 4'd0;
       status_x_r    <= 5'd0;
       ctlr_x_r      <= 64'd0;
@@ -826,6 +830,10 @@ module KL_pp_acmp_listener
       preL_started_r    <= 1'b0;
       strtL_val_r       <= 1'b0;
       strq_pend_r       <= 1'b0;
+      strq_busy_r       <= 1'b0;
+      strq_done_r       <= 1'b0;
+      strq_fail_r       <= 1'b0;
+      strq_tmo_r        <= '0;
       strq_sink_r       <= 16'd0;
       strq_val_r        <= 1'b0;
       dbg_strq_drop_r   <= 16'd0;
@@ -930,6 +938,7 @@ module KL_pp_acmp_listener
           if (strq_pend_r) begin
             src_txn_r   <= 1'b0;
             src_tmr_r   <= 1'b0;
+            src_strq_r  <= 1'b1;
             rxslot_r    <= PP_SLOT_NULL_C;
             sink_r      <= SINK_W_C'(strq_sink_r);
             strtL_val_r <= strq_val_r;
@@ -942,10 +951,13 @@ module KL_pp_acmp_listener
               //! arm stops being unreachable, and then the command would
               //! answer SUCCESS and land nowhere.
               dbg_strq_drop_r <= dbg_strq_drop_r + 16'd1;
+              strq_done_r     <= 1'b1;
+              strq_fail_r     <= 1'b1;
             end
           end else if (txn_valid_i) begin
             src_txn_r  <= 1'b1;
             src_tmr_r  <= 1'b0;
+            src_strq_r <= 1'b0;
             msg_x_r    <= txn_i.msg_type;
             status_x_r <= txn_i.status_in;
             ctlr_x_r   <= txn_i.controller_eid;
@@ -973,12 +985,14 @@ module KL_pp_acmp_listener
           end else if (pend_any_w) begin
             src_txn_r <= 1'b0;
             src_tmr_r <= 1'b1;
+            src_strq_r <= 1'b0;
             rxslot_r  <= PP_SLOT_NULL_C;
             sink_r    <= pend_sink_w;    // pendexp bit cleared alongside
             xs_r      <= X_RDREC;
           end else if (evt_tk_valid_i) begin
             src_txn_r <= 1'b0;
             src_tmr_r <= 1'b0;
+            src_strq_r <= 1'b0;
             rxslot_r  <= PP_SLOT_NULL_C;
             tkkind_r  <= evt_tk_kind_i;
             tkfail_r  <= evt_tk_failed_i;
@@ -988,6 +1002,7 @@ module KL_pp_acmp_listener
             end
             // else: acked and dropped, stay idle
           end else if (pre_valid_i) begin
+            src_strq_r         <= 1'b0;
             sink_r            <= SINK_W_C'(pre_sink_i);
             preL_talker_eid_r <= pre_talker_eid_i;
             preL_talker_uid_r <= pre_talker_uid_i;
@@ -1035,7 +1050,9 @@ module KL_pp_acmp_listener
             cellmut_r       <= 1'b1;
             xs_r            <= X_WB;
           end else begin
-            xs_r <= X_IDLE;
+            strq_done_r <= 1'b1;
+            strq_fail_r <= 1'b0;
+            xs_r        <= X_IDLE;
           end
         end
 
@@ -1402,6 +1419,10 @@ module KL_pp_acmp_listener
           act_strt_chg_o <= cellmut_r && bnd_was_r && rec_r.f_bound
                             && !bind_act_r
                             && (rec_r.f_started != strt_was_r);
+          if (src_strq_r) begin
+            strq_done_r <= 1'b1;
+            strq_fail_r <= 1'b0;
+          end
           xs_r         <= X_CONSUME;
         end
 
@@ -1416,17 +1437,36 @@ module KL_pp_acmp_listener
         default: xs_r <= X_IDLE;
       endcase
 
-      //! ---- the posted-write capture (outside the state walk) -----------
-      //! It runs in EVERY state, which is the whole point: the engine's
-      //! write completes the moment the holder is free, not when this
-      //! walker happens to be idle. Capture cannot collide with the X_IDLE
-      //! drain above - `strm_set_ready_o` is `!strq_pend_r`, so while a
-      //! request is pending no second one can be accepted, and the drain
-      //! cycle still reads pending, so ready is low for it too.
+      //! Internal capture runs in every state. `strq_busy_r` remains set
+      //! through the external completion handshake, so the valid held by the
+      //! microprocessor cannot be mistaken for a second request.
       if (strm_set_valid_i && strm_set_ready_o) begin
+        strq_busy_r <= 1'b0;
+        strq_done_r <= 1'b0;
+        strq_fail_r <= 1'b0;
+      end else if (strm_set_valid_i && !strq_busy_r) begin
         strq_pend_r <= 1'b1;
+        strq_busy_r <= 1'b1;
+        strq_done_r <= 1'b0;
+        strq_fail_r <= 1'b0;
+        strq_tmo_r  <= '0;
         strq_sink_r <= strm_set_sink_i;
         strq_val_r  <= strm_set_val_i;
+      end
+
+      //! Only the pending phase can wait on another walker job. Once the
+      //! holder drains, X_STRT_RD, X_STRT_AP and X_WB have no resource wait.
+      //! Timeout therefore discards a request before any record side effect.
+      if (strq_pend_r && (xs_r != X_IDLE)) begin
+        if (strq_tmo_r == STRQ_TMO_W_C'(STRM_TIMEOUT_CYC_P - 1)) begin
+          strq_pend_r <= 1'b0;
+          strq_done_r <= 1'b1;
+          strq_fail_r <= 1'b1;
+        end else begin
+          strq_tmo_r <= strq_tmo_r + STRQ_TMO_W_C'(1);
+        end
+      end else if (!strq_pend_r) begin
+        strq_tmo_r <= '0;
       end
     end
   end

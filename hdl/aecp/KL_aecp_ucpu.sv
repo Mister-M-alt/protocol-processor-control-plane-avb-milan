@@ -603,6 +603,8 @@ module KL_aecp_ucpu
                   if (st_err_i) status_r <= ST_NO_SUCH_DESC_C;
                   else          desc_base_r <= st_rdata_i[19:0];
                 end
+                OP_WRITE_ST:
+                  if (st_err_i) status_r <= ST_ENTITY_MISBEHAVING_C;
                 OP_CHECK_LOCK:
                   if (br_taken_w) status_r <= ST_LOCKED_C;
                 OP_CHECK_ARG:
