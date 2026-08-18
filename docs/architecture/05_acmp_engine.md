@@ -77,7 +77,7 @@ Incoming dispatch (Milan §5.5.3.1, rule V7 of [03 §3](03_packet_engine.md)):
 | Message | Guard | Action |
 |---|---|---|
 | BIND_RX / UNBIND_RX / GET_RX_STATE cmd | `listener_entity_id` = own; `listener_unique_id` valid | else respond **LISTENER_UNKNOWN_ID** (state fields undefined) |
-| PROBE_TX_RESPONSE | `listener_entity_id` = own; unique_id valid; {controller EID, talker EID, unique_id, seq} match the saved probe | else **silently ignore** |
+| PROBE_TX_RESPONSE | `listener_entity_id` = own; the LISTENER `unique_id` @38 valid (it addresses the record; the talker's @36 may differ freely); {controller EID, talker EID, talker unique_id, seq} match the saved probe | else **silently ignore** |
 | PROBE_TX / DISCONNECT_TX / GET_TX_STATE / GET_TX_CONNECTION cmd | `talker_entity_id` = own | talker responder [§6bis](#6bis-talker-side-stateless-responder) |
 | anything else | — | ignore |
 
