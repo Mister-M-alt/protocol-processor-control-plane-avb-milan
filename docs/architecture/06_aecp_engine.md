@@ -161,11 +161,11 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x0002 | ENTITY_AVAILABLE | shall | — | RO | — | — | — | — | 44 B (2021 form w/ flags + acquired/locked IDs) |
 | 0x0003 | CONTROLLER_AVAILABLE | responder: n/i (not a controller); **originator**: §7 | — | — | — | — | — | — | 24 B echo |
 | 0x0004 | READ_DESCRIPTOR | shall | allowed while locked | RO | no | — | **yes** | — | 28 + descriptor (4-B stub on failure) |
-| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER *(architectural class; the current single AECP engine serializes AEM commands while the dispatch scoreboard remains unwired)* | yes | - | - | yes *(open, #69)* | 28 B |
+| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER *(architectural class; the current single AECP engine serializes AEM commands while the dispatch scoreboard remains unwired)* | yes | - | - | success with state change, requester excluded | 28 B |
 | 0x0007 | GET_CONFIGURATION | shall | — | RO | — | yes | — | — | 28 B |
-| 0x0008 | SET_STREAM_FORMAT | shall | per stream, both directions; §6.4 chain | STREAM_CFG | yes | - | - | *(open, #69)* | 36 B |
+| 0x0008 | SET_STREAM_FORMAT | shall | per stream, both directions; §6.4 chain | STREAM_CFG | yes | - | - | success with state change, requester excluded | 36 B |
 | 0x0009 | GET_STREAM_FORMAT | shall | - | RO | - | yes | - | - | 36 B |
-| 0x000E | SET_STREAM_INFO | shall | **output only** (Δ11); §6.3 | STREAM_CFG | yes | - | - | *(open, #69)* | 108 B echo |
+| 0x000E | SET_STREAM_INFO | shall | **output only** (Δ11); §6.3 | STREAM_CFG | yes | - | - | success with state change, requester excluded | 108 B echo |
 | 0x000F | GET_STREAM_INFO | shall | Milan 80-B form §6.2 | RO | — | yes | — | async triggers | 80 B |
 | 0x0010 | SET_NAME | shall | every named descriptor; ENTITY indices 0 and 1, all others index 0 | NAME_WR | yes | - | - | naming trigger | cdl 84, current 64-B name |
 | 0x0011 | GET_NAME | shall | every named descriptor; ENTITY indices 0 and 1, all others index 0 | RO | no | yes | - | - | cdl 84, current 64-B name |
@@ -641,28 +641,33 @@ cannot see itself; GET_AS_PATH notifies on GM change.
 
 ## 7. Registry, notifications, liveness, identify
 
-**Realization status (2026-08-15, `hdl/aecp/KL_aecp_notify.sv`)** — the registry, the
-ENTITY lock and the emission walk are LANDED as one block beside the engine: 16-row
+**Realization status (2026-08-18, `hdl/aecp/KL_aecp_notify.sv`)**: the registry, the
+ENTITY lock and the emission walk are landed as one block beside the engine: 16-row
 LUTRAM table {EID, MAC, seq} + valid/TL flags, walked one row per cycle (single
 comparator, never a bank); REGISTER refresh preserves the row's sequence_id (Milan
 §5.4.2.21 initializes it "if a new entry is created"); overflow answers `NO_RESOURCES`
-directly — the CONTROLLER_AVAILABLE **eviction probe of the same clause is a MAY and is
+directly. The CONTROLLER_AVAILABLE **eviction probe of the same clause is a MAY and is
 not attempted**. TIME_LIMITED expiry (300 s, timer-service slots `regmon + i`) removes
 the row and emits the targeted DEREGISTER notification with u = 1 and the entry's own
-sequence_id. The F06.5 arcs through PROBING — the §5.4.5.3 random 30–60 s monitor with
-CONTROLLER_AVAILABLE + one retry — are **NOT landed** (they need the AECP originator TX
-path; the `regmon` group's second half and the CA pool stay reserved): a
-non-TIME_LIMITED registration whose controller vanishes silently persists until power
-cycle, bounded by the 16-row table refusing further registrations. Emission jobs run
+sequence_id. The F06.5 arcs through PROBING are implemented: every valid command from
+a registered tuple draws an independent 30 to 60 second interval; expiry originates
+CONTROLLER_AVAILABLE through the shared inflight tracker; any matching response status
+re-arms the monitor; and one failed retry removes the row and emits targeted
+DEREGISTER. A valid command that arrives while a probe is active cancels that probe
+and starts a fresh monitor interval. TIME_LIMITED expiry also cancels an active
+probe before its row is cleared, preventing a late result from changing a new
+controller that later reuses the row. Cancellation before issue releases any
+partially built TX slot and unlocks the shared writer. Emission jobs run
 through the engine one at a time (same µprograms, buffer and builder as solicited
-answers; `LANE_AECP_UNS`); event classes arm as their response programs land, and the
-counters class stays unarmed (the counters live behind the integrator's pull-only
-face). Identify machinery: still absent.
+answers; `LANE_AECP_UNS`). Successful state-changing commands retain their response
+kind and requester exclusion in a bounded queue. GET_COUNTERS changes are coalesced
+per served descriptor and cannot begin emission more than once per second. Identify
+machinery remains absent.
 
 Registry entry ([F07.7](07_memory_maps.md#fig-07-regrec)): {controller EID, MAC, port,
 next unsolicited `sequence_id` (init 0), TIME_LIMITED deadline, monitor deadline,
 probe state}. **No duplicate {EID, MAC, port} tuples; ≥ 16 entries per AVB interface;
-volatile** (cleared by power cycle) — Δ12.
+volatile** (cleared by power cycle), Δ12.
 
 <a id="fig-06-regsm"></a>**F06.5 — Registry-entry lifecycle**
 
@@ -678,9 +683,9 @@ stateDiagram-v2
     REGISTERED --> EMPTY: T-NOTIF-TIMELIMITED expiry / remove + targeted DEREGISTER notification
 ```
 
-Registration overflow (Milan §5.4.2.21): full table ⇒ probe **all** registered
-controllers (pool `P-CA-POOL`); deregister non-responders (targeted DEREGISTER
-notifications); still full ⇒ `NO_RESOURCES`. A responding controller is never evicted.
+Registration overflow (Milan §5.4.2.21): the probe sweep is optional. This
+implementation does not run the sweep and returns the mandatory `NO_RESOURCES` result
+when the table is full. It never evicts a controller that may still be responding.
 
 <a id="fig-06-fanout"></a>**F06.4 — Unsolicited fan-out**
 
@@ -829,7 +834,7 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x0014 / 0x0015 SET/GET_SAMPLING_RATE | real lock-protected per-Audio Unit dynamic state |
 | 0x0016 / 0x0017 SET/GET_CLOCK_SOURCE | real lock-protected per-Clock Domain dynamic state |
 | 0x0018 / 0x0019 SET/GET_CONTROL | real volatile Identify control with values 0 and 255 |
-| 0x0022 / 0x0023 START/STOP_STREAMING | real started/stopped state on the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is projected by the NVM shadow. The dynamic store's selector 6 is RETIRED rather than reused, so there is no second copy. The write-only request region separates capture from completion: success follows the record write or a confirmed no-op, and a bounded request that cannot start reports `ENTITY_MISBEHAVING` without changing the record. The same `st_err` arm also surfaces a descriptor-store write timeout as `ENTITY_MISBEHAVING` for every WRITE_ST user, where it was previously silently ignored. A Stream Output, and every other descriptor type, answers `NOT_SUPPORTED` per Milan Section 5.4.2.19/.20. **Residue:** IEEE Section 7.5.2's unsolicited *response* for these opcodes is not sent; the Table 5.22 GET_STREAM_INFO push on the state change is (issue #69) |
+| 0x0022 / 0x0023 START/STOP_STREAMING | real started/stopped state on the ACMP binding record (`pp_acmp_pkg.sv`'s `f_started`), which clears on unbind and is projected by the NVM shadow. The dynamic store's selector 6 is RETIRED rather than reused, so there is no second copy. The write-only request region separates capture from completion: success follows the record write or a confirmed no-op, and a bounded request that cannot start reports `ENTITY_MISBEHAVING` without changing the record. The same `st_err` arm also surfaces a descriptor-store write timeout as `ENTITY_MISBEHAVING` for every WRITE_ST user, where it was previously silently ignored. A Stream Output, and every other descriptor type, answers `NOT_SUPPORTED` per Milan Section 5.4.2.19/.20. A state-changing success sends the opcode-specific unsolicited response to every registered controller except the requester; the generic Table 5.22 started-state event is suppressed for that same command so it does not duplicate the push. |
 | 0x0024 / 0x0025 REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION | real bounded controller registry |
 | 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face |
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |

@@ -103,11 +103,9 @@ struct Eng {
   bool prev_gnt = false;
   // The DUT registers its slot-side qualification (stage-0 pipeline: the
   // != NULL compare on the far-traveling slot buses lands in pend_r before
-  // the selection loop sees it), so every arbitration decision - grant pick,
-  // aging, pacing - is made on the PREVIOUS cycle's pending set. The model
-  // mirrors that with this one-cycle-delayed view; requests are held until
-  // grant by contract, so the delay changes which cycle a frame starts,
-  // never which frame.
+  // the selection loop sees it). Selection uses that registered set AND the
+  // current valid set so a withdrawn request cannot survive for one stale
+  // cycle. The model mirrors that intersection.
   uint32_t pend_q = 0;
 
   explicit Eng(Vtx_arbiter_harness* d) : dut(d) { memset(img, 0, sizeof img); }
@@ -142,6 +140,7 @@ struct Eng {
     // settle + pre-edge observation (what the registers will see)
     dut->clk_i = 0; dut->eval();
     uint32_t pend_pre = pend_now();
+    uint32_t arb_pend_pre = pend_q & pend_pre;
     int  s_valid = dut->tx_valid_o, s_sof = dut->tx_sof_o;
     int  s_eof = dut->tx_eof_o, s_ready = dut->tx_ready_i;
     uint8_t s_data = dut->tx_data_o;
@@ -175,13 +174,13 @@ struct Eng {
       if (prev_gnt)    e_pulse++;
       int w = __builtin_ctz(g);
       if (in_service)  e_gnt_midframe++;
-      int exp = ref.decide(pend_q);
+      int exp = ref.decide(arb_pend_pre);
       if (exp != w) {
         e_gnt_mismatch++;
         printf("  gnt mismatch: dut=%d model=%d pend=%02x pace=%d\n",
-               w, exp, pend_q, int(ref.pace_nonsol));
+               w, exp, arb_pend_pre, int(ref.pace_nonsol));
       }
-      ref.edge(w, pend_q, tick_pre);       // DUT-history bookkeeping
+      ref.edge(w, arb_pend_pre, tick_pre); // DUT-history bookkeeping
       // frame capture from the model's own image of the presented slot
       srv_req  = w;
       srv_slot = slot_field[w];
@@ -192,7 +191,7 @@ struct Eng {
       req_mask &= ~(1u << w);              // requester drops after grant
       idle_wait = 0;
     } else {
-      ref.edge(-1, pend_q, tick_pre);
+      ref.edge(-1, arb_pend_pre, tick_pre);
       if (pend_pre != 0 && !in_service) {
         if (++idle_wait > 80) { e_stall++; idle_wait = 0; }
       } else {
@@ -329,6 +328,16 @@ int main(int argc, char** argv) {
     CHECK(h.grant_log.empty() && h.frames_done == 0,
           "A no grants or frames while idle");
     CHECK(dut->tx_valid_o == 0 && dut->gnt_o == 0, "A quiescent outputs");
+
+    // Populate the registered qualifier, then withdraw before arbitration.
+    // No pool slot is needed because the request must never be granted.
+    h.slot_field[5] = 0;
+    h.req_mask |= 1u << 5;
+    h.step();
+    h.req_mask &= ~(1u << 5);
+    h.run(4);
+    CHECK(h.grant_log.empty() && !h.in_service,
+          "A withdrawn registered request is never granted");
   }
 
   // ---- B: strict priority when fresh ----------------------------------

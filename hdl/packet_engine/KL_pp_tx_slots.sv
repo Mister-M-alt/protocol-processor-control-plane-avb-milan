@@ -64,6 +64,12 @@ module KL_pp_tx_slots #(
     input  wire                                     wr_commit_i,   //! ALLOC -> READY: mark ready-to-send
     input  wire  [$clog2(TX_OVERSIZE_BYTES_P+1)-1:0] wr_len_i,     //! committed frame length in bytes
 
+    // ---- originator pin/release -------------------------------------------
+    input  wire                                     hold_valid_i,  //! keep slot READY after serialization
+    input  wire  [$clog2(TX_STD_SLOTS_P+1)-1:0]     hold_slot_i,   //! slot to pin for an exact retry
+    input  wire                                     release_valid_i, //! exchange complete, free pinned slot
+    input  wire  [$clog2(TX_STD_SLOTS_P+1)-1:0]     release_slot_i, //! pinned slot to release
+
     // ---- serialize port (TX arbiter) --------------------------------------
     input  wire                                     ser_req_i,     //! start streaming ser_slot_i (sampled when idle)
     input  wire  [$clog2(TX_STD_SLOTS_P+1)-1:0]     ser_slot_i,    //! slot to stream — must be READY
@@ -112,6 +118,7 @@ module KL_pp_tx_slots #(
   // slot index (5..7) reads a hard FREE and can never alias a live slot
   slot_st_e           st_r  [0:(1 << SLOT_W_C) - 1];
   logic [LEN_W_C-1:0] len_r [0:(1 << SLOT_W_C) - 1];
+  logic [(1 << SLOT_W_C)-1:0] held_r, release_pend_r;
 
   logic                alloc_gnt_r;
   logic [SLOT_W_C-1:0] alloc_slot_r;
@@ -177,6 +184,8 @@ module KL_pp_tx_slots #(
       end
       alloc_gnt_r  <= 1'b0;
       alloc_slot_r <= '0;
+      held_r         <= '0;
+      release_pend_r <= '0;
     end else begin
       alloc_gnt_r <= grant_w;
       if (grant_w) begin
@@ -188,9 +197,31 @@ module KL_pp_tx_slots #(
         len_r[wr_slot_i] <= (wr_len_i > slot_cap_f(wr_slot_i))
                             ? slot_cap_f(wr_slot_i) : wr_len_i;
       end
+      if (hold_valid_i && (32'(hold_slot_i) < N_SLOTS_C)) begin
+        held_r[hold_slot_i] <= 1'b1;
+      end
+      if (release_valid_i && (32'(release_slot_i) < N_SLOTS_C)) begin
+        held_r[release_slot_i] <= 1'b0;
+        if (st_r[release_slot_i] == SLOT_STREAM)
+          release_pend_r[release_slot_i] <= 1'b1;
+        else if ((st_r[release_slot_i] == SLOT_READY)
+                 || (st_r[release_slot_i] == SLOT_ALLOC)) begin
+          st_r[release_slot_i] <= SLOT_FREE;
+          release_pend_r[release_slot_i] <= 1'b0;
+        end
+      end
       if (ser_start_w) st_r[ser_slot_i] <= SLOT_STREAM;
       if (ser_zero_w)  st_r[ser_slot_i] <= SLOT_FREE;
-      if (done_w)      st_r[cur_slot_r] <= SLOT_FREE;   // auto-free on eof
+      if (done_w) begin
+        if (held_r[cur_slot_r] && !release_pend_r[cur_slot_r]
+            && !(release_valid_i && (release_slot_i == cur_slot_r)))
+          st_r[cur_slot_r] <= SLOT_READY;
+        else begin
+          st_r[cur_slot_r] <= SLOT_FREE;
+          held_r[cur_slot_r] <= 1'b0;
+          release_pend_r[cur_slot_r] <= 1'b0;
+        end
+      end
     end
   end
 

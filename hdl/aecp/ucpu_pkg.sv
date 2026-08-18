@@ -83,7 +83,8 @@ package ucpu_pkg;
     OP_SET_LENGTH = 5'd25,
     OP_BUILD_HDR  = 5'd26,  // BUILD_HEADER
     OP_BUILD_FLD  = 5'd27,  // BUILD_FIELD
-    OP_SEND_RESP  = 5'd28   // SEND_RESPONSE
+    OP_SEND_RESP  = 5'd28,  // SEND_RESPONSE
+    OP_SHIFT_R    = 5'd29   // logical right shift by imm[5:0]
   } ucpu_op_e;
 
   // ---- fmt codes ---------------------------------------------------------

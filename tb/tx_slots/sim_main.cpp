@@ -199,6 +199,8 @@ int main(int argc, char** argv) {
   dut->alloc_req_i = 0; dut->oversize_i = 0;
   dut->wr_slot_i = 0; dut->wr_addr_i = 0; dut->wr_data_i = 0;
   dut->wr_valid_i = 0; dut->wr_commit_i = 0; dut->wr_len_i = 0;
+  dut->hold_valid_i = 0; dut->hold_slot_i = 0;
+  dut->release_valid_i = 0; dut->release_slot_i = 0;
   dut->ser_req_i = 0; dut->ser_slot_i = 0; dut->ser_ready_i = 0;
 
   // ---- A: reset state -------------------------------------------------
@@ -362,15 +364,96 @@ int main(int argc, char** argv) {
           "H empty frame freed on service");
   }
 
-  // ---- I: quiescence ---------------------------------------------------
+  // ---- I: cancellation releases an allocated builder slot -------------
+  {
+    int exp = h.ref.alloc(false);
+    int got = h.alloc_dut(false);
+    CHECK(got == exp && got == 0, "I alloc for cancelled builder frame");
+    dut->release_slot_i = 0; dut->release_valid_i = 1;
+    h.tick();
+    dut->release_valid_i = 0;
+    h.ref.freeSlot(0);
+    CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0,
+          "I release frees an uncommitted allocated slot");
+  }
+
+  // ---- J: held-slot exact retry ---------------------------------------
+  // A held originator slot must survive one complete serialization so the
+  // retry is the exact same byte image. Only release returns it to FREE.
+  {
+    int exp = h.ref.alloc(false);
+    int got = h.alloc_dut(false);
+    CHECK(got == exp && got == 0, "J alloc for held originator frame");
+    h.fill_ha(0, 47, 14, 3);
+    h.commit(0, 47);
+    std::vector<uint8_t> want(h.ref.img[0], h.ref.img[0] + 47);
+
+    dut->hold_slot_i = 0; dut->hold_valid_i = 1;
+    h.tick();
+    dut->hold_valid_i = 0;
+
+    auto first = h.stream(0, 47, 61, 500);
+    CHECK(first.done && first.bytes == want,
+          "J first held transmission is byte-exact");
+    CHECK((dut->slots_ready_o & 1u) != 0 && dut->slots_free_o == 4,
+          "J held slot returns to READY after eof");
+    h.ref.st[0] = RefPool::READY;
+
+    auto retry = h.stream(0, 47, 53, 500);
+    CHECK(retry.done && retry.bytes == want && retry.bytes == first.bytes,
+          "J retry reuses the exact byte image");
+    CHECK((dut->slots_ready_o & 1u) != 0 && dut->slots_free_o == 4,
+          "J held slot remains READY after retry");
+    h.ref.st[0] = RefPool::READY;
+
+    dut->release_slot_i = 0; dut->release_valid_i = 1;
+    h.tick();
+    dut->release_valid_i = 0;
+    h.ref.freeSlot(0);
+    CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0,
+          "J release frees the held slot");
+
+    // A cancellation can arrive on the final serializer beat. The release
+    // must win that edge instead of leaving an unheld READY slot stranded.
+    exp = h.ref.alloc(false);
+    got = h.alloc_dut(false);
+    CHECK(got == exp && got == 0, "J alloc for release-at-eof frame");
+    h.fill_ha(0, 1, 0, 4);
+    h.commit(0, 1);
+    dut->hold_slot_i = 0; dut->hold_valid_i = 1;
+    h.tick();
+    dut->hold_valid_i = 0;
+    dut->ser_req_i = 1; dut->ser_slot_i = 0; dut->ser_ready_i = 1;
+    h.tick();
+    dut->ser_req_i = 0;
+    bool release_at_eof = false;
+    for (int cyc = 0; cyc < 8 && !release_at_eof; ++cyc) {
+      dut->clk_i = 0;
+      dut->eval();
+      if (dut->ser_valid_o && dut->ser_last_o) {
+        dut->release_slot_i = 0;
+        dut->release_valid_i = 1;
+        release_at_eof = true;
+      }
+      h.tick();
+    }
+    dut->release_valid_i = 0;
+    h.ref.freeSlot(0);
+    CHECK(release_at_eof && h.o_valid && h.o_last,
+          "J release-at-eof coincides with the final consumed beat");
+    CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0,
+          "J release-at-eof frees the held slot");
+  }
+
+  // ---- K: quiescence ---------------------------------------------------
   {
     bool spur = false;
     for (int k = 0; k < 10; ++k) {
       h.tick();
       spur |= (dut->alloc_gnt_o != 0) || (h.o_valid != 0);
     }
-    CHECK(!spur, "I no spurious grants or bytes when idle");
-    CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0, "I final state clean");
+    CHECK(!spur, "K no spurious grants or bytes when idle");
+    CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0, "K final state clean");
   }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);

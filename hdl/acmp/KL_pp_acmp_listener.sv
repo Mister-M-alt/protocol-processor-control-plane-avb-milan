@@ -224,6 +224,7 @@ module KL_pp_acmp_listener
     //! change - the bind and settle events already have their own terms
     //! upstream, and re-triggering on those would push duplicates.
     output logic                         act_strt_chg_o,
+    output logic                         act_strt_cmd_chg_o,
     output logic                         dbg_recwr_o,     //! record write this cycle
     output logic [SINK_W_C-1:0]          dbg_recwr_sink_o,//! written sink
     output logic [ACMP_REC_W_C-1:0]      dbg_recwr_rec_o  //! written record image
@@ -841,6 +842,7 @@ module KL_pp_acmp_listener
       bnd_was_r         <= 1'b0;
       bind_act_r        <= 1'b0;
       act_strt_chg_o    <= 1'b0;
+      act_strt_cmd_chg_o <= 1'b0;
       tk_eid_f_r    <= 64'd0;
       tk_uid_f_r    <= 16'd0;
       flags_f_r     <= 16'd0;
@@ -902,6 +904,7 @@ module KL_pp_acmp_listener
       act_nvm_o         <= 1'b0;
       act_notify_o      <= 1'b0;
       act_strt_chg_o    <= 1'b0;
+      act_strt_cmd_chg_o <= 1'b0;
       f_cap_v_r         <= 1'b0;
 
       unique case (xs_r)
@@ -1419,6 +1422,9 @@ module KL_pp_acmp_listener
           act_strt_chg_o <= cellmut_r && bnd_was_r && rec_r.f_bound
                             && !bind_act_r
                             && (rec_r.f_started != strt_was_r);
+          act_strt_cmd_chg_o <= cellmut_r && bnd_was_r && rec_r.f_bound
+                                && !bind_act_r && src_strq_r
+                                && (rec_r.f_started != strt_was_r);
           if (src_strq_r) begin
             strq_done_r <= 1'b1;
             strq_fail_r <= 1'b0;

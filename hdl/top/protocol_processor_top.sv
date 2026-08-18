@@ -305,6 +305,9 @@ module protocol_processor_top
     output logic  [5:0] ctr_word_o,           //! 0..31 = block quadlet, 32 = counters_valid
     input  wire  [31:0] ctr_data_i,           //! that quadlet
     input  wire         ctr_wait_i,           //! HOLD the beat (not a ready)
+    input  wire         ctr_change_i,         //! one served descriptor counter changed
+    input  wire  [15:0] ctr_change_desc_type_i,
+    input  wire  [15:0] ctr_change_desc_index_i,
 
     //! ---- GET_AUDIO_MAP read face (06 §6.5; IEEE §7.4.44, Milan §5.4.2.26) ----
     //! The processor parses the command, enforces §7.4.44.1's page rule and
@@ -699,7 +702,8 @@ module protocol_processor_top
   localparam int unsigned LANE_SRP_C      = 4;  // whole MRPDU frames
   localparam int unsigned LANE_TKRSP_C    = 5;  // talker response PDUs (56 B)
   localparam int unsigned LANE_MAAP_C     = 6;  // whole 60 B MAAP frames (11)
-  localparam int unsigned LANE_N_C        = 7;
+  localparam int unsigned LANE_ORIG_C     = 7;  // originated AECP commands
+  localparam int unsigned LANE_N_C        = 8;
 
   // =========================================================================
   // shared services: timer, PRNG, scoreboard, trace ring, originator
@@ -865,57 +869,89 @@ module protocol_processor_top
       .rd_data_o  (trc_rd_data_w)
   );
 
-  // originator: wired per contract, issue side DEFINED-idle — the ACMP
-  // listener originates its own probes (05) and CA probing is a P4 flow.
-  logic        org_iss_ready_nc_w, org_iss_gnt_nc_w;
-  logic [15:0] org_iss_seq_nc_w;
-  logic [3:0]  org_iss_id_nc_w;
-  logic        org_rt_valid_nc_w, org_fail_valid_nc_w;
-  logic [3:0]  org_rt_owner_nc_w, org_rt_id_nc_w;
-  logic [3:0]  org_fail_owner_nc_w, org_fail_id_nc_w;
-  logic        org_send_valid_nc_w, org_resend_valid_nc_w;
-  logic [2:0]  org_send_slot_nc_w, org_resend_slot_nc_w;
-  logic        org_hold_valid_nc_w, org_release_valid_nc_w;
-  logic [2:0]  org_hold_slot_nc_w, org_release_slot_nc_w;
+  // Milan 5.4.5.3 CONTROLLER_AVAILABLE originator. The registry monitor
+  // supplies one owner per registered-controller row; the generic originator
+  // owns independent sequence counters, the one retry and response routing.
+  logic        org_iss_ready_w, org_iss_gnt_w;
+  logic [15:0] org_iss_seq_w;
+  logic [3:0]  org_iss_id_w;
+  logic        org_rt_valid_w, org_fail_valid_w;
+  logic [3:0]  org_rt_owner_w, org_rt_id_nc_w;
+  logic [3:0]  org_fail_owner_w, org_fail_id_nc_w;
+  logic        org_send_valid_w, org_resend_valid_w;
+  logic [2:0]  org_send_slot_w, org_resend_slot_w;
+  logic        org_hold_valid_w, org_release_valid_w;
+  logic [2:0]  org_hold_slot_w, org_release_slot_w;
   logic        org_arm_valid_w, org_arm_cancel_w;
   logic [TMR_AW_C-1:0] org_arm_slot_w;
   logic [PP_TIMER_OWNER_W_C-1:0] org_arm_owner_w;
   logic [31:0] org_arm_deadline_w;
   logic [7:0]  org_rsp_ign_nc_w;
-  logic [11:0] org_busy_nc_w;
+  logic [PP_CA_POOL_C-1:0] org_busy_nc_w;
+  logic        ntfy_ca_cancel_valid_w;
+  logic [3:0]  ntfy_ca_cancel_owner_w;
+
+  logic        ca_txs_alloc_req_w, ca_txs_gnt_w;
+  logic [TXS_W_C-1:0] ca_txs_gnt_slot_w, ca_txs_wr_slot_w;
+  logic [TXA_W_C-1:0] ca_txs_wr_addr_w, ca_txs_wr_len_w;
+  logic        ca_txs_wr_valid_w, ca_txs_wr_commit_w;
+  logic        ca_txs_abort_w;
+  logic [7:0]  ca_txs_wr_data_w;
+  logic        ca_iss_valid_w;
+  logic [3:0]  ca_iss_owner_w;
+  logic [2:0]  ca_iss_slot_w;
+  logic [111:0] ca_iss_key_w;
+  logic [15:0] ca_iss_timeout_w;
+  logic [TMR_AW_C-1:0] ca_iss_tmr_slot_w;
+  logic        ca_issued_nc_w;
+  logic [3:0]  ca_issued_owner_nc_w;
+  logic        ca_cancel_release_valid_w;
+  logic [TXS_W_C-1:0] ca_cancel_release_slot_w;
 
   KL_pp_originator #(
-      .TMR_SLOTS_P (TMR_SLOTS_C)
+      .CA_POOL_P     (PP_CA_POOL_C),
+      .PROBE_SLOTS_P (0),
+      .INFLIGHT_P    (PP_CA_POOL_C),
+      .KEY_W_P       (112),
+      .TMR_SLOTS_P   (TMR_SLOTS_C)
   ) u_originator (
       .clk_i                 (clk_i),
       .rst_n                 (rst_n),
-      .iss_valid_i           (1'b0),
-      .iss_owner_i           (4'd0),
-      .iss_tx_slot_i         (3'd0),
-      .iss_key_i             (16'd0),
-      .iss_tmr_slot_i        ({TMR_AW_C{1'b0}}),
-      .iss_timeout_ms_i      (16'd0),
-      .iss_ready_o           (org_iss_ready_nc_w),
-      .iss_gnt_o             (org_iss_gnt_nc_w),
-      .iss_seq_o             (org_iss_seq_nc_w),
-      .iss_id_o              (org_iss_id_nc_w),
-      .rsp_valid_i           (1'b0),
-      .rsp_seq_i             (16'd0),
-      .rsp_key_i             (16'd0),
-      .rt_valid_o            (org_rt_valid_nc_w),
-      .rt_owner_o            (org_rt_owner_nc_w),
+      .iss_valid_i           (ca_iss_valid_w),
+      .iss_owner_i           (ca_iss_owner_w),
+      .iss_tx_slot_i         (ca_iss_slot_w),
+      .iss_key_i             (ca_iss_key_w),
+      .iss_tmr_slot_i        (ca_iss_tmr_slot_w),
+      .iss_timeout_ms_i      (ca_iss_timeout_w),
+      .iss_ready_o           (org_iss_ready_w),
+      .iss_gnt_o             (org_iss_gnt_w),
+      .iss_seq_o             (org_iss_seq_w),
+      .iss_id_o              (org_iss_id_w),
+      .cancel_valid_i        (ntfy_ca_cancel_valid_w),
+      .cancel_owner_i        (ntfy_ca_cancel_owner_w),
+      .rsp_valid_i           (v_hdr_valid_w
+                              && (v_hdr_protocol_w == 3'(PP_PROTO_AEM))
+                              && (v_hdr_msg_type_w == 4'd1)
+                              && (v_hdr_opcode_w == 16'h0003)
+                              && (v_hdr_ctlr_eid_w == entity_id_i)),
+      .rsp_seq_i             (v_hdr_seq_w),
+      .rsp_key_i             ({v_hdr_target_eid_w, v_hdr_src_mac_w}),
+      .rt_valid_o            (org_rt_valid_w),
+      .rt_owner_o            (org_rt_owner_w),
       .rt_id_o               (org_rt_id_nc_w),
-      .fail_valid_o          (org_fail_valid_nc_w),
-      .fail_owner_o          (org_fail_owner_nc_w),
+      .fail_valid_o          (org_fail_valid_w),
+      .fail_owner_o          (org_fail_owner_w),
       .fail_id_o             (org_fail_id_nc_w),
-      .send_valid_o          (org_send_valid_nc_w),
-      .send_slot_o           (org_send_slot_nc_w),
-      .resend_valid_o        (org_resend_valid_nc_w),
-      .resend_slot_o         (org_resend_slot_nc_w),
-      .hold_valid_o          (org_hold_valid_nc_w),
-      .hold_slot_o           (org_hold_slot_nc_w),
-      .release_valid_o       (org_release_valid_nc_w),
-      .release_slot_o        (org_release_slot_nc_w),
+      .send_valid_o          (org_send_valid_w),
+      .send_slot_o           (org_send_slot_w),
+      .resend_valid_o        (org_resend_valid_w),
+      .resend_slot_o         (org_resend_slot_w),
+      .send_accept_valid_i   (arb_gnt_w[LANE_ORIG_C]),
+      .send_accept_slot_i    (laneq_org_r[0]),
+      .hold_valid_o          (org_hold_valid_w),
+      .hold_slot_o           (org_hold_slot_w),
+      .release_valid_o       (org_release_valid_w),
+      .release_slot_o        (org_release_slot_w),
       .tmr_arm_valid_o       (org_arm_valid_w),
       .tmr_arm_cancel_o      (org_arm_cancel_w),
       .tmr_arm_slot_o        (org_arm_slot_w),
@@ -927,6 +963,49 @@ module protocol_processor_top
       .exp_owner_i           (exp_owner_w),
       .rsp_ign_cnt_o         (org_rsp_ign_nc_w),
       .inflight_busy_o       (org_busy_nc_w)
+  );
+
+  KL_aecp_ca_originator #(
+      .TMR_SLOTS_P    (TMR_SLOTS_C),
+      .TMR_CA_BASE_P  (TMR_MAP_C.capool),
+      .TX_STD_SLOTS_P (TX_STD_SLOTS_P),
+      .TX_OVERSIZE_BYTES_P(TX_OVERSIZE_BYTES_P)
+  ) u_ca_builder (
+      .clk_i             (clk_i),
+      .rst_n             (rst_n),
+      .entity_id_i       (entity_id_i),
+      .own_mac_i         (own_mac_i),
+      .req_valid_i       (ntfy_ca_valid_w),
+      .req_owner_i       (ntfy_ca_owner_w),
+      .req_ctlr_eid_i    (ntfy_ca_eid_w),
+      .req_mac_i         (ntfy_ca_mac_w),
+      .req_ready_o       (ntfy_ca_ready_w),
+      .cancel_valid_i    (ntfy_ca_cancel_valid_w),
+      .cancel_owner_i    (ntfy_ca_cancel_owner_w),
+      .cancel_release_valid_o(ca_cancel_release_valid_w),
+      .cancel_release_slot_o(ca_cancel_release_slot_w),
+      .issued_valid_o    (ca_issued_nc_w),
+      .issued_owner_o    (ca_issued_owner_nc_w),
+      .txs_alloc_req_o   (ca_txs_alloc_req_w),
+      .txs_alloc_gnt_i   (ca_txs_gnt_w),
+      .txs_alloc_slot_i  (ca_txs_gnt_slot_w),
+      .txs_wr_slot_o     (ca_txs_wr_slot_w),
+      .txs_wr_addr_o     (ca_txs_wr_addr_w),
+      .txs_wr_valid_o    (ca_txs_wr_valid_w),
+      .txs_wr_data_o     (ca_txs_wr_data_w),
+      .txs_wr_commit_o   (ca_txs_wr_commit_w),
+      .txs_wr_len_o      (ca_txs_wr_len_w),
+      .txs_abort_o       (ca_txs_abort_w),
+      .iss_valid_o       (ca_iss_valid_w),
+      .iss_owner_o       (ca_iss_owner_w),
+      .iss_tx_slot_o     (ca_iss_slot_w),
+      .iss_key_o         (ca_iss_key_w),
+      .iss_tmr_slot_o    (ca_iss_tmr_slot_w),
+      .iss_timeout_ms_o  (ca_iss_timeout_w),
+      .iss_ready_i       (org_iss_ready_w),
+      .iss_gnt_i         (org_iss_gnt_w),
+      .iss_seq_i         (org_iss_seq_w),
+      .iss_id_i          (org_iss_id_w)
   );
 
   // =========================================================================
@@ -1604,6 +1683,7 @@ module protocol_processor_top
   //! unsolicited notification. Issue #69 owns the trigger SET; this is the
   //! one trigger that only exists because START/STOP_STREAMING landed.
   logic        lstn_act_strt_chg_w;
+  logic        lstn_act_strt_cmd_chg_w;
 
   KL_pp_acmp_listener #(
       .N_SINKS_P           (N_STREAM_IN_P),
@@ -1644,6 +1724,7 @@ module protocol_processor_top
       .strm_started_o        (aecp_strm_started_o),
       .dbg_strq_drop_o       (lstn_strq_drop_w),
       .act_strt_chg_o        (lstn_act_strt_chg_w),
+      .act_strt_cmd_chg_o    (lstn_act_strt_cmd_chg_w),
       .pre_ready_o           (pre_ready_w),
       .now_ms_i              (now_ms_w),
       .tmr_arm_valid_o       (lstn_arm_valid_w),
@@ -2310,7 +2391,7 @@ module protocol_processor_top
   // =========================================================================
   // timer arm-port priority mux (banner)
   // =========================================================================
-  // Six engine arm faces feed ONE always-accepting arm port. Arms are
+  // Eight engine arm faces feed ONE always-accepting arm port. Arms are
   // one-cycle strobes with no ready, so each face gets a 4-deep queue and a
   // fixed-priority drain: listener > talker > ADP > SRP > originator > MAAP
   // > notify (SM correctness first, cadence last; MAAP's ms-scale timers and
@@ -2318,7 +2399,7 @@ module protocol_processor_top
   // Per-face order is preserved (each engine owns
   // disjoint slot ranges, so cross-face order is free); a queue overrun
   // drops the NEWEST arm and counts — never silent.
-  localparam int unsigned ARM_N_C = 7;
+  localparam int unsigned ARM_N_C = 8;
   localparam int unsigned ARM_W_C = 1 + TMR_AW_C + PP_TIMER_OWNER_W_C + 32;
 
   logic [ARM_N_C-1:0]              armq_in_vld_w;
@@ -2327,7 +2408,7 @@ module protocol_processor_top
   logic [ARM_N_C-1:0][2:0]         armq_cnt_r;
   logic [15:0]                     arm_drop_r;
 
-  assign armq_in_vld_w = {ntfy_arm_valid_w, maapeng_arm_valid_w,
+  assign armq_in_vld_w = {ntfy_mon_arm_valid_w, ntfy_arm_valid_w, maapeng_arm_valid_w,
                           org_arm_valid_w, srp_arm_valid_w, adp_arm_valid_w,
                           tkr_arm_valid_w, lstn_arm_valid_w};
   assign armq_in_w[0] = {lstn_arm_cancel_w, lstn_arm_slot_w,
@@ -2344,6 +2425,8 @@ module protocol_processor_top
                          maapeng_arm_owner_w, maapeng_arm_deadline_w};
   assign armq_in_w[6] = {ntfy_arm_cancel_w, ntfy_arm_slot_w,
                          ntfy_arm_owner_w, ntfy_arm_deadline_w};
+  assign armq_in_w[7] = {ntfy_mon_arm_cancel_w, ntfy_mon_arm_slot_w,
+                         ntfy_mon_arm_owner_w, ntfy_mon_arm_deadline_w};
 
   logic [ARM_N_C-1:0]      armq_pop_w;
   logic [ARM_N_C-1:0][2:0] armq_mid_w;    // count after the pop
@@ -2409,14 +2492,14 @@ module protocol_processor_top
   // =========================================================================
   // PRNG draw-port owner mux (banner)
   // =========================================================================
-  // Five clients; a broadcast draw_valid would complete the WRONG client's
+  // Six clients; a broadcast draw_valid would complete the WRONG client's
   // draw, so the mux latches one pending request per client, serves them by
   // fixed priority (listener > talker > ADP > SRP > MAAP), and routes
   // draw_valid exclusively to the owner. The shared busy shown to every
   // client is "some draw pending or in flight" — each client's own protocol
   // (issue on not-busy, then wait for valid) remains exactly what its own
   // suite proved.
-  localparam int unsigned PRNG_N_C = 5;
+  localparam int unsigned PRNG_N_C = 6;
 
   logic [PRNG_N_C-1:0]      pr_pend_r;
   logic [PRNG_N_C-1:0][2:0] pr_kind_r;
@@ -2427,9 +2510,9 @@ module protocol_processor_top
   logic                     pr_any_pend_w;
   logic                     pr_busy_shared_w;
 
-  assign pr_req_w  = {maapeng_prng_req_w, srp_draw_req_w, adp_prng_req_w,
+  assign pr_req_w  = {ntfy_prng_req_w, maapeng_prng_req_w, srp_draw_req_w, adp_prng_req_w,
                       tkr_draw_req_w, lstn_draw_req_w};
-  assign pr_kind_w = {maapeng_prng_kind_w, srp_draw_kind_w, adp_prng_kind_w,
+  assign pr_kind_w = {ntfy_prng_kind_w, maapeng_prng_kind_w, srp_draw_kind_w, adp_prng_kind_w,
                       tkr_draw_kind_w, lstn_draw_kind_w};
   assign pr_any_pend_w    = |pr_pend_r;
   assign pr_busy_shared_w = pr_inflight_r || pr_any_pend_w || prng_busy_w;
@@ -2439,12 +2522,14 @@ module protocol_processor_top
   assign adp_prng_busy_w  = pr_busy_shared_w;
   assign srp_draw_busy_w  = pr_busy_shared_w;
   assign maapeng_prng_busy_w = pr_busy_shared_w;
+  assign ntfy_prng_busy_w = pr_busy_shared_w;
 
   assign lstn_draw_valid_w = prng_valid_w && pr_inflight_r && (pr_owner_r == 3'd0);
   assign tkr_draw_valid_w  = prng_valid_w && pr_inflight_r && (pr_owner_r == 3'd1);
   assign adp_prng_valid_w  = prng_valid_w && pr_inflight_r && (pr_owner_r == 3'd2);
   assign srp_draw_valid_w  = prng_valid_w && pr_inflight_r && (pr_owner_r == 3'd3);
   assign maapeng_prng_valid_w = prng_valid_w && pr_inflight_r && (pr_owner_r == 3'd4);
+  assign ntfy_prng_valid_w = prng_valid_w && pr_inflight_r && (pr_owner_r == 3'd5);
 
   always_ff @(posedge clk_i) begin : prng_mux
     if (!rst_n) begin
@@ -2736,8 +2821,9 @@ module protocol_processor_top
   logic [63:0] aecp_rgy_eid_w, aecp_rgy_data_w;
   logic [47:0] aecp_rgy_mac_w;
   logic        uns_valid_w, uns_done_w;
-  logic [2:0]  uns_kind_w;
+  logic [3:0]  uns_kind_w;
   logic [15:0] uns_dt_w, uns_di_w, uns_seq_w;
+  logic [15:0] uns_arg0_w, uns_arg1_w;
   logic        uns_amap_remove_w, ntfy_amap_busy_w;
   logic [15:0] uns_amap_count_w;
   logic [63:0] uns_eid_w;
@@ -2748,6 +2834,16 @@ module protocol_processor_top
   logic [TMR_AW_C-1:0] ntfy_arm_slot_w;
   logic [PP_TIMER_OWNER_W_C-1:0] ntfy_arm_owner_w;
   logic [31:0] ntfy_arm_deadline_w;
+  logic        ntfy_mon_arm_valid_w, ntfy_mon_arm_cancel_w;
+  logic [TMR_AW_C-1:0] ntfy_mon_arm_slot_w;
+  logic [PP_TIMER_OWNER_W_C-1:0] ntfy_mon_arm_owner_w;
+  logic [31:0] ntfy_mon_arm_deadline_w;
+  logic        ntfy_prng_req_w, ntfy_prng_busy_w, ntfy_prng_valid_w;
+  logic [2:0]  ntfy_prng_kind_w;
+  logic        ntfy_ca_valid_w, ntfy_ca_ready_w;
+  logic [3:0]  ntfy_ca_owner_w;
+  logic [63:0] ntfy_ca_eid_w;
+  logic [47:0] ntfy_ca_mac_w;
   logic [7:0]  ntfy_reg_cnt_nc_w, ntfy_coalesce_nc_w;
   logic [15:0] ntfy_uns_cnt_nc_w;
   logic [N_STREAM_IN_P-1:0]  ntfy_stri_in_w;
@@ -2765,7 +2861,7 @@ module protocol_processor_top
           (32'(lstn_act_sink_w) == k
            && (lstn_disc_arm_w || lstn_disc_disarm_w
                || lstn_act_settle_w || lstn_act_teardown_w
-               || lstn_act_strt_chg_w))
+               || (lstn_act_strt_chg_w && !lstn_act_strt_cmd_chg_w)))
           || srp_evt_tk_reg_w[k] || srp_evt_tk_unreg_w[k];
     end
     for (int unsigned k = 0; k < N_STREAM_OUT_P; k++) begin
@@ -2778,6 +2874,9 @@ module protocol_processor_top
   logic [7:0]              aecp_eff_nvm_mark_nc_w;
   logic [3:0]              aecp_eff_notify_cls_nc_w;
   logic                    aecp_eff_notify_stb_nc_w;
+  logic [15:0]             aecp_eff_notify_type_w, aecp_eff_notify_index_w;
+  logic [15:0]             aecp_eff_notify_arg0_w, aecp_eff_notify_arg1_w;
+  logic [63:0]             aecp_eff_notify_excl_w;
   logic                    aecp_dbg_busy_nc_w, aecp_dbg_img_valid_w;
   logic [15:0]             aecp_dbg_cmd_w, aecp_dbg_resp_w, aecp_dbg_drop_w;
   logic [15:0]             aecp_dbg_miss_w;
@@ -2980,6 +3079,8 @@ module protocol_processor_top
       .uns_seq_i          (uns_seq_w),
       .uns_amap_remove_i  (uns_amap_remove_w),
       .uns_amap_count_i   (uns_amap_count_w),
+      .uns_arg0_i         (uns_arg0_w),
+      .uns_arg1_i         (uns_arg1_w),
       .amap_notify_busy_i (ntfy_amap_busy_w),
       .uns_done_o         (uns_done_w),
       .txreq_uns_valid_o  (aecp_txreq_uns_valid_w),
@@ -3044,6 +3145,7 @@ module protocol_processor_top
       .gsi_data_i         (gsi_data_i),
       .gsi_wait_i         (gsi_wait_i),
       .strm_bound_i       (bound_hold_r),
+      .strm_started_i     (aecp_strm_started_o),
       .strm_streaming_i   (aecp_streaming_w),
       .lock_held_i        (ntfy_lock_held_w),
       .lock_ctlr_i        (ntfy_lock_ctlr_w),
@@ -3052,6 +3154,11 @@ module protocol_processor_top
       .eff_nvm_stb_o      (aecp_eff_nvm_stb_nc_w),
       .eff_notify_class_o (aecp_eff_notify_cls_nc_w),
       .eff_notify_stb_o   (aecp_eff_notify_stb_nc_w),
+      .eff_notify_type_o  (aecp_eff_notify_type_w),
+      .eff_notify_index_o (aecp_eff_notify_index_w),
+      .eff_notify_arg0_o  (aecp_eff_notify_arg0_w),
+      .eff_notify_arg1_o  (aecp_eff_notify_arg1_w),
+      .eff_notify_excl_eid_o(aecp_eff_notify_excl_w),
       .dbg_busy_o         (aecp_dbg_busy_nc_w),
       .dbg_cmd_cnt_o      (aecp_dbg_cmd_w),
       .dbg_resp_cnt_o     (aecp_dbg_resp_w),
@@ -3137,6 +3244,41 @@ module protocol_processor_top
       .ev_amap_index_i       (amap_edit_desc_index_o),
       .ev_amap_count_i       (amap_edit_count_o),
       .ev_amap_excl_eid_i    (aecp_rgy_eid_w),
+      .ev_ctr_i              (ctr_change_i),
+      .ev_ctr_type_i         (ctr_change_desc_type_i),
+      .ev_ctr_index_i        (ctr_change_desc_index_i),
+      .ev_cmd_i              (aecp_eff_notify_stb_nc_w),
+      .ev_cmd_class_i        (aecp_eff_notify_cls_nc_w),
+      .ev_cmd_type_i         (aecp_eff_notify_type_w),
+      .ev_cmd_index_i        (aecp_eff_notify_index_w),
+      .ev_cmd_arg0_i         (aecp_eff_notify_arg0_w),
+      .ev_cmd_arg1_i         (aecp_eff_notify_arg1_w),
+      .ev_cmd_excl_eid_i     (aecp_eff_notify_excl_w),
+      .rx_cmd_valid_i        (v_hdr_valid_w
+                              && (((v_hdr_protocol_w == 3'(PP_PROTO_AEM))
+                                   && (v_hdr_msg_type_w == 4'd0))
+                                  || ((v_hdr_protocol_w == 3'(PP_PROTO_MVU))
+                                      && (v_hdr_msg_type_w == 4'd6))
+                                  || ((v_hdr_protocol_w == 3'(PP_PROTO_AA))
+                                      && (v_hdr_msg_type_w == 4'd2)))),
+      .rx_cmd_eid_i          (v_hdr_ctlr_eid_w),
+      .rx_cmd_mac_i          (v_hdr_src_mac_w),
+      .prng_draw_req_o       (ntfy_prng_req_w),
+      .prng_draw_kind_o      (ntfy_prng_kind_w),
+      .prng_draw_busy_i      (ntfy_prng_busy_w),
+      .prng_draw_valid_i     (ntfy_prng_valid_w),
+      .prng_draw_ms_i        (prng_ms_w),
+      .ca_valid_o            (ntfy_ca_valid_w),
+      .ca_owner_o            (ntfy_ca_owner_w),
+      .ca_ctlr_eid_o         (ntfy_ca_eid_w),
+      .ca_mac_o              (ntfy_ca_mac_w),
+      .ca_ready_i            (ntfy_ca_ready_w),
+      .ca_cancel_valid_o     (ntfy_ca_cancel_valid_w),
+      .ca_cancel_owner_o     (ntfy_ca_cancel_owner_w),
+      .ca_rsp_valid_i        (org_rt_valid_w),
+      .ca_rsp_owner_i        (org_rt_owner_w),
+      .ca_fail_valid_i       (org_fail_valid_w),
+      .ca_fail_owner_i       (org_fail_owner_w),
       .uns_valid_o           (uns_valid_w),
       .uns_kind_o            (uns_kind_w),
       .uns_desc_type_o       (uns_dt_w),
@@ -3146,6 +3288,8 @@ module protocol_processor_top
       .uns_seq_o             (uns_seq_w),
       .uns_amap_remove_o     (uns_amap_remove_w),
       .uns_amap_count_o      (uns_amap_count_w),
+      .uns_arg0_o            (uns_arg0_w),
+      .uns_arg1_o            (uns_arg1_w),
       .uns_done_i            (uns_done_w),
       .amap_busy_o           (ntfy_amap_busy_w),
       .lock_held_o           (ntfy_lock_held_w),
@@ -3159,6 +3303,11 @@ module protocol_processor_top
       .tmr_exp_valid_i       (exp_valid_w),
       .tmr_exp_slot_i        (exp_slot_w),
       .tmr_exp_owner_i       (exp_owner_w),
+      .mon_arm_valid_o       (ntfy_mon_arm_valid_w),
+      .mon_arm_cancel_o      (ntfy_mon_arm_cancel_w),
+      .mon_arm_slot_o        (ntfy_mon_arm_slot_w),
+      .mon_arm_owner_o       (ntfy_mon_arm_owner_w),
+      .mon_arm_deadline_ms_o (ntfy_mon_arm_deadline_w),
       .dbg_reg_cnt_o         (ntfy_reg_cnt_nc_w),
       .dbg_uns_cnt_o         (ntfy_uns_cnt_nc_w),
       .dbg_coalesce_o        (ntfy_coalesce_nc_w)
@@ -3167,10 +3316,10 @@ module protocol_processor_top
   // =========================================================================
   // TX slot pool + pool-access arbiter (banner)
   // =========================================================================
-  // ONE alloc+write port, four builders (ADP / listener / SRP / talker
-  // builder). Ownership is taken at selection, the owner's own alloc pulses
-  // are forwarded (grant timing stays exactly what each engine's suite
-  // proved), the write lane stays muxed to the owner until its commit.
+  // ONE alloc+write port, seven builders (ADP / listener / SRP / talker /
+  // AECP / MAAP / CONTROLLER_AVAILABLE). Ownership is taken at selection,
+  // one alloc sample is forwarded at a time, and the write lane stays muxed
+  // to the owner until its commit or explicit cancellation.
   // Non-owners simply see no grant and keep retrying/holding — that IS
   // their landed behavior. A full pool parks the owner (grant comes when
   // serialization frees a slot); no timeout exists because every landed
@@ -3181,12 +3330,14 @@ module protocol_processor_top
   localparam int unsigned TXC_TKB_C  = 3;
   localparam int unsigned TXC_AECP_C = 4;   // KL_aecp_engine
   localparam int unsigned TXC_MAAP_C = 5;   // KL_pp_maap (11)
-  localparam int unsigned TXC_N_C    = 6;
+  localparam int unsigned TXC_CA_C   = 6;   // CONTROLLER_AVAILABLE builder
+  localparam int unsigned TXC_N_C    = 7;
 
   logic [TXC_N_C-1:0] txc_req_w;
   logic [TXC_N_C-1:0] txc_pend_r;
   logic [2:0] txc_owner_r;
   logic       txc_locked_r;
+  logic       txc_alloc_wait_r;
   logic       pool_alloc_req_w, pool_oversize_w;
   logic       pool_alloc_gnt_w;
   logic [TXS_W_C-1:0] pool_alloc_slot_w;
@@ -3196,11 +3347,11 @@ module protocol_processor_top
   logic [7:0] pool_wr_data_w;
   logic [TXC_N_C-1:0] txc_commit_w;
 
-  assign txc_req_w = {maapeng_txs_alloc_req_w,
+  assign txc_req_w = {ca_txs_alloc_req_w, maapeng_txs_alloc_req_w,
                       aecp_txs_alloc_req_w, tkb_alloc_req_w,
                       srp_txs_alloc_req_w,
                       lstn_txs_alloc_req_w, adp_txs_alloc_req_w};
-  assign txc_commit_w = {maapeng_txs_wr_commit_w,
+  assign txc_commit_w = {ca_txs_wr_commit_w, maapeng_txs_wr_commit_w,
                          aecp_txs_wr_commit_w, (tkb_st_r == TKB_COMMIT),
                          srp_txs_wr_commit_w,
                          lstn_txs_wr_commit_w, adp_txs_wr_commit_w};
@@ -3210,11 +3361,13 @@ module protocol_processor_top
       txc_pend_r   <= '0;
       txc_owner_r  <= 3'd0;
       txc_locked_r <= 1'b0;
+      txc_alloc_wait_r <= 1'b0;
     end else begin
       for (int unsigned i = 0; i < TXC_N_C; i++) begin
         if (txc_req_w[i]) txc_pend_r[i] <= 1'b1;
       end
       if (!txc_locked_r) begin
+        txc_alloc_wait_r <= 1'b0;
         //! fixed priority, 03 §8 order: listener (the 50 ms ACMP budget) >
         //! talker builder > AECP solicited (100 ms) > SRP > ADP periodic
         if (txc_pend_r[TXC_LSTN_C] || txc_req_w[TXC_LSTN_C]) begin
@@ -3223,6 +3376,8 @@ module protocol_processor_top
           txc_owner_r <= 3'(TXC_TKB_C);  txc_locked_r <= 1'b1;
         end else if (txc_pend_r[TXC_AECP_C] || txc_req_w[TXC_AECP_C]) begin
           txc_owner_r <= 3'(TXC_AECP_C); txc_locked_r <= 1'b1;
+        end else if (txc_pend_r[TXC_CA_C] || txc_req_w[TXC_CA_C]) begin
+          txc_owner_r <= 3'(TXC_CA_C); txc_locked_r <= 1'b1;
         end else if (txc_pend_r[TXC_SRP_C] || txc_req_w[TXC_SRP_C]) begin
           txc_owner_r <= 3'(TXC_SRP_C);  txc_locked_r <= 1'b1;
         end else if (txc_pend_r[TXC_ADP_C] || txc_req_w[TXC_ADP_C]) begin
@@ -3231,8 +3386,23 @@ module protocol_processor_top
           txc_owner_r <= 3'(TXC_MAAP_C); txc_locked_r <= 1'b1;
         end
       end else begin
+        // The pool reports a sampled allocation on the following cycle.
+        // Forward only one request while that registered result is pending;
+        // otherwise every builder that holds until grant allocates twice.
+        if (txc_alloc_wait_r)
+          txc_alloc_wait_r <= 1'b0;
+        else if (pool_alloc_req_w)
+          txc_alloc_wait_r <= 1'b1;
         if (pool_alloc_gnt_w) txc_pend_r[txc_owner_r] <= 1'b0;
-        if (txc_commit_w[txc_owner_r]) txc_locked_r <= 1'b0;
+        if (txc_commit_w[txc_owner_r]) begin
+          txc_locked_r <= 1'b0;
+          txc_alloc_wait_r <= 1'b0;
+        end
+        if ((txc_owner_r == 3'(TXC_CA_C)) && ca_txs_abort_w) begin
+          txc_pend_r[TXC_CA_C] <= 1'b0;
+          txc_locked_r <= 1'b0;
+          txc_alloc_wait_r <= 1'b0;
+        end
       end
     end
   end
@@ -3260,6 +3430,15 @@ module protocol_processor_top
           pool_wr_addr_w   = aecp_txs_wr_addr_w;
           pool_wr_data_w   = aecp_txs_wr_data_w;
           pool_wr_len_w    = aecp_txs_wr_len_w;
+        end
+        3'(TXC_CA_C): begin
+          pool_alloc_req_w = ca_txs_alloc_req_w;
+          pool_wr_valid_w  = ca_txs_wr_valid_w;
+          pool_wr_commit_w = ca_txs_wr_commit_w;
+          pool_wr_slot_w   = ca_txs_wr_slot_w;
+          pool_wr_addr_w   = ca_txs_wr_addr_w;
+          pool_wr_data_w   = ca_txs_wr_data_w;
+          pool_wr_len_w    = ca_txs_wr_len_w;
         end
         3'(TXC_ADP_C): begin
           pool_alloc_req_w = adp_txs_alloc_req_w;
@@ -3307,6 +3486,7 @@ module protocol_processor_top
           pool_wr_len_w    = TXA_W_C'(56);
         end
       endcase
+      if (txc_alloc_wait_r) pool_alloc_req_w = 1'b0;
     end
   end
 
@@ -3322,18 +3502,36 @@ module protocol_processor_top
                         && pool_alloc_gnt_w;
   assign maapeng_txs_gnt_w = txc_locked_r && (txc_owner_r == 3'(TXC_MAAP_C))
                         && pool_alloc_gnt_w;
+  assign ca_txs_gnt_w = txc_locked_r && (txc_owner_r == 3'(TXC_CA_C))
+                        && pool_alloc_gnt_w;
   assign adp_txs_gnt_slot_w  = pool_alloc_slot_w;
   assign lstn_txs_gnt_slot_w = pool_alloc_slot_w;
   assign srp_txs_gnt_slot_w  = pool_alloc_slot_w;
   assign tkb_gnt_slot_w      = pool_alloc_slot_w;
   assign aecp_txs_gnt_slot_w = pool_alloc_slot_w;
   assign maapeng_txs_gnt_slot_w = pool_alloc_slot_w;
+  assign ca_txs_gnt_slot_w = pool_alloc_slot_w;
 
   logic        ser_req_w, ser_valid_w, ser_last_w, ser_ready_w;
   logic [TXS_W_C-1:0] ser_slot_w;
   logic [7:0]  ser_data_w;
   logic [TX_STD_SLOTS_P:0] txs_ready_nc_w;
   logic [$clog2(TX_STD_SLOTS_P+2)-1:0] txs_free_w;
+  logic        txs_release_valid_w;
+  logic [TXS_W_C-1:0] txs_release_slot_w;
+
+  KL_pp_release_merge #(
+      .N_SLOTS_P (TX_STD_SLOTS_P + 1)
+  ) u_release_merge (
+      .clk_i           (clk_i),
+      .rst_n           (rst_n),
+      .a_valid_i       (org_release_valid_w),
+      .a_slot_i        (TXS_W_C'(org_release_slot_w)),
+      .b_valid_i       (ca_cancel_release_valid_w),
+      .b_slot_i        (ca_cancel_release_slot_w),
+      .release_valid_o (txs_release_valid_w),
+      .release_slot_o  (txs_release_slot_w)
+  );
 
   KL_pp_tx_slots #(
       .TX_STD_SLOTS_P      (TX_STD_SLOTS_P),
@@ -3352,6 +3550,10 @@ module protocol_processor_top
       .wr_data_i     (pool_wr_data_w),
       .wr_commit_i   (pool_wr_commit_w),
       .wr_len_i      (pool_wr_len_w),
+      .hold_valid_i  (org_hold_valid_w),
+      .hold_slot_i   (org_hold_slot_w),
+      .release_valid_i(txs_release_valid_w),
+      .release_slot_i(txs_release_slot_w),
       .ser_req_i     (ser_req_w),
       .ser_slot_i    (ser_slot_w),
       .ser_valid_o   (ser_valid_w),
@@ -3365,10 +3567,12 @@ module protocol_processor_top
   // ---- TX lane queues: the ADP engine and the listener pulse one-cycle
   // txreq strobes; the arbiter wants requests HELD until grant. Depth-8
   // slot-handle queues are structurally lossless (at most 5 slots exist).
-  logic [7:0][TXS_W_C-1:0] laneq_adp_r, laneq_acmp_r;
-  logic [3:0]              laneq_adp_cnt_r, laneq_acmp_cnt_r;
-  logic [3:0]              laneq_adp_mid_w, laneq_acmp_mid_w;
-  logic                    laneq_adp_push_w, laneq_acmp_push_w;
+  logic [7:0][TXS_W_C-1:0] laneq_adp_r, laneq_acmp_r, laneq_org_r;
+  logic [3:0]              laneq_adp_cnt_r, laneq_acmp_cnt_r, laneq_org_cnt_r;
+  logic [3:0]              laneq_adp_mid_w, laneq_acmp_mid_w, laneq_org_mid_w;
+  logic                    laneq_adp_push_w, laneq_acmp_push_w, laneq_org_push_w;
+  logic                    laneq_org_drop_w, laneq_org_pop_w;
+  logic                    laneq_org_release_head_w;
 
   logic [LANE_N_C-1:0]              arb_req_w;
   logic [LANE_N_C-1:0][TXS_W_C-1:0] arb_slot_w;
@@ -3381,15 +3585,32 @@ module protocol_processor_top
                           - (arb_gnt_w[LANE_ADP_C] ? 4'd1 : 4'd0);
   assign laneq_acmp_mid_w = laneq_acmp_cnt_r
                           - (arb_gnt_w[LANE_ACMP_C] ? 4'd1 : 4'd0);
+  // A cancelled exchange releases its slot while its handle may still be
+  // queued. Drop a head that is no longer READY before it can block the
+  // lane or serialize contents from a later reuse of that physical slot.
+  assign laneq_org_release_head_w = (laneq_org_cnt_r != 4'd0)
+                                  && txs_release_valid_w
+                                  && (txs_release_slot_w
+                                      == laneq_org_r[0]);
+  assign laneq_org_drop_w = (laneq_org_cnt_r != 4'd0)
+                          && (!txs_ready_nc_w[laneq_org_r[0]]
+                              || laneq_org_release_head_w);
+  assign laneq_org_pop_w  = arb_gnt_w[LANE_ORIG_C] || laneq_org_drop_w;
+  assign laneq_org_mid_w  = laneq_org_cnt_r
+                          - (laneq_org_pop_w ? 4'd1 : 4'd0);
   assign laneq_adp_push_w  = adp_txreq_valid_w  && (laneq_adp_mid_w != 4'd8);
   assign laneq_acmp_push_w = lstn_txreq_valid_w && (laneq_acmp_mid_w != 4'd8);
+  assign laneq_org_push_w = (org_send_valid_w || org_resend_valid_w)
+                            && (laneq_org_mid_w != 4'd8);
 
   always_ff @(posedge clk_i) begin : lane_queues
     if (!rst_n) begin
       laneq_adp_r      <= '0;
       laneq_acmp_r     <= '0;
+      laneq_org_r      <= '0;
       laneq_adp_cnt_r  <= 4'd0;
       laneq_acmp_cnt_r <= 4'd0;
+      laneq_org_cnt_r  <= 4'd0;
     end else begin
       if (arb_gnt_w[LANE_ADP_C]) begin
         for (int unsigned i = 0; i < 7; i++) begin
@@ -3411,6 +3632,19 @@ module protocol_processor_top
       end
       laneq_acmp_cnt_r <= laneq_acmp_mid_w
                         + (laneq_acmp_push_w ? 4'd1 : 4'd0);
+
+      if (laneq_org_pop_w) begin
+        for (int unsigned i = 0; i < 7; i++) begin
+          laneq_org_r[i] <= laneq_org_r[i + 1];
+        end
+      end
+      if (laneq_org_push_w) begin
+        laneq_org_r[laneq_org_mid_w[2:0]] <= org_resend_valid_w
+                                              ? org_resend_slot_w
+                                              : org_send_slot_w;
+      end
+      laneq_org_cnt_r <= laneq_org_mid_w
+                       + (laneq_org_push_w ? 4'd1 : 4'd0);
     end
   end
 
@@ -3421,6 +3655,9 @@ module protocol_processor_top
   assign arb_req_w[LANE_SRP_C]      = srp_txreq_valid_w;
   assign arb_req_w[LANE_TKRSP_C]    = tkb_lane_valid_r;
   assign arb_req_w[LANE_MAAP_C]     = maapeng_txreq_valid_w;
+  assign arb_req_w[LANE_ORIG_C]     = (laneq_org_cnt_r != 4'd0)
+                                    && txs_ready_nc_w[laneq_org_r[0]]
+                                    && !laneq_org_release_head_w;
   assign arb_slot_w[LANE_AECP_SOL_C] = aecp_txreq_slot_w;
   assign arb_slot_w[LANE_AECP_UNS_C] = aecp_txreq_slot_w;
   assign arb_slot_w[LANE_ACMP_C]     = laneq_acmp_r[0];
@@ -3428,6 +3665,7 @@ module protocol_processor_top
   assign arb_slot_w[LANE_SRP_C]      = srp_txreq_slot_w;
   assign arb_slot_w[LANE_TKRSP_C]    = tkb_slot_r;
   assign arb_slot_w[LANE_MAAP_C]     = maapeng_txreq_slot_w;
+  assign arb_slot_w[LANE_ORIG_C]     = laneq_org_r[0];
   assign maapeng_txreq_ready_w = arb_gnt_w[LANE_MAAP_C];
   assign srp_txreq_ready_w  = arb_gnt_w[LANE_SRP_C];
   assign aecp_txreq_ready_w = arb_gnt_w[LANE_AECP_SOL_C];
@@ -3442,8 +3680,8 @@ module protocol_processor_top
       //! Annex B attaches no response deadline to any MAAP PDU, and the
       //! T-TX-AGING guard still bounds its wait under load
       .N_REQ_P          (LANE_N_C),
-      .PRIO_MAP_P       ({2'd3, 2'd1, 2'd2, 2'd3, 2'd0, 2'd2, 2'd1}),
-      .SOLICITED_MASK_P (7'b0100101),
+      .PRIO_MAP_P       ({2'd1, 2'd3, 2'd1, 2'd2, 2'd3, 2'd0, 2'd2, 2'd1}),
+      .SOLICITED_MASK_P (8'b10100101),
       .TX_STD_SLOTS_P   (TX_STD_SLOTS_P)
   ) u_tx_arbiter (
       .clk_i       (clk_i),

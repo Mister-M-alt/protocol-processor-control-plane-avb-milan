@@ -476,7 +476,7 @@ module KL_aecp_engine
     //! when no solicited head is waiting, so notifications can never starve
     //! the command path; the producer holds `uns_valid_i` until `uns_done_o`.
     input  wire         uns_valid_i,         //! job presented, held until done
-    input  wire  [2:0]  uns_kind_i,          //! pp_pkg PP_UNS_* response kind
+    input  wire  [3:0]  uns_kind_i,          //! pp_pkg PP_UNS_* response kind
     input  wire  [15:0] uns_desc_type_i,     //! response descriptor_type
     input  wire  [15:0] uns_desc_index_i,    //! response descriptor_index
     input  wire  [63:0] uns_ctlr_eid_i,      //! target controller entity_id
@@ -484,6 +484,8 @@ module KL_aecp_engine
     input  wire  [15:0] uns_seq_i,           //! the entry's sequence_id
     input  wire         uns_amap_remove_i,
     input  wire  [15:0] uns_amap_count_i,
+    input  wire  [15:0] uns_arg0_i,
+    input  wire  [15:0] uns_arg1_i,
     input  wire         amap_notify_busy_i,
     output logic        uns_done_o,          //! one-cycle: job retired (sent or voided)
 
@@ -508,6 +510,7 @@ module KL_aecp_engine
     //! consumes the answer, because the reduction belongs where the SRP
     //! records live and not in a command decoder.
     input  wire [N_STREAM_IN_P-1:0]  strm_bound_i,
+    input  wire [N_STREAM_IN_P-1:0]  strm_started_i,
 
     //! ---- started/stopped request out (Milan §5.4.2.19 / §5.4.2.20) -----
     //! One held request per START/STOP_STREAMING, aimed at the ACMP binding
@@ -529,6 +532,11 @@ module KL_aecp_engine
     output logic        eff_nvm_stb_o,
     output logic  [3:0] eff_notify_class_o,
     output logic        eff_notify_stb_o,
+    output logic [15:0] eff_notify_type_o,
+    output logic [15:0] eff_notify_index_o,
+    output logic [15:0] eff_notify_arg0_o,
+    output logic [15:0] eff_notify_arg1_o,
+    output logic [63:0] eff_notify_excl_eid_o,
 
     //! ---- observability ----
     output logic        dbg_busy_o,          //! a command is in flight
@@ -756,6 +764,7 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_STRT_C     = 11'd1600; // E_STRT
   localparam logic [10:0] UPC_STOP_C     = 11'd1632; // E_STOP
   localparam logic [10:0] UPC_STRMNS_C   = 11'd1664; // E_STRMNS
+  localparam logic [10:0] UPC_STRMUNS_C  = 11'd1672; // E_STRMUNS
   localparam logic [10:0] UPC_STRMBAD_C  = 11'd1696; // E_STRMBAD
   //! MOVED with their microprograms: E_AMADD spans 34 words, so at 1632 it
   //! overlapped both E_STOP and E_STRMNS above. check_upc_map.py gates these
@@ -766,10 +775,10 @@ module KL_aecp_engine
   //! landed first on main and hold 1792..1939, so GET_NAME and the shared
   //! arms take the gaps between the setter slots and SET_NAME takes the
   //! tail (check_upc_map.py gates every constant against gen_ucode.py)
-  localparam logic [10:0] UPC_GNAME_C    = 11'd1808; // E_GNAME
-  localparam logic [10:0] UPC_SNAME_C    = 11'd1940; // E_SNAME
-  localparam logic [10:0] UPC_NAMEERR_C  = 11'd1840; // E_NAMEERR
-  localparam logic [10:0] UPC_NAMEBAD_C  = 11'd1890; // E_NAMEBAD
+  localparam logic [10:0] UPC_GNAME_C    = 11'd1344; // E_GNAME
+  localparam logic [10:0] UPC_SNAME_C    = 11'd1392; // E_SNAME
+  localparam logic [10:0] UPC_NAMEERR_C  = 11'd1352; // E_NAMEERR
+  localparam logic [10:0] UPC_NAMEBAD_C  = 11'd1384; // E_NAMEBAD
   //! the SET_STREAM_FORMAT twins (the store selector is a µcode immediate,
   //! so direction picks the program - the E_STRT/E_STOP reasoning), their
   //! dispatch-routed refusals, and SET_STREAM_INFO with its full-body
@@ -1248,6 +1257,25 @@ module KL_aecp_engine
                                          ? OP_REMOVE_AUDIO_MAP_C
                                          : OP_ADD_AUDIO_MAP_C;
                             uns_upc_w = UPC_UNSOK_C;   end
+      PP_UNS_CTRS_C:  begin uns_ct_w = OP_GET_COUNTERS_C;
+                            uns_upc_w = UPC_GCTRS_C;   end
+      PP_UNS_SRATE_C: begin uns_ct_w = OP_SET_SAMP_RATE_C;
+                            uns_upc_w = UPC_GSRATE_C;  end
+      PP_UNS_NAME_C:  begin uns_ct_w = OP_SET_NAME_C;
+                            uns_upc_w = UPC_GNAME_C;   end
+      PP_UNS_CFG_C:   begin uns_ct_w = OP_SET_CONFIG_C;
+                            uns_upc_w = UPC_GCFG_C;    end
+      PP_UNS_SFMT_C:  begin uns_ct_w = OP_SET_STREAM_FMT_C;
+                            uns_upc_w = UPC_GSFMT_C;   end
+      PP_UNS_SINFO_C: begin uns_ct_w = OP_SET_STREAM_INFO_C;
+                            uns_upc_w = UPC_GSTRI_C;   end
+      PP_UNS_CTRL_C:  begin uns_ct_w = OP_SET_CONTROL_C;
+                            uns_upc_w = UPC_GCTRL_C;   end
+      PP_UNS_CLKS_C:  begin uns_ct_w = OP_SET_CLOCK_SRC_C;
+                            uns_upc_w = UPC_GCLKS_C;   end
+      PP_UNS_STRM_C:  begin uns_ct_w = uns_arg0_i[0] ? OP_STOP_STRM_C
+                                                      : OP_START_STRM_C;
+                            uns_upc_w = UPC_STRMUNS_C; end
       default:        begin uns_ct_w = 16'd0;            uns_upc_w = UPC_NOSEND_C;  end
     endcase
   end
@@ -1557,6 +1585,24 @@ module KL_aecp_engine
       .dbg_ovf_o          (ucpu_ovf_nc_w)
   );
 
+  always_comb begin : notify_effect_context
+    eff_notify_type_o     = cfg_ix_r;
+    eff_notify_index_o    = desc_ix_r;
+    eff_notify_arg0_o     = 16'd0;
+    eff_notify_arg1_o     = 16'd0;
+    eff_notify_excl_eid_o = cmd_r.controller_eid;
+    if (eff_notify_class_o == 4'd1) begin
+      eff_notify_type_o  = DT_ENTITY_C;
+      eff_notify_index_o = 16'd0;
+      eff_notify_arg0_o  = desc_ix_r;
+    end else if (eff_notify_class_o == 4'd7) begin
+      eff_notify_arg0_o = name_ix_r;
+      eff_notify_arg1_o = name_cfg_r;
+    end else if (eff_notify_class_o == 4'd9) begin
+      eff_notify_arg0_o = cmd_r.opcode;
+    end
+  end
+
   logic [15:0] store_fetch_nc_w, store_rowr_nc_w, store_dlen_nc_w;
 
   KL_aecp_desc_store #(
@@ -1750,16 +1796,18 @@ module KL_aecp_engine
   //! other - which is exactly the bug ENTITY_AVAILABLE hit on its first run
   //! (rgy_req_o gated on it, the gxr_data_r mux did not, so the query was
   //! asked and the counters answer came back)
-  logic gx_alt_w, gsi_any_w, rgy_any_w;
+  logic gx_alt_w, gsi_any_w, rgy_any_w, strm_state_w;
   //! SET_STREAM_FORMAT joins the Milan-info face for the same reason
   //! GET_STREAM_FORMAT did: its refusal arms answer "the current value",
   //! which IS kind 0 selector 1, and its verdict word (selector 15) is the
   //! integrator's ruling on the PROPOSED format presented on
   //! `gsi_prop_fmt_o` - the supported set and the mapping-survival
   //! reduction both live integrator-side, where map edits already commit.
-  assign gsi_any_w = gstri_r | gavb_r | gasp_r | gsfmt_r | ssfmt_r;
+  assign gsi_any_w = gstri_r | gavb_r | gasp_r | gsfmt_r | ssfmt_r | ssinfo_r;
   assign rgy_any_w = regun_r | lockc_r | eavl_r;
-  assign gx_alt_w  = amap_r | amap_edit_r | sname_r | rgy_any_w | gsi_any_w;
+  assign strm_state_w = (strt_r || stop_r) && (gx_sel_w[7:4] == 4'hD);
+  assign gx_alt_w  = amap_r | amap_edit_r | sname_r | rgy_any_w | gsi_any_w
+                     | strm_state_w;
 
   assign ctr_req_o        = gx_req_w && !gx_alt_w;
   assign ctr_desc_type_o  = cfg_ix_r;
@@ -1777,7 +1825,7 @@ module KL_aecp_engine
   //! ...the Milan-info face: selector low nibble forwarded, the kind from
   //! the discriminators, the ordinal from the shared record counter below
   assign gsi_req_o        = gx_req_w && gsi_any_w;
-  assign gsi_kind_o       = (gstri_r || gsfmt_r || ssfmt_r) ? 2'd0
+  assign gsi_kind_o       = (gstri_r || gsfmt_r || ssfmt_r || ssinfo_r) ? 2'd0
                                                  : (gavb_r ? 2'd1 : 2'd2);
   assign gsi_desc_type_o  = cfg_ix_r;
   assign gsi_desc_index_o = desc_ix_r;
@@ -1953,6 +2001,13 @@ module KL_aecp_engine
                    : amap_edit_r          ? amap_edit_data_i
                    : sname_r              ? amap_stage_q_r
                    : rgy_any_w            ? rgy_data_i
+                   : strm_state_w         ? ((32'(desc_ix_r) < N_STREAM_IN_P)
+                                              ? {63'd0,
+                                                 1'(strm_bound_i >> desc_ix_r)
+                                                   ? 1'(strm_started_i
+                                                        >> desc_ix_r)
+                                                   : strt_r}
+                                              : 64'd0)
                    : gsi_any_w            ? gsi_data_i
                                           : {32'd0, ctr_data_i};
     end
@@ -2415,7 +2470,7 @@ module KL_aecp_engine
             cmd_r.rx_slot        <= PP_SLOT_NULL_C;
             upc_r      <= uns_upc_w;
             echo_r     <= (uns_kind_i == PP_UNS_AMAP_C);
-            ctrs_r     <= 1'b0;
+            ctrs_r     <= (uns_kind_i == PP_UNS_CTRS_C);
             amap_r     <= 1'b0;
             amap_edit_r <= 1'b0;
             amap_remove_r <= uns_amap_remove_i;
@@ -2426,7 +2481,8 @@ module KL_aecp_engine
             regun_r    <= (uns_kind_i == PP_UNS_LOCK_C);
             acq_r      <= 1'b0;
             lockc_r    <= 1'b0;
-            gstri_r    <= (uns_kind_i == PP_UNS_STRI_C);
+            gstri_r    <= (uns_kind_i == PP_UNS_STRI_C)
+                          || (uns_kind_i == PP_UNS_SINFO_C);
             gavb_r     <= (uns_kind_i == PP_UNS_AVB_C);
             gasp_r     <= (uns_kind_i == PP_UNS_ASP_C);
             //! no unsolicited job carries a read-side opcode (Table 5.22 lists
@@ -2435,21 +2491,21 @@ module KL_aecp_engine
             //! route the Milan-info face off a stale flop
             eavl_r     <= 1'b0;
             gcfg_r     <= 1'b0;
-            gsfmt_r    <= 1'b0;
-            gsrate_r   <= 1'b0;
-            gclks_r    <= 1'b0;
+            gsfmt_r    <= (uns_kind_i == PP_UNS_SFMT_C);
+            gsrate_r   <= (uns_kind_i == PP_UNS_SRATE_C);
+            gclks_r    <= (uns_kind_i == PP_UNS_CLKS_C);
             ssrate_r   <= 1'b0;
             sclks_r    <= 1'b0;
             ssfmt_r    <= 1'b0;
             ssinfo_r   <= 1'b0;
-            gctrl_r    <= 1'b0;
+            gctrl_r    <= (uns_kind_i == PP_UNS_CTRL_C);
             sctrl_r    <= 1'b0;
-            gname_r    <= 1'b0;
+            gname_r    <= (uns_kind_i == PP_UNS_NAME_C);
             sname_r    <= 1'b0;
-            scfg_r     <= 1'b0;
-            strt_r     <= 1'b0;
-            stop_r     <= 1'b0;
-            strm_r     <= 1'b0;
+            scfg_r     <= (uns_kind_i == PP_UNS_CFG_C);
+            strt_r     <= (uns_kind_i == PP_UNS_STRM_C) && !uns_arg0_i[0];
+            stop_r     <= (uns_kind_i == PP_UNS_STRM_C) && uns_arg0_i[0];
+            strm_r     <= (uns_kind_i == PP_UNS_STRM_C);
             setc_r     <= 1'b0;
             gdi_r      <= 1'b0;
             g_shape_fault_r <= 1'b0;
@@ -2463,9 +2519,10 @@ module KL_aecp_engine
             amap_rsp_count_r <= 8'd0;
             cfg_ix_r   <= (uns_kind_i == PP_UNS_ASP_C) ? uns_desc_index_i
                                                         : uns_desc_type_i;
-            desc_ix_r  <= uns_desc_index_i;
-            name_ix_r  <= 16'd0;
-            name_cfg_r <= 16'd0;
+            desc_ix_r  <= (uns_kind_i == PP_UNS_CFG_C) ? uns_arg0_i
+                                                        : uns_desc_index_i;
+            name_ix_r  <= uns_arg0_i;
+            name_cfg_r <= uns_arg1_i;
             desc_ty_r  <= (uns_kind_i == PP_UNS_AMAP_C)
                           ? uns_amap_count_i : 16'd0;
             raw_ct_r   <= uns_ct_w;

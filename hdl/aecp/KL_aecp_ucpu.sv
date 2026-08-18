@@ -13,7 +13,7 @@
 //                operand file in DISTRIBUTED RAM (never flops — the +894-LUT
 //                counter-mirror failure mode), 32-bit ALU with 64-bit move /
 //                merge paths, response + iteration cursors, 5-bit status,
-//                and decode for all 29 µISA operations of 06 §8. External
+//                and decode for all 30 µISA operations of 06 §8. External
 //                state (07 §3 image+overlay), gather sources, the response
 //                buffer and the effect strobes are PORTS: this block is the
 //                execute stage only, priced against the emit-engine mass it
@@ -175,6 +175,7 @@ module KL_aecp_ucpu
   logic e_writes_w;
   always_comb begin : raw_detect
     e_writes_w = vld_e_r && (uop_e_r.op inside {OP_MOVE, OP_SET_MASKED,
+                                                OP_SHIFT_R,
                                                 OP_READ_ST, OP_NAME_RD,
                                                 OP_GATHER_EXT});
     raw_d_w = vld_d_r &&
@@ -600,6 +601,10 @@ module KL_aecp_ucpu
                 OP_SET_MASKED: begin
                   wb_we_r <= 1'b1; wb_rd_r <= uop_e_r.rd;
                   wb_data_r <= merged_w;
+                end
+                OP_SHIFT_R: begin
+                  wb_we_r <= 1'b1; wb_rd_r <= uop_e_r.rd;
+                  wb_data_r <= opa_e_r >> uop_e_r.imm[5:0];
                 end
                 OP_READ_ST, OP_NAME_RD: begin
                   wb_we_r <= 1'b1; wb_rd_r <= uop_e_r.rd;

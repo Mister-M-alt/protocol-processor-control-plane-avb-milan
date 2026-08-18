@@ -157,16 +157,26 @@ The pipeline has **four producers** into the same dispatch stage:
    entity-initiated PDUs: ACMP `PROBE_TX` (from the listener SM), AECP
    `CONTROLLER_AVAILABLE` (from the registry monitor), unsolicited responses (from the
    fan-out engine), `IDENTIFY_NOTIFICATION`, ADP TX. The originator:
-   - allocates a TX slot and serializes the PDU from the owner's state (probe retries
-     **regenerate the identical PDU** from the sink record — Milan's "exact duplicate",
-     [05 §6.4](05_acmp_engine.md));
+   - accepts a PDU already serialized into a TX slot, then holds that immutable slot
+     across the exchange so a retry sends the exact same bytes
+     ([05 §6.4](05_acmp_engine.md));
    - assigns `sequence_id` from the owner's counter (per-controller for unsolicited,
      [06 §7](06_aecp_engine.md));
    - for command-type PDUs (PROBE_TX, CONTROLLER_AVAILABLE) writes an **inflight
      entry** `{owner, key, seq, deadline T-ID, retried}` so V7/V6 route the response
-     back; on deadline expiry with `retried = 0` it re-sends (exact duplicate) once,
-     else reports timeout to the owner. IEEE's one-retry rule is thereby central,
-     not per-engine (IEEE §9.3.6.1.2, §8.2.2.1.5).
+     back. The response timer starts only when the TX arbiter grants the handle to
+     the serializer, so time spent in the lane queue cannot consume an attempt
+     budget. Serializer grants are parked per inflight entry before the shared
+     timer arm port, so a simultaneous response or cancellation cannot lose one.
+     On deadline expiry with `retried = 0` it re-sends the held slot once;
+     the retry timer likewise starts only after serializer acceptance. A second
+     expiry reports timeout to the owner. IEEE's one-retry rule is thereby central,
+     not per-engine (IEEE §9.3.6.1.2, §8.2.2.1.5). The CONTROLLER_AVAILABLE key is
+     the full `{controller Entity ID, controller MAC}` tuple, so a folded-MAC
+     collision or a response for another target cannot complete the exchange;
+   - releases cancelled or completed slots through a per-slot pending merge. Two
+     release sources can pulse together without losing a handle, and a cancelled
+     handle still waiting in the originator lane queue is removed before slot reuse.
 4. **MGMT** — side-port operations that mirror ATDECC changes enter as transactions so
    lock checks, commits and notifications follow the same path ([02 §7](02_interfaces.md)).
 

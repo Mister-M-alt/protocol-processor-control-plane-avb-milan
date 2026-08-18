@@ -87,10 +87,15 @@
 //
 //                EXPIRY RIDES THE SHARED TIMER SERVICE, never a private
 //                millisecond counter: row i owns slot TMR_REGMON_BASE_P + i
-//                (the F08.4 registry-monitor group; its second half stays
-//                reserved for the Milan SS5.4.5.3 CONTROLLER_AVAILABLE
-//                monitor, a recorded gap this build does not probe), and
-//                the lock owns singleton slot TMR_LOCK_SLOT_P. A fired
+//                for TIME_LIMITED registration and the second half owns the
+//                Milan SS5.4.5.3 CONTROLLER_AVAILABLE monitor. Each valid
+//                command from a registered tuple requests a new independent
+//                PRNG draw in the 30 to 60 second range. A monitor expiry
+//                starts one CONTROLLER_AVAILABLE transaction through the
+//                shared originator. Any matching response, regardless of
+//                status, requests a new draw; one failed retry removes the
+//                row and queues its targeted DEREGISTER notification. The
+//                lock owns singleton slot TMR_LOCK_SLOT_P. A fired
 //                registration slot parks in pend_r exactly like
 //                KL_pp_originator parks expiries, because the walk engine
 //                is single-threaded; ANY successful re-register of the row
@@ -119,6 +124,13 @@
 //                this controller"), latched at drain time because its row
 //                is gone by emission time.
 //
+//                COMMAND TRIGGERS retain the opcode-specific response kind,
+//                descriptor tuple, command arguments, and requester EID in a
+//                bounded FIFO. Successful no-op setters do not enqueue. The
+//                requester is excluded from the table walk. GET_COUNTERS
+//                changes use one dirty and pending bit per served descriptor;
+//                their one-second limit is measured when emission begins.
+//
 //                DEADLOCK IS BROKEN BY WITHDRAWAL: while a presented job
 //                waits for the engine, a rising rgy_req_i proves the engine
 //                is busy running a solicited registry/lock command (an
@@ -127,14 +139,10 @@
 //                and the job re-presented. Without this, engine-waits-on-
 //                gather and notify-waits-on-done form a cycle.
 //
-//                WHAT THIS BLOCK DOES NOT DO, on purpose: no
-//                CONTROLLER_AVAILABLE probing (Milan SS5.4.5.3 - needs the
-//                AECP originator TX path, recorded gap: a non-TIME_LIMITED
-//                registration whose controller vanishes persists until
-//                power cycle, bounded by the 16-row table answering
-//                NO_RESOURCES when full); no GET_COUNTERS notification
-//                class (the counters live behind the integrator's pull-only
-//                face; this block never sees them move).
+//                WHAT THIS BLOCK DOES NOT DO, on purpose: the optional
+//                CONTROLLER_AVAILABLE eviction sweep on registry overflow.
+//                A full registry returns the mandatory NO_RESOURCES status
+//                without evicting a controller that may still be alive.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -186,10 +194,41 @@ module KL_aecp_notify
     input  wire  [15:0] ev_amap_index_i,
     input  wire  [15:0] ev_amap_count_i,
     input  wire  [63:0] ev_amap_excl_eid_i,
+    input  wire         ev_ctr_i,            //! one descriptor counter changed
+    input  wire  [15:0] ev_ctr_type_i,
+    input  wire  [15:0] ev_ctr_index_i,
+    input  wire         ev_cmd_i,            //! successful state-changing command
+    input  wire  [3:0]  ev_cmd_class_i,
+    input  wire  [15:0] ev_cmd_type_i,
+    input  wire  [15:0] ev_cmd_index_i,
+    input  wire  [15:0] ev_cmd_arg0_i,
+    input  wire  [15:0] ev_cmd_arg1_i,
+    input  wire  [63:0] ev_cmd_excl_eid_i,
+
+    //! ---- registered-controller availability monitor --------------------
+    input  wire         rx_cmd_valid_i,      //! valid AECP command at the RX validator
+    input  wire  [63:0] rx_cmd_eid_i,
+    input  wire  [47:0] rx_cmd_mac_i,
+    output logic        prng_draw_req_o,
+    output logic [2:0]  prng_draw_kind_o,
+    input  wire         prng_draw_busy_i,
+    input  wire         prng_draw_valid_i,
+    input  wire  [15:0] prng_draw_ms_i,
+    output logic        ca_valid_o,
+    output logic [3:0]  ca_owner_o,
+    output logic [63:0] ca_ctlr_eid_o,
+    output logic [47:0] ca_mac_o,
+    input  wire         ca_ready_i,
+    output logic        ca_cancel_valid_o,
+    output logic [3:0]  ca_cancel_owner_o,
+    input  wire         ca_rsp_valid_i,
+    input  wire  [3:0]  ca_rsp_owner_i,
+    input  wire         ca_fail_valid_i,
+    input  wire  [3:0]  ca_fail_owner_i,
 
     //! ---- unsolicited job face toward KL_aecp_engine ----
     output logic        uns_valid_o,         //! job presented, held until done
-    output logic [2:0]  uns_kind_o,          //! pp_pkg PP_UNS_* response kind
+    output logic [3:0]  uns_kind_o,          //! pp_pkg PP_UNS_* response kind
     output logic [15:0] uns_desc_type_o,     //! response descriptor_type
     output logic [15:0] uns_desc_index_o,    //! response descriptor_index
     output logic [63:0] uns_ctlr_eid_o,      //! target controller entity_id
@@ -197,6 +236,8 @@ module KL_aecp_notify
     output logic [15:0] uns_seq_o,           //! this entry's sequence_id
     output logic        uns_amap_remove_o,
     output logic [15:0] uns_amap_count_o,
+    output logic [15:0] uns_arg0_o,
+    output logic [15:0] uns_arg1_o,
     input  wire         uns_done_i,          //! engine retired the job (sent or voided)
     output logic        amap_busy_o,         //! preserve the engine staging RAM
 
@@ -214,6 +255,12 @@ module KL_aecp_notify
     input  wire                  tmr_exp_valid_i,       //! expiry event strobe
     input  wire  [TMR_AW_C-1:0]  tmr_exp_slot_i,        //! expired slot
     input  wire  [PP_TIMER_OWNER_W_C-1:0] tmr_exp_owner_i, //! owner tag as armed
+
+    output logic                 mon_arm_valid_o,
+    output logic                 mon_arm_cancel_o,
+    output logic [TMR_AW_C-1:0]  mon_arm_slot_o,
+    output logic [PP_TIMER_OWNER_W_C-1:0] mon_arm_owner_o,
+    output logic [31:0]          mon_arm_deadline_ms_o,
 
     //! ---- observability ----
     output logic [7:0]  dbg_reg_cnt_o,       //! live registrations
@@ -262,6 +309,44 @@ module KL_aecp_notify
   logic [63:0] lockx_eid_r;    //! requester excluded from the lock emission
   logic        lockx_v_r;      //! 0 = no exclusion (timeout, or coalesced)
 
+  // Command-driven notifications are losslessly parked behind the registry
+  // walk. Sixteen entries match the dispatcher depth and keep a slow fan-out
+  // from overwriting the identity of a later state change.
+  localparam int unsigned CMDQ_N_C = 16;
+  logic [3:0]  cmdq_class_r [0:CMDQ_N_C-1];
+  logic [15:0] cmdq_type_r  [0:CMDQ_N_C-1];
+  logic [15:0] cmdq_index_r [0:CMDQ_N_C-1];
+  logic [15:0] cmdq_arg0_r  [0:CMDQ_N_C-1];
+  logic [15:0] cmdq_arg1_r  [0:CMDQ_N_C-1];
+  logic [63:0] cmdq_excl_r  [0:CMDQ_N_C-1];
+  logic [3:0]  cmdq_wr_r, cmdq_rd_r;
+  logic [4:0]  cmdq_count_r;
+  logic [15:0] cmdq_drop_r;
+  logic        cmd_class_ok_w, cmd_push_w;
+
+  // Counter notifications have one independent one-second throttle per
+  // descriptor. This build serves every stream row plus AVB_INTERFACE[0]
+  // and CLOCK_DOMAIN[0], the same set accepted by GET_COUNTERS.
+  localparam int unsigned N_CTR_DESC_C = N_STREAM_IN_P + N_STREAM_OUT_P + 2;
+  localparam int unsigned CTX_W_C = (N_CTR_DESC_C > 1) ? $clog2(N_CTR_DESC_C) : 1;
+  localparam logic [15:0] DT_STREAM_INPUT_C  = 16'h0005;
+  localparam logic [15:0] DT_STREAM_OUTPUT_C = 16'h0006;
+  localparam logic [15:0] DT_AVB_INTERFACE_C = 16'h0009;
+  localparam logic [15:0] DT_CLOCK_DOMAIN_C  = 16'h0024;
+  logic [N_CTR_DESC_C-1:0] ctr_dirty_r, ctr_pend_r, ctr_sent_r;
+  logic [31:0] ctr_last_r [0:N_CTR_DESC_C-1];
+  logic        ctr_ev_ok_w;
+  logic [CTX_W_C-1:0] ctr_ev_ix_w;
+
+  // Availability monitor state. A command hit only sets a bit; the single
+  // PRNG draw port drains those bits and arms the second half of regmon.
+  logic [N_CTRL_P-1:0] mon_draw_pend_r, ca_pend_r, ca_probe_r;
+  logic                 mon_draw_wait_r;
+  logic [CIX_W_C-1:0]   mon_draw_ix_r;
+  logic                 mon_pick_ok_w, ca_pick_ok_w, ca_cancel_ok_w;
+  logic [CIX_W_C-1:0]   mon_pick_ix_w, ca_pick_ix_w, ca_cancel_ix_w;
+  logic [N_CTRL_P-1:0]  rx_cmd_hit_w;
+
   //! the auto-DEREGISTER single-shot holder: its row is cleared at drain, so
   //! the addressing tuple must be latched before it goes
   logic        dh_v_r;
@@ -304,13 +389,15 @@ module KL_aecp_notify
 
   // emit walk context
   logic        em_active_r;
-  logic [2:0]  em_kind_r;
+  logic [3:0]  em_kind_r;
   logic [15:0] em_dt_r, em_di_r;
+  logic [15:0] em_arg0_r, em_arg1_r;
   logic [63:0] em_excl_r;
   logic        em_excl_v_r;
   logic        em_amap_remove_r;
   logic [15:0] em_amap_count_r;
   logic        em_dh_r;                 // this job is the DEREG single-shot
+  logic        em_cmd_r;
   logic [CIX_W_C-1:0] em_ix_r;
 
   logic [15:0] uns_cnt_r;
@@ -343,19 +430,117 @@ module KL_aecp_notify
   assign em_skip_w = !valid_r[wk_ix_r]
                      || (em_excl_v_r && (row_eid_w == em_excl_r));
 
+  always_comb begin : counter_event_map
+    ctr_ev_ok_w = 1'b0;
+    ctr_ev_ix_w = '0;
+    if ((ev_ctr_type_i == DT_STREAM_INPUT_C)
+        && (32'(ev_ctr_index_i) < N_STREAM_IN_P)) begin
+      ctr_ev_ok_w = 1'b1;
+      ctr_ev_ix_w = CTX_W_C'(ev_ctr_index_i);
+    end else if ((ev_ctr_type_i == DT_STREAM_OUTPUT_C)
+                 && (32'(ev_ctr_index_i) < N_STREAM_OUT_P)) begin
+      ctr_ev_ok_w = 1'b1;
+      ctr_ev_ix_w = CTX_W_C'(N_STREAM_IN_P + 32'(ev_ctr_index_i));
+    end else if ((ev_ctr_type_i == DT_AVB_INTERFACE_C)
+                 && (ev_ctr_index_i == 16'd0)) begin
+      ctr_ev_ok_w = 1'b1;
+      ctr_ev_ix_w = CTX_W_C'(N_STREAM_IN_P + N_STREAM_OUT_P);
+    end else if ((ev_ctr_type_i == DT_CLOCK_DOMAIN_C)
+                 && (ev_ctr_index_i == 16'd0)) begin
+      ctr_ev_ok_w = 1'b1;
+      ctr_ev_ix_w = CTX_W_C'(N_STREAM_IN_P + N_STREAM_OUT_P + 1);
+    end
+  end
+
+  assign cmd_class_ok_w = ev_cmd_class_i inside {4'd1, 4'd2, 4'd3, 4'd4,
+                                                  4'd5, 4'd7, 4'd8, 4'd9};
+  assign cmd_push_w = ev_cmd_i && cmd_class_ok_w
+                      && (cmdq_count_r < 5'(CMDQ_N_C));
+
+  always_comb begin : monitor_pick
+    mon_pick_ok_w = 1'b0;
+    mon_pick_ix_w = '0;
+    ca_pick_ok_w  = 1'b0;
+    ca_pick_ix_w  = '0;
+    ca_cancel_ok_w = 1'b0;
+    ca_cancel_ix_w = '0;
+    for (int i = int'(N_CTRL_P) - 1; i >= 0; i--) begin
+      if (mon_draw_pend_r[i] && valid_r[i] && !ca_probe_r[i]) begin
+        mon_pick_ok_w = 1'b1;
+        mon_pick_ix_w = CIX_W_C'(i);
+      end
+      if (ca_pend_r[i] && valid_r[i] && !ca_probe_r[i]
+          && !rx_cmd_hit_w[i]) begin
+        ca_pick_ok_w = 1'b1;
+        ca_pick_ix_w = CIX_W_C'(i);
+      end
+      if (rx_cmd_hit_w[i] && ca_probe_r[i]) begin
+        ca_cancel_ok_w = 1'b1;
+        ca_cancel_ix_w = CIX_W_C'(i);
+      end
+    end
+  end
+
+  always_comb begin : command_registry_hit
+    rx_cmd_hit_w = '0;
+    for (int unsigned i = 0; i < N_CTRL_P; i++) begin
+      rx_cmd_hit_w[i] = rx_cmd_valid_i && valid_r[i]
+                        && (rows_r[i][127:64] == rx_cmd_eid_i)
+                        && (rows_r[i][63:16] == rx_cmd_mac_i);
+    end
+  end
+
+  always_comb begin : ca_request
+    ca_valid_o    = ca_pick_ok_w;
+    ca_owner_o    = 4'(ca_pick_ix_w);
+    ca_ctlr_eid_o = rows_r[ca_pick_ix_w][127:64];
+    ca_mac_o      = rows_r[ca_pick_ix_w][63:16];
+    // A TIME_LIMITED drain can remove and later reuse a row while its old
+    // availability exchange is still live. Cancel before clearing the row,
+    // just as an incoming command cancels a superseded probe.
+    ca_cancel_valid_o = ca_cancel_ok_w
+                        || ((n_st_r == N_DRAIN) && ca_probe_r[pd_ix_w]);
+    ca_cancel_owner_o = ((n_st_r == N_DRAIN) && ca_probe_r[pd_ix_w])
+                        ? 4'(pd_ix_w) : 4'(ca_cancel_ix_w);
+  end
+
   //! emit pick: the class priority is fixed - the single-shot DEREGISTER
   //! first (its controller is already gone from the table), then lock, then
   //! entity-wide classes, then per-stream ones
   logic        pick_any_w;
-  logic [2:0]  pick_kind_w;
+  logic [3:0]  pick_kind_w;
   logic [15:0] pick_dt_w, pick_di_w;
+  logic [15:0] pick_arg0_w, pick_arg1_w;
+  logic        pick_cmd_w;
+  logic [CTX_W_C-1:0] pick_ctr_ix_w;
   always_comb begin : emit_pick
     pick_any_w  = 1'b1;
     pick_kind_w = PP_UNS_LOCK_C;
     pick_dt_w   = 16'h0000;             // ENTITY
     pick_di_w   = 16'd0;
+    pick_arg0_w = 16'd0;
+    pick_arg1_w = 16'd0;
+    pick_cmd_w  = 1'b0;
+    pick_ctr_ix_w = '0;
     if (pe_lock_r) begin
       pick_kind_w = PP_UNS_LOCK_C;
+    end else if (cmdq_count_r != 5'd0) begin
+      pick_cmd_w = 1'b1;
+      pick_dt_w  = cmdq_type_r[cmdq_rd_r];
+      pick_di_w  = cmdq_index_r[cmdq_rd_r];
+      pick_arg0_w = cmdq_arg0_r[cmdq_rd_r];
+      pick_arg1_w = cmdq_arg1_r[cmdq_rd_r];
+      unique case (cmdq_class_r[cmdq_rd_r])
+        4'd1: pick_kind_w = PP_UNS_CFG_C;
+        4'd2: pick_kind_w = PP_UNS_SFMT_C;
+        4'd3: pick_kind_w = PP_UNS_SINFO_C;
+        4'd4: pick_kind_w = PP_UNS_CTRL_C;
+        4'd5: pick_kind_w = PP_UNS_SRATE_C;
+        4'd7: pick_kind_w = PP_UNS_NAME_C;
+        4'd8: pick_kind_w = PP_UNS_CLKS_C;
+        4'd9: pick_kind_w = PP_UNS_STRM_C;
+        default: pick_kind_w = PP_UNS_DEREG_C;
+      endcase
     end else if (pe_amap_r) begin
       pick_kind_w = PP_UNS_AMAP_C;
       pick_dt_w   = amap_type_r;
@@ -368,6 +553,26 @@ module KL_aecp_notify
       pick_dt_w   = 16'h0009;
     end else begin
       pick_any_w = 1'b0;
+      for (int unsigned c = 0; c < N_CTR_DESC_C; c++) begin
+        if (!pick_any_w && ctr_pend_r[c]) begin
+          pick_any_w    = 1'b1;
+          pick_kind_w   = PP_UNS_CTRS_C;
+          pick_ctr_ix_w = CTX_W_C'(c);
+          if (c < N_STREAM_IN_P) begin
+            pick_dt_w = DT_STREAM_INPUT_C;
+            pick_di_w = 16'(c);
+          end else if (c < (N_STREAM_IN_P + N_STREAM_OUT_P)) begin
+            pick_dt_w = DT_STREAM_OUTPUT_C;
+            pick_di_w = 16'(c - N_STREAM_IN_P);
+          end else if (c == (N_STREAM_IN_P + N_STREAM_OUT_P)) begin
+            pick_dt_w = DT_AVB_INTERFACE_C;
+            pick_di_w = 16'd0;
+          end else begin
+            pick_dt_w = DT_CLOCK_DOMAIN_C;
+            pick_di_w = 16'd0;
+          end
+        end
+      end
       for (int unsigned s = 0; s < N_STREAM_IN_P; s++) begin
         if (!pick_any_w && pe_sin_r[s]) begin
           pick_any_w  = 1'b1;
@@ -389,7 +594,7 @@ module KL_aecp_notify
 
   //! expiry intake: registry rows own {PP_OWN_NTFY_C + i}, the lock owns
   //! PP_OWN_LOCK_C; both also match on the armed slot, like the originator
-  logic        exp_row_w, exp_lock_w;
+  logic        exp_row_w, exp_lock_w, exp_mon_w;
   logic [CIX_W_C-1:0] exp_ix_w;
   assign exp_ix_w  = tmr_exp_owner_i[CIX_W_C-1:0];
   assign exp_row_w = tmr_exp_valid_i
@@ -397,6 +602,10 @@ module KL_aecp_notify
       && (tmr_exp_slot_i == TMR_AW_C'(TMR_REGMON_BASE_P + 32'(exp_ix_w)));
   assign exp_lock_w = tmr_exp_valid_i && (tmr_exp_owner_i == PP_OWN_LOCK_C)
       && (tmr_exp_slot_i == TMR_AW_C'(TMR_LOCK_SLOT_P));
+  assign exp_mon_w = tmr_exp_valid_i
+      && (tmr_exp_owner_i[7:CIX_W_C] == PP_OWN_CMON_C[7:CIX_W_C])
+      && (tmr_exp_slot_i == TMR_AW_C'(TMR_REGMON_BASE_P + N_CTRL_P
+                                      + 32'(exp_ix_w)));
 
   //! parked-expiry drain pick (lowest index first; order is immaterial)
   logic               pd_any_w;
@@ -435,8 +644,15 @@ module KL_aecp_notify
   assign uns_seq_o        = hold_seq_r;
   assign uns_amap_remove_o = em_amap_remove_r;
   assign uns_amap_count_o  = em_amap_count_r;
-  assign amap_busy_o = pe_amap_r
-                       || (em_active_r && (em_kind_r == PP_UNS_AMAP_C));
+  assign uns_arg0_o        = em_arg0_r;
+  assign uns_arg1_o        = em_arg1_r;
+  // Holding the command path while a class is draining makes the finite
+  // event queue lossless under sustained controller traffic. It also keeps
+  // the mapping staging RAM intact until its unsolicited body is consumed.
+  assign amap_busy_o = dh_v_r || em_active_r || pe_lock_r || pe_amap_r
+                       || pe_avb_r || pe_asp_r || (|pe_sin_r) || (|pe_sout_r)
+                       || (cmdq_count_r != 5'd0) || (|ctr_pend_r);
+  assign prng_draw_kind_o = 3'd4;       // KL_pp_prng: uniform 30..60 seconds
 
   assign dbg_uns_cnt_o  = uns_cnt_r;
   assign dbg_coalesce_o = coalesce_r;
@@ -463,6 +679,25 @@ module KL_aecp_notify
       pe_asp_r    <= 1'b0;
       pe_lock_r   <= 1'b0;
       pe_amap_r   <= 1'b0;
+      cmdq_wr_r   <= 4'd0;
+      cmdq_rd_r   <= 4'd0;
+      cmdq_count_r <= 5'd0;
+      cmdq_drop_r <= 16'd0;
+      ctr_dirty_r <= '0;
+      ctr_pend_r  <= '0;
+      ctr_sent_r  <= '0;
+      for (int unsigned c = 0; c < N_CTR_DESC_C; c++) ctr_last_r[c] <= 32'd0;
+      mon_draw_pend_r <= '0;
+      ca_pend_r       <= '0;
+      ca_probe_r      <= '0;
+      mon_draw_wait_r <= 1'b0;
+      mon_draw_ix_r   <= '0;
+      prng_draw_req_o <= 1'b0;
+      mon_arm_valid_o <= 1'b0;
+      mon_arm_cancel_o <= 1'b0;
+      mon_arm_slot_o <= '0;
+      mon_arm_owner_o <= '0;
+      mon_arm_deadline_ms_o <= 32'd0;
       amap_remove_r <= 1'b0;
       amap_type_r <= 16'd0;
       amap_index_r <= 16'd0;
@@ -489,14 +724,17 @@ module KL_aecp_notify
       result_r    <= 2'd0;
       result_q_r  <= 1'b0;
       em_active_r <= 1'b0;
-      em_kind_r   <= 3'd0;
+      em_kind_r   <= 4'd0;
       em_dt_r     <= 16'd0;
       em_di_r     <= 16'd0;
+      em_arg0_r   <= 16'd0;
+      em_arg1_r   <= 16'd0;
       em_excl_r   <= 64'd0;
       em_excl_v_r <= 1'b0;
       em_amap_remove_r <= 1'b0;
       em_amap_count_r <= 16'd0;
       em_dh_r     <= 1'b0;
+      em_cmd_r    <= 1'b0;
       em_ix_r     <= '0;
       uns_cnt_r   <= 16'd0;
       coalesce_r  <= 8'd0;
@@ -511,6 +749,8 @@ module KL_aecp_notify
     end else begin
       wr_en_r         <= 1'b0;
       tmr_arm_valid_o <= 1'b0;
+      prng_draw_req_o <= 1'b0;
+      mon_arm_valid_o <= 1'b0;
       if (!rgy_req_i) req_done_r <= 1'b0;
 
       // ---- event intake (independent of the FSM) -------------------------
@@ -529,6 +769,80 @@ module KL_aecp_notify
         amap_index_r <= ev_amap_index_i;
         amap_count_r <= ev_amap_count_i;
         amap_excl_r <= ev_amap_excl_eid_i;
+      end
+      if (ev_cmd_i && cmd_class_ok_w) begin
+        if (cmd_push_w) begin
+          cmdq_class_r[cmdq_wr_r] <= ev_cmd_class_i;
+          cmdq_type_r[cmdq_wr_r]  <= ev_cmd_type_i;
+          cmdq_index_r[cmdq_wr_r] <= ev_cmd_index_i;
+          cmdq_arg0_r[cmdq_wr_r]  <= ev_cmd_arg0_i;
+          cmdq_arg1_r[cmdq_wr_r]  <= ev_cmd_arg1_i;
+          cmdq_excl_r[cmdq_wr_r]  <= ev_cmd_excl_eid_i;
+          cmdq_wr_r    <= cmdq_wr_r + 4'd1;
+          cmdq_count_r <= cmdq_count_r + 5'd1;
+        end else if (cmdq_drop_r != 16'hFFFF) begin
+          cmdq_drop_r <= cmdq_drop_r + 16'd1;
+        end
+      end
+
+      if (ev_ctr_i && ctr_ev_ok_w) ctr_dirty_r[ctr_ev_ix_w] <= 1'b1;
+      for (int unsigned c = 0; c < N_CTR_DESC_C; c++) begin
+        if (ctr_dirty_r[c] && !ctr_pend_r[c]
+            && (!ctr_sent_r[c]
+                || ((now_ms_i - ctr_last_r[c]) >= 32'd1000))) begin
+          ctr_dirty_r[c] <= 1'b0;
+          ctr_pend_r[c]  <= 1'b1;
+        end
+      end
+
+      // Any valid command from a registered controller supersedes an old
+      // monitor deadline and asks for a fresh independent random interval.
+      for (int unsigned i = 0; i < N_CTRL_P; i++) begin
+        if (rx_cmd_hit_w[i]) begin
+          mon_draw_pend_r[i] <= 1'b1;
+          ca_pend_r[i]       <= 1'b0;
+          ca_probe_r[i]      <= 1'b0;
+        end
+      end
+
+      if (exp_mon_w && valid_r[exp_ix_w] && !ca_probe_r[exp_ix_w]
+          && !mon_draw_pend_r[exp_ix_w] && !rx_cmd_hit_w[exp_ix_w]
+          && !(mon_draw_wait_r && (mon_draw_ix_r == exp_ix_w))) begin
+        ca_pend_r[exp_ix_w] <= 1'b1;
+      end
+      if (ca_valid_o && ca_ready_i) begin
+        ca_pend_r[ca_pick_ix_w]  <= 1'b0;
+        ca_probe_r[ca_pick_ix_w] <= 1'b1;
+      end
+      if (ca_rsp_valid_i && (32'(ca_rsp_owner_i) < N_CTRL_P)
+          && !rx_cmd_hit_w[ca_rsp_owner_i]
+          && valid_r[ca_rsp_owner_i]) begin
+        ca_probe_r[ca_rsp_owner_i]      <= 1'b0;
+        mon_draw_pend_r[ca_rsp_owner_i] <= 1'b1;
+      end
+      if (ca_fail_valid_i && (32'(ca_fail_owner_i) < N_CTRL_P)
+          && !rx_cmd_hit_w[ca_fail_owner_i]
+          && valid_r[ca_fail_owner_i]) begin
+        ca_probe_r[ca_fail_owner_i] <= 1'b0;
+        pend_r[ca_fail_owner_i]     <= 1'b1;
+      end
+
+      if (!mon_draw_wait_r && mon_pick_ok_w && !prng_draw_busy_i) begin
+        prng_draw_req_o <= 1'b1;
+        mon_draw_wait_r <= 1'b1;
+        mon_draw_ix_r   <= mon_pick_ix_w;
+        mon_draw_pend_r[mon_pick_ix_w] <= 1'b0;
+      end
+      if (mon_draw_wait_r && prng_draw_valid_i) begin
+        mon_draw_wait_r       <= 1'b0;
+        mon_arm_valid_o       <= 1'b1;
+        mon_arm_cancel_o      <= 1'b0;
+        mon_arm_slot_o        <= TMR_AW_C'(TMR_REGMON_BASE_P + N_CTRL_P
+                                           + 32'(mon_draw_ix_r));
+        mon_arm_owner_o       <= PP_OWN_CMON_C
+                                 | {{(PP_TIMER_OWNER_W_C-CIX_W_C){1'b0}},
+                                    mon_draw_ix_r};
+        mon_arm_deadline_ms_o <= now_ms_i + 32'(prng_draw_ms_i);
       end
 
       // ---- registry TL expiry: park; the drain state removes + latches ---
@@ -620,7 +934,10 @@ module KL_aecp_notify
               em_kind_r <= PP_UNS_DEREG_C;
               em_dt_r   <= 16'd0;
               em_di_r   <= 16'd0;
+              em_arg0_r <= 16'd0;
+              em_arg1_r <= 16'd0;
               em_dh_r    <= 1'b1;
+              em_cmd_r   <= 1'b0;
               hold_eid_r <= dh_eid_r;
               hold_mac_r <= dh_mac_r;
               hold_seq_r <= dh_seq_r;
@@ -633,6 +950,9 @@ module KL_aecp_notify
                 em_kind_r   <= pick_kind_w;
                 em_dt_r     <= pick_dt_w;
                 em_di_r     <= pick_di_w;
+                em_arg0_r   <= pick_arg0_w;
+                em_arg1_r   <= pick_arg1_w;
+                em_cmd_r    <= pick_cmd_w;
                 em_ix_r     <= '0;
                 if (pick_kind_w == PP_UNS_LOCK_C) begin
                   em_excl_r   <= lockx_eid_r;
@@ -644,6 +964,21 @@ module KL_aecp_notify
                   em_amap_remove_r <= amap_remove_r;
                   em_amap_count_r <= amap_count_r;
                   pe_amap_r <= 1'b0;
+                end else if (pick_cmd_w) begin
+                  em_excl_r   <= cmdq_excl_r[cmdq_rd_r];
+                  em_excl_v_r <= 1'b1;
+                  cmdq_rd_r   <= cmdq_rd_r + 4'd1;
+                  if (cmd_push_w)
+                    cmdq_count_r <= cmdq_count_r;
+                  else
+                    cmdq_count_r <= cmdq_count_r - 5'd1;
+                end else if (pick_kind_w == PP_UNS_CTRS_C) begin
+                  em_excl_v_r <= 1'b0;
+                  ctr_pend_r[pick_ctr_ix_w] <= 1'b0;
+                  // Measure the one-second limit from emission selection,
+                  // not from the possibly much earlier pending instant.
+                  ctr_sent_r[pick_ctr_ix_w] <= 1'b1;
+                  ctr_last_r[pick_ctr_ix_w] <= now_ms_i;
                 end else begin
                   em_excl_v_r <= 1'b0;
                   if (pick_kind_w == PP_UNS_AVB_C)      pe_avb_r <= 1'b0;
@@ -690,6 +1025,19 @@ module KL_aecp_notify
               tmr_arm_slot_o   <= TMR_AW_C'(TMR_REGMON_BASE_P + 32'(wk_match_ix_r));
               tmr_arm_owner_o  <= PP_OWN_NTFY_C | {{(PP_TIMER_OWNER_W_C-CIX_W_C){1'b0}}, wk_match_ix_r};
               tmr_arm_deadline_ms_o <= 32'd0;
+              mon_draw_pend_r[wk_match_ix_r] <= 1'b0;
+              ca_pend_r[wk_match_ix_r]       <= 1'b0;
+              ca_probe_r[wk_match_ix_r]      <= 1'b0;
+              if (mon_draw_wait_r && (mon_draw_ix_r == wk_match_ix_r))
+                mon_draw_wait_r <= 1'b0;
+              mon_arm_valid_o       <= 1'b1;
+              mon_arm_cancel_o      <= 1'b1;
+              mon_arm_slot_o        <= TMR_AW_C'(TMR_REGMON_BASE_P + N_CTRL_P
+                                                  + 32'(wk_match_ix_r));
+              mon_arm_owner_o       <= PP_OWN_CMON_C
+                                       | {{(PP_TIMER_OWNER_W_C-CIX_W_C){1'b0}},
+                                          wk_match_ix_r};
+              mon_arm_deadline_ms_o <= 32'd0;
             end
           end else if (wk_match_r || wk_free_r) begin
             //! refresh keeps the row's Sequence ID; a new row starts at 0
@@ -702,6 +1050,9 @@ module KL_aecp_notify
             valid_r[wk_match_r ? wk_match_ix_r : wk_free_ix_r] <= 1'b1;
             tl_r[wk_match_r ? wk_match_ix_r : wk_free_ix_r]    <= op_tl_r;
             pend_r[wk_match_r ? wk_match_ix_r : wk_free_ix_r]  <= 1'b0;
+            mon_draw_pend_r[wk_match_r ? wk_match_ix_r : wk_free_ix_r] <= 1'b1;
+            ca_pend_r[wk_match_r ? wk_match_ix_r : wk_free_ix_r] <= 1'b0;
+            ca_probe_r[wk_match_r ? wk_match_ix_r : wk_free_ix_r] <= 1'b0;
             tmr_arm_valid_o  <= 1'b1;
             tmr_arm_cancel_o <= !op_tl_r;
             tmr_arm_slot_o   <= TMR_AW_C'(TMR_REGMON_BASE_P
@@ -729,6 +1080,19 @@ module KL_aecp_notify
           valid_r[pd_ix_w] <= 1'b0;
           tl_r[pd_ix_w]    <= 1'b0;
           pend_r[pd_ix_w]  <= 1'b0;
+          mon_draw_pend_r[pd_ix_w] <= 1'b0;
+          ca_pend_r[pd_ix_w]       <= 1'b0;
+          ca_probe_r[pd_ix_w]      <= 1'b0;
+          if (mon_draw_wait_r && (mon_draw_ix_r == pd_ix_w))
+            mon_draw_wait_r <= 1'b0;
+          mon_arm_valid_o       <= 1'b1;
+          mon_arm_cancel_o      <= 1'b1;
+          mon_arm_slot_o        <= TMR_AW_C'(TMR_REGMON_BASE_P + N_CTRL_P
+                                              + 32'(pd_ix_w));
+          mon_arm_owner_o       <= PP_OWN_CMON_C
+                                   | {{(PP_TIMER_OWNER_W_C-CIX_W_C){1'b0}},
+                                      pd_ix_w};
+          mon_arm_deadline_ms_o <= 32'd0;
           n_st_r <= N_IDLE;
         end
 

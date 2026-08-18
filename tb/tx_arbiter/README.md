@@ -4,7 +4,7 @@
 Proves the TX arbiter (`hdl/packet_engine/KL_pp_tx_arbiter.sv`) implements the
 [03 §8](../../docs/architecture/03_packet_engine.md) frame-atomic priority
 merge with the [08 §2](../../docs/architecture/08_timing.md) T-TX-AGING
-starvation guard: `make` = build + run, exit 0 = PASS, 60 checks.
+starvation guard: `make` = build + run, exit 0 = PASS, 61 checks.
 
 The harness (`tx_arbiter_harness.sv`) wires the arbiter to the REAL
 `KL_pp_tx_slots` pool with nothing in between — the ser_* port match is
@@ -28,7 +28,9 @@ aging — three aged non-solicited requesters against a continuously
 re-armed ACMP yield the strict alternation 1,2,4,2,3,2, never two
 non-solicited frames back-to-back while solicited traffic waits;
 per-requester grant counters exact against the model; a PP_SLOT_NULL_C
-handle is never granted and cannot hang the plane; randomized contention
+handle is never granted and cannot hang the plane; a request withdrawn
+after registered qualification is not granted from the stale bit;
+randomized contention
 (1000+ frames, random lengths 1..64, random ready 40..100%, sparse random
 ticks, oversize mixed in) with EVERY grant matched to the model's
 decision, every frame byte-exact with sof/eof placement, grants one-hot
@@ -41,7 +43,7 @@ pool's stall-never-skip skid (proven in `tb/tx_slots`) is what makes the
 freeze legal.
 
 Mutation-proven 2026-08-11 (each applied to a copy-backed original via
-sed, run red, restored, rerun green — 60/60):
+sed, run red, restored, rerun green, 60/60 original phases):
 
 | # | Mutation | Result |
 |---|---|---|

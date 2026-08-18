@@ -77,7 +77,7 @@ module KL_pp_tx_arbiter
     input  wire                                tick_ms_i,    //! 1-cycle ms strobe (KL_pp_timer_service tick_ms_o)
 
     // ---- requesters (one lane per F03.5 source) ---------------------------
-    input  wire  [N_REQ_P-1:0]                 req_valid_i,  //! request pending; hold until gnt_o
+    input  wire  [N_REQ_P-1:0]                 req_valid_i,  //! request pending; hold until grant or cancellation
     input  wire  [N_REQ_P-1:0][SLOT_W_C-1:0]   tx_slot_i,    //! committed KL_pp_tx_slots slot per requester
     output logic [N_REQ_P-1:0]                 gnt_o,        //! one-cycle grant pulse: frame accepted for TX
     output logic [N_REQ_P-1:0][CNT_W_P-1:0]    gnt_count_o,  //! per-requester grant counters (wrap at 2^CNT_W_P)
@@ -134,9 +134,9 @@ module KL_pp_tx_arbiter
   //! from there the aging/grant counter enables combinationally - measured
   //! on the reference part as a 16-level, 4-carry failing path
   //! (tx_slot_r -> cnt_r). The qualification now lands in pend_r first;
-  //! every request is held until grant by contract (the banner's
-  //! precondition), so one cycle of arbitration latency changes which
-  //! CYCLE a frame starts, never whether it starts.
+  //! requests are normally held until grant. A cancellation may withdraw a
+  //! request after qualification, so selection also checks the current valid
+  //! bit below. One cycle of latency changes which cycle a frame starts.
   logic [N_REQ_P-1:0]    pend_r;
   logic [N_REQ_P-1:0]    pend_w;
   logic                  sol_pend_w;
@@ -159,7 +159,11 @@ module KL_pp_tx_arbiter
     logic [2:0] key_w, best_w;
     // a PP_SLOT_NULL_C handle means "no payload" (pp_pkg): never a grant.
     // The cast is identity at the F01.5 shape (SLOT_W_C = 3 = handle width).
-    pend_w = pend_r;
+    // The registered qualifier removes the long slot-compare path, but a
+    // requester may withdraw while that registered bit is still high. Keep
+    // the current valid bit in the decision so a cancelled queue head cannot
+    // be granted one cycle after its slot was released.
+    pend_w = pend_r & req_valid_i;
     sol_pend_w = |(pend_w & SOLICITED_MASK_P);
     // pacing first (03 §8): after a non-solicited frame, only solicited
     // requesters are eligible while any wait — pacing outranks aging

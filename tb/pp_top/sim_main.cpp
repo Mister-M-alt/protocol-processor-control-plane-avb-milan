@@ -632,6 +632,11 @@ struct H {
   vluint64_t t = 0;
   // MAC TX capture
   bool in_frame = false;
+  bool mac_tx_ready = true;
+  bool stall_tx_at_eof = false;
+  bool tx_eof_stalled = false;
+  bool release_eof_sync = false;
+  bool release_eof_hit = false;
   std::vector<uint8_t> cur;
   std::deque<std::vector<uint8_t>> q_adp, q_acmp, q_msrp, q_mvrp;
   int tx_frames = 0;
@@ -1018,9 +1023,18 @@ struct H {
   void step() {
     d->clk_i = 0; d->eval();
 
-    // ---- MAC TX capture (always ready this suite) ----
-    d->tx_ready_i = 1;
-    if (d->tx_valid_o) {
+    // ---- MAC TX capture ----
+    if (stall_tx_at_eof && d->tx_valid_o && d->tx_eof_o) {
+      mac_tx_ready = false;
+      tx_eof_stalled = true;
+    }
+    if (release_eof_sync && d->dbg_txs_release_valid_o
+        && d->tx_valid_o && d->tx_eof_o) {
+      mac_tx_ready = true;
+      release_eof_hit = true;
+    }
+    d->tx_ready_i = mac_tx_ready;
+    if (d->tx_valid_o && mac_tx_ready) {
       if (d->tx_sof_o) { cur.clear(); in_frame = true; }
       if (in_frame) cur.push_back(d->tx_data_o);
       if (d->tx_eof_o && in_frame) {
@@ -1335,8 +1349,16 @@ struct H {
     d->cfg_acc_lat_ns_i = ACC_LAT; d->port_rate_bps_i = RATE;
     d->cfg_tspec_max_frame_i = 1024;
     d->rx_valid_i = 0; d->rx_data_i = 0; d->rx_last_i = 0;
+    mac_tx_ready = true;
+    stall_tx_at_eof = false;
+    tx_eof_stalled = false;
+    release_eof_sync = false;
+    release_eof_hit = false;
     d->tx_ready_i = 1;
     d->aecp_txn_ready_i = 0;              // P4 uCPU seam: defined tie-off
+    d->ctr_change_i = 0;
+    d->ctr_change_desc_type_i = 0;
+    d->ctr_change_desc_index_i = 0;
     d->restore_go_i = 0;
     d->nvm_dev_gnt_i = 0; d->nvm_dev_wready_i = 0;
     d->nvm_dev_rvalid_i = 0; d->nvm_dev_rdata_i = 0;
@@ -3966,9 +3988,125 @@ int main(int argc, char** argv) {
     CHECK(!got.empty() && got == want_rd,
           "U7: READ_DESCRIPTOR byte-exact with registrations live");
 
+    // ---- U8: command notifications exclude the requester and preserve
+    //          one independent sequence counter per registered controller
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x700F,
+                      0x0024, fl0));
+    f = h.wait_any(h.q_aecp, 400);
+    CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == AECP_SUCCESS,
+          "U8: second controller registered for command fan-out");
+
+    auto notify_name = [](const char* text) {
+      std::vector<uint8_t> p(72, 0);
+      putbe(&p[0], 0x0024, 2); putbe(&p[2], 0, 2);
+      putbe(&p[4], 0, 2); putbe(&p[6], CFGIX, 2);
+      size_t n = strlen(text);
+      if (n > 64) n = 64;
+      memcpy(&p[8], text, n);
+      return p;
+    };
+    auto name1 = notify_name("Clock Domain Notify One");
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7010,
+                      AEM_SET_NAME, name1));
+    auto rsp = h.wait_any(h.q_aecp, 800);
+    auto rsp_want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                               CTLR_EID, 0x7010, AEM_SET_NAME, name1);
+    CHECK(rsp == rsp_want, "U8b: changed SET_NAME response is byte-exact");
+    uns = h.wait_any(h.q_aecp, 800);
+    auto name_uns = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                               CTLR2_EID, 0x0000, AEM_SET_NAME, name1);
+    name_uns[36] |= 0x80;
+    CHECK(uns == name_uns,
+          "U8c: only the other controller receives the changed name, seq 0");
+    more = h.wait_any(h.q_aecp, 300);
+    CHECK(more.empty(), "U8d: requester exclusion emitted no extra frame");
+
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7011,
+                      AEM_SET_NAME, name1));
+    rsp = h.wait_any(h.q_aecp, 800);
+    CHECK(rsp == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                            CTLR_EID, 0x7011, AEM_SET_NAME, name1),
+          "U8e: same-value SET_NAME still answers SUCCESS");
+    more = h.wait_any(h.q_aecp, 300);
+    CHECK(more.empty(), "U8f: same-value SET_NAME sends no notification");
+
+    auto name2 = notify_name("Clock Domain Notify Two");
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7012,
+                      AEM_SET_NAME, name2));
+    rsp = h.wait_any(h.q_aecp, 800);
+    CHECK(rsp == aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                            CTLR2_EID, 0x7012, AEM_SET_NAME, name2),
+          "U8g: reverse SET_NAME response is byte-exact");
+    uns = h.wait_any(h.q_aecp, 800);
+    name_uns = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                          CTLR_EID, 0x0000, AEM_SET_NAME, name2);
+    name_uns[36] |= 0x80;
+    CHECK(uns == name_uns,
+          "U8h: reverse notification uses controller one's independent seq 0");
+    std::fill(desc_clkdom.begin() + 4, desc_clkdom.begin() + 68, 0);
+    std::copy(name2.begin() + 8, name2.end(), desc_clkdom.begin() + 4);
+
+    // ---- U9: GET_COUNTERS notifications are limited independently for
+    //          each descriptor to no more than one emission per second
+    auto counter_body = [](uint16_t ty, uint16_t ix) {
+      std::vector<uint8_t> b(136, 0);
+      putbe(&b[0], ty, 2); putbe(&b[2], ix, 2);
+      putbe(&b[4], H::ctr_mask(ty, ix), 4);
+      for (int n = 0; n < 32; ++n)
+        putbe(&b[8 + 4 * n], H::ctr_value(ty, ix, uint8_t(n)), 4);
+      return b;
+    };
+    auto ctr_body = counter_body(0x0005, 0);
+    auto pulse_counter = [&]() {
+      d->ctr_change_desc_type_i = 0x0005;
+      d->ctr_change_desc_index_i = 0;
+      d->ctr_change_i = 1;
+      h.step();
+      d->ctr_change_i = 0;
+      h.step();
+    };
+    h.q_aecp.clear();
+    pulse_counter();
+    auto ctr1 = h.wait_any(h.q_aecp, 800);
+    auto ctr2 = h.wait_any(h.q_aecp, 800);
+    auto ctr1_want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                                CTLR_EID, 0x0001, AEM_GET_COUNTERS, ctr_body);
+    auto ctr2_want = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                                CTLR2_EID, 0x0001, AEM_GET_COUNTERS, ctr_body);
+    ctr1_want[36] |= 0x80; ctr2_want[36] |= 0x80;
+    CHECK(ctr1 == ctr1_want && ctr2 == ctr2_want,
+          "U9: both controllers receive the first counter update at seq 1");
+
+    uint32_t ctr_t0 = h.now_ms();
+    pulse_counter();
+    auto early_ctr = h.wait_any(h.q_aecp, 500);
+    CHECK(early_ctr.empty(),
+          "U9b: a repeated update emits nothing inside 500 ms");
+    auto late_ctr1 = h.wait_any(h.q_aecp, 700);
+    uint32_t ctr_gap = h.now_ms() - ctr_t0;
+    auto late_ctr2 = h.wait_any(h.q_aecp, 100);
+    ctr1_want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                           CTLR_EID, 0x0002, AEM_GET_COUNTERS, ctr_body);
+    ctr2_want = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                           CTLR2_EID, 0x0002, AEM_GET_COUNTERS, ctr_body);
+    ctr1_want[36] |= 0x80; ctr2_want[36] |= 0x80;
+    CHECK(!late_ctr1.empty() && ctr_gap >= 900,
+          "U9c: throttled counter update waited %u ms, want at least 900",
+          ctr_gap);
+    CHECK(late_ctr1 == ctr1_want && late_ctr2 == ctr2_want,
+          "U9d: deferred counter update reaches both rows at seq 2");
+
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7013,
+                      0x0025, {}));
+    h.wait_any(h.q_aecp, 400);
+
     h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x700A,
                       0x0025, {}));
     h.wait_any(h.q_aecp, 400);
+
   }
 
   // ==== L. ACQUIRE_ENTITY + LOCK_ENTITY (Milan SS5.4.2.1/SS5.4.2.2) =======
@@ -4315,6 +4453,11 @@ int main(int argc, char** argv) {
       CHECK(!uns.empty() && uns == wantu,
             "G7: bind emits the u=1 GET_STREAM_INFO for that sink (seq 0)");
       if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
+      auto after = gsi_cmd(0x0005, 1, 0x740F);
+      CHECK(uns.size() == after.size() && uns.size() >= 42
+            && std::equal(uns.begin() + 42, uns.end(), after.begin() + 42),
+            "G7a: unsolicited content from flags onward equals the following "
+            "solicited response");
       // unbind: a second notification, sequence_id counting up
       h.q_aecp.clear();
       h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
@@ -4326,8 +4469,9 @@ int main(int argc, char** argv) {
       CHECK(!uns.empty() && uns == wantu,
             "G7b: unbind notifies again, sequence_id 1");
       if (!uns.empty() && uns != wantu) { dump("got", uns); dump("exp", wantu); }
-      // ---- G7c: a STOP_STREAMING pushes ONE unsolicited GET_STREAM_INFO,
-      // and a bind/unbind pushes exactly one (not two). Milan Table 5.22
+      // ---- G7c: a bind/unbind pushes exactly one notification. A
+      // STOP_STREAMING from the only registered controller excludes that
+      // requester and therefore pushes none here. Milan Table 5.22
       // lists "Started/stopped state (Stream Input only)"; 5.3.8.7 calls the
       // state undefined while unbound, so a bind and an unbind are NOT
       // started/stopped changes and must not add a second frame beside the
@@ -4348,7 +4492,7 @@ int main(int argc, char** argv) {
             "G7d: the bind pushed exactly ONE notification, not two "
             "(a started/stopped trigger that fires on bind duplicates it)");
 
-      // now a real started/stopped change, under a live binding
+      // now a real started/stopped change under a live binding
       h.q_aecp.clear();
       std::vector<uint8_t> sti(4, 0);
       putbe(&sti[0], 0x0005, 2); putbe(&sti[2], 1, 2);
@@ -4357,14 +4501,9 @@ int main(int argc, char** argv) {
       auto rsp = h.wait_any(h.q_aecp, 600);      // the solicited response
       CHECK(!rsp.empty() && ((rsp[16] >> 3) & 0x1F) == 0,
             "G7e: STOP_STREAMING on the bound sink answered SUCCESS");
-      auto push = h.wait_any(h.q_aecp, 600);     // ...then the unsolicited
-      CHECK(!push.empty() && push.size() > 37
-            && ((push[36] & 0x80) != 0)
-            && (((push[36] & 0x7F) << 8) | push[37]) == 0x000F,
-            "G7f: ...and a STOP_STREAMING pushes the u=1 GET_STREAM_INFO "
-            "Table 5.22 asks for");
-      auto push2 = h.wait_any(h.q_aecp, 300);
-      CHECK(push2.empty(), "G7g: ...exactly one, not two");
+      auto push = h.wait_any(h.q_aecp, 300);
+      CHECK(push.empty(),
+            "G7f: the STOP requester receives no unsolicited response");
 
       // deregister: leave the table clean. The unbind below ALSO pushes its
       // own notification (G7b grades that behaviour) - drain it here rather
@@ -6465,6 +6604,220 @@ int main(int argc, char** argv) {
                 && h.d->aecp_pt_offset_o.at(0) == 500000,
             "W25d: ...and the same SET_STREAM_INFO is accepted, offset moved");
     }
+  }
+
+  // ==== U10. departing-controller monitor (Milan 5.4.5.3) ===============
+  // This timing section runs after all state-dependent command checks so its
+  // real 30 to 60 second intervals cannot advance unrelated protocol timers
+  // underneath earlier test preconditions.
+  {
+    // Give the timing contract a fresh registry. Earlier sections deliberately
+    // exercise sequence advancement and repeated registrations.
+    h.reset();
+    const uint64_t C2_MAC = 0x0202C2C2C2C2ull;
+    std::vector<uint8_t> fl0(4, 0);
+    auto ca_cmd = [](uint64_t mac, uint64_t eid, uint16_t seq) {
+      return aecp_frame(mac, OWN_MAC, 0, 0, eid, EID, seq, 0x0003, {});
+    };
+    auto is_ca_cmd = [](const std::vector<uint8_t>& p) {
+      return p.size() >= 38 && (p[15] & 0x0F) == 0
+             && p[36] == 0 && p[37] == 3;
+    };
+    auto is_seq = [](uint16_t seq) {
+      return [=](const std::vector<uint8_t>& p) {
+        return p.size() >= 38
+               && (((uint16_t(p[34]) << 8) | p[35]) == seq);
+      };
+    };
+
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7020,
+                      0x0024, fl0));
+    auto f = h.wait_frame(h.q_aecp, 400, is_seq(0x7020));
+    CHECK(!f.empty() && ((f[16] >> 3) & 0x1F) == AECP_SUCCESS,
+          "U10: monitor controller registered");
+    uint32_t reg_ms = h.now_ms();
+
+    // Cancel the first probe while its frame is still being built. This
+    // grades the shared TX writer lock and slot lifecycle, not only the
+    // registry bit that suppresses a later retry.
+    bool ca_building = false;
+    for (int i = 0; i < 66000 * MS_CYC; ++i) {
+      if (h.d->dbg_ca_state_o != 0) {
+        ca_building = true;
+        break;
+      }
+      h.step();
+    }
+    CHECK(ca_building && h.d->dbg_ca_state_o <= 2,
+          "U10a: availability frame entered allocation or write phase");
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7024,
+                      AEM_GET_CONFIGURATION, {}, false));
+    auto canceled_rsp = h.wait_frame(h.q_aecp, 400, is_seq(0x7024));
+    CHECK(!canceled_rsp.empty()
+          && ((canceled_rsp[16] >> 3) & 0x1F) == AECP_SUCCESS,
+          "U10a2: solicited response proceeds after builder cancellation");
+    h.idle(8);
+    CHECK(h.d->dbg_ca_state_o == 0 && !h.d->dbg_txc_locked_o,
+          "U10a3: canceled builder returns idle and unlocks the TX writer");
+    CHECK(h.d->dbg_txs_free_o == 5,
+          "U10a4: cancellation conserves all five shared TX slots, got %u",
+          unsigned(h.d->dbg_txs_free_o));
+    h.q_aecp.clear();
+    auto canceled_more = h.wait_any(h.q_aecp, 500);
+    CHECK(canceled_more.empty(),
+          "U10a5: canceled partial probe produces no retry or deregistration");
+
+    // Hold a solicited response inside the serializer until the next probe
+    // reaches the originator queue. More than two response-timeout periods
+    // must not expire an attempt that has not reached the serializer. Then a
+    // valid controller command cancels the queued probe, and the stale handle
+    // must self-drain before that physical slot can be reused.
+    h.mac_tx_ready = false;
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7025,
+                      AEM_GET_CONFIGURATION, {}, false));
+    bool response_stalled = false;
+    for (int i = 0; i < 1000; ++i) {
+      h.step();
+      if (h.d->tx_valid_o) { response_stalled = true; break; }
+    }
+    CHECK(response_stalled,
+          "U10a6: solicited response occupies the stalled serializer");
+    bool probe_queued = false;
+    for (int i = 0; i < 66000 * MS_CYC; ++i) {
+      h.step();
+      if (h.d->dbg_org_queue_o != 0) { probe_queued = true; break; }
+    }
+    CHECK(probe_queued && h.d->dbg_org_busy_o != 0,
+          "U10a7: availability probe waits live in the originator queue");
+    h.run_ms(600);
+    CHECK(h.d->dbg_org_queue_o == 1 && h.d->dbg_org_busy_o != 0,
+          "U10a8: queue delay longer than two budgets causes no timeout");
+    // Advance the solicited response to its final byte and hold it there.
+    // Release the cancelled probe on the exact edge that this frame retires:
+    // the arbiter becomes idle while its registered originator request still
+    // contains the previous cycle, which is the stale-grant boundary.
+    h.stall_tx_at_eof = true;
+    h.mac_tx_ready = true;
+    for (int i = 0; i < 1000 && !h.tx_eof_stalled; ++i) h.step();
+    CHECK(h.tx_eof_stalled,
+          "U10a9: solicited response is held on its final byte");
+    h.release_eof_sync = true;
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7026,
+                      AEM_GET_CONFIGURATION, {}, false));
+    h.release_eof_sync = false;
+    h.stall_tx_at_eof = false;
+    CHECK(h.release_eof_hit,
+          "U10a10: cancellation release aligns with serializer EOF");
+    h.idle(20);
+    CHECK(h.d->dbg_org_busy_o == 0 && h.d->dbg_org_queue_o == 0,
+          "U10a11: EOF-aligned cancellation drains the queued handle");
+    auto stalled_rsp = h.wait_frame(h.q_aecp, 1000, is_seq(0x7025));
+    auto cancel_rsp = h.wait_frame(h.q_aecp, 1000, is_seq(0x7026));
+    CHECK(!stalled_rsp.empty() && !cancel_rsp.empty(),
+          "U10a12: both solicited responses drain after cancellation");
+    h.idle(20);
+    CHECK(h.d->dbg_txs_free_o == 5,
+          "U10a13: EOF-aligned cancellation conserves all five TX slots");
+    reg_ms = h.now_ms();
+    h.q_aecp.clear();
+    auto ca1 = h.wait_frame(h.q_aecp, 66000, is_ca_cmd);
+    uint32_t ca1_ms = h.now_ms();
+    uint16_t ca1_seq = ca1.size() >= 36
+                       ? uint16_t((uint16_t(ca1[34]) << 8) | ca1[35]) : 0;
+    auto ca1_want = ca_cmd(CTLR_MAC, CTLR_EID, ca1_seq);
+    CHECK(ca1 == ca1_want,
+          "U10b: first CONTROLLER_AVAILABLE command is byte-exact");
+    if (!ca1.empty() && ca1 != ca1_want) {
+      dump("got", ca1); dump("exp", ca1_want);
+    }
+    CHECK(!ca1.empty() && ca1_ms - reg_ms >= 27000
+          && ca1_ms - reg_ms <= 66000,
+          "U10c: first probe arrived after %u ms", ca1_ms - reg_ms);
+
+    // A folded MAC key can collide, and the same source can send a response
+    // carrying the wrong target Entity ID. Neither is the probed controller.
+    const uint64_t COLLIDING_MAC = 0x0203DEACBEEFull;
+    h.feed(aecp_frame(OWN_MAC, COLLIDING_MAC, 1, AECP_SUCCESS,
+                      CTLR_EID, EID, ca1_seq, 0x0003, {}, false));
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 1, AECP_SUCCESS,
+                      CTLR_EID ^ 1, EID, ca1_seq, 0x0003, {}, false));
+    auto ca_retry = h.wait_frame(h.q_aecp, 400, is_ca_cmd);
+    uint32_t retry_ms = h.now_ms();
+    CHECK(ca_retry == ca1,
+          "U10d: colliding or wrong-target responses do not suppress retry");
+    CHECK(!ca_retry.empty() && retry_ms - ca1_ms <= 260,
+          "U10e: the single retry arrived after %u ms", retry_ms - ca1_ms);
+    auto ca_dereg = h.wait_frame(h.q_aecp, 1000,
+      [&](const std::vector<uint8_t>& p) {
+        return p.size() >= 38 && p[37] == 0x25 && (p[36] & 0x80);
+      });
+    auto ca_dereg_want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS,
+                                    EID, CTLR_EID, 0x0000, 0x0025, {});
+    ca_dereg_want[36] |= 0x80;
+    CHECK(ca_dereg == ca_dereg_want,
+          "U10f: probe failure sends targeted deregistration at seq 0");
+    if (!ca_dereg.empty() && ca_dereg != ca_dereg_want) {
+      dump("got", ca_dereg); dump("exp", ca_dereg_want);
+    }
+    CHECK(!ca_dereg.empty() && h.now_ms() - retry_ms <= 1000,
+          "U10g: deregistration followed retry within %u ms",
+          h.now_ms() - retry_ms);
+    auto more = h.wait_any(h.q_aecp, 500);
+    CHECK(more.empty(), "U10h: no second retry or broadcast was emitted");
+
+    // A response with a failure status still proves controller availability.
+    // The next probe proves the independent random monitor was re-armed.
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7021,
+                      0x0024, fl0));
+    h.wait_frame(h.q_aecp, 400, is_seq(0x7021));
+    uint32_t c2_reg_ms = h.now_ms();
+    h.q_aecp.clear();
+    auto ca2 = h.wait_frame(h.q_aecp, 66000, is_ca_cmd);
+    uint16_t ca2_seq = ca2.size() >= 36
+                       ? uint16_t((uint16_t(ca2[34]) << 8) | ca2[35]) : 0;
+    auto ca2_want = ca_cmd(C2_MAC, CTLR2_EID, ca2_seq);
+    CHECK(ca2 == ca2_want && ca2_seq == uint16_t(ca1_seq + 1),
+          "U10i: reused monitor owner advances its originator sequence");
+    if (!ca2.empty() && ca2 != ca2_want) {
+      dump("got", ca2); dump("exp", ca2_want);
+    }
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 1, AECP_BAD_ARGUMENTS,
+                      CTLR2_EID, EID, ca2_seq, 0x0003, {}));
+    uint32_t ca_rsp_ms = h.now_ms();
+    h.q_aecp.clear();
+    auto ca3 = h.wait_frame(h.q_aecp, 66000, is_ca_cmd);
+    uint32_t ca3_ms = h.now_ms();
+    uint16_t ca3_seq = ca3.size() >= 36
+                       ? uint16_t((uint16_t(ca3[34]) << 8) | ca3[35]) : 0;
+    auto ca3_want = ca_cmd(C2_MAC, CTLR2_EID, ca3_seq);
+    CHECK(ca3 == ca3_want && ca3_seq == uint16_t(ca2_seq + 1),
+          "U10j: non-SUCCESS response re-arms and advances the next probe");
+    if (!ca3.empty() && ca3 != ca3_want) {
+      dump("got", ca3); dump("exp", ca3_want);
+    }
+    CHECK(!ca3.empty() && ca3_ms - ca_rsp_ms >= 27000
+          && ca3_ms - ca_rsp_ms <= 66000,
+          "U10k: response re-armed the monitor for %u ms",
+          ca3_ms - ca_rsp_ms);
+    CHECK(!ca2.empty() && ca_rsp_ms - c2_reg_ms <= 66000,
+          "U10l: response-path first probe stayed inside the test window");
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7023,
+                      AEM_GET_CONFIGURATION, {}));
+    auto live_rsp = h.wait_frame(h.q_aecp, 400, is_seq(0x7023));
+    CHECK(!live_rsp.empty() && ((live_rsp[16] >> 3) & 0x1F) == AECP_SUCCESS
+          && (((live_rsp[36] & 0x7F) << 8) | live_rsp[37])
+             == AEM_GET_CONFIGURATION,
+          "U10m: a valid command supersedes the in-flight probe");
+    more = h.wait_any(h.q_aecp, 500);
+    CHECK(more.empty(),
+          "U10n: superseded probe produced no retry or deregistration");
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7022,
+                      0x0025, {}));
+    h.wait_frame(h.q_aecp, 400, is_seq(0x7022));
+    h.q_aecp.clear();
   }
 
   // ==== MP. the INTERNAL MAAP engine (11; IEEE 1722-2016 Annex B) =========

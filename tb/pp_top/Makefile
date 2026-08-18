@@ -18,6 +18,7 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
        $(HDL)/packet_engine/KL_pp_normalizer.sv \
        $(HDL)/packet_engine/KL_pp_dispatch.sv \
        $(HDL)/packet_engine/KL_pp_tx_slots.sv \
+       $(HDL)/packet_engine/KL_pp_release_merge.sv \
        $(HDL)/packet_engine/KL_pp_tx_arbiter.sv \
        $(HDL)/packet_engine/KL_pp_scoreboard.sv \
        $(HDL)/packet_engine/KL_pp_event_router.sv \
@@ -27,7 +28,7 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
        $(HDL)/packet_engine/KL_pp_nvm_port.sv \
        $(HDL)/aecp/ucpu_pkg.sv $(HDL)/aecp/KL_aecp_ucpu.sv \
        $(HDL)/aecp/KL_aecp_desc_store.sv $(HDL)/aecp/KL_aecp_dyn_state.sv $(HDL)/aecp/KL_aecp_engine.sv $(HDL)/aecp/KL_aecp_resp_buf.sv \
-       $(HDL)/aecp/KL_aecp_notify.sv \
+       $(HDL)/aecp/KL_aecp_notify.sv $(HDL)/aecp/KL_aecp_ca_originator.sv \
        $(HDL)/adp/KL_adp_engine.sv \
        $(HDL)/acmp/KL_pp_acmp_listener.sv $(HDL)/acmp/KL_acmp_talker.sv \
        $(HDL)/acmp/KL_acmp_nvm_shadow.sv \

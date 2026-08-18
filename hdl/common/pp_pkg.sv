@@ -249,18 +249,28 @@ package pp_pkg;
   localparam logic [7:0] PP_OWN_NTFY_C    = 8'hA0;  // + entry  (KL_aecp_notify TL registry)
   localparam logic [7:0] PP_OWN_LOCK_C    = 8'hB0;  // the ENTITY lock singleton (KL_aecp_notify)
   // 0xC0..0xCF is KL_pp_originator's TMR_TAG_P nibble - see its parameter
+  localparam logic [7:0] PP_OWN_CMON_C    = 8'hD0;  // + entry  (Milan controller monitor)
 
   // ---- unsolicited-notification job kinds (06 SS6.7) ---------------------
   // KL_aecp_notify names the RESPONSE TYPE of a job; KL_aecp_engine maps the
   // kind onto {command_type, uPC entry}. A kind whose microprogram has not
   // landed maps to the no-send program - never a well-formed frame with an
   // empty body.
-  localparam logic [2:0] PP_UNS_DEREG_C = 3'd0;  // DEREGISTER_UNSOLICITED_NOTIFICATION
-  localparam logic [2:0] PP_UNS_LOCK_C  = 3'd1;  // LOCK_ENTITY
-  localparam logic [2:0] PP_UNS_STRI_C  = 3'd2;  // GET_STREAM_INFO
-  localparam logic [2:0] PP_UNS_AVB_C   = 3'd3;  // GET_AVB_INFO
-  localparam logic [2:0] PP_UNS_ASP_C   = 3'd4;  // GET_AS_PATH
-  localparam logic [2:0] PP_UNS_AMAP_C  = 3'd5;  // ADD/REMOVE_AUDIO_MAPPINGS
+  localparam logic [3:0] PP_UNS_DEREG_C = 4'd0;  // DEREGISTER_UNSOLICITED_NOTIFICATION
+  localparam logic [3:0] PP_UNS_LOCK_C  = 4'd1;  // LOCK_ENTITY
+  localparam logic [3:0] PP_UNS_STRI_C  = 4'd2;  // GET_STREAM_INFO
+  localparam logic [3:0] PP_UNS_AVB_C   = 4'd3;  // GET_AVB_INFO
+  localparam logic [3:0] PP_UNS_ASP_C   = 4'd4;  // GET_AS_PATH
+  localparam logic [3:0] PP_UNS_AMAP_C  = 4'd5;  // ADD/REMOVE_AUDIO_MAPPINGS
+  localparam logic [3:0] PP_UNS_CTRS_C  = 4'd6;  // GET_COUNTERS
+  localparam logic [3:0] PP_UNS_SRATE_C = 4'd7;  // SET_SAMPLING_RATE body from current state
+  localparam logic [3:0] PP_UNS_NAME_C  = 4'd8;  // SET_NAME body from current state
+  localparam logic [3:0] PP_UNS_CFG_C   = 4'd9;  // SET_CONFIGURATION body from current state
+  localparam logic [3:0] PP_UNS_SFMT_C  = 4'd10; // SET_STREAM_FORMAT body from current state
+  localparam logic [3:0] PP_UNS_SINFO_C = 4'd11; // SET_STREAM_INFO body from current state
+  localparam logic [3:0] PP_UNS_CTRL_C  = 4'd12; // SET_CONTROL body from current state
+  localparam logic [3:0] PP_UNS_CLKS_C  = 4'd13; // SET_CLOCK_SOURCE body from current state
+  localparam logic [3:0] PP_UNS_STRM_C  = 4'd14; // START/STOP_STREAMING response body
 
   // ---- 02 §5 event-router SOURCE MAP, derived — never literals -----------
   // The router presents ONE source index per event and carries no owner tag,

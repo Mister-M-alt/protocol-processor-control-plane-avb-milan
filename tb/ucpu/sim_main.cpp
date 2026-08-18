@@ -37,8 +37,8 @@ enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
        E_BADARG4 = 1240, E_STRT = 1600,
        E_SFMTI = 1792, E_SFMTO = 1824, E_SINFO = 1856, E_SFRUN = 1888,
        E_SFCUR = 1896, E_SFZERO = 1904, E_SFBAD = 1912, E_SIBAD = 1920,
-       E_SIRUN = 1936, E_GNAME = 1808, E_SNAME = 1940, E_NAMEERR = 1840,
-       E_NAMERESP = 1865, E_NAMEBAD = 1890 };
+       E_SIRUN = 1936, E_GNAME = 1344, E_SNAME = 1392, E_NAMEERR = 1352,
+       E_NAMERESP = 1364, E_NAMEBAD = 1384 };
 
 // IEEE 1722.1-2021 Table 7-141
 enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
@@ -1086,8 +1086,16 @@ int main(int argc, char** argv) {
           "S3 one qword write to RGN_DYN+SEL_FMTIN");
     CHECK(h.nvm_marks.size() == 1 && h.nvm_marks[0] == 1,
           "S3 the setting marks NVM region 1");
-    CHECK(!h.gx_sels.empty() && h.gx_sels[0] == 0xBF,
-          "S3 the verdict was ASKED before the write");
+    CHECK(h.gx_sels.size() >= 2 && h.gx_sels[0] == 0xB1
+              && h.gx_sels[1] == 0xBF,
+          "S3 current value and verdict were asked before the write");
+    CHECK(h.notify_classes.size() == 1 && h.notify_classes[0] == 2,
+          "S3 a changed format enqueues one notification");
+
+    CHECK(h.run(E_SFMTI, KEY, false, 2000, TYIX, Harness::SFMT_CUR_C),
+          "S3a no-op completes");
+    CHECK(h.last_status == ST_OK && h.notify_classes.empty(),
+          "S3a storing the current format enqueues no notification");
 
     // S3b: the integrator refuses the format (unsupported) -> BAD_ARGUMENTS
     // carrying the CURRENT format, and nothing written
