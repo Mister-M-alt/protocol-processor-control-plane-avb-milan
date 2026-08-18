@@ -1322,7 +1322,9 @@ module KL_acmp_talker
   assign rxs_free_o      = (state_r == S_TXN_ACT) && slot_ok_w;
   assign rxs_free_slot_o = txn_r.rx_slot[RXS_W_C-1:0];
 
-  assign txn_ready_o = (state_r == S_TXN_ACT);
+  //! Ready names the cycle that latches txn_i. A pending MAAP grant outranks
+  //! the transaction in S_IDLE, so withhold ready for that one event.
+  assign txn_ready_o = (state_r == S_IDLE) && !gp_valid_r;
 
   assign maap_req_valid_o   = (state_r == S_EV_MAAP);
   assign maap_req_release_o = mreq_rel_r;

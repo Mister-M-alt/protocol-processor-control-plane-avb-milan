@@ -193,6 +193,23 @@ control per class/key — the load-bearing role is **cross-engine interlock** (t
 | REGISTRY_OP | REGISTER/DEREGISTER, monitor removals, TIME_LIMITED expiry | registry | serialized on the registry |
 | IDENTIFY | SET_CONTROL(identify), notification bursts | identify | serialized |
 
+The current top-level classifier maps every ACMP transaction to `STREAM_CFG`
+and maps AECP opcodes `0x002C` and `0x002D` to `MAP_CFG`. The scoreboard uses
+the documented class-wide exclusion, so an ACMP stream-state transition cannot
+enter after mapping commit-begin and before the mapping response releases its
+hold.
+
+The top has one live admission port. Ready ACMP and AECP heads use round-robin
+choice, and neither dispatch queue pops unless the scoreboard grants that
+head. This prevents a continuous ACMP stream from starving a conflicting AECP
+write. The selected engine records the granted hold id and RX slot. The hold
+is released only when that same engine returns the matching RX slot, after its
+solicited response request has been queued or after a defined silent
+retirement. A simultaneous ACMP and AECP retirement is serialized through a
+one-cycle pending release bit. Root-local and SRP enable changes do not cross
+this processor admission point; the root mapping transaction therefore adds a
+per-output reservation after its phase-1 recheck.
+
 Ordering rules:
 
 - **(a)** commit → solicited-response enqueue → notification-trigger enqueue

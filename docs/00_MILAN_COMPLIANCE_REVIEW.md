@@ -165,17 +165,19 @@ The 187.5 ms figure is not spec-derived; budgets replace it.
 **Disposition**: master table [F08.1](architecture/08_timing.md#fig-08-constants), timer
 service + PRNG [08 §3](architecture/08_timing.md), budgets [08 §4](architecture/08_timing.md).
 
-#### <a id="gap-08"></a>GAP-08 [Major] — Entity-model memory architecture undefined
+#### <a id="gap-08"></a>GAP-08 [Major] -- Entity-model memory architecture incomplete
 "Descriptor RAM" is named but not designed. Needed: static descriptor image + dynamic
 overlay split; **IEEE 1722.1-2021 Table 7-8** STREAM descriptor layout (formats_offset =
 138, N ≤ 47 formats, redundancy tail emitted with R = 0 even when non-redundant, per
 Milan §5.3.3.4 which binds the descriptor to [ATDECC, Clause 7.2.6] and leaves Annex C
 Table C.1 a **may**); name table for all
-named descriptors; per-configuration index maps; audio-map storage with fixed ≤ 176-channel
-partitioning and all-or-nothing ADD validation (§5.4.2.26–.28); READ_DESCRIPTOR assembly
+named descriptors; per-configuration index maps; READ_DESCRIPTOR assembly
 incl. the 4-byte failure stub (IEEE §7.4.5). Response buffering must anticipate Milan
 **oversize responses** (no cdl cap for six commands; §5.4.1) — a full-Ethernet-frame TX
 slot, not `MAX_AECP_RESPONSE_SIZE` guesswork.
+The live audio-map transaction is implemented: the engine stages a full page,
+the root validates every row, and commit is all-or-nothing. Persisting and
+restoring mappings remains part of GAP-09 and issue #70.
 **Disposition**: [07 §3](architecture/07_memory_maps.md), TX slots [03 §7](architecture/03_packet_engine.md).
 
 #### <a id="gap-09"></a>GAP-09 [Major] — Persistence requirements absent
@@ -338,7 +340,7 @@ verification).
 | REQ-AEM-018 | Milan §5.4.2.25 | GET_COUNTERS for every AVB_INTERFACE/CLOCK_DOMAIN/STREAM_IN/STREAM_OUT of current config; Milan mask set takes precedence over IEEE for STREAM_OUTPUT | shall | P | [GAP-05](#gap-05) | E_GCTRS locate-first + type gate (landed; the integrator serves every declared STREAM_OUTPUT counter bank) | 06 §6.6 | DIR |
 | REQ-AEM-019 | Milan Tables 5.1/5.4/5.6/5.7 | Counter semantics: invariant pairs; ≤1 s observation intervals; input bank reset on not-bound→bound; output MEDIA_RESET/TS_UNCERTAIN/FRAMES_TX reset on stream start | shall | A | [GAP-05](#gap-05) | counter banks | 06 §6.6, 07 §4 | DIR |
 | REQ-AEM-020 | Milan §5.4.2.26 | GET_AUDIO_MAP: fixed partition, subsets ≤176 channels, number_of_maps = N always | shall | C | [GAP-08](#gap-08) | E_GAMAP + E_GAMAPO, both port directions off the integrator's map stores (landed) | 06 §6.5, 07 §3 | DIR |
-| REQ-AEM-021 | Milan §5.4.2.27/.28 | ADD/REMOVE_AUDIO_MAPPINGS: all-or-nothing BAD_ARGUMENTS; input conflict rules; REMOVE ignores duplicates; streaming-output changes gated by TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING; input maps changeable any time | shall | A | [GAP-08](#gap-08) | MAP_VALIDATE | 06 §6.5 | DIR |
+| REQ-AEM-021 | Milan §5.4.2.27/.28 | ADD/REMOVE_AUDIO_MAPPINGS: all-or-nothing BAD_ARGUMENTS; input conflict rules; REMOVE ignores duplicates; streaming-output changes gated by TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING; input maps changeable any time | shall | C | live transaction implemented; persistence in [GAP-09](#gap-09) | staged `MAP_VALID` transaction plus root projector | 06 §6.5 | DIR |
 | REQ-AEM-022 | Milan §5.4.2.29 / IEEE §7.4.76 | GET_DYNAMIC_INFO: fixed-size-GET whitelist (else BAD_ARGUMENTS, nothing processed); per-element status; skip-on-overflow; incompatible with IN_PROGRESS | shall | P | [GAP-15](#gap-15) | GDI iterator | 06 §6.7 | DIR |
 | REQ-AEM-023 | IEEE §9.3.5.3.3 | Correctly-sized NOT_IMPLEMENTED response for every unimplemented opcode | shall | A | [GAP-01](#gap-01) | response-size ROM | 06 §6 | TOL |
 | REQ-AEM-024 | IEEE §9.3.2.6 | AEM: respond ≤240 ms (250 ms controller timeout); policy: never IN_PROGRESS | shall | P | [GAP-07](#gap-07) | deadline engine | 08 §4 | TIM |

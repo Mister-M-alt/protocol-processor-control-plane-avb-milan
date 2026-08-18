@@ -479,10 +479,11 @@ static std::vector<uint8_t> clock_domain_descriptor() {
 
 static std::vector<uint8_t> stream_port_descriptor(uint16_t ty, uint16_t ix,
                                                    uint16_t clusters,
-                                                   uint16_t base_cluster) {
-  // §7.2.13 Table 7-23: 20 bytes, no object_name. number_of_maps = 0 is the
-  // DYNAMIC-mapping declaration (§7.2.13's convention, restated by Milan
-  // §5.3.3.9), which is exactly the shape GET_AUDIO_MAP exists to serve.
+                                                   uint16_t base_cluster,
+                                                   uint16_t maps = 0,
+                                                   uint16_t base_map = 0) {
+  // §7.2.13 Table 7-23: 20 bytes, no object_name. number_of_maps = 0 declares
+  // dynamic mapping; a nonzero value names the port's static AUDIO_MAPs.
   std::vector<uint8_t> d(20, 0);
   putbe(&d[0],  ty, 2);                           // descriptor_type
   putbe(&d[2],  ix, 2);                           // descriptor_index
@@ -492,8 +493,20 @@ static std::vector<uint8_t> stream_port_descriptor(uint16_t ty, uint16_t ix,
   putbe(&d[10], 0x0000, 2);                       // base_control
   putbe(&d[12], clusters, 2);                     // number_of_clusters
   putbe(&d[14], base_cluster, 2);                 // base_cluster
-  putbe(&d[16], 0x0000, 2);                       // number_of_maps: dynamic
-  putbe(&d[18], 0x0000, 2);                       // base_map (ignored)
+  putbe(&d[16], maps, 2);                         // number_of_maps
+  putbe(&d[18], base_map, 2);                     // base_map
+  return d;
+}
+
+static std::vector<uint8_t> audio_map_descriptor(uint16_t ix,
+                                                  uint64_t mapping) {
+  // §7.2.19 Table 7-32: one static mapping, starting at byte 8.
+  std::vector<uint8_t> d(16, 0);
+  putbe(&d[0], 0x0017, 2);                        // AUDIO_MAP
+  putbe(&d[2], ix, 2);
+  putbe(&d[4], 8, 2);                             // mappings_offset
+  putbe(&d[6], 1, 2);                             // number_of_mappings
+  putbe(&d[8], mapping, 8);
   return d;
 }
 
@@ -702,6 +715,127 @@ struct H {
   uint64_t amap_reads = 0;
   //! every completed query, folded like ctr_seq: {sel, rec} pairs
   std::vector<std::pair<uint8_t, uint8_t>> amap_seq;
+
+  // ---- ADD/REMOVE_AUDIO_MAPPINGS transaction store ---------------------
+  // Port 0 in each direction is dynamic. Port 1 exists in the descriptor
+  // image but is static, which gives the command suite a real NOT_SUPPORTED
+  // target. Claims model the final value of every key before commit so a
+  // late invalid row cannot leave an earlier write behind.
+  int  amap_edit_hold = 0;
+  bool amap_edit_stuck = false;
+  bool amap_edit_postcommit_wait = false;
+  bool amap_edit_reject_commit = false;
+  int  amap_edit_hold_cur = 0;
+  bool amap_edit_seen = false;
+  uint8_t amap_edit_seen_phase = 0, amap_edit_seen_rec = 0;
+  uint64_t amap_edit_reply = 0;
+  bool amap_edit_active = false, amap_edit_remove = false;
+  bool amap_edit_changed = false, amap_edit_finish_changed = false;
+  uint16_t amap_edit_type = 0, amap_edit_index = 0, amap_edit_count = 0;
+  uint64_t amap_edit_mutations = 0;
+  bool amap_edit_mode = false;
+  std::vector<uint64_t> amap_edit_in0, amap_edit_in1;
+  std::vector<uint64_t> amap_edit_out0, amap_edit_out1;
+  std::vector<uint64_t> amap_edit_claims;
+  std::vector<std::pair<uint8_t, uint8_t>> amap_edit_seq;
+
+  static bool amap_has(const std::vector<uint64_t>& v, uint64_t row) {
+    return std::find(v.begin(), v.end(), row) != v.end();
+  }
+  static uint32_t amap_edit_key(uint16_t ty, uint64_t row) {
+    uint16_t sc = uint16_t(row >> 32);
+    uint16_t co = uint16_t(row >> 16);
+    uint16_t cc = uint16_t(row);
+    return ty == 0x000E ? (uint32_t(co) << 16) | cc : sc;
+  }
+  static bool amap_edit_geometry(uint16_t ty, uint16_t ix, uint64_t row) {
+    uint16_t si = uint16_t(row >> 48), sc = uint16_t(row >> 32);
+    uint16_t co = uint16_t(row >> 16), cc = uint16_t(row);
+    if (ty == 0x000E)
+      return cc == 0 && co < 8 && si < 2 && sc < 8;
+    if (ty == 0x000F)
+      return cc == 0 && co < 25 && si < 2 && sc < 8 && ix < 2;
+    return false;
+  }
+  std::vector<uint64_t>& amap_edit_live(uint16_t ty, uint16_t ix) {
+    if (ty == 0x000E) return ix == 0 ? amap_edit_in0 : amap_edit_in1;
+    return ix == 0 ? amap_edit_out0 : amap_edit_out1;
+  }
+  bool amap_edit_context() const {
+    return amap_edit_active
+        && uint16_t(d->amap_edit_remove_o) == uint16_t(amap_edit_remove)
+        && uint16_t(d->amap_edit_desc_type_o) == amap_edit_type
+        && uint16_t(d->amap_edit_desc_index_o) == amap_edit_index
+        && uint16_t(d->amap_edit_count_o) == amap_edit_count;
+  }
+  bool amap_edit_validate_row(uint64_t row) {
+    if (!amap_edit_geometry(amap_edit_type, amap_edit_index, row)) return false;
+    uint32_t key = amap_edit_key(amap_edit_type, row);
+    for (uint64_t claim : amap_edit_claims) {
+      if (amap_edit_key(amap_edit_type, claim) == key) return claim == row;
+    }
+    for (uint64_t live : amap_edit_live(amap_edit_type, amap_edit_index)) {
+      if (amap_edit_key(amap_edit_type, live) == key) return live == row;
+    }
+    if (amap_edit_type == 0x000F) {
+      const auto& other = amap_edit_index == 0 ? amap_edit_out1 : amap_edit_out0;
+      for (uint64_t live : other)
+        if (amap_edit_key(amap_edit_type, live) == key) return false;
+    }
+    return !amap_edit_remove;
+  }
+  void amap_edit_accept() {
+    uint8_t phase = uint8_t(d->amap_edit_phase_o);
+    uint8_t rec = uint8_t(d->amap_edit_rec_o);
+    uint64_t row = uint64_t(d->amap_edit_record_o);
+    amap_edit_seq.push_back({phase, rec});
+    amap_edit_reply = 0;
+
+    if (phase == 0) {
+      amap_edit_type = uint16_t(d->amap_edit_desc_type_o);
+      amap_edit_index = uint16_t(d->amap_edit_desc_index_o);
+      amap_edit_count = uint16_t(d->amap_edit_count_o);
+      amap_edit_remove = d->amap_edit_remove_o != 0;
+      amap_edit_active = ((amap_edit_type == 0x000E
+                           || amap_edit_type == 0x000F)
+                          && amap_edit_index < 2);
+      amap_edit_changed = false;
+      amap_edit_claims.clear();
+      amap_edit_reply = amap_edit_active ? 1 : 0;
+      return;
+    }
+    if (phase == 3) {
+      amap_edit_active = false;
+      amap_edit_claims.clear();
+      return;
+    }
+    if (!amap_edit_context()) return;
+
+    if (phase == 4 && rec < amap_edit_count) {
+      bool ok = amap_edit_validate_row(row);
+      amap_edit_reply = ok ? 1 : 0;
+      if (ok && !amap_has(amap_edit_claims, row))
+        amap_edit_claims.push_back(row);
+    } else if (phase == 1) {
+      amap_edit_reply = amap_edit_reject_commit ? 0 : 1;
+    } else if (phase == 5 && rec < amap_edit_count) {
+      auto& live = amap_edit_live(amap_edit_type, amap_edit_index);
+      auto it = std::find(live.begin(), live.end(), row);
+      if (amap_edit_remove) {
+        if (it != live.end()) {
+          live.erase(it); amap_edit_changed = true; ++amap_edit_mutations;
+        }
+      } else if (it == live.end()) {
+        live.push_back(row); amap_edit_changed = true; ++amap_edit_mutations;
+      }
+      amap_edit_reply = 1;
+    } else if (phase == 2) {
+      amap_edit_finish_changed = amap_edit_changed;
+      amap_edit_reply = amap_edit_changed ? 1 : 0;
+      amap_edit_active = false;
+      amap_edit_claims.clear();
+    }
+  }
   static uint16_t amap_nmaps(uint16_t ty, uint16_t ix) {
     if (ty == 0x000E) {                      // render-side map RAM
       if (ix == 0) return 1;
@@ -739,6 +873,23 @@ struct H {
                        |  amap_count(ty, ix, page);
     if (sel == 2) return (rec < amap_count(ty, ix, page))
                        ? amap_rec(ty, ix, page, rec) : 0;
+    return 0;
+  }
+  uint64_t amap_query_value(uint16_t ty, uint16_t ix, uint16_t page,
+                            uint8_t sel, uint8_t rec) {
+    if (!amap_edit_mode) return amap_value(ty, ix, page, sel, rec);
+    if ((ty != 0x000E && ty != 0x000F) || ix >= 2) return 0;
+    uint16_t pages = ty == 0x000E ? 1 : 4;
+    if (sel == 0) return pages;
+    if (page >= pages) return sel == 1 ? (uint64_t(pages) << 16) : 0;
+    auto& live = amap_edit_live(ty, ix);
+    std::vector<uint64_t> rows;
+    for (uint64_t v : live) {
+      uint16_t co = uint16_t(v >> 16);
+      if (co / 8 == page) rows.push_back(v);
+    }
+    if (sel == 1) return (uint64_t(pages) << 16) | rows.size();
+    if (sel == 2 && rec < rows.size()) return rows[rec];
     return 0;
   }
 
@@ -1044,9 +1195,10 @@ struct H {
         ++amap_hold_cur;
       } else {
         uint8_t sel = (uint8_t)d->amap_sel_o, rec = (uint8_t)d->amap_rec_o;
-        d->amap_data_i = amap_value((uint16_t)d->amap_desc_type_o,
-                                    (uint16_t)d->amap_desc_index_o,
-                                    (uint16_t)d->amap_map_index_o, sel, rec);
+        d->amap_data_i = amap_query_value((uint16_t)d->amap_desc_type_o,
+                                          (uint16_t)d->amap_desc_index_o,
+                                          (uint16_t)d->amap_map_index_o,
+                                          sel, rec);
         amap_hold_cur = 0;
         ++amap_reads;
         if (amap_seq.empty() || amap_seq.back() != std::make_pair(sel, rec))
@@ -1054,6 +1206,34 @@ struct H {
       }
     } else {
       amap_hold_cur = 0;
+    }
+
+    // ADD/REMOVE_AUDIO_MAPPINGS transaction face.
+    d->amap_edit_wait_i = 0;
+    d->amap_edit_data_i = 0;
+    if (d->amap_edit_req_o) {
+      uint8_t phase = uint8_t(d->amap_edit_phase_o);
+      uint8_t rec = uint8_t(d->amap_edit_rec_o);
+      bool postcommit = phase == 2 || phase == 5;
+      if (!postcommit
+          && (amap_edit_stuck || amap_edit_hold_cur < amap_edit_hold)) {
+        d->amap_edit_wait_i = 1;
+        ++amap_edit_hold_cur;
+      } else {
+        if (postcommit && amap_edit_postcommit_wait)
+          d->amap_edit_wait_i = 1;
+        if (!amap_edit_seen || amap_edit_seen_phase != phase
+                            || amap_edit_seen_rec != rec) {
+          amap_edit_seen = true;
+          amap_edit_seen_phase = phase;
+          amap_edit_seen_rec = rec;
+          amap_edit_accept();
+        }
+        d->amap_edit_data_i = amap_edit_reply;
+      }
+    } else {
+      amap_edit_hold_cur = 0;
+      amap_edit_seen = false;
     }
 
     // ---- Milan-info face (06 SS6.2/SS6.10) ----
@@ -1120,6 +1300,12 @@ struct H {
     d->resp_mem_wr_done_i = 0; d->resp_mem_wr_err_i = 0;
     dram_busy = false; dram_wait = 0;
     rm_busy = false; rm_wbusy = false; rm_wait = 0; rm_wcnt = 0;
+    amap_edit_hold_cur = 0; amap_edit_seen = false;
+    amap_edit_active = false; amap_edit_changed = false;
+    amap_edit_finish_changed = false; amap_edit_mutations = 0;
+    amap_edit_in0.clear(); amap_edit_in1.clear(); amap_edit_out0.clear();
+    amap_edit_claims.clear();
+    amap_edit_seq.clear();
     idle(20);
     d->rst_n = 1;
     idle(10);
@@ -1256,7 +1442,8 @@ int main(int argc, char** argv) {
     {CFGIX, 0x0005, 2, 140, 1, 144, 0},          // STREAM_INPUT x2
     {CFGIX, 0x0006, 2, 140, 1, 144, 0},          // STREAM_OUTPUT x2
     {CFGIX, 0x0009, 1,  98, 1, 104, 0},          // AVB_INTERFACE
-    {CFGIX, 0x000F, 2,  20, 1,  24, 0},          // STREAM_PORT_OUTPUT x2
+    {CFGIX, 0x000F, 3,  20, 1,  24, 0},          // two dynamic, one static
+    {CFGIX, 0x0017, 1,  16, 0,  16, 0},          // static output AUDIO_MAP
     //! GET_SAMPLING_RATE's target. The rate is 96000, NOT the 48000 a
     //! hardcoded answer would most plausibly be, so a program that invents
     //! the value instead of copying it out of the image fails section W.
@@ -1280,6 +1467,8 @@ int main(int argc, char** argv) {
                         avb_interface_descriptor(0),
                         stream_port_descriptor(0x000F, 0, 8, 0),
                         stream_port_descriptor(0x000F, 1, 8, 8),
+                        stream_port_descriptor(0x000F, 2, 8, 16, 1, 0),
+                        audio_map_descriptor(0, 0),
                         audio_unit_descriptor(0, 96000u),
                         control_descriptor(0),
                         non_entity_312_descriptor(0)},
@@ -1845,15 +2034,12 @@ int main(int argc, char** argv) {
     // past the 60-octet Ethernet floor where padding can no longer hide a
     // wrong length. 0x7FFD/0x7FFE are unassigned in Table 7-140 and stay
     // NOT_IMPLEMENTED whatever else this engine grows.
-    //! 0x002B GET_AUDIO_MAP left this sweep when it became a real answer -
-    //! its refusals are graded in section Q, including the non-input-port
-    //! echo this entry used to cover by accident (payload 0xA0A1... is not
-    //! a STREAM_PORT_INPUT type). 0x002C ADD_AUDIO_MAPPINGS holds the
-    //! same-payload-shape slot and stays NOT_IMPLEMENTED (the recorded gap).
+    //! GET_AUDIO_MAP and both audio-map edit commands left this sweep when
+    //! they became real answers. Their refusals and variable bodies are
+    //! graded in sections Q and R.
     struct { uint16_t op; size_t n; const char* what; } nisz[] = {
       {0x7FFE,  0, "unassigned opcode, empty payload"},
       {0x004D,  4, "GET_MAX_TRANSIT_TIME (§7.4.78.1, the Hive 4.3.1 case)"},
-      {0x002C,  8, "ADD_AUDIO_MAPPINGS (§7.4.45.1)"},
       //! 0x0000 ACQUIRE_ENTITY left this sweep when Milan §5.4.2.1's
       //! NOT_SUPPORTED answer landed - its echo is graded in section L
       {0x7FFC, 16, "unassigned opcode, 16-byte payload"},
@@ -2939,9 +3125,9 @@ int main(int argc, char** argv) {
     got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPO, 0, 2), 0xE00C);
     want = expect(AECP_BAD_ARGUMENTS, 0xE00C, am_expect_pl(DT_SPO, 0, 2, 2, 0));
     CHECK(got == want, "Q5c: OUTPUT page law still §7.4.44.1");
-    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPO, 2, 0), 0xE00D);
+    got = cmd(AEM_GET_AUDIO_MAP, am_pl(DT_SPO, 3, 0), 0xE00D);
     want = expect(AECP_NO_SUCH_DESCRIPTOR, 0xE00D,
-                  am_expect_pl(DT_SPO, 2, 0, 0, 0));
+                  am_expect_pl(DT_SPO, 3, 0, 0, 0));
     CHECK(got == want, "Q5d: OUTPUT existence still the image's");
     //! ...and a type that is NEITHER port direction keeps the echo
     auto ju_pl = am_pl(0x0002, 0, 0);            // AUDIO_UNIT
@@ -3027,6 +3213,338 @@ int main(int argc, char** argv) {
     want_q = {{0, 0}, {1, 0}, {2, 0}, {2, 1}};
     CHECK(!got.empty() && h.amap_seq == want_q,
           "Q10: the record ordinal did not restart with the command");
+  }
+
+  // ==== R. ADD/REMOVE_AUDIO_MAPPINGS =====================================
+  // IEEE 1722.1-2021 7.4.45 and 7.4.46 require an exact reflected body,
+  // whole-command validation before any write, duplicate-safe removal, lock
+  // ordering, and a notification after every successful command.
+  {
+    const uint16_t GET = 0x002B, ADD = 0x002C, REMOVE = 0x002D;
+    const uint16_t DT_SPI = 0x000E, DT_SPO = 0x000F;
+    const uint64_t C2_MAC = 0x0202C2C2C2C2ull;
+    auto row = [](uint16_t si, uint16_t sc, uint16_t co, uint16_t cc = 0) {
+      return (uint64_t(si) << 48) | (uint64_t(sc) << 32)
+           | (uint64_t(co) << 16) | cc;
+    };
+    auto edit_pl = [](uint16_t ty, uint16_t ix,
+                      const std::vector<uint64_t>& rows) {
+      std::vector<uint8_t> p(8 + 8 * rows.size(), 0);
+      putbe(&p[0], ty, 2); putbe(&p[2], ix, 2);
+      putbe(&p[4], rows.size(), 2);
+      for (size_t i = 0; i < rows.size(); ++i)
+        putbe(&p[8 + 8 * i], rows[i], 8);
+      return p;
+    };
+    auto cmd_from = [&](uint64_t mac, uint64_t eid, uint16_t op,
+                        uint16_t seq, const std::vector<uint8_t>& p) {
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, mac, 0, 0, EID, eid,
+                        seq, op, p));
+      return h.wait_any(h.q_aecp, 400);
+    };
+    auto cmd = [&](uint16_t op, uint16_t seq,
+                   const std::vector<uint8_t>& p) {
+      return cmd_from(CTLR_MAC, CTLR_EID, op, seq, p);
+    };
+    auto expect = [&](uint8_t status, uint16_t op, uint16_t seq,
+                      const std::vector<uint8_t>& p) {
+      return aecp_frame(CTLR_MAC, OWN_MAC, 1, status, EID, CTLR_EID,
+                        seq, op, p);
+    };
+    auto status = [](const std::vector<uint8_t>& f) {
+      return f.size() > 16 ? uint8_t(f[16] >> 3) : uint8_t(0xFF);
+    };
+    auto map_rows = [&](uint16_t ty, uint16_t ix, uint16_t page,
+                        uint16_t seq) {
+      std::vector<uint8_t> q(8, 0);
+      putbe(&q[0], ty, 2); putbe(&q[2], ix, 2); putbe(&q[4], page, 2);
+      auto f = cmd(GET, seq, q);
+      std::vector<uint64_t> rows;
+      if (f.size() < 50 || status(f) != AECP_SUCCESS) return rows;
+      uint16_t count = uint16_t((uint16_t(f[46]) << 8) | f[47]);
+      for (uint16_t i = 0; i < count && 50 + 8 * size_t(i) + 7 < f.size(); ++i) {
+        uint64_t v = 0;
+        for (int b = 0; b < 8; ++b) v = (v << 8) | f[50 + 8 * size_t(i) + b];
+        rows.push_back(v);
+      }
+      return rows;
+    };
+
+    h.amap_edit_mode = true;
+    h.amap_edit_in0.clear(); h.amap_edit_out0.clear(); h.amap_edit_out1.clear();
+    h.amap_edit_seq.clear(); h.amap_edit_mutations = 0;
+
+    // A late conflict on cluster 0 rejects the whole command from empty.
+    uint64_t c0 = row(0, 0, 0), c1 = row(0, 1, 1);
+    auto p = edit_pl(DT_SPI, 0, {c0, c1, row(1, 1, 0)});
+    auto got = cmd(ADD, 0xE100, p);
+    CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE100, p),
+          "R1: a conflicting full command did not return BAD_ARGUMENTS");
+    CHECK(h.amap_edit_in0.empty()
+          && map_rows(DT_SPI, 0, 0, 0xE101).empty(),
+          "R1: conflict left a partial input mapping");
+
+    // Fill the complete eight-cluster page, then read it back through GET.
+    std::vector<uint64_t> linear;
+    for (uint16_t i = 0; i < 8; ++i) linear.push_back(row(0, i, i));
+    p = edit_pl(DT_SPI, 0, linear);
+    got = cmd(ADD, 0xE102, p);
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE102, p),
+          "R2: full-page ADD response is not byte-exact SUCCESS");
+    CHECK(map_rows(DT_SPI, 0, 0, 0xE103) == linear,
+          "R2: GET_AUDIO_MAP did not return the full committed page");
+
+    uint64_t m0 = h.amap_edit_mutations;
+    got = cmd(ADD, 0xE104, p);
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE104, p)
+          && h.amap_edit_mutations == m0 && !h.amap_edit_finish_changed,
+          "R3: idempotent full-page ADD changed state");
+
+    auto bad_remove = linear;
+    bad_remove.push_back(row(1, 0, 7));
+    p = edit_pl(DT_SPI, 0, bad_remove);
+    got = cmd(REMOVE, 0xE105, p);
+    CHECK(got == expect(AECP_BAD_ARGUMENTS, REMOVE, 0xE105, p)
+          && map_rows(DT_SPI, 0, 0, 0xE106) == linear,
+          "R4: absent REMOVE row caused a partial removal");
+
+    p = edit_pl(DT_SPI, 0, linear);
+    got = cmd(REMOVE, 0xE107, p);
+    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE107, p)
+          && map_rows(DT_SPI, 0, 0, 0xE108).empty(),
+          "R5: correct full-page REMOVE did not empty the map");
+    got = cmd(REMOVE, 0xE109, p);
+    CHECK(got == expect(AECP_BAD_ARGUMENTS, REMOVE, 0xE109, p),
+          "R6: repeated REMOVE of an empty map did not fail");
+
+    cmd(ADD, 0xE10A, edit_pl(DT_SPI, 0, linear));
+    std::vector<uint64_t> duplicates;
+    for (uint64_t v : linear) { duplicates.push_back(v); duplicates.push_back(v); }
+    p = edit_pl(DT_SPI, 0, duplicates);
+    got = cmd(REMOVE, 0xE10B, p);
+    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE10B, p)
+          && h.amap_edit_in0.empty(),
+          "R7: duplicated REMOVE rows were not ignored safely");
+
+    p = edit_pl(DT_SPI, 0, {row(0, 0, 0), row(1, 1, 0)});
+    got = cmd(ADD, 0xE10C, p);
+    CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE10C, p)
+          && h.amap_edit_in0.empty(),
+          "R8: nonredundant input conflict was accepted");
+
+    uint64_t cross = row(0, 0, 0);
+    p = edit_pl(DT_SPO, 0, {cross});
+    got = cmd(ADD, 0xE10D, p);
+    auto p2 = edit_pl(DT_SPO, 1, {cross});
+    auto got2 = cmd(ADD, 0xE10E, p2);
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE10D, p)
+          && got2 == expect(AECP_BAD_ARGUMENTS, ADD, 0xE10E, p2),
+          "R9: cross-port output-channel conflict status is wrong");
+    CHECK(map_rows(DT_SPO, 0, 0, 0xE10F) == std::vector<uint64_t>{cross}
+          && map_rows(DT_SPO, 1, 0, 0xE110).empty(),
+          "R9: cross-port refusal changed either output map");
+    cmd(REMOVE, 0xE111, p);
+
+    uint64_t out = row(0, 1, 16);
+    p = edit_pl(DT_SPO, 0, {out});
+    h.amap_edit_reject_commit = true;
+    got = cmd(ADD, 0xE112, p);
+    h.amap_edit_reject_commit = false;
+    CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE112, p),
+          "R10: running-output ADD recheck did not refuse the edit");
+    CHECK(h.amap_edit_out0.empty(),
+          "R10: running-output ADD still wrote the map");
+    got = cmd(ADD, 0xE113, p);
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE113, p)
+          && H::amap_has(h.amap_edit_out0, out),
+          "R10: the same output row did not commit when idle");
+    h.amap_edit_reject_commit = true;
+    got = cmd(REMOVE, 0xE114, p);
+    h.amap_edit_reject_commit = false;
+    CHECK(got == expect(AECP_BAD_ARGUMENTS, REMOVE, 0xE114, p)
+          && H::amap_has(h.amap_edit_out0, out),
+          "R10: running-output REMOVE changed the map");
+    cmd(REMOVE, 0xE115, p);
+
+    p = edit_pl(DT_SPI, 1, {});
+    got = cmd(ADD, 0xE116, p);
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE116, p),
+          "R11a: required dynamic Stream Port Input was not supported");
+    p = edit_pl(DT_SPO, 2, {});
+    got = cmd(ADD, 0xE122, p);
+    CHECK(got == expect(AECP_NOT_SUPPORTED, ADD, 0xE122, p),
+          "R11b: static Stream Port Output did not return NOT_SUPPORTED");
+
+    p = edit_pl(DT_SPI, 0, {row(0, 0, 0)});
+    putbe(&p[4], 2, 2);                    // count says two, body carries one
+    got = cmd(ADD, 0xE117, p);
+    auto normalized = edit_pl(DT_SPI, 0, {row(0, 0, 0)});
+    CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE117, normalized),
+          "R12: malformed response did not name its one contained record");
+
+    std::vector<uint8_t> short_edit(4, 0);
+    putbe(&short_edit[0], DT_SPI, 2); putbe(&short_edit[2], 0, 2);
+    got = cmd(ADD, 0xE128, short_edit);
+    CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE128,
+                        edit_pl(DT_SPI, 0, {})),
+          "R12a: short edit response omitted Figure 7-71's fixed body");
+
+    // Reserved command bytes are ignored on receipt and zero on transmission.
+    p = edit_pl(DT_SPI, 0, {row(0, 5, 5)});
+    p[6] = 0xA5; p[7] = 0x5A;
+    normalized = p; normalized[6] = 0; normalized[7] = 0;
+    got = cmd(ADD, 0xE126, p);
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE126, normalized)
+          && H::amap_has(h.amap_edit_in0, row(0, 5, 5)),
+          "R12b: response retransmitted nonzero reserved command bytes");
+    got = cmd(REMOVE, 0xE127, normalized);
+    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE127, normalized),
+          "R12b: reserved-field regression cleanup failed");
+
+    p = edit_pl(0x0002, 0, {});            // AUDIO_UNIT is not a Stream Port
+    got = cmd(ADD, 0xE118, p);
+    CHECK(got == expect(AECP_NOT_SUPPORTED, ADD, 0xE118, p),
+          "R13: non-Stream-Port target did not return NOT_SUPPORTED");
+
+    // A lock held by C2 refuses C1 before the transaction face can mutate.
+    std::vector<uint8_t> lock(16, 0);
+    got = cmd_from(C2_MAC, CTLR2_EID, 0x0001, 0xE119, lock);
+    CHECK(status(got) == AECP_SUCCESS, "R14: C2 could not take the lock");
+    p = edit_pl(DT_SPI, 0, {row(0, 0, 0)});
+    got = cmd(ADD, 0xE11A, p);
+    CHECK(status(got) == 3 && h.amap_edit_in0.empty(),
+          "R14: foreign locked ADD was not refused as ENTITY_LOCKED");
+    lock[3] = 1;
+    got = cmd_from(C2_MAC, CTLR2_EID, 0x0001, 0xE11B, lock);
+    CHECK(status(got) == AECP_SUCCESS, "R14: C2 could not release the lock");
+
+    // Register C2, then prove changed ADD/REMOVE reflect byte-exact to C2.
+    std::vector<uint8_t> flags(4, 0);
+    got = cmd_from(C2_MAC, CTLR2_EID, 0x0024, 0xE11C, flags);
+    CHECK(status(got) == AECP_SUCCESS, "R15: C2 registration failed");
+    uint64_t notice_row = row(0, 2, 2);
+    p = edit_pl(DT_SPI, 0, {notice_row});
+    got = cmd(ADD, 0xE11D, p);
+    auto uns = h.wait_any(h.q_aecp, 400);
+    auto want_uns = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                               CTLR2_EID, 0, ADD, p);
+    want_uns[36] |= 0x80;
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE11D, p)
+          && uns == want_uns,
+          "R15: changed ADD did not notify only C2 with the reflected body");
+
+    got = cmd(ADD, 0xE11E, p);
+    uns = h.wait_any(h.q_aecp, 400);
+    want_uns = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                          CTLR2_EID, 1, ADD, p);
+    want_uns[36] |= 0x80;
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE11E, p)
+          && uns == want_uns,
+          "R16: idempotent ADD did not emit the required notification");
+
+    got = cmd(REMOVE, 0xE11F, p);
+    uns = h.wait_any(h.q_aecp, 400);
+    want_uns = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                          CTLR2_EID, 2, REMOVE, p);
+    want_uns[36] |= 0x80;
+    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE11F, p)
+          && uns == want_uns,
+          "R17: changed REMOVE did not notify C2 with sequence 2");
+    cmd_from(C2_MAC, CTLR2_EID, 0x0025, 0xE120, {});
+
+    p = edit_pl(DT_SPI, 0, {});
+    h.amap_edit_stuck = true;
+    got = cmd(ADD, 0xE121, p);
+    h.amap_edit_stuck = false;
+    CHECK(got == expect(10, ADD, 0xE121, p),
+          "R18: wedged edit store omitted the fixed mapping response body");
+
+    std::vector<uint64_t> reserved = {row(0, 3, 3), row(0, 4, 4)};
+    p = edit_pl(DT_SPI, 0, reserved);
+    uint64_t before = h.amap_edit_mutations;
+    h.amap_edit_postcommit_wait = true;
+    got = cmd(ADD, 0xE123, p);
+    h.amap_edit_postcommit_wait = false;
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE123, p),
+          "R19: post-reservation wait poisoned the successful response");
+    CHECK(map_rows(DT_SPI, 0, 0, 0xE124) == reserved
+          && h.amap_edit_mutations == before + 2,
+          "R19: reserved transaction did not commit both records exactly");
+    got = cmd(REMOVE, 0xE125, p);
+    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE125, p),
+          "R19: post-reservation regression cleanup failed");
+
+    // Park an output edit at its phase-1 streaming recheck, then inject a
+    // state-changing PROBE_TX for source 1. The live MAP_CFG hold must keep
+    // STREAM_CFG in the dispatch queue until the complete mapping command
+    // retires. Before the scoreboard was wired this probe reached the talker,
+    // requested a MAAP address, and opened its declaration while the mapping
+    // command was still between validation and write-back.
+    uint64_t serialized_out = row(0, 2, 17);
+    p = edit_pl(DT_SPO, 0, {serialized_out});
+    before = h.amap_edit_mutations;
+    h.q_aecp.clear(); h.q_acmp.clear();
+    h.decl_edges.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID,
+                      0xE12E, ADD, p));
+    bool at_recheck = false;
+    for (int i = 0; i < 400; ++i) {
+      if (d->amap_edit_req_o && d->amap_edit_phase_o == 1) {
+        at_recheck = true;
+        h.amap_edit_hold = 200;
+        break;
+      }
+      h.step();
+    }
+    CHECK(at_recheck, "R19a: output edit did not reach phase-1 recheck");
+    auto probe_during_map = acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID,
+                                       T1_EID, 1, 7, 0, 0, 0xE12F,
+                                       0x000A, 0);
+    h.feed(probe_during_map);
+    CHECK(((h.snap(15) >> 24) & 0xFF) != 0,
+          "R19a: MAP_CFG did not own a live scoreboard hold");
+    CHECK(h.amap_edit_mutations == before && h.q_acmp.empty()
+          && !h.saw_decl_edge(1, true),
+          "R19a: STREAM_CFG crossed the held MAP_CFG recheck");
+    h.amap_edit_hold = 0;
+    got = h.wait_any(h.q_aecp, 400);
+    auto probe_after_map = h.wait_any(h.q_acmp, 400);
+    for (int i = 0; i < 400 && !h.saw_decl_edge(1, true); ++i) h.step();
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE12E, p)
+          && !probe_after_map.empty()
+          && (probe_after_map[15] & 0x0F) == 1
+          && h.saw_decl_edge(1, true)
+          && H::amap_has(h.amap_edit_out0, serialized_out),
+          "R19a: deferred MAP_CFG then STREAM_CFG did not complete in order");
+    got = cmd(REMOVE, 0xE130, p);
+    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE130, p),
+          "R19a: serialized output-map cleanup failed");
+
+    // IEEE 1722.1-2021 9.2.2.6 caps command cdl at 524 octets. Figure 7-71
+    // uses 20 + 8*N, so 63 records is the exact command maximum. Milan 5.4.1
+    // lifts the ceiling for responses only. Repeating one ADD row proves that
+    // every legal staged ordinal is read without inventing a conflict.
+    std::vector<uint64_t> full_slot(63, row(0, 6, 6));
+    p = edit_pl(DT_SPI, 0, full_slot);
+    got = cmd(ADD, 0xE129, p);
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE129, p)
+          && map_rows(DT_SPI, 0, 0, 0xE12A)
+             == std::vector<uint64_t>{row(0, 6, 6)},
+          "R20: 63-record maximum command was truncated or misapplied");
+    std::vector<uint64_t> over_limit(64, row(0, 7, 7));
+    p = edit_pl(DT_SPI, 0, over_limit);
+    before = h.amap_edit_mutations;
+    got = cmd(ADD, 0xE12B, p);
+    CHECK(got == expect(AECP_BAD_ARGUMENTS, ADD, 0xE12B, p)
+          && h.amap_edit_mutations == before
+          && map_rows(DT_SPI, 0, 0, 0xE12C)
+             == std::vector<uint64_t>{row(0, 6, 6)},
+          "R20: 64-record over-limit command changed the map");
+    p = edit_pl(DT_SPI, 0, {row(0, 6, 6)});
+    got = cmd(REMOVE, 0xE12D, p);
+    CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE12D, p),
+          "R20: command-bound regression cleanup failed");
   }
 
   // ==== U. REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION ===================

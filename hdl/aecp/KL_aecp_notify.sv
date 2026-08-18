@@ -180,6 +180,12 @@ module KL_aecp_notify
     input  wire  [N_STREAM_OUT_P-1:0] ev_stri_out_i, //! per-source GET_STREAM_INFO change
     input  wire         ev_avb_i,            //! GET_AVB_INFO state change
     input  wire         ev_asp_i,            //! GET_AS_PATH state change
+    input  wire         ev_amap_i,           //! successful state-changing map edit
+    input  wire         ev_amap_remove_i,    //! 0 ADD, 1 REMOVE
+    input  wire  [15:0] ev_amap_type_i,
+    input  wire  [15:0] ev_amap_index_i,
+    input  wire  [15:0] ev_amap_count_i,
+    input  wire  [63:0] ev_amap_excl_eid_i,
 
     //! ---- unsolicited job face toward KL_aecp_engine ----
     output logic        uns_valid_o,         //! job presented, held until done
@@ -189,7 +195,10 @@ module KL_aecp_notify
     output logic [63:0] uns_ctlr_eid_o,      //! target controller entity_id
     output logic [47:0] uns_mac_o,           //! target unicast MAC
     output logic [15:0] uns_seq_o,           //! this entry's sequence_id
+    output logic        uns_amap_remove_o,
+    output logic [15:0] uns_amap_count_o,
     input  wire         uns_done_i,          //! engine retired the job (sent or voided)
+    output logic        amap_busy_o,         //! preserve the engine staging RAM
 
     //! ---- lock state, published (06 SS6.4 consumers: engine + listener A1) ----
     output logic        lock_held_o,         //! ENTITY lock held
@@ -246,7 +255,10 @@ module KL_aecp_notify
   // ---- pending event classes + the lock notification's exclusion ----------
   logic [N_STREAM_IN_P-1:0]  pe_sin_r;
   logic [N_STREAM_OUT_P-1:0] pe_sout_r;
-  logic        pe_avb_r, pe_asp_r, pe_lock_r;
+  logic        pe_avb_r, pe_asp_r, pe_lock_r, pe_amap_r;
+  logic        amap_remove_r;
+  logic [15:0] amap_type_r, amap_index_r, amap_count_r;
+  logic [63:0] amap_excl_r;
   logic [63:0] lockx_eid_r;    //! requester excluded from the lock emission
   logic        lockx_v_r;      //! 0 = no exclusion (timeout, or coalesced)
 
@@ -296,6 +308,8 @@ module KL_aecp_notify
   logic [15:0] em_dt_r, em_di_r;
   logic [63:0] em_excl_r;
   logic        em_excl_v_r;
+  logic        em_amap_remove_r;
+  logic [15:0] em_amap_count_r;
   logic        em_dh_r;                 // this job is the DEREG single-shot
   logic [CIX_W_C-1:0] em_ix_r;
 
@@ -342,6 +356,10 @@ module KL_aecp_notify
     pick_di_w   = 16'd0;
     if (pe_lock_r) begin
       pick_kind_w = PP_UNS_LOCK_C;
+    end else if (pe_amap_r) begin
+      pick_kind_w = PP_UNS_AMAP_C;
+      pick_dt_w   = amap_type_r;
+      pick_di_w   = amap_index_r;
     end else if (pe_avb_r) begin
       pick_kind_w = PP_UNS_AVB_C;
       pick_dt_w   = 16'h0009;           // AVB_INTERFACE
@@ -415,6 +433,10 @@ module KL_aecp_notify
   assign uns_ctlr_eid_o   = hold_eid_r;
   assign uns_mac_o        = hold_mac_r;
   assign uns_seq_o        = hold_seq_r;
+  assign uns_amap_remove_o = em_amap_remove_r;
+  assign uns_amap_count_o  = em_amap_count_r;
+  assign amap_busy_o = pe_amap_r
+                       || (em_active_r && (em_kind_r == PP_UNS_AMAP_C));
 
   assign dbg_uns_cnt_o  = uns_cnt_r;
   assign dbg_coalesce_o = coalesce_r;
@@ -440,6 +462,12 @@ module KL_aecp_notify
       pe_avb_r    <= 1'b0;
       pe_asp_r    <= 1'b0;
       pe_lock_r   <= 1'b0;
+      pe_amap_r   <= 1'b0;
+      amap_remove_r <= 1'b0;
+      amap_type_r <= 16'd0;
+      amap_index_r <= 16'd0;
+      amap_count_r <= 16'd0;
+      amap_excl_r <= 64'd0;
       lockx_eid_r <= 64'd0;
       lockx_v_r   <= 1'b0;
       dh_v_r      <= 1'b0;
@@ -466,6 +494,8 @@ module KL_aecp_notify
       em_di_r     <= 16'd0;
       em_excl_r   <= 64'd0;
       em_excl_v_r <= 1'b0;
+      em_amap_remove_r <= 1'b0;
+      em_amap_count_r <= 16'd0;
       em_dh_r     <= 1'b0;
       em_ix_r     <= '0;
       uns_cnt_r   <= 16'd0;
@@ -492,6 +522,14 @@ module KL_aecp_notify
       end
       if (ev_avb_i) pe_avb_r <= 1'b1;
       if (ev_asp_i) pe_asp_r <= 1'b1;
+      if (ev_amap_i) begin
+        pe_amap_r <= 1'b1;
+        amap_remove_r <= ev_amap_remove_i;
+        amap_type_r <= ev_amap_type_i;
+        amap_index_r <= ev_amap_index_i;
+        amap_count_r <= ev_amap_count_i;
+        amap_excl_r <= ev_amap_excl_eid_i;
+      end
 
       // ---- registry TL expiry: park; the drain state removes + latches ---
       if (exp_row_w && valid_r[exp_ix_w] && tl_r[exp_ix_w]) begin
@@ -600,6 +638,12 @@ module KL_aecp_notify
                   em_excl_r   <= lockx_eid_r;
                   em_excl_v_r <= lockx_v_r;
                   pe_lock_r   <= 1'b0;
+                end else if (pick_kind_w == PP_UNS_AMAP_C) begin
+                  em_excl_r <= amap_excl_r;
+                  em_excl_v_r <= 1'b1;
+                  em_amap_remove_r <= amap_remove_r;
+                  em_amap_count_r <= amap_count_r;
+                  pe_amap_r <= 1'b0;
                 end else begin
                   em_excl_v_r <= 1'b0;
                   if (pick_kind_w == PP_UNS_AVB_C)      pe_avb_r <= 1'b0;
