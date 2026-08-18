@@ -5824,18 +5824,37 @@ int main(int argc, char** argv) {
 
     // ---- W8: READ_DESCRIPTOR still intact after the whole section -------
     {
-      std::vector<uint8_t> one(4, 0);
-      putbe(&one[2], 0x0001, 2);
-      ask(AEM_SET_CONFIGURATION, one, 0x765F);
+      //! Distinct-value discipline (the W18 lesson applied to this block):
+      //! it used to SET configuration 1 with the response discarded, but
+      //! W18 had already left the store at 1 - a dropped write here was
+      //! indistinguishable from W18's residue. Of the two legal indices
+      //! only 0 is residue-distinct, and 0 is ALSO the image default, so
+      //! W22d grades residue DISPLACEMENT (a lost later write); W18c owns
+      //! fallback-vs-overlay with its non-zero value. W22a grades that the
+      //! SUCCESS arm is reachable at all in the sinkless window after
+      //! W21u's unbind - a refusal predicate stuck from the earlier binds
+      //! would fail it. The echo (W22b) is command-sourced by the
+      //! microprogram, so it grades the response builder, not the store.
+      //! (W22 series: the old W8/W8b names here collided with the
+      //! GET_DYNAMIC_INFO section's.)
+      std::vector<uint8_t> zero(4, 0);
+      auto s = ask(AEM_SET_CONFIGURATION, zero, 0x765F);
+      CHECK(!s.empty() && st(s) == AECP_SUCCESS && cdl(s) == 16,
+            "W22a: SET_CONFIGURATION(0) succeeds in the sinkless window, "
+            "status %d cdl %d", st(s), cdl(s));
+      CHECK(s.size() >= 42 && (((unsigned)s[40] << 8) | s[41]) == 0x0000,
+            "W22b: ...echoing the commanded index, got %u",
+            s.size() >= 42 ? (((unsigned)s[40] << 8) | s[41]) : 999u);
 
       std::vector<uint8_t> rd(8, 0);
       putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2);
       auto f = ask(AEM_READ_DESCRIPTOR, rd, 0x7660);
       CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 12 + 4 + 312,
-            "W8: READ_DESCRIPTOR intact after the read-side set");
+            "W22c: READ_DESCRIPTOR intact after the read-side set");
       CHECK(f.size() >= 42 + 312
-            && (((unsigned)f[42 + 310] << 8) | f[42 + 311]) == 0x0001,
-            "W8b: ENTITY overlay follows the dynamic store; got %u",
+            && (((unsigned)f[42 + 310] << 8) | f[42 + 311]) == 0x0000,
+            "W22d: ENTITY overlay shows THIS write displaced W18's residue; "
+            "got %u",
             f.size() >= 42 + 312
               ? (((unsigned)f[42 + 310] << 8) | f[42 + 311]) : 999u);
     }

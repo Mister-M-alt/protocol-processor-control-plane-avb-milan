@@ -140,6 +140,28 @@ Neither `run_suites.sh` nor `lint_hdl.sh` is wired into `make check`, which is t
 documentation gate only; they are run separately before a submodule pin moves. See the
 [HDL engineer guide](../guides/hdl-engineer.md#6-running-the-testbenches).
 
+### 8.1 Dynamic-state overlay: the per-field A/B evidence map (issue #72)
+
+Every controller-settable field is graded on both arms -- A: unwritten reads the
+descriptor-image default; B: written reads the overlay -- plus row isolation and
+fail-closed addressing. The checks live in `tb/pp_top/sim_main.cpp` (W-sections)
+and `tb/dyn_state/sim_main.cpp` (lettered sections):
+
+| Field | A: image fallback | B: written overlay | Isolation / fail-closed |
+|---|---|---|---|
+| current_configuration | W3c, W3d, W16a | W18/W18b/W18c/W18c3; W22a (SUCCESS-arm reachability after W21u's unbind) + W22d (residue displacement) | mechanism-level: dyn_state C, D (row addressing shared across selectors) |
+| sampling_rate | W5 (byte-exact image 96000) | W9/W9b (48000) | mechanism-level: dyn_state C, D |
+| clock_source | W6/W6b | W10/W10d | mechanism-level: dyn_state C, D |
+| stream formats (in/out) | W4 per type and index | store-level only (dyn_state B, C) -- no served AECP setter yet (root issue #67) | dyn_state C, D |
+| presentation offset | (no getter opcode; live face) | dyn_state B, C + the live-face check F | dyn_state C |
+| Identify control | W12/W12b/W12c (pre-SET GET) | W12d-W12h (SET/GET cycles), W13-W13d (step legality); volatility: dyn_state E | dyn_state E |
+| started/stopped | NOT in this store: the ACMP binding record owns it and selector 6 is RETIRED (dyn_state F2) | listener suite + pp_top W21 | dyn_state F2 |
+
+Reset and persistence semantics: dyn_state A (everything invalid out of reset)
+and E (dirty marks the persisted set, and only it). The store is flops by
+design -- the fields are read continuously by the fabric -- with the area taken
+in per-field widths; the module banner carries the numbers.
+
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)
 per the scope rules in [docs/README §2](../README.md).
