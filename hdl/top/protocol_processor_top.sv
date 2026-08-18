@@ -1515,6 +1515,26 @@ module protocol_processor_top
   logic        lstn_txs_gnt_w;
   logic [TXS_W_C-1:0] lstn_txs_gnt_slot_w;
 
+  //! the started/stopped handshake: KL_aecp_engine raises it from a
+  //! START/STOP_STREAMING µprogram, KL_pp_acmp_listener owns the bit.
+  logic        strm_set_valid_w, strm_set_val_w, strm_set_ready_w;
+  logic [15:0] strm_set_index_w;
+  //! out-of-range started/stopped requests dropped by the record walker.
+  //! Reads a permanent 0 unless the descriptor image and this shape disagree.
+  //!
+  //! IT STOPS HERE, deliberately, and that is a limitation not a feature:
+  //! nothing at this level reads it, so on silicon it is unreadable - not by
+  //! a CSR, not by a bring-up probe. The arm it counts is driven and graded
+  //! in tb/acmp_listener (S1n), which is what makes it more than a comment;
+  //! carrying it to a register would be a register-map change for a counter
+  //! whose only legitimate value is zero. If that arm ever fires on real
+  //! hardware, this is the wire to bring out.
+  logic [15:0] lstn_strq_drop_w;
+  //! Milan Table 5.22: a started/stopped change pushes a GET_STREAM_INFO
+  //! unsolicited notification. Issue #69 owns the trigger SET; this is the
+  //! one trigger that only exists because START/STOP_STREAMING landed.
+  logic        lstn_act_strt_chg_w;
+
   KL_pp_acmp_listener #(
       .N_SINKS_P           (N_STREAM_IN_P),
       .TROM_HEX_P          (TROM_HEX_P),
@@ -1545,6 +1565,13 @@ module protocol_processor_top
       .pre_ctlr_eid_i        (pre_ctlr_eid_w),
       .pre_sw_i              (pre_sw_w),
       .pre_started_i         (pre_started_w),
+      .strm_set_valid_i      (strm_set_valid_w),
+      .strm_set_sink_i       (strm_set_index_w),
+      .strm_set_val_i        (strm_set_val_w),
+      .strm_set_ready_o      (strm_set_ready_w),
+      .strm_started_o        (aecp_strm_started_o),
+      .dbg_strq_drop_o       (lstn_strq_drop_w),
+      .act_strt_chg_o        (lstn_act_strt_chg_w),
       .pre_ready_o           (pre_ready_w),
       .now_ms_i              (now_ms_w),
       .tmr_arm_valid_o       (lstn_arm_valid_w),
@@ -2660,7 +2687,8 @@ module protocol_processor_top
       ntfy_stri_in_w[k] =
           (32'(lstn_act_sink_w) == k
            && (lstn_disc_arm_w || lstn_disc_disarm_w
-               || lstn_act_settle_w || lstn_act_teardown_w))
+               || lstn_act_settle_w || lstn_act_teardown_w
+               || lstn_act_strt_chg_w))
           || srp_evt_tk_reg_w[k] || srp_evt_tk_unreg_w[k];
     end
     for (int unsigned k = 0; k < N_STREAM_OUT_P; k++) begin
@@ -2839,7 +2867,10 @@ module protocol_processor_top
       .dyn_cur_config_o   (aecp_cur_config_o),
       .dyn_identify_o     (aecp_identify_o),
       .dyn_clk_src_index_o(aecp_clk_src_index_o),
-      .dyn_strm_started_o (aecp_strm_started_o),
+      .strm_set_valid_o   (strm_set_valid_w),
+      .strm_set_index_o   (strm_set_index_w),
+      .strm_set_val_o     (strm_set_val_w),
+      .strm_set_ready_i   (strm_set_ready_w),
       .dyn_pt_offset_o    (aecp_pt_offset_o),
       .dyn_dirty_o        (aecp_dyn_dirty_o)
   );

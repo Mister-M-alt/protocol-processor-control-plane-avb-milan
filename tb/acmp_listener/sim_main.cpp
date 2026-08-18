@@ -358,6 +358,15 @@ struct Model {
         case 2:
           r.talker_eid = s.tk_eid; r.talker_uid = s.tk_uid;
           r.bind_ctlr = s.ctlr; r.sw = (s.flags >> 3) & 1; r.bound = true;
+          // Milan 5.3.8.7 leaves started/stopped undefined while unbound, so
+          // the bind is what defines it, and IEEE 7.4.35 says which way:
+          // START_STREAMING starts a stream "connected via ACMP with the
+          // STREAMING_WAIT flag SET", so a bind carrying the flag lands
+          // stopped and a bind without it lands started. Table 5.9 bit 28
+          // agrees from the other side - it reports 1 only for a sink that
+          // is "bound and stopped", and ACMP reports the SAVED flag, so the
+          // two answers would contradict each other any other way.
+          r.started = !((s.flags >> 3) & 1);
           e.nvm = true; e.nvm_set = true; mut = true; break;
         case 3: e.frames.push_back(f_bind(s)); break;
         case 4:
@@ -368,7 +377,10 @@ struct Model {
           r.acmpsta = 0; e.frames.push_back(f_probe(sink));
           e.tops.push_back({false, NOW + T_CMD}); mut = true; break;
         case 6:
-          r.bind_ctlr = s.ctlr; r.sw = (s.flags >> 3) & 1; mut = true; break;
+          // 5.5.3.5.6 step 2 re-bind: the binding parameters are UPDATED
+          // with the new command's STREAMING_WAIT, so started follows
+          r.bind_ctlr = s.ctlr; r.sw = (s.flags >> 3) & 1;
+          r.started = !((s.flags >> 3) & 1); mut = true; break;
         case 7: e.frames.push_back(f_unbind(s)); break;
         case 8:
           e.teardown = true; r.sid = 0; r.da = 0; r.vlan = 0;
@@ -412,6 +424,9 @@ struct Model {
 struct ATop { bool cancel; uint8_t slot, owner; uint32_t deadline; };
 struct Col {
   int wrotes = 0, frees = 0, notifies = 0;
+  //! Milan Table 5.22's started/stopped trigger, counted separately from the
+  //! generic record-change notify so a no-op can be told from a transition.
+  int strt_chgs = 0;
   std::vector<Pdu> frames;
   std::vector<ATop> tops;
   bool settle = false, teardown = false, disc_arm = false;
@@ -499,6 +514,7 @@ struct Harness {
     if (d->act_disc_disarm_o) col.disc_disarm = true;
     if (d->act_nvm_o) { col.nvm = true; col.nvm_set = d->act_nvm_set_o; }
     if (d->act_notify_o) col.notifies++;
+    if (d->act_strt_chg_o) col.strt_chgs++;
     if (d->dbg_recwr_o) {
       col.wrotes++;
       shadow[d->dbg_recwr_sink_o] = unpack(&d->dbg_recwr_rec_o[0]);
@@ -705,6 +721,38 @@ int main(int argc, char** argv) {
   auto S_exp = [&]() { Stim s; s.k = Stim::EXP; return s; };
   auto S_tk = [&](uint8_t kind, bool fail = false) {
     Stim s; s.k = Stim::TK; s.tk_kind = kind; s.tk_fail = fail; return s;
+  };
+
+  // ---- the exported started/stopped view (Milan 5.3.8.7) ----------------
+  // The fabric admission gate reads this vector, NOT the record RAM, so a
+  // record that says started while the vector says stopped would discard
+  // every frame of a stream the controller was told is running. It is
+  // written off the record RAM's own write bus, and this is what proves it.
+  auto started_bit = [&](int sink) {
+    return (unsigned)((d->strm_started_o >> sink) & 1u);
+  };
+
+  //! Drive the AECP request face. The write is POSTED - the engine's side
+  //! completes as soon as the one-deep holder takes it, and this walker
+  //! services it a cycle or more later - so a caller that checked the record
+  //! straight after the handshake would read the PREVIOUS value and call it
+  //! agreement. Wait for the walker to pick the job up AND retire it.
+  auto post_started = [&](int sink, int val) {
+    d->strm_set_valid_i = 1;
+    d->strm_set_sink_i  = uint16_t(sink);
+    d->strm_set_val_i   = uint8_t(val);
+    int guard = 64;
+    while (guard-- > 0 && !d->strm_set_ready_o) h.tick();
+    //! grade the handshake at EVERY site, not just the first: a request that
+    //! was never accepted leaves the bit where it was, and at more than one
+    //! call site below that is exactly the value the caller expects.
+    CHECK(d->strm_set_ready_o == 1,
+          "post_started(%d,%d): the face offered ready", sink, val);
+    h.tick();                       // the accepting edge
+    d->strm_set_valid_i = 0;
+    guard = 64;
+    while (guard-- > 0 && !d->dbg_busy_o) h.tick();   // picked up
+    h.wait_idle();                                    // ...and retired
   };
 
   auto goto_state = [&](int sink, int st, const char* tag) {
@@ -985,6 +1033,14 @@ int main(int argc, char** argv) {
     chk_rec("B10 preload", h.shadow[2], r);
     CHECK(h.col.disc_arm && h.col.disc_eid == TK_A,
           "B10: A4 discovery arm with the restored talker");
+    // The restored bit must reach the ADMISSION VIEW, not just the record.
+    // The mirror claims "one write, two destinations" over every path
+    // including X_PRELOAD, and this is the only place that path is taken:
+    // without this row, a mirror that ignored the preload would leave a
+    // rebooted device reporting a started sink while discarding every frame.
+    CHECK(started_bit(2) == 1,
+          "B10: the RESTORED started bit reached the admission view (got %u)",
+          started_bit(2));
     CHECK(h.col.wrotes == 1 && h.col.notifies == 0,
           "B10: one record write, no notification at boot");
   }
@@ -1028,6 +1084,259 @@ int main(int argc, char** argv) {
   // B12: cross-sink isolation — the parked sink was never touched
   CHECK(h.shadow[7] == park7 && m.rec[7] == park7,
         "B12: parked sink 7 record untouched through the whole walk");
+
+  // ---- S1: the started/stopped face (Milan 5.3.8.7, 5.4.2.19/.20) -------
+  {
+    const int sk = 5;                       // a sink this walk left alone
+    Stim u = S_unbind(); u.uid = uint16_t(sk);
+    step(sk, u, false, "S1");
+    CHECK(started_bit(sk) == 0,
+          "S1a: an unbound sink reports stopped (got %u)", started_bit(sk));
+
+    // a bind with STREAMING_WAIT CLEAR lands STARTED (IEEE 7.4.35's premise:
+    // START_STREAMING exists for a stream connected WITH the flag set)
+    Stim b0 = S_bind(TK_A, TKUID_A, CTL1, false); b0.uid = uint16_t(sk);
+    step(sk, b0, false, "S1");
+    CHECK(started_bit(sk) == 1,
+          "S1b: a bind with STREAMING_WAIT clear lands STARTED (got %u)",
+          started_bit(sk));
+
+    // the AECP request face: stop it
+    h.wait_idle();
+    CHECK(d->strm_set_ready_o == 1,
+          "S1c: the request face offers ready without waiting on the walker");
+    // S1c2: the holder's BACKPRESSURE. `strm_set_ready_o` must drop while a
+    // request is pending, because the engine's WRITE_ST completes on it: if
+    // it were tied high, a second START/STOP arriving before this walker
+    // drained the first would OVERWRITE it, and the overwritten command has
+    // already answered SUCCESS. That window is only a couple of cycles from
+    // the wire (the drain runs at top priority), which is exactly why the
+    // property is graded HERE, where the request can be posted directly,
+    // rather than inferred from frame timing in pp_top.
+    {
+      d->strm_set_valid_i = 1;
+      d->strm_set_sink_i  = uint16_t(sk);
+      d->strm_set_val_i   = 0;
+      int g = 64;
+      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
+      h.tick();                       // accepted: the holder is now FULL
+      d->strm_set_valid_i = 0;
+      d->eval();
+      CHECK(d->strm_set_ready_o == 0,
+            "S1c2: ready DROPS while a posted request is still pending");
+      g = 64;
+      while (g-- > 0 && !d->dbg_busy_o) h.tick();
+      h.wait_idle();
+      d->eval();
+      CHECK(d->strm_set_ready_o == 1,
+            "S1c3: ...and comes back once the walker has drained it");
+    }
+    CHECK(started_bit(sk) == 0,
+          "S1d: STOP through the request face cleared the bit (got %u)",
+          started_bit(sk));
+
+    // ...and start it again
+    post_started(sk, 1);
+    CHECK(started_bit(sk) == 1,
+          "S1e: START through the request face set the bit (got %u)",
+          started_bit(sk));
+
+    // Table 5.22 + IEEE 7.4.35: a REAL transition pushes exactly one
+    // GET_STREAM_INFO unsolicited notification...
+    h.col.clear();
+    post_started(sk, 0);
+    CHECK(h.col.strt_chgs == 1,
+          "S1i: a real STOP raises the Table 5.22 trigger once (got %d)",
+          h.col.strt_chgs);
+    // ...and repeating it changes nothing, so it must push NOTHING. A
+    // notification saying "the state you already knew about" is worse than
+    // none: it is indistinguishable on the wire from a real change.
+    h.col.clear();
+    post_started(sk, 0);
+    CHECK(h.col.strt_chgs == 0,
+          "S1j: a repeated STOP raises NO trigger (got %d)",
+          h.col.strt_chgs);
+    CHECK(started_bit(sk) == 0, "S1j2: ...and the bit is still clear");
+    post_started(sk, 1);
+
+    // 5.3.8.7: unbind clears it, and a rebind does not resurrect it
+    Stim u2 = S_unbind(); u2.uid = uint16_t(sk);
+    step(sk, u2, false, "S1");
+    CHECK(started_bit(sk) == 0,
+          "S1f: unbind cleared the started bit (got %u)", started_bit(sk));
+
+    // a bind WITH STREAMING_WAIT set lands STOPPED - the other half of the
+    // rule, and the row that keeps S1b from passing on a constant 1
+    Stim b1 = S_bind(TK_A, TKUID_A, CTL1, true); b1.uid = uint16_t(sk);
+    step(sk, b1, false, "S1");
+    CHECK(started_bit(sk) == 0,
+          "S1g: a bind WITH STREAMING_WAIT lands STOPPED (got %u)",
+          started_bit(sk));
+
+    // S1k: a RE-BIND that flips STREAMING_WAIT moves started/stopped with no
+    // START/STOP_STREAMING in sight (Milan 5.5.3.5.6 step 2 updates the
+    // binding parameters, STREAMING_WAIT among them). Table 5.22 asks for a
+    // push when the state CHANGES, not when a particular command caused it -
+    // a trigger keyed on the AECP request alone missed this path entirely.
+    {
+      Stim b_on = S_bind(TK_A, TKUID_A, CTL1, false); b_on.uid = uint16_t(sk);
+      step(sk, b_on, false, "S1");            // -> bound + started
+      CHECK(started_bit(sk) == 1, "S1k0: precondition, re-bound and started");
+
+      h.col.clear();
+      Stim b_off = S_bind(TK_A, TKUID_A, CTL1, true); b_off.uid = uint16_t(sk);
+      step(sk, b_off, false, "S1");           // same talker -> A6 short-circuit
+      CHECK(started_bit(sk) == 0,
+            "S1k: a re-bind WITH STREAMING_WAIT stops the sink (got %u)",
+            started_bit(sk));
+      CHECK(h.col.strt_chgs == 1,
+            "S1l: ...and it raises the Table 5.22 trigger (got %d)",
+            h.col.strt_chgs);
+
+      h.col.clear();
+      Stim b_same = S_bind(TK_A, TKUID_A, CTL1, true); b_same.uid = uint16_t(sk);
+      step(sk, b_same, false, "S1");          // same flag: nothing changes
+      CHECK(h.col.strt_chgs == 0,
+            "S1m: a re-bind that changes nothing raises no trigger (got %d)",
+            h.col.strt_chgs);
+    }
+
+    // ---- RV: the holder arm sits at the TOP of the X_IDLE priority chain,
+    // so EVERY acceptor has to exclude it. On the cycle the holder drains,
+    // this walker is leaving X_IDLE - and a source still told "ready" on
+    // that cycle is consumed by its producer and never serviced. Fixing only
+    // `pre_ready_o` left three others, and the `txn_ready_o` one silently
+    // drops an ACMP command AND leaks one of four shared RX slots for good.
+    // These rows post a request by hand and inspect ready on the drain cycle.
+    {
+      const int rvs = 6;                       // a sink this walk left alone
+      d->strm_set_valid_i = 1;
+      d->strm_set_sink_i  = uint16_t(rvs);
+      d->strm_set_val_i   = 1;
+      int g = 64;
+      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
+      h.tick();                                // accepted: holder FULL
+      d->strm_set_valid_i = 0;
+      d->eval();
+      CHECK(d->strm_set_ready_o == 0, "RV0: precondition, a request is pending");
+      CHECK(d->txn_ready_o == 0,
+            "RV3: txn_ready_o is LOW while a started/stopped request is "
+            "pending - otherwise KL_pp_dispatch pops an ACMP command that "
+            "this walk will never service, and its RX slot leaks");
+      CHECK(d->evt_tk_ready_o == 0,
+            "RV5: evt_tk_ready_o is LOW on the same cycle - the event router "
+            "acks on it, so a talker event would be dropped");
+      CHECK(d->pre_ready_o == 0,
+            "RV6: pre_ready_o is LOW on the same cycle - the NVM shadow "
+            "treats it as acceptance and would advance past a restored sink");
+      g = 64;
+      while (g-- > 0 && !d->dbg_busy_o) h.tick();
+      h.wait_idle();
+      d->eval();
+      CHECK(d->txn_ready_o == 1,
+            "RV7: ...and every acceptor is free again once it has drained");
+    }
+
+    // RV4: a timer expiry pending at the same moment as a started/stopped
+    // request must still be SERVICED. `pend_clr_pop_w` clears the pendexp
+    // bit, so if it fires on the drain cycle the expiry is consumed by
+    // nothing - and a lost T-ACMP-CMD leaves the sink in PB_ACTIVE with no
+    // retry. Park a probing sink, then collide the two.
+    {
+      const int rvt = 4;
+      goto_state(rvt, S_PWR, "RV4");          // a sink with a live timer
+      h.wait_idle();
+      h.col.clear();
+
+      // post the request, then raise the expiry while the holder is FULL
+      d->strm_set_valid_i = 1;
+      d->strm_set_sink_i  = uint16_t(rvt);
+      d->strm_set_val_i   = 1;
+      int g = 64;
+      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
+      //! BOTH on the same edge. Raising the expiry a cycle later misses the
+      //! window entirely: the walker has already left X_IDLE for the holder
+      //! job by then, and `pend_clr_pop_w` needs `xs_r == X_IDLE`. The bug
+      //! only exists on the ONE cycle where the drain and a pending expiry
+      //! are both true.
+      h.inj_exp = true; h.inj_exp_sink = uint8_t(rvt);
+      h.tick();                               // holder captured + pendexp set
+      d->strm_set_valid_i = 0;
+      for (int i = 0; i < 200; ++i) h.tick();
+      h.wait_idle();
+
+      const size_t tops_collided = h.col.tops.size();
+
+      // CONTROL: the same expiry with NO request beside it. Without this the
+      // row above has no scale - "some timer op happened" passes for many
+      // reasons, and a check whose expected value is "not zero" is the trap
+      // this suite exists to avoid.
+      goto_state(rvt, S_PWR, "RV4");
+      h.wait_idle();
+      h.col.clear();
+      h.inj_exp = true; h.inj_exp_sink = uint8_t(rvt);
+      h.tick();
+      for (int i = 0; i < 200; ++i) h.tick();
+      h.wait_idle();
+      const size_t tops_alone = h.col.tops.size();
+
+      CHECK(tops_alone > 0,
+            "RV4pre: the control leg's expiry IS serviced (%zu timer ops) - "
+            "without this the comparison below means nothing", tops_alone);
+      CHECK(tops_collided == tops_alone,
+            "RV4: an expiry raised beside a started/stopped request is "
+            "serviced exactly as it is alone (collided %zu vs alone %zu) - "
+            "a pop that fires on the drain cycle loses it",
+            tops_collided, tops_alone);
+    }
+
+    // RV8: a BIND_NEW onto an ALREADY BOUND sink changes started/stopped
+    // without ever unbinding (its cell is A1 A11 A9 A2 A3 A4 A5 - no A10),
+    // and it already pushes from A4's discovery arm. It must NOT also raise
+    // the started/stopped trigger, or one event puts two GET_STREAM_INFO
+    // frames on the wire - the duplicate this trigger was narrowed to avoid.
+    {
+      const int rvb = 2;
+      Stim ba = S_bind(TK_A, TKUID_A, CTL1, false); ba.uid = uint16_t(rvb);
+      step(rvb, ba, false, "RV8");             // bound + started
+      h.wait_idle();
+      CHECK(started_bit(rvb) == 1, "RV8pre: bound to talker A and started");
+
+      h.col.clear();
+      Stim bb = S_bind(TK_B, TKUID_B, CTL1, true); bb.uid = uint16_t(rvb);
+      step(rvb, bb, false, "RV8");             // different talker, SW set
+      h.wait_idle();
+      CHECK(started_bit(rvb) == 0,
+            "RV8: the re-bind landed STOPPED (got %u)", started_bit(rvb));
+      CHECK(h.col.strt_chgs == 0,
+            "RV8b: ...and raised NO started/stopped trigger beside the "
+            "bind's own notification (got %d)", h.col.strt_chgs);
+    }
+
+    // an unbound sink ignores the request entirely (5.4.2.19's Note)
+    Stim u3 = S_unbind(); u3.uid = uint16_t(sk);
+    step(sk, u3, false, "S1");
+    // S1n: an out-of-range sink index is accepted (the engine already
+    // answered) and DROPPED - counted, not silent. The shape gate ties the
+    // descriptor count to N_SINKS_P so this should be unreachable in a real
+    // build; a stale descriptor image shipped beside the bitstream is how it
+    // would stop being unreachable, and then the command answers SUCCESS and
+    // lands nowhere. Driving it here is what makes that arm exist.
+    {
+      const int before = (int)d->dbg_strq_drop_o;
+      post_started(N_SINKS + 3, 1);
+      CHECK((int)d->dbg_strq_drop_o == before + 1,
+            "S1n: an out-of-range started/stopped request is COUNTED "
+            "(%d -> %d)", before, (int)d->dbg_strq_drop_o);
+      CHECK(d->strm_set_ready_o == 1,
+            "S1n2: ...and the face is free again afterwards");
+    }
+
+    post_started(sk, 1);
+    CHECK(started_bit(sk) == 0,
+          "S1h: START on an UNBOUND sink changed nothing (got %u)",
+          started_bit(sk));
+  }
 
   h.wait_idle();
   CHECK(d->txn_ready_o == 1, "idle at the end");
