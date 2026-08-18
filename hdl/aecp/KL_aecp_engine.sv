@@ -654,7 +654,7 @@ module KL_aecp_engine
   //! their own branch behind issue #78 (started/stopped has two candidate
   //! homes and the choice is not this PR's to make).
   localparam logic [15:0] OP_SET_CONFIG_C      = 16'h0006;
-  //! ---- SET_STREAM_FORMAT / SET_STREAM_INFO (Milan §5.4.2.7 / §5.4.2.11) --
+  //! ---- SET_STREAM_FORMAT / SET_STREAM_INFO (Milan §5.4.2.7 / §5.4.2.9) --
   //! SET_STREAM_FORMAT rides the full SET template: the tix shape, the
   //! 8-byte @28 capture (a stream_format fills `setval_r` exactly), and a
   //! per-descriptor STREAM_IS_RUNNING route below. SET_STREAM_INFO is the
@@ -666,7 +666,7 @@ module KL_aecp_engine
   localparam logic [15:0] OP_SET_STREAM_INFO_C = 16'h000E;
   //! IEEE 1722.1-2021 Table 7-133 stream_info_flags, numbered 0 = MSB like
   //! Table 7-144: MSRP_ACC_LAT_VALID is table bit 2, wire bit 29. Milan
-  //! §5.4.2.11 admits EXACTLY this flag - a command carrying any other bit,
+  //! §5.4.2.9 admits EXACTLY this flag - a command carrying any other bit,
   //! or none, is refused whole (NOT_SUPPORTED), never partially applied.
   localparam logic [31:0] SIF_ACC_LAT_C        = 32'h2000_0000;
   //! ---- START/STOP_STREAMING (Milan §5.4.2.19 / §5.4.2.20) --------------
@@ -770,6 +770,7 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_SFRUN_C    = 11'd1888; // E_SFRUN
   localparam logic [10:0] UPC_SFBAD_C    = 11'd1912; // E_SFBAD
   localparam logic [10:0] UPC_SIBAD_C    = 11'd1920; // E_SIBAD
+  localparam logic [10:0] UPC_SIRUN_C    = 11'd1936; // E_SIRUN
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -1307,15 +1308,17 @@ module KL_aecp_engine
   //! test of the descriptor a command names.
   logic any_running_w;
   assign any_running_w = (|strm_bound_i) || (|strm_streaming_i);
-  //! ...and the PER-DESCRIPTOR form, which is SET_STREAM_FORMAT's (Milan
-  //! §5.4.2.7 refuses "if the Stream Input/Output is running"): the SAME
+  //! ...and the PER-DESCRIPTOR form, shared by SET_STREAM_FORMAT (Milan
+  //! §5.4.2.7 refuses a bound Stream Input or a streaming Stream Output)
+  //! and SET_STREAM_INFO (§5.4.2.9 refuses a streaming Stream Output; its
+  //! type route guarantees the output arm is the one consulted): the SAME
   //! vectors, indexed by the descriptor the command walked. §5.3.7.3 makes
   //! "running" bound for a Stream Input and streaming for a Stream Output.
   //! The range guard keeps an out-of-shape index from wrapping onto a live
   //! stream's bit; such an index is not running, and the µprogram's locate
   //! then answers NO_SUCH_DESCRIPTOR for it.
-  logic sfmt_run_w;
-  assign sfmt_run_w =
+  logic run_this_w;
+  assign run_this_w =
       (cfg_ix_r == DT_STREAM_INPUT_C)
         ? ((32'(desc_ix_r) < N_STREAM_IN_P)
            && 1'(strm_bound_i >> desc_ix_r))
@@ -2981,12 +2984,12 @@ module KL_aecp_engine
               else if ((cfg_ix_r != DT_STREAM_INPUT_C)
                        && (cfg_ix_r != DT_STREAM_OUTPUT_C))
                                                       upc_r <= UPC_TIZ8NS_C;
-              else if (sfmt_run_w)                    upc_r <= UPC_SFRUN_C;
+              else if (run_this_w)                    upc_r <= UPC_SFRUN_C;
               else if (cfg_ix_r == DT_STREAM_INPUT_C) upc_r <= UPC_SFMTI_C;
               else                                    upc_r <= UPC_SFMTO_C;
               echo_r <= 1'b0;
             end
-            //! ---- SET_STREAM_INFO (Milan §5.4.2.11) ---------------------
+            //! ---- SET_STREAM_INFO (Milan §5.4.2.9) ---------------------
             //! Every narrowing is settled HERE, off registered walk fields:
             //! Figure 7-50 is 48 payload bytes (cdl 60) and the walked-length
             //! conjunct guards the @48 capture like the format's above; a
@@ -3012,6 +3015,10 @@ module KL_aecp_engine
               end
               else if (cfg_ix_r != DT_STREAM_OUTPUT_C)
                                                       upc_r <= UPC_NSUPPE_C;
+              //! §5.4.2.9's own SHALL: a STREAMING output refuses the whole
+              //! command with STREAM_IS_RUNNING, before the sub-command is
+              //! even examined - the same route order as SET_STREAM_FORMAT
+              else if (run_this_w)                    upc_r <= UPC_SIRUN_C;
               else if (setval_r[63:32] != SIF_ACC_LAT_C)
                                                       upc_r <= UPC_NSUPPE_C;
               else if (silat_r[31])                   upc_r <= UPC_BADARG_C;

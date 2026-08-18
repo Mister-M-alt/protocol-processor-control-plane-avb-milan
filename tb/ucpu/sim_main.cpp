@@ -36,7 +36,8 @@ enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
        E_TIZ8NS = 1216, E_TIZ4NS = 1224, E_LOCKED4 = 1232,
        E_BADARG4 = 1240, E_STRT = 1600,
        E_SFMTI = 1792, E_SFMTO = 1824, E_SINFO = 1856, E_SFRUN = 1888,
-       E_SFCUR = 1896, E_SFZERO = 1904, E_SFBAD = 1912, E_SIBAD = 1920 };
+       E_SFCUR = 1896, E_SFZERO = 1904, E_SFBAD = 1912, E_SIBAD = 1920,
+       E_SIRUN = 1936 };
 
 // IEEE 1722.1-2021 Table 7-141
 enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
@@ -1001,7 +1002,7 @@ int main(int argc, char** argv) {
     dut->disp_opd2_i = 0;
   }
 
-  // ---- S4: SET_STREAM_INFO (Milan 5.4.2.11) ------------------------------
+  // ---- S4: SET_STREAM_INFO (Milan 5.4.2.9) ------------------------------
   // The engine settles type/flags/range at dispatch and echoes the command
   // body itself, so the µprogram's whole job is the SEL_PTOFF write and a
   // header; its response here is header-only (the echo is the engine's).
@@ -1032,6 +1033,13 @@ int main(int argc, char** argv) {
     CHECK(h.last_status == ST_NOSUCH && h.stw.empty(),
           "S4c NO_SUCH_DESCRIPTOR writes nothing, got %u", h.last_status);
     dut->disp_opd2_i = 0;
+
+    // S4r: the streaming-output refusal arm rides the echo with only the
+    // status of Milan 5.4.2.9's SHALL
+    CHECK(h.run(E_SIRUN, KEY, false, 2000, TYIX), "S4r completes");
+    CHECK(h.last_status == ST_STRMRUN && h.last_len == 12 && h.stw.empty(),
+          "S4r STREAM_IS_RUNNING, header only, no write, got %u len %u",
+          h.last_status, h.last_len);
 
     // S4d: the short-command stub lays the full Figure 7-50 body as zeros
     CHECK(h.run(E_SIBAD, KEY, false, 2000, TYIX), "S4d completes");

@@ -6068,7 +6068,7 @@ int main(int argc, char** argv) {
             "W23i: SET_STREAM_FORMAT on a Stream Output publishes its row");
     }
 
-    // ---- W24: SET_STREAM_INFO (Milan 5.4.2.11, IEEE 7.4.15.1) -----------
+    // ---- W24: SET_STREAM_INFO (Milan 5.4.2.9, IEEE 7.4.15.1) -----------
     // Milan narrows the command to ONE sub-command: a Stream Output with
     // exactly MSRP_ACC_LAT_VALID, setting the presentation-time offset.
     // Command and response share Figure 7-50 (48 payload bytes, cdl 60), so
@@ -6152,6 +6152,62 @@ int main(int argc, char** argv) {
       CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR
                 && cdl(f) == 60,
             "W24h: a nonexistent Stream Output answers NO_SUCH_DESCRIPTOR");
+    }
+
+    // ---- W25: the streaming-output refusals, against REAL streaming ------
+    // Milan 5.4.2.7 and 5.4.2.9 both refuse a STREAMING Stream Output with
+    // STREAM_IS_RUNNING. Streaming is 5.3.7.3's conjunction - our Talker
+    // Advertise AND a registered Listener - so the precondition arrives the
+    // W17 way: a peer's Listener Ready on the wire, never a poked bit.
+    {
+      auto sf_pl = [&](uint16_t ty, uint16_t ix, uint64_t fmt) {
+        std::vector<uint8_t> p(12, 0);
+        putbe(&p[0], ty, 2); putbe(&p[2], ix, 2); putbe(&p[4], fmt, 8);
+        return p;
+      };
+      auto si_pl = [&](uint32_t lat) {
+        std::vector<uint8_t> p(48, 0);
+        putbe(&p[0], 0x0006, 2); putbe(&p[4], 0x20000000u, 4);
+        putbe(&p[24], lat, 4);
+        return p;
+      };
+      const uint64_t SID_T0 = (OWN_MAC << 16) | 0x0000;  // sid[k] = {mac, k}
+      h.sync_join();
+      Msg lsn{3, 8, true, {Vec{false, 1, fv_sid(SID_T0),
+                               {EV_JOININ}, {DECL_READY}}}};
+      h.feed(mrpdu_frame(true, T1_MAC, {lsn}));
+      h.run_ms(30);
+      CHECK(h.d->dbg_streaming0_o == 1,
+            "W25pre: Advertise plus a registered Listener; Stream Output 0 "
+            "is STREAMING");
+
+      auto f = ask(AEM_SET_STREAM_FORMAT,
+                   sf_pl(0x0006, 0, H::SFMT_MAIN_C), 0x76B0);
+      CHECK(!f.empty() && st(f) == AECP_STREAM_IS_RUNNING && cdl(f) == 24,
+            "W25a: SET_STREAM_FORMAT on a streaming output refuses "
+            "STREAM_IS_RUNNING, got %d", st(f));
+      CHECK((h.d->aecp_fmt_out_v_o & 1) == 0,
+            "W25a2: ...and its row was never written");
+
+      f = ask(AEM_SET_STREAM_INFO, si_pl(500000), 0x76B1);
+      CHECK(!f.empty() && st(f) == AECP_STREAM_IS_RUNNING && cdl(f) == 60,
+            "W25b: SET_STREAM_INFO on a streaming output refuses "
+            "STREAM_IS_RUNNING, got %d", st(f));
+      CHECK(h.d->aecp_pt_offset_o.at(0) == 1000000,
+            "W25b2: ...and the offset row kept W24a's value");
+
+      // the gate must LIFT: the Listener leaves, both commands are accepted
+      h.sync_join();
+      Msg lv{3, 8, true, {Vec{false, 1, fv_sid(SID_T0),
+                              {EV_LV}, {DECL_READY}}}};
+      h.feed(mrpdu_frame(true, T1_MAC, {lv}));
+      h.run_ms(30);
+      CHECK(h.d->dbg_streaming0_o == 0,
+            "W25c: the Listener left; Stream Output 0 stops streaming");
+      f = ask(AEM_SET_STREAM_INFO, si_pl(500000), 0x76B2);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS
+                && h.d->aecp_pt_offset_o.at(0) == 500000,
+            "W25d: ...and the same SET_STREAM_INFO is accepted, offset moved");
     }
   }
 

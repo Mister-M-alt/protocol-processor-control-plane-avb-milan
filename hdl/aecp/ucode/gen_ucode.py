@@ -172,7 +172,7 @@ E_STRMBAD = 1696     # ...either, too short to carry Figure 7-59's four bytes
 # move. 1712 and 1760 sit in the contiguous free run above E_STRMBAD's block.
 E_AMADD   = 1712     # ADD_AUDIO_MAPPINGS (Milan 5.4.2.27, IEEE 7.4.45)
 E_AMREMOVE = 1760    # REMOVE_AUDIO_MAPPINGS (Milan 5.4.2.28, IEEE 7.4.46)
-# --- SET_STREAM_FORMAT / SET_STREAM_INFO (Milan 5.4.2.7 / 5.4.2.11) ---------
+# --- SET_STREAM_FORMAT / SET_STREAM_INFO (Milan 5.4.2.7 / 5.4.2.9) ---------
 # 32-word slots in the free tail like the START/STOP pair, then the short
 # arms on 8-word pitches. The INPUT/OUTPUT twins are deliberately separate
 # programs for the reason E_STRT/E_STOP are: the store selector is an
@@ -188,6 +188,7 @@ E_SFCUR  = 1896     # the shared current-format tail (status set by the refuser)
 E_SFZERO = 1904     # the zero-format body (a locate miss keeps NO_SUCH_DESC)
 E_SFBAD  = 1912     # SET_STREAM_FORMAT too short to carry its own format
 E_SIBAD  = 1920     # SET_STREAM_INFO too short: the full 48-byte zero body
+E_SIRUN  = 1936     # SET_STREAM_INFO on a STREAMING output: refused whole
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
@@ -1803,17 +1804,18 @@ place(E_SFBAD, [
     u('BRANCH', imm=E_SFZERO),
 ])
 
-# --- SET_STREAM_INFO (Milan §5.4.2.11, IEEE §7.4.15.1, Figure 7-50) ---------
+# --- SET_STREAM_INFO (Milan §5.4.2.9, IEEE §7.4.15.1, Figure 7-50) ----------
 # Milan narrows the command to ONE sub-command: a STREAM_OUTPUT with exactly
 # the MSRP_ACC_LAT_VALID flag, setting the presentation-time offset. The
-# engine settles every narrowing at dispatch (type route, exact-flag test,
-# the bit-31 range refusal) off registered walk fields, so this program is
-# the SET_SAMPLING_RATE template with the response body ECHOED: command and
-# response share Figure 7-50, and with the one legal flag the only field the
-# response must update is the latency this command just wrote - which the
-# echo carries verbatim. The refusal arms (E_FAILSAFE here, E_NSUPPE /
-# E_BADARG / E_SIBAD at dispatch) ride the same echo with the status the
-# refusing op or route established.
+# engine settles every narrowing at dispatch (type route, the per-descriptor
+# streaming refusal, exact-flag test, the bit-31 range refusal) off
+# registered walk fields, so this program is the SET_SAMPLING_RATE template
+# with the response body ECHOED: §5.4.2.9 pins the successful response to
+# "the same value as in the command" for both the flag and the latency, and
+# command and response share Figure 7-50, so the echo IS the required body.
+# The refusal arms (E_FAILSAFE here, E_NSUPPE / E_BADARG / E_SIRUN / E_SIBAD
+# at dispatch) ride the same echo with the status the refusing op or route
+# established.
 place(E_SINFO, [
     u('CHECK_LOCK', ra=15, imm=E_FAILSAFE),      # echo + ENTITY_LOCKED
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
@@ -1841,6 +1843,18 @@ place(E_SIBAD, [
     u('BUILD_FLD', ra=2, fmt=FMT_Q),             # acc_lat + dest_mac   @48
     u('BUILD_FLD', ra=2, fmt=FMT_Q),             # mac tail + failure   @56
     u('BUILD_FLD', ra=2, fmt=FMT_Q),             # bridge_id tail + vlan @64
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# Milan §5.4.2.9: "If the Stream Output is streaming then the PAAD-AE shall
+# refuse the command with the STREAM_IS_RUNNING error code." The predicate
+# is the engine's per-descriptor route (the same indexed vectors as
+# SET_STREAM_FORMAT's); this arm only supplies the status and rides the
+# command echo like every other full-length SET_STREAM_INFO answer.
+place(E_SIRUN, [
+    u('SET_STATUS', imm=ST_STRMRUN),
+    u('BUILD_HDR', ra=15, rb=13),
     u('SEND_RESP'),
     u('END'),
 ])
