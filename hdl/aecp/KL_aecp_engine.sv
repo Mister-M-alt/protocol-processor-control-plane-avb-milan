@@ -870,7 +870,7 @@ module KL_aecp_engine
   //! walk below, because the µISA has no shift to justify it later.
   logic [63:0] setval_r;
   //! SET_STREAM_INFO's second capture: msrp_accumulated_latency sits at
-  //! @48..@51 (Figure 7-50), past `setval_r`'s span, and for this command
+  //! @48..@51 (Figure 7-40), past `setval_r`'s span, and for this command
   //! `setval_r`'s own top half holds the FLAGS word from @28. One more
   //! 32-bit register is the whole cost of reaching it; widening the shared
   //! capture to @51 for every SET would walk three commands' padding into
@@ -2993,13 +2993,15 @@ module KL_aecp_engine
             end
             //! ---- SET_STREAM_INFO (Milan §5.4.2.9) ---------------------
             //! Every narrowing is settled HERE, off registered walk fields:
-            //! the length floor is the 2013 edition's complete body (48
-            //! payload bytes, cdl 60 - 1722.1-2021's Figure 7-40 appends
-            //! ip_flags and the port/address block for a 96-byte cdl, and
-            //! the >= gate takes BOTH editions while refusing anything that
-            //! never reached the @48 latency; the appended 2021 fields are
-            //! walked and echoed, never interpreted). The walked-length
-            //! conjunct guards the @48 capture like the format's above; a
+            //! the length floor is 1722.1-2021 Figure 7-40's COMPLETE body
+            //! (84 payload bytes, cdl 96) - Milan v1.2 references the 2021
+            //! edition, so the 2013 60-byte shape is a truncated command
+            //! here, refused BAD_ARGUMENTS at the full 2021 response length
+            //! (the compatibility note for shorter bodies covers a
+            //! controller READING an older entity's response, never this
+            //! responder accepting a legacy command). The appended ip
+            //! fields are walked and echoed, never interpreted. The
+            //! walked-length conjunct guards the @48 capture as above; a
             //! Stream Input target is NOT_SUPPORTED (Milan implements this
             //! command for Stream Outputs only); the flags word must be
             //! EXACTLY MSRP_ACC_LAT_VALID (any other sub-command refuses the
@@ -3015,8 +3017,8 @@ module KL_aecp_engine
               //! a truncated command's echo is command-sized, and a refusal
               //! has to be the size of the response it refuses, so E_SIBAD
               //! builds the full zero body itself
-              if ((cmd_r.cdl < 11'd60)
-                  || (pld_cmd_r < 11'd48)) begin
+              if ((cmd_r.cdl < 11'd96)
+                  || (pld_cmd_r < 11'd84)) begin
                 upc_r  <= UPC_SIBAD_C;
                 echo_r <= 1'b0;
               end
@@ -3108,7 +3110,7 @@ module KL_aecp_engine
               11'd14, 11'd15, 11'd16, 11'd17:
                 if (lockc_r && (rxs_rd_data_i != 8'd0)) lock_ent_ok_r <= 1'b0;
               //! SET_STREAM_INFO's msrp_accumulated_latency, @48..@51
-              //! (Figure 7-50). Guarded on its own discriminator so no other
+              //! (Figure 7-40). Guarded on its own discriminator so no other
               //! long command's padding can reach the register, and settled
               //! well before the A_PLD exit reads it - a cdl-60 command's
               //! walk runs to index 47.

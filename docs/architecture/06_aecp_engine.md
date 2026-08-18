@@ -165,7 +165,7 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x0007 | GET_CONFIGURATION | shall | — | RO | — | yes | — | — | 28 B |
 | 0x0008 | SET_STREAM_FORMAT | shall | per stream, both directions; §6.4 chain | STREAM_CFG | yes | - | - | *(open, #69)* | 36 B |
 | 0x0009 | GET_STREAM_FORMAT | shall | - | RO | - | yes | - | - | 36 B |
-| 0x000E | SET_STREAM_INFO | shall | **output only** (Δ11); §6.3 | STREAM_CFG | yes | - | - | *(open, #69)* | 72 B echo |
+| 0x000E | SET_STREAM_INFO | shall | **output only** (Δ11); §6.3 | STREAM_CFG | yes | - | - | *(open, #69)* | 108 B echo |
 | 0x000F | GET_STREAM_INFO | shall | Milan 80-B form §6.2 | RO | — | yes | — | async triggers | 80 B |
 | 0x0010 | SET_NAME | shall, **n/i today** | target: all names | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | 0x0011 | GET_NAME | shall, **n/i today** | target: all names | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
@@ -310,7 +310,7 @@ response is never a torn mix of two states.
 
 | Command | Stream Input | Stream Output |
 |---|---|---|
-| SET_STREAM_INFO (**implemented**, Milan §5.4.2.9) | `NOT_SUPPORTED` whole, at the response's own length (params come from PROBE_TX_RESPONSE) | the one supported sub-command is **MSRP_ACC_LAT_VALID alone**: writes the presentation-time offset to the dynamic store's SEL_PTOFF row (0..0x7FFFFFFF ns; bit 31 set answers `BAD_ARGUMENTS`); **any other flag combination, including none, refuses the whole command `NOT_SUPPORTED`**; a STREAMING output refuses `STREAM_IS_RUNNING` before the sub-command is examined; success answers the command echo, which is exactly §5.4.2.9's required body (same flag, same latency). Every narrowing is an engine dispatch route off registered walk fields; the µprogram is CHECK_LOCK, locate, WRITE_ST, NVM mark, echo |
+| SET_STREAM_INFO (**implemented**, Milan §5.4.2.9) | `NOT_SUPPORTED` whole, at the response's own length (params come from PROBE_TX_RESPONSE) | the shape is 1722.1-2021 Figure 7-40's COMPLETE 84-byte payload (cdl 96, the ip block included) - Milan v1.2 references the 2021 edition, so the 2013 60-byte command is a TRUNCATED command, refused `BAD_ARGUMENTS` at the full 2021 response length. The one supported sub-command is **MSRP_ACC_LAT_VALID alone**: writes the presentation-time offset to the dynamic store's SEL_PTOFF row (0..0x7FFFFFFF ns; bit 31 set answers `BAD_ARGUMENTS`); **any other flag combination, including none, refuses the whole command `NOT_SUPPORTED`**; a STREAMING output refuses `STREAM_IS_RUNNING` before the sub-command is examined; success answers the command echo, which is exactly §5.4.2.9's required body (same flag, same latency; the ip fields are echoed, never interpreted). Every narrowing is an engine dispatch route off registered walk fields; the µprogram is CHECK_LOCK, locate, WRITE_ST, NVM mark, echo |
 | START/STOP_STREAMING | **implemented** (issues #78 and #97): a bound input changes state, while an unbound or repeated-state request is a confirmed no-op. The state lives only on the ACMP binding record. Success waits for the record write or no-op examination, and a bounded pending request fails safely if the record walker cannot start it | **implemented**: `NOT_SUPPORTED`, because a talker streams whenever reserved (Δ14) and Section 5.3.7.3 excludes stopping a Stream Output. Every non-input type takes the same arm |
 
 ### 6.4 Validation chains (order matters; first failure responds)

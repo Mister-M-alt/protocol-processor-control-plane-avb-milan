@@ -6086,15 +6086,18 @@ int main(int argc, char** argv) {
       h.sfmt_need_out[1] = 0;
     }
 
-    // ---- W24: SET_STREAM_INFO (Milan 5.4.2.9, IEEE 7.4.15.1) -----------
+    // ---- W24: SET_STREAM_INFO (Milan 5.4.2.9, 2021 7.4.15.1) -----------
     // Milan narrows the command to ONE sub-command: a Stream Output with
     // exactly MSRP_ACC_LAT_VALID, setting the presentation-time offset.
-    // Command and response share Figure 7-50 (48 payload bytes, cdl 60), so
-    // success and every full-length refusal answer as the echo.
+    // Milan v1.2 references 1722.1-2021, so the shape is Figure 7-40's
+    // complete 84-byte payload (cdl 96) including the ip block; command
+    // and response share it, so success and every full-length refusal
+    // answer as the echo. The 2013 60-byte shape is a TRUNCATED command
+    // here (W24g).
     {
       auto si_pl = [&](uint16_t ty, uint16_t ix, uint32_t flags,
                        uint32_t lat) {
-        std::vector<uint8_t> p(48, 0);
+        std::vector<uint8_t> p(84, 0);
         putbe(&p[0], ty, 2); putbe(&p[2], ix, 2);
         putbe(&p[4], flags, 4);
         putbe(&p[24], lat, 4);
@@ -6127,7 +6130,7 @@ int main(int argc, char** argv) {
       // W24c: a Stream Input target is NOT_SUPPORTED whole (echo)
       f = ask(AEM_SET_STREAM_INFO,
               si_pl(0x0005, 0, ACC_LAT, 1000000), 0x76A2);
-      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 60,
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 96,
             "W24c: SET_STREAM_INFO on a Stream Input is NOT_SUPPORTED");
 
       // W24d: any flag set beside ACC_LAT refuses the WHOLE command -
@@ -6150,16 +6153,22 @@ int main(int argc, char** argv) {
                 && h.d->aecp_pt_offset_o.at(0) == 1000000,
             "W24f: a bit-31 latency is BAD_ARGUMENTS and writes nothing");
 
-      // W24g: short of Figure 7-50 -> BAD_ARGUMENTS at the response's own
-      // length, {type,index} echoed, every value byte zero
-      std::vector<uint8_t> shortpl(40, 0);
+      // W24g: the 2013-complete 48-byte shape (cdl 60) IS the truncated
+      // case under Milan v1.2's 2021 reference - refused BAD_ARGUMENTS at
+      // the full 2021 response length, {type,index} echoed, every value
+      // byte zero. This row pins the review ruling: a legacy command is
+      // never accepted.
+      std::vector<uint8_t> shortpl(48, 0);
       putbe(&shortpl[0], 0x0006, 2); putbe(&shortpl[4], ACC_LAT, 4);
+      putbe(&shortpl[24], 640000, 4);
       f = ask(AEM_SET_STREAM_INFO, shortpl, 0x76A6);
-      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS && cdl(f) == 60,
-            "W24g: a truncated SET_STREAM_INFO refuses at cdl 60");
-      if (f.size() >= 38 + 48) {
+      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS && cdl(f) == 96,
+            "W24g: the 2013-length SET_STREAM_INFO refuses at cdl 96");
+      CHECK(h.d->aecp_pt_offset_o.at(0) == 1000000,
+            "W24g1: ...and its latency was NOT applied");
+      if (f.size() >= 38 + 84) {
         bool zeros = true;
-        for (int a = 42; a < 38 + 48; ++a) zeros = zeros && (f[a] == 0);
+        for (int a = 42; a < 38 + 84; ++a) zeros = zeros && (f[a] == 0);
         CHECK(zeros && (((unsigned)f[38] << 8) | f[39]) == 0x0006,
               "W24g2: the stub echoes {type,index} over a zero body");
       }
@@ -6169,7 +6178,7 @@ int main(int argc, char** argv) {
       f = ask(AEM_SET_STREAM_INFO,
               si_pl(0x0006, 5, ACC_LAT, 250000), 0x76A7);
       CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR
-                && cdl(f) == 60,
+                && cdl(f) == 96,
             "W24h: a nonexistent Stream Output answers NO_SUCH_DESCRIPTOR");
       CHECK(h.d->aecp_pt_offset_v_o == 0x1
                 && h.d->aecp_pt_offset_o.at(0) == 1000000,
@@ -6188,7 +6197,7 @@ int main(int argc, char** argv) {
         return p;
       };
       auto si_pl = [&](uint32_t lat) {
-        std::vector<uint8_t> p(48, 0);
+        std::vector<uint8_t> p(84, 0);
         putbe(&p[0], 0x0006, 2); putbe(&p[4], 0x20000000u, 4);
         putbe(&p[24], lat, 4);
         return p;
@@ -6212,7 +6221,7 @@ int main(int argc, char** argv) {
             "W25a2: ...and its row kept W23h4's value, nothing was written");
 
       f = ask(AEM_SET_STREAM_INFO, si_pl(500000), 0x76B1);
-      CHECK(!f.empty() && st(f) == AECP_STREAM_IS_RUNNING && cdl(f) == 60,
+      CHECK(!f.empty() && st(f) == AECP_STREAM_IS_RUNNING && cdl(f) == 96,
             "W25b: SET_STREAM_INFO on a streaming output refuses "
             "STREAM_IS_RUNNING, got %d", st(f));
       CHECK(h.d->aecp_pt_offset_o.at(0) == 1000000,

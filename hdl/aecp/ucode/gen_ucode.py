@@ -1804,7 +1804,7 @@ place(E_SFBAD, [
     u('BRANCH', imm=E_SFZERO),
 ])
 
-# --- SET_STREAM_INFO (Milan §5.4.2.9, IEEE §7.4.15.1, Figure 7-50) ----------
+# --- SET_STREAM_INFO (Milan §5.4.2.9, IEEE 1722.1-2021 §7.4.15.1, Figure 7-40)
 # Milan narrows the command to ONE sub-command: a STREAM_OUTPUT with exactly
 # the MSRP_ACC_LAT_VALID flag, setting the presentation-time offset. The
 # engine settles every narrowing at dispatch (type route, the per-descriptor
@@ -1812,7 +1812,7 @@ place(E_SFBAD, [
 # registered walk fields, so this program is the SET_SAMPLING_RATE template
 # with the response body ECHOED: §5.4.2.9 pins the successful response to
 # "the same value as in the command" for both the flag and the latency, and
-# command and response share Figure 7-50, so the echo IS the required body.
+# command and response share Figure 7-40, so the echo IS the required body.
 # The refusal arms (E_FAILSAFE here, E_NSUPPE / E_BADARG / E_SIRUN / E_SIBAD
 # at dispatch) ride the same echo with the status the refusing op or route
 # established.
@@ -1828,23 +1828,28 @@ place(E_SINFO, [
     u('END'),
 ])
 
-# Too short for the complete 2013-edition body (the shortest complete shape
-# of this command; 1722.1-2021's Figure 7-40 appends ip fields the engine
-# echoes without interpreting): the echo cannot serve here (a refusal has to
-# be the size of the response it refuses, and a truncated command's echo is
-# not), so the stub lays the 48-byte body out as zeros after the echoed
-# {type, index} word.
+# Too short for 1722.1-2021 Figure 7-40 - Milan v1.2 references the 2021
+# edition, so the 2013 60-byte shape is itself a truncated command here. The
+# echo cannot serve (a refusal has to be the size of the response it refuses,
+# and a truncated command's echo is not), so the stub lays the complete
+# 84-byte body out as zeros after the echoed {type, index} word: flags,
+# stream_format, stream_id, msrp_accumulated_latency, dest_mac, the failure
+# pair, failure_bridge_id, vlan, and the 2021 ip block through @107.
 place(E_SIBAD, [
     u('SET_STATUS', imm=ST_BADARG),
     u('MOVE', rd=2, ra=0, imm=0),
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
-    u('BUILD_FLD', ra=2, fmt=FMT_D),             # flags                @28
-    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # stream_format        @32
-    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # stream_id            @40
-    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # acc_lat + dest_mac   @48
-    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # mac tail + failure   @56
-    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # bridge_id tail + vlan @64
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # flags + format head  @28
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # format tail + sid    @36
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # sid tail + acc_lat   @44
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # dest_mac + failure   @52
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # bridge_id            @60
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # vlan + ip_flags + ports @68
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # source ip            @76
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # source ip tail       @84
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # destination ip       @92
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # destination ip tail  @100
     u('SEND_RESP'),
     u('END'),
 ])

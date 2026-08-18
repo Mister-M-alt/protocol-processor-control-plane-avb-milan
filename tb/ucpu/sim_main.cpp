@@ -1045,15 +1045,16 @@ int main(int argc, char** argv) {
           "S4r STREAM_IS_RUNNING, header only, no write, got %u len %u",
           h.last_status, h.last_len);
 
-    // S4d: the short-command stub lays the full Figure 7-50 body as zeros
+    // S4d: the short-command stub lays the full 2021 Figure 7-40 body
+    // (84 payload bytes, response length 96) as zeros
     CHECK(h.run(E_SIBAD, KEY, false, 2000, TYIX), "S4d completes");
-    CHECK(h.last_status == ST_BADARG && h.last_len == 60,
+    CHECK(h.last_status == ST_BADARG && h.last_len == 96,
           "S4d BAD_ARGUMENTS at the response's own length, got %u len %u",
           h.last_status, h.last_len);
     CHECK(h.w32(12) == 0x00060003u, "S4d echoes type+index, got %08x",
           h.w32(12));
     bool zeros = true;
-    for (uint32_t a = 16; a < 60; a += 4) zeros = zeros && (h.w32(a) == 0);
+    for (uint32_t a = 16; a < 96; a += 4) zeros = zeros && (h.w32(a) == 0);
     CHECK(zeros, "S4d every value byte is zero");
   }
 
