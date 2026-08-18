@@ -5546,17 +5546,10 @@ int main(int argc, char** argv) {
     {
       const uint16_t DT_STREAM_INPUT = 0x0005, DT_STREAM_OUTPUT = 0x0006;
       const uint16_t OP_START = 0x0022, OP_STOP = 0x0023;
-      //! The ACMP walker BUILDS AND SENDS its response before it writes the
-      //! record back (X_BLD_* run ahead of X_WB), and the AECP response is
-      //! likewise emitted by the µprogram that requested the change. So the
-      //! frame arriving is NOT proof the record moved - settle first, or
-      //! this block grades the previous value and calls it agreement.
-      //! 400 compressed cycles: the walker has an RX-slot fetch, a 16-step
-      //! action walk and a write-back to get through, and this suite runs at
-      //! 1 ms = 100 clk. Read it ONCE into a local at each site - calling a
-      //! settling reader twice (condition, then printf) would settle twice
-      //! and report a value the assertion never saw.
-      auto started = [&]() { h.idle(400); return (unsigned)d->aecp_strm_started_o; };
+      //! START/STOP completion now holds the AECP response behind the record
+      //! commit or required no-op examination. Read the started mirror with
+      //! no post-response delay so these rows grade the response boundary.
+      auto started = [&]() { return (unsigned)d->aecp_strm_started_o; };
 
       // W21bind: establish the precondition IN THIS BLOCK rather than lean
       // on section S6 far above - the sections between it and here bind and
@@ -5574,6 +5567,7 @@ int main(int argc, char** argv) {
             "W21bind: BIND_RX for the block's own precondition SUCCEEDED "
             "(status=%d)",
             bindrsp.size() > 16 ? ((bindrsp[16] >> 3) & 0x1F) : -1);
+      h.idle(400);                    // ACMP bind still retires after its response
 
       // W21pre: the PRECONDITION, asserted rather than assumed. Sink 0 was
       // bound by S6 with STREAMING_WAIT clear, so Milan 5.3.8.7 + IEEE
@@ -5679,6 +5673,7 @@ int main(int argc, char** argv) {
         CHECK(!b1.empty() && b1.size() > 16 && ((b1[16] >> 3) & 0x1F) == 0,
               "W21idx: BIND_RX of sink 1 succeeded (status=%d)",
               b1.size() > 16 ? ((b1[16] >> 3) & 0x1F) : -1);
+        h.idle(400);                  // settle the ACMP record write
         unsigned both = started();
         CHECK((both & 0x3u) == 0x3u,
               "W21idx2: both sinks are bound and started (started=0x%02X)",
@@ -5701,6 +5696,7 @@ int main(int argc, char** argv) {
         h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
                           T1_UID + 1, 1, 0, 0, 0x7A52, 0, 0));
         (void)h.wait_any(h.q_acmp, 400);
+        h.idle(400);                  // settle the ACMP record write
       }
 
       // (the image holds STREAM_INPUT 0 and 1; sink 1 is unbound again here)
@@ -5846,6 +5842,7 @@ int main(int argc, char** argv) {
             && ((unb[16] >> 3) & 0x1F) == 0,
             "W21u: UNBIND_RX succeeded (status=%d)",
             unb.size() > 16 ? ((unb[16] >> 3) & 0x1F) : -1);
+      h.idle(400);                    // ACMP unbind retires after its response
       sb = started();
       CHECK((sb & 1u) == 0u,
             "W21v: unbind cleared the started bit (started=0x%02X)", sb);

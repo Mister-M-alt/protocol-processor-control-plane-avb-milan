@@ -446,6 +446,7 @@ struct Harness {
   uint16_t txlen[5] = {};
   bool txfree[5] = {true, true, true, true, true};
   bool gnt_pending = false;
+  bool alloc_block = false;
   uint8_t gnt_slot = 0;
   uint8_t rx_pending_byte = 0;
   int prng_cnt = 0;
@@ -479,7 +480,7 @@ struct Harness {
     // sample this cycle's outputs (pre-edge)
     if (d->rxs_rd_en_o)
       rx_pending_byte = rxmem[d->rxs_rd_slot_o][d->rxs_rd_addr_o];
-    if (d->txs_alloc_req_o && !d->txs_oversize_o) {
+    if (d->txs_alloc_req_o && !d->txs_oversize_o && !alloc_block) {
       for (int i = 0; i < 4; ++i)
         if (txfree[i]) { txfree[i] = false; gnt_slot = uint8_t(i);
                          gnt_pending = true; break; }
@@ -732,27 +733,28 @@ int main(int argc, char** argv) {
     return (unsigned)((d->strm_started_o >> sink) & 1u);
   };
 
-  //! Drive the AECP request face. The write is POSTED - the engine's side
-  //! completes as soon as the one-deep holder takes it, and this walker
-  //! services it a cycle or more later - so a caller that checked the record
-  //! straight after the handshake would read the PREVIOUS value and call it
-  //! agreement. Wait for the walker to pick the job up AND retire it.
-  auto post_started = [&](int sink, int val) {
+  //! Drive the AECP request face. Ready is completion, not holder space, so
+  //! the record or required no-op check has finished when it rises.
+  auto post_started = [&](int sink, int val, bool fail = false) {
     d->strm_set_valid_i = 1;
     d->strm_set_sink_i  = uint16_t(sink);
     d->strm_set_val_i   = uint8_t(val);
     int guard = 64;
-    while (guard-- > 0 && !d->strm_set_ready_o) h.tick();
-    //! grade the handshake at EVERY site, not just the first: a request that
-    //! was never accepted leaves the bit where it was, and at more than one
-    //! call site below that is exactly the value the caller expects.
+    int cycles = 0;
+    while (guard-- > 0 && !d->strm_set_ready_o) {
+      h.tick();
+      cycles++;
+    }
     CHECK(d->strm_set_ready_o == 1,
-          "post_started(%d,%d): the face offered ready", sink, val);
-    h.tick();                       // the accepting edge
+          "post_started(%d,%d): the face completed", sink, val);
+    CHECK(cycles >= 2,
+          "post_started(%d,%d): holder capture was not completion", sink, val);
+    CHECK(bool(d->strm_set_error_o) == fail,
+          "post_started(%d,%d): error got %u want %u", sink, val,
+          unsigned(d->strm_set_error_o), unsigned(fail));
+    h.tick();                       // retire the completion handshake
     d->strm_set_valid_i = 0;
-    guard = 64;
-    while (guard-- > 0 && !d->dbg_busy_o) h.tick();   // picked up
-    h.wait_idle();                                    // ...and retired
+    d->eval();
   };
 
   auto goto_state = [&](int sink, int st, const char* tag) {
@@ -1103,33 +1105,30 @@ int main(int argc, char** argv) {
 
     // the AECP request face: stop it
     h.wait_idle();
-    CHECK(d->strm_set_ready_o == 1,
-          "S1c: the request face offers ready without waiting on the walker");
-    // S1c2: the holder's BACKPRESSURE. `strm_set_ready_o` must drop while a
-    // request is pending, because the engine's WRITE_ST completes on it: if
-    // it were tied high, a second START/STOP arriving before this walker
-    // drained the first would OVERWRITE it, and the overwritten command has
-    // already answered SUCCESS. That window is only a couple of cycles from
-    // the wire (the drain runs at top priority), which is exactly why the
-    // property is graded HERE, where the request can be posted directly,
-    // rather than inferred from frame timing in pp_top.
+    CHECK(d->strm_set_ready_o == 0,
+          "S1c: idle is not completion before a request exists");
+    // S1c2: capture and completion are separate. Ready must stay low until
+    // the record write has reached the fabric-facing started mirror.
     {
       d->strm_set_valid_i = 1;
       d->strm_set_sink_i  = uint16_t(sk);
       d->strm_set_val_i   = 0;
+      h.tick();                       // internal holder capture
+      d->eval();
+      CHECK(d->strm_set_ready_o == 0,
+            "S1c2: holder capture is not reported as completion");
       int g = 64;
       while (g-- > 0 && !d->strm_set_ready_o) h.tick();
-      h.tick();                       // accepted: the holder is now FULL
+      d->eval();
+      CHECK(d->strm_set_ready_o == 1,
+            "S1c3: completion rises after the walker commits");
+      CHECK(started_bit(sk) == 0,
+            "S1c4: the started mirror is committed at completion");
+      h.tick();
       d->strm_set_valid_i = 0;
       d->eval();
       CHECK(d->strm_set_ready_o == 0,
-            "S1c2: ready DROPS while a posted request is still pending");
-      g = 64;
-      while (g-- > 0 && !d->dbg_busy_o) h.tick();
-      h.wait_idle();
-      d->eval();
-      CHECK(d->strm_set_ready_o == 1,
-            "S1c3: ...and comes back once the walker has drained it");
+            "S1c5: completion retires with the held request");
     }
     CHECK(started_bit(sk) == 0,
           "S1d: STOP through the request face cleared the bit (got %u)",
@@ -1213,10 +1212,7 @@ int main(int argc, char** argv) {
       d->strm_set_valid_i = 1;
       d->strm_set_sink_i  = uint16_t(rvs);
       d->strm_set_val_i   = 1;
-      int g = 64;
-      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
-      h.tick();                                // accepted: holder FULL
-      d->strm_set_valid_i = 0;
+      h.tick();                                // holder captured
       d->eval();
       CHECK(d->strm_set_ready_o == 0, "RV0: precondition, a request is pending");
       CHECK(d->txn_ready_o == 0,
@@ -1229,9 +1225,10 @@ int main(int argc, char** argv) {
       CHECK(d->pre_ready_o == 0,
             "RV6: pre_ready_o is LOW on the same cycle - the NVM shadow "
             "treats it as acceptance and would advance past a restored sink");
-      g = 64;
-      while (g-- > 0 && !d->dbg_busy_o) h.tick();
-      h.wait_idle();
+      int g = 64;
+      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
+      h.tick();
+      d->strm_set_valid_i = 0;
       d->eval();
       CHECK(d->txn_ready_o == 1,
             "RV7: ...and every acceptor is free again once it has drained");
@@ -1252,8 +1249,6 @@ int main(int argc, char** argv) {
       d->strm_set_valid_i = 1;
       d->strm_set_sink_i  = uint16_t(rvt);
       d->strm_set_val_i   = 1;
-      int g = 64;
-      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
       //! BOTH on the same edge. Raising the expiry a cycle later misses the
       //! window entirely: the walker has already left X_IDLE for the holder
       //! job by then, and `pend_clr_pop_w` needs `xs_r == X_IDLE`. The bug
@@ -1261,6 +1256,9 @@ int main(int argc, char** argv) {
       //! are both true.
       h.inj_exp = true; h.inj_exp_sink = uint8_t(rvt);
       h.tick();                               // holder captured + pendexp set
+      int g = 64;
+      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
+      h.tick();
       d->strm_set_valid_i = 0;
       for (int i = 0; i < 200; ++i) h.tick();
       h.wait_idle();
@@ -1316,6 +1314,58 @@ int main(int argc, char** argv) {
     // an unbound sink ignores the request entirely (5.4.2.19's Note)
     Stim u3 = S_unbind(); u3.uid = uint16_t(sk);
     step(sk, u3, false, "S1");
+
+    // S1o: a walker that cannot retire must not stall the AECP execution
+    // stage forever. Hold an ordinary ACMP response at TX allocation, post a
+    // started request behind it, and require the bounded error completion to
+    // leave the record untouched.
+    {
+      Stim stuck = S_getrx();
+      stuck.uid = uint16_t(N_SINKS + 1);       // forces an error response
+      const int slot = h.next_rx_slot;
+      h.next_rx_slot = (h.next_rx_slot + 1) % 4;
+      Pdu p = mk_pdu(stuck.msg, stuck.status, stuck.sid, stuck.ctlr,
+                     stuck.tk_eid, stuck.target, stuck.tk_uid, stuck.uid,
+                     stuck.da, 0, stuck.seq, stuck.flags, stuck.vlan);
+      memcpy(h.rxmem[slot], p.b, 56);
+      uint32_t* w = &d->txn_i[0];
+      for (int i = 0; i < 13; ++i) w[i] = 0;
+      wput(w, 354, 3, stuck.protocol);
+      wput(w, 350, 4, stuck.msg);
+      wput(w, 345, 5, stuck.status);
+      wput(w, 334, 11, 44);
+      wput(w, 222, 64, stuck.ctlr);
+      wput(w, 158, 64, stuck.target);
+      wput(w, 142, 16, stuck.seq);
+      wput(w, 124, 16, stuck.msg);
+      wput(w, 60, 16, stuck.uid);
+      wput(w, 57, 3, uint64_t(slot));
+      wput(w, 0, 2, 1);
+
+      h.alloc_block = true;
+      d->txn_valid_i = 1;
+      h.tick();
+      d->txn_valid_i = 0;
+      for (int i = 0; i < 80; ++i) h.tick();
+      CHECK(d->dbg_busy_o == 1,
+            "S1o0: the control walk is blocked at response allocation");
+
+      const unsigned before_started = started_bit(sk);
+      d->strm_set_valid_i = 1;
+      d->strm_set_sink_i  = uint16_t(sk);
+      d->strm_set_val_i   = 1;
+      int g = 96;
+      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
+      CHECK(d->strm_set_ready_o == 1 && d->strm_set_error_o == 1,
+            "S1o: a blocked walker returns bounded error completion");
+      CHECK(started_bit(sk) == before_started,
+            "S1o2: timeout has no record side effect");
+      h.tick();
+      d->strm_set_valid_i = 0;
+      h.alloc_block = false;
+      CHECK(h.drain(), "S1o3: the original ACMP walk retires after release");
+    }
+
     // S1n: an out-of-range sink index is accepted (the engine already
     // answered) and DROPPED - counted, not silent. The shape gate ties the
     // descriptor count to N_SINKS_P so this should be unreachable in a real
@@ -1324,12 +1374,12 @@ int main(int argc, char** argv) {
     // lands nowhere. Driving it here is what makes that arm exist.
     {
       const int before = (int)d->dbg_strq_drop_o;
-      post_started(N_SINKS + 3, 1);
+      post_started(N_SINKS + 3, 1, true);
       CHECK((int)d->dbg_strq_drop_o == before + 1,
             "S1n: an out-of-range started/stopped request is COUNTED "
             "(%d -> %d)", before, (int)d->dbg_strq_drop_o);
-      CHECK(d->strm_set_ready_o == 1,
-            "S1n2: ...and the face is free again afterwards");
+      CHECK(d->strm_set_error_o == 0 && d->strm_set_ready_o == 0,
+            "S1n2: the failed completion retired cleanly");
     }
 
     post_started(sk, 1);

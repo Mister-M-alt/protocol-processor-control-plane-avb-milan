@@ -1567,6 +1567,7 @@ module protocol_processor_top
   //! the started/stopped handshake: KL_aecp_engine raises it from a
   //! START/STOP_STREAMING µprogram, KL_pp_acmp_listener owns the bit.
   logic        strm_set_valid_w, strm_set_val_w, strm_set_ready_w;
+  logic        strm_set_error_w;
   logic [15:0] strm_set_index_w;
   //! out-of-range started/stopped requests dropped by the record walker.
   //! Reads a permanent 0 unless the descriptor image and this shape disagree.
@@ -1593,7 +1594,8 @@ module protocol_processor_top
       .TX_OVERSIZE_BYTES_P (TX_OVERSIZE_BYTES_P),
       .TMR_SLOT_AW_P       (TMR_AW_C),
       .TMR_BASE_SLOT_P     (TMR_LSTN_BASE_C),
-      .TMR_OWNER_BASE_P    (32)
+      .TMR_OWNER_BASE_P    (32),
+      .STRM_TIMEOUT_CYC_P  (DESC_MEM_TMO_CYC_P)
   ) u_listener (
       .clk_i                 (clk_i),
       .rst_n                 (rst_n),
@@ -1618,6 +1620,7 @@ module protocol_processor_top
       .strm_set_sink_i       (strm_set_index_w),
       .strm_set_val_i        (strm_set_val_w),
       .strm_set_ready_o      (strm_set_ready_w),
+      .strm_set_error_o      (strm_set_error_w),
       .strm_started_o        (aecp_strm_started_o),
       .dbg_strq_drop_o       (lstn_strq_drop_w),
       .act_strt_chg_o        (lstn_act_strt_chg_w),
@@ -3047,6 +3050,7 @@ module protocol_processor_top
       .strm_set_index_o   (strm_set_index_w),
       .strm_set_val_o     (strm_set_val_w),
       .strm_set_ready_i   (strm_set_ready_w),
+      .strm_set_error_i   (strm_set_error_w),
       .dyn_pt_offset_o    (aecp_pt_offset_o),
       .dyn_dirty_o        (aecp_dyn_dirty_o)
   );

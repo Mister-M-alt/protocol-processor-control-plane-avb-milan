@@ -34,11 +34,11 @@ enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
        E_EAVL = 1008, E_GCFG = 1024, E_GSFMT = 1056, E_GSRATE = 1088,
        E_GCLKS = 1120, E_SSRATE = 1152, E_SCLKS = 1184,
        E_TIZ8NS = 1216, E_TIZ4NS = 1224, E_LOCKED4 = 1232,
-       E_BADARG4 = 1240 };
+       E_BADARG4 = 1240, E_STRT = 1600 };
 
 // IEEE 1722.1-2021 Table 7-141
 enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
-       ST_BADARG = 7, ST_NORES = 8, ST_NSUPP = 11 };
+       ST_BADARG = 7, ST_NORES = 8, ST_MISBEHAVING = 10, ST_NSUPP = 11 };
 
 static const uint64_t CTLR = 0xC0FFEE00DEADBEEFull;
 static const uint64_t OPD1 = 0x0000000000001234ull;
@@ -64,6 +64,7 @@ struct Harness {
   uint64_t gx_data_next = 0;
   int      tx_wait = 0;
   bool     lock_scenario = false;
+  bool     write_error = false;
   // response-buffer backpressure model — NON-ZERO by default
   int      rb_stall = 2;
   int      rb_hold  = 2;
@@ -209,6 +210,10 @@ struct Harness {
 
     // settle combinational logic with this cycle's inputs
     dut->clk_i = 0; dut->eval();
+    if (write_error && dut->st_req_o && dut->st_we_o) {
+      dut->st_err_i = 1;
+      dut->eval();
+    }
 
     // ---- response-buffer backpressure (KL_aecp_resp_buf is not single
     // cycle: a lane flush is a main-memory round trip). Refuse each write
@@ -869,6 +874,26 @@ int main(int argc, char** argv) {
     CHECK(h.run(E_GASP, KEY, false, 4000, 0), "V3 empty path completes");
     CHECK(h.last_status == ST_OK && h.last_len == 16,
           "V3 count 0 emits an empty list, len %u", h.last_len);
+  }
+
+  // ---- S: START_STREAMING write completion status -----------------------
+  // Success is established before WRITE_ST so a bounded listener failure can
+  // replace it with ENTITY_MISBEHAVING and cannot be overwritten afterward.
+  {
+    const uint64_t KEY = 0x0000000000050000ull;
+    const uint64_t TYIX = 0x0000000000050000ull;
+    h.write_error = false;
+    CHECK(h.run(E_STRT, KEY, false, 2000, TYIX), "S1 START completes");
+    CHECK(h.last_status == ST_OK && h.last_len == 16,
+          "S1 committed START is SUCCESS with full body");
+
+    h.write_error = true;
+    CHECK(h.run(E_STRT, KEY, false, 2000, TYIX),
+          "S2 failed START completion still retires");
+    CHECK(h.last_status == ST_MISBEHAVING && h.last_len == 16,
+          "S2 failed completion is ENTITY_MISBEHAVING, got %u len %u",
+          h.last_status, h.last_len);
+    h.write_error = false;
   }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);

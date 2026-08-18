@@ -1658,8 +1658,8 @@ def _strm(base, bit):
         u('BR_STATUS', cnd=0, imm=base + 6),     # ...and it survives the skip
         u('CHECK_LOCK', ra=15, imm=base + 6),    # a different controller holds
         u('MOVE', rd=1, ra=0, imm=bit),          # the started/stopped bit
-        u('WRITE_ST', ra=1, fmt=FMT_B, imm=RGN_STRQ + SEL_STRQ),
         u('SET_STATUS', imm=ST_OK),
+        u('WRITE_ST', ra=1, fmt=FMT_B, imm=RGN_STRQ + SEL_STRQ),
         u('BUILD_HDR', ra=15, rb=13),            # base + 6: every arm lands here
         u('BUILD_FLD', ra=13, fmt=FMT_D),        # type + index          @24
         u('SEND_RESP'),

@@ -114,7 +114,14 @@ static Expect classify(const Bytes& f, bool pool_ok) {
   } else if (sub == 0xFC) {                          // ACMP (F05.13)
     h.protocol = P_ACMP; h.opcode = h.msg_type;
     h.ctlr = r64(12); h.seq = r16(48);
-    uint16_t uid = (h.msg_type >= 6 && h.msg_type <= 11) ? r16(38) : r16(36);
+    // the CONSUMING engine's unique_id: the talker for its command set
+    // {0,2,4,12} (the top's pop-steer set), the LISTENER for everything
+    // else - including the TX-family responses the listener originated
+    // (PROBE_TX_RESPONSE: the record is addressed by listener_unique_id
+    // @38; keying it on @36 held only while every bind used tuid == luid)
+    uint16_t uid = (h.msg_type == 0 || h.msg_type == 2
+                    || h.msg_type == 4 || h.msg_type == 12)
+                   ? r16(36) : r16(38);
     h.operands = uid;                                // unique_id lane [15:0]
   } else {                                           // AECP (F06.10)
     h.ctlr = r64(12); h.seq = r16(20);
@@ -515,6 +522,42 @@ int main(int argc, char** argv) {
   // ---- F26: V8 still owns the sv/version nibble on MAAP frames ----------
   run_case(h, "F26", maap_pdu(DA_MAAP, 1, 16, 0x91E0F0004000ull, 8, 0, 0,
                               /*vernib=*/0x20));
+
+  // ---- F27: PROBE_TX_RESPONSE carries the LISTENER's unique_id ----------
+  // The listener originates the probe and consumes the answer; its record is
+  // addressed by listener_unique_id @38. Distinct uids are the point: the
+  // old talker-uid keying held only while every bind used tuid == luid, and
+  // the first bind that did not (the CRF sink: tuid 0x00F0, luid 4) had its
+  // probe answers silently consumed as out-of-range. The command-direction
+  // control below pins the other half so the fix cannot overreach.
+  {
+    Bytes f27 = eth(DA_AVDECC, 0x02AACC00DD02ull, 0x22F0);
+    f27.push_back(0xFC); f27.push_back(0x01);          // PROBE_TX_RESPONSE
+    f27.push_back(0x00); f27.push_back(44);            // status 0, cdl 44
+    put64(f27, 0x06000000000600F0ull);                 // stream_id
+    put64(f27, 0xC0FFEE00DEADBEEFull);                 // controller
+    put64(f27, 0x06000000000600F0ull);                 // talker
+    put64(f27, 0x2222222222222222ull);                 // listener
+    put16(f27, 0x00F0); put16(f27, 0x0004);            // tuid != luid
+    put_mac(f27, 0x91E0F0002A33ull);                   // stream_dest_mac
+    put16(f27, 0x0000);                                // connection_count
+    put16(f27, 0x0001);                                // sequence_id @48
+    put16(f27, 0x0000); put16(f27, 0x0000);            // flags, vlan
+    put16(f27, 0x0000);                                // @54
+    run_case(h, "F27", f27);
+    check_hdr(h, "F27", classify(f27, true).hdr);
+    CHECK((h.hg.operands & 0xFFFF) == 0x0004,
+          "F27 response unique_id is the LISTENER's, got %04x",
+          unsigned(h.hg.operands & 0xFFFF));
+
+    Bytes f27b = f27;                                  // same fields...
+    f27b[15] = 0x00;                                   // ...as PROBE_TX_COMMAND
+    run_case(h, "F27b", f27b);
+    check_hdr(h, "F27b", classify(f27b, true).hdr);
+    CHECK((h.hg.operands & 0xFFFF) == 0x00F0,
+          "F27b talker command unique_id is the TALKER's, got %04x",
+          unsigned(h.hg.operands & 0xFFFF));
+  }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   delete d;
