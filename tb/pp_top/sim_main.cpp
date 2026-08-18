@@ -338,6 +338,8 @@ static const uint16_t AEM_SET_CONFIGURATION = 0x0006;
 enum { AECP_STREAM_IS_RUNNING = 12, AECP_ENTITY_LOCKED = 3 };
 static const uint16_t AEM_IDENTIFY_NOTIF  = 0x0026;
 static const uint16_t AEM_GET_COUNTERS    = 0x0029;
+static const uint16_t AEM_GET_AUDIO_MAP   = 0x002B;
+static const uint16_t AEM_GET_DYNAMIC_INFO = 0x004B;
 enum { AECP_SUCCESS = 0, AECP_NOT_IMPLEMENTED = 1, AECP_NO_SUCH_DESCRIPTOR = 2,
        AECP_BAD_ARGUMENTS = 7, AECP_NOT_SUPPORTED = 11 };
 
@@ -4545,6 +4547,360 @@ int main(int argc, char** argv) {
         CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS,
               "W7: a truncated %04x answers BAD_ARGUMENTS", op);
       }
+    }
+
+    // ---- W8: GET_DYNAMIC_INFO batch semantics --------------------------
+    // IEEE 1722.1-2021 7.4.76 requires a complete whitelist pre-scan,
+    // independent record statuses, silent overflow skips, and continued
+    // processing after a skipped record. Milan 5.4.2.29 makes that command
+    // mandatory. These checks build the aggregate independently from the
+    // ordinary command responses.
+    {
+      auto direc = [](uint16_t op, const std::vector<uint8_t>& data,
+                      uint8_t info_status = 0) {
+        std::vector<uint8_t> r(8, 0);
+        putbe(&r[0], data.size(), 2);
+        r[4] = info_status;
+        putbe(&r[6], op, 2);
+        r.insert(r.end(), data.begin(), data.end());
+        return r;
+      };
+      auto append = [](std::vector<uint8_t>& dst,
+                       const std::vector<uint8_t>& src) {
+        dst.insert(dst.end(), src.begin(), src.end());
+      };
+      auto gcfg_body = [&]() {
+        std::vector<uint8_t> b(4, 0);
+        putbe(&b[2], CFGIX, 2);
+        return b;
+      };
+      auto gsfmt_body = [&](uint16_t ty, uint16_t ix) {
+        std::vector<uint8_t> b(12, 0);
+        putbe(&b[0], ty, 2); putbe(&b[2], ix, 2);
+        putbe(&b[4], H::gsi_value(0, ty, ix, 1, 0), 8);
+        return b;
+      };
+      auto gsi_body = [&](uint16_t ty, uint16_t ix, bool known) {
+        std::vector<uint8_t> b(56, 0);
+        putbe(&b[0], ty, 2); putbe(&b[2], ix, 2);
+        if (known) {
+          putbe(&b[4],  (uint32_t)H::gsi_value(0, ty, ix, 0, 0), 4);
+          putbe(&b[8],  H::gsi_value(0, ty, ix, 1, 0), 8);
+          putbe(&b[16], H::gsi_value(0, ty, ix, 2, 0), 8);
+          putbe(&b[24], (uint32_t)H::gsi_value(0, ty, ix, 3, 0), 4);
+          putbe(&b[28], H::gsi_value(0, ty, ix, 4, 0), 8);
+          putbe(&b[36], H::gsi_value(0, ty, ix, 5, 0), 8);
+          putbe(&b[44], H::gsi_value(0, ty, ix, 6, 0), 8);
+          putbe(&b[52], (uint32_t)H::gsi_value(0, ty, ix, 7, 0), 4);
+        }
+        return b;
+      };
+      auto ctr_body = [&](uint16_t ty, uint16_t ix) {
+        std::vector<uint8_t> b(136, 0);
+        putbe(&b[0], ty, 2); putbe(&b[2], ix, 2);
+        putbe(&b[4], H::ctr_mask(ty, ix), 4);
+        for (int n = 0; n < 32; ++n)
+          putbe(&b[8 + 4 * n], H::ctr_value(ty, ix, uint8_t(n)), 4);
+        return b;
+      };
+      auto rate_body = [](uint16_t ty, uint16_t ix, uint32_t rate) {
+        std::vector<uint8_t> b(8, 0);
+        putbe(&b[0], ty, 2); putbe(&b[2], ix, 2);
+        putbe(&b[4], rate, 4);
+        return b;
+      };
+
+      // Two implemented getters in one exact response.
+      std::vector<uint8_t> req;
+      append(req, direc(AEM_GET_CONFIGURATION, {}));
+      append(req, direc(AEM_GET_STREAM_FORMAT, ti(0x0005, 1)));
+      auto f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7660);
+      std::vector<uint8_t> body;
+      append(body, direc(AEM_GET_CONFIGURATION, gcfg_body(), AECP_SUCCESS));
+      append(body, direc(AEM_GET_STREAM_FORMAT,
+                         gsfmt_body(0x0005, 1), AECP_SUCCESS));
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x7660, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8: two-element GET_DYNAMIC_INFO response is byte-exact");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // A missing descriptor changes only that record's status.
+      req.clear(); body.clear();
+      append(req, direc(AEM_GET_SAMPLING_RATE, ti(0x0002, 1)));
+      append(req, direc(AEM_GET_CONFIGURATION, {}));
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7661);
+      std::vector<uint8_t> miss_rate(8, 0);
+      putbe(&miss_rate[0], 0x0002, 2); putbe(&miss_rate[2], 1, 2);
+      append(body, direc(AEM_GET_SAMPLING_RATE, miss_rate,
+                         AECP_NO_SUCH_DESCRIPTOR));
+      append(body, direc(AEM_GET_CONFIGURATION, gcfg_body(), AECP_SUCCESS));
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x7661, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8b: a missing descriptor is a per-record status");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // One forbidden variable-size getter rejects the whole list before the
+      // valid GET_CONFIGURATION ahead of it can reach the descriptor store.
+      req.clear();
+      append(req, direc(AEM_GET_CONFIGURATION, {}));
+      append(req, direc(AEM_GET_AUDIO_MAP, ti(0x000E, 0)));
+      uint64_t mem_before = h.dram_reqs;
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7662);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_BAD_ARGUMENTS, EID,
+                        CTLR_EID, 0x7662, AEM_GET_DYNAMIC_INFO, req);
+      CHECK(!f.empty() && f == want,
+            "W8c: forbidden GET_AUDIO_MAP rejects the complete batch");
+      CHECK(h.dram_reqs == mem_before,
+            "W8c2: pre-scan rejection processed no earlier record");
+
+      // The fourth 144-byte counter result would exceed cdl 524. It is
+      // omitted, while the smaller GET_CONFIGURATION after it is retained.
+      // Every counter target is distinct so skipping the wrong ordinal cannot
+      // produce an identical frame.
+      req.clear(); body.clear();
+      const std::vector<std::pair<uint16_t, uint16_t>> overflow_ctrs = {
+        {0x0005, 0}, {0x0005, 1}, {0x0006, 0}, {0x0009, 0}
+      };
+      for (const auto& target : overflow_ctrs)
+        append(req, direc(AEM_GET_COUNTERS,
+                          ti(target.first, target.second)));
+      append(req, direc(AEM_GET_CONFIGURATION, {}));
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7663);
+      for (size_t n = 0; n < 3; ++n)
+        append(body, direc(AEM_GET_COUNTERS,
+                           ctr_body(overflow_ctrs[n].first,
+                                    overflow_ctrs[n].second),
+                           AECP_SUCCESS));
+      append(body, direc(AEM_GET_CONFIGURATION, gcfg_body(), AECP_SUCCESS));
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x7663, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8d: overflow skips one record and continues with the next");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // Milan replaces the IEEE GET_STREAM_INFO body with exactly 56 bytes.
+      req = direc(0x000F, ti(0x0005, 0));
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7664);
+      body = direc(0x000F, gsi_body(0x0005, 0, true), AECP_SUCCESS);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x7664, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8e: GET_STREAM_INFO record carries the Milan 56-byte body");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // Whitelist membership does not claim implementation. GET_NAME is
+      // legal in a batch, so it receives a record-level NOT_SUPPORTED and
+      // its fixed command data is copied exactly.
+      std::vector<uint8_t> name_arg = {0xD3, 0x1C, 0xA5, 0x7E};
+      req = direc(0x0011, name_arg);
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7665);
+      body = direc(0x0011, name_arg, AECP_NOT_SUPPORTED);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x7665, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8f: legal unimplemented getter is NOT_SUPPORTED per record");
+
+      // An empty list is a valid request and produces an empty SUCCESS body.
+      req.clear(); body.clear();
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7666);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x7666, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8g: an empty GET_DYNAMIC_INFO list succeeds exactly");
+
+      // Header truncation and a data length that runs past the command both
+      // reject the complete list with its original bytes echoed.
+      req.assign(7, 0);
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7667);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_BAD_ARGUMENTS, EID,
+                        CTLR_EID, 0x7667, AEM_GET_DYNAMIC_INFO, req);
+      CHECK(!f.empty() && f == want,
+            "W8h: a truncated record rejects the complete list");
+      req.assign(8, 0);
+      putbe(&req[0], 4, 2);
+      putbe(&req[6], AEM_GET_CONFIGURATION, 2);
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7668);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_BAD_ARGUMENTS, EID,
+                        CTLR_EID, 0x7668, AEM_GET_DYNAMIC_INFO, req);
+      CHECK(!f.empty() && f == want,
+            "W8i: a record data overrun rejects the complete list");
+
+      // Section 7.4.76.1 requires SUCCESS in a command's info_status, but it
+      // also requires each parseable element to be handled independently. A
+      // malformed status is therefore contained to its record and does not
+      // suppress a valid neighbour.
+      req.clear(); body.clear();
+      append(req, direc(AEM_GET_CONFIGURATION, {}, AECP_NOT_SUPPORTED));
+      append(req, direc(AEM_GET_CONFIGURATION, {}));
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7669);
+      append(body, direc(AEM_GET_CONFIGURATION, {}, AECP_BAD_ARGUMENTS));
+      append(body, direc(AEM_GET_CONFIGURATION, gcfg_body(), AECP_SUCCESS));
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x7669, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8j: a non-SUCCESS info_status fails only its record");
+
+      // info_status occupies the complete byte. A high bit is not reserved
+      // padding, and a malformed later record must not erase an earlier
+      // valid result.
+      req.clear(); body.clear();
+      append(req, direc(AEM_GET_CONFIGURATION, {}));
+      append(req, direc(AEM_GET_CONFIGURATION, {}, 0x20));
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x766E);
+      append(body, direc(AEM_GET_CONFIGURATION, gcfg_body(), AECP_SUCCESS));
+      append(body, direc(AEM_GET_CONFIGURATION, {}, AECP_BAD_ARGUMENTS));
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x766E, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8j2: the complete info_status byte is graded per record");
+
+      // The discriminator is the complete 16-bit info_command_type. The
+      // high bit must not be treated as the outer AEM u bit and masked away.
+      req = direc(0x8007, {});
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x766A);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_BAD_ARGUMENTS, EID,
+                        CTLR_EID, 0x766A, AEM_GET_DYNAMIC_INFO, req);
+      CHECK(!f.empty() && f == want,
+            "W8k: the record command discriminator remains 16 bits");
+
+      // Exercise every member of the exact thirteen-command whitelist in one
+      // request. Empty data gives record BAD_ARGUMENTS for implemented
+      // four-byte getters and NOT_SUPPORTED for legal unimplemented getters;
+      // neither outcome is an outer BAD_ARGUMENTS rejection.
+      const std::vector<uint16_t> whitelist = {
+        0x0007, 0x0009, 0x000B, 0x000D, 0x000F, 0x0011, 0x0013,
+        0x0015, 0x0017, 0x001D, 0x0029, 0x0048, 0x004A
+      };
+      req.clear(); body.clear();
+      for (uint16_t op : whitelist) {
+        append(req, direc(op, {}));
+        if (op == AEM_GET_CONFIGURATION) {
+          append(body, direc(op, gcfg_body(), AECP_SUCCESS));
+        } else if ((op == AEM_GET_STREAM_FORMAT) || (op == 0x000F)
+                   || (op == AEM_GET_SAMPLING_RATE)
+                   || (op == AEM_GET_CLOCK_SOURCE)
+                   || (op == AEM_GET_COUNTERS)) {
+          append(body, direc(op, {}, AECP_BAD_ARGUMENTS));
+        } else {
+          append(body, direc(op, {}, AECP_NOT_SUPPORTED));
+        }
+      }
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x766B);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x766B, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8l: all thirteen fixed-size getters pass the whitelist");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // Three counter records, one Milan stream-info record and one eight-byte
+      // unsupported record total 512 payload bytes. With the 12-byte AECP
+      // header this is the exact cdl 524 boundary and must not be skipped.
+      req.clear(); body.clear();
+      for (int n = 0; n < 3; ++n) {
+        append(req, direc(AEM_GET_COUNTERS, ti(0x0005, 0)));
+        append(body, direc(AEM_GET_COUNTERS, ctr_body(0x0005, 0),
+                           AECP_SUCCESS));
+      }
+      append(req, direc(0x000F, ti(0x0005, 0)));
+      append(body, direc(0x000F, gsi_body(0x0005, 0, true), AECP_SUCCESS));
+      name_arg = {0xE1, 0x72, 0x3B, 0xC4, 0x5D, 0xA6, 0x8F, 0x10};
+      append(req, direc(0x0011, name_arg));
+      append(body, direc(0x0011, name_arg, AECP_NOT_SUPPORTED));
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x766C);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x766C, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want && cdl(f) == 524,
+            "W8m: an exact cdl 524 response is retained");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // IEEE 1722.1-2021 9.2.2.6 still caps commands at cdl 524. Milan 5.4.1
+      // lifts that limit only for responses. This 525-byte command must be
+      // rejected before its single oversized result can be skipped and leave
+      // the aggregate length pointing at unwritten response-buffer bytes.
+      name_arg.assign(505, 0);
+      req = direc(0x0011, name_arg);
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x766D);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_BAD_ARGUMENTS, EID,
+                        CTLR_EID, 0x766D, AEM_GET_DYNAMIC_INFO, req);
+      CHECK(!f.empty() && f == want && cdl(f) == 525,
+            "W8n: an oversized cdl 525 command is rejected exactly");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // The batched GET_CONFIGURATION must use the getter's actual image
+      // value. Zero is not evidence because both reset state and the default
+      // image contain zero.
+      uint32_t ent_off = 0;
+      for (auto& e : img_ents) if (e.type == 0x0000) ent_off = e.off;
+      CHECK(ent_off != 0, "W8o: the ENTITY entry was located in the image");
+      uint8_t save_hi = h.dram[ent_off + 310];
+      uint8_t save_lo = h.dram[ent_off + 311];
+      h.dram[ent_off + 310] = 0x00;
+      h.dram[ent_off + 311] = 0x07;
+      req = direc(AEM_GET_CONFIGURATION, {});
+      body = direc(AEM_GET_CONFIGURATION,
+                   std::vector<uint8_t>{0x00, 0x00, 0x00, 0x07},
+                   AECP_SUCCESS);
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x76E0);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x76E0, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8o2: batched GET_CONFIGURATION follows the image value");
+      h.dram[ent_off + 310] = save_hi;
+      h.dram[ent_off + 311] = save_lo;
+
+      // Wrong-target fixed getters retain their standalone response lengths.
+      // A command-sized refusal would shift every following record.
+      req.clear(); body.clear();
+      append(req, direc(AEM_GET_STREAM_FORMAT, ti(0x0002, 0)));
+      append(req, direc(AEM_GET_SAMPLING_RATE, ti(0x0005, 0)));
+      append(req, direc(AEM_GET_COUNTERS, ti(0x0000, 0)));
+      std::vector<uint8_t> wrong_fmt(12, 0);
+      putbe(&wrong_fmt[0], 0x0002, 2);
+      std::vector<uint8_t> wrong_rate(8, 0);
+      putbe(&wrong_rate[0], 0x0005, 2);
+      std::vector<uint8_t> wrong_ctrs(136, 0);
+      append(body, direc(AEM_GET_STREAM_FORMAT, wrong_fmt,
+                         AECP_NOT_SUPPORTED));
+      append(body, direc(AEM_GET_SAMPLING_RATE, wrong_rate,
+                         AECP_NOT_SUPPORTED));
+      append(body, direc(AEM_GET_COUNTERS, wrong_ctrs,
+                         AECP_NOT_SUPPORTED));
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x76E1);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x76E1, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8p: wrong targets retain all three fixed response shapes");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // Exercise the descriptor-image hit arm of GET_SAMPLING_RATE both before
+      // another record and as the final record. The four-byte COPY_BUF must
+      // not write a second word past its declared response.
+      req.clear(); body.clear();
+      append(req, direc(AEM_GET_SAMPLING_RATE, ti(0x0002, 0)));
+      append(req, direc(AEM_GET_CONFIGURATION, {}));
+      append(body, direc(AEM_GET_SAMPLING_RATE,
+                         rate_body(0x0002, 0, 96000), AECP_SUCCESS));
+      append(body, direc(AEM_GET_CONFIGURATION, gcfg_body(), AECP_SUCCESS));
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x76E2);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x76E2, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8q: sampling-rate hit preserves the following record");
+
+      for (size_t n = 28; n < 32; ++n) h.rmem[n] = 0xA7;
+      req = direc(AEM_GET_SAMPLING_RATE, ti(0x0002, 0));
+      body = direc(AEM_GET_SAMPLING_RATE,
+                   rate_body(0x0002, 0, 96000), AECP_SUCCESS);
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x76E3);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x76E3, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8q2: final sampling-rate hit is byte-exact");
+      CHECK(h.rmem[28] == 0xA7 && h.rmem[29] == 0xA7
+            && h.rmem[30] == 0xA7 && h.rmem[31] == 0xA7,
+            "W8q3: four-byte COPY_BUF leaves the next word untouched");
     }
 
     // ---- W9: SET_SAMPLING_RATE, and the overlay it creates --------------

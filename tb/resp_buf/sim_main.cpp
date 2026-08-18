@@ -341,6 +341,30 @@ int main(int argc, char** argv) {
           "R3: the 23..26 field did not survive the lane it crosses");
   }
 
+  // ---- R3b: GET_DYNAMIC_INFO status patch may revisit an earlier lane --
+  // The getter writes its data after a placeholder record header. Once its
+  // status is known, the engine patches one byte in that earlier header and
+  // continues forward with the next record. Partial memory strobes must keep
+  // every byte from both passes.
+  {
+    h.open();
+    h.write(12, 0x00040000u, 0xF);                 // length + reserved
+    h.write(16, 0x00000007u, 0xF);                 // status 0 + GET_CONFIG
+    h.write(20, 0x00000000u, 0xF);                 // first record data
+    h.write(24, 0x11223344u, 0xF);                 // force later-lane flush
+    h.write(16, 0x02u, 0x1);                       // status patch: NO_SUCH
+    h.write(28, 0x55667788u, 0xF);                 // resume forward
+    h.seal(20);                                    // bytes 12..31
+    CHECK(h.stream(20), "R3b: the patched response stopped short");
+    bool ok = h.got.size() == 20;
+    for (uint32_t i = 0; i < 20 && ok; ++i)
+      if (h.got[i] != h.ref.b[12 + i]) ok = false;
+    CHECK(ok, "R3b: the backward status patch corrupted response bytes");
+    CHECK(h.got.size() > 4 && h.got[4] == 0x02,
+          "R3b: patched info_status is %02x, want 02",
+          h.got.size() > 4 ? h.got[4] : 0xFF);
+  }
+
   // ---- R4: the write face is FLOW CONTROLLED ----------------------------
   // Every lane the write pattern closes is a memory round trip the µCPU has
   // to be held for, and the block must not hold it for anything else. The

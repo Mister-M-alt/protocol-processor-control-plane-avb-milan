@@ -304,3 +304,27 @@ repeat under back-pressure is free, an index that MOVES under it is a lost beat.
 The last one is the one worth keeping: it is the advertised-zero lie in its
 purest form — a full mask over a block the fabric never fills — and it must not
 be able to pass.
+
+## Section W8: GET_DYNAMIC_INFO
+
+The suite sends `0x004B` through the complete MAC, RX slot, dispatch, AECP
+engine, response memory, and TX path. Its expected bytes are built from the
+standard's record layout and the harness models, not from standalone DUT
+responses.
+
+W8 covers two implemented getters in one byte-exact aggregate, a missing
+descriptor that changes only one record status, whole-command `BAD_ARGUMENTS`
+for a forbidden `GET_AUDIO_MAP` with proof that no earlier record reached the
+descriptor store, silent overflow omission followed by successful processing
+of a later record, the Milan 56-byte `GET_STREAM_INFO` body, and
+record-level `NOT_SUPPORTED` with exact command-data copy for a permitted but
+unimplemented `GET_NAME`. It also covers an empty batch, truncated and
+overrunning records, per-record `BAD_ARGUMENTS` for a non-SUCCESS command
+status, preservation of the full 16-bit record command discriminator, every
+member of the exact 13-command whitelist, retention at the exact cdl 524
+response boundary, and rejection of an oversized cdl 525 command before record
+processing. The batch-only falsifiers use distinct overflow targets,
+non-zero unsupported data, a non-zero image configuration, full-body
+wrong-target refusals, and sampling-rate image hits both before another record
+and at the end of the aggregate. The final hit also verifies that the word
+after its four-byte body remains untouched.
