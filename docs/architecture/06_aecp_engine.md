@@ -167,8 +167,8 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x0009 | GET_STREAM_FORMAT | shall | - | RO | - | yes | - | - | 36 B |
 | 0x000E | SET_STREAM_INFO | shall | **output only** (Δ11); §6.3 | STREAM_CFG | yes | - | - | *(open, #69)* | 108 B echo |
 | 0x000F | GET_STREAM_INFO | shall | Milan 80-B form §6.2 | RO | — | yes | — | async triggers | 80 B |
-| 0x0010 | SET_NAME | shall, **n/i today** | target: all names | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
-| 0x0011 | GET_NAME | shall, **n/i today** | target: all names | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x0010 | SET_NAME | shall | every named descriptor; ENTITY indices 0 and 1, all others index 0 | NAME_WR | yes | - | - | naming trigger | cdl 84, current 64-B name |
+| 0x0011 | GET_NAME | shall | every named descriptor; ENTITY indices 0 and 1, all others index 0 | RO | no | yes | - | - | cdl 84, current 64-B name |
 | 0x0014 | SET_SAMPLING_RATE | shall | per AUDIO_UNIT; §6.4 | CLOCK_CFG | yes | — | — | yes | 36 B |
 | 0x0015 | GET_SAMPLING_RATE | shall | — | RO | — | yes | — | — | 36 B |
 | 0x0016 | SET_CLOCK_SOURCE | shall | per CLOCK_DOMAIN | CLOCK_CFG | yes | — | — | yes | 36 B |
@@ -306,6 +306,30 @@ Atomicity: the µprogram issues one `GATHER_EXT` that snapshots sink record + di
 under the sink's STREAM_CFG key (scoreboard blocks writers during the latch) — a
 response is never a torn mix of two states.
 
+#### 6.2.1 GET_NAME and SET_NAME
+
+Both responses carry the fixed IEEE Figures 7-39 and 7-40 body:
+`descriptor_type`, `descriptor_index`, `name_index`, `configuration_index`, then
+exactly 64 name octets. `GET_NAME` has an 8-byte command body and `SET_NAME` has a
+72-byte command body. Both responses therefore use control_data_length 84.
+
+The descriptor store translates the semantic selector through region `0xB`.
+ENTITY exposes `entity_name` at index 0 and `group_name` at index 1. Every other
+named descriptor exposes `object_name` at index 0. A missing descriptor returns
+`NO_SUCH_DESCRIPTOR`; an unsupported semantic index or configuration returns
+`BAD_ARGUMENTS` with the complete fixed response body.
+
+`SET_NAME` checks the entity lock before changing any byte. A rejected locked
+write returns `ENTITY_LOCKED` and the current name, not the rejected command
+name. A successful change writes all eight 64-bit lanes, returns the new current
+name, and emits the naming persistence and notification triggers. Repeating the
+same value performs no write and emits no trigger. The persistence consumer is
+tracked separately; the trigger alone does not make the update survive power loss.
+
+The writable name table is also patched into the currently located descriptor
+line. A later locate refreshes its line from the table after the image fetch.
+Consequently `SET_NAME`, `GET_NAME`, and `READ_DESCRIPTOR` expose one value.
+
 ### 6.3 Direction asymmetries (Δ11)
 
 | Command | Stream Input | Stream Output |
@@ -321,7 +345,7 @@ response is never a torn mix of two states.
 | SET_STREAM_FORMAT (**implemented**, Milan §5.4.2.7) | length (cdl 24 and the walked payload) → type ∈ {STREAM_INPUT, STREAM_OUTPUT} → **per-descriptor running at dispatch** (bound input ∨ streaming output ⇒ `STREAM_IS_RUNNING`, outranking the lock like SET_CONFIGURATION's reduction and for the same reason) → lock → locate → the integrator's ONE-GATHER verdict on the proposed format (kind 0 selector 15 against `gsi_prop_fmt`): supported-for-this-stream AND every mapping-referenced channel survives, anything less ⇒ `BAD_ARGUMENTS` → WRITE_ST to SEL_FMTIN/SEL_FMTOUT + NVM mark → echo the format now in force. Every refusal after the length gate carries the CURRENT format read through GET_STREAM_FORMAT's own face word, so the two can never disagree. The supported set and the mapping reduction live integrator-side (the builder's always-live shapes; the map machinery that already validates every edit), not in a µcode walk over the image |
 | SET_SAMPLING_RATE | lock → rate ∈ AUDIO_UNIT list → mappings whose stream rate ≠ new rate while port has neither SRC bit ⇒ may `NOT_SUPPORTED` (Milan §5.4.2.13 — "UNSUPPORTED" typo, review §8 item 3) → commit + NVM |
 | SET_CLOCK_SOURCE | lock → source ∈ CLOCK_DOMAIN list → `mclk.SET_CLOCK_SOURCE` → commit + NVM |
-| SET_NAME (target; n/i today) | lock, require a named descriptor, commit, and mark NVM |
+| SET_NAME | configuration valid, descriptor exists, semantic name index valid, lock, compare all 64 bytes, then commit and emit persistence plus notification triggers only when changed |
 
 **Two notes on SET_CONFIGURATION, both decisions rather than accidents.**
 

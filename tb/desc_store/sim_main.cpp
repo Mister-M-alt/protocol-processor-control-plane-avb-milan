@@ -36,11 +36,12 @@ static int checks = 0, fails = 0;
 static const uint32_t DESC_BASE   = 0x20000000u;
 static const uint32_t LINE_BYTES  = 576;
 static const uint32_t IDX_ENTRIES = 32;
-static const uint32_t NAME_ENTRIES = 16;
+static const uint32_t NAME_ENTRIES = 256;
 static const uint32_t MEM_TIMEOUT = 64;   // -GMEM_TIMEOUT_CYC_P in the Makefile
 
 // state-port regions (KL_aecp_desc_store banner)
 static const uint32_t RGN_DATA   = 0x00000;
+static const uint32_t RGN_NADDR  = 0xB0000;
 static const uint32_t RGN_NBASE  = 0xC0000;
 static const uint32_t RGN_NCFG   = 0xD0000;
 static const uint32_t RGN_LEN    = 0xE0000;
@@ -321,6 +322,36 @@ static uint64_t img64(const std::vector<uint8_t>& b, uint32_t at) {
   return v;
 }
 
+// Descriptor reads use the writable name table as their source of truth.
+// This independent expectation overlays the two ENTITY names at their IEEE
+// offsets and every other named descriptor's object_name at byte 4.
+static uint64_t served64(const Image& img, const Entry& e, uint16_t member,
+                         uint32_t desc_at, uint32_t lane_at) {
+  uint64_t v = 0;
+  for (uint32_t i = 0; i < 8; ++i) {
+    const uint32_t off = lane_at + i;
+    uint8_t byte = (desc_at + off < img.b.size()) ? img.b[desc_at + off] : 0xA5;
+    if (e.nbase != NAME_NONE) {
+      uint32_t name = uint32_t(e.nbase) + member;
+      int32_t name_byte = -1;
+      if (e.type == 0x0000) {
+        if (off >= 48 && off < 112) name_byte = int32_t(off - 48);
+        if (off >= 180 && off < 244) {
+          ++name;
+          name_byte = int32_t(off - 180);
+        }
+      } else if (off >= 4 && off < 68) {
+        name_byte = int32_t(off - 4);
+      }
+      if (name_byte >= 0) {
+        byte = img.b[img.names_off + 64u * name + uint32_t(name_byte)];
+      }
+    }
+    v = (v << 8) | byte;
+  }
+  return v;
+}
+
 // ---------------------------------------------------------------------------
 // walk every descriptor of an image and check the served bytes, byte-exactly
 // ---------------------------------------------------------------------------
@@ -347,9 +378,11 @@ static void check_all_descriptors(H& h, const Image& img, const char* tag) {
       CHECK(h.rd(RGN_LEN, false, 0) && !h.err && h.rdata == e.len,
             "%s type 0x%04X ix %u length got %llu want %u",
             tag, e.type, ix, (unsigned long long)h.rdata, e.len);
-      CHECK(h.rd(RGN_NBASE, false, 0) && !h.err && h.rdata == e.nbase,
+      const uint16_t want_nbase = (e.nbase == NAME_NONE)
+                                  ? NAME_NONE : uint16_t(e.nbase + k);
+      CHECK(h.rd(RGN_NBASE, false, 0) && !h.err && h.rdata == want_nbase,
             "%s type 0x%04X name_base got %llu want %u",
-            tag, e.type, (unsigned long long)h.rdata, e.nbase);
+            tag, e.type, (unsigned long long)h.rdata, want_nbase);
 
       uint32_t lanes = (e.len + 7u) / 8u;
       // `e.off` is the offset of this RUN's first member, so the stride
@@ -357,7 +390,7 @@ static void check_all_descriptors(H& h, const Image& img, const char* tag) {
       // past the run whenever an earlier run of the same type exists.
       uint32_t base = e.off + uint32_t(e.stride) * k;
       for (uint32_t l = 0; l < lanes; ++l) {
-        uint64_t want = img64(img.b, base + 8 * l);
+        uint64_t want = served64(img, e, k, base, 8 * l);
         CHECK(h.rd(RGN_DATA + 8 * l, false, 0) && h.rdata == want,
               "%s type 0x%04X ix %u lane %u got %016llx want %016llx",
               tag, e.type, ix, l, (unsigned long long)h.rdata,
@@ -375,8 +408,8 @@ static void check_all_descriptors(H& h, const Image& img, const char* tag) {
 // 8) so the stride path is exercised, plus a 4-byte-typed marker descriptor
 static Image synth_two_of_a_type() {
   std::vector<Entry> ents = {
-    {0, 0x0000, 1, 40,  0, 40, 0},
-    {0, 0x0014, 2, 90,  1, 96, 0},
+    {0, 0x0000, 1, 312, 0, 312, 0},
+    {0, 0x0014, 2, 90,  2, 96, 0},
     {0, 0x0024, 1, 78,  NAME_NONE, 80, 0},
   };
   std::vector<std::vector<uint8_t>> bodies;
@@ -387,12 +420,31 @@ static Image synth_two_of_a_type() {
     for (size_t k = 4; k < len; ++k) v[k] = uint8_t((type + ix * 7 + k) & 0xFF);
     return v;
   };
-  bodies.push_back(mk(0x0000, 0, 40));
+  bodies.push_back(mk(0x0000, 0, 312));
   bodies.push_back(mk(0x0014, 0, 90));
   bodies.push_back(mk(0x0014, 1, 90));
   bodies.push_back(mk(0x0024, 0, 78));
   Image im;
-  im.build(ents, bodies, {"entity", "cluster0", "cluster1"}, 1);
+  im.build(ents, bodies, {"entity", "group", "cluster0", "cluster1"}, 1);
+  return im;
+}
+
+// More than one 9-bit memory request can carry. The DUT must split this
+// table into whole-name chunks and preserve the absolute RAM address across
+// the boundary.
+static Image synth_many_names() {
+  Entry ent = {0, 0x0000, 1, 312, 0, 312, 0};
+  std::vector<uint8_t> body(312, 0);
+  std::vector<std::string> names;
+  for (unsigned i = 0; i < 80; ++i) {
+    char text[32];
+    snprintf(text, sizeof text, "chunked-name-%03u", i);
+    names.push_back(text);
+  }
+  memcpy(body.data() + 48, names[0].data(), names[0].size());
+  memcpy(body.data() + 180, names[1].data(), names[1].size());
+  Image im;
+  im.build({ent}, {body}, names, 1);
   return im;
 }
 
@@ -414,7 +466,7 @@ static Image synth_two_of_a_type() {
 // under test is the index map's run arithmetic, never a layout.
 static Image synth_mixed_lengths() {
   std::vector<Entry> ents = {
-    {0, 0x0000, 1, 40,  0,         40,  0},
+    {0, 0x0000, 1, 312, 0,         312, 0},
     {0, 0x0005, 1, 148, NAME_NONE, 152, 0},   // index 0     AAF, N=2
     {0, 0x0005, 1, 140, NAME_NONE, 144, 0},   // index 1     CRF, N=1
     {0, 0x0005, 1, 148, NAME_NONE, 152, 0},   // index 2     AAF, N=2
@@ -430,13 +482,13 @@ static Image synth_mixed_lengths() {
     for (size_t k = 4; k < len; ++k) v[k] = uint8_t((type + ix * 31 + k) & 0xFF);
     return v;
   };
-  bodies.push_back(mk(0x0000, 0, 40));
+  bodies.push_back(mk(0x0000, 0, 312));
   bodies.push_back(mk(0x0005, 0, 148));
   bodies.push_back(mk(0x0005, 1, 140));
   bodies.push_back(mk(0x0005, 2, 148));
   bodies.push_back(mk(0x0024, 0, 78));
   Image im;
-  im.build(ents, bodies, {"entity"}, 1);
+  im.build(ents, bodies, {"entity", "group"}, 1);
   return im;
 }
 
@@ -514,11 +566,59 @@ int main(int argc, char** argv) {
   h.wr(64u * 1u + 8u, true, 0x4E45575F4E414D45ull, 0xFF);
   CHECK(h.rd(64u * 1u + 8u, true, 0) && h.rdata == 0x4E45575F4E414D45ull,
         "G5 name write did not stick: got %016llx", (unsigned long long)h.rdata);
+  CHECK(h.rd(RGN_DATA + 184u, false, 0)
+        && h.rdata == 0x6E20456E4E45575Full,
+        "G5 SET_NAME first descriptor lane is stale: %016llx",
+        (unsigned long long)h.rdata);
+  CHECK(h.rd(RGN_DATA + 192u, false, 0)
+        && h.rdata == 0x4E414D4500000000ull,
+        "G5 SET_NAME second descriptor lane is stale: %016llx",
+        (unsigned long long)h.rdata);
   // byte strobes
   h.wr(64u * 1u + 8u, true, 0x00000000000000FFull, 0x01);
   CHECK(h.rd(64u * 1u + 8u, true, 0) &&
         h.rdata == 0x4E45575F4E414DFFull,
         "G5 byte-strobed name write got %016llx", (unsigned long long)h.rdata);
+  CHECK(h.rd(RGN_DATA + 192u, false, 0)
+        && h.rdata == 0x4E414DFF00000000ull,
+        "G5 byte-strobed name is stale in READ_DESCRIPTOR: %016llx",
+        (unsigned long long)h.rdata);
+
+  // Semantic name_index lookup is intentionally separate from the 64-byte
+  // overlay address. ENTITY exposes entity_name 0 and group_name 1.
+  CHECK(h.rd(RGN_NADDR, false, 0) && !h.err && h.rdata == 0,
+        "G5 ENTITY name_index 0 address got %llu",
+        (unsigned long long)h.rdata);
+  CHECK(h.rd(RGN_NADDR, false, 1) && !h.err && h.rdata == 64,
+        "G5 ENTITY name_index 1 address got %llu",
+        (unsigned long long)h.rdata);
+  CHECK(h.rd(RGN_NADDR, false, 2) && h.err && h.rdata == 0,
+        "G5 ENTITY name_index 2 was accepted");
+
+  CHECK(h.locate(0, 0x0001, 0) && !h.err, "G5 locate CONFIGURATION");
+  CHECK(h.rd(RGN_NADDR, false, 0) && !h.err && h.rdata == 128,
+        "G5 CONFIGURATION name_index 0 address got %llu",
+        (unsigned long long)h.rdata);
+  CHECK(h.rd(RGN_NADDR, false, 1) && h.err && h.rdata == 0,
+        "G5 non-ENTITY name_index 1 was accepted");
+
+  CHECK(h.locate(0, 0x0024, 0) && !h.err, "G5 locate CLOCK_DOMAIN");
+  CHECK(h.rd(RGN_NADDR, false, 0) && !h.err && h.rdata == 512,
+        "G5 CLOCK_DOMAIN name address got %llu",
+        (unsigned long long)h.rdata);
+
+  // ---- G5b: name tables larger than one 511-beat request -----------------
+  {
+    const Image many = synth_many_names();
+    CHECK(h.boot(many), "G5b chunked name-table boot never finished");
+    CHECK(dut->dbg_img_valid_o == 1, "G5b chunked image not valid");
+    const uint32_t last = many.n_names - 1;
+    const uint64_t want = img64(many.b, many.names_off + 64u * last);
+    CHECK(h.rd(64u * last, true, 0) && h.rdata == want,
+          "G5b final name after the burst boundary got %016llx want %016llx",
+          (unsigned long long)h.rdata, (unsigned long long)want);
+    CHECK(h.boot(gen), "G5b generator image did not restore");
+  }
 
   // ---- G6: the image is READ-ONLY at run time (07 §2) ---------------------
   {

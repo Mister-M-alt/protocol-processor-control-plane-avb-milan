@@ -336,10 +336,14 @@ module KL_aecp_ucpu
           st_addr_o = uop_e_r.imm[19:0] ^ {4'd0, opa_e_r[15:0]};
         end
         OP_READ_ST:  st_req_o = 1'b1;
-        OP_NAME_RD:  begin st_req_o = 1'b1; st_name_o = 1'b1; end
+        OP_NAME_RD:  begin st_req_o = 1'b1; st_name_o = 1'b1;
+                           st_addr_o = opa_e_r[19:0]
+                                       + uop_e_r.imm[19:0]; end
         OP_WRITE_ST: begin st_req_o = 1'b1; st_we_o = 1'b1; end
         OP_NAME_WR:  begin st_req_o = 1'b1; st_we_o = 1'b1;
-                           st_name_o = 1'b1; end
+                           st_name_o = 1'b1;
+                           st_addr_o = opb_e_r[19:0]
+                                       + uop_e_r.imm[19:0]; end
         OP_COPY_BUF: begin
           st_req_o  = copy_go_r && (copy_left_r != 16'd0) &&
                       (eseq_r == 4'd0);
@@ -615,6 +619,8 @@ module KL_aecp_ucpu
                   if (st_err_i) status_r <= ST_NO_SUCH_DESC_C;
                   else          desc_base_r <= st_rdata_i[19:0];
                 end
+                OP_READ_ST:
+                  if (st_err_i) status_r <= ST_BAD_ARGUMENTS_C;
                 OP_WRITE_ST:
                   if (st_err_i) status_r <= ST_ENTITY_MISBEHAVING_C;
                 OP_CHECK_LOCK:

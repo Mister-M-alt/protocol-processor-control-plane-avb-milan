@@ -115,7 +115,7 @@ module protocol_processor_top
     //! cached index-map entries, one per (configuration, descriptor_type)
     parameter int unsigned DESC_IDX_ENTRIES_P  = 32,
     //! 64-byte name-table entries held on chip (07 §3.4 overlay)
-    parameter int unsigned DESC_NAME_ENTRIES_P = 16,
+    parameter int unsigned DESC_NAME_ENTRIES_P = 32,
     //! no-progress watchdog on the descriptor memory face, in clocks
     parameter int unsigned DESC_MEM_TMO_CYC_P  = 4096,
     //! IEEE §7.4.37.2's 300 s TIME_LIMITED registration window and IEEE

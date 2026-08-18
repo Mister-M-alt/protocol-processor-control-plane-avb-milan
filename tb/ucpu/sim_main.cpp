@@ -37,7 +37,8 @@ enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
        E_BADARG4 = 1240, E_STRT = 1600,
        E_SFMTI = 1792, E_SFMTO = 1824, E_SINFO = 1856, E_SFRUN = 1888,
        E_SFCUR = 1896, E_SFZERO = 1904, E_SFBAD = 1912, E_SIBAD = 1920,
-       E_SIRUN = 1936 };
+       E_SIRUN = 1936, E_GNAME = 1808, E_SNAME = 1940, E_NAMEERR = 1840,
+       E_NAMERESP = 1865, E_NAMEBAD = 1890 };
 
 // IEEE 1722.1-2021 Table 7-141
 enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
@@ -60,7 +61,8 @@ struct Harness {
   int      commits = 0;
   std::vector<uint8_t> nvm_marks;
   std::vector<uint8_t> notify_classes;
-  uint64_t name_store = NAMEQ;
+  uint64_t name_store[16] = {};
+  uint64_t staged_name[8] = {};
   int      st_lat = 0;
   bool     st_err_next = false, st_name_next = false;
   uint64_t st_data_next = 0;
@@ -84,13 +86,18 @@ struct Harness {
   // faces legitimately claim the same selector values (gen_ucode.py's
   // audio-map note), so one flat sel->value table cannot model both.
   uint16_t cur_upc = 0;
-  uint64_t cur_opd0 = 0, cur_opd1 = 0;
+  uint64_t cur_opd0 = 0, cur_opd1 = 0, cur_opd2 = 0;
   int      amap_recs = 0;                 // RECORD gathers completed this run
   int      gsi_recs = 0;                  // Milan-info record gathers (sel 0xB8)
   int      gasp_count = 3;                // GET_AS_PATH path length served
   std::vector<uint8_t> gx_sels;           // every completed gather's selector
 
-  explicit Harness(VKL_aecp_ucpu* d) : dut(d) { memset(buf, 0, sizeof buf); }
+  explicit Harness(VKL_aecp_ucpu* d) : dut(d) {
+    memset(buf, 0, sizeof buf);
+    for (uint64_t& lane : name_store) lane = NAMEQ;
+    for (int lane = 0; lane < 8; ++lane)
+      staged_name[lane] = 0x5345545F4E414D30ull + uint64_t(lane);
+  }
 
   // ---- the GET_AUDIO_MAP integrator model (06 §6.5 face semantics) ----
   // Fixed partition of 3 pages; page 0 deliberately EMPTY (the 0-trip arm),
@@ -127,6 +134,8 @@ struct Harness {
   static const uint64_t SFMT_CUR_C = 0x0205021801406000ull;
 
   uint64_t gxval(uint8_t sel) {
+    if (cur_upc == E_SNAME && sel >= 0x60 && sel <= 0x67)
+      return staged_name[sel - 0x60];
     if (cur_upc == E_REGUN || cur_upc == E_DEREG ||
         cur_upc == E_LOCKEN || cur_upc == E_LOCKUNS) {
       if (sel == 0xA0) return rgy_result;
@@ -175,13 +184,24 @@ struct Harness {
 
   uint64_t st_read(uint32_t a, bool name, uint64_t wdata, bool* err) {
     *err = false;
-    if (name) return name_store;                   // name region, any offset
+    if (name) return name_store[(a & 0x7Fu) >> 3];
     // the RGN_LOCATE region (0xF0000): the key rides st_wdata as
     // {index[47:32], type[31:16], cfg[15:0]} - E_GAMAP's shape. Its cfg half
     // is 0, so the XORed address is the bare region; hit/miss must come from
     // the key itself, exactly as the real store decides.
     if ((a & 0xF0000u) == 0xF0000u)
       { *err = (((wdata >> 32) & 0xFFFFu) == 0x0BADu); return 0x500; }
+    // RGN_NADDR translates the semantic name index after a successful
+    // locate. ENTITY exposes indices 0 and 1; every other named descriptor
+    // exposes only index 0. The returned address is a byte address.
+    if ((a & 0xF0000u) == 0xB0000u) {
+      uint16_t type = uint16_t((cur_opd0 >> 16) & 0xFFFFu);
+      uint16_t name_index = uint16_t(wdata & 0xFFFFu);
+      if ((type == 0 && name_index <= 1) || (type != 0 && name_index == 0))
+        return uint64_t(name_index) << 6;
+      *err = true;
+      return 0;
+    }
     if (a == (0x100u ^ 0x0003u)) return 0x500;     // locate hit -> base
     if (a == (0x100u ^ 0x0BADu)) { *err = true; return 0; }
     if (a == 0x508u) return 0xBB80;                // current_rate
@@ -263,9 +283,19 @@ struct Harness {
       rb_hold = rb_stall;
       rb_have_held = false;
     }
-    if (dut->st_req_o && dut->st_we_o && dut->st_ready_i)
+    if (dut->st_req_o && dut->st_we_o && dut->st_ready_i) {
       stw.push_back({(bool)dut->st_name_o, (uint32_t)dut->st_addr_o,
                      (uint64_t)dut->st_wdata_o, (uint8_t)dut->st_wstrb_o});
+      if (dut->st_name_o && !dut->st_err_i) {
+        uint64_t& dst = name_store[(uint32_t(dut->st_addr_o) & 0x7Fu) >> 3];
+        for (int byte = 0; byte < 8; ++byte) {
+          if ((dut->st_wstrb_o >> byte) & 1u) {
+            uint64_t mask = 0xFFull << (8 * byte);
+            dst = (dst & ~mask) | (uint64_t(dut->st_wdata_o) & mask);
+          }
+        }
+      }
+    }
     if (dut->eff_commit_o) ++commits;
     if (dut->eff_nvm_stb_o) nvm_marks.push_back(dut->eff_nvm_mark_o);
     if (dut->eff_notify_stb_o) notify_classes.push_back(dut->eff_notify_class_o);
@@ -283,19 +313,20 @@ struct Harness {
   }
 
   bool run(uint16_t upc, uint64_t opd0, bool lock, int max_cycles = 2000,
-           uint64_t opd1 = OPD1) {
+           uint64_t opd1 = OPD1, uint64_t opd2 = 0) {
     memset(buf, 0, sizeof buf);
     bad_write = false; sends = 0; lock_scenario = lock;
     rb_accepts = 0; rb_held_cycles = 0; rb_have_held = false;
     rb_hold = rb_stall;
     stw.clear(); commits = 0; nvm_marks.clear(); notify_classes.clear();
-    cur_upc = upc; cur_opd0 = opd0; cur_opd1 = opd1;
+    cur_upc = upc; cur_opd0 = opd0; cur_opd1 = opd1; cur_opd2 = opd2;
     amap_recs = 0; gsi_recs = 0; gx_sels.clear();
     tx_wait = 3;
     dut->disp_upc_i = upc;
     dut->disp_ctlr_eid_i = CTLR;
     dut->disp_opd0_i = opd0;
     dut->disp_opd1_i = opd1;
+    dut->disp_opd2_i = opd2;
     dut->disp_batch_i = 0;
     dut->disp_resp_base_i = 12;
     dut->disp_valid_i = 1;
@@ -413,6 +444,123 @@ int main(int argc, char** argv) {
   }
   CHECK(h.w32(12) == uint32_t(NAMEQ >> 32) && h.w32(16) == uint32_t(NAMEQ),
         "P8 response carries the name got %08x %08x", h.w32(12), h.w32(16));
+
+  // ---- P8b: mandatory GET_NAME / SET_NAME response and state contract -
+  {
+    const uint64_t CD_KEY = 0x0000000000240000ull;  // CLOCK_DOMAIN[0]
+    const uint64_t CD_PFX = 0x0024000000000000ull;  // type,index,name,cfg
+    const uint64_t CD_BAD = 0x0024000000010000ull;  // invalid name_index 1
+    uint64_t old_name[8], group_name[8];
+    for (int lane = 0; lane < 8; ++lane) {
+      old_name[lane] = 0x4F4C445F4E414D30ull + uint64_t(lane);
+      group_name[lane] = 0x4752505F4E414D30ull + uint64_t(lane);
+      h.name_store[lane] = old_name[lane];
+      h.name_store[8 + lane] = group_name[lane];
+    }
+    auto check_name = [&](const uint64_t* want_name, const char* tag) {
+      int bad_lane = -1;
+      for (int lane = 0; lane < 8; ++lane) {
+        if (h.w32(20 + 8 * lane) != uint32_t(want_name[lane] >> 32) ||
+            h.w32(24 + 8 * lane) != uint32_t(want_name[lane])) {
+          bad_lane = lane;
+          break;
+        }
+      }
+      CHECK(bad_lane < 0, "%s name lane %d differs", tag, bad_lane);
+    };
+    auto check_zero_name = [&](const char* tag) {
+      uint64_t zero[8] = {};
+      check_name(zero, tag);
+    };
+
+    CHECK(h.run(E_GNAME, CD_KEY, false, 4000, CD_PFX, 0),
+          "P8b GET_NAME completes");
+    CHECK(h.last_status == ST_OK && h.last_len == 84,
+          "P8b GET_NAME status/len %u/%u", h.last_status, h.last_len);
+    CHECK(h.w32(12) == 0x00240000u && h.w32(16) == 0,
+          "P8b GET_NAME echoes the complete selector");
+    check_name(old_name, "P8b GET_NAME");
+    CHECK(h.stw.empty() && h.commits == 0 && h.nvm_marks.empty() &&
+          h.notify_classes.empty(), "P8b GET_NAME has no write or effects");
+
+    CHECK(h.run(E_GNAME, CD_KEY, false, 4000, CD_BAD, 1),
+          "P8c invalid GET_NAME completes");
+    CHECK(h.last_status == ST_BADARG && h.last_len == 84,
+          "P8c invalid name_index status/len %u/%u",
+          h.last_status, h.last_len);
+    CHECK(h.w32(12) == 0x00240000u && h.w32(16) == 0x00010000u,
+          "P8c invalid selector is echoed");
+    check_zero_name("P8c invalid GET_NAME");
+
+    const uint64_t MISS_KEY = 0x00000BAD00240000ull;
+    const uint64_t MISS_PFX = 0x00240BAD00000000ull;
+    CHECK(h.run(E_GNAME, MISS_KEY, false, 4000, MISS_PFX, 0),
+          "P8d missing-descriptor GET_NAME completes");
+    CHECK(h.last_status == ST_NOSUCH && h.last_len == 84,
+          "P8d missing descriptor status/len %u/%u",
+          h.last_status, h.last_len);
+    check_zero_name("P8d missing-descriptor GET_NAME");
+
+    const uint64_t ENTITY_KEY = 0;
+    const uint64_t GROUP_PFX = 0x0000000000010000ull;
+    CHECK(h.run(E_GNAME, ENTITY_KEY, false, 4000, GROUP_PFX, 1),
+          "P8e ENTITY group-name GET_NAME completes");
+    CHECK(h.last_status == ST_OK && h.last_len == 84,
+          "P8e ENTITY name_index 1 status/len %u/%u",
+          h.last_status, h.last_len);
+    check_name(group_name, "P8e ENTITY group name");
+
+    for (int lane = 0; lane < 8; ++lane) h.name_store[lane] = old_name[lane];
+    CHECK(h.run(E_SNAME, CD_KEY, false, 8000, CD_PFX, 0),
+          "P8f changed SET_NAME completes");
+    CHECK(h.last_status == ST_OK && h.last_len == 84,
+          "P8f SET_NAME status/len %u/%u", h.last_status, h.last_len);
+    CHECK(h.stw.size() == 8, "P8f writes eight changed lanes, got %zu",
+          h.stw.size());
+    int bad_write = -1;
+    for (int lane = 0; lane < 8 && lane < int(h.stw.size()); ++lane) {
+      if (!h.stw[lane].name || h.stw[lane].addr != uint32_t(8 * lane) ||
+          h.stw[lane].data != h.staged_name[lane] ||
+          h.stw[lane].strb != 0xFF) {
+        bad_write = lane;
+        break;
+      }
+    }
+    CHECK(bad_write < 0, "P8f state write lane %d differs", bad_write);
+    check_name(h.staged_name, "P8f SET_NAME response");
+    CHECK(h.commits == 1 && h.nvm_marks.size() == 1 &&
+          h.nvm_marks[0] == 7 && h.notify_classes.size() == 1 &&
+          h.notify_classes[0] == 7, "P8f changed SET_NAME emits effects once");
+
+    CHECK(h.run(E_GNAME, CD_KEY, false, 4000, CD_PFX, 0),
+          "P8g GET_NAME after SET_NAME completes");
+    check_name(h.staged_name, "P8g GET_NAME after SET_NAME");
+
+    CHECK(h.run(E_SNAME, CD_KEY, false, 8000, CD_PFX, 0),
+          "P8h idempotent SET_NAME completes");
+    CHECK(h.last_status == ST_OK && h.stw.empty(),
+          "P8h idempotent SET_NAME performs no writes");
+    CHECK(h.commits == 0 && h.nvm_marks.empty() && h.notify_classes.empty(),
+          "P8h idempotent SET_NAME emits no effects");
+    check_name(h.staged_name, "P8h idempotent SET_NAME response");
+
+    for (int lane = 0; lane < 8; ++lane) h.name_store[lane] = old_name[lane];
+    CHECK(h.run(E_SNAME, CD_KEY, true, 8000, CD_PFX, 0),
+          "P8i locked SET_NAME completes");
+    CHECK(h.last_status == ST_LOCKED && h.last_len == 84,
+          "P8i locked SET_NAME status/len %u/%u",
+          h.last_status, h.last_len);
+    CHECK(h.stw.empty() && h.commits == 0 && h.nvm_marks.empty() &&
+          h.notify_classes.empty(), "P8i locked SET_NAME has no side effects");
+    check_name(old_name, "P8i locked SET_NAME current-name response");
+
+    CHECK(h.run(E_NAMEBAD, CD_KEY, false, 4000, CD_PFX, 0),
+          "P8j malformed name-command response completes");
+    CHECK(h.last_status == ST_BADARG && h.last_len == 84,
+          "P8j malformed command status/len %u/%u",
+          h.last_status, h.last_len);
+    check_zero_name("P8j malformed command");
+  }
 
   // ---- P9: COPY_BUFFER — descriptor bytes into the response -----------
   CHECK(h.run(E_COPY, IDX_OK, false), "P9 completes");
@@ -924,9 +1072,8 @@ int main(int argc, char** argv) {
     const uint32_t WR_FMTIN_A  = 0x500u + 0x10000u + 0x18u;
     const uint32_t WR_FMTOUT_A = 0x500u + 0x10000u + 0x20u;
 
-    dut->disp_opd2_i = FMT;
     h.sfmt_verdict = 3;
-    CHECK(h.run(E_SFMTI, KEY, false, 2000, TYIX), "S3 completes");
+    CHECK(h.run(E_SFMTI, KEY, false, 2000, TYIX, FMT), "S3 completes");
     CHECK(h.last_status == ST_OK && h.last_len == 24,
           "S3 SUCCESS with the 12-byte body, got %u len %u",
           h.last_status, h.last_len);
@@ -945,7 +1092,7 @@ int main(int argc, char** argv) {
     // S3b: the integrator refuses the format (unsupported) -> BAD_ARGUMENTS
     // carrying the CURRENT format, and nothing written
     h.sfmt_verdict = 2;
-    CHECK(h.run(E_SFMTI, KEY, false, 2000, TYIX), "S3b completes");
+    CHECK(h.run(E_SFMTI, KEY, false, 2000, TYIX, FMT), "S3b completes");
     CHECK(h.last_status == ST_BADARG && h.last_len == 24,
           "S3b refusal keeps the full body, got %u len %u",
           h.last_status, h.last_len);
@@ -958,14 +1105,14 @@ int main(int argc, char** argv) {
 
     // S3c: supported but a mapping's channel would be orphaned
     h.sfmt_verdict = 1;
-    CHECK(h.run(E_SFMTI, KEY, false, 2000, TYIX), "S3c completes");
+    CHECK(h.run(E_SFMTI, KEY, false, 2000, TYIX, FMT), "S3c completes");
     CHECK(h.last_status == ST_BADARG && h.stw.empty(),
           "S3c the Milan mapping-survival SHALL refuses, got %u",
           h.last_status);
     h.sfmt_verdict = 3;
 
     // S3d: a foreign lock refuses before locate and verdict
-    CHECK(h.run(E_SFMTI, KEY, true, 2000, TYIX), "S3d completes");
+    CHECK(h.run(E_SFMTI, KEY, true, 2000, TYIX, FMT), "S3d completes");
     CHECK(h.last_status == ST_LOCKED && h.last_len == 24 && h.stw.empty(),
           "S3d ENTITY_LOCKED with the full body and no write, got %u len %u",
           h.last_status, h.last_len);
@@ -977,7 +1124,7 @@ int main(int argc, char** argv) {
     // S3e: a locate miss keeps NO_SUCH_DESCRIPTOR on the ZERO body and
     // never asks the face about a stream that does not exist
     CHECK(h.run(E_SFMTI, 0x00000BAD00050000ull, false, 2000,
-                0x0000000000050BADull),
+                0x0000000000050BADull, FMT),
           "S3e completes");
     CHECK(h.last_status == ST_NOSUCH && h.last_len == 24,
           "S3e NO_SUCH_DESCRIPTOR full body, got %u len %u",
@@ -986,9 +1133,8 @@ int main(int argc, char** argv) {
     CHECK(h.gx_sels.empty(), "S3e no gather for a nonexistent stream");
 
     // S3f: the OUTPUT twin differs in exactly the store selector
-    dut->disp_opd2_i = FMT;
     CHECK(h.run(E_SFMTO, 0x0000000300060000ull, false, 2000,
-                0x0000000000060003ull),
+                0x0000000000060003ull, FMT),
           "S3f completes");
     CHECK(h.last_status == ST_OK && h.stw.size() == 1
               && h.stw[0].addr == WR_FMTOUT_A && h.stw[0].data == FMT,
@@ -996,14 +1142,13 @@ int main(int argc, char** argv) {
 
     // S3g: the dispatch-routed running arm supplies STREAM_IS_RUNNING on
     // the current-format body
-    CHECK(h.run(E_SFRUN, KEY, false, 2000, TYIX), "S3g completes");
+    CHECK(h.run(E_SFRUN, KEY, false, 2000, TYIX, FMT), "S3g completes");
     CHECK(h.last_status == ST_STRMRUN && h.last_len == 24,
           "S3g STREAM_IS_RUNNING full body, got %u len %u",
           h.last_status, h.last_len);
     CHECK(h.w32(16) == uint32_t(Harness::SFMT_CUR_C >> 32),
           "S3g the running refusal serves the current format");
     CHECK(h.stw.empty(), "S3g the running refusal writes nothing");
-    dut->disp_opd2_i = 0;
   }
 
   // ---- S4: SET_STREAM_INFO (Milan 5.4.2.9) ------------------------------
@@ -1015,8 +1160,7 @@ int main(int argc, char** argv) {
     const uint64_t TYIX = 0x0000000000060003ull;
     const uint32_t WR_PTOFF_A = 0x500u + 0x10000u + 0x28u;
 
-    dut->disp_opd2_i = 1000000;
-    CHECK(h.run(E_SINFO, KEY, false, 2000, TYIX), "S4 completes");
+    CHECK(h.run(E_SINFO, KEY, false, 2000, TYIX, 1000000), "S4 completes");
     CHECK(h.last_status == ST_OK && h.last_len == 12,
           "S4 SUCCESS, header only (the echo is engine-side), got %u len %u",
           h.last_status, h.last_len);
@@ -1027,12 +1171,12 @@ int main(int argc, char** argv) {
     CHECK(h.nvm_marks.size() == 1 && h.nvm_marks[0] == 1,
           "S4 the setting marks NVM region 1");
 
-    CHECK(h.run(E_SINFO, KEY, true, 2000, TYIX), "S4b completes");
+    CHECK(h.run(E_SINFO, KEY, true, 2000, TYIX, 1000000), "S4b completes");
     CHECK(h.last_status == ST_LOCKED && h.stw.empty(),
           "S4b ENTITY_LOCKED writes nothing, got %u", h.last_status);
 
     CHECK(h.run(E_SINFO, 0x00000BAD00060000ull, false, 2000,
-                0x0000000000060BADull),
+                0x0000000000060BADull, 1000000),
           "S4c completes");
     CHECK(h.last_status == ST_NOSUCH && h.stw.empty(),
           "S4c NO_SUCH_DESCRIPTOR writes nothing, got %u", h.last_status);

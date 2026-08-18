@@ -10,6 +10,7 @@ TOP        = KL_aecp_desc_store
 VFLAGS = --cc --exe --build -j 0 \
          --top-module $(TOP) \
          -GMEM_TIMEOUT_CYC_P=64 \
+         -GNAME_ENTRIES_P=256 \
          -Wall -Wno-fatal -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDPARAM \
          -CFLAGS "-std=c++17 -O2 -I$(CURDIR)"

@@ -184,6 +184,12 @@ def descriptor_bytes(desc):
     return body
 
 
+def name_bytes(name):
+    """One name-table entry, exactly 64 bytes."""
+    raw = str(name).encode("utf-8")[:NAME_BYTES]
+    return raw + b"\x00" * (NAME_BYTES - len(raw))
+
+
 def build(model, line_bytes=576):
     """model (parsed JSON) -> (image bytes, human-readable map)."""
     if model.get("format") != "kl-aem-image":
@@ -191,6 +197,11 @@ def build(model, line_bytes=576):
     if _u(model.get("version", 0)) != LAYOUT_VERSION:
         raise ImageError(f"input version {model.get('version')} != "
                          f"{LAYOUT_VERSION}")
+
+    names = [str(n) for n in model.get("names", [])]
+    if len(names) >= NAME_NONE:
+        raise ImageError(f"the name table has {len(names)} entries; maximum "
+                         f"is {NAME_NONE - 1}")
 
     # ---- group by (configuration, type), ordered by (config, type, index) ---
     groups = {}
@@ -200,6 +211,11 @@ def build(model, line_bytes=576):
         idx = _u(desc.get("index", 0))
         body = descriptor_bytes(desc)
         nidx = _u(desc.get("name_index", NAME_NONE))
+        if nidx == -1:
+            nidx = NAME_NONE
+        if nidx < 0 or nidx > NAME_NONE:
+            raise ImageError(f"cfg {cfg} type 0x{typ:04X} index {idx} has "
+                             f"invalid name_index {nidx}")
         key = (cfg, typ)
         if idx in groups.setdefault(key, {}):
             raise ImageError(f"duplicate descriptor cfg {cfg} type "
@@ -215,6 +231,54 @@ def build(model, line_bytes=576):
         if want != list(range(len(want))):
             raise ImageError(f"cfg {cfg} type 0x{typ:04X} indices are not "
                              f"dense from 0: {want} (07 §3.1 rule L2)")
+
+        # One index-map row holds only the first name-table entry. Therefore
+        # every member of a named multi-descriptor group must consume the next
+        # table entry, while an unnamed group must be unnamed throughout.
+        # ENTITY is the sole exception: its one descriptor consumes two
+        # consecutive entries for entity_name and group_name.
+        named = [members[i][1] != NAME_NONE for i in want]
+        if any(named) and not all(named):
+            raise ImageError(f"cfg {cfg} type 0x{typ:04X} mixes named and "
+                             "unnamed descriptors in one index run")
+        if typ == TYPES["ENTITY"]:
+            if want != [0]:
+                raise ImageError(f"cfg {cfg} ENTITY must contain only index 0")
+            body, nidx = members[0]
+            if nidx == NAME_NONE:
+                raise ImageError(f"cfg {cfg} ENTITY has no name_index")
+            if len(body) < 244:
+                raise ImageError(f"cfg {cfg} ENTITY is {len(body)} bytes; "
+                                 "entity_name and group_name require 244")
+            if nidx + 2 > len(names):
+                raise ImageError(f"cfg {cfg} ENTITY names {nidx} and "
+                                 f"{nidx + 1} exceed table size {len(names)}")
+            if body[48:112] != name_bytes(names[nidx]):
+                raise ImageError(f"cfg {cfg} ENTITY entity_name differs from "
+                                 f"name-table entry {nidx}")
+            if body[180:244] != name_bytes(names[nidx + 1]):
+                raise ImageError(f"cfg {cfg} ENTITY group_name differs from "
+                                 f"name-table entry {nidx + 1}")
+        elif all(named):
+            base = members[0][1]
+            for i in want:
+                body, nidx = members[i]
+                if nidx != base + i:
+                    raise ImageError(
+                        f"cfg {cfg} type 0x{typ:04X} index {i} has name_index "
+                        f"{nidx}; expected contiguous entry {base + i}")
+                if len(body) < 68:
+                    raise ImageError(f"cfg {cfg} type 0x{typ:04X} index {i} "
+                                     f"is {len(body)} bytes; object_name "
+                                     "requires 68")
+                if nidx >= len(names):
+                    raise ImageError(
+                        f"cfg {cfg} type 0x{typ:04X} index {i} name_index "
+                        f"{nidx} exceeds table size {len(names)}")
+                if body[4:68] != name_bytes(names[nidx]):
+                    raise ImageError(
+                        f"cfg {cfg} type 0x{typ:04X} index {i} object_name "
+                        f"differs from name-table entry {nidx}")
         # A type does NOT have to be one uniform run. A Milan end-station puts
         # its media sink and its CRF sink both under STREAM_INPUT, and 07
         # §3.2's format list makes them different lengths (AAF advertising two
@@ -254,7 +318,6 @@ def build(model, line_bytes=576):
                             "first": run["first"],
                             "bodies": run["bodies"]})
 
-    names = [str(n) for n in model.get("names", [])]
     n_config = len({e["cfg"] for e in entries})
     if sorted({e["cfg"] for e in entries}) != list(range(n_config)):
         raise ImageError("configuration indices are not dense from 0")
@@ -279,9 +342,8 @@ def build(model, line_bytes=576):
     for off, body in blobs:
         img[off:off + len(body)] = body
     for i, nm in enumerate(names):
-        raw = nm.encode("utf-8")[:NAME_BYTES]
         img[names_off + i * NAME_BYTES:
-            names_off + i * NAME_BYTES + len(raw)] = raw
+            names_off + (i + 1) * NAME_BYTES] = name_bytes(nm)
 
     for i, ent in enumerate(entries):
         at = index_off + i * IDX_BYTES

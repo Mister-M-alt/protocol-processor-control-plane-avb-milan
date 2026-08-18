@@ -2,7 +2,7 @@
 # desc_store — KL_aecp_desc_store suite
 
 Proves the [07 §3.3](../../docs/architecture/07_memory_maps.md) entity-model
-store: `make` = build + run, exit 0 = PASS, **489 checks**.
+store: `make` = build + run, exit 0 = PASS, **584 checks**.
 
 The store keeps the descriptor image in the integrator's **main memory** (DDR3
 on the reference board) and serves the µCPU's `st_*` face from an on-chip line
@@ -38,7 +38,8 @@ buffer, so the harness is two independent models — never DUT logic:
 | **G1–G2** | boot walk out of DRAM; then every descriptor of the 07 §3.1 eight-descriptor example located and served **byte-exact**, lane by lane, with its length and `name_base`; a lane past the descriptor reads 0, never the next descriptor |
 | **G3** | index-map **boundaries**: the first and the last entry are both found (a scan that stops one early, or runs one past, fails exactly here); a type past the last entry and a type in a hole between entries both MISS |
 | **G4** | locate misses: unknown type, `descriptor_index` past `count`, unknown configuration — each `st_err`, each counted, and the store is not wedged afterwards |
-| **G5** | the 07 §3.4 **name region** via `st_name`: every entry read back against the image, then a full-lane and a byte-strobed write (names are overlay, so the region is writable) |
+| **G5** | the 07 §3.4 **name region** via `st_name`: every entry read back against the image, semantic index 0/1 validation, then full-lane and byte-strobed writes; each write is immediately visible in the unaligned inline field served by READ_DESCRIPTOR |
+| **G5b** | an 80-entry name table crosses the 511-beat request limit, loads through multiple whole-name chunks, and preserves the final entry at its absolute overlay address |
 | **G6** | the image is **read-only at run time** (07 §2): a non-name write is dropped, counted, and does not reach the served bytes |
 | **G7** | **back-to-back reads with `st_req` held high** — the µCPU never drops the request between two consecutive state ops, so a store that latched the request edge would deadlock here |
 | **G8** | a longer memory latency with inter-beat gaps changes nothing |

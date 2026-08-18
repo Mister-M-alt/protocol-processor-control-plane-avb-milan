@@ -60,7 +60,7 @@ Nothing here is writable at runtime, and that is deliberate.
 | `DESC_BASE_P` | 0x20000000 | where the descriptor image lives in **your** memory |
 | `DESC_LINE_BYTES_P` | 576 | the on-chip line buffer for one located descriptor |
 | `DESC_IDX_ENTRIES_P` | 32 | cached index-map entries |
-| `DESC_NAME_ENTRIES_P` | 16 | name-table entries held on chip |
+| `DESC_NAME_ENTRIES_P` | 32 | name-table entries held on chip; set it from the generated image's `n_names`, up to 1024 |
 | `DESC_MEM_TMO_CYC_P` | 4096 | no-progress watchdog on the descriptor memory face, in clocks |
 | `RESP_BASE_P` | 0x20100000 | where the AECP response buffer lives in **your** memory |
 

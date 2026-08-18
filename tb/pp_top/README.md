@@ -59,6 +59,15 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
     how a control plane builds a storm.
   - **A10/A11** three back-to-back commands each echo their own
     `sequence_id`; the snapshot window publishes the counters and image-valid.
+- **N** **GET_NAME and SET_NAME end to end** (Milan v1.2 5.4.2.11/.12):
+  every named slot in the fixture answers with cdl 84 and the exact 64 bytes
+  carried by its descriptor. The sweep includes both ENTITY semantic indices,
+  all other named descriptor types at index 0, and negative cases for an
+  unnamed descriptor, an invalid semantic index, a missing descriptor, and a
+  truncated command. Successful SET_NAME is followed by GET_NAME and
+  READ_DESCRIPTOR for both offset-4 `object_name` and the ENTITY group name at
+  offset 180. A foreign controller under lock receives `ENTITY_LOCKED` with
+  the old current name, and the stored value remains unchanged.
 - **M** **MVU GET_MILAN_INFO end to end** (Milan v1.2 §5.4.4.1) — the command a
   Milan controller sends FIRST, before a single descriptor, and the one whose
   answer decides whether it treats this device as a PAAD-AE at all. It is not
@@ -319,13 +328,14 @@ engine, response memory, and TX path. Its expected bytes are built from the
 standard's record layout and the harness models, not from standalone DUT
 responses.
 
-W8 covers two implemented getters in one byte-exact aggregate, a missing
+W8 covers implemented getters including full GET_NAME records in one byte-exact
+aggregate, a missing
 descriptor that changes only one record status, whole-command `BAD_ARGUMENTS`
 for a forbidden `GET_AUDIO_MAP` with proof that no earlier record reached the
 descriptor store, silent overflow omission followed by successful processing
 of a later record, the Milan 56-byte `GET_STREAM_INFO` body, and
 record-level `NOT_SUPPORTED` with exact command-data copy for a permitted but
-unimplemented `GET_NAME`. It also covers an empty batch, truncated and
+unimplemented getter. It also covers an empty batch, truncated and
 overrunning records, per-record `BAD_ARGUMENTS` for a non-SUCCESS command
 status, preservation of the full 16-bit record command discriminator, every
 member of the exact 13-command whitelist, retention at the exact cdl 524

@@ -184,6 +184,14 @@ caps (528 B), so 576 covers a model assembled either way. A descriptor longer th
 the line is refused at load time (header `desc_max_len`) and at locate time, never
 truncated.
 
+The writable name table is loaded into its own on-chip overlay during the same
+validation walk. A request can carry at most 511 beats, so the loader uses
+504-beat chunks, the largest whole-name multiple that fits, until every 64-byte
+entry is present. `NAME_ENTRIES_P` is the elaborated capacity and an image that
+exceeds it is refused. The reference root derives that capacity from the same
+generated entity shape that produces the image, including models whose table is
+larger than one request.
+
 #### 3.3.2 The other main-memory region — the AECP response buffer
 
 The image is read-only and the store never writes it, but it is not the only region
@@ -208,18 +216,27 @@ and neither base may be a register.
 | name table @`names_off` | `n_names` × 64 B — the §3.4 overlay's initial content | |
 
 Layout-version-1 constraints, enforced by the generator (it refuses an input that
-violates them) and re-checked by the store at locate time: every descriptor of one
-(configuration, type) has the same `elem_len`, and `elem_stride` is `elem_len` rounded
-up to 8 so index > 0 never starts mid-beat. Milan §6.3/§6.4 rate-completeness and
-configuration-uniformity already force the uniform length for the stream descriptors.
+violates them) and re-checked by the store at locate time: each index row is one
+maximal run of equal `elem_len`, and `elem_stride` is `elem_len` rounded up to 8 so
+index > 0 never starts mid-beat. Rows for one descriptor type remain contiguous.
+The store accumulates the counts of earlier rows of that type before calculating
+the run-relative index. This permits an AAF and CRF Stream Input to have the
+different lengths their format lists require without adding a second indirection.
 
-The µCPU's `st_*` face reaches all of this through a region nibble on `st_addr[19:16]`
-— 0x0 descriptor data, 0xC the located descriptor's `name_base`, 0xD
+The µCPU's `st_*` face reaches all of this through a region nibble on `st_addr[19:16]`:
+0x0 descriptor data, 0xB semantic `name_index` to writable-table byte address,
+0xC the located descriptor's `name_base`, 0xD
 `configurations_count` (so a µprogram can answer `BAD_ARGUMENTS` for a bad
 configuration index per [06 §6.1](06_aecp_engine.md), not `NO_SUCH_DESCRIPTOR`), 0xE
 its length, 0xF LOCATE with the 48-bit key on `st_wdata` — because a 20-bit address
 cannot carry {configuration, type, index} and [06 §8](06_aecp_engine.md) leaves the
 encoding open.
+
+After every descriptor fetch, the store copies its named fields from the writable
+table into the line buffer: ENTITY offsets 48 and 180, and offset 4 for every
+other named descriptor. A name write to the currently located descriptor patches
+the same line before accepting another state operation. Thus the table is the
+single writable source while descriptor reads remain coherent with it.
 
 ### 3.4 Dynamic overlay
 

@@ -40,6 +40,7 @@ REL_EQ, REL_NE, REL_LT, REL_GE = 0, 1, 2, 3
 # 48-bit locate key on a 20-bit address, so the region nibble selects what a
 # state access MEANS and the key rides st_wdata (= rf[ra]).
 RGN_DATA   = 0x00000   # the located descriptor's bytes
+RGN_NADDR  = 0xB0000   # semantic name_index -> overlay byte address
 RGN_NBASE  = 0xC0000   # name-table entry of the located descriptor
 RGN_NCFG   = 0xD0000   # configurations_count
 RGN_LEN    = 0xE0000   # located descriptor length
@@ -189,6 +190,16 @@ E_SFZERO = 1904     # the zero-format body (a locate miss keeps NO_SUCH_DESC)
 E_SFBAD  = 1912     # SET_STREAM_FORMAT too short to carry its own format
 E_SIBAD  = 1920     # SET_STREAM_INFO too short: the full 84-byte zero body
 E_SIRUN  = 1936     # SET_STREAM_INFO on a STREAMING output: refused whole
+#! the name family, RENUMBERED at the setters merge: the #67 programs landed
+#! first on main and hold 1792..1939, so GET_NAME and the three shared arms
+#! take the gaps between the setter slots and SET_NAME (62 words) takes the
+#! tail from 1940. The tail keeps 46 free words; the next family that does
+#! not fit renumbers again - place() asserts on any overlap either way.
+E_GNAME   = 1808     # GET_NAME (Milan 5.4.2.12, IEEE 7.4.18)
+E_SNAME   = 1940     # SET_NAME (Milan 5.4.2.11, IEEE 7.4.17)
+E_NAMEERR = 1840     # full GET_NAME/SET_NAME error body with a zero name
+E_NAMERESP = 1865    # full response with the current name overlay value
+E_NAMEBAD = 1890     # malformed name command enters the full error body
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
@@ -438,8 +449,9 @@ place(E_SETSR, [
 place(E_NAME, [
     u('DESC_ADDR', ra=14, imm=0x00100),
     u('BR_STATUS', cnd=0, imm=E_FAIL),
-    u('NAME_RD', rd=4, imm=0x10),
-    u('NAME_WR', ra=4, fmt=FMT_Q, imm=0x18),
+    u('MOVE', rd=3, imm=0x500),
+    u('NAME_RD', rd=4, ra=3, imm=0x10),
+    u('NAME_WR', ra=4, rb=3, fmt=FMT_Q, imm=0x18),
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=4, fmt=FMT_Q),
@@ -1864,6 +1876,80 @@ place(E_SIRUN, [
     u('BUILD_HDR', ra=15, rb=13),
     u('SEND_RESP'),
     u('END'),
+])
+
+# --- GET_NAME / SET_NAME ----------------------------------------------------
+# IEEE 1722.1-2021 Figures 7-39 and 7-40 use the same 72-byte response body:
+# {descriptor_type, descriptor_index, name_index, configuration_index, name}.
+# r14 is the locate key, r13 is that fixed eight-byte prefix, and r12 is the
+# semantic name_index. RGN_NADDR validates the name_index and translates it to
+# the byte address used by NAME_RD/NAME_WR. Every error still emits the full
+# response form. A SET rejected by the lock reaches E_NAMERESP after lookup,
+# so its response contains the old, currently effective value as required.
+place(E_GNAME, [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),
+    u('BR_STATUS', cnd=0, imm=E_NAMEERR),
+    u('READ_ST', rd=3, ra=12, imm=RGN_NADDR),
+    u('BR_STATUS', cnd=0, imm=E_NAMEERR),
+    u('SET_STATUS', imm=ST_OK),
+    u('BRANCH', imm=E_NAMERESP),
+])
+
+set_name = [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('MOVE', rd=5, ra=0, imm=0),              # any lane changed
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),
+    u('BR_STATUS', cnd=0, imm=E_NAMEERR),
+    u('READ_ST', rd=3, ra=12, imm=RGN_NADDR),
+    u('BR_STATUS', cnd=0, imm=E_NAMEERR),
+    u('CHECK_LOCK', ra=15, imm=E_NAMERESP),
+]
+for lane in range(8):
+    # Selector 0x60..0x67 reads the eight staged command-name lanes.
+    set_name += [
+        u('NAME_RD', rd=1, ra=3, imm=8 * lane),
+        u('GATHER_EXT', rd=4, cnd=6, imm=lane),
+        u('COMPARE', ra=1, rb=4, fmt=FMT_Q),
+        u('BR_STATUS', cnd=2, imm=E_SNAME + len(set_name) + 6),
+        u('MOVE', rd=5, ra=0, imm=1),
+        u('NAME_WR', ra=4, rb=3, fmt=FMT_Q, imm=8 * lane),
+    ]
+set_name += [
+    u('COMPARE', ra=5, fmt=FMT_B, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_SNAME + len(set_name) + 5),
+    u('COMMIT'),
+    u('NVM_MARK', imm=7),                       # naming persistence trigger
+    u('NOTIFY_ENQ', imm=7),                     # naming notification trigger
+    u('SET_STATUS', imm=ST_OK),
+    u('BRANCH', imm=E_NAMERESP),
+]
+place(E_SNAME, set_name)
+
+place(E_NAMEERR, [
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_Q),
+] + [u('BUILD_FLD', ra=2, fmt=FMT_Q) for _ in range(8)] + [
+    u('SEND_RESP'),
+    u('END'),
+])
+
+name_response = [
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_Q),
+]
+for lane in range(8):
+    name_response += [
+        u('NAME_RD', rd=1, ra=3, imm=8 * lane),
+        u('BUILD_FLD', ra=1, fmt=FMT_Q),
+    ]
+name_response += [u('SEND_RESP'), u('END')]
+place(E_NAMERESP, name_response)
+
+place(E_NAMEBAD, [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('SET_STATUS', imm=ST_BADARG),
+    u('BRANCH', imm=E_NAMEERR),
 ])
 
 
