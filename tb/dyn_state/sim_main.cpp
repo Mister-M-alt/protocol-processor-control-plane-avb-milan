@@ -34,7 +34,7 @@ static long checks = 0, fails = 0;
 
 // field selectors — mirror KL_aecp_dyn_state.sv's SEL_*_C
 enum { SEL_CFG = 0, SEL_RATE = 1, SEL_CLKSRC = 2, SEL_FMTIN = 3,
-       SEL_FMTOUT = 4, SEL_PTOFF = 5, SEL_START = 6, SEL_IDENT = 7 };
+       SEL_FMTOUT = 4, SEL_PTOFF = 5, SEL_RETIRED = 6, SEL_IDENT = 7 };
 // regions
 static const uint32_t RGN_DYN  = 0x1u << 16;   // the value
 static const uint32_t RGN_DYNV = 0x2u << 16;   // the valid flag
@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
   // "valid" would make every GET report a setting nobody made.
   {
     const int sels[] = {SEL_CFG, SEL_RATE, SEL_CLKSRC, SEL_FMTIN,
-                        SEL_FMTOUT, SEL_PTOFF, SEL_START, SEL_IDENT};
+                        SEL_FMTOUT, SEL_PTOFF, SEL_RETIRED, SEL_IDENT};
     for (int s : sels) {
       CHECK(rd(RGN_DYNV, s, 0) == 0,
             "A: selector %d reads VALID out of reset", s);
@@ -201,20 +201,41 @@ int main(int argc, char** argv) {
     wr(SEL_PTOFF, 0, 2000000);
     CHECK(d->pt_offset_o == 2000000,
           "F: presentation-offset face is %u", (unsigned)d->pt_offset_o);
-    wr(SEL_START, 0, 1);
-    CHECK((d->strm_started_o & 1u) == 1u,
-          "F: input 0's started bit did not reach the face");
-    if (NSI >= 2) {
-      CHECK(((d->strm_started_o >> 1) & 1u) == 0u,
-            "F: starting input 0 also started input 1");
-      wr(SEL_START, 1, 1);
-      CHECK(((d->strm_started_o >> 1) & 1u) == 1u,
-            "F: input 1's started bit did not reach the face");
-      wr(SEL_START, 0, 0);
-      CHECK((d->strm_started_o & 1u) == 0u, "F: input 0 did not stop");
-      CHECK(((d->strm_started_o >> 1) & 1u) == 1u,
-            "F: stopping input 0 also stopped input 1");
-    }
+  }
+
+  // ---- F2: selector 6 is RETIRED and cannot become a second source -------
+  // It used to hold started/stopped per Stream Input. Milan 5.3.8.7 makes
+  // that a property of the BINDING ("undefined when the Stream Input is not
+  // bound"), so it lives in the ACMP binding record, which is the only place
+  // with the lifecycle to clear it on unbind and restore it after a power
+  // cycle. A writable copy here would disagree with the record silently -
+  // both answer a plausible 0 or 1 and nothing says which is right.
+  //
+  // This is deliberately a test that the row is GONE rather than the absence
+  // of a test: a selector that owns no rows fails its range check, so the
+  // write is DROPPED AND COUNTED, and the read answers a clear valid flag.
+  // Without this, re-adding the field would turn the suite green again.
+  // (no reset() here: the counters below are read as deltas, and block G
+  //  downstream asserts on the configuration block F set)
+  {
+    const uint16_t wr0  = d->dbg_writes_o;
+    const uint16_t oob0 = d->dbg_oob_o;
+    wr(SEL_RETIRED, 0, 1);
+    CHECK(d->dbg_writes_o == wr0,
+          "F2: a write to the retired selector was ACCEPTED (writes %u -> %u)",
+          (unsigned)wr0, (unsigned)d->dbg_writes_o);
+    CHECK(d->dbg_oob_o == (uint16_t)(oob0 + 1),
+          "F2: the dropped write was not counted (oob %u -> %u)",
+          (unsigned)oob0, (unsigned)d->dbg_oob_o);
+    CHECK(rd(RGN_DYN, SEL_RETIRED, 0) == 0,
+          "F2: the retired selector still reads a value back");
+    CHECK(rd(RGN_DYNV, SEL_RETIRED, 0) == 0,
+          "F2: the retired selector still reports itself valid");
+    // ...and retiring it did not disturb the selector next to it
+    wr(SEL_IDENT, 0, 0x5A);
+    CHECK(d->identify_o == 0x5A,
+          "F2: SEL_IDENT broke when selector 6 was retired (%u)",
+          (unsigned)d->identify_o);
   }
 
   // ---- G: a read never disturbs the store --------------------------------

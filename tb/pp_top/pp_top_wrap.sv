@@ -248,7 +248,12 @@ module pp_top_wrap (
     output logic [15:0] dbg_aecp_drop_o,
     output logic  [2:0] dbg_resp_fault_o,
     output logic [15:0] dbg_resp_err_o,
-    output logic [15:0] dbg_resp_lane_o
+    output logic [15:0] dbg_resp_lane_o,
+    //! the per-sink started/stopped view the FABRIC admission gate reads
+    //! (Milan 5.3.8.7). It is exposed because a START/STOP_STREAMING that
+    //! answers SUCCESS without moving this bit is the exact defect the
+    //! command's response shape cannot show.
+    output logic  [7:0] aecp_strm_started_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
@@ -332,7 +337,7 @@ module pp_top_wrap (
       .aecp_cur_config_o     (),
       .aecp_identify_o       (),
       .aecp_clk_src_index_o  (),
-      .aecp_strm_started_o   (),
+      .aecp_strm_started_o   (aecp_strm_started_o),
       .aecp_pt_offset_o      (),
       .aecp_dyn_dirty_o      (),
       .aecp_lock_held_o      (aecp_lock_held_nc_w),
