@@ -264,7 +264,7 @@ module KL_aecp_engine
     parameter logic [31:0] RESP_BASE_P       = 32'h2010_0000,
     parameter int unsigned LINE_BYTES_P      = 576,
     parameter int unsigned IDX_ENTRIES_P     = 32,
-    parameter int unsigned NAME_ENTRIES_P    = 16,
+    parameter int unsigned NAME_ENTRIES_P    = 32,
     parameter int unsigned MEM_TIMEOUT_CYC_P = 4096,
     //! ---- the shape the dynamic-state store is sized from ---------------
     //! Milan v1.2 makes one setting per Audio Unit, per Clock Domain, per
@@ -557,13 +557,14 @@ module KL_aecp_engine
   localparam logic [15:0] OP_GET_COUNTERS_C    = 16'h0029;
   localparam logic [15:0] OP_GET_AUDIO_MAP_C   = 16'h002B;
   localparam logic [15:0] OP_GET_DYNAMIC_INFO_C = 16'h004B;
+  localparam logic [15:0] OP_SET_NAME_C         = 16'h0010;
+  localparam logic [15:0] OP_GET_NAME_C         = 16'h0011;
   //! IEEE 1722.1-2021 7.4.76.2 permits exactly these fixed-size getters in
   //! a dynamic_info list. Membership and implementation are separate:
   //! permitted getters that this profile does not serve receive a record
   //! status of NOT_SUPPORTED instead of rejecting the whole command.
   localparam logic [15:0] GDI_GET_VIDEO_FMT_C   = 16'h000B;
   localparam logic [15:0] GDI_GET_SENSOR_FMT_C  = 16'h000D;
-  localparam logic [15:0] GDI_GET_NAME_C        = 16'h0011;
   localparam logic [15:0] GDI_GET_ASSOC_ID_C    = 16'h0013;
   localparam logic [15:0] GDI_GET_SIGNAL_SEL_C  = 16'h001D;
   localparam logic [15:0] GDI_GET_MEM_LEN_C     = 16'h0048;
@@ -731,6 +732,10 @@ module KL_aecp_engine
   //! against gen_ucode.py, so the two cannot drift apart again silently.
   localparam logic [10:0] UPC_AMADD_C    = 11'd1712; // E_AMADD
   localparam logic [10:0] UPC_AMREMOVE_C = 11'd1760; // E_AMREMOVE
+  localparam logic [10:0] UPC_GNAME_C    = 11'd1824; // E_GNAME
+  localparam logic [10:0] UPC_SNAME_C    = 11'd1856; // E_SNAME
+  localparam logic [10:0] UPC_NAMEERR_C  = 11'd1920; // E_NAMEERR
+  localparam logic [10:0] UPC_NAMEBAD_C  = 11'd1960; // E_NAMEBAD
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -788,6 +793,7 @@ module KL_aecp_engine
   pp_txn_t     cmd_r;
   logic [15:0] raw_ct_r;                 // AECPDU @22..@23 echoed verbatim
   logic [15:0] cfg_ix_r, desc_ty_r, desc_ix_r;
+  logic [15:0] name_ix_r, name_cfg_r;
   logic [10:0] pld_cmd_r;                // command payload bytes
   logic [10:0] pld_r;                    // payload bytes to emit
   logic [10:0] walk_r;                   // payload walk index
@@ -813,6 +819,8 @@ module KL_aecp_engine
   logic        sclks_r;                  // ... a SET_CLOCK_SOURCE
   logic        gctrl_r;                  // ... a GET_CONTROL
   logic        sctrl_r;                  // ... a SET_CONTROL
+  logic        gname_r;                  // ... a GET_NAME
+  logic        sname_r;                  // ... a SET_NAME
   logic        scfg_r;                   // ... a SET_CONFIGURATION
   logic        strt_r;                   // ... a START_STREAMING
   logic        stop_r;                   // ... a STOP_STREAMING
@@ -860,7 +868,7 @@ module KL_aecp_engine
   function automatic logic gdi_allowed(input logic [15:0] command_type);
     unique case (command_type)
       OP_GET_CONFIG_C, OP_GET_STREAM_FMT_C, GDI_GET_VIDEO_FMT_C,
-      GDI_GET_SENSOR_FMT_C, OP_GET_STREAM_INFO_C, GDI_GET_NAME_C,
+      GDI_GET_SENSOR_FMT_C, OP_GET_STREAM_INFO_C, OP_GET_NAME_C,
       GDI_GET_ASSOC_ID_C, OP_GET_SAMP_RATE_C, OP_GET_CLOCK_SRC_C,
       GDI_GET_SIGNAL_SEL_C, OP_GET_COUNTERS_C, GDI_GET_MEM_LEN_C,
       GDI_GET_STREAM_BKUP_C: gdi_allowed = 1'b1;
@@ -923,6 +931,13 @@ module KL_aecp_engine
                         ? UPC_GCLKS_C : UPC_TIZ4NS_C;
         end
       end
+      OP_GET_NAME_C: begin
+        if (g_rec_len_r < 16'd8) g_sub_status_w = ST_BAD_ARGUMENTS_C;
+        else begin
+          g_sub_exec_w = 1'b1; g_sub_rlen_w = 11'd72;
+          g_sub_upc_w = UPC_GNAME_C;
+        end
+      end
       OP_GET_COUNTERS_C: begin
         if (g_rec_len_r < 16'd4) g_sub_status_w = ST_BAD_ARGUMENTS_C;
         else begin
@@ -963,7 +978,8 @@ module KL_aecp_engine
   logic  [7:0] amap_rx_count_w;
   logic [10:0] amap_edit_pld_w;
   logic        amap_stage_ser_w, amap_stage_ser_load_w;
-  logic        amap_stage_edit_load_w, amap_stage_rd_en_w;
+  logic        amap_stage_edit_load_w, amap_stage_name_load_w;
+  logic        amap_stage_rd_en_w;
   logic  [7:0] amap_stage_raddr_w;
 
   //! A malformed command can still carry complete mapping records. Figure
@@ -1132,6 +1148,9 @@ module KL_aecp_engine
   assign sctrl_w  = aem_w
                     && (txn_w.opcode == OP_SET_CONTROL_C);
   assign setc_w   = ssrate_w | sclks_w | sctrl_w;
+  logic gname_w, sname_w;
+  assign gname_w  = aem_w && (txn_w.opcode == OP_GET_NAME_C);
+  assign sname_w  = aem_w && (txn_w.opcode == OP_SET_NAME_C);
   logic scfg_w;
   assign scfg_w   = aem_w
                     && (txn_w.opcode == OP_SET_CONFIG_C);
@@ -1264,13 +1283,17 @@ module KL_aecp_engine
   logic tix_w;
   assign tix_w = ctrs_r | amap_r | amap_edit_r | gstri_r | gavb_r
                  | gsfmt_r | gsrate_r | gclks_r | setc_r | gctrl_r
-                 | strm_r;
+                 | strm_r | gname_r | sname_r;
   assign ix26_w = tix_w | regun_r | lockc_r | scfg_r;
-  assign opd0_w = tix_w       ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
+  assign opd0_w = (gname_r || sname_r)
+                              ? {16'd0, desc_ix_r, cfg_ix_r, name_cfg_r}
+                : tix_w       ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
                 : gasp_r      ? {16'd0, cfg_ix_r, DT_AVB_INTERFACE_C, 16'd0}
                 : lockc_r     ? {32'd0, cfg_ix_r, desc_ix_r}
                               : {16'd0, desc_ix_r, desc_ty_r, cfg_ix_r};
-  assign opd1_w = amap_r                 ? {32'd0, desc_ix_r, desc_ty_r}
+  assign opd1_w = (gname_r || sname_r)   ? {cfg_ix_r, desc_ix_r,
+                                             name_ix_r, name_cfg_r}
+                : amap_r                 ? {32'd0, desc_ix_r, desc_ty_r}
                 : tix_w                  ? {32'd0, cfg_ix_r, desc_ix_r}
                 : gasp_r                 ? {48'd0, cfg_ix_r}
                 : scfg_r                 ? {48'd0, desc_ix_r}
@@ -1285,7 +1308,8 @@ module KL_aecp_engine
   //! §7.4.7.1 puts `reserved` at @24 and `configuration_index` at @26, so the
   //! value is what the walk already captured into `desc_ix_r` and there is
   //! nothing to justify.
-  assign opd2_w = amap_edit_r ? {48'd0, desc_ty_r}
+  assign opd2_w = (gname_r || sname_r) ? {48'd0, name_ix_r}
+                : amap_edit_r ? {48'd0, desc_ty_r}
                 : ssrate_r ? {32'd0, setval_r[63:32]}
                 : sclks_r  ? {48'd0, setval_r[63:48]}
                 : sctrl_r  ? {56'd0, setval_r[63:56]}
@@ -1645,7 +1669,7 @@ module KL_aecp_engine
   logic gx_alt_w, gsi_any_w, rgy_any_w;
   assign gsi_any_w = gstri_r | gavb_r | gasp_r | gsfmt_r;
   assign rgy_any_w = regun_r | lockc_r | eavl_r;
-  assign gx_alt_w  = amap_r | amap_edit_r | rgy_any_w | gsi_any_w;
+  assign gx_alt_w  = amap_r | amap_edit_r | sname_r | rgy_any_w | gsi_any_w;
 
   assign ctr_req_o        = gx_req_w && !gx_alt_w;
   assign ctr_desc_type_o  = cfg_ix_r;
@@ -1732,10 +1756,15 @@ module KL_aecp_engine
   assign amap_stage_edit_load_w = !amap_stage_ser_w && gx_req_w && amap_edit_r
                                   && (amap_edit_phase_o >= 3'd4)
                                   && !amap_stage_ready_r;
+  assign amap_stage_name_load_w = !amap_stage_ser_w && gx_req_w && sname_r
+                                  && (gx_sel_w[7:3] == 5'b01100)
+                                  && !amap_stage_ready_r;
   assign amap_stage_rd_en_w = amap_stage_ser_load_w
-                              || amap_stage_edit_load_w;
+                              || amap_stage_edit_load_w
+                              || amap_stage_name_load_w;
   assign amap_stage_raddr_w = amap_stage_ser_w
-      ? 8'((bidx_r - 11'(FRAME_HDR_C + 7)) >> 3) : amap_rec_r;
+      ? 8'((bidx_r - 11'(FRAME_HDR_C + 7)) >> 3)
+      : sname_r ? {5'd0, gx_sel_w[2:0]} : amap_rec_r;
 
   always_ff @(posedge clk_i) begin : amap_stage_read
     if (!rst_n) begin
@@ -1744,8 +1773,9 @@ module KL_aecp_engine
     end else begin
       if (amap_stage_ser_w) begin
         amap_stage_ready_r <= 1'b0;
-      end else if (!gx_req_w || !amap_edit_r
-                   || (amap_edit_phase_o < 3'd4)) begin
+      end else if (!gx_req_w
+                   || (!(amap_edit_r && (amap_edit_phase_o >= 3'd4))
+                       && !sname_r)) begin
         amap_stage_ready_r <= 1'b0;
       end else if (!amap_stage_ready_r) begin
         amap_stage_ready_r <= 1'b1;
@@ -1765,7 +1795,7 @@ module KL_aecp_engine
       amap_stage_assem_r <= 64'd0;
     end else if (a_st_r == A_IDLE) begin
       amap_stage_assem_r <= 64'd0;
-    end else if ((a_st_r == A_PLD) && amap_edit_r
+    end else if ((a_st_r == A_PLD) && (amap_edit_r || sname_r)
                  && (walk_r >= 11'd11)) begin
       amap_stage_assem_r <= {amap_stage_assem_r[55:0], rxs_rd_data_i};
       if (((walk_r - 11'd11) & 11'd7) == 11'd7) begin
@@ -1782,7 +1812,8 @@ module KL_aecp_engine
   localparam int unsigned CTO_W_C = $clog2(MEM_TIMEOUT_CYC_P + 1);
   logic [CTO_W_C-1:0] gxf_tmo_r;
   logic               gxf_fail_r;
-  logic               ctr_hold_w, amap_hold_w, amap_edit_hold_w, rgy_hold_w;
+  logic               ctr_hold_w, amap_hold_w, amap_edit_hold_w, name_hold_w;
+  logic               rgy_hold_w;
   logic gsi_hold_w;
   assign ctr_hold_w  = gx_req_w && !gx_alt_w
                        && ctr_wait_i  && !gxf_fail_r;
@@ -1793,6 +1824,8 @@ module KL_aecp_engine
                                 || (amap_edit_req_o && amap_edit_wait_i
                                     && (amap_edit_phase_o != 3'd2)
                                     && (amap_edit_phase_o != 3'd5)));
+  assign name_hold_w = gx_req_w && sname_r && !amap_stage_ready_r
+                       && !gxf_fail_r;
   assign rgy_hold_w  = gx_req_w && (regun_r || lockc_r)
                        && rgy_wait_i && !gxf_fail_r;
   assign gsi_hold_w  = gx_req_w &&  gsi_any_w && gsi_wait_i && !gxf_fail_r;
@@ -1818,11 +1851,13 @@ module KL_aecp_engine
     end else begin
       gxr_valid_r <= gx_req_w && !gxr_valid_r
                      && !(ctr_hold_w || amap_hold_w || amap_edit_hold_w
+                          || name_hold_w
                           || rgy_hold_w
                           || gsi_hold_w);
       gxr_data_r  <= gxf_fail_r           ? 64'd0
                    : amap_r               ? amap_data_i
                    : amap_edit_r          ? amap_edit_data_i
+                   : sname_r              ? amap_stage_q_r
                    : rgy_any_w            ? rgy_data_i
                    : gsi_any_w            ? gsi_data_i
                                           : {32'd0, ctr_data_i};
@@ -1839,7 +1874,7 @@ module KL_aecp_engine
     end else if (a_st_r == A_IDLE) begin
       gxf_tmo_r  <= '0;
       gxf_fail_r <= 1'b0;
-    end else if (ctr_hold_w || amap_hold_w || amap_edit_hold_w
+    end else if (ctr_hold_w || amap_hold_w || amap_edit_hold_w || name_hold_w
                  || rgy_hold_w || gsi_hold_w) begin
       if (gxf_tmo_r == CTO_W_C'(MEM_TIMEOUT_CYC_P)) gxf_fail_r <= 1'b1;
       else                                          gxf_tmo_r  <= gxf_tmo_r + CTO_W_C'(1);
@@ -2101,6 +2136,8 @@ module KL_aecp_engine
       cfg_ix_r     <= 16'd0;
       desc_ty_r    <= 16'd0;
       desc_ix_r    <= 16'd0;
+      name_ix_r    <= 16'd0;
+      name_cfg_r   <= 16'd0;
       pld_cmd_r    <= 11'd0;
       pld_r        <= 11'd0;
       amap_rsp_count_r <= 8'd0;
@@ -2127,6 +2164,8 @@ module KL_aecp_engine
       sclks_r      <= 1'b0;
       gctrl_r      <= 1'b0;
       sctrl_r      <= 1'b0;
+      gname_r      <= 1'b0;
+      sname_r      <= 1'b0;
       scfg_r       <= 1'b0;
       strt_r       <= 1'b0;
       stop_r       <= 1'b0;
@@ -2210,6 +2249,8 @@ module KL_aecp_engine
               sclks_r    <= sclks_w;
               gctrl_r    <= gctrl_w;
               sctrl_r    <= sctrl_w;
+              gname_r    <= gname_w;
+              sname_r    <= sname_w;
               scfg_r     <= scfg_w;
               strt_r     <= strt_w;
               stop_r     <= stop_w;
@@ -2231,6 +2272,8 @@ module KL_aecp_engine
               cfg_ix_r  <= 16'd0;
               desc_ty_r <= 16'd0;
               desc_ix_r <= 16'd0;
+              name_ix_r <= 16'd0;
+              name_cfg_r <= 16'd0;
               raw_ct_r  <= gdi_w ? txn_w.opcode : 16'd0;
               walk_r    <= 11'd0;
               pid_lo_r  <= 2'b00;
@@ -2299,6 +2342,8 @@ module KL_aecp_engine
             sclks_r    <= 1'b0;
             gctrl_r    <= 1'b0;
             sctrl_r    <= 1'b0;
+            gname_r    <= 1'b0;
+            sname_r    <= 1'b0;
             scfg_r     <= 1'b0;
             strt_r     <= 1'b0;
             stop_r     <= 1'b0;
@@ -2317,6 +2362,8 @@ module KL_aecp_engine
             cfg_ix_r   <= (uns_kind_i == PP_UNS_ASP_C) ? uns_desc_index_i
                                                         : uns_desc_type_i;
             desc_ix_r  <= uns_desc_index_i;
+            name_ix_r  <= 16'd0;
+            name_cfg_r <= 16'd0;
             desc_ty_r  <= (uns_kind_i == PP_UNS_AMAP_C)
                           ? uns_amap_count_i : 16'd0;
             raw_ct_r   <= uns_ct_w;
@@ -2499,6 +2546,8 @@ module KL_aecp_engine
             cfg_ix_r       <= g_data_head_r[63:48];
             desc_ix_r      <= g_data_head_r[47:32];
             desc_ty_r      <= 16'd0;
+            name_ix_r      <= g_data_head_r[31:16];
+            name_cfg_r     <= g_data_head_r[15:0];
             ctrs_r         <= g_sub_exec_w && (g_rec_cmd_r == OP_GET_COUNTERS_C);
             amap_r         <= 1'b0;
             regun_r        <= 1'b0;
@@ -2520,6 +2569,9 @@ module KL_aecp_engine
             sclks_r        <= 1'b0;
             gctrl_r        <= 1'b0;
             sctrl_r        <= 1'b0;
+            gname_r        <= g_sub_exec_w
+                              && (g_rec_cmd_r == OP_GET_NAME_C);
+            sname_r        <= 1'b0;
             scfg_r         <= 1'b0;
             setc_r         <= 1'b0;
             echo_r         <= 1'b0;
@@ -2795,6 +2847,20 @@ module KL_aecp_engine
                 echo_r <= 1'b0;
               end
             end
+            //! GET_NAME and SET_NAME address every named descriptor. The
+            //! store validates both descriptor existence and semantic
+            //! name_index, including ENTITY's second group_name slot. A SET
+            //! must carry all 64 name bytes before staged RAM can be used.
+            if (gname_r) begin
+              upc_r <= ((cmd_r.cdl < 11'd20) || (pld_cmd_r < 11'd8))
+                       ? UPC_NAMEBAD_C : UPC_GNAME_C;
+              echo_r <= 1'b0;
+            end
+            if (sname_r) begin
+              upc_r <= ((cmd_r.cdl != 11'd84) || (pld_cmd_r != 11'd72))
+                       ? UPC_NAMEBAD_C : UPC_SNAME_C;
+              echo_r <= 1'b0;
+            end
             //! ---- the SET pair (Milan §5.4.2.13 / §5.4.2.15) ------------
             //! Their command carries a VALUE, so the length floor is the full
             //! §7.4.21.1 / §7.4.23.1 body (cdl 20), not the 16 a getter
@@ -2909,6 +2975,7 @@ module KL_aecp_engine
               end
               11'd6: begin
                 if (!ctrs_r) desc_ty_r[15:8] <= rxs_rd_data_i;
+                if (gname_r || sname_r) name_ix_r[15:8] <= rxs_rd_data_i;
                 //! ...and the SET family's argument starts here, at @28. It
                 //! is shifted in BIG-ENDIAN so an 8-byte stream format lands
                 //! already right-justified; the narrower fields are
@@ -2918,6 +2985,7 @@ module KL_aecp_engine
               end
               11'd7: begin
                 if (!ctrs_r) desc_ty_r[7:0]  <= rxs_rd_data_i;
+                if (gname_r || sname_r) name_ix_r[7:0] <= rxs_rd_data_i;
                 if (setc_r) setval_r[55:48] <= rxs_rd_data_i;
               end
               //! ...and the registration/lock shapes guard BACKWARD like the
@@ -2927,10 +2995,12 @@ module KL_aecp_engine
               //! there (found by the pp_top L5 check: UNLOCK re-locked)
               11'd8: begin
                 if (!ix26_w && !gasp_r) desc_ix_r[15:8] <= rxs_rd_data_i;
+                if (gname_r || sname_r) name_cfg_r[15:8] <= rxs_rd_data_i;
                 if (setc_r) setval_r[47:40] <= rxs_rd_data_i;
               end
               11'd9: begin
                 if (!ix26_w && !gasp_r) desc_ix_r[7:0]  <= rxs_rd_data_i;
+                if (gname_r || sname_r) name_cfg_r[7:0] <= rxs_rd_data_i;
                 if (setc_r) setval_r[39:32] <= rxs_rd_data_i;
               end
               11'd10: if (setc_r) setval_r[31:24] <= rxs_rd_data_i;

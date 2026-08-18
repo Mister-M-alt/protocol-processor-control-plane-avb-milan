@@ -109,6 +109,10 @@
 //                              order, so COPY_BUFFER hands the lane straight
 //                              to the response buffer unswapped). A lane past
 //                              the descriptor's length reads 0.
+//                  region 0xB  name-address lookup. `st_wdata_i[15:0]` is
+//                              the semantic name_index. A valid lookup returns
+//                              its byte address in the writable name overlay;
+//                              an invalid index raises `st_err_o`.
 //                  region 0xC  read: {48'd0, name_base of the located
 //                              descriptor} (0xFFFF = unnamed) — where a
 //                              GET_NAME/SET_NAME µprogram finds its entry.
@@ -150,7 +154,7 @@ module KL_aecp_desc_store #(
     //! Cached 07 §3.3 index-map entries — one per (configuration, type).
     parameter int unsigned IDX_ENTRIES_P     = 32,
     //! 64-byte name-table entries held on chip (07 §3.4, writable overlay).
-    parameter int unsigned NAME_ENTRIES_P    = 16,
+    parameter int unsigned NAME_ENTRIES_P    = 32,
     //! No-progress watchdog on the memory face, in clocks. An absent or wedged
     //! bridge must degrade to NO_SUCH_DESCRIPTOR, never hang the µCPU: the
     //! default 4096 is 41 µs at P-CLK-HZ = 100 MHz, far inside T-AECP-RESP.
@@ -206,6 +210,9 @@ module KL_aecp_desc_store #(
   localparam logic [15:0] IMG_VERSION_C = 16'd1;
   localparam logic [15:0] NAME_NONE_C   = 16'hFFFF;
   localparam int unsigned HDR_BEATS_C   = 4;              // 32-byte header
+  //! Keep name-table chunks aligned to whole 64-byte entries. 504 is the
+  //! largest multiple of eight that fits the 9-bit burst field.
+  localparam int unsigned NAME_BURST_BEATS_C = 504;
 
   // ---- fault codes (dbg_fault_o) -----------------------------------------
   localparam logic [3:0] FAULT_NONE_C    = 4'd0;
@@ -220,6 +227,7 @@ module KL_aecp_desc_store #(
 
   // ---- state-port regions (see the banner) --------------------------------
   localparam logic [3:0] RGN_DATA_C   = 4'h0;
+  localparam logic [3:0] RGN_NADDR_C  = 4'hB;
   localparam logic [3:0] RGN_NBASE_C  = 4'hC;
   localparam logic [3:0] RGN_NCFG_C   = 4'hD;
   localparam logic [3:0] RGN_LEN_C    = 4'hE;
@@ -230,9 +238,11 @@ module KL_aecp_desc_store #(
     $error("LINE_BYTES_P=%0d must be a multiple of 8 (64-bit lanes)",
            LINE_BYTES_P);
   end
-  if ((LINE_LANES_C > 511) || ((IDX_ENTRIES_P * 2) > 511)
-      || (NAME_LANES_C > 511)) begin : gen_g_beats
+  if ((LINE_LANES_C > 511) || ((IDX_ENTRIES_P * 2) > 511)) begin : gen_g_beats
     $error("a burst exceeds the 9-bit mem_req_beats_o field");
+  end
+  if ((NAME_ENTRIES_P == 0) || (NAME_ENTRIES_P > 1024)) begin : gen_g_names
+    $error("NAME_ENTRIES_P=%0d must be in 1..1024", NAME_ENTRIES_P);
   end
   if (DESC_BASE_P[2:0] != 3'd0) begin : gen_g_base_align
     $error("DESC_BASE_P=%08h must be 8-byte aligned", DESC_BASE_P);
@@ -263,9 +273,10 @@ module KL_aecp_desc_store #(
   logic [63:0]          line_q_r;
   logic [LINE_AW_C-1:0] line_waddr_w, line_raddr_w;
   logic                 line_we_w;
+  logic [63:0]          line_wdata_w;
 
   always_ff @(posedge clk_i) begin : line_ram
-    if (line_we_w) line_r[line_waddr_w] <= mem_rsp_data_i;
+    if (line_we_w) line_r[line_waddr_w] <= line_wdata_w;
     line_q_r <= line_r[line_raddr_w];
   end
 
@@ -299,7 +310,8 @@ module KL_aecp_desc_store #(
 
   typedef enum logic [3:0] {
     S_HDR_REQ, S_HDR_RSP, S_IDX_REQ, S_IDX_RSP, S_NAM_REQ, S_NAM_RSP,
-    S_READY, S_BAD, S_SCAN, S_FET_REQ, S_FET_RSP, S_ANSWER
+    S_READY, S_BAD, S_SCAN, S_FET_REQ, S_FET_RSP, S_PATCH_RD, S_PATCH_WR,
+    S_ANSWER
   } st_e;
   st_e st_r;
 
@@ -312,8 +324,13 @@ module KL_aecp_desc_store #(
   logic  [8:0]        mreq_beats_r;
   logic               mreq_valid_r;
   logic  [8:0]        beat_ix_r;
+  logic [19:0]        name_load_lane_r;
   logic [TMO_W_C-1:0] tmo_r;
   logic               mem_busy_r;
+
+  logic [19:0] name_total_lanes_w, name_lanes_left_w;
+  assign name_total_lanes_w = {4'd0, hdr_n_names_r} << 3;
+  assign name_lanes_left_w  = name_total_lanes_w - name_load_lane_r;
 
   logic beat_w, accept_w, tmo_hit_w;
   //! a beat only COUNTS while a burst of ours is outstanding, but the store is
@@ -362,6 +379,15 @@ module KL_aecp_desc_store #(
   logic                heal_pend_r;
   logic                heal_kind_r;
 
+  //! A located descriptor is refreshed from the writable name overlay before
+  //! LOCATE answers, and again after a write to one of its names. The refresh
+  //! is byte-serial so both memories keep one synchronous read port and the
+  //! line buffer keeps one full-lane write port. At AECP rates the 128-cycle
+  //! ENTITY case is negligible; duplicating either RAM port is not.
+  logic        patch_answer_r;
+  logic        patch_name_r;
+  logic  [5:0] patch_byte_r;
+
   // decoded fields of the scanned entry
   logic [15:0] e_cfg_w, e_type_w, e_cnt_w, e_len_w, e_nbase_w, e_strd_w;
   logic [31:0] e_off_w;
@@ -377,9 +403,24 @@ module KL_aecp_desc_store #(
   //! is shorter than the descriptor, or not 8-aligned, would place index > 0
   //! mid-beat and byte-shift the whole line buffer. Refuse it rather than
   //! serve a shifted descriptor.
-  logic e_usable_w;
+  logic e_usable_w, e_name_ok_w;
+  always_comb begin : entry_name_shape
+    e_name_ok_w = 1'b1;
+    if (e_nbase_w != NAME_NONE_C) begin
+      if (e_type_w == 16'h0000) begin
+        e_name_ok_w = (e_cnt_w == 16'd1) && (e_len_w >= 16'd244)
+                        && ((32'(e_nbase_w) + 32'd2)
+                            <= 32'(hdr_n_names_r));
+      end else begin
+        e_name_ok_w = (e_len_w >= 16'd68)
+                        && ((32'(e_nbase_w) + 32'(e_cnt_w))
+                            <= 32'(hdr_n_names_r));
+      end
+    end
+  end
   assign e_usable_w = (e_len_w != 16'd0) && (32'(e_len_w) <= 32'(LINE_BYTES_P))
-                      && (e_strd_w >= e_len_w) && (e_strd_w[2:0] == 3'd0);
+                      && (e_strd_w >= e_len_w) && (e_strd_w[2:0] == 3'd0)
+                      && e_name_ok_w;
 
   //! scan helpers. `rel_w` is the LOCATE key relative to the start of the run
   //! this entry describes (see scan_base_r); `last_w` marks the final table
@@ -418,6 +459,45 @@ module KL_aecp_desc_store #(
   logic [15:0] len_lanes_w;                 // ceil(desc_len/8)
   assign len_lanes_w = (desc_len_r + 16'd7) >> 3;
 
+  logic [15:0] patch_field_off_w, patch_abs_byte_w;
+  logic [15:0] patch_name_lane_w;
+  logic  [2:0] patch_line_byte_w, patch_name_byte_w;
+  logic  [7:0] patch_data_w;
+  logic [15:0] write_name_entry_w;
+  logic        write_hits_current_w;
+  logic [16:0] name_lookup_entry_w;
+  logic        name_lookup_valid_w;
+
+  assign patch_field_off_w = (key_type_r == 16'h0000)
+                             ? (patch_name_r ? 16'd180 : 16'd48)
+                             : 16'd4;
+  assign patch_abs_byte_w  = patch_field_off_w + {10'd0, patch_byte_r};
+  assign patch_name_lane_w = ((desc_nbase_r + {15'd0, patch_name_r}) << 3)
+                             + {13'd0, patch_byte_r[5:3]};
+  assign patch_line_byte_w = patch_abs_byte_w[2:0];
+  assign patch_name_byte_w = patch_byte_r[2:0];
+  assign write_name_entry_w = {6'd0, st_addr_i[15:6]};
+  assign write_hits_current_w = img_valid_r && (desc_nbase_r != NAME_NONE_C)
+                                && ((write_name_entry_w == desc_nbase_r)
+                                    || ((key_type_r == 16'h0000)
+                                        && (write_name_entry_w
+                                            == (desc_nbase_r + 16'd1))));
+  assign name_lookup_entry_w = {1'b0, desc_nbase_r}
+                               + {1'b0, st_wdata_i[15:0]};
+  assign name_lookup_valid_w = img_valid_r && (desc_nbase_r != NAME_NONE_C)
+                               && ((st_wdata_i[15:0] == 16'd0)
+                                   || ((key_type_r == 16'h0000)
+                                       && (st_wdata_i[15:0] == 16'd1)))
+                               && (name_lookup_entry_w < {1'b0, hdr_n_names_r});
+
+  always_comb begin : patch_byte_select
+    patch_data_w = 8'd0;
+    for (int unsigned b = 0; b < 8; b++) begin
+      if (patch_name_byte_w == 3'(b))
+        patch_data_w = name_q_r[63 - 8*b -: 8];
+    end
+  end
+
   // ---- RAM port muxes -----------------------------------------------------
   always_comb begin : ram_ports
     idx_we_w     = (st_r == S_IDX_RSP) && beat_w && beat_ix_r[0];
@@ -426,14 +506,28 @@ module KL_aecp_desc_store #(
     idx_wdata_w  = {idx_b0_r, mem_rsp_data_i};
     idx_raddr_w  = scan_rd_r;
 
-    line_we_w    = (st_r == S_FET_RSP) && beat_w;
-    line_waddr_w = LINE_AW_C'(beat_ix_r);
-    line_raddr_w = LINE_AW_C'(st_addr_i[15:3]);
+    line_we_w    = ((st_r == S_FET_RSP) && beat_w) || (st_r == S_PATCH_WR);
+    line_waddr_w = (st_r == S_PATCH_WR)
+                   ? LINE_AW_C'(patch_abs_byte_w >> 3)
+                   : LINE_AW_C'(beat_ix_r);
+    line_raddr_w = (st_r inside {S_PATCH_RD, S_PATCH_WR})
+                   ? LINE_AW_C'(patch_abs_byte_w >> 3)
+                   : LINE_AW_C'(st_addr_i[15:3]);
+    line_wdata_w = mem_rsp_data_i;
+    if (st_r == S_PATCH_WR) begin
+      line_wdata_w = line_q_r;
+      for (int unsigned b = 0; b < 8; b++) begin
+        if (patch_line_byte_w == 3'(b))
+          line_wdata_w[63 - 8*b -: 8] = patch_data_w;
+      end
+    end
 
-    name_raddr_w = NAME_AW_C'(st_addr_i[15:3]);
+    name_raddr_w = (st_r inside {S_PATCH_RD, S_PATCH_WR})
+                   ? NAME_AW_C'(patch_name_lane_w)
+                   : NAME_AW_C'(st_addr_i[15:3]);
     if ((st_r == S_NAM_RSP) && beat_w) begin
       name_we_w    = 1'b1;
-      name_waddr_w = NAME_AW_C'(beat_ix_r);
+      name_waddr_w = NAME_AW_C'(name_load_lane_r + {11'd0, beat_ix_r});
       name_wdata_w = mem_rsp_data_i;
       name_wstrb_w = 8'hFF;
     end else begin
@@ -510,6 +604,10 @@ module KL_aecp_desc_store #(
       scan_base_r     <= 16'd0;
       heal_pend_r     <= 1'b0;
       heal_kind_r     <= 1'b0;
+      patch_answer_r  <= 1'b0;
+      patch_name_r    <= 1'b0;
+      patch_byte_r    <= 6'd0;
+      name_load_lane_r <= 20'd0;
     end else begin
       // a read is claimed until its answer leaves
       if (take_rd_w)   req_seen_r <= 1'b1;
@@ -613,6 +711,7 @@ module KL_aecp_desc_store #(
             fault_r <= FAULT_MEMERR_C;
             st_r    <= S_BAD;
           end else if (beat_w && mem_rsp_last_i) begin
+            name_load_lane_r <= 20'd0;
             st_r <= S_NAM_REQ;
           end else if (tmo_hit_w) begin
             fault_r    <= FAULT_TIMEOUT_C;
@@ -643,8 +742,12 @@ module KL_aecp_desc_store #(
           end else begin
             if (!mreq_valid_r && !mem_busy_r) begin
               mreq_valid_r <= 1'b1;
-              mreq_addr_r  <= DESC_BASE_P + hdr_names_off_r;
-              mreq_beats_r <= 9'(hdr_n_names_r << 3);
+              mreq_addr_r  <= DESC_BASE_P + hdr_names_off_r
+                              + 32'(name_load_lane_r << 3);
+              mreq_beats_r <= (name_lanes_left_w
+                               > 20'(NAME_BURST_BEATS_C))
+                              ? 9'(NAME_BURST_BEATS_C)
+                              : 9'(name_lanes_left_w);
             end
             if (accept_w) st_r <= S_NAM_RSP;
             else if (tmo_hit_w) begin
@@ -660,22 +763,29 @@ module KL_aecp_desc_store #(
             fault_r <= FAULT_MEMERR_C;
             st_r    <= S_BAD;
           end else if (beat_w && mem_rsp_last_i) begin
-            img_valid_r <= 1'b1;
-            fault_r     <= FAULT_NONE_C;
-            if (heal_pend_r && !heal_kind_r) begin
-              heal_pend_r <= 1'b0;
-              scan_rd_r   <= '0;
-              scan_cmp_r  <= 16'd0;
-              scan_rdy_r  <= 1'b0;
-              scan_base_r <= 16'd0;
-              st_r        <= S_SCAN;
-            end else if (heal_pend_r) begin
-              heal_pend_r <= 1'b0;
-              ans_err_r   <= 1'b0;
-              ans_data_r  <= {48'd0, hdr_n_config_r};
-              rd_pipe_r   <= 1'b0;
-              st_r        <= S_ANSWER;
-            end else st_r <= S_READY;
+            if ((name_load_lane_r + {11'd0, mreq_beats_r})
+                < name_total_lanes_w) begin
+              name_load_lane_r <= name_load_lane_r
+                                  + {11'd0, mreq_beats_r};
+              st_r <= S_NAM_REQ;
+            end else begin
+              img_valid_r <= 1'b1;
+              fault_r     <= FAULT_NONE_C;
+              if (heal_pend_r && !heal_kind_r) begin
+                heal_pend_r <= 1'b0;
+                scan_rd_r   <= '0;
+                scan_cmp_r  <= 16'd0;
+                scan_rdy_r  <= 1'b0;
+                scan_base_r <= 16'd0;
+                st_r        <= S_SCAN;
+              end else if (heal_pend_r) begin
+                heal_pend_r <= 1'b0;
+                ans_err_r   <= 1'b0;
+                ans_data_r  <= {48'd0, hdr_n_config_r};
+                rd_pipe_r   <= 1'b0;
+                st_r        <= S_ANSWER;
+              end else st_r <= S_READY;
+            end
           end else if (tmo_hit_w) begin
             fault_r    <= FAULT_TIMEOUT_C;
             mem_busy_r <= 1'b0;
@@ -709,6 +819,13 @@ module KL_aecp_desc_store #(
           //! overlay takes a write, everything else is dropped and counted
           if (take_wr_w && !st_name_i && (rowr_cnt_r != 16'hFFFF)) begin
             rowr_cnt_r <= rowr_cnt_r + 16'd1;
+          end
+          if ((st_r == S_READY) && take_wr_w && st_name_i
+              && write_hits_current_w) begin
+            patch_answer_r <= 1'b0;
+            patch_name_r   <= 1'b0;
+            patch_byte_r   <= 6'd0;
+            st_r           <= S_PATCH_RD;
           end
           if (take_rd_w) begin
             ans_pend_r <= 1'b1;
@@ -751,6 +868,15 @@ module KL_aecp_desc_store #(
               unique case (region_w)
                 //! an unvalidated image reports NOTHING, not the garbage its
                 //! header walk happened to read
+                RGN_NADDR_C: begin
+                  rd_kind_r <= 2'd2;
+                  if (name_lookup_valid_w) begin
+                    rd_reg_r <= {41'd0, name_lookup_entry_w, 6'd0};
+                  end else begin
+                    rd_reg_r  <= 64'd0;
+                    ans_err_r <= 1'b1;
+                  end
+                end
                 RGN_NBASE_C: begin rd_kind_r <= 2'd2;
                                    rd_reg_r  <= img_valid_r
                                                 ? {48'd0, desc_nbase_r} : 64'd0; end
@@ -781,7 +907,8 @@ module KL_aecp_desc_store #(
             if (type_hit_w && e_usable_w
                 && (key_index_r >= scan_base_r) && (rel_w < e_cnt_w)) begin
               desc_len_r   <= e_len_w;
-              desc_nbase_r <= e_nbase_w;
+              desc_nbase_r <= (e_nbase_w == NAME_NONE_C)
+                              ? NAME_NONE_C : (e_nbase_w + rel_w);
               desc_off_r   <= e_off_w + (32'(e_strd_w) * 32'(rel_w));
               st_r         <= S_FET_REQ;
             //! RIGHT TYPE, EARLIER RUN. Step the running base over this run and
@@ -839,10 +966,17 @@ module KL_aecp_desc_store #(
             if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
             st_r <= S_ANSWER;
           end else if (beat_w && mem_rsp_last_i) begin
-            ans_err_r  <= 1'b0;
-            ans_data_r <= 64'd0;          // base = the line-buffer origin
-            rd_pipe_r  <= 1'b0;
-            st_r       <= S_ANSWER;
+            if (desc_nbase_r != NAME_NONE_C) begin
+              patch_answer_r <= 1'b1;
+              patch_name_r   <= 1'b0;
+              patch_byte_r   <= 6'd0;
+              st_r           <= S_PATCH_RD;
+            end else begin
+              ans_err_r  <= 1'b0;
+              ans_data_r <= 64'd0;        // base = the line-buffer origin
+              rd_pipe_r  <= 1'b0;
+              st_r       <= S_ANSWER;
+            end
           end else if (tmo_hit_w) begin
             ans_err_r    <= 1'b1;
             ans_data_r   <= 64'd0;
@@ -852,6 +986,30 @@ module KL_aecp_desc_store #(
             desc_nbase_r <= NAME_NONE_C;
             if (miss_cnt_r != 16'hFFFF) miss_cnt_r <= miss_cnt_r + 16'd1;
             st_r <= S_ANSWER;
+          end
+        end
+
+        // ---------------- writable-name to descriptor coherence ----------
+        S_PATCH_RD: begin
+          //! Both RAMs are synchronous. This state presents the byte's source
+          //! and destination lanes; S_PATCH_WR consumes their registered data.
+          st_r <= S_PATCH_WR;
+        end
+        S_PATCH_WR: begin
+          if (patch_byte_r != 6'd63) begin
+            patch_byte_r <= patch_byte_r + 6'd1;
+            st_r         <= S_PATCH_RD;
+          end else if ((key_type_r == 16'h0000) && !patch_name_r) begin
+            patch_name_r <= 1'b1;
+            patch_byte_r <= 6'd0;
+            st_r         <= S_PATCH_RD;
+          end else if (patch_answer_r) begin
+            ans_err_r  <= 1'b0;
+            ans_data_r <= 64'd0;
+            rd_pipe_r  <= 1'b0;
+            st_r       <= S_ANSWER;
+          end else begin
+            st_r <= S_READY;
           end
         end
 

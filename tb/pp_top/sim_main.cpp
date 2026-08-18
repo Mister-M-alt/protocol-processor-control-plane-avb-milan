@@ -332,6 +332,8 @@ static const uint16_t AEM_GET_SAMPLING_RATE = 0x0015;
 static const uint16_t AEM_GET_CLOCK_SOURCE = 0x0017;
 static const uint16_t AEM_SET_SAMPLING_RATE = 0x0014;
 static const uint16_t AEM_SET_CLOCK_SOURCE = 0x0016;
+static const uint16_t AEM_SET_NAME = 0x0010;
+static const uint16_t AEM_GET_NAME = 0x0011;
 static const uint16_t AEM_SET_CONTROL = 0x0018;
 static const uint16_t AEM_GET_CONTROL = 0x0019;
 static const uint16_t AEM_SET_CONFIGURATION = 0x0006;
@@ -1433,28 +1435,28 @@ int main(int argc, char** argv) {
   // generator's output.
   std::vector<ImgEnt> img_ents = {
     {CFGIX, 0x0000, 1, 312, 0, 312, 0},          // ENTITY
-    {CFGIX, 0x0024, 1,  78, 1,  80, 0},          // CLOCK_DOMAIN (not %8)
+    {CFGIX, 0x0024, 1,  78, 2,  80, 0},          // CLOCK_DOMAIN (not %8)
     //! the two STREAM_PORT_INPUTs the audio-map store models: the image is
     //! the EXISTENCE authority (E_GAMAP's DESC_ADDR locate), so an index
     //! past these two must answer NO_SUCH_DESCRIPTOR whatever the face says
-    {CFGIX, 0x000E, 2,  20, 1,  24, 0},          // STREAM_PORT_INPUT x2
+    {CFGIX, 0x000E, 2,  20, 0xFFFF, 24, 0},      // STREAM_PORT_INPUT x2
     //! GET_STREAM_INFO existence targets: the store is the authority, so
     //! index 2+ of either type must answer NO_SUCH_DESCRIPTOR whatever the
     //! Milan-info face would say
-    {CFGIX, 0x0005, 2, 140, 1, 144, 0},          // STREAM_INPUT x2
-    {CFGIX, 0x0006, 2, 140, 1, 144, 0},          // STREAM_OUTPUT x2
-    {CFGIX, 0x0009, 1,  98, 1, 104, 0},          // AVB_INTERFACE
-    {CFGIX, 0x000F, 3,  20, 1,  24, 0},          // two dynamic, one static
-    {CFGIX, 0x0017, 1,  16, 0,  16, 0},          // static output AUDIO_MAP
+    {CFGIX, 0x0005, 2, 140, 3, 144, 0},          // STREAM_INPUT x2
+    {CFGIX, 0x0006, 2, 140, 5, 144, 0},          // STREAM_OUTPUT x2
+    {CFGIX, 0x0009, 1,  98, 7, 104, 0},          // AVB_INTERFACE
+    {CFGIX, 0x000F, 3,  20, 0xFFFF, 24, 0},      // two dynamic, one static
+    {CFGIX, 0x0017, 1,  16, 0xFFFF, 16, 0},      // static output AUDIO_MAP
     //! GET_SAMPLING_RATE's target. The rate is 96000, NOT the 48000 a
     //! hardcoded answer would most plausibly be, so a program that invents
     //! the value instead of copying it out of the image fails section W.
-    {CFGIX, 0x0002, 1, 152, 0, 152, 0},          // AUDIO_UNIT
+    {CFGIX, 0x0002, 1, 152, 8, 152, 0},          // AUDIO_UNIT
     //! GET_CONTROL / SET_CONTROL's target: Milan 5.3.3.10 makes the primary
     //! IDENTIFY control exist in every configuration at the same index
-    {CFGIX, 0x001A, 1, 112, 0, 112, 0},          // CONTROL (Identify)
+    {CFGIX, 0x001A, 1, 112, 9, 112, 0},          // CONTROL (Identify)
     //! Test-only shape that makes E_RDESCENT's type guard load-bearing.
-    {CFGIX, 0x0022, 1, 312, 0, 312, 0},          // SIGNAL_MULTIPLEXER
+    {CFGIX, 0x0022, 1, 312, 10, 312, 0},         // SIGNAL_MULTIPLEXER
   };
   std::vector<uint8_t> desc_entity = entity_descriptor();
   std::vector<uint8_t> desc_clkdom = clock_domain_descriptor();
@@ -1481,7 +1483,10 @@ int main(int argc, char** argv) {
                        //! NO_SUCH_DESCRIPTOR target for READ_DESCRIPTOR.
                        //! A3's out-of-range probe uses index 3 and is
                        //! unaffected.
-                       {"PP Reference Entity", "Clock Domain 0"}, 2);
+                       {"PP Reference Entity", "Milan Endpoints",
+                        "Clock Domain 0", "Stream 5.0", "Stream 5.1",
+                        "Stream 6.0", "Stream 6.1", "AVB Interface 0",
+                        "Audio Unit 0", "Identify", "NonEntity312"}, 2);
 
   h.reset();
 
@@ -2179,6 +2184,204 @@ int main(int argc, char** argv) {
           "A11: the snapshot window publishes the command counter");
     CHECK((h.snap(34) & 1u) == 1u,
           "A11: the snapshot window publishes image-valid");
+  }
+
+  // ==== N. GET_NAME + SET_NAME (Milan v1.2 5.4.2.11/.12) ===============
+  // Every name is exactly 64 bytes. ENTITY exposes entity_name at semantic
+  // index 0 and group_name at index 1; every other named descriptor exposes
+  // only index 0. A successful SET must be visible through both GET_NAME and
+  // READ_DESCRIPTOR, and a lock refusal must return the current old name.
+  {
+    const uint64_t C2_MAC = 0x0202C2C2C2C2ull;
+    auto name64 = [](const char* s) {
+      std::vector<uint8_t> n(64, 0);
+      size_t len = strlen(s);
+      if (len > n.size()) len = n.size();
+      memcpy(n.data(), s, len);
+      return n;
+    };
+    auto name_body = [](uint16_t ty, uint16_t ix, uint16_t ni, uint16_t cfg,
+                        const std::vector<uint8_t>& name) {
+      std::vector<uint8_t> p(72, 0);
+      putbe(&p[0], ty, 2); putbe(&p[2], ix, 2);
+      putbe(&p[4], ni, 2); putbe(&p[6], cfg, 2);
+      if (name.size() == 64) std::copy(name.begin(), name.end(), p.begin() + 8);
+      return p;
+    };
+    auto name_sel = [&](uint16_t ty, uint16_t ix, uint16_t ni,
+                        uint16_t cfg = CFGIX) {
+      return name_body(ty, ix, ni, cfg, std::vector<uint8_t>(64, 0));
+    };
+    auto cmd_from = [&](uint64_t mac, uint64_t eid, uint16_t op,
+                        uint16_t seq, const std::vector<uint8_t>& p) {
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, mac, 0, 0, EID, eid, seq, op, p));
+      return h.wait_any(h.q_aecp, 2000);
+    };
+    auto cmd = [&](uint16_t op, uint16_t seq,
+                   const std::vector<uint8_t>& p) {
+      return cmd_from(CTLR_MAC, CTLR_EID, op, seq, p);
+    };
+    auto expect = [&](uint64_t mac, uint64_t eid, uint8_t status,
+                      uint16_t op, uint16_t seq,
+                      const std::vector<uint8_t>& p) {
+      return aecp_frame(mac, OWN_MAC, 1, status, EID, eid, seq, op, p);
+    };
+    auto read_descriptor = [&](uint16_t ty, uint16_t ix, uint16_t seq) {
+      std::vector<uint8_t> p(8, 0);
+      putbe(&p[0], CFGIX, 2); putbe(&p[4], ty, 2); putbe(&p[6], ix, 2);
+      return cmd(AEM_READ_DESCRIPTOR, seq, p);
+    };
+
+    struct NameProbe { uint16_t ty, ix, ni; const char* text; };
+    const NameProbe probes[] = {
+      {0x0000, 0, 0, "PP Reference Entity"},
+      {0x0000, 0, 1, "Milan Endpoints"},
+      {0x0024, 0, 0, "Clock Domain 0"},
+      {0x0005, 0, 0, "Stream 5.0"},
+      {0x0005, 1, 0, "Stream 5.1"},
+      {0x0006, 0, 0, "Stream 6.0"},
+      {0x0006, 1, 0, "Stream 6.1"},
+      {0x0009, 0, 0, "AVB Interface 0"},
+      {0x0002, 0, 0, "Audio Unit 0"},
+      {0x001A, 0, 0, "Identify"},
+      {0x0022, 0, 0, "NonEntity312"},
+    };
+
+    // N1: every name slot in this image is reachable with the semantic
+    // index the descriptor type defines, and each response has cdl 84.
+    uint16_t seq = 0xC100;
+    for (const auto& p : probes) {
+      auto sel = name_sel(p.ty, p.ix, p.ni);
+      auto got = cmd(AEM_GET_NAME, seq, sel);
+      auto body = name_body(p.ty, p.ix, p.ni, CFGIX, name64(p.text));
+      auto want = expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
+                         AEM_GET_NAME, seq, body);
+      CHECK(!got.empty() && got == want,
+            "N1: GET_NAME %04x[%u] name_index %u is not byte-exact",
+            p.ty, p.ix, p.ni);
+      unsigned cdl = got.size() > 17
+                     ? unsigned(((got[16] & 7) << 8) | got[17]) : 0;
+      CHECK(cdl == 84, "N1: GET_NAME cdl %u, want 84", cdl);
+      ++seq;
+    }
+
+    // N2: an unnamed descriptor, an invalid semantic index and a missing
+    // descriptor are distinct lookup failures with the full response body.
+    auto zero_name = std::vector<uint8_t>(64, 0);
+    auto sel = name_sel(0x000E, 0, 0);
+    auto got = cmd(AEM_GET_NAME, seq, sel);
+    CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_BAD_ARGUMENTS,
+                        AEM_GET_NAME, seq,
+                        name_body(0x000E, 0, 0, CFGIX, zero_name)),
+          "N2: GET_NAME on an unnamed descriptor is not BAD_ARGUMENTS");
+    ++seq;
+    sel = name_sel(0x0024, 0, 1);
+    got = cmd(AEM_GET_NAME, seq, sel);
+    CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_BAD_ARGUMENTS,
+                        AEM_GET_NAME, seq,
+                        name_body(0x0024, 0, 1, CFGIX, zero_name)),
+          "N2b: non-ENTITY name_index 1 is not BAD_ARGUMENTS");
+    ++seq;
+    sel = name_sel(0x0024, 9, 0);
+    got = cmd(AEM_GET_NAME, seq, sel);
+    CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_NO_SUCH_DESCRIPTOR,
+                        AEM_GET_NAME, seq,
+                        name_body(0x0024, 9, 0, CFGIX, zero_name)),
+          "N2c: missing named descriptor is not NO_SUCH_DESCRIPTOR");
+    ++seq;
+
+    // N3: a truncated GET still emits Figure 7-40's complete response shape.
+    std::vector<uint8_t> short_get(4, 0);
+    putbe(&short_get[0], 0x0024, 2);
+    got = cmd(AEM_GET_NAME, seq, short_get);
+    CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_BAD_ARGUMENTS,
+                        AEM_GET_NAME, seq,
+                        name_body(0x0024, 0, 0, 0, zero_name)),
+          "N3: truncated GET_NAME omitted its complete error body");
+    ++seq;
+
+    // N4: SET_NAME updates a non-lane-aligned object_name. Its response, the
+    // next GET_NAME and READ_DESCRIPTOR must all expose the same 64 bytes.
+    auto cd_new = name64("Clock Domain Renamed");
+    auto set_cd = name_body(0x0024, 0, 0, CFGIX, cd_new);
+    got = cmd(AEM_SET_NAME, seq, set_cd);
+    CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
+                        AEM_SET_NAME, seq, set_cd),
+          "N4: changed CLOCK_DOMAIN SET_NAME response is not byte-exact");
+    ++seq;
+    got = cmd(AEM_GET_NAME, seq, name_sel(0x0024, 0, 0));
+    CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
+                        AEM_GET_NAME, seq, set_cd),
+          "N4b: GET_NAME does not observe the completed SET_NAME");
+    ++seq;
+    std::fill(desc_clkdom.begin() + 4, desc_clkdom.begin() + 68, 0);
+    std::copy(cd_new.begin(), cd_new.end(), desc_clkdom.begin() + 4);
+    got = read_descriptor(0x0024, 0, seq);
+    std::vector<uint8_t> rd_body(4, 0);
+    putbe(&rd_body[0], CFGIX, 2);
+    rd_body.insert(rd_body.end(), desc_clkdom.begin(), desc_clkdom.end());
+    CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
+                        AEM_READ_DESCRIPTOR, seq, rd_body),
+          "N4c: READ_DESCRIPTOR does not observe the completed SET_NAME");
+    ++seq;
+
+    // N5: ENTITY group_name starts at descriptor byte 180, also unaligned to
+    // an eight-byte name lane. This catches an implementation that patches
+    // only the aligned entity_name field at byte 48.
+    auto group_new = name64("Milan Group Renamed");
+    auto set_group = name_body(0x0000, 0, 1, CFGIX, group_new);
+    got = cmd(AEM_SET_NAME, seq, set_group);
+    CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
+                        AEM_SET_NAME, seq, set_group),
+          "N5: ENTITY group SET_NAME response is not byte-exact");
+    ++seq;
+    std::fill(desc_entity.begin() + 180, desc_entity.begin() + 244, 0);
+    std::copy(group_new.begin(), group_new.end(), desc_entity.begin() + 180);
+    got = read_descriptor(0x0000, 0, seq);
+    rd_body.assign(4, 0);
+    putbe(&rd_body[0], CFGIX, 2);
+    rd_body.insert(rd_body.end(), desc_entity.begin(), desc_entity.end());
+    CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
+                        AEM_READ_DESCRIPTOR, seq, rd_body),
+          "N5b: READ_DESCRIPTOR does not expose the new ENTITY group_name");
+    ++seq;
+
+    // N6: a foreign controller cannot change a locked entity. The SET_NAME
+    // response carries the currently effective name, not the proposed one.
+    std::vector<uint8_t> lock(16, 0);
+    got = cmd(0x0001, seq, lock);
+    CHECK(!got.empty() && ((got[16] >> 3) & 0x1F) == AECP_SUCCESS,
+          "N6: controller could not take the entity lock");
+    ++seq;
+    auto blocked_name = name64("This Name Must Not Commit");
+    auto blocked_set = name_body(0x0024, 0, 0, CFGIX, blocked_name);
+    got = cmd_from(C2_MAC, CTLR2_EID, AEM_SET_NAME, seq, blocked_set);
+    CHECK(got == expect(C2_MAC, CTLR2_EID, AECP_ENTITY_LOCKED,
+                        AEM_SET_NAME, seq, set_cd),
+          "N6b: locked SET_NAME did not return the current old name");
+    ++seq;
+    got = cmd_from(C2_MAC, CTLR2_EID, AEM_GET_NAME, seq,
+                   name_sel(0x0024, 0, 0));
+    CHECK(got == expect(C2_MAC, CTLR2_EID, AECP_SUCCESS,
+                        AEM_GET_NAME, seq, set_cd),
+          "N6c: locked refusal changed the effective name");
+    ++seq;
+    lock[3] = 1;                                  // UNLOCK flag
+    got = cmd(0x0001, seq, lock);
+    CHECK(!got.empty() && ((got[16] >> 3) & 0x1F) == AECP_SUCCESS,
+          "N6d: controller could not release the entity lock");
+    ++seq;
+
+    // N7: SET_NAME requires the complete 72-byte command body and returns a
+    // complete zero-name BAD_ARGUMENTS response when it is truncated.
+    std::vector<uint8_t> short_set(8, 0);
+    putbe(&short_set[0], 0x0024, 2);
+    got = cmd(AEM_SET_NAME, seq, short_set);
+    CHECK(got == expect(CTLR_MAC, CTLR_EID, AECP_BAD_ARGUMENTS,
+                        AEM_SET_NAME, seq,
+                        name_body(0x0024, 0, 0, 0, zero_name)),
+          "N7: truncated SET_NAME omitted its complete error response");
   }
 
   // ==== M. MVU GET_MILAN_INFO (Milan v1.2 §5.4.4.1) =======================
@@ -4719,17 +4922,17 @@ int main(int argc, char** argv) {
             "W8e: GET_STREAM_INFO record carries the Milan 56-byte body");
       if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
 
-      // Whitelist membership does not claim implementation. GET_NAME is
-      // legal in a batch, so it receives a record-level NOT_SUPPORTED and
-      // its fixed command data is copied exactly.
+      // GET_NAME is legal in a batch, but its command data is exactly eight
+      // bytes. A short record fails only that record and copies the supplied
+      // bytes exactly in its BAD_ARGUMENTS result.
       std::vector<uint8_t> name_arg = {0xD3, 0x1C, 0xA5, 0x7E};
-      req = direc(0x0011, name_arg);
+      req = direc(AEM_GET_NAME, name_arg);
       f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7665);
-      body = direc(0x0011, name_arg, AECP_NOT_SUPPORTED);
+      body = direc(AEM_GET_NAME, name_arg, AECP_BAD_ARGUMENTS);
       want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                         CTLR_EID, 0x7665, AEM_GET_DYNAMIC_INFO, body);
       CHECK(!f.empty() && f == want,
-            "W8f: legal unimplemented getter is NOT_SUPPORTED per record");
+            "W8f: short GET_NAME is BAD_ARGUMENTS only for its record");
 
       // An empty list is a valid request and produces an empty SUCCESS body.
       req.clear(); body.clear();
@@ -4810,7 +5013,8 @@ int main(int argc, char** argv) {
         } else if ((op == AEM_GET_STREAM_FORMAT) || (op == 0x000F)
                    || (op == AEM_GET_SAMPLING_RATE)
                    || (op == AEM_GET_CLOCK_SOURCE)
-                   || (op == AEM_GET_COUNTERS)) {
+                   || (op == AEM_GET_COUNTERS)
+                   || (op == AEM_GET_NAME)) {
           append(body, direc(op, {}, AECP_BAD_ARGUMENTS));
         } else {
           append(body, direc(op, {}, AECP_NOT_SUPPORTED));
@@ -4835,13 +5039,34 @@ int main(int argc, char** argv) {
       append(req, direc(0x000F, ti(0x0005, 0)));
       append(body, direc(0x000F, gsi_body(0x0005, 0, true), AECP_SUCCESS));
       name_arg = {0xE1, 0x72, 0x3B, 0xC4, 0x5D, 0xA6, 0x8F, 0x10};
-      append(req, direc(0x0011, name_arg));
-      append(body, direc(0x0011, name_arg, AECP_NOT_SUPPORTED));
+      append(req, direc(0x0013, name_arg));
+      append(body, direc(0x0013, name_arg, AECP_NOT_SUPPORTED));
       f = ask(AEM_GET_DYNAMIC_INFO, req, 0x766C);
       want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                         CTLR_EID, 0x766C, AEM_GET_DYNAMIC_INFO, body);
       CHECK(!f.empty() && f == want && cdl(f) == 524,
             "W8m: an exact cdl 524 response is retained");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // A valid GET_NAME record would add 80 bytes to the aggregate. At the
+      // same 508-byte cdl prefix it cannot fit, so it is skipped whole while
+      // the preceding records remain byte-exact.
+      req.clear(); body.clear();
+      for (int n = 0; n < 3; ++n) {
+        append(req, direc(AEM_GET_COUNTERS, ti(0x0005, 0)));
+        append(body, direc(AEM_GET_COUNTERS, ctr_body(0x0005, 0),
+                           AECP_SUCCESS));
+      }
+      append(req, direc(0x000F, ti(0x0005, 0)));
+      append(body, direc(0x000F, gsi_body(0x0005, 0, true), AECP_SUCCESS));
+      name_arg.assign(8, 0);
+      putbe(&name_arg[0], 0x0024, 2);
+      append(req, direc(AEM_GET_NAME, name_arg));
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x76E1);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x76E1, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want && cdl(f) == 508,
+            "W8m2: an overflowing GET_NAME record is skipped whole");
       if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
 
       // IEEE 1722.1-2021 9.2.2.6 still caps commands at cdl 524. Milan 5.4.1
@@ -6058,7 +6283,8 @@ int main(int argc, char** argv) {
       auto got = h2.wait_any(h2.q_aecp, 400);
       std::vector<uint8_t> epl(4, 0);
       putbe(&epl[0], CFGIX, 2);
-      epl.insert(epl.end(), desc_entity.begin(), desc_entity.end());
+      auto d2_entity = entity_descriptor();
+      epl.insert(epl.end(), d2_entity.begin(), d2_entity.end());
       auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                              CTLR_EID, 0x6003, AEM_READ_DESCRIPTOR, epl);
       CHECK(!got.empty(), "MP6: READ_DESCRIPTOR answered with MAAP running");
