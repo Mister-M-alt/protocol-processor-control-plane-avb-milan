@@ -163,9 +163,9 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x0004 | READ_DESCRIPTOR | shall | allowed while locked | RO | no | — | **yes** | — | 28 + descriptor (4-B stub on failure) |
 | 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER *(architectural class; the current single AECP engine serializes AEM commands while the dispatch scoreboard remains unwired)* | yes | - | - | yes *(open, #69)* | 28 B |
 | 0x0007 | GET_CONFIGURATION | shall | — | RO | — | yes | — | — | 28 B |
-| 0x0008 | SET_STREAM_FORMAT | shall, **n/i today** | target: §6.4 chain | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x0008 | SET_STREAM_FORMAT | shall | per stream, both directions; §6.4 chain | STREAM_CFG | yes | - | - | *(open, #69)* | 36 B |
 | 0x0009 | GET_STREAM_FORMAT | shall | — | RO | — | yes | — | — | 40 B |
-| 0x000E | SET_STREAM_INFO | shall, **n/i today** | target: **output only** (Δ11); §6.3 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| 0x000E | SET_STREAM_INFO | shall | **output only** (Δ11); §6.3 | STREAM_CFG | yes | - | - | *(open, #69)* | 72 B echo |
 | 0x000F | GET_STREAM_INFO | shall | Milan 80-B form §6.2 | RO | — | yes | — | async triggers | 80 B |
 | 0x0010 | SET_NAME | shall, **n/i today** | target: all names | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
 | 0x0011 | GET_NAME | shall, **n/i today** | target: all names | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
@@ -217,7 +217,17 @@ selectors 0..7 = flags / stream_format / stream_id / msrp_accumulated_latency /
 {dest_mac, failure_code} / failure_bridge_id / {vlan, flags_ex} / {pbsta, acmpsta}),
 because the truth lives in the integrator's binding view, SRP registrars, format
 registers and probing state — an unwired face answers all-zero flags: every field
-honestly absent. Non-stream targets refuse NOT_SUPPORTED with the command echoed;
+honestly absent. Selector 15 of the same kind is SET_STREAM_FORMAT's verdict word:
+while that command is in flight the engine presents the PROPOSED format on
+`gsi_prop_fmt`, and the integrator answers bit 0 = supported for the addressed
+stream, bit 1 = every channel an existing audio mapping references survives it.
+The integrator is also expected to FOLD the published settings face into its
+selector 1 and 3 answers (a valid SEL_FMTIN/SEL_FMTOUT row is the current format,
+a valid SEL_PTOFF row the accumulated latency), which is what keeps a GET after a
+SET reading the value the SET stored. The published rows — every presentation
+offset and both format directions, each value beside its valid bit — are the
+`aecp_pt_offset` / `aecp_fmt_in` / `aecp_fmt_out` port groups on
+`protocol_processor_top`; `KL_aecp_dyn_state`'s banner is their authority. Non-stream targets refuse NOT_SUPPORTED with the command echoed;
 short commands BAD_ARGUMENTS; a wedged face voids to ENTITY_MISBEHAVING. The Table
 5.22 notification class is live for the events the fabric observes: sink bound /
 settled / torn-down and registered-Talker-attribute changes, source declaration
@@ -280,7 +290,7 @@ MSRP_FAILURE_VALID=0} ⇔ **streaming**.
 
 | Field / flag | Owner record | Signal ([F02.10](02_interfaces.md#fig-02-statusdict)) | Update event | Async notif (Table 5.22) |
 |---|---|---|---|---|
-| stream_format | overlay: current input format | — | SET_STREAM_FORMAT | via command trigger |
+| stream_format | integrator face word 1, folding the published SET_STREAM_FORMAT row when valid | — | SET_STREAM_FORMAT | via command trigger |
 | BOUND, pbsta, acmpsta, STREAMING_WAIT | ACMP sink record | — | listener-SM commits | yes (input) |
 | stream_id / DA / VLAN + *_VALID | sink record (settled) | — | A15 / A8 | yes |
 | msrp_accumulated_latency | srp | `acc_latency[sink]` + `P-INTERNAL-INGRESS-DELAY-NS` | talker-attr change | yes (input) |
@@ -295,7 +305,7 @@ response is never a torn mix of two states.
 
 | Command | Stream Input | Stream Output |
 |---|---|---|
-| SET_STREAM_INFO (target; n/i today) | `NOT_SUPPORTED` (params come from PROBE_TX_RESPONSE) | per IEEE §7.4.15 subset: **MSRP_ACC_LAT_VALID must be supported**; writes presentation-time offset (0..0x7FFFFFFF ns, else `BAD_ARGUMENTS`); **any unsupported sub-flag means whole command `NOT_SUPPORTED`**; `STREAM_IS_RUNNING` while streaming; success echoes the flag + value |
+| SET_STREAM_INFO (**implemented**, Milan §5.4.2.9) | `NOT_SUPPORTED` whole, at the response's own length (params come from PROBE_TX_RESPONSE) | the one supported sub-command is **MSRP_ACC_LAT_VALID alone**: writes the presentation-time offset to the dynamic store's SEL_PTOFF row (0..0x7FFFFFFF ns; bit 31 set answers `BAD_ARGUMENTS`); **any other flag combination, including none, refuses the whole command `NOT_SUPPORTED`**; a STREAMING output refuses `STREAM_IS_RUNNING` before the sub-command is examined; success answers the command echo, which is exactly §5.4.2.9's required body (same flag, same latency). Every narrowing is an engine dispatch route off registered walk fields; the µprogram is CHECK_LOCK, locate, WRITE_ST, NVM mark, echo |
 | START/STOP_STREAMING | **implemented** (issues #78 and #97): a bound input changes state, while an unbound or repeated-state request is a confirmed no-op. The state lives only on the ACMP binding record. Success waits for the record write or no-op examination, and a bounded pending request fails safely if the record walker cannot start it | **implemented**: `NOT_SUPPORTED`, because a talker streams whenever reserved (Δ14) and Section 5.3.7.3 excludes stopping a Stream Output. Every non-input type takes the same arm |
 
 ### 6.4 Validation chains (order matters; first failure responds)
@@ -303,7 +313,7 @@ response is never a torn mix of two states.
 | Command | Chain |
 |---|---|
 | SET_CONFIGURATION | any input bound ∨ any output streaming ⇒ `STREAM_IS_RUNNING` (**at dispatch, so it outranks the lock** - see below) → lock → index valid ⇒ commit → NVM mark (review §8 item 1). **No scoreboard barrier is drained today**: the current top admits a new AEM transaction only when its single AECP engine is idle, which orders SET_CONFIGURATION against both configuration read views. A future parallel AEM execution path must select `PP_HZ_CFG_BARRIER` before it can preserve that property. |
-| SET_STREAM_FORMAT (target; n/i today) | lock then sink bound or source streaming gives `STREAM_IS_RUNNING`; require format in the descriptor list and every static or dynamic mapping to reference an existing channel; otherwise `BAD_ARGUMENTS`; then commit, update AVTP format state, and mark NVM |
+| SET_STREAM_FORMAT (**implemented**, Milan §5.4.2.7) | length (cdl 24 and the walked payload) → type ∈ {STREAM_INPUT, STREAM_OUTPUT} → **per-descriptor running at dispatch** (bound input ∨ streaming output ⇒ `STREAM_IS_RUNNING`, outranking the lock like SET_CONFIGURATION's reduction and for the same reason) → lock → locate → the integrator's ONE-GATHER verdict on the proposed format (kind 0 selector 15 against `gsi_prop_fmt`): supported-for-this-stream AND every mapping-referenced channel survives, anything less ⇒ `BAD_ARGUMENTS` → WRITE_ST to SEL_FMTIN/SEL_FMTOUT + NVM mark → echo the format now in force. Every refusal after the length gate carries the CURRENT format read through GET_STREAM_FORMAT's own face word, so the two can never disagree. The supported set and the mapping reduction live integrator-side (the builder's always-live shapes; the map machinery that already validates every edit), not in a µcode walk over the image |
 | SET_SAMPLING_RATE | lock → rate ∈ AUDIO_UNIT list → mappings whose stream rate ≠ new rate while port has neither SRC bit ⇒ may `NOT_SUPPORTED` (Milan §5.4.2.13 — "UNSUPPORTED" typo, review §8 item 3) → commit + NVM |
 | SET_CLOCK_SOURCE | lock → source ∈ CLOCK_DOMAIN list → `mclk.SET_CLOCK_SOURCE` → commit + NVM |
 | SET_NAME (target; n/i today) | lock, require a named descriptor, commit, and mark NVM |
@@ -783,7 +793,9 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor; `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
 | 0x0006 SET_CONFIGURATION | real lock-protected **store**, with `STREAM_IS_RUNNING` while any Stream Input is bound or Stream Output is streaming. The value is recorded and republished; it does not yet re-point the served descriptor set - see the note under §6.4 |
 | 0x0007 GET_CONFIGURATION | real current configuration read |
+| 0x0008 SET_STREAM_FORMAT | real lock-protected per-stream store for both directions, with the Milan §5.4.2.7 refusals: per-descriptor `STREAM_IS_RUNNING` (bound input / streaming output, judged at dispatch off the indexed vectors), and one integrator gather that rules on the proposed format (supported set + mapping-channel survival) answering `BAD_ARGUMENTS`; every refusal carries the CURRENT format through GET_STREAM_FORMAT's own face word. The value is stored, published on the settings face and folded into the served current format; it does not yet re-shape the wire framers - the SET_CONFIGURATION precedent |
 | 0x0009 GET_STREAM_FORMAT | real current Stream Input or Stream Output format read |
+| 0x000E SET_STREAM_INFO | real for Stream Outputs, Milan §5.4.2.9's single sub-command: MSRP_ACC_LAT_VALID alone writes the presentation-time offset (bit 31 `BAD_ARGUMENTS`), any other flags refuse whole `NOT_SUPPORTED`, a streaming output refuses `STREAM_IS_RUNNING`, a Stream Input refuses `NOT_SUPPORTED`, and success answers the command echo §5.4.2.9 requires. The offset is stored, published per row and folded into GET_STREAM_INFO's latency word |
 | 0x000F GET_STREAM_INFO | real Milan Figure 5.1 response from the integrator state face |
 | 0x0014 / 0x0015 SET/GET_SAMPLING_RATE | real lock-protected per-Audio Unit dynamic state |
 | 0x0016 / 0x0017 SET/GET_CLOCK_SOURCE | real lock-protected per-Clock Domain dynamic state |
