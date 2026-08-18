@@ -374,7 +374,9 @@ module protocol_processor_top
     //! Kind 0 selector 15 asks the integrator to judge it for the addressed
     //! stream: answer bit 0 = the format is one this build can serve, bit 1
     //! = every channel an existing audio mapping references still exists in
-    //! it (Milan §5.4.2.7). An unwired face answers 0 and the command
+    //! it (Milan §5.4.2.7). ANSWER THE TWO BITS ALONE: the µprogram compares
+    //! the answer's low byte against exactly 0x03, so any other bit set in
+    //! it refuses the command. An unwired face answers 0 and the command
     //! refuses BAD_ARGUMENTS - a setter no integrator vouches for must not
     //! claim SUCCESS.
     output logic [63:0] gsi_prop_fmt_o,

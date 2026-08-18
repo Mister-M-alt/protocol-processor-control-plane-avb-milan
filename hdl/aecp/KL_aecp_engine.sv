@@ -442,7 +442,9 @@ module KL_aecp_engine
     //! the PROPOSED stream format while a SET_STREAM_FORMAT is in flight;
     //! kind 0 selector 15 asks the integrator to judge it (bit 0 = the
     //! format is supported for the addressed stream, bit 1 = every channel
-    //! an existing audio mapping references survives it, Milan §5.4.2.7)
+    //! an existing audio mapping references survives it, Milan §5.4.2.7).
+    //! The answer's LOW BYTE must be exactly 0x03 to pass - the µprogram's
+    //! byte-wide CHECK_ARG refuses any other bit set in it
     output logic [63:0] gsi_prop_fmt_o,
     input  wire  [63:0] gsi_data_i,          //! the word (see the doc tables)
     input  wire         gsi_wait_i,          //! HOLD the beat (not a ready)
@@ -2991,7 +2993,12 @@ module KL_aecp_engine
             end
             //! ---- SET_STREAM_INFO (Milan §5.4.2.9) ---------------------
             //! Every narrowing is settled HERE, off registered walk fields:
-            //! Figure 7-50 is 48 payload bytes (cdl 60) and the walked-length
+            //! the length floor is the 2013 edition's complete body (48
+            //! payload bytes, cdl 60 - 1722.1-2021's Figure 7-40 appends
+            //! ip_flags and the port/address block for a 96-byte cdl, and
+            //! the >= gate takes BOTH editions while refusing anything that
+            //! never reached the @48 latency; the appended 2021 fields are
+            //! walked and echoed, never interpreted). The walked-length
             //! conjunct guards the @48 capture like the format's above; a
             //! Stream Input target is NOT_SUPPORTED (Milan implements this
             //! command for Stream Outputs only); the flags word must be

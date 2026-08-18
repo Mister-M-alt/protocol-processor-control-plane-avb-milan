@@ -6048,6 +6048,13 @@ int main(int argc, char** argv) {
       if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
       CHECK(h.fmt_row(false, 0) == MAIN,
             "W23h2: the running refusal wrote nothing");
+      // the DIRECTION of the predicate: with INPUT 0 bound, a SET on
+      // OUTPUT 0 must still succeed - a mux that consulted the bound
+      // vector for outputs would refuse here and nothing else would see it
+      f = ask(AEM_SET_STREAM_FORMAT, sf_pl(0x0006, 0, MAIN), 0x769B);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS
+                && (h.d->aecp_fmt_out_v_o & 1) && h.fmt_row(true, 0) == MAIN,
+            "W23h4: a bound INPUT does not refuse the same-index OUTPUT");
       h.q_acmp.clear();
       h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
                         T1_UID, 0, 0, 0, 0x7A91, 0, 0));
@@ -6066,6 +6073,17 @@ int main(int argc, char** argv) {
                 && ((h.d->aecp_fmt_out_v_o >> 1) & 1)
                 && h.fmt_row(true, 1) == MAIN,
             "W23i: SET_STREAM_FORMAT on a Stream Output publishes its row");
+
+      // W23j: the mapping-survival reduction in the OUTPUT direction - the
+      // integrator model requires 4 channels on output 1, the 2ch shape
+      // orphans them, and the row must not move
+      h.sfmt_need_out[1] = 4;
+      f = ask(AEM_SET_STREAM_FORMAT, sf_pl(0x0006, 1, ALT), 0x769C);
+      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS
+                && h.fmt_row(true, 1) == MAIN,
+            "W23j: an output shrink that orphans a mapping refuses and "
+            "writes nothing");
+      h.sfmt_need_out[1] = 0;
     }
 
     // ---- W24: SET_STREAM_INFO (Milan 5.4.2.9, IEEE 7.4.15.1) -----------
@@ -6146,12 +6164,16 @@ int main(int argc, char** argv) {
               "W24g2: the stub echoes {type,index} over a zero body");
       }
 
-      // W24h: an index the image does not hold -> NO_SUCH_DESCRIPTOR
+      // W24h: an index the image does not hold -> NO_SUCH_DESCRIPTOR, and
+      // no offset row anywhere took the refused value
       f = ask(AEM_SET_STREAM_INFO,
               si_pl(0x0006, 5, ACC_LAT, 250000), 0x76A7);
       CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR
                 && cdl(f) == 60,
             "W24h: a nonexistent Stream Output answers NO_SUCH_DESCRIPTOR");
+      CHECK(h.d->aecp_pt_offset_v_o == 0x1
+                && h.d->aecp_pt_offset_o.at(0) == 1000000,
+            "W24h2: ...and the published rows did not move");
     }
 
     // ---- W25: the streaming-output refusals, against REAL streaming ------
@@ -6182,12 +6204,12 @@ int main(int argc, char** argv) {
             "is STREAMING");
 
       auto f = ask(AEM_SET_STREAM_FORMAT,
-                   sf_pl(0x0006, 0, H::SFMT_MAIN_C), 0x76B0);
+                   sf_pl(0x0006, 0, H::SFMT_ALT_C), 0x76B0);
       CHECK(!f.empty() && st(f) == AECP_STREAM_IS_RUNNING && cdl(f) == 24,
             "W25a: SET_STREAM_FORMAT on a streaming output refuses "
             "STREAM_IS_RUNNING, got %d", st(f));
-      CHECK((h.d->aecp_fmt_out_v_o & 1) == 0,
-            "W25a2: ...and its row was never written");
+      CHECK(h.fmt_row(true, 0) == H::SFMT_MAIN_C,
+            "W25a2: ...and its row kept W23h4's value, nothing was written");
 
       f = ask(AEM_SET_STREAM_INFO, si_pl(500000), 0x76B1);
       CHECK(!f.empty() && st(f) == AECP_STREAM_IS_RUNNING && cdl(f) == 60,

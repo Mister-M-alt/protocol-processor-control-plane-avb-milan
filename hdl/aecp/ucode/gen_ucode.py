@@ -1828,9 +1828,11 @@ place(E_SINFO, [
     u('END'),
 ])
 
-# Too short for Figure 7-50: the echo cannot serve here (a refusal has to be
-# the size of the response it refuses, and a truncated command's echo is not),
-# so the stub lays the full 48-byte body out as zeros after the echoed
+# Too short for the complete 2013-edition body (the shortest complete shape
+# of this command; 1722.1-2021's Figure 7-40 appends ip fields the engine
+# echoes without interpreting): the echo cannot serve here (a refusal has to
+# be the size of the response it refuses, and a truncated command's echo is
+# not), so the stub lays the 48-byte body out as zeros after the echoed
 # {type, index} word.
 place(E_SIBAD, [
     u('SET_STATUS', imm=ST_BADARG),

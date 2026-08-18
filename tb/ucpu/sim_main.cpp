@@ -967,8 +967,12 @@ int main(int argc, char** argv) {
     // S3d: a foreign lock refuses before locate and verdict
     CHECK(h.run(E_SFMTI, KEY, true, 2000, TYIX), "S3d completes");
     CHECK(h.last_status == ST_LOCKED && h.last_len == 24 && h.stw.empty(),
-          "S3d ENTITY_LOCKED with the current-format body, got %u len %u",
+          "S3d ENTITY_LOCKED with the full body and no write, got %u len %u",
           h.last_status, h.last_len);
+    CHECK(h.w32(16) == uint32_t(Harness::SFMT_CUR_C >> 32)
+              && h.w32(20) == uint32_t(Harness::SFMT_CUR_C),
+          "S3d2 the locked refusal carries the CURRENT format %08x %08x",
+          h.w32(16), h.w32(20));
 
     // S3e: a locate miss keeps NO_SUCH_DESCRIPTOR on the ZERO body and
     // never asks the face about a stream that does not exist

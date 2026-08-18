@@ -164,7 +164,7 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER *(architectural class; the current single AECP engine serializes AEM commands while the dispatch scoreboard remains unwired)* | yes | - | - | yes *(open, #69)* | 28 B |
 | 0x0007 | GET_CONFIGURATION | shall | — | RO | — | yes | — | — | 28 B |
 | 0x0008 | SET_STREAM_FORMAT | shall | per stream, both directions; §6.4 chain | STREAM_CFG | yes | - | - | *(open, #69)* | 36 B |
-| 0x0009 | GET_STREAM_FORMAT | shall | — | RO | — | yes | — | — | 40 B |
+| 0x0009 | GET_STREAM_FORMAT | shall | - | RO | - | yes | - | - | 36 B |
 | 0x000E | SET_STREAM_INFO | shall | **output only** (Δ11); §6.3 | STREAM_CFG | yes | - | - | *(open, #69)* | 72 B echo |
 | 0x000F | GET_STREAM_INFO | shall | Milan 80-B form §6.2 | RO | — | yes | — | async triggers | 80 B |
 | 0x0010 | SET_NAME | shall, **n/i today** | target: all names | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
@@ -222,10 +222,15 @@ while that command is in flight the engine presents the PROPOSED format on
 `gsi_prop_fmt`, and the integrator answers bit 0 = supported for the addressed
 stream, bit 1 = every channel an existing audio mapping references survives it.
 The integrator is also expected to FOLD the published settings face into its
-selector 1 and 3 answers (a valid SEL_FMTIN/SEL_FMTOUT row is the current format,
-a valid SEL_PTOFF row the accumulated latency), which is what keeps a GET after a
-SET reading the value the SET stored. The published rows — every presentation
-offset and both format directions, each value beside its valid bit — are the
+selector 1 answers for both directions (a valid SEL_FMTIN/SEL_FMTOUT row is the
+current format) and its selector 3 answer for the OUTPUT direction only (a valid
+SEL_PTOFF row is the accumulated latency; an input's latency stays the SRP
+registrars' fact and never folds), which is what keeps a GET after a SET reading
+the value the SET stored. The verdict answer is read with CHECK_ARG at byte
+width against the literal 3: the LOW BYTE must be exactly 0x03 to pass, so an
+integrator must answer the two defined bits ALONE -- any other bit set in the
+low byte refuses the command. The published rows -- every presentation offset
+and both format directions, each value beside its valid bit -- are the
 `aecp_pt_offset` / `aecp_fmt_in` / `aecp_fmt_out` port groups on
 `protocol_processor_top`; `KL_aecp_dyn_state`'s banner is their authority. Non-stream targets refuse NOT_SUPPORTED with the command echoed;
 short commands BAD_ARGUMENTS; a wedged face voids to ENTITY_MISBEHAVING. The Table
@@ -290,7 +295,7 @@ MSRP_FAILURE_VALID=0} ⇔ **streaming**.
 
 | Field / flag | Owner record | Signal ([F02.10](02_interfaces.md#fig-02-statusdict)) | Update event | Async notif (Table 5.22) |
 |---|---|---|---|---|
-| stream_format | integrator face word 1, folding the published SET_STREAM_FORMAT row when valid | — | SET_STREAM_FORMAT | via command trigger |
+| stream_format | integrator face word 1, folding the published SET_STREAM_FORMAT row when valid | - | SET_STREAM_FORMAT | via command trigger |
 | BOUND, pbsta, acmpsta, STREAMING_WAIT | ACMP sink record | — | listener-SM commits | yes (input) |
 | stream_id / DA / VLAN + *_VALID | sink record (settled) | — | A15 / A8 | yes |
 | msrp_accumulated_latency | srp | `acc_latency[sink]` + `P-INTERNAL-INGRESS-DELAY-NS` | talker-attr change | yes (input) |
