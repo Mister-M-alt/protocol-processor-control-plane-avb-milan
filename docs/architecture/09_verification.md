@@ -63,6 +63,7 @@ reports uncovered REQ-IDs as failures.
 | REGISTER_UNSOLICITED without `flags` (cdl 12) | accepted as flags = 0 (V4) |
 | padded minimum-size frames, cdl < frame length | parsed by cdl (V2) |
 | cdl + 12 > frame length | dropped + counted (V1) |
+| AECP command for a foreign target, including exact 38 through 45 B frames | silently dropped before short-command response dispatch (V6) |
 | h ≠ 0 / version ≠ 0 / unknown subtype | dropped (V8) |
 | unknown AEM opcode (each reserved range sampled) | echo + `NOT_IMPLEMENTED`, correctly sized |
 | MVU wrong protocol_id / unknown MVU type | VU `NOT_IMPLEMENTED` echo |

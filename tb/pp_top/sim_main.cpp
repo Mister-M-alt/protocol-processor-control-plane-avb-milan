@@ -2088,8 +2088,37 @@ int main(int argc, char** argv) {
     CHECK(!got.empty(), "A7: a truncated READ_DESCRIPTOR got no answer");
     CHECK(got == want, "A7: truncated-command answer is not byte-exact");
 
-    // ---- A8: a command for another entity is dropped (F06.2) -------------
+    // ---- A7b: short foreign-target commands stay silent (issue #48) -----
+    // The deleted legacy parser answered unpadded frames below 45 bytes
+    // before its target_entity_id comparison had completed. These frames are
+    // structurally valid by cdl, so they reach the AECP engine and must be
+    // rejected by the entity filter before the short-command BAD_ARGUMENTS
+    // path can build a response. Include 45 bytes to pin the old boundary.
     uint16_t drop0 = d->dbg_aecp_drop_o;
+    h.q_aecp.clear();
+    for (size_t n = 0; n <= 7; ++n) {
+      std::vector<uint8_t> short_foreign_pl(n);
+      for (size_t i = 0; i < n; ++i)
+        short_foreign_pl[i] = uint8_t(0x70 + i);
+      auto short_foreign = aecp_frame(
+          OWN_MAC, CTLR_MAC, 0, 0, EID ^ 0xFFULL, CTLR_EID,
+          uint16_t(0x7800 + n), AEM_READ_DESCRIPTOR, short_foreign_pl,
+          /*pad60=*/false);
+      CHECK(short_foreign.size() == 38 + n,
+            "A7b: generated %zu B frame, want %zu B",
+            short_foreign.size(), 38 + n);
+      h.feed(short_foreign);
+      h.run_ms(2);
+    }
+    h.run_ms(20);
+    CHECK(h.q_aecp.empty(),
+          "A7b: answered a 38..45 B command for another entity_id");
+    CHECK(d->dbg_aecp_drop_o == drop0 + 8,
+          "A7b: short foreign-target drops got %u, want %u",
+          (unsigned)(d->dbg_aecp_drop_o - drop0), 8u);
+
+    // ---- A8: a command for another entity is dropped (F06.2) -------------
+    drop0 = d->dbg_aecp_drop_o;
     h.q_aecp.clear();
     h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID ^ 0xFFULL, CTLR_EID,
                       0x8888, AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0, 0)));
