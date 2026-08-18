@@ -157,8 +157,7 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M3 | steer prefetch reads the addressed EID at PDU offset 27 instead of 28 | 16 FAIL — S6/S7/S9 the listener silently ignores mis-addressed heads (and the binding never commits): the target_eid rewrite is the real multicast discriminator |
 | M4 | `KL_acmp_talker` S_EV_MAAP loses its timeout exit (the deadlock restored) | 5 FAIL — S10: with no allocator the talker walker never consumes another command, so neither ACMP answer reaches the wire |
 | M5 | the top re-ties `.maap_req_ready_i (1'b0)` on the talker instance | 6 FAIL — S10: no grant, no gate, no declared DA on the SRP wire. The port is load-bearing, not decoration |
-
-| M6 | `KL_aecp_dyn_state` drops the SEL_CFG write (`cfg_r` assignment removed) | 8 FAIL — W17j, W18c, W18d3, W18f, W18g, W19a, W19g3, W19h: the configuration overlay is observed end to end. W8a/W8b pass under this whole-field drop by coincidence of the reset value — they exist to catch a LATER lost write against W18's residue (only two configuration indices are legal, so 0 is the one residue-distinct choice) |
+| M6 | `KL_aecp_dyn_state` drops the SEL_CFG write (`cfg_r` assignment removed) | 8 FAIL -- W17j, W18c, W18d3, W18f, W18g, W19a, W19g3, W19h: the configuration overlay is observed end to end. The W22 block passes under this mutation by construction: its echo is command-sourced and its expected 0 equals both the reset value and the image default. W22 exists for two other properties: a SUCCESS-arm refusal predicate stuck after W21u's unbind (W22a) and a lost later write against W18's residue of 1 (W22d) |
 
 All six bite; originals restored; suite back to green. The counts above were
 taken when the suite stood at 86 checks; scenario A and section B have since
