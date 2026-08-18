@@ -74,6 +74,15 @@ enum { ST_OK = 0, ST_FAIL = 1, ST_UNSUP = 2 };
 // ---------------------------------------------------------------------------
 // byte helpers
 // ---------------------------------------------------------------------------
+static uint64_t rd64(const uint8_t* p) {
+  uint64_t v = 0;
+  for (int i = 0; i < 8; ++i) v = (v << 8) | p[i];
+  return v;
+}
+static uint32_t rd32(const uint8_t* p) {
+  return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16)
+       | (uint32_t(p[2]) << 8) | p[3];
+}
 static void putbe(uint8_t* p, uint64_t v, int n) {
   for (int i = 0; i < n; ++i) p[i] = uint8_t(v >> (8 * (n - 1 - i)));
 }
@@ -332,6 +341,9 @@ static const uint16_t AEM_GET_SAMPLING_RATE = 0x0015;
 static const uint16_t AEM_GET_CLOCK_SOURCE = 0x0017;
 static const uint16_t AEM_SET_SAMPLING_RATE = 0x0014;
 static const uint16_t AEM_SET_CLOCK_SOURCE = 0x0016;
+static const uint16_t AEM_SET_STREAM_FORMAT = 0x0008;
+static const uint16_t AEM_SET_STREAM_INFO = 0x000E;
+static const uint16_t AEM_GET_STREAM_INFO = 0x000F;
 static const uint16_t AEM_SET_CONTROL = 0x0018;
 static const uint16_t AEM_GET_CONTROL = 0x0019;
 static const uint16_t AEM_SET_CONFIGURATION = 0x0006;
@@ -906,6 +918,33 @@ struct H {
   bool gsi_stuck = false;
   int  gsi_hold_cur = 0;
   uint64_t gsi_reads = 0;
+  // ---- the SET_STREAM_FORMAT verdict (kind 0 selector 15) and the
+  // settings fold. The verdict is the integrator's ruling on the PROPOSED
+  // format riding gsi_prop_fmt_o: bit 0 = the format is one of the
+  // builder's shapes, bit 1 = every channel a current mapping references
+  // survives it, modeled as a per-stream required-channel count the map
+  // machinery would maintain. The FOLD is the other half of the same
+  // contract: once the DUT publishes a row valid on its settings face, the
+  // integrator serves THAT value as the current format / latency word - so
+  // a GET after a SET grades store write, publication and fold end to end.
+  static const uint64_t SFMT_MAIN_C = 0x0205022000406000ull;   // the 8ch shape
+  static const uint64_t SFMT_ALT_C  = 0x0205021801006000ull;   // the 2ch shape
+  unsigned sfmt_need_in[2]  = {0, 0};
+  unsigned sfmt_need_out[2] = {0, 0};
+  uint64_t sfmt_verdicts = 0;
+  uint64_t sfmt_verdict_for(uint16_t ty, uint16_t ix, uint64_t fmt) const {
+    uint64_t v = 0;
+    if (fmt == SFMT_MAIN_C || fmt == SFMT_ALT_C) v |= 1;
+    const unsigned chans = (fmt == SFMT_ALT_C) ? 2 : 8;
+    unsigned need = 0;
+    if (ix < 2) need = (ty == 0x0006) ? sfmt_need_out[ix] : sfmt_need_in[ix];
+    if (need <= chans) v |= 2;
+    return v;
+  }
+  uint64_t fmt_row(bool out, int ix) const {
+    const auto& w = out ? d->aecp_fmt_out_o : d->aecp_fmt_in_o;
+    return (uint64_t(w.at(2 * ix + 1)) << 32) | w.at(2 * ix);
+  }
   static uint64_t gsi_value(uint8_t kind, uint16_t ty, uint16_t ix,
                             uint8_t sel, uint8_t ord) {
     if (kind == 0) {                      // GET_STREAM_INFO words
@@ -1246,11 +1285,26 @@ struct H {
         d->gsi_wait_i = 1;
         ++gsi_hold_cur;
       } else {
-        d->gsi_data_i = gsi_value((uint8_t)d->gsi_kind_o,
-                                  (uint16_t)d->gsi_desc_type_o,
-                                  (uint16_t)d->gsi_desc_index_o,
-                                  (uint8_t)d->gsi_sel_o,
-                                  (uint8_t)d->gsi_ord_o);
+        const uint8_t  gk  = (uint8_t)d->gsi_kind_o;
+        const uint16_t gty = (uint16_t)d->gsi_desc_type_o;
+        const uint16_t gix = (uint16_t)d->gsi_desc_index_o;
+        const uint8_t  gs  = (uint8_t)d->gsi_sel_o;
+        const bool gout = (gty == 0x0006);
+        if (gk == 0 && gs == 15) {
+          d->gsi_data_i = sfmt_verdict_for(gty, gix,
+                                           (uint64_t)d->gsi_prop_fmt_o);
+          ++sfmt_verdicts;
+        } else if (gk == 0 && gs == 1 && gix < 2
+                   && (((gout ? d->aecp_fmt_out_v_o : d->aecp_fmt_in_v_o)
+                        >> gix) & 1)) {
+          d->gsi_data_i = fmt_row(gout, gix);          // the settings fold
+        } else if (gk == 0 && gs == 3 && gout && gix < 2
+                   && ((d->aecp_pt_offset_v_o >> gix) & 1)) {
+          d->gsi_data_i = d->aecp_pt_offset_o.at(gix); // the settings fold
+        } else {
+          d->gsi_data_i = gsi_value(gk, gty, gix, gs,
+                                    (uint8_t)d->gsi_ord_o);
+        }
         gsi_hold_cur = 0;
         ++gsi_reads;
       }
@@ -5898,6 +5952,206 @@ int main(int argc, char** argv) {
             "W8d: non-ENTITY tail remains unchanged; got %#06x",
             f.size() >= 42 + 312
               ? (((unsigned)f[42 + 310] << 8) | f[42 + 311]) : 0);
+    }
+
+    // ---- W23: SET_STREAM_FORMAT (Milan 5.4.2.7, IEEE 7.4.9.1) -----------
+    // Command and response share Figure 7-34 (cdl 24 on every arm), the
+    // refusals carry the CURRENT format, and the value's authority chain is
+    // graded end to end: the store write, the published settings row, and
+    // the integrator fold that makes GET_STREAM_FORMAT serve it.
+    {
+      auto sf_pl = [&](uint16_t ty, uint16_t ix, uint64_t fmt) {
+        std::vector<uint8_t> p(12, 0);
+        putbe(&p[0], ty, 2); putbe(&p[2], ix, 2); putbe(&p[4], fmt, 8);
+        return p;
+      };
+      const uint64_t MAIN = H::SFMT_MAIN_C, ALT = H::SFMT_ALT_C;
+
+      // W23a: success on an idle Stream Input, byte-exact echo of the
+      // format now in force
+      auto f = ask(AEM_SET_STREAM_FORMAT, sf_pl(0x0005, 0, MAIN), 0x7690);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x7690, AEM_SET_STREAM_FORMAT,
+                             sf_pl(0x0005, 0, MAIN));
+      CHECK(!f.empty() && f == want,
+            "W23a: SET_STREAM_FORMAT byte-exact, echoing the stored format");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+      CHECK((h.d->aecp_fmt_in_v_o & 1) && h.fmt_row(false, 0) == MAIN,
+            "W23a2: the settings face publishes row 0 valid with the format");
+
+      // W23b: GET_STREAM_FORMAT now serves the SETTING through the fold -
+      // store write, publication and integrator fold graded in one read
+      auto g = ask(AEM_GET_STREAM_FORMAT, ti(0x0005, 0), 0x7691);
+      CHECK(!g.empty() && st(g) == AECP_SUCCESS && cdl(g) == 24
+                && g.size() >= 50 && rd64(&g[42]) == MAIN,
+            "W23b: GET_STREAM_FORMAT reads the format the SET stored");
+
+      // W23c: a format outside the builder's shapes -> BAD_ARGUMENTS
+      // carrying the CURRENT (folded) format, and the row does not move
+      f = ask(AEM_SET_STREAM_FORMAT,
+              sf_pl(0x0005, 0, 0xDEADBEEF00C0FFEEull), 0x7692);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_BAD_ARGUMENTS, EID,
+                        CTLR_EID, 0x7692, AEM_SET_STREAM_FORMAT,
+                        sf_pl(0x0005, 0, MAIN));
+      CHECK(!f.empty() && f == want,
+            "W23c: an unsupported format refuses with the CURRENT format");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+      CHECK(h.fmt_row(false, 0) == MAIN,
+            "W23c2: the refused format never reached the row");
+
+      // W23d: the Milan mapping-survival SHALL - a live mapping references
+      // channel 3, the 2ch shape orphans it, BAD_ARGUMENTS
+      h.sfmt_need_in[0] = 4;
+      f = ask(AEM_SET_STREAM_FORMAT, sf_pl(0x0005, 0, ALT), 0x7693);
+      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS && cdl(f) == 24
+                && h.fmt_row(false, 0) == MAIN,
+            "W23d: a shrink that orphans a mapping refuses and writes nothing");
+      h.sfmt_need_in[0] = 0;
+
+      // W23e: a wrong descriptor type is NOT_SUPPORTED in the full body
+      f = ask(AEM_SET_STREAM_FORMAT, sf_pl(0x0002, 0, MAIN), 0x7694);
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 24,
+            "W23e: a non-stream target is NOT_SUPPORTED at cdl 24");
+
+      // W23f: short of its own format -> BAD_ARGUMENTS on the zero body
+      f = ask(AEM_SET_STREAM_FORMAT, ti(0x0005, 0), 0x7695);
+      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS && cdl(f) == 24
+                && f.size() >= 50 && rd64(&f[42]) == 0,
+            "W23f: a truncated SET refuses on the zero-format body");
+
+      // W23g: an index the image does not hold -> NO_SUCH_DESCRIPTOR, zero
+      // body, and the face is never asked about it
+      const uint64_t asked_before = h.sfmt_verdicts;
+      f = ask(AEM_SET_STREAM_FORMAT, sf_pl(0x0005, 5, MAIN), 0x7696);
+      CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR && cdl(f) == 24
+                && f.size() >= 50 && rd64(&f[42]) == 0,
+            "W23g: a nonexistent stream answers NO_SUCH_DESCRIPTOR");
+      CHECK(h.sfmt_verdicts == asked_before,
+            "W23g2: no verdict was asked for a stream that does not exist");
+
+      // W23h: the per-descriptor STREAM_IS_RUNNING refusal, against a
+      // REALLY bound sink (the W21bind pattern), then cleared by unbind
+      h.q_acmp.clear();
+      h.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID,
+                        T1_UID, 0, 0, 0, 0x7A90, 0, 0));
+      auto b = h.wait_any(h.q_acmp, 400);
+      CHECK(!b.empty() && b.size() > 16 && ((b[16] >> 3) & 0x1F) == 0,
+            "W23h-bind: BIND_RX for the running precondition SUCCEEDED");
+      h.idle(400);
+      f = ask(AEM_SET_STREAM_FORMAT, sf_pl(0x0005, 0, ALT), 0x7697);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_STREAM_IS_RUNNING, EID,
+                        CTLR_EID, 0x7697, AEM_SET_STREAM_FORMAT,
+                        sf_pl(0x0005, 0, MAIN));
+      CHECK(!f.empty() && f == want,
+            "W23h: a bound Stream Input refuses STREAM_IS_RUNNING with the "
+            "current format");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+      CHECK(h.fmt_row(false, 0) == MAIN,
+            "W23h2: the running refusal wrote nothing");
+      h.q_acmp.clear();
+      h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                        T1_UID, 0, 0, 0, 0x7A91, 0, 0));
+      auto u = h.wait_any(h.q_acmp, 400);
+      CHECK(!u.empty() && u.size() > 16 && ((u[16] >> 3) & 0x1F) == 0,
+            "W23h-unbind: UNBIND_RX SUCCEEDED");
+      h.idle(400);
+      f = ask(AEM_SET_STREAM_FORMAT, sf_pl(0x0005, 0, ALT), 0x7698);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS
+                && h.fmt_row(false, 0) == ALT,
+            "W23h3: ...and the same SET succeeds once the sink is unbound");
+
+      // W23i: the OUTPUT direction lands on its own row
+      f = ask(AEM_SET_STREAM_FORMAT, sf_pl(0x0006, 1, MAIN), 0x7699);
+      CHECK(!f.empty() && st(f) == AECP_SUCCESS
+                && ((h.d->aecp_fmt_out_v_o >> 1) & 1)
+                && h.fmt_row(true, 1) == MAIN,
+            "W23i: SET_STREAM_FORMAT on a Stream Output publishes its row");
+    }
+
+    // ---- W24: SET_STREAM_INFO (Milan 5.4.2.11, IEEE 7.4.15.1) -----------
+    // Milan narrows the command to ONE sub-command: a Stream Output with
+    // exactly MSRP_ACC_LAT_VALID, setting the presentation-time offset.
+    // Command and response share Figure 7-50 (48 payload bytes, cdl 60), so
+    // success and every full-length refusal answer as the echo.
+    {
+      auto si_pl = [&](uint16_t ty, uint16_t ix, uint32_t flags,
+                       uint32_t lat) {
+        std::vector<uint8_t> p(48, 0);
+        putbe(&p[0], ty, 2); putbe(&p[2], ix, 2);
+        putbe(&p[4], flags, 4);
+        putbe(&p[24], lat, 4);
+        return p;
+      };
+      const uint32_t ACC_LAT = 0x20000000u;
+
+      // W24a: success writes the offset, publishes the row, and the echo is
+      // byte-exact
+      auto f = ask(AEM_SET_STREAM_INFO,
+                   si_pl(0x0006, 0, ACC_LAT, 1000000), 0x76A0);
+      auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                             CTLR_EID, 0x76A0, AEM_SET_STREAM_INFO,
+                             si_pl(0x0006, 0, ACC_LAT, 1000000));
+      CHECK(!f.empty() && f == want,
+            "W24a: SET_STREAM_INFO(ACC_LAT) byte-exact echo");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+      CHECK((h.d->aecp_pt_offset_v_o & 1)
+                && h.d->aecp_pt_offset_o.at(0) == 1000000,
+            "W24a2: the presentation-offset row published the setting");
+
+      // W24b: GET_STREAM_INFO's msrp_accumulated_latency now serves the
+      // setting through the fold (Milan Figure 5.1 keeps it at @48)
+      auto g = ask(AEM_GET_STREAM_INFO, ti(0x0006, 0), 0x76A1);
+      CHECK(!g.empty() && st(g) == AECP_SUCCESS && g.size() >= 66
+                && rd32(&g[62]) == 1000000,
+            "W24b: GET_STREAM_INFO reads the latency the SET stored, got %u",
+            g.size() >= 66 ? rd32(&g[62]) : 0u);
+
+      // W24c: a Stream Input target is NOT_SUPPORTED whole (echo)
+      f = ask(AEM_SET_STREAM_INFO,
+              si_pl(0x0005, 0, ACC_LAT, 1000000), 0x76A2);
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED && cdl(f) == 60,
+            "W24c: SET_STREAM_INFO on a Stream Input is NOT_SUPPORTED");
+
+      // W24d: any flag set beside ACC_LAT refuses the WHOLE command -
+      // nothing is partially applied
+      f = ask(AEM_SET_STREAM_INFO,
+              si_pl(0x0006, 0, ACC_LAT | 0x8u, 640000), 0x76A3);
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED
+                && h.d->aecp_pt_offset_o.at(0) == 1000000,
+            "W24d: an extra flag refuses whole and writes nothing");
+
+      // W24e: no sub-command at all is not a no-op SUCCESS
+      f = ask(AEM_SET_STREAM_INFO, si_pl(0x0006, 0, 0, 0), 0x76A4);
+      CHECK(!f.empty() && st(f) == AECP_NOT_SUPPORTED,
+            "W24e: an empty flags word is NOT_SUPPORTED");
+
+      // W24f: bit 31 is outside the offset's range -> BAD_ARGUMENTS
+      f = ask(AEM_SET_STREAM_INFO,
+              si_pl(0x0006, 0, ACC_LAT, 0x80000001u), 0x76A5);
+      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS
+                && h.d->aecp_pt_offset_o.at(0) == 1000000,
+            "W24f: a bit-31 latency is BAD_ARGUMENTS and writes nothing");
+
+      // W24g: short of Figure 7-50 -> BAD_ARGUMENTS at the response's own
+      // length, {type,index} echoed, every value byte zero
+      std::vector<uint8_t> shortpl(40, 0);
+      putbe(&shortpl[0], 0x0006, 2); putbe(&shortpl[4], ACC_LAT, 4);
+      f = ask(AEM_SET_STREAM_INFO, shortpl, 0x76A6);
+      CHECK(!f.empty() && st(f) == AECP_BAD_ARGUMENTS && cdl(f) == 60,
+            "W24g: a truncated SET_STREAM_INFO refuses at cdl 60");
+      if (f.size() >= 38 + 48) {
+        bool zeros = true;
+        for (int a = 42; a < 38 + 48; ++a) zeros = zeros && (f[a] == 0);
+        CHECK(zeros && (((unsigned)f[38] << 8) | f[39]) == 0x0006,
+              "W24g2: the stub echoes {type,index} over a zero body");
+      }
+
+      // W24h: an index the image does not hold -> NO_SUCH_DESCRIPTOR
+      f = ask(AEM_SET_STREAM_INFO,
+              si_pl(0x0006, 5, ACC_LAT, 250000), 0x76A7);
+      CHECK(!f.empty() && st(f) == AECP_NO_SUCH_DESCRIPTOR
+                && cdl(f) == 60,
+            "W24h: a nonexistent Stream Output answers NO_SUCH_DESCRIPTOR");
     }
   }
 

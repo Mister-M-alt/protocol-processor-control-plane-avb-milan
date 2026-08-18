@@ -172,6 +172,22 @@ E_STRMBAD = 1696     # ...either, too short to carry Figure 7-59's four bytes
 # move. 1712 and 1760 sit in the contiguous free run above E_STRMBAD's block.
 E_AMADD   = 1712     # ADD_AUDIO_MAPPINGS (Milan 5.4.2.27, IEEE 7.4.45)
 E_AMREMOVE = 1760    # REMOVE_AUDIO_MAPPINGS (Milan 5.4.2.28, IEEE 7.4.46)
+# --- SET_STREAM_FORMAT / SET_STREAM_INFO (Milan 5.4.2.7 / 5.4.2.11) ---------
+# 32-word slots in the free tail like the START/STOP pair, then the short
+# arms on 8-word pitches. The INPUT/OUTPUT twins are deliberately separate
+# programs for the reason E_STRT/E_STOP are: the store selector is an
+# immediate, so folding them would put the direction in the engine's dispatch
+# instead of in the program the dispatch names, and check_upc_map.py could no
+# longer tell them apart.
+E_SFMTI  = 1792     # SET_STREAM_FORMAT on a STREAM_INPUT
+E_SFMTO  = 1824     # SET_STREAM_FORMAT on a STREAM_OUTPUT
+E_SINFO  = 1856     # SET_STREAM_INFO, STREAM_OUTPUT, MSRP_ACC_LAT_VALID only
+E_SFRUN  = 1888     # SET_STREAM_FORMAT's STREAM_IS_RUNNING arm (dispatch lands
+                    # here, so it is an arm whose status no checking op set)
+E_SFCUR  = 1896     # the shared current-format tail (status set by the refuser)
+E_SFZERO = 1904     # the zero-format body (a locate miss keeps NO_SUCH_DESC)
+E_SFBAD  = 1912     # SET_STREAM_FORMAT too short to carry its own format
+E_SIBAD  = 1920     # SET_STREAM_INFO too short: the full 48-byte zero body
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
@@ -1695,6 +1711,139 @@ def _strm_refuse(status):
 
 place(E_STRMNS, _strm_refuse(ST_NSUPP))
 place(E_STRMBAD, _strm_refuse(ST_BADARG))
+
+
+# --- SET_STREAM_FORMAT (Milan §5.4.2.7, IEEE §7.4.9.1, Figure 7-34) ---------
+# Command and response share the figure: descriptor_type @24, descriptor_index
+# @26, stream_format @28. Payload 12, cdl 24 on every arm, including the
+# refusals. §7.4.9.1: a refused command answers with "the stream_format field
+# set to the current value", so every refusal arm below serves the CURRENT
+# format through the same GSI(1) word GET_STREAM_FORMAT reads (E_SFCUR),
+# never an echo of the value it refused.
+#
+# TWO validations, ONE verdict word. §7.4.9.1 refuses an unsupported format
+# and Milan §5.4.2.7 additionally SHALL-refuses a format that orphans any
+# channel an existing audio mapping references (the #58 defect class). Both
+# answer BAD_ARGUMENTS, and both facts belong to the integrator - the
+# supported set is the builder's always-live crossbar shapes, and the mapping
+# reduction lives where map edits already commit - so the µprogram asks ONE
+# gather, GSI(15), while the engine presents the PROPOSED format alongside
+# the gather face. Bit 0 = the format is supported for this stream, bit 1 =
+# every referenced channel survives. CHECK_ARG against 3 refuses anything
+# less, and the status it writes on the branch is exactly the BAD_ARGUMENTS
+# both clauses name.
+#
+# The per-descriptor STREAM_IS_RUNNING refusal (dispatch-routed E_SFRUN) and
+# the type gate run in the engine before either twin is named: a locate can
+# HIT on {ENTITY, 0}, so descriptor TYPE is never this program's to judge -
+# the E_STRT reasoning, unchanged.
+def _sfmt(sel):
+    return [
+        u('CHECK_LOCK', ra=15, imm=E_SFCUR),     # foreign lock -> ENTITY_LOCKED
+        u('DESC_ADDR', ra=14, imm=RGN_LOCATE),   # miss -> NO_SUCH_DESCRIPTOR
+        u('BR_STATUS', cnd=0, imm=E_SFZERO),     # ...with the zero-format body
+        u('GATHER_EXT', rd=3, **GSI(15)),        # the verdict on r12's format
+        u('MOVE', rd=4, ra=0, imm=3),            # required: supported + survives
+        u('CHECK_ARG', ra=3, rb=4, fmt=FMT_B,
+          cnd=REL_EQ, imm=E_SFCUR),              # short -> BAD_ARGUMENTS
+        u('WRITE_ST', ra=12, fmt=FMT_Q, imm=RGN_DYN + sel),
+        u('NVM_MARK', imm=1),                    # §5.3.5.1: persist it
+        u('SET_STATUS', imm=ST_OK),
+        u('BUILD_HDR', ra=15, rb=13),
+        u('BUILD_FLD', ra=13, fmt=FMT_D),        # type @24 + index @26
+        u('BUILD_FLD', ra=12, fmt=FMT_Q),        # the format now in force @28
+        u('SEND_RESP'),
+        u('END'),
+    ]
+
+place(E_SFMTI, _sfmt(SEL_FMTIN))
+place(E_SFMTO, _sfmt(SEL_FMTOUT))
+
+# Milan §5.4.2.7: "shall not accept ... if the Stream Input/Output is
+# running" - the PER-DESCRIPTOR predicate, judged by the engine at dispatch
+# off the indexed bound/streaming vectors (the reduction form stayed with
+# SET_CONFIGURATION). The arm only supplies the status the dispatch route
+# could not set, then falls into the shared current-format tail.
+place(E_SFRUN, [
+    u('SET_STATUS', imm=ST_STRMRUN),
+    u('BRANCH', imm=E_SFCUR),
+])
+
+# The shared refusal tail: whatever status the refusing op established
+# (ENTITY_LOCKED from CHECK_LOCK, BAD_ARGUMENTS from CHECK_ARG,
+# STREAM_IS_RUNNING from E_SFRUN) rides a body whose stream_format is the
+# CURRENT one, read through the face GET_STREAM_FORMAT already reads so the
+# two can never disagree.
+place(E_SFCUR, [
+    u('GATHER_EXT', rd=2, **GSI(1)),             # the current stream_format
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # current format       @28
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# A locate miss must NOT gather: the face answers by stream index, and asking
+# it about an index the image does not hold invents a value for a descriptor
+# that does not exist. Zero body, like E_GSFMT's own miss arm.
+place(E_SFZERO, [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # 8 zero bytes         @28
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# Too short to carry its own format: the walk never reached @35, so serving
+# either the captured fragment or a gather would dress a truncated command as
+# a judged one. BAD_ARGUMENTS on the zero-format body.
+place(E_SFBAD, [
+    u('SET_STATUS', imm=ST_BADARG),
+    u('BRANCH', imm=E_SFZERO),
+])
+
+# --- SET_STREAM_INFO (Milan §5.4.2.11, IEEE §7.4.15.1, Figure 7-50) ---------
+# Milan narrows the command to ONE sub-command: a STREAM_OUTPUT with exactly
+# the MSRP_ACC_LAT_VALID flag, setting the presentation-time offset. The
+# engine settles every narrowing at dispatch (type route, exact-flag test,
+# the bit-31 range refusal) off registered walk fields, so this program is
+# the SET_SAMPLING_RATE template with the response body ECHOED: command and
+# response share Figure 7-50, and with the one legal flag the only field the
+# response must update is the latency this command just wrote - which the
+# echo carries verbatim. The refusal arms (E_FAILSAFE here, E_NSUPPE /
+# E_BADARG / E_SIBAD at dispatch) ride the same echo with the status the
+# refusing op or route established.
+place(E_SINFO, [
+    u('CHECK_LOCK', ra=15, imm=E_FAILSAFE),      # echo + ENTITY_LOCKED
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=E_FAILSAFE),       # ...echoed at full length
+    u('WRITE_ST', ra=12, fmt=FMT_D, imm=RGN_DYN + SEL_PTOFF),
+    u('NVM_MARK', imm=1),                        # §5.3.5.1: persist it
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# Too short for Figure 7-50: the echo cannot serve here (a refusal has to be
+# the size of the response it refuses, and a truncated command's echo is not),
+# so the stub lays the full 48-byte body out as zeros after the echoed
+# {type, index} word.
+place(E_SIBAD, [
+    u('SET_STATUS', imm=ST_BADARG),
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_D),             # flags                @28
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # stream_format        @32
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # stream_id            @40
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # acc_lat + dest_mac   @48
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # mac tail + failure   @56
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # bridge_id tail + vlan @64
+    u('SEND_RESP'),
+    u('END'),
+])
 
 
 # --- deterministic non-degenerate fill ---------------------------------------

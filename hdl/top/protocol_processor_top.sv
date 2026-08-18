@@ -370,6 +370,14 @@ module protocol_processor_top
     output logic [15:0] gsi_desc_index_o,     //! addressed descriptor_index
     output logic  [3:0] gsi_sel_o,            //! word selector within the kind
     output logic  [7:0] gsi_ord_o,            //! ASP path entry ordinal
+    //! the PROPOSED stream format while a SET_STREAM_FORMAT is in flight.
+    //! Kind 0 selector 15 asks the integrator to judge it for the addressed
+    //! stream: answer bit 0 = the format is one this build can serve, bit 1
+    //! = every channel an existing audio mapping references still exists in
+    //! it (Milan §5.4.2.7). An unwired face answers 0 and the command
+    //! refuses BAD_ARGUMENTS - a setter no integrator vouches for must not
+    //! claim SUCCESS.
+    output logic [63:0] gsi_prop_fmt_o,
     input  wire  [63:0] gsi_data_i,           //! the word
     input  wire         gsi_wait_i,           //! HOLD the beat (not a ready)
     //! one-cycle strobe: a face-served GET_AVB_INFO word changed outside
@@ -570,7 +578,17 @@ module protocol_processor_top
     output logic  [7:0]                  aecp_identify_o,     //! IDENTIFY, 0 or 255
     output logic [15:0]                  aecp_clk_src_index_o,//! clock_source_index
     output logic [N_STREAM_IN_P-1:0]     aecp_strm_started_o, //! 1 = started
-    output logic [31:0]                  aecp_pt_offset_o,    //! presentation offset
+    //! per-row settings, value beside valid: presentation offsets at
+    //! [32k +: 32] and stream formats at [64k +: 64]. The offsets feed the
+    //! talker's transit entries, the formats the RX acceptance and the
+    //! served "current format"; a value whose valid bit is clear is a reset
+    //! zero and must not be consumed.
+    output logic [N_STREAM_OUT_P*32-1:0] aecp_pt_offset_o,
+    output logic [N_STREAM_OUT_P-1:0]    aecp_pt_offset_v_o,
+    output logic [N_STREAM_IN_P*64-1:0]  aecp_fmt_in_o,
+    output logic [N_STREAM_IN_P-1:0]     aecp_fmt_in_v_o,
+    output logic [N_STREAM_OUT_P*64-1:0] aecp_fmt_out_o,
+    output logic [N_STREAM_OUT_P-1:0]    aecp_fmt_out_v_o,
     output logic                         aecp_dyn_dirty_o,    //! a persisted field moved
     output logic                         aecp_lock_held_o,    //! LOCK_ENTITY ownership is live
 
@@ -3020,6 +3038,7 @@ module protocol_processor_top
       .gsi_desc_index_o   (gsi_desc_index_o),
       .gsi_sel_o          (gsi_sel_o),
       .gsi_ord_o          (gsi_ord_o),
+      .gsi_prop_fmt_o     (gsi_prop_fmt_o),
       .gsi_data_i         (gsi_data_i),
       .gsi_wait_i         (gsi_wait_i),
       .strm_bound_i       (bound_hold_r),
@@ -3052,6 +3071,11 @@ module protocol_processor_top
       .strm_set_ready_i   (strm_set_ready_w),
       .strm_set_error_i   (strm_set_error_w),
       .dyn_pt_offset_o    (aecp_pt_offset_o),
+      .dyn_pt_offset_v_o  (aecp_pt_offset_v_o),
+      .dyn_fmt_in_o       (aecp_fmt_in_o),
+      .dyn_fmt_in_v_o     (aecp_fmt_in_v_o),
+      .dyn_fmt_out_o      (aecp_fmt_out_o),
+      .dyn_fmt_out_v_o    (aecp_fmt_out_v_o),
       .dyn_dirty_o        (aecp_dyn_dirty_o)
   );
 
