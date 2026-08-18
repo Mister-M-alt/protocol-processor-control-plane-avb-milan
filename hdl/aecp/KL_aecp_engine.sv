@@ -3112,8 +3112,8 @@ module KL_aecp_engine
               //! SET_STREAM_INFO's msrp_accumulated_latency, @48..@51
               //! (Figure 7-40). Guarded on its own discriminator so no other
               //! long command's padding can reach the register, and settled
-              //! well before the A_PLD exit reads it - a cdl-60 command's
-              //! walk runs to index 47.
+              //! well before the A_PLD exit reads it - a cdl-96 command's
+              //! walk runs to index 83.
               11'd26: if (ssinfo_r) silat_r[31:24] <= rxs_rd_data_i;
               11'd27: if (ssinfo_r) silat_r[23:16] <= rxs_rd_data_i;
               11'd28: if (ssinfo_r) silat_r[15:8]  <= rxs_rd_data_i;

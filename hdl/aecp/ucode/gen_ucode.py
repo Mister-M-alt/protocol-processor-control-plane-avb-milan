@@ -187,7 +187,7 @@ E_SFRUN  = 1888     # SET_STREAM_FORMAT's STREAM_IS_RUNNING arm (dispatch lands
 E_SFCUR  = 1896     # the shared current-format tail (status set by the refuser)
 E_SFZERO = 1904     # the zero-format body (a locate miss keeps NO_SUCH_DESC)
 E_SFBAD  = 1912     # SET_STREAM_FORMAT too short to carry its own format
-E_SIBAD  = 1920     # SET_STREAM_INFO too short: the full 48-byte zero body
+E_SIBAD  = 1920     # SET_STREAM_INFO too short: the full 84-byte zero body
 E_SIRUN  = 1936     # SET_STREAM_INFO on a STREAMING output: refused whole
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
