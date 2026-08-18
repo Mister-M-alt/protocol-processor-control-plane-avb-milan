@@ -5824,9 +5824,21 @@ int main(int argc, char** argv) {
 
     // ---- W8: READ_DESCRIPTOR still intact after the whole section -------
     {
-      std::vector<uint8_t> one(4, 0);
-      putbe(&one[2], 0x0001, 2);
-      ask(AEM_SET_CONFIGURATION, one, 0x765F);
+      //! Distinct-value discipline (the W18 lesson applied to W8 itself):
+      //! this block used to SET configuration 1 with the response discarded,
+      //! but W18 had already left the store at 1 - a dropped write here was
+      //! indistinguishable from W18's residue. 0 is distinct from both that
+      //! residue and the image's 7, so every check below grades THIS write,
+      //! and the sinkless window after W21u's unbind is what makes the
+      //! SUCCESS arm reachable at all (issue #72's overlay B-leg record).
+      std::vector<uint8_t> zero(4, 0);
+      auto s = ask(AEM_SET_CONFIGURATION, zero, 0x765F);
+      CHECK(!s.empty() && st(s) == AECP_SUCCESS && cdl(s) == 16,
+            "W8a: SET_CONFIGURATION(0) succeeds in the sinkless window, "
+            "status %d cdl %d", st(s), cdl(s));
+      CHECK(s.size() >= 42 && (((unsigned)s[40] << 8) | s[41]) == 0x0000,
+            "W8a2: ...echoing the configuration it stored, got %u",
+            s.size() >= 42 ? (((unsigned)s[40] << 8) | s[41]) : 999u);
 
       std::vector<uint8_t> rd(8, 0);
       putbe(&rd[0], CFGIX, 2); putbe(&rd[4], 0x0000, 2);
@@ -5834,8 +5846,9 @@ int main(int argc, char** argv) {
       CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 12 + 4 + 312,
             "W8: READ_DESCRIPTOR intact after the read-side set");
       CHECK(f.size() >= 42 + 312
-            && (((unsigned)f[42 + 310] << 8) | f[42 + 311]) == 0x0001,
-            "W8b: ENTITY overlay follows the dynamic store; got %u",
+            && (((unsigned)f[42 + 310] << 8) | f[42 + 311]) == 0x0000,
+            "W8b: ENTITY overlay follows THIS write, not W18's residue nor "
+            "the image; got %u",
             f.size() >= 42 + 312
               ? (((unsigned)f[42 + 310] << 8) | f[42 + 311]) : 999u);
     }

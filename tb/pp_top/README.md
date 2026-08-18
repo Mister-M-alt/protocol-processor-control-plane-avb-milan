@@ -158,7 +158,9 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M4 | `KL_acmp_talker` S_EV_MAAP loses its timeout exit (the deadlock restored) | 5 FAIL — S10: with no allocator the talker walker never consumes another command, so neither ACMP answer reaches the wire |
 | M5 | the top re-ties `.maap_req_ready_i (1'b0)` on the talker instance | 6 FAIL — S10: no grant, no gate, no declared DA on the SRP wire. The port is load-bearing, not decoration |
 
-All five bite; originals restored; suite back to green. The counts above were
+| M6 | `KL_aecp_dyn_state` drops the SEL_CFG write (`cfg_r` assignment removed) | 8 FAIL — W17j, W18c, W18d3, W18f, W18g, W19a, W19g3, W19h: the configuration overlay is observed end to end. W8a/W8b pass under this whole-field drop by coincidence of the reset value — they exist to catch a LATER lost write against W18's residue (only two configuration indices are legal, so 0 is the one residue-distinct choice) |
+
+All six bite; originals restored; suite back to green. The counts above were
 taken when the suite stood at 86 checks; scenario A and section B have since
 been added, so re-run a mutation before quoting its blast radius.
 
