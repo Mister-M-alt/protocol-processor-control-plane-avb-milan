@@ -173,11 +173,33 @@ E_STRMBAD = 1696     # ...either, too short to carry Figure 7-59's four bytes
 # move. 1712 and 1760 sit in the contiguous free run above E_STRMBAD's block.
 E_AMADD   = 1712     # ADD_AUDIO_MAPPINGS (Milan 5.4.2.27, IEEE 7.4.45)
 E_AMREMOVE = 1760    # REMOVE_AUDIO_MAPPINGS (Milan 5.4.2.28, IEEE 7.4.46)
-E_GNAME   = 1824     # GET_NAME (Milan 5.4.2.12, IEEE 7.4.18)
-E_SNAME   = 1856     # SET_NAME (Milan 5.4.2.11, IEEE 7.4.17)
-E_NAMEERR = 1920     # full GET_NAME/SET_NAME error body with a zero name
-E_NAMERESP = 1936    # full response with the current name overlay value
-E_NAMEBAD = 1960     # malformed name command enters the full error body
+# --- SET_STREAM_FORMAT / SET_STREAM_INFO (Milan 5.4.2.7 / 5.4.2.9) ---------
+# 32-word slots in the free tail like the START/STOP pair, then the short
+# arms on 8-word pitches. The INPUT/OUTPUT twins are deliberately separate
+# programs for the reason E_STRT/E_STOP are: the store selector is an
+# immediate, so folding them would put the direction in the engine's dispatch
+# instead of in the program the dispatch names, and check_upc_map.py could no
+# longer tell them apart.
+E_SFMTI  = 1792     # SET_STREAM_FORMAT on a STREAM_INPUT
+E_SFMTO  = 1824     # SET_STREAM_FORMAT on a STREAM_OUTPUT
+E_SINFO  = 1856     # SET_STREAM_INFO, STREAM_OUTPUT, MSRP_ACC_LAT_VALID only
+E_SFRUN  = 1888     # SET_STREAM_FORMAT's STREAM_IS_RUNNING arm (dispatch lands
+                    # here, so it is an arm whose status no checking op set)
+E_SFCUR  = 1896     # the shared current-format tail (status set by the refuser)
+E_SFZERO = 1904     # the zero-format body (a locate miss keeps NO_SUCH_DESC)
+E_SFBAD  = 1912     # SET_STREAM_FORMAT too short to carry its own format
+E_SIBAD  = 1920     # SET_STREAM_INFO too short: the full 84-byte zero body
+E_SIRUN  = 1936     # SET_STREAM_INFO on a STREAMING output: refused whole
+#! the name family, RENUMBERED at the setters merge: the #67 programs landed
+#! first on main and hold 1792..1939, so GET_NAME and the three shared arms
+#! take the gaps between the setter slots and SET_NAME (62 words) takes the
+#! tail from 1940. The tail keeps 46 free words; the next family that does
+#! not fit renumbers again - place() asserts on any overlap either way.
+E_GNAME   = 1808     # GET_NAME (Milan 5.4.2.12, IEEE 7.4.18)
+E_SNAME   = 1940     # SET_NAME (Milan 5.4.2.11, IEEE 7.4.17)
+E_NAMEERR = 1840     # full GET_NAME/SET_NAME error body with a zero name
+E_NAMERESP = 1865    # full response with the current name overlay value
+E_NAMEBAD = 1890     # malformed name command enters the full error body
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
@@ -1703,6 +1725,158 @@ def _strm_refuse(status):
 place(E_STRMNS, _strm_refuse(ST_NSUPP))
 place(E_STRMBAD, _strm_refuse(ST_BADARG))
 
+
+# --- SET_STREAM_FORMAT (Milan §5.4.2.7, IEEE §7.4.9.1, Figure 7-34) ---------
+# Command and response share the figure: descriptor_type @24, descriptor_index
+# @26, stream_format @28. Payload 12, cdl 24 on every arm, including the
+# refusals. §7.4.9.1: a refused command answers with "the stream_format field
+# set to the current value", so every refusal arm below serves the CURRENT
+# format through the same GSI(1) word GET_STREAM_FORMAT reads (E_SFCUR),
+# never an echo of the value it refused.
+#
+# TWO validations, ONE verdict word. §7.4.9.1 refuses an unsupported format
+# and Milan §5.4.2.7 additionally SHALL-refuses a format that orphans any
+# channel an existing audio mapping references (the #58 defect class). Both
+# answer BAD_ARGUMENTS, and both facts belong to the integrator - the
+# supported set is the builder's always-live crossbar shapes, and the mapping
+# reduction lives where map edits already commit - so the µprogram asks ONE
+# gather, GSI(15), while the engine presents the PROPOSED format alongside
+# the gather face. Bit 0 = the format is supported for this stream, bit 1 =
+# every referenced channel survives. CHECK_ARG against 3 refuses anything
+# less, and the status it writes on the branch is exactly the BAD_ARGUMENTS
+# both clauses name.
+#
+# The per-descriptor STREAM_IS_RUNNING refusal (dispatch-routed E_SFRUN) and
+# the type gate run in the engine before either twin is named: a locate can
+# HIT on {ENTITY, 0}, so descriptor TYPE is never this program's to judge -
+# the E_STRT reasoning, unchanged.
+def _sfmt(sel):
+    return [
+        u('CHECK_LOCK', ra=15, imm=E_SFCUR),     # foreign lock -> ENTITY_LOCKED
+        u('DESC_ADDR', ra=14, imm=RGN_LOCATE),   # miss -> NO_SUCH_DESCRIPTOR
+        u('BR_STATUS', cnd=0, imm=E_SFZERO),     # ...with the zero-format body
+        u('GATHER_EXT', rd=3, **GSI(15)),        # the verdict on r12's format
+        u('MOVE', rd=4, ra=0, imm=3),            # required: supported + survives
+        u('CHECK_ARG', ra=3, rb=4, fmt=FMT_B,
+          cnd=REL_EQ, imm=E_SFCUR),              # short -> BAD_ARGUMENTS
+        u('WRITE_ST', ra=12, fmt=FMT_Q, imm=RGN_DYN + sel),
+        u('NVM_MARK', imm=1),                    # §5.3.5.1: persist it
+        u('SET_STATUS', imm=ST_OK),
+        u('BUILD_HDR', ra=15, rb=13),
+        u('BUILD_FLD', ra=13, fmt=FMT_D),        # type @24 + index @26
+        u('BUILD_FLD', ra=12, fmt=FMT_Q),        # the format now in force @28
+        u('SEND_RESP'),
+        u('END'),
+    ]
+
+place(E_SFMTI, _sfmt(SEL_FMTIN))
+place(E_SFMTO, _sfmt(SEL_FMTOUT))
+
+# Milan §5.4.2.7: "shall not accept ... if the Stream Input/Output is
+# running" - the PER-DESCRIPTOR predicate, judged by the engine at dispatch
+# off the indexed bound/streaming vectors (the reduction form stayed with
+# SET_CONFIGURATION). The arm only supplies the status the dispatch route
+# could not set, then falls into the shared current-format tail.
+place(E_SFRUN, [
+    u('SET_STATUS', imm=ST_STRMRUN),
+    u('BRANCH', imm=E_SFCUR),
+])
+
+# The shared refusal tail: whatever status the refusing op established
+# (ENTITY_LOCKED from CHECK_LOCK, BAD_ARGUMENTS from CHECK_ARG,
+# STREAM_IS_RUNNING from E_SFRUN) rides a body whose stream_format is the
+# CURRENT one, read through the face GET_STREAM_FORMAT already reads so the
+# two can never disagree.
+place(E_SFCUR, [
+    u('GATHER_EXT', rd=2, **GSI(1)),             # the current stream_format
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # current format       @28
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# A locate miss must NOT gather: the face answers by stream index, and asking
+# it about an index the image does not hold invents a value for a descriptor
+# that does not exist. Zero body, like E_GSFMT's own miss arm.
+place(E_SFZERO, [
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # 8 zero bytes         @28
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# Too short to carry its own format: the walk never reached @35, so serving
+# either the captured fragment or a gather would dress a truncated command as
+# a judged one. BAD_ARGUMENTS on the zero-format body.
+place(E_SFBAD, [
+    u('SET_STATUS', imm=ST_BADARG),
+    u('BRANCH', imm=E_SFZERO),
+])
+
+# --- SET_STREAM_INFO (Milan §5.4.2.9, IEEE 1722.1-2021 §7.4.15.1, Figure 7-40)
+# Milan narrows the command to ONE sub-command: a STREAM_OUTPUT with exactly
+# the MSRP_ACC_LAT_VALID flag, setting the presentation-time offset. The
+# engine settles every narrowing at dispatch (type route, the per-descriptor
+# streaming refusal, exact-flag test, the bit-31 range refusal) off
+# registered walk fields, so this program is the SET_SAMPLING_RATE template
+# with the response body ECHOED: §5.4.2.9 pins the successful response to
+# "the same value as in the command" for both the flag and the latency, and
+# command and response share Figure 7-40, so the echo IS the required body.
+# The refusal arms (E_FAILSAFE here, E_NSUPPE / E_BADARG / E_SIRUN / E_SIBAD
+# at dispatch) ride the same echo with the status the refusing op or route
+# established.
+place(E_SINFO, [
+    u('CHECK_LOCK', ra=15, imm=E_FAILSAFE),      # echo + ENTITY_LOCKED
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=E_FAILSAFE),       # ...echoed at full length
+    u('WRITE_ST', ra=12, fmt=FMT_D, imm=RGN_DYN + SEL_PTOFF),
+    u('NVM_MARK', imm=1),                        # §5.3.5.1: persist it
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# Too short for 1722.1-2021 Figure 7-40 - Milan v1.2 references the 2021
+# edition, so the 2013 60-byte shape is itself a truncated command here. The
+# echo cannot serve (a refusal has to be the size of the response it refuses,
+# and a truncated command's echo is not), so the stub lays the complete
+# 84-byte body out as zeros after the echoed {type, index} word: flags,
+# stream_format, stream_id, msrp_accumulated_latency, dest_mac, the failure
+# pair, failure_bridge_id, vlan, and the 2021 ip block through @107.
+place(E_SIBAD, [
+    u('SET_STATUS', imm=ST_BADARG),
+    u('MOVE', rd=2, ra=0, imm=0),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # flags + format head  @28
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # format tail + sid    @36
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # sid tail + acc_lat   @44
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # dest_mac + failure   @52
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # bridge_id            @60
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # vlan + ip_flags + ports @68
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # source ip            @76
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # source ip tail       @84
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # destination ip       @92
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # destination ip tail  @100
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# Milan §5.4.2.9: "If the Stream Output is streaming then the PAAD-AE shall
+# refuse the command with the STREAM_IS_RUNNING error code." The predicate
+# is the engine's per-descriptor route (the same indexed vectors as
+# SET_STREAM_FORMAT's); this arm only supplies the status and rides the
+# command echo like every other full-length SET_STREAM_INFO answer.
+place(E_SIRUN, [
+    u('SET_STATUS', imm=ST_STRMRUN),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+])
 
 # --- GET_NAME / SET_NAME ----------------------------------------------------
 # IEEE 1722.1-2021 Figures 7-39 and 7-40 use the same 72-byte response body:

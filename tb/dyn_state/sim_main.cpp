@@ -198,9 +198,52 @@ int main(int argc, char** argv) {
     wr(SEL_CLKSRC, 0, 1);
     CHECK(d->clk_src_index_o == 1,
           "F: clock_source_index face is %u", (unsigned)d->clk_src_index_o);
+    CHECK(d->pt_offset_v_o == 0,
+          "F: no presentation-offset row claims valid before a write");
     wr(SEL_PTOFF, 0, 2000000);
+    CHECK(d->pt_offset_v_o == 0x1,
+          "F: exactly row 0's presentation-offset valid rose, got 0x%X",
+          (unsigned)d->pt_offset_v_o);
+#ifdef SHAPE_1x1
+    // one row per direction: every published face is a plain scalar
     CHECK(d->pt_offset_o == 2000000,
-          "F: presentation-offset face is %u", (unsigned)d->pt_offset_o);
+          "F: presentation-offset row 0 face is %u",
+          (unsigned)d->pt_offset_o);
+    wr(SEL_FMTIN, 0, 0x0205022000406000ull);
+    CHECK(d->fmt_in_v_o == 0x1 && d->fmt_in_o == 0x0205022000406000ull,
+          "F: format-in row 0 face holds the written qword (v=0x%X)",
+          (unsigned)d->fmt_in_v_o);
+    wr(SEL_FMTOUT, 0, 0x0205022001406000ull);
+    CHECK(d->fmt_out_v_o == 0x1 && d->fmt_out_o == 0x0205022001406000ull,
+          "F: format-out row 0 face holds the written qword (v=0x%X)",
+          (unsigned)d->fmt_out_v_o);
+#else
+    CHECK((uint32_t)d->pt_offset_o == 2000000,
+          "F: presentation-offset row 0 face is %u",
+          (unsigned)(uint32_t)d->pt_offset_o);
+    // the per-row publication must keep rows apart: row 1's value and valid
+    // land beside row 0's, disturbing neither
+    wr(SEL_PTOFF, 1, 750000);
+    CHECK((uint32_t)(d->pt_offset_o >> 32) == 750000
+              && (uint32_t)d->pt_offset_o == 2000000
+              && d->pt_offset_v_o == 0x3,
+          "F: presentation-offset row 1 published beside row 0 (v=0x%X)",
+          (unsigned)d->pt_offset_v_o);
+    // the format faces publish the same way, 64 bits per row: row 1 lives
+    // in words 2..3 of the flat vector
+    wr(SEL_FMTIN, 1, 0x0205022000406000ull);
+    CHECK(d->fmt_in_v_o == 0x2
+              && d->fmt_in_o.at(2) == 0x00406000u
+              && d->fmt_in_o.at(3) == 0x02050220u,
+          "F: format-in row 1 face holds the written qword (v=0x%X)",
+          (unsigned)d->fmt_in_v_o);
+    wr(SEL_FMTOUT, 1, 0x0205022001406000ull);
+    CHECK(d->fmt_out_v_o == 0x2
+              && d->fmt_out_o.at(2) == 0x01406000u
+              && d->fmt_out_o.at(3) == 0x02050220u,
+          "F: format-out row 1 face holds the written qword (v=0x%X)",
+          (unsigned)d->fmt_out_v_o);
+#endif
   }
 
   // ---- F2: selector 6 is RETIRED and cannot become a second source -------
