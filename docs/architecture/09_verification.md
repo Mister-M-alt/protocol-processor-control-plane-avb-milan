@@ -153,8 +153,8 @@ and `tb/dyn_state/sim_main.cpp` (lettered sections):
 | current_configuration | W3c, W3d, W16a | W18/W18b/W18c/W18c3; W22a (SUCCESS-arm reachability after W21u's unbind) + W22d (residue displacement) | mechanism-level: dyn_state C, D (row addressing shared across selectors) |
 | sampling_rate | W5 (byte-exact image 96000) | W9/W9b (48000) | mechanism-level: dyn_state C, D |
 | clock_source | W6/W6b | W10/W10d | mechanism-level: dyn_state C, D |
-| stream formats (in/out) | W4 per type and index | store-level only (dyn_state B, C) -- no served AECP setter yet (root issue #67) | dyn_state C, D |
-| presentation offset | (no getter opcode; live face) | dyn_state B, C + the live-face check F | dyn_state C |
+| stream formats (in/out) | W4 per type and index | W23a/W23a2 (SET, both the echo and the published row), W23b (GET_STREAM_FORMAT serves the setting through the fold), W23i (the output row); refusals write nothing: W23c-W23h, W25a | dyn_state C, D + the per-row face checks F |
+| presentation offset | (no getter opcode; live face + GET_STREAM_INFO word 3) | W24a/W24a2 (SET + the published row), W24b (GET_STREAM_INFO serves it through the fold), W25d; refusals write nothing: W24c-W24h, W25b | dyn_state C + the per-row face checks F |
 | Identify control | W12/W12b/W12c (pre-SET GET) | W12d-W12h (SET/GET cycles), W13-W13d (step legality); volatility: dyn_state E | dyn_state E |
 | started/stopped | NOT in this store: the ACMP binding record owns it and selector 6 is RETIRED (dyn_state F2) | listener suite + pp_top W21 | dyn_state F2 |
 

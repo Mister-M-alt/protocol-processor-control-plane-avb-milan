@@ -112,6 +112,9 @@ module pp_top_wrap (
     output logic [15:0] gsi_desc_index_o,
     output logic  [3:0] gsi_sel_o,
     output logic  [7:0] gsi_ord_o,
+    //! the proposed format under a SET_STREAM_FORMAT: the harness integrator
+    //! model reads it to answer the kind-0 selector-15 verdict
+    output logic [63:0] gsi_prop_fmt_o,
     input  wire  [63:0] gsi_data_i,
     input  wire         gsi_wait_i,
 
@@ -253,7 +256,17 @@ module pp_top_wrap (
     //! (Milan 5.3.8.7). It is exposed because a START/STOP_STREAMING that
     //! answers SUCCESS without moving this bit is the exact defect the
     //! command's response shape cannot show.
-    output logic  [7:0] aecp_strm_started_o
+    output logic  [7:0] aecp_strm_started_o,
+    //! the per-row settings faces, exposed for the same reason: a
+    //! SET_STREAM_FORMAT / SET_STREAM_INFO that answers SUCCESS without
+    //! moving its row (or raising its valid bit) is invisible to any
+    //! response-shape check
+    output logic [8*32-1:0] aecp_pt_offset_o,
+    output logic  [7:0] aecp_pt_offset_v_o,
+    output logic [8*64-1:0] aecp_fmt_in_o,
+    output logic  [7:0] aecp_fmt_in_v_o,
+    output logic [8*64-1:0] aecp_fmt_out_o,
+    output logic  [7:0] aecp_fmt_out_v_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
@@ -338,7 +351,12 @@ module pp_top_wrap (
       .aecp_identify_o       (),
       .aecp_clk_src_index_o  (),
       .aecp_strm_started_o   (aecp_strm_started_o),
-      .aecp_pt_offset_o      (),
+      .aecp_pt_offset_o      (aecp_pt_offset_o),
+      .aecp_pt_offset_v_o    (aecp_pt_offset_v_o),
+      .aecp_fmt_in_o         (aecp_fmt_in_o),
+      .aecp_fmt_in_v_o       (aecp_fmt_in_v_o),
+      .aecp_fmt_out_o        (aecp_fmt_out_o),
+      .aecp_fmt_out_v_o      (aecp_fmt_out_v_o),
       .aecp_dyn_dirty_o      (),
       .aecp_lock_held_o      (aecp_lock_held_nc_w),
       .ctr_req_o             (ctr_req_o),
@@ -372,6 +390,7 @@ module pp_top_wrap (
       .gsi_desc_index_o      (gsi_desc_index_o),
       .gsi_sel_o             (gsi_sel_o),
       .gsi_ord_o             (gsi_ord_o),
+      .gsi_prop_fmt_o        (gsi_prop_fmt_o),
       .gsi_data_i            (gsi_data_i),
       .gsi_wait_i            (gsi_wait_i),
       //! the harness triggers AVB-info notifications through gm_change_i;

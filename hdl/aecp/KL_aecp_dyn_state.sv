@@ -105,7 +105,21 @@ module KL_aecp_dyn_state #(
     output logic [15:0] cur_config_o,      //! ENTITY.current_configuration
     output logic  [7:0] identify_o,        //! the IDENTIFY CONTROL's value
     output logic [15:0] clk_src_index_o,   //! CLOCK_DOMAIN[0].clock_source_index
-    output logic [31:0] pt_offset_o,       //! STREAM_OUTPUT[0] presentation off
+    //! per-row publication of the three stream-scoped settings, value beside
+    //! its valid bit. The banner's design intent made literal: the
+    //! presentation offset feeds the talker's per-STREAM_OUTPUT transit
+    //! entries and the formats feed the RX acceptance and the served
+    //! "current format", so the integrator needs every ROW, continuously -
+    //! an indexed view would serve one reader per cycle and the framers are
+    //! all readers at once. Values without their valid bit are meaningless:
+    //! row k reads zero until a controller writes it, and a consumer that
+    //! took the zero would present in the past / accept nothing.
+    output logic [N_STREAM_OUT_P*32-1:0] pt_offset_o,   //! row k at [32k +: 32]
+    output logic [N_STREAM_OUT_P-1:0]    pt_offset_v_o,
+    output logic [N_STREAM_IN_P*64-1:0]  fmt_in_o,      //! row k at [64k +: 64]
+    output logic [N_STREAM_IN_P-1:0]     fmt_in_v_o,
+    output logic [N_STREAM_OUT_P*64-1:0] fmt_out_o,     //! row k at [64k +: 64]
+    output logic [N_STREAM_OUT_P-1:0]    fmt_out_v_o,
     output logic        dirty_o,           //! a persisted field was written
 
     //! ---- observability -------------------------------------------------
@@ -293,7 +307,17 @@ module KL_aecp_dyn_state #(
   assign cur_config_o    = cfg_r;
   assign identify_o      = ident_r[0];
   assign clk_src_index_o = clksrc_r[0];
-  assign pt_offset_o     = ptoff_r[0];
+  always_comb begin : live_rows
+    for (int unsigned i = 0; i < N_STREAM_OUT_P; i++) begin
+      pt_offset_o[32*i +: 32] = ptoff_r[i];
+      fmt_out_o[64*i +: 64]   = fmtout_r[i];
+    end
+    for (int unsigned i = 0; i < N_STREAM_IN_P; i++)
+      fmt_in_o[64*i +: 64] = fmtin_r[i];
+  end
+  assign pt_offset_v_o   = ptoff_v_r;
+  assign fmt_in_v_o      = fmtin_v_r;
+  assign fmt_out_v_o     = fmtout_v_r;
   assign dbg_writes_o    = wr_cnt_r;
   assign dbg_oob_o       = oob_cnt_r;
 

@@ -158,10 +158,16 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M4 | `KL_acmp_talker` S_EV_MAAP loses its timeout exit (the deadlock restored) | 5 FAIL — S10: with no allocator the talker walker never consumes another command, so neither ACMP answer reaches the wire |
 | M5 | the top re-ties `.maap_req_ready_i (1'b0)` on the talker instance | 6 FAIL — S10: no grant, no gate, no declared DA on the SRP wire. The port is load-bearing, not decoration |
 | M6 | `KL_aecp_dyn_state` drops the SEL_CFG write (`cfg_r` assignment removed) | 8 FAIL -- W17j, W18c, W18d3, W18f, W18g, W19a, W19g3, W19h: the configuration overlay is observed end to end. The W22 block passes under this mutation by construction: its echo is command-sourced and its expected 0 equals both the reset value and the image default. W22 exists for two other properties: a SUCCESS-arm refusal predicate stuck after W21u's unbind (W22a) and a lost later write against W18's residue of 1 (W22d) |
+| M7 | the engine's SET_STREAM_FORMAT running route forced dead (`run_this_w` arm to `1'b0`) | 2 FAIL -- W23h + W23h2: the per-descriptor STREAM_IS_RUNNING refusal against a REALLY bound sink, and the write its absence lets through |
+| M8 | the verdict requirement dropped (E_SFMTI/E_SFMTO `MOVE r4, 3` to `MOVE r4, 0`) | 8 FAIL -- both refusal rows (W23c/W23c2 unsupported, W23d shrink) AND the success rows (W23a/W23a2/W23b, W23h/W23h2 -- the latter as collateral: their expected bodies ride W23a.s write through the fold): CHECK_ARG.s comparator is load-bearing in both directions, not a tautology |
+| M9 | the engine's SET_STREAM_INFO flag gate forced open (the SIF_ACC_LAT compare to `1'b0`) | 3 FAIL -- W24d/W24e, and W24f collaterally because the extra-flag command's write now lands: nothing is partially applied is a checked property |
+| M10 | E_SINFO's WRITE_ST replaced with NOP | 4 FAIL -- W24a2/W24b (the published row and the folded GET), W24d/W24f (rows that assert the value survived refusals). W24a's byte-exact echo PASSES under this mutation -- the echo cannot see a dropped write, which is exactly why the face checks exist |
+| M11 | the engine's SET_STREAM_INFO running route forced dead | 2 FAIL -- W25b + W25b2 against a REALLY streaming output (Advertise + registered Listener on the wire) |
 
-All six bite; originals restored; suite back to green. The counts above were
-taken when the suite stood at 86 checks; scenario A and section B have since
-been added, so re-run a mutation before quoting its blast radius.
+All eleven bite; originals restored; suite back to green. The M1-M6 counts were
+taken when the suite stood at 86 checks (scenario A and section B have since
+been added) and the M7-M11 counts at 1,139, so re-run a mutation before quoting
+its blast radius.
 
 ## Recorded seams and honest limits
 

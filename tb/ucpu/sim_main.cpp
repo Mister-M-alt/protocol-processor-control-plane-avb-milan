@@ -34,11 +34,15 @@ enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
        E_EAVL = 1008, E_GCFG = 1024, E_GSFMT = 1056, E_GSRATE = 1088,
        E_GCLKS = 1120, E_SSRATE = 1152, E_SCLKS = 1184,
        E_TIZ8NS = 1216, E_TIZ4NS = 1224, E_LOCKED4 = 1232,
-       E_BADARG4 = 1240, E_STRT = 1600 };
+       E_BADARG4 = 1240, E_STRT = 1600,
+       E_SFMTI = 1792, E_SFMTO = 1824, E_SINFO = 1856, E_SFRUN = 1888,
+       E_SFCUR = 1896, E_SFZERO = 1904, E_SFBAD = 1912, E_SIBAD = 1920,
+       E_SIRUN = 1936 };
 
 // IEEE 1722.1-2021 Table 7-141
 enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
-       ST_BADARG = 7, ST_NORES = 8, ST_MISBEHAVING = 10, ST_NSUPP = 11 };
+       ST_BADARG = 7, ST_NORES = 8, ST_MISBEHAVING = 10, ST_NSUPP = 11,
+       ST_STRMRUN = 12 };
 
 static const uint64_t CTLR = 0xC0FFEE00DEADBEEFull;
 static const uint64_t OPD1 = 0x0000000000001234ull;
@@ -115,6 +119,13 @@ struct Harness {
   uint64_t rgy_result = 0;
   uint64_t rgy_holder = 0;   // sel 0xA1: the lock holder's eid (0 = free)
 
+  // the SET_STREAM_FORMAT faces: the integrator's verdict on the proposed
+  // format (sel 0xBF: bit 0 supported, bit 1 mappings survive) and the
+  // CURRENT format the refusal arms serve through GET_STREAM_FORMAT's own
+  // word (sel 0xB1)
+  uint64_t sfmt_verdict = 3;
+  static const uint64_t SFMT_CUR_C = 0x0205021801406000ull;
+
   uint64_t gxval(uint8_t sel) {
     if (cur_upc == E_REGUN || cur_upc == E_DEREG ||
         cur_upc == E_LOCKEN || cur_upc == E_LOCKUNS) {
@@ -147,6 +158,12 @@ struct Harness {
       if ((sel & 0xF0) == 0xB0)
         return 0xB000'0000'0000'0000ull | (uint64_t(sel & 0x0F) << 32) |
                (0x00C0'0000ull | (sel & 0x0F));
+      return 0;
+    }
+    if (cur_upc == E_SFMTI || cur_upc == E_SFMTO ||
+        cur_upc == E_SFRUN || cur_upc == E_SFCUR) {
+      if (sel == 0xBF) return sfmt_verdict;
+      if (sel == 0xB1) return SFMT_CUR_C;
       return 0;
     }
     if (sel == 0x25) return 0x1111222233334444ull;
@@ -894,6 +911,151 @@ int main(int argc, char** argv) {
           "S2 failed completion is ENTITY_MISBEHAVING, got %u len %u",
           h.last_status, h.last_len);
     h.write_error = false;
+  }
+
+  // ---- S3: SET_STREAM_FORMAT family (Milan 5.4.2.7, IEEE 7.4.9.1) --------
+  // The tix operand shapes: r14 = {16'0, index, type, 16'0} is the locate
+  // key, r13 = {32'0, type, index} the emitted word. Index 3 of type 0x0005
+  // hits the harness locate; index 0x0BAD misses.
+  {
+    const uint64_t KEY  = 0x0000000300050000ull;
+    const uint64_t TYIX = 0x0000000000050003ull;
+    const uint64_t FMT  = 0x0205022000406000ull;
+    const uint32_t WR_FMTIN_A  = 0x500u + 0x10000u + 0x18u;
+    const uint32_t WR_FMTOUT_A = 0x500u + 0x10000u + 0x20u;
+
+    dut->disp_opd2_i = FMT;
+    h.sfmt_verdict = 3;
+    CHECK(h.run(E_SFMTI, KEY, false, 2000, TYIX), "S3 completes");
+    CHECK(h.last_status == ST_OK && h.last_len == 24,
+          "S3 SUCCESS with the 12-byte body, got %u len %u",
+          h.last_status, h.last_len);
+    CHECK(h.w32(12) == 0x00050003u, "S3 type+index got %08x", h.w32(12));
+    CHECK(h.w32(16) == uint32_t(FMT >> 32) && h.w32(20) == uint32_t(FMT),
+          "S3 the format now in force %08x %08x", h.w32(16), h.w32(20));
+    CHECK(h.stw.size() == 1 && !h.stw[0].name
+              && h.stw[0].addr == WR_FMTIN_A && h.stw[0].data == FMT
+              && h.stw[0].strb == 0xFF,
+          "S3 one qword write to RGN_DYN+SEL_FMTIN");
+    CHECK(h.nvm_marks.size() == 1 && h.nvm_marks[0] == 1,
+          "S3 the setting marks NVM region 1");
+    CHECK(!h.gx_sels.empty() && h.gx_sels[0] == 0xBF,
+          "S3 the verdict was ASKED before the write");
+
+    // S3b: the integrator refuses the format (unsupported) -> BAD_ARGUMENTS
+    // carrying the CURRENT format, and nothing written
+    h.sfmt_verdict = 2;
+    CHECK(h.run(E_SFMTI, KEY, false, 2000, TYIX), "S3b completes");
+    CHECK(h.last_status == ST_BADARG && h.last_len == 24,
+          "S3b refusal keeps the full body, got %u len %u",
+          h.last_status, h.last_len);
+    CHECK(h.w32(16) == uint32_t(Harness::SFMT_CUR_C >> 32)
+              && h.w32(20) == uint32_t(Harness::SFMT_CUR_C),
+          "S3b the refusal serves the CURRENT format %08x %08x",
+          h.w32(16), h.w32(20));
+    CHECK(h.stw.empty() && h.nvm_marks.empty(),
+          "S3b a refused format writes nothing");
+
+    // S3c: supported but a mapping's channel would be orphaned
+    h.sfmt_verdict = 1;
+    CHECK(h.run(E_SFMTI, KEY, false, 2000, TYIX), "S3c completes");
+    CHECK(h.last_status == ST_BADARG && h.stw.empty(),
+          "S3c the Milan mapping-survival SHALL refuses, got %u",
+          h.last_status);
+    h.sfmt_verdict = 3;
+
+    // S3d: a foreign lock refuses before locate and verdict
+    CHECK(h.run(E_SFMTI, KEY, true, 2000, TYIX), "S3d completes");
+    CHECK(h.last_status == ST_LOCKED && h.last_len == 24 && h.stw.empty(),
+          "S3d ENTITY_LOCKED with the full body and no write, got %u len %u",
+          h.last_status, h.last_len);
+    CHECK(h.w32(16) == uint32_t(Harness::SFMT_CUR_C >> 32)
+              && h.w32(20) == uint32_t(Harness::SFMT_CUR_C),
+          "S3d2 the locked refusal carries the CURRENT format %08x %08x",
+          h.w32(16), h.w32(20));
+
+    // S3e: a locate miss keeps NO_SUCH_DESCRIPTOR on the ZERO body and
+    // never asks the face about a stream that does not exist
+    CHECK(h.run(E_SFMTI, 0x00000BAD00050000ull, false, 2000,
+                0x0000000000050BADull),
+          "S3e completes");
+    CHECK(h.last_status == ST_NOSUCH && h.last_len == 24,
+          "S3e NO_SUCH_DESCRIPTOR full body, got %u len %u",
+          h.last_status, h.last_len);
+    CHECK(h.w32(16) == 0 && h.w32(20) == 0, "S3e zero format on a miss");
+    CHECK(h.gx_sels.empty(), "S3e no gather for a nonexistent stream");
+
+    // S3f: the OUTPUT twin differs in exactly the store selector
+    dut->disp_opd2_i = FMT;
+    CHECK(h.run(E_SFMTO, 0x0000000300060000ull, false, 2000,
+                0x0000000000060003ull),
+          "S3f completes");
+    CHECK(h.last_status == ST_OK && h.stw.size() == 1
+              && h.stw[0].addr == WR_FMTOUT_A && h.stw[0].data == FMT,
+          "S3f one qword write to RGN_DYN+SEL_FMTOUT");
+
+    // S3g: the dispatch-routed running arm supplies STREAM_IS_RUNNING on
+    // the current-format body
+    CHECK(h.run(E_SFRUN, KEY, false, 2000, TYIX), "S3g completes");
+    CHECK(h.last_status == ST_STRMRUN && h.last_len == 24,
+          "S3g STREAM_IS_RUNNING full body, got %u len %u",
+          h.last_status, h.last_len);
+    CHECK(h.w32(16) == uint32_t(Harness::SFMT_CUR_C >> 32),
+          "S3g the running refusal serves the current format");
+    CHECK(h.stw.empty(), "S3g the running refusal writes nothing");
+    dut->disp_opd2_i = 0;
+  }
+
+  // ---- S4: SET_STREAM_INFO (Milan 5.4.2.9) ------------------------------
+  // The engine settles type/flags/range at dispatch and echoes the command
+  // body itself, so the µprogram's whole job is the SEL_PTOFF write and a
+  // header; its response here is header-only (the echo is the engine's).
+  {
+    const uint64_t KEY  = 0x0000000300060000ull;
+    const uint64_t TYIX = 0x0000000000060003ull;
+    const uint32_t WR_PTOFF_A = 0x500u + 0x10000u + 0x28u;
+
+    dut->disp_opd2_i = 1000000;
+    CHECK(h.run(E_SINFO, KEY, false, 2000, TYIX), "S4 completes");
+    CHECK(h.last_status == ST_OK && h.last_len == 12,
+          "S4 SUCCESS, header only (the echo is engine-side), got %u len %u",
+          h.last_status, h.last_len);
+    CHECK(h.stw.size() == 1 && !h.stw[0].name
+              && h.stw[0].addr == WR_PTOFF_A && h.stw[0].data == 1000000
+              && h.stw[0].strb == 0x0F,
+          "S4 one dword write to RGN_DYN+SEL_PTOFF");
+    CHECK(h.nvm_marks.size() == 1 && h.nvm_marks[0] == 1,
+          "S4 the setting marks NVM region 1");
+
+    CHECK(h.run(E_SINFO, KEY, true, 2000, TYIX), "S4b completes");
+    CHECK(h.last_status == ST_LOCKED && h.stw.empty(),
+          "S4b ENTITY_LOCKED writes nothing, got %u", h.last_status);
+
+    CHECK(h.run(E_SINFO, 0x00000BAD00060000ull, false, 2000,
+                0x0000000000060BADull),
+          "S4c completes");
+    CHECK(h.last_status == ST_NOSUCH && h.stw.empty(),
+          "S4c NO_SUCH_DESCRIPTOR writes nothing, got %u", h.last_status);
+    dut->disp_opd2_i = 0;
+
+    // S4r: the streaming-output refusal arm rides the echo with only the
+    // status of Milan 5.4.2.9's SHALL
+    CHECK(h.run(E_SIRUN, KEY, false, 2000, TYIX), "S4r completes");
+    CHECK(h.last_status == ST_STRMRUN && h.last_len == 12 && h.stw.empty(),
+          "S4r STREAM_IS_RUNNING, header only, no write, got %u len %u",
+          h.last_status, h.last_len);
+
+    // S4d: the short-command stub lays the full 2021 Figure 7-40 body
+    // (84 payload bytes, response length 96) as zeros
+    CHECK(h.run(E_SIBAD, KEY, false, 2000, TYIX), "S4d completes");
+    CHECK(h.last_status == ST_BADARG && h.last_len == 96,
+          "S4d BAD_ARGUMENTS at the response's own length, got %u len %u",
+          h.last_status, h.last_len);
+    CHECK(h.w32(12) == 0x00060003u, "S4d echoes type+index, got %08x",
+          h.w32(12));
+    bool zeros = true;
+    for (uint32_t a = 16; a < 96; a += 4) zeros = zeros && (h.w32(a) == 0);
+    CHECK(zeros, "S4d every value byte is zero");
   }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);

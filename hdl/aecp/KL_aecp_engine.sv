@@ -439,6 +439,13 @@ module KL_aecp_engine
     output logic [15:0] gsi_desc_index_o,    //! the addressed descriptor_index
     output logic  [3:0] gsi_sel_o,           //! word selector within the kind
     output logic  [7:0] gsi_ord_o,           //! ASP path entry ordinal
+    //! the PROPOSED stream format while a SET_STREAM_FORMAT is in flight;
+    //! kind 0 selector 15 asks the integrator to judge it (bit 0 = the
+    //! format is supported for the addressed stream, bit 1 = every channel
+    //! an existing audio mapping references survives it, Milan §5.4.2.7).
+    //! The answer's LOW BYTE must be exactly 0x03 to pass - the µprogram's
+    //! byte-wide CHECK_ARG refuses any other bit set in it
+    output logic [63:0] gsi_prop_fmt_o,
     input  wire  [63:0] gsi_data_i,          //! the word (see the doc tables)
     input  wire         gsi_wait_i,          //! HOLD the beat (not a ready)
 
@@ -547,7 +554,15 @@ module KL_aecp_engine
     output logic [15:0] dyn_cur_config_o,    //! ENTITY.current_configuration
     output logic  [7:0] dyn_identify_o,      //! IDENTIFY value, 0 or 255
     output logic [15:0] dyn_clk_src_index_o, //! CLOCK_DOMAIN[0] clock source
-    output logic [31:0] dyn_pt_offset_o,     //! STREAM_OUTPUT[0] pres. offset
+    //! per-row: value beside its valid bit, row k of the offsets at
+    //! [32k +: 32] and of the formats at [64k +: 64]. A value without its
+    //! valid bit is a reset zero, not a setting.
+    output logic [N_STREAM_OUT_P*32-1:0] dyn_pt_offset_o,
+    output logic [N_STREAM_OUT_P-1:0]    dyn_pt_offset_v_o,
+    output logic [N_STREAM_IN_P*64-1:0]  dyn_fmt_in_o,
+    output logic [N_STREAM_IN_P-1:0]     dyn_fmt_in_v_o,
+    output logic [N_STREAM_OUT_P*64-1:0] dyn_fmt_out_o,
+    output logic [N_STREAM_OUT_P-1:0]    dyn_fmt_out_v_o,
     output logic        dyn_dirty_o          //! a persisted field was written
 );
 
@@ -641,6 +656,21 @@ module KL_aecp_engine
   //! their own branch behind issue #78 (started/stopped has two candidate
   //! homes and the choice is not this PR's to make).
   localparam logic [15:0] OP_SET_CONFIG_C      = 16'h0006;
+  //! ---- SET_STREAM_FORMAT / SET_STREAM_INFO (Milan §5.4.2.7 / §5.4.2.9) --
+  //! SET_STREAM_FORMAT rides the full SET template: the tix shape, the
+  //! 8-byte @28 capture (a stream_format fills `setval_r` exactly), and a
+  //! per-descriptor STREAM_IS_RUNNING route below. SET_STREAM_INFO is the
+  //! one command Milan narrows to a single sub-command - a STREAM_OUTPUT
+  //! with exactly the MSRP_ACC_LAT_VALID flag - so every narrowing is a
+  //! dispatch route off registered walk fields and the µprogram only writes
+  //! and echoes.
+  localparam logic [15:0] OP_SET_STREAM_FMT_C  = 16'h0008;
+  localparam logic [15:0] OP_SET_STREAM_INFO_C = 16'h000E;
+  //! IEEE 1722.1-2021 Table 7-133 stream_info_flags, numbered 0 = MSB like
+  //! Table 7-144: MSRP_ACC_LAT_VALID is table bit 2, wire bit 29. Milan
+  //! §5.4.2.9 admits EXACTLY this flag - a command carrying any other bit,
+  //! or none, is refused whole (NOT_SUPPORTED), never partially applied.
+  localparam logic [31:0] SIF_ACC_LAT_C        = 32'h2000_0000;
   //! ---- START/STOP_STREAMING (Milan §5.4.2.19 / §5.4.2.20) --------------
   //! IEEE Figure 7-59 gives both the {type @24, index @26} shape and nothing
   //! else, so they join `tix_w` and their response is four bytes long — the
@@ -731,6 +761,18 @@ module KL_aecp_engine
   //! against gen_ucode.py, so the two cannot drift apart again silently.
   localparam logic [10:0] UPC_AMADD_C    = 11'd1712; // E_AMADD
   localparam logic [10:0] UPC_AMREMOVE_C = 11'd1760; // E_AMREMOVE
+  //! the SET_STREAM_FORMAT twins (the store selector is a µcode immediate,
+  //! so direction picks the program - the E_STRT/E_STOP reasoning), their
+  //! dispatch-routed refusals, and SET_STREAM_INFO with its full-body
+  //! short-command stub. E_SFCUR/E_SFZERO are branch targets inside the
+  //! family, never dispatch entries, so they have no constant here.
+  localparam logic [10:0] UPC_SFMTI_C    = 11'd1792; // E_SFMTI
+  localparam logic [10:0] UPC_SFMTO_C    = 11'd1824; // E_SFMTO
+  localparam logic [10:0] UPC_SINFO_C    = 11'd1856; // E_SINFO
+  localparam logic [10:0] UPC_SFRUN_C    = 11'd1888; // E_SFRUN
+  localparam logic [10:0] UPC_SFBAD_C    = 11'd1912; // E_SFBAD
+  localparam logic [10:0] UPC_SIBAD_C    = 11'd1920; // E_SIBAD
+  localparam logic [10:0] UPC_SIRUN_C    = 11'd1936; // E_SIRUN
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -811,6 +853,8 @@ module KL_aecp_engine
   logic        gclks_r;                  // ... a GET_CLOCK_SOURCE
   logic        ssrate_r;                 // ... a SET_SAMPLING_RATE
   logic        sclks_r;                  // ... a SET_CLOCK_SOURCE
+  logic        ssfmt_r;                  // ... a SET_STREAM_FORMAT
+  logic        ssinfo_r;                 // ... a SET_STREAM_INFO
   logic        gctrl_r;                  // ... a GET_CONTROL
   logic        sctrl_r;                  // ... a SET_CONTROL
   logic        scfg_r;                   // ... a SET_CONFIGURATION
@@ -825,6 +869,13 @@ module KL_aecp_engine
   //! is 8 (§7.4.9.1). It is captured RIGHT-JUSTIFIED per command width by the
   //! walk below, because the µISA has no shift to justify it later.
   logic [63:0] setval_r;
+  //! SET_STREAM_INFO's second capture: msrp_accumulated_latency sits at
+  //! @48..@51 (Figure 7-40), past `setval_r`'s span, and for this command
+  //! `setval_r`'s own top half holds the FLAGS word from @28. One more
+  //! 32-bit register is the whole cost of reaching it; widening the shared
+  //! capture to @51 for every SET would walk three commands' padding into
+  //! live state instead.
+  logic [31:0] silat_r;
   logic        lock_ent_ok_r;            // its target walked as ENTITY[0]
   logic        uns_r;                    // engine-originated unsolicited job
   logic  [7:0] amap_rec_r;               // records handed out this command
@@ -1131,7 +1182,16 @@ module KL_aecp_engine
                     && (txn_w.opcode == OP_GET_CONTROL_C);
   assign sctrl_w  = aem_w
                     && (txn_w.opcode == OP_SET_CONTROL_C);
-  assign setc_w   = ssrate_w | sclks_w | sctrl_w;
+  //! SET_STREAM_FORMAT and SET_STREAM_INFO join the value-at-@28 family:
+  //! for the format that IS the argument (8 bytes, lands right-justified);
+  //! for SET_STREAM_INFO the eight bytes hold the FLAGS word at the top and
+  //! the argument itself rides the dedicated @48 capture (`silat_r`).
+  logic ssfmt_w, ssinfo_w;
+  assign ssfmt_w  = aem_w
+                    && (txn_w.opcode == OP_SET_STREAM_FMT_C);
+  assign ssinfo_w = aem_w
+                    && (txn_w.opcode == OP_SET_STREAM_INFO_C);
+  assign setc_w   = ssrate_w | sclks_w | sctrl_w | ssfmt_w | ssinfo_w;
   logic scfg_w;
   assign scfg_w   = aem_w
                     && (txn_w.opcode == OP_SET_CONFIG_C);
@@ -1247,11 +1307,25 @@ module KL_aecp_engine
   //! ---- the running predicate, reduced (Milan §5.3.7.3) ---------------
   //! §5.4.2.5's refusal is a REDUCTION over every stream — "if ONE OF the
   //! Stream Input is bound or ONE OF the Stream Output is streaming" — not a
-  //! test of the descriptor a command names. That is the only form this round
-  //! needs. The per-descriptor form belongs to SET_STREAM_FORMAT, and it
-  //! arrives WITH that command rather than sitting here unread.
+  //! test of the descriptor a command names.
   logic any_running_w;
   assign any_running_w = (|strm_bound_i) || (|strm_streaming_i);
+  //! ...and the PER-DESCRIPTOR form, shared by SET_STREAM_FORMAT (Milan
+  //! §5.4.2.7 refuses a bound Stream Input or a streaming Stream Output)
+  //! and SET_STREAM_INFO (§5.4.2.9 refuses a streaming Stream Output; its
+  //! type route guarantees the output arm is the one consulted): the SAME
+  //! vectors, indexed by the descriptor the command walked. §5.3.7.3 makes
+  //! "running" bound for a Stream Input and streaming for a Stream Output.
+  //! The range guard keeps an out-of-shape index from wrapping onto a live
+  //! stream's bit; such an index is not running, and the µprogram's locate
+  //! then answers NO_SUCH_DESCRIPTOR for it.
+  logic run_this_w;
+  assign run_this_w =
+      (cfg_ix_r == DT_STREAM_INPUT_C)
+        ? ((32'(desc_ix_r) < N_STREAM_IN_P)
+           && 1'(strm_bound_i >> desc_ix_r))
+        : ((32'(desc_ix_r) < N_STREAM_OUT_P)
+           && 1'(strm_streaming_i >> desc_ix_r));
 
   //! the @26..@27 capture set. `tix_w` is the {type @24, index @26} SHAPE;
   //! SET_CONFIGURATION is not that shape (§7.4.7.1 puts `reserved` at @24) but
@@ -1264,7 +1338,7 @@ module KL_aecp_engine
   logic tix_w;
   assign tix_w = ctrs_r | amap_r | amap_edit_r | gstri_r | gavb_r
                  | gsfmt_r | gsrate_r | gclks_r | setc_r | gctrl_r
-                 | strm_r;
+                 | strm_r | ssfmt_r | ssinfo_r;
   assign ix26_w = tix_w | regun_r | lockc_r | scfg_r;
   assign opd0_w = tix_w       ? {16'd0, desc_ix_r, cfg_ix_r, 16'd0}
                 : gasp_r      ? {16'd0, cfg_ix_r, DT_AVB_INTERFACE_C, 16'd0}
@@ -1290,6 +1364,7 @@ module KL_aecp_engine
                 : sclks_r  ? {48'd0, setval_r[63:48]}
                 : sctrl_r  ? {56'd0, setval_r[63:56]}
                 : scfg_r   ? {48'd0, desc_ix_r}
+                : ssinfo_r ? {32'd0, silat_r}
                            : setval_r;
 
   logic [63:0] opd0_r, opd1_r, opd2_r;
@@ -1527,6 +1602,11 @@ module KL_aecp_engine
       .identify_o      (dyn_identify_o),
       .clk_src_index_o (dyn_clk_src_index_o),
       .pt_offset_o     (dyn_pt_offset_o),
+      .pt_offset_v_o   (dyn_pt_offset_v_o),
+      .fmt_in_o        (dyn_fmt_in_o),
+      .fmt_in_v_o      (dyn_fmt_in_v_o),
+      .fmt_out_o       (dyn_fmt_out_o),
+      .fmt_out_v_o     (dyn_fmt_out_v_o),
       .dirty_o         (dyn_dirty_o),
       .dbg_writes_o    (dyn_writes_nc_w),
       .dbg_oob_o       (dyn_oob_nc_w)
@@ -1643,7 +1723,13 @@ module KL_aecp_engine
   //! (rgy_req_o gated on it, the gxr_data_r mux did not, so the query was
   //! asked and the counters answer came back)
   logic gx_alt_w, gsi_any_w, rgy_any_w;
-  assign gsi_any_w = gstri_r | gavb_r | gasp_r | gsfmt_r;
+  //! SET_STREAM_FORMAT joins the Milan-info face for the same reason
+  //! GET_STREAM_FORMAT did: its refusal arms answer "the current value",
+  //! which IS kind 0 selector 1, and its verdict word (selector 15) is the
+  //! integrator's ruling on the PROPOSED format presented on
+  //! `gsi_prop_fmt_o` - the supported set and the mapping-survival
+  //! reduction both live integrator-side, where map edits already commit.
+  assign gsi_any_w = gstri_r | gavb_r | gasp_r | gsfmt_r | ssfmt_r;
   assign rgy_any_w = regun_r | lockc_r | eavl_r;
   assign gx_alt_w  = amap_r | amap_edit_r | rgy_any_w | gsi_any_w;
 
@@ -1663,12 +1749,16 @@ module KL_aecp_engine
   //! ...the Milan-info face: selector low nibble forwarded, the kind from
   //! the discriminators, the ordinal from the shared record counter below
   assign gsi_req_o        = gx_req_w && gsi_any_w;
-  assign gsi_kind_o       = (gstri_r || gsfmt_r) ? 2'd0
+  assign gsi_kind_o       = (gstri_r || gsfmt_r || ssfmt_r) ? 2'd0
                                                  : (gavb_r ? 2'd1 : 2'd2);
   assign gsi_desc_type_o  = cfg_ix_r;
   assign gsi_desc_index_o = desc_ix_r;
   assign gsi_sel_o        = gx_sel_w[3:0];
   assign gsi_ord_o        = amap_rec_r;
+  //! the PROPOSED stream format, valid while a SET_STREAM_FORMAT is in
+  //! flight (it is that command's @28 capture, stable from the walk's end
+  //! to the next pop). The integrator reads it only to answer selector 15.
+  assign gsi_prop_fmt_o   = setval_r;
 
   assign rgy_req_o   = gx_req_w && rgy_any_w;
   assign rgy_state_o = gx_sel_w[0];
@@ -2125,6 +2215,8 @@ module KL_aecp_engine
       gclks_r      <= 1'b0;
       ssrate_r     <= 1'b0;
       sclks_r      <= 1'b0;
+      ssfmt_r      <= 1'b0;
+      ssinfo_r     <= 1'b0;
       gctrl_r      <= 1'b0;
       sctrl_r      <= 1'b0;
       scfg_r       <= 1'b0;
@@ -2134,6 +2226,7 @@ module KL_aecp_engine
       setc_r       <= 1'b0;
       gdi_r        <= 1'b0;
       setval_r     <= 64'd0;
+      silat_r      <= 32'd0;
       opd2_r       <= 64'd0;
       lock_ent_ok_r <= 1'b0;
       uns_r        <= 1'b0;
@@ -2208,6 +2301,8 @@ module KL_aecp_engine
               gclks_r    <= gclks_w;
               ssrate_r   <= ssrate_w;
               sclks_r    <= sclks_w;
+              ssfmt_r    <= ssfmt_w;
+              ssinfo_r   <= ssinfo_w;
               gctrl_r    <= gctrl_w;
               sctrl_r    <= sctrl_w;
               scfg_r     <= scfg_w;
@@ -2217,6 +2312,7 @@ module KL_aecp_engine
               setc_r     <= setc_w;
               gdi_r      <= gdi_w;
               setval_r   <= 64'd0;
+              silat_r    <= 32'd0;
               lock_ent_ok_r <= 1'b1;
               uns_r      <= 1'b0;
               err_mode_r <= 1'b0;
@@ -2297,6 +2393,8 @@ module KL_aecp_engine
             gclks_r    <= 1'b0;
             ssrate_r   <= 1'b0;
             sclks_r    <= 1'b0;
+            ssfmt_r    <= 1'b0;
+            ssinfo_r   <= 1'b0;
             gctrl_r    <= 1'b0;
             sctrl_r    <= 1'b0;
             scfg_r     <= 1'b0;
@@ -2518,6 +2616,8 @@ module KL_aecp_engine
                               && (g_rec_cmd_r == OP_GET_CLOCK_SRC_C);
             ssrate_r       <= 1'b0;
             sclks_r        <= 1'b0;
+            ssfmt_r        <= 1'b0;
+            ssinfo_r       <= 1'b0;
             gctrl_r        <= 1'b0;
             sctrl_r        <= 1'b0;
             scfg_r         <= 1'b0;
@@ -2869,6 +2969,70 @@ module KL_aecp_engine
               else                                    upc_r <= UPC_STOP_C;
               echo_r <= 1'b0;
             end
+            //! ---- SET_STREAM_FORMAT (Milan §5.4.2.7) --------------------
+            //! §7.4.9.1's command is 12 bytes, so cdl 24 is the whole of it,
+            //! and the `pld_cmd_r` conjunct is the amap_edit lesson: cdl is
+            //! a CLAIM, and a committed slot shorter than the claim leaves
+            //! the format capture holding a fragment - refusing on the
+            //! WALKED length is what keeps a fragment from being judged.
+            //! The type gate takes both stream directions (Milan implements
+            //! this SET for Stream Inputs AND Outputs); the per-descriptor
+            //! running route sits between the type gate and the twins so a
+            //! running stream refuses before lock and locate, mirroring
+            //! SET_CONFIGURATION's dispatch-routed reduction arm.
+            if (ssfmt_r) begin
+              if ((cmd_r.cdl < 11'd24)
+                  || (pld_cmd_r < 11'd12))            upc_r <= UPC_SFBAD_C;
+              else if ((cfg_ix_r != DT_STREAM_INPUT_C)
+                       && (cfg_ix_r != DT_STREAM_OUTPUT_C))
+                                                      upc_r <= UPC_TIZ8NS_C;
+              else if (run_this_w)                    upc_r <= UPC_SFRUN_C;
+              else if (cfg_ix_r == DT_STREAM_INPUT_C) upc_r <= UPC_SFMTI_C;
+              else                                    upc_r <= UPC_SFMTO_C;
+              echo_r <= 1'b0;
+            end
+            //! ---- SET_STREAM_INFO (Milan §5.4.2.9) ---------------------
+            //! Every narrowing is settled HERE, off registered walk fields:
+            //! the length floor is 1722.1-2021 Figure 7-40's COMPLETE body
+            //! (84 payload bytes, cdl 96) - Milan v1.2 references the 2021
+            //! edition, so the 2013 60-byte shape is a truncated command
+            //! here, refused BAD_ARGUMENTS at the full 2021 response length
+            //! (the compatibility note for shorter bodies covers a
+            //! controller READING an older entity's response, never this
+            //! responder accepting a legacy command). The appended ip
+            //! fields are walked and echoed, never interpreted. The
+            //! walked-length conjunct guards the @48 capture as above; a
+            //! Stream Input target is NOT_SUPPORTED (Milan implements this
+            //! command for Stream Outputs only); the flags word must be
+            //! EXACTLY MSRP_ACC_LAT_VALID (any other sub-command refuses the
+            //! whole command, never applies a part of it); and bit 31 of the
+            //! latency is outside the presentation-time range the store
+            //! carries, BAD_ARGUMENTS. Command and response share the
+            //! figure, so every route keeps the pop-time echo - the refusals
+            //! answer at the response's own length by construction, and the
+            //! success body's one updated field is the value the echo
+            //! already carries.
+            if (ssinfo_r) begin
+              //! the short-command stub is the ONE route that must not echo:
+              //! a truncated command's echo is command-sized, and a refusal
+              //! has to be the size of the response it refuses, so E_SIBAD
+              //! builds the full zero body itself
+              if ((cmd_r.cdl < 11'd96)
+                  || (pld_cmd_r < 11'd84)) begin
+                upc_r  <= UPC_SIBAD_C;
+                echo_r <= 1'b0;
+              end
+              else if (cfg_ix_r != DT_STREAM_OUTPUT_C)
+                                                      upc_r <= UPC_NSUPPE_C;
+              //! §5.4.2.9's own SHALL: a STREAMING output refuses the whole
+              //! command with STREAM_IS_RUNNING, before the sub-command is
+              //! even examined - the same route order as SET_STREAM_FORMAT
+              else if (run_this_w)                    upc_r <= UPC_SIRUN_C;
+              else if (setval_r[63:32] != SIF_ACC_LAT_C)
+                                                      upc_r <= UPC_NSUPPE_C;
+              else if (silat_r[31])                   upc_r <= UPC_BADARG_C;
+              else                                    upc_r <= UPC_SINFO_C;
+            end
             a_st_r <= A_DISP;
           end
           //! the RX pool answers one cycle after rd_en: byte for index
@@ -2945,6 +3109,15 @@ module KL_aecp_engine
               //! in one flop instead of the four bytes
               11'd14, 11'd15, 11'd16, 11'd17:
                 if (lockc_r && (rxs_rd_data_i != 8'd0)) lock_ent_ok_r <= 1'b0;
+              //! SET_STREAM_INFO's msrp_accumulated_latency, @48..@51
+              //! (Figure 7-40). Guarded on its own discriminator so no other
+              //! long command's padding can reach the register, and settled
+              //! well before the A_PLD exit reads it - a cdl-96 command's
+              //! walk runs to index 83.
+              11'd26: if (ssinfo_r) silat_r[31:24] <= rxs_rd_data_i;
+              11'd27: if (ssinfo_r) silat_r[23:16] <= rxs_rd_data_i;
+              11'd28: if (ssinfo_r) silat_r[15:8]  <= rxs_rd_data_i;
+              11'd29: if (ssinfo_r) silat_r[7:0]   <= rxs_rd_data_i;
               default: ;
             endcase
 
