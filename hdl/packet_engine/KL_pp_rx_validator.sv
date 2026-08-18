@@ -522,7 +522,13 @@ module KL_pp_rx_validator
             //! LISTENER for everything else - including the TX-family
             //! RESPONSES the listener itself originated (PROBE_TX_RESPONSE
             //! above all: Milan's listener probes and consumes the answer,
-            //! and its record is addressed by listener_unique_id @38). The
+            //! and its record is addressed by listener_unique_id @38).
+            //! CAVEAT for a future originator: messages 5/13 (GET_TX_STATE /
+            //! GET_TX_CONNECTION responses) get the listener uid here, which
+            //! a CONTROLLER consumer would not want - inert today because
+            //! nothing originates either command and both are silently
+            //! consumed; revisit this arm if KL_pp_originator ever grows a
+            //! GET_TX_* command. The
             //! old arm keyed responses on talker_unique_id @36, which held
             //! only while every bind used tuid == luid: a probe answer with
             //! tuid >= the sink count was silently consumed as
