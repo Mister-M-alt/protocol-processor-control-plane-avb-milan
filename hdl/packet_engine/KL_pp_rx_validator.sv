@@ -516,12 +516,25 @@ module KL_pp_rx_validator
           end else if (subtype_r == SUB_ACMP_C) begin
             hdr_protocol_r <= 3'(PP_PROTO_ACMP);
             hdr_opcode_r   <= {12'd0, msg_type_r};
-            // listener-directed messages carry the listener unique_id
+            //! the operand carries the unique_id of the engine that will
+            //! CONSUME the record: the talker for its command set {0,2,4,12}
+            //! (mirroring the top's ACMP pop steer term for term), the
+            //! LISTENER for everything else - including the TX-family
+            //! RESPONSES the listener itself originated (PROBE_TX_RESPONSE
+            //! above all: Milan's listener probes and consumes the answer,
+            //! and its record is addressed by listener_unique_id @38). The
+            //! old arm keyed responses on talker_unique_id @36, which held
+            //! only while every bind used tuid == luid: a probe answer with
+            //! tuid >= the sink count was silently consumed as
+            //! out-of-range, and one with a small distinct tuid would have
+            //! walked the WRONG sink's record.
             hdr_operands_r <= '{desc_type: 16'd0, desc_index: 16'd0,
                                 config_index: 16'd0,
-                                unique_id: ((msg_type_r >= 4'd6)
-                                            && (msg_type_r <= 4'd11))
-                                           ? luid_r : tuid_r};
+                                unique_id: ((msg_type_r == 4'd0)
+                                            || (msg_type_r == 4'd2)
+                                            || (msg_type_r == 4'd4)
+                                            || (msg_type_r == 4'd12))
+                                           ? tuid_r : luid_r};
           end else begin                                    // 0xFB AECP
             hdr_protocol_r <=
                 ((msg_type_r == 4'd6) || (msg_type_r == 4'd7))
