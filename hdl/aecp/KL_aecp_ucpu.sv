@@ -408,7 +408,11 @@ module KL_aecp_ucpu
           rb_wdata_o = gx_data_i[31:0];
         end
         OP_COPY_BUF: begin
-          rb_we_o    = (eseq_r == 4'd1) || (eseq_r == 4'd2);
+          //! A short final lane has no second word. Writing it anyway places
+          //! stale bytes after the declared response and, in a batch, into
+          //! the next dynamic_info header.
+          rb_we_o    = ((eseq_r == 4'd1) && (copy_adv1_w != 4'd0))
+                       || ((eseq_r == 4'd2) && (copy_adv2_w != 4'd0));
           rb_wdata_o = (eseq_r == 4'd1) ? copy_lane_r[63:32]
                                         : copy_lane_r[31:0];
         end

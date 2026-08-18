@@ -751,6 +751,11 @@ module KL_aecp_engine
            FRAME_MAX_C, TX_OVERSIZE_BYTES_P);
   end
 
+  if (RESP_BUF_C < ucpu_pkg::RESP_CAP_C) begin : gen_g_resp_cap_fit
+    $error("response buffer (%0d B) is smaller than GET_DYNAMIC_INFO limit (%0d B)",
+           RESP_BUF_C, ucpu_pkg::RESP_CAP_C);
+  end
+
   pp_txn_t txn_w;
   assign txn_w = pp_txn_t'(txn_i);
 
@@ -847,9 +852,11 @@ module KL_aecp_engine
   logic [15:0] g_scan_len_r;
   logic  [7:0] g_scan_cmd_hi_r;
   logic [15:0] g_rec_len_r, g_rec_cmd_r;
+  logic  [7:0] g_rec_cmd_status_r;
   logic [63:0] g_data_head_r;
   logic        g_rec_exec_r;
   logic  [4:0] g_rec_status_r;
+  logic        g_shape_fault_r;
 
   function automatic logic gdi_allowed(input logic [15:0] command_type);
     unique case (command_type)
@@ -930,6 +937,17 @@ module KL_aecp_engine
       end
       default: ;
     endcase
+    //! info_status is a record field, not a structural delimiter. A command
+    //! must supply SUCCESS, but a bad value leaves the following record
+    //! parseable. IEEE 1722.1-2021 7.4.76.1 says every element is handled as
+    //! an independent command, so contain this error to the record and copy
+    //! its command data in the BAD_ARGUMENTS response.
+    if (g_rec_cmd_status_r != 8'd0) begin
+      g_sub_exec_w   = 1'b0;
+      g_sub_rlen_w   = 11'(g_rec_len_r);
+      g_sub_upc_w    = UPC_NOTIMPL_C;
+      g_sub_status_w = ST_BAD_ARGUMENTS_C;
+    end
   end
   //! An ADD/REMOVE_AUDIO_MAPPINGS command can carry at most 63 records:
   //! IEEE 1722.1-2021 9.2.2.6 caps command control_data_length at 524, and
@@ -2150,9 +2168,11 @@ module KL_aecp_engine
       g_scan_cmd_hi_r  <= 8'd0;
       g_rec_len_r      <= 16'd0;
       g_rec_cmd_r      <= 16'd0;
+      g_rec_cmd_status_r <= 8'd0;
       g_data_head_r    <= 64'd0;
       g_rec_exec_r     <= 1'b0;
       g_rec_status_r   <= ST_SUCCESS_C;
+      g_shape_fault_r  <= 1'b0;
     end else begin
       unique case (a_st_r)
         A_IDLE: begin
@@ -2226,6 +2246,8 @@ module KL_aecp_engine
               g_out_r          <= 11'd12;
               g_rec_rlen_r     <= 11'd0;
               g_sub_end_r      <= 11'd0;
+              g_rec_cmd_status_r <= 8'd0;
+              g_shape_fault_r  <= 1'b0;
               g_data_head_r    <= 64'd0;
               a_st_r    <= gdi_w ? A_GSCAN
                           : (txn_w.rx_slot == PP_SLOT_NULL_C) ? A_DISP : A_PLD;
@@ -2283,6 +2305,7 @@ module KL_aecp_engine
             strm_r     <= 1'b0;
             setc_r     <= 1'b0;
             gdi_r      <= 1'b0;
+            g_shape_fault_r <= 1'b0;
             lock_ent_ok_r <= 1'b1;
             uns_r      <= 1'b1;
             err_mode_r <= 1'b0;
@@ -2311,7 +2334,7 @@ module KL_aecp_engine
             //! Milan 5.4.1 removes that ceiling only for responses. Refuse
             //! an oversized command before its record lengths can influence
             //! the aggregate response length or expose unwritten buffer RAM.
-            if (cmd_r.cdl > 11'd524) begin
+            if (cmd_r.cdl > 11'(ucpu_pkg::RESP_CAP_C)) begin
               upc_r   <= UPC_BADARG_C;
               echo_r  <= 1'b1;
               gdi_r   <= 1'b0;
@@ -2374,19 +2397,11 @@ module KL_aecp_engine
                 g_rd_pos_r <= g_rd_pos_r + 11'd1;
               end
               3'd4: begin
-                //! §7.4.76.1 requires SUCCESS in every command record.
-                //! A response status supplied in a command makes the record
-                //! malformed, so reject the complete list before any getter
-                //! can run.
-                if (rxs_rd_data_i != 8'h00) begin
-                  upc_r   <= UPC_BADARG_C;
-                  echo_r  <= 1'b1;
-                  gdi_r   <= 1'b0;
-                  a_st_r  <= A_DISP;
-                end else begin
-                  g_hdr_ix_r <= 3'd5;
-                  g_rd_pos_r <= g_rd_pos_r + 11'd1;
-                end
+                //! SUCCESS is the required command value, but this byte does
+                //! not affect record boundaries or whitelist membership. It
+                //! is judged independently during pass 2.
+                g_hdr_ix_r <= 3'd5;
+                g_rd_pos_r <= g_rd_pos_r + 11'd1;
               end
               3'd6: begin
                 g_scan_cmd_hi_r <= rxs_rd_data_i;
@@ -2420,6 +2435,7 @@ module KL_aecp_engine
               unique case (g_hdr_ix_r)
                 3'd0: g_rec_len_r[15:8] <= rxs_rd_data_i;
                 3'd1: g_rec_len_r[7:0]  <= rxs_rd_data_i;
+                3'd4: g_rec_cmd_status_r <= rxs_rd_data_i;
                 3'd6: g_rec_cmd_r[15:8] <= rxs_rd_data_i;
                 3'd7: begin
                   g_rec_cmd_r[7:0] <= rxs_rd_data_i;
@@ -2466,7 +2482,8 @@ module KL_aecp_engine
 
         // ---- decide response shape, including silent overflow skip -------
         A_GDEC: begin
-          if ((g_out_r + 11'd8 + g_sub_rlen_w) > 11'd524) begin
+          if ((g_out_r + 11'd8 + g_sub_rlen_w)
+              > 11'(ucpu_pkg::RESP_CAP_C)) begin
             g_rd_pos_r      <= g_next_pos_r;
             g_hdr_ix_r      <= 3'd0;
             g_load_data_r   <= 1'b0;
@@ -2570,7 +2587,8 @@ module KL_aecp_engine
 
         // ---- one aggregate response after every record has retired -------
         A_GDONE: begin
-          status_r    <= ST_SUCCESS_C;
+          status_r    <= g_shape_fault_r ? ST_ENTITY_MISBEHAVING_C
+                                         : ST_SUCCESS_C;
           echo_r      <= 1'b0;
           sent_r      <= 1'b1;
           bidx_r      <= 11'd0;
@@ -2973,7 +2991,20 @@ module KL_aecp_engine
           end
           if (ucpu_done_w) begin
             if (gdi_r) begin
-              a_st_r <= A_GPATCH;
+              //! g_rec_rlen_r is the shape selected before dispatch, while
+              //! resp_len_w is the getter's actual cursor. A future getter
+              //! edit must not silently misalign every following record or
+              //! expose stale response memory. Void the aggregate if the two
+              //! authorities disagree.
+              if ((resp_send_w ? resp_len_w : g_sub_end_r)
+                  != (g_out_r + 11'd8 + g_rec_rlen_r)) begin
+                g_shape_fault_r <= 1'b1;
+                pld_r           <= 11'd0;
+                echo_r          <= 1'b0;
+                a_st_r          <= A_GDONE;
+              end else begin
+                a_st_r <= A_GPATCH;
+              end
             end else begin
               bidx_r      <= 11'd0;
               frame_len_r <= pad_len_w;

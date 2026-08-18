@@ -497,7 +497,20 @@ standalone command, with `KL_aecp_ucpu` starting at the aggregate response
 cursor and suppressing its private header. Permitted but unimplemented members
 copy their command-specific data with record status `NOT_SUPPORTED`. A result
 that would take the aggregate cdl above 524 is omitted, and scanning continues
-with the next input record. The engine never emits `IN_PROGRESS`.
+with the next input record. A command-side `info_status` other than `SUCCESS`
+is a per-record `BAD_ARGUMENTS`; it is not a whole-list error because the field
+does not prevent the next record from being parsed. The only whole-list
+rejections are structural truncation, record overrun, an oversized command,
+and a command type outside the fixed-get whitelist.
+
+The response length selected by the batch decoder is checked against the
+getter's actual response cursor before the record status is patched. A mismatch
+voids the aggregate with `ENTITY_MISBEHAVING`, preventing a later getter edit
+from shifting following records or exposing stale response memory. Four-byte
+`COPY_BUF` operations write only their first word, so a sampling-rate image hit
+cannot touch the next record header. The engine and µCPU share
+`ucpu_pkg::RESP_CAP_C`, and elaboration fails if the configured response buffer
+is smaller than that limit. The engine never emits `IN_PROGRESS`.
 
 ### 6.8 ACQUIRE / LOCK
 

@@ -319,7 +319,12 @@ descriptor store, silent overflow omission followed by successful processing
 of a later record, the Milan 56-byte `GET_STREAM_INFO` body, and
 record-level `NOT_SUPPORTED` with exact command-data copy for a permitted but
 unimplemented `GET_NAME`. It also covers an empty batch, truncated and
-overrunning records, rejection of a non-SUCCESS command record, preservation
-of the full 16-bit record command discriminator, every member of the exact
-13-command whitelist, retention at the exact cdl 524 response boundary, and
-rejection of an oversized cdl 525 command before record processing.
+overrunning records, per-record `BAD_ARGUMENTS` for a non-SUCCESS command
+status, preservation of the full 16-bit record command discriminator, every
+member of the exact 13-command whitelist, retention at the exact cdl 524
+response boundary, and rejection of an oversized cdl 525 command before record
+processing. The batch-only falsifiers use distinct overflow targets,
+non-zero unsupported data, a non-zero image configuration, full-body
+wrong-target refusals, and sampling-rate image hits both before another record
+and at the end of the aggregate. The final hit also verifies that the word
+after its four-byte body remains untouched.

@@ -4603,6 +4603,12 @@ int main(int argc, char** argv) {
           putbe(&b[8 + 4 * n], H::ctr_value(ty, ix, uint8_t(n)), 4);
         return b;
       };
+      auto rate_body = [](uint16_t ty, uint16_t ix, uint32_t rate) {
+        std::vector<uint8_t> b(8, 0);
+        putbe(&b[0], ty, 2); putbe(&b[2], ix, 2);
+        putbe(&b[4], rate, 4);
+        return b;
+      };
 
       // Two implemented getters in one exact response.
       std::vector<uint8_t> req;
@@ -4651,13 +4657,21 @@ int main(int argc, char** argv) {
 
       // The fourth 144-byte counter result would exceed cdl 524. It is
       // omitted, while the smaller GET_CONFIGURATION after it is retained.
+      // Every counter target is distinct so skipping the wrong ordinal cannot
+      // produce an identical frame.
       req.clear(); body.clear();
-      for (int n = 0; n < 4; ++n)
-        append(req, direc(AEM_GET_COUNTERS, ti(0x0005, 0)));
+      const std::vector<std::pair<uint16_t, uint16_t>> overflow_ctrs = {
+        {0x0005, 0}, {0x0005, 1}, {0x0006, 0}, {0x0009, 0}
+      };
+      for (const auto& target : overflow_ctrs)
+        append(req, direc(AEM_GET_COUNTERS,
+                          ti(target.first, target.second)));
       append(req, direc(AEM_GET_CONFIGURATION, {}));
       f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7663);
-      for (int n = 0; n < 3; ++n)
-        append(body, direc(AEM_GET_COUNTERS, ctr_body(0x0005, 0),
+      for (size_t n = 0; n < 3; ++n)
+        append(body, direc(AEM_GET_COUNTERS,
+                           ctr_body(overflow_ctrs[n].first,
+                                    overflow_ctrs[n].second),
                            AECP_SUCCESS));
       append(body, direc(AEM_GET_CONFIGURATION, gcfg_body(), AECP_SUCCESS));
       want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
@@ -4679,8 +4693,7 @@ int main(int argc, char** argv) {
       // Whitelist membership does not claim implementation. GET_NAME is
       // legal in a batch, so it receives a record-level NOT_SUPPORTED and
       // its fixed command data is copied exactly.
-      std::vector<uint8_t> name_arg(4, 0);
-      putbe(&name_arg[0], 0x0000, 2); putbe(&name_arg[2], 0, 2);
+      std::vector<uint8_t> name_arg = {0xD3, 0x1C, 0xA5, 0x7E};
       req = direc(0x0011, name_arg);
       f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7665);
       body = direc(0x0011, name_arg, AECP_NOT_SUPPORTED);
@@ -4714,29 +4727,34 @@ int main(int argc, char** argv) {
       CHECK(!f.empty() && f == want,
             "W8i: a record data overrun rejects the complete list");
 
-      // Section 7.4.76.1 requires SUCCESS in a command's info_status. A
-      // response status supplied in a command is malformed.
-      req = direc(AEM_GET_CONFIGURATION, {}, AECP_NOT_SUPPORTED);
+      // Section 7.4.76.1 requires SUCCESS in a command's info_status, but it
+      // also requires each parseable element to be handled independently. A
+      // malformed status is therefore contained to its record and does not
+      // suppress a valid neighbour.
+      req.clear(); body.clear();
+      append(req, direc(AEM_GET_CONFIGURATION, {}, AECP_NOT_SUPPORTED));
+      append(req, direc(AEM_GET_CONFIGURATION, {}));
       f = ask(AEM_GET_DYNAMIC_INFO, req, 0x7669);
-      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_BAD_ARGUMENTS, EID,
-                        CTLR_EID, 0x7669, AEM_GET_DYNAMIC_INFO, req);
+      append(body, direc(AEM_GET_CONFIGURATION, {}, AECP_BAD_ARGUMENTS));
+      append(body, direc(AEM_GET_CONFIGURATION, gcfg_body(), AECP_SUCCESS));
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x7669, AEM_GET_DYNAMIC_INFO, body);
       CHECK(!f.empty() && f == want,
-            "W8j: a non-SUCCESS command record rejects the list");
+            "W8j: a non-SUCCESS info_status fails only its record");
 
       // info_status occupies the complete byte. A high bit is not reserved
-      // padding, and a malformed later record must stop an earlier valid
-      // getter from executing during the pre-scan.
-      req.clear();
+      // padding, and a malformed later record must not erase an earlier
+      // valid result.
+      req.clear(); body.clear();
       append(req, direc(AEM_GET_CONFIGURATION, {}));
       append(req, direc(AEM_GET_CONFIGURATION, {}, 0x20));
-      mem_before = h.dram_reqs;
       f = ask(AEM_GET_DYNAMIC_INFO, req, 0x766E);
-      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_BAD_ARGUMENTS, EID,
-                        CTLR_EID, 0x766E, AEM_GET_DYNAMIC_INFO, req);
+      append(body, direc(AEM_GET_CONFIGURATION, gcfg_body(), AECP_SUCCESS));
+      append(body, direc(AEM_GET_CONFIGURATION, {}, AECP_BAD_ARGUMENTS));
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x766E, AEM_GET_DYNAMIC_INFO, body);
       CHECK(!f.empty() && f == want,
-            "W8j2: a high info_status bit rejects the complete list");
-      CHECK(h.dram_reqs == mem_before,
-            "W8j3: high-bit rejection processed no earlier record");
+            "W8j2: the complete info_status byte is graded per record");
 
       // The discriminator is the complete 16-bit info_command_type. The
       // high bit must not be treated as the outer AEM u bit and masked away.
@@ -4787,7 +4805,7 @@ int main(int argc, char** argv) {
       }
       append(req, direc(0x000F, ti(0x0005, 0)));
       append(body, direc(0x000F, gsi_body(0x0005, 0, true), AECP_SUCCESS));
-      name_arg.assign(8, 0);
+      name_arg = {0xE1, 0x72, 0x3B, 0xC4, 0x5D, 0xA6, 0x8F, 0x10};
       append(req, direc(0x0011, name_arg));
       append(body, direc(0x0011, name_arg, AECP_NOT_SUPPORTED));
       f = ask(AEM_GET_DYNAMIC_INFO, req, 0x766C);
@@ -4809,6 +4827,80 @@ int main(int argc, char** argv) {
       CHECK(!f.empty() && f == want && cdl(f) == 525,
             "W8n: an oversized cdl 525 command is rejected exactly");
       if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // The batched GET_CONFIGURATION must use the getter's actual image
+      // value. Zero is not evidence because both reset state and the default
+      // image contain zero.
+      uint32_t ent_off = 0;
+      for (auto& e : img_ents) if (e.type == 0x0000) ent_off = e.off;
+      CHECK(ent_off != 0, "W8o: the ENTITY entry was located in the image");
+      uint8_t save_hi = h.dram[ent_off + 310];
+      uint8_t save_lo = h.dram[ent_off + 311];
+      h.dram[ent_off + 310] = 0x00;
+      h.dram[ent_off + 311] = 0x07;
+      req = direc(AEM_GET_CONFIGURATION, {});
+      body = direc(AEM_GET_CONFIGURATION,
+                   std::vector<uint8_t>{0x00, 0x00, 0x00, 0x07},
+                   AECP_SUCCESS);
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x76E0);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x76E0, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8o2: batched GET_CONFIGURATION follows the image value");
+      h.dram[ent_off + 310] = save_hi;
+      h.dram[ent_off + 311] = save_lo;
+
+      // Wrong-target fixed getters retain their standalone response lengths.
+      // A command-sized refusal would shift every following record.
+      req.clear(); body.clear();
+      append(req, direc(AEM_GET_STREAM_FORMAT, ti(0x0002, 0)));
+      append(req, direc(AEM_GET_SAMPLING_RATE, ti(0x0005, 0)));
+      append(req, direc(AEM_GET_COUNTERS, ti(0x0000, 0)));
+      std::vector<uint8_t> wrong_fmt(12, 0);
+      putbe(&wrong_fmt[0], 0x0002, 2);
+      std::vector<uint8_t> wrong_rate(8, 0);
+      putbe(&wrong_rate[0], 0x0005, 2);
+      std::vector<uint8_t> wrong_ctrs(136, 0);
+      append(body, direc(AEM_GET_STREAM_FORMAT, wrong_fmt,
+                         AECP_NOT_SUPPORTED));
+      append(body, direc(AEM_GET_SAMPLING_RATE, wrong_rate,
+                         AECP_NOT_SUPPORTED));
+      append(body, direc(AEM_GET_COUNTERS, wrong_ctrs,
+                         AECP_NOT_SUPPORTED));
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x76E1);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x76E1, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8p: wrong targets retain all three fixed response shapes");
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+
+      // Exercise the descriptor-image hit arm of GET_SAMPLING_RATE both before
+      // another record and as the final record. The four-byte COPY_BUF must
+      // not write a second word past its declared response.
+      req.clear(); body.clear();
+      append(req, direc(AEM_GET_SAMPLING_RATE, ti(0x0002, 0)));
+      append(req, direc(AEM_GET_CONFIGURATION, {}));
+      append(body, direc(AEM_GET_SAMPLING_RATE,
+                         rate_body(0x0002, 0, 96000), AECP_SUCCESS));
+      append(body, direc(AEM_GET_CONFIGURATION, gcfg_body(), AECP_SUCCESS));
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x76E2);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x76E2, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8q: sampling-rate hit preserves the following record");
+
+      for (size_t n = 28; n < 32; ++n) h.rmem[n] = 0xA7;
+      req = direc(AEM_GET_SAMPLING_RATE, ti(0x0002, 0));
+      body = direc(AEM_GET_SAMPLING_RATE,
+                   rate_body(0x0002, 0, 96000), AECP_SUCCESS);
+      f = ask(AEM_GET_DYNAMIC_INFO, req, 0x76E3);
+      want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                        CTLR_EID, 0x76E3, AEM_GET_DYNAMIC_INFO, body);
+      CHECK(!f.empty() && f == want,
+            "W8q2: final sampling-rate hit is byte-exact");
+      CHECK(h.rmem[28] == 0xA7 && h.rmem[29] == 0xA7
+            && h.rmem[30] == 0xA7 && h.rmem[31] == 0xA7,
+            "W8q3: four-byte COPY_BUF leaves the next word untouched");
     }
 
     // ---- W9: SET_SAMPLING_RATE, and the overlay it creates --------------
