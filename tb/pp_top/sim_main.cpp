@@ -925,6 +925,7 @@ struct H {
   bool gsi_stuck = false;
   int  gsi_hold_cur = 0;
   uint64_t gsi_reads = 0;
+  uint64_t ca_cancels = 0;
   // ---- the SET_STREAM_FORMAT verdict (kind 0 selector 15) and the
   // settings fold. The verdict is the integrator's ruling on the PROPOSED
   // format riding gsi_prop_fmt_o: bit 0 = the format is one of the
@@ -1328,6 +1329,7 @@ struct H {
       gsi_hold_cur = 0;
     }
     d->eval();
+    if (d->dbg_ca_cancel_o) ++ca_cancels;
 
     d->clk_i = 1; d->eval();
     t++;
@@ -1388,6 +1390,7 @@ struct H {
     amap_edit_in0.clear(); amap_edit_in1.clear(); amap_edit_out0.clear();
     amap_edit_claims.clear();
     amap_edit_seq.clear();
+    ca_cancels = 0;
     idle(20);
     d->rst_n = 1;
     idle(10);
@@ -3530,7 +3533,7 @@ int main(int argc, char** argv) {
   // ==== R. ADD/REMOVE_AUDIO_MAPPINGS =====================================
   // IEEE 1722.1-2021 7.4.45 and 7.4.46 require an exact reflected body,
   // whole-command validation before any write, duplicate-safe removal, lock
-  // ordering, and a notification after every successful command.
+  // ordering, and a notification after every state-changing command.
   {
     const uint16_t GET = 0x002B, ADD = 0x002C, REMOVE = 0x002D;
     const uint16_t DT_SPI = 0x000E, DT_SPO = 0x000F;
@@ -6719,12 +6722,11 @@ int main(int argc, char** argv) {
           "U10a5: canceled partial probe produces no retry or deregistration");
 
     // Milan 5.4.5.3 says every valid AECP command rearms the registered
-    // controller monitor. The validator's residual AECP bucket contains AVC,
-    // HDCP_APM, and EXTENDED commands as well as AEM, so exercise each type
-    // at the observable boundary: cancel a live availability probe, answer
-    // normally, and rearm far enough for the next probe to appear.
-    const uint8_t monitor_msg_types[] = {4, 8, 14};
-    for (unsigned mi = 0; mi < 3; ++mi) {
+    // controller monitor. Exercise every defined command message type at the
+    // observable boundary: cancel a live availability probe, answer normally,
+    // and rearm far enough for the next probe to appear.
+    const uint8_t monitor_msg_types[] = {0, 2, 4, 6, 8, 14};
+    for (unsigned mi = 0; mi < sizeof(monitor_msg_types); ++mi) {
       bool probe_live = false;
       for (int i = 0; i < 66000 * MS_CYC; ++i) {
         if (h.d->dbg_ca_state_o != 0) { probe_live = true; break; }
@@ -6735,6 +6737,7 @@ int main(int argc, char** argv) {
             mi + 1, unsigned(monitor_msg_types[mi]));
       std::vector<uint8_t> opaque(8, 0x5A);
       const uint16_t mon_seq = uint16_t(0x7040 + mi);
+      const uint64_t cancels_before = h.ca_cancels;
       h.feed(aecp_frame(OWN_MAC, CTLR_MAC, monitor_msg_types[mi], 0,
                         EID, CTLR_EID, mon_seq, 0x1111, opaque));
       auto mon_rsp = h.wait_frame(h.q_aecp, 800, is_seq(mon_seq));
@@ -6746,6 +6749,47 @@ int main(int argc, char** argv) {
       CHECK(h.d->dbg_ca_state_o == 0,
             "U10a5.%u: message type %u canceled the live probe",
             mi + 7, unsigned(monitor_msg_types[mi]));
+      CHECK(h.ca_cancels == cancels_before + 1,
+            "U10a5.%u: message type %u emitted one monitor cancellation",
+            mi + 10, unsigned(monitor_msg_types[mi]));
+      h.q_aecp.clear();
+    }
+
+    // Reserved even message types are not commands. They may be refused on
+    // the wire, but they must not prove controller liveness or disturb a live
+    // availability probe.
+    const uint8_t reserved_msg_types[] = {10, 12};
+    for (unsigned ri = 0; ri < sizeof(reserved_msg_types); ++ri) {
+      bool probe_live = false;
+      for (int i = 0; i < 66000 * MS_CYC; ++i) {
+        if (h.d->dbg_ca_state_o != 0) { probe_live = true; break; }
+        h.step();
+      }
+      CHECK(probe_live,
+            "U10a5r.%u: reserved type %u waited for a live monitor probe",
+            ri + 1, unsigned(reserved_msg_types[ri]));
+      const uint64_t cancels_before = h.ca_cancels;
+      const uint16_t reserved_seq = uint16_t(0x7050 + ri);
+      std::vector<uint8_t> opaque(8, 0xA5);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, reserved_msg_types[ri], 0,
+                        EID, CTLR_EID, reserved_seq, 0x2222, opaque));
+      auto reserved_rsp = h.wait_frame(h.q_aecp, 50, is_seq(reserved_seq));
+      CHECK(!reserved_rsp.empty()
+            && (reserved_rsp[15] & 0x0F)
+               == uint8_t(reserved_msg_types[ri] + 1),
+            "U10a5r.%u: reserved type %u received its refusal response",
+            ri + 3, unsigned(reserved_msg_types[ri]));
+      CHECK(h.ca_cancels == cancels_before,
+            "U10a5r.%u: reserved type %u did not cancel or rearm the monitor",
+            ri + 5, unsigned(reserved_msg_types[ri]));
+
+      const uint16_t cleanup_seq = uint16_t(0x7060 + ri);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID,
+                        cleanup_seq, AEM_GET_CONFIGURATION, {}));
+      auto cleanup_rsp = h.wait_frame(h.q_aecp, 400, is_seq(cleanup_seq));
+      CHECK(!cleanup_rsp.empty() && h.ca_cancels == cancels_before + 1,
+            "U10a5r.%u: following valid command canceled and rearmed it",
+            ri + 7);
       h.q_aecp.clear();
     }
 

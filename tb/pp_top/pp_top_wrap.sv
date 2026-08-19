@@ -258,6 +258,7 @@ module pp_top_wrap (
     output logic [15:0] dbg_resp_err_o,
     output logic [15:0] dbg_resp_lane_o,
     output logic  [2:0] dbg_ca_state_o,
+    output logic        dbg_ca_cancel_o,
     output logic        dbg_txc_locked_o,
     output logic  [2:0] dbg_txs_free_o,
     output logic  [3:0] dbg_org_busy_o,
@@ -521,6 +522,7 @@ module pp_top_wrap (
   assign dbg_resp_err_o   = u_dut.aecp_dbg_rerr_w;
   assign dbg_resp_lane_o  = u_dut.aecp_dbg_rlane_w;
   assign dbg_ca_state_o   = u_dut.u_ca_builder.c_st_r;
+  assign dbg_ca_cancel_o  = u_dut.ntfy_ca_cancel_valid_w;
   assign dbg_txc_locked_o = u_dut.txc_locked_r;
   assign dbg_txs_free_o   = u_dut.txs_free_w;
   assign dbg_org_busy_o   = u_dut.org_busy_nc_w;

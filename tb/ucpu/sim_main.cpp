@@ -1058,6 +1058,8 @@ int main(int argc, char** argv) {
     CHECK(h.last_status == ST_MISBEHAVING && h.last_len == 16,
           "S2 failed completion is ENTITY_MISBEHAVING, got %u len %u",
           h.last_status, h.last_len);
+    CHECK(h.notify_classes.empty(),
+          "S2 failed completion does not emit a state-change notification");
     h.write_error = false;
   }
 

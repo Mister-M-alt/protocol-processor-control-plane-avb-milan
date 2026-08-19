@@ -97,7 +97,8 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
     byte-exact, because Hive enumerating is worth more than the gap this closes.
 - **Audio-map edit transaction**: ADD/REMOVE_AUDIO_MAPPINGS cover atomic
   validation and commit, duplicate-safe removal, static-port refusal,
-  running-output refusal, success notifications including idempotent ADD,
+  running-output refusal, state-changing success notifications with
+  idempotent ADD kept silent,
   normalized Figure 7-71 responses, reserved-field clearing, timeout behavior
   after the phase-1 reservation point, and live scoreboard ownership. R19a
   parks MAP_CFG at the output streaming recheck, injects a state-changing

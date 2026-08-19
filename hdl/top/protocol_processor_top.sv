@@ -3261,11 +3261,17 @@ module protocol_processor_top
       .ev_cmd_arg0_i         (aecp_eff_notify_arg0_w),
       .ev_cmd_arg1_i         (aecp_eff_notify_arg1_w),
       .ev_cmd_excl_eid_i     (aecp_eff_notify_excl_w),
-      //! Every even AECP message type is a command. PP_PROTO_AEM is the
-      //! validator's residual AECP bucket and therefore also carries AVC,
-      //! HDCP_APM, and EXTENDED commands; restricting it to AEM type 0 leaves
-      //! a registered controller's liveness timer stale after valid traffic.
-      .rx_cmd_valid_i        (v_hdr_valid_w && !v_hdr_msg_type_w[0]
+      //! Enumerate the six defined AECP command message types. PP_PROTO_AEM
+      //! is the validator's residual bucket and therefore also carries AVC,
+      //! HDCP_APM, EXTENDED, and the reserved 10/12 types. The reserved types
+      //! must not refresh a registered controller's liveness timer.
+      .rx_cmd_valid_i        (v_hdr_valid_w
+                              && ((v_hdr_msg_type_w == 4'd0)
+                                  || (v_hdr_msg_type_w == 4'd2)
+                                  || (v_hdr_msg_type_w == 4'd4)
+                                  || (v_hdr_msg_type_w == 4'd6)
+                                  || (v_hdr_msg_type_w == 4'd8)
+                                  || (v_hdr_msg_type_w == 4'd14))
                               && ((v_hdr_protocol_w == 3'(PP_PROTO_AEM))
                                   || (v_hdr_protocol_w == 3'(PP_PROTO_MVU))
                                   || (v_hdr_protocol_w == 3'(PP_PROTO_AA)))),
