@@ -184,8 +184,8 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x0028 | GET_AS_PATH | shall | gather §6.2 | RO | — | **no** | **yes** | async trigger | 28 + 8·count |
 | 0x0029 | GET_COUNTERS | shall | §6.6 | RO | — | yes | — | async (`T-CTR-NOTIF`) | 160 B |
 | 0x002B | GET_AUDIO_MAP | shall (dynamic ports) | §6.5 | RO | — | **no** | **yes** | — | 32 + 8·N |
-| 0x002C | ADD_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | success, excluding requester | mirrors request |
-| 0x002D | REMOVE_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | success, excluding requester | mirrors request |
+| 0x002C | ADD_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | success with state change, requester excluded | mirrors request |
+| 0x002D | REMOVE_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | success with state change, requester excluded | mirrors request |
 | 0x004B | GET_DYNAMIC_INFO | shall | two-pass iterator §6.7 | RO per record | - | exactly the 13 fixed getters | - | - | cdl at most 524 |
 | MVU 0x0000 | GET_MILAN_INFO | shall | §6.9 | RO | — | — | — | — | 44 B |
 | MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended, **n/i today** (`P-EN-MVU-SUID`) | target: §6.9 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
@@ -629,15 +629,15 @@ constant. Both emit count-many records: a zero-count face answers an EMPTY list
 (cdl 32 / 16) — absent, never invented.
 
 **Honesty ledger** (what the reference fabric's face can and cannot say):
-propagation_delay is NOT exported by the gPTP plane — the face answers 0, the
-IEEE-permitted "as reported" value of a measurement this box does not surface;
-GET_AS_PATH answers count 1 = {gptp_grandmaster_id} (count 0 with no GM) — the
-pathSequence a leaf directly under its GM would see, an APPROXIMATION whenever
-bridges sit between (the full PathTrace TLV never reaches the fabric); asCapable
-and the class-A {priority 3, VID 2, SRclassID 6} mapping are live fabric state.
-Notification triggers observed: GM change, SRP domain change, link edges, plus the
-integrator's `gsi_avb_chg_i` strobe for face-word changes (asCapable) the processor
-cannot see itself; GET_AS_PATH notifies on GM change.
+propagation_delay is the daemon-published neighbor measurement; GET_AS_PATH
+answers zero entries without a grandmaster, otherwise the grandmaster followed
+by up to seven bridge identities from the atomically published PathTrace. The
+legacy parent identity remains a two-entry fallback until a full path is first
+published. asCapable and the class-A {priority 3, VID 2, SRclassID 6} mapping
+are live fabric state. Notification triggers observed for GET_AVB_INFO are GM,
+SRP domain, link, asCapable, and propagation-delay changes. GET_AS_PATH observes
+both GM changes and the integrator's `gsi_asp_chg_i` publish strobe, so a tail
+change with an unchanged GM is not lost.
 
 ## 7. Registry, notifications, liveness, identify
 
@@ -650,7 +650,9 @@ directly. The CONTROLLER_AVAILABLE **eviction probe of the same clause is a MAY 
 not attempted**. TIME_LIMITED expiry (300 s, timer-service slots `regmon + i`) removes
 the row and emits the targeted DEREGISTER notification with u = 1 and the entry's own
 sequence_id. The F06.5 arcs through PROBING are implemented: every valid command from
-a registered tuple draws an independent 30 to 60 second interval; expiry originates
+a registered tuple draws an independent 30 to 60 second interval; this includes
+the even command message types for AEM, Address Access, AVC, MVU, HDCP APM, and
+Extended. Expiry originates
 CONTROLLER_AVAILABLE through the shared inflight tracker; any matching response status
 re-arms the monitor; and one failed retry removes the row and emits targeted
 DEREGISTER. A valid command that arrives while a probe is active cancels that probe

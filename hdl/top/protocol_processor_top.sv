@@ -391,6 +391,10 @@ module protocol_processor_top
     //! and tying it 0 just narrows the Table 5.22 trigger set to what the
     //! processor sees itself.
     input  wire         gsi_avb_chg_i,
+    //! one-cycle strobe after the integrator atomically publishes a changed
+    //! PathTrace sequence. Grandmaster changes are derived internally; this
+    //! pin covers tail changes that retain the same grandmaster.
+    input  wire         gsi_asp_chg_i,
 
     //! ---- NVM boot restore + alarm (07 §5.3) ----
     input  wire         restore_go_i,          //! start boot restore
@@ -3235,10 +3239,11 @@ module protocol_processor_top
       //! Table 5.22 GET_AVB_INFO triggers: the grandmaster changed, the
       //! SRP domain (class A priority/VID) changed, the link state flipped
       //! (AVTP_DOWN), or the integrator strobed a face-word change.
-      //! GET_AS_PATH: the path follows the grandmaster here (06 §7).
+      //! GET_AS_PATH: grandmaster changes and independently published
+      //! PathTrace-tail changes are both observable.
       .ev_avb_i              (gm_change_i || srp_evt_domain_change_w
                               || (link_up_i != link_q_r) || gsi_avb_chg_i),
-      .ev_asp_i              (gm_change_i),
+      .ev_asp_i              (gm_change_i || gsi_asp_chg_i),
       .ev_amap_i             (aecp_eff_notify_stb_nc_w
                               && (aecp_eff_notify_cls_nc_w == 4'd6)),
       .ev_amap_remove_i      (amap_edit_remove_o),
@@ -3256,13 +3261,14 @@ module protocol_processor_top
       .ev_cmd_arg0_i         (aecp_eff_notify_arg0_w),
       .ev_cmd_arg1_i         (aecp_eff_notify_arg1_w),
       .ev_cmd_excl_eid_i     (aecp_eff_notify_excl_w),
-      .rx_cmd_valid_i        (v_hdr_valid_w
-                              && (((v_hdr_protocol_w == 3'(PP_PROTO_AEM))
-                                   && (v_hdr_msg_type_w == 4'd0))
-                                  || ((v_hdr_protocol_w == 3'(PP_PROTO_MVU))
-                                      && (v_hdr_msg_type_w == 4'd6))
-                                  || ((v_hdr_protocol_w == 3'(PP_PROTO_AA))
-                                      && (v_hdr_msg_type_w == 4'd2)))),
+      //! Every even AECP message type is a command. PP_PROTO_AEM is the
+      //! validator's residual AECP bucket and therefore also carries AVC,
+      //! HDCP_APM, and EXTENDED commands; restricting it to AEM type 0 leaves
+      //! a registered controller's liveness timer stale after valid traffic.
+      .rx_cmd_valid_i        (v_hdr_valid_w && !v_hdr_msg_type_w[0]
+                              && ((v_hdr_protocol_w == 3'(PP_PROTO_AEM))
+                                  || (v_hdr_protocol_w == 3'(PP_PROTO_MVU))
+                                  || (v_hdr_protocol_w == 3'(PP_PROTO_AA)))),
       .rx_cmd_eid_i          (v_hdr_ctlr_eid_w),
       .rx_cmd_mac_i          (v_hdr_src_mac_w),
       .prng_draw_req_o       (ntfy_prng_req_w),

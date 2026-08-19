@@ -1671,7 +1671,7 @@ place(E_AMADD, [
     u('COMMIT'),
     u('SET_STATUS', imm=ST_OK),
     u('COMPARE', ra=3, fmt=FMT_B, imm=0),
-    u('BR_STATUS', cnd=2, imm=E_AMADD + 23),     # unchanged: skip NVM only
+    u('BR_STATUS', cnd=2, imm=E_AMADD + 24),     # unchanged: skip NVM + push
     u('NVM_MARK', imm=6),                        # persist changed map state
     u('NOTIFY_ENQ', imm=6),                      # every successful command
     u('BUILD_HDR', ra=15, rb=13),
@@ -1717,16 +1717,17 @@ place(E_AMREMOVE, [
 def _strm(base, bit):
     return [
         u('DESC_ADDR', ra=14, imm=RGN_LOCATE),   # miss -> NO_SUCH_DESCRIPTOR
-        u('BR_STATUS', cnd=0, imm=base + 10),    # ...and it survives the skip
-        u('CHECK_LOCK', ra=15, imm=base + 10),   # a different controller holds
-        u('GATHER_EXT', rd=6, cnd=0xD, imm=0),   # effective bit; unbound is no-op
+        u('BR_STATUS', cnd=0, imm=base + 11),    # ...and it survives the skip
+        u('CHECK_LOCK', ra=15, imm=base + 11),   # a different controller holds
+        u('GATHER_EXT', rd=6, cnd=0xD, imm=0),   # effective bit before request
         u('MOVE', rd=1, ra=0, imm=bit),          # the started/stopped bit
         u('SET_STATUS', imm=ST_OK),
         u('WRITE_ST', ra=1, fmt=FMT_B, imm=RGN_STRQ + SEL_STRQ),
-        u('COMPARE', ra=1, rb=6, fmt=FMT_B),
-        u('BR_STATUS', cnd=2, imm=base + 10),
+        u('GATHER_EXT', rd=7, cnd=0xD, imm=0),   # effective bit after completion
+        u('COMPARE', ra=7, rb=6, fmt=FMT_B),
+        u('BR_STATUS', cnd=2, imm=base + 11),
         u('NOTIFY_ENQ', imm=9),                  # START/STOP_STREAMING
-        u('BUILD_HDR', ra=15, rb=13),            # base + 10: every arm lands here
+        u('BUILD_HDR', ra=15, rb=13),            # base + 11: every arm lands here
         u('BUILD_FLD', ra=13, fmt=FMT_D),        # type + index          @24
         u('SEND_RESP'),
         u('END'),

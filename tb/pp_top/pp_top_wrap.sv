@@ -120,6 +120,8 @@ module pp_top_wrap (
     output logic [63:0] gsi_prop_fmt_o,
     input  wire  [63:0] gsi_data_i,
     input  wire         gsi_wait_i,
+    input  wire         gsi_avb_chg_i,
+    input  wire         gsi_asp_chg_i,
 
     // descriptor-image memory master (07 §3.3) — the C++ harness plays a
     // latency-injecting DRAM behind it
@@ -406,9 +408,8 @@ module pp_top_wrap (
       .gsi_prop_fmt_o        (gsi_prop_fmt_o),
       .gsi_data_i            (gsi_data_i),
       .gsi_wait_i            (gsi_wait_i),
-      //! the harness triggers AVB-info notifications through gm_change_i;
-      //! the integrator-side word-change strobe stays quiet here
-      .gsi_avb_chg_i         (1'b0),
+      .gsi_avb_chg_i         (gsi_avb_chg_i),
+      .gsi_asp_chg_i         (gsi_asp_chg_i),
       .desc_mem_req_valid_o  (desc_mem_req_valid_o),
       .desc_mem_req_ready_i  (desc_mem_req_ready_i),
       .desc_mem_req_addr_o   (desc_mem_req_addr_o),
