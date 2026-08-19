@@ -1041,7 +1041,7 @@ place(E_GSTRI, [
 #            the ITER_OPEN count exactly like the audio-map GEOM word
 #   sel 8 -> mapping record ordinal gsi_ord_o (record-class: bit 3)
 # A face that answers count 0 emits an EMPTY list and cdl 32: absent, never
-# invented. The integrator exports live pDelay when available and otherwise
+# invented. The integrator supplies live pDelay when available and otherwise
 # answers propagation_delay 0 as the honest "not measured" value.
 place(E_GAVB, [
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR

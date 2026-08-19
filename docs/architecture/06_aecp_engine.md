@@ -629,16 +629,15 @@ index (§7.4.41.1), so the engine packs the locate key with the AVB_INTERFACE
 constant. Both emit count-many records: a zero-count face answers an EMPTY list
 (cdl 32 / 16) — absent, never invented.
 
-**Honesty ledger** (what the reference fabric's face can and cannot say):
-propagation_delay is the daemon-published neighbor measurement; GET_AS_PATH
-answers zero entries without a grandmaster, otherwise the grandmaster followed
-by up to seven bridge identities from the atomically published PathTrace. The
-legacy parent identity remains a two-entry fallback until a full path is first
-published. asCapable and the class-A {priority 3, VID 2, SRclassID 6} mapping
-are live fabric state. Notification triggers observed for GET_AVB_INFO are GM,
-SRP domain, link, asCapable, and propagation-delay changes. GET_AS_PATH observes
-both GM changes and the integrator's `gsi_asp_chg_i` publish strobe, so a tail
-change with an unchanged GM is not lost.
+**Honesty contract** (what the processor accepts from an integrator): the engine
+does not synthesize network state. The face supplies propagation_delay and a
+counted path of up to eight ClockIdentity entries. A consumer may publish zero
+when no propagation-delay measurement or grandmaster is available. The response
+builder serves exactly those words. `gsi_avb_chg_i` reports a change in an
+integrator-owned GET_AVB_INFO word, while `gsi_asp_chg_i` independently reports a
+path change, including a tail change with an unchanged grandmaster. Connecting
+the live measurements, the atomic PathTrace store, and both strobes is the
+consumer integration's responsibility and is not implemented in this repository.
 
 ## 7. Registry, notifications, liveness, identify
 
@@ -652,8 +651,8 @@ not attempted**. TIME_LIMITED expiry (300 s, timer-service slots `regmon + i`) r
 the row and emits the targeted DEREGISTER notification with u = 1 and the entry's own
 sequence_id. The F06.5 arcs through PROBING are implemented: every valid command from
 a registered tuple draws an independent 30 to 60 second interval; this includes
-the even command message types for AEM, Address Access, AVC, MVU, HDCP APM, and
-Extended. Expiry originates
+the six defined command message types for AEM, Address Access, AVC, MVU, HDCP APM,
+and Extended, while reserved types do not re-arm it. Expiry originates
 CONTROLLER_AVAILABLE through the shared inflight tracker; any matching response status
 re-arms the monitor; and one failed retry removes the row and emits targeted
 DEREGISTER. A valid command that arrives while a probe is active cancels that probe
