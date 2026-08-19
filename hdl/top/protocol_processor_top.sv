@@ -3568,9 +3568,11 @@ module protocol_processor_top
   // txreq strobes; the arbiter wants requests HELD until grant. Depth-8
   // slot-handle queues are structurally lossless (at most 5 slots exist).
   logic [7:0][TXS_W_C-1:0] laneq_adp_r, laneq_acmp_r, laneq_org_r;
+  logic [7:0][TXS_W_C-1:0] laneq_org_next_w;
   logic [3:0]              laneq_adp_cnt_r, laneq_acmp_cnt_r, laneq_org_cnt_r;
-  logic [3:0]              laneq_adp_mid_w, laneq_acmp_mid_w, laneq_org_mid_w;
-  logic                    laneq_adp_push_w, laneq_acmp_push_w, laneq_org_push_w;
+  logic [3:0]              laneq_adp_mid_w, laneq_acmp_mid_w;
+  logic [3:0]              laneq_org_next_cnt_w;
+  logic                    laneq_adp_push_w, laneq_acmp_push_w;
   logic                    laneq_org_drop_w, laneq_org_pop_w;
   logic                    laneq_org_release_head_w;
 
@@ -3596,12 +3598,32 @@ module protocol_processor_top
                           && (!txs_ready_nc_w[laneq_org_r[0]]
                               || laneq_org_release_head_w);
   assign laneq_org_pop_w  = arb_gnt_w[LANE_ORIG_C] || laneq_org_drop_w;
-  assign laneq_org_mid_w  = laneq_org_cnt_r
-                          - (laneq_org_pop_w ? 4'd1 : 4'd0);
   assign laneq_adp_push_w  = adp_txreq_valid_w  && (laneq_adp_mid_w != 4'd8);
   assign laneq_acmp_push_w = lstn_txreq_valid_w && (laneq_acmp_mid_w != 4'd8);
-  assign laneq_org_push_w = (org_send_valid_w || org_resend_valid_w)
-                            && (laneq_org_mid_w != 4'd8);
+
+  // A response or controller command may cancel any inflight exchange, not
+  // only the queue head. Compact every released handle before a physical slot
+  // can be reused, while preserving a simultaneous head grant and new push.
+  always_comb begin : originator_queue_next
+    laneq_org_next_w     = '0;
+    laneq_org_next_cnt_w = 4'd0;
+    for (int unsigned i = 0; i < 8; i++) begin
+      if ((4'(i) < laneq_org_cnt_r)
+          && !((i == 0) && laneq_org_pop_w)
+          && !(txs_release_valid_w
+               && (laneq_org_r[i] == txs_release_slot_w))) begin
+        laneq_org_next_w[laneq_org_next_cnt_w[2:0]] = laneq_org_r[i];
+        laneq_org_next_cnt_w = laneq_org_next_cnt_w + 4'd1;
+      end
+    end
+    if ((org_send_valid_w || org_resend_valid_w)
+        && (laneq_org_next_cnt_w != 4'd8)) begin
+      laneq_org_next_w[laneq_org_next_cnt_w[2:0]] = org_resend_valid_w
+                                                      ? org_resend_slot_w
+                                                      : org_send_slot_w;
+      laneq_org_next_cnt_w = laneq_org_next_cnt_w + 4'd1;
+    end
+  end
 
   always_ff @(posedge clk_i) begin : lane_queues
     if (!rst_n) begin
@@ -3633,18 +3655,8 @@ module protocol_processor_top
       laneq_acmp_cnt_r <= laneq_acmp_mid_w
                         + (laneq_acmp_push_w ? 4'd1 : 4'd0);
 
-      if (laneq_org_pop_w) begin
-        for (int unsigned i = 0; i < 7; i++) begin
-          laneq_org_r[i] <= laneq_org_r[i + 1];
-        end
-      end
-      if (laneq_org_push_w) begin
-        laneq_org_r[laneq_org_mid_w[2:0]] <= org_resend_valid_w
-                                              ? org_resend_slot_w
-                                              : org_send_slot_w;
-      end
-      laneq_org_cnt_r <= laneq_org_mid_w
-                       + (laneq_org_push_w ? 4'd1 : 4'd0);
+      laneq_org_r     <= laneq_org_next_w;
+      laneq_org_cnt_r <= laneq_org_next_cnt_w;
     end
   end
 

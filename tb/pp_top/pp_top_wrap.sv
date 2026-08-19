@@ -260,6 +260,7 @@ module pp_top_wrap (
     output logic  [2:0] dbg_txs_free_o,
     output logic  [3:0] dbg_org_busy_o,
     output logic  [3:0] dbg_org_queue_o,
+    output logic  [3:0] dbg_org_second_owner_o,
     output logic        dbg_txs_release_valid_o,
     //! the per-sink started/stopped view the FABRIC admission gate reads
     //! (Milan 5.3.8.7). It is exposed because a START/STOP_STREAMING that
@@ -524,6 +525,17 @@ module pp_top_wrap (
   assign dbg_org_busy_o   = u_dut.org_busy_nc_w;
   assign dbg_org_queue_o  = u_dut.laneq_org_cnt_r;
   assign dbg_txs_release_valid_o = u_dut.txs_release_valid_w;
+  always_comb begin : second_originator_owner
+    dbg_org_second_owner_o = 4'hF;
+    if (u_dut.laneq_org_cnt_r > 4'd1) begin
+      for (int unsigned i = 0; i < 16; i++) begin
+        if (u_dut.u_originator.valid_r[i]
+            && (u_dut.u_originator.txs_r[i] == u_dut.laneq_org_r[1])) begin
+          dbg_org_second_owner_o = u_dut.u_originator.owner_r[i];
+        end
+      end
+    end
+  end
 
 endmodule : pp_top_wrap
 `default_nettype wire

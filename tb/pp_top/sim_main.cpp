@@ -6820,6 +6820,84 @@ int main(int argc, char** argv) {
     h.q_aecp.clear();
   }
 
+  // ==== U11. cancellation compacts the whole originator queue ============
+  // Two controller probes wait behind a stalled solicited response. Cancel
+  // whichever controller owns the second handle and prove that the released
+  // handle is removed before its physical slot can be reused.
+  {
+    h.reset();
+    const uint64_t C2_MAC = 0x0202C2C2C2C2ull;
+    std::vector<uint8_t> fl0(4, 0);
+    auto is_seq = [](uint16_t seq) {
+      return [=](const std::vector<uint8_t>& p) {
+        return p.size() >= 38
+               && (((uint16_t(p[34]) << 8) | p[35]) == seq);
+      };
+    };
+    auto register_controller = [&](uint64_t mac, uint64_t eid,
+                                   uint16_t seq) {
+      h.feed(aecp_frame(OWN_MAC, mac, 0, 0, EID, eid, seq, 0x0024, fl0));
+      return h.wait_frame(h.q_aecp, 400, is_seq(seq));
+    };
+
+    auto r1 = register_controller(CTLR_MAC, CTLR_EID, 0x7030);
+    auto r2 = register_controller(C2_MAC, CTLR2_EID, 0x7031);
+    CHECK(!r1.empty() && !r2.empty(),
+          "U11a: both monitor controllers register");
+    h.q_aecp.clear();
+
+    h.mac_tx_ready = false;
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7032,
+                      AEM_GET_CONFIGURATION, {}, false));
+    bool response_stalled = false;
+    for (int i = 0; i < 1000; ++i) {
+      h.step();
+      if (h.d->tx_valid_o) { response_stalled = true; break; }
+    }
+    CHECK(response_stalled,
+          "U11b: solicited response holds the serializer busy");
+
+    bool two_queued = false;
+    for (int i = 0; i < 66000 * MS_CYC; ++i) {
+      h.step();
+      if (h.d->dbg_org_queue_o >= 2) { two_queued = true; break; }
+    }
+    CHECK(two_queued && h.d->dbg_org_queue_o == 2,
+          "U11c: two availability probes queue behind the serializer");
+    const unsigned second_owner = h.d->dbg_org_second_owner_o;
+    CHECK(second_owner < 2,
+          "U11d: second queued handle maps to a registered controller");
+
+    const uint64_t cancel_mac = second_owner == 0 ? CTLR_MAC : C2_MAC;
+    const uint64_t cancel_eid = second_owner == 0 ? CTLR_EID : CTLR2_EID;
+    h.feed(aecp_frame(OWN_MAC, cancel_mac, 0, 0, EID, cancel_eid, 0x7033,
+                      AEM_GET_CONFIGURATION, {}, false));
+    h.idle(20);
+    CHECK(h.d->dbg_org_queue_o == 1,
+          "U11e: canceling a non-head exchange compacts its queued handle");
+
+    h.mac_tx_ready = true;
+    auto stalled_rsp = h.wait_frame(h.q_aecp, 1000, is_seq(0x7032));
+    auto cancel_rsp = h.wait_frame(h.q_aecp, 1000, is_seq(0x7033));
+    CHECK(!stalled_rsp.empty() && !cancel_rsp.empty(),
+          "U11f: solicited responses drain after queue compaction");
+
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7034,
+                      AEM_GET_CONFIGURATION, {}, false));
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7035,
+                      AEM_GET_CONFIGURATION, {}, false));
+    auto clean1 = h.wait_frame(h.q_aecp, 1000, is_seq(0x7034));
+    auto clean2 = h.wait_frame(h.q_aecp, 1000, is_seq(0x7035));
+    CHECK(!clean1.empty() && !clean2.empty(),
+          "U11g: cleanup commands answer for both controllers");
+    h.idle(20);
+    CHECK(h.d->dbg_org_queue_o == 0 && h.d->dbg_org_busy_o == 0,
+          "U11h: cleanup leaves no queued or inflight exchange");
+    CHECK(h.d->dbg_txs_free_o == 5,
+          "U11i: non-head cancellation conserves all five TX slots");
+    h.q_aecp.clear();
+  }
+
   // ==== MP. the INTERNAL MAAP engine (11; IEEE 1722-2016 Annex B) =========
   // A SECOND DUT instance runs the same processor with cfg_maap_internal_i
   // = 1 from reset — the quasi-static select is a pre-enable decision, so

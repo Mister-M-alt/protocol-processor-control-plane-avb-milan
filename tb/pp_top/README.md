@@ -365,3 +365,11 @@ CONTROLLER_AVAILABLE handle to queue behind it for longer than two response
 budgets, and proves that no attempt timeout starts before serializer acceptance.
 A valid command then cancels the queued exchange. The stale handle must drain,
 both solicited responses must resume, and all five TX slots must return free.
+
+## Section U11: non-head cancellation
+
+U11 stalls the serializer until two independent controller probes occupy the
+originator queue. It cancels the controller owning the second handle and
+requires the queue to compact immediately, before the released physical slot
+can be reused. Cleanup commands then prove that no queued or inflight exchange
+survives and that all five shared TX slots return free.
