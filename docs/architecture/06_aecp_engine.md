@@ -401,9 +401,10 @@ at commit, and use the root transaction face to update the live map atomically.
 - `REMOVE_AUDIO_MAPPINGS`: ignores duplicate rows in one command, refuses an
   absent mapping, and applies the streaming-output restriction above.
 - Input maps are changeable **any time, even while bound** (Milan §5.3.10.1).
-- Every successful ADD or REMOVE sends the same unsolicited response to every
-  registered controller except the requester. A changed commit also marks the
-  mapping persistence class dirty. The current NVM backend does not retain the
+- Every successful ADD or REMOVE that changes the mapping sends the same
+  unsolicited response to every registered controller except the requester and
+  marks the mapping persistence class dirty. A confirmed no-op succeeds without
+  a notification or dirty mark. The current NVM backend does not retain the
   dirty class across reset; issue #70 tracks that remaining work.
 - Phase 1 acceptance is the commit reservation and point of no return. The
   integrator must reserve every resource needed for the complete transaction
