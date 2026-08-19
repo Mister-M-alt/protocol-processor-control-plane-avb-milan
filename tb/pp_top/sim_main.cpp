@@ -925,6 +925,7 @@ struct H {
   bool gsi_stuck = false;
   int  gsi_hold_cur = 0;
   uint64_t gsi_reads = 0;
+  uint64_t ca_cancels = 0;
   // ---- the SET_STREAM_FORMAT verdict (kind 0 selector 15) and the
   // settings fold. The verdict is the integrator's ruling on the PROPOSED
   // format riding gsi_prop_fmt_o: bit 0 = the format is one of the
@@ -1328,6 +1329,7 @@ struct H {
       gsi_hold_cur = 0;
     }
     d->eval();
+    if (d->dbg_ca_cancel_o) ++ca_cancels;
 
     d->clk_i = 1; d->eval();
     t++;
@@ -1359,6 +1361,8 @@ struct H {
     d->ctr_change_i = 0;
     d->ctr_change_desc_type_i = 0;
     d->ctr_change_desc_index_i = 0;
+    d->gsi_avb_chg_i = 0;
+    d->gsi_asp_chg_i = 0;
     d->restore_go_i = 0;
     d->nvm_dev_gnt_i = 0; d->nvm_dev_wready_i = 0;
     d->nvm_dev_rvalid_i = 0; d->nvm_dev_rdata_i = 0;
@@ -1386,6 +1390,7 @@ struct H {
     amap_edit_in0.clear(); amap_edit_in1.clear(); amap_edit_out0.clear();
     amap_edit_claims.clear();
     amap_edit_seq.clear();
+    ca_cancels = 0;
     idle(20);
     d->rst_n = 1;
     idle(10);
@@ -3528,7 +3533,7 @@ int main(int argc, char** argv) {
   // ==== R. ADD/REMOVE_AUDIO_MAPPINGS =====================================
   // IEEE 1722.1-2021 7.4.45 and 7.4.46 require an exact reflected body,
   // whole-command validation before any write, duplicate-safe removal, lock
-  // ordering, and a notification after every successful command.
+  // ordering, and a notification after every state-changing command.
   {
     const uint16_t GET = 0x002B, ADD = 0x002C, REMOVE = 0x002D;
     const uint16_t DT_SPI = 0x000E, DT_SPO = 0x000F;
@@ -3746,21 +3751,18 @@ int main(int argc, char** argv) {
 
     got = cmd(ADD, 0xE11E, p);
     uns = h.wait_any(h.q_aecp, 400);
-    want_uns = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
-                          CTLR2_EID, 1, ADD, p);
-    want_uns[36] |= 0x80;
     CHECK(got == expect(AECP_SUCCESS, ADD, 0xE11E, p)
-          && uns == want_uns,
-          "R16: idempotent ADD did not emit the required notification");
+          && uns.empty(),
+          "R16: idempotent ADD emitted a notification without a state change");
 
     got = cmd(REMOVE, 0xE11F, p);
     uns = h.wait_any(h.q_aecp, 400);
     want_uns = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
-                          CTLR2_EID, 2, REMOVE, p);
+                          CTLR2_EID, 1, REMOVE, p);
     want_uns[36] |= 0x80;
     CHECK(got == expect(AECP_SUCCESS, REMOVE, 0xE11F, p)
           && uns == want_uns,
-          "R17: changed REMOVE did not notify C2 with sequence 2");
+          "R17: changed REMOVE did not notify C2 with sequence 1");
     cmd_from(C2_MAC, CTLR2_EID, 0x0025, 0xE120, {});
 
     p = edit_pl(DT_SPI, 0, {});
@@ -4654,6 +4656,36 @@ int main(int argc, char** argv) {
                 && u2[37] == 0x28 && ((u2[34] << 8) | u2[35]) == 1;
       CHECK(k1, "V6b: first the u=1 GET_AVB_INFO, entry seq 0");
       CHECK(k2, "V6c: then the u=1 GET_AS_PATH, entry seq 1");
+
+      // A PathTrace-tail publish can change while the grandmaster stays the
+      // same. It must enqueue only GET_AS_PATH through the dedicated
+      // integrator event pin.
+      h.q_aecp.clear();
+      d->gsi_asp_chg_i = 1;
+      h.step();
+      d->gsi_asp_chg_i = 0;
+      auto asp_only = h.wait_any(h.q_aecp, 500);
+      auto asp_extra = h.wait_any(h.q_aecp, 300);
+      CHECK(!asp_only.empty() && asp_only.size() > 37
+            && (asp_only[36] & 0x80) && asp_only[37] == 0x28
+            && (((unsigned)asp_only[34] << 8) | asp_only[35]) == 2,
+            "V6d: a PathTrace-tail publish sends GET_AS_PATH at seq 2");
+      CHECK(asp_extra.empty(),
+            "V6e: a PathTrace-tail publish did not also send GET_AVB_INFO");
+
+      // Conversely, an integrator AVB word change must not masquerade as a
+      // path change.
+      d->gsi_avb_chg_i = 1;
+      h.step();
+      d->gsi_avb_chg_i = 0;
+      auto avb_only = h.wait_any(h.q_aecp, 500);
+      auto avb_extra = h.wait_any(h.q_aecp, 300);
+      CHECK(!avb_only.empty() && avb_only.size() > 37
+            && (avb_only[36] & 0x80) && avb_only[37] == 0x27
+            && (((unsigned)avb_only[34] << 8) | avb_only[35]) == 3,
+            "V6f: an AVB-info word change sends GET_AVB_INFO at seq 3");
+      CHECK(avb_extra.empty(),
+            "V6g: an AVB-info word change did not also send GET_AS_PATH");
       h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7509,
                         0x0025, {}));
       h.wait_any(h.q_aecp, 400);
@@ -6118,6 +6150,18 @@ int main(int argc, char** argv) {
       }
 
       // (the image holds STREAM_INPUT 0 and 1; sink 1 is unbound again here)
+      // Register a different controller so the no-op rule is observable on
+      // the wire. Without a recipient, a broken NOTIFY_ENQ is indistinguishable
+      // from the required silence.
+      const uint64_t W21_C2_MAC = 0x0202C2C2C2C2ull;
+      std::vector<uint8_t> w21_flags(4, 0);
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, W21_C2_MAC, 0, 0, EID, CTLR2_EID,
+                        0x7A53, 0x0024, w21_flags));
+      auto w21_reg = h.wait_any(h.q_aecp, 600);
+      CHECK(!w21_reg.empty() && st(w21_reg) == AECP_SUCCESS,
+            "W21s0: second controller registered for the no-op push check");
+      h.q_aecp.clear();
       f = ask(OP_START, ti(DT_STREAM_INPUT, 1), 0x7707);
       CHECK(!f.empty() && st(f) == AECP_SUCCESS && cdl(f) == 16,
             "W21s: START_STREAMING on an UNBOUND sink is SUCCESS (st=%d)",
@@ -6126,6 +6170,15 @@ int main(int argc, char** argv) {
       CHECK(((sb >> 1) & 1u) == 0u,
             "W21t: ...and it did NOT start an unbound Stream Input "
             "(started=0x%02X)", sb);
+      auto w21_noop_push = h.wait_any(h.q_aecp, 600);
+      CHECK(w21_noop_push.empty(),
+            "W21t2: unbound START emitted a notification without a change");
+      h.feed(aecp_frame(OWN_MAC, W21_C2_MAC, 0, 0, EID, CTLR2_EID,
+                        0x7A54, 0x0025, {}));
+      auto w21_dereg = h.wait_any(h.q_aecp, 600);
+      CHECK(!w21_dereg.empty() && st(w21_dereg) == AECP_SUCCESS,
+            "W21t3: no-op push observer deregistered cleanly");
+      h.q_aecp.clear();
 
       // W21cc: the request must survive a BUSY record walker. The AECP
       // µprogram settles the status (locate, lock) and only then issues the
@@ -6667,6 +6720,78 @@ int main(int argc, char** argv) {
     auto canceled_more = h.wait_any(h.q_aecp, 500);
     CHECK(canceled_more.empty(),
           "U10a5: canceled partial probe produces no retry or deregistration");
+
+    // Milan 5.4.5.3 says every valid AECP command rearms the registered
+    // controller monitor. Exercise every defined command message type at the
+    // observable boundary: cancel a live availability probe, answer normally,
+    // and rearm far enough for the next probe to appear.
+    const uint8_t monitor_msg_types[] = {0, 2, 4, 6, 8, 14};
+    for (unsigned mi = 0; mi < sizeof(monitor_msg_types); ++mi) {
+      bool probe_live = false;
+      for (int i = 0; i < 66000 * MS_CYC; ++i) {
+        if (h.d->dbg_ca_state_o != 0) { probe_live = true; break; }
+        h.step();
+      }
+      CHECK(probe_live,
+            "U10a5.%u: message type %u waited for a live monitor probe",
+            mi + 1, unsigned(monitor_msg_types[mi]));
+      std::vector<uint8_t> opaque(8, 0x5A);
+      const uint16_t mon_seq = uint16_t(0x7040 + mi);
+      const uint64_t cancels_before = h.ca_cancels;
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, monitor_msg_types[mi], 0,
+                        EID, CTLR_EID, mon_seq, 0x1111, opaque));
+      auto mon_rsp = h.wait_frame(h.q_aecp, 800, is_seq(mon_seq));
+      CHECK(!mon_rsp.empty() && (mon_rsp[15] & 0x0F)
+            == uint8_t(monitor_msg_types[mi] + 1),
+            "U10a5.%u: message type %u answered and rearmed the monitor",
+            mi + 4, unsigned(monitor_msg_types[mi]));
+      h.idle(8);
+      CHECK(h.d->dbg_ca_state_o == 0,
+            "U10a5.%u: message type %u canceled the live probe",
+            mi + 7, unsigned(monitor_msg_types[mi]));
+      CHECK(h.ca_cancels == cancels_before + 1,
+            "U10a5.%u: message type %u emitted one monitor cancellation",
+            mi + 10, unsigned(monitor_msg_types[mi]));
+      h.q_aecp.clear();
+    }
+
+    // Reserved even message types are not commands. They may be refused on
+    // the wire, but they must not prove controller liveness or disturb a live
+    // availability probe.
+    const uint8_t reserved_msg_types[] = {10, 12};
+    for (unsigned ri = 0; ri < sizeof(reserved_msg_types); ++ri) {
+      bool probe_live = false;
+      for (int i = 0; i < 66000 * MS_CYC; ++i) {
+        if (h.d->dbg_ca_state_o != 0) { probe_live = true; break; }
+        h.step();
+      }
+      CHECK(probe_live,
+            "U10a5r.%u: reserved type %u waited for a live monitor probe",
+            ri + 1, unsigned(reserved_msg_types[ri]));
+      const uint64_t cancels_before = h.ca_cancels;
+      const uint16_t reserved_seq = uint16_t(0x7050 + ri);
+      std::vector<uint8_t> opaque(8, 0xA5);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, reserved_msg_types[ri], 0,
+                        EID, CTLR_EID, reserved_seq, 0x2222, opaque));
+      auto reserved_rsp = h.wait_frame(h.q_aecp, 50, is_seq(reserved_seq));
+      CHECK(!reserved_rsp.empty()
+            && (reserved_rsp[15] & 0x0F)
+               == uint8_t(reserved_msg_types[ri] + 1),
+            "U10a5r.%u: reserved type %u received its refusal response",
+            ri + 3, unsigned(reserved_msg_types[ri]));
+      CHECK(h.ca_cancels == cancels_before,
+            "U10a5r.%u: reserved type %u did not cancel or rearm the monitor",
+            ri + 5, unsigned(reserved_msg_types[ri]));
+
+      const uint16_t cleanup_seq = uint16_t(0x7060 + ri);
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID,
+                        cleanup_seq, AEM_GET_CONFIGURATION, {}));
+      auto cleanup_rsp = h.wait_frame(h.q_aecp, 400, is_seq(cleanup_seq));
+      CHECK(!cleanup_rsp.empty() && h.ca_cancels == cancels_before + 1,
+            "U10a5r.%u: following valid command canceled and rearmed it",
+            ri + 7);
+      h.q_aecp.clear();
+    }
 
     // Hold a solicited response inside the serializer until the next probe
     // reaches the originator queue. More than two response-timeout periods

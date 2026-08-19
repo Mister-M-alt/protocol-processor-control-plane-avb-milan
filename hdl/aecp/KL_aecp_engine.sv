@@ -2004,9 +2004,8 @@ module KL_aecp_engine
                    : strm_state_w         ? ((32'(desc_ix_r) < N_STREAM_IN_P)
                                               ? {63'd0,
                                                  1'(strm_bound_i >> desc_ix_r)
-                                                   ? 1'(strm_started_i
-                                                        >> desc_ix_r)
-                                                   : strt_r}
+                                                   && 1'(strm_started_i
+                                                         >> desc_ix_r)}
                                               : 64'd0)
                    : gsi_any_w            ? gsi_data_i
                                           : {32'd0, ctr_data_i};

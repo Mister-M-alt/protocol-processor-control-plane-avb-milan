@@ -1040,9 +1040,9 @@ place(E_GSTRI, [
 #            - one qword lays @36..@43 in wire order, and [15:0] doubles as
 #            the ITER_OPEN count exactly like the audio-map GEOM word
 #   sel 8 -> mapping record ordinal gsi_ord_o (record-class: bit 3)
-# A face that answers count 0 emits an EMPTY list and cdl 32 - absent, never
-# invented; propagation_delay 0 is likewise the honest "not measured" (the
-# reference fabric's gPTP plane does not export pDelay - recorded in 06 §7).
+# A face that answers count 0 emits an EMPTY list and cdl 32: absent, never
+# invented. The integrator supplies live pDelay when available and otherwise
+# answers propagation_delay 0 as the honest "not measured" value.
 place(E_GAVB, [
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
     u('BR_STATUS', cnd=0, imm=E_GAVB + 3),
@@ -1065,14 +1065,12 @@ place(E_GAVB, [
 
 # --- GET_AS_PATH (IEEE §7.4.41, Milan §5.4.2.24) -----------------------------
 # "The path_sequence field is set to pathSequence of the latest IEEE Std
-# 802.1AS-2020 Announce message PathTrace TLV" - which of the path a leaf
-# device KNOWS is the integrator's affair: the reference fabric carries only
-# the elected grandmaster's identity, so its face answers count 1 with that
-# one ClockIdentity (count 0 with no GM) - the conformant minimal answer,
-# recorded in 06 §7. The command carries the INDEX at @24 (§7.4.41.1 - no
-# type field), so r13[15:0] is the index and the locate key is engine-packed
-# with the AVB_INTERFACE constant. Face words (kind 2): sel 0 -> {48'0,
-# count}; sel 8 -> path entry gsi_ord_o (record-class).
+# 802.1AS-2020 Announce message PathTrace TLV". The integrator provides the
+# latest published count and ClockIdentity entries. The command carries the
+# INDEX at @24 (§7.4.41.1, with no type field), so r13[15:0] is the index and
+# the locate key is engine-packed with the AVB_INTERFACE constant. Face words
+# (kind 2): sel 0 -> {48'0, count}; sel 8 -> path entry gsi_ord_o
+# (record-class).
 place(E_GASP, [
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
     u('BR_STATUS', cnd=0, imm=E_GASP + 3),
@@ -1671,9 +1669,9 @@ place(E_AMADD, [
     u('COMMIT'),
     u('SET_STATUS', imm=ST_OK),
     u('COMPARE', ra=3, fmt=FMT_B, imm=0),
-    u('BR_STATUS', cnd=2, imm=E_AMADD + 23),     # unchanged: skip NVM only
+    u('BR_STATUS', cnd=2, imm=E_AMADD + 24),     # unchanged: skip NVM + push
     u('NVM_MARK', imm=6),                        # persist changed map state
-    u('NOTIFY_ENQ', imm=6),                      # every successful command
+    u('NOTIFY_ENQ', imm=6),                      # successful state change
     u('BUILD_HDR', ra=15, rb=13),
     u('SEND_RESP'),
     u('END'),
@@ -1717,16 +1715,17 @@ place(E_AMREMOVE, [
 def _strm(base, bit):
     return [
         u('DESC_ADDR', ra=14, imm=RGN_LOCATE),   # miss -> NO_SUCH_DESCRIPTOR
-        u('BR_STATUS', cnd=0, imm=base + 10),    # ...and it survives the skip
-        u('CHECK_LOCK', ra=15, imm=base + 10),   # a different controller holds
-        u('GATHER_EXT', rd=6, cnd=0xD, imm=0),   # effective bit; unbound is no-op
+        u('BR_STATUS', cnd=0, imm=base + 11),    # ...and it survives the skip
+        u('CHECK_LOCK', ra=15, imm=base + 11),   # a different controller holds
+        u('GATHER_EXT', rd=6, cnd=0xD, imm=0),   # effective bit before request
         u('MOVE', rd=1, ra=0, imm=bit),          # the started/stopped bit
         u('SET_STATUS', imm=ST_OK),
         u('WRITE_ST', ra=1, fmt=FMT_B, imm=RGN_STRQ + SEL_STRQ),
-        u('COMPARE', ra=1, rb=6, fmt=FMT_B),
-        u('BR_STATUS', cnd=2, imm=base + 10),
+        u('GATHER_EXT', rd=7, cnd=0xD, imm=0),   # effective bit after completion
+        u('COMPARE', ra=7, rb=6, fmt=FMT_B),
+        u('BR_STATUS', cnd=2, imm=base + 11),
         u('NOTIFY_ENQ', imm=9),                  # START/STOP_STREAMING
-        u('BUILD_HDR', ra=15, rb=13),            # base + 10: every arm lands here
+        u('BUILD_HDR', ra=15, rb=13),            # base + 11: every arm lands here
         u('BUILD_FLD', ra=13, fmt=FMT_D),        # type + index          @24
         u('SEND_RESP'),
         u('END'),
