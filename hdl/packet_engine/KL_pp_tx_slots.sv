@@ -163,11 +163,15 @@ module KL_pp_tx_slots #(
   assign done_w      = consume_w && out_last_r;
   assign ser_start_w = !run_r && ser_req_i
                        && (st_r[ser_slot_i] == SLOT_READY)
-                       && (len_r[ser_slot_i] != '0);
+                       && (len_r[ser_slot_i] != '0)
+                       && !(release_valid_i
+                            && (release_slot_i == ser_slot_i));
   // a zero-length commit has nothing to stream: freed on service request
   assign ser_zero_w  = !run_r && ser_req_i
                        && (st_r[ser_slot_i] == SLOT_READY)
-                       && (len_r[ser_slot_i] == '0);
+                       && (len_r[ser_slot_i] == '0)
+                       && !(release_valid_i
+                            && (release_slot_i == ser_slot_i));
   // the backpressure line: refill the BRAM output register only when it is
   // empty or its byte is being consumed this cycle — stall, never skip
   assign rd_en_w     = run_r && (fetch_idx_r < cur_len_w)

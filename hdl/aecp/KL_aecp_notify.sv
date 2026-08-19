@@ -855,8 +855,9 @@ module KL_aecp_notify
         lk_held_r <= 1'b0;
         lk_ctlr_r <= 64'd0;
         if (pe_lock_r) begin
-          //! coalesced with an unemitted change: exclusion no longer names
-          //! every requester - send to all, count it
+          //! The final coalesced change is caused by timeout, not by the
+          //! earlier requester. Clear that command exclusion so every
+          //! registered controller observes the resulting unlocked state.
           lockx_v_r <= 1'b0;
           if (coalesce_r != 8'hFF) coalesce_r <= coalesce_r + 8'd1;
         end else begin

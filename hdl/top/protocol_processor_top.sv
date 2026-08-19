@@ -882,6 +882,7 @@ module protocol_processor_top
   logic [2:0]  org_send_slot_w, org_resend_slot_w;
   logic        org_hold_valid_w, org_release_valid_w;
   logic [2:0]  org_hold_slot_w, org_release_slot_w;
+  logic [7:0]  org_withdraw_slot_mask_w;
   logic        org_arm_valid_w, org_arm_cancel_w;
   logic [TMR_AW_C-1:0] org_arm_slot_w;
   logic [PP_TIMER_OWNER_W_C-1:0] org_arm_owner_w;
@@ -952,6 +953,7 @@ module protocol_processor_top
       .hold_slot_o           (org_hold_slot_w),
       .release_valid_o       (org_release_valid_w),
       .release_slot_o        (org_release_slot_w),
+      .withdraw_slot_mask_o  (org_withdraw_slot_mask_w),
       .tmr_arm_valid_o       (org_arm_valid_w),
       .tmr_arm_cancel_o      (org_arm_cancel_w),
       .tmr_arm_slot_o        (org_arm_slot_w),
@@ -3575,6 +3577,7 @@ module protocol_processor_top
   logic                    laneq_adp_push_w, laneq_acmp_push_w;
   logic                    laneq_org_drop_w, laneq_org_pop_w;
   logic                    laneq_org_release_head_w;
+  logic                    laneq_org_withdraw_head_w;
 
   logic [LANE_N_C-1:0]              arb_req_w;
   logic [LANE_N_C-1:0][TXS_W_C-1:0] arb_slot_w;
@@ -3594,9 +3597,12 @@ module protocol_processor_top
                                   && txs_release_valid_w
                                   && (txs_release_slot_w
                                       == laneq_org_r[0]);
+  assign laneq_org_withdraw_head_w = (laneq_org_cnt_r != 4'd0)
+                                   && org_withdraw_slot_mask_w[laneq_org_r[0]];
   assign laneq_org_drop_w = (laneq_org_cnt_r != 4'd0)
                           && (!txs_ready_nc_w[laneq_org_r[0]]
-                              || laneq_org_release_head_w);
+                              || laneq_org_release_head_w
+                              || laneq_org_withdraw_head_w);
   assign laneq_org_pop_w  = arb_gnt_w[LANE_ORIG_C] || laneq_org_drop_w;
   assign laneq_adp_push_w  = adp_txreq_valid_w  && (laneq_adp_mid_w != 4'd8);
   assign laneq_acmp_push_w = lstn_txreq_valid_w && (laneq_acmp_mid_w != 4'd8);
@@ -3611,7 +3617,8 @@ module protocol_processor_top
       if ((4'(i) < laneq_org_cnt_r)
           && !((i == 0) && laneq_org_pop_w)
           && !(txs_release_valid_w
-               && (laneq_org_r[i] == txs_release_slot_w))) begin
+               && (laneq_org_r[i] == txs_release_slot_w))
+          && !org_withdraw_slot_mask_w[laneq_org_r[i]]) begin
         laneq_org_next_w[laneq_org_next_cnt_w[2:0]] = laneq_org_r[i];
         laneq_org_next_cnt_w = laneq_org_next_cnt_w + 4'd1;
       end
@@ -3669,7 +3676,8 @@ module protocol_processor_top
   assign arb_req_w[LANE_MAAP_C]     = maapeng_txreq_valid_w;
   assign arb_req_w[LANE_ORIG_C]     = (laneq_org_cnt_r != 4'd0)
                                     && txs_ready_nc_w[laneq_org_r[0]]
-                                    && !laneq_org_release_head_w;
+                                    && !laneq_org_release_head_w
+                                    && !laneq_org_withdraw_head_w;
   assign arb_slot_w[LANE_AECP_SOL_C] = aecp_txreq_slot_w;
   assign arb_slot_w[LANE_AECP_UNS_C] = aecp_txreq_slot_w;
   assign arb_slot_w[LANE_ACMP_C]     = laneq_acmp_r[0];
@@ -3686,6 +3694,11 @@ module protocol_processor_top
 
   logic        arb_tx_valid_w, arb_tx_sof_w, arb_tx_eof_w, arb_tx_ready_w;
   logic [7:0]  arb_tx_data_w;
+  logic        arb_start_abort_w;
+
+  assign arb_start_abort_w = org_withdraw_slot_mask_w[ser_slot_w]
+                           || (txs_release_valid_w
+                               && (txs_release_slot_w == ser_slot_w));
 
   KL_pp_tx_arbiter #(
       //! lane 6 = MAAP (11): background class like the ADP periodic lane —
@@ -3701,6 +3714,7 @@ module protocol_processor_top
       .tick_ms_i   (tick_ms_w),
       .req_valid_i (arb_req_w),
       .tx_slot_i   (arb_slot_w),
+      .start_abort_i(arb_start_abort_w),
       .gnt_o       (arb_gnt_w),
       .gnt_count_o (arb_gnt_cnt_w),
       .ser_req_o   (ser_req_w),

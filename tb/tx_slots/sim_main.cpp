@@ -443,6 +443,32 @@ int main(int argc, char** argv) {
           "J release-at-eof coincides with the final consumed beat");
     CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0,
           "J release-at-eof frees the held slot");
+
+    // A release may arrive on the first serializer-request edge, before the
+    // pool accepts the frame. Release wins that boundary and no byte starts.
+    exp = h.ref.alloc(false);
+    got = h.alloc_dut(false);
+    CHECK(got == exp && got == 0, "J alloc for release-at-start frame");
+    h.fill_ha(0, 3, 1, 5);
+    h.commit(0, 3);
+    dut->hold_slot_i = 0; dut->hold_valid_i = 1;
+    h.tick();
+    dut->hold_valid_i = 0;
+    dut->ser_req_i = 1; dut->ser_slot_i = 0; dut->ser_ready_i = 1;
+    dut->release_slot_i = 0; dut->release_valid_i = 1;
+    h.tick();
+    dut->ser_req_i = 0;
+    dut->release_valid_i = 0;
+    h.ref.freeSlot(0);
+    bool release_at_start_byte = false;
+    for (int i = 0; i < 8; ++i) {
+      h.tick();
+      release_at_start_byte |= h.o_valid;
+    }
+    CHECK(!release_at_start_byte,
+          "J release-at-start suppresses the unaccepted frame");
+    CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0,
+          "J release-at-start frees the slot without entering STREAM");
   }
 
   // ---- K: quiescence ---------------------------------------------------

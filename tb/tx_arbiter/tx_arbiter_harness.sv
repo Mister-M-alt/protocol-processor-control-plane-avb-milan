@@ -41,6 +41,7 @@ module tx_arbiter_harness (
     // ---- the six requesters (TB = engines) --------------------------------
     input  wire  [5:0]       req_valid_i,  //! request pending per lane
     input  wire  [5:0][2:0]  tx_slot_i,    //! committed slot per lane
+    input  wire              start_abort_i, //! withdraw selected request before pool start
     output logic [5:0]       gnt_o,        //! grant pulse per lane
     output logic [5:0][15:0] gnt_count_o,  //! grant counters per lane
 
@@ -97,6 +98,7 @@ module tx_arbiter_harness (
       .tick_ms_i   (tick_ms_i),
       .req_valid_i (req_valid_i),
       .tx_slot_i   (tx_slot_i),
+      .start_abort_i(start_abort_i),
       .gnt_o       (gnt_o),
       .gnt_count_o (gnt_count_o),
       .ser_req_o   (ser_req_w),

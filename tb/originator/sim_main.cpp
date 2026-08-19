@@ -472,6 +472,28 @@ int main(int argc, char** argv) {
   CHECK((dut->inflight_busy_o & (1u << jb.id)) == 0,
         "J second entry responds and releases normally");
 
+  // ---- J2: cancellation is lossless beside another entry's response ---
+  auto jc = h.issue(13, 3, 0xCA13, 78, 250);
+  auto jd = h.issue(14, 4, 0xCA14, 79, 250);
+  h.idle(1);
+  rt0 = h.rts.size();
+  rel0 = h.releases;
+  can0 = h.cancels;
+  h.clr();
+  dut->rsp_valid_i = 1; dut->rsp_key_i = 0xCA13; dut->rsp_seq_i = jc.seq;
+  dut->cancel_valid_i = 1; dut->cancel_owner_i = 14;
+  h.tick();
+  h.clr();
+  h.idle(3);
+  CHECK(h.rts.size() == rt0 + 1 && h.rts.back().id == jc.id,
+        "J2 response retains priority over another entry cancellation");
+  CHECK((dut->inflight_busy_o & (1u << jd.id)) == 0,
+        "J2 simultaneous cancellation was parked and processed");
+  CHECK(h.releases == rel0 + 2,
+        "J2 response and parked cancellation release both slots");
+  CHECK(h.cancels == can0 + 2 && h.armed_count() == 0,
+        "J2 both timer cancellations complete without a leak");
+
   // ---- K: the 8-bit ignored counter wraps -----------------------------
   cnt0 = dut->rsp_ign_cnt_o;
   for (int i = 0; i < 255 - (int)cnt0; ++i) h.respond(0xDEAD, 0x9999);

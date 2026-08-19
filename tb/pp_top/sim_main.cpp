@@ -6705,6 +6705,7 @@ int main(int argc, char** argv) {
     h.release_eof_sync = true;
     h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7026,
                       AEM_GET_CONFIGURATION, {}, false));
+    for (int i = 0; i < 20 && !h.release_eof_hit; ++i) h.step();
     h.release_eof_sync = false;
     h.stall_tx_at_eof = false;
     CHECK(h.release_eof_hit,

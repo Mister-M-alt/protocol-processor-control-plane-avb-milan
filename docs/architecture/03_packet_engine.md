@@ -166,8 +166,9 @@ The pipeline has **four producers** into the same dispatch stage:
      entry** `{owner, key, seq, deadline T-ID, retried}` so V7/V6 route the response
      back. The response timer starts only when the TX arbiter grants the handle to
      the serializer, so time spent in the lane queue cannot consume an attempt
-     budget. Serializer grants are parked per inflight entry before the shared
-     timer arm port, so a simultaneous response or cancellation cannot lose one.
+     budget. Serializer grants and cancellation pulses are parked per inflight
+     entry before the shared timer arm port, so a simultaneous response cannot
+     lose either event.
      On deadline expiry with `retried = 0` it re-sends the held slot once;
      the retry timer likewise starts only after serializer acceptance. A second
      expiry reports timeout to the owner. IEEE's one-retry rule is thereby central,
@@ -177,6 +178,9 @@ The pipeline has **four producers** into the same dispatch stage:
    - releases cancelled or completed slots through a per-slot pending merge. Two
      release sources can pulse together without losing a handle, and a cancelled
      handle still waiting in the originator lane queue is removed before slot reuse.
+     A selected handle remains withdrawable until the slot pool accepts its
+     serializer start. The arbiter grants only on that acceptance boundary;
+     later release clears the hold so the final serializer beat frees the slot.
 4. **MGMT** — side-port operations that mirror ATDECC changes enter as transactions so
    lock checks, commits and notifications follow the same path ([02 §7](02_interfaces.md)).
 

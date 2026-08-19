@@ -3,7 +3,7 @@
 
 Proves the [03 §5](../../docs/architecture/03_packet_engine.md) originator +
 inflight table (`hdl/packet_engine/KL_pp_originator.sv`): `make` = build +
-run, exit 0 = PASS, 100 checks.
+run, exit 0 = PASS, 104 checks.
 
 The C++ harness is an independent model, never DUT logic: it implements a
 stub of the exact `KL_pp_timer_service` arm/expiry port protocol (arm =
@@ -32,7 +32,9 @@ response-beats-expiry priority both for another entry (response processed
 first, retry the next cycle) and for the same entry in the same cycle (route
 once, never retry/fail); stale expiries for freed entries and foreign owner
 tags are inert; a serializer acceptance concurrent with another entry's
-response is parked and later arms the correct timer. Final invariants: every
+response is parked and later arms the correct timer. A cancellation concurrent
+with another entry's response is also parked, then releases its held slot and
+disarms its timer without loss. Final invariants: every
 arm/cancel used a legal slot index,
 every hold released exactly once, no armed slot and no inflight entry leaks.
 
@@ -45,3 +47,8 @@ Historical mutation baseline from 2026-08-11 at 81 checks
   routes).
 - response path forgets the slot release → 6 of 81 fail (hold/release
   balance broken across A/C1/C2/E/F and the final tally).
+
+The 2026-08-19 concurrent-event regression is also mutation-proven at the
+current 104-check shape. Ignoring the parked cancellation after a different
+entry's response fails 6 of 104 checks, including the busy-table, timer, hold,
+and release invariants. Restoring cancellation parking passes 104 of 104.

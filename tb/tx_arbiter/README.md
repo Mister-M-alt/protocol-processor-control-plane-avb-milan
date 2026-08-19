@@ -4,7 +4,7 @@
 Proves the TX arbiter (`hdl/packet_engine/KL_pp_tx_arbiter.sv`) implements the
 [03 §8](../../docs/architecture/03_packet_engine.md) frame-atomic priority
 merge with the [08 §2](../../docs/architecture/08_timing.md) T-TX-AGING
-starvation guard: `make` = build + run, exit 0 = PASS, 61 checks.
+starvation guard: `make` = build + run, exit 0 = PASS, 66 checks.
 
 The harness (`tx_arbiter_harness.sv`) wires the arbiter to the REAL
 `KL_pp_tx_slots` pool with nothing in between — the ser_* port match is
@@ -30,6 +30,8 @@ non-solicited frames back-to-back while solicited traffic waits;
 per-requester grant counters exact against the model; a PP_SLOT_NULL_C
 handle is never granted and cannot hang the plane; a request withdrawn
 after registered qualification is not granted from the stale bit;
+selection remains abortable until the slot pool accepts its serializer start,
+with no grant, frame, or slot damage on a pre-start withdrawal;
 randomized contention
 (1000+ frames, random lengths 1..64, random ready 40..100%, sparse random
 ticks, oversize mixed in) with EVERY grant matched to the model's
@@ -42,8 +44,7 @@ contenders, so the schedules are exact regardless of prep length — the
 pool's stall-never-skip skid (proven in `tb/tx_slots`) is what makes the
 freeze legal.
 
-Mutation-proven 2026-08-11 (each applied to a copy-backed original via
-sed, run red, restored, rerun green, 60/60 original phases):
+Mutation-proven, restored, and rerun green at the current 66-check shape:
 
 | # | Mutation | Result |
 |---|---|---|
@@ -51,8 +52,9 @@ sed, run red, restored, rerun green, 60/60 original phases):
 | M2 | pacing dropped: eligibility mask condition `pace_nonsol_r && sol_pend_w` → `1'b0` | fails 6 of 60 (alternation becomes 1,4,3,..; 17 random-phase grant mismatches) |
 | M3 | priority inverted: best-key compare `<` → `>` | fails 21 of 60 (strict-priority sequences reversed; 311 model mismatches) |
 | M4 | frame atomicity broken: `eof_w = consume_w && ser_last_i` → `consume_w` (arbiter re-arbitrates after the first byte) | fails 27 of 60 (4 mid-frame grants, 55 byte errors, stalls, pool corruption) |
+| M5 | pre-start abort ignored and serializer request left asserted | fails 3 of 66 (canceled grant, frame start, and slot lifecycle) |
 
-All four are behavior-changing mutants (no equivalent mutants recorded).
+All five are behavior-changing mutants (no equivalent mutants recorded).
 M2 is exactly the class of defect the aged-flood pacing phase plants: with
 strict priority alone it is invisible, because solicited classes natively
 outrank the unsolicited ones — only an AGED non-solicited flood can take
