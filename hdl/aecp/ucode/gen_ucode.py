@@ -25,7 +25,7 @@ OPS = {
     'ITER_OPEN': 18, 'ITER_NEXT': 19, 'APPEND': 20,
     'COMMIT': 21, 'NVM_MARK': 22, 'NOTIFY_ENQ': 23,
     'SET_STATUS': 24, 'SET_LENGTH': 25, 'BUILD_HDR': 26,
-    'BUILD_FLD': 27, 'SEND_RESP': 28,
+    'BUILD_FLD': 27, 'SEND_RESP': 28, 'SHIFT_R': 29,
 }
 FMT_B, FMT_W, FMT_D, FMT_Q = 0, 1, 2, 3
 ST_OK, ST_NIMPL, ST_BADARG, ST_NSUPP = 0, 1, 7, 11
@@ -164,6 +164,7 @@ E_RDESCENT = 1568    # READ_DESCRIPTOR(ENTITY) with current_configuration overla
 E_STRT    = 1600     # START_STREAMING on a STREAM_INPUT
 E_STOP    = 1632     # STOP_STREAMING on a STREAM_INPUT
 E_STRMNS  = 1664     # ...either, on any other descriptor type: NOT_SUPPORTED
+E_STRMUNS = 1672     # unsolicited START/STOP response body
 E_STRMBAD = 1696     # ...either, too short to carry Figure 7-59's four bytes
 # --- ADD/REMOVE_AUDIO_MAPPINGS ----------------------------------------------
 # MOVED from 1632/1680 when START/STOP_STREAMING landed on those words:
@@ -190,16 +191,14 @@ E_SFZERO = 1904     # the zero-format body (a locate miss keeps NO_SUCH_DESC)
 E_SFBAD  = 1912     # SET_STREAM_FORMAT too short to carry its own format
 E_SIBAD  = 1920     # SET_STREAM_INFO too short: the full 84-byte zero body
 E_SIRUN  = 1936     # SET_STREAM_INFO on a STREAMING output: refused whole
-#! the name family, RENUMBERED at the setters merge: the #67 programs landed
-#! first on main and hold 1792..1939, so GET_NAME and the three shared arms
-#! take the gaps between the setter slots and SET_NAME (62 words) takes the
-#! tail from 1940. The tail keeps 46 free words; the next family that does
-#! not fit renumbers again - place() asserts on any overlap either way.
-E_GNAME   = 1808     # GET_NAME (Milan 5.4.2.12, IEEE 7.4.18)
-E_SNAME   = 1940     # SET_NAME (Milan 5.4.2.11, IEEE 7.4.17)
-E_NAMEERR = 1840     # full GET_NAME/SET_NAME error body with a zero name
-E_NAMERESP = 1865    # full response with the current name overlay value
-E_NAMEBAD = 1890     # malformed name command enters the full error body
+#! The name family occupies the free 1344..1455 run. Keeping it out of the
+#! setter tail lets the notification-aware stream programs grow without
+#! interleaving unrelated entry points.
+E_GNAME   = 1344     # GET_NAME (Milan 5.4.2.12, IEEE 7.4.18)
+E_NAMEERR = 1352     # full GET_NAME/SET_NAME error body with a zero name
+E_NAMERESP = 1364    # full response with the current name overlay value
+E_NAMEBAD = 1384     # malformed name command enters the full error body
+E_SNAME   = 1392     # SET_NAME (Milan 5.4.2.11, IEEE 7.4.17)
 DT_CONTROL = 0x001A  # 1722.1-2021 Table 7-1
 
 # --- the dynamic-state store's regions and field selectors -------------------
@@ -1275,7 +1274,14 @@ place(E_SSRATE, [
     u('MOVE', rd=2, ra=0, imm=0),                # the refusal arms' zero body
     u('CHECK_LOCK', ra=15, imm=E_LOCKED4),       # held by another controller?
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the Audio Unit exist?
-    u('BR_STATUS', cnd=0, imm=E_SSRATE + 12),   # no -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=E_SSRATE + 22),    # no -> NO_SUCH_DESCRIPTOR
+    u('READ_ST', rd=3, imm=RGN_DYNV + SEL_RATE), # overlay already written?
+    u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_SSRATE + 9),     # no -> descriptor default
+    u('READ_ST', rd=6, imm=RGN_DYN + SEL_RATE),  # current overlay value
+    u('BRANCH', imm=E_SSRATE + 11),
+    u('READ_ST', rd=6, imm=RGN_DATA + AU_RATE_OFF),
+    u('SHIFT_R', rd=6, ra=6, imm=32),            # current rate is lane[63:32]
     u('WRITE_ST', ra=12, fmt=FMT_D, imm=RGN_DYN + SEL_RATE),
     u('NVM_MARK', imm=1),                        # §5.3.5.1: persist it
     u('SET_STATUS', imm=ST_OK),
@@ -1283,8 +1289,11 @@ place(E_SSRATE, [
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
     u('BUILD_FLD', ra=12, fmt=FMT_D),            # the rate now in force @28
     u('SEND_RESP'),
+    u('COMPARE', ra=12, rb=6, fmt=FMT_D),
+    u('BR_STATUS', cnd=2, imm=E_SSRATE + 21),    # equal means no state change
+    u('NOTIFY_ENQ', imm=5),                      # SET_SAMPLING_RATE
     u('END'),
-    u('BUILD_HDR', ra=15, rb=13),                # E_SSRATE + 12: the refusal
+    u('BUILD_HDR', ra=15, rb=13),                # E_SSRATE + 22: the refusal
     u('BUILD_FLD', ra=13, fmt=FMT_D),
     u('BUILD_FLD', ra=2, fmt=FMT_D),
     u('SEND_RESP'),
@@ -1304,7 +1313,13 @@ place(E_SCLKS, [
     u('MOVE', rd=2, ra=0, imm=0),                # reserved @30, and the refusals
     u('CHECK_LOCK', ra=15, imm=E_LOCKED4),
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the Clock Domain exist?
-    u('BR_STATUS', cnd=0, imm=E_SCLKS + 13),
+    u('BR_STATUS', cnd=0, imm=E_SCLKS + 22),
+    u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CLKSRC),
+    u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_SCLKS + 9),
+    u('READ_ST', rd=6, imm=RGN_DYN + SEL_CLKSRC),
+    u('BRANCH', imm=E_SCLKS + 10),
+    u('READ_ST', rd=6, imm=RGN_DATA + CD_SRCIDX_LANE),
     u('WRITE_ST', ra=12, fmt=FMT_W, imm=RGN_DYN + SEL_CLKSRC),
     u('NVM_MARK', imm=1),                        # §5.3.11.1: persist it
     u('SET_STATUS', imm=ST_OK),
@@ -1313,8 +1328,11 @@ place(E_SCLKS, [
     u('BUILD_FLD', ra=12, fmt=FMT_W),            # clock_source_index   @28
     u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved             @30
     u('SEND_RESP'),
+    u('COMPARE', ra=12, rb=6, fmt=FMT_W),
+    u('BR_STATUS', cnd=2, imm=E_SCLKS + 21),
+    u('NOTIFY_ENQ', imm=8),                      # SET_CLOCK_SOURCE
     u('END'),
-    u('BUILD_HDR', ra=15, rb=13),                # E_SCLKS + 13: the refusal
+    u('BUILD_HDR', ra=15, rb=13),                # E_SCLKS + 22: the refusal
     u('BUILD_FLD', ra=13, fmt=FMT_D),
     u('BUILD_FLD', ra=2, fmt=FMT_D),             # index 0 + reserved 0
     u('SEND_RESP'),
@@ -1452,21 +1470,25 @@ place(E_SCTRL, [
     u('MOVE', rd=2, ra=0, imm=0),                # the refusal arms' zero body
     u('CHECK_LOCK', ra=15, imm=E_LOCKED1),       # held by another controller?
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the CONTROL exist?
-    u('BR_STATUS', cnd=0, imm=E_SCTRL + 16),     # no -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=E_SCTRL + 20),     # no -> NO_SUCH_DESCRIPTOR
     u('COMPARE', ra=12, fmt=FMT_B, imm=0),       # value == 0 ?
     u('BR_STATUS', cnd=2, imm=E_SCTRL + 9),
     u('COMPARE', ra=12, fmt=FMT_B, imm=255),     # value == 255 ?
     u('BR_STATUS', cnd=2, imm=E_SCTRL + 9),
     u('BRANCH', imm=E_BADARG1),                  # neither: out of range
-    u('WRITE_ST', ra=12, fmt=FMT_B,              # E_SCTRL + 9: accept
+    u('READ_ST', rd=6, imm=RGN_DYN + SEL_IDENT), # E_SCTRL + 9: old value
+    u('WRITE_ST', ra=12, fmt=FMT_B,
       imm=RGN_DYN + SEL_IDENT),
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
     u('BUILD_FLD', ra=12, fmt=FMT_B),            # the value now in force @28
     u('SEND_RESP'),
+    u('COMPARE', ra=12, rb=6, fmt=FMT_B),
+    u('BR_STATUS', cnd=2, imm=E_SCTRL + 19),
+    u('NOTIFY_ENQ', imm=4),                      # SET_CONTROL
     u('END'),
-    u('BUILD_HDR', ra=15, rb=13),                # E_SCTRL + 16: the miss arm
+    u('BUILD_HDR', ra=15, rb=13),                # E_SCTRL + 20: the miss arm
     u('BUILD_FLD', ra=13, fmt=FMT_D),
     u('BUILD_FLD', ra=2, fmt=FMT_B),
     u('SEND_RESP'),
@@ -1525,6 +1547,14 @@ place(E_SCFG, [
     u('READ_ST', rd=9, imm=RGN_NCFG),
     u('CHECK_ARG', ra=12, rb=9, fmt=FMT_W,
       cnd=REL_LT, imm=E_SCFGBAD),
+    u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CFG),
+    u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_SCFG + 9),
+    u('READ_ST', rd=6, imm=RGN_DYN + SEL_CFG),
+    u('BRANCH', imm=E_SCFG + 12),
+    u('DESC_ADDR', ra=2, imm=RGN_LOCATE),        # ENTITY[0] default source
+    u('READ_ST', rd=6, imm=RGN_DATA + ENT_CURCFG_LANE),
+    u('NOP'),
     u('WRITE_ST', ra=12, fmt=FMT_W, imm=RGN_DYN + SEL_CFG),
     u('NVM_MARK', imm=1),                        # es-5.1 item 1: persist it
     u('SET_STATUS', imm=ST_OK),
@@ -1532,6 +1562,9 @@ place(E_SCFG, [
     u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved            @24
     u('BUILD_FLD', ra=12, fmt=FMT_W),            # configuration_index @26
     u('SEND_RESP'),
+    u('COMPARE', ra=12, rb=6, fmt=FMT_W),
+    u('BR_STATUS', cnd=2, imm=E_SCFG + 22),
+    u('NOTIFY_ENQ', imm=1),                      # SET_CONFIGURATION
     u('END'),
 ])
 
@@ -1684,12 +1717,16 @@ place(E_AMREMOVE, [
 def _strm(base, bit):
     return [
         u('DESC_ADDR', ra=14, imm=RGN_LOCATE),   # miss -> NO_SUCH_DESCRIPTOR
-        u('BR_STATUS', cnd=0, imm=base + 6),     # ...and it survives the skip
-        u('CHECK_LOCK', ra=15, imm=base + 6),    # a different controller holds
+        u('BR_STATUS', cnd=0, imm=base + 10),    # ...and it survives the skip
+        u('CHECK_LOCK', ra=15, imm=base + 10),   # a different controller holds
+        u('GATHER_EXT', rd=6, cnd=0xD, imm=0),   # effective bit; unbound is no-op
         u('MOVE', rd=1, ra=0, imm=bit),          # the started/stopped bit
         u('SET_STATUS', imm=ST_OK),
         u('WRITE_ST', ra=1, fmt=FMT_B, imm=RGN_STRQ + SEL_STRQ),
-        u('BUILD_HDR', ra=15, rb=13),            # base + 6: every arm lands here
+        u('COMPARE', ra=1, rb=6, fmt=FMT_B),
+        u('BR_STATUS', cnd=2, imm=base + 10),
+        u('NOTIFY_ENQ', imm=9),                  # START/STOP_STREAMING
+        u('BUILD_HDR', ra=15, rb=13),            # base + 10: every arm lands here
         u('BUILD_FLD', ra=13, fmt=FMT_D),        # type + index          @24
         u('SEND_RESP'),
         u('END'),
@@ -1723,6 +1760,13 @@ def _strm_refuse(status):
     ]
 
 place(E_STRMNS, _strm_refuse(ST_NSUPP))
+place(E_STRMUNS, [
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),
+    u('SEND_RESP'),
+    u('END'),
+])
 place(E_STRMBAD, _strm_refuse(ST_BADARG))
 
 
@@ -1755,6 +1799,7 @@ def _sfmt(sel):
         u('CHECK_LOCK', ra=15, imm=E_SFCUR),     # foreign lock -> ENTITY_LOCKED
         u('DESC_ADDR', ra=14, imm=RGN_LOCATE),   # miss -> NO_SUCH_DESCRIPTOR
         u('BR_STATUS', cnd=0, imm=E_SFZERO),     # ...with the zero-format body
+        u('GATHER_EXT', rd=6, **GSI(1)),         # current stream_format
         u('GATHER_EXT', rd=3, **GSI(15)),        # the verdict on r12's format
         u('MOVE', rd=4, ra=0, imm=3),            # required: supported + survives
         u('CHECK_ARG', ra=3, rb=4, fmt=FMT_B,
@@ -1766,6 +1811,9 @@ def _sfmt(sel):
         u('BUILD_FLD', ra=13, fmt=FMT_D),        # type @24 + index @26
         u('BUILD_FLD', ra=12, fmt=FMT_Q),        # the format now in force @28
         u('SEND_RESP'),
+        u('COMPARE', ra=12, rb=6, fmt=FMT_Q),
+        u('BR_STATUS', cnd=2, imm=E_SFMTI + 17 if sel == SEL_FMTIN else E_SFMTO + 17),
+        u('NOTIFY_ENQ', imm=2),                  # SET_STREAM_FORMAT
         u('END'),
     ]
 
@@ -1832,11 +1880,15 @@ place(E_SINFO, [
     u('CHECK_LOCK', ra=15, imm=E_FAILSAFE),      # echo + ENTITY_LOCKED
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
     u('BR_STATUS', cnd=0, imm=E_FAILSAFE),       # ...echoed at full length
+    u('GATHER_EXT', rd=6, **GSI(3)),             # current presentation offset
     u('WRITE_ST', ra=12, fmt=FMT_D, imm=RGN_DYN + SEL_PTOFF),
     u('NVM_MARK', imm=1),                        # §5.3.5.1: persist it
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
     u('SEND_RESP'),
+    u('COMPARE', ra=12, rb=6, fmt=FMT_D),
+    u('BR_STATUS', cnd=2, imm=E_SINFO + 12),
+    u('NOTIFY_ENQ', imm=3),                      # SET_STREAM_INFO
     u('END'),
 ])
 

@@ -82,6 +82,7 @@ struct Eng {
   int  tick_burst = 0;       // forced ticks remaining
   int  tick_div   = 0;       // 0 = off, else 1-in-N random ticks
   int  ready_pct  = 100;
+  bool start_abort = false;
 
   // TB pool bookkeeping + frame images (per slot)
   bool    slot_free[5] = {true, true, true, true, true};
@@ -103,12 +104,12 @@ struct Eng {
   bool prev_gnt = false;
   // The DUT registers its slot-side qualification (stage-0 pipeline: the
   // != NULL compare on the far-traveling slot buses lands in pend_r before
-  // the selection loop sees it), so every arbitration decision - grant pick,
-  // aging, pacing - is made on the PREVIOUS cycle's pending set. The model
-  // mirrors that with this one-cycle-delayed view; requests are held until
-  // grant by contract, so the delay changes which cycle a frame starts,
-  // never which frame.
+  // the selection loop sees it). Selection uses that registered set AND the
+  // current valid set so a withdrawn request cannot survive for one stale
+  // cycle. The model mirrors that intersection.
   uint32_t pend_q = 0;
+  bool     select_pending = false;
+  int      selected_req = -1;
 
   explicit Eng(Vtx_arbiter_harness* d) : dut(d) { memset(img, 0, sizeof img); }
 
@@ -138,10 +139,17 @@ struct Eng {
     if (!tick && tick_div > 0) tick = (rnd() % uint32_t(tick_div)) == 0;
     dut->tick_ms_i = tick;
     dut->tx_ready_i = (rnd() % 100u) < uint32_t(ready_pct);
+    dut->start_abort_i = start_abort;
 
     // settle + pre-edge observation (what the registers will see)
     dut->clk_i = 0; dut->eval();
     uint32_t pend_pre = pend_now();
+    uint32_t arb_pend_pre = pend_q & pend_pre;
+    bool had_selection = select_pending;
+    int selected_pre = selected_req;
+    bool was_in_service = in_service;
+    int next_selection = (!was_in_service && !had_selection)
+                           ? ref.decide(arb_pend_pre) : -1;
     int  s_valid = dut->tx_valid_o, s_sof = dut->tx_sof_o;
     int  s_eof = dut->tx_eof_o, s_ready = dut->tx_ready_i;
     uint8_t s_data = dut->tx_data_o;
@@ -175,13 +183,13 @@ struct Eng {
       if (prev_gnt)    e_pulse++;
       int w = __builtin_ctz(g);
       if (in_service)  e_gnt_midframe++;
-      int exp = ref.decide(pend_q);
+      int exp = had_selection ? selected_pre : -1;
       if (exp != w) {
         e_gnt_mismatch++;
         printf("  gnt mismatch: dut=%d model=%d pend=%02x pace=%d\n",
-               w, exp, pend_q, int(ref.pace_nonsol));
+               w, exp, arb_pend_pre, int(ref.pace_nonsol));
       }
-      ref.edge(w, pend_q, tick_pre);       // DUT-history bookkeeping
+      ref.edge(w, arb_pend_pre, tick_pre); // DUT-history bookkeeping
       // frame capture from the model's own image of the presented slot
       srv_req  = w;
       srv_slot = slot_field[w];
@@ -192,12 +200,24 @@ struct Eng {
       req_mask &= ~(1u << w);              // requester drops after grant
       idle_wait = 0;
     } else {
-      ref.edge(-1, pend_q, tick_pre);
+      if (had_selection && !start_abort) {
+        e_gnt_mismatch++;
+        printf("  missing gnt: model=%d pend=%02x pace=%d\n",
+               selected_pre, arb_pend_pre, int(ref.pace_nonsol));
+      }
+      ref.edge(-1, arb_pend_pre, tick_pre);
       if (pend_pre != 0 && !in_service) {
         if (++idle_wait > 80) { e_stall++; idle_wait = 0; }
       } else {
         idle_wait = 0;
       }
+    }
+    if (had_selection) {
+      select_pending = false;
+      selected_req = -1;
+    } else if (!was_in_service && !g && next_selection >= 0) {
+      select_pending = true;
+      selected_req = next_selection;
     }
     prev_gnt = (g != 0);
     pend_q = pend_pre;
@@ -315,6 +335,7 @@ int main(int argc, char** argv) {
   dut->wr_slot_i = 0; dut->wr_addr_i = 0; dut->wr_data_i = 0;
   dut->wr_valid_i = 0; dut->wr_commit_i = 0; dut->wr_len_i = 0;
   dut->req_valid_i = 0; dut->tx_slot_i = 0; dut->tx_ready_i = 0;
+  dut->start_abort_i = 0;
   dut->tick_ms_i = 0;
 
   // ---- A: reset --------------------------------------------------------
@@ -329,6 +350,16 @@ int main(int argc, char** argv) {
     CHECK(h.grant_log.empty() && h.frames_done == 0,
           "A no grants or frames while idle");
     CHECK(dut->tx_valid_o == 0 && dut->gnt_o == 0, "A quiescent outputs");
+
+    // Populate the registered qualifier, then withdraw before arbitration.
+    // No pool slot is needed because the request must never be granted.
+    h.slot_field[5] = 0;
+    h.req_mask |= 1u << 5;
+    h.step();
+    h.req_mask &= ~(1u << 5);
+    h.run(4);
+    CHECK(h.grant_log.empty() && !h.in_service,
+          "A withdrawn registered request is never granted");
   }
 
   // ---- B: strict priority when fresh ----------------------------------
@@ -534,6 +565,34 @@ int main(int argc, char** argv) {
     CHECK(total == long(h.grant_log.size()),
           "G counter sum equals grant count (%ld vs %zu)",
           total, h.grant_log.size());
+  }
+
+  // ---- H: cancellation between selection and serializer acceptance ----
+  {
+    auto s0 = h.snap();
+    int slot = h.prep(17);
+    h.raise(5, slot);
+    for (int i = 0; i < 8 && !h.select_pending; ++i) h.step();
+    CHECK(h.select_pending && h.selected_req == 5,
+          "H originator request reaches the pre-start selection stage");
+    size_t g0 = h.grant_log.size();
+    long f0 = h.frames_done;
+    h.req_mask &= ~(1u << 5);
+    h.start_abort = true;
+    h.step();
+    h.start_abort = false;
+    h.run(4);
+    CHECK(h.grant_log.size() == g0 && h.frames_done == f0,
+          "H withdrawn selection produces no grant or frame");
+    CHECK((dut->slots_ready_o & (1u << slot)) != 0
+              && dut->slots_free_o == 4,
+          "H aborted start leaves the committed slot untouched");
+    h.raise(5, slot);
+    CHECK(h.wait_grant(100) == 5,
+          "H the same slot remains serviceable after the abort");
+    CHECK(h.wait_frames(f0 + 1, 1000) && dut->slots_free_o == 5
+              && h.clean_since(s0),
+          "H accepted retry is byte-exact and frees the pool");
   }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);

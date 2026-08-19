@@ -345,3 +345,31 @@ non-zero unsupported data, a non-zero image configuration, full-body
 wrong-target refusals, and sampling-rate image hits both before another record
 and at the end of the aggregate. The final hit also verifies that the word
 after its four-byte body remains untouched.
+
+## Section U10: controller availability monitor
+
+U10 verifies the full registered-controller liveness path through the real
+timer, PRNG, frame builder, inflight tracker, TX slot pool, serializer, and RX
+validator. It checks the independent 30 to 60 second draw, exact one-time retry,
+targeted deregistration after silence, any-status response rearm, sequence
+advancement across row reuse, and valid-command cancellation.
+
+The cancellation case interrupts a CONTROLLER_AVAILABLE frame during allocation
+or construction, then requires a solicited response to pass through the same TX
+writer, the writer lock to return idle, and all five TX slots to be free. The
+response-match cases inject both a colliding MAC fold and a correct MAC carrying
+the wrong target Entity ID. Neither may suppress the exact retry.
+
+The queue-delay case stalls a solicited response in the serializer, waits for a
+CONTROLLER_AVAILABLE handle to queue behind it for longer than two response
+budgets, and proves that no attempt timeout starts before serializer acceptance.
+A valid command then cancels the queued exchange. The stale handle must drain,
+both solicited responses must resume, and all five TX slots must return free.
+
+## Section U11: non-head cancellation
+
+U11 stalls the serializer until two independent controller probes occupy the
+originator queue. It cancels the controller owning the second handle and
+requires the queue to compact immediately, before the released physical slot
+can be reused. Cleanup commands then prove that no queued or inflight exchange
+survives and that all five shared TX slots return free.

@@ -147,12 +147,20 @@ trigger set = every successful state-changing command + non-ATDECC changes while
 unlocked + async triggers of Table 5.22 with **≤ 1 notification per descriptor per
 second** for counters; departing-controller detection (random 30–60 s monitor,
 CONTROLLER_AVAILABLE probe + one retry, removal + targeted DEREGISTER; §5.4.5.3);
-registration-overflow probing before `NO_RESOURCES` (§5.4.2.21); TIME_LIMITED
+optional registration-overflow probing before mandatory `NO_RESOURCES` (§5.4.2.21); TIME_LIMITED
 registrations with 300 s expiry (IEEE §7.4.37.2). The original conflates lock ownership
 with this table: the **lock manager** is a separate object (ENTITY scope only, UNLOCK
 flag, 60 s auto-unlock → notification; §5.4.2.2). Identify machinery (CONTROL 0/255,
 multicast notification 3× @150 ms; §5.3.12, §5.4.5.4, IEEE §7.5.1) is absent.
-**Disposition**: [06 §7](architecture/06_aecp_engine.md); records in [07 §4](architecture/07_memory_maps.md).\n**Landed 2026-08-15**: registry (16 rows, duplicates refreshed, NO_RESOURCES on overflow), TIME_LIMITED 300 s expiry with the targeted u=1 DEREGISTER, and the per-entry-sequence emission walk (`KL_aecp_notify` + engine unsolicited jobs on LANE_AECP_UNS). Still open here: the §5.4.5.3 CONTROLLER_AVAILABLE monitor and eviction probing (needs the originator TX path), the counters notification class, identify machinery.
+**Disposition**: [06 §7](architecture/06_aecp_engine.md); records in [07 §4](architecture/07_memory_maps.md).
+
+**Landed 2026-08-18**: registry (16 rows, duplicates refreshed, NO_RESOURCES on
+overflow), TIME_LIMITED 300 s expiry with targeted u=1 DEREGISTER, the per-entry
+sequence emission walk, successful state-changing command triggers with requester
+exclusion and no-op suppression, the per-descriptor GET_COUNTERS limiter, and the
+§5.4.5.3 random monitor with CONTROLLER_AVAILABLE, one retry, any-status rearm, and
+targeted removal. The optional overflow eviction sweep is not attempted. Identify
+notification machinery remains open.
 
 #### <a id="gap-07"></a>GAP-07 [Major] — Timing model incomplete
 Original §20 has one AECP number (250 ms, with a 187.5 ms internal target). The real
@@ -327,7 +335,7 @@ verification).
 | REQ-AEM-002 | Milan §5.4.2.1 | ACQUIRE_ENTITY implemented but never SUCCESS; respond NOT_SUPPORTED | shall | C | [GAP-15](#gap-15) | E_NSUPPE echo (landed) | 06 §6.8 | DIR |
 | REQ-AEM-003 | Milan §5.4.2.2 | LOCK_ENTITY: UNLOCK flag; ENTITY descriptor only; 60 s auto-unlock ⇒ unsolicited | shall | C | [GAP-06](#gap-06) | KL_aecp_notify lock (landed) | 06 §6.8 | TIM |
 | REQ-AEM-004 | Milan §5.4.2.3 / IEEE §7.4.3 | ENTITY_AVAILABLE: 2021 response with flags + acquired/locked IDs | shall | A | [GAP-01](#gap-01) | F06.14 row | 06 §6 | DIR |
-| REQ-AEM-005 | Milan §5.4.2.21/§5.4.5.3 | Entity originates CONTROLLER_AVAILABLE (overflow probing + monitor) with one retry | shall | A | [GAP-17](#gap-17) | originator + inflight | 03 §5, 06 §7 | RND |
+| REQ-AEM-005 | Milan §5.4.2.21/§5.4.5.3 | Entity originates CONTROLLER_AVAILABLE for the departing-controller monitor with one retry; overflow probing remains optional | shall | A | [GAP-17](#gap-17) | originator + inflight (landed for monitor) | 03 §5, 06 §7 | RND |
 | REQ-AEM-006 | Milan §5.4.2.4 / IEEE §7.4.5 | READ_DESCRIPTOR: allowed while locked/acquired; 4-byte stub on failure | shall | P | [GAP-01](#gap-01) | model store assembly | 07 §3 | DIR |
 | REQ-AEM-007 | Milan §5.4.2.5 | SET_CONFIGURATION rejected with STREAM_IS_RUNNING if any input bound or output streaming; lock-protected | shall | A | [GAP-01](#gap-01) | CFG_BARRIER + guard | 03 §6, 06 §6.4 | DIR |
 | REQ-AEM-008 | Milan §5.4.2.7 | SET_STREAM_FORMAT: STREAM_IS_RUNNING / BAD_ARGUMENTS (mapping refs channel absent in new format) | shall | A | [GAP-01](#gap-01) | validation chain | 06 §6.4 | DIR |
@@ -347,7 +355,7 @@ verification).
 | REQ-AEM-022 | Milan §5.4.2.29 / IEEE §7.4.76 | GET_DYNAMIC_INFO: fixed-size-GET whitelist (else BAD_ARGUMENTS, nothing processed); per-element status; skip-on-overflow; incompatible with IN_PROGRESS | shall | P | [GAP-15](#gap-15) | GDI iterator | 06 §6.7 | DIR |
 | REQ-AEM-023 | IEEE §9.3.5.3.3 | Correctly-sized NOT_IMPLEMENTED response for every unimplemented opcode | shall | A | [GAP-01](#gap-01) | response-size ROM | 06 §6 | TOL |
 | REQ-AEM-024 | IEEE §9.3.2.6 | AEM: respond ≤240 ms (250 ms controller timeout); policy: never IN_PROGRESS | shall | P | [GAP-07](#gap-07) | deadline engine | 08 §4 | TIM |
-| REQ-AEM-025 | Milan §5.4.2.22 + Table 5.22 | DEREGISTER on auto-removal sent unsolicited to that controller only | shall | A | [GAP-06](#gap-06) | notif engine | 06 §7 | RND |
+| REQ-AEM-025 | Milan §5.4.2.22 + Table 5.22 | DEREGISTER on auto-removal sent unsolicited to that controller only | shall | A | [GAP-06](#gap-06) | KL_aecp_notify targeted holder (landed) | 06 §7 | RND |
 | REQ-AEM-026 | IEEE §7.4.39, Milan §5.4.5.4 | IDENTIFY_NOTIFICATION: unsolicited-only (command ⇒ BAD_ARGUMENTS); multicast DA 91-E0-F0-01-00-01; 3× @150 ms; 1 s re-arm | should | A | [GAP-06](#gap-06) | identify handler | 06 §7 | DIR |
 
 ### 6.4 Milan Vendor Unique (MVU)
@@ -364,10 +372,10 @@ verification).
 
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
 |---|---|---|---|---|---|---|---|---|
-| REQ-NOT-001 | Milan §5.4.5.1 | Fan-out: one message per registered controller excluding requester; per-entry DA/EID/seq on recorded port; seq +1 after handing to stack | shall | A | [GAP-06](#gap-06) | F06.4 | 06 §7 | STORM |
-| REQ-NOT-002 | Milan §5.4.5.2 | Triggers: every successful state-changing command; equivalent non-ATDECC changes while unlocked | shall | A | [GAP-06](#gap-06) | NOTIFY_ENQ | 06 §7 | RND |
-| REQ-NOT-003 | Milan Table 5.22 | Async triggers: GET_STREAM_INFO/GET_AVB_INFO/GET_AS_PATH field changes; GET_COUNTERS ≤1/descriptor/s; LOCK auto-unlock; auto-DEREGISTER | shall | P | [GAP-06](#gap-06) | KL_aecp_notify (landed for the observed trigger set; GET_COUNTERS class open - pull-only face) | 06 §7 | STORM |
-| REQ-NOT-004 | Milan §5.4.5.3 | Departing-controller detection: per-controller random 30–60 s; CONTROLLER_AVAILABLE + retry; any-status reply re-arms; silence ⇒ remove + targeted DEREGISTER | shall | A | [GAP-06](#gap-06) | monitor engine | 06 §7 | TIM |
+| REQ-NOT-001 | Milan §5.4.5.1 | Fan-out: one message per registered controller excluding requester; per-entry DA/EID/seq on recorded port; seq +1 after handing to stack | shall | A | [GAP-06](#gap-06) | KL_aecp_notify row walk (landed) | 06 §7 | STORM |
+| REQ-NOT-002 | Milan §5.4.5.2 | Triggers: every successful state-changing command; equivalent non-ATDECC changes while unlocked | shall | A | [GAP-06](#gap-06) | command effect queue and observed fabric triggers (landed) | 06 §7 | RND |
+| REQ-NOT-003 | Milan Table 5.22 | Async triggers: GET_STREAM_INFO/GET_AVB_INFO/GET_AS_PATH field changes; GET_COUNTERS ≤1/descriptor/s; LOCK auto-unlock; auto-DEREGISTER | shall | P | [GAP-06](#gap-06) | KL_aecp_notify observed trigger set and per-descriptor limiter (landed) | 06 §7 | STORM |
+| REQ-NOT-004 | Milan §5.4.5.3 | Departing-controller detection: per-controller random 30–60 s; CONTROLLER_AVAILABLE + retry; any-status reply re-arms; silence ⇒ remove + targeted DEREGISTER | shall | A | [GAP-06](#gap-06) | registry monitor plus originator (landed) | 06 §7 | TIM |
 | REQ-NOT-005 | Milan §5.3.4.2 | Registry cleared by power cycle | shall | A | [GAP-09](#gap-09) | volatile policy | 07 §5 | NVM |
 
 ### 6.6 Entity model

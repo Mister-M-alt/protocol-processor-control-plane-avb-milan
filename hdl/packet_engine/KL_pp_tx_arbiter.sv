@@ -77,8 +77,9 @@ module KL_pp_tx_arbiter
     input  wire                                tick_ms_i,    //! 1-cycle ms strobe (KL_pp_timer_service tick_ms_o)
 
     // ---- requesters (one lane per F03.5 source) ---------------------------
-    input  wire  [N_REQ_P-1:0]                 req_valid_i,  //! request pending; hold until gnt_o
+    input  wire  [N_REQ_P-1:0]                 req_valid_i,  //! request pending; hold until grant or cancellation
     input  wire  [N_REQ_P-1:0][SLOT_W_C-1:0]   tx_slot_i,    //! committed KL_pp_tx_slots slot per requester
+    input  wire                                start_abort_i, //! withdraw selected slot before serializer acceptance
     output logic [N_REQ_P-1:0]                 gnt_o,        //! one-cycle grant pulse: frame accepted for TX
     output logic [N_REQ_P-1:0][CNT_W_P-1:0]    gnt_count_o,  //! per-requester grant counters (wrap at 2^CNT_W_P)
 
@@ -113,6 +114,8 @@ module KL_pp_tx_arbiter
 
   arb_st_e                arb_st_r;
   logic [SLOT_W_C-1:0]    slot_r;         // winner's slot, held sof -> eof
+  logic [REQ_IX_W_C-1:0]  owner_r;        // selected requester until acceptance
+  logic                   start_sent_r;   // pool accepted the start request
   logic                   sof_pend_r;     // first byte of the frame not yet consumed
   logic                   pace_nonsol_r;  // last granted frame was non-solicited
   logic [N_REQ_P-1:0]     gnt_r;
@@ -134,9 +137,9 @@ module KL_pp_tx_arbiter
   //! from there the aging/grant counter enables combinationally - measured
   //! on the reference part as a 16-level, 4-carry failing path
   //! (tx_slot_r -> cnt_r). The qualification now lands in pend_r first;
-  //! every request is held until grant by contract (the banner's
-  //! precondition), so one cycle of arbitration latency changes which
-  //! CYCLE a frame starts, never whether it starts.
+  //! requests are normally held until grant. A cancellation may withdraw a
+  //! request after qualification, so selection also checks the current valid
+  //! bit below. One cycle of latency changes which cycle a frame starts.
   logic [N_REQ_P-1:0]    pend_r;
   logic [N_REQ_P-1:0]    pend_w;
   logic                  sol_pend_w;
@@ -159,7 +162,11 @@ module KL_pp_tx_arbiter
     logic [2:0] key_w, best_w;
     // a PP_SLOT_NULL_C handle means "no payload" (pp_pkg): never a grant.
     // The cast is identity at the F01.5 shape (SLOT_W_C = 3 = handle width).
-    pend_w = pend_r;
+    // The registered qualifier removes the long slot-compare path, but a
+    // requester may withdraw while that registered bit is still high. Keep
+    // the current valid bit in the decision so a cancelled queue head cannot
+    // be granted one cycle after its slot was released.
+    pend_w = pend_r & req_valid_i;
     sol_pend_w = |(pend_w & SOLICITED_MASK_P);
     // pacing first (03 §8): after a non-solicited frame, only solicited
     // requesters are eligible while any wait — pacing outranks aging
@@ -181,9 +188,13 @@ module KL_pp_tx_arbiter
   end
 
   // ------------------------------------------------------- event strobes
-  logic commit_w, consume_w, eof_w;
+  logic select_w, accept_w, abort_w, consume_w, eof_w;
 
-  assign commit_w  = (arb_st_r == A_IDLE) && pick_ok_w;
+  assign select_w  = (arb_st_r == A_IDLE) && pick_ok_w;
+  assign accept_w  = (arb_st_r == A_START) && !start_sent_r
+                     && !start_abort_i;
+  assign abort_w   = (arb_st_r == A_START) && !start_sent_r
+                     && start_abort_i;
   assign consume_w = ser_valid_i && tx_ready_i;
   assign eof_w     = consume_w && ser_last_i;
 
@@ -192,6 +203,8 @@ module KL_pp_tx_arbiter
     if (!rst_n) begin
       arb_st_r      <= A_IDLE;
       slot_r        <= '0;
+      owner_r       <= '0;
+      start_sent_r  <= 1'b0;
       sof_pend_r    <= 1'b0;
       pace_nonsol_r <= 1'b0;
       gnt_r         <= '0;
@@ -199,19 +212,32 @@ module KL_pp_tx_arbiter
       gnt_r <= '0;
       case (arb_st_r)
         A_IDLE: begin
-          if (pick_ok_w) begin
+          if (select_w) begin
             arb_st_r      <= A_START;
             slot_r        <= tx_slot_i[pick_w];
-            gnt_r[pick_w] <= 1'b1;
+            owner_r       <= pick_w;
+            start_sent_r  <= 1'b0;
             sof_pend_r    <= 1'b1;
-            pace_nonsol_r <= !SOLICITED_MASK_P[pick_w];
           end
         end
         A_START: begin
-          // hold ser_req_o until the pool visibly streams, then release
-          if (sof_pend_r && consume_w) sof_pend_r <= 1'b0;
-          if (eof_w)                arb_st_r <= A_IDLE;   // 1-byte frame
-          else if (ser_valid_i)     arb_st_r <= A_STREAM;
+          // A selected request remains abortable until the pool samples its
+          // first start request. Only that acceptance emits the public grant.
+          if (abort_w) begin
+            arb_st_r     <= A_IDLE;
+            start_sent_r <= 1'b0;
+            sof_pend_r   <= 1'b0;
+          end else begin
+            if (accept_w) begin
+              start_sent_r        <= 1'b1;
+              gnt_r[owner_r]      <= 1'b1;
+              pace_nonsol_r       <= !SOLICITED_MASK_P[owner_r];
+            end
+            // hold ser_req_o until the pool visibly streams, then release
+            if (sof_pend_r && consume_w) sof_pend_r <= 1'b0;
+            if (eof_w)                arb_st_r <= A_IDLE;   // 1-byte frame
+            else if (ser_valid_i)     arb_st_r <= A_STREAM;
+          end
         end
         A_STREAM: begin
           if (sof_pend_r && consume_w) sof_pend_r <= 1'b0;
@@ -231,7 +257,7 @@ module KL_pp_tx_arbiter
       for (int i = 0; i < int'(N_REQ_P); i++) age_r[i] <= '0;
     end else begin
       for (int i = 0; i < int'(N_REQ_P); i++) begin
-        if (commit_w && (pick_w == REQ_IX_W_C'(i)))    age_r[i] <= '0;
+        if (accept_w && (owner_r == REQ_IX_W_C'(i)))   age_r[i] <= '0;
         else if (!pend_w[i])                           age_r[i] <= '0;
         else if (tick_ms_i && (age_r[i] != AGE_SAT_C))
           age_r[i] <= age_r[i] + AGE_W_C'(1);
@@ -243,14 +269,15 @@ module KL_pp_tx_arbiter
   always_ff @(posedge clk_i) begin : grant_counters
     if (!rst_n) begin
       for (int i = 0; i < int'(N_REQ_P); i++) cnt_r[i] <= '0;
-    end else if (commit_w) begin
-      cnt_r[pick_w] <= cnt_r[pick_w] + CNT_W_P'(1);
+    end else if (accept_w) begin
+      cnt_r[owner_r] <= cnt_r[owner_r] + CNT_W_P'(1);
     end
   end
 
   // -------------------------------------------------------------- outputs
   // byte lane is a pure pass-through: the pool's skid IS the backpressure
-  assign ser_req_o   = (arb_st_r == A_START);
+  assign ser_req_o   = (arb_st_r == A_START)
+                       && (start_sent_r || !start_abort_i);
   assign ser_slot_o  = slot_r;
   assign ser_ready_o = tx_ready_i;
   assign tx_valid_o  = ser_valid_i;

@@ -19,14 +19,15 @@
 //                HOLDS the slot across the exchange (hold/release pair
 //                toward the pool — the pool must not auto-free it on eof),
 //                requests the send, and arms the owner-provided timer slot
-//                through the exact KL_pp_timer_service arm port. Responses
+//                only after the serializer accepts that slot. Responses
 //                are matched on {key, seq} against the inflight table
 //                {owner, key, seq, timer-slot, timeout, tx-slot, retried}:
 //                hit -> route to owner + timer disarm + slot release; no
 //                match -> SILENTLY ignored but counted (8-bit, F09.4).
 //                First expiry -> ONE re-send request of the SAME held slot
-//                (bytes unchanged: Milan's exact duplicate, same seq) +
-//                re-arm; second expiry -> fail to owner + release. IEEE's
+//                (bytes unchanged: Milan's exact duplicate, same seq); the
+//                timer re-arms only when that retry reaches the serializer.
+//                Second expiry -> fail to owner + release. IEEE's
 //                one-retry rule is thereby central, never per-engine
 //                (IEEE §9.3.6.1.2, §8.2.2.1.5). Timeout values arrive on
 //                the issue port — 08 F08.1 stays the single source, no
@@ -41,12 +42,11 @@
 //                encodes {TMR_TAG_P, entry index} so expiry routing back
 //                into the table is O(1), and every shared one-op-per-cycle
 //                resource (timer arm port, hold/release, send lanes) is
-//                serialized to ONE event per cycle — priority response >
-//                expiry > issue (issue is the only backpressurable input)
-//                — with expiries parked in a per-entry pending bitmask
-//                that is overflow-free by construction: an armed slot
-//                fires exactly once, and only this module's own processing
-//                of that fire can re-arm it.
+//                serialized to ONE event per cycle. Non-backpressurable
+//                cancellation, serializer acceptance, and expiry inputs are
+//                parked per entry before the priority chain; issue is the only
+//                backpressurable input. The pending masks are overflow-free
+//                because each bit names its live inflight entry.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -57,6 +57,9 @@ module KL_pp_originator #(
     parameter int unsigned PROBE_SLOTS_P = 8,
     //! inflight entries (03 §5): default = CA pool + probe slots
     parameter int unsigned INFLIGHT_P    = CA_POOL_P + PROBE_SLOTS_P,
+    //! response identity width; 16 preserves the generic folded-key shape,
+    //! while AECP CONTROLLER_AVAILABLE uses the full {Entity ID, MAC} tuple
+    parameter int unsigned KEY_W_P       = 16,
     //! timer-service depth — sizes the arm/expiry slot index width
     parameter int unsigned TMR_SLOTS_P   = pp_pkg::PP_TIMER_SLOTS_C,
     //! fixed entry-index field width inside the 8-bit timer owner tag
@@ -76,7 +79,7 @@ module KL_pp_originator #(
     input  wire                  iss_valid_i,  //! issue request, held until granted
     input  wire  [IFL_AW_C-1:0]  iss_owner_i,  //! owner id (engine/sink) — seq counter + routing tag
     input  wire  [2:0]           iss_tx_slot_i, //! KL_pp_tx_slots handle of the serialized PDU
-    input  wire  [15:0]          iss_key_i,    //! match key (normalizer's V6/V7 src-field fold)
+    input  wire  [KEY_W_P-1:0]   iss_key_i,    //! exact owner-selected response identity
     input  wire  [TMR_AW_C-1:0]  iss_tmr_slot_i, //! timer slot to arm (sink SM slot / CA-pool slot, F08.4)
     input  wire  [15:0]          iss_timeout_ms_i, //! T-ACMP-CMD / T-AECP-TIMEOUT value, from the owner
     output logic                 iss_ready_o,  //! can accept this cycle (low = table full or busy)
@@ -84,10 +87,17 @@ module KL_pp_originator #(
     output logic [15:0]          iss_seq_o,    //! next seq for iss_owner_i — assigned on grant
     output logic [IFL_AW_C-1:0]  iss_id_o,     //! inflight id allocated on grant
 
+    // ---- owner cancellation ----------------------------------------------
+    // A controller monitor has at most one exchange live per owner. A valid
+    // command from that controller supersedes its availability probe, so the
+    // owner can cancel the live exchange without manufacturing a response.
+    input  wire                  cancel_valid_i,
+    input  wire  [IFL_AW_C-1:0]  cancel_owner_i,
+
     // ---- response match (RX pipeline, rules V6/V7) ------------------------
     input  wire                  rsp_valid_i,  //! a response PDU arrived
     input  wire  [15:0]          rsp_seq_i,    //! its sequence_id
-    input  wire  [15:0]          rsp_key_i,    //! its src-field fold (same derivation as iss_key_i)
+    input  wire  [KEY_W_P-1:0]   rsp_key_i,    //! same identity shape as iss_key_i
 
     // ---- routing back to the owner ----------------------------------------
     output logic                 rt_valid_o,   //! response matched an inflight entry
@@ -102,12 +112,15 @@ module KL_pp_originator #(
     output logic [2:0]           send_slot_o,    //! tx slot to serialize
     output logic                 resend_valid_o, //! retry: EXACT duplicate (same held slot, same seq)
     output logic [2:0]           resend_slot_o,  //! tx slot to re-serialize
+    input  wire                  send_accept_valid_i, //! serializer accepted initial/retry slot
+    input  wire  [2:0]           send_accept_slot_i,
 
     // ---- hold/release pair toward KL_pp_tx_slots --------------------------
     output logic                 hold_valid_o,    //! pin the slot: suppress auto-free on eof
     output logic [2:0]           hold_slot_o,     //! slot being pinned
     output logic                 release_valid_o, //! exchange over: pool may free the slot
     output logic [2:0]           release_slot_o,  //! slot being released
+    output logic [7:0]           withdraw_slot_mask_o, //! slots canceled before serializer acceptance
 
     // ---- timer arm port (exact KL_pp_timer_service shape) -----------------
     output logic                 tmr_arm_valid_o,       //! arm/cancel strobe
@@ -144,8 +157,11 @@ module KL_pp_originator #(
   logic [IFL_N_C-1:0]  valid_r;
   logic [IFL_N_C-1:0]  retried_r;
   logic [IFL_N_C-1:0]  exp_pend_r;
+  logic [IFL_N_C-1:0]  await_tx_r;
+  logic [IFL_N_C-1:0]  accept_pend_r;
+  logic [IFL_N_C-1:0]  cancel_pend_r;
   logic [IFL_AW_C-1:0] owner_r [0:IFL_N_C-1];
-  logic [15:0]         key_r   [0:IFL_N_C-1];
+  logic [KEY_W_P-1:0]  key_r   [0:IFL_N_C-1];
   logic [15:0]         seq_r   [0:IFL_N_C-1];
   logic [TMR_AW_C-1:0] tslot_r [0:IFL_N_C-1];
   logic [15:0]         tout_r  [0:IFL_N_C-1];
@@ -169,6 +185,38 @@ module KL_pp_originator #(
     end
   end
 
+  logic [IFL_N_C-1:0]  cancel_work_w;
+  logic                cancel_pend_ok_w;
+  logic [IFL_AW_C-1:0] cancel_pend_ix_w;
+
+  always_comb begin : cancel_pending_pick
+    cancel_work_w = cancel_pend_r;
+    if (cancel_valid_i && cancel_hit_w)
+      cancel_work_w[cancel_ix_w] = 1'b1;
+    cancel_pend_ok_w = 1'b0;
+    cancel_pend_ix_w = '0;
+    for (int i = int'(INFLIGHT_P) - 1; i >= 0; i--) begin
+      if (cancel_work_w[i]) begin
+        cancel_pend_ok_w = 1'b1;
+        cancel_pend_ix_w = IFL_AW_C'(i);
+      end
+    end
+  end
+
+  logic                accept_ok_w;
+  logic [IFL_AW_C-1:0] accept_pend_ix_w;
+
+  always_comb begin : accept_pending_pick
+    accept_ok_w      = 1'b0;
+    accept_pend_ix_w = '0;
+    for (int i = int'(INFLIGHT_P) - 1; i >= 0; i--) begin
+      if (accept_pend_r[i]) begin
+        accept_ok_w      = 1'b1;
+        accept_pend_ix_w = IFL_AW_C'(i);
+      end
+    end
+  end
+
   // ------------------------------------------------------- response CAM
   logic                hit_ok_w;
   logic [IFL_AW_C-1:0] hit_ix_w;
@@ -181,6 +229,40 @@ module KL_pp_originator #(
                      && (seq_r[i] == rsp_seq_i)) begin
         hit_ok_w = 1'b1;
         hit_ix_w = IFL_AW_C'(i);
+      end
+    end
+  end
+
+  logic                cancel_hit_w;
+  logic [IFL_AW_C-1:0] cancel_ix_w;
+
+  always_comb begin : cancel_pick
+    cancel_hit_w = 1'b0;
+    cancel_ix_w  = '0;
+    for (int i = int'(INFLIGHT_P) - 1; i >= 0; i--) begin
+      if (valid_r[i] && (owner_r[i] == cancel_owner_i)) begin
+        cancel_hit_w = 1'b1;
+        cancel_ix_w  = IFL_AW_C'(i);
+      end
+    end
+  end
+
+  // ------------------------------------------ serializer-acceptance CAM
+  // A held TX slot belongs to exactly one live exchange. Match the handle
+  // granted by the TX arbiter back to the entry whose initial send or retry
+  // is waiting in the originator lane queue. Until this grant arrives there
+  // is no wire attempt, so no response timeout may run.
+  logic                accept_hit_w;
+  logic [IFL_AW_C-1:0] accept_ix_w;
+
+  always_comb begin : accept_pick
+    accept_hit_w = 1'b0;
+    accept_ix_w  = '0;
+    for (int i = int'(INFLIGHT_P) - 1; i >= 0; i--) begin
+      if (valid_r[i] && await_tx_r[i]
+                     && (txs_r[i] == send_accept_slot_i)) begin
+        accept_hit_w = 1'b1;
+        accept_ix_w  = IFL_AW_C'(i);
       end
     end
   end
@@ -216,15 +298,35 @@ module KL_pp_originator #(
   end
 
   // -------------------------------------------------- one event per cycle
-  // Priority response > expiry > issue: the three event kinds share the
-  // timer arm port and the hold/release/send pulse lanes, so exactly one
-  // proceeds per cycle. Only issue can be backpressured, so it yields.
-  logic ev_rsp_w, ev_exp_w, ev_iss_w;
+  // Priority response > parked cancel > TX acceptance > expiry > issue: the
+  // event kinds share the timer arm port and the hold/release/send pulse lanes,
+  // so exactly one proceeds per cycle. Only issue can be backpressured.
+  logic ev_rsp_w, ev_cancel_w, ev_accept_w, ev_exp_w, ev_iss_w;
 
   assign ev_rsp_w    = rsp_valid_i && hit_ok_w;
-  assign ev_exp_w    = !ev_rsp_w && pend_ok_w;
-  assign iss_ready_o = free_ok_w && !ev_rsp_w && !pend_ok_w;
+  assign ev_cancel_w = !ev_rsp_w && cancel_pend_ok_w;
+  assign ev_accept_w = !ev_rsp_w && !ev_cancel_w && accept_ok_w;
+  assign ev_exp_w    = !ev_rsp_w && !ev_cancel_w && !ev_accept_w && pend_ok_w;
+  assign iss_ready_o = free_ok_w && !ev_rsp_w && !ev_cancel_w
+                     && !ev_accept_w && !pend_ok_w;
   assign ev_iss_w    = iss_valid_i && iss_ready_o;
+
+  // Expose every slot that must be withdrawn before serializer acceptance.
+  // The mask is combinational from the current response/cancel decision so
+  // the TX lane can suppress a selected request before the registered release
+  // reaches the shared slot pool. Stored cancellations remain masked while a
+  // response for another entry consumes the single action lane.
+  always_comb begin : withdraw_mask
+    withdraw_slot_mask_o = '0;
+    for (int i = 0; i < int'(INFLIGHT_P); i++) begin
+      if (cancel_work_w[i] && valid_r[i])
+        withdraw_slot_mask_o[txs_r[i]] = 1'b1;
+    end
+    if (ev_rsp_w)
+      withdraw_slot_mask_o[txs_r[hit_ix_w]] = 1'b1;
+    if (ev_exp_w && valid_r[pend_ix_w] && retried_r[pend_ix_w])
+      withdraw_slot_mask_o[txs_r[pend_ix_w]] = 1'b1;
+  end
 
   assign iss_gnt_o = ev_iss_w;
   assign iss_id_o  = free_ix_w;
@@ -236,6 +338,9 @@ module KL_pp_originator #(
       valid_r    <= '0;
       retried_r  <= '0;
       exp_pend_r <= '0;
+      await_tx_r <= '0;
+      accept_pend_r <= '0;
+      cancel_pend_r <= '0;
       for (int i = 0; i < int'(IFL_N_C); i++) begin
         seq_ctr_r[i] <= 16'd0;
       end
@@ -245,22 +350,51 @@ module KL_pp_originator #(
       if (exp_genuine_w) begin
         exp_pend_r[exp_ix_w] <= 1'b1;
       end
+      // The serializer grant is not backpressurable. Park it before the
+      // one-event priority chain so a simultaneous response or cancellation
+      // for another entry cannot consume the grant without starting a timer.
+      if (send_accept_valid_i && accept_hit_w) begin
+        accept_pend_r[accept_ix_w] <= 1'b1;
+      end
+      // Cancellation is also a one-cycle, non-backpressurable input. Park it
+      // before arbitration so a response for another entry cannot consume the
+      // sole event lane and lose a TIME_LIMITED drain cancellation.
+      if (cancel_valid_i && cancel_hit_w) begin
+        cancel_pend_r[cancel_ix_w] <= 1'b1;
+      end
       if (ev_rsp_w) begin
         valid_r[hit_ix_w]    <= 1'b0;
         exp_pend_r[hit_ix_w] <= 1'b0;
+        await_tx_r[hit_ix_w] <= 1'b0;
+        accept_pend_r[hit_ix_w] <= 1'b0;
+        cancel_pend_r[hit_ix_w] <= 1'b0;
+      end else if (ev_cancel_w) begin
+        valid_r[cancel_pend_ix_w]    <= 1'b0;
+        exp_pend_r[cancel_pend_ix_w] <= 1'b0;
+        await_tx_r[cancel_pend_ix_w] <= 1'b0;
+        accept_pend_r[cancel_pend_ix_w] <= 1'b0;
+        cancel_pend_r[cancel_pend_ix_w] <= 1'b0;
+      end else if (ev_accept_w) begin
+        await_tx_r[accept_pend_ix_w] <= 1'b0;
+        accept_pend_r[accept_pend_ix_w] <= 1'b0;
       end else if (ev_exp_w) begin
         exp_pend_r[pend_ix_w] <= 1'b0;
         if (valid_r[pend_ix_w]) begin
           if (!retried_r[pend_ix_w]) begin
             retried_r[pend_ix_w] <= 1'b1;   // one exact-duplicate retry
+            await_tx_r[pend_ix_w] <= 1'b1;
           end else begin
             valid_r[pend_ix_w] <= 1'b0;     // second timeout: fail + free
+            await_tx_r[pend_ix_w] <= 1'b0;
+            accept_pend_r[pend_ix_w] <= 1'b0;
           end
         end
       end else if (ev_iss_w) begin
         valid_r[free_ix_w]    <= 1'b1;
         retried_r[free_ix_w]  <= 1'b0;
         exp_pend_r[free_ix_w] <= 1'b0;
+        await_tx_r[free_ix_w] <= 1'b1;
+        accept_pend_r[free_ix_w] <= 1'b0;
         owner_r[free_ix_w]    <= iss_owner_i;
         key_r[free_ix_w]      <= iss_key_i;
         seq_r[free_ix_w]      <= seq_ctr_r[iss_owner_i];
@@ -316,18 +450,31 @@ module KL_pp_originator #(
         tmr_arm_slot_o        <= tslot_r[hit_ix_w];
         tmr_arm_owner_o       <= {TMR_TAG_P, hit_ix_w};
         tmr_arm_deadline_ms_o <= 32'd0;
+      end else if (ev_cancel_w) begin
+        // A valid command from this owner proves liveness and supersedes
+        // the probe. Free the immutable retry slot and disarm its timeout.
+        release_valid_o       <= 1'b1;
+        release_slot_o        <= txs_r[cancel_pend_ix_w];
+        tmr_arm_valid_o       <= 1'b1;
+        tmr_arm_cancel_o      <= 1'b1;
+        tmr_arm_slot_o        <= tslot_r[cancel_pend_ix_w];
+        tmr_arm_owner_o       <= {TMR_TAG_P, cancel_pend_ix_w};
+        tmr_arm_deadline_ms_o <= 32'd0;
+      end else if (ev_accept_w) begin
+        // Start the attempt budget only after the arbiter transfers this
+        // handle to the serializer. Queueing delay is outside that budget.
+        tmr_arm_valid_o       <= 1'b1;
+        tmr_arm_cancel_o      <= 1'b0;
+        tmr_arm_slot_o        <= tslot_r[accept_pend_ix_w];
+        tmr_arm_owner_o       <= {TMR_TAG_P, accept_pend_ix_w};
+        tmr_arm_deadline_ms_o <= now_ms_i + 32'(tout_r[accept_pend_ix_w]);
       end else if (ev_exp_w) begin
         if (valid_r[pend_ix_w]) begin
           if (!retried_r[pend_ix_w]) begin
             // one retry: EXACT duplicate — the held slot, untouched, so
             // the wire PDU (including seq) is bit-identical (05 A13)
-            resend_valid_o        <= 1'b1;
-            resend_slot_o         <= txs_r[pend_ix_w];
-            tmr_arm_valid_o       <= 1'b1;
-            tmr_arm_cancel_o      <= 1'b0;
-            tmr_arm_slot_o        <= tslot_r[pend_ix_w];
-            tmr_arm_owner_o       <= {TMR_TAG_P, pend_ix_w};
-            tmr_arm_deadline_ms_o <= now_ms_i + 32'(tout_r[pend_ix_w]);
+            resend_valid_o <= 1'b1;
+            resend_slot_o  <= txs_r[pend_ix_w];
           end else begin
             // second timeout: report + release (the expired slot already
             // disarmed itself in the timer service — no cancel needed)
@@ -343,11 +490,6 @@ module KL_pp_originator #(
         send_slot_o           <= iss_tx_slot_i;
         hold_valid_o          <= 1'b1;
         hold_slot_o           <= iss_tx_slot_i;
-        tmr_arm_valid_o       <= 1'b1;
-        tmr_arm_cancel_o      <= 1'b0;
-        tmr_arm_slot_o        <= iss_tmr_slot_i;
-        tmr_arm_owner_o       <= {TMR_TAG_P, free_ix_w};
-        tmr_arm_deadline_ms_o <= now_ms_i + 32'(iss_timeout_ms_i);
       end
     end
   end

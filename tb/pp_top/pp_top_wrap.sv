@@ -79,6 +79,9 @@ module pp_top_wrap (
     output logic  [5:0] ctr_word_o,
     input  wire  [31:0] ctr_data_i,
     input  wire         ctr_wait_i,
+    input  wire         ctr_change_i,
+    input  wire  [15:0] ctr_change_desc_type_i,
+    input  wire  [15:0] ctr_change_desc_index_i,
 
     // GET_AUDIO_MAP read face (06 §6.5) - same bargain: the harness plays
     // the integrator's dynamic-mapping store, so every geometry word and
@@ -252,6 +255,13 @@ module pp_top_wrap (
     output logic  [2:0] dbg_resp_fault_o,
     output logic [15:0] dbg_resp_err_o,
     output logic [15:0] dbg_resp_lane_o,
+    output logic  [2:0] dbg_ca_state_o,
+    output logic        dbg_txc_locked_o,
+    output logic  [2:0] dbg_txs_free_o,
+    output logic  [3:0] dbg_org_busy_o,
+    output logic  [3:0] dbg_org_queue_o,
+    output logic  [3:0] dbg_org_second_owner_o,
+    output logic        dbg_txs_release_valid_o,
     //! the per-sink started/stopped view the FABRIC admission gate reads
     //! (Milan 5.3.8.7). It is exposed because a START/STOP_STREAMING that
     //! answers SUCCESS without moving this bit is the exact defect the
@@ -365,6 +375,9 @@ module pp_top_wrap (
       .ctr_word_o            (ctr_word_o),
       .ctr_data_i            (ctr_data_i),
       .ctr_wait_i            (ctr_wait_i),
+      .ctr_change_i          (ctr_change_i),
+      .ctr_change_desc_type_i(ctr_change_desc_type_i),
+      .ctr_change_desc_index_i(ctr_change_desc_index_i),
       .amap_req_o            (amap_req_o),
       .amap_desc_type_o      (amap_desc_type_o),
       .amap_desc_index_o     (amap_desc_index_o),
@@ -506,6 +519,23 @@ module pp_top_wrap (
   assign dbg_resp_fault_o = u_dut.aecp_dbg_rfault_w;
   assign dbg_resp_err_o   = u_dut.aecp_dbg_rerr_w;
   assign dbg_resp_lane_o  = u_dut.aecp_dbg_rlane_w;
+  assign dbg_ca_state_o   = u_dut.u_ca_builder.c_st_r;
+  assign dbg_txc_locked_o = u_dut.txc_locked_r;
+  assign dbg_txs_free_o   = u_dut.txs_free_w;
+  assign dbg_org_busy_o   = u_dut.org_busy_nc_w;
+  assign dbg_org_queue_o  = u_dut.laneq_org_cnt_r;
+  assign dbg_txs_release_valid_o = u_dut.txs_release_valid_w;
+  always_comb begin : second_originator_owner
+    dbg_org_second_owner_o = 4'hF;
+    if (u_dut.laneq_org_cnt_r > 4'd1) begin
+      for (int unsigned i = 0; i < 16; i++) begin
+        if (u_dut.u_originator.valid_r[i]
+            && (u_dut.u_originator.txs_r[i] == u_dut.laneq_org_r[1])) begin
+          dbg_org_second_owner_o = u_dut.u_originator.owner_r[i];
+        end
+      end
+    end
+  end
 
 endmodule : pp_top_wrap
 `default_nettype wire

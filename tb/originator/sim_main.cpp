@@ -5,9 +5,11 @@
 // KL_pp_timer_service arm/expiry port protocol (arm = {slot, owner,
 // absolute-ms deadline}, cancel clears, a fired slot self-disarms) and a
 // hold/release tally standing in for the KL_pp_tx_slots pool. Covered:
-// issue -> respond routes + frees; per-owner seq counters; timeout -> ONE
-// exact re-send (same held slot, same seq — the original seq still routes
-// after the retry) -> second timeout fails; responses after fail and
+// issue -> serializer acceptance -> timer arm -> response routes + frees;
+// per-owner seq counters; queue delay never consumes an attempt timeout;
+// timeout -> ONE exact re-send (same held slot, same seq — the original seq
+// still routes after the retry), whose timer waits for retry acceptance;
+// second timeout fails; responses after fail and
 // mismatched {seq}/{key} are silently ignored but counted (F09.4, 8-bit
 // wrap); interleaved inflights route independently; table-full refusal +
 // reuse of the freed id; response-beats-expiry races (other entry and same
@@ -62,8 +64,10 @@ struct Harness {
 
   void clr() {
     dut->iss_valid_i = 0;
+    dut->cancel_valid_i = 0;
     dut->rsp_valid_i = 0;
     dut->exp_valid_i = 0;
+    dut->send_accept_valid_i = 0;
   }
 
   void tick() {
@@ -98,9 +102,17 @@ struct Harness {
 
   void idle(int n = 1) { clr(); for (int i = 0; i < n; ++i) tick(); }
 
+  void accept(uint8_t slot) {
+    clr();
+    dut->send_accept_valid_i = 1;
+    dut->send_accept_slot_i = slot;
+    tick();
+    dut->send_accept_valid_i = 0;
+  }
+
   struct Res { bool gnt; uint8_t id; uint16_t seq; };
   Res issue(uint8_t owner, uint8_t txslot, uint16_t key,
-            uint8_t tmrslot, uint16_t to_ms) {
+            uint8_t tmrslot, uint16_t to_ms, bool auto_accept = true) {
     clr();
     dut->iss_valid_i = 1; dut->iss_owner_i = owner;
     dut->iss_tx_slot_i = txslot; dut->iss_key_i = key;
@@ -108,6 +120,10 @@ struct Harness {
     tick();
     Res r{gnt, id, seq};
     dut->iss_valid_i = 0;
+    if (r.gnt && auto_accept) {
+      accept(txslot);
+      idle(2);  // acceptance is parked, then serviced through the timer port
+    }
     return r;
   }
 
@@ -120,6 +136,14 @@ struct Harness {
     dut->rsp_valid_i = 1; dut->rsp_key_i = key; dut->rsp_seq_i = s;
     tick();
     dut->rsp_valid_i = 0;
+  }
+
+  void cancel(uint8_t owner) {
+    clr();
+    dut->cancel_valid_i = 1;
+    dut->cancel_owner_i = owner;
+    tick();
+    dut->cancel_valid_i = 0;
   }
 
   void fire(uint8_t slot, uint8_t owner) {   // one expiry pulse on the bus
@@ -160,8 +184,10 @@ int main(int argc, char** argv) {
   dut->rst_n = 0; h.clr();
   dut->iss_owner_i = 0; dut->iss_tx_slot_i = 0; dut->iss_key_i = 0;
   dut->iss_tmr_slot_i = 0; dut->iss_timeout_ms_i = 0;
+  dut->cancel_owner_i = 0;
   dut->rsp_seq_i = 0; dut->rsp_key_i = 0;
   dut->exp_slot_i = 0; dut->exp_owner_i = 0;
+  dut->send_accept_slot_i = 0;
   for (int i = 0; i < 4; ++i) h.tick();
   dut->rst_n = 1;
   h.idle(1);
@@ -217,13 +243,17 @@ int main(int argc, char** argv) {
   h.idle(1);
   h.now += 200;
   CHECK(h.expire_due() == 50, "C1 expiry fired on slot 50");
+  int arms0 = h.arms;
   h.idle(2);
   CHECK(h.resends.size() == r0 + 1 && h.resends.back() == 3,
         "C1 one re-send of the HELD slot 3");
   CHECK(h.sends.size() == s0 + 1, "C1 no fresh send on retry");
+  CHECK(h.arms == arms0, "C1 retry queue delay did not arm timer");
+  h.accept(3);
+  h.idle(2);
   CHECK(!h.armops.back().cancel && h.armops.back().slot == 50
         && h.armops.back().deadline == h.now + 200,
-        "C1 re-armed same slot, new deadline");
+        "C1 re-armed same slot after retry acceptance");
   CHECK((dut->inflight_busy_o & (1u << c.id)) != 0, "C1 still inflight");
   h.respond(0x0777, c.seq);   // the ORIGINAL seq — never re-assigned
   h.idle(2);
@@ -241,6 +271,12 @@ int main(int argc, char** argv) {
   CHECK(h.expire_due() == 51, "C2 first expiry");
   h.idle(2);
   CHECK(h.resends.size() == r0 + 1, "C2 retry sent");
+  arms0 = h.arms;
+  h.now += 1000;
+  CHECK(h.expire_due() == -1, "C2 queued retry has no running timer");
+  CHECK(h.arms == arms0, "C2 queued retry did not re-arm");
+  h.accept(2);
+  h.idle(2);
   h.now += 200;
   CHECK(h.expire_due() == 51, "C2 second expiry (re-armed slot fired)");
   h.idle(2);
@@ -371,7 +407,94 @@ int main(int argc, char** argv) {
   h.idle(2);
   CHECK(h.resends.size() == r0 && h.fls.size() == f0, "G4 foreign tag inert");
 
-  // ---- H: the 8-bit ignored counter wraps -----------------------------
+  // ---- H: owner cancellation frees the held slot and timer ------------
+  auto hc = h.issue(8, 3, 0x0C08, 74, 250);
+  h.idle(1);
+  rt0 = h.rts.size(); f0 = h.fls.size();
+  int rel0 = h.releases, can0 = h.cancels;
+  h.cancel(8);
+  h.idle(2);
+  CHECK((dut->inflight_busy_o & (1u << hc.id)) == 0,
+        "H cancellation freed owner-8 entry");
+  CHECK(h.releases == rel0 + 1 && h.held[3] == 0,
+        "H cancellation released held slot");
+  CHECK(h.cancels == can0 + 1 && h.armed_count() == 0,
+        "H cancellation disarmed timeout");
+  CHECK(h.rts.size() == rt0 && h.fls.size() == f0,
+        "H cancellation produced no route or failure");
+  h.cancel(8);
+  h.idle(1);
+  CHECK(h.releases == rel0 + 1 && h.cancels == can0 + 1,
+        "H absent-owner cancellation is inert");
+
+  // ---- I: initial queue delay cannot consume the attempt budget -------
+  arms0 = h.arms;
+  auto qi = h.issue(10, 0, 0xCA10, 75, 250, false);
+  CHECK(qi.gnt, "I delayed issue granted");
+  h.idle(1);
+  CHECK(h.sends.back() == 0 && h.arms == arms0,
+        "I initial send queued without timer arm");
+  h.now += 1000;
+  CHECK(h.expire_due() == -1, "I no expiry before serializer acceptance");
+  CHECK((dut->inflight_busy_o & (1u << qi.id)) != 0,
+        "I queued entry remains live past timeout duration");
+  h.accept(0);
+  h.idle(2);
+  CHECK(h.arms == arms0 + 1 && h.armops.back().slot == 75,
+        "I timer armed on serializer acceptance");
+  CHECK(h.armops.back().deadline == h.now + 250,
+        "I full timeout budget begins at acceptance");
+  h.cancel(10);
+  h.idle(2);
+  CHECK((dut->inflight_busy_o & (1u << qi.id)) == 0,
+        "I delayed entry cancelled cleanly");
+
+  // ---- J: acceptance is lossless beside another entry's response ------
+  auto ja = h.issue(11, 1, 0xCA11, 76, 250);
+  auto jb = h.issue(12, 2, 0xCA12, 77, 250, false);
+  h.idle(1);
+  arms0 = h.arms;
+  rt0 = h.rts.size();
+  h.clr();
+  dut->rsp_valid_i = 1; dut->rsp_key_i = 0xCA11; dut->rsp_seq_i = ja.seq;
+  dut->send_accept_valid_i = 1; dut->send_accept_slot_i = 2;
+  h.tick();
+  h.clr();
+  h.idle(2);
+  CHECK(h.rts.size() == rt0 + 1 && h.rts.back().id == ja.id,
+        "J response retained priority over another slot acceptance");
+  CHECK(h.arms == arms0 + 1 && h.armops.back().slot == 77,
+        "J simultaneous serializer acceptance was parked and armed");
+  CHECK((dut->inflight_busy_o & (1u << jb.id)) != 0,
+        "J accepted second entry remains live");
+  h.respond(0xCA12, jb.seq);
+  h.idle(2);
+  CHECK((dut->inflight_busy_o & (1u << jb.id)) == 0,
+        "J second entry responds and releases normally");
+
+  // ---- J2: cancellation is lossless beside another entry's response ---
+  auto jc = h.issue(13, 3, 0xCA13, 78, 250);
+  auto jd = h.issue(14, 4, 0xCA14, 79, 250);
+  h.idle(1);
+  rt0 = h.rts.size();
+  rel0 = h.releases;
+  can0 = h.cancels;
+  h.clr();
+  dut->rsp_valid_i = 1; dut->rsp_key_i = 0xCA13; dut->rsp_seq_i = jc.seq;
+  dut->cancel_valid_i = 1; dut->cancel_owner_i = 14;
+  h.tick();
+  h.clr();
+  h.idle(3);
+  CHECK(h.rts.size() == rt0 + 1 && h.rts.back().id == jc.id,
+        "J2 response retains priority over another entry cancellation");
+  CHECK((dut->inflight_busy_o & (1u << jd.id)) == 0,
+        "J2 simultaneous cancellation was parked and processed");
+  CHECK(h.releases == rel0 + 2,
+        "J2 response and parked cancellation release both slots");
+  CHECK(h.cancels == can0 + 2 && h.armed_count() == 0,
+        "J2 both timer cancellations complete without a leak");
+
+  // ---- K: the 8-bit ignored counter wraps -----------------------------
   cnt0 = dut->rsp_ign_cnt_o;
   for (int i = 0; i < 255 - (int)cnt0; ++i) h.respond(0xDEAD, 0x9999);
   CHECK(dut->rsp_ign_cnt_o == 255, "H counter reaches 255");
