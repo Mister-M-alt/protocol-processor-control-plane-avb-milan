@@ -485,6 +485,86 @@ int main(int argc, char** argv) {
   CHECK(!dut->nvm_busy_o && !dut->nvm_done_o && !dut->nvm_err_o,
         "idle again at the end");
 
+  // ---- T15: POWER CUT mid-commit (issue #70) -----------------------------
+  // A commit is ERASE(region) then WRITE(0, 8+plen). Cut the power inside the
+  // WRITE and the region is left erased-plus-partial: the record being written
+  // is gone AND so is whatever it replaced. That is a property of writing a
+  // slot in place, and it is the reason the flash map reserves A/B slots --
+  // so this phase pins what the port DOES guarantee rather than asserting a
+  // survival the single-slot layout cannot give.
+  //
+  // The guarantee that matters for #70 is the one on the next phase: a torn
+  // commit of ONE record must not disturb ANOTHER. Here we pin that the torn
+  // image never restores as a VALID record -- "never a half-record that
+  // restores as garbage" -- graded with the suite's own CRC, because the port
+  // carries the CRC opaquely and only the manager can reject on it.
+  {
+    std::vector<uint8_t> whole = frame(7, pattern(24, 0x40));
+    h.ops.clear();
+    rc = h.commit(7, whole);
+    CHECK(rc == 0 && h.store_match(7, whole), "T15 seed record committed");
+
+    std::vector<uint8_t> replacement = frame(7, pattern(24, 0x90));
+    h.ops.clear();
+    h.arm_err(1, 12);                 // op 0 = ERASE, op 1 = WRITE: cut at 12 B
+    rc = h.commit(7, replacement);
+    h.disarm_err();
+    CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
+          "T15 torn commit reports err, never done");
+    CHECK(h.busy_ok, "T15 busy low at the err pulse");
+
+    // the cut must be REAL: neither the old record nor the new one is intact
+    CHECK(!h.store_match(7, whole) && !h.store_match(7, replacement),
+          "T15 the torn image is neither the old record nor the new one");
+
+    // ...and it must not read back as a valid record. Either the port refuses
+    // it at the header, or the bytes it forwards fail the manager's CRC.
+    h.ops.clear();
+    rc = h.restore(7);
+    bool refused = (rc == 1 && h.rbytes.empty());
+    bool crc_rejects = false;
+    if (!refused && h.rbytes.size() >= 8) {
+      std::vector<uint8_t> cb(h.rbytes.begin(), h.rbytes.begin() + 6);
+      cb.insert(cb.end(), h.rbytes.begin() + 8, h.rbytes.end());
+      uint16_t stored = uint16_t(uint16_t(h.rbytes[6] << 8) | h.rbytes[7]);
+      crc_rejects = (crc16(cb) != stored);
+    }
+    CHECK(refused || crc_rejects,
+          "T15 a torn record never restores as a valid one");
+
+    // the port survives the cut: a clean re-commit is byte-exact again
+    h.ops.clear();
+    rc = h.commit(7, replacement);
+    CHECK(rc == 0 && h.store_match(7, replacement),
+          "T15 serviceable after the cut: clean re-commit is byte-exact");
+  }
+
+  // ---- T16: a torn commit must not disturb the REST of the saved set -----
+  // This is the #70 property proper. Records live in their own regions, so a
+  // power cut while writing one must leave every other record readable and
+  // byte-exact -- otherwise one interrupted save loses the whole set.
+  {
+    std::vector<uint8_t> keep = frame(4, pattern(16, 0x11));
+    rc = h.commit(4, keep);
+    CHECK(rc == 0 && h.store_match(4, keep), "T16 neighbour record committed");
+
+    int erases_before = h.erase_count[4];
+    h.ops.clear();
+    h.arm_err(1, 5);
+    rc = h.commit(1, frame(1, pattern(16, 0x22)));
+    h.disarm_err();
+    CHECK(rc == 1, "T16 the neighbouring commit was torn");
+
+    CHECK(h.erase_count[4] == erases_before,
+          "T16 the torn commit never erased the neighbour's region");
+    CHECK(h.store_match(4, keep),
+          "T16 the neighbour's stored bytes are untouched");
+    h.ops.clear();
+    rc = h.restore(4);
+    CHECK(rc == 0 && h.rbytes == keep,
+          "T16 the neighbour still restores byte-exactly after the cut");
+  }
+
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   delete dut;
   return fails ? 1 : 0;

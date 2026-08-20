@@ -4,7 +4,7 @@
 Proves the class-F NVM port (`hdl/packet_engine/KL_pp_nvm_port.sv`,
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8 +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8): `make` = build + run,
-exit 0 = PASS, 55 checks. `-GMAX_PAYLOAD_P=1024` pins the geometry the C++
+exit 0 = PASS, 66 checks. `-GMAX_PAYLOAD_P=1024` pins the geometry the C++
 constants mirror.
 
 The harness plays BOTH neighbors, independently of the RTL: a **manager BFM**
@@ -37,6 +37,23 @@ and must be caught by the NVM-manager suite (P4). The byte order of the 16-bit
 header fields on the stream is a design decision of the port (network order),
 not pinned by the doc.
 
+Power-cut coverage (issue #70, added 2026-08-20). A commit is ERASE(region)
+then WRITE(0, 8+plen), so a cut inside the WRITE leaves the region erased plus a
+partial record: the record being written is gone **and so is whatever it
+replaced**. That is a property of writing a slot in place, and it is why the
+flash map reserves A/B slots — the suite pins what the port DOES guarantee
+rather than a survival this layout cannot give:
+
+- **T15** a torn commit reports `err` and never `done`, with busy low at the
+  pulse; the torn image is neither the old record nor the new one (so the cut is
+  real, not a no-op); it never restores as a VALID record — either the port
+  refuses it at the header or the bytes it forwards fail the manager's CRC,
+  which the suite computes itself; and the port is serviceable afterwards.
+- **T16** the property #70 actually needs: a torn commit of one record leaves
+  **every other record** untouched — the neighbour's region is never erased, its
+  stored bytes are byte-identical, and it still restores byte-exactly after the
+  cut. One interrupted save must not lose the whole saved set.
+
 Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
 - **M1** commit skips the ERASE (`S_WEREQ` target rewritten to `S_WWREQ`):
   fails 11 of 55 (op-log shape, erase pulse/visibility, erase-error path).
@@ -44,3 +61,7 @@ Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
   refusals and the nothing-forwarded check).
 - **M3** payload pump off-by-one (`bcnt_r == plen_r` for `plen_r - 1`, both
   directions): fails 38 of 55 (every data-phase op times out or mismatches).
+- **M4** (2026-08-20) the write phase swallows the device error (`S_WDPUMP`'s
+  `if (dev_err_i)` forced false): fails 7 of 66 — every T15/T16 check. A torn
+  commit then looks clean, which is exactly the false success #70 exists to
+  remove.
