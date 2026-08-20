@@ -14,7 +14,9 @@ the harness, opaque to the DUT) and streams them with configurable stalls, and
 a **device model** implementing the region port (req/gnt with delay, op
 READ/WRITE/ERASE_REGION, region + offset + len, stalling byte phases,
 busy/done/err with completion delays, error injection at any command index or
-data byte, a seeded byte store, and a log of every accepted command).
+data byte, a seeded byte store, and a log of every accepted command (`ops`), and a log of every byte the port
+put on the device write bus (`sent`), which is what the rule below points a
+check at when the assertion must not read the array).
 
 Covered: the commit envelope ERASE_REGION → WRITE(0, 8+plen) with the device
 store byte-exact against the manager's framed record and the erase visible past
@@ -38,10 +40,16 @@ header fields on the stream is a design decision of the port (network order),
 not pinned by the doc.
 
 Power-cut coverage (issue #70, added 2026-08-20). A commit is ERASE(region)
-then WRITE(0, 8+plen), so a cut inside the WRITE leaves the region erased plus a
+then WRITE(0, 8+plen). The destructive window is the WHOLE commit, not just the
+WRITE: a cut at `S_WWREQ` errs with zero bytes on the bus and `erase_count`
+already advanced, so **`err` never means "the saved set is unchanged"**. A cut
+inside the WRITE leaves the region erased plus a
 partial record: the record being written is gone, and on the backends that
 erase in place **so is whatever it replaced**. That is a property of writing a
-slot in place, and it is why the flash map reserves A/B slots. It is NOT
+slot in place. The flash map's A/B slots are related but do NOT cover it: they
+are per record SET, whole-image with read-back-then-promote, and this port has
+no slot notion at all. What would cover a torn SINGLE record is the crc16, which
+nothing implements yet. It is NOT
 universal: measured with the RTL byte-identical, a backend that both answers
 ERASE lazily and buffers writes to the page leaves the old record intact. So
 the suite pins what the port DOES guarantee, and where a claim about the array
@@ -227,7 +235,11 @@ last four on a failure; a page-buffered NOR, which keeps none until the program
 cycle ends with `done`; and a lazy-erase backend, which answers ERASE with
 `done` without rewriting the array at all. None is invented. The port's own
 header names the last one ("backends without erase semantics answer ERASE with
-done at once") and `02 SS8` lists host filesystem via `mgmt` as a backing.
+done at once"). `02 SS8` does list host filesystem via `mgmt` among the
+permitted backings in general, but NOT for these records: `milan_soc.py:163`
+places `BINDING[i]` in a journal slot that is deliberately RAW, no filesystem,
+for exactly this reason. The lazy-erase freedom is real and is what the models
+below exercise; the host-filesystem framing was too wide and is withdrawn.
 
 The rule:
 
@@ -325,3 +337,22 @@ Every row passes under pristine, which is why all six survived until a model
 beyond the shipping one was tried. Trying one model is how a family of five
 looked like a family of one; trying one freedom at a time is how the last two
 stayed hidden after three models had been run.
+
+
+### What this suite does NOT establish
+
+Recorded so the phase list does not read as closing #70:
+
+- **#70's desk-proof sentence is "leave the PREVIOUS SAVED SET intact", and this
+  layer cannot meet it.** T16 pins "every OTHER record", which is honest and is
+  what the port can guarantee, but it is weaker precisely on the record being
+  rewritten. Covering that needs the crc16, or A/B promotion, neither of which
+  exists yet.
+- **A restore failure is one signal for three situations**: a refused region, a
+  torn header, and a tear after a complete header has already been forwarded.
+  T18 pins that each reports `err`; it does not distinguish them, and the
+  specification requires the manager to (issue #16).
+- **The device model is well-behaved by construction**, so the port's tolerance
+  of a badly-behaved one is untested. The five variants below all vary what the
+  array RETAINS; none varies the handshake. Issues #14 and #15 are both defects
+  this suite is structurally blind to for that reason.
