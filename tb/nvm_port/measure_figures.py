@@ -48,9 +48,15 @@ NOT provided, because a figure nobody looked at is how the table went stale in
 the first place.
 
 It is slow: one Verilator build per arm, mutation, probe and device model, five
-for the matrix, plus the baseline -- 36 builds, about four minutes. It runs in
-CI and should be run after any change to this suite; it is deliberately not part
-of `run`. `make -C tb/nvm_port figures`.
+for the matrix, plus the baseline. The exact count is DERIVED and printed at the
+start of a run rather than written here. That is not fussiness: this number was
+wrong in three consecutive rounds, and it is the one figure the inverted default
+structurally cannot reach, because it matches no FIGURE_RE shape and does not
+live in the README at all. A hand-maintained integer inside the tool that exists
+to end hand-maintained integers is the joke writing itself.
+
+It runs in CI and should be run after any change to this suite; it is
+deliberately not part of `run`. `make -C tb/nvm_port figures`.
 """
 
 import argparse
@@ -294,14 +300,21 @@ MATRIX_FORMS = [
     ("T17 restore vs the record",
      "    h.ops.clear();\n    rc = h.commit(3, rec);\n"
      "    CHECK(rc == 0 && h.store_match(3, rec),",
-     '    {\n'
-     '      std::vector<uint8_t> probe_arr(h.store[3], h.store[3] + late.size());\n'
-     '      h.ops.clear(); int pr = h.restore(3);\n'
-     '      CHECK(pr == 0 && h.rbytes == late, "MX T17 restore vs the record");\n'
-     '      h.ops.clear(); pr = h.restore(3);\n'
-     '      CHECK(pr == 0 && h.rbytes.size() == late.size() && h.rbytes == probe_arr,\n'
-     '            "MX T17 restore vs the array");\n'
-     '    }\n'),
+     # Byte-faithful to the removed code, and pinned as such below. The
+     # earlier version renamed `rc` to `pr`, MERGED the two original checks
+     # into one conjunction, and captured the array BEFORE the restore across
+     # two restores instead of after it across one. All thirty cells agreed
+     # either way, which is exactly why it needed a pin rather than a re-run:
+     # a reconstruction and a re-reconstruction share their errors.
+     '    h.ops.clear();\n'
+     '    rc = h.restore(3);\n'
+     '    std::vector<uint8_t> in_array(h.store[3], h.store[3] + late.size());\n'
+     '    CHECK(rc == 0 && h.rbytes == late,\n'
+     '          "MX T17 restore vs the record");\n'
+     '    CHECK(rc == 0 && h.rbytes.size() == late.size(),\n'
+     '          "MX T17 restore vs the record length");\n'
+     '    CHECK(h.rbytes == in_array,\n'
+     '          "MX T17 restore vs the array");\n'),
     ("T15 branch pin", "    bool hdr_intact =",
      '    CHECK(crc_rejects && h.rbytes.size() == whole.size(),\n'
      '          "MX T15 branch pin");\n'
@@ -314,6 +327,41 @@ MATRIX_FORMS = [
 MATRIX_ROWS = ["T16 byte comparison", "T17 restore vs the record",
                "T17 restore vs the array", "T15 branch pin",
                "T15 cut was real", "T15 #70 property, unconditioned"]
+
+
+#: The one assumption the thirty matrix cells rest on that had no check behind
+#: it: that each injected form IS the form that was removed. Re-running proves
+#: nothing here -- two independent reconstructions share whatever transcription
+#: error both made, and both agreed on all thirty cells while one of them had
+#: merged two checks and moved an array capture. Git is the third party.
+#:
+#: (revision, predicate that must appear VERBATIM in that revision's file).
+GIT_FORMS = [
+    ("62d96d6~1", "std::vector<uint8_t> in_array(h.store[3], h.store[3] + late.size());"),
+    ("62d96d6~1", "CHECK(rc == 0 && h.rbytes.size() == late.size(),"),
+    ("62d96d6~1", "CHECK(h.rbytes == in_array,"),
+    ("dc354be~1", "CHECK(rc == 0 && h.rbytes == late,"),
+    ("dc354be~1", "rc = h.restore(3);"),
+]
+
+
+def git_verbatim():
+    """Problems where an injected predicate is not what git records."""
+    bad = []
+    for rev, pred in GIT_FORMS:
+        blob = subprocess.run(["git", "show", f"{rev}:tb/nvm_port/sim_main.cpp"],
+                              cwd=SRC, capture_output=True, text=True)
+        if blob.returncode:
+            bad.append(f"git-form pin: cannot read {rev} -- the revision the "
+                       "matrix injection was reconstructed from is gone")
+        elif pred not in blob.stdout:
+            bad.append(f"git-form pin: {pred!r:.70} is NOT in {rev}. The "
+                       "injected form is not the removed form, so the matrix "
+                       "row measures something the suite never had.")
+        elif not any(pred in code for _r, _a, code in MATRIX_FORMS):
+            bad.append(f"git-form pin: {pred!r:.70} is in {rev} but no longer "
+                       "in any injection -- the pin has gone slack")
+    return bad
 
 
 def readme_matrix():
@@ -356,28 +404,58 @@ TALLY_RE = re.compile(r"(\d+) checks: (\d+) PASS, (\d+) FAIL")
 #: checks go red`. A wider vocabulary would have been the same mistake with a
 #: longer list, so the default is inverted: this matches the SHAPE of a figure,
 #: and anything it finds is a claim that must be measured or waived out loud.
-#: A spelled-out numerator is still a numerator: "fails twenty-two of 90" was
-#: the one phrasing of seven that survived the first inverted-default pass.
-#: Enumerating English number words is a recogniser too, but unlike the verbs it
-#: is a genuinely CLOSED class -- there is no eighth way to write twenty-two --
-#: so the list cannot grow behind the gate's back the way "fails/FAILS/reddens/
-#: failed/go red" did.
+#: A spelled-out numerator is still a numerator, and so is one with an extra
+#: word in the middle. The previous version argued that enumerating English
+#: number words CLOSED this, and that argument was wrong in an instructive way:
+#: the closed class is number words, but the OPEN class is ways of writing a
+#: ratio, and closing one axis leaves the other untouched. Ten of thirteen
+#: phrasings still evaded, and the two cheapest used digits only --
+#: `fails 22 of the 90 checks` and `fails 22 out of 90`. A reviewer's own
+#: earlier attack was literally `68 out of 83`, caught only because the
+#: DENOMINATOR happened to be wrong.
+#:
+#: The two optional words below close all four digit-only cases and match
+#: exactly the same nineteen figures in the current file -- no false positives.
+#: What they do NOT do is close the class, and this comment is deliberately not
+#: claiming they do. `| M6 | 22 |`, `reddens 22 checks`, `a fifth of the
+#: suite`, `68/90ths` and `24%` all still evade. A real closure would mean
+#: treating every bare integer as a claim; measured, 230 numbers in this file
+#: fall outside every claim and waiver span, so the waiver list would be larger
+#: than the thing it protects. The honest position is that this is a strong
+#: default that catches every phrasing anyone has actually written here, not a
+#: proof that none can be written.
 _ONES = ("one two three four five six seven eight nine ten eleven twelve "
          "thirteen fourteen fifteen sixteen seventeen eighteen nineteen").split()
 _TENS = "twenty thirty forty fifty sixty seventy eighty ninety".split()
 _WORDS = "|".join(sorted(
     _ONES + _TENS + [f"{a}-{b}" for a in _TENS for b in _ONES[:9]] + ["zero"],
     key=len, reverse=True))
+_RATIO = r"(?:out )?of (?:the )?\d+"
 FIGURE_RE = re.compile(
-    r"\d+ of \d+|\d+ PASS, \d+ FAIL|\b\d+/\d+\b"
-    rf"|\b(?:{_WORDS}) of \d+")
+    rf"\d+ {_RATIO}|\d+ PASS, \d+ FAIL|\b\d+/\d+\b|\b(?:{_WORDS}) {_RATIO}")
 
 #: (regex, reason). A figure this file does not measure must be listed here with
 #: why, and the reason is PRINTED on every clean run. The exclusion list is now
 #: derived from the file rather than asserted in a docstring: a claim that is
 #: neither measured nor waived is a hard error, so it cannot be added silently
 #: and it cannot be quietly dropped from the covered set either.
+#: A waiver that absorbs too much is the escape hatch swallowing the gate:
+#: `\d+ of \d+` would absorb ten of the nineteen figures here, and `\d+` would
+#: absorb all nineteen. A waiver that absorbs NOTHING is the other failure --
+#: the same "row that stops being generated" class already closed for
+#: measurements, still open one door over. Both are checked, and the absorbed
+#: count is printed beside the reason on every clean run.
+WAIVER_CAP = 4
+
 WAIVERS = [
+    # The README's own paragraph about what this gate does NOT close quotes two
+    # evading phrasings as examples. The gate reads them as figures, which is
+    # correct and is the mechanism working: they are waived by a pattern narrow
+    # enough to reach only that sentence, so a real `22 out of 90` anywhere else
+    # is still a hard error.
+    (r"`fails 22 of the 90 checks` and `fails\s+22 out of 90`",
+     "two illustrative phrasings quoted inside the paragraph explaining what "
+     "the inverted default does not close; not claims about this suite"),
     (r"\b90/90\b",
      "suite tally shorthand; both halves are the suite size, which the size "
      "check already pins against the measured total"),
@@ -498,7 +576,18 @@ def claim_coverage(flat):
                            "deleted, so nothing checks this measurement any more")
             spans.extend((h.start(), h.end()) for h in hits)
     for pat, _reason in WAIVERS:
-        spans.extend((h.start(), h.end()) for h in re.finditer(pat, flat))
+        hits = list(re.finditer(pat, flat))
+        absorbed = sum(1 for m in FIGURE_RE.finditer(flat)
+                       if any(h.start() < m.end() and m.start() < h.end() for h in hits))
+        if absorbed == 0:
+            bad.append(f"waiver /{pat}/ absorbs no figure at all -- it is dead, "
+                       "and a dead waiver is indistinguishable from a live one "
+                       "until the figure it was written for comes back")
+        elif absorbed > WAIVER_CAP:
+            bad.append(f"waiver /{pat}/ absorbs {absorbed} figures, cap is "
+                       f"{WAIVER_CAP}. A broad waiver silences real claims: "
+                       "write one waiver per figure, with its own reason.")
+        spans.extend((h.start(), h.end()) for h in hits)
     for m in FIGURE_RE.finditer(flat):
         # OVERLAP, not containment: a claim regex captures the numerator and
         # ends at "... of", while the figure shape runs on through the
@@ -549,6 +638,10 @@ def main():
                          "exits non-zero on a disagreement with or without it")
     ap.parse_args()
 
+    n_builds = 1 + len(ARMS) + len(MUTATIONS) + len(MODELS) + len(MATRIX_MODELS)
+    print(f"{n_builds} Verilator builds: 1 baseline + {len(ARMS)} arms + "
+          f"{len(MUTATIONS)} mutations + {len(MODELS)} models + "
+          f"{len(MATRIX_MODELS)} matrix")
     total, passed, failed = run_suite()
     print(f"baseline: {total} checks, {passed} PASS, {failed} FAIL")
     if failed:
@@ -558,6 +651,7 @@ def main():
     flat = flat_readme()
     bad = readme_figures(total, flat)
     bad.extend(claim_coverage(flat))
+    bad.extend(git_verbatim())
 
     rtl_arms = rtl_arm_count()
     if rtl_arms != len(ARMS):
@@ -630,8 +724,12 @@ def main():
     if WAIVERS:
         print("\nNOT measured (waived, with the reason, so the exclusion set is\n"
               "derived from the file rather than asserted in a comment):")
+        flat_r = flat_readme()
         for pat, reason in WAIVERS:
-            print(f"  - /{pat}/: {reason}")
+            hits = list(re.finditer(pat, flat_r))
+            n = sum(1 for m in FIGURE_RE.finditer(flat_r)
+                    if any(h.start() < m.end() and m.start() < h.end() for h in hits))
+            print(f"  - /{pat}/ absorbs {n} (cap {WAIVER_CAP}): {reason}")
     return 0
 
 

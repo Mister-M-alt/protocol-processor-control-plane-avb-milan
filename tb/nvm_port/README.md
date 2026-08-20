@@ -186,10 +186,26 @@ result rows, and all thirty cells of the pre-fix matrix. CI runs it.
 
 The covered set is DERIVED, not asserted. Every `N of M` and `N PASS, N FAIL`
 here is a claim by default, satisfied only by a measurement or by an explicit
-waiver whose reason the script prints on a clean run. A new figure is a hard
-error until it is measured, so it cannot be added silently -- and it cannot be
-deleted to silence the gate either, because deleting it makes the measurement
-that owns it fail instead.
+waiver whose reason and absorbed count the script prints on a clean run. A new
+figure is a hard error until it is measured, so it cannot be added silently --
+and it cannot be deleted to silence the gate either, because deleting it makes
+the measurement that owns it fail instead.
+
+**What that does NOT establish, stated plainly because an earlier version of
+this paragraph claimed otherwise.** The default is inverted over the SHAPE of a
+figure, and shapes are recognised, not resolved. An earlier version argued the
+vocabulary could not grow behind the gate because English number words are a
+closed class. The argument is true and beside the point: the closed class is
+number words, the open class is ways of writing a ratio, and closing one axis
+leaves the other. Ten of thirteen phrasings still evaded, two of them using
+digits only -- `fails 22 of the 90 checks` and `fails 22 out of 90`. Both are
+caught now, and `| M6 | 22 |`, `reddens 22 checks`, `a fifth of the suite`,
+`68/90ths` and `24%` are not. A real closure would mean treating every bare
+integer as a claim: measured, 230 numbers in this file fall outside every claim
+and waiver, so the waiver list would be larger than what it protects. This is a
+strong default that catches every phrasing anyone has written here. It is not a
+proof that none can be written, and the difference is the whole subject of this
+section.
 
 It took four rounds to get the gate itself honest, and the failures belong in
 the record because they are the same failure four times. Version one checked
@@ -209,8 +225,8 @@ not be re-derived at all: its recipe had never been committed. The number was
 sound; it was unverifiable rather than wrong, so the recipe was committed rather
 than the figure retracted.
 
-Run `make -C tb/nvm_port figures` after any change to this suite. It takes 36
-Verilator builds, about four minutes, which is the price of figures that four
+Run `make -C tb/nvm_port figures` after any change to this suite. About four
+minutes; it prints its own derived build count. That is the price of figures that four
 review rounds found stale. Two of those rounds found the arm TABLE stale; the
 other two found stale numerators elsewhere in the file, which is why the gate
 covers every figure rather than the table alone.
