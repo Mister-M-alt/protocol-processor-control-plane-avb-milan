@@ -192,21 +192,35 @@ dropped from T17 while the three above were kept.
 
 ### Where a check may read from
 
-Three checks in this file were written against what the flash ARRAY held and
-had to be rewritten, because what the array holds after a device error is the
-device MODEL's choice, not the port's behaviour. Three models were run against
-the suite with the RTL byte-identical: this one, which keeps every accepted
-byte; a half-page model, which drops the last four on a failure; and a
-page-buffered NOR, which keeps none until the program cycle ends with `done`.
-That last one is literally the device the T17 prose above describes.
+FIVE checks in this file were written against what the flash ARRAY held and
+had to be rewritten, because what the array holds is the device MODEL's choice,
+not the port's behaviour. Four models were run with the RTL byte-identical:
+this one, which keeps every accepted byte; a half-page model, which drops the
+last four on a failure; a page-buffered NOR, which keeps none until the program
+cycle ends with `done`; and a lazy-erase backend, which answers ERASE with
+`done` without rewriting the array at all. None is invented. The port's own
+header names the last one ("backends without erase semantics answer ERASE with
+done at once") and `02 SS8` lists host filesystem via `mgmt` as a backing.
 
-The rule that ends the regress, and it is the reviewer's:
+The rule:
 
-> **After a device `done`, assert on the array. After a device `err`, assert on
-> what the port SENT or REQUESTED, never on what the array retained.**
+> **After a device `done`, assert on the array only for what the port itself
+> put there. After a device `err`, assert on what the port SENT or REQUESTED,
+> never on what the array retained.**
 
-Negative claims survive either way, which is why `T15 the torn image is neither
-the old record nor the new one` holds under all three models unchanged.
+The `done` clause carries that qualifier because a device SIDE EFFECT is not
+the port's behaviour either: `T1 erase visible past the record` asserts after a
+`done` and still reddens under lazy erase, since whether an ERASE rewrites the
+array is the backend's business. T1 is pre-existing and left as it is, named
+here as the one known remaining member rather than quietly fixed.
+
+**A negative claim about the array is NOT automatically safe.** An earlier
+version of this section said it was, and that was false: under lazy erase the
+old record survives a torn commit intact, so `the torn image is neither the old
+record nor the new one` reddens for a device doing exactly what #70 asks. A
+check that goes red when the device gets the requirement RIGHT is the wrong
+check. Where the property genuinely is about the array, CONDITION it on what
+the array holds rather than asserting it, the way T15's header check does.
 
 Applied here:
 
@@ -221,6 +235,21 @@ Applied here:
   header. It now pins that the branch the port took AGREES with what the array
   actually holds, which is the port's own behaviour under any model.
 
-All three models give **83 checks, 83 PASS** with `hdl/` untouched. A device
-model variant is the cheapest way to find a check that tests the harness rather
-than the DUT, and it belongs in the standing mutation set for that reason.
+- **T15** had two members, found only when a fourth model was tried. "The cut
+  was real" is now stated on the bus (ERASE then a WRITE that stopped 12 bytes
+  in, checked against `sent`), and the #70 property is CONDITIONED: unless the
+  old record survived, a torn image never restores as valid.
+
+| model | result |
+|---|---|
+| pristine | **83 PASS, 0 FAIL** |
+| half-page | **83 PASS, 0 FAIL** |
+| page-buffered NOR | **83 PASS, 0 FAIL** |
+| lazy erase | 82 PASS, 1 FAIL, only the pre-existing `T1` |
+| lazy erase + page-buffered | 82 PASS, 1 FAIL, only `T1` |
+
+A device model variant is the cheapest way to find a check that tests the
+harness rather than the DUT, and it belongs in the standing mutation set. Each
+new model has found a member the previous ones could not: page-buffered found
+T16 and T17, lazy erase found both T15 members. Trying only one is how a family
+of five looked like a family of one.

@@ -529,9 +529,17 @@ int main(int argc, char** argv) {
     // caught by the rc check above; this pair only pins the pulse's timing.
     CHECK(h.busy_seen && h.busy_ok, "T15 busy raised then low at the err pulse");
 
-    // the cut must be REAL: neither the old record nor the new one is intact
-    CHECK(!h.store_match(7, whole) && !h.store_match(7, replacement),
-          "T15 the torn image is neither the old record nor the new one");
+    // The cut must be REAL, stated on the bus. Reading the array here was a
+    // member of the same family as T16 and T17: under a backend that answers
+    // ERASE with `done` without rewriting the array -- which the port's own
+    // header names, and which 02 SS8 lists as the host-filesystem backing --
+    // the old record survives the tear intact, and an array-negative check
+    // reddens for a device doing the right thing.
+    CHECK(h.ops.size() == 2
+              && op_is(h.ops[1], OP_WRITE, 7, 0, (int)replacement.size())
+              && h.sent.size() == 12
+              && std::equal(h.sent.begin(), h.sent.end(), replacement.begin()),
+          "T15 the cut was real: ERASE then a WRITE stopped 12 bytes in");
 
     // ...and it must not read back as a valid record. Either the port refuses
     // it at the header, or the bytes it forwards fail the manager's CRC.
@@ -545,8 +553,11 @@ int main(int argc, char** argv) {
       uint16_t stored = uint16_t(uint16_t(h.rbytes[6] << 8) | h.rbytes[7]);
       crc_rejects = (crc16(cb) != stored);
     }
-    CHECK(refused || crc_rejects,
-          "T15 a torn record never restores as a valid one");
+    // Conditioned, not asserted: if the backend left the OLD record intact the
+    // torn commit lost nothing, which is the outcome #70 wants, not a defect.
+    bool old_intact = std::equal(whole.begin(), whole.end(), h.store[7]);
+    CHECK(old_intact || refused || crc_rejects,
+          "T15 unless the old record survived, a torn image never restores as valid");
     // ...and pin WHICH branch fired, so a regression toward refusing every
     // restore cannot satisfy the disjunction above in silence. Which branch
     // legitimately DIFFERS by device: this model keeps the bytes it accepted
