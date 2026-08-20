@@ -389,16 +389,39 @@ def git_verbatim():
 
 
 def _check_condition_lines(code):
-    """Every line of an injected CHECK that carries CONDITION, not message."""
-    out, inside = [], False
-    for line in code.splitlines():
-        if "CHECK(" in line:
-            inside = True
-        if inside and '"MX ' not in line:
-            out.append(line.strip())
-        if inside and '"MX ' in line:
-            inside = False
-    return [l for l in out if l]
+    """Every line of an injected CHECK that carries CONDITION, not message.
+
+    By paren balance, after stripping the message LITERAL. The first version
+    used `'"MX ' in line` as a terminator, which meant a condition sharing a
+    line with its message was never collected at all -- a one-line
+    `CHECK(cond, "MX row");` yielded nothing, not a partial result. Folding
+    T16's second condition onto its message line, altering it, and dropping the
+    now-unmatched pin passed all three rules with all thirty cells identical.
+    The rule this function implements was simply false whenever a condition
+    shared a line with a message.
+    """
+    lines, out = code.splitlines(), []
+    i = 0
+    while i < len(lines):
+        if "CHECK(" not in lines[i] or lines[i].strip().startswith("//"):
+            i += 1
+            continue
+        depth, body = 0, []
+        while i < len(lines):
+            raw = lines[i]
+            # drop the message literal but keep its comma, so a condition
+            # folded onto the same line is still seen
+            stripped = re.sub(r'"(?:[^"\\]|\\.)*"', "", raw)
+            body.append(stripped)
+            depth += stripped.count("(") - stripped.count(")")
+            i += 1
+            if depth <= 0:
+                break
+        for b in body:
+            b = b.strip().rstrip(";").rstrip(",").strip()
+            if b and b not in ("CHECK(", ")"):
+                out.append(b)
+    return out
 
 
 def pin_completeness():
@@ -456,8 +479,12 @@ def line_multiplicity():
         # The `"MX ..."` labels are renamed on purpose, so `measure_matrix`
         # can find each form by name in the run's FAIL lines. They are the one
         # thing here that legitimately does not exist in git.
+        # Was `len(strip()) > 12`, a threshold introduced while removing
+        # thresholds. Inert today, but its boundary sat on a load-bearing line:
+        # `refused = 1;` is exactly twelve characters and valid in T15's scope.
+        # Brace-only lines are what actually needed excluding.
         for line in {l.strip() for l in code.splitlines()
-                     if len(l.strip()) > 12 and '"MX ' not in l}:
+                     if l.strip() not in ("", "{", "}") and '"MX ' not in l}:
             got = sum(1 for l in code.splitlines() if l.strip() == line)
             allowed = max((sum(1 for l in b.splitlines() if l.strip() == line)
                            for b in blobs.values()), default=0)
