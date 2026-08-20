@@ -50,6 +50,15 @@ jobs:
       - name: Traceability matrix no-drift + untested budget 0
         run: python3 scripts/gen_matrix.py --check
 
+      # Out of run_suites.sh on purpose: 26 Verilator builds is too slow for the
+      # per-suite loop. But "run it by hand after a change" is the discipline
+      # that let the nvm_port figures go stale in four consecutive reviews, so
+      # it gates here, where Verilator is already built.
+      - name: nvm_port README figures agree with the tree
+        run: |
+          export PATH="$HOME/verilator/bin:$PATH"
+          make -C tb/nvm_port figures
+
   portability:
     runs-on: ubuntu-latest
     steps:

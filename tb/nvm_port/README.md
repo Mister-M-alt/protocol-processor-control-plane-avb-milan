@@ -67,8 +67,9 @@ condition on it and 14 do not**. Counting this needs care and got it wrong once:
 `T16 no other region's bytes moved` reaches the array through `other_moved`, a
 local hoisted 35 lines above its CHECK, so every text sweep for `store` missed
 it -- and that site is the #70 isolation claim itself, the most important member
-of the set. See "Where a check may read from" for the rule
-and its one known exception:
+of the set. See "Where a check may read from" for the rule and its one known exception,
+`T1 erase visible past the record`, which asserts on the array after a device
+`done` and reddens under a lazy-erase backend:
 
 - **T15** a torn commit reports `err` and never `done`, with busy low at the
   pulse; the cut is proven real on the BUS (ERASE then a WRITE that stopped 12
@@ -179,14 +180,30 @@ numbers for M1 to M3 long after the suite grew.**
 `KL_pp_nvm_port.sv` has twelve `if (dev_err_i)` arms. Each was forced to
 `1'b0` in turn and the suite re-run, so this table is measured, not argued —
 and it is now **checked by a script rather than by hand**: `measure_figures.py`
-re-runs every arm and every NAMED mutation, cross-checks the arm count against
-the RTL, and refuses to agree with a README that has drifted. Its first version
-checked only denominators and result-row sums, so seven of eight falsifications
-walked past it -- including reverting a numerator to the exact stale value the
-gate had been written after finding. A gate that cannot see the number it exists
-to protect is worse than none, because it retires the suspicion.
-Run `make -C tb/nvm_port figures` after any change to this suite. It takes about fifteen Verilator builds, which is the price of a table
-that four review rounds found stale.
+re-runs every arm, cross-checks the arm COUNT against the RTL, and re-runs every
+`fails N of M` claim in this file -- M1 and its sibling, M2 to M5, and all three
+probes -- plus every row of the device-model table. It refuses to agree with a
+README that has drifted, and CI runs it.
+
+It took two rounds to get the gate itself honest, and the failures are worth
+recording because they are the same failure twice. Its first version checked
+only denominators and result-row sums, so seven of eight falsifications walked
+past it -- including reverting a numerator to the exact stale value the gate had
+been written after finding. Its second version added a table of named mutations
+and still missed M3, the very numerator that had gone stale, because nothing
+required the table to cover the file's own claims. Both versions closed a
+narrower class than they claimed. The coupling that answers this is that every
+`fails N of M` sentence here must be claimed by exactly one measurement: a new
+figure is a hard error until it is measured, so it cannot be added silently.
+
+**One figure is NOT measured** and the script says so on a clean run: the
+six-by-five pre-fix matrix. Those thirty cells record check FORMS that no longer
+exist in the tree, so there is nothing to re-run them against. They are argued,
+not measured, and they are the one part of this file that can still rot quietly.
+
+Run `make -C tb/nvm_port figures` after any change to this suite. It takes 26
+Verilator builds, about three minutes, which is the price of a table that four
+review rounds found stale.
 It has been stale twice. Splitting one T17 check moved every row reaching T17;
 later, replacing an array-negative check with a bus check moved every row whose
 mutant WEDGES BEFORE T15, because the old check survived those mutants and the
@@ -239,7 +256,7 @@ that removed the thing being tested:
 
 The general shape: a phase that names a window is not the same as a phase that
 proves it entered one, and the evidence for the difference lived only in the
-coverage table below, which this file says has gone stale twice.
+"Device-error arm coverage" table, which this file says has gone stale twice.
 
 ### On checks that cannot fail alone
 
@@ -411,15 +428,16 @@ Recorded so the phase list does not read as closing #70:
   The parent answers this port's device face with a blank-flash responder that
   ties `nvm_dev_err_i` to `1'b0` (`milan-fpga hdl/milan/KL_pp_shadow.sv:1010`).
   That is the largest limitation here and it was omitted from this list: the
-  whole error-handling half of the port, and the coverage table below it, is
-  unreachable until a real backend lands. Note the responder is not inert - it
+  whole error-handling half of the port, and every row of the "Device-error arm
+  coverage" table, is unreachable until a real backend lands. Note the responder is not inert - it
   drives `nvm_dev_done_i` and answers every command - so what makes issues #14
   and #15 unfirable is that it is WELL BEHAVED, not that error is tied off. The
   port's own `nvm_err_o` is live and fires on every restore on the shipping
   build.
 - **The device model is well-behaved by construction**, so the port's tolerance
-  of a badly-behaved one is untested. The five variants below all vary what the
-  array RETAINS; none varies the handshake. Issues #14 and #15 are both defects
+  of a badly-behaved one is untested. The five variants in "Where a check may read
+  from" -- pristine, half-page, page-buffered NOR, lazy erase, and lazy erase
+  plus page buffering -- all vary what the array RETAINS; none varies the handshake. Issues #14 and #15 are both defects
   this suite is structurally blind to for that reason.
 - **No phase asserts `rst_n` after init.** "Power cut" means "the device raised
   `err`" throughout this file. A real reset mid-commit is the path a power cut
