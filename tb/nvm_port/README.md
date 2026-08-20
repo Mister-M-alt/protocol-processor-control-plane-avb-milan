@@ -179,9 +179,13 @@ numbers for M1 to M3 long after the suite grew.**
 `KL_pp_nvm_port.sv` has twelve `if (dev_err_i)` arms. Each was forced to
 `1'b0` in turn and the suite re-run, so this table is measured, not argued —
 and it is now **checked by a script rather than by hand**: `measure_figures.py`
-re-runs every mutation and refuses to agree with a README that has drifted.
-Run `python3 tb/nvm_port/measure_figures.py --check` after any change to this
-suite. It takes about fifteen Verilator builds, which is the price of a table
+re-runs every arm and every NAMED mutation, cross-checks the arm count against
+the RTL, and refuses to agree with a README that has drifted. Its first version
+checked only denominators and result-row sums, so seven of eight falsifications
+walked past it -- including reverting a numerator to the exact stale value the
+gate had been written after finding. A gate that cannot see the number it exists
+to protect is worse than none, because it retires the suspicion.
+Run `make -C tb/nvm_port figures` after any change to this suite. It takes about fifteen Verilator builds, which is the price of a table
 that four review rounds found stale.
 It has been stale twice. Splitting one T17 check moved every row reaching T17;
 later, replacing an array-negative check with a bus check moved every row whose

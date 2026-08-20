@@ -22,3 +22,13 @@ clean:
 	rm -rf obj_dir
 
 .PHONY: run clean
+
+# Re-measure every figure the README quotes and refuse to agree with a drifted
+# one. NOT part of `run`: it rebuilds the suite once per arm plus once per named
+# mutation, about seventeen builds. Run it after ANY change to this suite --
+# four review rounds found the figures stale, and each time the rows that had
+# been corrected were the ones somebody thought to check.
+figures:
+	@python3 $(CURDIR)/measure_figures.py --check
+
+.PHONY: figures

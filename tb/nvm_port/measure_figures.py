@@ -33,10 +33,29 @@ HERE = Path(__file__).resolve().parent
 RTL = HERE.parent.parent / "hdl" / "packet_engine" / "KL_pp_nvm_port.sv"
 README = HERE / "README.md"
 
-#: (line in the RTL, state name) for every `if (dev_err_i)` arm.
+#: (line in the RTL, state name) for every `if (dev_err_i)` arm. This list is
+#: cross-checked against the RTL below: a THIRTEENTH arm added anywhere used to
+#: leave the gate printing "all figures agree" while the README's "twelve arms"
+#: silently became false.
 ARMS = [(185, "S_WEREQ"), (194, "S_WEWAIT"), (204, "S_WWREQ"), (214, "S_WHPUMP"),
         (227, "S_WDPUMP"), (237, "S_WWAIT"), (248, "S_RHREQ"), (258, "S_RHCOLL"),
         (276, "S_RHWAIT"), (303, "S_RPREQ"), (313, "S_RPPUMP"), (323, "S_RPWAIT")]
+
+#: Named mutations the README quotes a NUMERATOR for, and how to reproduce each.
+#: A `sed`-style (file, old, new) edit; RTL paths are relative to the repo root.
+#: WHY: the first version of this gate checked only denominators ("of 90") and
+#: result-row sums. Seven of eight falsifications walked past it, including
+#: reverting M3 to the exact stale value the gate had been written after
+#: finding. A gate that cannot see the number it exists to protect is worse
+#: than none, because it retires the suspicion.
+MUTATIONS = [
+    ("M1", RTL, "                state_r <= S_WEREQ;", "                state_r <= S_WWREQ;"),
+    ("M2", RTL, "(hdr_r[0] == MAGIC_HI_C) && (hdr_r[1] == MAGIC_LO_C)", "1'b1"),
+    ("M4", RTL, "        S_WDPUMP: begin\n          if (dev_err_i) begin",
+                "        S_WDPUMP: begin\n          if (1'b0) begin"),
+    ("M5", RTL, "        S_WWAIT: begin\n          if (dev_err_i) begin",
+                "        S_WWAIT: begin\n          if (1'b0) begin"),
+]
 
 TALLY_RE = re.compile(r"(\d+) checks: (\d+) PASS, (\d+) FAIL")
 
@@ -72,6 +91,36 @@ def with_arm_disabled(lineno):
         return run_suite()[2]
     finally:
         RTL.write_text(original)
+
+
+def rtl_arm_count():
+    """How many `if (dev_err_i)` arms the RTL actually has, counted not assumed."""
+    return RTL.read_text().count("if (dev_err_i) begin")
+
+
+def with_edit(path, old, new):
+    """Apply one textual edit, run, restore. Returns the fail count."""
+    original = path.read_text()
+    try:
+        if old not in original:
+            raise RuntimeError(
+                f"{path.name}: mutation anchor not found -- this table is stale, "
+                "which is the class this gate exists to catch")
+        path.write_text(original.replace(old, new, 1))
+        return run_suite()[2]
+    finally:
+        path.write_text(original)
+
+
+def readme_numerators():
+    """{name: claimed fail count} for every `**Mx** ... fails N of M` claim."""
+    out = {}
+    flat = " ".join(README.read_text().split())
+    for name in (m[0] for m in MUTATIONS):
+        hit = re.search(rf"\*\*{name}\*\*.*?[Ff]ails \*?\*?(\d+) of", flat)
+        if hit:
+            out[name] = int(hit.group(1))
+    return out
 
 
 def readme_arm_rows():
@@ -127,6 +176,12 @@ def main():
 
     bad.extend(readme_figures(total))
 
+    rtl_arms = rtl_arm_count()
+    if rtl_arms != len(ARMS):
+        bad.append(f"the RTL has {rtl_arms} `if (dev_err_i)` arms; this gate's "
+                   f"ARMS table lists {len(ARMS)}. A new arm is invisible to "
+                   f"every row below until it is added here.")
+
     claimed = readme_arm_rows()
     if len(claimed) != len(ARMS):
         bad.append(f"README table has {len(claimed)} rows; the RTL has {len(ARMS)} arms")
@@ -140,6 +195,18 @@ def main():
         if says != got:
             bad.append(f"{state}: README says {says}, measured {got}")
 
+    says_n = readme_numerators()
+    print("\nnamed mutations (measured vs README):")
+    for name, path, old, new in MUTATIONS:
+        got = with_edit(path, old, new)
+        claim = says_n.get(name)
+        mark = "ok " if claim == got else "STALE"
+        print(f"  [{mark}] {name:<4} measured={got:<4} readme={claim}")
+        if claim is None:
+            bad.append(f"{name}: no `fails N of M` claim found in the README")
+        elif claim != got:
+            bad.append(f"{name}: README says {claim}, measured {got}")
+
     if bad:
         print("\nfigures disagree with the tree:")
         for b in bad:
@@ -147,7 +214,9 @@ def main():
         print("\nRe-measure and update README.md. Do NOT edit only the rows you\n"
               "changed: four review rounds found staleness in the rows nobody\n"
               "thought to check.")
-        return 1 if args.check else 0
+        # Always non-zero. The first version returned 0 without --check,
+        # so a caller that forgot the flag got a clean exit over a stale file.
+        return 1
 
     print("\nall figures agree with the tree")
     return 0
