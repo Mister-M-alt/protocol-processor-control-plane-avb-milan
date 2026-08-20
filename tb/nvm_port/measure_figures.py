@@ -388,6 +388,87 @@ def git_verbatim():
     return bad
 
 
+def _check_condition_lines(code):
+    """Every line of an injected CHECK that carries CONDITION, not message."""
+    out, inside = [], False
+    for line in code.splitlines():
+        if "CHECK(" in line:
+            inside = True
+        if inside and '"MX ' not in line:
+            out.append(line.strip())
+        if inside and '"MX ' in line:
+            inside = False
+    return [l for l in out if l]
+
+
+def pin_completeness():
+    """Every condition line of every injected CHECK must be pinned to git.
+
+    NOT "at least one pin per row", which was the rule this replaces and was
+    the weak default wearing new clothes. T16's form spans two lines and so
+    carried two pins; deleting the second left the row compliant, `git_verbatim`
+    clean, and re-opened the exact escape the pin had been added to close --
+    swapping `h.store[1][5] == 0xFF` for a DIFFERENT predicate, invisible to the
+    cell comparison because all thirty cells stay identical.
+
+    A minimum COUNT would have been the same mistake again: the three forms
+    carry one, three and three checks, so any threshold is arbitrary. The rule
+    is read off the artifact instead -- what must be pinned is determined by
+    what is injected, so it cannot drift out of proportion with it.
+    """
+    pinned = [pred for _row, _rev, pred in GIT_FORMS]
+    bad = []
+    for row, _anchor, code in MATRIX_FORMS:
+        for line in _check_condition_lines(code):
+            if not any(line in pred or pred.strip() in line for pred in pinned):
+                bad.append(f"pin completeness [{row}]: the condition line "
+                           f"{line!r:.60} is injected but not pinned to any "
+                           "revision, so it can be swapped for a different "
+                           "predicate and nothing will notice")
+    return bad
+
+
+def line_multiplicity():
+    """No injected line may appear more times than in its source revision.
+
+    This closes the structural hole the two other mechanisms share. The cell
+    comparison catches structure that moves a result; the git pin catches
+    predicate text; a structural change that does NEITHER -- prepending a
+    second restore, say -- leaves predicates verbatim and cells byte-identical
+    and passes both. Counting occurrences catches it, because the duplicate is
+    the structure.
+
+    Deliberately NOT the shape first proposed for this, which was diffing the
+    injected span against the git hunk: T17's form merges removals from two
+    revisions and T15's from three, so that rule false-positives on the landed
+    forms unless given a splice budget of three or more -- an arbitrary number,
+    which is how the waiver cap got its 4.
+    """
+    revs = sorted({rev for _r, rev, _p in GIT_FORMS})
+    blobs = {}
+    for rev in revs:
+        r = subprocess.run(["git", "show", f"{rev}:tb/nvm_port/sim_main.cpp"],
+                           cwd=SRC, capture_output=True, text=True)
+        if not r.returncode:
+            blobs[rev] = r.stdout
+    bad = []
+    for row, _anchor, code in MATRIX_FORMS:
+        # The `"MX ..."` labels are renamed on purpose, so `measure_matrix`
+        # can find each form by name in the run's FAIL lines. They are the one
+        # thing here that legitimately does not exist in git.
+        for line in {l.strip() for l in code.splitlines()
+                     if len(l.strip()) > 12 and '"MX ' not in l}:
+            got = sum(1 for l in code.splitlines() if l.strip() == line)
+            allowed = max((sum(1 for l in b.splitlines() if l.strip() == line)
+                           for b in blobs.values()), default=0)
+            if got > allowed:
+                bad.append(f"line multiplicity [{row}]: {line!r:.55} appears "
+                           f"{got}x in the injection but at most {allowed}x in "
+                           "any source revision -- the injected form has extra "
+                           "structure the removed form did not have")
+    return bad
+
+
 def readme_matrix():
     """{row: [pass/FAIL per model]} exactly as the README's matrix claims."""
     out, cols = {}, None
@@ -691,6 +772,8 @@ def main():
     bad = readme_figures(total, flat)
     bad.extend(claim_coverage(flat))
     bad.extend(git_verbatim())
+    bad.extend(pin_completeness())
+    bad.extend(line_multiplicity())
 
     rtl_arms = rtl_arm_count()
     if rtl_arms != len(ARMS):

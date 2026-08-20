@@ -427,13 +427,28 @@ builds. Every row carries at least one pin, which the gate enforces: the first
 version of that pin had five predicates and all five were T17, the one row where
 a defect had already been found, leaving the other four rows unpinned.
 
-**What neither mechanism sees**, recorded rather than left implicit: a
-STRUCTURAL change that moves no cell. Prepend an extra restore, or reorder the
-phases around an injection, and the predicates stay verbatim while the results
-stay byte-identical. The cell comparison catches structure that moves a result;
-the git pin catches predicate text. A structural change that does neither passes
-both. The merged T17 form was caught only because it also altered predicate
-text, which is luck rather than coverage.
+Two further rules close what those two share. **Every condition line of every
+injected CHECK must be pinned**, not merely one line per row: T16's form spans
+two lines, and deleting the second left the row nominally compliant while
+re-opening the exact escape the pin existed to close. The rule is read off the
+artifact rather than set as a threshold, because the forms carry one, three and
+three checks and any count would be arbitrary. And **no injected line may appear
+more times than in its source revision**, which catches a structural change that
+moves no cell: prepend a second restore and the predicates stay verbatim while
+every cell stays byte-identical, so neither of the other two mechanisms sees it,
+but the duplicate IS the structure. An earlier draft of this paragraph called
+that case unclosable. It is not, and the version that was tried first --
+diffing the injected span against the git hunk -- fails for a different reason
+worth recording: T17's form merges removals from two revisions and T15's from
+three, so it false-positives unless given a splice budget of three or more.
+
+**What still gets through**, narrowed to two nameable cases rather than left as
+a general excuse: an invented line that happens to exist elsewhere in the
+pre-fix file, and an ANCHOR change that moves no cell. The anchor half is the
+hard one; moving an anchor after the good commit flips ten cells, so the cell
+comparison is a real backstop there, but it is a backstop rather than a pin.
+The merged T17 form that started all this was caught only because it also
+altered predicate text, which was luck rather than coverage.
 
 | pre-fix form | pristine | half-page | page-buf | lazy | lazy+pb |
 |---|---|---|---|---|---|
