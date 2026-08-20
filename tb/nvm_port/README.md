@@ -4,7 +4,7 @@
 Proves the class-F NVM port (`hdl/packet_engine/KL_pp_nvm_port.sv`,
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8 +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8): `make` = build + run,
-exit 0 = PASS, 76 checks. `-GMAX_PAYLOAD_P=1024` pins the geometry the C++
+exit 0 = PASS, 82 checks. `-GMAX_PAYLOAD_P=1024` pins the geometry the C++
 constants mirror.
 
 The harness plays BOTH neighbors, independently of the RTL: a **manager BFM**
@@ -57,9 +57,16 @@ rather than a survival this layout cannot give:
   the neighbour still restores byte-exactly afterwards. The isolation claim is
   guarded against vacuity by first pinning that the torn commit really did
   reach the device — otherwise "nothing else moved" would also hold for a port
-  that never issued anything. That guard pins PAYLOAD, not merely change: the
-  ERASE alone rewrites the region to 0xFF, so only a byte past the erased state
-  shows that the WRITE moved data.
+  that never issued anything. Getting that guard right took three attempts and
+  the first two were themselves vacuous, which is worth recording: "the
+  region's bytes changed" is satisfied by the ERASE alone, and "some byte is
+  not 0xFF" is satisfied by whatever an earlier phase left behind — region 1
+  still holds T5b's record from `sim_main.cpp:375` eleven phases later, so that
+  spelling passed even under a mutant where the port wedged and issued no
+  device traffic at all. The guard now pins the bytes THIS commit moved, by
+  value and position: the op log must show ERASE then the WRITE for this
+  record, and exactly the bytes before the cut must have landed with the next
+  byte still erased.
 - **T17** the cut a NOR device actually produces. T15 and T16 cut while bytes
   are still moving, but a real program failure is not reported then: the device
   latches the bytes, starts the program cycle, and raises its error when that
@@ -67,9 +74,16 @@ rather than a survival this layout cannot give:
   `S_WWAIT` arm, the widest window in a commit, and nothing else in the suite
   enters it. The phase pins what the port owes there — `err` and never `done`,
   busy released and the port idle afterwards, and the port usable for the next
-  commit. It carries no separate "did not wedge" check: `rc == 1` already
-  excludes the wedge, so such a check could not fail on its own and would only
-  inflate the count.
+  commit. It also restores the region afterwards: what the array holds is the
+  model's choice, but whether the port still SERVES that region after taking
+  `S_WWAIT`'s error exit is the port's own property, and T17 otherwise
+  exercised only the write side.
+- **T18** the same argument on the RESTORE side. A NOR read fails the way a
+  program does: an ECC or timeout error surfaces when the read cycle ENDS, not
+  mid-stream. `S_RPWAIT` is the exact mirror of the arm T17 closed, `S_RHWAIT`
+  is that window on the header probe, and `S_RHCOLL` is an error during the
+  header collect — which sits on the boot restore walk, the one path where a
+  torn image is actually consumed. All three survived the suite before T18.
   What the array holds afterwards is deliberately NOT pinned: this device model
   writes every byte before failing, while real NOR may leave the last page
   half-programmed, and the port cannot distinguish those.
@@ -82,37 +96,73 @@ Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
 - **M3** payload pump off-by-one (`bcnt_r == plen_r` for `plen_r - 1`, both
   directions): fails 38 of 55 (every data-phase op times out or mismatches).
 - **M4** (2026-08-20) the write phase swallows the device error (`S_WDPUMP`'s
-  `if (dev_err_i)` forced false): **fails 14 of 76**. A torn commit then looks
-  clean, which is exactly the false success #70 exists to remove. It does not
-  fail every T15/T16/T17 check, and the seven survivors are named here rather
-  than glossed, because an earlier version of this file claimed it failed
-  "every T15/T16 check" and that claim was written from what the mutation ought
-  to do instead of from a run:
-  `T15 seed record committed` (it precedes the cut);
-  `T15 busy raised then low at the err pulse` and
-  `T17 busy raised then low at the err pulse` (a wedged port holds busy high
-  and never pulses, so neither pair is contradicted);
-  `T15 the torn image is neither the old record nor the new one`;
-  `T16 the torn commit really did move payload into its own region` (bytes did
-  move before the swallowed error);
-  and T16's two isolation checks, `erased no other region` and `no other
-  region's bytes moved` — which pass VACUOUSLY, since a wedged port issues no
-  further device traffic and so nothing else can move. That vacuity is why T16
-  pins its own region first. Note what does NOT survive: `T16 neighbour record
-  committed` and `T17 seed record committed` both FAIL, because the port wedges
-  in T15 and never recovers to serve them.
+  `if (dev_err_i)` forced false): **fails 21 of 82**. A torn commit then looks
+  clean, which is exactly the false success #70 exists to remove. Six checks
+  survive, enumerated by RUNNING the mutation rather than reasoning about it,
+  because earlier versions of this file twice published a survivor list written
+  from what M4 ought to do: `T15 seed record committed` (it precedes the cut);
+  `T15 busy raised then low at the err pulse` and `T17 busy raised then low at
+  the err pulse` (a wedged port holds busy high and never pulses, so neither
+  pair is contradicted); `T15 the torn image is neither the old record nor the
+  new one`; and T16's two isolation checks, `erased no other region` and `no
+  other region's bytes moved`, which pass VACUOUSLY because a wedged port
+  issues no further device traffic and so nothing else can move. That vacuity
+  is what the T16 guard exists to answer.
 - **M5** (2026-08-20) the completion window swallows the device error
-  (`S_WWAIT`'s `if (dev_err_i)` forced false): **fails 4 of 76** — the three
-  T17 checks plus `idle again at the end of the run` — and survives the whole
-  suite without T17. The port waits for a `done` that a failed device will
+  (`S_WWAIT`'s `if (dev_err_i)` forced false): **fails 9 of 82**, and survives
+  the whole suite without T17. The port waits for a `done` a failed device will
   never send, so the commit never answers at all: `run_op` returns -1 after
-  100,000 cycles. Note that `busy_seen && busy_ok` does NOT catch this, and the
-  comment at that check says so; a wedged port holds busy high, so `busy_seen`
-  is true and no pulse ever arrives to contradict `busy_ok`.
-- **Probe** (not a mutation of the RTL, a mutation of the TEST): arming T16's
-  tear as `arm_err(1, -1)`, so the WRITE fails before its first byte moves,
-  must not leave the phase green. It fails 1 of 76 on
-  `T16 the torn commit really did move payload into its own region`. An earlier
-  form of that guard compared the region's bytes against a snapshot and passed
-  this probe, because the ERASE alone changes them to 0xFF; only a byte past
-  the erased state distinguishes a WRITE that actually moved payload.
+  100,000 cycles. `busy_seen && busy_ok` does NOT catch this, and the comment
+  at that check says so: a wedged port holds busy high, so `busy_seen` is true
+  and no pulse arrives to contradict `busy_ok`.
+- **Probes** (mutations of the TEST, not the RTL). Arming T16's tear as
+  `arm_err(1, -1)`, so the WRITE fails before its first byte moves, fails 1 of
+  82. Replacing the torn commit with a bare `rc = 1` and no device traffic at
+  all — the port the T16 prose names as the threat — fails 3 of 82. Under the
+  previous guard that second probe failed only ONE check, the erase count,
+  while the payload guard passed on residue from an earlier phase.
+
+### Device-error arm coverage
+
+`KL_pp_nvm_port.sv` has twelve `if (dev_err_i)` arms. Each was forced to
+`1'b0` in turn and the suite re-run, so this table is measured, not argued:
+
+| line | state | checks failed |
+|---|---|---|
+| 185 | `S_WEREQ`  | **0 — uncovered** |
+| 194 | `S_WEWAIT` | 37 |
+| 204 | `S_WWREQ`  | **0 — uncovered** |
+| 214 | `S_WHPUMP` | 32 |
+| 227 | `S_WDPUMP` | 21 |
+| 237 | `S_WWAIT`  | 9 |
+| 248 | `S_RHREQ`  | **0 — uncovered** |
+| 258 | `S_RHCOLL` | 5 |
+| 276 | `S_RHWAIT` | 4 |
+| 303 | `S_RPREQ`  | **0 — uncovered** |
+| 313 | `S_RPPUMP` | 31 |
+| 323 | `S_RPWAIT` | 3 |
+
+**Eight of twelve are covered; four are not.** The survivors are the four
+`*REQ` arms, where the device asserts an error before its request is granted.
+Reaching them needs an `err_at_req` mode the device model does not have. That
+is written down here rather than left to be rediscovered, because a phase list
+that reads as complete is worse than one that names its gaps. The other
+outstanding item is the same: `09_verification.md:56` sets the bar as "cut at
+randomized commit points ... every record type cut >= once", and this suite
+uses fixed cut points on both sides, so the randomized half is still owed.
+
+### On checks that cannot fail alone
+
+Three added checks are implied by a neighbour: `T16 the neighbour's stored
+bytes are untouched` is subsumed by `no other region's bytes moved` now that
+the latter compares all of `REG_BYTES`; `T15 a torn record never restores as a
+valid one` is weaker than the CRC-branch pin following it; and `T17 the port is
+idle after the late failure` is structurally implied by `rc == 1` plus the next
+commit succeeding. They are kept deliberately, because a weak specification
+claim beside a strong implementation pin records WHAT is required separately
+from HOW the port happens to satisfy it today, and the two drift apart.
+
+The rule this suite follows, stated once: a check may restate a stronger
+neighbour when it states the SPECIFICATION, but a check that only restates the
+same implementation fact in other words is removed. That is why `rc != -1` was
+dropped from T17 while the three above were kept.

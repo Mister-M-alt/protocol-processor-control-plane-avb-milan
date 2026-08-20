@@ -572,8 +572,9 @@ int main(int argc, char** argv) {
       store_before[r].assign(h.store[r], h.store[r] + REG_BYTES);
     }
     h.ops.clear();
+    std::vector<uint8_t> torn = frame(1, pattern(16, 0x22));
     h.arm_err(1, 5);
-    rc = h.commit(1, frame(1, pattern(16, 0x22)));
+    rc = h.commit(1, torn);
     h.disarm_err();
     CHECK(rc == 1, "T16 the neighbouring commit was torn");
 
@@ -592,15 +593,19 @@ int main(int argc, char** argv) {
     // region's own bytes must be seen to change as well.
     CHECK(h.erase_count[1] > erases_before[1],
           "T16 the torn commit really did erase its own region");
-    // "the bytes changed" is NOT enough: the ERASE alone changes them, to
-    // 0xFF. What distinguishes a WRITE that moved payload is a byte past the
-    // erased state. Without this, arming the WRITE to fail before its first
-    // byte (arm_err(1, -1)) leaves the whole phase green while proving nothing.
-    bool wrote_payload = false;
-    for (int b = 0; b < REG_BYTES; ++b)
-      if (h.store[1][b] != 0xFF) { wrote_payload = true; break; }
-    CHECK(wrote_payload,
-          "T16 the torn commit really did move payload into its own region");
+    // Pin the bytes THIS commit moved, by value and position. Two weaker
+    // spellings were tried and both were vacuous: "the bytes changed" is
+    // satisfied by the ERASE alone, and "some byte is not 0xFF" is satisfied
+    // by whatever an earlier phase left behind -- region 1 still holds T5b's
+    // record (sim_main.cpp:375) eleven phases later, so that guard passed
+    // even when the port wedged and issued no traffic at all. Only the new
+    // record's own bytes, in the right place, distinguish a WRITE that ran.
+    CHECK(h.ops.size() == 2 && op_is(h.ops[1], OP_WRITE, 1, 0,
+                                     static_cast<int>(torn.size())),
+          "T16 the torn commit issued ERASE then the WRITE for this record");
+    CHECK(std::equal(torn.begin(), torn.begin() + 5, h.store[1])
+              && h.store[1][5] == 0xFF,
+          "T16 exactly the 5 bytes before the cut landed, the rest still erased");
     CHECK(!other_erased, "T16 the torn commit erased no other region");
     CHECK(!other_moved, "T16 no other region's bytes moved");
     CHECK(h.store_match(4, keep),
@@ -648,10 +653,54 @@ int main(int argc, char** argv) {
     // page half-programmed. The port cannot tell those apart and neither can
     // this model, so the phase pins what the PORT owes -- err not done, busy
     // released, bus not stranded -- and only that the port stays usable.
+    // The read side after a completion-window error is a PORT property and
+    // is checkable whichever way the model leaves the array: this model wrote
+    // every byte, so region 3 holds a well-formed `late` that the manager was
+    // told was NOT committed. Pin that the port still serves the region
+    // rather than wedging -- T17 otherwise exercises only the write side.
+    h.ops.clear();
+    rc = h.restore(3);
+    CHECK(rc == 0 && h.rbytes == late,
+          "T17 the region still restores after the late failure");
+
     h.ops.clear();
     rc = h.commit(3, rec);
     CHECK(rc == 0 && h.store_match(3, rec),
           "T17 the port accepts the next commit after a late failure");
+  }
+
+  // ---------------------------------------------------------------- T18
+  // The RESTORE side of the same argument. T17 covers the completion window
+  // on a WRITE, but a NOR read fails the same way: an ECC or timeout error
+  // surfaces when the read cycle ends, not mid-stream. `S_RPWAIT` is the
+  // exact mirror of the arm T17 closed, `S_RHWAIT` is that window on the
+  // header probe, and `S_RHCOLL` is an error during the header collect --
+  // which sits on the boot restore walk, the one path where a torn image is
+  // actually consumed. All three survived the suite before this phase.
+  {
+    h.ops.clear();
+    h.arm_err(0, 3);
+    int r = h.restore(5);
+    h.disarm_err();
+    CHECK(r == 1, "T18 an error collecting the header reports err (S_RHCOLL)");
+
+    h.ops.clear();
+    h.arm_err(0, 8);
+    r = h.restore(5);
+    h.disarm_err();
+    CHECK(r == 1, "T18 an error closing the header read reports err (S_RHWAIT)");
+
+    h.ops.clear();
+    h.arm_err(1, 40);
+    r = h.restore(5);
+    h.disarm_err();
+    CHECK(r == 1,
+          "T18 an error in the payload completion window reports err (S_RPWAIT)");
+
+    h.ops.clear();
+    r = h.restore(5);
+    CHECK(r == 0 && h.rbytes == f2,
+          "T18 serviceable after the three read cuts: restore is byte-exact");
   }
 
   // The real close. The check above used to carry this name but T15/T16/T17
