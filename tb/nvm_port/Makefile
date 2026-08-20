@@ -24,10 +24,11 @@ clean:
 .PHONY: run clean
 
 # Re-measure every figure the README quotes and refuse to agree with a drifted
-# one. NOT part of `run`: it rebuilds the suite once per arm plus once per named
-# mutation, about seventeen builds. Run it after ANY change to this suite --
-# four review rounds found the figures stale, and each time the rows that had
-# been corrected were the ones somebody thought to check.
+# one. 36 builds, about four minutes: one per arm, mutation, probe and device
+# model, five for the pre-fix matrix, plus the baseline. NOT part of `run` --
+# too slow for the per-suite loop -- but it IS gated in CI, because "run it by
+# hand after a change" is the discipline that let these figures go stale in four
+# consecutive review rounds.
 figures:
 	@python3 $(CURDIR)/measure_figures.py --check
 

@@ -13,49 +13,72 @@ a bus check moves every row whose mutant wedges earlier. There is no edit to
 this suite that reliably leaves the numbers alone, so hand-maintaining them is
 the wrong shape.
 
-WHAT IT COVERS, AND WHAT IT DOES NOT. Read this before trusting a green run.
+WHAT IT COVERS. Every figure in the README, and the covered set is DERIVED
+rather than asserted: each `N of M` and `N PASS, M FAIL` in the file is a claim
+by default, satisfied only by a measurement here or by an explicit entry in
+WAIVERS whose reason is printed on every clean run. Twelve arm rows plus the arm
+COUNT read from the RTL; eleven mutations and probes; seven device-model result
+rows; and all thirty cells of the pre-fix matrix.
 
-  covered   the twelve `if (dev_err_i)` arm rows, and the arm COUNT read out of
-            the RTL rather than assumed; every `fails N of M` claim in the file,
-            which is M1, its sibling, M2, M3, M4, M5 and the three test probes;
-            every row of the device-model result table; and every suite-size
-            figure.
-  NOT       the six-by-five pre-fix matrix. Those thirty cells are a historical
-            record of check FORMS that no longer exist in the tree, so there is
-            nothing here to re-run them against. They are argued, not measured,
-            and they are the one part of this file that can still rot quietly.
+Three earlier versions each closed a narrower class than they claimed, and the
+progression is the useful part. The first checked only denominators and
+result-row sums, so seven of eight falsifications walked past it. The second
+added a table of named mutations and still missed M3 -- the very numerator that
+had gone stale -- because nothing required the table to cover the file's own
+claims. The third coupled the table to the file but matched ONE PHRASE, "fails
+N of M", so three figures already present were invisible: "the same mutations
+FAIL 68 of 90", "that check FAILS while the header check PASSES, 2 of 90", and
+a prose restatement of a model row. A wider vocabulary would have been the same
+mistake with a longer list. Inverting the default is what ended it.
 
-That list is the honest version. Two earlier versions of this docstring said
-"re-measure every figure" while the code reached a strict subset, which is the
-same defect as the stale table: an instrument that closes a narrow class while
-claiming the wide one. A reviewer caught it both times.
+The third version also declared the thirty matrix cells unmeasurable "because
+the forms no longer exist in the tree". That was a cost choice dressed as an
+impossibility -- the README's own text says "re-deriving it is re-running it" --
+and re-injecting all six forms costs five builds. They are measured now.
 
-The coupling that keeps the list above true is CLAIM COVERAGE: every `fails N of
-M` sentence in the README must be claimed by exactly one measurement below. A
-new named mutation with a new count is a hard error until it is measured -- it
-cannot be added silently, which is how M3 stayed ungated after the first
-version of this gate was written specifically because M3 had gone stale.
+Inverting the default paid for itself immediately: on its first run it found
+that the coincident-completion figure could not be re-derived, because its
+recipe had never been committed. Unverifiable, not fabricated -- a different
+defect with a different fix, so the recipe is now `_COINCIDENT` and the number
+is measured rather than asserted.
 
 `--check` is accepted for symmetry with the other gates but changes nothing:
 this exits non-zero on any disagreement either way. `--write` is deliberately
 NOT provided, because a figure nobody looked at is how the table went stale in
 the first place.
 
-It is slow: one Verilator build per arm, per mutation, per probe and per device
-model, plus the baseline -- 26 builds, about three minutes. Run it when the
-suite changes, not on every commit. `make -C tb/nvm_port figures`.
+It is slow: one Verilator build per arm, mutation, probe and device model, five
+for the matrix, plus the baseline -- 36 builds, about four minutes. It runs in
+CI and should be run after any change to this suite; it is deliberately not part
+of `run`. `make -C tb/nvm_port figures`.
 """
 
 import argparse
+import atexit
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-RTL = HERE.parent.parent / "hdl" / "packet_engine" / "KL_pp_nvm_port.sv"
+SRC = Path(__file__).resolve().parent
+README = SRC / "README.md"          # read only, never written
+
+# Every mutation below edits a WORKING COPY, not the checkout. The `finally`
+# restores in place correctly, but for the ~4 minutes a sweep runs the tracked
+# sources on disk are wrong, and anything else reading them gets a false answer:
+# during one run a concurrent read reported 11 arms and "M4: anchor occurs 0
+# times", both false, both artefacts of reading mid-sweep. Copying removes the
+# class rather than narrowing the window.
+_WORK = Path(tempfile.mkdtemp(prefix="nvm_figures."))
+atexit.register(shutil.rmtree, _WORK, True)
+HERE = _WORK / "tb" / "nvm_port"
+shutil.copytree(SRC, HERE, ignore=shutil.ignore_patterns("obj_dir", "__pycache__"))
+_rtl_src = SRC.parent.parent / "hdl" / "packet_engine"
+shutil.copytree(_rtl_src, _WORK / "hdl" / "packet_engine")
+RTL = _WORK / "hdl" / "packet_engine" / "KL_pp_nvm_port.sv"
 SIM = HERE / "sim_main.cpp"
-README = HERE / "README.md"
 
 #: (line in the RTL, state name) for every `if (dev_err_i)` arm. Cross-checked
 #: against the RTL below: a THIRTEENTH arm added anywhere used to leave this
@@ -64,6 +87,58 @@ README = HERE / "README.md"
 ARMS = [(185, "S_WEREQ"), (194, "S_WEWAIT"), (204, "S_WWREQ"), (214, "S_WHPUMP"),
         (227, "S_WDPUMP"), (237, "S_WWAIT"), (248, "S_RHREQ"), (258, "S_RHCOLL"),
         (276, "S_RHWAIT"), (303, "S_RPREQ"), (313, "S_RPPUMP"), (323, "S_RPWAIT")]
+
+#: The coincident-completion model. Unlike every other model here it varies the
+#: HANDSHAKE, not what the array retains: the device raises `dev_done_i` on the
+#: same clock edge that moves a pump's final byte. `KL_pp_nvm_port.sv:151-153`
+#: says the sticky `done_seen_r` latch exists for exactly this device, so it is
+#: a documented contract freedom, not a broken peer -- and the port handles it,
+#: 90 PASS 0 FAIL on pristine RTL. Its whole interest is that deleting the latch
+#: is INVISIBLE without it.
+#:
+#: The load-bearing edit is the fourth. Setting the model's own `d_done` cannot
+#: produce this: `dut->dev_done_i = d_done;` is driven at the top of the tick,
+#: so it presents a cycle late, the port is already in a WAIT state reading
+#: `dev_done_i` directly, and the latch is bypassed. Four attempts to tune a
+#: completion delay all gave 90/0, because the delay is counted in ticks and the
+#: coincidence lives inside one. Writing `dut->dev_done_i` directly after the
+#: first `eval()` -- when the DUT's outputs for this cycle have settled, so the
+#: final-byte handshake is visible -- and re-evaluating before the posedge is
+#: the only thing that lands it on the right edge.
+#:
+#: The `fail_cur` guard is load-bearing too: without it the model pulses `done`
+#: on the byte an armed error is about to land on, and T17/T18 stop testing what
+#: they name.
+_COINCIDENT = [
+    (SIM, "  int  d_st = 0;                          // 0 idle, 1 data, 2 completion timer",
+          "  int  d_st = 0;                          // 0 idle, 1 data, 2 completion timer\n"
+          "  bool coinc = false;      // this tick's final byte carries `done` with it"),
+    (SIM, "        if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }\n"
+          "        else if (d_bytes == d_cur.len) { done_ctr = op_delay; d_st = 2; }",
+          "        if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }\n"
+          "        else if (d_bytes == d_cur.len) {\n"
+          "          if (coinc) { d_busy = false; d_st = 0; }\n"
+          "          else { done_ctr = op_delay; d_st = 2; } }"),
+    (SIM, "          if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }\n"
+          "          else if (d_bytes == d_cur.len) { done_ctr = op_delay; d_st = 2; }",
+          "          if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }\n"
+          "          else if (d_bytes == d_cur.len) {\n"
+          "            if (coinc) { d_busy = false; d_st = 0; }\n"
+          "            else { done_ctr = op_delay; d_st = 2; } }"),
+    (SIM, "    dut->clk_i = 0; dut->eval();",
+          "    dut->clk_i = 0; dut->eval();\n"
+          "    coinc = false;\n"
+          "    if (d_st == 1 && !(fail_cur && err_after_bytes >= 0\n"
+          "                       && d_bytes + 1 == err_after_bytes)) {\n"
+          "      bool lw = (d_cur.op == OP_WRITE && d_bytes + 1 == d_cur.len\n"
+          "                 && dut->dev_wready_i && dut->dev_wvalid_o);\n"
+          "      bool lr = (d_cur.op == OP_READ && d_bytes + 1 == d_cur.len\n"
+          "                 && dut->dev_rvalid_i && dut->dev_rready_o);\n"
+          "      if (lw || lr) { dut->dev_done_i = 1; dut->dev_busy_i = 0;\n"
+          "                      coinc = true; dut->eval(); }\n"
+          "    }"),
+]
+
 
 #: Every `fails N of M` claim in the README, and how to reproduce it.
 #:
@@ -111,6 +186,22 @@ MUTATIONS = [
               "    rc = 1;")]),
     ("probe-t18", r"replacing a T18 arm with a bare `r = 1`, port never touched: now\s+fails (\d+)", [
         (SIM, "    int r = h.restore(5);", "    int r = 1;")]),
+    # The retraction at "On checks that cannot fail alone": T15's tear moved
+    # into the completion window, so the survival check fails while the
+    # header-agreement check beside it passes. Its numerator was invisible to
+    # the first inverted-default pass because it reads "FAILS ... PASSES, 2 of
+    # 90" -- no "fails N of M" anywhere in the sentence.
+    # The `done_seen_r` escape: green on pristine both ways, and only the
+    # coincident model exposes it. This was an UNVERIFIABLE figure -- the
+    # recipe lived in a scratch run that was never committed, so it could not
+    # be re-derived. That is a different defect from a fabricated one and it
+    # gets a different fix: commit the recipe, not retract the number.
+    ("done_seen_r/coincident",
+     r"under a coincident-completion model the same\s+mutations fail (\d+) of", 
+     _COINCIDENT + [(RTL, "      if (dev_done_i) done_seen_r <= 1'b1;\n", "")]),
+    ("retraction", r"that check FAILS while the header check PASSES, (\d+) of", [
+        (SIM, "    h.arm_err(1, 12);                 // op 0 = ERASE, op 1 = WRITE: cut at 12 B",
+              "    h.arm_err(1, static_cast<int>(replacement.size()));")]),
 ]
 
 #: The device-model result table. Each varies what the ARRAY retains and must
@@ -155,36 +246,164 @@ _LAZY = [(SIM, "        int r = d_cur.region % N_REGIONS;\n"
                "        int r = d_cur.region % N_REGIONS;\n"
                "        ++erase_count[r];")]
 
+#: A model measurement may be quoted in more than one place. `claims` is a
+#: LIST, and every listed site must agree with the one measurement: the prose
+#: sentence at "Model probe" restates the half-page row, and a falsification of
+#: the prose alone survived a gate that anchored on the table row only.
+
 MODELS = [
-    ("half-page",                 r"\| half-page \| \*\*(\d+) PASS, (\d+) FAIL\*\*", [_HALFPAGE]),
-    ("page-buffered NOR",         r"\| page-buffered NOR \| \*\*(\d+) PASS, (\d+) FAIL\*\*", _PAGEBUF),
-    ("lazy erase",                r"\| lazy erase \| (\d+) PASS, (\d+) FAIL", _LAZY),
+    ("pristine", [r"\| pristine \| \*\*(\d+) PASS, (\d+) FAIL\*\*"], []),
+    ("half-page", [r"\| half-page \| \*\*(\d+) PASS, (\d+) FAIL\*\*",
+                   r"The half-page model is (\d+) PASS, (\d+) FAIL"], [_HALFPAGE]),
+    ("page-buffered NOR", [r"\| page-buffered NOR \| \*\*(\d+) PASS, (\d+) FAIL\*\*"], _PAGEBUF),
+    ("lazy erase", [r"\| lazy erase \| (\d+) PASS, (\d+) FAIL"], _LAZY),
     ("lazy erase + page-buffered",
-     r"\| lazy erase \+ page-buffered \| (\d+) PASS, (\d+) FAIL", _PAGEBUF + _LAZY),
+     [r"\| lazy erase \+ page-buffered \| (\d+) PASS, (\d+) FAIL"], _PAGEBUF + _LAZY),
+    ("coincident completion",
+     [r"\| coincident completion \| \*\*(\d+) PASS, (\d+) FAIL\*\*"], _COINCIDENT),
 ]
 
+#: Models whose columns the pre-fix matrix carries, in the table's own order.
+#: NOT simply "every model": the matrix is about what the array RETAINS, and
+#: the coincident model varies the handshake instead. Deriving the columns from
+#: MODELS produced a six-wide measurement against a five-wide table on the run
+#: that added `pristine` -- the gate caught it, which is the point.
+MATRIX_MODELS = ["pristine", "half-page", "page-buffered NOR", "lazy erase",
+                 "lazy erase + page-buffered"]
+
+#: The six-by-five pre-fix matrix. Each row is a check FORM that was removed
+#: from the suite because it read the array where it should not; the table
+#: records which device model exposed each. Two earlier versions of this script
+#: declared these thirty cells unmeasurable "because the forms no longer exist
+#: in the tree". That was a cost choice dressed as an impossibility, and the
+#: README's own text contradicted it: "re-deriving it is re-running it." The
+#: forms are recoverable from `ba403c6~1`, `62d96d6~1` and `dc354be~1`, and
+#: re-injecting all six beside the current checks costs FIVE builds -- one
+#: fewer than MODELS already spends.
+#:
+#: (README row label, anchor, code injected before it). Order matters: the two
+#: T17 forms must be injected BEFORE the good commit, because both pre-fix
+#: spellings restored the TORN region and anchoring after `h.commit(3, rec)`
+#: measures the wrong array.
+MATRIX_FORMS = [
+    ("T16 byte comparison",
+     "    CHECK(h.sent.size() == 5 && std::equal(h.sent.begin(), h.sent.end(),",
+     '    CHECK(std::equal(torn.begin(), torn.begin() + 5, h.store[1])\n'
+     '              && h.store[1][5] == 0xFF,\n'
+     '          "MX T16 byte comparison");\n'),
+    ("T17 restore vs the record",
+     "    h.ops.clear();\n    rc = h.commit(3, rec);\n"
+     "    CHECK(rc == 0 && h.store_match(3, rec),",
+     '    {\n'
+     '      std::vector<uint8_t> probe_arr(h.store[3], h.store[3] + late.size());\n'
+     '      h.ops.clear(); int pr = h.restore(3);\n'
+     '      CHECK(pr == 0 && h.rbytes == late, "MX T17 restore vs the record");\n'
+     '      h.ops.clear(); pr = h.restore(3);\n'
+     '      CHECK(pr == 0 && h.rbytes.size() == late.size() && h.rbytes == probe_arr,\n'
+     '            "MX T17 restore vs the array");\n'
+     '    }\n'),
+    ("T15 branch pin", "    bool hdr_intact =",
+     '    CHECK(crc_rejects && h.rbytes.size() == whole.size(),\n'
+     '          "MX T15 branch pin");\n'
+     '    CHECK(!h.store_match(7, whole) && !h.store_match(7, replacement),\n'
+     '          "MX T15 cut was real");\n'
+     '    CHECK(refused || crc_rejects,\n'
+     '          "MX T15 #70 property, unconditioned");\n'),
+]
+#: Rows carried by an injection above rather than owning an anchor of their own.
+MATRIX_ROWS = ["T16 byte comparison", "T17 restore vs the record",
+               "T17 restore vs the array", "T15 branch pin",
+               "T15 cut was real", "T15 #70 property, unconditioned"]
+
+
+def readme_matrix():
+    """{row: [pass/FAIL per model]} exactly as the README's matrix claims."""
+    out, cols = {}, None
+    for line in README.read_text().splitlines():
+        if line.startswith("| pre-fix form |"):
+            cols = [c.strip() for c in line.strip("|").split("|")][1:]
+        elif cols and line.startswith("|") and not line.startswith("|---"):
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if cells[0] in MATRIX_ROWS:
+                out[cells[0]] = ["FAIL" if "FAIL" in c else "pass" for c in cells[1:]]
+            elif out:
+                break
+    return out, (cols or [])
+
+
+def measure_matrix():
+    """{row: [pass/FAIL per model]} measured: inject all six, run every model."""
+    inject = [(SIM, anchor, code + anchor) for _, anchor, code in MATRIX_FORMS]
+    got = {r: [] for r in MATRIX_ROWS}
+    by_name = {n: e for n, _c, e in MODELS}
+    for mname in MATRIX_MODELS:
+        failed = apply_edits(inject + list(by_name[mname]), want_fail_names=True)
+        for r in MATRIX_ROWS:
+            got[r].append("FAIL" if any(f"MX {r}" in f for f in failed) else "pass")
+    return got
+
+
 TALLY_RE = re.compile(r"(\d+) checks: (\d+) PASS, (\d+) FAIL")
-#: Every sentence in the README that quotes a mutation/probe numerator. The
-#: coverage check requires each to be claimed by exactly one MUTATIONS entry.
-CLAIM_RE = re.compile(r"[Ff]ails\s+(?:only\s+)?\*?\*?\d+\s+of|now\s+fails\s+\d+")
+
+#: EVERY figure in the README. Not "every figure phrased the way I expected" --
+#: that was the previous version and it was a recogniser, matching one
+#: vocabulary ("fails N of M") and blind to everything else. Three figures
+#: already in the file sat outside it: "the same mutations FAIL 68 of 90"
+#: (fail, not fails), "that check FAILS while the header check PASSES, 2 of 90"
+#: (numerator not adjacent to any verb), and a prose restatement of a model row.
+#: Seven plausible phrasings of a future claim were silent too -- `reddens 22 of
+#: 90`, `FAILS 22 of 90`, `fails twenty-two of 90`, `| M6 | 22 |`, `22 of 90
+#: checks go red`. A wider vocabulary would have been the same mistake with a
+#: longer list, so the default is inverted: this matches the SHAPE of a figure,
+#: and anything it finds is a claim that must be measured or waived out loud.
+#: A spelled-out numerator is still a numerator: "fails twenty-two of 90" was
+#: the one phrasing of seven that survived the first inverted-default pass.
+#: Enumerating English number words is a recogniser too, but unlike the verbs it
+#: is a genuinely CLOSED class -- there is no eighth way to write twenty-two --
+#: so the list cannot grow behind the gate's back the way "fails/FAILS/reddens/
+#: failed/go red" did.
+_ONES = ("one two three four five six seven eight nine ten eleven twelve "
+         "thirteen fourteen fifteen sixteen seventeen eighteen nineteen").split()
+_TENS = "twenty thirty forty fifty sixty seventy eighty ninety".split()
+_WORDS = "|".join(sorted(
+    _ONES + _TENS + [f"{a}-{b}" for a in _TENS for b in _ONES[:9]] + ["zero"],
+    key=len, reverse=True))
+FIGURE_RE = re.compile(
+    r"\d+ of \d+|\d+ PASS, \d+ FAIL|\b\d+/\d+\b"
+    rf"|\b(?:{_WORDS}) of \d+")
+
+#: (regex, reason). A figure this file does not measure must be listed here with
+#: why, and the reason is PRINTED on every clean run. The exclusion list is now
+#: derived from the file rather than asserted in a docstring: a claim that is
+#: neither measured nor waived is a hard error, so it cannot be added silently
+#: and it cannot be quietly dropped from the covered set either.
+WAIVERS = [
+    (r"\b90/90\b",
+     "suite tally shorthand; both halves are the suite size, which the size "
+     "check already pins against the measured total"),
+]
 
 
-def run_suite():
-    """Build and run; return (total, passed, failed). Raises on a build error."""
+def run_suite(want_fail_names=False):
+    """Build and run; return (total, passed, failed), or the failing names."""
     subprocess.run(["make", "-s", "clean"], cwd=HERE, check=False,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     p = subprocess.run(["make", "-s"], cwd=HERE, capture_output=True, text=True)
-    m = None
+    m, names = None, []
     for line in (p.stdout + p.stderr).splitlines():
         hit = TALLY_RE.search(line)
         if hit:
             m = hit
+        elif line.startswith("FAIL: "):
+            names.append(line[6:])
     if not m:
         raise RuntimeError("no tally line; build failed:\n" + p.stdout[-2000:])
+    if want_fail_names:
+        return names
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
 
 
-def apply_edits(edits):
+def apply_edits(edits, want_fail_names=False):
     """Apply every edit, run, restore byte-identically. Returns the tally.
 
     An `old` that occurs zero times means this table is stale, which is the
@@ -205,7 +424,7 @@ def apply_edits(edits):
                     "this table is stale or the anchor is ambiguous, which is "
                     f"the class this gate exists to catch\n    {old!r:.120}")
             path.write_text(text.replace(old, new, 1))
-        return run_suite()
+        return run_suite(want_fail_names)
     finally:
         for path, text in saved.items():
             path.write_text(text)
@@ -258,25 +477,45 @@ def readme_arm_rows():
 def claim_coverage(flat):
     """Problems with the claim<->measurement correspondence, as strings.
 
-    Both directions, because one direction is not a coupling. MUTATIONS ->
-    README catches a claim that was reworded or deleted; README -> MUTATIONS
-    catches a claim that was ADDED, which is the direction the first version of
-    this gate missed entirely and the direction M3 escaped through.
+    Both directions, because one direction is not a coupling. Measurement ->
+    README catches a claim reworded or deleted; README -> measurement catches a
+    claim ADDED, which is the direction M3 escaped through.
+
+    The README -> measurement half now works by SHAPE, not by phrase. Every
+    `N of M` and `N PASS, M FAIL` in the file is a claim by default; it is
+    satisfied only by falling inside a measurement's own claim span or by an
+    explicit waiver. That inversion is what makes the covered set derivable
+    instead of asserted, and it found a figure nobody could reproduce on its
+    first run.
     """
     bad, spans = [], []
-    for name, claim, _ in MUTATIONS:
-        hits = list(re.finditer(claim, flat))
-        if len(hits) != 1:
-            bad.append(f"{name}: its README claim matches {len(hits)} times, "
-                       "need exactly 1 -- the claim was reworded, moved or "
-                       "deleted, so nothing checks this measurement any more")
-        spans.extend((h.start(), h.end()) for h in hits)
-    for m in CLAIM_RE.finditer(flat):
-        if not any(s <= m.start() and m.end() <= e for s, e in spans):
-            bad.append(f"unclaimed numerator {flat[m.start():m.end() + 6]!r} -- "
-                       "every `fails N of M` in the README must be measured by "
-                       "an entry in MUTATIONS. Add one; do not delete the claim.")
+    for name, claims, _ in _all_claims():
+        for claim in claims:
+            hits = list(re.finditer(claim, flat))
+            if len(hits) != 1:
+                bad.append(f"{name}: its README claim matches {len(hits)} times, "
+                           "need exactly 1 -- the claim was reworded, moved or "
+                           "deleted, so nothing checks this measurement any more")
+            spans.extend((h.start(), h.end()) for h in hits)
+    for pat, _reason in WAIVERS:
+        spans.extend((h.start(), h.end()) for h in re.finditer(pat, flat))
+    for m in FIGURE_RE.finditer(flat):
+        # OVERLAP, not containment: a claim regex captures the numerator and
+        # ends at "... of", while the figure shape runs on through the
+        # denominator. Containment rejected all eleven real claims.
+        if not any(s < m.end() and m.start() < e for s, e in spans):
+            ctx = flat[max(0, m.start() - 60):m.end() + 20]
+            bad.append(f"UNCLAIMED FIGURE {flat[m.start():m.end()]!r} -- every "
+                       "figure in the README must be measured by an entry here "
+                       "or waived in WAIVERS with a reason. Do not delete the "
+                       f"claim to silence this.\n      ...{ctx}...")
     return bad
+
+
+def _all_claims():
+    """(name, [claim regexes], edits) over mutations and models alike."""
+    return ([(n, [c], e) for n, c, e in MUTATIONS]
+            + [(n, cs, e) for n, cs, e in MODELS])
 
 
 def readme_figures(total, flat):
@@ -350,18 +589,31 @@ def main():
             bad.append(f"{name}: README says {says}, measured {got}")
 
     print("\ndevice models (measured vs README):")
-    for name, claim, edits in MODELS:
+    for name, claims, edits in MODELS:
         _, mp, mf = apply_edits(edits)
-        hit = re.search(claim, flat)
-        says = (int(hit.group(1)), int(hit.group(2))) if hit else None
         got = (mp, mf)
-        print(f"  [{'ok ' if says == got else 'STALE'}] {name:<26} "
-              f"measured={mp} PASS, {mf} FAIL  readme={says}")
-        if says is None:
-            bad.append(f"model '{name}': no result row found in the README")
-        elif says != got:
-            bad.append(f"model '{name}': README says {says[0]} PASS/{says[1]} "
-                       f"FAIL, measured {mp} PASS/{mf} FAIL")
+        for claim in claims:
+            hit = re.search(claim, flat)
+            says = (int(hit.group(1)), int(hit.group(2))) if hit else None
+            print(f"  [{'ok ' if says == got else 'STALE'}] {name:<26} "
+                  f"measured={mp} PASS, {mf} FAIL  readme={says}")
+            if says is None:
+                bad.append(f"model '{name}': a claim site vanished from the README")
+            elif says != got:
+                bad.append(f"model '{name}': README says {says[0]} PASS/{says[1]} "
+                           f"FAIL, measured {mp} PASS/{mf} FAIL")
+
+    print("\npre-fix matrix (measured vs README), 5 builds:")
+    says_m, cols = readme_matrix()
+    got_m = measure_matrix()
+    if len(says_m) != len(MATRIX_ROWS):
+        bad.append(f"README matrix has {len(says_m)} of {len(MATRIX_ROWS)} known rows")
+    for row in MATRIX_ROWS:
+        says, got = says_m.get(row), got_m[row]
+        print(f"  [{'ok ' if says == got else 'STALE'}] {row:<34} "
+              f"measured={' '.join(got)}")
+        if says != got:
+            bad.append(f"matrix row '{row}': README says {says}, measured {got}")
 
     if bad:
         print("\nfigures disagree with the tree:")
@@ -375,8 +627,11 @@ def main():
         return 1
 
     print("\nall measured figures agree with the tree")
-    print("NOT measured, and it says so at the top of this file: the six-by-five\n"
-          "pre-fix matrix, whose check forms no longer exist to re-run.")
+    if WAIVERS:
+        print("\nNOT measured (waived, with the reason, so the exclusion set is\n"
+              "derived from the file rather than asserted in a comment):")
+        for pat, reason in WAIVERS:
+            print(f"  - /{pat}/: {reason}")
     return 0
 
 

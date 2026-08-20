@@ -180,31 +180,41 @@ numbers for M1 to M3 long after the suite grew.**
 `KL_pp_nvm_port.sv` has twelve `if (dev_err_i)` arms. Each was forced to
 `1'b0` in turn and the suite re-run, so this table is measured, not argued —
 and it is now **checked by a script rather than by hand**: `measure_figures.py`
-re-runs every arm, cross-checks the arm COUNT against the RTL, and re-runs every
-`fails N of M` claim in this file -- M1 and its sibling, M2 to M5, and all three
-probes -- plus every row of the device-model table. It refuses to agree with a
-README that has drifted, and CI runs it.
+re-runs every arm, cross-checks the arm COUNT against the RTL, and re-measures
+**every figure in this file**: eleven mutations and probes, seven device-model
+result rows, and all thirty cells of the pre-fix matrix. CI runs it.
 
-It took two rounds to get the gate itself honest, and the failures are worth
-recording because they are the same failure twice. Its first version checked
+The covered set is DERIVED, not asserted. Every `N of M` and `N PASS, N FAIL`
+here is a claim by default, satisfied only by a measurement or by an explicit
+waiver whose reason the script prints on a clean run. A new figure is a hard
+error until it is measured, so it cannot be added silently -- and it cannot be
+deleted to silence the gate either, because deleting it makes the measurement
+that owns it fail instead.
+
+It took four rounds to get the gate itself honest, and the failures belong in
+the record because they are the same failure four times. Version one checked
 only denominators and result-row sums, so seven of eight falsifications walked
 past it -- including reverting a numerator to the exact stale value the gate had
-been written after finding. Its second version added a table of named mutations
-and still missed M3, the very numerator that had gone stale, because nothing
-required the table to cover the file's own claims. Both versions closed a
-narrower class than they claimed. The coupling that answers this is that every
-`fails N of M` sentence here must be claimed by exactly one measurement: a new
-figure is a hard error until it is measured, so it cannot be added silently.
+been written after finding. Version two added a table of named mutations and
+still missed M3, the very numerator that had gone stale, because nothing
+required the table to cover this file's own claims. Version three coupled the
+two but matched ONE PHRASE, `fails N of M`, so three figures already present
+were invisible to it. Version three also declared the thirty matrix cells
+unmeasurable because their check forms no longer exist in the tree -- a cost
+choice dressed as an impossibility, contradicted by this file's own sentence
+that re-deriving the matrix is re-running it. Each version closed a narrower
+class than it claimed. Inverting the default is what ended that, and it paid for
+itself on its first run by finding that the coincident-completion figure could
+not be re-derived at all: its recipe had never been committed. The number was
+sound; it was unverifiable rather than wrong, so the recipe was committed rather
+than the figure retracted.
 
-**One figure is NOT measured** and the script says so on a clean run: the
-six-by-five pre-fix matrix. Those thirty cells record check FORMS that no longer
-exist in the tree, so there is nothing to re-run them against. They are argued,
-not measured, and they are the one part of this file that can still rot quietly.
-
-Run `make -C tb/nvm_port figures` after any change to this suite. It takes 26
-Verilator builds, about three minutes, which is the price of a table that four
-review rounds found stale.
-It has been stale twice. Splitting one T17 check moved every row reaching T17;
+Run `make -C tb/nvm_port figures` after any change to this suite. It takes 36
+Verilator builds, about four minutes, which is the price of figures that four
+review rounds found stale. Two of those rounds found the arm TABLE stale; the
+other two found stale numerators elsewhere in the file, which is why the gate
+covers every figure rather than the table alone.
+The arm table specifically has been stale twice. Splitting one T17 check moved every row reaching T17;
 later, replacing an array-negative check with a bus check moved every row whose
 mutant WEDGES BEFORE T15, because the old check survived those mutants and the
 new one does not. The second time a spot-check missed it: M4 and M5 were
@@ -257,6 +267,8 @@ that removed the thing being tested:
 The general shape: a phase that names a window is not the same as a phase that
 proves it entered one, and the evidence for the difference lived only in the
 "Device-error arm coverage" table, which this file says has gone stale twice.
+That table, and every other figure here, is now re-measured by
+`make -C tb/nvm_port figures` and gated in CI.
 
 ### On checks that cannot fail alone
 
@@ -295,7 +307,13 @@ divergence across the cases I ran" is not "cannot diverge".
 
 FIVE checks in this file were written against what the flash ARRAY held and
 had to be rewritten, because what the array holds is the device MODEL's choice,
-not the port's behaviour. Four device models and one combination were run, RTL byte-identical:
+not the port's behaviour. FIVE device models and one combination were run, RTL
+byte-identical. Four vary what the array RETAINS; the fifth, coincident
+completion, varies the HANDSHAKE instead -- the device raises `dev_done_i` on
+the same edge that moves a pump's final byte, which `KL_pp_nvm_port.sv:151-153`
+says the sticky `done_seen_r` latch exists for. It is a contract freedom rather
+than a broken peer, and the port handles it. Its whole interest is that
+deleting that latch is INVISIBLE without it:
 this one, which keeps every accepted byte; a half-page model, which drops the
 last four on a failure; a page-buffered NOR, which keeps none until the program
 cycle ends with `done`; and a lazy-erase backend, which answers ERASE with
@@ -373,6 +391,7 @@ Applied here:
 | page-buffered NOR | **90 PASS, 0 FAIL** |
 | lazy erase | 89 PASS, 1 FAIL, only the pre-existing `T1` |
 | lazy erase + page-buffered | 89 PASS, 1 FAIL, only `T1` |
+| coincident completion | **90 PASS, 0 FAIL** |
 
 A device model variant is the cheapest way to find a check that tests the
 harness rather than the DUT, and it belongs in the standing mutation set. Each
