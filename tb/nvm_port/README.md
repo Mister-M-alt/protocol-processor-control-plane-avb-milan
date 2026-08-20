@@ -45,9 +45,11 @@ flash map reserves A/B slots — the suite pins what the port DOES guarantee
 rather than a survival this layout cannot give:
 
 - **T15** a torn commit reports `err` and never `done`, with busy low at the
-  pulse; the torn image is neither the old record nor the new one (so the cut is
-  real, not a no-op); it never restores as a VALID record — either the port
-  refuses it at the header or the bytes it forwards fail the manager's CRC,
+  pulse; the cut is proven real on the BUS (ERASE then a WRITE that stopped 12
+  bytes in, checked against the write-handshake log) rather than by reading the
+  array, which is the backend's business; unless the old record survived the
+  tear, it never restores as a VALID record — either the port refuses it at the
+  header or the bytes it forwards fail the manager's CRC,
   which the suite computes itself; and the port is serviceable afterwards.
 - **T16** the property #70 actually needs: a torn commit of one record leaves
   **every other record** untouched. All 8 regions are snapshotted in FULL
@@ -113,8 +115,8 @@ Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
   from what M4 ought to do: `T15 seed record committed` (it precedes the cut);
   `T15 busy raised then low at the err pulse` and `T17 busy raised then low at
   the err pulse` (a wedged port holds busy high and never pulses, so neither
-  pair is contradicted); `T15 the torn image is neither the old record nor the
-  new one`; and T16's two isolation checks, `erased no other region` and `no
+  pair is contradicted); `T15 the cut was real: ERASE then a WRITE stopped 12
+  bytes in`; and T16's two isolation checks, `erased no other region` and `no
   other region's bytes moved`, which pass VACUOUSLY because a wedged port
   issues no further device traffic and so nothing else can move. That vacuity
   is what the T16 guard exists to answer.
@@ -142,23 +144,28 @@ Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
 
 `KL_pp_nvm_port.sv` has twelve `if (dev_err_i)` arms. Each was forced to
 `1'b0` in turn and the suite re-run, so this table is measured, not argued.
-It was stale once already: splitting one T17 check into two moved every row
-that reaches T17, and the table was not re-run. Any change to the suite
-invalidates every number here, and the whole table has to be re-swept.
+It has been stale twice. Splitting one T17 check moved every row reaching T17;
+later, replacing an array-negative check with a bus check moved every row whose
+mutant WEDGES BEFORE T15, because the old check survived those mutants and the
+new one does not. The second time a spot-check missed it: M4 and M5 were
+re-measured and both were genuinely unchanged, since under those the bytes were
+really sent before the swallowed error. **Checking only the figures you changed
+is the wrong sample.** Any change to the suite invalidates every number here and
+the whole table has to be re-swept.
 
 | line | state | checks failed |
 |---|---|---|
 | 185 | `S_WEREQ`  | **0 — uncovered** |
-| 194 | `S_WEWAIT` | 38 |
+| 194 | `S_WEWAIT` | 39 |
 | 204 | `S_WWREQ`  | **0 — uncovered** |
-| 214 | `S_WHPUMP` | 33 |
+| 214 | `S_WHPUMP` | 34 |
 | 227 | `S_WDPUMP` | 22 |
 | 237 | `S_WWAIT`  | 10 |
 | 248 | `S_RHREQ`  | **0 — uncovered** |
 | 258 | `S_RHCOLL` | 5 |
 | 276 | `S_RHWAIT` | 4 |
 | 303 | `S_RPREQ`  | **0 — uncovered** |
-| 313 | `S_RPPUMP` | 32 |
+| 313 | `S_RPPUMP` | 33 |
 | 323 | `S_RPWAIT` | 3 |
 
 **Eight of twelve are covered; four are not.** The survivors are the four
@@ -221,6 +228,13 @@ record nor the new one` reddens for a device doing exactly what #70 asks. A
 check that goes red when the device gets the requirement RIGHT is the wrong
 check. Where the property genuinely is about the array, CONDITION it on what
 the array holds rather than asserting it, the way T15's header check does.
+
+But a condition must be LIVE, or it hides a check as effectively as it rescues
+one: a guard always true under the model CI runs silently disables everything
+behind it. Check both arms independently. Fix B's disjunction was verified that
+way -- under the pristine model `old_intact` fails alone while
+`refused || crc_rejects` passes alone, and under lazy erase the reverse -- so it
+is conditioned AND still doing work in CI.
 
 Applied here:
 
