@@ -108,6 +108,12 @@ struct Harness {
   int done_pulses = 0, err_pulses = 0;
   bool busy_seen = false, busy_ok = true; // busy must be LOW at done/err (F02.8)
   std::vector<uint8_t> rbytes;
+  // What the port SENT on the device write bus, captured at the handshake.
+  // Distinct from `store` on purpose: after a device error, what the array
+  // retained is the device model's choice (this model keeps every accepted
+  // byte; a page-buffered NOR keeps none until the program cycle ends), while
+  // what the port put on the bus is the port's own behaviour under any model.
+  std::vector<uint8_t> sent;
   long cycles = 0;
 
   explicit Harness(VKL_pp_nvm_port* d) : dut(d) {
@@ -162,6 +168,7 @@ struct Harness {
     // write byte accept
     if (d_st == 1 && d_cur.op == OP_WRITE) {
       if (dut->dev_wready_i && dut->dev_wvalid_o) {
+        sent.push_back(dut->dev_wdata_o);
         store[d_cur.region % N_REGIONS][(d_cur.offset + d_bytes) % REG_BYTES] =
             dut->dev_wdata_o;
         ++d_bytes;
@@ -243,6 +250,7 @@ struct Harness {
     done_pulses = err_pulses = 0;
     busy_seen = false; busy_ok = true;
     rbytes.clear();
+    sent.clear();
   }
 
   void start(bool we, uint8_t rec) {
@@ -539,12 +547,19 @@ int main(int argc, char** argv) {
     }
     CHECK(refused || crc_rejects,
           "T15 a torn record never restores as a valid one");
-    // ...and record WHICH branch fired: today the port forwards the whole
-    // 32-byte image and only the CRC rejects it. Pinning that keeps a
-    // regression toward refusing every restore from silently satisfying
-    // the disjunction above.
-    CHECK(crc_rejects && h.rbytes.size() == whole.size(),
-          "T15 the torn image is forwarded whole and rejected on CRC");
+    // ...and pin WHICH branch fired, so a regression toward refusing every
+    // restore cannot satisfy the disjunction above in silence. Which branch
+    // legitimately DIFFERS by device: this model keeps the bytes it accepted
+    // so the header survives and only the CRC rejects, while a page-buffered
+    // NOR discards them and the port rightly refuses at the header. So do not
+    // pin a branch -- pin that the branch the port took AGREES with what the
+    // array actually holds. That is the port's own behaviour under any model.
+    bool hdr_intact = (h.store[7][0] == 0x17 && h.store[7][1] == 0x22
+                       && ((h.store[7][4] << 8) | h.store[7][5]) <= MAXP);
+    bool asked_payload = (h.ops.size() == 2 && h.ops[1].op == OP_READ
+                          && h.ops[1].region == 7 && h.ops[1].offset == 8);
+    CHECK(hdr_intact ? asked_payload : !asked_payload,
+          "T15 the port forwarded or refused according to the stored header");
 
     // the port survives the cut: a clean re-commit is byte-exact again
     h.ops.clear();
@@ -604,18 +619,18 @@ int main(int argc, char** argv) {
     // power is in store[1][5] == 0xFF. The op log and the erase count are
     // what a no-traffic port cannot fake: both are driven by dev_req_o.
     //
-    // The byte comparison is a MODEL-CONSISTENCY check, and is honest about
-    // that: it pins what THIS device model's tear semantics produce. Under a
-    // model that leaves the last page half-programmed it reddens with no DUT
-    // change, exactly as the `late`-relative restore check in T17 did before
-    // it was made array-relative. It is kept because the offset and data it
-    // pins are the port's, but it is not load-bearing for anti-vacuity.
+    // The byte check reads `sent`, the bus handshake log, NOT the array. What
+    // the array retained after an error is the device model's choice -- this
+    // model keeps every accepted byte, a half-page model drops the last four,
+    // a page-buffered NOR keeps none until the program cycle ends -- so an
+    // array-relative assertion here tests the model. What the PORT put on the
+    // bus is the port's behaviour under all three.
     CHECK(h.ops.size() == 2 && op_is(h.ops[1], OP_WRITE, 1, 0,
                                      static_cast<int>(torn.size())),
           "T16 the torn commit issued ERASE then the WRITE for this record");
-    CHECK(std::equal(torn.begin(), torn.begin() + 5, h.store[1])
-              && h.store[1][5] == 0xFF,
-          "T16 exactly the 5 bytes before the cut landed, the rest still erased");
+    CHECK(h.sent.size() == 5 && std::equal(h.sent.begin(), h.sent.end(),
+                                           torn.begin()),
+          "T16 the port sent exactly the 5 record bytes before the cut");
     CHECK(!other_erased, "T16 the torn commit erased no other region");
     CHECK(!other_moved, "T16 no other region's bytes moved");
     CHECK(h.store_match(4, keep),
@@ -663,27 +678,25 @@ int main(int argc, char** argv) {
     // page half-programmed. The port cannot tell those apart and neither can
     // this model, so the phase pins what the PORT owes -- err not done, busy
     // released, bus not stranded -- and only that the port stays usable.
-    // The read side after a completion-window error is a PORT property, but
-    // comparing what comes back against `late` pins the MODEL instead: this
-    // model writes every byte and then errors, while real NOR may leave the
-    // last page half-programmed -- exactly the case named three lines above.
-    // A model that rolls its last bytes back to 0xFF reddens that comparison
-    // with no DUT change, which makes it a test of the device model.
-    // Compare against what the array ACTUALLY holds, so the check states the
-    // port's property under either model. The length pin is load-bearing on
-    // its own: a bare slice compare passes vacuously on an empty forward.
-    h.ops.clear();
-    rc = h.restore(3);
-    std::vector<uint8_t> in_array(h.store[3], h.store[3] + late.size());
-    CHECK(rc == 0 && h.rbytes.size() == late.size(),
-          "T17 the region still restores, forwarding the whole record");
-    CHECK(h.rbytes == in_array,
-          "T17 what restores is what the array holds, whatever the tear left");
-
+    // The read side after the error exit is a port property, but it must be
+    // asserted where the array is KNOWN. What region 3 holds right after the
+    // tear is the device model's choice, so restoring here would test the
+    // model (two earlier spellings did exactly that). Commit a good record
+    // first -- that ends in `done`, so every model agrees what the array now
+    // holds -- and only then exercise the read side, pinning the device ops
+    // the way T2 does so a fabricated restore cannot pass.
     h.ops.clear();
     rc = h.commit(3, rec);
     CHECK(rc == 0 && h.store_match(3, rec),
           "T17 the port accepts the next commit after a late failure");
+
+    h.ops.clear();
+    rc = h.restore(3);
+    CHECK(rc == 0 && h.rbytes == rec,
+          "T17 the read side works after the error exit: restore byte-exact");
+    CHECK(h.ops.size() == 2 && op_is(h.ops[0], OP_READ, 3, 0, 8)
+              && op_is(h.ops[1], OP_READ, 3, 8, (int)rec.size() - 8),
+          "T17 that restore really issued READ hdr then READ payload");
   }
 
   // ---------------------------------------------------------------- T18

@@ -141,21 +141,24 @@ Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
 ### Device-error arm coverage
 
 `KL_pp_nvm_port.sv` has twelve `if (dev_err_i)` arms. Each was forced to
-`1'b0` in turn and the suite re-run, so this table is measured, not argued:
+`1'b0` in turn and the suite re-run, so this table is measured, not argued.
+It was stale once already: splitting one T17 check into two moved every row
+that reaches T17, and the table was not re-run. Any change to the suite
+invalidates every number here, and the whole table has to be re-swept.
 
 | line | state | checks failed |
 |---|---|---|
 | 185 | `S_WEREQ`  | **0 — uncovered** |
-| 194 | `S_WEWAIT` | 37 |
+| 194 | `S_WEWAIT` | 38 |
 | 204 | `S_WWREQ`  | **0 — uncovered** |
-| 214 | `S_WHPUMP` | 32 |
-| 227 | `S_WDPUMP` | 21 |
-| 237 | `S_WWAIT`  | 9 |
+| 214 | `S_WHPUMP` | 33 |
+| 227 | `S_WDPUMP` | 22 |
+| 237 | `S_WWAIT`  | 10 |
 | 248 | `S_RHREQ`  | **0 — uncovered** |
 | 258 | `S_RHCOLL` | 5 |
 | 276 | `S_RHWAIT` | 4 |
 | 303 | `S_RPREQ`  | **0 — uncovered** |
-| 313 | `S_RPPUMP` | 31 |
+| 313 | `S_RPPUMP` | 32 |
 | 323 | `S_RPWAIT` | 3 |
 
 **Eight of twelve are covered; four are not.** The survivors are the four
@@ -185,3 +188,39 @@ The rule this suite follows, stated once: a check may restate a stronger
 neighbour when it states the SPECIFICATION, but a check that only restates the
 same implementation fact in other words is removed. That is why `rc != -1` was
 dropped from T17 while the three above were kept.
+
+
+### Where a check may read from
+
+Three checks in this file were written against what the flash ARRAY held and
+had to be rewritten, because what the array holds after a device error is the
+device MODEL's choice, not the port's behaviour. Three models were run against
+the suite with the RTL byte-identical: this one, which keeps every accepted
+byte; a half-page model, which drops the last four on a failure; and a
+page-buffered NOR, which keeps none until the program cycle ends with `done`.
+That last one is literally the device the T17 prose above describes.
+
+The rule that ends the regress, and it is the reviewer's:
+
+> **After a device `done`, assert on the array. After a device `err`, assert on
+> what the port SENT or REQUESTED, never on what the array retained.**
+
+Negative claims survive either way, which is why `T15 the torn image is neither
+the old record nor the new one` holds under all three models unchanged.
+
+Applied here:
+
+- **T16** reads `sent`, the write-bus handshake log, instead of the region's
+  bytes. Identical discriminating power, zero model dependency.
+- **T17** commits a good record first, so the array is known under every model
+  because that commit ended in `done`, and only then exercises the read side,
+  pinning the device ops the way T2 does so a fabricated restore cannot pass.
+- **T15**'s branch pin no longer records WHICH branch fired, because which one
+  fires legitimately differs by device: this model keeps the bytes so the CRC
+  rejects, a page-buffered NOR discards them so the port rightly refuses at the
+  header. It now pins that the branch the port took AGREES with what the array
+  actually holds, which is the port's own behaviour under any model.
+
+All three models give **83 checks, 83 PASS** with `hdl/` untouched. A device
+model variant is the cheapest way to find a check that tests the harness rather
+than the DUT, and it belongs in the standing mutation set for that reason.
