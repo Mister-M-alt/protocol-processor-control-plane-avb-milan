@@ -421,7 +421,10 @@ int main(int argc, char** argv) {
   CHECK(rc == 0 && h.done_pulses == 1, "T7b port recovered: retry commits");
   CHECK(h.store_match(4, f7), "T7b retry byte-exact");
 
-  // ---- T8: device error mid WRITE data phase -----------------------------
+  // ---- T8: device error during the WRITE's HEADER pump -------------------
+  // op 1 is the WRITE and it carries the framed record, so a cut after 5
+  // bytes is still inside the 8-byte header -- the record's payload has not
+  // started. T15 cuts the same op at 12 bytes for the data phase proper.
   h.arm_err(1, 5);
   h.ops.clear();
   rc = h.commit(4, f7);
@@ -511,7 +514,10 @@ int main(int argc, char** argv) {
     h.disarm_err();
     CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
           "T15 torn commit reports err, never done");
-    CHECK(h.busy_ok, "T15 busy low at the err pulse");
+    // busy_seen too: busy_ok alone starts true and only clears when a pulse
+    // coincides with busy high, so it passes vacuously if the port never
+    // pulsed at all -- which is exactly the wedge this phase must catch.
+    CHECK(h.busy_seen && h.busy_ok, "T15 busy raised then low at the err pulse");
 
     // the cut must be REAL: neither the old record nor the new one is intact
     CHECK(!h.store_match(7, whole) && !h.store_match(7, replacement),
@@ -531,6 +537,12 @@ int main(int argc, char** argv) {
     }
     CHECK(refused || crc_rejects,
           "T15 a torn record never restores as a valid one");
+    // ...and record WHICH branch fired: today the port forwards the whole
+    // 32-byte image and only the CRC rejects it. Pinning that keeps a
+    // regression toward refusing every restore from silently satisfying
+    // the disjunction above.
+    CHECK(crc_rejects && h.rbytes.size() == whole.size(),
+          "T15 the torn image is forwarded whole and rejected on CRC");
 
     // the port survives the cut: a clean re-commit is byte-exact again
     h.ops.clear();
@@ -548,21 +560,84 @@ int main(int argc, char** argv) {
     rc = h.commit(4, keep);
     CHECK(rc == 0 && h.store_match(4, keep), "T16 neighbour record committed");
 
-    int erases_before = h.erase_count[4];
+    // snapshot EVERY region: checking only the neighbour goes blind if the
+    // clobber lands one region over, and the README claims "every other
+    // record", not "the record next door".
+    int erases_before[N_REGIONS];
+    std::vector<std::vector<uint8_t>> store_before(N_REGIONS);
+    for (int r = 0; r < N_REGIONS; ++r) {
+      erases_before[r] = h.erase_count[r];
+      store_before[r].assign(h.store[r], h.store[r] + 64);
+    }
     h.ops.clear();
     h.arm_err(1, 5);
     rc = h.commit(1, frame(1, pattern(16, 0x22)));
     h.disarm_err();
     CHECK(rc == 1, "T16 the neighbouring commit was torn");
 
-    CHECK(h.erase_count[4] == erases_before,
-          "T16 the torn commit never erased the neighbour's region");
+    bool other_erased = false, other_moved = false;
+    for (int r = 0; r < N_REGIONS; ++r) {
+      if (r == 1) continue;                       // the torn record's own region
+      if (h.erase_count[r] != erases_before[r]) other_erased = true;
+      if (!std::equal(store_before[r].begin(), store_before[r].end(),
+                      h.store[r])) other_moved = true;
+    }
+    // Anti-vacuity: "no OTHER region moved" is trivially true if the commit
+    // never reached the device at all. Pin that it DID touch its own region
+    // first, so the isolation claim below is made about a real operation.
+    CHECK(h.erase_count[1] > erases_before[1],
+          "T16 the torn commit really did erase its own region");
+    CHECK(!other_erased, "T16 the torn commit erased no other region");
+    CHECK(!other_moved, "T16 no other region's bytes moved");
     CHECK(h.store_match(4, keep),
           "T16 the neighbour's stored bytes are untouched");
     h.ops.clear();
     rc = h.restore(4);
     CHECK(rc == 0 && h.rbytes == keep,
           "T16 the neighbour still restores byte-exactly after the cut");
+  }
+
+  // ---------------------------------------------------------------- T17
+  // The cut that NOR flash actually produces. T15/T16 cut mid-stream, while
+  // bytes are still moving. A real program failure is not reported then: the
+  // device latches the bytes, starts the program cycle, and raises its error
+  // only when that cycle ends -- after the LAST byte, with busy still high.
+  // That is the port's S_WWAIT arm (KL_pp_nvm_port.sv:236-239), the widest
+  // window in a commit, and no phase above enters it. Arming at exactly the
+  // write length takes the device's fail branch in preference to its done
+  // branch, so every byte is consumed and then err replaces done.
+  {
+    std::vector<uint8_t> rec = frame(3, pattern(20, 0xC5));
+    h.ops.clear();
+    int rc = h.commit(3, rec);
+    CHECK(rc == 0 && h.store_match(3, rec), "T17 seed record committed");
+
+    std::vector<uint8_t> late = frame(3, pattern(20, 0xD6));
+    h.ops.clear();
+    // op 0 = ERASE, op 1 = WRITE. The WRITE carries the whole framed record,
+    // so cutting after that many bytes lands in the completion window.
+    h.arm_err(1, static_cast<int>(late.size()));
+    rc = h.commit(3, late);
+    h.disarm_err();
+    CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
+          "T17 a failure in the completion window reports err, never done");
+    CHECK(h.busy_seen && h.busy_ok,
+          "T17 busy raised then low at the err pulse");
+    // Separate the two ways this can break. run_op returns -1 when nothing
+    // pulses inside 100k cycles, so a port that ignores dev_err_i here does
+    // not merely answer wrongly, it never answers at all -- name that.
+    CHECK(rc != -1, "T17 the port answered rather than wedging in S_WWAIT");
+
+    // What the array holds afterwards is NOT pinned here, and deliberately.
+    // This device model writes every byte and then reports the failure, so
+    // region 3 now holds a well-formed `late`. Real NOR may leave the last
+    // page half-programmed. The port cannot tell those apart and neither can
+    // this model, so the phase pins what the PORT owes -- err not done, busy
+    // released, bus not stranded -- and only that the port stays usable.
+    h.ops.clear();
+    rc = h.commit(3, rec);
+    CHECK(rc == 0 && h.store_match(3, rec),
+          "T17 the port accepts the next commit after a late failure");
   }
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);

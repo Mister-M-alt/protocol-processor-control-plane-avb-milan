@@ -4,7 +4,7 @@
 Proves the class-F NVM port (`hdl/packet_engine/KL_pp_nvm_port.sv`,
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8 +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8): `make` = build + run,
-exit 0 = PASS, 66 checks. `-GMAX_PAYLOAD_P=1024` pins the geometry the C++
+exit 0 = PASS, 74 checks. `-GMAX_PAYLOAD_P=1024` pins the geometry the C++
 constants mirror.
 
 The harness plays BOTH neighbors, independently of the RTL: a **manager BFM**
@@ -50,9 +50,22 @@ rather than a survival this layout cannot give:
   refuses it at the header or the bytes it forwards fail the manager's CRC,
   which the suite computes itself; and the port is serviceable afterwards.
 - **T16** the property #70 actually needs: a torn commit of one record leaves
-  **every other record** untouched — the neighbour's region is never erased, its
-  stored bytes are byte-identical, and it still restores byte-exactly after the
-  cut. One interrupted save must not lose the whole saved set.
+  **every other record** untouched. All 8 regions are snapshotted before the
+  cut and compared after, so a clobber that lands two regions over is caught,
+  not just one next door; the neighbour still restores byte-exactly afterwards.
+  The isolation claim is guarded against vacuity by first pinning that the torn
+  commit really did erase its OWN region — otherwise "nothing else moved" would
+  also hold for a port that never reached the device at all.
+- **T17** the cut a NOR device actually produces. T15 and T16 cut while bytes
+  are still moving, but a real program failure is not reported then: the device
+  latches the bytes, starts the program cycle, and raises its error when that
+  cycle ends — after the last byte, busy still high. That is the port's
+  `S_WWAIT` arm, the widest window in a commit, and nothing else in the suite
+  enters it. The phase pins what the port owes there — `err` and never `done`,
+  busy released, the bus not stranded, and the port usable for the next commit.
+  What the array holds afterwards is deliberately NOT pinned: this device model
+  writes every byte before failing, while real NOR may leave the last page
+  half-programmed, and the port cannot distinguish those.
 
 Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
 - **M1** commit skips the ERASE (`S_WEREQ` target rewritten to `S_WWREQ`):
@@ -62,6 +75,17 @@ Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
 - **M3** payload pump off-by-one (`bcnt_r == plen_r` for `plen_r - 1`, both
   directions): fails 38 of 55 (every data-phase op times out or mismatches).
 - **M4** (2026-08-20) the write phase swallows the device error (`S_WDPUMP`'s
-  `if (dev_err_i)` forced false): fails 7 of 66 — every T15/T16 check. A torn
-  commit then looks clean, which is exactly the false success #70 exists to
-  remove.
+  `if (dev_err_i)` forced false): fails 12 of 74. A torn commit then looks
+  clean, which is exactly the false success #70 exists to remove. It does NOT
+  fail every T15/T16/T17 check, and the survivors are worth naming: the seed
+  commits pass because they happen before the cut, and T15's busy check and its
+  "neither the old record nor the new one" check pass because the port wedges
+  instead of pulsing. T16's isolation checks would also have passed vacuously —
+  a wedged port issues no further device traffic, so nothing else can move —
+  which is why T16 now pins its own region's erase first.
+- **M5** (2026-08-20) the completion window swallows the device error
+  (`S_WWAIT`'s `if (dev_err_i)` forced false): fails 3 of 74, all in T17, and
+  survives the whole suite without it. The port waits for a `done` that a
+  failed device will never send, so the commit never answers at all — the
+  distinct "answered rather than wedging in `S_WWAIT`" check names that failure
+  mode rather than reporting it as a wrong answer.
