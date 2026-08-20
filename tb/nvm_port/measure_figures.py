@@ -335,32 +335,56 @@ MATRIX_ROWS = ["T16 byte comparison", "T17 restore vs the record",
 #: error both made, and both agreed on all thirty cells while one of them had
 #: merged two checks and moved an array capture. Git is the third party.
 #:
-#: (revision, predicate that must appear VERBATIM in that revision's file).
+#: (matrix row, revision, predicate that must appear VERBATIM in that file).
+#:
+#: The row is not decoration. The first version of this pin had five predicates
+#: and all five were T17 -- the row where a defect had already been found and
+#: fixed. The four rows where nothing had been found were the four with no pin,
+#: and swapping T16's predicate for a DIFFERENT one was caught by nothing: not
+#: by the pin, and not by the cell comparison either, since all thirty cells
+#: stayed identical. An instrument that covers exactly where a defect was
+#: already found is the same failure this gate has now made in five different
+#: costumes, so `git_verbatim` requires every row to carry at least one pin.
 GIT_FORMS = [
-    ("62d96d6~1", "std::vector<uint8_t> in_array(h.store[3], h.store[3] + late.size());"),
-    ("62d96d6~1", "CHECK(rc == 0 && h.rbytes.size() == late.size(),"),
-    ("62d96d6~1", "CHECK(h.rbytes == in_array,"),
-    ("dc354be~1", "CHECK(rc == 0 && h.rbytes == late,"),
-    ("dc354be~1", "rc = h.restore(3);"),
+    ("T17 restore vs the record", "dc354be~1", "CHECK(rc == 0 && h.rbytes == late,"),
+    ("T17 restore vs the record", "dc354be~1", "rc = h.restore(3);"),
+    ("T17 restore vs the array", "62d96d6~1",
+     "std::vector<uint8_t> in_array(h.store[3], h.store[3] + late.size());"),
+    ("T17 restore vs the array", "62d96d6~1", "CHECK(rc == 0 && h.rbytes.size() == late.size(),"),
+    ("T17 restore vs the array", "62d96d6~1", "CHECK(h.rbytes == in_array,"),
+    ("T16 byte comparison", "dc354be~1", "CHECK(std::equal(torn.begin(), torn.begin() + 5, h.store[1])"),
+    ("T16 byte comparison", "dc354be~1", "&& h.store[1][5] == 0xFF,"),
+    ("T15 branch pin", "dc354be~1", "CHECK(crc_rejects && h.rbytes.size() == whole.size(),"),
+    ("T15 cut was real", "dc354be~1",
+     "CHECK(!h.store_match(7, whole) && !h.store_match(7, replacement),"),
+    ("T15 #70 property, unconditioned", "dc354be~1", "CHECK(refused || crc_rejects,"),
 ]
 
 
 def git_verbatim():
     """Problems where an injected predicate is not what git records."""
     bad = []
-    for rev, pred in GIT_FORMS:
+    # Every row must carry a pin. Without this the pin covers whichever row
+    # somebody last found a bug in, which is precisely the coverage shape that
+    # let the T16 predicate be swapped for a different one unnoticed.
+    for row in MATRIX_ROWS:
+        if not any(r == row for r, _rev, _p in GIT_FORMS):
+            bad.append(f"git-form pin: matrix row '{row}' has NO pinned "
+                       "predicate, so nothing checks that its injected form is "
+                       "the form that was removed")
+    for row, rev, pred in GIT_FORMS:
         blob = subprocess.run(["git", "show", f"{rev}:tb/nvm_port/sim_main.cpp"],
                               cwd=SRC, capture_output=True, text=True)
         if blob.returncode:
             bad.append(f"git-form pin: cannot read {rev} -- the revision the "
                        "matrix injection was reconstructed from is gone")
         elif pred not in blob.stdout:
-            bad.append(f"git-form pin: {pred!r:.70} is NOT in {rev}. The "
-                       "injected form is not the removed form, so the matrix "
-                       "row measures something the suite never had.")
+            bad.append(f"git-form pin [{row}]: {pred!r:.60} is NOT in {rev}. "
+                       "The injected form is not the removed form, so the "
+                       "matrix row measures something the suite never had.")
         elif not any(pred in code for _r, _a, code in MATRIX_FORMS):
-            bad.append(f"git-form pin: {pred!r:.70} is in {rev} but no longer "
-                       "in any injection -- the pin has gone slack")
+            bad.append(f"git-form pin [{row}]: {pred!r:.60} is in {rev} but no "
+                       "longer in any injection -- the pin has gone slack")
     return bad
 
 
@@ -446,6 +470,12 @@ FIGURE_RE = re.compile(
 #: measurements, still open one door over. Both are checked, and the absorbed
 #: count is printed beside the reason on every clean run.
 WAIVER_CAP = 4
+#: ...and a cap on the TOTAL, because per-waiver is not a bound on the whole.
+#: Six individually legal waivers silence all twenty-one figures and the gate
+#: exits 0. The threat here is drift rather than malice, so this is a ratchet
+#: with a comment attached: raising it is a deliberate act that shows up in a
+#: diff, which is all it needs to be.
+WAIVER_TOTAL_CAP = 6
 
 WAIVERS = [
     # The README's own paragraph about what this gate does NOT close quotes two
@@ -575,10 +605,14 @@ def claim_coverage(flat):
                            "need exactly 1 -- the claim was reworded, moved or "
                            "deleted, so nothing checks this measurement any more")
             spans.extend((h.start(), h.end()) for h in hits)
+    waived_total = set()
     for pat, _reason in WAIVERS:
         hits = list(re.finditer(pat, flat))
-        absorbed = sum(1 for m in FIGURE_RE.finditer(flat)
-                       if any(h.start() < m.end() and m.start() < h.end() for h in hits))
+        absorbed = 0
+        for m in FIGURE_RE.finditer(flat):
+            if any(h.start() < m.end() and m.start() < h.end() for h in hits):
+                absorbed += 1
+                waived_total.add(m.span())
         if absorbed == 0:
             bad.append(f"waiver /{pat}/ absorbs no figure at all -- it is dead, "
                        "and a dead waiver is indistinguishable from a live one "
@@ -588,6 +622,11 @@ def claim_coverage(flat):
                        f"{WAIVER_CAP}. A broad waiver silences real claims: "
                        "write one waiver per figure, with its own reason.")
         spans.extend((h.start(), h.end()) for h in hits)
+    if len(waived_total) > WAIVER_TOTAL_CAP:
+        bad.append(f"waivers absorb {len(waived_total)} figures in total, cap is "
+                   f"{WAIVER_TOTAL_CAP}. Each may be individually legal and the "
+                   "aggregate still empties the gate: six legal waivers silence "
+                   "every figure in this file.")
     for m in FIGURE_RE.finditer(flat):
         # OVERLAP, not containment: a claim regex captures the numerator and
         # ends at "... of", while the figure shape runs on through the

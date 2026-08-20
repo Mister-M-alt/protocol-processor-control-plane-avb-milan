@@ -416,6 +416,25 @@ here is the measurement: every pre-fix form re-injected, every model run, RTL
 byte-identical throughout. An attribution sentence drifts from the runs; this
 cannot, because re-deriving it is re-running it.
 
+Re-running is not enough on its own, though, and the reason is worth stating.
+Two people reconstructing these forms from the old commits share whatever
+transcription error both make, and all thirty cells agree either way. That is
+not hypothetical: one reconstruction merged two T17 checks into one conjunction
+and moved the array capture from after the restore to before it, and every cell
+still agreed. So each row's predicates are additionally pinned VERBATIM against
+the revision they were recovered from -- git is the third party, and it costs no
+builds. Every row carries at least one pin, which the gate enforces: the first
+version of that pin had five predicates and all five were T17, the one row where
+a defect had already been found, leaving the other four rows unpinned.
+
+**What neither mechanism sees**, recorded rather than left implicit: a
+STRUCTURAL change that moves no cell. Prepend an extra restore, or reorder the
+phases around an injection, and the predicates stay verbatim while the results
+stay byte-identical. The cell comparison catches structure that moves a result;
+the git pin catches predicate text. A structural change that does neither passes
+both. The merged T17 form was caught only because it also altered predicate
+text, which is luck rather than coverage.
+
 | pre-fix form | pristine | half-page | page-buf | lazy | lazy+pb |
 |---|---|---|---|---|---|
 | T16 byte comparison | pass | **FAIL** | FAIL | FAIL | FAIL |
