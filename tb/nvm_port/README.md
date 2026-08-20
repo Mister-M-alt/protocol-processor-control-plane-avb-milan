@@ -43,9 +43,13 @@ partial record: the record being written is gone, and on the backends that
 erase in place **so is whatever it replaced**. That is a property of writing a
 slot in place, and it is why the flash map reserves A/B slots. It is NOT
 universal: measured with the RTL byte-identical, a backend that both answers
-ERASE lazily and buffers writes to the page leaves the old record intact, so
-the suite pins what the port DOES guarantee and CONDITIONS every claim about
-the array on what the array actually holds:
+ERASE lazily and buffers writes to the page leaves the old record intact. So
+the suite pins what the port DOES guarantee, and where a claim about the array
+follows a device `err` it is either moved onto the bus or conditioned on what
+the array actually holds. Claims that follow a `done` are asserted directly and
+need no condition, which is most of them: 26 sites read the array and exactly
+two condition on it. See "Where a check may read from" for the rule and its one
+known exception:
 
 - **T15** a torn commit reports `err` and never `done`, with busy low at the
   pulse; the cut is proven real on the BUS (ERASE then a WRITE that stopped 12
@@ -233,7 +237,8 @@ The `done` clause carries that qualifier because a device SIDE EFFECT is not
 the port's behaviour either: `T1 erase visible past the record` asserts after a
 `done` and still reddens under lazy erase, since whether an ERASE rewrites the
 array is the backend's business. T1 is pre-existing and left as it is, named
-here as the one known remaining member rather than quietly fixed.
+here as the one known remaining member rather than quietly fixed. It is the
+exception the power-cut preamble points at.
 
 **A negative claim about the array is NOT automatically safe.** An earlier
 version of this section said it was, and that was false: under lazy erase
