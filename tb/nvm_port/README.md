@@ -39,10 +39,13 @@ not pinned by the doc.
 
 Power-cut coverage (issue #70, added 2026-08-20). A commit is ERASE(region)
 then WRITE(0, 8+plen), so a cut inside the WRITE leaves the region erased plus a
-partial record: the record being written is gone **and so is whatever it
-replaced**. That is a property of writing a slot in place, and it is why the
-flash map reserves A/B slots — the suite pins what the port DOES guarantee
-rather than a survival this layout cannot give:
+partial record: the record being written is gone, and on the backends that
+erase in place **so is whatever it replaced**. That is a property of writing a
+slot in place, and it is why the flash map reserves A/B slots. It is NOT
+universal: measured with the RTL byte-identical, a backend that both answers
+ERASE lazily and buffers writes to the page leaves the old record intact, so
+the suite pins what the port DOES guarantee and CONDITIONS every claim about
+the array on what the array actually holds:
 
 - **T15** a torn commit reports `err` and never `done`, with busy low at the
   pulse; the cut is proven real on the BUS (ERASE then a WRITE that stopped 12
@@ -82,11 +85,11 @@ rather than a survival this layout cannot give:
   `S_WWAIT` arm, the widest window in a commit, and nothing else in the suite
   enters it. The phase pins what the port owes there — `err` and never `done`,
   busy released and the port idle afterwards, and the port usable for the next
-  commit. It also restores the region afterwards: what the array holds is the
-  model's choice, but whether the port still SERVES that region after taking
-  `S_WWAIT`'s error exit is the port's own property, and T17 otherwise
-  exercised only the write side. It does NOT restore the torn region, because
-  what that region holds is the backend's choice: it commits a good record
+  commit. It also exercises the READ side, because whether the port still
+  serves a region after taking `S_WWAIT`'s error exit is its own property and
+  T17 otherwise covered only the write side. It does NOT restore the torn
+  region, because what that region holds is the backend's choice: it commits
+  a good record
   first, which ends in `done` so every model agrees what the array now holds,
   and only then reads it back, pinning the device ops the way T2 does so a
   fabricated restore cannot pass. Two earlier spellings compared against the
@@ -177,12 +180,21 @@ uses fixed cut points on both sides, so the randomized half is still owed.
 
 ### On checks that cannot fail alone
 
-Three added checks are implied by a neighbour: `T16 the neighbour's stored
-bytes are untouched` is subsumed by `no other region's bytes moved` now that
-the latter compares all of `REG_BYTES`; `T15 unless the old record survived, a
-torn image never restores as valid` is weaker than the header-agreement check
-following it; and `T17 the port is idle after the late failure` is structurally
-implied by `rc == 1` plus the next commit succeeding. That last one states F02.8's busy envelope -- busy low once
+TWO added checks are implied by a neighbour: `T16 the neighbour's stored bytes
+are untouched` is subsumed by `no other region's bytes moved` now that the
+latter compares all of `REG_BYTES`; and `T17 the port is idle after the late
+failure` is structurally implied by `rc == 1` plus the next commit succeeding.
+
+A third was listed here and the claim was FALSE. `T15 unless the old record
+survived, a torn image never restores as valid` was called weaker than the
+header-agreement check beside it, on the evidence of twelve arms and four
+models showing no divergence. Measured directly by moving T15's tear into the
+completion window: that check FAILS while the header check PASSES, 2 of 83. It
+can fail alone. The error is the same shape as the corollary retracted below --
+a general claim generalised from the states that happened to be tried -- and it
+is left written down rather than deleted, because "no divergence across the
+cases I ran" is not "cannot diverge", and this file has now made that mistake
+twice. That last one states F02.8's busy envelope -- busy low once
 the terminating pulse has passed -- on the signal that carries it, so it sits
 on the specification side of the rule below rather than restating the
 implementation. They are kept deliberately, because a weak specification
@@ -199,7 +211,7 @@ dropped from T17 while the three above were kept.
 
 FIVE checks in this file were written against what the flash ARRAY held and
 had to be rewritten, because what the array holds is the device MODEL's choice,
-not the port's behaviour. Four models were run with the RTL byte-identical:
+not the port's behaviour. Four device models and one combination were run, RTL byte-identical:
 this one, which keeps every accepted byte; a half-page model, which drops the
 last four on a failure; a page-buffered NOR, which keeps none until the program
 cycle ends with `done`; and a lazy-erase backend, which answers ERASE with
@@ -220,10 +232,20 @@ array is the backend's business. T1 is pre-existing and left as it is, named
 here as the one known remaining member rather than quietly fixed.
 
 **A negative claim about the array is NOT automatically safe.** An earlier
-version of this section said it was, and that was false: under lazy erase the
-old record survives a torn commit intact, so `the torn image is neither the old
-record nor the new one` reddens for a device doing exactly what #70 asks. A
-check that goes red when the device gets the requirement RIGHT is the wrong
+version of this section said it was, and that was false: under lazy erase
+COMBINED WITH page buffering the old record survives a torn commit intact, so
+`the torn image is neither the old record nor the new one` reddens for a device
+doing exactly what #70 asks. The two freedoms are needed TOGETHER, measured by
+printing `old_intact` after T15's tear with the RTL byte-identical:
+
+| model | old record intact |
+|---|---|
+| pristine | 0 |
+| lazy erase alone | 0 |
+| lazy erase + page buffering | **1** |
+
+Under lazy erase alone the write still lands and the old record dies with it.
+A check that goes red when the device gets the requirement RIGHT is the wrong
 check. Where the property genuinely is about the array, CONDITION it on what
 the array holds rather than asserting it, the way T15's header check does.
 
@@ -241,16 +263,17 @@ Applied here:
 - **T17** commits a good record first, so the array is known under every model
   because that commit ended in `done`, and only then exercises the read side,
   pinning the device ops the way T2 does so a fabricated restore cannot pass.
-- **T15**'s branch pin no longer records WHICH branch fired, because which one
-  fires legitimately differs by device: this model keeps the bytes so the CRC
-  rejects, a page-buffered NOR discards them so the port rightly refuses at the
-  header. It now pins that the branch the port took AGREES with what the array
-  actually holds, which is the port's own behaviour under any model.
-
-- **T15** had two members, found only when a fourth model was tried. "The cut
-  was real" is now stated on the bus (ERASE then a WRITE that stopped 12 bytes
-  in, checked against `sent`), and the #70 property is CONDITIONED: unless the
-  old record survived, a torn image never restores as valid.
+- **T15** had THREE members, and the last two surfaced only when a device
+  model beyond the shipping one was tried:
+  - its branch pin no longer records WHICH branch fired, because which one
+    fires legitimately differs by device -- this model keeps the bytes so the
+    CRC rejects, a page-buffered NOR discards them so the port rightly refuses
+    at the header. It pins that the branch the port took AGREES with what the
+    array holds, which is the port's behaviour under any model.
+  - "the cut was real" is stated on the bus: ERASE then a WRITE that stopped
+    12 bytes in, checked against `sent`.
+  - the #70 property is CONDITIONED rather than asserted -- unless the old
+    record survived, a torn image never restores as valid.
 
 | model | result |
 |---|---|
