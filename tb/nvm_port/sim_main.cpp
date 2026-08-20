@@ -486,7 +486,7 @@ int main(int argc, char** argv) {
   CHECK(rc == 0 && h.rbytes == f2, "T14 clean restore after refusals");
   h.tick();
   CHECK(!dut->nvm_busy_o && !dut->nvm_done_o && !dut->nvm_err_o,
-        "idle again at the end");
+        "idle after the refusal phases");
 
   // ---- T15: POWER CUT mid-commit (issue #70) -----------------------------
   // A commit is ERASE(region) then WRITE(0, 8+plen). Cut the power inside the
@@ -514,9 +514,11 @@ int main(int argc, char** argv) {
     h.disarm_err();
     CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
           "T15 torn commit reports err, never done");
-    // busy_seen too: busy_ok alone starts true and only clears when a pulse
-    // coincides with busy high, so it passes vacuously if the port never
-    // pulsed at all -- which is exactly the wedge this phase must catch.
+    // busy_seen is added because busy_ok alone starts true and only clears
+    // when a pulse coincides with busy high, so it passes for a port that
+    // never pulsed. It does NOT catch a wedge: a wedged port holds busy high,
+    // so busy_seen is true and no pulse ever contradicts busy_ok. The wedge is
+    // caught by the rc check above; this pair only pins the pulse's timing.
     CHECK(h.busy_seen && h.busy_ok, "T15 busy raised then low at the err pulse");
 
     // the cut must be REAL: neither the old record nor the new one is intact
@@ -567,7 +569,7 @@ int main(int argc, char** argv) {
     std::vector<std::vector<uint8_t>> store_before(N_REGIONS);
     for (int r = 0; r < N_REGIONS; ++r) {
       erases_before[r] = h.erase_count[r];
-      store_before[r].assign(h.store[r], h.store[r] + 64);
+      store_before[r].assign(h.store[r], h.store[r] + REG_BYTES);
     }
     h.ops.clear();
     h.arm_err(1, 5);
@@ -585,8 +587,20 @@ int main(int argc, char** argv) {
     // Anti-vacuity: "no OTHER region moved" is trivially true if the commit
     // never reached the device at all. Pin that it DID touch its own region
     // first, so the isolation claim below is made about a real operation.
+    // Both halves are needed: the ERASE alone fires even when zero data bytes
+    // ever move (arm_err(1,-1) fails the WRITE before its first byte), so the
+    // region's own bytes must be seen to change as well.
     CHECK(h.erase_count[1] > erases_before[1],
           "T16 the torn commit really did erase its own region");
+    // "the bytes changed" is NOT enough: the ERASE alone changes them, to
+    // 0xFF. What distinguishes a WRITE that moved payload is a byte past the
+    // erased state. Without this, arming the WRITE to fail before its first
+    // byte (arm_err(1, -1)) leaves the whole phase green while proving nothing.
+    bool wrote_payload = false;
+    for (int b = 0; b < REG_BYTES; ++b)
+      if (h.store[1][b] != 0xFF) { wrote_payload = true; break; }
+    CHECK(wrote_payload,
+          "T16 the torn commit really did move payload into its own region");
     CHECK(!other_erased, "T16 the torn commit erased no other region");
     CHECK(!other_moved, "T16 no other region's bytes moved");
     CHECK(h.store_match(4, keep),
@@ -623,10 +637,10 @@ int main(int argc, char** argv) {
           "T17 a failure in the completion window reports err, never done");
     CHECK(h.busy_seen && h.busy_ok,
           "T17 busy raised then low at the err pulse");
-    // Separate the two ways this can break. run_op returns -1 when nothing
-    // pulses inside 100k cycles, so a port that ignores dev_err_i here does
-    // not merely answer wrongly, it never answers at all -- name that.
-    CHECK(rc != -1, "T17 the port answered rather than wedging in S_WWAIT");
+    // A wedge and a wrong answer are different failures and rc == 1 above
+    // already excludes both, so do not restate it. Assert instead what only a
+    // released port can show: busy low and idle once the pulse has passed.
+    CHECK(!dut->nvm_busy_o, "T17 the port is idle after the late failure");
 
     // What the array holds afterwards is NOT pinned here, and deliberately.
     // This device model writes every byte and then reports the failure, so
@@ -639,6 +653,13 @@ int main(int argc, char** argv) {
     CHECK(rc == 0 && h.store_match(3, rec),
           "T17 the port accepts the next commit after a late failure");
   }
+
+  // The real close. The check above used to carry this name but T15/T16/T17
+  // were appended after it, so nothing pinned the port's state at the end of
+  // the run any more -- a tear phase could leave it busy and no check would say.
+  h.tick();
+  CHECK(!dut->nvm_busy_o && !dut->nvm_done_o && !dut->nvm_err_o,
+        "idle again at the end of the run");
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   delete dut;
