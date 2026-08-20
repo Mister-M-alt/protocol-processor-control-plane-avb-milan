@@ -56,8 +56,12 @@ the suite pins what the port DOES guarantee, and where a claim about the array
 follows a device `err` it is either moved onto the bus or conditioned on what
 the array actually holds. Claims that follow a `done` are asserted directly and
 need no condition, which is most of them. Counted in the unit the claim is
-about, CHECK sites whose condition depends on the array: **15 sites, of which 2
-condition on it and 13 do not**. See "Where a check may read from" for the rule
+about, CHECK sites whose condition depends on the array: **16 sites, of which 2
+condition on it and 14 do not**. Counting this needs care and got it wrong once:
+`T16 no other region's bytes moved` reaches the array through `other_moved`, a
+local hoisted 35 lines above its CHECK, so every text sweep for `store` missed
+it -- and that site is the #70 isolation claim itself, the most important member
+of the set. See "Where a check may read from" for the rule
 and its one known exception:
 
 - **T15** a torn commit reports `err` and never `done`, with busy low at the
@@ -79,7 +83,7 @@ and its one known exception:
   the first two were themselves vacuous, which is worth recording: "the
   region's bytes changed" is satisfied by the ERASE alone, and "some byte is
   not 0xFF" is satisfied by whatever an earlier phase left behind — region 1
-  still holds T5b's record from `sim_main.cpp:375` eleven phases later, so that
+  still holds T5b's record (the `f5b` commit in T5) eleven phases later, so that
   spelling passed even under a mutant where the port wedged and issued no
   device traffic at all. What actually defends the claim is the pair of checks
   that READ THE DUT: the op log must show ERASE then the WRITE for this record,
@@ -114,13 +118,22 @@ and its one known exception:
   header collect — which sits on the boot restore walk, the one path where a
   torn image is actually consumed. All three survived the suite before T18.
 
-Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
-- **M1** commit skips the ERASE (`S_WEREQ` target rewritten to `S_WWREQ`):
-  fails 11 of 55 (op-log shape, erase pulse/visibility, erase-error path).
-- **M2** magic gate dropped from `hdr_ok_w`: fails 5 of 55 (both bad-magic
-  refusals and the nothing-forwarded check).
+Mutation-proven (backup → sed → run → restore → green). **These figures are
+against the 83-check suite; earlier revisions of this file carried 55-era
+numbers for M1 to M3 long after the suite grew.**
+- **M1** commit skips the ERASE: the transition INTO `S_WEREQ` (`:175`)
+  rewritten to `S_WWREQ`, so no ERASE is ever issued. **Fails 19 of 83**
+  (op-log shape, erase pulse/visibility, erase-error path).
+  The description used to read "`S_WEREQ` target rewritten", which is ambiguous
+  and the two readings differ enormously: rewriting what `S_WEREQ` itself
+  transitions to (`:189`), so the ERASE is REQUESTED but never awaited, **fails
+  only 1 of 83**. That sibling is a real coverage gap and is recorded as one
+  rather than hidden by the ambiguity.
+- **M2** magic gate dropped from `hdr_ok_w`: **fails 5 of 83** (both bad-magic
+  refusals and the nothing-forwarded check). Note this drops BOTH magic bytes;
+  the low byte alone is uncovered, see the gap list below.
 - **M3** payload pump off-by-one (`bcnt_r == plen_r` for `plen_r - 1`, both
-  directions): fails 38 of 55 (every data-phase op times out or mismatches).
+  directions): **fails 61 of 83** (every data-phase op times out or mismatches).
 - **M4** (2026-08-20) the write phase swallows the device error (`S_WDPUMP`'s
   `if (dev_err_i)` forced false): **fails 22 of 83**. A torn commit then looks
   clean, which is exactly the false success #70 exists to remove. Six checks
@@ -276,7 +289,8 @@ But a condition must be LIVE, or it hides a check as effectively as it rescues
 one: a guard always true under the model CI runs silently disables everything
 behind it. Check both arms independently. Fix B's disjunction was verified that
 way -- under the pristine model `old_intact` fails alone while
-`refused || crc_rejects` passes alone, and under lazy erase the reverse -- so it
+`refused || crc_rejects` passes alone, and under lazy erase PLUS page buffering
+the reverse -- lazy erase alone gives the same result as pristine -- so it
 is conditioned AND still doing work in CI.
 
 Applied here:
@@ -356,3 +370,22 @@ Recorded so the phase list does not read as closing #70:
   of a badly-behaved one is untested. The five variants below all vary what the
   array RETAINS; none varies the handshake. Issues #14 and #15 are both defects
   this suite is structurally blind to for that reason.
+- **No phase asserts `rst_n` after init.** "Power cut" means "the device raised
+  `err`" throughout this file. A real reset mid-commit is the path a power cut
+  actually takes, and it is not modelled: after one, the port forwards a 32-byte
+  torn image with 23 bytes erased as a well-formed record. That is #70's
+  "half-record that restores as garbage", reached the way it actually happens.
+  Tracked as issue #18.
+- **Four RTL mechanisms have zero coverage**, found by mutation and tracked in
+  issue #19: the low magic byte (`hdr_r[1]`, since both magic tests corrupt only
+  the high byte), the payload bound's upper edge (`<=` to `<` is green, so the
+  largest legal record can be silently refused), the sticky `done_seen_r` latch
+  (deleting it two ways is green; under a coincident-completion model the same
+  mutations fail 61 of 83), and the short-read defence at `:268`, whose failure
+  mode is a hang on the boot restore walk and which no `dev_err_i` mutation can
+  reach because it guards `dev_done_i`.
+- **The `err` clause of the rule has FOUR known exceptions, not one.** T1 is
+  named below; T16's three isolation checks are the others, and a coarse-erase
+  model where a sector spans regions reddens all three with the RTL untouched.
+  The erase-count check does not redden, which is the asymmetry the rule exists
+  to describe.

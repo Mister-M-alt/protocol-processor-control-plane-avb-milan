@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
 #include <vector>
 #include "VKL_pp_nvm_port.h"
 #include "verilated.h"
@@ -623,7 +624,7 @@ int main(int argc, char** argv) {
     // the byte comparison after them. Two earlier spellings were vacuous:
     // "the bytes changed" is satisfied by the ERASE alone, and "some byte is
     // not 0xFF" is satisfied by residue -- region 1 still holds T5b's record
-    // (sim_main.cpp:375) eleven phases later, so that guard passed even when
+    // (the f5b commit in T5) eleven phases later, so that guard passed even when
     // the port wedged and issued no traffic at all. Note the byte comparison
     // does NOT separate those cases by itself either: torn[0..4] is
     // 17 22 01 01 00, byte-identical to the T5b prefix, so all its separating
