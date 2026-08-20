@@ -69,11 +69,12 @@ rather than a survival this layout cannot give:
   that READ THE DUT: the op log must show ERASE then the WRITE for this record,
   and the region's erase count must have moved. Both are driven by `dev_req_o`,
   and a port issuing nothing can fake neither. The byte comparison beside them
-  is deliberately NOT load-bearing, and the code says so: `torn[0..4]` is
-  byte-identical to the T5b residue prefix, so all its separating power sits in
-  `store[1][5] == 0xFF`, and it reddens under a device model that leaves the
-  last page half-programmed even with the RTL untouched. It is kept as a
-  model-consistency check on offset and data, not as the anti-vacuity guard.
+  reads the write-handshake log `sent`, NOT the region, so it pins what the
+  port put on the bus and carries no model dependency. An earlier spelling
+  compared the region's bytes and was doubly wrong: `torn[0..4]` is
+  byte-identical to the T5b residue prefix, so its separating power sat
+  entirely in `store[1][5] == 0xFF`, and it reddened under a half-page model
+  with the RTL untouched.
 - **T17** the cut a NOR device actually produces. T15 and T16 cut while bytes
   are still moving, but a real program failure is not reported then: the device
   latches the bytes, starts the program cycle, and raises its error when that
@@ -84,21 +85,18 @@ rather than a survival this layout cannot give:
   commit. It also restores the region afterwards: what the array holds is the
   model's choice, but whether the port still SERVES that region after taking
   `S_WWAIT`'s error exit is the port's own property, and T17 otherwise
-  exercised only the write side. The restore is compared against what the
-  ARRAY holds rather than against the record that was being written: comparing
-  against the record pins the device model, and a model rolling its last bytes
-  back to 0xFF -- the half-programmed page this section names -- reddens it
-  with no RTL change at all. The length is pinned separately, because a bare
-  slice compare passes vacuously on an empty forward.
+  exercised only the write side. It does NOT restore the torn region, because
+  what that region holds is the backend's choice: it commits a good record
+  first, which ends in `done` so every model agrees what the array now holds,
+  and only then reads it back, pinning the device ops the way T2 does so a
+  fabricated restore cannot pass. Two earlier spellings compared against the
+  record being written and against the array, and both pinned the model.
 - **T18** the same argument on the RESTORE side. A NOR read fails the way a
   program does: an ECC or timeout error surfaces when the read cycle ENDS, not
   mid-stream. `S_RPWAIT` is the exact mirror of the arm T17 closed, `S_RHWAIT`
   is that window on the header probe, and `S_RHCOLL` is an error during the
   header collect — which sits on the boot restore walk, the one path where a
   torn image is actually consumed. All three survived the suite before T18.
-  What the array holds afterwards is deliberately NOT pinned: this device model
-  writes every byte before failing, while real NOR may leave the last page
-  half-programmed, and the port cannot distinguish those.
 
 Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
 - **M1** commit skips the ERASE (`S_WEREQ` target rewritten to `S_WWREQ`):
@@ -136,9 +134,9 @@ Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
 - **Model probe**: changing only the DEVICE MODEL to roll the last 4 bytes back
   to 0xFF on a completion-window failure — the half-programmed page a real NOR
   may leave — must not redden a check about the PORT. The T17 restore check
-  did exactly that before it was made array-relative. The T16 byte comparison
-  still does, which is why it is documented above as a model-consistency check
-  rather than counted toward the anti-vacuity guarantee.
+  did exactly that, and so did the T16 byte comparison, before both were moved
+  onto the bus. Neither does now: the half-page model is 83 PASS, 0 FAIL. See
+  the model table below for all five configurations.
 
 ### Device-error arm coverage
 
@@ -181,10 +179,10 @@ uses fixed cut points on both sides, so the randomized half is still owed.
 
 Three added checks are implied by a neighbour: `T16 the neighbour's stored
 bytes are untouched` is subsumed by `no other region's bytes moved` now that
-the latter compares all of `REG_BYTES`; `T15 a torn record never restores as a
-valid one` is weaker than the CRC-branch pin following it; and `T17 the port is
-idle after the late failure` is structurally implied by `rc == 1` plus the next
-commit succeeding. That last one states F02.8's busy envelope -- busy low once
+the latter compares all of `REG_BYTES`; `T15 unless the old record survived, a
+torn image never restores as valid` is weaker than the header-agreement check
+following it; and `T17 the port is idle after the late failure` is structurally
+implied by `rc == 1` plus the next commit succeeding. That last one states F02.8's busy envelope -- busy low once
 the terminating pulse has passed -- on the signal that carries it, so it sits
 on the specification side of the rule below rather than restating the
 implementation. They are kept deliberately, because a weak specification
