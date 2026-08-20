@@ -593,13 +593,23 @@ int main(int argc, char** argv) {
     // region's own bytes must be seen to change as well.
     CHECK(h.erase_count[1] > erases_before[1],
           "T16 the torn commit really did erase its own region");
-    // Pin the bytes THIS commit moved, by value and position. Two weaker
-    // spellings were tried and both were vacuous: "the bytes changed" is
-    // satisfied by the ERASE alone, and "some byte is not 0xFF" is satisfied
-    // by whatever an earlier phase left behind -- region 1 still holds T5b's
-    // record (sim_main.cpp:375) eleven phases later, so that guard passed
-    // even when the port wedged and issued no traffic at all. Only the new
-    // record's own bytes, in the right place, distinguish a WRITE that ran.
+    // Anti-vacuity rests on the TWO CHECKS BELOW THAT READ THE DUT, not on
+    // the byte comparison after them. Two earlier spellings were vacuous:
+    // "the bytes changed" is satisfied by the ERASE alone, and "some byte is
+    // not 0xFF" is satisfied by residue -- region 1 still holds T5b's record
+    // (sim_main.cpp:375) eleven phases later, so that guard passed even when
+    // the port wedged and issued no traffic at all. Note the byte comparison
+    // does NOT separate those cases by itself either: torn[0..4] is
+    // 17 22 01 01 00, byte-identical to the T5b prefix, so all its separating
+    // power is in store[1][5] == 0xFF. The op log and the erase count are
+    // what a no-traffic port cannot fake: both are driven by dev_req_o.
+    //
+    // The byte comparison is a MODEL-CONSISTENCY check, and is honest about
+    // that: it pins what THIS device model's tear semantics produce. Under a
+    // model that leaves the last page half-programmed it reddens with no DUT
+    // change, exactly as the `late`-relative restore check in T17 did before
+    // it was made array-relative. It is kept because the offset and data it
+    // pins are the port's, but it is not load-bearing for anti-vacuity.
     CHECK(h.ops.size() == 2 && op_is(h.ops[1], OP_WRITE, 1, 0,
                                      static_cast<int>(torn.size())),
           "T16 the torn commit issued ERASE then the WRITE for this record");
@@ -653,15 +663,22 @@ int main(int argc, char** argv) {
     // page half-programmed. The port cannot tell those apart and neither can
     // this model, so the phase pins what the PORT owes -- err not done, busy
     // released, bus not stranded -- and only that the port stays usable.
-    // The read side after a completion-window error is a PORT property and
-    // is checkable whichever way the model leaves the array: this model wrote
-    // every byte, so region 3 holds a well-formed `late` that the manager was
-    // told was NOT committed. Pin that the port still serves the region
-    // rather than wedging -- T17 otherwise exercises only the write side.
+    // The read side after a completion-window error is a PORT property, but
+    // comparing what comes back against `late` pins the MODEL instead: this
+    // model writes every byte and then errors, while real NOR may leave the
+    // last page half-programmed -- exactly the case named three lines above.
+    // A model that rolls its last bytes back to 0xFF reddens that comparison
+    // with no DUT change, which makes it a test of the device model.
+    // Compare against what the array ACTUALLY holds, so the check states the
+    // port's property under either model. The length pin is load-bearing on
+    // its own: a bare slice compare passes vacuously on an empty forward.
     h.ops.clear();
     rc = h.restore(3);
-    CHECK(rc == 0 && h.rbytes == late,
-          "T17 the region still restores after the late failure");
+    std::vector<uint8_t> in_array(h.store[3], h.store[3] + late.size());
+    CHECK(rc == 0 && h.rbytes.size() == late.size(),
+          "T17 the region still restores, forwarding the whole record");
+    CHECK(h.rbytes == in_array,
+          "T17 what restores is what the array holds, whatever the tear left");
 
     h.ops.clear();
     rc = h.commit(3, rec);

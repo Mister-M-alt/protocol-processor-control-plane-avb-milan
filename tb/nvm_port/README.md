@@ -4,7 +4,7 @@
 Proves the class-F NVM port (`hdl/packet_engine/KL_pp_nvm_port.sv`,
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8 +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8): `make` = build + run,
-exit 0 = PASS, 82 checks. `-GMAX_PAYLOAD_P=1024` pins the geometry the C++
+exit 0 = PASS, 83 checks. `-GMAX_PAYLOAD_P=1024` pins the geometry the C++
 constants mirror.
 
 The harness plays BOTH neighbors, independently of the RTL: a **manager BFM**
@@ -63,10 +63,15 @@ rather than a survival this layout cannot give:
   not 0xFF" is satisfied by whatever an earlier phase left behind — region 1
   still holds T5b's record from `sim_main.cpp:375` eleven phases later, so that
   spelling passed even under a mutant where the port wedged and issued no
-  device traffic at all. The guard now pins the bytes THIS commit moved, by
-  value and position: the op log must show ERASE then the WRITE for this
-  record, and exactly the bytes before the cut must have landed with the next
-  byte still erased.
+  device traffic at all. What actually defends the claim is the pair of checks
+  that READ THE DUT: the op log must show ERASE then the WRITE for this record,
+  and the region's erase count must have moved. Both are driven by `dev_req_o`,
+  and a port issuing nothing can fake neither. The byte comparison beside them
+  is deliberately NOT load-bearing, and the code says so: `torn[0..4]` is
+  byte-identical to the T5b residue prefix, so all its separating power sits in
+  `store[1][5] == 0xFF`, and it reddens under a device model that leaves the
+  last page half-programmed even with the RTL untouched. It is kept as a
+  model-consistency check on offset and data, not as the anti-vacuity guard.
 - **T17** the cut a NOR device actually produces. T15 and T16 cut while bytes
   are still moving, but a real program failure is not reported then: the device
   latches the bytes, starts the program cycle, and raises its error when that
@@ -77,7 +82,12 @@ rather than a survival this layout cannot give:
   commit. It also restores the region afterwards: what the array holds is the
   model's choice, but whether the port still SERVES that region after taking
   `S_WWAIT`'s error exit is the port's own property, and T17 otherwise
-  exercised only the write side.
+  exercised only the write side. The restore is compared against what the
+  ARRAY holds rather than against the record that was being written: comparing
+  against the record pins the device model, and a model rolling its last bytes
+  back to 0xFF -- the half-programmed page this section names -- reddens it
+  with no RTL change at all. The length is pinned separately, because a bare
+  slice compare passes vacuously on an empty forward.
 - **T18** the same argument on the RESTORE side. A NOR read fails the way a
   program does: an ECC or timeout error surfaces when the read cycle ENDS, not
   mid-stream. `S_RPWAIT` is the exact mirror of the arm T17 closed, `S_RHWAIT`
@@ -96,7 +106,7 @@ Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
 - **M3** payload pump off-by-one (`bcnt_r == plen_r` for `plen_r - 1`, both
   directions): fails 38 of 55 (every data-phase op times out or mismatches).
 - **M4** (2026-08-20) the write phase swallows the device error (`S_WDPUMP`'s
-  `if (dev_err_i)` forced false): **fails 21 of 82**. A torn commit then looks
+  `if (dev_err_i)` forced false): **fails 22 of 83**. A torn commit then looks
   clean, which is exactly the false success #70 exists to remove. Six checks
   survive, enumerated by RUNNING the mutation rather than reasoning about it,
   because earlier versions of this file twice published a survivor list written
@@ -109,7 +119,7 @@ Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
   issues no further device traffic and so nothing else can move. That vacuity
   is what the T16 guard exists to answer.
 - **M5** (2026-08-20) the completion window swallows the device error
-  (`S_WWAIT`'s `if (dev_err_i)` forced false): **fails 9 of 82**, and survives
+  (`S_WWAIT`'s `if (dev_err_i)` forced false): **fails 10 of 83**, and survives
   the whole suite without T17. The port waits for a `done` a failed device will
   never send, so the commit never answers at all: `run_op` returns -1 after
   100,000 cycles. `busy_seen && busy_ok` does NOT catch this, and the comment
@@ -117,10 +127,16 @@ Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
   and no pulse arrives to contradict `busy_ok`.
 - **Probes** (mutations of the TEST, not the RTL). Arming T16's tear as
   `arm_err(1, -1)`, so the WRITE fails before its first byte moves, fails 1 of
-  82. Replacing the torn commit with a bare `rc = 1` and no device traffic at
-  all — the port the T16 prose names as the threat — fails 3 of 82. Under the
+  83. Replacing the torn commit with a bare `rc = 1` and no device traffic at
+  all — the port the T16 prose names as the threat — fails 3 of 83. Under the
   previous guard that second probe failed only ONE check, the erase count,
   while the payload guard passed on residue from an earlier phase.
+- **Model probe**: changing only the DEVICE MODEL to roll the last 4 bytes back
+  to 0xFF on a completion-window failure — the half-programmed page a real NOR
+  may leave — must not redden a check about the PORT. The T17 restore check
+  did exactly that before it was made array-relative. The T16 byte comparison
+  still does, which is why it is documented above as a model-consistency check
+  rather than counted toward the anti-vacuity guarantee.
 
 ### Device-error arm coverage
 
@@ -158,7 +174,10 @@ bytes are untouched` is subsumed by `no other region's bytes moved` now that
 the latter compares all of `REG_BYTES`; `T15 a torn record never restores as a
 valid one` is weaker than the CRC-branch pin following it; and `T17 the port is
 idle after the late failure` is structurally implied by `rc == 1` plus the next
-commit succeeding. They are kept deliberately, because a weak specification
+commit succeeding. That last one states F02.8's busy envelope -- busy low once
+the terminating pulse has passed -- on the signal that carries it, so it sits
+on the specification side of the rule below rather than restating the
+implementation. They are kept deliberately, because a weak specification
 claim beside a strong implementation pin records WHAT is required separately
 from HOW the port happens to satisfy it today, and the two drift apart.
 
