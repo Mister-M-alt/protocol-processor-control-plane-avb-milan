@@ -180,31 +180,35 @@ uses fixed cut points on both sides, so the randomized half is still owed.
 
 ### On checks that cannot fail alone
 
-TWO added checks are implied by a neighbour: `T16 the neighbour's stored bytes
-are untouched` is subsumed by `no other region's bytes moved` now that the
-latter compares all of `REG_BYTES`; and `T17 the port is idle after the late
-failure` is structurally implied by `rc == 1` plus the next commit succeeding.
+TWO added checks are implied by a neighbour:
 
-A third was listed here and the claim was FALSE. `T15 unless the old record
-survived, a torn image never restores as valid` was called weaker than the
-header-agreement check beside it, on the evidence of twelve arms and four
-models showing no divergence. Measured directly by moving T15's tear into the
-completion window: that check FAILS while the header check PASSES, 2 of 83. It
-can fail alone. The error is the same shape as the corollary retracted below --
-a general claim generalised from the states that happened to be tried -- and it
-is left written down rather than deleted, because "no divergence across the
-cases I ran" is not "cannot diverge", and this file has now made that mistake
-twice. That last one states F02.8's busy envelope -- busy low once
-the terminating pulse has passed -- on the signal that carries it, so it sits
-on the specification side of the rule below rather than restating the
-implementation. They are kept deliberately, because a weak specification
-claim beside a strong implementation pin records WHAT is required separately
-from HOW the port happens to satisfy it today, and the two drift apart.
+- `T16 the neighbour's stored bytes are untouched` is subsumed by `no other
+  region's bytes moved`, now that the latter compares all of `REG_BYTES`.
+- `T17 the port is idle after the late failure` is structurally implied by
+  `rc == 1` plus the next commit succeeding. It is kept because it states
+  F02.8's busy envelope -- busy low once the terminating pulse has passed --
+  on the signal that carries it, so it sits on the specification side of the
+  rule below rather than restating the implementation.
+
+Both are kept deliberately, because a weak specification claim beside a strong
+implementation pin records WHAT is required separately from HOW the port
+happens to satisfy it today, and the two drift apart.
 
 The rule this suite follows, stated once: a check may restate a stronger
 neighbour when it states the SPECIFICATION, but a check that only restates the
 same implementation fact in other words is removed. That is why `rc != -1` was
-dropped from T17 while the three above were kept.
+dropped from T17 while the two above were kept.
+
+**A third check was listed here and the claim was FALSE**, so it is recorded
+rather than quietly deleted. `T15 unless the old record survived, a torn image
+never restores as valid` was called weaker than the header-agreement check
+beside it, on the evidence of twelve arms and four models showing no
+divergence. Measured directly by moving T15's tear into the completion window:
+that check FAILS while the header check PASSES, 2 of 83. It can fail alone, so
+it is not a member of this section at all. The error is the same shape as the
+corollary retracted below -- a general claim generalised from the states that
+happened to be tried -- and this file has now made it twice, because "no
+divergence across the cases I ran" is not "cannot diverge".
 
 
 ### Where a check may read from
@@ -285,6 +289,10 @@ Applied here:
 
 A device model variant is the cheapest way to find a check that tests the
 harness rather than the DUT, and it belongs in the standing mutation set. Each
-new model has found a member the previous ones could not: page-buffered found
-T16 and T17, lazy erase found both T15 members. Trying only one is how a family
-of five looked like a family of one.
+addition found a member the previous ones could not: page-buffered found T16
+and T17, and lazy erase COMBINED WITH page buffering found both T15 members.
+Lazy erase alone finds neither -- re-injecting the two pre-fix T15 checks and
+running each model gives both PASS under pristine, both PASS under lazy erase
+alone, and both FAIL only under the combination. Trying one model is how a
+family of five looked like a family of one, and trying one freedom at a time is
+how the last two members stayed hidden after three models had been run.
