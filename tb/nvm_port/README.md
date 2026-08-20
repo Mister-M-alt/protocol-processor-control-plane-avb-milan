@@ -47,9 +47,10 @@ ERASE lazily and buffers writes to the page leaves the old record intact. So
 the suite pins what the port DOES guarantee, and where a claim about the array
 follows a device `err` it is either moved onto the bus or conditioned on what
 the array actually holds. Claims that follow a `done` are asserted directly and
-need no condition, which is most of them: 26 sites read the array and exactly
-two condition on it. See "Where a check may read from" for the rule and its one
-known exception:
+need no condition, which is most of them. Counted in the unit the claim is
+about, CHECK sites whose condition depends on the array: **15 sites, of which 2
+condition on it and 13 do not**. See "Where a check may read from" for the rule
+and its one known exception:
 
 - **T15** a torn commit reports `err` and never `done`, with busy low at the
   pulse; the cut is proven real on the BUS (ERASE then a WRITE that stopped 12
@@ -272,8 +273,8 @@ Applied here:
 - **T17** commits a good record first, so the array is known under every model
   because that commit ended in `done`, and only then exercises the read side,
   pinning the device ops the way T2 does so a fabricated restore cannot pass.
-- **T15** had THREE members, and the last two surfaced only when a device
-  model beyond the shipping one was tried:
+- **T15** had THREE members. Its branch pin surfaced under the page-buffered
+  model; the other two needed lazy erase AND page buffering together:
   - its branch pin no longer records WHICH branch fired, because which one
     fires legitimately differs by device -- this model keeps the bytes so the
     CRC rejects, a page-buffered NOR discards them so the port rightly refuses
@@ -294,10 +295,16 @@ Applied here:
 
 A device model variant is the cheapest way to find a check that tests the
 harness rather than the DUT, and it belongs in the standing mutation set. Each
-addition found a member the previous ones could not: page-buffered found T16
-and T17, and lazy erase COMBINED WITH page buffering found both T15 members.
-Lazy erase alone finds neither -- re-injecting the two pre-fix T15 checks and
-running each model gives both PASS under pristine, both PASS under lazy erase
-alone, and both FAIL only under the combination. Trying one model is how a
-family of five looked like a family of one, and trying one freedom at a time is
-how the last two members stayed hidden after three models had been run.
+addition found members the previous ones could not, measured by re-injecting
+each pre-fix check and running every model:
+
+- **page-buffered NOR** finds THREE: T16's byte comparison, T17's restore, and
+  T15's branch pin. The branch pin fails under page-buffered alone (83 PASS,
+  1 FAIL) and passes under pristine (84/84).
+- **lazy erase COMBINED WITH page buffering** finds the other two T15 members.
+  Lazy erase alone finds neither: both pre-fix checks PASS under pristine and
+  under lazy erase alone, and FAIL only under the combination.
+
+That is 3 + 2 = the five members named above. Trying one model is how a family
+of five looked like a family of one, and trying one freedom at a time is how
+the last two stayed hidden after three models had been run.
