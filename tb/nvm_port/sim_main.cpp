@@ -108,6 +108,7 @@ struct Harness {
   // per-op capture
   int done_pulses = 0, err_pulses = 0;
   int dev_errs = 0;      // device-raised errors, not port refusals
+  int dev_rd = 0;        // bytes the DEVICE delivered on the read bus
   bool busy_seen = false, busy_ok = true; // busy must be LOW at done/err (F02.8)
   std::vector<uint8_t> rbytes;
   // What the port SENT on the device write bus, captured at the handshake.
@@ -184,7 +185,7 @@ struct Harness {
     if (d_st == 1 && d_cur.op == OP_READ) {
       if (dut->dev_rvalid_i) {
         if (dut->dev_rready_o) {
-          ++d_bytes; d_rhold = false; d_stall = rstall;
+          ++d_bytes; ++dev_rd; d_rhold = false; d_stall = rstall;
           if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }
           else if (d_bytes == d_cur.len) { done_ctr = op_delay; d_st = 2; }
         } else {
@@ -252,6 +253,7 @@ struct Harness {
   void clear_capture() {
     done_pulses = err_pulses = 0;
     dev_errs = 0;
+    dev_rd = 0;
     busy_seen = false; busy_ok = true;
     rbytes.clear();
     sent.clear();
@@ -734,8 +736,8 @@ int main(int argc, char** argv) {
     int r = h.restore(5);
     h.disarm_err();
     CHECK(r == 1 && h.err_pulses == 1, "T18 an error collecting the header reports err (S_RHCOLL)");
-    CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8),
-          "T18 S_RHCOLL was reached: the header READ was issued");
+    CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8) && h.dev_rd == 3,
+          "T18 S_RHCOLL was reached: the tear landed 3 bytes into the header");
     CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
 
     h.ops.clear();
@@ -743,8 +745,8 @@ int main(int argc, char** argv) {
     r = h.restore(5);
     h.disarm_err();
     CHECK(r == 1 && h.err_pulses == 1, "T18 an error closing the header read reports err (S_RHWAIT)");
-    CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8),
-          "T18 S_RHWAIT was reached: the header READ completed to its last byte");
+    CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8) && h.dev_rd == 8,
+          "T18 S_RHWAIT was reached: all 8 header bytes delivered before the error");
     CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
 
     h.ops.clear();
@@ -754,8 +756,9 @@ int main(int argc, char** argv) {
     CHECK(r == 1 && h.err_pulses == 1,
           "T18 an error in the payload completion window reports err (S_RPWAIT)");
     CHECK(h.ops.size() == 2 && op_is(h.ops[0], OP_READ, 5, 0, 8)
-              && h.ops[1].op == OP_READ && h.ops[1].offset == 8,
-          "T18 S_RPWAIT was reached: header then payload READ were issued");
+              && h.ops[1].op == OP_READ && h.ops[1].offset == 8
+              && h.dev_rd == 48 && h.rbytes.size() == f2.size(),
+          "T18 S_RPWAIT was reached: all 48 bytes delivered, whole record forwarded");
     CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
 
     h.ops.clear();

@@ -125,7 +125,7 @@ and its one known exception:
   torn image is actually consumed. All three survived the suite before T18.
 
 Mutation-proven (backup → sed → run → restore → green). **These figures are
-against the 83-check suite; earlier revisions of this file carried 55-era
+against the 90-check suite; earlier revisions of this file carried 55-era
 numbers for M1 to M3 long after the suite grew.**
 - **M1** commit skips the ERASE: the transition INTO `S_WEREQ` (`:175`)
   rewritten to `S_WWREQ`, so no ERASE is ever issued. **Fails 19 of 90**
@@ -139,7 +139,7 @@ numbers for M1 to M3 long after the suite grew.**
   refusals and the nothing-forwarded check). Note this drops BOTH magic bytes;
   the low byte alone is uncovered, see the gap list below.
 - **M3** payload pump off-by-one (`bcnt_r == plen_r` for `plen_r - 1`, both
-  directions): **fails 61 of 90** (every data-phase op times out or mismatches).
+  directions): **fails 68 of 90** (every data-phase op times out or mismatches).
 - **M4** (2026-08-20) the write phase swallows the device error (`S_WDPUMP`'s
   `if (dev_err_i)` forced false): **fails 29 of 90**. A torn commit then looks
   clean, which is exactly the false success #70 exists to remove. Six checks
@@ -162,7 +162,7 @@ numbers for M1 to M3 long after the suite grew.**
   and no pulse arrives to contradict `busy_ok`.
 - **Probes** (mutations of the TEST, not the RTL). Arming T16's tear as
   `arm_err(1, -1)`, so the WRITE fails before its first byte moves, fails 1 of
-  83. Replacing the torn commit with a bare `rc = 1` and no device traffic at
+  90. Replacing the torn commit with a bare `rc = 1` and no device traffic at
   all — the port the T16 prose names as the threat — fails 3 of 90. Under the
   previous guard that second probe failed only ONE check, the erase count,
   while the payload guard passed on residue from an earlier phase.
@@ -177,7 +177,12 @@ numbers for M1 to M3 long after the suite grew.**
 ### Device-error arm coverage
 
 `KL_pp_nvm_port.sv` has twelve `if (dev_err_i)` arms. Each was forced to
-`1'b0` in turn and the suite re-run, so this table is measured, not argued.
+`1'b0` in turn and the suite re-run, so this table is measured, not argued —
+and it is now **checked by a script rather than by hand**: `measure_figures.py`
+re-runs every mutation and refuses to agree with a README that has drifted.
+Run `python3 tb/nvm_port/measure_figures.py --check` after any change to this
+suite. It takes about fifteen Verilator builds, which is the price of a table
+that four review rounds found stale.
 It has been stale twice. Splitting one T17 check moved every row reaching T17;
 later, replacing an array-negative check with a bus check moved every row whose
 mutant WEDGES BEFORE T15, because the old check survived those mutants and the
@@ -345,8 +350,8 @@ Applied here:
 | pristine | **90 PASS, 0 FAIL** |
 | half-page | **90 PASS, 0 FAIL** |
 | page-buffered NOR | **90 PASS, 0 FAIL** |
-| lazy erase | 82 PASS, 1 FAIL, only the pre-existing `T1` |
-| lazy erase + page-buffered | 82 PASS, 1 FAIL, only `T1` |
+| lazy erase | 89 PASS, 1 FAIL, only the pre-existing `T1` |
+| lazy erase + page-buffered | 89 PASS, 1 FAIL, only `T1` |
 
 A device model variant is the cheapest way to find a check that tests the
 harness rather than the DUT, and it belongs in the standing mutation set. Each
@@ -423,11 +428,12 @@ Recorded so the phase list does not read as closing #70:
   the high byte), the payload bound's upper edge (`<=` to `<` is green, so the
   largest legal record can be silently refused), the sticky `done_seen_r` latch
   (deleting it two ways is green; under a coincident-completion model the same
-  mutations fail 61 of 90), and the short-read defence at `:268`, whose failure
+  mutations fail 68 of 90), and the short-read defence at `:268`, whose failure
   mode is a hang on the boot restore walk and which no `dev_err_i` mutation can
   reach because it guards `dev_done_i`.
-- **The `err` clause of the rule has FOUR known exceptions, not one.** T1 is
-  named below; T16's three isolation checks are the others, and a coarse-erase
+- **The `err` clause of the rule has THREE known exceptions**, and T1 is not
+  among them: T1 asserts after a `done` and reddens only under lazy erase, so
+  it is a `done`-clause exception. The three are T16's isolation checks, and a coarse-erase
   model where a sector spans regions reddens all three with the RTL untouched.
   The erase-count check does not redden, which is the asymmetry the rule exists
   to describe.
