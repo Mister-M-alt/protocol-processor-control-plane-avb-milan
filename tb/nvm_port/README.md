@@ -142,9 +142,10 @@ Mutation-proven 2026-08-11 (backup → sed → run → restore → green):
 - **Model probe**: changing only the DEVICE MODEL to roll the last 4 bytes back
   to 0xFF on a completion-window failure — the half-programmed page a real NOR
   may leave — must not redden a check about the PORT. The T17 restore check
-  did exactly that, and so did the T16 byte comparison, before both were moved
-  onto the bus. Neither does now: the half-page model is 83 PASS, 0 FAIL. See
-  the model table below for all five configurations.
+  did exactly that, and so did the T16 byte comparison. Neither does now, by
+  two different routes: T16's moved onto the bus, T17's moved to assert after
+  a `done` where the array is known. The half-page model is 83 PASS, 0 FAIL.
+  See the matrix below for every pre-fix form against every model.
 
 ### Device-error arm coverage
 
@@ -295,16 +296,32 @@ Applied here:
 
 A device model variant is the cheapest way to find a check that tests the
 harness rather than the DUT, and it belongs in the standing mutation set. Each
-addition found members the previous ones could not, measured by re-injecting
-each pre-fix check and running every model:
+addition found members the previous ones could not. Rather than say which,
+here is the measurement: every pre-fix form re-injected, every model run, RTL
+byte-identical throughout. An attribution sentence drifts from the runs; this
+cannot, because re-deriving it is re-running it.
 
-- **page-buffered NOR** finds THREE: T16's byte comparison, T17's restore, and
-  T15's branch pin. The branch pin fails under page-buffered alone (83 PASS,
-  1 FAIL) and passes under pristine (84/84).
-- **lazy erase COMBINED WITH page buffering** finds the other two T15 members.
-  Lazy erase alone finds neither: both pre-fix checks PASS under pristine and
-  under lazy erase alone, and FAIL only under the combination.
+| pre-fix form | pristine | half-page | page-buf | lazy | lazy+pb |
+|---|---|---|---|---|---|
+| T16 byte comparison | pass | **FAIL** | FAIL | FAIL | FAIL |
+| T17 restore vs the record | pass | **FAIL** | FAIL | pass | FAIL |
+| T17 restore vs the array | pass | pass | **FAIL** | pass | pass |
+| T15 branch pin | pass | pass | **FAIL** | pass | FAIL |
+| T15 cut was real | pass | pass | pass | pass | **FAIL** |
+| T15 #70 property, unconditioned | pass | pass | pass | pass | **FAIL** |
 
-That is 3 + 2 = the five members named above. Trying one model is how a family
-of five looked like a family of one, and trying one freedom at a time is how
-the last two stayed hidden after three models had been run.
+Bold marks first discovery, reading left to right. By MEMBER that partitions as
+**half-page 2, page-buffered 1, the combination 2 = the five** named above; the
+six rows exceed the five members because T17's restore appears twice, which is
+the most instructive line in the table:
+
+- **T17's restore was found twice, by two different models.** Half-page killed
+  the record-relative spelling. The array-relative fix written in response
+  SURVIVES half-page -- the very model that prompted it -- and page-buffered
+  killed it anyway. Passing the model that found the bug is not evidence the
+  fix is model-independent.
+
+Every row passes under pristine, which is why all six survived until a model
+beyond the shipping one was tried. Trying one model is how a family of five
+looked like a family of one; trying one freedom at a time is how the last two
+stayed hidden after three models had been run.
