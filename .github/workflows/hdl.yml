@@ -25,7 +25,15 @@ jobs:
   suites:
     runs-on: ubuntu-latest
     steps:
+      # Full history, not the default depth-1: the nvm_port figure gate pins its
+      # matrix injections against the revisions the removed check forms came
+      # from, and `git show <rev>~1` cannot resolve in a shallow clone. The gate
+      # fails loudly rather than passing blind when it cannot read them, which
+      # is how this was caught -- but only in CI, because a local run has the
+      # history and shows nothing.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Cache the pinned Verilator build
         id: cache-verilator
         uses: actions/cache@v4
