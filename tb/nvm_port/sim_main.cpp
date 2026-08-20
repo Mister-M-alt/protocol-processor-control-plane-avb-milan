@@ -107,6 +107,7 @@ struct Harness {
 
   // per-op capture
   int done_pulses = 0, err_pulses = 0;
+  int dev_errs = 0;      // device-raised errors, not port refusals
   bool busy_seen = false, busy_ok = true; // busy must be LOW at done/err (F02.8)
   std::vector<uint8_t> rbytes;
   // What the port SENT on the device write bus, captured at the handshake.
@@ -205,7 +206,8 @@ struct Harness {
     // completion timers
     if (d_st == 2) {
       if (done_ctr > 0 && --done_ctr == 0) { d_done = true; d_busy = false; d_st = 0; }
-      if (err_ctr  > 0 && --err_ctr  == 0) { d_err  = true; d_busy = false; d_st = 0; }
+      if (err_ctr  > 0 && --err_ctr  == 0) { d_err  = true; d_busy = false; d_st = 0;
+                                             ++dev_errs; }
     }
   }
 
@@ -249,6 +251,7 @@ struct Harness {
 
   void clear_capture() {
     done_pulses = err_pulses = 0;
+    dev_errs = 0;
     busy_seen = false; busy_ok = true;
     rbytes.clear();
     sent.clear();
@@ -677,6 +680,12 @@ int main(int argc, char** argv) {
     h.disarm_err();
     CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
           "T17 a failure in the completion window reports err, never done");
+    // Pin that the cut actually landed in the COMPLETION window. Without this
+    // the phase passes with the tear moved anywhere in the stream, and its
+    // whole point is the window: every byte accepted, THEN the error. `sent`
+    // holding the full record is what distinguishes S_WWAIT from S_WDPUMP.
+    CHECK(h.sent.size() == late.size(),
+          "T17 the cut was in the completion window: every byte sent first");
     CHECK(h.busy_seen && h.busy_ok,
           "T17 busy raised then low at the err pulse");
     // A wedge and a wrong answer are different failures and rc == 1 above
@@ -724,20 +733,30 @@ int main(int argc, char** argv) {
     h.arm_err(0, 3);
     int r = h.restore(5);
     h.disarm_err();
-    CHECK(r == 1, "T18 an error collecting the header reports err (S_RHCOLL)");
+    CHECK(r == 1 && h.err_pulses == 1, "T18 an error collecting the header reports err (S_RHCOLL)");
+    CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8),
+          "T18 S_RHCOLL was reached: the header READ was issued");
+    CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
 
     h.ops.clear();
     h.arm_err(0, 8);
     r = h.restore(5);
     h.disarm_err();
-    CHECK(r == 1, "T18 an error closing the header read reports err (S_RHWAIT)");
+    CHECK(r == 1 && h.err_pulses == 1, "T18 an error closing the header read reports err (S_RHWAIT)");
+    CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8),
+          "T18 S_RHWAIT was reached: the header READ completed to its last byte");
+    CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
 
     h.ops.clear();
     h.arm_err(1, 40);
     r = h.restore(5);
     h.disarm_err();
-    CHECK(r == 1,
+    CHECK(r == 1 && h.err_pulses == 1,
           "T18 an error in the payload completion window reports err (S_RPWAIT)");
+    CHECK(h.ops.size() == 2 && op_is(h.ops[0], OP_READ, 5, 0, 8)
+              && h.ops[1].op == OP_READ && h.ops[1].offset == 8,
+          "T18 S_RPWAIT was reached: header then payload READ were issued");
+    CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
 
     h.ops.clear();
     r = h.restore(5);

@@ -4,7 +4,7 @@
 Proves the class-F NVM port (`hdl/packet_engine/KL_pp_nvm_port.sv`,
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8 +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8): `make` = build + run,
-exit 0 = PASS, 83 checks. `-GMAX_PAYLOAD_P=1024` pins the geometry the C++
+exit 0 = PASS, 90 checks. `-GMAX_PAYLOAD_P=1024` pins the geometry the C++
 constants mirror.
 
 The harness plays BOTH neighbors, independently of the RTL: a **manager BFM**
@@ -48,8 +48,14 @@ partial record: the record being written is gone, and on the backends that
 erase in place **so is whatever it replaced**. That is a property of writing a
 slot in place. The flash map's A/B slots are related but do NOT cover it: they
 are per record SET, whole-image with read-back-then-promote, and this port has
-no slot notion at all. What would cover a torn SINGLE record is the crc16, which
-nothing implements yet. It is NOT
+no slot notion at all. What covers a torn SINGLE record is the crc16, and it IS
+implemented — in the manager, not here: `hdl/acmp/KL_acmp_nvm_shadow.sv`
+serialises it (`:402-403`), accumulates it (`:627`) and gates the record on it
+(`:316`), with the per-record vendor-default policy at `:54-55`. It is
+instantiated at `hdl/top/protocol_processor_top.sv:2238` and pinned by
+`tb/acmp_nvm`. An earlier revision of this file said nothing implemented it,
+which was wrong and is the third time this file has asserted an absence without
+checking for the presence. It is NOT
 universal: measured with the RTL byte-identical, a backend that both answers
 ERASE lazily and buffers writes to the page leaves the old record intact. So
 the suite pins what the port DOES guarantee, and where a claim about the array
@@ -122,20 +128,20 @@ Mutation-proven (backup → sed → run → restore → green). **These figures 
 against the 83-check suite; earlier revisions of this file carried 55-era
 numbers for M1 to M3 long after the suite grew.**
 - **M1** commit skips the ERASE: the transition INTO `S_WEREQ` (`:175`)
-  rewritten to `S_WWREQ`, so no ERASE is ever issued. **Fails 19 of 83**
+  rewritten to `S_WWREQ`, so no ERASE is ever issued. **Fails 19 of 90**
   (op-log shape, erase pulse/visibility, erase-error path).
   The description used to read "`S_WEREQ` target rewritten", which is ambiguous
   and the two readings differ enormously: rewriting what `S_WEREQ` itself
   transitions to (`:189`), so the ERASE is REQUESTED but never awaited, **fails
-  only 1 of 83**. That sibling is a real coverage gap and is recorded as one
+  only 1 of 90**. That sibling is a real coverage gap and is recorded as one
   rather than hidden by the ambiguity.
-- **M2** magic gate dropped from `hdr_ok_w`: **fails 5 of 83** (both bad-magic
+- **M2** magic gate dropped from `hdr_ok_w`: **fails 5 of 90** (both bad-magic
   refusals and the nothing-forwarded check). Note this drops BOTH magic bytes;
   the low byte alone is uncovered, see the gap list below.
 - **M3** payload pump off-by-one (`bcnt_r == plen_r` for `plen_r - 1`, both
-  directions): **fails 61 of 83** (every data-phase op times out or mismatches).
+  directions): **fails 61 of 90** (every data-phase op times out or mismatches).
 - **M4** (2026-08-20) the write phase swallows the device error (`S_WDPUMP`'s
-  `if (dev_err_i)` forced false): **fails 22 of 83**. A torn commit then looks
+  `if (dev_err_i)` forced false): **fails 29 of 90**. A torn commit then looks
   clean, which is exactly the false success #70 exists to remove. Six checks
   survive, enumerated by RUNNING the mutation rather than reasoning about it,
   because earlier versions of this file twice published a survivor list written
@@ -148,7 +154,7 @@ numbers for M1 to M3 long after the suite grew.**
   issues no further device traffic and so nothing else can move. That vacuity
   is what the T16 guard exists to answer.
 - **M5** (2026-08-20) the completion window swallows the device error
-  (`S_WWAIT`'s `if (dev_err_i)` forced false): **fails 10 of 83**, and survives
+  (`S_WWAIT`'s `if (dev_err_i)` forced false): **fails 16 of 90**, and survives
   the whole suite without T17. The port waits for a `done` a failed device will
   never send, so the commit never answers at all: `run_op` returns -1 after
   100,000 cycles. `busy_seen && busy_ok` does NOT catch this, and the comment
@@ -157,7 +163,7 @@ numbers for M1 to M3 long after the suite grew.**
 - **Probes** (mutations of the TEST, not the RTL). Arming T16's tear as
   `arm_err(1, -1)`, so the WRITE fails before its first byte moves, fails 1 of
   83. Replacing the torn commit with a bare `rc = 1` and no device traffic at
-  all — the port the T16 prose names as the threat — fails 3 of 83. Under the
+  all — the port the T16 prose names as the threat — fails 3 of 90. Under the
   previous guard that second probe failed only ONE check, the erase count,
   while the payload guard passed on residue from an earlier phase.
 - **Model probe**: changing only the DEVICE MODEL to roll the last 4 bytes back
@@ -165,7 +171,7 @@ numbers for M1 to M3 long after the suite grew.**
   may leave — must not redden a check about the PORT. The T17 restore check
   did exactly that, and so did the T16 byte comparison. Neither does now, by
   two different routes: T16's moved onto the bus, T17's moved to assert after
-  a `done` where the array is known. The half-page model is 83 PASS, 0 FAIL.
+  a `done` where the array is known. The half-page model is 90 PASS, 0 FAIL.
   See the matrix below for every pre-fix form against every model.
 
 ### Device-error arm coverage
@@ -184,16 +190,16 @@ the whole table has to be re-swept.
 | line | state | checks failed |
 |---|---|---|
 | 185 | `S_WEREQ`  | **0 — uncovered** |
-| 194 | `S_WEWAIT` | 39 |
+| 194 | `S_WEWAIT` | 46 |
 | 204 | `S_WWREQ`  | **0 — uncovered** |
-| 214 | `S_WHPUMP` | 34 |
-| 227 | `S_WDPUMP` | 22 |
-| 237 | `S_WWAIT`  | 10 |
+| 214 | `S_WHPUMP` | 41 |
+| 227 | `S_WDPUMP` | 29 |
+| 237 | `S_WWAIT`  | 16 |
 | 248 | `S_RHREQ`  | **0 — uncovered** |
-| 258 | `S_RHCOLL` | 5 |
-| 276 | `S_RHWAIT` | 4 |
+| 258 | `S_RHCOLL` | 9 |
+| 276 | `S_RHWAIT` | 6 |
 | 303 | `S_RPREQ`  | **0 — uncovered** |
-| 313 | `S_RPPUMP` | 33 |
+| 313 | `S_RPPUMP` | 40 |
 | 323 | `S_RPWAIT` | 3 |
 
 **Eight of twelve are covered; four are not.** The survivors are the four
@@ -204,6 +210,27 @@ that reads as complete is worse than one that names its gaps. The other
 outstanding item is the same: `09_verification.md:56` sets the bar as "cut at
 randomized commit points ... every record type cut >= once", and this suite
 uses fixed cut points on both sides, so the randomized half is still owed.
+
+### Reachability pins, and why they exist
+
+T17 and T18 name the windows they cover, and until a review probed them nothing
+CHECKED that they reached those windows. Both were measured green under probes
+that removed the thing being tested:
+
+- moving T17's cut off the completion window, so `S_WWAIT` is never entered:
+  **90/90 green** before, now fails on `T17 the cut was in the completion
+  window: every byte sent first`.
+- replacing T18's three device errors with a bad stored magic, so ZERO device
+  errors occur anywhere: **90/90 green** before. The op log alone could not tell
+  them apart, because the port issues the header READ BEFORE validating it, so
+  a refusal and a device error produce the same two ops. Distinguishing them
+  needed a count of DEVICE-raised errors, separate from the port's own `err`
+  pulses; `dev_errs` is that counter and each arm now pins it.
+- replacing a T18 arm with a bare `r = 1`, port never touched: now fails 3.
+
+The general shape: a phase that names a window is not the same as a phase that
+proves it entered one, and the evidence for the difference lived only in the
+coverage table below, which this file says has gone stale twice.
 
 ### On checks that cannot fail alone
 
@@ -231,7 +258,7 @@ rather than quietly deleted. `T15 unless the old record survived, a torn image
 never restores as valid` was called weaker than the header-agreement check
 beside it, on the evidence of twelve arms and four models showing no
 divergence. Measured directly by moving T15's tear into the completion window:
-that check FAILS while the header check PASSES, 2 of 83. It can fail alone, so
+that check FAILS while the header check PASSES, 2 of 90. It can fail alone, so
 it is not a member of this section at all. The error is the same shape as the
 corollary retracted below -- a general claim generalised from the states that
 happened to be tried -- and this file has now made it twice, because "no
@@ -249,8 +276,9 @@ cycle ends with `done`; and a lazy-erase backend, which answers ERASE with
 `done` without rewriting the array at all. None is invented. The port's own
 header names the last one ("backends without erase semantics answer ERASE with
 done at once"). `02 SS8` does list host filesystem via `mgmt` among the
-permitted backings in general, but NOT for these records: `milan_soc.py:163`
-places `BINDING[i]` in a journal slot that is deliberately RAW, no filesystem,
+permitted backings in general, but NOT for these records: the parent's
+`sw/litex/milan_soc.py` places the binding records in a journal slot that is
+deliberately RAW, no filesystem,
 for exactly this reason. The lazy-erase freedom is real and is what the models
 below exercise; the host-filesystem framing was too wide and is withdrawn.
 
@@ -314,9 +342,9 @@ Applied here:
 
 | model | result |
 |---|---|
-| pristine | **83 PASS, 0 FAIL** |
-| half-page | **83 PASS, 0 FAIL** |
-| page-buffered NOR | **83 PASS, 0 FAIL** |
+| pristine | **90 PASS, 0 FAIL** |
+| half-page | **90 PASS, 0 FAIL** |
+| page-buffered NOR | **90 PASS, 0 FAIL** |
 | lazy erase | 82 PASS, 1 FAIL, only the pre-existing `T1` |
 | lazy erase + page-buffered | 82 PASS, 1 FAIL, only `T1` |
 
@@ -360,12 +388,26 @@ Recorded so the phase list does not read as closing #70:
 - **#70's desk-proof sentence is "leave the PREVIOUS SAVED SET intact", and this
   layer cannot meet it.** T16 pins "every OTHER record", which is honest and is
   what the port can guarantee, but it is weaker precisely on the record being
-  rewritten. Covering that needs the crc16, or A/B promotion, neither of which
-  exists yet.
+  rewritten. Covering that is the crc16's job, and the crc16 exists — in
+  `KL_acmp_nvm_shadow`, on the synthesized path. What does not exist is A/B
+  promotion. So the gap is narrower than "nothing covers it": the manager can
+  reject a torn record, it just cannot recover the one it replaced.
 - **A restore failure is one signal for three situations**: a refused region, a
   torn header, and a tear after a complete header has already been forwarded.
   T18 pins that each reports `err`; it does not distinguish them, and the
-  specification requires the manager to (issue #16).
+  specification requires the manager to. Tracked as issue #20; issue #16 stated
+  this as a port-face defect and was closed, because the manager already makes
+  the distinction — what survives is narrower and is #20.
+- **NONE of the twelve `dev_err_i` arms can fire on any bitstream that exists.**
+  The parent answers this port's device face with a blank-flash responder that
+  ties `nvm_dev_err_i` to `1'b0` (`milan-fpga hdl/milan/KL_pp_shadow.sv:1010`).
+  That is the largest limitation here and it was omitted from this list: the
+  whole error-handling half of the port, and the coverage table below it, is
+  unreachable until a real backend lands. Note the responder is not inert - it
+  drives `nvm_dev_done_i` and answers every command - so what makes issues #14
+  and #15 unfirable is that it is WELL BEHAVED, not that error is tied off. The
+  port's own `nvm_err_o` is live and fires on every restore on the shipping
+  build.
 - **The device model is well-behaved by construction**, so the port's tolerance
   of a badly-behaved one is untested. The five variants below all vary what the
   array RETAINS; none varies the handshake. Issues #14 and #15 are both defects
@@ -381,7 +423,7 @@ Recorded so the phase list does not read as closing #70:
   the high byte), the payload bound's upper edge (`<=` to `<` is green, so the
   largest legal record can be silently refused), the sticky `done_seen_r` latch
   (deleting it two ways is green; under a coincident-completion model the same
-  mutations fail 61 of 83), and the short-read defence at `:268`, whose failure
+  mutations fail 61 of 90), and the short-read defence at `:268`, whose failure
   mode is a hang on the boot restore walk and which no `dev_err_i` mutation can
   reach because it guards `dev_done_i`.
 - **The `err` clause of the rule has FOUR known exceptions, not one.** T1 is
