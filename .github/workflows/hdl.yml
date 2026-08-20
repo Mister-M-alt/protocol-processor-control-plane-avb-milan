@@ -25,7 +25,15 @@ jobs:
   suites:
     runs-on: ubuntu-latest
     steps:
+      # Full history, not the default depth-1: the nvm_port figure gate pins its
+      # matrix injections against the revisions the removed check forms came
+      # from, and `git show <rev>~1` cannot resolve in a shallow clone. The gate
+      # fails loudly rather than passing blind when it cannot read them, which
+      # is how this was caught -- but only in CI, because a local run has the
+      # history and shows nothing.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Cache the pinned Verilator build
         id: cache-verilator
         uses: actions/cache@v4
@@ -49,6 +57,17 @@ jobs:
           ./scripts/run_suites.sh
       - name: Traceability matrix no-drift + untested budget 0
         run: python3 scripts/gen_matrix.py --check
+
+      # Out of run_suites.sh on purpose: too slow for the per-suite loop, and
+      # it prints its own derived build count rather than quoting one here --
+      # that number was stale in this file for two rounds. "Run it by hand
+      # after a change" is the discipline that let the nvm_port figures go
+      # stale in four consecutive reviews, so it gates here instead, where
+      # Verilator is already built.
+      - name: nvm_port README figures agree with the tree
+        run: |
+          export PATH="$HOME/verilator/bin:$PATH"
+          make -C tb/nvm_port figures
 
   portability:
     runs-on: ubuntu-latest

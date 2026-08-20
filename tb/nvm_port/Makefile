@@ -22,3 +22,14 @@ clean:
 	rm -rf obj_dir
 
 .PHONY: run clean
+
+# Re-measure every figure the README quotes and refuse to agree with a drifted
+# one. About four minutes; it prints its own derived build count, which is not
+# repeated here because this number was wrong three rounds running. NOT part of `run` --
+# too slow for the per-suite loop -- but it IS gated in CI, because "run it by
+# hand after a change" is the discipline that let these figures go stale in four
+# consecutive review rounds.
+figures:
+	@python3 $(CURDIR)/measure_figures.py --check
+
+.PHONY: figures
