@@ -175,13 +175,16 @@ The whole path, with its failure modes, is
 
 ## 6. Configuration and identity inputs
 
-All quasi-static: set them before `entity_enable_i` and leave them alone.
+The identity, capability, SRP and talker-source groups are quasi-static: set
+them before `entity_enable_i` and leave them alone. The two dynamic rows are
+updated at runtime under the event contracts below.
 
 | Group | Ports |
 |---|---|
 | Identity and model | `entity_id_i[63:0]`, `entity_model_id_i[63:0]`, `own_mac_i[47:0]`, `current_cfg_i[15:0]`, `identify_index_i[15:0]` |
 | Advertised capability | `talker_sources_i[15:0]`, `talker_caps_i[15:0]`, `listener_sinks_i[15:0]`, `listener_caps_i[15:0]` |
-| Level controls | `entity_enable_i`, `link_up_i`, `gm_change_i`, `gm_id_i[63:0]`, `gptp_domain_i[7:0]` |
+| Dynamic gPTP state | `gm_change_i`, `gm_id_i[63:0]`, `gptp_domain_i[7:0]` |
+| Level controls | `entity_enable_i`, `link_up_i` |
 | SRP | `p2p_i`, `cfg_rank_i`, `cfg_acc_lat_ns_i[31:0]`, `port_rate_bps_i[31:0]`, `cfg_tspec_max_frame_i[15:0]` |
 | Talker sources | `cfg_src_en_i`, `cfg_src_iface_i`, `cfg_stream_id_i` |
 
@@ -192,6 +195,17 @@ The three per-source vectors are **flat packed bit vectors**: index *s* occupies
 is held in DOWN and the entity is silent — because an entity must already be able to
 answer commands before it announces itself. Deasserting it later **is** the shutdown: it
 emits ENTITY_DEPARTING and resets `available_index`. There is no separate shutdown port.
+
+`gm_change_i` is a one-cycle **ADP / GET_AVB_INFO** event, not a
+`GET_AS_PATH` event. Raise it after atomically publishing a changed `gm_id_i`
+or `gptp_domain_i`; both fields are advertised and both are returned by
+`GET_AVB_INFO`. The path has its own publication edge, `gsi_asp_chg_i`. Raise
+that strobe after atomically publishing any changed PathTrace sequence,
+including entry 0 when a new grandmaster identity changes it. Consequently a
+GM identity update normally raises both strobes, a domain-only update raises
+only `gm_change_i`, and a tail-only PathTrace update raises only
+`gsi_asp_chg_i`. The processor keeps the two events separate so a domain
+change cannot claim that the path changed.
 
 ---
 

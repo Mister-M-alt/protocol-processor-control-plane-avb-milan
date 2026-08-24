@@ -4642,9 +4642,15 @@ int main(int argc, char** argv) {
                         0x0024, fl0));
       h.wait_any(h.q_aecp, 400);
       h.q_aecp.clear();
+      // A grandmaster IDENTITY change moves two independent facts at once:
+      // the ADP GM_CHANGE duty (gm_change_i) and the served path sequence,
+      // whose entry 0 IS the grandmaster (gsi_asp_chg_i). The integrator
+      // raises both, and it is the only side that can tell them apart.
       d->gm_change_i = 1;
+      d->gsi_asp_chg_i = 1;
       h.step();
       d->gm_change_i = 0;
+      d->gsi_asp_chg_i = 0;
       // GET_AVB_INFO outranks GET_AS_PATH in the emission pick
       auto u1 = h.wait_any(h.q_aecp, 500);
       auto u2 = h.wait_any(h.q_aecp, 500);
@@ -4686,6 +4692,26 @@ int main(int argc, char** argv) {
             "V6f: an AVB-info word change sends GET_AVB_INFO at seq 3");
       CHECK(avb_extra.empty(),
             "V6g: an AVB-info word change did not also send GET_AS_PATH");
+
+      // And the converse of V6: the ADP GM_CHANGE duty ALONE is not a path
+      // event. An integrator raises gm_change_i for any change of the
+      // advertised gPTP pair, gptp_domain_number included, and a domain
+      // number is not a path entry - Table 5.22 conditions GET_AS_PATH on
+      // "the path sequence changes". This is the negative control for that
+      // separation: without it, ev_asp_i could take gm_change_i and nothing
+      // in this suite would notice.
+      d->gm_change_i = 1;
+      h.step();
+      d->gm_change_i = 0;
+      auto gm_only = h.wait_any(h.q_aecp, 500);
+      auto gm_extra = h.wait_any(h.q_aecp, 300);
+      CHECK(!gm_only.empty() && gm_only.size() > 37
+            && (gm_only[36] & 0x80) && gm_only[37] == 0x27
+            && (((unsigned)gm_only[34] << 8) | gm_only[35]) == 4,
+            "V6h: gm_change_i alone sends GET_AVB_INFO at seq 4");
+      CHECK(gm_extra.empty(),
+            "V6i: gm_change_i alone did NOT send GET_AS_PATH (the ADP duty "
+            "covers a domain change, which is not a path change)");
       h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7509,
                         0x0025, {}));
       h.wait_any(h.q_aecp, 400);
