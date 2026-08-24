@@ -175,7 +175,11 @@ module protocol_processor_top
     //! ---- level controls + class-D inputs (02 §6) ----
     input  wire         entity_enable_i,       //! Milan §5.6.1 boot gate (level)
     input  wire         link_up_i,             //! link status (2FF-synced upstream)
-    input  wire         gm_change_i,           //! GM_CHANGE strobe (gptp)
+    //! one-cycle ADP/GET_AVB_INFO gPTP-pair change strobe. Raise it after
+    //! publishing a changed gm_id_i OR gptp_domain_i. A GM identity change
+    //! also changes AS_PATH entry 0, so pulse gsi_asp_chg_i once that path
+    //! snapshot is atomically published; a domain-only change does not.
+    input  wire         gm_change_i,
     input  wire  [63:0] gm_id_i,               //! gm_id (interface 0)
     input  wire  [7:0]  gptp_domain_i,         //! gptp_domain (interface 0)
 
@@ -391,9 +395,10 @@ module protocol_processor_top
     //! and tying it 0 just narrows the Table 5.22 trigger set to what the
     //! processor sees itself.
     input  wire         gsi_avb_chg_i,
-    //! one-cycle strobe after the integrator atomically publishes a changed
-    //! PathTrace sequence. Grandmaster changes are derived internally; this
-    //! pin covers tail changes that retain the same grandmaster.
+    //! one-cycle strobe after the integrator atomically publishes ANY changed
+    //! PathTrace sequence, including entry 0 when the GM identity changes.
+    //! This is the sole GET_AS_PATH trigger: gm_change_i also covers a domain
+    //! change, which does not by itself change the path sequence.
     input  wire         gsi_asp_chg_i,
 
     //! ---- NVM boot restore + alarm (07 §5.3) ----

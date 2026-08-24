@@ -145,6 +145,14 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
   the granted address is what the next GET_TX_STATE_RESPONSE carries, and the
   same address appears as the dest MAC of the Talker Advertise on the MSRP
   wire — MAAP -> DA gate -> ACMP answer -> SRP declaration, end to end.
+- **V** **GET_AVB_INFO / GET_AS_PATH and their Table 5.22 triggers**: both
+  solicited responses are byte-exact over the integrator-owned gather face;
+  missing descriptors and truncated commands fail with the required status;
+  a GM identity publish raises the independent AVB-info and AS-path strobes
+  and produces both pushes; a PathTrace-tail publish produces only
+  `GET_AS_PATH`; another AVB-info-word change produces only `GET_AVB_INFO`;
+  and `gm_change_i` alone produces only `GET_AVB_INFO`, because the same ADP
+  duty also covers a domain-only change whose path sequence did not move.
 
 ## Snapshot window map (side port 0x20000, implemented by the top)
 
@@ -173,11 +181,13 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M9 | the engine's SET_STREAM_INFO flag gate forced open (the SIF_ACC_LAT compare to `1'b0`) | 3 FAIL -- W24d/W24e, and W24f collaterally because the extra-flag command's write now lands: nothing is partially applied is a checked property |
 | M10 | E_SINFO's WRITE_ST replaced with NOP | 4 FAIL -- W24a2/W24b (the published row and the folded GET), W24d/W24f (rows that assert the value survived refusals). W24a's byte-exact echo PASSES under this mutation -- the echo cannot see a dropped write, which is exactly why the face checks exist |
 | M11 | the engine's SET_STREAM_INFO running route forced dead | 2 FAIL -- W25b + W25b2 against a REALLY streaming output (Advertise + registered Listener on the wire) |
+| M12 | restored the pre-fix `.ev_asp_i (gm_change_i || gsi_asp_chg_i)` wiring | 1 FAIL at 1,269 checks — V6i: `gm_change_i` alone emits the forbidden `GET_AS_PATH`; the positive simultaneous-strobe arm stays live |
+| M13 | tied `.ev_asp_i` to zero | 5 FAIL at 1,269 checks — V6/V6c/V6d lose both GM-entry and tail-only `GET_AS_PATH`; V6f/V6h fail collaterally because the missing frame shifts the per-controller sequence IDs |
 
-All eleven bite; originals restored; suite back to green. The M1-M6 counts were
+All thirteen bite; originals restored; suite back to green. The M1-M6 counts were
 taken when the suite stood at 86 checks (scenario A and section B have since
 been added) and the M7-M11 counts at 1,139, so re-run a mutation before quoting
-its blast radius.
+its blast radius. M12-M13 were measured at 1,269 checks.
 
 ## Recorded seams and honest limits
 
