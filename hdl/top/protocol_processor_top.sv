@@ -3239,11 +3239,29 @@ module protocol_processor_top
       //! Table 5.22 GET_AVB_INFO triggers: the grandmaster changed, the
       //! SRP domain (class A priority/VID) changed, the link state flipped
       //! (AVTP_DOWN), or the integrator strobed a face-word change.
-      //! GET_AS_PATH: grandmaster changes and independently published
-      //! PathTrace-tail changes are both observable.
+      //!
+      //! GET_AS_PATH IS NOT ONE OF THEM, and gm_change_i is not a path
+      //! event. gm_change_i is the ADP GM_CHANGE duty (Milan 5.6.3.5.7),
+      //! and an integrator may legitimately raise it for any change of the
+      //! advertised gPTP pair - grandmaster id OR gptp_domain_number -
+      //! because both are ADPDU fields that a re-advertise has to carry.
+      //! A domain number is not a path entry, so taking that strobe as an
+      //! AS_PATH event pushes a path sequence that did not change, which
+      //! Table 5.22 conditions on "the path sequence changes". 02 section 6
+      //! already lists the GM_CHANGE consumers as the ADP advertise SM, the
+      //! counters and GET_AVB_INFO - not GET_AS_PATH - so this restores the
+      //! documented contract.
+      //!
+      //! ev_asp_i therefore takes the integrator's path-source event ALONE.
+      //! gsi_asp_chg_i is the one face that can see whether the served path
+      //! sequence moved: the integrator owns entry 0 (the grandmaster) and
+      //! entries 1.. (the published PathTrace tail), answers them through
+      //! gsi_data_i, and raises gsi_asp_chg_i from the SAME sources. An
+      //! integrator that does not drive the gsi face answers an empty path
+      //! and has nothing to notify about.
       .ev_avb_i              (gm_change_i || srp_evt_domain_change_w
                               || (link_up_i != link_q_r) || gsi_avb_chg_i),
-      .ev_asp_i              (gm_change_i || gsi_asp_chg_i),
+      .ev_asp_i              (gsi_asp_chg_i),
       .ev_amap_i             (aecp_eff_notify_stb_nc_w
                               && (aecp_eff_notify_cls_nc_w == 4'd6)),
       .ev_amap_remove_i      (amap_edit_remove_o),
