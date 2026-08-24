@@ -25,12 +25,8 @@ jobs:
   suites:
     runs-on: ubuntu-latest
     steps:
-      # Full history, not the default depth-1: the nvm_port figure gate pins its
-      # matrix injections against the revisions the removed check forms came
-      # from, and `git show <rev>~1` cannot resolve in a shallow clone. The gate
-      # fails loudly rather than passing blind when it cannot read them, which
-      # is how this was caught -- but only in CI, because a local run has the
-      # history and shows nothing.
+      # Full main history, not the default depth-1: the nvm_port figure gate
+      # compares its matrix injections with historical implementations.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -67,6 +63,9 @@ jobs:
       - name: nvm_port README figures agree with the tree
         run: |
           export PATH="$HOME/verilator/bin:$PATH"
+          # PR #13 was squash-merged. Its review lineage is therefore absent
+          # from main, but remains available through GitHub's durable pull ref.
+          git fetch --no-tags origin refs/pull/13/head
           make -C tb/nvm_port figures
 
   portability:
