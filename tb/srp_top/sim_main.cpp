@@ -753,6 +753,48 @@ int main(int argc, char** argv) {
     CHECK(h.malformed == 0, "F3: no PDU we fed was tolerance-discarded");
   }
 
+  // ==== F4. peer LeaveAll cadence stays bounded (milan-fpga #75) ==========
+  {
+    h.sync();
+    // The bench measured ~11 MSRP PDUs per second sustained after a
+    // reconnect: the retired lwSRP engine answered EVERY received
+    // LeaveAll with an immediate re-declaration and the peer's next
+    // cycle echoed it back. A correct applicant answers rLA! by falling
+    // to VP and re-declaring once, join-paced, per cycle. Six peer
+    // LeaveAll cycles, each ridden on the bridge's own re-advertise
+    // (the shape a real switch emits), must produce a bounded and
+    // non-growing exchange - and every cycle must re-declare Ready.
+    int total = 0, ready_cycles = 0, worst_cycle = 0;
+    for (int k = 0; k < 6; k++) {
+      Msg la{1, 25, false, {Vec{true, 1,
+              fv_talker(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345),
+              {EV_JOININ}, {}}}};
+      h.feed(mrpdu_body(true, {la}), true);
+      bool ready = false; int cnt = 0;
+      // ~0.9-0.95 s per cycle (20 polls, minus feed/parse overhead). The
+      // 18/4 pins include the PRNG-scheduled own-LeaveAll burst landing
+      // in cycle 4; an upstream timing edit that moves that burst across
+      // a cycle boundary legitimately re-measures these two pins.
+      for (int slice = 0; slice < 20; slice++) {
+        auto f = h.wait_any(true, 50);
+        if (f.empty()) continue;
+        cnt++;
+        auto p = parse_frame(f);
+        for (auto& v : p.vecs)
+          if (v.type == 3 && fv_u64(v.fv, 0, 8) == SIDX
+              && !v.fp.empty() && v.fp[0] == DECL_READY) ready = true;
+      }
+      total += cnt;
+      if (cnt > worst_cycle) worst_cycle = cnt;
+      if (ready) ready_cycles++;
+    }
+    CHECK(total <= 18, "F4: six LeaveAll cycles emit a bounded exchange");
+    CHECK(worst_cycle <= 4, "F4: no single cycle approaches the 11-PDU storm");
+    CHECK(ready_cycles == 6, "F4: every cycle re-declares Listener Ready");
+    CHECK(h.tk_reg(0) == 1, "F4: talker registration survives the cadence");
+    CHECK(h.malformed == 0, "F4: no PDU we fed was tolerance-discarded");
+  }
+
   // ==== G. admission sweep vs the independent Σ-slope model ===============
   {
     // deterministic xorshift so the sweep is reproducible
