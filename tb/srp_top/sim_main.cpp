@@ -771,7 +771,11 @@ int main(int argc, char** argv) {
               {EV_JOININ}, {}}}};
       h.feed(mrpdu_body(true, {la}), true);
       bool ready = false; int cnt = 0;
-      for (int slice = 0; slice < 20; slice++) {  // one 1 s peer cycle
+      // ~0.9-0.95 s per cycle (20 polls, minus feed/parse overhead). The
+      // 18/4 pins include the PRNG-scheduled own-LeaveAll burst landing
+      // in cycle 4; an upstream timing edit that moves that burst across
+      // a cycle boundary legitimately re-measures these two pins.
+      for (int slice = 0; slice < 20; slice++) {
         auto f = h.wait_any(true, 50);
         if (f.empty()) continue;
         cnt++;
