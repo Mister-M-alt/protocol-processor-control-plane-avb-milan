@@ -162,7 +162,15 @@ module KL_aecp_dyn_state #(
   //! field. `_v_r` is the "a controller has set this" flag a GET branches on.
   logic [15:0] cfg_r;                      logic                      cfg_v_r;
   logic [31:0] rate_r   [N_AUDIO_UNIT_P];  logic [N_AUDIO_UNIT_P-1:0] rate_v_r;
-  logic [15:0] clksrc_r [N_CLK_DOMAIN_P];  logic [N_CLK_DOMAIN_P-1:0] clksrc_v_r;
+  //! public_flat_rw: the root-integration true-ratio harness (milan-fpga
+  //! tb/verilator/milan_dp sim_aclk) pokes the STORED selection directly to
+  //! ask its one question - "given CRF selected, do the two grids align?" -
+  //! without re-proving the command path (SET_CLOCK_SOURCE -> this row ->
+  //! clk_src_index_o -> the root resolve), which the AECP-FACE arms already
+  //! pin end to end. The tap is on the store, one hop upstream of that
+  //! proven chain, so no unproven seam hides between poke and product.
+  logic [15:0] clksrc_r [N_CLK_DOMAIN_P] /* verilator public_flat_rw */;
+  logic [N_CLK_DOMAIN_P-1:0] clksrc_v_r;
   logic [63:0] fmtin_r  [N_STREAM_IN_P];   logic [N_STREAM_IN_P-1:0]  fmtin_v_r;
   logic [63:0] fmtout_r [N_STREAM_OUT_P];  logic [N_STREAM_OUT_P-1:0] fmtout_v_r;
   logic [31:0] ptoff_r  [N_STREAM_OUT_P];  logic [N_STREAM_OUT_P-1:0] ptoff_v_r;
