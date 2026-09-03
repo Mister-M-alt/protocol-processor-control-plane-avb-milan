@@ -17,20 +17,26 @@
 #include <utility>
 #include "Vsrp_tb_wrap.h"
 #include "verilated.h"
+#include "../common/verilator_harness.hpp"
 
-static int checks = 0, fails = 0;
+// The tally lives in the suite object below; CHECK names those members, so it
+// expands only inside a SrpSuite member function.
 #define CHECK(cond, ...) do { \
   ++checks; \
   if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
 } while (0)
 
 // ---- independent 802.1Q reference packer ----------------------------------
+// The widest FirstValue either application carries: Talker Failed is 34 bytes,
+// so every FirstValue image in this file is a zero-padded buffer of that size.
+constexpr int kFirstValueBytes = 34;
+
 struct Ev {
   int app;            // 0 MSRP, 1 MVRP
   int type;           // AttributeType
   int event;          // 0 New, 1 JoinIn, 2 In, 3 JoinMt, 4 Mt, 5 Lv
   int fp;             // Listener FourPacked declaration parameter
-  uint8_t val[34];    // FirstValue, wire order, zero-padded
+  uint8_t val[kFirstValueBytes];  // FirstValue, wire order, zero-padded
 };
 
 static Ev mk_ev(int app, int type, int event, int fp,
@@ -43,7 +49,8 @@ static Ev mk_ev(int app, int type, int event, int fp,
 
 // bytes [off, off+len) of a, incremented as one big-endian integer, == b?
 static bool inc_eq(const uint8_t* a, const uint8_t* b, int off, int len) {
-  uint8_t tmp[34]; memcpy(tmp, a, 34);
+  uint8_t tmp[kFirstValueBytes];
+  memcpy(tmp, a, kFirstValueBytes);
   for (int i = off + len - 1; i >= off; --i) { if (++tmp[i] != 0) break; }
   return memcmp(tmp + off, b + off, len) == 0;
 }
@@ -78,8 +85,10 @@ static int attr_len(int app, int type) {
 static std::vector<uint8_t> model_pdu(const std::vector<Ev>& evs, bool leaveall,
                                       const uint8_t own[6]) {
   const int app = evs[0].app;
-  static const uint8_t da_msrp[6] = {0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E};
-  static const uint8_t da_mvrp[6] = {0x01, 0x80, 0xC2, 0x00, 0x00, 0x21};
+  static constexpr uint8_t da_msrp[6] = {0x01, 0x80, 0xC2,
+                                         0x00, 0x00, 0x0E};
+  static constexpr uint8_t da_mvrp[6] = {0x01, 0x80, 0xC2,
+                                         0x00, 0x00, 0x21};
   std::vector<uint8_t> f;
   const uint8_t* da = app ? da_mvrp : da_msrp;
   f.insert(f.end(), da, da + 6);
@@ -98,7 +107,8 @@ static std::vector<uint8_t> model_pdu(const std::vector<Ev>& evs, bool leaveall,
       runs.push_back({evs[i].type, &evs[i], {evs[i].event}, {evs[i].fp}});
     }
   }
-  size_t r = 0; bool first_vec = true;
+  size_t r = 0;
+  bool first_vec = true;
   while (r < runs.size()) {
     const int t = runs[r].type;
     const int alen = attr_len(app, t);
@@ -108,7 +118,8 @@ static std::vector<uint8_t> model_pdu(const std::vector<Ev>& evs, bool leaveall,
     while (r < runs.size() && runs[r].type == t) {
       const Run& R = runs[r];
       const int nov = int(R.e3.size());
-      const int la = (first_vec && leaveall) ? 1 : 0; first_vec = false;
+      const int la = (first_vec && leaveall) ? 1 : 0;
+      first_vec = false;
       f.push_back(uint8_t((la << 5) | ((nov >> 8) & 0x1F)));
       f.push_back(uint8_t(nov & 0xFF));
       f.insert(f.end(), R.first->val, R.first->val + alen);
@@ -120,7 +131,8 @@ static std::vector<uint8_t> model_pdu(const std::vector<Ev>& evs, bool leaveall,
       }
       if (app == 0 && t == 3) {
         for (int k = 0; k < (nov + 3) / 4; ++k) {
-          int v[4] = {0, 0, 0, 0};
+          int v[4] = {0, 0,
+                      0, 0};
           for (int m = 0; m < 4; ++m)
             if (4 * k + m < nov) v[m] = R.e4[size_t(4 * k + m)];
           f.push_back(uint8_t(v[0] * 64 + v[1] * 16 + v[2] * 4 + v[3]));
@@ -139,19 +151,36 @@ static std::vector<uint8_t> model_pdu(const std::vector<Ev>& evs, bool leaveall,
 }
 
 // ---- harness ---------------------------------------------------------------
-static const uint8_t OWN_MAC[6] = {0x02, 0x4B, 0x4C, 0x00, 0x00, 0x01};
+constexpr uint8_t OWN_MAC[6] = {0x02, 0x4B, 0x4C,
+                                0x00, 0x00, 0x01};
+
+// enc_ev_value_i is 272 bits wide: nine 32-bit Verilator words.
+constexpr int kValueWords = 9;
+// Cycles a ready handshake is given before the harness calls it backpressured.
+constexpr int kHandshakeTimeoutCycles = 100;
+// Cycles the TX request face is waited on before the drain is called lost.
+constexpr int kTxreqTimeoutCycles = 5000;
+// Loop guard on one slot's serialize walk: far longer than any legal frame.
+constexpr int kSerializeGuardCycles = 8000;
 
 struct H {
   Vsrp_tb_wrap* d;
   std::vector<std::pair<int, uint32_t>> dom_evs;
   std::vector<std::pair<int, int>>      vlan_evs;
-  int dom_changes = 0, vlan_errs = 0, commits = 0, allocs = 0, drops = 0;
+  int dom_changes = 0;
+  int vlan_errs = 0;
+  int commits = 0;
+  int allocs = 0;
+  int drops = 0;
   // pre-edge samples
-  bool last_enc_ready = false, last_txreq = false;
+  bool last_enc_ready = false;
+  bool last_txreq = false;
   int  last_txslot = 0;
-  bool last_ser_valid = false, last_ser_last = false;
+  bool last_ser_valid = false;
+  bool last_ser_last = false;
   uint8_t last_ser_data = 0;
-  bool last_user_ready = false, last_vlan_ev_valid = false;
+  bool last_user_ready = false;
+  bool last_vlan_ev_valid = false;
 
   explicit H(Vsrp_tb_wrap* dd) : d(dd) {}
 
@@ -179,15 +208,15 @@ struct H {
   }
   void run(int n) { for (int i = 0; i < n; ++i) tick(); }
 
-  void set_val(const uint8_t v[34]) {
-    for (int w = 0; w < 9; ++w) d->enc_ev_value_i[w] = 0;
-    for (int j = 0; j < 34; ++j) {
+  void set_val(const uint8_t v[kFirstValueBytes]) {
+    for (int w = 0; w < kValueWords; ++w) d->enc_ev_value_i[w] = 0;
+    for (int j = 0; j < kFirstValueBytes; ++j) {
       const int low = 264 - 8 * j;               // byte j at [271-8j : 264-8j]
       d->enc_ev_value_i[low / 32] |= uint32_t(v[j]) << (low % 32);
     }
   }
 
-  bool push_enc(const Ev& e, int timeout = 100) {
+  bool push_enc(const Ev& e, int timeout = kHandshakeTimeoutCycles) {
     d->enc_ev_app_i       = uint8_t(e.app);
     d->enc_ev_attr_type_i = uint8_t(e.type);
     d->enc_ev_event_i     = uint8_t(e.event);
@@ -203,7 +232,7 @@ struct H {
   }
 
   // wait for the TX request face, accept it, drain the slot via the pool
-  bool wait_and_drain(std::vector<uint8_t>& out, int to = 5000) {
+  bool wait_and_drain(std::vector<uint8_t>& out, int to = kTxreqTimeoutCycles) {
     int slot = -1;
     for (int i = 0; i < to && slot < 0; ++i) {
       tick();
@@ -213,7 +242,7 @@ struct H {
     d->enc_txreq_ready_i = 1; tick(); d->enc_txreq_ready_i = 0;
     d->ser_slot_i = uint8_t(slot); d->ser_req_i = 1; d->ser_ready_i = 1;
     out.clear();
-    for (int i = 0; i < 8000; ++i) {
+    for (int i = 0; i < kSerializeGuardCycles; ++i) {
       tick();
       d->ser_req_i = 0;
       if (last_ser_valid) {
@@ -225,14 +254,15 @@ struct H {
     return false;
   }
 
-  bool capture_pdu(int app, std::vector<uint8_t>& out, int to = 5000) {
+  bool capture_pdu(int app, std::vector<uint8_t>& out,
+                   int to = kTxreqTimeoutCycles) {
     d->enc_join_tick_i = uint8_t(1u << app);
     tick();
     d->enc_join_tick_i = 0;
     return wait_and_drain(out, to);
   }
 
-  bool vlan_op(bool join, int vid, int timeout = 100) {
+  bool vlan_op(bool join, int vid, int timeout = kHandshakeTimeoutCycles) {
     d->vlan_user_join_i = join; d->vlan_user_vid_i = uint16_t(vid);
     d->vlan_user_valid_i = 1;
     for (int i = 0; i < timeout; ++i) {
@@ -244,23 +274,50 @@ struct H {
   }
 };
 
-static void check_pdu(const char* name, const std::vector<uint8_t>& got,
-                      const std::vector<uint8_t>& exp) {
-  CHECK(got.size() == exp.size(), "%s: length got %zu exp %zu",
-        name, got.size(), exp.size());
-  const bool same = (got == exp);
-  CHECK(same, "%s: byte-exact against the independent packer", name);
-  if (!same) {
-    printf("  exp:"); for (uint8_t b : exp) printf(" %02x", b); printf("\n");
-    printf("  got:"); for (uint8_t b : got) printf(" %02x", b); printf("\n");
+namespace {
+
+//! The whole SRP suite as one object: the tally, the Verilated model, the BFM
+//! and the frame under comparison are members, so nothing this translation
+//! unit mutates lives at file scope (I.2).
+class SrpSuite {
+ public:
+  int run();
+
+ private:
+  void check_pdu(const char* name, const std::vector<uint8_t>& got,
+                 const std::vector<uint8_t>& exp) {
+    CHECK(got.size() == exp.size(), "%s: length got %zu exp %zu",
+          name, got.size(), exp.size());
+    const bool same = (got == exp);
+    CHECK(same, "%s: byte-exact against the independent packer", name);
+    if (!same) {
+      printf("  exp:"); for (uint8_t b : exp) printf(" %02x", b); printf("\n");
+      printf("  got:"); for (uint8_t b : got) printf(" %02x", b); printf("\n");
+    }
   }
-}
 
-int main(int argc, char** argv) {
-  Verilated::commandArgs(argc, argv);
-  auto* d = new Vsrp_tb_wrap;
-  H h(d);
+  void bring_out_of_reset();
+  void encode_the_two_minimal_pdus();
+  void aggregate_one_window_into_one_frame();
+  void carry_a_wide_firstvalue_and_one_leaveall();
+  void keep_the_two_participants_independent();
+  void pad_the_packed_lanes_and_drop_unknown_types();
+  void fold_a_full_table_then_backpressure_the_overflow();
+  void domain_declares_adopts_and_ignores_repeats();
+  void domain_surfaces_class_a_and_reverts_on_link_down();
+  void vlan_refcounts_every_vid_and_freezes_the_old_one();
+  void bridge_the_fsm_declarations_onto_real_frames();
 
+  int checks = 0;
+  int fails = 0;
+
+  const milan::tb::Model<Vsrp_tb_wrap> model;
+  Vsrp_tb_wrap* const d = model.get();
+  H h{d};
+  std::vector<uint8_t> got;
+};
+
+void SrpSuite::bring_out_of_reset() {
   // defaults
   d->rst_n = 0;
   d->enc_ev_valid_i = 0; d->enc_join_tick_i = 0; d->enc_leaveall_i = 0;
@@ -277,9 +334,9 @@ int main(int argc, char** argv) {
   h.run(5);
   d->rst_n = 1;
   h.run(3);
+}
 
-  std::vector<uint8_t> got;
-
+void SrpSuite::encode_the_two_minimal_pdus() {
   // =====================================================================
   // E1 — single Domain New: minimal MSRP PDU, both EndMarks, listlen rule
   // =====================================================================
@@ -315,7 +372,9 @@ int main(int argc, char** argv) {
     CHECK(got[15] == 1 && got[16] == 2,
           "E2 message header is {type, len} with NO list-length field");
   }
+}
 
+void SrpSuite::aggregate_one_window_into_one_frame() {
   // =====================================================================
   // E3 — cadence aggregation: N pushed events -> ONE frame on the tick
   // =====================================================================
@@ -329,7 +388,8 @@ int main(int argc, char** argv) {
                          0x00, 0x02, 0x00, 0x64, 0x00, 0x01, 0x70, 0x00,
                          0x00, 0x0F, 0x42}),
     };
-    const int c0 = h.commits, a0 = h.allocs;
+    const int c0 = h.commits;
+    const int a0 = h.allocs;
     for (auto& e : evs) CHECK(h.push_enc(e), "E3 push accepted");
     h.run(200);
     CHECK(h.commits == c0 && h.allocs == a0,
@@ -378,13 +438,15 @@ int main(int argc, char** argv) {
     CHECK(got[19] == 0x00 && got[20] == 0x02,
           "E5 first vector aggregated NoV=2");
   }
+}
 
+void SrpSuite::carry_a_wide_firstvalue_and_one_leaveall() {
   // =====================================================================
   // E6 — Talker Failed: 34-byte FirstValue survives byte-exact
   // =====================================================================
   {
     Ev f0 = mk_ev(0, 2, 0, 0, {});
-    for (int i = 0; i < 34; ++i) f0.val[i] = uint8_t(0xA0 + i);
+    for (int i = 0; i < kFirstValueBytes; ++i) f0.val[i] = uint8_t(0xA0 + i);
     std::vector<Ev> evs = {f0};
     CHECK(h.push_enc(f0), "E6 push accepted");
     CHECK(h.capture_pdu(0, got), "E6 PDU captured");
@@ -413,7 +475,9 @@ int main(int argc, char** argv) {
     check_pdu("E7b", got, model_pdu(ev2, false, OWN_MAC));
     CHECK((got[19] >> 5) == 0, "E7b LeaveAll consumed by the first PDU");
   }
+}
 
+void SrpSuite::keep_the_two_participants_independent() {
   // =====================================================================
   // E8 — both participants pending; each tick drains ONLY its own table
   // =====================================================================
@@ -444,7 +508,9 @@ int main(int argc, char** argv) {
     CHECK(h.wait_and_drain(got), "E9 second PDU follows automatically");
     check_pdu("E9-mvrp", got, model_pdu(ev, false, OWN_MAC));
   }
+}
 
+void SrpSuite::pad_the_packed_lanes_and_drop_unknown_types() {
   // =====================================================================
   // E10 — MVRP VID run + FourPacked absence; 5-element Listener run:
   //       ThreePacked and FourPacked padding both exercised
@@ -478,7 +544,9 @@ int main(int argc, char** argv) {
     CHECK(h.drops == dr0 + 1, "E11 drop strobe fired");
     CHECK(d->enc_dbg_cnt_msrp_o == 0, "E11 nothing pended");
   }
+}
 
+void SrpSuite::fold_a_full_table_then_backpressure_the_overflow() {
   // =====================================================================
   // E12 — full-table run: 12 consecutive Listeners fold to ONE NoV=12
   //       vector; the 13th push backpressures until the drain
@@ -500,7 +568,9 @@ int main(int argc, char** argv) {
     CHECK(h.capture_pdu(0, got), "E12b PDU captured");
     check_pdu("E12b", got, model_pdu({extra}, false, OWN_MAC));
   }
+}
 
+void SrpSuite::domain_declares_adopts_and_ignores_repeats() {
   // =====================================================================
   // D — Domain FSM walk (F10.2)
   // =====================================================================
@@ -560,7 +630,11 @@ int main(int argc, char** argv) {
     h.run(10);
     CHECK(h.dom_evs.empty(), "D5 no re-adoption of identical parameters");
     CHECK(h.dom_changes == ch1, "D5 no DOMAIN_CHANGE strobe");
+  }
+}
 
+void SrpSuite::domain_surfaces_class_a_and_reverts_on_link_down() {
+  {
     // D6: the certified two-class bridge shape — FirstValue {5, 2, VID 2},
     // NoV=2: Class A is value 1, priority 2 + (6 - 5) = 3
     h.dom_evs.clear();
@@ -632,7 +706,9 @@ int main(int argc, char** argv) {
           && h.dom_evs[0].second == 0x06030002u,
           "D9 LINK_UP re-declares the defaults (New)");
   }
+}
 
+void SrpSuite::vlan_refcounts_every_vid_and_freezes_the_old_one() {
   // =====================================================================
   // V — VLAN FSM walk (corrected F10.3: per-VID refcount, frozen VID)
   // =====================================================================
@@ -715,7 +791,9 @@ int main(int argc, char** argv) {
     CHECK(h.vlan_evs.size() == 2 && h.vlan_evs[1].first == 0,
           "V9 fresh first user -> New again");
   }
+}
 
+void SrpSuite::bridge_the_fsm_declarations_onto_real_frames() {
   // =====================================================================
   // B — bridge: the FSMs' own declarations, through the encoder, onto
   //     real frames (harness plays the event router)
@@ -730,7 +808,8 @@ int main(int argc, char** argv) {
     h.tick();
     d->dom_periodic_tick_i = 0; d->vlan_periodic_tick_i = 0;
     // bridge both faces into the encoder push port (domain first)
-    int bridged_dom = 0, bridged_vlan = 0;
+    int bridged_dom = 0;
+    int bridged_vlan = 0;
     for (int i = 0; i < 300; ++i) {
       d->clk_i = 0; d->eval();
       const bool dv = d->dom_ev_valid_o;
@@ -739,7 +818,7 @@ int main(int argc, char** argv) {
         d->enc_ev_app_i = 0; d->enc_ev_attr_type_i = 4;
         d->enc_ev_event_i = d->dom_ev_event_o & 7; d->enc_ev_fourpack_i = 0;
         const uint32_t v = d->dom_ev_value_o;
-        uint8_t val[34] = {0};
+        uint8_t val[kFirstValueBytes] = {0};
         val[0] = uint8_t(v >> 24); val[1] = uint8_t(v >> 16);
         val[2] = uint8_t(v >> 8);  val[3] = uint8_t(v);
         h.set_val(val);
@@ -748,7 +827,7 @@ int main(int argc, char** argv) {
         d->enc_ev_app_i = 1; d->enc_ev_attr_type_i = 1;
         d->enc_ev_event_i = d->vlan_ev_event_o & 7; d->enc_ev_fourpack_i = 0;
         const uint16_t v = d->vlan_ev_vid_o;
-        uint8_t val[34] = {0};
+        uint8_t val[kFirstValueBytes] = {0};
         val[0] = uint8_t(v >> 8); val[1] = uint8_t(v);
         h.set_val(val);
         d->enc_ev_valid_i = 1;
@@ -775,8 +854,29 @@ int main(int argc, char** argv) {
     CHECK(h.capture_pdu(1, got), "B1 VLAN frame captured");
     check_pdu("B1-vlan", got, model_pdu(bv, false, OWN_MAC));
   }
+}
+
+int SrpSuite::run() {
+  bring_out_of_reset();
+  encode_the_two_minimal_pdus();
+  aggregate_one_window_into_one_frame();
+  carry_a_wide_firstvalue_and_one_leaveall();
+  keep_the_two_participants_independent();
+  pad_the_packed_lanes_and_drop_unknown_types();
+  fold_a_full_table_then_backpressure_the_overflow();
+  domain_declares_adopts_and_ignores_repeats();
+  domain_surfaces_class_a_and_reverts_on_link_down();
+  vlan_refcounts_every_vid_and_freezes_the_old_one();
+  bridge_the_fsm_declarations_onto_real_frames();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
-  delete d;
   return fails ? 1 : 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  Verilated::commandArgs(argc, argv);
+  SrpSuite suite;
+  return suite.run();
 }

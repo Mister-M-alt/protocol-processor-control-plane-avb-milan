@@ -13,7 +13,7 @@ VFLAGS = --cc --exe --build -j 0 \
          -GNAME_ENTRIES_P=256 \
          -Wall -Wno-fatal -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDPARAM \
-         -CFLAGS "-std=c++17 -O2 -I$(CURDIR)"
+         -CFLAGS "-std=c++17 -O2 -I$(CURDIR) -Wall -Wextra"
 
 SRCS = $(HDL)/aecp/KL_aecp_desc_store.sv
 CPP  = sim_main.cpp

@@ -15,34 +15,55 @@
 // The reference model is contract-level bookkeeping (slot lifecycle, its
 // own byte images, free/ready accounting) — it shares no pipeline, no
 // skid and no address math with the DUT.
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 #include <vector>
 #include "VKL_pp_tx_slots.h"
 #include "verilated.h"
+#include "../common/verilator_harness.hpp"
 
-static int checks = 0, fails = 0;
+// ---- pool geometry, F01.5 "P-TX 4x576 + 1600" ------------------------------
+constexpr int kSlots         = 5;     // slots 0..3 plain, slot 4 oversize
+constexpr int kPlainSlots    = 4;     // the slots a plain allocation may take
+constexpr int kOversizeSlot  = 4;     // the only slot an oversize alloc gets
+constexpr int kPlainBytes    = 576;   // capacity of slots 0..3
+constexpr int kOversizeBytes = 1600;  // capacity of slot 4
+
+// full-std, 1-byte, mid, mid, full-oversize
+constexpr std::array<int, kSlots> lens = {kPlainBytes, 1, 137, 42, kOversizeBytes};
+constexpr std::array<int, kSlots> hdrs = {14, 0, 12, 5, 22};
+
 #define CHECK(cond, ...) do { \
   ++checks; \
   if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
 } while (0)
 
+namespace {
+
 // ---- independent contract model -------------------------------------------
 struct RefPool {
   enum St { FREE, ALLOC, READY, STREAM };
-  St      st[5];
-  int     len[5];
-  uint8_t img[5][1600];
+  St      st[kSlots];
+  int     len[kSlots];
+  uint8_t img[kSlots][kOversizeBytes];
 
-  RefPool() { for (int i = 0; i < 5; ++i) { st[i] = FREE; len[i] = 0; }
+  RefPool() { for (int i = 0; i < kSlots; ++i) { st[i] = FREE; len[i] = 0; }
               memset(img, 0, sizeof img); }
 
-  static int cap(int s) { return s == 4 ? 1600 : 576; }
+  static int cap(int s) { return s == kOversizeSlot ? kOversizeBytes : kPlainBytes; }
 
   int alloc(bool oversize) {
-    if (oversize) { if (st[4] == FREE) { st[4] = ALLOC; return 4; } return -1; }
-    for (int i = 0; i < 4; ++i)
+    if (oversize) {
+      if (st[kOversizeSlot] == FREE) {
+        st[kOversizeSlot] = ALLOC;
+        return kOversizeSlot;
+      }
+      return -1;
+    }
+    for (int i = 0; i < kPlainSlots; ++i)
       if (st[i] == FREE) { st[i] = ALLOC; return i; }
     return -1;
   }
@@ -56,11 +77,11 @@ struct RefPool {
   void freeSlot(int s) { st[s] = FREE; }
 
   int nfree() const {
-    int n = 0; for (int i = 0; i < 5; ++i) n += (st[i] == FREE); return n;
+    int n = 0; for (int i = 0; i < kSlots; ++i) n += (st[i] == FREE); return n;
   }
   uint32_t readyMask() const {
     uint32_t m = 0;
-    for (int i = 0; i < 5; ++i) if (st[i] == READY) m |= 1u << i;
+    for (int i = 0; i < kSlots; ++i) if (st[i] == READY) m |= 1u << i;
     return m;
   }
 };
@@ -71,8 +92,13 @@ struct Harness {
   RefPool ref;
   uint32_t rng = 0xC0FFEE01u;
 
+  int checks = 0;   // the tally the CHECK macro keeps
+  int fails = 0;
+
   // pre-edge observation of the serialize port (what the arbiter sees)
-  int o_valid = 0, o_last = 0, o_ready = 0;
+  int o_valid = 0;
+  int o_last = 0;
+  int o_ready = 0;
   uint8_t o_data = 0;
 
   bool last_pulse_ok = false;   // grant was a one-cycle pulse
@@ -122,7 +148,7 @@ struct Harness {
   }
 
   static uint8_t pat(int s, int a, int epoch) {
-    return uint8_t(0x35 * s + 7 * a + 0x11 + 0x4D * epoch);
+    return static_cast<uint8_t>(0x35 * s + 7 * a + 0x11 + 0x4D * epoch);
   }
 
   // builders write headers AFTER payloads: offsets [hdr..len) first, then [0..hdr)
@@ -148,12 +174,14 @@ struct Harness {
     if (assert_req) { dut->ser_req_i = 1; dut->ser_slot_i = slot; }
     bool req_up = true;
     bool stall_pending = false;
-    uint8_t stall_data = 0; int stall_last = 0;
-    int first_c = -1, last_c = -1;
+    uint8_t stall_data = 0;
+    int stall_last = 0;
+    int first_c = -1;
+    int last_c = -1;
     bool mid_sampled = false;
 
     for (int cyc = 0; cyc < maxcyc && !r.done; ++cyc) {
-      dut->ser_ready_i = (rnd() % 100u) < (uint32_t)ready_pct;
+      dut->ser_ready_i = (rnd() % 100u) < static_cast<uint32_t>(ready_pct);
       tick();
       if (o_valid && req_up) {
         // frame accepted: drop our request (or hand the line to bg_slot)
@@ -177,7 +205,7 @@ struct Harness {
         if (first_c < 0) first_c = cyc;
         last_c = cyc;
         r.bytes.push_back(o_data);
-        if (o_last) { r.last_pos = int(r.bytes.size()) - 1; r.done = true; }
+        if (o_last) { r.last_pos = static_cast<int>(r.bytes.size()) - 1; r.done = true; }
         else if (r.bytes.size() > explen) break;      // runaway guard
       }
     }
@@ -189,110 +217,124 @@ struct Harness {
     }
     return r;
   }
+
+  std::pair<SRes, uint32_t> frame(const char* tag, int slot, int ready_pct,
+                                  int bg = -1, bool assert_req = true,
+                                  bool drain = true);
+
+  int run();
+  void reset_leaves_the_pool_quiescent();
+  void allocation_walks_plain_slots_and_reserves_the_oversize();
+  void fills_header_after_payload_then_commits();
+  void an_uncommitted_slot_never_streams();
+  void serializes_all_five_out_of_order_under_backpressure();
+  void two_committed_slots_are_serviced_one_at_a_time();
+  void a_freed_slot_is_reusable_and_late_writes_are_discarded();
+  void a_zero_length_commit_is_freed_on_service();
+  void cancellation_releases_an_allocated_builder_slot();
+  void a_held_slot_survives_serialization_for_an_exact_retry();
+  void the_idle_pool_stays_quiescent();
 };
 
-int main(int argc, char** argv) {
-  Verilated::commandArgs(argc, argv);
-  auto* dut = new VKL_pp_tx_slots;
-  Harness h(dut);
+std::pair<Harness::SRes, uint32_t> Harness::frame(
+    const char* tag, int slot, int ready_pct, int bg,
+    bool assert_req, bool drain) {
+  int len = ref.len[slot];
+  std::vector<uint8_t> exp(ref.img[slot], ref.img[slot] + len);
+  uint32_t exp_mid = ref.readyMask() & ~(1u << slot);
+  auto r = stream(slot, static_cast<size_t>(len), ready_pct, len * 6 + 200,
+                    bg, assert_req, drain);
+  CHECK(r.done, "%s completes", tag);
+  CHECK(r.bytes == exp, "%s byte-exact (%zu of %d bytes)", tag,
+        r.bytes.size(), len);
+  CHECK(r.last_pos == len - 1, "%s ser_last on byte %d exp %d", tag,
+        r.last_pos, len - 1);
+  CHECK(r.hold_viol == 0, "%s backpressure stalls, never skips (%d viol)",
+        tag, r.hold_viol);
+  if (drain)
+    CHECK(r.spurious == 0, "%s no bytes after ser_last (%d)", tag, r.spurious);
+  CHECK(dut->slots_free_o == static_cast<uint32_t>(ref.nfree()) &&
+        dut->slots_ready_o == ref.readyMask(),
+        "%s auto-freed on eof (free %u exp %d)", tag,
+        static_cast<unsigned>(dut->slots_free_o), ref.nfree());
+  return std::make_pair(r, exp_mid);
+}
 
-  dut->alloc_req_i = 0; dut->oversize_i = 0;
-  dut->wr_slot_i = 0; dut->wr_addr_i = 0; dut->wr_data_i = 0;
-  dut->wr_valid_i = 0; dut->wr_commit_i = 0; dut->wr_len_i = 0;
-  dut->hold_valid_i = 0; dut->hold_slot_i = 0;
-  dut->release_valid_i = 0; dut->release_slot_i = 0;
-  dut->ser_req_i = 0; dut->ser_slot_i = 0; dut->ser_ready_i = 0;
-
-  // ---- A: reset state -------------------------------------------------
+// ---- A: reset state -------------------------------------------------
+void Harness::reset_leaves_the_pool_quiescent() {
   dut->rst_n = 0;
-  for (int i = 0; i < 4; ++i) h.tick();
+  for (int i = 0; i < 4; ++i) tick();
   dut->rst_n = 1;
-  h.tick();
-  CHECK(dut->slots_free_o == 5, "A all five slots free after reset");
+  tick();
+  CHECK(dut->slots_free_o == kSlots, "A all five slots free after reset");
   CHECK(dut->slots_ready_o == 0, "A nothing ready after reset");
   CHECK(dut->alloc_gnt_o == 0 && dut->ser_valid_o == 0, "A quiescent outputs");
+}
 
-  // ---- B: allocation policy ------------------------------------------
-  for (int k = 0; k < 4; ++k) {
-    int exp = h.ref.alloc(false);
-    int got = h.alloc_dut(false);
+// ---- B: allocation policy ------------------------------------------
+void Harness::allocation_walks_plain_slots_and_reserves_the_oversize() {
+  for (int k = 0; k < kPlainSlots; ++k) {
+    int exp = ref.alloc(false);
+    int got = alloc_dut(false);
     CHECK(got == exp, "B plain alloc #%d got %d exp %d", k, got, exp);
   }
-  CHECK(h.last_pulse_ok, "B grant is a one-cycle pulse");
+  CHECK(last_pulse_ok, "B grant is a one-cycle pulse");
   CHECK(dut->slots_free_o == 1, "B one slot (the oversize) left free");
   {
-    int exp = h.ref.alloc(false);                    // -1: std slots exhausted
-    int got = h.alloc_dut(false, 6);
+    int exp = ref.alloc(false);                    // -1: std slots exhausted
+    int got = alloc_dut(false, 6);
     CHECK(got == exp && got == -1,
           "B plain alloc NEVER returns slot 4 (got %d)", got);
   }
   {
-    int exp = h.ref.alloc(true);                     // 4
-    int got = h.alloc_dut(true);
-    CHECK(got == exp && got == 4, "B oversize alloc returns 4 (got %d)", got);
+    int exp = ref.alloc(true);                     // 4
+    int got = alloc_dut(true);
+    CHECK(got == exp && got == kOversizeSlot,
+          "B oversize alloc returns 4 (got %d)", got);
   }
   CHECK(dut->slots_free_o == 0, "B pool exhausted");
   {
-    int exp = h.ref.alloc(true);                     // -1: slot 4 busy
-    int got = h.alloc_dut(true, 4);
+    int exp = ref.alloc(true);                     // -1: slot 4 busy
+    int got = alloc_dut(true, 4);
     CHECK(got == exp && got == -1,
           "B oversize alloc waits for slot 4 (got %d)", got);
   }
   {
-    int got = h.alloc_dut(false, 4);
+    int got = alloc_dut(false, 4);
     CHECK(got == -1, "B plain alloc denied when all busy (got %d)", got);
   }
+}
 
-  // ---- C: fill (header after payload) + commit ------------------------
-  const int lens[5] = {576, 1, 137, 42, 1600};       // full-std, 1-byte, mid, mid, full-oversize
-  const int hdrs[5] = {14, 0, 12, 5, 22};
-  for (int s = 0; s < 5; ++s) h.fill_ha(s, lens[s], hdrs[s], 0);
+// ---- C: fill (header after payload) + commit ------------------------
+void Harness::fills_header_after_payload_then_commits() {
+  for (int s = 0; s < kSlots; ++s) fill_ha(s, lens[s], hdrs[s], 0);
   CHECK(dut->ser_valid_o == 0, "C no stream during fill");
-  h.commit(0, lens[0]);
-  h.commit(1, lens[1]);
-  h.commit(2, lens[2]);
+  commit(0, lens[0]);
+  commit(1, lens[1]);
+  commit(2, lens[2]);
+}
 
-  // ---- D: serialize request on a non-READY (still ALLOC) slot ---------
+// ---- D: serialize request on a non-READY (still ALLOC) slot ---------
+void Harness::an_uncommitted_slot_never_streams() {
   {
     dut->ser_req_i = 1; dut->ser_slot_i = 3;
     bool sawv = false;
-    for (int k = 0; k < 3; ++k) { h.tick(); sawv |= (h.o_valid != 0); }
+    for (int k = 0; k < 3; ++k) { tick(); sawv |= (o_valid != 0); }
     dut->ser_req_i = 0;
-    h.tick();
+    tick();
     CHECK(!sawv, "D uncommitted slot never streams");
-    CHECK(dut->slots_ready_o == h.ref.readyMask() && dut->slots_free_o == 0,
+    CHECK(dut->slots_ready_o == ref.readyMask() && dut->slots_free_o == 0,
           "D state untouched by the ignored request (rdy %02x)",
-          (unsigned)dut->slots_ready_o);
+          static_cast<unsigned>(dut->slots_ready_o));
   }
-  h.commit(3, lens[3]);
-  h.commit(4, lens[4]);
+  commit(3, lens[3]);
+  commit(4, lens[4]);
   CHECK(dut->slots_ready_o == 0x1F, "C+D all five committed -> ready 0x1F");
   CHECK(dut->slots_free_o == 0, "C+D none free while all queued");
+}
 
-  // ---- E: serialize all five, out of order, random backpressure -------
-  auto frame = [&](const char* tag, int slot, int ready_pct, int bg = -1,
-                   bool assert_req = true, bool drain = true) {
-    int len = h.ref.len[slot];
-    std::vector<uint8_t> exp(h.ref.img[slot], h.ref.img[slot] + len);
-    uint32_t exp_mid = h.ref.readyMask() & ~(1u << slot);
-    auto r = h.stream(slot, size_t(len), ready_pct, len * 6 + 200,
-                      bg, assert_req, drain);
-    CHECK(r.done, "%s completes", tag);
-    CHECK(r.bytes == exp, "%s byte-exact (%zu of %d bytes)", tag,
-          r.bytes.size(), len);
-    CHECK(r.last_pos == len - 1, "%s ser_last on byte %d exp %d", tag,
-          r.last_pos, len - 1);
-    CHECK(r.hold_viol == 0, "%s backpressure stalls, never skips (%d viol)",
-          tag, r.hold_viol);
-    if (drain)
-      CHECK(r.spurious == 0, "%s no bytes after ser_last (%d)", tag, r.spurious);
-    CHECK(dut->slots_free_o == (uint32_t)h.ref.nfree() &&
-          dut->slots_ready_o == h.ref.readyMask(),
-          "%s auto-freed on eof (free %u exp %d)", tag,
-          (unsigned)dut->slots_free_o, h.ref.nfree());
-    return std::make_pair(r, exp_mid);
-  };
-
+// ---- E: serialize all five, out of order, random backpressure -------
+void Harness::serializes_all_five_out_of_order_under_backpressure() {
   {
     auto [r, exp_mid] = frame("E slot2", 2, 60);
     CHECK(r.mid_ready == exp_mid,
@@ -314,17 +356,21 @@ int main(int argc, char** argv) {
           "E full-ready streams one byte per cycle (span %d exp %d)",
           r.consume_span, lens[3]);
   }
-  CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0,
+  CHECK(dut->slots_free_o == kSlots && dut->slots_ready_o == 0,
         "E pool fully drained");
+}
 
-  // ---- F: two committed slots, serviced one at a time -----------------
+// ---- F: two committed slots, serviced one at a time -----------------
+void Harness::two_committed_slots_are_serviced_one_at_a_time() {
   {
-    int a = h.ref.alloc(false); int ga = h.alloc_dut(false);
-    int b = h.ref.alloc(false); int gb = h.alloc_dut(false);
+    int a = ref.alloc(false);
+    int ga = alloc_dut(false);
+    int b = ref.alloc(false);
+    int gb = alloc_dut(false);
     CHECK(ga == a && a == 0, "F re-alloc lowest freed slot (got %d)", ga);
     CHECK(gb == b && b == 1, "F second alloc next lowest (got %d)", gb);
-    h.fill_ha(a, 96, 14, 1); h.commit(a, 96);
-    h.fill_ha(b, 64, 9, 1);  h.commit(b, 64);
+    fill_ha(a, 96, 14, 1); commit(a, 96);
+    fill_ha(b, 64, 9, 1);  commit(b, 64);
     CHECK(dut->slots_ready_o == 0x03, "F both committed");
     // stream A while holding ser_req for B the whole time
     auto [ra, mid_a] = frame("F slotA", a, 65, /*bg=*/b,
@@ -334,97 +380,105 @@ int main(int argc, char** argv) {
     // request line is still up for B: it must now stream, intact
     frame("F slotB", b, 80, -1, /*assert_req=*/false, /*drain=*/true);
   }
+}
 
-  // ---- G: reuse + write-after-commit is discarded ---------------------
+// ---- G: reuse + write-after-commit is discarded ---------------------
+void Harness::a_freed_slot_is_reusable_and_late_writes_are_discarded() {
   {
-    int exp = h.ref.alloc(false);
-    int got = h.alloc_dut(false);
+    int exp = ref.alloc(false);
+    int got = alloc_dut(false);
     CHECK(got == exp && got == 0, "G freed slot is reusable (got %d)", got);
-    h.fill_ha(0, 33, 4, 2);
-    h.commit(0, 33);
-    h.wr(0, 3, 0xEE);            // rogue write after commit: must not land
+    fill_ha(0, 33, 4, 2);
+    commit(0, 33);
+    wr(0, 3, 0xEE);            // rogue write after commit: must not land
     frame("G reused slot0", 0, 60);
   }
+}
 
-  // ---- H: zero-length commit is freed on service, no bytes ------------
+// ---- H: zero-length commit is freed on service, no bytes ------------
+void Harness::a_zero_length_commit_is_freed_on_service() {
   {
-    int exp = h.ref.alloc(false);
-    int got = h.alloc_dut(false);
+    int exp = ref.alloc(false);
+    int got = alloc_dut(false);
     CHECK(got == exp && got == 0, "H alloc for the empty frame (got %d)", got);
-    h.commit(0, 0);
+    commit(0, 0);
     CHECK((dut->slots_ready_o & 1) == 1, "H zero-length commit shows ready");
     dut->ser_req_i = 1; dut->ser_slot_i = 0;
     bool sawv = false;
-    for (int k = 0; k < 3; ++k) { h.tick(); sawv |= (h.o_valid != 0); }
+    for (int k = 0; k < 3; ++k) { tick(); sawv |= (o_valid != 0); }
     dut->ser_req_i = 0;
-    h.tick();
-    h.ref.freeSlot(0);
+    tick();
+    ref.freeSlot(0);
     CHECK(!sawv, "H empty frame emits no bytes");
-    CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0,
+    CHECK(dut->slots_free_o == kSlots && dut->slots_ready_o == 0,
           "H empty frame freed on service");
   }
+}
 
-  // ---- I: cancellation releases an allocated builder slot -------------
+// ---- I: cancellation releases an allocated builder slot -------------
+void Harness::cancellation_releases_an_allocated_builder_slot() {
   {
-    int exp = h.ref.alloc(false);
-    int got = h.alloc_dut(false);
+    int exp = ref.alloc(false);
+    int got = alloc_dut(false);
     CHECK(got == exp && got == 0, "I alloc for cancelled builder frame");
     dut->release_slot_i = 0; dut->release_valid_i = 1;
-    h.tick();
+    tick();
     dut->release_valid_i = 0;
-    h.ref.freeSlot(0);
-    CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0,
+    ref.freeSlot(0);
+    CHECK(dut->slots_free_o == kSlots && dut->slots_ready_o == 0,
           "I release frees an uncommitted allocated slot");
   }
+}
 
-  // ---- J: held-slot exact retry ---------------------------------------
-  // A held originator slot must survive one complete serialization so the
-  // retry is the exact same byte image. Only release returns it to FREE.
+// ---- J: held-slot exact retry ---------------------------------------
+// A held originator slot must survive one complete serialization so the
+// retry is the exact same byte image. Only release returns it to FREE.
+void Harness::a_held_slot_survives_serialization_for_an_exact_retry() {
   {
-    int exp = h.ref.alloc(false);
-    int got = h.alloc_dut(false);
+    int exp = ref.alloc(false);
+    int got = alloc_dut(false);
     CHECK(got == exp && got == 0, "J alloc for held originator frame");
-    h.fill_ha(0, 47, 14, 3);
-    h.commit(0, 47);
-    std::vector<uint8_t> want(h.ref.img[0], h.ref.img[0] + 47);
+    fill_ha(0, 47, 14, 3);
+    commit(0, 47);
+    std::vector<uint8_t> want(ref.img[0], ref.img[0] + 47);
 
     dut->hold_slot_i = 0; dut->hold_valid_i = 1;
-    h.tick();
+    tick();
     dut->hold_valid_i = 0;
 
-    auto first = h.stream(0, 47, 61, 500);
+    auto first = stream(0, 47, 61, 500);
     CHECK(first.done && first.bytes == want,
           "J first held transmission is byte-exact");
     CHECK((dut->slots_ready_o & 1u) != 0 && dut->slots_free_o == 4,
           "J held slot returns to READY after eof");
-    h.ref.st[0] = RefPool::READY;
+    ref.st[0] = RefPool::READY;
 
-    auto retry = h.stream(0, 47, 53, 500);
+    auto retry = stream(0, 47, 53, 500);
     CHECK(retry.done && retry.bytes == want && retry.bytes == first.bytes,
           "J retry reuses the exact byte image");
     CHECK((dut->slots_ready_o & 1u) != 0 && dut->slots_free_o == 4,
           "J held slot remains READY after retry");
-    h.ref.st[0] = RefPool::READY;
+    ref.st[0] = RefPool::READY;
 
     dut->release_slot_i = 0; dut->release_valid_i = 1;
-    h.tick();
+    tick();
     dut->release_valid_i = 0;
-    h.ref.freeSlot(0);
-    CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0,
+    ref.freeSlot(0);
+    CHECK(dut->slots_free_o == kSlots && dut->slots_ready_o == 0,
           "J release frees the held slot");
 
     // A cancellation can arrive on the final serializer beat. The release
     // must win that edge instead of leaving an unheld READY slot stranded.
-    exp = h.ref.alloc(false);
-    got = h.alloc_dut(false);
+    exp = ref.alloc(false);
+    got = alloc_dut(false);
     CHECK(got == exp && got == 0, "J alloc for release-at-eof frame");
-    h.fill_ha(0, 1, 0, 4);
-    h.commit(0, 1);
+    fill_ha(0, 1, 0, 4);
+    commit(0, 1);
     dut->hold_slot_i = 0; dut->hold_valid_i = 1;
-    h.tick();
+    tick();
     dut->hold_valid_i = 0;
     dut->ser_req_i = 1; dut->ser_slot_i = 0; dut->ser_ready_i = 1;
-    h.tick();
+    tick();
     dut->ser_req_i = 0;
     bool release_at_eof = false;
     for (int cyc = 0; cyc < 8 && !release_at_eof; ++cyc) {
@@ -435,54 +489,85 @@ int main(int argc, char** argv) {
         dut->release_valid_i = 1;
         release_at_eof = true;
       }
-      h.tick();
+      tick();
     }
     dut->release_valid_i = 0;
-    h.ref.freeSlot(0);
-    CHECK(release_at_eof && h.o_valid && h.o_last,
+    ref.freeSlot(0);
+    CHECK(release_at_eof && o_valid && o_last,
           "J release-at-eof coincides with the final consumed beat");
-    CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0,
+    CHECK(dut->slots_free_o == kSlots && dut->slots_ready_o == 0,
           "J release-at-eof frees the held slot");
 
     // A release may arrive on the first serializer-request edge, before the
     // pool accepts the frame. Release wins that boundary and no byte starts.
-    exp = h.ref.alloc(false);
-    got = h.alloc_dut(false);
+    exp = ref.alloc(false);
+    got = alloc_dut(false);
     CHECK(got == exp && got == 0, "J alloc for release-at-start frame");
-    h.fill_ha(0, 3, 1, 5);
-    h.commit(0, 3);
+    fill_ha(0, 3, 1, 5);
+    commit(0, 3);
     dut->hold_slot_i = 0; dut->hold_valid_i = 1;
-    h.tick();
+    tick();
     dut->hold_valid_i = 0;
     dut->ser_req_i = 1; dut->ser_slot_i = 0; dut->ser_ready_i = 1;
     dut->release_slot_i = 0; dut->release_valid_i = 1;
-    h.tick();
+    tick();
     dut->ser_req_i = 0;
     dut->release_valid_i = 0;
-    h.ref.freeSlot(0);
+    ref.freeSlot(0);
     bool release_at_start_byte = false;
     for (int i = 0; i < 8; ++i) {
-      h.tick();
-      release_at_start_byte |= h.o_valid;
+      tick();
+      release_at_start_byte |= o_valid;
     }
     CHECK(!release_at_start_byte,
           "J release-at-start suppresses the unaccepted frame");
-    CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0,
+    CHECK(dut->slots_free_o == kSlots && dut->slots_ready_o == 0,
           "J release-at-start frees the slot without entering STREAM");
   }
+}
 
-  // ---- K: quiescence ---------------------------------------------------
+// ---- K: quiescence ---------------------------------------------------
+void Harness::the_idle_pool_stays_quiescent() {
   {
     bool spur = false;
     for (int k = 0; k < 10; ++k) {
-      h.tick();
-      spur |= (dut->alloc_gnt_o != 0) || (h.o_valid != 0);
+      tick();
+      spur |= (dut->alloc_gnt_o != 0) || (o_valid != 0);
     }
     CHECK(!spur, "K no spurious grants or bytes when idle");
-    CHECK(dut->slots_free_o == 5 && dut->slots_ready_o == 0, "K final state clean");
+    CHECK(dut->slots_free_o == kSlots && dut->slots_ready_o == 0, "K final state clean");
   }
+}
+
+int Harness::run() {
+  dut->alloc_req_i = 0; dut->oversize_i = 0;
+  dut->wr_slot_i = 0; dut->wr_addr_i = 0; dut->wr_data_i = 0;
+  dut->wr_valid_i = 0; dut->wr_commit_i = 0; dut->wr_len_i = 0;
+  dut->hold_valid_i = 0; dut->hold_slot_i = 0;
+  dut->release_valid_i = 0; dut->release_slot_i = 0;
+  dut->ser_req_i = 0; dut->ser_slot_i = 0; dut->ser_ready_i = 0;
+
+  reset_leaves_the_pool_quiescent();
+  allocation_walks_plain_slots_and_reserves_the_oversize();
+  fills_header_after_payload_then_commits();
+  an_uncommitted_slot_never_streams();
+  serializes_all_five_out_of_order_under_backpressure();
+  two_committed_slots_are_serviced_one_at_a_time();
+  a_freed_slot_is_reusable_and_late_writes_are_discarded();
+  a_zero_length_commit_is_freed_on_service();
+  cancellation_releases_an_allocated_builder_slot();
+  a_held_slot_survives_serialization_for_an_exact_retry();
+  the_idle_pool_stays_quiescent();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
-  delete dut;
   return fails ? 1 : 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  Verilated::commandArgs(argc, argv);
+  const milan::tb::Model<VKL_pp_tx_slots> model;
+  Harness harness(model.get());
+  return harness.run();
 }

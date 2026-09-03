@@ -5,12 +5,14 @@
 #include <vector>
 #include "VKL_pp_release_merge.h"
 #include "verilated.h"
+#include "../common/verilator_harness.hpp"
 
-static int checks = 0, fails = 0;
 #define CHECK(cond, ...) do { \
   ++checks; \
   if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
 } while (0)
+
+namespace {
 
 struct Harness {
   VKL_pp_release_merge* dut;
@@ -29,7 +31,7 @@ struct Harness {
 
   void edge() {
     if (dut->rst_n && dut->release_valid_o)
-      releases.push_back((uint8_t)dut->release_slot_o);
+      releases.push_back(static_cast<uint8_t>(dut->release_slot_o));
     dut->clk_i = 1;
     dut->eval();
   }
@@ -46,13 +48,25 @@ struct Harness {
   }
 };
 
-int main(int argc, char** argv) {
-  Verilated::commandArgs(argc, argv);
-  auto* dut = new VKL_pp_release_merge;
+// The tally the CHECK macro keeps was a pair of file-scope statics; it is the
+// state of one run of this suite, so it belongs to the object that performs it.
+class ReleaseMergeSuite {
+ public:
+  int run();
+
+ private:
+  int checks = 0;
+  int fails = 0;
+};
+
+int ReleaseMergeSuite::run() {
+  const milan::tb::Model<VKL_pp_release_merge> model;
+  VKL_pp_release_merge* const dut = model.get();
   Harness h(dut);
 
   dut->rst_n = 0;
-  h.step(); h.step();
+  h.step();
+  h.step();
   dut->rst_n = 1;
   CHECK(h.idle_now(), "R idle after reset");
 
@@ -107,6 +121,13 @@ int main(int argc, char** argv) {
         h.releases.size());
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
-  delete dut;
   return fails ? 1 : 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  Verilated::commandArgs(argc, argv);
+  ReleaseMergeSuite suite;
+  return suite.run();
 }

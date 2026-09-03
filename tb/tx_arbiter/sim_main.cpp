@@ -17,25 +17,23 @@
 // The reference model re-implements the arbitration POLICY from the doc
 // (priority map, solicited mask, aging rule, pacing rule) — it shares no
 // FSM, no serializer and no memory with the RTL.
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <vector>
 #include "Vtx_arbiter_harness.h"
 #include "verilated.h"
+#include "../common/verilator_harness.hpp"
 
-static int checks = 0, fails = 0;
-#define CHECK(cond, ...) do { \
-  ++checks; \
-  if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
-} while (0)
+namespace {
 
 // ---- independent arbitration model ----------------------------------------
 struct RefArb {
   static constexpr int N = 6;
   // doc F03.5 classes, 0 = doc priority 1:
   //  0 AECP-sol=1, 1 AECP-unsol=2, 2 ACMP=0, 3 ADP=3, 4 SRP=2, 5 self/CA=1
-  static constexpr int  PRIO[N] = {1, 2, 0, 3, 2, 1};
+  static constexpr std::array<int, N> PRIO = {{1, 2, 0, 3, 2, 1}};
   static constexpr uint32_t SOL = 0b100101;   // ACMP, AECP-sol, self/CA
   static constexpr int  AGE_SAT = 10;         // T-TX-AGING in ms ticks
 
@@ -47,7 +45,8 @@ struct RefArb {
   int decide(uint32_t pend) const {
     bool solp = (pend & SOL) != 0;
     uint32_t elig = (pace_nonsol && solp) ? (pend & SOL) : pend;
-    int best = -1, bkey = 99;
+    int best = -1;
+    int bkey = 99;
     for (int i = 0; i < N; ++i) {
       if (!((elig >> i) & 1)) continue;
       int key = ((age[i] >= AGE_SAT) ? 0 : 4) + PRIO[i];
@@ -65,7 +64,6 @@ struct RefArb {
     if (w >= 0) { cnt[w]++; pace_nonsol = !((SOL >> w) & 1); }
   }
 };
-constexpr int RefArb::PRIO[];
 
 // ---- harness / engine ------------------------------------------------------
 struct Eng {
@@ -75,7 +73,7 @@ struct Eng {
 
   // requester drive state
   uint32_t req_mask = 0;
-  int      slot_field[6] = {0, 0, 0, 0, 0, 0};
+  std::array<int, 6> slot_field = {{0, 0, 0, 0, 0, 0}};
 
   // tick + ready policy
   bool tick_every = false;
@@ -85,21 +83,34 @@ struct Eng {
   bool start_abort = false;
 
   // TB pool bookkeeping + frame images (per slot)
-  bool    slot_free[5] = {true, true, true, true, true};
+  std::array<bool, 5> slot_free = {{true, true, true, true, true}};
   uint8_t img[5][1600];
   int     len_of[5] = {0};
   int     epoch = 0;
 
   // frame in service
   bool in_service = false;
-  int  srv_req = -1, srv_slot = -1, srv_pos = 0;
+  int  srv_req = -1;
+  int  srv_slot = -1;
+  int  srv_pos = 0;
   std::vector<uint8_t> srv_exp;
 
   // logs + error counters (every grant / byte in every phase runs these)
   std::vector<int> grant_log;
   long frames_done = 0;
-  long e_gnt_mismatch = 0, e_byte = 0, e_sof = 0, e_eof = 0, e_spur = 0;
-  long e_onehot = 0, e_pulse = 0, e_gnt_midframe = 0, e_stall = 0, e_alloc = 0;
+  long e_gnt_mismatch = 0;
+  long e_byte = 0;
+  long e_sof = 0;
+  long e_eof = 0;
+  long e_spur = 0;
+  long e_onehot = 0;
+  long e_pulse = 0;
+  long e_gnt_midframe = 0;
+  long e_stall = 0;
+  long e_alloc = 0;
+  // cycles a pending request may go ungranted, with the serializer idle,
+  // before the wait counts as an arbitration stall
+  static constexpr int kStallLimitCycles = 80;
   int  idle_wait = 0;
   bool prev_gnt = false;
   // The DUT registers its slot-side qualification (stage-0 pipeline: the
@@ -150,8 +161,10 @@ struct Eng {
     bool was_in_service = in_service;
     int next_selection = (!was_in_service && !had_selection)
                            ? ref.decide(arb_pend_pre) : -1;
-    int  s_valid = dut->tx_valid_o, s_sof = dut->tx_sof_o;
-    int  s_eof = dut->tx_eof_o, s_ready = dut->tx_ready_i;
+    int  s_valid = dut->tx_valid_o;
+    int  s_sof = dut->tx_sof_o;
+    int  s_eof = dut->tx_eof_o;
+    int  s_ready = dut->tx_ready_i;
     uint8_t s_data = dut->tx_data_o;
     bool tick_pre = dut->tick_ms_i;
 
@@ -207,7 +220,7 @@ struct Eng {
       }
       ref.edge(-1, arb_pend_pre, tick_pre);
       if (pend_pre != 0 && !in_service) {
-        if (++idle_wait > 80) { e_stall++; idle_wait = 0; }
+        if (++idle_wait > kStallLimitCycles) { e_stall++; idle_wait = 0; }
       } else {
         idle_wait = 0;
       }
@@ -326,19 +339,36 @@ struct Eng {
   }
 };
 
-int main(int argc, char** argv) {
-  Verilated::commandArgs(argc, argv);
-  auto* dut = new Vtx_arbiter_harness;
-  Eng h(dut);
+#define CHECK(cond, ...) do { \
+  ++checks; \
+  if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
+} while (0)
 
-  dut->alloc_req_i = 0; dut->oversize_i = 0;
-  dut->wr_slot_i = 0; dut->wr_addr_i = 0; dut->wr_data_i = 0;
-  dut->wr_valid_i = 0; dut->wr_commit_i = 0; dut->wr_len_i = 0;
-  dut->req_valid_i = 0; dut->tx_slot_i = 0; dut->tx_ready_i = 0;
-  dut->start_abort_i = 0;
-  dut->tick_ms_i = 0;
+// ---- the suite: the engine above, driven one lettered phase at a time -------
+class TxArbiterSuite {
+ public:
+  explicit TxArbiterSuite(Vtx_arbiter_harness* model) : dut(model), h(model) {}
 
-  // ---- A: reset --------------------------------------------------------
+  int run();
+
+ private:
+  void reset_leaves_the_arbiter_quiescent();
+  void strict_priority_when_every_requester_is_fresh();
+  void a_frame_is_atomic_against_a_higher_priority_arrival();
+  void aging_promotes_a_starved_requester();
+  void pacing_outranks_aging();
+  void a_null_slot_handle_is_never_granted();
+  void randomized_contention_matches_the_model();
+  void a_cancelled_selection_produces_no_grant();
+
+  Vtx_arbiter_harness* const dut;
+  Eng h;
+  int checks = 0;
+  int fails = 0;
+};
+
+// ---- A: reset --------------------------------------------------------
+void TxArbiterSuite::reset_leaves_the_arbiter_quiescent() {
   dut->rst_n = 0;
   for (int i = 0; i < 4; ++i) h.step();
   dut->rst_n = 1;
@@ -361,18 +391,23 @@ int main(int argc, char** argv) {
     CHECK(h.grant_log.empty() && !h.in_service,
           "A withdrawn registered request is never granted");
   }
+}
 
-  // ---- B: strict priority when fresh ----------------------------------
+// ---- B: strict priority when fresh ----------------------------------
+void TxArbiterSuite::strict_priority_when_every_requester_is_fresh() {
   // round 1: five simultaneous requesters -> 2 (ACMP), 0 (AECP-sol),
   // 5 (self/CA), 1 (unsol), 4 (SRP, oversize slot); index breaks ties
   {
     auto s0 = h.snap();
     h.ready_pct = 70;
-    int sl2 = h.prep(56), sl0 = h.prep(90), sl5 = h.prep(70), sl1 = h.prep(40);
+    int sl2 = h.prep(56);
+    int sl0 = h.prep(90);
+    int sl5 = h.prep(70);
+    int sl1 = h.prep(40);
     int sl4 = h.prep(100, true);
     h.raise(2, sl2); h.raise(0, sl0); h.raise(5, sl5); h.raise(1, sl1);
     h.raise(4, sl4);
-    static const int expseq[5] = {2, 0, 5, 1, 4};
+    static constexpr std::array<int, 5> expseq = {{2, 0, 5, 1, 4}};
     for (int k = 0; k < 5; ++k) {
       int g = h.wait_grant(4000);
       CHECK(g == expseq[k], "B1 grant #%d is %d exp %d", k, g, expseq[k]);
@@ -392,9 +427,11 @@ int main(int argc, char** argv) {
   // round 3: {0,3,4} -> 0, then 4 (class 2 < class 3), then 3
   {
     auto s0 = h.snap();
-    int a = h.prep(48), b = h.prep(30), c = h.prep(64);
+    int a = h.prep(48);
+    int b = h.prep(30);
+    int c = h.prep(64);
     h.raise(0, a); h.raise(3, b); h.raise(4, c);
-    static const int expseq[3] = {0, 4, 3};
+    static constexpr std::array<int, 3> expseq = {{0, 4, 3}};
     for (int k = 0; k < 3; ++k) {
       int g = h.wait_grant(2000);
       CHECK(g == expseq[k], "B3 grant #%d is %d exp %d", k, g, expseq[k]);
@@ -405,8 +442,10 @@ int main(int argc, char** argv) {
   for (int i = 0; i < 6; ++i)
     CHECK(h.cnt_field(i) == h.ref.cnt[i],
           "B counter[%d] dut %u model %u", i, h.cnt_field(i), h.ref.cnt[i]);
+}
 
-  // ---- C: frame atomicity ----------------------------------------------
+// ---- C: frame atomicity ----------------------------------------------
+void TxArbiterSuite::a_frame_is_atomic_against_a_higher_priority_arrival() {
   // ACMP arrives mid-ADP-frame: the ADP frame streams to ser_last intact,
   // no grant fires mid-frame, ACMP wins the next arbitration
   {
@@ -429,8 +468,10 @@ int main(int argc, char** argv) {
           "C both frames byte-exact and uninterrupted");
     if (!h.clean_since(s0)) h.print_errs();
   }
+}
 
-  // ---- D: aging promotion (compressed ticks) ---------------------------
+// ---- D: aging promotion (compressed ticks) ---------------------------
+void TxArbiterSuite::aging_promotes_a_starved_requester() {
   // ADP starves behind back-to-back ACMP while un-aged; a 12-tick burst
   // (>= T-TX-AGING = 10) flips the next arbitration to ADP
   {
@@ -463,8 +504,10 @@ int main(int argc, char** argv) {
     CHECK(h.wait_frames(16, 4000) && h.clean_since(s0), "D clean");
     if (!h.clean_since(s0)) h.print_errs();
   }
+}
 
-  // ---- E: pacing outranks aging ----------------------------------------
+// ---- E: pacing outranks aging ----------------------------------------
+void TxArbiterSuite::pacing_outranks_aging() {
   // three aged non-solicited requesters vs a continuously re-armed ACMP:
   // grants must alternate non-sol / solicited — never two non-sol in a row
   // while solicited traffic waits: [1, 2, 4, 2, 3, 2]
@@ -482,7 +525,7 @@ int main(int argc, char** argv) {
     h.arm(2, 80);                    // fresh solicited, ticks OFF again
     h.ready_pct = 60;
     while (h.in_service) h.step();
-    static const int expseq[6] = {1, 2, 4, 2, 3, 2};
+    static constexpr std::array<int, 6> expseq = {{1, 2, 4, 2, 3, 2}};
     for (int k = 0; k < 6; ++k) {
       g = h.wait_grant(3000);
       CHECK(g == expseq[k], "E grant #%d is %d exp %d", k, g, expseq[k]);
@@ -496,8 +539,10 @@ int main(int argc, char** argv) {
     CHECK(h.clean_since(s0), "E pacing rounds byte-exact and model-matched");
     if (!h.clean_since(s0)) h.print_errs();
   }
+}
 
-  // ---- F: a PP_SLOT_NULL_C handle is never granted ---------------------
+// ---- F: a PP_SLOT_NULL_C handle is never granted ---------------------
+void TxArbiterSuite::a_null_slot_handle_is_never_granted() {
   {
     auto s0 = h.snap();
     size_t nglog = h.grant_log.size();
@@ -511,16 +556,22 @@ int main(int argc, char** argv) {
     while (h.in_service) h.step();
     CHECK(h.clean_since(s0), "F clean");
   }
+}
 
-  // ---- G: randomized contention, >= 1000 frames ------------------------
+// ---- G: randomized contention, >= 1000 frames ------------------------
+void TxArbiterSuite::randomized_contention_matches_the_model() {
   {
-    long target = h.frames_done + 1000;
+    constexpr long kRandomFrames = 1000;           // the phase's frame target
+    constexpr long kRandomGuardCycles = 3000000;   // cap on cycles spent here
+    constexpr int  kDrainCycles = 30000;           // cap on the closing drain
+    long target = h.frames_done + kRandomFrames;
     h.tick_div = 50;                 // sparse ms ticks
     long guard = 0;
-    while (h.frames_done < target && guard < 3000000) {
+    while (h.frames_done < target && guard < kRandomGuardCycles) {
       // keep contention up: arm any idle requester when a slot is free
       uint32_t busy = h.req_mask;
-      int idle[6], ni = 0;
+      int idle[6];
+      int ni = 0;
       for (int r = 0; r < 6; ++r) if (!((busy >> r) & 1)) idle[ni++] = r;
       if (ni > 0 && (h.rnd() % 4u) != 0) {
         int r = idle[h.rnd() % uint32_t(ni)];
@@ -538,9 +589,10 @@ int main(int argc, char** argv) {
     h.tick_div = 0;
     // drain everything still pending
     h.ready_pct = 100;
-    for (int c = 0; c < 30000 && (h.pend_now() || h.in_service); ++c) h.step();
+    for (int c = 0; c < kDrainCycles && (h.pend_now() || h.in_service); ++c)
+      h.step();
     CHECK(h.frames_done >= target, "G >= 1000 randomized frames (%ld)",
-          h.frames_done - (target - 1000));
+          h.frames_done - (target - kRandomFrames));
     CHECK(h.e_gnt_mismatch == 0, "G every grant matched to the model (%ld off)",
           h.e_gnt_mismatch);
     CHECK(h.e_byte == 0, "G merged stream byte-exact (%ld off)", h.e_byte);
@@ -566,8 +618,10 @@ int main(int argc, char** argv) {
           "G counter sum equals grant count (%ld vs %zu)",
           total, h.grant_log.size());
   }
+}
 
-  // ---- H: cancellation between selection and serializer acceptance ----
+// ---- H: cancellation between selection and serializer acceptance ----
+void TxArbiterSuite::a_cancelled_selection_produces_no_grant() {
   {
     auto s0 = h.snap();
     int slot = h.prep(17);
@@ -594,9 +648,35 @@ int main(int argc, char** argv) {
               && h.clean_since(s0),
           "H accepted retry is byte-exact and frees the pool");
   }
+}
+
+int TxArbiterSuite::run() {
+  dut->alloc_req_i = 0; dut->oversize_i = 0;
+  dut->wr_slot_i = 0; dut->wr_addr_i = 0; dut->wr_data_i = 0;
+  dut->wr_valid_i = 0; dut->wr_commit_i = 0; dut->wr_len_i = 0;
+  dut->req_valid_i = 0; dut->tx_slot_i = 0; dut->tx_ready_i = 0;
+  dut->start_abort_i = 0;
+  dut->tick_ms_i = 0;
+
+  reset_leaves_the_arbiter_quiescent();
+  strict_priority_when_every_requester_is_fresh();
+  a_frame_is_atomic_against_a_higher_priority_arrival();
+  aging_promotes_a_starved_requester();
+  pacing_outranks_aging();
+  a_null_slot_handle_is_never_granted();
+  randomized_contention_matches_the_model();
+  a_cancelled_selection_produces_no_grant();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   if (fails) h.print_errs();
-  delete dut;
   return fails ? 1 : 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  Verilated::commandArgs(argc, argv);
+  const milan::tb::Model<Vtx_arbiter_harness> model;
+  TxArbiterSuite suite(model.get());
+  return suite.run();
 }

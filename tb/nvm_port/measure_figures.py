@@ -83,6 +83,12 @@ HERE = _WORK / "tb" / "nvm_port"
 shutil.copytree(SRC, HERE, ignore=shutil.ignore_patterns("obj_dir", "__pycache__"))
 _rtl_src = SRC.parent.parent / "hdl" / "packet_engine"
 shutil.copytree(_rtl_src, _WORK / "hdl" / "packet_engine")
+# `sim_main.cpp` includes the shared model owner as `../common/verilator_harness.hpp`
+# (Core Guidelines R.11, and the copy `check_cpp_idiom.py` refuses to let drift).
+# That header lives one directory up from the suite, so the working copy needs it
+# too or every one of the 35 builds below fails to compile and the gate reports a
+# build failure where it means to report a figure.
+shutil.copytree(SRC.parent / "common", _WORK / "tb" / "common")
 RTL = _WORK / "hdl" / "packet_engine" / "KL_pp_nvm_port.sv"
 SIM = HERE / "sim_main.cpp"
 
@@ -361,7 +367,7 @@ GIT_FORMS = [
 ]
 
 
-def git_verbatim():
+def git_verbatim() -> list[str]:
     """Problems where an injected predicate is not what git records."""
     bad = []
     # Every row must carry a pin. Without this the pin covers whichever row
@@ -424,7 +430,7 @@ def _check_condition_lines(code):
     return out
 
 
-def pin_completeness():
+def pin_completeness() -> list[str]:
     """Every condition line of every injected CHECK must be pinned to git.
 
     NOT "at least one pin per row", which was the rule this replaces and was
@@ -451,7 +457,7 @@ def pin_completeness():
     return bad
 
 
-def line_multiplicity():
+def line_multiplicity() -> list[str]:
     """No injected line may appear more times than in its source revision.
 
     This closes the structural hole the two other mechanisms share. The cell
@@ -496,7 +502,7 @@ def line_multiplicity():
     return bad
 
 
-def readme_matrix():
+def readme_matrix() -> tuple[dict[str, list[str]], list[str]]:
     """{row: [pass/FAIL per model]} exactly as the README's matrix claims."""
     out, cols = {}, None
     for line in README.read_text().splitlines():
@@ -511,7 +517,7 @@ def readme_matrix():
     return out, (cols or [])
 
 
-def measure_matrix():
+def measure_matrix() -> dict[str, list[str]]:
     """{row: [pass/FAIL per model]} measured: inject all six, run every model."""
     inject = [(SIM, anchor, code + anchor) for _, anchor, code in MATRIX_FORMS]
     got = {r: [] for r in MATRIX_ROWS}
@@ -600,7 +606,7 @@ WAIVERS = [
 ]
 
 
-def run_suite(want_fail_names=False):
+def run_suite(want_fail_names: bool = False) -> tuple[int, int, int] | list[str]:
     """Build and run; return (total, passed, failed), or the failing names."""
     subprocess.run(["make", "-s", "clean"], cwd=HERE, check=False,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -619,7 +625,8 @@ def run_suite(want_fail_names=False):
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
 
 
-def apply_edits(edits, want_fail_names=False):
+def apply_edits(edits: list[tuple[Path, str, str]],
+                want_fail_names: bool = False) -> tuple[int, int, int] | list[str]:
     """Apply every edit, run, restore byte-identically. Returns the tally.
 
     An `old` that occurs zero times means this table is stale, which is the
@@ -646,7 +653,7 @@ def apply_edits(edits, want_fail_names=False):
             path.write_text(text)
 
 
-def with_arm_disabled(lineno):
+def with_arm_disabled(lineno: int) -> int:
     """Force one `if (dev_err_i)` arm false, run, restore. Returns fail count.
 
     Line-indexed, NOT text-anchored, and deliberately does not go through
@@ -671,16 +678,18 @@ def with_arm_disabled(lineno):
         RTL.write_text(original)
 
 
-def rtl_arm_count():
+def rtl_arm_count() -> int:
     """How many `if (dev_err_i)` arms the RTL actually has, counted not assumed."""
     return RTL.read_text().count("if (dev_err_i) begin")
 
 
-def flat_readme():
+def flat_readme() -> str:
+    """The README as one whitespace-normalised line, so a figure split across
+    a line break is still one match for the claim patterns."""
     return " ".join(README.read_text().split())
 
 
-def readme_arm_rows():
+def readme_arm_rows() -> dict[str, int]:
     """{state: count} as the README's coverage table currently claims."""
     rows = {}
     for line in README.read_text().splitlines():
@@ -690,7 +699,7 @@ def readme_arm_rows():
     return rows
 
 
-def claim_coverage(flat):
+def claim_coverage(flat: str) -> list[str]:
     """Problems with the claim<->measurement correspondence, as strings.
 
     Both directions, because one direction is not a coupling. Measurement ->
@@ -754,7 +763,7 @@ def _all_claims():
             + [(n, cs, e) for n, cs, e in MODELS])
 
 
-def readme_figures(total, flat):
+def readme_figures(total: int, flat: str) -> list[str]:
     """Suite-size claims that disagree with `total`, as human-readable strings.
 
     A SIZE claim ("90 checks", "1 of 90", "the 90-check suite") is stale if it
@@ -778,7 +787,90 @@ def readme_figures(total, flat):
     return sorted(set(bad))
 
 
-def main():
+def _arm_coverage_disagreements(claimed):
+    """Print the per-arm measured-vs-README table; return the rows that disagree."""
+    bad = []
+    print("\narm coverage (measured vs README):")
+    for lineno, state in ARMS:
+        got = with_arm_disabled(lineno)
+        says = claimed.get(state)
+        print(f"  [{'ok ' if says == got else 'STALE'}] {lineno:>4} {state:<10} "
+              f"measured={got:<4} readme={says}")
+        if says != got:
+            bad.append(f"{state}: README says {says}, measured {got}")
+    return bad
+
+
+def _mutation_disagreements(flat):
+    """Print the mutation and probe table; return the rows that disagree."""
+    bad = []
+    print("\nmutations and probes (measured vs README):")
+    for name, claim, edits in MUTATIONS:
+        got = apply_edits(edits)[2]
+        hit = re.search(claim, flat)
+        says = int(hit.group(1)) if hit else None
+        print(f"  [{'ok ' if says == got else 'STALE'}] {name:<16} "
+              f"measured={got:<4} readme={says}")
+        if says is not None and says != got:
+            bad.append(f"{name}: README says {says}, measured {got}")
+    return bad
+
+
+def _model_disagreements(flat):
+    """Print the device-model table; return the rows that disagree, including a
+    claim site that has vanished from the README."""
+    bad = []
+    print("\ndevice models (measured vs README):")
+    for name, claims, edits in MODELS:
+        _, mp, mf = apply_edits(edits)
+        got = (mp, mf)
+        for claim in claims:
+            hit = re.search(claim, flat)
+            says = (int(hit.group(1)), int(hit.group(2))) if hit else None
+            print(f"  [{'ok ' if says == got else 'STALE'}] {name:<26} "
+                  f"measured={mp} PASS, {mf} FAIL  readme={says}")
+            if says is None:
+                bad.append(f"model '{name}': a claim site vanished from the README")
+            elif says != got:
+                bad.append(f"model '{name}': README says {says[0]} PASS/{says[1]} "
+                           f"FAIL, measured {mp} PASS/{mf} FAIL")
+    return bad
+
+
+def _matrix_disagreements():
+    """Print the pre-fix matrix; return the rows that disagree, and the row count
+    itself when the README carries fewer than the known rows."""
+    bad = []
+    print("\npre-fix matrix (measured vs README), 5 builds:")
+    says_m, cols = readme_matrix()
+    got_m = measure_matrix()
+    if len(says_m) != len(MATRIX_ROWS):
+        bad.append(f"README matrix has {len(says_m)} of {len(MATRIX_ROWS)} known rows")
+    for row in MATRIX_ROWS:
+        says, got = says_m.get(row), got_m[row]
+        print(f"  [{'ok ' if says == got else 'STALE'}] {row:<34} "
+              f"measured={' '.join(got)}")
+        if says != got:
+            bad.append(f"matrix row '{row}': README says {says}, measured {got}")
+    return bad
+
+
+def _print_waivers():
+    """Print each waiver with the reason and how many figures it absorbs, so the
+    exclusion set is derived from the file rather than asserted in a comment."""
+    if WAIVERS:
+        print("\nNOT measured (waived, with the reason, so the exclusion set is\n"
+              "derived from the file rather than asserted in a comment):")
+        flat_r = flat_readme()
+        for pat, reason in WAIVERS:
+            hits = list(re.finditer(pat, flat_r))
+            n = sum(1 for m in FIGURE_RE.finditer(flat_r)
+                    if any(h.start() < m.end() and m.start() < h.end() for h in hits))
+            print(f"  - /{pat}/ absorbs {n} (cap {WAIVER_CAP}): {reason}")
+
+def main() -> int:
+    """Re-measure every figure and report the ones the README no longer says;
+    non-zero on any disagreement, with or without `--check`."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--check", action="store_true",
                     help="accepted for symmetry with the other gates; this "
@@ -812,51 +904,10 @@ def main():
     if len(claimed) != len(ARMS):
         bad.append(f"README table has {len(claimed)} rows; the RTL has {len(ARMS)} arms")
 
-    print("\narm coverage (measured vs README):")
-    for lineno, state in ARMS:
-        got = with_arm_disabled(lineno)
-        says = claimed.get(state)
-        print(f"  [{'ok ' if says == got else 'STALE'}] {lineno:>4} {state:<10} "
-              f"measured={got:<4} readme={says}")
-        if says != got:
-            bad.append(f"{state}: README says {says}, measured {got}")
-
-    print("\nmutations and probes (measured vs README):")
-    for name, claim, edits in MUTATIONS:
-        got = apply_edits(edits)[2]
-        hit = re.search(claim, flat)
-        says = int(hit.group(1)) if hit else None
-        print(f"  [{'ok ' if says == got else 'STALE'}] {name:<16} "
-              f"measured={got:<4} readme={says}")
-        if says is not None and says != got:
-            bad.append(f"{name}: README says {says}, measured {got}")
-
-    print("\ndevice models (measured vs README):")
-    for name, claims, edits in MODELS:
-        _, mp, mf = apply_edits(edits)
-        got = (mp, mf)
-        for claim in claims:
-            hit = re.search(claim, flat)
-            says = (int(hit.group(1)), int(hit.group(2))) if hit else None
-            print(f"  [{'ok ' if says == got else 'STALE'}] {name:<26} "
-                  f"measured={mp} PASS, {mf} FAIL  readme={says}")
-            if says is None:
-                bad.append(f"model '{name}': a claim site vanished from the README")
-            elif says != got:
-                bad.append(f"model '{name}': README says {says[0]} PASS/{says[1]} "
-                           f"FAIL, measured {mp} PASS/{mf} FAIL")
-
-    print("\npre-fix matrix (measured vs README), 5 builds:")
-    says_m, cols = readme_matrix()
-    got_m = measure_matrix()
-    if len(says_m) != len(MATRIX_ROWS):
-        bad.append(f"README matrix has {len(says_m)} of {len(MATRIX_ROWS)} known rows")
-    for row in MATRIX_ROWS:
-        says, got = says_m.get(row), got_m[row]
-        print(f"  [{'ok ' if says == got else 'STALE'}] {row:<34} "
-              f"measured={' '.join(got)}")
-        if says != got:
-            bad.append(f"matrix row '{row}': README says {says}, measured {got}")
+    bad.extend(_arm_coverage_disagreements(claimed))
+    bad.extend(_mutation_disagreements(flat))
+    bad.extend(_model_disagreements(flat))
+    bad.extend(_matrix_disagreements())
 
     if bad:
         print("\nfigures disagree with the tree:")
@@ -870,15 +921,7 @@ def main():
         return 1
 
     print("\nall measured figures agree with the tree")
-    if WAIVERS:
-        print("\nNOT measured (waived, with the reason, so the exclusion set is\n"
-              "derived from the file rather than asserted in a comment):")
-        flat_r = flat_readme()
-        for pat, reason in WAIVERS:
-            hits = list(re.finditer(pat, flat_r))
-            n = sum(1 for m in FIGURE_RE.finditer(flat_r)
-                    if any(h.start() < m.end() and m.start() < h.end() for h in hits))
-            print(f"  - /{pat}/ absorbs {n} (cap {WAIVER_CAP}): {reason}")
+    _print_waivers()
     return 0
 
 
