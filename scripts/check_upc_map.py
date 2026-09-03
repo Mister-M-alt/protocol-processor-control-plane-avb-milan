@@ -24,14 +24,13 @@ program behind it dispatches into fill just as surely as a wrong number.
 
 Exit 0 = they agree. Exit 1 = they do not, and the diff is printed.
 """
-import os
 import re
 import sys
+from pathlib import Path
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-UCODE = os.path.join(ROOT, "hdl", "aecp", "ucode", "gen_ucode.py")
-ENGINE = os.path.join(ROOT, "hdl", "aecp", "KL_aecp_engine.sv")
+ROOT = Path(__file__).resolve().parents[1]
+UCODE = ROOT / "hdl" / "aecp" / "ucode" / "gen_ucode.py"
+ENGINE = ROOT / "hdl" / "aecp" / "KL_aecp_engine.sv"
 
 #! `E_NAME = 1234` at the start of a line, comment optional. Deliberately NOT
 #! matching indented assignments: a local in a function is not an entry point.
@@ -44,12 +43,14 @@ RE_ENGINE = re.compile(
 RE_PLACED = re.compile(r"place\((E_[A-Z0-9_]+)\s*,")
 
 def main() -> int:
+    """The gate: every entry point is its own place() target and every engine
+    UPC_ constant names that program's address; 1 prints the disagreement."""
     for path in (UCODE, ENGINE):
-        if not os.path.exists(path):
+        if not path.exists():
             print(f"UPC MAP GATE: cannot read {path}", file=sys.stderr)
             return 1
 
-    usrc = open(UCODE, encoding="utf-8").read()
+    usrc = UCODE.read_text(encoding="utf-8")
     ucode = {m.group(1): int(m.group(2))
              for m in RE_UCODE.finditer(usrc)}
     #! An address that is only a NUMBER is an address that can drift: if a name
@@ -59,8 +60,9 @@ def main() -> int:
     #! says PASS. A review demonstrated exactly that. Requiring every name to be
     #! a place() target is what makes the comparison below mean something.
     placed = set(RE_PLACED.findall(usrc))
+    esrc = ENGINE.read_text(encoding="utf-8")
     engine = {m.group(1): int(m.group(2))
-              for m in RE_ENGINE.finditer(open(ENGINE, encoding="utf-8").read())}
+              for m in RE_ENGINE.finditer(esrc)}
 
     if not ucode or not engine:
         print("UPC MAP GATE: parsed nothing — the patterns have gone stale, "

@@ -125,6 +125,8 @@ def encode(cell: str, state_ix: int) -> int:
 
 
 def main() -> None:
+    """Write the ROM image the CLI names: one line per F05.3 cell, each
+    carrying the doc's cell text, then the unused-event-code padding."""
     ap = argparse.ArgumentParser()
     ap.add_argument("-o", "--out", default="ltn_rom.hex")
     args = ap.parse_args()

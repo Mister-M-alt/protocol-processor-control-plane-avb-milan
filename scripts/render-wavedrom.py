@@ -22,42 +22,54 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUTDIR = os.path.join(ROOT, "docs", "diagrams", "wavedrom")
-VENV = os.path.join(ROOT, ".venv-wavedrom")
+SELF = Path(__file__).resolve()
+ROOT = SELF.parent.parent
+OUTDIR = ROOT / "docs" / "diagrams" / "wavedrom"
+VENV = ROOT / ".venv-wavedrom"
 ANCHOR = re.compile(r'<a id="(fig-[a-z0-9-]+)"></a>')
 
 
-def ensure_wavedrom():
+def ensure_wavedrom() -> None:
+    """Guarantee `wavedrom` is importable, re-executing this script if it is not.
+
+    A host without wavedrompy gets a one-time .venv-wavedrom bootstrap and the
+    script restarts inside it, so the same command works on a fresh checkout
+    and in CI without anyone being told to pip-install first.
+    """
     try:
         import wavedrom  # noqa: F401
         return
     except ModuleNotFoundError:
         pass
-    vpy = os.path.join(VENV, "bin", "python")
-    if not os.path.exists(vpy):
+    vpy = VENV / "bin" / "python"
+    if not vpy.exists():
         print("bootstrapping .venv-wavedrom (one-time) ...")
         import venv
         venv.create(VENV, with_pip=True)
-        subprocess.run([vpy, "-m", "pip", "install", "--quiet", "wavedrom"],
-                       check=True)
-    if os.path.realpath(sys.executable) != os.path.realpath(vpy):
-        os.execv(vpy, [vpy, os.path.abspath(__file__)] + sys.argv[1:])
+        subprocess.run([str(vpy), "-m", "pip", "install", "--quiet",
+                        "wavedrom"], check=True)
+    # `.resolve()` on both sides, as `os.path.realpath` did: the venv's
+    # `bin/python` is a symlink, so the comparison is between interpreters and
+    # not between the two spellings of one.
+    if Path(sys.executable).resolve() != vpy.resolve():
+        os.execv(vpy, [str(vpy), str(SELF)] + sys.argv[1:])
 
 
-def collect_blocks():
+def collect_blocks() -> list[tuple[Path, str, str]]:
     """-> list of (md_path, anchor, json_source)"""
     blocks = []
-    for base, _dirs, files in os.walk(os.path.join(ROOT, "docs")):
-        if os.path.commonpath([base, OUTDIR]) == OUTDIR:
+    for base_dir, _dirs, files in os.walk(ROOT / "docs"):
+        base = Path(base_dir)
+        if base.is_relative_to(OUTDIR):   # OUTDIR itself included
             continue
         for name in sorted(files):
             if not name.endswith(".md"):
                 continue
-            path = os.path.join(base, name)
+            path = base / name
             anchor, inblock, buf = None, False, []
-            with open(path, encoding="utf-8") as fh:
+            with path.open(encoding="utf-8") as fh:
                 for line in fh:
                     if not inblock:
                         m = ANCHOR.search(line)
@@ -81,26 +93,27 @@ def collect_blocks():
 
 
 def main() -> int:
+    """Render every embedded block, or under --check name the anchors whose
+    committed SVG no longer matches a fresh render (exit 1)."""
     ensure_wavedrom()
     import wavedrom
 
     check = "--check" in sys.argv
-    os.makedirs(OUTDIR, exist_ok=True)
+    OUTDIR.mkdir(parents=True, exist_ok=True)
     blocks, stale = collect_blocks(), []
     for path, anchor, src in blocks:
         try:
             svg = wavedrom.render(src).tostring()
         except Exception as exc:
-            sys.exit(f"FAIL: {anchor} in {os.path.relpath(path, ROOT)}: {exc}")
-        out = os.path.join(OUTDIR, anchor + ".svg")
-        old = open(out, encoding="utf-8").read() if os.path.exists(out) else None
+            sys.exit(f"FAIL: {anchor} in {path.relative_to(ROOT)}: {exc}")
+        out = OUTDIR / f"{anchor}.svg"
+        old = out.read_text(encoding="utf-8") if out.exists() else None
         if check:
             if svg != old:
                 stale.append(anchor)
         elif svg != old:
-            with open(out, "w", encoding="utf-8") as fh:
-                fh.write(svg)
-            print(f"rendered {os.path.relpath(out, ROOT)}")
+            out.write_text(svg, encoding="utf-8")
+            print(f"rendered {out.relative_to(ROOT)}")
 
     if check and stale:
         print(f"WAVEDROM STALE: {', '.join(stale)} "

@@ -95,6 +95,7 @@ USAGE
 import argparse
 import json
 import sys
+from typing import Any
 
 # IEEE 1722.1-2021 Table 7-2 descriptor types (the ones 07 §3.1 names, plus the
 # handful a Milan PAAD may still carry).  A numeric type is always accepted.
@@ -142,7 +143,10 @@ def _type_code(spec):
         raise ImageError(f"unknown descriptor type {spec!r}")
 
 
-def field_bytes(fld):
+def field_bytes(fld: dict[str, Any]) -> bytes:
+    """One field's wire bytes, big-endian and exactly `size` long. A field that
+    sets more than one of value/string/bytes is refused rather than resolved by
+    precedence, because which one won would be invisible in the image."""
     size = _u(fld["size"])
     if size < 0:
         raise ImageError(f"negative size in field {fld.get('name')}")
@@ -167,7 +171,9 @@ def field_bytes(fld):
     return b"\x00" * size
 
 
-def descriptor_bytes(desc):
+def descriptor_bytes(desc: dict[str, Any]) -> bytes:
+    """One descriptor's wire bytes, from its fields or its literal hex - never
+    both. Shorter than type+index is not a descriptor and is refused."""
     if "bytes" in desc and "fields" in desc:
         raise ImageError("a descriptor sets both 'bytes' and 'fields'")
     if "bytes" in desc:
@@ -184,26 +190,19 @@ def descriptor_bytes(desc):
     return body
 
 
-def name_bytes(name):
+def name_bytes(name: str) -> bytes:
     """One name-table entry, exactly 64 bytes."""
     raw = str(name).encode("utf-8")[:NAME_BYTES]
     return raw + b"\x00" * (NAME_BYTES - len(raw))
 
 
-def build(model, line_bytes=576):
-    """model (parsed JSON) -> (image bytes, human-readable map)."""
-    if model.get("format") != "kl-aem-image":
-        raise ImageError("input is not a kl-aem-image document")
-    if _u(model.get("version", 0)) != LAYOUT_VERSION:
-        raise ImageError(f"input version {model.get('version')} != "
-                         f"{LAYOUT_VERSION}")
+def _grouped_descriptors(model):
+    """{(configuration, type): {index: (body, name_index)}} from the document.
 
-    names = [str(n) for n in model.get("names", [])]
-    if len(names) >= NAME_NONE:
-        raise ImageError(f"the name table has {len(names)} entries; maximum "
-                         f"is {NAME_NONE - 1}")
-
-    # ---- group by (configuration, type), ordered by (config, type, index) ---
+    This is where a descriptor stops being JSON: its bytes are assembled, its
+    name_index is normalised (-1 and absent both mean NAME_NONE) and a second
+    descriptor claiming an occupied (cfg, type, index) is refused.
+    """
     groups = {}
     for desc in model.get("descriptors", []):
         cfg = _u(desc.get("configuration", 0))
@@ -223,7 +222,110 @@ def build(model, line_bytes=576):
         groups[key][idx] = (body, nidx)
     if not groups:
         raise ImageError("the model declares no descriptors")
+    return groups
 
+
+def _check_name_binding(cfg, typ, want, members, names):
+    """Refuse a group whose names the index map could not address.
+
+    One index-map row holds only the first name-table entry. Therefore every
+    member of a named multi-descriptor group must consume the next table entry,
+    while an unnamed group must be unnamed throughout. ENTITY is the sole
+    exception: its one descriptor consumes two consecutive entries for
+    entity_name and group_name. Each name is also checked against the inline
+    bytes READ_DESCRIPTOR serves, so the two can never disagree on the wire.
+    """
+    named = [members[i][1] != NAME_NONE for i in want]
+    if any(named) and not all(named):
+        raise ImageError(f"cfg {cfg} type 0x{typ:04X} mixes named and "
+                         "unnamed descriptors in one index run")
+    if typ == TYPES["ENTITY"]:
+        if want != [0]:
+            raise ImageError(f"cfg {cfg} ENTITY must contain only index 0")
+        body, nidx = members[0]
+        if nidx == NAME_NONE:
+            raise ImageError(f"cfg {cfg} ENTITY has no name_index")
+        if len(body) < 244:
+            raise ImageError(f"cfg {cfg} ENTITY is {len(body)} bytes; "
+                             "entity_name and group_name require 244")
+        if nidx + 2 > len(names):
+            raise ImageError(f"cfg {cfg} ENTITY names {nidx} and "
+                             f"{nidx + 1} exceed table size {len(names)}")
+        if body[48:112] != name_bytes(names[nidx]):
+            raise ImageError(f"cfg {cfg} ENTITY entity_name differs from "
+                             f"name-table entry {nidx}")
+        if body[180:244] != name_bytes(names[nidx + 1]):
+            raise ImageError(f"cfg {cfg} ENTITY group_name differs from "
+                             f"name-table entry {nidx + 1}")
+    elif all(named):
+        base = members[0][1]
+        for i in want:
+            body, nidx = members[i]
+            if nidx != base + i:
+                raise ImageError(
+                    f"cfg {cfg} type 0x{typ:04X} index {i} has name_index "
+                    f"{nidx}; expected contiguous entry {base + i}")
+            if len(body) < 68:
+                raise ImageError(f"cfg {cfg} type 0x{typ:04X} index {i} "
+                                 f"is {len(body)} bytes; object_name "
+                                 "requires 68")
+            if nidx >= len(names):
+                raise ImageError(
+                    f"cfg {cfg} type 0x{typ:04X} index {i} name_index "
+                    f"{nidx} exceeds table size {len(names)}")
+            if body[4:68] != name_bytes(names[nidx]):
+                raise ImageError(
+                    f"cfg {cfg} type 0x{typ:04X} index {i} object_name "
+                    f"differs from name-table entry {nidx}")
+
+
+def _index_runs(cfg, typ, want, members, line_bytes):
+    """One index-map entry per maximal run of equal-length descriptors.
+
+    A type does NOT have to be one uniform run. A Milan end-station puts its
+    media sink and its CRF sink both under STREAM_INPUT, and 07 §3.2's format
+    list makes them different lengths (AAF advertising two formats is 148
+    bytes, CRF advertising one is 140) — so REFUSING a mixed-length type
+    refused every real build of this device, not a corner case. It is also not
+    a model defect to fix upstream: 1722.1 §7.2.6 sizes a stream descriptor by
+    its own number_of_formats, and a CRF sink cannot advertise AAF formats to
+    pad itself level.
+
+    The layout is unchanged and still version 1. A type with mixed lengths is
+    emitted as SEVERAL index entries, one per maximal run of equal-length
+    descriptors, in ascending index order — each internally uniform, so the
+    "locate = elem_off + i*stride, no second indirection" property survives
+    intact. What absorbs the split is the SCAN: entries for one (cfg, type) are
+    contiguous and ordered, so the store accumulates the counts it has walked
+    past and subtracts that running base from the key. A type that is uniform
+    emits exactly one entry and the running base stays zero — byte-identical to
+    before, which is why no version bump is owed and old images still load.
+    """
+    runs = []
+    for i in want:
+        body, nidx = members[i]
+        if runs and len(runs[-1]["bodies"][0]) == len(body):
+            runs[-1]["bodies"].append(body)
+        else:
+            runs.append({"first": i, "name_base": nidx, "bodies": [body]})
+    entries = []
+    for run in runs:
+        elem_len = len(run["bodies"][0])
+        if elem_len > line_bytes:
+            raise ImageError(
+                f"cfg {cfg} type 0x{typ:04X} index {run['first']} is "
+                f"{elem_len} bytes, over the {line_bytes}-byte store line "
+                f"buffer — the store would answer NO_SUCH_DESCRIPTOR for it")
+        entries.append({"cfg": cfg, "type": typ, "count": len(run["bodies"]),
+                        "elem_len": elem_len, "name_base": run["name_base"],
+                        "stride": (elem_len + 7) & ~7,
+                        "first": run["first"],
+                        "bodies": run["bodies"]})
+    return entries
+
+
+def _index_entries(groups, names, line_bytes):
+    """Every index-map entry, in (configuration, type, index) order."""
     entries = []
     for (cfg, typ) in sorted(groups):
         members = groups[(cfg, typ)]
@@ -231,98 +333,19 @@ def build(model, line_bytes=576):
         if want != list(range(len(want))):
             raise ImageError(f"cfg {cfg} type 0x{typ:04X} indices are not "
                              f"dense from 0: {want} (07 §3.1 rule L2)")
+        _check_name_binding(cfg, typ, want, members, names)
+        entries.extend(_index_runs(cfg, typ, want, members, line_bytes))
+    return entries
 
-        # One index-map row holds only the first name-table entry. Therefore
-        # every member of a named multi-descriptor group must consume the next
-        # table entry, while an unnamed group must be unnamed throughout.
-        # ENTITY is the sole exception: its one descriptor consumes two
-        # consecutive entries for entity_name and group_name.
-        named = [members[i][1] != NAME_NONE for i in want]
-        if any(named) and not all(named):
-            raise ImageError(f"cfg {cfg} type 0x{typ:04X} mixes named and "
-                             "unnamed descriptors in one index run")
-        if typ == TYPES["ENTITY"]:
-            if want != [0]:
-                raise ImageError(f"cfg {cfg} ENTITY must contain only index 0")
-            body, nidx = members[0]
-            if nidx == NAME_NONE:
-                raise ImageError(f"cfg {cfg} ENTITY has no name_index")
-            if len(body) < 244:
-                raise ImageError(f"cfg {cfg} ENTITY is {len(body)} bytes; "
-                                 "entity_name and group_name require 244")
-            if nidx + 2 > len(names):
-                raise ImageError(f"cfg {cfg} ENTITY names {nidx} and "
-                                 f"{nidx + 1} exceed table size {len(names)}")
-            if body[48:112] != name_bytes(names[nidx]):
-                raise ImageError(f"cfg {cfg} ENTITY entity_name differs from "
-                                 f"name-table entry {nidx}")
-            if body[180:244] != name_bytes(names[nidx + 1]):
-                raise ImageError(f"cfg {cfg} ENTITY group_name differs from "
-                                 f"name-table entry {nidx + 1}")
-        elif all(named):
-            base = members[0][1]
-            for i in want:
-                body, nidx = members[i]
-                if nidx != base + i:
-                    raise ImageError(
-                        f"cfg {cfg} type 0x{typ:04X} index {i} has name_index "
-                        f"{nidx}; expected contiguous entry {base + i}")
-                if len(body) < 68:
-                    raise ImageError(f"cfg {cfg} type 0x{typ:04X} index {i} "
-                                     f"is {len(body)} bytes; object_name "
-                                     "requires 68")
-                if nidx >= len(names):
-                    raise ImageError(
-                        f"cfg {cfg} type 0x{typ:04X} index {i} name_index "
-                        f"{nidx} exceeds table size {len(names)}")
-                if body[4:68] != name_bytes(names[nidx]):
-                    raise ImageError(
-                        f"cfg {cfg} type 0x{typ:04X} index {i} object_name "
-                        f"differs from name-table entry {nidx}")
-        # A type does NOT have to be one uniform run. A Milan end-station puts
-        # its media sink and its CRF sink both under STREAM_INPUT, and 07
-        # §3.2's format list makes them different lengths (AAF advertising two
-        # formats is 148 bytes, CRF advertising one is 140) — so REFUSING a
-        # mixed-length type refused every real build of this device, not a
-        # corner case. It is also not a model defect to fix upstream: 1722.1
-        # §7.2.6 sizes a stream descriptor by its own number_of_formats, and a
-        # CRF sink cannot advertise AAF formats to pad itself level.
-        #
-        # The layout is unchanged and still version 1. A type with mixed
-        # lengths is emitted as SEVERAL index entries, one per maximal run of
-        # equal-length descriptors, in ascending index order — each internally
-        # uniform, so the "locate = elem_off + i*stride, no second
-        # indirection" property survives intact. What absorbs the split is the
-        # SCAN: entries for one (cfg, type) are contiguous and ordered, so the
-        # store accumulates the counts it has walked past and subtracts that
-        # running base from the key. A type that is uniform emits exactly one
-        # entry and the running base stays zero — byte-identical to before,
-        # which is why no version bump is owed and old images still load.
-        runs = []
-        for i in want:
-            body, nidx = members[i]
-            if runs and len(runs[-1]["bodies"][0]) == len(body):
-                runs[-1]["bodies"].append(body)
-            else:
-                runs.append({"first": i, "name_base": nidx, "bodies": [body]})
-        for run in runs:
-            elem_len = len(run["bodies"][0])
-            if elem_len > line_bytes:
-                raise ImageError(
-                    f"cfg {cfg} type 0x{typ:04X} index {run['first']} is "
-                    f"{elem_len} bytes, over the {line_bytes}-byte store line "
-                    f"buffer — the store would answer NO_SUCH_DESCRIPTOR for it")
-            entries.append({"cfg": cfg, "type": typ, "count": len(run["bodies"]),
-                            "elem_len": elem_len, "name_base": run["name_base"],
-                            "stride": (elem_len + 7) & ~7,
-                            "first": run["first"],
-                            "bodies": run["bodies"]})
 
-    n_config = len({e["cfg"] for e in entries})
-    if sorted({e["cfg"] for e in entries}) != list(range(n_config)):
-        raise ImageError("configuration indices are not dense from 0")
+def _render_image(entries, names, n_config):
+    """(image bytes, the header numbers the report restates).
 
-    # ---- lay the image out --------------------------------------------------
+    Lays the descriptors out at their 8-aligned strides, writes the name table
+    and the index map behind them, then closes the header with the checksum
+    that makes its eight u32 words sum to 0xFFFFFFFF. Each entry learns its own
+    `elem_off` here, which is what the report prints.
+    """
     index_off = HDR_BYTES
     cursor = index_off + IDX_BYTES * len(entries)
     cursor = (cursor + 7) & ~7
@@ -364,13 +387,23 @@ def build(model, line_bytes=576):
     checksum = (0xFFFFFFFF - (sum(words) & 0xFFFFFFFF)) & 0xFFFFFFFF
     img[0:HDR_BYTES] = head + checksum.to_bytes(4, "big")
 
+    return bytes(img), {"n_config": n_config, "index_off": index_off,
+                        "names_off": names_off, "image_bytes": image_bytes,
+                        "desc_max": desc_max, "checksum": checksum,
+                        "n_names": len(names)}
+
+
+def _render_report(entries, layout):
+    """The human-readable map: the header, then one row per index-map entry."""
     report = [
         f"magic AEMI  layout_version {LAYOUT_VERSION}",
-        f"configurations {n_config}  index entries {len(entries)}  "
-        f"names {len(names)}",
-        f"index_off 0x{index_off:06X}  names_off 0x{names_off:06X}  "
-        f"image_bytes {image_bytes}  desc_max_len {desc_max}",
-        f"checksum 0x{checksum:08X}",
+        f"configurations {layout['n_config']}  index entries {len(entries)}  "
+        f"names {layout['n_names']}",
+        f"index_off 0x{layout['index_off']:06X}  "
+        f"names_off 0x{layout['names_off']:06X}  "
+        f"image_bytes {layout['image_bytes']}  "
+        f"desc_max_len {layout['desc_max']}",
+        f"checksum 0x{layout['checksum']:08X}",
         "",
         # `first` is printed because a mixed-length type occupies several rows
         # and two rows with the same cfg+type would otherwise read as a
@@ -384,10 +417,36 @@ def build(model, line_bytes=576):
                       f"{ent['count']:>5}  {ent['elem_len']:>8}  "
                       f"{ent['stride']:>6}  "
                       f"0x{ent['elem_off']:06X}  {nm:>9}")
-    return bytes(img), "\n".join(report) + "\n"
+    return "\n".join(report) + "\n"
 
 
-def main():
+def build(model: dict[str, Any], line_bytes: int = 576) -> tuple[bytes, str]:
+    """model (parsed JSON) -> (image bytes, human-readable map)."""
+    if model.get("format") != "kl-aem-image":
+        raise ImageError("input is not a kl-aem-image document")
+    if _u(model.get("version", 0)) != LAYOUT_VERSION:
+        raise ImageError(f"input version {model.get('version')} != "
+                         f"{LAYOUT_VERSION}")
+
+    names = [str(n) for n in model.get("names", [])]
+    if len(names) >= NAME_NONE:
+        raise ImageError(f"the name table has {len(names)} entries; maximum "
+                         f"is {NAME_NONE - 1}")
+
+    entries = _index_entries(_grouped_descriptors(model), names, line_bytes)
+
+    n_config = len({e["cfg"] for e in entries})
+    if sorted({e["cfg"] for e in entries}) != list(range(n_config)):
+        raise ImageError("configuration indices are not dense from 0")
+
+    img, layout = _render_image(entries, names, n_config)
+    return img, _render_report(entries, layout)
+
+
+def main() -> int:
+    """Pack one model document into the flat image the store fetches, and write
+    the layout map beside it. A refused layout returns 1 and writes nothing,
+    because a partially written image would be fetched as a whole one."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("-i", "--input", required=True, help="model JSON")
     ap.add_argument("-o", "--out", required=True, help="flat memory image")
