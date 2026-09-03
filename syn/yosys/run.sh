@@ -2,7 +2,11 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
 # Device portability: sv2v + yosys must elaborate every top (hdl/README rule 2).
 # The tops array is the authoritative list — extend it with every new top.
-set -eu
+# `pipefail` completes the trio the other two thirds of which were already
+# here. It reaches only the `find | sort` pairs on the source line below, both
+# of which must succeed for that line to mean anything; the yosys verdicts are
+# AND-OR lists that `set -e` deliberately leaves alone.
+set -euo pipefail
 cd "$(dirname "$0")/../.."
 tops=(KL_aecp_ucpu KL_aecp_desc_store KL_aecp_dyn_state KL_aecp_resp_buf KL_aecp_engine KL_aecp_notify KL_aecp_ca_originator KL_pp_timer_service KL_pp_prng KL_pp_rx_slots KL_pp_tx_slots KL_pp_release_merge
       KL_pp_rx_validator KL_pp_normalizer KL_pp_dispatch KL_pp_scoreboard
@@ -11,7 +15,9 @@ tops=(KL_aecp_ucpu KL_aecp_desc_store KL_aecp_dyn_state KL_aecp_resp_buf KL_aecp
       KL_acmp_talker KL_pp_maap KL_srp_decoder KL_srp_encoder KL_srp_domain
       KL_srp_vlan KL_srp_talker_fsm KL_srp_listener_fsm)
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
-sv2v $(find hdl -name '*_pkg.sv' | sort) $(find hdl -name '*.sv' ! -name '*_pkg.sv' | sort) > "$work/all.v"
+# The two substitutions below are split on purpose - sv2v takes one file per
+# word - and stay on one line, which is the form Rule 9 kept for source lists.
+sv2v $(find hdl -name '*_pkg.sv' | sort) $(find hdl -name '*.sv' ! -name '*_pkg.sv' | sort) > "$work/all.v"  # shellcheck disable=SC2086 # deliberate word split of two source lists
 ( cd hdl/aecp/ucode && python3 gen_ucode.py -o "$work/ucode.hex" >/dev/null )
 ( cd hdl/acmp/rom && python3 gen_ltn_rom.py -o "$work/ltn_rom.hex" >/dev/null 2>&1 || python3 gen_ltn_rom.py > /dev/null; cp ltn_rom.hex "$work/" 2>/dev/null || true )
 cd "$work"

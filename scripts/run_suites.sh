@@ -3,8 +3,15 @@
 # Run every Verilator suite under tb/ (glob — never a hand-kept list).
 # Exit = number of failing suites; exit 90 if any PASSing suite's tally line
 # is unreadable (a suite whose check count cannot be read is unproven).
-set -u
-cd "$(dirname "$0")/.."
+
+# Strict mode, and it does NOT disarm the sweep. This script's job is to run
+# every suite and count the red ones, so each status it is built to survive was
+# checked against `set -e`: a failing suite is read by an `if`, and the two
+# `[ ... ] && exit` verdicts at the bottom are AND-OR lists - errexit acts on
+# neither. The one expected failure `pipefail` WOULD have turned into a crash
+# mid-sweep is the tally read, and that line now says so.
+set -euo pipefail
+cd "$(dirname "$0")/.." || exit 1   # every path below is relative to the repo root
 fails=0; unreadable=0; total=0
 
 # The uPC map is written down twice (gen_ucode.py's entry points and the
@@ -21,7 +28,10 @@ for d in tb/*/; do
   name=$(basename "$d")
   log=$(mktemp)
   if (cd "$d" && make) >"$log" 2>&1; then
-    tally=$(grep -Eo '[0-9]+ checks: [0-9]+ PASS, [0-9]+ FAIL' "$log" | tail -1)
+    # A suite that passed with no tally line is the UNREADABLE verdict below,
+    # not a crash: under `pipefail` the empty `grep` is a failing pipeline, so
+    # its status is consumed here and the emptiness of $tally is what is read.
+    tally=$(grep -Eo '[0-9]+ checks: [0-9]+ PASS, [0-9]+ FAIL' "$log" | tail -1) || tally=""
     if [ -z "$tally" ]; then
       echo "UNREADABLE $name (passed but no tally line)"; unreadable=1
     else
@@ -34,6 +44,6 @@ for d in tb/*/; do
   rm -f "$log"
 done
 echo "suites: $total checks total, $fails failing"
-[ $fails -gt 0 ] && exit $fails
-[ $unreadable -gt 0 ] && exit 90
+[ "$fails" -gt 0 ] && exit "$fails"
+[ "$unreadable" -gt 0 ] && exit 90
 exit 0
