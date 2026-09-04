@@ -3,7 +3,13 @@
 # Lint every embedded ```mermaid and ```wavedrom block in the documentation.
 #   mermaid  -> parse/render check via mmdc (headless chromium, --no-sandbox)
 #   wavedrom -> strict-JSON check via python3 -m json.tool
-set -u
+#
+# Strict mode is safe here because every status this script expects to be
+# non-zero is already read in a condition: `mmdc` and `json.tool` are the two
+# verdicts and both sit in an `if !`, and the `ls README.md` that may find
+# nothing is inside the process substitution feeding `mapfile`, whose own
+# status is what `set -e` sees.
+set -euo pipefail
 fail=0
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
@@ -46,5 +52,5 @@ done
 
 n_mmd=$(find "$tmpdir" -name 'mmd-*.txt' | wc -l)
 n_wd=$(find "$tmpdir" -name 'wd-*.txt' | wc -l)
-echo "lint: $n_mmd mermaid + $n_wd wavedrom blocks checked, $( [ $fail -eq 0 ] && echo OK || echo FAILURES )"
-exit $fail
+echo "lint: $n_mmd mermaid + $n_wd wavedrom blocks checked, $( [ "$fail" -eq 0 ] && echo OK || echo FAILURES )"
+exit "$fail"

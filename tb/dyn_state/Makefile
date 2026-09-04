@@ -11,7 +11,7 @@ VFLAGS = --cc --exe --build -j 0 \
          --top-module $(TOP) \
          -Wall -Wno-fatal -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDPARAM \
-         -CFLAGS "-std=c++17 -O2 -I$(CURDIR)"
+         -CFLAGS "-std=c++17 -O2 -I$(CURDIR) -Wall -Wextra"
 
 SRCS = $(HDL)/aecp/KL_aecp_dyn_state.sv
 CPP  = sim_main.cpp
@@ -22,7 +22,7 @@ run:
 	    --Mdir obj_dir $(SRCS) $(CPP) -o Vdyn_state_sim
 	./obj_dir/Vdyn_state_sim
 	$(VERILATOR) $(VFLAGS) -GN_STREAM_IN_P=1 -GN_STREAM_OUT_P=1 \
-	    -CFLAGS "-DSHAPE_1x1=1" --Mdir obj_1x1 $(SRCS) $(CPP) -o Vdyn_state_1x1
+	    -CFLAGS "-DSHAPE_1x1=1 -Wall -Wextra" --Mdir obj_1x1 $(SRCS) $(CPP) -o Vdyn_state_1x1
 	./obj_1x1/Vdyn_state_1x1
 	@awk '{c+=$$1; f+=$$2} END {printf "%d checks: %d PASS, %d FAIL\n", c, c-f, f}' \
 	    shape_tally.txt

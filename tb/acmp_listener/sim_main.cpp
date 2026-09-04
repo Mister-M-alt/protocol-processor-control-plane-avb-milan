@@ -20,40 +20,77 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 #include "VKL_pp_acmp_listener.h"
 #include "verilated.h"
+#include "../common/verilator_harness.hpp"
 
-static int checks = 0, fails = 0;
 #define CHECK(cond, ...) do { \
   ++checks; \
   if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
 } while (0)
 
 // ---- constants shared with the doc (not with the RTL) ---------------------
-static const uint64_t OUR_EID = 0x0A0B0C0D0E0F1011ull;
-static const uint64_t CTL1 = 0x0011223344556677ull;
-static const uint64_t CTL2 = 0x0099AABBCCDDEEFFull;
-static const uint64_t TK_A = 0x00221100AABBCCDDull;
-static const uint64_t TK_B = 0x00221100AABBCC55ull;
-static const uint16_t TKUID_A = 1, TKUID_B = 2;
-static const uint32_t NOW = 50000;
-static const uint16_t DRAWVAL = 777;         // scripted PRNG kind-0 draw
-static const int N_SINKS = 8;
-static const int TMR_BASE = 9, OWNER_BASE = 32;
-enum { T_CMD = 200, T_RETRY = 4000, T_NOTK = 10000 };
-enum { ST_OK = 0, ST_LUID = 1, ST_TT = 7, ST_NOAUTH = 13, ST_NOBW = 5 };
-enum { M_PROBE_CMD = 0, M_PROBE_RESP = 1, M_BIND = 6, M_BIND_R = 7,
-       M_UNBIND = 8, M_UNBIND_R = 9, M_GETRX = 10, M_GETRX_R = 11 };
-enum { S_UNB, S_PWA, S_PWD, S_PWR, S_PW2, S_PWT, S_SNR, S_SOK };
-enum { R_BIND_SAME, R_BIND_NEW, R_UNBIND, R_GETRX, R_PROBE_OK, R_PROBE_FAIL,
-       R_TMR_DELAY, R_TMR_CMD, R_TMR_RETRY, R_TMR_NOTK,
-       R_TK_DISC, R_TK_DEP, R_TK_REG, R_TK_UNREG };
-static const char* RN[14] = {"BIND_SAME","BIND_NEW","UNBIND","GETRX",
+constexpr uint64_t OUR_EID = 0x0A0B0C0D0E0F1011ull;
+constexpr uint64_t CTL1 = 0x0011223344556677ull;
+constexpr uint64_t CTL2 = 0x0099AABBCCDDEEFFull;
+constexpr uint64_t TK_A = 0x00221100AABBCCDDull;
+constexpr uint64_t TK_B = 0x00221100AABBCC55ull;
+constexpr uint16_t TKUID_A = 1;
+constexpr uint16_t TKUID_B = 2;
+constexpr uint32_t NOW = 50000;
+constexpr uint16_t DRAWVAL = 777;            // scripted PRNG kind-0 draw
+constexpr int N_SINKS = 8;
+constexpr int N_ROWS = 14;      // F05.3 event rows
+constexpr int N_STATES = 8;     // F05.3 listener states
+constexpr int PDU_BYTES = 56;   // committed ACMPDU length
+constexpr int TMR_BASE = 9;
+constexpr int OWNER_BASE = 32;
+constexpr int T_CMD = 200;
+constexpr int T_RETRY = 4000;
+constexpr int T_NOTK = 10000;
+constexpr int ST_OK = 0;
+constexpr int ST_LUID = 1;
+constexpr int ST_TT = 7;
+constexpr int ST_NOAUTH = 13;
+constexpr int ST_NOBW = 5;
+constexpr int M_PROBE_CMD = 0;
+constexpr int M_PROBE_RESP = 1;
+constexpr int M_BIND = 6;
+constexpr int M_BIND_R = 7;
+constexpr int M_UNBIND = 8;
+constexpr int M_UNBIND_R = 9;
+constexpr int M_GETRX = 10;
+constexpr int M_GETRX_R = 11;
+constexpr int S_UNB = 0;
+constexpr int S_PWA = 1;
+constexpr int S_PWD = 2;
+constexpr int S_PWR = 3;
+constexpr int S_PW2 = 4;
+constexpr int S_PWT = 5;
+constexpr int S_SNR = 6;
+constexpr int S_SOK = 7;
+constexpr int R_BIND_SAME = 0;
+constexpr int R_BIND_NEW = 1;
+constexpr int R_UNBIND = 2;
+constexpr int R_GETRX = 3;
+constexpr int R_PROBE_OK = 4;
+constexpr int R_PROBE_FAIL = 5;
+constexpr int R_TMR_DELAY = 6;
+constexpr int R_TMR_CMD = 7;
+constexpr int R_TMR_RETRY = 8;
+constexpr int R_TMR_NOTK = 9;
+constexpr int R_TK_DISC = 10;
+constexpr int R_TK_DEP = 11;
+constexpr int R_TK_REG = 12;
+constexpr int R_TK_UNREG = 13;
+constexpr const char* RN[N_ROWS] = {"BIND_SAME","BIND_NEW","UNBIND","GETRX",
   "PROBE_OK","PROBE_FAIL","TMR_DELAY","TMR_CMD","TMR_RETRY","TMR_NOTK",
   "TK_DISC","TK_DEP","TK_REG","TK_UNREG"};
-static const char* SN[8] = {"UNB","PWA","PWD","PWR","PW2","PWT","SNR","SOK"};
+constexpr const char* SN[N_STATES] = {"UNB","PWA","PWD","PWR","PW2","PWT",
+                                      "SNR","SOK"};
 
 // ---- bit helpers ----------------------------------------------------------
 static void wput(uint32_t* w, int lsb, int width, uint64_t v) {
@@ -74,7 +111,7 @@ static uint64_t wget(const uint32_t* w, int lsb, int width) {
 
 // ---- the wire ACMPDU (F05.13 transcription — used for stimulus AND
 // expectation; big-endian fields at the documented byte offsets) ------------
-struct Pdu { uint8_t b[56]; };
+struct Pdu { uint8_t b[PDU_BYTES]; };
 static void be(uint8_t* p, uint64_t v, int n) {
   for (int i = 0; i < n; ++i) p[i] = uint8_t(v >> (8 * (n - 1 - i)));
 }
@@ -103,13 +140,27 @@ static Pdu mk_pdu(uint8_t msg, uint8_t status, uint64_t sid, uint64_t ctlr,
 
 // ---- record image (F07.6 transcription) -----------------------------------
 struct Rec {
-  uint8_t sm = 0, pbsta = 0, acmpsta = 0, srp_decl = 0;
-  bool bound = false, started = false, sw = false, retried = false;
-  bool tk_reg = false, tk_disc = false;
-  uint64_t talker_eid = 0, bind_ctlr = 0, sid = 0, da = 0;
-  uint16_t talker_uid = 0, probe_seq = 0, vlan = 0;
+  uint8_t sm = 0;
+  uint8_t pbsta = 0;
+  uint8_t acmpsta = 0;
+  uint8_t srp_decl = 0;
+  bool bound = false;
+  bool started = false;
+  bool sw = false;
+  bool retried = false;
+  bool tk_reg = false;
+  bool tk_disc = false;
+  uint64_t talker_eid = 0;
+  uint64_t bind_ctlr = 0;
+  uint64_t sid = 0;
+  uint64_t da = 0;
+  uint16_t talker_uid = 0;
+  uint16_t probe_seq = 0;
+  uint16_t vlan = 0;
   uint32_t last_avail = 0;
-  uint8_t ifx = 0, smh = 0, noadp = 0;
+  uint8_t ifx = 0;
+  uint8_t smh = 0;
+  uint8_t noadp = 0;
   bool operator==(const Rec& o) const {
     return sm == o.sm && pbsta == o.pbsta && acmpsta == o.acmpsta &&
            srp_decl == o.srp_decl && bound == o.bound &&
@@ -143,10 +194,20 @@ static Rec unpack(const uint32_t* w) {
 // ---- stimulus -------------------------------------------------------------
 struct Stim {
   enum K { TXN, EXP, TK } k = TXN;
-  uint8_t msg = 0, status = 0;
-  uint16_t uid = 0, seq = 0, flags = 0, tk_uid = 0, vlan = 0;
-  uint64_t ctlr = 0, tk_eid = 0, sid = 0, da = 0, target = OUR_EID;
-  uint8_t tk_kind = 0; bool tk_fail = false;
+  uint8_t msg = 0;
+  uint8_t status = 0;
+  uint16_t uid = 0;
+  uint16_t seq = 0;
+  uint16_t flags = 0;
+  uint16_t tk_uid = 0;
+  uint16_t vlan = 0;
+  uint64_t ctlr = 0;
+  uint64_t tk_eid = 0;
+  uint64_t sid = 0;
+  uint64_t da = 0;
+  uint64_t target = OUR_EID;
+  uint8_t tk_kind = 0;
+  bool tk_fail = false;
   uint8_t protocol = 1;  // PP_PROTO_ACMP
 };
 
@@ -156,11 +217,18 @@ struct Exp {
   bool wrote = false;
   std::vector<Pdu> frames;
   std::vector<TOp> tops;
-  bool settle = false, teardown = false, disc_arm = false;
-  bool disc_disarm = false, nvm = false, nvm_set = false;
-  uint64_t disc_eid = 0, settle_sid = 0, settle_da = 0;
+  bool settle = false;
+  bool teardown = false;
+  bool disc_arm = false;
+  bool disc_disarm = false;
+  bool nvm = false;
+  bool nvm_set = false;
+  uint64_t disc_eid = 0;
+  uint64_t settle_sid = 0;
+  uint64_t settle_da = 0;
   uint16_t settle_vlan = 0;
-  int notify = 0, frees = 0;
+  int notify = 0;
+  int frees = 0;
   int row = -1;  // classified row (for walk bookkeeping)
 };
 
@@ -170,9 +238,12 @@ struct Exp {
 // action list in the doc's listed order}. 'cond' = the dagger legend:
 // tk? PWD/A12 : PWA/A17 (base acts run first).
 // ==========================================================================
-enum { C_DASH, C_IGN, C_NORM, C_COND };
+constexpr int C_DASH = 0;
+constexpr int C_IGN = 1;
+constexpr int C_NORM = 2;
+constexpr int C_COND = 3;
 struct MCell { int t; int next; const char* acts; };
-static const MCell M[14][8] = {
+constexpr MCell M[N_ROWS][N_STATES] = {
   // BIND_RX same talker+source: UNB impossible, else self/A1 A6 A3
   {{C_DASH,0,""},        {C_NORM,S_PWA,"1 6 3"}, {C_NORM,S_PWD,"1 6 3"},
    {C_NORM,S_PWR,"1 6 3"},{C_NORM,S_PW2,"1 6 3"},{C_NORM,S_PWT,"1 6 3"},
@@ -289,33 +360,36 @@ struct Model {
                   s.tk_uid, s.uid, 0, 0, s.seq, 0, 0);
   }
 
-  // predict all observable effects of one stimulus (the reference)
-  Exp predict(int sink, const Stim& s) {
-    Exp e;
-    e.frees = (s.k == Stim::TXN) ? 1 : 0;
-    if (s.k == Stim::TXN) {
-      if (s.protocol != 1 ||
-          !(s.msg == M_PROBE_RESP || s.msg == M_BIND || s.msg == M_UNBIND ||
-            s.msg == M_GETRX) || s.target != OUR_EID)
-        return e;  // consumed silently, nothing else
-      if (s.uid >= N_SINKS) {
-        if (s.msg != M_PROBE_RESP)
-          e.frames.push_back(f_err(s.msg, ST_LUID, s));
-        return e;
-      }
-      if (s.msg == M_PROBE_RESP) {
-        const Rec& r = rec[sink];
-        if (!(s.ctlr == r.bind_ctlr && s.tk_eid == r.talker_eid &&
-              s.tk_uid == r.talker_uid && s.seq == r.probe_seq))
-          return e;  // 05 §3: silently ignore
-      }
+ private:
+  // 05 §3 admission for a received transaction: only an ACMP-protocol
+  // command out of the listener's own message set, addressed to us, is let
+  // through to the matrix. An out-of-range listener UID is answered
+  // LISTENER_UNKNOWN_ID (a PROBE_RESP, being itself a response, is never
+  // answered); a PROBE_RESP that does not match the record's outstanding
+  // probe is dropped. False means the stimulus dies here, having already
+  // left in `e` whatever it was owed.
+  bool admit_txn(int sink, const Stim& s, Exp& e) const {
+    if (s.protocol != 1 ||
+        !(s.msg == M_PROBE_RESP || s.msg == M_BIND || s.msg == M_UNBIND ||
+          s.msg == M_GETRX) || s.target != OUR_EID)
+      return false;  // consumed silently, nothing else
+    if (s.uid >= N_SINKS) {
+      if (s.msg != M_PROBE_RESP)
+        e.frames.push_back(f_err(s.msg, ST_LUID, s));
+      return false;
     }
-    int row = classify(sink, s);
-    e.row = row;
-    Rec& r = rec[sink];
-    const MCell& c = M[row][r.sm];
+    if (s.msg == M_PROBE_RESP) {
+      const Rec& r = rec[sink];
+      if (!(s.ctlr == r.bind_ctlr && s.tk_eid == r.talker_eid &&
+            s.tk_uid == r.talker_uid && s.seq == r.probe_seq))
+        return false;  // 05 §3: silently ignore
+    }
+    return true;
+  }
 
-    // event bookkeeping, gated exactly by cell validity (not '—')
+  // event bookkeeping, gated exactly by cell validity (not '—')
+  void note_event(int sink, int row, const MCell& c, const Stim& s, Exp& e) {
+    Rec& r = rec[sink];
     bool valid = (c.t != C_DASH);
     if (valid && row == R_TK_DISC) r.tk_disc = true;
     if (valid && row == R_TK_DEP) r.tk_disc = false;
@@ -325,33 +399,37 @@ struct Model {
     }
     e.wrote = true;               // every classified work item writes back
     r.smh = uint8_t(TMR_BASE + sink);
-    if (c.t == C_DASH || c.t == C_IGN) return e;
+  }
 
-    // resolve the cell's action list + next state
-    std::vector<int> acts;
+  // one cell read against one record: the doc's action numbers in the doc's
+  // listed order, and the state the cell lands in
+  struct Resolved { std::vector<int> acts; int next = 0; };
+
+  // resolve the cell's action list + next state
+  Resolved resolve_cell(const MCell& c, const Rec& r) const {
+    Resolved rv;
     int tok = 0;
     for (const char* p = c.acts; *p;) {
       if (*p >= '0' && *p <= '9') { tok = tok * 10 + (*p - '0'); }
-      else if (tok) { acts.push_back(tok); tok = 0; }
+      else if (tok) { rv.acts.push_back(tok); tok = 0; }
       ++p;
     }
-    if (tok) acts.push_back(tok);
-    int next = c.next;
+    if (tok) rv.acts.push_back(tok);
+    rv.next = c.next;
     if (c.t == C_COND) {
-      if (r.tk_disc) { next = S_PWD; acts.push_back(12); }
-      else           { next = S_PWA; acts.push_back(17); }
+      if (r.tk_disc) { rv.next = S_PWD; rv.acts.push_back(12); }
+      else           { rv.next = S_PWA; rv.acts.push_back(17); }
     }
+    return rv;
+  }
 
-    // A1 gate (05 §6.3 legend)
-    bool has_a1 = !acts.empty() && acts[0] == 1;
-    if (has_a1 && lock_held && lock_eid != s.ctlr) {
-      e.frames.push_back(f_err(s.msg, ST_NOAUTH, s));
-      e.wrote = false;            // abort cell: no commit
-      return e;
-    }
-
+  // run the resolved action list against the record, collecting into `e`
+  // every observable the actions produce; the return is Table 5.22's
+  // notify, i.e. whether any action actually moved the record
+  bool apply_acts(int sink, int row, const std::vector<int>& acts,
+                  const Stim& s, Exp& e) {
+    Rec& r = rec[sink];
     bool mut = false;
-    r.sm = uint8_t(next);
     for (int a : acts) {
       switch (a) {
         case 1: break;
@@ -413,7 +491,32 @@ struct Model {
         default: break;
       }
     }
-    e.notify = mut ? 1 : 0;
+    return mut;
+  }
+
+ public:
+  // predict all observable effects of one stimulus (the reference)
+  Exp predict(int sink, const Stim& s) {
+    Exp e;
+    e.frees = (s.k == Stim::TXN) ? 1 : 0;
+    if (s.k == Stim::TXN && !admit_txn(sink, s, e)) return e;
+    int row = classify(sink, s);
+    e.row = row;
+    const MCell& c = M[row][rec[sink].sm];
+    note_event(sink, row, c, s, e);
+    if (c.t == C_DASH || c.t == C_IGN) return e;
+    Resolved rv = resolve_cell(c, rec[sink]);
+
+    // A1 gate (05 §6.3 legend)
+    bool has_a1 = !rv.acts.empty() && rv.acts[0] == 1;
+    if (has_a1 && lock_held && lock_eid != s.ctlr) {
+      e.frames.push_back(f_err(s.msg, ST_NOAUTH, s));
+      e.wrote = false;            // abort cell: no commit
+      return e;
+    }
+
+    rec[sink].sm = uint8_t(rv.next);
+    e.notify = apply_acts(sink, row, rv.acts, s, e) ? 1 : 0;
     return e;
   }
 };
@@ -421,17 +524,30 @@ struct Model {
 // ==========================================================================
 // Harness: cycle-exact emulation of the landed faces + collectors
 // ==========================================================================
-struct ATop { bool cancel; uint8_t slot, owner; uint32_t deadline; };
+struct ATop {
+  bool cancel;
+  uint8_t slot;
+  uint8_t owner;
+  uint32_t deadline;
+};
 struct Col {
-  int wrotes = 0, frees = 0, notifies = 0;
+  int wrotes = 0;
+  int frees = 0;
+  int notifies = 0;
   //! Milan Table 5.22's started/stopped trigger, counted separately from the
   //! generic record-change notify so a no-op can be told from a transition.
   int strt_chgs = 0;
   std::vector<Pdu> frames;
   std::vector<ATop> tops;
-  bool settle = false, teardown = false, disc_arm = false;
-  bool disc_disarm = false, nvm = false, nvm_set = false;
-  uint64_t disc_eid = 0, settle_sid = 0, settle_da = 0;
+  bool settle = false;
+  bool teardown = false;
+  bool disc_arm = false;
+  bool disc_disarm = false;
+  bool nvm = false;
+  bool nvm_set = false;
+  uint64_t disc_eid = 0;
+  uint64_t settle_sid = 0;
+  uint64_t settle_da = 0;
   uint16_t settle_vlan = 0;
   uint8_t free_slot = 0xFF;
   void clear() { *this = Col(); }
@@ -444,7 +560,8 @@ struct Harness {
   uint8_t rxmem[4][576] = {};
   uint8_t txmem[5][1600] = {};
   uint16_t txlen[5] = {};
-  bool txfree[5] = {true, true, true, true, true};
+  bool txfree[5] = {
+      true, true, true, true, true};
   bool gnt_pending = false;
   bool alloc_block = false;
   uint8_t gnt_slot = 0;
@@ -452,7 +569,8 @@ struct Harness {
   int prng_cnt = 0;
   bool prng_fire = false;
   // one-shot injections for the NEXT tick
-  bool inj_exp = false; uint8_t inj_exp_sink = 0;
+  bool inj_exp = false;
+  uint8_t inj_exp_sink = 0;
   int next_rx_slot = 0;
   uint32_t last_arm_deadline[N_SINKS] = {};
 
@@ -490,7 +608,8 @@ struct Harness {
     if (d->txs_wr_commit_o) txlen[d->txs_wr_slot_o] = d->txs_wr_len_o;
     if (d->txreq_valid_o) {
       Pdu p{};
-      int n = txlen[d->txreq_slot_o] < 56 ? txlen[d->txreq_slot_o] : 56;
+      int n = txlen[d->txreq_slot_o] < PDU_BYTES ? txlen[d->txreq_slot_o]
+                                                 : PDU_BYTES;
       memcpy(p.b, txmem[d->txreq_slot_o], size_t(n));
       col.frames.push_back(p);
       txfree[d->txreq_slot_o] = true;  // arbiter auto-free after serialize
@@ -540,7 +659,7 @@ struct Harness {
       int slot = next_rx_slot; next_rx_slot = (next_rx_slot + 1) % 4;
       Pdu p = mk_pdu(s.msg, s.status, s.sid, s.ctlr, s.tk_eid, s.target,
                      s.tk_uid, s.uid, s.da, 0, s.seq, s.flags, s.vlan);
-      memcpy(rxmem[slot], p.b, 56);
+      memcpy(rxmem[slot], p.b, PDU_BYTES);
       uint32_t* w = &d->txn_i[0];
       for (int i = 0; i < 13; ++i) w[i] = 0;
       wput(w, 391, 2, 0);                    // origin RX
@@ -580,8 +699,63 @@ struct Harness {
   }
 };
 
+// ==========================================================================
+// The walk driver: the tally, the emulated faces and the matrix model live in
+// one object, so no harness state sits at file scope (I.2).
+// ==========================================================================
+class ListenerWalk {
+ public:
+  explicit ListenerWalk(VKL_pp_acmp_listener* dut) : d(dut), h(dut) {}
+  int run();
+
+ private:
+  void chk_rec(const char* tag, const Rec& got, const Rec& want);
+  void chk_cell(const char* tag, int sink, const Exp& e);
+
+  Exp step(int sink, const Stim& s, bool check, const char* tag);
+  Stim S_bind(uint64_t tk, uint16_t tu, uint64_t ct, bool sw);
+  Stim S_unbind();
+  Stim S_getrx();
+  Stim S_probe(int sink, uint8_t status);
+  Stim S_exp();
+  Stim S_tk(uint8_t kind, bool fail = false);
+  unsigned started_bit(int sink);
+  void post_started(int sink, int val, bool fail = false);
+  void goto_state(int sink, int st, const char* tag);
+
+  void reset_and_init_sweep();
+  void park_sink_seven();
+  void walk_every_mtxw_cell();
+  void check_duplicate_probe_is_byte_identical(int sink);
+  void check_double_timeout_reaches_pwt(int sink);
+  void check_dagger_dual_arms(int sink);
+  void check_ref_bug_guard_at_sok(int sink);
+  void check_registering_failed_is_visible(int sink);
+  void check_unknown_listener_id();
+  void check_foreign_eid_and_protocol_are_silent();
+  void check_probe_guard_mismatch(int sink);
+  void check_lock_gate(int sink);
+  void check_boot_preload_lands_in_pwa();
+  void check_stale_expiry_is_swallowed();
+  void check_parked_sink_untouched();
+  void check_started_face_follows_bind_and_request(int sk);
+  void check_started_trigger_fires_once_per_transition(int sk);
+  void check_streaming_wait_rules_started(int sk);
+  void check_every_acceptor_excludes_the_holder_arm();
+  void check_expiry_survives_a_colliding_request();
+  void check_rebind_raises_no_duplicate_trigger();
+  void check_started_face_error_paths(int sk);
+
+  VKL_pp_acmp_listener* d;
+  Harness h;
+  Model m;
+  Rec park7;
+  int checks = 0;
+  int fails = 0;
+};
+
 // ---- comparators ----------------------------------------------------------
-static void chk_rec(const char* tag, const Rec& got, const Rec& want) {
+void ListenerWalk::chk_rec(const char* tag, const Rec& got, const Rec& want) {
   CHECK(got.sm == want.sm, "%s: sm_state got %s want %s", tag,
         SN[got.sm & 7], SN[want.sm & 7]);
   CHECK(got.pbsta == want.pbsta && got.acmpsta == want.acmpsta,
@@ -598,30 +772,32 @@ static void chk_rec(const char* tag, const Rec& got, const Rec& want) {
   CHECK(got.talker_eid == want.talker_eid && got.talker_uid == want.talker_uid
         && got.bind_ctlr == want.bind_ctlr,
         "%s: binding got %016lx/%u/%016lx want %016lx/%u/%016lx", tag,
-        (unsigned long)got.talker_eid, got.talker_uid,
-        (unsigned long)got.bind_ctlr, (unsigned long)want.talker_eid,
-        want.talker_uid, (unsigned long)want.bind_ctlr);
+        static_cast<unsigned long>(got.talker_eid), got.talker_uid,
+        static_cast<unsigned long>(got.bind_ctlr),
+        static_cast<unsigned long>(want.talker_eid),
+        want.talker_uid, static_cast<unsigned long>(want.bind_ctlr));
   CHECK(got.probe_seq == want.probe_seq, "%s: probe_seq got %u want %u",
         tag, got.probe_seq, want.probe_seq);
   CHECK(got.sid == want.sid && got.da == want.da && got.vlan == want.vlan,
         "%s: settled got %016lx/%012lx/%u want %016lx/%012lx/%u", tag,
-        (unsigned long)got.sid, (unsigned long)got.da, got.vlan,
-        (unsigned long)want.sid, (unsigned long)want.da, want.vlan);
+        static_cast<unsigned long>(got.sid), static_cast<unsigned long>(got.da),
+        got.vlan, static_cast<unsigned long>(want.sid),
+        static_cast<unsigned long>(want.da), want.vlan);
   CHECK(got.smh == want.smh && got.noadp == want.noadp &&
         got.last_avail == want.last_avail,
         "%s: plumbing smh %u want %u", tag, got.smh, want.smh);
 }
 
-static void chk_cell(const char* tag, Harness& h, int sink, const Exp& e) {
+void ListenerWalk::chk_cell(const char* tag, int sink, const Exp& e) {
   CHECK(h.col.wrotes == (e.wrote ? 1 : 0), "%s: writebacks got %d want %d",
         tag, h.col.wrotes, e.wrote ? 1 : 0);
   CHECK(h.col.frames.size() == e.frames.size(), "%s: frames got %zu want %zu",
         tag, h.col.frames.size(), e.frames.size());
   for (size_t i = 0; i < e.frames.size() && i < h.col.frames.size(); ++i) {
-    bool eq = memcmp(h.col.frames[i].b, e.frames[i].b, 56) == 0;
+    bool eq = memcmp(h.col.frames[i].b, e.frames[i].b, PDU_BYTES) == 0;
     CHECK(eq, "%s: frame %zu bytes differ", tag, i);
     if (!eq) {
-      for (int k = 0; k < 56; ++k)
+      for (int k = 0; k < PDU_BYTES; ++k)
         if (h.col.frames[i].b[k] != e.frames[i].b[k])
           printf("    byte %d got %02x want %02x\n", k,
                  h.col.frames[i].b[k], e.frames[i].b[k]);
@@ -650,11 +826,13 @@ static void chk_cell(const char* tag, Harness& h, int sink, const Exp& e) {
     CHECK(h.col.settle_sid == e.settle_sid && h.col.settle_da == e.settle_da
           && h.col.settle_vlan == e.settle_vlan,
           "%s: settle payload got %016lx/%012lx/%u", tag,
-          (unsigned long)h.col.settle_sid, (unsigned long)h.col.settle_da,
+          static_cast<unsigned long>(h.col.settle_sid),
+          static_cast<unsigned long>(h.col.settle_da),
           h.col.settle_vlan);
   if (e.disc_arm)
     CHECK(h.col.disc_eid == e.disc_eid, "%s: disc payload got %016lx want %016lx",
-          tag, (unsigned long)h.col.disc_eid, (unsigned long)e.disc_eid);
+          tag, static_cast<unsigned long>(h.col.disc_eid),
+          static_cast<unsigned long>(e.disc_eid));
   CHECK(h.col.notifies == e.notify, "%s: notify got %d want %d", tag,
         h.col.notifies, e.notify);
   CHECK(h.col.frees == e.frees, "%s: rx frees got %d want %d", tag,
@@ -662,13 +840,118 @@ static void chk_cell(const char* tag, Harness& h, int sink, const Exp& e) {
 }
 
 // ==========================================================================
-int main(int argc, char** argv) {
-  Verilated::commandArgs(argc, argv);
-  auto* d = new VKL_pp_acmp_listener;
-  Harness h(d);
-  Model m;
+// ---- helpers over harness + model in lock-step --------------------------
+Exp ListenerWalk::step(int sink, const Stim& s, bool check, const char* tag) {
+  h.col.clear();
+  Exp e = m.predict(sink, s);
+  bool done = h.drive(sink, s);
+  CHECK(done, "%s: completes", tag);
+  if (check) {
+    chk_cell(tag, sink, e);
+    chk_rec(tag, h.shadow[sink], m.rec[sink]);
+  } else {
+    CHECK(h.shadow[sink].sm == m.rec[sink].sm,
+          "%s(setup): state sync got %s want %s", tag,
+          SN[h.shadow[sink].sm & 7], SN[m.rec[sink].sm & 7]);
+  }
+  return e;
+}
+
+Stim ListenerWalk::S_bind(uint64_t tk, uint16_t tu, uint64_t ct, bool sw) {
+  Stim s; s.k = Stim::TXN; s.msg = M_BIND; s.tk_eid = tk; s.tk_uid = tu;
+  s.ctlr = ct; s.flags = sw ? 0x0008 : 0; s.seq = 0x4100; return s;
+}
+
+Stim ListenerWalk::S_unbind() {
+  Stim s; s.k = Stim::TXN; s.msg = M_UNBIND; s.ctlr = CTL1;
+  s.tk_eid = TK_A; s.tk_uid = TKUID_A; s.seq = 0x4200; return s;
+}
+
+Stim ListenerWalk::S_getrx() {
+  Stim s; s.k = Stim::TXN; s.msg = M_GETRX; s.ctlr = CTL2; s.seq = 0x4300;
+  return s;
+}
+
+Stim ListenerWalk::S_probe(int sink, uint8_t status) {
+  const Rec& r = m.rec[sink];
+  Stim s; s.k = Stim::TXN; s.msg = M_PROBE_RESP; s.status = status;
+  s.ctlr = r.bind_ctlr; s.tk_eid = r.talker_eid; s.tk_uid = r.talker_uid;
+  s.seq = r.probe_seq; s.sid = 0x5544332211002233ull + uint64_t(sink);
+  s.da = 0x91E0F0004455ull; s.vlan = 2;
+  return s;
+}
+
+Stim ListenerWalk::S_exp() { Stim s; s.k = Stim::EXP; return s; }
+
+Stim ListenerWalk::S_tk(uint8_t kind, bool fail) {
+  Stim s; s.k = Stim::TK; s.tk_kind = kind; s.tk_fail = fail; return s;
+}
+
+  // ---- the exported started/stopped view (Milan 5.3.8.7) ----------------
+  // The fabric admission gate reads this vector, NOT the record RAM, so a
+  // record that says started while the vector says stopped would discard
+  // every frame of a stream the controller was told is running. It is
+  // written off the record RAM's own write bus, and this is what proves it.
+unsigned ListenerWalk::started_bit(int sink) {
+  return static_cast<unsigned>((d->strm_started_o >> sink) & 1u);
+}
+
+  //! Drive the AECP request face. Ready is completion, not holder space, so
+  //! the record or required no-op check has finished when it rises.
+void ListenerWalk::post_started(int sink, int val, bool fail) {
+  d->strm_set_valid_i = 1;
+  d->strm_set_sink_i  = uint16_t(sink);
+  d->strm_set_val_i   = uint8_t(val);
+  int guard = 64;
+  int cycles = 0;
+  while (guard-- > 0 && !d->strm_set_ready_o) {
+    h.tick();
+    cycles++;
+  }
+  CHECK(d->strm_set_ready_o == 1,
+        "post_started(%d,%d): the face completed", sink, val);
+  CHECK(cycles >= 2,
+        "post_started(%d,%d): holder capture was not completion", sink, val);
+  CHECK(bool(d->strm_set_error_o) == fail,
+        "post_started(%d,%d): error got %u want %u", sink, val,
+        unsigned(d->strm_set_error_o), unsigned(fail));
+  h.tick();                       // retire the completion handshake
+  d->strm_set_valid_i = 0;
+  d->eval();
+}
+
+void ListenerWalk::goto_state(int sink, int st, const char* tag) {
+  Stim b = S_bind(TK_A, TKUID_A, CTL1, false); b.uid = uint16_t(sink);
+  Stim u = S_unbind(); u.uid = uint16_t(sink);
+  step(sink, u, false, tag);                    // any state -> UNB
+  if (st == S_UNB) return;
+  step(sink, b, false, tag);                    // UNB -> PWR
+  if (st == S_PWR) return;
+  Stim s;
+  switch (st) {
+    case S_PWA:
+      s = S_tk(1); step(sink, s, false, tag); break;      // DEP -> PWA
+    case S_PWD:
+      s = S_tk(1); step(sink, s, false, tag);
+      s = S_tk(0); step(sink, s, false, tag); break;      // DISC -> PWD
+    case S_PW2:
+      step(sink, S_exp(), false, tag); break;             // CMD -> PW2
+    case S_PWT: {
+      Stim p = S_probe(sink, ST_NOBW); p.uid = uint16_t(sink);
+      step(sink, p, false, tag); break;                   // fail -> PWT
+    }
+    case S_SNR: case S_SOK: {
+      Stim p = S_probe(sink, ST_OK); p.uid = uint16_t(sink);
+      step(sink, p, false, tag);                          // ok -> SNR
+      if (st == S_SOK) { s = S_tk(2); step(sink, s, false, tag); }
+      break;
+    }
+    default: break;
+  }
+}
 
   // ---- reset + init sweep -------------------------------------------------
+void ListenerWalk::reset_and_init_sweep() {
   d->rst_n = 0; d->txn_valid_i = 0; d->evt_tk_valid_i = 0;
   d->pre_valid_i = 0; d->lock_held_i = 0; d->lock_ctlr_i = 0;
   d->entity_id_i = OUR_EID;
@@ -682,124 +965,24 @@ int main(int argc, char** argv) {
     CHECK(allz, "init sweep zeroed all %d records", N_SINKS);
   }
   h.col.clear();
-
-  // ---- helpers over harness + model in lock-step --------------------------
-  auto step = [&](int sink, const Stim& s, bool check, const char* tag) {
-    h.col.clear();
-    Exp e = m.predict(sink, s);
-    bool done = h.drive(sink, s);
-    CHECK(done, "%s: completes", tag);
-    if (check) {
-      chk_cell(tag, h, sink, e);
-      chk_rec(tag, h.shadow[sink], m.rec[sink]);
-    } else {
-      CHECK(h.shadow[sink].sm == m.rec[sink].sm,
-            "%s(setup): state sync got %s want %s", tag,
-            SN[h.shadow[sink].sm & 7], SN[m.rec[sink].sm & 7]);
-    }
-    return e;
-  };
-  auto S_bind = [&](uint64_t tk, uint16_t tu, uint64_t ct, bool sw) {
-    Stim s; s.k = Stim::TXN; s.msg = M_BIND; s.tk_eid = tk; s.tk_uid = tu;
-    s.ctlr = ct; s.flags = sw ? 0x0008 : 0; s.seq = 0x4100; return s;
-  };
-  auto S_unbind = [&]() {
-    Stim s; s.k = Stim::TXN; s.msg = M_UNBIND; s.ctlr = CTL1;
-    s.tk_eid = TK_A; s.tk_uid = TKUID_A; s.seq = 0x4200; return s;
-  };
-  auto S_getrx = [&]() {
-    Stim s; s.k = Stim::TXN; s.msg = M_GETRX; s.ctlr = CTL2; s.seq = 0x4300;
-    return s;
-  };
-  auto S_probe = [&](int sink, uint8_t status) {
-    const Rec& r = m.rec[sink];
-    Stim s; s.k = Stim::TXN; s.msg = M_PROBE_RESP; s.status = status;
-    s.ctlr = r.bind_ctlr; s.tk_eid = r.talker_eid; s.tk_uid = r.talker_uid;
-    s.seq = r.probe_seq; s.sid = 0x5544332211002233ull + uint64_t(sink);
-    s.da = 0x91E0F0004455ull; s.vlan = 2;
-    return s;
-  };
-  auto S_exp = [&]() { Stim s; s.k = Stim::EXP; return s; };
-  auto S_tk = [&](uint8_t kind, bool fail = false) {
-    Stim s; s.k = Stim::TK; s.tk_kind = kind; s.tk_fail = fail; return s;
-  };
-
-  // ---- the exported started/stopped view (Milan 5.3.8.7) ----------------
-  // The fabric admission gate reads this vector, NOT the record RAM, so a
-  // record that says started while the vector says stopped would discard
-  // every frame of a stream the controller was told is running. It is
-  // written off the record RAM's own write bus, and this is what proves it.
-  auto started_bit = [&](int sink) {
-    return (unsigned)((d->strm_started_o >> sink) & 1u);
-  };
-
-  //! Drive the AECP request face. Ready is completion, not holder space, so
-  //! the record or required no-op check has finished when it rises.
-  auto post_started = [&](int sink, int val, bool fail = false) {
-    d->strm_set_valid_i = 1;
-    d->strm_set_sink_i  = uint16_t(sink);
-    d->strm_set_val_i   = uint8_t(val);
-    int guard = 64;
-    int cycles = 0;
-    while (guard-- > 0 && !d->strm_set_ready_o) {
-      h.tick();
-      cycles++;
-    }
-    CHECK(d->strm_set_ready_o == 1,
-          "post_started(%d,%d): the face completed", sink, val);
-    CHECK(cycles >= 2,
-          "post_started(%d,%d): holder capture was not completion", sink, val);
-    CHECK(bool(d->strm_set_error_o) == fail,
-          "post_started(%d,%d): error got %u want %u", sink, val,
-          unsigned(d->strm_set_error_o), unsigned(fail));
-    h.tick();                       // retire the completion handshake
-    d->strm_set_valid_i = 0;
-    d->eval();
-  };
-
-  auto goto_state = [&](int sink, int st, const char* tag) {
-    Stim b = S_bind(TK_A, TKUID_A, CTL1, false); b.uid = uint16_t(sink);
-    Stim u = S_unbind(); u.uid = uint16_t(sink);
-    step(sink, u, false, tag);                    // any state -> UNB
-    if (st == S_UNB) return;
-    step(sink, b, false, tag);                    // UNB -> PWR
-    if (st == S_PWR) return;
-    Stim s;
-    switch (st) {
-      case S_PWA:
-        s = S_tk(1); step(sink, s, false, tag); break;      // DEP -> PWA
-      case S_PWD:
-        s = S_tk(1); step(sink, s, false, tag);
-        s = S_tk(0); step(sink, s, false, tag); break;      // DISC -> PWD
-      case S_PW2:
-        step(sink, S_exp(), false, tag); break;             // CMD -> PW2
-      case S_PWT: {
-        Stim p = S_probe(sink, ST_NOBW); p.uid = uint16_t(sink);
-        step(sink, p, false, tag); break;                   // fail -> PWT
-      }
-      case S_SNR: case S_SOK: {
-        Stim p = S_probe(sink, ST_OK); p.uid = uint16_t(sink);
-        step(sink, p, false, tag);                          // ok -> SNR
-        if (st == S_SOK) { s = S_tk(2); step(sink, s, false, tag); }
-        break;
-      }
-      default: break;
-    }
-  };
+}
 
   // ---- park sink 7 in a settled state for the isolation check -------------
+void ListenerWalk::park_sink_seven() {
   goto_state(7, S_SOK, "park7");
-  Rec park7 = m.rec[7];
+  park7 = m.rec[7];
+}
 
   // ======================= THE MTXW WALK ==================================
   // every (event row x state) cell of F05.3; aliased timer '—' cells are
   // proven impossible-by-construction (own-T-ID deadline check) instead of
   // injected — the shared SM slot cannot carry the foreign T-ID.
-  static const int OWN_MS[8] = {-1, -1, DRAWVAL, T_CMD, T_CMD, T_RETRY,
-                                T_NOTK, -1};
+void ListenerWalk::walk_every_mtxw_cell() {
+  static constexpr int OWN_MS[N_STATES] = {-1, -1, DRAWVAL, T_CMD, T_CMD,
+                                           T_RETRY, T_NOTK, -1};
   int cells = 0;
-  for (int row = 0; row < 14; ++row) {
-    for (int st = 0; st < 8; ++st) {
+  for (int row = 0; row < N_ROWS; ++row) {
+    for (int st = 0; st < N_STATES; ++st) {
       char tag[64];
       snprintf(tag, sizeof tag, "F05.3 %s x %s", RN[row], SN[st]);
       int sink = (row * 8 + st) % 7;   // sink 7 stays parked
@@ -879,12 +1062,10 @@ int main(int argc, char** argv) {
     }
   }
   CHECK(cells == 112, "MTXW walked %d cells (want 112)", cells);
-
-  // ================== behavior checks beyond the walk =====================
-  int sink = 0;
-  char tg[64];
+}
 
   // B1: exact-duplicate probe — A13 bytes == A5 bytes, same seq, retried
+void ListenerWalk::check_duplicate_probe_is_byte_identical(int sink) {
   goto_state(sink, S_PWR, "B1");
   Pdu probe1 = h.col.frames.empty() ? Pdu{} : h.col.frames.back();
   {
@@ -900,21 +1081,25 @@ int main(int argc, char** argv) {
     uint16_t seq1 = m.rec[sink].probe_seq;
     step(sink, S_exp(), true, "B1 dup");           // PWR -CMD-> PW2 (A13)
     CHECK(!h.col.frames.empty() &&
-          memcmp(h.col.frames[0].b, probe1.b, 56) == 0,
+          memcmp(h.col.frames[0].b, probe1.b, PDU_BYTES) == 0,
           "B1: probe #2 is the exact duplicate of probe #1");
     CHECK(m.rec[sink].probe_seq == seq1 && h.shadow[sink].probe_seq == seq1,
           "B1: same probe_seq %u", seq1);
     CHECK(h.shadow[sink].retried, "B1: retried flag set");
   }
+}
 
   // B2: double timeout -> PWT with acmpsta 7, T-ACMP-RETRY armed
+void ListenerWalk::check_double_timeout_reaches_pwt(int sink) {
   step(sink, S_exp(), true, "B2 dbl-timeout");     // PW2 -CMD-> PWT A14(=7)
   CHECK(h.shadow[sink].sm == S_PWT && h.shadow[sink].acmpsta == ST_TT,
         "B2: PWT with acmpsta LISTENER_TALKER_TIMEOUT got %s/%u",
         SN[h.shadow[sink].sm & 7], h.shadow[sink].acmpsta);
+}
 
   // B3: dagger dual arms
   //   PWT + tk_disc: T-ACMP-RETRY -> PWD / A12 (walk covered the !tk arm)
+void ListenerWalk::check_dagger_dual_arms(int sink) {
   { Stim s = S_tk(0); step(sink, s, false, "B3"); }  // ign cell sets tk_disc
   step(sink, S_exp(), true, "B3 RETRY tk arm");
   CHECK(h.shadow[sink].sm == S_PWD, "B3: RETRY with talker -> PWD got %s",
@@ -931,14 +1116,18 @@ int main(int argc, char** argv) {
   { Stim s = S_tk(3); step(sink, s, true, "B3c UNREG tk arm"); }
   CHECK(h.shadow[sink].sm == S_PWD, "B3c: UNREG with talker -> PWD got %s",
         SN[h.shadow[sink].sm & 7]);
+}
 
   // B4: REF-BUG guard — TalkerFailed rise in SETTLED_RSV_OK is inert
+void ListenerWalk::check_ref_bug_guard_at_sok(int sink) {
   goto_state(sink, S_SOK, "B4");
   { Stim s = S_tk(2, true); step(sink, s, true, "B4 REF-BUG"); }
   CHECK(h.shadow[sink].sm == S_SOK && !((h.shadow[sink].srp_decl >> 1) & 1),
         "B4: no invented arc, no RF latch from the spurious rise");
+}
 
   // B5: REGISTERING_FAILED visible — settle then register a Failed attr
+void ListenerWalk::check_registering_failed_is_visible(int sink) {
   goto_state(sink, S_SNR, "B5");
   { Stim s = S_tk(2, true); step(sink, s, true, "B5 reg-failed"); }
   { Stim g = S_getrx(); g.uid = uint16_t(sink); h.col.clear();
@@ -948,10 +1137,13 @@ int main(int argc, char** argv) {
           (uint16_t(h.col.frames[0].b[50]) << 8 | h.col.frames[0].b[51]) ==
           (0x0002 | 0x0040),
           "B5: flags carry REGISTERING_FAILED 0x0040");
-    chk_cell("B5", h, sink, e);
+    chk_cell("B5", sink, e);
   }
+}
 
   // B6: LISTENER_UNKNOWN_ID for the three commands; probe resp dropped
+void ListenerWalk::check_unknown_listener_id() {
+  char tg[64];
   for (uint8_t mm : {uint8_t(M_BIND), uint8_t(M_UNBIND), uint8_t(M_GETRX)}) {
     snprintf(tg, sizeof tg, "B6 msg %u uid 8", mm);
     Stim s; s.k = Stim::TXN; s.msg = mm; s.uid = N_SINKS; s.ctlr = CTL1;
@@ -959,7 +1151,7 @@ int main(int argc, char** argv) {
     h.col.clear();
     Exp e = m.predict(0, s);
     CHECK(h.drive(0, s), "%s completes", tg);
-    chk_cell(tg, h, 0, e);
+    chk_cell(tg, 0, e);
     CHECK(!h.col.frames.empty() && (h.col.frames[0].b[2] >> 3) == ST_LUID,
           "%s: status LISTENER_UNKNOWN_ID", tg);
   }
@@ -967,37 +1159,43 @@ int main(int argc, char** argv) {
     h.col.clear();
     Exp e = m.predict(0, s);
     CHECK(h.drive(0, s), "B6 probe uid 8 completes");
-    chk_cell("B6 probe uid 8 (silent)", h, 0, e); }
+    chk_cell("B6 probe uid 8 (silent)", 0, e); }
+}
 
   // B7: foreign listener EID and foreign protocol are consumed silently
+void ListenerWalk::check_foreign_eid_and_protocol_are_silent() {
   { Stim s = S_bind(TK_A, TKUID_A, CTL1, false); s.target = 0xDEAD0001;
     h.col.clear(); Exp e = m.predict(0, s);
     CHECK(h.drive(0, s), "B7 foreign EID completes");
-    chk_cell("B7 foreign EID", h, 0, e); }
+    chk_cell("B7 foreign EID", 0, e); }
   { Stim s = S_bind(TK_A, TKUID_A, CTL1, false); s.protocol = 2;  // AEM
     h.col.clear(); Exp e = m.predict(0, s);
     CHECK(h.drive(0, s), "B7 foreign protocol completes");
-    chk_cell("B7 foreign protocol", h, 0, e); }
+    chk_cell("B7 foreign protocol", 0, e); }
+}
 
   // B8: probe-response guard mismatch (wrong seq) silently ignored
+void ListenerWalk::check_probe_guard_mismatch(int sink) {
   goto_state(sink, S_PWR, "B8");
   { Stim s = S_probe(sink, ST_OK); s.uid = uint16_t(sink);
     s.seq = uint16_t(s.seq + 1);
     h.col.clear(); Exp e = m.predict(sink, s);
     CHECK(h.drive(sink, s), "B8 completes");
-    chk_cell("B8 guard mismatch", h, sink, e);
+    chk_cell("B8 guard mismatch", sink, e);
     CHECK(h.col.wrotes == 0 && h.col.frees == 1,
           "B8: no write-back, slot returned");
     CHECK(h.shadow[sink].sm == S_PWR, "B8: still PRB_W_RESP"); }
+}
 
   // B9: A1 lock gate — BIND/UNBIND blocked for a foreign holder,
   // unaffected for the holder itself and for GET_RX_STATE
+void ListenerWalk::check_lock_gate(int sink) {
   d->lock_held_i = 1; d->lock_ctlr_i = CTL2;
   m.lock_held = true; m.lock_eid = CTL2;
   { Stim s = S_bind(TK_B, TKUID_B, CTL1, false); s.uid = uint16_t(sink);
     h.col.clear(); Exp e = m.predict(sink, s);
     CHECK(h.drive(sink, s), "B9 locked bind completes");
-    chk_cell("B9 locked bind", h, sink, e);
+    chk_cell("B9 locked bind", sink, e);
     CHECK(!h.col.frames.empty() && (h.col.frames[0].b[2] >> 3) == ST_NOAUTH,
           "B9: CONTROLLER_NOT_AUTHORIZED");
     CHECK(h.shadow[sink].sm == S_PWR && h.col.wrotes == 0,
@@ -1005,22 +1203,24 @@ int main(int argc, char** argv) {
   { Stim s = S_unbind(); s.uid = uint16_t(sink);
     h.col.clear(); Exp e = m.predict(sink, s);
     CHECK(h.drive(sink, s), "B9 locked unbind completes");
-    chk_cell("B9 locked unbind", h, sink, e); }
+    chk_cell("B9 locked unbind", sink, e); }
   { Stim g = S_getrx(); g.uid = uint16_t(sink); g.ctlr = CTL1;
     h.col.clear(); Exp e = m.predict(sink, g);
     CHECK(h.drive(sink, g), "B9 GET_RX_STATE under lock completes");
-    chk_cell("B9 getrx under lock", h, sink, e);
+    chk_cell("B9 getrx under lock", sink, e);
     CHECK(!h.col.frames.empty() && (h.col.frames[0].b[2] >> 3) == ST_OK,
           "B9: GET_RX_STATE unaffected by the lock"); }
   { Stim s = S_bind(TK_B, TKUID_B, CTL2, true); s.uid = uint16_t(sink);
     h.col.clear(); Exp e = m.predict(sink, s);
     CHECK(h.drive(sink, s), "B9 holder bind completes");
-    chk_cell("B9 holder bind", h, sink, e);
+    chk_cell("B9 holder bind", sink, e);
     CHECK(h.shadow[sink].talker_eid == TK_B,
           "B9: the lock holder's bind commits"); }
   d->lock_held_i = 0; m.lock_held = false;
+}
 
   // B10: boot preload -> PRB_W_AVAIL with discovery armed (07 §5.3)
+void ListenerWalk::check_boot_preload_lands_in_pwa() {
   goto_state(2, S_UNB, "B10");
   h.col.clear();
   d->pre_valid_i = 1; d->pre_sink_i = 2; d->pre_talker_eid_i = TK_A;
@@ -1048,8 +1248,10 @@ int main(int argc, char** argv) {
   }
   { Stim s = S_tk(0); step(2, s, true, "B10 disc after preload"); }
   CHECK(h.shadow[2].sm == S_PWD, "B10: preloaded sink probes on discovery");
+}
 
   // B11: A11 swallows a stale pending expiry (cancel wins the race)
+void ListenerWalk::check_stale_expiry_is_swallowed() {
   goto_state(3, S_PWR, "B11");
   { Stim p = S_probe(3, ST_OK); p.uid = 3;
     h.col.clear();
@@ -1059,7 +1261,7 @@ int main(int argc, char** argv) {
     int slot = h.next_rx_slot; h.next_rx_slot = (h.next_rx_slot + 1) % 4;
     Pdu pd = mk_pdu(p.msg, p.status, p.sid, p.ctlr, p.tk_eid, p.target,
                     p.tk_uid, p.uid, p.da, 0, p.seq, p.flags, p.vlan);
-    memcpy(h.rxmem[slot], pd.b, 56);
+    memcpy(h.rxmem[slot], pd.b, PDU_BYTES);
     uint32_t* w = &d->txn_i[0];
     for (int i = 0; i < 13; ++i) w[i] = 0;
     wput(w, 354, 3, 1); wput(w, 350, 4, p.msg); wput(w, 345, 5, p.status);
@@ -1071,7 +1273,7 @@ int main(int argc, char** argv) {
     h.tick();
     d->txn_valid_i = 0;
     h.tick(); h.wait_idle(); h.tick();
-    chk_cell("B11 settle beats stale expiry", h, 3, e);
+    chk_cell("B11 settle beats stale expiry", 3, e);
     // the swallowed expiry must never surface: a long quiet window with
     // ZERO activity (a second work item would need ~24 cycles to retire)
     h.col.clear();
@@ -1082,316 +1284,366 @@ int main(int argc, char** argv) {
           "wr %d td %d tops %zu nf %d)", SN[h.shadow[3].sm & 7],
           h.col.wrotes, h.col.teardown, h.col.tops.size(),
           h.col.notifies); }
+}
 
   // B12: cross-sink isolation — the parked sink was never touched
+void ListenerWalk::check_parked_sink_untouched() {
   CHECK(h.shadow[7] == park7 && m.rec[7] == park7,
         "B12: parked sink 7 record untouched through the whole walk");
+}
 
   // ---- S1: the started/stopped face (Milan 5.3.8.7, 5.4.2.19/.20) -------
+void ListenerWalk::check_started_face_follows_bind_and_request(int sk) {
+  Stim u = S_unbind(); u.uid = uint16_t(sk);
+  step(sk, u, false, "S1");
+  CHECK(started_bit(sk) == 0,
+        "S1a: an unbound sink reports stopped (got %u)", started_bit(sk));
+
+  // a bind with STREAMING_WAIT CLEAR lands STARTED (IEEE 7.4.35's premise:
+  // START_STREAMING exists for a stream connected WITH the flag set)
+  Stim b0 = S_bind(TK_A, TKUID_A, CTL1, false); b0.uid = uint16_t(sk);
+  step(sk, b0, false, "S1");
+  CHECK(started_bit(sk) == 1,
+        "S1b: a bind with STREAMING_WAIT clear lands STARTED (got %u)",
+        started_bit(sk));
+
+  // the AECP request face: stop it
+  h.wait_idle();
+  CHECK(d->strm_set_ready_o == 0,
+        "S1c: idle is not completion before a request exists");
+  // S1c2: capture and completion are separate. Ready must stay low until
+  // the record write has reached the fabric-facing started mirror.
   {
-    const int sk = 5;                       // a sink this walk left alone
-    Stim u = S_unbind(); u.uid = uint16_t(sk);
-    step(sk, u, false, "S1");
-    CHECK(started_bit(sk) == 0,
-          "S1a: an unbound sink reports stopped (got %u)", started_bit(sk));
-
-    // a bind with STREAMING_WAIT CLEAR lands STARTED (IEEE 7.4.35's premise:
-    // START_STREAMING exists for a stream connected WITH the flag set)
-    Stim b0 = S_bind(TK_A, TKUID_A, CTL1, false); b0.uid = uint16_t(sk);
-    step(sk, b0, false, "S1");
-    CHECK(started_bit(sk) == 1,
-          "S1b: a bind with STREAMING_WAIT clear lands STARTED (got %u)",
-          started_bit(sk));
-
-    // the AECP request face: stop it
-    h.wait_idle();
+    d->strm_set_valid_i = 1;
+    d->strm_set_sink_i  = uint16_t(sk);
+    d->strm_set_val_i   = 0;
+    h.tick();                       // internal holder capture
+    d->eval();
     CHECK(d->strm_set_ready_o == 0,
-          "S1c: idle is not completion before a request exists");
-    // S1c2: capture and completion are separate. Ready must stay low until
-    // the record write has reached the fabric-facing started mirror.
-    {
-      d->strm_set_valid_i = 1;
-      d->strm_set_sink_i  = uint16_t(sk);
-      d->strm_set_val_i   = 0;
-      h.tick();                       // internal holder capture
-      d->eval();
-      CHECK(d->strm_set_ready_o == 0,
-            "S1c2: holder capture is not reported as completion");
-      int g = 64;
-      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
-      d->eval();
-      CHECK(d->strm_set_ready_o == 1,
-            "S1c3: completion rises after the walker commits");
-      CHECK(started_bit(sk) == 0,
-            "S1c4: the started mirror is committed at completion");
-      h.tick();
-      d->strm_set_valid_i = 0;
-      d->eval();
-      CHECK(d->strm_set_ready_o == 0,
-            "S1c5: completion retires with the held request");
-    }
+          "S1c2: holder capture is not reported as completion");
+    int g = 64;
+    while (g-- > 0 && !d->strm_set_ready_o) h.tick();
+    d->eval();
+    CHECK(d->strm_set_ready_o == 1,
+          "S1c3: completion rises after the walker commits");
     CHECK(started_bit(sk) == 0,
-          "S1d: STOP through the request face cleared the bit (got %u)",
-          started_bit(sk));
-
-    // ...and start it again
-    post_started(sk, 1);
-    CHECK(started_bit(sk) == 1,
-          "S1e: START through the request face set the bit (got %u)",
-          started_bit(sk));
-
-    // Table 5.22 + IEEE 7.4.35: a REAL transition pushes exactly one
-    // GET_STREAM_INFO unsolicited notification...
-    h.col.clear();
-    post_started(sk, 0);
-    CHECK(h.col.strt_chgs == 1,
-          "S1i: a real STOP raises the Table 5.22 trigger once (got %d)",
-          h.col.strt_chgs);
-    // ...and repeating it changes nothing, so it must push NOTHING. A
-    // notification saying "the state you already knew about" is worse than
-    // none: it is indistinguishable on the wire from a real change.
-    h.col.clear();
-    post_started(sk, 0);
-    CHECK(h.col.strt_chgs == 0,
-          "S1j: a repeated STOP raises NO trigger (got %d)",
-          h.col.strt_chgs);
-    CHECK(started_bit(sk) == 0, "S1j2: ...and the bit is still clear");
-    post_started(sk, 1);
-
-    // 5.3.8.7: unbind clears it, and a rebind does not resurrect it
-    Stim u2 = S_unbind(); u2.uid = uint16_t(sk);
-    step(sk, u2, false, "S1");
-    CHECK(started_bit(sk) == 0,
-          "S1f: unbind cleared the started bit (got %u)", started_bit(sk));
-
-    // a bind WITH STREAMING_WAIT set lands STOPPED - the other half of the
-    // rule, and the row that keeps S1b from passing on a constant 1
-    Stim b1 = S_bind(TK_A, TKUID_A, CTL1, true); b1.uid = uint16_t(sk);
-    step(sk, b1, false, "S1");
-    CHECK(started_bit(sk) == 0,
-          "S1g: a bind WITH STREAMING_WAIT lands STOPPED (got %u)",
-          started_bit(sk));
-
-    // S1k: a RE-BIND that flips STREAMING_WAIT moves started/stopped with no
-    // START/STOP_STREAMING in sight (Milan 5.5.3.5.6 step 2 updates the
-    // binding parameters, STREAMING_WAIT among them). Table 5.22 asks for a
-    // push when the state CHANGES, not when a particular command caused it -
-    // a trigger keyed on the AECP request alone missed this path entirely.
-    {
-      Stim b_on = S_bind(TK_A, TKUID_A, CTL1, false); b_on.uid = uint16_t(sk);
-      step(sk, b_on, false, "S1");            // -> bound + started
-      CHECK(started_bit(sk) == 1, "S1k0: precondition, re-bound and started");
-
-      h.col.clear();
-      Stim b_off = S_bind(TK_A, TKUID_A, CTL1, true); b_off.uid = uint16_t(sk);
-      step(sk, b_off, false, "S1");           // same talker -> A6 short-circuit
-      CHECK(started_bit(sk) == 0,
-            "S1k: a re-bind WITH STREAMING_WAIT stops the sink (got %u)",
-            started_bit(sk));
-      CHECK(h.col.strt_chgs == 1,
-            "S1l: ...and it raises the Table 5.22 trigger (got %d)",
-            h.col.strt_chgs);
-
-      h.col.clear();
-      Stim b_same = S_bind(TK_A, TKUID_A, CTL1, true); b_same.uid = uint16_t(sk);
-      step(sk, b_same, false, "S1");          // same flag: nothing changes
-      CHECK(h.col.strt_chgs == 0,
-            "S1m: a re-bind that changes nothing raises no trigger (got %d)",
-            h.col.strt_chgs);
-    }
-
-    // ---- RV: the holder arm sits at the TOP of the X_IDLE priority chain,
-    // so EVERY acceptor has to exclude it. On the cycle the holder drains,
-    // this walker is leaving X_IDLE - and a source still told "ready" on
-    // that cycle is consumed by its producer and never serviced. Fixing only
-    // `pre_ready_o` left three others, and the `txn_ready_o` one silently
-    // drops an ACMP command AND leaks one of four shared RX slots for good.
-    // These rows post a request by hand and inspect ready on the drain cycle.
-    {
-      const int rvs = 6;                       // a sink this walk left alone
-      d->strm_set_valid_i = 1;
-      d->strm_set_sink_i  = uint16_t(rvs);
-      d->strm_set_val_i   = 1;
-      h.tick();                                // holder captured
-      d->eval();
-      CHECK(d->strm_set_ready_o == 0, "RV0: precondition, a request is pending");
-      CHECK(d->txn_ready_o == 0,
-            "RV3: txn_ready_o is LOW while a started/stopped request is "
-            "pending - otherwise KL_pp_dispatch pops an ACMP command that "
-            "this walk will never service, and its RX slot leaks");
-      CHECK(d->evt_tk_ready_o == 0,
-            "RV5: evt_tk_ready_o is LOW on the same cycle - the event router "
-            "acks on it, so a talker event would be dropped");
-      CHECK(d->pre_ready_o == 0,
-            "RV6: pre_ready_o is LOW on the same cycle - the NVM shadow "
-            "treats it as acceptance and would advance past a restored sink");
-      int g = 64;
-      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
-      h.tick();
-      d->strm_set_valid_i = 0;
-      d->eval();
-      CHECK(d->txn_ready_o == 1,
-            "RV7: ...and every acceptor is free again once it has drained");
-    }
-
-    // RV4: a timer expiry pending at the same moment as a started/stopped
-    // request must still be SERVICED. `pend_clr_pop_w` clears the pendexp
-    // bit, so if it fires on the drain cycle the expiry is consumed by
-    // nothing - and a lost T-ACMP-CMD leaves the sink in PB_ACTIVE with no
-    // retry. Park a probing sink, then collide the two.
-    {
-      const int rvt = 4;
-      goto_state(rvt, S_PWR, "RV4");          // a sink with a live timer
-      h.wait_idle();
-      h.col.clear();
-
-      // post the request, then raise the expiry while the holder is FULL
-      d->strm_set_valid_i = 1;
-      d->strm_set_sink_i  = uint16_t(rvt);
-      d->strm_set_val_i   = 1;
-      //! BOTH on the same edge. Raising the expiry a cycle later misses the
-      //! window entirely: the walker has already left X_IDLE for the holder
-      //! job by then, and `pend_clr_pop_w` needs `xs_r == X_IDLE`. The bug
-      //! only exists on the ONE cycle where the drain and a pending expiry
-      //! are both true.
-      h.inj_exp = true; h.inj_exp_sink = uint8_t(rvt);
-      h.tick();                               // holder captured + pendexp set
-      int g = 64;
-      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
-      h.tick();
-      d->strm_set_valid_i = 0;
-      for (int i = 0; i < 200; ++i) h.tick();
-      h.wait_idle();
-
-      const size_t tops_collided = h.col.tops.size();
-
-      // CONTROL: the same expiry with NO request beside it. Without this the
-      // row above has no scale - "some timer op happened" passes for many
-      // reasons, and a check whose expected value is "not zero" is the trap
-      // this suite exists to avoid.
-      goto_state(rvt, S_PWR, "RV4");
-      h.wait_idle();
-      h.col.clear();
-      h.inj_exp = true; h.inj_exp_sink = uint8_t(rvt);
-      h.tick();
-      for (int i = 0; i < 200; ++i) h.tick();
-      h.wait_idle();
-      const size_t tops_alone = h.col.tops.size();
-
-      CHECK(tops_alone > 0,
-            "RV4pre: the control leg's expiry IS serviced (%zu timer ops) - "
-            "without this the comparison below means nothing", tops_alone);
-      CHECK(tops_collided == tops_alone,
-            "RV4: an expiry raised beside a started/stopped request is "
-            "serviced exactly as it is alone (collided %zu vs alone %zu) - "
-            "a pop that fires on the drain cycle loses it",
-            tops_collided, tops_alone);
-    }
-
-    // RV8: a BIND_NEW onto an ALREADY BOUND sink changes started/stopped
-    // without ever unbinding (its cell is A1 A11 A9 A2 A3 A4 A5 - no A10),
-    // and it already pushes from A4's discovery arm. It must NOT also raise
-    // the started/stopped trigger, or one event puts two GET_STREAM_INFO
-    // frames on the wire - the duplicate this trigger was narrowed to avoid.
-    {
-      const int rvb = 2;
-      Stim ba = S_bind(TK_A, TKUID_A, CTL1, false); ba.uid = uint16_t(rvb);
-      step(rvb, ba, false, "RV8");             // bound + started
-      h.wait_idle();
-      CHECK(started_bit(rvb) == 1, "RV8pre: bound to talker A and started");
-
-      h.col.clear();
-      Stim bb = S_bind(TK_B, TKUID_B, CTL1, true); bb.uid = uint16_t(rvb);
-      step(rvb, bb, false, "RV8");             // different talker, SW set
-      h.wait_idle();
-      CHECK(started_bit(rvb) == 0,
-            "RV8: the re-bind landed STOPPED (got %u)", started_bit(rvb));
-      CHECK(h.col.strt_chgs == 0,
-            "RV8b: ...and raised NO started/stopped trigger beside the "
-            "bind's own notification (got %d)", h.col.strt_chgs);
-    }
-
-    // an unbound sink ignores the request entirely (5.4.2.19's Note)
-    Stim u3 = S_unbind(); u3.uid = uint16_t(sk);
-    step(sk, u3, false, "S1");
-
-    // S1o: a walker that cannot retire must not stall the AECP execution
-    // stage forever. Hold an ordinary ACMP response at TX allocation, post a
-    // started request behind it, and require the bounded error completion to
-    // leave the record untouched.
-    {
-      Stim stuck = S_getrx();
-      stuck.uid = uint16_t(N_SINKS + 1);       // forces an error response
-      const int slot = h.next_rx_slot;
-      h.next_rx_slot = (h.next_rx_slot + 1) % 4;
-      Pdu p = mk_pdu(stuck.msg, stuck.status, stuck.sid, stuck.ctlr,
-                     stuck.tk_eid, stuck.target, stuck.tk_uid, stuck.uid,
-                     stuck.da, 0, stuck.seq, stuck.flags, stuck.vlan);
-      memcpy(h.rxmem[slot], p.b, 56);
-      uint32_t* w = &d->txn_i[0];
-      for (int i = 0; i < 13; ++i) w[i] = 0;
-      wput(w, 354, 3, stuck.protocol);
-      wput(w, 350, 4, stuck.msg);
-      wput(w, 345, 5, stuck.status);
-      wput(w, 334, 11, 44);
-      wput(w, 222, 64, stuck.ctlr);
-      wput(w, 158, 64, stuck.target);
-      wput(w, 142, 16, stuck.seq);
-      wput(w, 124, 16, stuck.msg);
-      wput(w, 60, 16, stuck.uid);
-      wput(w, 57, 3, uint64_t(slot));
-      wput(w, 0, 2, 1);
-
-      h.alloc_block = true;
-      d->txn_valid_i = 1;
-      h.tick();
-      d->txn_valid_i = 0;
-      for (int i = 0; i < 80; ++i) h.tick();
-      CHECK(d->dbg_busy_o == 1,
-            "S1o0: the control walk is blocked at response allocation");
-
-      const unsigned before_started = started_bit(sk);
-      d->strm_set_valid_i = 1;
-      d->strm_set_sink_i  = uint16_t(sk);
-      d->strm_set_val_i   = 1;
-      int g = 96;
-      while (g-- > 0 && !d->strm_set_ready_o) h.tick();
-      CHECK(d->strm_set_ready_o == 1 && d->strm_set_error_o == 1,
-            "S1o: a blocked walker returns bounded error completion");
-      CHECK(started_bit(sk) == before_started,
-            "S1o2: timeout has no record side effect");
-      h.tick();
-      d->strm_set_valid_i = 0;
-      h.alloc_block = false;
-      CHECK(h.drain(), "S1o3: the original ACMP walk retires after release");
-    }
-
-    // S1n: an out-of-range sink index is accepted (the engine already
-    // answered) and DROPPED - counted, not silent. The shape gate ties the
-    // descriptor count to N_SINKS_P so this should be unreachable in a real
-    // build; a stale descriptor image shipped beside the bitstream is how it
-    // would stop being unreachable, and then the command answers SUCCESS and
-    // lands nowhere. Driving it here is what makes that arm exist.
-    {
-      const int before = (int)d->dbg_strq_drop_o;
-      post_started(N_SINKS + 3, 1, true);
-      CHECK((int)d->dbg_strq_drop_o == before + 1,
-            "S1n: an out-of-range started/stopped request is COUNTED "
-            "(%d -> %d)", before, (int)d->dbg_strq_drop_o);
-      CHECK(d->strm_set_error_o == 0 && d->strm_set_ready_o == 0,
-            "S1n2: the failed completion retired cleanly");
-    }
-
-    post_started(sk, 1);
-    CHECK(started_bit(sk) == 0,
-          "S1h: START on an UNBOUND sink changed nothing (got %u)",
-          started_bit(sk));
+          "S1c4: the started mirror is committed at completion");
+    h.tick();
+    d->strm_set_valid_i = 0;
+    d->eval();
+    CHECK(d->strm_set_ready_o == 0,
+          "S1c5: completion retires with the held request");
   }
+  CHECK(started_bit(sk) == 0,
+        "S1d: STOP through the request face cleared the bit (got %u)",
+        started_bit(sk));
+
+  // ...and start it again
+  post_started(sk, 1);
+  CHECK(started_bit(sk) == 1,
+        "S1e: START through the request face set the bit (got %u)",
+        started_bit(sk));
+}
+
+void ListenerWalk::check_started_trigger_fires_once_per_transition(int sk) {
+  // Table 5.22 + IEEE 7.4.35: a REAL transition pushes exactly one
+  // GET_STREAM_INFO unsolicited notification...
+  h.col.clear();
+  post_started(sk, 0);
+  CHECK(h.col.strt_chgs == 1,
+        "S1i: a real STOP raises the Table 5.22 trigger once (got %d)",
+        h.col.strt_chgs);
+  // ...and repeating it changes nothing, so it must push NOTHING. A
+  // notification saying "the state you already knew about" is worse than
+  // none: it is indistinguishable on the wire from a real change.
+  h.col.clear();
+  post_started(sk, 0);
+  CHECK(h.col.strt_chgs == 0,
+        "S1j: a repeated STOP raises NO trigger (got %d)",
+        h.col.strt_chgs);
+  CHECK(started_bit(sk) == 0, "S1j2: ...and the bit is still clear");
+  post_started(sk, 1);
+}
+
+void ListenerWalk::check_streaming_wait_rules_started(int sk) {
+  // 5.3.8.7: unbind clears it, and a rebind does not resurrect it
+  Stim u2 = S_unbind(); u2.uid = uint16_t(sk);
+  step(sk, u2, false, "S1");
+  CHECK(started_bit(sk) == 0,
+        "S1f: unbind cleared the started bit (got %u)", started_bit(sk));
+
+  // a bind WITH STREAMING_WAIT set lands STOPPED - the other half of the
+  // rule, and the row that keeps S1b from passing on a constant 1
+  Stim b1 = S_bind(TK_A, TKUID_A, CTL1, true); b1.uid = uint16_t(sk);
+  step(sk, b1, false, "S1");
+  CHECK(started_bit(sk) == 0,
+        "S1g: a bind WITH STREAMING_WAIT lands STOPPED (got %u)",
+        started_bit(sk));
+
+  // S1k: a RE-BIND that flips STREAMING_WAIT moves started/stopped with no
+  // START/STOP_STREAMING in sight (Milan 5.5.3.5.6 step 2 updates the
+  // binding parameters, STREAMING_WAIT among them). Table 5.22 asks for a
+  // push when the state CHANGES, not when a particular command caused it -
+  // a trigger keyed on the AECP request alone missed this path entirely.
+  {
+    Stim b_on = S_bind(TK_A, TKUID_A, CTL1, false); b_on.uid = uint16_t(sk);
+    step(sk, b_on, false, "S1");            // -> bound + started
+    CHECK(started_bit(sk) == 1, "S1k0: precondition, re-bound and started");
+
+    h.col.clear();
+    Stim b_off = S_bind(TK_A, TKUID_A, CTL1, true); b_off.uid = uint16_t(sk);
+    step(sk, b_off, false, "S1");           // same talker -> A6 short-circuit
+    CHECK(started_bit(sk) == 0,
+          "S1k: a re-bind WITH STREAMING_WAIT stops the sink (got %u)",
+          started_bit(sk));
+    CHECK(h.col.strt_chgs == 1,
+          "S1l: ...and it raises the Table 5.22 trigger (got %d)",
+          h.col.strt_chgs);
+
+    h.col.clear();
+    Stim b_same = S_bind(TK_A, TKUID_A, CTL1, true); b_same.uid = uint16_t(sk);
+    step(sk, b_same, false, "S1");          // same flag: nothing changes
+    CHECK(h.col.strt_chgs == 0,
+          "S1m: a re-bind that changes nothing raises no trigger (got %d)",
+          h.col.strt_chgs);
+  }
+}
+
+void ListenerWalk::check_every_acceptor_excludes_the_holder_arm() {
+  // ---- RV: the holder arm sits at the TOP of the X_IDLE priority chain,
+  // so EVERY acceptor has to exclude it. On the cycle the holder drains,
+  // this walker is leaving X_IDLE - and a source still told "ready" on
+  // that cycle is consumed by its producer and never serviced. Fixing only
+  // `pre_ready_o` left three others, and the `txn_ready_o` one silently
+  // drops an ACMP command AND leaks one of four shared RX slots for good.
+  // These rows post a request by hand and inspect ready on the drain cycle.
+  {
+    const int rvs = 6;                       // a sink this walk left alone
+    d->strm_set_valid_i = 1;
+    d->strm_set_sink_i  = uint16_t(rvs);
+    d->strm_set_val_i   = 1;
+    h.tick();                                // holder captured
+    d->eval();
+    CHECK(d->strm_set_ready_o == 0, "RV0: precondition, a request is pending");
+    CHECK(d->txn_ready_o == 0,
+          "RV3: txn_ready_o is LOW while a started/stopped request is "
+          "pending - otherwise KL_pp_dispatch pops an ACMP command that "
+          "this walk will never service, and its RX slot leaks");
+    CHECK(d->evt_tk_ready_o == 0,
+          "RV5: evt_tk_ready_o is LOW on the same cycle - the event router "
+          "acks on it, so a talker event would be dropped");
+    CHECK(d->pre_ready_o == 0,
+          "RV6: pre_ready_o is LOW on the same cycle - the NVM shadow "
+          "treats it as acceptance and would advance past a restored sink");
+    int g = 64;
+    while (g-- > 0 && !d->strm_set_ready_o) h.tick();
+    h.tick();
+    d->strm_set_valid_i = 0;
+    d->eval();
+    CHECK(d->txn_ready_o == 1,
+          "RV7: ...and every acceptor is free again once it has drained");
+  }
+}
+
+void ListenerWalk::check_expiry_survives_a_colliding_request() {
+  // RV4: a timer expiry pending at the same moment as a started/stopped
+  // request must still be SERVICED. `pend_clr_pop_w` clears the pendexp
+  // bit, so if it fires on the drain cycle the expiry is consumed by
+  // nothing - and a lost T-ACMP-CMD leaves the sink in PB_ACTIVE with no
+  // retry. Park a probing sink, then collide the two.
+  {
+    const int rvt = 4;
+    goto_state(rvt, S_PWR, "RV4");          // a sink with a live timer
+    h.wait_idle();
+    h.col.clear();
+
+    // post the request, then raise the expiry while the holder is FULL
+    d->strm_set_valid_i = 1;
+    d->strm_set_sink_i  = uint16_t(rvt);
+    d->strm_set_val_i   = 1;
+    //! BOTH on the same edge. Raising the expiry a cycle later misses the
+    //! window entirely: the walker has already left X_IDLE for the holder
+    //! job by then, and `pend_clr_pop_w` needs `xs_r == X_IDLE`. The bug
+    //! only exists on the ONE cycle where the drain and a pending expiry
+    //! are both true.
+    h.inj_exp = true; h.inj_exp_sink = uint8_t(rvt);
+    h.tick();                               // holder captured + pendexp set
+    int g = 64;
+    while (g-- > 0 && !d->strm_set_ready_o) h.tick();
+    h.tick();
+    d->strm_set_valid_i = 0;
+    for (int i = 0; i < 200; ++i) h.tick();
+    h.wait_idle();
+
+    const size_t tops_collided = h.col.tops.size();
+
+    // CONTROL: the same expiry with NO request beside it. Without this the
+    // row above has no scale - "some timer op happened" passes for many
+    // reasons, and a check whose expected value is "not zero" is the trap
+    // this suite exists to avoid.
+    goto_state(rvt, S_PWR, "RV4");
+    h.wait_idle();
+    h.col.clear();
+    h.inj_exp = true; h.inj_exp_sink = uint8_t(rvt);
+    h.tick();
+    for (int i = 0; i < 200; ++i) h.tick();
+    h.wait_idle();
+    const size_t tops_alone = h.col.tops.size();
+
+    CHECK(tops_alone > 0,
+          "RV4pre: the control leg's expiry IS serviced (%zu timer ops) - "
+          "without this the comparison below means nothing", tops_alone);
+    CHECK(tops_collided == tops_alone,
+          "RV4: an expiry raised beside a started/stopped request is "
+          "serviced exactly as it is alone (collided %zu vs alone %zu) - "
+          "a pop that fires on the drain cycle loses it",
+          tops_collided, tops_alone);
+  }
+}
+
+void ListenerWalk::check_rebind_raises_no_duplicate_trigger() {
+  // RV8: a BIND_NEW onto an ALREADY BOUND sink changes started/stopped
+  // without ever unbinding (its cell is A1 A11 A9 A2 A3 A4 A5 - no A10),
+  // and it already pushes from A4's discovery arm. It must NOT also raise
+  // the started/stopped trigger, or one event puts two GET_STREAM_INFO
+  // frames on the wire - the duplicate this trigger was narrowed to avoid.
+  {
+    const int rvb = 2;
+    Stim ba = S_bind(TK_A, TKUID_A, CTL1, false); ba.uid = uint16_t(rvb);
+    step(rvb, ba, false, "RV8");             // bound + started
+    h.wait_idle();
+    CHECK(started_bit(rvb) == 1, "RV8pre: bound to talker A and started");
+
+    h.col.clear();
+    Stim bb = S_bind(TK_B, TKUID_B, CTL1, true); bb.uid = uint16_t(rvb);
+    step(rvb, bb, false, "RV8");             // different talker, SW set
+    h.wait_idle();
+    CHECK(started_bit(rvb) == 0,
+          "RV8: the re-bind landed STOPPED (got %u)", started_bit(rvb));
+    CHECK(h.col.strt_chgs == 0,
+          "RV8b: ...and raised NO started/stopped trigger beside the "
+          "bind's own notification (got %d)", h.col.strt_chgs);
+  }
+}
+
+void ListenerWalk::check_started_face_error_paths(int sk) {
+  // an unbound sink ignores the request entirely (5.4.2.19's Note)
+  Stim u3 = S_unbind(); u3.uid = uint16_t(sk);
+  step(sk, u3, false, "S1");
+
+  // S1o: a walker that cannot retire must not stall the AECP execution
+  // stage forever. Hold an ordinary ACMP response at TX allocation, post a
+  // started request behind it, and require the bounded error completion to
+  // leave the record untouched.
+  {
+    Stim stuck = S_getrx();
+    stuck.uid = uint16_t(N_SINKS + 1);       // forces an error response
+    const int slot = h.next_rx_slot;
+    h.next_rx_slot = (h.next_rx_slot + 1) % 4;
+    Pdu p = mk_pdu(stuck.msg, stuck.status, stuck.sid, stuck.ctlr,
+                   stuck.tk_eid, stuck.target, stuck.tk_uid, stuck.uid,
+                   stuck.da, 0, stuck.seq, stuck.flags, stuck.vlan);
+    memcpy(h.rxmem[slot], p.b, PDU_BYTES);
+    uint32_t* w = &d->txn_i[0];
+    for (int i = 0; i < 13; ++i) w[i] = 0;
+    wput(w, 354, 3, stuck.protocol);
+    wput(w, 350, 4, stuck.msg);
+    wput(w, 345, 5, stuck.status);
+    wput(w, 334, 11, 44);
+    wput(w, 222, 64, stuck.ctlr);
+    wput(w, 158, 64, stuck.target);
+    wput(w, 142, 16, stuck.seq);
+    wput(w, 124, 16, stuck.msg);
+    wput(w, 60, 16, stuck.uid);
+    wput(w, 57, 3, uint64_t(slot));
+    wput(w, 0, 2, 1);
+
+    h.alloc_block = true;
+    d->txn_valid_i = 1;
+    h.tick();
+    d->txn_valid_i = 0;
+    for (int i = 0; i < 80; ++i) h.tick();
+    CHECK(d->dbg_busy_o == 1,
+          "S1o0: the control walk is blocked at response allocation");
+
+    const unsigned before_started = started_bit(sk);
+    d->strm_set_valid_i = 1;
+    d->strm_set_sink_i  = uint16_t(sk);
+    d->strm_set_val_i   = 1;
+    int g = 96;
+    while (g-- > 0 && !d->strm_set_ready_o) h.tick();
+    CHECK(d->strm_set_ready_o == 1 && d->strm_set_error_o == 1,
+          "S1o: a blocked walker returns bounded error completion");
+    CHECK(started_bit(sk) == before_started,
+          "S1o2: timeout has no record side effect");
+    h.tick();
+    d->strm_set_valid_i = 0;
+    h.alloc_block = false;
+    CHECK(h.drain(), "S1o3: the original ACMP walk retires after release");
+  }
+
+  // S1n: an out-of-range sink index is accepted (the engine already
+  // answered) and DROPPED - counted, not silent. The shape gate ties the
+  // descriptor count to N_SINKS_P so this should be unreachable in a real
+  // build; a stale descriptor image shipped beside the bitstream is how it
+  // would stop being unreachable, and then the command answers SUCCESS and
+  // lands nowhere. Driving it here is what makes that arm exist.
+  {
+    const int before = static_cast<int>(d->dbg_strq_drop_o);
+    post_started(N_SINKS + 3, 1, true);
+    CHECK(static_cast<int>(d->dbg_strq_drop_o) == before + 1,
+          "S1n: an out-of-range started/stopped request is COUNTED "
+          "(%d -> %d)", before, static_cast<int>(d->dbg_strq_drop_o));
+    CHECK(d->strm_set_error_o == 0 && d->strm_set_ready_o == 0,
+          "S1n2: the failed completion retired cleanly");
+  }
+
+  post_started(sk, 1);
+  CHECK(started_bit(sk) == 0,
+        "S1h: START on an UNBOUND sink changed nothing (got %u)",
+        started_bit(sk));
+}
+
+int ListenerWalk::run() {
+  reset_and_init_sweep();
+  park_sink_seven();
+  walk_every_mtxw_cell();
+
+  // ================== behavior checks beyond the walk =====================
+  int sink = 0;
+
+  check_duplicate_probe_is_byte_identical(sink);
+  check_double_timeout_reaches_pwt(sink);
+  check_dagger_dual_arms(sink);
+  check_ref_bug_guard_at_sok(sink);
+  check_registering_failed_is_visible(sink);
+  check_unknown_listener_id();
+  check_foreign_eid_and_protocol_are_silent();
+  check_probe_guard_mismatch(sink);
+  check_lock_gate(sink);
+  check_boot_preload_lands_in_pwa();
+  check_stale_expiry_is_swallowed();
+  check_parked_sink_untouched();
+
+  const int sk = 5;                       // a sink this walk left alone
+  check_started_face_follows_bind_and_request(sk);
+  check_started_trigger_fires_once_per_transition(sk);
+  check_streaming_wait_rules_started(sk);
+  check_every_acceptor_excludes_the_holder_arm();
+  check_expiry_survives_a_colliding_request();
+  check_rebind_raises_no_duplicate_trigger();
+  check_started_face_error_paths(sk);
 
   h.wait_idle();
   CHECK(d->txn_ready_o == 1, "idle at the end");
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
-  delete d;
   return fails ? 1 : 0;
+}
+
+int main(int argc, char** argv) {
+  Verilated::commandArgs(argc, argv);
+  const milan::tb::Model<VKL_pp_acmp_listener> model;
+  auto walk = std::make_unique<ListenerWalk>(model.get());
+  return walk->run();
 }

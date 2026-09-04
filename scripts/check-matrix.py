@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: CERN-OHL-W-2.0
 """Consistency checks for the compliance review: REQ rows, GAP ids, Ver vocabulary."""
-import os
 import re
 import sys
+from pathlib import Path
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REVIEW = os.path.join(ROOT, "docs", "00_MILAN_COMPLIANCE_REVIEW.md")
+ROOT = Path(__file__).resolve().parent.parent
+REVIEW = ROOT / "docs" / "00_MILAN_COMPLIANCE_REVIEW.md"
 VER_VOCAB = {"DIR", "MTXW", "TOL", "TIM", "RND", "STORM", "NVM", "—", "lint"}
 MAND_VOCAB = {"shall", "should", "may", "rec", "design", "—"}
 REQ_ROW = re.compile(r"^\|\s*(REQ-[A-Z]+-\d{3})\s*\|(.*)$", re.M)
@@ -15,7 +15,9 @@ GAP_REF = re.compile(r"\(#(gap-\d+)\)")
 
 
 def main() -> int:
-    body = open(REVIEW, encoding="utf-8").read()
+    """The gate: every REQ row complete and spelled in the vocabulary, every
+    GAP defined, referenced and owned by a REQ row; 1 on any finding."""
+    body = REVIEW.read_text(encoding="utf-8")
     problems, seen = [], {}
     req_gaps = set()
 

@@ -17,6 +17,7 @@
 //
 // The suite also loads the generator's own example image, so generator and RTL
 // are proven to agree on the format rather than merely on each other.
+#include <array>
 #include <map>
 #include <cstdint>
 #include <cstdio>
@@ -25,46 +26,63 @@
 #include <vector>
 #include "VKL_aecp_desc_store.h"
 #include "verilated.h"
+#include "../common/verilator_harness.hpp"
 
-static int checks = 0, fails = 0;
 #define CHECK(cond, ...) do { \
   ++checks; \
   if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
 } while (0)
 
 // KL_aecp_desc_store parameters this suite elaborates against
-static const uint32_t DESC_BASE   = 0x20000000u;
-static const uint32_t LINE_BYTES  = 576;
-static const uint32_t IDX_ENTRIES = 32;
-static const uint32_t NAME_ENTRIES = 256;
-static const uint32_t MEM_TIMEOUT = 64;   // -GMEM_TIMEOUT_CYC_P in the Makefile
+constexpr uint32_t DESC_BASE   = 0x20000000u;
+constexpr uint32_t LINE_BYTES  = 576;
+constexpr uint32_t IDX_ENTRIES = 32;
+constexpr uint32_t NAME_ENTRIES = 256;
+constexpr uint32_t MEM_TIMEOUT = 64;   // -GMEM_TIMEOUT_CYC_P in the Makefile
 
 // state-port regions (KL_aecp_desc_store banner)
-static const uint32_t RGN_DATA   = 0x00000;
-static const uint32_t RGN_NADDR  = 0xB0000;
-static const uint32_t RGN_NBASE  = 0xC0000;
-static const uint32_t RGN_NCFG   = 0xD0000;
-static const uint32_t RGN_LEN    = 0xE0000;
-static const uint32_t RGN_LOCATE = 0xF0000;
+constexpr uint32_t RGN_DATA   = 0x00000;
+constexpr uint32_t RGN_NADDR  = 0xB0000;
+constexpr uint32_t RGN_NBASE  = 0xC0000;
+constexpr uint32_t RGN_NCFG   = 0xD0000;
+constexpr uint32_t RGN_LEN    = 0xE0000;
+constexpr uint32_t RGN_LOCATE = 0xF0000;
 
-// fault codes
-enum { F_NONE = 0, F_MAGIC = 1, F_VERSION = 2, F_CKSUM = 3, F_NIDX = 4,
-       F_NNAME = 5, F_DESCLEN = 6, F_MEMERR = 7, F_TIMEOUT = 8 };
+// fault codes: plain integers, because they are compared against the 4-bit
+// dbg_fault_o word the model drives, never mixed with each other
+constexpr uint8_t F_NONE    = 0;
+constexpr uint8_t F_MAGIC   = 1;
+constexpr uint8_t F_VERSION = 2;
+constexpr uint8_t F_CKSUM   = 3;
+constexpr uint8_t F_NIDX    = 4;
+constexpr uint8_t F_NNAME   = 5;
+constexpr uint8_t F_DESCLEN = 6;
+constexpr uint8_t F_MEMERR  = 7;
+constexpr uint8_t F_TIMEOUT = 8;
 
-static const uint16_t NAME_NONE = 0xFFFF;
+constexpr uint16_t NAME_NONE = 0xFFFF;
 
 // ===========================================================================
 // an independent builder + parser of the documented image format
 // ===========================================================================
 struct Entry {
-  uint16_t cfg, type, count, len, nbase, stride;
+  uint16_t cfg;
+  uint16_t type;
+  uint16_t count;
+  uint16_t len;
+  uint16_t nbase;
+  uint16_t stride;
   uint32_t off;
 };
 
 struct Image {
   std::vector<uint8_t> b;
-  uint16_t n_config = 0, n_entries = 0, n_names = 0, desc_max = 0;
-  uint32_t index_off = 0, names_off = 0;
+  uint16_t n_config = 0;
+  uint16_t n_entries = 0;
+  uint16_t n_names = 0;
+  uint16_t desc_max = 0;
+  uint32_t index_off = 0;
+  uint32_t names_off = 0;
   std::vector<Entry> ents;
 
   static void put16(std::vector<uint8_t>& v, size_t at, uint16_t x) {
@@ -189,8 +207,11 @@ struct Dram {
 
   bool busy = false;
   uint32_t addr = 0;
-  int beats = 0, idx = 0, wait = 0;
-  uint64_t reqs = 0, beats_served = 0;
+  int beats = 0;
+  int idx = 0;
+  int wait = 0;
+  uint64_t reqs = 0;
+  uint64_t beats_served = 0;
 
   explicit Dram(VKL_aecp_desc_store* d) : dut(d) {}
 
@@ -247,7 +268,8 @@ struct Dram {
 struct H {
   VKL_aecp_desc_store* dut;
   Dram dram;
-  bool     rv = false, err = false;
+  bool     rv = false;
+  bool     err = false;
   uint64_t rdata = 0;
 
   explicit H(VKL_aecp_desc_store* d) : dut(d), dram(d) {}
@@ -352,58 +374,6 @@ static uint64_t served64(const Image& img, const Entry& e, uint16_t member,
   return v;
 }
 
-// ---------------------------------------------------------------------------
-// walk every descriptor of an image and check the served bytes, byte-exactly
-// ---------------------------------------------------------------------------
-static void check_all_descriptors(H& h, const Image& img, const char* tag) {
-  // A descriptor type may occupy SEVERAL entries - one per run of equal-length
-  // descriptors - so an entry's members are not indices 0..count-1 but
-  // first..first+count-1, where `first` is the number of indices the earlier
-  // runs of the same (cfg, type) already covered. Tracked here independently
-  // of the DUT, which is the point: if the RTL's own running base drifts, the
-  // absolute index this asks for stops matching the bytes it gets.
-  std::map<std::pair<uint16_t, uint16_t>, uint16_t> first;
-  for (const Entry& e : img.ents) {
-    const uint16_t run0 = first[{e.cfg, e.type}];
-    first[{e.cfg, e.type}] = uint16_t(run0 + e.count);
-    for (uint16_t k = 0; k < e.count; ++k) {
-      const uint16_t ix = uint16_t(run0 + k);
-      CHECK(h.locate(e.cfg, e.type, ix), "%s locate cfg %u type 0x%04X ix %u "
-            "never answered", tag, e.cfg, e.type, ix);
-      CHECK(!h.err, "%s locate cfg %u type 0x%04X ix %u errored",
-            tag, e.cfg, e.type, ix);
-      CHECK(h.rdata == 0, "%s locate base got %llu (line-buffer origin is 0)",
-            tag, (unsigned long long)h.rdata);
-
-      CHECK(h.rd(RGN_LEN, false, 0) && !h.err && h.rdata == e.len,
-            "%s type 0x%04X ix %u length got %llu want %u",
-            tag, e.type, ix, (unsigned long long)h.rdata, e.len);
-      const uint16_t want_nbase = (e.nbase == NAME_NONE)
-                                  ? NAME_NONE : uint16_t(e.nbase + k);
-      CHECK(h.rd(RGN_NBASE, false, 0) && !h.err && h.rdata == want_nbase,
-            "%s type 0x%04X name_base got %llu want %u",
-            tag, e.type, (unsigned long long)h.rdata, want_nbase);
-
-      uint32_t lanes = (e.len + 7u) / 8u;
-      // `e.off` is the offset of this RUN's first member, so the stride
-      // multiplies the run-relative index. Using the absolute one would read
-      // past the run whenever an earlier run of the same type exists.
-      uint32_t base = e.off + uint32_t(e.stride) * k;
-      for (uint32_t l = 0; l < lanes; ++l) {
-        uint64_t want = served64(img, e, k, base, 8 * l);
-        CHECK(h.rd(RGN_DATA + 8 * l, false, 0) && h.rdata == want,
-              "%s type 0x%04X ix %u lane %u got %016llx want %016llx",
-              tag, e.type, ix, l, (unsigned long long)h.rdata,
-              (unsigned long long)want);
-      }
-      // a lane past the descriptor must read as zero, never as the next one
-      CHECK(h.rd(RGN_DATA + 8 * lanes, false, 0) && h.rdata == 0,
-            "%s type 0x%04X lane past the end got %016llx",
-            tag, e.type, (unsigned long long)h.rdata);
-    }
-  }
-}
-
 // a small synthetic model: two AUDIO_CLUSTERs of 90 bytes (not a multiple of
 // 8) so the stride path is exercised, plus a 4-byte-typed marker descriptor
 static Image synth_two_of_a_type() {
@@ -492,22 +462,120 @@ static Image synth_mixed_lengths() {
   return im;
 }
 
-int main(int argc, char** argv) {
-  Verilated::commandArgs(argc, argv);
-  auto* dut = new VKL_aecp_desc_store;
-  H h(dut);
+namespace {
 
-  // ---- the generator's own example image ---------------------------------
+//! Owns the model, the memory BFM, the parsed reference image and the tally,
+//! so every phase below drives the same store and counts into the same
+//! summary line.
+class DescStoreSuite {
+ public:
+  DescStoreSuite() : dut(model.get()), h(dut) {}
+
+  int run();
+
+ private:
+  //! False when the generator's image could not be read at all - the one
+  //! condition that ends the run before any phase gets to count.
+  bool load_the_generators_example_image();
+  // walk every descriptor of an image and check the served bytes, byte-exactly
+  void check_all_descriptors(const Image& img, const char* tag);
+  void boots_from_the_generated_image();
+  void serves_every_generated_descriptor_byte_exact();
+  void index_map_boundaries_are_exact();
+  void locate_misses_are_answered_cleanly();
+  void the_name_region_is_the_writable_one();
+  void chunked_name_tables_cross_the_burst_boundary();
+  void the_image_is_read_only_at_run_time();
+  void back_to_back_reads_with_req_held_high();
+  void a_longer_memory_latency_changes_nothing();
+  void an_unloaded_region_serves_nothing();
+  void an_all_zero_region_serves_nothing();
+  void a_stale_checksum_is_refused();
+  void a_future_layout_version_is_refused();
+  void too_many_index_entries_is_refused();
+  void too_many_names_is_refused();
+  void a_descriptor_past_the_line_buffer_is_refused();
+  void a_late_image_load_self_heals();
+  void the_heal_precedes_the_first_answer();
+  void an_absent_bridge_times_out();
+  void a_fetch_error_becomes_a_miss();
+  void two_descriptors_of_one_type_are_strided();
+  void one_type_of_several_runs_indexes_across_them();
+  void an_inconsistent_stride_is_refused();
+  void a_zero_length_entry_is_refused();
+
+  const milan::tb::Model<VKL_aecp_desc_store> model;
+  VKL_aecp_desc_store* const dut;
+  H h;
   Image gen;
+  int checks = 0;
+  int fails = 0;
+};
+
+// ---------------------------------------------------------------------------
+// walk every descriptor of an image and check the served bytes, byte-exactly
+// ---------------------------------------------------------------------------
+void DescStoreSuite::check_all_descriptors(const Image& img, const char* tag) {
+  // A descriptor type may occupy SEVERAL entries - one per run of equal-length
+  // descriptors - so an entry's members are not indices 0..count-1 but
+  // first..first+count-1, where `first` is the number of indices the earlier
+  // runs of the same (cfg, type) already covered. Tracked here independently
+  // of the DUT, which is the point: if the RTL's own running base drifts, the
+  // absolute index this asks for stops matching the bytes it gets.
+  std::map<std::pair<uint16_t, uint16_t>, uint16_t> first;
+  for (const Entry& e : img.ents) {
+    const std::pair<uint16_t, uint16_t> key{e.cfg, e.type};
+    const uint16_t run0 = first[key];
+    first[key] = uint16_t(run0 + e.count);
+    for (uint16_t k = 0; k < e.count; ++k) {
+      const uint16_t ix = uint16_t(run0 + k);
+      CHECK(h.locate(e.cfg, e.type, ix), "%s locate cfg %u type 0x%04X ix %u "
+            "never answered", tag, e.cfg, e.type, ix);
+      CHECK(!h.err, "%s locate cfg %u type 0x%04X ix %u errored",
+            tag, e.cfg, e.type, ix);
+      CHECK(h.rdata == 0, "%s locate base got %llu (line-buffer origin is 0)",
+            tag, static_cast<unsigned long long>(h.rdata));
+
+      CHECK(h.rd(RGN_LEN, false, 0) && !h.err && h.rdata == e.len,
+            "%s type 0x%04X ix %u length got %llu want %u",
+            tag, e.type, ix, static_cast<unsigned long long>(h.rdata), e.len);
+      const uint16_t want_nbase = (e.nbase == NAME_NONE)
+                                  ? NAME_NONE : uint16_t(e.nbase + k);
+      CHECK(h.rd(RGN_NBASE, false, 0) && !h.err && h.rdata == want_nbase,
+            "%s type 0x%04X name_base got %llu want %u",
+            tag, e.type, static_cast<unsigned long long>(h.rdata), want_nbase);
+
+      uint32_t lanes = (e.len + 7u) / 8u;
+      // `e.off` is the offset of this RUN's first member, so the stride
+      // multiplies the run-relative index. Using the absolute one would read
+      // past the run whenever an earlier run of the same type exists.
+      uint32_t base = e.off + uint32_t(e.stride) * k;
+      for (uint32_t l = 0; l < lanes; ++l) {
+        uint64_t want = served64(img, e, k, base, 8 * l);
+        CHECK(h.rd(RGN_DATA + 8 * l, false, 0) && h.rdata == want,
+              "%s type 0x%04X ix %u lane %u got %016llx want %016llx",
+              tag, e.type, ix, l, static_cast<unsigned long long>(h.rdata),
+              static_cast<unsigned long long>(want));
+      }
+      // a lane past the descriptor must read as zero, never as the next one
+      CHECK(h.rd(RGN_DATA + 8 * lanes, false, 0) && h.rdata == 0,
+            "%s type 0x%04X lane past the end got %016llx",
+            tag, e.type, static_cast<unsigned long long>(h.rdata));
+    }
+  }
+}
+
+// ---- the generator's own example image ---------------------------------
+bool DescStoreSuite::load_the_generators_example_image() {
   {
     FILE* f = fopen("image.bin", "rb");
     if (!f) { printf("0 checks: 0 PASS, 1 FAIL\nFAIL: image.bin missing\n");
-              return 1; }
+              return false; }
     fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
     gen.b.resize(size_t(n));
     if (fread(gen.b.data(), 1, size_t(n), f) != size_t(n)) {
       printf("0 checks: 0 PASS, 1 FAIL\nFAIL: image.bin short read\n");
-      fclose(f); return 1;
+      fclose(f); return false;
     }
     fclose(f);
   }
@@ -515,19 +583,27 @@ int main(int argc, char** argv) {
         "documented format");
   CHECK(gen.n_entries == 8, "example has %u index entries, want the 07 §3.1 "
         "eight-descriptor tree", gen.n_entries);
+  return true;
+}
 
-  // ---- G1: boot from the generated image ----------------------------------
+// ---- G1: boot from the generated image ----------------------------------
+void DescStoreSuite::boots_from_the_generated_image() {
   CHECK(h.boot(gen), "G1 boot walk never finished");
   CHECK(dut->dbg_img_valid_o == 1, "G1 image not valid");
-  CHECK(dut->dbg_fault_o == F_NONE, "G1 fault %u", (unsigned)dut->dbg_fault_o);
+  CHECK(dut->dbg_fault_o == F_NONE, "G1 fault %u",
+        static_cast<unsigned>(dut->dbg_fault_o));
   CHECK(h.rd(RGN_NCFG, false, 0) && h.rdata == gen.n_config,
         "G1 configurations_count got %llu want %u",
-        (unsigned long long)h.rdata, gen.n_config);
+        static_cast<unsigned long long>(h.rdata), gen.n_config);
+}
 
-  // ---- G2: every descriptor of the generated image, byte-exact ------------
-  check_all_descriptors(h, gen, "G2");
+// ---- G2: every descriptor of the generated image, byte-exact ------------
+void DescStoreSuite::serves_every_generated_descriptor_byte_exact() {
+  check_all_descriptors(gen, "G2");
+}
 
-  // ---- G3: index-map boundaries -------------------------------------------
+// ---- G3: index-map boundaries -------------------------------------------
+void DescStoreSuite::index_map_boundaries_are_exact() {
   // first entry (lowest type) and last entry (highest) must BOTH be found:
   // a scan that stops one early or runs one past fails exactly here
   CHECK(h.locate(0, gen.ents.front().type, 0) && !h.err,
@@ -540,8 +616,10 @@ int main(int argc, char** argv) {
   // a type below the first one must MISS (there is no type < ENTITY, so use a
   // hole in the middle: 0x0003 sits between CONFIGURATION and STREAM_INPUT)
   CHECK(h.locate(0, 0x0003, 0) && h.err, "G3 hole type 0x0003 was served");
+}
 
-  // ---- G4: locate misses ---------------------------------------------------
+// ---- G4: locate misses ---------------------------------------------------
+void DescStoreSuite::locate_misses_are_answered_cleanly() {
   CHECK(h.locate(0, 0x0099, 0) && h.err, "G4 unknown type served");
   CHECK(h.locate(0, gen.ents.front().type, 1) && h.err,
         "G4 descriptor_index past count served");
@@ -554,60 +632,67 @@ int main(int argc, char** argv) {
   // one afterwards must still work (the machine is not wedged)
   CHECK(h.locate(0, gen.ents.front().type, 0) && !h.err,
         "G4 store wedged after a miss");
+}
 
-  // ---- G5: the name region (07 §3.4) --------------------------------------
+// ---- G5: the name region (07 §3.4) --------------------------------------
+void DescStoreSuite::the_name_region_is_the_writable_one() {
   for (uint16_t e = 0; e < gen.n_names; ++e) {
     uint64_t want = img64(gen.b, gen.names_off + 64u * e);
     CHECK(h.rd(uint32_t(e) * 64u, true, 0) && h.rdata == want,
           "G5 name entry %u lane 0 got %016llx want %016llx",
-          e, (unsigned long long)h.rdata, (unsigned long long)want);
+          e, static_cast<unsigned long long>(h.rdata),
+          static_cast<unsigned long long>(want));
   }
   // the name region is the ONE writable one — it is overlay, not image
   h.wr(64u * 1u + 8u, true, 0x4E45575F4E414D45ull, 0xFF);
   CHECK(h.rd(64u * 1u + 8u, true, 0) && h.rdata == 0x4E45575F4E414D45ull,
-        "G5 name write did not stick: got %016llx", (unsigned long long)h.rdata);
+        "G5 name write did not stick: got %016llx",
+        static_cast<unsigned long long>(h.rdata));
   CHECK(h.rd(RGN_DATA + 184u, false, 0)
         && h.rdata == 0x6E20456E4E45575Full,
         "G5 SET_NAME first descriptor lane is stale: %016llx",
-        (unsigned long long)h.rdata);
+        static_cast<unsigned long long>(h.rdata));
   CHECK(h.rd(RGN_DATA + 192u, false, 0)
         && h.rdata == 0x4E414D4500000000ull,
         "G5 SET_NAME second descriptor lane is stale: %016llx",
-        (unsigned long long)h.rdata);
+        static_cast<unsigned long long>(h.rdata));
   // byte strobes
   h.wr(64u * 1u + 8u, true, 0x00000000000000FFull, 0x01);
   CHECK(h.rd(64u * 1u + 8u, true, 0) &&
         h.rdata == 0x4E45575F4E414DFFull,
-        "G5 byte-strobed name write got %016llx", (unsigned long long)h.rdata);
+        "G5 byte-strobed name write got %016llx",
+        static_cast<unsigned long long>(h.rdata));
   CHECK(h.rd(RGN_DATA + 192u, false, 0)
         && h.rdata == 0x4E414DFF00000000ull,
         "G5 byte-strobed name is stale in READ_DESCRIPTOR: %016llx",
-        (unsigned long long)h.rdata);
+        static_cast<unsigned long long>(h.rdata));
 
   // Semantic name_index lookup is intentionally separate from the 64-byte
   // overlay address. ENTITY exposes entity_name 0 and group_name 1.
   CHECK(h.rd(RGN_NADDR, false, 0) && !h.err && h.rdata == 0,
         "G5 ENTITY name_index 0 address got %llu",
-        (unsigned long long)h.rdata);
+        static_cast<unsigned long long>(h.rdata));
   CHECK(h.rd(RGN_NADDR, false, 1) && !h.err && h.rdata == 64,
         "G5 ENTITY name_index 1 address got %llu",
-        (unsigned long long)h.rdata);
+        static_cast<unsigned long long>(h.rdata));
   CHECK(h.rd(RGN_NADDR, false, 2) && h.err && h.rdata == 0,
         "G5 ENTITY name_index 2 was accepted");
 
   CHECK(h.locate(0, 0x0001, 0) && !h.err, "G5 locate CONFIGURATION");
   CHECK(h.rd(RGN_NADDR, false, 0) && !h.err && h.rdata == 128,
         "G5 CONFIGURATION name_index 0 address got %llu",
-        (unsigned long long)h.rdata);
+        static_cast<unsigned long long>(h.rdata));
   CHECK(h.rd(RGN_NADDR, false, 1) && h.err && h.rdata == 0,
         "G5 non-ENTITY name_index 1 was accepted");
 
   CHECK(h.locate(0, 0x0024, 0) && !h.err, "G5 locate CLOCK_DOMAIN");
   CHECK(h.rd(RGN_NADDR, false, 0) && !h.err && h.rdata == 512,
         "G5 CLOCK_DOMAIN name address got %llu",
-        (unsigned long long)h.rdata);
+        static_cast<unsigned long long>(h.rdata));
+}
 
-  // ---- G5b: name tables larger than one 511-beat request -----------------
+// ---- G5b: name tables larger than one 511-beat request -----------------
+void DescStoreSuite::chunked_name_tables_cross_the_burst_boundary() {
   {
     const Image many = synth_many_names();
     CHECK(h.boot(many), "G5b chunked name-table boot never finished");
@@ -616,11 +701,14 @@ int main(int argc, char** argv) {
     const uint64_t want = img64(many.b, many.names_off + 64u * last);
     CHECK(h.rd(64u * last, true, 0) && h.rdata == want,
           "G5b final name after the burst boundary got %016llx want %016llx",
-          (unsigned long long)h.rdata, (unsigned long long)want);
+          static_cast<unsigned long long>(h.rdata),
+          static_cast<unsigned long long>(want));
     CHECK(h.boot(gen), "G5b generator image did not restore");
   }
+}
 
-  // ---- G6: the image is READ-ONLY at run time (07 §2) ---------------------
+// ---- G6: the image is READ-ONLY at run time (07 §2) ---------------------
+void DescStoreSuite::the_image_is_read_only_at_run_time() {
   {
     CHECK(h.locate(0, gen.ents.front().type, 0) && !h.err, "G6 relocate");
     uint64_t before = 0;
@@ -630,13 +718,16 @@ int main(int argc, char** argv) {
     h.wr(RGN_DATA, false, 0xDEADBEEFDEADBEEFull, 0xFF);
     CHECK(dut->dbg_ro_write_o == ro0 + 1,
           "G6 read-only write not counted (%u -> %u)",
-          ro0, (unsigned)dut->dbg_ro_write_o);
+          ro0, static_cast<unsigned>(dut->dbg_ro_write_o));
     CHECK(h.rd(RGN_DATA, false, 0) && h.rdata == before,
           "G6 a write reached the image: %016llx -> %016llx",
-          (unsigned long long)before, (unsigned long long)h.rdata);
+          static_cast<unsigned long long>(before),
+          static_cast<unsigned long long>(h.rdata));
   }
+}
 
-  // ---- G7: back-to-back reads with st_req held high -----------------------
+// ---- G7: back-to-back reads with st_req held high -----------------------
+void DescStoreSuite::back_to_back_reads_with_req_held_high() {
   // the µCPU never drops st_req between two consecutive state ops; a store
   // that latched the request edge would deadlock here
   {
@@ -644,7 +735,7 @@ int main(int argc, char** argv) {
     dut->st_req_i = 1; dut->st_we_i = 0; dut->st_name_i = 0;
     dut->st_wstrb_i = 0; dut->st_wdata_i = 0;
     int answered = 0;
-    uint64_t got[2] = {0, 0};
+    std::array<uint64_t, 2> got = {0, 0};
     dut->st_addr_i = RGN_DATA;
     for (int i = 0; i < 200 && answered < 2; ++i) {
       h.tick();
@@ -659,10 +750,13 @@ int main(int argc, char** argv) {
     CHECK(got[0] == img64(gen.b, gen.ents.front().off) &&
           got[1] == img64(gen.b, gen.ents.front().off + 8),
           "G7 held-request lanes %016llx %016llx",
-          (unsigned long long)got[0], (unsigned long long)got[1]);
+          static_cast<unsigned long long>(got[0]),
+          static_cast<unsigned long long>(got[1]));
   }
+}
 
-  // ---- G8: a longer memory latency changes nothing ------------------------
+// ---- G8: a longer memory latency changes nothing ------------------------
+void DescStoreSuite::a_longer_memory_latency_changes_nothing() {
   h.dram.latency = 47;
   h.dram.gap = 2;
   CHECK(h.boot(gen), "G8 boot at latency 47");
@@ -679,8 +773,10 @@ int main(int argc, char** argv) {
   }
   h.dram.latency = 24;
   h.dram.gap = 0;
+}
 
-  // ---- U1: SOFTWARE HAS NOT LOADED THE IMAGE ------------------------------
+// ---- U1: SOFTWARE HAS NOT LOADED THE IMAGE ------------------------------
+void DescStoreSuite::an_unloaded_region_serves_nothing() {
   // uninitialised DRAM is not a structural zero, so the store must recognise
   // it by the magic/version/checksum header and serve NOTHING
   {
@@ -689,21 +785,23 @@ int main(int argc, char** argv) {
     CHECK(h.boot(junk), "U1 walk never settled on garbage");
     CHECK(dut->dbg_img_valid_o == 0, "U1 garbage region was accepted");
     CHECK(dut->dbg_fault_o == F_MAGIC, "U1 fault %u want MAGIC",
-          (unsigned)dut->dbg_fault_o);
+          static_cast<unsigned>(dut->dbg_fault_o));
     // every locate must miss, and nothing plausible may come back
     CHECK(h.locate(0, 0x0000, 0) && h.err, "U1 ENTITY served from garbage");
     CHECK(h.rd(RGN_LEN, false, 0) && h.rdata == 0,
           "U1 a length (%llu) was reported for an unloaded image",
-          (unsigned long long)h.rdata);
+          static_cast<unsigned long long>(h.rdata));
     CHECK(h.rd(RGN_DATA, false, 0) && h.rdata == 0,
           "U1 descriptor bytes %016llx came back from an unloaded image",
-          (unsigned long long)h.rdata);
+          static_cast<unsigned long long>(h.rdata));
     CHECK(h.rd(RGN_NCFG, false, 0) && h.rdata == 0,
           "U1 configurations_count %llu from an unloaded image",
-          (unsigned long long)h.rdata);
+          static_cast<unsigned long long>(h.rdata));
   }
+}
 
-  // ---- U2: all-zero DRAM (the other shape of "not loaded") ----------------
+// ---- U2: all-zero DRAM (the other shape of "not loaded") ----------------
+void DescStoreSuite::an_all_zero_region_serves_nothing() {
   {
     Image zeros;
     zeros.b.assign(4096, 0x00);
@@ -711,64 +809,76 @@ int main(int argc, char** argv) {
     CHECK(dut->dbg_img_valid_o == 0, "U2 a zeroed region was accepted");
     CHECK(h.locate(0, 0x0000, 0) && h.err, "U2 ENTITY served from zeros");
   }
+}
 
-  // ---- U3: a TRUNCATED / corrupted load survives magic but not checksum ---
+// ---- U3: a TRUNCATED / corrupted load survives magic but not checksum ---
+void DescStoreSuite::a_stale_checksum_is_refused() {
   {
     Image bad = gen;
     bad.b[26] ^= 0x5A;                 // a reserved header byte, checksum stale
     CHECK(h.boot(bad), "U3 walk never settled");
     CHECK(dut->dbg_img_valid_o == 0, "U3 a stale-checksum image was accepted");
     CHECK(dut->dbg_fault_o == F_CKSUM, "U3 fault %u want CKSUM",
-          (unsigned)dut->dbg_fault_o);
+          static_cast<unsigned>(dut->dbg_fault_o));
     CHECK(h.locate(0, 0x0000, 0) && h.err, "U3 served a corrupted image");
   }
+}
 
-  // ---- U4: wrong layout version -------------------------------------------
+// ---- U4: wrong layout version -------------------------------------------
+void DescStoreSuite::a_future_layout_version_is_refused() {
   {
     Image bad = gen;
     Image::put16(bad.b, 4, 2);
     bad.reseal();
     CHECK(h.boot(bad), "U4 walk never settled");
     CHECK(dut->dbg_fault_o == F_VERSION, "U4 fault %u want VERSION",
-          (unsigned)dut->dbg_fault_o);
+          static_cast<unsigned>(dut->dbg_fault_o));
     CHECK(dut->dbg_img_valid_o == 0, "U4 a future layout was accepted");
   }
+}
 
-  // ---- U5: more index entries than the on-chip cache holds ----------------
+// ---- U5: more index entries than the on-chip cache holds ----------------
+void DescStoreSuite::too_many_index_entries_is_refused() {
   {
     Image bad = gen;
     Image::put16(bad.b, 8, uint16_t(IDX_ENTRIES + 1));
     bad.reseal();
     CHECK(h.boot(bad), "U5 walk never settled");
     CHECK(dut->dbg_fault_o == F_NIDX, "U5 fault %u want NIDX",
-          (unsigned)dut->dbg_fault_o);
+          static_cast<unsigned>(dut->dbg_fault_o));
     CHECK(h.locate(0, 0x0000, 0) && h.err,
           "U5 served a model that does not fit the index cache");
   }
+}
 
-  // ---- U6: more names than the on-chip overlay holds ----------------------
+// ---- U6: more names than the on-chip overlay holds ----------------------
+void DescStoreSuite::too_many_names_is_refused() {
   {
     Image bad = gen;
     Image::put16(bad.b, 10, uint16_t(NAME_ENTRIES + 1));
     bad.reseal();
     CHECK(h.boot(bad), "U6 walk never settled");
     CHECK(dut->dbg_fault_o == F_NNAME, "U6 fault %u want NNAME",
-          (unsigned)dut->dbg_fault_o);
+          static_cast<unsigned>(dut->dbg_fault_o));
   }
+}
 
-  // ---- U7: a descriptor longer than the line buffer -----------------------
+// ---- U7: a descriptor longer than the line buffer -----------------------
+void DescStoreSuite::a_descriptor_past_the_line_buffer_is_refused() {
   {
     Image bad = gen;
     Image::put16(bad.b, 24, uint16_t(LINE_BYTES + 8));
     bad.reseal();
     CHECK(h.boot(bad), "U7 walk never settled");
     CHECK(dut->dbg_fault_o == F_DESCLEN, "U7 fault %u want DESCLEN",
-          (unsigned)dut->dbg_fault_o);
+          static_cast<unsigned>(dut->dbg_fault_o));
     CHECK(h.locate(0, 0x0000, 0) && h.err,
           "U7 served an image whose descriptors do not fit the line");
   }
+}
 
-  // ---- U8: SELF-HEAL — software loads late --------------------------------
+// ---- U8: SELF-HEAL — software loads late --------------------------------
+void DescStoreSuite::a_late_image_load_self_heals() {
   {
     Image junk;
     junk.b.assign(4096, 0xA5);
@@ -785,8 +895,10 @@ int main(int argc, char** argv) {
           h.rdata == img64(gen.b, gen.ents.front().off),
           "U8 healed descriptor bytes wrong");
   }
+}
 
-  // ---- U9: HEAL BEFORE ANSWER - the silicon arrangement -------------------
+// ---- U9: HEAL BEFORE ANSWER - the silicon arrangement -------------------
+void DescStoreSuite::the_heal_precedes_the_first_answer() {
   // (r49a/w3a evidence: the store parks at boot against empty memory, the
   //  loader lands the image later, and the FIRST wire command used to miss
   //  because the re-arm came after the answer. The first locate after the
@@ -848,10 +960,13 @@ int main(int argc, char** argv) {
           "U9c the first post-load NCFG read never answered");
     CHECK(!h.err && (h.rdata & 0xFFFFu) == gen.n_config,
           "U9c the FIRST NCFG read answered %u, want the walked %u",
-          (unsigned)(h.rdata & 0xFFFFu), (unsigned)gen.n_config);
+          static_cast<unsigned>(h.rdata & 0xFFFFu),
+          static_cast<unsigned>(gen.n_config));
   }
+}
 
-  // ---- M1: a bridge that never accepts a request --------------------------
+// ---- M1: a bridge that never accepts a request --------------------------
+void DescStoreSuite::an_absent_bridge_times_out() {
   {
     h.dram.refuse = true;
     Image any = gen;
@@ -864,13 +979,15 @@ int main(int argc, char** argv) {
     }
     CHECK(settled, "M1 an absent bridge hung the store");
     CHECK(dut->dbg_fault_o == F_TIMEOUT, "M1 fault %u want TIMEOUT",
-          (unsigned)dut->dbg_fault_o);
+          static_cast<unsigned>(dut->dbg_fault_o));
     CHECK(h.locate(0, 0x0000, 0) && h.err,
           "M1 a locate with no memory did not answer a clean miss");
     h.dram.refuse = false;
   }
+}
 
-  // ---- M2: the bridge answers the descriptor fetch with an error ----------
+// ---- M2: the bridge answers the descriptor fetch with an error ----------
+void DescStoreSuite::a_fetch_error_becomes_a_miss() {
   {
     CHECK(h.boot(gen), "M2 boot");
     h.dram.err_at = 1;
@@ -881,20 +998,24 @@ int main(int argc, char** argv) {
     CHECK(h.locate(0, gen.ents.front().type, 0) && !h.err,
           "M2 the store did not recover after a fetch error");
   }
+}
 
-  // ---- S1: two descriptors of one type, length not a multiple of 8 --------
+// ---- S1: two descriptors of one type, length not a multiple of 8 --------
+void DescStoreSuite::two_descriptors_of_one_type_are_strided() {
   // without a padded STRIDE, index 1 starts mid-beat and the whole line
   // buffer comes back byte-shifted
   {
     Image syn = synth_two_of_a_type();
     CHECK(h.boot(syn), "S1 boot of the synthetic model");
     CHECK(dut->dbg_img_valid_o == 1, "S1 synthetic model rejected: fault %u",
-          (unsigned)dut->dbg_fault_o);
-    check_all_descriptors(h, syn, "S1");
+          static_cast<unsigned>(dut->dbg_fault_o));
+    check_all_descriptors(syn, "S1");
     CHECK(h.locate(0, 0x0014, 2) && h.err, "S1 cluster index 2 served");
   }
+}
 
-  // ---- S4: ONE TYPE, SEVERAL RUNS (the AAF + CRF stream shape) -------------
+// ---- S4: ONE TYPE, SEVERAL RUNS (the AAF + CRF stream shape) -------------
+void DescStoreSuite::one_type_of_several_runs_indexes_across_them() {
   // The scan must accumulate the counts of the runs it walks past, or index 1
   // is served from the run that owns index 0 and every controller reads the
   // wrong stream. Byte-exact, so a right-length-wrong-run answer still fails.
@@ -902,30 +1023,32 @@ int main(int argc, char** argv) {
     Image syn = synth_mixed_lengths();
     CHECK(h.boot(syn), "S4 boot of the mixed-length model");
     CHECK(dut->dbg_img_valid_o == 1, "S4 mixed-length model rejected: fault %u",
-          (unsigned)dut->dbg_fault_o);
-    check_all_descriptors(h, syn, "S4");
+          static_cast<unsigned>(dut->dbg_fault_o));
+    check_all_descriptors(syn, "S4");
 
     // the lengths must come back PER INDEX, not per type: this is the check
     // the uniform-stride layout could not have passed
-    const uint16_t want_len[3] = {148, 140, 148};
+    const std::array<uint16_t, 3> want_len = {148, 140, 148};
     for (uint16_t ix = 0; ix < 3; ++ix) {
       CHECK(h.locate(0, 0x0005, ix) && !h.err, "S4 STREAM_INPUT %u missed", ix);
       CHECK(h.rd(RGN_LEN, false, 0) && h.rdata == want_len[ix],
             "S4 STREAM_INPUT %u length got %llu want %u", ix,
-            (unsigned long long)h.rdata, want_len[ix]);
+            static_cast<unsigned long long>(h.rdata), want_len[ix]);
       // byte 3 of every body is its own index - proof the run arithmetic
       // landed on the right descriptor and not merely on the right length
       CHECK(h.rd(RGN_DATA, false, 0) && ((h.rdata >> 32) & 0xFFFF) == ix,
             "S4 STREAM_INPUT %u served descriptor_index %llu", ix,
-            (unsigned long long)((h.rdata >> 32) & 0xFFFF));
+            static_cast<unsigned long long>((h.rdata >> 32) & 0xFFFF));
     }
     // one past the last run must still MISS: accumulating must not run away
     CHECK(h.locate(0, 0x0005, 3) && h.err, "S4 STREAM_INPUT 3 was served");
     // and a later type must remain reachable past the split
     CHECK(h.locate(0, 0x0024, 0) && !h.err, "S4 type after the split missed");
   }
+}
 
-  // ---- S2: an entry whose stride is inconsistent must not be served -------
+// ---- S2: an entry whose stride is inconsistent must not be served -------
+void DescStoreSuite::an_inconsistent_stride_is_refused() {
   {
     Image syn = synth_two_of_a_type();
     const Entry* e = syn.find(0, 0x0014);
@@ -939,8 +1062,10 @@ int main(int argc, char** argv) {
     CHECK(h.locate(0, 0x0000, 0) && !h.err,
           "S2 one bad entry poisoned the rest of the model");
   }
+}
 
-  // ---- S3: an entry with a zero length ------------------------------------
+// ---- S3: an entry with a zero length ------------------------------------
+void DescStoreSuite::a_zero_length_entry_is_refused() {
   {
     Image syn = synth_two_of_a_type();
     const Entry* e = syn.find(0, 0x0024);
@@ -951,7 +1076,43 @@ int main(int argc, char** argv) {
     CHECK(h.locate(0, 0x0024, 0) && h.err, "S3 a zero-length entry was served");
   }
 
+}
+
+int DescStoreSuite::run() {
+  if (!load_the_generators_example_image()) return 1;
+  boots_from_the_generated_image();
+  serves_every_generated_descriptor_byte_exact();
+  index_map_boundaries_are_exact();
+  locate_misses_are_answered_cleanly();
+  the_name_region_is_the_writable_one();
+  chunked_name_tables_cross_the_burst_boundary();
+  the_image_is_read_only_at_run_time();
+  back_to_back_reads_with_req_held_high();
+  a_longer_memory_latency_changes_nothing();
+  an_unloaded_region_serves_nothing();
+  an_all_zero_region_serves_nothing();
+  a_stale_checksum_is_refused();
+  a_future_layout_version_is_refused();
+  too_many_index_entries_is_refused();
+  too_many_names_is_refused();
+  a_descriptor_past_the_line_buffer_is_refused();
+  a_late_image_load_self_heals();
+  the_heal_precedes_the_first_answer();
+  an_absent_bridge_times_out();
+  a_fetch_error_becomes_a_miss();
+  two_descriptors_of_one_type_are_strided();
+  one_type_of_several_runs_indexes_across_them();
+  an_inconsistent_stride_is_refused();
+  a_zero_length_entry_is_refused();
+
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
-  delete dut;
   return fails ? 1 : 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  Verilated::commandArgs(argc, argv);
+  DescStoreSuite suite;
+  return suite.run();
 }

@@ -15,8 +15,8 @@
 #include <vector>
 #include "Vsrp_stream_fsms_wrap.h"
 #include "verilated.h"
+#include "../common/verilator_harness.hpp"
 
-static int checks = 0, fails = 0;
 #define CHECK(cond, ...) do { \
   ++checks; \
   if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
@@ -26,11 +26,39 @@ static int checks = 0, fails = 0;
 // Independent transcription of IEEE 802.1Q-2018 Table 10-3 (applicant).
 // States (columns), events (rows). H = no transition ("--" cell).
 // ---------------------------------------------------------------------------
-enum { VO, VP, VN, AN, AA, QA, LA, AO, QO, AP, QP, LO, NSTATES };
-enum { eNew, eJoin, eLv, eRNew, eRJoinIn, eRIn, eRJoinMt, eRMt, eRLv, eRLA,
-       ePer, eTx, eTxLA, NEVENTS };
-static const int H = -1;
-static const int APP_TBL[NEVENTS][NSTATES] = {
+// Applicant states, in Table 10-3 column order. Plain integers: they index
+// APP_TBL, SN and the DUT's packed t_dbg_app_state_o nibbles.
+constexpr int VO = 0;
+constexpr int VP = 1;
+constexpr int VN = 2;
+constexpr int AN = 3;
+constexpr int AA = 4;
+constexpr int QA = 5;
+constexpr int LA = 6;
+constexpr int AO = 7;
+constexpr int QO = 8;
+constexpr int AP = 9;
+constexpr int QP = 10;
+constexpr int LO = 11;
+constexpr int NSTATES = 12;
+// Applicant events, in Table 10-3 row order. eRNew..eRLA are ordered so that
+// eRNew + <srp attribute-event code> names the received event.
+constexpr int eNew = 0;
+constexpr int eJoin = 1;
+constexpr int eLv = 2;
+constexpr int eRNew = 3;
+constexpr int eRJoinIn = 4;
+constexpr int eRIn = 5;
+constexpr int eRJoinMt = 6;
+constexpr int eRMt = 7;
+constexpr int eRLv = 8;
+constexpr int eRLA = 9;
+constexpr int ePer = 10;
+constexpr int eTx = 11;
+constexpr int eTxLA = 12;
+constexpr int NEVENTS = 13;
+constexpr int H = -1;
+constexpr int APP_TBL[NEVENTS][NSTATES] = {
   //            VO  VP  VN  AN  AA  QA  LA  AO  QO  AP  QP  LO
   /*New!    */ {VN, VN,  H,  H, VN, VN, VN, VN, VN, VN, VN, VN},
   /*Join!   */ {VP,  H,  H,  H,  H,  H, AA, AP, QP,  H,  H, VP},
@@ -62,7 +90,8 @@ static int app_next(int st, int ev, bool reg_in, bool p2p) {
 // sN=New(0), sJ=JoinIn(1)/JoinMt(3) by reg_in, sL=Lv(5), s=In(2)/Mt(4).
 // Optional [s]/[sJ]/[sL] encodings are never sent by the DUT (banner).
 static int app_msg(int st, bool txla, bool reg_in) {
-  const int sj = reg_in ? 1 : 3, se = reg_in ? 2 : 4;
+  const int sj = reg_in ? 1 : 3;
+  const int se = reg_in ? 2 : 4;
   if (!txla) {
     switch (st) {
       case VP: case AA: case AP: return sj;
@@ -80,20 +109,35 @@ static int app_msg(int st, bool txla, bool reg_in) {
   }
 }
 
-static const char* SN[NSTATES] =
+constexpr const char* SN[NSTATES] =
   {"VO","VP","VN","AN","AA","QA","LA","AO","QO","AP","QP","LO"};
-static const char* EN[NEVENTS] =
+constexpr const char* EN[NEVENTS] =
   {"New!","Join!","Lv!","rNew!","rJoinIn!","rIn!","rJoinMt!","rMt!","rLv!",
    "rLA!","periodic!","tx!","txLA!"};
 
 // ---------------------------------------------------------------------------
 // harness
 // ---------------------------------------------------------------------------
-static const uint64_t MAC  = 0x02AABBCCDDEEull;
-static const uint32_t NOW  = 100000;
-static const uint32_t LEAVE_MS = 5000;
+constexpr uint64_t MAC  = 0x02AABBCCDDEEull;
+constexpr uint32_t NOW  = 100000;
+constexpr uint32_t LEAVE_MS = 5000;
 
-struct Push { uint8_t type; uint8_t code; uint8_t fp; uint8_t val[34]; };
+// N_STREAMS_P of the wrapper: every per-slot capture array is this wide.
+constexpr int kStreams = 8;
+// The MRPDU FirstValue busses are 272 bits, i.e. 34 bytes, wide.
+constexpr int kFirstValueBytes = 34;
+constexpr int kFirstValueMsb = 271;
+// Guard on the wait for both modules to report a completed transmit
+// opportunity: far more clock steps than a txop needs, never reached in a
+// passing run.
+constexpr int kTxopPollSteps = 300;
+
+struct Push {
+  uint8_t type;
+  uint8_t code;
+  uint8_t fp;
+  uint8_t val[kFirstValueBytes];
+};
 struct Arm  { bool cancel; uint8_t slot; uint8_t owner; uint32_t deadline; };
 struct VOp  { bool join; uint16_t vid; };
 
@@ -109,11 +153,17 @@ static uint64_t wget(const VlWide<N>& w, int lo, int width) {
 
 struct Hn {
   Vsrp_stream_fsms_wrap* d;
-  std::vector<Push> t_push, l_push;
-  std::vector<Arm>  t_arm, l_arm;
-  std::vector<VOp>  t_vop, l_vop;
-  int t_chg[8] = {0}, l_reg[8] = {0}, l_unreg[8] = {0};
-  bool t_uready = true, l_uready = true;
+  std::vector<Push> t_push;
+  std::vector<Push> l_push;
+  std::vector<Arm>  t_arm;
+  std::vector<Arm>  l_arm;
+  std::vector<VOp>  t_vop;
+  std::vector<VOp>  l_vop;
+  int t_chg[kStreams] = {0};
+  int l_reg[kStreams] = {0};
+  int l_unreg[kStreams] = {0};
+  bool t_uready = true;
+  bool l_uready = true;
 
   explicit Hn(Vsrp_stream_fsms_wrap* dd) : d(dd) {}
 
@@ -132,30 +182,42 @@ struct Hn {
     d->clk_i = 0; d->eval();
     // harvest (all DUT outputs are registered or stable-from-registers)
     if (d->t_ev_valid_o) {
-      Push p; p.type = d->t_ev_attr_type_o; p.code = d->t_ev_event_o;
+      Push p;
+      p.type = d->t_ev_attr_type_o;
+      p.code = d->t_ev_event_o;
       p.fp = d->t_ev_fourpack_o;
-      for (int i = 0; i < 34; ++i)
-        p.val[i] = uint8_t(wget(d->t_ev_value_o, 271 - 8 * i - 7, 8));
+      for (int i = 0; i < kFirstValueBytes; ++i)
+        p.val[i] = static_cast<uint8_t>(
+            wget(d->t_ev_value_o, kFirstValueMsb - 8 * i - 7, 8));
       t_push.push_back(p);
     }
     if (d->l_ev_valid_o) {
-      Push p; p.type = d->l_ev_attr_type_o; p.code = d->l_ev_event_o;
+      Push p;
+      p.type = d->l_ev_attr_type_o;
+      p.code = d->l_ev_event_o;
       p.fp = d->l_ev_fourpack_o;
-      for (int i = 0; i < 34; ++i)
-        p.val[i] = uint8_t(wget(d->l_ev_value_o, 271 - 8 * i - 7, 8));
+      for (int i = 0; i < kFirstValueBytes; ++i)
+        p.val[i] = static_cast<uint8_t>(
+            wget(d->l_ev_value_o, kFirstValueMsb - 8 * i - 7, 8));
       l_push.push_back(p);
     }
     if (d->t_arm_valid_o)
-      t_arm.push_back({(bool)d->t_arm_cancel_o, (uint8_t)d->t_arm_slot_o,
-                       (uint8_t)d->t_arm_owner_o, (uint32_t)d->t_arm_deadline_ms_o});
+      t_arm.push_back({static_cast<bool>(d->t_arm_cancel_o),
+                       static_cast<uint8_t>(d->t_arm_slot_o),
+                       static_cast<uint8_t>(d->t_arm_owner_o),
+                       static_cast<uint32_t>(d->t_arm_deadline_ms_o)});
     if (d->l_arm_valid_o)
-      l_arm.push_back({(bool)d->l_arm_cancel_o, (uint8_t)d->l_arm_slot_o,
-                       (uint8_t)d->l_arm_owner_o, (uint32_t)d->l_arm_deadline_ms_o});
+      l_arm.push_back({static_cast<bool>(d->l_arm_cancel_o),
+                       static_cast<uint8_t>(d->l_arm_slot_o),
+                       static_cast<uint8_t>(d->l_arm_owner_o),
+                       static_cast<uint32_t>(d->l_arm_deadline_ms_o)});
     if (d->t_user_valid_o && t_uready)
-      t_vop.push_back({(bool)d->t_user_join_o, (uint16_t)d->t_user_vid_o});
+      t_vop.push_back({static_cast<bool>(d->t_user_join_o),
+                       static_cast<uint16_t>(d->t_user_vid_o)});
     if (d->l_user_valid_o && l_uready)
-      l_vop.push_back({(bool)d->l_user_join_o, (uint16_t)d->l_user_vid_o});
-    for (int s = 0; s < 8; ++s) {
+      l_vop.push_back({static_cast<bool>(d->l_user_join_o),
+                       static_cast<uint16_t>(d->l_user_vid_o)});
+    for (int s = 0; s < kStreams; ++s) {
       if ((d->t_lstn_reg_change_o >> s) & 1) ++t_chg[s];
       if ((d->l_evt_tk_registered_o >> s) & 1) ++l_reg[s];
       if ((d->l_evt_tk_unregistered_o >> s) & 1) ++l_unreg[s];
@@ -214,8 +276,9 @@ struct Hn {
 
   bool tick() {
     d->join_tick_i = 1; step();
-    bool td = false, ld = false;
-    for (int i = 0; i < 300 && !(td && ld); ++i) {
+    bool td = false;
+    bool ld = false;
+    for (int i = 0; i < kTxopPollSteps && !(td && ld); ++i) {
       td |= (d->t_txop_done_o != 0); ld |= (d->l_txop_done_o != 0);
       if (td && ld) break;
       step();
@@ -235,7 +298,9 @@ struct Hn {
   int t_decl(int s) const { return (d->t_tk_decl_state_o >> (2 * s)) & 3; }
   int l_tkreg(int s) const { return (d->l_tk_reg_state_o >> (2 * s)) & 3; }
   int l_decl(int s) const { return (d->l_lstn_decl_state_o >> (2 * s)) & 3; }
-  uint32_t l_lat(int s) const { return (uint32_t)wget(d->l_acc_latency_o, 32 * s, 32); }
+  uint32_t l_lat(int s) const {
+    return static_cast<uint32_t>(wget(d->l_acc_latency_o, 32 * s, 32));
+  }
   uint64_t l_fbridge(int s) const { return wget(d->l_msrp_fail_bridge_o, 64 * s, 64); }
   uint8_t  l_fcode(int s) const { return (d->l_msrp_fail_code_o >> (8 * s)) & 0xFF; }
   uint64_t t_fbridge(int s) const { return wget(d->t_msrp_fail_bridge_o, 64 * s, 64); }
@@ -243,9 +308,9 @@ struct Hn {
 };
 
 // stream identities used by the recipes
-static const uint64_t SID0 = 0x02AABBCCDDEE0001ull;
-static const uint64_t DA0  = 0x91E0F0001234ull;
-static const uint16_t VID0 = 2;
+constexpr uint64_t SID0 = 0x02AABBCCDDEE0001ull;
+constexpr uint64_t DA0  = 0x91E0F0001234ull;
+constexpr uint16_t VID0 = 2;
 
 // applicant-recipe drivers: land source/sink 0 in state S, tracking the
 // model alongside; each returns the model state for a final CHECK
@@ -323,14 +388,35 @@ static int l_goto(Hn& h, int S) {
   return m;
 }
 
-int main(int argc, char** argv) {
-  Verilated::commandArgs(argc, argv);
-  auto* d = new Vsrp_stream_fsms_wrap;
-  Hn h(d);
+namespace {
 
-  // ==== A. Table 10-3 walk: all rx events x all 12 states x both p2p arms,
-  //         through BOTH modules (one attribute each) =======================
-  const int rxevs[7] = {eRNew, eRJoinIn, eRIn, eRJoinMt, eRMt, eRLv, eRLA};
+//! The whole suite: one DUT, one BFM, one tally, one recipe walk per section.
+class SrpStreamFsmsSuite {
+ public:
+  int run();
+
+ private:
+  void rx_events_match_table_10_3();
+  void talker_tx_rows_send_the_table_10_3_message();
+  void listener_tx_rows_send_the_table_10_3_message();
+  void talker_registrar_follows_table_10_4_with_delta13();
+  void talker_declaration_tracks_ready_and_admission();
+  void listener_matcher_registers_swaps_and_unregisters();
+  void vlan_user_handshake_holds_and_collapses();
+  void talker_tracker_isolates_applications();
+
+  const milan::tb::Model<Vsrp_stream_fsms_wrap> model;
+  Vsrp_stream_fsms_wrap* const d = model.get();
+  int checks = 0;
+  int fails = 0;
+  Hn h{d};
+};
+
+// ==== A. Table 10-3 walk: all rx events x all 12 states x both p2p arms,
+//         through BOTH modules (one attribute each) =======================
+void SrpStreamFsmsSuite::rx_events_match_table_10_3() {
+  constexpr int rxevs[7] = {
+      eRNew, eRJoinIn, eRIn, eRJoinMt, eRMt, eRLv, eRLA};
   for (int p2p = 1; p2p >= 0; --p2p) {
     for (int S = 0; S < NSTATES; ++S) {
       for (int k = 0; k < 7; ++k) {
@@ -342,7 +428,8 @@ int main(int argc, char** argv) {
               SN[S], SN[h.t_app(0)], SN[m]);
         d->p2p_i = p2p;
         if (ev == eRLA) h.la_rx();
-        else h.inject(true, 1, SID0, DA0, VID0, uint8_t(ev - eRNew));
+        else h.inject(true, 1, SID0, DA0, VID0,
+                      static_cast<uint8_t>(ev - eRNew));
         int exp = app_next(S, ev, false, p2p);
         CHECK(h.t_app(0) == exp, "T %s x %s p2p=%d: dut %s want %s",
               SN[S], EN[ev], p2p, SN[h.t_app(0)], SN[exp]);
@@ -353,15 +440,18 @@ int main(int argc, char** argv) {
               SN[S], SN[h.l_app(0)], SN[m]);
         d->p2p_i = p2p;
         if (ev == eRLA) h.la_rx();
-        else h.inject(true, 3, SID0, 0, 0, uint8_t(ev - eRNew), 2);
+        else h.inject(true, 3, SID0, 0, 0,
+                      static_cast<uint8_t>(ev - eRNew), 2);
         exp = app_next(S, ev, false, p2p);
         CHECK(h.l_app(0) == exp, "L %s x %s p2p=%d: dut %s want %s",
               SN[S], EN[ev], p2p, SN[h.l_app(0)], SN[exp]);
       }
     }
   }
+}
 
-  // ==== B. tx! / txLA! rows: transition + exact message, talker ===========
+// ==== B. tx! / txLA! rows: transition + exact message, talker ===========
+void SrpStreamFsmsSuite::talker_tx_rows_send_the_table_10_3_message() {
   for (int txla = 0; txla <= 1; ++txla) {
     for (int S = 0; S < NSTATES; ++S) {
       h.reset();
@@ -382,7 +472,8 @@ int main(int argc, char** argv) {
         if (h.t_push.size() == 1) {
           const Push& p = h.t_push[0];
           CHECK(p.type == 1, "T %s: Talker Advertise type, got %u", SN[S], p.type);
-          uint64_t sid = 0, da = 0;
+          uint64_t sid = 0;
+          uint64_t da = 0;
           for (int i = 0; i < 8; ++i) sid = (sid << 8) | p.val[i];
           for (int i = 8; i < 14; ++i) da = (da << 8) | p.val[i];
           CHECK(sid == SID0 && da == DA0, "T %s FirstValue stream_id/DA", SN[S]);
@@ -394,8 +485,10 @@ int main(int argc, char** argv) {
       }
     }
   }
+}
 
-  // ==== B2. tx! / txLA! rows on the listener (Listener attribute) =========
+// ==== B2. tx! / txLA! rows on the listener (Listener attribute) =========
+void SrpStreamFsmsSuite::listener_tx_rows_send_the_table_10_3_message() {
   for (int txla = 0; txla <= 1; ++txla) {
     for (int S = 0; S < NSTATES; ++S) {
       h.reset();
@@ -426,8 +519,10 @@ int main(int argc, char** argv) {
       }
     }
   }
+}
 
-  // ==== C. Δ13 + registrar walk, talker side (Listener tracker) ===========
+// ==== C. Δ13 + registrar walk, talker side (Listener tracker) ===========
+void SrpStreamFsmsSuite::talker_registrar_follows_table_10_4_with_delta13() {
   h.reset();
   h.gate(true, 1, SID0 + 1, DA0 + 1, VID0);
   h.clear_logs();
@@ -467,8 +562,10 @@ int main(int argc, char** argv) {
   h.expire(3);
   h.expire(24);
   CHECK(h.t_reg(1) == 1, "T reg: foreign slots ignored");
+}
 
-  // ==== D. talker declare -> Ready -> ACTIVE -> admission-loss walk =======
+// ==== D. talker declare -> Ready -> ACTIVE -> admission-loss walk =======
+void SrpStreamFsmsSuite::talker_declaration_tracks_ready_and_admission() {
   h.reset();
   h.clear_logs();
   h.gate(true, 2, SID0 + 2, DA0 + 2, 5);
@@ -523,8 +620,10 @@ int main(int argc, char** argv) {
   h.tick();
   CHECK(h.t_push.size() == 1 && h.t_push[0].code == 5 && h.t_push[0].type == 1,
         "T close withdraws with Lv");
+}
 
-  // ==== E. listener matcher: match, near-miss, swap, unregister ===========
+// ==== E. listener matcher: match, near-miss, swap, unregister ===========
+void SrpStreamFsmsSuite::listener_matcher_registers_swaps_and_unregisters() {
   h.reset();
   h.clear_logs();
   h.ctl(true, 0, SID0, DA0, VID0);
@@ -608,8 +707,10 @@ int main(int argc, char** argv) {
   h.clear_logs();
   h.inject(true, 1, SID0, DA0, VID0, 0, 0, 222);
   CHECK(h.l_regst(0) == 0 && h.l_reg[0] == 0, "L A8 disarms the matcher");
+}
 
-  // ==== F. VLAN handshake back-pressure + collapse =========================
+// ==== F. VLAN handshake back-pressure + collapse =========================
+void SrpStreamFsmsSuite::vlan_user_handshake_holds_and_collapses() {
   h.reset();
   h.clear_logs();
   h.t_uready = false;
@@ -631,8 +732,10 @@ int main(int argc, char** argv) {
   h.idle(4);
   CHECK(h.t_vop.size() == 1, "T open+close before issue = net zero, got %zu",
         h.t_vop.size());
+}
 
-  // ==== G. per-application isolation on the talker tracker ================
+// ==== G. per-application isolation on the talker tracker ================
+void SrpStreamFsmsSuite::talker_tracker_isolates_applications() {
   h.reset();
   h.gate(true, 5, SID0 + 5, DA0 + 5, VID0);
   h.clear_logs();
@@ -640,8 +743,26 @@ int main(int argc, char** argv) {
   CHECK(h.t_reg(5) == 0 && h.t_chg[5] == 0, "T MVRP-app Listener ignored");
   h.inject(false, 1, SID0 + 5, DA0 + 5, VID0, 5);  // MVRP VID type-1 collision
   CHECK(h.t_app(5) == VN, "T MVRP type-1 collision never reaches the applicant");
+}
+
+int SrpStreamFsmsSuite::run() {
+  rx_events_match_table_10_3();
+  talker_tx_rows_send_the_table_10_3_message();
+  listener_tx_rows_send_the_table_10_3_message();
+  talker_registrar_follows_table_10_4_with_delta13();
+  talker_declaration_tracks_ready_and_admission();
+  listener_matcher_registers_swaps_and_unregisters();
+  vlan_user_handshake_holds_and_collapses();
+  talker_tracker_isolates_applications();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
-  delete d;
   return fails ? 1 : 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  Verilated::commandArgs(argc, argv);
+  SrpStreamFsmsSuite suite;
+  return suite.run();
 }

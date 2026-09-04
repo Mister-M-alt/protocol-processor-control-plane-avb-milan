@@ -20,19 +20,28 @@
 #include <vector>
 #include "VKL_pp_nvm_port.h"
 #include "verilated.h"
+#include "../common/verilator_harness.hpp"
 
-static int checks = 0, fails = 0;
 #define CHECK(cond, ...) do { \
   ++checks; \
   if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
 } while (0)
 
-// device-face op codes — mirror of the contract, independent of the RTL
-enum { OP_READ = 0, OP_WRITE = 1, OP_ERASE = 2 };
+// device-face op codes — mirror of the contract, independent of the RTL.
+// Plain integers on purpose: they are compared against `DevOp::op`, which the
+// harness fills from `dut->dev_op_o`, so an enum class would need a cast at
+// every use and ES.49 would be the worse for it.
+constexpr int OP_READ  = 0;
+constexpr int OP_WRITE = 1;
+constexpr int OP_ERASE = 2;
 
-static const int N_REGIONS = 8;    // test ids stay 0..7
-static const int REG_BYTES = 2048;
-static const int MAXP      = 1024; // pinned by -GMAX_PAYLOAD_P in the Makefile
+constexpr int N_REGIONS = 8;    // test ids stay 0..7
+constexpr int REG_BYTES = 2048;
+constexpr int MAXP      = 1024; // pinned by -GMAX_PAYLOAD_P in the Makefile
+
+constexpr int  kResetTicks      = 4;      // clocks held in reset before rst_n
+constexpr long kOpTimeoutCycles = 100000; // run_op guard: no done/err by then
+constexpr int  kDrainCycles     = 30;     // ticked past a pulse to catch a second
 
 // CRC-16/CCITT-FALSE — the manager's in-band integrity field; the DUT must
 // carry it opaquely (07 §5.3 puts computation/validation in the manager).
@@ -74,7 +83,12 @@ static std::vector<uint8_t> pattern(size_t n, uint8_t seed) {
   return p;
 }
 
-struct DevOp { int op, region, offset, len; };
+struct DevOp {
+  int op;
+  int region;
+  int offset;
+  int len;
+};
 
 struct Harness {
   VKL_pp_nvm_port* dut;
@@ -83,8 +97,10 @@ struct Harness {
   uint8_t store[N_REGIONS][REG_BYTES];
   std::vector<DevOp> ops;                 // every accepted device command
   int erase_count[N_REGIONS] = {0};
-  int gnt_delay = 1, op_delay = 4;        // req->gnt, data-end->done cycles
-  int wstall = 0, rstall = 0;             // device-side inter-byte stalls
+  int gnt_delay = 1;                      // req->gnt cycles
+  int op_delay = 4;                       // data-end->done cycles
+  int wstall = 0;                         // device-side inter-byte stalls
+  int rstall = 0;
   int err_at_op = -1;                     // op index since arm to fail
   int err_after_bytes = -1;               // fail after N data bytes (-1: at once)
   int ops_since_arm = 0;
@@ -92,24 +108,32 @@ struct Harness {
 
   int  d_st = 0;                          // 0 idle, 1 data, 2 completion timer
   int  d_reqwait = 0;
-  bool d_gnt = false, d_done = false, d_err = false, d_busy = false;
+  bool d_gnt = false;
+  bool d_done = false;
+  bool d_err = false;
+  bool d_busy = false;
   DevOp d_cur{0, 0, 0, 0};
-  int  d_bytes = 0, d_stall = 0;
+  int  d_bytes = 0;
+  int  d_stall = 0;
   bool d_rhold = false;
-  int  done_ctr = 0, err_ctr = 0;
+  int  done_ctr = 0;
+  int  err_ctr = 0;
 
   // ---- manager BFM ----
   int m_mode = 0;                         // 0 idle, 1 commit stream, 2 restore
   std::vector<uint8_t> m_wbytes;
   size_t m_widx = 0;
   int m_stall = 0;
-  int mgr_wstall = 0, mgr_rstall = 0;
+  int mgr_wstall = 0;
+  int mgr_rstall = 0;
 
   // per-op capture
-  int done_pulses = 0, err_pulses = 0;
+  int done_pulses = 0;
+  int err_pulses = 0;
   int dev_errs = 0;      // device-raised errors, not port refusals
   int dev_rd = 0;        // bytes the DEVICE delivered on the read bus
-  bool busy_seen = false, busy_ok = true; // busy must be LOW at done/err (F02.8)
+  bool busy_seen = false;                 // busy must be LOW at done/err (F02.8)
+  bool busy_ok = true;
   std::vector<uint8_t> rbytes;
   // What the port SENT on the device write bus, captured at the handshake.
   // Distinct from `store` on purpose: after a device error, what the array
@@ -144,7 +168,9 @@ struct Harness {
   }
 
   void sample_dev() {
-    bool drove_gnt = d_gnt, drove_done = d_done, drove_err = d_err;
+    bool drove_gnt = d_gnt;
+    bool drove_done = d_done;
+    bool drove_err = d_err;
 
     // command accept
     if (drove_gnt && dut->dev_req_o) {
@@ -268,7 +294,7 @@ struct Harness {
   }
 
   // run until done/err (+ drain to catch double pulses); 0 done, 1 err, -1 t/o
-  int run_op(long max_cycles = 100000, int drain = 30) {
+  int run_op(long max_cycles = kOpTimeoutCycles, int drain = kDrainCycles) {
     for (long i = 0; i < max_cycles; ++i) {
       tick();
       if (done_pulses + err_pulses > 0) {
@@ -281,18 +307,19 @@ struct Harness {
     return -1;
   }
 
-  int commit(uint8_t rec, const std::vector<uint8_t>& f, int drain = 30) {
+  int commit(uint8_t rec, const std::vector<uint8_t>& f,
+             int drain = kDrainCycles) {
     clear_capture();
     m_mode = 1; m_wbytes = f; m_widx = 0; m_stall = 0;
     start(true, rec);
-    return run_op(100000, drain);
+    return run_op(kOpTimeoutCycles, drain);
   }
 
-  int restore(uint8_t rec, int drain = 30) {
+  int restore(uint8_t rec, int drain = kDrainCycles) {
     clear_capture();
     m_mode = 2; m_stall = 0;
     start(false, rec);
-    return run_op(100000, drain);
+    return run_op(kOpTimeoutCycles, drain);
   }
 
   bool store_match(int region, const std::vector<uint8_t>& f) {
@@ -306,27 +333,66 @@ static bool op_is(const DevOp& o, int op, int region, int offset, int len) {
   return o.op == op && o.region == region && o.offset == offset && o.len == len;
 }
 
-int main(int argc, char** argv) {
-  Verilated::commandArgs(argc, argv);
-  auto* dut = new VKL_pp_nvm_port;
-  Harness h(dut);
+// ---- the suite ----------------------------------------------------------
+// One object owns the model, both neighbour BFMs and the tally, so every
+// phase below is a named member function rather than another stretch of a
+// `main` nobody can scope (Core Guidelines I.2, F.3).
+namespace {
+class NvmPortSuite {
+ public:
+  int run();
 
-  // ---- reset --------------------------------------------------------------
+ private:
+  void reset_leaves_the_port_idle();
+  void commit_erases_then_writes_byte_exact();
+  void restore_reads_header_then_payload_byte_exact();
+  void zero_payload_record_round_trips();
+  void stalls_on_every_byte_interface_are_survived();
+  void back_to_back_ops_all_complete();
+  void request_while_busy_is_ignored();
+  void erase_error_stops_the_commit_then_recovers();
+  void write_header_phase_error_surfaces_once();
+  void read_payload_phase_error_surfaces_once();
+  void bad_magic_commit_is_refused_before_the_device();
+  void oversize_payload_length_is_refused();
+  void bad_stored_magic_is_refused_on_restore();
+  void oversize_stored_length_is_refused_on_restore();
+  void refusals_leave_the_port_serviceable();
+  void torn_commit_never_restores_as_valid();
+  void torn_commit_leaves_every_other_region_untouched();
+  void late_write_failure_reports_err_not_done();
+  void read_completion_window_errors_report_err();
+  void the_port_is_idle_at_the_end_of_the_run();
+
+  const milan::tb::Model<VKL_pp_nvm_port> model;
+  VKL_pp_nvm_port* const dut = model.get();
+  Harness h{dut};
+  int checks = 0;
+  int fails = 0;
+  std::vector<uint8_t> f2;   // T2's record: re-read by T9, T14 and T18
+  std::vector<uint8_t> f7;   // T7's record: the WRITE T8 cuts short
+};
+}  // namespace
+
+// ---- reset --------------------------------------------------------------
+void NvmPortSuite::reset_leaves_the_port_idle() {
   dut->rst_n = 0;
   dut->nvm_req_i = 0; dut->nvm_we_i = 0; dut->nvm_record_id_i = 0;
   dut->nvm_wvalid_i = 0; dut->nvm_wdata_i = 0; dut->nvm_rready_i = 0;
   dut->dev_gnt_i = 0; dut->dev_wready_i = 0; dut->dev_rvalid_i = 0;
   dut->dev_rdata_i = 0; dut->dev_busy_i = 0; dut->dev_done_i = 0;
   dut->dev_err_i = 0;
-  for (int i = 0; i < 4; ++i) h.tick();
+  for (int i = 0; i < kResetTicks; ++i) h.tick();
   dut->rst_n = 1;
   h.tick();
   CHECK(!dut->nvm_busy_o && !dut->nvm_done_o && !dut->nvm_err_o,
         "idle after reset");
   CHECK(!dut->dev_req_o && !dut->dev_wvalid_o && !dut->nvm_rvalid_o,
         "no spontaneous device/read activity after reset");
+}
 
-  // ---- T1: commit envelope — ERASE then WRITE, byte-exact ----------------
+// ---- T1: commit envelope — ERASE then WRITE, byte-exact ----------------
+void NvmPortSuite::commit_erases_then_writes_byte_exact() {
   auto f1 = frame(3, pattern(24, 0x30));
   int rc = h.commit(3, f1);
   CHECK(rc == 0, "T1 commit completes with done, rc=%d", rc);
@@ -342,12 +408,14 @@ int main(int argc, char** argv) {
   CHECK(h.erase_count[3] == 1, "T1 erase pulsed region 3 once");
   CHECK(h.store_match(3, f1), "T1 device store byte-exact (header+crc+payload)");
   CHECK(h.store[3][f1.size()] == 0xFF, "T1 erase visible past the record");
+}
 
-  // ---- T2: restore envelope — header read then payload read, byte-exact --
-  auto f2 = frame(5, pattern(40, 0xA0));
+// ---- T2: restore envelope — header read then payload read, byte-exact --
+void NvmPortSuite::restore_reads_header_then_payload_byte_exact() {
+  f2 = frame(5, pattern(40, 0xA0));
   memcpy(h.store[5], f2.data(), f2.size());
   h.ops.clear();
-  rc = h.restore(5);
+  int rc = h.restore(5);
   CHECK(rc == 0, "T2 restore completes with done, rc=%d", rc);
   CHECK(h.done_pulses == 1 && h.err_pulses == 0, "T2 exactly one done");
   CHECK(h.rbytes == f2, "T2 restored stream byte-exact (%zu bytes)",
@@ -356,11 +424,13 @@ int main(int argc, char** argv) {
             && op_is(h.ops[1], OP_READ, 5, 8, 40),
         "T2 device ops = READ hdr(8) then READ payload(40)");
   CHECK(h.erase_count[5] == 0, "T2 restore never erases");
+}
 
-  // ---- T3: zero-payload record both directions ---------------------------
+// ---- T3: zero-payload record both directions ---------------------------
+void NvmPortSuite::zero_payload_record_round_trips() {
   auto f3 = frame(6, {});
   h.ops.clear();
-  rc = h.commit(6, f3);
+  int rc = h.commit(6, f3);
   CHECK(rc == 0 && h.done_pulses == 1, "T3 zero-payload commit done");
   CHECK(h.ops.size() == 2 && op_is(h.ops[1], OP_WRITE, 6, 0, 8),
         "T3 WRITE len 8 (header only)");
@@ -370,12 +440,14 @@ int main(int argc, char** argv) {
   CHECK(rc == 0 && h.rbytes == f3, "T3 zero-payload restore byte-exact");
   CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 6, 0, 8),
         "T3 restore issues only the header READ");
+}
 
-  // ---- T4: stall torture on all four byte interfaces ---------------------
+// ---- T4: stall torture on all four byte interfaces ---------------------
+void NvmPortSuite::stalls_on_every_byte_interface_are_survived() {
   h.mgr_wstall = 3; h.mgr_rstall = 2; h.wstall = 2; h.rstall = 3;
   h.gnt_delay = 5; h.op_delay = 9;
   auto f4 = frame(2, pattern(65, 0x11));
-  rc = h.commit(2, f4);
+  int rc = h.commit(2, f4);
   CHECK(rc == 0 && h.done_pulses == 1, "T4 commit done under stalls");
   CHECK(h.store_match(2, f4), "T4 store byte-exact under stalls");
   rc = h.restore(2);
@@ -383,8 +455,10 @@ int main(int argc, char** argv) {
   CHECK(h.rbytes == f4, "T4 restored stream byte-exact under stalls");
   h.mgr_wstall = 0; h.mgr_rstall = 0; h.wstall = 0; h.rstall = 0;
   h.gnt_delay = 1; h.op_delay = 4;
+}
 
-  // ---- T5: back-to-back ops (req immediately after each pulse) -----------
+// ---- T5: back-to-back ops (req immediately after each pulse) -----------
+void NvmPortSuite::back_to_back_ops_all_complete() {
   auto f5a = frame(0, pattern(12, 0x50));
   auto f5b = frame(1, pattern(20, 0x60));
   h.ops.clear();
@@ -396,8 +470,10 @@ int main(int argc, char** argv) {
   CHECK(h.store_match(0, f5a) && h.store_match(1, f5b),
         "T5 both commits byte-exact");
   CHECK(h.rbytes == f5a, "T5 immediate re-read byte-exact");
+}
 
-  // ---- T6: req while busy is ignored (single outstanding, F02.8) ---------
+// ---- T6: req while busy is ignored (single outstanding, F02.8) ---------
+void NvmPortSuite::request_while_busy_is_ignored() {
   h.gnt_delay = 8; h.op_delay = 30;
   auto f6 = frame(7, pattern(16, 0x70));
   h.ops.clear();
@@ -409,7 +485,7 @@ int main(int argc, char** argv) {
   dut->nvm_req_i = 1; dut->nvm_we_i = 0; dut->nvm_record_id_i = 5;
   for (int i = 0; i < 5; ++i) h.tick();
   dut->nvm_req_i = 0; dut->nvm_we_i = 0;
-  rc = h.run_op();
+  int rc = h.run_op();
   CHECK(rc == 0 && h.done_pulses == 1, "T6 exactly one done for the one op");
   CHECK(h.ops.size() == 2, "T6 no extra device op from the spurious req");
   bool no_read = true;
@@ -417,12 +493,14 @@ int main(int argc, char** argv) {
   CHECK(no_read, "T6 the spurious restore never reached the device");
   CHECK(h.store_match(7, f6), "T6 original commit still byte-exact");
   h.gnt_delay = 1; h.op_delay = 4;
+}
 
-  // ---- T7: device error during ERASE — err exactly once, no WRITE -------
-  auto f7 = frame(4, pattern(10, 0x90));
+// ---- T7: device error during ERASE — err exactly once, no WRITE -------
+void NvmPortSuite::erase_error_stops_the_commit_then_recovers() {
+  f7 = frame(4, pattern(10, 0x90));
   h.arm_err(0, -1);
   h.ops.clear();
-  rc = h.commit(4, f7);
+  int rc = h.commit(4, f7);
   CHECK(rc == 1, "T7 commit fails, rc=%d", rc);
   CHECK(h.err_pulses == 1 && h.done_pulses == 0,
         "T7 err exactly once, done never (got %d/%d)",
@@ -434,347 +512,395 @@ int main(int argc, char** argv) {
   rc = h.commit(4, f7);
   CHECK(rc == 0 && h.done_pulses == 1, "T7b port recovered: retry commits");
   CHECK(h.store_match(4, f7), "T7b retry byte-exact");
+}
 
-  // ---- T8: device error during the WRITE's HEADER pump -------------------
-  // op 1 is the WRITE and it carries the framed record, so a cut after 5
-  // bytes is still inside the 8-byte header -- the record's payload has not
-  // started. T15 cuts the same op at 12 bytes for the data phase proper.
+// ---- T8: device error during the WRITE's HEADER pump -------------------
+// op 1 is the WRITE and it carries the framed record, so a cut after 5
+// bytes is still inside the 8-byte header -- the record's payload has not
+// started. T15 cuts the same op at 12 bytes for the data phase proper.
+void NvmPortSuite::write_header_phase_error_surfaces_once() {
   h.arm_err(1, 5);
   h.ops.clear();
-  rc = h.commit(4, f7);
+  int rc = h.commit(4, f7);
   CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
         "T8 write-phase error surfaces exactly once");
   CHECK(h.ops.size() == 2, "T8 no device op after the failed WRITE");
   h.disarm_err();
+}
 
-  // ---- T9: device error mid READ payload phase ---------------------------
+// ---- T9: device error mid READ payload phase ---------------------------
+void NvmPortSuite::read_payload_phase_error_surfaces_once() {
   h.arm_err(1, 7);
   h.ops.clear();
-  rc = h.restore(5);
+  int rc = h.restore(5);
   CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
         "T9 read-phase error surfaces exactly once");
   CHECK(h.rbytes.size() < f2.size(), "T9 stream cut short (%zu of %zu)",
         h.rbytes.size(), f2.size());
   h.disarm_err();
+}
 
-  // ---- T10: unframed commit stream refused (magic, 07 §5.2) --------------
+// ---- T10: unframed commit stream refused (magic, 07 §5.2) --------------
+void NvmPortSuite::bad_magic_commit_is_refused_before_the_device() {
   auto fbad = frame(3, pattern(8, 0x22), /*magic=*/0xDEAD);
   h.ops.clear();
-  rc = h.commit(3, fbad);
+  int rc = h.commit(3, fbad);
   CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
         "T10 bad-magic commit refused with one err");
   CHECK(h.ops.empty(), "T10 refusal before any device traffic");
+}
 
-  // ---- T11: oversize payload_length refused ------------------------------
+// ---- T11: oversize payload_length refused ------------------------------
+void NvmPortSuite::oversize_payload_length_is_refused() {
   auto fbig = frame(3, pattern(4, 0x33), 0x1722, /*force_plen=*/MAXP + 1);
   h.ops.clear();
-  rc = h.commit(3, fbig);
+  int rc = h.commit(3, fbig);
   CHECK(rc == 1 && h.err_pulses == 1,
         "T11 oversize payload_length refused with one err");
   CHECK(h.ops.empty(), "T11 refusal before any device traffic");
+}
 
-  // ---- T12: stored record with bad magic refused on restore --------------
+// ---- T12: stored record with bad magic refused on restore --------------
+void NvmPortSuite::bad_stored_magic_is_refused_on_restore() {
   uint8_t save0 = h.store[5][0];
   h.store[5][0] = 0x00;
   h.ops.clear();
-  rc = h.restore(5);
+  int rc = h.restore(5);
   CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
         "T12 bad stored magic -> one err");
   CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8),
         "T12 only the header probe was issued");
   CHECK(h.rbytes.empty(), "T12 nothing forwarded to the manager");
   h.store[5][0] = save0;
+}
 
-  // ---- T13: stored record with oversize length refused on restore --------
-  uint8_t save4 = h.store[5][4], save5 = h.store[5][5];
+// ---- T13: stored record with oversize length refused on restore --------
+void NvmPortSuite::oversize_stored_length_is_refused_on_restore() {
+  uint8_t save4 = h.store[5][4];
+  uint8_t save5 = h.store[5][5];
   h.store[5][4] = 0xFF; h.store[5][5] = 0xFF;
   h.ops.clear();
-  rc = h.restore(5);
+  int rc = h.restore(5);
   CHECK(rc == 1 && h.err_pulses == 1, "T13 oversize stored length -> one err");
   CHECK(h.ops.size() == 1 && h.rbytes.empty(),
         "T13 header probe only, nothing forwarded");
   h.store[5][4] = save4; h.store[5][5] = save5;
+}
 
-  // ---- T14: refusals leave the port serviceable --------------------------
-  rc = h.restore(5);
+// ---- T14: refusals leave the port serviceable --------------------------
+void NvmPortSuite::refusals_leave_the_port_serviceable() {
+  int rc = h.restore(5);
   CHECK(rc == 0 && h.rbytes == f2, "T14 clean restore after refusals");
   h.tick();
   CHECK(!dut->nvm_busy_o && !dut->nvm_done_o && !dut->nvm_err_o,
         "idle after the refusal phases");
+}
 
-  // ---- T15: POWER CUT mid-commit (issue #70) -----------------------------
-  // A commit is ERASE(region) then WRITE(0, 8+plen). Cut the power inside the
-  // WRITE and the region is left erased-plus-partial: the record being written
-  // is gone AND so is whatever it replaced. That is a property of writing a
-  // slot in place, and it is the reason the flash map reserves A/B slots --
-  // so this phase pins what the port DOES guarantee rather than asserting a
-  // survival the single-slot layout cannot give.
+// ---- T15: POWER CUT mid-commit (issue #70) -----------------------------
+// A commit is ERASE(region) then WRITE(0, 8+plen). Cut the power inside the
+// WRITE and the region is left erased-plus-partial: the record being written
+// is gone AND so is whatever it replaced. That is a property of writing a
+// slot in place, and it is the reason the flash map reserves A/B slots --
+// so this phase pins what the port DOES guarantee rather than asserting a
+// survival the single-slot layout cannot give.
+//
+// The guarantee that matters for #70 is the one on the next phase: a torn
+// commit of ONE record must not disturb ANOTHER. Here we pin that the torn
+// image never restores as a VALID record -- "never a half-record that
+// restores as garbage" -- graded with the suite's own CRC, because the port
+// carries the CRC opaquely and only the manager can reject on it.
+void NvmPortSuite::torn_commit_never_restores_as_valid() {
+  std::vector<uint8_t> whole = frame(7, pattern(24, 0x40));
+  h.ops.clear();
+  int rc = h.commit(7, whole);
+  CHECK(rc == 0 && h.store_match(7, whole), "T15 seed record committed");
+
+  std::vector<uint8_t> replacement = frame(7, pattern(24, 0x90));
+  h.ops.clear();
+  h.arm_err(1, 12);                 // op 0 = ERASE, op 1 = WRITE: cut at 12 B
+  rc = h.commit(7, replacement);
+  h.disarm_err();
+  CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
+        "T15 torn commit reports err, never done");
+  // busy_seen is added because busy_ok alone starts true and only clears
+  // when a pulse coincides with busy high, so it passes for a port that
+  // never pulsed. It does NOT catch a wedge: a wedged port holds busy high,
+  // so busy_seen is true and no pulse ever contradicts busy_ok. The wedge is
+  // caught by the rc check above; this pair only pins the pulse's timing.
+  CHECK(h.busy_seen && h.busy_ok, "T15 busy raised then low at the err pulse");
+
+  // The cut must be REAL, stated on the bus. Reading the array here was a
+  // member of the same family as T16 and T17: under a backend that answers
+  // ERASE with `done` without rewriting the array -- which the port's own
+  // header names, and which 02 SS8 lists as the host-filesystem backing --
+  // the old record survives the tear intact, and an array-negative check
+  // reddens for a device doing the right thing.
+  CHECK(h.ops.size() == 2
+            && op_is(h.ops[1], OP_WRITE, 7, 0,
+                     static_cast<int>(replacement.size()))
+            && h.sent.size() == 12
+            && std::equal(h.sent.begin(), h.sent.end(), replacement.begin()),
+        "T15 the cut was real: ERASE then a WRITE stopped 12 bytes in");
+
+  // ...and it must not read back as a valid record. Either the port refuses
+  // it at the header, or the bytes it forwards fail the manager's CRC.
+  h.ops.clear();
+  rc = h.restore(7);
+  bool refused = (rc == 1 && h.rbytes.empty());
+  bool crc_rejects = false;
+  if (!refused && h.rbytes.size() >= 8) {
+    std::vector<uint8_t> cb(h.rbytes.begin(), h.rbytes.begin() + 6);
+    cb.insert(cb.end(), h.rbytes.begin() + 8, h.rbytes.end());
+    uint16_t stored = uint16_t(uint16_t(h.rbytes[6] << 8) | h.rbytes[7]);
+    crc_rejects = (crc16(cb) != stored);
+  }
+  // Conditioned, not asserted: if the backend left the OLD record intact the
+  // torn commit lost nothing, which is the outcome #70 wants, not a defect.
+  bool old_intact = std::equal(whole.begin(), whole.end(), h.store[7]);
+  CHECK(old_intact || refused || crc_rejects,
+        "T15 unless the old record survived, a torn image never restores as valid");
+  // ...and pin WHICH branch fired, so a regression toward refusing every
+  // restore cannot satisfy the disjunction above in silence. Which branch
+  // legitimately DIFFERS by device: this model keeps the bytes it accepted
+  // so the header survives and only the CRC rejects, while a page-buffered
+  // NOR discards them and the port rightly refuses at the header. So do not
+  // pin a branch -- pin that the branch the port took AGREES with what the
+  // array actually holds. That is the port's own behaviour under any model.
+  bool hdr_intact = (h.store[7][0] == 0x17 && h.store[7][1] == 0x22
+                     && ((h.store[7][4] << 8) | h.store[7][5]) <= MAXP);
+  bool asked_payload = (h.ops.size() == 2 && h.ops[1].op == OP_READ
+                        && h.ops[1].region == 7 && h.ops[1].offset == 8);
+  CHECK(hdr_intact ? asked_payload : !asked_payload,
+        "T15 the port forwarded or refused according to the stored header");
+
+  // the port survives the cut: a clean re-commit is byte-exact again
+  h.ops.clear();
+  rc = h.commit(7, replacement);
+  CHECK(rc == 0 && h.store_match(7, replacement),
+        "T15 serviceable after the cut: clean re-commit is byte-exact");
+}
+
+// ---- T16: a torn commit must not disturb the REST of the saved set -----
+// This is the #70 property proper. Records live in their own regions, so a
+// power cut while writing one must leave every other record readable and
+// byte-exact -- otherwise one interrupted save loses the whole set.
+void NvmPortSuite::torn_commit_leaves_every_other_region_untouched() {
+  std::vector<uint8_t> keep = frame(4, pattern(16, 0x11));
+  int rc = h.commit(4, keep);
+  CHECK(rc == 0 && h.store_match(4, keep), "T16 neighbour record committed");
+
+  // snapshot EVERY region: checking only the neighbour goes blind if the
+  // clobber lands one region over, and the README claims "every other
+  // record", not "the record next door".
+  int erases_before[N_REGIONS];
+  std::vector<std::vector<uint8_t>> store_before(N_REGIONS);
+  for (int r = 0; r < N_REGIONS; ++r) {
+    erases_before[r] = h.erase_count[r];
+    store_before[r].assign(h.store[r], h.store[r] + REG_BYTES);
+  }
+  h.ops.clear();
+  std::vector<uint8_t> torn = frame(1, pattern(16, 0x22));
+  h.arm_err(1, 5);
+  rc = h.commit(1, torn);
+  h.disarm_err();
+  CHECK(rc == 1, "T16 the neighbouring commit was torn");
+
+  bool other_erased = false;
+  bool other_moved = false;
+  for (int r = 0; r < N_REGIONS; ++r) {
+    if (r == 1) continue;                       // the torn record's own region
+    if (h.erase_count[r] != erases_before[r]) other_erased = true;
+    if (!std::equal(store_before[r].begin(), store_before[r].end(),
+                    h.store[r])) other_moved = true;
+  }
+  // Anti-vacuity: "no OTHER region moved" is trivially true if the commit
+  // never reached the device at all. Pin that it DID touch its own region
+  // first, so the isolation claim below is made about a real operation.
+  // Both halves are needed: the ERASE alone fires even when zero data bytes
+  // ever move (arm_err(1,-1) fails the WRITE before its first byte), so the
+  // region's own bytes must be seen to change as well.
+  CHECK(h.erase_count[1] > erases_before[1],
+        "T16 the torn commit really did erase its own region");
+  // Anti-vacuity rests on the TWO CHECKS BELOW THAT READ THE DUT, not on
+  // the byte comparison after them. Two earlier spellings were vacuous:
+  // "the bytes changed" is satisfied by the ERASE alone, and "some byte is
+  // not 0xFF" is satisfied by residue -- region 1 still holds T5b's record
+  // (the f5b commit in T5) eleven phases later, so that guard passed even when
+  // the port wedged and issued no traffic at all. Note the byte comparison
+  // does NOT separate those cases by itself either: torn[0..4] is
+  // 17 22 01 01 00, byte-identical to the T5b prefix, so all its separating
+  // power is in store[1][5] == 0xFF. The op log and the erase count are
+  // what a no-traffic port cannot fake: both are driven by dev_req_o.
   //
-  // The guarantee that matters for #70 is the one on the next phase: a torn
-  // commit of ONE record must not disturb ANOTHER. Here we pin that the torn
-  // image never restores as a VALID record -- "never a half-record that
-  // restores as garbage" -- graded with the suite's own CRC, because the port
-  // carries the CRC opaquely and only the manager can reject on it.
-  {
-    std::vector<uint8_t> whole = frame(7, pattern(24, 0x40));
-    h.ops.clear();
-    rc = h.commit(7, whole);
-    CHECK(rc == 0 && h.store_match(7, whole), "T15 seed record committed");
+  // The byte check reads `sent`, the bus handshake log, NOT the array. What
+  // the array retained after an error is the device model's choice -- this
+  // model keeps every accepted byte, a half-page model drops the last four,
+  // a page-buffered NOR keeps none until the program cycle ends -- so an
+  // array-relative assertion here tests the model. What the PORT put on the
+  // bus is the port's behaviour under all three.
+  CHECK(h.ops.size() == 2 && op_is(h.ops[1], OP_WRITE, 1, 0,
+                                   static_cast<int>(torn.size())),
+        "T16 the torn commit issued ERASE then the WRITE for this record");
+  CHECK(h.sent.size() == 5 && std::equal(h.sent.begin(), h.sent.end(),
+                                         torn.begin()),
+        "T16 the port sent exactly the 5 record bytes before the cut");
+  CHECK(!other_erased, "T16 the torn commit erased no other region");
+  CHECK(!other_moved, "T16 no other region's bytes moved");
+  CHECK(h.store_match(4, keep),
+        "T16 the neighbour's stored bytes are untouched");
+  h.ops.clear();
+  rc = h.restore(4);
+  CHECK(rc == 0 && h.rbytes == keep,
+        "T16 the neighbour still restores byte-exactly after the cut");
+}
 
-    std::vector<uint8_t> replacement = frame(7, pattern(24, 0x90));
-    h.ops.clear();
-    h.arm_err(1, 12);                 // op 0 = ERASE, op 1 = WRITE: cut at 12 B
-    rc = h.commit(7, replacement);
-    h.disarm_err();
-    CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
-          "T15 torn commit reports err, never done");
-    // busy_seen is added because busy_ok alone starts true and only clears
-    // when a pulse coincides with busy high, so it passes for a port that
-    // never pulsed. It does NOT catch a wedge: a wedged port holds busy high,
-    // so busy_seen is true and no pulse ever contradicts busy_ok. The wedge is
-    // caught by the rc check above; this pair only pins the pulse's timing.
-    CHECK(h.busy_seen && h.busy_ok, "T15 busy raised then low at the err pulse");
+// ---------------------------------------------------------------- T17
+// The cut that NOR flash actually produces. T15/T16 cut mid-stream, while
+// bytes are still moving. A real program failure is not reported then: the
+// device latches the bytes, starts the program cycle, and raises its error
+// only when that cycle ends -- after the LAST byte, with busy still high.
+// That is the port's S_WWAIT arm (KL_pp_nvm_port.sv:236-239), the widest
+// window in a commit, and no phase above enters it. Arming at exactly the
+// write length takes the device's fail branch in preference to its done
+// branch, so every byte is consumed and then err replaces done.
+void NvmPortSuite::late_write_failure_reports_err_not_done() {
+  std::vector<uint8_t> rec = frame(3, pattern(20, 0xC5));
+  h.ops.clear();
+  int rc = h.commit(3, rec);
+  CHECK(rc == 0 && h.store_match(3, rec), "T17 seed record committed");
 
-    // The cut must be REAL, stated on the bus. Reading the array here was a
-    // member of the same family as T16 and T17: under a backend that answers
-    // ERASE with `done` without rewriting the array -- which the port's own
-    // header names, and which 02 SS8 lists as the host-filesystem backing --
-    // the old record survives the tear intact, and an array-negative check
-    // reddens for a device doing the right thing.
-    CHECK(h.ops.size() == 2
-              && op_is(h.ops[1], OP_WRITE, 7, 0, (int)replacement.size())
-              && h.sent.size() == 12
-              && std::equal(h.sent.begin(), h.sent.end(), replacement.begin()),
-          "T15 the cut was real: ERASE then a WRITE stopped 12 bytes in");
+  std::vector<uint8_t> late = frame(3, pattern(20, 0xD6));
+  h.ops.clear();
+  // op 0 = ERASE, op 1 = WRITE. The WRITE carries the whole framed record,
+  // so cutting after that many bytes lands in the completion window.
+  h.arm_err(1, static_cast<int>(late.size()));
+  rc = h.commit(3, late);
+  h.disarm_err();
+  CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
+        "T17 a failure in the completion window reports err, never done");
+  // Pin that the cut actually landed in the COMPLETION window. Without this
+  // the phase passes with the tear moved anywhere in the stream, and its
+  // whole point is the window: every byte accepted, THEN the error. `sent`
+  // holding the full record is what distinguishes S_WWAIT from S_WDPUMP.
+  CHECK(h.sent.size() == late.size(),
+        "T17 the cut was in the completion window: every byte sent first");
+  CHECK(h.busy_seen && h.busy_ok,
+        "T17 busy raised then low at the err pulse");
+  // A wedge and a wrong answer are different failures and rc == 1 above
+  // already excludes both, so do not restate it. Assert instead what only a
+  // released port can show: busy low and idle once the pulse has passed.
+  CHECK(!dut->nvm_busy_o, "T17 the port is idle after the late failure");
 
-    // ...and it must not read back as a valid record. Either the port refuses
-    // it at the header, or the bytes it forwards fail the manager's CRC.
-    h.ops.clear();
-    rc = h.restore(7);
-    bool refused = (rc == 1 && h.rbytes.empty());
-    bool crc_rejects = false;
-    if (!refused && h.rbytes.size() >= 8) {
-      std::vector<uint8_t> cb(h.rbytes.begin(), h.rbytes.begin() + 6);
-      cb.insert(cb.end(), h.rbytes.begin() + 8, h.rbytes.end());
-      uint16_t stored = uint16_t(uint16_t(h.rbytes[6] << 8) | h.rbytes[7]);
-      crc_rejects = (crc16(cb) != stored);
-    }
-    // Conditioned, not asserted: if the backend left the OLD record intact the
-    // torn commit lost nothing, which is the outcome #70 wants, not a defect.
-    bool old_intact = std::equal(whole.begin(), whole.end(), h.store[7]);
-    CHECK(old_intact || refused || crc_rejects,
-          "T15 unless the old record survived, a torn image never restores as valid");
-    // ...and pin WHICH branch fired, so a regression toward refusing every
-    // restore cannot satisfy the disjunction above in silence. Which branch
-    // legitimately DIFFERS by device: this model keeps the bytes it accepted
-    // so the header survives and only the CRC rejects, while a page-buffered
-    // NOR discards them and the port rightly refuses at the header. So do not
-    // pin a branch -- pin that the branch the port took AGREES with what the
-    // array actually holds. That is the port's own behaviour under any model.
-    bool hdr_intact = (h.store[7][0] == 0x17 && h.store[7][1] == 0x22
-                       && ((h.store[7][4] << 8) | h.store[7][5]) <= MAXP);
-    bool asked_payload = (h.ops.size() == 2 && h.ops[1].op == OP_READ
-                          && h.ops[1].region == 7 && h.ops[1].offset == 8);
-    CHECK(hdr_intact ? asked_payload : !asked_payload,
-          "T15 the port forwarded or refused according to the stored header");
+  // What the array holds afterwards is NOT pinned here, and deliberately.
+  // This device model writes every byte and then reports the failure, so
+  // region 3 now holds a well-formed `late`. Real NOR may leave the last
+  // page half-programmed. The port cannot tell those apart and neither can
+  // this model, so the phase pins what the PORT owes -- err not done, busy
+  // released, bus not stranded -- and only that the port stays usable.
+  // The read side after the error exit is a port property, but it must be
+  // asserted where the array is KNOWN. What region 3 holds right after the
+  // tear is the device model's choice, so restoring here would test the
+  // model (two earlier spellings did exactly that). Commit a good record
+  // first -- that ends in `done`, so every model agrees what the array now
+  // holds -- and only then exercise the read side, pinning the device ops
+  // the way T2 does so a fabricated restore cannot pass.
+  h.ops.clear();
+  rc = h.commit(3, rec);
+  CHECK(rc == 0 && h.store_match(3, rec),
+        "T17 the port accepts the next commit after a late failure");
 
-    // the port survives the cut: a clean re-commit is byte-exact again
-    h.ops.clear();
-    rc = h.commit(7, replacement);
-    CHECK(rc == 0 && h.store_match(7, replacement),
-          "T15 serviceable after the cut: clean re-commit is byte-exact");
-  }
+  h.ops.clear();
+  rc = h.restore(3);
+  CHECK(rc == 0 && h.rbytes == rec,
+        "T17 the read side works after the error exit: restore byte-exact");
+  CHECK(h.ops.size() == 2 && op_is(h.ops[0], OP_READ, 3, 0, 8)
+            && op_is(h.ops[1], OP_READ, 3, 8,
+                     static_cast<int>(rec.size()) - 8),
+        "T17 that restore really issued READ hdr then READ payload");
+}
 
-  // ---- T16: a torn commit must not disturb the REST of the saved set -----
-  // This is the #70 property proper. Records live in their own regions, so a
-  // power cut while writing one must leave every other record readable and
-  // byte-exact -- otherwise one interrupted save loses the whole set.
-  {
-    std::vector<uint8_t> keep = frame(4, pattern(16, 0x11));
-    rc = h.commit(4, keep);
-    CHECK(rc == 0 && h.store_match(4, keep), "T16 neighbour record committed");
+// ---------------------------------------------------------------- T18
+// The RESTORE side of the same argument. T17 covers the completion window
+// on a WRITE, but a NOR read fails the same way: an ECC or timeout error
+// surfaces when the read cycle ends, not mid-stream. `S_RPWAIT` is the
+// exact mirror of the arm T17 closed, `S_RHWAIT` is that window on the
+// header probe, and `S_RHCOLL` is an error during the header collect --
+// which sits on the boot restore walk, the one path where a torn image is
+// actually consumed. All three survived the suite before this phase.
+void NvmPortSuite::read_completion_window_errors_report_err() {
+  h.ops.clear();
+  h.arm_err(0, 3);
+  int r = h.restore(5);
+  h.disarm_err();
+  CHECK(r == 1 && h.err_pulses == 1, "T18 an error collecting the header reports err (S_RHCOLL)");
+  CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8) && h.dev_rd == 3,
+        "T18 S_RHCOLL was reached: the tear landed 3 bytes into the header");
+  CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
 
-    // snapshot EVERY region: checking only the neighbour goes blind if the
-    // clobber lands one region over, and the README claims "every other
-    // record", not "the record next door".
-    int erases_before[N_REGIONS];
-    std::vector<std::vector<uint8_t>> store_before(N_REGIONS);
-    for (int r = 0; r < N_REGIONS; ++r) {
-      erases_before[r] = h.erase_count[r];
-      store_before[r].assign(h.store[r], h.store[r] + REG_BYTES);
-    }
-    h.ops.clear();
-    std::vector<uint8_t> torn = frame(1, pattern(16, 0x22));
-    h.arm_err(1, 5);
-    rc = h.commit(1, torn);
-    h.disarm_err();
-    CHECK(rc == 1, "T16 the neighbouring commit was torn");
+  h.ops.clear();
+  h.arm_err(0, 8);
+  r = h.restore(5);
+  h.disarm_err();
+  CHECK(r == 1 && h.err_pulses == 1, "T18 an error closing the header read reports err (S_RHWAIT)");
+  CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8) && h.dev_rd == 8,
+        "T18 S_RHWAIT was reached: all 8 header bytes delivered before the error");
+  CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
 
-    bool other_erased = false, other_moved = false;
-    for (int r = 0; r < N_REGIONS; ++r) {
-      if (r == 1) continue;                       // the torn record's own region
-      if (h.erase_count[r] != erases_before[r]) other_erased = true;
-      if (!std::equal(store_before[r].begin(), store_before[r].end(),
-                      h.store[r])) other_moved = true;
-    }
-    // Anti-vacuity: "no OTHER region moved" is trivially true if the commit
-    // never reached the device at all. Pin that it DID touch its own region
-    // first, so the isolation claim below is made about a real operation.
-    // Both halves are needed: the ERASE alone fires even when zero data bytes
-    // ever move (arm_err(1,-1) fails the WRITE before its first byte), so the
-    // region's own bytes must be seen to change as well.
-    CHECK(h.erase_count[1] > erases_before[1],
-          "T16 the torn commit really did erase its own region");
-    // Anti-vacuity rests on the TWO CHECKS BELOW THAT READ THE DUT, not on
-    // the byte comparison after them. Two earlier spellings were vacuous:
-    // "the bytes changed" is satisfied by the ERASE alone, and "some byte is
-    // not 0xFF" is satisfied by residue -- region 1 still holds T5b's record
-    // (the f5b commit in T5) eleven phases later, so that guard passed even when
-    // the port wedged and issued no traffic at all. Note the byte comparison
-    // does NOT separate those cases by itself either: torn[0..4] is
-    // 17 22 01 01 00, byte-identical to the T5b prefix, so all its separating
-    // power is in store[1][5] == 0xFF. The op log and the erase count are
-    // what a no-traffic port cannot fake: both are driven by dev_req_o.
-    //
-    // The byte check reads `sent`, the bus handshake log, NOT the array. What
-    // the array retained after an error is the device model's choice -- this
-    // model keeps every accepted byte, a half-page model drops the last four,
-    // a page-buffered NOR keeps none until the program cycle ends -- so an
-    // array-relative assertion here tests the model. What the PORT put on the
-    // bus is the port's behaviour under all three.
-    CHECK(h.ops.size() == 2 && op_is(h.ops[1], OP_WRITE, 1, 0,
-                                     static_cast<int>(torn.size())),
-          "T16 the torn commit issued ERASE then the WRITE for this record");
-    CHECK(h.sent.size() == 5 && std::equal(h.sent.begin(), h.sent.end(),
-                                           torn.begin()),
-          "T16 the port sent exactly the 5 record bytes before the cut");
-    CHECK(!other_erased, "T16 the torn commit erased no other region");
-    CHECK(!other_moved, "T16 no other region's bytes moved");
-    CHECK(h.store_match(4, keep),
-          "T16 the neighbour's stored bytes are untouched");
-    h.ops.clear();
-    rc = h.restore(4);
-    CHECK(rc == 0 && h.rbytes == keep,
-          "T16 the neighbour still restores byte-exactly after the cut");
-  }
+  h.ops.clear();
+  h.arm_err(1, 40);
+  r = h.restore(5);
+  h.disarm_err();
+  CHECK(r == 1 && h.err_pulses == 1,
+        "T18 an error in the payload completion window reports err (S_RPWAIT)");
+  CHECK(h.ops.size() == 2 && op_is(h.ops[0], OP_READ, 5, 0, 8)
+            && h.ops[1].op == OP_READ && h.ops[1].offset == 8
+            && h.dev_rd == 48 && h.rbytes.size() == f2.size(),
+        "T18 S_RPWAIT was reached: all 48 bytes delivered, whole record forwarded");
+  CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
 
-  // ---------------------------------------------------------------- T17
-  // The cut that NOR flash actually produces. T15/T16 cut mid-stream, while
-  // bytes are still moving. A real program failure is not reported then: the
-  // device latches the bytes, starts the program cycle, and raises its error
-  // only when that cycle ends -- after the LAST byte, with busy still high.
-  // That is the port's S_WWAIT arm (KL_pp_nvm_port.sv:236-239), the widest
-  // window in a commit, and no phase above enters it. Arming at exactly the
-  // write length takes the device's fail branch in preference to its done
-  // branch, so every byte is consumed and then err replaces done.
-  {
-    std::vector<uint8_t> rec = frame(3, pattern(20, 0xC5));
-    h.ops.clear();
-    int rc = h.commit(3, rec);
-    CHECK(rc == 0 && h.store_match(3, rec), "T17 seed record committed");
+  h.ops.clear();
+  r = h.restore(5);
+  CHECK(r == 0 && h.rbytes == f2,
+        "T18 serviceable after the three read cuts: restore is byte-exact");
+}
 
-    std::vector<uint8_t> late = frame(3, pattern(20, 0xD6));
-    h.ops.clear();
-    // op 0 = ERASE, op 1 = WRITE. The WRITE carries the whole framed record,
-    // so cutting after that many bytes lands in the completion window.
-    h.arm_err(1, static_cast<int>(late.size()));
-    rc = h.commit(3, late);
-    h.disarm_err();
-    CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
-          "T17 a failure in the completion window reports err, never done");
-    // Pin that the cut actually landed in the COMPLETION window. Without this
-    // the phase passes with the tear moved anywhere in the stream, and its
-    // whole point is the window: every byte accepted, THEN the error. `sent`
-    // holding the full record is what distinguishes S_WWAIT from S_WDPUMP.
-    CHECK(h.sent.size() == late.size(),
-          "T17 the cut was in the completion window: every byte sent first");
-    CHECK(h.busy_seen && h.busy_ok,
-          "T17 busy raised then low at the err pulse");
-    // A wedge and a wrong answer are different failures and rc == 1 above
-    // already excludes both, so do not restate it. Assert instead what only a
-    // released port can show: busy low and idle once the pulse has passed.
-    CHECK(!dut->nvm_busy_o, "T17 the port is idle after the late failure");
-
-    // What the array holds afterwards is NOT pinned here, and deliberately.
-    // This device model writes every byte and then reports the failure, so
-    // region 3 now holds a well-formed `late`. Real NOR may leave the last
-    // page half-programmed. The port cannot tell those apart and neither can
-    // this model, so the phase pins what the PORT owes -- err not done, busy
-    // released, bus not stranded -- and only that the port stays usable.
-    // The read side after the error exit is a port property, but it must be
-    // asserted where the array is KNOWN. What region 3 holds right after the
-    // tear is the device model's choice, so restoring here would test the
-    // model (two earlier spellings did exactly that). Commit a good record
-    // first -- that ends in `done`, so every model agrees what the array now
-    // holds -- and only then exercise the read side, pinning the device ops
-    // the way T2 does so a fabricated restore cannot pass.
-    h.ops.clear();
-    rc = h.commit(3, rec);
-    CHECK(rc == 0 && h.store_match(3, rec),
-          "T17 the port accepts the next commit after a late failure");
-
-    h.ops.clear();
-    rc = h.restore(3);
-    CHECK(rc == 0 && h.rbytes == rec,
-          "T17 the read side works after the error exit: restore byte-exact");
-    CHECK(h.ops.size() == 2 && op_is(h.ops[0], OP_READ, 3, 0, 8)
-              && op_is(h.ops[1], OP_READ, 3, 8, (int)rec.size() - 8),
-          "T17 that restore really issued READ hdr then READ payload");
-  }
-
-  // ---------------------------------------------------------------- T18
-  // The RESTORE side of the same argument. T17 covers the completion window
-  // on a WRITE, but a NOR read fails the same way: an ECC or timeout error
-  // surfaces when the read cycle ends, not mid-stream. `S_RPWAIT` is the
-  // exact mirror of the arm T17 closed, `S_RHWAIT` is that window on the
-  // header probe, and `S_RHCOLL` is an error during the header collect --
-  // which sits on the boot restore walk, the one path where a torn image is
-  // actually consumed. All three survived the suite before this phase.
-  {
-    h.ops.clear();
-    h.arm_err(0, 3);
-    int r = h.restore(5);
-    h.disarm_err();
-    CHECK(r == 1 && h.err_pulses == 1, "T18 an error collecting the header reports err (S_RHCOLL)");
-    CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8) && h.dev_rd == 3,
-          "T18 S_RHCOLL was reached: the tear landed 3 bytes into the header");
-    CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
-
-    h.ops.clear();
-    h.arm_err(0, 8);
-    r = h.restore(5);
-    h.disarm_err();
-    CHECK(r == 1 && h.err_pulses == 1, "T18 an error closing the header read reports err (S_RHWAIT)");
-    CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8) && h.dev_rd == 8,
-          "T18 S_RHWAIT was reached: all 8 header bytes delivered before the error");
-    CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
-
-    h.ops.clear();
-    h.arm_err(1, 40);
-    r = h.restore(5);
-    h.disarm_err();
-    CHECK(r == 1 && h.err_pulses == 1,
-          "T18 an error in the payload completion window reports err (S_RPWAIT)");
-    CHECK(h.ops.size() == 2 && op_is(h.ops[0], OP_READ, 5, 0, 8)
-              && h.ops[1].op == OP_READ && h.ops[1].offset == 8
-              && h.dev_rd == 48 && h.rbytes.size() == f2.size(),
-          "T18 S_RPWAIT was reached: all 48 bytes delivered, whole record forwarded");
-    CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
-
-    h.ops.clear();
-    r = h.restore(5);
-    CHECK(r == 0 && h.rbytes == f2,
-          "T18 serviceable after the three read cuts: restore is byte-exact");
-  }
-
-  // The real close. The check above used to carry this name but T15/T16/T17
-  // were appended after it, so nothing pinned the port's state at the end of
-  // the run any more -- a tear phase could leave it busy and no check would say.
+// The real close. The check above used to carry this name but T15/T16/T17
+// were appended after it, so nothing pinned the port's state at the end of
+// the run any more -- a tear phase could leave it busy and no check would say.
+void NvmPortSuite::the_port_is_idle_at_the_end_of_the_run() {
   h.tick();
   CHECK(!dut->nvm_busy_o && !dut->nvm_done_o && !dut->nvm_err_o,
         "idle again at the end of the run");
+}
+
+int NvmPortSuite::run() {
+  reset_leaves_the_port_idle();
+  commit_erases_then_writes_byte_exact();
+  restore_reads_header_then_payload_byte_exact();
+  zero_payload_record_round_trips();
+  stalls_on_every_byte_interface_are_survived();
+  back_to_back_ops_all_complete();
+  request_while_busy_is_ignored();
+  erase_error_stops_the_commit_then_recovers();
+  write_header_phase_error_surfaces_once();
+  read_payload_phase_error_surfaces_once();
+  bad_magic_commit_is_refused_before_the_device();
+  oversize_payload_length_is_refused();
+  bad_stored_magic_is_refused_on_restore();
+  oversize_stored_length_is_refused_on_restore();
+  refusals_leave_the_port_serviceable();
+  torn_commit_never_restores_as_valid();
+  torn_commit_leaves_every_other_region_untouched();
+  late_write_failure_reports_err_not_done();
+  read_completion_window_errors_report_err();
+  the_port_is_idle_at_the_end_of_the_run();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
-  delete dut;
   return fails ? 1 : 0;
+}
+
+int main(int argc, char** argv) {
+  Verilated::commandArgs(argc, argv);
+  NvmPortSuite suite;
+  return suite.run();
 }

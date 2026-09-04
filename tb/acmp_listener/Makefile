@@ -9,7 +9,7 @@ VFLAGS = --cc --exe --build -j 0 \
          -GSTRM_TIMEOUT_CYC_P=32 \
          -Wall -Wno-fatal -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDPARAM \
-         -CFLAGS "-std=c++17 -O2 -I$(CURDIR)"
+         -CFLAGS "-std=c++17 -O2 -I$(CURDIR) -Wall -Wextra"
 
 SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/acmp/pp_acmp_pkg.sv \
        $(HDL)/acmp/KL_pp_acmp_listener.sv

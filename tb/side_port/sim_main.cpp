@@ -14,16 +14,26 @@
 #include <cstring>
 #include "Vside_port_tb_wrap.h"
 #include "verilated.h"
+#include "../common/verilator_harness.hpp"
 
-static int checks = 0, fails = 0;
 #define CHECK(cond, ...) do { \
   ++checks; \
   if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
 } while (0)
 
+// P-TRACE-RING geometry: the ring holds kRingRecords records of kRecordLanes
+// 32-bit lanes each, and the write counter is mod-2^16.
+constexpr uint32_t kRingRecords = 256;
+constexpr uint32_t kRecordLanes = 4;
+constexpr uint32_t kRingIndexMask = kRingRecords - 1;
+constexpr uint32_t kCountMask = 0xFFFFu;
+
+// host-side transaction guard: hold req for at most this many cycles
+constexpr int kXactTimeoutCycles = 32;
+
 // deterministic environment data for the five stubbed windows
 static uint32_t stub_val(int win, uint32_t off) {
-  return (uint32_t(win) << 28) ^ (off * 2654435761u) ^ 0x005A17E5u;
+  return (static_cast<uint32_t>(win) << 28) ^ (off * 2654435761u) ^ 0x005A17E5u;
 }
 
 // deterministic trace-record lanes; lane 0 = record bits [127:96] (MSB-first)
@@ -37,21 +47,28 @@ struct Stub {
   uint32_t resp = 0;
   int reqs = 0;
   bool last_we = false;
-  uint32_t last_addr = 0, last_wdata = 0;
+  uint32_t last_addr = 0;
+  uint32_t last_wdata = 0;
 };
 
 struct Harness {
   Vside_port_tb_wrap* dut;
-  Stub img, dbg, snap, ctrl, fw;
+  Stub img;
+  Stub dbg;
+  Stub snap;
+  Stub ctrl;
+  Stub fw;
   int trace_reqs = 0;
 
   // ---- independent ring model (mod-2^16 count, 256 records × 4 lanes) ----
   uint32_t rcnt = 0;
-  std::array<std::array<uint32_t, 4>, 256> rmem{};
+  std::array<std::array<uint32_t, kRecordLanes>, kRingRecords> rmem{};
 
-  bool rv_seen = false, err_seen = false;
+  bool rv_seen = false;
+  bool err_seen = false;
   uint32_t rdata_seen = 0;
-  bool b_rv_seen = false, b_err_seen = false;
+  bool b_rv_seen = false;
+  bool b_err_seen = false;
   uint32_t b_rdata_seen = 0;
 
   explicit Harness(Vside_port_tb_wrap* d) : dut(d) {}
@@ -104,7 +121,7 @@ struct Harness {
     b_rdata_seen = dut->b_rdata_o;
 
     bool wv = dut->trc_wr_valid_i;
-    uint32_t lanes[4] = {0, 0, 0, 0};
+    std::array<uint32_t, kRecordLanes> lanes = {0, 0, 0, 0};
     if (wv) {  // VlWide word 0 = bits [31:0] = lane 3 (MSB-first lanes)
       lanes[0] = dut->trc_wr_data_i[3];
       lanes[1] = dut->trc_wr_data_i[2];
@@ -117,14 +134,15 @@ struct Harness {
 
     // ring model commits with the posedge (read-first vs same-edge reads)
     if (wv) {
-      rmem[rcnt & 255] = {lanes[0], lanes[1], lanes[2], lanes[3]};
-      rcnt = (rcnt + 1) & 0xFFFF;
+      rmem[rcnt & kRingIndexMask] = {lanes[0], lanes[1], lanes[2], lanes[3]};
+      rcnt = (rcnt + 1) & kCountMask;
     }
   }
 
   // ---- host A transaction: hold req until rvalid (F02.7 semantics) ----
   struct Rsp { bool done; bool err; uint32_t data; int cycles; };
-  Rsp xact(bool we, uint32_t addr, uint32_t wdata = 0, int timeout = 32) {
+  Rsp xact(bool we, uint32_t addr, uint32_t wdata = 0,
+           int timeout = kXactTimeoutCycles) {
     dut->req_valid_i = 1;
     dut->we_i = we;
     dut->addr_i = addr;
@@ -142,7 +160,8 @@ struct Harness {
     return {false, false, 0, timeout};
   }
 
-  Rsp b_xact(bool we, uint32_t addr, uint32_t wdata = 0, int timeout = 32) {
+  Rsp b_xact(bool we, uint32_t addr, uint32_t wdata = 0,
+             int timeout = kXactTimeoutCycles) {
     dut->b_req_valid_i = 1;
     dut->b_we_i = we;
     dut->b_addr_i = addr;
@@ -179,11 +198,38 @@ static uint32_t trace_addr(uint32_t rec, uint32_t lane) {
   return 0x40000u | (rec << 2) | lane;
 }
 
-int main(int argc, char** argv) {
-  Verilated::commandArgs(argc, argv);
-  auto* dut = new Vside_port_tb_wrap;
-  Harness h(dut);
+namespace {
 
+//! Owns the model, the two host BFMs and the tally, so every phase below
+//! drives the same DUT and counts into the same summary line.
+class SidePortSuite {
+ public:
+  SidePortSuite() : dut(model.get()), h(dut) {}
+
+  int run();
+
+ private:
+  void reset_leaves_the_bus_quiet();
+  void window_decode_at_every_boundary();
+  void unmapped_addresses_are_refused();
+  void read_only_windows_refuse_writes();
+  void image_window_writes_only_before_enable();
+  void rw_windows_forward_through_wait_states();
+  void single_outstanding_request_is_accepted_once();
+  void instance_b_drops_the_firmware_window();
+  void ring_first_fill_reads_back_bit_exact();
+  void three_hundred_writes_wrap_the_ring();
+  void read_during_write_returns_the_old_record();
+  void decode_still_exact_after_the_campaign();
+
+  const milan::tb::Model<Vside_port_tb_wrap> model;
+  Vside_port_tb_wrap* const dut;
+  Harness h;
+  int checks = 0;
+  int fails = 0;
+};
+
+void SidePortSuite::reset_leaves_the_bus_quiet() {
   dut->rst_n = 0;
   dut->entity_enable_i = 0;
   dut->req_valid_i = 0;
@@ -194,8 +240,10 @@ int main(int argc, char** argv) {
   dut->rst_n = 1;
   h.tick();
   CHECK(dut->trc_wr_count_o == 0, "ring count 0 after reset");
+}
 
-  // ---- T1: window decode at every boundary (first/last word) ------------
+// ---- T1: window decode at every boundary (first/last word) ------------
+void SidePortSuite::window_decode_at_every_boundary() {
   struct Bound { int win; uint32_t addr; Stub* s; };
   const Bound rd_bounds[] = {
       {0, 0x00000u, &h.img},  {0, 0x0FFFFu, &h.img},
@@ -227,10 +275,12 @@ int main(int argc, char** argv) {
     CHECK(r1.done && !r1.err && r1.data == 0,
           "trace window last word forwards (count map, got %08X)", r1.data);
   }
+}
 
-  // ---- T2: out-of-range / unmapped -> err, nothing forwarded ------------
-  const uint32_t bad_addrs[] = {0x30100u, 0x3FFFFu, 0x60000u, 0x70000u,
-                                0xFFFFFu};
+// ---- T2: out-of-range / unmapped -> err, nothing forwarded ------------
+void SidePortSuite::unmapped_addresses_are_refused() {
+  const std::array<uint32_t, 5> bad_addrs = {0x30100u, 0x3FFFFu, 0x60000u,
+                                             0x70000u, 0xFFFFFu};
   for (uint32_t a : bad_addrs) {
     int before = h.total_fwd_reqs();
     auto r = h.xact(false, a);
@@ -243,17 +293,22 @@ int main(int argc, char** argv) {
     CHECK(r.done && r.err, "unmapped write refused with err");
     CHECK(r.cycles == 1, "error response is single-cycle (got %d)", r.cycles);
   }
+}
 
-  // ---- T3: RO windows refuse writes, err, never forwarded ---------------
-  const uint32_t ro_wr[] = {0x10000u, 0x1FFFFu, 0x2ABCDu, 0x40000u, 0x4B123u};
+// ---- T3: RO windows refuse writes, err, never forwarded ---------------
+void SidePortSuite::read_only_windows_refuse_writes() {
+  const std::array<uint32_t, 5> ro_wr = {0x10000u, 0x1FFFFu, 0x2ABCDu,
+                                         0x40000u, 0x4B123u};
   for (uint32_t a : ro_wr) {
     int before = h.total_fwd_reqs();
     auto r = h.xact(true, a, 0xBADC0DEu);
     CHECK(r.done && r.err, "RO write 0x%05X refused with err", a);
     CHECK(h.total_fwd_reqs() == before, "RO write 0x%05X not forwarded", a);
   }
+}
 
-  // ---- T4: image window W pre-enable only (07 §2) -----------------------
+// ---- T4: image window W pre-enable only (07 §2) -----------------------
+void SidePortSuite::image_window_writes_only_before_enable() {
   {
     dut->entity_enable_i = 0;
     auto r = h.xact(true, 0x00123u, 0xA5C31E7Bu);
@@ -274,8 +329,10 @@ int main(int argc, char** argv) {
           "image READ still allowed post-enable (07 §2 read-only everywhere)");
     dut->entity_enable_i = 0;
   }
+}
 
-  // ---- T5: RW windows forward writes byte-exact through wait states -----
+// ---- T5: RW windows forward writes byte-exact through wait states -----
+void SidePortSuite::rw_windows_forward_through_wait_states() {
   {
     h.ctrl.lat = 3;
     auto r = h.xact(true, 0x30040u, 0x0F1E2D3Cu);
@@ -298,12 +355,15 @@ int main(int argc, char** argv) {
           h.fw.last_wdata);
     h.fw.lat = 1;
   }
+}
 
-  // ---- T6: single outstanding — held request accepted exactly once, and
-  //          a mid-wait address change must not fire another window -------
+// ---- T6: single outstanding — held request accepted exactly once, and
+//          a mid-wait address change must not fire another window -------
+void SidePortSuite::single_outstanding_request_is_accepted_once() {
   {
     h.ctrl.lat = 4;
-    int ctrl_before = h.ctrl.reqs, dbg_before = h.dbg.reqs;
+    int ctrl_before = h.ctrl.reqs;
+    int dbg_before = h.dbg.reqs;
     dut->req_valid_i = 1;
     dut->we_i = 0;
     dut->addr_i = 0x30011u;
@@ -319,8 +379,10 @@ int main(int argc, char** argv) {
     h.ctrl.lat = 1;
     h.tick();
   }
+}
 
-  // ---- T7: instance B (P-EN-FIRMWARE-ASSIST = 0): window 5 vanishes -----
+// ---- T7: instance B (P-EN-FIRMWARE-ASSIST = 0): window 5 vanishes -----
+void SidePortSuite::instance_b_drops_the_firmware_window() {
   {
     auto r = h.b_xact(false, 0x30010u);
     CHECK(r.done && !r.err && r.data == 0xB0B0B0B0u,
@@ -330,13 +392,15 @@ int main(int argc, char** argv) {
     auto r3 = h.b_xact(true, 0x5FFFFu, 1);
     CHECK(r3.done && r3.err, "B: fw write refused when parameter off");
   }
+}
 
-  // ---- T8: ring first fill — 5 records, all lanes bit-exact -------------
+// ---- T8: ring first fill — 5 records, all lanes bit-exact -------------
+void SidePortSuite::ring_first_fill_reads_back_bit_exact() {
   for (uint32_t k = 0; k < 5; ++k) h.write_record(k);
   CHECK(dut->trc_wr_count_o == 5, "count 5 after 5 writes (got %u)",
         dut->trc_wr_count_o);
   for (uint32_t rec = 0; rec < 5; ++rec) {
-    for (uint32_t lane = 0; lane < 4; ++lane) {
+    for (uint32_t lane = 0; lane < kRecordLanes; ++lane) {
       auto r = h.xact(false, trace_addr(rec, lane));
       CHECK(r.done && !r.err && r.data == h.rmem[rec][lane],
             "rec %u lane %u via window (got %08X want %08X)", rec, lane,
@@ -345,11 +409,13 @@ int main(int argc, char** argv) {
   }
   {
     auto r = h.xact(false, 0x40400u);  // offset bit 10 -> counter
-    CHECK(r.done && !r.err && r.data == (h.rcnt & 0xFFFFu),
+    CHECK(r.done && !r.err && r.data == (h.rcnt & kCountMask),
           "counter via window (got %08X)", r.data);
   }
+}
 
-  // ---- T9: 300 writes wrap — counter 300, oldest overwritten ------------
+// ---- T9: 300 writes wrap — counter 300, oldest overwritten ------------
+void SidePortSuite::three_hundred_writes_wrap_the_ring() {
   for (uint32_t k = 5; k < 300; ++k) h.write_record(k);
   CHECK(dut->trc_wr_count_o == 300, "count 300 after 300 writes (got %u)",
         dut->trc_wr_count_o);
@@ -360,10 +426,10 @@ int main(int argc, char** argv) {
   // model says: indices 0..43 hold records 256..299, 44..255 hold 44..255
   CHECK(h.rmem[0][0] == rec_lane(256, 0), "model: index 0 overwritten");
   CHECK(h.rmem[44][0] == rec_lane(44, 0), "model: index 44 is the oldest");
-  for (uint32_t rec = 0; rec < 256; ++rec) {
+  for (uint32_t rec = 0; rec < kRingRecords; ++rec) {
     bool ok = true;
-    uint32_t got[4] = {0, 0, 0, 0};
-    for (uint32_t lane = 0; lane < 4; ++lane) {
+    std::array<uint32_t, kRecordLanes> got = {0, 0, 0, 0};
+    for (uint32_t lane = 0; lane < kRecordLanes; ++lane) {
       auto r = h.xact(false, trace_addr(rec, lane));
       got[lane] = r.data;
       ok = ok && r.done && !r.err && (r.data == h.rmem[rec][lane]);
@@ -371,8 +437,10 @@ int main(int argc, char** argv) {
     CHECK(ok, "post-wrap rec %u bit-exact (got %08X %08X %08X %08X)", rec,
           got[0], got[1], got[2], got[3]);
   }
+}
 
-  // ---- T10: read during write — same record returns the OLD data --------
+// ---- T10: read during write — same record returns the OLD data --------
+void SidePortSuite::read_during_write_returns_the_old_record() {
   {
     // write pointer is at 300 % 256 = 44; read record 44 in the same cycle
     uint32_t old0 = h.rmem[44][0];
@@ -417,8 +485,10 @@ int main(int argc, char** argv) {
     CHECK(h.rv_seen && h.rdata_seen == h.rmem[100][2],
           "other-address read during write bit-exact");
   }
+}
 
-  // ---- T11: decode still exact after all traffic ------------------------
+// ---- T11: decode still exact after all traffic ------------------------
+void SidePortSuite::decode_still_exact_after_the_campaign() {
   {
     auto r = h.xact(false, 0x2FFFFu);
     CHECK(r.done && !r.err && r.data == stub_val(2, 0xFFFFu),
@@ -427,7 +497,30 @@ int main(int argc, char** argv) {
     CHECK(r2.done && r2.err, "trace window still RO after the campaign");
   }
 
+}
+
+int SidePortSuite::run() {
+  reset_leaves_the_bus_quiet();
+  window_decode_at_every_boundary();
+  unmapped_addresses_are_refused();
+  read_only_windows_refuse_writes();
+  image_window_writes_only_before_enable();
+  rw_windows_forward_through_wait_states();
+  single_outstanding_request_is_accepted_once();
+  instance_b_drops_the_firmware_window();
+  ring_first_fill_reads_back_bit_exact();
+  three_hundred_writes_wrap_the_ring();
+  read_during_write_returns_the_old_record();
+  decode_still_exact_after_the_campaign();
+
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
-  delete dut;
   return fails ? 1 : 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  Verilated::commandArgs(argc, argv);
+  SidePortSuite suite;
+  return suite.run();
 }

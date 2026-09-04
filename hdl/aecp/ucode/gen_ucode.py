@@ -14,6 +14,7 @@ BAD_ARGUMENTS 7 · NOT_SUPPORTED 11. Unused ROM words are a varied
 deterministic fill — contents are irrelevant to LUT once the ROM is BRAM.
 """
 import argparse
+from typing import NamedTuple
 
 OPS = {
     'NOP': 0, 'BRANCH': 1, 'BR_STATUS': 2, 'END': 3,
@@ -49,7 +50,24 @@ RGN_LOCATE = 0xF0000   # perform a locate
 ROM_DEPTH = 2048
 
 
-def u(op, rd=0, ra=0, rb=0, fmt=0, cnd=0, imm=0):
+class UopFields(NamedTuple):
+    """Everything a mnemonic can carry besides its opcode: the three register
+    selectors, the operand format, the condition and the 24-bit immediate.
+    A field a call does not name is zero, which is what the encoding means by
+    "unused", so an instruction spells only the fields it actually uses."""
+
+    rd: int = 0
+    ra: int = 0
+    rb: int = 0
+    fmt: int = 0
+    cnd: int = 0
+    imm: int = 0
+
+
+def u(op: str, **fields: int) -> int:
+    """One 48-bit µop word. `fields` are `UopFields`' - `rd`, `ra`, `rb`,
+    `fmt`, `cnd`, `imm` - and any the call omits encode as zero."""
+    rd, ra, rb, fmt, cnd, imm = UopFields(**fields)
     assert 0 <= imm < (1 << 24), hex(imm)
     return (OPS[op] << 43) | (rd << 39) | (ra << 35) | (rb << 31) \
         | (fmt << 28) | (cnd << 24) | imm
@@ -323,7 +341,13 @@ occupied = set()
 placed = []
 
 
-def place(at, words):
+def place(at: int, words: list[int]) -> None:
+    """Lay one microprogram at ROM word `at`, asserting on any overlap.
+
+    Three tracks add programs to this file in parallel, and two of them
+    choosing the same entry point is a silent wrong-uPC dispatch rather than
+    a build error; the overlap assert is what turns it into one.
+    """
     for i, w in enumerate(words):
         assert (at + i) not in occupied, f"overlap at {at + i}"
         occupied.add(at + i)
@@ -981,7 +1005,8 @@ place(E_LOCKUNS, [
 #   5 BRIDGE  msrp_failure_bridge_id                            -> @60 qword
 #   6 VLANEX  {stream_vlan_id, 16'0, flags_ex}                  -> @68 qword
 #   7 PBSTA   {32'0, {pbsta[2:0], acmpsta[4:0]}, 24'0}          -> @76 dword
-def GSI(n):
+def GSI(n: int) -> dict[str, int]:
+    """GET_STREAM_INFO word `n` as the cnd/imm pair a GATHER_EXT carries."""
     return dict(cnd=0xB, imm=n)
 
 # --- GET_STREAM_INFO (IEEE §7.4.16, Milan §5.4.2.10) -------------------------

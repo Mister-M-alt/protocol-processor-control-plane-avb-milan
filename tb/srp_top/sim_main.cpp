@@ -18,8 +18,8 @@
 #include <vector>
 #include "Vsrp_top_wrap.h"
 #include "verilated.h"
+#include "../common/verilator_harness.hpp"
 
-static int checks = 0, fails = 0;
 #define CHECK(cond, ...) do { \
   ++checks; \
   if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
@@ -28,30 +28,46 @@ static int checks = 0, fails = 0;
 // ---------------------------------------------------------------------------
 // constants (TB shape)
 // ---------------------------------------------------------------------------
-static const int      MS_CYC   = 40;                    // wrap: 1 ms = 40 clk
-static const uint64_t OWN_MAC  = 0x0A0B0C0D0E0FULL;
-static const uint64_t EID      = 0x123456789ABCDEF0ULL;
-static const uint32_t RATE     = 100000000u;            // 100 Mb/s port
-static const uint64_t LIMIT    = 75000000ull;           // 75 % ceiling
-static const uint32_t ACC_LAT  = 0x000186A0u;           // cfg initial latency
-static const uint64_t MSRP_DA  = 0x0180C200000EULL;
-static const uint64_t MVRP_DA  = 0x0180C2000021ULL;
+constexpr int         MS_CYC   = 40;                    // wrap: 1 ms = 40 clk
+constexpr uint64_t    OWN_MAC  = 0x0A0B0C0D0E0FULL;
+constexpr uint64_t    EID      = 0x123456789ABCDEF0ULL;
+constexpr uint32_t    RATE     = 100000000u;            // 100 Mb/s port
+constexpr uint64_t    LIMIT    = 75000000ull;           // 75 % ceiling
+constexpr uint32_t    ACC_LAT  = 0x000186A0u;           // cfg initial latency
+constexpr uint64_t    MSRP_DA  = 0x0180C200000EULL;
+constexpr uint64_t    MVRP_DA  = 0x0180C2000021ULL;
+
+// class-B request handshake guard, in clock cycles: the wait for req_ready_o
+// and the wait for the matching rsp_valid_o
+constexpr int         OP_GUARD = 200000;
 
 // class-B ops / status (KL_srp_top banner)
-enum { OP_DECL_TK = 0, OP_WDRW_TK = 1, OP_DECL_LS = 2, OP_WDRW_LS = 3,
-       OP_GET_DOM = 4 };
-enum { ST_OK = 0, ST_FAIL = 1, ST_UNSUP = 2 };
+constexpr int OP_DECL_TK = 0;
+constexpr int OP_WDRW_TK = 1;
+constexpr int OP_DECL_LS = 2;
+constexpr int OP_WDRW_LS = 3;
+constexpr int OP_GET_DOM = 4;
+constexpr int ST_OK      = 0;
+constexpr int ST_FAIL    = 1;
+constexpr int ST_UNSUP   = 2;
 
 // MRP attribute events (802.1Q §35.2.2.7.2) + Listener declarations
-enum { EV_NEW = 0, EV_JOININ = 1, EV_IN = 2, EV_JOINMT = 3, EV_MT = 4,
-       EV_LV = 5 };
-enum { DECL_IGNORE = 0, DECL_ASKFAIL = 1, DECL_READY = 2, DECL_READYFAIL = 3 };
+constexpr int EV_NEW         = 0;
+constexpr int EV_JOININ      = 1;
+constexpr int EV_IN          = 2;
+constexpr int EV_JOINMT      = 3;
+constexpr int EV_MT          = 4;
+constexpr int EV_LV          = 5;
+constexpr int DECL_IGNORE    = 0;
+constexpr int DECL_ASKFAIL   = 1;
+constexpr int DECL_READY     = 2;
+constexpr int DECL_READYFAIL = 3;
 
 // ---------------------------------------------------------------------------
 // independent Σ-slope model (Milan v1.2 §4.3.3.2, reference formula)
 // ---------------------------------------------------------------------------
 static uint64_t slope_bps(uint32_t mfs, uint32_t mif) {
-  uint64_t f = (uint64_t)mfs + 22;      // L2 header incl. VLAN tag + FCS
+  uint64_t f = static_cast<uint64_t>(mfs) + 22;  // L2 hdr incl. VLAN tag + FCS
   if (f < 68) f = 68;                   // tagged minimum-size frame
   uint64_t w = f + 20;                  // preamble + IPG
   return w * mif * 8000ull * 8ull;      // class-A 8000 intervals/s
@@ -59,7 +75,8 @@ static uint64_t slope_bps(uint32_t mfs, uint32_t mif) {
 
 struct AdmModel {
   bool     req[8] = {};
-  uint32_t mfs[8] = {}, mif[8] = {};
+  uint32_t mfs[8] = {};
+  uint32_t mif[8] = {};
   bool     grant[8];
   uint64_t granted[8];
   uint64_t sum;
@@ -102,15 +119,18 @@ static std::vector<uint8_t> vec_bytes(const Vec& v, bool listener) {
   b.push_back(v.nov & 0xFF);
   b.insert(b.end(), v.fv.begin(), v.fv.end());
   for (int i = 0; i < v.nov; i += 3) {
-    int e[3] = {0, 0, 0};
+    int e[3] = {0, 0,
+                0};
     for (int j = 0; j < 3 && i + j < v.nov; j++) e[j] = v.ev[i + j];
-    b.push_back((uint8_t)(((e[0] * 6) + e[1]) * 6 + e[2]));
+    b.push_back(static_cast<uint8_t>(((e[0] * 6) + e[1]) * 6 + e[2]));
   }
   if (listener) {
     for (int i = 0; i < v.nov; i += 4) {
-      int p[4] = {0, 0, 0, 0};
+      int p[4] = {0, 0,
+                  0, 0};
       for (int j = 0; j < 4 && i + j < v.nov; j++) p[j] = v.fp[i + j];
-      b.push_back((uint8_t)(p[0] * 64 + p[1] * 16 + p[2] * 4 + p[3]));
+      b.push_back(
+          static_cast<uint8_t>(p[0] * 64 + p[1] * 16 + p[2] * 4 + p[3]));
     }
   }
   return b;
@@ -120,14 +140,14 @@ static std::vector<uint8_t> mrpdu_body(bool msrp, const std::vector<Msg>& ms) {
   std::vector<uint8_t> b;
   b.push_back(0x00);                    // ProtocolVersion
   for (const Msg& m : ms) {
-    b.push_back((uint8_t)m.type);
-    b.push_back((uint8_t)m.alen);
+    b.push_back(static_cast<uint8_t>(m.type));
+    b.push_back(static_cast<uint8_t>(m.alen));
     std::vector<uint8_t> body;
     for (const Vec& v : m.vecs) {
       auto vb = vec_bytes(v, m.listener);
       body.insert(body.end(), vb.begin(), vb.end());
     }
-    if (msrp) put16(b, (uint16_t)(body.size() + 2));   // + list EndMark
+    if (msrp) put16(b, static_cast<uint16_t>(body.size() + 2));  // + EndMark
     b.insert(b.end(), body.begin(), body.end());
     put16(b, 0x0000);                   // AttributeList EndMark
   }
@@ -153,7 +173,7 @@ static std::vector<uint8_t> fv_talker(uint64_t sid, uint64_t da, uint16_t vid,
   for (int i = 7; i >= 0; i--) b.push_back((sid >> (8 * i)) & 0xFF);
   put_mac(b, da);
   put16(b, vid); put16(b, mfs); put16(b, mif);
-  b.push_back((uint8_t)((prio << 5) | (rank << 4)));
+  b.push_back(static_cast<uint8_t>((prio << 5) | (rank << 4)));
   for (int i = 3; i >= 0; i--) b.push_back((lat >> (8 * i)) & 0xFF);
   return b;
 }
@@ -211,11 +231,11 @@ static PFrame parse_frame(const std::vector<uint8_t>& f) {
       v.la  = (f[i] & 0xE0) != 0;
       v.nov = ((f[i] & 0x1F) << 8) | f[i + 1];
       i += 2;
-      if (i + (size_t)alen > f.size()) return r;
+      if (i + static_cast<size_t>(alen) > f.size()) return r;
       v.fv.assign(f.begin() + i, f.begin() + i + alen);
       i += alen;
       int n3 = (v.nov + 2) / 3;
-      if (i + (size_t)n3 > f.size()) return r;
+      if (i + static_cast<size_t>(n3) > f.size()) return r;
       for (int k = 0; k < n3; k++) {
         int b = f[i + k];
         v.ev.push_back(b / 36); v.ev.push_back((b / 6) % 6);
@@ -224,7 +244,7 @@ static PFrame parse_frame(const std::vector<uint8_t>& f) {
       i += n3;
       if (r.msrp && type == 3) {
         int n4 = (v.nov + 3) / 4;
-        if (i + (size_t)n4 > f.size()) return r;
+        if (i + static_cast<size_t>(n4) > f.size()) return r;
         for (int k = 0; k < n4; k++) {
           int b = f[i + k];
           v.fp.push_back(b / 64); v.fp.push_back((b / 16) % 4);
@@ -272,10 +292,12 @@ struct H {
   // frame capture
   bool streaming = false;
   std::vector<uint8_t> cur;
-  std::deque<std::vector<uint8_t>> q_msrp, q_mvrp;
+  std::deque<std::vector<uint8_t>> q_msrp;
+  std::deque<std::vector<uint8_t>> q_mvrp;
   std::vector<std::vector<uint8_t>> archive;   // everything ever captured
   // strobe accounting
-  int reg_cnt[8] = {}, unreg_cnt[8] = {};
+  int reg_cnt[8] = {};
+  int unreg_cnt[8] = {};
   int domchg = 0;
   int malformed = 0;
 
@@ -359,7 +381,7 @@ struct H {
   struct Rsp { int status; uint32_t data; bool got; };
   Rsp op(int opc, int idx, uint64_t sid = 0, uint64_t da = 0, int vid = 0,
          int mfs = 0, int mif = 0, int lstn = 0) {
-    int guard = 200000;
+    int guard = OP_GUARD;
     while (!d->req_ready_o && guard--) cycle();
     d->req_valid_i = 1;
     d->req_op_i = opc; d->req_index_i = idx;
@@ -369,7 +391,7 @@ struct H {
     cycle();                             // accepted at this posedge
     d->req_valid_i = 0;
     Rsp r{ -1, 0, false };
-    for (int i = 0; i < 200000; i++) {
+    for (int i = 0; i < OP_GUARD; i++) {
       if (d->rsp_valid_o) {              // registered strobe, post-edge view
         r.status = d->rsp_status_o; r.data = d->rsp_data_o; r.got = true;
         cycle();
@@ -384,7 +406,7 @@ struct H {
   // rest in the archive); empty vector on timeout
   template <typename P>
   std::vector<uint8_t> wait_frame(bool msrp, int timeout_ms, P pred) {
-    long budget = (long)timeout_ms * MS_CYC;
+    long budget = static_cast<long>(timeout_ms) * MS_CYC;
     for (;;) {
       auto& q = msrp ? q_msrp : q_mvrp;
       while (!q.empty()) {
@@ -418,11 +440,11 @@ struct H {
   uint32_t granted(int s) { return d->granted_slope_bps_o[s]; }
   uint32_t acclat(int k)  { return d->acc_latency_o[k]; }
   uint64_t src_bridge(int s) {
-    return ((uint64_t)d->src_fail_bridge_o[2 * s + 1] << 32)
+    return (static_cast<uint64_t>(d->src_fail_bridge_o[2 * s + 1]) << 32)
          | d->src_fail_bridge_o[2 * s];
   }
   uint64_t snk_bridge(int k) {
-    return ((uint64_t)d->snk_fail_bridge_o[2 * k + 1] << 32)
+    return (static_cast<uint64_t>(d->snk_fail_bridge_o[2 * k + 1]) << 32)
          | d->snk_fail_bridge_o[2 * k];
   }
   int tk_decl(int s)  { return (d->tk_decl_state_o   >> (2 * s)) & 3; }
@@ -438,23 +460,51 @@ static void dump(const char* tag, const std::vector<uint8_t>& f) {
   printf("\n");
 }
 
-int main(int argc, char** argv) {
-  Verilated::commandArgs(argc, argv);
-  auto* d = new Vsrp_top_wrap;
-  H h(d);
-  h.reset();
-  d->link_up_i = 1;                     // seeds the PRNG + Domain declares
-  h.idle(10);
+namespace {
 
-  const uint64_t SID0 = (OWN_MAC << 16) | 0x0001;
-  const uint64_t SID1 = (OWN_MAC << 16) | 0x0002;
-  const uint64_t DA0  = 0x91E0F00A0B01ULL;
-  const uint64_t DA1  = 0x91E0F00A0B11ULL;
-  const uint64_t SIDX = 0x1122334455660001ULL;
-  const uint64_t DAX  = 0x91E0F0112233ULL;
+//! The whole end-to-end bench under one owner (Core Guidelines I.2): the DUT,
+//! the BFM that captures its wire, the independent admission model the wire is
+//! judged against, and the tally. Each scenario below keeps the banner it had
+//! in `main` and is named for what it proves rather than for its letter (F.3).
+class SrpTopHarness {
+ public:
+  SrpTopHarness() : d(model.get()), h(d) {}
+
+  int run() {
+    bring_up_the_port();
+    check_domain_default_declaration_is_byte_exact();
+    check_get_domain_and_bad_ops();
+    check_declare_talker_admits_and_advertises();
+    check_over_ceiling_refusal_is_talker_failed();
+    check_freed_capacity_admits_the_refused_source();
+    check_listener_registration_becomes_a_ready_declaration();
+    check_certified_domain_arrival_adopts_and_redeclares();
+    check_own_msrp_leaveall_cycle();
+    check_received_msrp_leaveall_ages_to_expiry();
+    check_mvrp_leaveall_is_its_own_participant();
+    check_peer_leaveall_cadence_stays_bounded();
+    check_admission_sweep_matches_the_model();
+
+    printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
+    return fails ? 1 : 0;
+  }
+
+ private:
+  static constexpr uint64_t SID0 = (OWN_MAC << 16) | 0x0001;
+  static constexpr uint64_t SID1 = (OWN_MAC << 16) | 0x0002;
+  static constexpr uint64_t DA0  = 0x91E0F00A0B01ULL;
+  static constexpr uint64_t DA1  = 0x91E0F00A0B11ULL;
+  static constexpr uint64_t SIDX = 0x1122334455660001ULL;
+  static constexpr uint64_t DAX  = 0x91E0F0112233ULL;
+
+  void bring_up_the_port() {
+    h.reset();
+    d->link_up_i = 1;                     // seeds the PRNG + Domain declares
+    h.idle(10);
+  }
 
   // ==== 0. bring-up: Domain default declaration, byte-exact ===============
-  {
+  void check_domain_default_declaration_is_byte_exact() {
     auto f = h.wait_any(true, 1000);
     CHECK(!f.empty(), "0: first MSRP frame within 1 s");
     Msg m{4, 4, false, {Vec{false, 1, fv_domain(6, 3, 2), {EV_NEW}, {}}}};
@@ -469,7 +519,7 @@ int main(int argc, char** argv) {
   }
 
   // ==== A. GET_DOMAIN / bad ops ===========================================
-  {
+  void check_get_domain_and_bad_ops() {
     auto r = h.op(OP_GET_DOM, 6);
     CHECK(r.got && r.status == ST_OK, "A: GET_DOMAIN class A OK");
     CHECK(((r.data >> 16) & 7) == 3 && (r.data & 0xFFF) == 2,
@@ -483,8 +533,7 @@ int main(int argc, char** argv) {
   }
 
   // ==== B. DECLARE_TALKER -> admission + Advertise on the wire ============
-  AdmModel mdl;
-  {
+  void check_declare_talker_admits_and_advertises() {
     h.sync();
     auto r = h.op(OP_DECL_TK, 0, SID0, DA0, 2, 1024, 1);
     CHECK(r.got && r.status == ST_OK, "B: DECLARE_TALKER src 0 OK");
@@ -493,7 +542,7 @@ int main(int argc, char** argv) {
     CHECK((d->sr_admitted_o & 1) == 1, "B: src 0 admitted");
     CHECK(h.granted(0) == mdl.granted[0],
           "B: granted slope %u vs model %llu", h.granted(0),
-          (unsigned long long)mdl.granted[0]);
+          static_cast<unsigned long long>(mdl.granted[0]));
     CHECK(d->sum_slope_bps_o == mdl.sum, "B: sum slope vs model");
     CHECK(d->over_limit_o == 0, "B: no over_limit");
     CHECK(h.tk_decl(0) == 1, "B: tk_decl_state ADVERTISE");
@@ -529,7 +578,7 @@ int main(int argc, char** argv) {
   }
 
   // ==== C. over-ceiling refusal -> Talker Failed code 1 on the wire =======
-  {
+  void check_over_ceiling_refusal_is_talker_failed() {
     h.sync();
     // src 1 fits alone but pushes Σ over the 75 % ceiling
     auto r = h.op(OP_DECL_TK, 1, SID1, DA1, 2, 100, 1);
@@ -555,7 +604,7 @@ int main(int argc, char** argv) {
   }
 
   // ==== C2. capacity frees -> refused source admitted, swaps back =========
-  {
+  void check_freed_capacity_admits_the_refused_source() {
     auto r = h.op(OP_WDRW_TK, 0);
     CHECK(r.got && r.status == ST_OK, "C2: WITHDRAW_TALKER src 0 OK");
     mdl.req[0] = false; mdl.walk();
@@ -585,7 +634,7 @@ int main(int argc, char** argv) {
   }
 
   // ==== D. listener end-to-end: RX registration -> Ready declaration ======
-  {
+  void check_listener_registration_becomes_a_ready_declaration() {
     auto r = h.op(OP_DECL_LS, 0, SIDX, DAX, 2, 0, 0, DECL_READY);
     CHECK(r.got && r.status == ST_OK, "D: DECLARE_LISTENER sink 0 OK");
     h.sync();
@@ -636,7 +685,7 @@ int main(int argc, char** argv) {
   }
 
   // ==== E. certified two-class Domain arrival adopts + re-declares ========
-  {
+  void check_certified_domain_arrival_adopts_and_redeclares() {
     h.sync();
     int chg_before = h.domchg;
     // FirstValue {5, 2, VID 5}, NumberOfValues 2 — class A is value 1
@@ -663,7 +712,7 @@ int main(int argc, char** argv) {
   }
 
   // ==== F1. own MSRP LeaveAll end-to-end ==================================
-  {
+  void check_own_msrp_leaveall_cycle() {
     // wait for the PRNG-drawn leavealltimer (10-15 s from arming)
     auto laf = h.wait_frame(true, 16000, [](const std::vector<uint8_t>& fr) {
       auto p = parse_frame(fr);
@@ -677,7 +726,8 @@ int main(int argc, char** argv) {
       if (f.empty()) break;
       got.push_back(parse_frame(f));
     }
-    bool dom_rejoin = false, ls_rejoin = false;
+    bool dom_rejoin = false;
+    bool ls_rejoin = false;
     for (auto& p : got) {
       for (auto& v : p.vecs) {
         if (v.type == 4 && v.fv.size() == 4 && v.fv[0] == 6
@@ -702,7 +752,7 @@ int main(int argc, char** argv) {
   }
 
   // ==== F2. received MSRP LeaveAll ages to expiry, per application ========
-  {
+  void check_received_msrp_leaveall_ages_to_expiry() {
     h.sync();
     int unreg_before = h.unreg_cnt[0];
     auto vids_before = d->dbg_vid_active_o;
@@ -729,11 +779,13 @@ int main(int argc, char** argv) {
   }
 
   // ==== F3. the MVRP LeaveAll cycle is its own participant ================
-  {
+  void check_mvrp_leaveall_is_its_own_participant() {
     // own MVRP LeaveAll must have fired by now (>= 16 s elapsed): its PDU
     // carries the LA flag and re-joins every held VID; MSRP attributes
     // cannot appear in it by construction (separate application)
-    bool saw_mvrp_la = false, vid_rejoin = false, mvrp_lv = false;
+    bool saw_mvrp_la = false;
+    bool vid_rejoin = false;
+    bool mvrp_lv = false;
     for (auto& f : h.archive) {
       auto p = parse_frame(f);
       if (p.msrp || p.vecs.empty()) continue;
@@ -754,7 +806,7 @@ int main(int argc, char** argv) {
   }
 
   // ==== F4. peer LeaveAll cadence stays bounded (milan-fpga #75) ==========
-  {
+  void check_peer_leaveall_cadence_stays_bounded() {
     h.sync();
     // The bench measured ~11 MSRP PDUs per second sustained after a
     // reconnect: the retired lwSRP engine answered EVERY received
@@ -764,13 +816,16 @@ int main(int argc, char** argv) {
     // LeaveAll cycles, each ridden on the bridge's own re-advertise
     // (the shape a real switch emits), must produce a bounded and
     // non-growing exchange - and every cycle must re-declare Ready.
-    int total = 0, ready_cycles = 0, worst_cycle = 0;
+    int total = 0;
+    int ready_cycles = 0;
+    int worst_cycle = 0;
     for (int k = 0; k < 6; k++) {
       Msg la{1, 25, false, {Vec{true, 1,
               fv_talker(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345),
               {EV_JOININ}, {}}}};
       h.feed(mrpdu_body(true, {la}), true);
-      bool ready = false; int cnt = 0;
+      bool ready = false;
+      int cnt = 0;
       // ~0.9-0.95 s per cycle (20 polls, minus feed/parse overhead). The
       // 18/4 pins include the PRNG-scheduled own-LeaveAll burst landing
       // in cycle 4; an upstream timing edit that moves that burst across
@@ -796,7 +851,7 @@ int main(int argc, char** argv) {
   }
 
   // ==== G. admission sweep vs the independent Σ-slope model ===============
-  {
+  void check_admission_sweep_matches_the_model() {
     // deterministic xorshift so the sweep is reproducible
     uint32_t rng = 0xC0FFEE01u;
     auto rnd = [&rng]() {
@@ -812,7 +867,8 @@ int main(int argc, char** argv) {
         uint32_t mfs = rnd() % 2000;
         uint32_t mif = 1 + (rnd() % 4);
         auto r = h.op(OP_DECL_TK, s, (OWN_MAC << 16) | (0x100 + s),
-                      0x91E0F0000000ULL + ((uint64_t)s << 8), 5, mfs, mif);
+                      0x91E0F0000000ULL + (static_cast<uint64_t>(s) << 8), 5,
+                      mfs, mif);
         CHECK(r.got && r.status == ST_OK, "G%d: declare OK", iter);
         mdl.req[s] = true; mdl.mfs[s] = mfs; mdl.mif[s] = mif;
       }
@@ -831,11 +887,22 @@ int main(int argc, char** argv) {
       CHECK(d->over_limit_o == (mdl.over ? 1 : 0), "G%d: over_limit", iter);
       CHECK(d->sum_slope_bps_o == mdl.sum,
             "G%d: sum %u vs model %llu", iter, d->sum_slope_bps_o,
-            (unsigned long long)mdl.sum);
+            static_cast<unsigned long long>(mdl.sum));
     }
   }
 
-  printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
-  delete d;
-  return fails ? 1 : 0;
+  const milan::tb::Model<Vsrp_top_wrap> model;
+  Vsrp_top_wrap* const d;
+  H h;
+  AdmModel mdl;          // the independent Σ-slope model B/C/C2/G all walk
+  int checks = 0;
+  int fails = 0;
+};
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  Verilated::commandArgs(argc, argv);
+  SrpTopHarness harness;
+  return harness.run();
 }

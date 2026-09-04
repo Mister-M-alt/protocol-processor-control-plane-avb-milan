@@ -13,50 +13,100 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#include "../common/verilator_harness.hpp"
 #include "VKL_aecp_ucpu.h"
 #include "verilated.h"
 
-static int checks = 0, fails = 0;
 #define CHECK(cond, ...) do { \
   ++checks; \
   if (!(cond)) { ++fails; printf("FAIL: " __VA_ARGS__); printf("\n"); } \
 } while (0)
 
 // entry points — mirror gen_ucode.py
-enum { E_FAILSAFE = 8, E_GETSR = 16, E_ALU = 64, E_ITER = 128,
-       E_CHKARG = 192, E_LOCK = 224, E_GATHER = 256, E_SETSR = 288,
-       E_NAME = 320, E_COPY = 352, E_MAPV = 384, E_MAPVF = 400,
-       E_OVF = 416, E_FMT = 512, E_NOTIMPL = 560, E_ACQ = 576,
-       E_STPRE = 592, E_MVUINFO = 736, E_GCTRS = 768, E_GAMAP = 800,
-       E_REGUN = 832, E_DEREG = 844, E_UNSOK = 852, E_NOSEND = 858,
-       E_NSUPPE = 864, E_LOCKEN = 872, E_LOCKUNS = 896, E_GSTRI = 912,
-       E_GAVB = 944, E_GASP = 976, E_GCTRSNS = 796,
-       E_EAVL = 1008, E_GCFG = 1024, E_GSFMT = 1056, E_GSRATE = 1088,
-       E_GCLKS = 1120, E_SSRATE = 1152, E_SCLKS = 1184,
-       E_TIZ8NS = 1216, E_TIZ4NS = 1224, E_LOCKED4 = 1232,
-       E_BADARG4 = 1240, E_STRT = 1600,
-       E_SFMTI = 1792, E_SFMTO = 1824, E_SINFO = 1856, E_SFRUN = 1888,
-       E_SFCUR = 1896, E_SFZERO = 1904, E_SFBAD = 1912, E_SIBAD = 1920,
-       E_SIRUN = 1936, E_GNAME = 1344, E_SNAME = 1392, E_NAMEERR = 1352,
-       E_NAMERESP = 1364, E_NAMEBAD = 1384 };
+constexpr uint16_t E_FAILSAFE = 8;
+constexpr uint16_t E_GETSR = 16;
+constexpr uint16_t E_ALU = 64;
+constexpr uint16_t E_ITER = 128;
+constexpr uint16_t E_CHKARG = 192;
+constexpr uint16_t E_LOCK = 224;
+constexpr uint16_t E_GATHER = 256;
+constexpr uint16_t E_SETSR = 288;
+constexpr uint16_t E_NAME = 320;
+constexpr uint16_t E_COPY = 352;
+constexpr uint16_t E_MAPV = 384;
+constexpr uint16_t E_MAPVF = 400;
+constexpr uint16_t E_OVF = 416;
+constexpr uint16_t E_FMT = 512;
+constexpr uint16_t E_NOTIMPL = 560;
+constexpr uint16_t E_ACQ = 576;
+constexpr uint16_t E_STPRE = 592;
+constexpr uint16_t E_MVUINFO = 736;
+constexpr uint16_t E_GCTRS = 768;
+constexpr uint16_t E_GAMAP = 800;
+constexpr uint16_t E_REGUN = 832;
+constexpr uint16_t E_DEREG = 844;
+constexpr uint16_t E_UNSOK = 852;
+constexpr uint16_t E_NOSEND = 858;
+constexpr uint16_t E_NSUPPE = 864;
+constexpr uint16_t E_LOCKEN = 872;
+constexpr uint16_t E_LOCKUNS = 896;
+constexpr uint16_t E_GSTRI = 912;
+constexpr uint16_t E_GAVB = 944;
+constexpr uint16_t E_GASP = 976;
+constexpr uint16_t E_GCTRSNS = 796;
+constexpr uint16_t E_EAVL = 1008;
+constexpr uint16_t E_GCFG = 1024;
+constexpr uint16_t E_GSFMT = 1056;
+constexpr uint16_t E_GSRATE = 1088;
+constexpr uint16_t E_GCLKS = 1120;
+constexpr uint16_t E_SSRATE = 1152;
+constexpr uint16_t E_SCLKS = 1184;
+constexpr uint16_t E_TIZ8NS = 1216;
+constexpr uint16_t E_TIZ4NS = 1224;
+constexpr uint16_t E_LOCKED4 = 1232;
+constexpr uint16_t E_BADARG4 = 1240;
+constexpr uint16_t E_STRT = 1600;
+constexpr uint16_t E_SFMTI = 1792;
+constexpr uint16_t E_SFMTO = 1824;
+constexpr uint16_t E_SINFO = 1856;
+constexpr uint16_t E_SFRUN = 1888;
+constexpr uint16_t E_SFCUR = 1896;
+constexpr uint16_t E_SFZERO = 1904;
+constexpr uint16_t E_SFBAD = 1912;
+constexpr uint16_t E_SIBAD = 1920;
+constexpr uint16_t E_SIRUN = 1936;
+constexpr uint16_t E_GNAME = 1344;
+constexpr uint16_t E_SNAME = 1392;
+constexpr uint16_t E_NAMEERR = 1352;
+constexpr uint16_t E_NAMERESP = 1364;
+constexpr uint16_t E_NAMEBAD = 1384;
 
 // IEEE 1722.1-2021 Table 7-141
-enum { ST_OK = 0, ST_NIMPL = 1, ST_NOSUCH = 2, ST_LOCKED = 3,
-       ST_BADARG = 7, ST_NORES = 8, ST_MISBEHAVING = 10, ST_NSUPP = 11,
-       ST_STRMRUN = 12 };
+constexpr uint32_t ST_OK = 0;
+constexpr uint32_t ST_NIMPL = 1;
+constexpr uint32_t ST_NOSUCH = 2;
+constexpr uint32_t ST_LOCKED = 3;
+constexpr uint32_t ST_BADARG = 7;
+constexpr uint32_t ST_NORES = 8;
+constexpr uint32_t ST_MISBEHAVING = 10;
+constexpr uint32_t ST_NSUPP = 11;
+constexpr uint32_t ST_STRMRUN = 12;
 
-static const uint64_t CTLR = 0xC0FFEE00DEADBEEFull;
-static const uint64_t OPD1 = 0x0000000000001234ull;
-static const uint64_t NAMEQ = 0x4E414D455F303031ull;   // "NAME_001"
+constexpr uint64_t CTLR = 0xC0FFEE00DEADBEEFull;
+constexpr uint64_t OPD1 = 0x0000000000001234ull;
+constexpr uint64_t NAMEQ = 0x4E414D455F303031ull;   // "NAME_001"
+
+namespace {
 
 struct StWrite { bool name; uint32_t addr; uint64_t data; uint8_t strb; };
 
 struct Harness {
-  VKL_aecp_ucpu* dut;
+  VKL_aecp_ucpu* dut = nullptr;
   uint8_t  buf[640];
   bool     bad_write = false;
   int      sends = 0;
-  uint32_t last_len = 0, last_status = 0;
+  uint32_t last_len = 0;
+  uint32_t last_status = 0;
   std::vector<StWrite> stw;
   int      commits = 0;
   std::vector<uint8_t> nvm_marks;
@@ -64,7 +114,8 @@ struct Harness {
   uint64_t name_store[16] = {};
   uint64_t staged_name[8] = {};
   int      st_lat = 0;
-  bool     st_err_next = false, st_name_next = false;
+  bool     st_err_next = false;
+  bool     st_name_next = false;
   uint64_t st_data_next = 0;
   int      gx_lat = 0;
   uint64_t gx_data_next = 0;
@@ -78,7 +129,8 @@ struct Harness {
   int      rb_held_cycles = 0;  // cycles a presented write was refused
   int      rb_mutations = 0;    // a HELD write whose payload changed: a defect
   bool     rb_have_held = false;
-  uint32_t rb_h_addr = 0, rb_h_data = 0;
+  uint32_t rb_h_addr = 0;
+  uint32_t rb_h_data = 0;
   uint8_t  rb_h_strb = 0;
 
   // the program being run + its dispatch operands: the gather model below is
@@ -86,13 +138,15 @@ struct Harness {
   // faces legitimately claim the same selector values (gen_ucode.py's
   // audio-map note), so one flat sel->value table cannot model both.
   uint16_t cur_upc = 0;
-  uint64_t cur_opd0 = 0, cur_opd1 = 0, cur_opd2 = 0;
+  uint64_t cur_opd0 = 0;
+  uint64_t cur_opd1 = 0;
+  uint64_t cur_opd2 = 0;
   int      amap_recs = 0;                 // RECORD gathers completed this run
   int      gsi_recs = 0;                  // Milan-info record gathers (sel 0xB8)
   int      gasp_count = 3;                // GET_AS_PATH path length served
   std::vector<uint8_t> gx_sels;           // every completed gather's selector
 
-  explicit Harness(VKL_aecp_ucpu* d) : dut(d) {
+  Harness() {
     memset(buf, 0, sizeof buf);
     for (uint64_t& lane : name_store) lane = NAMEQ;
     for (int lane = 0; lane < 8; ++lane)
@@ -105,7 +159,7 @@ struct Harness {
   // index) answers 0 everywhere; an out-of-range page answers 0 mappings
   // under the real number_of_maps - the wrong-object guard the RTL face must
   // also implement.
-  static const int AM_NMAPS_C = 3;
+  static constexpr int AM_NMAPS_C = 3;
   int am_index()  const { return int((cur_opd0 >> 32) & 0xFFFF); }
   int am_page()   const { return int(cur_opd1 & 0xFFFF); }
   int am_nmaps()  const { return am_index() == 0x0BAD ? 0 : AM_NMAPS_C; }
@@ -131,7 +185,7 @@ struct Harness {
   // CURRENT format the refusal arms serve through GET_STREAM_FORMAT's own
   // word (sel 0xB1)
   uint64_t sfmt_verdict = 3;
-  static const uint64_t SFMT_CUR_C = 0x0205021801406000ull;
+  static constexpr uint64_t SFMT_CUR_C = 0x0205021801406000ull;
 
   uint64_t gxval(uint8_t sel) {
     if (cur_upc == E_SNAME && sel >= 0x60 && sel <= 0x67)
@@ -152,21 +206,21 @@ struct Harness {
     }
     if (cur_upc == E_GAVB) {
       if (sel == 0xB0) return 0x1112131415161718ull;          // gm
-      if (sel == 0xB1) return (0x0000'0BADull << 32) | (0x00ull << 24)
+      if (sel == 0xB1) return (0x00000BADull << 32) | (0x00ull << 24)
                             | (0x07ull << 16) | 2;            // count 2
-      if (sel == 0xB8) return 0x0603'0002ull + uint64_t(gsi_recs) * 0x01000000ull;
+      if (sel == 0xB8) return 0x06030002ull + uint64_t(gsi_recs) * 0x01000000ull;
       return 0;
     }
     if (cur_upc == E_GASP) {
       if (sel == 0xB0) return uint64_t(gasp_count);
-      if (sel == 0xB8) return 0xAB00'0000'0000'0000ull | unsigned(gsi_recs);
+      if (sel == 0xB8) return 0xAB00000000000000ull | unsigned(gsi_recs);
       return 0;
     }
     if (cur_upc == E_GSTRI) {
       // the Milan-info face: distinct per-selector words (06 SS6.2)
       if ((sel & 0xF0) == 0xB0)
-        return 0xB000'0000'0000'0000ull | (uint64_t(sel & 0x0F) << 32) |
-               (0x00C0'0000ull | (sel & 0x0F));
+        return 0xB000000000000000ull | (uint64_t(sel & 0x0F) << 32) |
+               (0x00C00000ull | (sel & 0x0F));
       return 0;
     }
     if (cur_upc == E_SFMTI || cur_upc == E_SFMTO ||
@@ -210,13 +264,19 @@ struct Harness {
     return 0xEEEE;
   }
 
-  void tick() {
+ private:
+  // Every cycle opens with the slave handshakes deasserted and the lock
+  // context presented; a face that answers this cycle raises its own.
+  void drive_cycle_defaults() {
     dut->st_rvalid_i = 0; dut->st_err_i = 0;
     dut->gx_valid_i  = 0;
     dut->st_ready_i  = 1;
     dut->lock_held_i = lock_scenario;
     dut->lock_ctlr_i = 0x1122334455667788ull;
+  }
 
+  // the state port: a read is answered two cycles after it is presented
+  void serve_state_port() {
     if (dut->st_req_o && !dut->st_we_o) {
       if (st_lat == 0) {
         bool err = false;
@@ -230,7 +290,11 @@ struct Harness {
         dut->st_err_i    = st_err_next;
       }
     } else st_lat = 0;
+  }
 
+  // the gather port, on the same two-cycle latency, counting the record
+  // gathers the per-program model in gxval() is indexed by
+  void serve_gather_port() {
     if (dut->gx_req_o) {
       if (gx_lat == 0) {
         gx_data_next = gxval(dut->gx_sel_o);
@@ -241,39 +305,51 @@ struct Harness {
       }
       else if (--gx_lat == 0) { dut->gx_valid_i = 1; dut->gx_data_i = gx_data_next; }
     } else gx_lat = 0;
+  }
 
+  // the reluctant TX: it refuses the first `tx_wait` cycles of a run
+  void serve_reluctant_tx() {
     dut->tx_ready_i = (tx_wait == 0);
     if (tx_wait > 0) --tx_wait;
+  }
 
-    // settle combinational logic with this cycle's inputs
+  // settle combinational logic with this cycle's inputs
+  void settle_combinational_inputs() {
     dut->clk_i = 0; dut->eval();
     if (write_error && dut->st_req_o && dut->st_we_o) {
       dut->st_err_i = 1;
       dut->eval();
     }
+  }
 
-    // ---- response-buffer backpressure (KL_aecp_resp_buf is not single
-    // cycle: a lane flush is a main-memory round trip). Refuse each write
-    // for `rb_stall` cycles, then take it.
+  // ---- response-buffer backpressure (KL_aecp_resp_buf is not single
+  // cycle: a lane flush is a main-memory round trip). Refuse each write
+  // for `rb_stall` cycles, then take it.
+  void arbitrate_response_buffer_write() {
     dut->rb_ready_i = 1;
     if (dut->rb_we_o && rb_hold > 0) { dut->rb_ready_i = 0; --rb_hold; }
     dut->eval();
+  }
 
-    // observe combinational outputs PRE-EDGE (what the registers see)
+  // a held write is watched for mutation; an admitted one lands in `buf`
+  void capture_response_buffer_write() {
     if (dut->rb_we_o && !dut->rb_ready_i) {
       // a REFUSED write must be re-presented byte-for-byte identically —
       // that is the whole contract a memory-backed buffer relies on
       ++rb_held_cycles;
-      if (rb_have_held && (rb_h_addr != (uint32_t)dut->rb_addr_o ||
-                           rb_h_data != (uint32_t)dut->rb_wdata_o ||
-                           rb_h_strb != (uint8_t)dut->rb_wstrb_o))
+      if (rb_have_held &&
+          (rb_h_addr != static_cast<uint32_t>(dut->rb_addr_o) ||
+           rb_h_data != static_cast<uint32_t>(dut->rb_wdata_o) ||
+           rb_h_strb != static_cast<uint8_t>(dut->rb_wstrb_o)))
         ++rb_mutations;
       rb_have_held = true;
-      rb_h_addr = dut->rb_addr_o; rb_h_data = dut->rb_wdata_o;
+      rb_h_addr = dut->rb_addr_o;
+      rb_h_data = dut->rb_wdata_o;
       rb_h_strb = dut->rb_wstrb_o;
     }
     if (dut->rb_we_o && dut->rb_ready_i) {
-      uint32_t a = dut->rb_addr_o, d = dut->rb_wdata_o;
+      uint32_t a = dut->rb_addr_o;
+      uint32_t d = dut->rb_wdata_o;
       uint8_t  s = dut->rb_wstrb_o;
       if (d == 0xBAD) bad_write = true;
       for (int i = 0; i < 4; ++i)
@@ -283,9 +359,16 @@ struct Harness {
       rb_hold = rb_stall;
       rb_have_held = false;
     }
+  }
+
+  // an accepted state-port write is recorded, and a name-region write is
+  // played back into the model store so a later read sees it
+  void capture_state_port_write() {
     if (dut->st_req_o && dut->st_we_o && dut->st_ready_i) {
-      stw.push_back({(bool)dut->st_name_o, (uint32_t)dut->st_addr_o,
-                     (uint64_t)dut->st_wdata_o, (uint8_t)dut->st_wstrb_o});
+      stw.push_back({static_cast<bool>(dut->st_name_o),
+                     static_cast<uint32_t>(dut->st_addr_o),
+                     static_cast<uint64_t>(dut->st_wdata_o),
+                     static_cast<uint8_t>(dut->st_wstrb_o)});
       if (dut->st_name_o && !dut->st_err_i) {
         uint64_t& dst = name_store[(uint32_t(dut->st_addr_o) & 0x7Fu) >> 3];
         for (int byte = 0; byte < 8; ++byte) {
@@ -296,12 +379,34 @@ struct Harness {
         }
       }
     }
+  }
+
+  // the effect strobes and the one response the engine gets to send
+  void capture_effects_and_send() {
     if (dut->eff_commit_o) ++commits;
     if (dut->eff_nvm_stb_o) nvm_marks.push_back(dut->eff_nvm_mark_o);
     if (dut->eff_notify_stb_o) notify_classes.push_back(dut->eff_notify_class_o);
     if (dut->resp_send_o && dut->tx_ready_i) {
       ++sends; last_len = dut->resp_len_o; last_status = dut->resp_status_o;
     }
+  }
+
+ public:
+  // One cycle of the BFM: drive this cycle's inputs, settle the
+  // combinational logic, observe what the registers are about to take,
+  // then clock.
+  void tick() {
+    drive_cycle_defaults();
+    serve_state_port();
+    serve_gather_port();
+    serve_reluctant_tx();
+    settle_combinational_inputs();
+    arbitrate_response_buffer_write();
+
+    // observe combinational outputs PRE-EDGE (what the registers see)
+    capture_response_buffer_write();
+    capture_state_port_write();
+    capture_effects_and_send();
 
     // rising edge: registers update
     dut->clk_i = 1; dut->eval();
@@ -341,22 +446,108 @@ struct Harness {
 };
 
 static uint32_t hdr2(uint32_t status) { return 0x12340000u | ((status & 0x1F) << 8); }
-static const uint64_t IDX_OK  = 0x0000000700250003ull;
-static const uint64_t IDX_BAD = 0x0000000700250BADull;
+constexpr uint64_t IDX_OK  = 0x0000000700250003ull;
+constexpr uint64_t IDX_BAD = 0x0000000700250BADull;
 
-int main(int argc, char** argv) {
-  Verilated::commandArgs(argc, argv);
-  auto* dut = new VKL_aecp_ucpu;
-  Harness h(dut);
+// The tally the CHECK macro keeps was a pair of file-scope statics; it is the
+// state of one run of this suite, so it belongs to the object that performs
+// it, together with the model handle and the BFM every phase below drives.
+// Each phase is the harness section that used to sit behind one banner
+// comment inside main.
+class UcpuSuite {
+ public:
+  int run();
 
+ private:
+  void reset_leaves_the_engine_idle();
+  void get_sampling_rate_exemplar_answers_the_rate();
+  void a_locate_miss_answers_no_such_descriptor();
+  void alu_raw_and_branch_flush_build_the_fields();
+  void the_iter_append_loop_emits_exactly_three();
+  void check_arg_answers_bad_arguments();
+  void check_lock_answers_entity_locked();
+  void gather_ext_and_read_counters_fill_the_burst();
+  void set_sampling_rate_writes_back_and_emits_effects();
+  void the_name_region_reads_and_writes_back();
+  void get_name_serves_the_stored_lanes();
+  void set_name_writes_only_changed_lanes();
+  void copy_buffer_moves_descriptor_bytes_into_the_response();
+  void map_validate_passes_and_fails();
+  void the_524_byte_cap_skips_on_overflow();
+  void write_strobes_truncating_moves_and_the_rb_raw();
+  void an_unknown_opcode_answers_not_implemented();
+  void acquire_entity_answers_not_supported();
+  void the_fail_safe_arm_preserves_the_best_status();
+  void mvu_get_milan_info_carries_every_field();
+  void the_response_buffer_face_is_flow_controlled();
+  void get_counters_lays_out_all_32_quadlets();
+  void a_counters_locate_miss_answers_a_zero_body();
+  void the_counter_less_type_refusal_is_the_full_body();
+  void get_audio_map_lays_out_its_response();
+  void the_engine_is_ready_again_after_every_program();
+  void the_registration_pair_and_the_unsolicited_stubs();
+  void lock_entity_and_the_not_supported_echo();
+  void get_stream_info_lays_out_figure_5_1();
+  void get_avb_info_and_get_as_path_lay_out_their_lists();
+  void start_streaming_carries_the_write_completion_status();
+  void the_set_stream_format_family_writes_or_refuses();
+  void set_stream_info_writes_only_the_presentation_offset();
+
+  // P8b's shared fixture: the name lanes the state model starts with, and
+  // the response comparison every GET_NAME / SET_NAME arm performs.
+  static constexpr uint64_t CD_KEY = 0x0000000000240000ull;  // CLOCK_DOMAIN[0]
+  static constexpr uint64_t CD_PFX = 0x0024000000000000ull;  // type,index,name,cfg
+  static constexpr uint64_t CD_BAD = 0x0024000000010000ull;  // invalid name_index 1
+  uint64_t old_name[8] = {};
+  uint64_t group_name[8] = {};
+  void seed_the_name_lanes();
+  void check_name(const uint64_t* want_name, const char* tag);
+  void check_zero_name(const char* tag);
+
+  VKL_aecp_ucpu* dut = nullptr;
+  Harness h;
+  int checks = 0;
+  int fails = 0;
+};
+
+void UcpuSuite::seed_the_name_lanes() {
+  for (int lane = 0; lane < 8; ++lane) {
+    old_name[lane] = 0x4F4C445F4E414D30ull + uint64_t(lane);
+    group_name[lane] = 0x4752505F4E414D30ull + uint64_t(lane);
+    h.name_store[lane] = old_name[lane];
+    h.name_store[8 + lane] = group_name[lane];
+  }
+}
+
+void UcpuSuite::check_name(const uint64_t* want_name, const char* tag) {
+  int bad_lane = -1;
+  for (int lane = 0; lane < 8; ++lane) {
+    if (h.w32(20 + 8 * lane) != uint32_t(want_name[lane] >> 32) ||
+        h.w32(24 + 8 * lane) != uint32_t(want_name[lane])) {
+      bad_lane = lane;
+      break;
+    }
+  }
+  CHECK(bad_lane < 0, "%s name lane %d differs", tag, bad_lane);
+}
+
+void UcpuSuite::check_zero_name(const char* tag) {
+  uint64_t zero[8] = {};
+  check_name(zero, tag);
+}
+
+// ---- reset: the engine comes up idle ------------------------------
+void UcpuSuite::reset_leaves_the_engine_idle() {
   dut->rst_n = 0; dut->disp_valid_i = 0;
   dut->disp_batch_i = 0; dut->disp_resp_base_i = 12;
   for (int i = 0; i < 4; ++i) h.tick();
   dut->rst_n = 1;
   h.tick();
   CHECK(dut->disp_ready_o == 1, "idle after reset");
+}
 
-  // ---- P1: GET_SAMPLING_RATE exemplar, success (06 §8) ----------------
+// ---- P1: GET_SAMPLING_RATE exemplar, success (06 §8) ----------------
+void UcpuSuite::get_sampling_rate_exemplar_answers_the_rate() {
   CHECK(h.run(E_GETSR, IDX_OK, false), "P1 completes");
   CHECK(h.w32(0) == 0xC0FFEE00u, "P1 hdr0 eid-hi got %08x", h.w32(0));
   CHECK(h.w32(4) == 0xDEADBEEFu, "P1 hdr1 eid-lo got %08x", h.w32(4));
@@ -367,15 +558,19 @@ int main(int argc, char** argv) {
   CHECK(h.sends == 1, "P1 one send got %d", h.sends);
   CHECK(h.commits == 0 && h.nvm_marks.empty() && h.notify_classes.empty(),
         "P1 GET has no effects");
+}
 
-  // ---- P1b: locate miss -> NO_SUCH_DESCRIPTOR (Table 7-141 code 2) ----
+// ---- P1b: locate miss -> NO_SUCH_DESCRIPTOR (Table 7-141 code 2) ----
+void UcpuSuite::a_locate_miss_answers_no_such_descriptor() {
   CHECK(h.run(E_GETSR, IDX_BAD, false), "P1b completes");
   CHECK(h.last_status == ST_NOSUCH, "P1b status got %u", h.last_status);
   CHECK(h.w32(8) == hdr2(ST_NOSUCH), "P1b hdr2 got %08x", h.w32(8));
   CHECK(h.last_len == 12, "P1b header-only got %u", h.last_len);
   CHECK(h.w32(12) == 0, "P1b no field written");
+}
 
-  // ---- P2: ALU / RAW / branch-flush / merge / qword field -------------
+// ---- P2: ALU / RAW / branch-flush / merge / qword field -------------
+void UcpuSuite::alu_raw_and_branch_flush_build_the_fields() {
   CHECK(h.run(E_ALU, 0, false), "P2 completes");
   CHECK(!h.bad_write, "P2 poison ops flushed");
   CHECK(h.w32(12) == 5 && h.w32(16) == 7 && h.w32(20) == 1 && h.w32(24) == 5,
@@ -383,26 +578,34 @@ int main(int argc, char** argv) {
   CHECK(h.w32(28) == 0xC0FFEE00u && h.w32(32) == 0xDEADBEEFu,
         "P2 qword %08x %08x", h.w32(28), h.w32(32));
   CHECK(h.last_len == 36, "P2 len got %u", h.last_len);
+}
 
-  // ---- P3: ITER/APPEND loop (GDI iteration shape) ---------------------
+// ---- P3: ITER/APPEND loop (GDI iteration shape) ---------------------
+void UcpuSuite::the_iter_append_loop_emits_exactly_three() {
   CHECK(h.run(E_ITER, 0, false), "P3 completes");
   CHECK(h.w32(12) == 0xAB && h.w32(16) == 0xAB && h.w32(20) == 0xAB,
         "P3 appends %x %x %x", h.w32(12), h.w32(16), h.w32(20));
   CHECK(h.w32(24) == 0, "P3 exactly three");
   CHECK(h.last_len == 24, "P3 len got %u", h.last_len);
+}
 
-  // ---- P4: CHECK_ARG -> BAD_ARGUMENTS = 7 (Table 7-141) ---------------
+// ---- P4: CHECK_ARG -> BAD_ARGUMENTS = 7 (Table 7-141) ---------------
+void UcpuSuite::check_arg_answers_bad_arguments() {
   CHECK(h.run(E_CHKARG, 0, false), "P4 completes");
   CHECK(h.last_status == ST_BADARG, "P4 BAD_ARGUMENTS=7 got %u", h.last_status);
   CHECK(h.w32(8) == hdr2(ST_BADARG), "P4 hdr2 got %08x", h.w32(8));
+}
 
-  // ---- P5: CHECK_LOCK -> ENTITY_LOCKED = 3 ----------------------------
+// ---- P5: CHECK_LOCK -> ENTITY_LOCKED = 3 ----------------------------
+void UcpuSuite::check_lock_answers_entity_locked() {
   CHECK(h.run(E_LOCK, 0, true), "P5 completes");
   CHECK(h.last_status == ST_LOCKED, "P5 LOCKED got %u", h.last_status);
   CHECK(h.run(E_LOCK, 0, false), "P5b completes");
   CHECK(h.last_status == ST_OK, "P5b unlocked got %u", h.last_status);
+}
 
-  // ---- P6: GATHER_EXT + READ_COUNTERS burst ---------------------------
+// ---- P6: GATHER_EXT + READ_COUNTERS burst ---------------------------
+void UcpuSuite::gather_ext_and_read_counters_fill_the_burst() {
   CHECK(h.run(E_GATHER, 0, false), "P6 completes");
   CHECK(h.w32(12) == 0x11112222u && h.w32(16) == 0x33334444u,
         "P6 qword %08x %08x", h.w32(12), h.w32(16));
@@ -410,8 +613,10 @@ int main(int argc, char** argv) {
         h.w32(32) == 0xC3, "P6 counters %x %x %x %x",
         h.w32(20), h.w32(24), h.w32(28), h.w32(32));
   CHECK(h.last_len == 36, "P6 len got %u", h.last_len);
+}
 
-  // ---- P7: SET_SAMPLING_RATE exemplar — write-back + effects ----------
+// ---- P7: SET_SAMPLING_RATE exemplar — write-back + effects ----------
+void UcpuSuite::set_sampling_rate_writes_back_and_emits_effects() {
   CHECK(h.run(E_SETSR, IDX_OK, false), "P7 completes");
   CHECK(h.last_status == ST_OK, "P7 status got %u", h.last_status);
   CHECK(h.stw.size() == 1, "P7 one state write got %zu", h.stw.size());
@@ -433,8 +638,10 @@ int main(int argc, char** argv) {
   CHECK(h.stw.empty(), "P7b no state write under lock");
   CHECK(h.commits == 0 && h.nvm_marks.empty() && h.notify_classes.empty(),
         "P7b no effects under lock");
+}
 
-  // ---- P8: NAME region read/write ------------------------------------
+// ---- P8: NAME region read/write ------------------------------------
+void UcpuSuite::the_name_region_reads_and_writes_back() {
   CHECK(h.run(E_NAME, IDX_OK, false), "P8 completes");
   CHECK(h.stw.size() == 1 && h.stw[0].name, "P8 name-region write flagged");
   if (h.stw.size() == 1) {
@@ -444,139 +651,125 @@ int main(int argc, char** argv) {
   }
   CHECK(h.w32(12) == uint32_t(NAMEQ >> 32) && h.w32(16) == uint32_t(NAMEQ),
         "P8 response carries the name got %08x %08x", h.w32(12), h.w32(16));
+}
 
-  // ---- P8b: mandatory GET_NAME / SET_NAME response and state contract -
-  {
-    const uint64_t CD_KEY = 0x0000000000240000ull;  // CLOCK_DOMAIN[0]
-    const uint64_t CD_PFX = 0x0024000000000000ull;  // type,index,name,cfg
-    const uint64_t CD_BAD = 0x0024000000010000ull;  // invalid name_index 1
-    uint64_t old_name[8], group_name[8];
-    for (int lane = 0; lane < 8; ++lane) {
-      old_name[lane] = 0x4F4C445F4E414D30ull + uint64_t(lane);
-      group_name[lane] = 0x4752505F4E414D30ull + uint64_t(lane);
-      h.name_store[lane] = old_name[lane];
-      h.name_store[8 + lane] = group_name[lane];
+// ---- P8b: mandatory GET_NAME / SET_NAME response and state contract -
+// (the GET_NAME arms; the fixture they share is seeded here)
+void UcpuSuite::get_name_serves_the_stored_lanes() {
+  seed_the_name_lanes();
+
+  CHECK(h.run(E_GNAME, CD_KEY, false, 4000, CD_PFX, 0),
+        "P8b GET_NAME completes");
+  CHECK(h.last_status == ST_OK && h.last_len == 84,
+        "P8b GET_NAME status/len %u/%u", h.last_status, h.last_len);
+  CHECK(h.w32(12) == 0x00240000u && h.w32(16) == 0,
+        "P8b GET_NAME echoes the complete selector");
+  check_name(old_name, "P8b GET_NAME");
+  CHECK(h.stw.empty() && h.commits == 0 && h.nvm_marks.empty() &&
+        h.notify_classes.empty(), "P8b GET_NAME has no write or effects");
+
+  CHECK(h.run(E_GNAME, CD_KEY, false, 4000, CD_BAD, 1),
+        "P8c invalid GET_NAME completes");
+  CHECK(h.last_status == ST_BADARG && h.last_len == 84,
+        "P8c invalid name_index status/len %u/%u",
+        h.last_status, h.last_len);
+  CHECK(h.w32(12) == 0x00240000u && h.w32(16) == 0x00010000u,
+        "P8c invalid selector is echoed");
+  check_zero_name("P8c invalid GET_NAME");
+
+  const uint64_t MISS_KEY = 0x00000BAD00240000ull;
+  const uint64_t MISS_PFX = 0x00240BAD00000000ull;
+  CHECK(h.run(E_GNAME, MISS_KEY, false, 4000, MISS_PFX, 0),
+        "P8d missing-descriptor GET_NAME completes");
+  CHECK(h.last_status == ST_NOSUCH && h.last_len == 84,
+        "P8d missing descriptor status/len %u/%u",
+        h.last_status, h.last_len);
+  check_zero_name("P8d missing-descriptor GET_NAME");
+
+  const uint64_t ENTITY_KEY = 0;
+  const uint64_t GROUP_PFX = 0x0000000000010000ull;
+  CHECK(h.run(E_GNAME, ENTITY_KEY, false, 4000, GROUP_PFX, 1),
+        "P8e ENTITY group-name GET_NAME completes");
+  CHECK(h.last_status == ST_OK && h.last_len == 84,
+        "P8e ENTITY name_index 1 status/len %u/%u",
+        h.last_status, h.last_len);
+  check_name(group_name, "P8e ENTITY group name");
+}
+
+// ---- P8b (continued): the SET_NAME arms of the same contract ------
+void UcpuSuite::set_name_writes_only_changed_lanes() {
+  for (int lane = 0; lane < 8; ++lane) h.name_store[lane] = old_name[lane];
+  CHECK(h.run(E_SNAME, CD_KEY, false, 8000, CD_PFX, 0),
+        "P8f changed SET_NAME completes");
+  CHECK(h.last_status == ST_OK && h.last_len == 84,
+        "P8f SET_NAME status/len %u/%u", h.last_status, h.last_len);
+  CHECK(h.stw.size() == 8, "P8f writes eight changed lanes, got %zu",
+        h.stw.size());
+  int bad_write = -1;
+  for (int lane = 0; lane < 8 && lane < int(h.stw.size()); ++lane) {
+    if (!h.stw[lane].name || h.stw[lane].addr != uint32_t(8 * lane) ||
+        h.stw[lane].data != h.staged_name[lane] ||
+        h.stw[lane].strb != 0xFF) {
+      bad_write = lane;
+      break;
     }
-    auto check_name = [&](const uint64_t* want_name, const char* tag) {
-      int bad_lane = -1;
-      for (int lane = 0; lane < 8; ++lane) {
-        if (h.w32(20 + 8 * lane) != uint32_t(want_name[lane] >> 32) ||
-            h.w32(24 + 8 * lane) != uint32_t(want_name[lane])) {
-          bad_lane = lane;
-          break;
-        }
-      }
-      CHECK(bad_lane < 0, "%s name lane %d differs", tag, bad_lane);
-    };
-    auto check_zero_name = [&](const char* tag) {
-      uint64_t zero[8] = {};
-      check_name(zero, tag);
-    };
-
-    CHECK(h.run(E_GNAME, CD_KEY, false, 4000, CD_PFX, 0),
-          "P8b GET_NAME completes");
-    CHECK(h.last_status == ST_OK && h.last_len == 84,
-          "P8b GET_NAME status/len %u/%u", h.last_status, h.last_len);
-    CHECK(h.w32(12) == 0x00240000u && h.w32(16) == 0,
-          "P8b GET_NAME echoes the complete selector");
-    check_name(old_name, "P8b GET_NAME");
-    CHECK(h.stw.empty() && h.commits == 0 && h.nvm_marks.empty() &&
-          h.notify_classes.empty(), "P8b GET_NAME has no write or effects");
-
-    CHECK(h.run(E_GNAME, CD_KEY, false, 4000, CD_BAD, 1),
-          "P8c invalid GET_NAME completes");
-    CHECK(h.last_status == ST_BADARG && h.last_len == 84,
-          "P8c invalid name_index status/len %u/%u",
-          h.last_status, h.last_len);
-    CHECK(h.w32(12) == 0x00240000u && h.w32(16) == 0x00010000u,
-          "P8c invalid selector is echoed");
-    check_zero_name("P8c invalid GET_NAME");
-
-    const uint64_t MISS_KEY = 0x00000BAD00240000ull;
-    const uint64_t MISS_PFX = 0x00240BAD00000000ull;
-    CHECK(h.run(E_GNAME, MISS_KEY, false, 4000, MISS_PFX, 0),
-          "P8d missing-descriptor GET_NAME completes");
-    CHECK(h.last_status == ST_NOSUCH && h.last_len == 84,
-          "P8d missing descriptor status/len %u/%u",
-          h.last_status, h.last_len);
-    check_zero_name("P8d missing-descriptor GET_NAME");
-
-    const uint64_t ENTITY_KEY = 0;
-    const uint64_t GROUP_PFX = 0x0000000000010000ull;
-    CHECK(h.run(E_GNAME, ENTITY_KEY, false, 4000, GROUP_PFX, 1),
-          "P8e ENTITY group-name GET_NAME completes");
-    CHECK(h.last_status == ST_OK && h.last_len == 84,
-          "P8e ENTITY name_index 1 status/len %u/%u",
-          h.last_status, h.last_len);
-    check_name(group_name, "P8e ENTITY group name");
-
-    for (int lane = 0; lane < 8; ++lane) h.name_store[lane] = old_name[lane];
-    CHECK(h.run(E_SNAME, CD_KEY, false, 8000, CD_PFX, 0),
-          "P8f changed SET_NAME completes");
-    CHECK(h.last_status == ST_OK && h.last_len == 84,
-          "P8f SET_NAME status/len %u/%u", h.last_status, h.last_len);
-    CHECK(h.stw.size() == 8, "P8f writes eight changed lanes, got %zu",
-          h.stw.size());
-    int bad_write = -1;
-    for (int lane = 0; lane < 8 && lane < int(h.stw.size()); ++lane) {
-      if (!h.stw[lane].name || h.stw[lane].addr != uint32_t(8 * lane) ||
-          h.stw[lane].data != h.staged_name[lane] ||
-          h.stw[lane].strb != 0xFF) {
-        bad_write = lane;
-        break;
-      }
-    }
-    CHECK(bad_write < 0, "P8f state write lane %d differs", bad_write);
-    check_name(h.staged_name, "P8f SET_NAME response");
-    CHECK(h.commits == 1 && h.nvm_marks.size() == 1 &&
-          h.nvm_marks[0] == 7 && h.notify_classes.size() == 1 &&
-          h.notify_classes[0] == 7, "P8f changed SET_NAME emits effects once");
-
-    CHECK(h.run(E_GNAME, CD_KEY, false, 4000, CD_PFX, 0),
-          "P8g GET_NAME after SET_NAME completes");
-    check_name(h.staged_name, "P8g GET_NAME after SET_NAME");
-
-    CHECK(h.run(E_SNAME, CD_KEY, false, 8000, CD_PFX, 0),
-          "P8h idempotent SET_NAME completes");
-    CHECK(h.last_status == ST_OK && h.stw.empty(),
-          "P8h idempotent SET_NAME performs no writes");
-    CHECK(h.commits == 0 && h.nvm_marks.empty() && h.notify_classes.empty(),
-          "P8h idempotent SET_NAME emits no effects");
-    check_name(h.staged_name, "P8h idempotent SET_NAME response");
-
-    for (int lane = 0; lane < 8; ++lane) h.name_store[lane] = old_name[lane];
-    CHECK(h.run(E_SNAME, CD_KEY, true, 8000, CD_PFX, 0),
-          "P8i locked SET_NAME completes");
-    CHECK(h.last_status == ST_LOCKED && h.last_len == 84,
-          "P8i locked SET_NAME status/len %u/%u",
-          h.last_status, h.last_len);
-    CHECK(h.stw.empty() && h.commits == 0 && h.nvm_marks.empty() &&
-          h.notify_classes.empty(), "P8i locked SET_NAME has no side effects");
-    check_name(old_name, "P8i locked SET_NAME current-name response");
-
-    CHECK(h.run(E_NAMEBAD, CD_KEY, false, 4000, CD_PFX, 0),
-          "P8j malformed name-command response completes");
-    CHECK(h.last_status == ST_BADARG && h.last_len == 84,
-          "P8j malformed command status/len %u/%u",
-          h.last_status, h.last_len);
-    check_zero_name("P8j malformed command");
   }
+  CHECK(bad_write < 0, "P8f state write lane %d differs", bad_write);
+  check_name(h.staged_name, "P8f SET_NAME response");
+  CHECK(h.commits == 1 && h.nvm_marks.size() == 1 &&
+        h.nvm_marks[0] == 7 && h.notify_classes.size() == 1 &&
+        h.notify_classes[0] == 7, "P8f changed SET_NAME emits effects once");
 
-  // ---- P9: COPY_BUFFER — descriptor bytes into the response -----------
+  CHECK(h.run(E_GNAME, CD_KEY, false, 4000, CD_PFX, 0),
+        "P8g GET_NAME after SET_NAME completes");
+  check_name(h.staged_name, "P8g GET_NAME after SET_NAME");
+
+  CHECK(h.run(E_SNAME, CD_KEY, false, 8000, CD_PFX, 0),
+        "P8h idempotent SET_NAME completes");
+  CHECK(h.last_status == ST_OK && h.stw.empty(),
+        "P8h idempotent SET_NAME performs no writes");
+  CHECK(h.commits == 0 && h.nvm_marks.empty() && h.notify_classes.empty(),
+        "P8h idempotent SET_NAME emits no effects");
+  check_name(h.staged_name, "P8h idempotent SET_NAME response");
+
+  for (int lane = 0; lane < 8; ++lane) h.name_store[lane] = old_name[lane];
+  CHECK(h.run(E_SNAME, CD_KEY, true, 8000, CD_PFX, 0),
+        "P8i locked SET_NAME completes");
+  CHECK(h.last_status == ST_LOCKED && h.last_len == 84,
+        "P8i locked SET_NAME status/len %u/%u",
+        h.last_status, h.last_len);
+  CHECK(h.stw.empty() && h.commits == 0 && h.nvm_marks.empty() &&
+        h.notify_classes.empty(), "P8i locked SET_NAME has no side effects");
+  check_name(old_name, "P8i locked SET_NAME current-name response");
+
+  CHECK(h.run(E_NAMEBAD, CD_KEY, false, 4000, CD_PFX, 0),
+        "P8j malformed name-command response completes");
+  CHECK(h.last_status == ST_BADARG && h.last_len == 84,
+        "P8j malformed command status/len %u/%u",
+        h.last_status, h.last_len);
+  check_zero_name("P8j malformed command");
+}
+
+// ---- P9: COPY_BUFFER — descriptor bytes into the response -----------
+void UcpuSuite::copy_buffer_moves_descriptor_bytes_into_the_response() {
   CHECK(h.run(E_COPY, IDX_OK, false), "P9 completes");
   CHECK(h.w32(12) == 0x11111111u && h.w32(16) == 0x22222222u &&
         h.w32(20) == 0x33333333u && h.w32(24) == 0x44444444u,
         "P9 lanes %08x %08x %08x %08x",
         h.w32(12), h.w32(16), h.w32(20), h.w32(24));
   CHECK(h.last_len == 28, "P9 len got %u", h.last_len);
+}
 
-  // ---- P10: MAP_VALIDATE pass and fail --------------------------------
+// ---- P10: MAP_VALIDATE pass and fail --------------------------------
+void UcpuSuite::map_validate_passes_and_fails() {
   CHECK(h.run(E_MAPV, 0, false), "P10 completes");
   CHECK(h.last_status == ST_OK, "P10 pass got %u", h.last_status);
   CHECK(h.run(E_MAPVF, 0, false), "P10b completes");
   CHECK(h.last_status == ST_BADARG, "P10b fail -> 7 got %u", h.last_status);
+}
 
-  // ---- P11: the 524-byte cap — skip-on-overflow (IEEE §7.4.76.1) ------
+// ---- P11: the 524-byte cap — skip-on-overflow (IEEE §7.4.76.1) ------
+void UcpuSuite::the_524_byte_cap_skips_on_overflow() {
   CHECK(h.run(E_OVF, 0, false, 1500), "P11 completes");
   CHECK(h.last_len == 524, "P11 capped at 524 got %u", h.last_len);
   CHECK(dut->dbg_ovf_o == 1, "P11 overflow flag set");
@@ -585,8 +778,10 @@ int main(int argc, char** argv) {
         h.w32(516) == 0 && h.w32(520) == 0xCAFE,
         "P11 first/last fitting elements (qword = hi word first)");
   CHECK(h.w32(524) == 0 && h.w32(528) == 0, "P11 nothing past the cap");
+}
 
-  // ---- P12: write strobes, truncating moves, 64-bit compare, rb-RAW ---
+// ---- P12: write strobes, truncating moves, 64-bit compare, rb-RAW ---
+void UcpuSuite::write_strobes_truncating_moves_and_the_rb_raw() {
   CHECK(h.run(E_FMT, IDX_OK, false), "P12 completes");
   CHECK(h.stw.size() == 3, "P12 three writes got %zu", h.stw.size());
   if (h.stw.size() == 3) {
@@ -600,19 +795,25 @@ int main(int argc, char** argv) {
   CHECK(h.buf[16] == 0x56 && h.buf[17] == 0x34, "P12 word field bytes");
   CHECK(h.buf[18] == 0x56, "P12 unaligned byte field");
   CHECK(h.last_len == 19, "P12 len got %u", h.last_len);
+}
 
-  // ---- P13: unknown-opcode path -> NOT_IMPLEMENTED (§9.3.5.3.3) -------
+// ---- P13: unknown-opcode path -> NOT_IMPLEMENTED (§9.3.5.3.3) -------
+void UcpuSuite::an_unknown_opcode_answers_not_implemented() {
   CHECK(h.run(E_NOTIMPL, 0, false), "P13 completes");
   CHECK(h.last_status == ST_NIMPL, "P13 NOT_IMPLEMENTED=1 got %u", h.last_status);
   CHECK(h.last_len == 12, "P13 echo-size got %u", h.last_len);
+}
 
-  // ---- P14: ACQUIRE_ENTITY exemplar (Milan Δ7) ------------------------
+// ---- P14: ACQUIRE_ENTITY exemplar (Milan Δ7) ------------------------
+void UcpuSuite::acquire_entity_answers_not_supported() {
   CHECK(h.run(E_ACQ, 0, false), "P14 completes");
   CHECK(h.last_status == ST_NSUPP, "P14 NOT_SUPPORTED=11 got %u", h.last_status);
   CHECK(h.w32(12) == 0 && h.w32(16) == 0, "P14 owner_id = 0");
   CHECK(h.last_len == 20, "P14 len got %u", h.last_len);
+}
 
-  // ---- P15: FAIL_SAFE arm preserves the best current status ----------
+// ---- P15: FAIL_SAFE arm preserves the best current status ----------
+void UcpuSuite::the_fail_safe_arm_preserves_the_best_status() {
   CHECK(h.run(E_STPRE, 0, false), "P15 completes");
   CHECK(h.last_status == ST_BADARG, "P15 status preserved got %u", h.last_status);
   CHECK(h.w32(8) == hdr2(ST_BADARG), "P15 hdr carries it");
@@ -621,13 +822,15 @@ int main(int argc, char** argv) {
   // P15b: the arm itself, dispatched clean -> SUCCESS response
   CHECK(h.run(E_FAILSAFE, 0, false), "P15b completes");
   CHECK(h.last_status == ST_OK && h.last_len == 12, "P15b clean arm");
+}
 
-  // ---- P17: MVU GET_MILAN_INFO (Milan v1.2 §5.4.4.1, Figure 5.4) ------
-  // The µprogram builds the whole 20-byte payload from constants: the tail of
-  // the 48-bit protocol_id, r + command_type, the reserved word the sender
-  // must zero, then the three 32-bit fields. Checked FIELD BY FIELD rather
-  // than as a length, because a wrong protocol_version or an overclaimed
-  // features_flags is a lie a controller believes.
+// ---- P17: MVU GET_MILAN_INFO (Milan v1.2 §5.4.4.1, Figure 5.4) ------
+// The µprogram builds the whole 20-byte payload from constants: the tail of
+// the 48-bit protocol_id, r + command_type, the reserved word the sender
+// must zero, then the three 32-bit fields. Checked FIELD BY FIELD rather
+// than as a length, because a wrong protocol_version or an overclaimed
+// features_flags is a lie a controller believes.
+void UcpuSuite::mvu_get_milan_info_carries_every_field() {
   {
     auto w16 = [&](uint32_t a) {
       return uint32_t(h.buf[a]) | uint32_t(h.buf[a + 1]) << 8;
@@ -648,17 +851,19 @@ int main(int argc, char** argv) {
     CHECK(h.w32(28) == 0u, "P17 certification_version got %08x, want 0",
           h.w32(28));
   }
+}
 
-  // ---- P16: the response-buffer face is FLOW CONTROLLED ---------------
-  // Every program above ran against a 2-cycle stall. These prove the µCPU is
-  // INVARIANT to how hard the buffer pushes back: a buffer in main memory can
-  // refuse for a whole memory round trip, and the bytes, the length, the
-  // status and the number of writes must all be identical to a buffer that
-  // never refuses at all.
+// ---- P16: the response-buffer face is FLOW CONTROLLED ---------------
+// Every program above ran against a 2-cycle stall. These prove the µCPU is
+// INVARIANT to how hard the buffer pushes back: a buffer in main memory can
+// refuse for a whole memory round trip, and the bytes, the length, the
+// status and the number of writes must all be identical to a buffer that
+// never refuses at all.
+void UcpuSuite::the_response_buffer_face_is_flow_controlled() {
   {
     struct Prog { const char* name; uint16_t upc; uint64_t opd0;
                   uint64_t opd1; };
-    static const Prog progs[] = {
+    static constexpr Prog progs[] = {
       {"GETSR", E_GETSR, IDX_OK, OPD1}, {"ALU", E_ALU, 0, OPD1},
       {"ITER", E_ITER, 0, OPD1},
       {"GATHER", E_GATHER, 0, OPD1},    {"COPY", E_COPY, IDX_OK, OPD1},
@@ -673,8 +878,11 @@ int main(int argc, char** argv) {
       h.rb_stall = 0;
       bool ok0 = h.run(p.upc, p.opd0, false, 2000, p.opd1);
       std::vector<uint8_t> img0(h.buf, h.buf + sizeof h.buf);
-      uint32_t len0 = h.last_len, st0 = h.last_status;
-      int snd0 = h.sends, acc0 = h.rb_accepts, held0 = h.rb_held_cycles;
+      uint32_t len0 = h.last_len;
+      uint32_t st0 = h.last_status;
+      int snd0 = h.sends;
+      int acc0 = h.rb_accepts;
+      int held0 = h.rb_held_cycles;
 
       h.rb_stall = 9;
       bool ok9 = h.run(p.upc, p.opd0, false, 2000, p.opd1);
@@ -699,19 +907,21 @@ int main(int argc, char** argv) {
     }
     h.rb_stall = 2;
   }
+}
 
-  // ---- P18: GET_COUNTERS lays out IEEE §7.4.42.2's block, all 32 quadlets
-  // The response is fixed-size on every status: descriptor_type, then
-  // descriptor_index, then counters_valid, then THIRTY-TWO quadlets. A short
-  // block is a deserialize error at the controller (Hive 4.3.1 reports exactly
-  // that shape of defect as "Incorrect payload size"), so the length is a check
-  // in its own right, and so is every quadlet's selector: quadlet n must come
-  // from gather selector {n>>2, n&3} and from nowhere else, because that
-  // mapping is the whole reason the block needs no decoder.
-  //
-  // Byte order here is the TB buffer's own little-endian convenience, not the
-  // wire's — KL_aecp_resp_buf owns the 1722.1 big-endian placement and tb/pp_top
-  // grades it against real AECPDU bytes.
+// ---- P18: GET_COUNTERS lays out IEEE §7.4.42.2's block, all 32 quadlets
+// The response is fixed-size on every status: descriptor_type, then
+// descriptor_index, then counters_valid, then THIRTY-TWO quadlets. A short
+// block is a deserialize error at the controller (Hive 4.3.1 reports exactly
+// that shape of defect as "Incorrect payload size"), so the length is a check
+// in its own right, and so is every quadlet's selector: quadlet n must come
+// from gather selector {n>>2, n&3} and from nowhere else, because that
+// mapping is the whole reason the block needs no decoder.
+//
+// Byte order here is the TB buffer's own little-endian convenience, not the
+// wire's — KL_aecp_resp_buf owns the 1722.1 big-endian placement and tb/pp_top
+// grades it against real AECPDU bytes.
+void UcpuSuite::get_counters_lays_out_all_32_quadlets() {
   {
     const uint16_t DESC_STREAM_INPUT = 0x0005;
     //! the locate-first contract (this round): r14 is the store key
@@ -728,14 +938,17 @@ int main(int argc, char** argv) {
     //! ((a == b) | DESC_STREAM_INPUT: always nonzero) - found when the
     //! locate-first landing changed the layout and it stayed green.
     //! Parenthesized now, and graded against the FMT_D {type, index} emit.
-    CHECK(h.w32(12) == (uint32_t)(CT_TYIX & 0xFFFFFFFFu),
+    CHECK(h.w32(12) == static_cast<uint32_t>(CT_TYIX & 0xFFFFFFFFu),
           "P18 {type, index} got %08x", h.w32(12));
-    CHECK(h.w32(16) == (uint32_t)h.gxval(0x80),
+    CHECK(h.w32(16) == static_cast<uint32_t>(h.gxval(0x80)),
           "P18 counters_valid comes from selector 0x80, got %08x", h.w32(16));
     int bad_q = -1;
     for (int n = 0; n < 32; ++n) {
       uint8_t sel = uint8_t(((n >> 2) << 4) | (n & 3));
-      if (h.w32(20 + 4 * n) != (uint32_t)h.gxval(sel)) { bad_q = n; break; }
+      if (h.w32(20 + 4 * n) != static_cast<uint32_t>(h.gxval(sel))) {
+        bad_q = n;
+        break;
+      }
     }
     CHECK(bad_q < 0, "P18 quadlet %d is not what selector 0x%02x answered",
           bad_q, bad_q < 0 ? 0 : (((bad_q >> 2) << 4) | (bad_q & 3)));
@@ -743,12 +956,14 @@ int main(int argc, char** argv) {
     CHECK(h.commits == 0 && h.nvm_marks.empty() && h.notify_classes.empty(),
           "P18 a GET has no effects");
   }
+}
 
-  // ---- P18b: the locate miss answers NO_SUCH_DESCRIPTOR, zero body --------
-  // (this round's first strictness rule: Table 7-141 "A descriptor with the
-  //  descriptor_type and descriptor_index specified does not exist" - and
-  //  the fixed Figure 7-67 body still emits, all zero, with the gather face
-  //  NEVER consulted: the store, not the face, is the existence authority)
+// ---- P18b: the locate miss answers NO_SUCH_DESCRIPTOR, zero body --------
+// (this round's first strictness rule: Table 7-141 "A descriptor with the
+//  descriptor_type and descriptor_index specified does not exist" - and
+//  the fixed Figure 7-67 body still emits, all zero, with the gather face
+//  NEVER consulted: the store, not the face, is the existence authority)
+void UcpuSuite::a_counters_locate_miss_answers_a_zero_body() {
   {
     const uint64_t CT_MISS = 0x00000BAD00050000ull;   // the store-miss index
     const uint64_t CT_TYIX = 0x0000000000050BADull;
@@ -767,10 +982,12 @@ int main(int argc, char** argv) {
           "P18b the face was asked %zu times about a nonexistent object",
           h.gx_sels.size());
   }
+}
 
-  // ---- P18c: the counter-less-type refusal is the FULL body ---------------
-  // (the la_avdecc size law: only NOT_IMPLEMENTED reflects at command
-  //  length; NOT_SUPPORTED must carry the fixed 160-byte response form)
+// ---- P18c: the counter-less-type refusal is the FULL body ---------------
+// (the la_avdecc size law: only NOT_IMPLEMENTED reflects at command
+//  length; NOT_SUPPORTED must carry the fixed 160-byte response form)
+void UcpuSuite::the_counter_less_type_refusal_is_the_full_body() {
   {
     const uint64_t CT_KEY  = 0x0000000000000000ull;   // never located
     const uint64_t CT_TYIX = 0x0000000000000000ull;   // ENTITY 0
@@ -785,16 +1002,18 @@ int main(int argc, char** argv) {
           "P18c the face was asked %zu times about a counter-less type",
           h.gx_sels.size());
   }
+}
 
-  // ---- P19: GET_AUDIO_MAP lays out IEEE §7.4.44.2's response --------------
-  // Fixed part {descriptor_type, descriptor_index, map_index, number_of_maps,
-  // number_of_mappings, reserved} then 8-byte records, so the payload is
-  // 12 + 8·M and resp_len 24 + 8·M. The register contract is the engine's:
-  // r14 = the locate key {index, STREAM_PORT_INPUT, cfg 0} and r13 =
-  // {descriptor_index, map_index}; the harness's face model partitions into
-  // 3 pages with page 0 EMPTY, page 1 = 3 records, page 2 = 1 (mirrors
-  // gen_ucode.py's E_GAMAP note). Byte order is the TB buffer's little-endian
-  // convenience - tb/pp_top grades the real wire bytes.
+// ---- P19: GET_AUDIO_MAP lays out IEEE §7.4.44.2's response --------------
+// Fixed part {descriptor_type, descriptor_index, map_index, number_of_maps,
+// number_of_mappings, reserved} then 8-byte records, so the payload is
+// 12 + 8·M and resp_len 24 + 8·M. The register contract is the engine's:
+// r14 = the locate key {index, STREAM_PORT_INPUT, cfg 0} and r13 =
+// {descriptor_index, map_index}; the harness's face model partitions into
+// 3 pages with page 0 EMPTY, page 1 = 3 records, page 2 = 1 (mirrors
+// gen_ucode.py's E_GAMAP note). Byte order is the TB buffer's little-endian
+// convenience - tb/pp_top grades the real wire bytes.
+void UcpuSuite::get_audio_map_lays_out_its_response() {
   {
     auto w16 = [&](uint32_t a) {
       return uint32_t(h.buf[a]) | uint32_t(h.buf[a + 1]) << 8;
@@ -879,15 +1098,20 @@ int main(int argc, char** argv) {
           h.w32(18));
     CHECK(count_sel(0x10) == 0, "P19d records fetched for a missing port");
   }
+}
 
+// The engine returns to idle once every program above has retired.
+void UcpuSuite::the_engine_is_ready_again_after_every_program() {
   h.tick();
   CHECK(dut->disp_ready_o == 1, "ready again after all programs");
+}
 
-  // ---- N: the registration pair + the unsolicited stubs ----------------
-  // (Milan SS5.4.2.21/SS5.4.2.22; gen_ucode.py E_REGUN/E_DEREG/E_UNSOK/
-  //  E_NOSEND). The op itself lives in KL_aecp_notify - here the face is
-  //  modeled, so what is proved is the microprogram's status law and that
-  //  exactly ONE op gather is issued per command (the once-per-edge rule).
+// ---- N: the registration pair + the unsolicited stubs ----------------
+// (Milan SS5.4.2.21/SS5.4.2.22; gen_ucode.py E_REGUN/E_DEREG/E_UNSOK/
+//  E_NOSEND). The op itself lives in KL_aecp_notify - here the face is
+//  modeled, so what is proved is the microprogram's status law and that
+//  exactly ONE op gather is issued per command (the once-per-edge rule).
+void UcpuSuite::the_registration_pair_and_the_unsolicited_stubs() {
   h.rgy_result = 0;
   CHECK(h.run(E_REGUN, 0, false), "N1 REGISTER ok-arm completes");
   CHECK(h.last_status == ST_OK, "N1 status SUCCESS got %u", h.last_status);
@@ -924,10 +1148,12 @@ int main(int argc, char** argv) {
 
   CHECK(h.run(E_NOSEND, 0, false), "N5 no-send arm completes");
   CHECK(h.sends == 0, "N5 emits NO frame, got %d", h.sends);
+}
 
-  // ---- L: LOCK_ENTITY + the NOT_SUPPORTED echo + the notification --------
-  // (Milan SS5.4.2.1/SS5.4.2.2, IEEE SS7.4.1/SS7.4.2; gen_ucode.py E_NSUPPE
-  //  / E_LOCKEN / E_LOCKUNS. r14[31:0] carries the command's flags word.)
+// ---- L: LOCK_ENTITY + the NOT_SUPPORTED echo + the notification --------
+// (Milan SS5.4.2.1/SS5.4.2.2, IEEE SS7.4.1/SS7.4.2; gen_ucode.py E_NSUPPE
+//  / E_LOCKEN / E_LOCKUNS. r14[31:0] carries the command's flags word.)
+void UcpuSuite::lock_entity_and_the_not_supported_echo() {
   h.rgy_result = 2;                          // took the lock (changed)
   h.rgy_holder = 0x1111222233334444ull;
   CHECK(h.run(E_LOCKEN, 0x0000000000000001ull, false), "L1 LOCK ok completes");
@@ -938,7 +1164,8 @@ int main(int argc, char** argv) {
   CHECK(h.w32(24) == 0, "L1 ENTITY[0] echo");
   CHECK(h.last_len == 28, "L1 len 28 got %u", h.last_len);
   {
-    int op = 0, st = 0;
+    int op = 0;
+    int st = 0;
     for (uint8_t v : h.gx_sels) { if (v == 0xA0) ++op; if (v == 0xA1) ++st; }
     CHECK(op == 1 && st == 1, "L1 one op + one state gather (%d, %d)", op, st);
   }
@@ -964,13 +1191,15 @@ int main(int argc, char** argv) {
   CHECK(h.last_status == ST_NSUPP && h.last_len == 12 && h.sends == 1,
         "L4 NOT_SUPPORTED, echo-sized (st %u len %u sends %d)",
         h.last_status, h.last_len, h.sends);
+}
 
-  // ---- G: GET_STREAM_INFO (Milan SS5.4.2.10 Figure 5.1 layout) -----------
-  // r14 = the locate key {index, type, cfg 0}; r13 = {type, index} for the
-  // @24 dword. Every value word comes from the face model above; what is
-  // proved here is the LAYOUT - each selector's word lands at its Figure 5.1
-  // offset - and that a locate miss keeps NO_SUCH_DESCRIPTOR while still
-  // emitting the full 56-byte body the face answered.
+// ---- G: GET_STREAM_INFO (Milan SS5.4.2.10 Figure 5.1 layout) -----------
+// r14 = the locate key {index, type, cfg 0}; r13 = {type, index} for the
+// @24 dword. Every value word comes from the face model above; what is
+// proved here is the LAYOUT - each selector's word lands at its Figure 5.1
+// offset - and that a locate miss keeps NO_SUCH_DESCRIPTOR while still
+// emitting the full 56-byte body the face answered.
+void UcpuSuite::get_stream_info_lays_out_figure_5_1() {
   {
     const uint64_t KEY_OK  = 0x0000000300050000ull;   // STREAM_INPUT[3]
     const uint64_t TYIX    = 0x0000000000050003ull;
@@ -1005,8 +1234,10 @@ int main(int argc, char** argv) {
     CHECK(h.last_len == 68, "G2 the full body still emits, len %u",
           h.last_len);
   }
+}
 
-  // ---- V: GET_AVB_INFO + GET_AS_PATH (IEEE SS7.4.40/SS7.4.41) ------------
+// ---- V: GET_AVB_INFO + GET_AS_PATH (IEEE SS7.4.40/SS7.4.41) ------------
+void UcpuSuite::get_avb_info_and_get_as_path_lay_out_their_lists() {
   {
     const uint64_t KEY  = 0x0000000300050000ull;   // any locate hit
     const uint64_t TYIX = 0x0000000000090000ull;   // {type 9, index 0}
@@ -1040,10 +1271,12 @@ int main(int argc, char** argv) {
     CHECK(h.last_status == ST_OK && h.last_len == 16,
           "V3 count 0 emits an empty list, len %u", h.last_len);
   }
+}
 
-  // ---- S: START_STREAMING write completion status -----------------------
-  // Success is established before WRITE_ST so a bounded listener failure can
-  // replace it with ENTITY_MISBEHAVING and cannot be overwritten afterward.
+// ---- S: START_STREAMING write completion status -----------------------
+// Success is established before WRITE_ST so a bounded listener failure can
+// replace it with ENTITY_MISBEHAVING and cannot be overwritten afterward.
+void UcpuSuite::start_streaming_carries_the_write_completion_status() {
   {
     const uint64_t KEY = 0x0000000000050000ull;
     const uint64_t TYIX = 0x0000000000050000ull;
@@ -1062,11 +1295,13 @@ int main(int argc, char** argv) {
           "S2 failed completion does not emit a state-change notification");
     h.write_error = false;
   }
+}
 
-  // ---- S3: SET_STREAM_FORMAT family (Milan 5.4.2.7, IEEE 7.4.9.1) --------
-  // The tix operand shapes: r14 = {16'0, index, type, 16'0} is the locate
-  // key, r13 = {32'0, type, index} the emitted word. Index 3 of type 0x0005
-  // hits the harness locate; index 0x0BAD misses.
+// ---- S3: SET_STREAM_FORMAT family (Milan 5.4.2.7, IEEE 7.4.9.1) --------
+// The tix operand shapes: r14 = {16'0, index, type, 16'0} is the locate
+// key, r13 = {32'0, type, index} the emitted word. Index 3 of type 0x0005
+// hits the harness locate; index 0x0BAD misses.
+void UcpuSuite::the_set_stream_format_family_writes_or_refuses() {
   {
     const uint64_t KEY  = 0x0000000300050000ull;
     const uint64_t TYIX = 0x0000000000050003ull;
@@ -1160,11 +1395,13 @@ int main(int argc, char** argv) {
           "S3g the running refusal serves the current format");
     CHECK(h.stw.empty(), "S3g the running refusal writes nothing");
   }
+}
 
-  // ---- S4: SET_STREAM_INFO (Milan 5.4.2.9) ------------------------------
-  // The engine settles type/flags/range at dispatch and echoes the command
-  // body itself, so the µprogram's whole job is the SEL_PTOFF write and a
-  // header; its response here is header-only (the echo is the engine's).
+// ---- S4: SET_STREAM_INFO (Milan 5.4.2.9) ------------------------------
+// The engine settles type/flags/range at dispatch and echoes the command
+// body itself, so the µprogram's whole job is the SEL_PTOFF write and a
+// header; its response here is header-only (the echo is the engine's).
+void UcpuSuite::set_stream_info_writes_only_the_presentation_offset() {
   {
     const uint64_t KEY  = 0x0000000300060000ull;
     const uint64_t TYIX = 0x0000000000060003ull;
@@ -1211,8 +1448,55 @@ int main(int argc, char** argv) {
     for (uint32_t a = 16; a < 96; a += 4) zeros = zeros && (h.w32(a) == 0);
     CHECK(zeros, "S4d every value byte is zero");
   }
+}
+
+int UcpuSuite::run() {
+  const milan::tb::Model<VKL_aecp_ucpu> model;
+  dut = model.get();
+  h.dut = dut;
+
+  reset_leaves_the_engine_idle();
+  get_sampling_rate_exemplar_answers_the_rate();
+  a_locate_miss_answers_no_such_descriptor();
+  alu_raw_and_branch_flush_build_the_fields();
+  the_iter_append_loop_emits_exactly_three();
+  check_arg_answers_bad_arguments();
+  check_lock_answers_entity_locked();
+  gather_ext_and_read_counters_fill_the_burst();
+  set_sampling_rate_writes_back_and_emits_effects();
+  the_name_region_reads_and_writes_back();
+  get_name_serves_the_stored_lanes();
+  set_name_writes_only_changed_lanes();
+  copy_buffer_moves_descriptor_bytes_into_the_response();
+  map_validate_passes_and_fails();
+  the_524_byte_cap_skips_on_overflow();
+  write_strobes_truncating_moves_and_the_rb_raw();
+  an_unknown_opcode_answers_not_implemented();
+  acquire_entity_answers_not_supported();
+  the_fail_safe_arm_preserves_the_best_status();
+  mvu_get_milan_info_carries_every_field();
+  the_response_buffer_face_is_flow_controlled();
+  get_counters_lays_out_all_32_quadlets();
+  a_counters_locate_miss_answers_a_zero_body();
+  the_counter_less_type_refusal_is_the_full_body();
+  get_audio_map_lays_out_its_response();
+  the_engine_is_ready_again_after_every_program();
+  the_registration_pair_and_the_unsolicited_stubs();
+  lock_entity_and_the_not_supported_echo();
+  get_stream_info_lays_out_figure_5_1();
+  get_avb_info_and_get_as_path_lay_out_their_lists();
+  start_streaming_carries_the_write_completion_status();
+  the_set_stream_format_family_writes_or_refuses();
+  set_stream_info_writes_only_the_presentation_offset();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
-  delete dut;
   return fails ? 1 : 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  Verilated::commandArgs(argc, argv);
+  UcpuSuite suite;
+  return suite.run();
 }
