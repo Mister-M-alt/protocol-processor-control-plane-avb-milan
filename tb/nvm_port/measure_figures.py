@@ -17,7 +17,7 @@ WHAT IT COVERS. Every figure in the README, and the covered set is DERIVED
 rather than asserted: each `N of M` and `N PASS, M FAIL` in the file is a claim
 by default, satisfied only by a measurement here or by an explicit entry in
 WAIVERS whose reason is printed on every clean run. Twelve arm rows plus the arm
-COUNT read from the RTL; fourteen mutations and probes; seven device-model result
+COUNT read from the RTL; eighteen mutations and probes; seven device-model result
 rows; and all thirty cells of the pre-fix matrix.
 
 Three earlier versions each closed a narrower class than they claimed, and the
@@ -102,55 +102,38 @@ ARMS = [(211, "S_WEREQ"), (220, "S_WEWAIT"), (230, "S_WWREQ"), (240, "S_WHPUMP")
 
 #: The coincident-completion model. Unlike every other model here it varies the
 #: HANDSHAKE, not what the array retains: the device raises `dev_done_i` on the
-#: same clock edge that moves a pump's final byte. `KL_pp_nvm_port.sv:175-179`
+#: same clock edge that moves a command's final byte. `KL_pp_nvm_port.sv:175-179`
 #: says the sticky `done_seen_r` latch exists for exactly this device, so it is
 #: a documented contract freedom, not a broken peer -- and the port handles it,
 #: with the suite green on pristine RTL. Its whole interest used to be that
-#: deleting the latch was INVISIBLE without it; T21 now catches that on the
-#: pristine model too, and this model still catches far more of it.
+#: deleting the latch was INVISIBLE without it; T21 and T22 now catch that on
+#: the pristine model too, and this model still catches far more of it.
 #:
-#: The load-bearing edit is the fourth. Setting the model's own `d_done` cannot
-#: produce this: `dut->dev_done_i = d_done;` is driven at the top of the tick,
-#: so it presents a cycle late, the port is already in a WAIT state reading
-#: `dev_done_i` directly, and the latch is bypassed. Four attempts to tune a
-#: completion delay all gave 90/0, because the delay is counted in ticks and the
-#: coincidence lives inside one. Writing `dut->dev_done_i` directly after the
-#: first `eval()` -- when the DUT's outputs for this cycle have settled, so the
-#: final-byte handshake is visible -- and re-evaluating before the posedge is
-#: the only thing that lands it on the right edge.
-#:
-#: The `fail_cur` guard is load-bearing too: without it the model pulses `done`
-#: on the byte an armed error is about to land on, and T17/T18 stop testing what
-#: they name.
+#: It used to be four edits that spliced the behaviour into the harness from
+#: here, and the mechanism they spliced in is now the harness's own armed
+#: backend behaviour -- `Harness::present_coincident_completion`, which T22
+#: arms for one commit and one restore. So this model is what it always meant:
+#: the same freedom, taken by the backend for the WHOLE run rather than at one
+#: armed moment. One anchor, on the declaration alone, so the comment beside it
+#: can be reworded without the gate going dark; the reason the pulse has to be
+#: written onto the pin between the two `eval()` calls is recorded in the
+#: harness beside the code that does it, where a reader of that code will find
+#: it.
 _COINCIDENT = [
-    (SIM, "  int  d_st = 0;                          // 0 idle, 1 data, 2 completion timer",
-          "  int  d_st = 0;                          // 0 idle, 1 data, 2 completion timer\n"
-          "  bool coinc = false;      // this tick's final byte carries `done` with it"),
-    (SIM, "        if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }\n"
-          "        else if (d_bytes == d_cur.len) { done_ctr = op_delay; d_st = 2; }",
-          "        if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }\n"
-          "        else if (d_bytes == d_cur.len) {\n"
-          "          if (coinc) { d_busy = false; d_st = 0; }\n"
-          "          else { done_ctr = op_delay; d_st = 2; } }"),
-    (SIM, "          if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }\n"
-          "          else if (d_bytes == d_cur.len) { done_ctr = op_delay; d_st = 2; }",
-          "          if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }\n"
-          "          else if (d_bytes == d_cur.len) {\n"
-          "            if (coinc) { d_busy = false; d_st = 0; }\n"
-          "            else { done_ctr = op_delay; d_st = 2; } }"),
-    (SIM, "    dut->clk_i = 0; dut->eval();",
-          "    dut->clk_i = 0; dut->eval();\n"
-          "    coinc = false;\n"
-          "    if (d_st == 1 && !(fail_cur && err_after_bytes >= 0\n"
-          "                       && d_bytes + 1 == err_after_bytes)) {\n"
-          "      bool lw = (d_cur.op == OP_WRITE && d_bytes + 1 == d_cur.len\n"
-          "                 && dut->dev_wready_i && dut->dev_wvalid_o);\n"
-          "      bool lr = (d_cur.op == OP_READ && d_bytes + 1 == d_cur.len\n"
-          "                 && dut->dev_rvalid_i && dut->dev_rready_o);\n"
-          "      if (lw || lr) { dut->dev_done_i = 1; dut->dev_busy_i = 0;\n"
-          "                      coinc = true; dut->eval(); }\n"
-          "    }"),
+    (SIM, "  bool done_on_last_byte = false;", "  bool done_on_last_byte = true;"),
 ]
+
+#: The state half of the ownership window: `dev_cmd_owned_w` narrowed to the
+#: grant handshake alone, which is the simplification a maintainer reaches for.
+#: The four states that can move a final byte are what carries a completion
+#: that rides one, so this is the mutation T22 exists to reject.
+_GRANT_ONLY_OWNERSHIP = [
+    (RTL, """  assign dev_cmd_owned_w = (dev_req_o && dev_gnt_i)
+                      || (state_r == S_WEWAIT) || (state_r == S_WHPUMP)
+                      || (state_r == S_WDPUMP) || (state_r == S_WWAIT)
+                      || (state_r == S_RHCOLL) || (state_r == S_RHWAIT)
+                      || (state_r == S_RPPUMP) || (state_r == S_RPWAIT);""",
+          "  assign dev_cmd_owned_w = (dev_req_o && dev_gnt_i);")]
 
 
 #: Every `fails N of M` claim in the README, and how to reproduce it.
@@ -169,11 +152,21 @@ _COINCIDENT = [
 #: An anchor also carries the harness's INDENTATION, and that is how this gate
 #: last went dark. When the suite's phases moved out of `main` into member
 #: functions the whole body shifted left by two spaces; four anchors here and
-#: three in `MATRIX_FORMS` kept the old form, `apply_edits` raised on the first
-#: of them, and the gate stopped before printing a single row. The refusal is
-#: the design working -- a stale table must not measure -- but note the failure
-#: mode: a gate that cannot START reports no staleness at all, so it looks like
-#: an unrelated build break rather than the finding it is.
+#: three in `MATRIX_FORMS` kept the old form, and `apply_edits` raised on the
+#: first of them.
+#:
+#: What that run actually did is worth stating exactly, because the first
+#: account of it in this file was wrong and a maintenance note that misstates
+#: the failure sends the next reader looking in the wrong place. It did not
+#: fail to start. Run at the baseline it printed its build count, a green
+#: 90-check baseline, all twelve arm rows and the six RTL mutation rows, then
+#: raised on `probe-armearly` -- the first row whose anchor is in
+#: `sim_main.cpp` rather than the RTL -- and stopped there, with `make`
+#: exiting non-zero. The refusal is the design working: a stale table must not
+#: measure. The failure mode to know is the other one. Rows printed before the
+#: refusal look like a clean sweep, the mutations, models and matrix after it
+#: never ran at all, and neither absence is announced -- so partial output is
+#: not a result, and only the EXIT STATUS says whether the gate finished.
 MUTATIONS = [
     # ---- mutations of the RTL ------------------------------------------------
     ("M1", r"rewritten to `S_WWREQ`.*?\*\*Fails (\d+) of", [
@@ -246,6 +239,38 @@ MUTATIONS = [
     ("done_seen_r/pristine",
      r"deleting the set\s+line now reddens (\d+) of", [
         (RTL, "      if (dev_done_i && dev_cmd_owned_w) done_seen_r <= 1'b1;\n", "")]),
+    # The state half of the ownership window, which no standing check reached
+    # until T22: every backend the suite ran completed some cycles after the
+    # last byte, and a completion that lands with the port already in a wait
+    # state is read live, so the sticky flag was never consulted and the eight
+    # state terms could all be deleted with the suite green. These four rows
+    # are that measurement, kept as figures so it cannot quietly come back.
+    ("own-states-dropped",
+     r"ownership narrowed to the grant handshake alone \*\*fails (\d+) of",
+     _GRANT_ONLY_OWNERSHIP),
+    # The `|| ` is part of both anchors below: three of the eight states are
+    # also named by an output assign, two of them with a second paren, so the
+    # bare `(state_r == X)` is ambiguous for `S_WHPUMP` and `S_RHCOLL` and
+    # `apply_edits` refuses it -- correctly, since a count-1 replace would have
+    # mutated the datapath instead of the ownership window.
+    ("own-minus-rhcoll",
+     r"dropping the single `S_RHCOLL` term \*\*fails (\d+) of", [
+        (RTL, "|| (state_r == S_RHCOLL)", "|| 1'b0")]),
+    # ...and the other half of the same honesty: a term that CANNOT be pinned,
+    # measured as such rather than asserted. A wait state consumes `dev_done_i`
+    # on the cycle it arrives, so setting the flag there changes nothing any
+    # observer can reach. If that ever stops being true this row goes red and
+    # the README paragraph naming these four terms undiscriminated is wrong.
+    ("own-minus-wwait",
+     r"dropping the single `S_WWAIT` term \*\*fails (\d+) of", [
+        (RTL, "|| (state_r == S_WWAIT)", "|| 1'b0")]),
+    # The exclusion at the other end: ownership widened by one state that owns
+    # nothing. T20a is the check that must reject it.
+    ("own-plus-rhreq",
+     r"admitting an ungranted `S_RHREQ` into the window \*\*fails (\d+) of", [
+        (RTL, "  assign dev_cmd_owned_w = (dev_req_o && dev_gnt_i)",
+              "  assign dev_cmd_owned_w = (dev_req_o && dev_gnt_i)\n"
+              "                      || (state_r == S_RHREQ)")]),
     ("retraction", r"that check FAILS while the header check PASSES, (\d+) of", [
         (SIM, "  h.arm_err(1, 12);                 // op 0 = ERASE, op 1 = WRITE: cut at 12 B",
               "  h.arm_err(1, static_cast<int>(replacement.size()));")]),
@@ -273,13 +298,13 @@ _PAGEBUF = [
           "            dut->dev_wdata_o;\n        ++d_bytes;",
           "        sent.push_back(dut->dev_wdata_o);\n"
           "        pagebuf.push_back(dut->dev_wdata_o);\n        ++d_bytes;"),
-    (SIM, "        else if (d_bytes == d_cur.len) { done_ctr = op_delay; d_st = 2; }\n"
+    (SIM, "        else if (d_bytes == d_cur.len) { finish_data_phase(); }\n"
           "      } else if (d_stall > 0) --d_stall;\n    }\n\n    // read byte delivery",
           "        else if (d_bytes == d_cur.len) {\n"
           "          for (size_t k = 0; k < pagebuf.size(); ++k)\n"
           "            store[d_cur.region % N_REGIONS][(d_cur.offset + k) % REG_BYTES] =\n"
           "                pagebuf[k];\n"
-          "          pagebuf.clear();\n          done_ctr = op_delay; d_st = 2;\n        }\n"
+          "          pagebuf.clear();\n          finish_data_phase();\n        }\n"
           "      } else if (d_stall > 0) --d_stall;\n    }\n\n    // read byte delivery"),
     (SIM, "        d_stall = wstall;\n"
           "        if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }",
@@ -583,16 +608,16 @@ TALLY_RE = re.compile(r"(\d+) checks: (\d+) PASS, (\d+) FAIL")
 #: the closed class is number words, but the OPEN class is ways of writing a
 #: ratio, and closing one axis leaves the other untouched. Ten of thirteen
 #: phrasings still evaded, and the two cheapest used digits only --
-#: `fails 22 of the 114 checks` and `fails 22 out of 114`. A reviewer's own
+#: `fails 22 of the 122 checks` and `fails 22 out of 122`. A reviewer's own
 #: earlier attack was literally `68 out of 83`, caught only because the
 #: DENOMINATOR happened to be wrong.
 #:
 #: The two optional words below close all four digit-only cases and match
-#: exactly the twenty-four figures in the current file -- no false positives.
+#: exactly the twenty-eight figures in the current file -- no false positives.
 #: What they do NOT do is close the class, and this comment is deliberately not
 #: claiming they do. `| Mx | 22 |`, `reddens 22 checks`, `a fifth of the
 #: suite`, `68/90ths` and `24%` all still evade. A real closure would mean
-#: treating every bare integer as a claim; measured, 262 numbers in this file
+#: treating every bare integer as a claim; measured, 292 numbers in this file
 #: fall outside every claim and waiver span, so the waiver list would be larger
 #: than the thing it protects. The honest position is that this is a strong
 #: default that catches every phrasing anyone has actually written here, not a
@@ -632,10 +657,10 @@ WAIVERS = [
     # correct and is the mechanism working: they are waived by a pattern narrow
     # enough to reach only that sentence, so a real `22 out of 90` anywhere else
     # is still a hard error.
-    (r"`fails 22 of the 114 checks` and `fails\s+22 out of 114`",
+    (r"`fails 22 of the 122 checks` and `fails\s+22 out of 122`",
      "two illustrative phrasings quoted inside the paragraph explaining what "
      "the inverted default does not close; not claims about this suite"),
-    (r"\b114/114\b",
+    (r"\b122/122\b",
      "suite tally shorthand; both halves are the suite size, which the size "
      "check already pins against the measured total"),
 ]

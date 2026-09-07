@@ -13,9 +13,10 @@
 // (busy low at the pulse, pulses exactly once), back-to-back ops, req-
 // while-busy refusal, header refusals (bad magic / oversize length) with
 // zero device traffic, mid-op device errors surfacing exactly once, and --
-// the one thing a well-behaved backend cannot show -- a `done` pulsed for no
-// command at all, which the port must not mistake for the completion of the
-// next one it issues.
+// the three things a well-behaved backend cannot show -- a `done` pulsed for
+// no command at all, which the port must not mistake for the completion of
+// the next one it issues, and the two completions it MUST take: one riding
+// its own grant, one riding a command's final byte.
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -136,14 +137,32 @@ struct Harness {
   bool gnt_done_now = false;              // this grant carries the completion
   int  gnt_done_pairs = 0;                // grant+done cycles presented
 
+  // ---- completion riding a pump's final byte ----
+  // The coincidence the sticky `done_seen_r` exists for, and the one the eight
+  // state terms of `dev_cmd_owned_w` carry: the backend raises `done` on the
+  // same edge that moves the command's last byte, while the port is still in
+  // the pump or collect state. It is armed rather than always on, because it
+  // is a contract freedom a backend may or may not take; `measure_figures.py`
+  // turns it on for the whole run as the coincident-completion model.
+  bool done_on_last_byte = false;         // arm: the backend answers on that edge
+  bool coinc_now = false;                 // this tick's final byte carries it
+  int  coinc_dones = 0;                   // final-byte completions presented
+
   // ---- what the port owes whichever neighbour it is talking to ----
   // Read off the BUS against the model's own record of a command it accepted
-  // and has not yet completed, so neither depends on what the array retains.
-  // A completion the port did not own, once consumed, shows up as one or the
-  // other: the next command requested into a device still working, or the
-  // manager answered before the device answered the port.
+  // and has not yet completed, so none depends on what the array retains.
+  // A completion the port did not own, once consumed, shows up as one of
+  // three: the next command requested into a device still working, the manager
+  // answered before the device answered the port, or a header the port
+  // buffered handed up before the read that filled it had completed. The third
+  // is the one a stray `done` taken by `S_RHWAIT` reaches FIRST -- the payload
+  // request and the manager's pulse come a whole header forward later, so on a
+  // backend whose completion delay is shorter than that forward the first two
+  // are back to zero by the time they are read, and only this one still says
+  // the read was closed early.
   int req_while_owed = 0;                 // cycles a new command was requested
   int pulse_while_owed = 0;               // cycles the manager was answered
+  int fwd_while_owed = 0;                 // cycles a BUFFERED restore byte moved
 
   int  d_st = 0;                          // 0 idle, 1 data, 2 completion timer
   int  d_reqwait = 0;
@@ -199,6 +218,44 @@ struct Harness {
     unsol_after_ops = after_ops; unsol_in_req = in_req;
   }
 
+  //! The data phase just moved its final byte. Either the completion rode that
+  //! byte -- `present_coincident_completion` has already put it on the pins for
+  //! this very cycle, so the command is over -- or it is `op_delay` away.
+  void finish_data_phase() {
+    if (coinc_now) { d_busy = false; d_st = 0; }
+    else { done_ctr = op_delay; d_st = 2; }
+  }
+
+  //! Raise `dev_done_i` on the same edge that moves the command's last byte.
+  //!
+  //! This cannot be done through the model's own `d_done`: that is driven at
+  //! the top of the tick, so it presents a cycle late, by which time the port
+  //! is in a WAIT state reading `dev_done_i` directly and the sticky latch is
+  //! bypassed. Tuning `op_delay` cannot reach it either -- the delay is counted
+  //! in ticks and this coincidence lives inside one. Writing the pin here,
+  //! after the cycle's first `eval()` has settled the DUT's outputs so the
+  //! final-byte handshake is visible, and re-evaluating before the posedge, is
+  //! what lands the pulse on the right edge.
+  //!
+  //! The armed-error guard is load-bearing: without it the backend pulses
+  //! `done` on the byte an armed error is about to land on, and T17/T18 stop
+  //! testing what they name.
+  void present_coincident_completion() {
+    coinc_now = false;
+    if (!done_on_last_byte || d_st != 1) return;
+    if (fail_cur && err_after_bytes >= 0 && d_bytes + 1 == err_after_bytes) return;
+    const bool last_write = (d_cur.op == OP_WRITE && d_bytes + 1 == d_cur.len
+                             && dut->dev_wready_i && dut->dev_wvalid_o);
+    const bool last_read = (d_cur.op == OP_READ && d_bytes + 1 == d_cur.len
+                            && dut->dev_rvalid_i && dut->dev_rready_o);
+    if (!(last_write || last_read)) return;
+    dut->dev_done_i = 1;
+    dut->dev_busy_i = 0;
+    coinc_now = true;
+    ++coinc_dones;
+    dut->eval();
+  }
+
   void drive_dev() {
     dut->dev_gnt_i  = d_gnt;
     dut->dev_done_i = d_done;
@@ -226,6 +283,11 @@ struct Harness {
     // array, so both counters hold under every device model.
     if (d_busy && dut->dev_req_o) ++req_while_owed;
     if (d_busy && (dut->nvm_done_o || dut->nvm_err_o)) ++pulse_while_owed;
+    // A restore byte with no device byte behind it on the same cycle is one
+    // the port buffered earlier, which it may only hand up once the read that
+    // filled the buffer has completed. Bus-side like the other two.
+    if (d_busy && dut->nvm_rvalid_o && dut->nvm_rready_i && !dut->dev_rvalid_i)
+      ++fwd_while_owed;
 
     // command accept
     if (drove_gnt && dut->dev_req_o) {
@@ -261,7 +323,7 @@ struct Harness {
         ++d_bytes;
         d_stall = wstall;
         if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }
-        else if (d_bytes == d_cur.len) { done_ctr = op_delay; d_st = 2; }
+        else if (d_bytes == d_cur.len) { finish_data_phase(); }
       } else if (d_stall > 0) --d_stall;
     }
 
@@ -271,7 +333,7 @@ struct Harness {
         if (dut->dev_rready_o) {
           ++d_bytes; ++dev_rd; d_rhold = false; d_stall = rstall;
           if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }
-          else if (d_bytes == d_cur.len) { done_ctr = op_delay; d_st = 2; }
+          else if (d_bytes == d_cur.len) { finish_data_phase(); }
         } else {
           d_rhold = true;               // hold the byte until accepted
         }
@@ -296,11 +358,23 @@ struct Harness {
       }
     }
 
-    // The unsolicited completion, fired in a cycle where this backend owns
-    // nothing: idle, no grant presented or scheduled, and no real pulse beside
-    // it -- so what reaches the port is unambiguously a `done` for a command
-    // that does not exist, rather than an early or doubled one for a command
-    // that does.
+    maybe_fire_unsolicited_done(drove_gnt, drove_done, drove_err);
+
+    // completion timers
+    if (d_st == 2) {
+      if (done_ctr > 0 && --done_ctr == 0) { d_done = true; d_busy = false; d_st = 0; }
+      if (err_ctr  > 0 && --err_ctr  == 0) { d_err  = true; d_busy = false; d_st = 0;
+                                             ++dev_errs; }
+    }
+  }
+
+  //! The unsolicited completion, fired in a cycle where this backend owns
+  //! nothing: idle, no grant presented or scheduled, and no real pulse beside
+  //! it -- so what reaches the port is unambiguously a `done` for a command
+  //! that does not exist, rather than an early or doubled one for a command
+  //! that does. Its own function because `sample_dev` is the whole backend and
+  //! this is one armed behaviour inside it.
+  void maybe_fire_unsolicited_done(bool drove_gnt, bool drove_done, bool drove_err) {
     const int mgr_moved = (m_mode == 1) ? int(m_widx) : int(rbytes.size());
     if (unsol_after_ops >= 0 && d_st == 0 && !d_busy
         && !d_gnt && !drove_gnt && !d_done && !drove_done
@@ -322,13 +396,6 @@ struct Harness {
       unsol_req = bool(dut->dev_req_o);
       unsol_after_ops = -1;               // once per arming
     }
-
-    // completion timers
-    if (d_st == 2) {
-      if (done_ctr > 0 && --done_ctr == 0) { d_done = true; d_busy = false; d_st = 0; }
-      if (err_ctr  > 0 && --err_ctr  == 0) { d_err  = true; d_busy = false; d_st = 0;
-                                             ++dev_errs; }
-    }
   }
 
   void tick() {
@@ -348,6 +415,7 @@ struct Harness {
     drive_dev();
 
     dut->clk_i = 0; dut->eval();
+    present_coincident_completion();
 
     // pre-edge sampling: what the registers (and both neighbors) see
     if (dut->nvm_done_o) ++done_pulses;
@@ -379,8 +447,8 @@ struct Harness {
     // captures, not the arming: a phase arms before it starts the op, and
     // `commit`/`restore` clear here on the way in.
     unsol_dones = 0; unsol_ops = -1; unsol_mgr = -1; unsol_req = false;
-    req_while_owed = 0; pulse_while_owed = 0;
-    gnt_done_pairs = 0;
+    req_while_owed = 0; pulse_while_owed = 0; fwd_while_owed = 0;
+    gnt_done_pairs = 0; coinc_dones = 0;
   }
 
   void start(bool we, uint8_t rec) {
@@ -463,6 +531,7 @@ class NvmPortSuite {
   void unsolicited_completion_during_a_commit();
   void unsolicited_completion_during_a_restore();
   void completion_riding_the_grant_is_taken();
+  void completion_riding_the_last_byte_is_taken();
   void the_port_is_idle_at_the_end_of_the_run();
 
   const milan::tb::Model<VKL_pp_nvm_port> model;
@@ -1065,10 +1134,18 @@ void NvmPortSuite::unsolicited_completion_during_a_restore() {
             && op_is(h.ops[1], OP_READ, 5, 8,
                      static_cast<int>(f2.size()) - 8),
         "T20a READ hdr then READ payload, both issued");
-  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0,
+  // The forward counter is the one that fails here. A completion taken in an
+  // ungranted `S_RHREQ` is consumed by `S_RHWAIT` the cycle the eighth header
+  // byte lands, so the port hands the buffered header up while the backend is
+  // still counting out the completion for the read that filled it. The request
+  // and pulse counters only catch that if the backend is still owing one a
+  // whole header forward later, which is a property of `op_delay`, not of the
+  // port: at the delay this phase runs they are both back to zero.
+  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0 && h.fwd_while_owed == 0,
         "T20a the header read was not closed on a stray done: nothing "
-        "requested (%d) or answered (%d) while the backend still owed one",
-        h.req_while_owed, h.pulse_while_owed);
+        "requested (%d), answered (%d) or forwarded from the header buffer "
+        "(%d) while the backend still owed one",
+        h.req_while_owed, h.pulse_while_owed, h.fwd_while_owed);
 
   // (b) S_RHFWD -- the header read is done and the payload READ is not yet
   // requested, so the port owns nothing while it hands the header up.
@@ -1082,10 +1159,11 @@ void NvmPortSuite::unsolicited_completion_during_a_restore() {
         h.unsol_mgr, h.unsol_dones, int(h.unsol_req), h.unsol_ops);
   CHECK(rc == 0 && h.done_pulses == 1 && h.rbytes == f2,
         "T20b the restore still completes with done, stream byte-exact");
-  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0,
+  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0 && h.fwd_while_owed == 0,
         "T20b the payload read was not closed on the header read's leftover: "
-        "nothing requested (%d) or answered (%d) while the backend still owed "
-        "one", h.req_while_owed, h.pulse_while_owed);
+        "nothing requested (%d), answered (%d) or forwarded (%d) while the "
+        "backend still owed one",
+        h.req_while_owed, h.pulse_while_owed, h.fwd_while_owed);
 
   // (c) S_RPREQ -- the payload READ is requested and ungranted.
   h.ops.clear();
@@ -1097,10 +1175,11 @@ void NvmPortSuite::unsolicited_completion_during_a_restore() {
         h.unsol_dones, int(h.unsol_req), h.unsol_ops);
   CHECK(rc == 0 && h.done_pulses == 1 && h.rbytes == f2,
         "T20c the restore still completes with done, stream byte-exact");
-  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0,
+  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0 && h.fwd_while_owed == 0,
         "T20c the payload read was not closed before its own done: nothing "
-        "requested (%d) or answered (%d) while the backend still owed one",
-        h.req_while_owed, h.pulse_while_owed);
+        "requested (%d), answered (%d) or forwarded (%d) while the backend "
+        "still owed one",
+        h.req_while_owed, h.pulse_while_owed, h.fwd_while_owed);
 
   h.gnt_delay = 1; h.op_delay = 4;
 }
@@ -1142,6 +1221,73 @@ void NvmPortSuite::completion_riding_the_grant_is_taken() {
   h.gnt_delay = 1; h.op_delay = 4;
 }
 
+// ---------------------------------------------------------------- T22
+// The coincidence the sticky latch was written for, and the one the eight
+// state terms of `dev_cmd_owned_w` carry: the backend raises `done` on the
+// same edge that moves the command's final byte, while the port is still in
+// the pump or collect state. A cycle later the wait state reads `done_seen_r`,
+// not `dev_done_i`, so a fix narrowed to the grant handshake alone drops the
+// completion and the port waits forever for one the backend already sent.
+//
+// T21 is the same argument at the other end of the window. Between them the
+// two edges of `dev_cmd_owned_w` are both defended by a standing check: T21
+// the grant term, this phase the four states that can move a final byte --
+// `S_WHPUMP`, `S_WDPUMP`, `S_RHCOLL` and `S_RPPUMP`. The four wait states in
+// the expression cannot be pinned by any phase, and the suite README says so
+// and says why.
+//
+// Every check here is on the bus or on the manager stream, so the phase holds
+// under every device model; `measure_figures.py` runs it under all six.
+void NvmPortSuite::completion_riding_the_last_byte_is_taken() {
+  const bool was_armed = h.done_on_last_byte;   // the gate arms it for a whole run
+  h.done_on_last_byte = true;
+
+  // (a) the WRITE's payload pump: the completion rides the last data byte,
+  // taken in `S_WDPUMP` and consumed by `S_WWAIT`.
+  std::vector<uint8_t> rec = frame(4, pattern(20, 0x5C));
+  h.ops.clear();
+  int rc = h.commit(4, rec);
+  CHECK(h.coinc_dones == 1,
+        "T22a the backend answered the WRITE on the edge that moved its last "
+        "byte (%d such completions)", h.coinc_dones);
+  CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0 && h.sent == rec,
+        "T22a the commit takes a completion that rode the last byte, rc=%d", rc);
+  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0,
+        "T22a one completion closed one command: nothing requested (%d) or "
+        "answered (%d) while the backend still owed one",
+        h.req_while_owed, h.pulse_while_owed);
+
+  // (b) a zero-payload record: the WRITE is the eight header bytes alone, so
+  // its final byte moves in `S_WHPUMP` instead.
+  std::vector<uint8_t> empty = frame(4, {});
+  h.ops.clear();
+  rc = h.commit(4, empty);
+  CHECK(h.coinc_dones == 1 && h.ops.size() == 2
+            && op_is(h.ops[1], OP_WRITE, 4, 0, 8),
+        "T22b the header-only WRITE was answered on its last byte (%d, %zu ops)",
+        h.coinc_dones, h.ops.size());
+  CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0 && h.sent == empty,
+        "T22b the zero-payload commit completes on that completion, rc=%d", rc);
+
+  // (c) both read phases at once: the header READ's eighth byte is collected
+  // in `S_RHCOLL` and the payload READ's last byte moves in `S_RPPUMP`, so one
+  // restore covers both. The forward counter is live here: the header may only
+  // be handed up once its own read has completed, which on this backend is the
+  // same edge rather than `op_delay` later.
+  h.ops.clear();
+  rc = h.restore(5);
+  CHECK(h.coinc_dones == 2,
+        "T22c both reads were answered on their last byte (%d)", h.coinc_dones);
+  CHECK(rc == 0 && h.done_pulses == 1 && h.rbytes == f2,
+        "T22c the restore takes both completions, stream byte-exact, rc=%d", rc);
+  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0 && h.fwd_while_owed == 0,
+        "T22c neither read was closed early: nothing requested (%d), answered "
+        "(%d) or forwarded (%d) while the backend still owed one",
+        h.req_while_owed, h.pulse_while_owed, h.fwd_while_owed);
+
+  h.done_on_last_byte = was_armed;
+}
+
 // The real close. The check above used to carry this name but T15/T16/T17
 // were appended after it, so nothing pinned the port's state at the end of
 // the run any more -- a tear phase could leave it busy and no check would say.
@@ -1174,6 +1320,7 @@ int NvmPortSuite::run() {
   unsolicited_completion_during_a_commit();
   unsolicited_completion_during_a_restore();
   completion_riding_the_grant_is_taken();
+  completion_riding_the_last_byte_is_taken();
   the_port_is_idle_at_the_end_of_the_run();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
