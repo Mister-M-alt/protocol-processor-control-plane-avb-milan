@@ -12,7 +12,10 @@
 // directions, the ERASE-then-WRITE commit shape, busy/done/err sequencing
 // (busy low at the pulse, pulses exactly once), back-to-back ops, req-
 // while-busy refusal, header refusals (bad magic / oversize length) with
-// zero device traffic, and mid-op device errors surfacing exactly once.
+// zero device traffic, mid-op device errors surfacing exactly once, and --
+// the one thing a well-behaved backend cannot show -- a `done` pulsed for no
+// command at all, which the port must not mistake for the completion of the
+// next one it issues.
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -106,6 +109,42 @@ struct Harness {
   int ops_since_arm = 0;
   bool fail_cur = false;
 
+  // ---- unsolicited completion (issue #14) ----
+  // A `done` that belongs to NO command. The model above only ever completes
+  // a command it accepted, so the port's tolerance of a backend that does
+  // otherwise was unobservable: "sticky per command" and "sticky globally"
+  // look identical to a well-behaved peer. A real backend produces one --
+  // the cycle it was aborted from finishes late, after the port has already
+  // reported `err` and the manager has re-issued.
+  //
+  // Armed by a phase and fired ONCE, in a window named by what the BUS shows
+  // rather than by DUT state: how many commands the backend has accepted, and
+  // whether a request is up that it has not granted.
+  int  unsol_after_ops = -1;              // fire at this accepted-command count
+  bool unsol_in_req = false;              // ...with a request up, else with none
+  int  unsol_dones = 0;                   // unsolicited completions emitted
+  int  unsol_ops = -1;                    // commands accepted when it fired
+  int  unsol_mgr = -1;                    // manager-face bytes moved when it fired
+  bool unsol_req = false;                 // a request was up when it fired
+
+  // ---- completion riding the grant ----
+  // The other edge of the same window, and a PERMITTED coincidence rather than
+  // a broken peer: the port's own header says backends without erase semantics
+  // answer ERASE with done at once, and at once can mean the grant cycle. The
+  // port owns the command from the handshake, so it must take that `done`.
+  bool gnt_done_on_erase = false;         // arm the backend to answer that way
+  bool gnt_done_now = false;              // this grant carries the completion
+  int  gnt_done_pairs = 0;                // grant+done cycles presented
+
+  // ---- what the port owes whichever neighbour it is talking to ----
+  // Read off the BUS against the model's own record of a command it accepted
+  // and has not yet completed, so neither depends on what the array retains.
+  // A completion the port did not own, once consumed, shows up as one or the
+  // other: the next command requested into a device still working, or the
+  // manager answered before the device answered the port.
+  int req_while_owed = 0;                 // cycles a new command was requested
+  int pulse_while_owed = 0;               // cycles the manager was answered
+
   int  d_st = 0;                          // 0 idle, 1 data, 2 completion timer
   int  d_reqwait = 0;
   bool d_gnt = false;
@@ -152,6 +191,14 @@ struct Harness {
   }
   void disarm_err() { err_at_op = -1; err_after_bytes = -1; }
 
+  //! Emit one `done` for no command, once, when `after_ops` commands have been
+  //! accepted and a request is (`in_req`) or is not up. It disarms itself, so
+  //! an arming that never found its window shows up as `unsol_dones == 0`
+  //! rather than as a pulse somewhere later.
+  void arm_unsolicited_done(int after_ops, bool in_req) {
+    unsol_after_ops = after_ops; unsol_in_req = in_req;
+  }
+
   void drive_dev() {
     dut->dev_gnt_i  = d_gnt;
     dut->dev_done_i = d_done;
@@ -172,8 +219,18 @@ struct Harness {
     bool drove_done = d_done;
     bool drove_err = d_err;
 
+    // The port carries ONE device command at a time (F02.8 on the manager
+    // face, the region port's own req/gnt here), and it cannot know an op
+    // ended before the backend says so. `d_busy` is the model's record of a
+    // command it accepted and has not yet completed; nothing below reads the
+    // array, so both counters hold under every device model.
+    if (d_busy && dut->dev_req_o) ++req_while_owed;
+    if (d_busy && (dut->nvm_done_o || dut->nvm_err_o)) ++pulse_while_owed;
+
     // command accept
     if (drove_gnt && dut->dev_req_o) {
+      const bool done_rode_the_grant = gnt_done_now;
+      gnt_done_now = false;
       d_cur = {int(dut->dev_op_o), int(dut->dev_region_o),
                int(dut->dev_offset_o), int(dut->dev_len_o)};
       ops.push_back(d_cur);
@@ -186,7 +243,8 @@ struct Harness {
         int r = d_cur.region % N_REGIONS;
         memset(store[r], 0xFF, REG_BYTES);
         ++erase_count[r];
-        done_ctr = op_delay; d_st = 2;
+        if (done_rode_the_grant) { d_busy = false; d_st = 0; }
+        else { done_ctr = op_delay; d_st = 2; }
       } else if (d_cur.len == 0) {
         done_ctr = op_delay; d_st = 2;
       } else {
@@ -227,7 +285,42 @@ struct Harness {
 
     // grant scheduling
     if (d_st == 0 && !d_busy && dut->dev_req_o && !drove_gnt) {
-      if (++d_reqwait >= gnt_delay) { d_gnt = true; d_reqwait = 0; }
+      if (++d_reqwait >= gnt_delay) {
+        d_gnt = true; d_reqwait = 0;
+        // ...and, for a backend with no erase semantics, the completion with
+        // it. `dev_op_o` is already valid: the port drives the command with
+        // the request it is still holding.
+        if (gnt_done_on_erase && int(dut->dev_op_o) == OP_ERASE) {
+          d_done = true; gnt_done_now = true; ++gnt_done_pairs;
+        }
+      }
+    }
+
+    // The unsolicited completion, fired in a cycle where this backend owns
+    // nothing: idle, no grant presented or scheduled, and no real pulse beside
+    // it -- so what reaches the port is unambiguously a `done` for a command
+    // that does not exist, rather than an early or doubled one for a command
+    // that does.
+    const int mgr_moved = (m_mode == 1) ? int(m_widx) : int(rbytes.size());
+    if (unsol_after_ops >= 0 && d_st == 0 && !d_busy
+        && !d_gnt && !drove_gnt && !d_done && !drove_done
+        && !d_err && !drove_err
+        && int(ops.size()) == unsol_after_ops
+        && bool(dut->dev_req_o) == unsol_in_req
+        // With no request up, the window is a manager-face phase -- collecting
+        // a header or forwarding one -- so require that this op has actually
+        // moved a byte. "Busy with nothing requested" is ALSO what a wedged
+        // port looks like, and firing there would rescue it: a stray `done` is
+        // exactly the pulse a stuck wait state is waiting for. Measured: with
+        // `S_WWAIT`'s error arm swallowed (M5) the port hangs, and without
+        // this term T19a un-hung it and turned the end-of-run idle check green.
+        && (unsol_in_req || (dut->nvm_busy_o && mgr_moved > 0))) {
+      d_done = true;                      // presented on the next tick, 1 cycle
+      ++unsol_dones;
+      unsol_ops = int(ops.size());
+      unsol_mgr = mgr_moved;
+      unsol_req = bool(dut->dev_req_o);
+      unsol_after_ops = -1;               // once per arming
     }
 
     // completion timers
@@ -283,6 +376,11 @@ struct Harness {
     busy_seen = false; busy_ok = true;
     rbytes.clear();
     sent.clear();
+    // captures, not the arming: a phase arms before it starts the op, and
+    // `commit`/`restore` clear here on the way in.
+    unsol_dones = 0; unsol_ops = -1; unsol_mgr = -1; unsol_req = false;
+    req_while_owed = 0; pulse_while_owed = 0;
+    gnt_done_pairs = 0;
   }
 
   void start(bool we, uint8_t rec) {
@@ -362,6 +460,9 @@ class NvmPortSuite {
   void torn_commit_leaves_every_other_region_untouched();
   void late_write_failure_reports_err_not_done();
   void read_completion_window_errors_report_err();
+  void unsolicited_completion_during_a_commit();
+  void unsolicited_completion_during_a_restore();
+  void completion_riding_the_grant_is_taken();
   void the_port_is_idle_at_the_end_of_the_run();
 
   const milan::tb::Model<VKL_pp_nvm_port> model;
@@ -759,7 +860,7 @@ void NvmPortSuite::torn_commit_leaves_every_other_region_untouched() {
 // bytes are still moving. A real program failure is not reported then: the
 // device latches the bytes, starts the program cycle, and raises its error
 // only when that cycle ends -- after the LAST byte, with busy still high.
-// That is the port's S_WWAIT arm (KL_pp_nvm_port.sv:236-239), the widest
+// That is the port's S_WWAIT arm (KL_pp_nvm_port.sv:262-265), the widest
 // window in a commit, and no phase above enters it. Arming at exactly the
 // write length takes the device's fail branch in preference to its done
 // branch, so every byte is consumed and then err replaces done.
@@ -864,6 +965,183 @@ void NvmPortSuite::read_completion_window_errors_report_err() {
         "T18 serviceable after the three read cuts: restore is byte-exact");
 }
 
+// ---------------------------------------------------------------- T19
+// Issue #14: a completion the port does NOT own, on the commit path.
+//
+// `done_seen_r` is sticky so a `done` landing on the same edge as a pump's
+// last byte is not lost (KL_pp_nvm_port.sv:175-179). The set is gated on
+// owning the command it completes -- from the grant handshake to the wait
+// state that consumes it (`dev_cmd_owned_w`, :151-162). Ungated, a stray
+// `done` while the header is still being collected is consumed by `S_WEWAIT`
+// as the ERASE's, and the WRITE goes into a region the backend is still
+// erasing -- reported as `done`, not `err`.
+//
+// This needs the device the harness could not play before: one that pulses
+// `done` for no command at all. Each arm names its window on the BUS -- how
+// many commands the backend has accepted, and whether a request is up that it
+// has not granted -- so no check here reads DUT state, and the two things the
+// port must not do are counted on the bus as well.
+void NvmPortSuite::unsolicited_completion_during_a_commit() {
+  h.gnt_delay = 6; h.op_delay = 8;    // open the ungranted-request window
+  std::vector<uint8_t> rec = frame(2, pattern(24, 0x1E));
+
+  // (a) S_WHDR -- the port is collecting the header and has issued nothing.
+  h.ops.clear();
+  h.arm_unsolicited_done(/*after_ops=*/0, /*in_req=*/false);
+  int rc = h.commit(2, rec);
+  CHECK(h.unsol_dones == 1 && !h.unsol_req && h.unsol_ops == 0
+            && h.unsol_mgr > 0 && h.unsol_mgr < 8,
+        "T19a the backend pulsed one done for no command, %d header bytes in "
+        "(dones %d, req %d, ops %d)",
+        h.unsol_mgr, h.unsol_dones, int(h.unsol_req), h.unsol_ops);
+  CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0 && h.sent == rec,
+        "T19a the commit still completes with done, byte-exact on the bus");
+  CHECK(h.ops.size() == 2 && op_is(h.ops[0], OP_ERASE, 2, 0, 0)
+            && op_is(h.ops[1], OP_WRITE, 2, 0, static_cast<int>(rec.size())),
+        "T19a ERASE then WRITE, both issued");
+  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0,
+        "T19a the stray done was not consumed as the ERASE's: nothing "
+        "requested (%d) or answered (%d) while the backend still owed one",
+        h.req_while_owed, h.pulse_while_owed);
+
+  // (b) S_WEREQ -- the ERASE is requested and the backend has not granted it.
+  h.ops.clear();
+  h.arm_unsolicited_done(/*after_ops=*/0, /*in_req=*/true);
+  rc = h.commit(2, rec);
+  CHECK(h.unsol_dones == 1 && h.unsol_req && h.unsol_ops == 0,
+        "T19b the pulse landed with the ERASE requested and ungranted "
+        "(dones %d, req %d, ops %d)",
+        h.unsol_dones, int(h.unsol_req), h.unsol_ops);
+  CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0 && h.sent == rec,
+        "T19b the commit still completes with done, byte-exact on the bus");
+  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0,
+        "T19b a done before the grant is not the granted command's: nothing "
+        "requested (%d) or answered (%d) while the backend still owed one",
+        h.req_while_owed, h.pulse_while_owed);
+
+  // (c) S_WWREQ -- the ERASE is complete, the WRITE is requested and ungranted.
+  // This is the arm the withdrawn S_WHDR-only clear would have left open, and
+  // the stale flag is consumed by `S_WWAIT` rather than `S_WEWAIT`: the commit
+  // reports done while the backend is still programming.
+  h.ops.clear();
+  h.arm_unsolicited_done(/*after_ops=*/1, /*in_req=*/true);
+  rc = h.commit(2, rec);
+  CHECK(h.unsol_dones == 1 && h.unsol_req && h.unsol_ops == 1,
+        "T19c the pulse landed with the WRITE requested and ungranted "
+        "(dones %d, req %d, ops %d)",
+        h.unsol_dones, int(h.unsol_req), h.unsol_ops);
+  CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0 && h.sent == rec,
+        "T19c the commit still completes with done, byte-exact on the bus");
+  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0,
+        "T19c the commit was not answered on someone else's done: nothing "
+        "requested (%d) or answered (%d) while the backend still owed one",
+        h.req_while_owed, h.pulse_while_owed);
+
+  h.gnt_delay = 1; h.op_delay = 4;
+}
+
+// ---------------------------------------------------------------- T20
+// The same defect on the RESTORE path, which is why the one-line clear in
+// `S_WHDR` this ticket first proposed was withdrawn: a restore goes
+// S_IDLE -> S_RHREQ and never enters S_WHDR at all, while `S_RHWAIT` and
+// `S_RPWAIT` consume the flag exactly as the commit's wait states do. The
+// boot restore walk is the path that reads a torn image, so a completion
+// consumed by the wrong read is the one that ends with the manager handed a
+// record the backend never finished delivering.
+void NvmPortSuite::unsolicited_completion_during_a_restore() {
+  h.gnt_delay = 6; h.op_delay = 8;
+
+  // (a) S_RHREQ -- the header READ is requested and ungranted.
+  h.ops.clear();
+  h.arm_unsolicited_done(/*after_ops=*/0, /*in_req=*/true);
+  int rc = h.restore(5);
+  CHECK(h.unsol_dones == 1 && h.unsol_req && h.unsol_ops == 0,
+        "T20a the pulse landed with the header READ requested and ungranted "
+        "(dones %d, req %d, ops %d)",
+        h.unsol_dones, int(h.unsol_req), h.unsol_ops);
+  CHECK(rc == 0 && h.done_pulses == 1 && h.rbytes == f2,
+        "T20a the restore still completes with done, stream byte-exact");
+  CHECK(h.ops.size() == 2 && op_is(h.ops[0], OP_READ, 5, 0, 8)
+            && op_is(h.ops[1], OP_READ, 5, 8,
+                     static_cast<int>(f2.size()) - 8),
+        "T20a READ hdr then READ payload, both issued");
+  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0,
+        "T20a the header read was not closed on a stray done: nothing "
+        "requested (%d) or answered (%d) while the backend still owed one",
+        h.req_while_owed, h.pulse_while_owed);
+
+  // (b) S_RHFWD -- the header read is done and the payload READ is not yet
+  // requested, so the port owns nothing while it hands the header up.
+  h.ops.clear();
+  h.arm_unsolicited_done(/*after_ops=*/1, /*in_req=*/false);
+  rc = h.restore(5);
+  CHECK(h.unsol_dones == 1 && !h.unsol_req && h.unsol_ops == 1
+            && h.unsol_mgr > 0 && h.unsol_mgr < 8,
+        "T20b the backend pulsed one done between the two reads, %d header "
+        "bytes forwarded (dones %d, req %d, ops %d)",
+        h.unsol_mgr, h.unsol_dones, int(h.unsol_req), h.unsol_ops);
+  CHECK(rc == 0 && h.done_pulses == 1 && h.rbytes == f2,
+        "T20b the restore still completes with done, stream byte-exact");
+  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0,
+        "T20b the payload read was not closed on the header read's leftover: "
+        "nothing requested (%d) or answered (%d) while the backend still owed "
+        "one", h.req_while_owed, h.pulse_while_owed);
+
+  // (c) S_RPREQ -- the payload READ is requested and ungranted.
+  h.ops.clear();
+  h.arm_unsolicited_done(/*after_ops=*/1, /*in_req=*/true);
+  rc = h.restore(5);
+  CHECK(h.unsol_dones == 1 && h.unsol_req && h.unsol_ops == 1,
+        "T20c the pulse landed with the payload READ requested and ungranted "
+        "(dones %d, req %d, ops %d)",
+        h.unsol_dones, int(h.unsol_req), h.unsol_ops);
+  CHECK(rc == 0 && h.done_pulses == 1 && h.rbytes == f2,
+        "T20c the restore still completes with done, stream byte-exact");
+  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0,
+        "T20c the payload read was not closed before its own done: nothing "
+        "requested (%d) or answered (%d) while the backend still owed one",
+        h.req_while_owed, h.pulse_while_owed);
+
+  h.gnt_delay = 1; h.op_delay = 4;
+}
+
+// ---------------------------------------------------------------- T21
+// The PERMITTED coincidence at the other edge of the ownership window, and
+// the reason the window opens at the grant rather than after it. The port's
+// own header says a backend without erase semantics answers ERASE with done
+// at once (KL_pp_nvm_port.sv:33-34), and at once can mean the cycle it takes
+// the command: `dev_gnt_i` and `dev_done_i` together, while `S_WEREQ` is
+// still driving the request. That completion IS the port's, and refusing it
+// would wedge the commit in `S_WEWAIT` for a device that did nothing wrong.
+//
+// T19 and T20 pin what the port must not take; without this phase the grant
+// term of `dev_cmd_owned_w` could be deleted with the suite still green, and
+// a fix narrowed that far reads as correct while it hangs a real backend.
+void NvmPortSuite::completion_riding_the_grant_is_taken() {
+  h.gnt_delay = 3; h.op_delay = 6;
+  h.gnt_done_on_erase = true;
+  std::vector<uint8_t> rec = frame(6, pattern(28, 0x2B));
+  h.ops.clear();
+  int rc = h.commit(6, rec);
+  h.gnt_done_on_erase = false;
+  CHECK(h.gnt_done_pairs == 1,
+        "T21 the backend answered ERASE on its own grant cycle (%d pairs)",
+        h.gnt_done_pairs);
+  CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0 && h.sent == rec,
+        "T21 the commit takes a completion that rode the grant, rc=%d", rc);
+  CHECK(h.ops.size() == 2 && op_is(h.ops[0], OP_ERASE, 6, 0, 0)
+            && op_is(h.ops[1], OP_WRITE, 6, 0, static_cast<int>(rec.size())),
+        "T21 ERASE then WRITE, both issued");
+  // One completion answers ONE command: consuming it twice would close the
+  // WRITE as well, and the port would answer the manager while the backend
+  // was still programming.
+  CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0,
+        "T21 the grant's done closed the ERASE only: nothing requested (%d) "
+        "or answered (%d) while the backend still owed one",
+        h.req_while_owed, h.pulse_while_owed);
+  h.gnt_delay = 1; h.op_delay = 4;
+}
+
 // The real close. The check above used to carry this name but T15/T16/T17
 // were appended after it, so nothing pinned the port's state at the end of
 // the run any more -- a tear phase could leave it busy and no check would say.
@@ -893,6 +1171,9 @@ int NvmPortSuite::run() {
   torn_commit_leaves_every_other_region_untouched();
   late_write_failure_reports_err_not_done();
   read_completion_window_errors_report_err();
+  unsolicited_completion_during_a_commit();
+  unsolicited_completion_during_a_restore();
+  completion_riding_the_grant_is_taken();
   the_port_is_idle_at_the_end_of_the_run();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);

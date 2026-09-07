@@ -45,7 +45,18 @@
 //                fails them on restore, ends in a single err pulse with no
 //                (further) device traffic. Device err mid-op aborts and
 //                surfaces on the manager face exactly once; the bounded
-//                retry and the side-port alarm are the manager's job.
+//                retry and the side-port alarm are the manager's job;
+//                (c) a dev_done_i observed while this port owns no device
+//                command is DISCARDED. 02 §8 leaves the device face free, so
+//                the completion contract is stated here: a command is owned
+//                from the cycle its grant is observed — that cycle may itself
+//                carry the completion, and a completion may land on the same
+//                cycle a pump moves its last byte — until the wait state
+//                consumes it. Ownership retires at the terminal state, at the
+//                next accept and at reset. Outside the window a completion
+//                belongs to nobody: remembering one there lets the NEXT wait
+//                state short-circuit on it, and a commit then reports done
+//                over a region the backend is still erasing.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -127,7 +138,7 @@ module KL_pp_nvm_port #(
   logic       [15:0] bcnt_r;        // payload bytes moved this phase
   logic       [15:0] plen_r;        // payload_length latched from the header
   logic        [7:0] rec_r;         // record id latched at accept
-  logic              done_seen_r;   // sticky dev_done_i (may land mid-pump)
+  logic              done_seen_r;   // sticky dev_done_i for the OWNED command
 
   // header validation view (bytes 0..5 are in hdr_r before the check fires)
   logic [15:0] hdr_plen_w;
@@ -136,6 +147,19 @@ module KL_pp_nvm_port #(
   assign hdr_plen_w = {hdr_r[4], hdr_r[5]};
   assign hdr_ok_w   = (hdr_r[0] == MAGIC_HI_C) && (hdr_r[1] == MAGIC_LO_C)
                       && (hdr_plen_w <= MAXP_C);
+
+  // device-command ownership (banner refusal (c)): the window in which a
+  // dev_done_i is a completion of OURS — from the grant handshake (dev_req_o
+  // is the four *REQ states, so a grant that carries its own done is owned)
+  // through every state that runs with the granted command still outstanding.
+  // S_WHDR, S_RHFWD, S_FIN, S_IDLE and an ungranted *REQ own nothing.
+  logic dev_cmd_owned_w;
+
+  assign dev_cmd_owned_w = (dev_req_o && dev_gnt_i)
+                      || (state_r == S_WEWAIT) || (state_r == S_WHPUMP)
+                      || (state_r == S_WDPUMP) || (state_r == S_WWAIT)
+                      || (state_r == S_RHCOLL) || (state_r == S_RHWAIT)
+                      || (state_r == S_RPPUMP) || (state_r == S_RPWAIT);
 
   always_ff @(posedge clk_i) begin : nvm_port_fsm
     if (!rst_n) begin
@@ -149,8 +173,10 @@ module KL_pp_nvm_port #(
       for (int unsigned i = 0; i < 8; i++) hdr_r[i] <= '0;
     end else begin
       // device done may land on the same cycle a pump moves its last byte —
-      // remember it; the WAIT states consume it (assignment below overrides)
-      if (dev_done_i) done_seen_r <= 1'b1;
+      // remember it; the WAIT states consume it (assignment below overrides).
+      // Only while we own the command it completes: a done seen outside that
+      // window is not ours to consume (banner refusal (c))
+      if (dev_done_i && dev_cmd_owned_w) done_seen_r <= 1'b1;
 
       case (state_r)
         S_IDLE: begin
@@ -331,7 +357,11 @@ module KL_pp_nvm_port #(
 
         // ------------------------------------------------------------ fin
         S_FIN: begin
-          state_r <= S_IDLE;          // one pulse cycle, then idle
+          done_seen_r <= 1'b0;        // ownership retires with the op, so a
+                                      // completion latched but never consumed
+                                      // cannot outlive it (error exits land
+                                      // here too)
+          state_r     <= S_IDLE;      // one pulse cycle, then idle
         end
 
         default: state_r <= S_IDLE;

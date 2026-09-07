@@ -17,7 +17,7 @@ WHAT IT COVERS. Every figure in the README, and the covered set is DERIVED
 rather than asserted: each `N of M` and `N PASS, M FAIL` in the file is a claim
 by default, satisfied only by a measurement here or by an explicit entry in
 WAIVERS whose reason is printed on every clean run. Twelve arm rows plus the arm
-COUNT read from the RTL; eleven mutations and probes; seven device-model result
+COUNT read from the RTL; fourteen mutations and probes; seven device-model result
 rows; and all thirty cells of the pre-fix matrix.
 
 Three earlier versions each closed a narrower class than they claimed, and the
@@ -96,17 +96,18 @@ SIM = HERE / "sim_main.cpp"
 #: against the RTL below: a THIRTEENTH arm added anywhere used to leave this
 #: gate printing "all figures agree" while the README's "twelve arms" silently
 #: became false.
-ARMS = [(185, "S_WEREQ"), (194, "S_WEWAIT"), (204, "S_WWREQ"), (214, "S_WHPUMP"),
-        (227, "S_WDPUMP"), (237, "S_WWAIT"), (248, "S_RHREQ"), (258, "S_RHCOLL"),
-        (276, "S_RHWAIT"), (303, "S_RPREQ"), (313, "S_RPPUMP"), (323, "S_RPWAIT")]
+ARMS = [(211, "S_WEREQ"), (220, "S_WEWAIT"), (230, "S_WWREQ"), (240, "S_WHPUMP"),
+        (253, "S_WDPUMP"), (263, "S_WWAIT"), (274, "S_RHREQ"), (284, "S_RHCOLL"),
+        (302, "S_RHWAIT"), (329, "S_RPREQ"), (339, "S_RPPUMP"), (349, "S_RPWAIT")]
 
 #: The coincident-completion model. Unlike every other model here it varies the
 #: HANDSHAKE, not what the array retains: the device raises `dev_done_i` on the
-#: same clock edge that moves a pump's final byte. `KL_pp_nvm_port.sv:151-153`
+#: same clock edge that moves a pump's final byte. `KL_pp_nvm_port.sv:175-179`
 #: says the sticky `done_seen_r` latch exists for exactly this device, so it is
 #: a documented contract freedom, not a broken peer -- and the port handles it,
-#: 90 PASS 0 FAIL on pristine RTL. Its whole interest is that deleting the latch
-#: is INVISIBLE without it.
+#: with the suite green on pristine RTL. Its whole interest used to be that
+#: deleting the latch was INVISIBLE without it; T21 now catches that on the
+#: pristine model too, and this model still catches far more of it.
 #:
 #: The load-bearing edit is the fourth. Setting the model's own `d_done` cannot
 #: produce this: `dut->dev_done_i = d_done;` is driven at the top of the tick,
@@ -164,6 +165,15 @@ _COINCIDENT = [
 #: twice in the file, and a count-1 replace silently patched whichever came
 #: first; they carry a line of context now so the ambiguity is impossible
 #: rather than merely unlikely.
+#:
+#: An anchor also carries the harness's INDENTATION, and that is how this gate
+#: last went dark. When the suite's phases moved out of `main` into member
+#: functions the whole body shifted left by two spaces; four anchors here and
+#: three in `MATRIX_FORMS` kept the old form, `apply_edits` raised on the first
+#: of them, and the gate stopped before printing a single row. The refusal is
+#: the design working -- a stale table must not measure -- but note the failure
+#: mode: a gate that cannot START reports no staleness at all, so it looks like
+#: an unrelated build break rather than the finding it is.
 MUTATIONS = [
     # ---- mutations of the RTL ------------------------------------------------
     ("M1", r"rewritten to `S_WWREQ`.*?\*\*Fails (\d+) of", [
@@ -187,33 +197,58 @@ MUTATIONS = [
     ("M5", r"\*\*M5\*\*.*?\*\*fails (\d+) of", [
         (RTL, "        S_WWAIT: begin\n          if (dev_err_i) begin",
               "        S_WWAIT: begin\n          if (1'b0) begin")]),
+    # The defect issue #14 named, re-injected: the sticky latch set outside the
+    # case, so a `done` is remembered in EVERY state -- including the ones with
+    # no granted command outstanding, where it belongs to nobody. This is the
+    # tree as it stood before the fix, and it is the mutation the standing
+    # unsolicited-completion phases exist to reject.
+    ("M6", r"\*\*M6\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "      if (dev_done_i && dev_cmd_owned_w) done_seen_r <= 1'b1;",
+              "      if (dev_done_i) done_seen_r <= 1'b1;")]),
+    # The fix the ticket proposed first and then withdrew: the global set, plus
+    # a one-line clear in `S_WHDR`. Measured rather than argued, because "that
+    # would not have been enough" is exactly the kind of claim this file has
+    # had to retract before -- and because the cheap fix is what a later reader
+    # will reach for.
+    ("M6-sibling", r"the withdrawn one-line clear in `S_WHDR`.*?\*\*fails (\d+) of", [
+        (RTL, "      if (dev_done_i && dev_cmd_owned_w) done_seen_r <= 1'b1;",
+              "      if (dev_done_i) done_seen_r <= 1'b1;"),
+        (RTL, "        S_WHDR: begin\n          if (nvm_wvalid_i) begin",
+              "        S_WHDR: begin\n          done_seen_r <= 1'b0;\n"
+              "          if (nvm_wvalid_i) begin")]),
     # ---- mutations of the TEST (the README calls these probes) ---------------
     ("probe-armearly", r"fails before its first byte moves, fails (\d+) of", [
-        (SIM, "    std::vector<uint8_t> torn = frame(1, pattern(16, 0x22));\n"
-              "    h.arm_err(1, 5);",
-              "    std::vector<uint8_t> torn = frame(1, pattern(16, 0x22));\n"
-              "    h.arm_err(1, -1);")]),
+        (SIM, "  std::vector<uint8_t> torn = frame(1, pattern(16, 0x22));\n"
+              "  h.arm_err(1, 5);",
+              "  std::vector<uint8_t> torn = frame(1, pattern(16, 0x22));\n"
+              "  h.arm_err(1, -1);")]),
     ("probe-nodevice", r"the port the T16 prose names as the threat \S+ fails (\d+) of", [
-        (SIM, "    h.arm_err(1, 5);\n    rc = h.commit(1, torn);\n    h.disarm_err();",
-              "    rc = 1;")]),
+        (SIM, "  h.arm_err(1, 5);\n  rc = h.commit(1, torn);\n  h.disarm_err();",
+              "  rc = 1;")]),
     ("probe-t18", r"replacing a T18 arm with a bare `r = 1`, port never touched: now\s+fails (\d+)", [
-        (SIM, "    int r = h.restore(5);", "    int r = 1;")]),
+        (SIM, "  int r = h.restore(5);", "  int r = 1;")]),
     # The retraction at "On checks that cannot fail alone": T15's tear moved
     # into the completion window, so the survival check fails while the
     # header-agreement check beside it passes. Its numerator was invisible to
     # the first inverted-default pass because it reads "FAILS ... PASSES, 2 of
     # 90" -- no "fails N of M" anywhere in the sentence.
-    # The `done_seen_r` escape: green on pristine both ways, and only the
-    # coincident model exposes it. This was an UNVERIFIABLE figure -- the
+    # The `done_seen_r` escape. It WAS green on pristine both ways, and only
+    # the coincident model exposed it. This was an UNVERIFIABLE figure -- the
     # recipe lived in a scratch run that was never committed, so it could not
     # be re-derived. That is a different defect from a fabricated one and it
-    # gets a different fix: commit the recipe, not retract the number.
+    # gets a different fix: commit the recipe, not retract the number. T21
+    # since gave the latch coverage on the pristine model as well, so the row
+    # now measures how much MORE the coincident model catches.
     ("done_seen_r/coincident",
-     r"under a coincident-completion model the same\s+mutations fail (\d+) of", 
-     _COINCIDENT + [(RTL, "      if (dev_done_i) done_seen_r <= 1'b1;\n", "")]),
+     r"under a coincident-completion model the same\s+mutations fail (\d+) of",
+     _COINCIDENT + [(RTL, "      if (dev_done_i && dev_cmd_owned_w) done_seen_r <= 1'b1;\n",
+                     "")]),
+    ("done_seen_r/pristine",
+     r"deleting the set\s+line now reddens (\d+) of", [
+        (RTL, "      if (dev_done_i && dev_cmd_owned_w) done_seen_r <= 1'b1;\n", "")]),
     ("retraction", r"that check FAILS while the header check PASSES, (\d+) of", [
-        (SIM, "    h.arm_err(1, 12);                 // op 0 = ERASE, op 1 = WRITE: cut at 12 B",
-              "    h.arm_err(1, static_cast<int>(replacement.size()));")]),
+        (SIM, "  h.arm_err(1, 12);                 // op 0 = ERASE, op 1 = WRITE: cut at 12 B",
+              "  h.arm_err(1, static_cast<int>(replacement.size()));")]),
 ]
 
 #: The device-model result table. Each varies what the ARRAY retains and must
@@ -299,13 +334,13 @@ MATRIX_MODELS = ["pristine", "half-page", "page-buffered NOR", "lazy erase",
 #: measures the wrong array.
 MATRIX_FORMS = [
     ("T16 byte comparison",
-     "    CHECK(h.sent.size() == 5 && std::equal(h.sent.begin(), h.sent.end(),",
+     "  CHECK(h.sent.size() == 5 && std::equal(h.sent.begin(), h.sent.end(),",
      '    CHECK(std::equal(torn.begin(), torn.begin() + 5, h.store[1])\n'
      '              && h.store[1][5] == 0xFF,\n'
      '          "MX T16 byte comparison");\n'),
     ("T17 restore vs the record",
-     "    h.ops.clear();\n    rc = h.commit(3, rec);\n"
-     "    CHECK(rc == 0 && h.store_match(3, rec),",
+     "  h.ops.clear();\n  rc = h.commit(3, rec);\n"
+     "  CHECK(rc == 0 && h.store_match(3, rec),",
      # Byte-faithful to the removed code, and pinned as such below. The
      # earlier version renamed `rc` to `pr`, MERGED the two original checks
      # into one conjunction, and captured the array BEFORE the restore across
@@ -321,7 +356,7 @@ MATRIX_FORMS = [
      '          "MX T17 restore vs the record length");\n'
      '    CHECK(h.rbytes == in_array,\n'
      '          "MX T17 restore vs the array");\n'),
-    ("T15 branch pin", "    bool hdr_intact =",
+    ("T15 branch pin", "  bool hdr_intact =",
      '    CHECK(crc_rejects && h.rbytes.size() == whole.size(),\n'
      '          "MX T15 branch pin");\n'
      '    CHECK(!h.store_match(7, whole) && !h.store_match(7, replacement),\n'
@@ -548,16 +583,16 @@ TALLY_RE = re.compile(r"(\d+) checks: (\d+) PASS, (\d+) FAIL")
 #: the closed class is number words, but the OPEN class is ways of writing a
 #: ratio, and closing one axis leaves the other untouched. Ten of thirteen
 #: phrasings still evaded, and the two cheapest used digits only --
-#: `fails 22 of the 90 checks` and `fails 22 out of 90`. A reviewer's own
+#: `fails 22 of the 114 checks` and `fails 22 out of 114`. A reviewer's own
 #: earlier attack was literally `68 out of 83`, caught only because the
 #: DENOMINATOR happened to be wrong.
 #:
 #: The two optional words below close all four digit-only cases and match
-#: exactly the same nineteen figures in the current file -- no false positives.
+#: exactly the twenty-four figures in the current file -- no false positives.
 #: What they do NOT do is close the class, and this comment is deliberately not
-#: claiming they do. `| M6 | 22 |`, `reddens 22 checks`, `a fifth of the
+#: claiming they do. `| Mx | 22 |`, `reddens 22 checks`, `a fifth of the
 #: suite`, `68/90ths` and `24%` all still evade. A real closure would mean
-#: treating every bare integer as a claim; measured, 230 numbers in this file
+#: treating every bare integer as a claim; measured, 262 numbers in this file
 #: fall outside every claim and waiver span, so the waiver list would be larger
 #: than the thing it protects. The honest position is that this is a strong
 #: default that catches every phrasing anyone has actually written here, not a
@@ -597,10 +632,10 @@ WAIVERS = [
     # correct and is the mechanism working: they are waived by a pattern narrow
     # enough to reach only that sentence, so a real `22 out of 90` anywhere else
     # is still a hard error.
-    (r"`fails 22 of the 90 checks` and `fails\s+22 out of 90`",
+    (r"`fails 22 of the 114 checks` and `fails\s+22 out of 114`",
      "two illustrative phrasings quoted inside the paragraph explaining what "
      "the inverted default does not close; not claims about this suite"),
-    (r"\b90/90\b",
+    (r"\b114/114\b",
      "suite tally shorthand; both halves are the suite size, which the size "
      "check already pins against the measured total"),
 ]
