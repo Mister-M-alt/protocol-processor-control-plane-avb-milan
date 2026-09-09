@@ -503,10 +503,14 @@ static std::vector<uint8_t> control_descriptor(uint16_t ix) {
   putbe(&d[96], 1, 2);                            // number_of_values
   return d;
 }
+//! §7.2.32: 76 fixed + 2 x clock_sources. THREE sources, the identity list
+//! 0..2, so SET_CLOCK_SOURCE's range check (E_SCLKS, milan-fpga #389) has an
+//! accepted index that is not the reset value (W10 stores 2) and a refused
+//! one right past the list (W10e refuses 3). 82 is NOT a multiple of 8,
+//! which is the case COPY_BUFFER has to stop mid-lane on (A4).
+constexpr size_t CLKDOM_LEN = 82;
 static std::vector<uint8_t> clock_domain_descriptor() {
-  // §7.2.32: 76 fixed + 2 x clock_sources. 78 is NOT a multiple of 8, which is
-  // the case COPY_BUFFER has to stop mid-lane on.
-  std::vector<uint8_t> d(78, 0);
+  std::vector<uint8_t> d(CLKDOM_LEN, 0);
   putbe(&d[0],  0x0024, 2);
   putbe(&d[2],  0x0000, 2);
   const char* nm = "Clock Domain 0";
@@ -514,8 +518,10 @@ static std::vector<uint8_t> clock_domain_descriptor() {
   putbe(&d[68], 0xFFFF, 2);                       // localized_description
   putbe(&d[70], 0x0000, 2);                       // clock_source_index
   putbe(&d[72], 76, 2);                           // clock_sources_offset
-  putbe(&d[74], 1, 2);                            // clock_sources_count
+  putbe(&d[74], 3, 2);                            // clock_sources_count
   putbe(&d[76], 0, 2);                            // clock_source_0
+  putbe(&d[78], 1, 2);                            // clock_source_1
+  putbe(&d[80], 2, 2);                            // clock_source_2
   return d;
 }
 
@@ -1720,10 +1726,11 @@ struct ReadDescriptorPhase {
     pl.insert(pl.end(), image_clkdom.begin(), image_clkdom.end());
     auto want = expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0x4444, pl);
     CHECK(!got.empty(), "A4: no CLOCK_DOMAIN response");
-    CHECK(got.size() == 38 + 4 + 78,
-          "A4: CLOCK_DOMAIN response is %zu B, want %d", got.size(),
-          38 + 4 + 78);
-    CHECK(got == want, "A4: 78-byte descriptor response is not byte-exact");
+    CHECK(got.size() == 38 + 4 + CLKDOM_LEN,
+          "A4: CLOCK_DOMAIN response is %zu B, want %zu", got.size(),
+          38 + 4 + CLKDOM_LEN);
+    CHECK(got == want, "A4: %zu-byte descriptor response is not byte-exact",
+          CLKDOM_LEN);
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
   }
 
@@ -1895,7 +1902,7 @@ struct ReadDescriptorPhase {
     for (uint16_t k = 0; k < 8; ++k) {
       auto got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0024, 0),
                      uint16_t(0xB000 + k));
-      CHECK(!got.empty() && got.size() == 38 + 4 + 78,
+      CHECK(!got.empty() && got.size() == 38 + 4 + CLKDOM_LEN,
             "A11: command %u of the leak run went unanswered", k);
     }
     h.run_ms(60);
@@ -6216,6 +6223,29 @@ struct ReadSidePhase : ReadSideTools {
             "W10d: GET_CLOCK_SOURCE reads %u, the SET stored 2",
             (((unsigned)g[42] << 8) | g[43]));
     }
+    // ---- W10e..h: the range check (milan-fpga #389). An index the domain
+    // does not list - 3, one past the identity list 0..2, and 0xFFFF - is
+    // BAD_ARGUMENTS in the full body, carries the CURRENT index (the 2 just
+    // stored) rather than the rejected one, and moves nothing: GET still
+    // reads 2. Table 7-141 row 7; §7.4.23.1.
+    for (uint16_t bad : {uint16_t(0x0003), uint16_t(0xFFFF)}) {
+      putbe(&pl[4], bad, 2);
+      auto r = ask(AEM_SET_CLOCK_SOURCE, pl, uint16_t(0x76A0 + (bad & 1)));
+      CHECK(!r.empty() && st(r) == AECP_BAD_ARGUMENTS && cdl(r) == 20,
+            "W10e: SET_CLOCK_SOURCE(%u) past clock_sources_count is "
+            "BAD_ARGUMENTS at cdl 20", bad);
+      if (r.size() >= 48) {
+        CHECK((((unsigned)r[42] << 8) | r[43]) == 0x0002,
+              "W10f: the refusal of %u carries the CURRENT index 2", bad);
+        CHECK((((unsigned)r[44] << 8) | r[45]) == 0,
+              "W10g: reserved @30 is zero on the refusal");
+      }
+    }
+    g = ask(AEM_GET_CLOCK_SOURCE, ti(0x0024, 0), 0x76A2);
+    if (g.size() >= 46) {
+      CHECK((((unsigned)g[42] << 8) | g[43]) == 0x0002,
+            "W10h: GET_CLOCK_SOURCE still reads 2 after the refused SETs");
+    }
   }
 
   // ---- W11: a SET's refusals ------------------------------------------
@@ -7545,7 +7575,7 @@ struct Suite {
   void load_descriptor_image() {
     image_ents = {
       {CFGIX, 0x0000, 1, 312, 0, 312, 0},          // ENTITY
-      {CFGIX, 0x0024, 1,  78, 2,  80, 0},          // CLOCK_DOMAIN (not %8)
+      {CFGIX, 0x0024, 1,  82, 2,  88, 0},          // CLOCK_DOMAIN (not %8)
       //! the two STREAM_PORT_INPUTs the audio-map store models: the image is
       //! the EXISTENCE authority (E_GAMAP's DESC_ADDR locate), so an index
       //! past these two must answer NO_SUCH_DESCRIPTOR whatever the face says
