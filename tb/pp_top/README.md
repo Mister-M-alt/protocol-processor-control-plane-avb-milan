@@ -33,8 +33,8 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
     `NO_SUCH_DESCRIPTOR` with the 4-byte {type, index} stub of IEEE §7.4.5.
   - **A3** a bad `configuration_index` answers `BAD_ARGUMENTS` (06 §6.1), not
     `NO_SUCH_DESCRIPTOR`.
-  - **A4** a 78-byte CLOCK_DOMAIN — a length that is NOT a multiple of 8, so
-    `COPY_BUFFER` has to stop mid-lane; a whole-lane advance would put 2 bytes
+  - **A4** an 82-byte CLOCK_DOMAIN - a length that is NOT a multiple of 8, so
+    `COPY_BUFFER` has to stop mid-lane; a whole-lane advance would put 6 bytes
     of the next descriptor on the wire and lie about `control_data_length`.
   - **A5/A6/A7** an unimplemented opcode answers `NOT_IMPLEMENTED` with the
     command ECHOED (F06.14 / IEEE §9.3.5.3.3) — never silence, never a

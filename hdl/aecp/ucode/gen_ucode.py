@@ -276,10 +276,16 @@ DT_STREAM_PORT_OUTPUT = 0x000F
 #                                     -> lane head, COPY_BUF 4 bytes
 #   CLOCK_DOMAIN.clock_source_index   @70,  lane 64..71,   lane bytes 6..7
 #                                     -> [15:0], BUILD_FLD FMT_W
+#   CLOCK_DOMAIN.clock_sources_count  @74,  lane 72..79,   lane bytes 2..3
+#                                     -> SHIFT_R 32 then MOVE FMT_W: [15:0]
+#                                     (SHIFT_R arrived after the rule above
+#                                     was written; a mid-lane field is now
+#                                     reachable into a register)
 ENT_CURCFG_LANE = 304     # ENTITY: gen_aem_store.py d_entity, total 312 B
 ENT_DESC_LEN = 312        # IEEE 1722.1-2021 §7.2.1 ENTITY descriptor size
 AU_RATE_OFF = 136         # AUDIO_UNIT: `assert len(b) == 144` after the count
 CD_SRCIDX_LANE = 64       # CLOCK_DOMAIN: wb["CLOCK_SRC_IDX"] = base + 70
+CD_SRCCNT_LANE = 72       # CLOCK_DOMAIN: clock_sources_offset @72, count @74
 
 # IEEE 1722.1-2021 Table 7-144 (ENTITY_AVAILABLE flags). The table numbers its
 # bits with 0 = MSB, so its "Bit 31" is the LSB — the same convention Table
@@ -1332,17 +1338,36 @@ place(E_SSRATE, [
 # live clock_source_index, which is why the CRF media clock could never be
 # selected and why KL_mmcm_drp_servo and the packet-grid NCO were
 # structurally off: nothing could move the index off 0 = INTERNAL.
+#
+# THE RANGE CHECK (06 §6 "source ∈ CLOCK_DOMAIN list"; milan-fpga #389). The
+# index is accepted only when clock_source_index < the located domain's
+# clock_sources_count: the generators emit the list as the identity
+# permutation (avdecc/aem_descriptors.py d_clock_domain), so the bound IS
+# the membership test §7.4.23.1 asks for. Anything else is BAD_ARGUMENTS
+# carrying the CURRENT index - the one a GET would read - with nothing
+# stored, marked or notified. Before this an index no descriptor backed was
+# stored, read back and announced while the media plane resolved it to
+# INTERNAL. The count sits mid-lane, hence SHIFT_R + a FMT_W MOVE.
+#
+# Two refusal arms share one tail: r6 carries the current index, preloaded
+# with 0 so the NO_SUCH_DESCRIPTOR arm (no domain, no current value) answers
+# zero exactly as before. 32 words: the slot ends at E_TIZ8NS.
 place(E_SCLKS, [
     u('MOVE', rd=2, ra=0, imm=0),                # reserved @30, and the refusals
+    u('MOVE', rd=6, ra=0, imm=0),                # the current index, 0 until read
     u('CHECK_LOCK', ra=15, imm=E_LOCKED4),
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the Clock Domain exist?
-    u('BR_STATUS', cnd=0, imm=E_SCLKS + 22),
+    u('BR_STATUS', cnd=0, imm=E_SCLKS + 26),     # miss -> NO_SUCH_DESCRIPTOR
     u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CLKSRC),
     u('COMPARE', ra=3, fmt=FMT_D, imm=0),
-    u('BR_STATUS', cnd=2, imm=E_SCLKS + 9),
-    u('READ_ST', rd=6, imm=RGN_DYN + SEL_CLKSRC),
-    u('BRANCH', imm=E_SCLKS + 10),
-    u('READ_ST', rd=6, imm=RGN_DATA + CD_SRCIDX_LANE),
+    u('READ_ST', rd=6, imm=RGN_DATA + CD_SRCIDX_LANE),   # the image's index
+    u('BR_STATUS', cnd=2, imm=E_SCLKS + 10),     # unset -> the image's stands
+    u('READ_ST', rd=6, imm=RGN_DYN + SEL_CLKSRC),        # set -> the controller's
+    u('READ_ST', rd=7, imm=RGN_DATA + CD_SRCCNT_LANE),   # E_SCLKS + 10
+    u('SHIFT_R', rd=7, ra=7, imm=32),            # count is lane[47:32]
+    u('MOVE', rd=9, ra=7, fmt=FMT_W),            # r9 = clock_sources_count
+    u('CHECK_ARG', ra=12, rb=9, fmt=FMT_W,       # index < count, else BAD_ARGS
+      cnd=REL_LT, imm=E_SCLKS + 26),
     u('WRITE_ST', ra=12, fmt=FMT_W, imm=RGN_DYN + SEL_CLKSRC),
     u('NVM_MARK', imm=1),                        # §5.3.11.1: persist it
     u('SET_STATUS', imm=ST_OK),
@@ -1352,14 +1377,15 @@ place(E_SCLKS, [
     u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved             @30
     u('SEND_RESP'),
     u('COMPARE', ra=12, rb=6, fmt=FMT_W),
-    u('BR_STATUS', cnd=2, imm=E_SCLKS + 21),
+    u('BR_STATUS', cnd=2, imm=E_SCLKS + 25),
     u('NOTIFY_ENQ', imm=8),                      # SET_CLOCK_SOURCE
-    u('END'),
-    u('BUILD_HDR', ra=15, rb=13),                # E_SCLKS + 22: the refusal
-    u('BUILD_FLD', ra=13, fmt=FMT_D),
-    u('BUILD_FLD', ra=2, fmt=FMT_D),             # index 0 + reserved 0
+    u('END'),                                    # E_SCLKS + 25
+    u('BUILD_HDR', ra=15, rb=13),                # E_SCLKS + 26: the refusals
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=6, fmt=FMT_W),             # the CURRENT index    @28
+    u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved             @30
     u('SEND_RESP'),
-    u('END'),
+    u('END'),                                    # E_SCLKS + 31 = E_TIZ8NS - 1
 ])
 
 # --- GET_CLOCK_SOURCE (Milan §5.4.2.16, IEEE §7.4.24.2, Figure 7-47) ---------
