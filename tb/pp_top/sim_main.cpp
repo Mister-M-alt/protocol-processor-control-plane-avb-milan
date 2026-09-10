@@ -6235,15 +6235,15 @@ struct ReadSidePhase : ReadSideTools {
             "W10e: SET_CLOCK_SOURCE(%u) past clock_sources_count is "
             "BAD_ARGUMENTS at cdl 20", bad);
       if (r.size() >= 48) {
-        CHECK((((unsigned)r[42] << 8) | r[43]) == 0x0002,
+        CHECK(((static_cast<unsigned>(r[42]) << 8) | r[43]) == 0x0002,
               "W10f: the refusal of %u carries the CURRENT index 2", bad);
-        CHECK((((unsigned)r[44] << 8) | r[45]) == 0,
+        CHECK(((static_cast<unsigned>(r[44]) << 8) | r[45]) == 0,
               "W10g: reserved @30 is zero on the refusal");
       }
     }
     g = ask(AEM_GET_CLOCK_SOURCE, ti(0x0024, 0), 0x76A2);
     if (g.size() >= 46) {
-      CHECK((((unsigned)g[42] << 8) | g[43]) == 0x0002,
+      CHECK(((static_cast<unsigned>(g[42]) << 8) | g[43]) == 0x0002,
             "W10h: GET_CLOCK_SOURCE still reads 2 after the refused SETs");
     }
   }
