@@ -279,7 +279,16 @@ module pp_top_wrap (
     output logic [8*64-1:0] aecp_fmt_in_o,
     output logic  [7:0] aecp_fmt_in_v_o,
     output logic [8*64-1:0] aecp_fmt_out_o,
-    output logic  [7:0] aecp_fmt_out_v_o
+    output logic  [7:0] aecp_fmt_out_v_o,
+    //! the SET_CLOCK_SOURCE refusal contract (06 section 6.4: nothing
+    //! stored, marked or notified) has no wire shape: a write of the value
+    //! the row already holds, an NVM mark and a notification enqueue all
+    //! leave the response and GET as they were. These three observe the
+    //! effects themselves: the dynamic store's accepted-write counter, the
+    //! OP_NVM_MARK strobe and the OP_NOTIFY_ENQ strobe (06 section 8).
+    output logic [15:0] dbg_dyn_writes_o,
+    output logic        dbg_nvm_mark_o,
+    output logic        dbg_notify_enq_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
@@ -528,6 +537,9 @@ module pp_top_wrap (
   assign dbg_org_busy_o   = u_dut.org_busy_nc_w;
   assign dbg_org_queue_o  = u_dut.laneq_org_cnt_r;
   assign dbg_txs_release_valid_o = u_dut.txs_release_valid_w;
+  assign dbg_dyn_writes_o = u_dut.u_aecp.dyn_writes_nc_w;
+  assign dbg_nvm_mark_o   = u_dut.aecp_eff_nvm_stb_nc_w;
+  assign dbg_notify_enq_o = u_dut.aecp_eff_notify_stb_nc_w;
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin
