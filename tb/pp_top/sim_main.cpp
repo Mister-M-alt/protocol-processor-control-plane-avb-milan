@@ -6281,9 +6281,15 @@ struct ReadSidePhase : ReadSideTools {
   // OP_NOTIFY_ENQ strobe (dbg_notify_enq_o, notify_enqs). A second
   // controller is registered for unsolicited notifications first, the U8
   // pattern, because that is where an enqueued notification surfaces on
-  // the wire. The accepted SET of count-1 that follows is the anti-vacuity
-  // half: the same three counters move by exactly one each and exactly one
-  // unsolicited SET_CLOCK_SOURCE reaches the second controller. Both of
+  // the wire. The accepted SET that follows is the anti-vacuity half: the
+  // same three counters move by exactly one each and exactly one
+  // unsolicited SET_CLOCK_SOURCE reaches the second controller. It stores
+  // 1, a listed index that differs both from the unset row's current 0 and
+  // from the 2 W10 stores next, so W10's SET still changes the index and
+  // W10b keeps a replaced value to tell the stored one from. W10j7b grades
+  // the same clause here, on the change from 0 to 1: a ROM whose success
+  // path builds the CURRENT index (E_SCLKS+19 from r6, the shape of the
+  // refusal tail nine words later) answers 0 here and 1 at W10b. Both of
   // W10e's refused values are graded, and each against the counters as
   // they stood just before it: on the ROM that predates the range check
   // the first refused value is stored and marked, and the second, now
@@ -6328,20 +6334,28 @@ struct ReadSidePhase : ReadSideTools {
             bad, static_cast<unsigned>(h.notify_enqs - nb));
     }
 
-    putbe(&pl[4], 0x0002, 2);                 // count - 1, the last listed
+    putbe(&pl[4], 0x0001, 2);                 // listed, and not W10's 2
     auto r = ask(AEM_SET_CLOCK_SOURCE, pl, 0x76D5);
     CHECK(!r.empty() && st(r) == AECP_SUCCESS && cdl(r) == 20,
-          "W10j7: SET_CLOCK_SOURCE(2) is accepted at cdl 20");
+          "W10j7: SET_CLOCK_SOURCE(1) is accepted at cdl 20");
+    if (r.size() >= 48) {
+      const unsigned idx = (static_cast<unsigned>(r[42]) << 8) | r[43];
+      CHECK(idx == 0x0001,
+            "W10j7b: the accepted SET's response carries the 1 it stored, "
+            "not %u", idx);
+      CHECK(((static_cast<unsigned>(r[44]) << 8) | r[45]) == 0,
+            "W10j7c: reserved @30 is zero on the accepted SET");
+    }
     auto uns = h.wait_any(h.q_aecp, 800);
     std::vector<uint8_t> body(8, 0);
     putbe(&body[0], 0x0024, 2); putbe(&body[2], 0, 2);
-    putbe(&body[4], 0x0002, 2);
+    putbe(&body[4], 0x0001, 2);
     auto want = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                            CTLR2_EID, 0x0000, AEM_SET_CLOCK_SOURCE, body);
     want[36] |= 0x80;
     CHECK(uns == want,
           "W10j8: the accepted SET reaches the second controller as one "
-          "unsolicited SET_CLOCK_SOURCE carrying 2, seq 0");
+          "unsolicited SET_CLOCK_SOURCE carrying 1, seq 0");
     if (!uns.empty() && uns != want) { dump("got", uns); dump("exp", want); }
     auto more = h.wait_any(h.q_aecp, 300);
     CHECK(more.empty(),
