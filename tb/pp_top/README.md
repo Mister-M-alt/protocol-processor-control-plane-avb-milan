@@ -183,11 +183,20 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M11 | the engine's SET_STREAM_INFO running route forced dead | 2 FAIL -- W25b + W25b2 against a REALLY streaming output (Advertise + registered Listener on the wire) |
 | M12 | restored the pre-fix `.ev_asp_i (gm_change_i || gsi_asp_chg_i)` wiring | 1 FAIL at 1,269 checks — V6i: `gm_change_i` alone emits the forbidden `GET_AS_PATH`; the positive simultaneous-strobe arm stays live |
 | M13 | tied `.ev_asp_i` to zero | 5 FAIL at 1,269 checks — V6/V6c/V6d lose both GM-entry and tail-only `GET_AS_PATH`; V6f/V6h fail collaterally because the missing frame shifts the per-controller sequence IDs |
+| M14 | E_SCLKS+7 (ROM word 1191, the image read that supplies the CURRENT index while the clock-source row is unset) replaced with NOP, in a review copy of `gen_ucode.py`; the ROM is swapped, the tracked generator is not touched | 1 FAIL at 1,300 checks -- W10i2: the refusal on the unset row answers the zero r6 preload instead of the image's 1. W10i (BAD_ARGUMENTS at cdl 20), W10i4 (GET still reads the image) and every W10j effect count PASS under this mutation, which is why W10i exists: no set-row arm (W10f) can see this word |
+| M15 | the ROM `gen_ucode.py` generated at 2faa5af8, the last commit before the range check (31 words differ, 1185 to 1215) | 20 FAIL at 1,300 checks -- W10e and W10f for both refused values, W10h, W10i/W10i2/W10i4, and the effect grades of W10j: the refusal of 3 is stored and marked (W10j2, W10j4, W10j5), the refusal of 65535 is stored, marked, enqueued AND announced at the second controller (W10j2 to W10j6), and the accepted SET that follows carries the residue in its counts and in its notification sequence (W10j8, W10j10 to W10j12) |
+| M16 | E_SCLKS+19 (ROM word 1203, the BUILD_FLD that puts the stored index, r12, at @28 of the success response) rewritten to build r6, the CURRENT index read before the write, in a review copy of `gen_ucode.py`; the same shape as the refusal tail nine words later, so a refactor that shares that tail produces it. The ROM is swapped, the tracked generator is not touched | 2 FAIL at 1,300 checks -- W10j7b: the accepted SET from the unset row answers 0, the index it replaced, not the 1 it stored; W10b: the SET on the set row answers 1, not the 2 it stored. Every other check PASSES, W10j8 included: the engine rebuilds the unsolicited copy from the stored row through GET_CLOCK_SOURCE's program, not from the response, so only the response body can see this word, and only when the SET changes the index; which is why W10j stores 1 and W10 then stores 2 |
 
-All thirteen bite; originals restored; suite back to green. The M1-M6 counts were
+All sixteen bite; originals restored; suite back to green. The M1-M6 counts were
 taken when the suite stood at 86 checks (scenario A and section B have since
 been added) and the M7-M11 counts at 1,139, so re-run a mutation before quoting
-its blast radius. M12-M13 were measured at 1,269 checks.
+its blast radius. M12-M13 were measured at 1,269 checks, M14-M16 at 1,300. M14
+to M16 are ROM swaps (`ucode.hex` is read at simulation start), so they need no
+rebuild: generate the review ROM elsewhere, copy it over `ucode.hex`, run
+`./obj_dir/Vpp_top_sim`, and put the generated ROM back. Only its sha256 against
+the generator's output proves the ROM is the pinned one again: a copied ROM is
+newer than `gen_ucode.py`, so `make` alone leaves it in place, and `git status`
+cannot see it (`ucode.hex` is ignored); `rm ucode.hex && make` regenerates it.
 
 ## Recorded seams and honest limits
 

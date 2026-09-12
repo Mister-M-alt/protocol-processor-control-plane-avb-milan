@@ -987,6 +987,11 @@ struct H {
   int  gsi_hold_cur = 0;
   uint64_t gsi_reads = 0;
   uint64_t ca_cancels = 0;
+  //! the two AECP effect strobes a response cannot show (06 section 8):
+  //! counted once per cycle so a refusal can be graded on what it did
+  //! NOT do (W10j), and an accepted SET on what it did exactly once
+  uint64_t nvm_marks = 0;
+  uint64_t notify_enqs = 0;
   // ---- the SET_STREAM_FORMAT verdict (kind 0 selector 15) and the
   // settings fold. The verdict is the integrator's ruling on the PROPOSED
   // format riding gsi_prop_fmt_o: bit 0 = the format is one of the
@@ -1103,6 +1108,8 @@ struct H {
 
     d->eval();
     if (d->dbg_ca_cancel_o) ++ca_cancels;
+    if (d->dbg_nvm_mark_o) ++nvm_marks;
+    if (d->dbg_notify_enq_o) ++notify_enqs;
 
     d->clk_i = 1; d->eval();
     t++;
@@ -1494,6 +1501,7 @@ struct H {
     amap_edit_claims.clear();
     amap_edit_seq.clear();
     ca_cancels = 0;
+    nvm_marks = 0; notify_enqs = 0;
     idle(20);
     d->rst_n = 1;
     idle(10);
@@ -5863,6 +5871,8 @@ struct SetStreamFormatPhase : ReadSideTools {
 // twice with the IMAGE PATCHED IN BETWEEN, so a constant cannot survive.
 struct ReadSidePhase : ReadSideTools {
   std::vector<ImgEnt>& image_ents;
+  //! the second controller of section U, so W10j registers the same one
+  static constexpr uint64_t C2_MAC = UnsolicitedPhase::C2_MAC;
   ReadSidePhase(H& hh, std::vector<ImgEnt>& ents)
       : ReadSideTools(hh), image_ents(ents) {}
 
@@ -5882,6 +5892,8 @@ struct ReadSidePhase : ReadSideTools {
     w7_the_three_type_index_reads_gate_their_length();
     DynamicInfoBatch{h, image_ents}.run();
     w9_set_sampling_rate_and_the_overlay_it_creates();
+    w10i_a_refusal_on_the_unset_row_carries_the_images_index();
+    w10j_a_refusal_moves_nothing_graded_at_the_effects();
     w10_set_clock_source_the_only_writer_of_the_live_index();
     w11_a_sets_refusals();
     w12_the_identify_control();
@@ -6130,14 +6142,30 @@ struct ReadSidePhase : ReadSideTools {
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
   }
 
-  // ---- W6b: THE FALSIFIER, again by patching the image ----------------
-  void w6b_the_falsifier_again_by_patching_the_image() {
+  // ---- the image patch W6b and W10i share ------------------------------
+  // CLOCK_DOMAIN[0].clock_source_index lives at @70 of the image's entry
+  // (IEEE 7.2.32). Patching it in place is how a read that FOLLOWS the
+  // image is told from one that invents a constant: the value goes in
+  // through the bytes and never through a command, so nothing in the
+  // dynamic store can have supplied it. The two bytes replaced are handed
+  // back so the caller restores them.
+  struct ImagePatch { uint32_t off; uint8_t hi; uint8_t lo; };
+  ImagePatch patch_image_clock_source(uint16_t v, const char* arm) {
     uint32_t cd_off = 0;
     for (auto& e : image_ents) if (e.type == 0x0024) cd_off = e.off;
-    CHECK(cd_off != 0, "W6b: the CLOCK_DOMAIN entry was located");
-    uint8_t s_hi = h.dram[cd_off + 70];
-    uint8_t s_lo = h.dram[cd_off + 71];
-    h.dram[cd_off + 70] = 0x00; h.dram[cd_off + 71] = 0x02;
+    CHECK(cd_off != 0, "%s: the CLOCK_DOMAIN entry was located", arm);
+    ImagePatch p{cd_off + 70, h.dram[cd_off + 70], h.dram[cd_off + 71]};
+    h.dram[p.off]     = static_cast<uint8_t>(v >> 8);
+    h.dram[p.off + 1] = static_cast<uint8_t>(v & 0xFF);
+    return p;
+  }
+  void restore_image(const ImagePatch& p) {
+    h.dram[p.off] = p.hi; h.dram[p.off + 1] = p.lo;
+  }
+
+  // ---- W6b: THE FALSIFIER, again by patching the image ----------------
+  void w6b_the_falsifier_again_by_patching_the_image() {
+    const auto patch = patch_image_clock_source(0x0002, "W6b");
 
     auto f = ask(AEM_GET_CLOCK_SOURCE, ti(0x0024, 0), 0x7641);
     std::vector<uint8_t> body(8, 0);
@@ -6149,7 +6177,7 @@ struct ReadSidePhase : ReadSideTools {
           "W6b: GET_CLOCK_SOURCE follows the image, it does not invent");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
 
-    h.dram[cd_off + 70] = s_hi; h.dram[cd_off + 71] = s_lo;
+    restore_image(patch);
   }
 
   // ---- W7: the three {type, index} reads gate their length ------------
@@ -6201,6 +6229,152 @@ struct ReadSidePhase : ReadSideTools {
       CHECK(got == 48000ul,
             "W9b2: GET_SAMPLING_RATE reads %lu, the SET stored 48000", got);
     }
+  }
+
+  // ---- W10i: a refusal on the UNSET row carries the image's index -----
+  // E_SCLKS preloads the current index (r6) with 0 and, while the dynamic
+  // row is unset, replaces it with the image's clock_source_index
+  // (E_SCLKS+7) before the range check runs. W10f cannot tell the two
+  // apart: it refuses after W10 has set the row, and the fixture's image
+  // value is 0, the preload. So this arm runs BEFORE any SET, with the
+  // image patched to 1, and the refusal has to carry that 1 (Milan
+  // 5.4.2.15; IEEE 7.4.23.1: the response carries the current value). GET
+  // reads the same 1 after it, which is also the "nothing stored" half of
+  // the contract for a value that differs from the current one. A ROM
+  // whose E_SCLKS+7 is a NOP answers 0 here and passes every other arm.
+  void w10i_a_refusal_on_the_unset_row_carries_the_images_index() {
+    const auto patch = patch_image_clock_source(0x0001, "W10i");
+    std::vector<uint8_t> pl(8, 0);
+    putbe(&pl[0], 0x0024, 2); putbe(&pl[2], 0, 2);
+    putbe(&pl[4], 0x0003, 2);                 // = clock_sources_count
+    auto r = ask(AEM_SET_CLOCK_SOURCE, pl, 0x76D0);
+    CHECK(!r.empty() && st(r) == AECP_BAD_ARGUMENTS && cdl(r) == 20,
+          "W10i: SET_CLOCK_SOURCE(3) on the unset row is BAD_ARGUMENTS "
+          "at cdl 20");
+    if (r.size() >= 48) {
+      const unsigned cur = (static_cast<unsigned>(r[42]) << 8) | r[43];
+      CHECK(cur == 0x0001,
+            "W10i2: the refusal on the unset row carries the image's index "
+            "1, not %u", cur);
+      CHECK(((static_cast<unsigned>(r[44]) << 8) | r[45]) == 0,
+            "W10i3: reserved @30 is zero on the unset-row refusal");
+    }
+    auto g = ask(AEM_GET_CLOCK_SOURCE, ti(0x0024, 0), 0x76D1);
+    if (g.size() >= 46) {
+      const unsigned cur = (static_cast<unsigned>(g[42]) << 8) | g[43];
+      CHECK(cur == 0x0001,
+            "W10i4: GET_CLOCK_SOURCE still reads the image's 1 after the "
+            "refusal, not %u", cur);
+    }
+    restore_image(patch);
+  }
+
+  // ---- W10j: a refusal moves nothing, graded at the effects -----------
+  // GET reads the row a refusal would have written, so W10h and W10i4
+  // prove "nothing stored" only for a value that differs. "Nothing marked
+  // or notified" has no wire shape at all: an NVM_MARK and a NOTIFY_ENQ
+  // leave the response exactly as it is. This arm therefore watches the
+  // effects themselves, through the wrapper's observe-only taps: the
+  // dynamic store's accepted-write counter (dbg_dyn_writes_o, the
+  // WRITE_ST that KL_aecp_dyn_state took), the OP_NVM_MARK strobe
+  // (dbg_nvm_mark_o, counted in H::step as nvm_marks) and the
+  // OP_NOTIFY_ENQ strobe (dbg_notify_enq_o, notify_enqs). A second
+  // controller is registered for unsolicited notifications first, the U8
+  // pattern, because that is where an enqueued notification surfaces on
+  // the wire. The accepted SET that follows is the anti-vacuity half: the
+  // same three counters move by exactly one each and exactly one
+  // unsolicited SET_CLOCK_SOURCE reaches the second controller. It stores
+  // 1, a listed index that differs both from the unset row's current 0 and
+  // from the 2 W10 stores next, so W10's SET still changes the index and
+  // W10b keeps a replaced value to tell the stored one from. W10j7b grades
+  // the same clause here, on the change from 0 to 1: a ROM whose success
+  // path builds the CURRENT index (E_SCLKS+19 from r6, the shape of the
+  // refusal tail nine words later) answers 0 here and 1 at W10b. Both of
+  // W10e's refused values are graded, and each against the counters as
+  // they stood just before it: on the ROM that predates the range check
+  // the first refused value is stored and marked, and the second, now
+  // different from the stored one, is stored, marked AND announced, so
+  // every clause of the refusal half fails by name there.
+  void w10j_a_refusal_moves_nothing_graded_at_the_effects() {
+    std::vector<uint8_t> fl0(4, 0);
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x76D2,
+                      0x0024, fl0));
+    auto f = h.wait_any(h.q_aecp, 400);
+    CHECK(!f.empty() && st(f) == AECP_SUCCESS,
+          "W10j: second controller registered for unsolicited notifications");
+
+    std::vector<uint8_t> pl(8, 0);
+    putbe(&pl[0], 0x0024, 2); putbe(&pl[2], 0, 2);
+    const unsigned w0 = d->dbg_dyn_writes_o;
+    const uint64_t m0 = h.nvm_marks;
+    const uint64_t n0 = h.notify_enqs;
+    for (uint16_t bad : {uint16_t(0x0003), uint16_t(0xFFFF)}) {
+      const unsigned wb = d->dbg_dyn_writes_o;
+      const uint64_t mb = h.nvm_marks;
+      const uint64_t nb = h.notify_enqs;
+      putbe(&pl[4], bad, 2);
+      auto r = ask(AEM_SET_CLOCK_SOURCE, pl, uint16_t(0x76D3 + (bad & 1)));
+      CHECK(!r.empty() && st(r) == AECP_BAD_ARGUMENTS && cdl(r) == 20,
+            "W10j2: SET_CLOCK_SOURCE(%u) is refused BAD_ARGUMENTS at cdl 20",
+            bad);
+      auto uns = h.wait_any(h.q_aecp, 300);
+      CHECK(uns.empty(),
+            "W10j3: the refusal of %u sent no unsolicited frame to the "
+            "second controller", bad);
+      if (!uns.empty()) dump("got", uns);
+      CHECK(d->dbg_dyn_writes_o == wb,
+            "W10j4: the refusal of %u wrote the dynamic store %u times, "
+            "want 0", bad, static_cast<unsigned>(d->dbg_dyn_writes_o - wb));
+      CHECK(h.nvm_marks == mb,
+            "W10j5: the refusal of %u raised OP_NVM_MARK %u times, want 0",
+            bad, static_cast<unsigned>(h.nvm_marks - mb));
+      CHECK(h.notify_enqs == nb,
+            "W10j6: the refusal of %u raised OP_NOTIFY_ENQ %u times, want 0",
+            bad, static_cast<unsigned>(h.notify_enqs - nb));
+    }
+
+    putbe(&pl[4], 0x0001, 2);                 // listed, and not W10's 2
+    auto r = ask(AEM_SET_CLOCK_SOURCE, pl, 0x76D5);
+    CHECK(!r.empty() && st(r) == AECP_SUCCESS && cdl(r) == 20,
+          "W10j7: SET_CLOCK_SOURCE(1) is accepted at cdl 20");
+    if (r.size() >= 48) {
+      const unsigned idx = (static_cast<unsigned>(r[42]) << 8) | r[43];
+      CHECK(idx == 0x0001,
+            "W10j7b: the accepted SET's response carries the 1 it stored, "
+            "not %u", idx);
+      CHECK(((static_cast<unsigned>(r[44]) << 8) | r[45]) == 0,
+            "W10j7c: reserved @30 is zero on the accepted SET");
+    }
+    auto uns = h.wait_any(h.q_aecp, 800);
+    std::vector<uint8_t> body(8, 0);
+    putbe(&body[0], 0x0024, 2); putbe(&body[2], 0, 2);
+    putbe(&body[4], 0x0001, 2);
+    auto want = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
+                           CTLR2_EID, 0x0000, AEM_SET_CLOCK_SOURCE, body);
+    want[36] |= 0x80;
+    CHECK(uns == want,
+          "W10j8: the accepted SET reaches the second controller as one "
+          "unsolicited SET_CLOCK_SOURCE carrying 1, seq 0");
+    if (!uns.empty() && uns != want) { dump("got", uns); dump("exp", want); }
+    auto more = h.wait_any(h.q_aecp, 300);
+    CHECK(more.empty(),
+          "W10j9: the accepted SET sent exactly one unsolicited frame");
+    CHECK(d->dbg_dyn_writes_o == w0 + 1,
+          "W10j10: the accepted SET wrote the dynamic store %u times, "
+          "want 1", static_cast<unsigned>(d->dbg_dyn_writes_o - w0));
+    CHECK(h.nvm_marks == m0 + 1,
+          "W10j11: the accepted SET raised OP_NVM_MARK %u times, want 1",
+          static_cast<unsigned>(h.nvm_marks - m0));
+    CHECK(h.notify_enqs == n0 + 1,
+          "W10j12: the accepted SET raised OP_NOTIFY_ENQ %u times, want 1",
+          static_cast<unsigned>(h.notify_enqs - n0));
+
+    //! leave the registry as this arm found it
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x76D6,
+                      0x0025, {}));
+    h.wait_any(h.q_aecp, 400);
+    h.q_aecp.clear();
   }
 
   // ---- W10: SET_CLOCK_SOURCE, the only writer of the live index --------
