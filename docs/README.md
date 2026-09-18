@@ -16,26 +16,40 @@ relies on. Read it before editing anything under `architecture/`.
 
 ## 1. Reading order
 
-```
-docs/README.md (this page)
-   └─► 00_MILAN_COMPLIANCE_REVIEW.md      why the architecture looks the way it does
-        └─► architecture/01_overview.md    scope, top-level, parameters, Milan↔IEEE deltas
-             └─► 02_interfaces.md          every external contract
-                  └─► 03_packet_engine.md  shared RX/TX datapath
-                       └─► 04_adp_engine.md ─► 05_acmp_engine.md   (04 before 05: ACMP
-                            └─► 10_srp_engine.md                    consumes ADP events;
-                                 └─► 11_maap_engine.md              10/11 with/after 05 —
-                                 └─► 06_aecp_engine.md              they serve 05's srp
-                                      └─► 07_memory_maps.md         and maap calls)
-                                           └─► 08_timing.md ─► 09_verification.md
-```
+Read top to bottom on a first pass. Each row says what the document answers and what
+it assumes you have already read, so a row can also be entered directly once its
+"Read after" column is covered.
 
-| Role | Path |
-|---|---|
-| Implementer (RTL) | 01 → 02 → 03 → 04 → 05 → 10 → 11 → 06 → 07 → 08 (00 on second pass) |
-| Verifier | 00 §6 matrix → 01 → 08 → 09 → the F05.3 / F06.14 behavior tables |
-| System integrator | 01 → 02 → 07 §5 (persistence) → 02 §7 (side-port) |
-| Compliance reviewer | 00 only, following its links into the architecture |
+| Step | Document | What it answers | Read after | Why it sits here |
+|---|---|---|---|---|
+| 0 | [docs/README.md](README.md) (this page) | the conventions, IDs and figure rules every other page relies on | nothing | the IDs below (`F`, `REQ`, `T`, `P`, `Δ`) are defined in [section 2](#2-identifier-registries) |
+| 1 | [00 Compliance review](00_MILAN_COMPLIANCE_REVIEW.md) | why the architecture looks the way it does: the gap findings and the compliance matrix | step 0 | the requirements the other pages trace to; implementers may skim it now and return on a second pass |
+| 2 | [01 Overview](architecture/01_overview.md) | scope, top level, parameters, the Milan-over-IEEE deltas | step 1 | names every engine and every `P-` and `Δ` ID used later |
+| 3 | [02 External interfaces](architecture/02_interfaces.md) | every external contract: streams, engine API, events, status, side-port, NVM | step 2 | the engines are described in terms of these interface classes |
+| 4 | [03 Packet engine](architecture/03_packet_engine.md) | the shared RX/TX datapath all engines sit on | step 3 | every protocol engine receives from and transmits through it |
+| 5 | [04 ADP engine](architecture/04_adp_engine.md) | discovery: the entity's advertisement and the ADP events the other engines consume | step 4 | ACMP consumes ADP events, so 04 comes before 05 |
+| 6 | [05 ACMP engine](architecture/05_acmp_engine.md) | Milan connection management, the listener and talker state machines | step 5 | it calls into SRP and MAAP, which the next two steps define |
+| 7 | [10 SRP engine](architecture/10_srp_engine.md) | the MSRP/MVRP endpoint participant behind ACMP's reservation calls | step 6 | read with or right after 05: it serves 05's `srp` calls |
+| 8 | [11 MAAP engine](architecture/11_maap_engine.md) | dynamic multicast address acquisition behind ACMP's address calls | step 6 | read with or right after 05: it serves 05's `maap` calls; independent of step 7 |
+| 9 | [06 AECP engine](architecture/06_aecp_engine.md) | AEM and Milan Vendor Unique commands, the command master table | steps 6 to 8 | its commands read and change the state the earlier engines own |
+| 10 | [07 Memory maps](architecture/07_memory_maps.md) | records, register and memory layouts, persistence | step 9 | the single home of every layout the engine pages link to |
+| 11 | [08 Timing](architecture/08_timing.md) | every timer, deadline and tick source (`T-` IDs) | step 10 | the single home of every timing value the state machines cite |
+| 12 | [09 Verification](architecture/09_verification.md) | test categories, coverage goals, how compliance is demonstrated | step 11 | it walks the tables and timers of all the pages above |
+
+Not on the path: [10 Resource and effort](10_RESOURCE_AND_EFFORT.md) sizes the
+implementation on the reference platform; read it for planning, after step 2. It is a
+different document from step 7's `architecture/10_srp_engine.md`.
+
+### Paths by role
+
+Steps refer to the table above.
+
+| Role | Path | Entry points worth bookmarking |
+|---|---|---|
+| Implementer (RTL) | steps 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 in order; step 1 on the second pass | [F05.3 listener matrix](architecture/05_acmp_engine.md#fig-05-listener-matrix), [F06.14 command master table](architecture/06_aecp_engine.md#fig-06-cmdtable) |
+| Verifier | step 1's [compliance matrix](00_MILAN_COMPLIANCE_REVIEW.md#6-compliance-matrix-f001), then steps 2, 11, 12, then the two behavior tables | [09 test categories](architecture/09_verification.md#3-test-categories), [F05.3](architecture/05_acmp_engine.md#fig-05-listener-matrix), [F06.14](architecture/06_aecp_engine.md#fig-06-cmdtable) |
+| System integrator | steps 2 and 3, then persistence, then the side-port | [07 persistence](architecture/07_memory_maps.md#5-persistence), [02 management side-port](architecture/02_interfaces.md#fig-02-memwave) |
+| Compliance reviewer | step 1 only, following its links into the architecture | [00 gap findings](00_MILAN_COMPLIANCE_REVIEW.md#5-gap-findings), [00 compliance matrix](00_MILAN_COMPLIANCE_REVIEW.md#6-compliance-matrix-f001) |
 
 ## 2. Identifier registries
 
