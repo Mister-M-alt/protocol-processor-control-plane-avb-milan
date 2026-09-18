@@ -459,25 +459,30 @@ verification).
 
 <a id="fig-00-disposition"></a>
 
-| GAP | Severity | Resolution | Addressed in | Verified by |
-|---|---|---|---|---|
-| [GAP-01](#gap-01) | Blocker | Full command/descriptor inventory + per-command rules | [F06.14](architecture/06_aecp_engine.md#fig-06-cmdtable), §6 matrix | DIR/TOL |
-| [GAP-02](#gap-02) | Blocker | Milan-native ACMP: stateless talker + listener SM package | [05](architecture/05_acmp_engine.md) | MTXW |
-| [GAP-03](#gap-03) | Major | MVU sub-decoder + 3 command groups + feature flags | [06 §6.9](architecture/06_aecp_engine.md) | DIR |
-| [GAP-04](#gap-04) | Blocker | Interface classes A–F; SRP/MAAP, gPTP, AVTP, media-clock adapters; status dictionary; in-scope SRP engine | [02](architecture/02_interfaces.md), [10](architecture/10_srp_engine.md) | DIR/MTXW/TOL/TIM |
-| [GAP-05](#gap-05) | Major | Counters subsystem with Milan-precedence masks | [06 §6.6](architecture/06_aecp_engine.md), [07 §4](architecture/07_memory_maps.md) | DIR |
-| [GAP-06](#gap-06) | Major | Registry + monitor + fan-out + lock manager + identify | [06 §7](architecture/06_aecp_engine.md) | RND/STORM/TIM |
-| [GAP-07](#gap-07) | Major | Master T-ID table, timer service, PRNG, budgets | [08](architecture/08_timing.md) | TIM |
-| [GAP-08](#gap-08) | Major | Entity-model store (image+overlay), Table 7-8 stream assembly, oversize TX slot | [07 §3](architecture/07_memory_maps.md), [03 §7](architecture/03_packet_engine.md) | DIR |
-| [GAP-09](#gap-09) | Major | NVM manager, records, commit/restore flows | [07 §5](architecture/07_memory_maps.md) | NVM |
-| [GAP-10](#gap-10) | Major | CDC/reset, interface contracts, parameter table, profiles, grounded hazards | [01](architecture/01_overview.md)/[02](architecture/02_interfaces.md)/[03](architecture/03_packet_engine.md) | DIR |
-| [GAP-11](#gap-11) | Minor | Verification strategy + traceability | [09](architecture/09_verification.md) | — |
-| [GAP-12](#gap-12) | Minor | Explicit non-redundant scope + parameterized seams | [01 §1/§7](architecture/01_overview.md) | DIR |
-| [GAP-13](#gap-13) | Minor | Firmware assist optional behind side-port flag | [02 §7](architecture/02_interfaces.md) | DIR |
-| [GAP-14](#gap-14) | Info | All figures Mermaid/WaveDrom/draw.io + lint | [docs/README.md](README.md), `Makefile` | lint |
-| [GAP-15](#gap-15) | Info | Conventions + parser rules + status policies | [docs/README.md](README.md) §4, [03 §3](architecture/03_packet_engine.md) | TOL |
-| [GAP-16](#gap-16) | Blocker | ADP advertise SM + talker-discovery SM (entity table dropped) | [04](architecture/04_adp_engine.md) | MTXW |
-| [GAP-17](#gap-17) | Blocker | Originator + inflight table; four transaction origins | [03 §5](architecture/03_packet_engine.md) | RND |
+| GAP | Severity | Resolution | Addressed in | Verified by | Open residue |
+|---|---|---|---|---|---|
+| [GAP-01](#gap-01) | Blocker | Full command/descriptor inventory + per-command rules | [F06.14](architecture/06_aecp_engine.md#fig-06-cmdtable), §6 matrix | DIR/TOL | [#76](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/76) |
+| [GAP-02](#gap-02) | Blocker | Milan-native ACMP: stateless talker + listener SM package | [05](architecture/05_acmp_engine.md) | MTXW | none found |
+| [GAP-03](#gap-03) | Major | MVU sub-decoder + 3 command groups + feature flags | [06 §6.9](architecture/06_aecp_engine.md) | DIR | [#77](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/77) |
+| [GAP-04](#gap-04) | Blocker | Interface classes A–F; SRP/MAAP, gPTP, AVTP, media-clock adapters; status dictionary; in-scope SRP engine | [02](architecture/02_interfaces.md), [10](architecture/10_srp_engine.md) | DIR/MTXW/TOL/TIM | [#78](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/78) |
+| [GAP-05](#gap-05) | Major | Counters subsystem with Milan-precedence masks | [06 §6.6](architecture/06_aecp_engine.md), [07 §4](architecture/07_memory_maps.md) | DIR | [#79](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/79) |
+| [GAP-06](#gap-06) | Major | Registry + monitor + fan-out + lock manager + identify | [06 §7](architecture/06_aecp_engine.md) | RND/STORM/TIM | [#80](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/80) |
+| [GAP-07](#gap-07) | Major | Master T-ID table, timer service, PRNG, budgets | [08](architecture/08_timing.md) | TIM | [#81](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/81) |
+| [GAP-08](#gap-08) | Major | Entity-model store (image+overlay), Table 7-8 stream assembly, oversize TX slot | [07 §3](architecture/07_memory_maps.md), [03 §7](architecture/03_packet_engine.md) | DIR | [#82](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/82) |
+| [GAP-09](#gap-09) | Major | NVM manager, records, commit/restore flows | [07 §5](architecture/07_memory_maps.md) | NVM | [#83](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/83) |
+| [GAP-10](#gap-10) | Major | CDC/reset, interface contracts, parameter table, profiles, grounded hazards | [01](architecture/01_overview.md)/[02](architecture/02_interfaces.md)/[03](architecture/03_packet_engine.md) | DIR | [#84](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/84) |
+| [GAP-11](#gap-11) | Minor | Verification strategy + traceability | [09](architecture/09_verification.md) | — | [#72](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/72) |
+| [GAP-12](#gap-12) | Minor | Explicit non-redundant scope + parameterized seams | [01 §1/§7](architecture/01_overview.md) | DIR | [#69](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/69) |
+| [GAP-13](#gap-13) | Minor | Firmware assist optional behind side-port flag | [02 §7](architecture/02_interfaces.md) | DIR | none found |
+| [GAP-14](#gap-14) | Info | All figures Mermaid/WaveDrom/draw.io + lint | [docs/README.md](README.md), `Makefile` | lint | [#75](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/75) |
+| [GAP-15](#gap-15) | Info | Conventions + parser rules + status policies | [docs/README.md](README.md) §4, [03 §3](architecture/03_packet_engine.md) | TOL | [#45](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/45) |
+| [GAP-16](#gap-16) | Blocker | ADP advertise SM + talker-discovery SM (entity table dropped) | [04](architecture/04_adp_engine.md) | MTXW | [#85](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/85) |
+| [GAP-17](#gap-17) | Blocker | Originator + inflight table; four transaction origins | [03 §5](architecture/03_packet_engine.md) | RND | [#86](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/86) |
+
+The **Open residue** column records the audit of 2026-09-18 at main `6a878f6`: each finding was
+checked against what `hdl/` and `tb/` carry, not against this table. A linked issue tracks what is
+still unimplemented or ungraded for that finding and lists the requirement tickets under it;
+"none found" means the resolution is implemented and a suite of the named category grades it.
 
 ## 8. Residual risks and open decisions
 
