@@ -186,11 +186,14 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M14 | E_SCLKS+7 (ROM word 1191, the image read that supplies the CURRENT index while the clock-source row is unset) replaced with NOP, in a review copy of `gen_ucode.py`; the ROM is swapped, the tracked generator is not touched | 1 FAIL at 1,300 checks -- W10i2: the refusal on the unset row answers the zero r6 preload instead of the image's 1. W10i (BAD_ARGUMENTS at cdl 20), W10i4 (GET still reads the image) and every W10j effect count PASS under this mutation, which is why W10i exists: no set-row arm (W10f) can see this word |
 | M15 | the ROM `gen_ucode.py` generated at 2faa5af8, the last commit before the range check (31 words differ, 1185 to 1215) | 20 FAIL at 1,300 checks -- W10e and W10f for both refused values, W10h, W10i/W10i2/W10i4, and the effect grades of W10j: the refusal of 3 is stored and marked (W10j2, W10j4, W10j5), the refusal of 65535 is stored, marked, enqueued AND announced at the second controller (W10j2 to W10j6), and the accepted SET that follows carries the residue in its counts and in its notification sequence (W10j8, W10j10 to W10j12) |
 | M16 | E_SCLKS+19 (ROM word 1203, the BUILD_FLD that puts the stored index, r12, at @28 of the success response) rewritten to build r6, the CURRENT index read before the write, in a review copy of `gen_ucode.py`; the same shape as the refusal tail nine words later, so a refactor that shares that tail produces it. The ROM is swapped, the tracked generator is not touched | 2 FAIL at 1,300 checks -- W10j7b: the accepted SET from the unset row answers 0, the index it replaced, not the 1 it stored; W10b: the SET on the set row answers 1, not the 2 it stored. Every other check PASSES, W10j8 included: the engine rebuilds the unsolicited copy from the stored row through GET_CLOCK_SOURCE's program, not from the response, so only the response body can see this word, and only when the SET changes the index; which is why W10j stores 1 and W10 then stores 2 |
+| M17 | `KL_acmp_talker` keys REGISTERING_FAILED on the retired private code 3 again (`rf_live_w` compares `srp_pkg::srp_decl_e'(2'd3)`, the pre-fix `LSN_ASKING_FAILED_C`), in a copy of the tree | 5 FAIL at 1,316 checks -- T2 and T3 for Asking Failed (flags 0x0000) and for Ready Failed (flags 0x0040), and T5. The same five failures are the reproduction of issue #46 at `2ccb427`, before the fix |
+| M18 | `srp_pkg::srp_decl_e` swaps ASKING_FAILED and READY_FAILED (1 and 3), in a copy of the tree | the same 5 FAIL at 1,316 checks, and nothing else in this suite: the decoder publishes the wire code and the top's streaming reduction tests bit 1. The SRP engine's own readers of the package move too (the talker FSM's ACTIVE term, the listener FSM's declaration), but this suite never grades them against an Asking Failed; `srp_stream_fsms` (4) and `srp_top` (1) do, and fail under the same mutation, as does `acmp_talker` (3) |
 
-All sixteen bite; originals restored; suite back to green. The M1-M6 counts were
+All eighteen bite; originals restored; suite back to green. The M1-M6 counts were
 taken when the suite stood at 86 checks (scenario A and section B have since
 been added) and the M7-M11 counts at 1,139, so re-run a mutation before quoting
-its blast radius. M12-M13 were measured at 1,269 checks, M14-M16 at 1,300. M14
+its blast radius. M12-M13 were measured at 1,269 checks, M14-M16 at 1,300,
+M17-M18 at 1,316. M14
 to M16 are ROM swaps (`ucode.hex` is read at simulation start), so they need no
 rebuild: generate the review ROM elsewhere, copy it over `ucode.hex`, run
 `./obj_dir/Vpp_top_sim`, and put the generated ROM back. Only its sha256 against
@@ -393,3 +396,32 @@ originator queue. It cancels the controller owning the second handle and
 requires the queue to compact immediately, before the released physical slot
 can be reused. Cleanup commands then prove that no queued or inflight exchange
 survives and that all five shared TX slots return free.
+
+## Section T: GET_TX_STATE against a registered Listener (issue #46)
+
+Milan §5.5.4.3 sets REGISTERING_FAILED (0x0040) in a GET_TX_STATE_RESPONSE iff
+the talker is registering a Listener Asking Failed attribute for the stream.
+`acmp_talker` grades that flag against a code its own harness drives; this is
+the one place the code comes from the SRP engine registering a real inbound
+MRPDU, so it is the one place the talker and the engine can disagree about
+what the code means. They did: the talker keyed on 3, which the engine
+publishes for Ready Failed (`srp_pkg::srp_decl_e`, 02 F02.10).
+
+T0 re-pings source 0 and requires its PROBE_TX answer and its Talker Advertise
+back. T1 to T4 then register, by MRPDU exactly as W17b does, Asking Failed,
+Ready Failed and Ready in turn: each arm checks the code the engine published
+(snapshot word 13), grades the GET_TX_STATE_RESPONSE byte-exact and its flags
+word alone (0x0040, 0, 0), and the Asking Failed arm asks source 1 too, which
+must answer flags 0. T5 to T7 prove the flag is read live in both directions:
+Asking Failed after Ready sets it again, and the Listener leaving clears it.
+
+It runs on the main DUT after U11, not beside W17b, on purpose. S10's
+PROBE_TX is the only ping source 0 gets, and W21 to W25 lean on that
+T-SRP-DAFRESH window still being open: the same arms placed after W17b took
+about 1.7 s of simulated time and moved the window's lapse into W21t2 and
+W25pre, which then failed for a reason that has nothing to do with them. At
+the end of the run two response fields have moved since S10, and neither is
+read from the talker: the DA is the one the bench's own allocator model last
+granted source 0 (`maap_src_da`), and the VID is the SR-class level on
+snapshot word 10, because the S8 Domain registration has aged out under the
+processor's own LeaveAll and the bench never re-declares it.

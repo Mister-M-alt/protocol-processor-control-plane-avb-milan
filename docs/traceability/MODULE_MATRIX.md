@@ -44,7 +44,7 @@
 | `pp_adp_pkg` | `hdl/adp/pp_adp_pkg.sv` | adp_engine, pp_top |
 | `pp_pkg` | `hdl/common/pp_pkg.sv` | acmp_listener, acmp_nvm, acmp_talker, adp_engine, aecp_notify, ca_originator, dispatch, maap, originator, pp_top, rx_validator, scoreboard, srp_decoder, srp_encoder, srp_stream_fsms, srp_top, timer_map, timer_service, tx_arbiter |
 | `protocol_processor_top` | `hdl/top/protocol_processor_top.sv` | pp_top |
-| `srp_pkg` | `hdl/srp/srp_pkg.sv` | pp_top, srp_decoder, srp_stream_fsms, srp_top |
+| `srp_pkg` | `hdl/srp/srp_pkg.sv` | acmp_talker, pp_top, srp_decoder, srp_stream_fsms, srp_top |
 | `ucpu_pkg` | `hdl/aecp/ucpu_pkg.sv` | pp_top, ucpu |
 
 Modules: 43 · untested: 0 (budget: 0)

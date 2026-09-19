@@ -5,7 +5,7 @@ Proves the ACMP stateless talker responder + per-source DA-gate
 (`hdl/acmp/KL_acmp_talker.sv`) against
 [05 §6bis](../../docs/architecture/05_acmp_engine.md) (F05.11 decision tree +
 F05.12 DA-gate) and the 08 §2/§5 timer contract: `make` = build + run, exit 0 =
-PASS, 807 checks. `make lint` runs the repo's zero-warning gate (no width
+PASS, 839 checks. `make lint` runs the repo's zero-warning gate (no width
 waivers).
 
 The C++ harness is an independent model, never DUT logic: every expected
@@ -22,7 +22,8 @@ unprobed); PROBE_TX success with every field checked incl. the flag law
 FORCED 0 — the trap the pipewire reference inverted); GET_TX_STATE with
 listener fields zeroed and REGISTERING_FAILED read LIVE from the srp face
 (`ASKING_FAILED`) — the two tables checked back-to-back on the same source so
-their deliberate difference is the check; TALKER_UNKNOWN_ID both verbs;
+their deliberate difference is the check — and clear for a registered Ready
+Failed (B6) and Ready (B7); TALKER_UNKNOWN_ID both verbs;
 silently-ignored wrong-interface probe (retired + slot freed, no ping);
 DISCONNECT_TX always-SUCCESS no-op; GET_TX_CONNECTION NOT_SUPPORTED; the V3
 truncated-PDU rule (flags beyond a 44-byte PDU read as 0); freshness expiry
@@ -37,6 +38,13 @@ disable (timer cancel + RELEASE_DA + unknown-id afterwards); per-source
 independence (src2's answer unchanged by src0/1/3 churn); and the stateless
 property twice (identical query around interleaved traffic = byte-identical
 response, compared as whole structs).
+
+The harness drives `srp_lsn_reg_state_i` in the SRP engine's own code,
+`srp_pkg::srp_decl_e` (1 Asking Failed, 2 Ready, 3 Ready Failed,
+[02 F02.10](../../docs/architecture/02_interfaces.md#fig-02-statusdict)), written
+down as the contract rather than read from the package. So this suite and
+`pp_top`'s section T, where the code comes from a real MRPDU through the SRP
+engine, grade the same code, and a package that moves a code fails both.
 
 Two things the port `declaring_o` and the maap face own, checked on the PORTS:
 
@@ -138,3 +146,15 @@ Mutation-proven 2026-08-13 (the owed-release round, 807 checks):
 - M12 `EVC_REL` demoted below `EVC_INIT` in the dispatcher: fails 47 (J7 and
   L4: a source that leaves and rejoins releases the address its rejoin was
   just granted).
+
+Mutation-proven 2026-09-19 (the lstn_reg_state encoding round, 839 checks,
+issue #46; run in a copy of the tree, the tracked files never edited):
+- M13 the retired private code restored: `rf_live_w` compares
+  `srp_pkg::srp_decl_e'(2'd3)`, the pre-fix `LSN_ASKING_FAILED_C`. Fails 3:
+  B3 (`flags got 0000 want 0040`), B5, and B6 (`flags got 0040 want 0000`),
+  the Ready Failed arm that did not exist before this round.
+- M14 `srp_pkg::srp_decl_e` swaps ASKING_FAILED and READY_FAILED (1 and 3):
+  fails the same 3, because the harness writes the codes as the contract and
+  never reads the package. The same mutation fails `pp_top` (5), and
+  `srp_stream_fsms` (4) and `srp_top` (1) through the SRP engine's own
+  readers of the package.

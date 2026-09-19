@@ -203,7 +203,7 @@ module KL_acmp_talker
     input  wire [N_STREAM_OUT_P*64-1:0]  cfg_stream_id_i,  //! per-source stream_id (64 b each, declared/answered)
 
     //! ---- srp declaration-state faces (02 §6 dictionary, live levels) ----
-    input  wire [N_STREAM_OUT_P*2-1:0]   srp_lsn_reg_state_i, //! lstn_reg_state[src]: 0 NONE 1 READY 2 READY_FAILED 3 ASKING_FAILED
+    input  wire [N_STREAM_OUT_P*2-1:0]   srp_lsn_reg_state_i, //! lstn_reg_state[src], srp_pkg::srp_decl_e: 0 NONE 1 ASKING_FAILED 2 READY 3 READY_FAILED
     input  wire [11:0]                   srp_class_vid_i,     //! SR-class VID (declared/answered stream_vlan_id)
     input  wire                          srp_pcp_change_i,    //! DOMAIN_CHANGE strobe: SR-class PCP changed (backoff trigger)
 
@@ -300,9 +300,8 @@ module KL_acmp_talker
   localparam logic [15:0] FLG_ECHO_MASK_C  = 16'h000A; // FAST_CONNECT | STREAMING_WAIT
   localparam logic [15:0] FLG_REG_FAILED_C = 16'h0040; // REGISTERING_FAILED
 
-  //! lstn_reg_state encodings (02 §6 F02.10 listed order)
-  localparam logic [1:0] LSN_NONE_C          = 2'd0;
-  localparam logic [1:0] LSN_ASKING_FAILED_C = 2'd3;
+  //! lstn_reg_state has no private encoding here: it is read as
+  //! srp_pkg::srp_decl_e, the code the SRP engine publishes (02 §6 F02.10)
 
   //! DA-gate states (F05.12)
   localparam logic [1:0] GS_NO_DA_C     = 2'd0;
@@ -382,13 +381,14 @@ module KL_acmp_talker
   endfunction
 
   //! per-source live Listener registration state slice
-  function automatic logic [1:0] lsn_state_f(input logic [SRC_W_C-1:0] s);
-    return srp_lsn_reg_state_i[32'(s) * 2 +: 2];
+  function automatic srp_pkg::srp_decl_e lsn_state_f(
+      input logic [SRC_W_C-1:0] s);
+    return srp_pkg::srp_decl_e'(srp_lsn_reg_state_i[32'(s) * 2 +: 2]);
   endfunction
 
   //! a Listener attribute is registered toward this source (any state)
   function automatic logic lsn_reg_f(input logic [SRC_W_C-1:0] s);
-    return (lsn_state_f(s) != LSN_NONE_C);
+    return (lsn_state_f(s) != srp_pkg::SRP_DECL_IGNORE);
   endfunction
 
   //! derived freshness: probed within T-SRP-DAFRESH (wrap-safe mod-2^32)
@@ -1170,7 +1170,7 @@ module KL_acmp_talker
   // difference: PROBE echoes FC+SW and forces RF = 0; GET_TX_STATE zeroes
   // the listener fields and reads RF live from the srp face.
   logic rf_live_w;
-  assign rf_live_w = (lsn_state_f(tsrc_w) == LSN_ASKING_FAILED_C);
+  assign rf_live_w = (lsn_state_f(tsrc_w) == srp_pkg::SRP_DECL_ASKING_FAILED);
 
   always_comb begin : respond
     resp_valid_o          = 1'b0;

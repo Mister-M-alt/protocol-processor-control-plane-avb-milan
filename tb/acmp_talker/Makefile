@@ -10,7 +10,7 @@ VFLAGS = --cc --exe --build -j 0 \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDPARAM \
          -CFLAGS "-std=c++17 -O2 -I$(CURDIR) -Wall -Wextra"
 
-SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/acmp/KL_acmp_talker.sv
+SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv $(HDL)/acmp/KL_acmp_talker.sv
 CPP  = sim_main.cpp
 
 run:

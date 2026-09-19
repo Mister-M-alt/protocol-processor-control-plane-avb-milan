@@ -699,6 +699,7 @@ struct H {
   int  maap_rsp_cnt = 0;
   uint64_t maap_rsp_da = 0;
   std::vector<std::pair<int, bool>> maap_reqs;      // {src, release}
+  uint64_t maap_src_da[8] = {};                     // last DA granted per source
   // acmp_declaring_o edge log: the gate LEVEL must be seen MOVING
   uint8_t decl_prev = 0;
   std::vector<std::pair<int, bool>> decl_edges;     // {src, rising}
@@ -1264,6 +1265,7 @@ struct H {
       maap_reqs.push_back({static_cast<int>(d->maap_req_src_o), rel});
       maap_rsp_cnt = 3;
       maap_rsp_da = (rel || !maap_grant_ok) ? 0 : maap_da(maap_da_seq++);
+      if (maap_rsp_da) maap_src_da[d->maap_req_src_o & 7] = maap_rsp_da;
     }
   }
 
@@ -7499,6 +7501,138 @@ struct ControllerMonitorPhase {
   }
 };
 
+// ==== T. GET_TX_STATE against a REALLY registered Listener (#46) ========
+// Milan 5.5.4.3: REGISTERING_FAILED (0x0040) is set iff this talker is
+// registering a Listener Asking Failed attribute for the stream. The
+// acmp_talker suite grades that flag against a code its own harness drives;
+// only here does the code come from the SRP engine registering a real
+// inbound MRPDU, so only here can the talker and the engine disagree about
+// what the code means. They did (#46): the talker keyed on 3, which the
+// engine publishes for Ready Failed. W17b registers the same attribute the
+// same way and stopped at the published code; this section asks.
+//
+// It runs LAST on the main DUT, after U11, on purpose. S10's PROBE_TX is
+// the only ping source 0 gets, and W21 to W25 lean on that T-SRP-DAFRESH
+// window still being open: simulated time spent anywhere before them closes
+// source 0's DA gate under them (measured: this section placed after W17b
+// moved the lapse into W21t2 and W25pre). So it re-pings source 0 itself
+// and shifts nothing already graded. Two response fields have moved since
+// S10 by then, and neither is read from the talker: the DA is the one the
+// bench's own allocator last granted source 0, and the VID is the SR-class
+// level the Domain machine publishes (snapshot word 10), because the S8
+// Domain registration has aged out under the processor's LeaveAll (the
+// bench never re-declares it).
+struct TalkerStatePhase {
+  H& h;
+  uint64_t da0 = 0;
+  uint16_t vid = 0;
+  explicit TalkerStatePhase(H& hh) : h(hh) {}
+
+  static constexpr uint64_t SID_T0 = (OWN_MAC << 16) | 0x0000;
+  static constexpr unsigned FL_RF = 0x0040;    // REGISTERING_FAILED
+
+  static unsigned flags_of(const std::vector<uint8_t>& f) {
+    return f.size() >= 66 ? (unsigned(f[64]) << 8) | f[65] : 0xFFFFu;
+  }
+  std::vector<uint8_t> get_tx_state(uint16_t tuid, uint16_t seq) {
+    h.q_acmp.clear();
+    h.feed(acmp_frame(CTLR_MAC, 4, 0, 0, CTLR_EID, EID, 0,
+                      tuid, 0, 0, 0, seq, 0, 0));
+    return h.wait_any(h.q_acmp, 400);
+  }
+  std::vector<uint8_t> tx_state_rsp(uint16_t seq, unsigned flags) const {
+    return acmp_frame(OWN_MAC, 5, 0, SID_T0, CTLR_EID, EID, 0,
+                      0, 0, da0, 0, seq, uint16_t(flags), vid);
+  }
+  //! one FourPackedEvent on the wire, exactly as W17b sends it
+  void listener(int ev, int decl) {
+    h.sync_join();
+    Msg m{3, 8, true, {Vec{false, 1, fv_sid(SID_T0), {ev}, {decl}}}};
+    h.feed(mrpdu_frame(true, T1_MAC, {m}));
+    h.run_ms(30);
+  }
+
+  void run() {
+    t0_source_0_declares_again();
+    t1_each_listener_answers_its_own_flag();
+    t5_the_flag_is_read_live();
+  }
+
+  // ---- T0: a fresh ping reopens source 0's DA gate --------------------
+  void t0_source_0_declares_again() {
+    da0 = h.maap_src_da[0];
+    vid = uint16_t(h.snap(10) & 0xFFF);
+    CHECK(da0 != 0 && (vid == 2 || vid == 5),
+          "T0: the bench granted source 0 a DA (0x%012llx) and the SR-class "
+          "VID is the default 2 or S8's adopted 5, got %u",
+          static_cast<unsigned long long>(da0), vid);
+    h.q_acmp.clear();
+    h.feed(acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID,
+                      0, 7, 0, 0, 0x5170, 0x000A, 0));
+    auto p = h.wait_any(h.q_acmp, 400);
+    auto want = acmp_frame(OWN_MAC, 1, 0, SID_T0, CTLR_EID, EID, T1_EID,
+                           0, 7, da0, 0, 0x5170, 0x000A, vid);
+    CHECK(!p.empty() && p == want,
+          "T0a: PROBE_TX on source 0 is SUCCESS byte-exact on that DA/VID");
+    if (!p.empty() && p != want) { dump("got", p); dump("exp", want); }
+    for (int i = 0; i < 100 && ((h.snap(13) >> 16) & 3) != 1; i++)
+      h.run_ms(10);
+    CHECK(((h.snap(13) >> 16) & 3) == 1 && (h.snap(13) & 0xFFFF) == 0,
+          "T0b: source 0 declares Advertise and no source has a Listener "
+          "registered, word 13 = 0x%08x", h.snap(13));
+  }
+
+  // ---- T1-T4: each registered Listener answers its own flag -----------
+  void t1_each_listener_answers_its_own_flag() {
+    struct Arm { const char* what; int decl; unsigned flags; uint16_t seq; };
+    const Arm arms[] = {
+      {"Asking Failed", DECL_ASKFAIL,   FL_RF, 0x5171},
+      {"Ready Failed",  DECL_READYFAIL, 0,     0x5172},
+      {"Ready",         DECL_READY,     0,     0x5173},
+    };
+    for (const Arm& a : arms) {
+      listener(EV_JOININ, a.decl);
+      CHECK((h.snap(13) & 3) == unsigned(a.decl),
+            "T1: Listener %s registered by MRPDU, lstn_reg_state[0] is %d, "
+            "got %u", a.what, a.decl, h.snap(13) & 3);
+      auto f = get_tx_state(0, a.seq);
+      auto want = tx_state_rsp(a.seq, a.flags);
+      CHECK(!f.empty() && f == want,
+            "T2: Listener %s: GET_TX_STATE_RESPONSE byte-exact", a.what);
+      if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
+      CHECK(flags_of(f) == a.flags,
+            "T3: Listener %s: flags 0x%04x, got 0x%04x",
+            a.what, a.flags, flags_of(f));
+      if (a.decl == DECL_ASKFAIL) {
+        // the flag is PER SOURCE: source 1 registers nothing
+        auto g = get_tx_state(1, 0x5174);
+        CHECK(((h.snap(13) >> 2) & 3) == 0 && !g.empty()
+              && ((g[16] >> 3) & 0x1F) == 0 && flags_of(g) == 0,
+              "T4: ...while source 1, with no Listener, answers SUCCESS "
+              "with flags 0, got 0x%04x", flags_of(g));
+      }
+    }
+  }
+
+  // ---- T5-T7: the flag is read LIVE, in both directions ---------------
+  void t5_the_flag_is_read_live() {
+    listener(EV_JOININ, DECL_ASKFAIL);
+    auto f1 = get_tx_state(0, 0x5175);
+    CHECK(flags_of(f1) == FL_RF,
+          "T5: Ready -> Asking Failed sets REGISTERING_FAILED again, got "
+          "0x%04x", flags_of(f1));
+    listener(EV_LV, DECL_ASKFAIL);
+    CHECK((h.snap(13) & 3) == 0,
+          "T6: the Listener left, lstn_reg_state[0] is 0, got %u",
+          h.snap(13) & 3);
+    auto f2 = get_tx_state(0, 0x5176);
+    auto want = tx_state_rsp(0x5176, 0);
+    CHECK(!f2.empty() && f2 == want,
+          "T7: ...and GET_TX_STATE answers flags 0 byte-exact again");
+    if (!f2.empty() && f2 != want) { dump("got", f2); dump("exp", want); }
+  }
+};
+
 // ==== MP. the INTERNAL MAAP engine (11; IEEE 1722-2016 Annex B) =========
 // A SECOND DUT instance runs the same processor with cfg_maap_internal_i
 // = 1 from reset — the quasi-static select is a pre-enable decision, so
@@ -7738,6 +7872,7 @@ struct Suite {
     ReadSidePhase{h, image_ents}.run();
     ControllerMonitorPhase{h}.run();
     cancellation_compacts_originator_queue();
+    TalkerStatePhase{h}.run();
     InternalMaapPhase{h}.run();
   }
 
