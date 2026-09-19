@@ -5305,6 +5305,63 @@ struct DynamicInfoBatch : ReadSideTools {
   }
 };
 
+struct SamplingRateTools : ReadSideTools {
+  using ReadSideTools::ReadSideTools;
+
+  // ---- the SET_SAMPLING_RATE list check (06 section 6.4, issue #51) ------
+  // The fixture's AUDIO_UNIT lists 48000 and 96000 (sampling_rates_offset
+  // 144, sampling_rates_count 2) and its current_sampling_rate is 96000.
+  // Milan 5.4.2.13 / IEEE 7.4.21.1: a rate the list does not hold is
+  // refused BAD_ARGUMENTS, and because command and response share Figure
+  // 7-45 the refusal carries the CURRENT rate (the one GET would read), with
+  // nothing stored, marked or notified: the SET_CLOCK_SOURCE contract of
+  // W10e-W10j, in its sampling-rate form.
+  static std::vector<uint8_t> rate_cmd(uint32_t rate) {
+    std::vector<uint8_t> pl(8, 0);
+    putbe(&pl[0], 0x0002, 2); putbe(&pl[2], 0, 2);
+    putbe(&pl[4], rate, 4);
+    return pl;
+  }
+  //! the whole response frame, byte for byte: Figure 7-45's body is the
+  //! command's own {type, index, rate}, so the rate it carries is the only
+  //! field a refusal and an acceptance may disagree on
+  static std::vector<uint8_t> rate_resp(int status, uint16_t seq,
+                                        uint32_t rate) {
+    return aecp_frame(CTLR_MAC, OWN_MAC, 1, status, EID, CTLR_EID, seq,
+                      AEM_SET_SAMPLING_RATE, rate_cmd(rate));
+  }
+  static unsigned long rate_at(const std::vector<uint8_t>& f) {
+    return f.size() < 46 ? 0xDEADBEEFul : rd32(&f[42]);
+  }
+  unsigned long get_rate(uint16_t seq) {
+    return rate_at(ask(AEM_GET_SAMPLING_RATE, ti(0x0002, 0), seq));
+  }
+  //! one SET whose whole answer is known in advance
+  void set_rate_expect(uint32_t rate, int status, uint32_t carried,
+                       uint16_t seq, const char* what) {
+    auto r = ask(AEM_SET_SAMPLING_RATE, rate_cmd(rate), seq);
+    auto want = rate_resp(status, seq, carried);
+    CHECK(!r.empty() && r == want, "%s (status %d, carries %lu)", what,
+          st(r), rate_at(r));
+    if (!r.empty() && r != want) { dump("got", r); dump("exp", want); }
+  }
+
+  //! a one-member GET_DYNAMIC_INFO(GET_SAMPLING_RATE), byte-exact
+  void gdi_rate_expect(uint32_t rate, uint16_t seq, const char* what) {
+    auto b = ask(AEM_GET_DYNAMIC_INFO,
+                 DynamicInfoBatch::direc(AEM_GET_SAMPLING_RATE, ti(0x0002, 0)),
+                 seq);
+    auto want = aecp_frame(
+        CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID, seq,
+        AEM_GET_DYNAMIC_INFO,
+        DynamicInfoBatch::direc(AEM_GET_SAMPLING_RATE,
+                                DynamicInfoBatch::rate_body(0x0002, 0, rate),
+                                AECP_SUCCESS));
+    CHECK(!b.empty() && b == want, "%s", what);
+    if (!b.empty() && b != want) { dump("got", b); dump("exp", want); }
+  }
+};
+
 // ---- W21: START/STOP_STREAMING (Milan 5.4.2.19 / 5.4.2.20) ----------
 // IEEE Figure 7-59 makes command and response the SAME shape - four
 // bytes, {descriptor_type @24, descriptor_index @26} - so every arm
@@ -5871,12 +5928,12 @@ struct SetStreamFormatPhase : ReadSideTools {
 // stream format is the per-{type,index} value only the Milan-info face
 // knows; and the configuration index and clock source index are each read
 // twice with the IMAGE PATCHED IN BETWEEN, so a constant cannot survive.
-struct ReadSidePhase : ReadSideTools {
+struct ReadSidePhase : SamplingRateTools {
   std::vector<ImgEnt>& image_ents;
   //! the second controller of section U, so W10j registers the same one
   static constexpr uint64_t C2_MAC = UnsolicitedPhase::C2_MAC;
   ReadSidePhase(H& hh, std::vector<ImgEnt>& ents)
-      : ReadSideTools(hh), image_ents(ents) {}
+      : SamplingRateTools(hh), image_ents(ents) {}
 
   void run() {
     h.q_aecp.clear();
@@ -5893,7 +5950,9 @@ struct ReadSidePhase : ReadSideTools {
     w6b_the_falsifier_again_by_patching_the_image();
     w7_the_three_type_index_reads_gate_their_length();
     DynamicInfoBatch{h, image_ents}.run();
+    w9i_an_unlisted_rate_on_the_unset_row_is_refused();
     w9_set_sampling_rate_and_the_overlay_it_creates();
+    w9j_an_unlisted_rate_on_the_set_row_carries_the_stored_rate();
     w10i_a_refusal_on_the_unset_row_carries_the_images_index();
     w10j_a_refusal_moves_nothing_graded_at_the_effects();
     w10_set_clock_source_the_only_writer_of_the_live_index();
@@ -6231,6 +6290,41 @@ struct ReadSidePhase : ReadSideTools {
       CHECK(got == 48000ul,
             "W9b2: GET_SAMPLING_RATE reads %lu, the SET stored 48000", got);
     }
+    //! ...and the GET_DYNAMIC_INFO member reads the same setting: W8q
+    //! graded the member's IMAGE arm before any SET, this is its overlay arm
+    gdi_rate_expect(48000u, 0x790F,
+                    "W9c: the GET_DYNAMIC_INFO member reads the stored 48000 "
+                    "too");
+  }
+
+  // ---- W9i: an unlisted rate on the UNSET row is refused ----------------
+  // THE REPRODUCTION. It runs before any SET, while the dynamic row is
+  // unset, so "current" is the image's 96000. 44100 is a real AAF rate this
+  // unit does not list. Before the list check E_SSRATE stored it, answered
+  // SUCCESS carrying 44100, and GET read 44100 back.
+  void w9i_an_unlisted_rate_on_the_unset_row_is_refused() {
+    set_rate_expect(44100u, AECP_BAD_ARGUMENTS, 96000u, 0x7910,
+                    "W9i: SET_SAMPLING_RATE(44100), a rate the list does not "
+                    "hold, is BAD_ARGUMENTS carrying the image's current "
+                    "96000, byte-exact");
+    const unsigned long g = get_rate(0x7911);
+    CHECK(g == 96000ul,
+          "W9i2: GET_SAMPLING_RATE still reads the image's 96000 after the "
+          "refusal, not %lu", g);
+  }
+
+  // ---- W9j: an unlisted rate on the SET row carries the stored rate ------
+  // W9 stored 48000. 192000 is a Milan base rate (6.2) and a list member on
+  // other shapes, but not on this unit, so the list and not a table of
+  // plausible rates is the authority. The refusal carries the controller's
+  // 48000, not the image's 96000 and not the argument.
+  void w9j_an_unlisted_rate_on_the_set_row_carries_the_stored_rate() {
+    set_rate_expect(192000u, AECP_BAD_ARGUMENTS, 48000u, 0x7912,
+                    "W9j: SET_SAMPLING_RATE(192000) on the set row is "
+                    "BAD_ARGUMENTS carrying the stored 48000, byte-exact");
+    const unsigned long g = get_rate(0x7913);
+    CHECK(g == 48000ul,
+          "W9j2: GET_SAMPLING_RATE still reads the stored 48000, not %lu", g);
   }
 
   // ---- W10i: a refusal on the UNSET row carries the image's index -----
@@ -7178,6 +7272,228 @@ struct ReadSidePhase : ReadSideTools {
   }
 };
 
+// ==== W9k-W9m. the SET_SAMPLING_RATE list check, graded at its effects ===
+// W9i and W9j grade the wire answer inside section W. These three arms
+// spend about 1.3 s of simulated time on empty notification windows, and
+// placed there they moved source 0's T-SRP-DAFRESH lapse into W25pre, the
+// failure section T's placement records. So they run LAST on the main DUT,
+// after section T, and shift nothing already graded. U10 and U11 reset the
+// DUT, so the row is unset again here (GET reads the image's 96000) and
+// U11 left both bench controllers registered: both are deregistered first,
+// so the only AECP frames on the wire are the ones these arms ask for, and
+// the listed 48000 is set to give W9k a set row to refuse against.
+struct SamplingRateListPhase : SamplingRateTools {
+  std::vector<ImgEnt>& image_ents;
+  static constexpr uint64_t C2_MAC = UnsolicitedPhase::C2_MAC;
+  SamplingRateListPhase(H& hh, std::vector<ImgEnt>& ents)
+      : SamplingRateTools(hh), image_ents(ents) {}
+
+  void run() {
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, 0x7940,
+                      0x0025, {}));
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7941,
+                      0x0025, {}));
+    h.run_ms(50);
+    h.q_aecp.clear();
+    set_rate_expect(48000u, AECP_SUCCESS, 48000u, 0x7942,
+                    "W9k0: SET_SAMPLING_RATE(48000) on the reset row is "
+                    "accepted");
+    w9k_a_rate_refusal_moves_nothing_graded_at_the_effects();
+    w9l_the_list_is_the_images_offset_count_and_entries();
+    w9m_the_lock_outranks_the_list_check();
+  }
+
+  //! only what reaches the second controller: nothing else is registered
+  std::vector<uint8_t> wait_c2(int ms) {
+    return h.wait_frame(h.q_aecp, ms, [](const std::vector<uint8_t>& f) {
+      return f.size() >= 8 && (rd64(&f[0]) >> 16) == C2_MAC;
+    });
+  }
+
+  // ---- W9k: a rate refusal moves nothing, graded at the effects ---------
+  // The W10j pattern: the dynamic store's accepted-write counter, the
+  // OP_NVM_MARK and OP_NOTIFY_ENQ strobes, and a second controller
+  // registered for unsolicited notifications, because a refusal that wrote
+  // the value the row already holds leaves every wire response as it was.
+  // Three refused values, each graded against the counters just before it:
+  //   44100       a rate the list does not hold;
+  //   0x2000BB80  48000 with pull 1 (x 1/1.001, IEEE 7.3.1): the list stores
+  //               whole 32-bit words and 48000 is listed with pull 0, so
+  //               the pulled rate is a different rate and is refused;
+  //   0           what a lane past the 152-byte descriptor reads, so a walk
+  //               that ran past sampling_rates_count would "find" it.
+  // The accepted SET of 96000 (entry 1, the low half of the list's first
+  // lane; W9 and W9k0 accepted entry 0, the high half) is the anti-vacuity
+  // half: each counter moves by exactly one and exactly one unsolicited
+  // SET_SAMPLING_RATE carrying 96000 reaches the second controller. GET
+  // and the GET_DYNAMIC_INFO member then read it back, and 48000 is put
+  // back, the row W9l and W9m start from.
+  void w9k_a_rate_refusal_moves_nothing_graded_at_the_effects() {
+    std::vector<uint8_t> fl0(4, 0);
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x7914,
+                      0x0024, fl0));
+    auto f = h.wait_any(h.q_aecp, 400);
+    CHECK(!f.empty() && st(f) == AECP_SUCCESS,
+          "W9k: second controller registered for unsolicited notifications");
+
+    const unsigned w0 = d->dbg_dyn_writes_o;
+    const uint64_t m0 = h.nvm_marks;
+    const uint64_t n0 = h.notify_enqs;
+    uint16_t seq = 0x7915;
+    for (uint32_t bad : {44100u, 0x2000BB80u, 0u}) {
+      const unsigned wb = d->dbg_dyn_writes_o;
+      const uint64_t mb = h.nvm_marks;
+      const uint64_t nb = h.notify_enqs;
+      char what[96];
+      snprintf(what, sizeof what, "W9k2: SET_SAMPLING_RATE(0x%08X) is "
+               "BAD_ARGUMENTS carrying the stored 48000", bad);
+      set_rate_expect(bad, AECP_BAD_ARGUMENTS, 48000u, seq++, what);
+      auto uns = wait_c2(300);
+      CHECK(uns.empty(),
+            "W9k3: the refusal of 0x%08X sent no unsolicited frame to the "
+            "second controller", bad);
+      if (!uns.empty()) dump("got", uns);
+      CHECK(d->dbg_dyn_writes_o == wb,
+            "W9k4: the refusal of 0x%08X wrote the dynamic store %u times, "
+            "want 0", bad, static_cast<unsigned>(d->dbg_dyn_writes_o - wb));
+      CHECK(h.nvm_marks == mb,
+            "W9k5: the refusal of 0x%08X raised OP_NVM_MARK %u times, "
+            "want 0", bad, static_cast<unsigned>(h.nvm_marks - mb));
+      CHECK(h.notify_enqs == nb,
+            "W9k6: the refusal of 0x%08X raised OP_NOTIFY_ENQ %u times, "
+            "want 0", bad, static_cast<unsigned>(h.notify_enqs - nb));
+    }
+
+    set_rate_expect(96000u, AECP_SUCCESS, 96000u, 0x7918,
+                    "W9k7: SET_SAMPLING_RATE(96000), list entry 1, is "
+                    "accepted carrying 96000");
+    auto uns = wait_c2(800);
+    auto want = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR2_EID,
+                           0x0000, AEM_SET_SAMPLING_RATE, rate_cmd(96000u));
+    want[36] |= 0x80;
+    CHECK(uns == want,
+          "W9k8: the accepted SET reaches the second controller as one "
+          "unsolicited SET_SAMPLING_RATE carrying 96000, seq 0");
+    if (!uns.empty() && uns != want) { dump("got", uns); dump("exp", want); }
+    auto more = wait_c2(300);
+    CHECK(more.empty(),
+          "W9k9: the accepted SET sent exactly one unsolicited frame");
+    CHECK(d->dbg_dyn_writes_o == w0 + 1,
+          "W9k10: the accepted SET wrote the dynamic store %u times, want 1",
+          static_cast<unsigned>(d->dbg_dyn_writes_o - w0));
+    CHECK(h.nvm_marks == m0 + 1,
+          "W9k11: the accepted SET raised OP_NVM_MARK %u times, want 1",
+          static_cast<unsigned>(h.nvm_marks - m0));
+    CHECK(h.notify_enqs == n0 + 1,
+          "W9k12: the accepted SET raised OP_NOTIFY_ENQ %u times, want 1",
+          static_cast<unsigned>(h.notify_enqs - n0));
+    const unsigned long g = get_rate(0x7919);
+    CHECK(g == 96000ul, "W9k13: GET_SAMPLING_RATE reads the accepted 96000, "
+          "not %lu", g);
+    gdi_rate_expect(96000u, 0x791A,
+                    "W9k14: the GET_DYNAMIC_INFO member reads the accepted "
+                    "96000");
+
+    //! leave the registry and the row as this arm found them
+    h.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, 0x791B,
+                      0x0025, {}));
+    h.wait_any(h.q_aecp, 400);
+    h.q_aecp.clear();
+    set_rate_expect(48000u, AECP_SUCCESS, 48000u, 0x791C,
+                    "W9k15: 48000 is set back");
+  }
+
+  // ---- W9l: the list is the image's offset, count and entries -----------
+  // A program that carried a list of its own, or walked past the count, or
+  // read the list from anywhere but where the descriptor says it is, would
+  // pass every arm above on this fixture. So the AUDIO_UNIT's bytes are
+  // patched in place, the W6b way (the store re-fetches per locate), and
+  // each patch is put back before the next:
+  //   count 2 -> 1      96000 (entry 1) is past the list: refused;
+  //   entry 1 -> 192000 192000 is listed now and accepted, 96000 is not;
+  //   offset 144 -> 148 the walk reads the list at 144, the only offset
+  //                     IEEE 7.2.3 gives this AEM version and the only one
+  //                     07 section 3.1 L10 admits, so any other offset
+  //                     refuses every rate: it fails closed.
+  void w9l_the_list_is_the_images_offset_count_and_entries() {
+    uint32_t au = 0;
+    for (auto& e : image_ents) if (e.type == 0x0002) au = e.off;
+    CHECK(au != 0, "W9l: the AUDIO_UNIT entry was located");
+    if (au == 0) return;
+    const std::vector<uint8_t> saved(h.dram.begin() + au + 140,
+                                     h.dram.begin() + au + 152);
+    auto restore = [&] {
+      std::copy(saved.begin(), saved.end(), h.dram.begin() + au + 140);
+    };
+
+    putbe(&h.dram[au + 142], 1, 2);           // sampling_rates_count
+    set_rate_expect(96000u, AECP_BAD_ARGUMENTS, 48000u, 0x7920,
+                    "W9l2: with sampling_rates_count patched to 1, 96000 "
+                    "(entry 1) is refused carrying the stored 48000");
+    set_rate_expect(48000u, AECP_SUCCESS, 48000u, 0x7921,
+                    "W9l3: ...while entry 0 is still accepted");
+    restore();
+
+    putbe(&h.dram[au + 148], 192000u, 4);     // sampling_rate_1
+    set_rate_expect(192000u, AECP_SUCCESS, 192000u, 0x7922,
+                    "W9l4: with entry 1 patched to 192000, 192000 is "
+                    "accepted: the walk reads the image's entries");
+    set_rate_expect(96000u, AECP_BAD_ARGUMENTS, 192000u, 0x7923,
+                    "W9l5: ...and the 96000 it replaced is refused");
+    restore();
+
+    putbe(&h.dram[au + 140], 148, 2);         // sampling_rates_offset
+    set_rate_expect(48000u, AECP_BAD_ARGUMENTS, 192000u, 0x7924,
+                    "W9l6: with sampling_rates_offset patched to 148, even "
+                    "the listed 48000 is refused: the walk fails closed");
+    restore();
+
+    set_rate_expect(48000u, AECP_SUCCESS, 48000u, 0x7925,
+                    "W9l7: the restored image accepts 48000 again");
+  }
+
+  // ---- W9m: the lock outranks the list check ----------------------------
+  // CHECK_LOCK is E_SSRATE's first check (06 section 6.4: lock, then the
+  // list), so a foreign controller is ENTITY_LOCKED whatever it asks for,
+  // listed or not, and moves nothing. The body of the locked refusal (zero
+  // or the current rate) is issue #53's decision and is not graded here.
+  // The holder still gets the list check.
+  void w9m_the_lock_outranks_the_list_check() {
+    std::vector<uint8_t> lk(16, 0);           // flags 0 = LOCK, ENTITY[0]
+    auto l = ask(0x0001, lk, 0x7930);
+    CHECK(!l.empty() && st(l) == AECP_SUCCESS, "W9m: the bench holds the lock");
+    const unsigned w0 = d->dbg_dyn_writes_o;
+    const uint64_t m0 = h.nvm_marks;
+    const uint64_t n0 = h.notify_enqs;
+    uint16_t seq = 0x7931;
+    for (uint32_t rate : {44100u, 96000u}) {
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR2_EID, seq++,
+                        AEM_SET_SAMPLING_RATE, rate_cmd(rate)));
+      auto f = h.wait_any(h.q_aecp, 600);
+      CHECK(!f.empty() && st(f) == AECP_ENTITY_LOCKED && cdl(f) == 20,
+            "W9m2: a foreign SET_SAMPLING_RATE(%u) is ENTITY_LOCKED at cdl "
+            "20, got status %d cdl %d", rate, st(f), cdl(f));
+    }
+    CHECK(d->dbg_dyn_writes_o == w0 && h.nvm_marks == m0
+          && h.notify_enqs == n0,
+          "W9m3: the locked refusals wrote, marked and notified nothing "
+          "(%u, %u, %u)", static_cast<unsigned>(d->dbg_dyn_writes_o - w0),
+          static_cast<unsigned>(h.nvm_marks - m0),
+          static_cast<unsigned>(h.notify_enqs - n0));
+    const unsigned long g = get_rate(0x7933);
+    CHECK(g == 48000ul, "W9m4: GET_SAMPLING_RATE still reads 48000, not %lu",
+          g);
+    set_rate_expect(44100u, AECP_BAD_ARGUMENTS, 48000u, 0x7934,
+                    "W9m5: the holder's unlisted 44100 is still refused "
+                    "BAD_ARGUMENTS carrying 48000");
+    std::vector<uint8_t> ul(16, 0);
+    putbe(&ul[2], 1, 2);                      // flags = UNLOCK
+    auto u = ask(0x0001, ul, 0x7935);
+    CHECK(!u.empty() && st(u) == AECP_SUCCESS, "W9m6: UNLOCK accepted");
+  }
+};
+
 // ==== U10. departing-controller monitor (Milan 5.4.5.3) ===============
 // This timing section runs after all state-dependent command checks so its
 // real 30 to 60 second intervals cannot advance unrelated protocol timers
@@ -7873,6 +8189,7 @@ struct Suite {
     ControllerMonitorPhase{h}.run();
     cancellation_compacts_originator_queue();
     TalkerStatePhase{h}.run();
+    SamplingRateListPhase{h, image_ents}.run();
     InternalMaapPhase{h}.run();
   }
 
