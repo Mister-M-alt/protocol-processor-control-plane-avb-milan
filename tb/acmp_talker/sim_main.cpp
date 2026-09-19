@@ -92,9 +92,14 @@ constexpr int ST_NSUPP = 31;
 constexpr uint16_t FL_FC = 0x0002;
 constexpr uint16_t FL_SW = 0x0008;
 constexpr uint16_t FL_RF = 0x0040;
+// lstn_reg_state codes, 02 §6 F02.10: the SRP engine's four-packed Listener
+// declaration (802.1Q §35.2.2.7.4, srp_pkg::srp_decl_e). Written here as the
+// contract, never read from the package, so a package that moves a code
+// fails this suite instead of moving it with it.
 constexpr int LSN_NONE = 0;
-constexpr int LSN_READY = 1;
-constexpr int LSN_ASKING_FAILED = 3;
+constexpr int LSN_ASKING_FAILED = 1;
+constexpr int LSN_READY = 2;
+constexpr int LSN_READY_FAILED = 3;
 
 constexpr int N_SRC = 8;
 constexpr int TMR_BASE = 17;           // IF + 2*SI (08 §5 F08.4 order)
@@ -545,6 +550,25 @@ void Hn::check_probe_tx_success_and_the_two_trap_tables() {
   Resp b5b = pop_resp("B5b");
   CHECK(b5a == b5b, "B5 identical query = identical answer");
   CHECK(b5a.flags == FL_RF && b5a.da == da[3], "B5 content sane");
+  // RF answers ONE code: a registered Listener Ready Failed or Ready leaves
+  // it clear. A talker keyed on the wrong code sets it for Ready Failed (#46)
+  set_lsn(3, LSN_READY_FAILED);
+  {
+    CHECK(send(MT_GTXS, 3, C1, 0x105, 0, 0, 0), "B6 consumed");
+    Resp e = echo(MT_GTXS, ST_OK, 3, C1, 0x105, 0, 0);
+    e.sid = sid_of(3); e.da = da[3]; e.vlan = VID;
+    e.flags = 0;                              // Ready Failed: RF clear
+    expect_resp("B6", e);
+  }
+  set_lsn(3, LSN_READY);
+  {
+    CHECK(send(MT_GTXS, 3, C1, 0x106, 0, 0, 0), "B7 consumed");
+    Resp e = echo(MT_GTXS, ST_OK, 3, C1, 0x106, 0, 0);
+    e.sid = sid_of(3); e.da = da[3]; e.vlan = VID;
+    e.flags = 0;                              // Ready: RF clear
+    expect_resp("B7", e);
+  }
+  set_lsn(3, LSN_ASKING_FAILED);              // B3's state again for C and D
   drained("B");
 }
 

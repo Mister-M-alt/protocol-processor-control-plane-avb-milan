@@ -257,7 +257,7 @@ gate on them per cycle.
 | `srp_granted_slope_bps_o`, `srp_sum_slope_bps_o` | per-source and summed granted idleSlope — the value your credit-based shaper's slope multiplexer needs. |
 | `srp_over_limit_o` | at least one source was refused against the port ceiling. |
 | `srp_class_a_prio_o`, `srp_class_a_vid_o`, `srp_domain_adopted_o`, `srp_domain_change_o` | the Class A identity in force. The two values are defaults until `srp_domain_adopted_o` says a bridge Domain was adopted. |
-| `srp_tk_decl_state_o`, `srp_lstn_reg_state_o`, `srp_tk_reg_state_o`, `srp_lstn_decl_state_o` | the four declaration/registration state vectors, two bits per index |
+| `srp_tk_decl_state_o`, `srp_lstn_reg_state_o`, `srp_tk_reg_state_o`, `srp_lstn_decl_state_o` | the four declaration/registration state vectors, two bits per index. Read each one against its port comment, never against a listed order: `srp_lstn_reg_state_o` carries `srp_pkg::srp_decl_e` (1 Asking Failed, 2 Ready, 3 Ready Failed, [02 F02.10](../architecture/02_interfaces.md#fig-02-statusdict)), so "a Listener is registered" is any non-zero code and "Ready or Ready Failed" is bit 1 |
 | `srp_acc_latency_o` | per-sink registered accumulated latency in nanoseconds, **raw** — add your own ingress delay |
 | `srp_src_fail_code_o`, `srp_src_fail_bridge_o`, `srp_snk_fail_code_o` | failure codes, valid only while the matching state vector says FAILED |
 | `adp_next_avail_index_o` | 32 bits, deliberately. Truncating it would make a controller see `available_index` step backwards, which is exactly the signal it uses to decide an entity restarted. |
