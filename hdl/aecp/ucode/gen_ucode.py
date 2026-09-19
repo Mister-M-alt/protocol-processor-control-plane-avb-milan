@@ -209,6 +209,10 @@ E_SFZERO = 1904     # the zero-format body (a locate miss keeps NO_SUCH_DESC)
 E_SFBAD  = 1912     # SET_STREAM_FORMAT too short to carry its own format
 E_SIBAD  = 1920     # SET_STREAM_INFO too short: the full 84-byte zero body
 E_SIRUN  = 1936     # SET_STREAM_INFO on a STREAMING output: refused whole
+#! SET_SAMPLING_RATE's sampling_rates walk (issue #51). E_SSRATE keeps its
+#! engine entry and its 32-word slot; the walk alone is 41 words, so it takes
+#! the front of this free tail and E_SSRATE branches into it.
+E_SSRWALK = 1952    # SET_SAMPLING_RATE: is the rate on the AUDIO_UNIT's list?
 #! The name family occupies the free 1344..1455 run. Keeping it out of the
 #! setter tail lets the notification-aware stream programs grow without
 #! interleaving unrelated entry points.
@@ -1299,19 +1303,65 @@ place(E_GSRATE, [
 # The rate/mapping-mismatch refusal of §5.4.2.13 is a MAY, not a SHALL, and is
 # deliberately not implemented — grading a MAY as a SHALL would refuse rates
 # this device can actually serve.
-place(E_SSRATE, [
-    u('MOVE', rd=2, ra=0, imm=0),                # the refusal arms' zero body
+#
+# THE LIST CHECK (06 §6.4 "rate ∈ AUDIO_UNIT list"; issue #51). The rate is
+# accepted only when the located AUDIO_UNIT's sampling_rates list holds it
+# (Milan §5.3.3.3: the list "shall correctly report the sampling rates
+# supported by the Audio Unit"). Anything else is BAD_ARGUMENTS carrying the
+# CURRENT rate - the one a GET would read - with nothing stored, marked or
+# notified; SET_CLOCK_SOURCE's refusal contract, and BAD_ARGUMENTS for the
+# same reason: Table 7-141 keeps NOT_SUPPORTED for a target that is not
+# supported, and review §8 item 3 reads §5.4.2.13's "UNSUPPORTED" into
+# NOT_SUPPORTED for the mapping-mismatch MAY above only. Before this an
+# unlisted rate was stored, read back and announced.
+#
+# The list sits where the descriptor says: lane 136 is {current_sampling_rate,
+# sampling_rates_offset, sampling_rates_count}. A state-port address is an
+# immediate, so the walk cannot follow an arbitrary offset: it reads the list
+# at 144, the offset IEEE §7.2.3 gives this AEM version, refuses every rate
+# when the descriptor's offset is anything else (fail closed), and consults
+# entries 0..count-1 of at most SSR_WALK_MAX (07 §3.1 L10). A rate listed past
+# that bound is refused, never an unlisted one accepted. Each entry is compared
+# as the whole 32-bit word the list stores, pull field (bits 31:29) included:
+# 48000 x 1/1.001 is a different rate from the 48000 a pull-0 list holds.
+#
+# Two refusal arms share one tail: r6 carries the current rate, preloaded with
+# 0 so the NO_SUCH_DESCRIPTOR arm (no unit, no current value) answers zero.
+SSR_LIST_OFF = 144      # IEEE §7.2.3 sampling_rates_offset, this AEM version
+SSR_WALK_MAX = 8        # entries the walk consults; 07 §3.1 L10's bound
+_SSR_HEAD = 14          # E_SSRATE's words ahead of the two tails
+SSR_NOTLISTED = E_SSRATE + _SSR_HEAD         # BAD_ARGUMENTS, then the tail
+SSR_REFUSE = SSR_NOTLISTED + 1               # the tail every refusal shares
+SSR_ACCEPT = SSR_REFUSE + 5                  # store, answer, maybe notify
+ssrate = [
+    u('MOVE', rd=6, ra=0, imm=0),                # the current rate, 0 until read
     u('CHECK_LOCK', ra=15, imm=E_LOCKED4),       # held by another controller?
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the Audio Unit exist?
-    u('BR_STATUS', cnd=0, imm=E_SSRATE + 22),    # no -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=SSR_REFUSE),       # no -> NO_SUCH_DESCRIPTOR
+    u('READ_ST', rd=7, imm=RGN_DATA + AU_RATE_OFF),  # {rate, offset, count}
     u('READ_ST', rd=3, imm=RGN_DYNV + SEL_RATE), # overlay already written?
+    u('SHIFT_R', rd=6, ra=7, imm=32),            # the image's current rate
     u('COMPARE', ra=3, fmt=FMT_D, imm=0),
-    u('BR_STATUS', cnd=2, imm=E_SSRATE + 9),     # no -> descriptor default
-    u('READ_ST', rd=6, imm=RGN_DYN + SEL_RATE),  # current overlay value
-    u('BRANCH', imm=E_SSRATE + 11),
-    u('READ_ST', rd=6, imm=RGN_DATA + AU_RATE_OFF),
-    u('SHIFT_R', rd=6, ra=6, imm=32),            # current rate is lane[63:32]
-    u('WRITE_ST', ra=12, fmt=FMT_D, imm=RGN_DYN + SEL_RATE),
+    u('BR_STATUS', cnd=2, imm=E_SSRATE + 10),    # unset -> the image's stands
+    u('READ_ST', rd=6, imm=RGN_DYN + SEL_RATE),  # set -> the controller's
+    u('MOVE', rd=9, ra=0, imm=SSR_LIST_OFF),     # E_SSRATE + 10
+    u('SHIFT_R', rd=8, ra=7, imm=16),            # sampling_rates_offset [15:0]
+    u('CHECK_ARG', ra=8, rb=9, fmt=FMT_W,        # the list where the walk
+      cnd=REL_EQ, imm=SSR_REFUSE),               # reads it, else BAD_ARGUMENTS
+    u('BRANCH', imm=E_SSRWALK),                  # r7[15:0] = the count
+]
+assert len(ssrate) == _SSR_HEAD
+ssrate += [
+    u('SET_STATUS', imm=ST_BADARG),              # SSR_NOTLISTED
+    u('BUILD_HDR', ra=15, rb=13),                # SSR_REFUSE: the refusals
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=6, fmt=FMT_D),             # the CURRENT rate     @28
+    u('SEND_RESP'),
+    u('END'),
+]
+assert E_SSRATE + len(ssrate) == SSR_ACCEPT
+ssrate += [
+    u('WRITE_ST', ra=12, fmt=FMT_D, imm=RGN_DYN + SEL_RATE),   # SSR_ACCEPT
     u('NVM_MARK', imm=1),                        # §5.3.5.1: persist it
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
@@ -1319,15 +1369,33 @@ place(E_SSRATE, [
     u('BUILD_FLD', ra=12, fmt=FMT_D),            # the rate now in force @28
     u('SEND_RESP'),
     u('COMPARE', ra=12, rb=6, fmt=FMT_D),
-    u('BR_STATUS', cnd=2, imm=E_SSRATE + 21),    # equal means no state change
+    u('BR_STATUS', cnd=2, imm=SSR_ACCEPT + 10),  # equal means no state change
     u('NOTIFY_ENQ', imm=5),                      # SET_SAMPLING_RATE
-    u('END'),
-    u('BUILD_HDR', ra=15, rb=13),                # E_SSRATE + 22: the refusal
-    u('BUILD_FLD', ra=13, fmt=FMT_D),
-    u('BUILD_FLD', ra=2, fmt=FMT_D),
-    u('SEND_RESP'),
-    u('END'),
-])
+    u('END'),                                    # SSR_ACCEPT + 10
+]
+place(E_SSRATE, ssrate)
+
+# The walk: entries k and k + 1 share the 64-bit lane at 144 + 4k (k in the
+# lane's [63:32], k + 1 in its [31:0]). Before each entry, count == k means
+# the list is spent and the rate is not on it; the lane is read only once
+# its first entry is known to be listed, so no lane past the list is read.
+# Falling out of the bottom is the same verdict for entries past the bound.
+ssrwalk = []
+for k in range(0, SSR_WALK_MAX, 2):
+    ssrwalk += [
+        u('COMPARE', ra=7, fmt=FMT_W, imm=k),        # count == k: list spent
+        u('BR_STATUS', cnd=2, imm=SSR_NOTLISTED),
+        u('READ_ST', rd=4, imm=RGN_DATA + SSR_LIST_OFF + 4 * k),
+        u('SHIFT_R', rd=5, ra=4, imm=32),            # entry k
+        u('COMPARE', ra=12, rb=5, fmt=FMT_D),        # all 32 bits, pull too
+        u('BR_STATUS', cnd=2, imm=SSR_ACCEPT),
+        u('COMPARE', ra=7, fmt=FMT_W, imm=k + 1),    # count == k + 1
+        u('BR_STATUS', cnd=2, imm=SSR_NOTLISTED),
+        u('COMPARE', ra=12, rb=4, fmt=FMT_D),        # entry k + 1
+        u('BR_STATUS', cnd=2, imm=SSR_ACCEPT),
+    ]
+ssrwalk += [u('BRANCH', imm=SSR_NOTLISTED)]      # past the bound: refused
+place(E_SSRWALK, ssrwalk)
 
 # --- SET_CLOCK_SOURCE (Milan §5.4.2.15, IEEE §7.4.23.1, Figure 7-47) --------
 # "For each Clock Domain, the PAAD-AE shall implement the SET_CLOCK_SOURCE

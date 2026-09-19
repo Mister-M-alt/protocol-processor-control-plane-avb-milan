@@ -188,13 +188,19 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M16 | E_SCLKS+19 (ROM word 1203, the BUILD_FLD that puts the stored index, r12, at @28 of the success response) rewritten to build r6, the CURRENT index read before the write, in a review copy of `gen_ucode.py`; the same shape as the refusal tail nine words later, so a refactor that shares that tail produces it. The ROM is swapped, the tracked generator is not touched | 2 FAIL at 1,300 checks -- W10j7b: the accepted SET from the unset row answers 0, the index it replaced, not the 1 it stored; W10b: the SET on the set row answers 1, not the 2 it stored. Every other check PASSES, W10j8 included: the engine rebuilds the unsolicited copy from the stored row through GET_CLOCK_SOURCE's program, not from the response, so only the response body can see this word, and only when the SET changes the index; which is why W10j stores 1 and W10 then stores 2 |
 | M17 | `KL_acmp_talker` keys REGISTERING_FAILED on the retired private code 3 again (`rf_live_w` compares `srp_pkg::srp_decl_e'(2'd3)`, the pre-fix `LSN_ASKING_FAILED_C`), in a copy of the tree | 5 FAIL at 1,316 checks -- T2 and T3 for Asking Failed (flags 0x0000) and for Ready Failed (flags 0x0040), and T5. The same five failures are the reproduction of issue #46 at `2ccb427`, before the fix |
 | M18 | `srp_pkg::srp_decl_e` swaps ASKING_FAILED and READY_FAILED (1 and 3), in a copy of the tree | the same 5 FAIL at 1,316 checks, and nothing else in this suite: the decoder publishes the wire code and the top's streaming reduction tests bit 1. The SRP engine's own readers of the package move too (the talker FSM's ACTIVE term, the listener FSM's declaration), but this suite never grades them against an Asking Failed; `srp_stream_fsms` (4) and `srp_top` (1) do, and fail under the same mutation, as does `acmp_talker` (3) |
+| M19 | THE LIST CHECK REMOVED: E_SSRATE+13 (ROM word 1165) `BRANCH E_SSRWALK` rewritten to `BRANCH SSR_ACCEPT`, so no rate is ever looked up, in a review copy of `gen_ucode.py`; the ROM is swapped, the tracked generator is not touched | 28 FAIL at 1,361 checks, the same 28 as M24: W9i/W9i2 (44100 answered SUCCESS on the unset row and read back), W9j/W9j2 (192000 stored on the set row), W11e (collateral: W9j's 192000 is still in the row), W9k2-W9k6 for all three refused values (each stored, marked and announced to the second controller), W9k8 and W9k10-W9k12 (the accepted SET carries the residue in its counts and its notification sequence), W9l2, W9l5, W9l6, W9m5 |
+| M20 | the count bound removed: the walk's two `BR_STATUS` per lane that leave on `count == k` replaced with NOP (E_SSRWALK+1, +7, +11, +17, +21, +27, +31, +37) | 10 FAIL at 1,361 checks -- W9k2-W9k6 for the zero rate, which the walk now "finds" in the lane past the 152-byte descriptor, and the residue it leaves in W9k8 and W9k10-W9k12; W9l2: with the count patched to 1, entry 1's 96000 is accepted |
+| M21 | the offset check removed: E_SSRATE+12 (ROM word 1164, the `CHECK_ARG` of `sampling_rates_offset` against 144) replaced with NOP | 1 FAIL at 1,361 checks -- W9l6: with the offset patched to 148 the walk still reads the list at 144 and accepts 48000. Nothing else can see this word, which is why W9l patches the offset |
+| M22 | the refusal tail builds r12, the REJECTED rate, at @28 instead of r6, the current one (E_SSRATE+17, ROM word 1169) | 9 FAIL at 1,361 checks -- every refusal that is graded byte-exact: W9i, W9j, W9k2 three times, W9l2, W9l5, W9l6, W9m5. Status, GET and every effect count PASS under it |
+| M23 | the unset row's image read removed: E_SSRATE+6 (ROM word 1158, `SHIFT_R` of the image's current_sampling_rate into r6) replaced with NOP, so r6 keeps its zero preload | 1 FAIL at 1,361 checks -- W9i: the refusal on the unset row carries 0 instead of the image's 96000. Every set-row arm reads the dynamic row instead and PASSES, which is why W9i runs before W9 |
+| M24 | the ROM `gen_ucode.py` generates at `6a9a124`, the last commit before the list check (the issue #51 reproduction with the final harness) | 28 FAIL at 1,361 checks, the M19 list |
 
-All eighteen bite; originals restored; suite back to green. The M1-M6 counts were
+All twenty-four bite; originals restored; suite back to green. The M1-M6 counts were
 taken when the suite stood at 86 checks (scenario A and section B have since
 been added) and the M7-M11 counts at 1,139, so re-run a mutation before quoting
 its blast radius. M12-M13 were measured at 1,269 checks, M14-M16 at 1,300,
-M17-M18 at 1,316. M14
-to M16 are ROM swaps (`ucode.hex` is read at simulation start), so they need no
+M17-M18 at 1,316, M19-M24 at 1,361. M14 to M16 and M19 to M24
+are ROM swaps (`ucode.hex` is read at simulation start), so they need no
 rebuild: generate the review ROM elsewhere, copy it over `ucode.hex`, run
 `./obj_dir/Vpp_top_sim`, and put the generated ROM back. Only its sha256 against
 the generator's output proves the ROM is the pinned one again: a copied ROM is
@@ -425,3 +431,37 @@ read from the talker: the DA is the one the bench's own allocator model last
 granted source 0 (`maap_src_da`), and the VID is the SR-class level on
 snapshot word 10, because the S8 Domain registration has aged out under the
 processor's own LeaveAll and the bench never re-declares it.
+
+## Section W9i-W9m: SET_SAMPLING_RATE against the AUDIO_UNIT list (issue #51)
+
+Milan §5.4.2.13 / IEEE §7.4.21.1 (06 §6.4): SET_SAMPLING_RATE accepts only a
+rate the located AUDIO_UNIT's `sampling_rates` list holds. Any other rate is
+`BAD_ARGUMENTS` carrying the CURRENT rate, with nothing stored, marked or
+notified. Before the check, `E_SSRATE` stored any 32-bit rate, answered
+`SUCCESS` and announced it. The fixture lists 48000 and 96000 and its
+`current_sampling_rate` is 96000.
+
+- **W9i** (before W9, on the unset row) refuses 44100 byte-exact carrying the
+  image's 96000, and GET still reads 96000. This is the reproduction. **W9c**
+  adds the GET_DYNAMIC_INFO member's read of W9's 48000 (W8q graded the
+  member's image arm). **W9j** refuses 192000 on the set row carrying the
+  stored 48000.
+- **W9k** registers a second controller and refuses 44100, 0x2000BB80 (48000
+  with pull 1: the list stores whole words, so a pulled rate is another rate)
+  and 0 (what a lane past the 152-byte descriptor reads). Each refusal is
+  graded at the dynamic store's write counter, the NVM-mark and notify
+  strobes, and the second controller's queue. The accepted 96000 (list entry
+  1) moves each counter once and sends one unsolicited SET_SAMPLING_RATE.
+- **W9l** patches the image in place: count 1 refuses entry 1, a replaced
+  entry is accepted and the rate it replaced refused, and offset 148 refuses
+  everything (the walk reads the list at 144 only, 07 §3.1 L10).
+- **W9m** proves the lock outranks the list check: a foreign controller is
+  `ENTITY_LOCKED` for a listed and an unlisted rate alike and moves nothing.
+  The body of that refusal is issue #53's decision and is not graded here.
+
+W9k, W9l and W9m run LAST on the main DUT, after section T, for section T's
+reason: their empty notification windows cost about 1.3 s of simulated time,
+and placed beside W9 they moved source 0's T-SRP-DAFRESH lapse into W25pre
+(5 FAIL, W25pre to W25b2, in the first placement). U10 and U11 reset the DUT,
+so the phase deregisters both bench controllers and sets the listed 48000
+before it starts.
