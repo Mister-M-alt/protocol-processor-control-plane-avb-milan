@@ -3559,7 +3559,8 @@ struct AudioMapEditPhase {
   void r21_the_commit_mark_export_names_the_record_group() {
     const uint64_t one = row(0, 3, 3);
     auto p = edit_pl(DT_SPI, 0, {one});
-    const uint64_t m0 = h.nvm_marks, c6_0 = h.nvm_marks_cls6;
+    const uint64_t m0 = h.nvm_marks;
+  const uint64_t c6_0 = h.nvm_marks_cls6;
     auto got = cmd(ADD, 0xE140, p);
     CHECK(got == expect(AECP_SUCCESS, ADD, 0xE140, p),
           "R21: the marked ADD_AUDIO_MAPPINGS was not accepted");
@@ -3582,7 +3583,8 @@ struct AudioMapEditPhase {
     // the phases after this one read the name they were written against
     const auto kept = NamePhase::name64("Clock Domain Renamed");
     const auto probe = NamePhase::name64("PP90 Mark Probe");
-    const uint64_t m2 = h.nvm_marks, c7_0 = h.nvm_marks_cls7;
+    const uint64_t m2 = h.nvm_marks;
+  const uint64_t c7_0 = h.nvm_marks_cls7;
     got = cmd(AEM_SET_NAME, 0xE142,
               NamePhase::name_body(0x0024, 0, 0, CFGIX, probe));
     CHECK(!got.empty() && status(got) == AECP_SUCCESS,
