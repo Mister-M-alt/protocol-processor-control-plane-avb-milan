@@ -427,6 +427,7 @@ struct Harness {
   void check_a_torn_readback_aborts_the_whole_restore();
   void check_a_change_during_restore_wins();
   void check_a_change_during_its_own_flush_reserializes();
+  void check_the_unflushed_export_contract();
   int report();
   int run_suite();
 };
@@ -729,6 +730,80 @@ void Harness::check_a_change_during_its_own_flush_reserializes() {
         "I3 the stale image was re-committed, not trusted");
 }
 
+// ===================== X: dbg_dirty_o IS the unflushed-state contract
+// protocol_processor_top publishes this vector as nvm_unflushed_o (issue
+// #90) and an integrator ORs it into a "saved state pending" bit, so the
+// three edges the pin promises are graded here, at the source, cycle by
+// cycle: it rises when a change is ACCEPTED (a capture whose persisted set
+// differs), it never drops before that change is committed with done, and
+// on retry exhaustion it drops on the SAME cycle the sticky alarm rises —
+// never silently. The suite's earlier groups sample the vector at rest;
+// what a pending bit needs is the span between those samples.
+void Harness::check_the_unflushed_export_contract() {
+  for (int k = 0; k < N_SINKS; ++k) seed_region(k, {});
+  reset();
+  go();
+  CHECK(run_until([&] { return restore_done(); }, 5000),
+        "X0 the walk that puts the manager in RUN completed");
+  CHECK(d->dbg_dirty_o == 0, "X0b nothing unflushed before the change");
+
+  // X1: a change is TAKEN -> exactly that sink reads unflushed
+  Bind x3{true, true, false, 9, TK_A, CTL2};
+  const size_t wr_before = size_t(count_ops(OP_WRITE, REC_BASE + 3));
+  inject(3, x3, 0x31);
+  CHECK(run_until([&] { return d->dbg_dirty_o != 0; }, 20),
+        "X1 the accepted change raises the unflushed vector");
+  CHECK(d->dbg_dirty_o == (1u << 3),
+        "X1b only the changed sink reads unflushed (0x%02x)",
+        unsigned(d->dbg_dirty_o));
+
+  // X2: it HOLDS through the debounce and the burst, and only the commit's
+  //     done clears it. Sampled every cycle, so a pin that pulsed, or that
+  //     cleared when the burst started, fails here and not by luck of when
+  //     the other groups happen to look.
+  bool on_done = false;
+  bool cleared = false;
+  for (int i = 0; i < 4000 && !cleared; ++i) {
+    //! the manager-face completion AS THIS CYCLE PRESENTS IT: the bit the
+    //! shadow clears on it only reads 0 after the edge below
+    const bool done_this_cycle = d->dbg_port_done_o != 0;
+    tick();
+    if (!(d->dbg_dirty_o & (1u << 3))) {
+      cleared = true;
+      on_done = done_this_cycle;
+    }
+  }
+  CHECK(cleared && size_t(count_ops(OP_WRITE, REC_BASE + 3)) > wr_before,
+        "X2 the change was committed and stopped reading unflushed");
+  CHECK(on_done,
+        "X3 the unflushed bit falls on the commit's done, not before it");
+  CHECK(store_match(3, frame(uint8_t(REC_BASE + 3), payload_of(x3))),
+        "X3b the record that cleared the bit is byte-exact");
+
+  // X4: retries exhausted -> the bit drops, and NEVER without the alarm.
+  //     The two are graded on the same cycle: a pin that cleared on the
+  //     give-up while the alarm was still low would lose the change with
+  //     nothing left to report it.
+  Bind x5{true, false, true, 10, TK_B, CTL1};
+  arm_err(OP_WRITE, REC_BASE + 5, -1, -1, 100);   // fail every WRITE
+  inject(5, x5, 0x32);
+  CHECK(run_until([&] { return (d->dbg_dirty_o >> 5) & 1; }, 20),
+        "X4 the change that will be given up reads unflushed first");
+  bool alarm_at_drop = false;
+  bool dropped = false;
+  for (int i = 0; i < 8000 && !dropped; ++i) {
+    tick();
+    if (!((d->dbg_dirty_o >> 5) & 1)) {
+      dropped = true;
+      alarm_at_drop = d->alarm_o != 0;
+    }
+  }
+  CHECK(dropped, "X5 the given-up change stops reading unflushed");
+  CHECK(alarm_at_drop,
+        "X5b the give-up raises alarm_o on the cycle it clears the bit");
+  disarm_err();
+}
+
 int Harness::report() {
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
@@ -744,6 +819,7 @@ int Harness::run_suite() {
   check_a_torn_readback_aborts_the_whole_restore();
   check_a_change_during_restore_wins();
   check_a_change_during_its_own_flush_reserializes();
+  check_the_unflushed_export_contract();
   return report();
 }
 

@@ -520,6 +520,25 @@ Boot restore is the mirror image (`we = 0`): the boot sequencer reads every reco
 CRC-validates, falls back to vendor defaults on failure, **then** releases
 `entity_enable` ([07 §5.3](07_memory_maps.md)).
 
+### 8.1 What the integrator reads while a commit is outstanding
+
+The device face above says a transaction is running; it does not say whether any
+state is waiting to be written. An integrator that publishes a "saved state
+pending" bit needs both of these top-level outputs, and neither changes behaviour.
+
+| Signal | Dir | Width | When |
+|---|---|---|---|
+| `nvm_unflushed_o` | out | `P-N-STREAM-IN` | bit k is 1 from the cycle the manager ACCEPTS a changed binding for sink k (a write-back that moves no persisted field never raises it) until that record commits with `done`, or until it gives up after `RETRY-MAX` retries — which is the same cycle `nvm_alarm_o` rises. A capture that lands mid-flush holds the bit: the burst re-serializes. |
+| `aecp_nvm_stb_o` / `aecp_nvm_mark_o` | out | 1 / 8 | one `clk_i` cycle per committed command that carries the µCPU's `NVM_MARK` effect, with the mark code naming the record group: **1** a dynamic-state field (sampling rate, clock source, configuration index, stream format, stream info), **6** channel maps, **7** user names. The code is meaningful only while the strobe is 1. |
+
+Only the binding records have a writer inside this processor (the manager above).
+Groups 6 and 7 have none, so the mark is the only evidence their live values moved:
+an integrator that persists them owns both the record and the write.
+
+Both are combinational reads of `clk_i`-domain registers, like every class-D level
+of [§6](#6-class-d-level-status-dictionary) — a consumer in another clock domain
+owns its own 2FF synchroniser.
+
 ## 9. Parameterization
 
 Widths/depths referenced here: `P-N-AVB-INTERFACES`, `P-N-STREAM-IN/OUT` (dictionary

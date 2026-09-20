@@ -92,7 +92,12 @@ module acmp_nvm_wrap
     output logic                     lsn_busy_o,      //! listener executor busy
     output logic [N_SINKS_P-1:0]     dbg_dirty_o,     //! shadow dirty bits
     output logic [N_SINKS_P-1:0]     dbg_valid_o,     //! shadow valid bits
-    output logic [N_SINKS_P-1:0]     dbg_touched_o    //! shadow touched bits
+    output logic [N_SINKS_P-1:0]     dbg_touched_o,   //! shadow touched bits
+    //! the port's MANAGER-face completion, the pulse the shadow clears a
+    //! dirty bit on. The device face's own dev_done_i is two cycles earlier
+    //! (KL_pp_nvm_port S_RPWAIT -> S_FIN), so a suite grading WHEN the
+    //! unflushed export falls has to see this one.
+    output logic                     dbg_port_done_o
 );
 
   localparam logic [63:0] ENTITY_ID_C = 64'h0A0B_0C0D_0E0F_1011;
@@ -297,6 +302,7 @@ module acmp_nvm_wrap
   assign lsn_recwr_o      = lsn_recwr_w;
   assign lsn_recwr_sink_o = lsn_recwr_sink_w;
   assign lsn_recwr_rec_o  = lsn_recwr_rec_w;
+  assign dbg_port_done_o  = nvm_done_w;
 
 endmodule
 

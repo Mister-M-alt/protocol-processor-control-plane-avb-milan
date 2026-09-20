@@ -412,6 +412,19 @@ module protocol_processor_top
     //! apart from a walk that actually put Milan 5.3.8.2/5.3.8.3 state back.
     output logic        restore_blank_o,       //! level: completed walk validated ZERO records
     output logic        nvm_alarm_o,           //! sticky: commit retries exhausted
+    //! per-sink UNFLUSHED binding state, the manager's own dirty vector
+    //! (KL_acmp_nvm_shadow dirty_r, a clk_i register read combinationally).
+    //! Bit k rises on the cycle the manager ACCEPTS a changed persisted set
+    //! for sink k — two clk_i cycles after cap_wr_i, because the capture is
+    //! pipelined one stage and the accept is the compare against the shadow,
+    //! so a write-back that changes no persisted field never raises it — and
+    //! falls on the cycle its commit reports done, or, on retry exhaustion,
+    //! on the same cycle nvm_alarm_o rises. A tainted commit (a capture that
+    //! hit the sink mid-flush) holds it: the burst re-serializes fresh data.
+    //! An integrator publishing a "saved state pending" bit ORs this vector
+    //! with aecp_dyn_dirty_o; without it a binding taken inside the
+    //! manager's debounce window reads durable.
+    output logic [N_STREAM_IN_P-1:0] nvm_unflushed_o,
 
     //! ---- NVM device face (external backend; KL_pp_nvm_port initiator) ----
     output logic        nvm_dev_req_o,         //! command request, held until gnt
@@ -604,6 +617,18 @@ module protocol_processor_top
     output logic [N_STREAM_OUT_P*64-1:0] aecp_fmt_out_o,
     output logic [N_STREAM_OUT_P-1:0]    aecp_fmt_out_v_o,
     output logic                         aecp_dyn_dirty_o,    //! a persisted field moved
+    //! the AECP engine's NVM COMMIT MARK, the µprogram effect that names the
+    //! record group a committed command changed (KL_aecp_ucpu OP_NVM_MARK:
+    //! both are combinational reads of the E-stage registers, one clk_i
+    //! cycle wide, and the mark is only meaningful while the strobe is 1).
+    //! The mark is the micro-op immediate: 1 dynamic-state field (sampling
+    //! rate, clock source, configuration index, stream format, stream info),
+    //! 6 channel maps (ADD/REMOVE_AUDIO_MAPPINGS), 7 user names (SET_NAME).
+    //! Nothing inside this processor consumes them: no record writer exists
+    //! for groups 6 and 7, so an integrator that persists those groups has
+    //! to see the mark to know a change happened at all.
+    output logic                         aecp_nvm_stb_o,      //! one cycle: a committed command marked a record group
+    output logic  [7:0]                  aecp_nvm_mark_o,     //! that group's mark code, valid with the strobe
     output logic                         aecp_lock_held_o,    //! LOCK_ENTITY ownership is live
 
     //! ---- observability ----
@@ -2324,8 +2349,7 @@ module protocol_processor_top
   logic        nvm_req_w, nvm_we_w, nvm_wvalid_w, nvm_wready_w;
   logic [7:0]  nvm_record_id_w, nvm_wdata_w, nvm_rdata_w;
   logic        nvm_rvalid_w, nvm_rready_w, nvm_busy_w, nvm_done_w, nvm_err_w;
-  logic [N_STREAM_IN_P-1:0] nvm_dbg_dirty_nc_w, nvm_dbg_valid_nc_w,
-                            nvm_dbg_touched_nc_w;
+  logic [N_STREAM_IN_P-1:0] nvm_dbg_valid_nc_w, nvm_dbg_touched_nc_w;
 
   KL_acmp_nvm_shadow #(
       .N_SINKS_P (N_STREAM_IN_P)
@@ -2362,7 +2386,7 @@ module protocol_processor_top
       .nvm_busy_i       (nvm_busy_w),
       .nvm_done_i       (nvm_done_w),
       .nvm_err_i        (nvm_err_w),
-      .dbg_dirty_o      (nvm_dbg_dirty_nc_w),
+      .dbg_dirty_o      (nvm_unflushed_o),
       .dbg_valid_o      (nvm_dbg_valid_nc_w),
       .dbg_touched_o    (nvm_dbg_touched_nc_w)
   );
@@ -2881,8 +2905,7 @@ module protocol_processor_top
           || srp_lstn_reg_change_w[k];
     end
   end
-  logic                    aecp_eff_commit_nc_w, aecp_eff_nvm_stb_nc_w;
-  logic [7:0]              aecp_eff_nvm_mark_nc_w;
+  logic                    aecp_eff_commit_nc_w;
   logic [3:0]              aecp_eff_notify_cls_nc_w;
   logic                    aecp_eff_notify_stb_nc_w;
   logic [15:0]             aecp_eff_notify_type_w, aecp_eff_notify_index_w;
@@ -3161,8 +3184,8 @@ module protocol_processor_top
       .lock_held_i        (ntfy_lock_held_w),
       .lock_ctlr_i        (ntfy_lock_ctlr_w),
       .eff_commit_o       (aecp_eff_commit_nc_w),
-      .eff_nvm_mark_o     (aecp_eff_nvm_mark_nc_w),
-      .eff_nvm_stb_o      (aecp_eff_nvm_stb_nc_w),
+      .eff_nvm_mark_o     (aecp_nvm_mark_o),
+      .eff_nvm_stb_o      (aecp_nvm_stb_o),
       .eff_notify_class_o (aecp_eff_notify_cls_nc_w),
       .eff_notify_stb_o   (aecp_eff_notify_stb_nc_w),
       .eff_notify_type_o  (aecp_eff_notify_type_w),

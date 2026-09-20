@@ -220,7 +220,7 @@ property, not an accident, and it is regression-tested.
 | MAAP allocation | `maap_req_valid_o`, `maap_req_release_o`, `maap_req_src_o`, `maap_conflict_ack_o` / `maap_req_ready_i`, `maap_rsp_valid_i`, `maap_rsp_ok_i`, `maap_rsp_da_i[47:0]`, `maap_conflict_valid_i`, `maap_conflict_src_i` | **no source ever declares.** `acmp_declaring_o` is structurally 0 and PROBE_TX answers `TALKER_DEST_MAC_FAILED`. Commands are still answered normally. |
 | Descriptor memory | `desc_mem_*` | the failed header probe leaves zero configurations, so every `READ_DESCRIPTOR` answers `BAD_ARGUMENTS` after the watchdog. |
 | Response memory | `resp_mem_*` | every built response becomes a well-formed 60-byte `ENTITY_MISBEHAVING`. |
-| NVM device | `nvm_dev_*`, plus `restore_go_i`, `restore_busy_o`, `restore_done_o`, `restore_fail_o`, `restore_blank_o`, `nvm_alarm_o` | bindings do not survive a power cycle. Nothing else changes **in this plane** — but your status register must not report otherwise: a walk over an unbacked face raises `restore_done_o` with no `restore_fail_o`, exactly like a successful one. Publish `restore_blank_o` beside them, and report not-successful when you know there is no media. |
+| NVM device | `nvm_dev_*`, plus `restore_go_i`, `restore_busy_o`, `restore_done_o`, `restore_fail_o`, `restore_blank_o`, `nvm_alarm_o`, `nvm_unflushed_o` | bindings do not survive a power cycle. Nothing else changes **in this plane** — but your status register must not report otherwise: a walk over an unbacked face raises `restore_done_o` with no `restore_fail_o`, exactly like a successful one. Publish `restore_blank_o` beside them, and report not-successful when you know there is no media. |
 | Management side port | `host_*` | you lose all diagnostics. The plane still runs. |
 | SRP service | `svc_*` | nothing declares through the configuration plane. |
 | AECP pop face | `aecp_txn_*`, `aecp_rxs_*` | **tie `aecp_txn_ready_i` low.** The internal AECP engine already drains this queue; this face is an *additional* observer. Driving it steals records from the engine. |
@@ -261,6 +261,8 @@ gate on them per cycle.
 | `srp_acc_latency_o` | per-sink registered accumulated latency in nanoseconds, **raw** — add your own ingress delay |
 | `srp_src_fail_code_o`, `srp_src_fail_bridge_o`, `srp_snk_fail_code_o` | failure codes, valid only while the matching state vector says FAILED |
 | `adp_next_avail_index_o` | 32 bits, deliberately. Truncating it would make a controller see `available_index` step backwards, which is exactly the signal it uses to decide an entity restarted. |
+| `nvm_unflushed_o` | per-sink binding state the manager has accepted and not yet committed. 1 from the accepted change until its record commits with `done`, or until the retries are exhausted and `nvm_alarm_o` rises on the same cycle. OR it with `aecp_dyn_dirty_o` for a "saved state pending" bit; without it a binding taken inside the commit debounce reads durable. |
+| `aecp_nvm_stb_o`, `aecp_nvm_mark_o` | one cycle per committed command that marked a record group, and the group: 1 a dynamic-state field, 6 channel maps, 7 user names. Nothing in the processor writes a record for 6 or 7, so this strobe is the only notice that those live values moved. |
 | `dbg_now_ms_o` | the free-running millisecond timebase |
 
 The status dictionary these implement is catalogued in

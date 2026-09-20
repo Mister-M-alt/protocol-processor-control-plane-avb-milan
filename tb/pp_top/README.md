@@ -104,7 +104,11 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
   parks MAP_CFG at the output streaming recheck, injects a state-changing
   source-1 PROBE_TX, proves the scoreboard hold is nonzero and the ACMP response
   and declaration edge are absent, then releases the map and grades both
-  transactions in order.
+  transactions in order. R21 grades the `aecp_nvm_stb_o` /
+  `aecp_nvm_mark_o` export (issue #90) on this face and the name store: a
+  committed ADD carries mark 6 and a committed SET_NAME mark 7, one strobe
+  each, and the GET between them carries none — a mark has no wire shape, so
+  the pin is the only place any of this is visible.
 - **R** boot restore over a blank NVM device: all 8 BINDING regions read,
   `restore_done` without `restore_fail`.
 - **S0/S1** quiescence + snapshot identity; SRP bring-up: the FIRST MSRP
@@ -132,7 +136,9 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
   TK_ATTR_REGISTERED trace record).
 - **S9** the S6 binding commits through the debounced NVM shadow: framed
   F07.8 record (magic 0x1722) carrying the bound talker EID at the device
-  face.
+  face, and the `nvm_unflushed_o` export (issue #90) sampled every cycle
+  across it — the sink reads unflushed while the change waits, and 0 once
+  the commit reports done.
 - **S10** the `maap` face (02 §4.2), which the top publishes because 01 §3
   puts address allocation in the integrating fabric. Run in two halves. With
   NO allocator (`maap_req_ready_i` 0 for the whole run above): the port is
