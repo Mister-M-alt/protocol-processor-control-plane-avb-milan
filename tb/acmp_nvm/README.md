@@ -5,7 +5,7 @@ Proves the ACMP binding NVM shadow (`hdl/acmp/KL_acmp_nvm_shadow.sv`,
 [05 §5](../../docs/architecture/05_acmp_engine.md) ≈20 B/sink shadow +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8/F07.9 +
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8): `make` = build + run,
-exit 0 = PASS, 76 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
+exit 0 = PASS, 86 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
 timing mirrors (tick_i is held high, so window = 50 cycles).
 
 The wrap compiles the shadow together with the REAL `KL_pp_nvm_port` (class-F
@@ -43,7 +43,13 @@ after; change-during-restore ordering both ways (capture before AND after
 its sink's record was walked: the capture wins, its sink is never preloaded,
 the live value is flushed back); change-during-flush (the taint path: a
 capture landing mid-serialization keeps dirty and the burst re-serializes —
-NVM converges to the newest value).
+NVM converges to the newest value); and group X, the contract
+`protocol_processor_top` exports as `nvm_unflushed_o` (issue #90) — the bit
+rises on the ACCEPTED change and on that sink only, holds through the
+debounce and the burst, falls on the commit's manager-face `done` (graded on
+the cycle, which is why the wrap publishes `dbg_port_done_o`: the device
+face's own done is two cycles earlier), and on retry exhaustion falls on the
+SAME cycle `alarm_o` rises, never silently.
 
 Known limits (honest): the BINDING record id allocation (`REC_ID_BASE_P` =
 0x20) and the exact payload byte layout are design decisions of the shadow's
@@ -69,3 +75,9 @@ Mutation-proven 2026-08-13 for the blank arm:
 - **M6** `restore_blank_o` hard-wired to `1'b0`: fails 2 of 76 (A2b empty
   NVM, G4b atomic reject), and 1 more in the consumer suite
   (milan-fpga `tb/verilator/pp_shadow`, `PP_STAT[7]`).
+
+Mutation-proven 2026-09-20 for the unflushed export:
+- **M7** `dbg_dirty_o` hard-wired to `'0` — the pin issue #90 exports:
+  fails 12 of 86, X1, X1b, X2, X3, X3b, X4 and X5b by name (B2 and the
+  four byte-exact store checks go with them, because the suite waits on the
+  same pin to know a burst drained).

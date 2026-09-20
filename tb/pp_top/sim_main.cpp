@@ -993,6 +993,15 @@ struct H {
   //! NOT do (W10j), and an accepted SET on what it did exactly once
   uint64_t nvm_marks = 0;
   uint64_t notify_enqs = 0;
+  //! the exported mark CODE beside the strobe (issue #90): the code is only
+  //! meaningful while the strobe is 1, so it is sampled there and counted
+  //! per group — 1 dynamic-state field, 6 channel maps, 7 user names
+  uint8_t  nvm_mark_last = 0;
+  uint64_t nvm_marks_cls6 = 0;
+  uint64_t nvm_marks_cls7 = 0;
+  //! every sink the manager reported UNFLUSHED at any cycle of the run, and
+  //! the same vector as it stands now (nvm_unflushed_o, issue #90)
+  uint32_t nvm_unflushed_seen = 0;
   // ---- the SET_STREAM_FORMAT verdict (kind 0 selector 15) and the
   // settings fold. The verdict is the integrator's ruling on the PROPOSED
   // format riding gsi_prop_fmt_o: bit 0 = the format is one of the
@@ -1109,8 +1118,14 @@ struct H {
 
     d->eval();
     if (d->dbg_ca_cancel_o) ++ca_cancels;
-    if (d->dbg_nvm_mark_o) ++nvm_marks;
+    if (d->aecp_nvm_stb_o) {
+      ++nvm_marks;
+      nvm_mark_last = d->aecp_nvm_mark_o;
+      if (d->aecp_nvm_mark_o == 6) ++nvm_marks_cls6;
+      if (d->aecp_nvm_mark_o == 7) ++nvm_marks_cls7;
+    }
     if (d->dbg_notify_enq_o) ++notify_enqs;
+    nvm_unflushed_seen |= d->nvm_unflushed_o;
 
     d->clk_i = 1; d->eval();
     t++;
@@ -1504,6 +1519,8 @@ struct H {
     amap_edit_seq.clear();
     ca_cancels = 0;
     nvm_marks = 0; notify_enqs = 0;
+    nvm_marks_cls6 = 0; nvm_marks_cls7 = 0; nvm_mark_last = 0;
+    nvm_unflushed_seen = 0;
     idle(20);
     d->rst_n = 1;
     idle(10);
@@ -3528,6 +3545,63 @@ struct AudioMapEditPhase {
     r19_a_post_reservation_wait_still_commits_exactly();
     r19a_a_held_map_recheck_defers_the_stream_config();
     r20_the_command_record_bound();
+    r21_the_commit_mark_export_names_the_record_group();
+  }
+
+  // R21: THE EXPORT (issue #90). aecp_nvm_stb_o / aecp_nvm_mark_o carry the
+  // uCPU's OP_NVM_MARK effect out of the top, and the mark is the micro-op
+  // immediate that names the record group: 6 for the channel maps this phase
+  // edits, 7 for a user name. Nothing in this processor writes a record for
+  // either group, so the mark is the ONLY evidence an integrator's saved
+  // state has fallen behind. Graded here because a mark has no wire shape:
+  // the response of a marked command is identical to the response of one
+  // that marked nothing, which is the third arm below.
+  void r21_the_commit_mark_export_names_the_record_group() {
+    const uint64_t one = row(0, 3, 3);
+    auto p = edit_pl(DT_SPI, 0, {one});
+    const uint64_t m0 = h.nvm_marks, c6_0 = h.nvm_marks_cls6;
+    auto got = cmd(ADD, 0xE140, p);
+    CHECK(got == expect(AECP_SUCCESS, ADD, 0xE140, p),
+          "R21: the marked ADD_AUDIO_MAPPINGS was not accepted");
+    CHECK(h.nvm_marks == m0 + 1 && h.nvm_marks_cls6 == c6_0 + 1
+          && h.nvm_mark_last == 6,
+          "R21: a committed ADD_AUDIO_MAPPINGS raised %u mark(s), last code "
+          "%u; want one strobe carrying class 6 (channel maps)",
+          static_cast<unsigned>(h.nvm_marks - m0),
+          static_cast<unsigned>(h.nvm_mark_last));
+
+    // a read of the same face marks nothing: same wire, no strobe
+    const uint64_t m1 = h.nvm_marks;
+    CHECK(map_rows(DT_SPI, 0, 0, 0xE141) == std::vector<uint64_t>{one},
+          "R21b: the marked row is not in the committed page");
+    CHECK(h.nvm_marks == m1,
+          "R21b: GET_AUDIO_MAP raised %u mark(s), want 0",
+          static_cast<unsigned>(h.nvm_marks - m1));
+
+    // class 7, the name store: change it, grade the mark, change it back so
+    // the phases after this one read the name they were written against
+    const auto kept = NamePhase::name64("Clock Domain Renamed");
+    const auto probe = NamePhase::name64("PP90 Mark Probe");
+    const uint64_t m2 = h.nvm_marks, c7_0 = h.nvm_marks_cls7;
+    got = cmd(AEM_SET_NAME, 0xE142,
+              NamePhase::name_body(0x0024, 0, 0, CFGIX, probe));
+    CHECK(!got.empty() && status(got) == AECP_SUCCESS,
+          "R21c: the marked SET_NAME was not accepted");
+    CHECK(h.nvm_marks == m2 + 1 && h.nvm_marks_cls7 == c7_0 + 1
+          && h.nvm_mark_last == 7,
+          "R21c: a committed SET_NAME raised %u mark(s), last code %u; want "
+          "one strobe carrying class 7 (user names)",
+          static_cast<unsigned>(h.nvm_marks - m2),
+          static_cast<unsigned>(h.nvm_mark_last));
+    got = cmd(AEM_SET_NAME, 0xE143,
+              NamePhase::name_body(0x0024, 0, 0, CFGIX, kept));
+    CHECK(!got.empty() && status(got) == AECP_SUCCESS,
+          "R21d: the name this arm borrowed was not restored");
+
+    auto clean = cmd(REMOVE, 0xE144, p);
+    CHECK(clean == expect(AECP_SUCCESS, REMOVE, 0xE144, p),
+          "R21d: commit-mark export cleanup failed");
+    h.q_aecp.clear();
   }
 
   // A late conflict on cluster 0 rejects the whole command from empty.
@@ -6373,7 +6447,7 @@ struct ReadSidePhase : SamplingRateTools {
   // effects themselves, through the wrapper's observe-only taps: the
   // dynamic store's accepted-write counter (dbg_dyn_writes_o, the
   // WRITE_ST that KL_aecp_dyn_state took), the OP_NVM_MARK strobe
-  // (dbg_nvm_mark_o, counted in H::step as nvm_marks) and the
+  // (aecp_nvm_stb_o, counted in H::step as nvm_marks) and the
   // OP_NOTIFY_ENQ strobe (dbg_notify_enq_o, notify_enqs). A second
   // controller is registered for unsolicited notifications first, the U8
   // pattern, because that is where an enqueued notification surfaces on
@@ -8603,6 +8677,18 @@ struct Suite {
     CHECK(hdr_ok, "S9: F07.8 magic 0x1722 leads the record");
     CHECK(eid_ok, "S9: committed record carries the bound talker EID");
     CHECK(d->nvm_alarm_o == 0, "S9: no commit alarm");
+    //! THE EXPORT (issue #90). The integrator's "saved state pending" bit is
+    //! this vector ORed with aecp_dyn_dirty_o, so the port has to carry the
+    //! whole unflushed span of a binding: raised while the S6 bind waited out
+    //! the debounce and the burst, and down once the commit above reported
+    //! done. Sampled every cycle in H::step, because both edges are inside
+    //! the 700 ms this phase already ran through.
+    CHECK((h.nvm_unflushed_seen & 1) != 0,
+          "S9: nvm_unflushed_o[0] rose while the binding was unflushed "
+          "(seen 0x%02x)", h.nvm_unflushed_seen);
+    CHECK(d->nvm_unflushed_o == 0,
+          "S9: nvm_unflushed_o clears on the commit's done (reads 0x%02x)",
+          d->nvm_unflushed_o);
   }
 
   // ==== S10. the maap face: the DA gate no fabric can open by itself ======
