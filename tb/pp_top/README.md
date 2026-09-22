@@ -520,6 +520,29 @@ nibble, which is why M27 fails the wire checks alone. The C++ expectation is
 compiled from the same Makefile variable the wrap receives, never read back from
 the DUT, and the wrap overrides nothing in the first build.
 
+The fixture branch refuses compilation unless its 16-bit wire value and its
+low 12-bit class-D value both differ from product default 2 (issue #97).
+`SRP_VID_FIXTURE=0002` fails both assertions; `SRP_VID_FIXTURE=1002` fails the
+class-D assertion even though its wire value differs. Each diagnostic names
+the fixture, product default and affected width. These are verification-bench
+assertions only. The default build has no fixture override and no distinctness
+assertion.
+
+`make` also runs `make fixture-guards`, a focused compile check of the actual
+`sim_main.cpp` against generated model headers in a disposable directory. It
+requires the no-override and pinned `5A3C` cases to compile, `0002` to fail with
+both diagnostics and `1002` to fail with only the class-D diagnostic. An
+unrelated compiler error fails the check. Run `make fixture-guards` alone for
+this coverage without simulation; it does not change the sources or reuse
+`obj_dir`/`obj_vid`. This check does not replace the two executable builds or
+the missing-binding and child-default controls in the mutation record.
+
+The compiler subprocess uses `LC_ALL=C` so diagnostic matching is independent
+of the caller's language; all other environment inputs and compiler arguments
+are preserved. `make fixture-guards-test` checks this isolation with mocked
+subprocesses, without requiring non-English compiler catalogs, and is required
+by `fixture-guards`. Removing the locale override makes this regression fail.
+
 DV runs on a fresh model in both builds, after reset and with the link down:
 
 - **DV1** the reset value on the class-D ports, snapshot word 10 and GET_DOMAIN;

@@ -51,7 +51,7 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
        pp_top_wrap.sv
 CPP  = sim_main.cpp
 
-run: ltn_rom.hex ucode.hex
+run: fixture-guards ltn_rom.hex ucode.hex
 	@rm -f obj_dir/build_tally.txt
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vpp_top_sim
 	./obj_dir/Vpp_top_sim
@@ -62,6 +62,15 @@ run: ltn_rom.hex ucode.hex
 	@awk '{c += $$1; f += $$2} END {if (NR != 2) {print "FAIL: " NR " build tallies, expected 2"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
 	    obj_dir/build_tally.txt
 
+# Compile the actual bench with four fixture settings in a temporary model dir.
+# No simulation or source mutation; bad fixtures must fail for the named guards.
+fixture-guards: fixture-guards-test
+	@python3 fixture_guards.py --verilator "$(VERILATOR)" --cxx "$(CXX)" -- \
+	    $(filter-out --exe --build,$(VFLAGS)) $(SRCS)
+
+fixture-guards-test:
+	@python3 -B -m unittest -v test_fixture_guards.py
+
 ltn_rom.hex: $(HDL)/acmp/rom/gen_ltn_rom.py
 	python3 $< -o $@
 
@@ -71,4 +80,4 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 clean:
 	rm -rf obj_dir obj_vid ltn_rom.hex ucode.hex
 
-.PHONY: run clean
+.PHONY: run fixture-guards fixture-guards-test clean
