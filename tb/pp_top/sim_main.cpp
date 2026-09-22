@@ -77,6 +77,11 @@ constexpr uint64_t    MVRP_DA = 0x0180C2000021ULL;
 //! compiled with the fixture the Makefile also hands the wrap.
 #ifdef PP_TOP_SRP_DOM_DEF_VID
 constexpr uint16_t    SRP_DEF_VID = PP_TOP_SRP_DOM_DEF_VID;
+//! A default-equivalent fixture cannot expose a dropped binding (issue #97).
+static_assert(SRP_DEF_VID != 2,
+              "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
+static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
+              "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
 #else
 constexpr uint16_t    SRP_DEF_VID = 2;
 #endif
