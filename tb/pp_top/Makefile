@@ -64,9 +64,12 @@ run: fixture-guards ltn_rom.hex ucode.hex
 
 # Compile the actual bench with four fixture settings in a temporary model dir.
 # No simulation or source mutation; bad fixtures must fail for the named guards.
-fixture-guards:
+fixture-guards: fixture-guards-test
 	@python3 fixture_guards.py --verilator "$(VERILATOR)" --cxx "$(CXX)" -- \
 	    $(filter-out --exe --build,$(VFLAGS)) $(SRCS)
+
+fixture-guards-test:
+	@python3 -B -m unittest -v test_fixture_guards.py
 
 ltn_rom.hex: $(HDL)/acmp/rom/gen_ltn_rom.py
 	python3 $< -o $@
@@ -77,4 +80,4 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 clean:
 	rm -rf obj_dir obj_vid ltn_rom.hex ucode.hex
 
-.PHONY: run fixture-guards clean
+.PHONY: run fixture-guards fixture-guards-test clean

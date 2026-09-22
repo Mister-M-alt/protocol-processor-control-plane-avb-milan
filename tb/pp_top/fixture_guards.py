@@ -3,6 +3,7 @@
 """Compile the real pp_top bench and require the issue #97 fixture diagnostics."""
 
 import argparse
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -34,11 +35,15 @@ def main():
             "-I" + tmp, "-I" + str(Path(root) / "include"),
             "-I" + str(Path(root) / "include/vltstd"),
         ]
+        # The diagnostic checks below require the compiler's English wording.
+        compiler_env = os.environ.copy()
+        compiler_env["LC_ALL"] = "C"
         for value, expected in cases:
             define = [] if value is None else ["-DPP_TOP_SRP_DOM_DEF_VID=0x" + value]
             result = subprocess.run(
                 [*command, *define, "sim_main.cpp"],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                env=compiler_env,
             )
             errors = [line for line in result.stdout.splitlines() if "error:" in line]
             assertions = [line for line in errors if "static assertion" in line]
