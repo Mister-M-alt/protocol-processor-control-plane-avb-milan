@@ -1,0 +1,10 @@
+HEAD 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e tree 8768f7e640ee62fd62862bec7117155fcab3ddbb symbolic-ref: detached
+status --porcelain --ignored lines: 0
+tree entries=224 index entries=224 index==HEAD tree at stage 0: True
+modes: {'100644': 214, '100755': 10}; paths whose kind/exec bit/bytes differ from HEAD blob: []
+fsck: 0 non-dangling messages
+live refs (2026-09-22T12:56:09+02:00):
+  5c45845ad15bd7995f20c81d7fd61501e5ca9d7e	refs/heads/97-assert-distinct-sr-vid-fixture
+  8452f564294300a82d56eed464276576f65f4d58	refs/heads/main
+  5c45845ad15bd7995f20c81d7fd61501e5ca9d7e	refs/pull/100/head
+  6439edc9e2a2fa06c4f9ce2e35d4ccaa273e321d	refs/pull/100/merge

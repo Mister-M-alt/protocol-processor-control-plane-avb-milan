@@ -1,0 +1,25 @@
+02-cc-EN: rc=1 expected=1 0.0s
+02-cc-DE_LANGUAGE: rc=1 expected=1 0.0s
+02-cc-FR_LANGUAGE: rc=1 expected=1 0.0s
+02-cc-DE_LANG: rc=1 expected=1 0.0s
+02-cc-FR_LANG: rc=1 expected=1 0.0s
+02-cc-DE_LC_ALL: rc=1 expected=1 0.0s
+02-cc-FR_LC_MESSAGES: rc=1 expected=1 0.0s
+02-cc-MIXED: rc=1 expected=1 0.0s
+02-cc-LC_ALL_C-LANGUAGE_de: rc=1 expected=1 0.0s
+02-cc-LC_ALL_C-MIXED: rc=1 expected=1 0.0s
+02-cc-LC_ALL_POSIX-LANGUAGE_de: rc=1 expected=1 0.0s
+02-cc-LC_ALL_C.UTF-8-LANGUAGE_de: rc=1 expected=1 0.0s
+== summary: error line per setting
+02-cc-DE_LANG                            probe.cpp:1:17: error: statische Assertion fehlgeschlagen: R230 probe message
+02-cc-DE_LANGUAGE                        probe.cpp:1:17: error: statische Assertion fehlgeschlagen: R230 probe message
+02-cc-DE_LC_ALL                          probe.cpp:1:17: error: statische Assertion fehlgeschlagen: R230 probe message
+02-cc-EN                                 probe.cpp:1:17: error: static assertion failed: R230 probe message
+02-cc-FR_LANG                            probe.cpp:1:17: error: l'assertion statique a échoué : R230 probe message
+02-cc-FR_LANGUAGE                        probe.cpp:1:17: error: l'assertion statique a échoué : R230 probe message
+02-cc-FR_LC_MESSAGES                     probe.cpp:1:17: error: l'assertion statique a échoué : R230 probe message
+02-cc-LC_ALL_C-LANGUAGE_de               probe.cpp:1:17: error: static assertion failed: R230 probe message
+02-cc-LC_ALL_C-MIXED                     probe.cpp:1:17: error: static assertion failed: R230 probe message
+02-cc-LC_ALL_C.UTF-8-LANGUAGE_de         probe.cpp:1:17: error: static assertion failed: R230 probe message
+02-cc-LC_ALL_POSIX-LANGUAGE_de           probe.cpp:1:17: error: static assertion failed: R230 probe message
+02-cc-MIXED                              probe.cpp:1:17: error: statische Assertion fehlgeschlagen: R230 probe message

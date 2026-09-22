@@ -1,0 +1,133 @@
+03-prior-EN: rc=0 expected=0 5.2s
+03-head-EN: rc=0 expected=0 5.3s
+03-prior-DE_LANGUAGE: rc=2 expected=2 4.3s
+03-head-DE_LANGUAGE: rc=0 expected=0 5.3s
+03-prior-FR_LANGUAGE: rc=2 expected=2 4.3s
+03-head-FR_LANGUAGE: rc=0 expected=0 5.3s
+03-prior-DE_LANG: rc=2 expected=2 4.3s
+03-head-DE_LANG: rc=0 expected=0 5.3s
+03-prior-FR_LANG: rc=2 expected=2 4.3s
+03-head-FR_LANG: rc=0 expected=0 5.3s
+03-prior-DE_LC_ALL: rc=2 expected=2 4.3s
+03-head-DE_LC_ALL: rc=0 expected=0 5.2s
+03-prior-FR_LC_MESSAGES: rc=2 expected=2 4.2s
+03-head-FR_LC_MESSAGES: rc=0 expected=0 5.3s
+03-prior-MIXED: rc=2 expected=2 4.3s
+03-head-MIXED: rc=0 expected=0 5.3s
+== per-run outcome lines
+-- 03-prior-EN rc=0
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guard 1002: refused: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guards: 4 cases PASS
+-- 03-head-EN rc=0
+   Ran 1 test in 0.002s
+   OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guard 1002: refused: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guards: 4 cases PASS
+-- 03-prior-DE_LANGUAGE rc=2
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+   sim_main.cpp:81:27: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+   sim_main.cpp:83:39: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 03-head-DE_LANGUAGE rc=0
+   Ran 1 test in 0.002s
+   OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guard 1002: refused: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guards: 4 cases PASS
+-- 03-prior-FR_LANGUAGE rc=2
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+   sim_main.cpp:81:27: error: l'assertion statique a échoué : SRP VID fixture must differ from product default 2 in the 16-bit wire value
+   sim_main.cpp:83:39: error: l'assertion statique a échoué : SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 03-head-FR_LANGUAGE rc=0
+   Ran 1 test in 0.002s
+   OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guard 1002: refused: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guards: 4 cases PASS
+-- 03-prior-DE_LANG rc=2
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+   sim_main.cpp:81:27: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+   sim_main.cpp:83:39: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 03-head-DE_LANG rc=0
+   Ran 1 test in 0.002s
+   OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guard 1002: refused: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guards: 4 cases PASS
+-- 03-prior-FR_LANG rc=2
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+   sim_main.cpp:81:27: error: l'assertion statique a échoué : SRP VID fixture must differ from product default 2 in the 16-bit wire value
+   sim_main.cpp:83:39: error: l'assertion statique a échoué : SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 03-head-FR_LANG rc=0
+   Ran 1 test in 0.002s
+   OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guard 1002: refused: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guards: 4 cases PASS
+-- 03-prior-DE_LC_ALL rc=2
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+   sim_main.cpp:81:27: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+   sim_main.cpp:83:39: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 03-head-DE_LC_ALL rc=0
+   Ran 1 test in 0.002s
+   OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guard 1002: refused: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guards: 4 cases PASS
+-- 03-prior-FR_LC_MESSAGES rc=2
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+   sim_main.cpp:81:27: error: l'assertion statique a échoué : SRP VID fixture must differ from product default 2 in the 16-bit wire value
+   sim_main.cpp:83:39: error: l'assertion statique a échoué : SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 03-head-FR_LC_MESSAGES rc=0
+   Ran 1 test in 0.002s
+   OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guard 1002: refused: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guards: 4 cases PASS
+-- 03-prior-MIXED rc=2
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+   sim_main.cpp:81:27: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+   sim_main.cpp:83:39: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 03-head-MIXED rc=0
+   Ran 1 test in 0.002s
+   OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guard 1002: refused: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guards: 4 cases PASS
+== leftover gate temp dirs in scratch TMPDIR:
+   none
+== head clone status --porcelain --ignored:
+   (end)

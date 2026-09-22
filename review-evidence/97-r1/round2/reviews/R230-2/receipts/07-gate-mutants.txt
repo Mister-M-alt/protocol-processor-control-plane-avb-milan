@@ -1,0 +1,114 @@
+07-G1-wire-guard-removed-DE_LC_ALL: rc=2 expected=2 4.4s
+07-G2-class-d-guard-removed-DE_LC_ALL: rc=2 expected=2 4.4s
+07-G3-class-d-mask-widened-DE_LC_ALL: rc=2 expected=2 5.3s
+07-G4-diagnostics-swapped-DE_LC_ALL: rc=2 expected=2 5.3s
+07-G5-guards-outside-fixture-branch-DE_LC_ALL: rc=2 expected=2 2.5s
+07-G6-unrelated-error-all-fixtures-DE_LC_ALL: rc=2 expected=2 3.4s
+07-G7-unrelated-error-0002-alongside-DE_LC_ALL: rc=2 expected=2 4.4s
+07-G8-unrelated-error-default-branch-DE_LC_ALL: rc=2 expected=2 2.6s
+07-G9-extra-static-assertion-0002-DE_LC_ALL: rc=2 expected=2 5.1s
+07-G1-wire-guard-removed-FR_LANG: rc=2 expected=2 4.5s
+07-G2-class-d-guard-removed-FR_LANG: rc=2 expected=2 4.3s
+07-G7-unrelated-error-0002-alongside-FR_LANG: rc=2 expected=2 4.4s
+07-G1-wire-guard-removed-MIXED: rc=2 expected=2 4.4s
+07-G2-class-d-guard-removed-MIXED: rc=2 expected=2 4.4s
+07-G7-unrelated-error-0002-alongside-MIXED: rc=2 expected=2 4.4s
+mutant tree sim_main.cpp restored to head bytes
+== verdict per mutant (regression line, gate verdict line, compiler error lines)
+-- 07-G1-wire-guard-removed-DE_LC_ALL rc=2
+   regression: OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+      sim_main.cpp:81:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 07-G1-wire-guard-removed-FR_LANG rc=2
+   regression: OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+      sim_main.cpp:81:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 07-G1-wire-guard-removed-MIXED rc=2
+   regression: OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+      sim_main.cpp:81:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 07-G2-class-d-guard-removed-DE_LC_ALL rc=2
+   regression: OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+      sim_main.cpp:81:27: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+-- 07-G2-class-d-guard-removed-FR_LANG rc=2
+   regression: OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+      sim_main.cpp:81:27: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+-- 07-G2-class-d-guard-removed-MIXED rc=2
+   regression: OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+      sim_main.cpp:81:27: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+-- 07-G3-class-d-mask-widened-DE_LC_ALL rc=2
+   regression: OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit
+   FAIL: fixture 1002: unexpected compiler result 0
+-- 07-G4-diagnostics-swapped-DE_LC_ALL rc=2
+   regression: OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit
+   FAIL: fixture 1002: unexpected compiler result 1
+      sim_main.cpp:83:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+-- 07-G5-guards-outside-fixture-branch-DE_LC_ALL rc=2
+   regression: OK
+   FAIL: fixture default (no override): unexpected compiler result 1
+      sim_main.cpp:84:27: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+      sim_main.cpp:86:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 07-G6-unrelated-error-all-fixtures-DE_LC_ALL rc=2
+   regression: OK
+   fixture guard default (no override): compiles
+   FAIL: fixture 5A3C: unexpected compiler result 1
+      sim_main.cpp:85:2: error: #error R230 unrelated compiler error control
+-- 07-G7-unrelated-error-0002-alongside-DE_LC_ALL rc=2
+   regression: OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+      sim_main.cpp:86:2: error: #error R230 unrelated compiler error control
+      sim_main.cpp:81:27: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+      sim_main.cpp:83:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 07-G7-unrelated-error-0002-alongside-FR_LANG rc=2
+   regression: OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+      sim_main.cpp:86:2: error: #error R230 unrelated compiler error control
+      sim_main.cpp:81:27: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+      sim_main.cpp:83:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 07-G7-unrelated-error-0002-alongside-MIXED rc=2
+   regression: OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+      sim_main.cpp:86:2: error: #error R230 unrelated compiler error control
+      sim_main.cpp:81:27: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+      sim_main.cpp:83:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 07-G8-unrelated-error-default-branch-DE_LC_ALL rc=2
+   regression: OK
+   FAIL: fixture default (no override): unexpected compiler result 1
+      sim_main.cpp:87:22: error: 'r230_undeclared' was not declared in this scope; did you mean 'r230_unrelated'?
+-- 07-G9-extra-static-assertion-0002-DE_LC_ALL rc=2
+   regression: OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   FAIL: fixture 0002: unexpected compiler result 1
+      sim_main.cpp:81:27: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+      sim_main.cpp:83:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+      sim_main.cpp:85:27: error: static assertion failed: R230 unrelated static assertion text
+== leftover gate temp dirs:
+   none

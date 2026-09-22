@@ -1,0 +1,31 @@
+11-check-links: rc=0 expected=0 0.1s
+11-check-matrix: rc=0 expected=0 0.0s
+11-gen-matrix-check: rc=0 expected=0 0.0s
+11-check-upc-map: rc=0 expected=0 0.0s
+11-make-stale: rc=0 expected=0 0.1s
+   11-check-links tail: links: 807 checked, OK 
+   11-check-matrix tail: matrix: 115 REQ rows, 17 GAP findings, OK 
+   11-gen-matrix-check tail: matrix: OK (86 rows, 0 untested) 
+   11-check-upc-map tail: UPC MAP GATE: PASS (56 engine constants, 80 entry points, all agree) 
+   11-make-stale tail: 
+== syntax (no bytecode written)
+parsed fixture_guards.py test_fixture_guards.py
+== oldest accepted grammar per tracked .py file (ast.parse feature_version)
+   3.6  hdl/aecp/ucode/gen_ucode.py
+   3.4  hdl/acmp/rom/gen_ltn_rom.py
+   3.4  hdl/aecp/desc/gen_desc_image.py
+   3.4  scripts/check-links.py
+   3.4  scripts/check-matrix.py
+   3.4  scripts/check_upc_map.py
+   3.4  scripts/gen_matrix.py
+   3.4  scripts/render-wavedrom.py
+   3.4  tb/nvm_port/measure_figures.py
+   3.4  tb/pp_top/fixture_guards.py
+   3.4  tb/pp_top/test_fixture_guards.py
+   files: 11  max minimum: 3.6
+== grammar feature in the new test that sets its minimum
+33:            with (self.subTest(LC_ALL=inherited_lc_all),
+== diff --check prior..head and base..head
+   rc=0
+   rc=0
+== head clone status --porcelain --ignored: 0 lines

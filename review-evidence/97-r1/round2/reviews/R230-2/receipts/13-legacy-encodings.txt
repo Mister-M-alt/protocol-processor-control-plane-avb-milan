@@ -1,0 +1,34 @@
+localedef de_DE.ISO-8859-1 rc=0
+localedef fr_FR.ISO-8859-15@euro rc=0
+localedef ja_JP.EUC-JP rc=0
+13-prior-DE_LATIN1: rc=2 expected=None 4.3s
+   FAIL: fixture 0002: unexpected compiler result 1
+13-head-DE_LATIN1: rc=0 expected=None 5.2s
+   fixture guards: 4 cases PASS
+13-prior-FR_LATIN9: rc=2 expected=None 4.2s
+   FAIL: fixture 0002: unexpected compiler result 1
+13-head-FR_LATIN9: rc=0 expected=None 5.8s
+   fixture guards: 4 cases PASS
+13-prior-JA_EUCJP: rc=2 expected=None 4.3s
+   UnicodeDecodeError: 'euc_jp' codec can't decode byte 0xe2 in position 7823: illegal multibyte sequence
+13-head-JA_EUCJP: rc=2 expected=None 4.3s
+   UnicodeDecodeError: 'euc_jp' codec can't decode byte 0xe2 in position 7826: illegal multibyte sequence
+13-base-make-ltn_rom-JA_EUCJP: rc=2 expected=None 0.1s
+   UnicodeEncodeError: 'euc_jp' codec can't encode character '\u2014' in position 31: illegal multibyte sequence
+13-base-make-ltn_rom-DE_LATIN1: rc=2 expected=None 0.0s
+   UnicodeEncodeError: 'latin-1' codec can't encode character '\u2014' in position 31: ordinal not in range(256)
+13-base-make-ltn_rom-FR_LATIN9: rc=2 expected=None 0.0s
+   UnicodeEncodeError: 'charmap' codec can't encode character '\u2014' in position 31: character maps to <undefined>
+13-base-make-ltn_rom-DE_UTF8: rc=0 expected=None 0.0s
+   wrote ltn_rom.hex: 128 x 32 b, 112 F05.3 cells
+13-base-JA_EUCJP-check_upc_map: rc=0 expected=None 0.0s
+   UPC MAP GATE: PASS (56 engine constants, 80 entry points, all agree)
+13-base-JA_EUCJP-check_links: rc=0 expected=None 0.1s
+   links: 807 checked, OK
+13-base-JA_EUCJP-check_matrix: rc=0 expected=None 0.0s
+   matrix: 115 REQ rows, 17 GAP findings, OK
+13-base-JA_EUCJP-gen_matrix: rc=1 expected=None 0.0s
+   UnicodeDecodeError: 'euc_jp' codec can't decode byte 0xe2 in position 318: illegal multibyte sequence
+13-base-JA_EUCJP-gen_ucode: rc=0 expected=None 0.1s
+13-base-JA_EUCJP-gen_ltn_rom: rc=1 expected=None 0.0s
+   UnicodeEncodeError: 'euc_jp' codec can't encode character '\u2014' in position 31: illegal multibyte sequence

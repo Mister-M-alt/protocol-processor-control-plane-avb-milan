@@ -1,0 +1,117 @@
+### G1-wire-guard-removed
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -78,8 +78,6 @@
+ #ifdef PP_TOP_SRP_DOM_DEF_VID
+ constexpr uint16_t    SRP_DEF_VID = PP_TOP_SRP_DOM_DEF_VID;
+ //! A default-equivalent fixture cannot expose a dropped binding (issue #97).
+-static_assert(SRP_DEF_VID != 2,
+-              "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
+ static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
+               "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
+ #else
+### G2-class-d-guard-removed
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -80,8 +80,6 @@
+ //! A default-equivalent fixture cannot expose a dropped binding (issue #97).
+ static_assert(SRP_DEF_VID != 2,
+               "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
+-static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
+-              "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
+ #else
+ constexpr uint16_t    SRP_DEF_VID = 2;
+ #endif
+### G3-class-d-mask-widened
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -80,7 +80,7 @@
+ //! A default-equivalent fixture cannot expose a dropped binding (issue #97).
+ static_assert(SRP_DEF_VID != 2,
+               "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
+-static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
++static_assert((SRP_DEF_VID & 0xFFFFu) != 2,
+               "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
+ #else
+ constexpr uint16_t    SRP_DEF_VID = 2;
+### G4-diagnostics-swapped
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -79,9 +79,9 @@
+ constexpr uint16_t    SRP_DEF_VID = PP_TOP_SRP_DOM_DEF_VID;
+ //! A default-equivalent fixture cannot expose a dropped binding (issue #97).
+ static_assert(SRP_DEF_VID != 2,
++              "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
++static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
+               "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
+-static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
+-              "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
+ #else
+ constexpr uint16_t    SRP_DEF_VID = 2;
+ #endif
+### G5-guards-outside-fixture-branch
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -78,13 +78,13 @@
+ #ifdef PP_TOP_SRP_DOM_DEF_VID
+ constexpr uint16_t    SRP_DEF_VID = PP_TOP_SRP_DOM_DEF_VID;
+ //! A default-equivalent fixture cannot expose a dropped binding (issue #97).
++#else
++constexpr uint16_t    SRP_DEF_VID = 2;
++#endif
+ static_assert(SRP_DEF_VID != 2,
+               "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
+ static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
+               "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
+-#else
+-constexpr uint16_t    SRP_DEF_VID = 2;
+-#endif
+ 
+ // MRP attribute events (802.1Q §35.2.2.7.2) + Listener declarations
+ constexpr int EV_NEW    = 0;
+### G6-unrelated-error-all-fixtures
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -82,6 +82,7 @@
+               "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
+ static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
+               "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
++#error R230 unrelated compiler error control
+ #else
+ constexpr uint16_t    SRP_DEF_VID = 2;
+ #endif
+### G7-unrelated-error-0002-alongside
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -82,6 +82,9 @@
+               "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
+ static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
+               "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
++#if PP_TOP_SRP_DOM_DEF_VID == 0x0002
++#error R230 unrelated compiler error control
++#endif
+ #else
+ constexpr uint16_t    SRP_DEF_VID = 2;
+ #endif
+### G8-unrelated-error-default-branch
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -84,6 +84,7 @@
+               "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
+ #else
+ constexpr uint16_t    SRP_DEF_VID = 2;
++int r230_unrelated = r230_undeclared;
+ #endif
+ 
+ // MRP attribute events (802.1Q §35.2.2.7.2) + Listener declarations
+### G9-extra-static-assertion-0002
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -82,6 +82,7 @@
+               "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
+ static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
+               "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
++static_assert(SRP_DEF_VID != 2, "R230 unrelated static assertion text");
+ #else
+ constexpr uint16_t    SRP_DEF_VID = 2;
+ #endif

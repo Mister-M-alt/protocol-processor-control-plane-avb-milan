@@ -1,0 +1,352 @@
+suites	Set up job	﻿2026-09-22T09:10:01.6730181Z Current runner version: '2.337.0'
+suites	Set up job	2026-09-22T09:10:01.6752515Z ##[group]Runner Image Provisioner
+suites	Set up job	2026-09-22T09:10:01.6753291Z Hosted Compute Agent
+suites	Set up job	2026-09-22T09:10:01.6753826Z Version: 20260828.587
+suites	Set up job	2026-09-22T09:10:01.6754424Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+suites	Set up job	2026-09-22T09:10:01.6755080Z Build Date: 2026-08-28T16:44:25Z
+suites	Set up job	2026-09-22T09:10:01.6755693Z Worker ID: {a6fa31a8-876e-4438-8025-6057cd851211}
+suites	Set up job	2026-09-22T09:10:01.6756277Z Azure Region: centralus
+suites	Set up job	2026-09-22T09:10:01.6756739Z ##[endgroup]
+suites	Set up job	2026-09-22T09:10:01.6758276Z ##[group]Operating System
+suites	Set up job	2026-09-22T09:10:01.6758829Z Ubuntu
+suites	Set up job	2026-09-22T09:10:01.6759379Z 24.04.5
+suites	Set up job	2026-09-22T09:10:01.6759817Z LTS
+suites	Set up job	2026-09-22T09:10:01.6760253Z ##[endgroup]
+suites	Set up job	2026-09-22T09:10:01.6760787Z ##[group]Runner Image
+suites	Set up job	2026-09-22T09:10:01.6761550Z Image: ubuntu-24.04
+suites	Set up job	2026-09-22T09:10:01.6762062Z Version: 20260907.300.1
+suites	Set up job	2026-09-22T09:10:01.6762923Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+suites	Set up job	2026-09-22T09:10:01.6764761Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+suites	Set up job	2026-09-22T09:10:01.6765552Z ##[endgroup]
+suites	Set up job	2026-09-22T09:10:01.6766552Z ##[group]GITHUB_TOKEN Permissions
+suites	Set up job	2026-09-22T09:10:01.6768606Z Contents: read
+suites	Set up job	2026-09-22T09:10:01.6769137Z Metadata: read
+suites	Set up job	2026-09-22T09:10:01.6769592Z Packages: read
+suites	Set up job	2026-09-22T09:10:01.6770135Z ##[endgroup]
+suites	Set up job	2026-09-22T09:10:01.6772147Z Secret source: Actions
+suites	Set up job	2026-09-22T09:10:01.6772886Z Cache mode: write
+suites	Set up job	2026-09-22T09:10:01.6773726Z Prepare workflow directory
+suites	Set up job	2026-09-22T09:10:01.7087786Z Prepare all required actions
+suites	Set up job	2026-09-22T09:10:01.7129577Z Getting action download info
+suites	Set up job	2026-09-22T09:10:01.9527857Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+suites	Set up job	2026-09-22T09:10:02.0389683Z Download action repository 'actions/cache@v4' (SHA:0057852bfaa89a56745cba8c7296529d2fc39830)
+suites	Set up job	2026-09-22T09:10:02.2710914Z Complete job name: suites
+suites	Run actions/checkout@v4	﻿2026-09-22T09:10:02.3271548Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3278666Z ##[group]Run actions/checkout@v4
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3279315Z with:
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3279778Z   fetch-depth: 0
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3280400Z   repository: Mister-M-alt/protocol-processor-control-plane-avb-milan
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3284077Z   token: ***
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3284535Z   ssh-strict: true
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3284971Z   ssh-user: git
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3285428Z   persist-credentials: true
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3285910Z   clean: true
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3286346Z   sparse-checkout-cone-mode: true
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3286867Z   fetch-tags: false
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3287302Z   show-progress: true
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3287797Z   lfs: false
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3288273Z   submodules: false
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3288766Z   set-safe-directory: true
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3289250Z   allow-unsafe-pr-checkout: false
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3289902Z env:
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3290363Z   VERILATOR_VERSION: v5.050
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.3290825Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4211032Z Syncing repository: Mister-M-alt/protocol-processor-control-plane-avb-milan
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4213838Z ##[group]Getting Git version info
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4215480Z Working directory is '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan'
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4217412Z [command]/usr/bin/git version
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4218219Z git version 2.55.0
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4230679Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4241067Z Temporarily overriding HOME='/home/runner/work/_temp/614aca47-2c10-415c-8561-d28c328ebbb2' before making global git config changes
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4243042Z Adding repository directory to the temporary git global config as a safe directory
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4245862Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4282864Z Deleting the contents of '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan'
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4287266Z ##[group]Initializing the repository
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4291715Z [command]/usr/bin/git init /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4398579Z hint: Using 'master' as the name for the initial branch. This default branch name
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4399538Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4400450Z hint: to use in all of your new repositories, which will suppress this warning,
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4401120Z hint: call:
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4401792Z hint:
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4402333Z hint: 	git config --global init.defaultBranch <name>
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4402940Z hint:
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4403481Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4404284Z hint: 'development'. The just-created branch can be renamed via this command:
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4404930Z hint:
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4405389Z hint: 	git branch -m <name>
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4405876Z hint:
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4406446Z hint: Disable this message with "git config set advice.defaultBranchName false"
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4410352Z Initialized empty Git repository in /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan/.git/
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4420437Z [command]/usr/bin/git remote add origin https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4455933Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4456687Z ##[group]Disabling automatic garbage collection
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4459962Z [command]/usr/bin/git config --local gc.auto 0
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4482832Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4483539Z ##[group]Setting up auth
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4489536Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4515192Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4823990Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.4848323Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.5016338Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.5041774Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.5198329Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.5225081Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.5226101Z ##[group]Fetching the repository
+suites	Run actions/checkout@v4	2026-09-22T09:10:02.5233372Z [command]/usr/bin/git -c protocol.version=2 fetch --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5414848Z From https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5417947Z  * [new branch]        121-notification-review-fixes -> origin/121-notification-review-fixes
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5420022Z  * [new branch]        14-asp-gm-identity      -> origin/14-asp-gm-identity
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5423561Z  * [new branch]        14-done_seen_r-latches-dev_done_i-in-states-with-no-outstanding-command -> origin/14-done_seen_r-latches-dev_done_i-in-states-with-no-outstanding-command
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5427912Z  * [new branch]        25-cover-every-module-and-stop-reparsing -> origin/25-cover-every-module-and-stop-reparsing
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5430585Z  * [new branch]        389-refusal-arms        -> origin/389-refusal-arms
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5433072Z  * [new branch]        389-set-clock-source-range-check -> origin/389-set-clock-source-range-check
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5435312Z  * [new branch]        46-lstn-reg-state-encoding -> origin/46-lstn-reg-state-encoding
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5437396Z  * [new branch]        51-sampling-rate-list-check -> origin/51-sampling-rate-list-check
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5439451Z  * [new branch]        66-aecp-get-set-name    -> origin/66-aecp-get-set-name
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5442115Z  * [new branch]        67-aecp-streaming-state-commands -> origin/67-aecp-streaming-state-commands
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5444903Z  * [new branch]        67-stream-format-and-info-setters -> origin/67-stream-format-and-info-setters
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5447202Z  * [new branch]        68-aecp-audio-mappings  -> origin/68-aecp-audio-mappings
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5450603Z  * [new branch]        69-aecp-unsolicited-notification-triggers -> origin/69-aecp-unsolicited-notification-triggers
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5453932Z  * [new branch]        71-get-dynamic-info     -> origin/71-get-dynamic-info
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5456253Z  * [new branch]        72-dyn-state-ab-getters -> origin/72-dyn-state-ab-getters
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5458913Z  * [new branch]        75-leaveall-cadence     -> origin/75-leaveall-cadence
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5461838Z  * [new branch]        78-start-stop-streaming -> origin/78-start-stop-streaming
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5465274Z  * [new branch]        78-started-state-in-acmp-record -> origin/78-started-state-in-acmp-record
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5468040Z  * [new branch]        78-started-state-single-source -> origin/78-started-state-single-source
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5470870Z  * [new branch]        83-vendor-unique-opcode-collision -> origin/83-vendor-unique-opcode-collision
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5474196Z  * [new branch]        90-nvm-exports          -> origin/90-nvm-exports
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5476399Z  * [new branch]        95-expose-default-sr-vid -> origin/95-expose-default-sr-vid
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5478960Z  * [new branch]        96-review-evidence      -> origin/96-review-evidence
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5482612Z  * [new branch]        97-assert-distinct-sr-vid-fixture -> origin/97-assert-distinct-sr-vid-fixture
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5486339Z  * [new branch]        97-review-evidence      -> origin/97-review-evidence
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5489870Z  * [new branch]        97-start-stop-commit-handshake -> origin/97-start-stop-commit-handshake
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5493996Z  * [new branch]        98-clarify-srp-domain-events -> origin/98-clarify-srp-domain-events
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5497312Z  * [new branch]        98-review-evidence      -> origin/98-review-evidence
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5500137Z  * [new branch]        aecp-dyn-state-store    -> origin/aecp-dyn-state-store
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5503415Z  * [new branch]        aecp-identify-control   -> origin/aecp-identify-control
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5506748Z  * [new branch]        aecp-set-rate-and-clock-source -> origin/aecp-set-rate-and-clock-source
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5509445Z  * [new branch]        chore/cpp-core-guidelines-idiom -> origin/chore/cpp-core-guidelines-idiom
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5512651Z  * [new branch]        clksrc-store-tb-tap     -> origin/clksrc-store-tb-tap
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5514995Z  * [new branch]        issue-73-aecp-doc-authority -> origin/issue-73-aecp-doc-authority
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5517564Z  * [new branch]        issue-73-stream-output-counters -> origin/issue-73-stream-output-counters
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5519798Z  * [new branch]        main                    -> origin/main
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5521573Z  * [new tag]           v2.0                    -> v2.0
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5525586Z [command]/usr/bin/git branch --list --remote origin/97-assert-distinct-sr-vid-fixture
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5527741Z   origin/97-assert-distinct-sr-vid-fixture
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5531673Z [command]/usr/bin/git rev-parse refs/remotes/origin/97-assert-distinct-sr-vid-fixture
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5533690Z 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5536860Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5538481Z ##[group]Determining the checkout info
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5540368Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.5541526Z [command]/usr/bin/git sparse-checkout disable
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.6052394Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.6077761Z ##[group]Checking out the ref
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.6081710Z [command]/usr/bin/git checkout --progress --force -B 97-assert-distinct-sr-vid-fixture refs/remotes/origin/97-assert-distinct-sr-vid-fixture
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.6546723Z Switched to a new branch '97-assert-distinct-sr-vid-fixture'
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.6550281Z branch '97-assert-distinct-sr-vid-fixture' set up to track 'origin/97-assert-distinct-sr-vid-fixture'.
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.6557310Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.6587440Z [command]/usr/bin/git log -1 --format=%H
+suites	Run actions/checkout@v4	2026-09-22T09:10:03.6606397Z 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e
+suites	Cache the pinned Verilator build	﻿2026-09-22T09:10:03.6891994Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.6896860Z ##[group]Run actions/cache@v4
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.6897871Z with:
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.6898692Z   path: ~/verilator
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.6899605Z   key: verilator-v5.050-Linux
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.6900682Z   enableCrossOsArchive: false
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.6901839Z   fail-on-cache-miss: false
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.6902868Z   lookup-only: false
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.6903820Z   save-always: false
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.6904737Z env:
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.6905593Z   VERILATOR_VERSION: v5.050
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.6906592Z ##[endgroup]
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.7784221Z (node:2092) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.7787902Z (Use `node --trace-deprecation ...` to show where the warning was created)
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.9106252Z Cache hit for: verilator-v5.050-Linux
+suites	Cache the pinned Verilator build	2026-09-22T09:10:03.9188073Z (node:2092) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+suites	Cache the pinned Verilator build	2026-09-22T09:10:05.0514555Z Received 92171511 of 92171511 (100.0%), 91.4 MBs/sec
+suites	Cache the pinned Verilator build	2026-09-22T09:10:05.0515464Z Cache Size: ~88 MB (92171511 B)
+suites	Cache the pinned Verilator build	2026-09-22T09:10:05.0550832Z [command]/usr/bin/tar -xf /home/runner/work/_temp/c145ba3c-f5ee-460a-9f4d-5469e6d5f1fd/cache.tzst -P -C /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan --use-compress-program unzstd
+suites	Cache the pinned Verilator build	2026-09-22T09:10:05.1657702Z Cache restored successfully
+suites	Cache the pinned Verilator build	2026-09-22T09:10:05.1756088Z Cache restored from key: verilator-v5.050-Linux
+suites	Lint (zero tolerance) + every suite	﻿2026-09-22T09:10:05.1903314Z ##[group]Run export PATH="$HOME/verilator/bin:$PATH"
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:05.1903946Z ^[[36;1mexport PATH="$HOME/verilator/bin:$PATH"^[[0m
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:05.1904429Z ^[[36;1mverilator --version^[[0m
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:05.1904790Z ^[[36;1m./scripts/lint_hdl.sh^[[0m
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:05.1905148Z ^[[36;1m./scripts/run_suites.sh^[[0m
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:05.1929449Z shell: /usr/bin/bash -e {0}
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:05.1929885Z env:
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:05.1930240Z   VERILATOR_VERSION: v5.050
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:05.1930599Z ##[endgroup]
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:05.3377373Z Verilator 5.050 2026-07-01 rev v5.050
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:05.5647478Z LINT OK  KL_acmp_nvm_shadow
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:05.7909135Z LINT OK  KL_acmp_talker
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:06.0081728Z LINT OK  KL_pp_acmp_listener
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:06.2353039Z LINT OK  KL_adp_engine
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:06.4278553Z LINT OK  KL_aecp_ca_originator
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:06.6287163Z LINT OK  KL_aecp_desc_store
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:06.8255817Z LINT OK  KL_aecp_dyn_state
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:07.1359055Z LINT OK  KL_aecp_engine
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:07.3607996Z LINT OK  KL_aecp_notify
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:07.5584506Z LINT OK  KL_aecp_resp_buf
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:07.7624213Z LINT OK  KL_aecp_ucpu
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:07.9523955Z LINT OK  KL_pp_prng
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:08.1391333Z LINT OK  KL_pp_timer_service
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:08.3409832Z LINT OK  KL_pp_maap
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:08.5338625Z LINT OK  KL_pp_dispatch
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:08.7288925Z LINT OK  KL_pp_event_router
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:08.9180776Z LINT OK  KL_pp_normalizer
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:09.1096711Z LINT OK  KL_pp_nvm_port
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:09.3145103Z LINT OK  KL_pp_originator
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:09.5007655Z LINT OK  KL_pp_release_merge
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:09.6914282Z LINT OK  KL_pp_rx_slots
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:09.8903663Z LINT OK  KL_pp_rx_validator
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:10.0819189Z LINT OK  KL_pp_scoreboard
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:10.2707876Z LINT OK  KL_pp_side_port
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:10.4589963Z LINT OK  KL_pp_trace_ring
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:10.6516463Z LINT OK  KL_pp_tx_arbiter
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:10.8461356Z LINT OK  KL_pp_tx_slots
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:11.0403548Z LINT OK  KL_srp_admission
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:11.2389220Z LINT OK  KL_srp_decoder
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:11.4278400Z LINT OK  KL_srp_domain
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:11.6309864Z LINT OK  KL_srp_encoder
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:11.8802177Z LINT OK  KL_srp_listener_fsm
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:12.1308760Z LINT OK  KL_srp_talker_fsm
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:12.5082052Z LINT OK  KL_srp_top
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:12.6988228Z LINT OK  KL_srp_vlan
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:12.8850088Z LINT OK  KL_mrp_strip
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:13.7920665Z LINT OK  protocol_processor_top
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:13.8148144Z UPC MAP GATE: PASS (56 engine constants, 80 entry points, all agree)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:18.6827821Z PASS acmp_listener (2540 checks: 2540 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:23.2007672Z PASS acmp_nvm (86 checks: 86 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:27.8013139Z PASS acmp_talker (839 checks: 839 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:32.3002501Z PASS adp_engine (533 checks: 533 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:36.7004912Z PASS aecp_notify (10 checks: 10 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:40.9529918Z PASS ca_originator (16 checks: 16 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:45.5065416Z PASS desc_store (584 checks: 584 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:49.9003957Z PASS dispatch (211 checks: 211 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:10:58.9348632Z PASS dyn_state (89 checks: 89 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:11:03.2886169Z PASS event_router (81 checks: 81 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:11:07.9192081Z PASS maap (75 checks: 75 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:11:12.1887304Z PASS nvm_port (122 checks: 122 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:11:16.6903164Z PASS originator (104 checks: 104 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:15:23.4943724Z PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:15:27.7614264Z PASS prng (76 checks: 76 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:15:32.0087350Z PASS release_merge (18 checks: 18 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:15:36.3329770Z PASS resp_buf (64 checks: 64 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:15:40.5914403Z PASS rx_slots (130 checks: 130 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:15:44.9922660Z PASS rx_validator (393 checks: 393 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:15:49.3433187Z PASS scoreboard (3705 checks: 3705 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:15:53.6344885Z PASS side_port (368 checks: 368 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:15:57.9683091Z PASS srp_decoder (113 checks: 113 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:16:02.5103672Z PASS srp_encoder (180 checks: 180 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:16:08.1212117Z PASS srp_stream_fsms (1005 checks: 1005 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:16:15.4268249Z PASS srp_top (235 checks: 235 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:16:31.8748627Z PASS timer_map (1360 checks: 1360 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:16:36.0854132Z PASS timer_service (48 checks: 48 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:16:40.4438608Z PASS tx_arbiter (66 checks: 66 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:16:44.7135722Z PASS tx_slots (95 checks: 95 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:16:49.2670638Z PASS ucpu (386 checks: 386 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T09:16:49.2677990Z suites: 14943 checks total, 0 failing
+suites	Traceability matrix no-drift + untested budget 0	﻿2026-09-22T09:16:49.2716149Z ##[group]Run python3 scripts/gen_matrix.py --check
+suites	Traceability matrix no-drift + untested budget 0	2026-09-22T09:16:49.2716560Z ^[[36;1mpython3 scripts/gen_matrix.py --check^[[0m
+suites	Traceability matrix no-drift + untested budget 0	2026-09-22T09:16:49.2738785Z shell: /usr/bin/bash -e {0}
+suites	Traceability matrix no-drift + untested budget 0	2026-09-22T09:16:49.2739136Z env:
+suites	Traceability matrix no-drift + untested budget 0	2026-09-22T09:16:49.2739395Z   VERILATOR_VERSION: v5.050
+suites	Traceability matrix no-drift + untested budget 0	2026-09-22T09:16:49.2739686Z ##[endgroup]
+suites	Traceability matrix no-drift + untested budget 0	2026-09-22T09:16:49.3120270Z matrix: OK (86 rows, 0 untested)
+suites	nvm_port README figures agree with the tree	﻿2026-09-22T09:16:49.3181680Z ##[group]Run export PATH="$HOME/verilator/bin:$PATH"
+suites	nvm_port README figures agree with the tree	2026-09-22T09:16:49.3182133Z ^[[36;1mexport PATH="$HOME/verilator/bin:$PATH"^[[0m
+suites	nvm_port README figures agree with the tree	2026-09-22T09:16:49.3182558Z ^[[36;1m# PR #13 was squash-merged. Its review lineage is therefore absent^[[0m
+suites	nvm_port README figures agree with the tree	2026-09-22T09:16:49.3183062Z ^[[36;1m# from main, but remains available through GitHub's durable pull ref.^[[0m
+suites	nvm_port README figures agree with the tree	2026-09-22T09:16:49.3183487Z ^[[36;1mgit fetch --no-tags origin refs/pull/13/head^[[0m
+suites	nvm_port README figures agree with the tree	2026-09-22T09:16:49.3183837Z ^[[36;1mmake -C tb/nvm_port figures^[[0m
+suites	nvm_port README figures agree with the tree	2026-09-22T09:16:49.3202715Z shell: /usr/bin/bash -e {0}
+suites	nvm_port README figures agree with the tree	2026-09-22T09:16:49.3203010Z env:
+suites	nvm_port README figures agree with the tree	2026-09-22T09:16:49.3203306Z   VERILATOR_VERSION: v5.050
+suites	nvm_port README figures agree with the tree	2026-09-22T09:16:49.3203582Z ##[endgroup]
+suites	nvm_port README figures agree with the tree	2026-09-22T09:16:49.9212158Z From https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+suites	nvm_port README figures agree with the tree	2026-09-22T09:16:49.9212739Z  * branch            refs/pull/13/head -> FETCH_HEAD
+suites	nvm_port README figures agree with the tree	2026-09-22T09:16:49.9227032Z make: Entering directory '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan/tb/nvm_port'
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2327055Z 42 Verilator builds: 1 baseline + 12 arms + 18 mutations + 6 models + 5 matrix
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2327896Z baseline: 122 checks, 122 PASS, 0 FAIL
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2328490Z 
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2328686Z arm coverage (measured vs README):
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2329108Z   [ok ]  211 S_WEREQ    measured=0    readme=0
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2329639Z   [ok ]  220 S_WEWAIT   measured=69   readme=69
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2330113Z   [ok ]  230 S_WWREQ    measured=0    readme=0
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2330641Z   [ok ]  240 S_WHPUMP   measured=64   readme=64
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2331148Z   [ok ]  253 S_WDPUMP   measured=52   readme=52
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2331698Z   [ok ]  263 S_WWAIT    measured=39   readme=39
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2332140Z   [ok ]  274 S_RHREQ    measured=0    readme=0
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2332593Z   [ok ]  284 S_RHCOLL   measured=32   readme=32
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2333051Z   [ok ]  302 S_RHWAIT   measured=29   readme=29
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2333433Z   [ok ]  329 S_RPREQ    measured=0    readme=0
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2333953Z   [ok ]  339 S_RPPUMP   measured=63   readme=63
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2334462Z   [ok ]  349 S_RPWAIT   measured=26   readme=26
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2334737Z 
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2334948Z mutations and probes (measured vs README):
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2335451Z   [ok ] M1               measured=24   readme=24
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2335964Z   [ok ] M1-sibling       measured=5    readme=5
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2336435Z   [ok ] M2               measured=5    readme=5
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2336924Z   [ok ] M3               measured=91   readme=91
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2337567Z   [ok ] M4               measured=52   readme=52
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2338787Z   [ok ] M5               measured=39   readme=39
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2339424Z   [ok ] M6               measured=6    readme=6
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2340113Z   [ok ] M6-sibling       measured=5    readme=5
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2340794Z   [ok ] probe-armearly   measured=1    readme=1
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2341523Z   [ok ] probe-nodevice   measured=3    readme=3
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2341985Z   [ok ] probe-t18        measured=3    readme=3
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2342435Z   [ok ] done_seen_r/coincident measured=91   readme=91
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2342935Z   [ok ] done_seen_r/pristine measured=9    readme=9
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2343442Z   [ok ] own-states-dropped measured=6    readme=6
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2343866Z   [ok ] own-minus-rhcoll measured=3    readme=3
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2344310Z   [ok ] own-minus-wwait  measured=0    readme=0
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2344721Z   [ok ] own-plus-rhreq   measured=1    readme=1
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2345483Z   [ok ] retraction       measured=2    readme=2
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2345721Z 
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2345903Z device models (measured vs README):
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2346347Z   [ok ] pristine                   measured=122 PASS, 0 FAIL  readme=(122, 0)
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2346963Z   [ok ] half-page                  measured=122 PASS, 0 FAIL  readme=(122, 0)
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2347510Z   [ok ] half-page                  measured=122 PASS, 0 FAIL  readme=(122, 0)
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2348234Z   [ok ] page-buffered NOR          measured=122 PASS, 0 FAIL  readme=(122, 0)
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2348776Z   [ok ] lazy erase                 measured=121 PASS, 1 FAIL  readme=(121, 1)
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2349439Z   [ok ] lazy erase + page-buffered measured=121 PASS, 1 FAIL  readme=(121, 1)
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2350093Z   [ok ] coincident completion      measured=122 PASS, 0 FAIL  readme=(122, 0)
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2350519Z 
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2350702Z pre-fix matrix (measured vs README), 5 builds:
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2351426Z   [ok ] T16 byte comparison                measured=pass FAIL FAIL FAIL FAIL
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2352110Z   [ok ] T17 restore vs the record          measured=pass FAIL FAIL pass FAIL
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2352778Z   [ok ] T17 restore vs the array           measured=pass pass FAIL pass pass
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2353444Z   [ok ] T15 branch pin                     measured=pass pass FAIL pass FAIL
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2354223Z   [ok ] T15 cut was real                   measured=pass pass pass pass FAIL
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2355052Z   [ok ] T15 #70 property, unconditioned    measured=pass pass pass pass FAIL
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2355516Z 
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2355700Z all measured figures agree with the tree
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2356064Z 
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2356370Z NOT measured (waived, with the reason, so the exclusion set is
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2357089Z derived from the file rather than asserted in a comment):
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2358419Z   - /`fails 22 of the 122 checks` and `fails\s+22 out of 122`/ absorbs 2 (cap 4): two illustrative phrasings quoted inside the paragraph explaining what the inverted default does not close; not claims about this suite
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2360053Z   - /\b122/122\b/ absorbs 2 (cap 4): suite tally shorthand; both halves are the suite size, which the size check already pins against the measured total
+suites	nvm_port README figures agree with the tree	2026-09-22T09:19:57.2397104Z make: Leaving directory '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan/tb/nvm_port'
+suites	Post Cache the pinned Verilator build	﻿2026-09-22T09:19:57.2478885Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+suites	Post Cache the pinned Verilator build	2026-09-22T09:19:57.2479922Z Post job cleanup.
+suites	Post Cache the pinned Verilator build	2026-09-22T09:19:57.3413737Z Cache hit occurred on the primary key verilator-v5.050-Linux, not saving cache.
+suites	Post Cache the pinned Verilator build	2026-09-22T09:19:57.3415415Z (node:6335) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+suites	Post Cache the pinned Verilator build	2026-09-22T09:19:57.3416060Z (Use `node --trace-deprecation ...` to show where the warning was created)
+suites	Post Run actions/checkout@v4	﻿2026-09-22T09:19:57.3535067Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.3536104Z Post job cleanup.
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.4227397Z [command]/usr/bin/git version
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.4267320Z git version 2.55.0
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.4312526Z Temporarily overriding HOME='/home/runner/work/_temp/69816ecd-c16c-4776-8af8-0c9f91cf9d1b' before making global git config changes
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.4313885Z Adding repository directory to the temporary git global config as a safe directory
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.4314970Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.4352224Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.4382617Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.4544668Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.4563868Z http.https://github.com/.extraheader
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.4574215Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.4598664Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.4795005Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+suites	Post Run actions/checkout@v4	2026-09-22T09:19:57.4823287Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+suites	Complete job	﻿2026-09-22T09:19:57.5126852Z Cleaning up orphan processes
+suites	Complete job	2026-09-22T09:19:57.5351977Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/cache@v4, actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

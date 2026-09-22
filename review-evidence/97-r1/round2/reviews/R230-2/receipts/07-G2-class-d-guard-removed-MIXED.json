@@ -1,0 +1,27 @@
+{
+ "name": "07-G2-class-d-guard-removed-MIXED",
+ "cwd": "/tmp/r230-100-r2-scratch/mutant-tree/tb/pp_top",
+ "cmd": [
+  "make",
+  "-j1",
+  "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/scripts/verilator8",
+  "fixture-guards"
+ ],
+ "env": {
+  "PATH": "/usr/local/bin:/usr/bin:/bin",
+  "HOME": "$WORKSPACE_HOME",
+  "LANG": "de_DE.UTF-8",
+  "TMPDIR": "/tmp/r230-100-r2-scratch/tmp",
+  "LOCPATH": "/tmp/r230-100-r2-scratch/locales",
+  "LC_ALL": "fr_FR.UTF-8",
+  "LANGUAGE": "de:fr",
+  "LC_MESSAGES": "de_DE.UTF-8",
+  "R230_VLOG": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/verilator-invocations.jsonl"
+ },
+ "rc": 2,
+ "expected_rc": 2,
+ "as_expected": true,
+ "seconds": 4.4,
+ "start": "2026-09-22T12:26:44+02:00",
+ "end": "2026-09-22T12:26:49+02:00"
+}

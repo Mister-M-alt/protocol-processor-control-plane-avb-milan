@@ -1,0 +1,121 @@
+06a-regression-EN: rc=0 expected=0 0.1s
+06a-regression-DE_LC_ALL: rc=0 expected=0 0.1s
+06a-regression-MIXED: rc=0 expected=0 0.1s
+06b-regression-audit-noPATH: rc=0 expected=0 0.1s
+06c-regression-N1-no-env-argument: rc=1 expected=1 0.1s
+06c-regression-N2-no-lc-all-override: rc=1 expected=1 0.1s
+06c-regression-N3-lang-instead-of-lc-all: rc=1 expected=1 0.1s
+06c-regression-N4-lc-messages-instead-of-lc-all: rc=1 expected=1 0.1s
+06c-regression-N5-drop-inherited-environment: rc=1 expected=1 0.1s
+06c-regression-N6-mutate-caller-environment: rc=1 expected=1 0.1s
+06c-regression-N7-verilator-also-normalised: rc=1 expected=1 0.1s
+06c-regression-N8-global-lc-all-before-verilator: rc=1 expected=1 0.1s
+06c-regression-E1-dict-merge: rc=0 expected=0 0.1s
+06c-regression-E2-dict-kwargs: rc=0 expected=0 0.1s
+06c-regression-C1-lenient-verdict: rc=0 expected=0 0.1s
+06d-gate-direct-head-DE_LC_ALL: rc=0 expected=0 5.3s
+06d-gate-direct-N1-no-env-argument-DE_LC_ALL: rc=1 expected=1 4.3s
+06d-gate-direct-N2-no-lc-all-override-DE_LC_ALL: rc=1 expected=1 4.3s
+06d-gate-direct-N3-lang-instead-of-lc-all-DE_LC_ALL: rc=1 expected=1 4.3s
+06d-gate-direct-N4-lc-messages-instead-of-lc-all-DE_LC_ALL: rc=1 expected=1 4.3s
+06e-make-default-target-N2-j8: rc=2 expected=2 0.1s
+after 06e: obj_dir exists=no obj_vid exists=no
+mutant tree gate restored to head bytes
+== summary
+06a-regression-DE_LC_ALL                             rc=0 expected=0 as_expected=True
+06a-regression-EN                                    rc=0 expected=0 as_expected=True
+06a-regression-MIXED                                 rc=0 expected=0 as_expected=True
+06b-regression-audit-noPATH                          rc=0 expected=0 as_expected=True
+06c-regression-C1-lenient-verdict                    rc=0 expected=0 as_expected=True
+06c-regression-E1-dict-merge                         rc=0 expected=0 as_expected=True
+06c-regression-E2-dict-kwargs                        rc=0 expected=0 as_expected=True
+06c-regression-N1-no-env-argument                    rc=1 expected=1 as_expected=True
+06c-regression-N2-no-lc-all-override                 rc=1 expected=1 as_expected=True
+06c-regression-N3-lang-instead-of-lc-all             rc=1 expected=1 as_expected=True
+06c-regression-N4-lc-messages-instead-of-lc-all      rc=1 expected=1 as_expected=True
+06c-regression-N5-drop-inherited-environment         rc=1 expected=1 as_expected=True
+06c-regression-N6-mutate-caller-environment          rc=1 expected=1 as_expected=True
+06c-regression-N7-verilator-also-normalised          rc=1 expected=1 as_expected=True
+06c-regression-N8-global-lc-all-before-verilator     rc=1 expected=1 as_expected=True
+06d-gate-direct-head-DE_LC_ALL                       rc=0 expected=0 as_expected=True
+06d-gate-direct-N1-no-env-argument-DE_LC_ALL         rc=1 expected=1 as_expected=True
+06d-gate-direct-N2-no-lc-all-override-DE_LC_ALL      rc=1 expected=1 as_expected=True
+06d-gate-direct-N3-lang-instead-of-lc-all-DE_LC_ALL  rc=1 expected=1 as_expected=True
+06d-gate-direct-N4-lc-messages-instead-of-lc-all-DE_LC_ALL rc=1 expected=1 as_expected=True
+06e-make-default-target-N2-j8                        rc=2 expected=2 as_expected=True
+== audit-hook result
+tests run=1 successful=True real process creations observed=0
+RESULT: PASS
+== failing assertion per N mutant
+-- 06c-regression-N1-no-env-argument
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None)
+   AssertionError: {'std[31 chars] True} != {'std[31 chars] True, 'env': {'LANG': 'fr_FR.UTF-8', 'LANGUAG[126 chars]'C'}}
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8')
+   AssertionError: {'std[31 chars] True} != {'std[31 chars] True, 'env': {'LANG': 'fr_FR.UTF-8', 'LANGUAG[126 chars]'C'}}
+   FAILED (failures=2)
+-- 06c-regression-N2-no-lc-all-override
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None)
+   AssertionError: {'std[145 chars]TH': '/test/include', 'CXXFLAGS': '-test-flag'}} != {'std[145 chars]TH': '/test/include', 'CXXFLAGS': '-test-flag', 'LC_ALL': 'C'}}
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8')
+   AssertionError: {'std[155 chars]t/include', 'CXXFLAGS': '-test-flag', 'LC_ALL': 'fr_FR.UTF-8'}} != {'std[155 chars]t/include', 'CXXFLAGS': '-test-flag', 'LC_ALL': 'C'}}
+   FAILED (failures=2)
+-- 06c-regression-N3-lang-instead-of-lc-all
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None)
+   AssertionError: {'std[50 chars]G': 'C', 'LANGUAGE': 'de:fr', 'LC_MESSAGES': '[82 chars]ag'}} != {'std[50 chars]G': 'fr_FR.UTF-8', 'LANGUAGE': 'de:fr', 'LC_ME[107 chars]'C'}}
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8')
+   AssertionError: {'std[50 chars]G': 'C', 'LANGUAGE': 'de:fr', 'LC_MESSAGES': '[107 chars]-8'}} != {'std[50 chars]G': 'fr_FR.UTF-8', 'LANGUAGE': 'de:fr', 'LC_ME[107 chars]'C'}}
+   FAILED (failures=2)
+-- 06c-regression-N4-lc-messages-instead-of-lc-all
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None)
+   AssertionError: {'std[101 chars]S': 'C', 'PATH': '/test/bin', 'CPATH': '/test/[31 chars]ag'}} != {'std[101 chars]S': 'de_DE.UTF-8', 'PATH': '/test/bin', 'CPATH[56 chars]'C'}}
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8')
+   AssertionError: {'std[101 chars]S': 'C', 'PATH': '/test/bin', 'CPATH': '/test/[56 chars]-8'}} != {'std[101 chars]S': 'de_DE.UTF-8', 'PATH': '/test/bin', 'CPATH[56 chars]'C'}}
+   FAILED (failures=2)
+-- 06c-regression-N5-drop-inherited-environment
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None)
+   AssertionError: {'std[43 chars]: {'LC_ALL': 'C'}} != {'std[43 chars]: {'LANG': 'fr_FR.UTF-8', 'LANGUAGE': 'de:fr',[114 chars]'C'}}
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8')
+   AssertionError: {'std[43 chars]: {'LC_ALL': 'C'}} != {'std[43 chars]: {'LANG': 'fr_FR.UTF-8', 'LANGUAGE': 'de:fr',[114 chars]'C'}}
+   FAILED (failures=2)
+-- 06c-regression-N6-mutate-caller-environment
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None)
+   AssertionError: {'LAN[94 chars]ATH': '/test/include', 'CXXFLAGS': '-test-flag', 'LC_ALL': 'C'} != {'LAN[94 chars]ATH': '/test/include', 'CXXFLAGS': '-test-flag'}
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8')
+   AssertionError: {'LAN[104 chars]st/include', 'CXXFLAGS': '-test-flag', 'LC_ALL': 'C'} != {'LAN[104 chars]st/include', 'CXXFLAGS': '-test-flag', 'LC_ALL': 'fr_FR.UTF-8'}
+   FAILED (failures=2)
+-- 06c-regression-N7-verilator-also-normalised
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None)
+   AssertionError: {'check': True, 'env': {'LANG': 'fr_FR.UTF-8', 'LANGUAG[126 chars]'C'}} != {'check': True}
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8')
+   AssertionError: {'check': True, 'env': {'LANG': 'fr_FR.UTF-8', 'LANGUAG[126 chars]'C'}} != {'check': True}
+   FAILED (failures=2)
+-- 06c-regression-N8-global-lc-all-before-verilator
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None)
+   AssertionError: {'LAN[94 chars]ATH': '/test/include', 'CXXFLAGS': '-test-flag', 'LC_ALL': 'C'} != {'LAN[94 chars]ATH': '/test/include', 'CXXFLAGS': '-test-flag'}
+   FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8')
+   AssertionError: {'LAN[104 chars]st/include', 'CXXFLAGS': '-test-flag', 'LC_ALL': 'C'} != {'LAN[104 chars]st/include', 'CXXFLAGS': '-test-flag', 'LC_ALL': 'fr_FR.UTF-8'}
+   FAILED (failures=2)
+== real gate verdict lines (06d)
+-- 06d-gate-direct-head-DE_LC_ALL
+   fixture guards: 4 cases PASS
+-- 06d-gate-direct-N1-no-env-argument-DE_LC_ALL
+   FAIL: fixture 0002: unexpected compiler result 1
+   sim_main.cpp:81:27: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+   sim_main.cpp:83:39: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 06d-gate-direct-N2-no-lc-all-override-DE_LC_ALL
+   FAIL: fixture 0002: unexpected compiler result 1
+   sim_main.cpp:81:27: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+   sim_main.cpp:83:39: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 06d-gate-direct-N3-lang-instead-of-lc-all-DE_LC_ALL
+   FAIL: fixture 0002: unexpected compiler result 1
+   sim_main.cpp:81:27: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+   sim_main.cpp:83:39: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+-- 06d-gate-direct-N4-lc-messages-instead-of-lc-all-DE_LC_ALL
+   FAIL: fixture 0002: unexpected compiler result 1
+   sim_main.cpp:81:27: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+   sim_main.cpp:83:39: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+== 06e tail
+Ran 1 test in 0.004s
+
+FAILED (failures=2)
+make: *** [Makefile:72: fixture-guards-test] Fehler 1

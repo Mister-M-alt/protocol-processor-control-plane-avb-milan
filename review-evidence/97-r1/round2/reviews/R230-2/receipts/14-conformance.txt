@@ -1,0 +1,45 @@
+== sources
+| P-SRP-DOM-DEF-VID | 2 | 16-bit; =2 in every product build (Milan §4.2.7.2.1). Any other value is a verification fixture proving the top-level binding, not a product profile | SRP Domain FSM default VID ([F10.2](10_srp_engine.md#fig-10-domsm)): declared at startup and LINK_UP, restored at LINK_DOWN; a received Class A Domain is still adopted over it |
+| `SRP_DOM_DEF_VID_P` | 2 | the Class A Domain VID the SRP engine declares at start-up and on every link-up, and returns to on link-down (Milan §4.2.7.2.1). A bridge's differing Class A Domain is still adopted at run time. **Keep it at 2 in a product build**: Milan fixes the value, and any other one exists only to prove this binding in verification. |
+<a id="fig-10-domsm"></a>**F10.2 — Class A Domain (Milan §4.2.7.2.1)**
+`P-SRP-DOM-DEF-VID` is the Domain default VID of [F10.2](#fig-10-domsm): declared at
+startup and on LINK_UP, restored on LINK_DOWN, and replaced at run time by an adopted
+Domain (§6.1).
+Instance counts: 2 + `P-N-STREAM-IN` + `P-N-STREAM-OUT` FSMs; registrar/leave timer
+| REQ-NET-002 | Milan §5.3.6.2, §4.2.7.2.1 | Track MSRP domain params (Class A priority 3, default VID 2); adopt + re-declare on differing Domain declaration; notify on change | shall | A | [GAP-04](#gap-04) | `srp` contract; SRP engine | 02 §4, 10 §6.1 | DIR |
+| REQ-SRP-004 | Milan §4.2.7.2.1 | Class A Domain: priority 3 / default VID 2 at startup and link-up; adopt received params + re-declare on differing declaration; Domain TX independent of gPTP port state | shall | A | [GAP-04](#gap-04) | Domain FSM F10.2 | 10 §6.1 | DIR |
+== bench guards (tb/pp_top/sim_main.cpp:75-87, 8257-8262)
+//! P-SRP-DOM-DEF-VID as THIS build asked for it (section DV). The first build
+//! overrides nothing, so it expects Milan §4.2.7.2.1's 2; the second build is
+//! compiled with the fixture the Makefile also hands the wrap.
+#ifdef PP_TOP_SRP_DOM_DEF_VID
+constexpr uint16_t    SRP_DEF_VID = PP_TOP_SRP_DOM_DEF_VID;
+//! A default-equivalent fixture cannot expose a dropped binding (issue #97).
+static_assert(SRP_DEF_VID != 2,
+              "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
+static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
+              "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
+#else
+constexpr uint16_t    SRP_DEF_VID = 2;
+#endif
+  //! the class-D port, snapshot word 10, GET_DOMAIN and the ACMP talker
+  //! carry 12 bits; only the MSRP wire field shows all 16 of the parameter
+  static constexpr unsigned DEF_VID12 = SRP_DEF_VID & 0x0FFFu;
+  //! a bridge's Class A Domain VID, distinct from both builds' defaults
+  static constexpr uint16_t ADOPT_VID = 5;
+  static_assert(SRP_DEF_VID != ADOPT_VID, "DV4 must see the VID move");
+== value matrix
+verilate rc=0
+   none   rc=0 wire=0 class-D=0 DV4=0 other-errors=0
+   5A3C   rc=0 wire=0 class-D=0 DV4=0 other-errors=0
+   5a3c   rc=0 wire=0 class-D=0 DV4=0 other-errors=0
+   0003   rc=0 wire=0 class-D=0 DV4=0 other-errors=0
+   0000   rc=0 wire=0 class-D=0 DV4=0 other-errors=0
+   0FFF   rc=0 wire=0 class-D=0 DV4=0 other-errors=0
+   1005   rc=0 wire=0 class-D=0 DV4=0 other-errors=0
+   0002   rc=1 wire=1 class-D=1 DV4=0 other-errors=0
+   2      rc=1 wire=1 class-D=1 DV4=0 other-errors=0
+   10002  rc=1 wire=1 class-D=1 DV4=0 other-errors=0
+   1002   rc=1 wire=0 class-D=1 DV4=0 other-errors=0
+   F002   rc=1 wire=0 class-D=1 DV4=0 other-errors=0
+== head clone status --porcelain --ignored: 0 lines

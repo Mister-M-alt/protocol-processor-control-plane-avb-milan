@@ -1,0 +1,24 @@
+{
+ "name": "12-gate-python3.11.15-DE_LC_ALL",
+ "cwd": "/tmp/r230-100-r2-scratch/head/tb/pp_top",
+ "cmd": [
+  "sh",
+  "-c",
+  "python3 --version; make -j1 VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/scripts/verilator8 fixture-guards"
+ ],
+ "env": {
+  "PATH": "$WORKSPACE_HOME/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/bin:/usr/local/bin:/usr/bin:/bin",
+  "HOME": "$WORKSPACE_HOME",
+  "LANG": "en_US.UTF-8",
+  "TMPDIR": "/tmp/r230-100-r2-scratch/tmp",
+  "LOCPATH": "/tmp/r230-100-r2-scratch/locales",
+  "LC_ALL": "de_DE.UTF-8",
+  "R230_VLOG": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/verilator-invocations.jsonl"
+ },
+ "rc": 0,
+ "expected_rc": 0,
+ "as_expected": true,
+ "seconds": 5.1,
+ "start": "2026-09-22T12:47:46+02:00",
+ "end": "2026-09-22T12:47:51+02:00"
+}

@@ -1,0 +1,23 @@
+{
+ "name": "06d-gate-direct-N3-lang-instead-of-lc-all-DE_LC_ALL",
+ "cwd": "/tmp/r230-100-r2-scratch/mutant-tree/tb/pp_top",
+ "cmd": [
+  "bash",
+  "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/scripts/gate-direct.sh",
+  "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/scripts/verilator8"
+ ],
+ "env": {
+  "PATH": "/usr/local/bin:/usr/bin:/bin",
+  "HOME": "$WORKSPACE_HOME",
+  "LANG": "en_US.UTF-8",
+  "TMPDIR": "/tmp/r230-100-r2-scratch/tmp",
+  "LOCPATH": "/tmp/r230-100-r2-scratch/locales",
+  "LC_ALL": "de_DE.UTF-8"
+ },
+ "rc": 1,
+ "expected_rc": 1,
+ "as_expected": true,
+ "seconds": 4.3,
+ "start": "2026-09-22T12:24:50+02:00",
+ "end": "2026-09-22T12:24:55+02:00"
+}

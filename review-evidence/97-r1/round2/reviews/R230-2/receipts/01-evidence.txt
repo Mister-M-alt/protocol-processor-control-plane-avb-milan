@@ -1,0 +1,109 @@
+## evidence branch 97-review-evidence tip: 290d5a2ceb23a5cb4eac41257ac331d63babeaf3
+commit 4d005092a0c5bec91b7768d5ab46beef0e6464c1 parent 87673c1c213275067657811000e9105131d6ef56 subject: Archive deterministic compiler locale correction and controls
+  touched top-level prefixes:
+      1     review-evidence/97-r1/MANIFEST.json/
+     86     review-evidence/97-r1/round2/author
+      1     review-evidence/97-r1/round2/manager
+  not an ancestor of head (never merged)
+commit 290d5a2ceb23a5cb4eac41257ac331d63babeaf3 parent 4d005092a0c5bec91b7768d5ab46beef0e6464c1 subject: Archive full native and hosted validation of locale correction
+  touched top-level prefixes:
+      1     review-evidence/97-r1/MANIFEST.json/
+     14     review-evidence/97-r1/round2/manager
+  not an ancestor of head (never merged)
+
+## MANIFEST.json round2 entries vs published bytes
+entries=101 on_disk=101 unlisted=[] hash_mismatch=[] redaction_flag_inconsistent=[] path_redacted=24
+
+## author patches vs actual diffs
+author/source.patch == git diff prior..head
+author/source-vs-main.patch == git diff base..head
+
+## author IDENTITY.json
+{
+  "head": "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+  "tree": "8768f7e640ee62fd62862bec7117155fcab3ddbb",
+  "parent": "1eb20dc4911880de10b745cc284e7dde306788b5",
+  "main_base": "8452f564294300a82d56eed464276576f65f4d58",
+  "branch": "97-assert-distinct-sr-vid-fixture",
+  "commit_message": "Normalize fixture guard compiler diagnostics to C"
+}
+
+## author RESULTS.json (return codes)
+  01-base-german rc 2  
+  02-base-french rc 2  
+  03-fixed-german rc 0  PASS
+  04-fixed-french rc 0  PASS
+  05-remove-wire rc 2  
+  06-remove-class-d rc 2  
+  07-unrelated-error rc 2  
+  08-remove-locale rc 2  
+  09-default-and-5a3c rc 0 1411 checks: 1411 PASS, 0 FAIL 
+  10-docs rc 0  
+  11-upc-map rc 0  
+  12-precommit-scope rc 0  
+  job_cap {'invocations': 18, 'work_invocations': 10, 'verilator_jobs': 8, 'build_jobs': 8, 'verilate_jobs': 8, 'outer_suite_make_jobs': 1, 'mutations': 'sequential, disposable scratch'}
+
+## manager candidate / native / integrity
+{
+  "head": "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+  "base": "8452f564294300a82d56eed464276576f65f4d58",
+  "tree": "8768f7e640ee62fd62862bec7117155fcab3ddbb",
+  "candidate_equals_head_tree": true,
+  "observed": "2026-09-22T11:09:50.869277+02:00"
+}
+
+head 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e
+  rc 0 verilator --version
+  rc 0 git fetch --no-tags origin refs/pull/13/head
+  rc 0 bash scripts/lint_hdl.sh
+  rc 0 bash scripts/run_suites.sh
+  rc 0 make -j1 check
+  rc 0 python3 scripts/gen_matrix.py --check
+  rc 0 bash syn/yosys/run.sh
+  rc 0 make -C tb/nvm_port figures
+  rc 0 git diff --check 8452f564294300a82d56eed464276576f65f4d58 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e
+{
+  "head": "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+  "exit_code": 0,
+  "finished": "2026-09-22T11:18:22.735641+02:00"
+}
+
+PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)
+suites: 14943 checks total, 0 failing
+Verilator 5.052 2026-09-05 rev v5.052
+final-integrity live_main 8452f564294300a82d56eed464276576f65f4d58 candidate_equals_head_tree True
+   $CANDIDATE 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e 8768f7e640ee62fd62862bec7117155fcab3ddbb porcelain=''
+   $VALIDATION 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e 8768f7e640ee62fd62862bec7117155fcab3ddbb porcelain=''
+
+## manager hosted.json snapshot
+headRefOid 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e isDraft True
+   docs-gates COMPLETED SUCCESS 35708829801/job/106684193718
+   docs-gates COMPLETED SUCCESS 35708824838/job/106684178741
+   suites COMPLETED SUCCESS 35708829801/job/106684193618
+   suites COMPLETED SUCCESS 35708824838/job/106684179182
+   portability COMPLETED SUCCESS 35708829801/job/106684193741
+   portability COMPLETED SUCCESS 35708824838/job/106684179155
+
+## live hosted runs (2026-09-22T12:18:46+02:00)
+run 35708824838 push completed/success head_sha=5c45845ad15bd7995f20c81d7fd61501e5ca9d7e attempt=1
+  job 106684178741 docs-gates completed/success head_sha=5c45845ad15bd7995f20c81d7fd61501e5ca9d7e
+  job 106684179155 portability completed/success head_sha=5c45845ad15bd7995f20c81d7fd61501e5ca9d7e
+  job 106684179182 suites completed/success head_sha=5c45845ad15bd7995f20c81d7fd61501e5ca9d7e
+run 35708829801 pull_request completed/success head_sha=5c45845ad15bd7995f20c81d7fd61501e5ca9d7e attempt=1
+  job 106684193618 suites completed/success head_sha=5c45845ad15bd7995f20c81d7fd61501e5ca9d7e
+  job 106684193718 docs-gates completed/success head_sha=5c45845ad15bd7995f20c81d7fd61501e5ca9d7e
+  job 106684193741 portability completed/success head_sha=5c45845ad15bd7995f20c81d7fd61501e5ca9d7e
+all hdl runs for head:
+  35708829801 hdl pull_request completed/success
+  35708824838 hdl push completed/success
+== 01-hosted-suites-push.log
+  checked out: 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e
+  Verilator 5.050 2026-07-01 rev v5.050
+  PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)
+  suites: 14943 checks total, 0 failing
+== 01-hosted-suites-pr.log
+  checked out: 6439edc9e2a2fa06c4f9ce2e35d4ccaa273e321d
+  HEAD is now at 6439edc Merge 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e into 8452f564294300a82d56eed464276576f65f4d58
+  Verilator 5.050 2026-07-01 rev v5.050
+  PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)
+  suites: 14943 checks total, 0 failing

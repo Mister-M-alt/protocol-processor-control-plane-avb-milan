@@ -1,0 +1,28 @@
+{
+ "argv": [
+  "-std=c++17",
+  "-Wall",
+  "-Wextra",
+  "-fsyntax-only",
+  "-I/tmp/r230-100-r2-scratch/tmp/pp-top-vid-guards-f65_ws2a",
+  "-I/usr/share/verilator/include",
+  "-I/usr/share/verilator/include/vltstd",
+  "-DPP_TOP_SRP_DOM_DEF_VID=0x5A3C",
+  "sim_main.cpp"
+ ],
+ "env": {
+  "HOME": "$WORKSPACE_HOME",
+  "LANG": "de_DE.UTF-8",
+  "LANGUAGE": "de:fr",
+  "LC_ALL": "C",
+  "LC_MESSAGES": "de_DE.UTF-8",
+  "LOCPATH": "/tmp/r230-100-r2-scratch/locales",
+  "PATH": "/usr/local/bin:/usr/bin:/bin",
+  "R230_CXX_DIR": "/tmp/r230-100-r2-scratch/capture/inprocess/cxx",
+  "R230_ENV_DUMP_DIR": "/tmp/r230-100-r2-scratch/capture/inprocess/venv",
+  "R230_MARKER": "keep-me",
+  "R230_VLOG": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/verilator-invocations.jsonl",
+  "TMPDIR": "/tmp/r230-100-r2-scratch/tmp"
+ },
+ "rc": 0
+}

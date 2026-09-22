@@ -1,0 +1,68 @@
+python3 ../../hdl/acmp/rom/gen_ltn_rom.py -o ltn_rom.hex
+python3 ../../hdl/aecp/ucode/gen_ucode.py -o ucode.hex
+wrote ltn_rom.hex: 128 x 32 b, 112 F05.3 cells
+ucode.hex: 2048 words, 80 programs
+test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) ... 
+  test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None) ... FAIL
+  test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8') ... FAIL
+
+======================================================================
+FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/r230-100-r2-scratch/mutant-tree/tb/pp_top/test_fixture_guards.py", line 57, in test_compiler_environment_and_arguments
+    self.assertEqual(call.kwargs, {
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+        "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "text": True,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        "env": {**caller_env, "LC_ALL": "C"},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    })
+    ^^
+AssertionError: {'std[145 chars]TH': '/test/include', 'CXXFLAGS': '-test-flag'}} != {'std[145 chars]TH': '/test/include', 'CXXFLAGS': '-test-flag', 'LC_ALL': 'C'}}
+  {'env': {'CPATH': '/test/include',
+           'CXXFLAGS': '-test-flag',
+           'LANG': 'fr_FR.UTF-8',
+           'LANGUAGE': 'de:fr',
++          'LC_ALL': 'C',
+           'LC_MESSAGES': 'de_DE.UTF-8',
+           'PATH': '/test/bin'},
+   'stderr': -2,
+   'stdout': -1,
+   'text': True}
+
+======================================================================
+FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/r230-100-r2-scratch/mutant-tree/tb/pp_top/test_fixture_guards.py", line 57, in test_compiler_environment_and_arguments
+    self.assertEqual(call.kwargs, {
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+        "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "text": True,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        "env": {**caller_env, "LC_ALL": "C"},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    })
+    ^^
+AssertionError: {'std[155 chars]t/include', 'CXXFLAGS': '-test-flag', 'LC_ALL': 'fr_FR.UTF-8'}} != {'std[155 chars]t/include', 'CXXFLAGS': '-test-flag', 'LC_ALL': 'C'}}
+  {'env': {'CPATH': '/test/include',
+           'CXXFLAGS': '-test-flag',
+           'LANG': 'fr_FR.UTF-8',
+           'LANGUAGE': 'de:fr',
+-          'LC_ALL': 'fr_FR.UTF-8',
+?                     ^^^^^^^^^^^
+
++          'LC_ALL': 'C',
+?                     ^
+
+           'LC_MESSAGES': 'de_DE.UTF-8',
+           'PATH': '/test/bin'},
+   'stderr': -2,
+   'stdout': -1,
+   'text': True}
+
+----------------------------------------------------------------------
+Ran 1 test in 0.004s
+
+FAILED (failures=2)
+make: *** [Makefile:72: fixture-guards-test] Fehler 1

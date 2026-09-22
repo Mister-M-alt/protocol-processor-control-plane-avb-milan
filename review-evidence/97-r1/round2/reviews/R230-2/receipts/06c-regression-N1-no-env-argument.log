@@ -1,0 +1,60 @@
+test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) ... 
+  test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None) ... FAIL
+  test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8') ... FAIL
+
+======================================================================
+FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/r230-100-r2-scratch/regression-mutants/N1-no-env-argument/test_fixture_guards.py", line 57, in test_compiler_environment_and_arguments
+    self.assertEqual(call.kwargs, {
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+        "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "text": True,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        "env": {**caller_env, "LC_ALL": "C"},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    })
+    ^^
+AssertionError: {'std[31 chars] True} != {'std[31 chars] True, 'env': {'LANG': 'fr_FR.UTF-8', 'LANGUAG[126 chars]'C'}}
+- {'stderr': -2, 'stdout': -1, 'text': True}
++ {'env': {'CPATH': '/test/include',
++          'CXXFLAGS': '-test-flag',
++          'LANG': 'fr_FR.UTF-8',
++          'LANGUAGE': 'de:fr',
++          'LC_ALL': 'C',
++          'LC_MESSAGES': 'de_DE.UTF-8',
++          'PATH': '/test/bin'},
++  'stderr': -2,
++  'stdout': -1,
++  'text': True}
+
+======================================================================
+FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/r230-100-r2-scratch/regression-mutants/N1-no-env-argument/test_fixture_guards.py", line 57, in test_compiler_environment_and_arguments
+    self.assertEqual(call.kwargs, {
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+        "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "text": True,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        "env": {**caller_env, "LC_ALL": "C"},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    })
+    ^^
+AssertionError: {'std[31 chars] True} != {'std[31 chars] True, 'env': {'LANG': 'fr_FR.UTF-8', 'LANGUAG[126 chars]'C'}}
+- {'stderr': -2, 'stdout': -1, 'text': True}
++ {'env': {'CPATH': '/test/include',
++          'CXXFLAGS': '-test-flag',
++          'LANG': 'fr_FR.UTF-8',
++          'LANGUAGE': 'de:fr',
++          'LC_ALL': 'C',
++          'LC_MESSAGES': 'de_DE.UTF-8',
++          'PATH': '/test/bin'},
++  'stderr': -2,
++  'stdout': -1,
++  'text': True}
+
+----------------------------------------------------------------------
+Ran 1 test in 0.003s
+
+FAILED (failures=2)

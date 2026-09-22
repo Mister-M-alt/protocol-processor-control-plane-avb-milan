@@ -1,0 +1,8 @@
+test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.002s
+
+OK
+tests run=1 successful=True real process creations observed=0
+RESULT: PASS

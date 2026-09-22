@@ -1,0 +1,140 @@
+### N1-no-env-argument
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -43,7 +43,6 @@
+             result = subprocess.run(
+                 [*command, *define, "sim_main.cpp"],
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+-                env=compiler_env,
+             )
+             errors = [line for line in result.stdout.splitlines() if "error:" in line]
+             assertions = [line for line in errors if "static assertion" in line]
+### N2-no-lc-all-override
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -37,7 +37,6 @@
+         ]
+         # The diagnostic checks below require the compiler's English wording.
+         compiler_env = os.environ.copy()
+-        compiler_env["LC_ALL"] = "C"
+         for value, expected in cases:
+             define = [] if value is None else ["-DPP_TOP_SRP_DOM_DEF_VID=0x" + value]
+             result = subprocess.run(
+### N3-lang-instead-of-lc-all
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -37,7 +37,7 @@
+         ]
+         # The diagnostic checks below require the compiler's English wording.
+         compiler_env = os.environ.copy()
+-        compiler_env["LC_ALL"] = "C"
++        compiler_env["LANG"] = "C"
+         for value, expected in cases:
+             define = [] if value is None else ["-DPP_TOP_SRP_DOM_DEF_VID=0x" + value]
+             result = subprocess.run(
+### N4-lc-messages-instead-of-lc-all
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -37,7 +37,7 @@
+         ]
+         # The diagnostic checks below require the compiler's English wording.
+         compiler_env = os.environ.copy()
+-        compiler_env["LC_ALL"] = "C"
++        compiler_env["LC_MESSAGES"] = "C"
+         for value, expected in cases:
+             define = [] if value is None else ["-DPP_TOP_SRP_DOM_DEF_VID=0x" + value]
+             result = subprocess.run(
+### N5-drop-inherited-environment
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -36,7 +36,7 @@
+             "-I" + str(Path(root) / "include/vltstd"),
+         ]
+         # The diagnostic checks below require the compiler's English wording.
+-        compiler_env = os.environ.copy()
++        compiler_env = {}
+         compiler_env["LC_ALL"] = "C"
+         for value, expected in cases:
+             define = [] if value is None else ["-DPP_TOP_SRP_DOM_DEF_VID=0x" + value]
+### N6-mutate-caller-environment
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -36,7 +36,7 @@
+             "-I" + str(Path(root) / "include/vltstd"),
+         ]
+         # The diagnostic checks below require the compiler's English wording.
+-        compiler_env = os.environ.copy()
++        compiler_env = os.environ
+         compiler_env["LC_ALL"] = "C"
+         for value, expected in cases:
+             define = [] if value is None else ["-DPP_TOP_SRP_DOM_DEF_VID=0x" + value]
+### N7-verilator-also-normalised
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -28,7 +28,8 @@
+ 
+     with tempfile.TemporaryDirectory(prefix="pp-top-vid-guards-") as tmp:
+         subprocess.run(
+-            [args.verilator, *vflags, "--Mdir", tmp], check=True
++            [args.verilator, *vflags, "--Mdir", tmp], check=True,
++            env={**os.environ, "LC_ALL": "C"},
+         )
+         command = [
+             *shlex.split(args.cxx), "-std=c++17", "-Wall", "-Wextra", "-fsyntax-only",
+### N8-global-lc-all-before-verilator
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -26,6 +26,7 @@
+     class_d = "SRP VID fixture must differ from product default 2 in the 12-bit class-D value"
+     cases = [(None, ()), ("5A3C", ()), ("0002", (wire, class_d)), ("1002", (class_d,))]
+ 
++    os.environ["LC_ALL"] = "C"
+     with tempfile.TemporaryDirectory(prefix="pp-top-vid-guards-") as tmp:
+         subprocess.run(
+             [args.verilator, *vflags, "--Mdir", tmp], check=True
+@@ -43,7 +44,6 @@
+             result = subprocess.run(
+                 [*command, *define, "sim_main.cpp"],
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+-                env=compiler_env,
+             )
+             errors = [line for line in result.stdout.splitlines() if "error:" in line]
+             assertions = [line for line in errors if "static assertion" in line]
+### E1-dict-merge
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -36,8 +36,7 @@
+             "-I" + str(Path(root) / "include/vltstd"),
+         ]
+         # The diagnostic checks below require the compiler's English wording.
+-        compiler_env = os.environ.copy()
+-        compiler_env["LC_ALL"] = "C"
++        compiler_env = {**os.environ, "LC_ALL": "C"}
+         for value, expected in cases:
+             define = [] if value is None else ["-DPP_TOP_SRP_DOM_DEF_VID=0x" + value]
+             result = subprocess.run(
+### E2-dict-kwargs
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -36,8 +36,7 @@
+             "-I" + str(Path(root) / "include/vltstd"),
+         ]
+         # The diagnostic checks below require the compiler's English wording.
+-        compiler_env = os.environ.copy()
+-        compiler_env["LC_ALL"] = "C"
++        compiler_env = dict(os.environ, LC_ALL="C")
+         for value, expected in cases:
+             define = [] if value is None else ["-DPP_TOP_SRP_DOM_DEF_VID=0x" + value]
+             result = subprocess.run(
+### C1-lenient-verdict
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -54,7 +54,7 @@
+                     or len(errors) != len(expected)):
+                 print(f"FAIL: fixture {label}: unexpected compiler result {result.returncode}")
+                 print(result.stdout)
+-                return 1
++                pass
+             outcome = "compiles" if not expected else "refused: " + "; ".join(expected)
+             print(f"fixture guard {label}: {outcome}")
+     print("fixture guards: 4 cases PASS")

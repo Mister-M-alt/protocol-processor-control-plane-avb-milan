@@ -1,0 +1,38 @@
+{
+ "argv": [
+  "-std=c++17",
+  "-Wall",
+  "-Wextra",
+  "-fsyntax-only",
+  "-I/tmp/r230-100-r2-scratch/tmp/pp-top-vid-guards-a8vfz3ki",
+  "-I/usr/share/verilator/include",
+  "-I/usr/share/verilator/include/vltstd",
+  "-DPP_TOP_SRP_DOM_DEF_VID=0x0002",
+  "sim_main.cpp"
+ ],
+ "env": {
+  "CPATH": "/tmp/r230-100-r2-scratch/empty-include",
+  "CPLUS_INCLUDE_PATH": "/tmp/r230-100-r2-scratch/empty-include",
+  "CXX": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/scripts/cxx-record",
+  "HOME": "$WORKSPACE_HOME",
+  "LANG": "en_US.UTF-8",
+  "LANGUAGE": "fr",
+  "LC_ALL": "C",
+  "LOCPATH": "/tmp/r230-100-r2-scratch/locales",
+  "MAKEFLAGS": " -j1 -- CXX=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/scripts/cxx-record VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/scripts/verilator8",
+  "MAKELEVEL": "1",
+  "MFLAGS": "-j1",
+  "PATH": "/usr/local/bin:/usr/bin:/bin",
+  "PWD": "/tmp/r230-100-r2-scratch/head/tb/pp_top",
+  "R230_CXX_DIR": "/tmp/r230-100-r2-scratch/capture/FR_LANGUAGE/cxx",
+  "R230_ENV_DUMP_DIR": "/tmp/r230-100-r2-scratch/capture/FR_LANGUAGE/venv",
+  "R230_MARKER": "keep-me",
+  "R230_VLOG": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/verilator-invocations.jsonl",
+  "SHLVL": "0",
+  "SOURCE_DATE_EPOCH": "0",
+  "TMPDIR": "/tmp/r230-100-r2-scratch/tmp",
+  "VERILATOR": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/scripts/verilator8",
+  "_": "/usr/bin/python3"
+ },
+ "rc": 1
+}

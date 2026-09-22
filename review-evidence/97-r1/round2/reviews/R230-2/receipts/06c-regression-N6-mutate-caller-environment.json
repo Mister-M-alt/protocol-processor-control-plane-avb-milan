@@ -1,0 +1,25 @@
+{
+ "name": "06c-regression-N6-mutate-caller-environment",
+ "cwd": "/tmp/r230-100-r2-scratch/regression-mutants/N6-mutate-caller-environment",
+ "cmd": [
+  "python3",
+  "-B",
+  "-m",
+  "unittest",
+  "-v",
+  "test_fixture_guards.py"
+ ],
+ "env": {
+  "PATH": "/usr/local/bin:/usr/bin:/bin",
+  "HOME": "$WORKSPACE_HOME",
+  "LANG": "en_US.UTF-8",
+  "TMPDIR": "/tmp/r230-100-r2-scratch/tmp",
+  "LOCPATH": "/tmp/r230-100-r2-scratch/locales"
+ },
+ "rc": 1,
+ "expected_rc": 1,
+ "as_expected": true,
+ "seconds": 0.1,
+ "start": "2026-09-22T12:24:35+02:00",
+ "end": "2026-09-22T12:24:36+02:00"
+}

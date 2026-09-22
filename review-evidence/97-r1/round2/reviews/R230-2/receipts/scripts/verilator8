@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Run the real Verilator with every job control pinned at 8, recording each call.
+
+Strips -j [N], -jN, --build-jobs N, --verilate-jobs N (and their = forms) and
+appends -j 8 --build-jobs 8 --verilate-jobs 8, except for --getenv/--version
+queries, which are passed through unchanged. When R230_VLOG is set, one JSON
+line per call records the original and effective argv, the working directory
+and the locale-related environment. When R230_ENV_DUMP_DIR is set, the complete
+environment this process received is also written there, one file per call.
+"""
+import hashlib
+import json
+import os
+import sys
+import time
+
+REAL = "/usr/bin/verilator"
+KEYS = ("LC_ALL", "LANG", "LANGUAGE", "LC_MESSAGES", "LOCPATH", "CPATH",
+        "R230_MARKER", "TMPDIR")
+
+argv = sys.argv[1:]
+eff = []
+i = 0
+while i < len(argv):
+    a = argv[i]
+    if a in ("-j", "--build-jobs", "--verilate-jobs"):
+        i += 2 if i + 1 < len(argv) and argv[i + 1].isdigit() else 1
+        continue
+    if (a.startswith("--build-jobs=") or a.startswith("--verilate-jobs=")
+            or (a.startswith("-j") and a[2:].isdigit())):
+        i += 1
+        continue
+    eff.append(a)
+    i += 1
+query = any(a in ("--getenv", "--version", "-V") for a in eff)
+if not query:
+    eff += ["-j", "8", "--build-jobs", "8", "--verilate-jobs", "8"]
+env_text = "".join(f"{k}={v}\n" for k, v in sorted(os.environ.items()))
+stamp = time.time_ns()
+log = os.environ.get("R230_VLOG")
+if log:
+    rec = {"t_ns": stamp, "pid": os.getpid(), "cwd": os.getcwd(), "argv": argv,
+           "effective": eff, "query": query,
+           "env": {k: os.environ.get(k) for k in KEYS},
+           "env_sha256": hashlib.sha256(env_text.encode()).hexdigest()}
+    with open(log, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec) + "\n")
+dump = os.environ.get("R230_ENV_DUMP_DIR")
+if dump:
+    with open(os.path.join(dump, f"verilator-{stamp}-{os.getpid()}.env"), "w",
+              encoding="utf-8") as f:
+        f.write(env_text)
+os.execv(REAL, [REAL, *eff])

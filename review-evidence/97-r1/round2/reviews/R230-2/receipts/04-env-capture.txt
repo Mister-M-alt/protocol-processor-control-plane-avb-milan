@@ -1,0 +1,46 @@
+04-capture-EN: rc=0 expected=0 5.4s
+04-capture-FR_LANGUAGE: rc=0 expected=0 5.4s
+04-capture-DE_LC_ALL: rc=0 expected=0 5.4s
+04-capture-MIXED: rc=0 expected=0 5.4s
+== EN: verilator calls=2 compiler calls=4 caller LC_ALL=None
+   verilator environments identical across its calls: True
+   verilator LC_ALL=None (caller None): True
+   compiler call 0: rc=0 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+   compiler call 1: rc=0 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+   compiler call 2: rc=1 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+   compiler call 3: rc=1 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+== FR_LANGUAGE: verilator calls=2 compiler calls=4 caller LC_ALL=None
+   verilator environments identical across its calls: True
+   verilator LC_ALL=None (caller None): True
+   compiler call 0: rc=0 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+   compiler call 1: rc=0 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+   compiler call 2: rc=1 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+   compiler call 3: rc=1 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+== DE_LC_ALL: verilator calls=2 compiler calls=4 caller LC_ALL='de_DE.UTF-8'
+   verilator environments identical across its calls: True
+   verilator LC_ALL='de_DE.UTF-8' (caller 'de_DE.UTF-8'): True
+   compiler call 0: rc=0 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+   compiler call 1: rc=0 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+   compiler call 2: rc=1 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+   compiler call 3: rc=1 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+== MIXED: verilator calls=2 compiler calls=4 caller LC_ALL='fr_FR.UTF-8'
+   verilator environments identical across its calls: True
+   verilator LC_ALL='fr_FR.UTF-8' (caller 'fr_FR.UTF-8'): True
+   compiler call 0: rc=0 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+   compiler call 1: rc=0 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+   compiler call 2: rc=1 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+   compiler call 3: rc=1 LC_ALL='C' keys differing from Verilator env=['LC_ALL'] caller inputs preserved=True
+== argv per case identical across settings (temp dir normalised):
+   case 0: True  -std=c++17 -Wall -Wextra -fsyntax-only -I<TMP> -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd sim_main.cpp
+   case 1: True  -std=c++17 -Wall -Wextra -fsyntax-only -I<TMP> -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DPP_TOP_SRP_DOM_DEF_VID=0x5A3C sim_main.cpp
+   case 2: True  -std=c++17 -Wall -Wextra -fsyntax-only -I<TMP> -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DPP_TOP_SRP_DOM_DEF_VID=0x0002 sim_main.cpp
+   case 3: True  -std=c++17 -Wall -Wextra -fsyntax-only -I<TMP> -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd -DPP_TOP_SRP_DOM_DEF_VID=0x1002 sim_main.cpp
+== diagnostic bytes per case identical across settings (temp dir normalised):
+   case 0: identical=True sha256=540890b162775978 bytes=16509 non-ascii=False
+   case 1: identical=True sha256=540890b162775978 bytes=16509 non-ascii=False
+   case 2: identical=True sha256=1caea53a004666d7 bytes=17067 non-ascii=True
+      sim_main.cpp:81:27: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+      sim_main.cpp:83:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   case 3: identical=True sha256=a56c53070ad5f09b bytes=16817 non-ascii=True
+      sim_main.cpp:83:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+RESULT: PASS

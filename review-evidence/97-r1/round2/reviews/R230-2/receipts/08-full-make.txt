@@ -1,0 +1,43 @@
+head clone status before: 0 lines
+08-head-make-DE_LC_ALL: rc=0 expected=0 199.6s
+== DE_LC_ALL
+   Ran 1 test in 0.002s
+   OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit
+   fixture guard 1002: refused: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guards: 4 cases PASS
+   [build default, SRP_DOM_DEF_VID_P 0x0002] 1391 checks, 0 failures
+   [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 0 failures
+   1411 checks: 1411 PASS, 0 FAIL
+   build_tally.txt: 1391 0 20 0 
+   last line: 1411 checks: 1411 PASS, 0 FAIL
+   run_suites.sh tally regex: 1411 checks: 1411 PASS, 0 FAIL
+   status after make (before clean):
+     !! tb/pp_top/ltn_rom.hex
+     !! tb/pp_top/obj_dir/
+     !! tb/pp_top/obj_vid/
+     !! tb/pp_top/ucode.hex
+08-head-make-FR_LANG: rc=0 expected=0 200.3s
+== FR_LANG
+   Ran 1 test in 0.002s
+   OK
+   fixture guard default (no override): compiles
+   fixture guard 5A3C: compiles
+   fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit
+   fixture guard 1002: refused: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+   fixture guards: 4 cases PASS
+   [build default, SRP_DOM_DEF_VID_P 0x0002] 1391 checks, 0 failures
+   [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 0 failures
+   1411 checks: 1411 PASS, 0 FAIL
+   build_tally.txt: 1391 0 20 0 
+   last line: 1411 checks: 1411 PASS, 0 FAIL
+   run_suites.sh tally regex: 1411 checks: 1411 PASS, 0 FAIL
+   status after make (before clean):
+     !! tb/pp_top/ltn_rom.hex
+     !! tb/pp_top/obj_dir/
+     !! tb/pp_top/obj_vid/
+     !! tb/pp_top/ucode.hex
+head clone status after clean: 0 lines
+rc08=0

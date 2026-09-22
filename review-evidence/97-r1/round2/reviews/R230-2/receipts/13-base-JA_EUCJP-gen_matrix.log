@@ -1,0 +1,17 @@
+Traceback (most recent call last):
+  File "/tmp/r230-100-r2-scratch/base-export/scripts/gen_matrix.py", line 68, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/tmp/r230-100-r2-scratch/base-export/scripts/gen_matrix.py", line 50, in main
+    body, untested = render()
+                     ~~~~~~^^
+  File "/tmp/r230-100-r2-scratch/base-export/scripts/gen_matrix.py", line 34, in render
+    mods, cov = modules(), suites()
+                ~~~~~~~^^
+  File "/tmp/r230-100-r2-scratch/base-export/scripts/gen_matrix.py", line 16, in modules
+    for m in re.findall(r"^\s*(?:module|package)\s+(\w+)", f.read_text(), re.M):
+                                                           ~~~~~~~~~~~^^
+  File "/usr/lib/python3.14/pathlib/__init__.py", line 788, in read_text
+    return f.read()
+           ~~~~~~^^
+UnicodeDecodeError: 'euc_jp' codec can't decode byte 0xe2 in position 318: illegal multibyte sequence

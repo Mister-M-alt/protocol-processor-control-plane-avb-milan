@@ -1,0 +1,4 @@
+probe.cpp:1:17: error: l'assertion statique a échoué : R230 probe message
+    1 | static_assert(1 == 2, "R230 probe message");
+      |               ~~^~~~
+  • la comparaison se réduit à « (1 == 2) »

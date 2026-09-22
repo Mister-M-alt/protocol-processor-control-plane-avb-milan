@@ -1,0 +1,52 @@
+test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) ... 
+  test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None) ... FAIL
+  test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8') ... FAIL
+
+======================================================================
+FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/r230-100-r2-scratch/regression-mutants/N7-verilator-also-normalised/test_fixture_guards.py", line 49, in test_compiler_environment_and_arguments
+    self.assertEqual(model_call.kwargs, {"check": True})
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'check': True, 'env': {'LANG': 'fr_FR.UTF-8', 'LANGUAG[126 chars]'C'}} != {'check': True}
+- {'check': True,
+?               ^
+
++ {'check': True}
+?               ^
+
+-  'env': {'CPATH': '/test/include',
+-          'CXXFLAGS': '-test-flag',
+-          'LANG': 'fr_FR.UTF-8',
+-          'LANGUAGE': 'de:fr',
+-          'LC_ALL': 'C',
+-          'LC_MESSAGES': 'de_DE.UTF-8',
+-          'PATH': '/test/bin'}}
+
+======================================================================
+FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/r230-100-r2-scratch/regression-mutants/N7-verilator-also-normalised/test_fixture_guards.py", line 49, in test_compiler_environment_and_arguments
+    self.assertEqual(model_call.kwargs, {"check": True})
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'check': True, 'env': {'LANG': 'fr_FR.UTF-8', 'LANGUAG[126 chars]'C'}} != {'check': True}
+- {'check': True,
+?               ^
+
++ {'check': True}
+?               ^
+
+-  'env': {'CPATH': '/test/include',
+-          'CXXFLAGS': '-test-flag',
+-          'LANG': 'fr_FR.UTF-8',
+-          'LANGUAGE': 'de:fr',
+-          'LC_ALL': 'C',
+-          'LC_MESSAGES': 'de_DE.UTF-8',
+-          'PATH': '/test/bin'}}
+
+----------------------------------------------------------------------
+Ran 1 test in 0.003s
+
+FAILED (failures=2)

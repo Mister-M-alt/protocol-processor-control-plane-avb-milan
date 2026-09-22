@@ -1,0 +1,3 @@
+invocations=134 queries=58 work=76 work-with-exact-8-caps=76 violations=0
+job settings requested by the callers and replaced: ['-j 0']
+RESULT: PASS

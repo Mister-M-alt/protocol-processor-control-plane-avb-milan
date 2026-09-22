@@ -1,0 +1,89 @@
+## review clone
+5c45845ad15bd7995f20c81d7fd61501e5ca9d7e
+8768f7e640ee62fd62862bec7117155fcab3ddbb
+parents: 1eb20dc4911880de10b745cc284e7dde306788b5
+author: hackerman-kl <hackerman-kl@kebag-logic.com> Tue Sep 22 10:59:00 2026 +0200
+committer: hackerman-kl Tue Sep 22 10:59:00 2026 +0200
+subject: Normalize fixture guard compiler diagnostics to C
+symbolic-ref: detached
+status --porcelain --ignored lines: 0
+merge-base HEAD base: 8452f564294300a82d56eed464276576f65f4d58
+prior 1eb20dc4911880de10b745cc284e7dde306788b5 is ancestor of HEAD
+base 8452f564294300a82d56eed464276576f65f4d58 is ancestor of HEAD
+commits base..HEAD:
+  5c45845ad15bd7995f20c81d7fd61501e5ca9d7e Normalize fixture guard compiler diagnostics to C
+  1eb20dc4911880de10b745cc284e7dde306788b5 Assert distinct SRP VID verification fixtures
+
+## live remote refs (2026-09-22T12:17:52+02:00)
+5c45845ad15bd7995f20c81d7fd61501e5ca9d7e	refs/heads/97-assert-distinct-sr-vid-fixture
+290d5a2ceb23a5cb4eac41257ac331d63babeaf3	refs/heads/97-review-evidence
+8452f564294300a82d56eed464276576f65f4d58	refs/heads/main
+5c45845ad15bd7995f20c81d7fd61501e5ca9d7e	refs/pull/100/head
+6439edc9e2a2fa06c4f9ce2e35d4ccaa273e321d	refs/pull/100/merge
+
+## PR100 live state
+state=OPEN draft=false mergeable=MERGEABLE head=5c45845ad15bd7995f20c81d7fd61501e5ca9d7e base=main@8452f564294300a82d56eed464276576f65f4d58 branch=97-assert-distinct-sr-vid-fixture
+
+## merge ref
+pull/100/merge 6439edc9e2a2fa06c4f9ce2e35d4ccaa273e321d parents 8452f564294300a82d56eed464276576f65f4d58 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e tree 8768f7e640ee62fd62862bec7117155fcab3ddbb
+head tree: 8768f7e640ee62fd62862bec7117155fcab3ddbb
+
+## diff 1eb20dc4911880de10b745cc284e7dde306788b5..HEAD (the correction)
+:100644 100644 d8c0136 22fa1ba M	tb/pp_top/Makefile
+:100644 100644 2a27a90 2547bf1 M	tb/pp_top/README.md
+:100644 100644 6e70a02 c20c539 M	tb/pp_top/fixture_guards.py
+:000000 100644 0000000 9201898 A	tb/pp_top/test_fixture_guards.py
+5	2	tb/pp_top/Makefile
+6	0	tb/pp_top/README.md
+5	0	tb/pp_top/fixture_guards.py
+64	0	tb/pp_top/test_fixture_guards.py
+diff --check rc: 0
+
+## diff base..HEAD (whole PR)
+:100644 100644 de0b2ec 22fa1ba M	tb/pp_top/Makefile
+:100644 100644 bf0dd1c 2547bf1 M	tb/pp_top/README.md
+:000000 100644 0000000 c20c539 A	tb/pp_top/fixture_guards.py
+:100644 100644 e52f0fd 6b400db M	tb/pp_top/sim_main.cpp
+:000000 100644 0000000 9201898 A	tb/pp_top/test_fixture_guards.py
+11	2	tb/pp_top/Makefile
+23	0	tb/pp_top/README.md
+65	0	tb/pp_top/fixture_guards.py
+5	0	tb/pp_top/sim_main.cpp
+64	0	tb/pp_top/test_fixture_guards.py
+diff --check rc: 0
+
+## unchanged-artifact check 1eb20dc4911880de10b745cc284e7dde306788b5 -> HEAD (mode, type, blob per path)
+entries prior=223 head=224
+entries that differ or exist on one side only:
+  > 100644 blob 22fa1baeeb81e6e1c2e0780ddaae6f03aa6c8c69	tb/pp_top/Makefile
+  > 100644 blob 2547bf11c2d6894a6a5c863a1de1b282b2967985	tb/pp_top/README.md
+  < 100644 blob 2a27a90351eb98566eca270455b99f8790639d64	tb/pp_top/README.md
+  < 100644 blob 6e70a0253159229cbd4f1ea91a8267bddbcdf704	tb/pp_top/fixture_guards.py
+  > 100644 blob 9201898d7e4fcbb242cf5e981ab13568955bdf91	tb/pp_top/test_fixture_guards.py
+  > 100644 blob c20c539210e6e091f196f4ace65ddedff7435e85	tb/pp_top/fixture_guards.py
+  < 100644 blob d8c01366b7e3a435e7ce13729ef9f015e0e0cc8b	tb/pp_top/Makefile
+unchanged hdl (abf21fefc041df67029d227e67391558fd15ddb3)
+unchanged syn (fd0818d726f08daa603309264de0ea924cc5da45)
+unchanged scripts (0dbd6277bd58f37ff1445d65cef8473f8dc7887f)
+unchanged .github (4e9429e064c0d618ed76c9dfcecbbad8c029f26c)
+unchanged docs (b8bd606480938f9526c4423c6196e858dc04f84b)
+unchanged tb/pp_top/sim_main.cpp (6b400dbcbf4d7afa848c0ac825d1c3a1ee000d1a)
+unchanged tb/pp_top/pp_top_wrap.sv (c755a16c14b02609714548675684c4dfeae44006)
+unchanged Makefile (7ec00bb9341b282bb345db1e6a4fc016a4e6accb)
+vs base unchanged hdl
+vs base unchanged syn
+vs base unchanged scripts
+vs base unchanged .github
+vs base unchanged docs
+vs base CHANGED tb/pp_top/sim_main.cpp
+vs base unchanged tb/pp_top/pp_top_wrap.sv
+
+## modes of the PR files at HEAD
+100644 blob 22fa1baeeb81e6e1c2e0780ddaae6f03aa6c8c69	tb/pp_top/Makefile
+100644 blob 2547bf11c2d6894a6a5c863a1de1b282b2967985	tb/pp_top/README.md
+100644 blob c20c539210e6e091f196f4ace65ddedff7435e85	tb/pp_top/fixture_guards.py
+100644 blob 6b400dbcbf4d7afa848c0ac825d1c3a1ee000d1a	tb/pp_top/sim_main.cpp
+100644 blob 9201898d7e4fcbb242cf5e981ab13568955bdf91	tb/pp_top/test_fixture_guards.py
+
+## non-ASCII added lines base..HEAD
+none

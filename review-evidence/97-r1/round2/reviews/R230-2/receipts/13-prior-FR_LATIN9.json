@@ -1,0 +1,24 @@
+{
+ "name": "13-prior-FR_LATIN9",
+ "cwd": "/tmp/r230-100-r2-scratch/prior/tb/pp_top",
+ "cmd": [
+  "make",
+  "-j1",
+  "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/scripts/verilator8",
+  "fixture-guards"
+ ],
+ "env": {
+  "PATH": "/usr/local/bin:/usr/bin:/bin",
+  "HOME": "$WORKSPACE_HOME",
+  "LANG": "fr_FR.ISO-8859-15@euro",
+  "TMPDIR": "/tmp/r230-100-r2-scratch/tmp",
+  "LOCPATH": "/tmp/r230-100-r2-scratch/locales",
+  "R230_VLOG": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r230/receipts/verilator-invocations.jsonl"
+ },
+ "rc": 2,
+ "expected_rc": null,
+ "as_expected": null,
+ "seconds": 4.2,
+ "start": "2026-09-22T12:48:06+02:00",
+ "end": "2026-09-22T12:48:11+02:00"
+}

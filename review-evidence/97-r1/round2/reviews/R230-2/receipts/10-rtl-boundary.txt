@@ -1,0 +1,27 @@
+10-lint-top-default: rc=0 expected=0 1.2s
+   10-lint-top-default: %Warning/%Error lines = 0
+10-lint-top-16h0002: rc=0 expected=0 1.2s
+   10-lint-top-16h0002: %Warning/%Error lines = 0
+10-lint-top-16h1002: rc=0 expected=0 1.2s
+   10-lint-top-16h1002: %Warning/%Error lines = 0
+10-lint-top-16h5A3C: rc=0 expected=0 1.2s
+   10-lint-top-16h5A3C: %Warning/%Error lines = 0
+== VID parameter defaults at head
+hdl/top/protocol_processor_top.sv:144:    parameter logic [15:0] SRP_DOM_DEF_VID_P   = 16'd2,
+hdl/srp/KL_srp_top.sv:80:    parameter logic [15:0] DOM_DEF_VID_P  = 16'd2,
+hdl/srp/KL_srp_domain.sv:42:    parameter logic [15:0] DEF_VID_P  = 16'd2
+== assertions mentioning a VID parameter in those RTL files (expect none)
+   none
+== real fixture build recipe, 0002 and 1002 (EN caller)
+10-fixture-build-0002: rc=2 expected=2 6.9s
+   verilation report present: 0
+   model header generated: yes; fixture executable: no
+   failing objects:       1 Error 1;      1 *** [Vpp_top_wrap.mk:64: sim_main.o];
+   ../sim_main.cpp:81:27: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+   ../sim_main.cpp:83:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+10-fixture-build-1002: rc=2 expected=2 6.5s
+   verilation report present: 0
+   model header generated: yes; fixture executable: no
+   failing objects:       1 Error 1;      1 *** [Vpp_top_wrap.mk:64: sim_main.o];
+   ../sim_main.cpp:83:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value
+== head clone status --porcelain --ignored: 0 lines

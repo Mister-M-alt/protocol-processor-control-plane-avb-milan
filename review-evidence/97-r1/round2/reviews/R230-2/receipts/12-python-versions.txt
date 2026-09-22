@@ -1,0 +1,20 @@
+12-gate-python3.11.15-DE_LC_ALL: rc=0 expected=0 5.1s
+   Python 3.11.15
+   Ran 1 test in 0.002s
+   OK
+   fixture guards: 4 cases PASS
+12-gate-python3.12.13-DE_LC_ALL: rc=0 expected=0 5.1s
+   Python 3.12.13
+   Ran 1 test in 0.002s
+   OK
+   fixture guards: 4 cases PASS
+== runtime floor already set by pp_top make prerequisites (no __future__ annotations):
+   gen_ucode.py: no __future__ import
+354:def place(at: int, words: list[int]) -> None:
+== features in the new test: parenthesized with (CPython PEG parser; documented 3.10), mock call.args/.kwargs (3.8)
+33:            with (self.subTest(LC_ALL=inherited_lc_all),
+46:                tmp = model_call.args[0][-1]
+47:                self.assertEqual(model_call.args[0],
+49:                self.assertEqual(model_call.kwargs, {"check": True})
+56:                    self.assertEqual(call.args[0], [*command, *define, "sim_main.cpp"])
+57:                    self.assertEqual(call.kwargs, {
