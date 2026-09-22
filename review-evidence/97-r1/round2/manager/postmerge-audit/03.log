@@ -1,0 +1,4 @@
+merge review-integrity: 2 finding(s) over the last 20 merged PR(s) into main:
+  PR #13: negative-merge - merged 2026-08-20T18:50:48Z with its last pre-merge review verdict NEGATIVE (2026-08-20T18:34:48Z)
+  PR #9: negative-merge - merged 2026-08-18T15:18:32Z with its last pre-merge review verdict NEGATIVE (2026-08-18T15:17:13Z)
+A NEGATIVE merge can be a legitimate maintainer override; this names it so a reader can tell, and an open linked Issue should be closed or its divergence recorded (CONTRIBUTING 2.1).
