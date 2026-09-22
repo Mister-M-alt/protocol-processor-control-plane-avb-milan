@@ -1,0 +1,6 @@
+{
+  "tb/pp_top/Makefile": true,
+  "tb/pp_top/README.md": true,
+  "tb/pp_top/sim_main.cpp": true,
+  "tb/pp_top/fixture_guards.py": true
+}

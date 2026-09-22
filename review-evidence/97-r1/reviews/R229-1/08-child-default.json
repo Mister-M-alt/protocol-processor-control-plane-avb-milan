@@ -1,0 +1,14 @@
+{
+  "name": "08-child-default",
+  "argv": [
+    "make",
+    "-j1",
+    "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r229/probe-tools/verilator"
+  ],
+  "cwd": "/tmp/r229-pr100-sd8ak_7h/08-child-default/tb/pp_top",
+  "head": "1eb20dc4911880de10b745cc284e7dde306788b5",
+  "start": 1790064324.0700204,
+  "seconds": 196.83125472068787,
+  "returncode": 0,
+  "expected": 0
+}

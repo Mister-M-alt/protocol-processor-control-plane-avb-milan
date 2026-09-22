@@ -1,0 +1,11 @@
+{
+  "name": "06-missing-binding",
+  "path": "/tmp/a161-issue97-rwxncqry/06-missing-binding",
+  "mutation": [
+    "hdl/top/protocol_processor_top.sv",
+    "      .DOM_DEF_VID_P    (SRP_DOM_DEF_VID_P),\n",
+    ""
+  ],
+  "before_sha256": "7a92f91f6f6c73be6ad507e4a1b7c03ee87bab8835b5090554b6d89eec6080f1",
+  "after_sha256": "1f7360aa93bde4214de3996da7bf8a18d8798b0599d823e243e4fd54a5d1399a"
+}

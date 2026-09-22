@@ -1,0 +1,11 @@
+{
+  "name": "07-child-default",
+  "path": "/tmp/a161-issue97-rwxncqry/07-child-default",
+  "mutation": [
+    "hdl/srp/KL_srp_top.sv",
+    "DOM_DEF_VID_P  = 16'd2",
+    "DOM_DEF_VID_P  = 16'd7"
+  ],
+  "before_sha256": "6f96b92d0ed56f95bc1ed783eb0dcdba9312576c661013f04e3107bd1a4fa61f",
+  "after_sha256": "6275c3288de61323e91842009136b3b64724298c2dadee8a6037302e2b3c3439"
+}

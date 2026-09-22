@@ -1,0 +1,16 @@
+{
+  "name": "06-full-refusal-0002-recipe",
+  "argv": [
+    "make",
+    "-n",
+    "run",
+    "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r229/probe-tools/verilator",
+    "SRP_VID_FIXTURE=0002"
+  ],
+  "cwd": "/tmp/r229-pr100-sd8ak_7h/06-full-refusal-0002/tb/pp_top",
+  "head": "1eb20dc4911880de10b745cc284e7dde306788b5",
+  "start": 1790064113.1406467,
+  "seconds": 0.0030791759490966797,
+  "returncode": 0,
+  "expected": 0
+}

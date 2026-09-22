@@ -1,0 +1,7 @@
+commit 1eb20dc4911880de10b745cc284e7dde306788b5
+Author:     hackerman-kl <hackerman-kl@kebag-logic.com>
+AuthorDate: Tue Sep 22 08:43:04 2026 +0200
+Commit:     hackerman-kl <hackerman-kl@kebag-logic.com>
+CommitDate: Tue Sep 22 08:43:04 2026 +0200
+
+    Assert distinct SRP VID verification fixtures

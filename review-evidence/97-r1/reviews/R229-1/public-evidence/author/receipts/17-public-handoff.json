@@ -1,0 +1,27 @@
+{
+  "name": "17-public-handoff",
+  "started_utc": "2026-09-22T06:43:45.946676+00:00",
+  "seconds": 1.888,
+  "cwd": "$CANDIDATE",
+  "argv": [
+    "rtk",
+    "proxy",
+    "gh",
+    "issue",
+    "comment",
+    "97",
+    "--repo",
+    "Mister-M-alt/protocol-processor-control-plane-avb-milan",
+    "--body-file",
+    "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/public/author-handoff-comment.md"
+  ],
+  "shell_command": "rtk proxy gh issue comment 97 --repo Mister-M-alt/protocol-processor-control-plane-avb-milan --body-file $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/public/author-handoff-comment.md",
+  "environment": {
+    "PATH": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/bin:$WORKSPACE_HOME/.codex/tmp/arg0/codex-arg0m9zHd6:$WORKSPACE_HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl",
+    "MAKEFLAGS": "-j8",
+    "VERILATOR": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/bin/verilator"
+  },
+  "exit_code": 0,
+  "expected_exit_code": 0,
+  "log": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/receipts/17-public-handoff.log"
+}

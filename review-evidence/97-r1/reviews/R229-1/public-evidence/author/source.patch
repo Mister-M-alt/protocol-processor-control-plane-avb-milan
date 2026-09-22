@@ -1,0 +1,142 @@
+diff --git a/tb/pp_top/Makefile b/tb/pp_top/Makefile
+index de0b2ec..d8c0136 100644
+--- a/tb/pp_top/Makefile
++++ b/tb/pp_top/Makefile
+@@ -51,7 +51,7 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
+        pp_top_wrap.sv
+ CPP  = sim_main.cpp
+ 
+-run: ltn_rom.hex ucode.hex
++run: fixture-guards ltn_rom.hex ucode.hex
+ 	@rm -f obj_dir/build_tally.txt
+ 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vpp_top_sim
+ 	./obj_dir/Vpp_top_sim
+@@ -62,6 +62,12 @@ run: ltn_rom.hex ucode.hex
+ 	@awk '{c += $$1; f += $$2} END {if (NR != 2) {print "FAIL: " NR " build tallies, expected 2"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
+ 	    obj_dir/build_tally.txt
+ 
++# Compile the actual bench with four fixture settings in a temporary model dir.
++# No simulation or source mutation; bad fixtures must fail for the named guards.
++fixture-guards:
++	@python3 fixture_guards.py --verilator "$(VERILATOR)" --cxx "$(CXX)" -- \
++	    $(filter-out --exe --build,$(VFLAGS)) $(SRCS)
++
+ ltn_rom.hex: $(HDL)/acmp/rom/gen_ltn_rom.py
+ 	python3 $< -o $@
+ 
+@@ -71,4 +77,4 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
+ clean:
+ 	rm -rf obj_dir obj_vid ltn_rom.hex ucode.hex
+ 
+-.PHONY: run clean
++.PHONY: run fixture-guards clean
+diff --git a/tb/pp_top/README.md b/tb/pp_top/README.md
+index bf0dd1c..2a27a90 100644
+--- a/tb/pp_top/README.md
++++ b/tb/pp_top/README.md
+@@ -520,6 +520,23 @@ nibble, which is why M27 fails the wire checks alone. The C++ expectation is
+ compiled from the same Makefile variable the wrap receives, never read back from
+ the DUT, and the wrap overrides nothing in the first build.
+ 
++The fixture branch refuses compilation unless its 16-bit wire value and its
++low 12-bit class-D value both differ from product default 2 (issue #97).
++`SRP_VID_FIXTURE=0002` fails both assertions; `SRP_VID_FIXTURE=1002` fails the
++class-D assertion even though its wire value differs. Each diagnostic names
++the fixture, product default and affected width. These are verification-bench
++assertions only. The default build has no fixture override and no distinctness
++assertion.
++
++`make` also runs `make fixture-guards`, a focused compile check of the actual
++`sim_main.cpp` against generated model headers in a disposable directory. It
++requires the no-override and pinned `5A3C` cases to compile, `0002` to fail with
++both diagnostics and `1002` to fail with only the class-D diagnostic. An
++unrelated compiler error fails the check. Run `make fixture-guards` alone for
++this coverage without simulation; it does not change the sources or reuse
++`obj_dir`/`obj_vid`. This check does not replace the two executable builds or
++the missing-binding and child-default controls in the mutation record.
++
+ DV runs on a fresh model in both builds, after reset and with the link down:
+ 
+ - **DV1** the reset value on the class-D ports, snapshot word 10 and GET_DOMAIN;
+diff --git a/tb/pp_top/fixture_guards.py b/tb/pp_top/fixture_guards.py
+new file mode 100644
+index 0000000..6e70a02
+--- /dev/null
++++ b/tb/pp_top/fixture_guards.py
+@@ -0,0 +1,60 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: CERN-OHL-W-2.0
++"""Compile the real pp_top bench and require the issue #97 fixture diagnostics."""
++
++import argparse
++from pathlib import Path
++import shlex
++import subprocess
++import tempfile
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--verilator", default="verilator")
++    parser.add_argument("--cxx", default="c++")
++    parser.add_argument("vflags", nargs=argparse.REMAINDER)
++    args = parser.parse_args()
++    vflags = args.vflags
++    if vflags and vflags[0] == "--":
++        vflags = vflags[1:]
++    root = subprocess.check_output(
++        [args.verilator, "--getenv", "VERILATOR_ROOT"], text=True
++    ).strip()
++    wire = "SRP VID fixture must differ from product default 2 in the 16-bit wire value"
++    class_d = "SRP VID fixture must differ from product default 2 in the 12-bit class-D value"
++    cases = [(None, ()), ("5A3C", ()), ("0002", (wire, class_d)), ("1002", (class_d,))]
++
++    with tempfile.TemporaryDirectory(prefix="pp-top-vid-guards-") as tmp:
++        subprocess.run(
++            [args.verilator, *vflags, "--Mdir", tmp], check=True
++        )
++        command = [
++            *shlex.split(args.cxx), "-std=c++17", "-Wall", "-Wextra", "-fsyntax-only",
++            "-I" + tmp, "-I" + str(Path(root) / "include"),
++            "-I" + str(Path(root) / "include/vltstd"),
++        ]
++        for value, expected in cases:
++            define = [] if value is None else ["-DPP_TOP_SRP_DOM_DEF_VID=0x" + value]
++            result = subprocess.run(
++                [*command, *define, "sim_main.cpp"],
++                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
++            )
++            errors = [line for line in result.stdout.splitlines() if "error:" in line]
++            assertions = [line for line in errors if "static assertion" in line]
++            found = tuple(message for message in (wire, class_d)
++                          if any(message in line for line in assertions))
++            label = "default (no override)" if value is None else value
++            if (bool(result.returncode) != bool(expected) or found != expected
++                    or len(errors) != len(expected)):
++                print(f"FAIL: fixture {label}: unexpected compiler result {result.returncode}")
++                print(result.stdout)
++                return 1
++            outcome = "compiles" if not expected else "refused: " + "; ".join(expected)
++            print(f"fixture guard {label}: {outcome}")
++    print("fixture guards: 4 cases PASS")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tb/pp_top/sim_main.cpp b/tb/pp_top/sim_main.cpp
+index e52f0fd..6b400db 100644
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -77,6 +77,11 @@ constexpr uint64_t    MVRP_DA = 0x0180C2000021ULL;
+ //! compiled with the fixture the Makefile also hands the wrap.
+ #ifdef PP_TOP_SRP_DOM_DEF_VID
+ constexpr uint16_t    SRP_DEF_VID = PP_TOP_SRP_DOM_DEF_VID;
++//! A default-equivalent fixture cannot expose a dropped binding (issue #97).
++static_assert(SRP_DEF_VID != 2,
++              "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
++static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
++              "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
+ #else
+ constexpr uint16_t    SRP_DEF_VID = 2;
+ #endif

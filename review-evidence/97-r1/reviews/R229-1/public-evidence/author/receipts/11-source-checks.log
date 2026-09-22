@@ -1,0 +1,5 @@
+Python syntax: PASS
+Added text: no new U+2014
+Scope: exactly the four pp_top test/documentation files
+Source matches the tested scratch snapshot
+Verilator invocation cap: PASS (43 calls)

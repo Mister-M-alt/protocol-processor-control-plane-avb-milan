@@ -1,0 +1,11 @@
+{
+  "four_actual_compiler_calls": true,
+  "headers_per_call": [
+    5,
+    5,
+    5,
+    5
+  ],
+  "identical_generated_headers_across_cases": true,
+  "temporary_header_dirs_removed": true
+}

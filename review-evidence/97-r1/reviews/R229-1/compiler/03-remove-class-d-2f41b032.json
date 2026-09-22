@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "/usr/bin/g++",
+    "-std=c++17",
+    "-Wall",
+    "-Wextra",
+    "-fsyntax-only",
+    "-I/tmp/pp-top-vid-guards-izorhasy",
+    "-I/usr/share/verilator/include",
+    "-I/usr/share/verilator/include/vltstd",
+    "sim_main.cpp"
+  ],
+  "cwd": "/tmp/r229-pr100-sd8ak_7h/03-remove-class-d/tb/pp_top",
+  "returncode": 0,
+  "headers": {
+    "/tmp/pp-top-vid-guards-izorhasy/Vpp_top_wrap___024root.h": "7023ac1aab2797d354b75ab49157013dcb544e3343b078eeefdd00406b38b259",
+    "/tmp/pp-top-vid-guards-izorhasy/Vpp_top_wrap__pch.h": "b459a97650b716618fb88435d25de159754fb1634ea7d579145c72f1f6f554e5",
+    "/tmp/pp-top-vid-guards-izorhasy/Vpp_top_wrap.h": "9c91724e142397f21cedfed912977ebb8a8a5c47aac4aa1023a0f8357bb79212",
+    "/tmp/pp-top-vid-guards-izorhasy/Vpp_top_wrap__Dpi.h": "f4c59dd93ed186791936a25c74e4a58773adae78ac18d4640ef36d322b0de9fd",
+    "/tmp/pp-top-vid-guards-izorhasy/Vpp_top_wrap__Syms.h": "14721997491085a9ebd7e0a559cbafb852472914aea95bf80679c92b3619413d"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "calls": 22,
+  "explicit_job_limits": [
+    8,
+    8,
+    8,
+    8,
+    8,
+    8,
+    8,
+    8,
+    8,
+    8,
+    8,
+    8,
+    8,
+    8,
+    8
+  ],
+  "maximum": 8,
+  "outer_make_jobs": 1,
+  "probes_sequential": true
+}

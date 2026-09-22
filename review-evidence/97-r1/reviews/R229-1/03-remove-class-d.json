@@ -1,0 +1,16 @@
+{
+  "name": "03-remove-class-d",
+  "argv": [
+    "make",
+    "-j1",
+    "fixture-guards",
+    "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r229/probe-tools/verilator",
+    "CXX=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r229/probe-tools/cxx-record"
+  ],
+  "cwd": "/tmp/r229-pr100-sd8ak_7h/03-remove-class-d/tb/pp_top",
+  "head": "1eb20dc4911880de10b745cc284e7dde306788b5",
+  "start": 1790063821.406508,
+  "seconds": 4.35524845123291,
+  "returncode": 2,
+  "expected": 2
+}

@@ -1,0 +1,80 @@
+[
+  {
+    "job": 106644775548,
+    "name": "portability",
+    "argv": [
+      "gh",
+      "api",
+      "--allow-escape-sequences",
+      "repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/jobs/106644775548/logs"
+    ],
+    "returncode": 0,
+    "bytes": 68081,
+    "stderr": ""
+  },
+  {
+    "job": 106644775791,
+    "name": "suites",
+    "argv": [
+      "gh",
+      "api",
+      "--allow-escape-sequences",
+      "repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/jobs/106644775791/logs"
+    ],
+    "returncode": 0,
+    "bytes": 31452,
+    "stderr": ""
+  },
+  {
+    "job": 106644775908,
+    "name": "docs-gates",
+    "argv": [
+      "gh",
+      "api",
+      "--allow-escape-sequences",
+      "repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/jobs/106644775908/logs"
+    ],
+    "returncode": 0,
+    "bytes": 14991,
+    "stderr": ""
+  },
+  {
+    "job": 106644761472,
+    "name": "portability",
+    "argv": [
+      "gh",
+      "api",
+      "--allow-escape-sequences",
+      "repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/jobs/106644761472/logs"
+    ],
+    "returncode": 0,
+    "bytes": 67213,
+    "stderr": ""
+  },
+  {
+    "job": 106644761597,
+    "name": "suites",
+    "argv": [
+      "gh",
+      "api",
+      "--allow-escape-sequences",
+      "repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/jobs/106644761597/logs"
+    ],
+    "returncode": 0,
+    "bytes": 30210,
+    "stderr": ""
+  },
+  {
+    "job": 106644761647,
+    "name": "docs-gates",
+    "argv": [
+      "gh",
+      "api",
+      "--allow-escape-sequences",
+      "repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/jobs/106644761647/logs"
+    ],
+    "returncode": 0,
+    "bytes": 14123,
+    "stderr": ""
+  }
+]

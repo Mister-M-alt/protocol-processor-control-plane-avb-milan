@@ -1,0 +1,7 @@
+Committed head: 1eb20dc4911880de10b745cc284e7dde306788b5
+One-line commit without trailer: Assert distinct SRP VID verification fixtures
+Scope: four pp_top files only; parent is assigned base
+Clean source including ignored files: PASS
+Committed content matches tested snapshot hashes: PASS
+Explicit Verilator job caps: PASS (58 calls)
+All expected test/control exits verified: PASS

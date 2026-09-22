@@ -1,0 +1,21 @@
+{
+  "08-child-default": [
+    "hdl/srp/KL_srp_top.sv"
+  ],
+  "07-missing-binding": [
+    "hdl/top/protocol_processor_top.sv"
+  ],
+  "06-full-refusal-1002": [],
+  "06-full-refusal-0002": [],
+  "04-extra-error-actual": [
+    "tb/pp_top/sim_main.cpp"
+  ],
+  "04-extra-error": [],
+  "03-remove-class-d": [
+    "tb/pp_top/sim_main.cpp"
+  ],
+  "02-remove-wire": [
+    "tb/pp_top/sim_main.cpp"
+  ],
+  "normal": []
+}

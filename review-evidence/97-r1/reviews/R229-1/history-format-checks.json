@@ -1,0 +1,23 @@
+[
+  {
+    "argv": [
+      "git",
+      "diff",
+      "--check",
+      "8452f564294300a82d56eed464276576f65f4d58",
+      "HEAD"
+    ],
+    "returncode": 0,
+    "stdout": ""
+  },
+  {
+    "argv": [
+      "git",
+      "log",
+      "--format=%H %P %s",
+      "8452f564294300a82d56eed464276576f65f4d58..HEAD"
+    ],
+    "returncode": 0,
+    "stdout": "1eb20dc4911880de10b745cc284e7dde306788b5 8452f564294300a82d56eed464276576f65f4d58 Assert distinct SRP VID verification fixtures\n"
+  }
+]

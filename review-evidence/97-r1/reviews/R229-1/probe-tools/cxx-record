@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+import sys,os,subprocess,pathlib,json,hashlib,uuid
+args=sys.argv[1:]; p=pathlib.Path(os.environ['R229_RECEIPTS'])/'compiler';p.mkdir(exist_ok=True)
+id=os.environ['R229_PROBE']+'-'+uuid.uuid4().hex[:8]
+headers={}
+for a in args:
+    if a.startswith('-I'):
+        d=pathlib.Path(a[2:])
+        for h in d.glob('Vpp_top_wrap*.h'):
+            headers[str(h)]=hashlib.sha256(h.read_bytes()).hexdigest()
+r=subprocess.run(['/usr/bin/g++',*args],stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+(p/(id+'.log')).write_bytes(r.stdout)
+(p/(id+'.json')).write_text(json.dumps({'argv':['/usr/bin/g++',*args],'cwd':os.getcwd(),'returncode':r.returncode,'headers':headers},indent=2)+'\n')
+sys.stdout.buffer.write(r.stdout)
+raise SystemExit(r.returncode)

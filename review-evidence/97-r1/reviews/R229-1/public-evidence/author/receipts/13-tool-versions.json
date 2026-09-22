@@ -1,0 +1,22 @@
+{
+  "name": "13-tool-versions",
+  "started_utc": "2026-09-22T06:36:05.110577+00:00",
+  "seconds": 0.106,
+  "cwd": "$CANDIDATE",
+  "argv": [
+    "rtk",
+    "proxy",
+    "bash",
+    "-c",
+    "verilator --version; g++ --version; python3 --version; make --version; git --version; rtk --version"
+  ],
+  "shell_command": "rtk proxy bash -c 'verilator --version; g++ --version; python3 --version; make --version; git --version; rtk --version'",
+  "environment": {
+    "PATH": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/bin:$WORKSPACE_HOME/.codex/tmp/arg0/codex-arg0m9zHd6:$WORKSPACE_HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl",
+    "MAKEFLAGS": "-j8",
+    "VERILATOR": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/bin/verilator"
+  },
+  "exit_code": 0,
+  "expected_exit_code": 0,
+  "log": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/receipts/13-tool-versions.log"
+}

@@ -1,0 +1,11 @@
+{
+  "errors": [
+    "../sim_main.cpp:81:27: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value",
+    "../sim_main.cpp:83:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value"
+  ],
+  "messages": [
+    "SRP VID fixture must differ from product default 2 in the 16-bit wire value",
+    "SRP VID fixture must differ from product default 2 in the 12-bit class-D value"
+  ],
+  "fixture_executable_exists": false
+}

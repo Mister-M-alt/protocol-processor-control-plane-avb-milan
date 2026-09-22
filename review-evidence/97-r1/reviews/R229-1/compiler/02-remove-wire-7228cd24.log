@@ -1,0 +1,155 @@
+In file included from /usr/share/verilator/include/verilated.h:1249,
+                 from /tmp/pp-top-vid-guards-sgeleblr/Vpp_top_wrap.h:11,
+                 from sim_main.cpp:30:
+/usr/share/verilator/include/verilated_funcs.h: In function ‘VlQueue<std::__cxx11::basic_string<char> > VL_STREAMR_NRI(int, VlQueue<std::__cxx11::basic_string<char> >, IData)’:
+/usr/share/verilator/include/verilated_funcs.h:1839:48: warning: unused parameter ‘lbits’ [-Wunused-parameter]
+ 1839 | inline VlQueue<std::string> VL_STREAMR_NRI(int lbits, const VlQueue<std::string> q,
+      |                                            ~~~~^~~~~
+/usr/share/verilator/include/verilated_funcs.h:1840:50: warning: unused parameter ‘rd’ [-Wunused-parameter]
+ 1840 |                                            IData rd) VL_MT_SAFE {
+      |                                            ~~~~~~^~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘IData VL_PACK_I_RI(int, int, const VlQueue<unsigned char>&)’:
+/usr/share/verilator/include/verilated_funcs.h:2159:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2159 |     for (size_t i = 0; i < q.size(); ++i)
+      |                        ~~^~~~~~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘IData VL_PACK_I_RI(int, int, const VlQueue<short unsigned int>&)’:
+/usr/share/verilator/include/verilated_funcs.h:2166:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2166 |     for (size_t i = 0; i < q.size(); ++i)
+      |                        ~~^~~~~~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘IData VL_PACK_I_RI(int, int, const VlQueue<unsigned int>&)’:
+/usr/share/verilator/include/verilated_funcs.h:2173:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2173 |     for (size_t i = 0; i < q.size(); ++i) ret |= q.at(q.size() - 1 - i) << (i * lbits);
+      |                        ~~^~~~~~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘QData VL_PACK_Q_RI(int, int, const VlQueue<unsigned char>&)’:
+/usr/share/verilator/include/verilated_funcs.h:2224:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2224 |     for (size_t i = 0; i < q.size(); ++i)
+      |                        ~~^~~~~~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘QData VL_PACK_Q_RI(int, int, const VlQueue<short unsigned int>&)’:
+/usr/share/verilator/include/verilated_funcs.h:2231:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2231 |     for (size_t i = 0; i < q.size(); ++i)
+      |                        ~~^~~~~~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘QData VL_PACK_Q_RI(int, int, const VlQueue<unsigned int>&)’:
+/usr/share/verilator/include/verilated_funcs.h:2238:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2238 |     for (size_t i = 0; i < q.size(); ++i)
+      |                        ~~^~~~~~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘QData VL_PACK_Q_RQ(int, int, const VlQueue<long unsigned int>&)’:
+/usr/share/verilator/include/verilated_funcs.h:2269:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2269 |     for (size_t i = 0; i < q.size(); ++i) ret |= q.at(q.size() - 1 - i) << (i * lbits);
+      |                        ~~^~~~~~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘IData VL_PACK_I_RQ(int, int, const VlQueue<long unsigned int>&)’:
+/usr/share/verilator/include/verilated_funcs.h:2275:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2275 |     for (size_t i = 0; i < q.size(); ++i) ret |= q.at(q.size() - 1 - i) << (i * lbits);
+      |                        ~~^~~~~~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘WDataOutP VL_PACK_W_RI(int, int, WDataOutP, const VlQueue<unsigned char>&)’:
+/usr/share/verilator/include/verilated_funcs.h:2297:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2297 |     for (size_t i = 0; i < q.size(); ++i)
+      |                        ~~^~~~~~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘WDataOutP VL_PACK_W_RI(int, int, WDataOutP, const VlQueue<short unsigned int>&)’:
+/usr/share/verilator/include/verilated_funcs.h:2307:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2307 |     for (size_t i = 0; i < q.size(); ++i)
+      |                        ~~^~~~~~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘WDataOutP VL_PACK_W_RI(int, int, WDataOutP, const VlQueue<unsigned int>&)’:
+/usr/share/verilator/include/verilated_funcs.h:2317:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2317 |     for (size_t i = 0; i < q.size(); ++i)
+      |                        ~~^~~~~~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘WDataOutP VL_PACK_W_RQ(int, int, WDataOutP, const VlQueue<long unsigned int>&)’:
+/usr/share/verilator/include/verilated_funcs.h:2354:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2354 |     for (size_t i = 0; i < q.size(); ++i)
+      |                        ~~^~~~~~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘void VL_UNPACK_RI_W(int, int, VlQueue<unsigned char>&, WDataInP)’:
+/usr/share/verilator/include/verilated_funcs.h:3115:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘const int’ [-Wsign-compare]
+ 3115 |     for (size_t i = 0; i < size; ++i) {
+      |                        ~~^~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘void VL_UNPACK_RI_W(int, int, VlQueue<short unsigned int>&, WDataInP)’:
+/usr/share/verilator/include/verilated_funcs.h:3128:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘const int’ [-Wsign-compare]
+ 3128 |     for (size_t i = 0; i < size; ++i) {
+      |                        ~~^~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘void VL_UNPACK_RI_W(int, int, VlQueue<unsigned int>&, WDataInP)’:
+/usr/share/verilator/include/verilated_funcs.h:3141:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘const int’ [-Wsign-compare]
+ 3141 |     for (size_t i = 0; i < size; ++i) {
+      |                        ~~^~~~~~
+/usr/share/verilator/include/verilated_funcs.h: In function ‘void VL_UNPACK_RQ_W(int, int, VlQueue<long unsigned int>&, WDataInP)’:
+/usr/share/verilator/include/verilated_funcs.h:3154:26: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘const int’ [-Wsign-compare]
+ 3154 |     for (size_t i = 0; i < size; ++i) {
+      |                        ~~^~~~~~
+In file included from /usr/share/verilator/include/verilated.h:43:
+/usr/share/verilator/include/verilated_types.h: In instantiation of ‘const T_Value& VlQueue<T_Value, N_MaxSize>::at(int32_t) const [with T_Value = unsigned char; long unsigned int N_MaxSize = 0; int32_t = int]’:
+/usr/share/verilator/include/verilated_funcs.h:2160:39:   required from here
+ 2160 |         ret |= static_cast<IData>(q.at(q.size() - 1 - i)) << (i * lbits);
+      |                                   ~~~~^~~~~~~~~~~~~~~~~~
+/usr/share/verilator/include/verilated_types.h:740:44: warning: comparison of integer expressions of different signedness: ‘int32_t’ {aka ‘int’} and ‘std::deque<unsigned char, std::allocator<unsigned char> >::size_type’ {aka ‘long unsigned int’} [-Wsign-compare]
+  740 |         if (VL_UNLIKELY(index < 0 || index >= m_deque.size())) return atDefault();
+      |                                      ~~~~~~^~~~~~~~~~~~~~~~~
+/usr/share/verilator/include/verilatedos.h:67:45: note: in definition of macro ‘VL_UNLIKELY’
+   67 | # define VL_UNLIKELY(x) __builtin_expect(!!(x), 0)  // Prefer over C++20 [[unlikely]]
+      |                                             ^
+/usr/share/verilator/include/verilated_types.h: In instantiation of ‘const T_Value& VlQueue<T_Value, N_MaxSize>::at(int32_t) const [with T_Value = short unsigned int; long unsigned int N_MaxSize = 0; int32_t = int]’:
+/usr/share/verilator/include/verilated_funcs.h:2167:39:   required from here
+ 2167 |         ret |= static_cast<IData>(q.at(q.size() - 1 - i)) << (i * lbits);
+      |                                   ~~~~^~~~~~~~~~~~~~~~~~
+/usr/share/verilator/include/verilated_types.h:740:44: warning: comparison of integer expressions of different signedness: ‘int32_t’ {aka ‘int’} and ‘std::deque<short unsigned int, std::allocator<short unsigned int> >::size_type’ {aka ‘long unsigned int’} [-Wsign-compare]
+  740 |         if (VL_UNLIKELY(index < 0 || index >= m_deque.size())) return atDefault();
+      |                                      ~~~~~~^~~~~~~~~~~~~~~~~
+/usr/share/verilator/include/verilatedos.h:67:45: note: in definition of macro ‘VL_UNLIKELY’
+   67 | # define VL_UNLIKELY(x) __builtin_expect(!!(x), 0)  // Prefer over C++20 [[unlikely]]
+      |                                             ^
+/usr/share/verilator/include/verilated_types.h: In instantiation of ‘const T_Value& VlQueue<T_Value, N_MaxSize>::at(int32_t) const [with T_Value = unsigned int; long unsigned int N_MaxSize = 0; int32_t = int]’:
+/usr/share/verilator/include/verilated_funcs.h:2173:54:   required from here
+ 2173 |     for (size_t i = 0; i < q.size(); ++i) ret |= q.at(q.size() - 1 - i) << (i * lbits);
+      |                                                  ~~~~^~~~~~~~~~~~~~~~~~
+/usr/share/verilator/include/verilated_types.h:740:44: warning: comparison of integer expressions of different signedness: ‘int32_t’ {aka ‘int’} and ‘std::deque<unsigned int, std::allocator<unsigned int> >::size_type’ {aka ‘long unsigned int’} [-Wsign-compare]
+  740 |         if (VL_UNLIKELY(index < 0 || index >= m_deque.size())) return atDefault();
+      |                                      ~~~~~~^~~~~~~~~~~~~~~~~
+/usr/share/verilator/include/verilatedos.h:67:45: note: in definition of macro ‘VL_UNLIKELY’
+   67 | # define VL_UNLIKELY(x) __builtin_expect(!!(x), 0)  // Prefer over C++20 [[unlikely]]
+      |                                             ^
+/usr/share/verilator/include/verilated_types.h: In instantiation of ‘const T_Value& VlQueue<T_Value, N_MaxSize>::at(int32_t) const [with T_Value = long unsigned int; long unsigned int N_MaxSize = 0; int32_t = int]’:
+/usr/share/verilator/include/verilated_funcs.h:2269:54:   required from here
+ 2269 |     for (size_t i = 0; i < q.size(); ++i) ret |= q.at(q.size() - 1 - i) << (i * lbits);
+      |                                                  ~~~~^~~~~~~~~~~~~~~~~~
+/usr/share/verilator/include/verilated_types.h:740:44: warning: comparison of integer expressions of different signedness: ‘int32_t’ {aka ‘int’} and ‘std::deque<long unsigned int, std::allocator<long unsigned int> >::size_type’ {aka ‘long unsigned int’} [-Wsign-compare]
+  740 |         if (VL_UNLIKELY(index < 0 || index >= m_deque.size())) return atDefault();
+      |                                      ~~~~~~^~~~~~~~~~~~~~~~~
+/usr/share/verilator/include/verilatedos.h:67:45: note: in definition of macro ‘VL_UNLIKELY’
+   67 | # define VL_UNLIKELY(x) __builtin_expect(!!(x), 0)  // Prefer over C++20 [[unlikely]]
+      |                                             ^
+/usr/share/verilator/include/verilated_types.h: In instantiation of ‘T_Value& VlQueue<T_Value, N_MaxSize>::atWrite(int32_t) [with T_Value = unsigned char; long unsigned int N_MaxSize = 0; int32_t = int]’:
+/usr/share/verilator/include/verilated_funcs.h:3066:48:   required from here
+ 3066 |     for (size_t i = 0; i < size; ++i) q.atWrite(size - 1 - i) = (from >> (i * lbits)) & mask;
+      |                                       ~~~~~~~~~^~~~~~~~~~~~~~
+/usr/share/verilator/include/verilated_types.h:720:44: warning: comparison of integer expressions of different signedness: ‘int32_t’ {aka ‘int’} and ‘std::deque<unsigned char, std::allocator<unsigned char> >::size_type’ {aka ‘long unsigned int’} [-Wsign-compare]
+  720 |         if (VL_UNLIKELY(index < 0 || index >= m_deque.size())) {
+      |                                      ~~~~~~^~~~~~~~~~~~~~~~~
+/usr/share/verilator/include/verilatedos.h:67:45: note: in definition of macro ‘VL_UNLIKELY’
+   67 | # define VL_UNLIKELY(x) __builtin_expect(!!(x), 0)  // Prefer over C++20 [[unlikely]]
+      |                                             ^
+/usr/share/verilator/include/verilated_types.h: In instantiation of ‘T_Value& VlQueue<T_Value, N_MaxSize>::atWrite(int32_t) [with T_Value = short unsigned int; long unsigned int N_MaxSize = 0; int32_t = int]’:
+/usr/share/verilator/include/verilated_funcs.h:3073:48:   required from here
+ 3073 |     for (size_t i = 0; i < size; ++i) q.atWrite(size - 1 - i) = (from >> (i * lbits)) & mask;
+      |                                       ~~~~~~~~~^~~~~~~~~~~~~~
+/usr/share/verilator/include/verilated_types.h:720:44: warning: comparison of integer expressions of different signedness: ‘int32_t’ {aka ‘int’} and ‘std::deque<short unsigned int, std::allocator<short unsigned int> >::size_type’ {aka ‘long unsigned int’} [-Wsign-compare]
+  720 |         if (VL_UNLIKELY(index < 0 || index >= m_deque.size())) {
+      |                                      ~~~~~~^~~~~~~~~~~~~~~~~
+/usr/share/verilator/include/verilatedos.h:67:45: note: in definition of macro ‘VL_UNLIKELY’
+   67 | # define VL_UNLIKELY(x) __builtin_expect(!!(x), 0)  // Prefer over C++20 [[unlikely]]
+      |                                             ^
+/usr/share/verilator/include/verilated_types.h: In instantiation of ‘T_Value& VlQueue<T_Value, N_MaxSize>::atWrite(int32_t) [with T_Value = unsigned int; long unsigned int N_MaxSize = 0; int32_t = int]’:
+/usr/share/verilator/include/verilated_funcs.h:3080:48:   required from here
+ 3080 |     for (size_t i = 0; i < size; ++i) q.atWrite(size - 1 - i) = (from >> (i * lbits)) & mask;
+      |                                       ~~~~~~~~~^~~~~~~~~~~~~~
+/usr/share/verilator/include/verilated_types.h:720:44: warning: comparison of integer expressions of different signedness: ‘int32_t’ {aka ‘int’} and ‘std::deque<unsigned int, std::allocator<unsigned int> >::size_type’ {aka ‘long unsigned int’} [-Wsign-compare]
+  720 |         if (VL_UNLIKELY(index < 0 || index >= m_deque.size())) {
+      |                                      ~~~~~~^~~~~~~~~~~~~~~~~
+/usr/share/verilator/include/verilatedos.h:67:45: note: in definition of macro ‘VL_UNLIKELY’
+   67 | # define VL_UNLIKELY(x) __builtin_expect(!!(x), 0)  // Prefer over C++20 [[unlikely]]
+      |                                             ^
+/usr/share/verilator/include/verilated_types.h: In instantiation of ‘T_Value& VlQueue<T_Value, N_MaxSize>::atWrite(int32_t) [with T_Value = long unsigned int; long unsigned int N_MaxSize = 0; int32_t = int]’:
+/usr/share/verilator/include/verilated_funcs.h:3108:48:   required from here
+ 3108 |     for (size_t i = 0; i < size; ++i) q.atWrite(size - 1 - i) = (from >> (i * lbits)) & mask;
+      |                                       ~~~~~~~~~^~~~~~~~~~~~~~
+/usr/share/verilator/include/verilated_types.h:720:44: warning: comparison of integer expressions of different signedness: ‘int32_t’ {aka ‘int’} and ‘std::deque<long unsigned int, std::allocator<long unsigned int> >::size_type’ {aka ‘long unsigned int’} [-Wsign-compare]
+  720 |         if (VL_UNLIKELY(index < 0 || index >= m_deque.size())) {
+      |                                      ~~~~~~^~~~~~~~~~~~~~~~~
+/usr/share/verilator/include/verilatedos.h:67:45: note: in definition of macro ‘VL_UNLIKELY’
+   67 | # define VL_UNLIKELY(x) __builtin_expect(!!(x), 0)  // Prefer over C++20 [[unlikely]]
+      |                                             ^

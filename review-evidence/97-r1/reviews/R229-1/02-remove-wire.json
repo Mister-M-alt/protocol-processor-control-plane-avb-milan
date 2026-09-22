@@ -1,0 +1,16 @@
+{
+  "name": "02-remove-wire",
+  "argv": [
+    "make",
+    "-j1",
+    "fixture-guards",
+    "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r229/probe-tools/verilator",
+    "CXX=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r229/probe-tools/cxx-record"
+  ],
+  "cwd": "/tmp/r229-pr100-sd8ak_7h/02-remove-wire/tb/pp_top",
+  "head": "1eb20dc4911880de10b745cc284e7dde306788b5",
+  "start": 1790063816.9449985,
+  "seconds": 4.417991876602173,
+  "returncode": 2,
+  "expected": 2
+}
