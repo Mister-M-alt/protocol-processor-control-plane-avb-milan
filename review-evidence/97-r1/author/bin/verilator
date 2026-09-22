@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+args = []
+it = iter(sys.argv[1:])
+for arg in it:
+    if arg in ("-j", "--build-jobs", "--verilate-jobs"):
+        next(it)
+    elif arg.startswith(("--build-jobs=", "--verilate-jobs=")) or (arg.startswith("-j") and arg[2:].isdigit()):
+        continue
+    else:
+        args.append(arg)
+args += ["-j", "8", "--build-jobs", "8", "--verilate-jobs", "8"]
+with Path('$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/receipts/verilator-invocations.jsonl').open("a") as log:
+    log.write(json.dumps({"cwd": os.getcwd(), "argv": ['/usr/bin/verilator', *args]}) + "\n")
+os.execv('/usr/bin/verilator', ['/usr/bin/verilator', *args])

@@ -1,0 +1,21 @@
+{
+  "name": "02-default-fixture",
+  "started_utc": "2026-09-22T06:32:10.813340+00:00",
+  "seconds": 199.078,
+  "cwd": "/tmp/a161-issue97-rwxncqry/candidate/tb/pp_top",
+  "argv": [
+    "rtk",
+    "proxy",
+    "make",
+    "-j8"
+  ],
+  "shell_command": "rtk proxy make -j8",
+  "environment": {
+    "PATH": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/bin:$WORKSPACE_HOME/.codex/tmp/arg0/codex-arg0m9zHd6:$WORKSPACE_HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl",
+    "MAKEFLAGS": "-j8",
+    "VERILATOR": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/bin/verilator"
+  },
+  "exit_code": 0,
+  "expected_exit_code": 0,
+  "log": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/receipts/02-default-fixture.log"
+}

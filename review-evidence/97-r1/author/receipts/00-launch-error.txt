@@ -1,0 +1,1 @@
+Initial receipt-runner invocation placed --cwd after its positional name; argparse REMAINDER consumed the option and exited 2 before running make. Corrected by putting --cwd before the name. No test ran in that initial invocation.

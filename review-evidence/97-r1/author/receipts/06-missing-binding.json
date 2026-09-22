@@ -1,0 +1,21 @@
+{
+  "name": "06-missing-binding",
+  "started_utc": "2026-09-22T06:36:04.332784+00:00",
+  "seconds": 197.352,
+  "cwd": "/tmp/a161-issue97-rwxncqry/06-missing-binding/tb/pp_top",
+  "argv": [
+    "rtk",
+    "proxy",
+    "make",
+    "-j8"
+  ],
+  "shell_command": "rtk proxy make -j8",
+  "environment": {
+    "PATH": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/bin:$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/bin:$WORKSPACE_HOME/.codex/tmp/arg0/codex-arg0m9zHd6:$WORKSPACE_HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl",
+    "MAKEFLAGS": "-j8",
+    "VERILATOR": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/bin/verilator"
+  },
+  "exit_code": 2,
+  "expected_exit_code": 2,
+  "log": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/receipts/06-missing-binding.log"
+}

@@ -1,0 +1,22 @@
+{
+  "name": "10-docs-final",
+  "started_utc": "2026-09-22T06:34:28.788165+00:00",
+  "seconds": 23.961,
+  "cwd": "$CANDIDATE",
+  "argv": [
+    "rtk",
+    "proxy",
+    "make",
+    "-j8",
+    "check"
+  ],
+  "shell_command": "rtk proxy make -j8 check",
+  "environment": {
+    "PATH": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/bin:$WORKSPACE_HOME/.codex/tmp/arg0/codex-arg0m9zHd6:$WORKSPACE_HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl",
+    "MAKEFLAGS": "-j8",
+    "VERILATOR": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/bin/verilator"
+  },
+  "exit_code": 0,
+  "expected_exit_code": 0,
+  "log": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/receipts/10-docs-final.log"
+}

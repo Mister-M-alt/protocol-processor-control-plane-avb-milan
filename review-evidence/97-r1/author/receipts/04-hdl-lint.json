@@ -1,0 +1,20 @@
+{
+  "name": "04-hdl-lint",
+  "started_utc": "2026-09-22T06:32:24.951347+00:00",
+  "seconds": 11.353,
+  "cwd": "$CANDIDATE",
+  "argv": [
+    "rtk",
+    "proxy",
+    "./scripts/lint_hdl.sh"
+  ],
+  "shell_command": "rtk proxy ./scripts/lint_hdl.sh",
+  "environment": {
+    "PATH": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/bin:$WORKSPACE_HOME/.codex/tmp/arg0/codex-arg0m9zHd6:$WORKSPACE_HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl",
+    "MAKEFLAGS": "-j8",
+    "VERILATOR": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/bin/verilator"
+  },
+  "exit_code": 0,
+  "expected_exit_code": 0,
+  "log": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor97-author/receipts/04-hdl-lint.log"
+}
