@@ -1,0 +1,28 @@
+{
+  "cwd": "$VALIDATION",
+  "head": "c8214cfe827fb3fb50c9bfee415468a24b7c27b1",
+  "base": "8452f564294300a82d56eed464276576f65f4d58",
+  "commands": [
+    [
+      "python3",
+      "$TRUSTED_DEV/scripts/check_merge_containment.py",
+      "--base",
+      "origin/main",
+      "origin/97-assert-distinct-sr-vid-fixture"
+    ],
+    [
+      "python3",
+      "$TRUSTED_DEV/scripts/check_merge_containment.py",
+      "--base",
+      "origin/main",
+      "--merged-prs"
+    ],
+    [
+      "python3",
+      "$TRUSTED_DEV/scripts/check_merge_review_integrity.py",
+      "--base",
+      "main"
+    ]
+  ],
+  "note": "Actual merged tree equals validated candidate; historical audit baseline remains."
+}

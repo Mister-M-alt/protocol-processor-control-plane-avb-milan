@@ -6724,5 +6724,59 @@
     "original_sha256": "45bd9b877cfd822a768443bd7bedb01b0a82194ce19c8846ec2c64b5e8ba3e11",
     "published_sha256": "45bd9b877cfd822a768443bd7bedb01b0a82194ce19c8846ec2c64b5e8ba3e11",
     "path_redacted": false
+  },
+  {
+    "file": "round2/manager/merge-result.json",
+    "original_sha256": "aa95527ff65c364562d0cf146e6cfb97bfc6052b7e06cf3a90d4348d9e96b0aa",
+    "published_sha256": "aa95527ff65c364562d0cf146e6cfb97bfc6052b7e06cf3a90d4348d9e96b0aa",
+    "path_redacted": false
+  },
+  {
+    "file": "round2/manager/actual-merge.json",
+    "original_sha256": "096d035bd2be52caacc6b214cd8092b475817c0f8fa62c9ca5d494729b634f17",
+    "published_sha256": "096d035bd2be52caacc6b214cd8092b475817c0f8fa62c9ca5d494729b634f17",
+    "path_redacted": false
+  },
+  {
+    "file": "round2/manager/postmerge-audit-spec.json",
+    "original_sha256": "d097a6771f88e4fdaec8574a0e195bc9ff5b8a26940a8482e8fe8c242d0c3069",
+    "published_sha256": "03cca157ca76181700b825e7a8a775034de903b5c19f5659f62cdcb1d87e8e77",
+    "path_redacted": true
+  },
+  {
+    "file": "round2/manager/postmerge-audit/01.log",
+    "original_sha256": "f87650b88d9ffd35e4260ac04142940a4b6e4b7b2935aad42637c69a2ee9692c",
+    "published_sha256": "f87650b88d9ffd35e4260ac04142940a4b6e4b7b2935aad42637c69a2ee9692c",
+    "path_redacted": false
+  },
+  {
+    "file": "round2/manager/postmerge-audit/02.log",
+    "original_sha256": "00e17b20d7ede491340e0f3dae3c4cc9ff95dd95358c20dc802f18501362774d",
+    "published_sha256": "00e17b20d7ede491340e0f3dae3c4cc9ff95dd95358c20dc802f18501362774d",
+    "path_redacted": false
+  },
+  {
+    "file": "round2/manager/postmerge-audit/03.log",
+    "original_sha256": "a0d831ffa68eeababaf46c2988d4aa32d180a87bfbe1aad902959e1a6ac8162b",
+    "published_sha256": "a0d831ffa68eeababaf46c2988d4aa32d180a87bfbe1aad902959e1a6ac8162b",
+    "path_redacted": false
+  },
+  {
+    "file": "round2/manager/postmerge-audit/complete.json",
+    "original_sha256": "5f2d3f2f19150ee2edbb06aebee4679ddc3167043a6f5ecc62b3b5d7b031ccf8",
+    "published_sha256": "5f2d3f2f19150ee2edbb06aebee4679ddc3167043a6f5ecc62b3b5d7b031ccf8",
+    "path_redacted": false
+  },
+  {
+    "file": "round2/manager/postmerge-audit/results.json",
+    "original_sha256": "d8f9703f3386d5835d3b97522caa1d144ffc36c792e261d9de5e49cdbb3c2328",
+    "published_sha256": "317c0d3746b8ab8e9c07c8ad0b8c4700312a26ffb0f129b9b230523cb7709a6d",
+    "path_redacted": true
+  },
+  {
+    "file": "round2/manager/postmerge-audit-summary.md",
+    "original_sha256": "ecb331d897ec811e2e008c260b0cad20187f910eb81a3dada9da8c5a1f5902d4",
+    "published_sha256": "ecb331d897ec811e2e008c260b0cad20187f910eb81a3dada9da8c5a1f5902d4",
+    "path_redacted": false
   }
 ]
