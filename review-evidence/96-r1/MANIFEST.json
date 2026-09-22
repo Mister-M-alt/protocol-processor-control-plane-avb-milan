@@ -1936,5 +1936,17 @@
     "original_sha256": "d1a34a622d7cfcc472b7d08618769d8d7c0d1e71b9921a85baec560adcc0598a",
     "published_sha256": "d1a34a622d7cfcc472b7d08618769d8d7c0d1e71b9921a85baec560adcc0598a",
     "path_redacted": false
+  },
+  {
+    "file": "manager/postmerge/hosted-main.json",
+    "original_sha256": "3a446b62bf2ede87f27041eb0aceac87d1ad7afc7a49c4c3196b875ec2643bc7",
+    "published_sha256": "3a446b62bf2ede87f27041eb0aceac87d1ad7afc7a49c4c3196b875ec2643bc7",
+    "path_redacted": false
+  },
+  {
+    "file": "manager/postmerge/hosted-main.log",
+    "original_sha256": "f0709eb7adb17b5392afe4a57ed22fc4beaa008e64a462f199215c101cc0544e",
+    "published_sha256": "f0709eb7adb17b5392afe4a57ed22fc4beaa008e64a462f199215c101cc0544e",
+    "path_redacted": false
   }
 ]
