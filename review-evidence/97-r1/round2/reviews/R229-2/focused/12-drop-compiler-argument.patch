@@ -1,0 +1,11 @@
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -31,7 +31,7 @@
+             [args.verilator, *vflags, "--Mdir", tmp], check=True
+         )
+         command = [
+-            *shlex.split(args.cxx), "-std=c++17", "-Wall", "-Wextra", "-fsyntax-only",
++            *shlex.split(args.cxx)[:-1], "-std=c++17", "-Wall", "-Wextra", "-fsyntax-only",
+             "-I" + tmp, "-I" + str(Path(root) / "include"),
+             "-I" + str(Path(root) / "include/vltstd"),
+         ]

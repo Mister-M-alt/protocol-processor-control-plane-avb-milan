@@ -1,0 +1,66 @@
+{
+  "headRefOid": "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+  "isDraft": true,
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-22T09:10:11Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708829801/job/106684193718",
+      "name": "docs-gates",
+      "startedAt": "2026-09-22T09:10:03Z",
+      "status": "COMPLETED",
+      "workflowName": "hdl"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-22T09:10:10Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708824838/job/106684178741",
+      "name": "docs-gates",
+      "startedAt": "2026-09-22T09:10:00Z",
+      "status": "COMPLETED",
+      "workflowName": "hdl"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-22T09:20:13Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708829801/job/106684193618",
+      "name": "suites",
+      "startedAt": "2026-09-22T09:10:04Z",
+      "status": "COMPLETED",
+      "workflowName": "hdl"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-22T09:19:59Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708824838/job/106684179182",
+      "name": "suites",
+      "startedAt": "2026-09-22T09:10:01Z",
+      "status": "COMPLETED",
+      "workflowName": "hdl"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-22T09:12:18Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708829801/job/106684193741",
+      "name": "portability",
+      "startedAt": "2026-09-22T09:10:03Z",
+      "status": "COMPLETED",
+      "workflowName": "hdl"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-22T09:12:22Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708824838/job/106684179155",
+      "name": "portability",
+      "startedAt": "2026-09-22T09:10:00Z",
+      "status": "COMPLETED",
+      "workflowName": "hdl"
+    }
+  ]
+}

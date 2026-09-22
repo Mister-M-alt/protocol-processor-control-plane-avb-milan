@@ -1,0 +1,36 @@
+{
+  "04-remove-wire": [
+    "tb/pp_top/sim_main.cpp"
+  ],
+  "05-remove-class-d": [
+    "tb/pp_top/sim_main.cpp"
+  ],
+  "06-extra-error": [
+    "tb/pp_top/sim_main.cpp"
+  ],
+  "07-remove-normalization": [
+    "tb/pp_top/fixture_guards.py"
+  ],
+  "08-remove-env-argument": [
+    "tb/pp_top/fixture_guards.py"
+  ],
+  "09-mutate-caller": [
+    "tb/pp_top/fixture_guards.py"
+  ],
+  "10-drop-inherited-inputs": [
+    "tb/pp_top/fixture_guards.py"
+  ],
+  "11-normalize-verilator": [
+    "tb/pp_top/fixture_guards.py"
+  ],
+  "12-drop-compiler-argument": [
+    "tb/pp_top/fixture_guards.py"
+  ],
+  "normal": [],
+  "prior": [
+    "tb/pp_top/Makefile",
+    "tb/pp_top/README.md",
+    "tb/pp_top/fixture_guards.py",
+    "tb/pp_top/test_fixture_guards.py"
+  ]
+}

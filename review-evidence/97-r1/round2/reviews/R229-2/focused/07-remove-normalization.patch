@@ -1,0 +1,10 @@
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -37,7 +37,6 @@
+         ]
+         # The diagnostic checks below require the compiler's English wording.
+         compiler_env = os.environ.copy()
+-        compiler_env["LC_ALL"] = "C"
+         for value, expected in cases:
+             define = [] if value is None else ["-DPP_TOP_SRP_DOM_DEF_VID=0x" + value]
+             result = subprocess.run(

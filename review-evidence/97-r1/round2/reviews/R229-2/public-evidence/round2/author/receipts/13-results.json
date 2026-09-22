@@ -1,0 +1,14 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "python3",
+    "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-m1-author/scripts/verify-results.py"
+  ],
+  "shell_command": "rtk proxy python3 $WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-m1-author/scripts/verify-results.py",
+  "cwd": "$CANDIDATE",
+  "started_utc": "2026-09-22T08:59:00.768609+00:00",
+  "seconds": 0.037,
+  "returncode": 0,
+  "expected_returncode": 0
+}

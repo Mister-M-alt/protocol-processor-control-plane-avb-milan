@@ -1,0 +1,67 @@
+test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) ... 
+  test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None) ... FAIL
+  test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8') ... FAIL
+
+======================================================================
+FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL=None)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/r229-r2-en0oej49/12-drop-compiler-argument/tb/pp_top/test_fixture_guards.py", line 56, in test_compiler_environment_and_arguments
+    self.assertEqual(call.args[0], [*command, *define, "sim_main.cpp"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['cac[23 chars]', '-std=c++17', '-Wall', '-Wextra', '-fsyntax[120 chars]cpp'] != ['cac[23 chars]', '--driver-flag', '-std=c++17', '-Wall', '-W[137 chars]cpp']
+
+First differing element 2:
+'-std=c++17'
+'--driver-flag'
+
+Second list contains 1 additional elements.
+First extra element 10:
+'sim_main.cpp'
+
+  ['cache-cxx',
+   'compiler path',
++  '--driver-flag',
+   '-std=c++17',
+   '-Wall',
+   '-Wextra',
+   '-fsyntax-only',
+   '-I/tmp/pp-top-vid-guards-px_q5tob',
+   '-I/test/verilator/include',
+   '-I/test/verilator/include/vltstd',
+   'sim_main.cpp']
+
+======================================================================
+FAIL: test_compiler_environment_and_arguments (test_fixture_guards.CompilerLocaleTest.test_compiler_environment_and_arguments) (LC_ALL='fr_FR.UTF-8')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/r229-r2-en0oej49/12-drop-compiler-argument/tb/pp_top/test_fixture_guards.py", line 56, in test_compiler_environment_and_arguments
+    self.assertEqual(call.args[0], [*command, *define, "sim_main.cpp"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['cac[23 chars]', '-std=c++17', '-Wall', '-Wextra', '-fsyntax[120 chars]cpp'] != ['cac[23 chars]', '--driver-flag', '-std=c++17', '-Wall', '-W[137 chars]cpp']
+
+First differing element 2:
+'-std=c++17'
+'--driver-flag'
+
+Second list contains 1 additional elements.
+First extra element 10:
+'sim_main.cpp'
+
+  ['cache-cxx',
+   'compiler path',
++  '--driver-flag',
+   '-std=c++17',
+   '-Wall',
+   '-Wextra',
+   '-fsyntax-only',
+   '-I/tmp/pp-top-vid-guards-nyrg876z',
+   '-I/test/verilator/include',
+   '-I/test/verilator/include/vltstd',
+   'sim_main.cpp']
+
+----------------------------------------------------------------------
+Ran 1 test in 0.003s
+
+FAILED (failures=2)
+make: *** [Makefile:72: fixture-guards-test] Error 1

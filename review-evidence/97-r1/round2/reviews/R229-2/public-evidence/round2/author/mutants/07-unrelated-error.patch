@@ -1,0 +1,12 @@
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -80,6 +80,9 @@
+ //! A default-equivalent fixture cannot expose a dropped binding (issue #97).
+ static_assert(SRP_DEF_VID != 2,
+               "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
++#if PP_TOP_SRP_DOM_DEF_VID == 0x0002
++#error A166 unrelated compiler error control
++#endif
+ static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
+               "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
+ #else

@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+import json, os, subprocess, sys
+from pathlib import Path
+a=sys.argv[1:]
+original=list(a)
+if '--getenv' not in a and '--version' not in a:
+    for i,v in enumerate(a):
+        if v in ('-j','--build-jobs','--verilate-jobs'):
+            n=int(a[i+1]); a[i+1]=str(8 if n==0 else min(n,8))
+        elif v.startswith('-j') and len(v)>2 and v[2:].isdigit():
+            n=int(v[2:]);a[i]='-j'+str(8 if n==0 else min(n,8))
+    if '-j' not in a and not any(v.startswith('-j') for v in a):a += ['-j','8']
+with open(Path(__file__).with_name('verilator-invocations.jsonl'),'a') as f:
+    f.write(json.dumps({'cwd':os.getcwd(),'original':original,'effective':a,
+        'env':{k:os.environ.get(k) for k in ('LANG','LANGUAGE','LC_ALL','LC_MESSAGES','R229_SENTINEL')}})+'\n')
+raise SystemExit(subprocess.call(['/usr/bin/verilator',*a]))

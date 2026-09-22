@@ -1,0 +1,15 @@
+{
+  "head": "1eb20dc4911880de10b745cc284e7dde306788b5",
+  "tree": "001d20069951396c5e056c5539c2af4217310a57",
+  "status": "",
+  "index_sha256": "1b384582e45013ad727c3e89497acecb31e7813fde154117f6e63602ffafce2a",
+  "index_entries_sha256": "38bc77be343b8bf0d15818d9a9322adbeeb5ded29f5d75177075bcb2d3c7f345",
+  "tracked_files": 223,
+  "tracked_manifest_unchanged": true,
+  "detached": true,
+  "cached_diff": "",
+  "working_diff": "",
+  "unmerged_entries": "",
+  "index_byte_exact": true,
+  "index_entries_unchanged": true
+}

@@ -1,0 +1,8 @@
+{
+  "sim_main_identical_to_base_after_removing_only_guard_addition": true,
+  "runtime_check_count": 753,
+  "hdl_diff_empty": true,
+  "wrapper_blob_unchanged": true,
+  "head_tree": "001d20069951396c5e056c5539c2af4217310a57",
+  "python_syntax": true
+}

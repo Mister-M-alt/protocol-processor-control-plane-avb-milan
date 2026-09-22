@@ -1,0 +1,23 @@
+{
+  "name": "16-diff-check",
+  "argv": [
+    "git",
+    "diff",
+    "--check",
+    "1eb20dc4911880de10b745cc284e7dde306788b5",
+    "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e"
+  ],
+  "cwd": "$VALIDATION_STORAGE/reviews/r229-100-r2",
+  "returncode": 0,
+  "expected": 0,
+  "seconds": 0.003,
+  "environment_overrides": {
+    "LANG": "en_US.UTF-8",
+    "LANGUAGE": "de",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "R229_SENTINEL": "inherited-reviewer-value",
+    "MAKEFLAGS": "-j1",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  }
+}

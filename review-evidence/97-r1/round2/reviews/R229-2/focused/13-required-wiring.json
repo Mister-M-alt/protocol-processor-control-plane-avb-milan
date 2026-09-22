@@ -1,0 +1,23 @@
+{
+  "name": "13-required-wiring",
+  "argv": [
+    "make",
+    "-j1",
+    "-n",
+    "run",
+    "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r2-r229/focused/verilator8"
+  ],
+  "cwd": "/tmp/r229-r2-en0oej49/normal/tb/pp_top",
+  "returncode": 0,
+  "expected": 0,
+  "seconds": 0.003,
+  "environment_overrides": {
+    "LANG": "en_US.UTF-8",
+    "LANGUAGE": "de",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "R229_SENTINEL": "inherited-reviewer-value",
+    "MAKEFLAGS": "-j1",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  }
+}

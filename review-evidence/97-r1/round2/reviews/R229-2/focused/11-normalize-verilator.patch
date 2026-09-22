@@ -1,0 +1,11 @@
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -28,7 +28,7 @@
+ 
+     with tempfile.TemporaryDirectory(prefix="pp-top-vid-guards-") as tmp:
+         subprocess.run(
+-            [args.verilator, *vflags, "--Mdir", tmp], check=True
++            [args.verilator, *vflags, "--Mdir", tmp], check=True, env={**os.environ, "LC_ALL": "C"}
+         )
+         command = [
+             *shlex.split(args.cxx), "-std=c++17", "-Wall", "-Wextra", "-fsyntax-only",

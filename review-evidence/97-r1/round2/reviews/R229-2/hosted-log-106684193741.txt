@@ -1,0 +1,715 @@
+﻿2026-09-22T09:10:03.6821765Z Current runner version: '2.337.0'
+2026-09-22T09:10:03.6847168Z ##[group]Runner Image Provisioner
+2026-09-22T09:10:03.6848163Z Hosted Compute Agent
+2026-09-22T09:10:03.6848781Z Version: 20260828.587
+2026-09-22T09:10:03.6849435Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+2026-09-22T09:10:03.6850293Z Build Date: 2026-08-28T16:44:25Z
+2026-09-22T09:10:03.6850996Z Worker ID: {fc918d0e-e0ca-495b-afb9-bc6a961400b2}
+2026-09-22T09:10:03.6851700Z Azure Region: eastus2
+2026-09-22T09:10:03.6852340Z ##[endgroup]
+2026-09-22T09:10:03.6854535Z ##[group]Operating System
+2026-09-22T09:10:03.6855379Z Ubuntu
+2026-09-22T09:10:03.6855923Z 24.04.5
+2026-09-22T09:10:03.6856415Z LTS
+2026-09-22T09:10:03.6857001Z ##[endgroup]
+2026-09-22T09:10:03.6857564Z ##[group]Runner Image
+2026-09-22T09:10:03.6858234Z Image: ubuntu-24.04
+2026-09-22T09:10:03.6858831Z Version: 20260907.300.1
+2026-09-22T09:10:03.6860168Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+2026-09-22T09:10:03.6861716Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+2026-09-22T09:10:03.6862774Z ##[endgroup]
+2026-09-22T09:10:03.6864216Z ##[group]GITHUB_TOKEN Permissions
+2026-09-22T09:10:03.6866469Z Contents: read
+2026-09-22T09:10:03.6867102Z Metadata: read
+2026-09-22T09:10:03.6867726Z Packages: read
+2026-09-22T09:10:03.6868403Z ##[endgroup]
+2026-09-22T09:10:03.6870431Z Secret source: Actions
+2026-09-22T09:10:03.6871434Z Cache mode: write
+2026-09-22T09:10:03.6872473Z Prepare workflow directory
+2026-09-22T09:10:03.7263886Z Prepare all required actions
+2026-09-22T09:10:03.7311634Z Getting action download info
+2026-09-22T09:10:03.9634050Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-09-22T09:10:04.1745628Z Complete job name: portability
+2026-09-22T09:10:04.2527269Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T09:10:04.2535833Z ##[group]Run actions/checkout@v4
+2026-09-22T09:10:04.2536589Z with:
+2026-09-22T09:10:04.2537217Z   repository: Mister-M-alt/protocol-processor-control-plane-avb-milan
+2026-09-22T09:10:04.2541054Z   token: ***
+2026-09-22T09:10:04.2541483Z   ssh-strict: true
+2026-09-22T09:10:04.2541937Z   ssh-user: git
+2026-09-22T09:10:04.2542384Z   persist-credentials: true
+2026-09-22T09:10:04.2542873Z   clean: true
+2026-09-22T09:10:04.2543517Z   sparse-checkout-cone-mode: true
+2026-09-22T09:10:04.2544038Z   fetch-depth: 1
+2026-09-22T09:10:04.2544476Z   fetch-tags: false
+2026-09-22T09:10:04.2544920Z   show-progress: true
+2026-09-22T09:10:04.2545406Z   lfs: false
+2026-09-22T09:10:04.2545825Z   submodules: false
+2026-09-22T09:10:04.2546268Z   set-safe-directory: true
+2026-09-22T09:10:04.2546776Z   allow-unsafe-pr-checkout: false
+2026-09-22T09:10:04.2547630Z env:
+2026-09-22T09:10:04.2548108Z   VERILATOR_VERSION: v5.050
+2026-09-22T09:10:04.2548591Z ##[endgroup]
+2026-09-22T09:10:04.3558277Z Syncing repository: Mister-M-alt/protocol-processor-control-plane-avb-milan
+2026-09-22T09:10:04.3560727Z ##[group]Getting Git version info
+2026-09-22T09:10:04.3562410Z Working directory is '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan'
+2026-09-22T09:10:04.3564385Z [command]/usr/bin/git version
+2026-09-22T09:10:04.3640926Z git version 2.55.0
+2026-09-22T09:10:04.3667054Z ##[endgroup]
+2026-09-22T09:10:04.3679534Z Temporarily overriding HOME='/home/runner/work/_temp/f22482ff-05c8-44d2-8887-a2efcc50a13e' before making global git config changes
+2026-09-22T09:10:04.3686094Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-22T09:10:04.3688520Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+2026-09-22T09:10:04.3764730Z Deleting the contents of '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan'
+2026-09-22T09:10:04.3771885Z ##[group]Initializing the repository
+2026-09-22T09:10:04.3774103Z [command]/usr/bin/git init /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+2026-09-22T09:10:04.3894340Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-22T09:10:04.3896437Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-22T09:10:04.3898246Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-22T09:10:04.3899772Z hint: call:
+2026-09-22T09:10:04.3900724Z hint:
+2026-09-22T09:10:04.3901860Z hint: 	git config --global init.defaultBranch <name>
+2026-09-22T09:10:04.3903290Z hint:
+2026-09-22T09:10:04.3904495Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-22T09:10:04.3906348Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-22T09:10:04.3907822Z hint:
+2026-09-22T09:10:04.3908694Z hint: 	git branch -m <name>
+2026-09-22T09:10:04.3909659Z hint:
+2026-09-22T09:10:04.3910893Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-22T09:10:04.3912986Z Initialized empty Git repository in /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan/.git/
+2026-09-22T09:10:04.3917613Z [command]/usr/bin/git remote add origin https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+2026-09-22T09:10:04.3956142Z ##[endgroup]
+2026-09-22T09:10:04.3957472Z ##[group]Disabling automatic garbage collection
+2026-09-22T09:10:04.3961579Z [command]/usr/bin/git config --local gc.auto 0
+2026-09-22T09:10:04.3992688Z ##[endgroup]
+2026-09-22T09:10:04.3994357Z ##[group]Setting up auth
+2026-09-22T09:10:04.4000330Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-22T09:10:04.4036775Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-22T09:10:04.4438129Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-22T09:10:04.4475827Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-22T09:10:04.4711163Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-22T09:10:04.4750109Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-22T09:10:04.4975929Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-22T09:10:04.5014952Z ##[endgroup]
+2026-09-22T09:10:04.5015740Z ##[group]Fetching the repository
+2026-09-22T09:10:04.5024837Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +6439edc9e2a2fa06c4f9ce2e35d4ccaa273e321d:refs/remotes/pull/100/merge
+2026-09-22T09:10:04.9645449Z From https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+2026-09-22T09:10:04.9647548Z  * [new ref]         6439edc9e2a2fa06c4f9ce2e35d4ccaa273e321d -> pull/100/merge
+2026-09-22T09:10:04.9650779Z ##[endgroup]
+2026-09-22T09:10:04.9652134Z ##[group]Determining the checkout info
+2026-09-22T09:10:04.9653956Z ##[endgroup]
+2026-09-22T09:10:04.9657048Z [command]/usr/bin/git sparse-checkout disable
+2026-09-22T09:10:04.9720652Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-22T09:10:04.9752775Z ##[group]Checking out the ref
+2026-09-22T09:10:04.9756234Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/100/merge
+2026-09-22T09:10:05.0228450Z Note: switching to 'refs/remotes/pull/100/merge'.
+2026-09-22T09:10:05.0229845Z 
+2026-09-22T09:10:05.0231011Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-09-22T09:10:05.0234142Z changes and commit them, and you can discard any commits you make in this
+2026-09-22T09:10:05.0237336Z state without impacting any branches by switching back to a branch.
+2026-09-22T09:10:05.0238942Z 
+2026-09-22T09:10:05.0239914Z If you want to create a new branch to retain commits you create, you may
+2026-09-22T09:10:05.0241536Z do so (now or later) by using -c with the switch command. Example:
+2026-09-22T09:10:05.0242465Z 
+2026-09-22T09:10:05.0242826Z   git switch -c <new-branch-name>
+2026-09-22T09:10:05.0243907Z 
+2026-09-22T09:10:05.0244384Z Or undo this operation with:
+2026-09-22T09:10:05.0245037Z 
+2026-09-22T09:10:05.0245283Z   git switch -
+2026-09-22T09:10:05.0245668Z 
+2026-09-22T09:10:05.0246352Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-09-22T09:10:05.0247502Z 
+2026-09-22T09:10:05.0248781Z HEAD is now at 6439edc Merge 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e into 8452f564294300a82d56eed464276576f65f4d58
+2026-09-22T09:10:05.0251887Z ##[endgroup]
+2026-09-22T09:10:05.0289978Z [command]/usr/bin/git log -1 --format=%H
+2026-09-22T09:10:05.0317066Z 6439edc9e2a2fa06c4f9ce2e35d4ccaa273e321d
+2026-09-22T09:10:05.0556328Z ##[group]Run sudo apt-get update && sudo apt-get install -y yosys
+2026-09-22T09:10:05.0557919Z [36;1msudo apt-get update && sudo apt-get install -y yosys[0m
+2026-09-22T09:10:05.0559808Z [36;1mcurl -sL https://github.com/zachjs/sv2v/releases/latest/download/sv2v-Linux.zip \[0m
+2026-09-22T09:10:05.0561578Z [36;1m  -o /tmp/sv2v.zip && sudo apt-get install -y unzip[0m
+2026-09-22T09:10:05.0562702Z [36;1munzip -o /tmp/sv2v.zip -d /tmp/sv2v[0m
+2026-09-22T09:10:05.0563991Z [36;1msudo install /tmp/sv2v/*/sv2v /usr/local/bin/[0m
+2026-09-22T09:10:05.0604869Z shell: /usr/bin/bash -e {0}
+2026-09-22T09:10:05.0605632Z env:
+2026-09-22T09:10:05.0606103Z   VERILATOR_VERSION: v5.050
+2026-09-22T09:10:05.0606762Z ##[endgroup]
+2026-09-22T09:10:05.1549653Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+2026-09-22T09:10:05.1851231Z Hit:2 http://azure.archive.ubuntu.com/ubuntu noble InRelease
+2026-09-22T09:10:05.1858081Z Get:6 https://packages.microsoft.com/ubuntu/24.04/prod noble InRelease [3600 B]
+2026-09-22T09:10:05.1882186Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+2026-09-22T09:10:05.1906202Z Get:4 http://azure.archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+2026-09-22T09:10:05.1932014Z Get:5 http://azure.archive.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+2026-09-22T09:10:05.2823448Z Get:7 https://dl.google.com/linux/chrome-stable/deb stable InRelease [2548 B]
+2026-09-22T09:10:05.3263889Z Get:8 https://packages.microsoft.com/ubuntu/24.04/prod noble/main arm64 Packages [430 kB]
+2026-09-22T09:10:05.3419899Z Get:9 https://packages.microsoft.com/ubuntu/24.04/prod noble/main amd64 Packages [480 kB]
+2026-09-22T09:10:05.3781064Z Get:10 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages [1284 kB]
+2026-09-22T09:10:05.3842891Z Get:11 http://azure.archive.ubuntu.com/ubuntu noble-updates/main Translation-en [295 kB]
+2026-09-22T09:10:05.3862165Z Get:12 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Components [181 kB]
+2026-09-22T09:10:05.3879252Z Get:13 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [1697 kB]
+2026-09-22T09:10:05.3969160Z Get:14 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe Translation-en [340 kB]
+2026-09-22T09:10:05.3995358Z Get:15 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Components [387 kB]
+2026-09-22T09:10:05.4045703Z Get:16 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Packages [1596 kB]
+2026-09-22T09:10:05.4114259Z Get:17 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted Translation-en [362 kB]
+2026-09-22T09:10:05.4142105Z Get:18 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Packages [45.7 kB]
+2026-09-22T09:10:05.4157216Z Get:19 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse Translation-en [13.1 kB]
+2026-09-22T09:10:05.4588268Z Get:20 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Components [940 B]
+2026-09-22T09:10:05.4605933Z Get:21 http://azure.archive.ubuntu.com/ubuntu noble-backports/main amd64 Packages [40.6 kB]
+2026-09-22T09:10:05.4615327Z Get:22 http://azure.archive.ubuntu.com/ubuntu noble-backports/main amd64 Components [5744 B]
+2026-09-22T09:10:05.4636014Z Get:23 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Packages [31.0 kB]
+2026-09-22T09:10:05.4641168Z Get:24 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe Translation-en [18.6 kB]
+2026-09-22T09:10:05.4665644Z Get:25 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Components [12.6 kB]
+2026-09-22T09:10:05.5209986Z Get:26 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Packages [1028 kB]
+2026-09-22T09:10:05.5280401Z Get:27 http://azure.archive.ubuntu.com/ubuntu noble-security/main Translation-en [216 kB]
+2026-09-22T09:10:05.5292005Z Get:28 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Components [46.4 kB]
+2026-09-22T09:10:05.5298274Z Get:29 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Packages [1217 kB]
+2026-09-22T09:10:05.5368445Z Get:30 http://azure.archive.ubuntu.com/ubuntu noble-security/universe Translation-en [244 kB]
+2026-09-22T09:10:05.5390974Z Get:31 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Components [76.3 kB]
+2026-09-22T09:10:05.5422791Z Get:32 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [1496 kB]
+2026-09-22T09:10:05.5494955Z Get:33 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted Translation-en [343 kB]
+2026-09-22T09:10:05.5938186Z Get:34 http://azure.archive.ubuntu.com/ubuntu noble-security/multiverse Translation-en [11.3 kB]
+2026-09-22T09:10:05.6023474Z Get:35 https://dl.google.com/linux/chrome-stable/deb stable/main amd64 Packages [1411 B]
+2026-09-22T09:10:09.6597329Z Fetched 12.3 MB in 1s (8918 kB/s)
+2026-09-22T09:10:10.4340821Z Reading package lists...
+2026-09-22T09:10:10.4646844Z Reading package lists...
+2026-09-22T09:10:10.6242907Z Building dependency tree...
+2026-09-22T09:10:10.6250249Z Reading state information...
+2026-09-22T09:10:10.7574579Z The following additional packages will be installed:
+2026-09-22T09:10:10.7575808Z   fonts-liberation2 gir1.2-atk-1.0 gir1.2-freedesktop gir1.2-gdkpixbuf-2.0
+2026-09-22T09:10:10.7576812Z   gir1.2-gtk-3.0 gir1.2-harfbuzz-0.0 gir1.2-pango-1.0 graphviz libann0
+2026-09-22T09:10:10.7577788Z   libblas3 libcdt5 libcgraph6 libgts-0.7-5t64 libgts-bin libgvc6 libgvpr2
+2026-09-22T09:10:10.7579902Z   libharfbuzz-gobject0 liblab-gamut1 liblapack3 libpangoxft-1.0-0 libpathplan4
+2026-09-22T09:10:10.7581512Z   python3-cairo python3-gi-cairo python3-numpy xdot yosys-abc
+2026-09-22T09:10:10.7587389Z Suggested packages:
+2026-09-22T09:10:10.7588170Z   gsfonts graphviz-doc python3-pytest
+2026-09-22T09:10:10.7836462Z The following NEW packages will be installed:
+2026-09-22T09:10:10.7837721Z   fonts-liberation2 gir1.2-atk-1.0 gir1.2-freedesktop gir1.2-gdkpixbuf-2.0
+2026-09-22T09:10:10.7838867Z   gir1.2-gtk-3.0 gir1.2-harfbuzz-0.0 gir1.2-pango-1.0 graphviz libann0
+2026-09-22T09:10:10.7839593Z   libblas3 libcdt5 libcgraph6 libgts-0.7-5t64 libgts-bin libgvc6 libgvpr2
+2026-09-22T09:10:10.7841278Z   libharfbuzz-gobject0 liblab-gamut1 liblapack3 libpangoxft-1.0-0 libpathplan4
+2026-09-22T09:10:10.7842446Z   python3-cairo python3-gi-cairo python3-numpy xdot yosys yosys-abc
+2026-09-22T09:10:10.8014921Z 0 upgraded, 27 newly installed, 0 to remove and 87 not upgraded.
+2026-09-22T09:10:10.8015693Z Need to get 20.7 MB of archives.
+2026-09-22T09:10:10.8016142Z After this operation, 70.6 MB of additional disk space will be used.
+2026-09-22T09:10:10.8017042Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+2026-09-22T09:10:10.8204194Z Get:2 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 fonts-liberation2 all 1:2.1.5-3 [3418 B]
+2026-09-22T09:10:10.8221982Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 gir1.2-atk-1.0 amd64 2.52.0-1build1 [23.1 kB]
+2026-09-22T09:10:10.8239110Z Get:4 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 gir1.2-freedesktop amd64 1.80.1-1 [49.7 kB]
+2026-09-22T09:10:10.8260360Z Get:5 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 gir1.2-gdkpixbuf-2.0 amd64 2.42.10+dfsg-3ubuntu3.3 [9482 B]
+2026-09-22T09:10:10.8275919Z Get:6 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libharfbuzz-gobject0 amd64 8.3.0-2build2 [34.3 kB]
+2026-09-22T09:10:10.8309463Z Get:7 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 gir1.2-harfbuzz-0.0 amd64 8.3.0-2build2 [44.5 kB]
+2026-09-22T09:10:10.8326790Z Get:8 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libpangoxft-1.0-0 amd64 1.52.1+ds-1build1 [20.3 kB]
+2026-09-22T09:10:10.8340507Z Get:9 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 gir1.2-pango-1.0 amd64 1.52.1+ds-1build1 [34.8 kB]
+2026-09-22T09:10:10.8358624Z Get:10 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 gir1.2-gtk-3.0 amd64 3.24.41-4ubuntu1.3 [245 kB]
+2026-09-22T09:10:10.8400482Z Get:11 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 libann0 amd64 1.1.2+doc-9build1 [25.5 kB]
+2026-09-22T09:10:10.8415766Z Get:12 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 libcdt5 amd64 2.42.2-9ubuntu0.1 [21.6 kB]
+2026-09-22T09:10:10.8432384Z Get:13 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 libcgraph6 amd64 2.42.2-9ubuntu0.1 [44.6 kB]
+2026-09-22T09:10:10.8448820Z Get:14 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 libgts-0.7-5t64 amd64 0.7.6+darcs121130-5.2build1 [161 kB]
+2026-09-22T09:10:10.8484486Z Get:15 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 libpathplan4 amd64 2.42.2-9ubuntu0.1 [24.0 kB]
+2026-09-22T09:10:10.8501047Z Get:16 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 libgvc6 amd64 2.42.2-9ubuntu0.1 [716 kB]
+2026-09-22T09:10:10.8612149Z Get:17 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 libgvpr2 amd64 2.42.2-9ubuntu0.1 [187 kB]
+2026-09-22T09:10:10.8641132Z Get:18 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 liblab-gamut1 amd64 2.42.2-9ubuntu0.1 [1886 kB]
+2026-09-22T09:10:10.8845050Z Get:19 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 graphviz amd64 2.42.2-9ubuntu0.1 [642 kB]
+2026-09-22T09:10:10.9320305Z Get:20 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libblas3 amd64 3.12.0-3build1.1 [238 kB]
+2026-09-22T09:10:10.9350883Z Get:21 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 libgts-bin amd64 0.7.6+darcs121130-5.2build1 [44.0 kB]
+2026-09-22T09:10:10.9368614Z Get:22 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 liblapack3 amd64 3.12.0-3build1.1 [2646 kB]
+2026-09-22T09:10:10.9574672Z Get:23 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 python3-cairo amd64 1.25.1-2build2 [119 kB]
+2026-09-22T09:10:10.9599079Z Get:24 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 python3-gi-cairo amd64 3.48.2-1 [8132 B]
+2026-09-22T09:10:10.9612026Z Get:25 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 python3-numpy amd64 1:1.26.4+ds-6ubuntu1 [4437 kB]
+2026-09-22T09:10:10.9935931Z Get:26 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 xdot all 1.3-1 [30.3 kB]
+2026-09-22T09:10:10.9972917Z Get:27 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 yosys-abc amd64 0.33-5build2 [5829 kB]
+2026-09-22T09:10:11.0508936Z Get:28 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 yosys amd64 0.33-5build2 [3222 kB]
+2026-09-22T09:10:11.3305291Z Fetched 20.7 MB in 0s (73.4 MB/s)
+2026-09-22T09:10:11.3529847Z Selecting previously unselected package fonts-liberation2.
+2026-09-22T09:10:11.3854013Z (Reading database ... 
+2026-09-22T09:10:11.3854803Z (Reading database ... 5%
+2026-09-22T09:10:11.3934528Z (Reading database ... 10%
+2026-09-22T09:10:11.3934992Z (Reading database ... 15%
+2026-09-22T09:10:11.3935402Z (Reading database ... 20%
+2026-09-22T09:10:11.3935868Z (Reading database ... 25%
+2026-09-22T09:10:11.3936338Z (Reading database ... 30%
+2026-09-22T09:10:11.3936745Z (Reading database ... 35%
+2026-09-22T09:10:11.3937166Z (Reading database ... 40%
+2026-09-22T09:10:11.3937698Z (Reading database ... 45%
+2026-09-22T09:10:11.3938086Z (Reading database ... 50%
+2026-09-22T09:10:11.3938861Z (Reading database ... 55%
+2026-09-22T09:10:11.5229674Z (Reading database ... 60%
+2026-09-22T09:10:11.6705014Z (Reading database ... 65%
+2026-09-22T09:10:11.8713100Z (Reading database ... 70%
+2026-09-22T09:10:12.0284621Z (Reading database ... 75%
+2026-09-22T09:10:12.1513767Z (Reading database ... 80%
+2026-09-22T09:10:12.3318445Z (Reading database ... 85%
+2026-09-22T09:10:12.4439817Z (Reading database ... 90%
+2026-09-22T09:10:12.5795649Z (Reading database ... 95%
+2026-09-22T09:10:12.5796279Z (Reading database ... 100%
+2026-09-22T09:10:12.5797142Z (Reading database ... 201818 files and directories currently installed.)
+2026-09-22T09:10:12.5836206Z Preparing to unpack .../00-fonts-liberation2_1%3a2.1.5-3_all.deb ...
+2026-09-22T09:10:12.5869108Z Unpacking fonts-liberation2 (1:2.1.5-3) ...
+2026-09-22T09:10:12.6083851Z Selecting previously unselected package gir1.2-atk-1.0:amd64.
+2026-09-22T09:10:12.6203324Z Preparing to unpack .../01-gir1.2-atk-1.0_2.52.0-1build1_amd64.deb ...
+2026-09-22T09:10:12.6214673Z Unpacking gir1.2-atk-1.0:amd64 (2.52.0-1build1) ...
+2026-09-22T09:10:12.6422019Z Selecting previously unselected package gir1.2-freedesktop:amd64.
+2026-09-22T09:10:12.6543249Z Preparing to unpack .../02-gir1.2-freedesktop_1.80.1-1_amd64.deb ...
+2026-09-22T09:10:12.6552664Z Unpacking gir1.2-freedesktop:amd64 (1.80.1-1) ...
+2026-09-22T09:10:12.6772196Z Selecting previously unselected package gir1.2-gdkpixbuf-2.0:amd64.
+2026-09-22T09:10:12.6894089Z Preparing to unpack .../03-gir1.2-gdkpixbuf-2.0_2.42.10+dfsg-3ubuntu3.3_amd64.deb ...
+2026-09-22T09:10:12.6904420Z Unpacking gir1.2-gdkpixbuf-2.0:amd64 (2.42.10+dfsg-3ubuntu3.3) ...
+2026-09-22T09:10:12.7121285Z Selecting previously unselected package libharfbuzz-gobject0:amd64.
+2026-09-22T09:10:12.7242328Z Preparing to unpack .../04-libharfbuzz-gobject0_8.3.0-2build2_amd64.deb ...
+2026-09-22T09:10:12.7264215Z Unpacking libharfbuzz-gobject0:amd64 (8.3.0-2build2) ...
+2026-09-22T09:10:12.7471198Z Selecting previously unselected package gir1.2-harfbuzz-0.0:amd64.
+2026-09-22T09:10:12.7592203Z Preparing to unpack .../05-gir1.2-harfbuzz-0.0_8.3.0-2build2_amd64.deb ...
+2026-09-22T09:10:12.7602945Z Unpacking gir1.2-harfbuzz-0.0:amd64 (8.3.0-2build2) ...
+2026-09-22T09:10:12.7826505Z Selecting previously unselected package libpangoxft-1.0-0:amd64.
+2026-09-22T09:10:12.7946041Z Preparing to unpack .../06-libpangoxft-1.0-0_1.52.1+ds-1build1_amd64.deb ...
+2026-09-22T09:10:12.7956382Z Unpacking libpangoxft-1.0-0:amd64 (1.52.1+ds-1build1) ...
+2026-09-22T09:10:12.8157794Z Selecting previously unselected package gir1.2-pango-1.0:amd64.
+2026-09-22T09:10:12.8276311Z Preparing to unpack .../07-gir1.2-pango-1.0_1.52.1+ds-1build1_amd64.deb ...
+2026-09-22T09:10:12.8286754Z Unpacking gir1.2-pango-1.0:amd64 (1.52.1+ds-1build1) ...
+2026-09-22T09:10:12.8491117Z Selecting previously unselected package gir1.2-gtk-3.0:amd64.
+2026-09-22T09:10:12.8609755Z Preparing to unpack .../08-gir1.2-gtk-3.0_3.24.41-4ubuntu1.3_amd64.deb ...
+2026-09-22T09:10:12.8619411Z Unpacking gir1.2-gtk-3.0:amd64 (3.24.41-4ubuntu1.3) ...
+2026-09-22T09:10:12.8864197Z Selecting previously unselected package libann0.
+2026-09-22T09:10:12.8981490Z Preparing to unpack .../09-libann0_1.1.2+doc-9build1_amd64.deb ...
+2026-09-22T09:10:12.8991867Z Unpacking libann0 (1.1.2+doc-9build1) ...
+2026-09-22T09:10:12.9196637Z Selecting previously unselected package libcdt5:amd64.
+2026-09-22T09:10:12.9318375Z Preparing to unpack .../10-libcdt5_2.42.2-9ubuntu0.1_amd64.deb ...
+2026-09-22T09:10:12.9330449Z Unpacking libcdt5:amd64 (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:12.9551819Z Selecting previously unselected package libcgraph6:amd64.
+2026-09-22T09:10:12.9680153Z Preparing to unpack .../11-libcgraph6_2.42.2-9ubuntu0.1_amd64.deb ...
+2026-09-22T09:10:12.9691808Z Unpacking libcgraph6:amd64 (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:12.9916583Z Selecting previously unselected package libgts-0.7-5t64:amd64.
+2026-09-22T09:10:13.0041946Z Preparing to unpack .../12-libgts-0.7-5t64_0.7.6+darcs121130-5.2build1_amd64.deb ...
+2026-09-22T09:10:13.0053103Z Unpacking libgts-0.7-5t64:amd64 (0.7.6+darcs121130-5.2build1) ...
+2026-09-22T09:10:13.0295772Z Selecting previously unselected package libpathplan4:amd64.
+2026-09-22T09:10:13.0418723Z Preparing to unpack .../13-libpathplan4_2.42.2-9ubuntu0.1_amd64.deb ...
+2026-09-22T09:10:13.0430781Z Unpacking libpathplan4:amd64 (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:13.0653762Z Selecting previously unselected package libgvc6.
+2026-09-22T09:10:13.0776198Z Preparing to unpack .../14-libgvc6_2.42.2-9ubuntu0.1_amd64.deb ...
+2026-09-22T09:10:13.0789002Z Unpacking libgvc6 (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:13.1108101Z Selecting previously unselected package libgvpr2:amd64.
+2026-09-22T09:10:13.1231440Z Preparing to unpack .../15-libgvpr2_2.42.2-9ubuntu0.1_amd64.deb ...
+2026-09-22T09:10:13.1241806Z Unpacking libgvpr2:amd64 (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:13.1479772Z Selecting previously unselected package liblab-gamut1:amd64.
+2026-09-22T09:10:13.1602361Z Preparing to unpack .../16-liblab-gamut1_2.42.2-9ubuntu0.1_amd64.deb ...
+2026-09-22T09:10:13.1613739Z Unpacking liblab-gamut1:amd64 (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:13.1907239Z Selecting previously unselected package graphviz.
+2026-09-22T09:10:13.2030485Z Preparing to unpack .../17-graphviz_2.42.2-9ubuntu0.1_amd64.deb ...
+2026-09-22T09:10:13.2042457Z Unpacking graphviz (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:13.2611078Z Selecting previously unselected package libblas3:amd64.
+2026-09-22T09:10:13.2736771Z Preparing to unpack .../18-libblas3_3.12.0-3build1.1_amd64.deb ...
+2026-09-22T09:10:13.2768518Z Unpacking libblas3:amd64 (3.12.0-3build1.1) ...
+2026-09-22T09:10:13.3001639Z Selecting previously unselected package libgts-bin.
+2026-09-22T09:10:13.3126684Z Preparing to unpack .../19-libgts-bin_0.7.6+darcs121130-5.2build1_amd64.deb ...
+2026-09-22T09:10:13.3138829Z Unpacking libgts-bin (0.7.6+darcs121130-5.2build1) ...
+2026-09-22T09:10:13.3408788Z Selecting previously unselected package liblapack3:amd64.
+2026-09-22T09:10:13.3534479Z Preparing to unpack .../20-liblapack3_3.12.0-3build1.1_amd64.deb ...
+2026-09-22T09:10:13.3568626Z Unpacking liblapack3:amd64 (3.12.0-3build1.1) ...
+2026-09-22T09:10:13.4077992Z Selecting previously unselected package python3-cairo.
+2026-09-22T09:10:13.4206058Z Preparing to unpack .../21-python3-cairo_1.25.1-2build2_amd64.deb ...
+2026-09-22T09:10:13.4217961Z Unpacking python3-cairo (1.25.1-2build2) ...
+2026-09-22T09:10:13.4448207Z Selecting previously unselected package python3-gi-cairo.
+2026-09-22T09:10:13.4570332Z Preparing to unpack .../22-python3-gi-cairo_3.48.2-1_amd64.deb ...
+2026-09-22T09:10:13.4579723Z Unpacking python3-gi-cairo (3.48.2-1) ...
+2026-09-22T09:10:13.4786842Z Selecting previously unselected package python3-numpy.
+2026-09-22T09:10:13.4909027Z Preparing to unpack .../23-python3-numpy_1%3a1.26.4+ds-6ubuntu1_amd64.deb ...
+2026-09-22T09:10:13.4919971Z Unpacking python3-numpy (1:1.26.4+ds-6ubuntu1) ...
+2026-09-22T09:10:13.7164088Z Selecting previously unselected package xdot.
+2026-09-22T09:10:13.7293183Z Preparing to unpack .../24-xdot_1.3-1_all.deb ...
+2026-09-22T09:10:13.7302863Z Unpacking xdot (1.3-1) ...
+2026-09-22T09:10:13.7542596Z Selecting previously unselected package yosys-abc.
+2026-09-22T09:10:13.7665799Z Preparing to unpack .../25-yosys-abc_0.33-5build2_amd64.deb ...
+2026-09-22T09:10:13.7675929Z Unpacking yosys-abc (0.33-5build2) ...
+2026-09-22T09:10:13.8467915Z Selecting previously unselected package yosys.
+2026-09-22T09:10:13.8595010Z Preparing to unpack .../26-yosys_0.33-5build2_amd64.deb ...
+2026-09-22T09:10:13.8605215Z Unpacking yosys (0.33-5build2) ...
+2026-09-22T09:10:13.9816392Z Setting up gir1.2-freedesktop:amd64 (1.80.1-1) ...
+2026-09-22T09:10:13.9860796Z Setting up python3-cairo (1.25.1-2build2) ...
+2026-09-22T09:10:14.0875965Z Setting up libpangoxft-1.0-0:amd64 (1.52.1+ds-1build1) ...
+2026-09-22T09:10:14.0896178Z Setting up gir1.2-gdkpixbuf-2.0:amd64 (2.42.10+dfsg-3ubuntu3.3) ...
+2026-09-22T09:10:14.0915573Z Setting up gir1.2-atk-1.0:amd64 (2.52.0-1build1) ...
+2026-09-22T09:10:14.0937571Z Setting up liblab-gamut1:amd64 (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:14.0956894Z Setting up yosys-abc (0.33-5build2) ...
+2026-09-22T09:10:14.0979474Z Setting up libharfbuzz-gobject0:amd64 (8.3.0-2build2) ...
+2026-09-22T09:10:14.1001377Z Setting up gir1.2-harfbuzz-0.0:amd64 (8.3.0-2build2) ...
+2026-09-22T09:10:14.1022858Z Setting up gir1.2-pango-1.0:amd64 (1.52.1+ds-1build1) ...
+2026-09-22T09:10:14.1044518Z Setting up libblas3:amd64 (3.12.0-3build1.1) ...
+2026-09-22T09:10:14.1107005Z update-alternatives: using /usr/lib/x86_64-linux-gnu/blas/libblas.so.3 to provide /usr/lib/x86_64-linux-gnu/libblas.so.3 (libblas.so.3-x86_64-linux-gnu) in auto mode
+2026-09-22T09:10:14.1131309Z Setting up fonts-liberation2 (1:2.1.5-3) ...
+2026-09-22T09:10:14.1157188Z Setting up libpathplan4:amd64 (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:14.1182994Z Setting up libann0 (1.1.2+doc-9build1) ...
+2026-09-22T09:10:14.1205890Z Setting up libgts-0.7-5t64:amd64 (0.7.6+darcs121130-5.2build1) ...
+2026-09-22T09:10:14.1228806Z Setting up libcdt5:amd64 (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:14.1251120Z Setting up libcgraph6:amd64 (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:14.1293345Z Setting up python3-gi-cairo (3.48.2-1) ...
+2026-09-22T09:10:14.1318311Z Setting up libgts-bin (0.7.6+darcs121130-5.2build1) ...
+2026-09-22T09:10:14.1342224Z Setting up liblapack3:amd64 (3.12.0-3build1.1) ...
+2026-09-22T09:10:14.1402656Z update-alternatives: using /usr/lib/x86_64-linux-gnu/lapack/liblapack.so.3 to provide /usr/lib/x86_64-linux-gnu/liblapack.so.3 (liblapack.so.3-x86_64-linux-gnu) in auto mode
+2026-09-22T09:10:14.1420416Z Setting up yosys (0.33-5build2) ...
+2026-09-22T09:10:14.2538485Z Setting up gir1.2-gtk-3.0:amd64 (3.24.41-4ubuntu1.3) ...
+2026-09-22T09:10:14.2562444Z Setting up libgvc6 (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:14.2806586Z Setting up python3-numpy (1:1.26.4+ds-6ubuntu1) ...
+2026-09-22T09:10:15.6975452Z Setting up libgvpr2:amd64 (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:15.6997211Z Setting up graphviz (2.42.2-9ubuntu0.1) ...
+2026-09-22T09:10:15.7031447Z Setting up xdot (1.3-1) ...
+2026-09-22T09:10:15.8331273Z Processing triggers for man-db (2.12.0-4build2) ...
+2026-09-22T09:10:15.8353738Z Not building database; man-db/auto-update is not 'true'.
+2026-09-22T09:10:15.8366364Z Processing triggers for libc-bin (2.39-0ubuntu8.8) ...
+2026-09-22T09:10:16.4965784Z 
+2026-09-22T09:10:16.4966260Z Running kernel seems to be up-to-date.
+2026-09-22T09:10:16.4966679Z 
+2026-09-22T09:10:16.4966862Z No services need to be restarted.
+2026-09-22T09:10:16.4967212Z 
+2026-09-22T09:10:16.4967397Z No containers need to be restarted.
+2026-09-22T09:10:16.4967720Z 
+2026-09-22T09:10:16.4967936Z No user sessions are running outdated binaries.
+2026-09-22T09:10:16.4968330Z 
+2026-09-22T09:10:16.4968691Z No VM guests are running outdated hypervisor (qemu) binaries on this host.
+2026-09-22T09:10:17.6314605Z Reading package lists...
+2026-09-22T09:10:17.7924765Z Building dependency tree...
+2026-09-22T09:10:17.7931908Z Reading state information...
+2026-09-22T09:10:17.9382595Z unzip is already the newest version (6.0-28ubuntu4.1).
+2026-09-22T09:10:17.9383535Z 0 upgraded, 0 newly installed, 0 to remove and 87 not upgraded.
+2026-09-22T09:10:17.9422071Z Archive:  /tmp/sv2v.zip
+2026-09-22T09:10:17.9423436Z    creating: /tmp/sv2v/sv2v-Linux/
+2026-09-22T09:10:17.9425865Z   inflating: /tmp/sv2v/sv2v-Linux/CHANGELOG.md  
+2026-09-22T09:10:17.9426496Z   inflating: /tmp/sv2v/sv2v-Linux/LICENSE  
+2026-09-22T09:10:18.0020902Z   inflating: /tmp/sv2v/sv2v-Linux/sv2v  
+2026-09-22T09:10:18.0024587Z   inflating: /tmp/sv2v/sv2v-Linux/NOTICE  
+2026-09-22T09:10:18.0025777Z   inflating: /tmp/sv2v/sv2v-Linux/README.md  
+2026-09-22T09:10:18.0190578Z ##[group]Run ./syn/yosys/run.sh
+2026-09-22T09:10:18.0190895Z [36;1m./syn/yosys/run.sh[0m
+2026-09-22T09:10:18.0229676Z shell: /usr/bin/bash -e {0}
+2026-09-22T09:10:18.0229919Z env:
+2026-09-22T09:10:18.0230116Z   VERILATOR_VERSION: v5.050
+2026-09-22T09:10:18.0230353Z ##[endgroup]
+2026-09-22T09:10:21.6398649Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:21.6399513Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:22.1845898Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:22.1846915Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:22.4241774Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:22.8885778Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:22.8886643Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:22.8887390Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:23.2870900Z YOSYS OK  KL_aecp_ucpu
+2026-09-22T09:10:23.6917550Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:23.6918404Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:24.2346519Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:24.2347471Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:24.4725298Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:24.9357055Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:24.9357713Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:24.9358392Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:25.4449804Z YOSYS OK  KL_aecp_desc_store
+2026-09-22T09:10:25.8508060Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:25.8508863Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:26.3954464Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:26.3955393Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:26.6346069Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:27.0992610Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:27.0994093Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:27.0994981Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:27.5280045Z YOSYS OK  KL_aecp_dyn_state
+2026-09-22T09:10:27.9330401Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:27.9331263Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:28.4751441Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:28.4752343Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:28.7124991Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:29.1760788Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:29.1761520Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:29.1762222Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:29.5304774Z YOSYS OK  KL_aecp_resp_buf
+2026-09-22T09:10:29.9453799Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:29.9455223Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:30.4876293Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:30.4877153Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:30.7267084Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:31.2170230Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:31.2171118Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:31.2172011Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:32.4378709Z YOSYS OK  KL_aecp_engine
+2026-09-22T09:10:32.8433413Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:32.8434309Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:33.3861862Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:33.3862695Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:33.6241865Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:34.0877488Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:34.0878225Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:34.0878936Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:35.5693643Z YOSYS OK  KL_aecp_notify
+2026-09-22T09:10:35.9755496Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:35.9756490Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:36.5190787Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:36.5191868Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:36.7573801Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:37.2206193Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:37.2207117Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:37.2208060Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:37.5569738Z YOSYS OK  KL_aecp_ca_originator
+2026-09-22T09:10:37.9637183Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:37.9637946Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:38.5101494Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:38.5102304Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:38.7496575Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:39.2190297Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:39.2191007Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:39.2191688Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:39.5611334Z YOSYS OK  KL_pp_timer_service
+2026-09-22T09:10:39.9665957Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:39.9666927Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:40.5092814Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:40.5094045Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:40.7464491Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:41.2109115Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:41.2110131Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:41.2111050Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:41.5495400Z YOSYS OK  KL_pp_prng
+2026-09-22T09:10:41.9581411Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:41.9582375Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:42.5022280Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:42.5023504Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:42.7409123Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:43.2070305Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:43.2071230Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:43.2072116Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:43.5429457Z YOSYS OK  KL_pp_rx_slots
+2026-09-22T09:10:43.9487455Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:43.9488496Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:44.4947210Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:44.4948196Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:44.7334248Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:45.1987384Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:45.1988177Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:45.1988950Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:45.5611828Z YOSYS OK  KL_pp_tx_slots
+2026-09-22T09:10:45.9675043Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:45.9675857Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:46.5141196Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:46.5142173Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:46.7533134Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:47.2180186Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:47.2181113Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:47.2182123Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:47.5413724Z YOSYS OK  KL_pp_release_merge
+2026-09-22T09:10:47.9478038Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:47.9478843Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:48.4947725Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:48.4948694Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:48.7337179Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:49.1998161Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:49.1999071Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:49.1999984Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:49.7657985Z YOSYS OK  KL_pp_rx_validator
+2026-09-22T09:10:50.1754955Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:50.1755827Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:50.7194336Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:50.7195255Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:50.9582963Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:51.4227824Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:51.4228752Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:51.4229669Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:52.0393825Z YOSYS OK  KL_pp_normalizer
+2026-09-22T09:10:52.4446470Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:52.4447485Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:52.9869600Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:52.9870389Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:53.2254829Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:53.6899575Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:53.6900399Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:53.6901206Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:54.0649945Z YOSYS OK  KL_pp_dispatch
+2026-09-22T09:10:54.4701030Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:54.4701883Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:55.0115222Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:55.0116071Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:55.2488495Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:55.7111651Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:55.7112539Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:55.7113860Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:56.1173708Z YOSYS OK  KL_pp_scoreboard
+2026-09-22T09:10:56.5222483Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:56.5223606Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:57.0657394Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:57.0658343Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:57.3039892Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:57.7686472Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:57.7687182Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:57.7687962Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:10:58.1340231Z YOSYS OK  KL_pp_event_router
+2026-09-22T09:10:58.5407434Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:10:58.5408348Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:10:59.0821806Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:10:59.0822789Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:10:59.3202125Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:10:59.7829731Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:10:59.7830365Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:10:59.7830975Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:00.4603845Z YOSYS OK  KL_pp_originator
+2026-09-22T09:11:00.8650196Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:00.8651278Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:01.4120720Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:01.4121871Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:01.6492078Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:02.1166427Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:02.1167530Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:02.1168339Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:02.4505060Z YOSYS OK  KL_pp_tx_arbiter
+2026-09-22T09:11:02.8554136Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:02.8554920Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:03.3984541Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:03.3985391Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:03.6427855Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:04.1075005Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:04.1075949Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:04.1076864Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:04.4337894Z YOSYS OK  KL_pp_trace_ring
+2026-09-22T09:11:04.8397604Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:04.8398526Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:05.3845464Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:05.3846447Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:05.6225069Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:06.0862422Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:06.0863630Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:06.0864384Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:06.4073977Z YOSYS OK  KL_pp_side_port
+2026-09-22T09:11:06.8117445Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:06.8118661Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:07.3566632Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:07.3567650Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:07.5942679Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:08.0591990Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:08.0593493Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:08.0594741Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:08.3991833Z YOSYS OK  KL_pp_nvm_port
+2026-09-22T09:11:08.8045490Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:08.8046341Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:09.3471646Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:09.3472726Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:09.5848852Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:10.0493334Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:10.0494688Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:10.0496057Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:12.2118885Z YOSYS OK  KL_adp_engine
+2026-09-22T09:11:12.6161391Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:12.6162431Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:13.1579263Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:13.1580507Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:13.3962018Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:13.8590086Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:13.8590838Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:13.8591586Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:15.1220689Z YOSYS OK  KL_pp_acmp_listener
+2026-09-22T09:11:15.5285383Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:15.5286263Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:16.0738993Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:16.0739914Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:16.3139053Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:16.7798584Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:16.7799379Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:16.7800171Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:17.6494944Z YOSYS OK  KL_acmp_talker
+2026-09-22T09:11:18.0561723Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:18.0562691Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:18.6145746Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:18.6146765Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:18.8547051Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:19.3205571Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:19.3206454Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:19.3207339Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:19.8560110Z YOSYS OK  KL_pp_maap
+2026-09-22T09:11:20.2636272Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:20.2636948Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:20.8037117Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:20.8038212Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:21.0415598Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:21.5037146Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:21.5038029Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:21.5038901Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:21.8825507Z YOSYS OK  KL_srp_decoder
+2026-09-22T09:11:22.2900194Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:22.2901155Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:22.8327275Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:22.8327998Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:23.0705543Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:23.5344510Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:23.5345338Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:23.5346137Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:24.1373921Z YOSYS OK  KL_srp_encoder
+2026-09-22T09:11:24.5428811Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:24.5429506Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:25.0845805Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:25.0846779Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:25.3213326Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:25.7841311Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:25.7842228Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:25.7843451Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:26.1084121Z YOSYS OK  KL_srp_domain
+2026-09-22T09:11:26.5136268Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:26.5137235Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:27.0575489Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:27.0576341Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:27.2968080Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:27.7607456Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:27.7608266Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:27.7609092Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:28.0967335Z YOSYS OK  KL_srp_vlan
+2026-09-22T09:11:28.5011470Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:28.5012674Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:29.0468596Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:29.0469786Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:29.2851729Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:29.7495797Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:29.7496752Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:29.7497812Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:31.3498151Z YOSYS OK  KL_srp_talker_fsm
+2026-09-22T09:11:31.7574407Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:31.7575370Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:32.3057848Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:32.5445598Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:32.5446509Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:33.0105693Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:33.0106565Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:33.0107435Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:11:34.2459788Z YOSYS OK  KL_srp_listener_fsm
+2026-09-22T09:11:34.6594853Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+2026-09-22T09:11:34.6595736Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+2026-09-22T09:11:35.2029132Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+2026-09-22T09:11:35.2029967Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+2026-09-22T09:11:35.4414506Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+2026-09-22T09:11:35.9063971Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+2026-09-22T09:11:35.9064791Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+2026-09-22T09:11:35.9065593Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+2026-09-22T09:12:16.3633643Z Warning: Resizing cell port KL_aecp_engine.amap_stage_r.0.0.ADDRARDADDR from 17 bits to 16 bits.
+2026-09-22T09:12:16.3634899Z Warning: Resizing cell port KL_aecp_engine.amap_stage_r.0.0.ADDRBWRADDR from 17 bits to 16 bits.
+2026-09-22T09:12:16.3636023Z Warning: Resizing cell port KL_aecp_engine.u_store.line_r.0.0.ADDRARDADDR from 17 bits to 16 bits.
+2026-09-22T09:12:16.3637063Z Warning: Resizing cell port KL_aecp_engine.u_store.line_r.0.0.ADDRBWRADDR from 17 bits to 16 bits.
+2026-09-22T09:12:16.3638203Z Warning: Resizing cell port KL_aecp_engine.u_store.name_r.0.0.ADDRARDADDR from 17 bits to 16 bits.
+2026-09-22T09:12:16.3639290Z Warning: Resizing cell port KL_aecp_engine.u_store.name_r.0.0.ADDRBWRADDR from 17 bits to 16 bits.
+2026-09-22T09:12:16.3640243Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.0.DOADO from 64 bits to 32 bits.
+2026-09-22T09:12:16.3641148Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.0.DOBDO from 64 bits to 32 bits.
+2026-09-22T09:12:16.3642014Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.0.DOPADOP from 8 bits to 4 bits.
+2026-09-22T09:12:16.3642869Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.0.DOPBDOP from 8 bits to 4 bits.
+2026-09-22T09:12:16.3643970Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.1.DOADO from 64 bits to 32 bits.
+2026-09-22T09:12:16.3644791Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.1.DOBDO from 64 bits to 32 bits.
+2026-09-22T09:12:16.3645618Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.1.DOPADOP from 8 bits to 4 bits.
+2026-09-22T09:12:16.3646434Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.1.DOPBDOP from 8 bits to 4 bits.
+2026-09-22T09:12:16.3647246Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.2.DOADO from 64 bits to 32 bits.
+2026-09-22T09:12:16.3648059Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.2.DOBDO from 64 bits to 32 bits.
+2026-09-22T09:12:16.3648873Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.2.DOPADOP from 8 bits to 4 bits.
+2026-09-22T09:12:16.3649685Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.2.DOPBDOP from 8 bits to 4 bits.
+2026-09-22T09:12:16.6531770Z YOSYS XILINX OK  KL_aecp_engine
+2026-09-22T09:12:16.6669463Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T09:12:16.6670963Z Post job cleanup.
+2026-09-22T09:12:16.7515512Z [command]/usr/bin/git version
+2026-09-22T09:12:16.7560222Z git version 2.55.0
+2026-09-22T09:12:16.7604688Z Temporarily overriding HOME='/home/runner/work/_temp/a63f683f-036b-4c66-bc22-5d93158d8f76' before making global git config changes
+2026-09-22T09:12:16.7605826Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-22T09:12:16.7611670Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+2026-09-22T09:12:16.7650701Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-22T09:12:16.7686313Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-22T09:12:16.7973875Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-22T09:12:16.8003543Z http.https://github.com/.extraheader
+2026-09-22T09:12:16.8016878Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-09-22T09:12:16.8056618Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-22T09:12:16.8300731Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-22T09:12:16.8338357Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-22T09:12:16.8735179Z Cleaning up orphan processes
+2026-09-22T09:12:16.9048218Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

@@ -1,0 +1,18 @@
+{
+  "verilator --version": "Verilator 5.052 2026-09-05 rev v5.052\n",
+  "g++ --version": "g++ (GCC) 16.2.1 20260810\nCopyright (C) 2026 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+  "python3 --version": "Python 3.14.7\n",
+  "make --version": "GNU Make 4.4.1\nBuilt for x86_64-pc-linux-gnu\nCopyright (C) 1988-2023 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n",
+  "locale -a": "C\nC.utf8\nPOSIX\nen_US.utf8\n",
+  "initial_locale_environment": {
+    "LANG": "en_US.UTF-8",
+    "LANGUAGE": null,
+    "LC_ALL": "C.UTF-8",
+    "LC_MESSAGES": null
+  },
+  "catalogs": {
+    "/usr/share/locale/de/LC_MESSAGES/gcc.mo": "ef9c2164b5f2add0d6a2fa1603a24add4bbb8f3b61b06c4d4bdc238c33d6bdeb",
+    "/usr/share/locale/fr/LC_MESSAGES/gcc.mo": "a73fd96e25c78cbe51c05ab3fabecaf4577617ce4b07c6846314e153582bf6be"
+  },
+  "wavedrom_importable": false
+}

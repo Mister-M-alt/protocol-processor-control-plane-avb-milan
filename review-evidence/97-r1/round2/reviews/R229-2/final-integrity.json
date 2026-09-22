@@ -1,0 +1,29 @@
+{
+  "head": {
+    "sha256": "1f26786a197fcedf5617ef2db6e83b162113f21fc738767519d8a42892c539ed",
+    "bytes": 82
+  },
+  "status": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "index": {
+    "sha256": "152d0b312717e6658fa5d4ea6604354b4a40df610b4f1da803e297a8ed626b61",
+    "bytes": 17605
+  },
+  "tree": {
+    "sha256": "7db186fc137079f7adfdab2b7988face1d9ff4dea6009662bf668e56b0f5ba6f",
+    "bytes": 18277
+  },
+  "working-diff": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "staged-diff": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "raw_index_sha256": "a585137b9943281379b982a020de991cf4c9e9fa91b9db2133cd3c831529e55e",
+  "tracked_files_verified": 224,
+  "detached": true
+}

@@ -1,0 +1,23 @@
+{
+  "name": "15-docs",
+  "argv": [
+    "make",
+    "-j1",
+    "links",
+    "matrix",
+    "modmatrix"
+  ],
+  "cwd": "/tmp/r229-r2-en0oej49/normal",
+  "returncode": 0,
+  "expected": 0,
+  "seconds": 0.132,
+  "environment_overrides": {
+    "LANG": "en_US.UTF-8",
+    "LANGUAGE": "de",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "R229_SENTINEL": "inherited-reviewer-value",
+    "MAKEFLAGS": "-j1",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "env",
+    "-u",
+    "LC_ALL",
+    "LANG=en_US.UTF-8",
+    "LANGUAGE=de",
+    "make",
+    "-j1",
+    "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-m1-author/scripts/verilator8",
+    "run"
+  ],
+  "shell_command": "rtk proxy env -u LC_ALL LANG=en_US.UTF-8 LANGUAGE=de make -j1 VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-m1-author/scripts/verilator8 run",
+  "cwd": "/tmp/a166-pr100-m1-hos8lcje/fixed/tb/pp_top",
+  "started_utc": "2026-09-22T08:54:43.591199+00:00",
+  "seconds": 195.527,
+  "returncode": 0,
+  "expected_returncode": 0
+}

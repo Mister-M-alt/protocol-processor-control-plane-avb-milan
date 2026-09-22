@@ -1,0 +1,15 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "python3",
+    "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-m1-author/scripts/verify-scope.py",
+    "precommit"
+  ],
+  "shell_command": "rtk proxy python3 $WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-m1-author/scripts/verify-scope.py precommit",
+  "cwd": "$CANDIDATE",
+  "started_utc": "2026-09-22T08:56:05.181120+00:00",
+  "seconds": 0.153,
+  "returncode": 0,
+  "expected_returncode": 0
+}

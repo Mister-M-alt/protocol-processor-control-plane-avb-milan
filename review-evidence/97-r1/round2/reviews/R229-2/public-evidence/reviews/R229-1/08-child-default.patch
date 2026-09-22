@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_top.sv
++++ b/hdl/srp/KL_srp_top.sv
+@@ -77,7 +77,7 @@
+     parameter int unsigned LEAVE_MS_P    = 5000,
+     //! default SR class A priority / VID (Milan §4.2.7.2.1)
+     parameter logic [7:0]  DOM_DEF_PRIO_P = 8'd3,
+-    parameter logic [15:0] DOM_DEF_VID_P  = 16'd2,
++    parameter logic [15:0] DOM_DEF_VID_P  = 16'd7,
+     //! MVRP membership table entries (10 §6.2: steady state is one VID)
+     parameter int unsigned N_VIDS_P    = 4,
+     //! VLAN refcount width: >= clog2(P-N-STREAM-IN + P-N-STREAM-OUT + 1)

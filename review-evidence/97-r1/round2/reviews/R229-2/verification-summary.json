@@ -1,0 +1,15 @@
+{
+  "source_integrity": "PASS",
+  "tracked_files": 224,
+  "downloaded_blobs_verified": 86,
+  "published_manifest_entries_verified": 84,
+  "original_author_manifest_links_verified": 56,
+  "focused_completed_probes": 18,
+  "recorded_syntax_compiler_calls": 31,
+  "corrected_normal_four_case_sets": 4,
+  "all_recorded_job_caps_and_temp_cleanup": "PASS",
+  "retained_R229_1_M25_M31": "PASS",
+  "manager_completed_native_commands": 9,
+  "completed_hosted_jobs": 6,
+  "hosted_PR_merge_tree_equals_reviewed_tree": true
+}

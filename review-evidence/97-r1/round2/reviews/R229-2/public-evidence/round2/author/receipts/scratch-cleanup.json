@@ -1,0 +1,6 @@
+{
+  "removed": "/tmp/a166-pr100-m1-hos8lcje",
+  "exists_after": false,
+  "mutants_removed_sequentially": true,
+  "source_lane_touched": false
+}

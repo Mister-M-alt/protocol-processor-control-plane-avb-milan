@@ -1,0 +1,10 @@
+--- a/tb/pp_top/fixture_guards.py
++++ b/tb/pp_top/fixture_guards.py
+@@ -43,7 +43,6 @@
+             result = subprocess.run(
+                 [*command, *define, "sim_main.cpp"],
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+-                env=compiler_env,
+             )
+             errors = [line for line in result.stdout.splitlines() if "error:" in line]
+             assertions = [line for line in errors if "static assertion" in line]

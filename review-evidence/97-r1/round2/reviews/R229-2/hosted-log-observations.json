@@ -1,0 +1,70 @@
+[
+  {
+    "job": 106684178741,
+    "name": "docs-gates",
+    "selected_lines": [
+      "2026-09-22T09:10:00.8696888Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29",
+      "2026-09-22T09:10:02.4548900Z [command]/usr/bin/git log -1 --format=%H",
+      "2026-09-22T09:10:02.4575712Z 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+      "2026-09-22T09:10:07.5343769Z   Created wheel for wavedrom: filename=wavedrom-2.0.3.post3-py2.py3-none-any.whl size=30056 sha256=249a27294dba76f573e7c09c2d3192ae423fadaf72ddb73792fc11653bc65548",
+      "2026-09-22T09:10:07.5345953Z   Stored in directory: /home/runner/.cache/pip/wheels/dd/97/87/67fda20d5b17da917e87e94dcdc39acd2195796f42511e42fe"
+    ]
+  },
+  {
+    "job": 106684179155,
+    "name": "portability",
+    "selected_lines": [
+      "2026-09-22T09:10:01.2234390Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29",
+      "2026-09-22T09:10:02.6002202Z [command]/usr/bin/git log -1 --format=%H",
+      "2026-09-22T09:10:02.6031146Z 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e"
+    ]
+  },
+  {
+    "job": 106684179182,
+    "name": "suites",
+    "selected_lines": [
+      "2026-09-22T09:10:01.6754427Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29",
+      "2026-09-22T09:10:03.5533694Z 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+      "2026-09-22T09:10:03.6587483Z [command]/usr/bin/git log -1 --format=%H",
+      "2026-09-22T09:10:03.6606445Z 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+      "2026-09-22T09:10:05.3377476Z Verilator 5.050 2026-07-01 rev v5.050",
+      "2026-09-22T09:15:23.4943820Z PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)",
+      "2026-09-22T09:16:49.2677999Z suites: 14943 checks total, 0 failing"
+    ]
+  },
+  {
+    "job": 106684193618,
+    "name": "suites",
+    "selected_lines": [
+      "2026-09-22T09:10:05.0207782Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29",
+      "2026-09-22T09:10:07.1548028Z HEAD is now at 6439edc Merge 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e into 8452f564294300a82d56eed464276576f65f4d58",
+      "2026-09-22T09:10:07.1574579Z [command]/usr/bin/git log -1 --format=%H",
+      "2026-09-22T09:10:07.1594356Z 6439edc9e2a2fa06c4f9ce2e35d4ccaa273e321d",
+      "2026-09-22T09:10:08.7797911Z Verilator 5.050 2026-07-01 rev v5.050",
+      "2026-09-22T09:15:31.9955895Z PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)",
+      "2026-09-22T09:17:01.4211360Z suites: 14943 checks total, 0 failing"
+    ]
+  },
+  {
+    "job": 106684193718,
+    "name": "docs-gates",
+    "selected_lines": [
+      "2026-09-22T09:10:03.5998923Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29",
+      "2026-09-22T09:10:05.0301986Z HEAD is now at 6439edc Merge 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e into 8452f564294300a82d56eed464276576f65f4d58",
+      "2026-09-22T09:10:05.0344948Z [command]/usr/bin/git log -1 --format=%H",
+      "2026-09-22T09:10:05.0367808Z 6439edc9e2a2fa06c4f9ce2e35d4ccaa273e321d",
+      "2026-09-22T09:10:08.9322870Z   Created wheel for wavedrom: filename=wavedrom-2.0.3.post3-py2.py3-none-any.whl size=30056 sha256=9c936b2c3566e2b6069f825c8a3b2e57ae85c388b0c6f571e70e319e80f631d6",
+      "2026-09-22T09:10:08.9323554Z   Stored in directory: /home/runner/.cache/pip/wheels/dd/97/87/67fda20d5b17da917e87e94dcdc39acd2195796f42511e42fe"
+    ]
+  },
+  {
+    "job": 106684193741,
+    "name": "portability",
+    "selected_lines": [
+      "2026-09-22T09:10:03.6849435Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29",
+      "2026-09-22T09:10:05.0248781Z HEAD is now at 6439edc Merge 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e into 8452f564294300a82d56eed464276576f65f4d58",
+      "2026-09-22T09:10:05.0289978Z [command]/usr/bin/git log -1 --format=%H",
+      "2026-09-22T09:10:05.0317066Z 6439edc9e2a2fa06c4f9ce2e35d4ccaa273e321d"
+    ]
+  }
+]

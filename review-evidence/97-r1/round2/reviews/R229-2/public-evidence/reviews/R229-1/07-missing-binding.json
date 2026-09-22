@@ -1,0 +1,14 @@
+{
+  "name": "07-missing-binding",
+  "argv": [
+    "make",
+    "-j1",
+    "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r229/probe-tools/verilator"
+  ],
+  "cwd": "/tmp/r229-pr100-sd8ak_7h/07-missing-binding/tb/pp_top",
+  "head": "1eb20dc4911880de10b745cc284e7dde306788b5",
+  "start": 1790064126.575917,
+  "seconds": 197.46284556388855,
+  "returncode": 2,
+  "expected": 2
+}

@@ -1,0 +1,14 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "python3",
+    "scripts/check_upc_map.py"
+  ],
+  "shell_command": "rtk proxy python3 scripts/check_upc_map.py",
+  "cwd": "$CANDIDATE",
+  "started_utc": "2026-09-22T08:54:27.302068+00:00",
+  "seconds": 0.04,
+  "returncode": 0,
+  "expected_returncode": 0
+}
