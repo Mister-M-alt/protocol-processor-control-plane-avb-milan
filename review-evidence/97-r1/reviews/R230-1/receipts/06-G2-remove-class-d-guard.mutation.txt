@@ -1,0 +1,13 @@
+exported 1eb20dc4911880de10b745cc284e7dde306788b5 of $VALIDATION_STORAGE/reviews/r230-100-r1 to /tmp/r230-100-r1/mut/G2-remove-class-d-guard
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -80,8 +80,6 @@
+ //! A default-equivalent fixture cannot expose a dropped binding (issue #97).
+ static_assert(SRP_DEF_VID != 2,
+               "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
+-static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
+-              "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
+ #else
+ constexpr uint16_t    SRP_DEF_VID = 2;
+ #endif
+mutant G2-remove-class-d-guard: tb/pp_top/sim_main.cpp sha256 0cd0d7aba2b7799d378e434d399ef49def0566869db2166353f1ef31cea2ddab -> 0565473e5446a55ac3ddc028b1cb916d6a08da7e1501e4f3e18064131703a84e

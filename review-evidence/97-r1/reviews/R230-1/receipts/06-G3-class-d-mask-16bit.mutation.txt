@@ -1,0 +1,13 @@
+exported 1eb20dc4911880de10b745cc284e7dde306788b5 of $VALIDATION_STORAGE/reviews/r230-100-r1 to /tmp/r230-100-r1/mut/G3-class-d-mask-16bit
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -80,7 +80,7 @@
+ //! A default-equivalent fixture cannot expose a dropped binding (issue #97).
+ static_assert(SRP_DEF_VID != 2,
+               "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
+-static_assert((SRP_DEF_VID & 0x0FFFu) != 2,
++static_assert((SRP_DEF_VID & 0xFFFFu) != 2,
+               "SRP VID fixture must differ from product default 2 in the 12-bit class-D value");
+ #else
+ constexpr uint16_t    SRP_DEF_VID = 2;
+mutant G3-class-d-mask-16bit: tb/pp_top/sim_main.cpp sha256 0cd0d7aba2b7799d378e434d399ef49def0566869db2166353f1ef31cea2ddab -> b969f885096146b425ffe0a60f5383a41473ef33dc54af500f51723e73541d2f

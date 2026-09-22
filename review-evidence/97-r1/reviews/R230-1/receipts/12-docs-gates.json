@@ -1,0 +1,23 @@
+{
+  "name": "12-docs-gates",
+  "cwd": "/tmp/r230-100-r1/head",
+  "command": [
+    "bash",
+    "-c",
+    "set -u; rc=0; for c in \"python3 scripts/check-links.py\" \"python3 scripts/check-matrix.py\" \"python3 scripts/gen_matrix.py --check\" \"python3 scripts/check_upc_map.py\" \"make stale\"; do echo \"\\$ $c\"; $c; s=$?; echo \"exit $s\"; [ $s -eq 0 ] || rc=1; done; echo \"\\$ python3 -m py_compile tb/pp_top/fixture_guards.py (to a scratch pycache)\"; PYTHONPYCACHEPREFIX=/tmp/r230-100-r1/pycache python3 -m py_compile tb/pp_top/fixture_guards.py; s=$?; echo \"exit $s\"; [ $s -eq 0 ] || rc=1; echo \"\\$ grep new U+2014 in the diff\"; git diff 8452f564294300a82d56eed464276576f65f4d58 HEAD | grep \"^+\" | grep -c \"\u2014\"; exit $rc"
+  ],
+  "env_overrides": {},
+  "started_utc": "2026-09-22T08:33:27.571114+00:00",
+  "seconds": 0.38,
+  "exit_code": 0,
+  "log": "12-docs-gates.log",
+  "inherited": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANGUAGE": null,
+    "MAKEFLAGS": null,
+    "CXX": null,
+    "TMPDIR": null
+  }
+}

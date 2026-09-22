@@ -1,0 +1,27 @@
+{
+  "name": "06-G5-guards-outside-fixture-branch",
+  "cwd": "/tmp/r230-100-r1/mut/G5-guards-outside-fixture-branch/tb/pp_top",
+  "command": [
+    "make",
+    "fixture-guards",
+    "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/scripts/verilator8"
+  ],
+  "env_overrides": {
+    "TMPDIR": "/tmp/r230-100-r1/tmp",
+    "R230_VLOG": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/verilator-invocations.jsonl",
+    "MAKEFLAGS": null
+  },
+  "started_utc": "2026-09-22T08:14:47.007605+00:00",
+  "seconds": 2.461,
+  "exit_code": 2,
+  "log": "06-G5-guards-outside-fixture-branch.log",
+  "inherited": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANGUAGE": null,
+    "MAKEFLAGS": null,
+    "CXX": null,
+    "TMPDIR": null
+  }
+}

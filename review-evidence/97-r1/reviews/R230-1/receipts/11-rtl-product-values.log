@@ -1,0 +1,6 @@
+protocol_processor_top default: verilator exit 0, 0 warning/error lines
+protocol_processor_top 16'h0002: verilator exit 0, 0 warning/error lines
+protocol_processor_top 16'h1002: verilator exit 0, 0 warning/error lines
+protocol_processor_top 16'h5A3C: verilator exit 0, 0 warning/error lines
+grep of hdl/ for any assertion on the VID parameter:
+  none

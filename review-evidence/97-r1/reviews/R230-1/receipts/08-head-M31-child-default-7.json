@@ -1,0 +1,26 @@
+{
+  "name": "08-head-M31-child-default-7",
+  "cwd": "/tmp/r230-100-r1/mut/head-M31-child-default-7/tb/pp_top",
+  "command": [
+    "make",
+    "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/scripts/verilator8"
+  ],
+  "env_overrides": {
+    "TMPDIR": "/tmp/r230-100-r1/tmp",
+    "R230_VLOG": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/verilator-invocations.jsonl",
+    "MAKEFLAGS": null
+  },
+  "started_utc": "2026-09-22T08:19:08.796188+00:00",
+  "seconds": 195.666,
+  "exit_code": 0,
+  "log": "08-head-M31-child-default-7.log",
+  "inherited": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANGUAGE": null,
+    "MAKEFLAGS": null,
+    "CXX": null,
+    "TMPDIR": null
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "05-head-make-fixture-1002",
+  "cwd": "/tmp/r230-100-r1/head/tb/pp_top",
+  "command": [
+    "make",
+    "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/scripts/verilator8",
+    "SRP_VID_FIXTURE=1002"
+  ],
+  "env_overrides": {
+    "TMPDIR": "/tmp/r230-100-r1/tmp",
+    "R230_VLOG": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/verilator-invocations.jsonl",
+    "MAKEFLAGS": null
+  },
+  "started_utc": "2026-09-22T08:10:32.041673+00:00",
+  "seconds": 172.356,
+  "exit_code": 2,
+  "log": "05-head-make-fixture-1002.log",
+  "inherited": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANGUAGE": null,
+    "MAKEFLAGS": null,
+    "CXX": null,
+    "TMPDIR": null
+  }
+}

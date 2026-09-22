@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+# R230 job cap: run /usr/bin/verilator with every -j/--build-jobs/--verilate-jobs
+# removed and all three pinned at 8. --getenv/--version pass through untouched.
+# Each capped invocation is appended to $R230_VLOG (JSON lines) when set.
+import json
+import os
+import sys
+
+REAL = "/usr/bin/verilator"
+argv = sys.argv[1:]
+if any(a in ("--getenv", "--version", "-V", "--help") for a in argv):
+    os.execv(REAL, [REAL, *argv])
+args = []
+it = iter(argv)
+for a in it:
+    if a in ("-j", "--build-jobs", "--verilate-jobs"):
+        next(it, None)
+    elif a.startswith(("--build-jobs=", "--verilate-jobs=")) or (a.startswith("-j") and a[2:].isdigit()):
+        continue
+    else:
+        args.append(a)
+args += ["-j", "8", "--build-jobs", "8", "--verilate-jobs", "8"]
+log = os.environ.get("R230_VLOG")
+if log:
+    with open(log, "a") as f:
+        f.write(json.dumps({"cwd": os.getcwd(), "argv": [REAL, *args]}) + "\n")
+os.execv(REAL, [REAL, *args])

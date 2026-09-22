@@ -1,0 +1,12 @@
+OK   HEAD 1eb20dc4911880de10b745cc284e7dde306788b5
+OK   tree 001d20069951396c5e056c5539c2af4217310a57
+# branch.oid 1eb20dc4911880de10b745cc284e7dde306788b5
+# branch.head (detached)
+OK   detached HEAD
+OK   no modified, staged, untracked or ignored path
+OK   index has only stage-0 entries
+OK   index entries == HEAD tree entries (223 paths, mode+object+path)
+tracked kinds: {'100644': 213, '100755': 10}
+OK   every tracked path has its mode's kind/exec bit and its HEAD blob bytes []
+OK   git fsck --full clean
+fails: 0

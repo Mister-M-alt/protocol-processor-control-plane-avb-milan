@@ -1,0 +1,13 @@
+exported 1eb20dc4911880de10b745cc284e7dde306788b5 of $VALIDATION_STORAGE/reviews/r230-100-r1 to /tmp/r230-100-r1/mut/head-M31-child-default-7
+--- a/hdl/srp/KL_srp_top.sv
++++ b/hdl/srp/KL_srp_top.sv
+@@ -77,7 +77,7 @@
+     parameter int unsigned LEAVE_MS_P    = 5000,
+     //! default SR class A priority / VID (Milan §4.2.7.2.1)
+     parameter logic [7:0]  DOM_DEF_PRIO_P = 8'd3,
+-    parameter logic [15:0] DOM_DEF_VID_P  = 16'd2,
++    parameter logic [15:0] DOM_DEF_VID_P  = 16'd7,
+     //! MVRP membership table entries (10 §6.2: steady state is one VID)
+     parameter int unsigned N_VIDS_P    = 4,
+     //! VLAN refcount width: >= clog2(P-N-STREAM-IN + P-N-STREAM-OUT + 1)
+mutant M31-child-default-7: hdl/srp/KL_srp_top.sv sha256 6f96b92d0ed56f95bc1ed783eb0dcdba9312576c661013f04e3107bd1a4fa61f -> 6275c3288de61323e91842009136b3b64724298c2dadee8a6037302e2b3c3439

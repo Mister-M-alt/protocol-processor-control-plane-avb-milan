@@ -1,0 +1,49 @@
+== review clone $VALIDATION_STORAGE/reviews/r230-100-r1
+OK   HEAD is 1eb20dc4911880de10b745cc284e7dde306788b5
+OK   HEAD tree is 001d20069951396c5e056c5539c2af4217310a57
+OK   single parent is base 8452f564294300a82d56eed464276576f65f4d58
+OK   merge-base(base, head) is base
+# branch.oid 1eb20dc4911880de10b745cc284e7dde306788b5
+# branch.head (detached)
+OK   HEAD detached
+OK   no tracked, untracked or ignored changes in the review clone
+M	tb/pp_top/Makefile
+M	tb/pp_top/README.md
+A	tb/pp_top/fixture_guards.py
+M	tb/pp_top/sim_main.cpp
+OK   exactly the four tb/pp_top files change
+ create mode 100644 tb/pp_top/fixture_guards.py
+OK   only summary line is the new 100644 file (no mode change, delete or rename)
+OK   git diff --check base..head clean
+OK   no change under hdl
+OK   no change under docs
+OK   no change under scripts
+OK   no change under .github
+OK   no change under syn
+OK   no change under tb/pp_top/pp_top_wrap.sv
+8	2	tb/pp_top/Makefile
+17	0	tb/pp_top/README.md
+60	0	tb/pp_top/fixture_guards.py
+5	0	tb/pp_top/sim_main.cpp
+100644 d8c01366b7e3a435e7ce13729ef9f015e0e0cc8b 0	tb/pp_top/Makefile
+100644 2a27a90351eb98566eca270455b99f8790639d64 0	tb/pp_top/README.md
+100644 6e70a0253159229cbd4f1ea91a8267bddbcdf704 0	tb/pp_top/fixture_guards.py
+100644 c755a16c14b02609714548675684c4dfeae44006 0	tb/pp_top/pp_top_wrap.sv
+100644 6b400dbcbf4d7afa848c0ac825d1c3a1ee000d1a 0	tb/pp_top/sim_main.cpp
+OK   all tb/pp_top files are 100644
+== author source snapshot and patch vs head blobs
+OK   snapshot sha256 matches head tb/pp_top/Makefile
+OK   snapshot sha256 matches head tb/pp_top/README.md
+OK   snapshot sha256 matches head tb/pp_top/sim_main.cpp
+OK   snapshot sha256 matches head tb/pp_top/fixture_guards.py
+OK   author source.patch is byte-identical to git diff base..head
+== evidence commits
+OK   8b61b6c parent is 8452f56
+OK   77e2fb5 parent is 8b61b6c
+OK   evidence commits touch only review-evidence/97-r1/
+OK   all 92 MANIFEST entries match published sha256 and flags []
+files not in MANIFEST: ['review-evidence/97-r1/MANIFEST.json', 'review-evidence/97-r1/README.md']
+OK   only MANIFEST.json/README.md are outside the manifest
+OK   manager candidate.json names this base/head/tree
+OK   manager full-native results: 9 commands, all exit 0, this head
+fails: 0

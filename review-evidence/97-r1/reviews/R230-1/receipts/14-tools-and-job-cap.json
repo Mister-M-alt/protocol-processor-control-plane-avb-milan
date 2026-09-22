@@ -1,0 +1,23 @@
+{
+  "name": "14-tools-and-job-cap",
+  "cwd": "/tmp",
+  "command": [
+    "bash",
+    "-c",
+    "verilator --version; g++ --version | head -1; python3 --version; make --version | head -1; git --version; rtk --version; command -v clang++ || echo \"clang++: not installed\"; echo \"nproc: $(nproc)\"; locale -a; echo \"LANG=$LANG LC_ALL=${LC_ALL:-} LANGUAGE=${LANGUAGE:-}\"; python3 - \"$0\" <<EOF\nimport json, sys\nrows = [json.loads(l) for l in open(\"$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/verilator-invocations.jsonl\")]\nbad = [r for r in rows if r[\"argv\"][-6:] != [\"-j\", \"8\", \"--build-jobs\", \"8\", \"--verilate-jobs\", \"8\"]\n       or sum(a == \"-j\" for a in r[\"argv\"]) != 1]\nprint(f\"capped verilator invocations: {len(rows)}; not capped at 8: {len(bad)}\")\nEOF"
+  ],
+  "env_overrides": {},
+  "started_utc": "2026-09-22T08:34:26.255058+00:00",
+  "seconds": 0.093,
+  "exit_code": 0,
+  "log": "14-tools-and-job-cap.log",
+  "inherited": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANGUAGE": null,
+    "MAKEFLAGS": null,
+    "CXX": null,
+    "TMPDIR": null
+  }
+}

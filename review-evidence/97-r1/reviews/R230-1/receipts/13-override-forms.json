@@ -1,0 +1,25 @@
+{
+  "name": "13-override-forms",
+  "cwd": "/tmp/r230-100-r1/head/tb/pp_top",
+  "command": [
+    "bash",
+    "-c",
+    "echo \"\\$ SRP_VID_FIXTURE=0002 make -n run  (environment prefix)\"; SRP_VID_FIXTURE=0002 make -n run VERILATOR=verilator | grep -oE \"PP_TOP_SRP_DOM_DEF_VID=(16.h|0x)[0-9A-Fa-f]+\"; echo \"\\$ make -n run SRP_VID_FIXTURE=0002  (make command-line variable)\"; make -n run VERILATOR=verilator SRP_VID_FIXTURE=0002 | grep -oE \"PP_TOP_SRP_DOM_DEF_VID=(16.h|0x)[0-9A-Fa-f]+\""
+  ],
+  "env_overrides": {
+    "MAKEFLAGS": null
+  },
+  "started_utc": "2026-09-22T08:34:20.155860+00:00",
+  "seconds": 0.009,
+  "exit_code": 0,
+  "log": "13-override-forms.log",
+  "inherited": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANGUAGE": null,
+    "MAKEFLAGS": null,
+    "CXX": null,
+    "TMPDIR": null
+  }
+}

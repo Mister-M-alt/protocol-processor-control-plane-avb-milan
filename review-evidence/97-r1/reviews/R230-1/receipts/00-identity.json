@@ -1,0 +1,24 @@
+{
+  "name": "00-identity",
+  "cwd": "/tmp",
+  "command": [
+    "python3",
+    "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/scripts/identity.py",
+    "$VALIDATION_STORAGE/reviews/r230-100-r1",
+    "/tmp/r230-100-r1/evidence-repo"
+  ],
+  "env_overrides": {},
+  "started_utc": "2026-09-22T08:02:36.744370+00:00",
+  "seconds": 0.273,
+  "exit_code": 0,
+  "log": "00-identity.log",
+  "inherited": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANGUAGE": null,
+    "MAKEFLAGS": null,
+    "CXX": null,
+    "TMPDIR": null
+  }
+}

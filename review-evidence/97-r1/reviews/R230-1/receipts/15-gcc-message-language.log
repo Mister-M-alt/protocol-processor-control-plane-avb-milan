@@ -1,0 +1,13 @@
+/usr/share/locale/de/LC_MESSAGES/gcc.mo is owned by gcc 16.2.1+r23+gd564253eb6c8-1
+/usr/share/locale/fr/LC_MESSAGES/gcc.mo is owned by gcc 16.2.1+r23+gd564253eb6c8-1
+gcc catalogs installed: 20
+static_assert(1 != 1, "SRP VID fixture must differ from product default 2 in the 16-bit wire value");
+int main() { return 0; }
+== LANGUAGE= g++ -std=c++17 -fsyntax-only t.cpp
+t.cpp:1:17: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+== LANGUAGE=de g++ -std=c++17 -fsyntax-only t.cpp
+t.cpp:1:17: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 16-bit wire value
+== LANGUAGE=fr g++ -std=c++17 -fsyntax-only t.cpp
+t.cpp:1:17: error: l'assertion statique a échoué : SRP VID fixture must differ from product default 2 in the 16-bit wire value
+== LANGUAGE=de LC_ALL=C g++ -std=c++17 -fsyntax-only t.cpp
+t.cpp:1:17: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value

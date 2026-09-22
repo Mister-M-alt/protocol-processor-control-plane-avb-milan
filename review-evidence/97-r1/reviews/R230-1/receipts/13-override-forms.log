@@ -1,0 +1,6 @@
+$ SRP_VID_FIXTURE=0002 make -n run  (environment prefix)
+PP_TOP_SRP_DOM_DEF_VID=16'h5A3C
+PP_TOP_SRP_DOM_DEF_VID=0x5A3C
+$ make -n run SRP_VID_FIXTURE=0002  (make command-line variable)
+PP_TOP_SRP_DOM_DEF_VID=16'h0002
+PP_TOP_SRP_DOM_DEF_VID=0x0002

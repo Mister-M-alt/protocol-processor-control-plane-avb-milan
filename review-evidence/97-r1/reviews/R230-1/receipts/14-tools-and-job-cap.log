@@ -1,0 +1,14 @@
+Verilator 5.052 2026-09-05 rev v5.052
+g++ (GCC) 16.2.1 20260810
+Python 3.14.7
+GNU Make 4.4.1
+git version 2.55.0
+rtk 0.43.0
+clang++: not installed
+nproc: 8
+C
+C.utf8
+en_US.utf8
+POSIX
+LANG=en_US.UTF-8 LC_ALL= LANGUAGE=
+capped verilator invocations: 37; not capped at 8: 0

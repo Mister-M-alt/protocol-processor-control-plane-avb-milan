@@ -1,0 +1,23 @@
+{
+  "name": "15-gcc-message-language",
+  "cwd": "/tmp/r230-100-r1/locale-probe",
+  "command": [
+    "bash",
+    "-c",
+    "pacman -Qo /usr/share/locale/de/LC_MESSAGES/gcc.mo /usr/share/locale/fr/LC_MESSAGES/gcc.mo; echo \"gcc catalogs installed: $(ls /usr/share/locale/*/LC_MESSAGES/gcc.mo | wc -l)\"; cat t.cpp; for env in \"LANGUAGE=\" \"LANGUAGE=de\" \"LANGUAGE=fr\" \"LANGUAGE=de LC_ALL=C\"; do echo \"== $env g++ -std=c++17 -fsyntax-only t.cpp\"; env $env g++ -std=c++17 -fsyntax-only t.cpp 2>&1 | grep \"error:\"; done"
+  ],
+  "env_overrides": {},
+  "started_utc": "2026-09-22T08:36:05.142707+00:00",
+  "seconds": 0.064,
+  "exit_code": 0,
+  "log": "15-gcc-message-language.log",
+  "inherited": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANGUAGE": null,
+    "MAKEFLAGS": null,
+    "CXX": null,
+    "TMPDIR": null
+  }
+}

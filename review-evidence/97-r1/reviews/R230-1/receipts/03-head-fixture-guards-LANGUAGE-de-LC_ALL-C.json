@@ -1,0 +1,29 @@
+{
+  "name": "03-head-fixture-guards-LANGUAGE-de-LC_ALL-C",
+  "cwd": "/tmp/r230-100-r1/head/tb/pp_top",
+  "command": [
+    "make",
+    "fixture-guards",
+    "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/scripts/verilator8"
+  ],
+  "env_overrides": {
+    "TMPDIR": "/tmp/r230-100-r1/tmp",
+    "R230_VLOG": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/verilator-invocations.jsonl",
+    "MAKEFLAGS": null,
+    "LANGUAGE": "de",
+    "LC_ALL": "C"
+  },
+  "started_utc": "2026-09-22T08:03:40.754171+00:00",
+  "seconds": 5.207,
+  "exit_code": 0,
+  "log": "03-head-fixture-guards-LANGUAGE-de-LC_ALL-C.log",
+  "inherited": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANGUAGE": null,
+    "MAKEFLAGS": null,
+    "CXX": null,
+    "TMPDIR": null
+  }
+}

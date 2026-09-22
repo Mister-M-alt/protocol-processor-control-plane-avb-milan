@@ -1,0 +1,12 @@
+exported 8452f564294300a82d56eed464276576f65f4d58 of $VALIDATION_STORAGE/reviews/r230-100-r1 to /tmp/r230-100-r1/mut/base-M25
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -2144,7 +2144,6 @@
+   KL_srp_top #(
+       .N_SOURCES_P      (N_STREAM_OUT_P),
+       .N_SINKS_P        (N_STREAM_IN_P),
+-      .DOM_DEF_VID_P    (SRP_DOM_DEF_VID_P),
+       .TX_STD_BYTES_P   (576),
+       .TX_OVERSIZE_BYTES_P (TX_OVERSIZE_BYTES_P),
+       .SLOT_AW_P        (TMR_AW_C),
+mutant M25-binding-removed: hdl/top/protocol_processor_top.sv sha256 7a92f91f6f6c73be6ad507e4a1b7c03ee87bab8835b5090554b6d89eec6080f1 -> 1f7360aa93bde4214de3996da7bf8a18d8798b0599d823e243e4fd54a5d1399a

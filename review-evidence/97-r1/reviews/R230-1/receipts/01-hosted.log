@@ -1,0 +1,31 @@
+== PR 100
+#100 OPEN draft=false MERGEABLE head=97-assert-distinct-sr-vid-fixture@1eb20dc4911880de10b745cc284e7dde306788b5 base=main@8452f564294300a82d56eed464276576f65f4d58
+== refs
+1eb20dc4911880de10b745cc284e7dde306788b5	refs/heads/97-assert-distinct-sr-vid-fixture
+8452f564294300a82d56eed464276576f65f4d58	refs/heads/main
+1eb20dc4911880de10b745cc284e7dde306788b5	refs/pull/100/head
+1a1f476b6f5dd0ebc35eb0d7e45b3ff08805735d	refs/pull/100/merge
+== runs at 1eb20dc4911880de10b745cc284e7dde306788b5
+35696611002 hdl pull_request 1eb20dc4911880de10b745cc284e7dde306788b5 completed success
+35696606554 hdl push 1eb20dc4911880de10b745cc284e7dde306788b5 completed success
+  run 35696611002  job 106644775548 portability success
+  run 35696611002  job 106644775791 suites success
+  run 35696611002  job 106644775908 docs-gates success
+  run 35696606554  job 106644761472 portability success
+  run 35696606554  job 106644761597 suites success
+  run 35696606554  job 106644761647 docs-gates success
+== suites logs
+-- job 106644761597
+2026-09-22T06:49:47.6999388Z [command]/usr/bin/git checkout --progress --force -B 97-assert-distinct-sr-vid-fixture refs/remotes/origin/97-assert-distinct-sr-vid-fixture
+2026-09-22T06:49:49.3360560Z Verilator 5.050 2026-07-01 rev v5.050
+2026-09-22T06:55:03.6346177Z PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)
+2026-09-22T06:56:26.6968906Z suites: 14943 checks total, 0 failing
+-- job 106644775791
+2026-09-22T06:49:52.1344146Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/100/merge
+2026-09-22T06:49:52.1894085Z HEAD is now at 1a1f476 Merge 1eb20dc4911880de10b745cc284e7dde306788b5 into 8452f564294300a82d56eed464276576f65f4d58
+2026-09-22T06:49:54.2657323Z Verilator 5.050 2026-07-01 rev v5.050
+2026-09-22T06:55:54.5680583Z PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)
+2026-09-22T06:57:44.5622085Z suites: 14943 checks total, 0 failing
+== PR merge commit used by the pull_request run
+1a1f476b6f5dd0ebc35eb0d7e45b3ff08805735d tree=001d20069951396c5e056c5539c2af4217310a57 parents=8452f564294300a82d56eed464276576f65f4d58 1eb20dc4911880de10b745cc284e7dde306788b5
+1eb20dc4911880de10b745cc284e7dde306788b5 tree=001d20069951396c5e056c5539c2af4217310a57 parents=8452f564294300a82d56eed464276576f65f4d58

@@ -1,0 +1,24 @@
+{
+  "name": "01-hosted",
+  "cwd": "/tmp",
+  "command": [
+    "bash",
+    "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/scripts/hosted.sh",
+    "/tmp/r230-100-r1/evidence-repo",
+    "/tmp/r230-100-r1/hosted"
+  ],
+  "env_overrides": {},
+  "started_utc": "2026-09-22T08:03:02.219163+00:00",
+  "seconds": 6.729,
+  "exit_code": 0,
+  "log": "01-hosted.log",
+  "inherited": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANGUAGE": null,
+    "MAKEFLAGS": null,
+    "CXX": null,
+    "TMPDIR": null
+  }
+}

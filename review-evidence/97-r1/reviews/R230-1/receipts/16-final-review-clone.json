@@ -1,0 +1,23 @@
+{
+  "name": "16-final-review-clone",
+  "cwd": "/tmp",
+  "command": [
+    "python3",
+    "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/scripts/final_clone_check.py",
+    "$VALIDATION_STORAGE/reviews/r230-100-r1"
+  ],
+  "env_overrides": {},
+  "started_utc": "2026-09-22T08:40:46.944391+00:00",
+  "seconds": 0.343,
+  "exit_code": 0,
+  "log": "16-final-review-clone.log",
+  "inherited": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANGUAGE": null,
+    "MAKEFLAGS": null,
+    "CXX": null,
+    "TMPDIR": null
+  }
+}

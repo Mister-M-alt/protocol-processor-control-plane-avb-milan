@@ -1,0 +1,26 @@
+{
+  "name": "11-rtl-product-values",
+  "cwd": "/tmp/r230-100-r1/head",
+  "command": [
+    "bash",
+    "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/scripts/rtl_values.sh",
+    "/tmp/r230-100-r1/head",
+    "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/scripts/verilator8"
+  ],
+  "env_overrides": {
+    "R230_VLOG": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/verilator-invocations.jsonl"
+  },
+  "started_utc": "2026-09-22T08:33:11.451976+00:00",
+  "seconds": 4.809,
+  "exit_code": 0,
+  "log": "11-rtl-product-values.log",
+  "inherited": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANGUAGE": null,
+    "MAKEFLAGS": null,
+    "CXX": null,
+    "TMPDIR": null
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "09-base-M25-fixture-0002",
+  "cwd": "/tmp/r230-100-r1/mut/base-M25/tb/pp_top",
+  "command": [
+    "make",
+    "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/scripts/verilator8",
+    "SRP_VID_FIXTURE=0002"
+  ],
+  "env_overrides": {
+    "TMPDIR": "/tmp/r230-100-r1/tmp",
+    "R230_VLOG": "$WORKSPACE_HOME/milan-fpga-management/2026-09-22/100-r1-r230/receipts/verilator-invocations.jsonl",
+    "MAKEFLAGS": null
+  },
+  "started_utc": "2026-09-22T08:22:36.355176+00:00",
+  "seconds": 195.818,
+  "exit_code": 0,
+  "log": "09-base-M25-fixture-0002.log",
+  "inherited": {
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": null,
+    "LC_MESSAGES": null,
+    "LANGUAGE": null,
+    "MAKEFLAGS": null,
+    "CXX": null,
+    "TMPDIR": null
+  }
+}
