@@ -1,0 +1,27 @@
+{
+  "cwd": "$VALIDATION",
+  "head": "ea93023fbdd31cbf718da0d8f1aab4d750bfd21a",
+  "base": "424c688fa2205b934a7689a58f2aa766420f2326",
+  "commands": [
+    [
+      "python3",
+      "$TRUSTED_DEV/scripts/check_merge_containment.py",
+      "--base",
+      "origin/main",
+      "origin/95-expose-default-sr-vid"
+    ],
+    [
+      "python3",
+      "$TRUSTED_DEV/scripts/check_merge_containment.py",
+      "--base",
+      "origin/main",
+      "--merged-prs"
+    ],
+    [
+      "python3",
+      "$TRUSTED_DEV/scripts/check_merge_review_integrity.py",
+      "--base",
+      "main"
+    ]
+  ]
+}
