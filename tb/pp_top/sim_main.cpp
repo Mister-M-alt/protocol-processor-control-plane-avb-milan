@@ -17,6 +17,9 @@
 // maap face both ways — with no allocator the talker still answers (the
 // walker must not wedge on an unaccepted request), with one the granted
 // address reaches acmp_declaring_o, the ACMP answer and the SRP wire.
+// The suite builds twice (Makefile): the second build overrides the top's
+// P-SRP-DOM-DEF-VID with a verification-only fixture and runs section DV
+// alone.
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -69,6 +72,14 @@ constexpr uint16_t    T1_UID  = 3;
 constexpr uint64_t    ACMP_MC = 0x91E0F0010000ULL;
 constexpr uint64_t    MSRP_DA = 0x0180C200000EULL;
 constexpr uint64_t    MVRP_DA = 0x0180C2000021ULL;
+//! P-SRP-DOM-DEF-VID as THIS build asked for it (section DV). The first build
+//! overrides nothing, so it expects Milan §4.2.7.2.1's 2; the second build is
+//! compiled with the fixture the Makefile also hands the wrap.
+#ifdef PP_TOP_SRP_DOM_DEF_VID
+constexpr uint16_t    SRP_DEF_VID = PP_TOP_SRP_DOM_DEF_VID;
+#else
+constexpr uint16_t    SRP_DEF_VID = 2;
+#endif
 
 // MRP attribute events (802.1Q §35.2.2.7.2) + Listener declarations
 constexpr int EV_NEW    = 0;
@@ -1002,6 +1013,9 @@ struct H {
   //! every sink the manager reported UNFLUSHED at any cycle of the run, and
   //! the same vector as it stands now (nvm_unflushed_o, issue #90)
   uint32_t nvm_unflushed_seen = 0;
+  //! srp_domain_change_o strobes, counted once per cycle (section DV): the
+  //! one-cycle DOMAIN_CHANGE has no wire shape of its own
+  int domain_changes = 0;
   // ---- the SET_STREAM_FORMAT verdict (kind 0 selector 15) and the
   // settings fold. The verdict is the integrator's ruling on the PROPOSED
   // format riding gsi_prop_fmt_o: bit 0 = the format is one of the
@@ -1126,6 +1140,7 @@ struct H {
     }
     if (d->dbg_notify_enq_o) ++notify_enqs;
     nvm_unflushed_seen |= d->nvm_unflushed_o;
+    if (d->srp_domain_change_o) ++domain_changes;
 
     d->clk_i = 1; d->eval();
     t++;
@@ -1521,6 +1536,7 @@ struct H {
     nvm_marks = 0; notify_enqs = 0;
     nvm_marks_cls6 = 0; nvm_marks_cls7 = 0; nvm_mark_last = 0;
     nvm_unflushed_seen = 0;
+    domain_changes = 0;
     idle(20);
     d->rst_n = 1;
     idle(10);
@@ -8218,6 +8234,172 @@ struct InternalMaapPhase {
   }
 };
 
+// ==== DV. the Domain default is the top's parameter (issue #95) ==========
+// P-SRP-DOM-DEF-VID reaches the Domain FSM only through the top's binding to
+// KL_srp_top.DOM_DEF_VID_P, and the FSM reads it at reset, at every LINK_UP
+// declaration and at the LINK_DOWN revert (10 §6.1 F10.2). DV grades all
+// three through the top's own faces, plus the adoption that must still win
+// over it, on a FRESH model so the main DUT's timeline is untouched. The
+// child's own default is 2 as well, so a dropped or misbound connection can
+// only show in the second build, whose fixture the child cannot produce.
+struct DomainDefaultPhase {
+  H& h;
+  const milan::tb::Model<Vpp_top_wrap> model2;
+  Vpp_top_wrap* const d2;
+  H h2;
+  explicit DomainDefaultPhase(H& hh) : h(hh), d2(model2.get()), h2(d2) {}
+
+  //! the class-D port, snapshot word 10, GET_DOMAIN and the ACMP talker
+  //! carry 12 bits; only the MSRP wire field shows all 16 of the parameter
+  static constexpr unsigned DEF_VID12 = SRP_DEF_VID & 0x0FFFu;
+  //! a bridge's Class A Domain VID, distinct from both builds' defaults
+  static constexpr uint16_t ADOPT_VID = 5;
+  static_assert(SRP_DEF_VID != ADOPT_VID, "DV4 must see the VID move");
+
+  //! one MRPDU from this station carrying one Domain message
+  static std::vector<uint8_t> own_domain_pdu(const std::vector<Vec>& vecs) {
+    return mrpdu_frame(true, OWN_MAC, {Msg{4, 4, false, vecs}});
+  }
+  //! the SRclassVID of a frame's first Domain vector, all 16 bits of the
+  //! field, or 0x10000 when the frame carries no Domain vector
+  static uint32_t wire_domain_vid(const std::vector<uint8_t>& f) {
+    for (const auto& v : parse_mrpdu(f).vecs)
+      if (v.type == 4 && v.fv.size() == 4) return uint32_t(fv_u64(v.fv, 2, 2));
+    return 0x10000u;
+  }
+  //! the class-D Domain ports: priority 3 (not parameterized), the VID, and
+  //! the F10.2 state
+  bool domain_is(unsigned vid, bool adopted) const {
+    return d2->srp_class_a_prio_o == 3 && d2->srp_class_a_vid_o == vid
+        && d2->srp_domain_adopted_o == (adopted ? 1u : 0u);
+  }
+  void print_domain(const char* when) const {
+    printf("  %s: class-D {prio %u, vid 0x%03x, adopted %u}\n", when,
+           unsigned(d2->srp_class_a_prio_o), unsigned(d2->srp_class_a_vid_o),
+           unsigned(d2->srp_domain_adopted_o));
+  }
+
+  void run() {
+    h2.reset();
+    dv1_reset_holds_the_default();
+    dv2_link_up_declares_the_default();
+    dv3_a_controller_reads_the_default();
+    dv4_a_bridge_domain_is_still_adopted();
+    dv5_link_down_restores_the_default();
+    dv6_link_up_declares_the_default_again();
+  }
+
+  // ---- DV1: out of reset, before any link: the reset value ----------------
+  void dv1_reset_holds_the_default() {
+    CHECK(domain_is(DEF_VID12, false),
+          "DV1: class-D Domain out of reset is {3, 0x%03x, DEFAULTS}",
+          DEF_VID12);
+    if (!domain_is(DEF_VID12, false)) print_domain("DV1");
+    const uint32_t w10 = h2.snap(10);
+    CHECK(w10 == ((3u << 16) | DEF_VID12),
+          "DV1: snapshot word 10 carries the default, got 0x%08x", w10);
+    auto rd = h2.svc(OP_GET_DOM, 6);
+    CHECK(rd.got && rd.status == ST_OK && rd.data == ((3u << 16) | DEF_VID12),
+          "DV1: GET_DOMAIN answers the default, got 0x%08x", rd.data);
+    h2.run_ms(300);
+    CHECK(h2.q_msrp.empty(), "DV1: nothing is declared before the link");
+  }
+
+  // ---- DV2: LINK_UP declares the default on the wire ----------------------
+  void dv2_link_up_declares_the_default() {
+    h2.sync_join();
+    d2->link_up_i = 1;
+    auto f = h2.wait_any(h2.q_msrp, 1200);
+    CHECK(!f.empty(), "DV2: first MSRP frame within 1.2 s of link");
+    auto exp = own_domain_pdu({Vec{false, 1, fv_domain(6, 3, SRP_DEF_VID),
+                                   {EV_NEW}, {}}});
+    CHECK(f == exp, "DV2: Domain New {6, 3, 0x%04x} byte-exact",
+          unsigned(SRP_DEF_VID));
+    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+    CHECK(wire_domain_vid(f) == SRP_DEF_VID,
+          "DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x%x",
+          wire_domain_vid(f));
+    CHECK(domain_is(DEF_VID12, false), "DV2: class-D still the default");
+  }
+
+  // ---- DV3: the stream VLAN a controller reads is the default -------------
+  // F05.11 leaves the stream fields undefined while a source is not
+  // declaring; this talker answers the SR-class VID either way (S10, MP3),
+  // so this grades the talker reading the same class-D VID as the Domain
+  void dv3_a_controller_reads_the_default() {
+    const uint64_t SID_T0 = OWN_MAC << 16;           // wrap: sid[k] = {mac, k}
+    h2.feed(acmp_frame(CTLR_MAC, 4, 0, 0, CTLR_EID, EID, 0,
+                       0, 0, 0, 0, 0x9501, 0, 0));
+    auto f = h2.wait_any(h2.q_acmp, 400);
+    CHECK(!f.empty(), "DV3: GET_TX_STATE answered");
+    auto exp = acmp_frame(OWN_MAC, 5, 0, SID_T0, CTLR_EID, EID, 0,
+                          0, 0, 0, 0, 0x9501, 0, uint16_t(DEF_VID12));
+    CHECK(f == exp, "DV3: GET_TX_STATE_RESPONSE stream_vlan_id 0x%03x",
+          DEF_VID12);
+    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+  }
+
+  // ---- DV4: a bridge's differing Domain still wins over the parameter -----
+  void dv4_a_bridge_domain_is_still_adopted() {
+    h2.sync_join();
+    const int ch0 = h2.domain_changes;
+    // the certified two-class shape: FirstValue {5, 2, VID}, NumberOfValues
+    // 2, so Class A arrives as value 1 (10 §3)
+    Msg dom{4, 4, false, {Vec{false, 2, fv_domain(5, 2, ADOPT_VID),
+                              {EV_JOININ, EV_JOININ}, {}}}};
+    h2.feed(mrpdu_frame(true, T1_MAC, {dom}));
+    h2.run_ms(20);
+    CHECK(domain_is(ADOPT_VID, true),
+          "DV4: the bridge's {3, %u} is ADOPTED over the parameter",
+          unsigned(ADOPT_VID));
+    if (!domain_is(ADOPT_VID, true)) print_domain("DV4");
+    CHECK(h2.domain_changes == ch0 + 1, "DV4: one DOMAIN_CHANGE, saw %d",
+          h2.domain_changes - ch0);
+    auto exp = own_domain_pdu(
+        {Vec{false, 1, fv_domain(6, 3, SRP_DEF_VID), {EV_LV}, {}},
+         Vec{false, 1, fv_domain(6, 3, ADOPT_VID), {EV_NEW}, {}}});
+    auto f = h2.wait_frame(h2.q_msrp, 900, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 4, 6, EV_LV);
+    });
+    CHECK(f == exp, "DV4: Lv {6, 3, 0x%04x} + New {6, 3, %u} byte-exact",
+          unsigned(SRP_DEF_VID), unsigned(ADOPT_VID));
+    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+  }
+
+  // ---- DV5: LINK_DOWN restores the default, and declares nothing ----------
+  void dv5_link_down_restores_the_default() {
+    h2.sync_join();
+    const int ch0 = h2.domain_changes;
+    d2->link_up_i = 0;
+    h2.idle(10);
+    CHECK(domain_is(DEF_VID12, false),
+          "DV5: LINK_DOWN restores {3, 0x%03x, DEFAULTS}", DEF_VID12);
+    if (!domain_is(DEF_VID12, false)) print_domain("DV5");
+    CHECK(h2.domain_changes == ch0 + 1,
+          "DV5: the revert is one DOMAIN_CHANGE, saw %d",
+          h2.domain_changes - ch0);
+    const uint32_t w10 = h2.snap(10);
+    CHECK(w10 == ((3u << 16) | DEF_VID12),
+          "DV5: snapshot word 10 reverted, got 0x%08x", w10);
+    h2.run_ms(500);
+    CHECK(h2.q_msrp.empty(), "DV5: nothing is declared while the link is down");
+    CHECK(domain_is(DEF_VID12, false), "DV5: the default holds while down");
+  }
+
+  // ---- DV6: LINK_UP declares the default again ----------------------------
+  void dv6_link_up_declares_the_default_again() {
+    h2.sync_join();
+    d2->link_up_i = 1;
+    auto f = h2.wait_any(h2.q_msrp, 1200);
+    auto exp = own_domain_pdu({Vec{false, 1, fv_domain(6, 3, SRP_DEF_VID),
+                                   {EV_NEW}, {}}});
+    CHECK(f == exp, "DV6: LINK_UP re-declares Domain New {6, 3, 0x%04x}",
+          unsigned(SRP_DEF_VID));
+    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+    CHECK(domain_is(DEF_VID12, false), "DV6: class-D is the default again");
+  }
+};
+
 // ---------------------------------------------------------------------------
 // the suite: one phase per property proved, in the order the wire proves them
 // ---------------------------------------------------------------------------
@@ -8267,6 +8449,7 @@ struct Suite {
     TalkerStatePhase{h}.run();
     SamplingRateListPhase{h, image_ents}.run();
     InternalMaapPhase{h}.run();
+    DomainDefaultPhase{h}.run();
   }
 
   // The entity model lives in the integrator's main memory (07 §3.3): load it
@@ -8858,10 +9041,32 @@ struct Suite {
 
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
+  //! the harness that owns the tally. Section DV runs on a model of its own
+  //! in both builds, so its code is one path; in the fixture build this
+  //! model is never clocked.
   const milan::tb::Model<Vpp_top_wrap> model;
   H h(model.get());
+#ifdef PP_TOP_SRP_DOM_DEF_VID
+  //! every other section is written against the product default, which the
+  //! first build grades; the fixture build runs section DV alone
+  DomainDefaultPhase{h}.run();
+  const char* const build = "fixture";
+#else
   Suite(h).run();
-  printf("%d checks: %d PASS, %d FAIL\n", h.checks, h.checks - h.fails,
-         h.fails);
+  const char* const build = "default";
+#endif
+  //! NOT the canonical tally shape: this binary is ONE of the suite's two
+  //! builds, and run_suites.sh reads only the LAST matching line, so a
+  //! canonical line here would drop the other build's checks from the total.
+  //! The Makefile sums both builds and prints the one canonical line.
+  printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x] %d checks, %d failures\n",
+         build, unsigned(SRP_DEF_VID), h.checks, h.fails);
+  FILE* acc = fopen("obj_dir/build_tally.txt", "a");
+  if (acc == nullptr) {
+    printf("FAIL: this build's tally cannot be recorded for the Makefile\n");
+    return 1;
+  }
+  fprintf(acc, "%d %d\n", h.checks, h.fails);
+  fclose(acc);
   return h.fails ? 1 : 0;
 }

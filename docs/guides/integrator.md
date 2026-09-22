@@ -63,6 +63,7 @@ Nothing here is writable at runtime, and that is deliberate.
 | `DESC_NAME_ENTRIES_P` | 32 | name-table entries held on chip; set it from the generated image's `n_names`, up to 1024 |
 | `DESC_MEM_TMO_CYC_P` | 4096 | no-progress watchdog on the descriptor memory face, in clocks |
 | `RESP_BASE_P` | 0x20100000 | where the AECP response buffer lives in **your** memory |
+| `SRP_DOM_DEF_VID_P` | 2 | the Class A Domain VID the SRP engine declares at start-up and on every link-up, and returns to on link-down (Milan §4.2.7.2.1). A bridge's differing Class A Domain is still adopted at run time. **Keep it at 2 in a product build**: Milan fixes the value, and any other one exists only to prove this binding in verification. |
 
 Three traps worth stating plainly:
 
@@ -256,7 +257,7 @@ gate on them per cycle.
 | `srp_sr_admitted_o` | the raw Σ-slope verdict. It **lags** `srp_active_o` by up to three admission rounds after a fresh declare, because admission is optimistic. Gating on this instead mutes a legal stream for those rounds. |
 | `srp_granted_slope_bps_o`, `srp_sum_slope_bps_o` | per-source and summed granted idleSlope — the value your credit-based shaper's slope multiplexer needs. |
 | `srp_over_limit_o` | at least one source was refused against the port ceiling. |
-| `srp_class_a_prio_o`, `srp_class_a_vid_o`, `srp_domain_adopted_o`, `srp_domain_change_o` | the Class A identity in force. The two values are defaults until `srp_domain_adopted_o` says a bridge Domain was adopted. |
+| `srp_class_a_prio_o`, `srp_class_a_vid_o`, `srp_domain_adopted_o`, `srp_domain_change_o` | the Class A identity in force. The two values are defaults until `srp_domain_adopted_o` says a bridge Domain was adopted. The VID default is `SRP_DOM_DEF_VID_P`, and a link-down restores both defaults. |
 | `srp_tk_decl_state_o`, `srp_lstn_reg_state_o`, `srp_tk_reg_state_o`, `srp_lstn_decl_state_o` | the four declaration/registration state vectors, two bits per index. Read each one against its port comment, never against a listed order: `srp_lstn_reg_state_o` carries `srp_pkg::srp_decl_e` (1 Asking Failed, 2 Ready, 3 Ready Failed, [02 F02.10](../architecture/02_interfaces.md#fig-02-statusdict)), so "a Listener is registered" is any non-zero code and "Ready or Ready Failed" is bit 1 |
 | `srp_acc_latency_o` | per-sink registered accumulated latency in nanoseconds, **raw** — add your own ingress delay |
 | `srp_src_fail_code_o`, `srp_src_fail_bridge_o`, `srp_snk_fail_code_o` | failure codes, valid only while the matching state vector says FAILED |
