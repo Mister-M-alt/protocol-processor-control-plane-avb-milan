@@ -1,0 +1,28 @@
+{
+  "cwd": "$VALIDATION",
+  "head": "f70ba36ecb634467e4b1c3f0dbf1239d1e12af57",
+  "base": "c8214cfe827fb3fb50c9bfee415468a24b7c27b1",
+  "commands": [
+    [
+      "python3",
+      "$TRUSTED_DEV/scripts/check_merge_containment.py",
+      "--base",
+      "origin/main",
+      "origin/98-clarify-srp-domain-events"
+    ],
+    [
+      "python3",
+      "$TRUSTED_DEV/scripts/check_merge_containment.py",
+      "--base",
+      "origin/main",
+      "--merged-prs"
+    ],
+    [
+      "python3",
+      "$TRUSTED_DEV/scripts/check_merge_review_integrity.py",
+      "--base",
+      "main"
+    ]
+  ],
+  "note": "Actual merged tree equality verified; historical audit baseline remains"
+}

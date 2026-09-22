@@ -1,0 +1,12 @@
+{
+  "checked_at": "2026-09-22T13:40:21.629626+02:00",
+  "merge": "f70ba36ecb634467e4b1c3f0dbf1239d1e12af57",
+  "parents": [
+    "c8214cfe827fb3fb50c9bfee415468a24b7c27b1",
+    "bc997e7c00e50e3d59b97987950bfbf6cc442182"
+  ],
+  "actual_tree": "37a5cd807c5e8a289a7149892c1a1762dcd8279c",
+  "validated_tree": "37a5cd807c5e8a289a7149892c1a1762dcd8279c",
+  "equal": true,
+  "source_branch_preserved": true
+}

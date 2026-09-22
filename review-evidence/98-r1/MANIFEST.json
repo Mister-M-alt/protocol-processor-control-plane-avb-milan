@@ -1444,5 +1444,89 @@
     "original_sha256": "e32beea255b68f8e857a649d595ba75201b0441600eb3e1b94cca341f61a385c",
     "published_sha256": "e32beea255b68f8e857a649d595ba75201b0441600eb3e1b94cca341f61a385c",
     "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/actual-merge.json",
+    "original_sha256": "6733c2d18b696ab23937c96f0abe0737119c8d4b590ea4ad3f72d93d08fef4ab",
+    "published_sha256": "6733c2d18b696ab23937c96f0abe0737119c8d4b590ea4ad3f72d93d08fef4ab",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/merge-result.json",
+    "original_sha256": "35a46b4a204f4acffd4208cbb415168cdae1a7d9ae4d49ba45533ae3d98bbd75",
+    "published_sha256": "35a46b4a204f4acffd4208cbb415168cdae1a7d9ae4d49ba45533ae3d98bbd75",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/postmerge-audit-spec.json",
+    "original_sha256": "0ff5eec40ed53d5048156bee979f8736f5a95eea6fb5a7ca5278046bec2190f3",
+    "published_sha256": "170a1e6d950ff7fb90820f8400d0b191092f133db32dada00cee4988ffa5dd84",
+    "path_redacted": true
+  },
+  {
+    "file": "candidate1/manager/postmerge-audit/01.log",
+    "original_sha256": "3d6d2411e7f5afd30063fa7c9555e879d8812c5b3f80be6f871c6e64730ab85d",
+    "published_sha256": "3d6d2411e7f5afd30063fa7c9555e879d8812c5b3f80be6f871c6e64730ab85d",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/postmerge-audit/02.log",
+    "original_sha256": "0b8996eea7d337a5ab296bcfd36a120f5bf23d34edab7ed5d51f61e64ed4c23c",
+    "published_sha256": "0b8996eea7d337a5ab296bcfd36a120f5bf23d34edab7ed5d51f61e64ed4c23c",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/postmerge-audit/03.log",
+    "original_sha256": "a0d831ffa68eeababaf46c2988d4aa32d180a87bfbe1aad902959e1a6ac8162b",
+    "published_sha256": "a0d831ffa68eeababaf46c2988d4aa32d180a87bfbe1aad902959e1a6ac8162b",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/postmerge-audit/complete.json",
+    "original_sha256": "1ab03779a904e7d670ed1ae8d3d6015aaba8e29d8962c4b5cea5d0e34b0872c4",
+    "published_sha256": "1ab03779a904e7d670ed1ae8d3d6015aaba8e29d8962c4b5cea5d0e34b0872c4",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/postmerge-audit/results.json",
+    "original_sha256": "61243223f413ed8f1e09478bfe75ff83bf78a850cc7a5efd0473a7f841e6eb2e",
+    "published_sha256": "48591470be3447bbdb3cd8c0c8672cd506b5e36eda1c3b08901599d31bd5a194",
+    "path_redacted": true
+  },
+  {
+    "file": "candidate1/manager/postmerge-hosted/job-106729209197.log",
+    "original_sha256": "1db7ed2ea0f887ba5a45115c958dddc5d24e5464ddbf17f5128040852b539242",
+    "published_sha256": "1db7ed2ea0f887ba5a45115c958dddc5d24e5464ddbf17f5128040852b539242",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/postmerge-hosted/job-106729209433.log",
+    "original_sha256": "661a5b47808e493d4a8b2087e9da2b2740d0cfa56da9410e0a57d6ef0fa4edd3",
+    "published_sha256": "661a5b47808e493d4a8b2087e9da2b2740d0cfa56da9410e0a57d6ef0fa4edd3",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/postmerge-hosted/job-106729209621.log",
+    "original_sha256": "c64194502c36954289536cfcfffc885df41d1dc3f5ac7e4a27237783067c9e59",
+    "published_sha256": "c64194502c36954289536cfcfffc885df41d1dc3f5ac7e4a27237783067c9e59",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/postmerge-hosted/metadata.json",
+    "original_sha256": "cbcbb422b414a0cd504db579c13132db1abbca6a49376373b2e53020fa1589a1",
+    "published_sha256": "cbcbb422b414a0cd504db579c13132db1abbca6a49376373b2e53020fa1589a1",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/completion.json",
+    "original_sha256": "4023d1049fe1bd45fa784a75db9951a31473121902e8d0a8688c57dac4046526",
+    "published_sha256": "4023d1049fe1bd45fa784a75db9951a31473121902e8d0a8688c57dac4046526",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/completion.md",
+    "original_sha256": "04ba3cbb60a7a5e740693c4dc8c986e88354010d5cb84fba925f2ea825a6ced5",
+    "published_sha256": "04ba3cbb60a7a5e740693c4dc8c986e88354010d5cb84fba925f2ea825a6ced5",
+    "path_redacted": false
   }
 ]

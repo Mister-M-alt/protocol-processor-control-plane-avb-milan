@@ -1,0 +1,41 @@
+{
+  "head": "f70ba36ecb634467e4b1c3f0dbf1239d1e12af57",
+  "base": "c8214cfe827fb3fb50c9bfee415468a24b7c27b1",
+  "results": [
+    {
+      "command": [
+        "python3",
+        "$TRUSTED_DEV/scripts/check_merge_containment.py",
+        "--base",
+        "origin/main",
+        "origin/98-clarify-srp-domain-events"
+      ],
+      "exit_code": 0,
+      "seconds": 1.152,
+      "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/postmerge-audit/01.log"
+    },
+    {
+      "command": [
+        "python3",
+        "$TRUSTED_DEV/scripts/check_merge_containment.py",
+        "--base",
+        "origin/main",
+        "--merged-prs"
+      ],
+      "exit_code": 1,
+      "seconds": 16.556,
+      "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/postmerge-audit/02.log"
+    },
+    {
+      "command": [
+        "python3",
+        "$TRUSTED_DEV/scripts/check_merge_review_integrity.py",
+        "--base",
+        "main"
+      ],
+      "exit_code": 1,
+      "seconds": 26.387,
+      "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/postmerge-audit/03.log"
+    }
+  ]
+}

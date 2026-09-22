@@ -1,0 +1,352 @@
+﻿2026-09-22T11:40:26.7605038Z Current runner version: '2.337.0'
+2026-09-22T11:40:26.7632861Z ##[group]Runner Image Provisioner
+2026-09-22T11:40:26.7633803Z Hosted Compute Agent
+2026-09-22T11:40:26.7634604Z Version: 20260828.587
+2026-09-22T11:40:26.7635301Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+2026-09-22T11:40:26.7636104Z Build Date: 2026-08-28T16:44:25Z
+2026-09-22T11:40:26.7636811Z Worker ID: {cba41215-7cee-4d9e-b894-1af86643fce8}
+2026-09-22T11:40:26.7637539Z Azure Region: centralus
+2026-09-22T11:40:26.7638274Z ##[endgroup]
+2026-09-22T11:40:26.7640550Z ##[group]Operating System
+2026-09-22T11:40:26.7641699Z Ubuntu
+2026-09-22T11:40:26.7642253Z 24.04.5
+2026-09-22T11:40:26.7642843Z LTS
+2026-09-22T11:40:26.7643534Z ##[endgroup]
+2026-09-22T11:40:26.7644111Z ##[group]Runner Image
+2026-09-22T11:40:26.7644784Z Image: ubuntu-24.04
+2026-09-22T11:40:26.7645374Z Version: 20260907.300.1
+2026-09-22T11:40:26.7646777Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+2026-09-22T11:40:26.7648364Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+2026-09-22T11:40:26.7649425Z ##[endgroup]
+2026-09-22T11:40:26.7650941Z ##[group]GITHUB_TOKEN Permissions
+2026-09-22T11:40:26.7653916Z Contents: read
+2026-09-22T11:40:26.7654551Z Metadata: read
+2026-09-22T11:40:26.7655125Z Packages: read
+2026-09-22T11:40:26.7655796Z ##[endgroup]
+2026-09-22T11:40:26.7658032Z Secret source: Actions
+2026-09-22T11:40:26.7659149Z Cache mode: write
+2026-09-22T11:40:26.7660300Z Prepare workflow directory
+2026-09-22T11:40:26.8071014Z Prepare all required actions
+2026-09-22T11:40:26.8120620Z Getting action download info
+2026-09-22T11:40:27.0801367Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-09-22T11:40:27.1813089Z Download action repository 'actions/cache@v4' (SHA:0057852bfaa89a56745cba8c7296529d2fc39830)
+2026-09-22T11:40:27.3864409Z Complete job name: suites
+2026-09-22T11:40:27.4606116Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T11:40:27.4614915Z ##[group]Run actions/checkout@v4
+2026-09-22T11:40:27.4615613Z with:
+2026-09-22T11:40:27.4616036Z   fetch-depth: 0
+2026-09-22T11:40:27.4616685Z   repository: Mister-M-alt/protocol-processor-control-plane-avb-milan
+2026-09-22T11:40:27.4621192Z   token: ***
+2026-09-22T11:40:27.4621643Z   ssh-strict: true
+2026-09-22T11:40:27.4622091Z   ssh-user: git
+2026-09-22T11:40:27.4622540Z   persist-credentials: true
+2026-09-22T11:40:27.4623025Z   clean: true
+2026-09-22T11:40:27.4623478Z   sparse-checkout-cone-mode: true
+2026-09-22T11:40:27.4624001Z   fetch-tags: false
+2026-09-22T11:40:27.4624447Z   show-progress: true
+2026-09-22T11:40:27.4624940Z   lfs: false
+2026-09-22T11:40:27.4625362Z   submodules: false
+2026-09-22T11:40:27.4625820Z   set-safe-directory: true
+2026-09-22T11:40:27.4626326Z   allow-unsafe-pr-checkout: false
+2026-09-22T11:40:27.4627075Z env:
+2026-09-22T11:40:27.4627495Z   VERILATOR_VERSION: v5.050
+2026-09-22T11:40:27.4627981Z ##[endgroup]
+2026-09-22T11:40:27.5642973Z Syncing repository: Mister-M-alt/protocol-processor-control-plane-avb-milan
+2026-09-22T11:40:27.5644943Z ##[group]Getting Git version info
+2026-09-22T11:40:27.5646101Z Working directory is '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan'
+2026-09-22T11:40:27.5647598Z [command]/usr/bin/git version
+2026-09-22T11:40:27.5734211Z git version 2.55.0
+2026-09-22T11:40:27.5766434Z ##[endgroup]
+2026-09-22T11:40:27.5781804Z Temporarily overriding HOME='/home/runner/work/_temp/db621f27-cf33-4499-91e7-c41230491c18' before making global git config changes
+2026-09-22T11:40:27.5783454Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-22T11:40:27.5785330Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+2026-09-22T11:40:27.5836377Z Deleting the contents of '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan'
+2026-09-22T11:40:27.5840587Z ##[group]Initializing the repository
+2026-09-22T11:40:27.5846267Z [command]/usr/bin/git init /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+2026-09-22T11:40:27.5946903Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-22T11:40:27.5948515Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-22T11:40:27.5950209Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-22T11:40:27.5951440Z hint: call:
+2026-09-22T11:40:27.5952053Z hint:
+2026-09-22T11:40:27.5952869Z hint: 	git config --global init.defaultBranch <name>
+2026-09-22T11:40:27.5954914Z hint:
+2026-09-22T11:40:27.5955900Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-22T11:40:27.5957398Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-22T11:40:27.5958563Z hint:
+2026-09-22T11:40:27.5959193Z hint: 	git branch -m <name>
+2026-09-22T11:40:27.5960084Z hint:
+2026-09-22T11:40:27.5961054Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-22T11:40:27.5963473Z Initialized empty Git repository in /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan/.git/
+2026-09-22T11:40:27.5967202Z [command]/usr/bin/git remote add origin https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+2026-09-22T11:40:27.6018118Z ##[endgroup]
+2026-09-22T11:40:27.6019306Z ##[group]Disabling automatic garbage collection
+2026-09-22T11:40:27.6022415Z [command]/usr/bin/git config --local gc.auto 0
+2026-09-22T11:40:27.6054304Z ##[endgroup]
+2026-09-22T11:40:27.6055394Z ##[group]Setting up auth
+2026-09-22T11:40:27.6061776Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-22T11:40:27.6095465Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-22T11:40:27.6492289Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-22T11:40:27.6538961Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-22T11:40:27.6793820Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-22T11:40:27.6833191Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-22T11:40:27.7077085Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-22T11:40:27.7157056Z ##[endgroup]
+2026-09-22T11:40:27.7157890Z ##[group]Fetching the repository
+2026-09-22T11:40:27.7159123Z [command]/usr/bin/git -c protocol.version=2 fetch --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*
+2026-09-22T11:40:28.8952265Z From https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+2026-09-22T11:40:28.8955428Z  * [new branch]        121-notification-review-fixes -> origin/121-notification-review-fixes
+2026-09-22T11:40:28.8957882Z  * [new branch]        14-asp-gm-identity      -> origin/14-asp-gm-identity
+2026-09-22T11:40:28.8961828Z  * [new branch]        14-done_seen_r-latches-dev_done_i-in-states-with-no-outstanding-command -> origin/14-done_seen_r-latches-dev_done_i-in-states-with-no-outstanding-command
+2026-09-22T11:40:28.8966784Z  * [new branch]        25-cover-every-module-and-stop-reparsing -> origin/25-cover-every-module-and-stop-reparsing
+2026-09-22T11:40:28.8969498Z  * [new branch]        389-refusal-arms        -> origin/389-refusal-arms
+2026-09-22T11:40:28.8971678Z  * [new branch]        389-set-clock-source-range-check -> origin/389-set-clock-source-range-check
+2026-09-22T11:40:28.8973664Z  * [new branch]        46-lstn-reg-state-encoding -> origin/46-lstn-reg-state-encoding
+2026-09-22T11:40:28.8976172Z  * [new branch]        51-sampling-rate-list-check -> origin/51-sampling-rate-list-check
+2026-09-22T11:40:28.8978845Z  * [new branch]        66-aecp-get-set-name    -> origin/66-aecp-get-set-name
+2026-09-22T11:40:28.8981905Z  * [new branch]        67-aecp-streaming-state-commands -> origin/67-aecp-streaming-state-commands
+2026-09-22T11:40:28.8985370Z  * [new branch]        67-stream-format-and-info-setters -> origin/67-stream-format-and-info-setters
+2026-09-22T11:40:28.8988585Z  * [new branch]        68-aecp-audio-mappings  -> origin/68-aecp-audio-mappings
+2026-09-22T11:40:28.8992909Z  * [new branch]        69-aecp-unsolicited-notification-triggers -> origin/69-aecp-unsolicited-notification-triggers
+2026-09-22T11:40:28.8996770Z  * [new branch]        71-get-dynamic-info     -> origin/71-get-dynamic-info
+2026-09-22T11:40:28.8999966Z  * [new branch]        72-dyn-state-ab-getters -> origin/72-dyn-state-ab-getters
+2026-09-22T11:40:28.9002794Z  * [new branch]        75-leaveall-cadence     -> origin/75-leaveall-cadence
+2026-09-22T11:40:28.9005460Z  * [new branch]        78-start-stop-streaming -> origin/78-start-stop-streaming
+2026-09-22T11:40:28.9008565Z  * [new branch]        78-started-state-in-acmp-record -> origin/78-started-state-in-acmp-record
+2026-09-22T11:40:28.9012478Z  * [new branch]        78-started-state-single-source -> origin/78-started-state-single-source
+2026-09-22T11:40:28.9015572Z  * [new branch]        83-vendor-unique-opcode-collision -> origin/83-vendor-unique-opcode-collision
+2026-09-22T11:40:28.9017853Z  * [new branch]        90-nvm-exports          -> origin/90-nvm-exports
+2026-09-22T11:40:28.9020062Z  * [new branch]        95-expose-default-sr-vid -> origin/95-expose-default-sr-vid
+2026-09-22T11:40:28.9022262Z  * [new branch]        96-review-evidence      -> origin/96-review-evidence
+2026-09-22T11:40:28.9024953Z  * [new branch]        97-assert-distinct-sr-vid-fixture -> origin/97-assert-distinct-sr-vid-fixture
+2026-09-22T11:40:28.9027321Z  * [new branch]        97-review-evidence      -> origin/97-review-evidence
+2026-09-22T11:40:28.9029274Z  * [new branch]        97-start-stop-commit-handshake -> origin/97-start-stop-commit-handshake
+2026-09-22T11:40:28.9031724Z  * [new branch]        98-clarify-srp-domain-events -> origin/98-clarify-srp-domain-events
+2026-09-22T11:40:28.9033753Z  * [new branch]        98-review-evidence      -> origin/98-review-evidence
+2026-09-22T11:40:28.9035430Z  * [new branch]        aecp-dyn-state-store    -> origin/aecp-dyn-state-store
+2026-09-22T11:40:28.9037209Z  * [new branch]        aecp-identify-control   -> origin/aecp-identify-control
+2026-09-22T11:40:28.9039178Z  * [new branch]        aecp-set-rate-and-clock-source -> origin/aecp-set-rate-and-clock-source
+2026-09-22T11:40:28.9041738Z  * [new branch]        chore/cpp-core-guidelines-idiom -> origin/chore/cpp-core-guidelines-idiom
+2026-09-22T11:40:28.9043750Z  * [new branch]        clksrc-store-tb-tap     -> origin/clksrc-store-tb-tap
+2026-09-22T11:40:28.9045607Z  * [new branch]        issue-73-aecp-doc-authority -> origin/issue-73-aecp-doc-authority
+2026-09-22T11:40:28.9047791Z  * [new branch]        issue-73-stream-output-counters -> origin/issue-73-stream-output-counters
+2026-09-22T11:40:28.9049803Z  * [new branch]        main                    -> origin/main
+2026-09-22T11:40:28.9051002Z  * [new tag]           v2.0                    -> v2.0
+2026-09-22T11:40:28.9053779Z [command]/usr/bin/git branch --list --remote origin/main
+2026-09-22T11:40:28.9055327Z   origin/main
+2026-09-22T11:40:28.9057138Z [command]/usr/bin/git rev-parse refs/remotes/origin/main
+2026-09-22T11:40:28.9058923Z f70ba36ecb634467e4b1c3f0dbf1239d1e12af57
+2026-09-22T11:40:28.9061679Z ##[endgroup]
+2026-09-22T11:40:28.9062794Z ##[group]Determining the checkout info
+2026-09-22T11:40:28.9064543Z ##[endgroup]
+2026-09-22T11:40:28.9073931Z [command]/usr/bin/git sparse-checkout disable
+2026-09-22T11:40:28.9127421Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-22T11:40:28.9162167Z ##[group]Checking out the ref
+2026-09-22T11:40:28.9165255Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-09-22T11:40:28.9718316Z Switched to a new branch 'main'
+2026-09-22T11:40:28.9722946Z branch 'main' set up to track 'origin/main'.
+2026-09-22T11:40:28.9735167Z ##[endgroup]
+2026-09-22T11:40:28.9785129Z [command]/usr/bin/git log -1 --format=%H
+2026-09-22T11:40:28.9816342Z f70ba36ecb634467e4b1c3f0dbf1239d1e12af57
+2026-09-22T11:40:29.0145682Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T11:40:29.0151017Z ##[group]Run actions/cache@v4
+2026-09-22T11:40:29.0151704Z with:
+2026-09-22T11:40:29.0152174Z   path: ~/verilator
+2026-09-22T11:40:29.0152764Z   key: verilator-v5.050-Linux
+2026-09-22T11:40:29.0153499Z   enableCrossOsArchive: false
+2026-09-22T11:40:29.0154228Z   fail-on-cache-miss: false
+2026-09-22T11:40:29.0154886Z   lookup-only: false
+2026-09-22T11:40:29.0155474Z   save-always: false
+2026-09-22T11:40:29.0156030Z env:
+2026-09-22T11:40:29.0156510Z   VERILATOR_VERSION: v5.050
+2026-09-22T11:40:29.0157155Z ##[endgroup]
+2026-09-22T11:40:29.1224740Z (node:2310) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-22T11:40:29.1227614Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-22T11:40:29.2693079Z Cache hit for: verilator-v5.050-Linux
+2026-09-22T11:40:29.2876402Z (node:2310) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-09-22T11:40:30.3045919Z Received 92171511 of 92171511 (100.0%), 97.7 MBs/sec
+2026-09-22T11:40:30.3046994Z Cache Size: ~88 MB (92171511 B)
+2026-09-22T11:40:30.3163010Z [command]/usr/bin/tar -xf /home/runner/work/_temp/fd025c7d-0dfe-4ddf-8b2f-b430518fe6ba/cache.tzst -P -C /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan --use-compress-program unzstd
+2026-09-22T11:40:30.4932145Z Cache restored successfully
+2026-09-22T11:40:30.5060308Z Cache restored from key: verilator-v5.050-Linux
+2026-09-22T11:40:30.5264466Z ##[group]Run export PATH="$HOME/verilator/bin:$PATH"
+2026-09-22T11:40:30.5265025Z [36;1mexport PATH="$HOME/verilator/bin:$PATH"[0m
+2026-09-22T11:40:30.5265493Z [36;1mverilator --version[0m
+2026-09-22T11:40:30.5265831Z [36;1m./scripts/lint_hdl.sh[0m
+2026-09-22T11:40:30.5266154Z [36;1m./scripts/run_suites.sh[0m
+2026-09-22T11:40:30.5310313Z shell: /usr/bin/bash -e {0}
+2026-09-22T11:40:30.5310671Z env:
+2026-09-22T11:40:30.5310958Z   VERILATOR_VERSION: v5.050
+2026-09-22T11:40:30.5311278Z ##[endgroup]
+2026-09-22T11:40:30.7084187Z Verilator 5.050 2026-07-01 rev v5.050
+2026-09-22T11:40:31.0247193Z LINT OK  KL_acmp_nvm_shadow
+2026-09-22T11:40:31.3193538Z LINT OK  KL_acmp_talker
+2026-09-22T11:40:31.5980148Z LINT OK  KL_pp_acmp_listener
+2026-09-22T11:40:31.8725469Z LINT OK  KL_adp_engine
+2026-09-22T11:40:32.1410485Z LINT OK  KL_aecp_ca_originator
+2026-09-22T11:40:32.4303913Z LINT OK  KL_aecp_desc_store
+2026-09-22T11:40:32.6998572Z LINT OK  KL_aecp_dyn_state
+2026-09-22T11:40:33.1304188Z LINT OK  KL_aecp_engine
+2026-09-22T11:40:33.4170340Z LINT OK  KL_aecp_notify
+2026-09-22T11:40:33.6659463Z LINT OK  KL_aecp_resp_buf
+2026-09-22T11:40:33.9370533Z LINT OK  KL_aecp_ucpu
+2026-09-22T11:40:34.2278596Z LINT OK  KL_pp_prng
+2026-09-22T11:40:34.4846593Z LINT OK  KL_pp_timer_service
+2026-09-22T11:40:34.7765378Z LINT OK  KL_pp_maap
+2026-09-22T11:40:35.0597205Z LINT OK  KL_pp_dispatch
+2026-09-22T11:40:35.3145987Z LINT OK  KL_pp_event_router
+2026-09-22T11:40:35.5664276Z LINT OK  KL_pp_normalizer
+2026-09-22T11:40:35.8139108Z LINT OK  KL_pp_nvm_port
+2026-09-22T11:40:36.0764612Z LINT OK  KL_pp_originator
+2026-09-22T11:40:36.3379328Z LINT OK  KL_pp_release_merge
+2026-09-22T11:40:36.6114889Z LINT OK  KL_pp_rx_slots
+2026-09-22T11:40:36.8985505Z LINT OK  KL_pp_rx_validator
+2026-09-22T11:40:37.1613874Z LINT OK  KL_pp_scoreboard
+2026-09-22T11:40:37.4164412Z LINT OK  KL_pp_side_port
+2026-09-22T11:40:37.6699534Z LINT OK  KL_pp_trace_ring
+2026-09-22T11:40:37.9245276Z LINT OK  KL_pp_tx_arbiter
+2026-09-22T11:40:38.2064710Z LINT OK  KL_pp_tx_slots
+2026-09-22T11:40:38.4722228Z LINT OK  KL_srp_admission
+2026-09-22T11:40:38.7402560Z LINT OK  KL_srp_decoder
+2026-09-22T11:40:39.0084434Z LINT OK  KL_srp_domain
+2026-09-22T11:40:39.2759014Z LINT OK  KL_srp_encoder
+2026-09-22T11:40:39.5918330Z LINT OK  KL_srp_listener_fsm
+2026-09-22T11:40:39.9092828Z LINT OK  KL_srp_talker_fsm
+2026-09-22T11:40:40.4451761Z LINT OK  KL_srp_top
+2026-09-22T11:40:40.7176970Z LINT OK  KL_srp_vlan
+2026-09-22T11:40:40.9710477Z LINT OK  KL_mrp_strip
+2026-09-22T11:40:42.3039580Z LINT OK  protocol_processor_top
+2026-09-22T11:40:42.3330351Z UPC MAP GATE: PASS (56 engine constants, 80 entry points, all agree)
+2026-09-22T11:40:48.3537859Z PASS acmp_listener (2540 checks: 2540 PASS, 0 FAIL)
+2026-09-22T11:40:53.9741743Z PASS acmp_nvm (86 checks: 86 PASS, 0 FAIL)
+2026-09-22T11:40:59.6883443Z PASS acmp_talker (839 checks: 839 PASS, 0 FAIL)
+2026-09-22T11:41:05.2489525Z PASS adp_engine (533 checks: 533 PASS, 0 FAIL)
+2026-09-22T11:41:10.7378131Z PASS aecp_notify (10 checks: 10 PASS, 0 FAIL)
+2026-09-22T11:41:16.0495167Z PASS ca_originator (16 checks: 16 PASS, 0 FAIL)
+2026-09-22T11:41:21.6401735Z PASS desc_store (584 checks: 584 PASS, 0 FAIL)
+2026-09-22T11:41:27.1521269Z PASS dispatch (211 checks: 211 PASS, 0 FAIL)
+2026-09-22T11:41:38.3192943Z PASS dyn_state (89 checks: 89 PASS, 0 FAIL)
+2026-09-22T11:41:43.6876209Z PASS event_router (81 checks: 81 PASS, 0 FAIL)
+2026-09-22T11:41:49.3292280Z PASS maap (75 checks: 75 PASS, 0 FAIL)
+2026-09-22T11:41:54.6823461Z PASS nvm_port (122 checks: 122 PASS, 0 FAIL)
+2026-09-22T11:42:00.2365883Z PASS originator (104 checks: 104 PASS, 0 FAIL)
+2026-09-22T11:46:23.3292882Z PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)
+2026-09-22T11:46:28.6570681Z PASS prng (76 checks: 76 PASS, 0 FAIL)
+2026-09-22T11:46:33.8924229Z PASS release_merge (18 checks: 18 PASS, 0 FAIL)
+2026-09-22T11:46:39.2668962Z PASS resp_buf (64 checks: 64 PASS, 0 FAIL)
+2026-09-22T11:46:44.5841238Z PASS rx_slots (130 checks: 130 PASS, 0 FAIL)
+2026-09-22T11:46:50.0902646Z PASS rx_validator (393 checks: 393 PASS, 0 FAIL)
+2026-09-22T11:46:55.4678697Z PASS scoreboard (3705 checks: 3705 PASS, 0 FAIL)
+2026-09-22T11:47:00.8073785Z PASS side_port (368 checks: 368 PASS, 0 FAIL)
+2026-09-22T11:47:06.1771162Z PASS srp_decoder (113 checks: 113 PASS, 0 FAIL)
+2026-09-22T11:47:11.8124607Z PASS srp_encoder (180 checks: 180 PASS, 0 FAIL)
+2026-09-22T11:47:18.9040168Z PASS srp_stream_fsms (1005 checks: 1005 PASS, 0 FAIL)
+2026-09-22T11:47:27.9242051Z PASS srp_top (235 checks: 235 PASS, 0 FAIL)
+2026-09-22T11:47:52.1536679Z PASS timer_map (1360 checks: 1360 PASS, 0 FAIL)
+2026-09-22T11:47:57.4833252Z PASS timer_service (48 checks: 48 PASS, 0 FAIL)
+2026-09-22T11:48:02.9004305Z PASS tx_arbiter (66 checks: 66 PASS, 0 FAIL)
+2026-09-22T11:48:08.1907538Z PASS tx_slots (95 checks: 95 PASS, 0 FAIL)
+2026-09-22T11:48:13.7438562Z PASS ucpu (386 checks: 386 PASS, 0 FAIL)
+2026-09-22T11:48:13.7450548Z suites: 14943 checks total, 0 failing
+2026-09-22T11:48:13.7493996Z ##[group]Run python3 scripts/gen_matrix.py --check
+2026-09-22T11:48:13.7494408Z [36;1mpython3 scripts/gen_matrix.py --check[0m
+2026-09-22T11:48:13.7535841Z shell: /usr/bin/bash -e {0}
+2026-09-22T11:48:13.7536292Z env:
+2026-09-22T11:48:13.7536512Z   VERILATOR_VERSION: v5.050
+2026-09-22T11:48:13.7536762Z ##[endgroup]
+2026-09-22T11:48:13.8059429Z matrix: OK (86 rows, 0 untested)
+2026-09-22T11:48:13.8140885Z ##[group]Run export PATH="$HOME/verilator/bin:$PATH"
+2026-09-22T11:48:13.8141330Z [36;1mexport PATH="$HOME/verilator/bin:$PATH"[0m
+2026-09-22T11:48:13.8141768Z [36;1m# PR #13 was squash-merged. Its review lineage is therefore absent[0m
+2026-09-22T11:48:13.8142264Z [36;1m# from main, but remains available through GitHub's durable pull ref.[0m
+2026-09-22T11:48:13.8142697Z [36;1mgit fetch --no-tags origin refs/pull/13/head[0m
+2026-09-22T11:48:13.8143029Z [36;1mmake -C tb/nvm_port figures[0m
+2026-09-22T11:48:13.8183806Z shell: /usr/bin/bash -e {0}
+2026-09-22T11:48:13.8184068Z env:
+2026-09-22T11:48:13.8184278Z   VERILATOR_VERSION: v5.050
+2026-09-22T11:48:13.8184526Z ##[endgroup]
+2026-09-22T11:48:14.3970236Z From https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+2026-09-22T11:48:14.3971353Z  * branch            refs/pull/13/head -> FETCH_HEAD
+2026-09-22T11:48:14.3992640Z make: Entering directory '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan/tb/nvm_port'
+2026-09-22T11:52:04.1312054Z 42 Verilator builds: 1 baseline + 12 arms + 18 mutations + 6 models + 5 matrix
+2026-09-22T11:52:04.1312896Z baseline: 122 checks, 122 PASS, 0 FAIL
+2026-09-22T11:52:04.1313770Z 
+2026-09-22T11:52:04.1314227Z arm coverage (measured vs README):
+2026-09-22T11:52:04.1314856Z   [ok ]  211 S_WEREQ    measured=0    readme=0
+2026-09-22T11:52:04.1315492Z   [ok ]  220 S_WEWAIT   measured=69   readme=69
+2026-09-22T11:52:04.1316119Z   [ok ]  230 S_WWREQ    measured=0    readme=0
+2026-09-22T11:52:04.1316737Z   [ok ]  240 S_WHPUMP   measured=64   readme=64
+2026-09-22T11:52:04.1317360Z   [ok ]  253 S_WDPUMP   measured=52   readme=52
+2026-09-22T11:52:04.1317947Z   [ok ]  263 S_WWAIT    measured=39   readme=39
+2026-09-22T11:52:04.1318545Z   [ok ]  274 S_RHREQ    measured=0    readme=0
+2026-09-22T11:52:04.1319199Z   [ok ]  284 S_RHCOLL   measured=32   readme=32
+2026-09-22T11:52:04.1320084Z   [ok ]  302 S_RHWAIT   measured=29   readme=29
+2026-09-22T11:52:04.1320749Z   [ok ]  329 S_RPREQ    measured=0    readme=0
+2026-09-22T11:52:04.1321363Z   [ok ]  339 S_RPPUMP   measured=63   readme=63
+2026-09-22T11:52:04.1321981Z   [ok ]  349 S_RPWAIT   measured=26   readme=26
+2026-09-22T11:52:04.1322437Z 
+2026-09-22T11:52:04.1322751Z mutations and probes (measured vs README):
+2026-09-22T11:52:04.1323341Z   [ok ] M1               measured=24   readme=24
+2026-09-22T11:52:04.1323973Z   [ok ] M1-sibling       measured=5    readme=5
+2026-09-22T11:52:04.1324583Z   [ok ] M2               measured=5    readme=5
+2026-09-22T11:52:04.1325166Z   [ok ] M3               measured=91   readme=91
+2026-09-22T11:52:04.1325804Z   [ok ] M4               measured=52   readme=52
+2026-09-22T11:52:04.1326437Z   [ok ] M5               measured=39   readme=39
+2026-09-22T11:52:04.1327062Z   [ok ] M6               measured=6    readme=6
+2026-09-22T11:52:04.1327703Z   [ok ] M6-sibling       measured=5    readme=5
+2026-09-22T11:52:04.1328359Z   [ok ] probe-armearly   measured=1    readme=1
+2026-09-22T11:52:04.1329002Z   [ok ] probe-nodevice   measured=3    readme=3
+2026-09-22T11:52:04.1329830Z   [ok ] probe-t18        measured=3    readme=3
+2026-09-22T11:52:04.1330579Z   [ok ] done_seen_r/coincident measured=91   readme=91
+2026-09-22T11:52:04.1331292Z   [ok ] done_seen_r/pristine measured=9    readme=9
+2026-09-22T11:52:04.1331979Z   [ok ] own-states-dropped measured=6    readme=6
+2026-09-22T11:52:04.1332646Z   [ok ] own-minus-rhcoll measured=3    readme=3
+2026-09-22T11:52:04.1333282Z   [ok ] own-minus-wwait  measured=0    readme=0
+2026-09-22T11:52:04.1333892Z   [ok ] own-plus-rhreq   measured=1    readme=1
+2026-09-22T11:52:04.1334467Z   [ok ] retraction       measured=2    readme=2
+2026-09-22T11:52:04.1334899Z 
+2026-09-22T11:52:04.1335177Z device models (measured vs README):
+2026-09-22T11:52:04.1335821Z   [ok ] pristine                   measured=122 PASS, 0 FAIL  readme=(122, 0)
+2026-09-22T11:52:04.1336987Z   [ok ] half-page                  measured=122 PASS, 0 FAIL  readme=(122, 0)
+2026-09-22T11:52:04.1338030Z   [ok ] half-page                  measured=122 PASS, 0 FAIL  readme=(122, 0)
+2026-09-22T11:52:04.1338907Z   [ok ] page-buffered NOR          measured=122 PASS, 0 FAIL  readme=(122, 0)
+2026-09-22T11:52:04.1339958Z   [ok ] lazy erase                 measured=121 PASS, 1 FAIL  readme=(121, 1)
+2026-09-22T11:52:04.1340820Z   [ok ] lazy erase + page-buffered measured=121 PASS, 1 FAIL  readme=(121, 1)
+2026-09-22T11:52:04.1341724Z   [ok ] coincident completion      measured=122 PASS, 0 FAIL  readme=(122, 0)
+2026-09-22T11:52:04.1342343Z 
+2026-09-22T11:52:04.1342664Z pre-fix matrix (measured vs README), 5 builds:
+2026-09-22T11:52:04.1343362Z   [ok ] T16 byte comparison                measured=pass FAIL FAIL FAIL FAIL
+2026-09-22T11:52:04.1344223Z   [ok ] T17 restore vs the record          measured=pass FAIL FAIL pass FAIL
+2026-09-22T11:52:04.1345098Z   [ok ] T17 restore vs the array           measured=pass pass FAIL pass pass
+2026-09-22T11:52:04.1346001Z   [ok ] T15 branch pin                     measured=pass pass FAIL pass FAIL
+2026-09-22T11:52:04.1346922Z   [ok ] T15 cut was real                   measured=pass pass pass pass FAIL
+2026-09-22T11:52:04.1347876Z   [ok ] T15 #70 property, unconditioned    measured=pass pass pass pass FAIL
+2026-09-22T11:52:04.1348586Z 
+2026-09-22T11:52:04.1348910Z all measured figures agree with the tree
+2026-09-22T11:52:04.1349398Z 
+2026-09-22T11:52:04.1349982Z NOT measured (waived, with the reason, so the exclusion set is
+2026-09-22T11:52:04.1350897Z derived from the file rather than asserted in a comment):
+2026-09-22T11:52:04.1352518Z   - /`fails 22 of the 122 checks` and `fails\s+22 out of 122`/ absorbs 2 (cap 4): two illustrative phrasings quoted inside the paragraph explaining what the inverted default does not close; not claims about this suite
+2026-09-22T11:52:04.1354556Z   - /\b122/122\b/ absorbs 2 (cap 4): suite tally shorthand; both halves are the suite size, which the size check already pins against the measured total
+2026-09-22T11:52:04.1404846Z make: Leaving directory '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan/tb/nvm_port'
+2026-09-22T11:52:04.1500863Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T11:52:04.1502082Z Post job cleanup.
+2026-09-22T11:52:04.2629383Z Cache hit occurred on the primary key verilator-v5.050-Linux, not saving cache.
+2026-09-22T11:52:04.2631815Z (node:6591) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-09-22T11:52:04.2632901Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-09-22T11:52:04.2797471Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-09-22T11:52:04.2798674Z Post job cleanup.
+2026-09-22T11:52:04.3697362Z [command]/usr/bin/git version
+2026-09-22T11:52:04.3747443Z git version 2.55.0
+2026-09-22T11:52:04.3790783Z Temporarily overriding HOME='/home/runner/work/_temp/741ff9fa-2dc2-48eb-b2bc-1b34c21207d9' before making global git config changes
+2026-09-22T11:52:04.3792096Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-22T11:52:04.3797526Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+2026-09-22T11:52:04.3840847Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-22T11:52:04.3882622Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-22T11:52:04.4164164Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-22T11:52:04.4205586Z http.https://github.com/.extraheader
+2026-09-22T11:52:04.4218229Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-09-22T11:52:04.4266496Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-22T11:52:04.4542967Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-22T11:52:04.4585341Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-22T11:52:04.5008948Z Cleaning up orphan processes
+2026-09-22T11:52:04.5305133Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/cache@v4, actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
