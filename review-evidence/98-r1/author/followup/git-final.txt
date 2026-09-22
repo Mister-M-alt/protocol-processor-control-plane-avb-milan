@@ -1,0 +1,11 @@
+bc997e7c00e50e3d59b97987950bfbf6cc442182
+bc997e7c00e50e3d59b97987950bfbf6cc442182 hackerman-kl <hackerman-kl@kebag-logic.com> Describe F10.2's revert edge in the srp_encoder README instead of quoting its old label
+## 98-clarify-srp-domain-events...origin/98-clarify-srp-domain-events [ahead 2]
+!! .venv-wavedrom/
+ tb/srp_encoder/README.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+old head 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf tree 1a65be1c93e51c2ad94e467abc2452a047047bdc
+new head bc997e7c00e50e3d59b97987950bfbf6cc442182 tree bd67eaac225513f84ecf3a228cf58a818e67b4da
+main base 8452f564294300a82d56eed464276576f65f4d58 tree ec259f379560863e6ea49c6043353f0c11fe714d
+8452f564294300a82d56eed464276576f65f4d58	refs/heads/98-clarify-srp-domain-events
+8452f564294300a82d56eed464276576f65f4d58	refs/heads/main

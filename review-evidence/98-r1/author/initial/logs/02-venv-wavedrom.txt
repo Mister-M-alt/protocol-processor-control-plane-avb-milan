@@ -1,0 +1,23 @@
+# .venv-wavedrom provenance (clone-local, gitignored by .gitignore:12; created by the first make check run via scripts/render-wavedrom.py ensure_wavedrom)
+# before the base make check: 'ls -la .venv-wavedrom' -> No such file or directory (session check at 10:1x CEST)
+## stat
+.venv-wavedrom  birth=2026-09-22 10:17:56.308000000 +0200  modify=2026-09-22 10:17:56.309851173 +0200
+.venv-wavedrom/pyvenv.cfg  birth=2026-09-22 10:17:56.309851173 +0200  modify=2026-09-22 10:17:56.309926365 +0200
+## pyvenv.cfg
+home = /usr/bin
+include-system-site-packages = false
+version = 3.14.7
+executable = /usr/bin/python3.14
+command = /usr/bin/python3 -m venv --copies --without-scm-ignore-files $CANDIDATE/.venv-wavedrom
+## pip freeze (venv)
+PyYAML==6.0.3
+six==1.17.0
+svgwrite==1.4.3
+wavedrom==2.0.3.post3
+## venv python
+Python 3.14.7
+$CANDIDATE/.venv-wavedrom/bin/python
+## git status --porcelain --ignored
+!! .venv-wavedrom/
+## git check-ignore -v
+.gitignore:12:.venv-wavedrom/	.venv-wavedrom/

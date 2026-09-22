@@ -1,0 +1,25 @@
+# date: 2026-09-22T10:43:00+02:00
+$ git rev-parse HEAD HEAD^{tree}
+bc997e7c00e50e3d59b97987950bfbf6cc442182
+bd67eaac225513f84ecf3a228cf58a818e67b4da
+# exit: 0
+$ git status --porcelain=v2 --branch --ignored
+# branch.oid bc997e7c00e50e3d59b97987950bfbf6cc442182
+# branch.head 98-clarify-srp-domain-events
+# branch.upstream origin/98-clarify-srp-domain-events
+# branch.ab +2 -0
+! .venv-wavedrom/
+# exit: 0
+$ git stash list
+# exit: 0
+$ git ls-remote origin refs/heads/main refs/heads/98-clarify-srp-domain-events
+8452f564294300a82d56eed464276576f65f4d58	refs/heads/98-clarify-srp-domain-events
+8452f564294300a82d56eed464276576f65f4d58	refs/heads/main
+# exit: 0
+$ gh pr list --head 98-clarify-srp-domain-events --state all --json number,url
+[]
+# exit: 0
+$ sed "s|  |  $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-author/|" $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-author/SHA256SUMS | sha256sum -c --strict --quiet
+# exit: 0
+$ find $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-author -type f | wc -l   (29 listed + SHA256SUMS itself)
+30

@@ -1,0 +1,12 @@
+# cwd: $CANDIDATE
+# HEAD: 8452f564294300a82d56eed464276576f65f4d58  (working tree carries the uncommitted one-line edit)
+# porcelain before: [ M docs/architecture/10_srp_engine.md;]
+# worktree blob of docs/architecture/10_srp_engine.md: b8dafc542930d607c32ab8be49329c7ca975f6b0
+# date: 2026-09-22T10:18:42+02:00
+# command: make -j1 check
+lint: 41 mermaid + 18 wavedrom blocks checked, OK
+wavedrom: 18 blocks checked, OK
+links: 807 checked, OK
+matrix: 115 REQ rows, 17 GAP findings, OK
+matrix: OK (86 rows, 0 untested)
+# exit: 0  elapsed_s: 25

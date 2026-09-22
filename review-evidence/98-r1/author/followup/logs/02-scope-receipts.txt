@@ -1,0 +1,308 @@
+# cwd: $CANDIDATE
+# date: 2026-09-22T10:39:04+02:00
+# command: rtk proxy bash $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-followup-author/scope-receipts.sh
+## 1. identity
+
+$ git rev-parse HEAD HEAD^{tree} 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf^{tree} 8452f564294300a82d56eed464276576f65f4d58 8452f564294300a82d56eed464276576f65f4d58^{tree}
+bc997e7c00e50e3d59b97987950bfbf6cc442182
+bd67eaac225513f84ecf3a228cf58a818e67b4da
+88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf
+1a65be1c93e51c2ad94e467abc2452a047047bdc
+8452f564294300a82d56eed464276576f65f4d58
+ec259f379560863e6ea49c6043353f0c11fe714d
+# exit: 0
+
+$ git rev-parse HEAD^
+88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf
+# exit: 0
+
+$ git status --porcelain=v2 --branch
+# branch.oid bc997e7c00e50e3d59b97987950bfbf6cc442182
+# branch.head 98-clarify-srp-domain-events
+# branch.upstream origin/98-clarify-srp-domain-events
+# branch.ab +2 -0
+# exit: 0
+
+$ git rev-list --count 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf..HEAD
+1
+# exit: 0
+
+$ git rev-list --count 8452f564294300a82d56eed464276576f65f4d58..HEAD
+2
+# exit: 0
+
+$ git log --format=%H %P%n  tree %T%n  author %an <%ae> %aI%n  committer %cn <%ce> %cI%n  subject %s 8452f564294300a82d56eed464276576f65f4d58..HEAD
+bc997e7c00e50e3d59b97987950bfbf6cc442182 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf
+  tree bd67eaac225513f84ecf3a228cf58a818e67b4da
+  author hackerman-kl <hackerman-kl@kebag-logic.com> 2026-09-22T10:36:53+02:00
+  committer hackerman-kl <hackerman-kl@kebag-logic.com> 2026-09-22T10:36:53+02:00
+  subject Describe F10.2's revert edge in the srp_encoder README instead of quoting its old label
+88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf 8452f564294300a82d56eed464276576f65f4d58
+  tree 1a65be1c93e51c2ad94e467abc2452a047047bdc
+  author hackerman-kl <hackerman-kl@kebag-logic.com> 2026-09-22T10:19:15+02:00
+  committer hackerman-kl <hackerman-kl@kebag-logic.com> 2026-09-22T10:19:15+02:00
+  subject Show F10.2's Domain defaults restored at LINK_DOWN and declared at the next LINK_UP
+# exit: 0
+HEAD matches expected bc997e7c00e50e3d59b97987950bfbf6cc442182
+HEAD^ is the figure commit 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf
+
+## 2. commit message: one line, no trailers
+
+$ git log -1 --format=%B HEAD
+Describe F10.2's revert edge in the srp_encoder README instead of quoting its old label
+
+# exit: 0
+message lines (non-empty): 1
+trailers parsed: []
+
+## 3. changed paths, modes and blobs (88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf..HEAD), and diff --check
+
+$ git diff --name-status 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf HEAD
+M	tb/srp_encoder/README.md
+# exit: 0
+
+$ git diff --numstat 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf HEAD
+1	1	tb/srp_encoder/README.md
+# exit: 0
+
+$ git diff --summary 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf HEAD
+# exit: 0
+
+$ git diff-tree -r 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf HEAD
+:100644 100644 2eae73950323db4cddaf9b263bd5eeee0ca13573 11092a208b3248690e1d1fd723c2d66c8f269b90 M	tb/srp_encoder/README.md
+# exit: 0
+
+$ git diff --check 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf HEAD
+# exit: 0
+
+$ git rev-parse 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf:tb/srp_encoder/README.md HEAD:tb/srp_encoder/README.md
+2eae73950323db4cddaf9b263bd5eeee0ca13573
+11092a208b3248690e1d1fd723c2d66c8f269b90
+# exit: 0
+sha256 old  tb/srp_encoder/README.md: a4af61b473faf4af7b45f2070b439f7a8348798f96e8af9ef2acfae4f4d877df  -
+sha256 head tb/srp_encoder/README.md: 654ed4239e65622f151928a0eb0f0df91dccccf3401191ce973b66a90eaa0bf1  -
+-- combined head against main (what full validation and review will see)
+
+$ git diff --name-status 8452f564294300a82d56eed464276576f65f4d58 HEAD
+M	docs/architecture/10_srp_engine.md
+M	tb/srp_encoder/README.md
+# exit: 0
+
+$ git diff --numstat 8452f564294300a82d56eed464276576f65f4d58 HEAD
+1	1	docs/architecture/10_srp_engine.md
+1	1	tb/srp_encoder/README.md
+# exit: 0
+
+$ git diff --check 8452f564294300a82d56eed464276576f65f4d58 HEAD
+# exit: 0
+
+## 4. the whole change (one hunk, tb/srp_encoder/README.md:75 only)
+
+$ git diff -U0 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf HEAD
+diff --git a/tb/srp_encoder/README.md b/tb/srp_encoder/README.md
+index 2eae739..11092a2 100644
+--- a/tb/srp_encoder/README.md
++++ b/tb/srp_encoder/README.md
+@@ -75 +75 @@ Restored tree: `180 checks: 180 PASS, 0 FAIL`, `scripts/lint_hdl.sh` clean.
+-- The revert edge reads "LINK_DOWN then LINK_UP / back to defaults": the
++- The F10.2 revert edge (ADOPTED to DEFAULTS) fires on LINK_DOWN: the
+# exit: 0
+added lines with U+2013/U+2014: 0
+added lines with any non-ASCII: 0
+added line length: 69
+-- note at 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf (tb/srp_encoder/README.md:69-77)
+  69  ## Notes / interpretations recorded
+  70  
+  71  - F10.2 says "adopt received FirstValue"; an endpoint declares only Class A,
+  72    so what is adopted and re-declared is the **surfaced** Class A tuple
+  73    {6, prio_first + (6 − SRclassID_first), VID} per 10 §3 — for a NoV=1
+  74    class-6 vector the two readings are identical.
+  75  - The revert edge reads "LINK_DOWN then LINK_UP / back to defaults": the
+  76    class-D levels revert at LINK_DOWN (nothing is declared on a dead link);
+  77    LINK_UP performs the default declaration.
+-- note at HEAD (tb/srp_encoder/README.md:69-77)
+  69  ## Notes / interpretations recorded
+  70  
+  71  - F10.2 says "adopt received FirstValue"; an endpoint declares only Class A,
+  72    so what is adopted and re-declared is the **surfaced** Class A tuple
+  73    {6, prio_first + (6 − SRclassID_first), VID} per 10 §3 — for a NoV=1
+  74    class-6 vector the two readings are identical.
+  75  - The F10.2 revert edge (ADOPTED to DEFAULTS) fires on LINK_DOWN: the
+  76    class-D levels revert at LINK_DOWN (nothing is declared on a dead link);
+  77    LINK_UP performs the default declaration.
+interpretation lines :76-77 byte-identical old/head: yes
+every line except :75 byte-identical old/head: yes
+
+## 5. stale quotation gone; the new label is not duplicated
+-- the old label anywhere in the tree (git grep exit 1 = no match)
+
+$ git grep -n -F LINK_DOWN then LINK_UP 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf
+88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf:tb/srp_encoder/README.md:75:- The revert edge reads "LINK_DOWN then LINK_UP / back to defaults": the
+# exit: 0
+
+$ git grep -n -F LINK_DOWN then LINK_UP HEAD
+# exit: 1
+
+$ git grep -n -F back to defaults HEAD
+# exit: 1
+-- the new label's literal text: its only home is the F10.2 fence
+
+$ git grep -n -F restore defaults, declared again on the next LINK_UP HEAD
+HEAD:docs/architecture/10_srp_engine.md:205:    ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+# exit: 0
+
+$ git grep -n -F declared again on the next HEAD
+HEAD:docs/architecture/10_srp_engine.md:205:    ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+# exit: 0
+-- the note no longer says the edge 'reads' a label
+
+$ git grep -n -E revert edge reads HEAD
+# exit: 1
+
+## 6. F10.2 source unchanged since the rendered commit
+
+$ git rev-parse 8452f564294300a82d56eed464276576f65f4d58:docs/architecture/10_srp_engine.md 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf:docs/architecture/10_srp_engine.md HEAD:docs/architecture/10_srp_engine.md
+b6e54afc8479f0a8ab38aa8b96506a8de9bf2b8b
+b8dafc542930d607c32ab8be49329c7ca975f6b0
+b8dafc542930d607c32ab8be49329c7ca975f6b0
+# exit: 0
+sha256 old  docs/architecture/10_srp_engine.md: 6406ddce99a0418566974a8554eb431b7d792cae3848721f27d7c5f49a68ee60  -
+sha256 head docs/architecture/10_srp_engine.md: 6406ddce99a0418566974a8554eb431b7d792cae3848721f27d7c5f49a68ee60  -
+
+$ git diff --quiet 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf HEAD -- docs/architecture/10_srp_engine.md
+# exit: 0
+-- Mermaid fence extracted by anchor fig-10-domsm (fence body, as rendered)
+fence sha256 base 8452f56: b05461fa84b2f683ed98cc2801d41714200ecf4da0e273dceaf67f63cb90a0ff  -
+fence sha256 old  88a4eb4: f16fb070aa490da5c7e69c76f36923f22ea02ffcc66c4f8d861678f8b67e2a47  -
+fence sha256 head bc997e7: f16fb070aa490da5c7e69c76f36923f22ea02ffcc66c4f8d861678f8b67e2a47  -
+head fence byte-identical to the rendered render/F10.2-head-88a4eb4.mmd: yes
+base fence byte-identical to the rendered render/F10.2-base-8452f56.mmd: yes
+-- the original packet's recorded hashes for the render files (its SHA256SUMS)
+b05461fa84b2f683ed98cc2801d41714200ecf4da0e273dceaf67f63cb90a0ff  render/F10.2-base-8452f56.mmd
+dcadfac2eb1cb03116e10d52ec539ef844ef987b2eedb06133c402f14d8876a7  render/F10.2-base-8452f56.png
+131d6a4643627cfc0a80ed499e8a06169346e8a447e0e55a0f018f02ad9cafb3  render/F10.2-base-8452f56.svg
+f16fb070aa490da5c7e69c76f36923f22ea02ffcc66c4f8d861678f8b67e2a47  render/F10.2-head-88a4eb4.mmd
+5533d609fa9cd6fc49cc5689cdd9ce2dfc06e34b8361faec4ab808bf5cddfb8f  render/F10.2-head-88a4eb4.png
+b2edf47857050d9cbeb5e0d261427bca7e4c396d21c8f13620f07e99892d3873  render/F10.2-head-88a4eb4.svg
+-- F10.2 at HEAD (docs/architecture/10_srp_engine.md:198-207)
+ 198  <a id="fig-10-domsm"></a>**F10.2 — Class A Domain (Milan §4.2.7.2.1)**
+ 199  
+ 200  ```mermaid
+ 201  stateDiagram-v2
+ 202      [*] --> DEFAULTS: startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID
+ 203      DEFAULTS --> ADOPTED: rx Class A Domain declaration with different params / adopt received FirstValue, re-declare it, DOMAIN_CHANGE
+ 204      ADOPTED --> ADOPTED: rx differing Domain again / adopt + re-declare + DOMAIN_CHANGE
+ 205      ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+ 206      DEFAULTS --> DEFAULTS: periodic or LeaveAll / re-join declaration
+ 207  ```
+
+## 7. renderer, master and executable bytes identical to 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf (exit 0 = identical)
+
+$ git diff --quiet 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf HEAD -- . :(exclude)tb/srp_encoder/README.md
+# exit: 0
+
+$ git diff --quiet 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf HEAD -- :(exclude)*.md
+# exit: 0
+mode+blob of every tracked path except the note identical old/head: yes
+tracked file list identical old/head: yes
+tracked paths at head: 222
+-- path sets
+  hdl                                              exit 0
+  syn                                              exit 0
+  scripts                                          exit 0
+  Makefile                                         exit 0
+  .github                                          exit 0
+  .gitignore                                       exit 0
+  README.md                                        exit 0
+  IEEE_1722_1_Hardware_Protocol_Processor.md       exit 0
+  docs                                             exit 0
+  docs/diagrams                                    exit 0
+  docs/diagrams/src                                exit 0
+  docs/diagrams/wavedrom                           exit 0
+  docs/architecture/10_srp_engine.md               exit 0
+  tb except tb/srp_encoder/README.md               exit 0
+-- renderer and gate scripts: mode and blob at old and head
+  Makefile                       old 100644 7ec00bb9341b282bb345db1e6a4fc016a4e6accb  head 100644 7ec00bb9341b282bb345db1e6a4fc016a4e6accb  same
+  scripts/lint-diagrams.sh       old 100755 de470321e6e249042b4d093d3b0257175b74e49e  head 100755 de470321e6e249042b4d093d3b0257175b74e49e  same
+  scripts/render-wavedrom.py     old 100755 b4b3597b708fbb9e5c757cdaa4b10269a7d167b1  head 100755 b4b3597b708fbb9e5c757cdaa4b10269a7d167b1  same
+  scripts/check-links.py         old 100755 4d8f438d7f6d5d8e47009332b6d64a55d0170789  head 100755 4d8f438d7f6d5d8e47009332b6d64a55d0170789  same
+  scripts/check-matrix.py        old 100755 7f39446cb9ca4449088d9e7ec7bd3b9af50a4bee  head 100755 7f39446cb9ca4449088d9e7ec7bd3b9af50a4bee  same
+  scripts/gen_matrix.py          old 100755 57ae0eadcd7aa7a1cc829d05bb438ce80779a300  head 100755 57ae0eadcd7aa7a1cc829d05bb438ce80779a300  same
+-- every executable (100755) file: blob at old and head
+  scripts/check-links.py         4d8f438d7f6d5d8e47009332b6d64a55d0170789 4d8f438d7f6d5d8e47009332b6d64a55d0170789  same
+  scripts/check-matrix.py        7f39446cb9ca4449088d9e7ec7bd3b9af50a4bee 7f39446cb9ca4449088d9e7ec7bd3b9af50a4bee  same
+  scripts/check_upc_map.py       172082a0a5d459e6206af0051a6006ce4d5198d5 172082a0a5d459e6206af0051a6006ce4d5198d5  same
+  scripts/gen_matrix.py          57ae0eadcd7aa7a1cc829d05bb438ce80779a300 57ae0eadcd7aa7a1cc829d05bb438ce80779a300  same
+  scripts/lint-diagrams.sh       de470321e6e249042b4d093d3b0257175b74e49e de470321e6e249042b4d093d3b0257175b74e49e  same
+  scripts/lint_hdl.sh            e042c56ad5a28d4eab09dc562a41ad6cd15c82cc e042c56ad5a28d4eab09dc562a41ad6cd15c82cc  same
+  scripts/render-wavedrom.py     b4b3597b708fbb9e5c757cdaa4b10269a7d167b1 b4b3597b708fbb9e5c757cdaa4b10269a7d167b1  same
+  scripts/run_suites.sh          e8f67af2675b87ddd5d544b5b8a8765d2133ecb2 e8f67af2675b87ddd5d544b5b8a8765d2133ecb2  same
+  syn/yosys/run.sh               a1fcba9b9e0f7f68d380540413d231f8e6f20eb4 a1fcba9b9e0f7f68d380540413d231f8e6f20eb4  same
+  tb/timer_map/shape_elab.sh     5dbf32949f04bd7fbc0a99ce07198192c4a17f32 5dbf32949f04bd7fbc0a99ce07198192c4a17f32  same
+executable files at old/head: 10/10
+mode of the note at old/head: 100644/100644
+
+## 8. generated/exported assets
+
+$ git diff --stat 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf HEAD -- docs/diagrams
+# exit: 0
+committed diagram assets at head: 34
+
+## 9. RTL and evidence behind the note (unchanged blobs, head line text)
+  hdl/srp/KL_srp_domain.sv       old 96c57db1adc9c1641d125201334deba3f1387838 head 96c57db1adc9c1641d125201334deba3f1387838
+  tb/srp_encoder/sim_main.cpp    old eab9912ea201b4918127832577a839370493267c head eab9912ea201b4918127832577a839370493267c
+  tb/pp_top/sim_main.cpp         old e52f0fde2e81e7e507c0f29e397d593f53706980 head e52f0fde2e81e7e507c0f29e397d593f53706980
+-- hdl/srp/KL_srp_domain.sv:109-110 (edge detects), :154-171 (LINK_DOWN / LINK_UP branches)
+ 109    assign link_rise_w = link_up_i && !link_q_r;
+ 110    assign link_fall_w = !link_up_i && link_q_r;
+ 154        // ---- link transitions own the state (F10.2 revert rule) -----------
+ 155        if (link_fall_w) begin
+ 156          // revert to defaults on LINK_DOWN only; nothing goes on the wire
+ 157          if (adopted_r) evt_domain_change_o <= 1'b1;
+ 158          decl_prio_r   <= DEF_PRIO_P;
+ 159          decl_vid_r    <= DEF_VID_P;
+ 160          adopted_r     <= 1'b0;
+ 161          declared_r    <= 1'b0;
+ 162          q0_valid_r    <= 1'b0;
+ 163          q1_valid_r    <= 1'b0;
+ 164          rx_pend_v_r   <= 1'b0;
+ 165          rejoin_pend_r <= 1'b0;
+ 166        end else if (link_rise_w) begin
+ 167          // declare the defaults (New) — startup lands here too
+ 168          q0_valid_r <= 1'b1;
+ 169          q0_ev_r    <= EV_NEW_C;
+ 170          q0_val_r   <= {CLASS_A_ID_C, DEF_PRIO_P, DEF_VID_P};
+ 171          declared_r <= 1'b1;
+-- tb/srp_encoder/sim_main.cpp:691-707 (D9)
+ 691      // D9: LINK_DOWN is the only revert; LINK_UP re-declares the defaults
+ 692      h.dom_evs.clear();
+ 693      const int ch4 = h.dom_changes;
+ 694      d->dom_link_up_i = 0;
+ 695      h.run(10);
+ 696      CHECK(h.dom_changes == ch4 + 1, "D9 revert fires DOMAIN_CHANGE");
+ 697      CHECK(d->dom_class_a_prio_o == 3 && d->dom_class_a_vid_o == 2,
+ 698            "D9 levels back to the defaults");
+ 699      CHECK(d->dom_adopted_o == 0, "D9 DEFAULTS state");
+ 700      d->dom_periodic_tick_i = 1; h.tick(); d->dom_periodic_tick_i = 0;
+ 701      h.run(10);
+ 702      CHECK(h.dom_evs.empty(), "D9 nothing declared while the link is down");
+ 703      d->dom_link_up_i = 1;
+ 704      h.run(10);
+ 705      CHECK(h.dom_evs.size() == 1 && h.dom_evs[0].first == 0
+ 706            && h.dom_evs[0].second == 0x06030002u,
+ 707            "D9 LINK_UP re-declares the defaults (New)");
+-- the same suite's own summary of D9 (tb/srp_encoder/README.md:42-43)
+  42  periodic/LeaveAll re-join the ADOPTED declaration and never revert; revert
+  43  happens on LINK_DOWN only, LINK_UP re-declares the defaults. Domain TX is
+
+## 10. remote: nothing pushed
+
+$ git ls-remote origin refs/heads/main refs/heads/98-clarify-srp-domain-events
+8452f564294300a82d56eed464276576f65f4d58	refs/heads/98-clarify-srp-domain-events
+8452f564294300a82d56eed464276576f65f4d58	refs/heads/main
+# exit: 0
+
+## 11. original packet intact (its own SHA256SUMS, absolute paths)
+# exit: 0
+files listed: 29
+# script exit: 0

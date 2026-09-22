@@ -1,0 +1,26 @@
+diff --git a/docs/architecture/10_srp_engine.md b/docs/architecture/10_srp_engine.md
+index b6e54af..b8dafc5 100644
+--- a/docs/architecture/10_srp_engine.md
++++ b/docs/architecture/10_srp_engine.md
+@@ -202,7 +202,7 @@ stateDiagram-v2
+     [*] --> DEFAULTS: startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID
+     DEFAULTS --> ADOPTED: rx Class A Domain declaration with different params / adopt received FirstValue, re-declare it, DOMAIN_CHANGE
+     ADOPTED --> ADOPTED: rx differing Domain again / adopt + re-declare + DOMAIN_CHANGE
+-    ADOPTED --> DEFAULTS: LINK_DOWN then LINK_UP / back to defaults
++    ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+     DEFAULTS --> DEFAULTS: periodic or LeaveAll / re-join declaration
+ ```
+ 
+diff --git a/tb/srp_encoder/README.md b/tb/srp_encoder/README.md
+index 2eae739..11092a2 100644
+--- a/tb/srp_encoder/README.md
++++ b/tb/srp_encoder/README.md
+@@ -72,7 +72,7 @@ Restored tree: `180 checks: 180 PASS, 0 FAIL`, `scripts/lint_hdl.sh` clean.
+   so what is adopted and re-declared is the **surfaced** Class A tuple
+   {6, prio_first + (6 − SRclassID_first), VID} per 10 §3 — for a NoV=1
+   class-6 vector the two readings are identical.
+-- The revert edge reads "LINK_DOWN then LINK_UP / back to defaults": the
++- The F10.2 revert edge (ADOPTED to DEFAULTS) fires on LINK_DOWN: the
+   class-D levels revert at LINK_DOWN (nothing is declared on a dead link);
+   LINK_UP performs the default declaration.
+ - A pending LeaveAll with an empty table rides the next PDU that carries

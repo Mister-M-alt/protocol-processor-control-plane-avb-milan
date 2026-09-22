@@ -1,0 +1,247 @@
+# $ bash $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-author/scope-receipts.sh   (cwd $CANDIDATE, 2026-09-22T10:23:20+02:00)
+## 1. identity
+
+$ git rev-parse HEAD HEAD^{tree} 8452f564294300a82d56eed464276576f65f4d58 8452f564294300a82d56eed464276576f65f4d58^{tree}
+88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf
+1a65be1c93e51c2ad94e467abc2452a047047bdc
+8452f564294300a82d56eed464276576f65f4d58
+ec259f379560863e6ea49c6043353f0c11fe714d
+# exit: 0
+
+$ git rev-parse HEAD^
+8452f564294300a82d56eed464276576f65f4d58
+# exit: 0
+
+$ git status --porcelain=v2 --branch
+# branch.oid 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf
+# branch.head 98-clarify-srp-domain-events
+# branch.upstream origin/98-clarify-srp-domain-events
+# branch.ab +1 -0
+# exit: 0
+
+$ git ls-remote origin refs/heads/main refs/heads/98-clarify-srp-domain-events
+8452f564294300a82d56eed464276576f65f4d58	refs/heads/98-clarify-srp-domain-events
+8452f564294300a82d56eed464276576f65f4d58	refs/heads/main
+# exit: 0
+
+$ git rev-list --count 8452f564294300a82d56eed464276576f65f4d58..HEAD
+1
+# exit: 0
+
+$ git log --format=%H %P%n  tree %T%n  author %an <%ae> %aI%n  committer %cn <%ce> %cI 8452f564294300a82d56eed464276576f65f4d58..HEAD
+88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf 8452f564294300a82d56eed464276576f65f4d58
+  tree 1a65be1c93e51c2ad94e467abc2452a047047bdc
+  author hackerman-kl <hackerman-kl@kebag-logic.com> 2026-09-22T10:19:15+02:00
+  committer hackerman-kl <hackerman-kl@kebag-logic.com> 2026-09-22T10:19:15+02:00
+# exit: 0
+HEAD matches expected 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf
+
+## 2. commit message: one line, no trailers
+
+$ git log -1 --format=%B HEAD
+Show F10.2's Domain defaults restored at LINK_DOWN and declared at the next LINK_UP
+
+# exit: 0
+message lines (non-empty): 1
+trailers parsed: []
+
+## 3. changed paths, modes and blobs
+
+$ git diff --name-status 8452f564294300a82d56eed464276576f65f4d58 HEAD
+M	docs/architecture/10_srp_engine.md
+# exit: 0
+
+$ git diff --numstat 8452f564294300a82d56eed464276576f65f4d58 HEAD
+1	1	docs/architecture/10_srp_engine.md
+# exit: 0
+
+$ git diff --summary 8452f564294300a82d56eed464276576f65f4d58 HEAD
+# exit: 0
+
+$ git diff-tree -r 8452f564294300a82d56eed464276576f65f4d58 HEAD
+:100644 100644 b6e54afc8479f0a8ab38aa8b96506a8de9bf2b8b b8dafc542930d607c32ab8be49329c7ca975f6b0 M	docs/architecture/10_srp_engine.md
+# exit: 0
+
+$ git diff --check 8452f564294300a82d56eed464276576f65f4d58 HEAD
+# exit: 0
+
+$ git rev-parse 8452f564294300a82d56eed464276576f65f4d58:docs/architecture/10_srp_engine.md HEAD:docs/architecture/10_srp_engine.md
+b6e54afc8479f0a8ab38aa8b96506a8de9bf2b8b
+b8dafc542930d607c32ab8be49329c7ca975f6b0
+# exit: 0
+sha256 base docs/architecture/10_srp_engine.md: 4ffc589ac3d68098faa401fc0a2fc9ec829640d1fe1a3166b7906d57a80b1242  -
+sha256 head docs/architecture/10_srp_engine.md: 6406ddce99a0418566974a8554eb431b7d792cae3848721f27d7c5f49a68ee60  -
+
+## 4. the whole change (one hunk, line 205 only)
+
+$ git diff -U0 8452f564294300a82d56eed464276576f65f4d58 HEAD
+diff --git a/docs/architecture/10_srp_engine.md b/docs/architecture/10_srp_engine.md
+index b6e54af..b8dafc5 100644
+--- a/docs/architecture/10_srp_engine.md
++++ b/docs/architecture/10_srp_engine.md
+@@ -205 +205 @@ stateDiagram-v2
+-    ADOPTED --> DEFAULTS: LINK_DOWN then LINK_UP / back to defaults
++    ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+# exit: 0
+added lines with U+2013/U+2014: 0
+added lines with any non-ASCII: 0
+
+## 5. F10.2 fence at head (file lines 198-207)
+ 198  <a id="fig-10-domsm"></a>**F10.2 — Class A Domain (Milan §4.2.7.2.1)**
+ 199  
+ 200  ```mermaid
+ 201  stateDiagram-v2
+ 202      [*] --> DEFAULTS: startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID
+ 203      DEFAULTS --> ADOPTED: rx Class A Domain declaration with different params / adopt received FirstValue, re-declare it, DOMAIN_CHANGE
+ 204      ADOPTED --> ADOPTED: rx differing Domain again / adopt + re-declare + DOMAIN_CHANGE
+ 205      ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+ 206      DEFAULTS --> DEFAULTS: periodic or LeaveAll / re-join declaration
+ 207  ```
+
+## 6. unchanged scope: each path set compared base..head (exit 0 = identical)
+  hdl                                              exit 0
+  tb                                               exit 0
+  syn                                              exit 0
+  scripts                                          exit 0
+  Makefile                                         exit 0
+  .github                                          exit 0
+  .gitignore                                       exit 0
+  README.md                                        exit 0
+  IEEE_1722_1_Hardware_Protocol_Processor.md       exit 0
+  docs/diagrams                                    exit 0
+  docs/README.md                                   exit 0
+  docs/guides                                      exit 0
+  docs/traceability                                exit 0
+  docs/00_MILAN_COMPLIANCE_REVIEW.md               exit 0
+  docs/10_RESOURCE_AND_EFFORT.md                   exit 0
+  docs/architecture/01_overview.md                 exit 0
+  docs/architecture/02_interfaces.md               exit 0
+  docs/architecture/03_packet_engine.md            exit 0
+  docs/architecture/04_adp_engine.md               exit 0
+  docs/architecture/05_acmp_engine.md              exit 0
+  docs/architecture/06_aecp_engine.md              exit 0
+  docs/architecture/07_memory_maps.md              exit 0
+  docs/architecture/08_timing.md                   exit 0
+  docs/architecture/09_verification.md             exit 0
+  docs/architecture/11_maap_engine.md              exit 0
+tracked file list identical base/head: yes
+
+## 7. generated/exported assets (none represents F10.2; all unchanged)
+
+$ git diff --stat 8452f564294300a82d56eed464276576f65f4d58 HEAD -- docs/diagrams
+# exit: 0
+committed diagram assets at head: 34
+assets containing F10.2/Domain FSM terms (fig-10-domsm|F10\.2|LINK_DOWN|LINK_UP|DEFAULTS|ADOPTED|back to defaults|DOMAIN_CHANGE): 0
+PNG assets whose strings contain those terms: 0
+
+$ git grep -n -E fig-10-domsm|LINK_DOWN then LINK_UP|back to defaults HEAD
+HEAD:docs/architecture/01_overview.md:166:| P-SRP-DOM-DEF-VID | 2 | 16-bit; =2 in every product build (Milan §4.2.7.2.1). Any other value is a verification fixture proving the top-level binding, not a product profile | SRP Domain FSM default VID ([F10.2](10_srp_engine.md#fig-10-domsm)): declared at startup and LINK_UP, restored at LINK_DOWN; a received Class A Domain is still adopted over it |
+HEAD:docs/architecture/10_srp_engine.md:198:<a id="fig-10-domsm"></a>**F10.2 — Class A Domain (Milan §4.2.7.2.1)**
+HEAD:docs/architecture/10_srp_engine.md:366:`P-SRP-DOM-DEF-VID` is the Domain default VID of [F10.2](#fig-10-domsm): declared at
+HEAD:tb/srp_encoder/README.md:75:- The revert edge reads "LINK_DOWN then LINK_UP / back to defaults": the
+# exit: 0
+
+## 8. RTL and evidence references (unchanged blobs, head line text)
+  hdl/srp/KL_srp_domain.sv           base 96c57db1adc9c1641d125201334deba3f1387838 head 96c57db1adc9c1641d125201334deba3f1387838
+  tb/pp_top/sim_main.cpp             base e52f0fde2e81e7e507c0f29e397d593f53706980 head e52f0fde2e81e7e507c0f29e397d593f53706980
+  tb/pp_top/README.md                base bf0dd1c95a31a282b423be692d1864cd8951cf64 head bf0dd1c95a31a282b423be692d1864cd8951cf64
+  tb/srp_encoder/sim_main.cpp        base eab9912ea201b4918127832577a839370493267c head eab9912ea201b4918127832577a839370493267c
+  tb/srp_encoder/README.md           base 2eae73950323db4cddaf9b263bd5eeee0ca13573 head 2eae73950323db4cddaf9b263bd5eeee0ca13573
+  docs/architecture/01_overview.md   base 2da749fce1ea7502f9d31cd702fbd8771c5b7f62 head 2da749fce1ea7502f9d31cd702fbd8771c5b7f62
+  docs/guides/integrator.md          base 3a2b82311c62c9400e4bd7a43f93b9ea394ff72c head 3a2b82311c62c9400e4bd7a43f93b9ea394ff72c
+-- hdl/srp/KL_srp_domain.sv:109-110 (edge detects), :113-119 (reset), :154-171 (LINK_DOWN / LINK_UP branches)
+ 109    assign link_rise_w = link_up_i && !link_q_r;
+ 110    assign link_fall_w = !link_up_i && link_q_r;
+ 113    always_ff @(posedge clk_i) begin : domain_sm
+ 114      if (!rst_n) begin
+ 115        decl_prio_r         <= DEF_PRIO_P;
+ 116        decl_vid_r          <= DEF_VID_P;
+ 117        adopted_r           <= 1'b0;
+ 118        declared_r          <= 1'b0;
+ 119        link_q_r            <= 1'b0;
+ 154        // ---- link transitions own the state (F10.2 revert rule) -----------
+ 155        if (link_fall_w) begin
+ 156          // revert to defaults on LINK_DOWN only; nothing goes on the wire
+ 157          if (adopted_r) evt_domain_change_o <= 1'b1;
+ 158          decl_prio_r   <= DEF_PRIO_P;
+ 159          decl_vid_r    <= DEF_VID_P;
+ 160          adopted_r     <= 1'b0;
+ 161          declared_r    <= 1'b0;
+ 162          q0_valid_r    <= 1'b0;
+ 163          q1_valid_r    <= 1'b0;
+ 164          rx_pend_v_r   <= 1'b0;
+ 165          rejoin_pend_r <= 1'b0;
+ 166        end else if (link_rise_w) begin
+ 167          // declare the defaults (New) — startup lands here too
+ 168          q0_valid_r <= 1'b1;
+ 169          q0_ev_r    <= EV_NEW_C;
+ 170          q0_val_r   <= {CLASS_A_ID_C, DEF_PRIO_P, DEF_VID_P};
+ 171          declared_r <= 1'b1;
+-- tb/pp_top/sim_main.cpp:8369-8400 (DV5, DV6)
+ 8369    // ---- DV5: LINK_DOWN restores the default, and declares nothing ----------
+ 8370    void dv5_link_down_restores_the_default() {
+ 8371      h2.sync_join();
+ 8372      const int ch0 = h2.domain_changes;
+ 8373      d2->link_up_i = 0;
+ 8374      h2.idle(10);
+ 8375      CHECK(domain_is(DEF_VID12, false),
+ 8376            "DV5: LINK_DOWN restores {3, 0x%03x, DEFAULTS}", DEF_VID12);
+ 8377      if (!domain_is(DEF_VID12, false)) print_domain("DV5");
+ 8378      CHECK(h2.domain_changes == ch0 + 1,
+ 8379            "DV5: the revert is one DOMAIN_CHANGE, saw %d",
+ 8380            h2.domain_changes - ch0);
+ 8381      const uint32_t w10 = h2.snap(10);
+ 8382      CHECK(w10 == ((3u << 16) | DEF_VID12),
+ 8383            "DV5: snapshot word 10 reverted, got 0x%08x", w10);
+ 8384      h2.run_ms(500);
+ 8385      CHECK(h2.q_msrp.empty(), "DV5: nothing is declared while the link is down");
+ 8386      CHECK(domain_is(DEF_VID12, false), "DV5: the default holds while down");
+ 8387    }
+ 8388  
+ 8389    // ---- DV6: LINK_UP declares the default again ----------------------------
+ 8390    void dv6_link_up_declares_the_default_again() {
+ 8391      h2.sync_join();
+ 8392      d2->link_up_i = 1;
+ 8393      auto f = h2.wait_any(h2.q_msrp, 1200);
+ 8394      auto exp = own_domain_pdu({Vec{false, 1, fv_domain(6, 3, SRP_DEF_VID),
+ 8395                                     {EV_NEW}, {}}});
+ 8396      CHECK(f == exp, "DV6: LINK_UP re-declares Domain New {6, 3, 0x%04x}",
+ 8397            unsigned(SRP_DEF_VID));
+ 8398      if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
+ 8399      CHECK(domain_is(DEF_VID12, false), "DV6: class-D is the default again");
+ 8400    }
+-- tb/pp_top/README.md:535-537
+ 535  - **DV5** LINK_DOWN restores the default and DEFAULTS with one DOMAIN_CHANGE,
+ 536    and nothing is declared for the 500 ms the link stays down.
+ 537  - **DV6** LINK_UP declares `New {6, 3, default}` again, byte-exact.
+-- tb/srp_encoder/sim_main.cpp:691-707 (D9)
+ 691      // D9: LINK_DOWN is the only revert; LINK_UP re-declares the defaults
+ 692      h.dom_evs.clear();
+ 693      const int ch4 = h.dom_changes;
+ 694      d->dom_link_up_i = 0;
+ 695      h.run(10);
+ 696      CHECK(h.dom_changes == ch4 + 1, "D9 revert fires DOMAIN_CHANGE");
+ 697      CHECK(d->dom_class_a_prio_o == 3 && d->dom_class_a_vid_o == 2,
+ 698            "D9 levels back to the defaults");
+ 699      CHECK(d->dom_adopted_o == 0, "D9 DEFAULTS state");
+ 700      d->dom_periodic_tick_i = 1; h.tick(); d->dom_periodic_tick_i = 0;
+ 701      h.run(10);
+ 702      CHECK(h.dom_evs.empty(), "D9 nothing declared while the link is down");
+ 703      d->dom_link_up_i = 1;
+ 704      h.run(10);
+ 705      CHECK(h.dom_evs.size() == 1 && h.dom_evs[0].first == 0
+ 706            && h.dom_evs[0].second == 0x06030002u,
+ 707            "D9 LINK_UP re-declares the defaults (New)");
+-- consistent prose already at base: 10:48, 10:366-368, 01:166, integrator:66, integrator:260, 00:422
+  10:48  - **Consumes**: `LINK_UP/DOWN{if}` (Domain defaults reset, re-declarations), timer
+  10:366  `P-SRP-DOM-DEF-VID` is the Domain default VID of [F10.2](#fig-10-domsm): declared at
+  10:367  startup and on LINK_UP, restored on LINK_DOWN, and replaced at run time by an adopted
+  10:368  Domain (§6.1).
+  01:166  | P-SRP-DOM-DEF-VID | 2 | 16-bit; =2 in every product build (Milan §4.2.7.2.1). Any other value is a verification fixture proving the top-level binding, not a product profile | SRP Domain FSM default VID ([F10.2](10_srp_engine.md#fig-10-domsm)): declared at startup and LINK_UP, restored at LINK_DOWN; a received Class A Domain is still adopted over it |
+  integrator:66  | `SRP_DOM_DEF_VID_P` | 2 | the Class A Domain VID the SRP engine declares at start-up and on every link-up, and returns to on link-down (Milan §4.2.7.2.1). A bridge's differing Class A Domain is still adopted at run time. **Keep it at 2 in a product build**: Milan fixes the value, and any other one exists only to prove this binding in verification. |
+  integrator:260  | `srp_class_a_prio_o`, `srp_class_a_vid_o`, `srp_domain_adopted_o`, `srp_domain_change_o` | the Class A identity in force. The two values are defaults until `srp_domain_adopted_o` says a bridge Domain was adopted. The VID default is `SRP_DOM_DEF_VID_P`, and a link-down restores both defaults. |
+  00:422  | REQ-SRP-004 | Milan §4.2.7.2.1 | Class A Domain: priority 3 / default VID 2 at startup and link-up; adopt received params + re-declare on differing declaration; Domain TX independent of gPTP port state | shall | A | [GAP-04](#gap-04) | Domain FSM F10.2 | 10 §6.1 | DIR |
+-- observed, unchanged: tb/srp_encoder/README.md:75-77 quotes the pre-change label
+  75  - The revert edge reads "LINK_DOWN then LINK_UP / back to defaults": the
+  76    class-D levels revert at LINK_DOWN (nothing is declared on a dead link);
+  77    LINK_UP performs the default declaration.

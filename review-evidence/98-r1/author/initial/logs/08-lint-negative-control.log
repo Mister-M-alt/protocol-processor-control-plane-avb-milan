@@ -1,0 +1,14 @@
+# scratch: git archive 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf -> /tmp/a165-negctl (the lane is not touched)
+# mutation: in the F10.2 fence only, 'ADOPTED --> DEFAULTS:' becomes 'ADOPTED --> --> DEFAULTS:' (invalid stateDiagram-v2 syntax)
+205c205
+<     ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+---
+>     ADOPTED --> --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+# $ ./scripts/lint-diagrams.sh   (in scratch)
+MERMAID FAIL: mmd-docs_architecture_10_srp_engine_md-2.txt
+    
+    Error: Parse error on line 5:
+    ...NGE    ADOPTED --> --> DEFAULTS: LINK_D
+    ----------------------^
+lint: 41 mermaid + 18 wavedrom blocks checked, FAILURES
+# exit: 1

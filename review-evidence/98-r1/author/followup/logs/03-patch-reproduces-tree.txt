@@ -1,0 +1,16 @@
+# date: 2026-09-22T10:39:27+02:00
+# temporary index /tmp/a165-f98-index (outside the lane), removed afterwards; the lane index and worktree are not touched
+$ GIT_INDEX_FILE=/tmp/a165-f98-index git read-tree 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf
+# exit: 0
+$ GIT_INDEX_FILE=/tmp/a165-f98-index git apply --cached --check $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-followup-author/bc997e7.patch
+# exit: 0
+$ GIT_INDEX_FILE=/tmp/a165-f98-index git apply --cached $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-followup-author/bc997e7.patch
+# exit: 0
+$ GIT_INDEX_FILE=/tmp/a165-f98-index git write-tree
+bd67eaac225513f84ecf3a228cf58a818e67b4da
+# exit: 0
+HEAD^{tree}: bd67eaac225513f84ecf3a228cf58a818e67b4da
+patch applied to 88a4eb4 reproduces the head tree: yes
+$ cmp <(git diff 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf HEAD) $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-followup-author/88a4eb4..bc997e7.diff
+# exit: 0
+# lane porcelain after: []

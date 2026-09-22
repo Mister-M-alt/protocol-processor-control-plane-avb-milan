@@ -1,0 +1,15 @@
+# mmdc: $WORKSPACE_HOME/.local/bin/mmdc -> $WORKSPACE_HOME/.local/lib/node_modules/@mermaid-js/mermaid-cli/src/cli.js; version 11.16.0
+# puppeteer config /tmp/a165-puppeteer.json: {"args":["--no-sandbox","--disable-gpu"]}
+# date: 2026-09-22T10:20:11+02:00
+$ mmdc -p /tmp/a165-puppeteer.json -i $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-author/render/F10.2-base-8452f56.mmd -o $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-author/render/F10.2-base-8452f56.svg 
+Generating single mermaid chart
+# exit: 0
+$ mmdc -p /tmp/a165-puppeteer.json -i $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-author/render/F10.2-base-8452f56.mmd -o $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-author/render/F10.2-base-8452f56.png -b white -s 2
+Generating single mermaid chart
+# exit: 0
+$ mmdc -p /tmp/a165-puppeteer.json -i $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-author/render/F10.2-head-88a4eb4.mmd -o $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-author/render/F10.2-head-88a4eb4.svg 
+Generating single mermaid chart
+# exit: 0
+$ mmdc -p /tmp/a165-puppeteer.json -i $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-author/render/F10.2-head-88a4eb4.mmd -o $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-author/render/F10.2-head-88a4eb4.png -b white -s 2
+Generating single mermaid chart
+# exit: 0

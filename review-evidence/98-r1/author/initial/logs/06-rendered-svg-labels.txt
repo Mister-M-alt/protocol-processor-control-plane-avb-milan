@@ -1,0 +1,14 @@
+== F10.2-base-8452f56.svg
+   state nodes: ['DEFAULTS', 'ADOPTED']  initial-pseudostate groups: 1  edge paths: 5
+   edge label 1: startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID
+   edge label 2: rx Class A Domain declaration with different params / adopt received FirstValue, re-declare it, DOMAIN_CHANGE
+   edge label 3: rx differing Domain again / adopt + re-declare + DOMAIN_CHANGE
+   edge label 4: LINK_DOWN then LINK_UP / back to defaults
+   edge label 5: periodic or LeaveAll / re-join declaration
+== F10.2-head-88a4eb4.svg
+   state nodes: ['DEFAULTS', 'ADOPTED']  initial-pseudostate groups: 1  edge paths: 5
+   edge label 1: startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID
+   edge label 2: rx Class A Domain declaration with different params / adopt received FirstValue, re-declare it, DOMAIN_CHANGE
+   edge label 3: rx differing Domain again / adopt + re-declare + DOMAIN_CHANGE
+   edge label 4: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+   edge label 5: periodic or LeaveAll / re-join declaration

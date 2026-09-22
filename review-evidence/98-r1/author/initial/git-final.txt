@@ -1,0 +1,10 @@
+88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf
+88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf hackerman-kl <hackerman-kl@kebag-logic.com> Show F10.2's Domain defaults restored at LINK_DOWN and declared at the next LINK_UP
+## 98-clarify-srp-domain-events...origin/98-clarify-srp-domain-events [ahead 1]
+!! .venv-wavedrom/
+ docs/architecture/10_srp_engine.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+old head 8452f564294300a82d56eed464276576f65f4d58 tree ec259f379560863e6ea49c6043353f0c11fe714d
+new head 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf tree 1a65be1c93e51c2ad94e467abc2452a047047bdc
+8452f564294300a82d56eed464276576f65f4d58	refs/heads/98-clarify-srp-domain-events
+8452f564294300a82d56eed464276576f65f4d58	refs/heads/main

@@ -1,0 +1,26 @@
+From bc997e7c00e50e3d59b97987950bfbf6cc442182 Mon Sep 17 00:00:00 2001
+From: hackerman-kl <hackerman-kl@kebag-logic.com>
+Date: Tue, 22 Sep 2026 10:36:53 +0200
+Subject: [PATCH] Describe F10.2's revert edge in the srp_encoder README
+ instead of quoting its old label
+
+---
+ tb/srp_encoder/README.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tb/srp_encoder/README.md b/tb/srp_encoder/README.md
+index 2eae739..11092a2 100644
+--- a/tb/srp_encoder/README.md
++++ b/tb/srp_encoder/README.md
+@@ -72,7 +72,7 @@ Restored tree: `180 checks: 180 PASS, 0 FAIL`, `scripts/lint_hdl.sh` clean.
+   so what is adopted and re-declared is the **surfaced** Class A tuple
+   {6, prio_first + (6 − SRclassID_first), VID} per 10 §3 — for a NoV=1
+   class-6 vector the two readings are identical.
+-- The revert edge reads "LINK_DOWN then LINK_UP / back to defaults": the
++- The F10.2 revert edge (ADOPTED to DEFAULTS) fires on LINK_DOWN: the
+   class-D levels revert at LINK_DOWN (nothing is declared on a dead link);
+   LINK_UP performs the default declaration.
+ - A pending LeaveAll with an empty table rides the next PDU that carries
+-- 
+2.55.0
+
