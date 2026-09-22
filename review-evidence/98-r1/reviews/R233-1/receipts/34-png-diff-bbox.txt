@@ -1,0 +1,4 @@
+r233-F10.2-8452f56.png: 1022x1294 bpp=3
+r233-F10.2-bc997e7.png: 1022x1294 bpp=3
+differing pixels: 11888
+bounding box (px, scale 2 render): x 610..965, y 564..685

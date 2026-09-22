@@ -1,0 +1,15 @@
+# live public state update (2026-09-22T13:32:39+02:00); comment bodies of R234 and of A10 5775631529 NOT read (header lines only)
+PR101 head=bc997e7c00e50e3d59b97987950bfbf6cc442182 state=OPEN draft=false mergeable=MERGEABLE mergeState=CLEAN
+main: c8214cfe827fb3fb50c9bfee415468a24b7c27b1
+98-review-evidence: 4640f5f8138418ee22bd4ae7ad5383303f6aa6cc
+reviews: 0; review comments: 0
+## PR101 comment header lines
+  5773721489 2026-09-22T08:51:30Z [A10] VALIDATION RUNNING
+  5773860098 2026-09-22T09:03:23Z [A10] FULL NATIVE BAR PASS
+  5775424250 2026-09-22T11:12:22Z [A10] REVIEW ROUND START - exact head bc997e7c00e50e3d59b97987950bfbf6cc442182
+  5775446554 2026-09-22T11:14:16Z [A10] CURRENT-CANDIDATE VALIDATION STARTED
+  5775566484 2026-09-22T11:24:19Z [A10] CURRENT-CANDIDATE NATIVE BAR COMPLETE
+  5775631280 2026-09-22T11:29:06Z [R234] POSITIVE - exact head bc997e7c00e50e3d59b97987950bfbf6cc442182
+  5775631529 2026-09-22T11:29:08Z [A10] R234-1 REVIEW AND COMPLETE EVIDENCE ARCHIVE
+## check runs at bc997e7
+  total=6 suites:success portability:success docs-gates:success suites:success docs-gates:success portability:success

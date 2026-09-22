@@ -1,0 +1,52 @@
+# committed diagram assets at bc997e7: search for F10.2 / Domain FSM terms (2026-09-22T13:22:18+02:00)
+asset count: 34
+  docs/diagrams/01-system-context.svg
+  docs/diagrams/01-top-level.svg
+  docs/diagrams/03-shared-datapath.svg
+  docs/diagrams/20-rtl-dataflow.png
+  docs/diagrams/20-rtl-dataflow.svg
+  docs/diagrams/21-integration-faces.png
+  docs/diagrams/21-integration-faces.svg
+  docs/diagrams/22-aecp-descriptor-fetch.png
+  docs/diagrams/22-aecp-descriptor-fetch.svg
+  docs/diagrams/23-bringup-decision.png
+  docs/diagrams/23-bringup-decision.svg
+  docs/diagrams/24-adp-acmp-states.png
+  docs/diagrams/24-adp-acmp-states.svg
+  docs/diagrams/src/01-system-context.drawio
+  docs/diagrams/src/01-top-level.drawio
+  docs/diagrams/src/03-shared-datapath.drawio
+  docs/diagrams/wavedrom/fig-02-apiwave.svg
+  docs/diagrams/wavedrom/fig-02-evtwave.svg
+  docs/diagrams/wavedrom/fig-02-memwave.svg
+  docs/diagrams/wavedrom/fig-02-nvmwave.svg
+  docs/diagrams/wavedrom/fig-02-rxwave.svg
+  docs/diagrams/wavedrom/fig-02-txwave.svg
+  docs/diagrams/wavedrom/fig-03-header.svg
+  docs/diagrams/wavedrom/fig-04-adpdu.svg
+  docs/diagrams/wavedrom/fig-05-acmpdu.svg
+  docs/diagrams/wavedrom/fig-06-aecpdu.svg
+  docs/diagrams/wavedrom/fig-06-mvu.svg
+  docs/diagrams/wavedrom/fig-06-streaminfo.svg
+  docs/diagrams/wavedrom/fig-07-nvmrec.svg
+  docs/diagrams/wavedrom/fig-07-regrec.svg
+  docs/diagrams/wavedrom/fig-07-sinkrec.svg
+  docs/diagrams/wavedrom/fig-08-budget.svg
+  docs/diagrams/wavedrom/fig-10-mrpdu.svg
+  docs/diagrams/wavedrom/fig-10-talkerfv.svg
+## text search (svg/drawio), case-insensitive
+docs/diagrams/01-system-context.svg:       1 domain;
+docs/diagrams/01-top-level.svg:       3 domain;
+docs/diagrams/21-integration-faces.svg:       2 link_up;
+docs/diagrams/23-bringup-decision.svg:       1 domain;      2 link_up;
+docs/diagrams/24-adp-acmp-states.svg:       1 link down;      1 Link down;      1 link up;
+docs/diagrams/src/01-system-context.drawio:       1 domain;
+docs/diagrams/src/01-top-level.drawio:       3 domain;
+docs/diagrams/wavedrom/fig-04-adpdu.svg:       1 domain;
+docs/diagrams/wavedrom/fig-10-talkerfv.svg:       2 Domain;
+## PNG strings search
+docs/diagrams/20-rtl-dataflow.png: []
+docs/diagrams/21-integration-faces.png: []
+docs/diagrams/22-aecp-descriptor-fetch.png: []
+docs/diagrams/23-bringup-decision.png: []
+docs/diagrams/24-adp-acmp-states.png: []

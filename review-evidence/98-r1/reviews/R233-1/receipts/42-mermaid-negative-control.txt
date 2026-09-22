@@ -1,0 +1,13 @@
+# mermaid lint negative control on scratch git archive of bc997e7 (2026-09-22T13:18:32+02:00)
+## control: unmodified archive
+lint: 41 mermaid + 18 wavedrom blocks checked, OK
+rc=0
+## planted: F10.2 line 205 arrow doubled
+205:    ADOPTED --> --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+MERMAID FAIL: mmd-docs_architecture_10_srp_engine_md-2.txt
+    
+    Error: Parse error on line 5:
+    ...NGE    ADOPTED --> --> DEFAULTS: LINK_D
+    ----------------------^
+lint: 41 mermaid + 18 wavedrom blocks checked, FAILURES
+rc=1

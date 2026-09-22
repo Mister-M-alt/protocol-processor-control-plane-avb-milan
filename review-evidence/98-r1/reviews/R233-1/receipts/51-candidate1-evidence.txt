@@ -1,0 +1,30 @@
+# later manager candidate evidence, inspected after round start (2026-09-22T13:26:51+02:00); informational, manager-owned
+evidence commit: c0b98764fb116b857cce0cfc389ad298c5948bed parent=94f47697f765e96a3c930dc09606fb7b559d3187 2026-09-22T13:24:16+02:00 Archive PR101 current-main candidate native validation
+paths outside review-evidence/98-r1 changed vs 94f4769: 0
+## files committed under candidate1/manager
+609 review-evidence/98-r1/candidate1/manager/candidate.json
+298 review-evidence/98-r1/candidate1/manager/final-integrity.json
+834 review-evidence/98-r1/candidate1/manager/full-native.json
+125 review-evidence/98-r1/candidate1/manager/full-native/complete.json
+2264 review-evidence/98-r1/candidate1/manager/full-native/results.json
+1205 review-evidence/98-r1/candidate1/manager/native-summary.md
+## MANIFEST (77 entries) verification against the committed tree
+OK      candidate1/manager/candidate.json
+OK      candidate1/manager/final-integrity.json
+ABSENT  candidate1/manager/full-native/01.log (manifest published_sha256 110d748d8e6eca23b22ad7bf766d1d1fcf69c45731c3260fc80857cdd2d62576)
+ABSENT  candidate1/manager/full-native/02.log (manifest published_sha256 6321e927f120057597592cf5f1a693ccfd14340c4cb54274074493dd4cdbfb9e)
+ABSENT  candidate1/manager/full-native/03.log (manifest published_sha256 d2a29ad3ad7491d0e2546e5b6890ca4f4be5ee6a974b48a2c8a60b7c792379c7)
+ABSENT  candidate1/manager/full-native/04.log (manifest published_sha256 266550d5aecfbeed5fa34b612a5be829143a6f25542330eddc106b741096ec8c)
+ABSENT  candidate1/manager/full-native/05.log (manifest published_sha256 66e29164e388d44d0d41d3a0c0def234074d5661880719198ebda70be57b34ca)
+ABSENT  candidate1/manager/full-native/06.log (manifest published_sha256 12176e4206f2f6f318251f8d1b36b56cf2821e41e89d45f365910c412b015697)
+ABSENT  candidate1/manager/full-native/07.log (manifest published_sha256 613127f38b0916340b488a47d81e0c7297f46bce80a03fa836b3ad8d3f05ba6f)
+ABSENT  candidate1/manager/full-native/08.log (manifest published_sha256 888bd075dbf2902e186907881dfbb2b438f30e2d5fe86a3682ba5c2c9579b03d)
+ABSENT  candidate1/manager/full-native/09.log (manifest published_sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855)
+OK      candidate1/manager/full-native/complete.json
+OK      candidate1/manager/full-native/results.json
+OK      candidate1/manager/full-native.json
+OK      candidate1/manager/native-summary.md
+non-candidate1 manifest entries identical to the 94f4769 manifest: yes
+## git check-ignore for an absent log path (bc997e7 .gitignore)
+.gitignore:22:*.log	review-evidence/98-r1/candidate1/manager/full-native/04.log
+## A10 comment 5775566484 states: 'Complete commands, durations and raw logs are archived.'

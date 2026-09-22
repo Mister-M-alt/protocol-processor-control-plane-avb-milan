@@ -1,0 +1,7 @@
+# independent mmdc renders (2026-09-22T13:16:45+02:00); mmdc 11.16.0, node v22.23.2
+render 8452f56 svg rc=0 sha256=131d6a4643627cfc0a80ed499e8a06169346e8a447e0e55a0f018f02ad9cafb3 bytes=14000
+render 8452f56 png rc=0 sha256=dcadfac2eb1cb03116e10d52ec539ef844ef987b2eedb06133c402f14d8876a7 bytes=108280
+render bc997e7 svg rc=0 sha256=b2edf47857050d9cbeb5e0d261427bca7e4c396d21c8f13620f07e99892d3873 bytes=14023
+render bc997e7 png rc=0 sha256=5533d609fa9cd6fc49cc5689cdd9ce2dfc06e34b8361faec4ab808bf5cddfb8f bytes=109635
+r233-F10.2-8452f56.png: PNG image data, 1022 x 1294, 8-bit/color RGB, non-interlaced
+r233-F10.2-bc997e7.png: PNG image data, 1022 x 1294, 8-bit/color RGB, non-interlaced

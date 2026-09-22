@@ -1,0 +1,10 @@
+# manifest verification of evidence commit 94f47697f765e96a3c930dc09606fb7b559d3187 review-evidence/98-r1 (2026-09-22T13:15:41+02:00)
+manifest entries: 62
+published sha256 match: 62, mismatch/missing: 0, flag inconsistencies: 0
+files on disk not in manifest:
+README.md
+(end)
+redacted entries: 20
+PNG entries:
+author/initial/render/F10.2-base-8452f56.png redacted=false orig=dcadfac2eb1cb03116e10d52ec539ef844ef987b2eedb06133c402f14d8876a7 pub=dcadfac2eb1cb03116e10d52ec539ef844ef987b2eedb06133c402f14d8876a7
+author/initial/render/F10.2-head-88a4eb4.png redacted=false orig=5533d609fa9cd6fc49cc5689cdd9ce2dfc06e34b8361faec4ab808bf5cddfb8f pub=5533d609fa9cd6fc49cc5689cdd9ce2dfc06e34b8361faec4ab808bf5cddfb8f

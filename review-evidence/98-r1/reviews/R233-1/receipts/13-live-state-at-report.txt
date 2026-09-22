@@ -1,0 +1,27 @@
+# live public state snapshot at report time (2026-09-22T13:25:50+02:00)
+PR101 head=bc997e7c00e50e3d59b97987950bfbf6cc442182 baseRefOid=8452f564294300a82d56eed464276576f65f4d58 state=OPEN draft=false mergeable=UNKNOWN mergeState=UNKNOWN reviewDecision=
+main: c8214cfe827fb3fb50c9bfee415468a24b7c27b1
+98-review-evidence branch: c0b98764fb116b857cce0cfc389ad298c5948bed
+## PR101 comment headers
+  5773721489 2026-09-22T08:51:30Z [A10] VALIDATION RUNNING
+  5773860098 2026-09-22T09:03:23Z [A10] FULL NATIVE BAR PASS
+  5775424250 2026-09-22T11:12:22Z [A10] REVIEW ROUND START - exact head bc997e7c00e50e3d59b97987950bfbf6cc442182
+  5775446554 2026-09-22T11:14:16Z [A10] CURRENT-CANDIDATE VALIDATION STARTED
+  5775566484 2026-09-22T11:24:19Z [A10] CURRENT-CANDIDATE NATIVE BAR COMPLETE
+## issue98 comment headers
+  5773239576 2026-09-22T08:12:07Z [A10] READY TAKEOVER
+  5773306413 2026-09-22T08:17:13Z [A165] TAKEN
+  5773433155 2026-09-22T08:27:44Z [A165] REVIEW READY (author handoff; manager validation, publication and the R233/R234 reviews pendi
+  5773480374 2026-09-22T08:31:55Z [A10] DIRECT DOCUMENTATION REFERENCE CORRECTION
+  5773538937 2026-09-22T08:36:12Z [A165] TAKEN (follow-up)
+  5773588874 2026-09-22T08:40:26Z [A165] REVIEW READY (follow-up; manager validation, publication and the R233/R234 reviews pending)
+## check runs at bc997e7
+  total=6
+  suites completed success completed=2026-09-22T09:01:04Z run_url=https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831/job/106677741296
+  portability completed success completed=2026-09-22T08:51:17Z run_url=https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831/job/106677741182
+  docs-gates completed success completed=2026-09-22T08:49:02Z run_url=https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831/job/106677741057
+  suites completed success completed=2026-09-22T08:55:59Z run_url=https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515/job/106677709562
+  docs-gates completed success completed=2026-09-22T08:49:00Z run_url=https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515/job/106677709529
+  portability completed success completed=2026-09-22T08:50:43Z run_url=https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515/job/106677709229
+## hosted runs at new main c8214cf (informational)
+  run 35720261532 event=push status=completed conclusion=success updated=2026-09-22T11:25:51Z

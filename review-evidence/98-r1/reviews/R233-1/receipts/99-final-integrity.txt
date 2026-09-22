@@ -1,0 +1,28 @@
+# final integrity 2026-09-22T13:27:03+02:00
+bc997e7c00e50e3d59b97987950bfbf6cc442182
+bd67eaac225513f84ecf3a228cf58a818e67b4da
+write-tree from index (no-op read): bd67eaac225513f84ecf3a228cf58a818e67b4da
+# branch.oid bc997e7c00e50e3d59b97987950bfbf6cc442182
+# branch.head (detached)
+ls-files -s sha256: 7cc6365761eb3e4b3dc4a5426f4af88f58fd67949189b575f70a77872c300da9  -
+index file sha256: eb8927279c5c32759150c9e170e1bfdab1038e0eb98b8153ab8ff0c4dd6fb44c  .git/index
+ls-tree -r HEAD sha256: d97a70b9f024543bb14a018e67a754ecfb898051acb342eaeed1068874d31a41  -
+tracked count: 222
+diff index vs HEAD quiet rc: 0
+diff worktree vs index quiet rc: 0
+per-file blob+mode check: 222 files, 0 mismatches
+refs: 684c149e42ba2ed8 (sha256 prefix of for-each-ref)
+refs/heads/98-clarify-srp-domain-events bc997e7c00e50e3d59b97987950bfbf6cc442182
+refs/remotes/origin/97-assert-distinct-sr-vid-fixture 1eb20dc4911880de10b745cc284e7dde306788b5
+refs/remotes/origin/98-clarify-srp-domain-events bc997e7c00e50e3d59b97987950bfbf6cc442182
+refs/remotes/origin/HEAD bc997e7c00e50e3d59b97987950bfbf6cc442182
+refs/tags/v2.0 e742bb47f252e9e531f8f410815a290831b36407
+stash entries: 0
+
+# re-check at finish 2026-09-22T13:33:25+02:00
+HEAD/tree: bc997e7c00e50e3d59b97987950bfbf6cc442182 bd67eaac225513f84ecf3a228cf58a818e67b4da 
+status porcelain (untracked+ignored): []
+ls-files -s sha256: 7cc6365761eb3e4b3dc4a5426f4af88f58fd67949189b575f70a77872c300da9
+index file sha256: eb8927279c5c32759150c9e170e1bfdab1038e0eb98b8153ab8ff0c4dd6fb44c
+ls-tree -r HEAD sha256: d97a70b9f024543bb14a018e67a754ecfb898051acb342eaeed1068874d31a41
+for-each-ref sha256 prefix: 684c149e42ba2ed8

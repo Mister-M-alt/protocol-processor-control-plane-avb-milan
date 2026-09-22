@@ -1,0 +1,16 @@
+# wavedrom inputs and outputs base 8452f56 vs head bc997e7 (2026-09-22T13:18:24+02:00)
+8452f56: wavedrom blocks=18 concatenated-source sha256=eec17a792618da89bac27ba1a34491ac4278a16351321af52fd501e5a104e1a7 docs/diagrams tree=aae2f05a3f2a1ef58b576deef0727ce7d79bbd0e
+bc997e7: wavedrom blocks=18 concatenated-source sha256=eec17a792618da89bac27ba1a34491ac4278a16351321af52fd501e5a104e1a7 docs/diagrams tree=aae2f05a3f2a1ef58b576deef0727ce7d79bbd0e
+## git diff --stat base..head -- docs/diagrams (empty = unchanged)
+(end)
+## hunks of the full diff (U0)
+@@ -205 +205 @@ stateDiagram-v2
+@@ -75 +75 @@ Restored tree: `180 checks: 180 PASS, 0 FAIL`, `scripts/lint_hdl.sh` clean.
+## scanned-file scope of render-wavedrom.py: walks ROOT/docs only; tb/srp_encoder/README.md is outside docs/
+63:    for base_dir, _dirs, files in os.walk(ROOT / "docs"):
+## check-links.py scan scope
+45:    too: hdl/README.md and the tb/ suite notes point into docs/, and the guides
+49:    which puts `a/b.md` before `a-x/c.md`, and the failure list is read in the
+53:    for base, dirs, files in os.walk(ROOT):
+55:        out += [Path(base) / f for f in files if f.endswith(".md")]
+79:            if anchor and resolved.suffix == ".md":

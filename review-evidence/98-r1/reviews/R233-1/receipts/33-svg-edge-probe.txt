@@ -1,0 +1,20 @@
+== r233-F10.2-8452f56.svg
+nodes: ['ADOPTED', 'DEFAULTS', 'root_start']  states: ['ADOPTED', 'DEFAULTS']  edges: 5
+edge0: root_start -> DEFAULTS | startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID
+edge1: DEFAULTS -> ADOPTED | rx Class A Domain declaration with different params / adopt received FirstValue, re-declare it, DOMAIN_CHANGE
+edge2: ADOPTED -> ADOPTED | rx differing Domain again / adopt + re-declare + DOMAIN_CHANGE
+edge3: ADOPTED -> DEFAULTS | LINK_DOWN then LINK_UP / back to defaults
+edge4: DEFAULTS -> DEFAULTS | periodic or LeaveAll / re-join declaration
+== r233-F10.2-bc997e7.svg
+nodes: ['ADOPTED', 'DEFAULTS', 'root_start']  states: ['ADOPTED', 'DEFAULTS']  edges: 5
+edge0: root_start -> DEFAULTS | startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID
+edge1: DEFAULTS -> ADOPTED | rx Class A Domain declaration with different params / adopt received FirstValue, re-declare it, DOMAIN_CHANGE
+edge2: ADOPTED -> ADOPTED | rx differing Domain again / adopt + re-declare + DOMAIN_CHANGE
+edge3: ADOPTED -> DEFAULTS | LINK_DOWN / restore defaults, declared again on the next LINK_UP
+edge4: DEFAULTS -> DEFAULTS | periodic or LeaveAll / re-join declaration
+== comparison (first vs second)
+edge0: endpoints same, label same
+edge1: endpoints same, label same
+edge2: endpoints same, label same
+edge3: endpoints same, label DIFFERS
+edge4: endpoints same, label same

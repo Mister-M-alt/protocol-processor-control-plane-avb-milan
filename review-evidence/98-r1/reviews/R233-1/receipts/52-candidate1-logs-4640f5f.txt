@@ -1,0 +1,43 @@
+# candidate1 raw logs at evidence commit 4640f5f8138418ee22bd4ae7ad5383303f6aa6cc (fetched 2026-09-22T13:32:24+02:00); R234 paths not opened
+commit: 4640f5f8138418ee22bd4ae7ad5383303f6aa6cc parent=c0b98764fb116b857cce0cfc389ad298c5948bed 2026-09-22T13:29:02+02:00 Archive R234 review and publish complete PP101 candidate logs
+## candidate1 MANIFEST entries at 4640f5f8138418ee22bd4ae7ad5383303f6aa6cc vs files, and vs the published_sha256 recorded at c0b98764fb116b857cce0cfc389ad298c5948bed
+candidate1/manager/candidate.json file=OK manifest@new=same manifest@c0b9876=1f38c7a7cd6fb743
+candidate1/manager/final-integrity.json file=OK manifest@new=same manifest@c0b9876=cd2c6f99521992a2
+candidate1/manager/full-native/01.log file=OK manifest@new=same manifest@c0b9876=110d748d8e6eca23
+candidate1/manager/full-native/02.log file=OK manifest@new=same manifest@c0b9876=6321e927f1200575
+candidate1/manager/full-native/03.log file=OK manifest@new=same manifest@c0b9876=d2a29ad3ad7491d0
+candidate1/manager/full-native/04.log file=OK manifest@new=same manifest@c0b9876=266550d5aecfbeed
+candidate1/manager/full-native/05.log file=OK manifest@new=same manifest@c0b9876=66e29164e388d44d
+candidate1/manager/full-native/06.log file=OK manifest@new=same manifest@c0b9876=12176e4206f2f6f3
+candidate1/manager/full-native/07.log file=OK manifest@new=same manifest@c0b9876=613127f38b091634
+candidate1/manager/full-native/08.log file=OK manifest@new=same manifest@c0b9876=888bd075dbf2902e
+candidate1/manager/full-native/09.log file=OK manifest@new=same manifest@c0b9876=e3b0c44298fc1c14
+candidate1/manager/full-native/complete.json file=OK manifest@new=same manifest@c0b9876=a13ce16850eadbf1
+candidate1/manager/full-native/results.json file=OK manifest@new=same manifest@c0b9876=1542a6f106243405
+candidate1/manager/full-native.json file=OK manifest@new=same manifest@c0b9876=ee2e6806705136d0
+candidate1/manager/native-summary.md file=OK manifest@new=same manifest@c0b9876=7678aee8e88b94e7
+non-candidate1, non-R234 MANIFEST entries identical to 94f4769 manifest: yes
+## 01.log
+Verilator 5.052 2026-09-05 rev v5.052
+## 03.log: 37 LINT OK lines, other lines: 0
+## 04.log (pp_top, srp_encoder, srp_top, total; PASS-line count)
+UPC MAP GATE: PASS (56 engine constants, 80 entry points, all agree)
+PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)
+PASS srp_encoder (180 checks: 180 PASS, 0 FAIL)
+PASS srp_top (235 checks: 235 PASS, 0 FAIL)
+suites: 14943 checks total, 0 failing
+PASS lines: 30; FAIL lines: 0
+## 05.log
+lint: 41 mermaid + 18 wavedrom blocks checked, OK
+wavedrom: 18 blocks checked, OK
+links: 807 checked, OK
+matrix: 115 REQ rows, 17 GAP findings, OK
+matrix: OK (86 rows, 0 untested)
+## 06.log
+matrix: OK (86 rows, 0 untested)
+## 07.log: YOSYS OK lines 33, lines with FAIL/ERROR: 0
+## 08.log last lines
+42 Verilator builds: 1 baseline + 12 arms + 18 mutations + 6 models + 5 matrix
+baseline: 122 checks, 122 PASS, 0 FAIL
+all measured figures agree with the tree
+## 09.log bytes: 0

@@ -1,0 +1,12 @@
+# R233 docs gates on scratch worktree /tmp/r233-101-r1/wt-head (2026-09-22T13:17:46+02:00)
+HEAD bc997e7c00e50e3d59b97987950bfbf6cc442182 tree bd67eaac225513f84ecf3a228cf58a818e67b4da
+lint: 41 mermaid + 18 wavedrom blocks checked, OK
+[make lint] rc=0 elapsed=25s
+links: 807 checked, OK
+[make links] rc=0 elapsed=0s
+matrix: 115 REQ rows, 17 GAP findings, OK
+[make matrix] rc=0 elapsed=0s
+matrix: OK (86 rows, 0 untested)
+[make modmatrix] rc=0 elapsed=0s
+[make stale] rc=0 elapsed=0s
+porcelain after: []

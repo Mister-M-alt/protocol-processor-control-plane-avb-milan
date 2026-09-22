@@ -1,0 +1,46 @@
+# new-main facts, informational only (2026-09-22T13:20:24+02:00); the manager owns candidate validation
+live main via API: c8214cfe827fb3fb50c9bfee415468a24b7c27b1
+## main history since base
+c8214cfe827fb3fb50c9bfee415468a24b7c27b1 8452f564294300a82d56eed464276576f65f4d58 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e Merge PR #100: assert distinct SRP VID test fixtures
+5c45845ad15bd7995f20c81d7fd61501e5ca9d7e 1eb20dc4911880de10b745cc284e7dde306788b5 Normalize fixture guard compiler diagnostics to C
+1eb20dc4911880de10b745cc284e7dde306788b5 8452f564294300a82d56eed464276576f65f4d58 Assert distinct SRP VID verification fixtures
+## is base an ancestor of new main?
+yes
+## paths changed base..new-main
+M	tb/pp_top/Makefile
+M	tb/pp_top/README.md
+A	tb/pp_top/fixture_guards.py
+M	tb/pp_top/sim_main.cpp
+A	tb/pp_top/test_fixture_guards.py
+## overlap with PR101 paths
+(end overlap)
+## git merge-tree --write-tree new-main head
+37a5cd807c5e8a289a7149892c1a1762dcd8279c
+rc=0
+manager-stated candidate tree: 37a5cd807c5e8a289a7149892c1a1762dcd8279c
+## the two changed blobs are unchanged at new main vs base?
+docs/architecture/10_srp_engine.md base=b6e54afc8479f0a8ab38aa8b96506a8de9bf2b8b new-main=b6e54afc8479f0a8ab38aa8b96506a8de9bf2b8b
+tb/srp_encoder/README.md base=2eae73950323db4cddaf9b263bd5eeee0ca13573 new-main=2eae73950323db4cddaf9b263bd5eeee0ca13573
+## candidate commit 1fd06bf6 fetchable?
+fatal: remote error: upload-pack: not our ref 1fd06bf6e40d2290adf1987b51c1fabe30671098
+fatal: git cat-file: could not get object info
+## informational: old-label and F10.2 text in merge-tree 37a5cd807c5e8a289a7149892c1a1762dcd8279c (not a validation of the candidate)
+old label: 0 hits
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:docs/architecture/10_srp_engine.md:205:    ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+## DV5/DV6 lines in new-main pp_top README/sim_main (blob changed by PR100)
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/README.md:210:| M25 | the top's `.DOM_DEF_VID_P (SRP_DOM_DEF_VID_P)` binding line removed | fixture build 13 FAIL of 20: every value check of DV1 to DV6. The default build PASSES all 1,391, which is why the fixture build exists |
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/README.md:212:| M27 | the binding truncated to 12 bits, `.DOM_DEF_VID_P (16'(SRP_DOM_DEF_VID_P[11:0]))` | fixture build 4 FAIL of 20: DV2 (byte-exact and the decoded SRclassVID), DV4 and DV6, the checks that read the 16-bit wire field. Every 12-bit face PASSES |
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/README.md:558:- **DV5** LINK_DOWN restores the default and DEFAULTS with one DOMAIN_CHANGE,
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/README.md:560:- **DV6** LINK_UP declares `New {6, 3, default}` again, byte-exact.
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/sim_main.cpp:8374:  // ---- DV5: LINK_DOWN restores the default, and declares nothing ----------
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/sim_main.cpp:8381:          "DV5: LINK_DOWN restores {3, 0x%03x, DEFAULTS}", DEF_VID12);
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/sim_main.cpp:8382:    if (!domain_is(DEF_VID12, false)) print_domain("DV5");
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/sim_main.cpp:8384:          "DV5: the revert is one DOMAIN_CHANGE, saw %d",
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/sim_main.cpp:8388:          "DV5: snapshot word 10 reverted, got 0x%08x", w10);
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/sim_main.cpp:8390:    CHECK(h2.q_msrp.empty(), "DV5: nothing is declared while the link is down");
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/sim_main.cpp:8391:    CHECK(domain_is(DEF_VID12, false), "DV5: the default holds while down");
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/sim_main.cpp:8394:  // ---- DV6: LINK_UP declares the default again ----------------------------
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/sim_main.cpp:8401:    CHECK(f == exp, "DV6: LINK_UP re-declares Domain New {6, 3, 0x%04x}",
+37a5cd807c5e8a289a7149892c1a1762dcd8279c:tb/pp_top/sim_main.cpp:8404:    CHECK(domain_is(DEF_VID12, false), "DV6: class-D is the default again");
+## diff of DV section functions base vs new main (dv5/dv6 bodies)
+DV5/DV6 bodies identical at base and merge-tree

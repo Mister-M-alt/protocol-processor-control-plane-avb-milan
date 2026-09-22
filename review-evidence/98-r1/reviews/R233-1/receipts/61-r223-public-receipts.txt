@@ -1,0 +1,25 @@
+# public PR96 R223 receipts used as accepted existing-behaviour evidence (commit 29b2066b91cf4b0387edff43250b8fe79192232b) (2026-09-22T13:23:46+02:00)
+## R223 SHA256SUMS check (sha256sum -c, quiet)
+all 90 entries OK
+## 96-r1 MANIFEST check for R223 files
+OK reviews/R223-1/receipts/02-head-pp_top-both-builds.log
+OK reviews/R223-1/receipts/09-mutants.log
+OK reviews/R223-1/receipts/mutations/R36_child_revert_literal/build_fixture.log
+OK reviews/R223-1/receipts/mutations/R36_child_revert_literal/commands.txt
+OK reviews/R223-1/receipts/mutations/R36_child_revert_literal/mutation.diff
+OK reviews/R223-1/receipts/mutations/R36_child_revert_literal/run_fixture.log
+OK reviews/R223-1/receipts/mutations/R37_child_linkup_decl_literal/build_fixture.log
+OK reviews/R223-1/receipts/mutations/R37_child_linkup_decl_literal/commands.txt
+OK reviews/R223-1/receipts/mutations/R37_child_linkup_decl_literal/mutation.diff
+OK reviews/R223-1/receipts/mutations/R37_child_linkup_decl_literal/run_fixture.log
+## R223 receipt 02 tallies
+[build default, SRP_DOM_DEF_VID_P 0x0002] 1391 checks, 0 failures
+[build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 0 failures
+1411 checks: 1411 PASS, 0 FAIL
+## R36/R37 lines in 09-mutants.log
+===== R36_child_revert_literal (fixture)
+[R36_child_revert_literal fixture] FAIL: DV5: LINK_DOWN restores {3, 0xa3c, DEFAULTS}
+[R36_child_revert_literal fixture] FAIL: DV5: snapshot word 10 reverted, got 0x00030002
+[R36_child_revert_literal fixture] FAIL: DV5: the default holds while down
+[R36_child_revert_literal fixture] FAIL: DV6: class-D is the default again
+[R36_child_revert_literal fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 4 failures

@@ -1,0 +1,26 @@
+# F10.2 fence extraction and hashing (2026-09-22T13:16:38+02:00)
+# method: git show <rev>:docs/architecture/10_srp_engine.md; take lines strictly between the first '```mermaid' after the fig-10-domsm anchor and the next closing fence
+8452f56 fence: 6 lines, 477 bytes, sha256 b05461fa84b2f683ed98cc2801d41714200ecf4da0e273dceaf67f63cb90a0ff
+8452f56 file blob: b6e54afc8479f0a8ab38aa8b96506a8de9bf2b8b file sha256 4ffc589ac3d68098faa401fc0a2fc9ec829640d1fe1a3166b7906d57a80b1242
+88a4eb4 fence: 6 lines, 500 bytes, sha256 f16fb070aa490da5c7e69c76f36923f22ea02ffcc66c4f8d861678f8b67e2a47
+88a4eb4 file blob: b8dafc542930d607c32ab8be49329c7ca975f6b0 file sha256 6406ddce99a0418566974a8554eb431b7d792cae3848721f27d7c5f49a68ee60
+bc997e7 fence: 6 lines, 500 bytes, sha256 f16fb070aa490da5c7e69c76f36923f22ea02ffcc66c4f8d861678f8b67e2a47
+bc997e7 file blob: b8dafc542930d607c32ab8be49329c7ca975f6b0 file sha256 6406ddce99a0418566974a8554eb431b7d792cae3848721f27d7c5f49a68ee60
+
+## author render sources (evidence 94f4769)
+F10.2-base-8452f56.mmd sha256 b05461fa84b2f683ed98cc2801d41714200ecf4da0e273dceaf67f63cb90a0ff bytes 477
+F10.2-head-88a4eb4.mmd sha256 f16fb070aa490da5c7e69c76f36923f22ea02ffcc66c4f8d861678f8b67e2a47 bytes 500
+
+## cmp author base mmd vs my 8452f56 fence
+identical
+## cmp author head mmd vs my 88a4eb4 fence
+identical
+## cmp 88a4eb4 fence vs bc997e7 fence
+identical
+## diff base fence -> head fence
+5c5
+<     ADOPTED --> DEFAULTS: LINK_DOWN then LINK_UP / back to defaults
+---
+>     ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+## 10_srp_engine.md identical 88a4eb4 vs bc997e7?
+yes (git diff --quiet rc=0)

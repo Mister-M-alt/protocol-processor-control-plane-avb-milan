@@ -1,0 +1,32 @@
+# label text at bc997e7c00e50e3d59b97987950bfbf6cc442182 (2026-09-22T13:28:04+02:00)
+## old label variants (expect 0 hits)
+count: 0
+## old label at base 8452f56 (for contrast)
+docs/architecture/10_srp_engine.md:205:    ADOPTED --> DEFAULTS: LINK_DOWN then LINK_UP / back to defaults
+tb/srp_encoder/README.md:75:- The revert edge reads "LINK_DOWN then LINK_UP / back to defaults": the
+## new label text (expect only 10_srp_engine.md:205)
+docs/architecture/10_srp_engine.md:205:    ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+## F10.2 fence at head with file line numbers
+L1+197	<a id="fig-10-domsm"></a>**F10.2 — Class A Domain (Milan §4.2.7.2.1)**
+L2+197	
+L3+197	```mermaid
+L4+197	stateDiagram-v2
+L5+197	    [*] --> DEFAULTS: startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID
+L6+197	    DEFAULTS --> ADOPTED: rx Class A Domain declaration with different params / adopt received FirstValue, re-declare it, DOMAIN_CHANGE
+L7+197	    ADOPTED --> ADOPTED: rx differing Domain again / adopt + re-declare + DOMAIN_CHANGE
+L8+197	    ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
+L9+197	    DEFAULTS --> DEFAULTS: periodic or LeaveAll / re-join declaration
+L10+197	```
+## srp_encoder README notes at head (lines 69-80)
+## Notes / interpretations recorded
+
+- F10.2 says "adopt received FirstValue"; an endpoint declares only Class A,
+  so what is adopted and re-declared is the **surfaced** Class A tuple
+  {6, prio_first + (6 − SRclassID_first), VID} per 10 §3 — for a NoV=1
+  class-6 vector the two readings are identical.
+- The F10.2 revert edge (ADOPTED to DEFAULTS) fires on LINK_DOWN: the
+  class-D levels revert at LINK_DOWN (nothing is declared on a dead link);
+  LINK_UP performs the default declaration.
+- A pending LeaveAll with an empty table rides the next PDU that carries
+  attributes; Domain and VLAN re-declare on the LeaveAll cycle, so that PDU
+  is the immediate next one in practice.

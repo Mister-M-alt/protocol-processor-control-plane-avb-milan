@@ -1,0 +1,72 @@
+# scope and hygiene receipts (2026-09-22T13:19:41+02:00)
+## rev-list 8452f564294300a82d56eed464276576f65f4d58..bc997e7c00e50e3d59b97987950bfbf6cc442182
+88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf 8452f564294300a82d56eed464276576f65f4d58
+bc997e7c00e50e3d59b97987950bfbf6cc442182 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf
+## merge-base
+8452f564294300a82d56eed464276576f65f4d58
+## commit messages (raw) and trailers
+--- 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf
+$
+Show F10.2's Domain defaults restored at LINK_DOWN and declared at the next LINK_UP$
+lines in message body: 1
+trailers: []
+author: hackerman-kl <hackerman-kl@kebag-logic.com> 2026-09-22T10:19:15+02:00
+committer: hackerman-kl <hackerman-kl@kebag-logic.com> 2026-09-22T10:19:15+02:00
+--- bc997e7c00e50e3d59b97987950bfbf6cc442182
+$
+Describe F10.2's revert edge in the srp_encoder README instead of quoting its old label$
+lines in message body: 1
+trailers: []
+author: hackerman-kl <hackerman-kl@kebag-logic.com> 2026-09-22T10:36:53+02:00
+committer: hackerman-kl <hackerman-kl@kebag-logic.com> 2026-09-22T10:36:53+02:00
+## diff-tree per commit
+:100644 100644 b6e54afc8479f0a8ab38aa8b96506a8de9bf2b8b b8dafc542930d607c32ab8be49329c7ca975f6b0 M	docs/architecture/10_srp_engine.md
+:100644 100644 2eae73950323db4cddaf9b263bd5eeee0ca13573 11092a208b3248690e1d1fd723c2d66c8f269b90 M	tb/srp_encoder/README.md
+## combined name-status/numstat/summary base..head
+M	docs/architecture/10_srp_engine.md
+M	tb/srp_encoder/README.md
+1	1	docs/architecture/10_srp_engine.md
+1	1	tb/srp_encoder/README.md
+summary: []
+## diff --check base..head / fig..head
+rc=0
+rc=0
+## added lines: non-ASCII and trailing-space check
+no non-ASCII in added lines
+no trailing whitespace in added lines
+## modes of changed paths at base/head
+docs/architecture/10_srp_engine.md base=100644 b6e54afc8479f0a8ab38aa8b96506a8de9bf2b8b fig=100644 b8dafc542930d607c32ab8be49329c7ca975f6b0 head=100644 b8dafc542930d607c32ab8be49329c7ca975f6b0
+tb/srp_encoder/README.md base=100644 2eae73950323db4cddaf9b263bd5eeee0ca13573 fig=100644 2eae73950323db4cddaf9b263bd5eeee0ca13573 head=100644 11092a208b3248690e1d1fd723c2d66c8f269b90
+## paths differing base..head (all)
+docs/architecture/10_srp_engine.md
+tb/srp_encoder/README.md
+## paths differing fig..head (all)
+tb/srp_encoder/README.md
+## file lists identical base/head?
+identical
+## ls-tree -r mode+blob compare base vs head excluding the two changed paths
+all other 220 entries: identical mode+blob
+awk: cmd. line:1: $1==\"100755\"
+awk: cmd. line:1:     ^ backslash not last character on line
+## executable-mode entries at head: 0
+## RTL/test blobs unchanged
+hdl/srp/KL_srp_domain.sv base=96c57db1adc9c1641d125201334deba3f1387838 head=96c57db1adc9c1641d125201334deba3f1387838
+hdl/srp/KL_srp_top.sv base=aea2c29549b59ca5af115f812396f832fb556605 head=aea2c29549b59ca5af115f812396f832fb556605
+hdl/top/protocol_processor_top.sv base=74e71abc27adc1be719bad38f86b616a8e7e81bd head=74e71abc27adc1be719bad38f86b616a8e7e81bd
+tb/pp_top/sim_main.cpp base=e52f0fde2e81e7e507c0f29e397d593f53706980 head=e52f0fde2e81e7e507c0f29e397d593f53706980
+tb/pp_top/README.md base=bf0dd1c95a31a282b423be692d1864cd8951cf64 head=bf0dd1c95a31a282b423be692d1864cd8951cf64
+tb/srp_encoder/sim_main.cpp base=eab9912ea201b4918127832577a839370493267c head=eab9912ea201b4918127832577a839370493267c
+tb/srp_top/sim_main.cpp base=2255441d73af95d0db09689749c1a6a3c47e3a7f head=2255441d73af95d0db09689749c1a6a3c47e3a7f
+## (corrected) executable-mode entries
+8452f56: 10 entries, sha256 of list a68eb750d6b0338c8f42916f55f60b3c8fe41c23aed866e92803de81f68e27aa
+bc997e7: 10 entries, sha256 of list a68eb750d6b0338c8f42916f55f60b3c8fe41c23aed866e92803de81f68e27aa
+scripts/check-links.py
+scripts/check-matrix.py
+scripts/check_upc_map.py
+scripts/gen_matrix.py
+scripts/lint-diagrams.sh
+scripts/lint_hdl.sh
+scripts/render-wavedrom.py
+scripts/run_suites.sh
+syn/yosys/run.sh
+tb/timer_map/shape_elab.sh
