@@ -72,7 +72,7 @@ Restored tree: `180 checks: 180 PASS, 0 FAIL`, `scripts/lint_hdl.sh` clean.
   so what is adopted and re-declared is the **surfaced** Class A tuple
   {6, prio_first + (6 − SRclassID_first), VID} per 10 §3 — for a NoV=1
   class-6 vector the two readings are identical.
-- The revert edge reads "LINK_DOWN then LINK_UP / back to defaults": the
+- The F10.2 revert edge (ADOPTED to DEFAULTS) fires on LINK_DOWN: the
   class-D levels revert at LINK_DOWN (nothing is declared on a dead link);
   LINK_UP performs the default declaration.
 - A pending LeaveAll with an empty table rides the next PDU that carries
