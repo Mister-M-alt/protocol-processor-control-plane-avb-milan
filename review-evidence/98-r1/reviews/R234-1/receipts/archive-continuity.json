@@ -1,0 +1,25 @@
+{
+  "unchanged_author_blob_mode_count": 46,
+  "source_archive": "c5f372ed8fc83bdd345137c435c34cc57c34ec85",
+  "completion_archive": "94f47697f765e96a3c930dc09606fb7b559d3187",
+  "pngs": [
+    {
+      "file": "author/initial/render/F10.2-base-8452f56.png",
+      "original_sha256": "dcadfac2eb1cb03116e10d52ec539ef844ef987b2eedb06133c402f14d8876a7",
+      "published_sha256": "dcadfac2eb1cb03116e10d52ec539ef844ef987b2eedb06133c402f14d8876a7",
+      "path_redacted": false,
+      "width": 1022,
+      "height": 1294,
+      "author_sha256sums_match": true
+    },
+    {
+      "file": "author/initial/render/F10.2-head-88a4eb4.png",
+      "original_sha256": "5533d609fa9cd6fc49cc5689cdd9ce2dfc06e34b8361faec4ab808bf5cddfb8f",
+      "published_sha256": "5533d609fa9cd6fc49cc5689cdd9ce2dfc06e34b8361faec4ab808bf5cddfb8f",
+      "path_redacted": false,
+      "width": 1022,
+      "height": 1294,
+      "author_sha256sums_match": true
+    }
+  ]
+}

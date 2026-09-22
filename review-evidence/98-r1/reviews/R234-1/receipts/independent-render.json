@@ -1,0 +1,74 @@
+{
+  "viewBox": "0 0 510.0495910644531 646.25",
+  "nodes": [
+    {
+      "id": "my-svg-state-root_start-0",
+      "transform": "translate(348, 15)",
+      "text": ""
+    },
+    {
+      "id": "my-svg-state-DEFAULTS-4",
+      "transform": "translate(348, 188)",
+      "text": "DEFAULTS"
+    },
+    {
+      "id": "my-svg-state-ADOPTED-3",
+      "transform": "translate(168, 398)",
+      "text": "ADOPTED"
+    }
+  ],
+  "edges": [
+    {
+      "id": "my-svg-edge0",
+      "d": "M348,22L348,34.167C348,46.333,348,70.667,348,95C348,119.333,348,143.667,348,155.833L348,168",
+      "start": null,
+      "end": "url(#my-svg_stateDiagram-barbEnd)"
+    },
+    {
+      "id": "my-svg-edge1",
+      "d": "M302.286,208L269.905,222.167C237.524,236.333,172.762,264.667,148.476,293C124.19,321.333,140.381,349.667,148.476,363.833L156.571,378",
+      "start": null,
+      "end": "url(#my-svg_stateDiagram-barbEnd)"
+    },
+    {
+      "id": "my-svg-edge3",
+      "d": "M214.266,381.807L256.555,367.006C298.844,352.205,383.422,322.602,409.52,293.635C435.619,264.667,403.238,236.333,387.048,222.167L370.857,208",
+      "start": null,
+      "end": "url(#my-svg_stateDiagram-barbEnd)"
+    },
+    {
+      "id": "my-svg-edge2",
+      "d": "M151.176,418L147.811,422C144.447,426,137.717,434,146.69,438C155.663,442,180.338,442,189.31,438C198.283,434,191.553,426,188.189,422L184.824,418",
+      "start": null,
+      "end": "url(#my-svg_stateDiagram-barbEnd)"
+    },
+    {
+      "id": "my-svg-edge4",
+      "d": "M330.565,208L327.078,212C323.591,216,316.618,224,325.916,228C335.215,232,360.785,232,370.084,228C379.382,224,372.409,216,368.922,212L365.435,208",
+      "start": null,
+      "end": "url(#my-svg_stateDiagram-barbEnd)"
+    }
+  ],
+  "labels": [
+    {
+      "transform": "translate(348, 95)",
+      "text": "startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID"
+    },
+    {
+      "transform": "translate(108, 293)",
+      "text": "rx Class A Domain declaration with different params / adopt received FirstValue, re-declare it, DOMAIN_CHANGE"
+    },
+    {
+      "transform": "translate(168, 482)",
+      "text": "rx differing Domain again / adopt + re-declare + DOMAIN_CHANGE"
+    },
+    {
+      "transform": "translate(402.04959, 316.08264)",
+      "text": "LINK_DOWN / restore defaults, declared again on the next LINK_UP"
+    },
+    {
+      "transform": "translate(348, 260)",
+      "text": "periodic or LeaveAll / re-join declaration"
+    }
+  ]
+}

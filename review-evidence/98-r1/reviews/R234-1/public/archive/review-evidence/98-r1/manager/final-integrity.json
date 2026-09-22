@@ -1,0 +1,19 @@
+{
+  "observed": "2026-09-22T11:03:18.943772+02:00",
+  "live_main": "8452f564294300a82d56eed464276576f65f4d58",
+  "candidate_equals_head_tree": true,
+  "checkouts": [
+    {
+      "checkout": "$CANDIDATE",
+      "head": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+      "tree": "bd67eaac225513f84ecf3a228cf58a818e67b4da",
+      "porcelain": ""
+    },
+    {
+      "checkout": "$VALIDATION",
+      "head": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+      "tree": "bd67eaac225513f84ecf3a228cf58a818e67b4da",
+      "porcelain": ""
+    }
+  ]
+}

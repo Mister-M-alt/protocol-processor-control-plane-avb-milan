@@ -1,0 +1,30 @@
+commit bc997e7c00e50e3d59b97987950bfbf6cc442182
+Author:     hackerman-kl <hackerman-kl@kebag-logic.com>
+AuthorDate: Tue Sep 22 10:36:53 2026 +0200
+Commit:     hackerman-kl <hackerman-kl@kebag-logic.com>
+CommitDate: Tue Sep 22 10:36:53 2026 +0200
+
+    Describe F10.2's revert edge in the srp_encoder README instead of quoting its old label
+
+ tb/srp_encoder/README.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf
+Author:     hackerman-kl <hackerman-kl@kebag-logic.com>
+AuthorDate: Tue Sep 22 10:19:15 2026 +0200
+Commit:     hackerman-kl <hackerman-kl@kebag-logic.com>
+CommitDate: Tue Sep 22 10:19:15 2026 +0200
+
+    Show F10.2's Domain defaults restored at LINK_DOWN and declared at the next LINK_UP
+
+ docs/architecture/10_srp_engine.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit 8452f564294300a82d56eed464276576f65f4d58
+Merge: 424c688 ea93023
+Author:     hackerman-kl <161579364+Mister-M-alt@users.noreply.github.com>
+AuthorDate: Tue Sep 22 08:23:06 2026 +0200
+Commit:     GitHub <noreply@github.com>
+CommitDate: Tue Sep 22 08:23:06 2026 +0200
+
+    Merge PR #96: expose the SRP default VID parameter

@@ -1,0 +1,47 @@
+# $ python3 $WORKSPACE_HOME/milan-fpga-management/2026-09-22/donor98-author/public-dv-evidence.py   (cwd $CANDIDATE, 2026-09-22T10:23:51+02:00)
+evidence commit 29b2066b91cf4b0387edff43250b8fe79192232b (origin/96-review-evidence), root review-evidence/96-r1/
+
+== reviews/R223-1/receipts/02-head-pp_top-both-builds.log
+   sha256 70a5d334deae51dba27f189e59abd66810dd600d8d0317f21654068b0cb83272 (MANIFEST match, SHA256SUMS match)
+     164: [build default, SRP_DOM_DEF_VID_P 0x0002] 1391 checks, 0 failures
+     324: [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 0 failures
+     325: 1411 checks: 1411 PASS, 0 FAIL
+
+== reviews/R223-1/receipts/mutations/R36_child_revert_literal/mutation.diff
+   sha256 0873d66e7f62b376031b87c7b15b92ade83c0912adb87d1d976ca1f550f75b62 (MANIFEST match, SHA256SUMS match)
+       7: -        decl_vid_r    <= DEF_VID_P;
+       8: +        decl_vid_r    <= 16'd2;
+
+== reviews/R223-1/receipts/mutations/R36_child_revert_literal/run_fixture.log
+   sha256 e69e72bf2b98c4e1819d516b7722b433ea719f8f1a40b57b9929a4787fe66cbd (MANIFEST match, SHA256SUMS match)
+       1: FAIL: DV5: LINK_DOWN restores {3, 0xa3c, DEFAULTS}
+       3: FAIL: DV5: snapshot word 10 reverted, got 0x00030002
+       4: FAIL: DV5: the default holds while down
+       5: FAIL: DV6: class-D is the default again
+       6: [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 4 failures
+
+== reviews/R223-1/receipts/mutations/R37_child_linkup_decl_literal/mutation.diff
+   sha256 7cea16f87580ff5d0728f3b90d1a2db1b30997bcca6a2e8d297a6e5f5c47419b (MANIFEST match, SHA256SUMS match)
+       7: -        q0_val_r   <= {CLASS_A_ID_C, DEF_PRIO_P, DEF_VID_P};
+       8: +        q0_val_r   <= {CLASS_A_ID_C, DEF_PRIO_P, 16'd2};
+
+== reviews/R223-1/receipts/mutations/R37_child_linkup_decl_literal/run_fixture.log
+   sha256 fd62a21bc1782df73e2813511b0e2fc21149f21452ac8da1574bd7c066d87253 (MANIFEST match, SHA256SUMS match)
+       1: FAIL: DV2: Domain New {6, 3, 0x5a3c} byte-exact
+       4: FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x2
+       5: FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x5a3c}
+       8: [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 3 failures
+
+== manager/postmerge/hosted-main.log
+   sha256 f0709eb7adb17b5392afe4a57ed22fc4beaa008e64a462f199215c101cc0544e (MANIFEST match)
+     108: portability	Run actions/checkout@v4	2026-09-22T06:23:14.5132624Z 8452f564294300a82d56eed464276576f65f4d58
+     832: suites	Run actions/checkout@v4	2026-09-22T06:23:17.0459814Z 8452f564294300a82d56eed464276576f65f4d58
+     844: suites	Run actions/checkout@v4	2026-09-22T06:23:17.1209934Z 8452f564294300a82d56eed464276576f65f4d58
+     928: suites	Lint (zero tolerance) + every suite	2026-09-22T06:28:53.5455612Z PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)
+     937: suites	Lint (zero tolerance) + every suite	2026-09-22T06:29:33.1523851Z PASS srp_encoder (180 checks: 180 PASS, 0 FAIL)
+     939: suites	Lint (zero tolerance) + every suite	2026-09-22T06:29:46.0838651Z PASS srp_top (235 checks: 235 PASS, 0 FAIL)
+     945: suites	Lint (zero tolerance) + every suite	2026-09-22T06:30:20.2033706Z suites: 14943 checks total, 0 failing
+    1156: docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5795454Z 8452f564294300a82d56eed464276576f65f4d58
+
+all cited hashes consistent
+# exit: 0

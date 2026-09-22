@@ -1,0 +1,98 @@
+{
+  "observed_utc": "2026-09-22T11:21:36.918171+00:00",
+  "head": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+  "checks": [
+    {
+      "id": 106677741296,
+      "name": "suites",
+      "head_sha": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-09-22T08:48:50Z",
+      "completed_at": "2026-09-22T09:01:04Z",
+      "html_url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831/job/106677741296"
+    },
+    {
+      "id": 106677741182,
+      "name": "portability",
+      "head_sha": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-09-22T08:48:50Z",
+      "completed_at": "2026-09-22T08:51:17Z",
+      "html_url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831/job/106677741182"
+    },
+    {
+      "id": 106677741057,
+      "name": "docs-gates",
+      "head_sha": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-09-22T08:48:51Z",
+      "completed_at": "2026-09-22T08:49:02Z",
+      "html_url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831/job/106677741057"
+    },
+    {
+      "id": 106677709562,
+      "name": "suites",
+      "head_sha": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-09-22T08:48:44Z",
+      "completed_at": "2026-09-22T08:55:59Z",
+      "html_url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515/job/106677709562"
+    },
+    {
+      "id": 106677709529,
+      "name": "docs-gates",
+      "head_sha": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-09-22T08:48:44Z",
+      "completed_at": "2026-09-22T08:49:00Z",
+      "html_url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515/job/106677709529"
+    },
+    {
+      "id": 106677709229,
+      "name": "portability",
+      "head_sha": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-09-22T08:48:44Z",
+      "completed_at": "2026-09-22T08:50:43Z",
+      "html_url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515/job/106677709229"
+    }
+  ],
+  "runs": [
+    {
+      "id": 35706849831,
+      "name": "hdl",
+      "event": "pull_request",
+      "head_sha": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-22T08:48:47Z",
+      "updated_at": "2026-09-22T09:01:05Z",
+      "html_url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831"
+    },
+    {
+      "id": 35706840515,
+      "name": "hdl",
+      "event": "push",
+      "head_sha": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-22T08:48:41Z",
+      "updated_at": "2026-09-22T08:56:00Z",
+      "html_url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515"
+    }
+  ],
+  "live_main": "c8214cfe827fb3fb50c9bfee415468a24b7c27b1",
+  "live_main_tree": "8768f7e640ee62fd62862bec7117155fcab3ddbb",
+  "live_main_message": "Merge PR #100: assert distinct SRP VID test fixtures",
+  "live_main_parents": [
+    "8452f564294300a82d56eed464276576f65f4d58",
+    "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e"
+  ],
+  "new_main_candidate_validated_by_this_reviewer": false
+}

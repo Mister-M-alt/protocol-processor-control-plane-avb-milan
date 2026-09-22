@@ -1,0 +1,5 @@
+The first review-probes.py run stopped before rendering/gates at its SVG edge-count assertion.
+Cause: the reviewer probe searched IDs starting with "edge"; Mermaid IDs are prefixed
+"my-svg-edge". Inspection confirmed five paths marked data-edge="true". The probe was
+corrected to use that attribute and rerun. This was a reviewer probe error, not a
+candidate or archived-render failure. Candidate files were not changed.

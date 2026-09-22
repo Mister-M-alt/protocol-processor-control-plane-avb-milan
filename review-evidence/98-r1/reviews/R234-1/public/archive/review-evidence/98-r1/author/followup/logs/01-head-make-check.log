@@ -1,0 +1,12 @@
+# cwd: $CANDIDATE
+# HEAD: bc997e7c00e50e3d59b97987950bfbf6cc442182  tree: bd67eaac225513f84ecf3a228cf58a818e67b4da
+# porcelain before: []
+# date: 2026-09-22T10:37:00+02:00
+# command: rtk proxy make -j1 check
+lint: 41 mermaid + 18 wavedrom blocks checked, OK
+wavedrom: 18 blocks checked, OK
+links: 807 checked, OK
+matrix: 115 REQ rows, 17 GAP findings, OK
+matrix: OK (86 rows, 0 untested)
+# exit: 0  elapsed_s: 25
+# porcelain after: []

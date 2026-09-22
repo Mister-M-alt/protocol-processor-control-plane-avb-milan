@@ -1,0 +1,65 @@
+{
+  "head": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+  "tree": "bd67eaac225513f84ecf3a228cf58a818e67b4da",
+  "base": "8452f564294300a82d56eed464276576f65f4d58",
+  "first_render_commit": "88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf",
+  "changes_to_final": {
+    "8452f564294300a82d56eed464276576f65f4d58": [
+      "docs/architecture/10_srp_engine.md",
+      "tb/srp_encoder/README.md"
+    ],
+    "88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf": [
+      "tb/srp_encoder/README.md"
+    ]
+  },
+  "all_modes_unchanged": true,
+  "tracked_count": 222,
+  "same_pr96_base_tree": true,
+  "fence_sha256": {
+    "8452f564294300a82d56eed464276576f65f4d58": "b05461fa84b2f683ed98cc2801d41714200ecf4da0e273dceaf67f63cb90a0ff",
+    "88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf": "f16fb070aa490da5c7e69c76f36923f22ea02ffcc66c4f8d861678f8b67e2a47",
+    "bc997e7c00e50e3d59b97987950bfbf6cc442182": "f16fb070aa490da5c7e69c76f36923f22ea02ffcc66c4f8d861678f8b67e2a47"
+  },
+  "architecture_blobs": {
+    "8452f564294300a82d56eed464276576f65f4d58": [
+      "100644",
+      "blob",
+      "b6e54afc8479f0a8ab38aa8b96506a8de9bf2b8b"
+    ],
+    "88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf": [
+      "100644",
+      "blob",
+      "b8dafc542930d607c32ab8be49329c7ca975f6b0"
+    ],
+    "bc997e7c00e50e3d59b97987950bfbf6cc442182": [
+      "100644",
+      "blob",
+      "b8dafc542930d607c32ab8be49329c7ca975f6b0"
+    ]
+  },
+  "readme_blobs": {
+    "8452f564294300a82d56eed464276576f65f4d58": [
+      "100644",
+      "blob",
+      "2eae73950323db4cddaf9b263bd5eeee0ca13573"
+    ],
+    "88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf": [
+      "100644",
+      "blob",
+      "2eae73950323db4cddaf9b263bd5eeee0ca13573"
+    ],
+    "bc997e7c00e50e3d59b97987950bfbf6cc442182": [
+      "100644",
+      "blob",
+      "11092a208b3248690e1d1fd723c2d66c8f269b90"
+    ]
+  },
+  "asset_count": 34,
+  "asset_term_hits": [],
+  "label_hits": {
+    "LINK_DOWN then LINK_UP / back to defaults": [],
+    "LINK_DOWN / restore defaults, declared again on the next LINK_UP": [
+      "docs/architecture/10_srp_engine.md"
+    ]
+  }
+}

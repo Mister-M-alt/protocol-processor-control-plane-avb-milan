@@ -1,0 +1,11 @@
+# cwd: $CANDIDATE
+# HEAD: 8452f564294300a82d56eed464276576f65f4d58  tree: ec259f379560863e6ea49c6043353f0c11fe714d
+# porcelain before: []
+# date: 2026-09-22T10:17:31+02:00
+# command: make -j1 check
+lint: 41 mermaid + 18 wavedrom blocks checked, OK
+wavedrom: 18 blocks checked, OK
+links: 807 checked, OK
+matrix: 115 REQ rows, 17 GAP findings, OK
+matrix: OK (86 rows, 0 untested)
+# exit: 0  elapsed_s: 28

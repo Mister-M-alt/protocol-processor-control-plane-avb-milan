@@ -1,0 +1,14 @@
+{
+  "utc": "2026-09-22T11:25:47.310779+00:00",
+  "head": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+  "tree": "bd67eaac225513f84ecf3a228cf58a818e67b4da",
+  "tracked_files_checked_directly": 222,
+  "executable_files": 10,
+  "all_physical_blobs_and_modes_match_head": true,
+  "index_equals_head_and_initial": true,
+  "index_listing_sha256": "7cc6365761eb3e4b3dc4a5426f4af88f58fd67949189b575f70a77872c300da9",
+  "detached_and_clean": true,
+  "no_untracked_files": true,
+  "no_replace_refs": true,
+  "candidate_agents_or_contributing": []
+}

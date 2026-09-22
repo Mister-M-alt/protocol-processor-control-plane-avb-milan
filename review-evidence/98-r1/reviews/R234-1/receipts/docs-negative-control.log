@@ -1,0 +1,7 @@
+MERMAID FAIL: mmd-docs_architecture_10_srp_engine_md-2.txt
+    
+    Error: Parse error on line 5:
+    ...NGE    ADOPTED --> --> DEFAULTS: LINK_D
+    ----------------------^
+lint: 41 mermaid + 18 wavedrom blocks checked, FAILURES
+make: *** [Makefile:31: lint] Error 1

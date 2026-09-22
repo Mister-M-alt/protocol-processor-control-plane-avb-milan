@@ -1,0 +1,20 @@
+# HEAD: 88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf  tree: 1a65be1c93e51c2ad94e467abc2452a047047bdc  porcelain: []
+# date: 2026-09-22T10:22:01+02:00
+$ make -j1 lint
+lint: 41 mermaid + 18 wavedrom blocks checked, OK
+# exit: 0
+$ make -j1 wavedrom-check
+wavedrom: 18 blocks checked, OK
+# exit: 0
+$ make -j1 links
+links: 807 checked, OK
+# exit: 0
+$ make -j1 matrix
+matrix: 115 REQ rows, 17 GAP findings, OK
+# exit: 0
+$ make -j1 modmatrix
+matrix: OK (86 rows, 0 untested)
+# exit: 0
+$ make -j1 stale
+# exit: 0
+# porcelain after: []

@@ -1,0 +1,37 @@
+[
+  {
+    "file": "manager/postmerge/hosted-main.log",
+    "sha256": "f0709eb7adb17b5392afe4a57ed22fc4beaa008e64a462f199215c101cc0544e",
+    "manifest_match": true
+  },
+  {
+    "file": "reviews/R223-1/receipts/02-head-pp_top-both-builds.log",
+    "sha256": "70a5d334deae51dba27f189e59abd66810dd600d8d0317f21654068b0cb83272",
+    "manifest_match": true,
+    "sha256sums_match": true
+  },
+  {
+    "file": "reviews/R223-1/receipts/mutations/R36_child_revert_literal/mutation.diff",
+    "sha256": "0873d66e7f62b376031b87c7b15b92ade83c0912adb87d1d976ca1f550f75b62",
+    "manifest_match": true,
+    "sha256sums_match": true
+  },
+  {
+    "file": "reviews/R223-1/receipts/mutations/R36_child_revert_literal/run_fixture.log",
+    "sha256": "e69e72bf2b98c4e1819d516b7722b433ea719f8f1a40b57b9929a4787fe66cbd",
+    "manifest_match": true,
+    "sha256sums_match": true
+  },
+  {
+    "file": "reviews/R223-1/receipts/mutations/R37_child_linkup_decl_literal/mutation.diff",
+    "sha256": "7cea16f87580ff5d0728f3b90d1a2db1b30997bcca6a2e8d297a6e5f5c47419b",
+    "manifest_match": true,
+    "sha256sums_match": true
+  },
+  {
+    "file": "reviews/R223-1/receipts/mutations/R37_child_linkup_decl_literal/run_fixture.log",
+    "sha256": "fd62a21bc1782df73e2813511b0e2fc21149f21452ac8da1574bd7c066d87253",
+    "manifest_match": true,
+    "sha256sums_match": true
+  }
+]

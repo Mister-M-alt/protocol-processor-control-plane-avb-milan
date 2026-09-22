@@ -1,0 +1,1206 @@
+portability	Set up job	﻿2026-09-22T06:23:12.9517134Z Current runner version: '2.337.0'
+portability	Set up job	2026-09-22T06:23:12.9545885Z ##[group]Runner Image Provisioner
+portability	Set up job	2026-09-22T06:23:12.9546789Z Hosted Compute Agent
+portability	Set up job	2026-09-22T06:23:12.9547483Z Version: 20260828.587
+portability	Set up job	2026-09-22T06:23:12.9548482Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+portability	Set up job	2026-09-22T06:23:12.9549303Z Build Date: 2026-08-28T16:44:25Z
+portability	Set up job	2026-09-22T06:23:12.9550062Z Worker ID: {edf799dd-65c6-4c1f-af9a-bdef39c79289}
+portability	Set up job	2026-09-22T06:23:12.9550826Z Azure Region: northcentralus
+portability	Set up job	2026-09-22T06:23:12.9551502Z ##[endgroup]
+portability	Set up job	2026-09-22T06:23:12.9553046Z ##[group]Operating System
+portability	Set up job	2026-09-22T06:23:12.9553804Z Ubuntu
+portability	Set up job	2026-09-22T06:23:12.9554333Z 24.04.5
+portability	Set up job	2026-09-22T06:23:12.9554867Z LTS
+portability	Set up job	2026-09-22T06:23:12.9555432Z ##[endgroup]
+portability	Set up job	2026-09-22T06:23:12.9555973Z ##[group]Runner Image
+portability	Set up job	2026-09-22T06:23:12.9556668Z Image: ubuntu-24.04
+portability	Set up job	2026-09-22T06:23:12.9557249Z Version: 20260907.300.1
+portability	Set up job	2026-09-22T06:23:12.9558780Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+portability	Set up job	2026-09-22T06:23:12.9560688Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+portability	Set up job	2026-09-22T06:23:12.9561755Z ##[endgroup]
+portability	Set up job	2026-09-22T06:23:12.9562971Z ##[group]GITHUB_TOKEN Permissions
+portability	Set up job	2026-09-22T06:23:12.9565788Z Contents: read
+portability	Set up job	2026-09-22T06:23:12.9566473Z Metadata: read
+portability	Set up job	2026-09-22T06:23:12.9567036Z Packages: read
+portability	Set up job	2026-09-22T06:23:12.9567652Z ##[endgroup]
+portability	Set up job	2026-09-22T06:23:12.9570416Z Secret source: Actions
+portability	Set up job	2026-09-22T06:23:12.9571530Z Cache mode: write
+portability	Set up job	2026-09-22T06:23:12.9572558Z Prepare workflow directory
+portability	Set up job	2026-09-22T06:23:13.0108862Z Prepare all required actions
+portability	Set up job	2026-09-22T06:23:13.0181961Z Getting action download info
+portability	Set up job	2026-09-22T06:23:13.2511446Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+portability	Set up job	2026-09-22T06:23:13.4425252Z Complete job name: portability
+portability	Run actions/checkout@v4	﻿2026-09-22T06:23:13.5299822Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5309399Z ##[group]Run actions/checkout@v4
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5310200Z with:
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5310862Z   repository: Mister-M-alt/protocol-processor-control-plane-avb-milan
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5315210Z   token: ***
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5315653Z   ssh-strict: true
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5316102Z   ssh-user: git
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5316675Z   persist-credentials: true
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5317171Z   clean: true
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5317624Z   sparse-checkout-cone-mode: true
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5318339Z   fetch-depth: 1
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5318789Z   fetch-tags: false
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5319244Z   show-progress: true
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5319706Z   lfs: false
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5320182Z   submodules: false
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5320643Z   set-safe-directory: true
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5321165Z   allow-unsafe-pr-checkout: false
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5321968Z env:
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5322402Z   VERILATOR_VERSION: v5.050
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.5322894Z ##[endgroup]
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6385983Z Syncing repository: Mister-M-alt/protocol-processor-control-plane-avb-milan
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6389465Z ##[group]Getting Git version info
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6391380Z Working directory is '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan'
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6393916Z [command]/usr/bin/git version
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6452649Z git version 2.55.0
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6483221Z ##[endgroup]
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6499471Z Temporarily overriding HOME='/home/runner/work/_temp/0e3176a8-c390-4a3a-99e7-f842ec5e977b' before making global git config changes
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6504096Z Adding repository directory to the temporary git global config as a safe directory
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6507227Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6565651Z Deleting the contents of '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan'
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6585868Z ##[group]Initializing the repository
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6588208Z [command]/usr/bin/git init /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6677343Z hint: Using 'master' as the name for the initial branch. This default branch name
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6683373Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6685349Z hint: to use in all of your new repositories, which will suppress this warning,
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6686889Z hint: call:
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6688253Z hint:
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6689272Z hint: 	git config --global init.defaultBranch <name>
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6690442Z hint:
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6691471Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6693164Z hint: 'development'. The just-created branch can be renamed via this command:
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6694413Z hint:
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6695108Z hint: 	git branch -m <name>
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6695943Z hint:
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6696820Z hint: Disable this message with "git config set advice.defaultBranchName false"
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6698649Z Initialized empty Git repository in /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan/.git/
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6703959Z [command]/usr/bin/git remote add origin https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6754227Z ##[endgroup]
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6755556Z ##[group]Disabling automatic garbage collection
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6759400Z [command]/usr/bin/git config --local gc.auto 0
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6794274Z ##[endgroup]
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6795552Z ##[group]Setting up auth
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6802593Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.6837426Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.7239336Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.7282667Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.7521207Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.7561468Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.7797706Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.7843805Z ##[endgroup]
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.7844739Z ##[group]Fetching the repository
+portability	Run actions/checkout@v4	2026-09-22T06:23:13.7854781Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +8452f564294300a82d56eed464276576f65f4d58:refs/remotes/origin/main
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.4437343Z From https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.4440644Z  * [new ref]         8452f564294300a82d56eed464276576f65f4d58 -> origin/main
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.4445042Z ##[endgroup]
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.4446888Z ##[group]Determining the checkout info
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.4449327Z ##[endgroup]
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.4459267Z [command]/usr/bin/git sparse-checkout disable
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.4505449Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.4541778Z ##[group]Checking out the ref
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.4546252Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.5034462Z Switched to a new branch 'main'
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.5041292Z branch 'main' set up to track 'origin/main'.
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.5048207Z ##[endgroup]
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.5101865Z [command]/usr/bin/git log -1 --format=%H
+portability	Run actions/checkout@v4	2026-09-22T06:23:14.5132624Z 8452f564294300a82d56eed464276576f65f4d58
+portability	Install yosys + sv2v	﻿2026-09-22T06:23:14.5401316Z ##[group]Run sudo apt-get update && sudo apt-get install -y yosys
+portability	Install yosys + sv2v	2026-09-22T06:23:14.5403532Z ^[[36;1msudo apt-get update && sudo apt-get install -y yosys^[[0m
+portability	Install yosys + sv2v	2026-09-22T06:23:14.5405926Z ^[[36;1mcurl -sL https://github.com/zachjs/sv2v/releases/latest/download/sv2v-Linux.zip \^[[0m
+portability	Install yosys + sv2v	2026-09-22T06:23:14.5408454Z ^[[36;1m  -o /tmp/sv2v.zip && sudo apt-get install -y unzip^[[0m
+portability	Install yosys + sv2v	2026-09-22T06:23:14.5410119Z ^[[36;1munzip -o /tmp/sv2v.zip -d /tmp/sv2v^[[0m
+portability	Install yosys + sv2v	2026-09-22T06:23:14.5411687Z ^[[36;1msudo install /tmp/sv2v/*/sv2v /usr/local/bin/^[[0m
+portability	Install yosys + sv2v	2026-09-22T06:23:14.5454897Z shell: /usr/bin/bash -e {0}
+portability	Install yosys + sv2v	2026-09-22T06:23:14.5456139Z env:
+portability	Install yosys + sv2v	2026-09-22T06:23:14.5457138Z   VERILATOR_VERSION: v5.050
+portability	Install yosys + sv2v	2026-09-22T06:23:14.5458576Z ##[endgroup]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.6480389Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.6722305Z Get:6 https://packages.microsoft.com/ubuntu/24.04/prod noble InRelease [3600 B]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.7564657Z Get:7 https://packages.microsoft.com/ubuntu/24.04/prod noble/main arm64 Packages [430 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.7693430Z Hit:2 http://azure.archive.ubuntu.com/ubuntu noble InRelease
+portability	Install yosys + sv2v	2026-09-22T06:23:14.7740223Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.7748595Z Get:8 https://packages.microsoft.com/ubuntu/24.04/prod noble/main amd64 Packages [480 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.7792676Z Get:4 http://azure.archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.7825369Z Get:5 http://azure.archive.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.8163018Z Get:9 https://dl.google.com/linux/chrome-stable/deb stable InRelease [2548 B]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.8898121Z Get:10 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages [1284 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.8970678Z Get:11 http://azure.archive.ubuntu.com/ubuntu noble-updates/main Translation-en [295 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9001413Z Get:12 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Components [181 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9018681Z Get:13 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [1697 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9140768Z Get:14 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe Translation-en [340 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9154488Z Get:15 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Components [387 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9175672Z Get:16 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Packages [1596 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9273262Z Get:17 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted Translation-en [362 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9303441Z Get:18 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Packages [45.7 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9320446Z Get:19 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse Translation-en [13.1 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9746950Z Get:20 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Components [940 B]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9769507Z Get:21 http://azure.archive.ubuntu.com/ubuntu noble-backports/main amd64 Packages [40.6 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9783881Z Get:22 http://azure.archive.ubuntu.com/ubuntu noble-backports/main amd64 Components [5744 B]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9795885Z Get:23 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Packages [31.0 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9810324Z Get:24 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe Translation-en [18.6 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:14.9824653Z Get:25 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Components [12.6 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:15.0160897Z Get:26 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Packages [1028 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:15.0208238Z Get:27 http://azure.archive.ubuntu.com/ubuntu noble-security/main Translation-en [216 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:15.0235829Z Get:28 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Components [46.4 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:15.0247596Z Get:29 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Packages [1217 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:15.0314117Z Get:30 http://azure.archive.ubuntu.com/ubuntu noble-security/universe Translation-en [244 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:15.0335859Z Get:31 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Components [76.3 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:15.0358719Z Get:32 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [1496 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:15.0458102Z Get:33 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted Translation-en [343 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:15.0921528Z Get:34 http://azure.archive.ubuntu.com/ubuntu noble-security/multiverse Translation-en [11.3 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:15.0987610Z Get:35 https://dl.google.com/linux/chrome-stable/deb stable/main amd64 Packages [1411 B]
+portability	Install yosys + sv2v	2026-09-22T06:23:19.4517781Z Fetched 12.3 MB in 1s (8761 kB/s)
+portability	Install yosys + sv2v	2026-09-22T06:23:20.3619326Z Reading package lists...
+portability	Install yosys + sv2v	2026-09-22T06:23:20.3936335Z Reading package lists...
+portability	Install yosys + sv2v	2026-09-22T06:23:20.6161647Z Building dependency tree...
+portability	Install yosys + sv2v	2026-09-22T06:23:20.6168488Z Reading state information...
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8002087Z The following additional packages will be installed:
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8003200Z   fonts-liberation2 gir1.2-atk-1.0 gir1.2-freedesktop gir1.2-gdkpixbuf-2.0
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8004568Z   gir1.2-gtk-3.0 gir1.2-harfbuzz-0.0 gir1.2-pango-1.0 graphviz libann0
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8005741Z   libblas3 libcdt5 libcgraph6 libgts-0.7-5t64 libgts-bin libgvc6 libgvpr2
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8007427Z   libharfbuzz-gobject0 liblab-gamut1 liblapack3 libpangoxft-1.0-0 libpathplan4
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8009078Z   python3-cairo python3-gi-cairo python3-numpy xdot yosys-abc
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8015797Z Suggested packages:
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8016356Z   gsfonts graphviz-doc python3-pytest
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8306471Z The following NEW packages will be installed:
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8307679Z   fonts-liberation2 gir1.2-atk-1.0 gir1.2-freedesktop gir1.2-gdkpixbuf-2.0
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8309028Z   gir1.2-gtk-3.0 gir1.2-harfbuzz-0.0 gir1.2-pango-1.0 graphviz libann0
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8310182Z   libblas3 libcdt5 libcgraph6 libgts-0.7-5t64 libgts-bin libgvc6 libgvpr2
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8339119Z   libharfbuzz-gobject0 liblab-gamut1 liblapack3 libpangoxft-1.0-0 libpathplan4
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8340274Z   python3-cairo python3-gi-cairo python3-numpy xdot yosys yosys-abc
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8561264Z 0 upgraded, 27 newly installed, 0 to remove and 87 not upgraded.
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8561803Z Need to get 20.7 MB of archives.
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8562182Z After this operation, 70.6 MB of additional disk space will be used.
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8562647Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+portability	Install yosys + sv2v	2026-09-22T06:23:20.8969667Z Get:2 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 fonts-liberation2 all 1:2.1.5-3 [3418 B]
+portability	Install yosys + sv2v	2026-09-22T06:23:20.9195688Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 gir1.2-atk-1.0 amd64 2.52.0-1build1 [23.1 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:20.9432785Z Get:4 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 gir1.2-freedesktop amd64 1.80.1-1 [49.7 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:20.9662934Z Get:5 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 gir1.2-gdkpixbuf-2.0 amd64 2.42.10+dfsg-3ubuntu3.3 [9482 B]
+portability	Install yosys + sv2v	2026-09-22T06:23:20.9885077Z Get:6 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libharfbuzz-gobject0 amd64 8.3.0-2build2 [34.3 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.0109442Z Get:7 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 gir1.2-harfbuzz-0.0 amd64 8.3.0-2build2 [44.5 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.0331272Z Get:8 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libpangoxft-1.0-0 amd64 1.52.1+ds-1build1 [20.3 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.0554398Z Get:9 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 gir1.2-pango-1.0 amd64 1.52.1+ds-1build1 [34.8 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.0773939Z Get:10 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 gir1.2-gtk-3.0 amd64 3.24.41-4ubuntu1.3 [245 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.1012892Z Get:11 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 libann0 amd64 1.1.2+doc-9build1 [25.5 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.1233401Z Get:12 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 libcdt5 amd64 2.42.2-9ubuntu0.1 [21.6 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.1452775Z Get:13 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 libcgraph6 amd64 2.42.2-9ubuntu0.1 [44.6 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.1675268Z Get:14 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 libgts-0.7-5t64 amd64 0.7.6+darcs121130-5.2build1 [161 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.1906546Z Get:15 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 libpathplan4 amd64 2.42.2-9ubuntu0.1 [24.0 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.2129781Z Get:16 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 libgvc6 amd64 2.42.2-9ubuntu0.1 [716 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.2405908Z Get:17 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 libgvpr2 amd64 2.42.2-9ubuntu0.1 [187 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.2640640Z Get:18 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 liblab-gamut1 amd64 2.42.2-9ubuntu0.1 [1886 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.3026084Z Get:19 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 graphviz amd64 2.42.2-9ubuntu0.1 [642 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.3821494Z Get:20 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libblas3 amd64 3.12.0-3build1.1 [238 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.4056302Z Get:21 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 libgts-bin amd64 0.7.6+darcs121130-5.2build1 [44.0 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.4276356Z Get:22 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 liblapack3 amd64 3.12.0-3build1.1 [2646 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.4865134Z Get:23 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 python3-cairo amd64 1.25.1-2build2 [119 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.5090961Z Get:24 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 python3-gi-cairo amd64 3.48.2-1 [8132 B]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.5309750Z Get:25 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 python3-numpy amd64 1:1.26.4+ds-6ubuntu1 [4437 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.6192731Z Get:26 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 xdot all 1.3-1 [30.3 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.6413572Z Get:27 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 yosys-abc amd64 0.33-5build2 [5829 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:21.7386368Z Get:28 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 yosys amd64 0.33-5build2 [3222 kB]
+portability	Install yosys + sv2v	2026-09-22T06:23:22.0537535Z Fetched 20.7 MB in 1s (22.3 MB/s)
+portability	Install yosys + sv2v	2026-09-22T06:23:22.0756680Z Selecting previously unselected package fonts-liberation2.
+portability	Install yosys + sv2v	2026-09-22T06:23:22.1006686Z (Reading database ... 
+portability	Install yosys + sv2v	2026-09-22T06:23:22.1007276Z (Reading database ... 5%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.1007572Z (Reading database ... 10%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.1008090Z (Reading database ... 15%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.1008476Z (Reading database ... 20%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.1008717Z (Reading database ... 25%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.1008949Z (Reading database ... 30%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.1009180Z (Reading database ... 35%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.1009412Z (Reading database ... 40%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.1009680Z (Reading database ... 45%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.1009919Z (Reading database ... 50%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.1058618Z (Reading database ... 55%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.2548039Z (Reading database ... 60%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.4058008Z (Reading database ... 65%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.5929040Z (Reading database ... 70%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.7495237Z (Reading database ... 75%
+portability	Install yosys + sv2v	2026-09-22T06:23:22.9149910Z (Reading database ... 80%
+portability	Install yosys + sv2v	2026-09-22T06:23:23.1019623Z (Reading database ... 85%
+portability	Install yosys + sv2v	2026-09-22T06:23:23.2935647Z (Reading database ... 90%
+portability	Install yosys + sv2v	2026-09-22T06:23:23.4632568Z (Reading database ... 95%
+portability	Install yosys + sv2v	2026-09-22T06:23:23.4633378Z (Reading database ... 100%
+portability	Install yosys + sv2v	2026-09-22T06:23:23.4633900Z (Reading database ... 201818 files and directories currently installed.)
+portability	Install yosys + sv2v	2026-09-22T06:23:23.4676391Z Preparing to unpack .../00-fonts-liberation2_1%3a2.1.5-3_all.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.4708253Z Unpacking fonts-liberation2 (1:2.1.5-3) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.4930112Z Selecting previously unselected package gir1.2-atk-1.0:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:23.5055631Z Preparing to unpack .../01-gir1.2-atk-1.0_2.52.0-1build1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.5065575Z Unpacking gir1.2-atk-1.0:amd64 (2.52.0-1build1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.5287206Z Selecting previously unselected package gir1.2-freedesktop:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:23.5416084Z Preparing to unpack .../02-gir1.2-freedesktop_1.80.1-1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.5426783Z Unpacking gir1.2-freedesktop:amd64 (1.80.1-1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.5659287Z Selecting previously unselected package gir1.2-gdkpixbuf-2.0:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:23.5786993Z Preparing to unpack .../03-gir1.2-gdkpixbuf-2.0_2.42.10+dfsg-3ubuntu3.3_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.5799412Z Unpacking gir1.2-gdkpixbuf-2.0:amd64 (2.42.10+dfsg-3ubuntu3.3) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.6034748Z Selecting previously unselected package libharfbuzz-gobject0:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:23.6161712Z Preparing to unpack .../04-libharfbuzz-gobject0_8.3.0-2build2_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.6189924Z Unpacking libharfbuzz-gobject0:amd64 (8.3.0-2build2) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.6411546Z Selecting previously unselected package gir1.2-harfbuzz-0.0:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:23.6538561Z Preparing to unpack .../05-gir1.2-harfbuzz-0.0_8.3.0-2build2_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.6550181Z Unpacking gir1.2-harfbuzz-0.0:amd64 (8.3.0-2build2) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.6802330Z Selecting previously unselected package libpangoxft-1.0-0:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:23.6931626Z Preparing to unpack .../06-libpangoxft-1.0-0_1.52.1+ds-1build1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.6943773Z Unpacking libpangoxft-1.0-0:amd64 (1.52.1+ds-1build1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.7159889Z Selecting previously unselected package gir1.2-pango-1.0:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:23.7290665Z Preparing to unpack .../07-gir1.2-pango-1.0_1.52.1+ds-1build1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.7302868Z Unpacking gir1.2-pango-1.0:amd64 (1.52.1+ds-1build1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.7529678Z Selecting previously unselected package gir1.2-gtk-3.0:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:23.7656027Z Preparing to unpack .../08-gir1.2-gtk-3.0_3.24.41-4ubuntu1.3_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.7668601Z Unpacking gir1.2-gtk-3.0:amd64 (3.24.41-4ubuntu1.3) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.7975636Z Selecting previously unselected package libann0.
+portability	Install yosys + sv2v	2026-09-22T06:23:23.8104480Z Preparing to unpack .../09-libann0_1.1.2+doc-9build1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.8115867Z Unpacking libann0 (1.1.2+doc-9build1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.8334781Z Selecting previously unselected package libcdt5:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:23.8464444Z Preparing to unpack .../10-libcdt5_2.42.2-9ubuntu0.1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.8474910Z Unpacking libcdt5:amd64 (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.8702774Z Selecting previously unselected package libcgraph6:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:23.8831958Z Preparing to unpack .../11-libcgraph6_2.42.2-9ubuntu0.1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.8843055Z Unpacking libcgraph6:amd64 (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.9105230Z Selecting previously unselected package libgts-0.7-5t64:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:23.9235424Z Preparing to unpack .../12-libgts-0.7-5t64_0.7.6+darcs121130-5.2build1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.9245259Z Unpacking libgts-0.7-5t64:amd64 (0.7.6+darcs121130-5.2build1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.9500498Z Selecting previously unselected package libpathplan4:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:23.9629696Z Preparing to unpack .../13-libpathplan4_2.42.2-9ubuntu0.1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.9640298Z Unpacking libpathplan4:amd64 (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:23.9878257Z Selecting previously unselected package libgvc6.
+portability	Install yosys + sv2v	2026-09-22T06:23:24.0008600Z Preparing to unpack .../14-libgvc6_2.42.2-9ubuntu0.1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.0020153Z Unpacking libgvc6 (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.0377700Z Selecting previously unselected package libgvpr2:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:24.0506414Z Preparing to unpack .../15-libgvpr2_2.42.2-9ubuntu0.1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.0518503Z Unpacking libgvpr2:amd64 (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.0771172Z Selecting previously unselected package liblab-gamut1:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:24.0900934Z Preparing to unpack .../16-liblab-gamut1_2.42.2-9ubuntu0.1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.0912136Z Unpacking liblab-gamut1:amd64 (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.1221262Z Selecting previously unselected package graphviz.
+portability	Install yosys + sv2v	2026-09-22T06:23:24.1349387Z Preparing to unpack .../17-graphviz_2.42.2-9ubuntu0.1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.1363380Z Unpacking graphviz (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.1920935Z Selecting previously unselected package libblas3:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:24.2052798Z Preparing to unpack .../18-libblas3_3.12.0-3build1.1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.2090358Z Unpacking libblas3:amd64 (3.12.0-3build1.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.2337286Z Selecting previously unselected package libgts-bin.
+portability	Install yosys + sv2v	2026-09-22T06:23:24.2469128Z Preparing to unpack .../19-libgts-bin_0.7.6+darcs121130-5.2build1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.2480518Z Unpacking libgts-bin (0.7.6+darcs121130-5.2build1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.2760844Z Selecting previously unselected package liblapack3:amd64.
+portability	Install yosys + sv2v	2026-09-22T06:23:24.2886290Z Preparing to unpack .../20-liblapack3_3.12.0-3build1.1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.2921141Z Unpacking liblapack3:amd64 (3.12.0-3build1.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.3426605Z Selecting previously unselected package python3-cairo.
+portability	Install yosys + sv2v	2026-09-22T06:23:24.3575456Z Preparing to unpack .../21-python3-cairo_1.25.1-2build2_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.3586473Z Unpacking python3-cairo (1.25.1-2build2) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.3866492Z Selecting previously unselected package python3-gi-cairo.
+portability	Install yosys + sv2v	2026-09-22T06:23:24.3997459Z Preparing to unpack .../22-python3-gi-cairo_3.48.2-1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.4007500Z Unpacking python3-gi-cairo (3.48.2-1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.4238948Z Selecting previously unselected package python3-numpy.
+portability	Install yosys + sv2v	2026-09-22T06:23:24.4372752Z Preparing to unpack .../23-python3-numpy_1%3a1.26.4+ds-6ubuntu1_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.4384361Z Unpacking python3-numpy (1:1.26.4+ds-6ubuntu1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.6457440Z Selecting previously unselected package xdot.
+portability	Install yosys + sv2v	2026-09-22T06:23:24.6592141Z Preparing to unpack .../24-xdot_1.3-1_all.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.6602413Z Unpacking xdot (1.3-1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.6864021Z Selecting previously unselected package yosys-abc.
+portability	Install yosys + sv2v	2026-09-22T06:23:24.6995921Z Preparing to unpack .../25-yosys-abc_0.33-5build2_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.7008622Z Unpacking yosys-abc (0.33-5build2) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.7932099Z Selecting previously unselected package yosys.
+portability	Install yosys + sv2v	2026-09-22T06:23:24.8062788Z Preparing to unpack .../26-yosys_0.33-5build2_amd64.deb ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.8073549Z Unpacking yosys (0.33-5build2) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.9259944Z Setting up gir1.2-freedesktop:amd64 (1.80.1-1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:24.9290896Z Setting up python3-cairo (1.25.1-2build2) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0336343Z Setting up libpangoxft-1.0-0:amd64 (1.52.1+ds-1build1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0361568Z Setting up gir1.2-gdkpixbuf-2.0:amd64 (2.42.10+dfsg-3ubuntu3.3) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0385666Z Setting up gir1.2-atk-1.0:amd64 (2.52.0-1build1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0412640Z Setting up liblab-gamut1:amd64 (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0438932Z Setting up yosys-abc (0.33-5build2) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0464002Z Setting up libharfbuzz-gobject0:amd64 (8.3.0-2build2) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0492563Z Setting up gir1.2-harfbuzz-0.0:amd64 (8.3.0-2build2) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0518634Z Setting up gir1.2-pango-1.0:amd64 (1.52.1+ds-1build1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0542663Z Setting up libblas3:amd64 (3.12.0-3build1.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0626761Z update-alternatives: using /usr/lib/x86_64-linux-gnu/blas/libblas.so.3 to provide /usr/lib/x86_64-linux-gnu/libblas.so.3 (libblas.so.3-x86_64-linux-gnu) in auto mode
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0647632Z Setting up fonts-liberation2 (1:2.1.5-3) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0678289Z Setting up libpathplan4:amd64 (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0698163Z Setting up libann0 (1.1.2+doc-9build1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0719190Z Setting up libgts-0.7-5t64:amd64 (0.7.6+darcs121130-5.2build1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0738515Z Setting up libcdt5:amd64 (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0759867Z Setting up libcgraph6:amd64 (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0780698Z Setting up python3-gi-cairo (3.48.2-1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0801679Z Setting up libgts-bin (0.7.6+darcs121130-5.2build1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0822238Z Setting up liblapack3:amd64 (3.12.0-3build1.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0881968Z update-alternatives: using /usr/lib/x86_64-linux-gnu/lapack/liblapack.so.3 to provide /usr/lib/x86_64-linux-gnu/liblapack.so.3 (liblapack.so.3-x86_64-linux-gnu) in auto mode
+portability	Install yosys + sv2v	2026-09-22T06:23:25.0897662Z Setting up yosys (0.33-5build2) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.2049693Z Setting up gir1.2-gtk-3.0:amd64 (3.24.41-4ubuntu1.3) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.2070127Z Setting up libgvc6 (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:25.2325951Z Setting up python3-numpy (1:1.26.4+ds-6ubuntu1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:26.7160480Z Setting up libgvpr2:amd64 (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:26.7182415Z Setting up graphviz (2.42.2-9ubuntu0.1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:26.7218820Z Setting up xdot (1.3-1) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:26.8585395Z Processing triggers for man-db (2.12.0-4build2) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:26.8609471Z Not building database; man-db/auto-update is not 'true'.
+portability	Install yosys + sv2v	2026-09-22T06:23:26.8623670Z Processing triggers for libc-bin (2.39-0ubuntu8.8) ...
+portability	Install yosys + sv2v	2026-09-22T06:23:27.5266262Z 
+portability	Install yosys + sv2v	2026-09-22T06:23:27.5266910Z Running kernel seems to be up-to-date.
+portability	Install yosys + sv2v	2026-09-22T06:23:27.5267290Z 
+portability	Install yosys + sv2v	2026-09-22T06:23:27.5267434Z No services need to be restarted.
+portability	Install yosys + sv2v	2026-09-22T06:23:27.5267666Z 
+portability	Install yosys + sv2v	2026-09-22T06:23:27.5269298Z No containers need to be restarted.
+portability	Install yosys + sv2v	2026-09-22T06:23:27.5269575Z 
+portability	Install yosys + sv2v	2026-09-22T06:23:27.5269746Z No user sessions are running outdated binaries.
+portability	Install yosys + sv2v	2026-09-22T06:23:27.5270013Z 
+portability	Install yosys + sv2v	2026-09-22T06:23:27.5270270Z No VM guests are running outdated hypervisor (qemu) binaries on this host.
+portability	Install yosys + sv2v	2026-09-22T06:23:29.0127523Z Reading package lists...
+portability	Install yosys + sv2v	2026-09-22T06:23:29.2304769Z Building dependency tree...
+portability	Install yosys + sv2v	2026-09-22T06:23:29.2311898Z Reading state information...
+portability	Install yosys + sv2v	2026-09-22T06:23:29.4306192Z unzip is already the newest version (6.0-28ubuntu4.1).
+portability	Install yosys + sv2v	2026-09-22T06:23:29.4306763Z 0 upgraded, 0 newly installed, 0 to remove and 87 not upgraded.
+portability	Install yosys + sv2v	2026-09-22T06:23:29.4364169Z Archive:  /tmp/sv2v.zip
+portability	Install yosys + sv2v	2026-09-22T06:23:29.4364947Z    creating: /tmp/sv2v/sv2v-Linux/
+portability	Install yosys + sv2v	2026-09-22T06:23:29.4367145Z   inflating: /tmp/sv2v/sv2v-Linux/CHANGELOG.md  
+portability	Install yosys + sv2v	2026-09-22T06:23:29.4367766Z   inflating: /tmp/sv2v/sv2v-Linux/LICENSE  
+portability	Install yosys + sv2v	2026-09-22T06:23:29.4969258Z   inflating: /tmp/sv2v/sv2v-Linux/sv2v  
+portability	Install yosys + sv2v	2026-09-22T06:23:29.4972771Z   inflating: /tmp/sv2v/sv2v-Linux/NOTICE  
+portability	Install yosys + sv2v	2026-09-22T06:23:29.4973915Z   inflating: /tmp/sv2v/sv2v-Linux/README.md  
+portability	Elaborate every top off-vendor	﻿2026-09-22T06:23:29.5140763Z ##[group]Run ./syn/yosys/run.sh
+portability	Elaborate every top off-vendor	2026-09-22T06:23:29.5141112Z ^[[36;1m./syn/yosys/run.sh^[[0m
+portability	Elaborate every top off-vendor	2026-09-22T06:23:29.5179497Z shell: /usr/bin/bash -e {0}
+portability	Elaborate every top off-vendor	2026-09-22T06:23:29.5179757Z env:
+portability	Elaborate every top off-vendor	2026-09-22T06:23:29.5179965Z   VERILATOR_VERSION: v5.050
+portability	Elaborate every top off-vendor	2026-09-22T06:23:29.5180201Z ##[endgroup]
+portability	Elaborate every top off-vendor	2026-09-22T06:23:33.3892246Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:23:33.3893361Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:23:33.9484949Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:23:33.9485851Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:23:34.1879378Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:23:34.6563418Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:23:34.6564817Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:23:34.6565845Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:23:35.0691557Z YOSYS OK  KL_aecp_ucpu
+portability	Elaborate every top off-vendor	2026-09-22T06:23:35.4768437Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:23:35.4769785Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:23:36.0289387Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:23:36.0290205Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:23:36.2677020Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:23:36.7340957Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:23:36.7342011Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:23:36.7343087Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:23:37.2594558Z YOSYS OK  KL_aecp_desc_store
+portability	Elaborate every top off-vendor	2026-09-22T06:23:37.6662671Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:23:37.6663379Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:23:38.2120289Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:23:38.2121319Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:23:38.4533161Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:23:38.9230876Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:23:38.9231852Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:23:38.9232770Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:23:39.3594110Z YOSYS OK  KL_aecp_dyn_state
+portability	Elaborate every top off-vendor	2026-09-22T06:23:39.7719755Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:23:39.7720553Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:23:40.3244683Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:23:40.3245579Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:23:40.5871670Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:23:41.0967275Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:23:41.0968211Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:23:41.0968826Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:23:41.4575709Z YOSYS OK  KL_aecp_resp_buf
+portability	Elaborate every top off-vendor	2026-09-22T06:23:41.8633957Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:23:41.8634732Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:23:42.4094687Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:23:42.4095568Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:23:42.6542378Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:23:43.1242708Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:23:43.1243554Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:23:43.1244317Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:23:44.4355047Z YOSYS OK  KL_aecp_engine
+portability	Elaborate every top off-vendor	2026-09-22T06:23:44.8476668Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:23:44.8478436Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:23:45.3965268Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:23:45.3966191Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:23:45.6367674Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:23:46.1069248Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:23:46.1070013Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:23:46.1070696Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:23:47.6698738Z YOSYS OK  KL_aecp_notify
+portability	Elaborate every top off-vendor	2026-09-22T06:23:48.0813645Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:23:48.0814557Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:23:48.6338262Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:23:48.6338965Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:23:48.8765900Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:23:49.3457225Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:23:49.3458314Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:23:49.3459066Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:23:49.6895364Z YOSYS OK  KL_aecp_ca_originator
+portability	Elaborate every top off-vendor	2026-09-22T06:23:50.0990368Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:23:50.0991276Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:23:50.6466282Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:23:50.6467004Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:23:50.8865261Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:23:51.3580341Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:23:51.3581306Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:23:51.3582278Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:23:51.7087239Z YOSYS OK  KL_pp_timer_service
+portability	Elaborate every top off-vendor	2026-09-22T06:23:52.1164004Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:23:52.1165008Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:23:52.6615895Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:23:52.6616790Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:23:52.9008503Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:23:53.3702443Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:23:53.3703882Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:23:53.3704820Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:23:53.7148249Z YOSYS OK  KL_pp_prng
+portability	Elaborate every top off-vendor	2026-09-22T06:23:54.1245909Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:23:54.1246712Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:23:54.6721783Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:23:54.6722634Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:23:54.9130054Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:23:55.3839878Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:23:55.3841309Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:23:55.3842241Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:23:55.7263780Z YOSYS OK  KL_pp_rx_slots
+portability	Elaborate every top off-vendor	2026-09-22T06:23:56.1339085Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:23:56.1339900Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:23:56.6810305Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:23:56.6811328Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:23:56.9212265Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:23:57.3919729Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:23:57.3920428Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:23:57.3921099Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:23:57.7640671Z YOSYS OK  KL_pp_tx_slots
+portability	Elaborate every top off-vendor	2026-09-22T06:23:58.1761719Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:23:58.1762648Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:23:58.7262565Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:23:58.7263575Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:23:58.9677447Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:23:59.4404973Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:23:59.4405679Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:23:59.4406335Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:23:59.7689333Z YOSYS OK  KL_pp_release_merge
+portability	Elaborate every top off-vendor	2026-09-22T06:24:00.1793996Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:00.1794847Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:00.7325570Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:00.7326563Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:00.9745735Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:01.4424226Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:01.4424988Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:01.4425689Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:02.0140290Z YOSYS OK  KL_pp_rx_validator
+portability	Elaborate every top off-vendor	2026-09-22T06:24:02.4234677Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:02.4236160Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:02.9762146Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:02.9763177Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:03.2175867Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:03.6892296Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:03.6893243Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:03.6894182Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:04.3158146Z YOSYS OK  KL_pp_normalizer
+portability	Elaborate every top off-vendor	2026-09-22T06:24:04.7208107Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:04.7209352Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:05.2623063Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:05.2624102Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:05.5001786Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:05.9685651Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:05.9686465Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:05.9687209Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:06.3421697Z YOSYS OK  KL_pp_dispatch
+portability	Elaborate every top off-vendor	2026-09-22T06:24:06.7501994Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:06.7502770Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:07.2999122Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:07.3000240Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:07.5396643Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:08.0079735Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:08.0080705Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:08.0081714Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:08.4210591Z YOSYS OK  KL_pp_scoreboard
+portability	Elaborate every top off-vendor	2026-09-22T06:24:08.8282975Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:08.8284232Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:09.3768908Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:09.3770111Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:09.6180406Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:10.0858143Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:10.0859343Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:10.0860458Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:10.4611570Z YOSYS OK  KL_pp_event_router
+portability	Elaborate every top off-vendor	2026-09-22T06:24:10.8707135Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:10.8708364Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:11.4209018Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:11.4210039Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:11.6606786Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:12.1299292Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:12.1300746Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:12.1301714Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:12.8594422Z YOSYS OK  KL_pp_originator
+portability	Elaborate every top off-vendor	2026-09-22T06:24:13.2727022Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:13.2728303Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:13.8196434Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:13.8197618Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:14.0585402Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:14.5250125Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:14.5251170Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:14.5252124Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:14.8687329Z YOSYS OK  KL_pp_tx_arbiter
+portability	Elaborate every top off-vendor	2026-09-22T06:24:15.2748663Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:15.2749695Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:15.8171974Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:15.8173009Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:16.0559283Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:16.5188760Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:16.5189762Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:16.5190691Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:16.8456102Z YOSYS OK  KL_pp_trace_ring
+portability	Elaborate every top off-vendor	2026-09-22T06:24:17.2536215Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:17.2537221Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:17.8009075Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:17.8009980Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:18.0411332Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:18.5055311Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:18.5056275Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:18.5057246Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:18.8290821Z YOSYS OK  KL_pp_side_port
+portability	Elaborate every top off-vendor	2026-09-22T06:24:19.2347150Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:19.2348329Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:19.7815256Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:19.7816134Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:20.0202888Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:20.4850247Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:20.4851169Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:20.4852034Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:20.8228448Z YOSYS OK  KL_pp_nvm_port
+portability	Elaborate every top off-vendor	2026-09-22T06:24:21.2342998Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:21.2344584Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:21.7905849Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:21.7906876Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:22.0346838Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:22.5111147Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:22.5112117Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:22.5113062Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:24.6919237Z YOSYS OK  KL_adp_engine
+portability	Elaborate every top off-vendor	2026-09-22T06:24:25.0992913Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:25.0994325Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:25.6437758Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:25.6439000Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:25.8831094Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:26.3489223Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:26.3490268Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:26.3491202Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:27.6222305Z YOSYS OK  KL_pp_acmp_listener
+portability	Elaborate every top off-vendor	2026-09-22T06:24:28.0288330Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:28.0289264Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:28.5739715Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:28.5740762Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:28.8163416Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:29.2839089Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:29.2839966Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:29.2840770Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:30.1772334Z YOSYS OK  KL_acmp_talker
+portability	Elaborate every top off-vendor	2026-09-22T06:24:30.5830791Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:30.5831797Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:31.1274998Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:31.1275873Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:31.3654613Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:31.8308164Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:31.8309151Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:31.8310132Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:32.3672613Z YOSYS OK  KL_pp_maap
+portability	Elaborate every top off-vendor	2026-09-22T06:24:32.7724655Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:32.7725666Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:33.3184912Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:33.3185795Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:33.5571527Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:34.0215952Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:34.0217098Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:34.0218193Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:34.4017447Z YOSYS OK  KL_srp_decoder
+portability	Elaborate every top off-vendor	2026-09-22T06:24:34.8055378Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:34.8056378Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:35.3524212Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:35.3525254Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:35.5895961Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:36.0540013Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:36.0541014Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:36.0541986Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:36.6557397Z YOSYS OK  KL_srp_encoder
+portability	Elaborate every top off-vendor	2026-09-22T06:24:37.0605806Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:37.0606810Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:37.6014466Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:37.6015474Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:37.8384370Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:38.3025954Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:38.3027008Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:38.3028177Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:38.6253284Z YOSYS OK  KL_srp_domain
+portability	Elaborate every top off-vendor	2026-09-22T06:24:39.0320309Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:39.0321553Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:39.5765009Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:39.5766012Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:39.8182382Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:40.2840171Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:40.2840922Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:40.2841663Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:40.6238966Z YOSYS OK  KL_srp_vlan
+portability	Elaborate every top off-vendor	2026-09-22T06:24:41.0335674Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:41.0336598Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:41.5815976Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:41.5817199Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:41.8204694Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:42.2903875Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:42.2904979Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:42.2905738Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:43.9225574Z YOSYS OK  KL_srp_talker_fsm
+portability	Elaborate every top off-vendor	2026-09-22T06:24:44.3318420Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:44.3319799Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:44.8811690Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:44.8812523Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:45.1231264Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:45.5908766Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:45.5909950Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:45.5911094Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:24:46.8659988Z YOSYS OK  KL_srp_listener_fsm
+portability	Elaborate every top off-vendor	2026-09-22T06:24:47.2773157Z Warning: Replacing memory \tpend_deadline_r with list of registers. See all.v:3452
+portability	Elaborate every top off-vendor	2026-09-22T06:24:47.2774281Z Warning: Replacing memory \adv_st_r with list of registers. See all.v:3450
+portability	Elaborate every top off-vendor	2026-09-22T06:24:47.8214216Z Warning: Replacing memory \lost_cnt_r with list of registers. See all.v:11228
+portability	Elaborate every top off-vendor	2026-09-22T06:24:47.8215061Z Warning: Replacing memory \payload_r with list of registers. See all.v:11227
+portability	Elaborate every top off-vendor	2026-09-22T06:24:48.0611737Z Warning: Replacing memory \age_r with list of registers. See all.v:13768
+portability	Elaborate every top off-vendor	2026-09-22T06:24:48.5264023Z Warning: Replacing memory \tf_cnt_r with list of registers. See all.v:17838
+portability	Elaborate every top off-vendor	2026-09-22T06:24:48.5264856Z Warning: Replacing memory \tf_q_r with list of registers. See all.v:17776
+portability	Elaborate every top off-vendor	2026-09-22T06:24:48.5265617Z Warning: Replacing memory \tf_wptr_r with list of registers. See all.v:17834, all.v:17771
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0308993Z Warning: Resizing cell port KL_aecp_engine.amap_stage_r.0.0.ADDRARDADDR from 17 bits to 16 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0310411Z Warning: Resizing cell port KL_aecp_engine.amap_stage_r.0.0.ADDRBWRADDR from 17 bits to 16 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0311531Z Warning: Resizing cell port KL_aecp_engine.u_store.line_r.0.0.ADDRARDADDR from 17 bits to 16 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0312543Z Warning: Resizing cell port KL_aecp_engine.u_store.line_r.0.0.ADDRBWRADDR from 17 bits to 16 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0313522Z Warning: Resizing cell port KL_aecp_engine.u_store.name_r.0.0.ADDRARDADDR from 17 bits to 16 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0314492Z Warning: Resizing cell port KL_aecp_engine.u_store.name_r.0.0.ADDRBWRADDR from 17 bits to 16 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0315415Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.0.DOADO from 64 bits to 32 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0316264Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.0.DOBDO from 64 bits to 32 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0317118Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.0.DOPADOP from 8 bits to 4 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0318222Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.0.DOPBDOP from 8 bits to 4 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0319102Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.1.DOADO from 64 bits to 32 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0320020Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.1.DOBDO from 64 bits to 32 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0320912Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.1.DOPADOP from 8 bits to 4 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0321803Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.1.DOPBDOP from 8 bits to 4 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0322618Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.2.DOADO from 64 bits to 32 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0323419Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.2.DOBDO from 64 bits to 32 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0324217Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.2.DOPADOP from 8 bits to 4 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.0325027Z Warning: Resizing cell port KL_aecp_engine.u_ucpu.rom_r.0.2.DOPBDOP from 8 bits to 4 bits.
+portability	Elaborate every top off-vendor	2026-09-22T06:25:31.3453126Z YOSYS XILINX OK  KL_aecp_engine
+portability	Post Run actions/checkout@v4	﻿2026-09-22T06:25:31.3608328Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.3609900Z Post job cleanup.
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.4471014Z [command]/usr/bin/git version
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.4517045Z git version 2.55.0
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.4556556Z Temporarily overriding HOME='/home/runner/work/_temp/874a181d-34b1-4cef-8ac3-34cab9ed56bd' before making global git config changes
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.4558166Z Adding repository directory to the temporary git global config as a safe directory
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.4563413Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.4602016Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.4638529Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.4897536Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.4926136Z http.https://github.com/.extraheader
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.4938502Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.4973186Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.5239269Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+portability	Post Run actions/checkout@v4	2026-09-22T06:25:31.5286636Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+portability	Complete job	﻿2026-09-22T06:25:31.5700133Z Cleaning up orphan processes
+portability	Complete job	2026-09-22T06:25:31.6128097Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+suites	Set up job	﻿2026-09-22T06:23:13.0193779Z Current runner version: '2.337.0'
+suites	Set up job	2026-09-22T06:23:13.0213560Z ##[group]Runner Image Provisioner
+suites	Set up job	2026-09-22T06:23:13.0214380Z Hosted Compute Agent
+suites	Set up job	2026-09-22T06:23:13.0215091Z Version: 20260828.587
+suites	Set up job	2026-09-22T06:23:13.0215760Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+suites	Set up job	2026-09-22T06:23:13.0216435Z Build Date: 2026-08-28T16:44:25Z
+suites	Set up job	2026-09-22T06:23:13.0217015Z Worker ID: {046845bc-9320-4262-88de-5e833099882d}
+suites	Set up job	2026-09-22T06:23:13.0217587Z Azure Region: westus3
+suites	Set up job	2026-09-22T06:23:13.0218064Z ##[endgroup]
+suites	Set up job	2026-09-22T06:23:13.0219250Z ##[group]Operating System
+suites	Set up job	2026-09-22T06:23:13.0219777Z Ubuntu
+suites	Set up job	2026-09-22T06:23:13.0220228Z 24.04.5
+suites	Set up job	2026-09-22T06:23:13.0220634Z LTS
+suites	Set up job	2026-09-22T06:23:13.0221084Z ##[endgroup]
+suites	Set up job	2026-09-22T06:23:13.0221535Z ##[group]Runner Image
+suites	Set up job	2026-09-22T06:23:13.0222388Z Image: ubuntu-24.04
+suites	Set up job	2026-09-22T06:23:13.0222870Z Version: 20260907.300.1
+suites	Set up job	2026-09-22T06:23:13.0223778Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+suites	Set up job	2026-09-22T06:23:13.0225367Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+suites	Set up job	2026-09-22T06:23:13.0226175Z ##[endgroup]
+suites	Set up job	2026-09-22T06:23:13.0227112Z ##[group]GITHUB_TOKEN Permissions
+suites	Set up job	2026-09-22T06:23:13.0228840Z Contents: read
+suites	Set up job	2026-09-22T06:23:13.0229304Z Metadata: read
+suites	Set up job	2026-09-22T06:23:13.0229750Z Packages: read
+suites	Set up job	2026-09-22T06:23:13.0230246Z ##[endgroup]
+suites	Set up job	2026-09-22T06:23:13.0231868Z Secret source: Actions
+suites	Set up job	2026-09-22T06:23:13.0232644Z Cache mode: write
+suites	Set up job	2026-09-22T06:23:13.0233196Z Prepare workflow directory
+suites	Set up job	2026-09-22T06:23:13.0542523Z Prepare all required actions
+suites	Set up job	2026-09-22T06:23:13.0585994Z Getting action download info
+suites	Set up job	2026-09-22T06:23:13.3451905Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+suites	Set up job	2026-09-22T06:23:13.5883138Z Download action repository 'actions/cache@v4' (SHA:0057852bfaa89a56745cba8c7296529d2fc39830)
+suites	Set up job	2026-09-22T06:23:14.3511811Z Complete job name: suites
+suites	Run actions/checkout@v4	﻿2026-09-22T06:23:14.4107394Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4115059Z ##[group]Run actions/checkout@v4
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4115859Z with:
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4116300Z   fetch-depth: 0
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4116933Z   repository: Mister-M-alt/protocol-processor-control-plane-avb-milan
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4120912Z   token: ***
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4121387Z   ssh-strict: true
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4121861Z   ssh-user: git
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4122322Z   persist-credentials: true
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4122830Z   clean: true
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4123316Z   sparse-checkout-cone-mode: true
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4123848Z   fetch-tags: false
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4124296Z   show-progress: true
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4124762Z   lfs: false
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4125476Z   submodules: false
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4125964Z   set-safe-directory: true
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4126477Z   allow-unsafe-pr-checkout: false
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4127144Z env:
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4127605Z   VERILATOR_VERSION: v5.050
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.4128113Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.5005735Z Syncing repository: Mister-M-alt/protocol-processor-control-plane-avb-milan
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.5008621Z ##[group]Getting Git version info
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.5010410Z Working directory is '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan'
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.5012603Z [command]/usr/bin/git version
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.8471307Z git version 2.55.0
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.8488701Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.8502047Z Temporarily overriding HOME='/home/runner/work/_temp/a7d5fa64-e025-4e60-b513-686efab4f0df' before making global git config changes
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.8504300Z Adding repository directory to the temporary git global config as a safe directory
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.8508155Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.8711497Z Deleting the contents of '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan'
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.8716044Z ##[group]Initializing the repository
+suites	Run actions/checkout@v4	2026-09-22T06:23:14.8719580Z [command]/usr/bin/git init /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0389797Z hint: Using 'master' as the name for the initial branch. This default branch name
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0392675Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0395102Z hint: to use in all of your new repositories, which will suppress this warning,
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0396776Z hint: call:
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0397573Z hint:
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0398519Z hint: 	git config --global init.defaultBranch <name>
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0399888Z hint:
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0401088Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0403281Z hint: 'development'. The just-created branch can be renamed via this command:
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0405021Z hint:
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0405853Z hint: 	git branch -m <name>
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0406748Z hint:
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0408009Z hint: Disable this message with "git config set advice.defaultBranchName false"
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0411219Z Initialized empty Git repository in /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan/.git/
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0416100Z [command]/usr/bin/git remote add origin https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0635526Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0637056Z ##[group]Disabling automatic garbage collection
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0638959Z [command]/usr/bin/git config --local gc.auto 0
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0666852Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0667851Z ##[group]Setting up auth
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0674303Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.0703875Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.2280798Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.2310532Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.2477474Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.2502817Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.2664480Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.2734355Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.2735952Z ##[group]Fetching the repository
+suites	Run actions/checkout@v4	2026-09-22T06:23:15.2738454Z [command]/usr/bin/git -c protocol.version=2 fetch --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0395660Z From https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0397349Z  * [new branch]        121-notification-review-fixes -> origin/121-notification-review-fixes
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0398534Z  * [new branch]        14-asp-gm-identity      -> origin/14-asp-gm-identity
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0399724Z  * [new branch]        14-done_seen_r-latches-dev_done_i-in-states-with-no-outstanding-command -> origin/14-done_seen_r-latches-dev_done_i-in-states-with-no-outstanding-command
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0400930Z  * [new branch]        25-cover-every-module-and-stop-reparsing -> origin/25-cover-every-module-and-stop-reparsing
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0402059Z  * [new branch]        389-refusal-arms        -> origin/389-refusal-arms
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0402821Z  * [new branch]        389-set-clock-source-range-check -> origin/389-set-clock-source-range-check
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0403642Z  * [new branch]        46-lstn-reg-state-encoding -> origin/46-lstn-reg-state-encoding
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0404414Z  * [new branch]        51-sampling-rate-list-check -> origin/51-sampling-rate-list-check
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0405484Z  * [new branch]        66-aecp-get-set-name    -> origin/66-aecp-get-set-name
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0406335Z  * [new branch]        67-aecp-streaming-state-commands -> origin/67-aecp-streaming-state-commands
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0407322Z  * [new branch]        67-stream-format-and-info-setters -> origin/67-stream-format-and-info-setters
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0408568Z  * [new branch]        68-aecp-audio-mappings  -> origin/68-aecp-audio-mappings
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0409715Z  * [new branch]        69-aecp-unsolicited-notification-triggers -> origin/69-aecp-unsolicited-notification-triggers
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0410793Z  * [new branch]        71-get-dynamic-info     -> origin/71-get-dynamic-info
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0411776Z  * [new branch]        72-dyn-state-ab-getters -> origin/72-dyn-state-ab-getters
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0412695Z  * [new branch]        75-leaveall-cadence     -> origin/75-leaveall-cadence
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0413755Z  * [new branch]        78-start-stop-streaming -> origin/78-start-stop-streaming
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0414798Z  * [new branch]        78-started-state-in-acmp-record -> origin/78-started-state-in-acmp-record
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0415867Z  * [new branch]        78-started-state-single-source -> origin/78-started-state-single-source
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0416976Z  * [new branch]        83-vendor-unique-opcode-collision -> origin/83-vendor-unique-opcode-collision
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0418048Z  * [new branch]        90-nvm-exports          -> origin/90-nvm-exports
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0419013Z  * [new branch]        95-expose-default-sr-vid -> origin/95-expose-default-sr-vid
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0419960Z  * [new branch]        96-review-evidence      -> origin/96-review-evidence
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0421024Z  * [new branch]        97-start-stop-commit-handshake -> origin/97-start-stop-commit-handshake
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0421947Z  * [new branch]        aecp-dyn-state-store    -> origin/aecp-dyn-state-store
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0422842Z  * [new branch]        aecp-identify-control   -> origin/aecp-identify-control
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0423766Z  * [new branch]        aecp-set-rate-and-clock-source -> origin/aecp-set-rate-and-clock-source
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0424820Z  * [new branch]        chore/cpp-core-guidelines-idiom -> origin/chore/cpp-core-guidelines-idiom
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0426471Z  * [new branch]        clksrc-store-tb-tap     -> origin/clksrc-store-tb-tap
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0427514Z  * [new branch]        issue-73-aecp-doc-authority -> origin/issue-73-aecp-doc-authority
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0428557Z  * [new branch]        issue-73-stream-output-counters -> origin/issue-73-stream-output-counters
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0429494Z  * [new branch]        main                    -> origin/main
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0430453Z  * [new tag]           v2.0                    -> v2.0
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0433669Z [command]/usr/bin/git branch --list --remote origin/main
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0434380Z   origin/main
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0439232Z [command]/usr/bin/git rev-parse refs/remotes/origin/main
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0459814Z 8452f564294300a82d56eed464276576f65f4d58
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0462692Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0463470Z ##[group]Determining the checkout info
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0465230Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0477317Z [command]/usr/bin/git sparse-checkout disable
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0629036Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0650462Z ##[group]Checking out the ref
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.0654016Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.1139075Z Switched to a new branch 'main'
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.1150301Z branch 'main' set up to track 'origin/main'.
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.1156174Z ##[endgroup]
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.1188777Z [command]/usr/bin/git log -1 --format=%H
+suites	Run actions/checkout@v4	2026-09-22T06:23:17.1209934Z 8452f564294300a82d56eed464276576f65f4d58
+suites	Cache the pinned Verilator build	﻿2026-09-22T06:23:17.1421248Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.1423001Z ##[group]Run actions/cache@v4
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.1423328Z with:
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.1423569Z   path: ~/verilator
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.1423871Z   key: verilator-v5.050-Linux
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.1424180Z   enableCrossOsArchive: false
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.1424492Z   fail-on-cache-miss: false
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.1424806Z   lookup-only: false
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.1425206Z   save-always: false
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.1425511Z env:
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.1425759Z   VERILATOR_VERSION: v5.050
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.1426045Z ##[endgroup]
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.2302166Z (node:2039) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.2303193Z (Use `node --trace-deprecation ...` to show where the warning was created)
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.5265734Z Cache hit for: verilator-v5.050-Linux
+suites	Cache the pinned Verilator build	2026-09-22T06:23:17.5353091Z (node:2039) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+suites	Cache the pinned Verilator build	2026-09-22T06:23:18.7519070Z Received 41943040 of 92171511 (45.5%), 40.0 MBs/sec
+suites	Cache the pinned Verilator build	2026-09-22T06:23:19.0771675Z Received 92171511 of 92171511 (100.0%), 66.3 MBs/sec
+suites	Cache the pinned Verilator build	2026-09-22T06:23:19.0773516Z Cache Size: ~88 MB (92171511 B)
+suites	Cache the pinned Verilator build	2026-09-22T06:23:19.0870870Z [command]/usr/bin/tar -xf /home/runner/work/_temp/092b70b4-4e15-4006-bc0f-17d5ff0bd396/cache.tzst -P -C /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan --use-compress-program unzstd
+suites	Cache the pinned Verilator build	2026-09-22T06:23:19.2266370Z Cache restored successfully
+suites	Cache the pinned Verilator build	2026-09-22T06:23:19.2360968Z Cache restored from key: verilator-v5.050-Linux
+suites	Lint (zero tolerance) + every suite	﻿2026-09-22T06:23:19.2483609Z ##[group]Run export PATH="$HOME/verilator/bin:$PATH"
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:19.2484141Z ^[[36;1mexport PATH="$HOME/verilator/bin:$PATH"^[[0m
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:19.2484510Z ^[[36;1mverilator --version^[[0m
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:19.2484804Z ^[[36;1m./scripts/lint_hdl.sh^[[0m
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:19.2485425Z ^[[36;1m./scripts/run_suites.sh^[[0m
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:19.2509785Z shell: /usr/bin/bash -e {0}
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:19.2510123Z env:
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:19.2510380Z   VERILATOR_VERSION: v5.050
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:19.2510703Z ##[endgroup]
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:19.6039367Z Verilator 5.050 2026-07-01 rev v5.050
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:19.8118821Z LINT OK  KL_acmp_nvm_shadow
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:20.0349333Z LINT OK  KL_acmp_talker
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:20.2556494Z LINT OK  KL_pp_acmp_listener
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:20.4669086Z LINT OK  KL_adp_engine
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:20.6545768Z LINT OK  KL_aecp_ca_originator
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:20.8576909Z LINT OK  KL_aecp_desc_store
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:21.0488380Z LINT OK  KL_aecp_dyn_state
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:21.3758256Z LINT OK  KL_aecp_engine
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:21.6047716Z LINT OK  KL_aecp_notify
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:21.7956623Z LINT OK  KL_aecp_resp_buf
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:22.0100816Z LINT OK  KL_aecp_ucpu
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:22.2008768Z LINT OK  KL_pp_prng
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:22.3864032Z LINT OK  KL_pp_timer_service
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:22.5923870Z LINT OK  KL_pp_maap
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:22.7855956Z LINT OK  KL_pp_dispatch
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:22.9853437Z LINT OK  KL_pp_event_router
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:23.1855795Z LINT OK  KL_pp_normalizer
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:23.3792049Z LINT OK  KL_pp_nvm_port
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:23.5840071Z LINT OK  KL_pp_originator
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:23.7745544Z LINT OK  KL_pp_release_merge
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:23.9634123Z LINT OK  KL_pp_rx_slots
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:24.1676575Z LINT OK  KL_pp_rx_validator
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:24.3657895Z LINT OK  KL_pp_scoreboard
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:24.5623822Z LINT OK  KL_pp_side_port
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:24.7568206Z LINT OK  KL_pp_trace_ring
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:24.9492355Z LINT OK  KL_pp_tx_arbiter
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:25.1515780Z LINT OK  KL_pp_tx_slots
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:25.3683009Z LINT OK  KL_srp_admission
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:25.5639495Z LINT OK  KL_srp_decoder
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:25.7538564Z LINT OK  KL_srp_domain
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:25.9595376Z LINT OK  KL_srp_encoder
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:26.2129961Z LINT OK  KL_srp_listener_fsm
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:26.4617685Z LINT OK  KL_srp_talker_fsm
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:26.8332711Z LINT OK  KL_srp_top
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:27.0272830Z LINT OK  KL_srp_vlan
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:27.2271041Z LINT OK  KL_mrp_strip
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:28.1340853Z LINT OK  protocol_processor_top
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:28.1581020Z UPC MAP GATE: PASS (56 engine constants, 80 entry points, all agree)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:48.0380617Z PASS acmp_listener (2540 checks: 2540 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:52.6293125Z PASS acmp_nvm (86 checks: 86 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:23:57.2100683Z PASS acmp_talker (839 checks: 839 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:24:01.7292775Z PASS adp_engine (533 checks: 533 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:24:06.1319572Z PASS aecp_notify (10 checks: 10 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:24:10.3466236Z PASS ca_originator (16 checks: 16 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:24:14.9004347Z PASS desc_store (584 checks: 584 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:24:19.3284480Z PASS dispatch (211 checks: 211 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:24:28.5430444Z PASS dyn_state (89 checks: 89 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:24:32.8984634Z PASS event_router (81 checks: 81 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:24:37.4241056Z PASS maap (75 checks: 75 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:24:41.6844481Z PASS nvm_port (122 checks: 122 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:24:46.1678728Z PASS originator (104 checks: 104 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:28:53.5455612Z PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:28:57.8751006Z PASS prng (76 checks: 76 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:29:02.1345966Z PASS release_merge (18 checks: 18 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:29:06.4968742Z PASS resp_buf (64 checks: 64 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:29:10.9458900Z PASS rx_slots (130 checks: 130 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:29:15.4550581Z PASS rx_validator (393 checks: 393 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:29:19.8052113Z PASS scoreboard (3705 checks: 3705 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:29:24.1245473Z PASS side_port (368 checks: 368 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:29:28.5679393Z PASS srp_decoder (113 checks: 113 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:29:33.1523851Z PASS srp_encoder (180 checks: 180 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:29:38.8102650Z PASS srp_stream_fsms (1005 checks: 1005 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:29:46.0838651Z PASS srp_top (235 checks: 235 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:30:02.5966314Z PASS timer_map (1360 checks: 1360 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:30:06.8846057Z PASS timer_service (48 checks: 48 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:30:11.2744417Z PASS tx_arbiter (66 checks: 66 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:30:15.6263614Z PASS tx_slots (95 checks: 95 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:30:20.2025331Z PASS ucpu (386 checks: 386 PASS, 0 FAIL)
+suites	Lint (zero tolerance) + every suite	2026-09-22T06:30:20.2033706Z suites: 14943 checks total, 0 failing
+suites	Traceability matrix no-drift + untested budget 0	﻿2026-09-22T06:30:20.2069612Z ##[group]Run python3 scripts/gen_matrix.py --check
+suites	Traceability matrix no-drift + untested budget 0	2026-09-22T06:30:20.2070031Z ^[[36;1mpython3 scripts/gen_matrix.py --check^[[0m
+suites	Traceability matrix no-drift + untested budget 0	2026-09-22T06:30:20.2089883Z shell: /usr/bin/bash -e {0}
+suites	Traceability matrix no-drift + untested budget 0	2026-09-22T06:30:20.2090192Z env:
+suites	Traceability matrix no-drift + untested budget 0	2026-09-22T06:30:20.2090516Z   VERILATOR_VERSION: v5.050
+suites	Traceability matrix no-drift + untested budget 0	2026-09-22T06:30:20.2090796Z ##[endgroup]
+suites	Traceability matrix no-drift + untested budget 0	2026-09-22T06:30:20.2469342Z matrix: OK (86 rows, 0 untested)
+suites	nvm_port README figures agree with the tree	﻿2026-09-22T06:30:20.2531599Z ##[group]Run export PATH="$HOME/verilator/bin:$PATH"
+suites	nvm_port README figures agree with the tree	2026-09-22T06:30:20.2532001Z ^[[36;1mexport PATH="$HOME/verilator/bin:$PATH"^[[0m
+suites	nvm_port README figures agree with the tree	2026-09-22T06:30:20.2532445Z ^[[36;1m# PR #13 was squash-merged. Its review lineage is therefore absent^[[0m
+suites	nvm_port README figures agree with the tree	2026-09-22T06:30:20.2533052Z ^[[36;1m# from main, but remains available through GitHub's durable pull ref.^[[0m
+suites	nvm_port README figures agree with the tree	2026-09-22T06:30:20.2533471Z ^[[36;1mgit fetch --no-tags origin refs/pull/13/head^[[0m
+suites	nvm_port README figures agree with the tree	2026-09-22T06:30:20.2533820Z ^[[36;1mmake -C tb/nvm_port figures^[[0m
+suites	nvm_port README figures agree with the tree	2026-09-22T06:30:20.2550678Z shell: /usr/bin/bash -e {0}
+suites	nvm_port README figures agree with the tree	2026-09-22T06:30:20.2550972Z env:
+suites	nvm_port README figures agree with the tree	2026-09-22T06:30:20.2551212Z   VERILATOR_VERSION: v5.050
+suites	nvm_port README figures agree with the tree	2026-09-22T06:30:20.2551516Z ##[endgroup]
+suites	nvm_port README figures agree with the tree	2026-09-22T06:30:21.0593439Z From https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+suites	nvm_port README figures agree with the tree	2026-09-22T06:30:21.0594602Z  * branch            refs/pull/13/head -> FETCH_HEAD
+suites	nvm_port README figures agree with the tree	2026-09-22T06:30:21.0608904Z make: Entering directory '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan/tb/nvm_port'
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7778147Z 42 Verilator builds: 1 baseline + 12 arms + 18 mutations + 6 models + 5 matrix
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7779081Z baseline: 122 checks, 122 PASS, 0 FAIL
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7779478Z 
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7779737Z arm coverage (measured vs README):
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7780288Z   [ok ]  211 S_WEREQ    measured=0    readme=0
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7780877Z   [ok ]  220 S_WEWAIT   measured=69   readme=69
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7781426Z   [ok ]  230 S_WWREQ    measured=0    readme=0
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7781975Z   [ok ]  240 S_WHPUMP   measured=64   readme=64
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7782471Z   [ok ]  253 S_WDPUMP   measured=52   readme=52
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7782942Z   [ok ]  263 S_WWAIT    measured=39   readme=39
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7783359Z   [ok ]  274 S_RHREQ    measured=0    readme=0
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7783794Z   [ok ]  284 S_RHCOLL   measured=32   readme=32
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7784238Z   [ok ]  302 S_RHWAIT   measured=29   readme=29
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7784615Z   [ok ]  329 S_RPREQ    measured=0    readme=0
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7785248Z   [ok ]  339 S_RPPUMP   measured=63   readme=63
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7785823Z   [ok ]  349 S_RPWAIT   measured=26   readme=26
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7786116Z 
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7786331Z mutations and probes (measured vs README):
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7787296Z   [ok ] M1               measured=24   readme=24
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7787822Z   [ok ] M1-sibling       measured=5    readme=5
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7788331Z   [ok ] M2               measured=5    readme=5
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7789008Z   [ok ] M3               measured=91   readme=91
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7789637Z   [ok ] M4               measured=52   readme=52
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7790287Z   [ok ] M5               measured=39   readme=39
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7790964Z   [ok ] M6               measured=6    readme=6
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7791611Z   [ok ] M6-sibling       measured=5    readme=5
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7792272Z   [ok ] probe-armearly   measured=1    readme=1
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7792727Z   [ok ] probe-nodevice   measured=3    readme=3
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7793208Z   [ok ] probe-t18        measured=3    readme=3
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7793639Z   [ok ] done_seen_r/coincident measured=91   readme=91
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7794126Z   [ok ] done_seen_r/pristine measured=9    readme=9
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7794632Z   [ok ] own-states-dropped measured=6    readme=6
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7795271Z   [ok ] own-minus-rhcoll measured=3    readme=3
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7795872Z   [ok ] own-minus-wwait  measured=0    readme=0
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7796284Z   [ok ] own-plus-rhreq   measured=1    readme=1
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7796759Z   [ok ] retraction       measured=2    readme=2
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7797004Z 
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7797180Z device models (measured vs README):
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7797634Z   [ok ] pristine                   measured=122 PASS, 0 FAIL  readme=(122, 0)
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7798199Z   [ok ] half-page                  measured=122 PASS, 0 FAIL  readme=(122, 0)
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7798800Z   [ok ] half-page                  measured=122 PASS, 0 FAIL  readme=(122, 0)
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7799648Z   [ok ] page-buffered NOR          measured=122 PASS, 0 FAIL  readme=(122, 0)
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7800382Z   [ok ] lazy erase                 measured=121 PASS, 1 FAIL  readme=(121, 1)
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7801010Z   [ok ] lazy erase + page-buffered measured=121 PASS, 1 FAIL  readme=(121, 1)
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7801722Z   [ok ] coincident completion      measured=122 PASS, 0 FAIL  readme=(122, 0)
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7802109Z 
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7802286Z pre-fix matrix (measured vs README), 5 builds:
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7802819Z   [ok ] T16 byte comparison                measured=pass FAIL FAIL FAIL FAIL
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7803485Z   [ok ] T17 restore vs the record          measured=pass FAIL FAIL pass FAIL
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7804101Z   [ok ] T17 restore vs the array           measured=pass pass FAIL pass pass
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7804793Z   [ok ] T15 branch pin                     measured=pass pass FAIL pass FAIL
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7805832Z   [ok ] T15 cut was real                   measured=pass pass pass pass FAIL
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7806658Z   [ok ] T15 #70 property, unconditioned    measured=pass pass pass pass FAIL
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7807136Z 
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7807343Z all measured figures agree with the tree
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7807712Z 
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7807962Z NOT measured (waived, with the reason, so the exclusion set is
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7808666Z derived from the file rather than asserted in a comment):
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7810040Z   - /`fails 22 of the 122 checks` and `fails\s+22 out of 122`/ absorbs 2 (cap 4): two illustrative phrasings quoted inside the paragraph explaining what the inverted default does not close; not claims about this suite
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7811669Z   - /\b122/122\b/ absorbs 2 (cap 4): suite tally shorthand; both halves are the suite size, which the size check already pins against the measured total
+suites	nvm_port README figures agree with the tree	2026-09-22T06:33:30.7851043Z make: Leaving directory '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan/tb/nvm_port'
+suites	Post Cache the pinned Verilator build	﻿2026-09-22T06:33:30.7929700Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+suites	Post Cache the pinned Verilator build	2026-09-22T06:33:30.7930780Z Post job cleanup.
+suites	Post Cache the pinned Verilator build	2026-09-22T06:33:30.8859848Z Cache hit occurred on the primary key verilator-v5.050-Linux, not saving cache.
+suites	Post Cache the pinned Verilator build	2026-09-22T06:33:30.8861988Z (node:6299) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+suites	Post Cache the pinned Verilator build	2026-09-22T06:33:30.8862726Z (Use `node --trace-deprecation ...` to show where the warning was created)
+suites	Post Run actions/checkout@v4	﻿2026-09-22T06:33:30.8977668Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:30.8978750Z Post job cleanup.
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:30.9703628Z [command]/usr/bin/git version
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:30.9738104Z git version 2.55.0
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:30.9766746Z Temporarily overriding HOME='/home/runner/work/_temp/caa550aa-8829-42e5-b9ec-8de5c3ab51e6' before making global git config changes
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:30.9767998Z Adding repository directory to the temporary git global config as a safe directory
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:30.9773203Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:30.9801823Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:30.9828141Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:31.0009546Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:31.0030940Z http.https://github.com/.extraheader
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:31.0046039Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:31.0067735Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:31.0247371Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+suites	Post Run actions/checkout@v4	2026-09-22T06:33:31.0280194Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+suites	Complete job	﻿2026-09-22T06:33:31.0586084Z Cleaning up orphan processes
+suites	Complete job	2026-09-22T06:33:31.0805729Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/cache@v4, actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+docs-gates	Set up job	﻿2026-09-22T06:23:13.1375150Z Current runner version: '2.337.0'
+docs-gates	Set up job	2026-09-22T06:23:13.1397661Z ##[group]Runner Image Provisioner
+docs-gates	Set up job	2026-09-22T06:23:13.1398378Z Hosted Compute Agent
+docs-gates	Set up job	2026-09-22T06:23:13.1398941Z Version: 20260828.587
+docs-gates	Set up job	2026-09-22T06:23:13.1399551Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+docs-gates	Set up job	2026-09-22T06:23:13.1400136Z Build Date: 2026-08-28T16:44:25Z
+docs-gates	Set up job	2026-09-22T06:23:13.1400751Z Worker ID: {59cc2db5-1162-4a94-a635-1ed0766ea251}
+docs-gates	Set up job	2026-09-22T06:23:13.1401348Z Azure Region: westcentralus
+docs-gates	Set up job	2026-09-22T06:23:13.1401876Z ##[endgroup]
+docs-gates	Set up job	2026-09-22T06:23:13.1403042Z ##[group]Operating System
+docs-gates	Set up job	2026-09-22T06:23:13.1403560Z Ubuntu
+docs-gates	Set up job	2026-09-22T06:23:13.1404053Z 24.04.5
+docs-gates	Set up job	2026-09-22T06:23:13.1404488Z LTS
+docs-gates	Set up job	2026-09-22T06:23:13.1404904Z ##[endgroup]
+docs-gates	Set up job	2026-09-22T06:23:13.1405481Z ##[group]Runner Image
+docs-gates	Set up job	2026-09-22T06:23:13.1405989Z Image: ubuntu-24.04
+docs-gates	Set up job	2026-09-22T06:23:13.1406822Z Version: 20260907.300.1
+docs-gates	Set up job	2026-09-22T06:23:13.1407713Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+docs-gates	Set up job	2026-09-22T06:23:13.1409213Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+docs-gates	Set up job	2026-09-22T06:23:13.1410002Z ##[endgroup]
+docs-gates	Set up job	2026-09-22T06:23:13.1411006Z ##[group]GITHUB_TOKEN Permissions
+docs-gates	Set up job	2026-09-22T06:23:13.1412622Z Contents: read
+docs-gates	Set up job	2026-09-22T06:23:13.1413596Z Metadata: read
+docs-gates	Set up job	2026-09-22T06:23:13.1414112Z Packages: read
+docs-gates	Set up job	2026-09-22T06:23:13.1414577Z ##[endgroup]
+docs-gates	Set up job	2026-09-22T06:23:13.1416675Z Secret source: Actions
+docs-gates	Set up job	2026-09-22T06:23:13.1417476Z Cache mode: write
+docs-gates	Set up job	2026-09-22T06:23:13.1418166Z Prepare workflow directory
+docs-gates	Set up job	2026-09-22T06:23:13.2422008Z Prepare all required actions
+docs-gates	Set up job	2026-09-22T06:23:13.2478581Z Getting action download info
+docs-gates	Set up job	2026-09-22T06:23:13.5007828Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+docs-gates	Set up job	2026-09-22T06:23:13.9974029Z Complete job name: docs-gates
+docs-gates	Run actions/checkout@v4	﻿2026-09-22T06:23:14.0746882Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0754929Z ##[group]Run actions/checkout@v4
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0755639Z with:
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0756237Z   repository: Mister-M-alt/protocol-processor-control-plane-avb-milan
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0760592Z   token: ***
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0760990Z   ssh-strict: true
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0761403Z   ssh-user: git
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0761826Z   persist-credentials: true
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0762285Z   clean: true
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0762700Z   sparse-checkout-cone-mode: true
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0763194Z   fetch-depth: 1
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0763593Z   fetch-tags: false
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0764007Z   show-progress: true
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0764447Z   lfs: false
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0764897Z   submodules: false
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0765312Z   set-safe-directory: true
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0765788Z   allow-unsafe-pr-checkout: false
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0766562Z env:
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0766938Z   VERILATOR_VERSION: v5.050
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.0767393Z ##[endgroup]
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1668755Z Syncing repository: Mister-M-alt/protocol-processor-control-plane-avb-milan
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1671709Z ##[group]Getting Git version info
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1673457Z Working directory is '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan'
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1675455Z [command]/usr/bin/git version
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1746569Z git version 2.55.0
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1768781Z ##[endgroup]
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1794436Z Temporarily overriding HOME='/home/runner/work/_temp/a72695bc-82e7-47a3-8759-496c3da6cb0c' before making global git config changes
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1797436Z Adding repository directory to the temporary git global config as a safe directory
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1809977Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1866457Z Deleting the contents of '/home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan'
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1872676Z ##[group]Initializing the repository
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1887060Z [command]/usr/bin/git init /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1958323Z hint: Using 'master' as the name for the initial branch. This default branch name
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1986633Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1988579Z hint: to use in all of your new repositories, which will suppress this warning,
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1993015Z hint: call:
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1993907Z hint:
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1994934Z hint: 	git config --global init.defaultBranch <name>
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1996186Z hint:
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1997415Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.1999067Z hint: 'development'. The just-created branch can be renamed via this command:
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2000406Z hint:
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2001170Z hint: 	git branch -m <name>
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2002017Z hint:
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2003192Z hint: Disable this message with "git config set advice.defaultBranchName false"
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2005955Z Initialized empty Git repository in /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan/.git/
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2010849Z [command]/usr/bin/git remote add origin https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2034576Z ##[endgroup]
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2035864Z ##[group]Disabling automatic garbage collection
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2037331Z [command]/usr/bin/git config --local gc.auto 0
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2078542Z ##[endgroup]
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2079545Z ##[group]Setting up auth
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2080592Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2112305Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2454262Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2489934Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2699782Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2732516Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2931266Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2968574Z ##[endgroup]
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2969378Z ##[group]Fetching the repository
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:14.2979151Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +8452f564294300a82d56eed464276576f65f4d58:refs/remotes/origin/main
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5181077Z From https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5182496Z  * [new ref]         8452f564294300a82d56eed464276576f65f4d58 -> origin/main
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5185030Z ##[endgroup]
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5185478Z ##[group]Determining the checkout info
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5188636Z ##[endgroup]
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5193909Z [command]/usr/bin/git sparse-checkout disable
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5240431Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5270266Z ##[group]Checking out the ref
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5311719Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5717076Z Switched to a new branch 'main'
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5720111Z branch 'main' set up to track 'origin/main'.
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5727342Z ##[endgroup]
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5770011Z [command]/usr/bin/git log -1 --format=%H
+docs-gates	Run actions/checkout@v4	2026-09-22T06:23:15.5795454Z 8452f564294300a82d56eed464276576f65f4d58
+docs-gates	Link, matrix, wavedrom and staleness gates	﻿2026-09-22T06:23:15.5984874Z ##[group]Run python3 -m pip install wavedrom
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:15.5985403Z ^[[36;1mpython3 -m pip install wavedrom^[[0m
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:15.5985750Z ^[[36;1mpython3 scripts/check-links.py^[[0m
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:15.5986079Z ^[[36;1mpython3 scripts/check-matrix.py^[[0m
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:15.5986689Z ^[[36;1mpython3 scripts/render-wavedrom.py --check^[[0m
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:15.5987035Z ^[[36;1mmake stale^[[0m
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:15.6024700Z shell: /usr/bin/bash -e {0}
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:15.6025025Z env:
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:15.6025263Z   VERILATOR_VERSION: v5.050
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:15.6025550Z ##[endgroup]
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:16.5572046Z Defaulting to user installation because normal site-packages is not writeable
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:17.2361499Z Collecting wavedrom
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:17.3093826Z   Downloading wavedrom-2.0.3.post3.tar.gz (137 kB)
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:17.3475313Z      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 137.7/137.7 kB 3.6 MB/s eta 0:00:00
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:17.3667098Z   Preparing metadata (setup.py): started
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:20.4048293Z   Preparing metadata (setup.py): finished with status 'done'
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:20.4236960Z Requirement already satisfied: pyyaml in /usr/lib/python3/dist-packages (from wavedrom) (6.0.1)
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:20.4241296Z Requirement already satisfied: six in /usr/lib/python3/dist-packages (from wavedrom) (1.16.0)
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:20.4582008Z Collecting svgwrite (from wavedrom)
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:20.4773238Z   Downloading svgwrite-1.4.3-py3-none-any.whl.metadata (8.8 kB)
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:20.5009241Z Downloading svgwrite-1.4.3-py3-none-any.whl (67 kB)
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:20.5067304Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 67.1/67.1 kB 13.7 MB/s eta 0:00:00
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:20.5097795Z Building wheels for collected packages: wavedrom
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:20.5102337Z   Building wheel for wavedrom (setup.py): started
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:21.2503831Z   Building wheel for wavedrom (setup.py): finished with status 'done'
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:21.2508088Z   Created wheel for wavedrom: filename=wavedrom-2.0.3.post3-py2.py3-none-any.whl size=30056 sha256=b1efd98d06587619b6a1fdf4eac367b5ed0eb34b5507410322baf9f2bc6ef226
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:21.2509201Z   Stored in directory: /home/runner/.cache/pip/wheels/dd/97/87/67fda20d5b17da917e87e94dcdc39acd2195796f42511e42fe
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:21.2525256Z Successfully built wavedrom
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:21.4468787Z Installing collected packages: svgwrite, wavedrom
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:21.5345727Z Successfully installed svgwrite-1.4.3 wavedrom-2.0.3.post3
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:21.6727360Z links: 807 checked, OK
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:21.6961865Z matrix: 115 REQ rows, 17 GAP findings, OK
+docs-gates	Link, matrix, wavedrom and staleness gates	2026-09-22T06:23:22.0837800Z wavedrom: 18 blocks checked, OK
+docs-gates	Post Run actions/checkout@v4	﻿2026-09-22T06:23:22.1361483Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.1362743Z Post job cleanup.
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.2079017Z [command]/usr/bin/git version
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.2117223Z git version 2.55.0
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.2149346Z Temporarily overriding HOME='/home/runner/work/_temp/5a6f9f45-6b57-4ece-b475-e5fc95d8577f' before making global git config changes
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.2150748Z Adding repository directory to the temporary git global config as a safe directory
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.2154761Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/protocol-processor-control-plane-avb-milan/protocol-processor-control-plane-avb-milan
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.2193219Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.2225152Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.2441159Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.2464940Z http.https://github.com/.extraheader
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.2474680Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.2504231Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.2724134Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+docs-gates	Post Run actions/checkout@v4	2026-09-22T06:23:22.2759414Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+docs-gates	Complete job	﻿2026-09-22T06:23:22.3161353Z Cleaning up orphan processes
+docs-gates	Complete job	2026-09-22T06:23:22.3401752Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

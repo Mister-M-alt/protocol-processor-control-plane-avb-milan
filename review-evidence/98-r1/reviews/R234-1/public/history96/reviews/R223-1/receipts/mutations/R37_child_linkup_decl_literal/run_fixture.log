@@ -1,0 +1,9 @@
+FAIL: DV2: Domain New {6, 3, 0x5a3c} byte-exact
+  got (30 B): 01 80 c2 00 00 0e 0a 0b 0c 0d 0e 0f 22 ea 00 04 04 00 09 00 01 06 03 00 02 00 00 00 00 00
+  exp (30 B): 01 80 c2 00 00 0e 0a 0b 0c 0d 0e 0f 22 ea 00 04 04 00 09 00 01 06 03 5a 3c 00 00 00 00 00
+FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x2
+FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x5a3c}
+  got (30 B): 01 80 c2 00 00 0e 0a 0b 0c 0d 0e 0f 22 ea 00 04 04 00 09 00 01 06 03 00 02 00 00 00 00 00
+  exp (30 B): 01 80 c2 00 00 0e 0a 0b 0c 0d 0e 0f 22 ea 00 04 04 00 09 00 01 06 03 5a 3c 00 00 00 00 00
+[build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 3 failures
+rc=1
