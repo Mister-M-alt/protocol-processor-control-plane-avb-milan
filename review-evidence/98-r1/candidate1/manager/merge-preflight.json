@@ -1,0 +1,729 @@
+{
+  "checked_at": "2026-09-22T13:37:47.871548+02:00",
+  "head": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+  "base": "c8214cfe827fb3fb50c9bfee415468a24b7c27b1",
+  "tree": "37a5cd807c5e8a289a7149892c1a1762dcd8279c",
+  "candidate_commit": "1fd06bf6e40d2290adf1987b51c1fabe30671098",
+  "old_hosted_base": "8452f564294300a82d56eed464276576f65f4d58",
+  "native": {
+    "complete": {
+      "head": "1fd06bf6e40d2290adf1987b51c1fabe30671098",
+      "exit_code": 0,
+      "finished": "2026-09-22T13:22:55.069015+02:00"
+    },
+    "results": {
+      "head": "1fd06bf6e40d2290adf1987b51c1fabe30671098",
+      "base": "c8214cfe827fb3fb50c9bfee415468a24b7c27b1",
+      "results": [
+        {
+          "command": [
+            "verilator",
+            "--version"
+          ],
+          "exit_code": 0,
+          "seconds": 0.05,
+          "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/01.log"
+        },
+        {
+          "command": [
+            "git",
+            "fetch",
+            "--no-tags",
+            "origin",
+            "refs/pull/13/head"
+          ],
+          "exit_code": 0,
+          "seconds": 0.486,
+          "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/02.log"
+        },
+        {
+          "command": [
+            "bash",
+            "scripts/lint_hdl.sh"
+          ],
+          "exit_code": 0,
+          "seconds": 9.96,
+          "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/03.log"
+        },
+        {
+          "command": [
+            "bash",
+            "scripts/run_suites.sh"
+          ],
+          "exit_code": 0,
+          "seconds": 190.892,
+          "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/04.log"
+        },
+        {
+          "command": [
+            "make",
+            "-j1",
+            "check"
+          ],
+          "exit_code": 0,
+          "seconds": 25.914,
+          "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/05.log"
+        },
+        {
+          "command": [
+            "python3",
+            "scripts/gen_matrix.py",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.048,
+          "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/06.log"
+        },
+        {
+          "command": [
+            "bash",
+            "syn/yosys/run.sh"
+          ],
+          "exit_code": 0,
+          "seconds": 67.532,
+          "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/07.log"
+        },
+        {
+          "command": [
+            "make",
+            "-C",
+            "tb/nvm_port",
+            "figures"
+          ],
+          "exit_code": 0,
+          "seconds": 225.664,
+          "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/08.log"
+        },
+        {
+          "command": [
+            "git",
+            "diff",
+            "--check",
+            "c8214cfe827fb3fb50c9bfee415468a24b7c27b1",
+            "1fd06bf6e40d2290adf1987b51c1fabe30671098"
+          ],
+          "exit_code": 0,
+          "seconds": 0.003,
+          "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/09.log"
+        }
+      ]
+    }
+  },
+  "pr": {
+    "headRefOid": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+    "isDraft": false,
+    "mergeStateStatus": "CLEAN",
+    "mergeable": "MERGEABLE",
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-22T08:49:02Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831/job/106677741057",
+        "name": "docs-gates",
+        "startedAt": "2026-09-22T08:48:51Z",
+        "status": "COMPLETED",
+        "workflowName": "hdl"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-22T08:49:00Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515/job/106677709529",
+        "name": "docs-gates",
+        "startedAt": "2026-09-22T08:48:44Z",
+        "status": "COMPLETED",
+        "workflowName": "hdl"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-22T09:01:04Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831/job/106677741296",
+        "name": "suites",
+        "startedAt": "2026-09-22T08:48:50Z",
+        "status": "COMPLETED",
+        "workflowName": "hdl"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-22T08:55:59Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515/job/106677709562",
+        "name": "suites",
+        "startedAt": "2026-09-22T08:48:44Z",
+        "status": "COMPLETED",
+        "workflowName": "hdl"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-22T08:51:17Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831/job/106677741182",
+        "name": "portability",
+        "startedAt": "2026-09-22T08:48:50Z",
+        "status": "COMPLETED",
+        "workflowName": "hdl"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-22T08:50:43Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515/job/106677709229",
+        "name": "portability",
+        "startedAt": "2026-09-22T08:48:44Z",
+        "status": "COMPLETED",
+        "workflowName": "hdl"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "conclusion": "success",
+      "event": "push",
+      "headSha": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+      "jobs": [
+        {
+          "completedAt": "2026-09-22T08:50:43Z",
+          "conclusion": "success",
+          "databaseId": 106677709229,
+          "name": "portability",
+          "startedAt": "2026-09-22T08:48:44Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-09-22T08:48:45Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-09-22T08:48:44Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:48:47Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-09-22T08:48:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:49:02Z",
+              "conclusion": "success",
+              "name": "Install yosys + sv2v",
+              "number": 3,
+              "startedAt": "2026-09-22T08:48:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:50:41Z",
+              "conclusion": "success",
+              "name": "Elaborate every top off-vendor",
+              "number": 4,
+              "startedAt": "2026-09-22T08:49:02Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:50:41Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 8,
+              "startedAt": "2026-09-22T08:50:41Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:50:41Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 9,
+              "startedAt": "2026-09-22T08:50:41Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515/job/106677709229"
+        },
+        {
+          "completedAt": "2026-09-22T08:49:00Z",
+          "conclusion": "success",
+          "databaseId": 106677709529,
+          "name": "docs-gates",
+          "startedAt": "2026-09-22T08:48:44Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-09-22T08:48:46Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-09-22T08:48:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:48:47Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-09-22T08:48:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:48:57Z",
+              "conclusion": "success",
+              "name": "Link, matrix, wavedrom and staleness gates",
+              "number": 3,
+              "startedAt": "2026-09-22T08:48:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:48:57Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 6,
+              "startedAt": "2026-09-22T08:48:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:48:58Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 7,
+              "startedAt": "2026-09-22T08:48:57Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515/job/106677709529"
+        },
+        {
+          "completedAt": "2026-09-22T08:55:59Z",
+          "conclusion": "success",
+          "databaseId": 106677709562,
+          "name": "suites",
+          "startedAt": "2026-09-22T08:48:44Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-09-22T08:48:46Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-09-22T08:48:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:48:48Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-09-22T08:48:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:48:50Z",
+              "conclusion": "success",
+              "name": "Cache the pinned Verilator build",
+              "number": 3,
+              "startedAt": "2026-09-22T08:48:48Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:48:50Z",
+              "conclusion": "skipped",
+              "name": "Build Verilator v5.050",
+              "number": 4,
+              "startedAt": "2026-09-22T08:48:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:53:39Z",
+              "conclusion": "success",
+              "name": "Lint (zero tolerance) + every suite",
+              "number": 5,
+              "startedAt": "2026-09-22T08:48:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:53:39Z",
+              "conclusion": "success",
+              "name": "Traceability matrix no-drift + untested budget 0",
+              "number": 6,
+              "startedAt": "2026-09-22T08:53:39Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:55:57Z",
+              "conclusion": "success",
+              "name": "nvm_port README figures agree with the tree",
+              "number": 7,
+              "startedAt": "2026-09-22T08:53:39Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:55:57Z",
+              "conclusion": "success",
+              "name": "Post Cache the pinned Verilator build",
+              "number": 13,
+              "startedAt": "2026-09-22T08:55:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:55:57Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 14,
+              "startedAt": "2026-09-22T08:55:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:55:57Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 15,
+              "startedAt": "2026-09-22T08:55:57Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515/job/106677709562"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515"
+    },
+    {
+      "conclusion": "success",
+      "event": "pull_request",
+      "headSha": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+      "jobs": [
+        {
+          "completedAt": "2026-09-22T08:49:02Z",
+          "conclusion": "success",
+          "databaseId": 106677741057,
+          "name": "docs-gates",
+          "startedAt": "2026-09-22T08:48:51Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-09-22T08:48:52Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-09-22T08:48:51Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:48:53Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-09-22T08:48:52Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:49:00Z",
+              "conclusion": "success",
+              "name": "Link, matrix, wavedrom and staleness gates",
+              "number": 3,
+              "startedAt": "2026-09-22T08:48:53Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:49:00Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 6,
+              "startedAt": "2026-09-22T08:49:00Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:49:00Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 7,
+              "startedAt": "2026-09-22T08:49:00Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831/job/106677741057"
+        },
+        {
+          "completedAt": "2026-09-22T08:51:17Z",
+          "conclusion": "success",
+          "databaseId": 106677741182,
+          "name": "portability",
+          "startedAt": "2026-09-22T08:48:50Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-09-22T08:48:52Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-09-22T08:48:51Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:48:53Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-09-22T08:48:52Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:49:13Z",
+              "conclusion": "success",
+              "name": "Install yosys + sv2v",
+              "number": 3,
+              "startedAt": "2026-09-22T08:48:53Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:51:14Z",
+              "conclusion": "success",
+              "name": "Elaborate every top off-vendor",
+              "number": 4,
+              "startedAt": "2026-09-22T08:49:13Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:51:14Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 8,
+              "startedAt": "2026-09-22T08:51:14Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:51:14Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 9,
+              "startedAt": "2026-09-22T08:51:14Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831/job/106677741182"
+        },
+        {
+          "completedAt": "2026-09-22T09:01:04Z",
+          "conclusion": "success",
+          "databaseId": 106677741296,
+          "name": "suites",
+          "startedAt": "2026-09-22T08:48:50Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-09-22T08:48:52Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-09-22T08:48:51Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:48:53Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-09-22T08:48:52Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:48:54Z",
+              "conclusion": "success",
+              "name": "Cache the pinned Verilator build",
+              "number": 3,
+              "startedAt": "2026-09-22T08:48:53Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:48:54Z",
+              "conclusion": "skipped",
+              "name": "Build Verilator v5.050",
+              "number": 4,
+              "startedAt": "2026-09-22T08:48:54Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:57:09Z",
+              "conclusion": "success",
+              "name": "Lint (zero tolerance) + every suite",
+              "number": 5,
+              "startedAt": "2026-09-22T08:48:54Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T08:57:09Z",
+              "conclusion": "success",
+              "name": "Traceability matrix no-drift + untested budget 0",
+              "number": 6,
+              "startedAt": "2026-09-22T08:57:09Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:01:03Z",
+              "conclusion": "success",
+              "name": "nvm_port README figures agree with the tree",
+              "number": 7,
+              "startedAt": "2026-09-22T08:57:09Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:01:03Z",
+              "conclusion": "success",
+              "name": "Post Cache the pinned Verilator build",
+              "number": 13,
+              "startedAt": "2026-09-22T09:01:03Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:01:03Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 14,
+              "startedAt": "2026-09-22T09:01:03Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:01:03Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 15,
+              "startedAt": "2026-09-22T09:01:03Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831/job/106677741296"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831"
+    }
+  ],
+  "reviews": {
+    "R233": {
+      "comment": {
+        "url": "https://api.github.com/repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/comments/5775735980",
+        "html_url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/pull/101#issuecomment-5775735980",
+        "issue_url": "https://api.github.com/repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/101",
+        "id": 5775735980,
+        "node_id": "IC_kwDOT06kyc8AAAABWEK8rA",
+        "user": {
+          "login": "Mister-M-alt",
+          "id": 161579364,
+          "node_id": "U_kgDOCaGBZA",
+          "avatar_url": "https://avatars.githubusercontent.com/u/161579364?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/Mister-M-alt",
+          "html_url": "https://github.com/Mister-M-alt",
+          "followers_url": "https://api.github.com/users/Mister-M-alt/followers",
+          "following_url": "https://api.github.com/users/Mister-M-alt/following{/other_user}",
+          "gists_url": "https://api.github.com/users/Mister-M-alt/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/Mister-M-alt/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/Mister-M-alt/subscriptions",
+          "organizations_url": "https://api.github.com/users/Mister-M-alt/orgs",
+          "repos_url": "https://api.github.com/users/Mister-M-alt/repos",
+          "events_url": "https://api.github.com/users/Mister-M-alt/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/Mister-M-alt/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "created_at": "2026-09-22T11:36:39Z",
+        "updated_at": "2026-09-22T11:36:39Z",
+        "body": "[R233] POSITIVE - exact head bc997e7c00e50e3d59b97987950bfbf6cc442182\n\nReviewer R233 (cold internal Opus), round R233-1. PP PR #101 (`98-clarify-srp-domain-events`) for issue #98 in Mister-M-alt/protocol-processor-control-plane-avb-milan.\n\n- Head `bc997e7c00e50e3d59b97987950bfbf6cc442182`, tree `bd67eaac225513f84ecf3a228cf58a818e67b4da`.\n- Base main `8452f564294300a82d56eed464276576f65f4d58`, tree `ec259f379560863e6ea49c6043353f0c11fe714d`.\n- Review clone: the isolated detached clone `$VALIDATION_STORAGE/reviews/r233-101-r1`.\n- Receipts are in `receipts/` beside this report. `receipts/COMMANDS.md` says how each was produced, and `receipts/SHA256SUMS` covers every receipt file.\n\n## Verdict\n\nPOSITIVE. No BLOCKER, MAJOR, MINOR or SUGGESTION finding is raised, and none is open. All five lenses are covered clean at the exact head: Conformance, RTL, Robustness, Tests and Docs.\n\n- Issue #98 acceptance items 1 to 4 are met at the head.\n- A10's direct-reference decision is met.\n- Acceptance item 5, the donor review and merge workflow, is still in progress and belongs to the manager (see \"Remaining merge obligations\").\n\n## Inputs read\n\n- **Issue #98:** the body and six comments:\n  - A10 READY TAKEOVER;\n  - A165 TAKEN;\n  - A165 REVIEW READY;\n  - A10 DIRECT DOCUMENTATION REFERENCE CORRECTION;\n  - A165 TAKEN (follow-up);\n  - A165 REVIEW READY (follow-up).\n- **PR #101:** the body, both commits, and five [A10] comments in full:\n  - VALIDATION RUNNING;\n  - FULL NATIVE BAR PASS;\n  - REVIEW ROUND START;\n  - CURRENT-CANDIDATE VALIDATION STARTED;\n  - CURRENT-CANDIDATE NATIVE BAR COMPLETE.\n\n  Two later comments were posted at 11:29Z: 5775631280 \"[R234] POSITIVE - exact head bc997e7\u2026\" and 5775631529 \"[A10] R234-1 REVIEW AND COMPLETE EVIDENCE ARCHIVE\". I read only their header lines. I did not open `reviews/R234-1/` in the evidence branch.\n\n  The PR had no reviews and no review comments (receipt 14). I read no other reviewer's work for this round and no private author material.\n- **Donor documents:**\n  - `docs/README.md` \u00a72, \u00a73 and \u00a76;\n  - `docs/guides/hdl-engineer.md` \u00a72, \u00a76 and \u00a78;\n  - `docs/architecture/10_srp_engine.md` \u00a71, \u00a72, \u00a76.1 (F10.2), \u00a711 and \u00a712;\n  - `01_overview.md:166` (the F01.5 row);\n  - `00_MILAN_COMPLIANCE_REVIEW.md:410` (REQ-NET-002) and `:422` (REQ-SRP-004);\n  - `02_interfaces.md:395,400,422`;\n  - `docs/guides/integrator.md:66,260`;\n  - `09_verification.md:51`.\n- **Parent contract:** kebag-logic/milan-fpga `AGENTS.md` \u00a76 and \u00a77, at live dev `ec34fcdee0ca9ffa63564a9af8ad70a3a618de29` (file sha256 `8a7287ee\u20266738`). The donor has no AGENTS or CONTRIBUTING file at the candidate.\n- **RTL:** all of `hdl/srp/KL_srp_domain.sv`; the comment at `hdl/top/protocol_processor_top.sv:137-139`.\n- **Tests:**\n  - `tb/srp_encoder/sim_main.cpp:573-709` (D1-D9) and its README;\n  - `tb/pp_top/sim_main.cpp:8237-8400` (DV1-DV6), its README section DV (`:493-543`) and M25-M31;\n  - `tb/srp_top/README.md`.\n- **Evidence:**\n  - evidence commits `94f47697f765e96a3c930dc09606fb7b559d3187` (author and source-head manager), `c0b98764fb116b857cce0cfc389ad298c5948bed` (current-main candidate) and `4640f5f8138418ee22bd4ae7ad5383303f6aa6cc` (candidate raw logs; only its `candidate1/` and MANIFEST entries were inspected);\n  - PR96's public R223 receipts at `29b2066b91cf4b0387edff43250b8fe79192232b`;\n  - hosted runs 35706840515 and 35706849831, with all six job logs;\n  - the status of hosted runs 35694588985 and 35720261532.\n- **Diff and history:** the full diff `8452f56..bc997e7` and its history.\n\n## What changed (verified)\n\n| Commit | File:line | Before | After |\n|---|---|---|---|\n| `88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf` | `docs/architecture/10_srp_engine.md:205` | `ADOPTED --> DEFAULTS: LINK_DOWN then LINK_UP / back to defaults` | `ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP` |\n| `bc997e7c00e50e3d59b97987950bfbf6cc442182` | `tb/srp_encoder/README.md:75` | `- The revert edge reads \"LINK_DOWN then LINK_UP / back to defaults\": the` | `- The F10.2 revert edge (ADOPTED to DEFAULTS) fires on LINK_DOWN: the` |\n\n- The combined diff is 2 files, each 1 insertion and 1 deletion.\n- Both files stay mode 100644. `git diff --summary` is empty and `git diff --check` is clean, against both base and 88a4eb4.\n- The added lines are ASCII with no trailing whitespace.\n- The file list is identical, and the other 220 tree entries have the same mode and blob as at base, including the 10 executable files.\n- Both commit messages are one line with no trailer, by hackerman-kl.\n- The published diffs match git, and `bc997e7.patch` applied to 88a4eb4 rebuilds tree `bd67eaa\u2026`.\n- The old label has 0 hits at the head. The new label text appears only at `10_srp_engine.md:205`.\n- Receipts: 43, 22, 46.\n\n## Figure and render evidence (receipts 30-34, 42, 44)\n\n- **The fence is unchanged since the render.** The F10.2 fence is identical at 88a4eb4 and bc997e7: 500 bytes, sha256 `f16fb070aa490da5c7e69c76f36923f22ea02ffcc66c4f8d861678f8b67e2a47`, in file blob `b8dafc54\u2026` at both commits. The author's claim \"`f16fb070\u20262a47`\" holds.\n- **The render reproduces byte for byte.** I rendered the base fence and the bc997e7 fence with mmdc 11.16.0, using the lint's own puppeteer config. All four outputs are byte-identical to the author's renders:\n\n  | Render | sha256 |\n  |---|---|\n  | base SVG | `131d6a46\u2026` |\n  | base PNG | `dcadfac2\u2026` |\n  | head SVG | `b2edf478\u2026` |\n  | head PNG | `5533d609\u2026` |\n\n  So the render attributed to 88a4eb4 is also the render of the final head.\n- **Only the revert edge's label changed.** My own SVG probe finds 2 states and 5 edges in both renders. Only `edge3` differs, and only in its label: `ADOPTED -> DEFAULTS | LINK_DOWN / restore defaults, declared again on the next LINK_UP`. The endpoints of every edge, and the other four labels, are identical.\n- **The pixel change is confined to that label.** The base and head PNGs are both 1022x1294. The 11,888 differing pixels all lie in x 610..965, y 564..685, which is edge3's label box at scale 2.\n- **Legibility.** I viewed the head PNG. The label reads as three lines at the base label's position and follows the ADOPTED-to-DEFAULTS arrow. Every other label is unchanged and visible.\n- **The Mermaid gate really parses F10.2.** On a scratch copy of bc997e7, `scripts/lint-diagrams.sh` returns rc 0. With line 205 planted as `ADOPTED --> --> DEFAULTS` it returns rc 1: `MERMAID FAIL: mmd-docs_architecture_10_srp_engine_md-2.txt`, `Parse error on line 5`.\n- **No generated asset of F10.2 exists.** None of the 34 committed diagram assets depicts it. The hits in those assets are clock domains, the gPTP domain, the `link_up_i` port, ADP \"link down\" and the field name \"Domain VID\". The fence is the master and GitHub renders it natively.\n\n## Executable evidence (receipts 12, 13, 20, 21, 61)\n\n**Hosted runs at bc997e7.** Two `hdl` runs, attempt 1, six jobs, all completed with success:\n- push run 35706840515, on the branch at bc997e7;\n- pull_request run 35706849831, on merge ref `2eb195d`, \"Merge bc997e7\u2026 into 8452f56\u2026\".\n\nThe suites logs show:\n- Verilator 5.050;\n- `PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)`;\n- `PASS srp_encoder (180 checks: 180 PASS, 0 FAIL)`;\n- `PASS srp_top (235 checks: 235 PASS, 0 FAIL)`;\n- `suites: 14943 checks total, 0 failing`;\n- nvm_port: `all measured figures agree with the tree`.\n\nThe docs-gates logs show links 807 OK, matrix 115 REQ OK and wavedrom 18 blocks OK. The portability logs show only YOSYS OK lines and 0 error markers.\n\nThe legacy combined-status endpoint reports `pending` with `total_count 0`. No commit status is posted there; the check runs are the gate.\n\n**A10 source-head native bar** (`94f4769\u2026/review-evidence/98-r1/manager`). Nine commands, all exit 0, at head bc997e7 with base 8452f56:\n- Verilator 5.052;\n- `lint_hdl`: 37 LINT OK;\n- 30 suites, 14,943 checks, 0 FAIL, with the same pp_top, srp_encoder and srp_top tallies;\n- the full `make -j1 check`, including wavedrom 18 OK;\n- `gen_matrix --check`;\n- Yosys;\n- nvm_port figures;\n- an empty `git diff --check`.\n\nThe evidence packet checks out:\n- All 62 MANIFEST entries match their published sha256.\n- The redaction flags are consistent, and the two PNGs are unredacted.\n- Both author SHA256SUMS files verify: 29 lines and 15 lines.\n\n**Accepted existing-behaviour evidence** (PR96, R223 receipts at `29b2066`). The inputs are the same as at this head:\n- R223's head tree `ec259f37\u2026` is this PR's base tree.\n- `KL_srp_domain.sv`, `tb/pp_top/sim_main.cpp` and `tb/srp_encoder/sim_main.cpp` have identical blobs at base and head.\n\nThe receipts verify:\n- `SHA256SUMS` 90/90;\n- the MANIFEST entries for receipts 02 and 09 and for the R36 and R37 folders.\n\nWhat they record:\n- Receipt 02: 1391/0 plus 20/0, 1411 PASS.\n- R36, a literal VID in the LINK_DOWN revert (`:159`), fails DV5 x3 and DV6's class-D check (4/20).\n- R37, a literal VID in the LINK_UP declaration (`:170`), fails DV2 x2 and DV6 (3/20).\n\n**Main hosted run cited by the author.** Run 35694588985 is a push to main at 8452f56 and succeeded. I checked its status only, not its log.\n\n## Acceptance mapping\n\n**Issue #98:**\n1. *Diagram shows default restoration at LINK_DOWN and declaration at LINK_UP.* Met.\n   - Source: `:205`, with the unchanged `[*] --> DEFAULTS: startup or LINK_UP / declare ...` at `:202`.\n   - Render: edge3 and edge0.\n   - RTL: `KL_srp_domain.sv:155-165` (LINK_DOWN) and `:166-171` (LINK_UP).\n2. *Generated assets match their master.* Met. No F10.2 export exists, `docs/diagrams` is unchanged (tree `aae2f05a\u2026` at base and head), and the WaveDrom sources are unchanged. `stale` passes (R233, A10, hosted) and `wavedrom-check` passes (A10, hosted).\n3. *Other transitions unchanged.* Met. Both states and the other four arcs are byte-identical, the render endpoints and labels are identical, and the pixel diff is confined to edge3's label.\n4. *`make check` (Mermaid and links), generated-image commands, and the rendered figure compared with `KL_srp_domain.sv:155-171`.* Met.\n   - The author and A10 ran the full `make check` at bc997e7.\n   - I ran `lint`, `links`, `matrix`, `modmatrix` and `stale` at bc997e7 (receipt 40), plus the negative control.\n   - No draw.io or WaveDrom source changed, so no regeneration command applies.\n   - The author and I both compared the render with the RTL.\n5. *Donor review and merge workflow.* Open, and owned by the manager.\n\n**A10 decision 5773480374 (direct-reference correction):** met.\n- `tb/srp_encoder/README.md:75` now describes the edge instead of quoting its label.\n- `:76-77` is byte-identical, so the interpretation is kept: restored at LINK_DOWN, nothing declared on a dead link, declared at LINK_UP.\n- The documentation gate ran on the final commit.\n- The render evidence stays attributed to 88a4eb4 with an unchanged fence, which is verified by hash and by the byte-identical re-render.\n\n## Lens results (reviewer-owned)\n\n[R233] PASS Conformance \u2014 `docs/architecture/10_srp_engine.md:202,205` (F10.2 at bc997e7), checked against `hdl/srp/KL_srp_domain.sv:155-171`, `docs/00_MILAN_COMPLIANCE_REVIEW.md:410,422` and `10_srp_engine.md:48,366-368` \u2014 What the arc now says matches the RTL:\n- LINK_DOWN loads `DEF_PRIO_P`/`DEF_VID_P`, clears `adopted_r` and `declared_r`, and emits nothing.\n- LINK_UP queues `New {6, DEF_PRIO_P, DEF_VID_P}`.\n\nThis is REQ-SRP-004's \"priority 3 / default VID 2 at startup and link-up\", with adoption and re-declaration unchanged, and REQ-NET-002's notification is unchanged. No state, event, wire value, timer, parameter or interface changed (receipt 43). Issue #98 items 1 to 4 are met.\n\n[R233] PASS RTL \u2014 `hdl/srp/KL_srp_domain.sv:113-193`, blob `96c57db1\u2026` at both base and bc997e7 \u2014 Each F10.2 arc maps to an RTL path:\n\n| F10.2 arc | RTL |\n|---|---|\n| `[*]` / LINK_UP | `:166-171`, with reset at `:114-130` |\n| DEFAULTS\u2192ADOPTED and ADOPTED\u2192ADOPTED | `:144-149` and `:172-184` |\n| ADOPTED\u2192DEFAULTS | `:155-165`, the only place besides reset that clears `adopted_r` |\n| DEFAULTS self-loop | `:150-152` and `:185-191` |\n\nLINK_DOWN takes precedence over LINK_UP in the if/else-if chain (`:155` before `:166`). The banner at `:11-19` and the comments at `:154` and `:156` agree with the new label. No RTL, interface or lint input changed: the other 220 entries are identical. A10's lint (37 OK) and Yosys, and hosted Yosys, pass at this head.\n\n[R233] PASS Robustness \u2014 `hdl/srp/KL_srp_domain.sv:144,150,162-165,185`, `tb/srp_encoder/sim_main.cpp:700-702`, `tb/pp_top/sim_main.cpp:8384-8386`, receipts 32 and 42 \u2014 \"Declared again on the next LINK_UP\" holds under ordering stress:\n- `declared_r = 0` blocks adoption and re-join while the link is down.\n- LINK_DOWN drops the queued Lv/New pair and the pending latches.\n- A tick while down declares nothing (D9), and 500 ms down declares nothing (DV5).\n- A flap on consecutive cycles takes `:155` then `:166`.\n\nOn the documentation side:\n- the Mermaid gate rejects a planted break in F10.2;\n- rendering is deterministic, and my re-render is byte-identical;\n- the new line is ASCII with no HTML label (`docs/README.md` \u00a73).\n\n[R233] PASS Tests \u2014 `tb/srp_encoder/sim_main.cpp:691-707` (D9), `tb/pp_top/sim_main.cpp:8369-8400` (DV5, DV6), receipts 12 and 61 \u2014 No test changed, and the issue and decisions expect none. D9 and DV5/DV6 grade exactly the relabelled behaviour:\n- at LINK_DOWN: one DOMAIN_CHANGE, class-D back to the defaults, DEFAULTS state;\n- while the link is down: nothing declared;\n- at the next LINK_UP: `New {6, 3, default}`.\n\nTheir blobs are unchanged. At this head they pass on hosted Verilator 5.050 (push and pull_request) and in A10's native run: pp_top 1411/0 and srp_encoder 180/0. The public R36/R37 receipts, on identical inputs, show that DV5/DV6 fail when the LINK_DOWN restore or the LINK_UP declaration is broken. That a revert deferred to LINK_UP would fail D9 `:696-699` and DV5 `:8375-8383` is from reading the source; I did not execute it (see Limits).\n\n[R233] PASS Docs \u2014 `docs/architecture/10_srp_engine.md:205`, `tb/srp_encoder/README.md:75-77`, receipts 30-34, 40, 41, 44, 45 and 46 \u2014 The F10.2 fence stays the label's single home: the new text appears once, the old label has 0 hits, and the README describes the edge without copying it. The fence agrees with:\n- `10_srp_engine.md:48` and `:366-368`;\n- `01_overview.md:166`;\n- `integrator.md:66,260`;\n- `protocol_processor_top.sv:139`;\n- `tb/pp_top/README.md:168,500,535-537`;\n- `tb/srp_encoder/README.md:36-44`;\n- the RTL banner.\n\nNo statement in the tree places the revert at LINK_UP. No F10.2 export exists and the WaveDrom inputs are unchanged. `make` `lint`, `links`, `matrix`, `modmatrix` and `stale` pass at the head. The render proof, attributed to 88a4eb4, is valid for bc997e7 (the fence and blob are identical, and the re-render is byte-identical). The label is legible. The issue, the PR and the evidence (62/62 MANIFEST, both SHA256SUMS, the patch rebuilding the tree) are enough for a cold reconstruction.\n\n## Findings\n\nNone. No finding of any severity is raised under any lens.\n\n## Existing unrelated observations\n\nNone of these is a finding. None counts against any lens, and none is proposed as #98 acceptance.\n\n- **O1 \u2014 F10.2 omissions that predate this PR.** All three are identical at base; the #98 decisions scoped them out, and the author's handoff flagged (a).\n  - (a) The revert arc does not name the DOMAIN_CHANGE that the RTL strobes on revert (`KL_srp_domain.sv:157`; graded at D9 `:696` and DV5 `:8378`). \u00a76.1 Rules `:210` covers it generally.\n  - (b) ADOPTED has no periodic/LeaveAll re-join self-loop, although the RTL re-joins the adopted declaration (`:150`, `:185-191`) and D8 grades it (`tb/srp_encoder/sim_main.cpp:672-689`).\n  - (c) The figure does not show that adoption and re-join are suppressed while the link is down (`:144`, `:150`, `:185`).\n- **O2 \u2014 mmdc layout, identical at base and head.** Edge3's label box overlaps edge4's (\"periodic or LeaveAll / re-join declaration\") by a few pixels, and edge3's path runs through its own label. I did not observe GitHub's native renderer.\n- **O3 \u2014 hosted CI does not run the Mermaid lint (existing CI scope).** The docs-gates job (`.github/workflows/hdl.yml:13-23`) runs links, matrix, `render-wavedrom --check` and `make stale`, but not `make lint`. So the Mermaid parse of a changed fence is covered only by local `make check`: the author, A10's native run and my receipts 40 and 42. `Makefile:12` describes `check` as \"everything CI should enforce\".\n- **O4 \u2014 cosmetic text that never reaches main.**\n  - The PR body has \"produced at88a4eb4\".\n  - The evidence README has \"commit88a4eb4\" and \"tobc997e7\".\n  - The PR body's \"Full native validation is running\" predates A10's 09:03Z pass.\n\n  Donor merge commits carry one-line messages (8452f56, c8214cf), so none of this lands on main.\n- **O5 \u2014 the candidate raw logs arrived after the claim, and the gap is now closed.** At `c0b98764\u2026`, `review-evidence/98-r1/candidate1/manager` held 6 files that match the MANIFEST. The nine raw logs the MANIFEST lists, `full-native/01.log` to `09.log`, were absent, and `.gitignore:22 *.log` matches their path (receipt 51). Comment 5775566484 had already said \"raw logs are archived\".\n\n  At `4640f5f8138418ee22bd4ae7ad5383303f6aa6cc` (13:29:02 CEST), A10 added the nine logs. All 15 candidate1 entries now match the MANIFEST, their hashes equal those the `c0b9876` MANIFEST already recorded, and the earlier 62 entries are unchanged (receipt 52). This needs no further action.\n\n## Reviewer-owned lens, covering round and exact head ledger\n\n| Lens | Covering round | Exact head | Result | Open findings (any severity) | Primary artifacts |\n|---|---|---|---|---|---|\n| Conformance | R233-1 | bc997e7c00e50e3d59b97987950bfbf6cc442182 | PASS, clean | none | `10_srp_engine.md:202,205`; `KL_srp_domain.sv:155-171`; 00 `:410,422`; receipts 30, 43 |\n| RTL | R233-1 | bc997e7c00e50e3d59b97987950bfbf6cc442182 | PASS, clean | none | `KL_srp_domain.sv:113-193` (blob `96c57db1`); receipts 12, 43 |\n| Robustness | R233-1 | bc997e7c00e50e3d59b97987950bfbf6cc442182 | PASS, clean | none | `KL_srp_domain.sv:144,150,162-165,185`; receipts 32, 42 |\n| Tests | R233-1 | bc997e7c00e50e3d59b97987950bfbf6cc442182 | PASS, clean | none | D9 `tb/srp_encoder/sim_main.cpp:691-707`; DV5/DV6 `tb/pp_top/sim_main.cpp:8369-8400`; receipts 12, 61 |\n| Docs | R233-1 | bc997e7c00e50e3d59b97987950bfbf6cc442182 | PASS, clean | none | `10_srp_engine.md:205`; `tb/srp_encoder/README.md:75-77`; receipts 30-34, 40-46 |\n\nNo BLOCKER, MAJOR, MINOR or SUGGESTION is open under any lens.\n\n## Remaining merge obligations\n\nThese are owned by the manager. I have not verified any of them as complete.\n\n1. **R234-1's independent review.** A comment headed \"[R234] POSITIVE - exact head bc997e7\u2026\" was posted at 11:29:06Z. I read only that line. Whether the round and its ledger are complete is the manager's call.\n2. **Current-candidate validation against main `c8214cfe827fb3fb50c9bfee415468a24b7c27b1`,** which PR #100 advanced.\n   - A10 reports 9/9 PASS on candidate `1fd06bf6\u2026`, tree `37a5cd80\u2026`.\n   - I independently reproduced `git merge-tree --write-tree c8214cf bc997e7` = `37a5cd807c5e8a289a7149892c1a1762dcd8279c` and confirmed that the paths are disjoint (receipt 50).\n   - The candidate logs at `4640f5f` verify by hash (receipt 52). They show:\n     - Verilator 5.052;\n     - 37 LINT OK;\n     - 30 PASS suites, 14,943 checks, 0 failing, including pp_top 1411/0 and srp_encoder 180/0;\n     - the full `make check`;\n     - modmatrix OK;\n     - 33 YOSYS OK lines;\n     - nvm_port figures agree;\n     - an empty `git diff --check`.\n   - I did not execute the candidate, and its commit cannot be fetched from the public remote.\n   - The source-head native and hosted evidence stays attributed to base 8452f56.\n3. **No hosted PR run exists against the new base.** The PR checks ran on merge ref `2eb195d` (base 8452f56). Push run 35720261532 on main `c8214cf` succeeded, but it covers main alone, not this candidate.\n4. **The merge itself and what follows it.**\n   - Final live-base and head verification immediately before merge.\n   - A maintainer-authorized merge.\n   - Merged-tree equality.\n   - Post-merge hosted checks and containment.\n   - Closure of #98 through `Closes #98`, and the project item moved to Done.\n5. **Merge state.** At 13:25:50 CEST, GitHub reported the PR OPEN and not draft, with `mergeable` UNKNOWN and `baseRefOid` still 8452f56, recomputing after main advanced. At 13:32:39 CEST it reported MERGEABLE and CLEAN, with the head unchanged (receipts 13, 14).\n6. **Ready-gated evidence does not apply.** Parent AGENTS \u00a77 requires exact-head RTL/tooling evidence after a PR is marked ready. PR #101 changes no RTL or tooling. Its hosted runs (08:48Z) predate `ready_for_review` (09:03:24Z).\n\n## Limits\n\n- **No RTL execution by R233.** I ran no Verilator build, suite, `lint_hdl`, Yosys or nvm_port figures, because the round excludes full native RTL and Yosys reruns.\n  - A focused `tb/srp_encoder` probe (a control build plus a revert deferred to LINK_UP) was denied by the session's tool permission. None of it ran and no files were created.\n  - The executable evidence is therefore A10's archived logs and the hosted logs, verified by hash, plus the public R223 receipts.\n- **`make wavedrom-check` was not run locally.** The `wavedrom` package is not installed, and the script would bootstrap a venv with `pip install`. Its inputs are unchanged (receipt 41), and it passes in A10's `05.log` and the hosted docs-gates.\n- **GitHub's own Mermaid rendering was not observed.** The only render is mmdc 11.16.0, the same tool as the author and the repository lint.\n- **Standards texts were not available.** The Milan v1.2 and IEEE 802.1Q texts are not in the repository. Conformance was judged against the 00 REQ rows, the architecture documents, the RTL and the tests.\n- **Verilator versions differ.** A10 ran natively with Verilator 5.052; the CI pin, 5.050, appears only in the hosted logs.\n- **Reused evidence was hash-checked, not re-run.** R223's PR96 receipts are reused as accepted existing-behaviour evidence (issue #98, PR96).\n- **Clone refs were not recorded at baseline.** No ref-writing command ran in the review clone. All fetches, worktrees and scratch copies were in `/tmp/r233-101-r1`.\n- **Timings are not reference figures.** The host is shared with other lanes.\n\n## Checkout integrity (receipts 00, 99)\n\nBaseline (13:12:39), final (13:27:03) and the re-check at 13:33:25 are identical:\n\n| Item | Value at both points |\n|---|---|\n| HEAD | `bc997e7c00e50e3d59b97987950bfbf6cc442182`, detached |\n| tree | `bd67eaac225513f84ecf3a228cf58a818e67b4da` |\n| `git ls-files -s` sha256 | `7cc63657\u20260da9` |\n| `.git/index` sha256 | `eb892727\u2026b44c` |\n| `git ls-tree -r HEAD` sha256 | `d97a70b9\u20261a41` |\n| tracked files | 222 |\n| porcelain status (with untracked and ignored) | empty |\n\nAt finish, all 222 files matched their index blob and mode, the index matched HEAD, and there was no stash. Nothing was committed, pushed, commented or published.\n\nR233-1 FINISHED\n",
+        "author_association": "OWNER",
+        "reactions": {
+          "url": "https://api.github.com/repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/comments/5775735980/reactions",
+          "total_count": 0,
+          "+1": 0,
+          "-1": 0,
+          "laugh": 0,
+          "hooray": 0,
+          "confused": 0,
+          "heart": 0,
+          "rocket": 0,
+          "eyes": 0
+        },
+        "performed_via_github_app": null,
+        "minimized": null
+      },
+      "execution": {
+        "requested_model": "claude-opus-5",
+        "requested_effort": "max",
+        "exit_code": 0,
+        "wall_seconds": 1274.0301352679962,
+        "cwd": "$VALIDATION_STORAGE/reviews/r233-101-r1",
+        "subtype": "success",
+        "duration_ms": 1271670,
+        "num_turns": 115,
+        "is_error": false,
+        "requested_model_present": true
+      }
+    },
+    "R234": {
+      "comment": {
+        "url": "https://api.github.com/repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/comments/5775631280",
+        "html_url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/pull/101#issuecomment-5775631280",
+        "issue_url": "https://api.github.com/repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/101",
+        "id": 5775631280,
+        "node_id": "IC_kwDOT06kyc8AAAABWEEjsA",
+        "user": {
+          "login": "Mister-M-alt",
+          "id": 161579364,
+          "node_id": "U_kgDOCaGBZA",
+          "avatar_url": "https://avatars.githubusercontent.com/u/161579364?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/Mister-M-alt",
+          "html_url": "https://github.com/Mister-M-alt",
+          "followers_url": "https://api.github.com/users/Mister-M-alt/followers",
+          "following_url": "https://api.github.com/users/Mister-M-alt/following{/other_user}",
+          "gists_url": "https://api.github.com/users/Mister-M-alt/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/Mister-M-alt/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/Mister-M-alt/subscriptions",
+          "organizations_url": "https://api.github.com/users/Mister-M-alt/orgs",
+          "repos_url": "https://api.github.com/users/Mister-M-alt/repos",
+          "events_url": "https://api.github.com/users/Mister-M-alt/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/Mister-M-alt/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "created_at": "2026-09-22T11:29:06Z",
+        "updated_at": "2026-09-22T11:29:06Z",
+        "body": "[R234] POSITIVE - exact head bc997e7c00e50e3d59b97987950bfbf6cc442182\n\nR234-1, cold external review of PP PR101 / issue98. Reviewed tree `bd67eaac225513f84ecf3a228cf58a818e67b4da` against base `8452f564294300a82d56eed464276576f65f4d58`. The two documentation corrections satisfy the settled scope. No open R234 findings: BLOCKER 0, MAJOR 0, MINOR 0, SUGGESTION 0. All five lenses are clean for this exact head. This verdict does not certify a merge result incorporating newer main.\n\nThe public contract is [issue98](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/98), including the [direct-reference correction decision](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/98#issuecomment-5773480374), and [PR101](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/pull/101). Authority examined: donor `docs/README.md` sections 2\u20133 and 6, the HDL engineer guide, REQ-SRP-004, F01.5, architecture 10 sections 2, 3, 4, 6.1 and 11, integrator sections 2 and 8, and the Domain RTL/banner. The candidate contains no AGENTS.md or CONTRIBUTING.md. The public parent [AGENTS review/coverage contract](https://github.com/kebag-logic/milan-fpga/blob/ec34fcdee0ca9ffa63564a9af8ad70a3a618de29/AGENTS.md) and CONTRIBUTING.md were fetched from live dev and checked against pinned `ec34fcdee0ca9ffa63564a9af8ad70a3a618de29`. Donor gate commands apply here; no parent product-pin adoption is included.\n\n[R234] PASS Conformance \u2014 `docs/architecture/10_srp_engine.md:205`, `docs/architecture/01_overview.md:166`, `docs/00_MILAN_COMPLIANCE_REVIEW.md:422`, `docs/guides/integrator.md:66` and `:260` \u2014 F10.2 now assigns restoration to LINK_DOWN and declaration to the next LINK_UP, consistent with the existing contract. Priority, default-VID parameter reference, runtime adoption, gPTP independence and all other transition meanings remain unchanged. The README correction is expressly authorized by the public decision; executable-test changes are not required.\n\n[R234] PASS RTL \u2014 `hdl/srp/KL_srp_domain.sv:109` through `:201`, especially `:155` and `:166`; `receipts/scope.json` \u2014 the falling-link branch restores both defaults, clears ADOPTED/declaration/queued work and emits DOMAIN_CHANGE when reverting an adoption. The rising-link branch queues a New declaration with the default tuple. The figure describes these existing branches accurately. Every RTL, test-program, build-script and workflow blob/mode is unchanged from base; no new clock, reset, CDC, width, synthesis, interface or timing effect is introduced.\n\n[R234] PASS Robustness \u2014 `hdl/srp/KL_srp_domain.sv:113`, `:144`, `:150`, `:155`, `:172`, `:185`; `tb/srp_encoder/sim_main.cpp:626` through `:707`; `tb/pp_top/sim_main.cpp:8292`, `:8369`, `:8389` \u2014 checked reset-before-link, identical/non-covering Domain input, adoption, maintenance while adopted, link-down restoration/quiescence, and subsequent declaration. The existing declared-state guards, pending-work clearing and ordered event queue remain intact. D5/D7/D8/D9 and DV1/DV5/DV6 provide concrete existing coverage for these cases. No new malformed-input, backpressure, timeout or feature-configuration behavior is introduced by the two prose lines.\n\n[R234] PASS Tests \u2014 `tb/pp_top/sim_main.cpp:8369` through `:8399`, `tb/pp_top/Makefile:54`, `tb/srp_encoder/sim_main.cpp:691`, and the factual native/PR96 artifacts below \u2014 DV5 checks restoration before LINK_UP, DEFAULTS state, one DOMAIN_CHANGE, snapshot state and silence while down; DV6 checks the subsequent byte-exact default declaration. D9 independently checks the same split at the Domain event interface, including a periodic tick while down. Existing mutation evidence distinguishes restore-source and declaration-source faults. The final-head manager sweep passes 30 suites / 14,943 checks / zero failures. No new behavior test is warranted for this unchanged executable tree.\n\n[R234] PASS Docs \u2014 `docs/architecture/10_srp_engine.md:198` through `:213`, `tb/srp_encoder/README.md:75` through `:77`, archived author renders, `render/F10.2-bc997e7.png`, and `receipts/visual-inspection.md` \u2014 the source and actual render show the intended event split; the README accurately describes it without preserving the stale quotation. Both states, the initial pseudostate and all five directed paths remain legible. No label text is clipped or collides with another label's text at the independently rendered native size. The Mermaid fence is the figure's master; the 34 committed diagram assets and documentation embedding rules disclose no F10.2 export requiring regeneration. Independent documentation checks pass, with the WaveDrom freshness limit stated below.\n\nThe complete F10.2 transition comparison was:\n\n| Source arc | Final meaning and preservation check | Existing implementation / test artifact |\n|---|---|---|\n| Initial \u2192 DEFAULTS | Startup/LINK_UP declares the default tuple; label unchanged | Domain RTL `:114`, `:166`; D1, DV1/DV2 |\n| DEFAULTS \u2192 ADOPTED | Differing received Class A Domain is adopted/redeclared; label unchanged | Domain RTL `:144`, `:172`; D4, DV4; architecture 10 section 3 and README `:71` clarify surfaced Class A versus raw FirstValue |\n| ADOPTED \u2192 ADOPTED | A further differing Domain replaces the declaration; label unchanged | Domain RTL `:144`, `:172`; D6/D8 |\n| ADOPTED \u2192 DEFAULTS | LINK_DOWN restores defaults; next LINK_UP declares them | Domain RTL `:155`, `:166`; D9, DV5/DV6 |\n| DEFAULTS \u2192 DEFAULTS | Periodic/LeaveAll rejoins the declaration; label unchanged | Domain RTL `:150`, `:185`; D2/D3 |\n\nF10.2 remains the behavioral summary identified at architecture 10 `:177`, not an expanded cycle-level state machine. The already-existing maintenance behavior while ADOPTED is unchanged and is checked by D8. No neighboring diagram redesign, extra event annotation, PP25/PR26 work, or fixture-policy change has been made an acceptance requirement.\n\nHistory and render attribution were verified independently. `88a4eb4f0765e7e8c1c41f35599f169ea74a2aaf` changes only the figure line; `bc997e7c00e50e3d59b97987950bfbf6cc442182` changes only the README line. From base, exactly two files have one insertion/deletion each, with unchanged `100644` modes. The architecture blob is `b8dafc542930d607c32ab8be49329c7ca975f6b0` at both author heads. The extracted fence SHA256 is `f16fb070aa490da5c7e69c76f36923f22ea02ffcc66c4f8d861678f8b67e2a47` at both heads and matches the archived render input. The original author rendering remains attributed to 88a4eb4; this review separately rendered the final head using installed mmdc 11.16.0.\n\nThe [initial public archive](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/tree/c5f372ed8fc83bdd345137c435c34cc57c34ec85/review-evidence/98-r1) and [completed archive](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/tree/94f47697f765e96a3c930dc09606fb7b559d3187/review-evidence/98-r1) contain identical blob/mode pairs for all 46 author files. All 42 downloaded manifest-listed artifacts match their published SHA256. Both PNG hashes also match the author's SHA256SUMS and the manifest's original/published fields: base `dcadfac2eb1cb03116e10d52ec539ef844ef987b2eedb06133c402f14d8876a7`, figure head `5533d609fa9cd6fc49cc5689cdd9ce2dfc06e34b8361faec4ab808bf5cddfb8f`. Public text is compared with its published hash where paths were neutralized. These checks establish consistency of the published evidence, without claiming access to private originals. Independently parsed SVGs preserve all node positions, edge paths and arrow markers; only the intended label changes. The new final-head rendering reproduces the archived head's graph and labels.\n\nThe historical [PP95/PR96 factual evidence archive](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/tree/29b2066b91cf4b0387edff43250b8fe79192232b/review-evidence/96-r1) was used only for existing-behavior execution evidence. The reviewed PR96 head `ea93023fbdd31cbf718da0d8f1aab4d750bfd21a` and this review's base have the same tree `ec259f379560863e6ea49c6043353f0c11fe714d`, verified from Git objects. Six selected raw logs/diffs match their published manifest and applicable receipt SHA256SUMS. The two-build baseline records 1391/0 default and 20/0 fixture, totaling 1411/0. R36 changes only the LINK_DOWN default-VID assignment to literal 2 and produces three DV5 failures plus DV6's class-D failure. R37 changes only the LINK_UP declaration VID to literal 2 and produces two DV2 failures plus DV6's wire failure. These mutations demonstrate sensitivity to the two separate value sources; they are not new executions or a claim to exhaust every timing fault. The historical hosted-main log records pp_top 1411/0, srp_encoder 180/0, srp_top 235/0 and total 14,943/0 at base 8452f56.\n\nThe [manager's native completion](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/pull/101#issuecomment-5773860098) is supported by `manager/full-native/results.json`, `complete.json` and logs 01\u201309 in archive 94f47697, rather than inferred from the earlier start comment. All nine recorded commands exit zero, completing at 2026-09-22 09:00:10 UTC: Verilator version 5.052, historical PR13 fetch, 37 clean lint tops, 30 suites / 14,943 checks / zero failures, full make check, module-matrix check, 32 Yosys OK plus one Xilinx OK, the 42-build NVM figure gate, and diff hygiene. The Yosys log contains warnings; its successful portability result is not represented as warning-free synthesis. Identity/candidate receipts tie this execution to bc997e7, tree bd67eaac, and base 8452f56.\n\nHosted status was queried independently. At the final snapshot, 2026-09-22 11:21:36 UTC, [push run 35706840515](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706840515) and [PR run 35706849831](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35706849831) are both completed/success with `head_sha` bc997e7. Their six `docs-gates`, `suites` and `portability` jobs are completed/success; the last job completed at 09:01:04 UTC. This is an observed completed result, not a prediction from a running snapshot. The donor workflow was examined at `.github/workflows/hdl.yml`; its hosted docs job does not itself render Mermaid, so the native and independent Mermaid results provide that evidence.\n\nReviewer-owned execution: the exact final fence rendered successfully as SVG and a 511 \u00d7 647 PNG. In an isolated exact-head archive, `make -j1 lint links matrix modmatrix` passed: 41 Mermaid blocks, 18 WaveDrom JSON blocks, 807 links, 115 REQ / 17 GAP records, and 86 module rows / zero untested. A malformed F10.2 arc in that scratch archive caused the correct Mermaid block to fail at fence line 5; inner lint exit 1, make exit 2. `make -j1 stale` and `git diff --check` passed. One initial reviewer SVG-selector assertion was corrected and disclosed in `receipts/probe-development.txt`; the completed probe uses Mermaid's actual edge attribute. No independent full `make check` is claimed: system Python lacks WaveDrom, and installation was prohibited. The verified manager full gate supplies the separate 18-render WaveDrom freshness result. No full RTL/Yosys rerun, hardware, installation, privilege change, Docker/act, source fix, commit, push, public metadata change, author contact or sub-agent was used.\n\nReviewer-owned coverage ledger:\n\n| Lens | Covering round / owner | Exact head | Clean / open findings |\n|---|---|---|---|\n| Conformance | R234-1 / R234 | bc997e7c00e50e3d59b97987950bfbf6cc442182 | CLEAN / none |\n| RTL | R234-1 / R234 | bc997e7c00e50e3d59b97987950bfbf6cc442182 | CLEAN / none |\n| Robustness | R234-1 / R234 | bc997e7c00e50e3d59b97987950bfbf6cc442182 | CLEAN / none |\n| Tests | R234-1 / R234 | bc997e7c00e50e3d59b97987950bfbf6cc442182 | CLEAN / none |\n| Docs | R234-1 / R234 | bc997e7c00e50e3d59b97987950bfbf6cc442182 | CLEAN / none |\n\nThis ledger is authored and accepted by R234 for R234-1. No private reasoning or current-round other-reviewer report was read. Historical execution receipts were inspected as factual evidence, not as another reviewer's verdict. New findings requiring severity, attributable lenses, requirement, impact, required outcome and re-verification: none. No finding has been deferred to another issue to manufacture clean coverage.\n\nRemaining merge obligations are concrete. Live main was already `c8214cfe827fb3fb50c9bfee415468a24b7c27b1` in this review's first live-main query and remains so in the final snapshot; its commit is the PR100 merge, tree `8768f7e640ee62fd62862bec7117155fcab3ddbb`. The old native candidate-equals-head claim was valid for its recorded 8452 base and is not carried forward to this new main. The manager must publish the independent reports, satisfy the two-review bar with no round in flight, construct and validate the actual candidate against then-current main, retain required hosted evidence, and perform authorized merge, containment and post-merge hosted verification before closing the work. This reviewer did not validate that future candidate or inspect the other review's outcome. The evidence branch must never merge. Parent pin/product adoption remains outside issue98.\n\nFinal preservation receipt: all 222 tracked files were directly hashed against HEAD blobs and checked for matching executable modes (10 executable files); the index equals HEAD and the initial index listing, with SHA256 `7cc6365761eb3e4b3dc4a5426f4af88f58fd67949189b575f70a77872c300da9`. HEAD/tree remain the requested objects; no replace refs, tracked/index diff or untracked files exist. The checkout remains detached and clean. `COMMANDS.md`, reproducible scripts, `receipts/`, downloaded public artifacts and independent renders accompany this report. Publication remains with the manager.\n\nR234-1 FINISHED\n",
+        "author_association": "OWNER",
+        "reactions": {
+          "url": "https://api.github.com/repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/comments/5775631280/reactions",
+          "total_count": 0,
+          "+1": 0,
+          "-1": 0,
+          "laugh": 0,
+          "hooray": 0,
+          "confused": 0,
+          "heart": 0,
+          "rocket": 0,
+          "eyes": 0
+        },
+        "performed_via_github_app": null,
+        "minimized": null
+      },
+      "execution": {
+        "requested_model": "gpt-6-astra",
+        "requested_effort": "xhigh",
+        "exit_code": 0,
+        "wall_seconds": 810.0791868349916,
+        "cwd": "$VALIDATION_STORAGE/reviews/r234-101-r1",
+        "last_message_present": true,
+        "error_events": 0,
+        "malformed_events": 0,
+        "terminal_completed": true,
+        "credit_exhausted": false,
+        "is_error": false
+      }
+    }
+  },
+  "merge_performed": false,
+  "authorization": "Standing automatic merge after two independent positives and complete gates",
+  "limits": "Manager must verify reviewer-owned clean five-lens ledgers, no findings and no other review in flight. Historical PP continuity/negative-merge audit findings remain a disclosed nonzero baseline; current PR containment must be clean."
+}

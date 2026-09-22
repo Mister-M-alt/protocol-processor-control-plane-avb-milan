@@ -1426,5 +1426,23 @@
     "original_sha256": "3a6c1566f815614e4055431a9ee67e7ae6d44a76ebddb078a9f627bb7117bdd0",
     "published_sha256": "3a6c1566f815614e4055431a9ee67e7ae6d44a76ebddb078a9f627bb7117bdd0",
     "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/merge-preflight.json",
+    "original_sha256": "bd22decbe9eac4fc9006bc73e1ed2eaa2bd5717ce3f6f8f23792337ed75c43eb",
+    "published_sha256": "fcbe9f8a25962f8357ccabde6f031ae8aadc76b36e99b8eea29fe2845a7713b7",
+    "path_redacted": true
+  },
+  {
+    "file": "candidate1/manager/merge-preflight.py",
+    "original_sha256": "c4e3cee203db4a8e727e0914486831e29f20a75e6986f3fcc186cac64b012ed0",
+    "published_sha256": "2a9a80042abd059434a0787aba246a78d832505b536e6a0b33051ab775f95d00",
+    "path_redacted": true
+  },
+  {
+    "file": "candidate1/manager/merge-bar.md",
+    "original_sha256": "e32beea255b68f8e857a649d595ba75201b0441600eb3e1b94cca341f61a385c",
+    "published_sha256": "e32beea255b68f8e857a649d595ba75201b0441600eb3e1b94cca341f61a385c",
+    "path_redacted": false
   }
 ]
