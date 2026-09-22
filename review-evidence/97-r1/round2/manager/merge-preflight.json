@@ -1,0 +1,727 @@
+{
+  "checked_at": "2026-09-22T13:12:25.135679+02:00",
+  "head": "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+  "base": "8452f564294300a82d56eed464276576f65f4d58",
+  "tree": "8768f7e640ee62fd62862bec7117155fcab3ddbb",
+  "native": {
+    "complete": {
+      "head": "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+      "exit_code": 0,
+      "finished": "2026-09-22T11:18:22.735641+02:00"
+    },
+    "results": {
+      "head": "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+      "base": "8452f564294300a82d56eed464276576f65f4d58",
+      "results": [
+        {
+          "command": [
+            "verilator",
+            "--version"
+          ],
+          "exit_code": 0,
+          "seconds": 0.051,
+          "log": "$VALIDATION_STORAGE/donor97-manager-r2/full-native/01.log"
+        },
+        {
+          "command": [
+            "git",
+            "fetch",
+            "--no-tags",
+            "origin",
+            "refs/pull/13/head"
+          ],
+          "exit_code": 0,
+          "seconds": 0.572,
+          "log": "$VALIDATION_STORAGE/donor97-manager-r2/full-native/02.log"
+        },
+        {
+          "command": [
+            "bash",
+            "scripts/lint_hdl.sh"
+          ],
+          "exit_code": 0,
+          "seconds": 9.818,
+          "log": "$VALIDATION_STORAGE/donor97-manager-r2/full-native/03.log"
+        },
+        {
+          "command": [
+            "bash",
+            "scripts/run_suites.sh"
+          ],
+          "exit_code": 0,
+          "seconds": 185.036,
+          "log": "$VALIDATION_STORAGE/donor97-manager-r2/full-native/04.log"
+        },
+        {
+          "command": [
+            "make",
+            "-j1",
+            "check"
+          ],
+          "exit_code": 0,
+          "seconds": 25.222,
+          "log": "$VALIDATION_STORAGE/donor97-manager-r2/full-native/05.log"
+        },
+        {
+          "command": [
+            "python3",
+            "scripts/gen_matrix.py",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.044,
+          "log": "$VALIDATION_STORAGE/donor97-manager-r2/full-native/06.log"
+        },
+        {
+          "command": [
+            "bash",
+            "syn/yosys/run.sh"
+          ],
+          "exit_code": 0,
+          "seconds": 63.896,
+          "log": "$VALIDATION_STORAGE/donor97-manager-r2/full-native/07.log"
+        },
+        {
+          "command": [
+            "make",
+            "-C",
+            "tb/nvm_port",
+            "figures"
+          ],
+          "exit_code": 0,
+          "seconds": 222.837,
+          "log": "$VALIDATION_STORAGE/donor97-manager-r2/full-native/08.log"
+        },
+        {
+          "command": [
+            "git",
+            "diff",
+            "--check",
+            "8452f564294300a82d56eed464276576f65f4d58",
+            "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e"
+          ],
+          "exit_code": 0,
+          "seconds": 0.007,
+          "log": "$VALIDATION_STORAGE/donor97-manager-r2/full-native/09.log"
+        }
+      ]
+    }
+  },
+  "pr": {
+    "headRefOid": "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+    "isDraft": false,
+    "mergeStateStatus": "CLEAN",
+    "mergeable": "MERGEABLE",
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-22T09:10:11Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708829801/job/106684193718",
+        "name": "docs-gates",
+        "startedAt": "2026-09-22T09:10:03Z",
+        "status": "COMPLETED",
+        "workflowName": "hdl"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-22T09:10:10Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708824838/job/106684178741",
+        "name": "docs-gates",
+        "startedAt": "2026-09-22T09:10:00Z",
+        "status": "COMPLETED",
+        "workflowName": "hdl"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-22T09:20:13Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708829801/job/106684193618",
+        "name": "suites",
+        "startedAt": "2026-09-22T09:10:04Z",
+        "status": "COMPLETED",
+        "workflowName": "hdl"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-22T09:19:59Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708824838/job/106684179182",
+        "name": "suites",
+        "startedAt": "2026-09-22T09:10:01Z",
+        "status": "COMPLETED",
+        "workflowName": "hdl"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-22T09:12:18Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708829801/job/106684193741",
+        "name": "portability",
+        "startedAt": "2026-09-22T09:10:03Z",
+        "status": "COMPLETED",
+        "workflowName": "hdl"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-22T09:12:22Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708824838/job/106684179155",
+        "name": "portability",
+        "startedAt": "2026-09-22T09:10:00Z",
+        "status": "COMPLETED",
+        "workflowName": "hdl"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "conclusion": "success",
+      "event": "push",
+      "headSha": "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+      "jobs": [
+        {
+          "completedAt": "2026-09-22T09:10:10Z",
+          "conclusion": "success",
+          "databaseId": 106684178741,
+          "name": "docs-gates",
+          "startedAt": "2026-09-22T09:10:00Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-09-22T09:10:01Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-09-22T09:10:00Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:02Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-09-22T09:10:01Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:08Z",
+              "conclusion": "success",
+              "name": "Link, matrix, wavedrom and staleness gates",
+              "number": 3,
+              "startedAt": "2026-09-22T09:10:02Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:08Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 6,
+              "startedAt": "2026-09-22T09:10:08Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:08Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 7,
+              "startedAt": "2026-09-22T09:10:08Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708824838/job/106684178741"
+        },
+        {
+          "completedAt": "2026-09-22T09:12:22Z",
+          "conclusion": "success",
+          "databaseId": 106684179155,
+          "name": "portability",
+          "startedAt": "2026-09-22T09:10:00Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-09-22T09:10:01Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-09-22T09:10:01Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:02Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-09-22T09:10:01Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:18Z",
+              "conclusion": "success",
+              "name": "Install yosys + sv2v",
+              "number": 3,
+              "startedAt": "2026-09-22T09:10:02Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:12:20Z",
+              "conclusion": "success",
+              "name": "Elaborate every top off-vendor",
+              "number": 4,
+              "startedAt": "2026-09-22T09:10:18Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:12:20Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 8,
+              "startedAt": "2026-09-22T09:12:20Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:12:20Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 9,
+              "startedAt": "2026-09-22T09:12:20Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708824838/job/106684179155"
+        },
+        {
+          "completedAt": "2026-09-22T09:19:59Z",
+          "conclusion": "success",
+          "databaseId": 106684179182,
+          "name": "suites",
+          "startedAt": "2026-09-22T09:10:01Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-09-22T09:10:02Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-09-22T09:10:01Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:03Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-09-22T09:10:02Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:05Z",
+              "conclusion": "success",
+              "name": "Cache the pinned Verilator build",
+              "number": 3,
+              "startedAt": "2026-09-22T09:10:03Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:05Z",
+              "conclusion": "skipped",
+              "name": "Build Verilator v5.050",
+              "number": 4,
+              "startedAt": "2026-09-22T09:10:05Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:16:49Z",
+              "conclusion": "success",
+              "name": "Lint (zero tolerance) + every suite",
+              "number": 5,
+              "startedAt": "2026-09-22T09:10:05Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:16:49Z",
+              "conclusion": "success",
+              "name": "Traceability matrix no-drift + untested budget 0",
+              "number": 6,
+              "startedAt": "2026-09-22T09:16:49Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:19:57Z",
+              "conclusion": "success",
+              "name": "nvm_port README figures agree with the tree",
+              "number": 7,
+              "startedAt": "2026-09-22T09:16:49Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:19:57Z",
+              "conclusion": "success",
+              "name": "Post Cache the pinned Verilator build",
+              "number": 13,
+              "startedAt": "2026-09-22T09:19:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:19:57Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 14,
+              "startedAt": "2026-09-22T09:19:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:19:57Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 15,
+              "startedAt": "2026-09-22T09:19:57Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708824838/job/106684179182"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708824838"
+    },
+    {
+      "conclusion": "success",
+      "event": "pull_request",
+      "headSha": "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+      "jobs": [
+        {
+          "completedAt": "2026-09-22T09:20:13Z",
+          "conclusion": "success",
+          "databaseId": 106684193618,
+          "name": "suites",
+          "startedAt": "2026-09-22T09:10:04Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-09-22T09:10:05Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-09-22T09:10:05Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:07Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-09-22T09:10:05Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:08Z",
+              "conclusion": "success",
+              "name": "Cache the pinned Verilator build",
+              "number": 3,
+              "startedAt": "2026-09-22T09:10:07Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:08Z",
+              "conclusion": "skipped",
+              "name": "Build Verilator v5.050",
+              "number": 4,
+              "startedAt": "2026-09-22T09:10:08Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:17:01Z",
+              "conclusion": "success",
+              "name": "Lint (zero tolerance) + every suite",
+              "number": 5,
+              "startedAt": "2026-09-22T09:10:08Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:17:01Z",
+              "conclusion": "success",
+              "name": "Traceability matrix no-drift + untested budget 0",
+              "number": 6,
+              "startedAt": "2026-09-22T09:17:01Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:20:11Z",
+              "conclusion": "success",
+              "name": "nvm_port README figures agree with the tree",
+              "number": 7,
+              "startedAt": "2026-09-22T09:17:01Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:20:11Z",
+              "conclusion": "success",
+              "name": "Post Cache the pinned Verilator build",
+              "number": 13,
+              "startedAt": "2026-09-22T09:20:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:20:11Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 14,
+              "startedAt": "2026-09-22T09:20:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:20:11Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 15,
+              "startedAt": "2026-09-22T09:20:11Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708829801/job/106684193618"
+        },
+        {
+          "completedAt": "2026-09-22T09:10:11Z",
+          "conclusion": "success",
+          "databaseId": 106684193718,
+          "name": "docs-gates",
+          "startedAt": "2026-09-22T09:10:03Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-09-22T09:10:04Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-09-22T09:10:03Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:05Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-09-22T09:10:04Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:09Z",
+              "conclusion": "success",
+              "name": "Link, matrix, wavedrom and staleness gates",
+              "number": 3,
+              "startedAt": "2026-09-22T09:10:05Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:09Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 6,
+              "startedAt": "2026-09-22T09:10:09Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:09Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 7,
+              "startedAt": "2026-09-22T09:10:09Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708829801/job/106684193718"
+        },
+        {
+          "completedAt": "2026-09-22T09:12:18Z",
+          "conclusion": "success",
+          "databaseId": 106684193741,
+          "name": "portability",
+          "startedAt": "2026-09-22T09:10:03Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-09-22T09:10:04Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-09-22T09:10:03Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:05Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-09-22T09:10:04Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:10:18Z",
+              "conclusion": "success",
+              "name": "Install yosys + sv2v",
+              "number": 3,
+              "startedAt": "2026-09-22T09:10:05Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:12:16Z",
+              "conclusion": "success",
+              "name": "Elaborate every top off-vendor",
+              "number": 4,
+              "startedAt": "2026-09-22T09:10:18Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:12:16Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 8,
+              "startedAt": "2026-09-22T09:12:16Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-09-22T09:12:16Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 9,
+              "startedAt": "2026-09-22T09:12:16Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708829801/job/106684193741"
+        }
+      ],
+      "status": "completed",
+      "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708829801"
+    }
+  ],
+  "reviews": {
+    "R229": {
+      "comment": {
+        "url": "https://api.github.com/repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/comments/5774922964",
+        "html_url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/pull/100#issuecomment-5774922964",
+        "issue_url": "https://api.github.com/repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/100",
+        "id": 5774922964,
+        "node_id": "IC_kwDOT06kyc8AAAABWDZU1A",
+        "user": {
+          "login": "Mister-M-alt",
+          "id": 161579364,
+          "node_id": "U_kgDOCaGBZA",
+          "avatar_url": "https://avatars.githubusercontent.com/u/161579364?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/Mister-M-alt",
+          "html_url": "https://github.com/Mister-M-alt",
+          "followers_url": "https://api.github.com/users/Mister-M-alt/followers",
+          "following_url": "https://api.github.com/users/Mister-M-alt/following{/other_user}",
+          "gists_url": "https://api.github.com/users/Mister-M-alt/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/Mister-M-alt/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/Mister-M-alt/subscriptions",
+          "organizations_url": "https://api.github.com/users/Mister-M-alt/orgs",
+          "repos_url": "https://api.github.com/users/Mister-M-alt/repos",
+          "events_url": "https://api.github.com/users/Mister-M-alt/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/Mister-M-alt/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "created_at": "2026-09-22T10:29:09Z",
+        "updated_at": "2026-09-22T10:29:09Z",
+        "body": "[R229] POSITIVE - exact head 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e\n\nPP PR100 / issue97, independent internal review round R229-2. Reviewed tree: `8768f7e640ee62fd62862bec7117155fcab3ddbb`. Correction parent and prior reviewed head: `1eb20dc4911880de10b745cc284e7dde306788b5`. Main base: `8452f564294300a82d56eed464276576f65f4d58`.\n\nR230-M1 is resolved at this head under its original **Robustness and Tests** lenses. No in-scope MINOR, MAJOR or BLOCKER remains open in this review. No new finding or suggestion is raised. Four lenses were applied afresh; RTL coverage is explicitly retained from R229-1 after independent artifact verification, as recorded below. This is one independent positive review, not completion of the manager's review and merge duties.\n\nThe contract was reconstructed from [issue97](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/97), [issue95 and AC2](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/95), the public assignment, source/history/diffs, [R230-M1's report](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/pull/100#issuecomment-5773649718), [accepted response](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/pull/100#issuecomment-5773649948), and the [published correction](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/pull/100#issuecomment-5773942386). I read the RTK instructions, donor documentation entry points and HDL engineer guide, relevant parameter/SRP/integrator/verification contracts, and the [parent public AGENTS review/completion rules](https://github.com/kebag-logic/milan-fpga/blob/HEAD/AGENTS.md). The donor has no AGENTS.md or CONTRIBUTING.md. No private author reasoning, private lane files, other reviewer contact, subagents or collaboration were used.\n\n**Accepted finding disposition.** R230-M1, MINOR, Robustness and Tests, concerned `tb/pp_top/fixture_guards.py`: translated GCC assertion wording made its English diagnostic classifier reject otherwise correct compiler refusals, stopping ordinary pp_top before simulation. The required outcome was language-independent verdicts while retaining both assertions, exact diagnostic sets, total-error checking and unrelated-error refusal.\n\nAt `fixture_guards.py:38\u201346`, the helper copies the inherited environment and changes only `LC_ALL` to `C` for the compiler subprocess. Compiler selection, argument splitting, includes, defines and capture options are preserved. Both Verilator calls retain inherited inputs; the caller environment is not modified. My instrumented actual compiler and Verilator calls confirm the boundary under German/French settings, including an inherited `LC_ALL` override. The classifier and four cases are byte-identical to the prior helper after removing only the locale additions. Independent results below close the finding under both original lenses; passing manager tests alone did not supply this disposition.\n\n**Independent execution and regression assessment.** `focused/` contains commands, working directories, exit codes, raw logs, mutant patches, compiler argv/environment/diagnostic records and effective Verilator invocations. Tools were installed Verilator 5.052, GCC 16.2.1, Python 3.14.7 and GNU Make 4.4.1. Builds ran sequentially in disposable source archives, outer make `-j1`, with an external wrapper changing Verilator's `-j 0` to explicit `-j 8`. All 20 recorded Verilator invocations were checked; all work invocations were capped at eight. No donor source flags were edited.\n\n| Probe / receipt | Completed observation |\n|---|---|\n| `01-prior-de`, `01-prior-fr` | Prior head: both gates exit 2 at `0002` despite the two intended translated GCC assertion diagnostics. Caller has `LANG=en_US.UTF-8`, `LANGUAGE=de` or `fr`, and no `LC_ALL`. Installed GCC catalogs supply the translations. |\n| `02-head-de`, `02-head-fr`, `03-head-inherited-lc-all` | Corrected head: each exits 0. No override and `5A3C` compile; `0002` yields exactly both named assertions; `1002` yields exactly class-D. The third probe sets `LC_ALL=fr_FR.UTF-8`, `LANGUAGE=de:fr`, `LC_MESSAGES=de_DE.UTF-8`. Compiler capture shows `LC_ALL=C`; model generation retains caller values. |\n| `04-remove-wire`, `05-remove-class-d` | Each single-assertion removal exits 2 at `0002`, detecting the missing diagnostic even though compilation still fails. |\n| `06-extra-error` | Both expected `0002` errors plus an unrelated injected `#error` exit 2. Expected assertion messages cannot conceal the third error. |\n| `07-remove-normalization` | Removing only the `LC_ALL=C` assignment fails both permanent regression subcases. `make fixture-guards` exits 2 before invoking Verilator or a compiler. Outer environment is C; no catalog lookup supplies the test's oracle. |\n| `08`\u2013`12` | The permanent regression also rejects removing the compiler env argument, mutating the caller env, discarding inherited inputs, explicitly normalizing Verilator's env, and dropping a compiler argument. Each fails before real tool invocation. |\n| `13-required-wiring` | Dry-run and source inspection establish ordinary `run` \u2192 `fixture-guards` \u2192 `fixture-guards-test`; all three are phony. The suite sweep and hosted workflow use this ordinary make entry point. |\n| `14-default-and-fixture` | German caller environment: make exits 0; default 1,391 checks / 0 failures, pinned fixture 20 / 0. Exactly one canonical final tally: `1411 checks: 1411 PASS, 0 FAIL`. |\n| `15-docs`, `16-diff-check` | Links, compliance matrix and module matrix pass: 807 links, 115 REQ rows / 17 GAP findings, 86 module rows / 0 untested. Correction diff whitespace check passes. |\n\nThe new regression's oracle is appropriate for its maintained contract. `test_fixture_guards.py:15\u201360` independently states the four cases and diagnostic literals, supplies controlled subprocess responses, and checks exactly five run calls: one model generation plus four compilers. It checks complete compiler argv/kwargs, including a quoted compiler argument, exact environment equality with only `LC_ALL` replaced, caller equality after the call, and unchanged Verilator lookup/generation arguments. Both absent and pre-existing `LC_ALL` are tested. The equality assertions cannot pass by merely accepting the mocked English responses: the removal and isolation mutants above turn them red. Mocking makes this an environment/argument boundary test; the separate real four-case compiler gate proves the actual assertions and diagnostics. Neither is claimed as simulation coverage.\n\nThe real probes also confirm temporary model cleanup on passing and failing gates. Scratch source comparisons show exactly each intended mutation, and no tracked difference in the normal copy. A reviewer-runner anchor assertion interrupted the first attempt before the unrelated-error mutation; only the external runner was corrected, and completed probes were retained without repetition. `reviewer-runner-note.txt` records that harness interruption.\n\n**Scope and retained evidence.** `scope-and-retention.json` verifies exactly four correction files: `tb/pp_top/fixture_guards.py`, its new regression, `Makefile`, and `README.md`. All 220 other files retain blob identities and modes. The complete HDL subtree is `abf21fefc041df67029d227e67391558fd15ddb3` at main, the prior head and this head. The wrapper and runtime bench are unchanged from R229-1. Removing only the original five guard/comment lines from the current bench makes it byte-identical to main. Makefile build flags, source list, fixture value, runtime recipes and tally aggregation are unchanged from the prior head. No RTL, runtime expectation, product parameter/default, adoption policy, workflow or Yosys change occurred.\n\nI retain M25/M31 from **R229-1 at `1eb20dc4911880de10b745cc284e7dde306788b5`**, not as new executions. The [prior public R229 report](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/pull/100#issuecomment-5773281544), archived raw `07-missing-binding` and `08-child-default` logs, patches and source-hash receipts were inspected. Their baseline source hashes match this head, and all simulation inputs and expectations are unchanged. M25 recorded default 1,391 / 0 and fixture 20 / 13 failures after deleting the real top-to-child binding. M31 recorded 1,391 + 20 / 0 with the child's default changed to 7 and the binding intact. The correction changes the prerequisite's diagnostic environment, not either control's compiled behavior. These controls were not rerun in R229-2.\n\n**Reviewer-owned lens / covering-round / head ledger.** CLEAN means no open MINOR, MAJOR or BLOCKER attributable to that lens in the reviewed scope. An open finding would leave every attributable lens unclean.\n\n| Lens | Covering round and exact head | Result and artifact-based coverage |\n|---|---|---|\n| Conformance | R229-2, `5c45845ad15bd7995f20c81d7fd61501e5ca9d7e` | PASS, CLEAN; applied afresh. Issue97/issue95 AC2; `sim_main.cpp:75\u201387,8257\u20138405`; `README.md:493\u2013566`; F01.5 `01_overview.md:166`, `integrator.md:66`, F10.2 / SRP \u00a711, REQ-SRP-004 and REQ-NET-002. Both observable-width refusals and normal-build acceptance hold; shipping VID 2 and received-Domain adoption remain unchanged. No normative conflict found. |\n| RTL | **Retained R229-1**, `1eb20dc4911880de10b745cc284e7dde306788b5`; unchanged scope verified in R229-2 | PASS, CLEAN; **not freshly applied RTL coverage**. Original artifacts: `protocol_processor_top.sv:144,2147`, `KL_srp_top.sv:80,323`, `KL_srp_domain.sv` reset/link/adoption logic, `pp_top_wrap.sv:332\u2013335`. Current blob/mode/subtree and compiled-input comparisons in `scope-and-retention.json` establish unchanged direct 16-bit binding and 12-bit projection scope; retained M25/M31 receipts support the original coverage. |\n| Robustness | R229-2, `5c45845ad15bd7995f20c81d7fd61501e5ca9d7e` | PASS, CLEAN; applied afresh. `fixture_guards.py:22\u201360`, `sim_main.cpp:78\u201384`, focused receipts `01`\u2013`12` and compiler/model captures. Locale normalization, inherited inputs, caller/Verilator isolation, exact diagnostics, unrelated-error refusal, failure propagation and temporary cleanup checked. R230-M1 resolved. |\n| Tests | R229-2, `5c45845ad15bd7995f20c81d7fd61501e5ca9d7e` | PASS, CLEAN; applied afresh. `test_fixture_guards.py:15\u201360`, `fixture_guards.py:25\u201360`, `Makefile:54\u201383`, `run_suites.sh:26\u201346`; focused receipts and retained, explicitly attributed controls above. Regression oracle and assertions, required wiring, sensitivity to lost normalization and guards, real compile results, full pp_top execution and canonical tally checked. R230-M1 resolved. |\n| Docs | R229-2, `5c45845ad15bd7995f20c81d7fd61501e5ca9d7e` | PASS, CLEAN; applied afresh. `README.md:523\u2013544`, helper comments, regression docstring, PR/issue public records, donor docs/HDL guide, `15-docs`. Locale and isolation claims match the implementation and executable evidence; syntax-only/mock coverage limits and product/fixture distinction remain accurate. |\n\nR230-S1 (Docs) and R230-S2 (Docs/Tests) remain optional, unadopted suggestions from the prior round. They were not converted into acceptance conditions, silently implemented or used to relax the existing fixture or product contract.\n\n**Completed external evidence and attribution.** I inspected the [manager's completed-bar record](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/pull/100#issuecomment-5774108311), [manager archive at `290d5a2`](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/tree/290d5a2ceb23a5cb4eac41257ac331d63babeaf3/review-evidence/97-r1/round2/manager), and [A166's factual author archive at `4d00509`](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/tree/4d005092a0c5bec91b7768d5ab46beef0e6464c1/review-evidence/97-r1/round2/author). All 86 downloaded blobs match Git object identities; all 84 applicable outer-manifest entries match published SHA-256 values. The archive distinguishes original hashes from hashes after public path neutralization; original author-manifest hashes were checked against the outer manifest's original fields, not mistaken for published-file hashes.\n\nThe manager's `full-native/results.json`, nine raw logs and `complete.json` identify this exact head and record all nine commands returning zero, with completion at `2026-09-22T11:18:22.735641+02:00`. Results include 37-module zero-tolerance lint, 30 suites / 14,943 checks / zero failures, complete documentation/matrix gates, existing Yosys portability and NVM figures. This is completed **manager execution**, not independent R229 execution; a start record alone would not establish it. A166's focused execution is author evidence, separately corroborated by the probes above.\n\nI independently retrieved GitHub run/job metadata and raw logs for all six completed hosted jobs; none was rerun by me:\n\n| Event / run | docs-gates | suites | portability |\n|---|---|---|---|\n| [push 35708824838](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708824838) | 106684178741 SUCCESS | 106684179182 SUCCESS | 106684179155 SUCCESS |\n| [pull_request 35708829801](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35708829801) | 106684193718 SUCCESS | 106684193618 SUCCESS | 106684193741 SUCCESS |\n\nPush jobs checked out the reviewed head. PR jobs checked out synthetic merge `6439edc9e2a2fa06c4f9ce2e35d4ccaa273e321d`, whose parents are the stated main/head and whose tree equals `8768f7e640ee62fd62862bec7117155fcab3ddbb`. Both hosted suite logs show Verilator 5.050, pp_top 1,411 PASS and donor 14,943 checks / zero failures. Current read-only public state still shows the assigned head, unchanged main, and an open, unmerged PR. This establishes current evidence identity, not actual merge containment.\n\n**Limits and integrity.** I did not run the full donor sweep, full HDL lint, complete diagram tooling, Yosys, NVM figures, hosted jobs, Docker/act, hardware or an alternate compiler. Only C and en_US locales are generated locally; German/French behavior was exercised through installed GCC message catalogs and LANGUAGE, not newly generated native locales. Specifications were assessed through the settled public issues and authoritative repository requirements; copyrighted specification PDFs were not supplied. Historical M26\u2013M30 coverage was not re-executed. The excluded PR26 portability-maintenance lane is unchanged; a passing existing portability gate is not a claim that unrelated historical issues are repaired.\n\nThe detached review clone retains all 224 tracked file contents, Git blobs, kinds and modes. Raw index SHA-256 remains `a585137b9943281379b982a020de991cf4c9e9fa91b9db2133cd3c831529e55e`; staged entries, working/index diffs, unmerged entries and status are unchanged/empty. `verify-receipts.py`, `verification-summary.json`, `initial-*` and `final-*` make those checks reproducible. All mutations and generated build products were confined to disposable scratch. No source fix, install, privilege use, commit, push, public write, metadata change, merge or parent pin change occurred.\n\n**Pending manager obligations.** Obtain both independent positive corrected-head reviews with reviewer-owned clean five-lens coverage and no review still in flight; enforce current-candidate validation and required review/publication state; then perform the authorized merge, verify actual merged-tree containment and post-merge hosted results, and complete issue state. Re-evaluate coverage and validation if the candidate changes. This report does not waive any execution or merge duty and does not authorize parent submodule integration. The evidence branch must never merge.\n\nR229-2 FINISHED\n",
+        "author_association": "OWNER",
+        "reactions": {
+          "url": "https://api.github.com/repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/comments/5774922964/reactions",
+          "total_count": 0,
+          "+1": 0,
+          "-1": 0,
+          "laugh": 0,
+          "hooray": 0,
+          "confused": 0,
+          "heart": 0,
+          "rocket": 0,
+          "eyes": 0
+        },
+        "performed_via_github_app": null,
+        "minimized": null
+      },
+      "execution": {
+        "requested_model": "gpt-6-astra",
+        "requested_effort": "xhigh",
+        "exit_code": 0,
+        "wall_seconds": 902.8120128800074,
+        "cwd": "$VALIDATION_STORAGE/reviews/r229-100-r2",
+        "last_message_present": true,
+        "error_events": 0,
+        "malformed_events": 0,
+        "terminal_completed": true,
+        "credit_exhausted": false,
+        "is_error": false
+      }
+    },
+    "R230": {
+      "comment": {
+        "url": "https://api.github.com/repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/comments/5775365763",
+        "html_url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/pull/100#issuecomment-5775365763",
+        "issue_url": "https://api.github.com/repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/100",
+        "id": 5775365763,
+        "node_id": "IC_kwDOT06kyc8AAAABWD0Wgw",
+        "user": {
+          "login": "Mister-M-alt",
+          "id": 161579364,
+          "node_id": "U_kgDOCaGBZA",
+          "avatar_url": "https://avatars.githubusercontent.com/u/161579364?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/Mister-M-alt",
+          "html_url": "https://github.com/Mister-M-alt",
+          "followers_url": "https://api.github.com/users/Mister-M-alt/followers",
+          "following_url": "https://api.github.com/users/Mister-M-alt/following{/other_user}",
+          "gists_url": "https://api.github.com/users/Mister-M-alt/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/Mister-M-alt/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/Mister-M-alt/subscriptions",
+          "organizations_url": "https://api.github.com/users/Mister-M-alt/orgs",
+          "repos_url": "https://api.github.com/users/Mister-M-alt/repos",
+          "events_url": "https://api.github.com/users/Mister-M-alt/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/Mister-M-alt/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "created_at": "2026-09-22T11:07:25Z",
+        "updated_at": "2026-09-22T11:07:25Z",
+        "body": "[R230] POSITIVE - exact head 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e\n\nReviewer R230 (cold independent external Opus), round R230-2. PR100 (`97-assert-distinct-sr-vid-fixture`) for issue #97.\n\n- Head `5c45845ad15bd7995f20c81d7fd61501e5ca9d7e`, tree `8768f7e640ee62fd62862bec7117155fcab3ddbb`.\n- Single parent `1eb20dc4911880de10b745cc284e7dde306788b5`, the head R230-1 reviewed.\n- Base main `8452f564294300a82d56eed464276576f65f4d58`.\n- Published evidence: branch `97-review-evidence` at `290d5a2ceb23a5cb4eac41257ac331d63babeaf3`. Author round 2 (A166) is under `review-evidence/97-r1/round2/author`, first published at `4d00509`. Manager round 2 (A10) is under `review-evidence/97-r1/round2/manager`.\n\nAttribution: author results belong to A166 (round 2) and A161 (round 1). Native results belong to A10, and hosted results to GitHub Actions runs `35708824838` and `35708829801`. The only exceptions are results I reproduced below. Everything I ran is in `receipts/` beside this report, and `receipts/SHA256SUMS` lists every receipt file.\n\n## Verdict\n\nPOSITIVE. No BLOCKER, MAJOR or MINOR finding is open at this head.\n\n- **R230-M1 (MINOR; Robustness, Tests) is resolved at this head.** See its disposition below.\n- **All five lenses are clean.** Conformance, RTL, Robustness, Tests and Docs were each applied afresh in this round at `5c45845`, and each is clean. No earlier coverage is banked.\n- **No new finding.**\n- **Optional suggestions stay optional.** R230-S1 and R230-S2 are SUGGESTIONs from R230-1. They were not adopted and are unchanged at this head. They remain optional, are not acceptance conditions, and do not affect coverage.\n- **Product behaviour is unchanged.**\n  - The correction touches four `tb/pp_top` files.\n  - The product RTL, the wrapper, the runtime bench (`sim_main.cpp`) and the documents that state the parameter policy are byte-identical to `1eb20dc`.\n\n## R230-M1 disposition\n\n### The original finding\n\n- Raised in R230-1 at `1eb20dc`, under Robustness and Tests.\n- `fixture_guards.py` ran the compiler in the caller's locale and matched English text.\n- Under a GCC that prints translated diagnostics, the gate rejected correct compiler behaviour. The default pp_top `make` then stopped before either build.\n\n### The correction at `5c45845`\n\n- `tb/pp_top/fixture_guards.py:38-47`:\n  - copies the inherited environment;\n  - overrides only `LC_ALL=C`;\n  - passes the result to each of the four compiler subprocesses.\n- Verilator's model generation (`:30-32`) and `--getenv` query (`:22-24`) keep the caller's environment.\n- The expected diagnostic sets, the error-count check and the fail-closed verdict (`:48-57`) are unchanged.\n- `tb/pp_top/Makefile:67,71-72,83` adds `fixture-guards-test`, a new regression (`test_fixture_guards.py`), and makes it a prerequisite of `fixture-guards`, and therefore of `run`.\n\n### Required outcome and verification, as stated in R230-1\n\n| Required | Evidence at this head | Result |\n|---|---|---|\n| With `LANGUAGE=de` and `LANGUAGE=fr`, `LC_ALL` unset and GCC catalogs installed, the gate prints the four expected outcomes and exits 0 | Receipt 03. This environment translates GCC's output (receipt 02), and the prior head fails in each localized setting. Five further UTF-8 settings also pass: German and French `LANG`, an inherited `LC_ALL=de_DE.UTF-8`, `LC_MESSAGES=fr_FR.UTF-8`, and a mixed German/French set. So do Latin-1 German and Latin-9 French locales (receipt 13) | met |\n| The verdict is independent of the message language | Receipt 04: the diagnostic bytes of each case are identical under EN, FR_LANGUAGE, DE_LC_ALL and MIXED, and every compiler call ran with `LC_ALL=C` | met |\n| The exact expected sets, the error-count check and fail-closed behaviour are kept | Receipt 07: G1-G9 each fail at the intended case under localized callers, including an unrelated error alongside both expected ones (G7) and a third, unrelated static assertion (G9). Receipt 06d | met |\n| G1 and G2 still fail | Receipt 07, under DE_LC_ALL, FR_LANG and MIXED | met |\n| pp_top `make` gives 1411 PASS | Receipt 08: German and French callers each give 1391 + 20 checks, `1411 checks: 1411 PASS, 0 FAIL`. A10's native run and the hosted runs, whose identity I verified in receipt 01 | met |\n| The hosted suites stay green | Receipt 01: all six jobs of the push and pull_request runs succeeded at this head | met |\n\nDisposition: **RESOLVED at `5c45845ad15bd7995f20c81d7fd61501e5ca9d7e`.** Robustness and Tests are clean in this round (ledger below).\n\n## Inputs read\n\n- **Issue #97:** the body (scope, acceptance, decision) and its four comments: A10 READY TAKEOVER, A161 TAKEN, A161 MATERIAL DECISIONS and A161 AUTHOR HANDOFF.\n- **PR100:**\n  - the body and the diff;\n  - both commits, whose messages are one line each with no trailers;\n  - these comments: A161 REVIEW READY; A10 VALIDATION RUNNING; A10 REVIEW READY; A10 INDEPENDENT REVIEW START; my R230-1 report; A10 R230-M1 ACCEPTED; A166 TAKEN, MATERIAL DECISIONS and AUTHOR HANDOFF; A10 CORRECTED HEAD PUBLISHED; A10 CORRECTED-HEAD FULL BAR PASS; A10 CORRECTED COLD REVIEW ROUND START.\n- **Read only as first lines (comment headers), to keep this review independent:** R229's two review comments and the manager note on R229-2's publication.\n- **Not read:** R229's archived evidence, and any private lane directory, including the local path named in A166's handoff.\n- **Review discipline:** the parent `kebag-logic/milan-fpga` `AGENTS.md` \u00a76-\u00a78 (branch `dev`, blob `b9d500c`). The donor has no AGENTS or CONTRIBUTING file.\n- **Donor documentation:**\n  - `docs/README.md` \u00a76;\n  - `docs/guides/hdl-engineer.md` \u00a72 and \u00a76-\u00a78;\n  - `tb/pp_top/README.md` (`:19-21`, `:500-567`, and mutation rows M25-M31 at `:210-216`);\n  - `docs/architecture/01_overview.md:166` (F01.5);\n  - `docs/guides/integrator.md:66`;\n  - `docs/architecture/10_srp_engine.md:198,366-369`;\n  - `docs/00_MILAN_COMPLIANCE_REVIEW.md:410,422`.\n- **Build and CI files:** `.github/workflows/hdl.yml`, `scripts/run_suites.sh`, `scripts/lint_hdl.sh` and the root `Makefile`.\n- **Source:**\n  - `tb/pp_top/Makefile`, `fixture_guards.py` and `test_fixture_guards.py`;\n  - `tb/pp_top/sim_main.cpp:75-87,8257-8262`;\n  - the VID parameter lines of `protocol_processor_top.sv`, `KL_srp_top.sv` and `KL_srp_domain.sv`.\n- **Evidence:**\n  - `review-evidence/97-r1/round2/` at `290d5a2`. Every file was hash-verified against `MANIFEST.json`. I read these files:\n    - author: `IDENTITY.json`, `RESULTS.json`, `COMMANDS.md`, `mutants/`, `receipts/runner-note.txt`, `receipts/08-remove-locale.log`, and both source patches;\n    - manager: `candidate.json`, `full-native.json`, `full-native/results.json`, `full-native/complete.json`, `final-integrity.json`, `hosted.json`, and the logs `full-native/01.log` and `04.log`;\n  - A161's round-1 M25 and M31 patches (`review-evidence/97-r1/author/receipts/06-missing-binding.patch`, `07-child-default.patch`).\n\n## Identity, scope and published evidence (receipts 00, 01, 16)\n\n### The review clone\n\n- Detached at `5c45845`, tree `8768f7e`, single parent `1eb20dc`.\n- `8452f56` is both its merge-base with base and an ancestor.\n- There were no tracked, untracked or ignored changes at the start (receipt 00) and none at the end (receipt 16).\n\n### The correction `1eb20dc..5c45845` changes exactly four files\n\n| File | Change |\n|---|---|\n| `tb/pp_top/Makefile` | +5/-2 |\n| `tb/pp_top/README.md` | +6 |\n| `tb/pp_top/fixture_guards.py` | +5 |\n| `tb/pp_top/test_fixture_guards.py` | new, +64, mode 100644 |\n\n- There are no other mode changes, deletions or renames, and `git diff --check` is clean.\n- 220 of the 224 tree entries have the same mode and blob as at `1eb20dc`. These include `hdl/` (tree `abf21fe`), `syn/`, `scripts/`, `.github/`, `docs/`, the root `Makefile`, `tb/pp_top/sim_main.cpp` (`6b400db`) and `tb/pp_top/pp_top_wrap.sv` (`c755a16`).\n- The whole PR, `8452f56..5c45845`, changes five `tb/pp_top` files (+168/-2) and adds no non-ASCII line.\n\n### Live state (12:56 CEST)\n\n- PR100 is OPEN, not draft, MERGEABLE, head `5c45845`, base `main@8452f56`.\n- `refs/pull/100/merge` is `6439edc`, with parents `8452f56` and `5c45845` and tree `8768f7e`, which is the head tree.\n\n### Evidence archive\n\n- `4d00509` (A166) and `290d5a2` (A10) touch only `review-evidence/97-r1/round2/**` and `review-evidence/97-r1/MANIFEST.json`. Neither is an ancestor of the head.\n- The `MANIFEST.json` round-2 section lists 101 entries for the 101 files present. Every published SHA-256 matches, and the 24 `path_redacted` flags are consistent.\n- A166's patches are byte-identical to the real diffs: `source.patch` to `git diff 1eb20dc..5c45845`, and `source-vs-main.patch` to `git diff 8452f56..5c45845`.\n\n### A166's recorded results (author facts; I reproduced their substance in receipts 03, 06, 07 and 08)\n\n- Before the correction, German and French gates give rc 2 while the compiler prints both intended diagnostics.\n- After it, both give rc 0 with the four outcomes, and the regression passes.\n- Mutants 05-08 give rc 2.\n- Default + 5A3C gives 1411 PASS.\n- Docs, UPC map and scope checks give rc 0, and every Verilator call was capped at 8.\n\n### A10's native results (not re-run by me)\n\n- `candidate.json` names this head, base and tree, with `candidate_equals_head_tree: true`.\n- `full-native/results.json` records nine commands, all exit 0, at this head:\n  - `verilator --version` (5.052);\n  - `lint_hdl.sh`;\n  - `run_suites.sh`, whose `04.log` shows `PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)` and `suites: 14943 checks total, 0 failing`;\n  - `make -j1 check`;\n  - `gen_matrix.py --check`;\n  - the Yosys portability run;\n  - nvm_port figures;\n  - `git diff --check`.\n- `complete.json` gives exit 0, finished 11:18:22+02:00.\n- `final-integrity.json` records both checkouts clean at this head and tree.\n\n### Hosted runs (live API; not re-run by me)\n\n- The `hdl` push run `35708824838` and pull_request run `35708829801` are the only runs for this head. Both are attempt 1 and completed/success with `head_sha` `5c45845`.\n- All six jobs (docs-gates, suites and portability, on both events) completed/success.\n- The suites logs:\n  - The push run checked out `5c45845`. The PR run checked out `6439edc`.\n  - Both show Verilator 5.050, `PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)` and `suites: 14943 checks total, 0 failing`.\n- A10's hosted snapshot recorded `isDraft: true` when it was taken. The PR is now ready for review (not a draft).\n\n## What I ran\n\n### Scratch and setup\n\n- Everything ran under `/tmp/r230-100-r2-scratch`:\n  - a `--no-hardlinks` clone detached at the head;\n  - `git archive` exports of the prior head, of base (receipt 13 only), a mutant tree, and the M25 and M31 trees. The M25 and M31 trees were removed afterwards.\n- `receipts/scripts/setup.sh` records the setup commands.\n\n### Locales\n\n- This host installs only the `C`, `C.utf8`, `en_US.utf8` and `POSIX` locales.\n- I generated `en_US.UTF-8`, `de_DE.UTF-8`, `fr_FR.UTF-8`, `de_DE.ISO-8859-1`, `fr_FR.ISO-8859-15@euro` and `ja_JP.EUC-JP` with glibc `localedef` into a scratch `LOCPATH`. This needed no privileges.\n- GCC 16.2.1's stock package ships 20 `gcc.mo` catalogs, de, fr and ja among them.\n\n### Controlled environment\n\n- Every probe ran through `receipts/scripts/run.py`, which starts from an explicit base environment:\n  - `PATH=/usr/local/bin:/usr/bin:/bin`;\n  - `HOME`;\n  - `LANG=en_US.UTF-8`;\n  - `TMPDIR` and `LOCPATH` inside the scratch area.\n- It then adds the setting's variables. Each JSON receipt records the complete environment, the working directory, the command, the exit code and the duration.\n\n### Caller settings (`scripts/settings.sh`)\n\n| Setting | Variables added to the base environment |\n|---|---|\n| EN | none |\n| DE_LANGUAGE | `LANGUAGE=de` |\n| FR_LANGUAGE | `LANGUAGE=fr` |\n| DE_LANG | `LANG=de_DE.UTF-8` |\n| FR_LANG | `LANG=fr_FR.UTF-8` |\n| DE_LC_ALL | `LC_ALL=de_DE.UTF-8`, an inherited non-C `LC_ALL` |\n| FR_LC_MESSAGES | `LC_MESSAGES=fr_FR.UTF-8` |\n| MIXED | `LC_ALL=fr_FR.UTF-8`, `LANG=de_DE.UTF-8`, `LANGUAGE=de:fr`, `LC_MESSAGES=de_DE.UTF-8` |\n\n### Job caps\n\n- The outer `make` ran serially (`-j1`). The one exception is 06e, a `make -j8` that stops at the regression before any compile.\n- Every Verilator call went through `receipts/scripts/verilator8`. It strips `-j`, `--build-jobs` and `--verilate-jobs` and pins all three at 8.\n- Receipt 15:\n  - 134 calls were logged: 76 work calls, all with exactly `-j 8 --build-jobs 8 --verilate-jobs 8`, and 58 `--getenv` queries.\n  - The callers' `-j 0` was replaced.\n  - Verilation reports show `on 8 threads`.\n\n### Toolchain\n\n- Verilator 5.052, GCC 16.2.1, Python 3.14.7 and GNU Make 4.4.1.\n- Receipt 12 also used the existing uv-managed CPython 3.11.15 and 3.12.13.\n- clang++ is not installed.\n\n## Receipts\n\n| Receipt | Probe | Result |\n|---|---|---|\n| 00 | identity, live refs, diff scope, unchanged-artifact check | As above. 4 changed paths; 220 of 224 entries identical to `1eb20dc`. |\n| 01 | published evidence and live hosted state | 101 of 101 manifest entries verified. Author patches byte-identical. 9 of 9 native commands rc 0. Hosted 6 of 6 jobs success, attempt 1, head `5c45845` (pull_request on `6439edc`, head tree). Verilator 5.050. 1411 pp_top checks and 14,943 suite checks, 0 failing. |\n| 02 | `g++ -fsyntax-only` of a one-line `static_assert` under each setting | All seven localized settings print `statische Assertion fehlgeschlagen` or `l'assertion statique a \u00e9chou\u00e9`; EN prints English. `LC_ALL=C` with `LANGUAGE=de`, `LC_ALL=C` with a mixed German/French set, `LC_ALL=POSIX` and `LC_ALL=C.UTF-8` with `LANGUAGE=de` all print English. |\n| 03 | real `make fixture-guards`, prior head against this head, 8 settings | Prior head: EN rc 0. All 7 localized settings give rc 2 with `FAIL: fixture 0002: unexpected compiler result 1`, although GCC printed both intended diagnostics in German or French.<br>This head: 8 of 8 give rc 0. Each shows `Ran 1 test ... OK`, the four outcomes and `fixture guards: 4 cases PASS`.<br>No temporary directory is left behind, and the clone stays clean including ignored files. |\n| 04 | real processes, no mocks: `make fixture-guards` with the compiler replaced by `cxx-record`, which runs `/usr/bin/g++` unchanged and records its environment, argv and output, and Verilator by `verilator8`, which dumps its environment. Settings EN, FR_LANGUAGE, DE_LC_ALL and MIXED, plus extra caller inputs: `CPATH`, `CPLUS_INCLUDE_PATH`, `SOURCE_DATE_EPOCH` and a marker variable | Per setting: 2 Verilator calls with identical environments that keep the caller's `LC_ALL` (unset, `de_DE.UTF-8` or `fr_FR.UTF-8`). 4 compiler calls whose environment differs from Verilator's only in `LC_ALL=C`. Every caller input is preserved: `LANG`, `LANGUAGE`, `LC_MESSAGES`, `LOCPATH`, `CPATH`, `CPLUS_INCLUDE_PATH`, the marker, `SOURCE_DATE_EPOCH`, `PATH`, `HOME` and `TMPDIR`.<br>Compiler argv is identical across settings. Per case, the diagnostic bytes are identical across settings (sha256 prefixes: `540890b1\u2026` for the no-override and 5A3C cases, `1caea53a\u2026` for 0002, `a56c5307\u2026` for 1002). Artifacts are in `04-capture/`. |\n| 05 | in-process: exact-head `fixture_guards.main()` with real subprocesses, argv taken from `make -n`, MIXED caller | `main()` returns 0. The caller's `os.environ` is unchanged afterwards. Both Verilator calls received exactly the caller environment. All 4 compiler calls received exactly the caller environment plus `LC_ALL=C` (caller `LC_ALL=fr_FR.UTF-8`). Artifacts are in `05-capture/`. |\n| 06a/b | `make fixture-guards-test` under EN, DE_LC_ALL and MIXED; the test under a CPython audit hook with `PATH=/nonexistent` | Passes in all three settings. Audit hook: 1 test run, 0 process creations. The regression needs no compiler, Verilator or message catalog. |\n| 06c | the regression against 11 edits of `fixture_guards.py` (diffs in `06c-mutants.diff`) | Fails (rc 1, both subtests) for N1-N8:<br>\u2022 N1: the `env` argument removed;<br>\u2022 N2: the `LC_ALL` override removed;<br>\u2022 N3: `LANG=C` instead;<br>\u2022 N4: `LC_MESSAGES=C` instead;<br>\u2022 N5: inherited environment dropped;<br>\u2022 N6: caller environment mutated;<br>\u2022 N7: Verilator also normalised;<br>\u2022 N8: global `LC_ALL` set before Verilator.<br>Passes (rc 0) for the equivalent rewrites E1 (`{**os.environ, \"LC_ALL\": \"C\"}`) and E2 (`dict(os.environ, LC_ALL=\"C\")`). Passes for C1 (lenient verdict), which is outside the regression's stated scope; see observation O2. |\n| 06d | the real gate, bypassing the regression (command exactly as `make -n` builds it), under DE_LC_ALL | Head: `4 cases PASS`. N1-N4: rc 1 at 0002, with German `statische Assertion fehlgeschlagen` lines. The regression's failures therefore match real defects. N5-N8 break the documented isolation contract and were not run through the real gate. |\n| 06e | N2 in a full tree, `make -j8`, the default target, DE_LANGUAGE | rc 2 at `Makefile:72: fixture-guards-test`. The ROM generators ran; the gate, Verilator and both builds did not. No `obj_dir` or `obj_vid`. |\n| 07 | G1-G9 `sim_main.cpp` mutants through `make fixture-guards`: all under DE_LC_ALL, and G1, G2 and G7 also under FR_LANG and MIXED (diffs in `07-sim-mutants.diff`) | All 15 runs give rc 2, with the regression OK and the compiler output in English:<br>\u2022 G1 (wire guard removed): 0002 shows the class-D diagnostic only.<br>\u2022 G2 (class-D guard removed): the wire diagnostic only.<br>\u2022 G3 (mask widened): 1002 compiles.<br>\u2022 G4 (messages swapped): 1002 carries the wire text.<br>\u2022 G5 (guards moved out of the fixture branch): the default build is refused.<br>\u2022 G6 (`#error` in every fixture build): 5A3C fails.<br>\u2022 G7 (`#error` for 0002 alongside both assertions): 3 errors against 2 expected.<br>\u2022 G8 (undeclared name in the default branch): the default build fails.<br>\u2022 G9 (third static assertion for 0002): 3 errors.<br>The mutant tree was restored to the head bytes; no temporary directory is left behind. |\n| 08 | full `make`, the default target, at the head: DE_LC_ALL and FR_LANG | Both rc 0. Regression OK, `fixture guards: 4 cases PASS`, `[build default, \u20260x0002] 1391 checks, 0 failures`, `[build fixture, \u20260x5a3c] 20 checks, 0 failures`. Last line `1411 checks: 1411 PASS, 0 FAIL`, and `build_tally.txt` holds `1391 0` and `20 0`. `run_suites.sh`'s tally regex extracts the same line. Only ignored outputs are created; clean after `make clean`. |\n| 09 | M25 (A161's patch removing the top's `.DOM_DEF_VID_P` binding) under DE_LANGUAGE; M31 (A161's patch changing `KL_srp_top`'s default to 7) under FR_LC_MESSAGES; each in its own export of this head | M25: gate PASS, default 1391/0, and the fixture build fails 13 of 20 (every value check of DV1-DV6); make rc 2.<br>M31: 1391/0 and 20/0, `1411 checks: 1411 PASS, 0 FAIL`.<br>Both match `README.md:210,216`. |\n| 10 | `lint_hdl.sh`'s zero-tolerance flags on `protocol_processor_top` at the default and at `-G\u2026=16'h0002`, `16'h1002` and `16'h5A3C`; RTL defaults and assertions; the real 0002 and 1002 fixture build recipes | Lint: rc 0 with 0 `%Warning`/`%Error` lines at all four values. The defaults are 2 at `protocol_processor_top.sv:144`, `KL_srp_top.sv:80` and `KL_srp_domain.sv:42`, and no RTL assertion mentions the VID.<br>Fixture builds: rc 2. The model header is generated, only `sim_main.o` fails, and there is no `Vpp_top_vid`. 0002 shows `:81` and `:83`; 1002 shows `:83` only. |\n| 11 | docs gates that need no install; syntax; `diff --check` | `check-links.py`: 807, OK. `check-matrix.py`: 115 REQ rows and 17 GAP findings, OK. `gen_matrix.py --check`: 86 rows, 0 untested. `check_upc_map.py`: PASS. `make stale`: rc 0. Both new Python files parse. `diff --check` is clean against the prior head and against base. |\n| 12 | regression plus gate under CPython 3.11.15 and 3.12.13, DE_LC_ALL | Both rc 0: `Ran 1 test \u2026 OK`, 4 cases PASS. |\n| 13 | legacy caller encodings | `de_DE.ISO-8859-1` and `fr_FR.ISO-8859-15@euro`: prior head rc 2, this head rc 0.<br>`ja_JP.EUC-JP` at both heads: rc 2 with a `UnicodeDecodeError` while decoding the 0002 output (see observation O1).<br>Base `8452f56`: `make ltn_rom.hex` fails under EUC-JP, Latin-1 and Latin-9 (`UnicodeEncodeError` on U+2014 in `gen_ltn_rom.py`) and passes under `de_DE.UTF-8`. Under EUC-JP, `gen_matrix.py --check` also fails with a `UnicodeDecodeError`. |\n| 14 | conformance sources at the head, and a width value matrix (the real `sim_main.cpp`, `-fsyntax-only`, `LC_ALL=C`, one generated model) | These compile: no override, 5A3C, 5a3c, 0003, 0000, 0FFF and 1005.<br>Refused at both widths: 0002, 2 and 10002.<br>Class-D only: 1002 and F002.<br>No other error appears for any value. |\n| 15 | Verilator job-cap audit (`verilator-invocations.jsonl`) | PASS, as described under \"Job caps\". |\n| 16 | final state of the review clone | HEAD `5c45845`, detached. Status is empty including ignored files. The 224 index entries equal the HEAD tree at stage 0. Every path matches its HEAD blob in kind, executable bit and bytes (214 x 100644, 10 x 100755). `git fsck --full` is clean. The live refs are unchanged. |\n\n## Findings\n\n**None new at this head.**\n\nThese carried SUGGESTIONs from R230-1 were not adopted, are unchanged and remain optional:\n\n- **R230-S1 (Docs):** `tb/pp_top/README.md:525` still writes the environment-prefix form `SRP_VID_FIXTURE=0002`. `Makefile:15` still overrides it; only `make SRP_VID_FIXTURE=\u2026` applies.\n- **R230-S2 (Docs, Tests):** the README mutation record (`:182-232`) still has no rows for the guards' mutants. The README prose (`:544`) now states that removing the locale override fails the regression.\n\nNeither is a condition of issue #97 or of R230-M1, and neither affects lens coverage.\n\n## Lens results (artifact-based, this round, this head)\n\n```text\n[R230] PASS Conformance \u2014 tb/pp_top/sim_main.cpp:78-87 (blob 6b400db, unchanged since 1eb20dc); docs/architecture/01_overview.md:166 (F01.5); docs/guides/integrator.md:66; docs/architecture/10_srp_engine.md:198,366-369; docs/00_MILAN_COMPLIANCE_REVIEW.md:410,422; receipts 03, 08, 09, 10, 14 \u2014 issue #97 acceptance re-checked at 5c45845: default + 5A3C builds pass 1391 + 20 = 1411 also under German and French callers (the R230-M1 gap), 0002/2/10002 are refused at both widths and 1002/F002 at class-D only, M25/M31 keep their recorded outcomes; product policy (2 in every product build, other values verification fixtures) unchanged and not restricted.\n[R230] PASS RTL \u2014 hdl/top/protocol_processor_top.sv:144,2147; hdl/srp/KL_srp_top.sv:80,323; hdl/srp/KL_srp_domain.sv:42; tb/pp_top/pp_top_wrap.sv (blob c755a16); receipts 00, 09, 10, 14 \u2014 no RTL or wrapper byte changed since base; product top lints with zero warnings at default, 0002, 1002 and 5A3C; no RTL assertion on the VID; the guard reference 2 equals all three RTL defaults; the real 0002/1002 fixture recipes generate the model and fail only in sim_main.o; M25 bites 13/20, M31 stays green.\n[R230] PASS Robustness \u2014 tb/pp_top/fixture_guards.py:22-60; tb/pp_top/Makefile:54,67-72; receipts 02, 03, 04, 05, 07, 08, 13 \u2014 gate verdict is independent of the caller's message language in 8 UTF-8 settings (LANGUAGE lists, LANG, LC_MESSAGES, inherited non-C LC_ALL, mixed) and in Latin-1/Latin-9 German/French locales; compiler environment = caller environment + LC_ALL=C only, Verilator environment and caller os.environ untouched; diagnostic bytes identical across settings; every gate mutant and unrelated error fails closed under localized callers; no temporary-directory or source residue.\n[R230] PASS Tests \u2014 tb/pp_top/test_fixture_guards.py:14-60; tb/pp_top/Makefile:67,71-72,83; receipts 03, 05, 06, 07, 08, 12 \u2014 the regression runs in every make through the prerequisite chain, starts no real process (audit hook, PATH without tools), passes under EN/DE/MIXED callers and CPython 3.11/3.12/3.14, fails for all eight normalisation/isolation mutants N1-N8 (N1-N4 also shown to break the real gate under an inherited German LC_ALL), accepts equivalent rewrites E1/E2, and a failing regression stops make before any build; the gate's four cases still detect G1-G9; canonical tally 1411 unchanged and readable by run_suites.sh.\n[R230] PASS Docs \u2014 tb/pp_top/README.md:523-544; tb/pp_top/fixture_guards.py:38; PR100 body; receipts 03, 04, 05, 06, 11 \u2014 each new README sentence matches a receipt (LC_ALL=C for the compiler subprocess only; other environment inputs and compiler arguments preserved; mocked regression needs no catalogs; required by fixture-guards; removing the override fails it); docs gates pass; no other document references the gate or LC_ALL; R230-S1/S2 unchanged and optional.\n```\n\n## Issue #97 acceptance, at this head\n\n- **Compile-time refusal at either observable width; default, 5A3C, RTL, runtime policy and shipping values preserved:** met (receipts 00, 10, 14).\n- **Default and 5A3C builds pass unchanged:**\n  - met, now also under German and French callers (receipt 08), which is the case R230-M1 was about;\n  - English results: A10's native run and the hosted runs (receipt 01).\n- **0002, and a value whose low 12 bits are 2, fail compilation with a clear diagnostic:** met (receipts 10, 14; the gate, receipt 03).\n- **Missing-binding and child-default controls keep their recorded outcomes:** met (receipt 09).\n- **Focused pp_top and the documented donor gates:**\n  - reproduced by me: focused pp_top (receipts 08, 09) and the no-install docs gates (receipt 11);\n  - from A10 and GitHub Actions: the complete native and hosted bar, whose identity and logs I verified and did not re-run (receipt 01).\n- **Decision: distinctness at both widths, no new product-parameter restriction:** met (receipts 10, 14).\n- **A10's R230-M1 decision** (fix the compiler subprocess locale; keep both diagnostic sets, the unrelated-error check and fail-closed behaviour; verify German and French, both removal mutants and default/5A3C; S1/S2 excluded; no RTL or policy change): met (receipts 00, 03, 06, 07, 08).\n- **Two independent reviews and merge containment:** this review is POSITIVE. Everything else is listed under pending obligations.\n\n## Reviewer-owned lens, covering-round and head ledger\n\n| Lens | Covering round | Head | Result | Open findings (any severity) | Primary artifacts |\n|---|---|---|---|---|---|\n| Conformance | R230-2 | 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e | PASS, clean | none | `sim_main.cpp:78-87`; F01.5 `01_overview.md:166`; receipts 03, 08, 09, 10, 14 |\n| RTL | R230-2 | 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e | PASS, clean | none | `protocol_processor_top.sv:144,2147`; `KL_srp_top.sv:80`; `KL_srp_domain.sv:42`; receipts 00, 09, 10 |\n| Robustness | R230-2 | 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e | PASS, clean | none (R230-M1 resolved) | `fixture_guards.py:22-60`; `Makefile:54,67-72`; receipts 02-05, 07, 08, 13 |\n| Tests | R230-2 | 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e | PASS, clean | R230-S2 (SUGGESTION, optional); R230-M1 resolved | `test_fixture_guards.py:14-60`; `Makefile:67,71-72`; receipts 03, 05-08, 12 |\n| Docs | R230-2 | 5c45845ad15bd7995f20c81d7fd61501e5ca9d7e | PASS, clean | R230-S1, R230-S2 (SUGGESTION, optional) | `tb/pp_top/README.md:523-544`; receipts 04-06, 11 |\n\n- All five lenses were applied in R230-2 against this head. None is banked from an earlier round.\n- **History:** R230-1 at `1eb20dc` left Conformance, RTL and Docs clean and Robustness and Tests not clean (R230-M1). `5c45845` changed files in the Robustness, Tests and Docs scopes. Those R230-1 rows are therefore superseded by the rows above.\n- No BLOCKER, MAJOR or MINOR finding is open under any lens.\n\n## Observations (not findings)\n\n**O1: the gate decodes compiler output in the caller's encoding.**\n\n- Location: `fixture_guards.py:43-47`, `text=True`. This has been present since `1eb20dc` and was not changed by the correction.\n- Behaviour under `LC_ALL=C`: GCC 16.2.1 still prints a UTF-8 bullet (U+2022) in the note under each failed static assertion.\n- Under `ja_JP.EUC-JP`, both heads stop at 0002 with a `UnicodeDecodeError` (receipt 13). The failure is closed; no bad fixture can pass.\n- Why not raised:\n  - It concerns output encoding, not message language.\n  - German and French Latin-1 and Latin-9 callers pass.\n  - The tree already does not run under these locales. In a fresh checkout, base pp_top `make` fails under every non-UTF-8 locale I tried, because its `ltn_rom.hex` prerequisite raises `UnicodeEncodeError` under EUC-JP, Latin-1 and Latin-9. The documented gate `gen_matrix.py --check` also fails under EUC-JP.\n  - The only way base passes and the gate fails is an EUC-JP-class caller whose ROM images were generated earlier under a UTF-8 locale.\n\n**O2: the new regression covers only locale, environment and argv plumbing, as its README paragraph says.**\n\n- A deliberately lenient verdict (C1) passes the regression.\n- The gate's classification is exercised by its four real cases on every `make`, and by the G1-G9 mutants (receipt 07) and A166's mutants 05-07. C1 is in receipt 06c.\n\n**O3: the new test raises no Python floor.**\n\n- It uses a parenthesized multi-item `with` (documented from CPython 3.10) and `mock` `call.args`/`call.kwargs` (3.8).\n- pp_top `make` already needs Python 3.9 or later whenever it generates `ucode.hex`: `gen_ucode.py` evaluates `list[int]` annotations at definition time (`:354`) and has no `__future__` import.\n- CPython 3.11, 3.12 and 3.14 pass locally (receipt 12), and so does the hosted ubuntu-24.04 runner (receipt 01). 3.9 and 3.10 are not available here.\n\n**O4: carried from R230-1 and unchanged by this PR.**\n\n- The DV4 guard `sim_main.cpp:8262` compares only 16 bits (1005 compiles, receipt 14).\n- PR96's R223-S1, R223-X1 and R223-X2 remain as recorded there.\n\n## Limitations\n\n- **Not re-run by me:**\n  - the complete `scripts/run_suites.sh` sweep;\n  - `scripts/lint_hdl.sh` over every module;\n  - `make check`'s diagram lint and WaveDrom check (`render-wavedrom.py` bootstraps a virtual environment on first run, which counts as an install);\n  - `syn/yosys/run.sh`;\n  - `make -C tb/nvm_port figures`;\n  - any hosted, Docker or act workflow.\n\n  For these I rely on A10's native receipts and the two hosted runs whose identity I verified (receipt 01).\n- **What the hosted logs show:** only `run_suites.sh`'s per-suite summary. That the regression and the gate ran on the hosted runner follows from the Makefile prerequisite chain and the `PASS pp_top` line. The logs do not print it.\n- **Toolchain:**\n  - The local Verilator is 5.052. The Verilator 5.050 result comes only from the hosted logs.\n  - clang++ is not installed, so the gate was exercised with GCC 16.2.1 only.\n- **Locales:**\n  - German, French and legacy locales were generated into a scratch `LOCPATH`, not installed system-wide.\n  - The GCC catalogs are the stock package's.\n  - No non-UTF-8 multibyte encoding other than EUC-JP was tried.\n- **Mutation coverage:** M25 and M31 were reproduced with A161's published patches. M26-M30 were not re-run.\n- **Specifications:** the Milan v1.2 and IEEE texts are not in the repository. Conformance was judged against:\n  - the issue text;\n  - F01.5, F10.2 and 10 \u00a711;\n  - the integrator guide;\n  - the 00 compliance rows;\n  - executable behaviour.\n- **Run history:**\n  - Receipt 05's first attempt stopped inside my harness before the gate ran: its argv extraction matched the `make -n` unittest line. The corrected harness produced the published receipt; `scripts/05-run.sh` records this.\n  - Receipts 08, 12 and 13 were first run as inline commands and then regenerated from their scripts; the published files are the script runs.\n  - `verilator-invocations.jsonl` is append-only, so it also covers the superseded runs. Every one of them was capped.\n- **Host and review clone:**\n  - The host is shared. Builds ran serially with Verilator capped at 8 threads, so durations are not reference figures.\n  - In the review clone only remote-tracking refs were fetched. The working tree, the index and HEAD are untouched (receipt 16).\n  - Nothing was committed, pushed or published by me.\n\n## Pending merge obligations (separate from this verdict)\n\n1. **R229-2.** A PR comment whose first line reads `[R229] POSITIVE - exact head 5c45845\u2026` exists (id 5774922964). I did not read its content. Whether it supplies a clean, reviewer-owned five-lens ledger at this head is for the manager to confirm.\n2. **Two positive independent reviews** with clean five-lens coverage at the merge candidate, or at an ancestor of it that no lens-scoped change has touched since. This report supplies R230's ledger at `5c45845`.\n3. **Current-candidate validation immediately before merge.** At 12:56 CEST main was `8452f56`, and `refs/pull/100/merge` (`6439edc`) carried the head tree. If main moves, the candidate must be re-validated.\n4. **Merge, then containment.** The merge needs explicit maintainer authorization. After it: actual-tree containment, post-merge hosted validation, and closure of issue #97 through `Closes #97`.\n5. **Separate lanes.** The `97-review-evidence` branch must never merge. Parent submodule integration is its own lane.\n\nR230-2 FINISHED\n",
+        "author_association": "OWNER",
+        "reactions": {
+          "url": "https://api.github.com/repos/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/comments/5775365763/reactions",
+          "total_count": 0,
+          "+1": 0,
+          "-1": 0,
+          "laugh": 0,
+          "hooray": 0,
+          "confused": 0,
+          "heart": 0,
+          "rocket": 0,
+          "eyes": 0
+        },
+        "performed_via_github_app": null,
+        "minimized": null
+      },
+      "execution": {
+        "requested_model": "claude-opus-5",
+        "requested_effort": "max",
+        "exit_code": 0,
+        "wall_seconds": 3250.7157592059957,
+        "cwd": "$VALIDATION_STORAGE/reviews/r230-100-r2",
+        "subtype": "success",
+        "duration_ms": 3248489,
+        "num_turns": 145,
+        "is_error": false,
+        "requested_model_present": true
+      }
+    }
+  },
+  "merge_performed": false,
+  "authorization": "Standing automatic merge after two independent positives and complete gates",
+  "limits": "Manager must verify reviewer-owned clean five-lens ledgers, R230-M1 disposition and no other review in flight. Historical PP continuity/negative-merge audit findings remain a disclosed nonzero baseline; current PR containment must be clean."
+}

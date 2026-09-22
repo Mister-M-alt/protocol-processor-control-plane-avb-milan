@@ -6712,5 +6712,17 @@
     "original_sha256": "91283478a0f8094b0edb113c3062b9d2d53ddcb1856dcd5e970b2c72bdf6e010",
     "published_sha256": "3e0bcac710b763dba01b7f014b6f502dea324d25e353db84dc8da8b545c530ac",
     "path_redacted": true
+  },
+  {
+    "file": "round2/manager/merge-preflight.json",
+    "original_sha256": "fcc599207e3db402376a5a3f801e361b5702fc290d2817a729a8cca73f23ccd5",
+    "published_sha256": "f4b55484ec23b65ecc15ed978726e6e6775b03c36da656b657b9f3d9c5963a1c",
+    "path_redacted": true
+  },
+  {
+    "file": "round2/manager/merge-bar.md",
+    "original_sha256": "45bd9b877cfd822a768443bd7bedb01b0a82194ce19c8846ec2c64b5e8ba3e11",
+    "published_sha256": "45bd9b877cfd822a768443bd7bedb01b0a82194ce19c8846ec2c64b5e8ba3e11",
+    "path_redacted": false
   }
 ]
