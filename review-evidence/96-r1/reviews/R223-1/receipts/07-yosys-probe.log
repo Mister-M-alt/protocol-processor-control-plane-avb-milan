@@ -1,0 +1,73 @@
+== head: sv2v lines 21924
+14786:	parameter [15:0] DEF_VID_P = 16'd2;
+14837:			decl_vid_r <= DEF_VID_P;
+14873:				decl_vid_r <= DEF_VID_P;
+14884:				q0_val_r <= {CLASS_A_ID_C, DEF_PRIO_P, DEF_VID_P};
+17073:	parameter [15:0] DOM_DEF_VID_P = 16'd2;
+17258:		.DEF_VID_P(DOM_DEF_VID_P)
+18608:	parameter [15:0] SRP_DOM_DEF_VID_P = 16'd2;
+20238:		.DOM_DEF_VID_P(SRP_DOM_DEF_VID_P),
+== base: sv2v lines 21922
+14786:	parameter [15:0] DEF_VID_P = 16'd2;
+14837:			decl_vid_r <= DEF_VID_P;
+14873:				decl_vid_r <= DEF_VID_P;
+14884:				q0_val_r <= {CLASS_A_ID_C, DEF_PRIO_P, DEF_VID_P};
+17073:	parameter [15:0] DOM_DEF_VID_P = 16'd2;
+17258:		.DEF_VID_P(DOM_DEF_VID_P)
+== head, top default
+  $paramod$8293ec7ca532a5bedae68d1926f8e7d7b3f09968\KL_srp_top
+  $paramod\KL_srp_domain\DEF_PRIO_P=8'00000011\DEF_VID_P=16'0000000000000010
+2.13. Executing AST frontend in derive mode using pre-parsed AST for module `\KL_srp_domain'.
+2.24. Executing AST frontend in derive mode using pre-parsed AST for module `\KL_srp_top'.
+Found cached RTLIL representation for module `$paramod\KL_srp_domain\DEF_PRIO_P=8'00000011\DEF_VID_P=16'0000000000000010'.
+Generating RTLIL representation for module `$paramod$8293ec7ca532a5bedae68d1926f8e7d7b3f09968\KL_srp_top'.
+Generating RTLIL representation for module `$paramod\KL_srp_domain\DEF_PRIO_P=8'00000011\DEF_VID_P=16'0000000000000010'.
+Generating RTLIL representation for module `\KL_srp_domain'.
+Generating RTLIL representation for module `\KL_srp_top'.
+Removing unused module `\KL_srp_domain'.
+Removing unused module `\KL_srp_top'.
+Used module:     $paramod$8293ec7ca532a5bedae68d1926f8e7d7b3f09968\KL_srp_top
+Used module:         $paramod\KL_srp_domain\DEF_PRIO_P=8'00000011\DEF_VID_P=16'0000000000000010
+Used module:         \KL_srp_domain
+Used module:     \KL_srp_top
+== head, -chparam SRP_DOM_DEF_VID_P 23100 (0x5A3C)
+  $paramod$f9d60ec582b8f6ee4b964aae6c7fbf5764eb5aab\KL_srp_top
+  $paramod\KL_srp_domain\DEF_PRIO_P=8'00000011\DEF_VID_P=16'0101101000111100
+3.13. Executing AST frontend in derive mode using pre-parsed AST for module `\KL_srp_domain'.
+3.25. Executing AST frontend in derive mode using pre-parsed AST for module `\KL_srp_top'.
+3.38. Executing AST frontend in derive mode using pre-parsed AST for module `\KL_srp_domain'.
+Generating RTLIL representation for module `$paramod$f9d60ec582b8f6ee4b964aae6c7fbf5764eb5aab\KL_srp_top'.
+Generating RTLIL representation for module `$paramod\KL_srp_domain\DEF_PRIO_P=8'00000011\DEF_VID_P=16'0000000000000010'.
+Generating RTLIL representation for module `$paramod\KL_srp_domain\DEF_PRIO_P=8'00000011\DEF_VID_P=16'0101101000111100'.
+Generating RTLIL representation for module `\KL_srp_domain'.
+Generating RTLIL representation for module `\KL_srp_top'.
+Removing unused module `$paramod\KL_srp_domain\DEF_PRIO_P=8'00000011\DEF_VID_P=16'0000000000000010'.
+Removing unused module `\KL_srp_domain'.
+Removing unused module `\KL_srp_top'.
+Used module:     $paramod$f9d60ec582b8f6ee4b964aae6c7fbf5764eb5aab\KL_srp_top
+Used module:         $paramod\KL_srp_domain\DEF_PRIO_P=8'00000011\DEF_VID_P=16'0101101000111100
+Used module:         \KL_srp_domain
+Used module:     \KL_srp_top
+== base, top default
+  $paramod$f3d4f12ca79771ded81c8a3e7310651f6f69c2f6\KL_srp_top
+  $paramod\KL_srp_domain\DEF_PRIO_P=8'00000011\DEF_VID_P=16'0000000000000010
+2.13. Executing AST frontend in derive mode using pre-parsed AST for module `\KL_srp_domain'.
+2.24. Executing AST frontend in derive mode using pre-parsed AST for module `\KL_srp_top'.
+Found cached RTLIL representation for module `$paramod\KL_srp_domain\DEF_PRIO_P=8'00000011\DEF_VID_P=16'0000000000000010'.
+Generating RTLIL representation for module `$paramod$f3d4f12ca79771ded81c8a3e7310651f6f69c2f6\KL_srp_top'.
+Generating RTLIL representation for module `$paramod\KL_srp_domain\DEF_PRIO_P=8'00000011\DEF_VID_P=16'0000000000000010'.
+Generating RTLIL representation for module `\KL_srp_domain'.
+Generating RTLIL representation for module `\KL_srp_top'.
+Removing unused module `\KL_srp_domain'.
+Removing unused module `\KL_srp_top'.
+Used module:     $paramod$f3d4f12ca79771ded81c8a3e7310651f6f69c2f6\KL_srp_top
+Used module:         $paramod\KL_srp_domain\DEF_PRIO_P=8'00000011\DEF_VID_P=16'0000000000000010
+Used module:         \KL_srp_domain
+Used module:     \KL_srp_top
+== base, -chparam SRP_DOM_DEF_VID_P 23100 (must be refused: no such top parameter)
+all.v:18378: ERROR: Can't find object for defparam `SRP_DOM_DEF_VID_P`!
+Generating RTLIL representation for module `\KL_srp_domain'.
+Generating RTLIL representation for module `\KL_srp_top'.
+-- Running command `read_verilog all.v; hierarchy -check -top protocol_processor_top -chparam SRP_DOM_DEF_VID_P 23100; ls' --
+YOSYS PROBE DONE
+rc=0

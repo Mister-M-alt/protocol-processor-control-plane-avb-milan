@@ -1,0 +1,11 @@
+--- /tmp/r223-96-r1/head/hdl/srp/KL_srp_domain.sv	2026-09-22 07:02:27.000000000 +0200
++++ hdl/srp/KL_srp_domain.sv	2026-09-22 08:13:06.075509346 +0200
+@@ -113,7 +113,7 @@
+   always_ff @(posedge clk_i) begin : domain_sm
+     if (!rst_n) begin
+       decl_prio_r         <= DEF_PRIO_P;
+-      decl_vid_r          <= DEF_VID_P;
++      decl_vid_r          <= 16'd2;
+       adopted_r           <= 1'b0;
+       declared_r          <= 1'b0;
+       link_q_r            <= 1'b0;

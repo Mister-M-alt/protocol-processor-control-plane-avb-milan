@@ -1,0 +1,218 @@
+===== R00_control (fixture)
+[R00_control fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 0 failures
+[R00_control fixture] rc=0
+===== R00_control done rc=0
+===== R25_binding_removed (both)
+[R25_binding_removed default] [build default, SRP_DOM_DEF_VID_P 0x0002] 1391 checks, 0 failures
+[R25_binding_removed default] rc=0
+[R25_binding_removed fixture] FAIL: DV1: class-D Domain out of reset is {3, 0xa3c, DEFAULTS}
+[R25_binding_removed fixture] FAIL: DV1: snapshot word 10 carries the default, got 0x00030002
+[R25_binding_removed fixture] FAIL: DV1: GET_DOMAIN answers the default, got 0x00030002
+[R25_binding_removed fixture] FAIL: DV2: Domain New {6, 3, 0x5a3c} byte-exact
+[R25_binding_removed fixture] FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x2
+[R25_binding_removed fixture] FAIL: DV2: class-D still the default
+[R25_binding_removed fixture] FAIL: DV3: GET_TX_STATE_RESPONSE stream_vlan_id 0xa3c
+[R25_binding_removed fixture] FAIL: DV4: Lv {6, 3, 0x5a3c} + New {6, 3, 5} byte-exact
+[R25_binding_removed fixture] FAIL: DV5: LINK_DOWN restores {3, 0xa3c, DEFAULTS}
+[R25_binding_removed fixture] FAIL: DV5: snapshot word 10 reverted, got 0x00030002
+[R25_binding_removed fixture] FAIL: DV5: the default holds while down
+[R25_binding_removed fixture] FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x5a3c}
+[R25_binding_removed fixture] FAIL: DV6: class-D is the default again
+[R25_binding_removed fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 13 failures
+[R25_binding_removed fixture] rc=1
+===== R25_binding_removed done rc=0
+===== R26_bound_literal_2 (fixture)
+[R26_bound_literal_2 fixture] FAIL: DV1: class-D Domain out of reset is {3, 0xa3c, DEFAULTS}
+[R26_bound_literal_2 fixture] FAIL: DV1: snapshot word 10 carries the default, got 0x00030002
+[R26_bound_literal_2 fixture] FAIL: DV1: GET_DOMAIN answers the default, got 0x00030002
+[R26_bound_literal_2 fixture] FAIL: DV2: Domain New {6, 3, 0x5a3c} byte-exact
+[R26_bound_literal_2 fixture] FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x2
+[R26_bound_literal_2 fixture] FAIL: DV2: class-D still the default
+[R26_bound_literal_2 fixture] FAIL: DV3: GET_TX_STATE_RESPONSE stream_vlan_id 0xa3c
+[R26_bound_literal_2 fixture] FAIL: DV4: Lv {6, 3, 0x5a3c} + New {6, 3, 5} byte-exact
+[R26_bound_literal_2 fixture] FAIL: DV5: LINK_DOWN restores {3, 0xa3c, DEFAULTS}
+[R26_bound_literal_2 fixture] FAIL: DV5: snapshot word 10 reverted, got 0x00030002
+[R26_bound_literal_2 fixture] FAIL: DV5: the default holds while down
+[R26_bound_literal_2 fixture] FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x5a3c}
+[R26_bound_literal_2 fixture] FAIL: DV6: class-D is the default again
+[R26_bound_literal_2 fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 13 failures
+[R26_bound_literal_2 fixture] rc=1
+===== R26_bound_literal_2 done rc=0
+===== R27_trunc_12b (fixture)
+[R27_trunc_12b fixture] FAIL: DV2: Domain New {6, 3, 0x5a3c} byte-exact
+[R27_trunc_12b fixture] FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0xa3c
+[R27_trunc_12b fixture] FAIL: DV4: Lv {6, 3, 0x5a3c} + New {6, 3, 5} byte-exact
+[R27_trunc_12b fixture] FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x5a3c}
+[R27_trunc_12b fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 4 failures
+[R27_trunc_12b fixture] rc=1
+===== R27_trunc_12b done rc=0
+===== R28_wrong_child_param (both)
+[R28_wrong_child_param default] FAIL: S1: Domain New {6,3,2} byte-exact
+[R28_wrong_child_param default] FAIL: S1: class-D domain defaults via snapshot, got 0x00020002
+[R28_wrong_child_param default] FAIL: S2: Talker Advertise New byte-exact
+[R28_wrong_child_param default] FAIL: S7: src 1 Talker Advertise New byte-exact
+[R28_wrong_child_param default] FAIL: S8: Domain Lv+New re-declaration byte-exact
+[R28_wrong_child_param default] FAIL: DV1: class-D Domain out of reset is {3, 0x002, DEFAULTS}
+[R28_wrong_child_param default] FAIL: DV1: snapshot word 10 carries the default, got 0x00020002
+[R28_wrong_child_param default] FAIL: DV1: GET_DOMAIN answers the default, got 0x00020002
+[R28_wrong_child_param default] FAIL: DV2: Domain New {6, 3, 0x0002} byte-exact
+[R28_wrong_child_param default] FAIL: DV2: class-D still the default
+[R28_wrong_child_param default] FAIL: DV4: Lv {6, 3, 0x0002} + New {6, 3, 5} byte-exact
+[R28_wrong_child_param default] FAIL: DV5: LINK_DOWN restores {3, 0x002, DEFAULTS}
+[R28_wrong_child_param default] FAIL: DV5: snapshot word 10 reverted, got 0x00020002
+[R28_wrong_child_param default] FAIL: DV5: the default holds while down
+[R28_wrong_child_param default] FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x0002}
+[R28_wrong_child_param default] FAIL: DV6: class-D is the default again
+[R28_wrong_child_param default] [build default, SRP_DOM_DEF_VID_P 0x0002] 1391 checks, 16 failures
+[R28_wrong_child_param default] rc=1
+[R28_wrong_child_param fixture] FAIL: DV1: class-D Domain out of reset is {3, 0xa3c, DEFAULTS}
+[R28_wrong_child_param fixture] FAIL: DV1: snapshot word 10 carries the default, got 0x00040002
+[R28_wrong_child_param fixture] FAIL: DV1: GET_DOMAIN answers the default, got 0x00040002
+[R28_wrong_child_param fixture] FAIL: DV2: Domain New {6, 3, 0x5a3c} byte-exact
+[R28_wrong_child_param fixture] FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x2
+[R28_wrong_child_param fixture] FAIL: DV2: class-D still the default
+[R28_wrong_child_param fixture] FAIL: DV3: GET_TX_STATE_RESPONSE stream_vlan_id 0xa3c
+[R28_wrong_child_param fixture] FAIL: DV4: Lv {6, 3, 0x5a3c} + New {6, 3, 5} byte-exact
+[R28_wrong_child_param fixture] FAIL: DV5: LINK_DOWN restores {3, 0xa3c, DEFAULTS}
+[R28_wrong_child_param fixture] FAIL: DV5: snapshot word 10 reverted, got 0x00040002
+[R28_wrong_child_param fixture] FAIL: DV5: the default holds while down
+[R28_wrong_child_param fixture] FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x5a3c}
+[R28_wrong_child_param fixture] FAIL: DV6: class-D is the default again
+[R28_wrong_child_param fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 13 failures
+[R28_wrong_child_param fixture] rc=1
+===== R28_wrong_child_param done rc=0
+===== R29_top_default_3 (both)
+[R29_top_default_3 default] FAIL: S1: Domain New {6,3,2} byte-exact
+[R29_top_default_3 default] FAIL: S1: class-D domain defaults via snapshot, got 0x00030003
+[R29_top_default_3 default] FAIL: S8: Domain Lv+New re-declaration byte-exact
+[R29_top_default_3 default] FAIL: T0: the bench granted source 0 a DA (0x91e0f0aabb0a) and the SR-class VID is the default 2 or S8's adopted 5, got 3
+[R29_top_default_3 default] FAIL: MP3: GET_TX_STATE answers the internally granted base + 0
+[R29_top_default_3 default] FAIL: DV1: class-D Domain out of reset is {3, 0x002, DEFAULTS}
+[R29_top_default_3 default] FAIL: DV1: snapshot word 10 carries the default, got 0x00030003
+[R29_top_default_3 default] FAIL: DV1: GET_DOMAIN answers the default, got 0x00030003
+[R29_top_default_3 default] FAIL: DV2: Domain New {6, 3, 0x0002} byte-exact
+[R29_top_default_3 default] FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x3
+[R29_top_default_3 default] FAIL: DV2: class-D still the default
+[R29_top_default_3 default] FAIL: DV3: GET_TX_STATE_RESPONSE stream_vlan_id 0x002
+[R29_top_default_3 default] FAIL: DV4: Lv {6, 3, 0x0002} + New {6, 3, 5} byte-exact
+[R29_top_default_3 default] FAIL: DV5: LINK_DOWN restores {3, 0x002, DEFAULTS}
+[R29_top_default_3 default] FAIL: DV5: snapshot word 10 reverted, got 0x00030003
+[R29_top_default_3 default] FAIL: DV5: the default holds while down
+[R29_top_default_3 default] FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x0002}
+[R29_top_default_3 default] FAIL: DV6: class-D is the default again
+[R29_top_default_3 default] [build default, SRP_DOM_DEF_VID_P 0x0002] 1391 checks, 18 failures
+[R29_top_default_3 default] rc=1
+[R29_top_default_3 fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 0 failures
+[R29_top_default_3 fixture] rc=0
+===== R29_top_default_3 done rc=0
+===== R30_wrap_override_removed (fixture)
+[R30_wrap_override_removed fixture] FAIL: DV1: class-D Domain out of reset is {3, 0xa3c, DEFAULTS}
+[R30_wrap_override_removed fixture] FAIL: DV1: snapshot word 10 carries the default, got 0x00030002
+[R30_wrap_override_removed fixture] FAIL: DV1: GET_DOMAIN answers the default, got 0x00030002
+[R30_wrap_override_removed fixture] FAIL: DV2: Domain New {6, 3, 0x5a3c} byte-exact
+[R30_wrap_override_removed fixture] FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x2
+[R30_wrap_override_removed fixture] FAIL: DV2: class-D still the default
+[R30_wrap_override_removed fixture] FAIL: DV3: GET_TX_STATE_RESPONSE stream_vlan_id 0xa3c
+[R30_wrap_override_removed fixture] FAIL: DV4: Lv {6, 3, 0x5a3c} + New {6, 3, 5} byte-exact
+[R30_wrap_override_removed fixture] FAIL: DV5: LINK_DOWN restores {3, 0xa3c, DEFAULTS}
+[R30_wrap_override_removed fixture] FAIL: DV5: snapshot word 10 reverted, got 0x00030002
+[R30_wrap_override_removed fixture] FAIL: DV5: the default holds while down
+[R30_wrap_override_removed fixture] FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x5a3c}
+[R30_wrap_override_removed fixture] FAIL: DV6: class-D is the default again
+[R30_wrap_override_removed fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 13 failures
+[R30_wrap_override_removed fixture] rc=1
+===== R30_wrap_override_removed done rc=0
+===== R31_child_default_7_control (both)
+[R31_child_default_7_control default] [build default, SRP_DOM_DEF_VID_P 0x0002] 1391 checks, 0 failures
+[R31_child_default_7_control default] rc=0
+[R31_child_default_7_control fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 0 failures
+[R31_child_default_7_control fixture] rc=0
+===== R31_child_default_7_control done rc=0
+===== R32_trunc_8b (fixture)
+[R32_trunc_8b fixture] FAIL: DV1: class-D Domain out of reset is {3, 0xa3c, DEFAULTS}
+[R32_trunc_8b fixture] FAIL: DV1: snapshot word 10 carries the default, got 0x0003003c
+[R32_trunc_8b fixture] FAIL: DV1: GET_DOMAIN answers the default, got 0x0003003c
+[R32_trunc_8b fixture] FAIL: DV2: Domain New {6, 3, 0x5a3c} byte-exact
+[R32_trunc_8b fixture] FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x3c
+[R32_trunc_8b fixture] FAIL: DV2: class-D still the default
+[R32_trunc_8b fixture] FAIL: DV3: GET_TX_STATE_RESPONSE stream_vlan_id 0xa3c
+[R32_trunc_8b fixture] FAIL: DV4: Lv {6, 3, 0x5a3c} + New {6, 3, 5} byte-exact
+[R32_trunc_8b fixture] FAIL: DV5: LINK_DOWN restores {3, 0xa3c, DEFAULTS}
+[R32_trunc_8b fixture] FAIL: DV5: snapshot word 10 reverted, got 0x0003003c
+[R32_trunc_8b fixture] FAIL: DV5: the default holds while down
+[R32_trunc_8b fixture] FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x5a3c}
+[R32_trunc_8b fixture] FAIL: DV6: class-D is the default again
+[R32_trunc_8b fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 13 failures
+[R32_trunc_8b fixture] rc=1
+===== R32_trunc_8b done rc=0
+===== R33_byte_swap (fixture)
+[R33_byte_swap fixture] FAIL: DV1: class-D Domain out of reset is {3, 0xa3c, DEFAULTS}
+[R33_byte_swap fixture] FAIL: DV1: snapshot word 10 carries the default, got 0x00030c5a
+[R33_byte_swap fixture] FAIL: DV1: GET_DOMAIN answers the default, got 0x00030c5a
+[R33_byte_swap fixture] FAIL: DV2: Domain New {6, 3, 0x5a3c} byte-exact
+[R33_byte_swap fixture] FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x3c5a
+[R33_byte_swap fixture] FAIL: DV2: class-D still the default
+[R33_byte_swap fixture] FAIL: DV3: GET_TX_STATE_RESPONSE stream_vlan_id 0xa3c
+[R33_byte_swap fixture] FAIL: DV4: Lv {6, 3, 0x5a3c} + New {6, 3, 5} byte-exact
+[R33_byte_swap fixture] FAIL: DV5: LINK_DOWN restores {3, 0xa3c, DEFAULTS}
+[R33_byte_swap fixture] FAIL: DV5: snapshot word 10 reverted, got 0x00030c5a
+[R33_byte_swap fixture] FAIL: DV5: the default holds while down
+[R33_byte_swap fixture] FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x5a3c}
+[R33_byte_swap fixture] FAIL: DV6: class-D is the default again
+[R33_byte_swap fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 13 failures
+[R33_byte_swap fixture] rc=1
+===== R33_byte_swap done rc=0
+===== R34_top_param_12b (both)
+[R34_top_param_12b default] [build default, SRP_DOM_DEF_VID_P 0x0002] 1391 checks, 0 failures
+[R34_top_param_12b default] rc=0
+[R34_top_param_12b fixture] FAIL: DV2: Domain New {6, 3, 0x5a3c} byte-exact
+[R34_top_param_12b fixture] FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0xa3c
+[R34_top_param_12b fixture] FAIL: DV4: Lv {6, 3, 0x5a3c} + New {6, 3, 5} byte-exact
+[R34_top_param_12b fixture] FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x5a3c}
+[R34_top_param_12b fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 4 failures
+[R34_top_param_12b fixture] rc=1
+===== R34_top_param_12b done rc=0
+===== R35_child_reset_literal (fixture)
+[R35_child_reset_literal fixture] FAIL: DV1: class-D Domain out of reset is {3, 0xa3c, DEFAULTS}
+[R35_child_reset_literal fixture] FAIL: DV1: snapshot word 10 carries the default, got 0x00030002
+[R35_child_reset_literal fixture] FAIL: DV1: GET_DOMAIN answers the default, got 0x00030002
+[R35_child_reset_literal fixture] FAIL: DV2: class-D still the default
+[R35_child_reset_literal fixture] FAIL: DV3: GET_TX_STATE_RESPONSE stream_vlan_id 0xa3c
+[R35_child_reset_literal fixture] FAIL: DV4: Lv {6, 3, 0x5a3c} + New {6, 3, 5} byte-exact
+[R35_child_reset_literal fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 6 failures
+[R35_child_reset_literal fixture] rc=1
+===== R35_child_reset_literal done rc=0
+===== R36_child_revert_literal (fixture)
+[R36_child_revert_literal fixture] FAIL: DV5: LINK_DOWN restores {3, 0xa3c, DEFAULTS}
+[R36_child_revert_literal fixture] FAIL: DV5: snapshot word 10 reverted, got 0x00030002
+[R36_child_revert_literal fixture] FAIL: DV5: the default holds while down
+[R36_child_revert_literal fixture] FAIL: DV6: class-D is the default again
+[R36_child_revert_literal fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 4 failures
+[R36_child_revert_literal fixture] rc=1
+===== R36_child_revert_literal done rc=0
+===== R37_child_linkup_decl_literal (fixture)
+[R37_child_linkup_decl_literal fixture] FAIL: DV2: Domain New {6, 3, 0x5a3c} byte-exact
+[R37_child_linkup_decl_literal fixture] FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x2
+[R37_child_linkup_decl_literal fixture] FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x5a3c}
+[R37_child_linkup_decl_literal fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 3 failures
+[R37_child_linkup_decl_literal fixture] rc=1
+===== R37_child_linkup_decl_literal done rc=0
+===== R38_srp_top_inner_literal (fixture)
+[R38_srp_top_inner_literal fixture] FAIL: DV1: class-D Domain out of reset is {3, 0xa3c, DEFAULTS}
+[R38_srp_top_inner_literal fixture] FAIL: DV1: snapshot word 10 carries the default, got 0x00030002
+[R38_srp_top_inner_literal fixture] FAIL: DV1: GET_DOMAIN answers the default, got 0x00030002
+[R38_srp_top_inner_literal fixture] FAIL: DV2: Domain New {6, 3, 0x5a3c} byte-exact
+[R38_srp_top_inner_literal fixture] FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x2
+[R38_srp_top_inner_literal fixture] FAIL: DV2: class-D still the default
+[R38_srp_top_inner_literal fixture] FAIL: DV3: GET_TX_STATE_RESPONSE stream_vlan_id 0xa3c
+[R38_srp_top_inner_literal fixture] FAIL: DV4: Lv {6, 3, 0x5a3c} + New {6, 3, 5} byte-exact
+[R38_srp_top_inner_literal fixture] FAIL: DV5: LINK_DOWN restores {3, 0xa3c, DEFAULTS}
+[R38_srp_top_inner_literal fixture] FAIL: DV5: snapshot word 10 reverted, got 0x00030002
+[R38_srp_top_inner_literal fixture] FAIL: DV5: the default holds while down
+[R38_srp_top_inner_literal fixture] FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x5a3c}
+[R38_srp_top_inner_literal fixture] FAIL: DV6: class-D is the default again
+[R38_srp_top_inner_literal fixture] [build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 13 failures
+[R38_srp_top_inner_literal fixture] rc=1
+===== R38_srp_top_inner_literal done rc=0
+ALL MUTANTS DONE
+rc=0

@@ -1,0 +1,11 @@
+--- /tmp/r223-96-r1/head/hdl/srp/KL_srp_domain.sv	2026-09-22 07:02:27.000000000 +0200
++++ hdl/srp/KL_srp_domain.sv	2026-09-22 08:13:38.172374220 +0200
+@@ -167,7 +167,7 @@
+         // declare the defaults (New) — startup lands here too
+         q0_valid_r <= 1'b1;
+         q0_ev_r    <= EV_NEW_C;
+-        q0_val_r   <= {CLASS_A_ID_C, DEF_PRIO_P, DEF_VID_P};
++        q0_val_r   <= {CLASS_A_ID_C, DEF_PRIO_P, 16'd2};
+         declared_r <= 1'b1;
+       end else if (rx_pend_v_r && q_empty_w) begin
+         // adopt: withdraw the old declaration, re-declare the adopted one

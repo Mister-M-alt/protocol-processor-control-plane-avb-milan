@@ -1,0 +1,7 @@
+FAIL: DV5: LINK_DOWN restores {3, 0xa3c, DEFAULTS}
+  DV5: class-D {prio 3, vid 0x002, adopted 0}
+FAIL: DV5: snapshot word 10 reverted, got 0x00030002
+FAIL: DV5: the default holds while down
+FAIL: DV6: class-D is the default again
+[build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 4 failures
+rc=1

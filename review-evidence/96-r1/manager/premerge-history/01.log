@@ -1,0 +1,23 @@
+  contained  #91 90-nvm-exports
+  contained  #88 51-sampling-rate-list-check
+  contained  #87 46-lstn-reg-state-encoding
+  contained  #36 389-refusal-arms
+  contained  #34 389-set-clock-source-range-check
+  contained  #32 14-done_seen_r-latches-dev_done_i-in-states-with-no-outstanding-command
+  contained  #31 chore/cpp-core-guidelines-idiom
+  contained  #30 clksrc-store-tb-tap
+  contained  #28 75-leaveall-cadence
+  contained  #23 14-asp-gm-identity
+  UNKNOWN    #13 70-nvm-power-cut: GitHub records head_ref_deleted at 2026-08-20T18:50:52Z, on or after the PR merged; the current same-name ref cannot prove branch continuity
+  contained  #12 121-notification-review-fixes
+  contained  #11 69-aecp-unsolicited-notification-triggers
+  contained  #10 66-aecp-get-set-name
+  contained  #9 67-stream-format-and-info-setters
+  contained  #8 97-start-stop-commit-handshake
+  UNKNOWN    #6 48-drop-undersized-aecp-frames: GitHub records head_ref_deleted at 2026-08-18T12:11:39Z, on or after the PR merged; the current same-name ref cannot prove branch continuity
+  contained  #7 72-dyn-state-ab-getters
+  contained  #4 71-get-dynamic-info
+  contained  #2 68-aecp-audio-mappings
+
+2 ref(s) could not be resolved, so the question was
+  not answered. An unknown is not a pass.

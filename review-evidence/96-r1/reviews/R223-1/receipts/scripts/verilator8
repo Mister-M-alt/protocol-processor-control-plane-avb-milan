@@ -1,0 +1,4 @@
+#!/bin/sh
+# R223 scratch wrapper: cap Verilator build/verilate parallelism at 8.
+# Explicit --build-jobs/--verilate-jobs take precedence over the suites' "-j 0".
+exec /usr/bin/verilator --build-jobs 8 --verilate-jobs 8 "$@"

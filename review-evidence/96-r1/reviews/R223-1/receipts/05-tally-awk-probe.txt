@@ -1,0 +1,8 @@
+# R223-1: tb/pp_top/Makefile tally awk program, fed synthetic tally files (2026-09-22T07:54:20+02:00)
+program (Makefile:62, with make's $$ unescaped): {c += $1; f += $2} END {if (NR != 2) {print "FAIL: " NR " build tallies, expected 2"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}
+input=[1391 0|20 0] -> [1411 checks: 1411 PASS, 0 FAIL] rc=0
+input=[1391 0] -> [FAIL: 1 build tallies, expected 2] rc=1
+input=[1391 0|20 0|20 0] -> [FAIL: 3 build tallies, expected 2] rc=1
+input=[] -> [FAIL: 0 build tallies, expected 2] rc=1
+input=[1391 0|20 3] -> [1411 checks: 1408 PASS, 3 FAIL] rc=0
+note: a non-zero FAIL count never reaches awk in the recipe, because each binary exits 1 when its own build fails (sim_main.cpp:9071; an unrecordable tally also exits 1 at :9067) and make stops.

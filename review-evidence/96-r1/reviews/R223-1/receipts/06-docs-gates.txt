@@ -1,0 +1,14 @@
+# R223-1: read-only docs/matrix gates on a git-archive copy of ea93023 (2026-09-22T07:54:20+02:00)
+$ python3 scripts/check-links.py
+links: 807 checked, OK
+rc=0
+$ python3 scripts/check-matrix.py
+matrix: 115 REQ rows, 17 GAP findings, OK
+rc=0
+$ python3 scripts/gen_matrix.py --check
+matrix: OK (86 rows, 0 untested)
+rc=0
+$ python3 scripts/check_upc_map.py
+UPC MAP GATE: PASS (56 engine constants, 80 entry points, all agree)
+rc=0
+not run here: make check's wavedrom-check and lint-diagrams (render/venv tooling); A10's make -j1 check at this head is recorded rc 0 in manager/full-native/results.json

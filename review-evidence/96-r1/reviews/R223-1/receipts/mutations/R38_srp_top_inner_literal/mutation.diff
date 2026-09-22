@@ -1,0 +1,11 @@
+--- /tmp/r223-96-r1/head/hdl/srp/KL_srp_top.sv	2026-09-22 07:02:27.000000000 +0200
++++ hdl/srp/KL_srp_top.sv	2026-09-22 08:13:54.273000000 +0200
+@@ -320,7 +320,7 @@
+ 
+   KL_srp_domain #(
+       .DEF_PRIO_P (DOM_DEF_PRIO_P),
+-      .DEF_VID_P  (DOM_DEF_VID_P)
++      .DEF_VID_P  (16'd2)
+   ) u_domain (
+       .clk_i               (clk_i),
+       .rst_n               (rst_n),

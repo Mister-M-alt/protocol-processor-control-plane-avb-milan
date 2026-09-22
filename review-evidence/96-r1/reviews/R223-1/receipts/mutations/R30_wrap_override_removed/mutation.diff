@@ -1,0 +1,10 @@
+--- /tmp/r223-96-r1/head/tb/pp_top/pp_top_wrap.sv	2026-09-22 07:02:27.000000000 +0200
++++ tb/pp_top/pp_top_wrap.sv	2026-09-22 08:05:52.432516788 +0200
+@@ -331,7 +331,6 @@
+   protocol_processor_top #(
+ `ifdef PP_TOP_SRP_DOM_DEF_VID
+       //! the second build's verification-only fixture (see the banner)
+-      .SRP_DOM_DEF_VID_P (`PP_TOP_SRP_DOM_DEF_VID),
+ `endif
+       .TIM_DIV_US_P (TB_DIV_US_C),
+       .TIM_DIV_MS_P (TB_DIV_MS_C),

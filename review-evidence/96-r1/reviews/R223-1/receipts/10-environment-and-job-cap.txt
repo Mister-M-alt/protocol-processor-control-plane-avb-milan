@@ -1,0 +1,12 @@
+# R223-1 job-cap receipt
+$ MAKE=logmake bin/verilator8 --cc --build -j 0 t.sv
+MAKE ARGS: -C obj_dir -f Vt.mk -j 8
+- Verilator: Walltime 4.238 s (elab=0.000, cvt=0.003, bld=4.232); cpu 0.008 s on 8 threads; allocated 16.070 MB
+$ Verilator reports in every R223 build log:
+     25 on 8 threads
+$ tool versions
+Verilator 5.052 2026-09-05 rev v5.052
+Yosys 0.66 (git sha1 86f2ddebc-dirty, g+
+sv2v v0.0.13
+g++ (GCC) 16.2.1 20260810
+16

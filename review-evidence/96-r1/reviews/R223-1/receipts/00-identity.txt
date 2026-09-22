@@ -1,0 +1,37 @@
+# R223-1 identity receipt (2026-09-22T07:53:57+02:00)
+$ git rev-parse HEAD HEAD^{tree} HEAD^
+ea93023fbdd31cbf718da0d8f1aab4d750bfd21a
+ec259f379560863e6ea49c6043353f0c11fe714d
+424c688fa2205b934a7689a58f2aa766420f2326
+$ git merge-base HEAD 424c688fa2205b934a7689a58f2aa766420f2326
+424c688fa2205b934a7689a58f2aa766420f2326
+$ git diff --stat 424c688f..HEAD
+ docs/architecture/01_overview.md   |   1 +
+ docs/architecture/10_srp_engine.md |   5 +-
+ docs/guides/integrator.md          |   3 +-
+ hdl/top/protocol_processor_top.sv  |   9 ++
+ tb/pp_top/Makefile                 |  19 +++-
+ tb/pp_top/README.md                |  72 ++++++++++++-
+ tb/pp_top/pp_top_wrap.sv           |  20 ++++
+ tb/pp_top/sim_main.cpp             | 209 ++++++++++++++++++++++++++++++++++++-
+ 8 files changed, 332 insertions(+), 6 deletions(-)
+$ git diff --check 424c688f..HEAD (rc)
+rc=0
+$ git ls-tree HEAD (changed paths, modes)
+100644 blob 2da749fce1ea7502f9d31cd702fbd8771c5b7f62	docs/architecture/01_overview.md
+100644 blob b6e54afc8479f0a8ab38aa8b96506a8de9bf2b8b	docs/architecture/10_srp_engine.md
+100644 blob 3a2b82311c62c9400e4bd7a43f93b9ea394ff72c	docs/guides/integrator.md
+100644 blob 74e71abc27adc1be719bad38f86b616a8e7e81bd	hdl/top/protocol_processor_top.sv
+100644 blob de0b2ec2da67fec19affd1ad8b248c141a5b35bf	tb/pp_top/Makefile
+100644 blob bf0dd1c95a31a282b423be692d1864cd8951cf64	tb/pp_top/README.md
+100644 blob c755a16c14b02609714548675684c4dfeae44006	tb/pp_top/pp_top_wrap.sv
+100644 blob e52f0fde2e81e7e507c0f29e397d593f53706980	tb/pp_top/sim_main.cpp
+$ gh pr view 96 (head/base/state)
+{"baseRefOid":"424c688fa2205b934a7689a58f2aa766420f2326","headRefName":"95-expose-default-sr-vid","headRefOid":"ea93023fbdd31cbf718da0d8f1aab4d750bfd21a","isDraft":false,"mergeable":"MERGEABLE","state":"OPEN"}
+$ hosted runs
+35689952257 event=pull_request sha=ea93023fbdd31cbf718da0d8f1aab4d750bfd21a success suites:success,portability:success,docs-gates:success
+35689949228 event=push sha=ea93023fbdd31cbf718da0d8f1aab4d750bfd21a success suites:success,portability:success,docs-gates:success
+$ hosted pull_request suites log lines
+Verilator 5.050 2026-07-01 rev v5.050
+PASS pp_top (1411 checks: 1411 PASS, 0 FAIL)
+suites: 14943 checks total, 0 failing

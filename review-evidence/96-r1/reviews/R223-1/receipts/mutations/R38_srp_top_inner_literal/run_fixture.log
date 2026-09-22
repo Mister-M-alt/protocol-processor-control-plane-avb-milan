@@ -1,0 +1,25 @@
+FAIL: DV1: class-D Domain out of reset is {3, 0xa3c, DEFAULTS}
+  DV1: class-D {prio 3, vid 0x002, adopted 0}
+FAIL: DV1: snapshot word 10 carries the default, got 0x00030002
+FAIL: DV1: GET_DOMAIN answers the default, got 0x00030002
+FAIL: DV2: Domain New {6, 3, 0x5a3c} byte-exact
+  got (30 B): 01 80 c2 00 00 0e 0a 0b 0c 0d 0e 0f 22 ea 00 04 04 00 09 00 01 06 03 00 02 00 00 00 00 00
+  exp (30 B): 01 80 c2 00 00 0e 0a 0b 0c 0d 0e 0f 22 ea 00 04 04 00 09 00 01 06 03 5a 3c 00 00 00 00 00
+FAIL: DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x2
+FAIL: DV2: class-D still the default
+FAIL: DV3: GET_TX_STATE_RESPONSE stream_vlan_id 0xa3c
+  got (70 B): 91 e0 f0 01 00 00 0a 0b 0c 0d 0e 0f 22 f0 fc 05 00 2c 0a 0b 0c 0d 0e 0f 00 00 77 77 00 00 00 00 00 42 12 34 56 78 9a bc de f0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 95 01 00 00 00 02 00 00
+  exp (70 B): 91 e0 f0 01 00 00 0a 0b 0c 0d 0e 0f 22 f0 fc 05 00 2c 0a 0b 0c 0d 0e 0f 00 00 77 77 00 00 00 00 00 42 12 34 56 78 9a bc de f0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 95 01 00 00 0a 3c 00 00
+FAIL: DV4: Lv {6, 3, 0x5a3c} + New {6, 3, 5} byte-exact
+  got (37 B): 01 80 c2 00 00 0e 0a 0b 0c 0d 0e 0f 22 ea 00 04 04 00 10 00 01 06 03 00 02 b4 00 01 06 03 00 05 00 00 00 00 00
+  exp (37 B): 01 80 c2 00 00 0e 0a 0b 0c 0d 0e 0f 22 ea 00 04 04 00 10 00 01 06 03 5a 3c b4 00 01 06 03 00 05 00 00 00 00 00
+FAIL: DV5: LINK_DOWN restores {3, 0xa3c, DEFAULTS}
+  DV5: class-D {prio 3, vid 0x002, adopted 0}
+FAIL: DV5: snapshot word 10 reverted, got 0x00030002
+FAIL: DV5: the default holds while down
+FAIL: DV6: LINK_UP re-declares Domain New {6, 3, 0x5a3c}
+  got (30 B): 01 80 c2 00 00 0e 0a 0b 0c 0d 0e 0f 22 ea 00 04 04 00 09 00 01 06 03 00 02 00 00 00 00 00
+  exp (30 B): 01 80 c2 00 00 0e 0a 0b 0c 0d 0e 0f 22 ea 00 04 04 00 09 00 01 06 03 5a 3c 00 00 00 00 00
+FAIL: DV6: class-D is the default again
+[build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 13 failures
+rc=1

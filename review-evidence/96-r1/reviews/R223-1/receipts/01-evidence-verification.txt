@@ -1,0 +1,43 @@
+# R223-1 public evidence verification (2026-09-22T07:54:09+02:00)
+$ git log -1 f41a2a13615fe321def5d896d0b1035695ed87b5 (fetched --depth=1 from origin into a scratch repo)
+f41a2a13615fe321def5d896d0b1035695ed87b5 hackerman-kl Tue Sep 22 07:30:30 2026 +0200 Include raw donor validation and mutation logs in evidence
+$ MANIFEST.json published_sha256 vs files
+63 entries, 0 mismatches; unlisted=['MANIFEST.json', 'README.md']; missing=[]
+$ manager/candidate.json
+{
+  "base": "424c688fa2205b934a7689a58f2aa766420f2326",
+  "head": "ea93023fbdd31cbf718da0d8f1aab4d750bfd21a",
+  "head_tree": "ec259f379560863e6ea49c6043353f0c11fe714d",
+  "candidate_tree": "ec259f379560863e6ea49c6043353f0c11fe714d",
+  "checks": {
+    "candidate": {
+      "head": "ea93023fbdd31cbf718da0d8f1aab4d750bfd21a",
+      "status": ""
+    },
+    "native": {
+      "head": "ea93023fbdd31cbf718da0d8f1aab4d750bfd21a",
+      "status": ""
+    }
+  }
+}
+
+$ manager/full-native/results.json exit codes
+ea93023fbdd31cbf718da0d8f1aab4d750bfd21a 424c688fa2205b934a7689a58f2aa766420f2326
+0 verilator --version
+0 git fetch --no-tags origin refs/pull/13/head
+0 bash scripts/lint_hdl.sh
+0 bash scripts/run_suites.sh
+0 make -j1 check
+0 python3 scripts/gen_matrix.py --check
+0 bash syn/yosys/run.sh
+0 make -C tb/nvm_port figures
+0 git diff --check 424c688fa2205b934a7689a58f2aa766420f2326 ea93023fbdd31cbf718da0d8f1aab4d750bfd21a
+$ manager/full-native/04.log tail
+PASS tx_slots (95 checks: 95 PASS, 0 FAIL)
+PASS ucpu (386 checks: 386 PASS, 0 FAIL)
+suites: 14943 checks total, 0 failing
+$ author pp_top logs
+1371 checks: 1371 PASS, 0 FAIL
+[build default, SRP_DOM_DEF_VID_P 0x0002] 1391 checks, 0 failures
+[build fixture, SRP_DOM_DEF_VID_P 0x5a3c] 20 checks, 0 failures
+1411 checks: 1411 PASS, 0 FAIL

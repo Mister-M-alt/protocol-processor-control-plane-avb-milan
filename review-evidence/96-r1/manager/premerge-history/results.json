@@ -1,0 +1,29 @@
+{
+  "head": "ea93023fbdd31cbf718da0d8f1aab4d750bfd21a",
+  "base": "424c688fa2205b934a7689a58f2aa766420f2326",
+  "results": [
+    {
+      "command": [
+        "python3",
+        "$TRUSTED_DEV/scripts/check_merge_containment.py",
+        "--base",
+        "origin/main",
+        "--merged-prs"
+      ],
+      "exit_code": 1,
+      "seconds": 16.735,
+      "log": "$VALIDATION_STORAGE/donor95-manager-r1/premerge-history/01.log"
+    },
+    {
+      "command": [
+        "python3",
+        "$TRUSTED_DEV/scripts/check_merge_review_integrity.py",
+        "--base",
+        "main"
+      ],
+      "exit_code": 1,
+      "seconds": 23.82,
+      "log": "$VALIDATION_STORAGE/donor95-manager-r1/premerge-history/02.log"
+    }
+  ]
+}
