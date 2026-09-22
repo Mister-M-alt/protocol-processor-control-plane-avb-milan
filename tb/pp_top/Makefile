@@ -1,8 +1,18 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
 # protocol_processor_top end-to-end suite — exit 0 = PASS.
+#
+# Two builds of one bench. The first overrides nothing and runs every
+# section; the second overrides P-SRP-DOM-DEF-VID with SRP_VID_FIXTURE and
+# runs section DV alone (README). The SRP engine's own default is 2 as well,
+# so only a value the child cannot produce shows a dropped or misbound
+# top-level connection. Each binary prints its own build's count; the last
+# line is the one canonical tally, summed over both builds.
 VERILATOR ?= verilator
 HDL        = ../../hdl
 TOP        = pp_top_wrap
+# verification only: Milan 4.2.7.2.1 fixes the product value at 2. README
+# section DV says why this pattern
+SRP_VID_FIXTURE = 5A3C
 
 VFLAGS = --cc --exe --build -j 0 \
          --top-module $(TOP) \
@@ -42,8 +52,15 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
 CPP  = sim_main.cpp
 
 run: ltn_rom.hex ucode.hex
+	@rm -f obj_dir/build_tally.txt
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vpp_top_sim
 	./obj_dir/Vpp_top_sim
+	$(VERILATOR) $(VFLAGS) "+define+PP_TOP_SRP_DOM_DEF_VID=16'h$(SRP_VID_FIXTURE)" \
+	    -CFLAGS "-DPP_TOP_SRP_DOM_DEF_VID=0x$(SRP_VID_FIXTURE)" \
+	    --Mdir obj_vid $(SRCS) $(CPP) -o Vpp_top_vid
+	./obj_vid/Vpp_top_vid
+	@awk '{c += $$1; f += $$2} END {if (NR != 2) {print "FAIL: " NR " build tallies, expected 2"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
+	    obj_dir/build_tally.txt
 
 ltn_rom.hex: $(HDL)/acmp/rom/gen_ltn_rom.py
 	python3 $< -o $@
@@ -52,6 +69,6 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 	python3 $< -o $@
 
 clean:
-	rm -rf obj_dir ltn_rom.hex ucode.hex
+	rm -rf obj_dir obj_vid ltn_rom.hex ucode.hex
 
 .PHONY: run clean

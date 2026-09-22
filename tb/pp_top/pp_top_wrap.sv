@@ -22,6 +22,11 @@
 //                through the svc face with its own stream_ids — the tied
 //                lanes only feed talker-command flows this suite does not
 //                byte-check.
+//
+//                The one parameter the suite builds twice: SRP_DOM_DEF_VID_P
+//                is overridden ONLY when the second build defines
+//                PP_TOP_SRP_DOM_DEF_VID (Makefile), so the first build grades
+//                the top's own default and never a copy of it.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -228,6 +233,13 @@ module pp_top_wrap (
     // the per-source DA gate a fabric ANDs with its own stream enable
     output logic [7:0]  acmp_declaring_o,
 
+    // the Class A Domain in force (class-D, F02.10), passed through by name:
+    // these ports are where an integrator reads P-SRP-DOM-DEF-VID's effect
+    output logic  [2:0] srp_class_a_prio_o,
+    output logic [11:0] srp_class_a_vid_o,
+    output logic        srp_domain_adopted_o,
+    output logic        srp_domain_change_o,
+
     // observability
     output logic [31:0] dbg_now_ms_o,
     // suite taps (cross-module refs into the DUT; observe-only)
@@ -317,6 +329,10 @@ module pp_top_wrap (
   logic                          aecp_lock_held_nc_w;
 
   protocol_processor_top #(
+`ifdef PP_TOP_SRP_DOM_DEF_VID
+      //! the second build's verification-only fixture (see the banner)
+      .SRP_DOM_DEF_VID_P (`PP_TOP_SRP_DOM_DEF_VID),
+`endif
       .TIM_DIV_US_P (TB_DIV_US_C),
       .TIM_DIV_MS_P (TB_DIV_MS_C),
       //! TIM compression for the registration/lock deadlines, same reason
@@ -512,6 +528,10 @@ module pp_top_wrap (
       .maap_conflicts_o      (maap_conflicts_o),
       .maap_defends_o        (maap_defends_o),
       .acmp_declaring_o      (acmp_declaring_o),
+      .srp_class_a_prio_o    (srp_class_a_prio_o),
+      .srp_class_a_vid_o     (srp_class_a_vid_o),
+      .srp_domain_adopted_o  (srp_domain_adopted_o),
+      .srp_domain_change_o   (srp_domain_change_o),
       .dbg_now_ms_o          (dbg_now_ms_o)
   );
 

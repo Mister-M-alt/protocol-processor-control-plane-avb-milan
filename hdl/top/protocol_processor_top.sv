@@ -134,6 +134,14 @@ module protocol_processor_top
     //! `16 + DESC_LINE_BYTES_P` bytes there that nothing else writes, and it
     //! must not overlap `DESC_BASE_P`.
     parameter logic [31:0] RESP_BASE_P         = 32'h2010_0000,
+    //! ---- SRP Class A Domain default (10 §6.1 F10.2) --------------------
+    //! P-SRP-DOM-DEF-VID (F01.5): the SRclassVID the Domain FSM declares at
+    //! startup and on every LINK_UP, and returns to on LINK_DOWN (Milan
+    //! §4.2.7.2.1). A bridge's differing Class A Domain is still adopted
+    //! over it at run time. Milan fixes the shipping value at 2, so any other
+    //! value is a verification fixture proving this binding, never a product
+    //! profile. Bound to KL_srp_top.DOM_DEF_VID_P at the same 16-bit width.
+    parameter logic [15:0] SRP_DOM_DEF_VID_P   = 16'd2,
     //! derived — do not override
     //! F08.4 timer-slot map for THIS shape. Every base below is the running
     //! sum of the group extents before it (pp_pkg::pp_timer_map is the ONE
@@ -2136,6 +2144,7 @@ module protocol_processor_top
   KL_srp_top #(
       .N_SOURCES_P      (N_STREAM_OUT_P),
       .N_SINKS_P        (N_STREAM_IN_P),
+      .DOM_DEF_VID_P    (SRP_DOM_DEF_VID_P),
       .TX_STD_BYTES_P   (576),
       .TX_OVERSIZE_BYTES_P (TX_OVERSIZE_BYTES_P),
       .SLOT_AW_P        (TMR_AW_C),

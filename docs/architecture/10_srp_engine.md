@@ -199,7 +199,7 @@ LeaveAll cycle (Δ13 below).
 
 ```mermaid
 stateDiagram-v2
-    [*] --> DEFAULTS: startup or LINK_UP / declare Domain A with priority 3, VID 2
+    [*] --> DEFAULTS: startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID
     DEFAULTS --> ADOPTED: rx Class A Domain declaration with different params / adopt received FirstValue, re-declare it, DOMAIN_CHANGE
     ADOPTED --> ADOPTED: rx differing Domain again / adopt + re-declare + DOMAIN_CHANGE
     ADOPTED --> DEFAULTS: LINK_DOWN then LINK_UP / back to defaults
@@ -363,6 +363,9 @@ Class A only, single VID, endpoint-only participant.
 ## 11. Parameterization
 
 `P-EN-SRP-ENGINE` (1 = this engine serves the `srp` contract; 0 = external stack).
+`P-SRP-DOM-DEF-VID` is the Domain default VID of [F10.2](#fig-10-domsm): declared at
+startup and on LINK_UP, restored on LINK_DOWN, and replaced at run time by an adopted
+Domain (§6.1).
 Instance counts: 2 + `P-N-STREAM-IN` + `P-N-STREAM-OUT` FSMs; registrar/leave timer
 pool sized in [08 §5](08_timing.md). Per-interface keying (`P-N-AVB-INTERFACES`)
 applies to the whole engine — one participant set per AVB interface.

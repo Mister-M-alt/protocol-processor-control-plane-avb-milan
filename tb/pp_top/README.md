@@ -16,7 +16,9 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make`: exit 0 = PASS; the executable prints its exact check tally.
+`make`: exit 0 = PASS. It builds the bench twice (section DV): each executable
+prints its own build's tally, and the last line sums both into the one canonical
+tally.
 
 ## What it proves
 
@@ -159,6 +161,11 @@ Milan §4.3.3.2 Σ-slope — never DUT logic.
   `GET_AS_PATH`; another AVB-info-word change produces only `GET_AVB_INFO`;
   and `gm_change_i` alone produces only `GET_AVB_INFO`, because the same ADP
   duty also covers a domain-only change whose path sequence did not move.
+- **DV** **the Domain default is the top's `SRP_DOM_DEF_VID_P`** (issue #95;
+  10 §6.1 F10.2, F01.5 `P-SRP-DOM-DEF-VID`), in both builds on a fresh model:
+  the reset value, the LINK_UP declaration byte-exact with all 16 bits of
+  SRclassVID, the GET_TX_STATE stream VLAN, a bridge's Domain still adopted
+  over it, the LINK_DOWN revert and the LINK_UP re-declaration. See section DV.
 
 ## Snapshot window map (side port 0x20000, implemented by the top)
 
@@ -200,6 +207,13 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M22 | the refusal tail builds r12, the REJECTED rate, at @28 instead of r6, the current one (E_SSRATE+17, ROM word 1169) | 9 FAIL at 1,361 checks -- every refusal that is graded byte-exact: W9i, W9j, W9k2 three times, W9l2, W9l5, W9l6, W9m5. Status, GET and every effect count PASS under it |
 | M23 | the unset row's image read removed: E_SSRATE+6 (ROM word 1158, `SHIFT_R` of the image's current_sampling_rate into r6) replaced with NOP, so r6 keeps its zero preload | 1 FAIL at 1,361 checks -- W9i: the refusal on the unset row carries 0 instead of the image's 96000. Every set-row arm reads the dynamic row instead and PASSES, which is why W9i runs before W9 |
 | M24 | the ROM `gen_ucode.py` generates at `6a9a124`, the last commit before the list check (the issue #51 reproduction with the final harness) | 28 FAIL at 1,361 checks, the M19 list |
+| M25 | the top's `.DOM_DEF_VID_P (SRP_DOM_DEF_VID_P)` binding line removed | fixture build 13 FAIL of 20: every value check of DV1 to DV6. The default build PASSES all 1,391, which is why the fixture build exists |
+| M26 | the binding misbound to a literal, `.DOM_DEF_VID_P (16'd2)` | fixture build 13 FAIL of 20, the M25 set |
+| M27 | the binding truncated to 12 bits, `.DOM_DEF_VID_P (16'(SRP_DOM_DEF_VID_P[11:0]))` | fixture build 4 FAIL of 20: DV2 (byte-exact and the decoded SRclassVID), DV4 and DV6, the checks that read the 16-bit wire field. Every 12-bit face PASSES |
+| M28 | the value bound to the wrong child parameter, `.DOM_DEF_PRIO_P (SRP_DOM_DEF_VID_P[7:0])`, the VID left unbound | default build 16 FAIL of 1,391 (S1 twice, S2, S7, S8 and 11 in DV); fixture build 13 FAIL of 20 |
+| M29 | the top's own default changed from 2 to 3 | default build 18 FAIL of 1,391 (S1 twice, S8, T0, MP3 and 13 in DV). The fixture build PASSES 20 of 20, because it overrides the default |
+| M30 | the wrap's fixture override removed (test infrastructure) | fixture build 13 FAIL of 20: the build cannot pass on the top's or the child's own default |
+| M31 | control, not a defect: `KL_srp_top`'s own `DOM_DEF_VID_P` default changed from 2 to 7, binding intact | both builds PASS, 1,391 and 20: the child's default is no longer a source |
 
 All twenty-four bite; originals restored; suite back to green. The M1-M6 counts were
 taken when the suite stood at 86 checks (scenario A and section B have since
@@ -212,6 +226,10 @@ rebuild: generate the review ROM elsewhere, copy it over `ucode.hex`, run
 the generator's output proves the ROM is the pinned one again: a copied ROM is
 newer than `gen_ucode.py`, so `make` alone leaves it in place, and `git status`
 cannot see it (`ucode.hex` is ignored); `rm ucode.hex && make` regenerates it.
+M25 to M31 were measured on 2026-09-22 at 1,391 checks in the default build and
+20 in the fixture build, each in its own scratch copy of `hdl/` and `tb/pp_top/`,
+so there was nothing to restore. M25 to M30 bite; M31, a control, stays green as
+it must.
 
 ## Recorded seams and honest limits
 
@@ -471,3 +489,55 @@ and placed beside W9 they moved source 0's T-SRP-DAFRESH lapse into W25pre
 (5 FAIL, W25pre to W25b2, in the first placement). U10 and U11 reset the DUT,
 so the phase deregisters both bench controllers and sets the listed 48000
 before it starts.
+
+## Section DV: the Domain default is the top's parameter (issue #95)
+
+`KL_srp_top` has a 16-bit `DOM_DEF_VID_P` with its own default of 2, and the top
+used to leave it unbound, so nothing outside the processor could drive the
+Domain default. The top now declares `SRP_DOM_DEF_VID_P` (`P-SRP-DOM-DEF-VID`,
+default 2) and binds it to the child explicitly. The Domain FSM reads it three
+times: as its reset value, in the declaration on every LINK_UP, and in the
+revert on LINK_DOWN (10 §6.1 F10.2).
+
+A build that only runs the product value cannot see that binding. The child's
+own default is also 2, so a dropped or misbound connection produces exactly the
+frames the default build expects (M25: 0 failures there). The Makefile therefore
+builds the bench twice:
+
+| Build | Override | Runs | Expects |
+|---|---|---|---|
+| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV last | 2 (Milan §4.2.7.2.1) |
+| `obj_vid/Vpp_top_vid` | `SRP_DOM_DEF_VID_P = 0x5A3C` (`SRP_VID_FIXTURE`) | DV alone | 0x5A3C |
+
+The fixture is a verification value, not a product profile: Milan §4.2.7.2.1
+fixes a shipping build at 2. It is chosen so that each plausible fault gives a
+value of its own: a missing binding or a literal (2), an 8- or 12-bit truncation
+(0x003C, 0x0A3C), a byte swap (0x3C5A), or routing it to the priority parameter
+(priority 0x3C, read as 4 on the 3-bit face). Its low 12 bits are a legal VID,
+0xA3C, and that is what the 12-bit faces carry: the class-D port, snapshot word
+10, GET_DOMAIN and the ACMP talker. Only the MSRP wire field shows the top
+nibble, which is why M27 fails the wire checks alone. The C++ expectation is
+compiled from the same Makefile variable the wrap receives, never read back from
+the DUT, and the wrap overrides nothing in the first build.
+
+DV runs on a fresh model in both builds, after reset and with the link down:
+
+- **DV1** the reset value on the class-D ports, snapshot word 10 and GET_DOMAIN;
+  nothing is declared before the link.
+- **DV2** LINK_UP: the first MSRP frame is `New {6, 3, default}` byte-exact, and
+  the decoded SRclassVID is all 16 bits of the parameter.
+- **DV3** GET_TX_STATE answers the default as `stream_vlan_id`. F05.11 leaves
+  that field undefined while a source is not declaring; this talker answers the
+  SR-class VID either way, as S10 and MP3 grade.
+- **DV4** a bridge's certified two-class Domain `{5, 2, 5}` (NumberOfValues 2)
+  is still adopted over the parameter: class-D `{3, 5}`, ADOPTED, one
+  DOMAIN_CHANGE, and `Lv {6, 3, default}` + `New {6, 3, 5}` byte-exact.
+- **DV5** LINK_DOWN restores the default and DEFAULTS with one DOMAIN_CHANGE,
+  and nothing is declared for the 500 ms the link stays down.
+- **DV6** LINK_UP declares `New {6, 3, default}` again, byte-exact.
+
+Every edge is aligned into a clean slot of the 200 ms join cadence
+(`sync_join`): the cadence timers are armed at reset, and a periodic re-join
+drained into the same MRPDU would change the frame. The phase costs about 3.4 s
+of simulated time on its own model, so the main DUT's timeline is untouched.
+M25 to M31 in the mutation record are its evidence.
