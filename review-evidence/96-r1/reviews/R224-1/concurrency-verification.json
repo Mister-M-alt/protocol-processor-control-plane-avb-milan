@@ -1,0 +1,6 @@
+{
+  "real_verilator_invocations": 10,
+  "all_effective_j_values": 8,
+  "builds_run_sequentially": true,
+  "make_jobs": 1
+}

@@ -1,0 +1,2 @@
+R224 command: ['make', '-j1', 'stale']
+exit: 0

@@ -1,0 +1,2 @@
+R224 command: ['git', 'diff', '--check', '424c688fa2205b934a7689a58f2aa766420f2326', 'HEAD']
+exit: 0

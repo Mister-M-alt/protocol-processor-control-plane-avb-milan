@@ -1,0 +1,83 @@
+[
+  {
+    "mode": "success",
+    "command": [
+      "make",
+      "-j1",
+      "VERILATOR=/tmp/r224-pr96-tally-5dzgotdx/fake-verilator"
+    ],
+    "cwd": "/tmp/r224-pr96-tally-5dzgotdx/tb/pp_top",
+    "exit_code": 0,
+    "canonical": [
+      "1411 checks: 1411 PASS, 0 FAIL"
+    ]
+  },
+  {
+    "mode": "default_fails",
+    "command": [
+      "make",
+      "-j1",
+      "VERILATOR=/tmp/r224-pr96-tally-5dzgotdx/fake-verilator"
+    ],
+    "cwd": "/tmp/r224-pr96-tally-5dzgotdx/tb/pp_top",
+    "exit_code": 2,
+    "canonical": []
+  },
+  {
+    "mode": "fixture_fails",
+    "command": [
+      "make",
+      "-j1",
+      "VERILATOR=/tmp/r224-pr96-tally-5dzgotdx/fake-verilator"
+    ],
+    "cwd": "/tmp/r224-pr96-tally-5dzgotdx/tb/pp_top",
+    "exit_code": 2,
+    "canonical": []
+  },
+  {
+    "mode": "default_missing",
+    "command": [
+      "make",
+      "-j1",
+      "VERILATOR=/tmp/r224-pr96-tally-5dzgotdx/fake-verilator"
+    ],
+    "cwd": "/tmp/r224-pr96-tally-5dzgotdx/tb/pp_top",
+    "exit_code": 2,
+    "canonical": []
+  },
+  {
+    "mode": "fixture_missing",
+    "command": [
+      "make",
+      "-j1",
+      "VERILATOR=/tmp/r224-pr96-tally-5dzgotdx/fake-verilator"
+    ],
+    "cwd": "/tmp/r224-pr96-tally-5dzgotdx/tb/pp_top",
+    "exit_code": 2,
+    "canonical": []
+  },
+  {
+    "mode": "extra_row",
+    "command": [
+      "make",
+      "-j1",
+      "VERILATOR=/tmp/r224-pr96-tally-5dzgotdx/fake-verilator"
+    ],
+    "cwd": "/tmp/r224-pr96-tally-5dzgotdx/tb/pp_top",
+    "exit_code": 2,
+    "canonical": []
+  },
+  {
+    "mode": "stale_row",
+    "command": [
+      "make",
+      "-j1",
+      "VERILATOR=/tmp/r224-pr96-tally-5dzgotdx/fake-verilator"
+    ],
+    "cwd": "/tmp/r224-pr96-tally-5dzgotdx/tb/pp_top",
+    "exit_code": 0,
+    "canonical": [
+      "1411 checks: 1411 PASS, 0 FAIL"
+    ]
+  }
+]

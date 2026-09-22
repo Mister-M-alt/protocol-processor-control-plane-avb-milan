@@ -1,0 +1,26 @@
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -8287,6 +8287,13 @@
+     dv4_a_bridge_domain_is_still_adopted();
+     dv5_link_down_restores_the_default();
+     dv6_link_up_declares_the_default_again();
++    dv4_a_bridge_domain_is_still_adopted();
++    h2.reset();
++    h2.flush_all();
++    dv1_reset_holds_the_default();
++    dv2_link_up_declares_the_default();
++    CHECK(h.t == 0 && h.domain_changes == 0,
++          "R224: fixture parent model remains unclocked and unaffected");
+   }
+ 
+   // ---- DV1: out of reset, before any link: the reset value ----------------
+--- a/tb/pp_top/sim_main.cpp
++++ b/tb/pp_top/sim_main.cpp
+@@ -9057,6 +9057,7 @@
+   //! every other section is written against the product default, which the
+   //! first build grades; the fixture build runs section DV alone
+   DomainDefaultPhase{h}.run();
++  DomainDefaultPhase{h}.run();
+   const char* const build = "fixture";
+ #else
+   Suite(h).run();

@@ -1,0 +1,12 @@
+ea93023fbdd31cbf718da0d8f1aab4d750bfd21a
+ea93023fbdd31cbf718da0d8f1aab4d750bfd21a hackerman-kl <hackerman-kl@kebag-logic.com> Expose the SRP Domain default VID as a top parameter and grade its binding in a second pp_top build
+## 95-expose-default-sr-vid...origin/95-expose-default-sr-vid [ahead 1]
+ docs/architecture/01_overview.md   |   1 +
+ docs/architecture/10_srp_engine.md |   5 +-
+ docs/guides/integrator.md          |   3 +-
+ hdl/top/protocol_processor_top.sv  |   9 ++
+ tb/pp_top/Makefile                 |  19 +++-
+ tb/pp_top/README.md                |  72 ++++++++++++-
+ tb/pp_top/pp_top_wrap.sv           |  20 ++++
+ tb/pp_top/sim_main.cpp             | 209 ++++++++++++++++++++++++++++++++++++-
+ 8 files changed, 332 insertions(+), 6 deletions(-)

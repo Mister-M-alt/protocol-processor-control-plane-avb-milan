@@ -1,0 +1,7 @@
+commit ea93023fbdd31cbf718da0d8f1aab4d750bfd21a
+Author:     hackerman-kl <hackerman-kl@kebag-logic.com>
+AuthorDate: Tue Sep 22 07:02:27 2026 +0200
+Commit:     hackerman-kl <hackerman-kl@kebag-logic.com>
+CommitDate: Tue Sep 22 07:02:27 2026 +0200
+
+    Expose the SRP Domain default VID as a top parameter and grade its binding in a second pp_top build

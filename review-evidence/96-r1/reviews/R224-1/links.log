@@ -1,0 +1,3 @@
+R224 command: ['python3', 'scripts/check-links.py']
+exit: 0
+links: 807 checked, OK

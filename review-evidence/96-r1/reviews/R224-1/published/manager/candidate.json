@@ -1,0 +1,16 @@
+{
+  "base": "424c688fa2205b934a7689a58f2aa766420f2326",
+  "head": "ea93023fbdd31cbf718da0d8f1aab4d750bfd21a",
+  "head_tree": "ec259f379560863e6ea49c6043353f0c11fe714d",
+  "candidate_tree": "ec259f379560863e6ea49c6043353f0c11fe714d",
+  "checks": {
+    "candidate": {
+      "head": "ea93023fbdd31cbf718da0d8f1aab4d750bfd21a",
+      "status": ""
+    },
+    "native": {
+      "head": "ea93023fbdd31cbf718da0d8f1aab4d750bfd21a",
+      "status": ""
+    }
+  }
+}

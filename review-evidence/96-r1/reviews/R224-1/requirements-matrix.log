@@ -1,0 +1,3 @@
+R224 command: ['python3', 'scripts/check-matrix.py']
+exit: 0
+matrix: 115 REQ rows, 17 GAP findings, OK

@@ -1,0 +1,35 @@
+[
+  {
+    "suite": "pp_top",
+    "command": [
+      "make",
+      "-j1",
+      "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/96-r1-r224/verilator8"
+    ],
+    "cwd": "$VALIDATION_STORAGE/reviews/r224-96-r1/tb/pp_top",
+    "exit_code": 0,
+    "seconds": 189.442
+  },
+  {
+    "suite": "srp_top",
+    "command": [
+      "make",
+      "-j1",
+      "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/96-r1-r224/verilator8"
+    ],
+    "cwd": "$VALIDATION_STORAGE/reviews/r224-96-r1/tb/srp_top",
+    "exit_code": 0,
+    "seconds": 6.338
+  },
+  {
+    "suite": "srp_encoder",
+    "command": [
+      "make",
+      "-j1",
+      "VERILATOR=$WORKSPACE_HOME/milan-fpga-management/2026-09-22/96-r1-r224/verilator8"
+    ],
+    "cwd": "$VALIDATION_STORAGE/reviews/r224-96-r1/tb/srp_encoder",
+    "exit_code": 0,
+    "seconds": 5.244
+  }
+]

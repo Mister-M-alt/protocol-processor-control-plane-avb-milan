@@ -1,0 +1,11 @@
+--- $CANDIDATE/hdl/top/protocol_processor_top.sv	2026-09-22 06:37:11.775000000 +0200
++++ $MUTATION_STORAGE/M29_top_default_3/hdl/top/protocol_processor_top.sv	2026-09-22 06:52:03.631334688 +0200
+@@ -141,7 +141,7 @@
+     //! over it at run time. Milan fixes the shipping value at 2, so any other
+     //! value is a verification fixture proving this binding, never a product
+     //! profile. Bound to KL_srp_top.DOM_DEF_VID_P at the same 16-bit width.
+-    parameter logic [15:0] SRP_DOM_DEF_VID_P   = 16'd2,
++    parameter logic [15:0] SRP_DOM_DEF_VID_P   = 16'd3,
+     //! derived — do not override
+     //! F08.4 timer-slot map for THIS shape. Every base below is the running
+     //! sum of the group extents before it (pp_pkg::pp_timer_map is the ONE
