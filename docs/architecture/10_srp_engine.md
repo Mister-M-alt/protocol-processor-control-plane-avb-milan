@@ -202,7 +202,7 @@ stateDiagram-v2
     [*] --> DEFAULTS: startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID
     DEFAULTS --> ADOPTED: rx Class A Domain declaration with different params / adopt received FirstValue, re-declare it, DOMAIN_CHANGE
     ADOPTED --> ADOPTED: rx differing Domain again / adopt + re-declare + DOMAIN_CHANGE
-    ADOPTED --> DEFAULTS: LINK_DOWN then LINK_UP / back to defaults
+    ADOPTED --> DEFAULTS: LINK_DOWN / restore defaults, declared again on the next LINK_UP
     DEFAULTS --> DEFAULTS: periodic or LeaveAll / re-join declaration
 ```
 
