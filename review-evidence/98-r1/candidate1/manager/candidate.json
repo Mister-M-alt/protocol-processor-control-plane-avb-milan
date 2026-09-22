@@ -1,0 +1,14 @@
+{
+  "prepared_at": "2026-09-22T13:14:14.436556+02:00",
+  "pr": 101,
+  "reviewed_head": "bc997e7c00e50e3d59b97987950bfbf6cc442182",
+  "previous_base": "8452f564294300a82d56eed464276576f65f4d58",
+  "live_base": "c8214cfe827fb3fb50c9bfee415468a24b7c27b1",
+  "candidate_commit": "1fd06bf6e40d2290adf1987b51c1fabe30671098",
+  "candidate_tree": "37a5cd807c5e8a289a7149892c1a1762dcd8279c",
+  "candidate_matches_git_merge_tree": true,
+  "disjoint_paths": true,
+  "PR_delta_unchanged": true,
+  "source_PR_unchanged": true,
+  "validation": "All9 commands PASS; 224 committed file blobs/modes and index tree verified"
+}

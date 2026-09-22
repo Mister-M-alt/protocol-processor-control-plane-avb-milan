@@ -1,0 +1,97 @@
+{
+  "head": "1fd06bf6e40d2290adf1987b51c1fabe30671098",
+  "base": "c8214cfe827fb3fb50c9bfee415468a24b7c27b1",
+  "results": [
+    {
+      "command": [
+        "verilator",
+        "--version"
+      ],
+      "exit_code": 0,
+      "seconds": 0.05,
+      "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/01.log"
+    },
+    {
+      "command": [
+        "git",
+        "fetch",
+        "--no-tags",
+        "origin",
+        "refs/pull/13/head"
+      ],
+      "exit_code": 0,
+      "seconds": 0.486,
+      "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/02.log"
+    },
+    {
+      "command": [
+        "bash",
+        "scripts/lint_hdl.sh"
+      ],
+      "exit_code": 0,
+      "seconds": 9.96,
+      "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/03.log"
+    },
+    {
+      "command": [
+        "bash",
+        "scripts/run_suites.sh"
+      ],
+      "exit_code": 0,
+      "seconds": 190.892,
+      "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/04.log"
+    },
+    {
+      "command": [
+        "make",
+        "-j1",
+        "check"
+      ],
+      "exit_code": 0,
+      "seconds": 25.914,
+      "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/05.log"
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/gen_matrix.py",
+        "--check"
+      ],
+      "exit_code": 0,
+      "seconds": 0.048,
+      "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/06.log"
+    },
+    {
+      "command": [
+        "bash",
+        "syn/yosys/run.sh"
+      ],
+      "exit_code": 0,
+      "seconds": 67.532,
+      "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/07.log"
+    },
+    {
+      "command": [
+        "make",
+        "-C",
+        "tb/nvm_port",
+        "figures"
+      ],
+      "exit_code": 0,
+      "seconds": 225.664,
+      "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/08.log"
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "c8214cfe827fb3fb50c9bfee415468a24b7c27b1",
+        "1fd06bf6e40d2290adf1987b51c1fabe30671098"
+      ],
+      "exit_code": 0,
+      "seconds": 0.003,
+      "log": "$VALIDATION_STORAGE/donor98-manager-candidate1/full-native/09.log"
+    }
+  ]
+}

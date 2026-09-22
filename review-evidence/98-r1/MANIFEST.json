@@ -370,5 +370,95 @@
     "original_sha256": "f98e82451b952dfc9a7470d69b5be8fb6b79b0ffed5a5e85e93de391e87cde9b",
     "published_sha256": "f98e82451b952dfc9a7470d69b5be8fb6b79b0ffed5a5e85e93de391e87cde9b",
     "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/candidate.json",
+    "original_sha256": "1f38c7a7cd6fb7432b00f2525d32caf5eadff2aa8d19f073779dd1bc9fc7eb68",
+    "published_sha256": "1f38c7a7cd6fb7432b00f2525d32caf5eadff2aa8d19f073779dd1bc9fc7eb68",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/final-integrity.json",
+    "original_sha256": "cd2c6f99521992a2951302449962d504dbee540e6ed6e352de22d196e32142f8",
+    "published_sha256": "cd2c6f99521992a2951302449962d504dbee540e6ed6e352de22d196e32142f8",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/full-native/01.log",
+    "original_sha256": "110d748d8e6eca23b22ad7bf766d1d1fcf69c45731c3260fc80857cdd2d62576",
+    "published_sha256": "110d748d8e6eca23b22ad7bf766d1d1fcf69c45731c3260fc80857cdd2d62576",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/full-native/02.log",
+    "original_sha256": "6321e927f120057597592cf5f1a693ccfd14340c4cb54274074493dd4cdbfb9e",
+    "published_sha256": "6321e927f120057597592cf5f1a693ccfd14340c4cb54274074493dd4cdbfb9e",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/full-native/03.log",
+    "original_sha256": "d2a29ad3ad7491d0e2546e5b6890ca4f4be5ee6a974b48a2c8a60b7c792379c7",
+    "published_sha256": "d2a29ad3ad7491d0e2546e5b6890ca4f4be5ee6a974b48a2c8a60b7c792379c7",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/full-native/04.log",
+    "original_sha256": "266550d5aecfbeed5fa34b612a5be829143a6f25542330eddc106b741096ec8c",
+    "published_sha256": "266550d5aecfbeed5fa34b612a5be829143a6f25542330eddc106b741096ec8c",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/full-native/05.log",
+    "original_sha256": "66e29164e388d44d0d41d3a0c0def234074d5661880719198ebda70be57b34ca",
+    "published_sha256": "66e29164e388d44d0d41d3a0c0def234074d5661880719198ebda70be57b34ca",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/full-native/06.log",
+    "original_sha256": "12176e4206f2f6f318251f8d1b36b56cf2821e41e89d45f365910c412b015697",
+    "published_sha256": "12176e4206f2f6f318251f8d1b36b56cf2821e41e89d45f365910c412b015697",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/full-native/07.log",
+    "original_sha256": "613127f38b0916340b488a47d81e0c7297f46bce80a03fa836b3ad8d3f05ba6f",
+    "published_sha256": "613127f38b0916340b488a47d81e0c7297f46bce80a03fa836b3ad8d3f05ba6f",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/full-native/08.log",
+    "original_sha256": "2fb240ca2b01e2418ac3cc0bc23a270acb2179eb48d448696f983a125e17863f",
+    "published_sha256": "888bd075dbf2902e186907881dfbb2b438f30e2d5fe86a3682ba5c2c9579b03d",
+    "path_redacted": true
+  },
+  {
+    "file": "candidate1/manager/full-native/09.log",
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "published_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/full-native/complete.json",
+    "original_sha256": "a13ce16850eadbf140339594f7e4306abb452dc849449bc5d2ed8e84718d32ce",
+    "published_sha256": "a13ce16850eadbf140339594f7e4306abb452dc849449bc5d2ed8e84718d32ce",
+    "path_redacted": false
+  },
+  {
+    "file": "candidate1/manager/full-native/results.json",
+    "original_sha256": "636bfa13d0808f9bae924f3d40d5a738afef1f14b6cf73010939ffe3e6e36c75",
+    "published_sha256": "1542a6f1062434054cb5bf9b8b5f49e91695a501c60d5dcc6e9aad2811c6e43d",
+    "path_redacted": true
+  },
+  {
+    "file": "candidate1/manager/full-native.json",
+    "original_sha256": "19fc97d756b307cc0546861c3d50202e3eebf58be827483a2b397c01ad0bd681",
+    "published_sha256": "ee2e6806705136d0ad6f02a86dc7f368a4c4c84f418fb33ac5948951e6f89672",
+    "path_redacted": true
+  },
+  {
+    "file": "candidate1/manager/native-summary.md",
+    "original_sha256": "7678aee8e88b94e72377c9307115db9780cd5c3ba65ee22aa24992b255da8582",
+    "published_sha256": "7678aee8e88b94e72377c9307115db9780cd5c3ba65ee22aa24992b255da8582",
+    "path_redacted": false
   }
 ]
