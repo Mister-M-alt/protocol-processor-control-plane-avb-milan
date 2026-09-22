@@ -1,0 +1,17 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "env",
+    "PATH=$WORKSPACE_HOME/milan-fpga-management/tools/fpga-gptp-wavedrom/bin:$WORKSPACE_HOME/.codex/tmp/arg0/codex-arg0KKu8Bg:$WORKSPACE_HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl",
+    "make",
+    "-j8",
+    "check"
+  ],
+  "shell_command": "rtk proxy env PATH=$WORKSPACE_HOME/milan-fpga-management/tools/fpga-gptp-wavedrom/bin:$WORKSPACE_HOME/.codex/tmp/arg0/codex-arg0KKu8Bg:$WORKSPACE_HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl make -j8 check",
+  "cwd": "$CANDIDATE",
+  "started_utc": "2026-09-22T08:54:02.865322+00:00",
+  "seconds": 25.357,
+  "returncode": 0,
+  "expected_returncode": 0
+}

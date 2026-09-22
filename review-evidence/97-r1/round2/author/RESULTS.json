@@ -1,0 +1,108 @@
+{
+  "01-base-german": {
+    "returncode": 2,
+    "error_lines": [
+      "sim_main.cpp:81:27: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 16-bit wire value",
+      "sim_main.cpp:83:39: error: statische Assertion fehlgeschlagen: SRP VID fixture must differ from product default 2 in the 12-bit class-D value"
+    ]
+  },
+  "02-base-french": {
+    "returncode": 2,
+    "error_lines": [
+      "sim_main.cpp:81:27: error: l'assertion statique a \u00e9chou\u00e9\u00a0: SRP VID fixture must differ from product default 2 in the 16-bit wire value",
+      "sim_main.cpp:83:39: error: l'assertion statique a \u00e9chou\u00e9\u00a0: SRP VID fixture must differ from product default 2 in the 12-bit class-D value"
+    ]
+  },
+  "03-fixed-german": {
+    "returncode": 0,
+    "outcomes": [
+      "fixture guard default (no override): compiles",
+      "fixture guard 5A3C: compiles",
+      "fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit class-D value",
+      "fixture guard 1002: refused: SRP VID fixture must differ from product default 2 in the 12-bit class-D value"
+    ],
+    "locale_regression": "PASS"
+  },
+  "04-fixed-french": {
+    "returncode": 0,
+    "outcomes": [
+      "fixture guard default (no override): compiles",
+      "fixture guard 5A3C: compiles",
+      "fixture guard 0002: refused: SRP VID fixture must differ from product default 2 in the 16-bit wire value; SRP VID fixture must differ from product default 2 in the 12-bit class-D value",
+      "fixture guard 1002: refused: SRP VID fixture must differ from product default 2 in the 12-bit class-D value"
+    ],
+    "locale_regression": "PASS"
+  },
+  "05-remove-wire": {
+    "name": "05-remove-wire",
+    "differences": [
+      "tb/pp_top/sim_main.cpp"
+    ],
+    "before_sha256": "0cd0d7aba2b7799d378e434d399ef49def0566869db2166353f1ef31cea2ddab",
+    "mutant_sha256": "6fe2627416bdac8b38d8802c2a9d4d5a193fa895ae5c3669e98859c2afa1288e",
+    "compiler_error_lines": [
+      "sim_main.cpp:81:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value"
+    ],
+    "returncode": 2
+  },
+  "06-remove-class-d": {
+    "name": "06-remove-class-d",
+    "differences": [
+      "tb/pp_top/sim_main.cpp"
+    ],
+    "before_sha256": "0cd0d7aba2b7799d378e434d399ef49def0566869db2166353f1ef31cea2ddab",
+    "mutant_sha256": "0565473e5446a55ac3ddc028b1cb916d6a08da7e1501e4f3e18064131703a84e",
+    "compiler_error_lines": [
+      "sim_main.cpp:81:27: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value"
+    ],
+    "returncode": 2
+  },
+  "07-unrelated-error": {
+    "name": "07-unrelated-error",
+    "differences": [
+      "tb/pp_top/sim_main.cpp"
+    ],
+    "before_sha256": "0cd0d7aba2b7799d378e434d399ef49def0566869db2166353f1ef31cea2ddab",
+    "mutant_sha256": "6dc71cef01c8d4d1faf9441811980bf857c0acd767ea8f00de18140350807249",
+    "compiler_error_lines": [
+      "sim_main.cpp:84:2: error: #error A166 unrelated compiler error control",
+      "sim_main.cpp:81:27: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 16-bit wire value",
+      "sim_main.cpp:86:39: error: static assertion failed: SRP VID fixture must differ from product default 2 in the 12-bit class-D value"
+    ],
+    "returncode": 2
+  },
+  "08-remove-locale": {
+    "name": "08-remove-locale",
+    "differences": [
+      "tb/pp_top/fixture_guards.py"
+    ],
+    "before_sha256": "0edd19409934d971d9f228d6fbbae9e04826c9d396979059f2e185837bd2e151",
+    "mutant_sha256": "b170cae5e3229b183f858a32800dfd6745ebf92cdfba88a5424e139d0a553451",
+    "returncode": 2
+  },
+  "09-default-and-5a3c": {
+    "returncode": 0,
+    "default_checks": 1391,
+    "fixture_checks": 20,
+    "failures": 0,
+    "canonical_tally": "1411 checks: 1411 PASS, 0 FAIL"
+  },
+  "10-docs": {
+    "returncode": 0
+  },
+  "11-upc-map": {
+    "returncode": 0
+  },
+  "12-precommit-scope": {
+    "returncode": 0
+  },
+  "job_cap": {
+    "invocations": 18,
+    "work_invocations": 10,
+    "verilator_jobs": 8,
+    "build_jobs": 8,
+    "verilate_jobs": 8,
+    "outer_suite_make_jobs": 1,
+    "mutations": "sequential, disposable scratch"
+  }
+}

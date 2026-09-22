@@ -1,0 +1,24 @@
+{
+  "phase": "final",
+  "head": "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+  "tree": "8768f7e640ee62fd62862bec7117155fcab3ddbb",
+  "correction_base": "1eb20dc4911880de10b745cc284e7dde306788b5",
+  "main_base": "8452f564294300a82d56eed464276576f65f4d58",
+  "modified": [
+    "tb/pp_top/Makefile",
+    "tb/pp_top/README.md",
+    "tb/pp_top/fixture_guards.py"
+  ],
+  "added": [
+    "tb/pp_top/test_fixture_guards.py"
+  ],
+  "changed_modes": [],
+  "untouched_count": 220,
+  "scratch_source_matches": true,
+  "original_guard_logic_byte_identical_after_removing_locale_lines": true,
+  "python_syntax": "PASS",
+  "diff_check": "PASS",
+  "new_em_dash_count": 0,
+  "committed_tree_bytes_and_executable_modes_match": true,
+  "clean_including_ignored": true
+}

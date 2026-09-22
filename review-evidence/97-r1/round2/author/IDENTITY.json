@@ -1,0 +1,8 @@
+{
+  "head": "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+  "tree": "8768f7e640ee62fd62862bec7117155fcab3ddbb",
+  "parent": "1eb20dc4911880de10b745cc284e7dde306788b5",
+  "main_base": "8452f564294300a82d56eed464276576f65f4d58",
+  "branch": "97-assert-distinct-sr-vid-fixture",
+  "commit_message": "Normalize fixture guard compiler diagnostics to C"
+}

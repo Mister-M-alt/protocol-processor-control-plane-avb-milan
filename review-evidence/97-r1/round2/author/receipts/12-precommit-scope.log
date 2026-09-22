@@ -1,0 +1,22 @@
+{
+  "phase": "precommit",
+  "head": "1eb20dc4911880de10b745cc284e7dde306788b5",
+  "tree": "001d20069951396c5e056c5539c2af4217310a57",
+  "correction_base": "1eb20dc4911880de10b745cc284e7dde306788b5",
+  "main_base": "8452f564294300a82d56eed464276576f65f4d58",
+  "modified": [
+    "tb/pp_top/Makefile",
+    "tb/pp_top/README.md",
+    "tb/pp_top/fixture_guards.py"
+  ],
+  "added": [
+    "tb/pp_top/test_fixture_guards.py"
+  ],
+  "changed_modes": [],
+  "untouched_count": 220,
+  "scratch_source_matches": true,
+  "original_guard_logic_byte_identical_after_removing_locale_lines": true,
+  "python_syntax": "PASS",
+  "diff_check": "PASS",
+  "new_em_dash_count": 0
+}
