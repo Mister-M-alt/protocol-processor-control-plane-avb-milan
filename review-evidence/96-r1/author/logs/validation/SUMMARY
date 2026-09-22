@@ -1,0 +1,18 @@
+HEAD ea93023fbdd31cbf718da0d8f1aab4d750bfd21a
+status-before: 0 changed paths
+pp_top rc=0 191s
+srp_top rc=0 7s
+srp_encoder rc=0 5s
+timer_map rc=2 0s
+check_upc_map rc=0 0s
+lint_hdl rc=0 10s
+make_check rc=0 24s
+gen_matrix rc=0 0s
+check_links rc=0 0s
+check_matrix rc=0 0s
+wavedrom_check rc=0 0s
+make_stale rc=0 0s
+yosys rc=0 63s
+status-after: 0 changed paths
+DONE
+timer_map rerun rc=0 22s

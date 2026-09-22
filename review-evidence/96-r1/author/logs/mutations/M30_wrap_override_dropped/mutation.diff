@@ -1,0 +1,10 @@
+--- $CANDIDATE/tb/pp_top/pp_top_wrap.sv	2026-09-22 06:37:41.035000000 +0200
++++ $MUTATION_STORAGE/M30_wrap_override_dropped/tb/pp_top/pp_top_wrap.sv	2026-09-22 06:55:22.062897839 +0200
+@@ -331,7 +331,6 @@
+   protocol_processor_top #(
+ `ifdef PP_TOP_SRP_DOM_DEF_VID
+       //! the second build's verification-only fixture (see the banner)
+-      .SRP_DOM_DEF_VID_P (`PP_TOP_SRP_DOM_DEF_VID),
+ `endif
+       .TIM_DIV_US_P (TB_DIV_US_C),
+       .TIM_DIV_MS_P (TB_DIV_MS_C),

@@ -1,0 +1,332 @@
++| P-SRP-DOM-DEF-VID | 2 | 16-bit; =2 in every product build (Milan §4.2.7.2.1). Any other value is a verification fixture proving the top-level binding, not a product profile | SRP Domain FSM default VID ([F10.2](10_srp_engine.md#fig-10-domsm)): declared at startup and LINK_UP, restored at LINK_DOWN; a received Class A Domain is still adopted over it |
++    [*] --> DEFAULTS: startup or LINK_UP / declare Domain A with priority 3, VID P-SRP-DOM-DEF-VID
++`P-SRP-DOM-DEF-VID` is the Domain default VID of [F10.2](#fig-10-domsm): declared at
++startup and on LINK_UP, restored on LINK_DOWN, and replaced at run time by an adopted
++Domain (§6.1).
++| `SRP_DOM_DEF_VID_P` | 2 | the Class A Domain VID the SRP engine declares at start-up and on every link-up, and returns to on link-down (Milan §4.2.7.2.1). A bridge's differing Class A Domain is still adopted at run time. **Keep it at 2 in a product build**: Milan fixes the value, and any other one exists only to prove this binding in verification. |
++| `srp_class_a_prio_o`, `srp_class_a_vid_o`, `srp_domain_adopted_o`, `srp_domain_change_o` | the Class A identity in force. The two values are defaults until `srp_domain_adopted_o` says a bridge Domain was adopted. The VID default is `SRP_DOM_DEF_VID_P`, and a link-down restores both defaults. |
++    //! ---- SRP Class A Domain default (10 §6.1 F10.2) --------------------
++    //! P-SRP-DOM-DEF-VID (F01.5): the SRclassVID the Domain FSM declares at
++    //! startup and on every LINK_UP, and returns to on LINK_DOWN (Milan
++    //! §4.2.7.2.1). A bridge's differing Class A Domain is still adopted
++    //! over it at run time. Milan fixes the shipping value at 2, so any other
++    //! value is a verification fixture proving this binding, never a product
++    //! profile. Bound to KL_srp_top.DOM_DEF_VID_P at the same 16-bit width.
++    parameter logic [15:0] SRP_DOM_DEF_VID_P   = 16'd2,
++      .DOM_DEF_VID_P    (SRP_DOM_DEF_VID_P),
++#
++# Two builds of one bench. The first overrides nothing and runs every
++# section; the second overrides P-SRP-DOM-DEF-VID with SRP_VID_FIXTURE and
++# runs section DV alone (README). The SRP engine's own default is 2 as well,
++# so only a value the child cannot produce shows a dropped or misbound
++# top-level connection. Each binary prints its own build's count; the last
++# line is the one canonical tally, summed over both builds.
++# verification only: Milan 4.2.7.2.1 fixes the product value at 2. README
++# section DV says why this pattern
++SRP_VID_FIXTURE = 5A3C
++	@rm -f obj_dir/build_tally.txt
++	$(VERILATOR) $(VFLAGS) "+define+PP_TOP_SRP_DOM_DEF_VID=16'h$(SRP_VID_FIXTURE)" \
++	    -CFLAGS "-DPP_TOP_SRP_DOM_DEF_VID=0x$(SRP_VID_FIXTURE)" \
++	    --Mdir obj_vid $(SRCS) $(CPP) -o Vpp_top_vid
++	./obj_vid/Vpp_top_vid
++	@awk '{c += $$1; f += $$2} END {if (NR != 2) {print "FAIL: " NR " build tallies, expected 2"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
++	    obj_dir/build_tally.txt
++	rm -rf obj_dir obj_vid ltn_rom.hex ucode.hex
++`make`: exit 0 = PASS. It builds the bench twice (section DV): each executable
++prints its own build's tally, and the last line sums both into the one canonical
++tally.
++- **DV** **the Domain default is the top's `SRP_DOM_DEF_VID_P`** (issue #95;
++  10 §6.1 F10.2, F01.5 `P-SRP-DOM-DEF-VID`), in both builds on a fresh model:
++  the reset value, the LINK_UP declaration byte-exact with all 16 bits of
++  SRclassVID, the GET_TX_STATE stream VLAN, a bridge's Domain still adopted
++  over it, the LINK_DOWN revert and the LINK_UP re-declaration. See section DV.
++| M25 | the top's `.DOM_DEF_VID_P (SRP_DOM_DEF_VID_P)` binding line removed | fixture build 13 FAIL of 20: every value check of DV1 to DV6. The default build PASSES all 1,391, which is why the fixture build exists |
++| M26 | the binding misbound to a literal, `.DOM_DEF_VID_P (16'd2)` | fixture build 13 FAIL of 20, the M25 set |
++| M27 | the binding truncated to 12 bits, `.DOM_DEF_VID_P (16'(SRP_DOM_DEF_VID_P[11:0]))` | fixture build 4 FAIL of 20: DV2 (byte-exact and the decoded SRclassVID), DV4 and DV6, the checks that read the 16-bit wire field. Every 12-bit face PASSES |
++| M28 | the value bound to the wrong child parameter, `.DOM_DEF_PRIO_P (SRP_DOM_DEF_VID_P[7:0])`, the VID left unbound | default build 16 FAIL of 1,391 (S1 twice, S2, S7, S8 and 11 in DV); fixture build 13 FAIL of 20 |
++| M29 | the top's own default changed from 2 to 3 | default build 18 FAIL of 1,391 (S1 twice, S8, T0, MP3 and 13 in DV). The fixture build PASSES 20 of 20, because it overrides the default |
++| M30 | the wrap's fixture override removed (test infrastructure) | fixture build 13 FAIL of 20: the build cannot pass on the top's or the child's own default |
++| M31 | control, not a defect: `KL_srp_top`'s own `DOM_DEF_VID_P` default changed from 2 to 7, binding intact | both builds PASS, 1,391 and 20: the child's default is no longer a source |
++M25 to M31 were measured on 2026-09-22 at 1,391 checks in the default build and
++20 in the fixture build, each in its own scratch copy of `hdl/` and `tb/pp_top/`,
++so there was nothing to restore. M25 to M30 bite; M31, a control, stays green as
++it must.
++
++## Section DV: the Domain default is the top's parameter (issue #95)
++
++`KL_srp_top` has a 16-bit `DOM_DEF_VID_P` with its own default of 2, and the top
++used to leave it unbound, so nothing outside the processor could drive the
++Domain default. The top now declares `SRP_DOM_DEF_VID_P` (`P-SRP-DOM-DEF-VID`,
++default 2) and binds it to the child explicitly. The Domain FSM reads it three
++times: as its reset value, in the declaration on every LINK_UP, and in the
++revert on LINK_DOWN (10 §6.1 F10.2).
++
++A build that only runs the product value cannot see that binding. The child's
++own default is also 2, so a dropped or misbound connection produces exactly the
++frames the default build expects (M25: 0 failures there). The Makefile therefore
++builds the bench twice:
++
++| Build | Override | Runs | Expects |
++|---|---|---|---|
++| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV last | 2 (Milan §4.2.7.2.1) |
++| `obj_vid/Vpp_top_vid` | `SRP_DOM_DEF_VID_P = 0x5A3C` (`SRP_VID_FIXTURE`) | DV alone | 0x5A3C |
++
++The fixture is a verification value, not a product profile: Milan §4.2.7.2.1
++fixes a shipping build at 2. It is chosen so that each plausible fault gives a
++value of its own: a missing binding or a literal (2), an 8- or 12-bit truncation
++(0x003C, 0x0A3C), a byte swap (0x3C5A), or routing it to the priority parameter
++(priority 0x3C, read as 4 on the 3-bit face). Its low 12 bits are a legal VID,
++0xA3C, and that is what the 12-bit faces carry: the class-D port, snapshot word
++10, GET_DOMAIN and the ACMP talker. Only the MSRP wire field shows the top
++nibble, which is why M27 fails the wire checks alone. The C++ expectation is
++compiled from the same Makefile variable the wrap receives, never read back from
++the DUT, and the wrap overrides nothing in the first build.
++
++DV runs on a fresh model in both builds, after reset and with the link down:
++
++- **DV1** the reset value on the class-D ports, snapshot word 10 and GET_DOMAIN;
++  nothing is declared before the link.
++- **DV2** LINK_UP: the first MSRP frame is `New {6, 3, default}` byte-exact, and
++  the decoded SRclassVID is all 16 bits of the parameter.
++- **DV3** GET_TX_STATE answers the default as `stream_vlan_id`. F05.11 leaves
++  that field undefined while a source is not declaring; this talker answers the
++  SR-class VID either way, as S10 and MP3 grade.
++- **DV4** a bridge's certified two-class Domain `{5, 2, 5}` (NumberOfValues 2)
++  is still adopted over the parameter: class-D `{3, 5}`, ADOPTED, one
++  DOMAIN_CHANGE, and `Lv {6, 3, default}` + `New {6, 3, 5}` byte-exact.
++- **DV5** LINK_DOWN restores the default and DEFAULTS with one DOMAIN_CHANGE,
++  and nothing is declared for the 500 ms the link stays down.
++- **DV6** LINK_UP declares `New {6, 3, default}` again, byte-exact.
++
++Every edge is aligned into a clean slot of the 200 ms join cadence
++(`sync_join`): the cadence timers are armed at reset, and a periodic re-join
++drained into the same MRPDU would change the frame. The phase costs about 3.4 s
++of simulated time on its own model, so the main DUT's timeline is untouched.
++M25 to M31 in the mutation record are its evidence.
++//
++//                The one parameter the suite builds twice: SRP_DOM_DEF_VID_P
++//                is overridden ONLY when the second build defines
++//                PP_TOP_SRP_DOM_DEF_VID (Makefile), so the first build grades
++//                the top's own default and never a copy of it.
++    // the Class A Domain in force (class-D, F02.10), passed through by name:
++    // these ports are where an integrator reads P-SRP-DOM-DEF-VID's effect
++    output logic  [2:0] srp_class_a_prio_o,
++    output logic [11:0] srp_class_a_vid_o,
++    output logic        srp_domain_adopted_o,
++    output logic        srp_domain_change_o,
++
++`ifdef PP_TOP_SRP_DOM_DEF_VID
++      //! the second build's verification-only fixture (see the banner)
++      .SRP_DOM_DEF_VID_P (`PP_TOP_SRP_DOM_DEF_VID),
++`endif
++      .srp_class_a_prio_o    (srp_class_a_prio_o),
++      .srp_class_a_vid_o     (srp_class_a_vid_o),
++      .srp_domain_adopted_o  (srp_domain_adopted_o),
++      .srp_domain_change_o   (srp_domain_change_o),
++// The suite builds twice (Makefile): the second build overrides the top's
++// P-SRP-DOM-DEF-VID with a verification-only fixture and runs section DV
++// alone.
++//! P-SRP-DOM-DEF-VID as THIS build asked for it (section DV). The first build
++//! overrides nothing, so it expects Milan §4.2.7.2.1's 2; the second build is
++//! compiled with the fixture the Makefile also hands the wrap.
++#ifdef PP_TOP_SRP_DOM_DEF_VID
++constexpr uint16_t    SRP_DEF_VID = PP_TOP_SRP_DOM_DEF_VID;
++#else
++constexpr uint16_t    SRP_DEF_VID = 2;
++#endif
++  //! srp_domain_change_o strobes, counted once per cycle (section DV): the
++  //! one-cycle DOMAIN_CHANGE has no wire shape of its own
++  int domain_changes = 0;
++    if (d->srp_domain_change_o) ++domain_changes;
++    domain_changes = 0;
++// ==== DV. the Domain default is the top's parameter (issue #95) ==========
++// P-SRP-DOM-DEF-VID reaches the Domain FSM only through the top's binding to
++// KL_srp_top.DOM_DEF_VID_P, and the FSM reads it at reset, at every LINK_UP
++// declaration and at the LINK_DOWN revert (10 §6.1 F10.2). DV grades all
++// three through the top's own faces, plus the adoption that must still win
++// over it, on a FRESH model so the main DUT's timeline is untouched. The
++// child's own default is 2 as well, so a dropped or misbound connection can
++// only show in the second build, whose fixture the child cannot produce.
++struct DomainDefaultPhase {
++  H& h;
++  const milan::tb::Model<Vpp_top_wrap> model2;
++  Vpp_top_wrap* const d2;
++  H h2;
++  explicit DomainDefaultPhase(H& hh) : h(hh), d2(model2.get()), h2(d2) {}
++
++  //! the class-D port, snapshot word 10, GET_DOMAIN and the ACMP talker
++  //! carry 12 bits; only the MSRP wire field shows all 16 of the parameter
++  static constexpr unsigned DEF_VID12 = SRP_DEF_VID & 0x0FFFu;
++  //! a bridge's Class A Domain VID, distinct from both builds' defaults
++  static constexpr uint16_t ADOPT_VID = 5;
++  static_assert(SRP_DEF_VID != ADOPT_VID, "DV4 must see the VID move");
++
++  //! one MRPDU from this station carrying one Domain message
++  static std::vector<uint8_t> own_domain_pdu(const std::vector<Vec>& vecs) {
++    return mrpdu_frame(true, OWN_MAC, {Msg{4, 4, false, vecs}});
++  }
++  //! the SRclassVID of a frame's first Domain vector, all 16 bits of the
++  //! field, or 0x10000 when the frame carries no Domain vector
++  static uint32_t wire_domain_vid(const std::vector<uint8_t>& f) {
++    for (const auto& v : parse_mrpdu(f).vecs)
++      if (v.type == 4 && v.fv.size() == 4) return uint32_t(fv_u64(v.fv, 2, 2));
++    return 0x10000u;
++  }
++  //! the class-D Domain ports: priority 3 (not parameterized), the VID, and
++  //! the F10.2 state
++  bool domain_is(unsigned vid, bool adopted) const {
++    return d2->srp_class_a_prio_o == 3 && d2->srp_class_a_vid_o == vid
++        && d2->srp_domain_adopted_o == (adopted ? 1u : 0u);
++  }
++  void print_domain(const char* when) const {
++    printf("  %s: class-D {prio %u, vid 0x%03x, adopted %u}\n", when,
++           unsigned(d2->srp_class_a_prio_o), unsigned(d2->srp_class_a_vid_o),
++           unsigned(d2->srp_domain_adopted_o));
++  }
++
++  void run() {
++    h2.reset();
++    dv1_reset_holds_the_default();
++    dv2_link_up_declares_the_default();
++    dv3_a_controller_reads_the_default();
++    dv4_a_bridge_domain_is_still_adopted();
++    dv5_link_down_restores_the_default();
++    dv6_link_up_declares_the_default_again();
++  }
++
++  // ---- DV1: out of reset, before any link: the reset value ----------------
++  void dv1_reset_holds_the_default() {
++    CHECK(domain_is(DEF_VID12, false),
++          "DV1: class-D Domain out of reset is {3, 0x%03x, DEFAULTS}",
++          DEF_VID12);
++    if (!domain_is(DEF_VID12, false)) print_domain("DV1");
++    const uint32_t w10 = h2.snap(10);
++    CHECK(w10 == ((3u << 16) | DEF_VID12),
++          "DV1: snapshot word 10 carries the default, got 0x%08x", w10);
++    auto rd = h2.svc(OP_GET_DOM, 6);
++    CHECK(rd.got && rd.status == ST_OK && rd.data == ((3u << 16) | DEF_VID12),
++          "DV1: GET_DOMAIN answers the default, got 0x%08x", rd.data);
++    h2.run_ms(300);
++    CHECK(h2.q_msrp.empty(), "DV1: nothing is declared before the link");
++  }
++
++  // ---- DV2: LINK_UP declares the default on the wire ----------------------
++  void dv2_link_up_declares_the_default() {
++    h2.sync_join();
++    d2->link_up_i = 1;
++    auto f = h2.wait_any(h2.q_msrp, 1200);
++    CHECK(!f.empty(), "DV2: first MSRP frame within 1.2 s of link");
++    auto exp = own_domain_pdu({Vec{false, 1, fv_domain(6, 3, SRP_DEF_VID),
++                                   {EV_NEW}, {}}});
++    CHECK(f == exp, "DV2: Domain New {6, 3, 0x%04x} byte-exact",
++          unsigned(SRP_DEF_VID));
++    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
++    CHECK(wire_domain_vid(f) == SRP_DEF_VID,
++          "DV2: the wire SRclassVID is all 16 bits of the parameter, got 0x%x",
++          wire_domain_vid(f));
++    CHECK(domain_is(DEF_VID12, false), "DV2: class-D still the default");
++  }
++
++  // ---- DV3: the stream VLAN a controller reads is the default -------------
++  // F05.11 leaves the stream fields undefined while a source is not
++  // declaring; this talker answers the SR-class VID either way (S10, MP3),
++  // so this grades the talker reading the same class-D VID as the Domain
++  void dv3_a_controller_reads_the_default() {
++    const uint64_t SID_T0 = OWN_MAC << 16;           // wrap: sid[k] = {mac, k}
++    h2.feed(acmp_frame(CTLR_MAC, 4, 0, 0, CTLR_EID, EID, 0,
++                       0, 0, 0, 0, 0x9501, 0, 0));
++    auto f = h2.wait_any(h2.q_acmp, 400);
++    CHECK(!f.empty(), "DV3: GET_TX_STATE answered");
++    auto exp = acmp_frame(OWN_MAC, 5, 0, SID_T0, CTLR_EID, EID, 0,
++                          0, 0, 0, 0, 0x9501, 0, uint16_t(DEF_VID12));
++    CHECK(f == exp, "DV3: GET_TX_STATE_RESPONSE stream_vlan_id 0x%03x",
++          DEF_VID12);
++    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
++  }
++
++  // ---- DV4: a bridge's differing Domain still wins over the parameter -----
++  void dv4_a_bridge_domain_is_still_adopted() {
++    h2.sync_join();
++    const int ch0 = h2.domain_changes;
++    // the certified two-class shape: FirstValue {5, 2, VID}, NumberOfValues
++    // 2, so Class A arrives as value 1 (10 §3)
++    Msg dom{4, 4, false, {Vec{false, 2, fv_domain(5, 2, ADOPT_VID),
++                              {EV_JOININ, EV_JOININ}, {}}}};
++    h2.feed(mrpdu_frame(true, T1_MAC, {dom}));
++    h2.run_ms(20);
++    CHECK(domain_is(ADOPT_VID, true),
++          "DV4: the bridge's {3, %u} is ADOPTED over the parameter",
++          unsigned(ADOPT_VID));
++    if (!domain_is(ADOPT_VID, true)) print_domain("DV4");
++    CHECK(h2.domain_changes == ch0 + 1, "DV4: one DOMAIN_CHANGE, saw %d",
++          h2.domain_changes - ch0);
++    auto exp = own_domain_pdu(
++        {Vec{false, 1, fv_domain(6, 3, SRP_DEF_VID), {EV_LV}, {}},
++         Vec{false, 1, fv_domain(6, 3, ADOPT_VID), {EV_NEW}, {}}});
++    auto f = h2.wait_frame(h2.q_msrp, 900, [](const std::vector<uint8_t>& fr) {
++      return frame_has(fr, true, 4, 6, EV_LV);
++    });
++    CHECK(f == exp, "DV4: Lv {6, 3, 0x%04x} + New {6, 3, %u} byte-exact",
++          unsigned(SRP_DEF_VID), unsigned(ADOPT_VID));
++    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
++  }
++
++  // ---- DV5: LINK_DOWN restores the default, and declares nothing ----------
++  void dv5_link_down_restores_the_default() {
++    h2.sync_join();
++    const int ch0 = h2.domain_changes;
++    d2->link_up_i = 0;
++    h2.idle(10);
++    CHECK(domain_is(DEF_VID12, false),
++          "DV5: LINK_DOWN restores {3, 0x%03x, DEFAULTS}", DEF_VID12);
++    if (!domain_is(DEF_VID12, false)) print_domain("DV5");
++    CHECK(h2.domain_changes == ch0 + 1,
++          "DV5: the revert is one DOMAIN_CHANGE, saw %d",
++          h2.domain_changes - ch0);
++    const uint32_t w10 = h2.snap(10);
++    CHECK(w10 == ((3u << 16) | DEF_VID12),
++          "DV5: snapshot word 10 reverted, got 0x%08x", w10);
++    h2.run_ms(500);
++    CHECK(h2.q_msrp.empty(), "DV5: nothing is declared while the link is down");
++    CHECK(domain_is(DEF_VID12, false), "DV5: the default holds while down");
++  }
++
++  // ---- DV6: LINK_UP declares the default again ----------------------------
++  void dv6_link_up_declares_the_default_again() {
++    h2.sync_join();
++    d2->link_up_i = 1;
++    auto f = h2.wait_any(h2.q_msrp, 1200);
++    auto exp = own_domain_pdu({Vec{false, 1, fv_domain(6, 3, SRP_DEF_VID),
++                                   {EV_NEW}, {}}});
++    CHECK(f == exp, "DV6: LINK_UP re-declares Domain New {6, 3, 0x%04x}",
++          unsigned(SRP_DEF_VID));
++    if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
++    CHECK(domain_is(DEF_VID12, false), "DV6: class-D is the default again");
++  }
++};
++
++    DomainDefaultPhase{h}.run();
++  //! the harness that owns the tally. Section DV runs on a model of its own
++  //! in both builds, so its code is one path; in the fixture build this
++  //! model is never clocked.
++#ifdef PP_TOP_SRP_DOM_DEF_VID
++  //! every other section is written against the product default, which the
++  //! first build grades; the fixture build runs section DV alone
++  DomainDefaultPhase{h}.run();
++  const char* const build = "fixture";
++#else
++  const char* const build = "default";
++#endif
++  //! NOT the canonical tally shape: this binary is ONE of the suite's two
++  //! builds, and run_suites.sh reads only the LAST matching line, so a
++  //! canonical line here would drop the other build's checks from the total.
++  //! The Makefile sums both builds and prints the one canonical line.
++  printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x] %d checks, %d failures\n",
++         build, unsigned(SRP_DEF_VID), h.checks, h.fails);
++  FILE* acc = fopen("obj_dir/build_tally.txt", "a");
++  if (acc == nullptr) {
++    printf("FAIL: this build's tally cannot be recorded for the Makefile\n");
++    return 1;
++  }
++  fprintf(acc, "%d %d\n", h.checks, h.fails);
++  fclose(acc);

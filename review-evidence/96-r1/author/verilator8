@@ -1,0 +1,2 @@
+#!/bin/sh
+exec verilator --build-jobs 8 --verilate-jobs 8 "$@"
