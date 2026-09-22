@@ -1,0 +1,235 @@
+{
+  "finished_at": "2026-09-22T13:27:09.263794+02:00",
+  "merge": "c8214cfe827fb3fb50c9bfee415468a24b7c27b1",
+  "issue": {
+    "state": "CLOSED",
+    "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/97"
+  },
+  "pr": {
+    "headRefOid": "5c45845ad15bd7995f20c81d7fd61501e5ca9d7e",
+    "mergeCommit": {
+      "oid": "c8214cfe827fb3fb50c9bfee415468a24b7c27b1"
+    },
+    "mergedAt": "2026-09-22T11:13:34Z",
+    "state": "MERGED"
+  },
+  "project": {
+    "data": {
+      "node": {
+        "fieldValueByName": {
+          "name": "Done"
+        }
+      }
+    }
+  },
+  "postmerge_hosted": {
+    "conclusion": "success",
+    "headSha": "c8214cfe827fb3fb50c9bfee415468a24b7c27b1",
+    "jobs": [
+      {
+        "completedAt": "2026-09-22T11:15:54Z",
+        "conclusion": "success",
+        "databaseId": 106721256498,
+        "name": "portability",
+        "startedAt": "2026-09-22T11:13:40Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-22T11:13:41Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-22T11:13:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:13:42Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-22T11:13:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:13:57Z",
+            "conclusion": "success",
+            "name": "Install yosys + sv2v",
+            "number": 3,
+            "startedAt": "2026-09-22T11:13:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:15:52Z",
+            "conclusion": "success",
+            "name": "Elaborate every top off-vendor",
+            "number": 4,
+            "startedAt": "2026-09-22T11:13:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:15:52Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-09-22T11:15:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:15:52Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-09-22T11:15:52Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35720261532/job/106721256498"
+      },
+      {
+        "completedAt": "2026-09-22T11:25:51Z",
+        "conclusion": "success",
+        "databaseId": 106721257051,
+        "name": "suites",
+        "startedAt": "2026-09-22T11:13:39Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-22T11:13:41Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-22T11:13:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:13:43Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-22T11:13:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:13:45Z",
+            "conclusion": "success",
+            "name": "Cache the pinned Verilator build",
+            "number": 3,
+            "startedAt": "2026-09-22T11:13:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:13:45Z",
+            "conclusion": "skipped",
+            "name": "Build Verilator v5.050",
+            "number": 4,
+            "startedAt": "2026-09-22T11:13:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:21:57Z",
+            "conclusion": "success",
+            "name": "Lint (zero tolerance) + every suite",
+            "number": 5,
+            "startedAt": "2026-09-22T11:13:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:21:57Z",
+            "conclusion": "success",
+            "name": "Traceability matrix no-drift + untested budget 0",
+            "number": 6,
+            "startedAt": "2026-09-22T11:21:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:25:48Z",
+            "conclusion": "success",
+            "name": "nvm_port README figures agree with the tree",
+            "number": 7,
+            "startedAt": "2026-09-22T11:21:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:25:48Z",
+            "conclusion": "success",
+            "name": "Post Cache the pinned Verilator build",
+            "number": 13,
+            "startedAt": "2026-09-22T11:25:48Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:25:48Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 14,
+            "startedAt": "2026-09-22T11:25:48Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:25:48Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 15,
+            "startedAt": "2026-09-22T11:25:48Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35720261532/job/106721257051"
+      },
+      {
+        "completedAt": "2026-09-22T11:13:56Z",
+        "conclusion": "success",
+        "databaseId": 106721257079,
+        "name": "docs-gates",
+        "startedAt": "2026-09-22T11:13:39Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-22T11:13:41Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-22T11:13:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:13:43Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-09-22T11:13:41Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:13:54Z",
+            "conclusion": "success",
+            "name": "Link, matrix, wavedrom and staleness gates",
+            "number": 3,
+            "startedAt": "2026-09-22T11:13:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:13:54Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 6,
+            "startedAt": "2026-09-22T11:13:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-22T11:13:54Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 7,
+            "startedAt": "2026-09-22T11:13:54Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35720261532/job/106721257079"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/actions/runs/35720261532"
+  },
+  "historical_audit_baseline": "Unchanged nonzero: PR13/6 continuity UNKNOWN; PR13/9 negative-merges. Current PR100 clean."
+}
