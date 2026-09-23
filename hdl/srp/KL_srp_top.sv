@@ -59,7 +59,7 @@
 //                and the engine follows it both ways (10 §6.5). The TIMER
 //                is per application (§10.7.9): two leavealltimer slots, two
 //                PRNG draws, two encoder LeaveAll lanes; the encoder flags
-//                every type the participant registers. A RECEIVED LeaveAll
+//                every type the application supports. A RECEIVED LeaveAll
 //                is routed per type, once per MRPDU and ahead of that
 //                type's events in it (§10.7.5.20 b)2), §10.8.2.6, §10.8):
 //                the decoder's la_msrp lanes go Talker Advertise/Failed to

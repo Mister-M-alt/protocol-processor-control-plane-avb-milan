@@ -340,15 +340,17 @@ LeaveAll shall never age an MSRP registrar, and vice versa — a merged LeaveAll
 pulse lets a bridge's MVRP maintenance cycle age a healthy Listener Ready and flap
 the stream licence.
 
-*Transmit.* The own LeaveAll MRPDU flags the first VectorAttribute of every type
-the participant registers: MSRP Talker Advertise, Talker Failed, Listener and
-Domain, and MVRP VID. A registered type the cycle declares nothing of rides a
-LeaveAll-only VectorAttribute in its own message: NumberOfValues 0, a FirstValue
-that is present at its full AttributeLength but ignored (sent as zero), and no
-packed events (§10.8.2.8 f and g, §10.8.2.10.1 NOTE). A bridge that scopes a
-received LeaveAll by type would otherwise re-declare only the types we flagged,
-and let our other registrations, such as its Listener Ready, age out after
-`T-MRP-LEAVE`.
+*Transmit.* The own LeaveAll MRPDU flags the first VectorAttribute of every
+Attribute Type the application supports, the criterion of the §10.7.5.20 NOTE
+above: MSRP Talker Advertise, Talker Failed, Listener and Domain, and MVRP VID.
+That holds whatever this participant declares or registers; the Domain type, for
+one, has no registrar here (table below). A supported type the cycle declares
+nothing of rides a LeaveAll-only VectorAttribute in its own message:
+NumberOfValues 0, a FirstValue that is present at its full AttributeLength but
+ignored (sent as zero), and no packed events (§10.8.2.8 f and g, §10.8.2.10.1
+NOTE). A bridge that scopes a received LeaveAll by type would otherwise
+re-declare only the types we flagged, and let our other registrations, such as
+its Listener Ready, age out after `T-MRP-LEAVE`.
 
 *Receive.* A received LeaveAllEvent "is interpreted on receipt as a MAD Leave All
 event to be applied to the state machines for all Attributes of the type defined

@@ -35,8 +35,8 @@
 //                Attribute Type (§10.8.2.6, §10.7.5.20 NOTE: a LeaveAll
 //                "must generate a LeaveAll Attribute for each Attribute
 //                Type supported by the application"): the first
-//                VectorHeader of every type the participant registers
-//                carries LeaveAllEvent, and each registered type with no
+//                VectorHeader of every type the application supports
+//                carries LeaveAllEvent, and each supported type with no
 //                vector in the drain gets a LeaveAll-only VectorAttribute
 //                in its own message after the drained ones — NumberOfValues
 //                0, a zero FirstValue of the full AttributeLength, no
@@ -146,10 +146,12 @@ module KL_srp_encoder #(
   localparam logic [7:0]  ATTR_DOMAIN_C      = 8'd4;
   localparam logic [7:0]  ATTR_MVRP_VID_C    = 8'd1;
 
-  //! Attribute Types each participant registers, bit (type - 1): the MSRP
-  //! participant registers Talker Advertise and Talker Failed (the sink
-  //! matchers), Listener (the source trackers) and Domain — every legal
-  //! elaboration has at least one sink and one source; MVRP has VID only
+  //! Attribute Types each application supports, bit (type - 1). The
+  //! criterion is 802.1Q-2014 §10.7.5.20 NOTE: a LeaveAll "must generate a
+  //! LeaveAll Attribute for each Attribute Type supported by the application
+  //! concerned". MSRP supports Talker Advertise, Talker Failed, Listener and
+  //! Domain (§35.2.2.4) whatever this elaboration declares or registers (the
+  //! Domain type has no registrar here, 10 §6.5); MVRP supports VID only
   localparam logic [3:0]  LA_TYPES_MSRP_C    = 4'b1111;
   localparam logic [3:0]  LA_TYPES_MVRP_C    = 4'b0001;
 
@@ -399,14 +401,14 @@ module KL_srp_encoder #(
   assign da_sel_w = (cur_app_r == APP_MVRP_C) ? MVRP_DA_C : MSRP_DA_C;
   assign et_sel_w = (cur_app_r == APP_MVRP_C) ? MVRP_ETYPE_C : MSRP_ETYPE_C;
   assign alen_w   = attr_len_f(cur_app_r, run_type_r);
-  // LeaveAllEvent on the first VectorHeader of each registered type
+  // LeaveAllEvent on the first VectorHeader of each supported type
   assign la_types_w = (cur_app_r == APP_MVRP_C) ? LA_TYPES_MVRP_C
                                                 : LA_TYPES_MSRP_C;
   // AttributeType 1..4 -> bit 0..3 (type 4 wraps: 2'b00 - 1 = 3)
   assign la_bit_w   = 4'b0001 << (run_type_r[1:0] - 2'd1);
   assign la3_w      = (la_act_r && ((la_types_w & la_bit_w & ~la_seen_r) != '0))
                     ? 3'd1 : 3'd0;
-  // registered types the drain carried no vector of: each gets a
+  // supported types the drain carried no vector of: each gets a
   // LeaveAll-only message after the drained ones, lowest AttributeType first
   assign la_need_w  = la_act_r ? (la_types_w & ~la_seen_r) : 4'b0000;
   always_comb begin : la_next_pick
@@ -677,7 +679,7 @@ module KL_srp_encoder #(
             if (!close_for_pdu_r) begin
               st_r <= E_MSGHDR;
             end else if (la_need_w != 4'b0000) begin
-              // LeaveAll-only message for a registered type the drain did
+              // LeaveAll-only message for a supported type the drain did
               // not carry (MSRP only: the MVRP drain always carries VID)
               run_type_r  <= la_next_w;
               run_first_r <= '0;
