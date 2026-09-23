@@ -894,7 +894,8 @@ class SrpTopHarness {
   // "the LeaveAll message operates on a per-Attribute Type basis" (802.1Q-
   // 2014 §10.7.5.20 NOTE), through the real decoder into the real FSMs.
   // Each step starts right after an own MSRP LeaveAll MRPDU, so the next
-  // own cycle (10-15 s) cannot land in its 5.4 s window; the peer answers
+  // own cycle (10-15 s) cannot land in its window (5.4 s; 7.7 s for (c)
+  // with its two talker-lane negatives, measured); the peer answers
   // that LeaveAll by re-declaring Listener Ready on source 1's stream and
   // its Talker Advertise toward sink 0.
   void peer_answers_own_leaveall(const char* step) {
@@ -974,6 +975,25 @@ class SrpTopHarness {
           "F5c: no re-declaration: the Listener registration ages to MT");
     CHECK(h.unreg_cnt[0] == unreg0 && h.tk_reg(0) == 1,
           "F5c: sink 0's Talker Advertise untouched");
+    // the Domain row's negative against the two talker lanes, each in its
+    // own clean slot: a Talker Advertise LeaveAll (the peer re-declares sink
+    // 0's Advertise in the flagged vector, so it stays registered) and a
+    // Talker Failed-only LeaveAll reach no Domain participant either
+    h.sync();
+    Msg ta{1, 25, false, {Vec{true, 1,
+           fv_talker(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345),
+           {EV_JOININ}, {}}}};
+    h.feed(mrpdu_body(true, {ta}), true);
+    rj = h.wait_frame(true, 400, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 4, 6, EV_JOININ);
+    });
+    CHECK(rj.empty(), "F5c: a Talker Advertise LeaveAll never re-declares our Domain");
+    h.sync();
+    h.feed(mrpdu_body(true, {la_only(2, 34, false)}), true);
+    rj = h.wait_frame(true, 400, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 4, 6, EV_JOININ);
+    });
+    CHECK(rj.empty(), "F5c: a Talker Failed-only LeaveAll never re-declares our Domain");
     CHECK(h.malformed == 0, "F5: no PDU we fed was tolerance-discarded");
   }
 
