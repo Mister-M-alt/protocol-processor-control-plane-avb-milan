@@ -5,7 +5,7 @@ Proves the SRP MRPDU vector decoder (`hdl/srp/KL_srp_decoder.sv`) against
 [10 §3](../../docs/architecture/10_srp_engine.md) (F10.6/F10.7/F10.8, the
 vector-value-k paragraph, the dual-EndMark framing rule and the Milan
 §4.2.7.1.2 tolerance rules, tested per F09.4) and the per-type LeaveAll rule
-of 10 §6.5: `make` = build + run, exit 0 = PASS, 150 checks.
+of 10 §6.5: `make` = build + run, exit 0 = PASS, 177 checks.
 
 Every MRPDU is hand-built **byte-exact** in the harness and every expected
 event is an explicit hand-computed constant — the C++ never re-implements
@@ -57,6 +57,19 @@ Covered:
   - **S — once per MRPDU**: two flagged Listener vectors plus a flagged
     second Listener message fire the lane once, ahead of all three
     re-declarations; the next MRPDU fires it again; MVRP likewise.
+  - **T: only a LeaveAllEvent closes the gate**, never a vector of the type
+    without one. The layout 10 §6.5 processes in DLSDU order, a type's
+    unflagged vector ahead of its first flagged one: `[L JoinIn] [L LA
+    JoinIn] [L LA JoinMt]` in one message gives `E3 L3 E3 E3`; `[L JoinIn]
+    [Domain LA n=2] [L LA JoinMt]` across messages gives `E3 L4 E4 E4 L3
+    E3`; MVRP `[VID JoinIn] [VID LA JoinIn]` gives `E1 M1 E1`.
+  - **U: the gate re-arms at the MRPDU after a malformed one.** An MRPDU
+    that fires the Listener lane and is then truncated mid-FirstValue, ends
+    after the AttributeList EndMark alone, or meets a bad AttributeLength
+    (whose discarded Domain LeaveAll never fires), and an MVRP MRPDU that
+    fires its lane ahead of an out-of-alphabet digit: each keeps its prefix,
+    lane included, is reported malformed, and the next well-formed MRPDU's
+    LeaveAll of that type fires the lane again.
 - Explicit-EndMark-then-padding (min-frame pad bytes inert, one done).
 
 Mutation-proven 2026-08-11 (backup/sed/run/restore):
