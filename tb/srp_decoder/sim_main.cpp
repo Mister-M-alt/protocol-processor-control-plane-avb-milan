@@ -17,8 +17,9 @@
 // type's lane once per MRPDU, ahead of that type's events, including the
 // bench switch's own LeaveAll MRPDU from the Run B capture byte for byte,
 // and both boundaries of that once-per-MRPDU gate: a flagged vector after an
-// unflagged one of its type still fires the lane, and the gate re-arms at the
-// MRPDU after a malformed one.
+// unflagged one of its type still fires the lane, nothing later in the MRPDU
+// re-opens a closed gate, and the gate re-arms at the MRPDU after a malformed
+// or a padded one.
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -197,6 +198,7 @@ class SrpDecoderSuite {
   void a_type_leaves_all_once_per_mrpdu();
   void a_leave_all_after_an_unflagged_vector_of_its_type_still_fires();
   void the_gate_re_arms_after_a_malformed_mrpdu();
+  void the_gate_stays_closed_to_the_mrpdu_end_and_re_arms_after_padding();
   void check_marks(const char* tag, const std::vector<Mark>& want);
 
   const milan::tb::Model<VKL_srp_decoder> model;
@@ -951,6 +953,84 @@ void SrpDecoderSuite::the_gate_re_arms_after_a_malformed_mrpdu() {
   CHECK(h.dones.size() == 1 && h.dones[0].ok, "U4 MVRP re-armed done ok");
 }
 
+// ==== V: a closed gate stays closed to the MRPDU's end, then re-arms =====
+// Once a type's lane has fired, nothing later in the same MRPDU re-opens
+// it: not a message of another type (V1), not a vector of the type without
+// LeaveAllEvent (V2). Either would re-age the registration an earlier
+// vector had just re-declared, the Run B burst-2 mechanism. And the MRPDU
+// after a well-formed but padded one fires the lane again (V3): the V9
+// route forwards an MRP frame byte-exact to its last octet, so a short
+// LeaveAll MRPDU reaches the decoder padded.
+void SrpDecoderSuite::the_gate_stays_closed_to_the_mrpdu_end_and_re_arms_after_padding() {
+  // V1: [Listener LA JoinIn][Domain LA n=2][Listener LA JoinMt]
+  h.clear();
+  std::vector<uint8_t> p;
+  P8(p, 0);
+  P8(p, 3); P8(p, 8); P16(p, 14);
+  P16(p, 0x2001); P64(p, SIDB + 0xD40); P8(p, 36); P8(p, 0x80);
+  P16(p, 0);
+  P8(p, 4); P8(p, 4); P16(p, 9);
+  P16(p, 0x2002); P8(p, 5); P8(p, 2); P16(p, 2); P8(p, 126);
+  P16(p, 0);
+  P8(p, 3); P8(p, 8); P16(p, 14);
+  P16(p, 0x2001); P64(p, SIDB + 0xE40); P8(p, 108); P8(p, 0x80);
+  P16(p, 0); P16(p, 0);
+  h.feed(p, true);
+  CHECK(h.la_lane[kListener - 1] == 1 && h.la_lane[kDomain - 1] == 1 && h.la_msrp == 2,
+        "V1 Listener and Domain lanes once each got %d %d of %d",
+        h.la_lane[kListener - 1], h.la_lane[kDomain - 1], h.la_msrp);
+  check_marks("V1 across a Domain message", {{'L', kListener}, {'E', kListener},
+                                            {'L', kDomain}, {'E', kDomain},
+                                            {'E', kDomain}, {'E', kListener}});
+  CHECK(h.evts.size() == 4 && h.evts[0].sid == SIDB + 0xD40 && h.evts[0].ev == 1
+        && h.evts[3].sid == SIDB + 0xE40 && h.evts[3].ev == 3,
+        "V1 the first message's JoinIn first, the last message's JoinMt last");
+  CHECK(h.dones.size() == 1 && h.dones[0].ok && h.llbad == 0, "V1 done ok");
+
+  // V2: one Listener message [LA JoinIn][no LA JoinIn][LA JoinMt]
+  h.clear();
+  p.clear();
+  P8(p, 0);
+  P8(p, 3); P8(p, 8);
+  P16(p, 38);                     // 3 x 12 + 2
+  P16(p, 0x2001); P64(p, SIDB + 0xD50); P8(p, 36); P8(p, 0x80);
+  P16(p, 0x0001); P64(p, SIDB + 0xE50); P8(p, 36); P8(p, 0x80);
+  P16(p, 0x2001); P64(p, SIDB + 0xF50); P8(p, 108); P8(p, 0x80);
+  P16(p, 0); P16(p, 0);
+  h.feed(p, true);
+  CHECK(h.la_lane[kListener - 1] == 1 && h.la_msrp == 1,
+        "V2 Listener lane once, no other lane got %d of %d",
+        h.la_lane[kListener - 1], h.la_msrp);
+  check_marks("V2 after an unflagged vector", {{'L', kListener}, {'E', kListener},
+                                               {'E', kListener}, {'E', kListener}});
+  CHECK(h.evts.size() == 3 && h.evts[0].sid == SIDB + 0xD50
+        && h.evts[1].sid == SIDB + 0xE50 && h.evts[2].sid == SIDB + 0xF50
+        && h.evts[2].ev == 3,
+        "V2 all three values in wire order, the JoinMt last");
+  CHECK(h.dones.size() == 1 && h.dones[0].ok && h.llbad == 0, "V2 done ok, list 38");
+
+  // V3: a Listener-only LeaveAll MRPDU (1 + 1 + 1 + 2 + 2 + 8 + 2 + 2 = 19
+  // octets) zero-padded to the 46-octet minimum payload of an untagged frame
+  // (64 - 14 header - 4 FCS), fed twice: one ok done per MRPDU at its dual
+  // EndMark, the padding inert, and the Listener lane both times
+  constexpr size_t kMinPayload = 46;
+  std::vector<uint8_t> q;
+  P8(q, 0);
+  P8(q, 3); P8(q, 8); P16(q, 12);
+  P16(q, 0x2000); P64(q, 0);
+  P16(q, 0); P16(q, 0);
+  CHECK(q.size() == 19, "V3 the MRPDU is 19 octets got %zu", q.size());
+  q.resize(kMinPayload, 0);
+  for (int pdu = 0; pdu < 2; ++pdu) {
+    h.clear();
+    h.feed(q, true);
+    check_marks(pdu == 0 ? "V3 padded MRPDU 0" : "V3 padded MRPDU 1, re-armed after padding",
+                {{'L', kListener}});
+    CHECK(h.dones.size() == 1 && h.dones[0].ok && !h.dones[0].mal && h.llbad == 0,
+          "V3 padded MRPDU %d one ok done, padding inert", pdu);
+  }
+}
+
 int SrpDecoderSuite::run() {
   reset_releases_the_decoder();
   the_certified_domain_shape_surfaces_class_a_at_plus_k();
@@ -974,6 +1054,7 @@ int SrpDecoderSuite::run() {
   a_type_leaves_all_once_per_mrpdu();
   a_leave_all_after_an_unflagged_vector_of_its_type_still_fires();
   the_gate_re_arms_after_a_malformed_mrpdu();
+  the_gate_stays_closed_to_the_mrpdu_end_and_re_arms_after_padding();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
