@@ -124,7 +124,7 @@ module KL_srp_talker_fsm
     // ---- MSRP participant cadence (timer expiries via the event router) ---
     input  wire         join_tick_i,      //! T-MRP-JOIN: tx! opportunity for every applicant
     input  wire         periodic_tick_i,  //! T-MRP-PERIODIC: periodic! row
-    input  wire         leaveall_rx_i,    //! received MSRP LeaveAll (decoder la_msrp_o) — rLA!
+    input  wire  [3:0]  leaveall_rx_i,    //! received LeaveAll per MSRP AttributeType (decoder la_msrp_o, lanes SRP_LA_*_C) — rLA!
     input  wire         leaveall_own_i,   //! own MSRP leavealltimer expiry — next walk is txLA!
     output logic        txop_done_o,      //! one-cycle strobe: tick walk finished, pushes accepted
 
@@ -408,7 +408,18 @@ module KL_srp_talker_fsm
   // ------------------------------------------------- applicant arbitration
   // one applicant event per source per cycle; decoder events outrank the
   // gate (gate_ready_o holds the host off on event cycles), then deferred
-  // rLA!, the admission fixer, deferred periodic!, and last the tick walk
+  // rLA!, the admission fixer, deferred periodic!, and last the tick walk.
+  // rLA! is scoped by Attribute Type (802.1Q-2014 §10.7.5.20 b)2)): the
+  // applicant takes the lane of the type it declares; the registrar plane
+  // below takes the Listener lane
+  logic [N_SOURCES_P-1:0] la_rx_app_w;
+  always_comb begin : la_rx_app_map
+    for (int unsigned s = 0; s < N_SOURCES_P; s++) begin
+      la_rx_app_w[s] = fail_r[s] ? leaveall_rx_i[SRP_LA_TALKER_FAILED_C]
+                                 : leaveall_rx_i[SRP_LA_TALKER_ADV_C];
+    end
+  end
+
   logic                   gate_acc_w;
   logic [N_SOURCES_P-1:0] app_ev_v_w;
   logic [N_SOURCES_P-1:0][3:0] app_ev_w;
@@ -440,7 +451,7 @@ module KL_srp_talker_fsm
         app_ev_v_w[s] = 1'b1;
         app_ev_w[s]   = gate_open_i ? (rec_valid_r[s] ? AE_JOIN_C : AE_NEW_C)
                                     : AE_LV_C;
-      end else if (rla_pend_r[s] || leaveall_rx_i) begin
+      end else if (rla_pend_r[s] || la_rx_app_w[s]) begin
         app_ev_v_w[s] = 1'b1;
         app_ev_w[s]   = AE_RLA_C;
         rla_grant_w[s] = 1'b1;
@@ -513,7 +524,7 @@ module KL_srp_talker_fsm
           app_r[s] <= app_next_f(app_r[s], app_ev_w[s], 1'b0, p2p_i);
         end
         // deferred-broadcast bookkeeping
-        if (leaveall_rx_i && !rla_grant_w[s]
+        if (la_rx_app_w[s] && !rla_grant_w[s]
             && (!app_ev_v_w[s] || (app_ev_w[s] != AE_RLA_C))) begin
           rla_pend_r[s] <= 1'b1;
         end else if (rla_grant_w[s]) begin
@@ -609,11 +620,14 @@ module KL_srp_talker_fsm
   // Table 10-4 with Δ13: rLv on IN drops to MT on the frame (no
   // leavetimer); rLA/own-LeaveAll is the only path into LV, aged by the
   // per-source T-MRP-LEAVE slot; a registering event stops the aging.
+  // The registrar tracks the Listener type, so only the Listener lane of
+  // a received LeaveAll ages it (§10.7.5.20 b)2)); an own LeaveAll ages
+  // every registrar of the participant (§10.7.9).
   logic        leaveall_any_w;
   logic        exp_hit_w;
   logic [31:0] exp_idx_w;
 
-  assign leaveall_any_w = leaveall_rx_i || leaveall_own_i;
+  assign leaveall_any_w = leaveall_rx_i[SRP_LA_LISTENER_C] || leaveall_own_i;
   // unsigned wrap maps below-base slots to huge indices — one bound check
   assign exp_idx_w = 32'(exp_slot_i) - SLOT_BASE_P;
   assign exp_hit_w = exp_valid_i && (exp_idx_w < N_SOURCES_P);

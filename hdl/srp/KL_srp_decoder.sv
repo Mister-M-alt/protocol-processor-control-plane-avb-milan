@@ -38,10 +38,20 @@
 //                truncation mid-anything) is processed up to the bad field,
 //                then the REST of that attribute list and ALL subsequent
 //                messages of the PDU are discarded, and the PDU summary
-//                reports malformed. LeaveAll is strobed PER APPLICATION
-//                (MSRP vs MVRP — the corrected §6.5 rule): one merged pulse
-//                would let a bridge's MVRP maintenance cycle age a healthy
-//                MSRP Listener Ready and flap the stream licence.
+//                reports malformed. LeaveAll is strobed PER ATTRIBUTE TYPE,
+//                ONCE PER MRPDU (10 §6.5): "the LeaveAll message operates on
+//                a per-Attribute Type basis" (802.1Q-2014 §10.7.5.20 NOTE),
+//                and rLA! reaches only the state machines of the type whose
+//                Message carries it (§10.7.5.20 b)2), §10.8.2.6). The lane
+//                of type t (la_msrp_o[t-1], or la_mvrp_o for the VID type)
+//                fires at the first VectorHeader of type t with
+//                LeaveAllEvent set, so it precedes that VectorAttribute's
+//                events and every later one — the MRPDU's messages are
+//                processed in DLSDU order (§10.8) and the VectorHeader
+//                precedes FirstValue and Vector (§10.8.1.2). A further
+//                LeaveAllEvent of the same type in the same MRPDU is not
+//                re-applied: it would re-age registrations that MRPDU had
+//                just re-declared. MSRP and MVRP lanes never merge.
 //
 //                Listener pairing storage is a sync-read byte RAM (the
 //                three-packed bytes precede the four-packed bytes on the
@@ -88,9 +98,9 @@ module KL_srp_decoder
     output logic [7:0]  evt_class_id_o,            //! reconstructed k-th Domain SRclassID
     output logic        evt_class_a_o,             //! Domain value k IS class A (SRclassID == 6) — the value-k rule
 
-    // ---- LeaveAll, PER APPLICATION (corrected §6.5 rule) ------------------
-    output logic        la_msrp_o,    //! MSRP LeaveAllEvent decoded (never fires on an MVRP PDU)
-    output logic        la_mvrp_o,    //! MVRP LeaveAllEvent decoded (never fires on an MSRP PDU)
+    // ---- LeaveAll, PER ATTRIBUTE TYPE, once per MRPDU (10 §6.5) -----------
+    output logic [3:0]  la_msrp_o,    //! MSRP LeaveAllEvent, lane AttributeType-1 (SRP_LA_*_C); each lane at most once per MRPDU
+    output logic        la_mvrp_o,    //! MVRP (VID type) LeaveAllEvent, at most once per MRPDU (never fires on an MSRP PDU)
 
     // ---- PDU summary ------------------------------------------------------
     output logic        pdu_done_o,       //! one strobe per PDU: walk finished
@@ -132,6 +142,7 @@ module KL_srp_decoder
   logic  [12:0] values_left_r;   // vector values not yet emitted
   logic  [5:0]  fv_idx_r;        // FirstValue byte offset
   logic         last_seen_r;     // the byte feeding the current drain carried last
+  logic  [3:0]  la_done_r;       // types whose LeaveAll this MRPDU already strobed
 
   // FirstValue field registers (captured at their F10.7 offsets, then
   // incremented IN PLACE per emitted value — the value-k reconstruction)
@@ -190,6 +201,13 @@ module KL_srp_decoder
   logic is_listener_w, is_domain_w;
   assign is_listener_w = app_msrp_r && (attr_type_r == SRP_MSRP_ATTR_LISTENER_C);
   assign is_domain_w   = app_msrp_r && (attr_type_r == SRP_MSRP_ATTR_DOMAIN_C);
+
+  // LeaveAll lane of the current message: len_ok_w admits only MSRP types
+  // 1..4 and the MVRP VID type 1 to a VectorHeader, so type-1 is the lane
+  logic [1:0] la_lane_w;
+  logic       la_first_w;
+  assign la_lane_w  = attr_type_r[1:0] - 2'd1;
+  assign la_first_w = (vhdr1_r[7:5] == SRP_LEAVEALL_EV_C) && !la_done_r[la_lane_w];
 
   // list-scope octet counting (MSRP AttributeListLength is counted, F10.6)
   logic in_list_w;
@@ -252,6 +270,7 @@ module KL_srp_decoder
       values_left_r   <= 13'd0;
       fv_idx_r        <= 6'd0;
       last_seen_r     <= 1'b0;
+      la_done_r       <= 4'd0;
       sid_r           <= 64'd0;
       da_r            <= 48'd0;
       vid_r           <= 16'd0;
@@ -288,7 +307,7 @@ module KL_srp_decoder
       evt_failure_code_o <= 8'd0;
       evt_class_id_o  <= 8'd0;
       evt_class_a_o   <= 1'b0;
-      la_msrp_o       <= 1'b0;
+      la_msrp_o       <= 4'd0;
       la_mvrp_o       <= 1'b0;
       pdu_done_o      <= 1'b0;
       pdu_ok_o        <= 1'b0;
@@ -298,7 +317,7 @@ module KL_srp_decoder
     end else begin
       // strobes are one-cycle
       evt_valid_o   <= 1'b0;
-      la_msrp_o     <= 1'b0;
+      la_msrp_o     <= 4'd0;
       la_mvrp_o     <= 1'b0;
       pdu_done_o    <= 1'b0;
       listlen_bad_o <= 1'b0;
@@ -312,6 +331,7 @@ module KL_srp_decoder
           S_IDLE: begin
             // ProtocolVersion — accepted at any value (MRP forward compat)
             app_msrp_r <= mrp_msrp_i;
+            la_done_r  <= 4'd0;          // a new MRPDU: every type may LeaveAll once
             if (mrp_last_i) pdu_fail_t();
             else            state_r <= S_MSGTYPE;
           end
@@ -379,10 +399,13 @@ module KL_srp_decoder
               if (mrp_last_i) pdu_fail_t();  // single-EndMark PDU
               else            state_r <= S_MSGTYPE;
             end else begin
-              // VectorHeader {LeaveAllEvent[2:0], NumberOfValues[12:0]}
-              if (vhdr1_r[7:5] == SRP_LEAVEALL_EV_C) begin
-                la_msrp_o <= app_msrp_r;    // per-application, never merged
-                la_mvrp_o <= ~app_msrp_r;
+              // VectorHeader {LeaveAllEvent[2:0], NumberOfValues[12:0]}:
+              // the first LeaveAll of this type in the MRPDU strobes its
+              // lane, ahead of this vector's events (banner)
+              if (la_first_w) begin
+                la_done_r[la_lane_w] <= 1'b1;
+                if (app_msrp_r) la_msrp_o[la_lane_w] <= 1'b1;
+                else            la_mvrp_o            <= 1'b1;
               end
               values_left_r <= {vhdr1_r[4:0], mrp_data_i};
               fv_idx_r      <= 6'd0;

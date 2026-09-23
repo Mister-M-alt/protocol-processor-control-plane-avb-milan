@@ -132,6 +132,13 @@ constexpr int kFirstValueMsb = 271;
 // passing run.
 constexpr int kTxopPollSteps = 300;
 
+// received-LeaveAll lanes, one per MSRP AttributeType (lane = type - 1)
+constexpr unsigned kLaTalkerAdv    = 1u << 0;
+constexpr unsigned kLaTalkerFailed = 1u << 1;
+constexpr unsigned kLaListener     = 1u << 2;
+constexpr unsigned kLaDomain       = 1u << 3;
+constexpr unsigned kAllLanes       = 0xFu;
+
 struct Push {
   uint8_t type;
   uint8_t code;
@@ -270,7 +277,11 @@ struct Hn {
     step(); idle(3);
   }
 
-  void la_rx()  { d->leaveall_rx_i = 1;  step(); idle(3); }
+  // a received LeaveAll on the given MSRP AttributeType lanes (bit t-1 =
+  // type t); la_rx() is one on every type, the shape of a conformant
+  // peer's LeaveAll MRPDU (802.1Q-2014 §10.7.5.20 NOTE)
+  void la_rx_lanes(unsigned lanes) { d->leaveall_rx_i = lanes; step(); idle(3); }
+  void la_rx()  { la_rx_lanes(kAllLanes); }
   void la_own() { d->leaveall_own_i = 1; step(); idle(2); }
   void expire(int slot) { d->exp_valid_i = 1; d->exp_slot_i = slot; step(); idle(2); }
 
@@ -404,6 +415,10 @@ class SrpStreamFsmsSuite {
   void listener_matcher_registers_swaps_and_unregisters();
   void vlan_user_handshake_holds_and_collapses();
   void talker_tracker_isolates_applications();
+  void received_leave_all_reaches_only_its_attribute_type();
+  void run_b_switch_leave_all_keeps_the_listener_registration_in();
+  void domain_only_leave_all_never_ages_the_listener_registrar();
+  void listener_only_leave_all_ages_the_listener_registrar_to_mt();
 
   const milan::tb::Model<Vsrp_stream_fsms_wrap> model;
   Vsrp_stream_fsms_wrap* const d = model.get();
@@ -745,6 +760,150 @@ void SrpStreamFsmsSuite::talker_tracker_isolates_applications() {
   CHECK(h.t_app(5) == VN, "T MVRP type-1 collision never reaches the applicant");
 }
 
+// registrar states as published on dbg_reg_state, and the Ready code
+constexpr int kRegMt = 0;
+constexpr int kRegIn = 1;
+constexpr int kRegLv = 2;
+constexpr int kDeclReady = 2;
+constexpr const char* kLaneName[4] = {"TalkerAdvertise", "TalkerFailed",
+                                      "Listener", "Domain"};
+
+// ==== H. rLA! reaches only the state machines of its Attribute Type =====
+// 802.1Q-2014 §10.7.5.20 b)2): rLA! occurs for an Applicant or Registrar
+// only when "the PDU contains a Message in which the Attribute Type is the
+// type associated with the state machine". Each lane alone, against every
+// plane: the talker applicant (Talker Advertise, or Talker Failed while
+// swapped), the talker registrar (Listener), the listener applicant
+// (Listener) and the listener registrar (the talker type it holds).
+void SrpStreamFsmsSuite::received_leave_all_reaches_only_its_attribute_type() {
+  for (unsigned lane = 0; lane < 4; ++lane) {
+    const unsigned bit = 1u << lane;
+    const char* ln = kLaneName[lane];
+    const int app_hit = app_next(QA, eRLA, false, true);
+
+    // talker source 0: Advertise applicant quiet (QA), Listener Ready IN
+    h.reset();
+    (void)t_goto(h, QA);
+    h.inject(true, 3, SID0, 0, 0, 3 /*JoinMt*/, kDeclReady);
+    CHECK(h.t_app(0) == QA && h.t_reg(0) == kRegIn, "H %s: talker set-up", ln);
+    h.clear_logs();
+    h.la_rx_lanes(bit);
+    CHECK(h.t_app(0) == (bit == kLaTalkerAdv ? app_hit : QA),
+          "H %s: talker Advertise applicant %s", ln, SN[h.t_app(0)]);
+    CHECK(h.t_reg(0) == (bit == kLaListener ? kRegLv : kRegIn),
+          "H %s: talker Listener registrar %d", ln, h.t_reg(0));
+    CHECK(h.t_arm.size() == (bit == kLaListener ? 1u : 0u),
+          "H %s: talker leave-timer ops %zu", ln, h.t_arm.size());
+
+    // talker source 0 swapped to Talker Failed (admission lost), quiet
+    h.reset();
+    h.gate(true, 0, SID0, DA0, VID0);
+    d->sr_admitted_i = 0xFE;
+    h.idle(3);
+    h.tick(); h.tick(); h.tick();
+    CHECK(h.t_decl(0) == 2 && h.t_app(0) == QA, "H %s: talker Failed set-up", ln);
+    h.la_rx_lanes(bit);
+    CHECK(h.t_app(0) == (bit == kLaTalkerFailed ? app_hit : QA),
+          "H %s: talker Failed applicant %s", ln, SN[h.t_app(0)]);
+
+    // listener sink 0: Listener applicant quiet, Advertise registered IN
+    h.reset();
+    (void)l_goto(h, QA);
+    CHECK(h.l_app(0) == QA && h.l_regst(0) == kRegIn && h.l_tkreg(0) == 1,
+          "H %s: listener set-up", ln);
+    h.clear_logs();
+    h.la_rx_lanes(bit);
+    CHECK(h.l_app(0) == (bit == kLaListener ? app_hit : QA),
+          "H %s: listener Listener applicant %s", ln, SN[h.l_app(0)]);
+    CHECK(h.l_regst(0) == (bit == kLaTalkerAdv ? kRegLv : kRegIn),
+          "H %s: listener Advertise registrar %d", ln, h.l_regst(0));
+
+    // listener sink 0 holding a Talker Failed registration
+    h.reset();
+    h.ctl(true, 0, SID0, DA0, VID0);
+    h.inject(true, 2, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 500, 0xBB, 1);
+    CHECK(h.l_tkreg(0) == 2 && h.l_regst(0) == kRegIn, "H %s: Failed set-up", ln);
+    h.la_rx_lanes(bit);
+    CHECK(h.l_regst(0) == (bit == kLaTalkerFailed ? kRegLv : kRegIn),
+          "H %s: listener Failed registrar %d", ln, h.l_regst(0));
+  }
+}
+
+// ==== I. (a) the Run B switch LeaveAll MRPDU, as the decoder presents it =
+// [Listener LA JoinMt/Ready][Domain LA n=2][TalkerAdvertise LA n=0]
+// [TalkerFailed LA n=0]: the decoder strobes each type's lane once, ahead
+// of that type's events (srp_decoder P), so the talker registrar sees the
+// Listener lane, then the re-declaration, then only other types' lanes.
+// The Listener registration must end IN, with no aging left armed.
+void SrpStreamFsmsSuite::run_b_switch_leave_all_keeps_the_listener_registration_in() {
+  h.reset();
+  h.gate(true, 1, SID0 + 1, DA0 + 1, VID0);
+  h.inject(true, 3, SID0 + 1, 0, 0, 3 /*JoinMt*/, kDeclReady);
+  CHECK(h.t_reg(1) == kRegIn && ((d->t_active_o >> 1) & 1),
+        "I set-up: Ready IN, source 1 ACTIVE");
+  h.clear_logs();
+  h.la_rx_lanes(kLaListener);
+  h.inject(true, 3, SID0 + 1, 0, 0, 3 /*JoinMt*/, kDeclReady);
+  h.la_rx_lanes(kLaDomain);
+  h.inject(true, 4, 0, 0, VID0, 3);           // the two Domain values
+  h.inject(true, 4, 0, 0, VID0, 3);
+  h.la_rx_lanes(kLaTalkerAdv);
+  h.la_rx_lanes(kLaTalkerFailed);
+  CHECK(h.t_reg(1) == kRegIn, "I Listener registration stays IN, got %d", h.t_reg(1));
+  CHECK(h.t_lstn(1) == kDeclReady, "I Ready still published");
+  CHECK(((d->t_active_o >> 1) & 1) == 1, "I source 1 stays ACTIVE");
+  CHECK(h.t_chg[1] == 0, "I no LISTENER_REG_CHANGE, got %d", h.t_chg[1]);
+  CHECK(h.t_arm.size() == 2 && !h.t_arm[0].cancel && h.t_arm[1].cancel
+        && h.t_arm[1].slot == 17,
+        "I the Listener lane's ARM is CANCELled by the re-declaration (%zu ops)",
+        h.t_arm.size());
+  // a T-MRP-LEAVE expiry for the slot finds nothing to age
+  h.expire(17);
+  CHECK(h.t_reg(1) == kRegIn && h.t_lstn(1) == kDeclReady,
+        "I a leave expiry after the MRPDU leaves the registration IN");
+}
+
+// ==== J. (b) LeaveAll on the Domain type only ============================
+// The processor's old own LeaveAll shape. No Listener re-declaration
+// follows, and none is needed: the Listener registrar never ages.
+void SrpStreamFsmsSuite::domain_only_leave_all_never_ages_the_listener_registrar() {
+  h.reset();
+  h.gate(true, 2, SID0 + 2, DA0 + 2, VID0);
+  h.inject(true, 3, SID0 + 2, 0, 0, 1 /*JoinIn*/, kDeclReady);
+  CHECK(h.t_reg(2) == kRegIn, "J set-up: Ready IN");
+  h.clear_logs();
+  h.la_rx_lanes(kLaDomain);
+  h.inject(true, 4, 0, 0, VID0, 1);
+  CHECK(h.t_reg(2) == kRegIn, "J Domain-only LeaveAll: registrar stays IN, got %d",
+        h.t_reg(2));
+  CHECK(h.t_arm.empty(), "J no leave timer armed, got %zu ops", h.t_arm.size());
+  h.expire(18);
+  CHECK(h.t_reg(2) == kRegIn && h.t_lstn(2) == kDeclReady && h.t_chg[2] == 0,
+        "J nothing ages: Ready published, no change strobe");
+  CHECK(((d->t_active_o >> 2) & 1) == 1, "J source 2 stays ACTIVE");
+}
+
+// ==== K. (c) LeaveAll on the Listener type, nothing re-declared ==========
+// The registrar enters LV with T-MRP-LEAVE armed, keeps the registration
+// published through LV, and without a re-declaration ages to MT.
+void SrpStreamFsmsSuite::listener_only_leave_all_ages_the_listener_registrar_to_mt() {
+  h.reset();
+  h.gate(true, 3, SID0 + 3, DA0 + 3, VID0);
+  h.inject(true, 3, SID0 + 3, 0, 0, 3 /*JoinMt*/, kDeclReady);
+  CHECK(h.t_reg(3) == kRegIn && ((d->t_active_o >> 3) & 1), "K set-up: Ready IN, ACTIVE");
+  h.clear_logs();
+  h.la_rx_lanes(kLaListener);
+  CHECK(h.t_reg(3) == kRegLv, "K Listener LeaveAll -> LV, got %d", h.t_reg(3));
+  CHECK(h.t_lstn(3) == kDeclReady && h.t_chg[3] == 0, "K LV keeps Ready published");
+  CHECK(h.t_arm.size() == 1 && !h.t_arm[0].cancel && h.t_arm[0].slot == 19
+        && h.t_arm[0].owner == 0x43 && h.t_arm[0].deadline == NOW + LEAVE_MS,
+        "K ARM slot 19 owner 0x43 now+5000 (got %zu ops)", h.t_arm.size());
+  h.expire(19);                                // no re-declaration arrived
+  CHECK(h.t_reg(3) == kRegMt && h.t_lstn(3) == 0, "K leavetimer! -> MT");
+  CHECK(h.t_chg[3] == 1, "K one LISTENER_REG_CHANGE, got %d", h.t_chg[3]);
+  CHECK(((d->t_active_o >> 3) & 1) == 0, "K source 3 no longer ACTIVE");
+}
+
 int SrpStreamFsmsSuite::run() {
   rx_events_match_table_10_3();
   talker_tx_rows_send_the_table_10_3_message();
@@ -754,6 +913,10 @@ int SrpStreamFsmsSuite::run() {
   listener_matcher_registers_swaps_and_unregisters();
   vlan_user_handshake_holds_and_collapses();
   talker_tracker_isolates_applications();
+  received_leave_all_reaches_only_its_attribute_type();
+  run_b_switch_leave_all_keeps_the_listener_registration_in();
+  domain_only_leave_all_never_ages_the_listener_registrar();
+  listener_only_leave_all_ages_the_listener_registrar_to_mt();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

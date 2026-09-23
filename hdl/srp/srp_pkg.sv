@@ -10,7 +10,8 @@
 //                FirstValue-length table, the three-packed attribute-event
 //                alphabet (802.1Q §35.2.2.7, encoded (((e1*6)+e2)*6)+e3),
 //                the Listener four-packed declaration codes, the
-//                VectorHeader LeaveAllEvent code (802.1Q §10.8.2.6), and
+//                VectorHeader LeaveAllEvent code (802.1Q §10.8.2.6), the
+//                per-AttributeType received-LeaveAll lane indices, and
 //                the class-A identity the 10 §3 vector-value-k rule keys on
 //                (SRclassID 6 = SR class A, 802.1Q Table 35-7).
 //
@@ -65,6 +66,14 @@ package srp_pkg;
 
   // ---- VectorHeader LeaveAllEvent code (802.1Q §10.8.2.6) ----------------
   localparam logic [2:0] SRP_LEAVEALL_EV_C = 3'd1;
+
+  // ---- received MSRP LeaveAll lanes, one per AttributeType ---------------
+  // lane = AttributeType - 1: the decoder's la_msrp_o and the stream FSMs'
+  // leaveall_rx_i carry one bit per MSRP type (802.1Q-2014 §10.8.2.6)
+  localparam int unsigned SRP_LA_TALKER_ADV_C    = 0;
+  localparam int unsigned SRP_LA_TALKER_FAILED_C = 1;
+  localparam int unsigned SRP_LA_LISTENER_C      = 2;
+  localparam int unsigned SRP_LA_DOMAIN_C        = 3;
 
   //! three-packed digit extract — idx 0 = first value (b / 36),
   //! idx 1 = (b / 6) % 6, idx 2 = b % 6. A digit > 5 (reachable only at

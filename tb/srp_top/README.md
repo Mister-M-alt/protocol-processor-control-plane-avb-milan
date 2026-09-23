@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **236 checks**.
+`make` = build + run, exit 0 = PASS, **252 checks**.
 
 Expectations are independent: an MRPDU builder/parser written here from
 802.1Q §10.8.1.2 / §35.2.2, a Σ-slope model transcribing the Milan v1.2
@@ -56,11 +56,29 @@ Covered end to end:
   Type once, on its first vector (a NumberOfValues-0 vector for a type the
   cycle declares nothing of; 802.1Q §10.8.2.6), and whose cycle re-declares
   Domain JoinIn + Listener Ready; registrations stay published through LV and a
-  peer re-join keeps them (no unregister). A received MSRP LeaveAll ages
-  the registrar over a real 5 s T-MRP-LEAVE to TK_ATTR_UNREGISTERED and
-  the Listener Lv reaches the wire — while MVRP membership is untouched.
+  peer re-join keeps them (no unregister). A received MSRP LeaveAll that
+  flags every MSRP type, as a conformant peer's does (F2), ages the
+  registrar over a real 5 s T-MRP-LEAVE to TK_ATTR_UNREGISTERED and the
+  Listener Lv reaches the wire — while MVRP membership is untouched.
   The MVRP participant runs its own LeaveAll (flagged PDU, VID re-join,
-  never an Lv flap).
+  never an Lv flap). The F4 peer cadence flags every type the same way.
+- **Received LeaveAll routed per Attribute Type, end to end (F5; 10 §6.5,
+  802.1Q-2014 §10.7.5.20 NOTE)**: each step starts right after an own MSRP
+  LeaveAll, so the next own cycle cannot land in its 5.4 s window, and the
+  peer answers it with Listener Ready on source 1 and Talker Advertise
+  toward sink 0.
+  - **(a)** the bench switch's LeaveAll MRPDU from Run B (LeaveAll in every
+    message, Listener JoinMt/Ready first, Talker Advertise/Failed as
+    NumberOfValues-0 vectors; this bench's stream_id and Domain VID): the
+    Listener registration stays IN past T-MRP-LEAVE and source 1 stays
+    ACTIVE, while the Talker Advertise lane ages sink 0's un-re-declared
+    Advertise to TK_ATTR_UNREGISTERED.
+  - **(b)** a Domain-only LeaveAll: our Domain re-declares (JoinIn at the
+    next T-MRP-JOIN, well before any periodic re-join); neither the
+    Listener registration nor sink 0's Advertise ages.
+  - **(c)** a Listener-only LeaveAll, never re-declared: Ready stays
+    published for T-MRP-LEAVE (LV), then ages to MT and ACTIVE drops; sink
+    0's Advertise is untouched.
 - **Admission sweep**: 30 randomized declare/withdraw rounds across all 8
   sources vs the model — admitted vector, per-source granted slopes, Σ
   and over_limit, exercising the greedy order and capacity reuse.
@@ -83,3 +101,14 @@ Mutation-proven 2026-08-11 (backup/sed/run/restore):
 | Admission verdict into the talker FSMs tied 1 (top wiring cut) | 5 of 230 FAIL (C: FAILED state, fail code/bridge, Talker Failed byte-exact; C2 swap-back) |
 
 All three restored; suite back to 230/230 PASS.
+
+Receive-side LeaveAll routing, mutation-proven 2026-09-23 (issue #106; each
+arm planted, run, restored under a SHA-256 check). F2 and F4 flag every type
+and pass under both the previous and the new routing; F5 separates them:
+
+| Mutation | Result |
+|---|---|
+| The previous receive side (decoder, both FSMs, KL_srp_top, srp_pkg at the first #106 commit) | 5 of 252 FAIL (F5a, F5b, F5c) |
+| Decoder strobes every lane at every flagged VectorHeader | 5 of 252 FAIL (F5a, F5b, F5c) |
+| KL_srp_top broadcasts every lane to every plane | 5 of 252 FAIL (F5a, F5b, F5c) |
+| Domain participant deaf to the Domain lane | 1 of 252 FAIL (F5b Domain re-declaration) |
