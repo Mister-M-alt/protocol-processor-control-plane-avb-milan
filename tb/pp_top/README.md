@@ -252,8 +252,8 @@ cannot see it (`ucode.hex` is ignored); `rm ucode.hex && make` regenerates it.
 M25 to M31 were measured on 2026-09-22 at 1,391 checks in the default build and
 20 in the fixture build, each in its own scratch copy of `hdl/` and `tb/pp_top/`,
 so there was nothing to restore. M25 to M30 bite; M31, a control, stays green as
-it must. M32 was measured on 2026-09-23 at 1,401 checks in the default build, M33
-and M34 on 2026-09-24 at 1,407.
+it must. M32 was measured on 2026-09-23 at 1,401 checks in the default build and
+again on 2026-09-24 at 1,407 (the same five), M33 and M34 on 2026-09-24 at 1,407.
 
 ## Recorded seams and honest limits
 
