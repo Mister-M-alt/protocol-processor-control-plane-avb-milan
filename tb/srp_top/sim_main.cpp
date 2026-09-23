@@ -201,6 +201,13 @@ static std::vector<uint8_t> fv_vid(uint16_t vid) {
   put16(b, vid);
   return b;
 }
+// a LeaveAll-only message: one vector, NumberOfValues 0, zero FirstValue
+// of the full AttributeLength (802.1Q §10.8.2.8 f) — how the bench switch
+// flags LeaveAll on a type it declares nothing of
+static Msg la_only(int type, int alen, bool listener) {
+  return Msg{type, alen, listener,
+             {Vec{true, 0, std::vector<uint8_t>(static_cast<size_t>(alen), 0), {}, {}}}};
+}
 
 // ---------------------------------------------------------------------------
 // independent MRPDU parser (structure walk; used for set-style checks)
@@ -448,6 +455,8 @@ struct H {
          | d->snk_fail_bridge_o[2 * k];
   }
   int tk_decl(int s)  { return (d->tk_decl_state_o   >> (2 * s)) & 3; }
+  int lstn_reg(int s) { return (d->lstn_reg_state_o  >> (2 * s)) & 3; }
+  bool active(int s)  { return ((d->active_o >> s) & 1) != 0; }
   int tk_reg(int k)   { return (d->tk_reg_state_o    >> (2 * k)) & 3; }
   int ls_decl(int k)  { return (d->lstn_decl_state_o >> (2 * k)) & 3; }
   uint8_t src_fcode(int s) { return (d->src_fail_code_o >> (8 * s)) & 0xFF; }
@@ -483,6 +492,7 @@ class SrpTopHarness {
     check_received_msrp_leaveall_ages_to_expiry();
     check_mvrp_leaveall_is_its_own_participant();
     check_peer_leaveall_cadence_stays_bounded();
+    check_received_leaveall_is_routed_per_type();
     check_admission_sweep_matches_the_model();
 
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
@@ -719,6 +729,27 @@ class SrpTopHarness {
       return !p.vecs.empty() && p.vecs.front().la;
     });
     CHECK(!laf.empty(), "F1: MSRP LeaveAllEvent PDU within 16 s");
+    // the LeaveAll message is per Attribute Type (802.1Q §10.8.2.6,
+    // §10.7.5.20 NOTE): every MSRP type is flagged once, on its first
+    // vector, and a type the cycle declares nothing of rides a
+    // NumberOfValues-0 vector
+    {
+      const PFrame lp = parse_frame(laf);
+      bool every_type = lp.ok;
+      for (int t = 1; t <= 4; t++) {
+        int flags = 0;
+        int first_la = -1;
+        for (const PVec& v : lp.vecs) {
+          if (v.type != t) continue;
+          if (first_la < 0) first_la = v.la ? 1 : 0;
+          if (v.la) flags++;
+          if (v.nov == 0 && !v.la) every_type = false;
+        }
+        if (flags != 1 || first_la != 1) every_type = false;
+      }
+      CHECK(every_type,
+            "F1: the LeaveAll MRPDU flags every MSRP type once, first vector");
+    }
     // gather the LA PDU + trailing re-joins; the union must re-declare
     std::vector<PFrame> got{parse_frame(laf)};
     for (int i = 0; i < 3; i++) {
@@ -756,10 +787,15 @@ class SrpTopHarness {
     h.sync();
     int unreg_before = h.unreg_cnt[0];
     auto vids_before = d->dbg_vid_active_o;
-    // LeaveAllEvent on a Domain JoinIn vector matching the operating Domain
+    // LeaveAllEvent on a Domain JoinIn vector matching the operating Domain,
+    // and on every other MSRP type (a LeaveAll-only vector each), as a
+    // conformant peer flags it (802.1Q-2014 §10.7.5.20 NOTE): the Talker
+    // Advertise lane is the one that ages this registration
     Msg dom{4, 4, false, {Vec{true, 1, fv_domain(6, 3, 5),
                               {EV_JOININ}, {}}}};
-    h.feed(mrpdu_body(true, {dom}), true);
+    h.feed(mrpdu_body(true, {dom, la_only(1, 25, false), la_only(2, 34, false),
+                             la_only(3, 8, true)}),
+           true);
     h.idle(10);
     CHECK(h.unreg_cnt[0] == unreg_before, "F2: no unregister at the frame");
     CHECK(d->dbg_vid_active_o == vids_before,
@@ -814,8 +850,10 @@ class SrpTopHarness {
     // cycle echoed it back. A correct applicant answers rLA! by falling
     // to VP and re-declaring once, join-paced, per cycle. Six peer
     // LeaveAll cycles, each ridden on the bridge's own re-advertise
-    // (the shape a real switch emits), must produce a bounded and
-    // non-growing exchange - and every cycle must re-declare Ready.
+    // (the shape a real switch emits: LeaveAll flagged in every MSRP
+    // type, a LeaveAll-only vector for each type it declares nothing
+    // of), must produce a bounded and non-growing exchange - and every
+    // cycle must re-declare Ready.
     int total = 0;
     int ready_cycles = 0;
     int worst_cycle = 0;
@@ -823,7 +861,9 @@ class SrpTopHarness {
       Msg la{1, 25, false, {Vec{true, 1,
               fv_talker(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345),
               {EV_JOININ}, {}}}};
-      h.feed(mrpdu_body(true, {la}), true);
+      h.feed(mrpdu_body(true, {la, la_only(2, 34, false), la_only(3, 8, true),
+                               la_only(4, 4, false)}),
+             true);
       bool ready = false;
       int cnt = 0;
       // ~0.9-0.95 s per cycle (20 polls, minus feed/parse overhead). The
@@ -848,6 +888,113 @@ class SrpTopHarness {
     CHECK(ready_cycles == 6, "F4: every cycle re-declares Listener Ready");
     CHECK(h.tk_reg(0) == 1, "F4: talker registration survives the cadence");
     CHECK(h.malformed == 0, "F4: no PDU we fed was tolerance-discarded");
+  }
+
+  // ==== F5. a received LeaveAll is routed per Attribute Type =============
+  // "the LeaveAll message operates on a per-Attribute Type basis" (802.1Q-
+  // 2014 §10.7.5.20 NOTE), through the real decoder into the real FSMs.
+  // Each step starts right after an own MSRP LeaveAll MRPDU, so the next
+  // own cycle (10-15 s) cannot land in its window (5.4 s; 7.7 s for (c)
+  // with its two talker-lane negatives, measured); the peer answers
+  // that LeaveAll by re-declaring Listener Ready on source 1's stream and
+  // its Talker Advertise toward sink 0.
+  void peer_answers_own_leaveall(const char* step) {
+    auto f = h.wait_frame(true, 16000, [](const std::vector<uint8_t>& fr) {
+      for (const PVec& v : parse_frame(fr).vecs) {
+        if (v.la) return true;
+      }
+      return false;
+    });
+    CHECK(!f.empty(), "F5%s: own MSRP LeaveAll within 16 s", step);
+    Msg lr{3, 8, true, {Vec{false, 1, fv_sid(SID1), {EV_JOININ}, {DECL_READY}}}};
+    Msg adv{1, 25, false, {Vec{false, 1,
+            fv_talker(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345),
+            {EV_JOININ}, {}}}};
+    h.feed(mrpdu_body(true, {lr, adv}), true);
+    h.idle(10);
+    CHECK(h.lstn_reg(1) == DECL_READY && h.active(1) && h.tk_reg(0) == 1,
+          "F5%s: Ready registered on source 1 (ACTIVE), Advertise on sink 0", step);
+  }
+
+  void check_received_leaveall_is_routed_per_type() {
+    // (a) the bench switch's LeaveAll MRPDU (Run B, 47.029619 s), its
+    // stream_id and Domain VID set to this bench's: LeaveAll in every
+    // message, Listener first. The Listener JoinMt re-declares the stream
+    // and no later lane of the MRPDU may age it again.
+    peer_answers_own_leaveall("a");
+    int unreg0 = h.unreg_cnt[0];
+    Msg l{3, 8, true, {Vec{true, 1, fv_sid(SID1), {EV_JOINMT}, {DECL_READY}}}};
+    Msg dm{4, 4, false, {Vec{true, 2, fv_domain(5, 2, 5),
+                             {EV_JOINMT, EV_JOINMT}, {}}}};
+    h.feed(mrpdu_body(true, {l, dm, la_only(1, 25, false), la_only(2, 34, false)}),
+           true);
+    h.run_ms(5400);
+    CHECK(h.lstn_reg(1) == DECL_READY,
+          "F5a: Run B LeaveAll MRPDU: the Listener registration stays IN past T-MRP-LEAVE");
+    CHECK(h.active(1), "F5a: source 1 stays ACTIVE");
+    CHECK(h.unreg_cnt[0] == unreg0 + 1 && h.tk_reg(0) == 0,
+          "F5a: its Talker Advertise lane ages sink 0's un-re-declared Advertise");
+
+    // (b) LeaveAll on the Domain type only (the processor's old own
+    // shape): no re-declaration follows, and no registrar of another type
+    // may age
+    peer_answers_own_leaveall("b");
+    unreg0 = h.unreg_cnt[0];
+    h.sync();       // clean slot: the next periodic re-join is >= 650 ms away
+    Msg dla{4, 4, false, {Vec{true, 1, fv_domain(6, 3, 5), {EV_JOININ}, {}}}};
+    h.feed(mrpdu_body(true, {dla}), true);
+    // the Domain lane reaches our Domain participant: rLA! re-declares it
+    // at the next T-MRP-JOIN, well before any periodic re-join
+    auto rj = h.wait_frame(true, 400, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 4, 6, EV_JOININ);
+    });
+    CHECK(!rj.empty(), "F5b: the Domain lane re-declares our Domain (JoinIn)");
+    h.run_ms(5200);                   // past T-MRP-LEAVE from the feed
+    CHECK(h.lstn_reg(1) == DECL_READY && h.active(1),
+          "F5b: a Domain-only LeaveAll never ages the Listener registration");
+    CHECK(h.unreg_cnt[0] == unreg0 && h.tk_reg(0) == 1,
+          "F5b: nor sink 0's Talker Advertise");
+
+    // (c) LeaveAll on the Listener type only, never re-declared: LV keeps
+    // Ready published, then T-MRP-LEAVE ages it to MT. The Domain row's
+    // negative: our Domain participant takes no rLA! from this lane, so no
+    // Domain JoinIn follows it before the next periodic re-join
+    peer_answers_own_leaveall("c");
+    unreg0 = h.unreg_cnt[0];
+    h.sync();       // clean slot: the next periodic re-join is >= 650 ms away
+    h.feed(mrpdu_body(true, {la_only(3, 8, true)}), true);
+    rj = h.wait_frame(true, 400, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 4, 6, EV_JOININ);
+    });
+    CHECK(rj.empty(), "F5c: a Listener-only LeaveAll never re-declares our Domain");
+    h.run_ms(4100);
+    CHECK(h.lstn_reg(1) == DECL_READY && h.active(1),
+          "F5c: Listener LeaveAll: LV keeps Ready published for T-MRP-LEAVE");
+    h.run_ms(900);
+    CHECK(h.lstn_reg(1) == 0 && !h.active(1),
+          "F5c: no re-declaration: the Listener registration ages to MT");
+    CHECK(h.unreg_cnt[0] == unreg0 && h.tk_reg(0) == 1,
+          "F5c: sink 0's Talker Advertise untouched");
+    // the Domain row's negative against the two talker lanes, each in its
+    // own clean slot: a Talker Advertise LeaveAll (the peer re-declares sink
+    // 0's Advertise in the flagged vector, so it stays registered) and a
+    // Talker Failed-only LeaveAll reach no Domain participant either
+    h.sync();
+    Msg ta{1, 25, false, {Vec{true, 1,
+           fv_talker(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345),
+           {EV_JOININ}, {}}}};
+    h.feed(mrpdu_body(true, {ta}), true);
+    rj = h.wait_frame(true, 400, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 4, 6, EV_JOININ);
+    });
+    CHECK(rj.empty(), "F5c: a Talker Advertise LeaveAll never re-declares our Domain");
+    h.sync();
+    h.feed(mrpdu_body(true, {la_only(2, 34, false)}), true);
+    rj = h.wait_frame(true, 400, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 4, 6, EV_JOININ);
+    });
+    CHECK(rj.empty(), "F5c: a Talker Failed-only LeaveAll never re-declares our Domain");
+    CHECK(h.malformed == 0, "F5: no PDU we fed was tolerance-discarded");
   }
 
   // ==== G. admission sweep vs the independent Σ-slope model ===============

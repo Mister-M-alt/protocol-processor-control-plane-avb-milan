@@ -52,13 +52,27 @@
 //                module IS the engine; leaving it out leaves the identical
 //                srp contract to an external stack (02 §4.1).
 //
-//  Decision    : the one decision that matters — LeaveAll stays PER
-//                APPLICATION end to end (802.1Q §10.7.1, the corrected 10
-//                §6.5 rule): two leavealltimer slots, two PRNG draws, two
-//                encoder LeaveAll lanes, and the decoder's split la_msrp /
-//                la_mvrp strobes are never OR-ed. One merged pulse would
-//                let a bridge's MVRP maintenance cycle age a healthy MSRP
-//                Listener Ready and flap the stream licence.
+//  Decision    : the one decision that matters — "the LeaveAll state
+//                machine operates on a per-application (not per-Attribute
+//                Type) basis, but the LeaveAll message operates on a
+//                per-Attribute Type basis" (802.1Q-2014 §10.7.5.20 NOTE),
+//                and the engine follows it both ways (10 §6.5). The TIMER
+//                is per application (§10.7.9): two leavealltimer slots, two
+//                PRNG draws, two encoder LeaveAll lanes; the encoder flags
+//                every type the application supports. A RECEIVED LeaveAll
+//                is routed per type, once per MRPDU and ahead of that
+//                type's events in it (§10.7.5.20 b)2), §10.8.2.6, §10.8):
+//                the decoder's la_msrp lanes go Talker Advertise/Failed to
+//                the talker applicants and the listener registrars,
+//                Listener to the listener applicants and the talker
+//                registrars, Domain to the Domain participant; la_mvrp to
+//                VLAN only. A LeaveAll the bridge flags on its Domain
+//                message never ages a Listener Ready it had just
+//                re-declared in the same MRPDU. The leavealltimer re-arms
+//                only at its own expiry; a received LeaveAll does not
+//                restart it, which 802.1Q-2014 Table 10-5 would (rLA! ->
+//                Start leavealltimer): an open deviation, 10 §6.5,
+//                tracked in issue #108.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -247,7 +261,7 @@ module KL_srp_top
   logic [7:0]  dec_evt_fail_code_w;
   logic [7:0]  dec_evt_class_id_w;
   logic        dec_evt_class_a_w;
-  logic        dec_la_msrp_w;
+  logic [3:0]  dec_la_msrp_w;   // received MSRP LeaveAll, one lane per AttributeType
   logic        dec_la_mvrp_w;
   logic [15:0] dec_dbg_listlen_w;
   logic        dec_listlen_bad_w;
@@ -331,7 +345,7 @@ module KL_srp_top
       .rxdom_vid_i         (dec_evt_vid_w),
       .rxdom_nov_i         (13'd1),
       .periodic_tick_i     (p_periodic_r),
-      .leaveall_tick_i     (dec_la_msrp_w || p_la_msrp_r),
+      .leaveall_tick_i     (dec_la_msrp_w[SRP_LA_DOMAIN_C] || p_la_msrp_r),
       .dom_ev_valid_o      (dom_ev_valid_w),
       .dom_ev_event_o      (dom_ev_event_w),
       .dom_ev_value_o      (dom_ev_value_w),

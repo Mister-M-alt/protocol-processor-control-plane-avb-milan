@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1005 checks.
+exit 0 = PASS, 1068 checks.
 
 The C++ model transcribes **Table 10-3 (applicant) and Table 10-4
 (registrar) independently as data matrices** — never DUT logic — including
@@ -55,6 +55,28 @@ Covered:
   failure info latched/gated, declaration follows Ready↔AskingFailed);
   Δ13 unregister withdraws the declaration; teardown A8 fires NO events,
   drops VLAN, disarms the matcher.
+- **Received LeaveAll per Attribute Type** (10 §6.5, 802.1Q-2014
+  §10.7.5.20 b)2)): `leaveall_rx_i` is one lane per MSRP type, as the
+  decoder strobes it. `la_rx()` drives every lane (a conformant peer's
+  LeaveAll MRPDU), so the Table 10-3/10-4 walks above keep their meaning;
+  `la_rx_lanes()` drives single lanes:
+  - **H — routing matrix**: each lane alone against every plane. The
+    talker applicant takes the Talker Advertise lane (Talker Failed while
+    swapped), the talker registrar the Listener lane, the listener
+    applicant the Listener lane, the listener registrar the lane of the
+    talker type it holds (Advertise or Failed). Every other lane leaves the
+    plane untouched, with no timer op.
+  - **I — (a) the Run B switch LeaveAll MRPDU** in the decoder's strobe
+    order (Listener lane, Listener JoinMt/Ready, Domain lane, Domain
+    values, Talker Advertise lane, Talker Failed lane): the Listener
+    registration ends IN, still Ready and ACTIVE, no change strobe, the
+    lane's ARM cancelled by the re-declaration, and a later leave expiry
+    finds nothing to age.
+  - **J — (b) Domain-only LeaveAll**: the Listener registrar stays IN, no
+    timer op, nothing ages on an expiry, the source stays ACTIVE.
+  - **K — (c) Listener-only LeaveAll, never re-declared**: IN → LV with
+    ARM(slot 19, owner 0x43, now+5000), Ready published through LV, then
+    the expiry ages it to MT with one LISTENER_REG_CHANGE and ACTIVE drops.
 - **Per-application isolation**: MVRP-application events with matching
   bytes (including the MVRP-VID/Talker-Advertise type-1 collision) never
   reach a registrar or applicant.
@@ -78,3 +100,16 @@ Mutation-proven 2026-08-11 (backup/sed/run/restore):
 | Listener exact-match DA compare disabled | 2 of 1005 FAIL (near-miss + isolation) |
 
 All three restored; suite back to 1005/1005 PASS.
+
+Receive-side LeaveAll routing, mutation-proven 2026-09-23 (issue #106; each
+arm planted, run, restored under a SHA-256 check):
+
+| Mutation | Result |
+|---|---|
+| Talker registrar ages on every lane | 13 of 1068 FAIL (H, I, J) |
+| Talker registrar deaf to the Listener lane (takes the Domain lane) | 16 of 1068 FAIL (H, I, J, K) |
+| Talker applicant takes every lane | 6 of 1068 FAIL (H) |
+| Talker applicant ignores the declared variant (Advertise lane always) | 2 of 1068 FAIL (H, the Failed rows) |
+| Listener registrar ages on every lane | 6 of 1068 FAIL (H) |
+| Listener registrar ignores the registered type (Advertise lane always) | 2 of 1068 FAIL (H, the Failed rows) |
+| Listener applicant takes every lane | 3 of 1068 FAIL (H) |

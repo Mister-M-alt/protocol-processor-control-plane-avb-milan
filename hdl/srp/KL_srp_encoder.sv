@@ -29,9 +29,18 @@
 //                has no such field); the AttributeList EndMark and the
 //                MRPDU EndMark are both always written, so the EndMark is
 //                explicit ahead of any MAC padding (Milan §4.2.7.1.3). A
-//                pending LeaveAll (per application, 802.1Q §10.7.1 keeps
-//                the two participants separate) rides the first
-//                VectorHeader of that application's next MRPDU. The
+//                pending LeaveAll is taken per application (one
+//                leavealltimer per participant, 802.1Q §10.7.9) when that
+//                application's next drain starts, and is SIGNALLED per
+//                Attribute Type (§10.8.2.6, §10.7.5.20 NOTE: a LeaveAll
+//                "must generate a LeaveAll Attribute for each Attribute
+//                Type supported by the application"): the first
+//                VectorHeader of every type the application supports
+//                carries LeaveAllEvent, and each supported type with no
+//                vector in the drain gets a LeaveAll-only VectorAttribute
+//                in its own message after the drained ones — NumberOfValues
+//                0, a zero FirstValue of the full AttributeLength, no
+//                packed events (§10.8.2.8 f/g, §10.8.2.10.1 NOTE). The
 //                finished frame — Ethernet header included, per the 03 §8
 //                destination-addressing row — lands in a KL_pp_tx_slots
 //                slot; the committed handle is offered to the (not yet
@@ -113,8 +122,13 @@ module KL_srp_encoder #(
 
   // worst-case drained MSRP frame: eth+version 15, four message shells
   // (type + length + list-length + list EndMark = 6 B each), every entry a
-  // lone Talker Failed vector (2 + 34 + 1 = 37 B), MRPDU EndMark 2
-  localparam int unsigned WORST_BYTES_C = 15 + (4 * 6) + (DEPTH_P * 37) + 2;
+  // lone Talker Failed vector (2 + 34 + 1 = 37 B), the LeaveAll-only
+  // vectors of at most three types (a drain holds at least one entry, so
+  // at least one type is flagged in place; their shells are among the
+  // four), bounded by the three largest (2 + 34, 2 + 25, 2 + 8 = 73 B),
+  // MRPDU EndMark 2
+  localparam int unsigned WORST_BYTES_C = 15 + (4 * 6) + (DEPTH_P * 37)
+                                        + 73 + 2;
   if (WORST_BYTES_C > TX_STD_BYTES_P) begin : g_depth_check
     $error("DEPTH_P drain cannot fit a standard TX slot");
   end
@@ -131,6 +145,15 @@ module KL_srp_encoder #(
   localparam logic [7:0]  ATTR_LISTENER_C    = 8'd3;
   localparam logic [7:0]  ATTR_DOMAIN_C      = 8'd4;
   localparam logic [7:0]  ATTR_MVRP_VID_C    = 8'd1;
+
+  //! Attribute Types each application supports, bit (type - 1). The
+  //! criterion is 802.1Q-2014 §10.7.5.20 NOTE: a LeaveAll "must generate a
+  //! LeaveAll Attribute for each Attribute Type supported by the application
+  //! concerned". MSRP supports Talker Advertise, Talker Failed, Listener and
+  //! Domain (§35.2.2.4) whatever this elaboration declares or registers (the
+  //! Domain type has no registrar here, 10 §6.5); MVRP supports VID only
+  localparam logic [3:0]  LA_TYPES_MSRP_C    = 4'b1111;
+  localparam logic [3:0]  LA_TYPES_MVRP_C    = 4'b0001;
 
   //! FirstValue length in bytes by application/type (F10.8)
   function automatic logic [5:0] attr_len_f(input logic app,
@@ -252,7 +275,8 @@ module KL_srp_encoder #(
   logic [ADDR_W_C-1:0] ll_addr_r;      // AttributeListLength patch address
   logic                msg_open_r;     // a message shell is open
   logic [7:0]          msg_type_r;     // its AttributeType
-  logic                first_vec_r;    // next vector is the PDU's first
+  logic                la_act_r;       // this drain is the LeaveAll MRPDU
+  logic [3:0]          la_seen_r;      // types already given a VectorHeader
   logic                close_for_pdu_r;// message close leads to the PDU EndMark
 
   // collected run
@@ -364,6 +388,10 @@ module KL_srp_encoder #(
   logic [47:0] da_sel_w;
   logic [15:0] et_sel_w;
   logic [5:0]  alen_w;
+  logic [3:0]  la_types_w;
+  logic [3:0]  la_bit_w;
+  logic [3:0]  la_need_w;
+  logic [7:0]  la_next_w;
   logic [2:0]  la3_w;
   logic [12:0] nov_w;
   logic [ADDR_W_C-1:0] ll_val_w;
@@ -373,7 +401,22 @@ module KL_srp_encoder #(
   assign da_sel_w = (cur_app_r == APP_MVRP_C) ? MVRP_DA_C : MSRP_DA_C;
   assign et_sel_w = (cur_app_r == APP_MVRP_C) ? MVRP_ETYPE_C : MSRP_ETYPE_C;
   assign alen_w   = attr_len_f(cur_app_r, run_type_r);
-  assign la3_w    = (first_vec_r && la_pend_r[cur_app_r]) ? 3'd1 : 3'd0;
+  // LeaveAllEvent on the first VectorHeader of each supported type
+  assign la_types_w = (cur_app_r == APP_MVRP_C) ? LA_TYPES_MVRP_C
+                                                : LA_TYPES_MSRP_C;
+  // AttributeType 1..4 -> bit 0..3 (type 4 wraps: 2'b00 - 1 = 3)
+  assign la_bit_w   = 4'b0001 << (run_type_r[1:0] - 2'd1);
+  assign la3_w      = (la_act_r && ((la_types_w & la_bit_w & ~la_seen_r) != '0))
+                    ? 3'd1 : 3'd0;
+  // supported types the drain carried no vector of: each gets a
+  // LeaveAll-only message after the drained ones, lowest AttributeType first
+  assign la_need_w  = la_act_r ? (la_types_w & ~la_seen_r) : 4'b0000;
+  always_comb begin : la_next_pick
+    la_next_w = 8'd0;
+    for (int i = 3; i >= 0; i--) begin
+      if (la_need_w[i]) la_next_w = 8'(i + 1);
+    end
+  end
   assign nov_w    = 13'(run_len_r);
   // AttributeListLength: everything after its own field, EndMark INCLUDED
   assign ll_val_w = waddr_r - ll_addr_r - ADDR_W_C'(2);
@@ -456,7 +499,8 @@ module KL_srp_encoder #(
       ll_addr_r       <= '0;
       msg_open_r      <= 1'b0;
       msg_type_r      <= 8'd0;
-      first_vec_r     <= 1'b0;
+      la_act_r        <= 1'b0;
+      la_seen_r       <= 4'b0000;
       close_for_pdu_r <= 1'b0;
       run_open_r      <= 1'b0;
       run_type_r      <= 8'd0;
@@ -492,11 +536,17 @@ module KL_srp_encoder #(
             drain_n_r   <= start0_w ? cnt_msrp_r : cnt_mvrp_r;
             if (start0_w) join_pend_r[0] <= 1'b0;
             else          join_pend_r[1] <= 1'b0;
+            // the drain takes the application's pending LeaveAll (a
+            // request landing mid-drain waits for the next MRPDU)
+            la_act_r <= start0_w ? (la_pend_r[0] || leaveall_i[0])
+                                 : (la_pend_r[1] || leaveall_i[1]);
+            if (start0_w) la_pend_r[0] <= 1'b0;
+            else          la_pend_r[1] <= 1'b0;
+            la_seen_r   <= 4'b0000;
             rd_idx_r    <= '0;
             waddr_r     <= '0;
             bidx_r      <= '0;
             msg_open_r  <= 1'b0;
-            first_vec_r <= 1'b1;
             run_open_r  <= 1'b0;
             hold_valid_r <= 1'b0;
             st_r        <= E_ALLOC;
@@ -566,12 +616,17 @@ module KL_srp_encoder #(
         end
         E_VHDR: begin
           if (last_byte_w) begin
-            first_vec_r <= 1'b0;
-            st_r        <= E_VFV;
+            la_seen_r <= la_seen_r | la_bit_w;
+            st_r <= E_VFV;
           end
         end
         E_VFV: begin
-          if (last_byte_w) st_r <= E_V3PK;
+          if (last_byte_w) begin
+            // a LeaveAll-only vector (NumberOfValues 0) has no packed
+            // events: its message closes straight after the FirstValue
+            if (run_len_r == '0) st_r <= E_MSGCLOSE;
+            else                 st_r <= E_V3PK;
+          end
         end
         E_V3PK: begin
           if (last_byte_w) begin
@@ -620,7 +675,21 @@ module KL_srp_encoder #(
           end
         end
         E_PATCH: begin
-          if (last_byte_w) st_r <= close_for_pdu_r ? E_PDUEND : E_MSGHDR;
+          if (last_byte_w) begin
+            if (!close_for_pdu_r) begin
+              st_r <= E_MSGHDR;
+            end else if (la_need_w != 4'b0000) begin
+              // LeaveAll-only message for a supported type the drain did
+              // not carry (MSRP only: the MVRP drain always carries VID)
+              run_type_r  <= la_next_w;
+              run_first_r <= '0;
+              run_last_r  <= '0;
+              run_len_r   <= '0;
+              st_r        <= E_MSGHDR;
+            end else begin
+              st_r <= E_PDUEND;
+            end
+          end
         end
         E_PDUEND: begin
           if (last_byte_w) st_r <= E_COMMIT;
@@ -628,7 +697,6 @@ module KL_srp_encoder #(
         E_COMMIT: begin
           if (cur_app_r == APP_MSRP_C) cnt_msrp_r <= '0;
           else                         cnt_mvrp_r <= '0;
-          la_pend_r[cur_app_r] <= 1'b0;
           st_r <= E_TXREQ;
         end
         E_TXREQ: begin
@@ -638,11 +706,12 @@ module KL_srp_encoder #(
       endcase
 
       // ---- cadence latches (after the case: a tick landing on the same
-      // cycle as a pend-clear or LeaveAll-consume must survive it) ---------
+      // cycle as a pend-clear must survive it; a LeaveAll landing on the
+      // cycle its drain starts was taken by that drain) --------------------
       if (join_tick_i[0] && !start0_w) join_pend_r[0] <= 1'b1;
       if (join_tick_i[1] && !start1_w) join_pend_r[1] <= 1'b1;
-      if (leaveall_i[0]) la_pend_r[0] <= 1'b1;
-      if (leaveall_i[1]) la_pend_r[1] <= 1'b1;
+      if (leaveall_i[0] && !start0_w) la_pend_r[0] <= 1'b1;
+      if (leaveall_i[1] && !start1_w) la_pend_r[1] <= 1'b1;
     end
   end
 

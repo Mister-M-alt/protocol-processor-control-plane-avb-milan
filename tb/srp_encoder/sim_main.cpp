@@ -10,9 +10,11 @@
 // (F10.3, corrected per-VID refcount) walks are checked event-by-event; a
 // bridge phase plays the not-yet-landed event router and feeds both FSMs'
 // declarations into the encoder for end-to-end frames.
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 #include <utility>
 #include "Vsrp_tb_wrap.h"
@@ -81,7 +83,18 @@ static int attr_len(int app, int type) {
   return 4;
 }
 
+// AttributeTypes a participant registers: MSRP 1..4, MVRP 1 (VID).
+static int n_types(int app) { return app ? 1 : 4; }
+
 // One MRPDU (Ethernet frame image) for one application's pending events.
+// A LeaveAll MRPDU is per Attribute Type (802.1Q-2014 §10.8.2.6; §10.7.5.20
+// NOTE: "it must generate a LeaveAll Attribute for each Attribute Type
+// supported by the application"): the first VectorAttribute of every type
+// carries LeaveAllEvent, and each type with no vector gets a LeaveAll-only
+// VectorAttribute after the drained messages, lowest type first (the
+// encoder's documented order): NumberOfValues 0, FirstValue present at its
+// full AttributeLength and zero, no packed events (§10.8.2.8 f and g,
+// §10.8.2.10.1 NOTE).
 static std::vector<uint8_t> model_pdu(const std::vector<Ev>& evs, bool leaveall,
                                       const uint8_t own[6]) {
   const int app = evs[0].app;
@@ -108,7 +121,8 @@ static std::vector<uint8_t> model_pdu(const std::vector<Ev>& evs, bool leaveall,
     }
   }
   size_t r = 0;
-  bool first_vec = true;
+  bool type_seen[5] = {false, false, false,
+                       false, false};           // indexed by AttributeType
   while (r < runs.size()) {
     const int t = runs[r].type;
     const int alen = attr_len(app, t);
@@ -118,8 +132,8 @@ static std::vector<uint8_t> model_pdu(const std::vector<Ev>& evs, bool leaveall,
     while (r < runs.size() && runs[r].type == t) {
       const Run& R = runs[r];
       const int nov = int(R.e3.size());
-      const int la = (first_vec && leaveall) ? 1 : 0;
-      first_vec = false;
+      const int la = (leaveall && !type_seen[t]) ? 1 : 0;
+      type_seen[t] = true;
       f.push_back(uint8_t((la << 5) | ((nov >> 8) & 0x1F)));
       f.push_back(uint8_t(nov & 0xFF));
       f.insert(f.end(), R.first->val, R.first->val + alen);
@@ -146,8 +160,112 @@ static std::vector<uint8_t> model_pdu(const std::vector<Ev>& evs, bool leaveall,
       f[ll_pos] = uint8_t(ll >> 8); f[ll_pos + 1] = uint8_t(ll & 0xFF);
     }
   }
+  for (int t = 1; leaveall && t <= n_types(app); ++t) {
+    if (type_seen[t]) continue;
+    const int alen = attr_len(app, t);
+    f.push_back(uint8_t(t)); f.push_back(uint8_t(alen));
+    if (app == 0) {                                    // header + FirstValue + EndMark
+      f.push_back(uint8_t((alen + 4) >> 8)); f.push_back(uint8_t((alen + 4) & 0xFF));
+    }
+    f.push_back(0x20); f.push_back(0x00);              // LeaveAll, NumberOfValues 0
+    f.insert(f.end(), size_t(alen), uint8_t(0));       // FirstValue, ignored
+    f.push_back(0); f.push_back(0);                    // AttributeList EndMark
+  }
   f.push_back(0); f.push_back(0);                      // MRPDU EndMark
   return f;
+}
+
+// Independent structural read of one captured MRPDU frame image (802.1Q-2014
+// §10.8.1.2 BNF): one entry per VectorAttribute. False when the image does
+// not parse, an MSRP AttributeListLength disagrees with the counted list, or
+// anything follows the MRPDU EndMark.
+struct PVec {
+  int msg;                    // Message index in the PDU
+  int type;                   // AttributeType
+  int alen;                   // AttributeLength
+  int listlen;                // MSRP AttributeListLength (-1 for MVRP)
+  int la;                     // LeaveAllEvent
+  int nov;                    // NumberOfValues
+  std::vector<uint8_t> fv;    // FirstValue
+  int packed;                 // ThreePacked + FourPacked octets
+};
+
+static bool parse_pdu(const std::vector<uint8_t>& f, std::vector<PVec>& out) {
+  out.clear();
+  if (f.size() < 17) return false;
+  const bool msrp = (f[12] == 0x22 && f[13] == 0xEA);
+  size_t i = 14;
+  if (f[i++] != 0x00) return false;                    // ProtocolVersion
+  for (int msg = 0;; ++msg) {
+    if (i + 2 > f.size()) return false;
+    if (f[i] == 0 && f[i + 1] == 0) return i + 2 == f.size();
+    const int type = f[i++];
+    const int alen = f[i++];
+    int ll = -1;
+    if (msrp) {
+      if (i + 2 > f.size()) return false;
+      ll = (f[i] << 8) | f[i + 1];
+      i += 2;
+    }
+    const size_t list0 = i;
+    for (;;) {
+      if (i + 2 > f.size()) return false;
+      if (f[i] == 0 && f[i + 1] == 0) { i += 2; break; }
+      PVec v;
+      v.msg = msg; v.type = type; v.alen = alen; v.listlen = ll;
+      v.la = f[i] >> 5;
+      v.nov = ((f[i] & 0x1F) << 8) | f[i + 1];
+      i += 2;
+      if (i + size_t(alen) > f.size()) return false;
+      v.fv.assign(f.begin() + long(i), f.begin() + long(i + size_t(alen)));
+      i += size_t(alen);
+      v.packed = (v.nov + 2) / 3 + ((msrp && type == 3) ? (v.nov + 3) / 4 : 0);
+      i += size_t(v.packed);
+      if (i > f.size()) return false;
+      out.push_back(v);
+    }
+    if (msrp && int(i - list0) != ll) return false;
+  }
+}
+
+// One JoinIn declaration of MSRP AttributeType t (1 Talker Advertise, 2 Talker
+// Failed, 3 Listener Ready, 4 Domain) — the LeaveAll suites' building block.
+static Ev typed_ev(int t) {
+  switch (t) {
+    case 1:
+      return mk_ev(0, 1, 1, 0, {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x01,
+                                0x91, 0xE0, 0xF0, 0x00, 0x33, 0x44,
+                                0x00, 0x02, 0x00, 0x1D, 0x00, 0x01, 0x70, 0x00,
+                                0x00, 0x0F, 0x42});
+    case 2: {
+      Ev e = mk_ev(0, 2, 1, 0, {});
+      for (int i = 0; i < kFirstValueBytes; ++i) e.val[i] = uint8_t(0xB0 + i);
+      return e;
+    }
+    case 3:
+      return mk_ev(0, 3, 1, 2, {0, 0, 0, 0, 0, 0, 0x05, 0x10});
+    default:
+      return mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x02});
+  }
+}
+
+// The bench switch's own LeaveAll-only messages, transcribed from the
+// milan-fpga #117 Run B tap capture (tap-runB.pcap, switch port
+// 3c:c0:c6:fe:02:11, the LeaveAll MRPDU at 10.429430 s): {type, length,
+// AttributeListLength, VectorHeader LeaveAll + NumberOfValues 0}, then that
+// many zero FirstValue octets, then the AttributeList EndMark.
+struct WireLaOnly { uint8_t head[6]; int zeros; };
+constexpr WireLaOnly kSwitchTalkerAdv = {{0x01, 0x19, 0x00,
+                                          0x1D, 0x20, 0x00}, 25};
+constexpr WireLaOnly kSwitchTalkerFail = {{0x02, 0x22, 0x00,
+                                           0x26, 0x20, 0x00}, 34};
+constexpr WireLaOnly kSwitchListener = {{0x03, 0x08, 0x00,
+                                         0x0C, 0x20, 0x00}, 8};
+
+static void put_la_only(std::vector<uint8_t>& out, const WireLaOnly& w) {
+  out.insert(out.end(), w.head, w.head + 6);
+  out.insert(out.end(), size_t(w.zeros), uint8_t(0));
+  out.push_back(0x00); out.push_back(0x00);
 }
 
 // ---- harness ---------------------------------------------------------------
@@ -296,6 +414,12 @@ class SrpSuite {
     }
   }
 
+  void check_leaveall_shape(const char* name, const std::vector<uint8_t>& f,
+                            int declared);
+  void check_only_flags_differ(const char* name,
+                               const std::vector<uint8_t>& la,
+                               const std::vector<uint8_t>& plain, int declared);
+
   void bring_out_of_reset();
   void encode_the_two_minimal_pdus();
   void aggregate_one_window_into_one_frame();
@@ -303,6 +427,11 @@ class SrpSuite {
   void keep_the_two_participants_independent();
   void pad_the_packed_lanes_and_drop_unknown_types();
   void fold_a_full_table_then_backpressure_the_overflow();
+  void flag_every_registered_type_in_one_leaveall();
+  void match_the_switch_leaveall_only_vectors();
+  void flag_each_type_once_across_repeated_messages();
+  void keep_the_mvrp_leaveall_on_its_one_type();
+  void take_one_leaveall_per_drain();
   void domain_declares_adopts_and_ignores_repeats();
   void domain_surfaces_class_a_and_reverts_on_link_down();
   void vlan_refcounts_every_vid_and_freezes_the_old_one();
@@ -454,8 +583,9 @@ void SrpSuite::carry_a_wide_firstvalue_and_one_leaveall() {
   }
 
   // =====================================================================
-  // E7 — LeaveAll injection: flag on the FIRST VectorHeader only, then
-  //      consumed — the next PDU carries none
+  // E7 — LeaveAll injection: per Attribute Type — the first VectorHeader
+  //      of EACH type carries it (802.1Q §10.8.2.6), then consumed — the
+  //      next PDU carries none
   // =====================================================================
   {
     std::vector<Ev> evs = {
@@ -466,9 +596,10 @@ void SrpSuite::carry_a_wide_firstvalue_and_one_leaveall() {
     for (auto& e : evs) CHECK(h.push_enc(e), "E7 push accepted");
     CHECK(h.capture_pdu(0, got), "E7 PDU captured");
     check_pdu("E7", got, model_pdu(evs, true, OWN_MAC));
-    CHECK((got[19] >> 5) == 1, "E7 LeaveAllEvent rides vector 1");
+    CHECK((got[19] >> 5) == 1, "E7 LeaveAllEvent rides the Domain vector");
     // second message: type@28 len@29 listlen@30-31 -> its VectorHeader @32
-    CHECK((got[32] >> 5) == 0, "E7 second vector carries no LeaveAll");
+    CHECK((got[32] >> 5) == 1,
+          "E7 the Listener message carries its own LeaveAllEvent");
     std::vector<Ev> ev2 = {mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x02})};
     CHECK(h.push_enc(ev2[0]), "E7b push accepted");
     CHECK(h.capture_pdu(0, got), "E7b PDU captured");
@@ -567,6 +698,239 @@ void SrpSuite::fold_a_full_table_then_backpressure_the_overflow() {
     CHECK(h.push_enc(extra), "E12 push accepted after the drain");
     CHECK(h.capture_pdu(0, got), "E12b PDU captured");
     check_pdu("E12b", got, model_pdu({extra}, false, OWN_MAC));
+  }
+}
+
+// Structural LeaveAll properties of one captured MSRP LeaveAll MRPDU whose
+// drain declared the AttributeTypes in `declared` (bit t-1 for type t), read
+// by the independent parser — never by the packer the byte-exact check uses.
+void SrpSuite::check_leaveall_shape(const char* name,
+                                    const std::vector<uint8_t>& f,
+                                    int declared) {
+  std::vector<PVec> vs;
+  CHECK(parse_pdu(f, vs), "%s: one well-formed MRPDU, list lengths agree", name);
+  int last_declared_msg = -1;
+  for (const PVec& v : vs) {
+    if (v.nov > 0 && v.msg > last_declared_msg) last_declared_msg = v.msg;
+  }
+  for (int t = 1; t <= 4; ++t) {
+    int flags = 0;
+    int la_only = 0;
+    int first_la = -1;
+    for (const PVec& v : vs) {
+      if (v.type != t) continue;
+      if (first_la < 0) first_la = v.la;
+      if (v.la == 1) ++flags;
+      if (v.nov == 0) ++la_only;
+    }
+    CHECK(flags == 1 && first_la == 1,
+          "%s: type %d carries LeaveAll once, on its first vector (%d flags)",
+          name, t, flags);
+    const bool is_declared = (declared >> (t - 1)) & 1;
+    CHECK(la_only == (is_declared ? 0 : 1),
+          "%s: type %d (%s) has %d LeaveAll-only vectors", name, t,
+          is_declared ? "declared" : "not declared", la_only);
+  }
+  for (const PVec& v : vs) {
+    if (v.nov != 0) continue;
+    bool zero = true;
+    for (uint8_t b : v.fv) zero = zero && (b == 0);
+    const int alen = attr_len(0, v.type);
+    CHECK(v.la == 1 && v.packed == 0 && zero && int(v.fv.size()) == alen
+          && v.listlen == alen + 4 && v.msg > last_declared_msg,
+          "%s: type %d LeaveAll-only vector: LeaveAll, NoV 0, zero FirstValue"
+          " of AttributeLength %d, no packed events, AttributeListLength %d,"
+          " after every declared message", name, v.type, alen, alen + 4);
+  }
+}
+
+// The same drain with and without LeaveAll: the declared messages are
+// byte-identical except the LeaveAllEvent bit of one VectorHeader per
+// declared type, and only the LeaveAll-only messages are added — nothing at
+// all when every registered type is declared.
+void SrpSuite::check_only_flags_differ(const char* name,
+                                       const std::vector<uint8_t>& la,
+                                       const std::vector<uint8_t>& plain,
+                                       int declared) {
+  int added = 0;
+  int n_declared = 0;
+  for (int t = 1; t <= 4; ++t) {
+    if ((declared >> (t - 1)) & 1) ++n_declared;
+    else                           added += attr_len(0, t) + 8;
+  }
+  CHECK(la.size() == plain.size() + size_t(added),
+        "%s: LeaveAll adds exactly %d octets (got %zu, plain %zu)",
+        name, added, la.size(), plain.size());
+  int diffs = 0;
+  bool only_la_bit = true;
+  for (size_t i = 0; i + 2 < plain.size() && i < la.size(); ++i) {
+    if (la[i] == plain[i]) continue;
+    ++diffs;
+    if ((la[i] ^ plain[i]) != 0x20 || (la[i] & 0x20) == 0) only_la_bit = false;
+  }
+  CHECK(diffs == n_declared && only_la_bit,
+        "%s: declared messages differ only by one LeaveAllEvent bit per type"
+        " (%d octets differ, %d types declared)", name, diffs, n_declared);
+}
+
+void SrpSuite::flag_every_registered_type_in_one_leaveall() {
+  // =====================================================================
+  // L1 — every combination of declared MSRP types (15 non-empty subsets
+  //      of {Talker Advertise, Talker Failed, Listener, Domain}): the
+  //      LeaveAll MRPDU flags every registered type once and adds one
+  //      LeaveAll-only vector for each type it declares nothing of; the
+  //      same drain without LeaveAll is the reference for "unchanged"
+  // =====================================================================
+  constexpr int kPushOrder[4] = {4, 3,
+                                 1, 2};
+  for (int mask = 1; mask <= 15; ++mask) {
+    const std::string tag = "L1[" + std::to_string(mask) + "]";
+    const char* name = tag.c_str();
+    std::vector<Ev> evs;
+    for (int k = 0; k < 4; ++k) {             // rotate the push order too
+      const int t = kPushOrder[(k + mask) % 4];
+      if ((mask >> (t - 1)) & 1) evs.push_back(typed_ev(t));
+    }
+    d->enc_leaveall_i = 1; h.tick(); d->enc_leaveall_i = 0;
+    for (auto& e : evs) CHECK(h.push_enc(e), "%s push accepted", name);
+    CHECK(h.capture_pdu(0, got), "%s LeaveAll PDU captured", name);
+    const std::vector<uint8_t> la = got;
+    check_pdu(name, la, model_pdu(evs, true, OWN_MAC));
+    check_leaveall_shape(name, la, mask);
+    for (auto& e : evs) CHECK(h.push_enc(e), "%s plain push accepted", name);
+    CHECK(h.capture_pdu(0, got), "%s plain PDU captured", name);
+    check_only_flags_differ(name, la, got, mask);
+  }
+}
+
+void SrpSuite::match_the_switch_leaveall_only_vectors() {
+  // =====================================================================
+  // L2 — the NumberOfValues-0 vectors byte-for-byte: a Domain-only drain
+  //      closes with exactly the three LeaveAll-only messages the bench
+  //      switch sends after its own Domain message; the Domain one (the
+  //      switch never needs it) from 802.1Q §10.8.2.8 f by hand
+  // =====================================================================
+  {
+    const Ev dm = typed_ev(4);
+    d->enc_leaveall_i = 1; h.tick(); d->enc_leaveall_i = 0;
+    CHECK(h.push_enc(dm), "L2 push accepted");
+    CHECK(h.capture_pdu(0, got), "L2 PDU captured");
+    std::vector<uint8_t> tail;
+    put_la_only(tail, kSwitchTalkerAdv);
+    put_la_only(tail, kSwitchTalkerFail);
+    put_la_only(tail, kSwitchListener);
+    tail.push_back(0x00); tail.push_back(0x00);          // MRPDU EndMark
+    constexpr size_t kDomainEnd = 15 + 13;   // eth + version, Domain message
+    CHECK(got.size() == kDomainEnd + tail.size(),
+          "L2 frame is %zu octets got %zu", kDomainEnd + tail.size(), got.size());
+    CHECK(got.size() == kDomainEnd + tail.size()
+          && std::equal(tail.begin(), tail.end(), got.begin() + long(kDomainEnd)),
+          "L2 LeaveAll-only tail equals the switch's wire bytes");
+    CHECK(got[19] == 0x20 && got[20] == 0x01,
+          "L2 the declared Domain vector carries LeaveAll, NoV 1");
+  }
+  {
+    const Ev ls = typed_ev(3);
+    d->enc_leaveall_i = 1; h.tick(); d->enc_leaveall_i = 0;
+    CHECK(h.push_enc(ls), "L2b push accepted");
+    CHECK(h.capture_pdu(0, got), "L2b PDU captured");
+    const std::vector<uint8_t> dom_la_only = {0x04, 0x04, 0x00, 0x08,
+                                              0x20, 0x00,
+                                              0x00, 0x00, 0x00, 0x00,
+                                              0x00, 0x00};
+    CHECK(got.size() > dom_la_only.size() + 2
+          && std::equal(dom_la_only.begin(), dom_la_only.end(),
+                        got.end() - long(dom_la_only.size() + 2)),
+          "L2b Domain LeaveAll-only message: list length 8, NoV 0, 4 zero octets");
+  }
+}
+
+void SrpSuite::flag_each_type_once_across_repeated_messages() {
+  // =====================================================================
+  // L3 — a type spread over two vectors of one message AND a later second
+  //      message of the same type: LeaveAll only on its first vector
+  // =====================================================================
+  std::vector<Ev> evs = {
+    mk_ev(0, 3, 1, 2, {0, 0, 0, 0, 0, 0, 0x07, 0x10}),
+    mk_ev(0, 3, 1, 2, {0, 0, 0, 0, 0, 0, 0x07, 0x40}),   // vector 2
+    mk_ev(0, 4, 1, 0, {0x06, 0x03, 0x00, 0x02}),
+    mk_ev(0, 3, 1, 3, {0, 0, 0, 0, 0, 0, 0x07, 0x70}),   // message 3
+  };
+  d->enc_leaveall_i = 1; h.tick(); d->enc_leaveall_i = 0;
+  for (auto& e : evs) CHECK(h.push_enc(e), "L3 push accepted");
+  CHECK(h.capture_pdu(0, got), "L3 PDU captured");
+  check_pdu("L3", got, model_pdu(evs, true, OWN_MAC));
+  check_leaveall_shape("L3", got, 0xC);
+  std::vector<PVec> vs;
+  CHECK(parse_pdu(got, vs) && vs.size() == 6, "L3 six vectors got %zu", vs.size());
+  CHECK(vs.size() == 6 && vs[0].type == 3 && vs[0].la == 1
+        && vs[1].type == 3 && vs[1].msg == 0 && vs[1].la == 0
+        && vs[3].type == 3 && vs[3].msg == 2 && vs[3].la == 0,
+        "L3 the Listener's second vector and second message carry no LeaveAll");
+}
+
+void SrpSuite::keep_the_mvrp_leaveall_on_its_one_type() {
+  // =====================================================================
+  // L4 — MVRP has one Attribute Type: its LeaveAll MRPDU is unchanged —
+  //      the first VID vector only, nothing appended; the MSRP lane is
+  //      untouched by it
+  // =====================================================================
+  std::vector<Ev> ev = {mk_ev(1, 1, 1, 0, {0x00, 0x02}),
+                        mk_ev(1, 1, 1, 0, {0x00, 0x09})};   // two vectors
+  d->enc_leaveall_i = 2; h.tick(); d->enc_leaveall_i = 0;
+  for (auto& e : ev) CHECK(h.push_enc(e), "L4 push accepted");
+  CHECK(h.capture_pdu(1, got), "L4 MVRP PDU captured");
+  check_pdu("L4", got, model_pdu(ev, true, OWN_MAC));
+  const std::vector<uint8_t> la = got;
+  std::vector<PVec> vs;
+  CHECK(parse_pdu(la, vs) && vs.size() == 2 && vs[0].la == 1 && vs[1].la == 0
+        && vs[0].msg == 0 && vs[1].msg == 0,
+        "L4 LeaveAll on the first VID vector only, one message, none added");
+  for (auto& e : ev) CHECK(h.push_enc(e), "L4 plain push accepted");
+  CHECK(h.capture_pdu(1, got), "L4 plain PDU captured");
+  int diffs = 0;
+  for (size_t i = 0; i < got.size() && i < la.size(); ++i) diffs += (got[i] != la[i]);
+  CHECK(la.size() == got.size() && diffs == 1 && (la[17] ^ got[17]) == 0x20,
+        "L4 with and without LeaveAll differ by the one flag bit");
+  const Ev dm = typed_ev(4);
+  CHECK(h.push_enc(dm), "L4 MSRP push accepted");
+  CHECK(h.capture_pdu(0, got), "L4 MSRP PDU captured");
+  check_pdu("L4 MSRP lane", got, model_pdu({dm}, false, OWN_MAC));
+}
+
+void SrpSuite::take_one_leaveall_per_drain() {
+  // =====================================================================
+  // L5 — a LeaveAll requested while a drain is already writing is carried
+  //      WHOLE by the next MRPDU: never split across two, never dropped
+  // =====================================================================
+  {
+    const Ev tf = typed_ev(2);        // 34-byte FirstValue: a long drain
+    CHECK(h.push_enc(tf), "L5 push accepted");
+    const int c0 = h.commits;
+    d->enc_join_tick_i = 1; h.tick(); d->enc_join_tick_i = 0;
+    h.run(30);                        // past the first VectorHeader
+    CHECK(h.commits == c0, "L5 the drain is still writing");
+    d->enc_leaveall_i = 1; h.tick(); d->enc_leaveall_i = 0;
+    CHECK(h.wait_and_drain(got), "L5 running drain completes");
+    check_pdu("L5 running drain", got, model_pdu({tf}, false, OWN_MAC));
+    CHECK(h.push_enc(tf), "L5 second push accepted");
+    CHECK(h.capture_pdu(0, got), "L5 next PDU captured");
+    check_pdu("L5 next PDU", got, model_pdu({tf}, true, OWN_MAC));
+  }
+  // =====================================================================
+  // L6 — a LeaveAll on the drain's start cycle is taken by that drain,
+  //      once: the following MRPDU carries none
+  // =====================================================================
+  {
+    const Ev dm = typed_ev(4);
+    CHECK(h.push_enc(dm), "L6 push accepted");
+    d->enc_leaveall_i = 1; d->enc_join_tick_i = 1; h.tick();
+    d->enc_leaveall_i = 0; d->enc_join_tick_i = 0;
+    CHECK(h.wait_and_drain(got), "L6 PDU captured");
+    check_pdu("L6 start-cycle LeaveAll", got, model_pdu({dm}, true, OWN_MAC));
+    CHECK(h.push_enc(dm), "L6 second push accepted");
+    CHECK(h.capture_pdu(0, got), "L6 next PDU captured");
+    check_pdu("L6 next PDU", got, model_pdu({dm}, false, OWN_MAC));
   }
 }
 
@@ -864,6 +1228,11 @@ int SrpSuite::run() {
   keep_the_two_participants_independent();
   pad_the_packed_lanes_and_drop_unknown_types();
   fold_a_full_table_then_backpressure_the_overflow();
+  flag_every_registered_type_in_one_leaveall();
+  match_the_switch_leaveall_only_vectors();
+  flag_each_type_once_across_repeated_messages();
+  keep_the_mvrp_leaveall_on_its_one_type();
+  take_one_leaveall_per_drain();
   domain_declares_adopts_and_ignores_repeats();
   domain_surfaces_class_a_and_reverts_on_link_down();
   vlan_refcounts_every_vid_and_freezes_the_old_one();
