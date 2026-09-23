@@ -4,8 +4,8 @@
 Proves the SRP MRPDU vector decoder (`hdl/srp/KL_srp_decoder.sv`) against
 [10 §3](../../docs/architecture/10_srp_engine.md) (F10.6/F10.7/F10.8, the
 vector-value-k paragraph, the dual-EndMark framing rule and the Milan
-§4.2.7.1.2 tolerance rules, tested per F09.4): `make` = build + run,
-exit 0 = PASS, 113 checks.
+§4.2.7.1.2 tolerance rules, tested per F09.4) and the per-type LeaveAll rule
+of 10 §6.5: `make` = build + run, exit 0 = PASS, 190 checks.
 
 Every MRPDU is hand-built **byte-exact** in the harness and every expected
 event is an explicit hand-computed constant — the C++ never re-implements
@@ -36,9 +36,49 @@ Covered:
   AttributeLength (nothing emitted, next PDU decodes cleanly), a bad
   attribute mid-PDU (good first message emitted, fully-valid third message
   proven discarded), out-of-alphabet three-packed digit (> 215).
-- **Per-application LeaveAll** (corrected §6.5 rule): an MSRP LeaveAll
-  never strobes `la_mvrp_o` and vice versa; LeaveAll with
-  `NumberOfValues = 0` consumes its FirstValue and emits no events.
+- **Per-application LeaveAll**: an MSRP LeaveAll never strobes `la_mvrp_o`
+  and vice versa; LeaveAll with `NumberOfValues = 0` consumes its FirstValue
+  and emits no events.
+- **Per-Attribute-Type LeaveAll lanes** (10 §6.5, 802.1Q-2014 §10.7.5.20
+  NOTE and b)2), §10.8.2.6): `la_msrp_o[type − 1]`, each lane once per
+  MRPDU, at the first VectorHeader of its type that carries LeaveAllEvent.
+  The harness records every lane strobe and every value event in one
+  timeline and checks it in full:
+  - **P — the bench switch's own LeaveAll MRPDU**, transcribed byte for
+    byte from the Run B capture (`tap-runB.pcap`, switch port, 47.029619 s,
+    FCS dropped, 109 B): `[Listener LA JoinMt/Ready] [Domain LA n=2]
+    [TalkerAdvertise LA n=0] [TalkerFailed LA n=0]` gives exactly
+    `L3 E3 L4 E4 E4 L1 L2` — each lane once, ahead of its own type's events,
+    and nothing after the Listener re-declaration reaches the Listener lane.
+  - **Q — Domain-only LeaveAll** behind a Listener re-declaration: the
+    Domain lane alone; the Listener and talker lanes never fire.
+  - **R — Listener-only LeaveAll** (NumberOfValues 0, zero FirstValue,
+    list = AttributeLength + 4): the Listener lane alone, no events.
+  - **S — once per MRPDU**: two flagged Listener vectors plus a flagged
+    second Listener message fire the lane once, ahead of all three
+    re-declarations; the next MRPDU fires it again; MVRP likewise.
+  - **T: only a LeaveAllEvent closes the gate**, never a vector of the type
+    without one. The layout 10 §6.5 processes in DLSDU order, a type's
+    unflagged vector ahead of its first flagged one: `[L JoinIn] [L LA
+    JoinIn] [L LA JoinMt]` in one message gives `E3 L3 E3 E3`; `[L JoinIn]
+    [Domain LA n=2] [L LA JoinMt]` across messages gives `E3 L4 E4 E4 L3
+    E3`; MVRP `[VID JoinIn] [VID LA JoinIn]` gives `E1 M1 E1`.
+  - **U: the gate re-arms at the MRPDU after a malformed one.** An MRPDU
+    that fires the Listener lane and is then truncated mid-FirstValue, ends
+    after the AttributeList EndMark alone, or meets a bad AttributeLength
+    (whose discarded Domain LeaveAll never fires), and an MVRP MRPDU that
+    fires its lane ahead of an out-of-alphabet digit: each keeps its prefix,
+    lane included, is reported malformed, and the next well-formed MRPDU's
+    LeaveAll of that type fires the lane again.
+  - **V: a closed gate stays closed to the MRPDU's end, and re-arms after
+    padding.** `[L LA JoinIn] [Domain LA n=2] [L LA JoinMt]` gives `L3 E3
+    L4 E4 E4 E3`: another type's message does not re-open the Listener
+    gate. One Listener message `[LA JoinIn] [JoinIn] [LA JoinMt]` gives
+    `L3 E3 E3 E3`: a vector without LeaveAllEvent after the flagged one does
+    not re-open it. A Listener-only LeaveAll MRPDU of 19 octets, zero-padded
+    to the 46-octet minimum payload (the V9 route forwards an MRP frame
+    byte-exact to its last octet), fed twice, gives `L3` and one ok done
+    each time.
 - Explicit-EndMark-then-padding (min-frame pad bytes inert, one done).
 
 Mutation-proven 2026-08-11 (backup/sed/run/restore):
@@ -50,3 +90,36 @@ Mutation-proven 2026-08-11 (backup/sed/run/restore):
 | Talker/Listener DA +k increment removed | 4 of 113 FAIL (B DA range checks) |
 
 All three restored; suite back to 113/113 PASS.
+
+Receive-side LeaveAll routing, mutation-proven 2026-09-23 (issue #106; each
+arm planted, run, restored under a SHA-256 check):
+
+| Mutation | Result |
+|---|---|
+| The previous decoder (one application-wide strobe per flagged VectorHeader) | 19 of 150 FAIL (L, P, Q, R, S) |
+| Every lane strobed at every flagged VectorHeader | 21 of 150 FAIL (L, P, Q, R, S) |
+| Once-per-MRPDU gate removed | 8 of 150 FAIL (S, both MRPDUs and MVRP) |
+| Gate never re-armed at the next MRPDU | 18 of 150 FAIL (P, Q, R, S) |
+| Lane = AttributeType instead of AttributeType − 1 | 11 of 150 FAIL (L, Q, R, S; P by strobe order alone) |
+
+Both boundaries of the once-per-MRPDU gate (T, U), mutation-proven
+2026-09-23 in `git archive` exports (PR #107 correction round 1). Every arm
+below passed all four SRP suites before T and U existed:
+
+| Mutation | Result |
+|---|---|
+| Any VectorHeader of the type closes the gate (R270-1 X1, R271-1 R1) | 6 of 177 FAIL (T1, T2, T3) |
+| The lane fires only at the first VectorHeader of an MSRP message | 2 of 177 FAIL (T1) |
+| Gate re-armed only by a clean dual EndMark (R270-1 X7, R271-1 R8) | 4 of 177 FAIL (U1, U2, U3, U4) |
+| Gate re-armed at a new MRPDU only when it is MSRP | 1 of 177 FAIL (U4) |
+
+The rest of that gate's boundary (V), mutation-proven 2026-09-24 in `git
+archive` exports with the reviewer's plants verbatim (PR #107 correction
+round 2). Every arm below passed all four SRP suites before V existed:
+
+| Mutation | Result |
+|---|---|
+| The gate remembers only the last type that fired: one register, not one bit per type (R271-2 K6) | 2 of 190 FAIL (V1) |
+| Gate re-armed at every message whose AttributeType differs from the previous message's (R271-2 K8) | 2 of 190 FAIL (V1) |
+| An unflagged VectorHeader of a type re-opens that type's gate (R271-2 K7) | 2 of 190 FAIL (V2) |
+| Gate re-armed at a malformed or an unpadded clean end, never after a padded MRPDU (R271-2 K5) | 1 of 190 FAIL (V3) |

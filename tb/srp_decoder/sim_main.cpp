@@ -12,7 +12,14 @@
 // AttributeListLength (counted + flagged, framing survives), the Milan
 // §4.2.7.1.2 tolerance list per F09.4 (truncation mid-FirstValue,
 // mid-vector, bad AttributeLength with subsequent messages discarded,
-// out-of-alphabet three-packed digit), and per-application LeaveAll.
+// out-of-alphabet three-packed digit), per-application LeaveAll, and the
+// per-Attribute-Type LeaveAll lanes (802.1Q-2014 §10.7.5.20 NOTE): each
+// type's lane once per MRPDU, ahead of that type's events, including the
+// bench switch's own LeaveAll MRPDU from the Run B capture byte for byte,
+// and both boundaries of that once-per-MRPDU gate: a flagged vector after an
+// unflagged one of its type still fires the lane, nothing later in the MRPDU
+// re-opens a closed gate, and the gate re-arms at the MRPDU after a malformed
+// or a padded one.
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -46,6 +53,19 @@ struct Done {
   bool ok;
   bool mal;
 };
+// one entry of the strobe timeline: a LeaveAll lane ('L', MSRP type;
+// 'M', the MVRP VID type) or a value event ('E', its AttributeType)
+struct Mark {
+  char     kind;
+  unsigned type;
+  bool operator==(const Mark& o) const { return kind == o.kind && type == o.type; }
+};
+
+// MSRP AttributeTypes (802.1Q §35.2.2.4); LeaveAll lane = type - 1
+constexpr unsigned kTalkerAdv    = 1;
+constexpr unsigned kTalkerFailed = 2;
+constexpr unsigned kListener     = 3;
+constexpr unsigned kDomain       = 4;
 
 // harness timing guards, in clock cycles
 constexpr int kResetCycles     = 4;      // reset held before release
@@ -56,7 +76,9 @@ struct Harness {
   VKL_srp_decoder* dut;
   std::vector<Evt>  evts;
   std::vector<Done> dones;
-  int la_msrp = 0;
+  std::vector<Mark> marks;
+  int la_msrp = 0;             // MSRP LeaveAll strobes, every lane
+  int la_lane[4] = {};         // per MSRP AttributeType, index type - 1
   int la_mvrp = 0;
   int llbad = 0;
   unsigned llcnt_at_bad = 0;
@@ -64,8 +86,9 @@ struct Harness {
   explicit Harness(VKL_srp_decoder* d) : dut(d) {}
 
   void clear() {
-    evts.clear(); dones.clear();
+    evts.clear(); dones.clear(); marks.clear();
     la_msrp = la_mvrp = llbad = 0; llcnt_at_bad = 0;
+    for (int& n : la_lane) n = 0;
   }
 
   // pre-edge sampling: settle inputs, observe registered strobes, then edge
@@ -91,9 +114,15 @@ struct Harness {
       e.cid  = dut->evt_class_id_o;
       e.ca   = dut->evt_class_a_o;
       evts.push_back(e);
+      marks.push_back({'E', e.attr});
     }
-    if (dut->la_msrp_o) ++la_msrp;
-    if (dut->la_mvrp_o) ++la_mvrp;
+    for (unsigned lane = 0; lane < 4; ++lane) {
+      if ((dut->la_msrp_o >> lane) & 1u) {
+        ++la_msrp; ++la_lane[lane];
+        marks.push_back({'L', lane + 1});
+      }
+    }
+    if (dut->la_mvrp_o) { ++la_mvrp; marks.push_back({'M', 1}); }
     if (dut->listlen_bad_o) { ++llbad; llcnt_at_bad = dut->dbg_listlen_cnt_o; }
     if (dut->pdu_done_o) dones.push_back({static_cast<bool>(dut->pdu_ok_o),
                                           static_cast<bool>(dut->pdu_malformed_o)});
@@ -163,6 +192,14 @@ class SrpDecoderSuite {
   void an_out_of_alphabet_three_packed_digit_is_malformed();
   void an_explicit_endmark_makes_frame_padding_inert();
   void a_multi_message_msrp_pdu_decodes_every_message();
+  void the_run_b_switch_leave_all_strobes_each_type_ahead_of_its_events();
+  void a_domain_only_leave_all_never_strobes_the_listener_lane();
+  void a_listener_only_leave_all_strobes_the_listener_lane_alone();
+  void a_type_leaves_all_once_per_mrpdu();
+  void a_leave_all_after_an_unflagged_vector_of_its_type_still_fires();
+  void the_gate_re_arms_after_a_malformed_mrpdu();
+  void the_gate_stays_closed_to_the_mrpdu_end_and_re_arms_after_padding();
+  void check_marks(const char* tag, const std::vector<Mark>& want);
 
   const milan::tb::Model<VKL_srp_decoder> model;
   VKL_srp_decoder* const dut = model.get();
@@ -494,6 +531,8 @@ void SrpDecoderSuite::leave_all_is_per_application() {
   P16(p, 0); P16(p, 0);
   h.feed(p, true);
   CHECK(h.la_msrp == 1, "L MSRP LeaveAll fires got %d", h.la_msrp);
+  CHECK(h.la_lane[kDomain - 1] == 1, "L on the Domain lane got %d",
+        h.la_lane[kDomain - 1]);
   CHECK(h.la_mvrp == 0, "L MVRP registrars untouched got %d", h.la_mvrp);
   CHECK(h.evts.empty(), "L zero values emit nothing got %zu", h.evts.size());
   CHECK(h.dones.size() == 1 && h.dones[0].ok, "L done ok");
@@ -587,6 +626,411 @@ void SrpDecoderSuite::a_multi_message_msrp_pdu_decodes_every_message() {
   CHECK(h.llbad == 0, "O every AttributeListLength truthful");
 }
 
+// the strobe timeline must equal `want` exactly (LeaveAll lanes and value
+// events in wire order); printed in full on a mismatch
+void SrpDecoderSuite::check_marks(const char* tag, const std::vector<Mark>& want) {
+  const bool same = (h.marks == want);
+  CHECK(same, "%s strobe order", tag);
+  if (!same) {
+    printf("  got :");
+    for (const Mark& m : h.marks) printf(" %c%u", m.kind, m.type);
+    printf("\n  want:");
+    for (const Mark& m : want) printf(" %c%u", m.kind, m.type);
+    printf("\n");
+  }
+}
+
+// ==== P: the bench switch's own LeaveAll MRPDU (Run B, 47.029619 s) =====
+// Transcribed from tap-runB.pcap (switch port -> DUT), FCS dropped: the
+// switch flags LeaveAll in EVERY message, Listener first. §10.7.5.20 NOTE:
+// "the LeaveAll message operates on a per-Attribute Type basis", so each
+// type's lane fires once, ahead of that type's events; the Listener
+// JoinMt that re-declares the stream is never followed by a Listener
+// LeaveAll in the same MRPDU (the per-VectorHeader strobe did exactly that)
+void SrpDecoderSuite::the_run_b_switch_leave_all_strobes_each_type_ahead_of_its_events() {
+  h.clear();
+  const std::vector<uint8_t> p = {
+      0x00,                                            // ProtocolVersion
+      0x03, 0x08, 0x00, 0x0e,                          // Listener, 8 B, list 14
+      0x20, 0x01,                                      // LeaveAll, 1 value
+      0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01,  // stream_id
+      0x6c, 0x80,                                      // [JoinMt] {Ready}
+      0x00, 0x00,
+      0x04, 0x04, 0x00, 0x09,                          // Domain, 4 B, list 9
+      0x20, 0x02,                                      // LeaveAll, 2 values
+      0x05, 0x02, 0x00, 0x02,                          // {5, 2, VID 2}
+      0x7e,                                            // [JoinMt, JoinMt]
+      0x00, 0x00,
+      0x01, 0x19, 0x00, 0x1d,                          // Talker Advertise, 25 B, list 29
+      0x20, 0x00,                                      // LeaveAll, 0 values
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00,                                            // FirstValue, ignored
+      0x00, 0x00,
+      0x02, 0x22, 0x00, 0x26,                          // Talker Failed, 34 B, list 38
+      0x20, 0x00,                                      // LeaveAll, 0 values
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00,
+      0x00, 0x00};                                     // MRPDU EndMark
+  CHECK(p.size() == 109, "P transcription is 109 B got %zu", p.size());
+  h.feed(p, true);
+
+  CHECK(h.la_lane[kListener - 1] == 1, "P Listener lane once got %d", h.la_lane[kListener - 1]);
+  CHECK(h.la_lane[kDomain - 1] == 1, "P Domain lane once got %d", h.la_lane[kDomain - 1]);
+  CHECK(h.la_lane[kTalkerAdv - 1] == 1, "P Talker Advertise lane once got %d",
+        h.la_lane[kTalkerAdv - 1]);
+  CHECK(h.la_lane[kTalkerFailed - 1] == 1, "P Talker Failed lane once got %d",
+        h.la_lane[kTalkerFailed - 1]);
+  CHECK(h.la_msrp == 4, "P four MSRP strobes in all got %d", h.la_msrp);
+  CHECK(h.la_mvrp == 0, "P MVRP lane quiet got %d", h.la_mvrp);
+  CHECK(h.evts.size() == 3, "P evts 1+2 got %zu", h.evts.size());
+  if (h.evts.size() == 3) {
+    CHECK(h.evts[0].attr == kListener && h.evts[0].ev == 3 && h.evts[0].fp == 2
+          && h.evts[0].sid == 0x0200000000010001ull,
+          "P Listener JoinMt Ready on the CRF stream");
+    CHECK(h.evts[2].attr == kDomain && h.evts[2].ca && h.evts[2].prio == 3,
+          "P Domain value 1 is class A, priority 3");
+  }
+  // each lane lands ahead of the events of its own type, and the Listener
+  // re-declaration is the LAST thing the Listener registrars see
+  check_marks("P", {{'L', kListener}, {'E', kListener},
+                    {'L', kDomain}, {'E', kDomain}, {'E', kDomain},
+                    {'L', kTalkerAdv}, {'L', kTalkerFailed}});
+  CHECK(h.dones.size() == 1 && h.dones[0].ok, "P done ok");
+  CHECK(h.llbad == 0, "P every AttributeListLength truthful");
+}
+
+// ==== Q: LeaveAll on the Domain type only — the Listener lane stays quiet
+// A Listener re-declaration ahead of a Domain-only LeaveAll in one MRPDU:
+// only the Domain lane fires, so no Listener registrar can age from it
+void SrpDecoderSuite::a_domain_only_leave_all_never_strobes_the_listener_lane() {
+  h.clear();
+  std::vector<uint8_t> p;
+  P8(p, 0);
+  P8(p, 3); P8(p, 8);             // Listener, no LeaveAll
+  P16(p, 14);
+  P16(p, 0x0001);
+  P64(p, SIDB + 0x900);
+  P8(p, 36); P8(p, 0x80);         // [JoinIn] {Ready}
+  P16(p, 0);
+  P8(p, 4); P8(p, 4);             // Domain, LeaveAll
+  P16(p, 9);
+  P16(p, 0x2002);
+  P8(p, 5); P8(p, 2); P16(p, 2);
+  P8(p, 126);                     // [JoinMt, JoinMt]
+  P16(p, 0); P16(p, 0);
+  h.feed(p, true);
+
+  CHECK(h.la_lane[kDomain - 1] == 1, "Q Domain lane once got %d", h.la_lane[kDomain - 1]);
+  CHECK(h.la_lane[kListener - 1] == 0, "Q Listener lane never fires got %d",
+        h.la_lane[kListener - 1]);
+  CHECK(h.la_lane[kTalkerAdv - 1] == 0 && h.la_lane[kTalkerFailed - 1] == 0,
+        "Q talker lanes never fire");
+  CHECK(h.la_msrp == 1 && h.la_mvrp == 0, "Q one MSRP strobe in all got %d", h.la_msrp);
+  check_marks("Q", {{'E', kListener}, {'L', kDomain}, {'E', kDomain}, {'E', kDomain}});
+  CHECK(h.dones.size() == 1 && h.dones[0].ok, "Q done ok");
+}
+
+// ==== R: LeaveAll on the Listener type only, nothing re-declared =========
+// A LeaveAll-only Listener vector (NumberOfValues 0, zero FirstValue, no
+// packed bytes, list = AttributeLength + 4): the Listener lane alone
+void SrpDecoderSuite::a_listener_only_leave_all_strobes_the_listener_lane_alone() {
+  h.clear();
+  std::vector<uint8_t> p;
+  P8(p, 0);
+  P8(p, 3); P8(p, 8);
+  P16(p, 12);                     // 2 + 8 + 2
+  P16(p, 0x2000);                 // LeaveAll, 0 values
+  P64(p, 0);
+  P16(p, 0); P16(p, 0);
+  h.feed(p, true);
+
+  CHECK(h.la_lane[kListener - 1] == 1, "R Listener lane once got %d",
+        h.la_lane[kListener - 1]);
+  CHECK(h.la_msrp == 1 && h.la_mvrp == 0, "R no other lane got %d", h.la_msrp);
+  CHECK(h.evts.empty(), "R no re-declaration got %zu", h.evts.size());
+  check_marks("R", {{'L', kListener}});
+  CHECK(h.dones.size() == 1 && h.dones[0].ok && h.llbad == 0, "R done ok, list 12");
+}
+
+// ==== S: a type's LeaveAll applies once per MRPDU, re-armed per MRPDU ====
+// Two flagged Listener vectors in one message plus a flagged second
+// Listener message: the lane fires at the first only, so the later values'
+// re-declarations are not re-aged by the same MRPDU. The next MRPDU fires
+// again. MVRP likewise.
+void SrpDecoderSuite::a_type_leaves_all_once_per_mrpdu() {
+  auto listener_vec = [](std::vector<uint8_t>& v, uint64_t sid, uint8_t tp) {
+    P16(v, 0x2001);               // LeaveAll, 1 value
+    P64(v, sid);
+    P8(v, tp); P8(v, 0x80);       // one event, {Ready}
+  };
+  std::vector<uint8_t> p;
+  P8(p, 0);
+  P8(p, 3); P8(p, 8);
+  P16(p, 26);                     // 12 + 12 + 2
+  listener_vec(p, SIDB + 0xA00, 108);   // JoinMt
+  listener_vec(p, SIDB + 0xB00, 108);   // JoinMt
+  P16(p, 0);
+  P8(p, 3); P8(p, 8);             // a second Listener message
+  P16(p, 14);
+  listener_vec(p, SIDB + 0xC00, 36);    // JoinIn
+  P16(p, 0); P16(p, 0);
+
+  for (int pdu = 0; pdu < 2; ++pdu) {
+    h.clear();
+    h.feed(p, true);
+    CHECK(h.la_lane[kListener - 1] == 1, "S pdu %d Listener lane once got %d",
+          pdu, h.la_lane[kListener - 1]);
+    CHECK(h.la_msrp == 1, "S pdu %d no other lane got %d", pdu, h.la_msrp);
+    CHECK(h.evts.size() == 3, "S pdu %d three re-declarations got %zu",
+          pdu, h.evts.size());
+    check_marks(pdu == 0 ? "S pdu 0" : "S pdu 1",
+                {{'L', kListener}, {'E', kListener}, {'E', kListener},
+                 {'E', kListener}});
+    CHECK(h.dones.size() == 1 && h.dones[0].ok, "S pdu %d done ok", pdu);
+  }
+
+  h.clear();
+  std::vector<uint8_t> q;         // MVRP: two flagged VID vectors
+  P8(q, 0);
+  P8(q, 1); P8(q, 2);
+  P16(q, 0x2001); P16(q, 5); P8(q, 36);
+  P16(q, 0x2001); P16(q, 9); P8(q, 36);
+  P16(q, 0); P16(q, 0);
+  h.feed(q, false);
+  CHECK(h.la_mvrp == 1 && h.la_msrp == 0, "S MVRP lane once per MRPDU got %d",
+        h.la_mvrp);
+  check_marks("S MVRP", {{'M', 1}, {'E', 1}, {'E', 1}});
+}
+
+// ==== T: the gate is closed by a LeaveAll, never by a vector without one ==
+// A vector of type t without LeaveAllEvent ahead of the first one with it
+// in the same MRPDU is processed in DLSDU order (10 §6.5, §10.8): its events,
+// then the lane at the flagged VectorHeader, then the flagged vector's
+// events. Within one message, across messages, and for MVRP.
+void SrpDecoderSuite::a_leave_all_after_an_unflagged_vector_of_its_type_still_fires() {
+  // T1: one Listener message [no LA JoinIn][LA JoinIn][LA JoinMt]
+  h.clear();
+  std::vector<uint8_t> p;
+  P8(p, 0);
+  P8(p, 3); P8(p, 8);
+  P16(p, 38);                     // 3 x 12 + 2
+  P16(p, 0x0001); P64(p, SIDB + 0xD00); P8(p, 36); P8(p, 0x80);
+  P16(p, 0x2001); P64(p, SIDB + 0xE00); P8(p, 36); P8(p, 0x80);
+  P16(p, 0x2001); P64(p, SIDB + 0xF00); P8(p, 108); P8(p, 0x80);
+  P16(p, 0); P16(p, 0);
+  h.feed(p, true);
+  CHECK(h.la_lane[kListener - 1] == 1 && h.la_msrp == 1,
+        "T1 Listener lane once, no other lane got %d of %d",
+        h.la_lane[kListener - 1], h.la_msrp);
+  check_marks("T1 one message", {{'E', kListener}, {'L', kListener},
+                                 {'E', kListener}, {'E', kListener}});
+  CHECK(h.evts.size() == 3 && h.evts[0].sid == SIDB + 0xD00
+        && h.evts[1].sid == SIDB + 0xE00 && h.evts[2].sid == SIDB + 0xF00,
+        "T1 the unflagged vector's event comes first");
+  CHECK(h.dones.size() == 1 && h.dones[0].ok && h.llbad == 0, "T1 done ok, list 38");
+
+  // T2: [Listener no LA JoinIn][Domain LA n=2][Listener LA JoinMt]
+  h.clear();
+  p.clear();
+  P8(p, 0);
+  P8(p, 3); P8(p, 8); P16(p, 14);
+  P16(p, 0x0001); P64(p, SIDB + 0xD10); P8(p, 36); P8(p, 0x80);
+  P16(p, 0);
+  P8(p, 4); P8(p, 4); P16(p, 9);
+  P16(p, 0x2002); P8(p, 5); P8(p, 2); P16(p, 2); P8(p, 126);
+  P16(p, 0);
+  P8(p, 3); P8(p, 8); P16(p, 14);
+  P16(p, 0x2001); P64(p, SIDB + 0xE10); P8(p, 108); P8(p, 0x80);
+  P16(p, 0); P16(p, 0);
+  h.feed(p, true);
+  CHECK(h.la_lane[kListener - 1] == 1 && h.la_lane[kDomain - 1] == 1 && h.la_msrp == 2,
+        "T2 Listener and Domain lanes once each got %d %d of %d",
+        h.la_lane[kListener - 1], h.la_lane[kDomain - 1], h.la_msrp);
+  check_marks("T2 across messages", {{'E', kListener}, {'L', kDomain}, {'E', kDomain},
+                                     {'E', kDomain}, {'L', kListener}, {'E', kListener}});
+  CHECK(h.dones.size() == 1 && h.dones[0].ok && h.llbad == 0, "T2 done ok");
+
+  // T3: MVRP [VID no LA JoinIn][VID LA JoinIn]
+  h.clear();
+  p.clear();
+  P8(p, 0);
+  P8(p, 1); P8(p, 2);
+  P16(p, 0x0001); P16(p, 5); P8(p, 36);
+  P16(p, 0x2001); P16(p, 9); P8(p, 36);
+  P16(p, 0); P16(p, 0);
+  h.feed(p, false);
+  CHECK(h.la_mvrp == 1 && h.la_msrp == 0, "T3 MVRP lane once got %d", h.la_mvrp);
+  check_marks("T3 MVRP", {{'E', 1}, {'M', 1}, {'E', 1}});
+  CHECK(h.evts.size() == 2 && h.evts[0].vid == 5 && h.evts[1].vid == 9,
+        "T3 VID 5 before the lane, VID 9 after");
+  CHECK(h.dones.size() == 1 && h.dones[0].ok, "T3 done ok");
+}
+
+// ==== U: the gate re-arms at the next MRPDU after a malformed one ========
+// Each first MRPDU fires a lane and is then tolerance-discarded (Milan
+// §4.2.7.1.2): its prefix stands, the lane included. The next MRPDU is a
+// new PDU, so its LeaveAll of the same type fires the lane again.
+void SrpDecoderSuite::the_gate_re_arms_after_a_malformed_mrpdu() {
+  std::vector<uint8_t> good_l;    // Listener-only LeaveAll, well formed
+  P8(good_l, 0);
+  P8(good_l, 3); P8(good_l, 8); P16(good_l, 12);
+  P16(good_l, 0x2000); P64(good_l, 0);
+  P16(good_l, 0); P16(good_l, 0);
+  auto next_fires_again = [&](const char* tag) {
+    h.clear();
+    h.feed(good_l, true);
+    check_marks(tag, {{'L', kListener}});
+    CHECK(h.dones.size() == 1 && h.dones[0].ok, "%s done ok", tag);
+  };
+  auto first_is_malformed = [&](const char* tag) {
+    CHECK(h.dones.size() == 1 && h.dones[0].mal && !h.dones[0].ok,
+          "%s malformed", tag);
+  };
+
+  // U1: flagged Listener vector truncated mid-FirstValue (3 of 8 bytes)
+  h.clear();
+  std::vector<uint8_t> p;
+  P8(p, 0);
+  P8(p, 3); P8(p, 8); P16(p, 14);
+  P16(p, 0x2001); P8(p, 0x02); P8(p, 0x00); P8(p, 0x00);
+  h.feed(p, true);
+  check_marks("U1 truncated: lane before the cut", {{'L', kListener}});
+  first_is_malformed("U1 truncated");
+  next_fires_again("U1 re-armed after a truncated MRPDU");
+
+  // U2: flagged Listener vector, then the AttributeList EndMark alone
+  h.clear();
+  p.clear();
+  P8(p, 0);
+  P8(p, 3); P8(p, 8); P16(p, 14);
+  P16(p, 0x2001); P64(p, SIDB + 0xA20); P8(p, 36); P8(p, 0x80);
+  P16(p, 0);                      // no MRPDU EndMark
+  h.feed(p, true);
+  check_marks("U2 single EndMark: prefix stands", {{'L', kListener}, {'E', kListener}});
+  first_is_malformed("U2 single EndMark");
+  next_fires_again("U2 re-armed after a single-EndMark MRPDU");
+
+  // U3: flagged Listener message, then a Domain message with a bad
+  // AttributeLength: the rest is discarded, its flagged vector included
+  h.clear();
+  p.clear();
+  P8(p, 0);
+  P8(p, 3); P8(p, 8); P16(p, 14);
+  P16(p, 0x2001); P64(p, SIDB + 0xA30); P8(p, 36); P8(p, 0x80);
+  P16(p, 0);
+  P8(p, 4); P8(p, 5);             // Domain, AttributeLength 5: malformed
+  P16(p, 9);
+  P16(p, 0x2002); P8(p, 5); P8(p, 2); P16(p, 2); P8(p, 126);
+  P16(p, 0); P16(p, 0);
+  h.feed(p, true);
+  check_marks("U3 bad AttributeLength: the discarded Domain LeaveAll never fires",
+              {{'L', kListener}, {'E', kListener}});
+  first_is_malformed("U3 bad AttributeLength");
+  next_fires_again("U3 re-armed after a discarded MRPDU");
+
+  // U4: MVRP [VID LA JoinIn][VID digit 6]: out of alphabet, discarded
+  h.clear();
+  p.clear();
+  P8(p, 0);
+  P8(p, 1); P8(p, 2);
+  P16(p, 0x2001); P16(p, 5); P8(p, 36);
+  P16(p, 0x0001); P16(p, 9); P8(p, 220);
+  P16(p, 0); P16(p, 0);
+  h.feed(p, false);
+  check_marks("U4 MVRP out-of-alphabet digit: prefix stands", {{'M', 1}, {'E', 1}});
+  first_is_malformed("U4 MVRP out-of-alphabet digit");
+  h.clear();
+  p.clear();
+  P8(p, 0);
+  P8(p, 1); P8(p, 2);
+  P16(p, 0x2001); P16(p, 5); P8(p, 36);
+  P16(p, 0); P16(p, 0);
+  h.feed(p, false);
+  check_marks("U4 MVRP re-armed after a discarded MRPDU", {{'M', 1}, {'E', 1}});
+  CHECK(h.dones.size() == 1 && h.dones[0].ok, "U4 MVRP re-armed done ok");
+}
+
+// ==== V: a closed gate stays closed to the MRPDU's end, then re-arms =====
+// Once a type's lane has fired, nothing later in the same MRPDU re-opens
+// it: not a message of another type (V1), not a vector of the type without
+// LeaveAllEvent (V2). Either would re-age the registration an earlier
+// vector had just re-declared, the Run B burst-2 mechanism. And the MRPDU
+// after a well-formed but padded one fires the lane again (V3): the V9
+// route forwards an MRP frame byte-exact to its last octet, so a short
+// LeaveAll MRPDU reaches the decoder padded.
+void SrpDecoderSuite::the_gate_stays_closed_to_the_mrpdu_end_and_re_arms_after_padding() {
+  // V1: [Listener LA JoinIn][Domain LA n=2][Listener LA JoinMt]
+  h.clear();
+  std::vector<uint8_t> p;
+  P8(p, 0);
+  P8(p, 3); P8(p, 8); P16(p, 14);
+  P16(p, 0x2001); P64(p, SIDB + 0xD40); P8(p, 36); P8(p, 0x80);
+  P16(p, 0);
+  P8(p, 4); P8(p, 4); P16(p, 9);
+  P16(p, 0x2002); P8(p, 5); P8(p, 2); P16(p, 2); P8(p, 126);
+  P16(p, 0);
+  P8(p, 3); P8(p, 8); P16(p, 14);
+  P16(p, 0x2001); P64(p, SIDB + 0xE40); P8(p, 108); P8(p, 0x80);
+  P16(p, 0); P16(p, 0);
+  h.feed(p, true);
+  CHECK(h.la_lane[kListener - 1] == 1 && h.la_lane[kDomain - 1] == 1 && h.la_msrp == 2,
+        "V1 Listener and Domain lanes once each got %d %d of %d",
+        h.la_lane[kListener - 1], h.la_lane[kDomain - 1], h.la_msrp);
+  check_marks("V1 across a Domain message", {{'L', kListener}, {'E', kListener},
+                                            {'L', kDomain}, {'E', kDomain},
+                                            {'E', kDomain}, {'E', kListener}});
+  CHECK(h.evts.size() == 4 && h.evts[0].sid == SIDB + 0xD40 && h.evts[0].ev == 1
+        && h.evts[3].sid == SIDB + 0xE40 && h.evts[3].ev == 3,
+        "V1 the first message's JoinIn first, the last message's JoinMt last");
+  CHECK(h.dones.size() == 1 && h.dones[0].ok && h.llbad == 0, "V1 done ok");
+
+  // V2: one Listener message [LA JoinIn][no LA JoinIn][LA JoinMt]
+  h.clear();
+  p.clear();
+  P8(p, 0);
+  P8(p, 3); P8(p, 8);
+  P16(p, 38);                     // 3 x 12 + 2
+  P16(p, 0x2001); P64(p, SIDB + 0xD50); P8(p, 36); P8(p, 0x80);
+  P16(p, 0x0001); P64(p, SIDB + 0xE50); P8(p, 36); P8(p, 0x80);
+  P16(p, 0x2001); P64(p, SIDB + 0xF50); P8(p, 108); P8(p, 0x80);
+  P16(p, 0); P16(p, 0);
+  h.feed(p, true);
+  CHECK(h.la_lane[kListener - 1] == 1 && h.la_msrp == 1,
+        "V2 Listener lane once, no other lane got %d of %d",
+        h.la_lane[kListener - 1], h.la_msrp);
+  check_marks("V2 after an unflagged vector", {{'L', kListener}, {'E', kListener},
+                                               {'E', kListener}, {'E', kListener}});
+  CHECK(h.evts.size() == 3 && h.evts[0].sid == SIDB + 0xD50
+        && h.evts[1].sid == SIDB + 0xE50 && h.evts[2].sid == SIDB + 0xF50
+        && h.evts[2].ev == 3,
+        "V2 all three values in wire order, the JoinMt last");
+  CHECK(h.dones.size() == 1 && h.dones[0].ok && h.llbad == 0, "V2 done ok, list 38");
+
+  // V3: a Listener-only LeaveAll MRPDU (1 + 1 + 1 + 2 + 2 + 8 + 2 + 2 = 19
+  // octets) zero-padded to the 46-octet minimum payload of an untagged frame
+  // (64 - 14 header - 4 FCS), fed twice: one ok done per MRPDU at its dual
+  // EndMark, the padding inert, and the Listener lane both times
+  constexpr size_t kMinPayload = 46;
+  std::vector<uint8_t> q;
+  P8(q, 0);
+  P8(q, 3); P8(q, 8); P16(q, 12);
+  P16(q, 0x2000); P64(q, 0);
+  P16(q, 0); P16(q, 0);
+  CHECK(q.size() == 19, "V3 the MRPDU is 19 octets got %zu", q.size());
+  q.resize(kMinPayload, 0);
+  for (int pdu = 0; pdu < 2; ++pdu) {
+    h.clear();
+    h.feed(q, true);
+    check_marks(pdu == 0 ? "V3 padded MRPDU 0" : "V3 padded MRPDU 1, re-armed after padding",
+                {{'L', kListener}});
+    CHECK(h.dones.size() == 1 && h.dones[0].ok && !h.dones[0].mal && h.llbad == 0,
+          "V3 padded MRPDU %d one ok done, padding inert", pdu);
+  }
+}
+
 int SrpDecoderSuite::run() {
   reset_releases_the_decoder();
   the_certified_domain_shape_surfaces_class_a_at_plus_k();
@@ -604,6 +1048,13 @@ int SrpDecoderSuite::run() {
   an_out_of_alphabet_three_packed_digit_is_malformed();
   an_explicit_endmark_makes_frame_padding_inert();
   a_multi_message_msrp_pdu_decodes_every_message();
+  the_run_b_switch_leave_all_strobes_each_type_ahead_of_its_events();
+  a_domain_only_leave_all_never_strobes_the_listener_lane();
+  a_listener_only_leave_all_strobes_the_listener_lane_alone();
+  a_type_leaves_all_once_per_mrpdu();
+  a_leave_all_after_an_unflagged_vector_of_its_type_still_fires();
+  the_gate_re_arms_after_a_malformed_mrpdu();
+  the_gate_stays_closed_to_the_mrpdu_end_and_re_arms_after_padding();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

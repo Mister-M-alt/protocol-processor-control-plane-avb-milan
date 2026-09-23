@@ -42,7 +42,7 @@ module srp_stream_fsms_wrap #(
     // shared cadence + timebase + expiry bus
     input  wire         join_tick_i,
     input  wire         periodic_tick_i,
-    input  wire         leaveall_rx_i,
+    input  wire  [3:0]  leaveall_rx_i,   // one lane per MSRP AttributeType (srp_pkg SRP_LA_*_C)
     input  wire         leaveall_own_i,
     input  wire  [31:0] now_ms_i,
     input  wire         exp_valid_i,
