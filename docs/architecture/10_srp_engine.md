@@ -326,12 +326,30 @@ sequenceDiagram
 > latency; `EVT_TK_UNREGISTERED` therefore fires on the *frame* that withdraws a
 > talker attribute, not a timer later.
 
-**LeaveAll scope is per MRP application** (802.1Q §10.7.1): MSRP and MVRP are
-separate participants with separate leavealltimers, exactly as
-[F08.4](08_timing.md#fig-08-alloc) sizes them (× 2 participants). An MVRP LeaveAll
-shall never age an MSRP registrar, and vice versa — a merged LeaveAll pulse lets a
-bridge's MVRP maintenance cycle age a healthy Listener Ready and flap the stream
-licence.
+**The LeaveAll timer is per MRP application; the LeaveAll message is per
+Attribute Type.** MSRP and MVRP are separate participants with separate
+leavealltimers (802.1Q §10.7.9), exactly as [F08.4](08_timing.md#fig-08-alloc)
+sizes them (× 2 participants). An MVRP LeaveAll shall never age an MSRP registrar,
+and vice versa — a merged LeaveAll pulse lets a bridge's MVRP maintenance cycle age
+a healthy Listener Ready and flap the stream licence. The LeaveAllEvent itself
+applies "to the state machines for all Attributes of the type defined by the
+AttributeType field" (§10.8.2.6), so a LeaveAll "must generate a LeaveAll
+Attribute for each Attribute Type supported by the application" (§10.7.5.20
+NOTE). The own LeaveAll MRPDU therefore flags the first VectorAttribute of every
+type the participant registers: MSRP Talker Advertise, Talker Failed, Listener and
+Domain, and MVRP VID. A registered type the cycle declares nothing of rides a
+LeaveAll-only VectorAttribute in its own message: NumberOfValues 0, a FirstValue
+that is present at its full AttributeLength but ignored (sent as zero), and no
+packed events (§10.8.2.8 f and g, §10.8.2.10.1 NOTE). A bridge that scopes a
+received LeaveAll by type would otherwise re-declare only the types we flagged,
+and let our other registrations, such as its Listener Ready, age out after
+`T-MRP-LEAVE`.
+
+Receive side, as landed: the decoder still raises one application-wide rLA! for
+each VectorAttribute that carries LeaveAllEvent (`KL_srp_decoder`, `la_msrp_o`),
+so a bridge LeaveAll MRPDU that flags every type re-ages a registration that an
+earlier message of the same PDU had just re-declared. §10.8.2.6 scopes that event
+to the message's Attribute Type. This is an open deviation, recorded on issue #106.
 
 ## 7. µcode / dispatch
 

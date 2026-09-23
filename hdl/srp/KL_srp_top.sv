@@ -52,13 +52,15 @@
 //                module IS the engine; leaving it out leaves the identical
 //                srp contract to an external stack (02 §4.1).
 //
-//  Decision    : the one decision that matters — LeaveAll stays PER
-//                APPLICATION end to end (802.1Q §10.7.1, the corrected 10
-//                §6.5 rule): two leavealltimer slots, two PRNG draws, two
+//  Decision    : the one decision that matters — the LeaveAll TIMER stays
+//                PER APPLICATION end to end (802.1Q §10.7.9, the corrected
+//                10 §6.5 rule): two leavealltimer slots, two PRNG draws, two
 //                encoder LeaveAll lanes, and the decoder's split la_msrp /
 //                la_mvrp strobes are never OR-ed. One merged pulse would
 //                let a bridge's MVRP maintenance cycle age a healthy MSRP
-//                Listener Ready and flap the stream licence.
+//                Listener Ready and flap the stream licence. (The LeaveAll
+//                MESSAGE is per Attribute Type, §10.8.2.6: the encoder
+//                flags every type the lane's participant registers.)
 //---------------------------------------------------------------------------//
 `default_nettype none
 

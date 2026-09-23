@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **230 checks**.
+`make` = build + run, exit 0 = PASS, **236 checks**.
 
 Expectations are independent: an MRPDU builder/parser written here from
 802.1Q §10.8.1.2 / §35.2.2, a Σ-slope model transcribing the Milan v1.2
@@ -52,8 +52,10 @@ Covered end to end:
   re-declares end-to-end: one Domain message, Lv `{6,3,2}` + New
   `{6,3,5}`, byte-exact.
 - **LeaveAll per application (10 §6.5)**: the own MSRP leavealltimer
-  (PRNG-drawn) emits a LeaveAllEvent PDU whose cycle re-declares Domain
-  JoinIn + Listener Ready; registrations stay published through LV and a
+  (PRNG-drawn) emits a LeaveAllEvent PDU that flags every MSRP Attribute
+  Type once, on its first vector (a NumberOfValues-0 vector for a type the
+  cycle declares nothing of; 802.1Q §10.8.2.6), and whose cycle re-declares
+  Domain JoinIn + Listener Ready; registrations stay published through LV and a
   peer re-join keeps them (no unregister). A received MSRP LeaveAll ages
   the registrar over a real 5 s T-MRP-LEAVE to TK_ATTR_UNREGISTERED and
   the Listener Lv reaches the wire — while MVRP membership is untouched.

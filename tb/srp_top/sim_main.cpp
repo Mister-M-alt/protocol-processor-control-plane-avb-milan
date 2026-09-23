@@ -719,6 +719,27 @@ class SrpTopHarness {
       return !p.vecs.empty() && p.vecs.front().la;
     });
     CHECK(!laf.empty(), "F1: MSRP LeaveAllEvent PDU within 16 s");
+    // the LeaveAll message is per Attribute Type (802.1Q §10.8.2.6,
+    // §10.7.5.20 NOTE): every MSRP type is flagged once, on its first
+    // vector, and a type the cycle declares nothing of rides a
+    // NumberOfValues-0 vector
+    {
+      const PFrame lp = parse_frame(laf);
+      bool every_type = lp.ok;
+      for (int t = 1; t <= 4; t++) {
+        int flags = 0;
+        int first_la = -1;
+        for (const PVec& v : lp.vecs) {
+          if (v.type != t) continue;
+          if (first_la < 0) first_la = v.la ? 1 : 0;
+          if (v.la) flags++;
+          if (v.nov == 0 && !v.la) every_type = false;
+        }
+        if (flags != 1 || first_la != 1) every_type = false;
+      }
+      CHECK(every_type,
+            "F1: the LeaveAll MRPDU flags every MSRP type once, first vector");
+    }
     // gather the LA PDU + trailing re-joins; the union must re-declare
     std::vector<PFrame> got{parse_frame(laf)};
     for (int i = 0; i < 3; i++) {
