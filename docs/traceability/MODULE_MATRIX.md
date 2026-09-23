@@ -15,6 +15,7 @@
 | `KL_aecp_ucpu` | `hdl/aecp/KL_aecp_ucpu.sv` | pp_top, ucpu |
 | `KL_mrp_strip` | `hdl/top/KL_mrp_strip.sv` | pp_top |
 | `KL_pp_acmp_listener` | `hdl/acmp/KL_pp_acmp_listener.sv` | acmp_listener, acmp_nvm, pp_top |
+| `KL_pp_acmp_lsn_admit` | `hdl/acmp/KL_pp_acmp_lsn_admit.sv` | acmp_nvm, lsn_admit, pp_top |
 | `KL_pp_dispatch` | `hdl/packet_engine/KL_pp_dispatch.sv` | dispatch, pp_top |
 | `KL_pp_dispatch_fifo` | `hdl/packet_engine/KL_pp_dispatch.sv` | dispatch, pp_top |
 | `KL_pp_event_router` | `hdl/packet_engine/KL_pp_event_router.sv` | event_router, pp_top |
@@ -47,4 +48,4 @@
 | `srp_pkg` | `hdl/srp/srp_pkg.sv` | acmp_talker, pp_top, srp_decoder, srp_stream_fsms, srp_top |
 | `ucpu_pkg` | `hdl/aecp/ucpu_pkg.sv` | pp_top, ucpu |
 
-Modules: 43 · untested: 0 (budget: 0)
+Modules: 44 · untested: 0 (budget: 0)

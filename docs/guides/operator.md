@@ -245,7 +245,11 @@ problem. The full transition matrix is
 diagram is a vocabulary, not a path.
 
 Bindings **survive a power cycle**. On boot a restored binding starts in `PRB_W_AVAIL` and
-re-probes; it does not resume as though nothing happened.
+re-probes; it does not resume as though nothing happened. Until the restore walk ends
+(control word 1 bit 2), the listener answers no ACMP command: a controller that already
+knows the entity and asks early gets its answer when the walk ends, from the restored
+binding. An entity that never shows restore busy or done after reset was never told to
+restore, and its listener stays silent until it is.
 
 ---
 

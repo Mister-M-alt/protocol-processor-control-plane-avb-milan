@@ -41,6 +41,7 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
        $(HDL)/aecp/KL_aecp_notify.sv $(HDL)/aecp/KL_aecp_ca_originator.sv \
        $(HDL)/adp/KL_adp_engine.sv \
        $(HDL)/acmp/KL_pp_acmp_listener.sv $(HDL)/acmp/KL_acmp_talker.sv \
+       $(HDL)/acmp/KL_pp_acmp_lsn_admit.sv \
        $(HDL)/acmp/KL_acmp_nvm_shadow.sv \
        $(HDL)/maap/KL_pp_maap.sv \
        $(HDL)/srp/KL_srp_decoder.sv $(HDL)/srp/KL_srp_domain.sv \

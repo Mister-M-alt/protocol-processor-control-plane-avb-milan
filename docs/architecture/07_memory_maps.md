@@ -385,6 +385,12 @@ flowchart TB
   end
 ```
 
+The binding walk owns the ACMP listener from reset until its last preload has been
+written and armed: commands, talker events, START/STOP requests and timer expiries wait
+at their producers until then, and `restore_done_o` marks that end
+([05 §5.1](05_acmp_engine.md#sec-05-boot-admission)). A read-only command that arrives
+during the walk is answered from the restored image afterwards and changes nothing here.
+
 ### 5.4 Open decisions
 
 Recorded in [review §8](../00_MILAN_COMPLIANCE_REVIEW.md): configuration-index,

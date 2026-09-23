@@ -248,6 +248,10 @@ module pp_top_wrap (
     output logic        dbg_is_tkr_o,
     output logic        dbg_lstn_pop_o,
     output logic        dbg_lstn_busy_o,
+    //! the binding manager's OWN terminal (KL_acmp_nvm_shadow restore_done_o),
+    //! which the top's restore_done_o follows once the listener admission
+    //! gate releases
+    output logic        dbg_walk_done_o,
     output logic        dbg_evr_valid_o,
     output logic [4:0]  dbg_evr_src_o,
     output logic        dbg_evr_ack_o,
@@ -539,7 +543,8 @@ module pp_top_wrap (
   assign dbg_acmp_msg_o   = u_dut.acmp_head_w.msg_type;
   assign dbg_is_tkr_o     = u_dut.acmp_is_tkr_w;
   assign dbg_lstn_pop_o   = u_dut.lstn_txn_ready_w;
-  assign dbg_lstn_busy_o  = u_dut.lstn_dbg_busy_nc_w;
+  assign dbg_lstn_busy_o  = u_dut.lstn_dbg_busy_w;
+  assign dbg_walk_done_o  = u_dut.nvm_walk_done_w;
   assign dbg_evr_valid_o  = u_dut.evr_valid_w;
   assign dbg_evr_src_o    = u_dut.evr_src_w;
   assign dbg_evr_ack_o    = u_dut.evr_ack_w;

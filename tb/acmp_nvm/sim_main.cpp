@@ -24,9 +24,20 @@
 // change-during-restore ordering (the capture wins over the image, its
 // sink is never preloaded, the live value is flushed back); bounded
 // commit retry then the sticky alarm.
+//
+// Group L drives the listener's four work faces through the REAL
+// KL_pp_acmp_lsn_admit, from producer models that hold a presented request
+// until its handshake as the dispatch queue, the event router and the AECP
+// engine do, and grades what the listener TOOK and ANSWERED and what the
+// device ends up holding (issue #92, and issue #93's S4 admission).
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <string>
 #include <vector>
 #include "Vacmp_nvm_wrap.h"
 #include "verilated.h"
@@ -156,6 +167,75 @@ struct Accept {
   Bind b;
 };
 
+// ---- the 56-byte Milan ACMPDU (F05.13 offsets, big-endian fields) ---------
+constexpr int PDU_BYTES = 56;
+constexpr uint64_t OUR_EID = 0x0A0B0C0D0E0F1011ull;   // the wrap's entity_id
+// IEEE 1722.1 Table 8.1 message types under their Milan names (Milan 5.5.2)
+constexpr uint8_t M_PROBE_TX_CMD = 0;
+constexpr uint8_t M_BIND_RX_CMD  = 6;
+constexpr uint8_t M_BIND_RX_RSP  = 7;
+constexpr uint8_t M_UNBIND_CMD   = 8;
+constexpr uint8_t M_UNBIND_RSP   = 9;
+constexpr uint8_t M_GETRX_CMD    = 10;
+constexpr uint8_t M_GETRX_RSP    = 11;
+// ACMP flags (IEEE 1722.1 Table 8.2)
+constexpr uint16_t F_FAST_CONNECT   = 0x0002;
+constexpr uint16_t F_STREAMING_WAIT = 0x0008;
+
+static void be_put(std::vector<uint8_t>& p, int at, uint64_t v, int n) {
+  for (int i = 0; i < n; ++i) p[size_t(at + i)] = uint8_t(v >> (8 * (n - 1 - i)));
+}
+static uint64_t be_get(const std::vector<uint8_t>& p, int at, int n) {
+  uint64_t v = 0;
+  for (int i = 0; i < n; ++i) v = (v << 8) | p[size_t(at + i)];
+  return v;
+}
+
+static std::vector<uint8_t> acmpdu(uint8_t msg, uint8_t status, uint64_t ctlr,
+                                   uint64_t tk, uint16_t tkuid, uint16_t luid,
+                                   uint16_t cc, uint16_t seq, uint16_t flags) {
+  std::vector<uint8_t> p(PDU_BYTES, 0);
+  p[0] = 0xFC;                              // subtype
+  p[1] = uint8_t(msg & 0x0F);               // h=0, version 0, message_type
+  p[2] = uint8_t(status << 3);              // status, cdl[10:8] = 0
+  p[3] = 44;                                // cdl (Milan 5.5.2: 44)
+  be_put(p, 12, ctlr, 8);                   // controller_entity_id
+  be_put(p, 20, tk, 8);                     // talker_entity_id
+  be_put(p, 28, OUR_EID, 8);                // listener_entity_id
+  be_put(p, 36, tkuid, 2);                  // talker_unique_id
+  be_put(p, 38, luid, 2);                   // listener_unique_id
+  be_put(p, 46, cc, 2);                     // connection_count
+  be_put(p, 48, seq, 2);                    // sequence_id
+  be_put(p, 50, flags, 2);                  // flags
+  return p;
+}
+
+// Milan Table 5.37 / F05.14: the GET_RX_STATE_RESPONSE of a sink whose
+// binding came back from NVM and has not settled: bound, the saved talker,
+// FAST_CONNECT, STREAMING_WAIT copied from the saved binding, stream fields 0
+static std::vector<uint8_t> getrx_bound(int sink, const Bind& b, uint64_t ctlr,
+                                        uint16_t seq) {
+  return acmpdu(M_GETRX_RSP, 0, ctlr, b.tk, b.uid, uint16_t(sink), 1, seq,
+                uint16_t(F_FAST_CONNECT | (b.sw ? F_STREAMING_WAIT : 0)));
+}
+
+// a work request as its producer holds it
+struct Req {
+  uint8_t msg = M_GETRX_CMD;
+  int sink = 0;
+  uint64_t ctlr = 0;
+  uint64_t tk = 0;
+  uint16_t tkuid = 0;
+  uint16_t seq = 0;
+  uint16_t flags = 0;
+  long at = 0;              // first cycle it may be presented
+};
+
+struct Resp {
+  long cyc;
+  std::vector<uint8_t> b;
+};
+
 namespace {
 
 // ---- harness ---------------------------------------------------------------
@@ -216,8 +296,49 @@ struct Harness {
   size_t ops_b = 0;
   Bind b2b;
 
+  // ---- producers in front of the admission gate, and the listener's pools.
+  //      A presented request is HELD until its producer-side handshake, as
+  //      KL_pp_dispatch's queue head, the event router's sticky latch and
+  //      the AECP engine's START/STOP request are.
+  std::deque<Req> txq;             // dispatch queue (head presented)
+  int head_slot = -1;              // RX slot the head's payload sits in
+  int rx_next = 0;
+  uint8_t rxmem[4][576];
+  uint8_t rx_pending = 0;
+  uint8_t txmem[5][64];
+  int txlen[5] = {};
+  bool txfree[5] = {true, true, true, true, true};
+  bool gnt_pending = false;
+  int gnt_slot = 0;
+  std::vector<Resp> resps;         // every ACMPDU the listener committed
+  //! per-cycle hooks, each dropped once it returns true (a case's trigger)
+  std::vector<std::function<bool()>> hooks;
+
+  // ---- group L monitors (cleared by reset) ----------------------------------
+  std::vector<long> txn_pops, txn_takes;
+  int txn_mismatch = 0;            // cycles a pop and a take disagreed
+  long done_cyc = -1;              // restore_done_o first seen
+  long rel_cyc = -1;               // the gate's release first seen
+  std::vector<long> pre_take_cyc;  // preload taken (valid && ready)
+  std::vector<long> pre_wr_cyc;    // the listener's preload record write
+  std::vector<long> arm_cyc;       // the listener's A4 strobe
+  long pre_wait = 0;               // current run of an untaken offer
+  long pre_wait_max = 0;           // longest run of an untaken offer
+  uint32_t own_states = 0;         // listener states seen while owned
+  int own_effects = 0;             // side effects while owned
+  int own_takes = 0;               // work taken at a listener face while owned
+  struct RecWr {
+    long cyc;
+    int sink;
+    bool bound;
+    uint64_t tk;
+  };
+  std::vector<RecWr> recwrs;
+
   Harness() {
     memset(store, 0, sizeof store);
+    memset(rxmem, 0, sizeof rxmem);
+    memset(txmem, 0, sizeof txmem);
   }
 
   int row(int region) const { return (region - REC_BASE) & (N_SINKS - 1); }
@@ -317,9 +438,12 @@ struct Harness {
     }
   }
 
+  //! Neither sampler reads a cycle held in reset: the registers it would
+  //! read still hold the state the reset is about to clear.
   void sample_monitors() {
+    if (!d->rst_n) return;
     if (d->pre_valid_o) pre_valid_seen = true;
-    if (d->pre_valid_o && d->pre_ready_o) {
+    if (d->pre_valid_o && d->pre_ready_o && !d->pre_hold_i) {
       Accept a;
       a.sink      = int(d->pre_sink_o);
       a.b.valid   = true;
@@ -333,7 +457,8 @@ struct Harness {
     if (d->lsn_recwr_o) {
       const uint32_t* w = &d->lsn_recwr_rec_o[0];
       // a preload write-back: PRB_W_AVAIL (sm 1) + bound, from X_PRELOAD
-      if (wget(w, 0, 3) == 1 && wget(w, 11, 1) == 1) {
+      // (a later GET_RX_STATE write-back of the same record is not one)
+      if (wget(w, 0, 3) == 1 && wget(w, 11, 1) == 1 && d->lsn_state_o == 2) {
         Accept a;
         a.sink      = int(d->lsn_recwr_sink_o);
         a.b.valid   = true;
@@ -352,10 +477,103 @@ struct Harness {
     }
   }
 
+  // the 03 §4 record of an ACMP command received on the wire, in the bit
+  // positions of pp_pkg's pp_txn_t (393 bits, 13 words)
+  void pack_txn(const Req& r, int slot) {
+    uint32_t* w = &d->p_txn_i[0];
+    for (int i = 0; i < 13; ++i) w[i] = 0;
+    wput(w, 391, 2, 0);                    // origin RX
+    wput(w, 354, 3, 1);                    // protocol ACMP
+    wput(w, 350, 4, r.msg);                // message_type
+    wput(w, 334, 11, 44);                  // cdl
+    wput(w, 222, 64, r.ctlr);              // controller_entity_id
+    wput(w, 158, 64, OUR_EID);             // target (listener_entity_id)
+    wput(w, 142, 16, r.seq);               // sequence_id
+    wput(w, 124, 16, r.msg);               // opcode mirror
+    wput(w, 60, 16, uint64_t(r.sink));     // operands.unique_id
+    wput(w, 57, 3, uint64_t(slot));        // rx_slot
+    wput(w, 0, 2, 1);                      // ACMP multicast disposition
+  }
+
+  void drive_producers() {
+    for (size_t i = 0; i < hooks.size();) {
+      if (hooks[i]()) hooks.erase(hooks.begin() + long(i));
+      else ++i;
+    }
+    // dispatch head: its payload is placed in an RX slot when it is first
+    // presented, and it stays presented until the producer sees its pop
+    bool pres = !txq.empty() && cycles >= txq.front().at;
+    if (pres && head_slot < 0) {
+      const Req& r = txq.front();
+      head_slot = rx_next;
+      rx_next = (rx_next + 1) % 4;
+      std::vector<uint8_t> p = acmpdu(r.msg, 0, r.ctlr, r.tk, r.tkuid,
+                                      uint16_t(r.sink), 0, r.seq, r.flags);
+      memcpy(rxmem[head_slot], p.data(), PDU_BYTES);
+    }
+    if (pres) pack_txn(txq.front(), head_slot);
+    d->p_txn_valid_i = pres;
+    // the pools answer last cycle's requests
+    d->rxs_rd_data_i = rx_pending;
+    d->txs_alloc_gnt_i = gnt_pending;
+    d->txs_alloc_slot_i = uint8_t(gnt_slot);
+    gnt_pending = false;
+  }
+
+  void sample_producers() {
+    if (!d->rst_n) return;
+    const bool pop  = d->p_txn_valid_i && d->p_txn_ready_o;
+    const bool take = d->l_txn_valid_o && d->l_txn_ready_o;
+    if (pop != take) ++txn_mismatch;
+    if (pop) { txn_pops.push_back(cycles); txq.pop_front(); head_slot = -1; }
+    if (take) txn_takes.push_back(cycles);
+    if (d->rxs_rd_en_o) rx_pending = rxmem[d->rxs_rd_slot_o][d->rxs_rd_addr_o];
+    if (d->txs_alloc_req_o) {
+      for (int i = 0; i < 4; ++i)
+        if (txfree[i]) { txfree[i] = false; gnt_slot = i; gnt_pending = true; break; }
+    }
+    if (d->txs_wr_valid_o && d->txs_wr_addr_o < 64)
+      txmem[d->txs_wr_slot_o][d->txs_wr_addr_o] = d->txs_wr_data_o;
+    if (d->txs_wr_commit_o) txlen[d->txs_wr_slot_o] = d->txs_wr_len_o;
+    if (d->txreq_valid_o) {
+      const int s = d->txreq_slot_o;
+      resps.push_back({cycles, std::vector<uint8_t>(
+          txmem[s], txmem[s] + std::min(txlen[s], PDU_BYTES))});
+      txfree[s] = true;                    // the arbiter frees after serializing
+    }
+    if (d->restore_done_o && done_cyc < 0) done_cyc = cycles;
+    if (d->gate_released_o && rel_cyc < 0) rel_cyc = cycles;
+    const bool offered = d->pre_valid_o && !d->pre_hold_i;
+    if (offered && d->pre_ready_o) pre_take_cyc.push_back(cycles);
+    if (offered && !d->pre_ready_o) {
+      pre_wait_max = std::max(pre_wait_max, ++pre_wait);
+    } else {
+      pre_wait = 0;
+    }
+    if (d->lsn_recwr_o) {
+      const uint32_t* w = &d->lsn_recwr_rec_o[0];
+      recwrs.push_back({cycles, int(d->lsn_recwr_sink_o), wget(w, 11, 1) != 0,
+                        wget(w, 32, 64)});
+      if (d->lsn_state_o == 2) pre_wr_cyc.push_back(cycles);   // X_PRELOAD
+    }
+    if (d->lsn_disc_arm_o) arm_cyc.push_back(cycles);
+    if (d->gate_own_o) {
+      own_states |= 1u << (d->lsn_state_o & 31);
+      own_effects += d->tmr_arm_valid_o + d->txs_alloc_req_o + d->rxs_free_o
+                   + d->lsn_settle_o + d->lsn_teardown_o + d->lsn_disarm_o
+                   + d->lsn_notify_o + d->strm_ready_o + d->strm_error_o
+                   + d->draw_req_o;
+      own_takes += take + (d->l_tk_valid_o && d->l_tk_ready_o)
+                 + d->l_strm_valid_o + d->l_exp_valid_o;
+    }
+  }
+
   void tick() {
     drive_dev();
+    drive_producers();
     d->clk_i = 0; d->eval();
     sample_monitors();
+    sample_producers();
     sample_dev();
     d->clk_i = 1; d->eval();
     ++cycles;
@@ -372,19 +590,36 @@ struct Harness {
     return cond();
   }
 
-  void reset() {
+  //! `keep_producers` models a producer that is NOT reset with the entity
+  //! and keeps presenting what it held: the stricter case for the gate.
+  void reset(bool keep_producers = false) {
     d->rst_n = 0;
     d->tick_i = 0;
     d->restore_go_i = 0;
     d->tb_cap_wr_i = 0;
     d->tb_cap_sink_i = 0;
     for (int i = 0; i < REC_WORDS; ++i) d->tb_cap_rec_i[i] = 0;
-    d->evt_block_i = 0;
+    d->pre_hold_i = 0;
+    d->p_tk_valid_i = 0; d->p_tk_kind_i = 0; d->p_tk_failed_i = 0;
+    d->p_tk_sink_i = 0;
+    d->p_strm_valid_i = 0; d->p_strm_sink_i = 0; d->p_strm_val_i = 0;
+    d->p_exp_valid_i = 0; d->p_exp_slot_i = 0; d->p_exp_owner_i = 0;
+    d->draw_busy_i = 0; d->draw_valid_i = 0; d->draw_ms_i = 0;
     d_st = 0; d_reqwait = 0; d_gnt = d_done = d_err = d_busy = false;
     d_bytes = d_stall = 0; d_rhold = false; done_ctr = err_ctr = 0;
     disarm_err();
     ops.clear(); accepts.clear(); lsn_pre_recs.clear();
     pre_valid_seen = false; lsn_preload_wr = 0; disc_arms = 0;
+    if (!keep_producers) { txq.clear(); hooks.clear(); }
+    head_slot = -1;
+    gnt_pending = false;
+    for (bool& f : txfree) f = true;
+    resps.clear(); recwrs.clear();
+    txn_pops.clear(); txn_takes.clear(); txn_mismatch = 0;
+    done_cyc = rel_cyc = -1;
+    pre_take_cyc.clear(); pre_wr_cyc.clear(); arm_cyc.clear();
+    pre_wait = pre_wait_max = 0;
+    own_states = 0; own_effects = 0; own_takes = 0;
     run(5);
     d->rst_n = 1;
     d->tick_i = 1;               // 1 tick per cycle: window = DEB_TICKS cycles
@@ -428,6 +663,26 @@ struct Harness {
   void check_a_change_during_restore_wins();
   void check_a_change_during_its_own_flush_reserializes();
   void check_the_unflushed_export_contract();
+
+  // ---- group L: the boot window and the listener's admission ---------------
+  Bind l_saved[N_SINKS];
+  void l_seed(const std::vector<std::pair<int, Bind>>& s);
+  void l_boot(bool keep_producers = false);
+  void l_finish();
+  void l_push(uint8_t msg, int sink, uint16_t seq, long at = 0,
+              uint64_t tk = 0, uint16_t tkuid = 0, uint16_t flags = 0);
+  std::vector<Resp> l_resps(uint8_t msg) const;
+  bool l_walk_ok(std::string& why);
+  bool l_nvm_is(int sink, const Bind& b) const;
+  bool l_nvm_untouched(std::string& why) const;
+  bool l_round_trip(const Bind (&want)[N_SINKS], std::string& why);
+  void l_grade(const char* tag, int n_txn, bool nvm_untouched);
+  void check_l00_restore_control();
+  void check_l05_read_only_in_the_window();
+  void check_l05_anywhere_in_the_window();
+  void check_l09_live_changes_stay_ordered();
+  void check_l10_release_boundary();
+  void check_l_reset_boundaries();
   int report();
   int run_suite();
 };
@@ -564,11 +819,13 @@ void Harness::check_boot_replay_from_a_seeded_image() {
   }
   reset();
   go();
-  // backpressure the first preload via the listener's own priority order
+  // backpressure the first preload at the handshake itself. The listener's
+  // own priority order no longer can: the admission gate holds every other
+  // source at its producer until the walk ends (group L).
   CHECK(run_until([&] { return d->pre_valid_o != 0; }, 5000),
         "F0 replay reaches the first preload");
   {
-    d->evt_block_i = 1;
+    d->pre_hold_i = 1;
     bool stable = true;
     uint64_t tk0 = d->pre_talker_eid_o;
     uint16_t s0 = d->pre_sink_o;
@@ -579,7 +836,7 @@ void Harness::check_boot_replay_from_a_seeded_image() {
     }
     CHECK(stable, "F1 pre_* held stable under listener backpressure");
     CHECK(accepts.empty(), "F2 no accept while the listener is busy");
-    d->evt_block_i = 0;
+    d->pre_hold_i = 0;
   }
   CHECK(run_until([&] { return restore_done(); }, 20000),
         "F3 restore completes");
@@ -804,6 +1061,517 @@ void Harness::check_the_unflushed_export_contract() {
   disarm_err();
 }
 
+// ======================= L: the boot window and the listener's admission
+// Issue #92: during the binding walk, a read-only GET_RX_STATE the listener
+// served ended in a record write-back the shadow took as a live change, so
+// the restored binding of a sink stored and not yet preloaded was withdrawn
+// and the listener's unbound record flushed over the saved one. Every case
+// boots on the bindings of the FIRST and the LAST sink and grades what the
+// listener took and answered, the preloads, the release, and what the
+// device holds at the end; the reset round trips boot again on that.
+constexpr uint64_t L_CTLR    = 0x00CCCCCCCCCC00CCull;
+constexpr uint64_t L_TKC     = 0x00BB00BB00BB0001ull;
+constexpr uint16_t L_TKC_UID = 0x0B01;
+// KL_acmp_nvm_shadow's engine states the triggers key on (its hstate_e)
+constexpr unsigned M_RS_STORE = 4;
+constexpr unsigned M_RP_DRIVE = 7;
+// KL_pp_acmp_listener states admissible while the gate owns its faces:
+// X_INIT, X_IDLE, X_PRELOAD (its xstate_e codes 0, 1, 2)
+constexpr uint32_t OWNED_STATES = 0x7u;
+const Bind L_B0{true, true, false, 0x0A01, 0x00A1A1A1A1A10001ull,
+                0x00C0C0C0C0C00001ull};
+const Bind L_B7{true, false, true, 0x0B02, 0x00A2A2A2A2A20002ull,
+                0x00C0C0C0C0C00002ull};
+constexpr int L_LAST = N_SINKS - 1;
+
+void Harness::l_seed(const std::vector<std::pair<int, Bind>>& s) {
+  for (int k = 0; k < N_SINKS; ++k) {
+    seed_region(k, {});
+    l_saved[k] = Bind{};
+  }
+  for (const auto& e : s) {
+    seed_region(e.first, frame(uint8_t(REC_BASE + e.first), payload_of(e.second)));
+    l_saved[e.first] = e.second;
+  }
+}
+
+void Harness::l_boot(bool keep_producers) {
+  reset(keep_producers);
+  go();
+}
+
+void Harness::l_push(uint8_t msg, int sink, uint16_t seq, long at,
+                     uint64_t tk, uint16_t tkuid, uint16_t flags) {
+  Req r;
+  r.msg = msg; r.sink = sink; r.ctlr = L_CTLR; r.tk = tk; r.tkuid = tkuid;
+  r.seq = seq; r.flags = flags; r.at = at;
+  txq.push_back(r);
+}
+
+// run the boot out: the walk, the release, every held and queued request,
+// their replies and any flush they cause, then prove quiescence
+void Harness::l_finish() {
+  run_until([&] {
+    return rel_cyc >= 0 && txq.empty() && hooks.empty() && !d->lsn_busy_o;
+  }, 40000);
+  run(100);
+  run_until([&] { return d->dbg_dirty_o == 0 && d_st == 0 && !d_busy; }, 8000);
+  run(DEB_TICKS * 3);
+}
+
+std::vector<Resp> Harness::l_resps(uint8_t msg) const {
+  std::vector<Resp> v;
+  for (const Resp& r : resps)
+    if (r.b.size() == size_t(PDU_BYTES) && (r.b[1] & 0x0F) == msg) v.push_back(r);
+  return v;
+}
+
+bool Harness::l_walk_ok(std::string& why) {
+  char b[160];
+  why.clear();
+  auto bad = [&](const char* s) {
+    if (!why.empty()) why += "; ";
+    why += s;
+  };
+  if (!d->restore_done_o || d->restore_fail_o) bad("the walk is not done, or failed");
+  std::vector<int> want;
+  for (int k = 0; k < N_SINKS; ++k)
+    if (l_saved[k].valid) want.push_back(k);
+  if (accepts.size() != want.size()) {
+    snprintf(b, sizeof b, "%zu preloads taken, %zu saved", accepts.size(), want.size());
+    bad(b);
+  } else {
+    for (size_t i = 0; i < want.size(); ++i)
+      if (accepts[i].sink != want[i] || !(accepts[i].b == l_saved[want[i]])) {
+        snprintf(b, sizeof b, "preload %zu is not sink %d as saved", i, want[i]);
+        bad(b);
+      }
+  }
+  if (lsn_pre_recs.size() != want.size()) {
+    snprintf(b, sizeof b, "%zu preload records written", lsn_pre_recs.size());
+    bad(b);
+  } else {
+    for (size_t i = 0; i < want.size(); ++i)
+      if (lsn_pre_recs[i].sink != want[i] || !(lsn_pre_recs[i].b == l_saved[want[i]]))
+        bad("a preload record is not written bound as saved");
+  }
+  if (pre_wait_max != 0) {
+    snprintf(b, sizeof b, "an offer waited %ld cycles untaken", pre_wait_max);
+    bad(b);
+  }
+  if (rel_cyc < 0 || done_cyc < 0) {
+    bad("no release");
+  } else {
+    size_t arms_before = 0;
+    for (long c : arm_cyc) arms_before += (c < rel_cyc);
+    bool wr_before = pre_wr_cyc.size() == want.size();
+    for (long c : pre_wr_cyc) wr_before = wr_before && (c < rel_cyc);
+    if (!wr_before || arms_before != want.size())
+      bad("the release precedes a preload's record write or discovery arm");
+    if (rel_cyc < done_cyc || rel_cyc - done_cyc > 4) {
+      snprintf(b, sizeof b, "released %ld cycles after the terminal", rel_cyc - done_cyc);
+      bad(b);
+    }
+  }
+  if (own_states & ~OWNED_STATES) {
+    snprintf(b, sizeof b, "listener states 0x%x while owned", own_states);
+    bad(b);
+  }
+  if (own_effects || own_takes) {
+    snprintf(b, sizeof b, "%d side effects, %d takes while owned", own_effects, own_takes);
+    bad(b);
+  }
+  if (d->dbg_touched_o) {
+    snprintf(b, sizeof b, "touched 0x%02x", unsigned(d->dbg_touched_o));
+    bad(b);
+  }
+  return why.empty();
+}
+
+bool Harness::l_nvm_is(int sink, const Bind& b) const {
+  return store_match(sink, frame(uint8_t(REC_BASE + sink), payload_of(b)));
+}
+
+bool Harness::l_nvm_untouched(std::string& why) const {
+  char b[200];
+  why.clear();
+  if (count_ops(OP_WRITE) || count_ops(OP_ERASE)) {
+    snprintf(b, sizeof b, "%d writes, %d erases", count_ops(OP_WRITE),
+             count_ops(OP_ERASE));
+    why = b;
+  }
+  for (int k = 0; k < N_SINKS; ++k) {
+    if (l_saved[k].valid && !l_nvm_is(k, l_saved[k])) {
+      std::string hex;
+      for (int i = 8; i < 20; ++i) {
+        snprintf(b, sizeof b, "%02x", store[k][i]);
+        hex += b;
+      }
+      snprintf(b, sizeof b, "%ssink %d holds %s", why.empty() ? "" : "; ", k,
+               hex.c_str());
+      why += b;
+    }
+  }
+  return why.empty();
+}
+
+// a reset, then the next boot's walk: what comes back is what NVM holds
+bool Harness::l_round_trip(const Bind (&want)[N_SINKS], std::string& why) {
+  char b[120];
+  why.clear();
+  reset();
+  go();
+  run_until([&] {
+    return d->restore_done_o && !d->pre_valid_o && !d->lsn_busy_o
+        && !d->lsn_disc_arm_o;
+  }, 20000);
+  run(10);
+  size_t n = 0;
+  for (int k = 0; k < N_SINKS; ++k) {
+    if (!want[k].valid) continue;
+    bool found = false;
+    for (const Accept& a : accepts)
+      if (a.sink == k && a.b == want[k]) found = true;
+    if (!found) {
+      snprintf(b, sizeof b, "%ssink %d not restored as saved", why.empty() ? "" : "; ", k);
+      why += b;
+    }
+    ++n;
+  }
+  if (accepts.size() != n) {
+    snprintf(b, sizeof b, "%s%zu preloads, want %zu", why.empty() ? "" : "; ",
+             accepts.size(), n);
+    why += b;
+  }
+  return why.empty();
+}
+
+void Harness::l_grade(const char* tag, int n_txn, bool nvm_untouched) {
+  std::string why;
+  CHECK(hooks.empty(), "%s: the case's trigger fired", tag);
+  CHECK(l_walk_ok(why), "%s: walk, preloads, release and ownership: %s", tag,
+        why.c_str());
+  bool after = true;
+  for (long c : txn_takes) after = after && rel_cyc >= 0 && c >= rel_cyc;
+  CHECK(txn_mismatch == 0 && txn_pops.size() == size_t(n_txn)
+            && txn_takes.size() == size_t(n_txn) && after,
+        "%s: each of %d requests popped exactly when the listener took it, "
+        "at or after the release (pops %zu, takes %zu, %d cycles disagreed)",
+        tag, n_txn, txn_pops.size(), txn_takes.size(), txn_mismatch);
+  if (nvm_untouched)
+    CHECK(l_nvm_untouched(why),
+          "%s: the saved bindings are still in NVM, nothing written: %s", tag,
+          why.c_str());
+}
+
+void Harness::check_l00_restore_control() {
+  l_seed({{0, L_B0}, {L_LAST, L_B7}});
+  l_boot();
+  l_finish();
+  l_push(M_GETRX_CMD, 0, 0x100, cycles);
+  l_push(M_GETRX_CMD, L_LAST, 0x101, cycles);
+  l_finish();
+  l_grade("L00 control, no traffic in the window", 2, true);
+  const auto g = l_resps(M_GETRX_RSP);
+  CHECK(g.size() == 2 && g[0].b == getrx_bound(0, L_B0, L_CTLR, 0x100)
+            && g[1].b == getrx_bound(L_LAST, L_B7, L_CTLR, 0x101),
+        "L00: the listener answers both restored bindings after the release");
+  std::string why;
+  CHECK(l_round_trip(l_saved, why), "L00: a reset restores the same bindings: %s",
+        why.c_str());
+}
+
+void Harness::check_l05_read_only_in_the_window() {
+  struct C {
+    const char* tag;
+    unsigned state;      // the manager state the GETs are presented in
+    int sink;            // ...for this sink (restore cursor or preload sink)
+    std::vector<int> gets;
+  };
+  const std::vector<C> cs = {
+    {"L05a first sink's GET between its store and its preload", M_RS_STORE, 0, {0}},
+    {"L05b later sink's GET between its store and its preload", M_RS_STORE, L_LAST, {L_LAST}},
+    {"L05c first sink's GET at the later sink's store", M_RS_STORE, L_LAST, {0}},
+    {"L05d later sink's GET at the first sink's store", M_RS_STORE, 0, {L_LAST}},
+    {"L05e consecutive GETs of both sinks", M_RS_STORE, 0, {0, 0, L_LAST, L_LAST, 0}},
+    {"L05f later sink's GET as the first sink's preload is offered", M_RP_DRIVE, 0, {L_LAST}},
+  };
+  for (const C& c : cs) {
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    l_boot();
+    hooks.push_back([this, c] {
+      const int at = (c.state == M_RS_STORE) ? int(d->mgr_rs_sink_o)
+                                             : int(d->pre_sink_o);
+      if (d->mgr_state_o != c.state || at != c.sink) return false;
+      for (size_t i = 0; i < c.gets.size(); ++i)
+        l_push(M_GETRX_CMD, c.gets[i], uint16_t(0x500 + i), cycles);
+      return true;
+    });
+    l_finish();
+    l_grade(c.tag, int(c.gets.size()), true);
+    const auto g = l_resps(M_GETRX_RSP);
+    bool exact = g.size() == c.gets.size();
+    for (size_t i = 0; exact && i < g.size(); ++i)
+      exact = g[i].b == getrx_bound(c.gets[i], l_saved[c.gets[i]], L_CTLR,
+                                    uint16_t(0x500 + i));
+    CHECK(exact, "%s: every reply reports the restored binding (%zu replies)",
+          c.tag, g.size());
+    std::string why;
+    CHECK(l_round_trip(l_saved, why), "%s: a reset restores the same bindings: %s",
+          c.tag, why.c_str());
+  }
+}
+
+// every cycle of the window, one boot each: from the reset's release,
+// through restore_go, the whole walk and its release, a single GET of the
+// first or the last sink is presented at that cycle
+void Harness::check_l05_anywhere_in_the_window() {
+  l_seed({{0, L_B0}, {L_LAST, L_B7}});
+  reset();
+  const long t0 = cycles;
+  run(3);
+  go();
+  run_until([&] { return rel_cyc >= 0 && done_cyc >= 0; }, 20000);
+  const long span = std::max(rel_cyc, done_cyc) - t0 + 3;
+  CHECK(span > 20 && span < 2000, "L05s: the window measured (%ld cycles)", span);
+  for (int sink : {0, L_LAST}) {
+    int bad_walk = 0, bad_take = 0, bad_reply = 0, bad_nvm = 0;
+    long first_walk = -1, first_take = -1, first_reply = -1, first_nvm = -1;
+    std::string why_walk, why_nvm;
+    for (long off = 0; off <= span; ++off) {
+      l_seed({{0, L_B0}, {L_LAST, L_B7}});
+      reset();
+      const long at = cycles + off;
+      hooks.push_back([this, at, sink] {
+        if (cycles < at) return false;
+        l_push(M_GETRX_CMD, sink, 0x600, cycles);
+        return true;
+      });
+      run(3);
+      go();
+      l_finish();
+      std::string why;
+      if (!l_walk_ok(why)) {
+        if (!bad_walk++) { first_walk = off; why_walk = why; }
+      }
+      bool after = txn_takes.size() == 1 && txn_pops.size() == 1
+                && txn_mismatch == 0 && txn_takes[0] >= rel_cyc;
+      if (!after && !bad_take++) first_take = off;
+      const auto g = l_resps(M_GETRX_RSP);
+      if (!(g.size() == 1 && g[0].b == getrx_bound(sink, l_saved[sink], L_CTLR, 0x600))
+          && !bad_reply++) first_reply = off;
+      if (!l_nvm_untouched(why) && !bad_nvm++) { first_nvm = off; why_nvm = why; }
+    }
+    CHECK(bad_walk == 0, "L05s sink %d: %d presentation cycles broke the walk "
+          "(first at +%ld: %s)", sink, bad_walk, first_walk, why_walk.c_str());
+    CHECK(bad_take == 0, "L05s sink %d: %d presentation cycles were not taken "
+          "once, after the release (first at +%ld)", sink, bad_take, first_take);
+    CHECK(bad_reply == 0, "L05s sink %d: %d presentation cycles answered other "
+          "than the restored binding (first at +%ld)", sink, bad_reply, first_reply);
+    CHECK(bad_nvm == 0, "L05s sink %d: %d presentation cycles changed NVM "
+          "(first at +%ld: %s)", sink, bad_nvm, first_nvm, why_nvm.c_str());
+  }
+}
+
+void Harness::check_l09_live_changes_stay_ordered() {
+  // the new binding a BIND_RX of the first sink to another talker leaves
+  // behind: no STREAMING_WAIT, so it lands started (IEEE 7.4.35)
+  const Bind nb{true, true, false, L_TKC_UID, L_TKC, L_CTLR};
+  const std::vector<uint8_t> bind_rsp =
+      acmpdu(M_BIND_RX_RSP, 0, L_CTLR, L_TKC, L_TKC_UID, 0, 1, 0x901, 0);
+  std::string why;
+  {
+    const char* tag = "L09 BIND of the first sink to another talker, held from reset";
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    reset();
+    l_push(M_BIND_RX_CMD, 0, 0x901, 0, L_TKC, L_TKC_UID, 0);
+    go();
+    l_finish();
+    l_push(M_GETRX_CMD, 0, 0x902, cycles);
+    l_finish();
+    l_grade(tag, 2, false);
+    const auto br = l_resps(M_BIND_RX_RSP);
+    const auto g = l_resps(M_GETRX_RSP);
+    CHECK(br.size() == 1 && br[0].b == bind_rsp && g.size() == 1
+              && g[0].b == getrx_bound(0, nb, L_CTLR, 0x902),
+          "%s: answered SUCCESS after the restore, and the sink reports it", tag);
+    CHECK(l_nvm_is(0, nb) && l_nvm_is(L_LAST, L_B7)
+              && count_ops(OP_WRITE, REC_BASE + 0) == 1
+              && count_ops(OP_WRITE, REC_BASE + L_LAST) == 0,
+          "%s: the live change wins in NVM by coming later, once", tag);
+    Bind want[N_SINKS];
+    want[0] = nb;
+    want[L_LAST] = L_B7;
+    CHECK(l_round_trip(want, why), "%s: a reset restores the new binding: %s", tag,
+          why.c_str());
+  }
+  {
+    const char* tag = "L09u UNBIND of the later sink at the first sink's store";
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    l_boot();
+    hooks.push_back([this] {
+      if (d->mgr_state_o != M_RS_STORE || d->mgr_rs_sink_o != 0) return false;
+      l_push(M_UNBIND_CMD, L_LAST, 0x903, cycles);
+      return true;
+    });
+    l_finish();
+    l_grade(tag, 1, false);
+    const auto u = l_resps(M_UNBIND_RSP);
+    CHECK(u.size() == 1
+              && u[0].b == acmpdu(M_UNBIND_RSP, 0, L_CTLR, 0, 0, uint16_t(L_LAST),
+                                  0, 0x903, 0),
+          "%s: answered SUCCESS after the restore", tag);
+    CHECK(l_nvm_is(L_LAST, Bind{}) && l_nvm_is(0, L_B0)
+              && count_ops(OP_WRITE, REC_BASE + 0) == 0,
+          "%s: the saved unbind replaces the restored binding, sink 0 untouched", tag);
+    Bind want[N_SINKS];
+    want[0] = L_B0;
+    CHECK(l_round_trip(want, why), "%s: a reset restores only the first sink: %s",
+          tag, why.c_str());
+  }
+  {
+    const char* tag = "L09q a queue of reads and changes at the first sink's store";
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    l_boot();
+    hooks.push_back([this] {
+      if (d->mgr_state_o != M_RS_STORE || d->mgr_rs_sink_o != 0) return false;
+      l_push(M_GETRX_CMD, 0, 0x911, cycles);
+      l_push(M_BIND_RX_CMD, 0, 0x912, cycles, L_TKC, L_TKC_UID, 0);
+      l_push(M_GETRX_CMD, 0, 0x913, cycles);
+      l_push(M_UNBIND_CMD, L_LAST, 0x914, cycles);
+      l_push(M_GETRX_CMD, L_LAST, 0x915, cycles);
+      return true;
+    });
+    l_finish();
+    l_grade(tag, 5, false);
+    std::vector<std::vector<uint8_t>> want_r = {
+      getrx_bound(0, L_B0, L_CTLR, 0x911),
+      acmpdu(M_BIND_RX_RSP, 0, L_CTLR, L_TKC, L_TKC_UID, 0, 1, 0x912, 0),
+      getrx_bound(0, nb, L_CTLR, 0x913),
+      acmpdu(M_UNBIND_RSP, 0, L_CTLR, 0, 0, uint16_t(L_LAST), 0, 0x914, 0),
+      acmpdu(M_GETRX_RSP, 0, L_CTLR, 0, 0, uint16_t(L_LAST), 0, 0x915, 0),
+    };
+    std::vector<std::vector<uint8_t>> got;
+    for (const Resp& r : resps)
+      if ((r.b[1] & 0x0F) != M_PROBE_TX_CMD) got.push_back(r.b);
+    CHECK(got == want_r,
+          "%s: five replies in queue order, each on the state its predecessor "
+          "left (%zu replies)", tag, got.size());
+    CHECK(l_nvm_is(0, nb) && l_nvm_is(L_LAST, Bind{}),
+          "%s: NVM ends at the queue's last word for both sinks", tag);
+    Bind want[N_SINKS];
+    want[0] = nb;
+    CHECK(l_round_trip(want, why), "%s: a reset restores what the queue left: %s",
+          tag, why.c_str());
+  }
+}
+
+// a request presented in the gate's last owned cycle (m1), its first
+// released one (z) and the one after (p1): taken once, after the release.
+// The boot is deterministic, so a control boot measures where the release
+// lands and the three presentations are placed against that cycle, not
+// against a copy of the gate's own release condition.
+void Harness::check_l10_release_boundary() {
+  l_seed({{0, L_B0}, {L_LAST, L_B7}});
+  reset();
+  long t0 = cycles;
+  go();
+  run_until([&] { return rel_cyc >= 0; }, 20000);
+  const long rel_off = rel_cyc - t0;
+  static const char* const tags[] = {
+    "L10m1 GET presented in the last owned cycle",
+    "L10z GET presented in the first released cycle",
+    "L10p1 GET presented the cycle after the release"};
+  for (int v = 0; v < 3; ++v) {
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    reset();
+    t0 = cycles;
+    const long at = t0 + rel_off - 1 + v;
+    auto owned_at = std::make_shared<int>(-1);
+    hooks.push_back([this, at, v, owned_at] {
+      if (cycles < at) return false;
+      *owned_at = d->gate_own_o;
+      l_push(M_GETRX_CMD, 0, uint16_t(0xA00 + v), cycles);
+      return true;
+    });
+    go();
+    l_finish();
+    l_grade(tags[v], 1, true);
+    CHECK(*owned_at == (v == 0 ? 1 : 0) && rel_cyc == t0 + rel_off
+              && txn_takes.size() == 1 && txn_takes[0] == std::max(at, rel_cyc),
+          "%s: presented %s, taken in cycle %ld (release %ld)", tags[v],
+          v == 0 ? "while owned" : "released",
+          txn_takes.empty() ? -1L : txn_takes[0] - t0, rel_off);
+    const auto g = l_resps(M_GETRX_RSP);
+    CHECK(g.size() == 1 && g[0].b == getrx_bound(0, L_B0, L_CTLR, uint16_t(0xA00 + v)),
+          "%s: answered with the restored binding", tags[v]);
+  }
+}
+
+void Harness::check_l_reset_boundaries() {
+  std::string why;
+  {
+    // a GET held in the window, and the entity reset under it before the
+    // release: a producer that keeps presenting it gets it taken once, after
+    // the NEXT walk's release
+    const char* tag = "L20 a held GET across a reset inside the window";
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    l_boot();
+    hooks.push_back([this] {
+      if (d->mgr_state_o != M_RS_STORE || d->mgr_rs_sink_o != 0) return false;
+      l_push(M_GETRX_CMD, 0, 0xB00, cycles);
+      return true;
+    });
+    run_until([&] { return accepts.size() == 1; }, 20000);
+    CHECK(accepts.size() == 1 && txn_pops.empty() && txq.size() == 1
+              && count_ops(OP_WRITE) == 0 && count_ops(OP_ERASE) == 0,
+          "%s: held, not taken, nothing written when the reset lands", tag);
+    l_boot(true);
+    l_finish();
+    l_grade(tag, 1, true);
+    const auto g = l_resps(M_GETRX_RSP);
+    CHECK(g.size() == 1 && g[0].b == getrx_bound(0, L_B0, L_CTLR, 0xB00),
+          "%s: answered once, with the restored binding", tag);
+  }
+  {
+    // the power cut in the preload phase: after the first sink's preload was
+    // taken, written and armed, before the last sink's
+    const char* tag = "L21 a power cut inside the preload phase";
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    l_boot();
+    run_until([&] { return pre_wr_cyc.size() == 1 && !arm_cyc.empty(); }, 20000);
+    CHECK(accepts.size() == 1 && d->gate_own_o && count_ops(OP_WRITE) == 0
+              && count_ops(OP_ERASE) == 0,
+          "%s: cut inside the phase with nothing written", tag);
+    l_boot();
+    l_finish();
+    l_grade(tag, 0, true);
+  }
+  {
+    // a BIND held from reset, reset again before its release: the live
+    // change still lands once, after the second walk, and persists
+    const char* tag = "L22 a held BIND across a reset inside the window";
+    const Bind nb{true, true, false, L_TKC_UID, L_TKC, L_CTLR};
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    reset();
+    l_push(M_BIND_RX_CMD, 0, 0xB02, 0, L_TKC, L_TKC_UID, 0);
+    go();
+    run_until([&] { return accepts.size() == 1; }, 20000);
+    CHECK(txn_pops.empty() && txq.size() == 1, "%s: held when the reset lands", tag);
+    l_boot(true);
+    l_finish();
+    l_grade(tag, 1, false);
+    CHECK(l_resps(M_BIND_RX_RSP).size() == 1 && l_nvm_is(0, nb)
+              && l_nvm_is(L_LAST, L_B7),
+          "%s: answered once and persisted after the second walk", tag);
+    Bind want[N_SINKS];
+    want[0] = nb;
+    want[L_LAST] = L_B7;
+    CHECK(l_round_trip(want, why), "%s: a reset restores the new binding: %s", tag,
+          why.c_str());
+  }
+}
+
 int Harness::report() {
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
@@ -820,6 +1588,12 @@ int Harness::run_suite() {
   check_a_change_during_restore_wins();
   check_a_change_during_its_own_flush_reserializes();
   check_the_unflushed_export_contract();
+  check_l00_restore_control();
+  check_l05_read_only_in_the_window();
+  check_l05_anywhere_in_the_window();
+  check_l09_live_changes_stay_ordered();
+  check_l10_release_boundary();
+  check_l_reset_boundaries();
   return report();
 }
 

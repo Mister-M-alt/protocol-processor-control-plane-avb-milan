@@ -112,9 +112,21 @@ tally.
   each, and the GET between them carries none — a mark has no wire shape, so
   the pin is the only place any of this is visible.
 - **R** boot restore over a blank NVM device: all 8 BINDING regions read,
-  `restore_done` without `restore_fail`.
-- **S0/S1** quiescence + snapshot identity; SRP bring-up: the FIRST MSRP
+  the walk's terminal without `restore_fail`. The loop waits on the binding
+  manager's own terminal (`dbg_walk_done_o`), not on `restore_done_o`, so every
+  later section keeps the clock it was tuned against (section T's note).
+- **S0/S1** quiescence + snapshot identity, and `restore_done_o` has followed
+  the walk's terminal (the top's level now waits for the listener admission
+  gate's release, issue #92); SRP bring-up: the FIRST MSRP
   frame is the Domain default declaration `New {6,3,2}`, byte-exact.
+- **BW** (runs last, behind resets of its own) a read-only command in the
+  boot window, at the top (issue #92): sink 0 is bound to a talker of the
+  section's own and committed (a verified F07.8 record in the device model);
+  across a reset one `GET_RX_STATE` arrives before `restore_go_i` and one once
+  region 0x20 has been read and stored, with the device slowed so the walk
+  stays open. Both are held while the walk runs, both answer the restored
+  binding byte-exact after it, nothing is written to region 0x20, and the
+  next reset restores the same binding.
 - **S2** `DECLARE_TALKER` (svc face) → Σ-slope admission equals the
   independent Milan model (sum, granted, admitted, no over-limit) → Talker
   Advertise `New` AND MVRP VID `New` byte-exact on the MAC stream.
@@ -214,6 +226,7 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M29 | the top's own default changed from 2 to 3 | default build 18 FAIL of 1,391 (S1 twice, S8, T0, MP3 and 13 in DV). The fixture build PASSES 20 of 20, because it overrides the default |
 | M30 | the wrap's fixture override removed (test infrastructure) | fixture build 13 FAIL of 20: the build cannot pass on the top's or the child's own default |
 | M31 | control, not a defect: `KL_srp_top`'s own `DOM_DEF_VID_P` default changed from 2 to 7, binding intact | both builds PASS, 1,391 and 20: the child's default is no longer a source |
+| M32 | the listener admission gate deleted (`KL_pp_acmp_lsn_admit` never owns: `own_r` resets to 0), the top's wiring before issue #92 | default build 5 FAIL of 1,401: BW1 four times (the GET before the walk is answered at once; the one inside the window is taken, answers sink 0 unbound and its write-back rewrites region 0x20 unbound) and BW2 (the next reset restores nothing). Every other section PASSES |
 
 All twenty-four bite; originals restored; suite back to green. The M1-M6 counts were
 taken when the suite stood at 86 checks (scenario A and section B have since
@@ -229,7 +242,7 @@ cannot see it (`ucode.hex` is ignored); `rm ucode.hex && make` regenerates it.
 M25 to M31 were measured on 2026-09-22 at 1,391 checks in the default build and
 20 in the fixture build, each in its own scratch copy of `hdl/` and `tb/pp_top/`,
 so there was nothing to restore. M25 to M30 bite; M31, a control, stays green as
-it must.
+it must. M32 was measured on 2026-09-23 at 1,401 checks in the default build.
 
 ## Recorded seams and honest limits
 
@@ -264,10 +277,11 @@ it must.
   and the address flow through this processor — never MAAP itself: the
   probe/defend/announce state machine of IEEE 1722 Annex B lives in the
   integrating fabric, outside this repo.
-- The NVM device model is blank flash (reads answer 0xFF): a record failing
-  the F07.8 magic/layout check is SKIPPED by the shadow, which is the
-  documented no-saved-binding path. Torn-stream restore aborts are covered
-  by the `acmp_nvm` suite, not here.
+- The NVM device model is an erased flash (every byte 0xFF) that keeps what
+  is written to it: the first boot reads blank, so a record failing the F07.8
+  magic/layout check is SKIPPED by the shadow, which is the documented
+  no-saved-binding path; section BW's resets read back what it committed.
+  Torn-stream restore aborts are covered by the `acmp_nvm` suite, not here.
 - The wrap exposes observe-only cross-module taps (`dbg_*`) used during
   bring-up; the checks themselves read only wire frames + the host face.
 

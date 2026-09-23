@@ -221,7 +221,7 @@ property, not an accident, and it is regression-tested.
 | MAAP allocation | `maap_req_valid_o`, `maap_req_release_o`, `maap_req_src_o`, `maap_conflict_ack_o` / `maap_req_ready_i`, `maap_rsp_valid_i`, `maap_rsp_ok_i`, `maap_rsp_da_i[47:0]`, `maap_conflict_valid_i`, `maap_conflict_src_i` | **no source ever declares.** `acmp_declaring_o` is structurally 0 and PROBE_TX answers `TALKER_DEST_MAC_FAILED`. Commands are still answered normally. |
 | Descriptor memory | `desc_mem_*` | the failed header probe leaves zero configurations, so every `READ_DESCRIPTOR` answers `BAD_ARGUMENTS` after the watchdog. |
 | Response memory | `resp_mem_*` | every built response becomes a well-formed 60-byte `ENTITY_MISBEHAVING`. |
-| NVM device | `nvm_dev_*`, plus `restore_go_i`, `restore_busy_o`, `restore_done_o`, `restore_fail_o`, `restore_blank_o`, `nvm_alarm_o`, `nvm_unflushed_o` | bindings do not survive a power cycle. Nothing else changes **in this plane** — but your status register must not report otherwise: a walk over an unbacked face raises `restore_done_o` with no `restore_fail_o`, exactly like a successful one. Publish `restore_blank_o` beside them, and report not-successful when you know there is no media. |
+| NVM device | `nvm_dev_*`, plus `restore_go_i`, `restore_busy_o`, `restore_done_o`, `restore_fail_o`, `restore_blank_o`, `nvm_alarm_o`, `nvm_unflushed_o` | bindings do not survive a power cycle. Nothing else changes **in this plane** — but your status register must not report otherwise: a walk over an unbacked face raises `restore_done_o` with no `restore_fail_o`, exactly like a successful one. Publish `restore_blank_o` beside them, and report not-successful when you know there is no media. **`restore_go_i` is not part of the tie-off:** pulse it on every boot. The ACMP listener serves nothing until the walk has ended ([05 §5.1](../architecture/05_acmp_engine.md#sec-05-boot-admission)), so an unbacked face must still answer the walk's reads. |
 | Management side port | `host_*` | you lose all diagnostics. The plane still runs. |
 | SRP service | `svc_*` | nothing declares through the configuration plane. |
 | AECP pop face | `aecp_txn_*`, `aecp_rxs_*` | **tie `aecp_txn_ready_i` low.** The internal AECP engine already drains this queue; this face is an *additional* observer. Driving it steals records from the engine. |
@@ -275,11 +275,16 @@ The status dictionary these implement is catalogued in
 
 1. Load the descriptor image into your memory at `DESC_BASE_P`.
 2. Release `rst_n` with `clk_i` running.
-3. Optionally pulse `restore_go_i` to restore persisted bindings from NVM; wait for
-   `restore_done_o`, then read `restore_fail_o` **and** `restore_blank_o`.
+3. Pulse `restore_go_i` to restore persisted bindings from NVM, **on every boot**; wait
+   for `restore_done_o`, then read `restore_fail_o` **and** `restore_blank_o`.
    `restore_done_o` says the walk sequenced, not that anything came back: every
    per-record vendor default sets it. `restore_blank_o` is the pin that separates
-   a restore from a walk over blank, unframed or absent media.
+   a restore from a walk over blank, unframed or absent media. The walk is not
+   optional: from reset until `restore_done_o` the ACMP listener's work is held at
+   its producers, so a boot that never starts the walk never answers an ACMP
+   listener command. `restore_done_o` rises once the last restored binding has been
+   written and its discovery armed, a few cycles after the walk's own terminal, with
+   `restore_busy_o` high in between; gate the entity enable on it.
 4. Present identity, capability and configuration inputs.
 5. Assert `entity_enable_i`. Only now may the entity advertise.
 

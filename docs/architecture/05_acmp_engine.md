@@ -135,6 +135,54 @@ NVM shadow ≈20 B/sink: {valid, talker EID, talker unique_id, controller EID, s
 2 PROBING_ACTIVE · 3 PROBING_COMPLETED. `acmpsta` = IEEE Table 8-3 code, **defined
 only while PROBING_ACTIVE**, else 0 (Milan §5.3.8.6).
 
+### <a id="sec-05-boot-admission"></a>5.1 Boot restore ownership of the listener
+
+The NVM shadow ([`KL_acmp_nvm_shadow`](../../hdl/acmp/KL_acmp_nvm_shadow.sv)) restores
+in two phases: it reads and stores every sink's saved binding, then offers each valid
+one to the listener's preload face, which writes the sink's record bound in
+`PRB_W_AVAIL` and arms discovery (A4). The shadow also captures every record the listener
+writes and treats a capture during the restore as a live change that wins over the saved
+image. The listener, for its part, ranks a START/STOP request, a dispatch transaction, a
+pending timer expiry and a talker event above the preload, and every walk it runs ends in
+a record write-back. Left alone, a read-only `GET_RX_STATE` served between a sink's store
+and its preload wrote the sink's still-unbound record back, the shadow withdrew the
+restored binding, and the unbound record was flushed over the saved one (processor issue
+#92). A talker event held as a level could hold the preload phase indefinitely.
+
+The ownership contract is therefore:
+
+| Rule | Realization |
+|---|---|
+| From the hard reset, the listener's four work faces belong to [`KL_pp_acmp_lsn_admit`](../../hdl/acmp/KL_pp_acmp_lsn_admit.sv), not to their producers. | instanced in `protocol_processor_top` in front of the listener; the listener itself is unchanged |
+| A dispatch transaction and a talker event are **held at their producers**. | valid towards the listener **and** ready towards the producer masked: the ACMP head stays in its dispatch queue (and is not admitted to the scoreboard), the event router's sticky latch stays set. A producer pops exactly when the listener takes. |
+| A START/STOP request is **held by the AECP engine**. | its valid is masked; the listener's completion passes. The listener's holder is empty from reset, so no completion can fire while the faces are owned. |
+| A timer expiry of a listener owner is **refused and counted**. | no listener timer can be armed while the faces are owned; the count is the gate's `dbg_exp_drop_o`, whose healthy reading is 0 |
+| The faces are **released once**, when the binding walk has drained. | the shadow's terminal (`restore_done_o`, failed or not), no preload presented, the listener idle and its last A4 strobe gone. The shadow never walks again before a reset. |
+| The release is **the binding walk's end**. | the top's `restore_done_o` is the shadow's terminal AND the release, and `restore_busy_o` covers the cycles between them, so an entity enable gated on `restore_done_o` cannot precede the last preload's record write and discovery arm |
+
+What follows: until the release, the listener's only reachable states are `X_INIT`,
+`X_IDLE` and `X_PRELOAD`, so a preload is taken in the cycle it is offered and the only
+records the shadow captures during its walk are the preloads' own, which compare equal
+to the restored image. A command, a talker event or a START/STOP request that arrives
+before the release is served after it, in its producer's order, on the restored image:
+a live change (a BIND, an UNBIND) still wins by coming later, and a read-only command
+answers the restored binding instead of erasing it. The release trails the shadow's
+terminal by at most four cycles.
+
+Two consequences an integrator must plan for. **The walk is not optional**: pulse
+`restore_go_i` on every boot, with or without media behind the NVM device face, because a
+boot that never starts the walk leaves the listener owned until the next reset. And there
+is **no fairness promise** among the listener's sources after the release: its own
+priority order applies again. What a producer does with arrivals behind a held head is
+that producer's own queue policy. While a talker event is held, the router presents it
+and nothing behind it, so later router events wait (they are latched, not lost) and a
+source strobing again coalesces as the router documents.
+
+The contract is graded with the real listener, shadow and port in
+[`tb/acmp_nvm`](../../tb/acmp_nvm/README.md) (group L, every presentation cycle of the
+window, with reset round trips) and at the top in [`tb/pp_top`](../../tb/pp_top/README.md)
+(section BW).
+
 ## 6. Listener behavior — the four-view package
 
 Reading guide: **[F05.3](#fig-05-listener-matrix) is the single authoritative

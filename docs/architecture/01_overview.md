@@ -100,7 +100,9 @@ once in [F02.10](02_interfaces.md#fig-02-statusdict).
 - **Initialization** — boot sequencer order: (1) load/validate descriptor image and
   identity registers (side-port or ROM); (2) NVM restore of the persisted set
   ([07 §5](07_memory_maps.md)); (3) preload engine state — a restored binding puts that
-  sink's listener SM in `PRB_W_AVAIL`; (4) adapters report ready; (5) assert
+  sink's listener SM in `PRB_W_AVAIL`, and the listener takes no other work until the
+  last preload is written and armed ([05 §5.1](05_acmp_engine.md#sec-05-boot-admission));
+  (4) adapters report ready; (5) assert
   `entity_enable` — only now may ADP advertise (Milan §5.6.1), because the entity must
   already accept AECP commands and bind/probe requests.
 - **Steady state** — RX commands, timer events, self-originated traffic and side-port

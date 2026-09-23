@@ -27,7 +27,9 @@
 //                  Services: KL_pp_timer_service (arm-port priority mux),
 //                      KL_pp_prng (draw-port owner mux), KL_pp_scoreboard,
 //                      KL_pp_event_router, KL_pp_originator, KL_pp_trace_ring,
-//                      KL_pp_side_port, KL_acmp_nvm_shadow -> KL_pp_nvm_port.
+//                      KL_pp_side_port, KL_acmp_nvm_shadow -> KL_pp_nvm_port,
+//                      KL_pp_acmp_lsn_admit (the listener's four work faces
+//                      held from reset to the binding walk's end).
 //                  The F02.10 class-D status dictionary is aggregated into
 //                      the side-port snapshot window (0x20000).
 //
@@ -816,7 +818,7 @@ module protocol_processor_top
   logic [N_STREAM_IN_P-1:0] bound_hold_r;
   always_ff @(posedge clk_i) begin : bound_debounce
     if (!rst_n)                    bound_hold_r <= '0;
-    else if (!lstn_dbg_busy_nc_w)  bound_hold_r <= bound_r;   // idle: track
+    else if (!lstn_dbg_busy_w)     bound_hold_r <= bound_r;   // idle: track
     else                           bound_hold_r <= bound_hold_r | bound_r;
   end
   assign acmp_bound_o     = bound_hold_r;
@@ -1700,7 +1702,7 @@ module protocol_processor_top
   logic [47:0] lstn_act_settle_da_w;
   logic [11:0] lstn_act_settle_vlan_w;
   logic        lstn_act_nvm_nc_w, lstn_act_nvm_set_nc_w, lstn_act_notify_nc_w;
-  logic        lstn_dbg_busy_nc_w;
+  logic        lstn_dbg_busy_w;
   logic        lstn_recwr_w;
   logic [SINK_IDX_W_C-1:0] lstn_recwr_sink_w;  //! CLAMPED (see SINK_IDX_W_C)
   logic [pp_acmp_pkg::ACMP_REC_W_C-1:0] lstn_recwr_rec_w;
@@ -1729,6 +1731,60 @@ module protocol_processor_top
   logic        lstn_act_strt_chg_w;
   logic        lstn_act_strt_cmd_chg_w;
 
+  // ---- the listener's boot-owned admission (issue #92, issue #93 S4) -----
+  //! KL_pp_acmp_lsn_admit owns the listener's four work faces from rst_n to
+  //! the binding walk's drained terminal: the dispatch head and the router's
+  //! talker event are held at their producers (valid AND ready masked, so
+  //! the head is neither popped nor admitted to the scoreboard and the
+  //! sticky event is neither acknowledged nor traced), the AECP engine's
+  //! START/STOP valid is masked while its completion passes, and a timer
+  //! expiry of a listener owner is refused and counted. Without it a
+  //! read-only GET_RX_STATE served between a sink's restore store and its
+  //! preload withdrew the restored binding and flushed the listener's
+  //! unbound record over the saved one. Its release is the binding walk's
+  //! END, and restore_done_o below takes it.
+  localparam int unsigned LSTN_OWNER_BASE_C = 32;
+  logic        lsn_released_w;
+  logic        lsn_own_nc_w;
+  logic        lsn_txn_valid_w, lsn_evt_tk_valid_w, lsn_strm_valid_w;
+  logic        lsn_exp_valid_w;
+  logic        lsn_txn_ready_raw_w, lsn_evt_tk_ready_raw_w;
+  //! expiries of a listener owner refused while the gate owned the faces.
+  //! Like lstn_strq_drop_w it STOPS HERE: its only healthy reading is 0,
+  //! and tb/acmp_nvm grades the arm that moves it.
+  logic [15:0] lsn_exp_drop_nc_w;
+  logic        nvm_walk_done_w, nvm_walk_busy_w;
+
+  KL_pp_acmp_lsn_admit #(
+      .N_SINKS_P        (N_STREAM_IN_P),
+      .TMR_OWNER_BASE_P (LSTN_OWNER_BASE_C),
+      .OWNER_W_P        (PP_TIMER_OWNER_W_C)
+  ) u_lsn_admit (
+      .clk_i          (clk_i),
+      .rst_n          (rst_n),
+      .walk_done_i    (nvm_walk_done_w),
+      .pre_valid_i    (pre_valid_w),
+      .lsn_busy_i     (lstn_dbg_busy_w),
+      .lsn_arm_i      (lstn_disc_arm_w),
+      .own_o          (lsn_own_nc_w),
+      .released_o     (lsn_released_w),
+      .p_txn_valid_i  (acmp_txn_valid_w && acmp_sb_grant_w && pf_ready_w
+                       && !acmp_is_tkr_w),
+      .p_txn_ready_o  (lstn_txn_ready_w),
+      .l_txn_valid_o  (lsn_txn_valid_w),
+      .l_txn_ready_i  (lsn_txn_ready_raw_w),
+      .p_tk_valid_i   (lstn_evt_tk_valid_w),
+      .p_tk_ready_o   (lstn_evt_tk_ready_w),
+      .l_tk_valid_o   (lsn_evt_tk_valid_w),
+      .l_tk_ready_i   (lsn_evt_tk_ready_raw_w),
+      .p_strm_valid_i (strm_set_valid_w),
+      .l_strm_valid_o (lsn_strm_valid_w),
+      .p_exp_valid_i  (exp_valid_w),
+      .p_exp_owner_i  (exp_owner_w),
+      .l_exp_valid_o  (lsn_exp_valid_w),
+      .dbg_exp_drop_o (lsn_exp_drop_nc_w)
+  );
+
   KL_pp_acmp_listener #(
       .N_SINKS_P           (N_STREAM_IN_P),
       .TROM_HEX_P          (TROM_HEX_P),
@@ -1738,21 +1794,20 @@ module protocol_processor_top
       .TX_OVERSIZE_BYTES_P (TX_OVERSIZE_BYTES_P),
       .TMR_SLOT_AW_P       (TMR_AW_C),
       .TMR_BASE_SLOT_P     (TMR_LSTN_BASE_C),
-      .TMR_OWNER_BASE_P    (32),
+      .TMR_OWNER_BASE_P    (LSTN_OWNER_BASE_C),
       .STRM_TIMEOUT_CYC_P  (DESC_MEM_TMO_CYC_P)
   ) u_listener (
       .clk_i                 (clk_i),
       .rst_n                 (rst_n),
       .entity_id_i           (entity_id_i),
-      .txn_valid_i           (acmp_txn_valid_w && acmp_sb_grant_w && pf_ready_w
-                              && !acmp_is_tkr_w),
+      .txn_valid_i           (lsn_txn_valid_w),
       .txn_i                 (steer_txn_w),
-      .txn_ready_o           (lstn_txn_ready_w),
-      .evt_tk_valid_i        (lstn_evt_tk_valid_w),
+      .txn_ready_o           (lsn_txn_ready_raw_w),
+      .evt_tk_valid_i        (lsn_evt_tk_valid_w),
       .evt_tk_kind_i         (lstn_evt_tk_kind_w),
       .evt_tk_failed_i       (lstn_evt_tk_failed_w),
       .evt_tk_sink_i         (lstn_evt_tk_sink_w),
-      .evt_tk_ready_o        (lstn_evt_tk_ready_w),
+      .evt_tk_ready_o        (lsn_evt_tk_ready_raw_w),
       .pre_valid_i           (pre_valid_w),
       .pre_sink_i            (pre_sink_w),
       .pre_talker_eid_i      (pre_talker_eid_w),
@@ -1760,7 +1815,7 @@ module protocol_processor_top
       .pre_ctlr_eid_i        (pre_ctlr_eid_w),
       .pre_sw_i              (pre_sw_w),
       .pre_started_i         (pre_started_w),
-      .strm_set_valid_i      (strm_set_valid_w),
+      .strm_set_valid_i      (lsn_strm_valid_w),
       .strm_set_sink_i       (strm_set_index_w),
       .strm_set_val_i        (strm_set_val_w),
       .strm_set_ready_o      (strm_set_ready_w),
@@ -1776,7 +1831,7 @@ module protocol_processor_top
       .tmr_arm_slot_o        (lstn_arm_slot_w),
       .tmr_arm_owner_o       (lstn_arm_owner_w),
       .tmr_arm_deadline_ms_o (lstn_arm_deadline_w),
-      .tmr_exp_valid_i       (exp_valid_w),
+      .tmr_exp_valid_i       (lsn_exp_valid_w),
       .tmr_exp_slot_i        (exp_slot_w),
       .tmr_exp_owner_i       (exp_owner_w),
       .draw_req_o            (lstn_draw_req_w),
@@ -1818,7 +1873,7 @@ module protocol_processor_top
       .act_nvm_set_o         (lstn_act_nvm_set_nc_w),
       .act_notify_o          (lstn_act_notify_nc_w),
       .act_sink_o            (lstn_act_sink_w),
-      .dbg_busy_o            (lstn_dbg_busy_nc_w),
+      .dbg_busy_o            (lstn_dbg_busy_w),
       .dbg_recwr_o           (lstn_recwr_w),
       .dbg_recwr_sink_o      (lstn_recwr_sink_w),
       .dbg_recwr_rec_o       (lstn_recwr_rec_w)
@@ -2367,8 +2422,8 @@ module protocol_processor_top
       .rst_n            (rst_n),
       .tick_i           (tick_ms_w),
       .restore_go_i     (restore_go_i),
-      .restore_busy_o   (restore_busy_o),
-      .restore_done_o   (restore_done_o),
+      .restore_busy_o   (nvm_walk_busy_w),
+      .restore_done_o   (nvm_walk_done_w),
       .restore_fail_o   (restore_fail_o),
       .restore_blank_o  (restore_blank_o),
       .alarm_o          (nvm_alarm_o),
@@ -2399,6 +2454,16 @@ module protocol_processor_top
       .dbg_valid_o      (nvm_dbg_valid_nc_w),
       .dbg_touched_o    (nvm_dbg_touched_nc_w)
   );
+
+  //! the binding walk ENDS at the admission gate's release, not at the
+  //! shadow's terminal: the last preload's record write and discovery arm
+  //! land up to four cycles after that terminal, and the integrator's entity
+  //! enable (entity_enable_i AND restore_done_o, 07 §5.3 boot-before-enable)
+  //! must not precede them. Busy covers the gap, so the pair never reads
+  //! neither-busy-nor-done once the walk has started.
+  assign restore_done_o = nvm_walk_done_w && lsn_released_w;
+  assign restore_busy_o = nvm_walk_busy_w
+                          || (nvm_walk_done_w && !lsn_released_w);
 
   KL_pp_nvm_port u_nvm_port (
       .clk_i           (clk_i),

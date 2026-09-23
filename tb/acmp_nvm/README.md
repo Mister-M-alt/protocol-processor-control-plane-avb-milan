@@ -5,13 +5,18 @@ Proves the ACMP binding NVM shadow (`hdl/acmp/KL_acmp_nvm_shadow.sv`,
 [05 §5](../../docs/architecture/05_acmp_engine.md) ≈20 B/sink shadow +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8/F07.9 +
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8): `make` = build + run,
-exit 0 = PASS, 86 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
+exit 0 = PASS, 190 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
 timing mirrors (tick_i is held high, so window = 50 cycles).
 
 The wrap compiles the shadow together with the REAL `KL_pp_nvm_port` (class-F
-manager face) and the REAL `KL_pp_acmp_listener` (capture from its record write
-port, boot replay into its `pre_*` preload face) — face compatibility is
-proven by elaboration, not transcription. The harness plays the physical NVM
+manager face), the REAL `KL_pp_acmp_listener` (capture from its record write
+port, boot replay into its `pre_*` preload face) and the REAL
+`KL_pp_acmp_lsn_admit` between the listener's four work faces and their
+producers, wired as `protocol_processor_top` wires them — face compatibility is
+proven by elaboration, not transcription. The harness plays the producers
+(dispatch queue head, event router, AECP START/STOP request, timer expiry), each
+holding a presented request until its producer-side handshake, and the
+listener's RX-slot and TX-slot pools. The harness plays the physical NVM
 behind the port's device face (region store, grant/completion delays,
 per-byte stalls, targeted error injection) and independently re-implements
 the record contract: crc16 CCITT-FALSE, big-endian 16-bit header fields, and
@@ -51,6 +56,54 @@ the cycle, which is why the wrap publishes `dbg_port_done_o`: the device
 face's own done is two cycles earlier), and on retry exhaustion falls on the
 SAME cycle `alarm_o` rises, never silently.
 
+Group L — the boot window and the listener's admission (issue #92, and the
+S4 admission of issue #93). Each case boots on the saved bindings of the FIRST
+(0) and the LAST (7) sink and grades what the listener TOOK and ANSWERED and
+what the device ends up holding, never a timeout: the walk completes, both
+saved bindings are preloaded, each in the cycle it is offered, and written
+bound as saved; the release follows the last preload's record write and
+discovery arm, within four cycles of the manager's terminal; while the gate
+owns the faces the listener visits only `X_INIT`, `X_IDLE` and `X_PRELOAD`,
+takes nothing at a work face and raises no side effect (timer arm, PRNG draw,
+TX allocation, RX free, settle, teardown, disarm, notify, START/STOP
+completion); every request is popped by its producer in exactly the cycle the
+listener takes it, at or after the release; no sink is marked touched.
+- **L00** control, no traffic in the window; after the release both sinks
+  answer `GET_RX_STATE` with their restored binding; a reset restores both.
+- **L05a-f** a read-only `GET_RX_STATE` in the window: of the first sink
+  between its store and its preload, of the later sink likewise, of the first
+  sink at the later sink's store, of the later sink at the first sink's store,
+  five consecutive GETs of both sinks, and one of the later sink as the first
+  sink's preload is offered. Every reply is the restored binding byte-exact
+  (Milan Table 5.37), nothing is written to NVM, both saved records stay
+  byte-exact, and a reset restores both.
+- **L05s** the same GET, of either sink, presented at EVERY cycle from the
+  reset's release through `restore_go_i`, the whole walk and its release, one
+  boot per cycle.
+- **L09** live changes stay ordered: a BIND of the first sink to another
+  talker held from reset lands after the restore, answers SUCCESS, is
+  committed once and restored by the next reset; an UNBIND of the later sink
+  presented at the first sink's store commits a `valid = 0` record and the
+  next reset restores only the first sink; a queue of GET, BIND, GET, UNBIND,
+  GET at the first sink's store is answered in queue order, each reply on the
+  state its predecessor left, and NVM ends at the queue's last word.
+- **L10** a GET presented in the gate's last owned cycle, its first released
+  cycle and the one after, placed against the release a control boot
+  measured: taken once, in the release cycle or its own.
+- **L20-L22** reset boundaries: a GET held in the window across a reset
+  (taken once, after the NEXT walk's release); a power cut inside the preload
+  phase writes nothing and the next boot restores both; a BIND held across a
+  reset lands once after the second walk and persists.
+
+Pinned wiring: `make pinned` builds the same bench with the gate left out
+(`ACMP_NVM_PINNED_WIRING`, the producers wired straight to the listener as the
+top was before issue #92) and exits non-zero. It is the reproduction of the
+recorded L05 control: 58 of 190 checks fail, among them L05a's "sink 0
+holds 000000000000000000000000" (the listener's unbound record flushed over
+the saved binding), the unbound reply and the reset that no longer restores
+it; L05s finds 193 presentation cycles of sink 0 and 202 of sink 7 answered
+unbound. Its failures are assertions on completed scenarios.
+
 Known limits (honest): the BINDING record id allocation (`REC_ID_BASE_P` =
 0x20) and the exact payload byte layout are design decisions of the shadow's
 banner — 07 §5.2 names the BINDING[i] record but pins neither; the suite's
@@ -75,6 +128,22 @@ Mutation-proven 2026-08-13 for the blank arm:
 - **M6** `restore_blank_o` hard-wired to `1'b0`: fails 2 of 76 (A2b empty
   NVM, G4b atomic reject), and 1 more in the consumer suite
   (milan-fpga `tb/verilator/pp_shadow`, `PP_STAT[7]`).
+
+Mutation-proven 2026-09-23 for the listener admission (issue #92), each on
+`KL_pp_acmp_lsn_admit` at 190 checks:
+- **LG01** the gate deleted (`own_r` resets to 0): fails 58 of 190, the
+  pinned-wiring set above.
+- **LG02** the transaction's valid admitted while owned, its ready masked:
+  fails 52 of 190 (the listener takes the head every cycle it is idle while
+  the producer never pops: 561 takes, no release in L05a).
+- **LG03** the transaction's ready passed while owned, its valid masked:
+  fails 38 of 190 (the producer pops a head the listener never took: the
+  command is lost, no reply).
+- **LRdone** the release no longer waits for the walk's terminal: fails 58
+  of 190, the LG01 set.
+- The `pre_valid`, `busy` and `arm` release terms are NOT graded here: the
+  real manager raises its terminal one cycle after its last preload was taken,
+  when all three are already clear. `tb/lsn_admit` grades each on its own.
 
 Mutation-proven 2026-09-20 for the unflushed export:
 - **M7** `dbg_dirty_o` hard-wired to `'0` — the pin issue #90 exports:
