@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **253 checks**.
+`make` = build + run, exit 0 = PASS, **255 checks**.
 
 Expectations are independent: an MRPDU builder/parser written here from
 802.1Q §10.8.1.2 / §35.2.2, a Σ-slope model transcribing the Milan v1.2
@@ -79,7 +79,9 @@ Covered end to end:
   - **(c)** a Listener-only LeaveAll, never re-declared: Ready stays
     published for T-MRP-LEAVE (LV), then ages to MT and ACTIVE drops; sink
     0's Advertise is untouched. The Domain row's negative: no Domain JoinIn
-    follows it before the next periodic re-join.
+    follows it before the next periodic re-join, nor, each in its own clean
+    slot, a Talker Advertise LeaveAll (sink 0's Advertise re-declared in the
+    flagged vector) or a Talker Failed-only LeaveAll.
 - **Admission sweep**: 30 randomized declare/withdraw rounds across all 8
   sources vs the model — admitted vector, per-source granted slopes, Σ
   and over_limit, exercising the greedy order and capacity reuse.
@@ -120,3 +122,12 @@ The F5c Domain negative (PR #107 correction round 1), mutation-proven
 | Mutation | Result |
 |---|---|
 | Domain participant takes every MSRP lane (R270-1 X2, R271-1 R4) | 1 of 253 FAIL (F5c no Domain re-declaration) |
+
+Its extension to the two talker lanes (PR #107 correction round 2),
+mutation-proven 2026-09-24 in `git archive` exports with the reviewer's plants
+verbatim; both arms passed all 253 checks before it:
+
+| Mutation | Result |
+|---|---|
+| Domain participant also takes the Talker Advertise lane (R271-2 K13) | 1 of 255 FAIL (F5c Talker Advertise LeaveAll) |
+| Domain participant also takes the Talker Failed lane (R271-2 K14) | 1 of 255 FAIL (F5c Talker Failed-only LeaveAll) |

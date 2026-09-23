@@ -5,7 +5,7 @@ Proves the SRP MRPDU vector decoder (`hdl/srp/KL_srp_decoder.sv`) against
 [10 §3](../../docs/architecture/10_srp_engine.md) (F10.6/F10.7/F10.8, the
 vector-value-k paragraph, the dual-EndMark framing rule and the Milan
 §4.2.7.1.2 tolerance rules, tested per F09.4) and the per-type LeaveAll rule
-of 10 §6.5: `make` = build + run, exit 0 = PASS, 177 checks.
+of 10 §6.5: `make` = build + run, exit 0 = PASS, 190 checks.
 
 Every MRPDU is hand-built **byte-exact** in the harness and every expected
 event is an explicit hand-computed constant — the C++ never re-implements
@@ -70,6 +70,15 @@ Covered:
     fires its lane ahead of an out-of-alphabet digit: each keeps its prefix,
     lane included, is reported malformed, and the next well-formed MRPDU's
     LeaveAll of that type fires the lane again.
+  - **V: a closed gate stays closed to the MRPDU's end, and re-arms after
+    padding.** `[L LA JoinIn] [Domain LA n=2] [L LA JoinMt]` gives `L3 E3
+    L4 E4 E4 E3`: another type's message does not re-open the Listener
+    gate. One Listener message `[LA JoinIn] [JoinIn] [LA JoinMt]` gives
+    `L3 E3 E3 E3`: a vector without LeaveAllEvent after the flagged one does
+    not re-open it. A Listener-only LeaveAll MRPDU of 19 octets, zero-padded
+    to the 46-octet minimum payload (the V9 route forwards an MRP frame
+    byte-exact to its last octet), fed twice, gives `L3` and one ok done
+    each time.
 - Explicit-EndMark-then-padding (min-frame pad bytes inert, one done).
 
 Mutation-proven 2026-08-11 (backup/sed/run/restore):
@@ -103,3 +112,14 @@ below passed all four SRP suites before T and U existed:
 | The lane fires only at the first VectorHeader of an MSRP message | 2 of 177 FAIL (T1) |
 | Gate re-armed only by a clean dual EndMark (R270-1 X7, R271-1 R8) | 4 of 177 FAIL (U1, U2, U3, U4) |
 | Gate re-armed at a new MRPDU only when it is MSRP | 1 of 177 FAIL (U4) |
+
+The rest of that gate's boundary (V), mutation-proven 2026-09-24 in `git
+archive` exports with the reviewer's plants verbatim (PR #107 correction
+round 2). Every arm below passed all four SRP suites before V existed:
+
+| Mutation | Result |
+|---|---|
+| The gate remembers only the last type that fired: one register, not one bit per type (R271-2 K6) | 2 of 190 FAIL (V1) |
+| Gate re-armed at every message whose AttributeType differs from the previous message's (R271-2 K8) | 2 of 190 FAIL (V1) |
+| An unflagged VectorHeader of a type re-opens that type's gate (R271-2 K7) | 2 of 190 FAIL (V2) |
+| Gate re-armed at a malformed or an unpadded clean end, never after a padded MRPDU (R271-2 K5) | 1 of 190 FAIL (V3) |
