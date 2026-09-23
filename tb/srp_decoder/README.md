@@ -92,3 +92,14 @@ arm planted, run, restored under a SHA-256 check):
 | Once-per-MRPDU gate removed | 8 of 150 FAIL (S, both MRPDUs and MVRP) |
 | Gate never re-armed at the next MRPDU | 18 of 150 FAIL (P, Q, R, S) |
 | Lane = AttributeType instead of AttributeType − 1 | 11 of 150 FAIL (L, Q, R, S; P by strobe order alone) |
+
+Both boundaries of the once-per-MRPDU gate (T, U), mutation-proven
+2026-09-23 in `git archive` exports (PR #107 correction round 1). Every arm
+below passed all four SRP suites before T and U existed:
+
+| Mutation | Result |
+|---|---|
+| Any VectorHeader of the type closes the gate (R270-1 X1, R271-1 R1) | 6 of 177 FAIL (T1, T2, T3) |
+| The lane fires only at the first VectorHeader of an MSRP message | 2 of 177 FAIL (T1) |
+| Gate re-armed only by a clean dual EndMark (R270-1 X7, R271-1 R8) | 4 of 177 FAIL (U1, U2, U3, U4) |
+| Gate re-armed at a new MRPDU only when it is MSRP | 1 of 177 FAIL (U4) |

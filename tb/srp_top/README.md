@@ -113,3 +113,10 @@ and pass under both the previous and the new routing; F5 separates them:
 | Decoder strobes every lane at every flagged VectorHeader | 5 of 252 FAIL (F5a, F5b, F5c) |
 | KL_srp_top broadcasts every lane to every plane | 5 of 252 FAIL (F5a, F5b, F5c) |
 | Domain participant deaf to the Domain lane | 1 of 252 FAIL (F5b Domain re-declaration) |
+
+The F5c Domain negative (PR #107 correction round 1), mutation-proven
+2026-09-23 in a `git archive` export; the arm passed all 252 checks before it:
+
+| Mutation | Result |
+|---|---|
+| Domain participant takes every MSRP lane (R270-1 X2, R271-1 R4) | 1 of 253 FAIL (F5c no Domain re-declaration) |
