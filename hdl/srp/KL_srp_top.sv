@@ -71,7 +71,8 @@
 //                re-declared in the same MRPDU. The leavealltimer re-arms
 //                only at its own expiry; a received LeaveAll does not
 //                restart it, which 802.1Q-2014 Table 10-5 would (rLA! ->
-//                Start leavealltimer) — an open deviation, 10 §6.5.
+//                Start leavealltimer): an open deviation, 10 §6.5,
+//                tracked in issue #108.
 //---------------------------------------------------------------------------//
 `default_nettype none
 

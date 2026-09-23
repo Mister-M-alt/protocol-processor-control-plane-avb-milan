@@ -406,9 +406,11 @@ received LeaveAll does not restart it. 802.1Q-2014 does restart it: Table 10-5
 says "Reception of a LeaveAll message from another Participant causes the timer to
 be restarted without generating a message, thus suppressing multiple LeaveAll
 messages from Participants connected to the same LAN." Milan v1.2 Table 4.3 sets
-only the timer's range (10–15 s, ± 0.5 s). The behaviour is kept unchanged by the
-issue #106 scope decision and recorded there as open. Without the restart, both
-ends send a LeaveAll each cycle instead of one between them.
+only the timer's range (10–15 s, ± 0.5 s). Issue #106 leaves the behaviour
+unchanged; the deviation is tracked in issue
+[#108](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/108).
+Without the restart, both ends send a LeaveAll each cycle instead of one between
+them.
 
 ## 7. µcode / dispatch
 
