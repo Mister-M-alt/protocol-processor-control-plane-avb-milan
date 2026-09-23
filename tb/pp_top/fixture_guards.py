@@ -10,7 +10,17 @@ import subprocess
 import tempfile
 
 
-def main():
+def main() -> int:
+    """Check each SRP VID fixture case against the real bench; 0 = all four PASS.
+
+    Reads --verilator, --cxx and the Verilator flags after `--` from the
+    command line, generates the model once into a temporary directory, then
+    syntax-checks sim_main.cpp with no override, 5A3C, 0002 and 1002 under
+    LC_ALL=C. Returns 1, after printing the compiler output, when a case's exit
+    status, static-assertion diagnostics or error count differs from the
+    expected. A failed VERILATOR_ROOT query or model generation raises
+    CalledProcessError.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--verilator", default="verilator")
     parser.add_argument("--cxx", default="c++")

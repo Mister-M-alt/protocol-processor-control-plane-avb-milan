@@ -12,7 +12,14 @@ import fixture_guards
 
 
 class CompilerLocaleTest(unittest.TestCase):
-    def test_compiler_environment_and_arguments(self):
+    def test_compiler_environment_and_arguments(self) -> None:
+        """main() passes every argument through and sets LC_ALL=C for the compiler only.
+
+        Runs with mocked subprocesses, once with LC_ALL unset and once with it
+        inherited. Requires exit 0, the caller's environment unchanged, and the
+        exact model-generation call and four compiler calls, each compiler call
+        getting the caller's environment plus LC_ALL=C.
+        """
         wire = "SRP VID fixture must differ from product default 2 in the 16-bit wire value"
         class_d = "SRP VID fixture must differ from product default 2 in the 12-bit class-D value"
         cases = [(None, ()), ("5A3C", ()), ("0002", (wire, class_d)), ("1002", (class_d,))]
