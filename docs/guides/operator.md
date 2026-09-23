@@ -199,9 +199,13 @@ Word address = 0x30000 + N.
 | 0 | read/write | a scratch register. Writing then reading it back is the cheapest proof the side port works in both directions |
 | 1 | read only | bit 0 `entity_enable_i` · bit 1 restore busy · bit 2 restore done · bit 3 restore failed |
 
-`restore_fail_o` means a torn read-back aborted the whole boot restore — deliberately, so
-a partial set of bindings is never preloaded. A blank device is not a failure: a record
-that fails its framing check is skipped, and that sink simply starts unbound.
+`restore_fail_o` means the whole boot restore was abandoned — deliberately, so a partial
+set of bindings is never preloaded: a read-back torn mid-record, a device error on a
+record read, or a device that stopped answering for the read deadline. Every sink then
+starts unbound, and the listener still answers. A blank device is not a failure: a
+record that fails its framing check is skipped, and that sink simply starts unbound. A
+device that stopped answering and never recovers also leaves every later binding change
+pending (never written) until the next reset.
 
 **Do not read restore done as restore succeeded.** It says the walk reached its end,
 which every skipped record also does, so a device whose NVM is blank — or whose

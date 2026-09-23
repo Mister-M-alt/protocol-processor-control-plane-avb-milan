@@ -45,39 +45,51 @@
 //                partial preload).
 //
 //  Refusals    : (a) a read-back that ends with ZERO record bytes
-//                forwarded (empty/unframed region, header refused by the
-//                port) is the F07.9 per-record arm — vendor default =
-//                no saved binding, the walk continues; a read-back torn
-//                MID-STREAM (err or short done after ≥1 byte) aborts the
-//                WHOLE restore: restore_fail_o, no preload is ever driven,
-//                every un-captured sink stays invalid. (b) a complete
-//                record failing crc/layout_version/record_id/length is
-//                per-record vendor default (F07.9 crc arm), never an
-//                abort. (c) a capture during restore WINS over the
-//                restored image for its sink: the NVM value is discarded,
-//                the preload is skipped, and the live change is written
-//                back after the walk (change-during-restore ordering).
-//                (d) a capture hitting a record MID-FLUSH taints the
-//                in-flight image: dirty survives the commit and the burst
-//                loop re-serializes fresh data (NVM converges to newest).
-//                Captures during the post-reset init sweep are dropped
-//                (both sweeps write zeros); flushes are gated behind
+//                forwarded because the device answered with something that
+//                is not a record (a clean done, or an err the port names
+//                UNFRAMED: an empty or unframed region) is the F07.9
+//                per-record arm — vendor default = no saved binding, the
+//                walk continues. Everything else that ends a read early
+//                aborts the WHOLE restore: restore_fail_o, no preload is
+//                ever driven, every un-captured sink stays invalid, and
+//                restore_cause_o says which (issue #93): 1 a read-back
+//                torn MID-STREAM (err or short done after ≥1 byte); 2 a
+//                DEVICE err with zero bytes forwarded (a failing device is
+//                not an empty record); 3 the read phase's no-progress
+//                deadline, RS_TMO_CYC_P cycles waiting on the port for its
+//                idle, a byte, a done or an err. An expiry while this
+//                manager's read is issued abandons it (nvm_abort_o) to the
+//                arbiter in front of the port, which drains it: its late
+//                bytes and its ending reach no manager. The preload phase
+//                is not watched here; KL_pp_acmp_lsn_admit bounds it.
+//                (b) a complete record failing crc/layout_version/
+//                record_id/length is per-record vendor default (F07.9 crc
+//                arm), never an abort. (c) a capture during restore WINS
+//                over the restored image for its sink: the NVM value is
+//                discarded, the preload is skipped, and the live change is
+//                written back after the walk (change-during-restore
+//                ordering). (d) a capture hitting a record MID-FLUSH taints
+//                the in-flight image: dirty survives the commit and the
+//                burst loop re-serializes fresh data (NVM converges to
+//                newest). Captures during the post-reset init sweep are
+//                dropped (both sweeps write zeros); flushes are gated behind
 //                restore completion (07 §5.3 boot-before-enable order).
 //
-//  Blank arm   : restore_done_o is SEQUENCING, not a verdict. Every path in
-//                (a) and (b) above ends the walk with done and no fail, so
-//                done alone cannot separate a restore that put bindings back
-//                from one that read blank or unframed media and applied
-//                vendor defaults to every sink. Milan v1.2 5.3.8.2/5.3.8.3
-//                make that difference reportable state (the bound state and
-//                the binding parameters either came back or did not), so
-//                restore_blank_o carries it: it is done AND no record was
-//                ever validated off the media this walk. A record that is
-//                framed, crc-clean and carries valid=0 (a saved UNBIND,
-//                5.3.8.3's "cleared when the Stream Input gets unbound") is
-//                NOT blank - the media answered. A torn walk is not blank
-//                either by accident: the atomic reject discards every record
-//                it had already taken, so the count it reports is zero.
+//  Blank arm   : restore_done_o is SEQUENCING, not a verdict. Every
+//                per-record path in (a) and (b) above ends the walk with
+//                done and no fail, so done alone cannot separate a restore
+//                that put bindings back from one that read blank or unframed
+//                media and applied vendor defaults to every sink. Milan v1.2
+//                5.3.8.2/5.3.8.3 make that difference reportable state (the
+//                bound state and the binding parameters either came back or
+//                did not), so restore_blank_o carries it: it is done AND no
+//                record was ever validated off the media this walk. A record
+//                that is framed, crc-clean and carries valid=0 (a saved
+//                UNBIND, 5.3.8.3's "cleared when the Stream Input gets
+//                unbound") is NOT blank - the media answered. A failed walk,
+//                whatever its cause, is blank and not by accident: the
+//                atomic reject discards every record it had already taken,
+//                so the count it reports is zero.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -102,6 +114,9 @@ module KL_acmp_nvm_shadow
     parameter int unsigned DEB_TICKS_P   = 500,
     //! bounded commit retries before the side-port alarm (F07.9)
     parameter int unsigned RETRY_MAX_P   = 2,
+    //! T-NVM-RS-DEADLINE (F08.1) in clocks: the restore walk's read phase
+    //! fails whole after this many consecutive cycles without progress
+    parameter int unsigned RS_TMO_CYC_P  = 2_000_000,
     //! derived — do not override
     localparam int unsigned SINK_W_C = (N_SINKS_P > 1) ? $clog2(N_SINKS_P) : 1
 ) (
@@ -115,6 +130,10 @@ module KL_acmp_nvm_shadow
     output logic                       restore_done_o, //! level: restore sequencing complete
     output logic                       restore_fail_o, //! level: torn read-back aborted the WHOLE restore
     output logic                       restore_blank_o,//! level: the completed walk validated ZERO records (blank or invalid media)
+    //! level, with restore_fail_o: why the walk failed. 0 it did not, 1 a
+    //! read-back torn mid-record, 2 a device error with nothing forwarded,
+    //! 3 the read phase's deadline
+    output logic [1:0]                 restore_cause_o,
     output logic                       alarm_o,        //! sticky: commit retries exhausted (side-port alarm)
 
     //! ---- (a) capture face (KL_pp_acmp_listener dbg_recwr_* shadow) ---------
@@ -145,12 +164,23 @@ module KL_acmp_nvm_shadow
     input  wire                        nvm_busy_i,     //! op in flight
     input  wire                        nvm_done_i,     //! one-cycle pulse: op complete
     input  wire                        nvm_err_i,      //! one-cycle pulse: op failed
+    input  wire  [1:0]                 nvm_err_cause_i,//! the port's cause with err: 1 DEVICE, 2 UNFRAMED
+    //! one-cycle pulse: the walk abandons the read the port is serving for
+    //! it (the deadline expired); the manager arbiter drains that read
+    output logic                       nvm_abort_o,
 
     //! ---- observability (suite taps; never drive anything) ---------------
     output logic [N_SINKS_P-1:0]       dbg_dirty_o,    //! per-sink dirty (unflushed change)
     output logic [N_SINKS_P-1:0]       dbg_valid_o,    //! per-sink saved-binding valid
     output logic [N_SINKS_P-1:0]       dbg_touched_o   //! per-sink captured-during-restore
 );
+
+  // ---- the port's terminal cause, and why a walk failed (issue #93) -------
+  localparam logic [1:0] CAUSE_UNFRAMED_C    = 2'd2;   // KL_pp_nvm_port
+  localparam logic [1:0] RS_CAUSE_NONE_C     = 2'd0;
+  localparam logic [1:0] RS_CAUSE_TORN_C     = 2'd1;
+  localparam logic [1:0] RS_CAUSE_DEVICE_C   = 2'd2;
+  localparam logic [1:0] RS_CAUSE_DEADLINE_C = 2'd3;
 
   // ---- F07.8 framing constants (07 §5.2) ---------------------------------
   localparam logic [7:0]  MAGIC_HI_C = 8'h17;
@@ -453,20 +483,64 @@ module KL_acmp_nvm_shadow
   assign wr_addr_w = c1_wr_w ? c1_sink_r : fsm_wr_addr_w;
   assign wr_data_w = c1_wr_w ? SHW_W_C'(c1_proj_r) : fsm_wr_data_w;
 
+  // ---- the read phase's deadline (issue #93, S3) ---------------------------
+  //! Consecutive cycles the read phase waits on the port without the event
+  //! it waits for: in H_RS_REQ the port idle, in H_RS_STREAM a byte, a done
+  //! or an err. Progress is that event itself, so a device that is slow but
+  //! moving never trips it; expiry ends the walk as a failed one and clears
+  //! the count, so it never reads past RS_TMO_CYC_P - 1.
+  logic [31:0] rs_wd_r;
+  logic        rs_stall_w;
+  logic        rs_tmo_w;
+
+  assign rs_stall_w = ((hs_r == H_RS_REQ) && (nvm_busy_i || nvm_done_i || nvm_err_i))
+                    || ((hs_r == H_RS_STREAM)
+                        && !nvm_rvalid_i && !nvm_done_i && !nvm_err_i);
+  assign rs_tmo_w   = rs_stall_w && (rs_wd_r >= 32'(RS_TMO_CYC_P - 1));
+
+  always_ff @(posedge clk_i) begin : rs_wd_ff
+    if (!rst_n)                       rs_wd_r <= 32'd0;
+    else if (rs_stall_w && !rs_tmo_w) rs_wd_r <= rs_wd_r + 32'd1;
+    else                              rs_wd_r <= 32'd0;
+  end
+
+  //! only a read this walk ISSUED is abandoned: in H_RS_REQ nothing is owed
+  assign nvm_abort_o = rs_tmo_w && (hs_r == H_RS_STREAM);
+
   // ---- restore stream terminal events ------------------------------------
-  logic rs_torn_w;      // ended mid-record: abort the WHOLE restore
+  logic rs_torn_w;      // the WHOLE restore fails: torn, device, or deadline
+  logic rs_dev0_w;      // a DEVICE err with zero bytes forwarded
   logic rs_empty_w;     // ended with zero bytes: per-record vendor default
   logic rs_complete_w;  // full frame delivered
 
-  assign rs_torn_w = (hs_r == H_RS_STREAM)
-                   && ((nvm_err_i && (rbcnt_r != 17'd0))
-                       || (nvm_done_i && (rbcnt_r != 17'd0)
-                           && ((rbcnt_r < 17'd8) || (rbcnt_r != rexp_total_w))));
+  assign rs_dev0_w = (hs_r == H_RS_STREAM) && nvm_err_i && (rbcnt_r == 17'd0)
+                   && (nvm_err_cause_i != CAUSE_UNFRAMED_C);
+  assign rs_torn_w = ((hs_r == H_RS_STREAM)
+                      && ((nvm_err_i && (rbcnt_r != 17'd0))
+                          || (nvm_done_i && (rbcnt_r != 17'd0)
+                              && ((rbcnt_r < 17'd8) || (rbcnt_r != rexp_total_w)))))
+                   || rs_dev0_w || rs_tmo_w;
   assign rs_empty_w = (hs_r == H_RS_STREAM)
-                    && ((nvm_err_i && (rbcnt_r == 17'd0))
+                    && ((nvm_err_i && (rbcnt_r == 17'd0)
+                         && (nvm_err_cause_i == CAUSE_UNFRAMED_C))
                         || (nvm_done_i && (rbcnt_r == 17'd0)));
   assign rs_complete_w = (hs_r == H_RS_STREAM) && nvm_done_i
                        && (rbcnt_r >= 17'd8) && (rbcnt_r == rexp_total_w);
+
+  //! the first failure of a walk names it, and a new walk clears it
+  logic [1:0] rs_cause_r;
+
+  always_ff @(posedge clk_i) begin : rs_cause_ff
+    if (!rst_n) begin
+      rs_cause_r <= RS_CAUSE_NONE_C;
+    end else if (go_take_w) begin
+      rs_cause_r <= RS_CAUSE_NONE_C;
+    end else if (rs_torn_w && (rs_cause_r == RS_CAUSE_NONE_C)) begin
+      rs_cause_r <= rs_tmo_w  ? RS_CAUSE_DEADLINE_C
+                  : rs_dev0_w ? RS_CAUSE_DEVICE_C
+                              : RS_CAUSE_TORN_C;
+    end
+  end
 
   // ---- flush terminal events ----------------------------------------------
   // err can land mid-stream (device abort) or in the wait state; both are
@@ -610,7 +684,12 @@ module KL_acmp_nvm_shadow
 
         // -------------------------------------------------------- H_RS_REQ
         H_RS_REQ: begin
-          if (!nvm_busy_i && !nvm_done_i && !nvm_err_i) begin
+          if (rs_tmo_w) begin
+            fail_r    <= 1'b1;                 // the port never came idle:
+            done_r    <= 1'b1;                 // the whole walk fails, nothing
+            any_rec_r <= 1'b0;                 // taken survives it (flags_ff)
+            hs_r      <= H_RUN;
+          end else if (!nvm_busy_i && !nvm_done_i && !nvm_err_i) begin
             nvm_req_o       <= 1'b1;
             nvm_we_o        <= 1'b0;
             nvm_record_id_o <= REC_ID_BASE_P + 8'(rs_k_r);
@@ -824,6 +903,7 @@ module KL_acmp_nvm_shadow
   assign restore_done_o  = done_r;
   assign restore_fail_o  = fail_r;
   assign restore_blank_o = done_r && !any_rec_r;
+  assign restore_cause_o = rs_cause_r;
   assign alarm_o        = alarm_r;
   assign dbg_dirty_o    = dirty_r;
   assign dbg_valid_o    = valid_r;

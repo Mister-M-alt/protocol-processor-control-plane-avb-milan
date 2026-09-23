@@ -46,6 +46,9 @@
 //                (further) device traffic. Device err mid-op aborts and
 //                surfaces on the manager face exactly once; the bounded
 //                retry and the side-port alarm are the manager's job;
+//                nvm_err_cause_o names which of the two an err was, so a
+//                manager can tell a failing device from a record that is not
+//                there (processor issue #93, S1);
 //                (c) a dev_done_i observed while this port owns no device
 //                command is DISCARDED. 02 §8 leaves the device face free, so
 //                the completion contract is stated here: a command is owned
@@ -81,6 +84,14 @@ module KL_pp_nvm_port #(
     output logic        nvm_busy_o,      //! op in flight (long periods expected)
     output logic        nvm_done_o,      //! one-cycle pulse: op complete (busy already low)
     output logic        nvm_err_o,       //! one-cycle pulse: op failed — exactly once per op
+    //! the terminal cause, valid with nvm_err_o and 0 otherwise.
+    //! 1 DEVICE: the device reported an error in any state, or ended the
+    //! 8-byte header read short. 2 UNFRAMED: the device COMPLETED the header
+    //! read and the header failed the magic or length gate, or the manager's
+    //! own commit header failed it. UNFRAMED says the device answered with
+    //! something that is not a record; it does not prove erased media.
+    //! 3 is reserved for a port deadline and never produced here.
+    output logic [1:0]  nvm_err_cause_o,
 
     //! ---- device face (initiator toward the side-port backend, 02 §8-free) ----
     output logic        dev_req_o,       //! command request, held until dev_gnt_i
@@ -368,6 +379,34 @@ module KL_pp_nvm_port #(
       endcase
     end
   end
+
+  // ---- the terminal cause (issue #93, S1) ----------------------------------
+  //! UNFRAMED only where this port itself refuses a header: one the device
+  //! delivered whole (S_RHWAIT, done without err) or the manager streamed
+  //! (S_WHDR's eighth byte). Every other err is DEVICE, the short header
+  //! read included. Taken on the transition into S_FIN and held there, the
+  //! cycle nvm_err_o pulses.
+  localparam logic [1:0] CAUSE_DEVICE_C   = 2'd1;
+  localparam logic [1:0] CAUSE_UNFRAMED_C = 2'd2;
+  logic [1:0] cause_r;
+  logic       refuse_w;
+
+  assign refuse_w = ((state_r == S_RHWAIT) && !dev_err_i
+                     && (dev_done_i || done_seen_r) && !hdr_ok_w)
+                  || ((state_r == S_WHDR) && nvm_wvalid_i && (hidx_r == 3'd7)
+                     && !hdr_ok_w);
+
+  always_ff @(posedge clk_i) begin : nvm_port_cause
+    if (!rst_n) begin
+      cause_r <= 2'd0;
+    end else if (refuse_w) begin
+      cause_r <= CAUSE_UNFRAMED_C;
+    end else if ((state_r != S_FIN) && (state_r != S_IDLE)) begin
+      cause_r <= CAUSE_DEVICE_C;
+    end
+  end
+
+  assign nvm_err_cause_o = nvm_err_o ? cause_r : 2'd0;
 
   // ---- manager face outputs ----------------------------------------------
   assign nvm_busy_o   = (state_r != S_IDLE) && (state_r != S_FIN);

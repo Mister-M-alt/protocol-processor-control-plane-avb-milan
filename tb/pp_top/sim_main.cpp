@@ -9029,6 +9029,74 @@ struct Suite {
     h.feed(get_cmd(0x0B21));
     auto g3 = bw_acmp(11, 50);
     CHECK(g3 == get_rsp(0x0B21), "BW2: a reset restores the same binding");
+
+    // BW3 (issue #93, S3): the device stops answering in the middle of the
+    // walk, after sink 0's saved record was read and stored. The walk fails
+    // WHOLE at its read deadline (the wrap's NVM_RS_TMO_CYC_P), nothing is
+    // preloaded, and the listener, released on the failed terminal, answers
+    // the GET it held on the vendor default, before the entity is enabled.
+    // When the device finally serves the abandoned read the arbiter drains
+    // it; a later BIND then persists, and the next reset restores that.
+    constexpr long BW_TMO = 20000;
+    const uint64_t BW_TK2 = 0x00B0B0B0B0B00002ULL;
+    const uint16_t BW_UID2 = 0x0B0B;
+    h.reset();
+    h.flush_all();
+    const size_t ops3 = h.nvm_ops.size();
+    d->restore_go_i = 1;
+    h.idle(5);
+    d->restore_go_i = 0;
+    guard = 400000;
+    while (bw_ops(ops3, 0, 0x20) < 2 && guard--) h.step();
+    h.nv_gnt_hold = 1 << 30;             // the next record's read: no grant
+    h.feed(get_cmd(0x0B31));
+    long waited = 0;
+    while (!d->restore_done_o && waited < 4 * BW_TMO) { h.step(); ++waited; }
+    // blank as well: the atomic reject discards the record already taken
+    CHECK(d->restore_done_o && d->restore_fail_o && d->restore_blank_o
+              && d->entity_enable_i == 0 && waited < BW_TMO + 200
+              && bw_ops(ops3, 0, 0x21) == 0,
+          "BW3: the walk fails whole at its deadline, %ld cycles after the "
+          "silence began, the next record's read still unserved", waited);
+    auto g4 = bw_acmp(11, 50);
+    CHECK(g4 == acmp_frame(OWN_MAC, 11, 0, 0, CTLR_EID, 0, EID, 0, 0, 0, 0,
+                           0x0B31, 0, 0)
+              && d->entity_enable_i == 0,
+          "BW3: the held GET is answered on the vendor default, before the "
+          "entity is enabled");
+    if (!g4.empty() && g4 != acmp_frame(OWN_MAC, 11, 0, 0, CTLR_EID, 0, EID, 0, 0,
+                                        0, 0, 0x0B31, 0, 0)) {
+      dump("got", g4);
+    }
+    h.nv_gnt_hold = 0;                   // the device serves the abandoned read
+    guard = 400000;
+    while (bw_ops(ops3, 0, 0x21) == 0 && guard--) h.step();
+    h.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, BW_TK2, EID, BW_UID2, 0, 0, 0,
+                      0x0B32, 0, 0));
+    auto b3 = bw_acmp(7, 400);
+    CHECK(b3 == acmp_frame(OWN_MAC, 7, 0, 0, CTLR_EID, BW_TK2, EID, BW_UID2, 0, 0,
+                           1, 0x0B32, 0, 0),
+          "BW3: a BIND after the failed walk answers SUCCESS");
+    h.run_ms(1500);
+    size_t rd21 = 0, er20 = 0;
+    for (size_t i = ops3; i < h.nvm_ops.size(); i++) {
+      if (!rd21 && h.nvm_ops[i].op == 0 && h.nvm_ops[i].region == 0x21) rd21 = i;
+      if (!er20 && h.nvm_ops[i].op == 2 && h.nvm_ops[i].region == 0x20) er20 = i;
+    }
+    const std::vector<uint8_t> bound2(h.nv_mem[0x20].begin(),
+                                      h.nv_mem[0x20].begin() + 28);
+    CHECK(rd21 && er20 > rd21 && bw_ops(ops3, 1, 0x20) == 1
+              && nv_record_ok(bound2, 0x20, BW_TK2, BW_UID2, CTLR_EID),
+          "BW3: the drained read ends first, then the BIND is committed, a "
+          "verified F07.8 record");
+    h.reset();
+    CHECK(bw_boot() && !d->restore_fail_o, "BW3: the next walk ends clean");
+    h.flush_all();
+    h.feed(get_cmd(0x0B33));
+    auto g5 = bw_acmp(11, 50);
+    CHECK(g5 == acmp_frame(OWN_MAC, 11, 0, 0, CTLR_EID, BW_TK2, EID, BW_UID2, 0, 0,
+                           1, 0x0B33, 0x0002, 0),
+          "BW3: a reset restores the binding made after the failed walk");
   }
 
   // ==== S10. the maap face: the DA gate no fabric can open by itself ======

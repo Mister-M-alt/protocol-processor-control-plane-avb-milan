@@ -21,6 +21,7 @@
 | `KL_pp_event_router` | `hdl/packet_engine/KL_pp_event_router.sv` | event_router, pp_top |
 | `KL_pp_maap` | `hdl/maap/KL_pp_maap.sv` | maap, pp_top |
 | `KL_pp_normalizer` | `hdl/packet_engine/KL_pp_normalizer.sv` | dispatch, pp_top |
+| `KL_pp_nvm_mgr_arb` | `hdl/packet_engine/KL_pp_nvm_mgr_arb.sv` | acmp_nvm, pp_top |
 | `KL_pp_nvm_port` | `hdl/packet_engine/KL_pp_nvm_port.sv` | acmp_nvm, nvm_port, pp_top |
 | `KL_pp_originator` | `hdl/packet_engine/KL_pp_originator.sv` | originator, pp_top |
 | `KL_pp_prng` | `hdl/common/KL_pp_prng.sv` | adp_engine, maap, pp_top, prng, srp_top |
@@ -48,4 +49,4 @@
 | `srp_pkg` | `hdl/srp/srp_pkg.sv` | acmp_talker, pp_top, srp_decoder, srp_stream_fsms, srp_top |
 | `ucpu_pkg` | `hdl/aecp/ucpu_pkg.sv` | pp_top, ucpu |
 
-Modules: 44 · untested: 0 (budget: 0)
+Modules: 45 · untested: 0 (budget: 0)

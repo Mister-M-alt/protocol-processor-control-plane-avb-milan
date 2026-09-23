@@ -168,7 +168,7 @@
   <rect x="24" y="690" width="1312" height="76" rx="8" fill="#f4f4f6" stroke="#6b7280" stroke-width="1.2"/>
   <text x="40" y="710" font-size="11.5" font-weight="bold" fill="#16181d">shared services — every engine is a client</text>
   <text x="40" y="731" font-size="10.5" fill="#4a5058">KL_pp_timer_service (1 ms timebase + deadline slots, arm-port priority mux) · KL_pp_prng (one 64-bit LFSR, owner-routed draw port) · KL_pp_scoreboard (nine hazard classes)</text>
-  <text x="40" y="750" font-size="10.5" fill="#4a5058">KL_pp_event_router (sticky events) · KL_pp_originator (self-issued commands + inflight) · KL_pp_trace_ring (256 × 128 b) · KL_pp_side_port · KL_acmp_nvm_shadow → KL_pp_nvm_port (owns the listener until its walk ends)</text>
+  <text x="40" y="750" font-size="10.5" fill="#4a5058">KL_pp_event_router (sticky events) · KL_pp_originator (self-issued commands + inflight) · KL_pp_trace_ring (256 × 128 b) · KL_pp_side_port · KL_acmp_nvm_shadow → KL_pp_nvm_mgr_arb → KL_pp_nvm_port (its walk owns the listener)</text>
 
   <!-- ============================ ROW 8: external faces ============================ -->
   <rect x="24" y="790" width="1312" height="104" rx="8" fill="#fff6e5" stroke="#a06400" stroke-width="1.2"/>

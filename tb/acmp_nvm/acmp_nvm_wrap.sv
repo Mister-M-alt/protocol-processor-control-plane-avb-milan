@@ -8,7 +8,10 @@
 //                (docs/architecture/05 §5, 07 §5, 02 §8)
 //
 //  Description : Integration wrap for the KL_acmp_nvm_shadow suite: the
-//                shadow, the REAL KL_pp_nvm_port, the REAL
+//                shadow, the REAL KL_pp_nvm_port behind the REAL
+//                KL_pp_nvm_mgr_arb (the shadow is its manager 0; manager 1
+//                is a harness face, as the platform's saved-state writer
+//                will be), the REAL
 //                KL_pp_acmp_listener and the REAL KL_pp_acmp_lsn_admit wired
 //                at their landed faces, the way protocol_processor_top wires
 //                them — the shadow's capture face on the listener's record
@@ -48,6 +51,7 @@ module acmp_nvm_wrap
     parameter logic [7:0]   REC_ID_BASE_P = 8'h20,
     parameter int unsigned  DEB_TICKS_P   = 500,
     parameter int unsigned  RETRY_MAX_P   = 2,
+    parameter int unsigned  RS_TMO_CYC_P  = 3000,
     parameter string        TROM_HEX_P    = "ltn_rom.hex",
     localparam int unsigned SINK_W_C = (N_SINKS_P > 1) ? $clog2(N_SINKS_P) : 1
 ) (
@@ -61,7 +65,29 @@ module acmp_nvm_wrap
     output logic                     restore_done_o,  //! restore complete level
     output logic                     restore_fail_o,  //! whole-restore abort level
     output logic                     restore_blank_o, //! completed walk validated ZERO records
+    output logic [1:0]               restore_cause_o, //! why the walk failed
     output logic                     alarm_o,         //! commit-retry alarm
+
+    //! ---- manager 1 of the arbiter (a second record writer, harness) ------
+    input  wire                      m1_req_i,        //! op request, held until granted
+    input  wire                      m1_we_i,         //! 1 = commit
+    input  wire  [7:0]               m1_rid_i,        //! record id
+    input  wire                      m1_wvalid_i,     //! commit byte present
+    input  wire  [7:0]               m1_wdata_i,      //! commit byte
+    input  wire                      m1_rready_i,     //! restore byte accepted
+    input  wire                      m1_abort_i,      //! abandon its read
+    output logic                     m1_gnt_o,        //! issued this cycle
+    output logic                     m1_wready_o,     //! commit byte taken
+    output logic                     m1_rvalid_o,     //! restore byte present
+    output logic                     m1_done_o,       //! its op completed
+    output logic                     m1_err_o,        //! its op failed
+    output logic                     arb_drain_o,     //! an abandoned read is draining
+    output logic                     mgr_abort_o,     //! the shadow abandoned its read
+    output logic [1:0]               mgr_err_cause_o, //! the cause the shadow saw with err
+    output logic                     mgr_done_o,      //! the shadow's manager-face done
+    output logic                     mgr_err_o,       //! the shadow's manager-face err
+    output logic                     mgr_rvalid_o,    //! a restore byte reached the shadow
+    output logic [31:0]              mgr_wd_o,        //! the shadow's read-phase stall count
 
     //! ---- harness capture injection (behind the listener's writes) ------
     input  wire                      tb_cap_wr_i,     //! inject a record write
@@ -188,6 +214,13 @@ module acmp_nvm_wrap
   logic        nvm_rvalid_w, nvm_rready_w;
   logic [7:0]  nvm_rdata_w;
   logic        nvm_busy_w, nvm_done_w, nvm_err_w;
+  logic [1:0]  nvm_err_cause_w;
+  logic        nvm_abort_w;
+  // the port's manager face behind the arbiter
+  logic        np_req_w, np_we_w, np_wvalid_w, np_wready_w, np_rvalid_w;
+  logic        np_rready_w, np_busy_w, np_done_w, np_err_w;
+  logic [7:0]  np_rid_w, np_wdata_w, np_rdata_w;
+  logic [1:0]  np_err_cause_w;
 
   // ---- shadow <-> listener preload face -----------------------------------
   logic        pre_valid_w;
@@ -215,7 +248,8 @@ module acmp_nvm_wrap
       .N_SINKS_P    (N_SINKS_P),
       .REC_ID_BASE_P(REC_ID_BASE_P),
       .DEB_TICKS_P  (DEB_TICKS_P),
-      .RETRY_MAX_P  (RETRY_MAX_P)
+      .RETRY_MAX_P  (RETRY_MAX_P),
+      .RS_TMO_CYC_P (RS_TMO_CYC_P)
   ) u_shadow (
       .clk_i           (clk_i),
       .rst_n           (rst_n),
@@ -225,6 +259,7 @@ module acmp_nvm_wrap
       .restore_done_o  (restore_done_o),
       .restore_fail_o  (restore_fail_o),
       .restore_blank_o (restore_blank_o),
+      .restore_cause_o (restore_cause_o),
       .alarm_o         (alarm_o),
       .cap_wr_i        (cap_wr_w),
       .cap_sink_i      (cap_sink_w),
@@ -249,9 +284,62 @@ module acmp_nvm_wrap
       .nvm_busy_i      (nvm_busy_w),
       .nvm_done_i      (nvm_done_w),
       .nvm_err_i       (nvm_err_w),
+      .nvm_err_cause_i (nvm_err_cause_w),
+      .nvm_abort_o     (nvm_abort_w),
       .dbg_dirty_o     (dbg_dirty_o),
       .dbg_valid_o     (dbg_valid_o),
       .dbg_touched_o   (dbg_touched_o)
+  );
+
+  // ---- the real manager arbiter, the shadow as its manager 0 ---------------
+  logic [7:0] m1_rdata_nc_w;
+  logic [1:0] m1_err_cause_nc_w;
+
+  KL_pp_nvm_mgr_arb u_arb (
+      .clk_i          (clk_i),
+      .rst_n          (rst_n),
+      .m0_req_i       (nvm_req_w),
+      .m0_we_i        (nvm_we_w),
+      .m0_rid_i       (nvm_record_id_w),
+      .m0_wvalid_i    (nvm_wvalid_w),
+      .m0_wdata_i     (nvm_wdata_w),
+      .m0_rready_i    (nvm_rready_w),
+      .m0_wready_o    (nvm_wready_w),
+      .m0_rvalid_o    (nvm_rvalid_w),
+      .m0_rdata_o     (nvm_rdata_w),
+      .m0_busy_o      (nvm_busy_w),
+      .m0_done_o      (nvm_done_w),
+      .m0_err_o       (nvm_err_w),
+      .m0_err_cause_o (nvm_err_cause_w),
+      .m0_abort_i     (nvm_abort_w),
+      .m1_req_i       (m1_req_i),
+      .m1_we_i        (m1_we_i),
+      .m1_rid_i       (m1_rid_i),
+      .m1_wvalid_i    (m1_wvalid_i),
+      .m1_wdata_i     (m1_wdata_i),
+      .m1_rready_i    (m1_rready_i),
+      .m1_gnt_o       (m1_gnt_o),
+      .m1_wready_o    (m1_wready_o),
+      .m1_rvalid_o    (m1_rvalid_o),
+      .m1_rdata_o     (m1_rdata_nc_w),
+      .m1_done_o      (m1_done_o),
+      .m1_err_o       (m1_err_o),
+      .m1_err_cause_o (m1_err_cause_nc_w),
+      .m1_abort_i     (m1_abort_i),
+      .p_req_o        (np_req_w),
+      .p_we_o         (np_we_w),
+      .p_rid_o        (np_rid_w),
+      .p_wvalid_o     (np_wvalid_w),
+      .p_wdata_o      (np_wdata_w),
+      .p_rready_o     (np_rready_w),
+      .p_wready_i     (np_wready_w),
+      .p_rvalid_i     (np_rvalid_w),
+      .p_rdata_i      (np_rdata_w),
+      .p_busy_i       (np_busy_w),
+      .p_done_i       (np_done_w),
+      .p_err_i        (np_err_w),
+      .p_err_cause_i  (np_err_cause_w),
+      .dbg_drain_o    (arb_drain_o)
   );
 
   // ---- the real class-F port ----------------------------------------------
@@ -260,18 +348,19 @@ module acmp_nvm_wrap
   ) u_port (
       .clk_i          (clk_i),
       .rst_n          (rst_n),
-      .nvm_req_i      (nvm_req_w),
-      .nvm_we_i       (nvm_we_w),
-      .nvm_record_id_i(nvm_record_id_w),
-      .nvm_wvalid_i   (nvm_wvalid_w),
-      .nvm_wready_o   (nvm_wready_w),
-      .nvm_wdata_i    (nvm_wdata_w),
-      .nvm_rvalid_o   (nvm_rvalid_w),
-      .nvm_rready_i   (nvm_rready_w),
-      .nvm_rdata_o    (nvm_rdata_w),
-      .nvm_busy_o     (nvm_busy_w),
-      .nvm_done_o     (nvm_done_w),
-      .nvm_err_o      (nvm_err_w),
+      .nvm_req_i      (np_req_w),
+      .nvm_we_i       (np_we_w),
+      .nvm_record_id_i(np_rid_w),
+      .nvm_wvalid_i   (np_wvalid_w),
+      .nvm_wready_o   (np_wready_w),
+      .nvm_wdata_i    (np_wdata_w),
+      .nvm_rvalid_o   (np_rvalid_w),
+      .nvm_rready_i   (np_rready_w),
+      .nvm_rdata_o    (np_rdata_w),
+      .nvm_busy_o     (np_busy_w),
+      .nvm_done_o     (np_done_w),
+      .nvm_err_o      (np_err_w),
+      .nvm_err_cause_o(np_err_cause_w),
       .dev_req_o      (dev_req_o),
       .dev_gnt_i      (dev_gnt_i),
       .dev_op_o       (dev_op_o),
@@ -441,6 +530,12 @@ module acmp_nvm_wrap
   assign mgr_state_o      = 4'(u_shadow.hs_r);
   assign mgr_rs_sink_o    = u_shadow.rs_k_r;
   assign dbg_port_done_o  = nvm_done_w;
+  assign mgr_abort_o      = nvm_abort_w;
+  assign mgr_err_cause_o  = nvm_err_cause_w;
+  assign mgr_done_o       = nvm_done_w;
+  assign mgr_err_o        = nvm_err_w;
+  assign mgr_rvalid_o     = nvm_rvalid_w;
+  assign mgr_wd_o         = u_shadow.rs_wd_r;
 
 endmodule
 

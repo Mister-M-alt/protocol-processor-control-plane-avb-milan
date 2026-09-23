@@ -13,7 +13,7 @@ VFLAGS = --cc --exe --build -j 0 \
          --top-module $(TOP) \
          -Wall -Wno-fatal -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDPARAM \
-         -GDEB_TICKS_P=50 \
+         -GDEB_TICKS_P=50 -GRS_TMO_CYC_P=3000 \
          -CFLAGS "-std=c++17 -O2 -I$(CURDIR) -Wall -Wextra"
 
 SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/acmp/pp_acmp_pkg.sv \
@@ -21,6 +21,7 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/acmp/pp_acmp_pkg.sv \
        $(HDL)/acmp/KL_pp_acmp_lsn_admit.sv \
        $(HDL)/acmp/KL_acmp_nvm_shadow.sv \
        $(HDL)/packet_engine/KL_pp_nvm_port.sv \
+       $(HDL)/packet_engine/KL_pp_nvm_mgr_arb.sv \
        acmp_nvm_wrap.sv
 CPP  = sim_main.cpp
 

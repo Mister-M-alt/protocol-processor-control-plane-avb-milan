@@ -5,11 +5,15 @@ Proves the ACMP binding NVM shadow (`hdl/acmp/KL_acmp_nvm_shadow.sv`,
 [05 §5](../../docs/architecture/05_acmp_engine.md) ≈20 B/sink shadow +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8/F07.9 +
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8): `make` = build + run,
-exit 0 = PASS, 190 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
-timing mirrors (tick_i is held high, so window = 50 cycles).
+exit 0 = PASS, 323 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
+timing mirrors (tick_i is held high, so window = 50 cycles), and
+`-GRS_TMO_CYC_P=3000` the walk's read deadline (`T-NVM-RS-DEADLINE`) that group N
+places its boundaries against.
 
 The wrap compiles the shadow together with the REAL `KL_pp_nvm_port` (class-F
-manager face), the REAL `KL_pp_acmp_listener` (capture from its record write
+manager face) behind the REAL `KL_pp_nvm_mgr_arb` (the shadow is its manager 0;
+manager 1 is a harness face, as the platform's saved-state writer will be), the
+REAL `KL_pp_acmp_listener` (capture from its record write
 port, boot replay into its `pre_*` preload face) and the REAL
 `KL_pp_acmp_lsn_admit` between the listener's four work faces and their
 producers, wired as `protocol_processor_top` wires them — face compatibility is
@@ -94,15 +98,75 @@ listener takes it, at or after the release; no sink is marked touched.
   (taken once, after the NEXT walk's release); a power cut inside the preload
   phase writes nothing and the next boot restores both; a BIND held across a
   reset lands once after the second walk and persists.
+- **L01-L03b** the talker-event face (issue #93, S4): a talker-event level
+  held from reset for ever (R217 R3-F1's: a droppable event the listener
+  acknowledges and drops, re-raised at once), a finite level from reset, the
+  level raised against the later sink once the first sink's preload is taken,
+  and a queued `EVT_TK_DISCOVERED` of the first sink at the same point. The
+  walk and every preload are unaffected, the router's acknowledge equals the
+  listener's take in every cycle and none comes before the release, the
+  discovered event is taken exactly once, and both restored bindings answer
+  after the release.
+- **L04** `GET_RX_STATE` polled from reset, alternating the two sinks: four
+  answers after the release, in queue order, each the restored binding.
+- **L06-L06c** the START/STOP face: a STOP of the first sink held from reset,
+  a START then a STOP of it back to back, a START of the later sink against its
+  preload. Nothing is captured and no completion fires while the gate owns the
+  faces; each request completes once, in order, after the release; NVM holds
+  the started state the requests left and a reset restores it.
+- **L07, L07b** the expiry bus: an expiry of the first sink's owner every cycle
+  from reset, and of the later sink's owner every cycle from the first
+  preload on. None reaches the listener while owned, every one is counted
+  (`dbg_exp_drop_o` equals the number presented), and the bus reaches the
+  listener again after the release.
+
+Group N — how the walk ends (issue #93, S1 and S3). A read that ends with
+nothing forwarded is an empty record only when the port names the err
+UNFRAMED (or the read ends in a clean done); a DEVICE err there fails the whole
+walk. The read phase is bounded by `RS_TMO_CYC_P` cycles without progress, and
+an expiry abandons an issued read to the arbiter, which drains it. Every failed
+walk is graded whole: `restore_done_o` and `restore_fail_o` with the named
+`restore_cause_o`, no preload offered and no restored binding kept, blank, the
+release within four cycles, no work while owned, nothing written.
+- **N1a-d** cause 2: a device error at the first record's header read, inside
+  a middle record's header, the last record's header read ended short at five
+  bytes, a device error after the first header and before its done. The walk
+  stops at the failing record and the released listener answers the vendor
+  default.
+- **N2a-b** an erased middle record (eight 0xFF) and one whose magic is
+  corrupt: that record's default, and the walk completes past it with both
+  saved bindings (A2, F4 and G2 grade cause 0, 0 and 1 on their own paths).
+- **N3** a middle record's header read granted and never answered: cause 3
+  within the deadline of the silence, the read abandoned exactly once; the
+  listener answers on the defaults, the port stays quarantined, and a later
+  change stays pending, never written.
+- **N4** the port held by manager 1's read, which the device never answers:
+  the walk waits for the port idle, issues no read of its own, abandons
+  nothing, and fails at its deadline with cause 3.
+- **N5** the boundary, placed against the lag a control boot measures between
+  the device's first header byte and the walk's: the walk's first byte in the
+  last cycle before the expiry completes the walk (the stall count reads
+  `RS_TMO_CYC_P - 1`); one cycle later fails it with cause 3, the late read's
+  bytes move in the drain and none reaches a manager, the next operation is
+  issued only after the drain ended, and a later change persists. **N5c**: the
+  device ends the abandoned read 2,000 cycles after the deadline, with a live
+  change waiting the whole time: the change stays pending while the port is
+  drained and is issued only after the device ended the read; a reset
+  restores all three bindings.
+- **N6** the arbiter's grant-cycle rule: manager 1's read presented at every
+  offset from the go to a control walk's terminal (200 boots). Every walk
+  completes as saved and every manager-1 read is granted inside the walk and
+  completes.
 
 Pinned wiring: `make pinned` builds the same bench with the gate left out
 (`ACMP_NVM_PINNED_WIRING`, the producers wired straight to the listener as the
 top was before issue #92) and exits non-zero. It is the reproduction of the
-recorded L05 control: 58 of 190 checks fail, among them L05a's "sink 0
+recorded L05 control: 94 of 323 checks fail, among them L05a's "sink 0
 holds 000000000000000000000000" (the listener's unbound record flushed over
 the saved binding), the unbound reply and the reset that no longer restores
 it; L05s finds 193 presentation cycles of sink 0 and 202 of sink 7 answered
-unbound. Its failures are assertions on completed scenarios.
+unbound, and L01's talker-event level leaves both preloads untaken and both
+records flushed unbound. Its failures are assertions on completed scenarios.
 
 Known limits (honest): the BINDING record id allocation (`REC_ID_BASE_P` =
 0x20) and the exact payload byte layout are design decisions of the shadow's
@@ -144,6 +208,36 @@ Mutation-proven 2026-09-23 for the listener admission (issue #92), each on
 - The `pre_valid`, `busy` and `arm` release terms are NOT graded here: the
   real manager raises its terminal one cycle after its last preload was taken,
   when all three are already clear. `tb/lsn_admit` grades each on its own.
+
+Mutation-proven 2026-09-24 for issue #93 at 323 checks (receipts under the
+lane's output directory, one log per mutant):
+- **LG01** the gate deleted: fails 94 of 323, every L case and, through the
+  early release, N2-N6 as well. **LRdone** fails 95.
+- **LG02** / **LG03** the transaction's valid admitted, or its ready passed:
+  fail 55 and 40 of 323.
+- **LG02t** the talker event's valid admitted while owned: fails 15 of 323
+  (L01-L03b: the listener takes the level every idle cycle, 80,501 takes in
+  L01, and the walk never ends). **LG03t** its ready passed: fails 5 (the
+  router's acknowledge no longer equals a take, and L03b's event is lost).
+- **LG04** expiries admitted: fails 5 of 323 (L07, L07b: the expiries reach
+  the listener in the window, hold L07's first preload offer untaken for
+  19,811 cycles, and their write-backs flush a saved binding unbound).
+- **LG05** START/STOP admitted: fails 12 of 323 (L06-L06c: the request is
+  captured and completed while the gate owns the faces, before its sink's
+  preload, so NVM does not end at the state the request left and the next
+  reset does not restore it).
+- **B01** no read deadline: fails 13 of 323 (N3, N4, N5b, N5c: the walk never
+  ends). **BA1** the abort never raised: fails 12 (N3, N5b, N5c: the late read
+  reaches the manager and wedges the port).
+- **B02** a zero-byte err read as blank whatever its cause (processor issue
+  20's defect): fails 9 of 323, N1a-d. **B04** an UNFRAMED err failing the
+  walk: fails 125 of 316, A2 and F4 (the blank first boot) among them.
+- **BC1** the walk's cause collapsed to torn: fails 8 of 323 (N1a-d, N3, N4,
+  N5b, N5c).
+- **B03** the abandoned read never drained (`KL_pp_nvm_mgr_arb`): fails 9 of
+  323 (N3, N5b, N5c: the port never serves again).
+- **A01** the arbiter's grant-cycle busy term deleted: fails 1 of 323, N6
+  (92 of 200 offsets lose the walk's request and end at the deadline).
 
 Mutation-proven 2026-09-20 for the unflushed export:
 - **M7** `dbg_dirty_o` hard-wired to `'0` — the pin issue #90 exports:

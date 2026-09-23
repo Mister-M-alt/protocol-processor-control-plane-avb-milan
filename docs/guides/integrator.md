@@ -221,7 +221,7 @@ property, not an accident, and it is regression-tested.
 | MAAP allocation | `maap_req_valid_o`, `maap_req_release_o`, `maap_req_src_o`, `maap_conflict_ack_o` / `maap_req_ready_i`, `maap_rsp_valid_i`, `maap_rsp_ok_i`, `maap_rsp_da_i[47:0]`, `maap_conflict_valid_i`, `maap_conflict_src_i` | **no source ever declares.** `acmp_declaring_o` is structurally 0 and PROBE_TX answers `TALKER_DEST_MAC_FAILED`. Commands are still answered normally. |
 | Descriptor memory | `desc_mem_*` | the failed header probe leaves zero configurations, so every `READ_DESCRIPTOR` answers `BAD_ARGUMENTS` after the watchdog. |
 | Response memory | `resp_mem_*` | every built response becomes a well-formed 60-byte `ENTITY_MISBEHAVING`. |
-| NVM device | `nvm_dev_*`, plus `restore_go_i`, `restore_busy_o`, `restore_done_o`, `restore_fail_o`, `restore_blank_o`, `nvm_alarm_o`, `nvm_unflushed_o` | bindings do not survive a power cycle. Nothing else changes **in this plane** — but your status register must not report otherwise: a walk over an unbacked face raises `restore_done_o` with no `restore_fail_o`, exactly like a successful one. Publish `restore_blank_o` beside them, and report not-successful when you know there is no media. **`restore_go_i` is not part of the tie-off:** pulse it on every boot. The ACMP listener serves nothing until the walk has ended ([05 §5.1](../architecture/05_acmp_engine.md#sec-05-boot-admission)), so an unbacked face must still answer the walk's reads. |
+| NVM device | `nvm_dev_*`, plus `restore_go_i`, `restore_busy_o`, `restore_done_o`, `restore_fail_o`, `restore_blank_o`, `nvm_alarm_o`, `nvm_unflushed_o` | bindings do not survive a power cycle. Nothing else changes **in this plane** — but your status register must not report otherwise: a walk over an unbacked face raises `restore_done_o` with no `restore_fail_o`, exactly like a successful one. Publish `restore_blank_o` beside them, and report not-successful when you know there is no media. **`restore_go_i` is not part of the tie-off:** pulse it on every boot. The ACMP listener serves nothing until the walk has ended ([05 §5.1](../architecture/05_acmp_engine.md#sec-05-boot-admission)), so an unbacked face must still answer the walk's reads, **as erased media**: grant each READ, deliver the bytes it asks for as `0xFF`, then `done`. A face that answers with `err`, or with `done` before the eight header bytes, is a failing device: the walk fails whole (`restore_fail_o`). A face that never answers ends the walk at `NVM_RS_TMO_CYC_P` and leaves the port quarantined until reset ([07 §5.3](../architecture/07_memory_maps.md#fig-07-nvmflow)). |
 | Management side port | `host_*` | you lose all diagnostics. The plane still runs. |
 | SRP service | `svc_*` | nothing declares through the configuration plane. |
 | AECP pop face | `aecp_txn_*`, `aecp_rxs_*` | **tie `aecp_txn_ready_i` low.** The internal AECP engine already drains this queue; this face is an *additional* observer. Driving it steals records from the engine. |
@@ -284,7 +284,12 @@ The status dictionary these implement is catalogued in
    its producers, so a boot that never starts the walk never answers an ACMP
    listener command. `restore_done_o` rises once the last restored binding has been
    written and its discovery armed, a few cycles after the walk's own terminal, with
-   `restore_busy_o` high in between; gate the entity enable on it.
+   `restore_busy_o` high in between; gate the entity enable on it. The walk always
+   reaches that terminal: `restore_fail_o` beside it says it failed whole (a torn
+   read-back, a device error, or a device silent for `NVM_RS_TMO_CYC_P` clocks) and
+   every binding starts at its vendor default. Size `NVM_RS_TMO_CYC_P` (default
+   20 ms of `CLK_HZ_P`) above the slowest single record read your device face can
+   take.
 4. Present identity, capability and configuration inputs.
 5. Assert `entity_enable_i`. Only now may the entity advertise.
 

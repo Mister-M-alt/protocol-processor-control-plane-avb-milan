@@ -345,6 +345,11 @@ module pp_top_wrap (
       //! million compressed cycles for them
       .REG_TL_TIMEOUT_MS_P (400),
       .LOCK_TIMEOUT_MS_P   (400),
+      //! the boot restore walk's read deadline, in clocks. The product
+      //! default is 20 ms of P-CLK-HZ, two million steps of this bench; a
+      //! record read of its device model takes well under a hundred, so
+      //! section BW3 sees the deadline expire at a hundredth of that
+      .NVM_RS_TMO_CYC_P    (20_000),
       .TROM_HEX_P   ("ltn_rom.hex"),
       .UCODE_HEX_P  ("ucode.hex")
   ) u_dut (

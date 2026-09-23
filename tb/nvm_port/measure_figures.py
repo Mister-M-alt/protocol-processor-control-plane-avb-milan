@@ -96,13 +96,13 @@ SIM = HERE / "sim_main.cpp"
 #: against the RTL below: a THIRTEENTH arm added anywhere used to leave this
 #: gate printing "all figures agree" while the README's "twelve arms" silently
 #: became false.
-ARMS = [(211, "S_WEREQ"), (220, "S_WEWAIT"), (230, "S_WWREQ"), (240, "S_WHPUMP"),
-        (253, "S_WDPUMP"), (263, "S_WWAIT"), (274, "S_RHREQ"), (284, "S_RHCOLL"),
-        (302, "S_RHWAIT"), (329, "S_RPREQ"), (339, "S_RPPUMP"), (349, "S_RPWAIT")]
+ARMS = [(222, "S_WEREQ"), (231, "S_WEWAIT"), (241, "S_WWREQ"), (251, "S_WHPUMP"),
+        (264, "S_WDPUMP"), (274, "S_WWAIT"), (285, "S_RHREQ"), (295, "S_RHCOLL"),
+        (313, "S_RHWAIT"), (340, "S_RPREQ"), (350, "S_RPPUMP"), (360, "S_RPWAIT")]
 
 #: The coincident-completion model. Unlike every other model here it varies the
 #: HANDSHAKE, not what the array retains: the device raises `dev_done_i` on the
-#: same clock edge that moves a command's final byte. `KL_pp_nvm_port.sv:175-179`
+#: same clock edge that moves a command's final byte. `KL_pp_nvm_port.sv:186-190`
 #: says the sticky `done_seen_r` latch exists for exactly this device, so it is
 #: a documented contract freedom, not a broken peer -- and the port handles it,
 #: with the suite green on pristine RTL. Its whole interest used to be that
@@ -271,6 +271,18 @@ MUTATIONS = [
         (RTL, "  assign dev_cmd_owned_w = (dev_req_o && dev_gnt_i)",
               "  assign dev_cmd_owned_w = (dev_req_o && dev_gnt_i)\n"
               "                      || (state_r == S_RHREQ)")]),
+    # ---- the terminal cause (issue #93, S1) -----------------------------------
+    # The register deleted, collapsed either way, and read without its gate.
+    ("C1", r"\*\*C1\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "  assign nvm_err_cause_o = nvm_err_o ? cause_r : 2'd0;",
+              "  assign nvm_err_cause_o = 2'd0;")]),
+    ("C2", r"\*\*C2\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "      cause_r <= CAUSE_UNFRAMED_C;", "      cause_r <= CAUSE_DEVICE_C;")]),
+    ("C3", r"\*\*C3\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "      cause_r <= CAUSE_DEVICE_C;", "      cause_r <= CAUSE_UNFRAMED_C;")]),
+    ("C4", r"\*\*C4\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "  assign nvm_err_cause_o = nvm_err_o ? cause_r : 2'd0;",
+              "  assign nvm_err_cause_o = cause_r;")]),
     ("retraction", r"that check FAILS while the header check PASSES, (\d+) of", [
         (SIM, "  h.arm_err(1, 12);                 // op 0 = ERASE, op 1 = WRITE: cut at 12 B",
               "  h.arm_err(1, static_cast<int>(replacement.size()));")]),
@@ -657,10 +669,10 @@ WAIVERS = [
     # correct and is the mechanism working: they are waived by a pattern narrow
     # enough to reach only that sentence, so a real `22 out of 90` anywhere else
     # is still a hard error.
-    (r"`fails 22 of the 122 checks` and `fails\s+22 out of 122`",
+    (r"`fails 22 of the 136 checks` and `fails\s+22 out of 136`",
      "two illustrative phrasings quoted inside the paragraph explaining what "
      "the inverted default does not close; not claims about this suite"),
-    (r"\b122/122\b",
+    (r"\b136/136\b",
      "suite tally shorthand; both halves are the suite size, which the size "
      "check already pins against the measured total"),
 ]

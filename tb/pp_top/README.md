@@ -5,7 +5,7 @@ Builds `protocol_processor_top` (every landed module of the tree wired:
 validator + replicated RX pools + normalizer + dispatch + ADP engine + ACMP
 listener/talker + SRP engine behind `KL_mrp_strip` + TX pool/arbiter + the
 ACMP Ethernet-prepend shim + timer/PRNG muxes + scoreboard, event router,
-originator, trace ring, side port, NVM shadow + port) under `pp_top_wrap`
+originator, trace ring, side port, NVM shadow + manager arbiter + port) under `pp_top_wrap`
 and drives it ONLY through the top's external contract: one MAC byte stream
 in, one MAC byte stream out, the side-port host face, the SRP service face,
 the NVM device face and the descriptor-image memory master. Time is compressed to 1 ms = 100 clk (the 89-slot
@@ -126,7 +126,15 @@ tally.
   region 0x20 has been read and stored, with the device slowed so the walk
   stays open. Both are held while the walk runs, both answer the restored
   binding byte-exact after it, nothing is written to region 0x20, and the
-  next reset restores the same binding.
+  next reset restores the same binding. **BW3** (issue #93) the device stops
+  granting the walk's next read after region 0x20 was stored: the walk fails
+  whole at its read deadline (the wrap sets `NVM_RS_TMO_CYC_P` to 20,000
+  clocks; the product default is 20 ms of `CLK_HZ_P`, two million steps here),
+  blank and nothing preloaded, and the GET held in the window answers the
+  vendor default while `entity_enable_i` is still low. Released, the device
+  serves the abandoned read, which the arbiter drains; a BIND after it commits
+  only once that read has ended, a verified F07.8 record, and the next reset
+  restores it.
 - **S2** `DECLARE_TALKER` (svc face) → Σ-slope admission equals the
   independent Milan model (sum, granted, admitted, no over-limit) → Talker
   Advertise `New` AND MVRP VID `New` byte-exact on the MAC stream.
@@ -227,6 +235,8 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M30 | the wrap's fixture override removed (test infrastructure) | fixture build 13 FAIL of 20: the build cannot pass on the top's or the child's own default |
 | M31 | control, not a defect: `KL_srp_top`'s own `DOM_DEF_VID_P` default changed from 2 to 7, binding intact | both builds PASS, 1,391 and 20: the child's default is no longer a source |
 | M32 | the listener admission gate deleted (`KL_pp_acmp_lsn_admit` never owns: `own_r` resets to 0), the top's wiring before issue #92 | default build 5 FAIL of 1,401: BW1 four times (the GET before the walk is answered at once; the one inside the window is taken, answers sink 0 unbound and its write-back rewrites region 0x20 unbound) and BW2 (the next reset restores nothing). Every other section PASSES |
+| M33 | the binding walk's read deadline deleted (`KL_acmp_nvm_shadow` `rs_tmo_w` tied 0) | default build 2 FAIL of 1,407: BW3 (the walk never ends in 80,000 clocks, and the held GET is never answered). Every other section PASSES |
+| M34 | the abandoned read never drained (`KL_pp_nvm_mgr_arb` never sets `drain_r`) | default build 2 FAIL of 1,407: BW3 (the late read is handed to the binding manager, which takes no byte outside its walk, so the read never ends: the BIND is never committed and the next reset restores nothing). Every other section PASSES |
 
 All twenty-four bite; originals restored; suite back to green. The M1-M6 counts were
 taken when the suite stood at 86 checks (scenario A and section B have since
@@ -242,7 +252,8 @@ cannot see it (`ucode.hex` is ignored); `rm ucode.hex && make` regenerates it.
 M25 to M31 were measured on 2026-09-22 at 1,391 checks in the default build and
 20 in the fixture build, each in its own scratch copy of `hdl/` and `tb/pp_top/`,
 so there was nothing to restore. M25 to M30 bite; M31, a control, stays green as
-it must. M32 was measured on 2026-09-23 at 1,401 checks in the default build.
+it must. M32 was measured on 2026-09-23 at 1,401 checks in the default build, M33
+and M34 on 2026-09-24 at 1,407.
 
 ## Recorded seams and honest limits
 
@@ -281,7 +292,9 @@ it must. M32 was measured on 2026-09-23 at 1,401 checks in the default build.
   is written to it: the first boot reads blank, so a record failing the F07.8
   magic/layout check is SKIPPED by the shadow, which is the documented
   no-saved-binding path; section BW's resets read back what it committed.
-  Torn-stream restore aborts are covered by the `acmp_nvm` suite, not here.
+  Torn-stream and device-error restore aborts, and the deadline at its
+  boundary, are covered by the `acmp_nvm` suite; BW3 grades the deadline at the
+  top once.
 - The wrap exposes observe-only cross-module taps (`dbg_*`) used during
   bring-up; the checks themselves read only wire frames + the host face.
 

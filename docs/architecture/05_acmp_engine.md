@@ -178,10 +178,18 @@ that producer's own queue policy. While a talker event is held, the router prese
 and nothing behind it, so later router events wait (they are latched, not lost) and a
 source strobing again coalesces as the router documents.
 
-The contract is graded with the real listener, shadow and port in
+**The walk always ends.** Its preload phase cannot stall: with nothing else admitted,
+`pre_ready_o` is 1 in every `X_IDLE` cycle, so each offer is taken at once. Its read phase
+is bounded by `T-NVM-RS-DEADLINE`: a device that stops answering fails the whole walk at
+the deadline, with every sink at its vendor default and nothing preloaded
+([07 §5.3](07_memory_maps.md#fig-07-nvmflow)). Either way the terminal comes, the faces
+are released and the listener answers, so persistence that wedges never holds ACMP
+listener service, or an enable gated on `restore_done_o`, for ever.
+
+The contract is graded with the real listener, shadow, arbiter and port in
 [`tb/acmp_nvm`](../../tb/acmp_nvm/README.md) (group L, every presentation cycle of the
-window, with reset round trips) and at the top in [`tb/pp_top`](../../tb/pp_top/README.md)
-(section BW).
+window and every other work face, with reset round trips; group N, the failed and
+bounded walk) and at the top in [`tb/pp_top`](../../tb/pp_top/README.md) (section BW).
 
 ## 6. Listener behavior — the four-view package
 
