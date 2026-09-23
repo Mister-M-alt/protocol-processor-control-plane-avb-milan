@@ -955,11 +955,18 @@ class SrpTopHarness {
           "F5b: nor sink 0's Talker Advertise");
 
     // (c) LeaveAll on the Listener type only, never re-declared: LV keeps
-    // Ready published, then T-MRP-LEAVE ages it to MT
+    // Ready published, then T-MRP-LEAVE ages it to MT. The Domain row's
+    // negative: our Domain participant takes no rLA! from this lane, so no
+    // Domain JoinIn follows it before the next periodic re-join
     peer_answers_own_leaveall("c");
     unreg0 = h.unreg_cnt[0];
+    h.sync();       // clean slot: the next periodic re-join is >= 650 ms away
     h.feed(mrpdu_body(true, {la_only(3, 8, true)}), true);
-    h.run_ms(4500);
+    rj = h.wait_frame(true, 400, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 4, 6, EV_JOININ);
+    });
+    CHECK(rj.empty(), "F5c: a Listener-only LeaveAll never re-declares our Domain");
+    h.run_ms(4100);
     CHECK(h.lstn_reg(1) == DECL_READY && h.active(1),
           "F5c: Listener LeaveAll: LV keeps Ready published for T-MRP-LEAVE");
     h.run_ms(900);
