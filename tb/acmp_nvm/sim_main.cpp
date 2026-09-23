@@ -870,6 +870,7 @@ struct Harness {
   void check_n4_silence_before_reading();
   void check_n5_the_deadline_boundary();
   void check_n6_a_second_manager_on_the_port();
+  void check_n7_a_talker_level_at_the_deadline();
   void check_l_reset_boundaries();
   int report();
   int run_suite();
@@ -2244,6 +2245,64 @@ void Harness::check_n6_a_second_manager_on_the_port() {
         "(%d did not, %d of %d inside the walk)", bad_m1, contended, SPAN);
 }
 
+// S3 meets S4: R217's talker-event level held from reset while the read phase
+// runs up to its deadline. Near it, the walk completes and every preload is
+// still taken in the cycle it is offered; past it, the walk fails whole, the
+// listener is released on the failed terminal, and the level reaches the
+// listener only after that release.
+void Harness::check_n7_a_talker_level_at_the_deadline() {
+  l_seed({{0, L_B0}, {L_LAST, L_B7}});
+  l_boot();
+  run_until([&] { return mgr_first_rd >= 0; }, 2000);
+  const long lag = mgr_first_rd - dev_first_rd;
+  const Tk level{0, false, L_DROP_SINK, 0, 0, true};
+  {
+    const char* tag = "N7a a talker-event level from reset, the walk's first byte "
+                      "in the last cycle before the deadline";
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    reset();
+    tkq.push_back(level);
+    hold_region = REC_BASE + 0;
+    hold_mode = 1;
+    hold_n = RS_TMO - 1 - lag;
+    go();
+    l_finish();
+    l_grade(tag, 0, true);
+    CHECK(wd_max == RS_TMO - 1 && aborts == 0 && !d->restore_fail_o
+              && d->restore_cause_o == 0 && !tk_takes.empty(),
+          "%s: the walk completes at a stall count of %ld and the level flows "
+          "once released (%zu takes)", tag, wd_max, tk_takes.size());
+  }
+  {
+    const char* tag = "N7b a talker-event level from reset, a record read the "
+                      "device never answers";
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    reset();
+    tkq.push_back(level);
+    hold_region = REC_BASE + 3;
+    hold_mode = 3;
+    go();
+    run_until([&] { return rel_cyc >= 0; }, 4 * RS_TMO);
+    std::string why;
+    CHECK(n_failed_walk(3, why) && aborts == 1,
+          "%s: the walk fails whole at its deadline with cause 3: %s", tag,
+          why.c_str());
+    run(200);
+    bool after = true;
+    for (long c : tk_takes) after = after && c >= rel_cyc;
+    CHECK(!tk_takes.empty() && after && tk_mismatch == 0,
+          "%s: the level reaches the listener only after the release, each "
+          "acknowledge a take (%zu takes)", tag, tk_takes.size());
+    l_push(M_GETRX_CMD, 0, 0xE20, cycles);
+    run_until([&] { return txq.empty() && !d->lsn_busy_o; }, 4000);
+    run(100);
+    const auto g = l_resps(M_GETRX_RSP);
+    CHECK(g.size() == 1
+              && g[0].b == acmpdu(M_GETRX_RSP, 0, L_CTLR, 0, 0, 0, 0, 0xE20, 0),
+          "%s: the listener answers on the vendor default", tag);
+  }
+}
+
 int Harness::report() {
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
@@ -2276,6 +2335,7 @@ int Harness::run_suite() {
   check_n4_silence_before_reading();
   check_n5_the_deadline_boundary();
   check_n6_a_second_manager_on_the_port();
+  check_n7_a_talker_level_at_the_deadline();
   return report();
 }
 

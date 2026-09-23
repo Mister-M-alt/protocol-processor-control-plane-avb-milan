@@ -5,7 +5,7 @@ Proves the ACMP binding NVM shadow (`hdl/acmp/KL_acmp_nvm_shadow.sv`,
 [05 §5](../../docs/architecture/05_acmp_engine.md) ≈20 B/sink shadow +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8/F07.9 +
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8): `make` = build + run,
-exit 0 = PASS, 323 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
+exit 0 = PASS, 332 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
 timing mirrors (tick_i is held high, so window = 50 cycles), and
 `-GRS_TMO_CYC_P=3000` the walk's read deadline (`T-NVM-RS-DEADLINE`) that group N
 places its boundaries against.
@@ -157,11 +157,17 @@ release within four cycles, no work while owned, nothing written.
   offset from the go to a control walk's terminal (200 boots). Every walk
   completes as saved and every manager-1 read is granted inside the walk and
   completes.
+- **N7a-b** the talker-event level of L01 held from reset while the read
+  phase runs to its deadline (S3 against S4): the walk's first byte in the
+  last cycle before the expiry completes the walk with every preload taken in
+  the cycle it is offered; a record read the device never answers fails the
+  walk with cause 3, the level reaches the listener only after the release,
+  and the listener answers the vendor default.
 
 Pinned wiring: `make pinned` builds the same bench with the gate left out
 (`ACMP_NVM_PINNED_WIRING`, the producers wired straight to the listener as the
 top was before issue #92) and exits non-zero. It is the reproduction of the
-recorded L05 control: 94 of 323 checks fail, among them L05a's "sink 0
+recorded L05 control: 96 of 332 checks fail, among them L05a's "sink 0
 holds 000000000000000000000000" (the listener's unbound record flushed over
 the saved binding), the unbound reply and the reset that no longer restores
 it; L05s finds 193 presentation cycles of sink 0 and 202 of sink 7 answered
@@ -209,34 +215,35 @@ Mutation-proven 2026-09-23 for the listener admission (issue #92), each on
   real manager raises its terminal one cycle after its last preload was taken,
   when all three are already clear. `tb/lsn_admit` grades each on its own.
 
-Mutation-proven 2026-09-24 for issue #93 at 323 checks (receipts under the
+Mutation-proven 2026-09-24 for issue #93 at 332 checks (receipts under the
 lane's output directory, one log per mutant):
-- **LG01** the gate deleted: fails 94 of 323, every L case and, through the
-  early release, N2-N6 as well. **LRdone** fails 95.
+- **LG01** the gate deleted: fails 96 of 332, every L case and, through the
+  early release, N2-N6 as well. **LRdone** fails 97.
 - **LG02** / **LG03** the transaction's valid admitted, or its ready passed:
-  fail 55 and 40 of 323.
-- **LG02t** the talker event's valid admitted while owned: fails 15 of 323
-  (L01-L03b: the listener takes the level every idle cycle, 80,501 takes in
-  L01, and the walk never ends). **LG03t** its ready passed: fails 5 (the
-  router's acknowledge no longer equals a take, and L03b's event is lost).
-- **LG04** expiries admitted: fails 5 of 323 (L07, L07b: the expiries reach
+  fail 55 and 40 of 332.
+- **LG02t** the talker event's valid admitted while owned: fails 19 of 332
+  (L01-L03b, N7a-b: the listener takes the level every idle cycle, 80,501
+  takes in L01, and the walk never ends). **LG03t** its ready passed: fails 7
+  (the router's acknowledge no longer equals a take, and L03b's event is
+  lost).
+- **LG04** expiries admitted: fails 5 of 332 (L07, L07b: the expiries reach
   the listener in the window, hold L07's first preload offer untaken for
   19,811 cycles, and their write-backs flush a saved binding unbound).
-- **LG05** START/STOP admitted: fails 12 of 323 (L06-L06c: the request is
+- **LG05** START/STOP admitted: fails 12 of 332 (L06-L06c: the request is
   captured and completed while the gate owns the faces, before its sink's
   preload, so NVM does not end at the state the request left and the next
   reset does not restore it).
-- **B01** no read deadline: fails 13 of 323 (N3, N4, N5b, N5c: the walk never
-  ends). **BA1** the abort never raised: fails 12 (N3, N5b, N5c: the late read
-  reaches the manager and wedges the port).
+- **B01** no read deadline: fails 16 of 332 (N3, N4, N5b, N5c, N7b: the walk
+  never ends). **BA1** the abort never raised: fails 13 (N3, N5b, N5c, N7b:
+  the late read reaches the manager and wedges the port).
 - **B02** a zero-byte err read as blank whatever its cause (processor issue
-  20's defect): fails 9 of 323, N1a-d. **B04** an UNFRAMED err failing the
-  walk: fails 125 of 316, A2 and F4 (the blank first boot) among them.
-- **BC1** the walk's cause collapsed to torn: fails 8 of 323 (N1a-d, N3, N4,
-  N5b, N5c).
+  20's defect): fails 9 of 332, N1a-d. **B04** an UNFRAMED err failing the
+  walk: fails 128 of 325, A2 and F4 (the blank first boot) among them.
+- **BC1** the walk's cause collapsed to torn: fails 9 of 332 (N1a-d, N3, N4,
+  N5b, N5c, N7b).
 - **B03** the abandoned read never drained (`KL_pp_nvm_mgr_arb`): fails 9 of
-  323 (N3, N5b, N5c: the port never serves again).
-- **A01** the arbiter's grant-cycle busy term deleted: fails 1 of 323, N6
+  332 (N3, N5b, N5c: the port never serves again).
+- **A01** the arbiter's grant-cycle busy term deleted: fails 1 of 332, N6
   (92 of 200 offsets lose the walk's request and end at the deadline).
 
 Mutation-proven 2026-09-20 for the unflushed export:
