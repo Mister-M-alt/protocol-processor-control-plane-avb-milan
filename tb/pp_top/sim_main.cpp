@@ -1019,6 +1019,7 @@ struct H {
   //! "BOUND, STREAMING_WAIT"): STREAMING_WAIT 0x00000008 = bound and
   //! stopped. Other sections keep the fixed flags word they grade against.
   bool gsi_fold_sw = false;
+  bool gsi_fold_latency = false;
   uint64_t ca_cancels = 0;
   //! the two AECP effect strobes a response cannot show (06 section 8):
   //! counted once per cycle so a refusal can be graded on what it did
@@ -1533,6 +1534,8 @@ struct H {
         } else {
           d->gsi_data_i = gsi_value(gk, gty, gix, gs,
                                     static_cast<uint8_t>(d->gsi_ord_o));
+          if (gsi_fold_latency && gk == 0 && gs == 3 && gty == 0x0005 && gix < 8)
+            d->gsi_data_i = d->srp_acc_latency_o.at(gix);
           if (gsi_fold_sw && gk == 0 && gs == 0 && gty == 0x0005 && gix < 2
               && ((d->acmp_bound_o >> gix) & 1)
               && !((d->aecp_strm_started_o >> gix) & 1))

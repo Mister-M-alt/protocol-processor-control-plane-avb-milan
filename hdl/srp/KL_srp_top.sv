@@ -195,6 +195,7 @@ module KL_srp_top
     //! registered Talker Failed's FailureInformation changed{sink}: a
     //! GET_STREAM_INFO notification strobe only, NOT a routed class-C event
     output logic [N_SINKS_P-1:0]   evt_tk_fail_chg_o,
+    output logic [N_SINKS_P-1:0]   evt_tk_latency_chg_o, //! committed sink latency change; GET_STREAM_INFO only
     output logic [N_SOURCES_P-1:0] lstn_reg_change_o,     //! LISTENER_REG_CHANGE{source}
     output logic                   evt_domain_change_o,   //! DOMAIN_CHANGE{class A}
 
@@ -622,6 +623,7 @@ module KL_srp_top
       .evt_tk_registered_o     (evt_tk_registered_o),
       .evt_tk_unregistered_o   (evt_tk_unregistered_o),
       .evt_tk_fail_chg_o       (evt_tk_fail_chg_o),
+      .evt_tk_latency_chg_o    (evt_tk_latency_chg_o),
       .tk_reg_state_o          (tk_reg_state_o),
       .lstn_decl_state_o       (lstn_decl_state_o),
       .acc_latency_o           (acc_latency_o),

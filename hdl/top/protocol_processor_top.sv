@@ -2211,6 +2211,7 @@ module protocol_processor_top
   //! FailureInformation change: feeds ONLY the GET_STREAM_INFO notify OR
   //! (stri_events), never the event router or the ACMP listener
   logic [N_STREAM_IN_P-1:0]  srp_evt_tk_fail_chg_w;
+  logic [N_STREAM_IN_P-1:0]  srp_evt_tk_latency_chg_w;
   logic [N_STREAM_OUT_P-1:0] srp_lstn_reg_change_w;
   logic [3:0]  srp_dbg_vid_active_w;
   logic        srp_dbg_vlan_err_nc_w, srp_dbg_adm_round_nc_w;
@@ -2288,6 +2289,7 @@ module protocol_processor_top
       .evt_tk_registered_o   (srp_evt_tk_reg_w),
       .evt_tk_unregistered_o (srp_evt_tk_unreg_w),
       .evt_tk_fail_chg_o     (srp_evt_tk_fail_chg_w),
+      .evt_tk_latency_chg_o  (srp_evt_tk_latency_chg_w),
       .lstn_reg_change_o     (srp_lstn_reg_change_w),
       .evt_domain_change_o   (srp_evt_domain_change_w),
       .class_a_prio_o      (srp_class_a_prio_w),
@@ -3134,7 +3136,8 @@ module protocol_processor_top
   //! STREAMING_WAIT while pbsta/acmpsta stay put (PWR -> PWR). Both are
   //! registered off the SAME X_WB record write, so a walk that moves both
   //! lands them in one cycle and the OR pushes one frame. SRP gives the
-  //! registration events and the FailureInformation change.
+  //! registration events, the FailureInformation change and the committed
+  //! accumulated_latency change. These register on the same attribute write.
   always_comb begin : stri_events
     ntfy_stri_in_w  = '0;
     ntfy_stri_out_w = '0;
@@ -3144,7 +3147,7 @@ module protocol_processor_top
            && lstn_act_strt_chg_w && !lstn_act_strt_cmd_chg_w)
           || lstn_gsi_changed_r[k]
           || srp_evt_tk_reg_w[k] || srp_evt_tk_unreg_w[k]
-          || srp_evt_tk_fail_chg_w[k];
+          || srp_evt_tk_fail_chg_w[k] || srp_evt_tk_latency_chg_w[k];
     end
     for (int unsigned k = 0; k < N_STREAM_OUT_P; k++) begin
       ntfy_stri_out_w[k] =

@@ -397,6 +397,7 @@ Event catalog (routed by the event router to the listed consumers):
 | `AS_CAPABLE_CHANGE{if}` / `PATH_CHANGE{if}` | gptp | NOTIF (GET_AVB_INFO / GET_AS_PATH) |
 | `TK_ATTR_REGISTERED/UNREGISTERED{sink}` | srp | ACMP listener SM (`EVT_TK_REGISTERED/UNREGISTERED`) |
 | `TK_FAILURE_CHANGE{sink}` | srp | NOTIF (GET_STREAM_INFO) only, wired directly and NOT routed: never the ACMP listener, never a Listener re-declaration ([10 §6.4](10_srp_engine.md)) |
+| `TK_LATENCY_CHANGE{sink}` | srp | committed `acc_latency[sink]` change on a registering Talker attribute; NOTIF (GET_STREAM_INFO) only, wired directly and not routed; unchanged refreshes are silent ([10 §6.4](10_srp_engine.md)) |
 | `LISTENER_REG_CHANGE{src}` | srp | talker DA-gate, NOTIF (GET_STREAM_INFO), GET_TX_STATE data |
 | `DOMAIN_CHANGE{class}` | srp | NOTIF (GET_AVB_INFO), talker PCP flow |
 | `MAAP_CONFLICT{src}` | maap | talker DA flow ([05 §6bis](05_acmp_engine.md)) |
