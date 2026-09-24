@@ -31,6 +31,7 @@
 // engine do, and grades what the listener TOOK and ANSWERED and what the
 // device ends up holding (issue #92, and issue #93's S4 admission).
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -185,11 +186,6 @@ constexpr uint16_t F_STREAMING_WAIT = 0x0008;
 static void be_put(std::vector<uint8_t>& p, int at, uint64_t v, int n) {
   for (int i = 0; i < n; ++i) p[size_t(at + i)] = uint8_t(v >> (8 * (n - 1 - i)));
 }
-static uint64_t be_get(const std::vector<uint8_t>& p, int at, int n) {
-  uint64_t v = 0;
-  for (int i = 0; i < n; ++i) v = (v << 8) | p[size_t(at + i)];
-  return v;
-}
 
 static std::vector<uint8_t> acmpdu(uint8_t msg, uint8_t status, uint64_t ctlr,
                                    uint64_t tk, uint16_t tkuid, uint16_t luid,
@@ -281,7 +277,8 @@ struct Harness {
   bool hold_cur = false;
   bool hold_rel = false;           // the held command was released
   long hold_done_cyc = -1;         // the held command's own completion
-  long drain_on = -1, drain_off = -1;   // the arbiter's drain: first, last cycle
+  long drain_on = -1;              // the arbiter's drain: first cycle
+  long drain_off = -1;             // ...and last cycle
   long drain_bytes = 0;            // device bytes the drain moved
   long dev_first_rd = -1;          // the device's first restore byte of a boot
   long mgr_first_rd = -1;          // ...and the first that reached the manager
@@ -359,7 +356,8 @@ struct Harness {
   std::vector<Done> strq_done;
   //! the timer service's expiry bus: owner `exp_owner` every `exp_every`
   //! cycles from `exp_from` up to `exp_until` (exp_every 0 = none)
-  long exp_from = 0, exp_until = 0;
+  long exp_from = 0;
+  long exp_until = 0;
   int exp_every = 0;
   unsigned exp_owner = 32;
   long exp_owned = 0;              // listener-owner expiries presented while owned
@@ -373,7 +371,7 @@ struct Harness {
   uint8_t rx_pending = 0;
   uint8_t txmem[5][64];
   int txlen[5] = {};
-  bool txfree[5] = {true, true, true, true, true};
+  std::array<bool, 5> txfree = {true, true, true, true, true};
   bool gnt_pending = false;
   int gnt_slot = 0;
   std::vector<Resp> resps;         // every ACMPDU the listener committed
@@ -381,9 +379,11 @@ struct Harness {
   std::vector<std::function<bool()>> hooks;
 
   // ---- group L monitors (cleared by reset) ----------------------------------
-  std::vector<long> txn_pops, txn_takes;
+  std::vector<long> txn_pops;
+  std::vector<long> txn_takes;
   int txn_mismatch = 0;            // cycles a pop and a take disagreed
-  std::vector<long> tk_pops, tk_takes;
+  std::vector<long> tk_pops;
+  std::vector<long> tk_takes;
   int tk_mismatch = 0;
   long done_cyc = -1;              // restore_done_o first seen
   long rel_cyc = -1;               // the gate's release first seen
@@ -1539,9 +1539,16 @@ void Harness::check_l05_anywhere_in_the_window() {
   const long span = std::max(rel_cyc, done_cyc) - t0 + 3;
   CHECK(span > 20 && span < 2000, "L05s: the window measured (%ld cycles)", span);
   for (int sink : {0, L_LAST}) {
-    int bad_walk = 0, bad_take = 0, bad_reply = 0, bad_nvm = 0;
-    long first_walk = -1, first_take = -1, first_reply = -1, first_nvm = -1;
-    std::string why_walk, why_nvm;
+    int bad_walk = 0;
+    int bad_take = 0;
+    int bad_reply = 0;
+    int bad_nvm = 0;
+    long first_walk = -1;
+    long first_take = -1;
+    long first_reply = -1;
+    long first_nvm = -1;
+    std::string why_walk;
+    std::string why_nvm;
     for (long off = 0; off <= span; ++off) {
       l_seed({{0, L_B0}, {L_LAST, L_B7}});
       reset();
@@ -1862,7 +1869,8 @@ void Harness::check_l06_start_stop() {
     const char* tag;
     std::vector<Strq> reqs;   // presented from reset unless `later`
     bool later;               // raised the cycle after the first preload
-    Bind b0, b7;              // what each sink must end at, NVM and restored
+    Bind b0;                  // what each sink must end at, NVM and restored
+    Bind b7;
   };
   Bind b0s = L_B0; b0s.started = false;        // L_B0 stopped
   Bind b7s = L_B7; b7s.started = true;         // L_B7 started
@@ -2216,7 +2224,10 @@ void Harness::check_n6_a_second_manager_on_the_port() {
   run_until([&] { return done_cyc >= 0; }, 20000);
   const int SPAN = int(done_cyc - g0);
   CHECK(SPAN > 100, "N6 control: the walk takes %d cycles from its go", SPAN);
-  int bad_walks = 0, bad_m1 = 0, first_bad = -1, contended = 0;
+  int bad_walks = 0;
+  int bad_m1 = 0;
+  int first_bad = -1;
+  int contended = 0;
   for (int o = 0; o < SPAN; ++o) {
     l_seed({{0, L_B0}, {L_LAST, L_B7}});
     reset();

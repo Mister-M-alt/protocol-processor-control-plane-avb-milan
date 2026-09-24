@@ -31,7 +31,7 @@ run: ltn_rom.hex
 
 pinned: ltn_rom.hex
 	$(VERILATOR) $(VFLAGS) +define+ACMP_NVM_PINNED_WIRING \
-	    -CFLAGS "-DACMP_NVM_PINNED_WIRING" --Mdir obj_pinned \
+	    -CFLAGS "-DACMP_NVM_PINNED_WIRING -Wall -Wextra" --Mdir obj_pinned \
 	    $(SRCS) $(CPP) -o Vacmp_nvm_pinned
 	./obj_pinned/Vacmp_nvm_pinned
 
