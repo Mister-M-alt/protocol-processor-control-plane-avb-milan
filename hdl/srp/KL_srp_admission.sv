@@ -45,6 +45,11 @@
 //                sequential walk — one source through the 3-stage slope
 //                pipeline per cycle, one admission decision per cycle —
 //                never a parallel wide adder tree.
+//                A declaration invalidates its source at every pipeline
+//                stage and clears its published grant. The partial admission
+//                round restarts, so no saved decision from the old TSpec can
+//                be published. Only a valid slope in a completed new round
+//                can grant; pending evaluation is not a ceiling refusal.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -59,6 +64,7 @@ module KL_srp_admission #(
     input  wire                           rst_n,        //! synchronous active-low reset
 
     input  wire  [N_SOURCES_P-1:0]        req_i,        //! per-source reservation request level (declaration standing)
+    input  wire  [N_SOURCES_P-1:0]        invalidate_i, //! strobe on accepted declare/withdraw, at the edge updating req/TSpec
     input  wire  [N_SOURCES_P-1:0][15:0]  max_frame_i,  //! per-source TSpec MaxFrameSize (talker declare face)
     input  wire  [N_SOURCES_P-1:0][15:0]  interval_frames_i, //! per-source TSpec MaxIntervalFrames (talker declare face)
     input  wire  [31:0]                   port_rate_bps_i,   //! port rate in bps (quasi-static; 1G = 1_000_000_000)
@@ -97,6 +103,13 @@ module KL_srp_admission #(
   logic [16:0]                 frame_bytes_r;   // W = clamped F + wire overhead
   logic [32:0]                 iv_bytes_r;      // W x MaxIntervalFrames
   logic [N_SOURCES_P-1:0][31:0] slope_q_r;
+  logic                         valid_q1_r, valid_q2_r;
+  logic [N_SOURCES_P-1:0]       slope_valid_r;
+  logic [N_SOURCES_P-1:0]       invalid_w;
+
+  // TSpec/request changes must strobe invalidate_i, even for a same-TSpec
+  // re-declaration. A dropped request also makes all its old work unusable.
+  assign invalid_w = invalidate_i | ~req_i;
 
   logic [16:0] f_raw_w;
   logic [32:0] slope_prod_w;
@@ -112,11 +125,22 @@ module KL_srp_admission #(
       frame_bytes_r <= '0;
       iv_bytes_r    <= '0;
       slope_q_r     <= '0;
+      valid_q1_r    <= 1'b0;
+      valid_q2_r    <= 1'b0;
+      slope_valid_r <= '0;
     end else begin
       cidx_r    <= (32'(cidx_r) == N_SOURCES_P - 1) ? '0
                                                     : cidx_r + SRC_W_C'(1);
       cidx_q1_r <= cidx_r;
       cidx_q2_r <= cidx_q1_r;
+      valid_q1_r <= !invalid_w[cidx_r];
+      valid_q2_r <= valid_q1_r && !invalid_w[cidx_q1_r];
+      slope_valid_r[cidx_q2_r] <= valid_q2_r;
+      // Invalidation wins over a same-edge pipeline arrival, including
+      // N_SOURCES_P = 1/2 where several stages hold the same source.
+      for (int unsigned s = 0; s < N_SOURCES_P; s++) begin
+        if (invalid_w[s]) slope_valid_r[s] <= 1'b0;
+      end
       // stage 1: F clamped to the tagged minimum, plus the wire overhead
       frame_bytes_r <= ((f_raw_w < MIN_L2_BYTES_C) ? MIN_L2_BYTES_C : f_raw_w)
                        + WIRE_OVERHEAD_C;
@@ -150,8 +174,9 @@ module KL_srp_admission #(
   logic        round_w;
 
   assign cand_w   = {1'b0, acc_r} + {1'b0, slope_q_r[aidx_r]};
-  assign fit_w    = req_i[aidx_r] && (cand_w <= {1'b0, limit_w});
-  assign refuse_w = req_i[aidx_r] && !fit_w;
+  assign fit_w    = !invalid_w[aidx_r] && slope_valid_r[aidx_r]
+                   && (cand_w <= {1'b0, limit_w});
+  assign refuse_w = !invalid_w[aidx_r] && slope_valid_r[aidx_r] && !fit_w;
   assign round_w  = (32'(aidx_r) == N_SOURCES_P - 1);
 
   logic [N_SOURCES_P-1:0]       wgrant_now_w;
@@ -178,7 +203,16 @@ module KL_srp_admission #(
       round_done_o <= 1'b0;
     end else begin
       round_done_o <= 1'b0;
-      if (round_w) begin
+      if (|invalidate_i) begin
+        // Retire the changed sources immediately, keep unrelated grants,
+        // and discard the partial sum/decisions as one coherent snapshot.
+        grant_r    <= grant_r & ~invalid_w;
+        aidx_r     <= '0;
+        acc_r      <= 32'd0;
+        over_acc_r <= 1'b0;
+        wgrant_r   <= '0;
+        wgslope_r  <= '0;
+      end else if (round_w) begin
         grant_r      <= wgrant_now_w;
         gslope_r     <= wgslope_now_w;
         // a FIT candidate sum is <= the ceiling < 2^32: the slice is exact

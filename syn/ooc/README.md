@@ -71,3 +71,18 @@ Measured 2026-09-24 with Vivado 2026.1, `xc7a100tfgg484-2`: **4 Slice LUTs,
 [immutable T9 estimate](https://github.com/kebag-logic/milan-fpga/blob/c1ee27d81c4a1e98f9584e979b73a88acfe238b3/design-evidence/500-materialization/tickets/T9-processor-descriptor-memory-response-isolation.md)
 of 5 LUTs and 1 flip-flop. The guard was synthesized as its own top with all
 ports present. This is post-synthesis area, not routed timing or hardware proof.
+
+## SRP admission freshness — issue #112
+
+`srp_ooc.tcl` measures the complete `KL_srp_top` at its default shape
+(eight sources, eight sinks), with all ports present, using the same part,
+OOC synthesis, clock and reports:
+
+```sh
+cd <empty-output-directory>
+vivado -mode batch -source <repo>/syn/ooc/srp_ooc.tcl -nojournal -log ooc.log
+```
+
+For a base/head comparison, run this identical recipe against each source
+tree. `util_hier.rpt` includes the admission block as well as the enclosing
+engine, so the internal invalidation wiring is included in the total.

@@ -511,20 +511,20 @@ module protocol_processor_top
     output logic                         srp_domain_change_o,     //! one-cycle DOMAIN_CHANGE, pairs with the two levels above
     output logic [N_STREAM_OUT_P*2-1:0]  srp_tk_decl_state_o,     //! per-source self-declared {0 NONE, 1 ADVERTISE, 2 FAILED}
     output logic [N_STREAM_OUT_P*2-1:0]  srp_lstn_reg_state_o,    //! per-source registered Listener attr (srp_pkg::srp_decl_e)
-    //! THE AVTP transmit gate: declaring AND not failed AND a listener is
-    //! READY AND admitted. Use THIS — never rebuild it from the terms below,
-    //! which carry an optimistic window (see srp_sr_admitted_o).
+    //! Declaring Advertise AND Listener Ready/ReadyFailed AND optimistic-or-
+    //! real admission. For confirmed admission, gate with srp_active_o AND
+    //! srp_sr_admitted_o (parent #551 decision; architecture 10 section 6.3).
     output logic [N_STREAM_OUT_P-1:0]    srp_active_o,
-    //! RAW Σ-slope verdict. It lags srp_active_o by up to three admission
-    //! rounds after a fresh declare, because the FSM admits optimistically
-    //! (KL_srp_top: sr_adm_fsm = opt_r | adm_admitted). A consumer that gates
-    //! on this instead of srp_active_o mutes a legal stream for those rounds.
+    //! Real Σ-slope verdict for the current declaration, with no optimistic
+    //! term. Low from acceptance until the new slope completes a full round:
+    //! at most 3*N_STREAM_OUT_P clocks without another declaration/withdrawal
+    //! (4 clocks at one source). See architecture 10 section 6.3.
     output logic [N_STREAM_OUT_P-1:0]    srp_sr_admitted_o,
     output logic [N_STREAM_OUT_P*32-1:0] srp_granted_slope_bps_o, //! per-source granted idleSlope, 0 when not admitted (802.1Q §34.6.1.1); same optimistic lag
     output logic [N_STREAM_OUT_P*8-1:0]  srp_src_fail_code_o,     //! per-source SELF-declared Failed code; valid only with tk_decl_state == FAILED
     output logic [N_STREAM_OUT_P*64-1:0] srp_src_fail_bridge_o,   //! per-source SELF-declared FailureInformation; same validity
-    output logic [31:0]                  srp_sum_slope_bps_o,     //! Σ granted idleSlope over admitted sources — the CBS slope-MUX value
-    output logic                         srp_over_limit_o,        //! at least one source was refused against the port ceiling
+    output logic [31:0]                  srp_sum_slope_bps_o,     //! round-latched Σ; may retain a retired source until the next completed round
+    output logic                         srp_over_limit_o,        //! round-latched: at least one evaluated source refused against the ceiling
     output logic [N_STREAM_IN_P*2-1:0]   srp_tk_reg_state_o,      //! per-sink registered Talker attr {0 NONE, 1 ADVERTISE, 2 FAILED}
     output logic [N_STREAM_IN_P*2-1:0]   srp_lstn_decl_state_o,   //! per-sink OUR Listener declaration
     output logic [N_STREAM_IN_P*32-1:0]  srp_acc_latency_o,       //! per-sink registered accumulated_latency, ns, RAW — the consumer adds its own ingress delay

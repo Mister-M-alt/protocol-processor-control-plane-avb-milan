@@ -100,10 +100,21 @@ module srp_top_wrap (
     output logic [3:0]  dbg_vid_active_o,
     output logic        dbg_vlan_err_o,
     output logic        dbg_adm_round_o,
+    output wire [7:0]   dbg_decl_o,
+    output wire [7:0]   dbg_withdraw_o,
+    output wire [7:0]   dbg_opt_o,
+    output wire [7:0]   dbg_sample_index_o,
     output logic        dbg_pdu_done_o,
     output logic        dbg_pdu_ok_o,
     output logic        dbg_pdu_malformed_o
 );
+
+  // Read-only probes: acceptance at the real service gate, its optimistic
+  // window, and the free-running slope phase. No forced service state.
+  assign dbg_decl_o = u_dut.adm_invalidate_w & {8{u_dut.a_open_r}};
+  assign dbg_withdraw_o = u_dut.adm_invalidate_w & {8{!u_dut.a_open_r}};
+  assign dbg_opt_o = u_dut.opt_r;
+  assign dbg_sample_index_o = 8'(u_dut.u_admission.cidx_r);
 
   // time compression: 1 ms = DIV_US x DIV_MS = 40 clk cycles; the 32-slot
   // sweep (34 cycles) fits inside it (KL_pp_timer_service constraint)

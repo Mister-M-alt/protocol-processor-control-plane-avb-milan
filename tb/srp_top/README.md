@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **255 checks**.
+`make` = build + run, exit 0 = PASS, **735 checks**.
 
 Expectations are independent: an MRPDU builder/parser written here from
 802.1Q §10.8.1.2 / §35.2.2, a Σ-slope model transcribing the Milan v1.2
@@ -85,6 +85,19 @@ Covered end to end:
 - **Admission sweep**: 30 randomized declare/withdraw rounds across all 8
   sources vs the model — admitted vector, per-source granted slopes, Σ
   and over_limit, exercising the greedy order and capacity reuse.
+- **Current-declaration grant (H, issue #112)**: sources 0, 1 and 7 at all
+  eight slope-sampling phases. Cold refusal, 224 → 20000-byte growth,
+  20000 → 224-byte shrink, and identical re-declaration are observed on
+  every cycle from real service-gate acceptance. The refused source never
+  grants; every admitted slope belongs to the current declaration; the
+  grant is low on acceptance and only returns at round completion.
+  Shrink/identical latency is 8/16/24 clocks from acceptance, printed per
+  case. An actual Listener Ready PDU is paused before its packed events
+  and completed just after acceptance, exercising optimistic ACTIVE before
+  the real grant. The suite checks the three-round window, the ACTIVE
+  equation, zero slope while unadmitted, and settled sum/refusal. No state
+  or verdict is forced. The [unit suite](../srp_admission/README.md) covers
+  smaller shapes, rapid changes, both TSpec fields and failing mutants.
 
 Known limits (recorded honestly): the C++ side emulates the TX arbiter
 and the processor-top header strip (both out of scope here — 03 §8 / 03
