@@ -36,11 +36,13 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
        $(HDL)/packet_engine/KL_pp_trace_ring.sv \
        $(HDL)/packet_engine/KL_pp_side_port.sv \
        $(HDL)/packet_engine/KL_pp_nvm_port.sv \
+       $(HDL)/packet_engine/KL_pp_nvm_mgr_arb.sv \
        $(HDL)/aecp/ucpu_pkg.sv $(HDL)/aecp/KL_aecp_ucpu.sv \
        $(HDL)/aecp/KL_aecp_desc_store.sv $(HDL)/aecp/KL_aecp_dyn_state.sv $(HDL)/aecp/KL_aecp_engine.sv $(HDL)/aecp/KL_aecp_resp_buf.sv \
        $(HDL)/aecp/KL_aecp_notify.sv $(HDL)/aecp/KL_aecp_ca_originator.sv \
        $(HDL)/adp/KL_adp_engine.sv \
        $(HDL)/acmp/KL_pp_acmp_listener.sv $(HDL)/acmp/KL_acmp_talker.sv \
+       $(HDL)/acmp/KL_pp_acmp_lsn_admit.sv \
        $(HDL)/acmp/KL_acmp_nvm_shadow.sv \
        $(HDL)/maap/KL_pp_maap.sv \
        $(HDL)/srp/KL_srp_decoder.sv $(HDL)/srp/KL_srp_domain.sv \

@@ -8,22 +8,38 @@
 //                (docs/architecture/05 §5, 07 §5, 02 §8)
 //
 //  Description : Integration wrap for the KL_acmp_nvm_shadow suite: the
-//                shadow, the REAL KL_pp_nvm_port and the REAL
-//                KL_pp_acmp_listener wired at their landed faces — the
-//                shadow's capture face on the listener's record write
-//                port, the shadow's pre_* driving the listener's preload
-//                face, the shadow's class-F face on the port's manager
-//                face; the port's device face and the listener's inert
-//                faces surface to the harness. tb_cap_* lets the harness
-//                inject record writes (started-change and executor
-//                traffic stand-ins) ORed behind the listener's own
-//                writes; evt_block_i parks a droppable TK event on the
-//                listener to backpressure pre_ready.
+//                shadow, the REAL KL_pp_nvm_port behind the REAL
+//                KL_pp_nvm_mgr_arb (the shadow is its manager 0; manager 1
+//                is a harness face, as the platform's saved-state writer
+//                will be), the REAL
+//                KL_pp_acmp_listener and the REAL KL_pp_acmp_lsn_admit wired
+//                at their landed faces, the way protocol_processor_top wires
+//                them — the shadow's capture face on the listener's record
+//                write port, the shadow's pre_* driving the listener's
+//                preload face, the shadow's class-F face on the port's
+//                manager face, and the admission gate between the
+//                listener's four work faces and their producers. The port's
+//                device face, the producers' side of the gate and the
+//                listener's TX, RX-slot, timer, PRNG and action faces
+//                surface to the harness, which plays the dispatch queue, the
+//                event router, the AECP engine, the timer service, the slot
+//                pools and the NVM device. tb_cap_* lets the harness inject
+//                record writes (started-change and executor traffic
+//                stand-ins) ORed behind the listener's own writes;
+//                pre_hold_i holds the preload handshake at the manager
+//                (valid AND ready masked), the suite's preload-backpressure
+//                lever now that the gate lets nothing else hold it.
 //
 //                The one design decision that matters: the suite compiles
-//                the three landed modules TOGETHER so face compatibility
-//                is proven by elaboration, not by transcription — a port
-//                rename or width change in any neighbor breaks this build.
+//                the landed modules TOGETHER so face compatibility is proven
+//                by elaboration, not by transcription — a port rename or
+//                width change in any neighbor breaks this build.
+//
+//                `ACMP_NVM_PINNED_WIRING` (the Makefile's `pinned` target,
+//                never the suite's own run) leaves the gate out and wires
+//                the producers straight to the listener, as the top did
+//                before issue #92: the build that reproduces the recorded
+//                L05 binding loss.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -35,6 +51,7 @@ module acmp_nvm_wrap
     parameter logic [7:0]   REC_ID_BASE_P = 8'h20,
     parameter int unsigned  DEB_TICKS_P   = 500,
     parameter int unsigned  RETRY_MAX_P   = 2,
+    parameter int unsigned  RS_TMO_CYC_P  = 3000,
     parameter string        TROM_HEX_P    = "ltn_rom.hex",
     localparam int unsigned SINK_W_C = (N_SINKS_P > 1) ? $clog2(N_SINKS_P) : 1
 ) (
@@ -48,15 +65,99 @@ module acmp_nvm_wrap
     output logic                     restore_done_o,  //! restore complete level
     output logic                     restore_fail_o,  //! whole-restore abort level
     output logic                     restore_blank_o, //! completed walk validated ZERO records
+    output logic [1:0]               restore_cause_o, //! why the walk failed
     output logic                     alarm_o,         //! commit-retry alarm
+
+    //! ---- manager 1 of the arbiter (a second record writer, harness) ------
+    input  wire                      m1_req_i,        //! op request, held until granted
+    input  wire                      m1_we_i,         //! 1 = commit
+    input  wire  [7:0]               m1_rid_i,        //! record id
+    input  wire                      m1_wvalid_i,     //! commit byte present
+    input  wire  [7:0]               m1_wdata_i,      //! commit byte
+    input  wire                      m1_rready_i,     //! restore byte accepted
+    input  wire                      m1_abort_i,      //! abandon its read
+    output logic                     m1_gnt_o,        //! issued this cycle
+    output logic                     m1_wready_o,     //! commit byte taken
+    output logic                     m1_rvalid_o,     //! restore byte present
+    output logic                     m1_done_o,       //! its op completed
+    output logic                     m1_err_o,        //! its op failed
+    output logic                     arb_drain_o,     //! an abandoned read is draining
+    output logic                     mgr_abort_o,     //! the shadow abandoned its read
+    output logic [1:0]               mgr_err_cause_o, //! the cause the shadow saw with err
+    output logic                     mgr_done_o,      //! the shadow's manager-face done
+    output logic                     mgr_err_o,       //! the shadow's manager-face err
+    output logic                     mgr_rvalid_o,    //! a restore byte reached the shadow
+    output logic [31:0]              mgr_wd_o,        //! the shadow's read-phase stall count
 
     //! ---- harness capture injection (behind the listener's writes) ------
     input  wire                      tb_cap_wr_i,     //! inject a record write
     input  wire  [SINK_W_C-1:0]      tb_cap_sink_i,   //! injected sink
     input  wire  [ACMP_REC_W_C-1:0]  tb_cap_rec_i,    //! injected F07.6 image
 
-    //! ---- listener backpressure lever ------------------------------------
-    input  wire                      evt_block_i,     //! hold a droppable TK event
+    //! ---- preload backpressure lever (harness only) ----------------------
+    input  wire                      pre_hold_i,      //! hold the preload handshake
+
+    //! ---- producers' side of the admission gate --------------------------
+    input  wire                      p_txn_valid_i,   //! dispatch head present
+    input  wire  [PP_TXN_W_C-1:0]    p_txn_i,         //! the head (03 §4 record)
+    output logic                     p_txn_ready_o,   //! dispatch pop
+    input  wire                      p_tk_valid_i,    //! router event present
+    input  wire  [1:0]               p_tk_kind_i,     //! TK_KIND_*_C
+    input  wire                      p_tk_failed_i,   //! with REG: Talker Failed
+    input  wire  [15:0]              p_tk_sink_i,     //! sink payload
+    output logic                     p_tk_ready_o,    //! router acknowledge
+    input  wire                      p_strm_valid_i,  //! AECP START/STOP held
+    input  wire  [15:0]              p_strm_sink_i,   //! Stream Input index
+    input  wire                      p_strm_val_i,    //! 1 = started
+    output logic                     strm_ready_o,    //! listener completion
+    output logic                     strm_error_o,    //! listener bounded-wait error
+    input  wire                      p_exp_valid_i,   //! timer expiry strobe
+    input  wire  [6:0]               p_exp_slot_i,    //! expired slot
+    input  wire  [PP_TIMER_OWNER_W_C-1:0] p_exp_owner_i, //! expired owner
+
+    //! ---- the gate ---------------------------------------------------------
+    output logic                     gate_own_o,      //! gate owns the faces
+    output logic                     gate_released_o, //! binding walk drained
+    output logic [15:0]              gate_exp_drop_o, //! expiries refused while owned
+    output logic                     l_txn_valid_o,   //! listener's txn_valid_i
+    output logic                     l_txn_ready_o,   //! listener's txn_ready_o
+    output logic                     l_tk_valid_o,    //! listener's evt_tk_valid_i
+    output logic                     l_tk_ready_o,    //! listener's evt_tk_ready_o
+    output logic                     l_strm_valid_o,  //! listener's strm_set_valid_i
+    output logic                     l_exp_valid_o,   //! listener's tmr_exp_valid_i
+
+    //! ---- listener TX / RX-slot / timer / PRNG faces (harness pools) -----
+    output logic                     txs_alloc_req_o, //! TX slot request
+    input  wire                      txs_alloc_gnt_i, //! grant pulse
+    input  wire  [2:0]               txs_alloc_slot_i,//! granted slot
+    output logic [2:0]               txs_wr_slot_o,   //! slot written
+    output logic [10:0]              txs_wr_addr_o,   //! byte offset
+    output logic                     txs_wr_valid_o,  //! byte strobe
+    output logic [7:0]               txs_wr_data_o,   //! ACMPDU byte
+    output logic                     txs_wr_commit_o, //! commit
+    output logic [10:0]              txs_wr_len_o,    //! committed length
+    output logic                     txreq_valid_o,   //! TX request strobe
+    output logic [2:0]               txreq_slot_o,    //! committed slot
+    output logic [1:0]               rxs_rd_slot_o,   //! RX payload slot
+    output logic [9:0]               rxs_rd_addr_o,   //! ACMPDU byte offset
+    output logic                     rxs_rd_en_o,     //! sync-read enable
+    input  wire  [7:0]               rxs_rd_data_i,   //! byte, one cycle later
+    output logic                     rxs_free_o,      //! slot returned
+    output logic [1:0]               rxs_free_slot_o, //! which slot
+    output logic                     tmr_arm_valid_o, //! arm/cancel strobe
+    output logic                     tmr_arm_cancel_o,//! 1 = cancel
+    output logic [PP_TIMER_OWNER_W_C-1:0] tmr_arm_owner_o, //! owner tag
+    output logic                     draw_req_o,      //! PRNG draw request
+    input  wire                      draw_busy_i,     //! draw in progress
+    input  wire                      draw_valid_i,    //! draw result valid
+    input  wire  [15:0]              draw_ms_i,       //! drawn delay
+
+    //! ---- listener action strobes ------------------------------------------
+    output logic                     lsn_settle_o,    //! A15
+    output logic                     lsn_teardown_o,  //! A8
+    output logic                     lsn_disarm_o,    //! A9
+    output logic                     lsn_notify_o,    //! committed-change trigger
+    output logic [N_SINKS_P-1:0]     lsn_started_o,   //! started/stopped mirror
 
     //! ---- device face (harness region-store model) -----------------------
     output logic                     dev_req_o,       //! command request
@@ -90,6 +191,9 @@ module acmp_nvm_wrap
     output logic                     lsn_disc_arm_o,  //! listener A4 strobe
     output logic [63:0]              lsn_disc_eid_o,  //! listener A4 talker EID
     output logic                     lsn_busy_o,      //! listener executor busy
+    output logic [4:0]               lsn_state_o,     //! listener executor state
+    output logic [3:0]               mgr_state_o,     //! shadow engine state
+    output logic [SINK_W_C-1:0]      mgr_rs_sink_o,   //! shadow restore cursor
     output logic [N_SINKS_P-1:0]     dbg_dirty_o,     //! shadow dirty bits
     output logic [N_SINKS_P-1:0]     dbg_valid_o,     //! shadow valid bits
     output logic [N_SINKS_P-1:0]     dbg_touched_o,   //! shadow touched bits
@@ -110,6 +214,13 @@ module acmp_nvm_wrap
   logic        nvm_rvalid_w, nvm_rready_w;
   logic [7:0]  nvm_rdata_w;
   logic        nvm_busy_w, nvm_done_w, nvm_err_w;
+  logic [1:0]  nvm_err_cause_w;
+  logic        nvm_abort_w;
+  // the port's manager face behind the arbiter
+  logic        np_req_w, np_we_w, np_wvalid_w, np_wready_w, np_rvalid_w;
+  logic        np_rready_w, np_busy_w, np_done_w, np_err_w;
+  logic [7:0]  np_rid_w, np_wdata_w, np_rdata_w;
+  logic [1:0]  np_err_cause_w;
 
   // ---- shadow <-> listener preload face -----------------------------------
   logic        pre_valid_w;
@@ -137,7 +248,8 @@ module acmp_nvm_wrap
       .N_SINKS_P    (N_SINKS_P),
       .REC_ID_BASE_P(REC_ID_BASE_P),
       .DEB_TICKS_P  (DEB_TICKS_P),
-      .RETRY_MAX_P  (RETRY_MAX_P)
+      .RETRY_MAX_P  (RETRY_MAX_P),
+      .RS_TMO_CYC_P (RS_TMO_CYC_P)
   ) u_shadow (
       .clk_i           (clk_i),
       .rst_n           (rst_n),
@@ -147,6 +259,7 @@ module acmp_nvm_wrap
       .restore_done_o  (restore_done_o),
       .restore_fail_o  (restore_fail_o),
       .restore_blank_o (restore_blank_o),
+      .restore_cause_o (restore_cause_o),
       .alarm_o         (alarm_o),
       .cap_wr_i        (cap_wr_w),
       .cap_sink_i      (cap_sink_w),
@@ -158,7 +271,7 @@ module acmp_nvm_wrap
       .pre_ctlr_eid_o  (pre_ctlr_eid_w),
       .pre_sw_o        (pre_sw_w),
       .pre_started_o   (pre_started_w),
-      .pre_ready_i     (pre_ready_w),
+      .pre_ready_i     (pre_ready_w && !pre_hold_i),
       .nvm_req_o       (nvm_req_w),
       .nvm_we_o        (nvm_we_w),
       .nvm_record_id_o (nvm_record_id_w),
@@ -171,9 +284,62 @@ module acmp_nvm_wrap
       .nvm_busy_i      (nvm_busy_w),
       .nvm_done_i      (nvm_done_w),
       .nvm_err_i       (nvm_err_w),
+      .nvm_err_cause_i (nvm_err_cause_w),
+      .nvm_abort_o     (nvm_abort_w),
       .dbg_dirty_o     (dbg_dirty_o),
       .dbg_valid_o     (dbg_valid_o),
       .dbg_touched_o   (dbg_touched_o)
+  );
+
+  // ---- the real manager arbiter, the shadow as its manager 0 ---------------
+  logic [7:0] m1_rdata_nc_w;
+  logic [1:0] m1_err_cause_nc_w;
+
+  KL_pp_nvm_mgr_arb u_arb (
+      .clk_i          (clk_i),
+      .rst_n          (rst_n),
+      .m0_req_i       (nvm_req_w),
+      .m0_we_i        (nvm_we_w),
+      .m0_rid_i       (nvm_record_id_w),
+      .m0_wvalid_i    (nvm_wvalid_w),
+      .m0_wdata_i     (nvm_wdata_w),
+      .m0_rready_i    (nvm_rready_w),
+      .m0_wready_o    (nvm_wready_w),
+      .m0_rvalid_o    (nvm_rvalid_w),
+      .m0_rdata_o     (nvm_rdata_w),
+      .m0_busy_o      (nvm_busy_w),
+      .m0_done_o      (nvm_done_w),
+      .m0_err_o       (nvm_err_w),
+      .m0_err_cause_o (nvm_err_cause_w),
+      .m0_abort_i     (nvm_abort_w),
+      .m1_req_i       (m1_req_i),
+      .m1_we_i        (m1_we_i),
+      .m1_rid_i       (m1_rid_i),
+      .m1_wvalid_i    (m1_wvalid_i),
+      .m1_wdata_i     (m1_wdata_i),
+      .m1_rready_i    (m1_rready_i),
+      .m1_gnt_o       (m1_gnt_o),
+      .m1_wready_o    (m1_wready_o),
+      .m1_rvalid_o    (m1_rvalid_o),
+      .m1_rdata_o     (m1_rdata_nc_w),
+      .m1_done_o      (m1_done_o),
+      .m1_err_o       (m1_err_o),
+      .m1_err_cause_o (m1_err_cause_nc_w),
+      .m1_abort_i     (m1_abort_i),
+      .p_req_o        (np_req_w),
+      .p_we_o         (np_we_w),
+      .p_rid_o        (np_rid_w),
+      .p_wvalid_o     (np_wvalid_w),
+      .p_wdata_o      (np_wdata_w),
+      .p_rready_o     (np_rready_w),
+      .p_wready_i     (np_wready_w),
+      .p_rvalid_i     (np_rvalid_w),
+      .p_rdata_i      (np_rdata_w),
+      .p_busy_i       (np_busy_w),
+      .p_done_i       (np_done_w),
+      .p_err_i        (np_err_w),
+      .p_err_cause_i  (np_err_cause_w),
+      .dbg_drain_o    (arb_drain_o)
   );
 
   // ---- the real class-F port ----------------------------------------------
@@ -182,18 +348,19 @@ module acmp_nvm_wrap
   ) u_port (
       .clk_i          (clk_i),
       .rst_n          (rst_n),
-      .nvm_req_i      (nvm_req_w),
-      .nvm_we_i       (nvm_we_w),
-      .nvm_record_id_i(nvm_record_id_w),
-      .nvm_wvalid_i   (nvm_wvalid_w),
-      .nvm_wready_o   (nvm_wready_w),
-      .nvm_wdata_i    (nvm_wdata_w),
-      .nvm_rvalid_o   (nvm_rvalid_w),
-      .nvm_rready_i   (nvm_rready_w),
-      .nvm_rdata_o    (nvm_rdata_w),
-      .nvm_busy_o     (nvm_busy_w),
-      .nvm_done_o     (nvm_done_w),
-      .nvm_err_o      (nvm_err_w),
+      .nvm_req_i      (np_req_w),
+      .nvm_we_i       (np_we_w),
+      .nvm_record_id_i(np_rid_w),
+      .nvm_wvalid_i   (np_wvalid_w),
+      .nvm_wready_o   (np_wready_w),
+      .nvm_wdata_i    (np_wdata_w),
+      .nvm_rvalid_o   (np_rvalid_w),
+      .nvm_rready_i   (np_rready_w),
+      .nvm_rdata_o    (np_rdata_w),
+      .nvm_busy_o     (np_busy_w),
+      .nvm_done_o     (np_done_w),
+      .nvm_err_o      (np_err_w),
+      .nvm_err_cause_o(np_err_cause_w),
       .dev_req_o      (dev_req_o),
       .dev_gnt_i      (dev_gnt_i),
       .dev_op_o       (dev_op_o),
@@ -211,10 +378,55 @@ module acmp_nvm_wrap
       .dev_err_i      (dev_err_i)
   );
 
-  // ---- the real listener, protocol faces inert ----------------------------
-  // A droppable TK event (sink out of range) parks on the event face while
-  // evt_block_i holds, which deasserts pre_ready (X_IDLE priority order) —
-  // the suite's preload-backpressure lever.
+  // ---- the admission gate, wired as protocol_processor_top wires it --------
+  logic lsn_txn_ready_w, lsn_tk_ready_w;
+  logic lsn_arm_w;
+
+`ifdef ACMP_NVM_PINNED_WIRING
+  assign gate_own_o      = 1'b0;
+  assign gate_released_o = 1'b1;
+  assign gate_exp_drop_o = 16'd0;
+  assign l_txn_valid_o   = p_txn_valid_i;
+  assign p_txn_ready_o   = lsn_txn_ready_w;
+  assign l_tk_valid_o    = p_tk_valid_i;
+  assign p_tk_ready_o    = lsn_tk_ready_w;
+  assign l_strm_valid_o  = p_strm_valid_i;
+  assign l_exp_valid_o   = p_exp_valid_i;
+`else
+  KL_pp_acmp_lsn_admit #(
+      .N_SINKS_P        (N_SINKS_P),
+      .TMR_OWNER_BASE_P (32),
+      .OWNER_W_P        (PP_TIMER_OWNER_W_C)
+  ) u_admit (
+      .clk_i          (clk_i),
+      .rst_n          (rst_n),
+      .walk_done_i    (restore_done_o),
+      .pre_valid_i    (pre_valid_w),
+      .lsn_busy_i     (lsn_busy_o),
+      .lsn_arm_i      (lsn_arm_w),
+      .own_o          (gate_own_o),
+      .released_o     (gate_released_o),
+      .p_txn_valid_i  (p_txn_valid_i),
+      .p_txn_ready_o  (p_txn_ready_o),
+      .l_txn_valid_o  (l_txn_valid_o),
+      .l_txn_ready_i  (lsn_txn_ready_w),
+      .p_tk_valid_i   (p_tk_valid_i),
+      .p_tk_ready_o   (p_tk_ready_o),
+      .l_tk_valid_o   (l_tk_valid_o),
+      .l_tk_ready_i   (lsn_tk_ready_w),
+      .p_strm_valid_i (p_strm_valid_i),
+      .l_strm_valid_o (l_strm_valid_o),
+      .p_exp_valid_i  (p_exp_valid_i),
+      .p_exp_owner_i  (p_exp_owner_i),
+      .l_exp_valid_o  (l_exp_valid_o),
+      .dbg_exp_drop_o (gate_exp_drop_o)
+  );
+`endif
+
+  assign l_txn_ready_o = lsn_txn_ready_w;
+  assign l_tk_ready_o  = lsn_tk_ready_w;
+
+  // ---- the real listener ----------------------------------------------------
   KL_pp_acmp_listener #(
       .N_SINKS_P (N_SINKS_P),
       .TROM_HEX_P(TROM_HEX_P)
@@ -222,15 +434,15 @@ module acmp_nvm_wrap
       .clk_i                (clk_i),
       .rst_n                (rst_n),
       .entity_id_i          (ENTITY_ID_C),
-      .txn_valid_i          (1'b0),
-      .txn_i                (pp_txn_t'('0)),
-      .txn_ready_o          (),
-      .evt_tk_valid_i       (evt_block_i),
-      .evt_tk_kind_i        (2'd0),
-      .evt_tk_failed_i      (1'b0),
-      .evt_tk_sink_i        (16'hFFFF),
-      .evt_tk_ready_o       (),
-      .pre_valid_i          (pre_valid_w),
+      .txn_valid_i          (l_txn_valid_o),
+      .txn_i                (pp_txn_t'(p_txn_i)),
+      .txn_ready_o          (lsn_txn_ready_w),
+      .evt_tk_valid_i       (l_tk_valid_o),
+      .evt_tk_kind_i        (p_tk_kind_i),
+      .evt_tk_failed_i      (p_tk_failed_i),
+      .evt_tk_sink_i        (p_tk_sink_i),
+      .evt_tk_ready_o       (lsn_tk_ready_w),
+      .pre_valid_i          (pre_valid_w && !pre_hold_i),
       .pre_sink_i           (pre_sink_w),
       .pre_talker_eid_i     (pre_talker_eid_w),
       .pre_talker_uid_i     (pre_talker_uid_w),
@@ -238,53 +450,62 @@ module acmp_nvm_wrap
       .pre_sw_i             (pre_sw_w),
       .pre_started_i        (pre_started_w),
       .pre_ready_o          (pre_ready_w),
+      .strm_set_valid_i     (l_strm_valid_o),
+      .strm_set_sink_i      (p_strm_sink_i),
+      .strm_set_val_i       (p_strm_val_i),
+      .strm_set_ready_o     (strm_ready_o),
+      .strm_set_error_o     (strm_error_o),
+      .strm_started_o       (lsn_started_o),
       .now_ms_i             (32'd0),
-      .tmr_arm_valid_o      (),
-      .tmr_arm_cancel_o     (),
+      .tmr_arm_valid_o      (tmr_arm_valid_o),
+      .tmr_arm_cancel_o     (tmr_arm_cancel_o),
       .tmr_arm_slot_o       (),
-      .tmr_arm_owner_o      (),
+      .tmr_arm_owner_o      (tmr_arm_owner_o),
       .tmr_arm_deadline_ms_o(),
-      .tmr_exp_valid_i      (1'b0),
-      .tmr_exp_slot_i       (7'd0),
-      .tmr_exp_owner_i      (8'd0),
-      .draw_req_o           (),
+      .tmr_exp_valid_i      (l_exp_valid_o),
+      .tmr_exp_slot_i       (p_exp_slot_i),
+      .tmr_exp_owner_i      (p_exp_owner_i),
+      .draw_req_o           (draw_req_o),
       .draw_kind_o          (),
-      .draw_busy_i          (1'b0),
-      .draw_valid_i         (1'b0),
-      .draw_ms_i            (16'd0),
-      .rxs_rd_slot_o        (),
-      .rxs_rd_addr_o        (),
-      .rxs_rd_en_o          (),
-      .rxs_rd_data_i        (8'd0),
-      .rxs_free_o           (),
-      .rxs_free_slot_o      (),
-      .txs_alloc_req_o      (),
+      .draw_busy_i          (draw_busy_i),
+      .draw_valid_i         (draw_valid_i),
+      .draw_ms_i            (draw_ms_i),
+      .rxs_rd_slot_o        (rxs_rd_slot_o),
+      .rxs_rd_addr_o        (rxs_rd_addr_o),
+      .rxs_rd_en_o          (rxs_rd_en_o),
+      .rxs_rd_data_i        (rxs_rd_data_i),
+      .rxs_free_o           (rxs_free_o),
+      .rxs_free_slot_o      (rxs_free_slot_o),
+      .txs_alloc_req_o      (txs_alloc_req_o),
       .txs_oversize_o       (),
-      .txs_alloc_gnt_i      (1'b0),
-      .txs_alloc_slot_i     (3'd0),
-      .txs_wr_slot_o        (),
-      .txs_wr_addr_o        (),
-      .txs_wr_valid_o       (),
-      .txs_wr_data_o        (),
-      .txs_wr_commit_o      (),
-      .txs_wr_len_o         (),
-      .txreq_valid_o        (),
-      .txreq_slot_o         (),
+      .txs_alloc_gnt_i      (txs_alloc_gnt_i),
+      .txs_alloc_slot_i     (txs_alloc_slot_i),
+      .txs_wr_slot_o        (txs_wr_slot_o),
+      .txs_wr_addr_o        (txs_wr_addr_o),
+      .txs_wr_valid_o       (txs_wr_valid_o),
+      .txs_wr_data_o        (txs_wr_data_o),
+      .txs_wr_commit_o      (txs_wr_commit_o),
+      .txs_wr_len_o         (txs_wr_len_o),
+      .txreq_valid_o        (txreq_valid_o),
+      .txreq_slot_o         (txreq_slot_o),
       .lock_held_i          (1'b0),
       .lock_ctlr_i          (64'd0),
-      .act_settle_o         (),
+      .act_settle_o         (lsn_settle_o),
       .act_settle_sid_o     (),
       .act_settle_da_o      (),
       .act_settle_vlan_o    (),
-      .act_teardown_o       (),
-      .act_disc_arm_o       (lsn_disc_arm_o),
+      .act_teardown_o       (lsn_teardown_o),
+      .act_disc_arm_o       (lsn_arm_w),
       .act_disc_talker_eid_o(lsn_disc_eid_o),
-      .act_disc_disarm_o    (),
+      .act_disc_disarm_o    (lsn_disarm_o),
       .act_nvm_o            (),
       .act_nvm_set_o        (),
-      .act_notify_o         (),
+      .act_notify_o         (lsn_notify_o),
       .act_sink_o           (),
       .dbg_busy_o           (lsn_busy_o),
+      .dbg_strq_drop_o      (),
+      .act_strt_chg_o       (),
+      .act_strt_cmd_chg_o   (),
       .dbg_recwr_o          (lsn_recwr_w),
       .dbg_recwr_sink_o     (lsn_recwr_sink_w),
       .dbg_recwr_rec_o      (lsn_recwr_rec_w)
@@ -302,7 +523,19 @@ module acmp_nvm_wrap
   assign lsn_recwr_o      = lsn_recwr_w;
   assign lsn_recwr_sink_o = lsn_recwr_sink_w;
   assign lsn_recwr_rec_o  = lsn_recwr_rec_w;
+  assign lsn_disc_arm_o   = lsn_arm_w;
+  //! suite taps on two engines' state registers, read by hierarchical
+  //! reference so neither module grows a port for a testbench
+  assign lsn_state_o      = 5'(u_listener.xs_r);
+  assign mgr_state_o      = 4'(u_shadow.hs_r);
+  assign mgr_rs_sink_o    = u_shadow.rs_k_r;
   assign dbg_port_done_o  = nvm_done_w;
+  assign mgr_abort_o      = nvm_abort_w;
+  assign mgr_err_cause_o  = nvm_err_cause_w;
+  assign mgr_done_o       = nvm_done_w;
+  assign mgr_err_o        = nvm_err_w;
+  assign mgr_rvalid_o     = nvm_rvalid_w;
+  assign mgr_wd_o         = u_shadow.rs_wd_r;
 
 endmodule
 

@@ -199,16 +199,32 @@ Word address = 0x30000 + N.
 | 0 | read/write | a scratch register. Writing then reading it back is the cheapest proof the side port works in both directions |
 | 1 | read only | bit 0 `entity_enable_i` · bit 1 restore busy · bit 2 restore done · bit 3 restore failed |
 
-`restore_fail_o` means a torn read-back aborted the whole boot restore — deliberately, so
-a partial set of bindings is never preloaded. A blank device is not a failure: a record
-that fails its framing check is skipped, and that sink simply starts unbound.
+`restore_fail_o` means the whole boot restore was abandoned — deliberately, so a partial
+set of bindings is never preloaded: a read-back torn mid-record, a device error on a
+record read, or a device that stopped answering for the read deadline. Every sink then
+starts unbound, and the listener still answers. The saved bindings are not lost with it:
+nothing is written over them until a controller binds that sink again, so polling a sink,
+or unbinding one the failed restore left unbound, changes nothing on the device, and the
+next boot on a healthy device restores them. A blank device is not a failure: a record
+that fails its framing check is skipped, and that sink simply starts unbound. A device
+that stopped answering and never recovers also leaves every later binding change pending
+(never written) until the next reset.
 
 **Do not read restore done as restore succeeded.** It says the walk reached its end,
-which every skipped record also does, so a device whose NVM is blank — or whose
-integrator never wired a backend at all — publishes the same two bits as one that
-restored every sink. `restore_blank_o` is the third pin: set when the completed walk
-validated zero records. Whether there is any media behind the device face is a fact
-only the integrating fabric holds, and it has to publish that too.
+which every skipped record also does. What bits 2 and 3 read depends on what answers
+behind the NVM device face:
+
+| Behind the device face | Restore done | Restore failed |
+|---|---|---|
+| media that holds the bindings | 1 | 0 |
+| blank media, or a face that answers every read as erased media (each byte `0xFF`, then done) — how an integrator ties off a board with no backend | 1 | 0, the same as a full restore |
+| a face that answers a read with an error, or ends it before the record's 8-byte header | 1 | 1 (a device error) |
+| a face that never answers, such as an unwired backend whose grant is tied low | 1, after the read deadline | 1 (the deadline); the NVM port then stays blocked until reset, so no binding change is ever written |
+
+`restore_blank_o` is the third pin: set when the walk validated zero records, a failed
+walk included. It is what separates the first two rows. Whether there is any media
+behind the device face is a fact only the integrating fabric holds, and it has to
+publish that too.
 
 ## 7. The trace ring
 
@@ -245,7 +261,11 @@ problem. The full transition matrix is
 diagram is a vocabulary, not a path.
 
 Bindings **survive a power cycle**. On boot a restored binding starts in `PRB_W_AVAIL` and
-re-probes; it does not resume as though nothing happened.
+re-probes; it does not resume as though nothing happened. Until the restore walk ends
+(control word 1 bit 2), the listener answers no ACMP command: a controller that already
+knows the entity and asks early gets its answer when the walk ends, from the restored
+binding. An entity that never shows restore busy or done after reset was never told to
+restore, and its listener stays silent until it is.
 
 ---
 

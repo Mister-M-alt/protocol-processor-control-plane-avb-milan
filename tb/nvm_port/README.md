@@ -4,7 +4,7 @@
 Proves the class-F NVM port (`hdl/packet_engine/KL_pp_nvm_port.sv`,
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8 +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8): `make` = build + run,
-exit 0 = PASS, 122 checks. `-GMAX_PAYLOAD_P=1024` pins the geometry the C++
+exit 0 = PASS, 136 checks. `-GMAX_PAYLOAD_P=1024` pins the geometry the C++
 constants mirror.
 
 The harness plays BOTH neighbors, independently of the RTL: a **manager BFM**
@@ -132,6 +132,25 @@ of the set. See "Where a check may read from" for the rule and its one known exc
   header collect — which sits on the boot restore walk, the one path where a
   torn image is actually consumed. All three survived the suite before T18.
 
+### Terminal cause (issue #93, S1)
+
+`nvm_err_cause_o` names what an err was: **1 DEVICE** for every error the device
+raised, in any state, and for a header read it ended short; **2 UNFRAMED** only
+for a header this port refused, one the device delivered whole or one the manager
+streamed on a commit; 0 with done and on every cycle without err. Before it, all
+of those ended in the same err with nothing forwarded, so a manager restoring a
+record could not tell a failing device from a record that is not there.
+UNFRAMED does not prove erased media, and nothing here claims it does. T23 runs
+last, after the end-of-run idle check has graded every earlier phase, and from a
+reset of its own, so a mutation that wedged the port earlier cannot fail it as
+collateral. It grades: the header read refused at the grant (`S_RHREQ`'s
+error arm, which no phase reached before), a device error inside the header, a
+header read ended short at five bytes, a device error after the header and before
+its done, a device error in the payload and on a commit's ERASE, all DEVICE; an
+erased header (eight 0xFF), a corrupted magic and a payload_length over the bound,
+each delivered whole, and a commit whose own header fails the gate, all UNFRAMED;
+and a done reading 0, with no cycle of the whole run reading a cause without err.
+
 ### Completion ownership (issue #14)
 
 `done_seen_r` is sticky because a device `done` may land on the same edge a pump
@@ -150,7 +169,7 @@ it. The array-flavoured variants vary a different axis and none of them reaches
 this.
 
 What the port owes is now stated in its own header as refusal (c) and gated on
-it (`dev_cmd_owned_w`, `KL_pp_nvm_port.sv:151-162`): a completion is this port's
+it (`dev_cmd_owned_w`, `KL_pp_nvm_port.sv:162-173`): a completion is this port's
 from the cycle its grant is observed — that cycle may carry the completion —
 until the wait state consumes it, and ownership retires at the terminal state,
 at the next accept, and at reset. `S_WHDR`, an ungranted `*REQ`, `S_RHFWD`,
@@ -224,10 +243,10 @@ tuned -- the port may hand up a buffered header only once the read that filled
 the buffer has completed, on any backend, at any delay.
 
 The sticky latch is no longer invisible on the pristine model either: deleting the set
-line now reddens 9 of 122 here, in T21, all three T22 arms and the end-of-run
+line now reddens 9 of 136 here, in T21, all three T22 arms and the end-of-run
 idle check, because a commit that never gets its completion never releases
 busy, and under a coincident-completion model the same
-mutations fail 91 of 122.
+mutations fail 105 of 136.
 Narrowing ownership the other way, by dropping the grant term, reddens exactly
 the same nine: T21 is the first phase that needs a completion the wait state
 cannot read live, so the port wedges there and T22 dies with it.
@@ -244,15 +263,15 @@ are load-bearing rather than dead; what was missing was a standing phase pairing
 them with the completion semantics the port's own header allows. T22 is that
 phase, and these are the measurements:
 
-- ownership narrowed to the grant handshake alone **fails 6 of 122**. The port
+- ownership narrowed to the grant handshake alone **fails 6 of 136**. The port
   wedges on T22a and every later phase dies with it.
-- dropping the single `S_RHCOLL` term **fails 3 of 122**: the restore whose
+- dropping the single `S_RHCOLL` term **fails 3 of 136**: the restore whose
   header read is answered on its own eighth byte loses that completion, wedges
   in `S_RHWAIT`, and never issues the payload read, so T22c's own witness
   reports one coincidence where it requires two.
-- dropping the single `S_WWAIT` term **fails 0 of 122**, and that is not an
+- dropping the single `S_WWAIT` term **fails 0 of 136**, and that is not an
   oversight; see the list below.
-- admitting an ungranted `S_RHREQ` into the window **fails 1 of 122**, on
+- admitting an ungranted `S_RHREQ` into the window **fails 1 of 136**, on
   T20a's forward counter. Before that counter existed this mutant was green.
 
 **What this does NOT establish.** Nothing here says the defect was reachable on
@@ -293,23 +312,28 @@ and it was too small:
   issue #15, which this suite does not model.
 
 Mutation-proven (backup → sed → run → restore → green). **These figures are
-against the 122-check suite; earlier revisions of this file carried 55-era
+against the 136-check suite; earlier revisions of this file carried 55-era
 numbers for M1 to M3 long after the suite grew.**
+- **C1** (2026-09-23) the cause register deleted (`nvm_err_cause_o` tied 0):
+  **fails 10 of 136**, every DEVICE and UNFRAMED case of T23.
+- **C2** the cause collapsed to DEVICE (the refusal records DEVICE): **fails 4 of 136**, the four UNFRAMED cases.
+- **C3** the cause collapsed to UNFRAMED (every active state records UNFRAMED): **fails 6 of 136**, the six DEVICE cases.
+- **C4** the cause published without its err gate: **fails 1 of 136**, T23k.
 - **M1** commit skips the ERASE: the transition INTO `S_WEREQ` (`:201`)
-  rewritten to `S_WWREQ`, so no ERASE is ever issued. **Fails 24 of 122**
+  rewritten to `S_WWREQ`, so no ERASE is ever issued. **Fails 24 of 136**
   (op-log shape, erase pulse/visibility, erase-error path).
   The description used to read "`S_WEREQ` target rewritten", which is ambiguous
   and the two readings differ enormously: rewriting what `S_WEREQ` itself
   transitions to (`:215`), so the ERASE is REQUESTED but never awaited, **fails
-  only 5 of 122**. That sibling is a real coverage gap and is recorded as one
+  only 5 of 136**. That sibling is a real coverage gap and is recorded as one
   rather than hidden by the ambiguity.
-- **M2** magic gate dropped from `hdr_ok_w`: **fails 5 of 122** (both bad-magic
+- **M2** magic gate dropped from `hdr_ok_w`: **fails 8 of 136** (both bad-magic
   refusals and the nothing-forwarded check). Note this drops BOTH magic bytes;
   the low byte alone is uncovered, see the gap list below.
 - **M3** payload pump off-by-one (`bcnt_r == plen_r` for `plen_r - 1`, both
-  directions): **fails 91 of 122** (every data-phase op times out or mismatches).
+  directions): **fails 105 of 136** (every data-phase op times out or mismatches).
 - **M4** (2026-08-20) the write phase swallows the device error (`S_WDPUMP`'s
-  `if (dev_err_i)` forced false): **fails 52 of 122**. A torn commit then looks
+  `if (dev_err_i)` forced false): **fails 52 of 136**. A torn commit then looks
   clean, which is exactly the false success #70 exists to remove. Six checks
   survive in the phases the mutation reaches, enumerated by RUNNING the
   mutation rather than reasoning about it,
@@ -327,7 +351,7 @@ numbers for M1 to M3 long after the suite grew.**
   anything at all, which is what the completion check beside each of them is
   for.
 - **M5** (2026-08-20) the completion window swallows the device error
-  (`S_WWAIT`'s `if (dev_err_i)` forced false): **fails 39 of 122**, and survives
+  (`S_WWAIT`'s `if (dev_err_i)` forced false): **fails 39 of 136**, and survives
   the whole suite without T17. The port waits for a `done` a failed device will
   never send, so the commit never answers at all: `run_op` returns -1 after
   100,000 cycles. `busy_seen && busy_ok` does NOT catch this, and the comment
@@ -336,18 +360,18 @@ numbers for M1 to M3 long after the suite grew.**
   it, which is why the count is so much larger than the mechanism.
 - **M6** (2026-09-07) the completion latch armed in every state: the ownership
   gate removed from the set, putting the flag back the way issue #14 found it.
-  **fails 6 of 122**, one per arm of the unsolicited-completion table above and
+  **fails 6 of 136**, one per arm of the unsolicited-completion table above and
   nothing else in the suite — before those phases the same mutation was green.
   The same edit plus the withdrawn one-line clear in `S_WHDR`, the fix the
-  ticket proposed first and then retracted, **fails 5 of 122**: it closes the
+  ticket proposed first and then retracted, **fails 5 of 136**: it closes the
   header-collection arm alone, `S_WEREQ` stays exposed on the commit side, and
   a restore never enters `S_WHDR` at all. It is measured rather than argued
   because "that would not have been enough" is exactly the shape of claim this
   file has had to retract before.
 - **Probes** (mutations of the TEST, not the RTL). Arming T16's tear as
   `arm_err(1, -1)`, so the WRITE fails before its first byte moves, fails 1 of
-  122. Replacing the torn commit with a bare `rc = 1` and no device traffic at
-  all — the port the T16 prose names as the threat — fails 3 of 122. Under the
+  136. Replacing the torn commit with a bare `rc = 1` and no device traffic at
+  all — the port the T16 prose names as the threat — fails 3 of 136. Under the
   previous guard that second probe failed only ONE check, the erase count,
   while the payload guard passed on residue from an earlier phase.
 - **Model probe**: changing only the DEVICE MODEL to roll the last 4 bytes back
@@ -355,7 +379,7 @@ numbers for M1 to M3 long after the suite grew.**
   may leave — must not redden a check about the PORT. The T17 restore check
   did exactly that, and so did the T16 byte comparison. Neither does now, by
   two different routes: T16's moved onto the bus, T17's moved to assert after
-  a `done` where the array is known. The half-page model is 122 PASS, 0 FAIL.
+  a `done` where the array is known. The half-page model is 136 PASS, 0 FAIL.
   See the matrix below for every pre-fix form against every model.
 
 ### Device-error arm coverage
@@ -381,7 +405,7 @@ vocabulary could not grow behind the gate because English number words are a
 closed class. The argument is true and beside the point: the closed class is
 number words, the open class is ways of writing a ratio, and closing one axis
 leaves the other. Ten of thirteen phrasings still evaded, two of them using
-digits only -- `fails 22 of the 122 checks` and `fails 22 out of 122`. Both are
+digits only -- `fails 22 of the 136 checks` and `fails 22 out of 136`. Both are
 caught now, and `| Mx | 22 |`, `reddens 22 checks`, `a fifth of the suite`,
 `68/90ths` and `24%` are not. A real closure would mean treating every bare
 integer as a claim: measured, 292 numbers in this file fall outside every claim
@@ -424,22 +448,24 @@ the whole table has to be re-swept.
 
 | line | state | checks failed |
 |---|---|---|
-| 211 | `S_WEREQ`  | **0 — uncovered** |
-| 220 | `S_WEWAIT` | 69 |
-| 230 | `S_WWREQ`  | **0 — uncovered** |
-| 240 | `S_WHPUMP` | 64 |
-| 253 | `S_WDPUMP` | 52 |
-| 263 | `S_WWAIT`  | 39 |
-| 274 | `S_RHREQ`  | **0 — uncovered** |
-| 284 | `S_RHCOLL` | 32 |
-| 302 | `S_RHWAIT` | 29 |
-| 329 | `S_RPREQ`  | **0 — uncovered** |
-| 339 | `S_RPPUMP` | 63 |
-| 349 | `S_RPWAIT` | 26 |
+| 222 | `S_WEREQ`  | **0 — uncovered** |
+| 231 | `S_WEWAIT` | 76 |
+| 241 | `S_WWREQ`  | **0 — uncovered** |
+| 251 | `S_WHPUMP` | 64 |
+| 264 | `S_WDPUMP` | 52 |
+| 274 | `S_WWAIT`  | 39 |
+| 285 | `S_RHREQ`  | 2 |
+| 295 | `S_RHCOLL` | 43 |
+| 313 | `S_RHWAIT` | 38 |
+| 340 | `S_RPREQ`  | **0 — uncovered** |
+| 350 | `S_RPPUMP` | 71 |
+| 360 | `S_RPWAIT` | 26 |
 
-**Eight of twelve are covered; four are not.** The survivors are the four
-`*REQ` arms, where the device asserts an error before its request is granted.
-Reaching them needs an `err_at_req` mode the device model does not have. That
+**Nine of twelve are covered; three are not.** The survivors are three of the
+four `*REQ` arms, where the device asserts an error before its request is
+granted. T23a added that mode to the device model (`gnt_err`: err in place of
+the grant) for the header READ, which is how `S_RHREQ` came to be reached; the
+ERASE, the WRITE and the payload READ have not been armed with it. That
 is written down here rather than left to be rediscovered, because a phase list
 that reads as complete is worse than one that names its gaps. The other
 outstanding item is the same: `09_verification.md:56` sets the bar as "cut at
@@ -453,10 +479,10 @@ CHECKED that they reached those windows. Both were measured green under probes
 that removed the thing being tested:
 
 - moving T17's cut off the completion window, so `S_WWAIT` is never entered:
-  **122/122 green** before, now fails on `T17 the cut was in the completion
+  **136/136 green** before, now fails on `T17 the cut was in the completion
   window: every byte sent first`.
 - replacing T18's three device errors with a bad stored magic, so ZERO device
-  errors occur anywhere: **122/122 green** before. The op log alone could not tell
+  errors occur anywhere: **136/136 green** before. The op log alone could not tell
   them apart, because the port issues the header READ BEFORE validating it, so
   a refusal and a device error produce the same two ops. Distinguishing them
   needed a count of DEVICE-raised errors, separate from the port's own `err`
@@ -495,7 +521,7 @@ rather than quietly deleted. `T15 unless the old record survived, a torn image
 never restores as valid` was called weaker than the header-agreement check
 beside it, on the evidence of twelve arms and four models showing no
 divergence. Measured directly by moving T15's tear into the completion window:
-that check FAILS while the header check PASSES, 2 of 122. It can fail alone, so
+that check FAILS while the header check PASSES, 2 of 136. It can fail alone, so
 it is not a member of this section at all. The error is the same shape as the
 corollary retracted below -- a general claim generalised from the states that
 happened to be tried -- and this file has now made it twice, because "no
@@ -509,7 +535,7 @@ had to be rewritten, because what the array holds is the device MODEL's choice,
 not the port's behaviour. FIVE device models and one combination were run, RTL
 byte-identical. Four vary what the array RETAINS; the fifth, coincident
 completion, varies the HANDSHAKE instead -- the device raises `dev_done_i` on
-the same edge that moves a pump's final byte, which `KL_pp_nvm_port.sv:175-179`
+the same edge that moves a pump's final byte, which `KL_pp_nvm_port.sv:186-190`
 says the sticky `done_seen_r` latch exists for. It is a contract freedom rather
 than a broken peer, and the port handles it. Its whole interest was that
 deleting that latch was INVISIBLE without it, which stopped being true when
@@ -593,12 +619,12 @@ Applied here:
 
 | model | result |
 |---|---|
-| pristine | **122 PASS, 0 FAIL** |
-| half-page | **122 PASS, 0 FAIL** |
-| page-buffered NOR | **122 PASS, 0 FAIL** |
-| lazy erase | 121 PASS, 1 FAIL, only the pre-existing `T1` |
-| lazy erase + page-buffered | 121 PASS, 1 FAIL, only `T1` |
-| coincident completion | **122 PASS, 0 FAIL** |
+| pristine | **136 PASS, 0 FAIL** |
+| half-page | **136 PASS, 0 FAIL** |
+| page-buffered NOR | **136 PASS, 0 FAIL** |
+| lazy erase | 135 PASS, 1 FAIL, only the pre-existing `T1` |
+| lazy erase + page-buffered | 135 PASS, 1 FAIL, only `T1` |
+| coincident completion | **136 PASS, 0 FAIL** |
 
 A device model variant is the cheapest way to find a check that tests the
 harness rather than the DUT, and it belongs in the standing mutation set. Each

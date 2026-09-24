@@ -494,6 +494,15 @@ free. Long busy periods expected; commits are asynchronous to protocol responses
 | `record_id` | out | 8 |
 | `wdata` / `rdata` | out / in | streamed bytes (record framing per [07 §5](07_memory_maps.md)) |
 | `busy` / `done` / `err` | in | 1 each |
+| `err_cause` | in | 2 — valid with `err`, 0 otherwise: **1** DEVICE, **2** UNFRAMED, 3 reserved |
+
+`err_cause` says what an `err` was, so a manager restoring a record can tell a failing
+device from a record that is not there (processor issue #93). **DEVICE** is every error
+the device raised, in any state, and a header read the device ended short of its eight
+bytes. **UNFRAMED** is a header the port itself refused after the device delivered it
+whole, or a commit header the manager streamed, that failed the magic or length gate.
+UNFRAMED does not prove erased media; it says the device answered with something that is
+not a record. Code 3 is kept for a port deadline and is never produced.
 
 <a id="fig-02-nvmwave"></a>**F02.8 — NVM commit (broken axis over the busy period)**
 
@@ -518,7 +527,9 @@ free. Long busy periods expected; commits are asynchronous to protocol responses
 
 Boot restore is the mirror image (`we = 0`): the boot sequencer reads every record,
 CRC-validates, falls back to vendor defaults on failure, **then** releases
-`entity_enable` ([07 §5.3](07_memory_maps.md)).
+`entity_enable` ([07 §5.3](07_memory_maps.md)). Which failures are one record's
+default and which fail the whole walk is [07 §5.3](07_memory_maps.md#fig-07-nvmflow)'s
+table.
 
 ### 8.1 What the integrator reads while a commit is outstanding
 
@@ -538,6 +549,21 @@ an integrator that persists them owns both the record and the write.
 Both are combinational reads of `clk_i`-domain registers, like every class-D level
 of [§6](#6-class-d-level-status-dictionary) — a consumer in another clock domain
 owns its own 2FF synchroniser.
+
+### 8.2 Two record managers, one port
+
+[`KL_pp_nvm_mgr_arb`](../../hdl/packet_engine/KL_pp_nvm_mgr_arb.sv) sits between the
+port's manager face and its managers: the binding manager is manager 0, and manager 1 is
+kept for a second record writer (the integrating platform's saved-state writer) and is
+tied idle in `protocol_processor_top` until one lands. The device face keeps exactly one
+sequential initiator.
+
+| Rule | Realization |
+|---|---|
+| Ownership is per operation. | the manager whose request the port accepted owns every data phase and the `done` or `err` (with its cause) that ends it; the other sees none of them |
+| A manager-0 request only ever meets an idle port. | manager 0 raises a registered one-cycle request after it reads the port idle, so the busy it reads also covers the cycle manager 1 is granted. Manager 1 holds its request until its grant; on a tie at an idle port manager 0 wins |
+| An abandoned READ is **drained**, never handed on. | the port's answers name no operation, so when a read's owner abandons it (the binding walk's deadline, [07 §5.3](07_memory_maps.md#fig-07-nvmflow)) the arbiter keeps the operation: it holds `rready`, discards the late bytes, swallows the `done` or `err`, and grants neither manager until then. Only reads are abandoned: a write stream is never cut |
+| The drain ends **only** on that operation's own `done` or `err`. | never on time. A device that never ends the abandoned read keeps the port **quarantined until reset**: every later binding change reads pending in `nvm_unflushed_o` and is never written. Reusable service after a permanently silent device needs a real cancellation, which is the port's open recovery contract (processor issue #15) |
 
 ## 9. Parameterization
 

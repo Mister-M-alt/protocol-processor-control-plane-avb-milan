@@ -385,6 +385,50 @@ flowchart TB
   end
 ```
 
+The binding walk owns the ACMP listener from reset until its last preload has been
+written and armed: commands, talker events, START/STOP requests and timer expiries wait
+at their producers until then, and `restore_done_o` marks that end
+([05 §5.1](05_acmp_engine.md#sec-05-boot-admission)). A read-only command that arrives
+during the walk is answered afterwards, from the restored image or, if the walk failed,
+from the vendor defaults, and it changes nothing here either way.
+
+**How a binding walk ends** (`KL_acmp_nvm_shadow`, processor issue #93). A walk is a
+transaction: a transport failure anywhere ends it with **every** sink not captured live at
+its vendor default, `restore_fail_o` and no preload, never with part of the image. It
+rejects the image, not the media: every saved record stays in the device as it was.
+
+| The record read… | Result | `restore_cause_o` |
+|---|---|---|
+| delivers a whole record that passes crc, layout_version, record_id and length | that sink's saved binding is stored and later preloaded | 0 |
+| delivers a whole record that fails one of those | **that record's** vendor default; the walk continues | 0 |
+| ends with nothing forwarded because the device answered with something that is not a record: a clean `done`, or an `err` the port names UNFRAMED ([02 §8](02_interfaces.md#fig-02-nvmwave)) | **that record's** vendor default; the walk continues | 0 |
+| ends after at least one forwarded byte and short of the record (torn) | the **whole walk** fails | 1 |
+| ends with nothing forwarded on an `err` the port names DEVICE (a device error, or a header read the device ended short) | the **whole walk** fails: a failing device is not an empty record | 2 |
+| waits `P-NVM-RS-TMO-CYC` consecutive clocks without progress (`T-NVM-RS-DEADLINE`): for the port idle before a read, or for a byte, `done` or `err` during it | the **whole walk** fails, and a read already issued is abandoned to the arbiter, which drains it ([02 §8.2](02_interfaces.md#82-two-record-managers-one-port)) | 3 |
+
+Progress is the awaited event itself, so a device that is slow but moving never trips the
+deadline, and the deadline bounds only the read phase: the preload phase is bounded by
+the listener's admission ([05 §5.1](05_acmp_engine.md#sec-05-boot-admission)). A failed
+walk still reaches its terminal, the listener is released and answers on the defaults,
+and an enable gated on `restore_done_o` follows. A walk that validated no record reports
+`restore_blank_o`, a failed one included. What the deadline does **not** do: it gives the
+port no deadline of its own and releases nothing on time. A device that ends the
+abandoned read late ends the drain and the port serves the next operation; a device that
+never ends it leaves the port quarantined until reset.
+
+**A failed walk keeps the saved records** (processor issue #92). After the atomic reject
+the listener runs on its defaults, and it writes its record back for every command it
+serves, a read-only `GET_RX_STATE` included. The shadow commits only a record that differs
+from what it holds, and **two unbound records never differ**, whatever their other fields:
+an unbound record carries no binding (Milan v1.2 5.3.8.3 clears the binding parameters on
+unbind), and no walk preloads one. So a command that leaves a sink unbound writes nothing
+after a failed walk, whether it is a `GET_RX_STATE` held from the boot window, a later
+poll, or an `UNBIND` of a sink the failed walk left unbound, and the next walk on a
+healthy device restores every saved binding. A `BIND` does bind the sink: it replaces
+that sink's record, as it would after any walk. Graded for all three causes in
+[`tb/acmp_nvm`](../../tb/acmp_nvm/README.md) (N8) and at the top in
+[`tb/pp_top`](../../tb/pp_top/README.md) (BW3).
+
 ### 5.4 Open decisions
 
 Recorded in [review §8](../00_MILAN_COMPLIANCE_REVIEW.md): configuration-index,

@@ -100,7 +100,9 @@ once in [F02.10](02_interfaces.md#fig-02-statusdict).
 - **Initialization** — boot sequencer order: (1) load/validate descriptor image and
   identity registers (side-port or ROM); (2) NVM restore of the persisted set
   ([07 §5](07_memory_maps.md)); (3) preload engine state — a restored binding puts that
-  sink's listener SM in `PRB_W_AVAIL`; (4) adapters report ready; (5) assert
+  sink's listener SM in `PRB_W_AVAIL`, and the listener takes no other work until the
+  last preload is written and armed ([05 §5.1](05_acmp_engine.md#sec-05-boot-admission));
+  (4) adapters report ready; (5) assert
   `entity_enable` — only now may ADP advertise (Milan §5.6.1), because the entity must
   already accept AECP commands and bind/probe requests.
 - **Steady state** — RX commands, timer events, self-originated traffic and side-port
@@ -165,6 +167,7 @@ values; other documents reference `P-…` IDs.
 | P-MRPDU-QUEUE-BYTES | 2048 | SRP MRPDU RX queue: one max-size frame + headroom ([10 §4](10_srp_engine.md)) | SRP engine |
 | P-SRP-DOM-DEF-VID | 2 | 16-bit; =2 in every product build (Milan §4.2.7.2.1). Any other value is a verification fixture proving the top-level binding, not a product profile | SRP Domain FSM default VID ([F10.2](10_srp_engine.md#fig-10-domsm)): declared at startup and LINK_UP, restored at LINK_DOWN; a received Class A Domain is still adopted over it |
 | P-CLK-HZ | 100 MHz | any; prescaler retuned | timebase |
+| P-NVM-RS-TMO-CYC | P-CLK-HZ / 50 (20 ms) | above the slowest single record read the NVM device face can take (`NVM_RS_TMO_CYC_P`) | boot restore walk's read deadline, `T-NVM-RS-DEADLINE` ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) |
 | P-INTERNAL-INGRESS-DELAY-NS | product | added to reported input latency (Milan §5.4.2.10.1) | GET_STREAM_INFO |
 | P-PT-OFFSET-DEFAULT-NS | 2 000 000 | 0..0x7FFFFFFF (Milan §5.3.7.6) | presentation time |
 | P-EN-MVU-SUID / P-EN-MVU-MCR | 1 / 1 | Milan "recommended" MVU groups | MVU decode |

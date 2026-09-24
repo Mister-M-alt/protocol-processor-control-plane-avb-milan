@@ -248,6 +248,17 @@ module pp_top_wrap (
     output logic        dbg_is_tkr_o,
     output logic        dbg_lstn_pop_o,
     output logic        dbg_lstn_busy_o,
+    //! the binding manager's OWN terminal (KL_acmp_nvm_shadow restore_done_o),
+    //! which the top's restore_done_o follows once the listener admission
+    //! gate releases
+    output logic        dbg_walk_done_o,
+    //! the listener admission gate's release (KL_pp_acmp_lsn_admit
+    //! released_o), and the listener writing a preload record (X_PRELOAD)
+    //! or raising its A4 discovery arm: section BW4 grades the top's
+    //! restore_done_o and restore_busy_o against them every cycle
+    output logic        dbg_lsn_released_o,
+    output logic        dbg_lsn_preload_o,
+    output logic        dbg_lsn_arm_o,
     output logic        dbg_evr_valid_o,
     output logic [4:0]  dbg_evr_src_o,
     output logic        dbg_evr_ack_o,
@@ -341,6 +352,11 @@ module pp_top_wrap (
       //! million compressed cycles for them
       .REG_TL_TIMEOUT_MS_P (400),
       .LOCK_TIMEOUT_MS_P   (400),
+      //! the boot restore walk's read deadline, in clocks. The product
+      //! default is 20 ms of P-CLK-HZ, two million steps of this bench; a
+      //! record read of its device model takes well under a hundred, so
+      //! section BW3 sees the deadline expire at a hundredth of that
+      .NVM_RS_TMO_CYC_P    (20_000),
       .TROM_HEX_P   ("ltn_rom.hex"),
       .UCODE_HEX_P  ("ucode.hex")
   ) u_dut (
@@ -539,7 +555,11 @@ module pp_top_wrap (
   assign dbg_acmp_msg_o   = u_dut.acmp_head_w.msg_type;
   assign dbg_is_tkr_o     = u_dut.acmp_is_tkr_w;
   assign dbg_lstn_pop_o   = u_dut.lstn_txn_ready_w;
-  assign dbg_lstn_busy_o  = u_dut.lstn_dbg_busy_nc_w;
+  assign dbg_lstn_busy_o  = u_dut.lstn_dbg_busy_w;
+  assign dbg_walk_done_o  = u_dut.nvm_walk_done_w;
+  assign dbg_lsn_released_o = u_dut.lsn_released_w;
+  assign dbg_lsn_preload_o  = (5'(u_dut.u_listener.xs_r) == 5'd2);   // X_PRELOAD
+  assign dbg_lsn_arm_o      = u_dut.lstn_disc_arm_w;
   assign dbg_evr_valid_o  = u_dut.evr_valid_w;
   assign dbg_evr_src_o    = u_dut.evr_src_w;
   assign dbg_evr_ack_o    = u_dut.evr_ack_w;

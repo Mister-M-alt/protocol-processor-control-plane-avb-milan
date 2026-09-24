@@ -27,7 +27,10 @@
 //                  Services: KL_pp_timer_service (arm-port priority mux),
 //                      KL_pp_prng (draw-port owner mux), KL_pp_scoreboard,
 //                      KL_pp_event_router, KL_pp_originator, KL_pp_trace_ring,
-//                      KL_pp_side_port, KL_acmp_nvm_shadow -> KL_pp_nvm_port.
+//                      KL_pp_side_port, KL_acmp_nvm_shadow -> KL_pp_nvm_mgr_arb
+//                      -> KL_pp_nvm_port,
+//                      KL_pp_acmp_lsn_admit (the listener's four work faces
+//                      held from reset to the binding walk's end).
 //                  The F02.10 class-D status dictionary is aggregated into
 //                      the side-port snapshot window (0x20000).
 //
@@ -118,6 +121,12 @@ module protocol_processor_top
     parameter int unsigned DESC_NAME_ENTRIES_P = 32,
     //! no-progress watchdog on the descriptor memory face, in clocks
     parameter int unsigned DESC_MEM_TMO_CYC_P  = 4096,
+    //! T-NVM-RS-DEADLINE (F08.1), P-NVM-RS-TMO-CYC (F01.5): the boot restore
+    //! walk's read phase fails whole after this many clocks without
+    //! progress. Size it above the slowest single record read your NVM
+    //! device face can take; a silent device then ends the walk here instead
+    //! of holding the listener (and an enable gated on restore_done_o) for ever.
+    parameter int unsigned NVM_RS_TMO_CYC_P    = CLK_HZ_P / 32'd50,
     //! IEEE §7.4.37.2's 300 s TIME_LIMITED registration window and IEEE
     //! §7.4.2's 60 s lock, in ms of the (possibly TIM-compressed) timebase.
     //! Parameters for the same reason TIM_DIV_* are: a suite that needs to
@@ -413,11 +422,18 @@ module protocol_processor_top
     input  wire         restore_go_i,          //! start boot restore
     output logic        restore_busy_o,        //! restore walk running
     output logic        restore_done_o,        //! level: restore complete
-    output logic        restore_fail_o,        //! level: torn read-back aborted restore
+    //! level: the walk failed WHOLE, every sink not changed live at its
+    //! vendor default and nothing preloaded: a read-back torn mid-record, a device error on a
+    //! record read with nothing forwarded, or the read phase's deadline
+    //! (NVM_RS_TMO_CYC_P). A record the device answered with something that
+    //! is not a record (an erased or unframed header) is that record's
+    //! default, never a failure (07 §5.3).
+    output logic        restore_fail_o,
     //! done says the walk SEQUENCED; blank says it validated nothing. An
-    //! integrator whose device face is unbacked or whose media is erased sees
-    //! done with no fail on every path, so this is the only pin that tells it
-    //! apart from a walk that actually put Milan 5.3.8.2/5.3.8.3 state back.
+    //! integrator whose media is erased, or whose unbacked device face
+    //! answers every read as erased media, sees done with no fail on every
+    //! path, so this is the only pin that tells it apart from a walk that
+    //! actually put Milan 5.3.8.2/5.3.8.3 state back.
     output logic        restore_blank_o,       //! level: completed walk validated ZERO records
     output logic        nvm_alarm_o,           //! sticky: commit retries exhausted
     //! per-sink UNFLUSHED binding state, the manager's own dirty vector
@@ -816,7 +832,7 @@ module protocol_processor_top
   logic [N_STREAM_IN_P-1:0] bound_hold_r;
   always_ff @(posedge clk_i) begin : bound_debounce
     if (!rst_n)                    bound_hold_r <= '0;
-    else if (!lstn_dbg_busy_nc_w)  bound_hold_r <= bound_r;   // idle: track
+    else if (!lstn_dbg_busy_w)     bound_hold_r <= bound_r;   // idle: track
     else                           bound_hold_r <= bound_hold_r | bound_r;
   end
   assign acmp_bound_o     = bound_hold_r;
@@ -1700,7 +1716,7 @@ module protocol_processor_top
   logic [47:0] lstn_act_settle_da_w;
   logic [11:0] lstn_act_settle_vlan_w;
   logic        lstn_act_nvm_nc_w, lstn_act_nvm_set_nc_w, lstn_act_notify_nc_w;
-  logic        lstn_dbg_busy_nc_w;
+  logic        lstn_dbg_busy_w;
   logic        lstn_recwr_w;
   logic [SINK_IDX_W_C-1:0] lstn_recwr_sink_w;  //! CLAMPED (see SINK_IDX_W_C)
   logic [pp_acmp_pkg::ACMP_REC_W_C-1:0] lstn_recwr_rec_w;
@@ -1729,6 +1745,60 @@ module protocol_processor_top
   logic        lstn_act_strt_chg_w;
   logic        lstn_act_strt_cmd_chg_w;
 
+  // ---- the listener's boot-owned admission (issue #92, issue #93 S4) -----
+  //! KL_pp_acmp_lsn_admit owns the listener's four work faces from rst_n to
+  //! the binding walk's drained terminal: the dispatch head and the router's
+  //! talker event are held at their producers (valid AND ready masked, so
+  //! the head is neither popped nor admitted to the scoreboard and the
+  //! sticky event is neither acknowledged nor traced), the AECP engine's
+  //! START/STOP valid is masked while its completion passes, and a timer
+  //! expiry of a listener owner is refused and counted. Without it a
+  //! read-only GET_RX_STATE served between a sink's restore store and its
+  //! preload withdrew the restored binding and flushed the listener's
+  //! unbound record over the saved one. Its release is the binding walk's
+  //! END, and restore_done_o below takes it.
+  localparam int unsigned LSTN_OWNER_BASE_C = 32;
+  logic        lsn_released_w;
+  logic        lsn_own_nc_w;
+  logic        lsn_txn_valid_w, lsn_evt_tk_valid_w, lsn_strm_valid_w;
+  logic        lsn_exp_valid_w;
+  logic        lsn_txn_ready_raw_w, lsn_evt_tk_ready_raw_w;
+  //! expiries of a listener owner refused while the gate owned the faces.
+  //! Like lstn_strq_drop_w it STOPS HERE: its only healthy reading is 0,
+  //! and tb/acmp_nvm grades the arm that moves it.
+  logic [15:0] lsn_exp_drop_nc_w;
+  logic        nvm_walk_done_w, nvm_walk_busy_w;
+
+  KL_pp_acmp_lsn_admit #(
+      .N_SINKS_P        (N_STREAM_IN_P),
+      .TMR_OWNER_BASE_P (LSTN_OWNER_BASE_C),
+      .OWNER_W_P        (PP_TIMER_OWNER_W_C)
+  ) u_lsn_admit (
+      .clk_i          (clk_i),
+      .rst_n          (rst_n),
+      .walk_done_i    (nvm_walk_done_w),
+      .pre_valid_i    (pre_valid_w),
+      .lsn_busy_i     (lstn_dbg_busy_w),
+      .lsn_arm_i      (lstn_disc_arm_w),
+      .own_o          (lsn_own_nc_w),
+      .released_o     (lsn_released_w),
+      .p_txn_valid_i  (acmp_txn_valid_w && acmp_sb_grant_w && pf_ready_w
+                       && !acmp_is_tkr_w),
+      .p_txn_ready_o  (lstn_txn_ready_w),
+      .l_txn_valid_o  (lsn_txn_valid_w),
+      .l_txn_ready_i  (lsn_txn_ready_raw_w),
+      .p_tk_valid_i   (lstn_evt_tk_valid_w),
+      .p_tk_ready_o   (lstn_evt_tk_ready_w),
+      .l_tk_valid_o   (lsn_evt_tk_valid_w),
+      .l_tk_ready_i   (lsn_evt_tk_ready_raw_w),
+      .p_strm_valid_i (strm_set_valid_w),
+      .l_strm_valid_o (lsn_strm_valid_w),
+      .p_exp_valid_i  (exp_valid_w),
+      .p_exp_owner_i  (exp_owner_w),
+      .l_exp_valid_o  (lsn_exp_valid_w),
+      .dbg_exp_drop_o (lsn_exp_drop_nc_w)
+  );
+
   KL_pp_acmp_listener #(
       .N_SINKS_P           (N_STREAM_IN_P),
       .TROM_HEX_P          (TROM_HEX_P),
@@ -1738,21 +1808,20 @@ module protocol_processor_top
       .TX_OVERSIZE_BYTES_P (TX_OVERSIZE_BYTES_P),
       .TMR_SLOT_AW_P       (TMR_AW_C),
       .TMR_BASE_SLOT_P     (TMR_LSTN_BASE_C),
-      .TMR_OWNER_BASE_P    (32),
+      .TMR_OWNER_BASE_P    (LSTN_OWNER_BASE_C),
       .STRM_TIMEOUT_CYC_P  (DESC_MEM_TMO_CYC_P)
   ) u_listener (
       .clk_i                 (clk_i),
       .rst_n                 (rst_n),
       .entity_id_i           (entity_id_i),
-      .txn_valid_i           (acmp_txn_valid_w && acmp_sb_grant_w && pf_ready_w
-                              && !acmp_is_tkr_w),
+      .txn_valid_i           (lsn_txn_valid_w),
       .txn_i                 (steer_txn_w),
-      .txn_ready_o           (lstn_txn_ready_w),
-      .evt_tk_valid_i        (lstn_evt_tk_valid_w),
+      .txn_ready_o           (lsn_txn_ready_raw_w),
+      .evt_tk_valid_i        (lsn_evt_tk_valid_w),
       .evt_tk_kind_i         (lstn_evt_tk_kind_w),
       .evt_tk_failed_i       (lstn_evt_tk_failed_w),
       .evt_tk_sink_i         (lstn_evt_tk_sink_w),
-      .evt_tk_ready_o        (lstn_evt_tk_ready_w),
+      .evt_tk_ready_o        (lsn_evt_tk_ready_raw_w),
       .pre_valid_i           (pre_valid_w),
       .pre_sink_i            (pre_sink_w),
       .pre_talker_eid_i      (pre_talker_eid_w),
@@ -1760,7 +1829,7 @@ module protocol_processor_top
       .pre_ctlr_eid_i        (pre_ctlr_eid_w),
       .pre_sw_i              (pre_sw_w),
       .pre_started_i         (pre_started_w),
-      .strm_set_valid_i      (strm_set_valid_w),
+      .strm_set_valid_i      (lsn_strm_valid_w),
       .strm_set_sink_i       (strm_set_index_w),
       .strm_set_val_i        (strm_set_val_w),
       .strm_set_ready_o      (strm_set_ready_w),
@@ -1776,7 +1845,7 @@ module protocol_processor_top
       .tmr_arm_slot_o        (lstn_arm_slot_w),
       .tmr_arm_owner_o       (lstn_arm_owner_w),
       .tmr_arm_deadline_ms_o (lstn_arm_deadline_w),
-      .tmr_exp_valid_i       (exp_valid_w),
+      .tmr_exp_valid_i       (lsn_exp_valid_w),
       .tmr_exp_slot_i        (exp_slot_w),
       .tmr_exp_owner_i       (exp_owner_w),
       .draw_req_o            (lstn_draw_req_w),
@@ -1818,7 +1887,7 @@ module protocol_processor_top
       .act_nvm_set_o         (lstn_act_nvm_set_nc_w),
       .act_notify_o          (lstn_act_notify_nc_w),
       .act_sink_o            (lstn_act_sink_w),
-      .dbg_busy_o            (lstn_dbg_busy_nc_w),
+      .dbg_busy_o            (lstn_dbg_busy_w),
       .dbg_recwr_o           (lstn_recwr_w),
       .dbg_recwr_sink_o      (lstn_recwr_sink_w),
       .dbg_recwr_rec_o       (lstn_recwr_rec_w)
@@ -2355,22 +2424,40 @@ module protocol_processor_top
   // =========================================================================
   // NVM: shadow between the listener record shadow and KL_pp_nvm_port
   // =========================================================================
+  //! the binding manager is manager 0 of KL_pp_nvm_mgr_arb, which drains a
+  //! read the manager abandons at its deadline so the late response reaches
+  //! nobody (issue #93, S3). Manager 1 is the platform's saved-state writer;
+  //! until it lands here that face is tied idle.
   logic        nvm_req_w, nvm_we_w, nvm_wvalid_w, nvm_wready_w;
   logic [7:0]  nvm_record_id_w, nvm_wdata_w, nvm_rdata_w;
   logic        nvm_rvalid_w, nvm_rready_w, nvm_busy_w, nvm_done_w, nvm_err_w;
+  logic [1:0]  nvm_err_cause_w;
+  logic        nvm_abort_w;
+  logic [1:0]  nvm_restore_cause_nc_w;
   logic [N_STREAM_IN_P-1:0] nvm_dbg_valid_nc_w, nvm_dbg_touched_nc_w;
+  // the port's manager face, behind the arbiter
+  logic        np_req_w, np_we_w, np_wvalid_w, np_wready_w, np_rvalid_w;
+  logic        np_rready_w, np_busy_w, np_done_w, np_err_w;
+  logic [7:0]  np_rid_w, np_wdata_w, np_rdata_w;
+  logic [1:0]  np_err_cause_w;
+  logic        nm1_gnt_nc_w, nm1_wready_nc_w, nm1_rvalid_nc_w;
+  logic        nm1_done_nc_w, nm1_err_nc_w, nvm_drain_nc_w;
+  logic [7:0]  nm1_rdata_nc_w;
+  logic [1:0]  nm1_err_cause_nc_w;
 
   KL_acmp_nvm_shadow #(
-      .N_SINKS_P (N_STREAM_IN_P)
+      .N_SINKS_P    (N_STREAM_IN_P),
+      .RS_TMO_CYC_P (NVM_RS_TMO_CYC_P)
   ) u_nvm_shadow (
       .clk_i            (clk_i),
       .rst_n            (rst_n),
       .tick_i           (tick_ms_w),
       .restore_go_i     (restore_go_i),
-      .restore_busy_o   (restore_busy_o),
-      .restore_done_o   (restore_done_o),
+      .restore_busy_o   (nvm_walk_busy_w),
+      .restore_done_o   (nvm_walk_done_w),
       .restore_fail_o   (restore_fail_o),
       .restore_blank_o  (restore_blank_o),
+      .restore_cause_o  (nvm_restore_cause_nc_w),
       .alarm_o          (nvm_alarm_o),
       .cap_wr_i         (lstn_recwr_w),
       .cap_sink_i       (lstn_recwr_sink_w),
@@ -2395,26 +2482,86 @@ module protocol_processor_top
       .nvm_busy_i       (nvm_busy_w),
       .nvm_done_i       (nvm_done_w),
       .nvm_err_i        (nvm_err_w),
+      .nvm_err_cause_i  (nvm_err_cause_w),
+      .nvm_abort_o      (nvm_abort_w),
       .dbg_dirty_o      (nvm_unflushed_o),
       .dbg_valid_o      (nvm_dbg_valid_nc_w),
       .dbg_touched_o    (nvm_dbg_touched_nc_w)
   );
 
+  //! the binding walk ENDS at the admission gate's release, not at the
+  //! shadow's terminal: the last preload's record write and discovery arm
+  //! land up to four cycles after that terminal, and the integrator's entity
+  //! enable (entity_enable_i AND restore_done_o, 07 §5.3 boot-before-enable)
+  //! must not precede them. Busy covers the gap, so the pair never reads
+  //! neither-busy-nor-done once the walk has started.
+  assign restore_done_o = nvm_walk_done_w && lsn_released_w;
+  assign restore_busy_o = nvm_walk_busy_w
+                          || (nvm_walk_done_w && !lsn_released_w);
+
+  KL_pp_nvm_mgr_arb u_nvm_arb (
+      .clk_i          (clk_i),
+      .rst_n          (rst_n),
+      .m0_req_i       (nvm_req_w),
+      .m0_we_i        (nvm_we_w),
+      .m0_rid_i       (nvm_record_id_w),
+      .m0_wvalid_i    (nvm_wvalid_w),
+      .m0_wdata_i     (nvm_wdata_w),
+      .m0_rready_i    (nvm_rready_w),
+      .m0_wready_o    (nvm_wready_w),
+      .m0_rvalid_o    (nvm_rvalid_w),
+      .m0_rdata_o     (nvm_rdata_w),
+      .m0_busy_o      (nvm_busy_w),
+      .m0_done_o      (nvm_done_w),
+      .m0_err_o       (nvm_err_w),
+      .m0_err_cause_o (nvm_err_cause_w),
+      .m0_abort_i     (nvm_abort_w),
+      .m1_req_i       (1'b0),
+      .m1_we_i        (1'b0),
+      .m1_rid_i       (8'd0),
+      .m1_wvalid_i    (1'b0),
+      .m1_wdata_i     (8'd0),
+      .m1_rready_i    (1'b0),
+      .m1_gnt_o       (nm1_gnt_nc_w),
+      .m1_wready_o    (nm1_wready_nc_w),
+      .m1_rvalid_o    (nm1_rvalid_nc_w),
+      .m1_rdata_o     (nm1_rdata_nc_w),
+      .m1_done_o      (nm1_done_nc_w),
+      .m1_err_o       (nm1_err_nc_w),
+      .m1_err_cause_o (nm1_err_cause_nc_w),
+      .m1_abort_i     (1'b0),
+      .p_req_o        (np_req_w),
+      .p_we_o         (np_we_w),
+      .p_rid_o        (np_rid_w),
+      .p_wvalid_o     (np_wvalid_w),
+      .p_wdata_o      (np_wdata_w),
+      .p_rready_o     (np_rready_w),
+      .p_wready_i     (np_wready_w),
+      .p_rvalid_i     (np_rvalid_w),
+      .p_rdata_i      (np_rdata_w),
+      .p_busy_i       (np_busy_w),
+      .p_done_i       (np_done_w),
+      .p_err_i        (np_err_w),
+      .p_err_cause_i  (np_err_cause_w),
+      .dbg_drain_o    (nvm_drain_nc_w)
+  );
+
   KL_pp_nvm_port u_nvm_port (
       .clk_i           (clk_i),
       .rst_n           (rst_n),
-      .nvm_req_i       (nvm_req_w),
-      .nvm_we_i        (nvm_we_w),
-      .nvm_record_id_i (nvm_record_id_w),
-      .nvm_wvalid_i    (nvm_wvalid_w),
-      .nvm_wready_o    (nvm_wready_w),
-      .nvm_wdata_i     (nvm_wdata_w),
-      .nvm_rvalid_o    (nvm_rvalid_w),
-      .nvm_rready_i    (nvm_rready_w),
-      .nvm_rdata_o     (nvm_rdata_w),
-      .nvm_busy_o      (nvm_busy_w),
-      .nvm_done_o      (nvm_done_w),
-      .nvm_err_o       (nvm_err_w),
+      .nvm_req_i       (np_req_w),
+      .nvm_we_i        (np_we_w),
+      .nvm_record_id_i (np_rid_w),
+      .nvm_wvalid_i    (np_wvalid_w),
+      .nvm_wready_o    (np_wready_w),
+      .nvm_wdata_i     (np_wdata_w),
+      .nvm_rvalid_o    (np_rvalid_w),
+      .nvm_rready_i    (np_rready_w),
+      .nvm_rdata_o     (np_rdata_w),
+      .nvm_busy_o      (np_busy_w),
+      .nvm_done_o      (np_done_w),
+      .nvm_err_o       (np_err_w),
+      .nvm_err_cause_o (np_err_cause_w),
       .dev_req_o       (nvm_dev_req_o),
       .dev_gnt_i       (nvm_dev_gnt_i),
       .dev_op_o        (nvm_dev_op_o),

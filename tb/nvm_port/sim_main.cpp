@@ -109,6 +109,11 @@ struct Harness {
   int err_after_bytes = -1;               // fail after N data bytes (-1: at once)
   int ops_since_arm = 0;
   bool fail_cur = false;
+  // ---- the header-phase device failures the port's cause separates (#93) --
+  bool gnt_err = false;                   // answer the next request with err, no grant
+  int  short_after = -1;                  // end the next READ with done after N bytes
+  bool short_cur = false;
+  int  short_after_n = 0;                 // ...the N the armed READ ends at
 
   // ---- unsolicited completion (issue #14) ----
   // A `done` that belongs to NO command. The model above only ever completes
@@ -188,6 +193,8 @@ struct Harness {
   // per-op capture
   int done_pulses = 0;
   int err_pulses = 0;
+  int last_cause = -1;   // nvm_err_cause_o at the last err pulse
+  int cause_leaks = 0;   // cycles the cause read non-zero without err (whole run)
   int dev_errs = 0;      // device-raised errors, not port refusals
   int dev_rd = 0;        // bytes the DEVICE delivered on the read bus
   bool busy_seen = false;                 // busy must be LOW at done/err (F02.8)
@@ -271,16 +278,14 @@ struct Harness {
         : 0;
   }
 
-  void sample_dev() {
-    bool drove_gnt = d_gnt;
-    bool drove_done = d_done;
-    bool drove_err = d_err;
-
-    // The port carries ONE device command at a time (F02.8 on the manager
-    // face, the region port's own req/gnt here), and it cannot know an op
-    // ended before the backend says so. `d_busy` is the model's record of a
-    // command it accepted and has not yet completed; nothing below reads the
-    // array, so both counters hold under every device model.
+  //! What the port owes, read off the bus before this cycle's backend moves.
+  //! The port carries ONE device command at a time (F02.8 on the manager
+  //! face, the region port's own req/gnt here), and it cannot know an op
+  //! ended before the backend says so. `d_busy` is the model's record of a
+  //! command it accepted and has not yet completed; nothing here reads the
+  //! array, so every counter holds under every device model. Its own function
+  //! because `sample_dev` is the backend and this is a monitor of the port.
+  void count_owed_traffic() {
     if (d_busy && dut->dev_req_o) ++req_while_owed;
     if (d_busy && (dut->nvm_done_o || dut->nvm_err_o)) ++pulse_while_owed;
     // A restore byte with no device byte behind it on the same cycle is one
@@ -288,6 +293,14 @@ struct Harness {
     // filled the buffer has completed. Bus-side like the other two.
     if (d_busy && dut->nvm_rvalid_o && dut->nvm_rready_i && !dut->dev_rvalid_i)
       ++fwd_while_owed;
+  }
+
+  void sample_dev() {
+    bool drove_gnt = d_gnt;
+    bool drove_done = d_done;
+    bool drove_err = d_err;
+
+    count_owed_traffic();
 
     // command accept
     if (drove_gnt && dut->dev_req_o) {
@@ -298,6 +311,8 @@ struct Harness {
       ops.push_back(d_cur);
       d_busy = true; d_bytes = 0; d_stall = 0; d_rhold = false;
       fail_cur = (err_at_op >= 0 && ops_since_arm == err_at_op);
+      short_cur = (short_after >= 0 && d_cur.op == OP_READ);
+      if (short_cur) { short_after_n = short_after; short_after = -1; }
       ++ops_since_arm;
       if (fail_cur && err_after_bytes < 0) {
         err_ctr = op_delay; d_st = 2;
@@ -334,6 +349,9 @@ struct Harness {
           ++d_bytes; ++dev_rd; d_rhold = false; d_stall = rstall;
           if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }
           else if (d_bytes == d_cur.len) { finish_data_phase(); }
+          else if (short_cur && d_bytes == short_after_n) {
+            short_cur = false; done_ctr = op_delay; d_st = 2;   // ended short
+          }
         } else {
           d_rhold = true;               // hold the byte until accepted
         }
@@ -345,8 +363,14 @@ struct Harness {
     if (drove_done) d_done = false;
     if (drove_err)  d_err  = false;
 
+    // a device that refuses a command outright: err in place of its grant
+    if (gnt_err && d_st == 0 && !d_busy && dut->dev_req_o && !drove_gnt
+        && !drove_err && !d_err) {
+      d_err = true; gnt_err = false; ++dev_errs;
+    }
+
     // grant scheduling
-    if (d_st == 0 && !d_busy && dut->dev_req_o && !drove_gnt) {
+    if (d_st == 0 && !d_busy && dut->dev_req_o && !drove_gnt && !d_err) {
       if (++d_reqwait >= gnt_delay) {
         d_gnt = true; d_reqwait = 0;
         // ...and, for a backend with no erase semantics, the completion with
@@ -420,6 +444,8 @@ struct Harness {
     // pre-edge sampling: what the registers (and both neighbors) see
     if (dut->nvm_done_o) ++done_pulses;
     if (dut->nvm_err_o)  ++err_pulses;
+    if (dut->nvm_err_o)  last_cause = dut->nvm_err_cause_o;
+    if (dut->nvm_err_cause_o && !dut->nvm_err_o) ++cause_leaks;
     if (dut->nvm_busy_o) busy_seen = true;
     if ((dut->nvm_done_o || dut->nvm_err_o) && dut->nvm_busy_o) busy_ok = false;
     if (m_mode == 1) {
@@ -437,8 +463,20 @@ struct Harness {
     ++cycles;
   }
 
+  //! Return the backend and the manager BFM to idle, as a device and a
+  //! manager are after a reset: nothing owed, nothing armed.
+  void quiesce_model() {
+    d_st = 0; d_reqwait = 0; d_gnt = d_done = d_err = d_busy = false;
+    d_bytes = 0; d_stall = 0; d_rhold = false; done_ctr = err_ctr = 0;
+    fail_cur = false; short_cur = false; gnt_err = false; short_after = -1;
+    unsol_after_ops = -1; gnt_done_on_erase = false; gnt_done_now = false;
+    m_mode = 0; m_stall = 0;
+    disarm_err();
+  }
+
   void clear_capture() {
     done_pulses = err_pulses = 0;
+    last_cause = -1;
     dev_errs = 0;
     dev_rd = 0;
     busy_seen = false; busy_ok = true;
@@ -532,6 +570,7 @@ class NvmPortSuite {
   void unsolicited_completion_during_a_restore();
   void completion_riding_the_grant_is_taken();
   void completion_riding_the_last_byte_is_taken();
+  void terminal_cause_names_the_failure();
   void the_port_is_idle_at_the_end_of_the_run();
 
   const milan::tb::Model<VKL_pp_nvm_port> model;
@@ -929,7 +968,7 @@ void NvmPortSuite::torn_commit_leaves_every_other_region_untouched() {
 // bytes are still moving. A real program failure is not reported then: the
 // device latches the bytes, starts the program cycle, and raises its error
 // only when that cycle ends -- after the LAST byte, with busy still high.
-// That is the port's S_WWAIT arm (KL_pp_nvm_port.sv:262-265), the widest
+// That is the port's S_WWAIT arm (KL_pp_nvm_port.sv:273-276), the widest
 // window in a commit, and no phase above enters it. Arming at exactly the
 // write length takes the device's fail branch in preference to its done
 // branch, so every byte is consumed and then err replaces done.
@@ -1038,7 +1077,7 @@ void NvmPortSuite::read_completion_window_errors_report_err() {
 // Issue #14: a completion the port does NOT own, on the commit path.
 //
 // `done_seen_r` is sticky so a `done` landing on the same edge as a pump's
-// last byte is not lost (KL_pp_nvm_port.sv:175-179). The set is gated on
+// last byte is not lost (KL_pp_nvm_port.sv:186-190). The set is gated on
 // owning the command it completes -- from the grant handshake to the wait
 // state that consumes it (`dev_cmd_owned_w`, :151-162). Ungated, a stray
 // `done` while the header is still being collected is consumed by `S_WEWAIT`
@@ -1291,6 +1330,95 @@ void NvmPortSuite::completion_riding_the_last_byte_is_taken() {
 // The real close. The check above used to carry this name but T15/T16/T17
 // were appended after it, so nothing pinned the port's state at the end of
 // the run any more -- a tear phase could leave it busy and no check would say.
+// ---- T23: the terminal cause (issue #93, S1) ----------------------------
+// A manager restoring a record cannot tell a device that failed from a record
+// that is not there when both end in one err with nothing forwarded. The
+// cause separates them: DEVICE for every error the device raised and for a
+// header read it ended short, UNFRAMED only for a header this port refused
+// after the device delivered it whole, or the manager streamed it. A done
+// carries 0, and so does every cycle without err, over the whole run.
+void NvmPortSuite::terminal_cause_names_the_failure() {
+  // Last, after the end-of-run idle check has graded every earlier phase,
+  // and from a reset of its own: a mutation that wedged the port in an
+  // earlier phase must not fail these checks as collateral, and a cause this
+  // phase grades must not be one an earlier phase left in the register.
+  h.quiesce_model();
+  dut->rst_n = 0;
+  for (int i = 0; i < kResetTicks; ++i) h.tick();
+  dut->rst_n = 1;
+  h.tick();
+  const std::vector<uint8_t> good = frame(4, pattern(20, 0x44));
+  h.disarm_err();
+  CHECK(h.commit(4, good) == 0, "T23 setup: a framed record committed to region 4");
+  auto device = [&](const char* tag, int rc) {
+    CHECK(rc == 1 && h.err_pulses == 1 && h.rbytes.empty() && h.last_cause == 1,
+          "T23 %s: one err, nothing forwarded, cause DEVICE (read %d)", tag,
+          h.last_cause);
+  };
+  auto unframed = [&](const char* tag, int rc) {
+    CHECK(rc == 1 && h.err_pulses == 1 && h.rbytes.empty() && h.last_cause == 2,
+          "T23 %s: one err, nothing forwarded, cause UNFRAMED (read %d)", tag,
+          h.last_cause);
+  };
+  // the device's own failures in the header phase
+  const size_t ops_before = h.ops.size();
+  h.gnt_err = true;
+  device("a the header read refused at the grant", h.restore(4));
+  CHECK(h.ops.size() == ops_before && !h.gnt_err,
+        "T23a the device refused the command: none was accepted");
+  h.arm_err(0, 3);
+  device("b a device error inside the header", h.restore(4));
+  h.disarm_err();
+  h.short_after = 5;
+  device("c the header read ended short at 5 bytes", h.restore(4));
+  h.arm_err(0, 8);
+  device("d a device error after the header, before its done", h.restore(4));
+  h.disarm_err();
+  // ...and after it, in the payload phase and on a commit
+  h.arm_err(1, 4);
+  {
+    const int rc = h.restore(4);
+    CHECK(rc == 1 && h.err_pulses == 1 && h.last_cause == 1,
+          "T23e a device error in the payload: cause DEVICE (read %d)", h.last_cause);
+  }
+  h.arm_err(0, -1);
+  {
+    const int rc = h.commit(4, good);
+    CHECK(rc == 1 && h.err_pulses == 1 && h.last_cause == 1,
+          "T23f a failed erase on a commit: cause DEVICE (read %d)", h.last_cause);
+  }
+  h.disarm_err();
+  CHECK(h.commit(4, good) == 0, "T23 setup: region 4 committed again");
+  // headers the device delivered whole and this port refused
+  uint8_t keep[8];
+  memcpy(keep, h.store[4], 8);
+  memset(h.store[4], 0xFF, 8);
+  unframed("g an erased header (8 x 0xFF)", h.restore(4));
+  memcpy(h.store[4], keep, 8);
+  h.store[4][1] ^= 0x01;
+  unframed("h a corrupted magic", h.restore(4));
+  memcpy(h.store[4], keep, 8);
+  h.store[4][4] = 0xFF;
+  unframed("i a payload_length over the bound", h.restore(4));
+  memcpy(h.store[4], keep, 8);
+  // the manager's own commit header
+  {
+    std::vector<uint8_t> bad = good;
+    bad[0] = 0x71;
+    const int rc = h.commit(4, bad);
+    CHECK(rc == 1 && h.err_pulses == 1 && h.last_cause == 2,
+          "T23j a commit whose header fails the gate: cause UNFRAMED (read %d)",
+          h.last_cause);
+  }
+  // done carries nothing
+  {
+    const int rc = h.restore(4);
+    CHECK(rc == 0 && h.rbytes == good && h.cause_leaks == 0,
+          "T23k done reads cause 0, and no cycle of the run read a cause "
+          "without err (%d)", h.cause_leaks);
+  }
+}
+
 void NvmPortSuite::the_port_is_idle_at_the_end_of_the_run() {
   h.tick();
   CHECK(!dut->nvm_busy_o && !dut->nvm_done_o && !dut->nvm_err_o,
@@ -1322,6 +1450,7 @@ int NvmPortSuite::run() {
   completion_riding_the_grant_is_taken();
   completion_riding_the_last_byte_is_taken();
   the_port_is_idle_at_the_end_of_the_run();
+  terminal_cause_names_the_failure();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
