@@ -37,7 +37,7 @@ module KL_aecp_desc_mem_guard (
     input  wire   [8:0] s_req_beats_i,   //! number of 64-bit beats
     output logic        s_rsp_valid_o,   //! memory response, passed through
     input  wire         s_rsp_ready_i,   //! store consumes the response
-    output logic [63:0] s_rsp_data_o,    //! response bytes, unchanged
+    output logic [63:0] s_rsp_data_o,    //! response data, unchanged
     output logic        s_rsp_last_o,    //! terminal response beat
     output logic        s_rsp_err_o,     //! terminal error response
 

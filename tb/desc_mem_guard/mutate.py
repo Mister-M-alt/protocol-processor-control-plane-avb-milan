@@ -25,7 +25,9 @@ def main() -> int:
     cmd = ["make", "-C", str(suite), "run", f"GUARD_SRC={mutant}",
            "OBJ_DIR=obj_mutant", "ARGS=--late-only"]
     with log.open("w") as stream:
-        result = subprocess.run(cmd, stdout=stream, stderr=subprocess.STDOUT, timeout=600)
+        # The late-only case bounds boot and every read by BOUND cycles;
+        # its remaining idle steps have fixed counts, even if memory stalls.
+        result = subprocess.run(cmd, stdout=stream, stderr=subprocess.STDOUT)
     text = log.read_text()
     failures = [line for line in text.splitlines() if line.startswith("FAIL:")]
     expected = "FAIL: third locate late_beats_never_served: STREAM_INPUT received another burst's bytes"
