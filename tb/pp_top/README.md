@@ -69,6 +69,8 @@ tally.
     more wire commands each receive `NO_SUCH_DESCRIPTOR` in bounded time.
     The standalone [guard suite](../desc_mem_guard/README.md) supplies the
     unguarded reproduction, hold-deleted mutant and independent reset checks.
+    The bench observes `u_dut.u_desc_mem_guard.debt_o` hierarchically; debt
+    routing through the product top and parent consumer is deferred to D3.
 - **N** **GET_NAME and SET_NAME end to end** (Milan v1.2 5.4.2.11/.12):
   every named slot in the fixture answers with cdl 84 and the exact 64 bytes
   carried by its descriptor. The sweep includes both ENTITY semantic indices,

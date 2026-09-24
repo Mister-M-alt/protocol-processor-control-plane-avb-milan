@@ -244,7 +244,6 @@ module protocol_processor_top
     input  wire         desc_mem_rsp_last_i,   //! final beat of the burst
     input  wire         desc_mem_rsp_err_i,    //! read failed — abort the burst
 
-    output logic        desc_mem_debt_o,      //! D3: burst owed; hard-reset-only guard
 
     //! ---- AECP response-buffer memory master (03 §7; READ + WRITE) -------
     //! A SECOND, independent main-memory master, dedicated to the AECP
@@ -3215,6 +3214,8 @@ module protocol_processor_top
   logic  [8:0] desc_req_beats_w;
   logic desc_rsp_valid_w, desc_rsp_ready_w, desc_rsp_last_w, desc_rsp_err_w;
   logic [63:0] desc_rsp_data_w;
+  // D3 consumes the guard port; top + parent routing is deferred to that lane.
+  logic desc_mem_debt_nc_w;
 
   KL_aecp_desc_mem_guard u_desc_mem_guard (
       .clk_i(clk_i), .rst_n(rst_n),
@@ -3227,7 +3228,7 @@ module protocol_processor_top
       .m_req_addr_o(desc_mem_req_addr_o), .m_req_beats_o(desc_mem_req_beats_o),
       .m_rsp_valid_i(desc_mem_rsp_valid_i), .m_rsp_ready_o(desc_mem_rsp_ready_o),
       .m_rsp_data_i(desc_mem_rsp_data_i), .m_rsp_last_i(desc_mem_rsp_last_i),
-      .m_rsp_err_i(desc_mem_rsp_err_i), .debt_o(desc_mem_debt_o)
+      .m_rsp_err_i(desc_mem_rsp_err_i), .debt_o(desc_mem_debt_nc_w)
   );
 
   KL_aecp_engine #(

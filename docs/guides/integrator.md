@@ -129,8 +129,10 @@ unchanged and the store discards beats it no longer awaits. The first response
 must arrive after the request-acceptance cycle. An error terminates the burst:
 the bridge must not emit further beats for that request.
 
-The guard's `debt_o` is published at the top as `desc_mem_debt_o`, the **D3
-interface** ([status dictionary](../architecture/02_interfaces.md#fig-02-statusdict)).
+The guard's own module port `debt_o` is the **D3 interface**
+([memory contract](../architecture/07_memory_maps.md#sec-desc-memory)). It is not
+exposed by `protocol_processor_top`; the D3 lane will add that routing together
+with the parent consumer changes, keeping the current top-level interface intact.
 Connect the guard's synchronous active-low reset to the **hard reset only**.
 A store-only reset, future rollback reset, or entity disable must not clear it.
 A hard reset must also flush the memory path, including any CDC queues, so no

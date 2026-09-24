@@ -10,8 +10,11 @@
 #include "Vdesc_mem_guard_wrap.h"
 #include "../common/verilator_harness.hpp"
 
-static int checks = 0, fails = 0;
-#define CHECK(c, ...) do { ++checks; if (!(c)) { ++fails; \
+struct TestResults {
+    int checks = 0;
+    int fails = 0;
+};
+#define CHECK(c, ...) do { ++results.checks; if (!(c)) { ++results.fails; \
     std::printf("FAIL: " __VA_ARGS__); std::puts(""); } } while (0)
 
 constexpr uint32_t BASE = 0x20000000;
@@ -23,12 +26,14 @@ constexpr uint64_t OUTPUT0 = 0x00060000deadbeefull;
 constexpr uint64_t OUTPUT1 = 0xcafef00d01234567ull;
 
 struct Answer {
-    bool valid = false, err = false;
+    bool valid = false;
+    bool err = false;
     uint64_t data = 0;
     unsigned cycles = 0;
 };
 
 struct Harness {
+    TestResults& results;
     milan::tb::Model<Vdesc_mem_guard_wrap> model;
     Vdesc_mem_guard_wrap& d = *model.get();
     // Header, two index entries and two unnamed 16-byte marker descriptors.
@@ -42,18 +47,26 @@ struct Harness {
     }};
     struct Burst {
         uint32_t addr;
-        unsigned beats, index;
+        unsigned beats;
+        unsigned index;
         uint64_t due;
-        bool stuck, error;
+        bool stuck;
+        bool error;
     };
     std::deque<Burst> fifo;
-    uint64_t cycle = 0, accepted = 0, terminal = 0;
-    uint64_t delayed_accept = 0, delayed_first = 0, delayed_end = 0;
+    uint64_t cycle = 0;
+    uint64_t accepted = 0;
+    uint64_t terminal = 0;
+    uint64_t delayed_accept = 0;
+    uint64_t delayed_first = 0;
+    uint64_t delayed_end = 0;
     unsigned delay_next = 24;
-    bool stuck_next = false, error_next = false;
-    unsigned held_cycles = 0, overlap_accepts = 0;
+    bool stuck_next = false;
+    bool error_next = false;
+    unsigned held_cycles = 0;
+    unsigned overlap_accepts = 0;
 
-    Harness() {
+    explicit Harness(TestResults& results) : results(results) {
         uint32_t sum = 0;
         for (unsigned i = 0; i < 4; ++i) {
             sum += uint32_t(image[i] >> 32);
@@ -147,15 +160,15 @@ struct Harness {
         const auto first = read(0);
         const auto second = read(8);
         std::printf("%s bytes: %016llx %016llx; want %016llx %016llx\n", tag,
-                    (unsigned long long)first.data, (unsigned long long)second.data,
-                    (unsigned long long)INPUT0, (unsigned long long)INPUT1);
+                    static_cast<unsigned long long>(first.data), static_cast<unsigned long long>(second.data),
+                    static_cast<unsigned long long>(INPUT0), static_cast<unsigned long long>(INPUT1));
         CHECK(!first.err && !second.err && first.data == INPUT0 && second.data == INPUT1,
               "%s late_beats_never_served: STREAM_INPUT received another burst's bytes", tag);
     }
 };
 
-static void late_case() {
-    Harness h;
+static void late_case(TestResults& results) {
+    Harness h(results);
     h.boot();
     h.delay_next = 6000;
     const auto late = h.locate(6);
@@ -175,13 +188,13 @@ static void late_case() {
     h.check_input("after drain");
     std::printf("late case completed: accept=%llu first=%llu end=%llu third-presented=%llu "
                 "held=%u overlap-accepts=%u timeout-answer=%u third-answer=%u\n",
-                (unsigned long long)h.delayed_accept, (unsigned long long)h.delayed_first,
-                (unsigned long long)h.delayed_end, (unsigned long long)presented,
+                static_cast<unsigned long long>(h.delayed_accept), static_cast<unsigned long long>(h.delayed_first),
+                static_cast<unsigned long long>(h.delayed_end), static_cast<unsigned long long>(presented),
                 h.held_cycles, h.overlap_accepts, late.cycles, third.cycles);
 }
 
-static void stuck_case() {
-    Harness h;
+static void stuck_case(TestResults& results) {
+    Harness h(results);
     h.boot();
     h.stuck_next = true;
     const auto first = h.locate(6);
@@ -201,8 +214,8 @@ static void stuck_case() {
           "stuck memory did not hold the store requests");
     std::printf("stuck case completed: 5 later locates answered errors; max=%u bound=%u "
                 "held=%u accepted=%llu terminal=%llu debt=%u\n", longest, BOUND,
-                h.held_cycles, (unsigned long long)h.accepted,
-                (unsigned long long)h.terminal, unsigned(h.d.debt_o));
+                h.held_cycles, static_cast<unsigned long long>(h.accepted),
+                static_cast<unsigned long long>(h.terminal), unsigned(h.d.debt_o));
 
     // This proves the independent reset seam only, not a D3 rollback writer.
     h.d.store_rst_n = 0;
@@ -229,8 +242,8 @@ static void stuck_case() {
     h.check_input("after hard reset");
 }
 
-static void terminal_error_case() {
-    Harness h;
+static void terminal_error_case(TestResults& results) {
+    Harness h(results);
     h.boot();
     h.error_next = true; // err on beat zero of two, without last.
     CHECK(h.locate(6).err, "terminal memory error did not reach the store");
@@ -239,7 +252,7 @@ static void terminal_error_case() {
     h.check_input("after terminal error");
 }
 
-static void handshake_case() {
+static void handshake_case(TestResults& results) {
     milan::tb::Model<Vdesc_mem_guard_wrap> model;
     auto& d = *model.get();
     auto eval = [&] { d.clk_i = 0; d.eval(); };
@@ -314,12 +327,14 @@ static void handshake_case() {
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
-    late_case();
+    TestResults results;
+    late_case(results);
     if (argc == 1 || std::strcmp(argv[1], "--late-only") != 0) {
-        stuck_case();
-        terminal_error_case();
-        handshake_case();
+        stuck_case(results);
+        terminal_error_case(results);
+        handshake_case(results);
     }
-    std::printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
-    return fails ? 1 : 0;
+    std::printf("%d checks: %d PASS, %d FAIL\n",
+                results.checks, results.checks - results.fails, results.fails);
+    return results.fails ? 1 : 0;
 }

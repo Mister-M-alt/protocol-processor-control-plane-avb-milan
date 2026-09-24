@@ -6,7 +6,8 @@ from pathlib import Path
 import subprocess
 
 
-def main():
+def main() -> int:
+    """Read CLI options and return 0 only when the completed byte check kills the mutant."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
