@@ -423,9 +423,9 @@ module KL_aecp_engine
     //! ---- Milan-info gather face (06 §6.2/§6.10; IEEE §7.4.16/§7.4.40/
     //! §7.4.41, Milan §5.4.2.10/§5.4.2.23/§5.4.2.24) ----
     //! ONE face for the three read-only Milan info commands, selector-coded
-    //! like the counters face: the INTEGRATOR owns every answer word because
-    //! the truth lives in its binding view, SRP registrars and gPTP plane -
-    //! this parser only lays the words out. `gsi_kind_o` names the command
+    //! like the counters face. The top supplies processor-owned input
+    //! failure/probing fields and routes other words to the integrator;
+    //! this parser lays the words out. `gsi_kind_o` names the command
     //! family (0 GET_STREAM_INFO, 1 GET_AVB_INFO, 2 GET_AS_PATH), the
     //! selector the word (docs/architecture/06 §6.2/§6.10 tables), and
     //! `gsi_ord_o` the array ordinal for GET_AS_PATH's path_sequence.
@@ -1824,7 +1824,12 @@ module KL_aecp_engine
   //! bytes from becoming a flag.
   //! ...the Milan-info face: selector low nibble forwarded, the kind from
   //! the discriminators, the ordinal from the shared record counter below
-  assign gsi_req_o        = gx_req_w && gsi_any_w;
+  //! A locate miss must not expose live records at an index absent from
+  //! the descriptor image. Keep the full zero body without consulting a
+  //! gather provider (including the top's internal STREAM_INPUT words).
+  logic gsi_missing_w;
+  assign gsi_missing_w = gstri_r && (resp_status_w == ST_NO_SUCH_DESC_C);
+  assign gsi_req_o        = gx_req_w && gsi_any_w && !gsi_missing_w;
   assign gsi_kind_o       = (gstri_r || gsfmt_r || ssfmt_r || ssinfo_r) ? 2'd0
                                                  : (gavb_r ? 2'd1 : 2'd2);
   assign gsi_desc_type_o  = cfg_ix_r;
@@ -1970,7 +1975,7 @@ module KL_aecp_engine
                        && !gxf_fail_r;
   assign rgy_hold_w  = gx_req_w && (regun_r || lockc_r)
                        && rgy_wait_i && !gxf_fail_r;
-  assign gsi_hold_w  = gx_req_w &&  gsi_any_w && gsi_wait_i && !gxf_fail_r;
+  assign gsi_hold_w  = gsi_req_o && gsi_wait_i && !gxf_fail_r;
 
   //! REGISTERED gather answer - the stage-0 pipeline cut. The integrator's
   //! wait/data cone (ctr_wait_i / amap_wait_i arrive combinationally from
@@ -2007,7 +2012,7 @@ module KL_aecp_engine
                                                    && 1'(strm_started_i
                                                          >> desc_ix_r)}
                                               : 64'd0)
-                   : gsi_any_w            ? gsi_data_i
+                   : gsi_any_w            ? (gsi_missing_w ? 64'd0 : gsi_data_i)
                                           : {32'd0, ctr_data_i};
     end
   end

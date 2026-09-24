@@ -537,6 +537,13 @@ struct Col {
   //! Milan Table 5.22's started/stopped trigger, counted separately from the
   //! generic record-change notify so a no-op can be told from a transition.
   int strt_chgs = 0;
+  //! cycle stamps: the started/stopped pulse must land one cycle after the
+  //! record write that commits it, the same edge the top's pbsta/acmpsta
+  //! compare registers on, so the two OR into one notification
+  long strt_cyc = -1;
+  long wr_cyc = -1;
+  int strt_sink = -1;
+  int wr_sink = -1;
   std::vector<Pdu> frames;
   std::vector<ATop> tops;
   bool settle = false;
@@ -573,6 +580,7 @@ struct Harness {
   uint8_t inj_exp_sink = 0;
   int next_rx_slot = 0;
   uint32_t last_arm_deadline[N_SINKS] = {};
+  long cyc = 0;
 
   explicit Harness(VKL_pp_acmp_listener* dut) : d(dut) {}
 
@@ -634,13 +642,20 @@ struct Harness {
     if (d->act_disc_disarm_o) col.disc_disarm = true;
     if (d->act_nvm_o) { col.nvm = true; col.nvm_set = d->act_nvm_set_o; }
     if (d->act_notify_o) col.notifies++;
-    if (d->act_strt_chg_o) col.strt_chgs++;
+    if (d->act_strt_chg_o) {
+      col.strt_chgs++;
+      col.strt_cyc = cyc;
+      col.strt_sink = int(d->act_sink_o);
+    }
     if (d->dbg_recwr_o) {
       col.wrotes++;
+      col.wr_cyc = cyc;
+      col.wr_sink = int(d->dbg_recwr_sink_o);
       shadow[d->dbg_recwr_sink_o] = unpack(&d->dbg_recwr_rec_o[0]);
     }
 
     d->clk_i = 1; d->eval();
+    ++cyc;
   }
 
   bool wait_idle(int cap = 4000) {
@@ -1503,10 +1518,12 @@ void ListenerWalk::check_expiry_survives_a_colliding_request() {
 
 void ListenerWalk::check_rebind_raises_no_duplicate_trigger() {
   // RV8: a BIND_NEW onto an ALREADY BOUND sink changes started/stopped
-  // without ever unbinding (its cell is A1 A11 A9 A2 A3 A4 A5 - no A10),
-  // and it already pushes from A4's discovery arm. It must NOT also raise
-  // the started/stopped trigger, or one event puts two GET_STREAM_INFO
-  // frames on the wire - the duplicate this trigger was narrowed to avoid.
+  // without ever unbinding (its cell is A1 A11 A9 A2 A3 A4 A5 - no A10).
+  // The discovery arm/disarm no longer notifies upstream, and from
+  // PRB_W_RESP the committed pbsta/acmpsta stay ACTIVE/0, so this trigger
+  // is the ONLY Table 5.22 push for that started/stopped change: exactly
+  // one pulse, in the X_WB cycle (the upstream pbsta compare, when it also
+  // moves, lands in the same cycle and ORs with it).
   {
     const int rvb = 2;
     Stim ba = S_bind(TK_A, TKUID_A, CTL1, false); ba.uid = uint16_t(rvb);
@@ -1520,9 +1537,22 @@ void ListenerWalk::check_rebind_raises_no_duplicate_trigger() {
     h.wait_idle();
     CHECK(started_bit(rvb) == 0,
           "RV8: the re-bind landed STOPPED (got %u)", started_bit(rvb));
-    CHECK(h.col.strt_chgs == 0,
-          "RV8b: ...and raised NO started/stopped trigger beside the "
-          "bind's own notification (got %d)", h.col.strt_chgs);
+    CHECK(h.col.strt_chgs == 1,
+          "RV8b: ...and raised the started/stopped trigger exactly once "
+          "(got %d)", h.col.strt_chgs);
+    CHECK(h.col.strt_cyc == h.col.wr_cyc + 1 && h.col.strt_sink == rvb
+          && h.col.wr_sink == rvb,
+          "RV8d: ...one cycle after its record write, for that sink "
+          "(pulse @%ld sink %d, write @%ld sink %d)", h.col.strt_cyc,
+          h.col.strt_sink, h.col.wr_cyc, h.col.wr_sink);
+
+    h.col.clear();
+    Stim bc = S_bind(TK_A, TKUID_A, CTL1, true); bc.uid = uint16_t(rvb);
+    step(rvb, bc, false, "RV8");             // different talker, SW kept
+    h.wait_idle();
+    CHECK(started_bit(rvb) == 0 && h.col.strt_chgs == 0,
+          "RV8c: a re-bind to another talker that keeps STREAMING_WAIT "
+          "raises no started/stopped trigger (got %d)", h.col.strt_chgs);
   }
 }
 

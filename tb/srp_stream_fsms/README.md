@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1068 checks.
+exit 0 = PASS, 1087 checks.
 
 The C++ model transcribes **Table 10-3 (applicant) and Table 10-4
 (registrar) independently as data matrices** — never DUT logic — including
@@ -55,6 +55,19 @@ Covered:
   failure info latched/gated, declaration follows Ready↔AskingFailed);
   Δ13 unregister withdraws the declaration; teardown A8 fires NO events,
   drops VLAN, disarms the matcher.
+- **L — FailureInformation change** (10 §6.4, issues #43/#49): a changed
+  code, bridge ID or both under a registered Talker Failed (IN, and LV after
+  a LeaveAll) raises `evt_tk_fail_chg_o` once and nothing else: no
+  EVT_TK_REGISTERED, no declaration request, no New on the next tick (the LV
+  case's LeaveAll re-declaration carries no New either). An unchanged refresh
+  and a non-registering In with other values strobe and latch nothing; the
+  Advertise↔Failed swap strobes REGISTERED, never the change; a fresh Failed
+  registration never strobes the change. The single hit-sink comparator is
+  proven against two sinks on different streams (each refresh compared with
+  its own sink's latch) and three sinks on one stream (a later-settled,
+  lower-index sink is not a candidate; a change strobes all registered sinks).
+  The bridge output is the raw latch: under ADVERTISE the code reads 0 and
+  the bridge keeps its value (the consumer gates it on `tk_reg_state`).
 - **Received LeaveAll per Attribute Type** (10 §6.5, 802.1Q-2014
   §10.7.5.20 b)2)): `leaveall_rx_i` is one lane per MSRP type, as the
   decoder strobes it. `la_rx()` drives every lane (a conformant peer's
@@ -113,3 +126,13 @@ arm planted, run, restored under a SHA-256 check):
 | Listener registrar ages on every lane | 6 of 1068 FAIL (H) |
 | Listener registrar ignores the registered type (Advertise lane always) | 2 of 1068 FAIL (H, the Failed rows) |
 | Listener applicant takes every lane | 3 of 1068 FAIL (H) |
+
+FailureInformation change (section L), mutation-proven 2026-09-24 in scratch
+copies of the tree (one exact edit each, `make` with the pinned simulator):
+
+| Mutation | Result |
+|---|---|
+| The change is folded back into the registration indication (round-1 coupling) | 8 of 1087 FAIL (L2 ×2, L3 ×2, L4, L6 ×2, L9) |
+| The change strobe is never raised | 6 of 1087 FAIL (L2, L3 ×2, L6, L8, L9) |
+| The comparator always reads sink 0's latch | 2 of 1087 FAIL (L8, L9) |
+| Every hit sink is a candidate (no registered-Failed restriction) | 2 of 1087 FAIL (L1, L9) |

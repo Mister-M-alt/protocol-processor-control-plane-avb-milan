@@ -1028,12 +1028,11 @@ def GSI(n: int) -> dict[str, int]:
 #
 # WHO DECIDES WHAT (the §6.2 split): EXISTENCE is the descriptor store's
 # (DESC_ADDR against the same image READ_DESCRIPTOR serves - a miss answers
-# NO_SUCH_DESCRIPTOR with the full, zero-flagged body); every VALUE and every
-# VALIDITY FLAG is the integrator's, through the gsi face - the binding view,
-# SRP registrars, probing state and formats live there, and Milan's validity
-# matrix (Tables 5.9-5.12) is exactly "which of the integrator's registers
-# hold truth right now", which no parser can second-guess. An unwired face
-# answers all-zero flags: every field honestly absent.
+# NO_SUCH_DESCRIPTOR with the full, zero-valued body and no gather request).
+# The top supplies STREAM_INPUT failure code (selector 4 byte), bridge ID
+# (selector 5) and probing/ACMP status (selector 7) from its state owners.
+# Other words and all validity flags use the integrator's gsi face. Keep
+# this word table shared by solicited, unsolicited and GDI responses.
 #
 # Register contract (engine at dispatch): r14 = the locate key
 # {index, type, cfg 0}; r13 = {32'0, descriptor_type, descriptor_index} so

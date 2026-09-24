@@ -4,7 +4,7 @@
 Proves the ROM-driven Milan listener-SM executor
 (`hdl/acmp/KL_pp_acmp_listener.sv`) against the full F05.3 transition matrix of
 [05 §6.3](../../docs/architecture/05_acmp_engine.md): `make` = generate the
-ROM + build + run, exit 0 = PASS, 2458 checks.
+ROM + build + run, exit 0 = PASS, 2544 checks.
 
 **The MTXW walk** ([09 §3](../../docs/architecture/09_verification.md)):
 every one of the 112 cells (14 events x 8 states) is driven against an
@@ -62,3 +62,11 @@ Mutation-proven 2026-08-11 (backup/sed/run/restore):
 - **M4** RTL: same-bind classification disabled (every BIND treated as
   new/different source) -> 389 FAIL (the whole BIND_SAME row re-probes and
   churns SRP instead of the v1.2 A6 short-circuit).
+
+Re-bind started/stopped trigger (RV8, issues #43/#49): a BIND_NEW onto a bound
+sink with STREAMING_WAIT flipped (A2 without A10) raises `act_strt_chg_o`
+exactly once, one cycle after its record write for that sink (the edge the
+top's pbsta/acmpsta compare registers on, so the two OR into one
+notification); a re-bind that keeps STREAMING_WAIT raises none. Mutation-proven
+2026-09-24 in a scratch copy: excluding walks that run A2 from the trigger
+again → 2 of 2544 FAIL (RV8b, RV8d).
