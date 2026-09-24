@@ -8,7 +8,8 @@ import subprocess
 import tempfile
 
 
-def main():
+def main() -> int:
+    """Run controls and mutants; return 0 only if every expected outcome holds."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
