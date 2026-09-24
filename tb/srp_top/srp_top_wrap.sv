@@ -219,6 +219,7 @@ module srp_top_wrap (
       .evt_tk_registered_o (evt_tk_registered_o),
       .evt_tk_unregistered_o (evt_tk_unregistered_o),
       .evt_tk_fail_chg_o   (evt_tk_fail_chg_o),
+      .evt_tk_latency_chg_o (),
       .lstn_reg_change_o   (lstn_reg_change_o),
       .evt_domain_change_o (evt_domain_change_o),
       .class_a_prio_o      (class_a_prio_o),

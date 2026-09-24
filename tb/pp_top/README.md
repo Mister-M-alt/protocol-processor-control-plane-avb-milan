@@ -56,6 +56,16 @@ tally.
   are stalled if requested, and a request counter must remain zero.
   Existing section G still checks the unchanged STREAM_OUTPUT gather.
 
+  Latency-only Talker JoinIn refreshes (issue #113) are checked with sink 0
+  registering Advertise and sink 1 Failed. The harness folds the processor's
+  published per-sink accumulated latency into selector 3 with zero ingress
+  delay. Every changed refresh must emit exactly one byte-exact unsolicited
+  response carrying the new value; a solicited read must agree. An unchanged
+  refresh emits none, and neither the other sink nor any other descriptor may
+  be notified. Distinct values, bit 31, zero and all ones exercise the full
+  comparison width and sink selection. The processor's external ports are
+  unchanged; the test wrapper exposes an existing output for the gather model.
+
   Focused reproduction: `make -C tb/pp_top gsi-internal`. The normal suite
   includes GI in its default build. The older registry/configuration tests
   retain a bound sink waiting passively for an absent peer, so independent
@@ -70,6 +80,7 @@ tally.
 
   | Mutation | Required failing check |
   |---|---|
+  | Latency trigger disconnected from `stri_events` | `GI LATENCY-CHANGE: exactly one unsolicited response` |
   | Failure code tied to zero | `GI FAILED-0 solicited: failure code` |
   | Failure bridge tied to zero | `GI FAILED-0 solicited: full failure bridge` |
   | pbsta tied to zero | `GI PASSIVE solicited: pbsta` |

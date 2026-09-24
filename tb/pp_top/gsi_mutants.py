@@ -17,6 +17,9 @@ def mutations() -> list[tuple[str, str, str, str, int, str]]:
     srp = "hdl/srp/KL_srp_listener_fsm.sv"
     lstn = "hdl/acmp/KL_pp_acmp_listener.sv"
     return [
+        ("latency-trigger-removed", top,
+         " || srp_evt_tk_latency_chg_w[k]", "", 1,
+         "GI LATENCY-CHANGE: exactly one unsolicited response"),
         ("failure-code-zero", top,
          "{gsi_data_i[63:16], gsi_fail_code_w, 8'd0}",
          "{gsi_data_i[63:16], 8'd0, 8'd0}", 1,

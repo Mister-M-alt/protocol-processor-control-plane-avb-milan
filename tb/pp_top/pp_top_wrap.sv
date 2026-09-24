@@ -127,6 +127,7 @@ module pp_top_wrap (
     input  wire         gsi_wait_i,
     input  wire         gsi_avb_chg_i,
     input  wire         gsi_asp_chg_i,
+    output logic [255:0] srp_acc_latency_o, //! real per-sink latency for the harness integrator
 
     // descriptor-image memory master (07 §3.3) — the C++ harness plays a
     // latency-injecting DRAM behind it
@@ -528,6 +529,7 @@ module pp_top_wrap (
       .svc_rsp_valid_o       (svc_rsp_valid_o),
       .svc_rsp_status_o      (svc_rsp_status_o),
       .svc_rsp_data_o        (svc_rsp_data_o),
+      .srp_acc_latency_o     (srp_acc_latency_o),
       .maap_req_valid_o      (maap_req_valid_o),
       .maap_req_ready_i      (maap_req_ready_i),
       .maap_req_release_o    (maap_req_release_o),

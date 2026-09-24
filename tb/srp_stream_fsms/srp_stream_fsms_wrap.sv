@@ -249,6 +249,7 @@ module srp_stream_fsms_wrap #(
       .evt_tk_registered_o    (l_evt_tk_registered_o),
       .evt_tk_unregistered_o  (l_evt_tk_unregistered_o),
       .evt_tk_fail_chg_o      (l_evt_tk_fail_chg_o),
+      .evt_tk_latency_chg_o   (),
       .tk_reg_state_o         (l_tk_reg_state_o),
       .lstn_decl_state_o      (l_lstn_decl_state_o),
       .acc_latency_o          (l_acc_latency_o),

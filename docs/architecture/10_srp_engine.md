@@ -376,6 +376,8 @@ stateDiagram-v2
     READY --> FAILED_SEEN: Talker Failed replaces the Advertise in place / latch fail code + system id, withdraw Ready (optionally declare AskingFailed), EVT_TK_REGISTERED
     FAILED_SEEN --> READY: Talker Advertise re-registered in place (clears the failure) / clear fail latch, declare Ready, EVT_TK_REGISTERED
     FAILED_SEEN --> FAILED_SEEN: Talker Failed refresh with a changed FailureInformation / re-latch fail code + system id, failure-change strobe only (declaration unchanged)
+    READY --> READY: Talker Advertise refresh with a changed latency / re-latch latency, latency-change strobe (declaration unchanged)
+    FAILED_SEEN --> FAILED_SEEN: Talker Failed refresh with a changed latency / re-latch latency, latency-change strobe (declaration unchanged)
     READY --> MONITORING: matching attribute unregistered / withdraw Ready, EVT_TK_UNREGISTERED
     FAILED_SEEN --> MONITORING: matching attribute unregistered / EVT_TK_UNREGISTERED
     READY --> IDLE: ACMP teardown A8 / withdraw Ready, VLAN user--
@@ -386,7 +388,14 @@ stateDiagram-v2
 The match is **exact** on {stream_id, DA, VLAN}; a talker attribute with divergent
 parameters is simply "no match" — which is precisely what sends the ACMP listener SM
 back to probing (Milan §5.3.8.9, [F05.5](05_acmp_engine.md#fig-05-settled)).
-`acc_latency[sink]` latches the registered attribute's accumulated_latency.
+`acc_latency[sink]` latches the registered attribute's accumulated_latency on
+each registering event. A write that changes this sink's latch also raises
+`evt_tk_latency_chg_o` on the same edge (Milan §5.4.5.2, Table 5.22). This
+notification-only strobe feeds the existing per-sink GET_STREAM_INFO pending
+path, alongside any registration or FailureInformation change on that edge.
+An unchanged refresh raises no latency strobe; another sink is unaffected
+unless that sink also matches the received attribute. The strobe never drives
+the applicant, event router or ACMP listener.
 
 The **in-place Advertise ↔ Failed swap edges are the normal path**, not an edge
 case: a talker may transition directly from Advertise to Failed (802.1Q §35.1.2.1,
@@ -402,7 +411,8 @@ GET_STREAM_INFO notification ([06 §7](06_aecp_engine.md#7-registry-notification
 not a declaration change: the Listener attribute (stream_id) and its AskingFailed
 parameter are unchanged, so the applicant is not re-driven with New,
 EVT_TK_REGISTERED stays silent and neither the event router nor the ACMP
-listener sees it. An unchanged FailureInformation refresh emits nothing. The
+listener sees it. Unchanged FailureInformation raises no failure-change strobe;
+an independently changed latency still raises its own strobe. The
 change is detected with one comparator on the hit sink: every sink that can
 take the strobe is registered Failed on the same {stream_id, DA, VLAN} and has
 latched the same last FailureInformation. The failure code output is zero after

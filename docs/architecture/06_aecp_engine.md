@@ -300,7 +300,7 @@ MSRP_FAILURE_VALID=0} ⇔ **streaming**.
 | BOUND, STREAMING_WAIT | ACMP sink record, published binding/started view folded by the integrator | — | listener-SM commits; a started/stopped change under a live binding, including a re-bind that flips STREAMING_WAIT | yes (input) |
 | pbsta, acmpsta | ACMP sink record, internal selector 7 | `pbsta[sink]`, `acmpsta[sink]` | changed record write, including preload | yes (input) |
 | stream_id / DA / VLAN + *_VALID | sink record (settled) | — | A15 / A8 | yes |
-| msrp_accumulated_latency | srp | `acc_latency[sink]` + `P-INTERNAL-INGRESS-DELAY-NS` | talker-attr change | yes (input) |
+| msrp_accumulated_latency | srp | `acc_latency[sink]` + `P-INTERNAL-INGRESS-DELAY-NS` | committed per-sink latch change on a registering Talker attribute, including a latency-only refresh; unchanged refresh is silent | yes (input), §5.4.5.2 / Table 5.22 |
 | REGISTERING (flags_ex), REGISTERING_FAILED | srp | `tk_reg_state[sink]` | TK_ATTR events | yes |
 | msrp_failure_code / bridge | SRP listener registrar, internal selector 4 byte / selector 5 | `msrp_fail_*` | TK_ATTR(Failed), a changed FailureInformation under a registered Failed (notification strobe only, [10 §6.4](10_srp_engine.md)), replacement or withdrawal | yes |
 
@@ -735,9 +735,14 @@ unbind, settle, teardown, double probe timeout, retry); the committed
 started/stopped change under a live binding (`act_strt_chg_o`: the §5.5.3.5.6
 re-bind short-circuit, and a re-bind to another talker from a bound state,
 which from PRB_W_RESP leaves pbsta/acmpsta at ACTIVE/0 so this is its only
-push); the SRP registration and unregistration events; and SRP's
-FailureInformation change strobe, which feeds only this notification (no
+push); the SRP registration and unregistration events; SRP's committed
+per-sink accumulated-latency change (`evt_tk_latency_chg_o`, including a
+latency-only Talker refresh, with no pulse for an unchanged value); and SRP's
+FailureInformation change strobe. Both change strobes feed only this notification (no
 Listener re-declaration, no event-router or ACMP event, [10 §6.4](10_srp_engine.md)).
+The SRP change strobes register on the attribute latch write alongside any
+registration event; the per-sink OR therefore raises one event even if several
+fields change together. No GET_COUNTERS rate limit applies to GET_STREAM_INFO.
 The two listener terms register off the same record write, so a walk that
 moves both pushes one frame. A START/STOP_STREAMING's own change is excluded:
 the command sends its opcode-specific unsolicited response instead.

@@ -152,3 +152,24 @@ sink only, which took the SRP listener from +808 to +455 LUTs at 8x8 against
 the first revision; removing that revision's selector-0 sample-and-hold removed
 81 top-level registers at 8x8 (78 at 1x1). LUT moves of a few tens in modules
 this change does not touch are synthesis variance.
+
+## Accumulated-latency notification trigger - issue #113
+
+Measured 2026-09-24 with the complete-processor recipe above, default
+8-input / 8-output shape, `xc7a100tfgg484-2`, 10 ns clock, synthesis 2026.1.
+The same recipe was run in separate empty build directories against base
+`a8f8ce81` and the latency-trigger change, with all top-level ports present.
+
+| Resource | Base | Change | Delta |
+|---|---:|---:|---:|
+| Slice LUTs | 28,649 | 28,643 | -6 |
+| Registers | 31,095 | 31,123 | +28 |
+| RAMB36 / RAMB18 / DSP | 23 / 2 / 4 | 23 / 2 / 4 | 0 |
+
+The changed SRP listener instance is 1,795 -> 1,868 LUTs (+73) and
+2,328 -> 2,336 registers (+8): one comparison and one pulse bit per sink,
+reusing the existing latency latches. Whole-processor optimization also
+remaps unchanged modules, so the total LUT decrease is not a claim that the
+trigger saves logic. These are post-synthesis area estimates. Both builds
+have negative OOC slack at 10 ns (-10.089 ns base, -8.192 ns change); this
+measurement makes no routed timing or hardware claim.
