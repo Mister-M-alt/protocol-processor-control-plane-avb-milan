@@ -377,17 +377,20 @@ module protocol_processor_top
     //! ---- Milan-info gather face (06 §6.2/§6.10; IEEE §7.4.16/§7.4.40/
     //! §7.4.41, Milan §5.4.2.10/§5.4.2.23/§5.4.2.24) ----
     //! The processor parses GET_STREAM_INFO / GET_AVB_INFO / GET_AS_PATH and
-    //! lays out their responses; the INTEGRATOR owns every word, because the
-    //! truth lives in its binding view, SRP registrars, format registers and
-    //! gPTP plane. One word at a time: `gsi_kind_o` names the command family
+    //! lays out their responses. STREAM_INPUT failure code/bridge and
+    //! probing/ACMP status come from the internal SRP and listener records
+    //! (Milan §5.3.8.6/.8). Selectors 5 and 7 are never requested externally
+    //! for an input; selector 4 still requests the DA, with its failure-code
+    //! byte replaced internally. Other words belong to the integrator.
+    //! One word at a time: `gsi_kind_o` names the command family
     //! (0 STRI / 1 AVB / 2 ASP), `gsi_sel_o` the word, `gsi_ord_o` the
     //! GET_AS_PATH array ordinal. Word tables: docs/architecture/06
     //! §6.2/§6.10.
     //!
     //! LEAVING IT UNWIRED IS SAFE AND HONEST, same polarity as the other
-    //! faces: an undriven `gsi_wait_i` is 0, every word answers 0, and the
-    //! responses carry cleared validity flags, zero fields and a zero path
-    //! count - absent, never invented.
+    //! faces: an undriven `gsi_wait_i` is 0, external words answer 0,
+    //! including validity flags and path count. Internal status still
+    //! reports the processor's records.
     output logic        gsi_req_o,            //! a word is being asked for
     output logic [1:0]  gsi_kind_o,           //! 0 STRI / 1 AVB / 2 ASP
     output logic [15:0] gsi_desc_type_o,      //! addressed descriptor_type
@@ -1944,7 +1947,7 @@ module protocol_processor_top
   logic [N_STREAM_IN_P-1:0][1:0]   srp_lstn_decl_state_w;
   logic [N_STREAM_IN_P-1:0][31:0]  srp_acc_latency_w;
   logic [N_STREAM_IN_P-1:0][7:0]   srp_snk_fail_code_w;
-  logic [N_STREAM_IN_P-1:0][63:0]  srp_snk_fail_bridge_nc_w;
+  logic [N_STREAM_IN_P-1:0][63:0]  srp_snk_fail_bridge_w;
   logic [N_STREAM_OUT_P-1:0][31:0] srp_granted_slope_w;
   logic [N_STREAM_OUT_P-1:0]       srp_sr_admitted_w;
   logic [31:0] srp_sum_slope_w;
@@ -2292,7 +2295,7 @@ module protocol_processor_top
       .lstn_decl_state_o   (srp_lstn_decl_state_w),
       .acc_latency_o       (srp_acc_latency_w),
       .snk_fail_code_o     (srp_snk_fail_code_w),
-      .snk_fail_bridge_o   (srp_snk_fail_bridge_nc_w),
+      .snk_fail_bridge_o   (srp_snk_fail_bridge_w),
       .granted_slope_bps_o (srp_granted_slope_w),
       .sr_admitted_o       (srp_sr_admitted_w),
       .sum_slope_bps_o     (srp_sum_slope_w),
@@ -3040,6 +3043,81 @@ module protocol_processor_top
   logic [N_STREAM_IN_P-1:0]  ntfy_stri_in_w;
   logic [N_STREAM_OUT_P-1:0] ntfy_stri_out_w;
 
+  //! Milan §5.3.8.6 / Table 5.22: an eight-bit committed status view,
+  //! written ONLY by the listener record RAM's write bus (including reset
+  //! sweep and boot preload). This small flop view also compares every
+  //! commit for notification; the full listener record remains in RAM.
+  pp_acmp_pkg::acmp_rec_t lstn_commit_rec_w;
+  logic [N_STREAM_IN_P-1:0][7:0] lstn_gsi_status_r;
+  logic [7:0] lstn_gsi_status_w;
+  logic [N_STREAM_IN_P-1:0] lstn_gsi_changed_r;
+  assign lstn_commit_rec_w = pp_acmp_pkg::acmp_rec_t'(lstn_recwr_rec_w);
+  assign lstn_gsi_status_w = {lstn_commit_rec_w.pbsta,
+                              lstn_commit_rec_w.acmpsta};
+  always_ff @(posedge clk_i) begin : listener_gsi_status
+    if (!rst_n) begin
+      lstn_gsi_status_r  <= '0;
+      lstn_gsi_changed_r <= '0;
+    end else begin
+      lstn_gsi_changed_r <= '0;
+      if (lstn_recwr_w) begin
+        lstn_gsi_status_r[lstn_recwr_sink_w] <= lstn_gsi_status_w;
+        lstn_gsi_changed_r[lstn_recwr_sink_w] <=
+            (lstn_gsi_status_r[lstn_recwr_sink_w] != lstn_gsi_status_w);
+      end
+    end
+  end
+
+  //! The engine keeps its word table and response layout. Intercept only
+  //! kind 0 STREAM_INPUT words here, where the state owners meet. Snapshot
+  //! the internal fields once at the flags beat, so failure code/bridge and
+  //! probing status remain one sample across the later gather beats. The
+  //! full descriptor index is checked BEFORE narrowing to the sink width.
+  logic        aecp_gsi_req_w, aecp_gsi_wait_w;
+  logic [63:0] aecp_gsi_data_w;
+  logic        gsi_input_w, gsi_internal_w, gsi_sampled_r;
+  logic [7:0]  gsi_fail_code_r, gsi_status_r;
+  logic [63:0] gsi_fail_bridge_r;
+  assign gsi_input_w = (gsi_kind_o == 2'd0)
+                        && (gsi_desc_type_o == 16'h0005);
+  assign gsi_internal_w = gsi_input_w
+                           && ((gsi_sel_o == 4'd5) || (gsi_sel_o == 4'd7));
+  assign gsi_req_o = aecp_gsi_req_w && !gsi_internal_w;
+  assign aecp_gsi_wait_w = !gsi_internal_w && gsi_wait_i;
+
+  always_ff @(posedge clk_i) begin : gsi_sample
+    if (!rst_n) begin
+      gsi_sampled_r    <= 1'b0;
+      gsi_fail_code_r  <= 8'd0;
+      gsi_fail_bridge_r <= 64'd0;
+      gsi_status_r     <= 8'd0;
+    end else if (!aecp_gsi_req_w || !gsi_input_w || (gsi_sel_o != 4'd0)) begin
+      gsi_sampled_r <= 1'b0;
+    end else if (!gsi_wait_i && !gsi_sampled_r) begin
+      gsi_sampled_r <= 1'b1;
+      gsi_fail_code_r   <= 8'd0;
+      gsi_fail_bridge_r <= 64'd0;
+      gsi_status_r      <= 8'd0;
+      if (32'(gsi_desc_index_o) < N_STREAM_IN_P) begin
+        gsi_fail_code_r <= srp_snk_fail_code_w[SINK_IDX_W_C'(gsi_desc_index_o)];
+        gsi_fail_bridge_r <= srp_snk_fail_bridge_w[SINK_IDX_W_C'(gsi_desc_index_o)];
+        gsi_status_r <= lstn_gsi_status_r[SINK_IDX_W_C'(gsi_desc_index_o)];
+      end
+    end
+  end
+
+  always_comb begin : gsi_answer
+    aecp_gsi_data_w = gsi_data_i;
+    if (gsi_input_w) begin
+      case (gsi_sel_o)
+        4'd4: aecp_gsi_data_w = {gsi_data_i[63:16], gsi_fail_code_r, 8'd0};
+        4'd5: aecp_gsi_data_w = gsi_fail_bridge_r;
+        4'd7: aecp_gsi_data_w = {32'd0, gsi_status_r, 24'd0};
+        default: begin end
+      endcase
+    end
+  end
+
   //! Publish the notification block's authoritative lock level so local
   //! non-ATDECC mapping paths can enforce Milan 5.4.2.27 and 5.4.2.28.
   assign aecp_lock_held_o = ntfy_lock_held_w;
@@ -3050,9 +3128,8 @@ module protocol_processor_top
     for (int unsigned k = 0; k < N_STREAM_IN_P; k++) begin
       ntfy_stri_in_w[k] =
           (32'(lstn_act_sink_w) == k
-           && (lstn_disc_arm_w || lstn_disc_disarm_w
-               || lstn_act_settle_w || lstn_act_teardown_w
-               || (lstn_act_strt_chg_w && !lstn_act_strt_cmd_chg_w)))
+           && lstn_act_strt_chg_w && !lstn_act_strt_cmd_chg_w)
+          || lstn_gsi_changed_r[k]
           || srp_evt_tk_reg_w[k] || srp_evt_tk_unreg_w[k];
     end
     for (int unsigned k = 0; k < N_STREAM_OUT_P; k++) begin
@@ -3349,15 +3426,15 @@ module protocol_processor_top
       .amap_edit_value_o  (amap_edit_value_o),
       .amap_edit_data_i   (amap_edit_data_i),
       .amap_edit_wait_i   (amap_edit_wait_i),
-      .gsi_req_o          (gsi_req_o),
+      .gsi_req_o          (aecp_gsi_req_w),
       .gsi_kind_o         (gsi_kind_o),
       .gsi_desc_type_o    (gsi_desc_type_o),
       .gsi_desc_index_o   (gsi_desc_index_o),
       .gsi_sel_o          (gsi_sel_o),
       .gsi_ord_o          (gsi_ord_o),
       .gsi_prop_fmt_o     (gsi_prop_fmt_o),
-      .gsi_data_i         (gsi_data_i),
-      .gsi_wait_i         (gsi_wait_i),
+      .gsi_data_i         (aecp_gsi_data_w),
+      .gsi_wait_i         (aecp_gsi_wait_w),
       .strm_bound_i       (bound_hold_r),
       .strm_started_i     (aecp_strm_started_o),
       .strm_streaming_i   (aecp_streaming_w),
@@ -3436,9 +3513,9 @@ module protocol_processor_top
       .rgy_data_o            (aecp_rgy_data_w),
       .rgy_wait_o            (aecp_rgy_wait_w),
       //! Table 5.22 GET_STREAM_INFO triggers this fabric OBSERVES: for a
-      //! sink, bound-state changes (arm/disarm), the settled parameters
-      //! (settle/teardown - also the probing-status edges) and the
-      //! registered Talker attribute events; for a source, its declaration
+      //! sink, committed probing/ACMP status changes (also covering bound
+      //! and settled transitions) and registered Talker attribute events,
+      //! including changed FailureInformation; for a source, its declaration
       //! opening/closing and the registered Listener attribute changes.
       //! What the fabric cannot see, it cannot notify about - the honest
       //! remainder is recorded in 06 §7.

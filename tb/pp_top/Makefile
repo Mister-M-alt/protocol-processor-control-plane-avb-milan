@@ -13,6 +13,7 @@ TOP        = pp_top_wrap
 # verification only: Milan 4.2.7.2.1 fixes the product value at 2. README
 # section DV says why this pattern
 SRP_VID_FIXTURE = 5A3C
+.DEFAULT_GOAL := run
 
 VFLAGS = --cc --exe --build -j 0 \
          --top-module $(TOP) \
@@ -54,6 +55,12 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
        pp_top_wrap.sv
 CPP  = sim_main.cpp
 
+gsi-build: ltn_rom.hex ucode.hex
+	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vpp_top_sim
+
+gsi-internal: gsi-build
+	./obj_dir/Vpp_top_sim --gsi-internal-only
+
 run: fixture-guards ltn_rom.hex ucode.hex
 	@rm -f obj_dir/build_tally.txt
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vpp_top_sim
@@ -83,4 +90,4 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 clean:
 	rm -rf obj_dir obj_vid ltn_rom.hex ucode.hex
 
-.PHONY: run fixture-guards fixture-guards-test clean
+.PHONY: run gsi-build gsi-internal fixture-guards fixture-guards-test clean

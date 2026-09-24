@@ -1,6 +1,16 @@
 <!-- SPDX-License-Identifier: CERN-OHL-W-2.0 -->
 # syn/ooc — the µCPU area experiment
 
+`protocol_processor_ooc.tcl` applies the same post-synthesis instrument to
+the complete processor, with its default stream shape and all top-level
+ports present. Run it from an empty build directory; an optional first Tcl
+argument selects a different source tree for a baseline measurement. It
+generates both ROM images in that build directory and reports hierarchical
+and total utilization. It uses the reference part and clock from
+`ucpu_ooc.tcl`; these are area measurements, not routed timing or hardware
+qualification. Keep baseline and candidate reports beside the change's
+validation evidence and compare the same recipe on both trees.
+
 The gate experiment of
 [`docs/10_RESOURCE_AND_EFFORT.md` §6](../../docs/10_RESOURCE_AND_EFFORT.md):
 out-of-context Vivado synthesis of the µCPU skeleton at the reference

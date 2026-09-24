@@ -304,6 +304,12 @@ as an implicit `rLv` of the old type followed by the new registration — no
 unregistration event separates the two (§35.2.6, where the NOTE also gives Failed
 precedence when both are somehow registered).
 
+While Failed remains registered, a changed failure code or bridge ID also
+raises the registration event, allowing the GET_STREAM_INFO notification
+path in [06 F06.13](06_aecp_engine.md#fig-06-lineage) to report it. An unchanged
+FailureInformation refresh emits no new event. The failure outputs are zero
+after replacement by Advertise, withdrawal, teardown or reset.
+
 ### 6.5 LeaveAll and the Δ13 registrar deviation
 
 <a id="fig-10-leaveall"></a>**F10.9 — LeaveAll cycle (either side may start it)**

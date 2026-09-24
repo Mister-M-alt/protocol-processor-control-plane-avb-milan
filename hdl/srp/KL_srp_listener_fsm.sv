@@ -38,6 +38,9 @@
 //                registering event (a refresh re-latches);
 //                msrp_fail_code/bridge[sink] latch the Talker Failed
 //                FailureInformation while FAILED is the registered type.
+//                A changed FailureInformation also strobes registration,
+//                so Milan Table 5.22 can notify the new code/bridge even
+//                when the registered attribute remains Talker Failed.
 //                Messages ride tx!/txLA! walks exactly as in
 //                KL_srp_talker_fsm (optional [s]/[sJ]/[sL] never sent;
 //                periodic! carries the re-join).
@@ -407,7 +410,7 @@ module KL_srp_listener_fsm
   logic                 la_rx_app_w;
   logic                 exp_hit_w;
   logic [31:0]          exp_idx_w;
-  logic [N_SINKS_P-1:0] ind_reg_w;     // fresh registration or type swap
+  logic [N_SINKS_P-1:0] ind_reg_w;     // registration, type or failure change
   logic [N_SINKS_P-1:0] ind_unreg_w;   // Δ13 rLv or leavetimer expiry
 
   assign la_rx_app_w = leaveall_rx_i[SRP_LA_LISTENER_C];
@@ -425,7 +428,10 @@ module KL_srp_listener_fsm
   always_comb begin : reg_ind
     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
       ind_reg_w[s] = reg_rx_hit_w[s] && rx_registering_w
-                  && ((reg_r[s] == R_MT_C) || (rtype_r[s] != rx_is_failed_w));
+                  && ((reg_r[s] == R_MT_C) || (rtype_r[s] != rx_is_failed_w)
+                      || (rx_is_failed_w
+                          && ((fcode_r[s] != evt_failure_code_i)
+                              || (fsysid_r[s] != evt_failure_system_id_i))));
       ind_unreg_w[s] = (reg_rx_hit_w[s]
                         && (evt_mrp_event_i == 3'(SRP_EV_LV))
                         && (reg_r[s] == R_IN_C))
