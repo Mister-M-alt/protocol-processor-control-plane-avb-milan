@@ -519,10 +519,9 @@ module protocol_processor_top
     //! srp_sr_admitted_o (parent #551 decision; architecture 10 section 6.3).
     output logic [N_STREAM_OUT_P-1:0]    srp_active_o,
     //! Real Σ-slope verdict for the current declaration, with no optimistic
-    //! term. Low from acceptance until the new slope completes a full round:
-    //! at most 3*N_STREAM_OUT_P clocks without another declaration/withdrawal
-    //! (4 clocks at one source). While any declaration is pending, no other
-    //! bit rises: capacity frees only by withdrawal or an evaluated shrink.
+    //! term. Low from acceptance until the new slope completes a full round.
+    //! While any declaration is pending, no other bit rises: capacity frees
+    //! only by withdrawal or an evaluated shrink.
     //! See architecture 10 section 6.3.
     output logic [N_STREAM_OUT_P-1:0]    srp_sr_admitted_o,
     output logic [N_STREAM_OUT_P*32-1:0] srp_granted_slope_bps_o, //! per-source granted idleSlope (802.1Q §34.6.1.1); zero until the real grant, follows srp_sr_admitted_o
@@ -817,6 +816,8 @@ module protocol_processor_top
   assign srp_tk_decl_state_o     = srp_tk_decl_state_w;
   assign srp_lstn_reg_state_o    = srp_lstn_reg_state_w;
   assign srp_active_o            = srp_active_w;
+  // Admission latency from acceptance is at most 3*N_STREAM_OUT_P clocks
+  // (4 clocks at one source) without another declaration/withdrawal.
   assign srp_sr_admitted_o       = srp_sr_admitted_w;
   assign srp_granted_slope_bps_o = srp_granted_slope_w;
   assign srp_src_fail_code_o     = srp_src_fail_code_nc_w;
@@ -2527,6 +2528,8 @@ module protocol_processor_top
       .m0_err_o       (nvm_err_w),
       .m0_err_cause_o (nvm_err_cause_w),
       .m0_abort_i     (nvm_abort_w),
+      // The saved-state writer is not present yet; keep manager 1's request,
+      // payload and handshakes idle so only the binding manager uses the port.
       .m1_req_i       (1'b0),
       .m1_we_i        (1'b0),
       .m1_rid_i       (8'd0),
@@ -2540,6 +2543,7 @@ module protocol_processor_top
       .m1_done_o      (nm1_done_nc_w),
       .m1_err_o       (nm1_err_nc_w),
       .m1_err_cause_o (nm1_err_cause_nc_w),
+      // The absent manager 1 owns no read and therefore has nothing to abort.
       .m1_abort_i     (1'b0),
       .p_req_o        (np_req_w),
       .p_we_o         (np_we_w),

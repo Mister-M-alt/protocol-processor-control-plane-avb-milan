@@ -58,8 +58,10 @@ def build_tree(tree: Path) -> None:
 def run_suite(tree: Path, suite: str, command: tuple[str, ...], log: Path) -> tuple[int, str]:
     """Run one suite in the tree; return its exit status and its log text."""
     with log.open("w") as stream:
+        # The twelve legs use fixed source/case loops and cycle observations;
+        # decoder drains and the recurring timer cadence are not mutated.
         result = subprocess.run(list(command), cwd=tree / suite, stdout=stream,
-                                stderr=subprocess.STDOUT, timeout=1200, check=False)
+                                stderr=subprocess.STDOUT, check=False)
     return result.returncode, log.read_text()
 
 

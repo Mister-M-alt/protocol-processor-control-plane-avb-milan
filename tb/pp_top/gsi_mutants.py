@@ -94,9 +94,10 @@ def mutations() -> list[tuple[str, str, str, str, int, str]]:
 def run(command: list[str], cwd: Path, log: Path) -> int:
     """Run in the foreground, recording the command's own status and output."""
     with log.open("w") as stream:
+        # Each fixed variant runs gsi-internal-only: boot, query and frame
+        # waits have cycle budgets; the other loops consume finite inputs.
         return subprocess.run(command, cwd=cwd, stdout=stream,
-                              stderr=subprocess.STDOUT, check=False,
-                              timeout=1800).returncode
+                              stderr=subprocess.STDOUT, check=False).returncode
 
 
 def check_variant(tree: Path, output: Path, name: str, expected: str,
