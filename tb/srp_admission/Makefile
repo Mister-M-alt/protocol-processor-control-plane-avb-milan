@@ -2,6 +2,9 @@
 VERILATOR ?= verilator
 N ?= 8
 
+# The suite bank runs `make`: every shape, the eight-source tally last.
+all: shapes
+
 run:
 	$(VERILATOR) --cc --exe --build -j 8 --top-module srp_admission_wrap \
 	  -Wall -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
@@ -21,4 +24,4 @@ shapes:
 clean:
 	rm -rf obj_1 obj_2 obj_3 obj_5 obj_8
 
-.PHONY: run shapes clean
+.PHONY: all run shapes clean

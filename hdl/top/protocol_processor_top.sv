@@ -518,13 +518,15 @@ module protocol_processor_top
     //! Real Σ-slope verdict for the current declaration, with no optimistic
     //! term. Low from acceptance until the new slope completes a full round:
     //! at most 3*N_STREAM_OUT_P clocks without another declaration/withdrawal
-    //! (4 clocks at one source). See architecture 10 section 6.3.
+    //! (4 clocks at one source). While any declaration is pending, no other
+    //! bit rises: capacity frees only by withdrawal or an evaluated shrink.
+    //! See architecture 10 section 6.3.
     output logic [N_STREAM_OUT_P-1:0]    srp_sr_admitted_o,
-    output logic [N_STREAM_OUT_P*32-1:0] srp_granted_slope_bps_o, //! per-source granted idleSlope, 0 when not admitted (802.1Q §34.6.1.1); same optimistic lag
+    output logic [N_STREAM_OUT_P*32-1:0] srp_granted_slope_bps_o, //! per-source granted idleSlope (802.1Q §34.6.1.1); zero until the real grant, follows srp_sr_admitted_o
     output logic [N_STREAM_OUT_P*8-1:0]  srp_src_fail_code_o,     //! per-source SELF-declared Failed code; valid only with tk_decl_state == FAILED
     output logic [N_STREAM_OUT_P*64-1:0] srp_src_fail_bridge_o,   //! per-source SELF-declared FailureInformation; same validity
-    output logic [31:0]                  srp_sum_slope_bps_o,     //! round-latched Σ; may retain a retired source until the next completed round
-    output logic                         srp_over_limit_o,        //! round-latched: at least one evaluated source refused against the ceiling
+    output logic [31:0]                  srp_sum_slope_bps_o,     //! Σ latched by published rounds; holds while any declaration is pending, may retain a retired source until then
+    output logic                         srp_over_limit_o,        //! latched with the Σ: at least one evaluated source refused against the ceiling
     output logic [N_STREAM_IN_P*2-1:0]   srp_tk_reg_state_o,      //! per-sink registered Talker attr {0 NONE, 1 ADVERTISE, 2 FAILED}
     output logic [N_STREAM_IN_P*2-1:0]   srp_lstn_decl_state_o,   //! per-sink OUR Listener declaration
     output logic [N_STREAM_IN_P*32-1:0]  srp_acc_latency_o,       //! per-sink registered accumulated_latency, ns, RAW — the consumer adds its own ingress delay

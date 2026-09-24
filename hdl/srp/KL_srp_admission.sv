@@ -30,6 +30,8 @@
 //                <= the ceiling; a refused source never displaces a
 //                lower-indexed grant, and the walk re-runs every round so a
 //                refused source is admitted the moment capacity frees.
+//                Capacity frees only by a withdrawal or by an evaluated
+//                smaller slope, never by a declaration still pending.
 //                Published per F02.10: granted_slope_bps[src] (the granted
 //                idleSlope while sr_admitted[src] = 1, else 0),
 //                sr_admitted[src], the Σ of granted slopes and an
@@ -48,8 +50,12 @@
 //                A declaration invalidates its source at every pipeline
 //                stage and clears its published grant. The partial admission
 //                round restarts, so no saved decision from the old TSpec can
-//                be published. Only a valid slope in a completed new round
-//                can grant; pending evaluation is not a ceiling refusal.
+//                be published. A round publishes only if every requesting
+//                source had a valid slope for its current declaration; a
+//                round that met a pending source is discarded, so every
+//                other grant and granted slope, the Σ and over_limit keep
+//                their last published values. A pending source is neither
+//                granted nor refused, and never counted as absent.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -73,7 +79,7 @@ module KL_srp_admission #(
     output logic [N_SOURCES_P-1:0][31:0]  granted_slope_bps_o, //! F02.10: granted idleSlope while admitted, else 0
     output logic [31:0]                   sum_slope_bps_o,     //! Σ of granted slopes, bps (round-latched)
     output logic                          over_limit_o,        //! some requested source refused by the ceiling (round-latched)
-    output logic                          round_done_o         //! one-cycle strobe: an admission round latched its verdicts
+    output logic                          round_done_o         //! one-cycle strobe: an admission round latched its verdicts (a discarded round does not strobe)
 );
 
   // ---- Milan v1.2 §4.3.3.2 constants (reference-matched) -----------------
@@ -156,11 +162,13 @@ module KL_srp_admission #(
 
   // ------------------------------------------------------------------------
   // Admission walk: greedy in index order against the Σ ceiling; verdicts
-  // (grant vector, granted slopes, Σ, over_limit) latch at round end
+  // (grant vector, granted slopes, Σ, over_limit) latch at the end of a
+  // round that met no pending source
   // ------------------------------------------------------------------------
   logic [SRC_W_C-1:0]           aidx_r;
   logic [31:0]                  acc_r;        // running granted Σ <= ceiling
   logic                         over_acc_r;
+  logic                         pend_acc_r;   // this round met a pending source
   logic [N_SOURCES_P-1:0]       wgrant_r;
   logic [N_SOURCES_P-1:0][31:0] wgslope_r;
   logic [N_SOURCES_P-1:0]       grant_r;
@@ -171,12 +179,17 @@ module KL_srp_admission #(
   logic [32:0] cand_w;
   logic        fit_w;
   logic        refuse_w;
+  logic        pend_w;
   logic        round_w;
 
+  // The validity terms are defensive: a round that visits a pending source
+  // is discarded (pend_w), so a published round never evaluates a stale slope.
   assign cand_w   = {1'b0, acc_r} + {1'b0, slope_q_r[aidx_r]};
   assign fit_w    = !invalid_w[aidx_r] && slope_valid_r[aidx_r]
                    && (cand_w <= {1'b0, limit_w});
   assign refuse_w = !invalid_w[aidx_r] && slope_valid_r[aidx_r] && !fit_w;
+  // requesting, but its current-declaration slope is not valid yet
+  assign pend_w   = !invalid_w[aidx_r] && !slope_valid_r[aidx_r];
   assign round_w  = (32'(aidx_r) == N_SOURCES_P - 1);
 
   logic [N_SOURCES_P-1:0]       wgrant_now_w;
@@ -194,6 +207,7 @@ module KL_srp_admission #(
       aidx_r       <= '0;
       acc_r        <= 32'd0;
       over_acc_r   <= 1'b0;
+      pend_acc_r   <= 1'b0;
       wgrant_r     <= '0;
       wgslope_r    <= '0;
       grant_r      <= '0;
@@ -210,18 +224,24 @@ module KL_srp_admission #(
         aidx_r     <= '0;
         acc_r      <= 32'd0;
         over_acc_r <= 1'b0;
+        pend_acc_r <= 1'b0;
         wgrant_r   <= '0;
         wgslope_r  <= '0;
       end else if (round_w) begin
-        grant_r      <= wgrant_now_w;
-        gslope_r     <= wgslope_now_w;
-        // a FIT candidate sum is <= the ceiling < 2^32: the slice is exact
-        sum_r        <= fit_w ? cand_w[31:0] : acc_r;
-        over_r       <= over_acc_r | refuse_w;
-        round_done_o <= 1'b1;
+        // Publish only a round that saw every requesting source's current
+        // slope; after a pending visit keep every published verdict.
+        if (!(pend_acc_r || pend_w)) begin
+          grant_r      <= wgrant_now_w;
+          gslope_r     <= wgslope_now_w;
+          // a FIT candidate sum is <= the ceiling < 2^32: the slice is exact
+          sum_r        <= fit_w ? cand_w[31:0] : acc_r;
+          over_r       <= over_acc_r | refuse_w;
+          round_done_o <= 1'b1;
+        end
         aidx_r       <= '0;
         acc_r        <= 32'd0;
         over_acc_r   <= 1'b0;
+        pend_acc_r   <= 1'b0;
         wgrant_r     <= '0;
         wgslope_r    <= '0;
       end else begin
@@ -229,6 +249,7 @@ module KL_srp_admission #(
         wgslope_r  <= wgslope_now_w;
         acc_r      <= fit_w ? cand_w[31:0] : acc_r;
         over_acc_r <= over_acc_r | refuse_w;
+        pend_acc_r <= pend_acc_r | pend_w;
         aidx_r     <= aidx_r + SRC_W_C'(1);
       end
     end
