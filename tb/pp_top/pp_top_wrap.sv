@@ -130,6 +130,7 @@ module pp_top_wrap (
 
     // descriptor-image memory master (07 §3.3) — the C++ harness plays a
     // latency-injecting DRAM behind it
+    output logic        desc_mem_debt_o,
     output logic        desc_mem_req_valid_o,
     input  wire         desc_mem_req_ready_i,
     output logic [31:0] desc_mem_req_addr_o,
@@ -458,6 +459,7 @@ module pp_top_wrap (
       .gsi_wait_i            (gsi_wait_i),
       .gsi_avb_chg_i         (gsi_avb_chg_i),
       .gsi_asp_chg_i         (gsi_asp_chg_i),
+      .desc_mem_debt_o       (desc_mem_debt_o),
       .desc_mem_req_valid_o  (desc_mem_req_valid_o),
       .desc_mem_req_ready_i  (desc_mem_req_ready_i),
       .desc_mem_req_addr_o   (desc_mem_req_addr_o),

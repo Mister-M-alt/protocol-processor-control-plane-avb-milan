@@ -52,6 +52,7 @@ flowchart LR
 | `mgmt` | E | in | own (sync or 4-phase async) | model store, NVM, debug, ctrl/status | optional at runtime, needed for image load unless ROM |
 | `nvm` | F | both | core | NVM manager | record-level, device-agnostic |
 | `identify_active` | D | out | core | device indicator | level, 1 = identifying |
+| `desc_mem_debt_o` | 1 | descriptor-memory guard (`debt_o`) | `clk_i` level; set on request acceptance, cleared on consumed `last` or `err`, or hard reset only | D3 writer interface (writer deferred); see [07 §3.3.1](07_memory_maps.md#sec-desc-memory) |
 | `identify_button` | D | in | core (2FF sync) | identify handler | optional (P-EN-IDENTIFY-NOTIFICATION) |
 
 ## 2. Clocking, reset, CDC
