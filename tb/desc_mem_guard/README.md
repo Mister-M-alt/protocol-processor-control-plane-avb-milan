@@ -22,6 +22,7 @@ The suite proves:
 - Request and response payloads pass unchanged. Only accepted requests create
   debt; nonterminal beats, invalid terminal flags and backpressured terminal
   beats cannot clear it. The next request stays held through the terminal cycle.
+  Acceptance wins over a coincident stray terminal beat when no debt was owed.
 
 The wrapper exposes the store/guard seam and provides a direct guard stimulus
 mode for handshake checks. There is no D3 writer here: owner-release policy,

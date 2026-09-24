@@ -244,7 +244,6 @@ module protocol_processor_top
     input  wire         desc_mem_rsp_last_i,   //! final beat of the burst
     input  wire         desc_mem_rsp_err_i,    //! read failed — abort the burst
 
-
     //! ---- AECP response-buffer memory master (03 §7; READ + WRITE) -------
     //! A SECOND, independent main-memory master, dedicated to the AECP
     //! response buffer at RESP_BASE_P. It is separate from the descriptor face

@@ -323,6 +323,14 @@ static void handshake_case(TestResults& results) {
     CHECK(d.unit_rsp_valid_o && d.unit_rsp_err_o && !d.unit_rsp_last_o
           && d.unit_rsp_data_o == INPUT1 && d.mem_rsp_ready_o,
           "response path filtered a beat while no debt was owed");
+
+    // A stray terminal beat is outside the memory contract. Even if one
+    // coincides with acceptance, it must not erase the new request's debt.
+    d.unit_req_valid_i = 1;
+    d.mem_rsp_last_i = 1;
+    d.mem_rsp_err_i = 0;
+    tick();
+    CHECK(d.debt_o, "request acceptance must win over a coincident stray terminal beat");
 }
 
 int main(int argc, char** argv) {

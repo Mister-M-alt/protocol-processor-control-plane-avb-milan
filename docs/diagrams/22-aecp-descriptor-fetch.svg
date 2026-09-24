@@ -53,7 +53,6 @@
   <text x="868" y="217" font-size="11.5" font-weight="bold" fill="#16181d">image header + index map, at DESC_BASE_P</text>
   <text x="868" y="235" font-size="10.5" fill="#4a5058">magic + layout version + checksum, probed once after reset;</text>
   <text x="868" y="252" font-size="10.5" fill="#4a5058">the index map is walked ONCE into a small on-chip table</text>
-  <line x1="828" y1="231" x2="845" y2="231" stroke="#6b46a5" stroke-width="1.6" marker-end="url(#ahm)"/>
 
   <!-- STEP 4 -->
   <rect x="382" y="286" width="440" height="70" rx="6" fill="#f3ecfb" stroke="#6b46a5" stroke-width="1.3"/>
@@ -61,19 +60,27 @@
   <text x="400" y="325" font-size="10.5" fill="#4a5058">a single burst into the DESC_LINE_BYTES_P line buffer, then every</text>
   <text x="400" y="342" font-size="10.5" fill="#4a5058">later read is served from that buffer — one memory latency per command</text>
 
-  <rect x="850" y="286" width="426" height="70" rx="6" fill="#f6eeff" stroke="#6b46a5" stroke-width="1.3"/>
-  <text x="868" y="307" font-size="11.5" font-weight="bold" fill="#16181d">descriptor image — via KL_aecp_desc_mem_guard</text>
-  <text x="868" y="325" font-size="10.5" fill="#4a5058">desc_mem_*: read only, in order; last or err ends the burst</text>
-  <text x="868" y="342" font-size="10.5" fill="#4a5058">a beat carries its lowest byte address in bits [63:56] (wire order)</text>
   <line x1="828" y1="321" x2="845" y2="321" stroke="#6b46a5" stroke-width="1.6" marker-end="url(#ahm)"/>
   <line x1="602" y1="266" x2="602" y2="281" stroke="#6b46a5" stroke-width="1.6" marker-end="url(#ahm)"/>
 
-  <!-- Guard lives at the processor top, outside KL_aecp_engine. -->
-  <rect x="850" y="376" width="426" height="70" rx="6" fill="#eef7ef" stroke="#2f7d46" stroke-width="1.3"/>
-  <text x="868" y="397" font-size="11.5" font-weight="bold" fill="#16181d">Guard at processor top — hard reset only</text>
-  <text x="868" y="415" font-size="10.5" fill="#4a5058">owed holds the next request; every response beat passes through</text>
-  <text x="868" y="432" font-size="10.5" fill="#4a5058">guard debt_o: D3 interface; top + parent routing deferred to D3</text>
-  <line x1="1063" y1="356" x2="1063" y2="371" stroke="#2f7d46" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <!-- The guard is between step 4 and memory, outside KL_aecp_engine. -->
+  <rect x="850" y="286" width="220" height="160" rx="6" fill="#eef7ef" stroke="#2f7d46" stroke-width="1.3"/>
+  <text x="864" y="307" font-size="11" font-weight="bold" fill="#16181d">KL_aecp_desc_mem_guard</text>
+  <text x="864" y="326" font-size="10.5" fill="#4a5058">at processor top · hard reset only</text>
+  <text x="864" y="344" font-size="10.5" fill="#4a5058">owed holds the next request;</text>
+  <text x="864" y="362" font-size="10.5" fill="#4a5058">every response beat passes through</text>
+  <text x="864" y="389" font-size="10.5" fill="#4a5058">guard debt_o: D3 interface;</text>
+  <text x="864" y="407" font-size="10.5" fill="#4a5058">top + parent routing deferred to D3</text>
+  <path d="M960,286 L960,271" fill="none" stroke="#6b46a5" stroke-width="1.6" marker-end="url(#ahm)"/>
+  <line x1="1070" y1="321" x2="1089" y2="321" stroke="#6b46a5" stroke-width="1.6" marker-end="url(#ahm)"/>
+
+  <rect x="1094" y="286" width="182" height="160" rx="6" fill="#f6eeff" stroke="#6b46a5" stroke-width="1.3"/>
+  <text x="1108" y="307" font-size="11.5" font-weight="bold" fill="#16181d">descriptor image</text>
+  <text x="1108" y="326" font-size="10.5" fill="#4a5058">desc_mem_*: read only,</text>
+  <text x="1108" y="344" font-size="10.5" fill="#4a5058">in order; last or err</text>
+  <text x="1108" y="362" font-size="10.5" fill="#4a5058">ends the burst</text>
+  <text x="1108" y="389" font-size="10.5" fill="#4a5058">lowest byte address in</text>
+  <text x="1108" y="407" font-size="10.5" fill="#4a5058">bits [63:56] (wire order)</text>
 
   <!-- STEP 5 -->
   <rect x="382" y="376" width="440" height="70" rx="6" fill="#f3ecfb" stroke="#6b46a5" stroke-width="1.3"/>

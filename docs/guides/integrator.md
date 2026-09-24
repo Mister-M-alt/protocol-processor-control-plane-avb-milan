@@ -133,10 +133,10 @@ The guard's own module port `debt_o` is the **D3 interface**
 ([memory contract](../architecture/07_memory_maps.md#sec-desc-memory)). It is not
 exposed by `protocol_processor_top`; the D3 lane will add that routing together
 with the parent consumer changes, keeping the current top-level interface intact.
-Connect the guard's synchronous active-low reset to the **hard reset only**.
-A store-only reset, future rollback reset, or entity disable must not clear it.
-A hard reset must also flush the memory path, including any CDC queues, so no
-pre-reset response can arrive after debt is forgotten.
+Drive `protocol_processor_top.rst_n`, its synchronous active-low reset, only
+from a **hard reset** that also flushes the descriptor-memory path, including
+any CDC queues. Never drive it from an entity disable, store-only reset, or
+future rollback reset: no pre-reset response may arrive after debt is forgotten.
 
 If a burst never terminates, the guard keeps requests held; the store's watchdog
 still answers each locate with an error in bounded time. The existing immediate
