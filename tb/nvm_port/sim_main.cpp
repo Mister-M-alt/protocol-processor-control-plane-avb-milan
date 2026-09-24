@@ -278,16 +278,14 @@ struct Harness {
         : 0;
   }
 
-  void sample_dev() {
-    bool drove_gnt = d_gnt;
-    bool drove_done = d_done;
-    bool drove_err = d_err;
-
-    // The port carries ONE device command at a time (F02.8 on the manager
-    // face, the region port's own req/gnt here), and it cannot know an op
-    // ended before the backend says so. `d_busy` is the model's record of a
-    // command it accepted and has not yet completed; nothing below reads the
-    // array, so both counters hold under every device model.
+  //! What the port owes, read off the bus before this cycle's backend moves.
+  //! The port carries ONE device command at a time (F02.8 on the manager
+  //! face, the region port's own req/gnt here), and it cannot know an op
+  //! ended before the backend says so. `d_busy` is the model's record of a
+  //! command it accepted and has not yet completed; nothing here reads the
+  //! array, so every counter holds under every device model. Its own function
+  //! because `sample_dev` is the backend and this is a monitor of the port.
+  void count_owed_traffic() {
     if (d_busy && dut->dev_req_o) ++req_while_owed;
     if (d_busy && (dut->nvm_done_o || dut->nvm_err_o)) ++pulse_while_owed;
     // A restore byte with no device byte behind it on the same cycle is one
@@ -295,6 +293,14 @@ struct Harness {
     // filled the buffer has completed. Bus-side like the other two.
     if (d_busy && dut->nvm_rvalid_o && dut->nvm_rready_i && !dut->dev_rvalid_i)
       ++fwd_while_owed;
+  }
+
+  void sample_dev() {
+    bool drove_gnt = d_gnt;
+    bool drove_done = d_done;
+    bool drove_err = d_err;
+
+    count_owed_traffic();
 
     // command accept
     if (drove_gnt && dut->dev_req_o) {
