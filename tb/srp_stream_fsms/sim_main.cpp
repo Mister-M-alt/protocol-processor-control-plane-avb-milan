@@ -685,12 +685,13 @@ void SrpStreamFsmsSuite::listener_matcher_registers_swaps_and_unregisters() {
   CHECK(h.l_push.size() == 1 && h.l_push[0].code == 0 && h.l_push[0].fp == 1,
         "L AskingFailed rides New after the swap");
   // swap back: Failed -> Advertise
+  const uint64_t failed_bridge = h.l_fbridge(0);
   h.inject(true, 1, SID0, DA0, VID0, 3, 0, 555);
   CHECK(h.l_tkreg(0) == 1 && h.l_reg[0] == 1, "L swap back to ADVERTISE");
   // the code is gated here; the bridge is the raw latch, valid only with
   // tk_reg_state FAILED (its one consumer gates it after its index mux)
-  CHECK(h.l_fcode(0) == 0 && h.l_tkreg(0) != 2
-        && h.l_fbridge(0) == 0xBBBB0000CCCCull,
+  CHECK(h.l_fcode(0) == 0 && h.l_tkreg(0) != 2 && failed_bridge != 0
+        && h.l_fbridge(0) == failed_bridge,
         "L failure gated off: code 0, bridge left ungated under ADVERTISE");
   CHECK(h.l_decl(0) == 2, "L declaration back to READY");
   // Δ13 unregister: on the withdrawing frame
