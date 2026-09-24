@@ -389,11 +389,13 @@ The binding walk owns the ACMP listener from reset until its last preload has be
 written and armed: commands, talker events, START/STOP requests and timer expiries wait
 at their producers until then, and `restore_done_o` marks that end
 ([05 §5.1](05_acmp_engine.md#sec-05-boot-admission)). A read-only command that arrives
-during the walk is answered from the restored image afterwards and changes nothing here.
+during the walk is answered afterwards, from the restored image or, if the walk failed,
+from the vendor defaults, and it changes nothing here either way.
 
 **How a binding walk ends** (`KL_acmp_nvm_shadow`, processor issue #93). A walk is a
 transaction: a transport failure anywhere ends it with **every** sink not captured live at
-its vendor default, `restore_fail_o` and no preload, never with part of the image.
+its vendor default, `restore_fail_o` and no preload, never with part of the image. It
+rejects the image, not the media: every saved record stays in the device as it was.
 
 | The record read… | Result | `restore_cause_o` |
 |---|---|---|
@@ -413,6 +415,19 @@ and an enable gated on `restore_done_o` follows. A walk that validated no record
 port no deadline of its own and releases nothing on time. A device that ends the
 abandoned read late ends the drain and the port serves the next operation; a device that
 never ends it leaves the port quarantined until reset.
+
+**A failed walk keeps the saved records** (processor issue #92). After the atomic reject
+the listener runs on its defaults, and it writes its record back for every command it
+serves, a read-only `GET_RX_STATE` included. The shadow commits only a record that differs
+from what it holds, and **two unbound records never differ**, whatever their other fields:
+an unbound record carries no binding (Milan v1.2 5.3.8.3 clears the binding parameters on
+unbind), and no walk preloads one. So a command that leaves a sink unbound writes nothing
+after a failed walk, whether it is a `GET_RX_STATE` held from the boot window, a later
+poll, or an `UNBIND` of a sink the failed walk left unbound, and the next walk on a
+healthy device restores every saved binding. A `BIND` does bind the sink: it replaces
+that sink's record, as it would after any walk. Graded for all three causes in
+[`tb/acmp_nvm`](../../tb/acmp_nvm/README.md) (N8) and at the top in
+[`tb/pp_top`](../../tb/pp_top/README.md) (BW3).
 
 ### 5.4 Open decisions
 

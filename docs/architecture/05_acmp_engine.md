@@ -166,8 +166,11 @@ records the shadow captures during its walk are the preloads' own, which compare
 to the restored image. A command, a talker event or a START/STOP request that arrives
 before the release is served after it, in its producer's order, on the restored image:
 a live change (a BIND, an UNBIND) still wins by coming later, and a read-only command
-answers the restored binding instead of erasing it. The release trails the shadow's
-terminal by at most four cycles.
+answers the restored binding instead of erasing it. If the walk failed, the image is the
+vendor defaults and the command answers those, and a read-only command still leaves the
+saved records alone: the shadow never commits one unbound record over another
+([07 §5.3](07_memory_maps.md#fig-07-nvmflow)), so the next boot on a healthy device
+restores them. The release trails the shadow's terminal by at most four cycles.
 
 Two consequences an integrator must plan for. **The walk is not optional**: pulse
 `restore_go_i` on every boot, with or without media behind the NVM device face, because a
@@ -181,15 +184,17 @@ source strobing again coalesces as the router documents.
 **The walk always ends.** Its preload phase cannot stall: with nothing else admitted,
 `pre_ready_o` is 1 in every `X_IDLE` cycle, so each offer is taken at once. Its read phase
 is bounded by `T-NVM-RS-DEADLINE`: a device that stops answering fails the whole walk at
-the deadline, with every sink at its vendor default and nothing preloaded
-([07 §5.3](07_memory_maps.md#fig-07-nvmflow)). Either way the terminal comes, the faces
+the deadline, with every sink at its vendor default, nothing preloaded and every saved
+record left on the media ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)). Either way the terminal comes, the faces
 are released and the listener answers, so persistence that wedges never holds ACMP
 listener service, or an enable gated on `restore_done_o`, for ever.
 
 The contract is graded with the real listener, shadow, arbiter and port in
 [`tb/acmp_nvm`](../../tb/acmp_nvm/README.md) (group L, every presentation cycle of the
 window and every other work face, with reset round trips; group N, the failed and
-bounded walk) and at the top in [`tb/pp_top`](../../tb/pp_top/README.md) (section BW).
+bounded walk and the saved records it keeps) and at the top in
+[`tb/pp_top`](../../tb/pp_top/README.md) (section BW; BW4 grades `restore_done_o` and
+`restore_busy_o` against the release in every cycle of every walk).
 
 ## 6. Listener behavior — the four-view package
 
