@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 
 
-def mutations():
+def mutations() -> list[tuple[str, str, str, str, int, str]]:
     """Each tuple names one exact source edit and its required failing check."""
     top = "hdl/top/protocol_processor_top.sv"
     return [
@@ -49,7 +49,7 @@ def mutations():
     ]
 
 
-def run(command, cwd, log):
+def run(command: list[str], cwd: Path, log: Path) -> int:
     """Run in the foreground, recording the command's own status and output."""
     with log.open("w") as stream:
         return subprocess.run(command, cwd=cwd, stdout=stream,
@@ -57,7 +57,8 @@ def run(command, cwd, log):
                               timeout=1800).returncode
 
 
-def check_variant(tree, output, name, expected, verilator):
+def check_variant(tree: Path, output: Path, name: str, expected: str,
+                  verilator: str) -> dict[str, object]:
     """Compilation must pass; only a completed simulation can kill a mutant."""
     bench = tree / "tb/pp_top"
     build_rc = run(["make", "gsi-build", "VERILATOR=" + verilator], bench,
@@ -80,7 +81,7 @@ def check_variant(tree, output, name, expected, verilator):
     return result
 
 
-def main():
+def main() -> int:
     """Copy only sources to a temporary build tree; leave the lane untouched."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
