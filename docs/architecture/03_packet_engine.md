@@ -201,7 +201,7 @@ control per class/key — the load-bearing role is **cross-engine interlock** (t
 | CFG_BARRIER | SET_CONFIGURATION | global | drain all in-flight, block admission, then execute (STREAM_IS_RUNNING pre-guard first) |
 | STREAM_CFG | SET_STREAM_FORMAT/INFO, START/STOP_STREAMING, BIND/UNBIND/probe events, listener-SM steps | stream index | serialized per key — doubles as the per-sink SM serialization (one event at a time per sink) |
 | MAP_CFG | ADD/REMOVE_AUDIO_MAPPINGS, GET_AUDIO_MAP (write side) | stream port | serialized per key **and** cross-locked with STREAM_CFG of referenced streams (format↔mapping validation pair) |
-| CLOCK_CFG | SET_SAMPLING_RATE, SET_CLOCK_SOURCE, MVU SET_MCR_INFO | audio unit / clock domain | serialized per key |
+| CLOCK_CFG | SET_SAMPLING_RATE, SET_CLOCK_SOURCE; MVU SET_MCR_INFO deferred ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) | audio unit / clock domain | serialized per key |
 | NAME_WR | SET_NAME | descriptor | serialized per key |
 | LOCK_OP | LOCK_ENTITY + `T-LOCK-UNLOCK` expiry event | global | serialized vs every lock-protected member (incl. ACMP BIND/UNBIND and MGMT writes) |
 | REGISTRY_OP | REGISTER/DEREGISTER, monitor removals, TIME_LIMITED expiry | registry | serialized on the registry |

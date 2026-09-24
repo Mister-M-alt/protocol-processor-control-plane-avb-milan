@@ -148,7 +148,7 @@ values; other documents reference `P-…` IDs.
 | P-N-STREAM-OUT | product | ≥1 with a Base format if talker (Milan §6.3) | source records, DA timers, counters |
 | P-N-CONTROLLERS | 16 | ≥16 per interface (Milan §5.3.4.2) | registry, monitor timers, fan-out |
 | P-N-CONFIGURATIONS | 1 | ≥1 | index maps, image size |
-| P-N-AUDIO-UNITS / P-N-CLOCK-DOMAINS / P-N-CLOCK-SOURCES | 1 / 1 / 2 | model-driven (≥1 CD, ≥1 CS/CD) | overlay, counters, MVU MCR |
+| P-N-AUDIO-UNITS / P-N-CLOCK-DOMAINS / P-N-CLOCK-SOURCES | 1 / 1 / 2 | model-driven (≥1 CD, ≥1 CS/CD) | overlay, counters; MVU MCR deferred per [06 §6.9](06_aecp_engine.md#69-mvu-commands) |
 | P-N-FORMATS-MAX | 16 | ≤47 (IEEE 1722.1-2021 Table 7-8) | descriptor assembly, format tables |
 | P-MAP-SUBSET-CH-MAX | 176 | =176 (Milan §5.4.2.26) | audio-map partitioning |
 | P-N-MAP-ENTRIES | product | per port | map RAM |
@@ -170,7 +170,7 @@ values; other documents reference `P-…` IDs.
 | P-NVM-RS-TMO-CYC | P-CLK-HZ / 50 (20 ms) | above the slowest single record read the NVM device face can take (`NVM_RS_TMO_CYC_P`) | boot restore walk's read deadline, `T-NVM-RS-DEADLINE` ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) |
 | P-INTERNAL-INGRESS-DELAY-NS | product | added to reported input latency (Milan §5.4.2.10.1) | GET_STREAM_INFO |
 | P-PT-OFFSET-DEFAULT-NS | 2 000 000 | 0..0x7FFFFFFF (Milan §5.3.7.6) | presentation time |
-| P-EN-MVU-SUID / P-EN-MVU-MCR | 1 / 1 | Milan "recommended" MVU groups | MVU decode |
+| P-EN-MVU-SUID / P-EN-MVU-MCR | n/a | reserved names; neither is an RTL parameter | not implemented; October release waiver ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) |
 | `MILAN_FEATURES_FLAGS.TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING` | 0 | GET_MILAN_INFO feature 0x2 remains clear | µcode constant + root-integrator mapping validation |
 | P-EN-IDENTIFY-NOTIFICATION | 1 | "should" (Milan §5.4.5.4) | identify handler |
 | P-EN-ADDRESS-ACCESS / P-EN-FIRMWARE-ASSIST | 0 / 0 | IEEE-optional ([GAP-13](../00_MILAN_COMPLIANCE_REVIEW.md#gap-13)) | side-port features |

@@ -110,8 +110,21 @@ mandatory **GET_MILAN_INFO** (protocol_version = 1, features flags, certificatio
 §5.4.4.1), recommended SET/GET_SYSTEM_UNIQUE_ID (§5.4.4.2/.3) and
 SET/GET_MEDIA_CLOCK_REFERENCE_INFO (§5.4.4.4/.5), MVU timing 250 ms / respond ≤ 240 ms
 (§5.4.3.4).
-**Disposition**: [06 §6.9](architecture/06_aecp_engine.md), feature-flag parameters in
-[F01.5](architecture/01_overview.md#fig-01-params).
+**Current disposition (October release)**: the MVU sub-decoder and one command
+group, GET_MILAN_INFO, are implemented. The two recommended pairs are deliberately
+not implemented under the
+[2026-09-23 owner decision](https://github.com/kebag-logic/milan-fpga/issues/510#issuecomment-5789766089).
+Milan v1.2 §5.4.4.2–§5.4.4.5 (printed pp. 58–61) and §7.6 (printed p. 115)
+each mark feature support as a recommendation. Implementation is deferred to
+[P4](https://github.com/kebag-logic/milan-fpga/issues/416) if the conformance lab
+requires it. [06 §6.9](architecture/06_aecp_engine.md#69-mvu-commands) records
+the waiver and command-length `NOT_IMPLEMENTED` responses for 0x0001–0x0004;
+[`tb/pp_top`](../tb/pp_top/README.md) M4 grades all four byte-exact.
+[F01.5](architecture/01_overview.md#fig-01-params) marks the phantom enable
+parameters reserved with no RTL consumer. M1/M2 grade GET_MILAN_INFO's zero
+features_flags; Table 5.20 has no SUID or MCR support bits. The separate timing
+requirement remains open in
+[#57](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/57).
 
 #### <a id="gap-04"></a>GAP-04 [Blocker] — External-engine "Hardware API" never defined
 Original §21 draws arrows to AVTP/gPTP/TSN engines but defines no interface. Mandatory
@@ -364,8 +377,8 @@ verification).
 |---|---|---|---|---|---|---|---|---|
 | REQ-MVU-001 | Milan §5.4.3.2 | MVU framing: protocol_id 00-1B-C5-0A-C1-00; r=0; 15-bit command_type; padding excluded from cdl | shall | A | [GAP-03](#gap-03) | MVU sub-decoder | 06 §6.9 | DIR |
 | REQ-MVU-002 | Milan §5.4.4.1, §4.2.4 | GET_MILAN_INFO: protocol_version = 1; features (REDUNDANCY=0; TALKER_DYNAMIC_MAPPINGS optional); certification_version | shall | A | [GAP-03](#gap-03) | F06.11 | 06 §6.9 | DIR |
-| REQ-MVU-003 | Milan §5.4.4.2/.3 | SET/GET_SYSTEM_UNIQUE_ID (default 0; set ≠ 0) | rec | A | [GAP-03](#gap-03) | P-EN-MVU-SUID | 06 §6.9 | DIR |
-| REQ-MVU-004 | Milan §5.4.4.4/.5, §7.6 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO: flags = supported set in responses; default prio read-only; 64-B UTF-8 domain name, default "DEFAULT" | rec | A | [GAP-03](#gap-03) | P-EN-MVU-MCR | 06 §6.9 | DIR |
+| REQ-MVU-003 | Milan v1.2 §5.4.4.2/.3 | SET/GET_SYSTEM_UNIQUE_ID: recommended; October release waiver, not implemented (owner decision in GAP-03); revisit at P4 if the lab requires it | rec | A | [GAP-03](#gap-03) | NOT_IMPLEMENTED command echo; pp_top M4 verifies fallback only | 06 §6.9 | DIR |
+| REQ-MVU-004 | Milan v1.2 §5.4.4.4/.5, §7.6 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO: recommended; October release waiver, not implemented (owner decision in GAP-03); revisit at P4 if the lab requires it | rec | A | [GAP-03](#gap-03) | NOT_IMPLEMENTED command echo; pp_top M4 verifies fallback only | 06 §6.9 | DIR |
 | REQ-MVU-005 | Milan §5.4.3.3/.4 | MVU status {SUCCESS, NOT_IMPLEMENTED}; 250 ms timeout / respond ≤240 ms | shall | A | [GAP-03](#gap-03) | deadline engine | 08 §2 | TIM |
 
 ### 6.5 Notifications and registry
@@ -463,7 +476,7 @@ verification).
 |---|---|---|---|---|---|
 | [GAP-01](#gap-01) | Blocker | Full command/descriptor inventory + per-command rules | [F06.14](architecture/06_aecp_engine.md#fig-06-cmdtable), §6 matrix | DIR/TOL | [#76](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/76) |
 | [GAP-02](#gap-02) | Blocker | Milan-native ACMP: stateless talker + listener SM package | [05](architecture/05_acmp_engine.md) | MTXW | none found |
-| [GAP-03](#gap-03) | Major | MVU sub-decoder + 3 command groups + feature flags | [06 §6.9](architecture/06_aecp_engine.md) | DIR | [#77](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/77) |
+| [GAP-03](#gap-03) | Major | MVU sub-decoder + one implemented group (GET_MILAN_INFO); SUID/MCR pairs waived for October by the linked owner decision; reserved enable names have no RTL consumer | [06 §6.9](architecture/06_aecp_engine.md#69-mvu-commands), [F01.5](architecture/01_overview.md#fig-01-params) | DIR: pp_top M1/M2 feature fields and M4 four refusals; no implementation claim for the waived pairs | [#55](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/55), [#56](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/56), [#77](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/77) resolved by waiver; timing remains [#57](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/57) |
 | [GAP-04](#gap-04) | Blocker | Interface classes A–F; SRP/MAAP, gPTP, AVTP, media-clock adapters; status dictionary; in-scope SRP engine | [02](architecture/02_interfaces.md), [10](architecture/10_srp_engine.md) | DIR/MTXW/TOL/TIM | [#78](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/78) |
 | [GAP-05](#gap-05) | Major | Counters subsystem with Milan-precedence masks | [06 §6.6](architecture/06_aecp_engine.md), [07 §4](architecture/07_memory_maps.md) | DIR | [#79](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/79) |
 | [GAP-06](#gap-06) | Major | Registry + monitor + fan-out + lock manager + identify | [06 §7](architecture/06_aecp_engine.md) | RND/STORM/TIM | [#80](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/80) |
@@ -483,6 +496,8 @@ The **Open residue** column records the audit of 2026-09-18 at main `6a878f6`: e
 checked against what `hdl/` and `tb/` carry, not against this table. A linked issue tracks what is
 still unimplemented or ungraded for that finding and lists the requirement tickets under it;
 "none found" means the resolution is implemented and a suite of the named category grades it.
+GAP-03 carries the later October-release waiver above; it does not re-grade the
+original-document Cov column or close REQ-MVU-005's timing evidence.
 
 ## 8. Residual risks and open decisions
 
@@ -491,7 +506,7 @@ still unimplemented or ungraded for that finding and lists the requirement ticke
 | 1 | Current configuration index persistence unstated by Milan | **Persist** (least surprise across power cycles) | 07 §5 |
 | 2 | AEM status for lock violation unspecified by Milan | Use IEEE `ENTITY_LOCKED` (3) | 06 §6.8 |
 | 3 | Milan §5.4.2.13 references "UNSUPPORTED" status | Read as `NOT_SUPPORTED` (11) — no such code exists | 06 §6.4 |
-| 4 | `user_mcr_prio` / media-clock-domain-name persistence unstated | Persist alongside REQ-PER-001 set (cheap, user-visible) | 07 §5 |
+| 4 | `system_unique_id` / `user_mcr_prio` / media-clock-domain-name persistence unstated | Earlier persistence plan deferred with the commands under the October waiver; no processor storage or persistence for these fields; P4 if required by the lab | [06 §6.9](architecture/06_aecp_engine.md#69-mvu-commands), 07 §5 |
 | 5 | Dual ADP startup delay (0–2 s) vs link-up (0–4 s) — easy single-constant bug | Two distinct T-IDs | 08 §2 |
 | 6 | talker/listener_capabilities bits unconstrained by Milan | Set per IEEE Table 6-3/6-4 (IMPLEMENTED + AUDIO/MEDIA_CLOCK as per product) | 04 §3 |
 | 7 | IN_PROGRESS vs GET_DYNAMIC_INFO | Never emit IN_PROGRESS; hard ≤240 ms response budget | 06 §5, 08 §4 |
