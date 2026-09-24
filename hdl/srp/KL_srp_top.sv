@@ -29,8 +29,8 @@
 //                computes the 10 §6.3 Σ-slope verdicts from the TSpecs
 //                captured at DECLARE_TALKER and feeds the talker FSMs'
 //                sr_admitted_i (through a short optimistic window: a fresh
-//                declaration counts as admitted until the first full
-//                admission round after it has been evaluated, so the wire
+//                declaration counts as admitted for three published
+//                admission rounds, separately from the real grant, so the wire
 //                order is always declare-Advertise-then-swap-to-Failed —
 //                the exact §6.3 sentence — never a spurious Failed-first).
 //                The class-B ops of 02 §4.1 (DECLARE_TALKER 0,
@@ -213,9 +213,9 @@ module KL_srp_top
     output logic [N_SINKS_P-1:0][7:0]     snk_fail_code_o,     //! msrp_fail_code[sink] (registered Talker Failed)
     output logic [N_SINKS_P-1:0][63:0]    snk_fail_bridge_o,   //! msrp_fail_bridge[sink] (FailureInformation system id), UNGATED: valid only with tk_reg_state == FAILED
     output logic [N_SOURCES_P-1:0][31:0]  granted_slope_bps_o, //! per-source granted idleSlope while admitted, else 0
-    output logic [N_SOURCES_P-1:0]        sr_admitted_o,       //! per-source Σ-slope admission verdict
-    output logic [31:0]                   sum_slope_bps_o,     //! Σ of granted slopes, bps
-    output logic                          over_limit_o,        //! some requested source stands refused
+    output logic [N_SOURCES_P-1:0]        sr_admitted_o,       //! per-source Σ-slope verdict for the current declaration; never raised while any declaration is pending
+    output logic [31:0]                   sum_slope_bps_o,     //! Σ of granted slopes, bps, latched by published rounds (held while any declaration is pending)
+    output logic                          over_limit_o,        //! some evaluated source stands refused, latched with the Σ; pending is not refusal
 
     // ---- observability -----------------------------------------------------
     output logic [N_VIDS_P-1:0] dbg_vid_active_o,    //! MVRP membership-live bits
@@ -421,6 +421,7 @@ module KL_srp_top
   logic [N_SOURCES_P-1:0][15:0] adm_mfs_r;
   logic [N_SOURCES_P-1:0][15:0] adm_mif_r;
   logic [N_SOURCES_P-1:0]       adm_admitted_w;
+  logic [N_SOURCES_P-1:0]       adm_invalidate_w;
   logic                         adm_round_w;
   logic [N_SOURCES_P-1:0]       opt_r;
   logic [N_SOURCES_P-1:0][1:0]  opt_cnt_r;
@@ -432,6 +433,7 @@ module KL_srp_top
       .clk_i               (clk_i),
       .rst_n               (rst_n),
       .req_i               (adm_req_r),
+      .invalidate_i        (adm_invalidate_w),
       .max_frame_i         (adm_mfs_r),
       .interval_frames_i   (adm_mif_r),
       .port_rate_bps_i     (port_rate_bps_i),
@@ -752,6 +754,13 @@ module KL_srp_top
   assign gate_acc_w   = gate_valid_w && gate_ready_w;
   assign ctl_acc_w    = ctl_valid_w && ctl_ready_w;
 
+  // This is the same edge that installs/removes the current declaration.
+  // Include identical re-declarations: a new declaration needs a new round.
+  always_comb begin : admission_invalidation
+    adm_invalidate_w = '0;
+    if (gate_acc_w) adm_invalidate_w[a_idx_r[SRC_W_C-1:0]] = 1'b1;
+  end
+
   always_ff @(posedge clk_i) begin : service_plane
     if (!rst_n) begin
       svc_st_r     <= S_IDLE;
@@ -773,8 +782,10 @@ module KL_srp_top
     end else begin
       rsp_valid_o <= 1'b0;
 
-      // ---- optimistic-window aging (one full round with the request
-      // visible must complete before the verdict is trusted) --------------
+      // ---- optimistic-window aging (three published admission rounds;
+      // invalidation restarts a partial round, and a round discarded for a
+      // pending source does not strobe, so the window outlives a held
+      // verdict). The real grant separately waits for a published round. ----
       if (adm_round_w) begin
         for (int unsigned s = 0; s < N_SOURCES_P; s++) begin
           if (opt_r[s]) begin
@@ -853,8 +864,9 @@ module KL_srp_top
         S_GATE: begin
           if (gate_acc_w) begin
             if (a_open_r) begin
-              // TSpec joins the admission request set; verdict optimistic
-              // until one full round has evaluated it (banner)
+              // TSpec joins the admission request set; only the talker FSM
+              // sees optimistic admission during the three-published-round
+              // window.
               adm_req_r[a_idx_r[SRC_W_C-1:0]]   <= 1'b1;
               adm_mfs_r[a_idx_r[SRC_W_C-1:0]]   <= a_mfs_r;
               adm_mif_r[a_idx_r[SRC_W_C-1:0]]   <= a_mif_r;

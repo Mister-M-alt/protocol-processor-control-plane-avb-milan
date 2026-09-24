@@ -35,7 +35,7 @@
 | `KL_pp_trace_ring` | `hdl/packet_engine/KL_pp_trace_ring.sv` | pp_top, side_port |
 | `KL_pp_tx_arbiter` | `hdl/packet_engine/KL_pp_tx_arbiter.sv` | pp_top, tx_arbiter |
 | `KL_pp_tx_slots` | `hdl/packet_engine/KL_pp_tx_slots.sv` | maap, pp_top, srp_encoder, srp_top, tx_arbiter, tx_slots |
-| `KL_srp_admission` | `hdl/srp/KL_srp_admission.sv` | pp_top, srp_top |
+| `KL_srp_admission` | `hdl/srp/KL_srp_admission.sv` | pp_top, srp_admission, srp_top |
 | `KL_srp_decoder` | `hdl/srp/KL_srp_decoder.sv` | pp_top, srp_decoder, srp_top |
 | `KL_srp_domain` | `hdl/srp/KL_srp_domain.sv` | pp_top, srp_encoder, srp_top |
 | `KL_srp_encoder` | `hdl/srp/KL_srp_encoder.sv` | pp_top, srp_encoder, srp_top |

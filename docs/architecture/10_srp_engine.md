@@ -257,7 +257,7 @@ Ready or ReadyFailed (Milan §5.3.7.3, Δ14 — exported as a level to the AVTP 
 `GET_TX_STATE`'s REGISTERING_FAILED reports the AskingFailed case
 ([F05.11](05_acmp_engine.md#fig-05-talker)). The streaming level additionally
 requires admission: ACTIVE(src) = declaring Advertise ∧ registering
-Ready/ReadyFailed ∧ `sr_admitted[src]` — the engine computes Σ-slope admission
+Ready/ReadyFailed ∧ (`optimistic[src]` ∨ `sr_admitted[src]`) — the engine computes Σ-slope admission
 against the port ceiling and publishes `granted_slope_bps[src]`
 ([F02.10](02_interfaces.md#fig-02-statusdict)); the shaper consumes it, never
 computes it. **Local admission can fail**, and that failure is reported the
@@ -272,6 +272,96 @@ FailureInformation system identifier be an end-station MAC, and Milan
 §5.4.2.10.2 requires GET_STREAM_INFO on a Stream Output to report the
 self-declared failure — the class-D `msrp_fail_code/bridge[x]` publication
 covers sources for that path.
+
+<a id="sec-10-admission-freshness"></a>**Admission freshness and latency.**
+The real `sr_admitted[src]` verdict belongs to the source's current
+declaration. Every accepted `DECLARE_TALKER`, including an identical
+re-declaration, clears that source's grant at the edge that captures its
+TSpec. `WITHDRAW_TALKER` does the same. The admission block invalidates
+that source's cached slope and in-flight pipeline stages, then restarts
+the partial greedy admission round at source zero. Unchanged sources keep
+their published grants until a published round updates them. This is an
+internal connection; neither SRP nor processor top-level ports change.
+
+The three-stage slope pipeline continues sampling one source per clock.
+Only a slope computed entirely after declaration acceptance may participate
+in admission. The grant stays low until that slope is evaluated and its
+full source-order round publishes. Repeated declarations restart this process;
+there is no generation counter that can wrap and resurrect an older result.
+
+<a id="sec-10-admission-cross-source"></a>**A pending declaration keeps its
+capacity.** A source is *pending* from the acceptance of its declaration
+until its new slope is valid. Its own grant stays low. A round publishes only
+if every requesting source had a valid slope for its current declaration.
+A round that visits a pending source is discarded. So every other
+source's `sr_admitted[src]` and `granted_slope_bps[src]`, and the
+aggregate `sum_slope_bps` and `over_limit`, keep their last published values
+until every requesting source has been evaluated. Then the round publishes
+normally: the greedy walk over all current declarations, including the new
+one. Capacity is released only by a withdrawal (the live AND with the
+request drops that grant at once) or by an evaluated smaller slope. A
+pending evaluation never releases capacity. So a source that the greedy walk
+refuses before and after another source's identical, shrinking or growing
+re-declaration is never granted, not even for one clock. Its Talker Failed
+declaration and its ACTIVE level do not move. A shrink that does free
+capacity admits the refused source in the same published round that grants
+the shrunk slope.
+
+Let M be `P-N-STREAM-OUT`, and count the accepted declaration edge as cycle
+zero. Once declarations and withdrawals stop, the new TSpec is sampled
+within M cycles, its slope is stored two cycles later, and the next visit
+and completion of its admission round are within another `2*M - 1`
+cycles. Thus the conservative bound is `3*M + 1` clocks; with the restart
+at source zero, the completion boundary makes it at most three rounds
+for M ≥ 2, and four clocks for M = 1. Every other pending source is
+evaluated within the same bound of its own declaration, so the bound holds
+from the last declaration or withdrawal. Every verdict that changes,
+including other sources' verdicts, publishes in that one round. A refused
+TSpec never produces a grant pulse. Measured shrink/identical/restart cases
+in [`tb/srp_admission`](../../tb/srp_admission/README.md) give 4 clocks for
+M = 1, 4 or 6 for M = 2, 6 or 9 for M = 3, 5/10/15 for M = 5, and
+8/16/24 for the default M = 8. With a refused source competing, the
+latencies stay within the same sets. The real service-port suite measures
+8/16/24 clocks at M = 8, from gate acceptance to the published grant.
+Source 0 re-declaring beside a refused source 1 or 7 measures 16/24, and a
+freed source's first grant lands on that same clock.
+At `P-CLK-HZ` = 100 MHz those default-shape cases are 80/160/240 ns;
+at 50 MHz they are 160/320/480 ns. Service request waiting time and
+Listener registration time are additional, independently controlled delays.
+Declarations or withdrawals that keep arriving less than a round apart keep
+restarting the round, so no verdict publishes until they stop.
+
+The **optimistic window** serves only the talker FSM: it keeps the initial
+Advertise from becoming a premature Failed before admission has completed.
+It lasts until the third *published* admission round has been observed
+(one clock after that round's latch). A discarded round does not count.
+The first published round after a declaration always carries that
+declaration's verdict, so the window cannot close while the verdict waits
+for another source's pending evaluation. For a lone declaration at M = 8
+it lasts 25, 33 or 41 clocks: 17 clocks past the round that publishes its
+verdict. A new
+declaration restarts its window; any declaration or withdrawal restarts the
+partial admission round and can extend another source's window.
+Re-declaration resets the Listener tracker, so ACTIVE still needs a fresh
+Ready/ReadyFailed. During the window ACTIVE can be high even for a TSpec
+that will be refused; the real `sr_admitted[src]` stays low. The window
+belongs only to the source whose declaration opened it; another source's
+pending declaration never opens a window or a grant for a refused source.
+A consumer requiring confirmed admission uses ACTIVE AND the real grant
+(parent issue #551).
+
+`granted_slope_bps[src]` is the evaluated current slope while that source
+is admitted and zero otherwise, including pending evaluation and teardown.
+`sum_slope_bps` and `over_limit` are **snapshots latched by published
+rounds**. A declaration or withdrawal immediately retires that source's
+grant. The previous aggregate holds until the next published round, which
+waits for every pending source. The aggregate can therefore differ for a
+while from the sum of the live per-source outputs. The live Σ never exceeds
+the published one, because a grant can only rise when a round publishes.
+Partial and discarded round sums are thrown away. At each publication,
+sum equals the granted slopes and over-limit reports requests refused by
+the ceiling, all of them evaluated. The greedy walk grants in source-index
+order, retries refused sources each round, and never exceeds the 75% ceiling.
 
 ### 6.4 Listener-side stream FSM (×N)
 
