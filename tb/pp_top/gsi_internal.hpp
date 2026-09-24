@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: CERN-OHL-W-2.0
 // Milan 5.3.8.6/.8 and Table 5.22, through the real MAC/ADP/ACMP/SRP path.
 // No record pokes or status injection: the peer drives protocol messages,
-// and two unanswered probes drive the real timer/record timeout path.
+// and two unanswered probes drive the real timer/record timeout path. The
+// harness integrator folds the published binding/started view into the
+// flags word (H::gsi_fold_sw), so STREAMING_WAIT is graded byte-exact too.
 struct InternalStreamInfoPhase {
   H& h;
   const milan::tb::Model<Vpp_top_wrap> model;
@@ -73,7 +75,8 @@ struct InternalStreamInfoPhase {
 
   void check_frame(const std::vector<uint8_t>& f, const char* phase,
                    unsigned sink, uint8_t pb, uint8_t acmp,
-                   uint8_t code, uint64_t bridge, bool uns, bool known = true) {
+                   uint8_t code, uint64_t bridge, bool uns, bool known = true,
+                   bool sw = false) {
     const char* kind = uns ? "unsolicited" : "solicited";
     CHECK(f.size() == 94, "GI %s %s: complete Milan response", phase, kind);
     if (f.size() != 94) return;
@@ -89,6 +92,7 @@ struct InternalStreamInfoPhase {
                                         uint8_t((pb << 5) | acmp));
     body[34] = code;
     putbe(&body[36], bridge, 8);
+    if (sw) body[7] |= 0x08;                      // STREAMING_WAIT
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, known ? 0 : 2, EID, CTLR_EID,
                           uns ? unsolicited_sequence++ : sequence - 1,
                           0x000F, body);
@@ -99,20 +103,23 @@ struct InternalStreamInfoPhase {
 
   void pair(const char* phase, unsigned sink, uint8_t pb, uint8_t acmp = 0,
             uint8_t code = 0, uint64_t bridge = 0, bool known = true,
-            int wait_ms = 500) {
+            int wait_ms = 500, bool sw = false) {
     auto uns = io.wait_any(io.q_aecp, wait_ms);
-    check_frame(uns, phase, sink, pb, acmp, code, bridge, true, known);
+    check_frame(uns, phase, sink, pb, acmp, code, bridge, true, known, sw);
     auto solicited = query(sink);
-    check_frame(solicited, phase, sink, pb, acmp, code, bridge, false, known);
+    check_frame(solicited, phase, sink, pb, acmp, code, bridge, false, known,
+                sw);
     CHECK(uns.size() == 94 && solicited.size() == 94
           && std::equal(uns.begin() + 38, uns.end(), solicited.begin() + 38),
           "GI %s: solicited and unsolicited bodies agree for sink %u", phase, sink);
   }
 
-  void binding(unsigned sink, bool bind) {
+  void binding(unsigned sink, bool bind, uint64_t tk = 0,
+               uint16_t flags = 0) {
     const auto seq = sequence++;
     io.feed(acmp_frame(CTLR_MAC, bind ? 6 : 8, 0, 0, CTLR_EID,
-                      talker(sink), EID, T1_UID, sink, 0, 0, seq, 0, 0));
+                      tk ? tk : talker(sink), EID, T1_UID, sink, 0, 0, seq,
+                      flags, 0));
     auto f = io.wait_frame(io.q_acmp, 500, [seq](const std::vector<uint8_t>& r) {
       return r.size() == 70 && fv_u64(r, 62, 2) == seq
           && ((r[15] & 15) == 7 || (r[15] & 15) == 9);
@@ -172,14 +179,110 @@ struct InternalStreamInfoPhase {
              {Vec{false, 1, fv, {event}, {}}}}}));
   }
 
-  void run() {
+  // Every Listener declaration (attribute 3) the processor transmits for this
+  // sink's stream with the New event over `ms`, each vector value checked.
+  int listener_news(unsigned sink, int ms) {
+    int n = 0;
+    for (int t = 0; t < ms; ++t) {
+      io.run_ms(1);
+      while (!io.q_msrp.empty()) {
+        const auto p = parse_mrpdu(io.q_msrp.front());
+        io.q_msrp.pop_front();
+        if (!p.msrp) continue;
+        for (const auto& v : p.vecs) {
+          if (v.type != 3 || v.fv.size() < 8) continue;
+          const uint64_t first = fv_u64(v.fv, 0, 8);
+          for (size_t j = 0; j < v.ev.size(); ++j)
+            if (first + j == sid(sink) && v.ev[j] == EV_NEW) ++n;
+        }
+      }
+    }
+    return n;
+  }
+
+  // Unsolicited GET_STREAM_INFO responses naming STREAM_INPUT `sink`, queued
+  // or arriving within `ms`; other frames stay queued.
+  std::vector<std::vector<uint8_t>> input_uns(unsigned sink, int ms) {
+    std::vector<std::vector<uint8_t>> got;
+    auto take = [&]() {
+      for (auto it = io.q_aecp.begin(); it != io.q_aecp.end();) {
+        const auto& f = *it;
+        if (f.size() == 94 && (f[36] & 0x80) && fv_u64(f, 38, 2) == 0x0005
+            && fv_u64(f, 40, 2) == sink) {
+          got.push_back(f);
+          it = io.q_aecp.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    };
+    take();
+    for (int t = 0; t < ms; ++t) { io.run_ms(1); take(); }
+    return got;
+  }
+
+  // Table 5.22 started/stopped through F05.3 "BIND_RX new source" in
+  // PRB_W_RESP: a re-bind naming ANOTHER talker with STREAMING_WAIT runs A2
+  // without A10, keeps pbsta/acmpsta at ACTIVE/0 and stops the sink. It is
+  // a committed change of a visible field, so exactly one unsolicited
+  // response reports it, carrying the new STREAMING_WAIT.
+  void rebind_from_probing(unsigned sink) {
+    binding(sink, true);
+    pair("REBIND-BOUND", sink, 2);
+    probe(sink);                                 // now PRB_W_RESP
+    const bool started = (io.d->aecp_strm_started_o >> sink) & 1;
+    binding(sink, true, talker(sink) + 0x55, 0x0008);
+    const auto uns = input_uns(sink, 150);
+    CHECK(started && !((io.d->aecp_strm_started_o >> sink) & 1),
+          "GI REBIND-SW: the re-bind with STREAMING_WAIT stopped sink %u",
+          sink);
+    CHECK(uns.size() == 1,
+          "GI REBIND-SW: exactly one unsolicited response for sink %u, "
+          "got %zu", sink, uns.size());
+    const auto pushed = uns.empty() ? std::vector<uint8_t>{} : uns[0];
+    check_frame(pushed, "REBIND-SW", sink, 2, 0, 0, 0, true, true, true);
+    const auto solicited = query(sink);
+    check_frame(solicited, "REBIND-SW", sink, 2, 0, 0, 0, false, true, true);
+    CHECK(pushed.size() == 94 && solicited.size() == 94
+          && std::equal(pushed.begin() + 38, pushed.end(),
+                        solicited.begin() + 38),
+          "GI REBIND-SW: solicited and unsolicited bodies agree");
+    // the new talker never answers: the double timeout still reports
+    pair("REBIND-TIMEOUT", sink, 2, 7, 0, 0, true, 700, true);
+    binding(sink, false);
+    pair("REBIND-UNBIND", sink, 0);
+  }
+
+  // An index at or past N_STREAM_IN_P must never be narrowed onto a
+  // hardware sink: STREAM_INPUT 9 of a ten-input image aliases sink 1 in
+  // the three-bit sink index. Solicited only: notifications are raised per
+  // hardware sink, so no unsolicited response can name an index past the
+  // shape.
+  void index_guard(unsigned alias, uint8_t alias_pb) {
+    check_frame(query(9), "INDEX-GUARD", 9, 0, 0, 0, 0, false);
+    check_frame(query(alias), "INDEX-GUARD-ALIAS", alias, alias_pb, 0, 0, 0,
+                false);
+  }
+
+  static std::vector<uint8_t> image(uint16_t inputs) {
+    static const char* const kNames[] = {
+        "Entity", "Input 0", "Input 1", "Input 2", "Input 3", "Input 4",
+        "Input 5", "Input 6", "Input 7", "Input 8", "Input 9"};
     std::vector<ImgEnt> entries{
         {CFGIX, 0x0000, 1, 312, 0, 312, 0},
-        {CFGIX, 0x0005, 2, 140, 1, 144, 0}};
-    io.dram = build_image(entries,
-        {entity_descriptor(), stream_descriptor(0x0005, 0),
-         stream_descriptor(0x0005, 1)}, {"Entity", "Input 0", "Input 1"}, 1);
+        {CFGIX, 0x0005, inputs, 140, 1, 144, 0}};
+    std::vector<std::vector<uint8_t>> bodies{entity_descriptor()};
+    for (uint16_t i = 0; i < inputs; ++i)
+      bodies.push_back(stream_descriptor(0x0005, i));
+    return build_image(entries, bodies,
+                       std::vector<const char*>(kNames, kNames + 1 + inputs),
+                       1);
+  }
+
+  void run() {
+    io.dram = image(2);
     io.gsi_retired_stuck = true;
+    io.gsi_fold_sw = true;
     boot();
     for (unsigned s = 0; s < 2; ++s)
       check_frame(query(s), "RESET", s, 0, 0, 0, 0, false);
@@ -211,13 +314,21 @@ struct InternalStreamInfoPhase {
     pair("ACTIVE", 1, 2);
     settle(1, probe(1));
 
+    io.q_msrp.clear();
     attribute(0, 7, BRIDGE0, true);
     pair("FAILED-0", 0, 3, 0, 7, BRIDGE0);
     attribute(1, 11, BRIDGE1, true);
     pair("FAILED-1", 1, 3, 0, 11, BRIDGE1);
     check_frame(query(0), "DISTINCT-0", 0, 3, 0, 7, BRIDGE0, false);
+    // wire control: the fresh Failed registration DOES declare New, so the
+    // silence checked after FAILED-REFRESH is not a blind detector
+    CHECK(listener_news(0, 1000) >= 1,
+          "GI FAILED-0 wire: a fresh Failed registration declares Listener New");
     attribute(0, 9, BRIDGE0 ^ 0xFFFF000000000000ull, true);
     pair("FAILED-REFRESH", 0, 3, 0, 9, BRIDGE0 ^ 0xFFFF000000000000ull);
+    CHECK(listener_news(0, 600) == 0,
+          "GI FAILED-REFRESH wire: a changed FailureInformation sends no "
+          "Listener New");
     attribute(0, 9, BRIDGE0 ^ 0xFFFF000000000000ull, true);
     io.run_ms(100);
     CHECK(io.q_aecp.empty(), "GI unchanged Failed: no fabricated failure transition");
@@ -232,11 +343,15 @@ struct InternalStreamInfoPhase {
     binding(0, false);
     pair("DISABLED", 0, 0);
     // Reset with sink 1 still COMPLETED and registering a nonzero Failed.
+    // The image now carries STREAM_INPUT 0..9, past the eight hardware sinks.
+    io.dram = image(10);
     boot();
     for (unsigned s = 0; s < 2; ++s)
       check_frame(query(s), "RESET-LIVE", s, 0, 0, 0, 0, false);
     register_controller();
+    rebind_from_probing(0);
     bind_without_talker(1);
+    index_guard(1, 1);
     binding(1, false);
     pair("DISABLED", 1, 0);
     io.run_ms(100);

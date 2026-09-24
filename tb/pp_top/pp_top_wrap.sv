@@ -233,6 +233,9 @@ module pp_top_wrap (
 
     // the per-source DA gate a fabric ANDs with its own stream enable
     output logic [7:0]  acmp_declaring_o,
+    //! the published (debounced) binding view an integrator folds into
+    //! GET_STREAM_INFO's BOUND/STREAMING_WAIT flags (06 F06.13)
+    output logic [7:0]  acmp_bound_o,
 
     // the Class A Domain in force (class-D, F02.10), passed through by name:
     // these ports are where an integrator reads P-SRP-DOM-DEF-VID's effect
@@ -545,6 +548,7 @@ module pp_top_wrap (
       .maap_conflicts_o      (maap_conflicts_o),
       .maap_defends_o        (maap_defends_o),
       .acmp_declaring_o      (acmp_declaring_o),
+      .acmp_bound_o          (acmp_bound_o),
       .srp_class_a_prio_o    (srp_class_a_prio_o),
       .srp_class_a_vid_o     (srp_class_a_vid_o),
       .srp_domain_adopted_o  (srp_domain_adopted_o),

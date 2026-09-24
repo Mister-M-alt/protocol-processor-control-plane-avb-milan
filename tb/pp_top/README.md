@@ -24,7 +24,9 @@ tally.
 
 - **GI: processor-owned GET_STREAM_INFO input fields** (Milan 5.3.8.6/.8,
   5.4.5.2/Table 5.22). `gsi_internal.hpp` uses a fresh eight-sink processor
-  with two STREAM_INPUT descriptors. Real BIND_RX, ADP discovery,
+  with two STREAM_INPUT descriptors (ten after the second reset). The harness
+  integrator folds the published binding/started view into STREAMING_WAIT,
+  as F06.13 asks of an integrator, so that flag is graded too. Real BIND_RX, ADP discovery,
   PROBE_TX_RESPONSE and MSRP frames drive the listener and SRP state
   machines; no record is forced. Every transition is checked in the complete
   solicited and unsolicited response, including sequence, descriptor index,
@@ -37,10 +39,20 @@ tally.
   Two settled sinks register different failure codes and 64-bit bridge IDs.
   Replacing Failed by Advertise and withdrawing Failed clear both fields;
   a changed FailureInformation refresh notifies, while an unchanged refresh
-  stays quiet. Withdrawal produces the SRP and ensuing probing events, both
+  stays quiet. On the wire, the fresh Failed registration declares Listener
+  New (a control for the detector) and the changed refresh declares none:
+  the processor's MSRP frames are parsed value by value for 1 s and 600 ms.
+  Withdrawal produces the SRP and ensuing probing events, both
   checked. Reset over erased NVM clears live status. A hardware sink missing
   from the descriptor image answers a full zero error body in both response
-  paths despite its real ACTIVE record. External input selectors 5 and 7
+  paths despite its real ACTIVE record. After the second reset, a re-bind
+  from PRB_W_RESP to another talker with STREAMING_WAIT keeps ACTIVE/0 and
+  must give exactly one unsolicited response carrying STREAMING_WAIT
+  (REBIND-SW), then the new talker's double timeout and the unbind report.
+  STREAM_INPUT 9 of the ten-input image, which a three-bit sink index would
+  alias onto PASSIVE sink 1, answers zero internal fields (INDEX-GUARD;
+  solicited only, because notifications are raised per hardware sink).
+  External input selectors 5 and 7
   are stalled if requested, and a request counter must remain zero.
   Existing section G still checks the unchanged STREAM_OUTPUT gather.
 
@@ -62,10 +74,15 @@ tally.
   | Failure bridge tied to zero | `GI FAILED-0 solicited: full failure bridge` |
   | pbsta tied to zero | `GI PASSIVE solicited: pbsta` |
   | acmpsta tied to zero | `GI TIMEOUT solicited: acmpsta` |
-  | Adjacent sink selected for the internal sample | `GI DISTINCT-0 solicited: full failure bridge` |
+  | Adjacent sink selected for the internal read | `GI DISTINCT-0 solicited: full failure bridge` |
   | Original integrator path restored | `GI internal seam: selectors 5/7 never requested` |
   | Missing-descriptor guard removed | `GI MISSING solicited: pbsta` |
   | Committed-status notification removed | `GI PASSIVE unsolicited: complete Milan response` |
+  | Re-bind started/stopped trigger removed (bind walks excluded again) | `GI REBIND-SW: exactly one unsolicited response` |
+  | SRP FailureInformation-change strobe removed | `GI FAILED-REFRESH unsolicited: complete Milan response` |
+  | FailureInformation change re-declares the Listener again | `GI FAILED-REFRESH wire: a changed FailureInformation sends no` |
+  | Index guard removed before narrowing | `GI INDEX-GUARD solicited: pbsta sink 9` |
+  | Bridge no longer gated on FAILED after the index mux | `GI ADVERTISE unsolicited: full failure bridge` |
 
 - **A** **READ_DESCRIPTOR end to end** (06 §6.1, 07 §3.3) — the seam this
   suite used to stop at. A real AEM command on the MAC byte stream comes back

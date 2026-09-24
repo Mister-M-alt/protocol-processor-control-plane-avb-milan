@@ -304,8 +304,9 @@ Selector 4 still requests the destination MAC, but its failure-code byte is
 replaced internally. Keep serving the other selectors and the existing
 STREAM_OUTPUT words. No additional port or instantiation connection is needed.
 The internal fields and their notification events have one state owner; do not
-derive a second probing status from bound/settled flags. The authoritative
-gather and sampling contract is [06 F06.13](../architecture/06_aecp_engine.md#fig-06-lineage).
+derive a second probing status from bound/settled flags. The internal fields are
+read live at each gather beat, like your own words; the authoritative gather
+contract and its coherence bound are [06 F06.13](../architecture/06_aecp_engine.md#fig-06-lineage).
 
 ---
 

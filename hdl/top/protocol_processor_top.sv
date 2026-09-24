@@ -2205,6 +2205,9 @@ module protocol_processor_top
   logic [2:0]  srp_draw_kind_w;
   logic        srp_draw_busy_w, srp_draw_valid_w;
   logic [N_STREAM_IN_P-1:0]  srp_evt_tk_reg_w, srp_evt_tk_unreg_w;
+  //! FailureInformation change: feeds ONLY the GET_STREAM_INFO notify OR
+  //! (stri_events), never the event router or the ACMP listener
+  logic [N_STREAM_IN_P-1:0]  srp_evt_tk_fail_chg_w;
   logic [N_STREAM_OUT_P-1:0] srp_lstn_reg_change_w;
   logic [3:0]  srp_dbg_vid_active_w;
   logic        srp_dbg_vlan_err_nc_w, srp_dbg_adm_round_nc_w;
@@ -2281,6 +2284,7 @@ module protocol_processor_top
       .draw_ms_i           (prng_ms_w),
       .evt_tk_registered_o   (srp_evt_tk_reg_w),
       .evt_tk_unregistered_o (srp_evt_tk_unreg_w),
+      .evt_tk_fail_chg_o     (srp_evt_tk_fail_chg_w),
       .lstn_reg_change_o     (srp_lstn_reg_change_w),
       .evt_domain_change_o   (srp_evt_domain_change_w),
       .class_a_prio_o      (srp_class_a_prio_w),
@@ -3069,40 +3073,35 @@ module protocol_processor_top
   end
 
   //! The engine keeps its word table and response layout. Intercept only
-  //! kind 0 STREAM_INPUT words here, where the state owners meet. Snapshot
-  //! the internal fields once at the flags beat, so failure code/bridge and
-  //! probing status remain one sample across the later gather beats. The
-  //! full descriptor index is checked BEFORE narrowing to the sink width.
+  //! kind 0 STREAM_INPUT words here, where the state owners meet, and read
+  //! the owners LIVE at each beat: no sample-and-hold copy (06 F06.13 states
+  //! the bound). The full descriptor index is checked BEFORE narrowing to
+  //! the sink width. The SRP bridge arrives ungated, so it is gated ONCE
+  //! here, after the index mux, on the addressed sink's registered FAILED.
   logic        aecp_gsi_req_w, aecp_gsi_wait_w;
   logic [63:0] aecp_gsi_data_w;
-  logic        gsi_input_w, gsi_internal_w, gsi_sampled_r;
-  logic [7:0]  gsi_fail_code_r, gsi_status_r;
-  logic [63:0] gsi_fail_bridge_r;
+  logic        gsi_input_w, gsi_internal_w;
+  logic [SINK_IDX_W_C-1:0] gsi_sink_w;
+  logic [7:0]  gsi_fail_code_w, gsi_status_w;
+  logic [63:0] gsi_fail_bridge_w;
   assign gsi_input_w = (gsi_kind_o == 2'd0)
                         && (gsi_desc_type_o == 16'h0005);
   assign gsi_internal_w = gsi_input_w
                            && ((gsi_sel_o == 4'd5) || (gsi_sel_o == 4'd7));
   assign gsi_req_o = aecp_gsi_req_w && !gsi_internal_w;
   assign aecp_gsi_wait_w = !gsi_internal_w && gsi_wait_i;
+  assign gsi_sink_w = SINK_IDX_W_C'(gsi_desc_index_o);
 
-  always_ff @(posedge clk_i) begin : gsi_sample
-    if (!rst_n) begin
-      gsi_sampled_r    <= 1'b0;
-      gsi_fail_code_r  <= 8'd0;
-      gsi_fail_bridge_r <= 64'd0;
-      gsi_status_r     <= 8'd0;
-    end else if (!aecp_gsi_req_w || !gsi_input_w || (gsi_sel_o != 4'd0)) begin
-      gsi_sampled_r <= 1'b0;
-    end else if (!gsi_wait_i && !gsi_sampled_r) begin
-      gsi_sampled_r <= 1'b1;
-      gsi_fail_code_r   <= 8'd0;
-      gsi_fail_bridge_r <= 64'd0;
-      gsi_status_r      <= 8'd0;
-      if (32'(gsi_desc_index_o) < N_STREAM_IN_P) begin
-        gsi_fail_code_r <= srp_snk_fail_code_w[SINK_IDX_W_C'(gsi_desc_index_o)];
-        gsi_fail_bridge_r <= srp_snk_fail_bridge_w[SINK_IDX_W_C'(gsi_desc_index_o)];
-        gsi_status_r <= lstn_gsi_status_r[SINK_IDX_W_C'(gsi_desc_index_o)];
+  always_comb begin : gsi_owner_read
+    gsi_fail_code_w   = 8'd0;
+    gsi_fail_bridge_w = 64'd0;
+    gsi_status_w      = 8'd0;
+    if (32'(gsi_desc_index_o) < N_STREAM_IN_P) begin
+      gsi_fail_code_w = srp_snk_fail_code_w[gsi_sink_w];
+      if (srp_tk_reg_state_w[gsi_sink_w] == 2'd2) begin
+        gsi_fail_bridge_w = srp_snk_fail_bridge_w[gsi_sink_w];
       end
+      gsi_status_w = lstn_gsi_status_r[gsi_sink_w];
     end
   end
 
@@ -3110,9 +3109,9 @@ module protocol_processor_top
     aecp_gsi_data_w = gsi_data_i;
     if (gsi_input_w) begin
       case (gsi_sel_o)
-        4'd4: aecp_gsi_data_w = {gsi_data_i[63:16], gsi_fail_code_r, 8'd0};
-        4'd5: aecp_gsi_data_w = gsi_fail_bridge_r;
-        4'd7: aecp_gsi_data_w = {32'd0, gsi_status_r, 24'd0};
+        4'd4: aecp_gsi_data_w = {gsi_data_i[63:16], gsi_fail_code_w, 8'd0};
+        4'd5: aecp_gsi_data_w = gsi_fail_bridge_w;
+        4'd7: aecp_gsi_data_w = {32'd0, gsi_status_w, 24'd0};
         default: begin end
       endcase
     end
@@ -3122,6 +3121,14 @@ module protocol_processor_top
   //! non-ATDECC mapping paths can enforce Milan 5.4.2.27 and 5.4.2.28.
   assign aecp_lock_held_o = ntfy_lock_held_w;
 
+  //! Milan Table 5.22, STREAM_INPUT: one term per GET_STREAM_INFO-visible
+  //! owner. The listener's committed record gives two: the pbsta/acmpsta
+  //! compare (bind, unbind, settle, teardown, double timeout, retry) and
+  //! the started/stopped change, including a re-bind that flips
+  //! STREAMING_WAIT while pbsta/acmpsta stay put (PWR -> PWR). Both are
+  //! registered off the SAME X_WB record write, so a walk that moves both
+  //! lands them in one cycle and the OR pushes one frame. SRP gives the
+  //! registration events and the FailureInformation change.
   always_comb begin : stri_events
     ntfy_stri_in_w  = '0;
     ntfy_stri_out_w = '0;
@@ -3130,7 +3137,8 @@ module protocol_processor_top
           (32'(lstn_act_sink_w) == k
            && lstn_act_strt_chg_w && !lstn_act_strt_cmd_chg_w)
           || lstn_gsi_changed_r[k]
-          || srp_evt_tk_reg_w[k] || srp_evt_tk_unreg_w[k];
+          || srp_evt_tk_reg_w[k] || srp_evt_tk_unreg_w[k]
+          || srp_evt_tk_fail_chg_w[k];
     end
     for (int unsigned k = 0; k < N_STREAM_OUT_P; k++) begin
       ntfy_stri_out_w[k] =
@@ -3514,8 +3522,10 @@ module protocol_processor_top
       .rgy_wait_o            (aecp_rgy_wait_w),
       //! Table 5.22 GET_STREAM_INFO triggers this fabric OBSERVES: for a
       //! sink, committed probing/ACMP status changes (also covering bound
-      //! and settled transitions) and registered Talker attribute events,
-      //! including changed FailureInformation; for a source, its declaration
+      //! and settled transitions), committed started/stopped changes
+      //! (including a re-bind that flips STREAMING_WAIT), registered Talker
+      //! attribute events and a changed Talker Failed FailureInformation
+      //! (stri_events); for a source, its declaration
       //! opening/closing and the registered Listener attribute changes.
       //! What the fabric cannot see, it cannot notify about - the honest
       //! remainder is recorded in 06 §7.
