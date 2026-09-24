@@ -423,6 +423,8 @@ class SrpStreamFsmsSuite {
   void domain_only_leave_all_never_ages_the_listener_registrar();
   void listener_only_leave_all_ages_the_listener_registrar_to_mt();
   void listener_failure_change_notifies_without_redeclaring();
+  void listener_failure_change_compares_each_sink_with_its_own_latch();
+  void listener_failure_change_notifies_registered_sinks_on_a_shared_stream();
 
   const milan::tb::Model<Vsrp_stream_fsms_wrap> model;
   Vsrp_stream_fsms_wrap* const d = model.get();
@@ -997,7 +999,9 @@ void SrpStreamFsmsSuite::listener_failure_change_notifies_without_redeclaring() 
   CHECK(h.l_reg[0] == 2 && h.l_fchg[0] == 0,
         "L7: Failed->Advertise->Failed swaps strobe REGISTERED, never the "
         "change (reg %d, fchg %d)", h.l_reg[0], h.l_fchg[0]);
+}
 
+void SrpStreamFsmsSuite::listener_failure_change_compares_each_sink_with_its_own_latch() {
   // One comparator on the HIT sink: two sinks on different streams hold
   // different latches, and each refresh is compared with its own sink's.
   constexpr uint64_t SIDB = 0x02AABBCCDDEE0002ull;
@@ -1016,7 +1020,9 @@ void SrpStreamFsmsSuite::listener_failure_change_notifies_without_redeclaring() 
   CHECK(h.l_fchg[0] == 0 && h.l_fchg[1] == 1,
         "L8: sink 1 taking sink 0's values still strobes sink 1 only "
         "(fchg %d/%d)", h.l_fchg[0], h.l_fchg[1]);
+}
 
+void SrpStreamFsmsSuite::listener_failure_change_notifies_registered_sinks_on_a_shared_stream() {
   // Sinks on the SAME stream share the latch. A sink settled later (MT,
   // zeroed) is not a candidate even at the lowest index: its fresh
   // registration strobes REGISTERED while the registered pair stays quiet.
@@ -1055,6 +1061,8 @@ int SrpStreamFsmsSuite::run() {
   domain_only_leave_all_never_ages_the_listener_registrar();
   listener_only_leave_all_ages_the_listener_registrar_to_mt();
   listener_failure_change_notifies_without_redeclaring();
+  listener_failure_change_compares_each_sink_with_its_own_latch();
+  listener_failure_change_notifies_registered_sinks_on_a_shared_stream();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
