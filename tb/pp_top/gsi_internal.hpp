@@ -269,7 +269,7 @@ struct InternalStreamInfoPhase {
   // Change only the latency bytes of a real Talker JoinIn refresh; grade
   // every emitted response and the solicited read through the same gather.
   void latency_refresh(unsigned sink, uint32_t latency, uint32_t other_latency,
-                       bool changed) {
+                       bool changed, const char* step = "LATENCY-CHANGE") {
     const unsigned other = sink ^ 1;
     const uint8_t code = sink == 1 ? 11 : 0;
     const uint64_t bridge = sink == 1 ? BRIDGE1 : 0;
@@ -277,14 +277,14 @@ struct InternalStreamInfoPhase {
     const auto uns = input_uns(sink, 100);
     if (changed) {
       CHECK(uns.size() == 1,
-            "GI LATENCY-CHANGE: exactly one unsolicited response for sink %u, got %zu",
-            sink, uns.size());
+            "GI %s: exactly one unsolicited response for sink %u, got %zu",
+            step, sink, uns.size());
       const auto pushed = uns.empty() ? std::vector<uint8_t>{} : uns[0];
-      check_frame(pushed, "LATENCY-CHANGE", sink, 3, 0, code, bridge,
+      check_frame(pushed, step, sink, 3, 0, code, bridge,
                   true, true, false, latency);
     } else {
-      CHECK(uns.empty(), "GI LATENCY-SAME: unchanged refresh sends no response for sink %u",
-            sink);
+      CHECK(uns.empty(), "GI LATENCY-SAME: unchanged refresh sends no response for sink %u (%s)",
+            sink, step);
     }
     check_frame(query(sink), "LATENCY-READ", sink, 3, 0, code, bridge,
                 false, true, false, latency);
@@ -294,6 +294,40 @@ struct InternalStreamInfoPhase {
                 other == 1 ? 11 : 0, other == 1 ? BRIDGE1 : 0,
                 false, true, false, other_latency);
     CHECK(io.q_aecp.empty(), "GI LATENCY: no duplicate or unrelated response");
+  }
+
+  // Start and finish at the existing zero/all-ones latches. Returning to
+  // the baseline between walking values makes EACH transition differ in
+  // only the named bit, in both directions. Repeat every committed value.
+  void latency_walks() {
+    const int before_checks = h.checks;
+    const int before_fails = h.fails;
+    for (unsigned walk = 0; walk < 2; ++walk) {
+      const unsigned sink = walk;
+      const uint32_t baseline = walk == 0 ? 0u : UINT32_MAX;
+      const uint32_t other_latency = ~baseline;
+      for (unsigned bit = 0; bit < 32; ++bit) {
+        // Keep both real peers discovered and registered through the long
+        // sweep. This unchanged refresh is graded before the isolated step,
+        // so a registration event cannot substitute for its latency event.
+        discover(0);
+        discover(1);
+        latency_refresh(sink ^ 1, other_latency, baseline, false,
+                        "LATENCY-WALK-PEER-REFRESH");
+        const uint32_t value = baseline ^ (uint32_t{1} << bit);
+        for (unsigned returning = 0; returning < 2; ++returning) {
+          const uint32_t latency = returning ? baseline : value;
+          char step[80];
+          snprintf(step, sizeof(step), "LATENCY-WALK-%s bit %u %s",
+                   walk == 0 ? "ONE" : "ZERO", bit,
+                   returning ? "return" : "step");
+          latency_refresh(sink, latency, other_latency, true, step);
+          latency_refresh(sink, latency, other_latency, false, step);
+        }
+      }
+    }
+    printf("GI latency walks added: %d checks, %d failures\n",
+           h.checks - before_checks, h.fails - before_fails);
   }
 
   void latency_changes() {
@@ -308,6 +342,7 @@ struct InternalStreamInfoPhase {
     latency_refresh(1, 0xABCDEF01, 0x81234567, false);
     latency_refresh(0, 0, 0xABCDEF01, true);
     latency_refresh(1, 0xFFFFFFFF, 0, true);
+    latency_walks();
     io.gsi_fold_latency = false;
   }
 
