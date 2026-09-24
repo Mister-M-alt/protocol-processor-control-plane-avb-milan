@@ -396,6 +396,7 @@ Event catalog (routed by the event router to the listed consumers):
 | `GM_CHANGE{if}` | gptp | ADP advertise SM, counters, NOTIF (GET_AVB_INFO) |
 | `AS_CAPABLE_CHANGE{if}` / `PATH_CHANGE{if}` | gptp | NOTIF (GET_AVB_INFO / GET_AS_PATH) |
 | `TK_ATTR_REGISTERED/UNREGISTERED{sink}` | srp | ACMP listener SM (`EVT_TK_REGISTERED/UNREGISTERED`) |
+| `TK_FAILURE_CHANGE{sink}` | srp | NOTIF (GET_STREAM_INFO) only, wired directly and NOT routed: never the ACMP listener, never a Listener re-declaration ([10 §6.4](10_srp_engine.md)) |
 | `LISTENER_REG_CHANGE{src}` | srp | talker DA-gate, NOTIF (GET_STREAM_INFO), GET_TX_STATE data |
 | `DOMAIN_CHANGE{class}` | srp | NOTIF (GET_AVB_INFO), talker PCP flow |
 | `MAAP_CONFLICT{src}` | maap | talker DA flow ([05 §6bis](05_acmp_engine.md)) |
@@ -406,8 +407,9 @@ Event catalog (routed by the event router to the listed consumers):
 ## 6. Class D — level status dictionary
 
 Table-only by design: these are synchronized levels with no transaction protocol; a
-waveform would show nothing. Single source of truth for external state names — the
-GET_x gather paths ([06 §6.2](06_aecp_engine.md)) cite these names.
+waveform would show nothing. Single source of truth for status names; the
+GET_x gather paths ([06 §6.2](06_aecp_engine.md)) cite these names. Rows marked
+internal are consumed inside the processor and add no top-level ports.
 
 <a id="fig-02-statusdict"></a>**F02.10 — External status dictionary**
 
@@ -423,7 +425,8 @@ GET_x gather paths ([06 §6.2](06_aecp_engine.md)) cite these names.
 | `tk_decl_state[src]` | 2 | srp | {NONE, ADVERTISE, FAILED — self-declared, permitted but unused by this profile ([10 §6.3](10_srp_engine.md))} | GET_STREAM_INFO(out), GET_TX_STATE |
 | `lstn_reg_state[src]` | 2 | srp | the registered Listener's FourPackedEvent (802.1Q §35.2.2.7.4): 0 NONE (Ignore), 1 ASKING_FAILED, 2 READY, 3 READY_FAILED. These codes live in ONE place, [`srp_pkg::srp_decl_e`](../../hdl/srp/srp_pkg.sv), and no module keeps a second copy; READY and READY_FAILED share bit 1, which is what the streaming reduction tests | GET_TX_STATE and GET_STREAM_INFO(out) REGISTERING_FAILED, DA-gate, the Milan §5.3.7.3 streaming reduction |
 | `tk_reg_state[sink]` | 2 | srp | {NONE, ADVERTISE, FAILED} for the settled match | GET_STREAM_INFO(in), GET_RX_STATE |
-| `msrp_fail_code[x]` / `msrp_fail_bridge[x]` | 8 / 64 | srp | valid with FAILED states | GET_STREAM_INFO |
+| `msrp_fail_code[x]` / `msrp_fail_bridge[x]` | 8 / 64 | srp | valid with FAILED states; zero outside them, except the internal sink bridge, which is the raw registrar latch gated once on `tk_reg_state[sink]` FAILED after the processor's index mux; input values read live per gather beat ([06 F06.13](06_aecp_engine.md#fig-06-lineage)) | GET_STREAM_INFO: input failure-code byte of selector 4 and bridge selector 5 are processor-owned; selector 5 has no external request for inputs |
+| `pbsta[sink]` / `acmpsta[sink]` | 3 / 5 | ACMP listener record (internal) | committed record RAM write; acmpsta zero outside PROBING_ACTIVE (Milan §5.3.8.6) | GET_STREAM_INFO input selector 7, served internally with no external request; changed commits trigger notification |
 | `granted_slope_bps[src]` | 32 | srp | per-stream granted idleSlope while `sr_admitted[src]` = 1, else 0 (802.1Q §34.6.1.1) | CBS slope MUX, per-talker gate |
 | `sr_admitted[src]` | 1 | srp | reservation admitted against the Σ-slope port ceiling | AVTP per-talker gate |
 | `acc_latency[sink]` | 32 | srp | registered talker attr value | GET_STREAM_INFO(in) (+ P-INTERNAL-INGRESS-DELAY-NS) |

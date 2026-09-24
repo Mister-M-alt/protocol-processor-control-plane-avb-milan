@@ -1012,6 +1012,13 @@ struct H {
   bool gsi_stuck = false;
   int  gsi_hold_cur = 0;
   uint64_t gsi_reads = 0;
+  uint64_t gsi_internal_leaks = 0;
+  bool gsi_retired_stuck = false;
+  //! Section GI only: fold the processor's published binding/started view
+  //! into the STREAM_INPUT flags word the way an integrator must (06 F06.13
+  //! "BOUND, STREAMING_WAIT"): STREAMING_WAIT 0x00000008 = bound and
+  //! stopped. Other sections keep the fixed flags word they grade against.
+  bool gsi_fold_sw = false;
   uint64_t ca_cancels = 0;
   //! the two AECP effect strobes a response cannot show (06 section 8):
   //! counted once per cycle so a refusal can be graded on what it did
@@ -1500,7 +1507,10 @@ struct H {
     d->gsi_wait_i = 0;
     d->gsi_data_i = 0;
     if (d->gsi_req_o) {
-      if (gsi_stuck || gsi_hold_cur < gsi_hold) {
+      const bool retired = d->gsi_kind_o == 0 && d->gsi_desc_type_o == 0x0005
+                           && (d->gsi_sel_o == 5 || d->gsi_sel_o == 7);
+      if (retired) ++gsi_internal_leaks;
+      if (gsi_stuck || (gsi_retired_stuck && retired) || gsi_hold_cur < gsi_hold) {
         d->gsi_wait_i = 1;
         ++gsi_hold_cur;
       } else {
@@ -1523,6 +1533,10 @@ struct H {
         } else {
           d->gsi_data_i = gsi_value(gk, gty, gix, gs,
                                     static_cast<uint8_t>(d->gsi_ord_o));
+          if (gsi_fold_sw && gk == 0 && gs == 0 && gty == 0x0005 && gix < 2
+              && ((d->acmp_bound_o >> gix) & 1)
+              && !((d->aecp_strm_started_o >> gix) & 1))
+            d->gsi_data_i |= 0x00000008u;              // STREAMING_WAIT
         }
         gsi_hold_cur = 0;
         ++gsi_reads;
@@ -4592,16 +4606,14 @@ struct LockPhase {
 };
 
 // ==== G. GET_STREAM_INFO (IEEE SS7.4.16, Milan SS5.4.2.10) ==============
-// (the Milan 80-byte response: flags_ex + pbsta/acmpsta; every value and
-//  every validity flag is the INTEGRATOR's through the gsi face - the
-//  harness above IS that integrator - while existence is the descriptor
-//  store's, so index 2 refuses NO_SUCH_DESCRIPTOR with a zero-flagged
-//  body whatever the face would answer.)
+// The Milan 80-byte response combines external words with the processor's
+// input failure/probing fields. Section GI drives their real state owners.
 struct StreamInfoPhase {
   H& h;
   const std::vector<uint8_t>& image_entity;
 
-  static std::vector<uint8_t> gsi_body(uint16_t ty, uint16_t ix, bool known) {
+  static std::vector<uint8_t> gsi_body(uint16_t ty, uint16_t ix, bool known,
+                                      uint8_t status = 0) {
       std::vector<uint8_t> b(56, 0);
       putbe(&b[0], ty, 2);
       putbe(&b[2], ix, 2);
@@ -4614,6 +4626,11 @@ struct StreamInfoPhase {
         putbe(&b[36], H::gsi_value(0, ty, ix, 5, 0), 8);
         putbe(&b[44], H::gsi_value(0, ty, ix, 6, 0), 8);
         putbe(&b[52], static_cast<uint32_t>(H::gsi_value(0, ty, ix, 7, 0)), 4);
+        if (ty == 0x0005) {
+          b[34] = 0;
+          putbe(&b[36], 0, 8);
+          putbe(&b[52], uint32_t(status) << 24, 4);
+        }
       }
       return b;
   }
@@ -4644,7 +4661,7 @@ struct StreamInfoPhase {
   void g1_g2_byte_exact_milan_responses_both_sides() {
     auto f = gsi_cmd(0x0005, 0, 0x7401);
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
-                           0x7401, 0x000F, gsi_body(0x0005, 0, true));
+                           0x7401, 0x000F, gsi_body(0x0005, 0, true, 0x20));
     CHECK(!f.empty() && f == want,
           "G1: STREAM_INPUT[0] Milan 80-byte response byte-exact (cdl 68)");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -4717,7 +4734,7 @@ struct StreamInfoPhase {
     auto uns = h.wait_any(h.q_aecp, 500);
     auto wantu = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                             CTLR_EID, 0x0000, 0x000F,
-                            gsi_body(0x0005, 1, true));
+                            gsi_body(0x0005, 1, true, 0x40));
     wantu[36] |= 0x80;
     CHECK(!uns.empty() && uns == wantu,
           "G7: bind emits the u=1 GET_STREAM_INFO for that sink (seq 0)");
@@ -4763,6 +4780,10 @@ struct StreamInfoPhase {
     CHECK(extra.empty(),
           "G7d: the bind pushed exactly ONE notification, not two "
           "(a started/stopped trigger that fires on bind duplicates it)");
+    auto timeout = h.wait_any(h.q_aecp, 300);
+    CHECK(timeout.size() == 94 && (timeout[36] & 0x80)
+          && fv_u64(timeout, 40, 2) == 1 && timeout[90] == 0x47,
+          "G7d2: the later double probe timeout reports ACTIVE/acmpsta 7");
   }
 
   // now a real started/stopped change under a live binding
@@ -5094,19 +5115,8 @@ struct DynamicInfoBatch : ReadSideTools {
       return b;
   }
   static std::vector<uint8_t> gsi_body(uint16_t ty, uint16_t ix, bool known) {
-      std::vector<uint8_t> b(56, 0);
-      putbe(&b[0], ty, 2); putbe(&b[2], ix, 2);
-      if (known) {
-        putbe(&b[4],  static_cast<uint32_t>(H::gsi_value(0, ty, ix, 0, 0)), 4);
-        putbe(&b[8],  H::gsi_value(0, ty, ix, 1, 0), 8);
-        putbe(&b[16], H::gsi_value(0, ty, ix, 2, 0), 8);
-        putbe(&b[24], static_cast<uint32_t>(H::gsi_value(0, ty, ix, 3, 0)), 4);
-        putbe(&b[28], H::gsi_value(0, ty, ix, 4, 0), 8);
-        putbe(&b[36], H::gsi_value(0, ty, ix, 5, 0), 8);
-        putbe(&b[44], H::gsi_value(0, ty, ix, 6, 0), 8);
-        putbe(&b[52], static_cast<uint32_t>(H::gsi_value(0, ty, ix, 7, 0)), 4);
-      }
-      return b;
+      // The shared fixture keeps input 0 bound to an absent talker, PASSIVE.
+      return StreamInfoPhase::gsi_body(ty, ix, known, ix == 0 ? 0x20 : 0);
   }
   static std::vector<uint8_t> ctr_body(uint16_t ty, uint16_t ix) {
       std::vector<uint8_t> b(136, 0);
@@ -5777,6 +5787,9 @@ struct StreamingStatePhase : ReadSideTools {
   // the wire. Without a recipient, a broken NOTIFY_ENQ is indistinguishable
   // from the required silence.
   void w21s_an_unbound_sink_is_a_no_op() {
+    // Let sink 0's independent unanswered-probe sequence reach PASSIVE
+    // before registering the observer for sink 1's START no-op.
+    h.run_ms(4500);
     const uint64_t W21_C2_MAC = 0x0202C2C2C2C2ull;
     std::vector<uint8_t> w21_flags(4, 0);
     h.q_aecp.clear();
@@ -6136,6 +6149,21 @@ struct ReadSidePhase : SamplingRateTools {
   static constexpr uint64_t C2_MAC = UnsolicitedPhase::C2_MAC;
   ReadSidePhase(H& hh, std::vector<ImgEnt>& ents)
       : SamplingRateTools(hh), image_ents(ents) {}
+
+  // These output checks must own their freshness window: earlier phases
+  // may spend time waiting for listener status transitions. A real probe
+  // refreshes the MAAP address gate and the talker's SRP declaration.
+  void refresh_source0(uint16_t seq) {
+    h.q_acmp.clear();
+    h.feed(acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID,
+                      0, 7, 0, 0, seq, 0x000A, 0));
+    auto rsp = h.wait_frame(h.q_acmp, 400,
+        [seq](const std::vector<uint8_t>& f) { return f.size() == 70
+            && (f[15] & 0x0F) == 1 && fv_u64(f, 62, 2) == seq; });
+    CHECK(!rsp.empty() && st(rsp) == AECP_SUCCESS,
+          "W-output-pre: source 0 probe refresh succeeds");
+    h.run_ms(300);
+  }
 
   void run() {
     h.q_aecp.clear();
@@ -6925,6 +6953,7 @@ struct ReadSidePhase : SamplingRateTools {
   // it), so a refusal below can only come from the output half.
   void w17_the_other_predicate_half_a_streaming_output() {
     const uint64_t SID_T0 = (OWN_MAC << 16) | 0x0000;
+    refresh_source0(0x76E0);
 
     CHECK(h.d->dbg_bound0_o == 0,
           "W17: no Stream Input is bound; the input half cannot be what "
@@ -7423,6 +7452,7 @@ struct ReadSidePhase : SamplingRateTools {
   // Advertise AND a registered Listener - so the precondition arrives the
   // W17 way: a peer's Listener Ready on the wire, never a poked bit.
   void w25_the_streaming_output_refusals_against_real_streaming() {
+    refresh_source0(0x76E1);
     auto sf_pl = [&](uint16_t ty, uint16_t ix, uint64_t fmt) {
       std::vector<uint8_t> p(12, 0);
       putbe(&p[0], ty, 2); putbe(&p[2], ix, 2); putbe(&p[4], fmt, 8);
@@ -8510,6 +8540,8 @@ struct DomainDefaultPhase {
   }
 };
 
+#include "gsi_internal.hpp"
+
 // ---------------------------------------------------------------------------
 // the suite: one phase per property proved, in the order the wire proves them
 // ---------------------------------------------------------------------------
@@ -8549,6 +8581,29 @@ struct Suite {
     CountersPhase{h, d, image_entity}.run();
     AudioMapPhase{h, d, image_spi1}.run();
     AudioMapEditPhase{h, d}.run();
+    // S8's service-only sink has no descriptor and no later consumer.
+    // Withdraw it so its eventual LeaveAll expiry cannot notify a controller
+    // registered by an unrelated command test.
+    const auto listener_retired = h.svc(OP_WDRW_LS, 2);
+    CHECK(listener_retired.got && listener_retired.status == ST_OK,
+          "GI-isolation: retire S8 listener before registry tests");
+    // S6 leaves a talker in its retry loop. Retire it before the registry
+    // timing tests: its now-observable ACTIVE/timeout changes are unrelated
+    // to their notification sequence and controller-lifetime assertions.
+    h.q_acmp.clear();
+    h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                      T1_UID, 0, 0, 0, 0x731F, 0, 0));
+    const auto retired = h.wait_frame(h.q_acmp, 400,
+        [](const std::vector<uint8_t>& f) { return f.size() == 70
+            && (f[15] & 0x0F) == 9 && fv_u64(f, 62, 2) == 0x731F; });
+    CHECK(!retired.empty(), "GI-isolation: retire S6 probing before registry tests");
+    h.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID + 0x100, EID,
+                      T1_UID, 0, 0, 0, 0x731E, 0, 0));
+    const auto rebound = h.wait_frame(h.q_acmp, 400,
+        [](const std::vector<uint8_t>& f) { return f.size() == 70
+            && (f[15] & 0x0F) == 7 && fv_u64(f, 62, 2) == 0x731E; });
+    CHECK(!rebound.empty(), "GI-isolation: bind absent peer for configuration tests");
+    h.run_ms(4500);
     UnsolicitedPhase{h, d, image_entity, image_clkdom}.run();
     LockPhase{h}.run();
     StreamInfoPhase{h, image_entity}.run();
@@ -9444,7 +9499,9 @@ int main(int argc, char** argv) {
   DomainDefaultPhase{h}.run();
   const char* const build = "fixture";
 #else
-  Suite(h).run();
+  const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
+  if (!gsi_only) Suite(h).run();
+  InternalStreamInfoPhase{h}.run();
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's two

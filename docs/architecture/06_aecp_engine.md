@@ -208,16 +208,21 @@ status (`NO_SUCH_DESCRIPTOR` / `BAD_ARGUMENTS` for a bad config index) with the 
 
 ### 6.2 GET_STREAM_INFO — the Milan 80-byte response and its data lineage
 
-**Realization status (2026-08-15, `E_GSTRI` + the `gsi_*` face)** — LANDED for
+**Realization status (`E_GSTRI` + the internal/external gather)**: implemented for
 STREAM_INPUT and STREAM_OUTPUT: the Milan §5.4.2.10 80-byte response (cdl 68) with
 flags_ex and the pbsta/acmpsta byte. Existence is the descriptor store's (a locate
-miss answers NO_SUCH_DESCRIPTOR carrying the full, zero-flagged body); every VALUE
-and VALIDITY FLAG rides the shared Milan-info gather face (`gsi_kind` 0, word
+miss answers NO_SUCH_DESCRIPTOR carrying the full, zero-valued body without
+requesting gather data). The engine's Milan-info gather uses `gsi_kind` 0, word
 selectors 0..7 = flags / stream_format / stream_id / msrp_accumulated_latency /
-{dest_mac, failure_code} / failure_bridge_id / {vlan, flags_ex} / {pbsta, acmpsta}),
-because the truth lives in the integrator's binding view, SRP registrars, format
-registers and probing state — an unwired face answers all-zero flags: every field
-honestly absent. Selector 15 of the same kind is SET_STREAM_FORMAT's verdict word:
+{dest_mac, failure_code} / failure_bridge_id / {vlan, flags_ex} / {pbsta, acmpsta}.
+For STREAM_INPUT, the top serves selectors 5 and 7 internally from SRP and
+the committed ACMP listener record, and replaces selector 4's failure-code
+byte with SRP's code. Selector 4 still asks the integrator for the destination
+MAC. Selectors 5 and 7 produce **no external request for an input** and ignore
+external wait/data. There are no added top-level ports. Other input words,
+all output words, and all validity flags remain integrator-owned; an unwired
+external face clears those words and flags while the internal fields still
+report their state owners. Selector 15 of the same kind is SET_STREAM_FORMAT's verdict word:
 while that command is in flight the engine presents the PROPOSED format on
 `gsi_prop_fmt`, and the integrator answers bit 0 = supported for the addressed
 stream, bit 1 = every channel an existing audio mapping references survives it.
@@ -234,14 +239,10 @@ and both format directions, each value beside its valid bit -- are the
 `aecp_pt_offset` / `aecp_fmt_in` / `aecp_fmt_out` port groups on
 `protocol_processor_top`; `KL_aecp_dyn_state`'s banner is their authority. Non-stream targets refuse NOT_SUPPORTED with the command echoed;
 short commands BAD_ARGUMENTS; a wedged face voids to ENTITY_MISBEHAVING. The Table
-5.22 notification class is live for the events the fabric observes: sink bound /
-settled / torn-down and registered-Talker-attribute changes, source declaration
-open/close and registered-Listener changes. Started/stopped IS observed since
-issue #78: `KL_pp_acmp_listener` raises `act_strt_chg_o` on a committed change
-under a live binding, and `protocol_processor_top` ORs it into the per-sink
-STREAM_INPUT event level. It is deliberately narrow — a repeat that changes
-nothing pushes none, and a walk that re-binds pushes from its own discovery
-term instead, so one event never yields two frames.
+5.22 notification class is live for the events the fabric observes; the
+STREAM_INPUT trigger set and its one-frame rule are stated once, in
+[§7](#7-registry-notifications-liveness-identify), and the per-field update
+events are F06.13's.
 
 <a id="fig-06-streaminfo"></a>**F06.12 — Response payload @24..@79** (Milan Fig 5.1,
 renames Δ6; legacy controllers ignore @72+, Milan controllers detect the extension via
@@ -296,15 +297,29 @@ MSRP_FAILURE_VALID=0} ⇔ **streaming**.
 | Field / flag | Owner record | Signal ([F02.10](02_interfaces.md#fig-02-statusdict)) | Update event | Async notif (Table 5.22) |
 |---|---|---|---|---|
 | stream_format | integrator face word 1, folding the published SET_STREAM_FORMAT row when valid | - | SET_STREAM_FORMAT | via command trigger |
-| BOUND, pbsta, acmpsta, STREAMING_WAIT | ACMP sink record | — | listener-SM commits | yes (input) |
+| BOUND, STREAMING_WAIT | ACMP sink record, published binding/started view folded by the integrator | — | listener-SM commits; a started/stopped change under a live binding, including a re-bind that flips STREAMING_WAIT | yes (input) |
+| pbsta, acmpsta | ACMP sink record, internal selector 7 | `pbsta[sink]`, `acmpsta[sink]` | changed record write, including preload | yes (input) |
 | stream_id / DA / VLAN + *_VALID | sink record (settled) | — | A15 / A8 | yes |
 | msrp_accumulated_latency | srp | `acc_latency[sink]` + `P-INTERNAL-INGRESS-DELAY-NS` | talker-attr change | yes (input) |
 | REGISTERING (flags_ex), REGISTERING_FAILED | srp | `tk_reg_state[sink]` | TK_ATTR events | yes |
-| msrp_failure_code / bridge | srp | `msrp_fail_*` | TK_ATTR(Failed) | yes |
+| msrp_failure_code / bridge | SRP listener registrar, internal selector 4 byte / selector 5 | `msrp_fail_*` | TK_ATTR(Failed), a changed FailureInformation under a registered Failed (notification strobe only, [10 §6.4](10_srp_engine.md)), replacement or withdrawal | yes |
 
-Atomicity: the µprogram issues one `GATHER_EXT` that snapshots sink record + dictionary
-under the sink's STREAM_CFG key (scoreboard blocks writers during the latch) — a
-response is never a torn mix of two states.
+Reads: the top reads the input failure code, bridge ID and committed
+probing/ACMP byte LIVE from their owners at the selector 4, 5 and 7 beats; there
+is no sample-and-hold copy. The SRP bridge is the registrar's raw latch and is
+gated once, after the top's index mux, on the addressed sink's registered
+FAILED. The integrator answers its words one beat at a time the same way.
+**Coherence bound**: one gather spans a few cycles (longer only while the
+integrator holds a beat, bounded by the gather watchdog), so an owner change
+that lands inside it can mix pre- and post-change beats in that one response.
+Every such change is itself a notification trigger whose pending bit is set
+after the change, so that change's own unsolicited response follows, gathered
+after it, with coherent values. The same gather and builder serve solicited,
+unsolicited and GET_DYNAMIC_INFO responses. The listener status view copies
+only the two fields from the record RAM write bus; it has no independent
+state transitions. Notifications compare committed values, so an unchanged
+write produces no new status event. Failure information is zero whenever
+the SRP registrar is not registering a matching Talker Failed attribute.
 
 #### 6.2.1 GET_NAME and SET_NAME
 
@@ -714,6 +729,18 @@ while unlocked — read-only objects use the GET_ form (IEEE §7.5.2); (3) async
 Table 5.22 set: GET_STREAM_INFO field changes (input/output splits per F06.13),
 GET_AVB_INFO (GM, prop delay, domain, asCapable, class-A prio/VID), GET_AS_PATH,
 GET_COUNTERS (`T-CTR-NOTIF`-limited), LOCK_ENTITY auto-unlock, targeted DEREGISTER.
+**STREAM_INPUT triggers** (`protocol_processor_top` `stri_events`): the
+committed pbsta/acmpsta compare off the listener record write bus (bind,
+unbind, settle, teardown, double probe timeout, retry); the committed
+started/stopped change under a live binding (`act_strt_chg_o`: the §5.5.3.5.6
+re-bind short-circuit, and a re-bind to another talker from a bound state,
+which from PRB_W_RESP leaves pbsta/acmpsta at ACTIVE/0 so this is its only
+push); the SRP registration and unregistration events; and SRP's
+FailureInformation change strobe, which feeds only this notification (no
+Listener re-declaration, no event-router or ACMP event, [10 §6.4](10_srp_engine.md)).
+The two listener terms register off the same record write, so a walk that
+moves both pushes one frame. A START/STOP_STREAMING's own change is excluded:
+the command sends its opcode-specific unsolicited response instead.
 Coalescing merges same-key pending triggers (safe: notifications carry current full
 state); LOCK/DEREGISTER events are never coalesced. Ordering: notification after
 commit and after the solicited response ([03 §6](03_packet_engine.md) rule a).

@@ -375,6 +375,7 @@ stateDiagram-v2
     MONITORING --> FAILED_SEEN: matching Talker Failed registered / latch fail code + system id, EVT_TK_REGISTERED, optionally declare AskingFailed
     READY --> FAILED_SEEN: Talker Failed replaces the Advertise in place / latch fail code + system id, withdraw Ready (optionally declare AskingFailed), EVT_TK_REGISTERED
     FAILED_SEEN --> READY: Talker Advertise re-registered in place (clears the failure) / clear fail latch, declare Ready, EVT_TK_REGISTERED
+    FAILED_SEEN --> FAILED_SEEN: Talker Failed refresh with a changed FailureInformation / re-latch fail code + system id, failure-change strobe only (declaration unchanged)
     READY --> MONITORING: matching attribute unregistered / withdraw Ready, EVT_TK_UNREGISTERED
     FAILED_SEEN --> MONITORING: matching attribute unregistered / EVT_TK_UNREGISTERED
     READY --> IDLE: ACMP teardown A8 / withdraw Ready, VLAN user--
@@ -393,6 +394,21 @@ normative), and the receiving participant treats a declaration whose type change
 as an implicit `rLv` of the old type followed by the new registration — no
 unregistration event separates the two (§35.2.6, where the NOTE also gives Failed
 precedence when both are somehow registered).
+
+While Failed remains registered (IN or LV), a changed failure code or bridge ID
+re-latches both and raises `evt_tk_fail_chg_o`, a strobe that feeds **only** the
+GET_STREAM_INFO notification ([06 §7](06_aecp_engine.md#7-registry-notifications-liveness-identify),
+[F06.13](06_aecp_engine.md#fig-06-lineage)). It is not a registration event and
+not a declaration change: the Listener attribute (stream_id) and its AskingFailed
+parameter are unchanged, so the applicant is not re-driven with New,
+EVT_TK_REGISTERED stays silent and neither the event router nor the ACMP
+listener sees it. An unchanged FailureInformation refresh emits nothing. The
+change is detected with one comparator on the hit sink: every sink that can
+take the strobe is registered Failed on the same {stream_id, DA, VLAN} and has
+latched the same last FailureInformation. The failure code output is zero after
+replacement by Advertise, withdrawal, teardown or reset; the bridge output is the
+raw latch, valid only with `tk_reg_state` FAILED, and its one consumer gates it
+after its index mux.
 
 ### 6.5 LeaveAll and the Δ13 registrar deviation
 

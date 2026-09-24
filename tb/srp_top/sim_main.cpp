@@ -305,6 +305,7 @@ struct H {
   // strobe accounting
   int reg_cnt[8] = {};
   int unreg_cnt[8] = {};
+  int fchg_cnt[8] = {};
   int domchg = 0;
   int malformed = 0;
   struct Sample {
@@ -338,6 +339,7 @@ struct H {
     for (int k = 0; k < 8; k++) {
       if ((d->evt_tk_registered_o >> k) & 1)   reg_cnt[k]++;
       if ((d->evt_tk_unregistered_o >> k) & 1) unreg_cnt[k]++;
+      if ((d->evt_tk_fail_chg_o >> k) & 1)     fchg_cnt[k]++;
     }
     if (d->evt_domain_change_o) domchg++;
     if (d->dbg_pdu_done_o && d->dbg_pdu_malformed_o) malformed++;
@@ -716,6 +718,35 @@ class SrpTopHarness {
     CHECK(h.snk_fcode(0) == 7, "D: sink failure code latched");
     CHECK(h.snk_bridge(0) == 0xBBBBCCCCDDDDULL, "D: sink system id latched");
     CHECK(h.ls_decl(0) == 1, "D: declaration follows to ASKING_FAILED");
+    // a changed FailureInformation under that registered Failed is not a
+    // declaration change: the notification strobe only, no REGISTERED,
+    // and no Listener New on the wire once the swap's own New has drained
+    h.run_ms(800);
+    h.sync();
+    reg_before = h.reg_cnt[0];
+    int fchg_before = h.fchg_cnt[0];
+    Msg fail2{2, 34, false, {Vec{false, 1,
+              fv_failed(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345,
+                        0xBBBBCCCCDDDEULL, 9),
+              {EV_JOININ}, {}}}};
+    h.feed(mrpdu_body(true, {fail2}), true);
+    h.idle(10);
+    CHECK(h.fchg_cnt[0] == fchg_before + 1 && h.reg_cnt[0] == reg_before,
+          "D: a changed FailureInformation strobes the change only "
+          "(fchg +%d, reg +%d)", h.fchg_cnt[0] - fchg_before,
+          h.reg_cnt[0] - reg_before);
+    CHECK(h.snk_fcode(0) == 9 && h.snk_bridge(0) == 0xBBBBCCCCDDDEULL
+          && h.tk_reg(0) == 2 && h.ls_decl(0) == 1,
+          "D: new FailureInformation latched, still FAILED/AskingFailed");
+    auto renew = h.wait_frame(true, 800, [&](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 3, SIDX, EV_NEW);
+    });
+    CHECK(renew.empty(),
+          "D: no Listener New on the wire after a changed FailureInformation");
+    h.feed(mrpdu_body(true, {fail2}), true);
+    h.idle(10);
+    CHECK(h.fchg_cnt[0] == fchg_before + 1 && h.reg_cnt[0] == reg_before,
+          "D: an unchanged Failed refresh strobes nothing");
     // and back: Advertise re-registers in place, clears the failure
     h.feed(mrpdu_body(true, {adv}), true);
     h.idle(10);

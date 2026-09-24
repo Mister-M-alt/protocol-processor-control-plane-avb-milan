@@ -297,6 +297,17 @@ gate on them per cycle.
 The status dictionary these implement is catalogued in
 [`02_interfaces.md` F02.10](../architecture/02_interfaces.md#fig-02-statusdict).
 
+GET_STREAM_INFO input failure/probing fields are resolved **inside the processor**
+from its SRP registrar and ACMP listener record. Kind 0 selectors 5 and 7 never
+raise `gsi_req_o` for STREAM_INPUT; external answers for those cases are unused.
+Selector 4 still requests the destination MAC, but its failure-code byte is
+replaced internally. Keep serving the other selectors and the existing
+STREAM_OUTPUT words. No additional port or instantiation connection is needed.
+The internal fields and their notification events have one state owner; do not
+derive a second probing status from bound/settled flags. The internal fields are
+read live at each gather beat, like your own words; the authoritative gather
+contract and its coherence bound are [06 F06.13](../architecture/06_aecp_engine.md#fig-06-lineage).
+
 ---
 
 ## 9. Bring-up order

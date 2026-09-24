@@ -192,6 +192,9 @@ module KL_srp_top
     // ---- class-C event strobes (02 §4.1; router makes them sticky) --------
     output logic [N_SINKS_P-1:0]   evt_tk_registered_o,   //! TK_ATTR_REGISTERED{sink}
     output logic [N_SINKS_P-1:0]   evt_tk_unregistered_o, //! TK_ATTR_UNREGISTERED{sink}
+    //! registered Talker Failed's FailureInformation changed{sink}: a
+    //! GET_STREAM_INFO notification strobe only, NOT a routed class-C event
+    output logic [N_SINKS_P-1:0]   evt_tk_fail_chg_o,
     output logic [N_SOURCES_P-1:0] lstn_reg_change_o,     //! LISTENER_REG_CHANGE{source}
     output logic                   evt_domain_change_o,   //! DOMAIN_CHANGE{class A}
 
@@ -208,7 +211,7 @@ module KL_srp_top
     output logic [N_SINKS_P-1:0][1:0]     lstn_decl_state_o,   //! 0 NONE / 1 ASKING_FAILED / 2 READY
     output logic [N_SINKS_P-1:0][31:0]    acc_latency_o,       //! registered talker attr accumulated_latency
     output logic [N_SINKS_P-1:0][7:0]     snk_fail_code_o,     //! msrp_fail_code[sink] (registered Talker Failed)
-    output logic [N_SINKS_P-1:0][63:0]    snk_fail_bridge_o,   //! msrp_fail_bridge[sink] (FailureInformation system id)
+    output logic [N_SINKS_P-1:0][63:0]    snk_fail_bridge_o,   //! msrp_fail_bridge[sink] (FailureInformation system id), UNGATED: valid only with tk_reg_state == FAILED
     output logic [N_SOURCES_P-1:0][31:0]  granted_slope_bps_o, //! per-source granted idleSlope while admitted, else 0
     output logic [N_SOURCES_P-1:0]        sr_admitted_o,       //! per-source Σ-slope verdict for the current declaration; never raised while any declaration is pending
     output logic [31:0]                   sum_slope_bps_o,     //! Σ of granted slopes, bps, latched by published rounds (held while any declaration is pending)
@@ -618,6 +621,7 @@ module KL_srp_top
       .exp_slot_i              (exp_slot_i),
       .evt_tk_registered_o     (evt_tk_registered_o),
       .evt_tk_unregistered_o   (evt_tk_unregistered_o),
+      .evt_tk_fail_chg_o       (evt_tk_fail_chg_o),
       .tk_reg_state_o          (tk_reg_state_o),
       .lstn_decl_state_o       (lstn_decl_state_o),
       .acc_latency_o           (acc_latency_o),
