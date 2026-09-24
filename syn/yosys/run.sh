@@ -8,7 +8,7 @@
 # AND-OR lists that `set -e` deliberately leaves alone.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-tops=(KL_aecp_ucpu KL_aecp_desc_store KL_aecp_dyn_state KL_aecp_resp_buf KL_aecp_engine KL_aecp_notify KL_aecp_ca_originator KL_pp_timer_service KL_pp_prng KL_pp_rx_slots KL_pp_tx_slots KL_pp_release_merge
+tops=(KL_aecp_desc_mem_guard KL_aecp_ucpu KL_aecp_desc_store KL_aecp_dyn_state KL_aecp_resp_buf KL_aecp_engine KL_aecp_notify KL_aecp_ca_originator KL_pp_timer_service KL_pp_prng KL_pp_rx_slots KL_pp_tx_slots KL_pp_release_merge
       KL_pp_rx_validator KL_pp_normalizer KL_pp_dispatch KL_pp_scoreboard
       KL_pp_event_router KL_pp_originator KL_pp_tx_arbiter KL_pp_trace_ring
       KL_pp_side_port KL_pp_nvm_port KL_pp_nvm_mgr_arb KL_adp_engine KL_pp_acmp_listener

@@ -732,11 +732,13 @@ struct H {
   // that makes it hard.
   std::vector<uint8_t> dram;
   int  dram_lat = 31;
-  bool dram_busy = false;
-  uint32_t dram_addr = 0;
-  int dram_beats = 0;
-  int dram_idx = 0;
-  int dram_wait = 0;
+  // Always-ready in-order request FIFO: acceptance is independent of older
+  // responses, as it is across the integrator's asynchronous memory seam.
+  struct DescBurst { uint32_t addr; int beats, idx; uint64_t due; bool stuck; };
+  std::deque<DescBurst> desc_fifo;
+  int dram_delay_next = -1;
+  bool dram_stuck_next = false;
+  uint64_t dram_overlap_accepts = 0;
   uint64_t dram_reqs = 0;
   // AECP response-buffer memory at RESP_BASE_P (03 §7). READ + WRITE, and
   // NON-ZERO latency on BOTH channels by default — a buffer tested only
@@ -1238,30 +1240,29 @@ struct H {
 
   // ---- descriptor-image DRAM model (07 §3.3) ----
   void serve_descriptor_dram() {
-    d->desc_mem_req_ready_i = dram_busy ? 0 : 1;
+    d->desc_mem_req_ready_i = 1;
     d->desc_mem_rsp_valid_i = 0;
     d->desc_mem_rsp_data_i  = 0;
     d->desc_mem_rsp_last_i  = 0;
     d->desc_mem_rsp_err_i   = 0;
-    if (dram_busy && dram_wait == 0 && dram_idx < dram_beats) {
+    if (!desc_fifo.empty() && t >= desc_fifo.front().due && !desc_fifo.front().stuck) {
+      auto& b = desc_fifo.front();
       d->desc_mem_rsp_valid_i = 1;
       d->desc_mem_rsp_data_i =
-          dram_rd64(dram_addr - DESC_BASE + uint32_t(8 * dram_idx));
-      d->desc_mem_rsp_last_i = (dram_idx == dram_beats - 1) ? 1 : 0;
-    }
-    if (!dram_busy) {
-      if (d->desc_mem_req_valid_o) {
-        dram_busy  = true;
-        dram_addr  = d->desc_mem_req_addr_o;
-        dram_beats = d->desc_mem_req_beats_o;
-        dram_idx   = 0;
-        dram_wait  = dram_lat;
-        ++dram_reqs;
+          dram_rd64(b.addr - DESC_BASE + uint32_t(8 * b.idx));
+      d->desc_mem_rsp_last_i = (b.idx == b.beats - 1) ? 1 : 0;
+      if (d->desc_mem_rsp_ready_o && ++b.idx >= b.beats) {
+        desc_fifo.pop_front();
       }
-    } else if (dram_wait > 0) {
-      --dram_wait;
-    } else if (d->desc_mem_rsp_valid_i && d->desc_mem_rsp_ready_o) {
-      if (++dram_idx >= dram_beats) dram_busy = false;
+    }
+    if (d->rst_n && d->desc_mem_req_valid_o) {
+      if (!desc_fifo.empty()) ++dram_overlap_accepts;
+      desc_fifo.push_back({d->desc_mem_req_addr_o, int(d->desc_mem_req_beats_o), 0,
+                          t + uint64_t(dram_delay_next >= 0 ? dram_delay_next : dram_lat),
+                          dram_stuck_next});
+      dram_delay_next = -1;
+      dram_stuck_next = false;
+      ++dram_reqs;
     }
   }
 
@@ -1579,7 +1580,7 @@ struct H {
     d->resp_mem_rsp_data_i = 0; d->resp_mem_rsp_last_i = 0;
     d->resp_mem_rsp_err_i = 0; d->resp_mem_wr_ready_i = 0;
     d->resp_mem_wr_done_i = 0; d->resp_mem_wr_err_i = 0;
-    dram_busy = false; dram_wait = 0;
+    desc_fifo.clear(); dram_delay_next = -1; dram_stuck_next = false;
     rm_busy = false; rm_wbusy = false; rm_wait = 0; rm_wcnt = 0;
     amap_edit_hold_cur = 0; amap_edit_seen = false;
     amap_edit_active = false; amap_edit_changed = false;
@@ -1754,6 +1755,60 @@ struct ReadDescriptorPhase {
     a9_an_aem_response_as_input_is_never_answered();
     a10_back_to_back_commands_echo_sequence_id();
     a11_no_slot_is_silted_up(tx_free_before);
+    a12_late_descriptor_response_isolated();
+    a13_unterminated_descriptor_burst();
+  }
+
+  void a12_late_descriptor_response_isolated() {
+    h.dram_delay_next = 6000;
+    auto got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 6, 0), 0xA120);
+    CHECK(got == expect(AECP_NO_SUCH_DESCRIPTOR, AEM_READ_DESCRIPTOR, 0xA120,
+                        rdesc_pl(CFGIX, 6, 0)), "A12: delayed output fetch must answer error");
+    CHECK(d->desc_mem_debt_o && !h.desc_fifo.empty(), "A12: timed-out burst no longer owed");
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 5, 0), 0xA121);
+    CHECK(got == expect(AECP_NO_SUCH_DESCRIPTOR, AEM_READ_DESCRIPTOR, 0xA121,
+                        rdesc_pl(CFGIX, 5, 0)), "A12: first post-timeout locate must error");
+    CHECK(d->desc_mem_debt_o, "A12: third command must be presented while debt remains");
+    std::vector<uint8_t> payload(4, 0);
+    putbe(payload.data(), CFGIX, 2);
+    const auto body = stream_descriptor(5, 0);
+    payload.insert(payload.end(), body.begin(), body.end());
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 5, 0), 0xA122);
+    CHECK(got == expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0xA122, payload),
+          "A12: late STREAM_OUTPUT bytes reached STREAM_INPUT on the wire");
+    CHECK(!d->desc_mem_debt_o && h.dram_overlap_accepts == 0,
+          "A12: integrated guard accepted a request while memory debt remained");
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 5, 0), 0xA123);
+    CHECK(got == expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0xA123, payload),
+          "A12: service after finite late burst did not recover");
+  }
+
+  void a13_unterminated_descriptor_burst() {
+    h.dram_stuck_next = true;
+    auto got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 6, 0), 0xA130);
+    CHECK(got == expect(AECP_NO_SUCH_DESCRIPTOR, AEM_READ_DESCRIPTOR, 0xA130,
+                        rdesc_pl(CFGIX, 6, 0)), "A13: stuck fetch must answer error");
+    const auto accepted = h.dram_reqs;
+    for (uint16_t i = 1; i <= 3; ++i) {
+      const auto start = h.t;
+      const uint16_t seq = uint16_t(0xA130 + i);
+      got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 5, 0), seq);
+      CHECK(got == expect(AECP_NO_SUCH_DESCRIPTOR, AEM_READ_DESCRIPTOR, seq,
+                          rdesc_pl(CFGIX, 5, 0)), "A13: later command %u was not an error", i);
+      CHECK(h.t - start < 6000, "A13: wire error exceeded watchdog plus protocol overhead");
+      CHECK(d->desc_mem_debt_o && h.dram_reqs == accepted,
+            "A13: integrated guard forgot debt or accepted another request");
+    }
+    CHECK(h.desc_fifo.size() == 1, "A13: expected one stuck burst");
+    if (!h.desc_fifo.empty()) h.desc_fifo.front().stuck = false;
+    h.idle(100);
+    CHECK(!d->desc_mem_debt_o, "A13: released terminal did not clear debt");
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0024, 0), 0xA134);
+    std::vector<uint8_t> payload(4, 0);
+    putbe(payload.data(), CFGIX, 2);
+    payload.insert(payload.end(), image_clkdom.begin(), image_clkdom.end());
+    CHECK(got == expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0xA134, payload),
+          "A13: service did not recover after terminal response");
   }
 
   void a0_the_image_validated_out_of_dram() {

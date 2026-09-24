@@ -108,6 +108,7 @@ the response buffer as fabric state was the flop group the placer could not pack
 Both masters are **vendor-neutral by contract** — this repository does not know what is
 behind them. You bridge them to whatever you have.
 
+<a id="sec-desc-memory"></a>
 ### 4.1 `desc_mem_*` — read only
 
 | Port | |
@@ -119,6 +120,30 @@ One outstanding request. Responses arrive **in order**; `rsp_last` marks the fin
 Addresses are byte addresses, 8-byte aligned. A beat carries its lowest byte address in
 bits [63:56] — IEEE 1722.1 wire order, so a descriptor byte can be handed to the µCPU
 unswapped.
+
+`KL_aecp_desc_mem_guard` sits between the AECP engine's descriptor-store master
+and this face. It remembers an accepted burst until a response beat with `last`
+or `err` is consumed, even when the store has timed out. While that debt exists,
+the next request is held on both sides of the guard; responses pass through
+unchanged and the store discards beats it no longer awaits. The first response
+must arrive after the request-acceptance cycle. An error terminates the burst:
+the bridge must not emit further beats for that request.
+
+The guard's own module port `debt_o` is the **D3 interface**
+([memory contract](../architecture/07_memory_maps.md#sec-desc-memory)). It is not
+exposed by `protocol_processor_top`; the D3 lane will add that routing together
+with the parent consumer changes, keeping the current top-level interface intact.
+Drive `protocol_processor_top.rst_n`, its synchronous active-low reset, only
+from a **hard reset** that also flushes the descriptor-memory path, including
+any CDC queues. Never drive it from an entity disable, store-only reset, or
+future rollback reset: no pre-reset response may arrive after debt is forgotten.
+
+If a burst never terminates, the guard keeps requests held; the store's watchdog
+still answers each locate with an error in bounded time. The existing immediate
+error on the first locate following a fetch-response timeout is unchanged.
+The D3 writer is deferred: it will hold restorable owners while `debt_o` is set
+and use its own deadline to end CLOSED if debt does not drain. This output alone
+does not implement rollback or release those owners.
 
 ### 4.2 `resp_mem_*` — read and write
 

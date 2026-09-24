@@ -3206,6 +3206,30 @@ module protocol_processor_top
     end
   end
 
+  //! Preserve memory debt independently of the engine/store watchdog and any
+  //! future D3 owner reset. Only the top-level hard reset reaches this guard.
+  logic desc_req_valid_w, desc_req_ready_w;
+  logic [31:0] desc_req_addr_w;
+  logic  [8:0] desc_req_beats_w;
+  logic desc_rsp_valid_w, desc_rsp_ready_w, desc_rsp_last_w, desc_rsp_err_w;
+  logic [63:0] desc_rsp_data_w;
+  // D3 consumes the guard port; top + parent routing is deferred to that lane.
+  logic desc_mem_debt_nc_w;
+
+  KL_aecp_desc_mem_guard u_desc_mem_guard (
+      .clk_i(clk_i), .rst_n(rst_n),
+      .s_req_valid_i(desc_req_valid_w), .s_req_ready_o(desc_req_ready_w),
+      .s_req_addr_i(desc_req_addr_w), .s_req_beats_i(desc_req_beats_w),
+      .s_rsp_valid_o(desc_rsp_valid_w), .s_rsp_ready_i(desc_rsp_ready_w),
+      .s_rsp_data_o(desc_rsp_data_w), .s_rsp_last_o(desc_rsp_last_w),
+      .s_rsp_err_o(desc_rsp_err_w),
+      .m_req_valid_o(desc_mem_req_valid_o), .m_req_ready_i(desc_mem_req_ready_i),
+      .m_req_addr_o(desc_mem_req_addr_o), .m_req_beats_o(desc_mem_req_beats_o),
+      .m_rsp_valid_i(desc_mem_rsp_valid_i), .m_rsp_ready_o(desc_mem_rsp_ready_o),
+      .m_rsp_data_i(desc_mem_rsp_data_i), .m_rsp_last_i(desc_mem_rsp_last_i),
+      .m_rsp_err_i(desc_mem_rsp_err_i), .debt_o(desc_mem_debt_nc_w)
+  );
+
   KL_aecp_engine #(
       .UCODE_HEX_P         (UCODE_HEX_P),
       .DESC_BASE_P         (DESC_BASE_P),
@@ -3275,15 +3299,15 @@ module protocol_processor_top
       .uns_done_o         (uns_done_w),
       .txreq_uns_valid_o  (aecp_txreq_uns_valid_w),
       .txreq_uns_ready_i  (aecp_txreq_uns_ready_w),
-      .mem_req_valid_o    (desc_mem_req_valid_o),
-      .mem_req_ready_i    (desc_mem_req_ready_i),
-      .mem_req_addr_o     (desc_mem_req_addr_o),
-      .mem_req_beats_o    (desc_mem_req_beats_o),
-      .mem_rsp_valid_i    (desc_mem_rsp_valid_i),
-      .mem_rsp_ready_o    (desc_mem_rsp_ready_o),
-      .mem_rsp_data_i     (desc_mem_rsp_data_i),
-      .mem_rsp_last_i     (desc_mem_rsp_last_i),
-      .mem_rsp_err_i      (desc_mem_rsp_err_i),
+      .mem_req_valid_o    (desc_req_valid_w),
+      .mem_req_ready_i    (desc_req_ready_w),
+      .mem_req_addr_o     (desc_req_addr_w),
+      .mem_req_beats_o    (desc_req_beats_w),
+      .mem_rsp_valid_i    (desc_rsp_valid_w),
+      .mem_rsp_ready_o    (desc_rsp_ready_w),
+      .mem_rsp_data_i     (desc_rsp_data_w),
+      .mem_rsp_last_i     (desc_rsp_last_w),
+      .mem_rsp_err_i      (desc_rsp_err_w),
       .rmem_req_valid_o   (resp_mem_req_valid_o),
       .rmem_req_ready_i   (resp_mem_req_ready_i),
       .rmem_req_addr_o    (resp_mem_req_addr_o),

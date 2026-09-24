@@ -130,6 +130,7 @@ module pp_top_wrap (
 
     // descriptor-image memory master (07 §3.3) — the C++ harness plays a
     // latency-injecting DRAM behind it
+    output logic        desc_mem_debt_o,
     output logic        desc_mem_req_valid_o,
     input  wire         desc_mem_req_ready_i,
     output logic [31:0] desc_mem_req_addr_o,
@@ -570,6 +571,8 @@ module pp_top_wrap (
   assign dbg_evt_tk_v_o   = u_dut.lstn_evt_tk_valid_w;
   assign dbg_evt_tk_rdy_o = u_dut.lstn_evt_tk_ready_w;
   assign dbg_img_valid_o  = u_dut.aecp_dbg_img_valid_w;
+  // Observe the D3 guard interface without extending the product top ports.
+  assign desc_mem_debt_o = u_dut.u_desc_mem_guard.debt_o;
   assign dbg_img_fault_o  = u_dut.aecp_dbg_fault_w;
   assign dbg_aecp_cmd_o   = u_dut.aecp_dbg_cmd_w;
   assign dbg_aecp_resp_o  = u_dut.aecp_dbg_resp_w;

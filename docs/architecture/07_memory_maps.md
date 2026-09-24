@@ -143,6 +143,7 @@ Software loads it into the integrator's main memory at `DESC_BASE_P` before
 Both alternatives were priced and rejected in §3.3.1 below, and neither is what the RTL
 does.
 
+<a id="sec-desc-memory"></a>
 #### 3.3.1 Realization — the image lives in MAIN MEMORY, not on chip
 
 `hdl/aecp/KL_aecp_desc_store.sv`. A ROM was priced and rejected: the reference
@@ -153,6 +154,24 @@ tiles) measured 131 tiles used. So the image sits in the integrator's main memor
 DDR3 on the reference board — behind a **vendor-neutral read-only master** on
 `protocol_processor_top` (`desc_mem_*`: byte address + 64-bit beat count out, an
 in-order response stream back). This repository does not know what that memory is.
+
+The master passes through `KL_aecp_desc_mem_guard` before reaching that face.
+An accepted burst remains owed until its terminal response (`last` or `err`)
+is consumed. The guard holds subsequent requests while owed and passes every
+response through unchanged; a store that abandoned the burst discards its late
+beats. A permanently unterminated burst therefore holds memory requests, while
+the store watchdog still bounds every locate with an error. The watchdog itself
+is unchanged, including the immediate error on the next locate after a fetch
+response timeout.
+
+The guard is reset by the hard reset alone. Its module port `debt_o` is the D3
+interface: a `clk_i` level set on request acceptance and cleared on a consumed
+`last` or `err`, or hard reset only. It is not a `protocol_processor_top` port.
+The D3 lane will route it to the top together with the parent consumer changes.
+The future D3 writer must hold restorable owners while this debt is set and end
+CLOSED if its deadline expires; that writer and its rollback cases are deferred
+to the D3 lane. The memory ordering, terminal-error and reset obligations are in the
+[integrator guide §4.1](../guides/integrator.md#sec-desc-memory).
 
 Every address is an **elaboration parameter** (`DESC_BASE_P`), never a register and
 never a CSR: the memory map is fixed when the bitstream is built, so a runtime base

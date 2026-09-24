@@ -61,6 +61,16 @@ tally.
     how a control plane builds a storm.
   - **A10/A11** three back-to-back commands each echo their own
     `sequence_id`; the snapshot window publishes the counters and image-valid.
+  - **A12/A13** the descriptor-memory model accepts in-order queued requests
+    while older bursts are owed. A fetch delayed beyond the store watchdog
+    must not supply STREAM_OUTPUT bytes to a later STREAM_INPUT command;
+    the integrated guard holds the next request and recovery is byte-exact.
+    An unterminated burst keeps debt set and memory requests held while three
+    more wire commands each receive `NO_SUCH_DESCRIPTOR` in bounded time.
+    The standalone [guard suite](../desc_mem_guard/README.md) supplies the
+    unguarded reproduction, hold-deleted mutant and independent reset checks.
+    The bench observes `u_dut.u_desc_mem_guard.debt_o` hierarchically; debt
+    routing through the product top and parent consumer is deferred to D3.
 - **N** **GET_NAME and SET_NAME end to end** (Milan v1.2 5.4.2.11/.12):
   every named slot in the fixture answers with cdl 84 and the exact 64 bytes
   carried by its descriptor. The sweep includes both ENTITY semantic indices,

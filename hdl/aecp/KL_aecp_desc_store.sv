@@ -27,6 +27,10 @@
 //                nothing about what that memory is: it issues a byte address
 //                plus a 64-bit beat count and consumes an in-order response
 //                stream.
+//                At the processor top, KL_aecp_desc_mem_guard retains the
+//                memory's burst debt when this store times out. Standalone
+//                integrations also need that guard if the memory can accept
+//                another request before an abandoned burst has terminated.
 //
 //                WHERE THE ADDRESSES COME FROM. Every address is an
 //                ELABORATION PARAMETER (`DESC_BASE_P`), never a register and

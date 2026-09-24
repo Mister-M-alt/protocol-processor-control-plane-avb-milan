@@ -24,7 +24,7 @@
   <text x="602" y="94" font-size="11.5" font-weight="bold" text-anchor="middle" fill="#16181d">inside KL_aecp_engine</text>
 
   <rect x="850" y="76" width="426" height="26" rx="4" fill="#f6eeff" stroke="#6b46a5" stroke-width="1"/>
-  <text x="1063" y="94" font-size="11.5" font-weight="bold" text-anchor="middle" fill="#16181d">integrator main memory (this repository does not know it is DDR3)</text>
+  <text x="1063" y="94" font-size="11.5" font-weight="bold" text-anchor="middle" fill="#16181d">processor memory face / integrator main memory</text>
 
   <!-- lane separators -->
   <line x1="368" y1="76" x2="368" y2="740" stroke="#dde2e9" stroke-width="1"/>
@@ -53,7 +53,6 @@
   <text x="868" y="217" font-size="11.5" font-weight="bold" fill="#16181d">image header + index map, at DESC_BASE_P</text>
   <text x="868" y="235" font-size="10.5" fill="#4a5058">magic + layout version + checksum, probed once after reset;</text>
   <text x="868" y="252" font-size="10.5" fill="#4a5058">the index map is walked ONCE into a small on-chip table</text>
-  <line x1="828" y1="231" x2="845" y2="231" stroke="#6b46a5" stroke-width="1.6" marker-end="url(#ahm)"/>
 
   <!-- STEP 4 -->
   <rect x="382" y="286" width="440" height="70" rx="6" fill="#f3ecfb" stroke="#6b46a5" stroke-width="1.3"/>
@@ -61,12 +60,27 @@
   <text x="400" y="325" font-size="10.5" fill="#4a5058">a single burst into the DESC_LINE_BYTES_P line buffer, then every</text>
   <text x="400" y="342" font-size="10.5" fill="#4a5058">later read is served from that buffer — one memory latency per command</text>
 
-  <rect x="850" y="286" width="426" height="70" rx="6" fill="#f6eeff" stroke="#6b46a5" stroke-width="1.3"/>
-  <text x="868" y="307" font-size="11.5" font-weight="bold" fill="#16181d">descriptor image — desc_mem_* master, READ ONLY</text>
-  <text x="868" y="325" font-size="10.5" fill="#4a5058">one outstanding request, responses in order, rsp_last on the last beat</text>
-  <text x="868" y="342" font-size="10.5" fill="#4a5058">a beat carries its lowest byte address in bits [63:56] (wire order)</text>
   <line x1="828" y1="321" x2="845" y2="321" stroke="#6b46a5" stroke-width="1.6" marker-end="url(#ahm)"/>
   <line x1="602" y1="266" x2="602" y2="281" stroke="#6b46a5" stroke-width="1.6" marker-end="url(#ahm)"/>
+
+  <!-- The guard is between step 4 and memory, outside KL_aecp_engine. -->
+  <rect x="850" y="286" width="220" height="160" rx="6" fill="#eef7ef" stroke="#2f7d46" stroke-width="1.3"/>
+  <text x="864" y="307" font-size="11" font-weight="bold" fill="#16181d">KL_aecp_desc_mem_guard</text>
+  <text x="864" y="326" font-size="10.5" fill="#4a5058">at processor top · hard reset only</text>
+  <text x="864" y="344" font-size="10.5" fill="#4a5058">owed holds the next request;</text>
+  <text x="864" y="362" font-size="10.5" fill="#4a5058">every response beat passes through</text>
+  <text x="864" y="389" font-size="10.5" fill="#4a5058">guard debt_o: D3 interface;</text>
+  <text x="864" y="407" font-size="10.5" fill="#4a5058">top + parent routing deferred to D3</text>
+  <path d="M960,286 L960,271" fill="none" stroke="#6b46a5" stroke-width="1.6" marker-end="url(#ahm)"/>
+  <line x1="1070" y1="321" x2="1089" y2="321" stroke="#6b46a5" stroke-width="1.6" marker-end="url(#ahm)"/>
+
+  <rect x="1094" y="286" width="182" height="160" rx="6" fill="#f6eeff" stroke="#6b46a5" stroke-width="1.3"/>
+  <text x="1108" y="307" font-size="11.5" font-weight="bold" fill="#16181d">descriptor image</text>
+  <text x="1108" y="326" font-size="10.5" fill="#4a5058">desc_mem_*: read only,</text>
+  <text x="1108" y="344" font-size="10.5" fill="#4a5058">in order; last or err</text>
+  <text x="1108" y="362" font-size="10.5" fill="#4a5058">ends the burst</text>
+  <text x="1108" y="389" font-size="10.5" fill="#4a5058">lowest byte address in</text>
+  <text x="1108" y="407" font-size="10.5" fill="#4a5058">bits [63:56] (wire order)</text>
 
   <!-- STEP 5 -->
   <rect x="382" y="376" width="440" height="70" rx="6" fill="#f3ecfb" stroke="#6b46a5" stroke-width="1.3"/>
@@ -125,8 +139,8 @@
 
   <rect x="452" y="708" width="396" height="96" rx="6" fill="#fff" stroke="#a03030" stroke-width="1"/>
   <text x="468" y="729" font-size="11" font-weight="bold" fill="#16181d">desc_mem_* absent or wedged</text>
-  <text x="468" y="747" font-size="10.5" fill="#4a5058">req_ready tied 0 is LEGAL wiring. The store's</text>
-  <text x="468" y="764" font-size="10.5" fill="#4a5058">watchdog fires and degrades the locate:</text>
+  <text x="468" y="747" font-size="10.5" fill="#4a5058">Late bursts hold new requests until last or err.</text>
+  <text x="468" y="764" font-size="10.5" fill="#4a5058">A missing terminal beat still leaves each locate bounded:</text>
   <text x="468" y="781" font-size="10.5" fill="#a03030">NO_SUCH_DESCRIPTOR</text>
   <text x="468" y="798" font-size="10" fill="#4a5058">never a garbage descriptor on the wire.</text>
 
@@ -139,6 +153,6 @@
 
   <text x="42" y="852" font-size="11" fill="#16181d">All three faults are counted. The side-port snapshot window is where an integrator sees WHICH channel failed and how often — see the operator guide.</text>
   <text x="42" y="876" font-size="11" fill="#4a5058">Latency is affordable by design: IEEE 1722.1-2021 §9.2.1.1 gives a controller 100 ms before it retries, against roughly one microsecond per memory access.</text>
-  <text x="42" y="900" font-size="11" fill="#4a5058">Modules: hdl/aecp/KL_aecp_engine.sv · KL_aecp_ucpu.sv · KL_aecp_desc_store.sv · KL_aecp_resp_buf.sv</text>
-  <text x="42" y="924" font-size="11" fill="#4a5058">Suites that prove this path end to end: tb/desc_store, tb/resp_buf, tb/ucpu and scenario A + section B of tb/pp_top.</text>
+  <text x="42" y="900" font-size="11" fill="#4a5058">Modules: hdl/aecp/KL_aecp_engine.sv · KL_aecp_ucpu.sv · KL_aecp_desc_store.sv · KL_aecp_desc_mem_guard.sv · KL_aecp_resp_buf.sv</text>
+  <text x="42" y="924" font-size="11" fill="#4a5058">Suites that prove this path end to end: tb/desc_store, tb/desc_mem_guard, tb/resp_buf, tb/ucpu and scenario A + section B of tb/pp_top.</text>
 </svg>

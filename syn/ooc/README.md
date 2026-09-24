@@ -55,3 +55,19 @@ same feature cost ~1 ns of WNS on the whole processor.
 The number is a **skeleton** measurement: dispatch handshake, hazard-key
 extraction and the deadline/abort arm will grow it. The bracket it collapses
 (+1,200…+2,500 ESTIMATE) survives a 2× growth allowance.
+
+## Descriptor-memory guard — issue #94
+
+`desc_mem_guard_ooc.tcl` uses the same out-of-context synthesis, reference part,
+clock constraint and utilization reports as the µCPU flow above:
+
+```sh
+cd <empty-output-directory>
+vivado -mode batch -source <repo>/syn/ooc/desc_mem_guard_ooc.tcl -nojournal -log ooc.log
+```
+
+Measured 2026-09-24 with Vivado 2026.1, `xc7a100tfgg484-2`: **4 Slice LUTs,
+1 flip-flop, no RAM or DSP**, against the
+[immutable T9 estimate](https://github.com/kebag-logic/milan-fpga/blob/c1ee27d81c4a1e98f9584e979b73a88acfe238b3/design-evidence/500-materialization/tickets/T9-processor-descriptor-memory-response-isolation.md)
+of 5 LUTs and 1 flip-flop. The guard was synthesized as its own top with all
+ports present. This is post-synthesis area, not routed timing or hardware proof.
