@@ -56,6 +56,26 @@ tally.
   are stalled if requested, and a request counter must remain zero.
   Existing section G still checks the unchanged STREAM_OUTPUT gather.
 
+  Latency-only Talker JoinIn refreshes (issue #113) are checked with sink 0
+  registering Advertise and sink 1 Failed. The harness folds the processor's
+  published per-sink accumulated latency into selector 3 with zero ingress
+  delay. Every changed refresh must emit exactly one byte-exact unsolicited
+  response carrying the new value; a solicited read must agree. An unchanged
+  refresh emits none, and neither the other sink nor any other descriptor may
+  be notified. The original distinct-value, zero and all-ones cases remain.
+  A walking one on the Advertise sink then a walking zero on the Failed sink
+  each cover all 32 bit positions (bit 0 is the least significant bit). Between
+  walking values the latch returns to zero or all ones, respectively, so each
+  of the 128 changed refreshes differs from its previous committed value in
+  exactly one bit. Every changed value, including each return, is repeated
+  unchanged. All 256 refreshes use the same response, solicited-read and
+  other-sink checks. Before each bit, discovery and an unchanged, response-graded
+  refresh of the other peer keep both streams live through the long sweep.
+  These 64 maintenance refreshes must also stay silent. The added checks have
+  a separate subtotal in the run log;
+  the original GI and suite checks are retained. The processor's external ports are
+  unchanged; the test wrapper exposes an existing output for the gather model.
+
   Focused reproduction: `make -C tb/pp_top gsi-internal`. The normal suite
   includes GI in its default build. The older registry/configuration tests
   retain a bound sink waiting passively for an absent peer, so independent
@@ -70,6 +90,13 @@ tally.
 
   | Mutation | Required failing check |
   |---|---|
+  | Latency trigger disconnected from `stri_events` | `GI LATENCY-CHANGE: exactly one unsolicited response` |
+  | Latency comparison truncated to [7:0] | `GI LATENCY-WALK-ONE bit 8 step: exactly one unsolicited response` |
+  | Latency comparison truncated to [15:0] | `GI LATENCY-WALK-ONE bit 16 step: exactly one unsolicited response` |
+  | Latency comparison truncated to [31:16] | `GI LATENCY-WALK-ONE bit 0 step: exactly one unsolicited response` |
+  | Latency comparison truncated to [30:0] | `GI LATENCY-WALK-ONE bit 31 step: exactly one unsolicited response` |
+  | Latency comparison truncated to [31:30] | `GI LATENCY-WALK-ONE bit 0 step: exactly one unsolicited response` |
+  | Latency bit 31 dropped by masking both operands | `GI LATENCY-WALK-ONE bit 31 step: exactly one unsolicited response` |
   | Failure code tied to zero | `GI FAILED-0 solicited: failure code` |
   | Failure bridge tied to zero | `GI FAILED-0 solicited: full failure bridge` |
   | pbsta tied to zero | `GI PASSIVE solicited: pbsta` |

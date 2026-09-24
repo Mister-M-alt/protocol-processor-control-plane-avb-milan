@@ -35,7 +35,9 @@
 //                §4.2.7.2.2) and on a LeaveAll-cycle T-MRP-LEAVE expiry,
 //                the only LV path. acc_latency[sink] latches the
 //                registered attribute's accumulated_latency on every
-//                registering event (a refresh re-latches);
+//                registering event (a refresh re-latches). A changed latch
+//                raises evt_tk_latency_chg_o for GET_STREAM_INFO only
+//                (Milan §5.4.5.2, Table 5.22); an unchanged refresh is quiet.
 //                msrp_fail_code/bridge[sink] latch the Talker Failed
 //                FailureInformation while FAILED is the registered type
 //                (the code gated to FAILED here, the bridge the raw latch
@@ -151,6 +153,7 @@ module KL_srp_listener_fsm
     //! GET_STREAM_INFO notification only: never a declaration request,
     //! never EVT_TK_REGISTERED, not routed to the ACMP listener.
     output logic [N_SINKS_P-1:0]       evt_tk_fail_chg_o,
+    output logic [N_SINKS_P-1:0]       evt_tk_latency_chg_o, //! committed accumulated_latency change; notification only
     output logic [N_SINKS_P-1:0][1:0]  tk_reg_state_o,        //! 0 NONE / 1 ADVERTISE / 2 FAILED
     output logic [N_SINKS_P-1:0][1:0]  lstn_decl_state_o,     //! 0 NONE / 1 ASKING_FAILED / 2 READY
     output logic [N_SINKS_P-1:0][31:0] acc_latency_o,         //! latched accumulated_latency
@@ -695,6 +698,7 @@ module KL_srp_listener_fsm
       evt_tk_registered_o   <= '0;
       evt_tk_unregistered_o <= '0;
       evt_tk_fail_chg_o     <= '0;
+      evt_tk_latency_chg_o  <= '0;
       arm_valid_o           <= 1'b0;
       arm_cancel_o          <= 1'b0;
       arm_slot_o            <= '0;
@@ -704,6 +708,7 @@ module KL_srp_listener_fsm
       evt_tk_registered_o   <= '0;
       evt_tk_unregistered_o <= '0;
       evt_tk_fail_chg_o     <= '0;
+      evt_tk_latency_chg_o  <= '0;
       arm_valid_o           <= 1'b0;
 
       // ---- one leave-timer op per cycle (service accepts O(1)); a
@@ -727,6 +732,10 @@ module KL_srp_listener_fsm
           reg_r[s]   <= R_IN_C;
           rtype_r[s] <= rx_is_failed_w;
           lat_r[s]   <= evt_acc_latency_i;   // refresh re-latches (10 §6.4)
+          // Compare this sink's old latch on its actual write. The pulse
+          // and any registration/failure pulse land together, so the
+          // existing per-descriptor notify OR coalesces them into one event.
+          evt_tk_latency_chg_o[s] <= (lat_r[s] != evt_acc_latency_i);
           if (rx_is_failed_w) begin
             fcode_r[s]  <= evt_failure_code_i;
             fsysid_r[s] <= evt_failure_system_id_i;
