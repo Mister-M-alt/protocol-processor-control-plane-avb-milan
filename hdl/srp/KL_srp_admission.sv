@@ -77,8 +77,8 @@ module KL_srp_admission #(
 
     output logic [N_SOURCES_P-1:0]        sr_admitted_o,       //! F02.10: admitted against the Σ-slope ceiling (live-AND with req)
     output logic [N_SOURCES_P-1:0][31:0]  granted_slope_bps_o, //! F02.10: granted idleSlope while admitted, else 0
-    output logic [31:0]                   sum_slope_bps_o,     //! Σ of granted slopes, bps (round-latched)
-    output logic                          over_limit_o,        //! some requested source refused by the ceiling (round-latched)
+    output logic [31:0]                   sum_slope_bps_o,     //! Σ of granted slopes, bps (latched by published rounds)
+    output logic                          over_limit_o,        //! some evaluated source refused by the ceiling (latched by published rounds)
     output logic                          round_done_o         //! one-cycle strobe: an admission round latched its verdicts (a discarded round does not strobe)
 );
 

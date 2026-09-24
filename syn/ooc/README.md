@@ -86,3 +86,34 @@ vivado -mode batch -source <repo>/syn/ooc/srp_ooc.tcl -nojournal -log ooc.log
 For a base/head comparison, run this identical recipe against each source
 tree. `util_hier.rpt` includes the admission block as well as the enclosing
 engine, so the internal invalidation wiring is included in the total.
+
+Measured 2026-09-24 with Vivado 2026.1, `xc7a100tfgg484-2`, 10 ns clock. Base
+is `939c143`. Round 1 is `73a5478`, where a pending source counted as
+absent. Round 2 holds every verdict while a declaration is pending.
+
+| Complete `KL_srp_top` | Base | Round 1 | Round 2 |
+|---|---:|---:|---:|
+| Slice LUTs | 7566 | 7334 | **7603** (+37 on base) |
+| Flip-flops | 10485 | 10464 | **10502** (+17 on base) |
+| LUT as memory / RAMB18 / RAMB36 / DSP | 194 / 1 / 0 / 2 | same | same |
+| `u_admission` LUTs / flip-flops | 782 / 862 | 503 / 841 | 749 / 879 |
+| WNS, OOC (worst path in the unmodified `u_decoder`) | +1.302 ns | +1.083 ns | +1.083 ns |
+
+The engine total is the area result. A hierarchy row is not an isolated
+estimate, because whole-engine optimization remaps unmodified blocks too.
+Round 1's drop came from that remapping, not from removed function: from
+base to round 1, `u_vlan` fell 361 → 101 LUTs, `u_talker` rose 1667 → 1893
+and `u_encoder` rose 1181 → 1252, and these stay put in round 2. The
+admission flip-flops, listed per register bank, account for every
+difference:
+
+- Round 2 − base = +17. The validity pipeline adds 10 (`valid_q1_r`,
+  `valid_q2_r`, 8 × `slope_valid_r`) and `pend_acc_r` adds 1. Synthesis adds
+  5 fanout replicas of `aidx_r`. Base had also trimmed `wgrant_r[7]`.
+- Round 1 − base = −21. The validity pipeline adds 10 and `wgrant_r[7]` is
+  kept (+1). Round 1 also trimmed `wgslope_r[7]` (−32), which is always zero
+  because index 7 publishes straight from the candidate.
+
+Round 1's admission LUT primitives packed two to a LUT (712 primitives in
+503 LUTs). Base and round 2 map to wider LUTs: 950 in 782, and 944 in 749.
+This is post-synthesis area, not routed timing or hardware proof.

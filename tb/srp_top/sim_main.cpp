@@ -1184,7 +1184,8 @@ class SrpTopHarness {
           "H: grow has no grant pulse, shrink has bounded grant source %d frame %u latency %d",
           s, mfs, first_grant);
     CHECK(window_correct && optimistic_seen && active_equation,
-          "H: ACTIVE and three-round optimistic window source %d phase %u", s, phase);
+          "H: ACTIVE and three-published-round optimistic window source %d phase %u",
+          s, phase);
     CHECK(d->sum_slope_bps_o == (admitted ? slope_bps(mfs, 1) : 0) &&
           bool(d->over_limit_o) == !admitted,
           "H: settled sum and refusal source %d frame %u", s, mfs);
