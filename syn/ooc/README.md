@@ -4,7 +4,9 @@
 `protocol_processor_ooc.tcl` applies the same post-synthesis instrument to
 the complete processor, with its default stream shape and all top-level
 ports present. Run it from an empty build directory; an optional first Tcl
-argument selects a different source tree for a baseline measurement. It
+argument selects a different source tree for a baseline measurement, and an
+optional second and third select `N_STREAM_IN_P` and `N_STREAM_OUT_P` (for
+example `-tclargs <tree> 1 1`, the shipping one-stream shape). It
 generates both ROM images in that build directory and reports hierarchical
 and total utilization. It uses the reference part and clock from
 `ucpu_ooc.tcl`; these are area measurements, not routed timing or hardware
@@ -81,3 +83,26 @@ Measured 2026-09-24 with Vivado 2026.1, `xc7a100tfgg484-2`: **4 Slice LUTs,
 [immutable T9 estimate](https://github.com/kebag-logic/milan-fpga/blob/c1ee27d81c4a1e98f9584e979b73a88acfe238b3/design-evidence/500-materialization/tickets/T9-processor-descriptor-memory-response-isolation.md)
 of 5 LUTs and 1 flip-flop. The guard was synthesized as its own top with all
 ports present. This is post-synthesis area, not routed timing or hardware proof.
+
+## GET_STREAM_INFO input selectors — issues #43/#49
+
+Measured 2026-09-24 with Vivado 2026.1, `xc7a100tfgg484-2`, this recipe on the
+base `939c1433` and on the change's final RTL, both shapes. Post-synthesis
+area, not routed timing or hardware proof:
+
+| Shape | Resource | Base | Change | Delta |
+|---|---|---:|---:|---:|
+| 8 in / 8 out | Slice LUTs | 28,092 | 28,326 | +234 |
+| 8 in / 8 out | Registers | 30,354 | 31,064 | +710 |
+| 1 in / 1 out | Slice LUTs | 20,978 | 21,245 | +267 |
+| 1 in / 1 out | Registers | 23,446 | 23,674 | +228 |
+
+Block RAM is unchanged at both shapes. The registers are owned state kept
+alive by the new readers: the per-sink 64-bit FailureInformation bridge latch
+in the SRP listener, the decoder's FailureInformation capture (+128 at either
+shape) and the eight-bit committed pbsta/acmpsta view per sink. The bridge is
+gated once after the top's index mux and the change is compared on the hit
+sink only, which took the SRP listener from +808 to +455 LUTs at 8x8 against
+the first revision; removing that revision's selector-0 sample-and-hold removed
+81 top-level registers at 8x8 (78 at 1x1). LUT moves of a few tens in modules
+this change does not touch are synthesis variance.
