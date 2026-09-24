@@ -37,7 +37,9 @@
 //                compares each record write against the stored projection
 //                and only a DIFFERING persisted field marks dirty — so
 //                GET_RX_STATE write-backs and probe bookkeeping cost zero
-//                NVM wear ("write-through on change") — and boot restore
+//                NVM wear ("write-through on change"); two unbound records
+//                never differ, because an unbound record is no binding
+//                whatever its other fields hold — and boot restore
 //                is two-phase: every record is read and validated into the
 //                store FIRST, pre_* replay starts only after the whole
 //                walk, so a torn stream atomically rejects the image
@@ -52,6 +54,8 @@
 //                walk continues. Everything else that ends a read early
 //                aborts the WHOLE restore: restore_fail_o, no preload is
 //                ever driven, every un-captured sink stays invalid, and
+//                the media keeps every saved record until a live change
+//                binds that sink (the capture compare's unbound rule), and
 //                restore_cause_o says which (issue #93): 1 a read-back
 //                torn MID-STREAM (err or short done after ≥1 byte); 2 a
 //                DEVICE err with zero bytes forwarded (a failing device is
@@ -128,7 +132,7 @@ module KL_acmp_nvm_shadow
     input  wire                        restore_go_i,   //! start boot restore (07 §5.3)
     output logic                       restore_busy_o, //! restore walk/replay running
     output logic                       restore_done_o, //! level: restore sequencing complete
-    output logic                       restore_fail_o, //! level: torn read-back aborted the WHOLE restore
+    output logic                       restore_fail_o, //! level: the WHOLE restore aborted, any cause
     output logic                       restore_blank_o,//! level: the completed walk validated ZERO records (blank or invalid media)
     //! level, with restore_fail_o: why the walk failed. 0 it did not, 1 a
     //! read-back torn mid-record, 2 a device error with nothing forwarded,
@@ -311,8 +315,15 @@ module KL_acmp_nvm_shadow
 
   assign cmp_data_w = (byp_v_r && (byp_sink_r == c1_sink_r)) ? byp_data_r
                                                              : shw_rdata_r;
-  assign c1_diff_w  = (SHW_W_C'(c1_proj_r) != cmp_data_w)
-                    || (c1_vld_r != valid_r[c1_sink_r]);
+  //! Two UNBOUND records are equal whatever their other fields hold: an
+  //! unbound record carries no binding (Milan v1.2 5.3.8.3 clears the
+  //! binding parameters on unbind) and no walk ever preloads one. The atomic
+  //! reject clears valid and leaves the rejected sinks' restored fields in
+  //! this RAM, so without this rule the listener's first write-back of its
+  //! default after a failed walk (a read-only GET_RX_STATE) compared unequal
+  //! and flushed an unbound record over the saved binding (issue #92).
+  assign c1_diff_w  = (c1_vld_r != valid_r[c1_sink_r])
+                    || (c1_vld_r && (SHW_W_C'(c1_proj_r) != cmp_data_w));
   assign c1_wr_w    = c1_v_r && c1_diff_w;
 
   // ---- restore span / sequencing helpers ---------------------------------

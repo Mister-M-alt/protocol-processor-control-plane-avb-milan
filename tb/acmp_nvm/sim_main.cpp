@@ -871,6 +871,8 @@ struct Harness {
   void check_n5_the_deadline_boundary();
   void check_n6_a_second_manager_on_the_port();
   void check_n7_a_talker_level_at_the_deadline();
+  void check_n8_a_failed_walk_keeps_the_saved_records();
+  void check_n9_an_unwired_device_face();
   void check_l_reset_boundaries();
   int report();
   int run_suite();
@@ -2314,6 +2316,121 @@ void Harness::check_n7_a_talker_level_at_the_deadline() {
   }
 }
 
+// A failed walk rejects the IMAGE, not the media (issue #92 after issue #93's
+// failure causes). The walk stores sink 0, then fails at sink 3 with each
+// cause; sink 7 is never read. The atomic reject leaves sink 0's restored
+// fields in the shadow with valid cleared, and the listener, released on
+// defaults, writes its unbound record back for every command it serves. A
+// GET_RX_STATE of sink 0 held from reset through the window, and one GET of
+// each saved sink polled afterwards, must be answered on the default and
+// leave every saved record in the device byte-exact, with nothing pending;
+// so must an UNBIND of a sink the failed walk left unbound, which restates
+// the same default. A reset on a healthy device then restores all three.
+void Harness::check_n8_a_failed_walk_keeps_the_saved_records() {
+  struct C {
+    const char* tag;
+    unsigned cause;
+  };
+  const std::vector<C> cs = {
+    {"N8a sink 3's payload read torn after 3 bytes", 1},
+    {"N8b a device error at sink 3's header read", 2},
+    {"N8c sink 3's read silent, the device ending it 2000 cycles after the "
+     "abort", 3},
+  };
+  const Bind b3{true, false, false, 0x0A03, 0x00A3A3A3A3A30003ull,
+                0x00C0C0C0C0C00003ull};
+  const std::vector<int> saved = {0, 3, L_LAST};
+  for (const C& c : cs) {
+    l_seed({{0, L_B0}, {3, b3}, {L_LAST, L_B7}});
+    reset();
+    if (c.cause == 1) arm_err(OP_READ, REC_BASE + 3, 8, 3, 1);
+    if (c.cause == 2) arm_err(OP_READ, REC_BASE + 3, 0, -1, 1);
+    if (c.cause == 3) {
+      hold_region = REC_BASE + 3;
+      hold_mode = 2;
+      hold_n = 2000;
+    }
+    l_push(M_GETRX_CMD, 0, 0xE80, 0);
+    go();
+    l_finish();
+    std::string why;
+    CHECK(n_failed_walk(c.cause, why) && count_ops(OP_READ, REC_BASE + 0) == 2
+              && count_ops(OP_READ, REC_BASE + L_LAST) == 0,
+          "%s: sink 0 stored, then the WHOLE walk fails with cause %u, and the "
+          "GET held through it writes nothing: %s", c.tag, c.cause, why.c_str());
+    disarm_err();
+    for (int k : saved) l_push(M_GETRX_CMD, k, uint16_t(0xE81 + k), cycles);
+    if (c.cause == 2) l_push(M_UNBIND_CMD, 3, 0xE8F, cycles);
+    l_finish();
+    std::vector<std::vector<uint8_t>> want_r = {
+      acmpdu(M_GETRX_RSP, 0, L_CTLR, 0, 0, 0, 0, 0xE80, 0)};
+    for (int k : saved)
+      want_r.push_back(acmpdu(M_GETRX_RSP, 0, L_CTLR, 0, 0, uint16_t(k), 0,
+                              uint16_t(0xE81 + k), 0));
+    if (c.cause == 2)
+      want_r.push_back(acmpdu(M_UNBIND_RSP, 0, L_CTLR, 0, 0, 3, 0, 0xE8F, 0));
+    std::vector<std::vector<uint8_t>> got;
+    for (const Resp& r : resps) got.push_back(r.b);
+    CHECK(got == want_r, "%s: every command answered on the vendor default, in "
+          "order (%zu replies)", c.tag, got.size());
+    CHECK(l_nvm_untouched(why) && d->dbg_dirty_o == 0,
+          "%s: every saved record is still in the device, nothing written or "
+          "pending: %s", c.tag, why.c_str());
+    Bind want[N_SINKS];
+    for (int k : saved) want[k] = l_saved[k];
+    CHECK(l_round_trip(want, why),
+          "%s: a reset on a healthy device restores every saved binding: %s",
+          c.tag, why.c_str());
+  }
+}
+
+// An unwired device face, as the integrator guide's tie-off rules state it:
+// one that never grants a READ fails the walk at its deadline (cause 3) and
+// leaves the port quarantined, one that answers every READ with err fails it
+// at once (cause 2). Either way the listener is released and answers on the
+// defaults, and nothing is written. (A face answering as erased media is the
+// per-record default of N2a, and a device of empty regions is A1-A6.)
+void Harness::check_n9_an_unwired_device_face() {
+  {
+    const char* tag = "N9a a device face that never grants";
+    reset();
+    gnt_delay = 1 << 30;
+    l_push(M_GETRX_CMD, 0, 0xE90, 0);
+    go();
+    run_until([&] { return rel_cyc >= 0 && txq.empty() && !d->lsn_busy_o; },
+              4 * RS_TMO);
+    run(DEB_TICKS * 3);
+    std::string why;
+    CHECK(n_failed_walk(3, why) && aborts == 1 && count_ops(OP_READ) == 0,
+          "%s: the walk fails whole at its deadline with cause 3, its one "
+          "request abandoned: %s", tag, why.c_str());
+    const auto g = l_resps(M_GETRX_RSP);
+    CHECK(g.size() == 1
+              && g[0].b == acmpdu(M_GETRX_RSP, 0, L_CTLR, 0, 0, 0, 0, 0xE90, 0)
+              && d->arb_drain_o,
+          "%s: the listener answers on the vendor default and the port stays "
+          "quarantined", tag);
+    gnt_delay = 1;
+  }
+  {
+    const char* tag = "N9b a device face that answers every READ with err";
+    reset();
+    arm_err(OP_READ, -1, -1, -1, 1000);
+    l_push(M_GETRX_CMD, 0, 0xE91, 0);
+    go();
+    l_finish();
+    std::string why;
+    CHECK(n_failed_walk(2, why) && count_ops(OP_READ) == 1,
+          "%s: the walk fails whole at its first read with cause 2: %s", tag,
+          why.c_str());
+    const auto g = l_resps(M_GETRX_RSP);
+    CHECK(g.size() == 1
+              && g[0].b == acmpdu(M_GETRX_RSP, 0, L_CTLR, 0, 0, 0, 0, 0xE91, 0),
+          "%s: the listener answers on the vendor default", tag);
+    disarm_err();
+  }
+}
+
 int Harness::report() {
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
@@ -2347,6 +2464,8 @@ int Harness::run_suite() {
   check_n5_the_deadline_boundary();
   check_n6_a_second_manager_on_the_port();
   check_n7_a_talker_level_at_the_deadline();
+  check_n8_a_failed_walk_keeps_the_saved_records();
+  check_n9_an_unwired_device_face();
   return report();
 }
 
