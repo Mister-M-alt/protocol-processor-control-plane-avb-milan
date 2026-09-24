@@ -8470,6 +8470,7 @@ struct Suite {
     InternalMaapPhase{h}.run();
     DomainDefaultPhase{h}.run();
     boot_window_at_the_top();
+    boot_window_read_deadline();
   }
 
   // The entity model lives in the integrator's main memory (07 §3.3): load it
@@ -8956,16 +8957,16 @@ struct Suite {
       if (h.nvm_ops[i].op == op && h.nvm_ops[i].region == region) n++;
     return n;
   }
+  static std::vector<uint8_t> bw_get_cmd(uint16_t seq) {
+    return acmp_frame(CTLR_MAC, 10, 0, 0, CTLR_EID, 0, EID, 0, 0, 0, 0, seq,
+                      0, 0);
+  }
   void boot_window_at_the_top() {
     const uint64_t BW_TK  = 0x00B0B0B0B0B00001ULL;
     const uint16_t BW_UID = 0x0B0A;
     auto get_rsp = [&](uint16_t seq) {
       return acmp_frame(OWN_MAC, 11, 0, 0, CTLR_EID, BW_TK, EID, BW_UID, 0, 0,
                         1, seq, 0x0002, 0);
-    };
-    auto get_cmd = [&](uint16_t seq) {
-      return acmp_frame(CTLR_MAC, 10, 0, 0, CTLR_EID, 0, EID, 0, 0, 0, 0, seq,
-                        0, 0);
     };
 
     // BW0: a fresh boot, then sink 0 bound to this section's own talker and
@@ -8992,7 +8993,7 @@ struct Suite {
     h.reset();
     h.flush_all();
     const size_t ops1 = h.nvm_ops.size();
-    h.feed(get_cmd(0x0B11));
+    h.feed(bw_get_cmd(0x0B11));
     h.idle(300);
     CHECK(h.q_acmp.empty() && !d->restore_busy_o && !d->restore_done_o,
           "BW1: a GET_RX_STATE received before the walk is held");
@@ -9002,7 +9003,7 @@ struct Suite {
     int guard = 400000;
     while (bw_ops(ops1, 0, 0x20) < 2 && guard--) h.step();
     h.nv_gnt_hold = 3000;                // the next record's read waits
-    h.feed(get_cmd(0x0B12));
+    h.feed(bw_get_cmd(0x0B12));
     h.idle(1500);
     CHECK(bw_ops(ops1, 0, 0x20) == 2 && h.q_acmp.empty() && d->restore_busy_o
               && !d->restore_done_o,
@@ -9026,17 +9027,19 @@ struct Suite {
     h.reset();
     CHECK(bw_boot(), "BW2: the next walk ends");
     h.flush_all();
-    h.feed(get_cmd(0x0B21));
+    h.feed(bw_get_cmd(0x0B21));
     auto g3 = bw_acmp(11, 50);
     CHECK(g3 == get_rsp(0x0B21), "BW2: a reset restores the same binding");
+  }
 
-    // BW3 (issue #93, S3): the device stops answering in the middle of the
-    // walk, after sink 0's saved record was read and stored. The walk fails
-    // WHOLE at its read deadline (the wrap's NVM_RS_TMO_CYC_P), nothing is
-    // preloaded, and the listener, released on the failed terminal, answers
-    // the GET it held on the vendor default, before the entity is enabled.
-    // When the device finally serves the abandoned read the arbiter drains
-    // it; a later BIND then persists, and the next reset restores that.
+  // BW3 (issue #93, S3): the device stops answering in the middle of the
+  // walk, after sink 0's saved record was read and stored. The walk fails
+  // WHOLE at its read deadline (the wrap's NVM_RS_TMO_CYC_P), nothing is
+  // preloaded, and the listener, released on the failed terminal, answers
+  // the GET it held on the vendor default, before the entity is enabled.
+  // When the device finally serves the abandoned read the arbiter drains
+  // it; a later BIND then persists, and the next reset restores that.
+  void boot_window_read_deadline() {
     constexpr long BW_TMO = 20000;
     const uint64_t BW_TK2 = 0x00B0B0B0B0B00002ULL;
     const uint16_t BW_UID2 = 0x0B0B;
@@ -9046,10 +9049,10 @@ struct Suite {
     d->restore_go_i = 1;
     h.idle(5);
     d->restore_go_i = 0;
-    guard = 400000;
+    int guard = 400000;
     while (bw_ops(ops3, 0, 0x20) < 2 && guard--) h.step();
     h.nv_gnt_hold = 1 << 30;             // the next record's read: no grant
-    h.feed(get_cmd(0x0B31));
+    h.feed(bw_get_cmd(0x0B31));
     long waited = 0;
     while (!d->restore_done_o && waited < 4 * BW_TMO) { h.step(); ++waited; }
     // blank as well: the atomic reject discards the record already taken
@@ -9078,7 +9081,8 @@ struct Suite {
                            1, 0x0B32, 0, 0),
           "BW3: a BIND after the failed walk answers SUCCESS");
     h.run_ms(1500);
-    size_t rd21 = 0, er20 = 0;
+    size_t rd21 = 0;
+    size_t er20 = 0;
     for (size_t i = ops3; i < h.nvm_ops.size(); i++) {
       if (!rd21 && h.nvm_ops[i].op == 0 && h.nvm_ops[i].region == 0x21) rd21 = i;
       if (!er20 && h.nvm_ops[i].op == 2 && h.nvm_ops[i].region == 0x20) er20 = i;
@@ -9092,7 +9096,7 @@ struct Suite {
     h.reset();
     CHECK(bw_boot() && !d->restore_fail_o, "BW3: the next walk ends clean");
     h.flush_all();
-    h.feed(get_cmd(0x0B33));
+    h.feed(bw_get_cmd(0x0B33));
     auto g5 = bw_acmp(11, 50);
     CHECK(g5 == acmp_frame(OWN_MAC, 11, 0, 0, CTLR_EID, BW_TK2, EID, BW_UID2, 0, 0,
                            1, 0x0B33, 0x0002, 0),
