@@ -252,6 +252,13 @@ module pp_top_wrap (
     //! which the top's restore_done_o follows once the listener admission
     //! gate releases
     output logic        dbg_walk_done_o,
+    //! the listener admission gate's release (KL_pp_acmp_lsn_admit
+    //! released_o), and the listener writing a preload record (X_PRELOAD)
+    //! or raising its A4 discovery arm: section BW4 grades the top's
+    //! restore_done_o and restore_busy_o against them every cycle
+    output logic        dbg_lsn_released_o,
+    output logic        dbg_lsn_preload_o,
+    output logic        dbg_lsn_arm_o,
     output logic        dbg_evr_valid_o,
     output logic [4:0]  dbg_evr_src_o,
     output logic        dbg_evr_ack_o,
@@ -550,6 +557,9 @@ module pp_top_wrap (
   assign dbg_lstn_pop_o   = u_dut.lstn_txn_ready_w;
   assign dbg_lstn_busy_o  = u_dut.lstn_dbg_busy_w;
   assign dbg_walk_done_o  = u_dut.nvm_walk_done_w;
+  assign dbg_lsn_released_o = u_dut.lsn_released_w;
+  assign dbg_lsn_preload_o  = (5'(u_dut.u_listener.xs_r) == 5'd2);   // X_PRELOAD
+  assign dbg_lsn_arm_o      = u_dut.lstn_disc_arm_w;
   assign dbg_evr_valid_o  = u_dut.evr_valid_w;
   assign dbg_evr_src_o    = u_dut.evr_src_w;
   assign dbg_evr_ack_o    = u_dut.evr_ack_w;

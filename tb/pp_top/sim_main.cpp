@@ -1025,6 +1025,21 @@ struct H {
   //! every sink the manager reported UNFLUSHED at any cycle of the run, and
   //! the same vector as it stands now (nvm_unflushed_o, issue #90)
   uint32_t nvm_unflushed_seen = 0;
+  //! the top's restore level pair against the listener admission gate,
+  //! sampled every cycle of every walk and never cleared by a reset (section
+  //! BW4, issue #93 S4): a walk starts at its first restore_busy_o, and from
+  //! then until the next reset busy or done must read 1, done must never
+  //! read 1 while the gate still owns the listener, and no preload record
+  //! write or A4 arm of the walk may land once done has risen
+  bool rs_on = false;
+  bool rs_done = false;
+  long rs_walks = 0;
+  long rs_dones = 0;
+  long rs_gap = 0;          // cycles the walk's terminal led the release
+  long rs_hole = 0;         // cycles after a walk's start with neither level
+  long rs_done_owned = 0;   // cycles restore_done_o read 1 while owned
+  long rs_pre = 0;          // the walks' preload record writes and A4 arms
+  long rs_pre_late = 0;     // ...of them, those at or after restore_done_o
   //! srp_domain_change_o strobes, counted once per cycle (section DV): the
   //! one-cycle DOMAIN_CHANGE has no wire shape of its own
   int domain_changes = 0;
@@ -1152,10 +1167,31 @@ struct H {
     }
     if (d->dbg_notify_enq_o) ++notify_enqs;
     nvm_unflushed_seen |= d->nvm_unflushed_o;
+    sample_restore_levels();
     if (d->srp_domain_change_o) ++domain_changes;
 
     d->clk_i = 1; d->eval();
     t++;
+  }
+
+  // the admission gate owns the listener from reset until its release, so
+  // every preload record write and A4 arm it sees while owned is the walk's
+  void sample_restore_levels() {
+    if (!d->rst_n) {
+      rs_on = false;
+      rs_done = false;
+      return;
+    }
+    const bool owned = !d->dbg_lsn_released_o;
+    if (d->restore_busy_o && !rs_on) { rs_on = true; ++rs_walks; }
+    if (d->restore_done_o && !rs_done) { rs_done = true; ++rs_dones; }
+    if (rs_on && !d->restore_busy_o && !d->restore_done_o) ++rs_hole;
+    if (d->restore_done_o && owned) ++rs_done_owned;
+    if (d->dbg_walk_done_o && owned) ++rs_gap;
+    if (owned && (d->dbg_lsn_preload_o || d->dbg_lsn_arm_o)) {
+      ++rs_pre;
+      if (rs_done) ++rs_pre_late;
+    }
   }
 
   // ---- MAC TX capture ----
@@ -8471,6 +8507,7 @@ struct Suite {
     DomainDefaultPhase{h}.run();
     boot_window_at_the_top();
     boot_window_read_deadline();
+    boot_window_restore_levels();
   }
 
   // The entity model lives in the integrator's main memory (07 §3.3): load it
@@ -8546,7 +8583,8 @@ struct Suite {
     //! which this loop used to exit (the PRNG seeds on S0's link rise, and
     //! section T records what a shifted clock does to W21/W25), and the
     //! top's restore_done_o now follows that terminal by the listener
-    //! admission gate's release. The level itself is graded in S0.
+    //! admission gate's release. S0 reads the level at rest; section BW4
+    //! grades it, and restore_busy_o, in every cycle of every walk.
     while (!d->dbg_walk_done_o && guard--) h.step();
     CHECK(d->dbg_walk_done_o == 1, "R: the binding walk reached its terminal");
     CHECK(d->restore_fail_o == 0, "R: no restore_fail on a blank device");
@@ -8918,9 +8956,7 @@ struct Suite {
   // flushed over the saved one. Both must now wait for the walk's end, answer
   // the restored binding, and leave the device alone; the next reset must
   // restore the same binding.
-  static bool nv_record_ok(const std::vector<uint8_t>& r, uint8_t rid,
-                           uint64_t tk, uint16_t uid, uint64_t ctlr) {
-    if (r.size() < 28) return false;
+  static uint16_t nv_crc(const std::vector<uint8_t>& r) {
     uint16_t c = 0xFFFF;                  // crc16 CCITT-FALSE (07 section 5.2)
     for (size_t i = 0; i < 28; i++) {
       if (i == 6 || i == 7) continue;     // over header-sans-crc + payload
@@ -8928,15 +8964,36 @@ struct Suite {
       for (int b = 0; b < 8; b++)
         c = (c & 0x8000) ? uint16_t((c << 1) ^ 0x1021) : uint16_t(c << 1);
     }
+    return c;
+  }
+  static bool nv_record_ok(const std::vector<uint8_t>& r, uint8_t rid,
+                           uint64_t tk, uint16_t uid, uint64_t ctlr) {
+    if (r.size() < 28) return false;
     auto be = [&](size_t at, int n) {
       uint64_t v = 0;
       for (int i = 0; i < n; i++) v = (v << 8) | r[at + size_t(i)];
       return v;
     };
     return r[0] == 0x17 && r[1] == 0x22 && r[2] == 0x02 && r[3] == rid
-        && be(4, 2) == 20 && be(6, 2) == c
+        && be(4, 2) == 20 && be(6, 2) == nv_crc(r)
         && r[8] == 0x03                   // valid, started (no STREAMING_WAIT)
         && be(10, 2) == uid && be(12, 8) == tk && be(20, 8) == ctlr;
+  }
+  //! a saved binding framed as 07 section 5.2 lays it out: valid, started
+  static std::vector<uint8_t> nv_record(uint8_t rid, uint64_t tk, uint16_t uid,
+                                        uint64_t ctlr) {
+    std::vector<uint8_t> r(28, 0);
+    r[0] = 0x17;
+    r[1] = 0x22;
+    r[2] = 0x02;                          // layout_version
+    r[3] = rid;
+    r[5] = 20;                            // payload_length
+    r[8] = 0x03;                          // valid, started
+    putbe(&r[10], uid, 2);
+    putbe(&r[12], tk, 8);
+    putbe(&r[20], ctlr, 8);
+    putbe(&r[6], nv_crc(r), 2);
+    return r;
   }
   bool bw_boot() {
     d->restore_go_i = 1;
@@ -9046,6 +9103,8 @@ struct Suite {
     h.reset();
     h.flush_all();
     const size_t ops3 = h.nvm_ops.size();
+    const std::vector<uint8_t> saved3(h.nv_mem[0x20].begin(),
+                                      h.nv_mem[0x20].begin() + 28);
     d->restore_go_i = 1;
     h.idle(5);
     d->restore_go_i = 0;
@@ -9074,6 +9133,18 @@ struct Suite {
     h.nv_gnt_hold = 0;                   // the device serves the abandoned read
     guard = 400000;
     while (bw_ops(ops3, 0, 0x21) == 0 && guard--) h.step();
+    // the GET's write-back restated the listener's default over sink 0,
+    // whose saved record the walk had stored before it failed: every
+    // debounce and flush runs out here, before the BIND, and the device must
+    // still hold that record
+    h.run_ms(1500);
+    const std::vector<uint8_t> kept3(h.nv_mem[0x20].begin(),
+                                     h.nv_mem[0x20].begin() + 28);
+    CHECK(bw_ops(ops3, 1, 0x20) == 0 && bw_ops(ops3, 2, 0x20) == 0
+              && kept3 == saved3 && (saved3[8] & 1) != 0,
+          "BW3: the GET served after the failed walk left sink 0's saved "
+          "record in the device, nothing written (byte 8 %02x -> %02x)",
+          saved3[8], kept3[8]);
     h.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, BW_TK2, EID, BW_UID2, 0, 0, 0,
                       0x0B32, 0, 0));
     auto b3 = bw_acmp(7, 400);
@@ -9101,6 +9172,45 @@ struct Suite {
     CHECK(g5 == acmp_frame(OWN_MAC, 11, 0, 0, CTLR_EID, BW_TK2, EID, BW_UID2, 0, 0,
                            1, 0x0B33, 0x0002, 0),
           "BW3: a reset restores the binding made after the failed walk");
+  }
+
+  // BW4 (issue #93 S4): the top's restore_done_o is the binding walk's END,
+  // the admission gate's release, so an enable gated on it cannot precede
+  // the last preload's record write and discovery arm; restore_busy_o covers
+  // the cycles between the shadow's terminal and that release. Graded in
+  // every cycle of every walk this run made (H::sample_restore_levels): the
+  // blank boot of section R, the boots of BW0-BW2 with and without a saved
+  // binding, BW3's failed walk and the boot after it, and one more here whose
+  // last offer is the LAST sink's saved binding, so that the shadow's
+  // terminal rises while that preload's discovery arm is still up.
+  void boot_window_restore_levels() {
+    const uint64_t BW_TK7 = 0x00B0B0B0B0B00007ULL;
+    const uint16_t BW_UID7 = 0x0B07;
+    h.reset();
+    const std::vector<uint8_t> rec7 = nv_record(0x27, BW_TK7, BW_UID7, CTLR_EID);
+    std::copy(rec7.begin(), rec7.end(), h.nv_mem[0x27].begin());
+    CHECK(bw_boot() && !d->restore_fail_o,
+          "BW4: a walk whose last offer is the last sink's saved binding ends");
+    h.flush_all();
+    h.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR_EID, 0, EID, 0, 7, 0, 0, 0x0B41,
+                      0, 0));
+    auto g7 = bw_acmp(11, 50);
+    CHECK(g7 == acmp_frame(OWN_MAC, 11, 0, 0, CTLR_EID, BW_TK7, EID, BW_UID7, 7, 0,
+                           1, 0x0B41, 0x0002, 0),
+          "BW4: the last sink's saved binding is restored");
+    CHECK(h.rs_walks >= 7 && h.rs_dones == h.rs_walks && h.rs_gap >= h.rs_walks,
+          "BW4: %ld walks, each ended with restore_done_o, the walk's terminal "
+          "leading the release in %ld cycles", h.rs_walks, h.rs_gap);
+    CHECK(h.rs_hole == 0,
+          "BW4: restore_busy_o or restore_done_o read 1 in every cycle from "
+          "each walk's start (%ld cycles read neither)", h.rs_hole);
+    CHECK(h.rs_done_owned == 0,
+          "BW4: restore_done_o never read 1 while the admission gate still "
+          "owned the listener (%ld cycles did)", h.rs_done_owned);
+    CHECK(h.rs_pre > 0 && h.rs_pre_late == 0,
+          "BW4: every preload record write and discovery arm of a walk came "
+          "before its restore_done_o (%ld of %ld after it)", h.rs_pre_late,
+          h.rs_pre);
   }
 
   // ==== S10. the maap face: the DA gate no fabric can open by itself ======

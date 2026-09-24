@@ -117,7 +117,7 @@ tally.
   later section keeps the clock it was tuned against (section T's note).
 - **S0/S1** quiescence + snapshot identity, and `restore_done_o` has followed
   the walk's terminal (the top's level now waits for the listener admission
-  gate's release, issue #92); SRP bring-up: the FIRST MSRP
+  gate's release, issue #92; BW4 grades it cycle by cycle); SRP bring-up: the FIRST MSRP
   frame is the Domain default declaration `New {6,3,2}`, byte-exact.
 - **BW** (runs last, behind resets of its own) a read-only command in the
   boot window, at the top (issue #92): sink 0 is bound to a talker of the
@@ -132,9 +132,21 @@ tally.
   clocks; the product default is 20 ms of `CLK_HZ_P`, two million steps here),
   blank and nothing preloaded, and the GET held in the window answers the
   vendor default while `entity_enable_i` is still low. Released, the device
-  serves the abandoned read, which the arbiter drains; a BIND after it commits
-  only once that read has ended, a verified F07.8 record, and the next reset
-  restores it.
+  serves the abandoned read, which the arbiter drains. Every debounce and
+  flush then runs out before anything else happens, and region 0x20 must
+  still hold the saved record the failed walk had stored: the held GET's
+  write-back restated the listener's default and changes nothing (issue #92
+  after #93's causes). A BIND after it commits only once that read has
+  ended, a verified F07.8 record, and the next reset restores it. **BW4**
+  (issue #93 S4) grades the top's `restore_done_o` and `restore_busy_o` in
+  every cycle of every walk the run made (section R's blank boot, BW0-BW3,
+  the boot after BW3, and one of its own whose last offer is sink 7's saved
+  binding, seeded in the device model): from a walk's first busy cycle to the
+  next reset one of the two reads 1; `restore_done_o` never reads 1 while
+  the admission gate still owns the listener; and no preload record write or
+  discovery arm of a walk lands in a cycle at or after its `restore_done_o`
+  rose. The walks' terminals lead the release by at least one cycle each, so
+  the composition is exercised, not assumed.
 - **S2** `DECLARE_TALKER` (svc face) → Σ-slope admission equals the
   independent Milan model (sum, granted, admitted, no over-limit) → Talker
   Advertise `New` AND MVRP VID `New` byte-exact on the MAC stream.
@@ -237,8 +249,11 @@ Trace window 0x40000: record = 4 words, lane 0 = now_ms, lane 1 =
 | M32 | the listener admission gate deleted (`KL_pp_acmp_lsn_admit` never owns: `own_r` resets to 0), the top's wiring before issue #92 | default build 5 FAIL of 1,401: BW1 four times (the GET before the walk is answered at once; the one inside the window is taken, answers sink 0 unbound and its write-back rewrites region 0x20 unbound) and BW2 (the next reset restores nothing). Every other section PASSES |
 | M33 | the binding walk's read deadline deleted (`KL_acmp_nvm_shadow` `rs_tmo_w` tied 0) | default build 2 FAIL of 1,407: BW3 (the walk never ends in 80,000 clocks, and the held GET is never answered). Every other section PASSES |
 | M34 | the abandoned read never drained (`KL_pp_nvm_mgr_arb` never sets `drain_r`) | default build 2 FAIL of 1,407: BW3 (the late read is handed to the binding manager, which takes no byte outside its walk, so the read never ends: the BIND is never committed and the next reset restores nothing). Every other section PASSES |
+| M35 | the binding manager's capture compare back to its form before the unbound rule (`KL_acmp_nvm_shadow` `c1_diff_w` true on any field difference, so two unbound records can differ) | default build 2 FAIL of 1,414: BW3 (the GET served after the failed walk rewrites region 0x20 unbound, byte 8 `03` to `00`, before any BIND; the BIND then writes region 0x20 a second time). Every other section PASSES |
+| M36 | the top's `restore_done_o` without the release (`= nvm_walk_done_w`) | default build 2 FAIL of 1,414: BW4 (8 cycles of `restore_done_o` while the gate owned the listener, one in each of the six earlier walks and two in BW4's own; and in BW4's own walk the last preload's discovery arm lands in the cycle `restore_done_o` rose). Every other section PASSES |
+| M37 | the top's `restore_busy_o` without the gap term (`= nvm_walk_busy_w`) | default build 1 FAIL of 1,414: BW4 (8 cycles read neither busy nor done). Every other section PASSES |
 
-All twenty-four bite; originals restored; suite back to green. The M1-M6 counts were
+Every row but the M31 control bites; originals restored; suite back to green. The M1-M6 counts were
 taken when the suite stood at 86 checks (scenario A and section B have since
 been added) and the M7-M11 counts at 1,139, so re-run a mutation before quoting
 its blast radius. M12-M13 were measured at 1,269 checks, M14-M16 at 1,300,
@@ -254,6 +269,10 @@ M25 to M31 were measured on 2026-09-22 at 1,391 checks in the default build and
 so there was nothing to restore. M25 to M30 bite; M31, a control, stays green as
 it must. M32 was measured on 2026-09-23 at 1,401 checks in the default build and
 again on 2026-09-24 at 1,407 (the same five), M33 and M34 on 2026-09-24 at 1,407.
+M32 to M37 were measured on 2026-09-24 at 1,414, each in its own extract of the
+tree: M32 then fails 8 (BW1 four times, BW2, BW3's saved-record check, and BW4
+twice, because a gate that never owns makes no gap and sees no preload), M33
+and M34 the same 2 as before.
 
 ## Recorded seams and honest limits
 
@@ -296,7 +315,11 @@ again on 2026-09-24 at 1,407 (the same five), M33 and M34 on 2026-09-24 at 1,407
   boundary, are covered by the `acmp_nvm` suite; BW3 grades the deadline at the
   top once.
 - The wrap exposes observe-only cross-module taps (`dbg_*`) used during
-  bring-up; the checks themselves read only wire frames + the host face.
+  bring-up; the checks themselves read only wire frames + the host face,
+  except where a section names its tap: R waits on `dbg_walk_done_o`, and
+  BW4 grades the top's restore pins against the admission gate's release and
+  the listener's preload write and A4 arm (`dbg_lsn_released_o`,
+  `dbg_lsn_preload_o`, `dbg_lsn_arm_o`).
 
 ## Section B — the response buffer lives in main memory (03 §7.1)
 
