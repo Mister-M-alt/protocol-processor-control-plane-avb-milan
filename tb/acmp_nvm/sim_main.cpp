@@ -2387,9 +2387,10 @@ void Harness::check_n8_a_failed_walk_keeps_the_saved_records() {
 // An unwired device face, as the integrator guide's tie-off rules state it:
 // one that never grants a READ fails the walk at its deadline (cause 3) and
 // leaves the port quarantined, one that answers every READ with err fails it
-// at once (cause 2). Either way the listener is released and answers on the
-// defaults, and nothing is written. (A face answering as erased media is the
-// per-record default of N2a, and a device of empty regions is A1-A6.)
+// at once (cause 2); either way the listener is released and answers on the
+// defaults, and nothing is written. One that answers every READ as erased
+// media ends the walk done, not failed, and blank: the same two levels as a
+// full restore, which is why restore_blank_o exists.
 void Harness::check_n9_an_unwired_device_face() {
   {
     const char* tag = "N9a a device face that never grants";
@@ -2428,6 +2429,18 @@ void Harness::check_n9_an_unwired_device_face() {
               && g[0].b == acmpdu(M_GETRX_RSP, 0, L_CTLR, 0, 0, 0, 0, 0xE91, 0),
           "%s: the listener answers on the vendor default", tag);
     disarm_err();
+  }
+  {
+    const char* tag = "N9c a device face that answers every READ as erased media";
+    for (int k = 0; k < N_SINKS; ++k) memset(store[k], 0xFF, REG_BYTES);
+    l_boot();
+    l_finish();
+    CHECK(d->restore_done_o && !d->restore_fail_o && d->restore_cause_o == 0
+              && d->restore_blank_o && !pre_valid_seen && d->dbg_valid_o == 0
+              && count_ops(OP_READ) == N_SINKS && count_ops(OP_WRITE) == 0
+              && count_ops(OP_ERASE) == 0,
+          "%s: done, not failed, blank, one header read per sink and nothing "
+          "preloaded or written", tag);
   }
 }
 

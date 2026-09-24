@@ -5,7 +5,7 @@ Proves the ACMP binding NVM shadow (`hdl/acmp/KL_acmp_nvm_shadow.sv`,
 [05 §5](../../docs/architecture/05_acmp_engine.md) ≈20 B/sink shadow +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8/F07.9 +
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8): `make` = build + run,
-exit 0 = PASS, 348 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
+exit 0 = PASS, 349 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
 timing mirrors (tick_i is held high, so window = 50 cycles), and
 `-GRS_TMO_CYC_P=3000` the walk's read deadline (`T-NVM-RS-DEADLINE`) that group N
 places its boundaries against.
@@ -173,18 +173,19 @@ release within four cycles, no work while owned, nothing written.
   UNBIND of sink 3, which the failed walk left unbound, is too. Nothing is
   written or left pending, every saved record is still in the device
   byte-exact, and a reset on a healthy device restores all three bindings.
-- **N9a-b** an unwired device face, as the integrator guide's tie-off rules
+- **N9a-c** an unwired device face, as the integrator guide's tie-off rules
   state it: a face that never grants fails the walk at its deadline with
   cause 3, its one request abandoned and the port left quarantined; a face
-  that answers every READ with err fails it at the first read with cause 2.
-  Either way the released listener answers the vendor default and nothing is
-  written. (A face answering as erased media is N2a's per-record default, and
-  a device of empty regions is A1-A6.)
+  that answers every READ with err fails it at the first read with cause 2;
+  either way the released listener answers the vendor default and nothing is
+  written. A face that answers every READ as erased media (every region
+  0xFF) ends the walk done, not failed and blank, one header read per sink,
+  nothing preloaded or written: the same two levels as a full restore.
 
 Pinned wiring: `make pinned` builds the same bench with the gate left out
 (`ACMP_NVM_PINNED_WIRING`, the producers wired straight to the listener as the
 top was before issue #92) and exits non-zero. It is the reproduction of the
-recorded L05 control: 107 of 348 checks fail, among them L05a's "sink 0
+recorded L05 control: 107 of 349 checks fail, among them L05a's "sink 0
 holds 000000000000000000000000" (the listener's unbound record flushed over
 the saved binding), the unbound reply and the reset that no longer restores
 it; L05s finds 193 presentation cycles of sink 0 and 202 of sink 7 answered
@@ -233,43 +234,43 @@ Mutation-proven 2026-09-23 for the listener admission (issue #92), each on
   when all three are already clear. `tb/lsn_admit` grades each on its own.
 
 Mutation-proven 2026-09-24 for issue #93, first at 332 checks and measured
-again at 348 once N8 and N9 were added (receipts under the lane's output
-directory, one log per mutant); the counts below are at 348:
-- **LG01** the gate deleted: fails 107 of 348, every L case and, through the
+again at 349 once N8 and N9 were added (receipts under the lane's output
+directory, one log per mutant); the counts below are at 349:
+- **LG01** the gate deleted: fails 107 of 349, every L case and, through the
   early release, N2-N9a as well. **LRdone** fails 108.
 - **LG02** / **LG03** the transaction's valid admitted, or its ready passed:
-  fail 71 and 45 of 348.
-- **LG02t** the talker event's valid admitted while owned: fails 19 of 348
+  fail 71 and 45 of 349.
+- **LG02t** the talker event's valid admitted while owned: fails 19 of 349
   (L01-L03b, N7a-b: the listener takes the level every idle cycle, 80,501
   takes in L01, and the walk never ends). **LG03t** its ready passed: fails 7
   (the router's acknowledge no longer equals a take, and L03b's event is
   lost).
-- **LG04** expiries admitted: fails 5 of 348 (L07, L07b: the expiries reach
+- **LG04** expiries admitted: fails 5 of 349 (L07, L07b: the expiries reach
   the listener in the window, hold L07's first preload offer untaken for
   19,811 cycles, and their write-backs flush a saved binding unbound).
-- **LG05** START/STOP admitted: fails 12 of 348 (L06-L06c: the request is
+- **LG05** START/STOP admitted: fails 12 of 349 (L06-L06c: the request is
   captured and completed while the gate owns the faces, before its sink's
   preload, so NVM does not end at the state the request left and the next
   reset does not restore it).
-- **B01** no read deadline: fails 20 of 348 (N3, N4, N5b, N5c, N7b, N8c,
+- **B01** no read deadline: fails 20 of 349 (N3, N4, N5b, N5c, N7b, N8c,
   N9a: the walk never ends). **BA1** the abort never raised: fails 15 (N3,
   N5b, N5c, N7b, N9a: the late read reaches the manager and wedges the port).
 - **B02** a zero-byte err read as blank whatever its cause (processor issue
-  20's defect, both of its edits): fails 12 of 348, N1a-d, N8b and N9b.
-  **B04** an UNFRAMED err failing the walk: fails 119 of 341, A2 and F4 (the
-  blank first boot) among them.
-- **BC1** the walk's cause collapsed to torn: fails 13 of 348 (N1a-d, N3, N4,
+  20's defect, both of its edits): fails 12 of 349, N1a-d, N8b and N9b.
+  **B04** an UNFRAMED err failing the walk: fails 120 of 342, A2, F4 (the
+  blank first boot) and N9c among them.
+- **BC1** the walk's cause collapsed to torn: fails 13 of 349 (N1a-d, N3, N4,
   N5b, N5c, N7b, N8b-c, N9a-b).
 - **B03** the abandoned read never drained (`KL_pp_nvm_mgr_arb`): fails 10 of
-  348 (N3, N5b, N5c, N9a: the port never serves again).
-- **A01** the arbiter's grant-cycle busy term deleted: fails 1 of 348, N6
+  349 (N3, N5b, N5c, N9a: the port never serves again).
+- **A01** the arbiter's grant-cycle busy term deleted: fails 1 of 349, N6
   (92 of 200 offsets lose the walk's request and end at the deadline).
 
 Mutation-proven 2026-09-24 for the failed walk's saved records (issue #92
-after #93's causes, PR #109 review), at 348 checks:
+after #93's causes, PR #109 review), at 349 checks:
 - **F1-compare** the capture compare back to its form before the unbound
   rule (`c1_diff_w` true on any field difference, so two unbound records can
-  differ): fails 9 of 348, N8a-c, three each. After every cause the GET held
+  differ): fails 9 of 349, N8a-c, three each. After every cause the GET held
   through the window writes sink 0's record unbound (1 erase and 1 write,
   `sink 0 holds 000000000000000000000000`), and the next healthy reset
   restores two bindings of three. The whole suite is otherwise green: no
