@@ -14,11 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Link, matrix, wavedrom and staleness gates
+      - name: Link, matrix, parameter, wavedrom and staleness gates
         run: |
           python3 -m pip install wavedrom
           python3 scripts/check-links.py
           python3 scripts/check-matrix.py
+          python3 scripts/check-integrator-params.py
           python3 scripts/render-wavedrom.py --check
           make stale
 

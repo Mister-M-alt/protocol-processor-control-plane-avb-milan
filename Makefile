@@ -6,11 +6,11 @@ DRAWIO      ?= drawio
 DRAWIO_SRC  := $(wildcard docs/diagrams/src/*.drawio)
 DRAWIO_SVG  := $(patsubst docs/diagrams/src/%.drawio,docs/diagrams/%.svg,$(DRAWIO_SRC))
 
-.PHONY: all check diagrams wavedrom wavedrom-check lint links matrix modmatrix stale
+.PHONY: all check diagrams wavedrom wavedrom-check lint links matrix modmatrix params stale
 all: diagrams check
 
 # everything CI should enforce (see docs/architecture/09_verification.md section 7)
-check: lint wavedrom-check links matrix modmatrix stale
+check: lint wavedrom-check links matrix modmatrix params stale
 
 diagrams: $(DRAWIO_SVG) wavedrom
 
@@ -35,6 +35,9 @@ links:
 
 matrix:
 	@python3 scripts/check-matrix.py
+
+params:
+	@python3 scripts/check-integrator-params.py
 
 # the module<->testbench matrix is GENERATED; drift and an untested module both fail
 modmatrix:

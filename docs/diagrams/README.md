@@ -57,6 +57,18 @@ Overlap, clipped text and lines running through boxes are invisible in the XML.
 rsvg-convert -w 1500 -o /tmp/check.png docs/diagrams/20-rtl-dataflow.svg
 ```
 
+For diagram 21, the SVG above is the editable master and its committed PNG is an
+export. After editing the master, regenerate the PNG with the same renderer:
+
+```sh
+rsvg-convert -w 1905 -o docs/diagrams/21-integration-faces.png docs/diagrams/21-integration-faces.svg
+```
+
+Its `integration-parameters` group lists every overridable top-level parameter;
+[`check-integrator-params.py`](../../scripts/check-integrator-params.py) compares
+that visible inventory and the integrator guide's section 2 table with the RTL
+declarations. Defaults remain at the owners linked from the guide.
+
 Check for overlapping text, labels escaping their box, arrows landing on the wrong block,
 and legibility at normal size. Every one of these carries an opaque light background so it
 reads on both light and dark page themes.

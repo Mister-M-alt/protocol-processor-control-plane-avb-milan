@@ -12,8 +12,9 @@ whole contract on one page, including what happens when you do not connect somet
 For what is inside the box, see
 [`../diagrams/20-rtl-dataflow.svg`](../diagrams/20-rtl-dataflow.svg).
 
-> The port names and defaults on this page are transcribed from the RTL. Where the
-> architecture documents describe an older interface, the RTL is authoritative and the
+> The port and parameter names on this page describe the RTL; section 2 links to
+> their authoritative homes instead of copying defaults. Where the architecture
+> documents describe an older interface, the RTL defines the implemented interface and the
 > divergence is listed in the
 > [HDL engineer guide](hdl-engineer.md#9-where-the-specification-and-the-tree-still-disagree).
 
@@ -44,26 +45,48 @@ able to run from a bridged management clock; the top instantiates it on `clk_i`.
 
 ## 2. Parameters — the shape is fixed when you build the bitstream
 
-Nothing here is writable at runtime, and that is deliberate.
+<a id="integration-parameters"></a>
 
-| Parameter | Default | What it sets |
+This is the **complete inventory of overridable parameters** on
+[`protocol_processor_top`](../../hdl/top/protocol_processor_top.sv), in declaration
+order. Nothing here is writable at runtime. Derived `localparam` declarations in
+the header are internal calculations, not integration overrides.
+
+The top's parameter declarations give the exact implemented default expressions.
+The table below names each parameter's documented owner: architectural parameter
+values and constraints stay in [F01.5](../architecture/01_overview.md#fig-01-params),
+protocol timing values stay in [F08.1](../architecture/08_timing.md#fig-08-constants),
+and implementation settings without a master-table entry stay in the top's RTL
+declaration and banner. These are references, not another table of values
+([single-source rule](../README.md#2-identifier-registries)). In particular, the
+stream counts in F01.5 are product choices; the top supplies implementation defaults.
+
+| Parameter | Authoritative home / documented owner | What it sets |
 |---|---|---|
-| `N_STREAM_IN_P` | 8 | Stream Inputs — sinks, listener machines, per-sink records |
-| `N_STREAM_OUT_P` | 8 | Stream Outputs — sources, talker gates, SRP declarations |
-| `RX_SLOTS_P` × `RX_SLOT_BYTES_P` | 4 × 576 | the RX payload pool |
-| `TX_STD_SLOTS_P` | 4 | standard TX slots (a fifth oversize slot always exists) |
-| `TX_OVERSIZE_BYTES_P` | 1600 | the oversize TX slot, for the responses Milan lets exceed the normal cap |
-| `CLK_HZ_P` | 100 MHz | the timer prescaler base |
-| `TIM_DIV_US_P` / `TIM_DIV_MS_P` | derived / 1000 | prescaler overrides. **Simulation only** — they exist so a testbench can compress time. |
-| `TROM_HEX_P` | `ltn_rom.hex` | the ACMP listener transition-ROM image |
-| `UCODE_HEX_P` | `ucode.hex` | the AECP µcode ROM image |
-| `DESC_BASE_P` | 0x20000000 | where the descriptor image lives in **your** memory |
-| `DESC_LINE_BYTES_P` | 576 | the on-chip line buffer for one located descriptor |
-| `DESC_IDX_ENTRIES_P` | 32 | cached index-map entries |
-| `DESC_NAME_ENTRIES_P` | 32 | name-table entries held on chip; set it from the generated image's `n_names`, up to 1024 |
-| `DESC_MEM_TMO_CYC_P` | 4096 | no-progress watchdog on the descriptor memory face, in clocks |
-| `RESP_BASE_P` | 0x20100000 | where the AECP response buffer lives in **your** memory |
-| `SRP_DOM_DEF_VID_P` | 2 | the Class A Domain VID the SRP engine declares at start-up and on every link-up, and returns to on link-down (Milan §4.2.7.2.1). A bridge's differing Class A Domain is still adopted at run time. **Keep it at 2 in a product build**: Milan fixes the value, and any other one exists only to prove this binding in verification. |
+| `N_STREAM_IN_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-N-STREAM-IN` | Stream Inputs: sinks, listener machines, per-sink records |
+| `N_STREAM_OUT_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-N-STREAM-OUT` | Stream Outputs: sources, talker gates, SRP declarations |
+| `N_AUDIO_UNIT_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-N-AUDIO-UNITS` | Audio Unit rows in the AECP dynamic-state store, including sampling-rate settings; match the entity model |
+| `N_CLK_DOMAIN_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-N-CLOCK-DOMAINS` | Clock Domain rows in the AECP dynamic-state store, including clock-source selections; match the entity model |
+| `N_CONTROL_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [AECP dynamic-state store](../../hdl/aecp/KL_aecp_dyn_state.sv) | IDENTIFY CONTROL rows and identify settings; match the entity model. This counts CONTROL descriptors, not registered controllers (`P-N-CONTROLLERS`). |
+| `RX_SLOTS_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-RX-SLOTS` | Number of RX payload slots |
+| `RX_SLOT_BYTES_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-RX-SLOT-BYTES` | Capacity of each RX payload slot |
+| `TX_STD_SLOTS_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-TX-STD-SLOTS` | Standard TX slots; the oversize slot is additional |
+| `TX_OVERSIZE_BYTES_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-TX-OVERSIZE-BYTES` | Oversize TX slot capacity for responses Milan permits beyond the normal cap |
+| `CLK_HZ_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-CLK-HZ` | Core clock frequency used to derive the timer prescaler and restore watchdog defaults |
+| `TIM_DIV_US_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [F08.2 timebase](../architecture/08_timing.md#fig-08-timerhw) | Core-clock divider for the microsecond tick. **Simulation time compression only** when overriding the clock-derived expression. |
+| `TIM_DIV_MS_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [F08.2 timebase](../architecture/08_timing.md#fig-08-timerhw) | Microsecond-tick divider for the millisecond tick. **Simulation time compression only** when overriding. |
+| `TROM_HEX_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [listener ROM generator](../../hdl/acmp/rom/gen_ltn_rom.py) | File path to the ACMP listener transition-ROM image |
+| `UCODE_HEX_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [AECP µcode generator](../../hdl/aecp/ucode/gen_ucode.py) | File path to the AECP µcode ROM image |
+| `DESC_BASE_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.1 memory contract](../architecture/07_memory_maps.md#sec-desc-memory) | Base of the descriptor image in **your** memory |
+| `DESC_LINE_BYTES_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.1 descriptor store](../architecture/07_memory_maps.md#sec-desc-memory) | On-chip line capacity for one located descriptor; also sizes the response-buffer reservation |
+| `DESC_IDX_ENTRIES_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.1 descriptor store](../architecture/07_memory_maps.md#sec-desc-memory) | Cached index-map capacity, per (configuration, descriptor type) |
+| `DESC_NAME_ENTRIES_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.1 descriptor store](../architecture/07_memory_maps.md#sec-desc-memory) | Name-table capacity on chip; size from the generated image's `n_names` within the store's supported limits |
+| `DESC_MEM_TMO_CYC_P` | [Top declaration and bindings](../../hdl/top/protocol_processor_top.sv); [AECP engine](../../hdl/aecp/KL_aecp_engine.sv) | Watchdog budget in core clocks for descriptor and response memory, AECP gather waits, and the listener's stream-command handshake |
+| `NVM_RS_TMO_CYC_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-NVM-RS-TMO-CYC`; [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NVM-RS-DEADLINE` | Boot restore read-phase no-progress deadline, in core clocks; size above the slowest record read on the NVM device face |
+| `REG_TL_TIMEOUT_MS_P` | [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NOTIF-TIMELIMITED`; [top declaration](../../hdl/top/protocol_processor_top.sv) | TIME_LIMITED registration expiry in the AECP notification registry, in milliseconds of the possibly compressed timebase. Shortened overrides are for verification. |
+| `LOCK_TIMEOUT_MS_P` | [F08.1](../architecture/08_timing.md#fig-08-constants), `T-LOCK-UNLOCK`; [top declaration](../../hdl/top/protocol_processor_top.sv) | ENTITY lock auto-unlock deadline in the AECP notification block, in milliseconds of the possibly compressed timebase. Shortened overrides are for verification. |
+| `RESP_BASE_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.2 response-buffer contract](../architecture/07_memory_maps.md#sec-resp-memory) | Base of the AECP response buffer in **your** memory |
+| `SRP_DOM_DEF_VID_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-SRP-DOM-DEF-VID`; [F10.2 Domain FSM](../architecture/10_srp_engine.md#fig-10-domsm) | Class A Domain VID declared at startup and link-up, and restored on link-down. A bridge's differing Class A Domain is adopted at runtime. **Keep the F01.5 Milan value in a product build**; alternatives are verification fixtures. |
 
 Three traps worth stating plainly:
 
@@ -77,8 +100,9 @@ Three traps worth stating plainly:
 3. **A one-stream shape is supported.** Index widths are clamped so a shape of one does
    not declare a negative-width vector.
 
-Parameter identities and ranges are owned by
-[`01_overview.md` §7](../architecture/01_overview.md#7-parameter-master-table-f015).
+[`scripts/check-integrator-params.py`](../../scripts/check-integrator-params.py)
+compares this table and diagram 21's parameter inventory with the top's declarations.
+It runs in the CI documentation gates and in `make check`.
 
 ---
 
