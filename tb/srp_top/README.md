@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **255 checks**.
+`make` = build + run, exit 0 = PASS, **1531 checks**.
 
 Expectations are independent: an MRPDU builder/parser written here from
 802.1Q §10.8.1.2 / §35.2.2, a Σ-slope model transcribing the Milan v1.2
@@ -85,6 +85,46 @@ Covered end to end:
 - **Admission sweep**: 30 randomized declare/withdraw rounds across all 8
   sources vs the model — admitted vector, per-source granted slopes, Σ
   and over_limit, exercising the greedy order and capacity reuse.
+- **Current-declaration grant (H, issue #112)**: sources 0, 1 and 7 at all
+  eight slope-sampling phases. Cold refusal, 224 → 20000-byte growth,
+  20000 → 224-byte shrink, and identical re-declaration are observed on
+  every cycle from real service-gate acceptance. The refused source never
+  grants; every admitted slope belongs to the current declaration; the
+  grant is low on acceptance and only returns at round completion.
+  Shrink/identical latency is 8/16/24 clocks from acceptance, printed per
+  case. An actual Listener Ready PDU is paused before its packed events
+  and completed just after acceptance, exercising optimistic ACTIVE before
+  the real grant. The suite checks the three-published-round window, the
+  ACTIVE equation, zero slope while unadmitted, and settled sum/refusal.
+  The window length is printed per case: 25, 33 or 41 clocks, 17 past the
+  round that publishes the verdict. No state or verdict is forced. The
+  [unit suite](../srp_admission/README.md) covers smaller shapes, rapid
+  changes, both TSpec fields and failing mutants.
+- **A pending re-declaration frees no capacity (I, issue #112 round 2)**:
+  source 0 (69.952 Mb/s) is admitted and ACTIVE. Source 1 or 7
+  (15.488 Mb/s) is refused by the 75 Mb/s ceiling and declared Talker
+  Failed, with a real Listener Ready. Source 0 then re-declares:
+  - identically, or shrunk to 60.288 Mb/s. The other source stays refused.
+    On every clock from acceptance it never grants, is never ACTIVE and
+    never declares Advertise. Across two T-MRP-JOIN periods, no Talker
+    Advertise vector for its stream reaches the wire.
+  - shrunk to 17.024 Mb/s, the control that frees capacity. The other
+    source's first grant is the same clock as source 0's re-grant, its
+    Advertise follows, and its Advertise reaches the wire.
+
+  Each case runs at all eight sampling phases, 48 runs in all. The
+  identical re-declaration is also accepted 1 to 40 clocks before a
+  T-MRP-JOIN tick (read-only `dbg_join_tick_o` probe). This is the placement
+  where round 1's rule put a Talker Advertise on the wire for k = 1–5, 7
+  and 8. Every recorded round must publish the independent greedy model,
+  and between rounds a grant only retires with its own declaration.
+- **The optimistic window outlives a held verdict (J)**: source 7, then
+  source 0, both admissible, with 0 to 20 idle clocks between the two
+  requests, at all eight phases.
+  While source 0 is pending, source 7's verdict is held, and a window that
+  aged on discarded rounds could close first. Neither source ever declares
+  Failed. A verdict still pending at source 0's acceptance publishes in the
+  same clock as source 0's.
 
 Known limits (recorded honestly): the C++ side emulates the TX arbiter
 and the processor-top header strip (both out of scope here — 03 §8 / 03
@@ -131,3 +171,11 @@ verbatim; both arms passed all 253 checks before it:
 |---|---|
 | Domain participant also takes the Talker Advertise lane (R271-2 K13) | 1 of 255 FAIL (F5c Talker Advertise LeaveAll) |
 | Domain participant also takes the Talker Failed lane (R271-2 K14) | 1 of 255 FAIL (F5c Talker Failed-only LeaveAll) |
+
+FailureInformation change end to end (section D, issues #43/#49): after the
+Advertise→Failed swap has drained, a Failed JoinIn with a changed code and
+bridge raises `evt_tk_fail_chg_o` once and no EVT_TK_REGISTERED, latches the
+new values, and puts NO Listener New on the wire for 800 ms; an unchanged
+refresh strobes nothing. Mutation-proven 2026-09-24 in a scratch copy: folding
+the change back into the registration indication → 3 of 259 FAIL (the strobe
+count, the wire silence, and the unchanged-refresh count).

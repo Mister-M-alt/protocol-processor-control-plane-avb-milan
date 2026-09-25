@@ -13,6 +13,7 @@ TOP        = pp_top_wrap
 # verification only: Milan 4.2.7.2.1 fixes the product value at 2. README
 # section DV says why this pattern
 SRP_VID_FIXTURE = 5A3C
+.DEFAULT_GOAL := run
 
 VFLAGS = --cc --exe --build -j 0 \
          --top-module $(TOP) \
@@ -38,6 +39,7 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
        $(HDL)/packet_engine/KL_pp_nvm_port.sv \
        $(HDL)/packet_engine/KL_pp_nvm_mgr_arb.sv \
        $(HDL)/aecp/ucpu_pkg.sv $(HDL)/aecp/KL_aecp_ucpu.sv \
+       $(HDL)/aecp/KL_aecp_desc_mem_guard.sv \
        $(HDL)/aecp/KL_aecp_desc_store.sv $(HDL)/aecp/KL_aecp_dyn_state.sv $(HDL)/aecp/KL_aecp_engine.sv $(HDL)/aecp/KL_aecp_resp_buf.sv \
        $(HDL)/aecp/KL_aecp_notify.sv $(HDL)/aecp/KL_aecp_ca_originator.sv \
        $(HDL)/adp/KL_adp_engine.sv \
@@ -52,6 +54,12 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/srp/srp_pkg.sv \
        $(HDL)/top/KL_mrp_strip.sv $(HDL)/top/protocol_processor_top.sv \
        pp_top_wrap.sv
 CPP  = sim_main.cpp
+
+gsi-build: ltn_rom.hex ucode.hex
+	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vpp_top_sim
+
+gsi-internal: gsi-build
+	./obj_dir/Vpp_top_sim --gsi-internal-only
 
 run: fixture-guards ltn_rom.hex ucode.hex
 	@rm -f obj_dir/build_tally.txt
@@ -82,4 +90,4 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 clean:
 	rm -rf obj_dir obj_vid ltn_rom.hex ucode.hex
 
-.PHONY: run fixture-guards fixture-guards-test clean
+.PHONY: run gsi-build gsi-internal fixture-guards fixture-guards-test clean

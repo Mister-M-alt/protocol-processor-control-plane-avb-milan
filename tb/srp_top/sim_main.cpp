@@ -305,8 +305,25 @@ struct H {
   // strobe accounting
   int reg_cnt[8] = {};
   int unreg_cnt[8] = {};
+  int fchg_cnt[8] = {};
   int domchg = 0;
   int malformed = 0;
+  struct Sample {
+    unsigned decl;
+    unsigned withdraw;
+    unsigned phase;
+    unsigned grants;
+    unsigned active;
+    unsigned opt;
+    unsigned round;
+    unsigned tk_decl;
+    unsigned listener;
+    uint32_t sum;
+    std::vector<uint32_t> slopes;
+    bool join;                           // T-MRP-JOIN tick of the talker walk
+  };
+  bool recording = false;
+  std::vector<Sample> samples;
 
   explicit H(Vsrp_top_wrap* dd) : d(dd) {}
 
@@ -315,10 +332,14 @@ struct H {
   // Returns the decoder's ready as sampled in the low phase.
   bool step() {
     d->clk_i = 0; d->eval();
+    unsigned decl = d->dbg_decl_o;
+    unsigned withdraw = d->dbg_withdraw_o;
+    unsigned phase = d->dbg_sample_index_o;
     bool mready = d->mrp_ready_o != 0;
     for (int k = 0; k < 8; k++) {
       if ((d->evt_tk_registered_o >> k) & 1)   reg_cnt[k]++;
       if ((d->evt_tk_unregistered_o >> k) & 1) unreg_cnt[k]++;
+      if ((d->evt_tk_fail_chg_o >> k) & 1)     fchg_cnt[k]++;
     }
     if (d->evt_domain_change_o) domchg++;
     if (d->dbg_pdu_done_o && d->dbg_pdu_malformed_o) malformed++;
@@ -345,6 +366,14 @@ struct H {
       cur.clear();
     }
     d->clk_i = 1; d->eval();
+    if (recording) {
+      Sample sample{decl, withdraw, phase, d->sr_admitted_o, d->active_o,
+                    d->dbg_opt_o, d->dbg_adm_round_o, d->tk_decl_state_o,
+                    d->lstn_reg_state_o, d->sum_slope_bps_o, {},
+                    d->dbg_join_tick_o != 0};
+      for (int s = 0; s < 8; ++s) sample.slopes.push_back(granted(s));
+      samples.push_back(sample);
+    }
     t++;
     return mready;
   }
@@ -353,6 +382,7 @@ struct H {
   void run_ms(int ms) { idle(ms * MS_CYC); }
 
   void reset() {
+    streaming = false; cur.clear(); q_msrp.clear(); q_mvrp.clear(); archive.clear();
     d->rst_n = 0;
     d->own_mac_i = OWN_MAC; d->entity_id_i = EID;
     d->link_up_i = 0; d->p2p_i = 1; d->cfg_rank_i = 1;
@@ -494,6 +524,9 @@ class SrpTopHarness {
     check_peer_leaveall_cadence_stays_bounded();
     check_received_leaveall_is_routed_per_type();
     check_admission_sweep_matches_the_model();
+    check_redeclaration_never_publishes_a_stale_slope();
+    check_pending_redeclaration_frees_no_capacity();
+    check_optimistic_window_outlives_a_held_verdict();
 
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
     return fails ? 1 : 0;
@@ -685,6 +718,35 @@ class SrpTopHarness {
     CHECK(h.snk_fcode(0) == 7, "D: sink failure code latched");
     CHECK(h.snk_bridge(0) == 0xBBBBCCCCDDDDULL, "D: sink system id latched");
     CHECK(h.ls_decl(0) == 1, "D: declaration follows to ASKING_FAILED");
+    // a changed FailureInformation under that registered Failed is not a
+    // declaration change: the notification strobe only, no REGISTERED,
+    // and no Listener New on the wire once the swap's own New has drained
+    h.run_ms(800);
+    h.sync();
+    reg_before = h.reg_cnt[0];
+    int fchg_before = h.fchg_cnt[0];
+    Msg fail2{2, 34, false, {Vec{false, 1,
+              fv_failed(SIDX, DAX, 2, 0x0100, 1, 3, 1, 0x00012345,
+                        0xBBBBCCCCDDDEULL, 9),
+              {EV_JOININ}, {}}}};
+    h.feed(mrpdu_body(true, {fail2}), true);
+    h.idle(10);
+    CHECK(h.fchg_cnt[0] == fchg_before + 1 && h.reg_cnt[0] == reg_before,
+          "D: a changed FailureInformation strobes the change only "
+          "(fchg +%d, reg +%d)", h.fchg_cnt[0] - fchg_before,
+          h.reg_cnt[0] - reg_before);
+    CHECK(h.snk_fcode(0) == 9 && h.snk_bridge(0) == 0xBBBBCCCCDDDEULL
+          && h.tk_reg(0) == 2 && h.ls_decl(0) == 1,
+          "D: new FailureInformation latched, still FAILED/AskingFailed");
+    auto renew = h.wait_frame(true, 800, [&](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, true, 3, SIDX, EV_NEW);
+    });
+    CHECK(renew.empty(),
+          "D: no Listener New on the wire after a changed FailureInformation");
+    h.feed(mrpdu_body(true, {fail2}), true);
+    h.idle(10);
+    CHECK(h.fchg_cnt[0] == fchg_before + 1 && h.reg_cnt[0] == reg_before,
+          "D: an unchanged Failed refresh strobes nothing");
     // and back: Advertise re-registers in place, clears the failure
     h.feed(mrpdu_body(true, {adv}), true);
     h.idle(10);
@@ -1035,6 +1097,347 @@ class SrpTopHarness {
       CHECK(d->sum_slope_bps_o == mdl.sum,
             "G%d: sum %u vs model %llu", iter, d->sum_slope_bps_o,
             static_cast<unsigned long long>(mdl.sum));
+    }
+  }
+
+  // ==== H. issue #112: current TSpec, every cycle from gate acceptance =====
+  void check_redeclaration_never_publishes_a_stale_slope() {
+    // All eight sampling phases, sources at the start and end of the round.
+    // A real Listener Ready arrives just after each re-declaration resets
+    // the tracker. Only the request and byte-stream ports are driven.
+    for (int s : {0, 1, 7}) {
+      unsigned mask = 1u << s;
+      for (unsigned phase = 0; phase < 8; ++phase) {
+        h.reset(); d->link_up_i = 1; h.idle(40);
+        uint64_t sid = (OWN_MAC << 16) | (0x400 + s);
+        uint64_t da = DA0 + s;
+        auto declare = [&](unsigned mfs) {
+          return h.op(OP_DECL_TK, s, sid, da, 2, mfs, 1);
+        };
+        auto align = [&]() {
+          for (unsigned n = 0; d->dbg_sample_index_o != phase && n < 8; ++n)
+            h.cycle();
+          h.samples.clear(); h.recording = true;
+        };
+        // Cold refusal checks the reset slope as well as re-declaration.
+        align(); auto r = declare(20000); h.idle(64); h.recording = false;
+        bool cold_low = true;
+        for (const auto& x : h.samples) cold_low &= !(x.grants & mask);
+        CHECK(r.got && r.status == ST_OK && cold_low,
+              "H: cold refusal never grants source %d phase %u", s, phase);
+        declare(224); h.idle(64);
+        h.feed(mrpdu_body(true, {Msg{3, 8, true,
+          {Vec{false, 1, fv_sid(sid), {EV_NEW}, {DECL_READY}}}}}), true);
+        CHECK(h.active(s) && (d->sr_admitted_o & mask),
+              "H: previous small declaration is active source %d", s);
+
+        for (unsigned mfs : {20000u, 224u, 224u}) {
+          auto ready = mrpdu_body(true, {Msg{3, 8, true,
+            {Vec{false, 1, fv_sid(sid), {EV_NEW}, {DECL_READY}}}}});
+          // Stop before the packed events, with the FirstValue received.
+          for (size_t i = 0; i < 15;) {
+            d->mrp_valid_i = 1; d->mrp_data_i = ready[i];
+            d->mrp_last_i = 0; d->mrp_msrp_i = 1;
+            if (h.step()) ++i;
+          }
+          d->mrp_valid_i = 0;
+          align();
+          CHECK(d->req_ready_o, "H: service ready for concurrent declaration");
+          d->req_valid_i = 1; d->req_op_i = OP_DECL_TK; d->req_index_i = s;
+          d->req_stream_id_i = sid; d->req_da_i = da; d->req_vid_i = 2;
+          d->req_max_frame_i = mfs; d->req_max_interval_i = 1;
+          h.cycle(); d->req_valid_i = 0;
+          bool response_ok = false;
+          for (size_t i = 15; i < ready.size();) {
+            d->mrp_valid_i = 1; d->mrp_data_i = ready[i];
+            d->mrp_last_i = (i + 1 == ready.size());
+            if (h.step()) ++i;
+            response_ok |= d->rsp_valid_o && d->rsp_status_o == ST_OK;
+          }
+          d->mrp_valid_i = 0; d->mrp_last_i = 0;
+          for (int i = 0; i < 64; ++i) {
+            h.cycle(); response_ok |= d->rsp_valid_o && d->rsp_status_o == ST_OK;
+          }
+          h.recording = false;
+          check_redeclaration_samples(s, phase, mfs, response_ok);
+        }
+      }
+    }
+  }
+
+  // Check the recorded cycles without advancing the simulation.
+  void check_redeclaration_samples(int s, unsigned phase, unsigned mfs, bool response_ok) {
+    unsigned mask = 1u << s;
+    int accepted = -1;
+    int first_grant = -1;
+    int accepted_phase = -1;
+    bool current = true;
+    bool no_early_grant = true;
+    bool zero_if_refused = true;
+    bool active_equation = true;
+    bool optimistic_seen = false;
+    unsigned rounds = 0;
+    bool window_correct = true;
+    unsigned previous_round = 0;
+    int window = -1;
+    for (size_t i = 0; i < h.samples.size(); ++i) {
+      const auto& x = h.samples[i];
+      if (x.decl & mask) {
+        accepted = int(i); accepted_phase = int(x.phase);
+        no_early_grant &= !(x.grants & mask);
+        previous_round = 0;
+      }
+      if (accepted < 0) continue;
+      if (int(i) > accepted) rounds += previous_round;
+      previous_round = x.round;
+      window_correct &= bool(x.opt & mask) == (rounds < 3);
+      if (window < 0 && !(x.opt & mask)) window = int(i) - accepted;
+      optimistic_seen |= (x.opt & mask) && (x.active & mask) && !(x.grants & mask);
+      unsigned listener = (x.listener >> (2 * s)) & 3;
+      bool declaring = ((x.tk_decl >> (2 * s)) & 3) == 1;
+      bool expected_active = declaring && listener >= DECL_READY &&
+                             ((x.opt | x.grants) & mask);
+      active_equation &= bool(x.active & mask) == expected_active;
+      bool grant = x.grants & mask;
+      current &= !grant || (mfs == 224 && x.slopes[s] == slope_bps(mfs, 1));
+      zero_if_refused &= grant || x.slopes[s] == 0;
+      if (grant && first_grant < 0) {
+        first_grant = int(i) - accepted;
+        no_early_grant &= first_grant >= 4 && x.round;
+      }
+    }
+    bool admitted = mfs == 224;
+    CHECK(response_ok && accepted >= 0,
+          "H: real declaration accepted source %d", s);
+    CHECK(current && no_early_grant && zero_if_refused,
+          "H: no stale grant or slope source %d phase %u frame %u", s, phase, mfs);
+    CHECK(admitted ? (first_grant >= 4 && first_grant <= 24) : first_grant == -1,
+          "H: grow has no grant pulse, shrink has bounded grant source %d frame %u latency %d",
+          s, mfs, first_grant);
+    CHECK(window_correct && optimistic_seen && active_equation,
+          "H: ACTIVE and three-published-round optimistic window source %d phase %u",
+          s, phase);
+    CHECK(d->sum_slope_bps_o == (admitted ? slope_bps(mfs, 1) : 0) &&
+          bool(d->over_limit_o) == !admitted,
+          "H: settled sum and refusal source %d frame %u", s, mfs);
+    printf("LATENCY source=%d request_phase=%u accepted_phase=%d frame=%u cycles=%d "
+           "window=%d\n", s, phase, accepted_phase, mfs, first_grant, window);
+  }
+
+  // ==== I. issue #112 round 2: a pending re-declaration frees no capacity ==
+  // Source 0 is admitted and ACTIVE; source 1 or 7 is refused by the 75 Mb/s
+  // ceiling and declared Talker Failed, with a real Listener Ready. Source 0
+  // re-declares identically, shrinks to a slope that still refuses the
+  // other, or shrinks enough to free it, at every slope-sampling phase and
+  // up to 40 clocks before a T-MRP-JOIN tick. Judged on every clock from
+  // acceptance against the independent greedy model, then on the wire.
+  static constexpr unsigned F_LO = 1051;         // 69.952 Mb/s
+  static constexpr unsigned F_LO_SHRINK = 900;   // 60.288 Mb/s: the other stays refused
+  static constexpr unsigned F_LO_FREE = 224;     // 17.024 Mb/s: frees the other
+  static constexpr unsigned F_HI = 200;          // 15.488 Mb/s
+  static constexpr uint64_t cross_sid(int s) { return (OWN_MAC << 16) | (0x500 + s); }
+  static constexpr uint64_t cross_da(int s) { return DA0 + 0x40 + s; }
+  struct CrossModels { AdmModel before; AdmModel after; };
+
+  void check_pending_redeclaration_frees_no_capacity() {
+    for (int hi : {1, 7}) {
+      for (unsigned frame : {F_LO, F_LO_SHRINK, F_LO_FREE}) {
+        for (unsigned phase = 0; phase < 8; ++phase) cross_source_at_phase(hi, frame, phase);
+      }
+    }
+    for (int k = 1; k <= 40; ++k) cross_source_before_join(k);
+  }
+
+  // Source 0 admitted and ACTIVE, source hi refused and Failed, both with a
+  // real Listener Ready; the model before and after source 0 declares `frame`.
+  CrossModels cross_source_setup(int hi, unsigned frame) {
+    h.reset(); d->link_up_i = 1; h.idle(40);
+    auto rl = h.op(OP_DECL_TK, 0, cross_sid(0), cross_da(0), 2, F_LO, 1);
+    auto rh = h.op(OP_DECL_TK, hi, cross_sid(hi), cross_da(hi), 2, F_HI, 1);
+    h.idle(64);
+    h.feed(mrpdu_body(true, {Msg{3, 8, true,
+      {Vec{false, 1, fv_sid(cross_sid(0)), {EV_NEW}, {DECL_READY}},
+       Vec{false, 1, fv_sid(cross_sid(hi)), {EV_NEW}, {DECL_READY}}}}}), true);
+    h.idle(64);
+    CrossModels m;
+    m.before.req[0] = true; m.before.mfs[0] = F_LO; m.before.mif[0] = 1;
+    m.before.req[hi] = true; m.before.mfs[hi] = F_HI; m.before.mif[hi] = 1;
+    m.before.walk();
+    m.after = m.before; m.after.mfs[0] = frame; m.after.walk();
+    CHECK(rl.got && rh.got && m.before.grant[0] && !m.before.grant[hi] &&
+          m.after.grant[0] && m.after.grant[hi] == (frame == F_LO_FREE),
+          "I: model admits 0 and refuses %d, then frees it only for frame %u", hi, frame);
+    CHECK(h.active(0) && (d->sr_admitted_o & 1u) && !(d->sr_admitted_o & (1u << hi)) &&
+          h.tk_decl(hi) == 2 && !h.active(hi) && h.lstn_reg(hi) == DECL_READY,
+          "I: source 0 ACTIVE and granted, source %d refused and Failed with Listener Ready", hi);
+    h.run_ms(450);                        // the setup's frames leave first
+    return m;
+  }
+
+  // Re-declare source 0 and record every clock through its new verdict.
+  void cross_source_redeclare(unsigned frame) {
+    h.samples.clear(); h.recording = true;
+    auto r = h.op(OP_DECL_TK, 0, cross_sid(0), cross_da(0), 2, frame, 1);
+    h.idle(96);
+    h.recording = false;
+    CHECK(r.got && r.status == ST_OK, "I: re-declaration of source 0 accepted");
+  }
+
+  void cross_source_at_phase(int hi, unsigned frame, unsigned phase) {
+    const CrossModels m = cross_source_setup(hi, frame);
+    const size_t wire0 = h.archive.size();
+    for (unsigned n = 0; d->dbg_sample_index_o != phase && n < 8; ++n) h.cycle();
+    cross_source_redeclare(frame);
+    check_cross_source_samples(hi, m, "phase", phase);
+    h.run_ms(450);                        // two T-MRP-JOIN periods
+    check_cross_source_wire(hi, m.after.grant[hi], wire0, "phase", phase);
+  }
+
+  // R299-1's wire placement: the identical re-declaration is accepted k
+  // clocks before the talker walk's T-MRP-JOIN transmit opportunity.
+  void cross_source_before_join(int k) {
+    const int hi = 7;
+    const CrossModels m = cross_source_setup(hi, F_LO);
+    auto next_tick = [&]() {
+      long n = 0;
+      while (d->dbg_join_tick_o) { h.cycle(); ++n; }
+      while (!d->dbg_join_tick_o) { h.cycle(); ++n; }
+      return n;
+    };
+    next_tick();
+    const long period = next_tick();
+    h.idle(int(period) - k - 3);          // op() accepts three clocks after its call
+    const size_t wire0 = h.archive.size();
+    cross_source_redeclare(F_LO);
+    int accepted = -1;
+    int join = -1;
+    for (size_t i = 0; i < h.samples.size(); ++i) {
+      if (accepted < 0 && (h.samples[i].decl & 1u)) accepted = int(i);
+      if (accepted >= 0 && join < 0 && h.samples[i].join) join = int(i);
+    }
+    CHECK(accepted >= 0 && join > accepted,
+          "I: re-declaration accepted before a T-MRP-JOIN tick (k=%d)", k);
+    printf("CROSS join_offset k=%d accepted_to_join=%d\n", k, join - accepted);
+    check_cross_source_samples(hi, m, "k", unsigned(k));
+    h.run_ms(450);
+    check_cross_source_wire(hi, false, wire0, "k", unsigned(k));
+  }
+
+  static unsigned grant_mask(const AdmModel& m) {
+    unsigned mask = 0;
+    for (int s = 0; s < 8; ++s) mask |= m.grant[s] ? 1u << s : 0u;
+    return mask;
+  }
+
+  // Every recorded clock: a refused source never grants, is never ACTIVE
+  // and never declares Advertise. Each published round is the greedy model
+  // over the declarations then current; between rounds a grant only retires
+  // with its own declaration. A freed source grants only in the round that
+  // publishes source 0's new slope, and declares Advertise only after it.
+  void check_cross_source_samples(int hi, const CrossModels& m, const char* tag,
+                                  unsigned value) {
+    const unsigned mhi = 1u << hi;
+    const bool freed = m.after.grant[hi];
+    int accepted = -1;
+    int lo_first = -1;
+    int hi_first = -1;
+    int hi_advertise = -1;
+    unsigned refused_levels = 0;
+    bool published = true;
+    bool frozen = true;
+    unsigned previous = h.samples.empty() ? 0 : h.samples[0].grants;
+    for (size_t i = 0; i < h.samples.size(); ++i) {
+      const auto& x = h.samples[i];
+      const int n = int(i);
+      if (x.decl & 1u) accepted = n;
+      const AdmModel& now = accepted >= 0 ? m.after : m.before;
+      if (x.round) published &= x.grants == grant_mask(now) && x.sum == now.sum;
+      else if (n > 0) frozen &= x.grants == (previous & ~(x.decl | x.withdraw));
+      previous = x.grants;
+      const bool grant = x.grants & mhi;
+      const bool advertise = ((x.tk_decl >> (2 * hi)) & 3u) == 1u;
+      if (!freed) refused_levels += grant + bool(x.active & mhi) + advertise;
+      if (grant && hi_first < 0) hi_first = n;
+      if (advertise && hi_advertise < 0) hi_advertise = n;
+      if (accepted >= 0 && n > accepted && (x.grants & 1u) && lo_first < 0) lo_first = n;
+    }
+    const int latency = lo_first - accepted;
+    CHECK(accepted >= 0 && lo_first >= 0 && latency >= 4 && latency <= 24 &&
+          h.samples[lo_first].round,
+          "I: source 0 re-granted at a published round (%s=%u latency %d)", tag, value, latency);
+    CHECK(published && frozen,
+          "I: rounds publish the greedy model; grants only retire between them (%s=%u)",
+          tag, value);
+    if (freed) {
+      CHECK(hi_first == lo_first && hi_advertise > hi_first,
+            "I: freed source %d grants with source 0's new slope, then declares Advertise "
+            "(%s=%u)", hi, tag, value);
+    } else {
+      CHECK(refused_levels == 0,
+            "I: refused source %d never grants, is never ACTIVE, never declares Advertise "
+            "(%s=%u frame %u)", hi, tag, value, unsigned(m.after.mfs[0]));
+    }
+    CHECK(d->sr_admitted_o == grant_mask(m.after) && d->sum_slope_bps_o == m.after.sum,
+          "I: settled grants and sum match the model (%s=%u)", tag, value);
+    printf("CROSS source=%d %s=%u frame=%u lo_latency=%d hi_first=%d refused_levels=%u\n",
+           hi, tag, value, unsigned(m.after.mfs[0]), latency,
+           hi_first < 0 ? -1 : hi_first - accepted, refused_levels);
+  }
+
+  // The wire through two T-MRP-JOIN periods: no Talker Advertise vector for a
+  // refused source's stream; a freed source's Advertise replaces its Failed.
+  void check_cross_source_wire(int hi, bool freed, size_t wire0, const char* tag,
+                               unsigned value) {
+    unsigned advertise = 0;
+    for (size_t i = wire0; i < h.archive.size(); ++i) {
+      const PFrame p = parse_frame(h.archive[i]);
+      if (!p.msrp) continue;
+      for (const PVec& v : p.vecs) {
+        if (v.type == 1 && fv_u64(v.fv, 0, 8) == cross_sid(hi)) ++advertise;
+      }
+    }
+    CHECK(freed ? advertise > 0 : advertise == 0,
+          "I: wire Talker Advertise for source %d only once freed (%s=%u: %u vectors)",
+          hi, tag, value, advertise);
+  }
+
+  // ==== J. the optimistic window outlives a held verdict ==================
+  // Two admissible fresh declarations, source 7 then source 0, `gap` clocks
+  // apart at every sampling phase. While source 0 is pending, source 7's
+  // verdict is held, so a window counted in discarded rounds could close
+  // first and declare a spurious Failed. Every clock: neither declares
+  // Failed; a verdict still pending at source 0's acceptance publishes in
+  // the same round as source 0's.
+  void check_optimistic_window_outlives_a_held_verdict() {
+    for (unsigned phase = 0; phase < 8; ++phase) {
+      for (int gap : {0, 4, 8, 12, 16, 20}) {
+        h.reset(); d->link_up_i = 1; h.idle(40);
+        for (unsigned n = 0; d->dbg_sample_index_o != phase && n < 8; ++n) h.cycle();
+        h.samples.clear(); h.recording = true;
+        auto r7 = h.op(OP_DECL_TK, 7, cross_sid(7), cross_da(7), 2, 224, 1);
+        h.idle(gap);
+        auto r0 = h.op(OP_DECL_TK, 0, cross_sid(0), cross_da(0), 2, 224, 1);
+        h.idle(96);
+        h.recording = false;
+        int accepted0 = -1;
+        int first7 = -1;
+        int first0 = -1;
+        unsigned failed = 0;
+        for (size_t i = 0; i < h.samples.size(); ++i) {
+          const auto& x = h.samples[i];
+          failed += (x.tk_decl & 3u) == 2u || ((x.tk_decl >> 14) & 3u) == 2u;
+          if (accepted0 < 0 && (x.decl & 1u)) accepted0 = int(i);
+          if (first7 < 0 && (x.grants & 0x80u)) first7 = int(i);
+          if (first0 < 0 && (x.grants & 1u)) first0 = int(i);
+        }
+        const bool held = first7 < 0 || first7 > accepted0;
+        CHECK(r7.got && r0.got && failed == 0 && first7 >= 0 && first0 > accepted0 &&
+              (!held || first7 == first0),
+              "J: no Failed while source 7's verdict waits for source 0 (phase %u gap %d: "
+              "%u Failed clocks, grants at %d/%d)", phase, gap, failed, first7, first0);
+        printf("WINDOW phase=%u gap=%d held=%d source7=%d source0=%d from_accept0\n",
+               phase, gap, int(held), first7 - accepted0, first0 - accepted0);
+      }
     }
   }
 

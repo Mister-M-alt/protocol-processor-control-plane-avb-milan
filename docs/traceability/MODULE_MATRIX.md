@@ -7,7 +7,8 @@
 | `KL_acmp_talker` | `hdl/acmp/KL_acmp_talker.sv` | acmp_talker, pp_top |
 | `KL_adp_engine` | `hdl/adp/KL_adp_engine.sv` | adp_engine, pp_top |
 | `KL_aecp_ca_originator` | `hdl/aecp/KL_aecp_ca_originator.sv` | ca_originator, pp_top |
-| `KL_aecp_desc_store` | `hdl/aecp/KL_aecp_desc_store.sv` | desc_store, pp_top |
+| `KL_aecp_desc_mem_guard` | `hdl/aecp/KL_aecp_desc_mem_guard.sv` | desc_mem_guard, pp_top |
+| `KL_aecp_desc_store` | `hdl/aecp/KL_aecp_desc_store.sv` | desc_mem_guard, desc_store, pp_top |
 | `KL_aecp_dyn_state` | `hdl/aecp/KL_aecp_dyn_state.sv` | dyn_state, pp_top |
 | `KL_aecp_engine` | `hdl/aecp/KL_aecp_engine.sv` | pp_top |
 | `KL_aecp_notify` | `hdl/aecp/KL_aecp_notify.sv` | aecp_notify, pp_top |
@@ -34,7 +35,7 @@
 | `KL_pp_trace_ring` | `hdl/packet_engine/KL_pp_trace_ring.sv` | pp_top, side_port |
 | `KL_pp_tx_arbiter` | `hdl/packet_engine/KL_pp_tx_arbiter.sv` | pp_top, tx_arbiter |
 | `KL_pp_tx_slots` | `hdl/packet_engine/KL_pp_tx_slots.sv` | maap, pp_top, srp_encoder, srp_top, tx_arbiter, tx_slots |
-| `KL_srp_admission` | `hdl/srp/KL_srp_admission.sv` | pp_top, srp_top |
+| `KL_srp_admission` | `hdl/srp/KL_srp_admission.sv` | pp_top, srp_admission, srp_top |
 | `KL_srp_decoder` | `hdl/srp/KL_srp_decoder.sv` | pp_top, srp_decoder, srp_top |
 | `KL_srp_domain` | `hdl/srp/KL_srp_domain.sv` | pp_top, srp_encoder, srp_top |
 | `KL_srp_encoder` | `hdl/srp/KL_srp_encoder.sv` | pp_top, srp_encoder, srp_top |
@@ -49,4 +50,4 @@
 | `srp_pkg` | `hdl/srp/srp_pkg.sv` | acmp_talker, pp_top, srp_decoder, srp_stream_fsms, srp_top |
 | `ucpu_pkg` | `hdl/aecp/ucpu_pkg.sv` | pp_top, ucpu |
 
-Modules: 45 · untested: 0 (budget: 0)
+Modules: 46 · untested: 0 (budget: 0)

@@ -132,6 +132,7 @@ the response buffer as fabric state was the flop group the placer could not pack
 Both masters are **vendor-neutral by contract** — this repository does not know what is
 behind them. You bridge them to whatever you have.
 
+<a id="sec-desc-memory"></a>
 ### 4.1 `desc_mem_*` — read only
 
 | Port | |
@@ -143,6 +144,30 @@ One outstanding request. Responses arrive **in order**; `rsp_last` marks the fin
 Addresses are byte addresses, 8-byte aligned. A beat carries its lowest byte address in
 bits [63:56] — IEEE 1722.1 wire order, so a descriptor byte can be handed to the µCPU
 unswapped.
+
+`KL_aecp_desc_mem_guard` sits between the AECP engine's descriptor-store master
+and this face. It remembers an accepted burst until a response beat with `last`
+or `err` is consumed, even when the store has timed out. While that debt exists,
+the next request is held on both sides of the guard; responses pass through
+unchanged and the store discards beats it no longer awaits. The first response
+must arrive after the request-acceptance cycle. An error terminates the burst:
+the bridge must not emit further beats for that request.
+
+The guard's own module port `debt_o` is the **D3 interface**
+([memory contract](../architecture/07_memory_maps.md#sec-desc-memory)). It is not
+exposed by `protocol_processor_top`; the D3 lane will add that routing together
+with the parent consumer changes, keeping the current top-level interface intact.
+Drive `protocol_processor_top.rst_n`, its synchronous active-low reset, only
+from a **hard reset** that also flushes the descriptor-memory path, including
+any CDC queues. Never drive it from an entity disable, store-only reset, or
+future rollback reset: no pre-reset response may arrive after debt is forgotten.
+
+If a burst never terminates, the guard keeps requests held; the store's watchdog
+still answers each locate with an error in bounded time. The existing immediate
+error on the first locate following a fetch-response timeout is unchanged.
+The D3 writer is deferred: it will hold restorable owners while `debt_o` is set
+and use its own deadline to end CLOSED if debt does not drain. This output alone
+does not implement rollback or release those owners.
 
 ### 4.2 `resp_mem_*` — read and write
 
@@ -250,7 +275,7 @@ leaves the ACMP listener held until the next reset
 | Response memory | `resp_mem_*` | every built response becomes a well-formed 60-byte `ENTITY_MISBEHAVING`. |
 | NVM device | `nvm_dev_*`, plus `restore_go_i`, `restore_busy_o`, `restore_done_o`, `restore_fail_o`, `restore_blank_o`, `nvm_alarm_o`, `nvm_unflushed_o` | bindings do not survive a power cycle. **`restore_go_i` is not part of the tie-off:** pulse it on every boot. The ACMP listener serves nothing until the walk has ended ([05 §5.1](../architecture/05_acmp_engine.md#sec-05-boot-admission)), and what the walk reports depends on how you tie the face off. Tie it off **as erased media**: grant each READ, deliver the bytes it asks for as `0xFF`, then `done`. The walk then ends with `restore_done_o`, no `restore_fail_o` and `restore_blank_o`, the same done-without-fail as a successful walk, so publish `restore_blank_o` beside them and report not-successful when you know there is no media. A face that answers with `err`, or with `done` before the eight header bytes, is a failing device: the walk fails whole (`restore_fail_o`, a device error). A face that never answers fails the walk at `NVM_RS_TMO_CYC_P` (`restore_fail_o`, the deadline) and leaves the port quarantined until reset ([07 §5.3](../architecture/07_memory_maps.md#fig-07-nvmflow)). Nothing else changes **in this plane**. |
 | Management side port | `host_*` | you lose all diagnostics. The plane still runs. |
-| SRP service | `svc_*` | nothing declares through the configuration plane. |
+| SRP service | `svc_*` | nothing declares through the configuration plane. When it is driven, each accepted declaration holds every admission verdict until its new slope has been evaluated, which takes up to three rounds (`3*N_STREAM_OUT_P` clocks), and each declaration or withdrawal restarts the partial round. If they keep arriving faster than that, no verdict publishes for any source until they pause ([10 §6.3](../architecture/10_srp_engine.md#sec-10-admission-freshness)). |
 | AECP pop face | `aecp_txn_*`, `aecp_rxs_*` | **tie `aecp_txn_ready_i` low.** The internal AECP engine already drains this queue; this face is an *additional* observer. Driving it steals records from the engine. |
 
 **MAAP is yours to place.** With `cfg_maap_internal_i` tied 0 (the default), the
@@ -280,10 +305,10 @@ gate on them per cycle.
 | `acmp_declaring_o` | **the talker egress gate.** AND it with your own stream enable. |
 | `acmp_bound_o` | per-sink binding installed, **debounced** — safe to edge-detect. The raw internal register dips low and high again inside a single rebind transaction; this port does not. |
 | `acmp_bound_eid_o`, `acmp_bound_sid_o`, `acmp_bound_dmac_o`, `acmp_bound_vlan_o` | the bound stream's identity on the wire: who the talker is, which stream, on what address and VLAN. Arm your RX filter and stream table from these — you cannot derive them from the entity id. |
-| `srp_active_o` | **the AVTP transmit gate.** Declaring, not failed, a listener is ready, and admitted. Use this one. |
-| `srp_sr_admitted_o` | the raw Σ-slope verdict. It **lags** `srp_active_o` by up to three admission rounds after a fresh declare, because admission is optimistic. Gating on this instead mutes a legal stream for those rounds. |
-| `srp_granted_slope_bps_o`, `srp_sum_slope_bps_o` | per-source and summed granted idleSlope — the value your credit-based shaper's slope multiplexer needs. |
-| `srp_over_limit_o` | at least one source was refused against the port ceiling. |
+| `srp_active_o` | declaring Advertise, a Listener is Ready/ReadyFailed, and optimistic or real admission. For confirmed admission use **ACTIVE AND `srp_sr_admitted_o`** (parent issue #551 decision). |
+| `srp_sr_admitted_o` | real Σ-slope verdict for the current declaration; low after every accepted declaration until its new slope completes an admission round. No optimistic term. **Cross-source rule:** while any source's new declaration is pending, no bit rises, and a bit falls only with its own source's declaration or withdrawal. A pending declaration never frees its capacity for another source; only a withdrawal or an evaluated shrink does ([10 §6.3](../architecture/10_srp_engine.md#sec-10-admission-cross-source)). Latency is at most three rounds after the last declaration/withdrawal, or four clocks for one source; [10 §6.3](../architecture/10_srp_engine.md#sec-10-admission-freshness) gives the measured cases. |
+| `srp_granted_slope_bps_o`, `srp_sum_slope_bps_o` | current per-source granted idleSlope (zero while pending or unadmitted; follows `srp_sr_admitted_o`) and the sum for the shaper, latched when a round publishes. The sum holds its previous value from a declaration or withdrawal until every pending declaration has been evaluated. |
+| `srp_over_limit_o` | latched with the sum: at least one evaluated source was refused against the port ceiling; pending evaluation is not refusal. |
 | `srp_class_a_prio_o`, `srp_class_a_vid_o`, `srp_domain_adopted_o`, `srp_domain_change_o` | the Class A identity in force. The two values are defaults until `srp_domain_adopted_o` says a bridge Domain was adopted. The VID default is `SRP_DOM_DEF_VID_P`, and a link-down restores both defaults. |
 | `srp_tk_decl_state_o`, `srp_lstn_reg_state_o`, `srp_tk_reg_state_o`, `srp_lstn_decl_state_o` | the four declaration/registration state vectors, two bits per index. Read each one against its port comment, never against a listed order: `srp_lstn_reg_state_o` carries `srp_pkg::srp_decl_e` (1 Asking Failed, 2 Ready, 3 Ready Failed, [02 F02.10](../architecture/02_interfaces.md#fig-02-statusdict)), so "a Listener is registered" is any non-zero code and "Ready or Ready Failed" is bit 1 |
 | `srp_acc_latency_o` | per-sink registered accumulated latency in nanoseconds, **raw** — add your own ingress delay |
@@ -295,6 +320,17 @@ gate on them per cycle.
 
 The status dictionary these implement is catalogued in
 [`02_interfaces.md` F02.10](../architecture/02_interfaces.md#fig-02-statusdict).
+
+GET_STREAM_INFO input failure/probing fields are resolved **inside the processor**
+from its SRP registrar and ACMP listener record. Kind 0 selectors 5 and 7 never
+raise `gsi_req_o` for STREAM_INPUT; external answers for those cases are unused.
+Selector 4 still requests the destination MAC, but its failure-code byte is
+replaced internally. Keep serving the other selectors and the existing
+STREAM_OUTPUT words. No additional port or instantiation connection is needed.
+The internal fields and their notification events have one state owner; do not
+derive a second probing status from bound/settled flags. The internal fields are
+read live at each gather beat, like your own words; the authoritative gather
+contract and its coherence bound are [06 F06.13](../architecture/06_aecp_engine.md#fig-06-lineage).
 
 ---
 

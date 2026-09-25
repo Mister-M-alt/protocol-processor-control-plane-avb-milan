@@ -169,6 +169,7 @@ struct Hn {
   int t_chg[kStreams] = {0};
   int l_reg[kStreams] = {0};
   int l_unreg[kStreams] = {0};
+  int l_fchg[kStreams] = {0};
   bool t_uready = true;
   bool l_uready = true;
 
@@ -180,6 +181,7 @@ struct Hn {
     memset(t_chg, 0, sizeof t_chg);
     memset(l_reg, 0, sizeof l_reg);
     memset(l_unreg, 0, sizeof l_unreg);
+    memset(l_fchg, 0, sizeof l_fchg);
   }
 
   void step() {
@@ -228,6 +230,7 @@ struct Hn {
       if ((d->t_lstn_reg_change_o >> s) & 1) ++t_chg[s];
       if ((d->l_evt_tk_registered_o >> s) & 1) ++l_reg[s];
       if ((d->l_evt_tk_unregistered_o >> s) & 1) ++l_unreg[s];
+      if ((d->l_evt_tk_fail_chg_o >> s) & 1) ++l_fchg[s];
     }
     d->clk_i = 1; d->eval();
     // one-shot inputs auto-clear
@@ -419,6 +422,9 @@ class SrpStreamFsmsSuite {
   void run_b_switch_leave_all_keeps_the_listener_registration_in();
   void domain_only_leave_all_never_ages_the_listener_registrar();
   void listener_only_leave_all_ages_the_listener_registrar_to_mt();
+  void listener_failure_change_notifies_without_redeclaring();
+  void listener_failure_change_compares_each_sink_with_its_own_latch();
+  void listener_failure_change_notifies_registered_sinks_on_a_shared_stream();
 
   const milan::tb::Model<Vsrp_stream_fsms_wrap> model;
   Vsrp_stream_fsms_wrap* const d = model.get();
@@ -681,9 +687,14 @@ void SrpStreamFsmsSuite::listener_matcher_registers_swaps_and_unregisters() {
   CHECK(h.l_push.size() == 1 && h.l_push[0].code == 0 && h.l_push[0].fp == 1,
         "L AskingFailed rides New after the swap");
   // swap back: Failed -> Advertise
+  const uint64_t failed_bridge = h.l_fbridge(0);
   h.inject(true, 1, SID0, DA0, VID0, 3, 0, 555);
   CHECK(h.l_tkreg(0) == 1 && h.l_reg[0] == 1, "L swap back to ADVERTISE");
-  CHECK(h.l_fcode(0) == 0 && h.l_fbridge(0) == 0, "L failure gated off");
+  // the code is gated here; the bridge is the raw latch, valid only with
+  // tk_reg_state FAILED (its one consumer gates it after its index mux)
+  CHECK(h.l_fcode(0) == 0 && h.l_tkreg(0) != 2 && failed_bridge != 0
+        && h.l_fbridge(0) == failed_bridge,
+        "L failure gated off: code 0, bridge left ungated under ADVERTISE");
   CHECK(h.l_decl(0) == 2, "L declaration back to READY");
   // Δ13 unregister: on the withdrawing frame
   h.inject(true, 1, SID0, DA0, VID0, 5 /*Lv*/);
@@ -904,6 +915,138 @@ void SrpStreamFsmsSuite::listener_only_leave_all_ages_the_listener_registrar_to_
   CHECK(((d->t_active_o >> 3) & 1) == 0, "K source 3 no longer ACTIVE");
 }
 
+// ==== L. FailureInformation change: notification strobe only ============
+// A changed failure code or bridge ID while Talker Failed stays registered
+// is NOT a Listener declaration change: same attribute (stream_id), same
+// AskingFailed parameter. It raises evt_tk_fail_chg_o for the
+// GET_STREAM_INFO notification (Milan Table 5.22) and nothing else: no
+// EVT_TK_REGISTERED, no declaration request, so no New on the next tick.
+void SrpStreamFsmsSuite::listener_failure_change_notifies_without_redeclaring() {
+  auto no_new = [this]() {
+    for (const Push& p : h.l_push) if (p.code == 0) return false;
+    return true;
+  };
+  h.reset();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.clear_logs();
+  h.inject(true, 2, SID0, DA0, VID0, 0 /*New*/, 0, 999, 0xBBBB0000CCCCull, 7);
+  CHECK(h.l_tkreg(0) == 2 && h.l_reg[0] == 1 && h.l_fchg[0] == 0,
+        "L1: a fresh Failed registration strobes REGISTERED, not the change "
+        "(reg %d, fchg %d)", h.l_reg[0], h.l_fchg[0]);
+  h.clear_logs();
+  h.tick();
+  CHECK(h.l_push.size() == 1 && h.l_push[0].code == 0 && h.l_push[0].fp == 1,
+        "L1: the fresh registration's AskingFailed rides New");
+  for (int i = 0; i < 6; ++i) { h.clear_logs(); h.tick(); }
+  CHECK(h.l_push.empty(), "L2 precondition: the applicant is quiet, got %zu",
+        h.l_push.size());
+
+  h.clear_logs();
+  h.inject(true, 2, SID0, DA0, VID0, 1 /*JoinIn*/, 0, 999,
+           0xBBBB0000DDDDull, 9);
+  CHECK(h.l_fchg[0] == 1 && h.l_reg[0] == 0 && h.l_unreg[0] == 0,
+        "L2: a changed FailureInformation strobes the change once and "
+        "nothing else (fchg %d, reg %d, unreg %d)",
+        h.l_fchg[0], h.l_reg[0], h.l_unreg[0]);
+  CHECK(h.l_fcode(0) == 9 && h.l_fbridge(0) == 0xBBBB0000DDDDull
+        && h.l_tkreg(0) == 2 && h.l_decl(0) == 1,
+        "L2: new code and bridge latched, still FAILED and AskingFailed");
+  h.clear_logs();
+  h.tick();
+  CHECK(h.l_push.empty(),
+        "L2: no Listener New, no message at all, on the next tick (got %zu)",
+        h.l_push.size());
+
+  h.clear_logs();
+  h.inject(true, 2, SID0, DA0, VID0, 1, 0, 999, 0xBBBB0000DDDEull, 9);
+  CHECK(h.l_fchg[0] == 1 && h.l_reg[0] == 0,
+        "L3: a bridge-only change strobes the change");
+  h.clear_logs();
+  h.inject(true, 2, SID0, DA0, VID0, 3 /*JoinMt*/, 0, 999,
+           0xBBBB0000DDDEull, 10);
+  CHECK(h.l_fchg[0] == 1 && h.l_reg[0] == 0,
+        "L3: a code-only change strobes the change");
+  h.clear_logs();
+  h.inject(true, 2, SID0, DA0, VID0, 1, 0, 999, 0xBBBB0000DDDEull, 10);
+  CHECK(h.l_fchg[0] == 0 && h.l_reg[0] == 0,
+        "L4: an unchanged refresh strobes nothing");
+  h.tick();
+  CHECK(h.l_push.empty(), "L4: ...and declares nothing");
+  h.clear_logs();
+  h.inject(true, 2, SID0, DA0, VID0, 2 /*In*/, 0, 999, 0x1111ull, 3);
+  CHECK(h.l_fchg[0] == 0 && h.l_fcode(0) == 10
+        && h.l_fbridge(0) == 0xBBBB0000DDDEull,
+        "L5: a non-registering In carrying other values strobes and "
+        "latches nothing");
+
+  // LV is still registered: a changed re-join notifies, never re-declares
+  h.clear_logs();
+  h.la_rx();
+  CHECK(h.l_regst(0) == 2 && h.l_tkreg(0) == 2,
+        "L6 precondition: LeaveAll -> LV, still FAILED");
+  h.clear_logs();
+  h.inject(true, 2, SID0, DA0, VID0, 3, 0, 999, 0xCCCC0000EEEEull, 4);
+  CHECK(h.l_regst(0) == 1 && h.l_fchg[0] == 1 && h.l_reg[0] == 0,
+        "L6: a changed re-join in LV strobes the change, back IN, no "
+        "REGISTERED (fchg %d, reg %d)", h.l_fchg[0], h.l_reg[0]);
+  h.tick();
+  CHECK(no_new(), "L6: the LeaveAll re-declaration carries no New");
+
+  // the swap is a type change, not a FailureInformation change
+  h.clear_logs();
+  h.inject(true, 1, SID0, DA0, VID0, 1, 0, 999);
+  h.inject(true, 2, SID0, DA0, VID0, 1, 0, 999, 0xCCCC0000EEEEull, 4);
+  CHECK(h.l_reg[0] == 2 && h.l_fchg[0] == 0,
+        "L7: Failed->Advertise->Failed swaps strobe REGISTERED, never the "
+        "change (reg %d, fchg %d)", h.l_reg[0], h.l_fchg[0]);
+}
+
+void SrpStreamFsmsSuite::listener_failure_change_compares_each_sink_with_its_own_latch() {
+  // One comparator on the HIT sink: two sinks on different streams hold
+  // different latches, and each refresh is compared with its own sink's.
+  constexpr uint64_t SIDB = 0x02AABBCCDDEE0002ull;
+  constexpr uint64_t DAB  = 0x91E0F0001235ull;
+  h.reset();
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.ctl(true, 1, SIDB, DAB, VID0);
+  h.inject(true, 2, SID0, DA0, VID0, 0, 0, 1, 0xAAAA0000AAAAull, 7);
+  h.inject(true, 2, SIDB, DAB, VID0, 0, 0, 1, 0xBBBB0000BBBBull, 8);
+  h.clear_logs();
+  h.inject(true, 2, SIDB, DAB, VID0, 1, 0, 1, 0xBBBB0000BBBBull, 8);
+  CHECK(h.l_fchg[0] == 0 && h.l_fchg[1] == 0,
+        "L8: sink 1's unchanged refresh is compared with sink 1's latch, "
+        "not sink 0's (fchg %d/%d)", h.l_fchg[0], h.l_fchg[1]);
+  h.inject(true, 2, SIDB, DAB, VID0, 1, 0, 1, 0xAAAA0000AAAAull, 7);
+  CHECK(h.l_fchg[0] == 0 && h.l_fchg[1] == 1,
+        "L8: sink 1 taking sink 0's values still strobes sink 1 only "
+        "(fchg %d/%d)", h.l_fchg[0], h.l_fchg[1]);
+}
+
+void SrpStreamFsmsSuite::listener_failure_change_notifies_registered_sinks_on_a_shared_stream() {
+  // Sinks on the SAME stream share the latch. A sink settled later (MT,
+  // zeroed) is not a candidate even at the lowest index: its fresh
+  // registration strobes REGISTERED while the registered pair stays quiet.
+  h.reset();
+  h.ctl(true, 1, SID0, DA0, VID0);
+  h.ctl(true, 2, SID0, DA0, VID0);
+  h.inject(true, 2, SID0, DA0, VID0, 0, 0, 1, 0xAAAA0000AAAAull, 7);
+  h.ctl(true, 0, SID0, DA0, VID0);
+  h.clear_logs();
+  h.inject(true, 2, SID0, DA0, VID0, 1, 0, 1, 0xAAAA0000AAAAull, 7);
+  CHECK(h.l_reg[0] == 1 && h.l_fchg[0] == 0 && h.l_fchg[1] == 0
+        && h.l_fchg[2] == 0 && h.l_reg[1] == 0 && h.l_reg[2] == 0,
+        "L9: unchanged on a shared stream: the late sink registers, the "
+        "registered pair stays quiet (reg %d/%d/%d, fchg %d/%d/%d)",
+        h.l_reg[0], h.l_reg[1], h.l_reg[2],
+        h.l_fchg[0], h.l_fchg[1], h.l_fchg[2]);
+  h.clear_logs();
+  h.inject(true, 2, SID0, DA0, VID0, 1, 0, 1, 0xAAAA0000AAABull, 7);
+  CHECK(h.l_fchg[0] == 1 && h.l_fchg[1] == 1 && h.l_fchg[2] == 1
+        && h.l_reg[0] + h.l_reg[1] + h.l_reg[2] == 0,
+        "L9: a change on a shared stream strobes every registered sink "
+        "once (fchg %d/%d/%d)", h.l_fchg[0], h.l_fchg[1], h.l_fchg[2]);
+}
+
 int SrpStreamFsmsSuite::run() {
   rx_events_match_table_10_3();
   talker_tx_rows_send_the_table_10_3_message();
@@ -917,6 +1060,9 @@ int SrpStreamFsmsSuite::run() {
   run_b_switch_leave_all_keeps_the_listener_registration_in();
   domain_only_leave_all_never_ages_the_listener_registrar();
   listener_only_leave_all_ages_the_listener_registrar_to_mt();
+  listener_failure_change_notifies_without_redeclaring();
+  listener_failure_change_compares_each_sink_with_its_own_latch();
+  listener_failure_change_notifies_registered_sinks_on_a_shared_stream();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

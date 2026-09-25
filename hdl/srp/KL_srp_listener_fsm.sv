@@ -35,9 +35,18 @@
 //                §4.2.7.2.2) and on a LeaveAll-cycle T-MRP-LEAVE expiry,
 //                the only LV path. acc_latency[sink] latches the
 //                registered attribute's accumulated_latency on every
-//                registering event (a refresh re-latches);
+//                registering event (a refresh re-latches). A changed latch
+//                raises evt_tk_latency_chg_o for GET_STREAM_INFO only
+//                (Milan §5.4.5.2, Table 5.22); an unchanged refresh is quiet.
 //                msrp_fail_code/bridge[sink] latch the Talker Failed
-//                FailureInformation while FAILED is the registered type.
+//                FailureInformation while FAILED is the registered type
+//                (the code gated to FAILED here, the bridge the raw latch
+//                that its one consumer gates after its index mux). A
+//                changed FailureInformation under a still-registered
+//                Talker Failed raises ONLY evt_tk_fail_chg_o, so Milan
+//                Table 5.22 can notify the new code/bridge: it is not a
+//                Listener declaration change (same attribute, same
+//                AskingFailed), so no MRP New and no EVT_TK_REGISTERED.
 //                Messages ride tx!/txLA! walks exactly as in
 //                KL_srp_talker_fsm (optional [s]/[sJ]/[sL] never sent;
 //                periodic! carries the re-join).
@@ -140,11 +149,19 @@ module KL_srp_listener_fsm
     // ---- class-C strobes + class-D levels (F02.10) ------------------------
     output logic [N_SINKS_P-1:0]       evt_tk_registered_o,   //! TK_ATTR_REGISTERED{sink}
     output logic [N_SINKS_P-1:0]       evt_tk_unregistered_o, //! TK_ATTR_UNREGISTERED{sink}
+    //! FailureInformation changed while Talker Failed stays registered.
+    //! GET_STREAM_INFO notification only: never a declaration request,
+    //! never EVT_TK_REGISTERED, not routed to the ACMP listener.
+    output logic [N_SINKS_P-1:0]       evt_tk_fail_chg_o,
+    output logic [N_SINKS_P-1:0]       evt_tk_latency_chg_o, //! committed accumulated_latency change; notification only
     output logic [N_SINKS_P-1:0][1:0]  tk_reg_state_o,        //! 0 NONE / 1 ADVERTISE / 2 FAILED
     output logic [N_SINKS_P-1:0][1:0]  lstn_decl_state_o,     //! 0 NONE / 1 ASKING_FAILED / 2 READY
     output logic [N_SINKS_P-1:0][31:0] acc_latency_o,         //! latched accumulated_latency
     output logic [N_SINKS_P-1:0][7:0]  msrp_fail_code_o,      //! latched failure code while FAILED
-    output logic [N_SINKS_P-1:0][63:0] msrp_fail_bridge_o,    //! latched failure system id while FAILED
+    //! latched failure system id, UNGATED: valid only while
+    //! tk_reg_state_o == FAILED. The consumer gates it once, after its own
+    //! index mux, instead of N 64-bit gates here.
+    output logic [N_SINKS_P-1:0][63:0] msrp_fail_bridge_o,
 
     // ---- observability (MTXW applicant/registrar walk) --------------------
     output logic [N_SINKS_P-1:0][3:0] dbg_app_state_o, //! Table 10-3 applicant state per sink
@@ -409,6 +426,7 @@ module KL_srp_listener_fsm
   logic [31:0]          exp_idx_w;
   logic [N_SINKS_P-1:0] ind_reg_w;     // fresh registration or type swap
   logic [N_SINKS_P-1:0] ind_unreg_w;   // Δ13 rLv or leavetimer expiry
+  logic [N_SINKS_P-1:0] ind_fchg_w;    // FailureInformation change only
 
   assign la_rx_app_w = leaveall_rx_i[SRP_LA_LISTENER_C];
   always_comb begin : la_rx_reg_map
@@ -432,6 +450,35 @@ module KL_srp_listener_fsm
                     || (exp_hit_w && (exp_idx_w == s)
                         && (reg_r[s] == R_LV_C) && (tpend_r[s] != T_ARM_C)
                         && !(reg_rx_hit_w[s] && rx_registering_w));
+    end
+  end
+
+  // FailureInformation change: a registering Talker Failed on a sink that
+  // already holds Failed registered (IN or LV) with a different code or
+  // bridge ID. ONE 72-bit comparator on the lowest such hit sink instead of
+  // one per sink: every candidate matches the same {stream_id, DA, VLAN},
+  // entered registration on an event that also latched into every other
+  // registered candidate, and has taken every registering event since, so
+  // all candidates hold the same FailureInformation.
+  logic [N_SINKS_P-1:0] fchg_cand_w;
+  logic                 fchg_hit_w;
+  logic [SNK_W_C-1:0]   fchg_ix_w;
+  logic                 fchg_diff_w;
+  always_comb begin : fail_change_ind
+    fchg_hit_w = 1'b0;
+    fchg_ix_w  = '0;
+    for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+      fchg_cand_w[s] = reg_rx_hit_w[s] && (reg_r[s] != R_MT_C) && rtype_r[s];
+      if (!fchg_hit_w && fchg_cand_w[s]) begin
+        fchg_hit_w = 1'b1;
+        fchg_ix_w  = SNK_W_C'(s);
+      end
+    end
+    fchg_diff_w = (fcode_r[fchg_ix_w] != evt_failure_code_i)
+               || (fsysid_r[fchg_ix_w] != evt_failure_system_id_i);
+    for (int unsigned s = 0; s < N_SINKS_P; s++) begin
+      ind_fchg_w[s] = fchg_cand_w[s] && rx_registering_w && rx_is_failed_w
+                   && fchg_diff_w;
     end
   end
 
@@ -650,6 +697,8 @@ module KL_srp_listener_fsm
       tpend_r               <= '0;
       evt_tk_registered_o   <= '0;
       evt_tk_unregistered_o <= '0;
+      evt_tk_fail_chg_o     <= '0;
+      evt_tk_latency_chg_o  <= '0;
       arm_valid_o           <= 1'b0;
       arm_cancel_o          <= 1'b0;
       arm_slot_o            <= '0;
@@ -658,6 +707,8 @@ module KL_srp_listener_fsm
     end else begin
       evt_tk_registered_o   <= '0;
       evt_tk_unregistered_o <= '0;
+      evt_tk_fail_chg_o     <= '0;
+      evt_tk_latency_chg_o  <= '0;
       arm_valid_o           <= 1'b0;
 
       // ---- one leave-timer op per cycle (service accepts O(1)); a
@@ -681,11 +732,16 @@ module KL_srp_listener_fsm
           reg_r[s]   <= R_IN_C;
           rtype_r[s] <= rx_is_failed_w;
           lat_r[s]   <= evt_acc_latency_i;   // refresh re-latches (10 §6.4)
+          // Compare this sink's old latch on its actual write. The pulse
+          // and any registration/failure pulse land together, so the
+          // existing per-descriptor notify OR coalesces them into one event.
+          evt_tk_latency_chg_o[s] <= (lat_r[s] != evt_acc_latency_i);
           if (rx_is_failed_w) begin
             fcode_r[s]  <= evt_failure_code_i;
             fsysid_r[s] <= evt_failure_system_id_i;
           end
-          if (ind_reg_w[s]) evt_tk_registered_o[s] <= 1'b1;
+          if (ind_reg_w[s])  evt_tk_registered_o[s] <= 1'b1;
+          if (ind_fchg_w[s]) evt_tk_fail_chg_o[s]   <= 1'b1;
         end else if (reg_rx_hit_w[s]
                      && (evt_mrp_event_i == 3'(SRP_EV_LV))) begin
           if (reg_r[s] == R_IN_C) begin
@@ -800,7 +856,7 @@ module KL_srp_listener_fsm
                            : 2'd0;
       acc_latency_o[s] = lat_r[s];
       msrp_fail_code_o[s]   = (tk_reg_state_o[s] == 2'd2) ? fcode_r[s] : 8'd0;
-      msrp_fail_bridge_o[s] = (tk_reg_state_o[s] == 2'd2) ? fsysid_r[s] : 64'd0;
+      msrp_fail_bridge_o[s] = fsysid_r[s];   // ungated (port note)
       dbg_app_state_o[s] = app_r[s];
       dbg_reg_state_o[s] = reg_r[s];
     end

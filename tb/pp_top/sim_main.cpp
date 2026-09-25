@@ -732,11 +732,13 @@ struct H {
   // that makes it hard.
   std::vector<uint8_t> dram;
   int  dram_lat = 31;
-  bool dram_busy = false;
-  uint32_t dram_addr = 0;
-  int dram_beats = 0;
-  int dram_idx = 0;
-  int dram_wait = 0;
+  // Always-ready in-order request FIFO: acceptance is independent of older
+  // responses, as it is across the integrator's asynchronous memory seam.
+  struct DescBurst { uint32_t addr; int beats, idx; uint64_t due; bool stuck; };
+  std::deque<DescBurst> desc_fifo;
+  int dram_delay_next = -1;
+  bool dram_stuck_next = false;
+  uint64_t dram_overlap_accepts = 0;
   uint64_t dram_reqs = 0;
   // AECP response-buffer memory at RESP_BASE_P (03 §7). READ + WRITE, and
   // NON-ZERO latency on BOTH channels by default — a buffer tested only
@@ -1010,6 +1012,14 @@ struct H {
   bool gsi_stuck = false;
   int  gsi_hold_cur = 0;
   uint64_t gsi_reads = 0;
+  uint64_t gsi_internal_leaks = 0;
+  bool gsi_retired_stuck = false;
+  //! Section GI only: fold the processor's published binding/started view
+  //! into the STREAM_INPUT flags word the way an integrator must (06 F06.13
+  //! "BOUND, STREAMING_WAIT"): STREAMING_WAIT 0x00000008 = bound and
+  //! stopped. Other sections keep the fixed flags word they grade against.
+  bool gsi_fold_sw = false;
+  bool gsi_fold_latency = false;
   uint64_t ca_cancels = 0;
   //! the two AECP effect strobes a response cannot show (06 section 8):
   //! counted once per cycle so a refusal can be graded on what it did
@@ -1238,30 +1248,29 @@ struct H {
 
   // ---- descriptor-image DRAM model (07 §3.3) ----
   void serve_descriptor_dram() {
-    d->desc_mem_req_ready_i = dram_busy ? 0 : 1;
+    d->desc_mem_req_ready_i = 1;
     d->desc_mem_rsp_valid_i = 0;
     d->desc_mem_rsp_data_i  = 0;
     d->desc_mem_rsp_last_i  = 0;
     d->desc_mem_rsp_err_i   = 0;
-    if (dram_busy && dram_wait == 0 && dram_idx < dram_beats) {
+    if (!desc_fifo.empty() && t >= desc_fifo.front().due && !desc_fifo.front().stuck) {
+      auto& b = desc_fifo.front();
       d->desc_mem_rsp_valid_i = 1;
       d->desc_mem_rsp_data_i =
-          dram_rd64(dram_addr - DESC_BASE + uint32_t(8 * dram_idx));
-      d->desc_mem_rsp_last_i = (dram_idx == dram_beats - 1) ? 1 : 0;
-    }
-    if (!dram_busy) {
-      if (d->desc_mem_req_valid_o) {
-        dram_busy  = true;
-        dram_addr  = d->desc_mem_req_addr_o;
-        dram_beats = d->desc_mem_req_beats_o;
-        dram_idx   = 0;
-        dram_wait  = dram_lat;
-        ++dram_reqs;
+          dram_rd64(b.addr - DESC_BASE + uint32_t(8 * b.idx));
+      d->desc_mem_rsp_last_i = (b.idx == b.beats - 1) ? 1 : 0;
+      if (d->desc_mem_rsp_ready_o && ++b.idx >= b.beats) {
+        desc_fifo.pop_front();
       }
-    } else if (dram_wait > 0) {
-      --dram_wait;
-    } else if (d->desc_mem_rsp_valid_i && d->desc_mem_rsp_ready_o) {
-      if (++dram_idx >= dram_beats) dram_busy = false;
+    }
+    if (d->rst_n && d->desc_mem_req_valid_o) {
+      if (!desc_fifo.empty()) ++dram_overlap_accepts;
+      desc_fifo.push_back({d->desc_mem_req_addr_o, int(d->desc_mem_req_beats_o), 0,
+                          t + uint64_t(dram_delay_next >= 0 ? dram_delay_next : dram_lat),
+                          dram_stuck_next});
+      dram_delay_next = -1;
+      dram_stuck_next = false;
+      ++dram_reqs;
     }
   }
 
@@ -1499,7 +1508,10 @@ struct H {
     d->gsi_wait_i = 0;
     d->gsi_data_i = 0;
     if (d->gsi_req_o) {
-      if (gsi_stuck || gsi_hold_cur < gsi_hold) {
+      const bool retired = d->gsi_kind_o == 0 && d->gsi_desc_type_o == 0x0005
+                           && (d->gsi_sel_o == 5 || d->gsi_sel_o == 7);
+      if (retired) ++gsi_internal_leaks;
+      if (gsi_stuck || (gsi_retired_stuck && retired) || gsi_hold_cur < gsi_hold) {
         d->gsi_wait_i = 1;
         ++gsi_hold_cur;
       } else {
@@ -1522,6 +1534,12 @@ struct H {
         } else {
           d->gsi_data_i = gsi_value(gk, gty, gix, gs,
                                     static_cast<uint8_t>(d->gsi_ord_o));
+          if (gsi_fold_latency && gk == 0 && gs == 3 && gty == 0x0005 && gix < 8)
+            d->gsi_data_i = d->srp_acc_latency_o.at(gix);
+          if (gsi_fold_sw && gk == 0 && gs == 0 && gty == 0x0005 && gix < 2
+              && ((d->acmp_bound_o >> gix) & 1)
+              && !((d->aecp_strm_started_o >> gix) & 1))
+            d->gsi_data_i |= 0x00000008u;              // STREAMING_WAIT
         }
         gsi_hold_cur = 0;
         ++gsi_reads;
@@ -1579,7 +1597,7 @@ struct H {
     d->resp_mem_rsp_data_i = 0; d->resp_mem_rsp_last_i = 0;
     d->resp_mem_rsp_err_i = 0; d->resp_mem_wr_ready_i = 0;
     d->resp_mem_wr_done_i = 0; d->resp_mem_wr_err_i = 0;
-    dram_busy = false; dram_wait = 0;
+    desc_fifo.clear(); dram_delay_next = -1; dram_stuck_next = false;
     rm_busy = false; rm_wbusy = false; rm_wait = 0; rm_wcnt = 0;
     amap_edit_hold_cur = 0; amap_edit_seen = false;
     amap_edit_active = false; amap_edit_changed = false;
@@ -1754,6 +1772,60 @@ struct ReadDescriptorPhase {
     a9_an_aem_response_as_input_is_never_answered();
     a10_back_to_back_commands_echo_sequence_id();
     a11_no_slot_is_silted_up(tx_free_before);
+    a12_late_descriptor_response_isolated();
+    a13_unterminated_descriptor_burst();
+  }
+
+  void a12_late_descriptor_response_isolated() {
+    h.dram_delay_next = 6000;
+    auto got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 6, 0), 0xA120);
+    CHECK(got == expect(AECP_NO_SUCH_DESCRIPTOR, AEM_READ_DESCRIPTOR, 0xA120,
+                        rdesc_pl(CFGIX, 6, 0)), "A12: delayed output fetch must answer error");
+    CHECK(d->desc_mem_debt_o && !h.desc_fifo.empty(), "A12: timed-out burst no longer owed");
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 5, 0), 0xA121);
+    CHECK(got == expect(AECP_NO_SUCH_DESCRIPTOR, AEM_READ_DESCRIPTOR, 0xA121,
+                        rdesc_pl(CFGIX, 5, 0)), "A12: first post-timeout locate must error");
+    CHECK(d->desc_mem_debt_o, "A12: third command must be presented while debt remains");
+    std::vector<uint8_t> payload(4, 0);
+    putbe(payload.data(), CFGIX, 2);
+    const auto body = stream_descriptor(5, 0);
+    payload.insert(payload.end(), body.begin(), body.end());
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 5, 0), 0xA122);
+    CHECK(got == expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0xA122, payload),
+          "A12: late STREAM_OUTPUT bytes reached STREAM_INPUT on the wire");
+    CHECK(!d->desc_mem_debt_o && h.dram_overlap_accepts == 0,
+          "A12: integrated guard accepted a request while memory debt remained");
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 5, 0), 0xA123);
+    CHECK(got == expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0xA123, payload),
+          "A12: service after finite late burst did not recover");
+  }
+
+  void a13_unterminated_descriptor_burst() {
+    h.dram_stuck_next = true;
+    auto got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 6, 0), 0xA130);
+    CHECK(got == expect(AECP_NO_SUCH_DESCRIPTOR, AEM_READ_DESCRIPTOR, 0xA130,
+                        rdesc_pl(CFGIX, 6, 0)), "A13: stuck fetch must answer error");
+    const auto accepted = h.dram_reqs;
+    for (uint16_t i = 1; i <= 3; ++i) {
+      const auto start = h.t;
+      const uint16_t seq = uint16_t(0xA130 + i);
+      got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 5, 0), seq);
+      CHECK(got == expect(AECP_NO_SUCH_DESCRIPTOR, AEM_READ_DESCRIPTOR, seq,
+                          rdesc_pl(CFGIX, 5, 0)), "A13: later command %u was not an error", i);
+      CHECK(h.t - start < 6000, "A13: wire error exceeded watchdog plus protocol overhead");
+      CHECK(d->desc_mem_debt_o && h.dram_reqs == accepted,
+            "A13: integrated guard forgot debt or accepted another request");
+    }
+    CHECK(h.desc_fifo.size() == 1, "A13: expected one stuck burst");
+    if (!h.desc_fifo.empty()) h.desc_fifo.front().stuck = false;
+    h.idle(100);
+    CHECK(!d->desc_mem_debt_o, "A13: released terminal did not clear debt");
+    got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 0x0024, 0), 0xA134);
+    std::vector<uint8_t> payload(4, 0);
+    putbe(payload.data(), CFGIX, 2);
+    payload.insert(payload.end(), image_clkdom.begin(), image_clkdom.end());
+    CHECK(got == expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0xA134, payload),
+          "A13: service did not recover after terminal response");
   }
 
   void a0_the_image_validated_out_of_dram() {
@@ -2315,7 +2387,8 @@ struct MilanInfoPhase {
     const auto m1_got = m1_the_figure_5_4_response_byte_exact(info_pl);
     m2_the_three_fields_a_controller_records(m1_got);
     m3_a_foreign_protocol_id_is_still_not_implemented();
-    m4_an_mvu_command_type_this_build_does_not_implement();
+    m4_the_waived_pairs_and_a_reserved_command_type();
+    m4l_the_waived_sets_under_another_controllers_lock();
     m5_the_r_field_is_compared_the_reserved_field_is_not(info_pl);
     m6_a_truncated_mvu_command();
     m7_the_descriptor_path_is_untouched();
@@ -2363,8 +2436,9 @@ struct MilanInfoPhase {
   // this is the content the whole command exists for. features_flags is 0
   // ON PURPOSE: Table 5.20's REDUNDANCY would claim Milan §8 on a
   // single-interface PAAD, and TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING would
-  // claim map changes while streaming from a build that answers
-  // ADD/REMOVE_AUDIO_MAPPINGS with NOT_IMPLEMENTED.
+  // claim map changes while a Stream Output is running, which this build
+  // refuses. Neither SUID nor MCR has a bit in Table 5.20; their waiver is
+  // observed through M4's responses, not inferred from these flags.
   void m2_the_three_fields_a_controller_records(
       const std::vector<uint8_t>& got) {
     if (got.size() >= 60) {
@@ -2398,16 +2472,105 @@ struct MilanInfoPhase {
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
   }
 
-  // ---- M4: an MVU command_type this build does not implement -------------
-  // GET_SYSTEM_UNIQUE_ID (Table 5.18 0x0002) is a Milan RECOMMENDATION this
-  // build does not serve: MVU status 1 with the command echoed, never
-  // silence and never a Figure 5.4 body it cannot fill.
-  void m4_an_mvu_command_type_this_build_does_not_implement() {
-    auto suid = mvu_cmd_pl(MVU_PID_LO, 0x0002, 8);
-    auto got = mvu(MVU_PID_LO, 0x0002, 0xC003);
-    auto want = mvu_expect(AECP_NOT_IMPLEMENTED, 0xC003, suid);
-    CHECK(!got.empty(), "M4: an unimplemented MVU command_type got silence");
-    CHECK(got == want, "M4: the unimplemented-MVU echo is not byte-exact");
+  // ---- M4: the October waiver and an independent generic refusal --------
+  // 06 section 6.9 / issues #55, #56, #77: both recommended pairs remain
+  // unsupported. Send the complete command forms from Milan Figures 5.3,
+  // 5.5, 5.6 and 5.7, including nonzero SET data. The GETs echo their SHORT
+  // command forms, not the longer successful response. Table 5.18 reserves
+  // 0x0005, so generic refusal remains covered independently of the waiver.
+  void m4_the_waived_pairs_and_a_reserved_command_type() {
+    struct Refusal {
+      uint16_t command_type;
+      size_t payload_bytes;
+      unsigned cdl;
+      size_t frame_bytes;
+    };
+    const Refusal cases[] = {
+      {0x0001, 16, 28, 60},   // SET_SYSTEM_UNIQUE_ID, Figure 5.5
+      {0x0002,  8, 20, 60},   // GET_SYSTEM_UNIQUE_ID, Figure 5.3
+      {0x0003, 80, 92, 118},  // SET_MEDIA_CLOCK_REFERENCE_INFO, Figure 5.6
+      {0x0004,  8, 20, 60},   // GET_MEDIA_CLOCK_REFERENCE_INFO, Figure 5.7
+      {0x0005,  8, 20, 60},   // reserved command_type, generic refusal
+    };
+    for (const auto& c : cases) {
+      auto payload = mvu_cmd_pl(MVU_PID_LO, c.command_type, c.payload_bytes);
+      if (c.command_type == 0x0001)
+        putbe(&payload[8], 0x0123456789ABCDEFull, 8);  // nonzero SUID @32
+      if (c.command_type == 0x0003) {
+        payload[8] = 3;                         // both valid flags @32
+        payload[11] = 0x5A;                     // user_mcr_prio @35
+        const std::string name = "Waived clock domain";
+        std::copy(name.begin(), name.end(), payload.begin() + 16); // @40
+      }
+      const uint16_t seq = uint16_t(0xC030 + c.command_type);
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, VU_COMMAND, 0, EID, CTLR_EID,
+                        seq, MVU_PID_HI, payload));
+      const auto got = h.wait_any(h.q_aecp, 200);
+      const auto want = mvu_expect(AECP_NOT_IMPLEMENTED, seq, payload);
+      CHECK(got.size() == c.frame_bytes,
+            "M4: MVU 0x%04x frame length %zu, want %zu",
+            c.command_type, got.size(), c.frame_bytes);
+      CHECK(got.size() > 17 && (got[15] & 0x0F) == VU_RESPONSE &&
+            (got[16] >> 3) == 1,
+            "M4: MVU 0x%04x must answer VENDOR_UNIQUE_RESPONSE / NOT_IMPLEMENTED",
+            c.command_type);
+      CHECK(got.size() > 17 && unsigned(((got[16] & 7) << 8) | got[17]) == c.cdl,
+            "M4: MVU 0x%04x must retain command cdl %u",
+            c.command_type, c.cdl);
+      CHECK(got == want,
+            "M4: MVU 0x%04x NOT_IMPLEMENTED echo is not byte-exact",
+            c.command_type);
+    }
+  }
+
+  // ---- M4L: the waived SETs still refuse under another controller's lock
+  // 06 section 6.8/6.9: unsupported MVU bypasses CHECK_LOCK. Table 5.19
+  // reserves status 2..31, so an AEM ENTITY_LOCKED response would be wrong.
+  void m4l_the_waived_sets_under_another_controllers_lock() {
+    constexpr uint64_t FOREIGN_MAC = 0x0202C2C2C2C2ull;
+    std::vector<uint8_t> lock(16, 0);            // LOCK ENTITY[0]
+    auto held = lock;
+    putbe(&held[4], CTLR_EID, 8);                // locked_controller_id
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID,
+                      0xC050, 0x0001, lock));
+    auto got = h.wait_any(h.q_aecp, 200);
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS,
+                            EID, CTLR_EID, 0xC050, 0x0001, held),
+          "M4L: LOCK_ENTITY must grant controller 1 the lock byte-exact");
+
+    for (uint16_t ct : {uint16_t(0x0001), uint16_t(0x0003)}) {
+      auto payload = mvu_cmd_pl(MVU_PID_LO, ct, ct == 0x0001 ? 16 : 80);
+      if (ct == 0x0001) {
+        putbe(&payload[8], 0x0123456789ABCDEFull, 8);
+      } else {
+        payload[8] = 3;
+        payload[11] = 0x5A;
+        const std::string name = "Waived clock domain";
+        std::copy(name.begin(), name.end(), payload.begin() + 16);
+      }
+      const uint16_t seq = uint16_t(0xC060 + ct);
+      h.feed(aecp_frame(OWN_MAC, FOREIGN_MAC, VU_COMMAND, 0, EID,
+                        CTLR2_EID, seq, MVU_PID_HI, payload));
+      got = h.wait_any(h.q_aecp, 200);
+      const auto want = aecp_frame(FOREIGN_MAC, OWN_MAC, VU_RESPONSE,
+                                   AECP_NOT_IMPLEMENTED, EID, CTLR2_EID,
+                                   seq, MVU_PID_HI, payload);
+      CHECK(got == want,
+            "M4L: MVU 0x%04x under another controller's lock must echo "
+            "NOT_IMPLEMENTED byte-exact", ct);
+      h.run_ms(20);                             // within the held-lock window
+      CHECK(h.q_aecp.empty(), "M4L: MVU 0x%04x emitted an extra AECP frame", ct);
+    }
+
+    lock[3] = 1;                               // holder releases the lock
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID,
+                      0xC051, 0x0001, lock));
+    got = h.wait_any(h.q_aecp, 200);
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS,
+                            EID, CTLR_EID, 0xC051, 0x0001, lock),
+          "M4L: UNLOCK_ENTITY must clear the holder byte-exact");
   }
 
   // ---- M5: the r field is compared, the reserved field is not -----------
@@ -4537,16 +4700,14 @@ struct LockPhase {
 };
 
 // ==== G. GET_STREAM_INFO (IEEE SS7.4.16, Milan SS5.4.2.10) ==============
-// (the Milan 80-byte response: flags_ex + pbsta/acmpsta; every value and
-//  every validity flag is the INTEGRATOR's through the gsi face - the
-//  harness above IS that integrator - while existence is the descriptor
-//  store's, so index 2 refuses NO_SUCH_DESCRIPTOR with a zero-flagged
-//  body whatever the face would answer.)
+// The Milan 80-byte response combines external words with the processor's
+// input failure/probing fields. Section GI drives their real state owners.
 struct StreamInfoPhase {
   H& h;
   const std::vector<uint8_t>& image_entity;
 
-  static std::vector<uint8_t> gsi_body(uint16_t ty, uint16_t ix, bool known) {
+  static std::vector<uint8_t> gsi_body(uint16_t ty, uint16_t ix, bool known,
+                                      uint8_t status = 0) {
       std::vector<uint8_t> b(56, 0);
       putbe(&b[0], ty, 2);
       putbe(&b[2], ix, 2);
@@ -4559,6 +4720,11 @@ struct StreamInfoPhase {
         putbe(&b[36], H::gsi_value(0, ty, ix, 5, 0), 8);
         putbe(&b[44], H::gsi_value(0, ty, ix, 6, 0), 8);
         putbe(&b[52], static_cast<uint32_t>(H::gsi_value(0, ty, ix, 7, 0)), 4);
+        if (ty == 0x0005) {
+          b[34] = 0;
+          putbe(&b[36], 0, 8);
+          putbe(&b[52], uint32_t(status) << 24, 4);
+        }
       }
       return b;
   }
@@ -4589,7 +4755,7 @@ struct StreamInfoPhase {
   void g1_g2_byte_exact_milan_responses_both_sides() {
     auto f = gsi_cmd(0x0005, 0, 0x7401);
     auto want = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
-                           0x7401, 0x000F, gsi_body(0x0005, 0, true));
+                           0x7401, 0x000F, gsi_body(0x0005, 0, true, 0x20));
     CHECK(!f.empty() && f == want,
           "G1: STREAM_INPUT[0] Milan 80-byte response byte-exact (cdl 68)");
     if (!f.empty() && f != want) { dump("got", f); dump("exp", want); }
@@ -4662,7 +4828,7 @@ struct StreamInfoPhase {
     auto uns = h.wait_any(h.q_aecp, 500);
     auto wantu = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID,
                             CTLR_EID, 0x0000, 0x000F,
-                            gsi_body(0x0005, 1, true));
+                            gsi_body(0x0005, 1, true, 0x40));
     wantu[36] |= 0x80;
     CHECK(!uns.empty() && uns == wantu,
           "G7: bind emits the u=1 GET_STREAM_INFO for that sink (seq 0)");
@@ -4708,6 +4874,10 @@ struct StreamInfoPhase {
     CHECK(extra.empty(),
           "G7d: the bind pushed exactly ONE notification, not two "
           "(a started/stopped trigger that fires on bind duplicates it)");
+    auto timeout = h.wait_any(h.q_aecp, 300);
+    CHECK(timeout.size() == 94 && (timeout[36] & 0x80)
+          && fv_u64(timeout, 40, 2) == 1 && timeout[90] == 0x47,
+          "G7d2: the later double probe timeout reports ACTIVE/acmpsta 7");
   }
 
   // now a real started/stopped change under a live binding
@@ -5039,19 +5209,8 @@ struct DynamicInfoBatch : ReadSideTools {
       return b;
   }
   static std::vector<uint8_t> gsi_body(uint16_t ty, uint16_t ix, bool known) {
-      std::vector<uint8_t> b(56, 0);
-      putbe(&b[0], ty, 2); putbe(&b[2], ix, 2);
-      if (known) {
-        putbe(&b[4],  static_cast<uint32_t>(H::gsi_value(0, ty, ix, 0, 0)), 4);
-        putbe(&b[8],  H::gsi_value(0, ty, ix, 1, 0), 8);
-        putbe(&b[16], H::gsi_value(0, ty, ix, 2, 0), 8);
-        putbe(&b[24], static_cast<uint32_t>(H::gsi_value(0, ty, ix, 3, 0)), 4);
-        putbe(&b[28], H::gsi_value(0, ty, ix, 4, 0), 8);
-        putbe(&b[36], H::gsi_value(0, ty, ix, 5, 0), 8);
-        putbe(&b[44], H::gsi_value(0, ty, ix, 6, 0), 8);
-        putbe(&b[52], static_cast<uint32_t>(H::gsi_value(0, ty, ix, 7, 0)), 4);
-      }
-      return b;
+      // The shared fixture keeps input 0 bound to an absent talker, PASSIVE.
+      return StreamInfoPhase::gsi_body(ty, ix, known, ix == 0 ? 0x20 : 0);
   }
   static std::vector<uint8_t> ctr_body(uint16_t ty, uint16_t ix) {
       std::vector<uint8_t> b(136, 0);
@@ -5722,6 +5881,9 @@ struct StreamingStatePhase : ReadSideTools {
   // the wire. Without a recipient, a broken NOTIFY_ENQ is indistinguishable
   // from the required silence.
   void w21s_an_unbound_sink_is_a_no_op() {
+    // Let sink 0's independent unanswered-probe sequence reach PASSIVE
+    // before registering the observer for sink 1's START no-op.
+    h.run_ms(4500);
     const uint64_t W21_C2_MAC = 0x0202C2C2C2C2ull;
     std::vector<uint8_t> w21_flags(4, 0);
     h.q_aecp.clear();
@@ -6081,6 +6243,21 @@ struct ReadSidePhase : SamplingRateTools {
   static constexpr uint64_t C2_MAC = UnsolicitedPhase::C2_MAC;
   ReadSidePhase(H& hh, std::vector<ImgEnt>& ents)
       : SamplingRateTools(hh), image_ents(ents) {}
+
+  // These output checks must own their freshness window: earlier phases
+  // may spend time waiting for listener status transitions. A real probe
+  // refreshes the MAAP address gate and the talker's SRP declaration.
+  void refresh_source0(uint16_t seq) {
+    h.q_acmp.clear();
+    h.feed(acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID,
+                      0, 7, 0, 0, seq, 0x000A, 0));
+    auto rsp = h.wait_frame(h.q_acmp, 400,
+        [seq](const std::vector<uint8_t>& f) { return f.size() == 70
+            && (f[15] & 0x0F) == 1 && fv_u64(f, 62, 2) == seq; });
+    CHECK(!rsp.empty() && st(rsp) == AECP_SUCCESS,
+          "W-output-pre: source 0 probe refresh succeeds");
+    h.run_ms(300);
+  }
 
   void run() {
     h.q_aecp.clear();
@@ -6870,6 +7047,7 @@ struct ReadSidePhase : SamplingRateTools {
   // it), so a refusal below can only come from the output half.
   void w17_the_other_predicate_half_a_streaming_output() {
     const uint64_t SID_T0 = (OWN_MAC << 16) | 0x0000;
+    refresh_source0(0x76E0);
 
     CHECK(h.d->dbg_bound0_o == 0,
           "W17: no Stream Input is bound; the input half cannot be what "
@@ -7368,6 +7546,7 @@ struct ReadSidePhase : SamplingRateTools {
   // Advertise AND a registered Listener - so the precondition arrives the
   // W17 way: a peer's Listener Ready on the wire, never a poked bit.
   void w25_the_streaming_output_refusals_against_real_streaming() {
+    refresh_source0(0x76E1);
     auto sf_pl = [&](uint16_t ty, uint16_t ix, uint64_t fmt) {
       std::vector<uint8_t> p(12, 0);
       putbe(&p[0], ty, 2); putbe(&p[2], ix, 2); putbe(&p[4], fmt, 8);
@@ -8455,6 +8634,8 @@ struct DomainDefaultPhase {
   }
 };
 
+#include "gsi_internal.hpp"
+
 // ---------------------------------------------------------------------------
 // the suite: one phase per property proved, in the order the wire proves them
 // ---------------------------------------------------------------------------
@@ -8494,6 +8675,29 @@ struct Suite {
     CountersPhase{h, d, image_entity}.run();
     AudioMapPhase{h, d, image_spi1}.run();
     AudioMapEditPhase{h, d}.run();
+    // S8's service-only sink has no descriptor and no later consumer.
+    // Withdraw it so its eventual LeaveAll expiry cannot notify a controller
+    // registered by an unrelated command test.
+    const auto listener_retired = h.svc(OP_WDRW_LS, 2);
+    CHECK(listener_retired.got && listener_retired.status == ST_OK,
+          "GI-isolation: retire S8 listener before registry tests");
+    // S6 leaves a talker in its retry loop. Retire it before the registry
+    // timing tests: its now-observable ACTIVE/timeout changes are unrelated
+    // to their notification sequence and controller-lifetime assertions.
+    h.q_acmp.clear();
+    h.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                      T1_UID, 0, 0, 0, 0x731F, 0, 0));
+    const auto retired = h.wait_frame(h.q_acmp, 400,
+        [](const std::vector<uint8_t>& f) { return f.size() == 70
+            && (f[15] & 0x0F) == 9 && fv_u64(f, 62, 2) == 0x731F; });
+    CHECK(!retired.empty(), "GI-isolation: retire S6 probing before registry tests");
+    h.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID + 0x100, EID,
+                      T1_UID, 0, 0, 0, 0x731E, 0, 0));
+    const auto rebound = h.wait_frame(h.q_acmp, 400,
+        [](const std::vector<uint8_t>& f) { return f.size() == 70
+            && (f[15] & 0x0F) == 7 && fv_u64(f, 62, 2) == 0x731E; });
+    CHECK(!rebound.empty(), "GI-isolation: bind absent peer for configuration tests");
+    h.run_ms(4500);
     UnsolicitedPhase{h, d, image_entity, image_clkdom}.run();
     LockPhase{h}.run();
     StreamInfoPhase{h, image_entity}.run();
@@ -9389,7 +9593,9 @@ int main(int argc, char** argv) {
   DomainDefaultPhase{h}.run();
   const char* const build = "fixture";
 #else
-  Suite(h).run();
+  const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
+  if (!gsi_only) Suite(h).run();
+  InternalStreamInfoPhase{h}.run();
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's two

@@ -22,6 +22,95 @@ tally.
 
 ## What it proves
 
+- **GI: processor-owned GET_STREAM_INFO input fields** (Milan 5.3.8.6/.8,
+  5.4.5.2/Table 5.22). `gsi_internal.hpp` uses a fresh eight-sink processor
+  with two STREAM_INPUT descriptors (ten after the second reset). The harness
+  integrator folds the published binding/started view into STREAMING_WAIT,
+  as F06.13 asks of an integrator, so that flag is graded too. Real BIND_RX, ADP discovery,
+  PROBE_TX_RESPONSE and MSRP frames drive the listener and SRP state
+  machines; no record is forced. Every transition is checked in the complete
+  solicited and unsolicited response, including sequence, descriptor index,
+  reserved bytes, failure code, full bridge ID and probing/ACMP byte.
+  A new bind immediately probes (5.5.3.5.3); without a talker, the two
+  unanswered probes and retry window reach PASSIVE (5.5.3.5.29). Discovery
+  then drives ACTIVE, another double timeout reports ACMP status 7, retry
+  clears that status, and successful probing reaches COMPLETED. Unbind
+  reports DISABLED; every observed non-ACTIVE state carries ACMP status 0.
+  Two settled sinks register different failure codes and 64-bit bridge IDs.
+  Replacing Failed by Advertise and withdrawing Failed clear both fields;
+  a changed FailureInformation refresh notifies, while an unchanged refresh
+  stays quiet. On the wire, the fresh Failed registration declares Listener
+  New (a control for the detector) and the changed refresh declares none:
+  the processor's MSRP frames are parsed value by value for 1 s and 600 ms.
+  Withdrawal produces the SRP and ensuing probing events, both
+  checked. Reset over erased NVM clears live status. A hardware sink missing
+  from the descriptor image answers a full zero error body in both response
+  paths despite its real ACTIVE record. After the second reset, a re-bind
+  from PRB_W_RESP to another talker with STREAMING_WAIT keeps ACTIVE/0 and
+  must give exactly one unsolicited response carrying STREAMING_WAIT
+  (REBIND-SW), then the new talker's double timeout and the unbind report.
+  STREAM_INPUT 9 of the ten-input image, which a three-bit sink index would
+  alias onto PASSIVE sink 1, answers zero internal fields (INDEX-GUARD;
+  solicited only, because notifications are raised per hardware sink).
+  External input selectors 5 and 7
+  are stalled if requested, and a request counter must remain zero.
+  Existing section G still checks the unchanged STREAM_OUTPUT gather.
+
+  Latency-only Talker JoinIn refreshes (issue #113) are checked with sink 0
+  registering Advertise and sink 1 Failed. The harness folds the processor's
+  published per-sink accumulated latency into selector 3 with zero ingress
+  delay. Every changed refresh must emit exactly one byte-exact unsolicited
+  response carrying the new value; a solicited read must agree. An unchanged
+  refresh emits none, and neither the other sink nor any other descriptor may
+  be notified. The original distinct-value, zero and all-ones cases remain.
+  A walking one on the Advertise sink then a walking zero on the Failed sink
+  each cover all 32 bit positions (bit 0 is the least significant bit). Between
+  walking values the latch returns to zero or all ones, respectively, so each
+  of the 128 changed refreshes differs from its previous committed value in
+  exactly one bit. Every changed value, including each return, is repeated
+  unchanged. All 256 refreshes use the same response, solicited-read and
+  other-sink checks. Before each bit, discovery and an unchanged, response-graded
+  refresh of the other peer keep both streams live through the long sweep.
+  These 64 maintenance refreshes must also stay silent. The added checks have
+  a separate subtotal in the run log;
+  the original GI and suite checks are retained. The processor's external ports are
+  unchanged; the test wrapper exposes an existing output for the gather model.
+
+  Focused reproduction: `make -C tb/pp_top gsi-internal`. The normal suite
+  includes GI in its default build. The older registry/configuration tests
+  retain a bound sink waiting passively for an absent peer, so independent
+  probe-timeout notifications cannot masquerade as their command responses.
+
+  Retained negative controls:
+  `python3 tb/pp_top/gsi_mutants.py --output <log-directory>`.
+  The runner builds in a temporary source copy, requires a clean golden run,
+  and accepts only a completed simulation failing its named check. Compile
+  failures do not count. It restores the sources and requires another clean
+  run at the end.
+
+  | Mutation | Required failing check |
+  |---|---|
+  | Latency trigger disconnected from `stri_events` | `GI LATENCY-CHANGE: exactly one unsolicited response` |
+  | Latency comparison truncated to [7:0] | `GI LATENCY-WALK-ONE bit 8 step: exactly one unsolicited response` |
+  | Latency comparison truncated to [15:0] | `GI LATENCY-WALK-ONE bit 16 step: exactly one unsolicited response` |
+  | Latency comparison truncated to [31:16] | `GI LATENCY-WALK-ONE bit 0 step: exactly one unsolicited response` |
+  | Latency comparison truncated to [30:0] | `GI LATENCY-WALK-ONE bit 31 step: exactly one unsolicited response` |
+  | Latency comparison truncated to [31:30] | `GI LATENCY-WALK-ONE bit 0 step: exactly one unsolicited response` |
+  | Latency bit 31 dropped by masking both operands | `GI LATENCY-WALK-ONE bit 31 step: exactly one unsolicited response` |
+  | Failure code tied to zero | `GI FAILED-0 solicited: failure code` |
+  | Failure bridge tied to zero | `GI FAILED-0 solicited: full failure bridge` |
+  | pbsta tied to zero | `GI PASSIVE solicited: pbsta` |
+  | acmpsta tied to zero | `GI TIMEOUT solicited: acmpsta` |
+  | Adjacent sink selected for the internal read | `GI DISTINCT-0 solicited: full failure bridge` |
+  | Original integrator path restored | `GI internal seam: selectors 5/7 never requested` |
+  | Missing-descriptor guard removed | `GI MISSING solicited: pbsta` |
+  | Committed-status notification removed | `GI PASSIVE unsolicited: complete Milan response` |
+  | Re-bind started/stopped trigger removed (bind walks excluded again) | `GI REBIND-SW: exactly one unsolicited response` |
+  | SRP FailureInformation-change strobe removed | `GI FAILED-REFRESH unsolicited: complete Milan response` |
+  | FailureInformation change re-declares the Listener again | `GI FAILED-REFRESH wire: a changed FailureInformation sends no` |
+  | Index guard removed before narrowing | `GI INDEX-GUARD solicited: pbsta sink 9` |
+  | Bridge no longer gated on FAILED after the index mux | `GI ADVERTISE unsolicited: full failure bridge` |
+
 - **A** **READ_DESCRIPTOR end to end** (06 §6.1, 07 §3.3) — the seam this
   suite used to stop at. A real AEM command on the MAC byte stream comes back
   as a byte-exact AECPDU carrying a descriptor that lives in MAIN MEMORY,
@@ -61,6 +150,16 @@ tally.
     how a control plane builds a storm.
   - **A10/A11** three back-to-back commands each echo their own
     `sequence_id`; the snapshot window publishes the counters and image-valid.
+  - **A12/A13** the descriptor-memory model accepts in-order queued requests
+    while older bursts are owed. A fetch delayed beyond the store watchdog
+    must not supply STREAM_OUTPUT bytes to a later STREAM_INPUT command;
+    the integrated guard holds the next request and recovery is byte-exact.
+    An unterminated burst keeps debt set and memory requests held while three
+    more wire commands each receive `NO_SUCH_DESCRIPTOR` in bounded time.
+    The standalone [guard suite](../desc_mem_guard/README.md) supplies the
+    unguarded reproduction, hold-deleted mutant and independent reset checks.
+    The bench observes `u_dut.u_desc_mem_guard.debt_o` hierarchically; debt
+    routing through the product top and parent consumer is deferred to D3.
 - **N** **GET_NAME and SET_NAME end to end** (Milan v1.2 5.4.2.11/.12):
   every named slot in the fixture answers with cdl 84 and the exact 64 bytes
   carried by its descriptor. The sweep includes both ENTITY semantic indices,
@@ -84,11 +183,24 @@ tally.
     single-interface PAAD and TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING would claim
     map changes while a Stream Output is running, which the root integrator
     deliberately refuses.
-  - **M3/M4** a FOREIGN vendor-unique protocol (same Avnu OUI-36, protocol id
-    0x101) and an MVU `command_type` this build does not serve
-    (GET_SYSTEM_UNIQUE_ID) both come back echoed with MVU status 1. M3 is what
-    proves the whole 48 bits are compared: nothing above @26 tells the two
-    protocols apart.
+  - **M3** a FOREIGN vendor-unique protocol (same Avnu OUI-36, protocol id
+    0x101) comes back echoed with MVU status 1. This proves the whole 48 bits
+    are compared: nothing above @26 tells the two protocols apart.
+  - **M4** pins the [October waiver](../../docs/architecture/06_aecp_engine.md#69-mvu-commands)
+    for SET/GET_SYSTEM_UNIQUE_ID and SET/GET_MEDIA_CLOCK_REFERENCE_INFO
+    (0x0001–0x0004), plus reserved command type 0x0005 for generic refusal.
+    Each complete command receives VENDOR_UNIQUE_RESPONSE, status 1
+    NOT_IMPLEMENTED, and its own bytes and cdl echoed exactly. The SET
+    payloads contain a nonzero ID or priority/name; the short GET payloads
+    remain short. In command order, response AECPDU lengths are 40/32/104/32
+    bytes, cdl 28/20/92/20, and untagged frame lengths excluding FCS are
+    60/60/118/60 bytes. The reserved type uses cdl 20. M1/M2 separately pin
+    features_flags = 0; Table 5.20 has no support bit for either waived pair.
+  - **M4L** takes LOCK_ENTITY with one controller, then sends both complete,
+    nonzero waived SETs from another controller. Each must still receive its
+    byte-exact NOT_IMPLEMENTED echo, with no extra AECP frame during a 20 ms
+    observation. The lock grant
+    and the holder's subsequent unlock are also checked byte-exact.
   - **M5** the r field is compared and the reserved field is not — §5.4.3.2.2
     requires r = 0 and gives the receiver no leave to ignore it, while
     §5.4.4.1's reserved field is explicitly "ignored by the receiver". So r = 1
@@ -385,6 +497,32 @@ The `COPY_BUFFER` one is the interesting result: it goes red HERE and stays
 green in `tb/ucpu` (0 checks red there), because that suite's µprogram only copies a
 whole number of 8-byte lanes. A descriptor whose length is not a multiple of 8
 is a thing only the end-to-end suite sees.
+
+## October MVU waiver response mutation (2026-09-25)
+
+Issues #55/#56/#77 use the waiver in
+[06 §6.9](../../docs/architecture/06_aecp_engine.md#69-mvu-commands).
+All counts in this section were re-measured on 2026-09-25 at merged head
+`b51bc3893b06f4d39be49726c1b8f4ed6c65573d`, before the M4L lock regression
+was added. At that head, the unmodified `make -C tb/pp_top run` passed
+**7,660 checks**: 7,640 in the default build, including M1/M2 and all five
+M4 cases, plus 20 in the domain-default fixture build. These are measurements
+of that commit, not live suite totals; re-run the suite and both mutations
+before quoting counts for any later head.
+
+Each mutation changes only a disposable copy of generated `tb/pp_top/ucode.hex`.
+Copy `ltn_rom.hex` alongside it, create an `obj_dir` for the tally, then run the
+built `tb/pp_top/obj_dir/Vpp_top_sim` binary with the ROM-copy directory as its
+working directory. The tracked generator and RTL stay unchanged. ROM indices below
+are zero-based; the normal suite bank uses the unmodified source-checkout ROM.
+
+| Generated-ROM change | Result |
+|---|---|
+| E_NOTIMPL, word 560: `c00000000001` → `c00000000000` (`SET_STATUS NOT_IMPLEMENTED` → `SET_STATUS SUCCESS`), with body and length untouched | exit 1; 197 of 7,640 default-build checks fail. M4 contributes 10: both the status and byte-exact echo assertion for each type 0x0001–0x0005. All five frame-length and cdl checks still pass |
+| E_MVUINFO+5, word 741: `230000000000` → `230000000003` (`MOVE r6, 0` → `MOVE r6, 3`), asserting both Table 5.20 flags | exit 1; 3 of 7,640 default-build checks fail: M1, M2 features_flags, and M5b |
+
+Both mutants were rejected. Each ran against a disposable generated-ROM copy;
+the source checkout's original ROM remained byte-for-byte unchanged.
 
 ## Section K — GET_COUNTERS (06 §6.6; IEEE §7.4.42, Milan §5.4.2.25)
 

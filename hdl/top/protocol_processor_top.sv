@@ -377,17 +377,20 @@ module protocol_processor_top
     //! ---- Milan-info gather face (06 §6.2/§6.10; IEEE §7.4.16/§7.4.40/
     //! §7.4.41, Milan §5.4.2.10/§5.4.2.23/§5.4.2.24) ----
     //! The processor parses GET_STREAM_INFO / GET_AVB_INFO / GET_AS_PATH and
-    //! lays out their responses; the INTEGRATOR owns every word, because the
-    //! truth lives in its binding view, SRP registrars, format registers and
-    //! gPTP plane. One word at a time: `gsi_kind_o` names the command family
+    //! lays out their responses. STREAM_INPUT failure code/bridge and
+    //! probing/ACMP status come from the internal SRP and listener records
+    //! (Milan §5.3.8.6/.8). Selectors 5 and 7 are never requested externally
+    //! for an input; selector 4 still requests the DA, with its failure-code
+    //! byte replaced internally. Other words belong to the integrator.
+    //! One word at a time: `gsi_kind_o` names the command family
     //! (0 STRI / 1 AVB / 2 ASP), `gsi_sel_o` the word, `gsi_ord_o` the
     //! GET_AS_PATH array ordinal. Word tables: docs/architecture/06
     //! §6.2/§6.10.
     //!
     //! LEAVING IT UNWIRED IS SAFE AND HONEST, same polarity as the other
-    //! faces: an undriven `gsi_wait_i` is 0, every word answers 0, and the
-    //! responses carry cleared validity flags, zero fields and a zero path
-    //! count - absent, never invented.
+    //! faces: an undriven `gsi_wait_i` is 0, external words answer 0,
+    //! including validity flags and path count. Internal status still
+    //! reports the processor's records.
     output logic        gsi_req_o,            //! a word is being asked for
     output logic [1:0]  gsi_kind_o,           //! 0 STRI / 1 AVB / 2 ASP
     output logic [15:0] gsi_desc_type_o,      //! addressed descriptor_type
@@ -511,20 +514,21 @@ module protocol_processor_top
     output logic                         srp_domain_change_o,     //! one-cycle DOMAIN_CHANGE, pairs with the two levels above
     output logic [N_STREAM_OUT_P*2-1:0]  srp_tk_decl_state_o,     //! per-source self-declared {0 NONE, 1 ADVERTISE, 2 FAILED}
     output logic [N_STREAM_OUT_P*2-1:0]  srp_lstn_reg_state_o,    //! per-source registered Listener attr (srp_pkg::srp_decl_e)
-    //! THE AVTP transmit gate: declaring AND not failed AND a listener is
-    //! READY AND admitted. Use THIS — never rebuild it from the terms below,
-    //! which carry an optimistic window (see srp_sr_admitted_o).
+    //! Declaring Advertise AND Listener Ready/ReadyFailed AND optimistic-or-
+    //! real admission. For confirmed admission, gate with srp_active_o AND
+    //! srp_sr_admitted_o (parent #551 decision; architecture 10 section 6.3).
     output logic [N_STREAM_OUT_P-1:0]    srp_active_o,
-    //! RAW Σ-slope verdict. It lags srp_active_o by up to three admission
-    //! rounds after a fresh declare, because the FSM admits optimistically
-    //! (KL_srp_top: sr_adm_fsm = opt_r | adm_admitted). A consumer that gates
-    //! on this instead of srp_active_o mutes a legal stream for those rounds.
+    //! Real Σ-slope verdict for the current declaration, with no optimistic
+    //! term. Low from acceptance until the new slope completes a full round.
+    //! While any declaration is pending, no other bit rises: capacity frees
+    //! only by withdrawal or an evaluated shrink.
+    //! See architecture 10 section 6.3.
     output logic [N_STREAM_OUT_P-1:0]    srp_sr_admitted_o,
-    output logic [N_STREAM_OUT_P*32-1:0] srp_granted_slope_bps_o, //! per-source granted idleSlope, 0 when not admitted (802.1Q §34.6.1.1); same optimistic lag
+    output logic [N_STREAM_OUT_P*32-1:0] srp_granted_slope_bps_o, //! per-source granted idleSlope (802.1Q §34.6.1.1); zero until the real grant, follows srp_sr_admitted_o
     output logic [N_STREAM_OUT_P*8-1:0]  srp_src_fail_code_o,     //! per-source SELF-declared Failed code; valid only with tk_decl_state == FAILED
     output logic [N_STREAM_OUT_P*64-1:0] srp_src_fail_bridge_o,   //! per-source SELF-declared FailureInformation; same validity
-    output logic [31:0]                  srp_sum_slope_bps_o,     //! Σ granted idleSlope over admitted sources — the CBS slope-MUX value
-    output logic                         srp_over_limit_o,        //! at least one source was refused against the port ceiling
+    output logic [31:0]                  srp_sum_slope_bps_o,     //! Σ latched by published rounds; holds while any declaration is pending, may retain a retired source until then
+    output logic                         srp_over_limit_o,        //! latched with the Σ: at least one evaluated source refused against the ceiling
     output logic [N_STREAM_IN_P*2-1:0]   srp_tk_reg_state_o,      //! per-sink registered Talker attr {0 NONE, 1 ADVERTISE, 2 FAILED}
     output logic [N_STREAM_IN_P*2-1:0]   srp_lstn_decl_state_o,   //! per-sink OUR Listener declaration
     output logic [N_STREAM_IN_P*32-1:0]  srp_acc_latency_o,       //! per-sink registered accumulated_latency, ns, RAW — the consumer adds its own ingress delay
@@ -812,6 +816,8 @@ module protocol_processor_top
   assign srp_tk_decl_state_o     = srp_tk_decl_state_w;
   assign srp_lstn_reg_state_o    = srp_lstn_reg_state_w;
   assign srp_active_o            = srp_active_w;
+  // Admission latency from acceptance is at most 3*N_STREAM_OUT_P clocks
+  // (4 clocks at one source) without another declaration/withdrawal.
   assign srp_sr_admitted_o       = srp_sr_admitted_w;
   assign srp_granted_slope_bps_o = srp_granted_slope_w;
   assign srp_src_fail_code_o     = srp_src_fail_code_nc_w;
@@ -1944,7 +1950,7 @@ module protocol_processor_top
   logic [N_STREAM_IN_P-1:0][1:0]   srp_lstn_decl_state_w;
   logic [N_STREAM_IN_P-1:0][31:0]  srp_acc_latency_w;
   logic [N_STREAM_IN_P-1:0][7:0]   srp_snk_fail_code_w;
-  logic [N_STREAM_IN_P-1:0][63:0]  srp_snk_fail_bridge_nc_w;
+  logic [N_STREAM_IN_P-1:0][63:0]  srp_snk_fail_bridge_w;
   logic [N_STREAM_OUT_P-1:0][31:0] srp_granted_slope_w;
   logic [N_STREAM_OUT_P-1:0]       srp_sr_admitted_w;
   logic [31:0] srp_sum_slope_w;
@@ -2202,6 +2208,10 @@ module protocol_processor_top
   logic [2:0]  srp_draw_kind_w;
   logic        srp_draw_busy_w, srp_draw_valid_w;
   logic [N_STREAM_IN_P-1:0]  srp_evt_tk_reg_w, srp_evt_tk_unreg_w;
+  //! FailureInformation change: feeds ONLY the GET_STREAM_INFO notify OR
+  //! (stri_events), never the event router or the ACMP listener
+  logic [N_STREAM_IN_P-1:0]  srp_evt_tk_fail_chg_w;
+  logic [N_STREAM_IN_P-1:0]  srp_evt_tk_latency_chg_w;
   logic [N_STREAM_OUT_P-1:0] srp_lstn_reg_change_w;
   logic [3:0]  srp_dbg_vid_active_w;
   logic        srp_dbg_vlan_err_nc_w, srp_dbg_adm_round_nc_w;
@@ -2278,6 +2288,8 @@ module protocol_processor_top
       .draw_ms_i           (prng_ms_w),
       .evt_tk_registered_o   (srp_evt_tk_reg_w),
       .evt_tk_unregistered_o (srp_evt_tk_unreg_w),
+      .evt_tk_fail_chg_o     (srp_evt_tk_fail_chg_w),
+      .evt_tk_latency_chg_o  (srp_evt_tk_latency_chg_w),
       .lstn_reg_change_o     (srp_lstn_reg_change_w),
       .evt_domain_change_o   (srp_evt_domain_change_w),
       .class_a_prio_o      (srp_class_a_prio_w),
@@ -2292,7 +2304,7 @@ module protocol_processor_top
       .lstn_decl_state_o   (srp_lstn_decl_state_w),
       .acc_latency_o       (srp_acc_latency_w),
       .snk_fail_code_o     (srp_snk_fail_code_w),
-      .snk_fail_bridge_o   (srp_snk_fail_bridge_nc_w),
+      .snk_fail_bridge_o   (srp_snk_fail_bridge_w),
       .granted_slope_bps_o (srp_granted_slope_w),
       .sr_admitted_o       (srp_sr_admitted_w),
       .sum_slope_bps_o     (srp_sum_slope_w),
@@ -2516,6 +2528,8 @@ module protocol_processor_top
       .m0_err_o       (nvm_err_w),
       .m0_err_cause_o (nvm_err_cause_w),
       .m0_abort_i     (nvm_abort_w),
+      // The saved-state writer is not present yet; keep manager 1's request,
+      // payload and handshakes idle so only the binding manager uses the port.
       .m1_req_i       (1'b0),
       .m1_we_i        (1'b0),
       .m1_rid_i       (8'd0),
@@ -2529,6 +2543,7 @@ module protocol_processor_top
       .m1_done_o      (nm1_done_nc_w),
       .m1_err_o       (nm1_err_nc_w),
       .m1_err_cause_o (nm1_err_cause_nc_w),
+      // The absent manager 1 owns no read and therefore has nothing to abort.
       .m1_abort_i     (1'b0),
       .p_req_o        (np_req_w),
       .p_we_o         (np_we_w),
@@ -3040,20 +3055,99 @@ module protocol_processor_top
   logic [N_STREAM_IN_P-1:0]  ntfy_stri_in_w;
   logic [N_STREAM_OUT_P-1:0] ntfy_stri_out_w;
 
+  //! Milan §5.3.8.6 / Table 5.22: an eight-bit committed status view,
+  //! written ONLY by the listener record RAM's write bus (including reset
+  //! sweep and boot preload). This small flop view also compares every
+  //! commit for notification; the full listener record remains in RAM.
+  pp_acmp_pkg::acmp_rec_t lstn_commit_rec_w;
+  logic [N_STREAM_IN_P-1:0][7:0] lstn_gsi_status_r;
+  logic [7:0] lstn_gsi_status_w;
+  logic [N_STREAM_IN_P-1:0] lstn_gsi_changed_r;
+  assign lstn_commit_rec_w = pp_acmp_pkg::acmp_rec_t'(lstn_recwr_rec_w);
+  assign lstn_gsi_status_w = {lstn_commit_rec_w.pbsta,
+                              lstn_commit_rec_w.acmpsta};
+  always_ff @(posedge clk_i) begin : listener_gsi_status
+    if (!rst_n) begin
+      lstn_gsi_status_r  <= '0;
+      lstn_gsi_changed_r <= '0;
+    end else begin
+      lstn_gsi_changed_r <= '0;
+      if (lstn_recwr_w) begin
+        lstn_gsi_status_r[lstn_recwr_sink_w] <= lstn_gsi_status_w;
+        lstn_gsi_changed_r[lstn_recwr_sink_w] <=
+            (lstn_gsi_status_r[lstn_recwr_sink_w] != lstn_gsi_status_w);
+      end
+    end
+  end
+
+  //! The engine keeps its word table and response layout. Intercept only
+  //! kind 0 STREAM_INPUT words here, where the state owners meet, and read
+  //! the owners LIVE at each beat: no sample-and-hold copy (06 F06.13 states
+  //! the bound). The full descriptor index is checked BEFORE narrowing to
+  //! the sink width. The SRP bridge arrives ungated, so it is gated ONCE
+  //! here, after the index mux, on the addressed sink's registered FAILED.
+  logic        aecp_gsi_req_w, aecp_gsi_wait_w;
+  logic [63:0] aecp_gsi_data_w;
+  logic        gsi_input_w, gsi_internal_w;
+  logic [SINK_IDX_W_C-1:0] gsi_sink_w;
+  logic [7:0]  gsi_fail_code_w, gsi_status_w;
+  logic [63:0] gsi_fail_bridge_w;
+  assign gsi_input_w = (gsi_kind_o == 2'd0)
+                        && (gsi_desc_type_o == 16'h0005);
+  assign gsi_internal_w = gsi_input_w
+                           && ((gsi_sel_o == 4'd5) || (gsi_sel_o == 4'd7));
+  assign gsi_req_o = aecp_gsi_req_w && !gsi_internal_w;
+  assign aecp_gsi_wait_w = !gsi_internal_w && gsi_wait_i;
+  assign gsi_sink_w = SINK_IDX_W_C'(gsi_desc_index_o);
+
+  always_comb begin : gsi_owner_read
+    gsi_fail_code_w   = 8'd0;
+    gsi_fail_bridge_w = 64'd0;
+    gsi_status_w      = 8'd0;
+    if (32'(gsi_desc_index_o) < N_STREAM_IN_P) begin
+      gsi_fail_code_w = srp_snk_fail_code_w[gsi_sink_w];
+      if (srp_tk_reg_state_w[gsi_sink_w] == 2'd2) begin
+        gsi_fail_bridge_w = srp_snk_fail_bridge_w[gsi_sink_w];
+      end
+      gsi_status_w = lstn_gsi_status_r[gsi_sink_w];
+    end
+  end
+
+  always_comb begin : gsi_answer
+    aecp_gsi_data_w = gsi_data_i;
+    if (gsi_input_w) begin
+      case (gsi_sel_o)
+        4'd4: aecp_gsi_data_w = {gsi_data_i[63:16], gsi_fail_code_w, 8'd0};
+        4'd5: aecp_gsi_data_w = gsi_fail_bridge_w;
+        4'd7: aecp_gsi_data_w = {32'd0, gsi_status_w, 24'd0};
+        default: begin end
+      endcase
+    end
+  end
+
   //! Publish the notification block's authoritative lock level so local
   //! non-ATDECC mapping paths can enforce Milan 5.4.2.27 and 5.4.2.28.
   assign aecp_lock_held_o = ntfy_lock_held_w;
 
+  //! Milan Table 5.22, STREAM_INPUT: one term per GET_STREAM_INFO-visible
+  //! owner. The listener's committed record gives two: the pbsta/acmpsta
+  //! compare (bind, unbind, settle, teardown, double timeout, retry) and
+  //! the started/stopped change, including a re-bind that flips
+  //! STREAMING_WAIT while pbsta/acmpsta stay put (PWR -> PWR). Both are
+  //! registered off the SAME X_WB record write, so a walk that moves both
+  //! lands them in one cycle and the OR pushes one frame. SRP gives the
+  //! registration events, the FailureInformation change and the committed
+  //! accumulated_latency change. These register on the same attribute write.
   always_comb begin : stri_events
     ntfy_stri_in_w  = '0;
     ntfy_stri_out_w = '0;
     for (int unsigned k = 0; k < N_STREAM_IN_P; k++) begin
       ntfy_stri_in_w[k] =
           (32'(lstn_act_sink_w) == k
-           && (lstn_disc_arm_w || lstn_disc_disarm_w
-               || lstn_act_settle_w || lstn_act_teardown_w
-               || (lstn_act_strt_chg_w && !lstn_act_strt_cmd_chg_w)))
-          || srp_evt_tk_reg_w[k] || srp_evt_tk_unreg_w[k];
+           && lstn_act_strt_chg_w && !lstn_act_strt_cmd_chg_w)
+          || lstn_gsi_changed_r[k]
+          || srp_evt_tk_reg_w[k] || srp_evt_tk_unreg_w[k]
+          || srp_evt_tk_fail_chg_w[k] || srp_evt_tk_latency_chg_w[k];
     end
     for (int unsigned k = 0; k < N_STREAM_OUT_P; k++) begin
       ntfy_stri_out_w[k] =
@@ -3206,6 +3300,30 @@ module protocol_processor_top
     end
   end
 
+  //! Preserve memory debt independently of the engine/store watchdog and any
+  //! future D3 owner reset. Only the top-level hard reset reaches this guard.
+  logic desc_req_valid_w, desc_req_ready_w;
+  logic [31:0] desc_req_addr_w;
+  logic  [8:0] desc_req_beats_w;
+  logic desc_rsp_valid_w, desc_rsp_ready_w, desc_rsp_last_w, desc_rsp_err_w;
+  logic [63:0] desc_rsp_data_w;
+  // D3 consumes the guard port; top + parent routing is deferred to that lane.
+  logic desc_mem_debt_nc_w;
+
+  KL_aecp_desc_mem_guard u_desc_mem_guard (
+      .clk_i(clk_i), .rst_n(rst_n),
+      .s_req_valid_i(desc_req_valid_w), .s_req_ready_o(desc_req_ready_w),
+      .s_req_addr_i(desc_req_addr_w), .s_req_beats_i(desc_req_beats_w),
+      .s_rsp_valid_o(desc_rsp_valid_w), .s_rsp_ready_i(desc_rsp_ready_w),
+      .s_rsp_data_o(desc_rsp_data_w), .s_rsp_last_o(desc_rsp_last_w),
+      .s_rsp_err_o(desc_rsp_err_w),
+      .m_req_valid_o(desc_mem_req_valid_o), .m_req_ready_i(desc_mem_req_ready_i),
+      .m_req_addr_o(desc_mem_req_addr_o), .m_req_beats_o(desc_mem_req_beats_o),
+      .m_rsp_valid_i(desc_mem_rsp_valid_i), .m_rsp_ready_o(desc_mem_rsp_ready_o),
+      .m_rsp_data_i(desc_mem_rsp_data_i), .m_rsp_last_i(desc_mem_rsp_last_i),
+      .m_rsp_err_i(desc_mem_rsp_err_i), .debt_o(desc_mem_debt_nc_w)
+  );
+
   KL_aecp_engine #(
       .UCODE_HEX_P         (UCODE_HEX_P),
       .DESC_BASE_P         (DESC_BASE_P),
@@ -3275,15 +3393,15 @@ module protocol_processor_top
       .uns_done_o         (uns_done_w),
       .txreq_uns_valid_o  (aecp_txreq_uns_valid_w),
       .txreq_uns_ready_i  (aecp_txreq_uns_ready_w),
-      .mem_req_valid_o    (desc_mem_req_valid_o),
-      .mem_req_ready_i    (desc_mem_req_ready_i),
-      .mem_req_addr_o     (desc_mem_req_addr_o),
-      .mem_req_beats_o    (desc_mem_req_beats_o),
-      .mem_rsp_valid_i    (desc_mem_rsp_valid_i),
-      .mem_rsp_ready_o    (desc_mem_rsp_ready_o),
-      .mem_rsp_data_i     (desc_mem_rsp_data_i),
-      .mem_rsp_last_i     (desc_mem_rsp_last_i),
-      .mem_rsp_err_i      (desc_mem_rsp_err_i),
+      .mem_req_valid_o    (desc_req_valid_w),
+      .mem_req_ready_i    (desc_req_ready_w),
+      .mem_req_addr_o     (desc_req_addr_w),
+      .mem_req_beats_o    (desc_req_beats_w),
+      .mem_rsp_valid_i    (desc_rsp_valid_w),
+      .mem_rsp_ready_o    (desc_rsp_ready_w),
+      .mem_rsp_data_i     (desc_rsp_data_w),
+      .mem_rsp_last_i     (desc_rsp_last_w),
+      .mem_rsp_err_i      (desc_rsp_err_w),
       .rmem_req_valid_o   (resp_mem_req_valid_o),
       .rmem_req_ready_i   (resp_mem_req_ready_i),
       .rmem_req_addr_o    (resp_mem_req_addr_o),
@@ -3325,15 +3443,15 @@ module protocol_processor_top
       .amap_edit_value_o  (amap_edit_value_o),
       .amap_edit_data_i   (amap_edit_data_i),
       .amap_edit_wait_i   (amap_edit_wait_i),
-      .gsi_req_o          (gsi_req_o),
+      .gsi_req_o          (aecp_gsi_req_w),
       .gsi_kind_o         (gsi_kind_o),
       .gsi_desc_type_o    (gsi_desc_type_o),
       .gsi_desc_index_o   (gsi_desc_index_o),
       .gsi_sel_o          (gsi_sel_o),
       .gsi_ord_o          (gsi_ord_o),
       .gsi_prop_fmt_o     (gsi_prop_fmt_o),
-      .gsi_data_i         (gsi_data_i),
-      .gsi_wait_i         (gsi_wait_i),
+      .gsi_data_i         (aecp_gsi_data_w),
+      .gsi_wait_i         (aecp_gsi_wait_w),
       .strm_bound_i       (bound_hold_r),
       .strm_started_i     (aecp_strm_started_o),
       .strm_streaming_i   (aecp_streaming_w),
@@ -3412,9 +3530,11 @@ module protocol_processor_top
       .rgy_data_o            (aecp_rgy_data_w),
       .rgy_wait_o            (aecp_rgy_wait_w),
       //! Table 5.22 GET_STREAM_INFO triggers this fabric OBSERVES: for a
-      //! sink, bound-state changes (arm/disarm), the settled parameters
-      //! (settle/teardown - also the probing-status edges) and the
-      //! registered Talker attribute events; for a source, its declaration
+      //! sink, committed probing/ACMP status changes (also covering bound
+      //! and settled transitions), committed started/stopped changes
+      //! (including a re-bind that flips STREAMING_WAIT), registered Talker
+      //! attribute events and a changed Talker Failed FailureInformation
+      //! (stri_events); for a source, its declaration
       //! opening/closing and the registered Listener attribute changes.
       //! What the fabric cannot see, it cannot notify about - the honest
       //! remainder is recorded in 06 §7.

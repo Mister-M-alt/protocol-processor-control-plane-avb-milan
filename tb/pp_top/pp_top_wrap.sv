@@ -127,9 +127,11 @@ module pp_top_wrap (
     input  wire         gsi_wait_i,
     input  wire         gsi_avb_chg_i,
     input  wire         gsi_asp_chg_i,
+    output logic [255:0] srp_acc_latency_o, //! real per-sink latency for the harness integrator
 
     // descriptor-image memory master (07 §3.3) — the C++ harness plays a
     // latency-injecting DRAM behind it
+    output logic        desc_mem_debt_o,
     output logic        desc_mem_req_valid_o,
     input  wire         desc_mem_req_ready_i,
     output logic [31:0] desc_mem_req_addr_o,
@@ -232,6 +234,9 @@ module pp_top_wrap (
 
     // the per-source DA gate a fabric ANDs with its own stream enable
     output logic [7:0]  acmp_declaring_o,
+    //! the published (debounced) binding view an integrator folds into
+    //! GET_STREAM_INFO's BOUND/STREAMING_WAIT flags (06 F06.13)
+    output logic [7:0]  acmp_bound_o,
 
     // the Class A Domain in force (class-D, F02.10), passed through by name:
     // these ports are where an integrator reads P-SRP-DOM-DEF-VID's effect
@@ -524,6 +529,7 @@ module pp_top_wrap (
       .svc_rsp_valid_o       (svc_rsp_valid_o),
       .svc_rsp_status_o      (svc_rsp_status_o),
       .svc_rsp_data_o        (svc_rsp_data_o),
+      .srp_acc_latency_o     (srp_acc_latency_o),
       .maap_req_valid_o      (maap_req_valid_o),
       .maap_req_ready_i      (maap_req_ready_i),
       .maap_req_release_o    (maap_req_release_o),
@@ -544,6 +550,7 @@ module pp_top_wrap (
       .maap_conflicts_o      (maap_conflicts_o),
       .maap_defends_o        (maap_defends_o),
       .acmp_declaring_o      (acmp_declaring_o),
+      .acmp_bound_o          (acmp_bound_o),
       .srp_class_a_prio_o    (srp_class_a_prio_o),
       .srp_class_a_vid_o     (srp_class_a_vid_o),
       .srp_domain_adopted_o  (srp_domain_adopted_o),
@@ -570,6 +577,8 @@ module pp_top_wrap (
   assign dbg_evt_tk_v_o   = u_dut.lstn_evt_tk_valid_w;
   assign dbg_evt_tk_rdy_o = u_dut.lstn_evt_tk_ready_w;
   assign dbg_img_valid_o  = u_dut.aecp_dbg_img_valid_w;
+  // Observe the D3 guard interface without extending the product top ports.
+  assign desc_mem_debt_o = u_dut.u_desc_mem_guard.debt_o;
   assign dbg_img_fault_o  = u_dut.aecp_dbg_fault_w;
   assign dbg_aecp_cmd_o   = u_dut.aecp_dbg_cmd_w;
   assign dbg_aecp_resp_o  = u_dut.aecp_dbg_resp_w;
