@@ -212,6 +212,7 @@ exceeds it is refused. The reference root derives that capacity from the same
 generated entity shape that produces the image, including models whose table is
 larger than one request.
 
+<a id="sec-resp-memory"></a>
 #### 3.3.2 The other main-memory region — the AECP response buffer
 
 The image is read-only and the store never writes it, but it is not the only region
