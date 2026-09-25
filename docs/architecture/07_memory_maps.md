@@ -270,8 +270,8 @@ single writable source while descriptor reads remain coherent with it.
 | per port dynamic mapping tables | 64·M | yes (§5.3.9.1/§5.3.10.1) |
 | name table: `entity_name`, `group_name`, `object_name` of every named descriptor | 64 B each | yes (§5.3.13) |
 | identify value | 8 | no — reset to 0 |
-| `system_unique_id` | 64 | design decision — yes |
-| per CLOCK_DOMAIN `user_mcr_prio` + media-clock-domain name | 8 + 64 B | design decision — yes |
+| `system_unique_id` (deferred design; no storage) | 64 | not implemented under the October MVU waiver ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) |
+| per CLOCK_DOMAIN `user_mcr_prio` + media-clock-domain name (deferred design; no storage) | 8 + 64 B | not implemented under the same waiver |
 
 ## 4. Dynamic state records
 
@@ -353,13 +353,21 @@ Event→address mapping and masks: [F06.15](06_aecp_engine.md#fig-06-counters).
 | Persisted (Milan clause) | Volatile (clause) |
 |---|---|
 | sampling rate (§5.3.5.1) · stream formats in/out (§5.3.7.1/§5.3.8.1) · presentation offset (§5.3.7.6) · bound state + binding params (§5.3.8.2/.3) · started/stopped (§5.3.8.7) · output + input mappings (§5.3.9.1/§5.3.10.1) · clock source (§5.3.11.1) · all user names (§5.3.13) | lock state (§5.3.4.1) · controller registry (§5.3.4.2) · identify value = 0 after reset (§5.3.12) |
-| design decisions (review §8): current configuration index · system_unique_id · user_mcr_prio + MC domain name | |
+| design decision (review §8): current configuration index | |
+
+The earlier design intention to persist `system_unique_id`, `user_mcr_prio`
+and the media-clock-domain name is deferred with their commands under the
+[October MVU waiver](06_aecp_engine.md#69-mvu-commands). These fields are neither
+stored nor persisted by the processor in this release.
 
 ### 5.2 NVM record layout
 
 <a id="fig-07-nvmrec"></a>**F07.8 — Record framing** (device-agnostic; one record per
 item group and index — a partial update never rewrites unrelated records; lanes
 bottom→top = record order)
+
+The SUID and MCR[d] labels in F07.8 are reserved design groups, not implemented
+records in the October release ([06 §6.9](06_aecp_engine.md#69-mvu-commands)).
 
 ![fig-07-nvmrec](../diagrams/wavedrom/fig-07-nvmrec.svg)
 
@@ -450,10 +458,11 @@ that sink's record, as it would after any walk. Graded for all three causes in
 
 ### 5.4 Open decisions
 
-Recorded in [review §8](../00_MILAN_COMPLIANCE_REVIEW.md): configuration-index,
-system_unique_id and MCR persistence are design-affirmative (Milan silent); wear
-management (write coalescing beyond `T-NVM-DEBOUNCE`) is device-dependent and out of
-contract.
+Recorded in [review §8](../00_MILAN_COMPLIANCE_REVIEW.md): configuration-index
+persistence is a design decision (Milan silent). The earlier system_unique_id
+and MCR persistence plans are deferred under [06 §6.9](06_aecp_engine.md#69-mvu-commands).
+Wear management (write coalescing beyond `T-NVM-DEBOUNCE`) is device-dependent
+and out of contract.
 
 ### 5.5 Side-port address map (detail of [02 §7](02_interfaces.md))
 

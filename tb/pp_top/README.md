@@ -183,11 +183,24 @@ tally.
     single-interface PAAD and TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING would claim
     map changes while a Stream Output is running, which the root integrator
     deliberately refuses.
-  - **M3/M4** a FOREIGN vendor-unique protocol (same Avnu OUI-36, protocol id
-    0x101) and an MVU `command_type` this build does not serve
-    (GET_SYSTEM_UNIQUE_ID) both come back echoed with MVU status 1. M3 is what
-    proves the whole 48 bits are compared: nothing above @26 tells the two
-    protocols apart.
+  - **M3** a FOREIGN vendor-unique protocol (same Avnu OUI-36, protocol id
+    0x101) comes back echoed with MVU status 1. This proves the whole 48 bits
+    are compared: nothing above @26 tells the two protocols apart.
+  - **M4** pins the [October waiver](../../docs/architecture/06_aecp_engine.md#69-mvu-commands)
+    for SET/GET_SYSTEM_UNIQUE_ID and SET/GET_MEDIA_CLOCK_REFERENCE_INFO
+    (0x0001–0x0004), plus reserved command type 0x0005 for generic refusal.
+    Each complete command receives VENDOR_UNIQUE_RESPONSE, status 1
+    NOT_IMPLEMENTED, and its own bytes and cdl echoed exactly. The SET
+    payloads contain a nonzero ID or priority/name; the short GET payloads
+    remain short. In command order, response AECPDU lengths are 40/32/104/32
+    bytes, cdl 28/20/92/20, and untagged frame lengths excluding FCS are
+    60/60/118/60 bytes. The reserved type uses cdl 20. M1/M2 separately pin
+    features_flags = 0; Table 5.20 has no support bit for either waived pair.
+  - **M4L** takes LOCK_ENTITY with one controller, then sends both complete,
+    nonzero waived SETs from another controller. Each must still receive its
+    byte-exact NOT_IMPLEMENTED echo, with no extra AECP frame during a 20 ms
+    observation. The lock grant
+    and the holder's subsequent unlock are also checked byte-exact.
   - **M5** the r field is compared and the reserved field is not — §5.4.3.2.2
     requires r = 0 and gives the receiver no leave to ignore it, while
     §5.4.4.1's reserved field is explicitly "ignored by the receiver". So r = 1
@@ -484,6 +497,32 @@ The `COPY_BUFFER` one is the interesting result: it goes red HERE and stays
 green in `tb/ucpu` (0 checks red there), because that suite's µprogram only copies a
 whole number of 8-byte lanes. A descriptor whose length is not a multiple of 8
 is a thing only the end-to-end suite sees.
+
+## October MVU waiver response mutation (2026-09-25)
+
+Issues #55/#56/#77 use the waiver in
+[06 §6.9](../../docs/architecture/06_aecp_engine.md#69-mvu-commands).
+All counts in this section were re-measured on 2026-09-25 at merged head
+`b51bc3893b06f4d39be49726c1b8f4ed6c65573d`, before the M4L lock regression
+was added. At that head, the unmodified `make -C tb/pp_top run` passed
+**7,660 checks**: 7,640 in the default build, including M1/M2 and all five
+M4 cases, plus 20 in the domain-default fixture build. These are measurements
+of that commit, not live suite totals; re-run the suite and both mutations
+before quoting counts for any later head.
+
+Each mutation changes only a disposable copy of generated `tb/pp_top/ucode.hex`.
+Copy `ltn_rom.hex` alongside it, create an `obj_dir` for the tally, then run the
+built `tb/pp_top/obj_dir/Vpp_top_sim` binary with the ROM-copy directory as its
+working directory. The tracked generator and RTL stay unchanged. ROM indices below
+are zero-based; the normal suite bank uses the unmodified source-checkout ROM.
+
+| Generated-ROM change | Result |
+|---|---|
+| E_NOTIMPL, word 560: `c00000000001` → `c00000000000` (`SET_STATUS NOT_IMPLEMENTED` → `SET_STATUS SUCCESS`), with body and length untouched | exit 1; 197 of 7,640 default-build checks fail. M4 contributes 10: both the status and byte-exact echo assertion for each type 0x0001–0x0005. All five frame-length and cdl checks still pass |
+| E_MVUINFO+5, word 741: `230000000000` → `230000000003` (`MOVE r6, 0` → `MOVE r6, 3`), asserting both Table 5.20 flags | exit 1; 3 of 7,640 default-build checks fail: M1, M2 features_flags, and M5b |
+
+Both mutants were rejected. Each ran against a disposable generated-ROM copy;
+the source checkout's original ROM remained byte-for-byte unchanged.
 
 ## Section K — GET_COUNTERS (06 §6.6; IEEE §7.4.42, Milan §5.4.2.25)
 

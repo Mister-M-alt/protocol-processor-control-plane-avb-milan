@@ -3,7 +3,8 @@
 
 ## 1. Role and scope
 
-Executes every AEM and MVU command, owns the controller registry + unsolicited
+Executes supported AEM and MVU commands and refuses unimplemented types per F06.14.
+Owns the controller registry + unsolicited
 notification machinery, the lock manager, the counters service and the identify
 handler. This is the microcoded part of the processor: ~24 mandatory commands with
 per-command validation chains and variable-size responses justify a µsequencer over
@@ -52,7 +53,8 @@ bottom→top = wire order, `@n` byte offsets authoritative)
 
 <a id="fig-06-mvu"></a>**F06.11 — MVU header + GET_MILAN_INFO response** (MVU commands:
 0x0000 GET_MILAN_INFO, 0x0001/2 SET/GET_SYSTEM_UNIQUE_ID, 0x0003/4
-SET/GET_MEDIA_CLOCK_REFERENCE_INFO; padding never counted in cdl; lanes bottom→top =
+SET/GET_MEDIA_CLOCK_REFERENCE_INFO, the latter two pairs waived per §6.9;
+padding never counted in cdl; lanes bottom→top =
 wire order, `@n` byte offsets authoritative)
 
 ![fig-06-mvu](../diagrams/wavedrom/fig-06-mvu.svg)
@@ -188,8 +190,8 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x002D | REMOVE_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | success with state change, requester excluded | mirrors request |
 | 0x004B | GET_DYNAMIC_INFO | shall | two-pass iterator §6.7 | RO per record | - | exactly the 13 fixed getters | - | - | cdl at most 524 |
 | MVU 0x0000 | GET_MILAN_INFO | shall | §6.9 | RO | — | — | — | — | 44 B |
-| MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended, **n/i today** (`P-EN-MVU-SUID`) | target: §6.9 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
-| MVU 0x0003/0x0004 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO | recommended, **n/i today** (`P-EN-MVU-MCR`) | target: §6.9 | n/i | - | - | - | - | echo, `NOT_IMPLEMENTED` |
+| MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended, **waived for October; not implemented** | owner decision and Milan §5.4.4.2/.3: §6.9 | n/i | - | - | - | - | command-length echo, status 1 `NOT_IMPLEMENTED`; SET/GET cdl 28/20 |
+| MVU 0x0003/0x0004 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO | recommended, **waived for October; not implemented** | owner decision and Milan §5.4.4.4/.5, §7.6: §6.9 | n/i | - | - | - | - | command-length echo, status 1 `NOT_IMPLEMENTED`; SET/GET cdl 92/20 |
 | 0x000B | GET_VIDEO_FORMAT | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
 | 0x000D | GET_SENSOR_FORMAT | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
 | 0x0013 | GET_ASSOCIATION_ID | n/i | — | RO | — | **yes** | — | — | echo, `NOT_IMPLEMENTED` standalone; per-element `NOT_SUPPORTED` inside GDI |
@@ -607,19 +609,62 @@ stateDiagram-v2
 different controller receives `ENTITY_LOCKED` — Milan leaves the code unspecified,
 review §8 item 2; ACMP uses `CONTROLLER_NOT_AUTHORIZED`): SET_CONFIGURATION,
 SET_STREAM_FORMAT, SET_STREAM_INFO, SET_NAME, SET_SAMPLING_RATE, SET_CLOCK_SOURCE,
-SET_CONTROL, START/STOP_STREAMING, ADD/REMOVE_AUDIO_MAPPINGS, MVU SETs, ACMP
+SET_CONTROL, START/STOP_STREAMING, ADD/REMOVE_AUDIO_MAPPINGS, ACMP
 BIND_RX/UNBIND_RX, and **MGMT-origin state changes** (front-panel equivalence,
 Milan §5.4.2.x "in any other way").
+The waived MVU SETs (§6.9) take the unsupported-command path without a lock check;
+`tb/pp_top` M4L pins their byte-exact refusal under another controller's lock.
 
 ### 6.9 MVU commands
 
-| Command | Behavior |
+**October release waiver (owner decision 2026-09-23).**
+SET/GET_SYSTEM_UNIQUE_ID and SET/GET_MEDIA_CLOCK_REFERENCE_INFO are recommended
+and deliberately not implemented. Milan v1.2 §5.4.4.2–§5.4.4.5 (printed pp. 58–61)
+and §7.6 (printed p. 115) each introduce the feature with
+“Note: Support for this feature is a recommendation for Milan compliant PAADs.
+This recommendation will become a requirement in a future revision of this specification.”
+(Spelling normalized.)
+Those notes qualify the implementation language that follows; they do not make
+either pair a mandatory feature of this release. The
+[owner decision](https://github.com/kebag-logic/milan-fpga/issues/510#issuecomment-5789766089)
+records this product choice; the parent requirement FR-MVU-02 is SHOULD.
+Implementation moves to [P4](https://github.com/kebag-logic/milan-fpga/issues/416)
+if the conformance lab requires it or a targeted Milan revision makes it mandatory.
+Processor issues
+[#55](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/55),
+[#56](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/56)
+and [#77](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/77)
+are resolved by recording this waiver and the tested fallback, not by adding support.
+
+| Command | Current behavior |
 |---|---|
-| GET_MILAN_INFO (0x0000, shall) | respond F06.11: protocol_version 1; features = (`P-EN-TALKER-DYN-MAPPINGS-RUNNING` ? 0x2 : 0) — REDUNDANCY stays 0; certification_version register (0 = uncertified). Per-config compliance flag in model metadata implements the "no reply if active configuration non-compliant" recommendation |
-| SET/GET_SYSTEM_UNIQUE_ID (0x0001/2, rec) | u64 @32; default 0; SET value must be ≠ 0 else `BAD_ARGUMENTS`; persisted (design decision, review §8 item 4) |
-| SET/GET_MEDIA_CLOCK_REFERENCE_INFO (0x0003/4, rec) | `clock_domain_index @28`; `flags` (PRIO_VALID 0x1, NAME_VALID 0x2 — response reports the *supported* set); `default_mcr_prio` read-only from `mclk.GET_MCR_DEFAULTS`; `user_mcr_prio` default = default prio; 64-B UTF-8 domain name, default `"DEFAULT"`; persisted (design decision) |
+| GET_MILAN_INFO (0x0000, shall) | implemented: F06.11, SUCCESS, 44-B AECPDU / cdl 32; protocol_version 1, features_flags 0, certification_version 0 (microcode constants). The per-configuration compliance gate and certification register are not implemented (§8.1) |
+| SET/GET_SYSTEM_UNIQUE_ID (0x0001/0x0002, rec) | waived; VU response with MVU status 1 `NOT_IMPLEMENTED`, echoing the command body and length; no ID storage, SET validation, persistence or notification |
+| SET/GET_MEDIA_CLOCK_REFERENCE_INFO (0x0003/0x0004, rec) | waived; VU response with MVU status 1 `NOT_IMPLEMENTED`, echoing the command body and length; no priority/name storage, default-priority interface, SET validation, persistence or notification |
 | any other MVU type | VU response, MVU status 1 `NOT_IMPLEMENTED` |
 | wrong `protocol_id` | VU response echoing the protocol_id, status `NOT_IMPLEMENTED` |
+
+The status is Milan Table 5.19's unsupported-command response. For complete
+command forms, the current engine reflects the following lengths; it does not
+build the larger successful GET response. Padding is excluded from cdl.
+
+| Command type | Command format | Response AECPDU bytes | Response cdl | Ethernet bytes, untagged, excluding FCS |
+|---|---|---|---|---|
+| 0x0001 SET_SYSTEM_UNIQUE_ID | Figure 5.5 | 40 | 28 | 60 |
+| 0x0002 GET_SYSTEM_UNIQUE_ID | Figure 5.3 | 32 | 20 | 60 |
+| 0x0003 SET_MEDIA_CLOCK_REFERENCE_INFO | Figure 5.6 | 104 | 92 | 118 |
+| 0x0004 GET_MEDIA_CLOCK_REFERENCE_INFO | Figure 5.7 | 32 | 20 | 60 |
+
+The full protocol_id, r/command_type, sequence ID and command-specific bytes are
+preserved. Response message_type is 7 (`VENDOR_UNIQUE_RESPONSE`); source and
+destination MAC addresses reverse. This is the command-reflection policy of
+§8.2, exercised by [`tb/pp_top`](../../tb/pp_top/README.md) M4 for all four types.
+M3 and the reserved command type 0x0005 in M4 keep generic refusal covered.
+M1/M2 pin `features_flags` to zero. Milan Table 5.20 defines only REDUNDANCY
+and TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING: there is no feature bit for either
+waived pair, so this field advertises neither pair and is not a command-support
+bitmap. The reserved `P-EN-MVU-SUID` / `P-EN-MVU-MCR` names in
+[F01.5](01_overview.md#fig-01-params) have no RTL consumer or enable setting.
 
 ### 6.10 GET_AVB_INFO / GET_AS_PATH and the Milan-info face
 
@@ -1196,8 +1241,13 @@ master table [F01.4](01_overview.md#fig-01-deltas).
 ## 11. Parameterization
 
 `P-N-CONTROLLERS`, `P-CA-POOL`, `P-NOTIF-QUEUE-DEPTH`, `P-UCODE-ROM-DEPTH`,
-`P-EN-MVU-SUID`, `P-EN-MVU-MCR`, `P-EN-TALKER-DYN-MAPPINGS-RUNNING`,
 `P-EN-IDENTIFY-NOTIFICATION`, `P-MAP-SUBSET-CH-MAX`, `P-INTERNAL-INGRESS-DELAY-NS`.
+
+`MILAN_FEATURES_FLAGS.TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING` is the F01.5
+microcode constant (§8.1).
+
+`P-EN-MVU-SUID` and `P-EN-MVU-MCR` are reserved names only in F01.5;
+neither is an RTL parameter (§6.9).
 
 ## 12. Cross-references
 

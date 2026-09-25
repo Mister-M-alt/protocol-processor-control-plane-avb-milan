@@ -48,7 +48,7 @@ flowchart LR
 | `maap` | B+C | both | core | talker DA management | allocation + conflict events; served internally by [11](11_maap_engine.md) when `cfg_maap_internal_i` = 1 |
 | `gptp` | B+C+D | both | core | ADP, AECP gather, counters | GM/domain/asCapable/path |
 | `avtp` | B+C+D | both | core | ACMP settle, AECP, counters | per-stream control + health events |
-| `mclk` | B+C+D | both | core | AECP (clock source, MVU MCR), counters | per clock domain |
+| `mclk` | B+C+D | both | core | AECP clock source, counters; MVU MCR deferred ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) | per clock domain |
 | `mgmt` | E | in | own (sync or 4-phase async) | model store, NVM, debug, ctrl/status | optional at runtime, needed for image load unless ROM |
 | `nvm` | F | both | core | NVM manager | record-level, device-agnostic |
 | `identify_active` | D | out | core | device indicator | level, 1 = identifying |
@@ -357,7 +357,7 @@ that holds forever is bounded by `MEM_TIMEOUT_CYC_P` ([06 §8.1](06_aecp_engine.
 | Op | Args | Result |
 |---|---|---|
 | `SET_CLOCK_SOURCE` | clock domain idx, CLOCK_SOURCE idx | OK/FAIL |
-| `GET_MCR_DEFAULTS` | clock domain idx | {default_mcr_prio} (read-only, vendor-set) |
+| `GET_MCR_DEFAULTS` | clock domain idx | deferred design only; no RTL face under the MVU waiver ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) |
 
 Events: `MC_LOCKED{domain}` / `MC_UNLOCKED{domain}` → CLOCK_DOMAIN counter bank.
 

@@ -2387,7 +2387,8 @@ struct MilanInfoPhase {
     const auto m1_got = m1_the_figure_5_4_response_byte_exact(info_pl);
     m2_the_three_fields_a_controller_records(m1_got);
     m3_a_foreign_protocol_id_is_still_not_implemented();
-    m4_an_mvu_command_type_this_build_does_not_implement();
+    m4_the_waived_pairs_and_a_reserved_command_type();
+    m4l_the_waived_sets_under_another_controllers_lock();
     m5_the_r_field_is_compared_the_reserved_field_is_not(info_pl);
     m6_a_truncated_mvu_command();
     m7_the_descriptor_path_is_untouched();
@@ -2435,8 +2436,9 @@ struct MilanInfoPhase {
   // this is the content the whole command exists for. features_flags is 0
   // ON PURPOSE: Table 5.20's REDUNDANCY would claim Milan §8 on a
   // single-interface PAAD, and TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING would
-  // claim map changes while streaming from a build that answers
-  // ADD/REMOVE_AUDIO_MAPPINGS with NOT_IMPLEMENTED.
+  // claim map changes while a Stream Output is running, which this build
+  // refuses. Neither SUID nor MCR has a bit in Table 5.20; their waiver is
+  // observed through M4's responses, not inferred from these flags.
   void m2_the_three_fields_a_controller_records(
       const std::vector<uint8_t>& got) {
     if (got.size() >= 60) {
@@ -2470,16 +2472,105 @@ struct MilanInfoPhase {
     if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
   }
 
-  // ---- M4: an MVU command_type this build does not implement -------------
-  // GET_SYSTEM_UNIQUE_ID (Table 5.18 0x0002) is a Milan RECOMMENDATION this
-  // build does not serve: MVU status 1 with the command echoed, never
-  // silence and never a Figure 5.4 body it cannot fill.
-  void m4_an_mvu_command_type_this_build_does_not_implement() {
-    auto suid = mvu_cmd_pl(MVU_PID_LO, 0x0002, 8);
-    auto got = mvu(MVU_PID_LO, 0x0002, 0xC003);
-    auto want = mvu_expect(AECP_NOT_IMPLEMENTED, 0xC003, suid);
-    CHECK(!got.empty(), "M4: an unimplemented MVU command_type got silence");
-    CHECK(got == want, "M4: the unimplemented-MVU echo is not byte-exact");
+  // ---- M4: the October waiver and an independent generic refusal --------
+  // 06 section 6.9 / issues #55, #56, #77: both recommended pairs remain
+  // unsupported. Send the complete command forms from Milan Figures 5.3,
+  // 5.5, 5.6 and 5.7, including nonzero SET data. The GETs echo their SHORT
+  // command forms, not the longer successful response. Table 5.18 reserves
+  // 0x0005, so generic refusal remains covered independently of the waiver.
+  void m4_the_waived_pairs_and_a_reserved_command_type() {
+    struct Refusal {
+      uint16_t command_type;
+      size_t payload_bytes;
+      unsigned cdl;
+      size_t frame_bytes;
+    };
+    const Refusal cases[] = {
+      {0x0001, 16, 28, 60},   // SET_SYSTEM_UNIQUE_ID, Figure 5.5
+      {0x0002,  8, 20, 60},   // GET_SYSTEM_UNIQUE_ID, Figure 5.3
+      {0x0003, 80, 92, 118},  // SET_MEDIA_CLOCK_REFERENCE_INFO, Figure 5.6
+      {0x0004,  8, 20, 60},   // GET_MEDIA_CLOCK_REFERENCE_INFO, Figure 5.7
+      {0x0005,  8, 20, 60},   // reserved command_type, generic refusal
+    };
+    for (const auto& c : cases) {
+      auto payload = mvu_cmd_pl(MVU_PID_LO, c.command_type, c.payload_bytes);
+      if (c.command_type == 0x0001)
+        putbe(&payload[8], 0x0123456789ABCDEFull, 8);  // nonzero SUID @32
+      if (c.command_type == 0x0003) {
+        payload[8] = 3;                         // both valid flags @32
+        payload[11] = 0x5A;                     // user_mcr_prio @35
+        const std::string name = "Waived clock domain";
+        std::copy(name.begin(), name.end(), payload.begin() + 16); // @40
+      }
+      const uint16_t seq = uint16_t(0xC030 + c.command_type);
+      h.q_aecp.clear();
+      h.feed(aecp_frame(OWN_MAC, CTLR_MAC, VU_COMMAND, 0, EID, CTLR_EID,
+                        seq, MVU_PID_HI, payload));
+      const auto got = h.wait_any(h.q_aecp, 200);
+      const auto want = mvu_expect(AECP_NOT_IMPLEMENTED, seq, payload);
+      CHECK(got.size() == c.frame_bytes,
+            "M4: MVU 0x%04x frame length %zu, want %zu",
+            c.command_type, got.size(), c.frame_bytes);
+      CHECK(got.size() > 17 && (got[15] & 0x0F) == VU_RESPONSE &&
+            (got[16] >> 3) == 1,
+            "M4: MVU 0x%04x must answer VENDOR_UNIQUE_RESPONSE / NOT_IMPLEMENTED",
+            c.command_type);
+      CHECK(got.size() > 17 && unsigned(((got[16] & 7) << 8) | got[17]) == c.cdl,
+            "M4: MVU 0x%04x must retain command cdl %u",
+            c.command_type, c.cdl);
+      CHECK(got == want,
+            "M4: MVU 0x%04x NOT_IMPLEMENTED echo is not byte-exact",
+            c.command_type);
+    }
+  }
+
+  // ---- M4L: the waived SETs still refuse under another controller's lock
+  // 06 section 6.8/6.9: unsupported MVU bypasses CHECK_LOCK. Table 5.19
+  // reserves status 2..31, so an AEM ENTITY_LOCKED response would be wrong.
+  void m4l_the_waived_sets_under_another_controllers_lock() {
+    constexpr uint64_t FOREIGN_MAC = 0x0202C2C2C2C2ull;
+    std::vector<uint8_t> lock(16, 0);            // LOCK ENTITY[0]
+    auto held = lock;
+    putbe(&held[4], CTLR_EID, 8);                // locked_controller_id
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID,
+                      0xC050, 0x0001, lock));
+    auto got = h.wait_any(h.q_aecp, 200);
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS,
+                            EID, CTLR_EID, 0xC050, 0x0001, held),
+          "M4L: LOCK_ENTITY must grant controller 1 the lock byte-exact");
+
+    for (uint16_t ct : {uint16_t(0x0001), uint16_t(0x0003)}) {
+      auto payload = mvu_cmd_pl(MVU_PID_LO, ct, ct == 0x0001 ? 16 : 80);
+      if (ct == 0x0001) {
+        putbe(&payload[8], 0x0123456789ABCDEFull, 8);
+      } else {
+        payload[8] = 3;
+        payload[11] = 0x5A;
+        const std::string name = "Waived clock domain";
+        std::copy(name.begin(), name.end(), payload.begin() + 16);
+      }
+      const uint16_t seq = uint16_t(0xC060 + ct);
+      h.feed(aecp_frame(OWN_MAC, FOREIGN_MAC, VU_COMMAND, 0, EID,
+                        CTLR2_EID, seq, MVU_PID_HI, payload));
+      got = h.wait_any(h.q_aecp, 200);
+      const auto want = aecp_frame(FOREIGN_MAC, OWN_MAC, VU_RESPONSE,
+                                   AECP_NOT_IMPLEMENTED, EID, CTLR2_EID,
+                                   seq, MVU_PID_HI, payload);
+      CHECK(got == want,
+            "M4L: MVU 0x%04x under another controller's lock must echo "
+            "NOT_IMPLEMENTED byte-exact", ct);
+      h.run_ms(20);                             // within the held-lock window
+      CHECK(h.q_aecp.empty(), "M4L: MVU 0x%04x emitted an extra AECP frame", ct);
+    }
+
+    lock[3] = 1;                               // holder releases the lock
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID,
+                      0xC051, 0x0001, lock));
+    got = h.wait_any(h.q_aecp, 200);
+    CHECK(got == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS,
+                            EID, CTLR_EID, 0xC051, 0x0001, lock),
+          "M4L: UNLOCK_ENTITY must clear the holder byte-exact");
   }
 
   // ---- M5: the r field is compared, the reserved field is not -----------
