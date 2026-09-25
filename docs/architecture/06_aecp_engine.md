@@ -612,7 +612,8 @@ SET_STREAM_FORMAT, SET_STREAM_INFO, SET_NAME, SET_SAMPLING_RATE, SET_CLOCK_SOURC
 SET_CONTROL, START/STOP_STREAMING, ADD/REMOVE_AUDIO_MAPPINGS, ACMP
 BIND_RX/UNBIND_RX, and **MGMT-origin state changes** (front-panel equivalence,
 Milan §5.4.2.x "in any other way").
-The waived MVU SETs (§6.9) take the unsupported-command path without a lock check.
+The waived MVU SETs (§6.9) take the unsupported-command path without a lock check;
+`tb/pp_top` M4L pins their byte-exact refusal under another controller's lock.
 
 ### 6.9 MVU commands
 
@@ -620,13 +621,16 @@ The waived MVU SETs (§6.9) take the unsupported-command path without a lock che
 SET/GET_SYSTEM_UNIQUE_ID and SET/GET_MEDIA_CLOCK_REFERENCE_INFO are recommended
 and deliberately not implemented. Milan v1.2 §5.4.4.2–§5.4.4.5 (printed pp. 58–61)
 and §7.6 (printed p. 115) each introduce the feature with
-“Support for this feature is a recommendation for Milan compliant PAADs.”
+“Note: Support for this feature is a recommendation for Milan compliant PAADs.
+This recommendation will become a requirement in a future revision of this specification.”
+(Spelling normalized.)
 Those notes qualify the implementation language that follows; they do not make
 either pair a mandatory feature of this release. The
 [owner decision](https://github.com/kebag-logic/milan-fpga/issues/510#issuecomment-5789766089)
 records this product choice; the parent requirement FR-MVU-02 is SHOULD.
 Implementation moves to [P4](https://github.com/kebag-logic/milan-fpga/issues/416)
-if the conformance lab requires it. Processor issues
+if the conformance lab requires it or a targeted Milan revision makes it mandatory.
+Processor issues
 [#55](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/55),
 [#56](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/56)
 and [#77](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/77)
@@ -1237,8 +1241,10 @@ master table [F01.4](01_overview.md#fig-01-deltas).
 ## 11. Parameterization
 
 `P-N-CONTROLLERS`, `P-CA-POOL`, `P-NOTIF-QUEUE-DEPTH`, `P-UCODE-ROM-DEPTH`,
-`P-EN-TALKER-DYN-MAPPINGS-RUNNING`,
 `P-EN-IDENTIFY-NOTIFICATION`, `P-MAP-SUBSET-CH-MAX`, `P-INTERNAL-INGRESS-DELAY-NS`.
+
+`MILAN_FEATURES_FLAGS.TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING` is the F01.5
+microcode constant (§8.1).
 
 `P-EN-MVU-SUID` and `P-EN-MVU-MCR` are reserved names only in F01.5;
 neither is an RTL parameter (§6.9).

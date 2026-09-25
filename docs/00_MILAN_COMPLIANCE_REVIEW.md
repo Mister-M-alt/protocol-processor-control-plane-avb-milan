@@ -115,9 +115,13 @@ group, GET_MILAN_INFO, are implemented. The two recommended pairs are deliberate
 not implemented under the
 [2026-09-23 owner decision](https://github.com/kebag-logic/milan-fpga/issues/510#issuecomment-5789766089).
 Milan v1.2 §5.4.4.2–§5.4.4.5 (printed pp. 58–61) and §7.6 (printed p. 115)
-each mark feature support as a recommendation. Implementation is deferred to
+each state: “Note: Support for this feature is a recommendation for Milan compliant PAADs.
+This recommendation will become a requirement in a future revision of this specification.”
+(Spelling normalized.)
+Implementation is deferred to
 [P4](https://github.com/kebag-logic/milan-fpga/issues/416) if the conformance lab
-requires it. [06 §6.9](architecture/06_aecp_engine.md#69-mvu-commands) records
+requires it or a targeted Milan revision makes it mandatory.
+[06 §6.9](architecture/06_aecp_engine.md#69-mvu-commands) records
 the waiver and command-length `NOT_IMPLEMENTED` responses for 0x0001–0x0004;
 [`tb/pp_top`](../tb/pp_top/README.md) M4 grades all four byte-exact.
 [F01.5](architecture/01_overview.md#fig-01-params) marks the phantom enable
@@ -377,8 +381,8 @@ verification).
 |---|---|---|---|---|---|---|---|---|
 | REQ-MVU-001 | Milan §5.4.3.2 | MVU framing: protocol_id 00-1B-C5-0A-C1-00; r=0; 15-bit command_type; padding excluded from cdl | shall | A | [GAP-03](#gap-03) | MVU sub-decoder | 06 §6.9 | DIR |
 | REQ-MVU-002 | Milan §5.4.4.1, §4.2.4 | GET_MILAN_INFO: protocol_version = 1; features (REDUNDANCY=0; TALKER_DYNAMIC_MAPPINGS optional); certification_version | shall | A | [GAP-03](#gap-03) | F06.11 | 06 §6.9 | DIR |
-| REQ-MVU-003 | Milan v1.2 §5.4.4.2/.3 | SET/GET_SYSTEM_UNIQUE_ID: recommended; October release waiver, not implemented (owner decision in GAP-03); revisit at P4 if the lab requires it | rec | A | [GAP-03](#gap-03) | NOT_IMPLEMENTED command echo; pp_top M4 verifies fallback only | 06 §6.9 | DIR |
-| REQ-MVU-004 | Milan v1.2 §5.4.4.4/.5, §7.6 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO: recommended; October release waiver, not implemented (owner decision in GAP-03); revisit at P4 if the lab requires it | rec | A | [GAP-03](#gap-03) | NOT_IMPLEMENTED command echo; pp_top M4 verifies fallback only | 06 §6.9 | DIR |
+| REQ-MVU-003 | Milan v1.2 §5.4.4.2/.3 | SET/GET_SYSTEM_UNIQUE_ID: recommended; October release waiver, not implemented (owner decision in GAP-03); revisit at P4 if the lab requires it or a targeted Milan revision makes it mandatory | rec | A | [GAP-03](#gap-03) | NOT_IMPLEMENTED command echo; pp_top M4 verifies fallback only | 06 §6.9 | DIR |
+| REQ-MVU-004 | Milan v1.2 §5.4.4.4/.5, §7.6 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO: recommended; October release waiver, not implemented (owner decision in GAP-03); revisit at P4 if the lab requires it or a targeted Milan revision makes it mandatory | rec | A | [GAP-03](#gap-03) | NOT_IMPLEMENTED command echo; pp_top M4 verifies fallback only | 06 §6.9 | DIR |
 | REQ-MVU-005 | Milan §5.4.3.3/.4 | MVU status {SUCCESS, NOT_IMPLEMENTED}; 250 ms timeout / respond ≤240 ms | shall | A | [GAP-03](#gap-03) | deadline engine | 08 §2 | TIM |
 
 ### 6.5 Notifications and registry

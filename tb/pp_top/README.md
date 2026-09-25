@@ -196,6 +196,11 @@ tally.
     bytes, cdl 28/20/92/20, and untagged frame lengths excluding FCS are
     60/60/118/60 bytes. The reserved type uses cdl 20. M1/M2 separately pin
     features_flags = 0; Table 5.20 has no support bit for either waived pair.
+  - **M4L** takes LOCK_ENTITY with one controller, then sends both complete,
+    nonzero waived SETs from another controller. Each must still receive its
+    byte-exact NOT_IMPLEMENTED echo, with no extra AECP frame during a 20 ms
+    observation. The lock grant
+    and the holder's subsequent unlock are also checked byte-exact.
   - **M5** the r field is compared and the reserved field is not — §5.4.3.2.2
     requires r = 0 and gives the receiver no leave to ignore it, while
     §5.4.4.1's reserved field is explicitly "ignored by the receiver". So r = 1
@@ -497,21 +502,27 @@ is a thing only the end-to-end suite sees.
 
 Issues #55/#56/#77 use the waiver in
 [06 §6.9](../../docs/architecture/06_aecp_engine.md#69-mvu-commands).
-The unmodified `make -C tb/pp_top run` passes **1,966 checks**: 1,946 in
-the default build, including M1/M2 and all five M4 cases, plus 20 in the
-domain-default fixture build.
+All counts in this section were re-measured on 2026-09-25 at merged head
+`b51bc3893b06f4d39be49726c1b8f4ed6c65573d`, before the M4L lock regression
+was added. At that head, the unmodified `make -C tb/pp_top run` passed
+**7,660 checks**: 7,640 in the default build, including M1/M2 and all five
+M4 cases, plus 20 in the domain-default fixture build. These are measurements
+of that commit, not live suite totals; re-run the suite and both mutations
+before quoting counts for any later head.
 
-The mutation changes only the generated `tb/pp_top/ucode.hex`, then runs
-`./obj_dir/Vpp_top_sim` from `tb/pp_top`. The tracked generator and RTL are
-unchanged. ROM indices below are zero-based. Restore the original ROM before
-running the normal suite bank.
+Each mutation changes only a disposable copy of generated `tb/pp_top/ucode.hex`.
+Copy `ltn_rom.hex` alongside it, create an `obj_dir` for the tally, then run the
+built `tb/pp_top/obj_dir/Vpp_top_sim` binary with the ROM-copy directory as its
+working directory. The tracked generator and RTL stay unchanged. ROM indices below
+are zero-based; the normal suite bank uses the unmodified source-checkout ROM.
 
 | Generated-ROM change | Result |
 |---|---|
-| E_NOTIMPL, word 560: `c00000000001` → `c00000000000` (`SET_STATUS NOT_IMPLEMENTED` → `SET_STATUS SUCCESS`), with body and length untouched | exit 1; 197 of 1,946 default-build checks fail. M4 contributes 10: both the status and byte-exact echo assertion for each type 0x0001–0x0005. All five frame-length and cdl checks still pass |
-| E_MVUINFO+5, word 741: `230000000000` → `230000000003` (`MOVE r6, 0` → `MOVE r6, 3`), asserting both Table 5.20 flags | exit 1; 3 of 1,946 default-build checks fail: M1, M2 features_flags, and M5b |
+| E_NOTIMPL, word 560: `c00000000001` → `c00000000000` (`SET_STATUS NOT_IMPLEMENTED` → `SET_STATUS SUCCESS`), with body and length untouched | exit 1; 197 of 7,640 default-build checks fail. M4 contributes 10: both the status and byte-exact echo assertion for each type 0x0001–0x0005. All five frame-length and cdl checks still pass |
+| E_MVUINFO+5, word 741: `230000000000` → `230000000003` (`MOVE r6, 0` → `MOVE r6, 3`), asserting both Table 5.20 flags | exit 1; 3 of 7,640 default-build checks fail: M1, M2 features_flags, and M5b |
 
-Both mutants were rejected and the original ROM restored byte-for-byte.
+Both mutants were rejected. Each ran against a disposable generated-ROM copy;
+the source checkout's original ROM remained byte-for-byte unchanged.
 
 ## Section K — GET_COUNTERS (06 §6.6; IEEE §7.4.42, Milan §5.4.2.25)
 
