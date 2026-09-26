@@ -526,8 +526,12 @@ module KL_aecp_engine
     input  wire         lock_held_i,
     input  wire  [63:0] lock_ctlr_i,
 
+    //! One clk_i cycle per accepted live 64-bit name lane, at its write edge;
+    //! direct store output, with no ready/ack. Boot loading, unchanged lanes,
+    //! refused commands and writes aborted before acceptance emit no pulse.
+    output logic        name_wr_o,
+
     //! ---- effect strobes (06 §8; consumers are P4) ----
-    output logic        name_wr_o,         //! store accepted a live name lane on clk_i
     output logic        eff_commit_o,
     output logic  [7:0] eff_nvm_mark_o,
     output logic        eff_nvm_stb_o,

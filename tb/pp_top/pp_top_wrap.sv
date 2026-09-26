@@ -318,8 +318,15 @@ module pp_top_wrap (
     //! mark strobe and its code are TOP-LEVEL PORTS now (issue #90), so they
     //! are passed through by name and not peeked at inside the DUT.
     output logic [15:0] dbg_dyn_writes_o,
+    //! Processor event on clk_i: one cycle per accepted live 64-bit name
+    //! lane at the write edge, no ready/ack; boot, unchanged, refused and
+    //! pre-acceptance aborted writes remain silent.
     output logic        aecp_name_wr_o,
-    output logic        dbg_name_live_we_o, //! actual RAM enable outside boot load
+    //! Independent clk_i observation of the actual name RAM write enable
+    //! while the store accepts live requests; excludes boot loading. Sample
+    //! each write edge alongside aecp_name_wr_o, with no ready/ack.
+    output logic        dbg_name_live_we_o,
+
     output logic        aecp_nvm_stb_o,
     output logic  [7:0] aecp_nvm_mark_o,
     output logic        dbg_notify_enq_o

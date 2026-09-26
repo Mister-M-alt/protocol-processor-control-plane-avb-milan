@@ -182,7 +182,10 @@ module KL_aecp_desc_store #(
     input  wire  [63:0] st_wdata_i,        //! write data / LOCATE key
     input  wire   [7:0] st_wstrb_i,        //! per-byte write enables
     output logic        st_ready_o,        //! write accepted this cycle
-    output logic        name_wr_o,         //! accepted live name lane; excludes boot load
+    //! Live 64-bit name-lane write accepted on this clk_i edge: st_req_i,
+    //! st_we_i, st_name_i and st_ready_o are all high. No ready/ack of its
+    //! own; excludes boot loading. Held requests pulse only when accepted.
+    output logic        name_wr_o,
     output logic        st_rvalid_o,       //! one-cycle read / locate answer
     output logic [63:0] st_rdata_o,        //! read data (0 on a locate hit)
     output logic        st_err_o,          //! locate MISS -> NO_SUCH_DESCRIPTOR

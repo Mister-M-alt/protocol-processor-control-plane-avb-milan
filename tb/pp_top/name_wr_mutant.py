@@ -12,13 +12,16 @@ import tempfile
 
 
 def run(command: list[str], cwd: Path, log: Path) -> int:
+    """Run in the foreground and return the process status, saving its output."""
     with log.open("w") as stream:
+        # The name-write harness bounds its waits in DUT cycles; only its
+        # completed simulation verdict can kill the command-decode mutant.
         return subprocess.run(command, cwd=cwd, stdout=stream,
-                              stderr=subprocess.STDOUT, timeout=1800,
-                              check=False).returncode
+                              stderr=subprocess.STDOUT, check=False).returncode
 
 
 def main() -> int:
+    """Require golden/restored passes and named mutant failures in a temporary tree."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()

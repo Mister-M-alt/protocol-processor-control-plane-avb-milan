@@ -652,7 +652,7 @@ module protocol_processor_top
     //! before acceptance do not pulse. Earlier accepted writes remain
     //! visible if a command later aborts. No ready/ack; leave unused with
     //! an explicit .aecp_name_wr_o() connection.
-    output logic                         aecp_name_wr_o,     //! accepted live name lane
+    output logic                         aecp_name_wr_o,
     //! the AECP engine's NVM COMMIT MARK, the µprogram effect that names the
     //! record group a committed command changed (KL_aecp_ucpu OP_NVM_MARK:
     //! both are combinational reads of the E-stage registers, one clk_i
