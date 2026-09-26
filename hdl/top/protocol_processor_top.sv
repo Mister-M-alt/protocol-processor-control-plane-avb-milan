@@ -645,6 +645,14 @@ module protocol_processor_top
     output logic [N_STREAM_OUT_P*64-1:0] aecp_fmt_out_o,
     output logic [N_STREAM_OUT_P-1:0]    aecp_fmt_out_v_o,
     output logic                         aecp_dyn_dirty_o,    //! a persisted field moved
+    //! Accepted live name write (07 §3.4): one clk_i cycle per 64-bit lane
+    //! actually written by the descriptor store, at the accepting edge.
+    //! A multi-lane SET_NAME can pulse more than once; unchanged lanes,
+    //! boot name loading, refused/out-of-range commands and writes aborted
+    //! before acceptance do not pulse. Earlier accepted writes remain
+    //! visible if a command later aborts. No ready/ack; leave unused with
+    //! an explicit .aecp_name_wr_o() connection.
+    output logic                         aecp_name_wr_o,
     //! the AECP engine's NVM COMMIT MARK, the µprogram effect that names the
     //! record group a committed command changed (KL_aecp_ucpu OP_NVM_MARK:
     //! both are combinational reads of the E-stage registers, one clk_i
@@ -654,7 +662,8 @@ module protocol_processor_top
     //! 6 channel maps (ADD/REMOVE_AUDIO_MAPPINGS), 7 user names (SET_NAME).
     //! Nothing inside this processor consumes them: no record writer exists
     //! for groups 6 and 7, so an integrator that persists those groups has
-    //! to see the mark to know a change happened at all.
+    //! to consume the mark for command completion; aecp_name_wr_o and map
+    //! edit phase 5 expose the earlier accepted live writes.
     output logic                         aecp_nvm_stb_o,      //! one cycle: a committed command marked a record group
     output logic  [7:0]                  aecp_nvm_mark_o,     //! that group's mark code, valid with the strobe
     output logic                         aecp_lock_held_o,    //! LOCK_ENTITY ownership is live
@@ -3458,6 +3467,7 @@ module protocol_processor_top
       .lock_held_i        (ntfy_lock_held_w),
       .lock_ctlr_i        (ntfy_lock_ctlr_w),
       .eff_commit_o       (aecp_eff_commit_nc_w),
+      .name_wr_o          (aecp_name_wr_o),
       .eff_nvm_mark_o     (aecp_nvm_mark_o),
       .eff_nvm_stb_o      (aecp_nvm_stb_o),
       .eff_notify_class_o (aecp_eff_notify_cls_nc_w),

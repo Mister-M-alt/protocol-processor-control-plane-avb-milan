@@ -309,6 +309,15 @@ module pp_top_wrap (
     output logic  [7:0] aecp_fmt_in_v_o,
     output logic [8*64-1:0] aecp_fmt_out_o,
     output logic  [7:0] aecp_fmt_out_v_o,
+    //! Processor event on clk_i: one cycle per accepted live 64-bit name
+    //! lane at the write edge, no ready/ack; boot, unchanged, refused and
+    //! pre-acceptance aborted writes remain silent.
+    output logic        aecp_name_wr_o,
+    //! Independent clk_i observation of the actual name RAM write enable
+    //! while the store accepts live requests; excludes boot loading. Sample
+    //! each write edge alongside aecp_name_wr_o, with no ready/ack.
+    output logic        dbg_name_live_we_o,
+
     //! the SET_CLOCK_SOURCE refusal contract (06 section 6.4: nothing
     //! stored, marked or notified) has no wire shape: a write of the value
     //! the row already holds, an NVM mark and a notification enqueue all
@@ -421,6 +430,7 @@ module pp_top_wrap (
       .aecp_fmt_out_o        (aecp_fmt_out_o),
       .aecp_fmt_out_v_o      (aecp_fmt_out_v_o),
       .aecp_dyn_dirty_o      (),
+      .aecp_name_wr_o        (aecp_name_wr_o),
       .aecp_nvm_stb_o        (aecp_nvm_stb_o),
       .aecp_nvm_mark_o       (aecp_nvm_mark_o),
       .aecp_lock_held_o      (aecp_lock_held_nc_w),
@@ -594,6 +604,8 @@ module pp_top_wrap (
   assign dbg_org_queue_o  = u_dut.laneq_org_cnt_r;
   assign dbg_txs_release_valid_o = u_dut.txs_release_valid_w;
   assign dbg_dyn_writes_o = u_dut.u_aecp.dyn_writes_nc_w;
+  assign dbg_name_live_we_o = u_dut.u_aecp.u_store.name_we_w
+                              && u_dut.u_aecp.u_store.st_ready_o;
   assign dbg_notify_enq_o = u_dut.aecp_eff_notify_stb_nc_w;
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;

@@ -22,6 +22,31 @@ tally.
 
 ## What it proves
 
+- **NW: accepted live name writes (issue #120).** The top's `aecp_name_wr_o`
+  is sampled on every accepting clock edge. Independent byte comparisons
+  predict one changed lane, all eight changed lanes and an unchanged name;
+  byte-exact SET responses and GET readback check the actual stored value.
+  A wrapper tap of the name RAM write enable outside boot loading checks
+  cycle alignment independently of the exported wire. Pulse widths and
+  ordering before the unchanged group-7 NVM mark are checked too.
+  Boot loading, reads, idle time, lock refusal, invalid semantic indices,
+  missing descriptors/configurations, unnamed descriptors and truncated
+  SETs must produce no event. A delayed descriptor fetch must remain quiet
+  until its eight writes are accepted. A fetch watchdog abort must remain
+  quiet through late-response drain and recovery, with the old name intact.
+
+  Focused reproduction: `make -C tb/pp_top name-writes`. The default full
+  suite also runs these checks. Mutation reproduction:
+  `python3 tb/pp_top/name_wr_mutant.py --output <log-directory>`.
+  Builds use a temporary source copy; only logs enter the output directory.
+  Golden and restored runs must pass. The mutant must compile, complete
+  simulation and fail each named pulse-count check below; a build failure
+  cannot count as detection.
+
+  | Mutation | Required failing checks |
+  |---|---|
+  | Engine export driven by accepted `SET_NAME` command decode instead of the store's accepted live write | `NW EIGHT`, `NW LOCKED`, `NW ABORT`: accepted lane pulse count |
+
 - **GI: processor-owned GET_STREAM_INFO input fields** (Milan 5.3.8.6/.8,
   5.4.5.2/Table 5.22). `gsi_internal.hpp` uses a fresh eight-sink processor
   with two STREAM_INPUT descriptors (ten after the second reset). The harness

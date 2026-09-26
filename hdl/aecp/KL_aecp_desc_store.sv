@@ -182,6 +182,10 @@ module KL_aecp_desc_store #(
     input  wire  [63:0] st_wdata_i,        //! write data / LOCATE key
     input  wire   [7:0] st_wstrb_i,        //! per-byte write enables
     output logic        st_ready_o,        //! write accepted this cycle
+    //! Live 64-bit name-lane write accepted on this clk_i edge: st_req_i,
+    //! st_we_i, st_name_i and st_ready_o are all high. No ready/ack of its
+    //! own; excludes boot loading. Held requests pulse only when accepted.
+    output logic        name_wr_o,
     output logic        st_rvalid_o,       //! one-cycle read / locate answer
     output logic [63:0] st_rdata_o,        //! read data (0 on a locate hit)
     output logic        st_err_o,          //! locate MISS -> NO_SUCH_DESCRIPTOR
@@ -448,6 +452,9 @@ module KL_aecp_desc_store #(
   logic take_rd_w, take_wr_w;
   assign take_rd_w = st_req_i && !st_we_i && !req_seen_r && st_ready_o;
   assign take_wr_w = st_req_i &&  st_we_i && st_ready_o;
+  //! The live RAM write acceptance, before the boot-load mux. No new state
+  //! or command decode: this is the same enable that writes the name lane.
+  assign name_wr_o = take_wr_w && st_name_i;
 
   assign st_rvalid_o = ans_pend_r && !rd_pipe_r && (st_r == S_ANSWER);
   assign st_rdata_o  = ans_data_r;
@@ -535,7 +542,7 @@ module KL_aecp_desc_store #(
       name_wdata_w = mem_rsp_data_i;
       name_wstrb_w = 8'hFF;
     end else begin
-      name_we_w    = take_wr_w && st_name_i;
+      name_we_w    = name_wr_o;
       name_waddr_w = NAME_AW_C'(st_addr_i[15:3]);
       name_wdata_w = st_wdata_i;
       name_wstrb_w = st_wstrb_i;
