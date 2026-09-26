@@ -18,7 +18,7 @@ VFLAGS = --cc --exe --build -j 0 \
 SRCS = $(HDL)/aecp/KL_aecp_desc_store.sv
 CPP  = sim_main.cpp
 
-run: image.bin
+run: generator-check image.bin
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vdesc_store_sim
 	./obj_dir/Vdesc_store_sim
 
@@ -28,7 +28,10 @@ image.bin: $(HDL)/aecp/desc/gen_desc_image.py $(HDL)/aecp/desc/example_milan_8.j
 	python3 $(HDL)/aecp/desc/gen_desc_image.py \
 	  -i $(HDL)/aecp/desc/example_milan_8.json -o $@ -m image.map >/dev/null
 
+generator-check:
+	python3 -B test_gen_desc_image.py
+
 clean:
 	rm -rf obj_dir image.bin image.map
 
-.PHONY: run clean
+.PHONY: run generator-check clean

@@ -37,6 +37,9 @@ INPUT FORMAT  (JSON; see example_milan_8.json)
   ]
 }
 
+The assembled body must start with its directory key: a big-endian u16 type
+and u16 index. A disagreement is refused for both body input forms.
+
 A field carries exactly one of `value` (big-endian unsigned integer, int or
 "0x.." string), `string` (UTF-8, zero-padded/truncated to `size`), `bytes` (hex,
 zero-padded/truncated to `size`), or nothing (zeros).
@@ -209,6 +212,13 @@ def _grouped_descriptors(model):
         typ = _type_code(desc["type"])
         idx = _u(desc.get("index", 0))
         body = descriptor_bytes(desc)
+        body_type = int.from_bytes(body[0:2], "big")
+        body_index = int.from_bytes(body[2:4], "big")
+        if (body_type, body_index) != (typ, idx):
+            raise ImageError(
+                f"cfg {cfg} directory key type 0x{typ:04X} index {idx} "
+                f"disagrees with body type 0x{body_type:04X} "
+                f"index {body_index}")
         nidx = _u(desc.get("name_index", NAME_NONE))
         if nidx == -1:
             nidx = NAME_NONE

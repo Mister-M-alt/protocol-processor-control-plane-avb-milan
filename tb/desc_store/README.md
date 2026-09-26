@@ -56,6 +56,39 @@ buffer, so the harness is two independent models — never DUT logic:
 the "no bridge at all" arm runs in a few hundred clocks instead of tens of
 thousands; the default is 4096 (41 µs at P-CLK-HZ), far inside `T-AECP-RESP`.
 
+## Generator body/key agreement
+
+`make` runs `generator-check` before the RTL suite; the repository's
+`scripts/run_suites.sh` therefore gates it too. Run just these probes with
+`make -C tb/desc_store generator-check` from the repository root.
+
+`test_gen_desc_image.py` exercises both `build()` and the command-line packer:
+
+| Probe | `fields` | `bytes` |
+|---|---|---|
+| Legal body type/index equals the directory key | accepted, body bytes preserved | accepted, body bytes preserved |
+| Only body type differs | named `ImageError`; CLI exit 1, no image or map | named `ImageError`; CLI exit 1, no image or map |
+| Only body index differs | named `ImageError`; CLI exit 1, no image or map | named `ImageError`; CLI exit 1, no image or map |
+
+Each of the six tests runs with a named type, an integer, a hexadecimal string
+and a numeric type outside the name table: 24 cases. The target is configuration
+1, index 1; all configurations and indices stay dense. Each mismatch changes
+only the high byte of one body field. Refusals must report the configuration,
+both key values and both body values. Legal controls also cover default-zero
+keys, integer-string keys, unnamed fields, hex whitespace and `pad_to`.
+
+Mutation proof (2026-09-26): remove only the body type/index comparison and its
+`ImageError` from `_grouped_descriptors`, retaining every other refusal.
+
+| Probe with check removed | Result |
+|---|---|
+| Legal controls, both forms | 2 tests / 8 cases pass, exit 0 |
+| Type mismatch alone, both forms | 2 tests / 8 cases fail: `ImageError` not raised, exit 1 |
+| Index mismatch alone, both forms | 2 tests / 8 cases fail: `ImageError` not raised, exit 1 |
+| `make generator-check` | 16 refusal cases fail, both legal tests pass, make exit 2 |
+
+The existing RTL tally above remains separate from these Python tests.
+
 ## Mutation-proven 2026-08-13
 
 | Break | Went red |
