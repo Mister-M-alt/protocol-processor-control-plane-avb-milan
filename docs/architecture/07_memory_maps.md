@@ -243,6 +243,8 @@ index > 0 never starts mid-beat. Rows for one descriptor type remain contiguous.
 The store accumulates the counts of earlier rows of that type before calculating
 the run-relative index. This permits an AAF and CRF Stream Input to have the
 different lengths their format lists require without adding a second indirection.
+Bytes 0–3 of every packed descriptor equal its index-map key (type, index),
+and the generator refuses a disagreement.
 
 The µCPU's `st_*` face reaches all of this through a region nibble on `st_addr[19:16]`:
 0x0 descriptor data, 0xB semantic `name_index` to writable-table byte address,

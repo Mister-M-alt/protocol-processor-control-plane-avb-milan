@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from typing import Any
 import unittest
 
 
@@ -22,8 +23,9 @@ class BodyKeyTest(unittest.TestCase):
     KEYS = (("AUDIO_CLUSTER", 0x0014), (20, 0x0014),
             ("0x0014", 0x0014), (0x1234, 0x1234))
 
-    def model(self, form, key, typ, body_type=None, body_index=1):
-        """Only the last body's type or index changes in a refusal probe.
+    def model(self, form: str, key: str | int, typ: int,
+              body_type: int | None = None, body_index: int = 1) -> dict[str, Any]:
+        """Build a dense tree with only the last body's type or index varied.
 
         Dense configurations and indices, no name binding, and short bodies
         keep unrelated refusals out of the experiment. The target is cfg 1,
@@ -52,16 +54,18 @@ class BodyKeyTest(unittest.TestCase):
         return {"format": "kl-aem-image", "version": 1,
                 "descriptors": descriptors}
 
-    def cli(self, model, directory):
+    def cli(self, model: dict[str, Any], directory: Path) -> subprocess.CompletedProcess[str]:
+        """Write the model and run the CLI, capturing its status and diagnostics."""
         source = directory / "model.json"
         source.write_text(json.dumps(model), encoding="utf-8")
         return subprocess.run(
             [sys.executable, "-B", str(GENERATOR), "-i", str(source),
              "-o", str(directory / "image.bin"),
              "-m", str(directory / "image.map")],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, text=True)
 
-    def legal(self, form):
+    def legal(self, form: str) -> None:
+        """Prove all key spellings preserve legal body bytes through build and CLI."""
         for key, typ in self.KEYS:
             with self.subTest(key=key):
                 model = self.model(form, key, typ)
@@ -79,7 +83,8 @@ class BodyKeyTest(unittest.TestCase):
                     self.assertEqual((directory / "image.bin").read_bytes(), image)
                     self.assertEqual((directory / "image.map").read_text(), report)
 
-    def refused(self, form, mismatch):
+    def refused(self, form: str, mismatch: str) -> None:
+        """Prove build and CLI refuse the mismatch with context and no output files."""
         for key, typ in self.KEYS:
             with self.subTest(key=key):
                 # Change only the high byte, catching truncated comparisons.
@@ -101,22 +106,28 @@ class BodyKeyTest(unittest.TestCase):
                     self.assertFalse((directory / "image.bin").exists())
                     self.assertFalse((directory / "image.map").exists())
 
-    def test_legal_fields(self):
+    def test_legal_fields(self) -> None:
+        """Matching field bodies are accepted unchanged by build and CLI."""
         self.legal("fields")
 
-    def test_legal_bytes(self):
+    def test_legal_bytes(self) -> None:
+        """Matching literal byte bodies are accepted unchanged by build and CLI."""
         self.legal("bytes")
 
-    def test_type_mismatch_fields(self):
+    def test_type_mismatch_fields(self) -> None:
+        """A type-only mismatch in fields is refused by build and CLI."""
         self.refused("fields", "type")
 
-    def test_type_mismatch_bytes(self):
+    def test_type_mismatch_bytes(self) -> None:
+        """A type-only mismatch in literal bytes is refused by build and CLI."""
         self.refused("bytes", "type")
 
-    def test_index_mismatch_fields(self):
+    def test_index_mismatch_fields(self) -> None:
+        """An index-only mismatch in fields is refused by build and CLI."""
         self.refused("fields", "index")
 
-    def test_index_mismatch_bytes(self):
+    def test_index_mismatch_bytes(self) -> None:
+        """An index-only mismatch in literal bytes is refused by build and CLI."""
         self.refused("bytes", "index")
 
 

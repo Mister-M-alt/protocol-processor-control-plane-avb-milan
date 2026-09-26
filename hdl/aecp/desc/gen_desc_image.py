@@ -28,6 +28,7 @@ INPUT FORMAT  (JSON; see example_milan_8.json)
       "pad_to": 312,                 // optional: zero-pad to this exact length
       "fields": [                    // ordered; concatenated big-endian
         {"name": "descriptor_type", "size": 2, "value": "0x0000"},
+        {"name": "descriptor_index", "size": 2, "value": 0},
         {"name": "entity_name",     "size": 64, "string": "..."},
         {"name": "raw",             "size": 6,  "bytes": "001b92fffe01"},
         {"name": "reserved",        "size": 8}          // value defaults to 0
