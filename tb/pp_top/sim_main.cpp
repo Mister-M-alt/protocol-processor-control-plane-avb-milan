@@ -9741,7 +9741,7 @@ struct NameWritePhase {
   }
 };
 
-static void run_name_writes(H& h) {
+[[maybe_unused]] static void run_name_writes(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
   Suite setup(h);
