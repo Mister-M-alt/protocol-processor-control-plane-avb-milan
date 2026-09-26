@@ -38,7 +38,7 @@ module desc_mem_guard_wrap (
   wire  [8:0] req_beats_w;
   wire        rsp_valid_w, rsp_ready_w, rsp_last_w, rsp_err_w;
   wire [63:0] rsp_data_w;
-  wire        st_ready_w;
+  wire        st_ready_w, name_wr_nc_w;
   wire  [3:0] fault_w;
   wire [15:0] misses_w, fetches_w, writes_w, length_w;
   assign unit_rsp_valid_o = rsp_valid_w;
@@ -51,7 +51,7 @@ module desc_mem_guard_wrap (
       .st_req_i(st_req_i), .st_we_i(1'b0), .st_name_i(1'b0),
       .st_addr_i(st_addr_i), .st_wdata_i(st_wdata_i), .st_wstrb_i(8'd0),
       .st_ready_o(st_ready_w), .st_rvalid_o(st_rvalid_o), .st_rdata_o(st_rdata_o),
-      .st_err_o(st_err_o),
+      .st_err_o(st_err_o), .name_wr_o(name_wr_nc_w),
       .mem_req_valid_o(store_req_o), .mem_req_ready_i(store_ready_o),
       .mem_req_addr_o(req_addr_w), .mem_req_beats_o(req_beats_w),
       .mem_rsp_valid_i(rsp_valid_w), .mem_rsp_ready_o(rsp_ready_w),

@@ -539,20 +539,22 @@ table.
 
 The device face above says a transaction is running; it does not say whether any
 state is waiting to be written. An integrator that publishes a "saved state
-pending" bit needs both of these top-level outputs, and neither changes behaviour.
+pending" bit observes the following top-level outputs. They do not change behaviour.
 
 | Signal | Dir | Width | When |
 |---|---|---|---|
 | `nvm_unflushed_o` | out | `P-N-STREAM-IN` | bit k is 1 from the cycle the manager ACCEPTS a changed binding for sink k (a write-back that moves no persisted field never raises it) until that record commits with `done`, or until it gives up after `RETRY-MAX` retries — which is the same cycle `nvm_alarm_o` rises. A capture that lands mid-flush holds the bit: the burst re-serializes. |
+| `aecp_name_wr_o` | out | 1 | one `clk_i` cycle per accepted live 64-bit name-lane write, sampled at the same rising edge that writes the descriptor store. Multi-lane names pulse once per written lane; unchanged lanes, boot loading, refused/out-of-range commands and writes aborted before acceptance do not pulse. Earlier accepted writes remain visible if a command later aborts. No ready/ack; leave unused with an explicit `.aecp_name_wr_o()` connection. |
 | `aecp_nvm_stb_o` / `aecp_nvm_mark_o` | out | 1 / 8 | one `clk_i` cycle per committed command that carries the µCPU's `NVM_MARK` effect, with the mark code naming the record group: **1** a dynamic-state field (sampling rate, clock source, configuration index, stream format, stream info), **6** channel maps, **7** user names. The code is meaningful only while the strobe is 1. |
 
 Only the binding records have a writer inside this processor (the manager above).
-Groups 6 and 7 have none, so the mark is the only evidence their live values moved:
-an integrator that persists them owns both the record and the write.
+Groups 6 and 7 have none: an integrator that persists them owns both the record
+and the write. The live name acceptance precedes the unchanged group-7 completion
+mark. For maps, the corresponding live write is `amap_edit_req_o` with
+`amap_edit_phase_o == 5`.
 
-Both are combinational reads of `clk_i`-domain registers, like every class-D level
-of [§6](#6-class-d-level-status-dictionary) — a consumer in another clock domain
-owns its own 2FF synchroniser.
+These signals are in the `clk_i` domain. Consumers in another clock domain
+own the crossing; single-cycle events need pulse capture or an event handshake.
 
 ### 8.2 Two record managers, one port
 

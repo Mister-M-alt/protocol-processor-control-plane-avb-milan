@@ -318,6 +318,8 @@ module pp_top_wrap (
     //! mark strobe and its code are TOP-LEVEL PORTS now (issue #90), so they
     //! are passed through by name and not peeked at inside the DUT.
     output logic [15:0] dbg_dyn_writes_o,
+    output logic        aecp_name_wr_o,
+    output logic        dbg_name_live_we_o, //! actual RAM enable outside boot load
     output logic        aecp_nvm_stb_o,
     output logic  [7:0] aecp_nvm_mark_o,
     output logic        dbg_notify_enq_o
@@ -421,6 +423,7 @@ module pp_top_wrap (
       .aecp_fmt_out_o        (aecp_fmt_out_o),
       .aecp_fmt_out_v_o      (aecp_fmt_out_v_o),
       .aecp_dyn_dirty_o      (),
+      .aecp_name_wr_o        (aecp_name_wr_o),
       .aecp_nvm_stb_o        (aecp_nvm_stb_o),
       .aecp_nvm_mark_o       (aecp_nvm_mark_o),
       .aecp_lock_held_o      (aecp_lock_held_nc_w),
@@ -594,6 +597,8 @@ module pp_top_wrap (
   assign dbg_org_queue_o  = u_dut.laneq_org_cnt_r;
   assign dbg_txs_release_valid_o = u_dut.txs_release_valid_w;
   assign dbg_dyn_writes_o = u_dut.u_aecp.dyn_writes_nc_w;
+  assign dbg_name_live_we_o = u_dut.u_aecp.u_store.name_we_w
+                              && u_dut.u_aecp.u_store.st_ready_o;
   assign dbg_notify_enq_o = u_dut.aecp_eff_notify_stb_nc_w;
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;

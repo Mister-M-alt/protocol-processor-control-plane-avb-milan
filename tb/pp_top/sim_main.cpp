@@ -1025,6 +1025,9 @@ struct H {
   //! counted once per cycle so a refusal can be graded on what it did
   //! NOT do (W10j), and an accepted SET on what it did exactly once
   uint64_t nvm_marks = 0;
+  std::vector<uint64_t> name_wr_cycles;
+  uint64_t name_wr_mismatches = 0;
+  uint64_t name_mark_cycle = 0;
   uint64_t notify_enqs = 0;
   //! the exported mark CODE beside the strobe (issue #90): the code is only
   //! meaningful while the strobe is 1, so it is sampled there and counted
@@ -1169,7 +1172,11 @@ struct H {
 
     d->eval();
     if (d->dbg_ca_cancel_o) ++ca_cancels;
+    if (d->aecp_name_wr_o) name_wr_cycles.push_back(t);
+    if (d->rst_n && bool(d->aecp_name_wr_o) != bool(d->dbg_name_live_we_o))
+      ++name_wr_mismatches;
     if (d->aecp_nvm_stb_o) {
+      if (d->aecp_nvm_mark_o == 7) name_mark_cycle = t;
       ++nvm_marks;
       nvm_mark_last = d->aecp_nvm_mark_o;
       if (d->aecp_nvm_mark_o == 6) ++nvm_marks_cls6;
@@ -1607,6 +1614,7 @@ struct H {
     amap_edit_seq.clear();
     ca_cancels = 0;
     nvm_marks = 0; notify_enqs = 0;
+    name_wr_cycles.clear(); name_wr_mismatches = 0; name_mark_cycle = 0;
     nvm_marks_cls6 = 0; nvm_marks_cls7 = 0; nvm_mark_last = 0;
     nvm_unflushed_seen = 0;
     domain_changes = 0;
@@ -9580,6 +9588,163 @@ struct Suite {
 
 };
 
+// Issue #120: expectations come from changed eight-byte lanes and wire
+// readback; the RAM-enable tap separately grades the exported event's edge.
+static void run_name_writes(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  Suite setup(h);
+  setup.load_descriptor_image();
+  h.reset();
+  setup.boot_restore_over_blank_nvm();
+  h.d->link_up_i = 1;
+  h.d->entity_enable_i = 1;
+  h.idle(1000);
+  NamePhase names{h, setup.image_entity, setup.image_clkdom};
+  uint16_t seq = 0xC200;
+  CHECK(h.d->dbg_img_valid_o && h.name_wr_cycles.empty(),
+        "NW BOOT: image/name loading emits no live-write pulse");
+
+  auto count = [&](size_t before, size_t expected, const char* label) {
+    CHECK(h.name_wr_cycles.size() == before + expected,
+          "NW %s: accepted lane pulse count %zu, want %zu", label,
+          h.name_wr_cycles.size() - before, expected);
+    bool single = true;
+    for (size_t i = before + 1; i < h.name_wr_cycles.size(); ++i)
+      if (h.name_wr_cycles[i] <= h.name_wr_cycles[i - 1] + 1) single = false;
+    CHECK(single, "NW %s: each pulse is one clock wide", label);
+    CHECK(h.name_wr_mismatches == 0,
+          "NW %s: output must coincide with actual live RAM write enable", label);
+  };
+  auto current = NamePhase::name64("Clock Domain 0");
+  auto set = [&](const std::vector<uint8_t>& next, const char* label) {
+    size_t changed = 0;
+    for (size_t lane = 0; lane < 8; ++lane)
+      if (!std::equal(current.begin() + 8 * lane, current.begin() + 8 * lane + 8,
+                      next.begin() + 8 * lane)) ++changed;
+    const size_t before = h.name_wr_cycles.size();
+    const auto marks = h.nvm_marks_cls7;
+    const auto body = NamePhase::name_body(0x0024, 0, 0, CFGIX, next);
+    const auto got = names.cmd(AEM_SET_NAME, seq, body);
+    CHECK(got == NamePhase::expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
+                                  AEM_SET_NAME, seq, body),
+          "NW %s: byte-exact SET response", label);
+    ++seq;
+    count(before, changed, label);
+    CHECK(h.nvm_marks_cls7 == marks + (changed ? 1 : 0),
+          "NW %s: existing group-7 mark count is unchanged", label);
+    if (changed && h.name_wr_cycles.size() > before)
+      CHECK(h.name_wr_cycles.back() < h.name_mark_cycle,
+            "NW %s: every accepted write precedes the completion mark", label);
+    const auto read = names.cmd(AEM_GET_NAME, seq, NamePhase::name_sel(0x0024, 0, 0));
+    CHECK(read == NamePhase::expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
+                                   AEM_GET_NAME, seq, body),
+          "NW %s: GET reads all accepted bytes", label);
+    ++seq;
+    count(before, changed, "READBACK");
+    current = next;
+  };
+
+  auto next = current;
+  next[63] = 0x5A;
+  set(next, "ONE");
+  for (auto& byte : next) byte ^= 0xA5;
+  set(next, "EIGHT");
+  set(next, "UNCHANGED");
+
+  // Lock refusal still decodes SET_NAME, but writes no lane.
+  std::vector<uint8_t> lock(16, 0);
+  auto got = names.cmd(0x0001, seq++, lock);
+  CHECK(!got.empty() && (got[16] >> 3) == AECP_SUCCESS,
+        "NW LOCK: acquire before refusal probe");
+  size_t before = h.name_wr_cycles.size();
+  const auto refused = NamePhase::name_body(0x0024, 0, 0, CFGIX,
+                                           NamePhase::name64("Refused"));
+  got = names.cmd_from(NamePhase::C2_MAC, CTLR2_EID, AEM_SET_NAME, seq, refused);
+  CHECK(got == NamePhase::expect(NamePhase::C2_MAC, CTLR2_EID, AECP_ENTITY_LOCKED,
+                                AEM_SET_NAME, seq,
+                                NamePhase::name_body(0x0024, 0, 0, CFGIX, current)),
+        "NW LOCKED: refusal returns the unchanged name");
+  ++seq;
+  count(before, 0, "LOCKED");
+  lock[3] = 1;
+  got = names.cmd(0x0001, seq++, lock);
+  CHECK(!got.empty() && (got[16] >> 3) == AECP_SUCCESS,
+        "NW LOCK: release after refusal probe");
+
+  struct BadName { uint16_t type, index, name, config; uint8_t status; };
+  const BadName bad[] = {
+    {0x0024, 0, 1, CFGIX, AECP_BAD_ARGUMENTS},
+    {0x0000, 0, 2, CFGIX, AECP_BAD_ARGUMENTS},
+    {0x0024, 9, 0, CFGIX, AECP_NO_SUCH_DESCRIPTOR},
+    {0x000E, 0, 0, CFGIX, AECP_BAD_ARGUMENTS},
+    {0x0024, 0, 0, 0xFFFF, AECP_NO_SUCH_DESCRIPTOR},
+  };
+  for (const auto& b : bad) {
+    before = h.name_wr_cycles.size();
+    const auto body = NamePhase::name_body(b.type, b.index, b.name, b.config, next);
+    got = names.cmd(AEM_SET_NAME, seq, body);
+    CHECK(got == NamePhase::expect(CTLR_MAC, CTLR_EID, b.status,
+                                  AEM_SET_NAME, seq,
+                                  NamePhase::name_sel(b.type, b.index, b.name, b.config)),
+          "NW RANGE: refused selector %04x/%u/%u/%u has complete error response",
+          b.type, b.index, b.name, b.config);
+    ++seq;
+    count(before, 0, "RANGE");
+  }
+  before = h.name_wr_cycles.size();
+  auto short_body = NamePhase::name_sel(0x0024, 0, 0);
+  short_body.resize(8);
+  got = names.cmd(AEM_SET_NAME, seq++, short_body);
+  CHECK(!got.empty() && (got[16] >> 3) == AECP_BAD_ARGUMENTS,
+        "NW SHORT: truncated SET is refused");
+  count(before, 0, "SHORT");
+
+  // A descriptor fetch stalls the decoded SET before any NAME_WR can land.
+  for (auto& byte : next) byte ^= 0x3C;
+  const auto body = NamePhase::name_body(0x0024, 0, 0, CFGIX, next);
+  h.dram_delay_next = 1000;
+  before = h.name_wr_cycles.size();
+  h.q_aecp.clear();
+  h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, seq, AEM_SET_NAME, body));
+  int budget = 1000;
+  while (h.desc_fifo.empty() && --budget) h.step();
+  CHECK(budget > 0, "NW STALL: SET reaches the held descriptor fetch");
+  h.idle(40);
+  count(before, 0, "STALL");
+  got = h.wait_any(h.q_aecp, 2000);
+  CHECK(got == NamePhase::expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
+                                AEM_SET_NAME, seq++, body),
+        "NW STALL: release completes the SET");
+  count(before, 8, "RELEASE");
+  current = next;
+
+  // The no-progress watchdog aborts locate before any live write. The late
+  // terminal is drained by the normal guard; no internal signal is forced.
+  h.dram_delay_next = 6000;
+  before = h.name_wr_cycles.size();
+  const auto marks = h.nvm_marks_cls7;
+  got = names.cmd(AEM_SET_NAME, seq, refused);
+  CHECK(got == NamePhase::expect(CTLR_MAC, CTLR_EID, AECP_NO_SUCH_DESCRIPTOR,
+                                AEM_SET_NAME, seq++, NamePhase::name_sel(0x0024, 0, 0)),
+        "NW ABORT: watchdog terminates SET before write acceptance");
+  CHECK(h.d->desc_mem_debt_o, "NW ABORT: late descriptor burst still owed");
+  count(before, 0, "ABORT");
+  h.idle(6500);
+  // First post-timeout locate retains the existing miss; next locate heals.
+  names.cmd(AEM_GET_NAME, seq++, NamePhase::name_sel(0x0024, 0, 0));
+  got = names.cmd(AEM_GET_NAME, seq, NamePhase::name_sel(0x0024, 0, 0));
+  CHECK(got == NamePhase::expect(CTLR_MAC, CTLR_EID, AECP_SUCCESS,
+                                AEM_GET_NAME, seq++,
+                                NamePhase::name_body(0x0024, 0, 0, CFGIX, current)),
+        "NW ABORT: recovery preserves the last accepted name");
+  count(before, 0, "RECOVERY");
+  CHECK(h.nvm_marks_cls7 == marks, "NW ABORT: no group-7 completion mark");
+  h.idle(500);
+  count(before, 0, "IDLE");
+  printf("NW: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   //! the harness that owns the tally. Section DV runs on a model of its own
@@ -9594,8 +9759,10 @@ int main(int argc, char** argv) {
   const char* const build = "fixture";
 #else
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
-  if (!gsi_only) Suite(h).run();
-  InternalStreamInfoPhase{h}.run();
+  const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
+  if (!gsi_only && !name_only) Suite(h).run();
+  if (!name_only) InternalStreamInfoPhase{h}.run();
+  if (!gsi_only) run_name_writes(h);
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's two

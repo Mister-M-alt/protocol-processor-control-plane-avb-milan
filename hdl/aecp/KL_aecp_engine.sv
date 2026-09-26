@@ -527,6 +527,7 @@ module KL_aecp_engine
     input  wire  [63:0] lock_ctlr_i,
 
     //! ---- effect strobes (06 §8; consumers are P4) ----
+    output logic        name_wr_o,         //! store accepted a live name lane on clk_i
     output logic        eff_commit_o,
     output logic  [7:0] eff_nvm_mark_o,
     output logic        eff_nvm_stb_o,
@@ -1621,6 +1622,7 @@ module KL_aecp_engine
       .st_wdata_i        (st_wdata_w),
       .st_wstrb_i        (st_wstrb_w),
       .st_ready_o        (store_ready_w),
+      .name_wr_o         (name_wr_o),
       .st_rvalid_o       (store_rvalid_w),
       .st_rdata_o        (store_rdata_w),
       .st_err_o          (store_err_w),
