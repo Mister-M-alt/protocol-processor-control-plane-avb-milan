@@ -75,8 +75,44 @@ classDiagram
     class AUDIO_CLUSTER_OUT { channel_count = 1 }
 ```
 
-Structural rules enforced by the **model lint** (build-time, part of the single-source
-toolchain — [09 §1](09_verification.md)):
+The `1..*` cluster minimum on both Stream Port directions follows Milan §5.3.3.8
+(printed p. 27). IEEE 1722.1-2021 §7.2.13, Table 7-23 (pp. 81–82), defines
+`number_of_clusters` separately from `number_of_maps`; dynamic mapping sets the
+latter to zero, not the cluster minimum. The parent's D8 zero-cluster 8×8 input
+pools conflict with that Milan requirement. The [#122 clause disposition](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/122#issuecomment-5853884588)
+retains F07.2's minimum and leaves the product correction to the parent.
+Successful packing is not a waiver.
+
+The consuming product owns its shipping-model semantics. For the parent end-station,
+the allocation and measured enforcement are recorded in
+[`docs/reference/PP_DESCRIPTOR_OWNERSHIP.md`](https://github.com/kebag-logic/milan-fpga/blob/e0920d77/docs/reference/PP_DESCRIPTOR_OWNERSHIP.md).
+That contract distinguishes construction from discriminating refusal. The processor
+owns generic packed-image structure and validation: image extents, directory
+well-formedness, dense indices, name binding, line-buffer bounds and descriptor
+type/index consistency. An ownership assignment is not evidence that every check
+is implemented. At processor commit `493e5e4b`, the
+[packer](../../hdl/aecp/desc/gen_desc_image.py) rejects configuration and per-type
+index gaps, duplicate keys, invalid name bindings and descriptors exceeding the
+configured line-buffer bound. It also rejects disagreement between the descriptor
+body's type/index and its directory key, including both `fields` and `bytes` inputs.
+
+Parent shipping checks are authoritative for configuration-dependent semantics:
+model identity and evolution, AUDIO_UNIT rate-list offset, count and length,
+clock-source construction and list shape, and ADP stream-count maxima across
+supported configurations. Processor checks retained for the same semantic
+constraints are defence in depth. Neither construction nor byte-exact serving
+substitutes for a negative validation case. Open obligations remain under
+[#38](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/38)
+(identity validity and evolution),
+[#39](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/39)
+(ADP maxima),
+[#60](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/60)
+(model-rule coverage),
+[#89](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/89)
+(L6/L10 image checks), and the parent matrix's linked follow-ups.
+
+The rules below are model obligations, not a claim that a complete build-time
+model lint is implemented (see [09 §1](09_verification.md)):
 
 | # | Rule | Clause |
 |---|---|---|
@@ -90,6 +126,15 @@ toolchain — [09 §1](09_verification.md)):
 | L8 | Primary IDENTIFY CONTROL present in all configurations at the same index | Milan §5.3.3.10 |
 | L9 | `entity_model_id` ≠ 0 / ≠ all-1s; changes whenever the static model changes | Milan §5.3.1 |
 | L10 | AUDIO_UNIT `sampling_rates_offset` = 144 and `sampling_rates_count` ≤ 8, each entry the full sampling-rate word (pull field included): the processor's SET_SAMPLING_RATE reads the list at 144 and consults at most its first 8 entries ([06 §6.4](06_aecp_engine.md#64-validation-chains-order-matters-first-failure-responds)). Another offset refuses every rate, and a rate listed past the eighth entry is refused; neither can accept an unlisted rate | IEEE §7.2.3, §7.4.21.1; Milan §5.3.3.3 |
+
+The AUDIO_UNIT descriptor extent must equal `144 + 4 × sampling_rates_count`
+bytes, excluding packed-image stride padding. The parent currently emits one
+configuration per image, with one or three rate words. Its loader permits at most
+eight distinct entries, but its image conversion currently supports only 48000,
+96000 and 192000 Hz. These are separate limits, as the parent ownership matrix
+records. The processor packer at `493e5e4b` enforces the generic checks above; it
+does not enforce L10's semantic offset/count/length checks or L6's identity
+clock-source list. Those checks remain open under #89 and the parent matrix's F6.
 
 ### 3.2 Descriptor sizing
 

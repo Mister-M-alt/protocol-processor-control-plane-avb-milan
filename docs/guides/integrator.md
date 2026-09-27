@@ -238,6 +238,21 @@ updated at runtime under the event contracts below.
 | SRP | `p2p_i`, `cfg_rank_i`, `cfg_acc_lat_ns_i[31:0]`, `port_rate_bps_i[31:0]`, `cfg_tspec_max_frame_i[15:0]` |
 | Talker sources | `cfg_src_en_i`, `cfg_src_iface_i`, `cfg_stream_id_i` |
 
+Drive `entity_model_id_i` from the same identity used in the ENTITY descriptor
+bytes. Zero and all-ones are invalid. A static-model change requires a new model
+identity, subject to IEEE 1722.1 §6.2.2.8's exclusions.
+
+Drive `talker_sources_i` and `listener_sinks_i` with the maximum respective
+STREAM_OUTPUT and STREAM_INPUT counts over every supported configuration
+(Milan §5.3.3.1). The ENTITY descriptor must carry those same values. Drive
+`identify_index_i` with the primary IDENTIFY CONTROL index present in every
+configuration (Milan §5.3.3.10).
+
+These are integrator obligations, not properties proved by ADP transport. The
+[descriptor ownership contract](../architecture/07_memory_maps.md#31-descriptor-tree)
+identifies the parent shipping checks, the processor's current packer checks and
+the open validation obligations.
+
 The three per-source vectors are **flat packed bit vectors**: index *s* occupies
 `[W*s +: W]`. The same convention is used by every per-index status output.
 
