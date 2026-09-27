@@ -239,8 +239,9 @@ updated at runtime under the event contracts below.
 | Talker sources | `cfg_src_en_i`, `cfg_src_iface_i`, `cfg_stream_id_i` |
 
 Drive `entity_model_id_i` from the same identity used in the ENTITY descriptor
-bytes. Zero and all-ones are invalid. A static-model change requires a new model
-identity, subject to IEEE 1722.1 §6.2.2.8's exclusions.
+bytes. Zero and all-ones are invalid (Milan v1.2 §5.3.3.1, printed p. 25).
+A static-model change requires a new model identity, subject to
+IEEE 1722.1 §6.2.2.8's exclusions.
 
 Drive `talker_sources_i` and `listener_sinks_i` with the maximum respective
 STREAM_OUTPUT and STREAM_INPUT counts over every supported configuration
@@ -253,7 +254,8 @@ These are integrator obligations, not properties proved by ADP transport. The
 identifies the parent shipping checks, the processor's current packer checks and
 the open validation obligations.
 
-The three per-source vectors are **flat packed bit vectors**: index *s* occupies
+The three per-source vectors `cfg_src_en_i`, `cfg_src_iface_i` and
+`cfg_stream_id_i` are **flat packed bit vectors**: index *s* occupies
 `[W*s +: W]`. The same convention is used by every per-index status output.
 
 `entity_enable_i` is the boot gate of Milan §5.6.1. While it is low the advertise machine
