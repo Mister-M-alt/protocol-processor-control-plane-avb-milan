@@ -1866,6 +1866,153 @@ struct D3RestorePhase {
     x.dram = image;
   }
 
+  // D3R16 (R391-2 F1: the aggregate is inert after the terminal). Three
+  // restores reach their terminal long before the bound: COMPLETE with
+  // every record saved; DEFAULTS rolled back (the rate rule's AUDIO_UNIT
+  // fetch errs, cause 6); CLOSED after a roll-back whose re-LOCATE meets a
+  // silent memory (cause 2). A presentation offset is then SET where AECP
+  // runs. Observed two per-wait deadlines past the bound, each keeps its
+  // verdicts, its ownership and its rows (the SET value included), and no
+  // roll-back strobe runs after the terminal. A count that kept running
+  // would roll the COMPLETE restore back at the bound, reset the rows the
+  // DEFAULTS one served, and turn the CLOSED one into DEFAULTS.
+  void r16_the_aggregate_is_inert_after_the_terminal() {
+    enum class End { COMPLETE, DEFAULTS, CLOSED };
+    struct Arm { End end; const char* what; };
+    const std::array<Arm, 3> arms{{{End::COMPLETE, "COMPLETE"}, {End::DEFAULTS, "DEFAULTS"},
+                                   {End::CLOSED, "CLOSED"}}};
+    for (const auto& a : arms) {
+      fresh();
+      if (a.end == End::COMPLETE) seed_every_record();
+      if (a.end == End::DEFAULTS) {
+        seed(0x02, d3_record(0x02, 96000, 4));
+        x.dram_err_at = au_addr;
+      }
+      if (a.end == End::CLOSED) {
+        seed(0x00, d3_record(0x00, 1, 2));
+        seed(0x50, d3_record(0x50, 1500000, 4));
+        x.nv_rd_region = 0x50;
+        x.nv_rd_nth = 3;
+        x.nv_rd_after = 0;
+        x.nv_rd_silent = false;
+        x.nv_rd_seen = 0;
+      }
+      long bound = -1;
+      const Boot b = boot_with(8 * RS_TMO, [&] {
+        if (bound < 0) bound = bound_t(x.d->dbg_d3_agg_o);
+        if (a.end == End::CLOSED && x.d->dbg_d3_rb_rst_o) x.dram_silent = true;
+      });
+      x.dram_silent = false;
+      x.dram_err_at = 0;
+      x.nv_rd_region = -1;
+      const bool closed = a.end == End::CLOSED;
+      const bool set = closed || ok(AEM_SET_STREAM_INFO, D3ServicePhase::pl_ptof(0, 4040404));
+      const auto* d = x.d;
+      const bool done0 = d->restore_done_o;
+      const bool fail0 = d->restore_fail_o;
+      const bool rb0 = d->restore_rb_o;
+      const bool closed0 = d->restore_closed_o;
+      const unsigned cause0 = d->rs_cause_o;
+      long strobes = 0;
+      long own = 0;
+      long cycles = 0;
+      const long until = bound + 2 * RS_TMO;
+      while (long(x.t) < until) {
+        x.step();
+        ++cycles;
+        strobes += x.d->dbg_d3_rb_rst_o ? 1 : 0;
+        own += x.d->dbg_d3_own_o ? 1 : 0;
+      }
+      const bool rows = closed ? true
+                               : (x.d->aecp_pt_offset_o.at(0) == 4040404
+                                  && (x.d->aecp_pt_offset_v_o & 1) != 0
+                                  && (a.end != End::COMPLETE
+                                      || (x.d->dbg_dyn_cfg_v_o && x.d->dbg_dyn_rate_v_o)));
+      const bool reached = (closed ? b.closed : b.done) >= 0 && bound > 0
+                           && long(x.t) > bound + RS_TMO;
+      CHECK(reached && set && strobes == 0 && rows && d->restore_done_o == done0
+                && d->restore_fail_o == fail0 && d->restore_rb_o == rb0
+                && d->restore_closed_o == closed0 && d->rs_cause_o == cause0
+                && done0 == !closed && closed0 == closed && bool(d->dbg_d3_own_o) == closed
+                && (!closed || own == cycles),
+            "D3R16 %s: two per-wait deadlines past the bound the verdicts hold (done %u "
+            "fail %u rolled back %u closed %u cause %u), %ld roll-back strobe cycles after "
+            "the terminal, the rows %s", a.what, unsigned(d->restore_done_o),
+            unsigned(d->restore_fail_o), unsigned(d->restore_rb_o),
+            unsigned(d->restore_closed_o), unsigned(d->rs_cause_o), strobes,
+            rows ? "kept" : "lost");
+    }
+    x.dram = image;
+  }
+
+  // D3R17 (R391-2 F1: the aggregate never fires with an event in hand).
+  // With every record saved and the device's grants steered, the writer's
+  // arbiter grant of a pass-0 READ lands on the bound's own clock: the
+  // aggregate waits for the next clock without an event (the device now
+  // withholding that READ), ends DEFAULTS, cause 3, and abandons the READ it
+  // owns to the drain; once the device ends it, a later SET persists. Firing
+  // on the grant itself would leave that READ granted to a writer that has
+  // stopped reading and no drain behind it: the port stays owned and no
+  // later change is ever written.
+  void r17_the_aggregate_waits_for_a_clock_without_an_event() {
+    fresh();
+    seed_every_record();
+    x.nv_gnt_every = 1 << 30;                      // steer() grants each command
+    //! the binding walk's eight probes, then pass 0's header and payload
+    //! READs: command 60 is 0x56's payload READ, and the writer's grant of
+    //! 0x57's header READ follows it by the latency `lat` measured on the
+    //! earlier 4-byte payload READs of this boot
+    Steer s{60, -1};
+    long lat = -1;
+    long gnt_t = -1;
+    bool gnt_d3 = false;
+    long bound = -1;
+    bool in_hand = false;
+    long done_t = -1;
+    (void)boot_with(AGG + 4 * RS_TMO, [&] {
+      const auto* d = x.d;
+      if (x.nv_gnt_t != gnt_t) {                   // the device granted a command
+        gnt_t = x.nv_gnt_t;
+        gnt_d3 = x.nv_cur.op == 0 && x.nv_cur.len == 4
+                 && (x.nv_cur.region < 0x20 || x.nv_cur.region > 0x27);
+      }
+      if (d->dbg_d3_mgnt_o && gnt_d3 && lat < 0) lat = long(x.t) - gnt_t;
+      if (d->dbg_d3_mgnt_o) gnt_d3 = false;
+      //! paced from the start on an estimate, exact once the latency is known
+      //! (long before the target command)
+      if (s.seen < s.target) s.at = bound_t(d->dbg_d3_agg_o) - (lat >= 0 ? lat : 40);
+      steer(s);
+      if (bound < 0 && d->dbg_d3_agg_o == uint32_t(AGG - 1)) {
+        bound = long(x.t);
+        in_hand = d->dbg_d3_mgnt_o && !d->dbg_d3_done_o;
+      }
+      if (done_t < 0 && d->dbg_d3_done_o) done_t = long(x.t);
+    });
+    const auto* d = x.d;
+    const bool draining = d->dbg_nvm_drain_o;
+    CHECK(s.granted == s.at && s.region == 0x56 && s.off == 8 && in_hand && done_t > bound
+              && done_t - bound < RS_TMO && d->restore_fail_o && d->rs_cause_o == 3
+              && !d->restore_rb_o && !d->restore_closed_o && rows_cleared() && draining,
+          "D3R17: the writer's grant lands on the bound's own clock (%u, 0x%02x's READ "
+          "steered %u, latency %ld); DEFAULTS %ld clocks later, cause %u, the READ in "
+          "hand drained %u", unsigned(in_hand), unsigned(s.region),
+          unsigned(s.granted == s.at), lat, done_t - bound, unsigned(d->rs_cause_o),
+          unsigned(draining));
+    steer_release();
+    for (long c = 0; c < RS_TMO; ++c) x.step();
+    const size_t ops0 = x.nvm_ops.size();
+    const bool set = ok(AEM_SET_STREAM_INFO, D3ServicePhase::pl_ptof(0, 1717171));
+    for (long c = 0; c < 2 * WINDOW; ++c) x.step();
+    int writes = 0;
+    for (size_t i = ops0; i < x.nvm_ops.size(); i++)
+      writes += x.nvm_ops[i].op == 1 && x.nvm_ops[i].region == 0x50;
+    CHECK(set && writes == 1 && !x.d->d3_unflushed_o
+              && std::equal(x.nv_mem[0x50].begin(), x.nv_mem[0x50].begin() + 12,
+                            d3_record(0x50, 1717171, 4).begin()),
+          "D3R17: once the device ends the READ granted on the bound's clock a later "
+          "SET persists (%d WRITEs, unflushed %u)", writes, unsigned(x.d->d3_unflushed_o));
+  }
+
   // ---- DR3a: restore durations and the longest waits (informational) ----
   // The parent D3 contract's DR3a had the processor lane MEASURE its
   // per-wait (20 ms) and aggregate (1,000 ms) candidates; the manager
@@ -2104,5 +2251,7 @@ struct D3RestorePhase {
     r13_the_aggregate_bound();
     r14_an_aggregate_bound_before_the_image_proof();
     r15_the_aggregate_bound_inside_a_roll_back();
+    r16_the_aggregate_is_inert_after_the_terminal();
+    r17_the_aggregate_waits_for_a_clock_without_an_event();
   }
 };

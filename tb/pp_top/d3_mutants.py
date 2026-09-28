@@ -330,6 +330,16 @@ AGGREGATE = (
     Mutant("agg_not_in_rollback", PP_TOP, (
         (WRITER, AGG_LIVE, AGG_LIVE[:-2] + "\n                        && (ws_r != W_RB) && (ws_r != W_RELOC);\n"),),
         ("D3R15 debt wait: CLOSED", "D3R15 re-LOCATE: CLOSED")),
+    # R391-2 F1: inert after the terminal, never fired with an event in hand
+    # (the reviewer's own edits)
+    Mutant("agg_not_stopped_at_terminal", PP_TOP, (
+        (WRITER, AGG_LIVE, "  assign agg_live_w   = (agg_run_r || rs_go_i) && !agg_fired_r;\n"),),
+        ("D3R16 COMPLETE", "D3R16 DEFAULTS", "D3R16 CLOSED")),
+    Mutant("agg_fires_with_event_in_hand", PP_TOP, (
+        (WRITER, "  assign agg_expire_w = agg_live_w && (agg_r >= 32'(RS_AGG_CYC_P - 1))\n"
+                 "                        && (stall_w || !wait_w);\n",
+         "  assign agg_expire_w = agg_live_w && (agg_r >= 32'(RS_AGG_CYC_P - 1));\n"),),
+        ("D3R17: the writer's grant", "D3R17: once the device ends")),
 )
 
 # the AECP hold admission (issue #131 ruling 5873580386)

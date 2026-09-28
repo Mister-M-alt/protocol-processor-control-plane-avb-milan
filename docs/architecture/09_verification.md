@@ -187,14 +187,15 @@ manager (`tb/acmp_nvm`):
 | the ratified 1,000 ms aggregate from `restore_go_i`, derived from `CLK_HZ_P`, against a device just inside every per-wait deadline | D3R13 |
 | an aggregate expiry never closes a provable image: a binding walk slowed per byte past the bound fails whole at it, and the D3 walk proves the image and ends DEFAULTS (CLOSED only with an unprovable image) | D3R14 |
 | the aggregate spans the roll-back: a bound inside its debt wait or its re-LOCATE ends it CLOSED on the bound's own clock | D3R15 |
+| the aggregate is inert after COMPLETE, DEFAULTS and CLOSED, and never fires with an event in hand: a grant on the bound's own clock is drained, and a later SET persists | D3R16, D3R17 |
 | the AECP hold admission: one AECP record in the ingress while held, the rest dropped and counted, ACMP at its idle latency | D3O5, D3O6; `tb/rx_validator` F28 |
 | guard debt held across the roll-back, watchdog recovery, CLOSED on an unprovable image | D3R10, D3R12, D3O2, D3O3, D3O4 |
 | completed bindings kept on a D3 roll-back | D3R11 |
 | AECP held from reset; ADP released only by both walks | D3O1, D3R1, D3R9, D3S9, D3S11 |
 | DR2c on both producers: three attempts, the top's derived backoff, dispatch free while it runs, no forgiveness | D3S10; `tb/acmp_nvm` E8 to E11 |
 
-Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plants 66
-of them, each in its own extract, and requires its named checks to fail (all 66 KILLED
+Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plants 68
+of them, each in its own extract, and requires its named checks to fail (all 68 KILLED
 at the lane head; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
 `tb/rx_validator` READMEs). The name and map stages add their groups' controls when they land. The port suites'
 open limitations stay theirs: issue #18 (no reset mid-commit), #19 (port mechanisms
