@@ -72,10 +72,15 @@ tally.
   rewrite after convergence moves nothing, and clock source 0 on the unset
   row, a row becoming valid at its reset value, is written. **D3S10** (DR2c)
   a record whose WRITEs all fail is attempted three times in all, each
-  retry granted `NVM_RETRY_BACKOFF_CYC_P` cycles or more after the failed
-  attempt's error (the wrap sets 50,000: 500 ms of its compressed time),
-  then dropped with the reset-sticky `nvm_alarm_o`; no fourth attempt
-  follows and a later successful write does not clear the alarm. **D3S11** a READ_DESCRIPTOR
+  retry granted after the backoff and within one relatch of it (14 cycles
+  here): the backoff is the top's own derivation, 500 ms of the wrap's
+  `CLK_HZ_P`, ceil(1,000,001 / 2) = 500,001 cycles, with no override, so a
+  product derivation of 5 ms or a count of 500 bench ticks fails it. While
+  it waits the writer owns neither dispatch nor the state bus in any cycle,
+  and a READ_DESCRIPTOR sent 1,000 cycles into it is answered byte-exact
+  (2,364 cycles later) before the retry. Then the record is dropped with the
+  reset-sticky `nvm_alarm_o`; no fourth attempt follows and a later
+  successful write does not clear the alarm. **D3S11** a READ_DESCRIPTOR
   whose fetch the memory answers 3,000 cycles late is running when the
   debounce closes: the writer holds dispatch but not the state bus until
   it retires, then latches. **D3S9** grades every cycle of the phase: no
@@ -116,7 +121,10 @@ tally.
   pass 0 and erased at rest before pass 1 aborts (cause 5, the passes
   agree record by record) after an earlier record was applied, and the
   roll-back resets both stores: DEFAULTS (`restore_rb_o`), every row at its
-  reset value, the image walked again and AECP running. **D3R5** faults in pass 0 apply
+  reset value, the image walked again and AECP running; with no descriptor
+  debt owed the roll-back strobe still holds both stores in reset two cycles.
+  **D3R4b** the other direction: a record erased when pass 0 reads it and
+  framed at rest before pass 1 aborts too (cause 5) and is never applied. **D3R5** faults in pass 0 apply
   nothing and end done and failed on defaults with AECP running: a DEVICE
   error on a header (cause 2), a payload torn after two bytes (cause 1),
   and a header the device never answers, abandoned at the deadline to

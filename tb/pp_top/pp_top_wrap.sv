@@ -431,11 +431,10 @@ module pp_top_wrap (
       //! million compressed cycles for them
       .REG_TL_TIMEOUT_MS_P (400),
       .LOCK_TIMEOUT_MS_P   (400),
-      //! NVM_RS_TMO_CYC_P and NVM_RS_AGG_CYC_P are NOT overridden: the top
-      //! derives 20,001 and 1,000,001 clocks from TB_CLK_HZ_C
-      //! DR2c's 500 ms backoff in this bench's compressed time (1 ms = 100
-      //! clk), as the debounce runs: the product derives ceil(CLK_HZ_P / 2)
-      .NVM_RETRY_BACKOFF_CYC_P (50_000),
+      //! NVM_RS_TMO_CYC_P, NVM_RS_AGG_CYC_P and NVM_RETRY_BACKOFF_CYC_P are
+      //! NOT overridden: the top derives 20,001, 1,000,001 and 500,001
+      //! clocks from TB_CLK_HZ_C, and sections D3R8, D3R13 and D3S10 time
+      //! them
       .TROM_HEX_P   ("ltn_rom.hex"),
       .UCODE_HEX_P  ("ucode.hex")
   ) u_dut (

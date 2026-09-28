@@ -685,12 +685,20 @@ struct D3ServicePhase {
   }
 
   // D3S10 (DR2c): a record whose every WRITE fails is attempted three times
-  // in all, each retry starting RETRY_BACKOFF_CYC_P cycles or more after the
-  // failed attempt's error (the wrap's 50,000: 500 ms of its compressed
-  // time), then dropped with the reset-sticky nvm_alarm_o: pending falls
-  // with it, no fourth attempt follows, and a later successful write does
-  // not forgive it.
-  static constexpr long BACKOFF = 50000;           //! the wrap's override
+  // in all, each retry granted RETRY_BACKOFF_CYC_P cycles or more after the
+  // failed attempt's error and within one relatch of it. The backoff is the
+  // top's own derivation, never an override: 500 ms of the wrap's clock,
+  // ceil(1,000,001 / 2) = 500,001 cycles (a product derivation of 5 ms, or a
+  // count of the 500 bench ticks, is far short of it). While it waits the
+  // writer holds neither dispatch nor the state bus: its ownership reads 0
+  // in every cycle of it, and a READ_DESCRIPTOR sent into it is answered
+  // byte-exact before the retry. Then the record is dropped with the
+  // reset-sticky nvm_alarm_o: pending falls with it, no fourth attempt
+  // follows, and a later successful write does not forgive it.
+  static constexpr long BACKOFF = clk_ms(500);     //! the top's derivation
+  //! a retry's grant follows its backoff by one relatch (ACQUIRE, the latch
+  //! and its answer, the crc, the request): tens of cycles
+  static constexpr long RELATCH = 64;
   void s10_bounded_attempts_then_the_sticky_alarm() {
     power_up();
     const size_t ops0 = x.nvm_ops.size();
@@ -699,11 +707,27 @@ struct D3ServicePhase {
     const bool a = set_ok(AEM_SET_STREAM_INFO, pl_ptof(0, 7000001));
     std::vector<long> grants;
     std::vector<long> errs;
-    for (long c = 0; c < 6 * WINDOW && !x.d->nvm_alarm_o; ++c) {
+    long owned = 0;
+    long read_sent = -1;
+    long read_answered = -1;
+    std::vector<uint8_t> read_rsp;
+    for (long c = 0; c < 3 * BACKOFF + 6 * WINDOW && !x.d->nvm_alarm_o; ++c) {
       const long at = long(x.t);
       x.step();
       if (x.d->dbg_d3_mgnt_o) grants.push_back(at + 1);
       if (x.d->dbg_d3_merr_o) errs.push_back(at + 1);
+      const bool backoff = !errs.empty() && grants.size() == errs.size()
+                           && long(x.t) - errs.back() < BACKOFF;
+      if (backoff && x.d->dbg_d3_own_o) ++owned;
+      if (backoff && read_sent < 0 && long(x.t) - errs.back() >= 1000) {
+        x.q_aecp.clear();
+        read_sent = long(x.t);
+        x.feed(d3_read_entity_cmd(0xD510));
+      }
+      if (read_sent >= 0 && read_answered < 0 && !x.q_aecp.empty()) {
+        read_answered = long(x.t);
+        read_rsp = x.q_aecp.front();
+      }
     }
     const bool dropped = settle(2 * WINDOW);
     const int failed = writes(ops0, 0x50, 3);
@@ -712,14 +736,18 @@ struct D3ServicePhase {
           "D3S10 count: %d failed attempts of 0x50 (%zu grants), alarm %u, "
           "unflushed %u", failed, grants.size(), unsigned(x.d->nvm_alarm_o),
           unsigned(x.d->d3_unflushed_o));
-    const bool spaced = grants.size() == 3 && errs.size() >= 2
-                        && grants[1] - errs[0] >= BACKOFF
-                        && grants[2] - errs[1] >= BACKOFF;
-    CHECK(spaced,
-          "D3S10 timing: each retry granted RETRY_BACKOFF_CYC_P cycles or more "
-          "after the failed attempt's error (%ld, %ld)",
-          grants.size() > 1 && !errs.empty() ? grants[1] - errs[0] : -1L,
-          grants.size() > 2 && errs.size() > 1 ? grants[2] - errs[1] : -1L);
+    const long gap1 = grants.size() > 1 && !errs.empty() ? grants[1] - errs[0] : -1L;
+    const long gap2 = grants.size() > 2 && errs.size() > 1 ? grants[2] - errs[1] : -1L;
+    CHECK(gap1 >= BACKOFF && gap1 < BACKOFF + RELATCH && gap2 >= BACKOFF
+              && gap2 < BACKOFF + RELATCH,
+          "D3S10 timing: each retry granted after the derived %ld-cycle backoff "
+          "and one relatch (%ld, %ld)", BACKOFF, gap1, gap2);
+    CHECK(owned == 0 && read_sent >= 0 && read_answered > read_sent
+              && grants.size() > 1 && read_answered < grants[1]
+              && read_rsp == d3_read_entity_rsp(0xD510),
+          "D3S10 backoff: %ld owned cycles inside the backoffs; a READ_DESCRIPTOR "
+          "sent into the first is answered %ld cycles later, before the retry",
+          owned, read_answered - read_sent);
     x.idle(static_cast<int>(3 * BACKOFF));
     CHECK(writes(ops0, 0x50, 3) == 3, "D3S10 count: no fourth attempt (%d)",
           writes(ops0, 0x50, 3));
@@ -1148,7 +1176,8 @@ struct D3RestorePhase {
   // unframed record, which aborts the restore (cause 5) after the
   // configuration record was applied. The abort rolls both stores back:
   // DEFAULTS, every row at its reset value, the image walked again and
-  // AECP running.
+  // AECP running. With no descriptor debt owed, the roll-back still holds
+  // both stores in reset for at least two cycles (parent D3 6.2).
   void r4_the_passes_agree_record_by_record() {
     fresh();
     seed(0x00, d3_record(0x00, 1, 2));
@@ -1156,12 +1185,16 @@ struct D3RestorePhase {
     const size_t ops0 = x.nvm_ops.size();
     bool erased = false;
     bool applied_before = false;
+    long strobe = 0;
+    long debt = 0;
     const Boot b = boot_with(6 * RS_TMO, [&] {
       if (!erased && reads_of(ops0, 0x50) == 2) {
         std::fill(x.nv_mem[0x50].begin(), x.nv_mem[0x50].begin() + 256, 0xFF);
         erased = true;
       }
       applied_before = applied_before || x.d->dbg_dyn_cfg_v_o;
+      strobe += x.d->dbg_d3_rb_rst_o ? 1 : 0;
+      debt += (x.d->dbg_d3_rb_rst_o && x.d->desc_mem_debt_o) ? 1 : 0;
     });
     CHECK(erased && applied_before && b.done > b.release && x.d->restore_fail_o
               && x.d->rs_cause_o == 5 && x.d->restore_rb_o && !x.d->restore_closed_o
@@ -1170,6 +1203,35 @@ struct D3RestorePhase {
           "D3R4: the record whole in pass 0 and unframed in pass 1 aborts, cause "
           "%u, rolled back %u: every row at its default after the applied "
           "configuration", unsigned(x.d->rs_cause_o), unsigned(x.d->restore_rb_o));
+    CHECK(strobe >= 2 && debt == 0,
+          "D3R4 strobe: with no debt owed the roll-back holds both stores in "
+          "reset %ld cycles, at least two", strobe);
+  }
+
+  // D3R4b: the other direction of the agreement. 0x50 is unframed (erased)
+  // when pass 0 reads it and framed at rest before pass 1 does: a record
+  // blank in one pass and whole in the other aborts too (cause 5), is never
+  // applied, and the configuration applied before it is rolled back.
+  void r4b_blank_then_whole_disagrees() {
+    fresh();
+    seed(0x00, d3_record(0x00, 1, 2));
+    const size_t ops0 = x.nvm_ops.size();
+    bool planted = false;
+    bool applied_before = false;
+    const Boot b = boot_with(6 * RS_TMO, [&] {
+      if (!planted && reads_of(ops0, 0x50) == 1 && x.nv_st == H::NvState::NV_IDLE) {
+        seed(0x50, d3_record(0x50, 1500000, 4));
+        planted = true;
+      }
+      applied_before = applied_before || x.d->dbg_dyn_cfg_v_o;
+    });
+    CHECK(planted && applied_before && b.done > b.release && x.d->restore_fail_o
+              && x.d->rs_cause_o == 5 && x.d->restore_rb_o && !x.d->restore_closed_o
+              && rows_cleared() && (x.d->aecp_pt_offset_v_o & 1) == 0,
+          "D3R4b: a record blank in pass 0 and whole in pass 1 aborts, cause %u, "
+          "rolled back %u, the offset not applied (valid 0x%02x)",
+          unsigned(x.d->rs_cause_o), unsigned(x.d->restore_rb_o),
+          unsigned(x.d->aecp_pt_offset_v_o));
   }
 
   //! seed a configuration and an offset, arm one fault on 0x50's READs, boot
@@ -1638,6 +1700,7 @@ struct D3RestorePhase {
     r2_the_set_rules_and_the_frame_refuse();
     r3_the_set_rules_accept();
     r4_the_passes_agree_record_by_record();
+    r4b_blank_then_whole_disagrees();
     r5_a_pass_0_fault_applies_nothing();
     r6_blank_is_honest();
     r7_a_rule_fetch_fault_aborts();
