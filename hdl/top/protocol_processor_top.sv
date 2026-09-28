@@ -450,6 +450,10 @@ module protocol_processor_top
     //! an abort it could not recover): fail, never done, AECP held and the
     //! ADP enable withheld until reset
     output logic        restore_closed_o,
+    //! level: the D3 walk aborted in pass 1 and rolled both stores back to
+    //! their reset state, then proved the image again: DEFAULTS (with
+    //! restore_done_o and restore_fail_o). Completed bindings stay restored.
+    output logic        restore_rb_o,
     //! the D3 walk's first abort cause, valid with restore_fail_o: 0 none,
     //! 1 torn read, 2 device error, 3 deadline, 5 the two passes disagree,
     //! 6 descriptor fault, 7 image not proven
@@ -3368,8 +3372,8 @@ module protocol_processor_top
   logic  [8:0] desc_req_beats_w;
   logic desc_rsp_valid_w, desc_rsp_ready_w, desc_rsp_last_w, desc_rsp_err_w;
   logic [63:0] desc_rsp_data_w;
-  // D3 consumes the guard port; top + parent routing is deferred to that lane.
-  logic desc_mem_debt_nc_w;
+  //! the D3 writer holds its roll-back while the memory owes a burst
+  logic desc_mem_debt_w;
 
   KL_aecp_desc_mem_guard u_desc_mem_guard (
       .clk_i(clk_i), .rst_n(rst_n),
@@ -3382,7 +3386,7 @@ module protocol_processor_top
       .m_req_addr_o(desc_mem_req_addr_o), .m_req_beats_o(desc_mem_req_beats_o),
       .m_rsp_valid_i(desc_mem_rsp_valid_i), .m_rsp_ready_o(desc_mem_rsp_ready_o),
       .m_rsp_data_i(desc_mem_rsp_data_i), .m_rsp_last_i(desc_mem_rsp_last_i),
-      .m_rsp_err_i(desc_mem_rsp_err_i), .debt_o(desc_mem_debt_nc_w)
+      .m_rsp_err_i(desc_mem_rsp_err_i), .debt_o(desc_mem_debt_w)
   );
 
   KL_aecp_engine #(
@@ -3542,6 +3546,8 @@ module protocol_processor_top
       .d3_closed_o        (d3_closed_w),
       .d3_cause_o         (rs_cause_o),
       .d3_blank_o         (d3_blank_w),
+      .d3_rb_o            (restore_rb_o),
+      .d3_desc_debt_i     (desc_mem_debt_w),
       .d3_unflushed_o     (d3_unflushed_o),
       .d3_alarm_o         (d3_alarm_w),
       .eff_nvm_mark_o     (aecp_nvm_mark_o),

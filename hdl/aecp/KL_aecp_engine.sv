@@ -254,7 +254,10 @@
 //                stays in its dispatch queue, and the stores answer the
 //                writer alone. A command that arrived meanwhile is served
 //                after the terminal, on the state the restore left; a
-//                CLOSED terminal holds dispatch until the next reset.
+//                CLOSED terminal holds dispatch until the next reset. The
+//                writer's roll-back resets both stores (`store_rst_n_w`);
+//                the descriptor memory guard, outside, takes the hard reset
+//                only, and its debt reaches the writer as `d3_desc_debt_i`.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -570,6 +573,10 @@ module KL_aecp_engine
     output logic        d3_closed_o,        //! level: CLOSED, AECP held until reset
     output logic  [2:0] d3_cause_o,         //! the first abort's cause
     output logic        d3_blank_o,         //! done, not failed, nothing framed
+    output logic        d3_rb_o,            //! DEFAULTS after a pass-1 roll-back
+    //! the descriptor memory owes a burst (KL_aecp_desc_mem_guard debt_o,
+    //! outside: it takes the hard reset only)
+    input  wire         d3_desc_debt_i,
     //! a D3 record's accepted change is not yet in the window (the OR of the
     //! writer's per-record dirty bits); sticky alarm: a record's write
     //! attempts were exhausted
@@ -1495,6 +1502,10 @@ module KL_aecp_engine
   logic [63:0] u_st_wdata_w;
   logic  [7:0] u_st_wstrb_w;
   logic        d3_own_w, d3_bus_w;
+  //! the roll-back: both stores reset together (D3 stage 1), the guard never
+  logic        d3_rb_rst_w;
+  logic        store_rst_n_w;
+  assign store_rst_n_w = rst_n && !d3_rb_rst_w;
   logic        d3_jd_req_w;
   logic [15:0] d3_jd_type_w, d3_jd_index_w;
   logic [63:0] d3_jd_fmt_w;
@@ -1693,7 +1704,7 @@ module KL_aecp_engine
       .MEM_TIMEOUT_CYC_P (MEM_TIMEOUT_CYC_P)
   ) u_store (
       .clk_i             (clk_i),
-      .rst_n             (rst_n),
+      .rst_n             (store_rst_n_w),
       .st_req_i          (st_req_w && !dyn_sel_w && !strq_sel_w),
       .st_we_i           (st_we_w),
       .st_name_i         (st_name_w),
@@ -1744,7 +1755,7 @@ module KL_aecp_engine
       .N_CONTROL_P    (N_CONTROL_P)
   ) u_dyn (
       .clk_i           (clk_i),
-      .rst_n           (rst_n),
+      .rst_n           (store_rst_n_w),
       .st_req_i        (st_req_w && dyn_sel_w),
       .st_we_i         (st_we_w),
       .st_addr_i       (st_addr_w),
@@ -1804,6 +1815,8 @@ module KL_aecp_engine
       .tick_i      (d3_tick_i),
       .go_i        (d3_go_i),
       .img_valid_i (dbg_img_valid_o),
+      .desc_debt_i (d3_desc_debt_i),
+      .rb_rst_o    (d3_rb_rst_w),
       .own_o       (d3_own_w),
       .bus_o       (d3_bus_w),
       .prog_busy_i (prog_busy_w),
@@ -1842,6 +1855,7 @@ module KL_aecp_engine
       .done_o      (d3_done_o),
       .fail_o      (d3_fail_o),
       .closed_o    (d3_closed_o),
+      .rb_o        (d3_rb_o),
       .cause_o     (d3_cause_o),
       .blank_o     (d3_blank_o),
       .unflushed_o (d3_unflushed_o),

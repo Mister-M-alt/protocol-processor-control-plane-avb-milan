@@ -94,8 +94,9 @@ tally.
   applied and 10 refused. **D3R3** configuration 0, the rate list's second
   entry and clock source 0 are accepted. **D3R4** a record read whole in
   pass 0 and erased at rest before pass 1 aborts (cause 5, the passes
-  agree record by record) after an earlier record was applied; until the
-  roll-back lands the abort ends CLOSED. **D3R5** faults in pass 0 apply
+  agree record by record) after an earlier record was applied, and the
+  roll-back resets both stores: DEFAULTS (`restore_rb_o`), every row at its
+  reset value, the image walked again and AECP running. **D3R5** faults in pass 0 apply
   nothing and end done and failed on defaults with AECP running: a DEVICE
   error on a header (cause 2), a payload torn after two bytes (cause 1),
   and a header the device never answers, abandoned at the deadline to
@@ -104,11 +105,22 @@ tally.
   failed, an unframed record is its default, and the one saved record
   lost to a device error is a failure, never blank. **D3R7** the rate
   rule's AUDIO_UNIT fetch answers an error beat: the restore aborts
-  (cause 6), never a refused value. **D3R8** a READ granted 200 cycles
+  (cause 6), never a refused value, and rolls back. **D3R8** a READ granted 200 cycles
   inside the wrap's 20,000-cycle deadline completes; 200 cycles past it
   aborts (cause 3). **D3R9** a SET held since before the walk runs after
   the restore applied the saved value, is in force, and the next flush
-  saves it.
+  saves it. **D3R10** the rate rule's AUDIO_UNIT fetch answers late: at
+  4,000 cycles (inside the store's 4,096-cycle watchdog) the restore
+  completes; at 5,000 and 16,000 the watchdog's error aborts it (cause 6),
+  both stores stay in reset while the guard still owes the abandoned burst
+  (its debt survives the stores' reset) and leave it only after the late
+  burst, and the re-walked image ends DEFAULTS; at 30,000 the debt outlasts
+  the deadline and the restore ends CLOSED. **D3R11** a pass-1 roll-back
+  after the binding walk restored sink 0 leaves it bound: the listener's
+  GET_RX_STATE answers the restored talker and its record is not
+  rewritten. **D3R12** a roll-back whose re-walk cannot prove the image
+  (the memory falls silent) ends CLOSED: no done, AECP held, ADP never
+  enabled.
   The dispatch hold runs from reset, so every section that resets and then
   issues AECP commands starts both walks first (`H::boot_to_aecp`, U10, U11
   and the internal-MAAP model's MP0). Focused reproduction:

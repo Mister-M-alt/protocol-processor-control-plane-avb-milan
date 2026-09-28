@@ -952,24 +952,30 @@ struct D3RestorePhase {
   // D3R4: the passes agree record by record. 0x50 is read whole in pass 0
   // (its header and payload READs), then erased at rest; pass 1 meets an
   // unframed record, which aborts the restore (cause 5) after the
-  // configuration record was applied. Until the roll-back lands that abort
-  // ends CLOSED: AECP stays held and nothing partial is released.
+  // configuration record was applied. The abort rolls both stores back:
+  // DEFAULTS, every row at its reset value, the image walked again and
+  // AECP running.
   void r4_the_passes_agree_record_by_record() {
     fresh();
     seed(0x00, d3_record(0x00, 1, 2));
     seed(0x50, d3_record(0x50, 1500000, 4));
     const size_t ops0 = x.nvm_ops.size();
     bool erased = false;
+    bool applied_before = false;
     const Boot b = boot_with(6 * RS_TMO, [&] {
       if (!erased && reads_of(ops0, 0x50) == 2) {
-        std::fill(x.nv_mem[0x50].begin(), x.nv_mem[0x50].end(), 0xFF);
+        std::fill(x.nv_mem[0x50].begin(), x.nv_mem[0x50].begin() + 256, 0xFF);
         erased = true;
       }
+      applied_before = applied_before || x.d->dbg_dyn_cfg_v_o;
     });
-    CHECK(erased && b.closed > b.release && b.done < 0 && x.d->restore_fail_o
-              && x.d->rs_cause_o == 5 && x.d->dbg_d3_own_o && !x.d->restore_blank_o,
+    CHECK(erased && applied_before && b.done > b.release && x.d->restore_fail_o
+              && x.d->rs_cause_o == 5 && x.d->restore_rb_o && !x.d->restore_closed_o
+              && rows_cleared() && x.d->dbg_img_valid_o && !x.d->dbg_d3_own_o
+              && !x.d->restore_blank_o,
           "D3R4: the record whole in pass 0 and unframed in pass 1 aborts, cause "
-          "%u, CLOSED %u", unsigned(x.d->rs_cause_o), unsigned(x.d->restore_closed_o));
+          "%u, rolled back %u: every row at its default after the applied "
+          "configuration", unsigned(x.d->rs_cause_o), unsigned(x.d->restore_rb_o));
   }
 
   //! seed a configuration and an offset, arm one fault on 0x50's READs, boot
@@ -1053,19 +1059,136 @@ struct D3RestorePhase {
 
   // D3R7: a descriptor read the rule needs that fails is a transport
   // failure, never a refused value: the AUDIO_UNIT fetch of the rate rule
-  // answers an error beat in pass 1 and the restore aborts, cause 6. Until
-  // the roll-back lands that abort ends CLOSED.
+  // answers an error beat in pass 1, the restore aborts (cause 6) and rolls
+  // back to DEFAULTS.
   void r7_a_rule_fetch_fault_aborts() {
     fresh();
     seed(0x02, d3_record(0x02, 96000, 4));
     x.dram_err_at = au_addr;
     const Boot b = boot(6 * RS_TMO);
-    CHECK(au_addr != 0 && x.dram_err_at == 0 && b.closed > b.release
-              && x.d->restore_fail_o && x.d->rs_cause_o == 6
-              && x.d->dbg_d3_refused_o == 0,
-          "D3R7: the rule's descriptor fetch errs: cause %u, refused %u, "
-          "CLOSED %u", unsigned(x.d->rs_cause_o), unsigned(x.d->dbg_d3_refused_o),
-          unsigned(x.d->restore_closed_o));
+    CHECK(au_addr != 0 && x.dram_err_at == 0 && b.done > b.release
+              && x.d->restore_fail_o && x.d->rs_cause_o == 6 && x.d->restore_rb_o
+              && x.d->dbg_d3_refused_o == 0 && rows_cleared(),
+          "D3R7: the rule's descriptor fetch errs: cause %u, refused %u, rolled "
+          "back %u", unsigned(x.d->rs_cause_o), unsigned(x.d->dbg_d3_refused_o),
+          unsigned(x.d->restore_rb_o));
+  }
+
+  // D3R10: the rule's AUDIO_UNIT fetch answers late. 4,000 cycles is inside
+  // the store's 4,096-cycle watchdog: COMPLETE. At 5,000 and 16,000 the
+  // store answers its watchdog's error, the restore aborts (cause 6) and
+  // rolls back; both stores stay in reset while the memory still owes the
+  // abandoned burst (the guard's debt, which the stores' reset does not
+  // clear), leave it only after the late burst, and the re-walked image is
+  // proven: DEFAULTS. At 30,000 the debt outlasts the restore deadline:
+  // CLOSED.
+  void r10_a_late_burst_is_waited_out() {
+    struct Arm { int late; bool rolled; bool closed; };
+    const Arm arms[] = {{4000, false, false}, {5000, true, false},
+                        {16000, true, false}, {30000, false, true}};
+    for (const auto& a : arms) {
+      fresh();
+      seed(0x02, d3_record(0x02, 96000, 4));
+      x.dram_late_at = au_addr;
+      x.dram_late_cycles = a.late;
+      long rb_rise = -1;
+      long rb_fall = -1;
+      long debt_fall = -1;
+      long debt_owed_in_rb = 0;
+      long c = 0;
+      const Boot b = boot_with(8 * RS_TMO, [&] {
+        ++c;
+        const bool rb = x.d->dbg_d3_rb_rst_o;
+        if (rb && rb_rise < 0) rb_rise = c;
+        if (!rb && rb_rise >= 0 && rb_fall < 0) rb_fall = c;
+        if (rb) debt_owed_in_rb += x.d->desc_mem_debt_o ? 1 : 0;
+        if (rb_rise >= 0 && debt_fall < 0 && !x.d->desc_mem_debt_o) debt_fall = c;
+      });
+      const bool as_expected =
+          a.closed ? (b.closed >= 0 && b.done < 0 && x.d->rs_cause_o == 6)
+          : a.rolled ? (b.done >= 0 && x.d->restore_rb_o && x.d->rs_cause_o == 6
+                        && rows_cleared() && debt_owed_in_rb > 1
+                        && debt_fall >= 0 && rb_fall > debt_fall - 1)
+                     : (b.done >= 0 && !x.d->restore_fail_o && x.d->dbg_dyn_rate_v_o);
+      CHECK(as_expected,
+            "D3R10 %d: done %ld closed %ld cause %u rolled back %u; the stores "
+            "in reset from %ld to %ld, the debt owed %ld cycles of it, fell at %ld",
+            a.late, b.done, b.closed, unsigned(x.d->rs_cause_o),
+            unsigned(x.d->restore_rb_o), rb_rise, rb_fall, debt_owed_in_rb, debt_fall);
+    }
+  }
+
+  //! a binding record for sink 0 (05 section 5, 20-byte payload, valid and
+  //! started), built from the framing, not the RTL
+  static std::vector<uint8_t> binding_record(uint64_t talker, uint16_t uid,
+                                             uint64_t ctlr) {
+    std::vector<uint8_t> r(28, 0);
+    r[0] = 0x17; r[1] = 0x22; r[2] = 0x02; r[3] = 0x20; r[5] = 20;
+    r[8] = 0x03;
+    putbe(&r[10], uid, 2);
+    putbe(&r[12], talker, 8);
+    putbe(&r[20], ctlr, 8);
+    return reframe(r);
+  }
+
+  // D3R11: a D3 roll-back leaves the binding walk's work alone: the
+  // binding restored for sink 0 stays bound, the listener answers it, and
+  // its record is not rewritten. The D3 walk fails in pass 1 on a DEVICE
+  // error on 0x50's header after the configuration was applied.
+  void r11_a_roll_back_keeps_the_restored_binding() {
+    fresh();
+    constexpr uint64_t TALKER = 0x00B0B0B0B0B0D311ULL;
+    const auto bind = binding_record(TALKER, 0x0D31, CTLR_EID);
+    seed(0x20, bind);
+    seed(0x00, d3_record(0x00, 1, 2));
+    seed(0x50, d3_record(0x50, 1500000, 4));
+    x.nv_rd_region = 0x50;
+    x.nv_rd_nth = 3;                              // pass 1's header READ
+    x.nv_rd_after = 0;
+    x.nv_rd_silent = false;
+    x.nv_rd_seen = 0;
+    const size_t ops0 = x.nvm_ops.size();
+    const Boot b = boot(6 * RS_TMO);
+    x.q_acmp.clear();
+    x.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR_EID, 0, EID, 0, 0, 0, 0, 0xD311, 0, 0));
+    const auto g = x.wait_frame(x.q_acmp, 50, [](const std::vector<uint8_t>& f) {
+      return f.size() > 15 && (f[15] & 0x0F) == 11;
+    });
+    int rewrites = 0;
+    for (size_t i = ops0; i < x.nvm_ops.size(); i++)
+      rewrites += x.nvm_ops[i].op != 0 && x.nvm_ops[i].region == 0x20;
+    CHECK(b.done > b.release && x.d->restore_rb_o && x.d->rs_cause_o == 2
+              && (x.d->acmp_bound_o & 1) && g.size() > 50 && fv_u64(g, 34, 8) == TALKER
+              && rewrites == 0,
+          "D3R11: rolled back (cause %u), sink 0 still bound to its restored "
+          "talker, %d rewrites of its record", unsigned(x.d->rs_cause_o), rewrites);
+  }
+
+  // D3R12: a roll-back whose re-walk cannot prove the image ends CLOSED:
+  // the descriptor memory falls silent at the pass-1 abort, the store's
+  // watchdog answers the re-LOCATE with an error, and the entity stays
+  // held: no done, AECP owned, ADP never enabled.
+  void r12_a_roll_back_that_cannot_prove_the_image_closes() {
+    fresh();
+    seed(0x00, d3_record(0x00, 1, 2));
+    seed(0x50, d3_record(0x50, 1500000, 4));
+    x.nv_rd_region = 0x50;
+    x.nv_rd_nth = 3;
+    x.nv_rd_after = 0;
+    x.nv_rd_silent = false;
+    x.nv_rd_seen = 0;
+    x.d->entity_enable_i = 1;
+    x.d->link_up_i = 1;
+    const Boot b = boot_with(8 * RS_TMO, [&] {
+      if (x.d->dbg_d3_rb_rst_o) x.dram_silent = true;
+    });
+    x.dram_silent = false;
+    CHECK(b.closed > b.release && b.done < 0 && x.d->restore_fail_o
+              && !x.d->restore_done_o && x.d->dbg_d3_own_o && !x.d->dbg_adp_enable_o
+              && x.d->rs_cause_o == 2,
+          "D3R12: the re-walk cannot prove the image: CLOSED %ld, cause %u, the "
+          "entity held", b.closed, unsigned(x.d->rs_cause_o));
+    x.d->entity_enable_i = 0;
   }
 
   // D3R8: the deadline counts cycles without progress. 0x50's header READ
@@ -1130,5 +1253,8 @@ struct D3RestorePhase {
     r7_a_rule_fetch_fault_aborts();
     r8_the_deadline_boundary();
     r9_a_held_set_follows_the_restore();
+    r10_a_late_burst_is_waited_out();
+    r11_a_roll_back_keeps_the_restored_binding();
+    r12_a_roll_back_that_cannot_prove_the_image_closes();
   }
 };

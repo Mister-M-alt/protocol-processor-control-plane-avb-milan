@@ -108,9 +108,21 @@
 //                the sticky `alarm_o`: the landed binding manager's policy.
 //                The ruled DR2c backoff lands in the stage after the restore.
 //
-//                NOT YET HERE. The roll-back of an abort in pass 1 lands in
-//                the next stage; until it does, such an abort ends CLOSED,
-//                so no partially restored state is ever released.
+//                AN ABORT IN PASS 1 ROLLS BACK (parent D3 §8.6). The restore
+//                wrote only into reset state, so the undo is a reset: `rb_rst_o`
+//                resets the dynamic-state store and the descriptor store
+//                together, for at least two cycles and while the descriptor
+//                memory still owes a burst its terminal beat (`desc_debt_i`,
+//                KL_aecp_desc_mem_guard, which takes the hard reset only, so
+//                its debt survives this local reset). The store's reset also
+//                returns its fetch watchdog to zero and makes it walk the image
+//                again, so the re-LOCATE of ENTITY 0 that follows proves the
+//                image anew: a hit ends DEFAULTS (done, failed, rolled back,
+//                `own_o` released), a miss or an error CLOSED. The deadline
+//                bounds the debt wait and the re-LOCATE, and an abort during
+//                the roll-back ends CLOSED. The binding walk, the listener and
+//                the binding manager are no owner of this roll-back: bindings
+//                the binding walk restored stay restored.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -159,6 +171,12 @@ module KL_aecp_nvm_writer #(
     input  wire         prog_busy_i,    //! the engine has a command in flight
 
     //! ---- the state-bus client (the engine's state port, µCPU contract) -----
+    //! ---- the roll-back -------------------------------------------------------
+    input  wire         desc_debt_i,    //! the descriptor memory owes a burst its last beat
+    //! reset of every restorable owner (both stores): at least two cycles,
+    //! and while desc_debt_i
+    output logic        rb_rst_o,
+
     output logic        sb_req_o,
     output logic        sb_we_o,
     output logic [19:0] sb_addr_o,      //! [19:16] region, [15:0] byte offset
@@ -202,6 +220,7 @@ module KL_aecp_nvm_writer #(
     output logic        done_o,         //! the restore is done: COMPLETE or DEFAULTS
     output logic        fail_o,         //! the restore failed, any terminal
     output logic        closed_o,       //! CLOSED: fail, never done, own kept
+    output logic        rb_o,           //! DEFAULTS after a roll-back of pass 1
     //! the first abort's cause: 0 none, 1 torn, 2 device error, 3 deadline,
     //! 5 the passes disagree, 6 descriptor fault, 7 image not proven
     output logic  [2:0] cause_o,
@@ -355,6 +374,8 @@ module KL_aecp_nvm_writer #(
     W_JUDGE,    // the integrator's verdict on a stream format
     W_APPLY,    // the value, and with it its valid flag, into the store
     W_NEXT,     // the next record, the next pass, or the terminal
+    W_RB,       // the roll-back: both stores held in reset
+    W_RELOC,    // the re-LOCATE of ENTITY 0 proves the image walked again
     W_DONE,     // terminal: COMPLETE, or DEFAULTS after an abort in pass 0
     W_CLOSED    // terminal: fail, never done, own kept until reset
   } wstate_e;
@@ -368,6 +389,8 @@ module KL_aecp_nvm_writer #(
   logic [N_REC_C-1:0] whole0_r;     // pass 0 read the record whole
   logic             framed_any_r;   // pass 1 read a framed, crc-clean record
   logic [7:0]       n_app_r, n_ref_r, n_blank_r;   // pass 1 verdicts (suite taps)
+  logic             rb_r;           // the restore rolled back
+  logic             rb_min_r;       // the strobe has been held for its first cycle
 
   // ---- the record being read -------------------------------------------------
   logic [2:0]  rsel_w;
@@ -445,7 +468,9 @@ module KL_aecp_nvm_writer #(
 
   always_comb begin : restore_stall
     unique case (ws_r)
-      W_IMGLOC, W_NCFG, W_LOC, W_LANE: stall_w = !sb_rvalid_i;
+      W_IMGLOC, W_NCFG, W_LOC, W_LANE, W_RELOC: stall_w = !sb_rvalid_i;
+      //! the roll-back waits for the memory's debt to fall
+      W_RB:    stall_w = rb_min_r && desc_debt_i;
       W_RQ:    stall_w = !m_gnt_i;
       W_RD:    stall_w = !m_rvalid_i && !m_done_i && !m_err_i;
       W_JUDGE: stall_w = jd_wait_i;
@@ -513,6 +538,8 @@ module KL_aecp_nvm_writer #(
       n_app_r      <= 8'd0;
       n_ref_r      <= 8'd0;
       n_blank_r    <= 8'd0;
+      rb_r         <= 1'b0;
+      rb_min_r     <= 1'b0;
       rbcnt_r      <= 17'd0;
       rmagic_r     <= 16'd0;
       rplen_hdr_r  <= 16'd0;
@@ -528,15 +555,18 @@ module KL_aecp_nvm_writer #(
     end else if (abort_w) begin
       //! the first abort names the restore. Before the image is proven it is
       //! CLOSED; in pass 0 nothing was applied, so it ends done on defaults;
-      //! in pass 1 it ends CLOSED until the roll-back lands
-      cause_r  <= abort_cause_w;
+      //! in pass 1 it rolls back; during the roll-back it is CLOSED
+      if (cause_r == CAUSE_NONE_C) cause_r <= abort_cause_w;
       fail_r   <= 1'b1;
-      if (proven_r && !pass_r) begin
+      if ((ws_r == W_RB) || (ws_r == W_RELOC) || !proven_r) begin
+        closed_r <= 1'b1;
+        ws_r     <= W_CLOSED;
+      end else if (!pass_r) begin
         done_r <= 1'b1;
         ws_r   <= W_DONE;
       end else begin
-        closed_r <= 1'b1;
-        ws_r     <= W_CLOSED;
+        rb_min_r <= 1'b0;
+        ws_r     <= W_RB;
       end
     end else begin
       unique case (ws_r)
@@ -651,6 +681,20 @@ module KL_aecp_nvm_writer #(
             ws_r  <= W_RQ;
           end
         end
+        W_RB: begin
+          rb_min_r <= 1'b1;               // two cycles at least, then the debt
+          if (rb_min_r && !desc_debt_i) ws_r <= W_RELOC;
+        end
+        W_RELOC: begin
+          if (sb_rvalid_i && sb_err_i) begin
+            closed_r <= 1'b1;             // the image walked again is not proven
+            ws_r     <= W_CLOSED;
+          end else if (sb_rvalid_i) begin
+            done_r <= 1'b1;               // DEFAULTS: done, failed, rolled back
+            rb_r   <= 1'b1;
+            ws_r   <= W_DONE;
+          end
+        end
         W_DONE, W_CLOSED: ;
         default: ws_r <= W_CLOSED;
       endcase
@@ -674,7 +718,7 @@ module KL_aecp_nvm_writer #(
     rs_sb_addr_w  = ADDR_LOCATE_C;
     rs_sb_wdata_w = KEY_ENTITY0_C;
     unique case (ws_r)
-      W_IMGLOC: rs_sb_req_w = 1'b1;
+      W_IMGLOC, W_RELOC: rs_sb_req_w = 1'b1;
       W_NCFG: begin
         rs_sb_req_w  = 1'b1;
         rs_sb_addr_w = ADDR_NCFG_C;
@@ -939,6 +983,8 @@ module KL_aecp_nvm_writer #(
   assign done_o      = done_r;
   assign fail_o      = fail_r;
   assign closed_o    = closed_r;
+  assign rb_o        = rb_r;
+  assign rb_rst_o    = (ws_r == W_RB);
   assign cause_o     = cause_r;
   assign blank_o     = done_r && !fail_r && !framed_any_r;
   assign unflushed_o = |dirty_r;

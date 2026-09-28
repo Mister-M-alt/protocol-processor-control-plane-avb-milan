@@ -25,8 +25,9 @@ The suite proves:
   Acceptance wins over a coincident stray terminal beat when no debt was owed.
 
 The wrapper exposes the store/guard seam and provides a direct guard stimulus
-mode for handshake checks. There is no D3 writer here: owner-release policy,
-rollback deadlines and the 5,000/16,000-cycle rollback cases belong to that lane.
+mode for handshake checks. There is no D3 writer here: its owner-release
+policy, rollback deadline and the 4,000/5,000/16,000/30,000-cycle late-burst
+rollback cases run through the real top in `tb/pp_top` section D3R10.
 The product integration is also exercised by `tb/pp_top` cases A12/A13, through
 real READ_DESCRIPTOR commands and byte-exact responses on the MAC interface.
 

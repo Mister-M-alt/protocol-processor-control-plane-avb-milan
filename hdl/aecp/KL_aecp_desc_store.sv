@@ -31,6 +31,13 @@
 //                memory's burst debt when this store times out. Standalone
 //                integrations also need that guard if the memory can accept
 //                another request before an abandoned burst has terminated.
+//                The D3 writer's roll-back (KL_aecp_nvm_writer) resets this
+//                store together with the dynamic-state store through `rst_n`:
+//                the reset returns the fetch watchdog to zero and walks the
+//                image again, so the writer's recovery LOCATE proves it anew
+//                and the names are the image's. The guard's debt is outside
+//                that reset, and the writer holds it while debt is owed.
+//                `dbg_img_valid_o` is the validated-image level its proof reads.
 //
 //                WHERE THE ADDRESSES COME FROM. Every address is an
 //                ELABORATION PARAMETER (`DESC_BASE_P`), never a register and

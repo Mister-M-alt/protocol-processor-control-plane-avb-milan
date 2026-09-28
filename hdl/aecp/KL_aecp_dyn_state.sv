@@ -70,6 +70,9 @@
 //                write, which the engine taps on the µCPU's side of the
 //                state-bus selection, so a restore write is never a change.
 //                `dirty_o` stays a sticky diagnostic and drives no manager.
+//                The writer's restore writes values with their valid flags
+//                into the reset state; its roll-back resets this store (every
+//                row invalid, IDENTIFY 0) together with the descriptor store.
 //                An out-of-range descriptor index is dropped and counted
 //                rather than aliased onto row zero, because silently writing
 //                the wrong stream's format is worse than refusing.

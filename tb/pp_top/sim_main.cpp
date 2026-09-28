@@ -763,6 +763,9 @@ struct H {
   //! a burst requested at this byte address answers one beat carrying the
   //! memory's err, which ends it (0 = none); consumed by that burst
   uint32_t dram_err_at = 0;
+  //! a burst requested at dram_late_at answers dram_late_cycles late (once)
+  uint32_t dram_late_at = 0;
+  int dram_late_cycles = 0;
   uint64_t dram_overlap_accepts = 0;
   uint64_t dram_reqs = 0;
   // AECP response-buffer memory at RESP_BASE_P (03 §7). READ + WRITE, and
@@ -1324,10 +1327,13 @@ struct H {
     if (d->rst_n && d->desc_mem_req_valid_o) {
       if (!desc_fifo.empty()) ++dram_overlap_accepts;
       desc_fifo.push_back({d->desc_mem_req_addr_o, int(d->desc_mem_req_beats_o), 0,
-                          t + uint64_t(dram_delay_next >= 0 ? dram_delay_next : dram_lat),
+                          t + uint64_t(dram_late_at != 0 && d->desc_mem_req_addr_o == dram_late_at
+                                       ? dram_late_cycles
+                                       : dram_delay_next >= 0 ? dram_delay_next : dram_lat),
                           dram_stuck_next || dram_silent,
                           dram_err_at != 0 && d->desc_mem_req_addr_o == dram_err_at});
       if (dram_err_at != 0 && d->desc_mem_req_addr_o == dram_err_at) dram_err_at = 0;
+      if (dram_late_at != 0 && d->desc_mem_req_addr_o == dram_late_at) dram_late_at = 0;
       dram_delay_next = -1;
       dram_stuck_next = false;
       ++dram_reqs;

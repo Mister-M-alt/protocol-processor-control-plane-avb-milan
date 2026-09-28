@@ -167,6 +167,7 @@ module pp_top_wrap (
     output logic        restore_fail_o,
     output logic        restore_blank_o,
     output logic        restore_closed_o,
+    output logic        restore_rb_o,
     output logic  [2:0] rs_cause_o,
     output logic  [1:0] restore_cause_o,
     output logic        nvm_alarm_o,
@@ -368,7 +369,9 @@ module pp_top_wrap (
     output logic  [7:0] dbg_d3_blank_o,
     //! the ADP engine's enable input: the requested enable once the
     //! restore released it
-    output logic        dbg_adp_enable_o
+    output logic        dbg_adp_enable_o,
+    //! the D3 roll-back strobe to both stores
+    output logic        dbg_d3_rb_rst_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
@@ -543,6 +546,7 @@ module pp_top_wrap (
       .restore_fail_o        (restore_fail_o),
       .restore_blank_o       (restore_blank_o),
       .restore_closed_o      (restore_closed_o),
+      .restore_rb_o          (restore_rb_o),
       .rs_cause_o            (rs_cause_o),
       .restore_cause_o       (restore_cause_o),
       .nvm_alarm_o           (nvm_alarm_o),
@@ -671,6 +675,7 @@ module pp_top_wrap (
   assign dbg_d3_refused_o = u_dut.u_aecp.u_d3.n_ref_r;
   assign dbg_d3_blank_o   = u_dut.u_aecp.u_d3.n_blank_r;
   assign dbg_adp_enable_o = u_dut.u_adp.entity_enable_i;
+  assign dbg_d3_rb_rst_o  = u_dut.u_aecp.d3_rb_rst_w;
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin
