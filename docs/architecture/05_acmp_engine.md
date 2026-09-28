@@ -413,7 +413,10 @@ command normally.
 without a listener probe every `T-ACMP-DA-RETRY`. One attempt per
 source per round is allowed, including probe/listener-triggered requests;
 pending work coalesces rather than accumulating. Initial enable and conflict
-start a new acquisition lifetime. The source picker rotates after each visit,
+start a new acquisition lifetime. A conflict in `DA_OK` queues allocation at
+once; a conflict cancelling an in-flight allocation discards and releases its
+grant, then waits for new demand or the next `T-ACMP-DA-RETRY` round.
+The source picker rotates after each visit,
 so a refused low index cannot starve a later source when an allocation spans
 several rounds. Disabled sources do not allocate. An owned DA is kept, and
 `BACKOFF` is never eligible: neither the conflict nor PCP delay is shortened.

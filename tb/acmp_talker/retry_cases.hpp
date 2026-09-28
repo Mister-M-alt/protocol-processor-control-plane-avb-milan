@@ -24,6 +24,8 @@ struct RetryChecks {
   void grant_boundary_cancel();
   void allocation_boundary_cancel();
   void release_does_not_pace_allocation();
+  void event_classes();
+  void absent_demand_pacing();
 
 };
 
@@ -389,6 +391,65 @@ void RetryChecks::release_does_not_pace_allocation() {
         "R15 release does not consume re-enabled lifetime allocation attempt");
 }
 
+// R16: every event class must act while commands remain continuously valid.
+// Query another source so command side effects cannot supply the event action.
+void RetryChecks::event_classes() {
+  static const char* const names[4] = {"conflict", "pcp", "freshness", "listener"};
+  for (int kind = 0; kind < 4; ++kind) {
+    Hn h; h.configure_the_talker_and_release_reset(); h.run(400);   // boot walk: 8 DAs
+    h.resps.clear();
+    CHECK(h.send(MT_PROBE, 1, C1, 0x501, L1, 8, FL_FC), "R16 %s seed probe", names[kind]);
+    CHECK(h.decl_mask() == 0x02, "R16 %s src1 declaring before stimulus (0x%02x)",
+          names[kind], h.decl_mask());
+    if (kind == 2) {                       // move past the freshness window, drain the round
+      h.d->now_ms_i = 100 + T_DAFRESH + 1; h.run(400);   // seed ping was at 100
+      CHECK(h.decl_mask() == 0x02, "R16 freshness gate still open before expiry");
+    }
+    // seed a GET_TX_STATE record for src3, then hold it valid continuously
+    CHECK(h.send(MT_GTXS, 3, C1, 0x777, 0, 0, 0), "R16 %s command seed", names[kind]);
+    h.resps.clear();
+    h.d->txn_valid_i = 1;
+    h.run(8);
+    switch (kind) {
+      case 0: h.d->maap_conflict_valid_i = 1; h.d->maap_conflict_src_i = 1; h.tick(); break;
+      case 1: h.d->srp_pcp_change_i = 1; h.tick(); break;
+      case 2: h.fire_expiry(1); break;
+      default: {
+        uint16_t v = h.d->srp_lsn_reg_state_i;
+        v = uint16_t((v & ~(3u << 4)) | (unsigned(LSN_READY) << 4));   // src2 listener
+        h.d->srp_lsn_reg_state_i = v; h.tick();
+      }
+    }
+    h.run(4 * (MAAP_TMO + 64));
+    const uint32_t mask = h.decl_mask();   // sampled with commands still presented
+    const size_t served = h.resps.size();
+    h.d->txn_valid_i = 0;
+    const uint32_t want = (kind == 3) ? 0x06u : 0x00u;
+    CHECK(served > 100, "R16 %s commands keep flowing (%zu)", names[kind], served);
+    CHECK(mask == want, "R16 %s event served under continuous commands (gates 0x%02x want 0x%02x)",
+          names[kind], mask, want);
+  }
+}
+
+// R17: an offer abandoned at a never-ready allocator consumes the round's
+// attempt too. Count offers, not accepts, while repeated probes keep time fixed.
+void RetryChecks::absent_demand_pacing() {
+  Hn h; h.configure_the_talker_and_release_reset();
+  h.d->maap_req_ready_i = 0; h.run(sweep_cycles);
+  CHECK(h.offers_alloc == N_SRC, "R17 absent startup offers every source once");
+  for (int round = 0; round < 2; ++round) {
+    const auto before = h.offers_alloc;
+    for (int repeat = 0; repeat < 3; ++repeat)
+      for (int src = 0; src < N_SRC; ++src)
+        probe(h, src, ST_DMAC_FAIL, 0, "R17 repeated absent probe");
+    h.run(sweep_cycles);
+    CHECK(h.offers_alloc == before, "R17 absent same-round probes cannot re-offer");
+    h.d->now_ms_i += retry_ms; h.run(sweep_cycles);
+    CHECK(h.offers_alloc == before + N_SRC,
+          "R17 absent next round offers every source once");
+  }
+}
+
 void Hn::check_retry_cases() {
   RetryChecks retry{checks, fails};
   retry.late_availability();
@@ -406,4 +467,6 @@ void Hn::check_retry_cases() {
   retry.grant_boundary_cancel();
   retry.allocation_boundary_cancel();
   retry.release_does_not_pace_allocation();
+  retry.event_classes();
+  retry.absent_demand_pacing();
 }

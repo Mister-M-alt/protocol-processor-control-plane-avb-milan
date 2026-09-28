@@ -210,6 +210,49 @@ MUTATIONS = {
     'tick_keeps_wait': (
         ("        retry_t0_r   <= now_ms_i;\n        retry_wait_r <= '0;", '        retry_t0_r   <= now_ms_i;'),
     ),
+    # Event-class fairness, absent offers, and explicitly classified controls.
+    'no_get_tx_state_response': (
+        ("MT_GTX_ST_C: begin\n          resp_valid_o = 1'b1;",
+         "MT_GTX_ST_C: begin\n          resp_valid_o = 1'b0;"),
+    ),
+    'elig_drop_conflict': (
+        ('!(|pe_off_r || |pe_conflict_r || |pe_pcp_r',
+         '!(|pe_off_r || |pe_pcp_r'),
+    ),
+    'elig_drop_pcp': (
+        ('!(|pe_off_r || |pe_conflict_r || |pe_pcp_r',
+         '!(|pe_off_r || |pe_conflict_r'),
+    ),
+    'elig_drop_tmr': (
+        ('|| |pe_tmr_r || |pe_lsn_r || |pe_rel_r',
+         '|| |pe_lsn_r || |pe_rel_r'),
+    ),
+    'elig_drop_lsn': (
+        ('|| |pe_tmr_r || |pe_lsn_r || |pe_rel_r',
+         '|| |pe_tmr_r || |pe_rel_r'),
+    ),
+    'init_busy_else_removed': (
+        ("            ev_initset_w = 1'b1;  // maap busy: keep the request pending",
+         ''),
+    ),
+    'kill_w_no_off': (
+        ('  assign maap_kill_w = !cfg_src_en_i[maap_src_r] || pe_off_r[maap_src_r]\n',
+         '  assign maap_kill_w = !cfg_src_en_i[maap_src_r]\n'),
+    ),
+    'init_ready_no_en': (
+        ('pe_init_r & cfg_src_en_i & ~retry_wait_r',
+         'pe_init_r & ~retry_wait_r'),
+    ),
+    'wait_only_on_accept': (
+        ("if ((state_r == S_EV_ACT) && ev_to_maap_w && !ev_maap_rel_w)\n"
+         "        retry_wait_r[ev_src_r] <= 1'b1;",
+         "if (maap_accept_w && !mreq_rel_r)\n"
+         "        retry_wait_r[mreq_src_r] <= 1'b1;"),
+    ),
+    'sticky_kill_ignores_accept': (
+        ('if (!maap_accept_w && (maap_busy_r || gp_valid_r) && maap_kill_w)',
+         'if ((maap_busy_r || gp_valid_r) && maap_kill_w)'),
+    ),
 }
 
 
@@ -217,6 +260,12 @@ MUTATIONS = {
 # single terms overlap by construction; removing the whole cause is tested
 # separately (kill_sticky_off / kill_no_conflict_at_all / kill_no_disable_at_all).
 EQUIVALENT_MUTATIONS = {
+    "sticky_kill_ignores_accept": "An accept requires availability: busy and gp_valid "
+        "are both clear, so the sticky-kill condition is false on that edge.",
+    "init_busy_else_removed": "INIT dispatch requires availability; no other request "
+        "can become accepted or create a grant before this walk reaches its action.",
+    "kill_w_no_off": "Disable is captured live while busy or holding a grant; an "
+        "older OFF is captured at accept, so its pending copy adds no cancellation.",
     "no_sticky_gp_window": "Until GRANT consumes gp_valid, OFF/CONFLICT cannot dispatch; "
         "their pending bits retain every cancellation through the grant action.",
     "accept_kill_zero": "Cancellation on accept is pending on the next busy edge; "
@@ -225,6 +274,11 @@ EQUIVALENT_MUTATIONS = {
         "latches the kill on the next busy edge before grant consumption.",
     "kill_no_pending_conflict": "A conflict after accept latches the live kill; "
         "an older pending conflict is captured by the accept-side kill expression.",
+}
+# This control may change cycle traces; it is not an equivalence claim.
+PERFORMANCE_MUTATIONS = {
+    "init_ready_no_en": "The action-side enable guard prevents disabled allocation; "
+        "the picker mask only avoids no-op visits and their command latency.",
 }
 REMOVED_EQUIVALENTS = {
     "no_reenable_wait_clear": "Removed !en_q_r: reset clears wait and each disabled "
@@ -293,6 +347,11 @@ def main() -> int:
                     raise RuntimeError(f"{name}: equivalence control failed")
                 print(f"EQUIVALENT {name}: baseline behavior retained", flush=True)
                 continue
+            if name in PERFORMANCE_MUTATIONS:
+                if rc or failures:
+                    raise RuntimeError(f"{name}: performance control failed")
+                print(f"PERFORMANCE {name}: documented bounds retained", flush=True)
+                continue
             if not rc or not failures:
                 raise RuntimeError(f"{name}: survived the committed suite")
             print(f"KILLED {name}: rc={rc}, {len(failures)} assertion failures", flush=True)
@@ -309,8 +368,10 @@ def main() -> int:
         if not args.only and missing:
             raise RuntimeError(f"new assertions without a killed witness: {sorted(missing)}")
     equivalents = len(set(selected) & set(EQUIVALENT_MUTATIONS))
-    print(f"PASS: {len(selected) - equivalents} mutants killed; "
-          f"{equivalents} equivalence controls; baseline and restored rc 0")
+    performance = len(set(selected) & set(PERFORMANCE_MUTATIONS))
+    print(f"PASS: {len(selected) - equivalents - performance} mutants killed; "
+          f"{equivalents} equivalence controls; {performance} performance controls; "
+          "baseline and restored rc 0")
     return 0
 
 

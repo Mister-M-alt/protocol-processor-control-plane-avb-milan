@@ -853,9 +853,9 @@ module KL_acmp_talker
         //! announcing and defending an address it still holds, until the
         //! event arrives. Dropping it is not: footnote c makes the range
         //! free only AFTER Release! reaches INITIAL.
-        //! Unlike EVC_INIT this does not re-set its own flag: pe_rel_r is
-        //! cleared by the ACCEPT, not by the dispatch, so a busy face
-        //! simply re-dispatches the still-set bit.
+        //! pe_rel_r is cleared only by ACCEPT, so a busy face re-dispatches
+        //! the still-set debt. EVC_INIT is dispatched only when the face
+        //! is available; its busy fallback is a redundant defensive branch.
         if (maap_avail_w) begin
           ev_to_maap_w  = 1'b1;
           ev_maap_rel_w = 1'b1;
