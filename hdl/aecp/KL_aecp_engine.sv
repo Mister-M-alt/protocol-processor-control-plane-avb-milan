@@ -313,8 +313,8 @@ module KL_aecp_engine
     //! restore's aggregate deadline in clock cycles from the accepted restore
     //! start (KL_aecp_nvm_writer; the top derives it: 1,000 ms)
     parameter int unsigned NVM_RS_AGG_CYC_P    = 100_000_000,
-    //! DR2c: the D3 writer's backoff after a failed write attempt, clocks
-    //! (500 ms at the F01.5 default P-CLK-HZ; the top derives it)
+    //! DR2c: the D3 writer's backoff after a failed write attempt, in clock
+    //! cycles (500 ms at the F01.5 default P-CLK-HZ; the top derives it)
     parameter int unsigned NVM_RETRY_BACKOFF_CYC_P = 50_000_000,
     //! derived — do not override
     localparam int unsigned RXS_W_C  = (RX_SLOTS_P > 1) ? $clog2(RX_SLOTS_P) : 1,

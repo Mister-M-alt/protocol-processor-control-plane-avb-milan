@@ -114,7 +114,7 @@
 //                index. The backend takes the record over at that done
 //                (parent D3 §7.1): nothing a slot does later reaches back.
 //
-//                THE DEBOUNCE is a first-dirty window of DEB_TICKS_P ticks
+//                THE DEBOUNCE is a first-dirty window of DEB_MS_P ticks
 //                (T-NVM-DEBOUNCE). Its close arms one burst that drains
 //                every dirty record in round-robin order.
 //
@@ -158,8 +158,9 @@ module KL_aecp_nvm_writer #(
     parameter int unsigned N_CLK_DOMAIN_P = 1,
     //! F07.8 layout_version, the one KL_acmp_nvm_shadow writes and accepts
     parameter logic [7:0]  LAYOUT_VER_P   = 8'h02,
-    //! T-NVM-DEBOUNCE in tick_i units (F08.1: 500 ms at a 1 ms tick)
-    parameter int unsigned DEB_TICKS_P    = 500,
+    //! T-NVM-DEBOUNCE in ms, counted on tick_i, the 1 ms tick (F08.1: 500
+    //! ms; the binding manager's DEB_TICKS_P is the same count)
+    parameter int unsigned DEB_MS_P       = 500,
     //! additional attempts after a failed first write (F07.9)
     parameter int unsigned RETRY_MAX_P    = 2,
     //! DR2c: clk_i cycles a failed attempt waits before the next; the top
@@ -218,9 +219,9 @@ module KL_aecp_nvm_writer #(
     output logic [63:0] sb_wdata_o,     //! write data / LOCATE key
     output logic [15:0] sb_didx_o,      //! descriptor index of a dynamic-state row
     input  wire         sb_ready_i,     //! a write was taken this cycle
-    input  wire         sb_rvalid_i,
-    input  wire  [63:0] sb_rdata_i,
-    input  wire         sb_err_i,
+    input  wire         sb_rvalid_i,    //! one cycle: the answer to the last request
+    input  wire  [63:0] sb_rdata_i,     //! the answer's data, with sb_rvalid_i
+    input  wire         sb_err_i,       //! with sb_rvalid_i: a LOCATE miss or a fetch error
 
     //! ---- the change snoop (the µCPU's accepted, changing write) -------------
     input  wire         chg_i,
@@ -898,7 +899,7 @@ module KL_aecp_nvm_writer #(
     end else begin
       if (set_any_w && !deb_open_r) begin
         deb_open_r <= 1'b1;
-        deb_cnt_r  <= DEB_TICKS_P;
+        deb_cnt_r  <= DEB_MS_P;
       end else if (deb_open_r && tick_i) begin
         if (deb_cnt_r <= 32'd1) begin
           deb_open_r <= 1'b0;

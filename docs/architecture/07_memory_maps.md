@@ -515,7 +515,7 @@ Every multi-byte field is big-endian. An unused map entry is eight `0xFF` bytes.
 flowchart TB
   subgraph runtime ["runtime commit (one record producer; the binding manager's is the same loop)"]
     chg["accepted live write that changes a record's projection {value, valid}:<br/>selectors 0-5 on the µCPU's side of the state bus (D3 §3.1);<br/>never a completion mark, never a restore write, never IDENTIFY"] --> dirty["set dirty[group, index]"]
-    dirty --> deb["first-dirty window DEB_TICKS_P (T-NVM-DEBOUNCE) arms one burst"]
+    dirty --> deb["first-dirty window of 500 ticks (T-NVM-DEBOUNCE) arms one burst"]
     deb --> acq["ACQUIRE: hold dispatch; wait for no program in flight"]
     acq --> latch["LATCH the row over the state bus, taint 0; release"]
     latch --> ser["frame F07.8 + crc16"] --> port["class-F WRITE through manager 1 (F02.8); attempt + 1"]
@@ -562,7 +562,7 @@ the phase-5 map commit beat) and are **not implemented yet**: they have no write
 their stages land, and their records are neither written nor restored by this release.
 
 The service loop, both producers alike: the first dirty record opens a
-`T-NVM-DEBOUNCE` window (`DEB_TICKS_P` ticks); its close arms one burst that drains every
+`T-NVM-DEBOUNCE` window (500 ticks of `tick_ms`: `DEB_TICKS_P`, `DEB_MS_P`); its close arms one burst that drains every
 dirty record in round-robin order. For each, the D3 writer holds AECP dispatch (ACQUIRE),
 waits until no program is in flight, then takes the state bus for one read of the row
 (LATCH) and releases both, so a latched value is always one a completed command left.
