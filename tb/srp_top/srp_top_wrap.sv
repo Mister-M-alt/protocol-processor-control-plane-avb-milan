@@ -57,6 +57,8 @@ module srp_top_wrap (
     output logic [1:0]  rsp_status_o,
     output logic [31:0] rsp_data_o,
 
+    input wire          block_alloc_i, //! delay allocation at the real slot-pool face
+
     // TX capture (the C++ side is the 03 §8 arbiter)
     output logic        txreq_valid_o,
     output logic [2:0]  txreq_slot_o,
@@ -98,6 +100,20 @@ module srp_top_wrap (
     output logic              over_limit_o,
 
     // observability
+    output wire [15:0] dbg_t_reg_o,
+    output wire [15:0] dbg_l_reg_o,
+    output wire [31:0] dbg_la_deadline_o,
+    output wire        dbg_la_pending_o,
+    output wire        dbg_la_action_o,
+    output wire        dbg_prepare_done_o,
+    output wire        dbg_la_expiry_o,
+    output wire        dbg_la_wait_o,
+    output wire        dbg_round_o,
+    output wire [4:0]  dbg_enc_state_o,
+    output wire [3:0]  dbg_enc_count_o,
+    output wire        dbg_rx_event_o,
+    output wire [3:0]  dbg_rx_la_o,
+    output wire        dbg_alloc_req_o,
     output logic [3:0]  dbg_vid_active_o,
     output logic        dbg_vlan_err_o,
     output logic        dbg_adm_round_o,
@@ -111,13 +127,28 @@ module srp_top_wrap (
     output logic        dbg_pdu_malformed_o
 );
 
+  assign dbg_t_reg_o = u_dut.u_talker.dbg_reg_state_o;
+  assign dbg_l_reg_o = u_dut.u_listener.dbg_reg_state_o;
+  assign dbg_la_deadline_o = u_dut.cad_dl_r[3];
+  assign dbg_la_pending_o = u_dut.la_msrp_pend_r;
+  assign dbg_la_expiry_o = u_dut.cad_hit_w && (u_dut.cad_exp_ix_w == 3);
+  assign dbg_prepare_done_o = u_dut.la_done_w;
+  assign dbg_la_action_o = u_dut.p_la_msrp_w;
+  assign dbg_la_wait_o = u_dut.la_wait_r;
+  assign dbg_round_o = u_dut.rnd_act_r;
+  assign dbg_enc_state_o = u_dut.u_encoder.st_r;
+  assign dbg_enc_count_o = u_dut.enc_cnt_msrp_w;
+  assign dbg_rx_event_o = u_dut.dec_evt_valid_w;
+  assign dbg_rx_la_o = u_dut.dec_la_msrp_w;
+  assign dbg_alloc_req_o = alloc_req_w;
+
   // Read-only probes: acceptance at the real service gate, its optimistic
   // window, the T-MRP-JOIN tick of the talker walk, and the free-running
   // slope phase. No forced service state.
   assign dbg_decl_o = u_dut.adm_invalidate_w & {8{u_dut.a_open_r}};
   assign dbg_withdraw_o = u_dut.adm_invalidate_w & {8{!u_dut.a_open_r}};
   assign dbg_opt_o = u_dut.opt_r;
-  assign dbg_join_tick_o = u_dut.p_join_fsm_r;
+  assign dbg_join_tick_o = u_dut.join_fsm_w;
   assign dbg_sample_index_o = 8'(u_dut.u_admission.cidx_r);
 
   // time compression: 1 ms = DIV_US x DIV_MS = 40 clk cycles; the 32-slot
@@ -250,7 +281,7 @@ module srp_top_wrap (
   KL_pp_tx_slots u_tx_slots (
       .clk_i         (clk_i),
       .rst_n         (rst_n),
-      .alloc_req_i   (alloc_req_w),
+      .alloc_req_i   (alloc_req_w && !block_alloc_i),
       .oversize_i    (oversize_w),
       .alloc_gnt_o   (alloc_gnt_w),
       .alloc_slot_o  (alloc_slot_w),

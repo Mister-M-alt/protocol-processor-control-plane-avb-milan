@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1087 checks.
+exit 0 = PASS, 1215 checks.
 
 The C++ model transcribes **Table 10-3 (applicant) and Table 10-4
 (registrar) independently as data matrices** — never DUT logic — including
@@ -101,8 +101,10 @@ Covered:
 Known model limits (recorded honestly): the harness drives the timer and
 VLAN faces itself, so it proves the *contract* (op/slot/owner/deadline,
 hold-until-ready), not KL_pp_timer_service/KL_srp_vlan integration; own
-LeaveAll ages registrars at the `leaveall_own_i` strobe rather than at the
-txLA! opportunity (≤ one T-MRP-JOIN early on a ≥ 4.5 s timer).
+LeaveAll input is the accepted `sLA` action supplied by the top, rather than
+timer expiry. Both separate and same-edge `sLA`/join inputs are walked through
+every applicant state; the real encoder/slot acceptance is covered by
+[srp_top](../srp_top/README.md).
 
 Mutation-proven 2026-08-11 (backup/sed/run/restore):
 
@@ -136,3 +138,18 @@ copies of the tree (one exact edit each, `make` with the pinned simulator):
 | The change strobe is never raised | 6 of 1087 FAIL (L2, L3 ×2, L6, L8, L9) |
 | The comparator always reads sink 0's latch | 2 of 1087 FAIL (L8, L9) |
 | Every hit sink is a candidate (no registered-Failed restriction) | 2 of 1087 FAIL (L1, L9) |
+
+Own LeaveAll acceptance (issue #127): the tx!/txLA! matrix also drives
+`leaveall_own_i` on the same edge as `join_tick_i`, as the integrated encoder
+now does. Omitting that same-edge action from either walk's txLA selection is
+mutation-tested by [the campaign](../srp_top/mutants.py). The separate action
+followed by a later join remains covered. Registrar receive priority and LV +
+rLv semantics are unchanged.
+
+| Mutation | Result |
+|---|---|
+| Talker walk omits same-edge sLA from txLA selection | 12 of 1203 FAIL (state transitions and exact messages) |
+| Listener walk omits same-edge sLA from txLA selection | 12 of 1211 FAIL (state transitions and exact messages) |
+
+The unmodified control executes 1215 checks; each mutation suppresses pushes
+and therefore some payload comparisons, so its executed tally is smaller.

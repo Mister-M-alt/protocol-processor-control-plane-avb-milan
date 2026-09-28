@@ -41,7 +41,12 @@
 //                in its own message after the drained ones — NumberOfValues
 //                0, a zero FirstValue of the full AttributeLength, no
 //                packed events (§10.8.2.8 f/g, §10.8.2.10.1 NOTE). The
-//                finished frame — Ethernet header included, per the 03 §8
+//                assembled MSRP participant uses a prepared round: reserve
+//                a slot, issue sLA (Table 10-5), collect the induced txLA!
+//                responses, then drain. A peer can supersede the action
+//                until slot acceptance; an accepted action is never replayed
+//                by TX backpressure. The finished frame — Ethernet header
+//                included, per the 03 §8
 //                destination-addressing row — lands in a KL_pp_tx_slots
 //                slot; the committed handle is offered to the (not yet
 //                landed) TX arbiter as txreq_valid_o/txreq_slot_o.
@@ -86,6 +91,13 @@ module KL_srp_encoder #(
     // ---- cadence strobes (timer expiries routed by the event router) ------
     input  wire  [1:0]   join_tick_i,    //! T-MRP-JOIN per participant: bit 0 MSRP, bit 1 MVRP
     input  wire  [1:0]   leaveall_i,     //! LeaveAllEvent injection request per participant
+
+    // MSRP sLA preparation: reserve a slot before issuing the local event.
+    // After done, collect the induced applicant walk until join_tick_i[0].
+    input  wire         la_prepare_i,        //! held request for an own MSRP round
+    input  wire         la_cancel_i,         //! peer superseded the unaccepted own round
+    output logic        la_prepare_done_o,   //! reserved slot available; start the applicant walk
+    output logic        la_tx_o,             //! sLA action, subset of prepare_done
 
     // ---- addressing -------------------------------------------------------
     input  wire  [47:0]  own_mac_i,      //! station MAC — Ethernet source address
@@ -247,26 +259,28 @@ module KL_srp_encoder #(
   logic [CNT_W_C-1:0] rd_idx_r;
 
   // ------------------------------------------------------------ FSM state
-  typedef enum logic [3:0] {
-    E_IDLE     = 4'd0,   // wait for a join tick with pending events
-    E_ALLOC    = 4'd1,   // request a standard TX slot
-    E_HDR      = 4'd2,   // Ethernet header + ProtocolVersion (15 B)
-    E_RD       = 4'd3,   // issue pending-table read
-    E_CAP      = 4'd4,   // capture entry: open / extend / break the run
-    E_BOUND    = 4'd5,   // message-boundary dispatch for a final run
-    E_MSGHDR   = 4'd6,   // AttributeType/-Length (+ list-length placeholder)
-    E_VHDR     = 4'd7,   // VectorHeader {LeaveAllEvent, NumberOfValues}
-    E_VFV      = 4'd8,   // FirstValue bytes
-    E_V3PK     = 4'd9,   // ThreePackedEvents bytes
-    E_V4PK     = 4'd10,  // FourPackedEvents bytes (Listener only)
-    E_MSGCLOSE = 4'd11,  // AttributeList EndMark
-    E_PATCH    = 4'd12,  // back-patch AttributeListLength (MSRP only)
-    E_PDUEND   = 4'd13,  // MRPDU EndMark
-    E_COMMIT   = 4'd14,  // commit the slot with the final length
-    E_TXREQ    = 4'd15   // offer the handle to the TX arbiter
+  typedef enum logic [4:0] {
+    E_IDLE     = 5'd0,   // wait for a join tick with pending events
+    E_ALLOC    = 5'd1,   // request a standard TX slot
+    E_HDR      = 5'd2,   // Ethernet header + ProtocolVersion (15 B)
+    E_RD       = 5'd3,   // issue pending-table read
+    E_CAP      = 5'd4,   // capture entry: open / extend / break the run
+    E_BOUND    = 5'd5,   // message-boundary dispatch for a final run
+    E_MSGHDR   = 5'd6,   // AttributeType/-Length (+ list-length placeholder)
+    E_VHDR     = 5'd7,   // VectorHeader {LeaveAllEvent, NumberOfValues}
+    E_VFV      = 5'd8,   // FirstValue bytes
+    E_V3PK     = 5'd9,   // ThreePackedEvents bytes
+    E_V4PK     = 5'd10,  // FourPackedEvents bytes (Listener only)
+    E_MSGCLOSE = 5'd11,  // AttributeList EndMark
+    E_PATCH    = 5'd12,  // back-patch AttributeListLength (MSRP only)
+    E_PDUEND   = 5'd13,  // MRPDU EndMark
+    E_COMMIT   = 5'd14,  // commit the slot with the final length
+    E_TXREQ    = 5'd15,  // offer the handle to the TX arbiter
+    E_COLLECT  = 5'd16   // reserved sLA slot: collect applicant responses
   } enc_st_e;
 
   enc_st_e             st_r;
+  logic                preparing_r;    // allocation is for a prepared MSRP round
   logic                cur_app_r;      // application being drained
   logic [CNT_W_C-1:0]  drain_n_r;      // snapshot of the pending count
   logic [SLOT_W_C-1:0] slot_r;         // granted TX slot
@@ -314,15 +328,21 @@ module KL_srp_encoder #(
 
   assign go0_w    = join_tick_i[0] || join_pend_r[0];
   assign go1_w    = join_tick_i[1] || join_pend_r[1];
-  assign start0_w = (st_r == E_IDLE) && go0_w && (cnt_msrp_r != '0);
-  assign start1_w = (st_r == E_IDLE) && !start0_w && go1_w && (cnt_mvrp_r != '0);
+  assign start0_w = (st_r == E_IDLE) && !la_prepare_i && go0_w && (cnt_msrp_r != '0);
+  assign start1_w = (st_r == E_IDLE) && !la_prepare_i && !start0_w && go1_w && (cnt_mvrp_r != '0);
 
   // the drain owns its application's table: pushes to it wait
-  assign busy_app_w  = (st_r != E_IDLE) && (cur_app_r == ev_app_i);
+  assign busy_app_w  = (st_r != E_IDLE) && (st_r != E_COLLECT)
+                    && (cur_app_r == ev_app_i);
   assign tgt_full_w  = (ev_app_i == APP_MSRP_C)
                      ? (cnt_msrp_r == CNT_W_C'(DEPTH_P))
                      : (cnt_mvrp_r == CNT_W_C'(DEPTH_P));
-  assign start_tgt_w = (ev_app_i == APP_MSRP_C) ? start0_w : start1_w;
+  assign start_tgt_w = (ev_app_i == APP_MSRP_C)
+                     ? (start0_w || ((st_r == E_COLLECT) && go0_w)
+                        || ((st_r == E_IDLE) && la_prepare_i)) : start1_w;
+  assign la_prepare_done_o = ((st_r == E_ALLOC) && preparing_r && alloc_gnt_i)
+                          || ((st_r == E_COLLECT) && la_prepare_i);
+  assign la_tx_o = la_prepare_done_o && ((st_r == E_COLLECT) || la_act_r) && !la_cancel_i;
   assign ev_ready_o  = !tgt_full_w && !busy_app_w && !start_tgt_w;
 
   always_ff @(posedge clk_i) begin : pend_write
@@ -491,6 +511,7 @@ module KL_srp_encoder #(
   always_ff @(posedge clk_i) begin : enc_fsm
     if (!rst_n) begin
       st_r            <= E_IDLE;
+      preparing_r     <= 1'b0;
       cur_app_r       <= APP_MSRP_C;
       drain_n_r       <= '0;
       slot_r          <= '0;
@@ -531,16 +552,17 @@ module KL_srp_encoder #(
       // ---- per-state transitions ----------------------------------------
       unique case (st_r)
         E_IDLE: begin
-          if (start0_w || start1_w) begin
-            cur_app_r   <= start0_w ? APP_MSRP_C : APP_MVRP_C;
+          if (start0_w || start1_w || la_prepare_i) begin
+            preparing_r <= la_prepare_i;
+            cur_app_r   <= (start0_w || la_prepare_i) ? APP_MSRP_C : APP_MVRP_C;
             drain_n_r   <= start0_w ? cnt_msrp_r : cnt_mvrp_r;
-            if (start0_w) join_pend_r[0] <= 1'b0;
+            if (start0_w || la_prepare_i) join_pend_r[0] <= 1'b0;
             else          join_pend_r[1] <= 1'b0;
             // the drain takes the application's pending LeaveAll (a
             // request landing mid-drain waits for the next MRPDU)
-            la_act_r <= start0_w ? (la_pend_r[0] || leaveall_i[0])
+            la_act_r <= la_prepare_i ? !la_cancel_i : start0_w ? (la_pend_r[0] || leaveall_i[0])
                                  : (la_pend_r[1] || leaveall_i[1]);
-            if (start0_w) la_pend_r[0] <= 1'b0;
+            if (start0_w || la_prepare_i) la_pend_r[0] <= 1'b0;
             else          la_pend_r[1] <= 1'b0;
             la_seen_r   <= 4'b0000;
             rd_idx_r    <= '0;
@@ -557,14 +579,40 @@ module KL_srp_encoder #(
           end
         end
         E_ALLOC: begin
+          // Cancellation never abandons an allocated handle. A superseded
+          // preparation collects an ordinary join round, waiting for content
+          // if empty (MRPDU requires a Message, IEEE 802.1Q-2014 10.8.1.2).
+          if (preparing_r && la_cancel_i) la_act_r <= 1'b0;
           if (alloc_gnt_i) begin
             slot_r <= alloc_slot_i;
             bidx_r <= '0;
-            st_r   <= E_HDR;
+            st_r   <= preparing_r ? E_COLLECT : E_HDR;
+          end
+        end
+        E_COLLECT: begin
+          // A canceled empty round retains its reserved handle until real
+          // content arrives. A later own round can reuse that handle; do
+          // not wait for another allocation or emit an empty MRPDU.
+          if (la_prepare_i) begin
+            la_act_r <= !la_cancel_i;
+            join_pend_r[0] <= 1'b0;
+          end else if (go0_w && ((cnt_msrp_r != '0) || la_act_r)) begin
+            drain_n_r <= cnt_msrp_r;
+            join_pend_r[0] <= 1'b0;
+            st_r <= E_HDR;
           end
         end
         E_HDR: begin
-          if (last_byte_w) st_r <= E_RD;
+          if (last_byte_w) begin
+            if (drain_n_r != '0) st_r <= E_RD;
+            else if (la_act_r) begin
+              run_type_r <= ATTR_TALKER_ADV_C;
+              run_first_r <= '0;
+              run_len_r <= '0;
+              close_for_pdu_r <= 1'b1;
+              st_r <= E_MSGHDR;
+            end else st_r <= E_PDUEND;
+          end
         end
         E_RD: begin
           st_r <= E_CAP;    // sync read lands next cycle
@@ -708,7 +756,7 @@ module KL_srp_encoder #(
       // ---- cadence latches (after the case: a tick landing on the same
       // cycle as a pend-clear must survive it; a LeaveAll landing on the
       // cycle its drain starts was taken by that drain) --------------------
-      if (join_tick_i[0] && !start0_w) join_pend_r[0] <= 1'b1;
+      if (join_tick_i[0] && !start0_w && (st_r != E_COLLECT)) join_pend_r[0] <= 1'b1;
       if (join_tick_i[1] && !start1_w) join_pend_r[1] <= 1'b1;
       if (leaveall_i[0] && !start0_w) la_pend_r[0] <= 1'b1;
       if (leaveall_i[1] && !start1_w) la_pend_r[1] <= 1'b1;
