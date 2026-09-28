@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <string>
 #include <utility>
 #include <vector>
 #include "Vpp_top_wrap.h"

@@ -805,6 +805,41 @@ struct D3ServicePhase {
   }
 };
 
+// ---- an image whose AUDIO_UNIT lists more rates than the suite's two ----
+//! The suite's image re-packed by the same independent packer with one
+//! change: the AUDIO_UNIT's sampling_rates list (count at 142, entries from
+//! 144, IEEE 1722.1 Table 7-5) is `rates`, its descriptor 4 bytes longer a
+//! rate. Every other descriptor and name is copied out of the suite's image.
+static std::vector<uint8_t> d3_image_with_rates(const std::vector<uint8_t>& img,
+                                                std::vector<ImgEnt> ents,
+                                                const std::vector<uint32_t>& rates) {
+  auto rd16 = [&img](size_t o) { return uint16_t((img[o] << 8) | img[o + 1]); };
+  std::vector<std::vector<uint8_t>> bodies;
+  for (auto& e : ents) {
+    for (uint16_t k = 0; k < e.count; ++k) {
+      const auto* at = &img[e.off + size_t(k) * e.stride];
+      std::vector<uint8_t> body(at, at + e.len);
+      if (e.type == 0x0002) {
+        body.resize(144 + 4 * rates.size(), 0);
+        putbe(&body[142], uint16_t(rates.size()), 2);
+        for (size_t r = 0; r < rates.size(); ++r) putbe(&body[144 + 4 * r], rates[r], 4);
+        e.len = uint16_t(body.size());
+        e.stride = uint16_t((body.size() + 7) & ~size_t(7));
+      }
+      bodies.push_back(body);
+    }
+  }
+  std::vector<std::string> names;
+  const uint32_t nm_off = rd32(&img[16]);
+  for (uint16_t i = 0; i < rd16(10); ++i) {
+    const auto* at = &img[nm_off + 64u * i];
+    names.emplace_back(at, std::find(at, at + 64, uint8_t(0)));
+  }
+  std::vector<const char*> name_ptrs;
+  for (const auto& n : names) name_ptrs.push_back(n.c_str());
+  return build_image(ents, bodies, name_ptrs, rd16(6));
+}
+
 // ==== D3R. the restore transaction: both passes, the rules, the verdicts ===
 struct D3RestorePhase {
   H& h;
@@ -819,9 +854,12 @@ struct D3RestorePhase {
   static constexpr long RS_TMO = clk_ms(20);
   static constexpr long AGG = clk_ms(1000);
 
+  //! the suite image's descriptor index, to re-pack it (D3R3b)
+  const std::vector<ImgEnt> image_ents;
+
   D3RestorePhase(H& tally, const std::vector<uint8_t>& img,
                  const std::vector<ImgEnt>& ents)
-      : h(tally), x(model.get()), image(img) {
+      : h(tally), x(model.get()), image(img), image_ents(ents) {
     for (const auto& e : ents)
       if (e.type == 0x0002) au_addr = DESC_BASE + e.off;
   }
@@ -1148,6 +1186,36 @@ struct D3RestorePhase {
           "their valid flags (applied %u)", unsigned(d->dbg_d3_applied_o));
   }
 
+  // D3R3b: the rate rule walks the AUDIO_UNIT's list as the SET program
+  // does, entries 0 to count - 1 and at most eight of them, a lane (two
+  // entries) at a time. Over an image listing ten rates, the eighth entry
+  // (one lane past the first three) is accepted and the ninth, listed but
+  // past the bound, is refused.
+  void r3b_the_rate_walk_reaches_its_eighth_entry() {
+    const std::vector<uint32_t> rates{32000, 44100, 48000, 88200, 96000,
+                                      176400, 192000, 24000, 16000, 8000};
+    const auto ten = d3_image_with_rates(image, image_ents, rates);
+    const std::array<size_t, 2> picks{7, 8};
+    for (const size_t k : picks) {
+      x.dram = ten;
+      x.erase_nvm();
+      power_cycle();
+      seed(0x02, d3_record(0x02, rates[k], 4));
+      const Boot b = boot(6 * RS_TMO);
+      const auto* d = x.d;
+      const bool in_bound = k < 8;
+      CHECK(b.done > b.release && !d->restore_fail_o
+                && d->dbg_d3_applied_o == (in_bound ? 1u : 0u)
+                && d->dbg_d3_refused_o == (in_bound ? 0u : 1u)
+                && bool(d->dbg_dyn_rate_v_o) == in_bound
+                && (!in_bound || d->dbg_dyn_rate_o == rates[k]),
+            "D3R3b entry %zu of 10 (%u Hz): applied %u refused %u, rate %u valid %u",
+            k, rates[k], unsigned(d->dbg_d3_applied_o), unsigned(d->dbg_d3_refused_o),
+            unsigned(d->dbg_dyn_rate_o), unsigned(d->dbg_dyn_rate_v_o));
+    }
+    x.dram = image;
+  }
+
   //! a boot like boot(), running `hook` after every clock
   template <class Hook>
   Boot boot_with(long cycles, Hook hook) {
@@ -1281,6 +1349,34 @@ struct D3RestorePhase {
               && std::equal(x.nv_mem[0x50].begin(), x.nv_mem[0x50].begin() + 12,
                             d3_record(0x50, 4242424, 4).begin()),
           "D3R5: once the device ends the drained read a later SET persists");
+  }
+
+  // D3R5b: pass 1's header READ of 0x50 is never answered. The deadline
+  // aborts pass 1 (cause 3) and rolls back to DEFAULTS, abandoning the
+  // granted READ to the arbiter's drain; once the device ends it, a later
+  // SET persists and nothing stays unflushed.
+  void r5b_a_pass_1_read_held_past_its_deadline_is_drained() {
+    const Boot b = faulted_boot(3, 0, true);
+    const auto* d = x.d;
+    CHECK(b.done > b.release && d->restore_fail_o && d->rs_cause_o == 3
+              && d->restore_rb_o && !d->restore_closed_o && rows_cleared()
+              && !d->dbg_d3_own_o,
+          "D3R5b: pass 1's silent READ aborts at the deadline: DEFAULTS, cause %u, "
+          "rolled back %u", unsigned(d->rs_cause_o), unsigned(d->restore_rb_o));
+    const bool drained_busy = x.nv_st == H::NvState::NV_READ && x.d->dbg_nvm_drain_o;
+    x.nv_rd_fault = false;
+    x.idle(200);
+    const size_t ops0 = x.nvm_ops.size();
+    const bool set = ok(AEM_SET_STREAM_INFO, D3ServicePhase::pl_ptof(0, 4545454));
+    for (long c = 0; c < 2 * WINDOW; ++c) x.step();
+    int writes = 0;
+    for (size_t i = ops0; i < x.nvm_ops.size(); i++)
+      writes += x.nvm_ops[i].op == 1 && x.nvm_ops[i].region == 0x50;
+    CHECK(drained_busy && set && writes == 1 && !x.d->d3_unflushed_o
+              && std::equal(x.nv_mem[0x50].begin(), x.nv_mem[0x50].begin() + 12,
+                            d3_record(0x50, 4545454, 4).begin()),
+          "D3R5b: once the device ends the drained pass-1 READ a later SET "
+          "persists (%d WRITEs, unflushed %u)", writes, unsigned(x.d->d3_unflushed_o));
   }
 
   // D3R6: the restore meets an erased device (V10) and an unframed record:
@@ -1668,6 +1764,26 @@ struct D3RestorePhase {
     }
   }
 
+  // D3R8b: the integrator's format judge is a watched wait too. It never
+  // answers in pass 1 (the Milan-info face stuck), and the per-wait
+  // deadline, not the aggregate, ends the walk: rolled back to DEFAULTS,
+  // cause 3, within the deadline plus the walk to the judge.
+  void r8b_a_silent_format_judge_is_watched() {
+    fresh();
+    seed(0x00, d3_record(0x00, 1, 2));
+    seed(0x30, d3_record(0x30, H::SFMT_MAIN_C, 8));
+    x.gsi_stuck = true;
+    const Boot b = boot(8 * RS_TMO);
+    x.gsi_stuck = false;
+    const auto* d = x.d;
+    CHECK(b.done > b.release && b.done - b.release < 2 * RS_TMO && d->restore_fail_o
+              && d->rs_cause_o == 3 && d->restore_rb_o && rows_cleared()
+              && !d->dbg_d3_own_o,
+          "D3R8b: a silent judge ends DEFAULTS at %ld, the release at %ld, cause "
+          "%u, rolled back %u", b.done, b.release, unsigned(d->rs_cause_o),
+          unsigned(d->restore_rb_o));
+  }
+
   // D3R9: a SET that waits through the restore wins by coming later. The
   // offset saved as A is restored, then the SET of B held since before the
   // walk runs, and the next flush saves B.
@@ -1699,12 +1815,15 @@ struct D3RestorePhase {
     r1_every_group_survives_a_power_cycle();
     r2_the_set_rules_and_the_frame_refuse();
     r3_the_set_rules_accept();
+    r3b_the_rate_walk_reaches_its_eighth_entry();
     r4_the_passes_agree_record_by_record();
     r4b_blank_then_whole_disagrees();
     r5_a_pass_0_fault_applies_nothing();
+    r5b_a_pass_1_read_held_past_its_deadline_is_drained();
     r6_blank_is_honest();
     r7_a_rule_fetch_fault_aborts();
     r8_the_deadline_boundary();
+    r8b_a_silent_format_judge_is_watched();
     r9_a_held_set_follows_the_restore();
     r10_a_late_burst_is_waited_out();
     r11_a_roll_back_keeps_the_restored_binding();

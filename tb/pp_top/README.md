@@ -117,7 +117,11 @@ tally.
   another record's id, a u64 group carrying four bytes) are refused
   before any rule; the neighbour offset applies; COMPLETE with exactly 1
   applied and 10 refused. **D3R3** configuration 0, the rate list's second
-  entry and clock source 0 are accepted. **D3R4** a record read whole in
+  entry and clock source 0 are accepted. **D3R3b** the rate rule walks the
+  AUDIO_UNIT's list as the SET program does, a lane (two entries) at a time
+  and at most eight entries: over the suite's image re-packed with a
+  ten-rate list, the eighth entry (read from the fourth lane) is restored
+  and the ninth, listed but past the bound, is refused. **D3R4** a record read whole in
   pass 0 and erased at rest before pass 1 aborts (cause 5, the passes
   agree record by record) after an earlier record was applied, and the
   roll-back resets both stores: DEFAULTS (`restore_rb_o`), every row at its
@@ -129,13 +133,19 @@ tally.
   error on a header (cause 2), a payload torn after two bytes (cause 1),
   and a header the device never answers, abandoned at the deadline to
   the arbiter's drain (cause 3); once the device answers the drained read
-  a later SET persists. **D3R6** an erased device restores blank and not
+  a later SET persists. **D3R5b** the same containment in pass 1: its header
+  READ of 0x50 never answered, the deadline aborts (cause 3) and rolls back
+  to DEFAULTS, the READ goes to the drain, and once the device ends it a
+  later SET persists with nothing left unflushed. **D3R6** an erased device restores blank and not
   failed, an unframed record is its default, and the one saved record
   whose every read ends in the device's error is a failure with cause 2,
   never blank. **D3R7** the rate
   rule's AUDIO_UNIT fetch answers an error beat: the restore aborts
   (cause 6), never a refused value, and rolls back. **D3R8** a READ granted 200 cycles
   inside the per-wait deadline completes; 200 cycles past it aborts (cause 3).
+  **D3R8b** the integrator's format judge is a watched wait: stuck in pass 1,
+  the per-wait deadline (not the aggregate) rolls the walk back to DEFAULTS,
+  cause 3, within twice the deadline of the release.
   The deadline is the top's own derivation, never an override: 20 ms of the
   wrap's `CLK_HZ_P` (1,000,001 Hz) is ceil(20,000.02) = 20,001 clocks. **D3R9** a SET held since before the walk runs after
   the restore applied the saved value, is in force, and the next flush
