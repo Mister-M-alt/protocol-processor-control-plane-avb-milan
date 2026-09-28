@@ -46,6 +46,12 @@
 // TB shape
 // ---------------------------------------------------------------------------
 constexpr int         MS_CYC = 100;                  // wrap: 1 ms = 100 clk
+//! the wrap's nominal P-CLK-HZ (TB_CLK_HZ_C): the top derives its restore
+//! deadlines from it, and the suite re-derives them from the ruled ms
+constexpr long        CLK_HZ = 1000001;
+//! t ms of CLK_HZ in clocks, rounded up: ceil(CLK_HZ x t / 1000), the one
+//! conversion the parent D3 contract's DR3a states
+constexpr long clk_ms(long ms) { return (CLK_HZ * ms + 999) / 1000; }
 //! the wrap's compile-time memory map (07 §3.3 image, 03 §7 response buffer)
 constexpr uint32_t    DESC_BASE  = 0x20000000u;
 constexpr uint32_t    RESP_BASE  = 0x20100000u;
@@ -711,6 +717,10 @@ struct H {
   uint16_t nv_rd_pos = 0;
   //! cycles the next command grant is withheld (a slow device), 0 = none
   int      nv_gnt_hold = 0;
+  //! when non-zero, EVERY command's grant is withheld this many cycles
+  //! from the cycle the device first sees it (a device slow on each wait)
+  int      nv_gnt_every = 0;
+  bool     nv_gnt_seen = false;
   //! a WRITE whose bytes are all taken completes no earlier than this
   //! harness cycle (-1: at once), so a completion can be placed on a chosen
   //! clock edge
@@ -1443,9 +1453,14 @@ struct H {
     d->nvm_dev_err_i = 0;
     d->nvm_dev_busy_i = (nv_st != NvState::NV_IDLE);
     if (nv_st == NvState::NV_IDLE) {
+      if (d->nvm_dev_req_o && nv_gnt_every > 0 && !nv_gnt_seen) {
+        nv_gnt_hold = nv_gnt_every;
+        nv_gnt_seen = true;
+      }
       if (d->nvm_dev_req_o && nv_gnt_hold > 0) {
         --nv_gnt_hold;
       } else if (d->nvm_dev_req_o) {
+        nv_gnt_seen = false;
         d->nvm_dev_gnt_i = 1;
         nv_cur = NvmOp{ static_cast<int>(d->nvm_dev_op_o),
                         static_cast<uint8_t>(d->nvm_dev_region_o),
@@ -9406,13 +9421,14 @@ struct Suite {
 
   // BW3 (issue #93, S3): the device stops answering in the middle of the
   // walk, after sink 0's saved record was read and stored. The walk fails
-  // WHOLE at its read deadline (the wrap's NVM_RS_TMO_CYC_P), nothing is
-  // preloaded, and the listener, released on the failed terminal, answers
-  // the GET it held on the vendor default, before the entity is enabled.
-  // When the device finally serves the abandoned read the arbiter drains
-  // it; a later BIND then persists, and the next reset restores that.
+  // WHOLE at its read deadline (the top's NVM_RS_TMO_CYC_P, 20 ms of the
+  // wrap's clock), nothing is preloaded, and the listener, released on the
+  // failed terminal, answers the GET it held on the vendor default, before
+  // the entity is enabled. When the device finally serves the abandoned
+  // read the arbiter drains it; a later BIND then persists, and the next
+  // reset restores that.
   void boot_window_read_deadline() {
-    constexpr long BW_TMO = 20000;
+    constexpr long BW_TMO = clk_ms(20);
     const uint64_t BW_TK2 = 0x00B0B0B0B0B00002ULL;
     const uint16_t BW_UID2 = 0x0B0B;
     h.reset();

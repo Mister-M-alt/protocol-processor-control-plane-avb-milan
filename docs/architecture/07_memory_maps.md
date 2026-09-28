@@ -647,13 +647,21 @@ program that would set it (configuration below `configurations_count`; a rate on
 AUDIO_UNIT's list; a clock source below `clock_sources_count`; a format the integrator's
 judge supports; a presentation offset with bit 31 clear) and writes an accepted value
 with its valid flag. A framed record whose frame or value fails keeps its default and the
-walk goes on. Every restore wait is watched by one count of stalled clocks.
+walk goes on. Every restore wait is watched by one count of stalled clocks, and the whole
+restore by a second count: `P-NVM-RS-AGG-CYC` clocks (1,000 ms, `T-NVM-RS-AGGREGATE`)
+from the accepted restore start (`restore_go_i`), the binding walk, both passes and the
+roll-back included. At that bound the D3 walk takes the path a stalled wait takes in its
+state, once, in the first clock at or after the bound whose wait has no event in hand; a
+device that answers every wait just inside its deadline therefore ends there (parent DR3a,
+ratified as an enforced bound).
 
 | Event | Cause (`rs_cause_o`) | Terminal |
 |---|---|---|
 | the image cannot be proven (the LOCATE errs or finds no validated image) | 7 | **CLOSED**: fail, never done; AECP dispatch and ADP held until reset; the listener stays released |
-| in pass 0: a DEVICE err, a torn read, a stall of `P-NVM-RS-TMO-CYC` clocks (a granted read abandoned to the drain) | 2, 1, 3 | **DEFAULTS**: done and fail; nothing was applied |
+| the aggregate bound before the image is proven (the binding walk still running, or the image proof) | 3 | **CLOSED**, as above |
+| in pass 0: a DEVICE err, a torn read, a stall of `P-NVM-RS-TMO-CYC` clocks or the aggregate bound (a granted read abandoned to the drain) | 2, 1, 3 | **DEFAULTS**: done and fail; nothing was applied |
 | in pass 1: any of those, a record whole in one pass and not the other, or a descriptor read a value rule needs that errs (never a refusal) | 2, 1, 3, 5, 6 | **ROLL-BACK**, then DEFAULTS or CLOSED |
+| during the roll-back: its debt wait or re-LOCATE stalls `P-NVM-RS-TMO-CYC` clocks, or the aggregate bound | 3 | **CLOSED** |
 | an UNFRAMED err with nothing forwarded | - | that record is blank; the walk continues |
 | pass 1 ends | - | **COMPLETE**: done |
 

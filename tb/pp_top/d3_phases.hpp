@@ -677,7 +677,10 @@ struct D3RestorePhase {
   uint32_t au_addr = 0;            //! the AUDIO_UNIT descriptor in the image
   uint16_t seq = 0xD600;
   static constexpr long WINDOW = 500L * MS_CYC;
-  static constexpr long RS_TMO = 20000;         //! the wrap's NVM_RS_TMO_CYC_P
+  //! the top's NVM_RS_TMO_CYC_P and NVM_RS_AGG_CYC_P, both derived from the
+  //! wrap's clock (DR3a: 20 ms per wait, 1,000 ms in all)
+  static constexpr long RS_TMO = clk_ms(20);
+  static constexpr long AGG = clk_ms(1000);
 
   D3RestorePhase(H& tally, const std::vector<uint8_t>& img,
                  const std::vector<ImgEnt>& ents)
@@ -713,6 +716,8 @@ struct D3RestorePhase {
     x.nv_rd_region = -1;
     x.nv_rd_fault = false;
     x.nv_gnt_hold = 0;
+    x.nv_gnt_every = 0;
+    x.nv_gnt_seen = false;
     x.nv_st = H::NvState::NV_IDLE;
     x.reset();
     x.nv_st = H::NvState::NV_IDLE;
@@ -1273,12 +1278,78 @@ struct D3RestorePhase {
     x.d->entity_enable_i = 0;
   }
 
+  //! every D3 record framed, so each costs its header and payload READs
+  void seed_every_record() {
+    seed(0x00, d3_record(0x00, 1, 2));
+    seed(0x02, d3_record(0x02, 48000, 4));
+    seed(0x0A, d3_record(0x0A, 1, 2));
+    for (uint8_t k = 0; k < 8; ++k) {
+      seed(uint8_t(0x30 + k), d3_record(uint8_t(0x30 + k), H::SFMT_MAIN_C, 8));
+      seed(uint8_t(0x40 + k), d3_record(uint8_t(0x40 + k), H::SFMT_MAIN_C, 8));
+      seed(uint8_t(0x50 + k), d3_record(uint8_t(0x50 + k), 1000000u + k, 4));
+    }
+  }
+
+  // D3R13 (DR3a, ratified as an enforced bound): a device that grants every
+  // request, the binding walk's included, 200 cycles inside the per-wait
+  // deadline trips no wait's deadline, and the restore still ends at the
+  // aggregate bound. Every record saved puts the bound in pass 0: DEFAULTS
+  // registered by the AGG-th clock counting the one that took restore_go_i
+  // as the first, cause 3, nothing applied, the READ in hand abandoned to
+  // the drain, and once the device ends it a later SET persists. Over an
+  // erased device the bound falls in pass 1, which rolls back to DEFAULTS
+  // within one per-wait deadline of it. Without the counter the first walk
+  // runs to about 2.3 million clocks.
+  void r13_the_aggregate_bound() {
+    fresh();
+    seed_every_record();
+    x.nv_gnt_every = static_cast<int>(RS_TMO - 200);
+    long d3_wait = 0;
+    const Boot b = boot_with(AGG + 4 * RS_TMO, [&] {
+      d3_wait = std::max(d3_wait, long(x.d->dbg_d3_wd_o));
+    });
+    const auto* d = x.d;
+    CHECK(b.done + 1 == AGG && d->restore_fail_o && d->rs_cause_o == 3
+              && !d->restore_rb_o && !d->restore_closed_o
+              && d->dbg_d3_applied_o == 0 && rows_cleared() && !d->dbg_d3_own_o
+              && d3_wait < RS_TMO,
+          "D3R13 pass 0: DEFAULTS at clock %ld of the aggregate %ld, cause %u, "
+          "rolled back %u, applied %u, the longest wait %ld of %ld",
+          b.done + 1, AGG, unsigned(d->rs_cause_o), unsigned(d->restore_rb_o),
+          unsigned(d->dbg_d3_applied_o), d3_wait, RS_TMO);
+    x.nv_gnt_every = 0;
+    const bool draining = x.d->dbg_nvm_drain_o;
+    for (long c = 0; c < RS_TMO; ++c) x.step();
+    const size_t ops0 = x.nvm_ops.size();
+    const bool set = ok(AEM_SET_STREAM_INFO, D3ServicePhase::pl_ptof(0, 4343434));
+    for (long c = 0; c < 2 * WINDOW; ++c) x.step();
+    int writes = 0;
+    for (size_t i = ops0; i < x.nvm_ops.size(); i++)
+      writes += x.nvm_ops[i].op == 1 && x.nvm_ops[i].region == 0x50;
+    CHECK(draining && set && writes == 1
+              && std::equal(x.nv_mem[0x50].begin(), x.nv_mem[0x50].begin() + 12,
+                            d3_record(0x50, 4343434, 4).begin()),
+          "D3R13 pass 0: the READ in hand at the bound was drained, and once "
+          "the device ends it a later SET persists");
+    fresh();
+    x.nv_gnt_every = static_cast<int>(RS_TMO - 200);
+    const Boot e = boot(AGG + 4 * RS_TMO);
+    x.nv_gnt_every = 0;
+    CHECK(e.done + 1 > AGG && e.done + 1 <= AGG + RS_TMO && d->restore_fail_o
+              && d->rs_cause_o == 3 && d->restore_rb_o && !d->restore_closed_o
+              && rows_cleared() && !d->dbg_d3_own_o,
+          "D3R13 pass 1: rolled back to DEFAULTS at clock %ld, the bound %ld, "
+          "cause %u, rolled back %u", e.done + 1, AGG, unsigned(d->rs_cause_o),
+          unsigned(d->restore_rb_o));
+  }
+
   // ---- DR3a: restore durations and the longest waits (informational) ----
-  // The parent D3 contract's DR3a asks the processor lane to MEASURE its
-  // per-wait (20 ms) and aggregate (1,000 ms) candidates, which the manager
-  // then ratifies or revises. These lines are printed, never graded: every
-  // figure is clk_i cycles of this bench from restore_go_i, with this
-  // bench's device and memory models (their latencies are named per line).
+  // The parent D3 contract's DR3a had the processor lane MEASURE its
+  // per-wait (20 ms) and aggregate (1,000 ms) candidates; the manager
+  // ratified both, the aggregate as an enforced bound (D3R13 grades it).
+  // These lines are printed, never graded: every figure is clk_i cycles of
+  // this bench from restore_go_i, with this bench's device and memory
+  // models (their latencies are named per line).
   struct Span {
     long release = -1;        //! go to the admission gate's release
     long terminal = -1;       //! go to COMPLETE, DEFAULTS or CLOSED
@@ -1316,7 +1387,8 @@ struct D3RestorePhase {
   }
   void dr3a_measurements() {
     std::printf("DR3a: cycles from restore_go_i; NVM model grants at once and "
-                "streams a byte a cycle; RS_TMO %ld\n", RS_TMO);
+                "streams a byte a cycle; CLK_HZ %ld, RS_TMO %ld, AGG %ld\n",
+                CLK_HZ, RS_TMO, AGG);
     const std::array<int, 2> lats{31, 143};
     for (const int lat : lats) {
       x.dram_lat = lat;
@@ -1375,6 +1447,11 @@ struct D3RestorePhase {
     power_cycle();
     report("descriptor memory silent", measured(8 * RS_TMO));
     x.dram_silent = false;
+    fresh();
+    seed_every_record();
+    x.nv_gnt_every = static_cast<int>(RS_TMO - 200);
+    report("every grant 200 inside the per-wait deadline", measured(AGG + 4 * RS_TMO));
+    x.nv_gnt_every = 0;
     //! DR2a, this producer's share: one real SET, no other traffic, from
     //! the record reading pending to the port's done of its WRITE (the
     //! backend's window, where the integrator's own debounce begins)
@@ -1460,5 +1537,6 @@ struct D3RestorePhase {
     r10_a_late_burst_is_waited_out();
     r11_a_roll_back_keeps_the_restored_binding();
     r12_a_roll_back_that_cannot_prove_the_image_closes();
+    r13_the_aggregate_bound();
   }
 };

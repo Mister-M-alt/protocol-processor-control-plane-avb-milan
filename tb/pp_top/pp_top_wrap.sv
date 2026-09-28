@@ -14,7 +14,10 @@
 //                (DIV_US 2 x DIV_MS 50), which keeps the 89-slot deadline
 //                sweep (91 cycles) inside the ms tick while T-ADP-DELAY(-
 //                START), T-ADP-ADV, T-ACMP-DELAY, T-MRP-JOIN and the NVM
-//                debounce all run for real.
+//                debounce all run for real. The restore deadlines are not
+//                compressed that way: the top derives them from CLK_HZ_P,
+//                set here to 1,000,001 Hz, and no override stands in for
+//                the derivation.
 //
 //                The one decision that matters: the talker source shape is
 //                tied HERE (all 8 sources enabled, stream_id k =
@@ -381,12 +384,22 @@ module pp_top_wrap (
     //! the binding manager's rs_wd_r): the DR3a measurement reads their
     //! maxima, the longest single wait each walk met
     output logic [31:0] dbg_d3_wd_o,
-    output logic [31:0] dbg_bind_wd_o
+    output logic [31:0] dbg_bind_wd_o,
+    //! the NVM arbiter is draining an abandoned READ (a restore deadline's)
+    output logic        dbg_nvm_drain_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
   localparam int unsigned TB_DIV_US_C = 2;
   localparam int unsigned TB_DIV_MS_C = 50;
+  //! the nominal P-CLK-HZ the saved-state times are DERIVED from (the
+  //! prescaler above is overridden, so the timebase does not use it). A
+  //! 1 MHz clock, the parent D3 model's, makes the ratified 20 ms per-wait
+  //! deadline about 20,000 clocks and the 1,000 ms aggregate 50 of them;
+  //! the extra hertz is odd on purpose: ceil(CLK_HZ_P x t / 1000) then
+  //! differs by one clock from a floor or from a count of 1 ms ticks, so
+  //! the sections that time them grade the top's own derivation
+  localparam int unsigned TB_CLK_HZ_C = 1_000_001;
 
   // talker source shape (see banner)
   logic [7:0]       cfg_src_en_w;
@@ -409,6 +422,7 @@ module pp_top_wrap (
       //! the second build's verification-only fixture (see the banner)
       .SRP_DOM_DEF_VID_P (`PP_TOP_SRP_DOM_DEF_VID),
 `endif
+      .CLK_HZ_P     (TB_CLK_HZ_C),
       .TIM_DIV_US_P (TB_DIV_US_C),
       .TIM_DIV_MS_P (TB_DIV_MS_C),
       //! TIM compression for the registration/lock deadlines, same reason
@@ -417,11 +431,8 @@ module pp_top_wrap (
       //! million compressed cycles for them
       .REG_TL_TIMEOUT_MS_P (400),
       .LOCK_TIMEOUT_MS_P   (400),
-      //! the boot restore walk's read deadline, in clocks. The product
-      //! default is 20 ms of P-CLK-HZ, two million steps of this bench; a
-      //! record read of its device model takes well under a hundred, so
-      //! section BW3 sees the deadline expire at a hundredth of that
-      .NVM_RS_TMO_CYC_P    (20_000),
+      //! NVM_RS_TMO_CYC_P and NVM_RS_AGG_CYC_P are NOT overridden: the top
+      //! derives 20,001 and 1,000,001 clocks from TB_CLK_HZ_C
       //! DR2c's 500 ms backoff in this bench's compressed time (1 ms = 100
       //! clk), as the debounce runs: the product derives ceil(CLK_HZ_P / 2)
       .NVM_RETRY_BACKOFF_CYC_P (50_000),
@@ -691,6 +702,7 @@ module pp_top_wrap (
   assign dbg_d3_rb_rst_o  = u_dut.u_aecp.d3_rb_rst_w;
   assign dbg_d3_wd_o      = u_dut.u_aecp.u_d3.wd_r;
   assign dbg_bind_wd_o    = u_dut.u_nvm_shadow.rs_wd_r;
+  assign dbg_nvm_drain_o  = u_dut.nvm_drain_nc_w;
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin

@@ -87,7 +87,8 @@ stream counts in F01.5 are product choices; the top supplies implementation defa
 | `DESC_IDX_ENTRIES_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.1 descriptor store](../architecture/07_memory_maps.md#sec-desc-memory) | Cached index-map capacity, per (configuration, descriptor type) |
 | `DESC_NAME_ENTRIES_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.1 descriptor store](../architecture/07_memory_maps.md#sec-desc-memory) | Name-table capacity on chip; size from the generated image's `n_names` within the store's supported limits |
 | `DESC_MEM_TMO_CYC_P` | [Top declaration and bindings](../../hdl/top/protocol_processor_top.sv); [AECP engine](../../hdl/aecp/KL_aecp_engine.sv) | Watchdog budget in core clocks for descriptor and response memory, AECP gather waits, and the listener's stream-command handshake |
-| `NVM_RS_TMO_CYC_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-NVM-RS-TMO-CYC`; [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NVM-RS-DEADLINE` | Per-wait no-progress deadline of both boot restore walks (the binding walk's reads; every wait of the D3 walk, the roll-back's debt wait included), in core clocks; size above the slowest record read on the NVM device face and the descriptor image walk. The 20 ms default is an initial candidate pending measurement and ratification ([08 §2](../architecture/08_timing.md#sec-08-nvm)) |
+| `NVM_RS_TMO_CYC_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-NVM-RS-TMO-CYC`; [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NVM-RS-DEADLINE` | Per-wait no-progress deadline of both boot restore walks (the binding walk's reads; every wait of the D3 walk, the roll-back's debt wait included), in core clocks; size above the slowest record read on the NVM device face and the descriptor image walk. The default is the ratified 20 ms, ceil(`CLK_HZ_P` / 50) ([08 §2](../architecture/08_timing.md#sec-08-nvm)) |
+| `NVM_RS_AGG_CYC_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-NVM-RS-AGG-CYC`; [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NVM-RS-AGGREGATE` | Aggregate restore deadline in core clocks from `restore_go_i`, both walks and the roll-back included: at it the D3 walk ends as a stalled wait would (DEFAULTS, or CLOSED before the image is proven), however promptly each single wait is answered. The default is the ratified 1,000 ms, `CLK_HZ_P` clocks; keep it derived from your clock. Shortened overrides are for verification. |
 | `NVM_RETRY_BACKOFF_CYC_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-NVM-RETRY-BACKOFF-CYC`; [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NVM-RETRY-BACKOFF` | Wait after a failed record write before the next attempt, in core clocks, for the binding manager and the D3 writer alike; the default is ceil(`CLK_HZ_P` / 2) = 500 ms. Each record gets three **attempts** in all: the first write and two **retries** (`RETRY_MAX_P` = 2 inside each producer, not a top parameter), then the reset-sticky `nvm_alarm_o`. Shortened overrides are for verification. |
 | `REG_TL_TIMEOUT_MS_P` | [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NOTIF-TIMELIMITED`; [top declaration](../../hdl/top/protocol_processor_top.sv) | TIME_LIMITED registration expiry in the AECP notification registry, in milliseconds of the possibly compressed timebase. Shortened overrides are for verification. |
 | `LOCK_TIMEOUT_MS_P` | [F08.1](../architecture/08_timing.md#fig-08-constants), `T-LOCK-UNLOCK`; [top declaration](../../hdl/top/protocol_processor_top.sv) | ENTITY lock auto-unlock deadline in the AECP notification block, in milliseconds of the possibly compressed timebase. Shortened overrides are for verification. |
@@ -398,10 +399,12 @@ contract and its coherence bound are [06 F06.13](../architecture/06_aecp_engine.
    until reset, the listener keeps serving; fix the image and reset. The saved records
    stay on the media after any failure: only a later change replaces one, so the next
    boot on a healthy device restores them. Budget the restore: each wait is bounded by
-   `NVM_RS_TMO_CYC_P` (default 20 ms of `CLK_HZ_P`; size it above the slowest single
-   record read your device face can take and above the descriptor image walk), and the
-   whole restore from `restore_go_i` to its terminal has a 1,000 ms budget. Both are
-   initial candidates pending measurement and ratification ([08 §2](../architecture/08_timing.md#sec-08-nvm)).
+   `NVM_RS_TMO_CYC_P` (20 ms of `CLK_HZ_P`; size it above the slowest single record read
+   your device face can take and above the descriptor image walk), and the whole restore
+   from `restore_go_i` to its terminal by `NVM_RS_AGG_CYC_P` (1,000 ms of `CLK_HZ_P`):
+   a device slow enough to reach that bound ends the restore on defaults (`rs_cause_o` 3)
+   rather than holding AECP and the enable. DR3a ratified both numbers
+   ([08 §2](../architecture/08_timing.md#sec-08-nvm)).
 4. Present identity, capability and configuration inputs.
 5. Assert `entity_enable_i` when you are ready; the processor forwards it to ADP only
    once `restore_done_o` is 1. Only then may the entity advertise.

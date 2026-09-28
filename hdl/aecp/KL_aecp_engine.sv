@@ -309,6 +309,10 @@ module KL_aecp_engine
     //! T-NVM-RS-DEADLINE (F08.1), P-NVM-RS-TMO-CYC (F01.5): the D3 restore's
     //! per-wait deadline in clocks (KL_aecp_nvm_writer)
     parameter int unsigned NVM_RS_TMO_CYC_P    = 2_000_000,
+    //! T-NVM-RS-AGGREGATE (F08.1), P-NVM-RS-AGG-CYC (F01.5), DR3a: the D3
+    //! restore's aggregate deadline in clock cycles from the accepted restore
+    //! start (KL_aecp_nvm_writer; the top derives it: 1,000 ms)
+    parameter int unsigned NVM_RS_AGG_CYC_P    = 100_000_000,
     //! DR2c: the D3 writer's backoff after a failed write attempt, clocks
     //! (500 ms at the F01.5 default P-CLK-HZ; the top derives it)
     parameter int unsigned NVM_RETRY_BACKOFF_CYC_P = 50_000_000,
@@ -570,6 +574,9 @@ module KL_aecp_engine
     //! restore: the binding walk's drained terminal (KL_pp_acmp_lsn_admit
     //! released_o). Its NVM face is manager 1 of KL_pp_nvm_mgr_arb.
     input  wire         d3_go_i,
+    //! the accepted restore start (the top's restore_go_i): the writer's
+    //! aggregate deadline counts from it
+    input  wire         d3_rs_go_i,
     input  wire         d3_tick_i,          //! the debounce timebase (1 ms tick)
     output logic        d3_m_req_o,         //! op request, held until granted
     output logic        d3_m_we_o,          //! 1 = commit, 0 = restore
@@ -1829,12 +1836,14 @@ module KL_aecp_engine
       .N_AUDIO_UNIT_P (N_AUDIO_UNIT_P),
       .N_CLK_DOMAIN_P (N_CLK_DOMAIN_P),
       .RS_TMO_CYC_P   (NVM_RS_TMO_CYC_P),
+      .RS_AGG_CYC_P   (NVM_RS_AGG_CYC_P),
       .RETRY_BACKOFF_CYC_P (NVM_RETRY_BACKOFF_CYC_P)
   ) u_d3 (
       .clk_i       (clk_i),
       .rst_n       (rst_n),
       .tick_i      (d3_tick_i),
       .go_i        (d3_go_i),
+      .rs_go_i     (d3_rs_go_i),
       .img_valid_i (dbg_img_valid_o),
       .desc_debt_i (d3_desc_debt_i),
       .rb_rst_o    (d3_rb_rst_w),

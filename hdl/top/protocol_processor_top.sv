@@ -122,20 +122,30 @@ module protocol_processor_top
     parameter int unsigned DESC_NAME_ENTRIES_P = 32,
     //! no-progress watchdog on the descriptor memory face, in clocks
     parameter int unsigned DESC_MEM_TMO_CYC_P  = 4096,
+    //! The saved-state times below are ONE conversion with ONE rounding
+    //! rule: t ms of this clock is ceil(CLK_HZ_P x t / 1000) clock cycles,
+    //! written reduced so it never multiplies or overflows (08 §2).
     //! T-NVM-RS-DEADLINE (F08.1), P-NVM-RS-TMO-CYC (F01.5): each restore
     //! wait of both walks (the binding walk's reads; every D3 wait, the
     //! roll-back's debt wait and re-LOCATE included) fails its walk after
-    //! this many clocks without progress. Size it above the slowest single
-    //! record read your NVM device face can take and above the descriptor
-    //! image walk; a silent device then ends each walk here instead of
-    //! holding the listener, AECP and the ADP enable for ever. 20 ms is an
-    //! initial candidate pending measurement and ratification (08 §2).
-    parameter int unsigned NVM_RS_TMO_CYC_P    = CLK_HZ_P / 32'd50,
+    //! this many clock cycles without progress. Size it above the slowest
+    //! single record read your NVM device face can take and above the
+    //! descriptor image walk; a silent device then ends each walk here
+    //! instead of holding the listener, AECP and the ADP enable for ever.
+    //! DR3a ratifies 20 ms: ceil(CLK_HZ_P / 50) clock cycles.
+    parameter int unsigned NVM_RS_TMO_CYC_P    = (CLK_HZ_P / 32'd50)
+                                                 + (((CLK_HZ_P % 32'd50) != 32'd0) ? 32'd1 : 32'd0),
+    //! T-NVM-RS-AGGREGATE (F08.1), P-NVM-RS-AGG-CYC (F01.5): the D3 walk
+    //! takes its per-wait deadline's path this many clock cycles after the
+    //! accepted restore start (restore_go_i), counting the binding walk,
+    //! both passes and the roll-back, however promptly each single wait is
+    //! answered. DR3a ratifies 1,000 ms as an enforced bound: CLK_HZ_P
+    //! clock cycles.
+    parameter int unsigned NVM_RS_AGG_CYC_P    = CLK_HZ_P,
     //! DR2c (P-NVM-RETRY-BACKOFF-CYC, F01.5): clk_i cycles a record
     //! producer waits after a failed write attempt before the next, for the
-    //! binding manager and the D3 writer alike: ceil(CLK_HZ_P / 2) = 500 ms,
-    //! computed without a multiply or an overflow. At most three attempts
-    //! per record, then the reset-sticky nvm_alarm_o.
+    //! binding manager and the D3 writer alike: 500 ms, ceil(CLK_HZ_P / 2).
+    //! At most three attempts per record, then the reset-sticky nvm_alarm_o.
     parameter int unsigned NVM_RETRY_BACKOFF_CYC_P = (CLK_HZ_P / 32'd2) + (CLK_HZ_P % 32'd2),
     //! IEEE §7.4.37.2's 300 s TIME_LIMITED registration window and IEEE
     //! §7.4.2's 60 s lock, in ms of the (possibly TIM-compressed) timebase.
@@ -448,7 +458,8 @@ module protocol_processor_top
     //! read-back torn mid-record, a device error with nothing forwarded,
     //! or its read deadline (NVM_RS_TMO_CYC_P). The D3 walk fails on a
     //! device error, a torn read, passes that disagree, a descriptor fault,
-    //! an unproven image or its deadline (rs_cause_o). A record the device
+    //! an unproven image, a wait's deadline or the aggregate deadline
+    //! (NVM_RS_AGG_CYC_P from restore_go_i; rs_cause_o 3). A record the device
     //! answered with something that is not a record (an erased or
     //! unframed header) is that record's default, never a failure (07 §5.3).
     output logic        restore_fail_o,
@@ -3424,6 +3435,7 @@ module protocol_processor_top
       .TX_STD_BYTES_P      (576),
       .TX_OVERSIZE_BYTES_P (TX_OVERSIZE_BYTES_P),
       .NVM_RS_TMO_CYC_P    (NVM_RS_TMO_CYC_P),
+      .NVM_RS_AGG_CYC_P    (NVM_RS_AGG_CYC_P),
       .NVM_RETRY_BACKOFF_CYC_P (NVM_RETRY_BACKOFF_CYC_P)
   ) u_aecp (
       .clk_i              (clk_i),
@@ -3548,6 +3560,8 @@ module protocol_processor_top
       //! its roll-back of both AECP stores while the descriptor memory guard
       //! owes a burst (debt survives that local reset: hard reset only)
       .d3_go_i            (lsn_released_w),
+      //! the aggregate deadline (DR3a) counts from the accepted start
+      .d3_rs_go_i         (restore_go_i),
       .d3_tick_i          (tick_ms_w),
       .d3_m_req_o         (d3_m_req_w),
       .d3_m_we_o          (d3_m_we_w),

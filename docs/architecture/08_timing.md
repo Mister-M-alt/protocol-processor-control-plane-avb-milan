@@ -41,7 +41,8 @@ plain-IEEE build where different; blank = same).
 | T-MRP-LEAVEALL | random 10–15 s | SRP engine (10) | leavealltimer per participant | Milan Table 4.3 | |
 | T-MRP-PERIODIC | 1000 ms (900–1500) | SRP engine (10) | periodictimer — periodic re-join transmissions | Milan Table 4.3 | |
 | T-NVM-DEBOUNCE | 500 ms: `DEB_TICKS_P` = 500 ticks of the 1 ms `tick_ms` | NVM mgr, D3 writer | the producer's first-dirty window: the first change opens it, its close arms one burst that drains every dirty record (the integrator's own firmware window, 1,000 ms, is separate and not this processor's) | parent DR2a ruling | a tick counter in each producer, not a timer-service slot |
-| T-NVM-RS-DEADLINE | `P-NVM-RS-TMO-CYC` clocks without progress (default 20 ms; an **initial candidate**, see below) | NVM mgr, D3 writer | per restore wait: the binding walk's read phase, and every wait of the D3 walk (reads, descriptor reads, the judge, the roll-back's debt wait, the re-LOCATE). Expiry fails that walk and abandons an issued read to the drain ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) | parent DR3a ruling (persistence that wedges must not hold the entity) | a clock counter in each walk, not a timer-service slot |
+| T-NVM-RS-DEADLINE | `P-NVM-RS-TMO-CYC` clocks without progress (20 ms, ceil(`P-CLK-HZ` × 20 / 1000); **ratified**, DR3a) | NVM mgr, D3 writer | per restore wait: the binding walk's read phase, and every wait of the D3 walk (reads, descriptor reads, the judge, the roll-back's debt wait, the re-LOCATE). Expiry fails that walk and abandons an issued read to the drain ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) | parent DR3a ruling (persistence that wedges must not hold the entity) | a clock counter in each walk, not a timer-service slot |
+| T-NVM-RS-AGGREGATE | `P-NVM-RS-AGG-CYC` clocks from the accepted restore start (1,000 ms, ceil(`P-CLK-HZ` × 1000 / 1000) = `P-CLK-HZ`; **ratified** as an enforced bound, DR3a) | D3 writer | the whole restore: from `restore_go_i` through the binding walk, both D3 passes and the roll-back to the terminal. At the bound the D3 walk takes the path a stalled wait takes in its state (cause 3), once, in the first clock whose wait has no event in hand: CLOSED before the image is proven, DEFAULTS in pass 0, the roll-back in pass 1, CLOSED during it ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)). A device that answers every wait just inside `T-NVM-RS-DEADLINE` ends here | parent DR3a ratification (a slow but live device must not hold AECP and the enable) | a clock counter in the D3 writer, not a timer-service slot |
 | T-NVM-RETRY-BACKOFF | `P-NVM-RETRY-BACKOFF-CYC` clocks (500 ms) from a failed record write | NVM mgr, D3 writer | DR2c: at most three attempts per record (`RETRY_MAX_P` = 2 retries), this wait before each retry, then the reset-sticky `nvm_alarm_o` | parent DR2c ruling | a clock counter in each producer, not a timer-service slot |
 | T-TX-AGING | 10 ms (design) | TX arbiter | starvation promotion | design | |
 | T-BUDGET-ACMP-RESP | ≤ 50 ms (design) | budgets | see §4 | design | |
@@ -60,13 +61,18 @@ govern persistence; none stands for another.
 | firmware debounce | the integrator's snapshot writer | 1,000 ms first-dirty window | ruled (DR2a); not this processor's |
 | producer retry | each record producer | at most **three attempts** per record (the first write and `RETRY_MAX_P` = 2 retries), each retry `P-NVM-RETRY-BACKOFF-CYC` = ceil(`P-CLK-HZ` / 2) clocks (500 ms) after the failed attempt's error; 50,000,000 clocks at 100 MHz, 25,000,000 at 50 MHz | ruled (DR2c) |
 | firmware retry | the integrator's snapshot writer | at most three transaction attempts per unchanged captured work set, 1,000 ms apart | ruled (DR2c); not this processor's |
-| per-wait restore deadline | each restore walk | `T-NVM-RS-DEADLINE`, 20 ms = ceil(`P-CLK-HZ` × 20 / 1000) clocks | **initial candidate** (DR3a) |
-| aggregate restore budget | from the accepted restore start (`restore_go_i`, the integrator's `PP_CTRL[1]`) to COMPLETE, DEFAULTS or CLOSED, roll-back included | 1,000 ms | **initial candidate** (DR3a); not enforced by a counter in this processor: the per-wait deadlines bound each wait |
+| per-wait restore deadline | each restore walk | `T-NVM-RS-DEADLINE`, 20 ms = ceil(`P-CLK-HZ` × 20 / 1000) clocks; 2,000,000 at 100 MHz, 1,000,000 at 50 MHz | **ratified** (DR3a) |
+| aggregate restore deadline | from the accepted restore start (`restore_go_i`, the integrator's `PP_CTRL[1]`) to COMPLETE, DEFAULTS or CLOSED, roll-back included | `T-NVM-RS-AGGREGATE`, 1,000 ms = `P-CLK-HZ` clocks; 100,000,000 at 100 MHz, 50,000,000 at 50 MHz | **ratified** as an enforced bound (DR3a): a counter in the D3 writer, not a measured budget |
 | media deadlines | the integrator's device and flash | the device's own | outside this processor; the port has no deadline of its own |
 
-Both DR3a numbers stay **initial candidates** until the processor lane measures them and
-the manager ratifies or revises both before the parent's scalar lane implements; this
-document does not ratify them.
+One conversion and one rounding rule serve every clock count above: t ms of the core clock
+is ceil(`P-CLK-HZ` × t / 1000) clocks, which the top writes reduced (ceil(`P-CLK-HZ` / 50),
+ceil(`P-CLK-HZ` / 2), `P-CLK-HZ`) so it never multiplies or overflows. The processor lane
+measured both DR3a numbers (healthy restores end within 2,661 clocks, the longest healthy
+wait is 853) and the manager ratified them
+([parent #70](https://github.com/kebag-logic/milan-fpga/issues/70#issuecomment-5873060660)):
+20 ms per wait, and 1,000 ms in all as an **enforced** bound, because each wait alone lets a
+device that answers every wait just inside 20 ms stretch the D3 walk over some 970 waits.
 
 **One alarm.** `nvm_alarm_o` is the only reset-sticky persistence alarm, and only a
 producer's **own** write-attempt exhaustion raises it: the third failed WRITE of one

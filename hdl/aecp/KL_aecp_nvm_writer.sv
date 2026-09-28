@@ -55,6 +55,21 @@
 //                restore ends done and failed, on defaults. A restore write
 //                is never a change (the snoop is the µCPU's).
 //
+//                THE AGGREGATE DEADLINE (parent DR3a, ratified as an enforced
+//                bound). A second count starts at the accepted restore start
+//                (`rs_go_i`, the top's restore_go_i, PP_CTRL[1]) and runs
+//                through the binding walk, both passes and the roll-back to
+//                the terminal. At RS_AGG_CYC_P cycles the walk takes the path
+//                a per-wait deadline takes in the state it is in (cause 3,
+//                a granted READ abandoned to the drain), once, and in the
+//                first cycle at or after the bound in which its wait has no
+//                event in hand (as the per-wait deadline fires): before the
+//                image is proven, the binding walk still running included,
+//                CLOSED; in pass 0 DEFAULTS; in pass 1 the roll-back, which
+//                the per-wait deadline still bounds; during the roll-back
+//                CLOSED. A device that answers every wait just inside its
+//                deadline therefore ends at this bound.
+//
 //                THE VALUE RULES, the SET programs' own (gen_ucode.py):
 //                configuration index below configurations_count (region
 //                0xD); sampling rate on the located AUDIO_UNIT's list, read
@@ -154,6 +169,11 @@ module KL_aecp_nvm_writer #(
     //! T-NVM-RS-DEADLINE (F08.1), P-NVM-RS-TMO-CYC (F01.5): clocks a restore
     //! wait may pass without its event before the restore aborts
     parameter int unsigned RS_TMO_CYC_P   = 2_000_000,
+    //! T-NVM-RS-AGGREGATE (F08.1), P-NVM-RS-AGG-CYC (F01.5), DR3a: clock
+    //! cycles from the accepted restore start to the terminal; the top
+    //! derives it from CLK_HZ_P (this default is 1,000 ms at the F01.5
+    //! default P-CLK-HZ of 100 MHz)
+    parameter int unsigned RS_AGG_CYC_P   = 100_000_000,
     //! derived — do not override
     localparam int unsigned OFF_RATE_C = 1,
     localparam int unsigned OFF_CLK_C  = OFF_RATE_C + N_AUDIO_UNIT_P,
@@ -169,6 +189,9 @@ module KL_aecp_nvm_writer #(
 
     //! ---- boot sequencing ----------------------------------------------------
     input  wire         go_i,           //! the binding walk's drained terminal (level)
+    //! the accepted restore start (the top's restore_go_i, PP_CTRL[1]): the
+    //! aggregate deadline counts from the first cycle it reads 1
+    input  wire         rs_go_i,
     input  wire         img_valid_i,    //! the descriptor store holds a validated image
 
     //! ---- ownership of the AECP engine (the dispatch hold) -------------------
@@ -256,6 +279,10 @@ module KL_aecp_nvm_writer #(
   //! zero would wrap RS_TMO_CYC_P - 1 below into a 2^32-clock deadline
   if (RS_TMO_CYC_P < 1) begin : g_rs_tmo_check
     $error("KL_aecp_nvm_writer: RS_TMO_CYC_P must be at least 1");
+  end
+  //! the same wrap below, for the aggregate's RS_AGG_CYC_P - 1
+  if (RS_AGG_CYC_P < 1) begin : g_rs_agg_check
+    $error("KL_aecp_nvm_writer: RS_AGG_CYC_P must be at least 1");
   end
 
   // ---- constants ---------------------------------------------------------------
@@ -479,9 +506,10 @@ module KL_aecp_nvm_writer #(
   // ---- the deadline --------------------------------------------------------------
   //! consecutive cycles a restore wait passes without the event it waits for
   logic [31:0] wd_r;
-  logic        stall_w, expire_w;
+  logic        stall_w, wait_w, wait_expire_w, agg_expire_w, expire_w;
 
   always_comb begin : restore_stall
+    wait_w = 1'b1;
     unique case (ws_r)
       W_IMGLOC, W_NCFG, W_LOC, W_LANE, W_RELOC: stall_w = !sb_rvalid_i;
       //! the roll-back waits for the memory's debt to fall
@@ -490,15 +518,44 @@ module KL_aecp_nvm_writer #(
       W_RD:    stall_w = !m_rvalid_i && !m_done_i && !m_err_i;
       W_JUDGE: stall_w = jd_wait_i;
       W_APPLY: stall_w = !sb_ready_i;
-      default: stall_w = 1'b0;
+      default: begin
+        stall_w = 1'b0;
+        wait_w  = 1'b0;          // nothing awaited, so nothing is in hand
+      end
     endcase
   end
-  assign expire_w = stall_w && (wd_r >= 32'(RS_TMO_CYC_P - 1));
+  assign wait_expire_w = stall_w && (wd_r >= 32'(RS_TMO_CYC_P - 1));
+  //! either deadline takes the one path below
+  assign expire_w      = wait_expire_w || agg_expire_w;
 
   always_ff @(posedge clk_i) begin : deadline_ff
     if (!rst_n)                    wd_r <= 32'd0;
     else if (stall_w && !expire_w) wd_r <= wd_r + 32'd1;
     else                           wd_r <= 32'd0;
+  end
+
+  // ---- the aggregate deadline (DR3a) ---------------------------------------------
+  //! cycles since the accepted restore start, 0 in its own cycle, counted
+  //! until the terminal; the bound fires once, in a cycle whose wait has no
+  //! event in hand (a grant, a byte, an answer), so no granted READ is
+  //! orphaned and an abandoned one goes to the drain exactly as above
+  logic        agg_run_r, agg_fired_r, agg_live_w;
+  logic [31:0] agg_r;
+
+  assign agg_live_w   = (agg_run_r || rs_go_i) && !agg_fired_r && !done_r && !closed_r;
+  assign agg_expire_w = agg_live_w && (agg_r >= 32'(RS_AGG_CYC_P - 1))
+                        && (stall_w || !wait_w);
+
+  always_ff @(posedge clk_i) begin : aggregate_ff
+    if (!rst_n) begin
+      agg_run_r   <= 1'b0;
+      agg_fired_r <= 1'b0;
+      agg_r       <= 32'd0;
+    end else begin
+      if (rs_go_i)      agg_run_r   <= 1'b1;
+      if (agg_expire_w) agg_fired_r <= 1'b1;
+      if (agg_live_w && (agg_r < 32'(RS_AGG_CYC_P - 1))) agg_r <= agg_r + 32'd1;
+    end
   end
 
   // ---- the abort -----------------------------------------------------------------

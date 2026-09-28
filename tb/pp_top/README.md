@@ -115,8 +115,9 @@ tally.
   never blank. **D3R7** the rate
   rule's AUDIO_UNIT fetch answers an error beat: the restore aborts
   (cause 6), never a refused value, and rolls back. **D3R8** a READ granted 200 cycles
-  inside the wrap's 20,000-cycle deadline completes; 200 cycles past it
-  aborts (cause 3). **D3R9** a SET held since before the walk runs after
+  inside the per-wait deadline completes; 200 cycles past it aborts (cause 3).
+  The deadline is the top's own derivation, never an override: 20 ms of the
+  wrap's `CLK_HZ_P` (1,000,001 Hz) is ceil(20,000.02) = 20,001 clocks. **D3R9** a SET held since before the walk runs after
   the restore applied the saved value, is in force, and the next flush
   saves it. **D3R10** the rate rule's AUDIO_UNIT fetch answers late: at
   4,000 cycles (inside the store's 4,096-cycle watchdog) the restore
@@ -129,7 +130,17 @@ tally.
   GET_RX_STATE answers the restored talker and its record is not
   rewritten. **D3R12** a roll-back whose re-walk cannot prove the image
   (the memory falls silent) ends CLOSED: no done, AECP held, ADP never
-  enabled. The restore's negative controls (each group's replay deleted,
+  enabled. **D3R13** (DR3a, ratified as an enforced bound) a device that
+  grants every request, the binding walk's included, 200 cycles inside the
+  per-wait deadline trips no wait's deadline (the longest wait is graded
+  under 20,001) and still ends the restore at the aggregate bound, the top's
+  `NVM_RS_AGG_CYC_P` = 1,000 ms of the wrap's clock = 1,000,001 clocks from
+  the one that took `restore_go_i`: with every record saved the bound falls
+  in pass 0, DEFAULTS is registered by exactly that clock, cause 3, nothing
+  applied, and the READ in hand is drained; once the device ends it a later
+  SET persists. Over an erased device the bound falls in pass 1, which
+  rolls back to DEFAULTS within one per-wait deadline of it. Without the
+  counter the first walk runs to about 2.3 million clocks. The restore's negative controls (each group's replay deleted,
   a value rule ignored, the passes allowed to disagree, a DEVICE error read
   as blank and an UNFRAMED one read as a device error, a descriptor error
   read as a refusal, no restore watchdog, restore writes counted as changes,
@@ -394,8 +405,8 @@ tally.
   binding byte-exact after it, nothing is written to region 0x20, and the
   next reset restores the same binding. **BW3** (issue #93) the device stops
   granting the walk's next read after region 0x20 was stored: the walk fails
-  whole at its read deadline (the wrap sets `NVM_RS_TMO_CYC_P` to 20,000
-  clocks; the product default is 20 ms of `CLK_HZ_P`, two million steps here),
+  whole at its read deadline (the top derives `NVM_RS_TMO_CYC_P` from the
+  wrap's `CLK_HZ_P`: 20 ms of 1,000,001 Hz, 20,001 clocks),
   cause 3 and nothing preloaded, and the GET held in the window answers the
   vendor default at the listener's release, while `entity_enable_i` is
   still low and before the restore is done: the D3 walk's first read meets
