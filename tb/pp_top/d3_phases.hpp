@@ -1124,17 +1124,19 @@ struct D3RestorePhase {
     CHECK(b.done > b.release && !x.d->restore_fail_o && x.d->restore_blank_o
               && x.d->dbg_d3_blank_o == 27,
           "D3R6: an unframed record is that record's default, never a failure");
+    //! every READ of the one saved record ends in the device's error, in
+    //! both passes, so the pass agreement cannot stand in for the verdict
     fresh();
     seed(0x50, d3_record(0x50, 1500000, 4));
     x.nv_rd_region = 0x50;
     x.nv_rd_nth = 1;
     x.nv_rd_after = 0;
     x.nv_rd_silent = false;
-    x.nv_rd_seen = 0;
-    b = boot(6 * RS_TMO);
-    CHECK(b.done > b.release && x.d->restore_fail_o && !x.d->restore_blank_o,
-          "D3R6: the one saved record lost to a device error is a failure, "
-          "never a blank first boot");
+    b = boot_with(6 * RS_TMO, [&] { x.nv_rd_seen = 0; });
+    CHECK(b.done > b.release && x.d->restore_fail_o && !x.d->restore_blank_o
+              && x.d->rs_cause_o == 2,
+          "D3R6: the one saved record lost to a device error is a failure "
+          "(cause %u), never a blank first boot", unsigned(x.d->rs_cause_o));
   }
 
   // D3R7: a descriptor read the rule needs that fails is a transport
@@ -1373,6 +1375,24 @@ struct D3RestorePhase {
     power_cycle();
     report("descriptor memory silent", measured(8 * RS_TMO));
     x.dram_silent = false;
+    //! DR2a, this producer's share: one real SET, no other traffic, from
+    //! the record reading pending to the port's done of its WRITE (the
+    //! backend's window, where the integrator's own debounce begins)
+    fresh();
+    x.boot_to_aecp();
+    x.q_aecp.clear();
+    x.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, seq++, AEM_SET_STREAM_INFO,
+                      D3ServicePhase::pl_ptof(0, 1234567)));
+    long rise = -1;
+    long fall = -1;
+    for (long c = 0; c < 4 * WINDOW && fall < 0; ++c) {
+      x.step();
+      if (rise < 0 && x.d->d3_unflushed_o) rise = c;
+      if (rise >= 0 && fall < 0 && !x.d->d3_unflushed_o) fall = c;
+    }
+    std::printf("DR2a one SET_STREAM_INFO: pending %ld cycles, acceptance to the "
+                "window's done (%ld ticks of this bench's %ld-cycle ms)\n",
+                fall - rise, (fall - rise) / MS_CYC, long(MS_CYC));
   }
 
   // D3R8: the deadline counts cycles without progress. 0x50's header READ

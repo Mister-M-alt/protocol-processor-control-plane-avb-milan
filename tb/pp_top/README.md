@@ -111,7 +111,8 @@ tally.
   the arbiter's drain (cause 3); once the device answers the drained read
   a later SET persists. **D3R6** an erased device restores blank and not
   failed, an unframed record is its default, and the one saved record
-  lost to a device error is a failure, never blank. **D3R7** the rate
+  whose every read ends in the device's error is a failure with cause 2,
+  never blank. **D3R7** the rate
   rule's AUDIO_UNIT fetch answers an error beat: the restore aborts
   (cause 6), never a refused value, and rolls back. **D3R8** a READ granted 200 cycles
   inside the wrap's 20,000-cycle deadline completes; 200 cycles past it
