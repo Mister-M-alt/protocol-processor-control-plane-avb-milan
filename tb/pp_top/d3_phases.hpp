@@ -1737,6 +1737,135 @@ struct D3RestorePhase {
     x.dram = image;
   }
 
+  // ---- steering the device's grants onto a chosen clock --------------------
+  //! Some cases must land one event on one exact clock about a million
+  //! clocks after restore_go_i: the aggregate bound's own clock, or a set
+  //! distance before it. The device withholds every grant, and steer(),
+  //! called after every clock, releases each: the `target`-th command the
+  //! device sees in the boot is granted on exactly harness cycle `at`, and
+  //! every one before it after an equal share of the time left, so each
+  //! single wait stays inside the per-wait deadline and none trips it. Every
+  //! command after the target stays withheld until the case releases it.
+  struct Steer {
+    int target;               //! the command, 1-based, in the device's order
+    long at;                  //! the harness cycle its grant must land on
+    int seen = 0;             //! commands the device has seen
+    long granted = -1;        //! the harness cycle the target was granted
+    int region = -1;          //! the target command's region and offset
+    int off = -1;
+  };
+  void steer(Steer& s) {
+    const auto* d = x.d;
+    if (s.granted < 0 && s.seen == s.target && x.nv_gnt_at < 0
+        && x.nv_st != H::NvState::NV_IDLE)
+      s.granted = x.nv_gnt_t;
+    if (x.nv_st != H::NvState::NV_IDLE || !d->nvm_dev_req_o || x.nv_gnt_at >= 0
+        || s.seen >= s.target)
+      return;
+    ++s.seen;
+    const long now = long(x.t);
+    if (s.seen == s.target) {
+      s.region = int(d->nvm_dev_region_o);
+      s.off = int(d->nvm_dev_offset_o);
+      x.nv_gnt_at = s.at;
+      return;
+    }
+    const long share = (s.at - now) / (s.target - s.seen + 1);
+    x.nv_gnt_at = now + std::clamp(share, 1L, RS_TMO - 1000);
+  }
+  //! the device's harness cycle on which the aggregate count reads AGG - 1
+  //! (the bound's own clock), from its reading `agg` now
+  long bound_t(uint32_t agg) const { return long(x.t) + (AGG - 1 - long(agg)); }
+  //! the device serves every command again at once
+  void steer_release() {
+    x.nv_gnt_every = 0;
+    x.nv_gnt_hold = 0;
+    x.nv_gnt_at = -1;
+    x.nv_gnt_seen = false;
+  }
+
+  // D3R15 (R390-2 F3: the aggregate spans the roll-back). A pass-1 fault
+  // that starts a roll-back shortly before the aggregate bound, with every
+  // wait inside its deadline (the device's grants steered): the bound falls
+  // inside the roll-back and ends it CLOSED on the bound's own clock, with
+  // the pass-1 fault's cause (parent D3 section 6.3, as the clarification of
+  // DR3a on issue #131 keeps it: a roll-back that cannot prove the image
+  // again by the deadline). Two arms: the roll-back still waiting out the
+  // descriptor memory's debt (the rate rule's AUDIO_UNIT fetch answers
+  // 16,000 cycles late, so its watchdog aborts pass 1, cause 6, and the late
+  // burst is owed across the bound), and its re-LOCATE still waiting for the
+  // store's walk of the image (a DEVICE error on pass 1's header READ of
+  // 0x02 100 cycles before the bound, cause 2). A counter that paused in the
+  // roll-back would let both end DEFAULTS after the bound instead.
+  void r15_the_aggregate_bound_inside_a_roll_back() {
+    struct Arm { bool debt; int target; long before; unsigned cause; const char* what; };
+    //! every record saved: the binding walk's eight probes, pass 0's header
+    //! and payload READs of all 27 records, then pass 1's of 0x00 and 0x02
+    const std::array<Arm, 2> arms{{
+        {true, 66, 10000, 6, "debt wait"},
+        {false, 65, 100, 2, "re-LOCATE"}}};
+    for (const auto& a : arms) {
+      fresh();
+      seed_every_record();
+      if (a.debt) {
+        x.dram_late_at = au_addr;
+        x.dram_late_cycles = 16000;
+      } else {
+        x.nv_rd_region = 0x02;
+        x.nv_rd_nth = 3;                           // pass 1's header READ of 0x02
+        x.nv_rd_after = 0;
+        x.nv_rd_silent = false;
+        x.nv_rd_seen = 0;
+      }
+      x.nv_gnt_every = 1 << 30;                    // steer() grants each command
+      Steer s{a.target, -1};
+      long bound = -1;
+      long closed_t = -1;
+      long done_t = -1;
+      bool strobe = false;
+      bool debt = false;
+      bool img = true;
+      bool rolling = false;
+      (void)boot_with(AGG + 4 * RS_TMO, [&] {
+        const auto* d = x.d;
+        if (s.at < 0) s.at = bound_t(d->dbg_d3_agg_o) - a.before;
+        steer(s);
+        if (bound < 0 && d->dbg_d3_agg_o == uint32_t(AGG - 1)) {
+          bound = long(x.t);
+          strobe = d->dbg_d3_rb_rst_o;
+          debt = d->desc_mem_debt_o;
+          img = d->dbg_img_valid_o;
+          rolling = d->dbg_d3_fail_o && !d->dbg_d3_done_o && !d->dbg_d3_closed_o;
+        }
+        if (closed_t < 0 && d->restore_closed_o) closed_t = long(x.t);
+        if (done_t < 0 && d->dbg_d3_done_o) done_t = long(x.t);
+      });
+      steer_release();
+      x.dram_late_at = 0;
+      x.nv_rd_region = -1;
+      const auto* d = x.d;
+      const bool premise = s.granted == s.at && s.region == 0x02
+                           && s.off == (a.debt ? 8 : 0) && rolling
+                           && (a.debt ? (strobe && debt) : (!strobe && !img));
+      CHECK(premise,
+            "D3R15 %s: the pass-1 fault's READ (region 0x%02x offset %d) granted on "
+            "its steered cycle %u; at the bound the roll-back was under way (strobe "
+            "%u, debt %u, image valid %u)", a.what, unsigned(s.region), s.off,
+            unsigned(s.granted == s.at), unsigned(strobe), unsigned(debt), unsigned(img));
+      //! the bound's own clock ends with the abort, so CLOSED is seen on the
+      //! next one
+      CHECK(bound >= 0 && closed_t == bound + 1 && done_t < 0 && d->restore_closed_o
+                && d->rs_cause_o == a.cause && !d->restore_done_o && !d->restore_rb_o
+                && d->dbg_d3_own_o,
+            "D3R15 %s: CLOSED %ld clocks after the bound's own (want 0), cause %u, D3 "
+            "done %ld clocks after the bound, rolled back %u, AECP owned %u", a.what,
+            (closed_t < 0 || bound < 0) ? -1 : closed_t - bound - 1, unsigned(d->rs_cause_o),
+            (done_t < 0 || bound < 0) ? -1 : done_t - bound, unsigned(d->restore_rb_o),
+            unsigned(d->dbg_d3_own_o));
+    }
+    x.dram = image;
+  }
+
   // ---- DR3a: restore durations and the longest waits (informational) ----
   // The parent D3 contract's DR3a had the processor lane MEASURE its
   // per-wait (20 ms) and aggregate (1,000 ms) candidates; the manager
@@ -1974,5 +2103,6 @@ struct D3RestorePhase {
     r12_a_roll_back_that_cannot_prove_the_image_closes();
     r13_the_aggregate_bound();
     r14_an_aggregate_bound_before_the_image_proof();
+    r15_the_aggregate_bound_inside_a_roll_back();
   }
 };

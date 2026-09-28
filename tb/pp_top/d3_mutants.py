@@ -67,6 +67,7 @@ VERDICT_END = ("      W_JUDGE: begin accept_w = !jd_wait_i && jd_data_i[0];\n"
 BLANK = "                      && (m_err_cause_i == PORT_UNFRAMED_C);\n"
 DEVICE = "                      && (m_err_cause_i != PORT_UNFRAMED_C);\n"
 GROUPS = ("cfg", "rate", "clks", "fmti", "fmto", "ptof")
+AGG_LIVE = "  assign agg_live_w   = (agg_run_r || rs_go_i) && !agg_fired_r && !done_r && !closed_r;\n"
 
 
 def trigger_deleted(sel: int) -> Mutant:
@@ -325,6 +326,10 @@ AGGREGATE = (
         (WRITER, "      if (proof_w && agg_past_w) begin\n",
          "      if (1'b0 && proof_w && agg_past_w) begin\n"),),
         ("D3R14 image valid: DEFAULTS",)),
+    # R390-2 F3: the aggregate spans the roll-back (the reviewer's own edit)
+    Mutant("agg_not_in_rollback", PP_TOP, (
+        (WRITER, AGG_LIVE, AGG_LIVE[:-2] + "\n                        && (ws_r != W_RB) && (ws_r != W_RELOC);\n"),),
+        ("D3R15 debt wait: CLOSED", "D3R15 re-LOCATE: CLOSED")),
 )
 
 # the AECP hold admission (issue #131 ruling 5873580386)

@@ -184,7 +184,16 @@ tally.
   deadline of the bound, with the image valid, AECP released (a
   READ_DESCRIPTOR answered byte-exact) and the enable released to ADP;
   once the device ends the drained READ a later SET persists. With the
-  image refused (its magic flipped) the same boot ends CLOSED, cause 7. The restore's negative controls (each group's replay deleted,
+  image refused (its magic flipped) the same boot ends CLOSED, cause 7.
+  **D3R15** (R390-2 F3: the aggregate spans the roll-back) a pass-1 fault
+  starts a roll-back shortly before the bound while every wait stays inside
+  its deadline (the device's grants are steered so the fault's READ is
+  granted on a chosen clock): the bound falls inside the roll-back and ends
+  it CLOSED on the bound's own clock with the fault's cause, in its debt
+  wait (the rate rule's AUDIO_UNIT fetch 16,000 cycles late: cause 6, the
+  burst still owed at the bound) and in its re-LOCATE (a DEVICE error on
+  pass 1's header READ of 0x02 100 cycles before the bound: cause 2, the
+  store still walking the image at the bound). The restore's negative controls (each group's replay deleted,
   a value rule ignored, the passes allowed to disagree, a DEVICE error read
   as blank and an UNFRAMED one read as a device error, a descriptor error
   read as a refusal, no restore watchdog, restore writes counted as changes,
@@ -611,12 +620,12 @@ extract of `hdl/`, `tb/common/` and this directory, builds `gsi-build`, runs
 tally, exits non-zero and every named check fails; a golden extract runs first and
 must pass. The same driver runs the binding manager's three DR2c controls in
 `tb/acmp_nvm` and the validator's admission control in `tb/rx_validator` (their
-READMEs record them). At the lane head all 65 are KILLED and the three goldens PASS;
+READMEs record them). At the lane head all 66 are KILLED and the three goldens PASS;
 the last column is how many checks each one failed there.
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
 |---|---|---|---|
-| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 11 |
+| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 13 |
 | `dispatch_not_held` | the engine's three dispatch gates ignore the writer's ownership | `D3O1: without the walk the writer owns every cycle` | 4 |
 | `own_taken_at_the_walk` | ownership and the bus taken only once the walk starts, not from reset | `D3R9: the held SET` | 10 |
 | `image_unproven_continues` | an unprovable image (the LOCATE's error) no longer aborts | `D3O2: CLOSED at`, `D3O3: CLOSED` | 7 |
@@ -641,21 +650,21 @@ the last column is how many checks each one failed there.
 | `RPL_ptof` | presentation-offset replay deleted | `D3R1 ptof` | 6 |
 | `rule_ignored` | a SET-rule refusal applied anyway | `D3R2: COMPLETE` | 3 |
 | `passes_may_disagree` | the pass agreement removed | `D3R4:`, `D3R4b` | 3 |
-| `device_error_reads_as_blank` | a DEVICE error read as a blank record | `D3R5 device error on the header`, `D3R6: the one saved record` | 4 |
+| `device_error_reads_as_blank` | a DEVICE error read as a blank record | `D3R5 device error on the header`, `D3R6: the one saved record` | 5 |
 | `unframed_reads_as_device_error` | an UNFRAMED record read as a device error | `D3R6: an erased device restores blank` | 37 |
-| `desc_error_is_a_refusal` | a rule's descriptor error read as a refusal | `D3R7` | 4 |
+| `desc_error_is_a_refusal` | a rule's descriptor error read as a refusal | `D3R7` | 6 |
 | `no_restore_watchdog` | the per-wait deadline removed | `D3R8: a READ granted`, `D3R8b` | 7 |
 | `restore_writes_are_changes` | the snoop taps the shared bus, so restore writes are changes | `D3R1: no restore write is a change` | 1 |
 | `enable_not_released_by_restore` | ADP enabled by the request alone | `D3R1: the enable requested from reset` | 4 |
-| `done_without_d3` | restore done without the D3 walk | `D3R1: the enable requested from reset`, `D3R1: COMPLETE` | 33 |
+| `done_without_d3` | restore done without the D3 walk | `D3R1: the enable requested from reset`, `D3R1: COMPLETE` | 37 |
 | `blank_ignores_d3` | restore blank ignores the D3 walk | `D3R1: COMPLETE` | 1 |
 | `store_not_cleared` | the sampling-rate row and its valid flag not reset | `D3R1: every row at its reset value` | 16 |
 | `valid_not_cleared` | the sampling-rate valid flag not reset | `D3R1: every row at its reset value` | 16 |
 | `quarantine_released_by_time` | the arbiter ends a drain after 1,000 cycles | `D3R5: once the device ends the drained read a later SET persists` | 6 |
-| `no_rollback` | a pass-1 abort ends DEFAULTS without the roll-back | `D3R4:` | 12 |
+| `no_rollback` | a pass-1 abort ends DEFAULTS without the roll-back | `D3R4:` | 16 |
 | `dyn_not_rolled_back` | the dynamic-state store left out of the roll-back | `D3R4:` | 4 |
-| `store_not_rolled_back` | the descriptor store left out of the roll-back | `D3R10 5000` | 2 |
-| `rollback_ignores_debt` | the roll-back ignores the guard's debt | `D3R10 16000` | 2 |
+| `store_not_rolled_back` | the descriptor store left out of the roll-back | `D3R10 5000` | 3 |
+| `rollback_ignores_debt` | the roll-back ignores the guard's debt | `D3R10 16000` | 3 |
 | `closed_releases_the_entity` | a roll-back that cannot re-prove the image ends DEFAULTS | `D3R12` | 1 |
 | `no_backoff_d3` | the writer's DR2c backoff removed | `D3S10 timing` | 2 |
 | `fourth_attempt` | the writer allows a fourth attempt | `D3S10 count` | 2 |
@@ -668,13 +677,14 @@ the last column is how many checks each one failed there.
 | `judge_wait_unwatched` | the format judge's wait is not watched | `D3R8b` | 1 |
 | `rate_walk_stuck_on_first_lane` | the rate walk never leaves the list's first lane | `D3R3b entry 7` | 1 |
 | `rate_walk_unbounded` | the rate walk's eight-entry bound dropped | `D3R3b entry 8` | 1 |
-| `no_aggregate_deadline` | the aggregate deadline removed | `D3R13 pass 0: DEFAULTS at clock`, `D3R13 pass 1` | 8 |
-| `aggregate_mirrored` | the aggregate a mirrored 100,000,000 instead of CLK_HZ_P | `D3R13 pass 0: DEFAULTS at clock` | 8 |
-| `aggregate_from_the_walk` | the aggregate counts from the binding walk's end | `D3R13 pass 0: DEFAULTS at clock` | 8 |
+| `no_aggregate_deadline` | the aggregate deadline removed | `D3R13 pass 0: DEFAULTS at clock`, `D3R13 pass 1` | 10 |
+| `aggregate_mirrored` | the aggregate a mirrored 100,000,000 instead of CLK_HZ_P | `D3R13 pass 0: DEFAULTS at clock` | 10 |
+| `aggregate_from_the_walk` | the aggregate counts from the binding walk's end | `D3R13 pass 0: DEFAULTS at clock` | 12 |
 | `per_wait_floor` | the per-wait derivation rounds down | `D3R8 deadline` | 1 |
 | `agg_closes_before_proof` | the aggregate aborts before the image is proven (the pre-walk close) | `D3R14 image valid: DEFAULTS` | 3 |
 | `binding_walk_ignores_aggregate` | the binding walk ignores the aggregate and reads on | `D3R14 image valid: the binding walk`, `D3R14 image refused: the binding walk` | 5 |
 | `proof_reads_records_past_bound` | the image proven past the bound starts pass 0 | `D3R14 image valid: DEFAULTS` | 1 |
+| `agg_not_in_rollback` | the aggregate count paused in the roll-back and its re-LOCATE (R390-2's own edit) | `D3R15 debt wait: CLOSED`, `D3R15 re-LOCATE: CLOSED` | 4 |
 | `aecp_hold_unbounded` | the admission gate never drops (the unbounded hold) | `D3O5: in CLOSED each GET_RX_STATE`, `D3O6: during the slowed walk` | 6 |
 | `held_drop_uncounted` | a held drop not counted | `D3O5: one AECP command held`, `D3O6: at the terminal` | 4 |
 
