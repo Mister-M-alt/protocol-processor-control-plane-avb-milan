@@ -176,11 +176,120 @@ struct D3OwnershipPhase {
           "D3O4: the held command is answered from the proven image");
   }
 
+  // ---- the AECP hold admission (processor issue #131 ruling) -------------
+  //! the top's RX_SLOTS_P: the wrap keeps the F01.5 default, and the
+  //! snapshot's shape word (word 1, [15:8]) is graded to say so
+  static constexpr uint32_t RX_SLOTS = 4;
+  //! GET_RX_STATE of sink 0 from the controller: live ACMP listener work
+  static std::vector<uint8_t> get_rx_state(uint16_t seq) {
+    return acmp_frame(CTLR_MAC, 10, 0, 0, CTLR_EID, 0, EID, 0, 0, 0, 0, seq, 0, 0);
+  }
+  //! cycles from the end of its feed to its GET_RX_STATE_RESPONSE, -1 if
+  //! none within `ms`
+  long rx_state_latency(uint16_t seq, int ms) {
+    x.q_acmp.clear();
+    x.feed(get_rx_state(seq));
+    const long t0 = long(x.t);
+    const auto g = x.wait_frame(x.q_acmp, ms, [seq](const std::vector<uint8_t>& f) {
+      return f.size() > 63 && (f[15] & 0x0F) == 11 && fv_u64(f, 62, 2) == seq;
+    });
+    return g.empty() ? -1 : long(x.t) - t0;
+  }
+  //! AECP responses on the wire carrying sequence id `seq`
+  int answered(uint16_t seq) const {
+    int n = 0;
+    for (const auto& r : x.q_aecp) n += (r.size() >= 38 && fv_u64(r, 34, 2) == seq) ? 1 : 0;
+    return n;
+  }
+
+  // D3O5: CLOSED holds AECP for ever, and still at most ONE AECP record
+  // occupies the shared ingress. Of RX_SLOTS_P + 2 AECP commands the first
+  // is held and every further one is dropped at the slot gate and counted
+  // (snapshot word 37, the side port's own read). A GET_RX_STATE after each
+  // is answered in exactly the cycles it takes with no AECP traffic, none
+  // of the AECP commands is answered, and after 2,000 ms the listener
+  // still answers in that time.
+  void o5_closed_admits_one_aecp_record() {
+    std::vector<uint8_t> bad = image;
+    bad[0] ^= 0xFF;
+    power_up(bad, false);
+    const Boot b = boot_for(12000);
+    const uint32_t shape = x.snap(1);
+    const long idle_lat = rx_state_latency(0xD350, 50);
+    long worst = 0;
+    bool same = true;
+    for (uint32_t k = 0; k < RX_SLOTS + 2; ++k) {
+      x.feed(d3_read_entity_cmd(uint16_t(0xD360 + k)));
+      const long lat = rx_state_latency(uint16_t(0xD351 + k), 50);
+      same = same && lat == idle_lat;
+      worst = std::max(worst, lat);
+    }
+    CHECK(b.closed > b.release && ((shape >> 8) & 0xFF) == RX_SLOTS && idle_lat > 0
+              && same,
+          "D3O5: in CLOSED each GET_RX_STATE after each of %u AECP commands is "
+          "answered in %ld cycles, the idle latency (worst %ld)",
+          RX_SLOTS + 2, idle_lat, worst);
+    int replies = 0;
+    for (uint32_t k = 0; k < RX_SLOTS + 2; ++k) replies += answered(uint16_t(0xD360 + k));
+    const uint32_t dropped = x.snap(37);
+    CHECK(dropped == RX_SLOTS + 1 && replies == 0 && x.d->dbg_aecp_head_o
+              && x.d->dbg_d3_own_o,
+          "D3O5: one AECP command held, %u dropped at the slot gate and counted, "
+          "%d answered", dropped, replies);
+    x.run_ms(2000);
+    const long late = rx_state_latency(0xD35F, 50);
+    CHECK(late == idle_lat && x.snap(37) == RX_SLOTS + 1,
+          "D3O5: after 2,000 ms in CLOSED the listener answers in %ld cycles", late);
+  }
+
+  // D3O6: the same during a restore slowed inside its per-wait deadline:
+  // the D3 walk's next grant waits 15,000 cycles, and six AECP commands
+  // arrive after the listener's release. A GET_RX_STATE is answered in the
+  // idle latency long before the D3 terminal; at the terminal the one held
+  // command is answered byte-exact and the five dropped ones never are; a
+  // command after the terminal is served and nothing more is dropped.
+  void o6_a_slowed_restore_admits_one_aecp_record() {
+    power_up(image, false);
+    x.d->restore_go_i = 1;
+    for (long c = 0; c < 20000 && !x.d->dbg_lsn_released_o; ++c) {
+      if (c == 5) x.d->restore_go_i = 0;
+      x.step();
+    }
+    x.d->restore_go_i = 0;
+    x.nv_gnt_hold = 15000;                        // the D3 walk's next grant
+    const long idle_lat = rx_state_latency(0xD380, 50);
+    for (int k = 0; k < 6; ++k) x.feed(d3_read_entity_cmd(uint16_t(0xD370 + k)));
+    const long lat = rx_state_latency(0xD381, 50);
+    const bool walking = !x.d->dbg_d3_done_o;
+    for (long c = 0; c < 40000 && !x.d->dbg_d3_done_o; ++c) x.step();
+    x.idle(3000);
+    int dropped_replies = 0;
+    for (int k = 1; k < 6; ++k) dropped_replies += answered(uint16_t(0xD370 + k));
+    std::vector<uint8_t> held;
+    for (const auto& r : x.q_aecp)
+      if (r.size() >= 38 && fv_u64(r, 34, 2) == 0xD370) held = r;
+    const uint32_t dropped = x.snap(37);
+    CHECK(idle_lat > 0 && lat == idle_lat && walking,
+          "D3O6: during the slowed walk a GET_RX_STATE behind six AECP "
+          "commands is answered in %ld cycles, the idle latency %ld", lat, idle_lat);
+    CHECK(x.d->dbg_d3_done_o && held == d3_read_entity_rsp(0xD370)
+              && dropped_replies == 0 && dropped == 5,
+          "D3O6: at the terminal the held command is answered byte-exact, %u "
+          "dropped and counted, %d of them answered", dropped, dropped_replies);
+    x.q_aecp.clear();
+    x.feed(d3_read_entity_cmd(0xD37F));
+    const auto after = x.wait_any(x.q_aecp, 50);
+    CHECK(after == d3_read_entity_rsp(0xD37F) && x.snap(37) == 5,
+          "D3O6: after the terminal an AECP command is served, no drop counted");
+  }
+
   void run() {
     o1_dispatch_is_held_from_reset();
     o2_an_unprovable_image_ends_closed();
     o3_a_silent_descriptor_memory_ends_closed();
     o4_a_late_image_is_proven_by_its_locate();
+    o5_closed_admits_one_aecp_record();
+    o6_a_slowed_restore_admits_one_aecp_record();
   }
 };
 

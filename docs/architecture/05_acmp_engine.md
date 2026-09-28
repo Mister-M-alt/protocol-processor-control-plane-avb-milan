@@ -195,7 +195,10 @@ enable wait for the D3 terminal, the listener does not. A D3 failure, its roll-b
 the AECP stores included, never resets the listener, its admission gate or the binding
 manager: bindings the binding walk restored stay restored and a read-only poll still
 answers them (`tb/pp_top` D3R11). A CLOSED D3 terminal holds AECP and the enable until
-reset and leaves the listener released.
+reset and leaves the listener released. The held AECP work cannot starve the listener
+through the shared ingress either: while AECP is held at most one AECP record occupies it,
+and every further AECP frame is dropped at its slot gate and counted
+([03 §6](03_packet_engine.md) rule (d); `tb/pp_top` D3O5, D3O6).
 
 The contract is graded with the real listener, shadow, arbiter and port in
 [`tb/acmp_nvm`](../../tb/acmp_nvm/README.md) (group L, every presentation cycle of the

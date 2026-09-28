@@ -1165,6 +1165,10 @@ module protocol_processor_top
   logic [2:0]  v_hdr_rx_slot_w;
   logic [15:0] cnt_rx_da_w, cnt_rx_ethertype_w, cnt_rx_subtype_w;
   logic [15:0] cnt_rx_version_w, cnt_rx_length_w;
+  //! the AECP hold admission's gate and its drop count (driven below, at
+  //! the D3 writer's verdicts)
+  logic        aecp_rx_hold_w;
+  logic [15:0] cnt_rx_aecp_held_w;
 
   KL_pp_rx_validator #(
       .SLOTS_P (RX_SLOTS_P),
@@ -1176,6 +1180,7 @@ module protocol_processor_top
       .rx_data_i            (rx_data_i),
       .rx_last_i            (rx_last_i),
       .own_mac_i            (own_mac_i),
+      .aecp_hold_i          (aecp_rx_hold_w),
       .mrp_valid_o          (v_mrp_valid_w),
       .mrp_data_o           (v_mrp_data_w),
       .mrp_last_o           (v_mrp_last_w),
@@ -1205,7 +1210,8 @@ module protocol_processor_top
       .rx_ethertype_count_o (cnt_rx_ethertype_w),
       .rx_subtype_count_o   (cnt_rx_subtype_w),
       .rx_version_count_o   (cnt_rx_version_w),
-      .rx_length_count_o    (cnt_rx_length_w)
+      .rx_length_count_o    (cnt_rx_length_w),
+      .rx_aecp_held_count_o (cnt_rx_aecp_held_w)
   );
 
   // ---- RX free-return queue: 4 clients -> one serialized broadcast --------
@@ -2604,6 +2610,49 @@ module protocol_processor_top
   assign restore_closed_o = d3_closed_w;
   //! one reset-sticky alarm for both record producers
   assign nvm_alarm_o      = nvm_bind_alarm_w || d3_alarm_w;
+
+  // ---- the AECP hold admission (processor issue #131 ruling) ---------------
+  //! While the D3 writer holds AECP, from reset to its COMPLETE or DEFAULTS
+  //! terminal and for ever in CLOSED, at most ONE AECP record may occupy the
+  //! shared ingress (an RX slot and the AECP dispatch queue): the validator
+  //! drops every further AECP frame at its slot gate and counts it (snapshot
+  //! word 37), so the other RX_SLOTS_P - 1 slots stay ACMP's, ADP's and
+  //! MAAP's and their service keeps its latency. The resident count is the
+  //! AECP records committed (the parsed-header beat the latch above takes,
+  //! routed as the dispatch routes: not ADP, ACMP or MAAP) and not yet
+  //! returned (the engine's slot free, or the optional external drain's).
+  //! The one held record is served at the release like any other; in CLOSED
+  //! it stays held.
+  localparam int unsigned RXR_W_C = $clog2(RX_SLOTS_P + 1);
+  logic [RXR_W_C-1:0] aecp_rx_res_r;
+  logic [RXR_W_C:0]   aecp_rx_next_w;
+  logic               aecp_rx_in_w;
+  logic [1:0]         aecp_rx_out_w;
+
+  assign aecp_rx_in_w  = v_hdr_valid_w && !(hdr_vld_r && !nrm_rx_ready_w)
+                         && (v_hdr_protocol_w != 3'(PP_PROTO_ADP))
+                         && (v_hdr_protocol_w != 3'(PP_PROTO_ACMP))
+                         && (v_hdr_protocol_w != 3'(PP_PROTO_MAAP));
+  assign aecp_rx_out_w = {1'b0, aecp_rxs_free_w} + {1'b0, aecp_rxs_free_i};
+
+  //! committed in, returned out; never below zero, never above the pool
+  always_comb begin : aecp_rx_res_next
+    aecp_rx_next_w = {1'b0, aecp_rx_res_r} + (RXR_W_C + 1)'(aecp_rx_in_w);
+    if (aecp_rx_next_w > (RXR_W_C + 1)'(aecp_rx_out_w))
+      aecp_rx_next_w = aecp_rx_next_w - (RXR_W_C + 1)'(aecp_rx_out_w);
+    else
+      aecp_rx_next_w = '0;
+    if (aecp_rx_next_w > (RXR_W_C + 1)'(RX_SLOTS_P))
+      aecp_rx_next_w = (RXR_W_C + 1)'(RX_SLOTS_P);
+  end
+
+  always_ff @(posedge clk_i) begin : aecp_rx_res_ff
+    if (!rst_n) aecp_rx_res_r <= '0;
+    else        aecp_rx_res_r <= RXR_W_C'(aecp_rx_next_w);
+  end
+
+  //! the hold: the D3 writer has not reached a done terminal
+  assign aecp_rx_hold_w = !d3_done_w && ((aecp_rx_res_r != '0) || aecp_rx_in_w);
 
   KL_pp_nvm_mgr_arb u_nvm_arb (
       .clk_i          (clk_i),
@@ -4448,6 +4497,9 @@ module protocol_processor_top
         //! an integrator sees WHICH channel failed and how often.
         6'd35: sp_snap_rdata_r <= {aecp_dbg_rerr_w, aecp_dbg_rlane_w};
         6'd36: sp_snap_rdata_r <= {29'd0, aecp_dbg_rfault_w};
+        //! the AECP hold admission: AECP frames dropped at the slot gate
+        //! while the D3 writer held AECP with one AECP record resident
+        6'd37: sp_snap_rdata_r <= {16'd0, cnt_rx_aecp_held_w};
         default: sp_snap_rdata_r <= 32'd0;
       endcase
     end

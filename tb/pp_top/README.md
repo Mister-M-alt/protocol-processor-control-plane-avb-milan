@@ -39,6 +39,18 @@ tally.
   the store's 4,096-cycle watchdogs, never a hang. **D3O4** an image loaded
   after the store's boot walk failed is proven by the writer's LOCATE of
   ENTITY 0 (heal before answer), and the held command is answered from it.
+  **D3O5** (the AECP hold admission, processor issue #131 ruling) in CLOSED,
+  of `RX_SLOTS_P` + 2 = 6 READ_DESCRIPTORs the first is held and the other
+  five are dropped at the slot gate and counted (snapshot word 37, read over
+  the side port); a GET_RX_STATE after each is answered in exactly the 168
+  cycles it takes with no AECP traffic, none of the six is answered, and the
+  listener still answers in that time 2,000 ms later. **D3O6** the same
+  during a restore whose next D3 grant waits 15,000 cycles: six AECP
+  commands after the listener's release, then a GET_RX_STATE answered in the
+  idle latency before the D3 terminal; at the terminal the held command is
+  answered byte-exact, the five dropped ones never are, five drops are
+  counted, and a command after the terminal is served with no drop. A mutant
+  that drops nothing (the unbounded hold) fails all six checks.
   **D3S** the writer in service, on real AECP SETs over the device model.
   **D3S1** every persisted group at its first and last declared index
   (configuration, sampling rate, clock source, both stream-format

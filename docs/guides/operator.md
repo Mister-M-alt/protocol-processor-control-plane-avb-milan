@@ -183,6 +183,12 @@ processor, in the MAC path.
 | 34 | 20:10 | length of the last response |
 | 35 | 31:16 / 15:0 | responses voided by the response memory / lanes written to it |
 | 36 | 2:0 | last fault code on the response-memory master |
+| 37 | 15:0 | AECP frames dropped at the slot gate while the saved-state restore held AECP and one AECP command was already held (the AECP hold admission) |
+
+Word 37 rising while the entity is not yet advertised, or for ever in a CLOSED restore,
+means controllers are sending AECP commands the restore holds: one is kept and answered
+at the release (never, in CLOSED), the rest are dropped and their controllers retry. ACMP,
+ADP and MAAP are not affected by it.
 
 Word 34 bit 0 reading 0 is the single most common cause of an entity that discovers
 cleanly and then shows nothing in a controller: the model lives in the integrator's

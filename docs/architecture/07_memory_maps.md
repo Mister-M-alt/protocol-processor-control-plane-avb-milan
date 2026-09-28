@@ -657,7 +657,7 @@ ratified as an enforced bound).
 
 | Event | Cause (`rs_cause_o`) | Terminal |
 |---|---|---|
-| the image cannot be proven (the LOCATE errs or finds no validated image) | 7 | **CLOSED**: fail, never done; AECP dispatch and ADP held until reset; the listener stays released |
+| the image cannot be proven (the LOCATE errs or finds no validated image) | 7 | **CLOSED**: fail, never done; AECP dispatch and ADP held until reset; the listener stays released and keeps its latency: at most one AECP command stays held in the ingress, and every further one is dropped at its slot gate and counted (snapshot word 37; [03 §6](03_packet_engine.md) rule (d)) |
 | the aggregate bound before the image is proven (the binding walk still running, or the image proof) | 3 | **CLOSED**, as above |
 | in pass 0: a DEVICE err, a torn read, a stall of `P-NVM-RS-TMO-CYC` clocks or the aggregate bound (a granted read abandoned to the drain) | 2, 1, 3 | **DEFAULTS**: done and fail; nothing was applied |
 | in pass 1: any of those, a record whole in one pass and not the other, or a descriptor read a value rule needs that errs (never a refusal) | 2, 1, 3, 5, 6 | **ROLL-BACK**, then DEFAULTS or CLOSED |
@@ -722,11 +722,13 @@ Decided by the parent manager rulings ([D3 contract](https://github.com/kebag-lo
 | 0x40000–0x4FFFF | RO | trace ring (class-A framing) | **implemented** |
 | 0x50000–0x5FFFF | RW | firmware mailbox (`P-EN-FIRMWARE-ASSIST` only) | disabled — every access refused |
 
-The **snapshot window at `0x20000`** is the observability surface. Its words 32–36 publish
+The **snapshot window at `0x20000`** is the observability surface. Its words 32–37 publish
 the AECP engine, the descriptor store and the response buffer: command, response, drop and
 locate-miss counters, the last response's status and length, the image-valid flag and its
 fault code, and — words 35 and 36 — the count of responses voided by the response memory,
-the lanes written to it and the last fault code on that master. The wire only ever shows
+the lanes written to it and the last fault code on that master; word 37 counts the AECP
+frames dropped at the slot gate while the D3 writer held AECP with one AECP record resident
+(the AECP hold admission, [03 §6](03_packet_engine.md) rule (d)). The wire only ever shows
 `ENTITY_MISBEHAVING` when that bridge fails; this window is where an integrator sees which
 channel failed and how often.
 
