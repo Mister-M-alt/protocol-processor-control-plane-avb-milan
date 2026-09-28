@@ -27,8 +27,9 @@
 //                  Services: KL_pp_timer_service (arm-port priority mux),
 //                      KL_pp_prng (draw-port owner mux), KL_pp_scoreboard,
 //                      KL_pp_event_router, KL_pp_originator, KL_pp_trace_ring,
-//                      KL_pp_side_port, KL_acmp_nvm_shadow -> KL_pp_nvm_mgr_arb
-//                      -> KL_pp_nvm_port,
+//                      KL_pp_side_port, KL_acmp_nvm_shadow (manager 0) and
+//                      the AECP engine's D3 writer KL_aecp_nvm_writer
+//                      (manager 1) -> KL_pp_nvm_mgr_arb -> KL_pp_nvm_port,
 //                      KL_pp_acmp_lsn_admit (the listener's four work faces
 //                      held from reset to the binding walk's end).
 //                  The F02.10 class-D status dictionary is aggregated into
@@ -2447,8 +2448,12 @@ module protocol_processor_top
   // =========================================================================
   //! the binding manager is manager 0 of KL_pp_nvm_mgr_arb, which drains a
   //! read the manager abandons at its deadline so the late response reaches
-  //! nobody (issue #93, S3). Manager 1 is the platform's saved-state writer;
-  //! until it lands here that face is tied idle.
+  //! nobody (issue #93, S3). Manager 1 is the processor's D3 saved-state
+  //! writer, KL_aecp_nvm_writer inside KL_aecp_engine; the arbiter drains a
+  //! read either manager abandons, and one device-face initiator remains.
+  logic        d3_m_req_w, d3_m_we_w, d3_m_wvalid_w, d3_m_rready_w;
+  logic        d3_m_abort_w;
+  logic [7:0]  d3_m_rid_w, d3_m_wdata_w;
   logic        nvm_req_w, nvm_we_w, nvm_wvalid_w, nvm_wready_w;
   logic [7:0]  nvm_record_id_w, nvm_wdata_w, nvm_rdata_w;
   logic        nvm_rvalid_w, nvm_rready_w, nvm_busy_w, nvm_done_w, nvm_err_w;
@@ -2537,14 +2542,13 @@ module protocol_processor_top
       .m0_err_o       (nvm_err_w),
       .m0_err_cause_o (nvm_err_cause_w),
       .m0_abort_i     (nvm_abort_w),
-      // The saved-state writer is not present yet; keep manager 1's request,
-      // payload and handshakes idle so only the binding manager uses the port.
-      .m1_req_i       (1'b0),
-      .m1_we_i        (1'b0),
-      .m1_rid_i       (8'd0),
-      .m1_wvalid_i    (1'b0),
-      .m1_wdata_i     (8'd0),
-      .m1_rready_i    (1'b0),
+      // Manager 1: the D3 writer inside the AECP engine.
+      .m1_req_i       (d3_m_req_w),
+      .m1_we_i        (d3_m_we_w),
+      .m1_rid_i       (d3_m_rid_w),
+      .m1_wvalid_i    (d3_m_wvalid_w),
+      .m1_wdata_i     (d3_m_wdata_w),
+      .m1_rready_i    (d3_m_rready_w),
       .m1_gnt_o       (nm1_gnt_nc_w),
       .m1_wready_o    (nm1_wready_nc_w),
       .m1_rvalid_o    (nm1_rvalid_nc_w),
@@ -2552,8 +2556,7 @@ module protocol_processor_top
       .m1_done_o      (nm1_done_nc_w),
       .m1_err_o       (nm1_err_nc_w),
       .m1_err_cause_o (nm1_err_cause_nc_w),
-      // The absent manager 1 owns no read and therefore has nothing to abort.
-      .m1_abort_i     (1'b0),
+      .m1_abort_i     (d3_m_abort_w),
       .p_req_o        (np_req_w),
       .p_we_o         (np_we_w),
       .p_rid_o        (np_rid_w),
@@ -3165,6 +3168,10 @@ module protocol_processor_top
     end
   end
   logic                    aecp_eff_commit_nc_w;
+  //! the D3 writer's restore verdicts. The top's restore outputs are still
+  //! the binding walk's alone at this stage; tb/pp_top observes these.
+  logic                    d3_done_nc_w, d3_fail_nc_w, d3_closed_nc_w;
+  logic  [2:0]             d3_cause_nc_w;
   logic [3:0]              aecp_eff_notify_cls_nc_w;
   logic                    aecp_eff_notify_stb_nc_w;
   logic [15:0]             aecp_eff_notify_type_w, aecp_eff_notify_index_w;
@@ -3350,7 +3357,8 @@ module protocol_processor_top
       .RX_SLOT_BYTES_P     (RX_SLOT_BYTES_P),
       .TX_STD_SLOTS_P      (TX_STD_SLOTS_P),
       .TX_STD_BYTES_P      (576),
-      .TX_OVERSIZE_BYTES_P (TX_OVERSIZE_BYTES_P)
+      .TX_OVERSIZE_BYTES_P (TX_OVERSIZE_BYTES_P),
+      .NVM_RS_TMO_CYC_P    (NVM_RS_TMO_CYC_P)
   ) u_aecp (
       .clk_i              (clk_i),
       .rst_n              (rst_n),
@@ -3468,6 +3476,18 @@ module protocol_processor_top
       .lock_ctlr_i        (ntfy_lock_ctlr_w),
       .eff_commit_o       (aecp_eff_commit_nc_w),
       .name_wr_o          (aecp_name_wr_o),
+      .d3_go_i            (lsn_released_w),
+      .d3_m_req_o         (d3_m_req_w),
+      .d3_m_we_o          (d3_m_we_w),
+      .d3_m_rid_o         (d3_m_rid_w),
+      .d3_m_wvalid_o      (d3_m_wvalid_w),
+      .d3_m_wdata_o       (d3_m_wdata_w),
+      .d3_m_rready_o      (d3_m_rready_w),
+      .d3_m_abort_o       (d3_m_abort_w),
+      .d3_done_o          (d3_done_nc_w),
+      .d3_fail_o          (d3_fail_nc_w),
+      .d3_closed_o        (d3_closed_nc_w),
+      .d3_cause_o         (d3_cause_nc_w),
       .eff_nvm_mark_o     (aecp_nvm_mark_o),
       .eff_nvm_stb_o      (aecp_nvm_stb_o),
       .eff_notify_class_o (aecp_eff_notify_cls_nc_w),

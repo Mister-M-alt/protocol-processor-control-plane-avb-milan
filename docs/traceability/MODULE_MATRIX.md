@@ -12,6 +12,7 @@
 | `KL_aecp_dyn_state` | `hdl/aecp/KL_aecp_dyn_state.sv` | dyn_state, pp_top |
 | `KL_aecp_engine` | `hdl/aecp/KL_aecp_engine.sv` | pp_top |
 | `KL_aecp_notify` | `hdl/aecp/KL_aecp_notify.sv` | aecp_notify, pp_top |
+| `KL_aecp_nvm_writer` | `hdl/aecp/KL_aecp_nvm_writer.sv` | pp_top |
 | `KL_aecp_resp_buf` | `hdl/aecp/KL_aecp_resp_buf.sv` | pp_top, resp_buf |
 | `KL_aecp_ucpu` | `hdl/aecp/KL_aecp_ucpu.sv` | pp_top, ucpu |
 | `KL_mrp_strip` | `hdl/top/KL_mrp_strip.sv` | pp_top |
@@ -50,4 +51,4 @@
 | `srp_pkg` | `hdl/srp/srp_pkg.sv` | acmp_talker, pp_top, srp_decoder, srp_stream_fsms, srp_top |
 | `ucpu_pkg` | `hdl/aecp/ucpu_pkg.sv` | pp_top, ucpu |
 
-Modules: 46 · untested: 0 (budget: 0)
+Modules: 47 · untested: 0 (budget: 0)

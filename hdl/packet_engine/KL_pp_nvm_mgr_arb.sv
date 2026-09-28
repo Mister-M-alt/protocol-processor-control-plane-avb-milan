@@ -11,11 +11,11 @@
 //  Description : Two record managers in front of ONE KL_pp_nvm_port. The
 //                port has one manager face and serves one operation at a
 //                time; this block puts the binding manager
-//                (KL_acmp_nvm_shadow, manager 0) and a second record writer
-//                (manager 1, the saved-state writer of the integrating
-//                platform's contract; tied idle until it lands) in front of
-//                it, so the device face keeps exactly one sequential
-//                initiator and the backend sees nothing new.
+//                (KL_acmp_nvm_shadow, manager 0) and the processor's D3
+//                saved-state writer (KL_aecp_nvm_writer inside
+//                KL_aecp_engine, manager 1; parent D3 contract §3 rule 5,
+//                §6.4) in front of it, so the device face keeps exactly one
+//                sequential initiator and the backend sees nothing new.
 //
 //                OWNERSHIP IS PER OPERATION. The manager whose request the
 //                port accepted owns every data phase and the done or err

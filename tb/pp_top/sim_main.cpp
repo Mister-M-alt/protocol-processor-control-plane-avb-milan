@@ -738,6 +738,9 @@ struct H {
   std::deque<DescBurst> desc_fifo;
   int dram_delay_next = -1;
   bool dram_stuck_next = false;
+  //! every request from now on is accepted and never answered (a silent
+  //! memory behind a live bridge); unlike dram_stuck_next it persists
+  bool dram_silent = false;
   uint64_t dram_overlap_accepts = 0;
   uint64_t dram_reqs = 0;
   // AECP response-buffer memory at RESP_BASE_P (03 §7). READ + WRITE, and
@@ -1274,7 +1277,7 @@ struct H {
       if (!desc_fifo.empty()) ++dram_overlap_accepts;
       desc_fifo.push_back({d->desc_mem_req_addr_o, int(d->desc_mem_req_beats_o), 0,
                           t + uint64_t(dram_delay_next >= 0 ? dram_delay_next : dram_lat),
-                          dram_stuck_next});
+                          dram_stuck_next || dram_silent});
       dram_delay_next = -1;
       dram_stuck_next = false;
       ++dram_reqs;
@@ -1557,6 +1560,22 @@ struct H {
   }
 
   void idle(int n) { for (int i = 0; i < n; i++) step(); }
+  //! the device keeps nothing: every region reads erased
+  void erase_nvm() {
+    for (auto& region : nv_mem) std::fill(region.begin(), region.end(), 0xFF);
+  }
+  //! Start both restore walks as firmware does on every boot path and
+  //! wait for the D3 writer to release AECP dispatch at its terminal.
+  //! The dispatch hold runs from reset, so a section that resets and
+  //! then issues AECP commands boots first.
+  bool boot_to_aecp() {
+    d->restore_go_i = 1;
+    idle(5);
+    d->restore_go_i = 0;
+    long guard = 400000;
+    while (d->dbg_d3_own_o && guard-- > 0) step();
+    return !d->dbg_d3_own_o;
+  }
   void run_ms(int ms) { idle(ms * MS_CYC); }
   uint32_t now_ms() { return d->dbg_now_ms_o; }
 
@@ -7853,8 +7872,12 @@ struct ControllerMonitorPhase {
 
   void run() {
     // Give the timing contract a fresh registry. Earlier sections deliberately
-    // exercise sequence advancement and repeated registrations.
+    // exercise sequence advancement and repeated registrations. The boot
+    // walks run over an erased device so no earlier binding is restored:
+    // AECP dispatch is held from reset until the D3 terminal.
+    h.erase_nvm();
     h.reset();
+    CHECK(h.boot_to_aecp(), "U10: both walks over an erased device release AECP");
     std::vector<uint8_t> fl0(4, 0);
     u10_the_monitor_controller_registers(fl0);
     u10a_a_probe_cancelled_while_its_frame_is_built();
@@ -8333,6 +8356,7 @@ struct InternalMaapPhase {
     d2->cfg_maap_seed_offset_i = 0;
     d2->cfg_maap_seed_valid_i = 0;
     h2.reset();
+    CHECK(h2.boot_to_aecp(), "MP0: both walks over an erased device release AECP");
     const uint64_t base = mp1_the_whole_acquisition_on_the_wire();
     const uint64_t prober = mp2_a_conflicting_probe_is_defended(base);
     mp3_the_talker_is_granted_from_the_internal_claim(base);
@@ -9520,7 +9544,9 @@ struct Suite {
   // whichever controller owns the second handle and prove that the released
   // handle is removed before its physical slot can be reused.
   void cancellation_compacts_originator_queue() {
+    h.erase_nvm();
     h.reset();
+    CHECK(h.boot_to_aecp(), "U11: both walks over an erased device release AECP");
     const uint64_t C2_MAC = 0x0202C2C2C2C2ull;
     std::vector<uint8_t> fl0(4, 0);
     auto is_seq = [](uint16_t seq) {
@@ -9748,6 +9774,20 @@ struct NameWritePhase {
   }
 };
 
+#include "d3_phases.hpp"
+
+//! Section D3 on fresh models, against the same descriptor image the
+//! suite loads; `--d3-only` runs it alone.
+[[maybe_unused]] static void run_d3(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  Suite setup(h);
+  setup.load_descriptor_image();
+  const std::vector<uint8_t> image = h.dram;
+  D3OwnershipPhase{h, image}.run();
+  printf("D3: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 [[maybe_unused]] static void run_name_writes(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
@@ -9784,9 +9824,11 @@ int main(int argc, char** argv) {
 #else
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
-  if (!gsi_only && !name_only) Suite(h).run();
-  if (!name_only) InternalStreamInfoPhase{h}.run();
-  if (!gsi_only) run_name_writes(h);
+  const bool d3_only = argc == 2 && std::strcmp(argv[1], "--d3-only") == 0;
+  if (!gsi_only && !name_only && !d3_only) Suite(h).run();
+  if (!name_only && !d3_only) InternalStreamInfoPhase{h}.run();
+  if (!gsi_only && !d3_only) run_name_writes(h);
+  if (!gsi_only && !name_only) run_d3(h);
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's two

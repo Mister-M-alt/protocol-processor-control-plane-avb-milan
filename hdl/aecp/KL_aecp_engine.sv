@@ -246,6 +246,15 @@
 //                originates no AECP command yet, and answering a response is
 //                how a control plane builds a storm; and a command whose
 //                target_entity_id is not ours is dropped (F06.2 MATCHED arc).
+//
+//                THE D3 WRITER HOLDS DISPATCH FROM RESET. KL_aecp_nvm_writer
+//                (parent D3 contract §3 rule 7) owns the state bus from the
+//                hard reset to its restore terminal. While it does, A_IDLE
+//                takes neither a command nor an unsolicited job, the head
+//                stays in its dispatch queue, and the stores answer the
+//                writer alone. A command that arrived meanwhile is served
+//                after the terminal, on the state the restore left; a
+//                CLOSED terminal holds dispatch until the next reset.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -281,6 +290,9 @@ module KL_aecp_engine
     parameter int unsigned TX_STD_SLOTS_P      = 4,
     parameter int unsigned TX_STD_BYTES_P      = 576,
     parameter int unsigned TX_OVERSIZE_BYTES_P = 1600,
+    //! T-NVM-RS-DEADLINE (F08.1), P-NVM-RS-TMO-CYC (F01.5): the D3 restore's
+    //! per-wait deadline in clocks (KL_aecp_nvm_writer)
+    parameter int unsigned NVM_RS_TMO_CYC_P    = 2_000_000,
     //! derived — do not override
     localparam int unsigned RXS_W_C  = (RX_SLOTS_P > 1) ? $clog2(RX_SLOTS_P) : 1,
     localparam int unsigned RXA_W_C  = $clog2(RX_SLOT_BYTES_P),
@@ -530,6 +542,25 @@ module KL_aecp_engine
     //! direct store output, with no ready/ack. Boot loading, unchanged lanes,
     //! refused commands and writes aborted before acceptance emit no pulse.
     output logic        name_wr_o,
+
+    //! ---- the D3 saved-state writer (KL_aecp_nvm_writer, inside) -----------
+    //! The writer owns this engine's state bus and dispatch FROM RESET until
+    //! its restore terminal: no AECP command or unsolicited job is taken while
+    //! it does (the dispatch head stays in its queue). `d3_go_i` starts its
+    //! restore: the binding walk's drained terminal (KL_pp_acmp_lsn_admit
+    //! released_o). Its NVM face is manager 1 of KL_pp_nvm_mgr_arb.
+    input  wire         d3_go_i,
+    output logic        d3_m_req_o,         //! op request, held until granted
+    output logic        d3_m_we_o,          //! 1 = commit, 0 = restore
+    output logic  [7:0] d3_m_rid_o,         //! record id
+    output logic        d3_m_wvalid_o,      //! commit byte present
+    output logic  [7:0] d3_m_wdata_o,       //! commit byte
+    output logic        d3_m_rready_o,      //! restore byte accepted
+    output logic        d3_m_abort_o,       //! abandon the READ it owns
+    output logic        d3_done_o,          //! level: the D3 restore is done
+    output logic        d3_fail_o,          //! level: the D3 restore failed
+    output logic        d3_closed_o,        //! level: CLOSED, AECP held until reset
+    output logic  [2:0] d3_cause_o,         //! the first abort's cause
 
     //! ---- effect strobes (06 §8; consumers are P4) ----
     output logic        eff_commit_o,
@@ -1436,6 +1467,29 @@ module KL_aecp_engine
   logic  [7:0] st_wstrb_w;
   logic        st_ready_w, st_rvalid_w, st_err_w;
 
+  //! ---- the state bus has TWO clients now (D3) ----------------------------
+  //! The µCPU's request (`u_st_*`) and the saved-state writer's (`d3_sb_*`)
+  //! meet in a 2:1 selection in front of the two stores, and `d3_own_w`
+  //! chooses. The writer owns the bus from reset to its restore terminal and
+  //! the engine takes no command meanwhile (A_IDLE below), so the µCPU is idle
+  //! whenever the writer drives: the selection never cuts a request in half.
+  //! The stores see exactly one client's contract either way.
+  logic        u_st_req_w, u_st_we_w, u_st_name_w;
+  logic [19:0] u_st_addr_w;
+  logic [63:0] u_st_wdata_w;
+  logic  [7:0] u_st_wstrb_w;
+  logic        d3_own_w;
+  logic        d3_sb_req_w, d3_sb_we_w;
+  logic [19:0] d3_sb_addr_w;
+  logic [63:0] d3_sb_wdata_w;
+
+  assign st_req_w   = d3_own_w ? d3_sb_req_w   : u_st_req_w;
+  assign st_we_w    = d3_own_w ? d3_sb_we_w    : u_st_we_w;
+  assign st_name_w  = d3_own_w ? 1'b0          : u_st_name_w;
+  assign st_addr_w  = d3_own_w ? d3_sb_addr_w  : u_st_addr_w;
+  assign st_wdata_w = d3_own_w ? d3_sb_wdata_w : u_st_wdata_w;
+  assign st_wstrb_w = d3_own_w ? 8'hFF         : u_st_wstrb_w;
+
   //! ---- the state port has TWO slaves now (06 §8) ------------------------
   //! Regions 0x1 and 0x2 are the dynamic-state store's value and valid-flag
   //! views; everything else — RGN_DATA 0x0, NBASE 0xC, NCFG 0xD, LEN 0xE,
@@ -1547,14 +1601,15 @@ module KL_aecp_engine
       .disp_opd2_i        (opd2_r),
       .disp_batch_i       (gdi_r),
       .disp_resp_base_i   (10'(g_out_r + 11'd8)),
-      .st_req_o           (st_req_w),
-      .st_we_o            (st_we_w),
-      .st_name_o          (st_name_w),
-      .st_addr_o          (st_addr_w),
-      .st_wdata_o         (st_wdata_w),
-      .st_wstrb_o         (st_wstrb_w),
-      .st_ready_i         (st_ready_w),
-      .st_rvalid_i        (st_rvalid_w),
+      .st_req_o           (u_st_req_w),
+      .st_we_o            (u_st_we_w),
+      .st_name_o          (u_st_name_w),
+      .st_addr_o          (u_st_addr_w),
+      .st_wdata_o         (u_st_wdata_w),
+      .st_wstrb_o         (u_st_wstrb_w),
+      //! an answer to the writer's request is never the µCPU's
+      .st_ready_i         (st_ready_w && !d3_own_w),
+      .st_rvalid_i        (st_rvalid_w && !d3_own_w),
       .st_rdata_i         (st_rdata_w),
       .st_err_i           (st_err_w),
       //! the 06 §6.6/§6.5 gather bus, with TWO sources routed by command:
@@ -1690,6 +1745,37 @@ module KL_aecp_engine
       .dirty_o         (dyn_dirty_o),
       .dbg_writes_o    (dyn_writes_nc_w),
       .dbg_oob_o       (dyn_oob_nc_w)
+  );
+
+  //! ---- the D3 saved-state writer (parent D3 §3, §6.2) --------------------
+  //! It owns the state bus from reset (the selection above) and holds this
+  //! engine's dispatch until its restore terminal (A_IDLE below). Its image
+  //! proof reads the descriptor store's validated-image level.
+  KL_aecp_nvm_writer #(
+      .RS_TMO_CYC_P (NVM_RS_TMO_CYC_P)
+  ) u_d3 (
+      .clk_i       (clk_i),
+      .rst_n       (rst_n),
+      .go_i        (d3_go_i),
+      .img_valid_i (dbg_img_valid_o),
+      .own_o       (d3_own_w),
+      .sb_req_o    (d3_sb_req_w),
+      .sb_we_o     (d3_sb_we_w),
+      .sb_addr_o   (d3_sb_addr_w),
+      .sb_wdata_o  (d3_sb_wdata_w),
+      .sb_rvalid_i (st_rvalid_w && d3_own_w),
+      .sb_err_i    (st_err_w),
+      .m_req_o     (d3_m_req_o),
+      .m_we_o      (d3_m_we_o),
+      .m_rid_o     (d3_m_rid_o),
+      .m_wvalid_o  (d3_m_wvalid_o),
+      .m_wdata_o   (d3_m_wdata_o),
+      .m_rready_o  (d3_m_rready_o),
+      .m_abort_o   (d3_m_abort_o),
+      .done_o      (d3_done_o),
+      .fail_o      (d3_fail_o),
+      .closed_o    (d3_closed_o),
+      .cause_o     (d3_cause_o)
   );
 
   logic [15:0] resp_burst_nc_w, resp_drop_nc_w;
@@ -2223,8 +2309,11 @@ module KL_aecp_engine
   //! memory: `open_i` re-arms the buffer, and re-arming it under a burst that
   //! is still in flight would leave the bridge holding a beat nobody sinks.
   //! The buffer's watchdog bounds this wait, so it can never become a hang.
+  //! Nor while the D3 writer owns the state bus: the head stays in its queue
+  //! (and out of the scoreboard, whose candidacy reads this ready) until the
+  //! writer's restore terminal, and is then taken first.
   assign txn_ready_o     = (a_st_r == A_IDLE) && !rsp_busy_w
-                           && !amap_notify_busy_i;
+                           && !amap_notify_busy_i && !d3_own_w;
   assign txs_alloc_req_o = (a_st_r == A_ALLOC);
   assign txs_oversize_o  = (frame_len_r > 11'(TX_STD_BYTES_P));
   assign txs_wr_slot_o   = tx_slot_r;
@@ -2261,7 +2350,7 @@ module KL_aecp_engine
   //! opened when a command is accepted, sealed when its µprogram retires. An
   //! echoed payload never entered the buffer, so it is sealed with length 0
   //! and costs no read burst at all.
-  assign rsp_open_w     = (a_st_r == A_IDLE) && !rsp_busy_w
+  assign rsp_open_w     = (a_st_r == A_IDLE) && !rsp_busy_w && !d3_own_w
                           && ((txn_valid_i && !drop_w
                                && !amap_notify_busy_i)
                               || (uns_valid_i
@@ -2381,8 +2470,10 @@ module KL_aecp_engine
           //! pop only happens when txn_ready_o is high, so advancing while
           //! the previous response's memory burst still held the buffer
           //! would process the un-popped head TWICE and double-free its RX
-          //! slot. The same guard arms the unsolicited path.
-          if (txn_valid_i && !rsp_busy_w && !amap_notify_busy_i) begin
+          //! slot. The same guard arms the unsolicited path. The D3 writer's
+          //! ownership holds both until its restore terminal.
+          if (txn_valid_i && !rsp_busy_w && !amap_notify_busy_i
+              && !d3_own_w) begin
             cmd_r <= txn_w;
             if (drop_w) begin
               if (drop_cnt_r != 16'hFFFF) drop_cnt_r <= drop_cnt_r + 16'd1;
@@ -2460,7 +2551,7 @@ module KL_aecp_engine
               a_st_r    <= gdi_w ? A_GSCAN
                           : (txn_w.rx_slot == PP_SLOT_NULL_C) ? A_DISP : A_PLD;
             end
-          end else if (uns_valid_i && !rsp_busy_w) begin
+          end else if (uns_valid_i && !rsp_busy_w && !d3_own_w) begin
             //! the unsolicited job: a phantom 03 §4 record with no RX slot
             //! and no payload walk - the solicited head always outranks it,
             //! so notifications can never starve the command path. Only the

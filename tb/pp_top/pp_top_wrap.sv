@@ -329,7 +329,20 @@ module pp_top_wrap (
     output logic [15:0] dbg_dyn_writes_o,
     output logic        aecp_nvm_stb_o,
     output logic  [7:0] aecp_nvm_mark_o,
-    output logic        dbg_notify_enq_o
+    output logic        dbg_notify_enq_o,
+
+    //! the D3 writer inside the AECP engine (KL_aecp_nvm_writer), observed
+    //! for section D3: its ownership of the state bus and dispatch, its
+    //! restore verdicts, and whether the engine has a command in flight
+    output logic        dbg_d3_own_o,
+    output logic        dbg_d3_done_o,
+    output logic        dbg_d3_fail_o,
+    output logic        dbg_d3_closed_o,
+    output logic  [2:0] dbg_d3_cause_o,
+    output logic        dbg_aecp_busy_o,
+    //! the AECP dispatch queue's head is present (before the scoreboard
+    //! admission that aecp_txn_valid_o is gated by)
+    output logic        dbg_aecp_head_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
@@ -607,6 +620,13 @@ module pp_top_wrap (
   assign dbg_name_live_we_o = u_dut.u_aecp.u_store.name_we_w
                               && u_dut.u_aecp.u_store.st_ready_o;
   assign dbg_notify_enq_o = u_dut.aecp_eff_notify_stb_nc_w;
+  assign dbg_d3_own_o     = u_dut.u_aecp.d3_own_w;
+  assign dbg_d3_done_o    = u_dut.d3_done_nc_w;
+  assign dbg_d3_fail_o    = u_dut.d3_fail_nc_w;
+  assign dbg_d3_closed_o  = u_dut.d3_closed_nc_w;
+  assign dbg_d3_cause_o   = u_dut.d3_cause_nc_w;
+  assign dbg_aecp_busy_o  = u_dut.aecp_dbg_busy_nc_w;
+  assign dbg_aecp_head_o  = u_dut.aecp_txn_valid_w;
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin

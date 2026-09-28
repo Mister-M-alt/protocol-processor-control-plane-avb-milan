@@ -5,7 +5,8 @@ Builds `protocol_processor_top` (every landed module of the tree wired:
 validator + replicated RX pools + normalizer + dispatch + ADP engine + ACMP
 listener/talker + SRP engine behind `KL_mrp_strip` + TX pool/arbiter + the
 ACMP Ethernet-prepend shim + timer/PRNG muxes + scoreboard, event router,
-originator, trace ring, side port, NVM shadow + manager arbiter + port) under `pp_top_wrap`
+originator, trace ring, side port, NVM shadow + the AECP engine's D3 writer +
+manager arbiter + port) under `pp_top_wrap`
 and drives it ONLY through the top's external contract: one MAC byte stream
 in, one MAC byte stream out, the side-port host face, the SRP service face,
 the NVM device face and the descriptor-image memory master. Time is compressed to 1 ms = 100 clk (the 89-slot
@@ -22,6 +23,26 @@ tally.
 
 ## What it proves
 
+- **D3: the saved-state writer's ownership (parent D3 contract sections 3,
+  6.2 and 8.1).** `d3_phases.hpp` runs every case on a fresh model with the
+  suite's descriptor image and an erased NVM device, through the top's own
+  faces. **D3O1** a READ_DESCRIPTOR fed before `restore_go_i` waits in the
+  AECP dispatch queue for 2,000 cycles with the writer owning the state bus
+  in every one and the engine running nothing; after the boot the writer's
+  terminal follows the listener admission gate's release, its ownership
+  falls on that terminal, the engine takes the held command only after it,
+  a validated image is proven without a LOCATE, and the command is answered
+  byte-exact. **D3O2** an image whose magic the store refuses ends the
+  restore CLOSED, cause 7, with ownership kept: a command then waits 30,000
+  cycles unserved while the listener stays released. **D3O3** a descriptor
+  memory that accepts and never answers ends CLOSED, cause 7, inside two of
+  the store's 4,096-cycle watchdogs, never a hang. **D3O4** an image loaded
+  after the store's boot walk failed is proven by the writer's LOCATE of
+  ENTITY 0 (heal before answer), and the held command is answered from it.
+  The dispatch hold runs from reset, so every section that resets and then
+  issues AECP commands starts both walks first (`H::boot_to_aecp`, U10, U11
+  and the internal-MAAP model's MP0). Focused reproduction:
+  `./obj_dir/Vpp_top_sim --d3-only` after `make gsi-build`.
 - **NW: accepted live name writes (issue #120).** The top's `aecp_name_wr_o`
   is sampled on every accepting clock edge. Independent byte comparisons
   predict one changed lane, all eight changed lanes and an unchanged name;
@@ -459,7 +480,9 @@ and M34 the same 2 as before.
   except where a section names its tap: R waits on `dbg_walk_done_o`, and
   BW4 grades the top's restore pins against the admission gate's release and
   the listener's preload write and A4 arm (`dbg_lsn_released_o`,
-  `dbg_lsn_preload_o`, `dbg_lsn_arm_o`).
+  `dbg_lsn_preload_o`, `dbg_lsn_arm_o`). Section D3 grades the writer's
+  ownership and verdicts (`dbg_d3_*`), the engine's command-in-flight level
+  (`dbg_aecp_busy_o`) and the dispatch queue's head (`dbg_aecp_head_o`).
 
 ## Section B — the response buffer lives in main memory (03 §7.1)
 
@@ -635,7 +658,13 @@ budgets, and proves that no attempt timeout starts before serializer acceptance.
 A valid command then cancels the queued exchange. The stale handle must drain,
 both solicited responses must resume, and all five TX slots must return free.
 
+U10 resets the DUT over an erased NVM device and starts both restore walks
+before its first command (`H::boot_to_aecp`): the D3 writer holds AECP
+dispatch from reset to its restore terminal.
+
 ## Section U11: non-head cancellation
+
+U11 boots the same way after its reset.
 
 U11 stalls the serializer until two independent controller probes occupy the
 originator queue. It cancels the controller owning the second handle and
