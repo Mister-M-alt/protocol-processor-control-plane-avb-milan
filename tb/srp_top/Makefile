@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
 # KL_srp_top end-to-end engine suite — exit 0 = PASS.
 VERILATOR ?= verilator
+MUTANT_OUTPUT ?= /tmp/srp-leaveall-mutants
 HDL        = ../../hdl
 TOP        = srp_top_wrap
 
@@ -24,7 +25,10 @@ run:
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vsrp_top_sim
 	./obj_dir/Vsrp_top_sim $(RUN_ARGS)
 
+mutants:
+	python3 mutants.py --output "$(MUTANT_OUTPUT)"
+
 clean:
 	rm -rf obj_dir
 
-.PHONY: run clean
+.PHONY: run mutants clean

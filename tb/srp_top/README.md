@@ -208,8 +208,14 @@ a stricter LV + rLv policy or implement the receive-timer restart in issue #108.
 Run the mutation campaign with:
 
 ```sh
-python3 tb/srp_top/mutants.py --output /tmp/srp-leaveall-mutants
+make -C tb/srp_top mutants MUTANT_OUTPUT=/tmp/srp-leaveall-mutants
 ```
+
+The `mutants` target runs the complete campaign and is invoked by the HDL
+workflow. `MUTANT_OUTPUT` selects the receipt directory; the default is shown
+above. Plain `make` still runs the positive suite. The patch files retain their
+unified-diff context verbatim; `.gitattributes` exempts only those files from
+blank-at-end-of-line and blank-at-end-of-file whitespace checks.
 
 Each control and deliberate RTL defect builds in a temporary source copy.
 A mutation counts only when a simulation finishes with a nonzero result and
