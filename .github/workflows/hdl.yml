@@ -52,6 +52,10 @@ jobs:
           verilator --version
           ./scripts/lint_hdl.sh
           ./scripts/run_suites.sh
+      - name: SRP LeaveAll mutation campaign
+        run: |
+          export PATH="$HOME/verilator/bin:$PATH"
+          make -C tb/srp_top mutants
       - name: Traceability matrix no-drift + untested budget 0
         run: python3 scripts/gen_matrix.py --check
 

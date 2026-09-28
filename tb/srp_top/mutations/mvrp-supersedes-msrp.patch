@@ -1,0 +1,11 @@
+--- a/hdl/srp/KL_srp_top.sv
++++ b/hdl/srp/KL_srp_top.sv
+@@ -1176,7 +1176,7 @@
+       end
+       // A peer supersedes only an unaccepted own sLA. Keep #108's timer
+       // cadence unchanged; neither re-arm nor request a new random draw.
+-      if (|dec_la_msrp_w) begin
++      if ((|dec_la_msrp_w) || dec_la_mvrp_w) begin
+         la_msrp_pend_r <= 1'b0;
+         if (la_wait_r) la_cancel_r <= 1'b1;
+       end

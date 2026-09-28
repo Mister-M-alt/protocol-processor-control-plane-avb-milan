@@ -125,7 +125,7 @@ module KL_srp_talker_fsm
     input  wire         join_tick_i,      //! T-MRP-JOIN: tx! opportunity for every applicant
     input  wire         periodic_tick_i,  //! T-MRP-PERIODIC: periodic! row
     input  wire  [3:0]  leaveall_rx_i,    //! received LeaveAll per MSRP AttributeType (decoder la_msrp_o, lanes SRP_LA_*_C) — rLA!
-    input  wire         leaveall_own_i,   //! own MSRP leavealltimer expiry — next walk is txLA!
+    input  wire         leaveall_own_i,   //! accepted own MSRP sLA action — age registrars and use txLA!
     output logic        txop_done_o,      //! one-cycle strobe: tick walk finished, pushes accepted
 
     // ---- KL_srp_encoder intake face (exact port match) --------------------
@@ -567,7 +567,7 @@ module KL_srp_talker_fsm
         W_IDLE: begin
           if (join_tick_i || tick_pend_r) begin
             tick_pend_r <= 1'b0;
-            wtxla_r     <= laown_pend_r;
+            wtxla_r     <= laown_pend_r || leaveall_own_i;
             laown_pend_r <= 1'b0;
             wsrc_r      <= '0;
             walk_r      <= W_EVAL;
