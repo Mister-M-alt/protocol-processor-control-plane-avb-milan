@@ -331,15 +331,30 @@ struct H {
   // across the cycle), drive the TX-arbiter emulation, posedge.
   // Returns the decoder's ready as sampled in the low phase.
   bool pause_tx = false;
-  std::vector<uint64_t> la_cycles, rx_cycles, prep_cycles, peer_la_cycles, expiry_cycles;
+  std::vector<uint64_t> la_cycles;
+  std::vector<uint64_t> rx_cycles;
+  std::vector<uint64_t> prep_cycles;
+  std::vector<uint64_t> peer_la_cycles;
+  std::vector<uint64_t> expiry_cycles;
+  std::vector<uint64_t> join_cycles;
   std::vector<uint32_t> la_times;
   bool step() {
+    // Bound every run, including decoder/timer deadlocks, by DUT clocks.
+    if (t >= 200000000ULL) {
+      std::fprintf(stderr, "CYCLE_BUDGET: SRP top exceeded 200000000 clocks\n");
+      std::exit(3);
+    }
     d->clk_i = 0; d->eval();
-    if (d->dbg_la_action_o) { la_cycles.push_back(t); la_times.push_back(d->now_ms_o); }
-    if (d->dbg_la_expiry_o) expiry_cycles.push_back(t);
-    if (d->dbg_prepare_done_o) prep_cycles.push_back(t);
-    if (d->dbg_rx_la_o) peer_la_cycles.push_back(t);
-    if (d->dbg_rx_event_o) rx_cycles.push_back(t);
+    // Reset can interrupt a combinational acceptance; that edge resets the
+    // DUT and must not enter the next scenario's event history.
+    if (d->rst_n) {
+      if (d->dbg_join_tick_o) join_cycles.push_back(t);
+      if (d->dbg_la_action_o) { la_cycles.push_back(t); la_times.push_back(d->now_ms_o); }
+      if (d->dbg_la_expiry_o) expiry_cycles.push_back(t);
+      if (d->dbg_prepare_done_o) prep_cycles.push_back(t);
+      if (d->dbg_rx_la_o) peer_la_cycles.push_back(t);
+      if (d->dbg_rx_event_o) rx_cycles.push_back(t);
+    }
     unsigned decl = d->dbg_decl_o;
     unsigned withdraw = d->dbg_withdraw_o;
     unsigned phase = d->dbg_sample_index_o;
@@ -395,6 +410,7 @@ struct H {
 
   void reset() {
     streaming = false; cur.clear(); q_msrp.clear(); q_mvrp.clear(); archive.clear();
+    join_cycles.clear();
     pause_tx = false; expiry_cycles.clear(); prep_cycles.clear(); peer_la_cycles.clear(); la_cycles.clear(); la_times.clear(); rx_cycles.clear();
     d->block_alloc_i = 0;
     d->rst_n = 0;
@@ -547,6 +563,8 @@ class SrpTopHarness {
     if (!*group || !strcmp(group,"edge")) check_own_leaveall_acceptance_boundary();
     if (!*group || !strcmp(group,"peer")) check_pending_leaveall_supersession();
     if (!*group || !strcmp(group,"congestion")) check_own_leaveall_congestion_and_recovery();
+
+    if (!*group || !strcmp(group,"guards")) check_leaveall_guards();
 
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
     return fails ? 1 : 0;
@@ -705,7 +723,8 @@ class SrpTopHarness {
     size_t quiet_base=h.archive.size();
     h.feed(mrpdu_body(true,{la_only(3,8,true)}),true);
     d->block_alloc_i=0; h.run_ms(1500);
-    bool valid_content=true, domain=false;
+    bool valid_content=true;
+    bool domain=false;
     for(size_t j=quiet_base;j<h.archive.size();j++) {
       auto p=parse_frame(h.archive[j]);
       if(!p.msrp) continue;
@@ -807,7 +826,9 @@ class SrpTopHarness {
     CHECK(h.la_cycles.size()==1, "N4: delayed TX acceptance never repeats sLA");
     h.pause_tx=false; h.run_ms(800);
     CHECK(leaveall_frames(h,base)==1, "N5: full-table recovery emits one flagged round");
-    unsigned sources=0,sinks=0,types=0;
+    unsigned sources=0;
+    unsigned sinks=0;
+    unsigned types=0;
     for(size_t j=base;j<h.archive.size();j++) {
       auto p=parse_frame(h.archive[j]); if(!p.ok || !p.msrp) continue;
       for(const auto& v:p.vecs) {
@@ -854,6 +875,198 @@ class SrpTopHarness {
     h.pause_tx=false; h.run_ms(700);
     CHECK(h.la_cycles.size()==1 && !d->dbg_round_o && !d->dbg_la_wait_o,
           "N13: asymmetric walks preserve completion across blocked cadence ticks");
+  }
+
+  // O: reproduce the distinct cancellation races with real RX bytes and
+  // timer/slot handshakes. Calibration observes timing, never an expectation.
+  void check_busy_preparation_cancel() {
+    h.reset(); d->link_up_i = 1; h.run_ms(700);
+    const uint32_t deadline = d->dbg_la_deadline_o;
+    until_ms(deadline - 300); h.pause_tx = true;
+    until_ms(deadline + 250);
+    CHECK(d->dbg_la_wait_o && d->dbg_enc_state_o == 15,
+          "O1: preparation waits behind an encoder TX request");
+    const size_t base = h.archive.size();
+    h.feed(mrpdu_body(true, {la_only(4, 4, false)}), true);
+    h.pause_tx = false; h.run_ms(800);
+    CHECK(h.la_cycles.empty() && leaveall_frames(h, base) == 0 && !d->dbg_la_wait_o,
+          "O1: latched peer cancellation survives the busy encoder");
+  }
+
+  void check_new_intent_after_cancel() {
+    const uint32_t deadline = leaveall_setup(DECL_READY);
+    until_ms(deadline - 20); d->block_alloc_i = 1;
+    until_ms(deadline + 250);
+    h.feed(mrpdu_body(true, {la_only(4, 4, false)}), true);
+    const uint32_t next = d->dbg_la_deadline_o;
+    until_ms(next + 50);
+    CHECK(next > deadline + 1000 && d->dbg_la_pending_o && d->dbg_la_wait_o
+          && h.la_cycles.empty(), "O2: newer expiry waits behind canceled preparation");
+    const size_t base = h.archive.size();
+    d->block_alloc_i = 0; h.run_ms(800);
+    CHECK(h.la_cycles.size() == 1 && leaveall_frames(h, base) == 1,
+          "O2: canceled acceptance preserves the newer own intent exactly once");
+  }
+
+  void check_peer_at_join_opportunity() {
+    uint32_t deadline = leaveall_setup(DECL_READY);
+    until_ms(deadline + 1);
+    const uint64_t mark = h.t;
+    int guard = 400 * MS_CYC;
+    while (!d->dbg_la_wait_o && guard-- > 0) h.cycle();
+    const int distance = static_cast<int>(h.t - mark);
+    CHECK(d->dbg_la_wait_o && distance > 8, "O3: join opportunity calibrated");
+    unsigned seen = 0;
+    for (int delta : {-1, 0, 1}) {
+      deadline = leaveall_setup(DECL_READY);
+      until_ms(deadline + 1);
+      const uint64_t join = h.t + distance - 1;
+      // Domain LeaveAll's vector header is decoded seven accepted clocks in.
+      h.idle(distance - 8 + delta);
+      const size_t base = h.archive.size();
+      h.feed(mrpdu_body(true, {la_only(4, 4, false)}), true);
+      h.run_ms(700);
+      const bool placed = h.peer_la_cycles.size() == 1
+        && static_cast<int64_t>(h.peer_la_cycles[0]) - static_cast<int64_t>(join) == delta;
+      if (placed) seen |= 1u << (delta + 1);
+      CHECK(placed && h.la_cycles.empty() && leaveall_frames(h, base) == 0
+            && source_reg(0) == 1 && sink_reg(7) == 1,
+            "O3: peer at join delta=%d supersedes before acceptance on both planes", delta);
+    }
+    CHECK(seen == 7, "O3: peer sweep covers join opportunity -1/0/+1");
+  }
+
+  uint32_t parked_reservation() {
+    h.reset(); d->link_up_i = 1; h.run_ms(700);
+    const uint32_t deadline = d->dbg_la_deadline_o;
+    until_ms(deadline - 20); d->block_alloc_i = 1; d->link_up_i = 0;
+    until_ms(deadline + 250);
+    const uint32_t next = d->dbg_la_deadline_o;
+    h.feed(mrpdu_body(true, {la_only(3, 8, true)}), true);
+    d->block_alloc_i = 0;
+    until_ms(next + 1);
+    return next;
+  }
+
+  void check_peer_at_reservation_reuse() {
+    parked_reservation();
+    CHECK(d->dbg_enc_state_o == 16 && h.la_cycles.empty(),
+          "O4: canceled empty reservation retained until later intent");
+    const uint64_t mark = h.t;
+    int guard = 400 * MS_CYC;
+    while (!d->dbg_la_wait_o && guard-- > 0) h.cycle();
+    const int distance = static_cast<int>(h.t - mark);
+    CHECK(d->dbg_la_wait_o && distance > 8, "O4: reuse acceptance calibrated");
+    unsigned seen = 0;
+    for (int delta : {-1, 0, 1}) {
+      parked_reservation();
+      const uint64_t acceptance = h.t + distance;
+      const size_t base = h.archive.size();
+      h.prep_cycles.clear();
+      h.peer_la_cycles.clear();
+      h.idle(distance - 7 + delta);
+      h.feed(mrpdu_body(true, {la_only(4, 4, false)}), true);
+      h.run_ms(700);
+      const bool placed = h.peer_la_cycles.size() == 1
+        && static_cast<int64_t>(h.peer_la_cycles[0])
+           - static_cast<int64_t>(acceptance) == delta;
+      if (placed) seen |= 1u << (delta + 1);
+      const bool own = delta > 0;
+      CHECK(placed && h.la_cycles.size() == static_cast<size_t>(own)
+            && leaveall_frames(h, base) == static_cast<int>(own),
+            "O4: reuse peer delta=%d wire flags require an uncanceled sLA (placed=%d actions=%zu flags=%d)",
+            delta, placed, h.la_cycles.size(), leaveall_frames(h, base));
+      if (delta == 0) {
+        CHECK(h.prep_cycles.size() == 1 && h.prep_cycles[0] == acceptance,
+              "O4: peer decoded exactly on retained reservation acceptance");
+      }
+    }
+    CHECK(seen == 7, "O4: retained reservation sweep covers -1/0/+1");
+  }
+
+  void check_sink_at_acceptance() {
+    for (int sink : {0, 7}) {
+      unsigned seen = 0;
+      // Different lengths exercise Advertise and Failed (both sink types).
+      const bool failed = sink == 7;
+      for (int release = 30; release <= 52; ++release) {
+        const uint32_t deadline = leaveall_setup(DECL_READY);
+        until_ms(deadline - 20); d->block_alloc_i = 1;
+        until_ms(deadline + 250);
+        h.rx_cycles.clear(); h.la_cycles.clear();
+        const auto fv = failed
+          ? fv_failed(peer_sid(sink), peer_da(sink), 2, 29, 1, 3, 1, 500, 0x1234, 1)
+          : fv_talker(peer_sid(sink), peer_da(sink), 2, 29, 1, 3, 1, 500);
+        const auto bytes = mrpdu_body(true, {Msg{failed ? 2 : 1, failed ? 34 : 25,
+          false, {Vec{false, 1, fv, {EV_LV}, {}}}}});
+        size_t i = 0;
+        for (int clk = 0; clk < 120; ++clk) {
+          if (clk == release) d->block_alloc_i = 0;
+          d->mrp_valid_i = i < bytes.size();
+          d->mrp_data_i = i < bytes.size() ? bytes[i] : 0;
+          d->mrp_last_i = i + 1 == bytes.size(); d->mrp_msrp_i = 1;
+          if (h.step() && i < bytes.size()) ++i;
+        }
+        d->mrp_valid_i = 0; d->mrp_last_i = 0;
+        CHECK(h.la_cycles.size() == 1 && h.rx_cycles.size() == 1,
+              "O5: one sLA and decoded sink Lv");
+        if (h.la_cycles.empty() || h.rx_cycles.empty()) continue;
+        const auto delta = static_cast<int64_t>(h.rx_cycles[0])
+                         - static_cast<int64_t>(h.la_cycles[0]);
+        if (delta < -1 || delta > 1) continue;
+        seen |= 1u << (delta + 1);
+        const bool retain = delta > 0;
+        h.run_ms(50);
+        CHECK(sink_reg(sink) == (retain ? 2 : 0)
+              && h.tk_reg(sink) == (retain ? (failed ? 2 : 1) : 0),
+              "O5: sink type=%d Lv at acceptance delta=%lld follows IN/LV policy",
+              failed ? 2 : 1, static_cast<long long>(delta));
+      }
+      CHECK(seen == 7, "O5: sink acceptance sweep covers -1/0/+1 type=%d", failed ? 2 : 1);
+    }
+  }
+
+  void check_join_coalescing() {
+    const uint32_t deadline = leaveall_setup(DECL_READY);
+    until_ms(deadline - 20); d->block_alloc_i = 1;
+    until_ms(deadline + 650); // more than one cadence tick while la_wait holds
+    h.join_cycles.clear();
+    d->block_alloc_i = 0;
+    h.run_ms(20); // far short of the next cadence opportunity
+    CHECK(h.la_cycles.size() == 1 && h.join_cycles.size() == 2 && !d->dbg_round_o,
+          "O6: blocked cadence ticks coalesce into one immediate follow-up walk (ticks=%zu)",
+          h.join_cycles.size());
+  }
+
+  void check_empty_reservation_bound() {
+    h.reset(); d->link_up_i = 1; h.run_ms(700);
+    const uint32_t deadline = d->dbg_la_deadline_o;
+    until_ms(deadline - 20); d->block_alloc_i = 1;
+    until_ms(deadline + 250);
+    h.feed(mrpdu_body(true, {la_only(3, 8, true)}), true);
+    const size_t base = h.archive.size();
+    d->block_alloc_i = 0; h.run_ms(5);
+    CHECK(d->dbg_enc_state_o == 16 && d->dbg_enc_count_o == 0,
+          "O7: empty canceled round retains one reservation awaiting content");
+    const uint32_t entered = d->now_ms_o;
+    int guard = 1200 * MS_CYC;
+    while (d->dbg_enc_state_o == 16 && guard-- > 0) h.cycle();
+    const uint32_t dwell = d->now_ms_o - entered;
+    h.run_ms(20);
+    CHECK(guard > 0 && h.archive.size() > base && h.la_cycles.empty()
+          && leaveall_frames(h, base) == 0,
+          "O7: Domain periodic refresh drains canceled reservation within periodic plus join");
+    printf("LEAVEALL_EMPTY dwell_ms=%u bound_ms=1200\n", dwell);
+  }
+
+  void check_leaveall_guards() {
+    check_busy_preparation_cancel();
+    check_new_intent_after_cancel();
+    check_peer_at_join_opportunity();
+    check_peer_at_reservation_reuse();
+    check_sink_at_acceptance();
+    check_join_coalescing();
+    check_empty_reservation_bound();
   }
 
   void bring_up_the_port() {
@@ -1773,6 +1986,7 @@ int main(int argc, char** argv) {
   SrpTopHarness harness;
   const char* group = argc > 1 ? argv[1] : "";
   if (*group && strcmp(group,"phases") && strcmp(group,"edge")
-      && strcmp(group,"peer") && strcmp(group,"congestion")) return 2;
+      && strcmp(group,"peer") && strcmp(group,"congestion")
+      && strcmp(group,"guards")) return 2;
   return harness.run(group);
 }

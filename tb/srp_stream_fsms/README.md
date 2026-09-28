@@ -148,5 +148,8 @@ rLv semantics are unchanged.
 
 | Mutation | Result |
 |---|---|
-| Talker walk omits same-edge sLA from txLA selection | 12 of 1215 FAIL (state transitions and exact messages) |
-| Listener walk omits same-edge sLA from txLA selection | 12 of 1215 FAIL (state transitions and exact messages) |
+| Talker walk omits same-edge sLA from txLA selection | 12 of 1203 FAIL (state transitions and exact messages) |
+| Listener walk omits same-edge sLA from txLA selection | 12 of 1211 FAIL (state transitions and exact messages) |
+
+The unmodified control executes 1215 checks; each mutation suppresses pushes
+and therefore some payload comparisons, so its executed tally is smaller.

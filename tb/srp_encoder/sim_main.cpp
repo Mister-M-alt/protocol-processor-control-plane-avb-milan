@@ -290,6 +290,7 @@ struct H {
   int commits = 0;
   int allocs = 0;
   int drops = 0;
+  int own_actions = 0;
   // pre-edge samples
   bool last_enc_ready = false;
   bool last_txreq = false;
@@ -299,6 +300,7 @@ struct H {
   uint8_t last_ser_data = 0;
   bool last_user_ready = false;
   bool last_vlan_ev_valid = false;
+  bool last_prepare_done = false;
 
   explicit H(Vsrp_tb_wrap* dd) : d(dd) {}
 
@@ -313,6 +315,8 @@ struct H {
     last_ser_data      = d->ser_data_o;
     last_user_ready    = d->vlan_user_ready_o;
     last_vlan_ev_valid = d->vlan_ev_valid_o;
+    last_prepare_done = d->enc_la_done_o;
+    if (d->enc_la_tx_o) ++own_actions;
     if (d->dom_ev_valid_o && d->dom_ev_ready_i)
       dom_evs.push_back({int(d->dom_ev_event_o), uint32_t(d->dom_ev_value_o)});
     if (d->vlan_ev_valid_o && d->vlan_ev_ready_i)
@@ -432,6 +436,7 @@ class SrpSuite {
   void flag_each_type_once_across_repeated_messages();
   void keep_the_mvrp_leaveall_on_its_one_type();
   void take_one_leaveall_per_drain();
+  void arbitrate_prepare_and_mvrp();
   void domain_declares_adopts_and_ignores_repeats();
   void domain_surfaces_class_a_and_reverts_on_link_down();
   void vlan_refcounts_every_vid_and_freezes_the_old_one();
@@ -450,6 +455,7 @@ void SrpSuite::bring_out_of_reset() {
   // defaults
   d->rst_n = 0;
   d->enc_ev_valid_i = 0; d->enc_join_tick_i = 0; d->enc_leaveall_i = 0;
+  d->enc_la_prepare_i = 0;
   d->enc_txreq_ready_i = 0;
   d->ser_req_i = 0; d->ser_ready_i = 0; d->ser_slot_i = 0;
   d->dom_link_up_i = 0; d->dom_rx_valid_i = 0;
@@ -1220,6 +1226,37 @@ void SrpSuite::bridge_the_fsm_declarations_onto_real_frames() {
   }
 }
 
+void SrpSuite::arbitrate_prepare_and_mvrp() {
+  bring_out_of_reset();
+  const auto first = mk_ev(1, 1, 0, 0, {0, 2});
+  const auto second = mk_ev(1, 1, 0, 0, {0, 3});
+  CHECK(h.push_enc(first), "O8: first VID queued before preparation");
+  d->enc_ev_app_i = 1; d->enc_ev_attr_type_i = 1;
+  d->enc_ev_event_i = 0; d->enc_ev_fourpack_i = 0;
+  h.set_val(second.val);
+  d->enc_ev_valid_i = 1;
+  d->enc_join_tick_i = 2;
+  d->enc_la_prepare_i = 1;
+  h.tick();
+  CHECK(h.last_enc_ready && d->enc_dbg_cnt_mvrp_o == 2,
+        "O8: MSRP preparation leaves MVRP intake open on its join clock");
+  d->enc_ev_valid_i = 0; d->enc_join_tick_i = 0;
+  const int actions = h.own_actions;
+  for (int i = 0; i < 50; ++i) {
+    h.tick();
+    if (h.last_prepare_done) break;
+  }
+  CHECK(h.last_prepare_done && h.own_actions == actions + 1,
+        "O8: simultaneous MVRP tick accepts exactly one MSRP action");
+  d->enc_la_prepare_i = 0;
+  std::vector<uint8_t> msrp;
+  std::vector<uint8_t> mvrp;
+  CHECK(h.capture_pdu(0, msrp), "O8: prepared MSRP round completes");
+  CHECK(h.wait_and_drain(mvrp), "O8: deferred MVRP join completes without another tick");
+  CHECK(mvrp == model_pdu({first, second}, false, OWN_MAC),
+        "O8: deferred MVRP frame contains both accepted VIDs");
+}
+
 int SrpSuite::run() {
   bring_out_of_reset();
   encode_the_two_minimal_pdus();
@@ -1233,6 +1270,7 @@ int SrpSuite::run() {
   flag_each_type_once_across_repeated_messages();
   keep_the_mvrp_leaveall_on_its_one_type();
   take_one_leaveall_per_drain();
+  arbitrate_prepare_and_mvrp();
   domain_declares_adopts_and_ignores_repeats();
   domain_surfaces_class_a_and_reverts_on_link_down();
   vlan_refcounts_every_vid_and_freezes_the_old_one();

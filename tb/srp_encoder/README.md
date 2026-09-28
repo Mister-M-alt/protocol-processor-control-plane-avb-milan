@@ -3,7 +3,7 @@
 
 Exit 0 = PASS. `make` builds `srp_tb_wrap` (encoder wired to a **real**
 `KL_pp_tx_slots` pool; Domain and VLAN singletons stand-alone) and runs
-556 checks against an **independent** C++ packer written from 802.1Q
+562 checks against an **independent** C++ packer written from 802.1Q
 §10.8.1/§35.2.2 and Milan §4.2.7 — never from the RTL — and an independent
 byte-level MRPDU parser. Every captured frame crossed the actual slot RAM
 through its serialize port.
@@ -109,7 +109,9 @@ restore-hash check are kept in the review packet (`mutate.py`):
 | M11 | a start-cycle LeaveAll is taken once | its pending latch no longer gated by the drain start | 2 FAIL — `L6 next PDU: length got 121 exp 30` + byte-exact |
 | M12 | a start-cycle LeaveAll is taken by that drain | the drain's snapshot ignores the same-cycle request | 2 FAIL — `L6 start-cycle LeaveAll: length got 30 exp 121` + byte-exact |
 
-Restored tree: `556 checks: 556 PASS, 0 FAIL`, `scripts/lint_hdl.sh` clean.
+The issue #106 restore control was `556 checks: 556 PASS, 0 FAIL`, with
+`scripts/lint_hdl.sh` clean. The current suite adds the six O8 arbitration
+checks below: `562 checks: 562 PASS, 0 FAIL`.
 
 ## Notes / interpretations recorded
 
@@ -134,8 +136,12 @@ Restored tree: `556 checks: 556 PASS, 0 FAIL`, `scripts/lint_hdl.sh` clean.
 
 The integrated MSRP own round uses the encoder's preparation handshake:
 acceptance with a reserved slot emits `sLA`, then the pending table accepts the induced
-applicant responses before the join drain. This unit wrapper ties preparation
-off to keep exercising the original per-application injection interface;
+applicant responses before the join drain. O8 drives preparation concurrently
+with an MVRP join tick and a second VID push. Preparation leaves the MVRP intake
+open; the deferred join emits both VIDs without another tick. The
+`r-mvrp-start-during-prepare` arm in the integrated mutation campaign removes
+the arbitration guard and must fail O8. The other unit cases keep preparation
+low to exercise the original per-application injection interface;
 [srp_top](../srp_top/README.md) exercises the preparation, cancellation,
 allocation/TX stalls, empty canceled reservations and full-table paths through
 real shared services. A canceled empty reservation waits for content or can be

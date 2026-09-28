@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **1914 checks**.
+`make` = build + run, exit 0 = PASS, **1987 checks**.
 
 Expectations are independent: an MRPDU builder/parser written here from
 802.1Q §10.8.1.2 / §35.2.2, a Σ-slope model transcribing the Milan v1.2
@@ -214,12 +214,16 @@ python3 tb/srp_top/mutants.py --output /tmp/srp-leaveall-mutants
 Each control and deliberate RTL defect builds in a temporary source copy.
 A mutation counts only when a simulation finishes with a nonzero result and
 its named assertion fails; compilation failures and timeouts do not count.
-The working sources are checked unchanged afterward. `RUN_ARGS=phases`, `edge`,
-`peer` or `congestion` selects one group for a focused run; plain `make` runs
+The driver applies checked-in unified patches with `git apply --check` in a
+fresh scratch RTL copy; it never reads DUT source to derive an oracle. Only
+simulation logs are read. Original source integrity is recorded in the review
+packet. `srp_top` stops at 200,000,000 DUT clocks; the encoder and stream-FSM
+walks use finite cycle bounds. Budget exits and missing tallies are unproven,
+not kills. `RUN_ARGS=phases`, `edge`, `peer`, `congestion` or `guards` selects one group for a focused run; plain `make` runs
 every existing and new check. The stream-FSM suite independently walks every
 applicant state with same-edge sLA/join acceptance.
 
-Measured on the final implementation: all five positive controls pass; all 36
+Round 1 measurement: all five positive controls pass; all 36
 mutation runs finish with the required named assertion failing. Restoring the
 timer-expiry registrar pulse causes 81 failures. The union of killed assertions
 covers all 41 new integration check families (K1–K12, L1–L4, M1–M12, N1–N13).
@@ -265,3 +269,58 @@ Build errors and timeouts are never counted as kills.
 | `action-omitted` | congestion | 6 | N10, N12, N13, N3, N4, N8 |
 | `preparation-before-slot` | peer | 22 | M1, M10, M11, M12, M5, M6, M8 |
 | `table-one-short` | congestion | 8 | N10, N13, N3, N4, N5, N6, N8, N9 |
+
+
+## Round 2: pending-action guards
+
+The default suite includes 73 additional checks; no DUT event is forced.
+Reset edges are excluded from the event history because synchronous reset can
+interrupt a combinational preparation acceptance without performing an action.
+
+| Check | Stimulus and required behavior |
+|---|---|
+| O1 | A peer Domain LeaveAll while preparation waits behind a held encoder TX request cancels the eventual action and its wire flags. |
+| O2 | After cancellation, a second real timer expiry while allocation remains blocked survives the canceled acceptance and produces exactly one own action/frame. |
+| O3 | Peer Domain LeaveAll decoded at -1/0/+1 clocks around the join opportunity cancels before acceptance; both registrar planes remain IN. |
+| O4 | With the link down, reuse a retained empty reservation; peer decode at -1/0/+1 around reuse acceptance permits wire flags only when the local action preceded the peer. The exact acceptance clock is checked separately. |
+| O5 | Talker Advertise and Failed Leaves on sinks 0 and 7 decode at -1/0/+1 around acceptance. Before/on the edge they clear IN; afterward they retain LV. |
+| O6 | Several cadence ticks during blocked preparation produce exactly one immediate follow-up walk after acceptance, before another cadence tick. |
+| O7 | A canceled Domain-only round holds its empty reservation for periodic content; with the link up it drains within Periodic plus Join (measured 649 ms, test bound 1200 ms). |
+| O8 (encoder suite) | An MVRP join tick and VID push coincide with MSRP preparation. MVRP intake remains open, and the deferred drain emits both VIDs without another tick. |
+
+The reserved handle cannot be released through the current TX interface, which
+has no abort operation. It holds one of the shared standard slots and blocks
+this encoder's MVRP drains. The link-up bound assumes eventual TX acceptance.
+With the link down it waits for link-up content or the next unsuperseded own
+action; repeated peer cancellation or external backpressure can extend this
+without a finite bound. See [10 section 6.5](../../docs/architecture/10_srp_engine.md#65-leaveall-and-the-δ13-registrar-deviation).
+
+The round-2 campaign reproduces the 36 measurements above and adds all 19
+reviewer arms (including aliases for the same edit) plus an empty-reservation
+drain arm. All seven controls pass, all 56 arms are killed by their required
+named assertions, and all 49 integration assertion families K1–O8 are covered:
+`64 checks: 64 PASS, 0 FAIL`, driver rc 0. Stream-FSM control is 1215/1215;
+encoder control is 562/562. The required new reviewer edits are measured below.
+
+| Deliberate breakage | Group | Failing checks | Named failing assertions |
+|---|---|---:|---|
+| `my-expiry-pulse` | phases | 62 | K11,K12,K2,K4,K5 |
+| `my-join-edge-peer` | guards | 2 | O3,O4 |
+| `my-cancel-eats-new-intent` | guards | 1 | O2 |
+| `my-edge-cancel-lost` | peer | 2 | M6,M7 |
+| `my-la-outranks-leave` | edge | 2 | L2 |
+| `my-drop-join-during-wait` | guards | 1 | O6 |
+| `my-no-walk-at-sLA` | congestion | 5 | N10,N12,N13,N5,N6 |
+| `my-reuse-flags-ignore-cancel` | guards | 1 | O4 |
+| `r-expiry-pulse-restored` | phases | 62 | K11,K12,K2,K4,K5 |
+| `r-cancel-latch-dropped` | guards | 1 | O1 |
+| `r-cancel-consumes-new-intent` | guards | 1 | O2 |
+| `r-join-start-guard-dropped` | guards | 2 | O3,O4 |
+| `r-sink-receive-priority-lost` | guards | 2 | O5 |
+| `r-join-coalesce-dropped` | guards | 1 | O6 |
+| `r-la-only-emission-lost` | peer | 1 | M12 |
+| `r-collect-blocks-pushes` | congestion | 4 | N12,N13,N5,N6 |
+| `r-accept-edge-drain-lost` | congestion | 1 | N10 |
+| `r-reuse-without-action` | peer | 1 | M12 |
+| `r-mvrp-start-during-prepare` | srp_encoder | 5 | B1-vlan,O8 |
+| `canceled-content-never-drains` | guards | 1 | O7 |

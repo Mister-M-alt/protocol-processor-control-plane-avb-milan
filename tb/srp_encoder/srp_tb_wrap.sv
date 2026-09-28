@@ -32,6 +32,9 @@ module srp_tb_wrap (
 
     input  wire  [1:0]   enc_join_tick_i,     //! T-MRP-JOIN per participant
     input  wire  [1:0]   enc_leaveall_i,      //! LeaveAll injection per participant
+    input  wire          enc_la_prepare_i,    //! reserve a slot for an own MSRP round
+    output logic         enc_la_done_o,       //! preparation accepted this clock
+    output logic         enc_la_tx_o,         //! accepted local LeaveAll action
     input  wire  [47:0]  enc_own_mac_i,       //! station MAC
 
     output logic         enc_txreq_valid_o,   //! committed-frame request
@@ -108,10 +111,10 @@ module srp_tb_wrap (
       .ev_value_i     (enc_ev_value_i),
       .ev_drop_o      (enc_ev_drop_o),
       .join_tick_i    (enc_join_tick_i),
-      .la_prepare_i (1'b0),
+      .la_prepare_i (enc_la_prepare_i),
       .la_cancel_i (1'b0),
-      .la_prepare_done_o (),
-      .la_tx_o (),
+      .la_prepare_done_o (enc_la_done_o),
+      .la_tx_o (enc_la_tx_o),
       .leaveall_i     (enc_leaveall_i),
       .own_mac_i      (enc_own_mac_i),
       .alloc_req_o    (alloc_req_w),

@@ -511,7 +511,16 @@ including on the preparation-acceptance edge. Its registrar/applicant effects st
 the per-type routing above. If slot preparation has begun, it finishes as an
 ordinary join round. If it has no content, the encoder retains the allocated slot
 until a real declaration arrives or a later own action reuses it; it never emits
-an empty MRPDU (§10.8.1.2). An MVRP LeaveAll
+an empty MRPDU (§10.8.1.2). The slot interface has no abort operation, so this
+holds one shared standard TX slot and delays MVRP drains in this encoder.
+With the link up, Domain refresh supplies content within `T-MRP-PERIODIC`,
+followed by at most one `T-MRP-JOIN` before encoding. Serialization and external
+TX backpressure add their own delay. With the link down, Domain refresh is
+silent: the reservation waits for link-up content or the next unsuperseded own
+action (at most `T-MRP-LEAVEALL` plus `T-MRP-JOIN` without further peer
+cancellation or backpressure). Repeated cancellation on a down link has no
+finite release bound. Reset clears the slot pool as well as the encoder.
+An MVRP LeaveAll
 cannot cancel an MSRP action. This pending-action cancellation does not restart
 either leavealltimer; the broader receive-timer deviation below remains #108.
 
