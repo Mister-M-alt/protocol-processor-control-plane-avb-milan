@@ -944,6 +944,7 @@ struct D3RestorePhase {
     x.nv_gnt_every = 0;
     x.nv_gnt_seen = false;
     x.nv_gnt_at = -1;
+    x.nv_rd_done_at = -1;
     x.nv_hdr_every = 0;
     x.nv_byte_every = 0;
     x.nv_byte_wait = 0;
@@ -2063,6 +2064,115 @@ struct D3RestorePhase {
           "SET persists (%d WRITEs, unflushed %u)", writes, unsigned(x.d->d3_unflushed_o));
   }
 
+  // D3R18 (R390-3 F1: an abort in the arbiter's issue cycle). The binding
+  // walk registers its READ strobe, so the strobe is out in the walk's
+  // first H_RS_STREAM clock, where no byte can be in hand yet. When agg_o
+  // first reads 1 on exactly that clock, the walk abandons the READ in the
+  // cycle the arbiter issues it, the arbiter still unowned. Every sink's
+  // binding and every record saved, the headers at once and each payload
+  // byte G clocks apart, so the fifth binding READ would start about 12,000
+  // clocks before the bound; the done of the fourth record's payload READ
+  // is held (nv_rd_done_at) so that the fifth strobe lands on agg_o's first
+  // clock, from the done-to-strobe lag measured on the earlier records of
+  // the same boot. The arbiter drains that READ from the next clock until
+  // the device ends it, the walk fails whole (cause 3) and the restore ends
+  // DEFAULTS; once the device is fast again the drain ends, the port is
+  // idle and a later SET persists. An arbiter that arms the drain only for
+  // a READ it already owns loses this abort: the port waits on the walk's
+  // rready for ever and no later change is written.
+  void r18_an_abort_in_the_arbiters_issue_cycle() {
+    fresh();
+    seed_every_record();
+    seed_every_binding();
+    x.d->entity_enable_i = 1;
+    x.d->link_up_i = 1;
+    constexpr int K = 4;                           //! the strobe to land, 0-based
+    //! K records' 20-byte payloads fill the bound less about 12,000 clocks
+    const int G = static_cast<int>((AGG - 12000) / (20 * K));
+    x.nv_hdr_every = 0;
+    x.nv_byte_every = G;
+    std::vector<long> strobes;                     //! clocks of the binding READ strobes
+    std::vector<long> dones;                       //! device dones of binding payloads
+    size_t ops = x.nvm_ops.size();
+    long lag = -1;                                 //! a payload's done to the next strobe
+    long hold_at = -1;
+    long first = -1;                               //! agg_o's first clock
+    bool strobe_at = false;
+    bool abort_at = false;
+    unsigned own_at = 9;
+    int strobe_k = -1;
+    bool drain_next = false;
+    unsigned own_next = 9;
+    long bind_wait = 0;
+    const Boot b = boot_with(AGG + 2 * RS_TMO, [&] {
+      const auto* d = x.d;
+      const long now = long(x.t);
+      while (ops < x.nvm_ops.size()) {
+        const auto& o = x.nvm_ops[ops++];
+        if (o.op == 0 && o.region >= 0x20 && o.region < 0x28 && o.off != 0)
+          dones.push_back(now - 1);                // the device's clock of it
+      }
+      if (d->dbg_bind_req_o) strobes.push_back(now);
+      if (lag < 0 && strobes.size() == 3 && dones.size() == 2) lag = strobes[2] - dones[1];
+      if (hold_at < 0 && lag > 0 && x.nv_st == H::NvState::NV_READ
+          && x.nv_cur.region == 0x20 + K - 1 && x.nv_cur.off != 0) {
+        hold_at = bound_t(d->dbg_d3_agg_o) + 1 - lag;
+        x.nv_rd_done_at = hold_at;
+      }
+      if (first >= 0 && now == first + 1) {
+        drain_next = d->dbg_nvm_drain_o;
+        own_next = d->dbg_nvm_own_o;
+      }
+      if (first < 0 && d->dbg_d3_agg_fired_o) {
+        first = now;
+        strobe_at = d->dbg_bind_req_o;
+        abort_at = d->dbg_bind_abort_o;
+        own_at = d->dbg_nvm_own_o;
+        strobe_k = int(strobes.size()) - 1;
+      }
+      bind_wait = std::max(bind_wait, long(d->dbg_bind_wd_o));
+    });
+    x.nv_rd_done_at = -1;
+    const auto* d = x.d;
+    CHECK(first >= 0 && strobe_at && abort_at && own_at == 0 && strobe_k == K && lag > 0
+              && hold_at > 0 && bind_wait < RS_TMO,
+          "D3R18: binding READ strobe %d on agg_o's first clock %ld (strobe %u, abort %u, "
+          "arbiter owner %u), the done before it held to %ld (lag %ld, payload bytes %d "
+          "apart, longest wait %ld of %ld)", strobe_k + 1, first, unsigned(strobe_at),
+          unsigned(abort_at), own_at, hold_at, lag, G, bind_wait, RS_TMO);
+    CHECK(drain_next && own_next == 1 && d->dbg_nvm_drain_o && d->restore_fail_o
+              && d->restore_cause_o == 3 && b.done >= 0 && b.closed < 0 && d->restore_done_o
+              && d->rs_cause_o == 3 && !d->restore_closed_o && !d->dbg_d3_own_o,
+          "D3R18: the READ abandoned in its issue cycle is drained from the next clock "
+          "(%u, owner %u), the binding walk fails whole (cause %u) and the restore ends "
+          "DEFAULTS (cause %u, closed %u)", unsigned(drain_next), own_next,
+          unsigned(d->restore_cause_o), unsigned(d->rs_cause_o),
+          unsigned(d->restore_closed_o));
+    x.nv_hdr_every = 0;
+    x.nv_byte_every = 0;
+    for (long k = 0; k < RS_TMO; ++k) x.step();
+    const bool idle = !x.d->dbg_nvm_drain_o && !x.d->dbg_nvm_busy_o && x.d->dbg_nvm_own_o == 0;
+    const size_t ops1 = x.nvm_ops.size();
+    const bool set = ok(AEM_SET_STREAM_INFO, D3ServicePhase::pl_ptof(0, 1818181));
+    long busy = 0;
+    for (long k = 0; k < 2 * WINDOW; ++k) {
+      x.step();
+      busy += x.d->dbg_nvm_busy_o ? 1 : 0;
+    }
+    int writes = 0;
+    for (size_t i = ops1; i < x.nvm_ops.size(); i++)
+      writes += x.nvm_ops[i].op == 1 && x.nvm_ops[i].region == 0x50;
+    CHECK(idle && set && writes == 1 && busy < 1000 && !x.d->dbg_nvm_busy_o
+              && x.d->dbg_nvm_own_o == 0 && !x.d->d3_unflushed_o
+              && std::equal(x.nv_mem[0x50].begin(), x.nv_mem[0x50].begin() + 12,
+                            d3_record(0x50, 1818181, 4).begin()),
+          "D3R18: once the device ends the drained READ the port is idle (%u), and a later "
+          "SET persists (%d WRITEs, the port busy %ld of %ld clocks, unflushed %u)",
+          unsigned(idle), writes, busy, 2 * WINDOW, unsigned(x.d->d3_unflushed_o));
+    x.d->entity_enable_i = 0;
+    x.d->link_up_i = 0;
+  }
+
   // ---- DR3a: restore durations and the longest waits (informational) ----
   // The parent D3 contract's DR3a had the processor lane MEASURE its
   // per-wait (20 ms) and aggregate (1,000 ms) candidates; the manager
@@ -2303,5 +2413,6 @@ struct D3RestorePhase {
     r15_the_aggregate_bound_inside_a_roll_back();
     r16_the_aggregate_is_inert_after_the_terminal();
     r17_the_aggregate_waits_for_a_clock_without_an_event();
+    r18_an_abort_in_the_arbiters_issue_cycle();
   }
 };

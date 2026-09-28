@@ -612,7 +612,7 @@ was. The raw verdicts below are the binding manager's; the top's
 | ends after at least one forwarded byte and short of the record (torn) | the **whole walk** fails | 1 |
 | ends with nothing forwarded on an `err` the port names DEVICE (a device error, or a header read the device ended short) | the **whole walk** fails: a failing device is not an empty record | 2 |
 | waits `P-NVM-RS-TMO-CYC` consecutive clocks without progress (`T-NVM-RS-DEADLINE`): for the port idle before a read, or for a byte, `done` or `err` during it | the **whole walk** fails, and a read already issued is abandoned to the arbiter, which drains it ([02 §8.2](02_interfaces.md#82-two-record-managers-one-port)) | 3 |
-| is still reading when the restore's aggregate deadline fires (`T-NVM-RS-AGGREGATE`, below): at once before a read is issued, else in its first clock without a byte, `done` or `err` | the same path: the **whole walk** fails and an issued read goes to the drain | 3 |
+| is still reading when the restore's aggregate deadline fires (`T-NVM-RS-AGGREGATE`, below): at once before a read is issued, else in its first clock without a byte, `done` or `err`, which may be the clock its read strobe is issued | the same path: the **whole walk** fails and an issued read goes to the drain, also one abandoned in its issue clock (the arbiter arms the drain there, [02 §8.2](02_interfaces.md#82-two-record-managers-one-port)) | 3 |
 
 Progress is the awaited event itself, so a device that is slow but moving never trips the
 deadline, and the deadline bounds only the read phase: the preload phase is bounded by

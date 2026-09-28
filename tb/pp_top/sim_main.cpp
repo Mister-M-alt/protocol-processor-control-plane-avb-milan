@@ -740,6 +740,11 @@ struct H {
   //! harness cycle (-1: at once), so a completion can be placed on a chosen
   //! clock edge
   long     nv_done_at = -1;
+  //! a READ whose bytes have all moved ends with its done on exactly this
+  //! harness cycle when it is later (-1: at once): the binding walk's next
+  //! strobe follows that done by a fixed lag, so it can be placed on a
+  //! chosen clock
+  long     nv_rd_done_at = -1;
   //! the next nv_err_writes WRITEs to region nv_err_region end with the
   //! device's err instead of done, and change nothing
   int      nv_err_region = -1;
@@ -1517,6 +1522,8 @@ struct H {
           nv_rd_sent++;
           nv_byte_wait = 0;
         }
+      } else if (long(t) < nv_rd_done_at) {
+        nv_done_lag = 1;                               // the done on its chosen cycle
       } else if (--nv_done_lag <= 0) {
         d->nvm_dev_done_i = 1;
         nvm_ops.push_back(nv_cur);

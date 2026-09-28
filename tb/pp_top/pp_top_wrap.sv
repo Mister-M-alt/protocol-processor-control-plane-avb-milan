@@ -392,6 +392,13 @@ module pp_top_wrap (
     output logic [31:0] dbg_bind_wd_o,
     //! the NVM arbiter is draining an abandoned READ (a restore deadline's)
     output logic        dbg_nvm_drain_o,
+    //! the binding manager's one-cycle READ strobe and its abort (manager 0
+    //! of the arbiter), the arbiter's owner (0 none, 1 manager 0, 2 manager
+    //! 1) and the port's busy: D3R18 lands the strobe on agg_o's first clock
+    output logic        dbg_bind_req_o,
+    output logic        dbg_bind_abort_o,
+    output logic  [1:0] dbg_nvm_own_o,
+    output logic        dbg_nvm_busy_o,
     //! the D3 writer's aggregate count (agg_r, 0 in the accepted start's own
     //! cycle) and its fired level (agg_o): a case that must land an event on
     //! the bound's own cycle reads them to prove it did
@@ -715,6 +722,10 @@ module pp_top_wrap (
   assign dbg_d3_wd_o      = u_dut.u_aecp.u_d3.wd_r;
   assign dbg_bind_wd_o    = u_dut.u_nvm_shadow.rs_wd_r;
   assign dbg_nvm_drain_o  = u_dut.nvm_drain_nc_w;
+  assign dbg_bind_req_o   = u_dut.nvm_req_w;
+  assign dbg_bind_abort_o = u_dut.nvm_abort_w;
+  assign dbg_nvm_own_o    = 2'(u_dut.u_nvm_arb.own_r);
+  assign dbg_nvm_busy_o   = u_dut.np_busy_w;
   assign dbg_d3_agg_o     = u_dut.u_aecp.u_d3.agg_r;
   assign dbg_d3_agg_fired_o = u_dut.d3_agg_w;
   always_comb begin : second_originator_owner

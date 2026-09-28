@@ -303,6 +303,11 @@ struct Harness {
   int m1_rid = 0;
   long m1_gnt_cyc = -1;
   long m1_end_cyc = -1;
+  //! manager 1 abandons its READ in the cycle it is issued (its abort
+  //! presented with its strobe), then accepts no byte of it
+  bool m1_abort_issue = false;
+  bool m1_abandoned = false;
+  int m1_leaks = 0;                // cycles an abandoned read reached manager 1
   // targeted error injection
   int err_op = -1;
   int err_region = -1;
@@ -625,8 +630,8 @@ struct Harness {
     d->m1_rid_i = uint8_t(m1_rid);
     d->m1_wvalid_i = 0;
     d->m1_wdata_i = 0;
-    d->m1_rready_i = 1;
-    d->m1_abort_i = 0;
+    d->m1_rready_i = !m1_abandoned;
+    d->m1_abort_i = m1_pend && m1_abort_issue;
     while (!tkq.empty() && tkq.front().level && tkq.front().until > 0
            && cycles >= tkq.front().until) tkq.pop_front();   // a finite level ends
     const bool tk = !tkq.empty() && cycles >= tkq.front().at;
@@ -723,7 +728,12 @@ struct Harness {
       drain_off = cycles;
       if (d->dev_rvalid_i && d->dev_rready_o) ++drain_bytes;
     }
-    if (d->m1_req_i && d->m1_gnt_o) { m1_pend = false; m1_gnt_cyc = cycles; }
+    if (m1_abandoned && (d->m1_rvalid_o || d->m1_done_o || d->m1_err_o)) ++m1_leaks;
+    if (d->m1_req_i && d->m1_gnt_o) {
+      m1_pend = false;
+      m1_gnt_cyc = cycles;
+      m1_abandoned = d->m1_abort_i;
+    }
     if (d->m1_done_o || d->m1_err_o) m1_end_cyc = cycles;
     if (d->gate_own_o) {
       own_states |= 1u << (d->lsn_state_o & 31);
@@ -791,6 +801,7 @@ struct Harness {
     writes_in_drain = 0;
     short_region = -1; short_n = 0; short_cur = false;
     m1_pend = false; m1_gnt_cyc = -1; m1_end_cyc = -1;
+    m1_abort_issue = false; m1_abandoned = false; m1_leaks = 0;
     d->m1_req_i = 0; d->m1_abort_i = 0;
     exp_owned = exp_after = 0;
     prng_cnt = 0; prng_fire = false;
@@ -882,6 +893,7 @@ struct Harness {
   void check_n7_a_talker_level_at_the_deadline();
   void check_n8_a_failed_walk_keeps_the_saved_records();
   void check_n9_an_unwired_device_face();
+  void check_n10_an_abort_in_the_issue_cycle();
   void check_l_reset_boundaries();
   int report();
   int run_suite();
@@ -2489,6 +2501,46 @@ void Harness::check_n9_an_unwired_device_face() {
   }
 }
 
+// R390-3 F1 on manager 1's side of the arbiter (processor issue #131): a
+// READ abandoned in the very cycle the arbiter issues it, its abort
+// presented with its strobe while the arbiter is still unowned. The D3
+// writer never does this (its request is W_RQ's or the service's, its abort
+// W_RD's), so manager 1 is driven here; the binding walk's case is pp_top's
+// D3R18. The drain must arm in the issue cycle: the abandoning manager
+// takes no byte, so an arbiter that armed it only for an owned READ would
+// leave the port waiting on its rready for ever. With the drain the read
+// moves in it and ends, and the port serves both managers again.
+void Harness::check_n10_an_abort_in_the_issue_cycle() {
+  const char* tag = "N10 a manager-1 READ abandoned in its issue cycle";
+  l_seed({{0, L_B0}, {L_LAST, L_B7}});
+  reset();
+  m1_rid = 0x30;
+  m1_abort_issue = true;
+  m1_pend = true;
+  run_until([&] { return m1_gnt_cyc >= 0; }, 200);
+  const long issued = m1_gnt_cyc;
+  run_until([&] { return drain_off >= 0 && !d->arb_drain_o; }, 4000);
+  run(20);
+  CHECK(issued >= 0 && m1_abandoned && drain_on == issued + 1 && drain_bytes > 0
+            && !d->arb_drain_o && m1_leaks == 0 && drain_leaks == 0 && m1_end_cyc < 0
+            && d_st == 0 && !d_busy,
+        "%s: the drain armed in the issue cycle (issued at %ld, draining from %ld), "
+        "moved %ld bytes and ended with the read; %d cycles reached manager 1",
+        tag, issued, drain_on, drain_bytes, m1_leaks);
+  //! the next READ; manager 1 takes bytes again only once it is granted
+  m1_abort_issue = false;
+  m1_gnt_cyc = -1;
+  m1_end_cyc = -1;
+  m1_pend = true;
+  go();
+  l_finish();
+  std::string why;
+  CHECK(l_walk_ok(why) && !d->restore_fail_o && d->restore_cause_o == 0
+            && m1_gnt_cyc >= 0 && m1_end_cyc > m1_gnt_cyc && !m1_pend && !d->arb_drain_o,
+        "%s: the port is free again: the walk completes as saved and manager 1's "
+        "next READ completes: %s", tag, why.c_str());
+}
+
 int Harness::report() {
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
@@ -2524,6 +2576,7 @@ int Harness::run_suite() {
   check_n7_a_talker_level_at_the_deadline();
   check_n8_a_failed_walk_keeps_the_saved_records();
   check_n9_an_unwired_device_face();
+  check_n10_an_abort_in_the_issue_cycle();
   return report();
 }
 

@@ -209,7 +209,17 @@ tally.
   READ lands on the bound's own clock; the aggregate waits for the next
   clock without an event, ends DEFAULTS (cause 3) two clocks later and
   abandons that READ to the drain, and once the device ends it a later SET
-  persists with nothing unflushed. The restore's negative controls (each group's replay deleted,
+  persists with nothing unflushed. **D3R18** (R390-3 F1) an abort in the
+  arbiter's issue cycle: the binding walk's registered READ strobe is out in
+  its first `H_RS_STREAM` clock, where no byte can be in hand, and the case
+  lands the fifth binding strobe on the first clock `agg_o` reads 1 (every
+  binding and record saved, the headers at once, each payload byte 12,350
+  clocks apart, the fourth record's done held to a clock placed from
+  the done-to-strobe lag measured earlier in the same boot). That clock
+  carries the strobe and the walk's abort with the arbiter still unowned;
+  the arbiter drains the READ from the next clock, the walk fails whole
+  (cause 3), the restore ends DEFAULTS, and once the device ends the
+  drained READ the port is idle and a later SET persists. The restore's negative controls (each group's replay deleted,
   a value rule ignored, the passes allowed to disagree, a DEVICE error read
   as blank and an UNFRAMED one read as a device error, a descriptor error
   read as a refusal, no restore watchdog, restore writes counted as changes,
@@ -651,7 +661,7 @@ the last column is how many checks each one failed there.
 | `TRG_clks` | clock-source trigger deleted | `D3S1 clks` | 5 |
 | `TRG_fmti` | input-format trigger deleted | `D3S1 fmti` | 4 |
 | `TRG_fmto` | output-format trigger deleted | `D3S1 fmto` | 4 |
-| `TRG_ptof` | presentation-offset trigger deleted | `D3S1 ptof` | 23 |
+| `TRG_ptof` | presentation-offset trigger deleted | `D3S1 ptof` | 24 |
 | `taint_ignored` | a change after the latch no longer taints the write | `D3S4 taint` | 1 |
 | `clear_wins_same_edge` | the done's clear outranks a change on the same edge | `D3S5 same edge` | 1 |
 | `clear_by_group` | the done clears every record of the group | `D3S6 group` | 8 |
@@ -676,7 +686,7 @@ the last column is how many checks each one failed there.
 | `blank_ignores_d3` | restore blank ignores the D3 walk | `D3R1: COMPLETE` | 1 |
 | `store_not_cleared` | the sampling-rate row and its valid flag not reset | `D3R1: every row at its reset value` | 17 |
 | `valid_not_cleared` | the sampling-rate valid flag not reset | `D3R1: every row at its reset value` | 17 |
-| `quarantine_released_by_time` | the arbiter ends a drain after 1,000 cycles | `D3R5: once the device ends the drained read a later SET persists` | 8 |
+| `quarantine_released_by_time` | the arbiter ends a drain after 1,000 cycles | `D3R5: once the device ends the drained read a later SET persists` | 10 |
 | `no_rollback` | a pass-1 abort ends DEFAULTS without the roll-back | `D3R4:` | 17 |
 | `dyn_not_rolled_back` | the dynamic-state store left out of the roll-back | `D3R4:` | 4 |
 | `store_not_rolled_back` | the descriptor store left out of the roll-back | `D3R10 5000` | 3 |
@@ -693,12 +703,12 @@ the last column is how many checks each one failed there.
 | `judge_wait_unwatched` | the format judge's wait is not watched | `D3R8b` | 1 |
 | `rate_walk_stuck_on_first_lane` | the rate walk never leaves the list's first lane | `D3R3b entry 7` | 1 |
 | `rate_walk_unbounded` | the rate walk's eight-entry bound dropped | `D3R3b entry 8` | 1 |
-| `no_aggregate_deadline` | the aggregate deadline removed | `D3R13 pass 0: DEFAULTS at clock`, `D3R13 pass 1` | 11 |
-| `aggregate_mirrored` | the aggregate a mirrored 100,000,000 instead of CLK_HZ_P | `D3R13 pass 0: DEFAULTS at clock` | 11 |
-| `aggregate_from_the_walk` | the aggregate counts from the binding walk's end | `D3R13 pass 0: DEFAULTS at clock` | 13 |
+| `no_aggregate_deadline` | the aggregate deadline removed | `D3R13 pass 0: DEFAULTS at clock`, `D3R13 pass 1` | 13 |
+| `aggregate_mirrored` | the aggregate a mirrored 100,000,000 instead of CLK_HZ_P | `D3R13 pass 0: DEFAULTS at clock` | 13 |
+| `aggregate_from_the_walk` | the aggregate counts from the binding walk's end | `D3R13 pass 0: DEFAULTS at clock` | 15 |
 | `per_wait_floor` | the per-wait derivation rounds down | `D3R8 deadline` | 1 |
-| `agg_closes_before_proof` | the aggregate aborts before the image is proven (the pre-walk close) | `D3R14 image valid: DEFAULTS` | 3 |
-| `binding_walk_ignores_aggregate` | the binding walk ignores the aggregate and reads on | `D3R14 image valid: the binding walk`, `D3R14 image refused: the binding walk` | 5 |
+| `agg_closes_before_proof` | the aggregate aborts before the image is proven (the pre-walk close) | `D3R14 image valid: DEFAULTS` | 5 |
+| `binding_walk_ignores_aggregate` | the binding walk ignores the aggregate and reads on | `D3R14 image valid: the binding walk`, `D3R14 image refused: the binding walk` | 7 |
 | `proof_reads_records_past_bound` | the image proven past the bound starts pass 0 | `D3R14 image valid: DEFAULTS` | 1 |
 | `agg_not_in_rollback` | the aggregate count paused in the roll-back and its re-LOCATE (R390-2's own edit) | `D3R15 debt wait: CLOSED`, `D3R15 re-LOCATE: CLOSED` | 4 |
 | `agg_not_stopped_at_terminal` | the aggregate keeps counting after the terminal (R391-2's own edit) | `D3R16 COMPLETE`, `D3R16 DEFAULTS`, `D3R16 CLOSED` | 3 |

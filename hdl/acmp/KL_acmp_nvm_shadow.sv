@@ -150,8 +150,9 @@ module KL_acmp_nvm_shadow
     //! level: the D3 writer's aggregate restore deadline fired (DR3a;
     //! KL_aecp_nvm_writer agg_o). A read phase still running takes its own
     //! deadline's path at once in H_RS_REQ, where nothing is owed, and in
-    //! H_RS_STREAM in its first cycle without a byte, done or err. Tie 0
-    //! where no D3 writer runs
+    //! H_RS_STREAM in its first cycle without a byte, done or err, which
+    //! may be the cycle its READ strobe is issued: the arbiter drains a
+    //! READ abandoned there too. Tie 0 where no D3 writer runs
     input  wire                        rs_agg_i,
     output logic                       restore_busy_o, //! restore walk/replay running
     output logic                       restore_done_o, //! level: restore sequencing complete
@@ -541,7 +542,9 @@ module KL_acmp_nvm_shadow
   //! aggregate deadline (rs_agg_i) takes the same path: in H_RS_REQ at once
   //! (no read is issued, nothing is owed), in H_RS_STREAM in a stalled
   //! cycle, so a byte in hand is never orphaned and the read goes to the
-  //! drain as below.
+  //! drain as below. The first H_RS_STREAM cycle is always stalled and
+  //! carries the registered strobe (nvm_req_o), so the abort can meet the
+  //! arbiter's issue cycle; KL_pp_nvm_mgr_arb arms its drain there as well.
   logic [31:0] rs_wd_r;
   logic        rs_stall_w;
   logic        rs_tmo_w;
