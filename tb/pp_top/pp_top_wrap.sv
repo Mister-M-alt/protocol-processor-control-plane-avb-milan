@@ -77,6 +77,11 @@ module pp_top_wrap (
     // AECP pop face (kept live: an integrator may still observe/drain it)
     output logic        aecp_txn_valid_o,
     input  wire         aecp_txn_ready_i,
+    //! the optional external drain's slot return, 0 but where a case steals
+    //! a record (D3O7), and the RX slot of the head record it pops
+    input  wire         aecp_rxs_free_i,
+    input  wire  [1:0]  aecp_rxs_free_slot_i,
+    output logic [2:0]  aecp_txn_slot_o,
 
     // GET_COUNTERS read face (06 §6.6) — the C++ harness plays the
     // integrator's counter store behind it, so the counter VALUES this suite
@@ -419,6 +424,9 @@ module pp_top_wrap (
 
   // AECP pop face: record lane observed, payload faces DEFINED-idle
   logic [pp_pkg::PP_TXN_W_C-1:0] aecp_txn_nc_w;
+  pp_pkg::pp_txn_t aecp_txn_rec_w;
+  assign aecp_txn_rec_w  = pp_pkg::pp_txn_t'(aecp_txn_nc_w);
+  assign aecp_txn_slot_o = aecp_txn_rec_w.rx_slot;
   logic [7:0]                    aecp_rd_data_nc_w;
   logic [9:0]                    aecp_slot_len_nc_w;
 
@@ -483,8 +491,8 @@ module pp_top_wrap (
       .aecp_rxs_rd_en_i      (1'b0),
       .aecp_rxs_rd_data_o    (aecp_rd_data_nc_w),
       .aecp_rxs_slot_len_o   (aecp_slot_len_nc_w),
-      .aecp_rxs_free_i       (1'b0),
-      .aecp_rxs_free_slot_i  (2'd0),
+      .aecp_rxs_free_i       (aecp_rxs_free_i),
+      .aecp_rxs_free_slot_i  (aecp_rxs_free_slot_i),
       //! Dynamic state is verified through AECP response traffic here. Keep
       //! every unused publication explicit so newly added state cannot leave
       //! a silent harness integration gap.

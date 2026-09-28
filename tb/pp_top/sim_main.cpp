@@ -1716,6 +1716,8 @@ struct H {
     release_eof_hit = false;
     d->tx_ready_i = 1;
     d->aecp_txn_ready_i = 0;              // P4 uCPU seam: defined tie-off
+    d->aecp_rxs_free_i = 0;               // the external drain returns nothing
+    d->aecp_rxs_free_slot_i = 0;
     d->ctr_change_i = 0;
     d->ctr_change_desc_type_i = 0;
     d->ctr_change_desc_index_i = 0;

@@ -50,7 +50,12 @@ tally.
   idle latency before the D3 terminal; at the terminal the held command is
   answered byte-exact, the five dropped ones never are, five drops are
   counted, and a command after the terminal is served with no drop. A mutant
-  that drops nothing (the unbounded hold) fails all six checks.
+  that drops nothing (the unbounded hold) fails all six checks. **D3O7**
+  (R391-2 S1, taken) the resident count comes back down: in CLOSED the
+  optional external drain (`aecp_txn_ready_i`, then `aecp_rxs_free_i` with
+  the head record's slot, which the wrap exposes for this case alone) steals
+  the held command, and of the next two AECP commands the first is held and
+  only the second is dropped and counted.
   **D3S** the writer in service, on real AECP SETs over the device model.
   **D3S1** every persisted group at its first and last declared index
   (configuration, sampling rate, clock source, both stream-format
@@ -631,15 +636,15 @@ extract of `hdl/`, `tb/common/` and this directory, builds `gsi-build`, runs
 tally, exits non-zero and every named check fails; a golden extract runs first and
 must pass. The same driver runs the binding manager's three DR2c controls in
 `tb/acmp_nvm` and the validator's admission control in `tb/rx_validator` (their
-READMEs record them). At the lane head all 68 are KILLED and the three goldens PASS;
+READMEs record them). At the lane head all 69 are KILLED and the three goldens PASS;
 the last column is how many checks each one failed there.
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
 |---|---|---|---|
-| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 14 |
-| `dispatch_not_held` | the engine's three dispatch gates ignore the writer's ownership | `D3O1: without the walk the writer owns every cycle` | 4 |
+| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 16 |
+| `dispatch_not_held` | the engine's three dispatch gates ignore the writer's ownership | `D3O1: without the walk the writer owns every cycle` | 5 |
 | `own_taken_at_the_walk` | ownership and the bus taken only once the walk starts, not from reset | `D3R9: the held SET` | 10 |
-| `image_unproven_continues` | an unprovable image (the LOCATE's error) no longer aborts | `D3O2: CLOSED at`, `D3O3: CLOSED` | 7 |
+| `image_unproven_continues` | an unprovable image (the LOCATE's error) no longer aborts | `D3O2: CLOSED at`, `D3O3: CLOSED` | 9 |
 | `latch_ignores_program` | the service latch does not wait for a running program | `D3S9` | 3 |
 | `TRG_cfg` | configuration trigger deleted | `D3S1 cfg` | 3 |
 | `TRG_rate` | sampling-rate trigger deleted | `D3S1 rate` | 3 |
@@ -698,8 +703,9 @@ the last column is how many checks each one failed there.
 | `agg_not_in_rollback` | the aggregate count paused in the roll-back and its re-LOCATE (R390-2's own edit) | `D3R15 debt wait: CLOSED`, `D3R15 re-LOCATE: CLOSED` | 4 |
 | `agg_not_stopped_at_terminal` | the aggregate keeps counting after the terminal (R391-2's own edit) | `D3R16 COMPLETE`, `D3R16 DEFAULTS`, `D3R16 CLOSED` | 3 |
 | `agg_fires_with_event_in_hand` | the aggregate fires with a grant, byte or answer in hand (R391-2's own edit) | `D3R17: the writer's grant`, `D3R17: once the device ends` | 2 |
-| `aecp_hold_unbounded` | the admission gate never drops (the unbounded hold) | `D3O5: in CLOSED each GET_RX_STATE`, `D3O6: during the slowed walk` | 6 |
-| `held_drop_uncounted` | a held drop not counted | `D3O5: one AECP command held`, `D3O6: at the terminal` | 4 |
+| `aecp_hold_unbounded` | the admission gate never drops (the unbounded hold) | `D3O5: in CLOSED each GET_RX_STATE`, `D3O6: during the slowed walk` | 7 |
+| `held_drop_uncounted` | a held drop not counted | `D3O5: one AECP command held`, `D3O6: at the terminal` | 5 |
+| `resident_never_returned` | the resident count never comes back down (R391-2's own edit) | `D3O7: the returned slot frees the share` | 1 |
 
 ## Recorded seams and honest limits
 

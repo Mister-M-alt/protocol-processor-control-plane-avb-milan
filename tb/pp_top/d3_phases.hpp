@@ -283,6 +283,55 @@ struct D3OwnershipPhase {
           "D3O6: after the terminal an AECP command is served, no drop counted");
   }
 
+  // D3O7 (R391-2 S1, taken: the resident count is returned). The admission
+  // counts an AECP record resident from its commit until its slot is
+  // returned, by the engine or by the optional external drain. In CLOSED the
+  // engine never takes one, so the drain (`aecp_txn_ready_i`, then
+  // `aecp_rxs_free_i` with the popped record's slot) steals the held
+  // command: the share is free again, so the next AECP command is held, not
+  // dropped, and only the one after it is dropped and counted. A count that
+  // never came back down would drop both.
+  void o7_a_record_the_external_drain_returns_frees_the_share() {
+    std::vector<uint8_t> bad = image;
+    bad[0] ^= 0xFF;
+    power_up(bad, false);
+    const Boot b = boot_for(12000);
+    x.feed(d3_read_entity_cmd(0xD390));
+    x.idle(300);
+    const bool held = x.d->dbg_aecp_head_o;
+    const uint32_t before = x.snap(37);
+    //! the head record names its RX slot while it waits in the queue
+    const int slot = held ? int(x.d->aecp_txn_slot_o) : -1;
+    x.d->aecp_txn_ready_i = 1;                    // the drain pops the head
+    int pops = 0;
+    for (int c = 0; c < 200 && x.d->dbg_aecp_head_o; ++c) {
+      x.step();
+      ++pops;
+    }
+    x.d->aecp_txn_ready_i = 0;
+    const bool popped = !x.d->dbg_aecp_head_o && slot >= 0 && slot < int(RX_SLOTS);
+    x.idle(20);
+    x.d->aecp_rxs_free_i = 1;                     // ... and returns its slot
+    x.d->aecp_rxs_free_slot_i = uint8_t(slot < 0 ? 0 : slot);
+    x.step();
+    x.d->aecp_rxs_free_i = 0;
+    x.d->aecp_rxs_free_slot_i = 0;
+    x.idle(20);
+    x.feed(d3_read_entity_cmd(0xD391));
+    x.idle(300);
+    x.feed(d3_read_entity_cmd(0xD392));
+    x.idle(300);
+    const uint32_t after = x.snap(37);
+    CHECK(b.closed > b.release && held && before == 0 && popped,
+          "D3O7: in CLOSED the held AECP command is stolen by the external drain "
+          "(slot %d, the head %s after %d clocks)", slot, popped ? "emptied" : "still held",
+          pops);
+    CHECK(after == before + 1 && x.d->dbg_aecp_head_o && x.q_aecp.empty()
+              && x.d->dbg_d3_own_o,
+          "D3O7: the returned slot frees the share: the next command held, the one "
+          "after it dropped (%u counted), none answered", after - before);
+  }
+
   void run() {
     o1_dispatch_is_held_from_reset();
     o2_an_unprovable_image_ends_closed();
@@ -290,6 +339,7 @@ struct D3OwnershipPhase {
     o4_a_late_image_is_proven_by_its_locate();
     o5_closed_admits_one_aecp_record();
     o6_a_slowed_restore_admits_one_aecp_record();
+    o7_a_record_the_external_drain_returns_frees_the_share();
   }
 };
 

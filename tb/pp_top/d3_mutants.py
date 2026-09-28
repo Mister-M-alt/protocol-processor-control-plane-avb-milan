@@ -13,8 +13,9 @@ the tree this script lives in is never touched.
 The controls are those of the parent D3 contract section 18.1 (processor issue #131)
 and the review rounds on it: the aggregate restore deadline (DR3a), the AECP hold
 admission, the DR2c backoff derivation and its freedom of dispatch, both directions of
-the pass agreement, the roll-back strobe, the pass-1 drain, the watched format judge
-and the rate walk. The suite READMEs carry the matching mutation records.
+the pass agreement, the roll-back strobe, the pass-1 drain, the watched format judge,
+the rate walk, the aggregate's terminals, span and inertness, and the admission's
+resident count. The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/d3_mutants.py --output DIR [--verilator V] [--jobs N]
                                        [--only NAME ...]
@@ -352,6 +353,11 @@ ADMISSION = (
         (VALIDATOR, "      if (held_fail_w && (cnt_held_r != CNT_MAX_C)) cnt_held_r <= cnt_held_r + 16'd1;\n",
          ""),),
         ("D3O5: one AECP command held", "D3O6: at the terminal")),
+    # R391-2 S1 (taken): the resident count returned (the reviewer's own edit)
+    Mutant("resident_never_returned", PP_TOP, (
+        (TOP, "  assign aecp_rx_out_w = {1'b0, aecp_rxs_free_w} + {1'b0, aecp_rxs_free_i};\n",
+         "  assign aecp_rx_out_w = 2'd0;\n"),),
+        ("D3O7: the returned slot frees the share",)),
     Mutant("validator_admits_held_aecp", RX_VALIDATOR, (
         (VALIDATOR, "  assign held_fail_w = pdu_byte_w && (pidx_w == 11'd0) && aecp_hold_i\n",
          "  assign held_fail_w = 1'b0 && (pidx_w == 11'd0) && aecp_hold_i\n"),),
