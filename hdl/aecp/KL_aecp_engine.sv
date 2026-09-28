@@ -562,10 +562,14 @@ module KL_aecp_engine
     input  wire         d3_m_wready_i,      //! the port accepts the commit byte
     input  wire         d3_m_done_i,        //! its operation completed
     input  wire         d3_m_err_i,         //! its operation failed
+    input  wire         d3_m_rvalid_i,      //! restore byte present
+    input  wire  [7:0]  d3_m_rdata_i,       //! restore byte
+    input  wire  [1:0]  d3_m_err_cause_i,   //! the port's cause with its err
     output logic        d3_done_o,          //! level: the D3 restore is done
     output logic        d3_fail_o,          //! level: the D3 restore failed
     output logic        d3_closed_o,        //! level: CLOSED, AECP held until reset
     output logic  [2:0] d3_cause_o,         //! the first abort's cause
+    output logic        d3_blank_o,         //! done, not failed, nothing framed
     //! a D3 record's accepted change is not yet in the window (the OR of the
     //! writer's per-record dirty bits); sticky alarm: a record's write
     //! attempts were exhausted
@@ -1491,6 +1495,9 @@ module KL_aecp_engine
   logic [63:0] u_st_wdata_w;
   logic  [7:0] u_st_wstrb_w;
   logic        d3_own_w, d3_bus_w;
+  logic        d3_jd_req_w;
+  logic [15:0] d3_jd_type_w, d3_jd_index_w;
+  logic [63:0] d3_jd_fmt_w;
   logic        d3_sb_req_w, d3_sb_we_w;
   logic [19:0] d3_sb_addr_w;
   logic [63:0] d3_sb_wdata_w;
@@ -1805,6 +1812,7 @@ module KL_aecp_engine
       .sb_addr_o   (d3_sb_addr_w),
       .sb_wdata_o  (d3_sb_wdata_w),
       .sb_didx_o   (d3_sb_didx_w),
+      .sb_ready_i  (st_ready_w && d3_bus_w),
       .sb_rvalid_i (st_rvalid_w && d3_bus_w),
       .sb_rdata_i  (st_rdata_w),
       .sb_err_i    (st_err_w),
@@ -1822,10 +1830,20 @@ module KL_aecp_engine
       .m_wready_i  (d3_m_wready_i),
       .m_done_i    (d3_m_done_i),
       .m_err_i     (d3_m_err_i),
+      .m_rvalid_i  (d3_m_rvalid_i),
+      .m_rdata_i   (d3_m_rdata_i),
+      .m_err_cause_i (d3_m_err_cause_i),
+      .jd_req_o    (d3_jd_req_w),
+      .jd_type_o   (d3_jd_type_w),
+      .jd_index_o  (d3_jd_index_w),
+      .jd_fmt_o    (d3_jd_fmt_w),
+      .jd_data_i   (gsi_data_i),
+      .jd_wait_i   (gsi_wait_i),
       .done_o      (d3_done_o),
       .fail_o      (d3_fail_o),
       .closed_o    (d3_closed_o),
       .cause_o     (d3_cause_o),
+      .blank_o     (d3_blank_o),
       .unflushed_o (d3_unflushed_o),
       .alarm_o     (d3_alarm_o)
   );
@@ -1972,18 +1990,23 @@ module KL_aecp_engine
   //! the descriptor image. Keep the full zero body without consulting a
   //! gather provider (including the top's internal STREAM_INPUT words).
   logic gsi_missing_w;
+  logic gsi_req_u_w;
   assign gsi_missing_w = gstri_r && (resp_status_w == ST_NO_SUCH_DESC_C);
-  assign gsi_req_o        = gx_req_w && gsi_any_w && !gsi_missing_w;
-  assign gsi_kind_o       = (gstri_r || gsfmt_r || ssfmt_r || ssinfo_r) ? 2'd0
-                                                 : (gavb_r ? 2'd1 : 2'd2);
-  assign gsi_desc_type_o  = cfg_ix_r;
-  assign gsi_desc_index_o = desc_ix_r;
-  assign gsi_sel_o        = gx_sel_w[3:0];
-  assign gsi_ord_o        = amap_rec_r;
+  assign gsi_req_u_w   = gx_req_w && gsi_any_w && !gsi_missing_w;
+  //! the D3 writer's restore asks the same face for the integrator's
+  //! verdict on a saved stream format (kind 0, selector 15). It does so only
+  //! while it owns dispatch from reset, so no µprogram gathers meanwhile.
+  assign gsi_req_o        = d3_jd_req_w || gsi_req_u_w;
+  assign gsi_kind_o       = (d3_jd_req_w || gstri_r || gsfmt_r || ssfmt_r
+                             || ssinfo_r) ? 2'd0 : (gavb_r ? 2'd1 : 2'd2);
+  assign gsi_desc_type_o  = d3_jd_req_w ? d3_jd_type_w : cfg_ix_r;
+  assign gsi_desc_index_o = d3_jd_req_w ? d3_jd_index_w : desc_ix_r;
+  assign gsi_sel_o        = d3_jd_req_w ? 4'd15 : gx_sel_w[3:0];
+  assign gsi_ord_o        = d3_jd_req_w ? 8'd0 : amap_rec_r;
   //! the PROPOSED stream format, valid while a SET_STREAM_FORMAT is in
   //! flight (it is that command's @28 capture, stable from the walk's end
   //! to the next pop). The integrator reads it only to answer selector 15.
-  assign gsi_prop_fmt_o   = setval_r;
+  assign gsi_prop_fmt_o   = d3_jd_req_w ? d3_jd_fmt_w : setval_r;
 
   assign rgy_req_o   = gx_req_w && rgy_any_w;
   assign rgy_state_o = gx_sel_w[0];
@@ -2119,7 +2142,7 @@ module KL_aecp_engine
                        && !gxf_fail_r;
   assign rgy_hold_w  = gx_req_w && (regun_r || lockc_r)
                        && rgy_wait_i && !gxf_fail_r;
-  assign gsi_hold_w  = gsi_req_o && gsi_wait_i && !gxf_fail_r;
+  assign gsi_hold_w  = gsi_req_u_w && gsi_wait_i && !gxf_fail_r;
 
   //! REGISTERED gather answer - the stage-0 pipeline cut. The integrator's
   //! wait/data cone (ctr_wait_i / amap_wait_i arrive combinationally from
@@ -2194,7 +2217,7 @@ module KL_aecp_engine
              && (amap_edit_phase_o <= 3'd1)) amap_rec_r <= 8'd0;
     else if (((amap_req_o && gx_sel_w[4])
               || (amap_edit_req_o && (amap_edit_phase_o >= 3'd4))
-              || (gsi_req_o && gx_sel_w[3])) && gx_valid_w
+              || (gsi_req_u_w && gx_sel_w[3])) && gx_valid_w
              && (amap_rec_r != 8'hFF)) amap_rec_r <= amap_rec_r + 8'd1;
   end
 

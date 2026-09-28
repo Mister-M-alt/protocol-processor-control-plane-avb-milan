@@ -73,6 +73,42 @@ tally.
   forgiven by success, an unproven image continued, the hold released at
   the go, no dispatch hold) each fail their named check; they run from the
   lane's evidence packet, which plants them in a scratch copy.
+  **D3R** the restore transaction over the device model, on fresh models.
+  **D3R1** the nine rows D3S1 saves through real SETs come back across a
+  power cycle: when the D3 walk starts (the admission gate's release)
+  every row of selectors 0 to 5 reads its reset value with its valid flag
+  clear, read through taps rather than the bus the restore owns; the walk
+  ends COMPLETE with exactly 9 applied, 0 refused and 18 blank of 27; each
+  group's value and valid flag are restored and a real GET reads each
+  back (GET_CONFIGURATION, GET_SAMPLING_RATE, GET_CLOCK_SOURCE, both
+  GET_STREAM_FORMAT directions, GET_STREAM_INFO's latency through the
+  integrator fold); an enable requested from reset advertises nothing
+  before the combined terminal and ADP advertises after it; and no restore
+  write becomes a change (no pending, no device write, for two windows).
+  **D3R2** framed records a SET program would refuse keep their defaults
+  and the walk goes on: configuration 5 of 2, rate 44100 (off the list),
+  clock source 3 of 3, formats the integrator's judge refuses, an offset
+  with bit 31 set; records whose frame fails (crc, layout version,
+  another record's id, a u64 group carrying four bytes) are refused
+  before any rule; the neighbour offset applies; COMPLETE with exactly 1
+  applied and 10 refused. **D3R3** configuration 0, the rate list's second
+  entry and clock source 0 are accepted. **D3R4** a record read whole in
+  pass 0 and erased at rest before pass 1 aborts (cause 5, the passes
+  agree record by record) after an earlier record was applied; until the
+  roll-back lands the abort ends CLOSED. **D3R5** faults in pass 0 apply
+  nothing and end done and failed on defaults with AECP running: a DEVICE
+  error on a header (cause 2), a payload torn after two bytes (cause 1),
+  and a header the device never answers, abandoned at the deadline to
+  the arbiter's drain (cause 3); once the device answers the drained read
+  a later SET persists. **D3R6** an erased device restores blank and not
+  failed, an unframed record is its default, and the one saved record
+  lost to a device error is a failure, never blank. **D3R7** the rate
+  rule's AUDIO_UNIT fetch answers an error beat: the restore aborts
+  (cause 6), never a refused value. **D3R8** a READ granted 200 cycles
+  inside the wrap's 20,000-cycle deadline completes; 200 cycles past it
+  aborts (cause 3). **D3R9** a SET held since before the walk runs after
+  the restore applied the saved value, is in force, and the next flush
+  saves it.
   The dispatch hold runs from reset, so every section that resets and then
   issues AECP commands starts both walks first (`H::boot_to_aecp`, U10, U11
   and the internal-MAAP model's MP0). Focused reproduction:
@@ -308,8 +344,9 @@ tally.
   manager's own terminal (`dbg_walk_done_o`), not on `restore_done_o`, so every
   later section keeps the clock it was tuned against (section T's note).
 - **S0/S1** quiescence + snapshot identity, and `restore_done_o` has followed
-  the walk's terminal (the top's level now waits for the listener admission
-  gate's release, issue #92; BW4 grades it cycle by cycle); SRP bring-up: the FIRST MSRP
+  both walks' terminals (the top's level waits for the listener admission
+  gate's release, issue #92, and for the D3 walk; BW4 grades it cycle by
+  cycle; S0 reads it after its 20 ms so section R's clock is unchanged); SRP bring-up: the FIRST MSRP
   frame is the Domain default declaration `New {6,3,2}`, byte-exact.
 - **BW** (runs last, behind resets of its own) a read-only command in the
   boot window, at the top (issue #92): sink 0 is bound to a talker of the
@@ -322,8 +359,11 @@ tally.
   granting the walk's next read after region 0x20 was stored: the walk fails
   whole at its read deadline (the wrap sets `NVM_RS_TMO_CYC_P` to 20,000
   clocks; the product default is 20 ms of `CLK_HZ_P`, two million steps here),
-  blank and nothing preloaded, and the GET held in the window answers the
-  vendor default while `entity_enable_i` is still low. Released, the device
+  cause 3 and nothing preloaded, and the GET held in the window answers the
+  vendor default at the listener's release, while `entity_enable_i` is
+  still low and before the restore is done: the D3 walk's first read meets
+  the port the arbiter drains and ends at its own deadline on defaults
+  (`rs_cause_o` 3), within two deadlines of the silence. Released, the device
   serves the abandoned read, which the arbiter drains. Every debounce and
   flush then runs out before anything else happens, and region 0x20 must
   still hold the saved record the failed walk had stored: the held GET's

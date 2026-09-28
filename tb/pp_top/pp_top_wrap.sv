@@ -166,6 +166,9 @@ module pp_top_wrap (
     output logic        restore_done_o,
     output logic        restore_fail_o,
     output logic        restore_blank_o,
+    output logic        restore_closed_o,
+    output logic  [2:0] rs_cause_o,
+    output logic  [1:0] restore_cause_o,
     output logic        nvm_alarm_o,
     output logic  [7:0] nvm_unflushed_o,
     output logic        d3_unflushed_o,
@@ -350,7 +353,22 @@ module pp_top_wrap (
     output logic        dbg_d3_mdone_o,
     output logic [26:0] dbg_d3_dirty_o,
     //! the writer is latching a record over the state bus in service
-    output logic        dbg_d3_latch_o
+    output logic        dbg_d3_latch_o,
+    //! the dynamic-state rows the fabric does not publish with their valid
+    //! flag (configuration, sampling rate and clock source, row 0), for the
+    //! D3 cleared-first and restored checks; and the writer's pass-1 counts
+    output logic [15:0] dbg_dyn_cfg_o,
+    output logic        dbg_dyn_cfg_v_o,
+    output logic [31:0] dbg_dyn_rate_o,
+    output logic        dbg_dyn_rate_v_o,
+    output logic [15:0] dbg_dyn_clk_o,
+    output logic        dbg_dyn_clk_v_o,
+    output logic  [7:0] dbg_d3_applied_o,
+    output logic  [7:0] dbg_d3_refused_o,
+    output logic  [7:0] dbg_d3_blank_o,
+    //! the ADP engine's enable input: the requested enable once the
+    //! restore released it
+    output logic        dbg_adp_enable_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
@@ -524,6 +542,9 @@ module pp_top_wrap (
       .restore_done_o        (restore_done_o),
       .restore_fail_o        (restore_fail_o),
       .restore_blank_o       (restore_blank_o),
+      .restore_closed_o      (restore_closed_o),
+      .rs_cause_o            (rs_cause_o),
+      .restore_cause_o       (restore_cause_o),
       .nvm_alarm_o           (nvm_alarm_o),
       .nvm_unflushed_o       (nvm_unflushed_o),
       .d3_unflushed_o        (d3_unflushed_o),
@@ -630,16 +651,26 @@ module pp_top_wrap (
                               && u_dut.u_aecp.u_store.st_ready_o;
   assign dbg_notify_enq_o = u_dut.aecp_eff_notify_stb_nc_w;
   assign dbg_d3_own_o     = u_dut.u_aecp.d3_own_w;
-  assign dbg_d3_done_o    = u_dut.d3_done_nc_w;
-  assign dbg_d3_fail_o    = u_dut.d3_fail_nc_w;
-  assign dbg_d3_closed_o  = u_dut.d3_closed_nc_w;
-  assign dbg_d3_cause_o   = u_dut.d3_cause_nc_w;
+  assign dbg_d3_done_o    = u_dut.d3_done_w;
+  assign dbg_d3_fail_o    = u_dut.d3_fail_w;
+  assign dbg_d3_closed_o  = u_dut.d3_closed_w;
+  assign dbg_d3_cause_o   = u_dut.rs_cause_o;
   assign dbg_aecp_busy_o  = u_dut.aecp_dbg_busy_nc_w;
   assign dbg_aecp_head_o  = u_dut.aecp_txn_valid_w;
   assign dbg_d3_mgnt_o    = u_dut.d3_m_gnt_w;
   assign dbg_d3_mdone_o   = u_dut.d3_m_done_w;
   assign dbg_d3_dirty_o   = u_dut.u_aecp.u_d3.dirty_r;
   assign dbg_d3_latch_o   = u_dut.u_aecp.u_d3.latch_w;
+  assign dbg_dyn_cfg_o    = u_dut.u_aecp.u_dyn.cfg_r;
+  assign dbg_dyn_cfg_v_o  = u_dut.u_aecp.u_dyn.cfg_v_r;
+  assign dbg_dyn_rate_o   = u_dut.u_aecp.u_dyn.rate_r[0];
+  assign dbg_dyn_rate_v_o = u_dut.u_aecp.u_dyn.rate_v_r[0];
+  assign dbg_dyn_clk_o    = u_dut.u_aecp.u_dyn.clksrc_r[0];
+  assign dbg_dyn_clk_v_o  = u_dut.u_aecp.u_dyn.clksrc_v_r[0];
+  assign dbg_d3_applied_o = u_dut.u_aecp.u_d3.n_app_r;
+  assign dbg_d3_refused_o = u_dut.u_aecp.u_d3.n_ref_r;
+  assign dbg_d3_blank_o   = u_dut.u_aecp.u_d3.n_blank_r;
+  assign dbg_adp_enable_o = u_dut.u_adp.entity_enable_i;
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin

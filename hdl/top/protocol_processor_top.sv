@@ -424,21 +424,39 @@ module protocol_processor_top
 
     //! ---- NVM boot restore + alarm (07 §5.3) ----
     input  wire         restore_go_i,          //! start boot restore
-    output logic        restore_busy_o,        //! restore walk running
-    output logic        restore_done_o,        //! level: restore complete
-    //! level: the walk failed WHOLE, every sink not changed live at its
-    //! vendor default and nothing preloaded: a read-back torn mid-record, a device error on a
-    //! record read with nothing forwarded, or the read phase's deadline
-    //! (NVM_RS_TMO_CYC_P). A record the device answered with something that
-    //! is not a record (an erased or unframed header) is that record's
-    //! default, never a failure (07 §5.3).
+    //! level: a restore walk is running, from the binding walk's start to
+    //! the combined terminal (never after CLOSED: see restore_closed_o)
+    output logic        restore_busy_o,
+    //! level: BOTH walks ended: the binding walk's drained terminal (the
+    //! listener admission gate's release) AND the D3 walk's COMPLETE or
+    //! DEFAULTS. It releases the ADP enable; AECP runs from the D3
+    //! terminal and live ACMP listener work from the gate's release.
+    output logic        restore_done_o,
+    //! level: either walk failed. The binding walk fails WHOLE, every sink
+    //! not changed live at its vendor default and nothing preloaded, on a
+    //! read-back torn mid-record, a device error with nothing forwarded,
+    //! or its read deadline (NVM_RS_TMO_CYC_P). The D3 walk fails on a
+    //! device error, a torn read, passes that disagree, a descriptor fault,
+    //! an unproven image or its deadline (rs_cause_o). A record the device
+    //! answered with something that is not a record (an erased or
+    //! unframed header) is that record's default, never a failure (07 §5.3).
     output logic        restore_fail_o,
-    //! done says the walk SEQUENCED; blank says it validated nothing. An
-    //! integrator whose media is erased, or whose unbacked device face
-    //! answers every read as erased media, sees done with no fail on every
-    //! path, so this is the only pin that tells it apart from a walk that
-    //! actually put Milan 5.3.8.2/5.3.8.3 state back.
-    output logic        restore_blank_o,       //! level: completed walk validated ZERO records
+    //! done says both walks SEQUENCED; blank says nothing came back: done,
+    //! no failure, and neither walk validated a record. A restore that
+    //! failed is never blank, so a device error that loses the one saved
+    //! record never reads as a clean first boot.
+    output logic        restore_blank_o,
+    //! level: the D3 walk ended CLOSED (its image could not be proven, or
+    //! an abort it could not recover): fail, never done, AECP held and the
+    //! ADP enable withheld until reset
+    output logic        restore_closed_o,
+    //! the D3 walk's first abort cause, valid with restore_fail_o: 0 none,
+    //! 1 torn read, 2 device error, 3 deadline, 5 the two passes disagree,
+    //! 6 descriptor fault, 7 image not proven
+    output logic  [2:0] rs_cause_o,
+    //! the binding walk's cause (KL_acmp_nvm_shadow): 0 none, 1 torn,
+    //! 2 a device error with nothing forwarded, 3 its read deadline
+    output logic  [1:0] restore_cause_o,
     //! sticky until reset: a record producer exhausted its write attempts,
     //! the binding manager's or the D3 writer's (both managers' alarm)
     output logic        nvm_alarm_o,
@@ -1638,6 +1656,9 @@ module protocol_processor_top
   //! not "nc" any more: this is the live available_index, published below.
   logic [31:0] adp_dbg_aidx_nc_w;
   logic [N_STREAM_IN_P-1:0] adp_dbg_tkdisc_nc_w;
+  //! the effective ADP enable: requested AND released by the restore
+  logic        adp_enable_w;
+  assign adp_enable_w = entity_enable_i && restore_done_o;
   logic        adp_txs_gnt_w;
   logic [TXS_W_C-1:0] adp_txs_gnt_slot_w;
 
@@ -1654,7 +1675,10 @@ module protocol_processor_top
   ) u_adp (
       .clk_i                 (clk_i),
       .rst_n                 (rst_n),
-      .entity_enable_i       (entity_enable_i),
+      //! the REQUESTED enable reaches ADP only once both restore walks have
+      //! ended (restore_done_o): no advertisement precedes a restore write.
+      //! The side port's image-window lock keeps the requested level.
+      .entity_enable_i       (adp_enable_w),
       .link_up_i             (link_up_i),
       .gm_change_i           (gm_change_i),
       .gm_id_i               (gm_id_i),
@@ -2472,16 +2496,18 @@ module protocol_processor_top
   logic        nvm_rvalid_w, nvm_rready_w, nvm_busy_w, nvm_done_w, nvm_err_w;
   logic [1:0]  nvm_err_cause_w;
   logic        nvm_abort_w;
-  logic [1:0]  nvm_restore_cause_nc_w;
+  logic        nvm_walk_fail_w, nvm_walk_blank_w;
   logic [N_STREAM_IN_P-1:0] nvm_dbg_valid_nc_w, nvm_dbg_touched_nc_w;
   // the port's manager face, behind the arbiter
   logic        np_req_w, np_we_w, np_wvalid_w, np_wready_w, np_rvalid_w;
   logic        np_rready_w, np_busy_w, np_done_w, np_err_w;
   logic [7:0]  np_rid_w, np_wdata_w, np_rdata_w;
   logic [1:0]  np_err_cause_w;
-  logic        nm1_rvalid_nc_w, nvm_drain_nc_w;
-  logic [7:0]  nm1_rdata_nc_w;
-  logic [1:0]  nm1_err_cause_nc_w;
+  logic        nvm_drain_nc_w;
+  logic        d3_m_rvalid_w;
+  logic [7:0]  d3_m_rdata_w;
+  logic [1:0]  d3_m_err_cause_w;
+  logic        d3_done_w, d3_fail_w, d3_closed_w, d3_blank_w;
 
   KL_acmp_nvm_shadow #(
       .N_SINKS_P    (N_STREAM_IN_P),
@@ -2493,9 +2519,9 @@ module protocol_processor_top
       .restore_go_i     (restore_go_i),
       .restore_busy_o   (nvm_walk_busy_w),
       .restore_done_o   (nvm_walk_done_w),
-      .restore_fail_o   (restore_fail_o),
-      .restore_blank_o  (restore_blank_o),
-      .restore_cause_o  (nvm_restore_cause_nc_w),
+      .restore_fail_o   (nvm_walk_fail_w),
+      .restore_blank_o  (nvm_walk_blank_w),
+      .restore_cause_o  (restore_cause_o),
       .alarm_o          (nvm_bind_alarm_w),
       .cap_wr_i         (lstn_recwr_w),
       .cap_sink_i       (lstn_recwr_sink_w),
@@ -2529,15 +2555,24 @@ module protocol_processor_top
 
   //! the binding walk ENDS at the admission gate's release, not at the
   //! shadow's terminal: the last preload's record write and discovery arm
-  //! land up to four cycles after that terminal, and the integrator's entity
-  //! enable (entity_enable_i AND restore_done_o, 07 §5.3 boot-before-enable)
-  //! must not precede them. Busy covers the gap, so the pair never reads
-  //! neither-busy-nor-done once the walk has started.
-  assign restore_done_o = nvm_walk_done_w && lsn_released_w;
+  //! land up to four cycles after that terminal. The release starts the
+  //! D3 walk, and the restore is done only at the D3 walk's terminal too
+  //! (COMPLETE or DEFAULTS; CLOSED never). Busy covers every cycle from
+  //! the binding walk's start to that combined terminal, so the pair never
+  //! reads neither-busy-nor-done once the walk has started, unless the
+  //! restore ended CLOSED, which restore_closed_o reports.
+  assign restore_done_o   = nvm_walk_done_w && lsn_released_w && d3_done_w;
+  assign restore_busy_o   = nvm_walk_busy_w
+                            || (nvm_walk_done_w && !restore_done_o
+                                && !d3_closed_w);
+  assign restore_fail_o   = nvm_walk_fail_w || d3_fail_w;
+  //! the binding manager reports blank on a failed walk too; combined,
+  //! a failure is never blank
+  assign restore_blank_o  = restore_done_o && !restore_fail_o
+                            && nvm_walk_blank_w && d3_blank_w;
+  assign restore_closed_o = d3_closed_w;
   //! one reset-sticky alarm for both record producers
-  assign nvm_alarm_o    = nvm_bind_alarm_w || d3_alarm_w;
-  assign restore_busy_o = nvm_walk_busy_w
-                          || (nvm_walk_done_w && !lsn_released_w);
+  assign nvm_alarm_o      = nvm_bind_alarm_w || d3_alarm_w;
 
   KL_pp_nvm_mgr_arb u_nvm_arb (
       .clk_i          (clk_i),
@@ -2565,11 +2600,11 @@ module protocol_processor_top
       .m1_rready_i    (d3_m_rready_w),
       .m1_gnt_o       (d3_m_gnt_w),
       .m1_wready_o    (d3_m_wready_w),
-      .m1_rvalid_o    (nm1_rvalid_nc_w),
-      .m1_rdata_o     (nm1_rdata_nc_w),
+      .m1_rvalid_o    (d3_m_rvalid_w),
+      .m1_rdata_o     (d3_m_rdata_w),
       .m1_done_o      (d3_m_done_w),
       .m1_err_o       (d3_m_err_w),
-      .m1_err_cause_o (nm1_err_cause_nc_w),
+      .m1_err_cause_o (d3_m_err_cause_w),
       .m1_abort_i     (d3_m_abort_w),
       .p_req_o        (np_req_w),
       .p_we_o         (np_we_w),
@@ -3182,10 +3217,6 @@ module protocol_processor_top
     end
   end
   logic                    aecp_eff_commit_nc_w;
-  //! the D3 writer's restore verdicts. The top's restore outputs are still
-  //! the binding walk's alone at this stage; tb/pp_top observes these.
-  logic                    d3_done_nc_w, d3_fail_nc_w, d3_closed_nc_w;
-  logic  [2:0]             d3_cause_nc_w;
   logic [3:0]              aecp_eff_notify_cls_nc_w;
   logic                    aecp_eff_notify_stb_nc_w;
   logic [15:0]             aecp_eff_notify_type_w, aecp_eff_notify_index_w;
@@ -3503,10 +3534,14 @@ module protocol_processor_top
       .d3_m_wready_i      (d3_m_wready_w),
       .d3_m_done_i        (d3_m_done_w),
       .d3_m_err_i         (d3_m_err_w),
-      .d3_done_o          (d3_done_nc_w),
-      .d3_fail_o          (d3_fail_nc_w),
-      .d3_closed_o        (d3_closed_nc_w),
-      .d3_cause_o         (d3_cause_nc_w),
+      .d3_m_rvalid_i      (d3_m_rvalid_w),
+      .d3_m_rdata_i       (d3_m_rdata_w),
+      .d3_m_err_cause_i   (d3_m_err_cause_w),
+      .d3_done_o          (d3_done_w),
+      .d3_fail_o          (d3_fail_w),
+      .d3_closed_o        (d3_closed_w),
+      .d3_cause_o         (rs_cause_o),
+      .d3_blank_o         (d3_blank_w),
       .d3_unflushed_o     (d3_unflushed_o),
       .d3_alarm_o         (d3_alarm_w),
       .eff_nvm_mark_o     (aecp_nvm_mark_o),

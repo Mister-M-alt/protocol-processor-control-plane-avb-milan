@@ -647,3 +647,488 @@ struct D3ServicePhase {
     s9_the_hold_graded_every_cycle();
   }
 };
+
+// ==== D3R. the restore transaction: both passes, the rules, the verdicts ===
+struct D3RestorePhase {
+  H& h;
+  const milan::tb::Model<Vpp_top_wrap> model;
+  H x;
+  const std::vector<uint8_t>& image;
+  uint32_t au_addr = 0;            //! the AUDIO_UNIT descriptor in the image
+  uint16_t seq = 0xD600;
+  static constexpr long WINDOW = 500L * MS_CYC;
+  static constexpr long RS_TMO = 20000;         //! the wrap's NVM_RS_TMO_CYC_P
+
+  D3RestorePhase(H& tally, const std::vector<uint8_t>& img,
+                 const std::vector<ImgEnt>& ents)
+      : h(tally), x(model.get()), image(img) {
+    for (const auto& e : ents)
+      if (e.type == 0x0002) au_addr = DESC_BASE + e.off;
+  }
+
+  // ---- the device and the commands, as D3S uses them ----------------------
+  void seed(uint8_t rid, const std::vector<uint8_t>& rec) {
+    std::fill(x.nv_mem[rid].begin(), x.nv_mem[rid].end(), 0xFF);
+    std::copy(rec.begin(), rec.end(), x.nv_mem[rid].begin());
+  }
+  std::vector<uint8_t> ask(uint16_t op, const std::vector<uint8_t>& pl) {
+    const uint16_t s = seq++;
+    x.q_aecp.clear();
+    x.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, s, op, pl));
+    return x.wait_frame(x.q_aecp, 100, [s](const std::vector<uint8_t>& r) {
+      return r.size() >= 38 && fv_u64(r, 34, 2) == s;
+    });
+  }
+  static std::vector<uint8_t> ti(uint16_t ty, uint16_t ix) {
+    std::vector<uint8_t> p(4, 0);
+    putbe(&p[0], ty, 2);
+    putbe(&p[2], ix, 2);
+    return p;
+  }
+  //! a reset that keeps the device (a power cycle: the flash is carried)
+  void power_cycle() {
+    x.nv_rd_region = -1;
+    x.nv_rd_fault = false;
+    x.nv_gnt_hold = 0;
+    x.nv_st = H::NvState::NV_IDLE;
+    x.reset();
+    x.q_aecp.clear();
+    x.q_adp.clear();
+  }
+  void fresh() {
+    x.dram = image;
+    x.erase_nvm();
+    power_cycle();
+  }
+
+  template <class Wide>
+  static bool wide_zero(const Wide& w, int words) {
+    for (int i = 0; i < words; i++)
+      if (w.at(i) != 0) return false;
+    return true;
+  }
+  //! every persisted row at its reset value with its valid flag clear
+  bool rows_cleared() const {
+    const auto* d = x.d;
+    return d->dbg_dyn_cfg_o == 0 && !d->dbg_dyn_cfg_v_o && d->dbg_dyn_rate_o == 0
+           && !d->dbg_dyn_rate_v_o && d->dbg_dyn_clk_o == 0 && !d->dbg_dyn_clk_v_o
+           && d->aecp_fmt_in_v_o == 0 && d->aecp_fmt_out_v_o == 0
+           && d->aecp_pt_offset_v_o == 0 && wide_zero(d->aecp_fmt_in_o, 16)
+           && wide_zero(d->aecp_fmt_out_o, 16) && wide_zero(d->aecp_pt_offset_o, 8);
+  }
+
+  //! what one boot observed from restore_go_i: the rows at the D3 walk's
+  //! start (the admission gate's release), the terminal, the first ADPDU
+  struct Boot {
+    bool cleared = false;
+    long release = -1;
+    long done = -1;
+    long closed = -1;
+    long adp_first = -1;
+    long aecp_first = -1;    //! first AECP response on the wire
+    long pending = 0;        //! cycles a D3 record read unflushed
+    long enable_early = 0;   //! cycles ADP was enabled before both terminals
+    long done_early = 0;     //! cycles restore_done_o led the D3 terminal
+  };
+  //! the per-cycle facts every boot records
+  void observe(Boot& b, long c) {
+    const auto* d = x.d;
+    const bool both = d->dbg_d3_done_o && d->dbg_lsn_released_o;
+    if (b.done < 0 && d->restore_done_o) b.done = c;
+    if (b.closed < 0 && d->restore_closed_o) b.closed = c;
+    if (b.adp_first < 0 && !x.q_adp.empty()) b.adp_first = c;
+    if (b.aecp_first < 0 && !x.q_aecp.empty()) b.aecp_first = c;
+    b.pending += d->d3_unflushed_o ? 1 : 0;
+    b.enable_early += (d->dbg_adp_enable_o && !both) ? 1 : 0;
+    b.done_early += (d->restore_done_o && !both) ? 1 : 0;
+  }
+  Boot boot(long cycles) {
+    Boot b;
+    x.d->restore_go_i = 1;
+    for (long c = 0; c < cycles; ++c) {
+      if (c == 5) x.d->restore_go_i = 0;
+      x.step();
+      if (b.release < 0 && x.d->dbg_lsn_released_o) {
+        b.release = c;
+        b.cleared = rows_cleared();
+      }
+      observe(b, c);
+      if (b.done >= 0 && c > b.done + 3000) break;
+    }
+    x.d->restore_go_i = 0;
+    return b;
+  }
+
+  bool ok(uint16_t op, const std::vector<uint8_t>& pl) {
+    const auto f = ask(op, pl);
+    return f.size() > 16 && ((f[16] >> 3) & 0x1F) == AECP_SUCCESS;
+  }
+  //! the nine rows D3S1 sets: every group at its first and last declared
+  //! index, saved through real SETs and a flush
+  bool save_all_rows() {
+    using S = D3ServicePhase;
+    bool all = ok(AEM_SET_CONFIGURATION, S::pl_cfg(1));
+    all = ok(AEM_SET_SAMPLING_RATE, S::pl_rate(48000)) && all;
+    all = ok(AEM_SET_CLOCK_SOURCE, S::pl_clk(2)) && all;
+    all = ok(AEM_SET_STREAM_FORMAT, S::pl_fmt(0x0005, 0, H::SFMT_ALT_C)) && all;
+    all = ok(AEM_SET_STREAM_FORMAT, S::pl_fmt(0x0005, 1, H::SFMT_MAIN_C)) && all;
+    all = ok(AEM_SET_STREAM_FORMAT, S::pl_fmt(0x0006, 0, H::SFMT_ALT_C)) && all;
+    all = ok(AEM_SET_STREAM_FORMAT, S::pl_fmt(0x0006, 1, H::SFMT_MAIN_C)) && all;
+    all = ok(AEM_SET_STREAM_INFO, S::pl_ptof(0, 1000000)) && all;
+    all = ok(AEM_SET_STREAM_INFO, S::pl_ptof(1, 2500000)) && all;
+    for (long c = 0; c < 2 * WINDOW; ++c) x.step();
+    return all && !x.d->d3_unflushed_o;
+  }
+
+  //! the crc recomputed after a test edits a header or payload byte
+  static std::vector<uint8_t> reframe(std::vector<uint8_t> r) {
+    const uint16_t c = d3_crc16(r);
+    r[6] = static_cast<uint8_t>(c >> 8);
+    r[7] = static_cast<uint8_t>(c);
+    return r;
+  }
+
+  // D3R1: every group saved through real SETs comes back across a power
+  // cycle. When the D3 walk starts, every row reads its reset value with
+  // its valid flag clear; the walk ends COMPLETE with exact counts; the
+  // enable requested from reset reaches ADP only after the combined
+  // terminal; and no restore write becomes a change (no pending, no WRITE).
+  void r1_every_group_survives_a_power_cycle() {
+    fresh();
+    CHECK(x.boot_to_aecp() && save_all_rows(), "D3R1: nine rows saved through real SETs");
+    power_cycle();
+    x.d->link_up_i = 1;
+    x.d->entity_enable_i = 1;                     // requested from reset (W14)
+    const Boot b = boot(6 * RS_TMO);
+    CHECK(b.cleared, "D3R1: every row at its reset value, valid clear, when the D3 walk starts");
+    CHECK(b.done > b.release && !x.d->restore_fail_o && !x.d->restore_blank_o
+              && !x.d->restore_closed_o && x.d->dbg_d3_applied_o == 9
+              && x.d->dbg_d3_refused_o == 0 && x.d->dbg_d3_blank_o == 18,
+          "D3R1: COMPLETE %ld cycles after the release, applied %u refused %u "
+          "blank %u of 27", b.done - b.release, unsigned(x.d->dbg_d3_applied_o),
+          unsigned(x.d->dbg_d3_refused_o), unsigned(x.d->dbg_d3_blank_o));
+    //! graded on the ADP engine's enable input, every cycle: ADP's own
+    //! 0-2 s start delay would hide an early enable from the wire
+    CHECK(b.enable_early == 0 && b.done_early == 0 && x.d->dbg_adp_enable_o,
+          "D3R1: the enable requested from reset reaches ADP only at the "
+          "combined terminal (%ld early enable cycles, %ld early done cycles)",
+          b.enable_early, b.done_early);
+    const size_t ops0 = x.nvm_ops.size();
+    long pending = b.pending;
+    for (long c = 0; c < 2 * WINDOW; ++c) {
+      x.step();
+      pending += x.d->d3_unflushed_o ? 1 : 0;
+    }
+    int writes = 0;
+    for (size_t i = ops0; i < x.nvm_ops.size(); i++) writes += x.nvm_ops[i].op != 0;
+    CHECK(pending == 0 && writes == 0,
+          "D3R1: no restore write is a change (%ld pending cycles, %d device writes)",
+          pending, writes);
+    CHECK(b.adp_first < 0 || b.adp_first > b.done,
+          "D3R1: no ADPDU before the terminal");
+    r1_readback();
+  }
+
+  //! each group's value AND valid flag, then a real GET of it
+  void r1_readback() {
+    const auto* d = x.d;
+    auto g = ask(AEM_GET_CONFIGURATION, {});
+    CHECK(d->dbg_dyn_cfg_v_o && d->dbg_dyn_cfg_o == 1 && g.size() >= 42
+              && fv_u64(g, 40, 2) == 1,
+          "D3R1 cfg: configuration 1 restored with its valid flag, GET reads it");
+    g = ask(AEM_GET_SAMPLING_RATE, ti(0x0002, 0));
+    CHECK(d->dbg_dyn_rate_v_o && d->dbg_dyn_rate_o == 48000 && g.size() >= 46
+              && rd32(&g[42]) == 48000,
+          "D3R1 rate: 48000 restored with its valid flag, GET reads it");
+    g = ask(AEM_GET_CLOCK_SOURCE, ti(0x0024, 0));
+    CHECK(d->dbg_dyn_clk_v_o && d->dbg_dyn_clk_o == 2 && g.size() >= 44
+              && fv_u64(g, 42, 2) == 2,
+          "D3R1 clks: clock source 2 restored with its valid flag, GET reads it");
+    const auto gi0 = ask(AEM_GET_STREAM_FORMAT, ti(0x0005, 0));
+    const auto gi1 = ask(AEM_GET_STREAM_FORMAT, ti(0x0005, 1));
+    CHECK(d->aecp_fmt_in_v_o == 0x03 && x.fmt_row(false, 0) == H::SFMT_ALT_C
+              && x.fmt_row(false, 1) == H::SFMT_MAIN_C && gi0.size() >= 50
+              && gi1.size() >= 50 && fv_u64(gi0, 42, 8) == H::SFMT_ALT_C
+              && fv_u64(gi1, 42, 8) == H::SFMT_MAIN_C,
+          "D3R1 fmti: both input formats restored with their valid flags, GET "
+          "reads them (valid 0x%02x)", unsigned(d->aecp_fmt_in_v_o));
+    const auto go0 = ask(AEM_GET_STREAM_FORMAT, ti(0x0006, 0));
+    const auto go1 = ask(AEM_GET_STREAM_FORMAT, ti(0x0006, 1));
+    CHECK(d->aecp_fmt_out_v_o == 0x03 && x.fmt_row(true, 0) == H::SFMT_ALT_C
+              && x.fmt_row(true, 1) == H::SFMT_MAIN_C && go0.size() >= 50
+              && go1.size() >= 50 && fv_u64(go0, 42, 8) == H::SFMT_ALT_C
+              && fv_u64(go1, 42, 8) == H::SFMT_MAIN_C,
+          "D3R1 fmto: both output formats restored with their valid flags, GET "
+          "reads them (valid 0x%02x)", unsigned(d->aecp_fmt_out_v_o));
+    const auto gs0 = ask(AEM_GET_STREAM_INFO, ti(0x0006, 0));
+    const auto gs1 = ask(AEM_GET_STREAM_INFO, ti(0x0006, 1));
+    CHECK(d->aecp_pt_offset_v_o == 0x03 && d->aecp_pt_offset_o.at(0) == 1000000
+              && d->aecp_pt_offset_o.at(1) == 2500000 && gs0.size() >= 66
+              && gs1.size() >= 66 && rd32(&gs0[62]) == 1000000
+              && rd32(&gs1[62]) == 2500000,
+          "D3R1 ptof: both presentation offsets restored with their valid "
+          "flags, GET_STREAM_INFO reads them (valid 0x%02x)",
+          unsigned(d->aecp_pt_offset_v_o));
+  }
+
+  // D3R2: framed records a SET program would refuse keep their defaults and
+  // the walk goes on: configuration past configurations_count, a rate off
+  // the AUDIO_UNIT's list, a clock source index equal to the count, formats
+  // the integrator judges unsupported, an offset with bit 31 set. Records
+  // whose frame fails (crc, layout version, another record's id, a u64 group
+  // carrying four bytes) are refused before any rule. Their neighbour still
+  // applies, and nothing aborts.
+  void r2_the_set_rules_and_the_frame_refuse() {
+    fresh();
+    seed(0x00, d3_record(0x00, 5, 2));
+    seed(0x02, d3_record(0x02, 44100, 4));
+    seed(0x0A, d3_record(0x0A, 3, 2));
+    seed(0x30, d3_record(0x30, 0xDEADBEEF00C0FFEEull, 8));
+    seed(0x40, d3_record(0x40, 0x0205022001406000ull, 8));
+    seed(0x50, d3_record(0x50, 0x80000005u, 4));
+    seed(0x51, d3_record(0x51, 1600000, 4));
+    auto crc = d3_record(0x31, H::SFMT_MAIN_C, 8);
+    crc[9] ^= 0x01;                                // payload changed, crc kept
+    seed(0x31, crc);
+    auto ver = d3_record(0x41, H::SFMT_MAIN_C, 8);
+    ver[2] = 0x03;
+    seed(0x41, reframe(ver));
+    seed(0x37, d3_record(0x36, H::SFMT_MAIN_C, 8));
+    seed(0x47, d3_record(0x47, 0x00001234u, 4));
+    const Boot b = boot(6 * RS_TMO);
+    const auto* d = x.d;
+    CHECK(b.done > b.release && !d->restore_fail_o && d->dbg_d3_applied_o == 1
+              && d->dbg_d3_refused_o == 10 && d->dbg_d3_blank_o == 16,
+          "D3R2: COMPLETE, applied %u refused %u blank %u of 27",
+          unsigned(d->dbg_d3_applied_o), unsigned(d->dbg_d3_refused_o),
+          unsigned(d->dbg_d3_blank_o));
+    CHECK(!d->dbg_dyn_cfg_v_o && !d->dbg_dyn_rate_v_o && !d->dbg_dyn_clk_v_o
+              && d->aecp_fmt_in_v_o == 0 && d->aecp_fmt_out_v_o == 0
+              && d->aecp_pt_offset_v_o == 0x02 && d->aecp_pt_offset_o.at(1) == 1600000,
+          "D3R2: only the neighbour's offset restored (valid 0x%02x)",
+          unsigned(d->aecp_pt_offset_v_o));
+  }
+
+  // D3R3: the other side of every rule: configuration 0, the rate list's
+  // second entry (96000) and clock source 0 are accepted.
+  void r3_the_set_rules_accept() {
+    fresh();
+    seed(0x00, d3_record(0x00, 0, 2));
+    seed(0x02, d3_record(0x02, 96000, 4));
+    seed(0x0A, d3_record(0x0A, 0, 2));
+    const Boot b = boot(6 * RS_TMO);
+    const auto* d = x.d;
+    CHECK(b.done > b.release && !d->restore_fail_o && d->dbg_d3_applied_o == 3
+              && d->dbg_dyn_cfg_v_o && d->dbg_dyn_cfg_o == 0 && d->dbg_dyn_rate_v_o
+              && d->dbg_dyn_rate_o == 96000 && d->dbg_dyn_clk_v_o
+              && d->dbg_dyn_clk_o == 0,
+          "D3R3: configuration 0, rate 96000 and clock source 0 restored with "
+          "their valid flags (applied %u)", unsigned(d->dbg_d3_applied_o));
+  }
+
+  //! a boot like boot(), running `hook` after every clock
+  template <class Hook>
+  Boot boot_with(long cycles, Hook hook) {
+    Boot b;
+    x.d->restore_go_i = 1;
+    for (long c = 0; c < cycles; ++c) {
+      if (c == 5) x.d->restore_go_i = 0;
+      x.step();
+      hook();
+      if (b.release < 0 && x.d->dbg_lsn_released_o) b.release = c;
+      observe(b, c);
+      if ((b.done >= 0 || b.closed >= 0) && c > std::max(b.done, b.closed) + 3000) break;
+    }
+    x.d->restore_go_i = 0;
+    return b;
+  }
+  int reads_of(size_t from, uint8_t region) const {
+    int n = 0;
+    for (size_t i = from; i < x.nvm_ops.size(); i++)
+      if (x.nvm_ops[i].op == 0 && x.nvm_ops[i].region == region) n++;
+    return n;
+  }
+
+  // D3R4: the passes agree record by record. 0x50 is read whole in pass 0
+  // (its header and payload READs), then erased at rest; pass 1 meets an
+  // unframed record, which aborts the restore (cause 5) after the
+  // configuration record was applied. Until the roll-back lands that abort
+  // ends CLOSED: AECP stays held and nothing partial is released.
+  void r4_the_passes_agree_record_by_record() {
+    fresh();
+    seed(0x00, d3_record(0x00, 1, 2));
+    seed(0x50, d3_record(0x50, 1500000, 4));
+    const size_t ops0 = x.nvm_ops.size();
+    bool erased = false;
+    const Boot b = boot_with(6 * RS_TMO, [&] {
+      if (!erased && reads_of(ops0, 0x50) == 2) {
+        std::fill(x.nv_mem[0x50].begin(), x.nv_mem[0x50].end(), 0xFF);
+        erased = true;
+      }
+    });
+    CHECK(erased && b.closed > b.release && b.done < 0 && x.d->restore_fail_o
+              && x.d->rs_cause_o == 5 && x.d->dbg_d3_own_o && !x.d->restore_blank_o,
+          "D3R4: the record whole in pass 0 and unframed in pass 1 aborts, cause "
+          "%u, CLOSED %u", unsigned(x.d->rs_cause_o), unsigned(x.d->restore_closed_o));
+  }
+
+  //! seed a configuration and an offset, arm one fault on 0x50's READs, boot
+  Boot faulted_boot(int nth, int after, bool silent) {
+    fresh();
+    seed(0x00, d3_record(0x00, 1, 2));
+    seed(0x50, d3_record(0x50, 1500000, 4));
+    x.nv_rd_region = 0x50;
+    x.nv_rd_nth = nth;
+    x.nv_rd_after = after;
+    x.nv_rd_silent = silent;
+    x.nv_rd_seen = 0;
+    return boot(6 * RS_TMO);
+  }
+
+  // D3R5: a transport fault in pass 0 has applied nothing: the restore ends
+  // done and failed on defaults, never blank, and AECP runs. A DEVICE error
+  // on 0x50's header (cause 2), a payload torn after two bytes (cause 1),
+  // and a header READ the device never answers, abandoned at the deadline
+  // to the arbiter's drain (cause 3); once the device ends that read, a
+  // later SET persists.
+  void r5_a_pass_0_fault_applies_nothing() {
+    struct Arm { int nth; int after; bool silent; unsigned cause; const char* what; };
+    const Arm arms[] = {{1, 0, false, 2, "device error on the header"},
+                        {2, 2, false, 1, "payload torn after two bytes"},
+                        {1, 0, true, 3, "the header never answered"}};
+    for (const auto& a : arms) {
+      const Boot b = faulted_boot(a.nth, a.after, a.silent);
+      const auto* d = x.d;
+      CHECK(b.done > b.release && d->restore_fail_o && !d->restore_blank_o
+              && !d->restore_closed_o && d->rs_cause_o == a.cause
+              && d->dbg_d3_applied_o == 0 && rows_cleared() && !d->dbg_d3_own_o,
+            "D3R5 %s: DEFAULTS, cause %u, applied %u, rows at their defaults",
+            a.what, unsigned(d->rs_cause_o), unsigned(d->dbg_d3_applied_o));
+    }
+    // the drained read ends when the device answers it; the port is free
+    const bool drained_busy = x.nv_st == H::NvState::NV_READ;
+    x.nv_rd_fault = false;
+    x.idle(200);
+    const size_t ops0 = x.nvm_ops.size();
+    const bool set = ok(AEM_SET_STREAM_INFO, D3ServicePhase::pl_ptof(0, 4242424));
+    for (long c = 0; c < 2 * WINDOW; ++c) x.step();
+    int writes = 0;
+    for (size_t i = ops0; i < x.nvm_ops.size(); i++)
+      writes += x.nvm_ops[i].op == 1 && x.nvm_ops[i].region == 0x50;
+    CHECK(drained_busy && set && writes == 1
+              && std::equal(x.nv_mem[0x50].begin(), x.nv_mem[0x50].begin() + 12,
+                            d3_record(0x50, 4242424, 4).begin()),
+          "D3R5: once the device ends the drained read a later SET persists");
+  }
+
+  // D3R6: the restore meets an erased device (V10) and an unframed record:
+  // both are that record's default, never a failure. Erased everywhere is a
+  // blank restore; one saved record lost to a device error never is (H8).
+  void r6_blank_is_honest() {
+    fresh();
+    Boot b = boot(6 * RS_TMO);
+    CHECK(b.done > b.release && !x.d->restore_fail_o && x.d->restore_blank_o
+              && x.d->dbg_d3_blank_o == 27,
+          "D3R6: an erased device restores blank, not failed (%u of 27 blank)",
+          unsigned(x.d->dbg_d3_blank_o));
+    fresh();
+    std::vector<uint8_t> junk(12, 0x5A);           // no F07.8 magic
+    seed(0x50, junk);
+    b = boot(6 * RS_TMO);
+    CHECK(b.done > b.release && !x.d->restore_fail_o && x.d->restore_blank_o
+              && x.d->dbg_d3_blank_o == 27,
+          "D3R6: an unframed record is that record's default, never a failure");
+    fresh();
+    seed(0x50, d3_record(0x50, 1500000, 4));
+    x.nv_rd_region = 0x50;
+    x.nv_rd_nth = 1;
+    x.nv_rd_after = 0;
+    x.nv_rd_silent = false;
+    x.nv_rd_seen = 0;
+    b = boot(6 * RS_TMO);
+    CHECK(b.done > b.release && x.d->restore_fail_o && !x.d->restore_blank_o,
+          "D3R6: the one saved record lost to a device error is a failure, "
+          "never a blank first boot");
+  }
+
+  // D3R7: a descriptor read the rule needs that fails is a transport
+  // failure, never a refused value: the AUDIO_UNIT fetch of the rate rule
+  // answers an error beat in pass 1 and the restore aborts, cause 6. Until
+  // the roll-back lands that abort ends CLOSED.
+  void r7_a_rule_fetch_fault_aborts() {
+    fresh();
+    seed(0x02, d3_record(0x02, 96000, 4));
+    x.dram_err_at = au_addr;
+    const Boot b = boot(6 * RS_TMO);
+    CHECK(au_addr != 0 && x.dram_err_at == 0 && b.closed > b.release
+              && x.d->restore_fail_o && x.d->rs_cause_o == 6
+              && x.d->dbg_d3_refused_o == 0,
+          "D3R7: the rule's descriptor fetch errs: cause %u, refused %u, "
+          "CLOSED %u", unsigned(x.d->rs_cause_o), unsigned(x.d->dbg_d3_refused_o),
+          unsigned(x.d->restore_closed_o));
+  }
+
+  // D3R8: the deadline counts cycles without progress. 0x50's header READ
+  // is granted by the device RS_TMO - 200 cycles late and the restore
+  // completes with it applied; granted RS_TMO + 200 late, the restore
+  // aborts at the deadline, cause 3, on defaults.
+  void r8_the_deadline_boundary() {
+    const long holds[] = {RS_TMO - 200, RS_TMO + 200};
+    for (const long hold : holds) {
+      fresh();
+      seed(0x50, d3_record(0x50, 1500000, 4));
+      bool armed = false;
+      const Boot b = boot_with(8 * RS_TMO, [&] {
+        if (!armed && x.d->nvm_dev_req_o && x.d->nvm_dev_region_o == 0x50) {
+          x.nv_gnt_hold = static_cast<int>(hold);
+          armed = true;
+        }
+      });
+      const bool late = hold > RS_TMO;
+      CHECK(armed && b.done > b.release && x.d->restore_fail_o == late
+              && x.d->rs_cause_o == (late ? 3u : 0u)
+              && ((x.d->aecp_pt_offset_v_o & 1) != 0) == !late,
+            "D3R8: a READ granted %ld cycles late: fail %u, cause %u",
+            hold, unsigned(x.d->restore_fail_o), unsigned(x.d->rs_cause_o));
+    }
+  }
+
+  // D3R9: a SET that waits through the restore wins by coming later. The
+  // offset saved as A is restored, then the SET of B held since before the
+  // walk runs, and the next flush saves B.
+  void r9_a_held_set_follows_the_restore() {
+    fresh();
+    CHECK(x.boot_to_aecp() && ok(AEM_SET_STREAM_INFO, D3ServicePhase::pl_ptof(0, 1234567)),
+          "D3R9: offset A set and answered");
+    for (long c = 0; c < 2 * WINDOW; ++c) x.step();
+    power_cycle();
+    const uint16_t s = seq++;
+    x.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, s,
+                      AEM_SET_STREAM_INFO, D3ServicePhase::pl_ptof(0, 7654321)));
+    x.idle(3000);                       // far longer than the SET takes when served
+    const Boot b = boot(6 * RS_TMO);
+    const auto f = x.wait_frame(x.q_aecp, 100, [s](const std::vector<uint8_t>& r) {
+      return r.size() >= 38 && fv_u64(r, 34, 2) == s;
+    });
+    CHECK(b.done > b.release && !f.empty() && x.d->aecp_pt_offset_o.at(0) == 7654321
+              && x.d->dbg_d3_applied_o == 1 && b.aecp_first > b.done,
+          "D3R9: the held SET answered after the restore applied A, and its B "
+          "is in force (row %u)", unsigned(x.d->aecp_pt_offset_o.at(0)));
+    for (long c = 0; c < 2 * WINDOW; ++c) x.step();
+    CHECK(std::equal(x.nv_mem[0x50].begin(), x.nv_mem[0x50].begin() + 12,
+                     d3_record(0x50, 7654321, 4).begin()),
+          "D3R9: the next flush saves B over the restored A");
+  }
+
+  void run() {
+    r1_every_group_survives_a_power_cycle();
+    r2_the_set_rules_and_the_frame_refuse();
+    r3_the_set_rules_accept();
+    r4_the_passes_agree_record_by_record();
+    r5_a_pass_0_fault_applies_nothing();
+    r6_blank_is_honest();
+    r7_a_rule_fetch_fault_aborts();
+    r8_the_deadline_boundary();
+    r9_a_held_set_follows_the_restore();
+  }
+};

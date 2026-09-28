@@ -718,6 +718,17 @@ struct H {
   //! device's err instead of done, and change nothing
   int      nv_err_region = -1;
   int      nv_err_writes = 0;
+  //! a fault on one READ of region nv_rd_region: the nv_rd_nth READ command
+  //! of it granted from now (1 = the next) delivers nv_rd_after bytes, then
+  //! ends with the device's err (nv_rd_silent false) or delivers nothing
+  //! more until the test clears nv_rd_fault (true)
+  int      nv_rd_region = -1;
+  int      nv_rd_nth = 0;
+  int      nv_rd_after = 0;
+  bool     nv_rd_silent = false;
+  int      nv_rd_seen = 0;
+  bool     nv_rd_fault = false;
+  int      nv_rd_sent = 0;
   // MAAP allocator model (02 §4.2). OFF by default: the processor ships
   // with the allocator in the integrating fabric, and "no allocator wired
   // yet" must be a survivable wiring, not a wedge.
@@ -742,13 +753,16 @@ struct H {
   int  dram_lat = 31;
   // Always-ready in-order request FIFO: acceptance is independent of older
   // responses, as it is across the integrator's asynchronous memory seam.
-  struct DescBurst { uint32_t addr; int beats, idx; uint64_t due; bool stuck; };
+  struct DescBurst { uint32_t addr; int beats, idx; uint64_t due; bool stuck; bool err; };
   std::deque<DescBurst> desc_fifo;
   int dram_delay_next = -1;
   bool dram_stuck_next = false;
   //! every request from now on is accepted and never answered (a silent
   //! memory behind a live bridge); unlike dram_stuck_next it persists
   bool dram_silent = false;
+  //! a burst requested at this byte address answers one beat carrying the
+  //! memory's err, which ends it (0 = none); consumed by that burst
+  uint32_t dram_err_at = 0;
   uint64_t dram_overlap_accepts = 0;
   uint64_t dram_reqs = 0;
   // AECP response-buffer memory at RESP_BASE_P (03 §7). READ + WRITE, and
@@ -1302,7 +1316,8 @@ struct H {
       d->desc_mem_rsp_data_i =
           dram_rd64(b.addr - DESC_BASE + uint32_t(8 * b.idx));
       d->desc_mem_rsp_last_i = (b.idx == b.beats - 1) ? 1 : 0;
-      if (d->desc_mem_rsp_ready_o && ++b.idx >= b.beats) {
+      d->desc_mem_rsp_err_i  = b.err ? 1 : 0;
+      if (d->desc_mem_rsp_ready_o && (b.err || ++b.idx >= b.beats)) {
         desc_fifo.pop_front();
       }
     }
@@ -1310,7 +1325,9 @@ struct H {
       if (!desc_fifo.empty()) ++dram_overlap_accepts;
       desc_fifo.push_back({d->desc_mem_req_addr_o, int(d->desc_mem_req_beats_o), 0,
                           t + uint64_t(dram_delay_next >= 0 ? dram_delay_next : dram_lat),
-                          dram_stuck_next || dram_silent});
+                          dram_stuck_next || dram_silent,
+                          dram_err_at != 0 && d->desc_mem_req_addr_o == dram_err_at});
+      if (dram_err_at != 0 && d->desc_mem_req_addr_o == dram_err_at) dram_err_at = 0;
       dram_delay_next = -1;
       dram_stuck_next = false;
       ++dram_reqs;
@@ -1429,16 +1446,28 @@ struct H {
                         static_cast<uint16_t>(d->nvm_dev_len_o), {} };
         nv_left = nv_cur.len;
         nv_rd_pos = nv_cur.off;
+        if (nv_cur.op == 0 && nv_cur.region == nv_rd_region) {
+          nv_rd_fault = (++nv_rd_seen == nv_rd_nth);
+          nv_rd_sent = 0;
+        }
         nv_done_lag = 2;
         if (nv_cur.op == 0)      nv_st = NvState::NV_READ;    // NVMP_OP_READ_C
         else if (nv_cur.op == 1) nv_st = NvState::NV_WRITE;
         else                     nv_st = NvState::NV_ERASE;
       }
     } else if (nv_st == NvState::NV_READ) {
-      if (nv_left) {
+      if (nv_rd_fault && nv_rd_sent >= nv_rd_after) {
+        if (!nv_rd_silent) {                           // the device errs
+          d->nvm_dev_err_i = 1;
+          nv_cur.op = 4;                               // logged: a failed READ
+          nvm_ops.push_back(nv_cur);
+          nv_rd_fault = false;
+          nv_st = NvState::NV_IDLE;
+        }                                              // silent: nothing moves
+      } else if (nv_left) {
         d->nvm_dev_rvalid_i = 1;
         d->nvm_dev_rdata_i = nv_mem[nv_cur.region][nv_rd_pos & 0xFF];
-        if (d->nvm_dev_rready_o) { nv_left--; nv_rd_pos++; }
+        if (d->nvm_dev_rready_o) { nv_left--; nv_rd_pos++; nv_rd_sent++; }
       } else if (--nv_done_lag <= 0) {
         d->nvm_dev_done_i = 1;
         nvm_ops.push_back(nv_cur);
@@ -8872,11 +8901,7 @@ struct Suite {
 
   // ==== S0. link up, pre-enable quiescence + snapshot identity ============
   void link_up_pre_enable_quiescence() {
-    //! the host reads below take far longer than the four cycles the
-    //! release may trail the walk's terminal by
     CHECK(h.snap(0) == 0x4B4C5050u, "S0: snapshot magic KLPP");
-    CHECK(d->restore_done_o == 1 && d->restore_busy_o == 0,
-          "S0: restore_done_o has followed the walk's terminal (issue #92)");
     CHECK(h.snap(1) == 0x08080404u, "S0: shape word {SI,SO,RX,TX}");
     d->link_up_i = 1;
     h.idle(50);
@@ -8887,6 +8912,11 @@ struct Suite {
     uint32_t m1 = h.snap(2);
     CHECK(m1 >= m0 + 15 && m1 <= m0 + 30,
           "S0: now_ms advances at the compressed rate (%u -> %u)", m0, m1);
+    //! read after the 20 ms, which take far longer than the D3 walk that
+    //! follows the binding walk's release; R's clock is left where the
+    //! later sections were tuned
+    CHECK(d->restore_done_o == 1 && d->restore_busy_o == 0,
+          "S0: restore_done_o has followed both walks' terminals (issue #92, D3)");
     CHECK(h.q_adp.empty() && h.q_acmp.empty(),
           "S0: no 1722.1 TX before entity enable");
   }
@@ -9389,19 +9419,29 @@ struct Suite {
     h.nv_gnt_hold = 1 << 30;             // the next record's read: no grant
     h.feed(bw_get_cmd(0x0B31));
     long waited = 0;
-    while (!d->restore_done_o && waited < 4 * BW_TMO) { h.step(); ++waited; }
-    // blank as well: the atomic reject discards the record already taken
-    CHECK(d->restore_done_o && d->restore_fail_o && d->restore_blank_o
+    while (!d->dbg_walk_done_o && waited < 4 * BW_TMO) { h.step(); ++waited; }
+    CHECK(d->dbg_walk_done_o && d->restore_fail_o && d->restore_cause_o == 3
               && d->entity_enable_i == 0 && waited < BW_TMO + 200
               && bw_ops(ops3, 0, 0x21) == 0,
           "BW3: the walk fails whole at its deadline, %ld cycles after the "
           "silence began, the next record's read still unserved", waited);
+    //! the listener is released at that terminal, so the GET it held is
+    //! live ACMP work while the D3 walk still waits (D3 section 8.1)
     auto g4 = bw_acmp(11, 50);
     CHECK(g4 == acmp_frame(OWN_MAC, 11, 0, 0, CTLR_EID, 0, EID, 0, 0, 0, 0,
                            0x0B31, 0, 0)
-              && d->entity_enable_i == 0,
-          "BW3: the held GET is answered on the vendor default, before the "
-          "entity is enabled");
+              && d->entity_enable_i == 0 && !d->restore_done_o,
+          "BW3: the held GET is answered on the vendor default at the "
+          "listener's release, before the restore is done");
+    //! the D3 walk's first read meets the port the arbiter still drains, and
+    //! ends at its own deadline on defaults: two deadlines, never for ever
+    long waited2 = 0;
+    while (!d->restore_done_o && waited2 < 4 * BW_TMO) { h.step(); ++waited2; }
+    CHECK(d->restore_done_o && d->restore_fail_o && d->rs_cause_o == 3
+              && !d->restore_closed_o && !d->restore_blank_o
+              && waited + waited2 < 2 * BW_TMO + 1000,
+          "BW3: the D3 walk ends at its own deadline on defaults, %ld cycles "
+          "after the silence began", waited + waited2);
     if (!g4.empty() && g4 != acmp_frame(OWN_MAC, 11, 0, 0, CTLR_EID, 0, EID, 0, 0,
                                         0, 0, 0x0B31, 0, 0)) {
       dump("got", g4);
@@ -9825,6 +9865,7 @@ struct NameWritePhase {
   const std::vector<uint8_t> image = h.dram;
   D3OwnershipPhase{h, image}.run();
   D3ServicePhase{h, image}.run();
+  D3RestorePhase{h, image, setup.image_ents}.run();
   printf("D3: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
