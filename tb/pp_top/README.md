@@ -77,7 +77,10 @@ tally.
   lane's evidence packet, which plants them in a scratch copy.
   **D3R** the restore transaction over the device model, on fresh models.
   **D3R1** the nine rows D3S1 saves through real SETs come back across a
-  power cycle: when the D3 walk starts (the admission gate's release)
+  power cycle. Before the save the volatile set is populated: the controller
+  registers for notifications (proved by the one a second controller's change
+  sends it), locks the entity and sets IDENTIFY to 255. When the D3 walk
+  starts (the admission gate's release)
   every row of selectors 0 to 5 reads its reset value with its valid flag
   clear, read through taps rather than the bus the restore owns; the walk
   ends COMPLETE with exactly 9 applied, 0 refused and 18 blank of 27; each
@@ -85,8 +88,11 @@ tally.
   back (GET_CONFIGURATION, GET_SAMPLING_RATE, GET_CLOCK_SOURCE, both
   GET_STREAM_FORMAT directions, GET_STREAM_INFO's latency through the
   integrator fold); an enable requested from reset advertises nothing
-  before the combined terminal and ADP advertises after it; and no restore
-  write becomes a change (no pending, no device write, for two windows).
+  before the combined terminal and ADP advertises after it; no restore
+  write becomes a change (no pending, no device write, for two windows);
+  and the volatile set is gone: IDENTIFY reads 0, the lock is free (the
+  second controller's SET is accepted) and the registry is empty (that
+  change notifies nobody).
   **D3R2** framed records a SET program would refuse keep their defaults
   and the walk goes on: configuration 5 of 2, rate 44100 (off the list),
   clock source 3 of 3, formats the integrator's judge refuses, an offset
@@ -122,11 +128,25 @@ tally.
   GET_RX_STATE answers the restored talker and its record is not
   rewritten. **D3R12** a roll-back whose re-walk cannot prove the image
   (the memory falls silent) ends CLOSED: no done, AECP held, ADP never
-  enabled.
+  enabled. The restore's negative controls (each group's replay deleted,
+  a value rule ignored, the passes allowed to disagree, a DEVICE error read
+  as blank and an UNFRAMED one read as a device error, a descriptor error
+  read as a refusal, no restore watchdog, restore writes counted as changes,
+  ADP enabled without the restore, done without the D3 walk, blank ignoring
+  the D3 walk, ownership taken only at the walk, no roll-back, either store
+  left out of it, the roll-back ignoring the guard's debt, a CLOSED re-walk
+  released) each fail their named check, from the same evidence packet.
+  `restore_done_o` is the COMBINED terminal: the binding walk's release
+  alone (S4) frees the listener, never AECP or ADP.
   The dispatch hold runs from reset, so every section that resets and then
   issues AECP commands starts both walks first (`H::boot_to_aecp`, U10, U11
   and the internal-MAAP model's MP0). Focused reproduction:
   `./obj_dir/Vpp_top_sim --d3-only` after `make gsi-build`.
+  `./obj_dir/Vpp_top_sim --dr3a` prints, and never grades, the restore
+  durations and longest waits the parent contract's DR3a asks this lane to
+  measure (blank and full restores at two memory latencies, the image walk,
+  pass-0 and pass-1 faults, a debt-held roll-back, a silent device, CLOSED);
+  it records no tally.
 - **NW: accepted live name writes (issue #120).** The top's `aecp_name_wr_o`
   is sampled on every accepting clock edge. Independent byte comparisons
   predict one changed lane, all eight changed lanes and an unchanged name;
@@ -352,7 +372,9 @@ tally.
   `aecp_nvm_mark_o` export (issue #90) on this face and the name store: a
   committed ADD carries mark 6 and a committed SET_NAME mark 7, one strobe
   each, and the GET between them carries none — a mark has no wire shape, so
-  the pin is the only place any of this is visible.
+  the pin is the only place any of this is visible. A mark is a completion
+  notification: R21 proves the notification, never persistence (section D3
+  grades the scalar records; maps and names are later stages).
 - **R** boot restore over a blank NVM device: all 8 BINDING regions read,
   the walk's terminal without `restore_fail`. The loop waits on the binding
   manager's own terminal (`dbg_walk_done_o`), not on `restore_done_o`, so every
@@ -418,7 +440,9 @@ tally.
   F07.8 record (magic 0x1722) carrying the bound talker EID at the device
   face, and the `nvm_unflushed_o` export (issue #90) sampled every cycle
   across it — the sink reads unflushed while the change waits, and 0 once
-  the commit reports done.
+  the commit reports done. That is the binding manager's pending only; the
+  D3 records' is `d3_unflushed_o` (D3S2), and an integrator's pending is
+  their OR.
 - **S10** the `maap` face (02 §4.2), which the top publishes because 01 §3
   puts address allocation in the integrating fabric. Run in two halves. With
   NO allocator (`maap_req_ready_i` 0 for the whole run above): the port is
@@ -544,10 +568,12 @@ and M34 the same 2 as before.
 - The AECP pop face is still exposed and still tied `ready = 0` here: the
   AECP head is now drained by `KL_aecp_engine` INSIDE the top, and the port
   is an additional, optional consumer (see its banner).
-- Scenario A is the only one that touches the descriptor memory. The image is
+- Scenario A and section D3 touch the descriptor memory. The image is
   loaded into the DRAM model BEFORE reset, exactly as software does before
-  `entity_enable`; the "software has not loaded it" and "no bridge at all"
-  arms live in the `desc_store` suite, which owns that face.
+  `restore_go_i` (and so before `entity_enable`); the "software has not
+  loaded it" and "no bridge at all" arms live in the `desc_store` suite,
+  which owns that face, and their effect on the restore (CLOSED, or a late
+  load healed by the restore's LOCATE) is D3O2 to D3O4.
 - The `A` expectations are byte builders from the IEEE §9.3.1 AECPDU and
   §7.2 descriptor field offsets plus the documented image layout — nothing in
   them comes from the DUT or from `gen_desc_image.py`'s output.

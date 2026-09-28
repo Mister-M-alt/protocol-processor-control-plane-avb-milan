@@ -38,6 +38,10 @@
 //                and the names are the image's. The guard's debt is outside
 //                that reset, and the writer holds it while debt is owed.
 //                `dbg_img_valid_o` is the validated-image level its proof reads.
+//                The names are not persisted yet: the saved-state contract's
+//                name stage (not implemented here) captures a name coherently
+//                from the accepted live lane write (`name_wr_o`) and replays
+//                it only after the image walk has made the store ready.
 //
 //                WHERE THE ADDRESSES COME FROM. Every address is an
 //                ELABORATION PARAMETER (`DESC_BASE_P`), never a register and

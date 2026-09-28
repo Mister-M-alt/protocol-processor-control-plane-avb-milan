@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1340" height="900" viewBox="0 0 1340 900" font-family="DejaVu Sans, Verdana, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1340" height="940" viewBox="0 0 1340 940" font-family="DejaVu Sans, Verdana, Helvetica, Arial, sans-serif">
   <defs>
     <marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
       <path d="M0,1 L8,4.5 L0,8 z" fill="#2c3038"/>
@@ -8,7 +8,7 @@
     </marker>
   </defs>
 
-  <rect x="0" y="0" width="1340" height="900" fill="#fbfcfe" stroke="#ccd2da" stroke-width="1"/>
+  <rect x="0" y="0" width="1340" height="940" fill="#fbfcfe" stroke="#ccd2da" stroke-width="1"/>
 
   <text x="24" y="34" font-size="19" font-weight="bold" fill="#16181d">The integrator's contract — every face of protocol_processor_top</text>
   <text x="24" y="56" font-size="12.5" fill="#4a5058">Port names are exact. Directions are from the processor's point of view. Red text is what happens when you do not connect a face.</text>
@@ -65,7 +65,7 @@
   <text x="42" y="320" font-size="11.5" fill="#4a5058">entity_id_i · entity_model_id_i · own_mac_i · the four</text>
   <text x="42" y="337" font-size="11.5" fill="#4a5058">ADPDU capability words · current_cfg_i</text>
   <text x="42" y="357" font-size="11.5" fill="#4a5058">entity_enable_i · link_up_i · gm_change_i · gm_id_i</text>
-  <text x="42" y="380" font-size="11.5" fill="#a03030">entity_enable_i is the boot gate: 0 means never advertise.</text>
+  <text x="42" y="380" font-size="11.5" fill="#a03030">entity_enable_i requests; ADP sees it AND restore_done_o.</text>
 
   <rect x="24" y="426" width="390" height="116" rx="7" fill="#eef7ef" stroke="#2f7d46" stroke-width="1.3"/>
   <text x="42" y="448" font-size="12.5" font-weight="bold" fill="#16181d">quasi-static configuration  →  in</text>
@@ -97,7 +97,7 @@
   <text x="968" y="268" font-size="12.5" font-weight="bold" fill="#16181d">desc_mem_*  ←  master, READ ONLY</text>
   <text x="968" y="288" font-size="11.5" fill="#4a5058">One outstanding request, responses IN ORDER, rsp_last</text>
   <text x="968" y="305" font-size="11.5" fill="#4a5058">on the final beat, big-endian 64-bit lanes.</text>
-  <text x="968" y="328" font-size="11.5" fill="#a03030">req_ready tied 0 is LEGAL → NO_SUCH_DESCRIPTOR.</text>
+  <text x="968" y="328" font-size="11.5" fill="#a03030">No provable image → restore CLOSED: no AECP, no ADP.</text>
 
   <rect x="950" y="362" width="366" height="96" rx="7" fill="#f3ecfb" stroke="#6b46a5" stroke-width="1.3"/>
   <text x="968" y="384" font-size="12.5" font-weight="bold" fill="#16181d">resp_mem_*  ↔  master, READ + WRITE</text>
@@ -107,15 +107,17 @@
 
   <rect x="950" y="478" width="366" height="96" rx="7" fill="#fdf0e3" stroke="#b5741f" stroke-width="1.3"/>
   <text x="968" y="500" font-size="12.5" font-weight="bold" fill="#16181d">three optional service faces  ↔</text>
-  <text x="968" y="520" font-size="11.5" fill="#4a5058">nvm_dev_* — persistence backend (record-level)</text>
+  <text x="968" y="520" font-size="11.5" fill="#4a5058">nvm_dev_* — saved state; restore_go_i on EVERY boot</text>
   <text x="968" y="537" font-size="11.5" fill="#4a5058">svc_* — the SRP config plane (DECLARE/WITHDRAW)</text>
   <text x="968" y="560" font-size="11.5" fill="#a03030">maap_* — tie it off and NO talker ever declares.</text>
 
-  <rect x="950" y="594" width="366" height="96" rx="7" fill="#eef7ef" stroke="#2f7d46" stroke-width="1.3"/>
+  <rect x="950" y="594" width="366" height="118" rx="7" fill="#eef7ef" stroke="#2f7d46" stroke-width="1.3"/>
   <text x="968" y="616" font-size="12.5" font-weight="bold" fill="#16181d">class-D status wires  ←  out, every clock</text>
   <text x="968" y="636" font-size="11.5" fill="#4a5058">acmp_declaring_o · acmp_bound_o + bound stream identity</text>
   <text x="968" y="653" font-size="11.5" fill="#4a5058">srp_active_o · srp_granted_slope_bps_o · srp_sum_slope_bps_o</text>
-  <text x="968" y="676" font-size="11.5" fill="#4a5058">Combinational reads of clk_i registers — you own the 2FF.</text>
+  <text x="968" y="670" font-size="11.5" fill="#4a5058">restore_{busy,done,fail,blank}_o: both walks combined</text>
+  <text x="968" y="687" font-size="11.5" fill="#4a5058">restore_closed_o · rs_cause_o · restore_rb_o · nvm_alarm_o</text>
+  <text x="968" y="704" font-size="11.5" fill="#4a5058">pending: |nvm_unflushed_o | d3_unflushed_o</text>
 
   <line x1="905" y1="178" x2="945" y2="178" stroke="#2c3038" stroke-width="1.8" marker-end="url(#ah)"/>
   <line x1="905" y1="294" x2="945" y2="294" stroke="#2c3038" stroke-width="1.8" marker-end="url(#ah)"/>
@@ -124,11 +126,13 @@
   <line x1="905" y1="642" x2="945" y2="642" stroke="#2c3038" stroke-width="1.8" marker-end="url(#ah)"/>
 
   <!-- ===== bottom band ===== -->
-  <rect x="24" y="722" width="1292" height="150" rx="8" fill="#fff6e5" stroke="#a06400" stroke-width="1.3"/>
-  <text x="42" y="746" font-size="13" font-weight="bold" fill="#16181d">What you must reserve in your memory map</text>
-  <text x="42" y="770" font-size="11.5" fill="#4a5058">At DESC_BASE_P — the descriptor image your software writes before entity_enable. The processor only READS it.</text>
-  <text x="42" y="790" font-size="11.5" fill="#4a5058">At RESP_BASE_P — 16 + DESC_LINE_BYTES_P bytes that NOTHING ELSE WRITES. The processor writes here. It must not overlap DESC_BASE_P.</text>
-  <text x="42" y="810" font-size="11.5" fill="#4a5058">Both are 8-byte aligned. The two masters are deliberately separate: sharing one channel would need an arbiter whose grant must be released correctly on every watchdog.</text>
-  <text x="42" y="838" font-size="13" font-weight="bold" fill="#16181d">The tie-off rule</text>
-  <text x="42" y="860" font-size="11.5" fill="#4a5058">Every optional face is watchdog-bounded, so leaving it unconnected degrades that function to an honest answer on the wire — it never wedges the control plane.</text>
+  <rect x="24" y="732" width="1292" height="182" rx="8" fill="#fff6e5" stroke="#a06400" stroke-width="1.3"/>
+  <text x="42" y="756" font-size="13" font-weight="bold" fill="#16181d">What you must reserve in your memory map</text>
+  <text x="42" y="780" font-size="11.5" fill="#4a5058">At DESC_BASE_P — the descriptor image your software writes and CRC-checks before restore_go_i. The processor only READS it.</text>
+  <text x="42" y="800" font-size="11.5" fill="#4a5058">At RESP_BASE_P — 16 + DESC_LINE_BYTES_P bytes that NOTHING ELSE WRITES. The processor writes here. It must not overlap DESC_BASE_P.</text>
+  <text x="42" y="820" font-size="11.5" fill="#4a5058">Both are 8-byte aligned. The two masters are deliberately separate: sharing one channel would need an arbiter whose grant must be released correctly on every watchdog.</text>
+  <text x="42" y="848" font-size="13" font-weight="bold" fill="#16181d">The tie-off rule</text>
+  <text x="42" y="870" font-size="11.5" fill="#4a5058">Every optional face is watchdog-bounded, so leaving it unconnected degrades that function to an honest answer on the wire — it never wedges the control plane.</text>
+  <text x="42" y="890" font-size="11.5" fill="#a03030">One exception: the saved-state restore judges values against the descriptor image, so an image it cannot prove ends it CLOSED (AECP and ADP held until reset).</text>
+  <text x="42" y="908" font-size="11.5" fill="#4a5058">Erased NVM behind a proven image is not that: both walks end on defaults and everything is served.</text>
 </svg>

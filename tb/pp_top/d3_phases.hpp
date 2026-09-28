@@ -705,13 +705,17 @@ struct D3RestorePhase {
     putbe(&p[2], ix, 2);
     return p;
   }
-  //! a reset that keeps the device (a power cycle: the flash is carried)
+  //! a reset that keeps the device (a power cycle: the flash is carried).
+  //! The device face is reset with the processor, as the product couples
+  //! the two resets: a request still presented as the reset began may have
+  //! been granted by the model, and no walk issues one before its go.
   void power_cycle() {
     x.nv_rd_region = -1;
     x.nv_rd_fault = false;
     x.nv_gnt_hold = 0;
     x.nv_st = H::NvState::NV_IDLE;
     x.reset();
+    x.nv_st = H::NvState::NV_IDLE;
     x.q_aecp.clear();
     x.q_adp.clear();
   }
@@ -783,6 +787,43 @@ struct D3RestorePhase {
     const auto f = ask(op, pl);
     return f.size() > 16 && ((f[16] >> 3) & 0x1F) == AECP_SUCCESS;
   }
+
+  // ---- the volatile set (Milan 5.3.4.1, 5.3.4.2, 5.3.12) ------------------
+  static constexpr uint64_t C2_MAC = 0x0202C2C2C2C2ULL;
+  static constexpr uint16_t AEM_LOCK_ENTITY = 0x0001;
+  static constexpr uint16_t AEM_REGISTER_UNSOL = 0x0024;
+  //! a SET_CLOCK_SOURCE from the second controller, answered SUCCESS
+  bool c2_sets_clock(uint16_t source) {
+    const uint16_t s = seq++;
+    x.q_aecp.clear();
+    x.feed(aecp_frame(OWN_MAC, C2_MAC, 0, 0, EID, CTLR2_EID, s,
+                      AEM_SET_CLOCK_SOURCE, D3ServicePhase::pl_clk(source)));
+    const auto f = x.wait_frame(x.q_aecp, 100, [s](const std::vector<uint8_t>& r) {
+      return r.size() >= 38 && fv_u64(r, 34, 2) == s;
+    });
+    return f.size() > 16 && ((f[16] >> 3) & 0x1F) == AECP_SUCCESS;
+  }
+  //! unsolicited responses (u = 1) addressed to the first controller within
+  //! the next `ms`, the frames already queued included
+  int unsolicited_to_ctlr(int ms) {
+    for (long c = 0; c < ms * MS_CYC; ++c) x.step();
+    int n = 0;
+    for (const auto& r : x.q_aecp)
+      n += (r.size() > 36 && fv_u64(r, 0, 6) == CTLR_MAC && (r[36] & 0x80) != 0) ? 1 : 0;
+    return n;
+  }
+  //! populate the volatile set before the saved-set cycle: the first
+  //! controller registered (proved by a notification the second one's
+  //! change sends it), then the entity locked by it and IDENTIFY set
+  bool populate_volatile() {
+    const bool reg = ok(AEM_REGISTER_UNSOL, std::vector<uint8_t>(4, 0));
+    const bool c2 = c2_sets_clock(1);
+    const int notes = unsolicited_to_ctlr(20);
+    const bool lock = ok(AEM_LOCK_ENTITY, std::vector<uint8_t>(16, 0));
+    const bool ident = ok(AEM_SET_CONTROL, D3ServicePhase::pl_identify(255));
+    return reg && c2 && notes >= 1 && lock && ident && x.d->dbg_lock_held_o
+           && x.d->dbg_identify_o == 255;
+  }
   //! the nine rows D3S1 sets: every group at its first and last declared
   //! index, saved through real SETs and a flush
   bool save_all_rows() {
@@ -815,7 +856,9 @@ struct D3RestorePhase {
   // terminal; and no restore write becomes a change (no pending, no WRITE).
   void r1_every_group_survives_a_power_cycle() {
     fresh();
-    CHECK(x.boot_to_aecp() && save_all_rows(), "D3R1: nine rows saved through real SETs");
+    CHECK(x.boot_to_aecp() && populate_volatile(),
+          "D3R1: registered, locked and identifying before the save (premise)");
+    CHECK(save_all_rows(), "D3R1: nine rows saved through real SETs");
     power_cycle();
     x.d->link_up_i = 1;
     x.d->entity_enable_i = 1;                     // requested from reset (W14)
@@ -847,6 +890,23 @@ struct D3RestorePhase {
     CHECK(b.adp_first < 0 || b.adp_first > b.done,
           "D3R1: no ADPDU before the terminal");
     r1_readback();
+    r1_volatile_set_is_gone();
+  }
+
+  //! the volatile set, populated before the same cycle, is absent after it:
+  //! IDENTIFY reads 0, the lock is free (the second controller's SET is
+  //! accepted) and the registry is empty (that change notifies nobody)
+  void r1_volatile_set_is_gone() {
+    const auto g = ask(AEM_GET_CONTROL, ti(0x001A, 0));
+    CHECK(x.d->dbg_identify_o == 0 && g.size() > 42 && g[42] == 0,
+          "D3R1 volatile: IDENTIFY reads 0 after the restore (%u)",
+          unsigned(x.d->dbg_identify_o));
+    const bool unlocked = !x.d->dbg_lock_held_o;
+    const bool c2 = c2_sets_clock(1);
+    const int notes = unsolicited_to_ctlr(20);
+    CHECK(unlocked && c2, "D3R1 volatile: the lock is free after the restore");
+    CHECK(notes == 0, "D3R1 volatile: the registry is empty after the restore "
+          "(%d notifications)", notes);
   }
 
   //! each group's value AND valid flag, then a real GET of it
@@ -1211,12 +1271,116 @@ struct D3RestorePhase {
     x.d->entity_enable_i = 0;
   }
 
+  // ---- DR3a: restore durations and the longest waits (informational) ----
+  // The parent D3 contract's DR3a asks the processor lane to MEASURE its
+  // per-wait (20 ms) and aggregate (1,000 ms) candidates, which the manager
+  // then ratifies or revises. These lines are printed, never graded: every
+  // figure is clk_i cycles of this bench from restore_go_i, with this
+  // bench's device and memory models (their latencies are named per line).
+  struct Span {
+    long release = -1;        //! go to the admission gate's release
+    long terminal = -1;       //! go to COMPLETE, DEFAULTS or CLOSED
+    uint32_t bind_wait = 0;   //! the binding walk's longest wait (cycles)
+    uint32_t d3_wait = 0;     //! the D3 walk's longest wait (cycles)
+    long rec_max = 0;         //! the longest D3 port operation, grant to end
+  };
+  Span measured(long cycles) {
+    Span s;
+    long gnt_at = -1;
+    long now = 0;
+    const Boot b = boot_with(cycles, [&] {
+      const auto* d = x.d;
+      s.bind_wait = std::max(s.bind_wait, uint32_t(d->dbg_bind_wd_o));
+      s.d3_wait = std::max(s.d3_wait, uint32_t(d->dbg_d3_wd_o));
+      if (d->dbg_d3_mgnt_o) gnt_at = now;
+      if ((d->dbg_d3_mdone_o || d->dbg_d3_merr_o) && gnt_at >= 0) {
+        s.rec_max = std::max(s.rec_max, now - gnt_at);
+        gnt_at = -1;
+      }
+      ++now;
+    });
+    s.release = b.release;
+    s.terminal = b.done >= 0 ? b.done : b.closed;
+    return s;
+  }
+  void report(const char* what, const Span& s) {
+    const auto* d = x.d;
+    const char* term = d->restore_closed_o ? "CLOSED"
+                       : !d->restore_fail_o ? "COMPLETE" : "DEFAULTS";
+    std::printf("DR3a %-46s release %7ld  terminal %8ld  %-8s cause %u  "
+                "longest wait: binding %6u D3 %6u  longest D3 record op %4ld\n",
+                what, s.release, s.terminal, term, unsigned(d->rs_cause_o),
+                s.bind_wait, s.d3_wait, s.rec_max);
+  }
+  void dr3a_measurements() {
+    std::printf("DR3a: cycles from restore_go_i; NVM model grants at once and "
+                "streams a byte a cycle; RS_TMO %ld\n", RS_TMO);
+    const std::array<int, 2> lats{31, 143};
+    for (const int lat : lats) {
+      x.dram_lat = lat;
+      char what[96];
+      fresh();
+      std::snprintf(what, sizeof what, "erased device, DRAM %d cyc", lat);
+      report(what, measured(6 * RS_TMO));
+      fresh();
+      x.boot_to_aecp();
+      save_all_rows();
+      power_cycle();
+      std::snprintf(what, sizeof what, "nine records saved, DRAM %d cyc", lat);
+      report(what, measured(6 * RS_TMO));
+      //! the store's own image walk from reset (header, index, names)
+      fresh();
+      long img = -1;
+      for (long c = 0; c < 4 * RS_TMO && img < 0; ++c) {
+        x.step();
+        if (x.d->dbg_img_valid_o) img = c;
+      }
+      std::printf("DR3a image walk from reset, DRAM %d cyc: %ld cycles\n", lat, img);
+    }
+    x.dram_lat = 31;
+    fresh();
+    seed(0x00, d3_record(0x00, 1, 2));
+    seed(0x50, d3_record(0x50, 1500000, 4));
+    x.nv_rd_region = 0x50;
+    x.nv_rd_nth = 1;
+    x.nv_rd_after = 0;
+    x.nv_rd_silent = false;
+    x.nv_rd_seen = 0;
+    report("pass 0: DEVICE error on a header", measured(6 * RS_TMO));
+    fresh();
+    seed(0x02, d3_record(0x02, 96000, 4));
+    x.dram_err_at = au_addr;
+    report("pass 1: rule fetch error, roll-back", measured(6 * RS_TMO));
+    x.dram_err_at = 0;
+    fresh();
+    seed(0x02, d3_record(0x02, 96000, 4));
+    x.dram_late_at = au_addr;
+    x.dram_late_cycles = 16000;
+    report("pass 1: rule fetch 16000 late, roll-back on debt", measured(8 * RS_TMO));
+    x.dram_late_at = 0;
+    fresh();
+    x.nv_gnt_hold = 1 << 30;
+    report("NVM device silent from its first read", measured(8 * RS_TMO));
+    x.nv_gnt_hold = 0;
+    x.dram = image;
+    x.dram[0] ^= 0xFF;                            // the store refuses the magic
+    x.erase_nvm();
+    power_cycle();
+    report("descriptor image refused (magic)", measured(8 * RS_TMO));
+    x.dram = image;
+    x.dram_silent = true;
+    x.erase_nvm();
+    power_cycle();
+    report("descriptor memory silent", measured(8 * RS_TMO));
+    x.dram_silent = false;
+  }
+
   // D3R8: the deadline counts cycles without progress. 0x50's header READ
   // is granted by the device RS_TMO - 200 cycles late and the restore
   // completes with it applied; granted RS_TMO + 200 late, the restore
   // aborts at the deadline, cause 3, on defaults.
   void r8_the_deadline_boundary() {
-    const long holds[] = {RS_TMO - 200, RS_TMO + 200};
+    const std::array<long, 2> holds{RS_TMO - 200, RS_TMO + 200};
     for (const long hold : holds) {
       fresh();
       seed(0x50, d3_record(0x50, 1500000, 4));

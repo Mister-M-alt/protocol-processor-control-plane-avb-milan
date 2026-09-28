@@ -233,7 +233,15 @@ Ordering rules:
   implementations — IEEE permits pipelined controllers, §9.2.2).
 - **(c)** the unsolicited stream is an independent per-controller sequence
   ([06 §7](06_aecp_engine.md)).
-- **(d)** NVM commits are asynchronous and never delay responses.
+- **(d)** NVM media commits are asynchronous to responses: no response waits for a
+  device write. Two holds are not commits and are bounded separately. At RUNTIME
+  the D3 writer's coherent latch holds AECP dispatch from ACQUIRE until its one
+  state-bus read completes: the command already running finishes first (as it
+  would under single issue anyway), and the next one waits a few clocks more.
+  The latch adds no media time to the command-response line of rule (e). At BOOT the D3 writer owns dispatch from reset to its
+  restore terminal, so commands that arrive then are answered after the restore,
+  before the entity is advertised; the restore's own deadlines bound that hold
+  ([07 §5.3](07_memory_maps.md#fig-07-nvmflow), [02 §8](02_interfaces.md#fig-02-nvmwave)).
 - **(e)** a deadline expiry **forces a response, never a silent drop** (IEEE
   1722.1-2021 §9.3.2.6: "Entities shall respond to all ATDECC commands within
   240 milliseconds"): the transaction is redirected to the FAIL_SAFE µprogram

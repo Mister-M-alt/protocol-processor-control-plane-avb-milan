@@ -127,7 +127,8 @@ module KL_aecp_dyn_state #(
     output logic [N_STREAM_IN_P-1:0]     fmt_in_v_o,
     output logic [N_STREAM_OUT_P*64-1:0] fmt_out_o,     //! row k at [64k +: 64]
     output logic [N_STREAM_OUT_P-1:0]    fmt_out_v_o,
-    output logic        dirty_o,           //! a persisted field was written
+    //! DIAGNOSTIC, sticky: a persisted row was written; no manager reads it
+    output logic        dirty_o,
     //! one cycle, with an accepted write that CHANGES a persisted row's
     //! projection {value, valid}: selectors 0 to 5 in range, and the row
     //! was not valid yet or the value differs within the field's width.

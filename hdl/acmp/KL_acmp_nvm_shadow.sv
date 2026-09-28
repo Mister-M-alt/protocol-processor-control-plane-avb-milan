@@ -122,7 +122,7 @@ module KL_acmp_nvm_shadow
     //! controller happens to send START_STREAMING. Refusing them costs one
     //! re-bind and cannot be silent.
     parameter logic [7:0]  LAYOUT_VER_P  = 8'h02,
-    //! T-NVM-DEBOUNCE in tick_i units (F08.1: ≈500 ms at a 1 ms tick)
+    //! T-NVM-DEBOUNCE in tick_i units (F08.1: 500 ms at a 1 ms tick, DR2a)
     parameter int unsigned DEB_TICKS_P   = 500,
     //! additional attempts after a failed first commit (F07.9, DR2c):
     //! three attempts in all before the sticky alarm
@@ -132,7 +132,8 @@ module KL_acmp_nvm_shadow
     //! is 500 ms at the F01.5 default P-CLK-HZ of 100 MHz)
     parameter int unsigned RETRY_BACKOFF_CYC_P = 50_000_000,
     //! T-NVM-RS-DEADLINE (F08.1) in clocks: the restore walk's read phase
-    //! fails whole after this many consecutive cycles without progress
+    //! fails whole after this many consecutive cycles without progress (the
+    //! top binds the same value to the D3 walk's per-wait deadline)
     parameter int unsigned RS_TMO_CYC_P  = 2_000_000,
     //! derived — do not override
     localparam int unsigned SINK_W_C = (N_SINKS_P > 1) ? $clog2(N_SINKS_P) : 1
@@ -151,7 +152,9 @@ module KL_acmp_nvm_shadow
     //! read-back torn mid-record, 2 a device error with nothing forwarded,
     //! 3 the read phase's deadline
     output logic [1:0]                 restore_cause_o,
-    output logic                       alarm_o,        //! sticky: commit retries exhausted (side-port alarm)
+    //! sticky until reset: a record's three attempts exhausted (DR2c); the
+    //! top ORs it with the D3 writer's into nvm_alarm_o
+    output logic                       alarm_o,
 
     //! ---- (a) capture face (KL_pp_acmp_listener dbg_recwr_* shadow) ---------
     input  wire                        cap_wr_i,       //! record write this cycle

@@ -21,6 +21,7 @@
 // P-SRP-DOM-DEF-VID with a verification-only fixture and runs section DV
 // alone.
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -3886,9 +3887,11 @@ struct AudioMapEditPhase {
   // R21: THE EXPORT (issue #90). aecp_nvm_stb_o / aecp_nvm_mark_o carry the
   // uCPU's OP_NVM_MARK effect out of the top, and the mark is the micro-op
   // immediate that names the record group: 6 for the channel maps this phase
-  // edits, 7 for a user name. Nothing in this processor writes a record for
-  // either group, so the mark is the ONLY evidence an integrator's saved
-  // state has fallen behind. Graded here because a mark has no wire shape:
+  // edits, 7 for a user name. The mark is a completion notification, not a
+  // persistence trigger: the saved-state contract's map and name stages
+  // (not implemented yet) select their records from the accepted live
+  // writes, and section D3 grades the scalar records. Graded here because
+  // a mark has no wire shape:
   // the response of a marked command is identical to the response of one
   // that marked nothing, which is the third arm below.
   void r21_the_commit_mark_export_names_the_record_group() {
@@ -8822,7 +8825,7 @@ struct Suite {
   }
 
   // The entity model lives in the integrator's main memory (07 §3.3): load it
-  // BEFORE reset, exactly as software does before entity_enable. The image is
+  // BEFORE reset, exactly as software does before restore_go_i. The image is
   // built here from the IEEE §7.2 field offsets and the documented header /
   // index-map layout — nothing in it comes from the DUT or from the
   // generator's output.
@@ -9244,7 +9247,7 @@ struct Suite {
     CHECK(eid_ok, "S9: committed record carries the bound talker EID");
     CHECK(d->nvm_alarm_o == 0, "S9: no commit alarm");
     //! THE EXPORT (issue #90). The integrator's "saved state pending" bit is
-    //! this vector ORed with aecp_dyn_dirty_o, so the port has to carry the
+    //! this vector ORed with d3_unflushed_o (D3S2), so the port has to carry the
     //! whole unflushed span of a binding: raised while the S6 bind waited out
     //! the debounce and the burst, and down once the commit above reported
     //! done. Sampled every cycle in H::step, because both edges are inside
@@ -9496,9 +9499,10 @@ struct Suite {
           "BW3: a reset restores the binding made after the failed walk");
   }
 
-  // BW4 (issue #93 S4): the top's restore_done_o is the binding walk's END,
-  // the admission gate's release, so an enable gated on it cannot precede
-  // the last preload's record write and discovery arm; restore_busy_o covers
+  // BW4 (issue #93 S4): the top's restore_done_o waits for the binding walk's
+  // END, the admission gate's release (and for the D3 walk, section D3), so
+  // an enable gated on it cannot precede the last preload's record write and
+  // discovery arm; restore_busy_o covers
   // the cycles between the shadow's terminal and that release. Graded in
   // every cycle of every walk this run made (H::sample_restore_levels): the
   // blank boot of section R, the boots of BW0-BW2 with and without a saved
@@ -9875,6 +9879,16 @@ struct NameWritePhase {
   printf("D3: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+//! DR3a (parent D3 contract): the restore durations and longest waits,
+//! printed for the manager's ratification and never graded; `--dr3a` runs
+//! them alone and records no tally.
+[[maybe_unused]] static void run_dr3a(H& h) {
+  Suite setup(h);
+  setup.load_descriptor_image();
+  const std::vector<uint8_t> image = h.dram;
+  D3RestorePhase{h, image, setup.image_ents}.dr3a_measurements();
+}
+
 [[maybe_unused]] static void run_name_writes(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
@@ -9912,6 +9926,10 @@ int main(int argc, char** argv) {
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
   const bool d3_only = argc == 2 && std::strcmp(argv[1], "--d3-only") == 0;
+  if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
+    run_dr3a(h);
+    return 0;
+  }
   if (!gsi_only && !name_only && !d3_only) Suite(h).run();
   if (!name_only && !d3_only) InternalStreamInfoPhase{h}.run();
   if (!gsi_only && !d3_only) run_name_writes(h);

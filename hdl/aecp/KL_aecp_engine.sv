@@ -258,6 +258,19 @@
 //                writer's roll-back resets both stores (`store_rst_n_w`);
 //                the descriptor memory guard, outside, takes the hard reset
 //                only, and its debt reaches the writer as `d3_desc_debt_i`.
+//                Its image proof reads the store's validated-image level
+//                (`dbg_img_valid_o`). Its trigger is the dynamic-state
+//                store's accepted CHANGING write, snooped only while the
+//                µCPU drives the bus (`d3_chg_w`), so a restore write is
+//                never a change and IDENTIFY never is one. During the
+//                restore it drives the Milan-info gather face itself (kind 0
+//                selector 15, the SET_STREAM_FORMAT verdict) to judge a
+//                saved format; the map read and edit faces are the map
+//                stage's and it does not drive them yet. The top combines
+//                its done with the binding walk's end into restore_done_o,
+//                which releases ADP. `dyn_dirty_o` and the `eff_nvm_*` marks
+//                are a diagnostic and completion notifications: neither is
+//                persistence work.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -425,7 +438,8 @@ module KL_aecp_engine
     //! the processor ignores `amap_edit_wait_i` on those phases. A finish
     //! reply returns bit 0 = at least one mapping changed. The future
     //! SET_STREAM_FORMAT survival query uses the same value lane instead of
-    //! opening a second map authority.
+    //! opening a second map authority. Phase 5 is also the saved-state
+    //! contract's map trigger (its map stage, not implemented here yet).
     output logic        amap_edit_req_o,
     output logic  [2:0] amap_edit_phase_o,
     output logic        amap_edit_remove_o,
@@ -586,7 +600,8 @@ module KL_aecp_engine
     output logic        d3_unflushed_o,
     output logic        d3_alarm_o,
 
-    //! ---- effect strobes (06 §8; consumers are P4) ----
+    //! ---- effect strobes (06 §8): completion notifications. The marks
+    //! select no record; the D3 writer persists from the accepted change ----
     output logic        eff_commit_o,
     output logic  [7:0] eff_nvm_mark_o,
     output logic        eff_nvm_stb_o,
@@ -631,7 +646,9 @@ module KL_aecp_engine
     output logic [N_STREAM_IN_P-1:0]     dyn_fmt_in_v_o,
     output logic [N_STREAM_OUT_P*64-1:0] dyn_fmt_out_o,
     output logic [N_STREAM_OUT_P-1:0]    dyn_fmt_out_v_o,
-    output logic        dyn_dirty_o          //! a persisted field was written
+    //! DIAGNOSTIC: some persisted row was written since reset (sticky);
+    //! not pending and not a persistence trigger (d3_unflushed_o is)
+    output logic        dyn_dirty_o
 );
 
   // ---- IEEE 1722.1-2021 AEM opcodes this block decodes --------------------

@@ -469,7 +469,8 @@ place(E_SETSR, [
     u('CHECK_ARG', ra=2, rb=3, fmt=FMT_D, cnd=0, imm=E_FAIL),
     u('WRITE_ST', ra=2, fmt=FMT_D, imm=8),       # current_rate <- arg
     u('COMMIT'),                                 # atomicity point
-    u('NVM_MARK', imm=0x21),                     # sampling_rate record
+    u('NVM_MARK', imm=0x21),                     # completion mark only: the
+                                                 # WRITE_ST above selects the record
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=2, fmt=FMT_D),
@@ -1361,7 +1362,7 @@ ssrate += [
 assert E_SSRATE + len(ssrate) == SSR_ACCEPT
 ssrate += [
     u('WRITE_ST', ra=12, fmt=FMT_D, imm=RGN_DYN + SEL_RATE),   # SSR_ACCEPT
-    u('NVM_MARK', imm=1),                        # §5.3.5.1: persist it
+    u('NVM_MARK', imm=1),                        # completion mark (the WRITE_ST persists)
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
@@ -1436,7 +1437,7 @@ place(E_SCLKS, [
     u('CHECK_ARG', ra=12, rb=9, fmt=FMT_W,       # index < count, else BAD_ARGS
       cnd=REL_LT, imm=E_SCLKS + 26),
     u('WRITE_ST', ra=12, fmt=FMT_W, imm=RGN_DYN + SEL_CLKSRC),
-    u('NVM_MARK', imm=1),                        # §5.3.11.1: persist it
+    u('NVM_MARK', imm=1),                        # completion mark (the WRITE_ST persists)
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
@@ -1579,9 +1580,12 @@ place(E_GCTRL, [
 # accept and a fall-through that refuses — which also reads in the order the
 # clause is written.
 #
-# No NVM_MARK: §5.3.12 keeps this value volatile, so committing it to flash
-# would both violate the clause and burn erase cycles on a blinking front
-# panel.
+# §5.3.12 keeps this value volatile. What keeps it out of flash is the D3
+# writer's change snoop, which covers dynamic-state selectors 0 to 5 only:
+# SEL_IDENT (7) never becomes pending, whatever this program does. Emitting
+# no NVM_MARK here is a separate fact about completion notifications, not the
+# persistence exclusion; persisting it would violate the clause and burn
+# erase cycles on a blinking front panel.
 place(E_SCTRL, [
     u('MOVE', rd=2, ra=0, imm=0),                # the refusal arms' zero body
     u('CHECK_LOCK', ra=15, imm=E_LOCKED1),       # held by another controller?
@@ -1672,7 +1676,7 @@ place(E_SCFG, [
     u('READ_ST', rd=6, imm=RGN_DATA + ENT_CURCFG_LANE),
     u('NOP'),
     u('WRITE_ST', ra=12, fmt=FMT_W, imm=RGN_DYN + SEL_CFG),
-    u('NVM_MARK', imm=1),                        # es-5.1 item 1: persist it
+    u('NVM_MARK', imm=1),                        # completion mark (the WRITE_ST persists)
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
     u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved            @24
@@ -1787,8 +1791,8 @@ place(E_AMADD, [
     u('COMMIT'),
     u('SET_STATUS', imm=ST_OK),
     u('COMPARE', ra=3, fmt=FMT_B, imm=0),
-    u('BR_STATUS', cnd=2, imm=E_AMADD + 24),     # unchanged: skip NVM + push
-    u('NVM_MARK', imm=6),                        # persist changed map state
+    u('BR_STATUS', cnd=2, imm=E_AMADD + 24),     # unchanged: skip mark + push
+    u('NVM_MARK', imm=6),                        # completion mark of a changed map
     u('NOTIFY_ENQ', imm=6),                      # successful state change
     u('BUILD_HDR', ra=15, rb=13),
     u('SEND_RESP'),
@@ -1922,7 +1926,7 @@ def _sfmt(sel):
         u('CHECK_ARG', ra=3, rb=4, fmt=FMT_B,
           cnd=REL_EQ, imm=E_SFCUR),              # short -> BAD_ARGUMENTS
         u('WRITE_ST', ra=12, fmt=FMT_Q, imm=RGN_DYN + sel),
-        u('NVM_MARK', imm=1),                    # §5.3.5.1: persist it
+        u('NVM_MARK', imm=1),                    # completion mark (the WRITE_ST persists)
         u('SET_STATUS', imm=ST_OK),
         u('BUILD_HDR', ra=15, rb=13),
         u('BUILD_FLD', ra=13, fmt=FMT_D),        # type @24 + index @26
@@ -1999,7 +2003,7 @@ place(E_SINFO, [
     u('BR_STATUS', cnd=0, imm=E_FAILSAFE),       # ...echoed at full length
     u('GATHER_EXT', rd=6, **GSI(3)),             # current presentation offset
     u('WRITE_ST', ra=12, fmt=FMT_D, imm=RGN_DYN + SEL_PTOFF),
-    u('NVM_MARK', imm=1),                        # §5.3.5.1: persist it
+    u('NVM_MARK', imm=1),                        # completion mark (the WRITE_ST persists)
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
     u('SEND_RESP'),
@@ -2088,7 +2092,7 @@ set_name += [
     u('COMPARE', ra=5, fmt=FMT_B, imm=0),
     u('BR_STATUS', cnd=2, imm=E_SNAME + len(set_name) + 5),
     u('COMMIT'),
-    u('NVM_MARK', imm=7),                       # naming persistence trigger
+    u('NVM_MARK', imm=7),                       # naming completion mark
     u('NOTIFY_ENQ', imm=7),                     # naming notification trigger
     u('SET_STATUS', imm=ST_OK),
     u('BRANCH', imm=E_NAMERESP),

@@ -37,8 +37,11 @@ flowchart LR
   adp["ADP engine"] --> dyn
   pkt["packet engine"] --> rxs & txs
   side["mgmt side-port"] -. "RO debug windows" .-> ovl & reg & ctr
-  nvmm["NVM manager"] <--> ovl & dyn & names
+  d3w["D3 writer (NVM manager 1)"] <--> ovl
+  bindm["binding manager (NVM manager 0)"] <--> dyn
 ```
+
+The names' NVM manager is the name stage's, accepted and not implemented yet (§5.3).
 
 The two regions in main memory are reached over separate vendor-neutral masters and are
 the integrator's to reserve — see the
@@ -48,6 +51,9 @@ and [diagram 22](../diagrams/22-aecp-descriptor-fetch.svg).
 Access-rights rule: exactly one writer class per region at runtime (µCPU for
 overlay/names, ACMP executor for sink records, counters subsystem for banks); the
 side-port is read-only everywhere after `entity_enable` except the control window.
+The D3 writer writes the overlay only during its boot restore, and the binding manager
+reaches the sink records only through the listener's boot preload (§5.3); in service
+both only read.
 
 ## 3. Entity model
 
@@ -189,8 +195,10 @@ index) order + an **index map** per configuration (type → base pointer + count
 `DESC_ADDR`. READ_DESCRIPTOR assembles: image bytes, then overlay patches
 (current values, names), then the Table 7-8 redundancy tail with R = 0.
 
-Software loads it into the integrator's main memory at `DESC_BASE_P` before
-`entity_enable` — **not** through the side-port window, and not as a synthesized ROM.
+Software loads it into the integrator's main memory at `DESC_BASE_P`, and checks it,
+before it starts the restore (`restore_go_i`, which judges saved values against it; §5.3)
+and so before `entity_enable` — **not** through the side-port window, and not as a
+synthesized ROM.
 Both alternatives were priced and rejected in §3.3.1 below, and neither is what the RTL
 does.
 
@@ -215,14 +223,22 @@ the store watchdog still bounds every locate with an error. The watchdog itself
 is unchanged, including the immediate error on the next locate after a fetch
 response timeout.
 
-The guard is reset by the hard reset alone. Its module port `debt_o` is the D3
-interface: a `clk_i` level set on request acceptance and cleared on a consumed
-`last` or `err`, or hard reset only. It is not a `protocol_processor_top` port.
-The D3 lane will route it to the top together with the parent consumer changes.
-The future D3 writer must hold restorable owners while this debt is set and end
-CLOSED if its deadline expires; that writer and its rollback cases are deferred
-to the D3 lane. The memory ordering, terminal-error and reset obligations are in the
+The guard is reset by the hard reset alone. Its module port `debt_o` is a `clk_i`
+level set on request acceptance and cleared on a consumed `last` or `err`, or hard
+reset only. The top routes it, inside the processor, to the D3 writer in the AECP
+engine; it is not a `protocol_processor_top` port. The D3 restore's **roll-back**
+(§5.3) resets this store and the dynamic-state store together (`rb_rst`) for at
+least two clocks and while the debt is set, and ends CLOSED if its deadline expires
+first. The guard never takes that local reset, so a burst the store abandoned stays
+owed across it. The store's local reset returns its fetch watchdog to zero and makes
+it walk the image again, so the recovery LOCATE of ENTITY 0 that follows proves the
+image anew. The memory ordering, terminal-error and reset obligations are in the
 [integrator guide §4.1](../guides/integrator.md#sec-desc-memory).
+
+The store's validated-image level (`dbg_img_valid_o` on the engine) is the D3
+restore's image proof: the restore reads it, and makes the store walk the image with
+a LOCATE of ENTITY 0 if it is not yet set. An image that cannot be proven ends the
+restore CLOSED (§5.3), since no restored value could be judged against it.
 
 Every address is an **elaboration parameter** (`DESC_BASE_P`), never a register and
 never a CSR: the memory map is fixed when the bitstream is built, so a runtime base
@@ -312,6 +328,12 @@ other named descriptor. A name write to the currently located descriptor patches
 the same line before accepting another state operation. Thus the table is the
 single writable source while descriptor reads remain coherent with it.
 
+The names initialise from the verified image at every image walk, a roll-back's
+included. Persisting them is the name stage of the saved-state contract: its
+restore writes names only after the image walk, and its trigger is the accepted
+name-table lane write on the command side. That stage is accepted and **not
+implemented** in this release.
+
 ### 3.4 Dynamic overlay
 
 | Overlaid field | Width | NVM? |
@@ -327,7 +349,20 @@ single writable source while descriptor reads remain coherent with it.
 | `system_unique_id` (deferred design; no storage) | 64 | not implemented under the October MVU waiver ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) |
 | per CLOCK_DOMAIN `user_mcr_prio` + media-clock-domain name (deferred design; no storage) | 8 + 64 B | not implemented under the same waiver |
 
+"yes" names the saved set, not the writer. The scalar rows (configuration, sampling
+rate, clock source, both formats, presentation offset) are written by the D3 writer
+from the store's accepted changing write (§5.3); their records are §5.2's. The maps and
+names are accepted in the same contract and implemented by later stages. The store's
+sticky `dirty_o` (`aecp_dyn_dirty_o` at the top) is a diagnostic, not the trigger.
+
 ## 4. Dynamic state records
+
+Ownership of the overlay rows of §3.4: from reset until the D3 restore's terminal the
+D3 writer owns the engine's state bus (AECP dispatch is held), restores the rows it
+accepts, and, on a pass-1 abort, returns the dynamic-state store and the descriptor
+store to their reset state together (§5.3). In service the µCPU owns the bus, except for
+the writer's one-row latch while dispatch is held. The ACMP records below are the
+listener's and never take that roll-back.
 
 <a id="fig-07-sinkrec"></a>**F07.6 — ACMP sink record** (48 B core; fields defined in
 [05 §5](05_acmp_engine.md); lanes bottom→top = record order)
@@ -414,6 +449,13 @@ and the media-clock-domain name is deferred with their commands under the
 [October MVU waiver](06_aecp_engine.md#69-mvu-commands). These fields are neither
 stored nor persisted by the processor in this release.
 
+The volatile column is enforced at the trigger, not by the absence of a completion
+mark: the D3 writer's change snoop covers dynamic-state selectors 0 to 5 only, so
+IDENTIFY (selector 7) never becomes pending, and lock and registry state has no
+record ([parent D3 contract](https://github.com/kebag-logic/milan-fpga/blob/7a7582f0/docs/design/SAVED_STATE_MATERIALIZATION.md) §9). The CONTROL descriptor's **name** is a user
+name like any other and is persisted with the name group. Which record carries each
+persisted item, and which stage writes it, is §5.2's inventory.
+
 ### 5.2 NVM record layout
 
 <a id="fig-07-nvmrec"></a>**F07.8 — Record framing** (device-agnostic; one record per
@@ -422,6 +464,29 @@ bottom→top = record order)
 
 The SUID and MCR[d] labels in F07.8 are reserved design groups, not implemented
 records in the October release ([06 §6.9](06_aecp_engine.md#69-mvu-commands)).
+
+**The record inventory.** The allocation authority is the parent saved-state page's
+[§4.2](https://github.com/kebag-logic/milan-fpga/blob/7a7582f0/docs/design/SAVED_STATE_FASTCONNECT.md#42-the-allocation----decided-the-donors-f078-rule-unchanged); this table
+restates it with the processor's writer for each block. A record sits at
+`base + index`; one record per group and index, user names included (one 64-byte record
+per writable-name ordinal, the AEM string verbatim, no name banks).
+
+| ids | group | index | payload | writer in this release |
+|---|---|---|---|---|
+| `0x00` | configuration index | - | u16 | D3 writer (scalar stage) |
+| `0x01` | system unique id | - | reserved | none: kept erased (MVU waiver) |
+| `0x02` .. `0x09` | sampling rate | AUDIO_UNIT | u32 | D3 writer (scalar stage) |
+| `0x0A` .. `0x11` | clock source index | CLOCK_DOMAIN | u16 | D3 writer (scalar stage) |
+| `0x12` .. `0x19` | media clock reference | CLOCK_DOMAIN | reserved | none: kept erased (MVU waiver) |
+| `0x20` .. `0x2F` | binding | sink | 20 B | binding manager (`REC_ID_BASE_P`) |
+| `0x30` .. `0x3F` | stream format in | STREAM_INPUT | u64 | D3 writer (scalar stage) |
+| `0x40` .. `0x4F` | stream format out | STREAM_OUTPUT | u64 | D3 writer (scalar stage) |
+| `0x50` .. `0x5F` | presentation time offset | STREAM_OUTPUT | u32 | D3 writer (scalar stage) |
+| `0x60` .. `0x6F` | channel map in | STREAM_PORT_INPUT | clusters × 8 B | accepted, not implemented (map stage) |
+| `0x70` .. `0x7F` | channel map out | STREAM_PORT_OUTPUT | max(clusters, STREAM_OUTPUT × 8) × 8 B for a dynamic port (#501), clusters × 8 B for a static one | accepted, not implemented (map stage) |
+| `0x80` .. `0xFF` | user name | writable-name ordinal | 64 B | accepted, not implemented (name stage) |
+
+Every multi-byte field is big-endian. An unused map entry is eight `0xFF` bytes.
 
 ![fig-07-nvmrec](../diagrams/wavedrom/fig-07-nvmrec.svg)
 
@@ -448,35 +513,96 @@ records in the October release ([06 §6.9](06_aecp_engine.md#69-mvu-commands)).
 
 ```mermaid
 flowchart TB
-  subgraph runtime ["runtime commit"]
-    chg["committed state change (COMMIT + NVM_MARK)"] --> dirty["set record dirty bit"]
-    dirty --> deb["debounce T-NVM-DEBOUNCE (coalesce bursts)"]
-    deb --> ser["serialize record + crc16"] --> port["class-F port write (F02.8)"]
-    port --> ok{"done?"}
-    ok -- err --> retry["bounded retry, then side-port alarm - responses were never blocked"]
-    ok -- done --> clr["clear dirty"]
+  subgraph runtime ["runtime commit (one record producer; the binding manager's is the same loop)"]
+    chg["accepted live write that changes a record's projection {value, valid}:<br/>selectors 0-5 on the µCPU's side of the state bus (D3 §3.1);<br/>never a completion mark, never a restore write, never IDENTIFY"] --> dirty["set dirty[group, index]"]
+    dirty --> deb["first-dirty window DEB_TICKS_P (T-NVM-DEBOUNCE) arms one burst"]
+    deb --> acq["ACQUIRE: hold dispatch; wait for no program in flight"]
+    acq --> latch["LATCH the row over the state bus, taint 0; release"]
+    latch --> ser["frame F07.8 + crc16"] --> port["class-F WRITE through manager 1 (F02.8); attempt + 1"]
+    port --> ok{"port"}
+    ok -- "done, not tainted" --> clr["clear dirty[group, index] - the backend owns it now"]
+    ok -- "done, tainted: a change after the latch" --> keep["dirty kept; a change on the done edge wins"]
+    ok -- "err, attempt 1 or 2" --> bo["BACKOFF RETRY_BACKOFF_CYC_P (500 ms), then a fresh latch"]
+    bo --> acq
+    ok -- "err, attempt 3" --> alarm["drop the record: clear dirty, nvm_alarm_o set until reset"]
   end
-  subgraph boot ["boot restore (before entity_enable)"]
-    rd["read all records"] --> crc{"magic+version+crc ok?"}
-    crc -- no --> defs["vendor defaults for that record"]
-    crc -- yes --> apply["apply to overlay / sink shadows"]
-    defs --> apply
-    apply --> preload["saved binding present? preload listener SM to PRB_W_AVAIL (05)"]
-    preload --> en["release entity_enable (ADP may start - Milan 5.6.1)"]
+  subgraph boot ["boot restore: two walks, three releases"]
+    aem["AEM loaded and CRC-checked by the platform; restore_go_i"] --> bw["binding walk (manager 0): read, validate, preload the listener"]
+    bw --> drained["drained binding terminal: the admission gate's release (S4)<br/>= live ACMP listener work"]
+    drained --> img{"descriptor image proven?<br/>(valid, or a LOCATE of ENTITY 0 walks it)"}
+    img -- no --> closed["CLOSED: fail, never done; AECP and ADP held until reset"]
+    img -- yes --> p0["pass 0: every D3 record read whole or blank"]
+    p0 -- abort --> defs0["DEFAULTS: done + fail, nothing applied"]
+    p0 --> p1["pass 1: read again; passes agree; frame; value rule;<br/>apply value with its valid bit"]
+    p1 -- abort --> rb["ROLL-BACK both stores (rb_rst, held while desc debt)"]
+    rb --> reloc{"re-LOCATE proves the image?"}
+    reloc -- yes --> defs1["DEFAULTS: done + fail + rolled back"]
+    reloc -- no --> closed
+    p1 --> comp["COMPLETE: done"]
+    comp --> aecp["AECP dispatch released (the held commands first)"]
+    defs0 --> aecp
+    defs1 --> aecp
+    aecp --> en["restore_done_o = both walks: entity_enable_i reaches ADP (Milan 5.6.1)"]
   end
 ```
 
-The binding walk owns the ACMP listener from reset until its last preload has been
-written and armed: commands, talker events, START/STOP requests and timer expiries wait
-at their producers until then, and `restore_done_o` marks that end
-([05 §5.1](05_acmp_engine.md#sec-05-boot-admission)). A read-only command that arrives
-during the walk is answered afterwards, from the restored image or, if the walk failed,
-from the vendor defaults, and it changes nothing here either way.
+**Runtime: who writes which record.** Two record producers share the one port behind
+`KL_pp_nvm_mgr_arb` ([02 §8.2](02_interfaces.md#82-two-record-managers-one-port)): the
+binding manager `KL_acmp_nvm_shadow` (manager 0, region 0x20, from the listener's record
+write-back) and the D3 writer `KL_aecp_nvm_writer` inside the AECP engine (manager 1, the
+scalar records of §3.4's rows). The D3 writer's trigger is the dynamic-state store's
+**accepted write that changes the row's `{value, valid}` projection**, selectors 0 to 5,
+tapped on the µCPU's side of the engine's state-bus selection
+([parent D3 contract](https://github.com/kebag-logic/milan-fpga/blob/7a7582f0/docs/design/SAVED_STATE_MATERIALIZATION.md) §3.1, DR2b). A restore write is therefore never a change, IDENTIFY (selector 7) sets nothing,
+and a row becoming valid at its reset value is a change. The µprogram's `NVM_MARK`
+instructions keep their completion effects (`aecp_nvm_stb_o` / `aecp_nvm_mark_o`,
+[02 §8](02_interfaces.md#fig-02-nvmwave)); they select no record. The user-name and
+channel-map groups are accepted in the same contract (§3.1: the name-table lane write and
+the phase-5 map commit beat) and are **not implemented yet**: they have no writer until
+their stages land, and their records are neither written nor restored by this release.
+
+The service loop, both producers alike: the first dirty record opens a
+`T-NVM-DEBOUNCE` window (`DEB_TICKS_P` ticks); its close arms one burst that drains every
+dirty record in round-robin order. For each, the D3 writer holds AECP dispatch (ACQUIRE),
+waits until no program is in flight, then takes the state bus for one read of the row
+(LATCH) and releases both, so a latched value is always one a completed command left.
+The record is framed (F07.8) and written; an attempt starts at the arbiter's grant. A
+change to the record after its latch **taints** the write, whose `done` then clears
+nothing; a change on the `done` edge wins; set and clear name the record by group **and**
+index. An untainted `done` clears the record: from that `done` the integrator's backend
+owns it (parent D3 §7.1), and nothing a flash slot does later reaches back to the
+producer. A failed attempt waits `RETRY_BACKOFF_CYC_P` clocks (`NVM_RETRY_BACKOFF_CYC_P`
+at the top, 500 ms, [F08.1](08_timing.md) `T-NVM-RETRY-BACKOFF`) holding neither the
+state bus nor the port, then relatches afresh; relatching never replenishes the count.
+The third failed attempt (`1 + RETRY_MAX_P`, `RETRY_MAX_P = 2` additional retries) drops
+the record with `nvm_alarm_o`, which only reset clears (parent DR2c). The binding manager
+follows the same rules on its own sink records. Pending is exported per producer:
+`nvm_unflushed_o` (binding sinks) and `d3_unflushed_o` (any D3 record dirty); the
+integrator's pending is their OR ([02 §8.1](02_interfaces.md#81-what-the-integrator-reads-while-a-commit-is-outstanding)).
+`aecp_dyn_dirty_o` is a sticky diagnostic of the store, not persistence work.
+
+**Boot: the order.** The platform loads and CRC-checks the AEM image in main memory
+before it starts the restore (`restore_go_i`), because the D3 walk judges values against
+that image. From reset, the listener's work faces are owned by the admission gate and
+AECP dispatch by the D3 writer. Three releases follow, each its own
+([05 §5.1](05_acmp_engine.md#sec-05-boot-admission), parent D3 §8.1):
+
+| Point | Releases | What runs from it |
+|---|---|---|
+| the binding walk's **drained** terminal: the admission gate's release | the listener's four work faces | live ACMP listener work, on the restored bindings or the defaults |
+| the D3 terminal COMPLETE or DEFAULTS | AECP dispatch and the state bus | AECP programs, those held since reset first; CLOSED never releases |
+| `restore_done_o` = both walks | the ADP engine's enable, `entity_enable_i && restore_done_o` | ADP advertising (Milan 5.6.1); the side port's image-window lock keeps the requested `entity_enable_i` |
+
+A read-only command that arrives during either walk is answered after its release, from
+the restored state or the defaults, and it changes nothing here either way.
 
 **How a binding walk ends** (`KL_acmp_nvm_shadow`, processor issue #93). A walk is a
 transaction: a transport failure anywhere ends it with **every** sink not captured live at
-its vendor default, `restore_fail_o` and no preload, never with part of the image. It
-rejects the image, not the media: every saved record stays in the device as it was.
+its vendor default, the binding manager's raw fail and no preload, never with part of the
+image. It rejects the image, not the media: every saved record stays in the device as it
+was. The raw verdicts below are the binding manager's; the top's
+`restore_done_o` / `restore_fail_o` / `restore_blank_o` combine them with the D3 walk's
+(below), and `restore_cause_o` stays the binding walk's cause.
 
 | The record read… | Result | `restore_cause_o` |
 |---|---|---|
@@ -491,11 +617,12 @@ Progress is the awaited event itself, so a device that is slow but moving never 
 deadline, and the deadline bounds only the read phase: the preload phase is bounded by
 the listener's admission ([05 §5.1](05_acmp_engine.md#sec-05-boot-admission)). A failed
 walk still reaches its terminal, the listener is released and answers on the defaults,
-and an enable gated on `restore_done_o` follows. A walk that validated no record reports
-`restore_blank_o`, a failed one included. What the deadline does **not** do: it gives the
-port no deadline of its own and releases nothing on time. A device that ends the
-abandoned read late ends the drain and the port serves the next operation; a device that
-never ends it leaves the port quarantined until reset.
+and the D3 walk starts. The binding manager's raw blank reads 1 for a walk that validated
+no record, a failed one included; the top's combined `restore_blank_o` never does (below).
+What the deadline does **not** do: it gives the port no deadline of its own and releases
+nothing on time. A device that ends the abandoned read late ends the drain and the port
+serves the next operation; a device that never ends it leaves the port quarantined until
+reset.
 
 **A failed walk keeps the saved records** (processor issue #92). After the atomic reject
 the listener runs on its defaults, and it writes its record back for every command it
@@ -510,13 +637,71 @@ that sink's record, as it would after any walk. Graded for all three causes in
 [`tb/acmp_nvm`](../../tb/acmp_nvm/README.md) (N8) and at the top in
 [`tb/pp_top`](../../tb/pp_top/README.md) (BW3).
 
+**How the D3 walk ends** (`KL_aecp_nvm_writer`, processor issue #131; parent D3 §6.2,
+§8.6). It starts at the admission gate's release and is a transaction too. It first
+**proves the descriptor image**: the store's validated-image level, or a LOCATE of
+ENTITY 0 that makes the store walk the image the platform loaded. **Pass 0** reads every
+D3 record and only marks it whole or blank; **pass 1** reads each again, requires the
+same verdict as pass 0, checks the F07.8 frame, judges the value by the rule of the SET
+program that would set it (configuration below `configurations_count`; a rate on the
+AUDIO_UNIT's list; a clock source below `clock_sources_count`; a format the integrator's
+judge supports; a presentation offset with bit 31 clear) and writes an accepted value
+with its valid flag. A framed record whose frame or value fails keeps its default and the
+walk goes on. Every restore wait is watched by one count of stalled clocks.
+
+| Event | Cause (`rs_cause_o`) | Terminal |
+|---|---|---|
+| the image cannot be proven (the LOCATE errs or finds no validated image) | 7 | **CLOSED**: fail, never done; AECP dispatch and ADP held until reset; the listener stays released |
+| in pass 0: a DEVICE err, a torn read, a stall of `P-NVM-RS-TMO-CYC` clocks (a granted read abandoned to the drain) | 2, 1, 3 | **DEFAULTS**: done and fail; nothing was applied |
+| in pass 1: any of those, a record whole in one pass and not the other, or a descriptor read a value rule needs that errs (never a refusal) | 2, 1, 3, 5, 6 | **ROLL-BACK**, then DEFAULTS or CLOSED |
+| an UNFRAMED err with nothing forwarded | - | that record is blank; the walk continues |
+| pass 1 ends | - | **COMPLETE**: done |
+
+The **roll-back** undoes pass 1 by reset: `rb_rst` resets the dynamic-state store and the
+descriptor store together for at least two clocks and while the descriptor-memory guard
+owes a burst its terminal beat (`debt_o`, §3.3.1). The guard takes the hard reset only, so
+its debt survives the local reset. The store's reset returns its fetch watchdog to zero
+and makes it walk the image again; the re-LOCATE of ENTITY 0 that follows proves the
+image anew: a hit ends DEFAULTS with `restore_rb_o`, a miss or error, or an abort during
+the roll-back, ends CLOSED. The roll-back owns neither the binding manager, the listener
+nor its admission gate: **bindings the binding walk restored stay restored**. Maps join
+the roll-back with their stage (parent D3 §8.6); they are not restored in this release.
+
+**Combined verdicts at the top** (parent D3 §8.7):
+
+| Output | Meaning |
+|---|---|
+| `restore_done_o` | the drained binding terminal AND the D3 walk's done (COMPLETE or DEFAULTS); never in CLOSED |
+| `restore_busy_o` | from the binding walk's start to that combined terminal; 0 in CLOSED |
+| `restore_fail_o` | either walk failed |
+| `restore_blank_o` | done, **not failed**, and neither walk validated a record: a failed product restore is never blank |
+| `restore_closed_o`, `rs_cause_o[2:0]`, `restore_rb_o` | the D3 walk's CLOSED terminal, its cause, and its roll-back |
+| `restore_cause_o[1:0]` | the binding walk's cause, unchanged |
+| `nvm_alarm_o` | either producer exhausted a record's three write attempts; reset-sticky |
+
+Graded at the top in [`tb/pp_top`](../../tb/pp_top/README.md) (D3O, D3S, D3R).
+
 ### 5.4 Open decisions
 
 Recorded in [review §8](../00_MILAN_COMPLIANCE_REVIEW.md): configuration-index
-persistence is a design decision (Milan silent). The earlier system_unique_id
-and MCR persistence plans are deferred under [06 §6.9](06_aecp_engine.md#69-mvu-commands).
-Wear management (write coalescing beyond `T-NVM-DEBOUNCE`) is device-dependent
-and out of contract.
+persistence is a design decision (Milan silent), retained by the parent D3 contract
+(§16, "design-affirmative"). The earlier system_unique_id and MCR persistence plans are
+deferred under [06 §6.9](06_aecp_engine.md#69-mvu-commands); their record spans stay
+deliberately erased.
+
+Decided by the parent manager rulings ([D3 contract](https://github.com/kebag-logic/milan-fpga/blob/7a7582f0/docs/design/SAVED_STATE_MATERIALIZATION.md) §15.1):
+
+- **Migration (DR5).** The inventory above and its flat ids are retained. An image whose
+  identity, shape or layout is incompatible is refused under the integrator's image
+  rules and never erased merely on refusal; any added source, name growth or layout
+  change needs a public migration decision and new goldens first.
+- **Wear (DR2a, DR2b).** A producer writes once per first-dirty window
+  (`T-NVM-DEBOUNCE`, 500 ms), draining one burst; only a proven unchanged
+  `{value, valid}` projection is suppressed, so every real change is written and an
+  identical rewrite is not. Coalescing beyond that is the integrator's (its firmware
+  window, 1,000 ms) and device-dependent.
+- **Retries (DR2c).** At most three write attempts per record, 500 ms apart, then the
+  reset-sticky alarm (§5.3).
 
 ### 5.5 Side-port address map (detail of [02 §7](02_interfaces.md))
 

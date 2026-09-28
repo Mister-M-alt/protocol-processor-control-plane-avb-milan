@@ -12,6 +12,13 @@ places its boundaries against, and `-GRETRY_BACKOFF_CYC_P=600` the DR2c wait
 after a failed commit attempt (`T-NVM-RETRY-BACKOFF`, 500 ms in the product)
 that group E grades.
 
+Every restore verdict graded here (`restore_done_o`, `restore_fail_o`,
+`restore_blank_o`, `restore_cause_o`) is the binding manager's RAW verdict on
+its own walk. `protocol_processor_top` combines it with the D3 walk's into the
+top's verdicts ([07 §5.3](../../docs/architecture/07_memory_maps.md#fig-07-nvmflow)),
+which [`tb/pp_top`](../pp_top/README.md) grades (sections BW and D3). The check
+counts quoted below keep the heads they were measured at.
+
 The wrap compiles the shadow together with the REAL `KL_pp_nvm_port` (class-F
 manager face) behind the REAL `KL_pp_nvm_mgr_arb` (the shadow is its manager 0;
 manager 1 is a harness face here; in the top it is the processor's D3 writer,

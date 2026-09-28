@@ -182,13 +182,13 @@ module KL_aecp_nvm_writer #(
     output logic        bus_o,
     input  wire         prog_busy_i,    //! the engine has a command in flight
 
-    //! ---- the state-bus client (the engine's state port, µCPU contract) -----
     //! ---- the roll-back -------------------------------------------------------
     input  wire         desc_debt_i,    //! the descriptor memory owes a burst its last beat
     //! reset of every restorable owner (both stores): at least two cycles,
     //! and while desc_debt_i
     output logic        rb_rst_o,
 
+    //! ---- the state-bus client (the engine's state port, µCPU contract) -----
     output logic        sb_req_o,
     output logic        sb_we_o,
     output logic [19:0] sb_addr_o,      //! [19:16] region, [15:0] byte offset

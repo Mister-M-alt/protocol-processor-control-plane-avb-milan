@@ -94,7 +94,8 @@ Rules (behavioral — no vendor primitives):
    stable afterwards — no CDC needed post-enable.
 5. Reset: asynchronous assert, synchronous release, released in the boot-sequencer
    order ([01 §5](01_overview.md)); `entity_enable` is the master gate implementing
-   ADP start gating (Milan §5.6.1).
+   ADP start gating (Milan §5.6.1), a request the processor forwards to ADP only once
+   both restore walks are done (`restore_done_o`, [07 §5.3](07_memory_maps.md#fig-07-nvmflow)).
 
 ## 3. Class A — packet streaming
 
@@ -493,10 +494,13 @@ left to the host.
 
 ## 8. Class F — NVM port
 
-Record-level, device-agnostic: the NVM manager presents {record id, payload}; the
+Record-level, device-agnostic: an NVM manager presents {record id, payload}; the
 backing implementation (SPI flash controller, EEPROM, host filesystem via `mgmt`) is
-free. Long busy periods expected; commits are asynchronous to protocol responses
-([03 §6](03_packet_engine.md) ordering rule d).
+free. Long busy periods expected; the device's commits are asynchronous to protocol
+responses ([03 §6](03_packet_engine.md) ordering rule d). What is not asynchronous is
+the D3 writer's **latch**: to capture a coherent row it holds AECP dispatch briefly,
+from ACQUIRE until one state-bus read completes (at most the running command's own
+duration plus a few clocks), never across a media commit ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)).
 
 | Signal | Dir | Width |
 |---|---|---|
@@ -530,16 +534,18 @@ not a record. Code 3 is kept for a port deadline and is never produced.
   {"name": "nvm_done", "wave": "0....|.10."},
   {"name": "nvm_err",  "wave": "0....|...."}
 ],
- "head": {"text": "err instead of done triggers bounded retry then side-port alarm"}}
+ "head": {"text": "err instead of done: backoff, relatch and retry (3 attempts), then the reset-sticky alarm"}}
 ```
 
 </details>
 
-Boot restore is the mirror image (`we = 0`): the boot sequencer reads every record,
-CRC-validates, falls back to vendor defaults on failure, **then** releases
-`entity_enable` ([07 §5.3](07_memory_maps.md)). Which failures are one record's
-default and which fail the whole walk is [07 §5.3](07_memory_maps.md#fig-07-nvmflow)'s
-table.
+Boot restore is the mirror image (`we = 0`), in two walks: the binding manager's, then,
+from the listener's release, the D3 writer's. The D3 walk first proves the descriptor
+image, reads every record twice, validates the frame and the value, and ends COMPLETE,
+DEFAULTS (done and failed, rolled back if pass 1 had applied anything) or CLOSED (an
+unprovable image: never done). ADP's enable is `entity_enable_i && restore_done_o`, the
+done of both walks; CLOSED never releases it. Which failures are one record's default and
+which fail a walk is [07 §5.3](07_memory_maps.md#fig-07-nvmflow)'s tables.
 
 ### 8.1 What the integrator reads while a commit is outstanding
 
@@ -549,15 +555,29 @@ pending" bit observes the following top-level outputs. They do not change behavi
 
 | Signal | Dir | Width | When |
 |---|---|---|---|
-| `nvm_unflushed_o` | out | `P-N-STREAM-IN` | bit k is 1 from the cycle the manager ACCEPTS a changed binding for sink k (a write-back that moves no persisted field never raises it) until that record commits with `done`, or until it gives up after `RETRY-MAX` retries — which is the same cycle `nvm_alarm_o` rises. A capture that lands mid-flush holds the bit: the burst re-serializes. |
+| `nvm_unflushed_o` | out | `P-N-STREAM-IN` | the binding manager's: bit k is 1 from the cycle the manager ACCEPTS a changed binding for sink k (a write-back that moves no persisted field never raises it) until that record commits with `done`, or until it gives up after three attempts — which is the same cycle `nvm_alarm_o` rises. A capture that lands mid-flush holds the bit: the burst re-serializes. |
+| `d3_unflushed_o` | out | 1 | the D3 writer's: 1 from the cycle after the dynamic-state store accepts a write that changes a persisted row's `{value, valid}` until every such record's WRITE has ended with an untainted `done` or its attempts are exhausted. The integrator's pending is `(|nvm_unflushed_o) | d3_unflushed_o`. |
+| `nvm_alarm_o` | out | 1 | either producer exhausted a record's three write attempts; set until reset, whatever later writes do. |
+| `aecp_dyn_dirty_o` | out | 1 | a sticky diagnostic of the dynamic-state store (any row written since reset); not pending and not a persistence trigger. |
 | `aecp_name_wr_o` | out | 1 | one `clk_i` cycle per accepted live 64-bit name-lane write, sampled at the same rising edge that writes the descriptor store. Multi-lane names pulse once per written lane; unchanged lanes, boot loading, refused/out-of-range commands and writes aborted before acceptance do not pulse. Earlier accepted writes remain visible if a command later aborts. No ready/ack; leave unused with an explicit `.aecp_name_wr_o()` connection. |
-| `aecp_nvm_stb_o` / `aecp_nvm_mark_o` | out | 1 / 8 | one `clk_i` cycle per committed command that carries the µCPU's `NVM_MARK` effect, with the mark code naming the record group: **1** a dynamic-state field (sampling rate, clock source, configuration index, stream format, stream info), **6** channel maps, **7** user names. The code is meaningful only while the strobe is 1. |
+| `aecp_nvm_stb_o` / `aecp_nvm_mark_o` | out | 1 / 8 | one `clk_i` cycle per committed command that carries the µCPU's `NVM_MARK` effect, with the mark code naming the record group: **1** a dynamic-state field (sampling rate, clock source, configuration index, stream format, stream info), **6** channel maps, **7** user names. The code is meaningful only while the strobe is 1. A mark is a **completion notification**: it selects no record and triggers no persistence. |
 
-Only the binding records have a writer inside this processor (the manager above).
-Groups 6 and 7 have none: an integrator that persists them owns both the record
-and the write. The live name acceptance precedes the unchanged group-7 completion
-mark. For maps, the corresponding live write is `amap_edit_req_o` with
-`amap_edit_phase_o == 5`.
+Two record producers live inside this processor: the binding manager and the D3 writer
+(the scalar records: configuration, sampling rates, clock sources, both stream-format
+directions, presentation offsets). Each is triggered by its accepted live write, never by
+a mark. The name and map groups are accepted in the same saved-state contract, with the
+accepted name-lane write (`aecp_name_wr_o`, which precedes the unchanged group-7 mark) and
+the phase-5 edit commit beat (`amap_edit_req_o` with `amap_edit_phase_o == 5`) as their
+triggers; their writers are later D3 stages and are **not implemented** in this release.
+
+The top's restore verdicts are combined over both walks ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)):
+`restore_done_o`, `restore_busy_o`, `restore_fail_o`, `restore_blank_o` (done and not
+failed, nothing validated by either walk), `restore_closed_o`, `rs_cause_o[2:0]` (the D3
+walk's cause), `restore_rb_o` (a D3 roll-back ended DEFAULTS) and `restore_cause_o[1:0]`
+(the binding walk's cause). Inside the processor, the D3 writer owns AECP dispatch from
+reset to its terminal, reads the descriptor store's validated-image level for its image
+proof, and holds its roll-back of both stores while the descriptor-memory guard's debt is
+set; none of these is a top port.
 
 These signals are in the `clk_i` domain. Consumers in another clock domain
 own the crossing; single-cycle events need pulse capture or an event handshake.
@@ -566,16 +586,15 @@ own the crossing; single-cycle events need pulse capture or an event handshake.
 
 [`KL_pp_nvm_mgr_arb`](../../hdl/packet_engine/KL_pp_nvm_mgr_arb.sv) sits between the
 port's manager face and its managers: the binding manager is manager 0, and manager 1 is
-kept for a second record writer (the integrating platform's saved-state writer) and is
-tied idle in `protocol_processor_top` until one lands. The device face keeps exactly one
-sequential initiator.
+the processor's D3 saved-state writer (`KL_aecp_nvm_writer` inside the AECP engine). The
+device face keeps exactly one sequential initiator.
 
 | Rule | Realization |
 |---|---|
 | Ownership is per operation. | the manager whose request the port accepted owns every data phase and the `done` or `err` (with its cause) that ends it; the other sees none of them |
 | A manager-0 request only ever meets an idle port. | manager 0 raises a registered one-cycle request after it reads the port idle, so the busy it reads also covers the cycle manager 1 is granted. Manager 1 holds its request until its grant; on a tie at an idle port manager 0 wins |
-| An abandoned READ is **drained**, never handed on. | the port's answers name no operation, so when a read's owner abandons it (the binding walk's deadline, [07 §5.3](07_memory_maps.md#fig-07-nvmflow)) the arbiter keeps the operation: it holds `rready`, discards the late bytes, swallows the `done` or `err`, and grants neither manager until then. Only reads are abandoned: a write stream is never cut |
-| The drain ends **only** on that operation's own `done` or `err`. | never on time. A device that never ends the abandoned read keeps the port **quarantined until reset**: every later binding change reads pending in `nvm_unflushed_o` and is never written. Reusable service after a permanently silent device needs a real cancellation, which is the port's open recovery contract (processor issue #15) |
+| An abandoned READ is **drained**, never handed on. | the port's answers name no operation, so when a read's owner abandons it (either walk's deadline, [07 §5.3](07_memory_maps.md#fig-07-nvmflow)) the arbiter keeps the operation: it holds `rready`, discards the late bytes, swallows the `done` or `err`, and grants neither manager until then. Only reads are abandoned: a write stream is never cut |
+| The drain ends **only** on that operation's own `done` or `err`. | never on time. A device that never ends the abandoned read keeps the port **quarantined until reset**: every later change reads pending in `nvm_unflushed_o` or `d3_unflushed_o` and is never written. Reusable service after a permanently silent device needs a real cancellation, which is the port's open recovery contract (processor issue #15) |
 
 ## 9. Parameterization
 

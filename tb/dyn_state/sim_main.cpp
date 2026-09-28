@@ -228,7 +228,7 @@ void DynStateHarness::refuse_an_index_the_shape_lacks() {
         "D: the out-of-range write ALIASED onto row 0");
 }
 
-// ---- E: dirty marks the persisted set, and only it ---------------------
+// ---- E: the diagnostic dirty marks the persisted set, and only it -----
 // Milan 5.3.13 & friends make these fields non-volatile; 5.3.12 makes the
 // IDENTIFY value volatile. Raising dirty for IDENTIFY would commit flash
 // every time a front panel blinked.

@@ -260,7 +260,7 @@ module pp_top_wrap (
     output logic        dbg_lstn_busy_o,
     //! the binding manager's OWN terminal (KL_acmp_nvm_shadow restore_done_o),
     //! which the top's restore_done_o follows once the listener admission
-    //! gate releases
+    //! gate releases and the D3 walk is done
     output logic        dbg_walk_done_o,
     //! the listener admission gate's release (KL_pp_acmp_lsn_admit
     //! released_o), and the listener writing a preload record (X_PRELOAD)
@@ -372,7 +372,16 @@ module pp_top_wrap (
     //! restore released it
     output logic        dbg_adp_enable_o,
     //! the D3 roll-back strobe to both stores
-    output logic        dbg_d3_rb_rst_o
+    output logic        dbg_d3_rb_rst_o,
+    //! the volatile set D3R1 populates before a saved-set cycle: the ENTITY
+    //! lock and the IDENTIFY value, the top's own outputs
+    output logic        dbg_lock_held_o,
+    output logic  [7:0] dbg_identify_o,
+    //! the two restore walks' no-progress counters (the D3 writer's wd_r,
+    //! the binding manager's rs_wd_r): the DR3a measurement reads their
+    //! maxima, the longest single wait each walk met
+    output logic [31:0] dbg_d3_wd_o,
+    output logic [31:0] dbg_bind_wd_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
@@ -394,7 +403,6 @@ module pp_top_wrap (
   logic [pp_pkg::PP_TXN_W_C-1:0] aecp_txn_nc_w;
   logic [7:0]                    aecp_rd_data_nc_w;
   logic [9:0]                    aecp_slot_len_nc_w;
-  logic                          aecp_lock_held_nc_w;
 
   protocol_processor_top #(
 `ifdef PP_TOP_SRP_DOM_DEF_VID
@@ -466,7 +474,7 @@ module pp_top_wrap (
       //! every unused publication explicit so newly added state cannot leave
       //! a silent harness integration gap.
       .aecp_cur_config_o     (),
-      .aecp_identify_o       (),
+      .aecp_identify_o       (dbg_identify_o),
       .aecp_clk_src_index_o  (),
       .aecp_strm_started_o   (aecp_strm_started_o),
       .aecp_pt_offset_o      (aecp_pt_offset_o),
@@ -479,7 +487,7 @@ module pp_top_wrap (
       .aecp_name_wr_o        (aecp_name_wr_o),
       .aecp_nvm_stb_o        (aecp_nvm_stb_o),
       .aecp_nvm_mark_o       (aecp_nvm_mark_o),
-      .aecp_lock_held_o      (aecp_lock_held_nc_w),
+      .aecp_lock_held_o      (dbg_lock_held_o),
       .ctr_req_o             (ctr_req_o),
       .ctr_desc_type_o       (ctr_desc_type_o),
       .ctr_desc_index_o      (ctr_desc_index_o),
@@ -681,6 +689,8 @@ module pp_top_wrap (
   assign dbg_d3_blank_o   = u_dut.u_aecp.u_d3.n_blank_r;
   assign dbg_adp_enable_o = u_dut.u_adp.entity_enable_i;
   assign dbg_d3_rb_rst_o  = u_dut.u_aecp.d3_rb_rst_w;
+  assign dbg_d3_wd_o      = u_dut.u_aecp.u_d3.wd_r;
+  assign dbg_bind_wd_o    = u_dut.u_nvm_shadow.rs_wd_r;
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin

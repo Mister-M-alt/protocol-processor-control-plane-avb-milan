@@ -38,8 +38,8 @@
 //                AN ABANDONED READ IS DRAINED, NEVER HANDED ON. The port
 //                answers untagged: its bytes and its done or err name no
 //                operation. So when the manager that owns a READ abandons it
-//                (m0_abort_i, the binding walk's deadline; m1_abort_i,
-//                manager 1's), this block keeps that operation as its OWN: it
+//                (m0_abort_i, the binding walk's deadline; m1_abort_i, the
+//                D3 walk's), this block keeps that operation as its OWN: it
 //                holds rready so the port can move every late byte, discards
 //                them, swallows the done or err that ends it, and keeps both
 //                managers off the port until then. A late response can only
@@ -75,7 +75,7 @@ module KL_pp_nvm_mgr_arb (
     output logic [1:0] m0_err_cause_o,   //! the port's cause with m0_err_o
     input  wire        m0_abort_i,       //! abandon the READ it owns: drain it
 
-    //! ---- manager 1: a second record writer (request held until granted) --
+    //! ---- manager 1: the D3 writer (request held until granted) ------------
     input  wire        m1_req_i,         //! op request, held until m1_gnt_o
     input  wire        m1_we_i,          //! 1 = commit, 0 = restore
     input  wire [7:0]  m1_rid_i,         //! record id

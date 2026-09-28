@@ -1230,7 +1230,8 @@ void Harness::check_a_change_during_its_own_flush_reserializes() {
 
 // ===================== X: dbg_dirty_o IS the unflushed-state contract
 // protocol_processor_top publishes this vector as nvm_unflushed_o (issue
-// #90) and an integrator ORs it into a "saved state pending" bit, so the
+// #90) and an integrator ORs it with d3_unflushed_o into a "saved state
+// pending" bit, so the
 // three edges the pin promises are graded here, at the source, cycle by
 // cycle: it rises when a change is ACCEPTED (a capture whose persisted set
 // differs), it never drops before that change is committed with done, and

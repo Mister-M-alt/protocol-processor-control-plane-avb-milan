@@ -108,11 +108,11 @@ module protocol_processor_top
     //!
     //! Every address is a COMPILE-TIME parameter — the DRAM map is fixed when
     //! the bitstream is built, so a runtime base would only buy a 32-bit port
-    //! and the flops behind it. Software loads the image at DESC_BASE_P before
-    //! entity_enable; if it has not (or loaded a truncated one), the store's
-    //! magic + version + checksum header check fails and reports zero
-    //! configurations. READ_DESCRIPTOR then answers BAD_ARGUMENTS before
-    //! locate, never a garbage descriptor on the wire.
+    //! and the flops behind it. Software loads and CRC-checks the image at
+    //! DESC_BASE_P before restore_go_i; if it has not (or loaded a truncated
+    //! one), the store's magic + version + checksum header check fails and
+    //! the D3 restore, which cannot prove the image, ends CLOSED with AECP
+    //! held: never a garbage descriptor on the wire.
     parameter logic [31:0] DESC_BASE_P         = 32'h2000_0000,
     //! on-chip line buffer for ONE located descriptor (07 §3.2 worst case)
     parameter int unsigned DESC_LINE_BYTES_P   = 576,
@@ -122,11 +122,14 @@ module protocol_processor_top
     parameter int unsigned DESC_NAME_ENTRIES_P = 32,
     //! no-progress watchdog on the descriptor memory face, in clocks
     parameter int unsigned DESC_MEM_TMO_CYC_P  = 4096,
-    //! T-NVM-RS-DEADLINE (F08.1), P-NVM-RS-TMO-CYC (F01.5): the boot restore
-    //! walk's read phase fails whole after this many clocks without
-    //! progress. Size it above the slowest single record read your NVM
-    //! device face can take; a silent device then ends the walk here instead
-    //! of holding the listener (and an enable gated on restore_done_o) for ever.
+    //! T-NVM-RS-DEADLINE (F08.1), P-NVM-RS-TMO-CYC (F01.5): each restore
+    //! wait of both walks (the binding walk's reads; every D3 wait, the
+    //! roll-back's debt wait and re-LOCATE included) fails its walk after
+    //! this many clocks without progress. Size it above the slowest single
+    //! record read your NVM device face can take and above the descriptor
+    //! image walk; a silent device then ends each walk here instead of
+    //! holding the listener, AECP and the ADP enable for ever. 20 ms is an
+    //! initial candidate pending measurement and ratification (08 §2).
     parameter int unsigned NVM_RS_TMO_CYC_P    = CLK_HZ_P / 32'd50,
     //! DR2c (P-NVM-RETRY-BACKOFF-CYC, F01.5): clk_i cycles a record
     //! producer waits after a failed write attempt before the next, for the
@@ -197,7 +200,9 @@ module protocol_processor_top
     input  wire  [15:0] identify_index_i,      //! identify_control_index
 
     //! ---- level controls + class-D inputs (02 §6) ----
-    input  wire         entity_enable_i,       //! Milan §5.6.1 boot gate (level)
+    //! Milan §5.6.1 boot gate (level), as a REQUEST: ADP sees it AND
+    //! restore_done_o; the side port's image-window lock sees it as is
+    input  wire         entity_enable_i,
     input  wire         link_up_i,             //! link status (2FF-synced upstream)
     //! one-cycle ADP/GET_AVB_INFO gPTP-pair change strobe. Raise it after
     //! publishing a changed gm_id_i OR gptp_domain_i. A GM identity change
@@ -684,7 +689,10 @@ module protocol_processor_top
     output logic [N_STREAM_IN_P-1:0]     aecp_fmt_in_v_o,
     output logic [N_STREAM_OUT_P*64-1:0] aecp_fmt_out_o,
     output logic [N_STREAM_OUT_P-1:0]    aecp_fmt_out_v_o,
-    output logic                         aecp_dyn_dirty_o,    //! a persisted field moved
+    //! DIAGNOSTIC only: some persisted dynamic-state row was written since
+    //! reset (sticky). Not pending and not a persistence trigger: the D3
+    //! writer's d3_unflushed_o above is the pending of these rows.
+    output logic                         aecp_dyn_dirty_o,
     //! Accepted live name write (07 §3.4): one clk_i cycle per 64-bit lane
     //! actually written by the descriptor store, at the accepting edge.
     //! A multi-lane SET_NAME can pulse more than once; unchanged lanes,
@@ -700,10 +708,11 @@ module protocol_processor_top
     //! The mark is the micro-op immediate: 1 dynamic-state field (sampling
     //! rate, clock source, configuration index, stream format, stream info),
     //! 6 channel maps (ADD/REMOVE_AUDIO_MAPPINGS), 7 user names (SET_NAME).
-    //! Nothing inside this processor consumes them: no record writer exists
-    //! for groups 6 and 7, so an integrator that persists those groups has
-    //! to consume the mark for command completion; aecp_name_wr_o and map
-    //! edit phase 5 expose the earlier accepted live writes.
+    //! A COMPLETION notification only: nothing selects a record from it.
+    //! Group 1's records are written by the D3 writer from the accepted
+    //! changing write itself; groups 6 and 7 are the saved-state contract's
+    //! map and name stages, triggered by map edit phase 5 and
+    //! aecp_name_wr_o, and not implemented in this release.
     output logic                         aecp_nvm_stb_o,      //! one cycle: a committed command marked a record group
     output logic  [7:0]                  aecp_nvm_mark_o,     //! that group's mark code, valid with the strobe
     output logic                         aecp_lock_held_o,    //! LOCK_ENTITY ownership is live
@@ -3533,6 +3542,11 @@ module protocol_processor_top
       .lock_ctlr_i        (ntfy_lock_ctlr_w),
       .eff_commit_o       (aecp_eff_commit_nc_w),
       .name_wr_o          (aecp_name_wr_o),
+      //! the D3 saved-state writer inside the engine: it holds AECP dispatch
+      //! from rst_n, starts its restore at the binding walk's end (the
+      //! admission gate's release), is NVM manager 1 of u_nvm_arb, and holds
+      //! its roll-back of both AECP stores while the descriptor memory guard
+      //! owes a burst (debt survives that local reset: hard reset only)
       .d3_go_i            (lsn_released_w),
       .d3_tick_i          (tick_ms_w),
       .d3_m_req_o         (d3_m_req_w),
@@ -4287,6 +4301,8 @@ module protocol_processor_top
   KL_pp_side_port #(.EN_FW_ASSIST_P(1'b0)) u_side_port (
       .clk_i           (clk_i),
       .rst_n           (rst_n),
+      //! the REQUESTED enable locks the image window, as it always did; only
+      //! ADP takes the restore-released one (adp_enable_w)
       .entity_enable_i (entity_enable_i),
       .req_valid_i     (host_req_valid_i),
       .we_i            (host_we_i),
@@ -4357,6 +4373,8 @@ module protocol_processor_top
       end
       unique case (sp_ctrl_addr_w)
         8'd0:    sp_ctrl_rdata_r <= ctrl_scratch_r;
+        //! the COMBINED restore verdicts beside the REQUESTED enable; a
+        //! CLOSED restore reads busy 0, done 0, fail 1
         8'd1:    sp_ctrl_rdata_r <= {28'd0, restore_fail_o, restore_done_o,
                                      restore_busy_o, entity_enable_i};
         default: sp_ctrl_rdata_r <= 32'd0;

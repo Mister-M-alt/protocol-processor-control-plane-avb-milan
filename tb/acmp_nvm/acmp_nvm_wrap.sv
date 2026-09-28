@@ -69,7 +69,7 @@ module acmp_nvm_wrap
     output logic [1:0]               restore_cause_o, //! why the walk failed
     output logic                     alarm_o,         //! commit-retry alarm
 
-    //! ---- manager 1 of the arbiter (a second record writer, harness) ------
+    //! ---- manager 1 of the arbiter (harness; the D3 writer in the top) ----
     input  wire                      m1_req_i,        //! op request, held until granted
     input  wire                      m1_we_i,         //! 1 = commit
     input  wire  [7:0]               m1_rid_i,        //! record id
