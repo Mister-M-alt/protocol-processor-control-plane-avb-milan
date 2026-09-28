@@ -330,8 +330,16 @@ struct H {
   // one clock: low-phase observe (all strobes are registered and stable
   // across the cycle), drive the TX-arbiter emulation, posedge.
   // Returns the decoder's ready as sampled in the low phase.
+  bool pause_tx = false;
+  std::vector<uint64_t> la_cycles, rx_cycles, prep_cycles, peer_la_cycles, expiry_cycles;
+  std::vector<uint32_t> la_times;
   bool step() {
     d->clk_i = 0; d->eval();
+    if (d->dbg_la_action_o) { la_cycles.push_back(t); la_times.push_back(d->now_ms_o); }
+    if (d->dbg_la_expiry_o) expiry_cycles.push_back(t);
+    if (d->dbg_prepare_done_o) prep_cycles.push_back(t);
+    if (d->dbg_rx_la_o) peer_la_cycles.push_back(t);
+    if (d->dbg_rx_event_o) rx_cycles.push_back(t);
     unsigned decl = d->dbg_decl_o;
     unsigned withdraw = d->dbg_withdraw_o;
     unsigned phase = d->dbg_sample_index_o;
@@ -347,6 +355,7 @@ struct H {
     d->ser_ready_i = 1;
     d->txreq_ready_i = 0;
     d->ser_req_i = 0;
+    bool finished = false;
     if (streaming && d->ser_valid_o) {
       cur.push_back(d->ser_data_o);
       if (d->ser_last_o) {
@@ -356,9 +365,12 @@ struct H {
         else              q_mvrp.push_back(cur);
         cur.clear();
         streaming = false;
+        finished = true;
       }
     }
-    if (!streaming && d->txreq_valid_o) {
+    // The slot serializer returns to idle on the last-byte edge.
+    // Its next request must wait until the following clock.
+    if (!pause_tx && !streaming && !finished && d->txreq_valid_o) {
       d->txreq_ready_i = 1;
       d->ser_req_i = 1;
       d->ser_slot_i = d->txreq_slot_o;
@@ -383,6 +395,8 @@ struct H {
 
   void reset() {
     streaming = false; cur.clear(); q_msrp.clear(); q_mvrp.clear(); archive.clear();
+    pause_tx = false; expiry_cycles.clear(); prep_cycles.clear(); peer_la_cycles.clear(); la_cycles.clear(); la_times.clear(); rx_cycles.clear();
+    d->block_alloc_i = 0;
     d->rst_n = 0;
     d->own_mac_i = OWN_MAC; d->entity_id_i = EID;
     d->link_up_i = 0; d->p2p_i = 1; d->cfg_rank_i = 1;
@@ -509,7 +523,8 @@ class SrpTopHarness {
  public:
   SrpTopHarness() : d(model.get()), h(d) {}
 
-  int run() {
+  int run(const char* group = "") {
+    if (!*group) {
     bring_up_the_port();
     check_domain_default_declaration_is_byte_exact();
     check_get_domain_and_bad_ops();
@@ -527,6 +542,11 @@ class SrpTopHarness {
     check_redeclaration_never_publishes_a_stale_slope();
     check_pending_redeclaration_frees_no_capacity();
     check_optimistic_window_outlives_a_held_verdict();
+    }
+    if (!*group || !strcmp(group,"phases")) check_own_leaveall_phases();
+    if (!*group || !strcmp(group,"edge")) check_own_leaveall_acceptance_boundary();
+    if (!*group || !strcmp(group,"peer")) check_pending_leaveall_supersession();
+    if (!*group || !strcmp(group,"congestion")) check_own_leaveall_congestion_and_recovery();
 
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
     return fails ? 1 : 0;
@@ -539,6 +559,302 @@ class SrpTopHarness {
   static constexpr uint64_t DA1  = 0x91E0F00A0B11ULL;
   static constexpr uint64_t SIDX = 0x1122334455660001ULL;
   static constexpr uint64_t DAX  = 0x91E0F0112233ULL;
+
+  static uint64_t own_sid(int s) { return (OWN_MAC << 16) | (0x100 + s); }
+  static uint64_t peer_sid(int s) { return 0x1122334455660100ULL + s; }
+  static uint64_t peer_da(int s) { return 0x91e0f0112300ULL + s; }
+  int source_reg(int s) const { return (d->dbg_t_reg_o >> (2*s)) & 3; }
+  int sink_reg(int s) const { return (d->dbg_l_reg_o >> (2*s)) & 3; }
+  void until_ms(uint32_t ms) { while (d->now_ms_o < ms) h.cycle(); }
+  void listener_event(int s, int ev, int fp, int sid_delta = 0) {
+    h.feed(mrpdu_body(true, {Msg{3,8,true,
+      {Vec{false,1,fv_sid(own_sid(s)+sid_delta),{ev},{fp}}}}}), true);
+  }
+  void talker_event(int s, int ev) {
+    bool failed = s & 1;
+    auto fv = failed ? fv_failed(peer_sid(s),peer_da(s),2,29,1,3,1,500,0x1234,1)
+                     : fv_talker(peer_sid(s),peer_da(s),2,29,1,3,1,500);
+    h.feed(mrpdu_body(true, {Msg{failed?2:1,failed?34:25,false,
+      {Vec{false,1,fv,{ev},{}}}}}),true);
+  }
+  uint32_t leaveall_setup(int fp, bool full = false, bool asymmetric = false) {
+    h.reset(); d->link_up_i = 1; h.idle(10);
+    for (int s=0;s<8;s++) {
+      if (full || s==0 || s==3 || s==7) {
+        h.op(OP_DECL_TK,s,own_sid(s),0x91e0f0010100ULL+s,2,29,1);
+        listener_event(s,EV_NEW,fp);
+      }
+      if (asymmetric ? s==0 : (full || s==0 || s==7)) {
+        h.op(OP_DECL_LS,s,peer_sid(s),peer_da(s),2,0,0,DECL_READY);
+        talker_event(s,EV_NEW);
+      }
+    }
+    h.run_ms(700);
+    return d->dbg_la_deadline_o;
+  }
+  static int leaveall_frames(const H& bfm, size_t first) {
+    int count=0;
+    for (size_t i=first;i<bfm.archive.size();i++) {
+      auto p=parse_frame(bfm.archive[i]);
+      bool la=false;
+      for (const auto& v:p.vecs) la |= v.la;
+      count += p.ok && p.msrp && la;
+    }
+    return count;
+  }
+
+  // K: independent oracle: an explicit Lv before sLA sees IN; an Lv
+  // after sLA sees LV and retains registration until LeaveTime expires.
+  void check_own_leaveall_phases() {
+    for (int fp : {DECL_READY, DECL_READYFAIL}) for (int target : {0,3,7}) {
+      for (int offset : {-50,-1,1,40,80,120,199}) {
+        uint32_t deadline=leaveall_setup(fp);
+        until_ms(deadline+offset);
+        bool after=offset>=120;
+        CHECK(h.la_cycles.size()==size_t(after), "K1: phase has the expected sLA count");
+        listener_event(target,EV_LV,fp);
+        CHECK(source_reg(target)==(after?2:0) && h.active(target)==after,
+              "K2: phase Lv follows IN/LV policy fp=%d src=%d offset=%d",fp,target,offset);
+        int sink=target==7?7:0;
+        talker_event(sink,EV_LV);
+        CHECK(sink_reg(sink)==(after?2:0) && h.tk_reg(sink)==(after?(sink&1?2:1):0),
+              "K11: sink phase Lv follows IN/LV policy");
+        int other=target==0?3:0;
+        CHECK(h.active(other), "K3: another source remains active");
+        bool held=true;
+        for(int i=0;i<2000*MS_CYC;i++) { h.cycle(); held &= h.active(target)==after; }
+        CHECK(held, "K4: phase result holds for the two-second disconnect");
+        printf("LEAVEALL_PHASE fp=%d source=%d offset_ms=%d active=%d actions=%zu\n",
+               fp,target,offset,h.active(target),h.la_cycles.size());
+      }
+    }
+    // No target event: real own LeaveTime expiry in both stream planes.
+    uint32_t deadline=leaveall_setup(DECL_READY);
+    until_ms(deadline+10);
+    listener_event(0,EV_LV,DECL_READY,20);
+    CHECK(source_reg(0)==1 && h.active(0), "K5: mismatched SID cannot withdraw registration");
+    auto bad_fv=fv_sid(own_sid(0)); bad_fv.push_back(0);
+    auto bad=mrpdu_body(true,{Msg{3,9,true,{Vec{false,1,bad_fv,{EV_LV},{DECL_READY}}}}});
+    unsigned malformed=h.malformed;
+    h.feed(bad,true);
+    CHECK(h.malformed==malformed+1 && source_reg(0)==1,
+          "K12: malformed Listener Leave cannot withdraw registration");
+    until_ms(deadline+300);
+    talker_event(0,EV_LV); talker_event(7,EV_LV);
+    CHECK(sink_reg(0)==2 && sink_reg(7)==2, "K6: genuine sink LV plus rLv retains both types");
+    uint32_t action=h.la_times.empty()?deadline+200:h.la_times[0];
+    until_ms(action+4900);
+    listener_event(0,EV_JOINMT,DECL_READY); talker_event(0,EV_JOINMT);
+    bool healthy=true;
+    for(int i=0;i<500*MS_CYC;i++) {h.cycle(); healthy &= h.active(0) && h.tk_reg(0)==1;}
+    CHECK(healthy && source_reg(0)==1 && sink_reg(0)==1,
+          "K7: rejoin cancels own LeaveTime without an interruption");
+    CHECK(!h.active(3) && !h.active(7) && source_reg(3)==0 && sink_reg(7)==0,
+          "K8: missing rejoin expires both stream planes");
+    // Reset while waiting for a slot must discard the intent.
+    deadline=leaveall_setup(DECL_READY); until_ms(deadline-20);
+    d->block_alloc_i=1; until_ms(deadline+300);
+    CHECK(h.la_cycles.empty(), "K9: allocation backpressure keeps sLA pending");
+    h.reset(); d->link_up_i=1; h.run_ms(500);
+    CHECK(h.la_cycles.empty() && d->dbg_t_reg_o==0 && d->dbg_l_reg_o==0,
+          "K10: reset discards the pending action and registrars");
+  }
+
+  // L: move slot acceptance across one decoded Listener Lv. The frame
+  // bytes and slot-pool handshake are real; no internal event is forced.
+  void check_own_leaveall_acceptance_boundary() {
+    for (int fp : {DECL_READY,DECL_READYFAIL}) {
+      unsigned seen=0;
+      for(int release=12;release<=25;release++) {
+        uint32_t deadline=leaveall_setup(fp);
+        until_ms(deadline-20); d->block_alloc_i=1; until_ms(deadline+250);
+        h.rx_cycles.clear();
+        auto bytes=mrpdu_body(true,{Msg{3,8,true,{Vec{false,1,fv_sid(own_sid(3)),{EV_LV},{fp}}}}});
+        size_t i=0;
+        for(int clk=0;clk<80;clk++) {
+          if(clk==release) d->block_alloc_i=0;
+          d->mrp_valid_i=i<bytes.size();
+          d->mrp_data_i=i<bytes.size()?bytes[i]:0;
+          d->mrp_last_i=i+1==bytes.size(); d->mrp_msrp_i=1;
+          if(h.step() && i<bytes.size()) i++;
+        }
+        d->mrp_valid_i=0; d->mrp_last_i=0;
+        CHECK(h.la_cycles.size()==1 && h.rx_cycles.size()==1, "L1: one sLA and one valid decoded Lv");
+        if(h.la_cycles.empty() || h.rx_cycles.empty()) continue;
+        int delta=int(h.rx_cycles[0]-h.la_cycles[0]);
+        if(delta>=-1 && delta<=1) seen |= 1u<<(delta+1);
+        bool retain=delta>0; // Receive wins on the same edge, as in both registrar tables.
+        CHECK(h.active(3)==retain && source_reg(3)==(retain?2:0),
+              "L2: decoded Lv at acceptance boundary delta=%d",delta);
+        CHECK(source_reg(0)==2 && source_reg(7)==2 && sink_reg(0)==2 && sink_reg(7)==2,
+              "L3: accepted sLA reaches every unaffected registrar");
+        printf("LEAVEALL_EDGE fp=%d release=%d rx_minus_sLA=%d active=%d\n",fp,release,delta,h.active(3));
+      }
+      CHECK(seen==7, "L4: acceptance sweep covers -1, 0 and +1 clocks");
+    }
+  }
+
+  void check_pending_leaveall_supersession() {
+    // No stream declarations: cancel the preparation with a Listener rLA.
+    // The reserved slot must wait for content, then carry the next Domain
+    // refresh; a ProtocolVersion/EndMark-only PDU is not an MRPDU.
+    h.reset(); d->link_up_i=1; h.run_ms(700);
+    uint32_t quiet_deadline=d->dbg_la_deadline_o;
+    until_ms(quiet_deadline-20); d->block_alloc_i=1;
+    until_ms(quiet_deadline+250);
+    size_t quiet_base=h.archive.size();
+    h.feed(mrpdu_body(true,{la_only(3,8,true)}),true);
+    d->block_alloc_i=0; h.run_ms(1500);
+    bool valid_content=true, domain=false;
+    for(size_t j=quiet_base;j<h.archive.size();j++) {
+      auto p=parse_frame(h.archive[j]);
+      if(!p.msrp) continue;
+      valid_content &= p.ok && !p.vecs.empty();
+      for(const auto& v:p.vecs) domain |= v.type==4 && v.nov>0;
+    }
+    CHECK(valid_content && domain && h.la_cycles.empty() && !d->dbg_round_o,
+          "M11: quiet canceled round emits valid content and recovers");
+    h.reset(); d->link_up_i=1; h.run_ms(700);
+    quiet_deadline=d->dbg_la_deadline_o;
+    until_ms(quiet_deadline-20); d->block_alloc_i=1; d->link_up_i=0;
+    until_ms(quiet_deadline+250);
+    quiet_base=h.archive.size(); uint32_t later_deadline=d->dbg_la_deadline_o;
+    h.feed(mrpdu_body(true,{la_only(3,8,true)}),true);
+    d->block_alloc_i=0; until_ms(later_deadline+700);
+    CHECK(h.la_cycles.size()==1 && leaveall_frames(h,quiet_base)==1
+          && !d->dbg_la_wait_o && !d->dbg_round_o,
+          "M12: a later own action reuses an empty canceled reservation");
+    for(int type=0;type<=4;type++) for(bool allocating : {false,true}) {
+      uint32_t deadline=leaveall_setup(DECL_READY);
+      until_ms(deadline-20); d->block_alloc_i=1;
+      until_ms(deadline+(allocating?250:10));
+      size_t base=h.archive.size(); uint32_t next=d->dbg_la_deadline_o;
+      if(type==0) h.feed(mrpdu_body(false,{la_only(1,2,false)}),false);
+      else h.feed(mrpdu_body(true,{la_only(type,type==1?25:type==2?34:type==3?8:4,type==3)}),true);
+      listener_event(0,EV_JOINMT,DECL_READY); talker_event(0,EV_JOINMT); talker_event(7,EV_JOINMT);
+      d->block_alloc_i=0; h.run_ms(700);
+      CHECK(h.la_cycles.size()==size_t(type==0), "M1: only an MSRP peer supersedes pending own sLA");
+      CHECK(leaveall_frames(h,base)==(type==0?1:0), "M2: supersession agrees with the wire flags");
+      CHECK(source_reg(0)==(type==0?2:1) && sink_reg(0)==(type==0?2:1) && sink_reg(7)==(type==0?2:1),
+            "M3: superseded action never re-ages a peer rejoin");
+      CHECK(d->dbg_la_deadline_o==next, "M4: peer supersession leaves the timer deadline unchanged");
+    }
+      // Peer rLA versus slot acceptance, including the identical edge.
+    unsigned seen=0;
+    for(int release=3;release<=8;release++) {
+      uint32_t deadline=leaveall_setup(DECL_READY);
+      until_ms(deadline-20); d->block_alloc_i=1; until_ms(deadline+250);
+      size_t base=h.archive.size();
+      auto bytes=mrpdu_body(true,{la_only(4,4,false)});
+      size_t i=0;
+      for(int clk=0;clk<60;clk++) {
+        if(clk==release) d->block_alloc_i=0;
+        d->mrp_valid_i=i<bytes.size(); d->mrp_data_i=i<bytes.size()?bytes[i]:0;
+        d->mrp_last_i=i+1==bytes.size(); d->mrp_msrp_i=1;
+        if(h.step() && i<bytes.size()) i++;
+      }
+      d->mrp_valid_i=0; d->mrp_last_i=0;
+      CHECK(h.prep_cycles.size()==1 && h.peer_la_cycles.size()==1,
+            "M5: one allocation acceptance and one peer LeaveAll");
+      if(h.prep_cycles.empty() || h.peer_la_cycles.empty()) continue;
+      int delta=int(h.peer_la_cycles[0]-h.prep_cycles[0]);
+      if(delta>=-1 && delta<=1) seen |= 1u<<(delta+1);
+      bool own=delta>0;
+      h.run_ms(700);
+      CHECK(h.la_cycles.size()==size_t(own) && leaveall_frames(h,base)==int(own),
+            "M6: peer at acceptance cancels only an unaccepted sLA delta=%d",delta);
+      CHECK(source_reg(0)==(own?2:1) && sink_reg(7)==(own?2:1),
+            "M7: peer boundary agrees with both registrar planes");
+      printf("LEAVEALL_PEER release=%d rx_minus_accept=%d actions=%zu\n",release,delta,h.la_cycles.size());
+    }
+    CHECK(seen==7, "M8: peer boundary covers -1, 0 and +1 clocks");
+    // Calibrate only the real timer's phase, then inject bytes so the
+    // peer lane is just before, on, or just after that expiry edge.
+    uint32_t deadline=leaveall_setup(DECL_READY);
+    until_ms(deadline-1); uint64_t mark=h.t;
+    int guard=100;
+    while(h.expiry_cycles.empty() && guard--) h.cycle();
+    int phase=h.expiry_cycles.empty()?40:int(h.expiry_cycles[0]-mark);
+    for(int delta : {-1,0,1}) {
+      deadline=leaveall_setup(DECL_READY); until_ms(deadline-1);
+      h.idle(phase-7+delta); size_t base=h.archive.size();
+      h.feed(mrpdu_body(true,{la_only(4,4,false)}),true);
+      h.run_ms(600);
+      CHECK(h.expiry_cycles.size()==1 && h.peer_la_cycles.size()==1
+            && int(h.peer_la_cycles[0]-h.expiry_cycles[0])==delta,
+            "M9: peer and real timer expiry have the requested phase");
+      bool own=delta<0; // A later timer expiry is new intent; #108 is unchanged.
+      CHECK(h.la_cycles.size()==size_t(own) && leaveall_frames(h,base)==int(own)
+            && source_reg(0)==(own?2:1) && sink_reg(7)==(own?2:1),
+            "M10: peer supersession respects expiry ordering delta=%d",delta);
+      printf("LEAVEALL_EXPIRY peer_minus_expiry=%d actions=%zu\n",delta,h.la_cycles.size());
+    }
+  }
+
+  void check_own_leaveall_congestion_and_recovery() {
+    uint32_t deadline=leaveall_setup(DECL_READY,true);
+    until_ms(deadline-300); h.pause_tx=true;
+    until_ms(deadline+700);
+    CHECK(h.la_cycles.empty() && d->dbg_t_reg_o==0x5555 && d->dbg_l_reg_o==0x5555,
+          "N1: blocked previous TX keeps both registrar arrays IN");
+    listener_event(3,EV_LV,DECL_READY); talker_event(7,EV_LV);
+    CHECK(!h.active(3) && sink_reg(7)==0, "N2: both planes honor Lv while encoder is blocked");
+    size_t base=h.archive.size(); h.pause_tx=false;
+    int guard=800*MS_CYC;
+    while(h.la_cycles.empty() && guard--) h.cycle();
+    CHECK(h.la_cycles.size()==1, "N3: pending round accepts sLA after backpressure");
+    h.pause_tx=true; h.run_ms(700); // walk larger than the 12-entry table
+    CHECK(h.la_cycles.size()==1, "N4: delayed TX acceptance never repeats sLA");
+    h.pause_tx=false; h.run_ms(800);
+    CHECK(leaveall_frames(h,base)==1, "N5: full-table recovery emits one flagged round");
+    unsigned sources=0,sinks=0,types=0;
+    for(size_t j=base;j<h.archive.size();j++) {
+      auto p=parse_frame(h.archive[j]); if(!p.ok || !p.msrp) continue;
+      for(const auto& v:p.vecs) {
+        if(v.la) types |= 1u<<(v.type-1);
+        for(int k=0;k<v.nov;k++) for(int s=0;s<8;s++) {
+          auto sid=fv_u64(v.fv,0,8)+k;
+          if(v.type==1 && sid==own_sid(s)) sources|=1u<<s;
+          if(v.type==3 && sid==peer_sid(s) && v.fp[k]==(s&1?DECL_ASKFAIL:DECL_READY)) sinks|=1u<<s;
+        }
+      }
+    }
+    CHECK(types==15 && sources==255 && (sinks&127)==127 && !d->dbg_round_o,
+          "N6: full-table drain preserves all types and all live declarations");
+    for(int s=0;s<8;s++) {listener_event(s,EV_JOINMT,DECL_READY); talker_event(s,EV_JOINMT);}
+    bool healthy=true; uint32_t end=d->now_ms_o+5400;
+    while(d->now_ms_o<end) {h.cycle(); healthy &= d->active_o==255 && d->tk_reg_state_o==0x9999;}
+    CHECK(healthy, "N7: every renewed stream survives the old leave deadline");
+    CHECK(h.la_cycles.size()==1, "N8: completing queued ticks never replays the own action");
+    deadline=leaveall_setup(DECL_READY);
+    until_ms(deadline+10);
+    for(int vid=3;vid<11;vid++)
+      h.feed(mrpdu_body(true,{Msg{4,4,false,{Vec{false,1,fv_domain(6,3,vid),{EV_NEW},{}}}}}),true);
+    CHECK(d->dbg_enc_count_o==12 && h.la_cycles.empty(),
+          "N9: pending table is already full before sLA acceptance");
+    base=h.archive.size(); h.run_ms(800);
+    CHECK(h.la_cycles.size()==1 && leaveall_frames(h,base)==1 && !d->dbg_round_o,
+          "N10: already-full table drains and both walks complete");
+    deadline=leaveall_setup(DECL_READY);
+    until_ms(deadline-20); d->block_alloc_i=1;
+    until_ms(deadline+100); uint32_t second=d->dbg_la_deadline_o;
+    until_ms(second+300);
+    CHECK(h.la_cycles.empty() && source_reg(0)==1 && sink_reg(7)==1,
+          "N11: two timer expiries remain pending under allocation backpressure");
+    base=h.archive.size(); d->block_alloc_i=0; h.run_ms(800);
+    CHECK(h.la_cycles.size()==1 && leaveall_frames(h,base)==1,
+          "N12: repeated pending expiries coalesce into one accepted action");
+    // A short listener walk completes while the longer talker walk
+    // waits behind a full table. Later cadence ticks must keep that done bit.
+    deadline=leaveall_setup(DECL_READY,true,true);
+    until_ms(deadline+10); h.pause_tx=true;
+    for(int vid=3;vid<6;vid++)
+      h.feed(mrpdu_body(true,{Msg{4,4,false,{Vec{false,1,fv_domain(6,3,vid),{EV_NEW},{}}}}}),true);
+    until_ms(deadline+700);
+    h.pause_tx=false; h.run_ms(700);
+    CHECK(h.la_cycles.size()==1 && !d->dbg_round_o && !d->dbg_la_wait_o,
+          "N13: asymmetric walks preserve completion across blocked cadence ticks");
+  }
 
   void bring_up_the_port() {
     h.reset();
@@ -941,6 +1257,7 @@ class SrpTopHarness {
           if (v.type == 3 && fv_u64(v.fv, 0, 8) == SIDX
               && !v.fp.empty() && v.fp[0] == DECL_READY) ready = true;
       }
+      printf("NO_STORM cycle=%d frames=%d ready=%d\n",k,cnt,ready);
       total += cnt;
       if (cnt > worst_cycle) worst_cycle = cnt;
       if (ready) ready_cycles++;
@@ -1454,5 +1771,8 @@ class SrpTopHarness {
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   SrpTopHarness harness;
-  return harness.run();
+  const char* group = argc > 1 ? argv[1] : "";
+  if (*group && strcmp(group,"phases") && strcmp(group,"edge")
+      && strcmp(group,"peer") && strcmp(group,"congestion")) return 2;
+  return harness.run(group);
 }

@@ -473,11 +473,12 @@ void SrpStreamFsmsSuite::rx_events_match_table_10_3() {
 
 // ==== B. tx! / txLA! rows: transition + exact message, talker ===========
 void SrpStreamFsmsSuite::talker_tx_rows_send_the_table_10_3_message() {
-  for (int txla = 0; txla <= 1; ++txla) {
+  for (int txla = 0; txla <= 2; ++txla) {
     for (int S = 0; S < NSTATES; ++S) {
       h.reset();
       (void)t_goto(h, S);
-      if (txla) h.la_own();
+      if (txla == 1) h.la_own();
+      if (txla == 2) d->leaveall_own_i = 1;
       h.clear_logs();
       CHECK(h.tick(), "T tx walk %s txla=%d completes", SN[S], txla);
       int exp = app_next(S, txla ? eTxLA : eTx, false, true);
@@ -510,13 +511,14 @@ void SrpStreamFsmsSuite::talker_tx_rows_send_the_table_10_3_message() {
 
 // ==== B2. tx! / txLA! rows on the listener (Listener attribute) =========
 void SrpStreamFsmsSuite::listener_tx_rows_send_the_table_10_3_message() {
-  for (int txla = 0; txla <= 1; ++txla) {
+  for (int txla = 0; txla <= 2; ++txla) {
     for (int S = 0; S < NSTATES; ++S) {
       h.reset();
       (void)l_goto(h, S);
       // fourpack declared by the recipe: READY iff the recipe declared
       const bool declared = !(S == VO || S == AO || S == QO || S == LO);
-      if (txla) h.la_own();
+      if (txla == 1) h.la_own();
+      if (txla == 2) d->leaveall_own_i = 1;
       h.clear_logs();
       CHECK(h.tick(), "L tx walk %s txla=%d completes", SN[S], txla);
       int exp = app_next(S, txla ? eTxLA : eTx, false, true);

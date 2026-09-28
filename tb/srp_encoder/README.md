@@ -131,3 +131,12 @@ Restored tree: `556 checks: 556 PASS, 0 FAIL`, `scripts/lint_hdl.sh` clean.
 - The TX request face (`txreq_valid_o` held until accept + committed slot
   handle) matches the since-landed `KL_pp_tx_arbiter` requester contract
   (`req_valid_i[i]` + committed `tx_slot_i`, grant completes).
+
+The integrated MSRP own round uses the encoder's preparation handshake:
+acceptance with a reserved slot emits `sLA`, then the pending table accepts the induced
+applicant responses before the join drain. This unit wrapper ties preparation
+off to keep exercising the original per-application injection interface;
+[srp_top](../srp_top/README.md) exercises the preparation, cancellation,
+allocation/TX stalls, empty canceled reservations and full-table paths through
+real shared services. A canceled empty reservation waits for content or can be
+reused by a later own action; it does not emit an empty MRPDU.

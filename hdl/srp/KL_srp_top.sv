@@ -47,7 +47,11 @@
 //                the encoder drain only after both txop_done strobes (plus
 //                a high-water interim drain when the pending table fills
 //                mid-walk), so a cadence's messages ride that cadence's
-//                MRPDU instead of waiting a full T-MRP-JOIN.
+//                MRPDU instead of waiting a full T-MRP-JOIN. Own MSRP
+//                expiry only retains intent: the encoder reserves a slot
+//                before sLA ages the registrars and starts both txLA!
+//                walks. Peer LeaveAll supersedes an unaccepted own action
+//                without changing the timer cadence (issue #127).
 //                P-EN-SRP-ENGINE is elaboration-time: instantiating this
 //                module IS the engine; leaving it out leaves the identical
 //                srp contract to an external stack (02 §4.1).
@@ -311,9 +315,16 @@ module KL_srp_top
   // ========================================================================
   logic       p_join_fsm_r;    // T-MRP-JOIN (MSRP): tick the FSM walks
   logic       p_periodic_r;    // T-MRP-PERIODIC: all four participants
-  logic       p_la_msrp_r;     // own MSRP leavealltimer expiry
+  logic       p_la_msrp_w;     // accepted own MSRP sLA action
   logic       p_la_mvrp_r;     // own MVRP leavealltimer expiry
   logic [1:0] enc_join_r;      // encoder drain ticks {MVRP, MSRP}
+  logic       la_msrp_pend_r;  // timer intent, not a registrar event
+  logic       join_msrp_pend_r;
+  logic       la_wait_r;
+  logic       la_cancel_r;
+  logic       la_done_w;
+  logic       join_fsm_w;
+  assign join_fsm_w = p_join_fsm_r || la_done_w;
   logic [1:0] enc_la_r;        // encoder LeaveAllEvent lanes {MVRP, MSRP}
 
   // ========================================================================
@@ -349,7 +360,7 @@ module KL_srp_top
       .rxdom_vid_i         (dec_evt_vid_w),
       .rxdom_nov_i         (13'd1),
       .periodic_tick_i     (p_periodic_r),
-      .leaveall_tick_i     (dec_la_msrp_w[SRP_LA_DOMAIN_C] || p_la_msrp_r),
+      .leaveall_tick_i     (dec_la_msrp_w[SRP_LA_DOMAIN_C] || p_la_msrp_w),
       .dom_ev_valid_o      (dom_ev_valid_w),
       .dom_ev_event_o      (dom_ev_event_w),
       .dom_ev_value_o      (dom_ev_value_w),
@@ -513,10 +524,10 @@ module KL_srp_top
       .evt_vid_i           (dec_evt_vid_w),
       .evt_mrp_event_i     (dec_evt_mrp_event_w),
       .evt_fourpacked_i    (dec_evt_fourpacked_w),
-      .join_tick_i         (p_join_fsm_r),
+      .join_tick_i         (join_fsm_w),
       .periodic_tick_i     (p_periodic_r),
       .leaveall_rx_i       (dec_la_msrp_w),
-      .leaveall_own_i      (p_la_msrp_r),
+      .leaveall_own_i      (p_la_msrp_w),
       .txop_done_o         (tk_txop_done_w),
       .ev_valid_o          (tk_ev_valid_w),
       .ev_ready_i          (tk_ev_ready_w),
@@ -596,10 +607,10 @@ module KL_srp_top
       .evt_acc_latency_i       (dec_evt_acc_latency_w),
       .evt_failure_system_id_i (dec_evt_fail_sysid_w),
       .evt_failure_code_i      (dec_evt_fail_code_w),
-      .join_tick_i             (p_join_fsm_r),
+      .join_tick_i             (join_fsm_w),
       .periodic_tick_i         (p_periodic_r),
       .leaveall_rx_i           (dec_la_msrp_w),
-      .leaveall_own_i          (p_la_msrp_r),
+      .leaveall_own_i          (p_la_msrp_w),
       .txop_done_o             (ls_txop_done_w),
       .ev_valid_o              (ls_ev_valid_w),
       .ev_ready_i              (ls_ev_ready_w),
@@ -715,6 +726,10 @@ module KL_srp_top
       .ev_drop_o      (enc_ev_drop_w),
       .join_tick_i    (enc_join_r),
       .leaveall_i     (enc_la_r),
+      .la_prepare_i   (la_wait_r),
+      .la_cancel_i    (la_cancel_r || (|dec_la_msrp_w)),
+      .la_prepare_done_o (la_done_w),
+      .la_tx_o        (p_la_msrp_w),
       .own_mac_i      (own_mac_i),
       .alloc_req_o    (alloc_req_o),
       .oversize_o     (oversize_o),
@@ -959,6 +974,7 @@ module KL_srp_top
   logic       hw_full_q_r;
   logic       enc_msrp_full_w;
   logic       cad_hit_w;
+  logic       join_due_w;
   logic [31:0] cad_exp_ix_w;
 
   // lowest pending cadence index
@@ -972,6 +988,7 @@ module KL_srp_top
   // unsigned wrap maps below-base slots to huge indices — one bound check
   assign cad_exp_ix_w    = 32'(exp_slot_i) - CAD_SLOT_BASE_P;
   assign cad_hit_w       = exp_valid_i && (cad_exp_ix_w < N_CAD_C);
+  assign join_due_w = cad_hit_w && (cad_exp_ix_w == CAD_JOIN_MSRP_C);
   assign enc_msrp_full_w = (32'(enc_cnt_msrp_w) == ENC_DEPTH_P);
 
   assign draw_kind_o = 3'd3;   // T-MRP-LEAVEALL range (F08.2)
@@ -1005,7 +1022,10 @@ module KL_srp_top
       hw_full_q_r       <= 1'b0;
       p_join_fsm_r      <= 1'b0;
       p_periodic_r      <= 1'b0;
-      p_la_msrp_r       <= 1'b0;
+      la_msrp_pend_r    <= 1'b0;
+      join_msrp_pend_r  <= 1'b0;
+      la_wait_r         <= 1'b0;
+      la_cancel_r       <= 1'b0;
       p_la_mvrp_r       <= 1'b0;
       enc_join_r        <= 2'b00;
       enc_la_r          <= 2'b00;
@@ -1015,7 +1035,6 @@ module KL_srp_top
       draw_req_o   <= 1'b0;
       p_join_fsm_r <= 1'b0;
       p_periodic_r <= 1'b0;
-      p_la_msrp_r  <= 1'b0;
       p_la_mvrp_r  <= 1'b0;
       enc_join_r   <= 2'b00;
       enc_la_r     <= 2'b00;
@@ -1056,6 +1075,30 @@ module KL_srp_top
         end
       endcase
 
+      // A cadence tick coalesces while either walk is pending. Do not
+      // reset completion bits mid-round under encoder/TX backpressure.
+      if (!rnd_act_r && !la_wait_r && (join_msrp_pend_r || join_due_w)) begin
+        join_msrp_pend_r <= 1'b0;
+        if (la_msrp_pend_r && !(|dec_la_msrp_w)) begin
+          la_wait_r      <= 1'b1;
+          la_cancel_r    <= 1'b0;
+        end else begin
+          p_join_fsm_r <= 1'b1;
+          rnd_act_r   <= 1'b1;
+          td_tk_r     <= 1'b0;
+          td_ls_r     <= 1'b0;
+        end
+      end
+      if (la_done_w) begin
+        // Repeated expiries coalesce until this action is accepted. A
+        // canceled preparation must not consume a newer timer intent.
+        if (!la_cancel_r) la_msrp_pend_r <= 1'b0;
+        la_wait_r   <= 1'b0;
+        rnd_act_r   <= 1'b1;
+        td_tk_r     <= 1'b0;
+        td_ls_r     <= 1'b0;
+      end
+
       // ---- MSRP round completion + high-water interim drain -------------
       if (rnd_act_r && tk_txop_done_w) td_tk_r <= 1'b1;
       if (rnd_act_r && ls_txop_done_w) td_ls_r <= 1'b1;
@@ -1065,7 +1108,8 @@ module KL_srp_top
         rnd_act_r     <= 1'b0;
       end
       hw_full_q_r <= enc_msrp_full_w;
-      if (rnd_act_r && enc_msrp_full_w && !hw_full_q_r) begin
+      if ((rnd_act_r || la_done_w) && enc_msrp_full_w
+          && (!hw_full_q_r || la_done_w)) begin
         enc_join_r[0] <= 1'b1;   // pending table full mid-walk: interim drain
       end
 
@@ -1105,10 +1149,7 @@ module KL_srp_top
       if (cad_hit_w) begin
         unique case (cad_exp_ix_w[2:0])
           3'(CAD_JOIN_MSRP_C): begin
-            p_join_fsm_r <= 1'b1;    // walks first, encoder drain after
-            rnd_act_r    <= 1'b1;
-            td_tk_r      <= 1'b0;
-            td_ls_r      <= 1'b0;
+            if (rnd_act_r || la_wait_r) join_msrp_pend_r <= 1'b1;
             cad_pend_r[CAD_JOIN_MSRP_C] <= 1'b1;
             cad_dl_r[CAD_JOIN_MSRP_C]   <= now_ms_i + JOIN_MS_P;
           end
@@ -1123,8 +1164,7 @@ module KL_srp_top
             cad_dl_r[CAD_PERIODIC_C]   <= now_ms_i + PERIODIC_MS_P;
           end
           3'(CAD_LA_MSRP_C): begin
-            p_la_msrp_r    <= 1'b1;  // FSMs age + txLA!; Domain re-declares
-            enc_la_r[0]    <= 1'b1;  // LeaveAllEvent rides the next MSRP PDU
+            la_msrp_pend_r <= 1'b1;  // wait for a supported sLA opportunity
             need_draw_r[0] <= 1'b1;  // fresh 10-15 s draw re-arms the slot
           end
           default: begin             // CAD_LA_MVRP_C
@@ -1133,6 +1173,12 @@ module KL_srp_top
             need_draw_r[1] <= 1'b1;
           end
         endcase
+      end
+      // A peer supersedes only an unaccepted own sLA. Keep #108's timer
+      // cadence unchanged; neither re-arm nor request a new random draw.
+      if (|dec_la_msrp_w) begin
+        la_msrp_pend_r <= 1'b0;
+        if (la_wait_r) la_cancel_r <= 1'b1;
       end
     end
   end

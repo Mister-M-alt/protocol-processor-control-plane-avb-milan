@@ -22,7 +22,7 @@ CPP  = sim_main.cpp
 
 run:
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vsrp_top_sim
-	./obj_dir/Vsrp_top_sim
+	./obj_dir/Vsrp_top_sim $(RUN_ARGS)
 
 clean:
 	rm -rf obj_dir
