@@ -41,6 +41,11 @@ There is exactly one clock and one reset.
 [`KL_pp_side_port`](../../hdl/packet_engine/KL_pp_side_port.sv) is documented as being
 able to run from a bridged management clock; the top instantiates it on `clk_i`.
 
+The talker's automatic destination-address retry rounds require a running
+`now_ms_i` timebase. After a refused attempt, a stalled timebase prevents further
+attempts in that round, including probe-triggered requests. See
+[the retry bound](../architecture/05_acmp_engine.md#6bis-talker-side-stateless-responder).
+
 ---
 
 ## 2. Parameters — the shape is fixed when you build the bitstream

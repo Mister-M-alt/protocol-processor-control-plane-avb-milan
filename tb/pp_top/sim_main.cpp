@@ -8402,16 +8402,17 @@ struct InternalMaapPhase {
   // ---- MP3: the talker is granted from the INTERNAL claim -------------
   void mp3_the_talker_is_granted_from_the_internal_claim(uint64_t base) {
     d2->entity_enable_i = 1;
-    h2.run_ms(20);
+    h2.run_ms(100);
+    h2.idle(8 * (1024 + 64));  // retry period plus bounded acquisition sweep
     const uint64_t SID_T0 = (OWN_MAC << 16);       // wrap: sid[k] = {mac, k}
     auto prb = acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID,
                           0, 7, 0, 0, 0x6001, 0x000A, 0);
     h2.feed(prb);
     auto p = h2.wait_any(h2.q_acmp, 400);
-    // no DA is installed yet at the answer instant: the honest first answer
-    auto expp = acmp_frame(OWN_MAC, 1, 3, 0, CTLR_EID, EID, T1_EID,
-                           0, 7, 0, 0, 0x6001, 0x000A, 0);
-    CHECK(p == expp, "MP3: first PROBE_TX_RESPONSE DEST_MAC_FAILED");
+    // The claim was acquired independently of this first listener probe.
+    auto expp = acmp_frame(OWN_MAC, 1, 0, SID_T0, CTLR_EID, EID, T1_EID,
+                           0, 7, base, 0, 0x6001, 0x000A, 2);
+    CHECK(p == expp, "MP3: first PROBE_TX_RESPONSE succeeds after acquisition bound");
     for (int i = 0; i < 200 && !(d2->acmp_declaring_o & 1); i++) h2.idle(10);
     CHECK(h2.saw_decl_edge(0, true),
           "MP3: the internal grant opened acmp_declaring_o[0]");
@@ -9457,9 +9458,8 @@ struct Suite {
     CHECK(f == expf, "S10: GET_TX_STATE_RESPONSE byte-exact, DA 0");
     if (!f.empty() && f != expf) { dump("got", f); dump("exp", expf); }
 
-    // (c) a probe with no DA is answered TALKER_DEST_MAC_FAILED — the
-    //     honest degrade — and asks the (now present) allocator again
-    h.maap_on = true;
+    // (c) a probe while the allocator is still absent answers an honest
+    //     TALKER_DEST_MAC_FAILED. Allocation availability changes afterward.
     auto prb = acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID,
                           0, 7, 0, 0, 0x5151, 0x000A, 0);
     h.feed(prb);
@@ -9470,13 +9470,20 @@ struct Suite {
     CHECK(p == expp, "S10: PROBE_TX_RESPONSE DEST_MAC_FAILED byte-exact");
     if (!p.empty() && p != expp) { dump("got", p); dump("exp", expp); }
 
-    // (d) the grant travels: maap -> DA gate -> the published level
-    for (int i = 0; i < 200 && !(d->acmp_declaring_o & 1); i++) h.idle(10);
+    // (d) allocator availability alone recovers all enabled sources. Allow
+    // one 100 ms retry round plus the conservative 8704-core-clock sweep;
+    // the latter matters with this bench's compressed millisecond clock.
+    h.maap_on = true;
+    h.run_ms(100);
+    h.idle(8 * (1024 + 64));
     CHECK(h.saw_decl_edge(0, true),
           "S10: acmp_declaring_o[0] OBSERVED 0 -> 1 on the MAAP grant");
-    CHECK(h.maap_reqs.size() == 1 && h.maap_reqs[0].first == 0
-          && !h.maap_reqs[0].second, "S10: exactly one ALLOC_DA, source 0");
-    const uint64_t DA_G0 = H::maap_da(0);
+    unsigned allocated = 0;
+    for (const auto& request : h.maap_reqs)
+      if (!request.second) allocated |= 1u << request.first;
+    CHECK(h.maap_reqs.size() == 8 && allocated == 0xff,
+          "S10: exactly one ALLOC_DA for every enabled source");
+    const uint64_t DA_G0 = h.maap_src_da[0]; // address supplied by the BFM
 
     // (e) ... and reaches the ACMP answer
     auto gts2 = acmp_frame(CTLR_MAC, 4, 0, 0, CTLR_EID, EID, 0,

@@ -386,6 +386,7 @@ never through ACMP (Milan §5.5.2.7).
 ```mermaid
 stateDiagram-v2
     [*] --> NO_DA
+    NO_DA --> NO_DA: T-ACMP-DA-RETRY / paced ALLOC_DA
     NO_DA --> DA_OK: maap ALLOC_DA success
     DA_OK --> DECLARING: gate true [DA_OK AND (T-SRP-DAFRESH alive OR listener attr registered)] / srp DECLARE_TALKER
     DECLARING --> DA_OK: gate false / srp WITHDRAW_TALKER
@@ -407,6 +408,57 @@ that also answers PROBE_TX / DISCONNECT_TX / GET_TX_STATE for every source, and
 waiting forever on the response strands the GLOBAL allocation tracker so that no
 source anywhere reaches `DA_OK` — while the processor keeps answering every
 command normally.
+
+**Allocation recovery (issue #128).** Enabled `NO_DA` sources are revisited
+without a listener probe every `T-ACMP-DA-RETRY`. One attempt per
+source per round is allowed, including probe/listener-triggered requests;
+pending work coalesces rather than accumulating. Initial enable and conflict
+start a new acquisition lifetime. A conflict in `DA_OK` queues allocation at
+once; a conflict cancelling an in-flight allocation discards and releases its
+grant, then waits for new demand or the next `T-ACMP-DA-RETRY` round.
+The source picker rotates after each visit,
+so a refused low index cannot starve a later source when an allocation spans
+several rounds. Disabled sources do not allocate. An owned DA is kept, and
+`BACKOFF` is never eligible: neither the conflict nor PCP delay is shortened.
+The round uses `now_ms`, leaving the shared freshness/backoff slot untouched.
+Acquiring an address does not create demand or declare a stream.
+
+Commands and pending events alternate when both are present; a returned grant
+is consumed first. A retry can delay a solicited command by at most one
+`P-MAAP-ACCEPT-CYC` window plus record/dispatch overhead, rather than an
+allocator response wait. A conservative bound is `P-MAAP-ACCEPT-CYC + 64`
+core cycles for retry-induced command service. Existing PRNG service and
+higher-priority teardown/conflict event work retain their service assumptions.
+
+With no outstanding stale response debt, a stable allocator that accepts and
+answers in bounded time acquires every eligible source within one retry period
+plus a source sweep. For the parent one-cycle block adapter, conservatively
+allow `N_STREAM_OUT * (P-MAAP-ACCEPT-CYC + 64)` core clocks after the round
+boundary (8,704 clocks at the default shape, 87.04 microseconds at 100 MHz).
+Thus the late-availability bound is **`T-ACMP-DA-RETRY` plus that sweep**,
+including continuous solicited commands but excluding new configuration,
+conflict, PCP and other higher-priority event churn. A slower conforming
+allocator adds at most its bounded response latency per source. A permanently
+unanswered allocator cannot promise acquisition: the existing response
+watchdog and stale-credit capacity preserve bounded, honest failures instead.
+Rounds may meet at a boundary, so two adjacent attempts are possible; sustained
+traffic is bounded to one attempt per source per `T-ACMP-DA-RETRY` round.
+
+A grant invalidated by disable (even followed by re-enable) or conflict while
+in flight is never installed. Its successful allocation is released before a
+new one is attempted. Timeout responses retain FIFO stale-credit handling.
+The first probe after acquisition returns the cached valid tuple immediately;
+a probe before acquisition still returns `TALKER_DEST_MAC_FAILED`. This policy
+was chosen over waiting on demand because it repairs startup independently of
+listener timing and keeps allocation response waits off the command walker.
+
+**Consumer-visible timing change.** A `PROBE_TX` in a round that has already
+attempted does not force an immediate `ALLOC_DA`; it returns the honest cached
+status, and allocation resumes in the next round. Every enabled in-block source
+auto-acquires, whether or not that source was probed. Consumers must allow one
+retry round plus the sweep when observing an allocation, and associate each
+grant with its accepted request's source index, never the globally last grant.
+The processor/allocator ports and parameters are unchanged.
 
 The `source removed` arc is the one that must not degrade the same way. It wipes
 the record naming the address, so the `RELEASE_DA` it asks for is the only chance

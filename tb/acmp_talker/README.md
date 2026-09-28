@@ -5,7 +5,7 @@ Proves the ACMP stateless talker responder + per-source DA-gate
 (`hdl/acmp/KL_acmp_talker.sv`) against
 [05 §6bis](../../docs/architecture/05_acmp_engine.md) (F05.11 decision tree +
 F05.12 DA-gate) and the 08 §2/§5 timer contract: `make` = build + run, exit 0 =
-PASS, 839 checks. `make lint` runs the repo's zero-warning gate (no width
+PASS, 1342 checks. `make lint` runs the repo's zero-warning gate (no width
 waivers).
 
 The C++ harness is an independent model, never DUT logic: every expected
@@ -57,8 +57,7 @@ Two things the port `declaring_o` and the maap face own, checked on the PORTS:
   `maap_req_ready_i` tied 0 the request is offered for exactly
   P-MAAP-ACCEPT-CYC = 1024 cycles and then abandoned; the source lands in the
   refused-alloc state (PROBE_TX answers TALKER_DEST_MAC_FAILED, still pinging
-  freshness), every following command is still consumed and answered, each
-  new stimulus re-offers, and when maap returns the source recovers to
+  freshness), every following command is still consumed and answered, a later retry round re-offers, and when maap returns the source recovers to
   DECLARING. This is the regression test for the deadlock the single walker
   had: S_EV_MAAP was the only state with no exit but ready, and the same
   walker serves every source and every talker command.
@@ -67,7 +66,7 @@ Two things the port `declaring_o` and the maap face own, checked on the PORTS:
   GLOBAL tracker, so one request the allocator accepts and never answers
   stops allocation for *every* source — nothing reaches `GS_DA_OK`, no DA
   gate opens, and there is no SRP `DECLARE_TALKER` either. It never wedges:
-  transaction dispatch outranks the pending-init flag, so PROBE_TX and
+  commands alternate with pending events, so PROBE_TX and
   GET_TX_STATE keep answering and every liveness signal stays healthy while
   no stream can start. Section K accepts src 6's `ALLOC_DA` and goes quiet,
   then proves in order: src 2 cannot even OFFER a request (K2 — the defect);
@@ -76,8 +75,8 @@ Two things the port `declaring_o` and the maap face own, checked on the PORTS:
   the bound src 2 allocates again (K5 — the regression); src 6's LATE
   response, carrying a poison address, is swallowed and installs nothing on
   the source that is now tracked (K6); src 2's own response then completes
-  normally with its own DA (K7); and the abandoned source recovers on its
-  next stimulus with a fresh DA, never the poison one (K8).
+  normally with its own DA (K7); and the abandoned source recovers on a
+  paced retry with a fresh DA, never the poison one (K8).
 - **A RELEASE_DA is OWED, never attempted (section L).** An `ALLOC_DA` that
   cannot reach the face is safe to drop, because the stimulus that asked for
   it comes again; a `RELEASE_DA` has no such stimulus, and `EVC_OFF` wipes the
@@ -158,3 +157,164 @@ issue #46; run in a copy of the tree, the tracked files never edited):
   never reads the package. The same mutation fails `pp_top` (5), and
   `srp_stream_fsms` (4) and `srp_top` (1) through the SRP engine's own
   readers of the package.
+
+## Refused startup allocation recovery (issue #128)
+
+Section R adds 503 checks across seventeen independent fresh boots/scenario groups.
+The allocation BFM can supply a stable base-plus-source block, refuse out-of-range
+sources, refuse all requests, withhold ready or delay responses. All assertions
+observe ports; no internal state is forced. The parent adapter remains a separate
+integration regression in the consumer lane.
+
+| Case | Contract |
+|---|---|
+| R1 | All eight startup refusals recover automatically at 100 ms, never before; first probes succeed with the correct tuple; acquisition alone creates no declaration or timer arm; freshness still expires |
+| R2 | Repeated probes and listener changes share one attempt/source/round; disabled sources stay quiet, including listener events; every source recovers on re-enable |
+| R3 | Absent ready and continuously presented commands: every source gets a turn, each offer ends at 1024 cycles, response gap stays within 1088 cycles |
+| R4 | Successful grants invalidated by disable/re-enable or conflict are never installed; their releases precede fresh allocation |
+| R5 | Response timeout and time wrap, stale response swallowed before the retry response, silent-accept capacity saturates and resumes safely after draining |
+| R6 | Retry rounds leave conflict and PCP backoff/timer arms untouched; only conflict reallocates, while PCP retains its address |
+| R7 | Count growth, shrink and block move: every source's mapping is checked; out-of-block probes fail without a retry storm |
+| R8 | Retry deadline on both sides of the 32-bit millisecond wrap |
+| R9 | Six consecutive probes meet the command bound while an accepted allocation is silent and another source has INIT pending |
+| R10 | DA_OK conflict and refused-source disable/re-enable restart allocation inside the current round |
+| R11 | Continuous commands do not starve source disable/withdrawal or immediate/owed releases |
+| R12 | Probe, listener change and full backoff expiry each allocate between retry ticks; no round can mask a missing demand arc |
+| R13 | Disable and conflict swept over the response edge and following three edges never publish an obsolete grant and always release it |
+| R14 | Cancellation during allocation dispatch/read or at its action edge suppresses an obsolete request |
+| R15 | Re-enable at the release offer acquires immediately; release does not charge the allocation pacing bit |
+| R16 | Conflict, PCP, freshness and listener events act with GET_TX_STATE continuously valid on another source; gate state is sampled before commands stop, and responses keep flowing |
+| R17 | A never-ready allocator gets one offer per source per round; three repeated probes per source cannot re-offer inside either of two rounds, and the next round visits all sources |
+
+The acquisition bound and its assumptions are in
+[05 §6bis](../../docs/architecture/05_acmp_engine.md#6bis-talker-side-stateless-responder).
+R3 deliberately compresses a millisecond into a clock so an unaccepted request
+spans several retry rounds and exercises rotating arbitration under saturation.
+R1 and R8 hold time fixed to prove the exact pacing boundary. R17 holds time
+fixed throughout each probe group and counts offers rather than accepted requests,
+so an abandoned offer cannot escape the same-round limit.
+
+Run the new mutations with:
+
+```sh
+python3 tb/acmp_talker/retry_mutants.py --logs /tmp/acmp-retry-mutants
+```
+
+The runner copies only build inputs into a temporary directory, requires a
+simulation tally (a compiler error cannot kill a mutant), checks nonzero exits
+and named assertion failures, then restores the original RTL and requires rc 0.
+It records a failing witness by file and line for every new assertion site in
+`coverage.txt`. The complete table includes both review mutant sets. Equivalent single-term
+variants are controls and never count as killed witnesses; their construction
+arguments are recorded in `EQUIVALENT_MUTATIONS`. `PERFORMANCE_MUTATIONS`
+records the enable mask that avoids no-op walker visits: it preserves the
+contract but can change cycle traces, so it is not an equivalence claim.
+The redundant enable-edge
+clear was removed, with its reason in `REMOVED_EQUIVALENTS`. Simulation verdicts
+use DUT cycles only, with no host-time deadline. Final measured results follow.
+
+Measured on the expanded suite: 62 defect mutants killed, seven equivalent
+controls retained baseline behavior, and one performance control retained the
+contract bounds; baseline and restored runs pass 1342 checks.
+All 59 assertion sites in `retry_cases.hpp` have a killed witness. Counts below
+include named failures anywhere in the committed suite; `coverage.txt` separately
+requires a witness for each retry assertion site.
+
+| Mutant | Result | Named failing assertion |
+|---|---|---|
+| `no_round` | killed, 22 failures | R1 automatic bounded acquisition |
+| `early_round` | killed, 2 failures | R1 no retry before 100 ms |
+| `late_round` | killed, 22 failures | R1 automatic bounded acquisition |
+| `retry_wrap` | killed, 2 failures | R8 wrap retry bound minus one |
+| `no_pacing` | killed, 40 failures | R2 demand cannot bypass retry pacing |
+| `fixed_priority` | killed, 1 failures | R3 every source gets an attempt under continuous commands |
+| `command_monopoly` | killed, 9 failures | R3 every source gets an attempt under continuous commands |
+| `retry_monopoly` | killed, 60 failures | R3 absent allocator src0 consumed |
+| `disabled_alloc` | killed, 2 failures | R2 disabled listener event cannot allocate |
+| `no_accept_bound` | killed, 197 failures | R3 every source gets an attempt under continuous commands |
+| `short_accept_bound` | killed, 2 failures | R3 absent request respects accept bound |
+| `refusal_is_grant` | killed, 62 failures | R1 automatic bounded acquisition |
+| `obsolete_grant` | killed, 19 failures | R4 obsolete grant rejected src0 status/tuple |
+| `obsolete_release_lost` | killed, 11 failures | R4 obsolete successful allocation released before retry |
+| `no_response_bound` | killed, 16 failures | R5 timeout retries automatically across wrap |
+| `response_wrap` | killed, 1 failures | R5 no premature response timeout across wrap |
+| `no_stale_swallow` | killed, 9 failures | R5 stale timeout response src0 status/tuple |
+| `no_stale_capacity` | killed, 2 failures | R5 silent accepts stop at stale-credit capacity |
+| `no_stale_drain` | killed, 16 failures | R5 retry response src0 status/tuple |
+| `backoff_bypass` | killed, 2 failures | R6 retries leave backoff and timer untouched |
+| `reallocate_owned` | killed, 119 failures | R1 owned addresses are never reallocated |
+| `half_backoff` | killed, 6 failures | R6 full two-LeaveAll backoff armed |
+| `fresh_forever` | killed, 94 failures | R1 freshness expiry still withdraws every source |
+| `declare_without_demand` | killed, 158 failures | R1 acquired addresses neither declare nor borrow timer slots |
+| `source_alias` | killed, 172 failures | R1 first probe after bound src0 status/tuple |
+| `gate_without_ownership` | killed, 56 failures | R1 acquired addresses neither declare nor borrow timer slots |
+| `no_requests` | killed, 215 failures | R1 one refused startup attempt per source |
+| `no_command_ready` | killed, 693 failures | R1 first probe after bound src0 consumed |
+| `busy_tracker_blocks_commands` | killed, 62 failures | R4 obsolete grant rejected src0 consumed |
+| `no_conflict_wait_clear` | killed, 3 failures | R10 conflict immediately restarts acquisition |
+| `wait_on_release` | killed, 48 failures | R15 release does not consume re-enabled lifetime allocation attempt |
+| `tick_no_rearm` | killed, 43 failures | R2 one attempt per enabled source per round |
+| `no_rotate_advance` | killed, 1 failures | R3 every source gets an attempt under continuous commands |
+| `no_sticky_gp_window` | equivalent control, rc 0 | See construction argument below |
+| `grant_kill_reg_only` | killed, 3 failures | R13 cancellation kind0 edge3 never publishes obsolete grant |
+| `accept_kill_zero` | equivalent control, rc 0 | See construction argument below |
+| `kill_no_pending_conflict` | equivalent control, rc 0 | See construction argument below |
+| `kill_no_live_conflict` | killed, 2 failures | R13 cancellation kind0 edge3 never publishes obsolete grant |
+| `kill_no_disable` | killed, 1 failures | R13 cancellation kind1 edge3 never publishes obsolete grant |
+| `init_elig_no_avail` | killed, 15 failures | R9 consecutive command during silent allocation src1 consumed |
+| `no_turn_restore` | killed, 57 failures | R3 commands never starve behind retries (gap=0) |
+| `elig_drop_rel` | killed, 1 failures | R11 owed release serviced under continuous commands |
+| `elig_drop_off` | killed, 4 failures | R11 disable withdraws under continuous commands |
+| `ready_ignores_turn` | killed, 89 failures | B4 re-ping: timer arm missing |
+| `init_ignores_off_conflict` | killed, 2 failures | R14 cancellation kind0 prevents obsolete allocation offer |
+| `retry_period_200` | killed, 22 failures | R1 automatic bounded acquisition |
+| `tick_ge_to_gt` | killed, 22 failures | R1 automatic bounded acquisition |
+| `kill_no_conflict_at_all` | killed, 10 failures | R4 obsolete grant rejected src0 status/tuple |
+| `kill_no_disable_at_all` | killed, 9 failures | R4 obsolete grant rejected src0 status/tuple |
+| `kill_sticky_off` | killed, 10 failures | R4 obsolete grant rejected src0 status/tuple |
+| `no_probe_initset` | killed, 1 failures | R12 demand arc 0 allocates inside round |
+| `no_lsn_initset` | killed, 1 failures | R12 demand arc 1 allocates inside round |
+| `no_conflict_daok_initset` | killed, 39 failures | R10 conflict immediately restarts acquisition |
+| `no_backoff_exit_initset` | killed, 1 failures | R12 demand arc 2 allocates inside round |
+| `no_enable_wait_clear` | killed, 2 failures | R10 re-enable immediately restarts acquisition |
+| `eligible_only_init` | killed, 8 failures | R11 disable withdraws under continuous commands |
+| `accept_kill_no_disable` | equivalent control, rc 0 | See construction argument below |
+| `init_no_enable_check` | killed, 1 failures | R14 cancellation kind2 prevents obsolete allocation offer |
+| `eligible_ignores_init` | killed, 1 failures | R3 every source gets an attempt under continuous commands |
+| `tick_keeps_wait` | killed, 33 failures | R1 automatic bounded acquisition |
+| `no_get_tx_state_response` | killed, 131 failures | R16 conflict commands keep flowing (0) |
+| `elig_drop_conflict` | killed, 1 failures | R16 conflict event served under continuous commands (gates 0x02 want 0x00) |
+| `elig_drop_pcp` | killed, 1 failures | R16 pcp event served under continuous commands (gates 0x02 want 0x00) |
+| `elig_drop_tmr` | killed, 1 failures | R16 freshness event served under continuous commands (gates 0x02 want 0x00) |
+| `elig_drop_lsn` | killed, 1 failures | R16 listener event served under continuous commands (gates 0x02 want 0x06) |
+| `init_busy_else_removed` | equivalent control, rc 0 | See construction argument below |
+| `kill_w_no_off` | equivalent control, rc 0 | See construction argument below |
+| `init_ready_no_en` | performance control, rc 0 | Action-side enable guard retains the bounds |
+| `wait_only_on_accept` | killed, 4 failures | R17 absent same-round probes cannot re-offer |
+| `sticky_kill_ignores_accept` | equivalent control, rc 0 | See construction argument below |
+
+Equivalent controls are checked for a clean baseline result, not counted as kills.
+
+- `no_sticky_gp_window`: Until GRANT consumes gp_valid, OFF/CONFLICT cannot dispatch; their pending bits retain every cancellation through the grant action.
+- `accept_kill_zero`: Cancellation on accept is pending on the next busy edge; a response cannot be consumed as a grant before that edge latches the kill.
+- `accept_kill_no_disable`: An accept-edge disable sets OFF, which persists and latches the kill on the next busy edge before grant consumption.
+- `kill_no_pending_conflict`: A conflict after accept latches the live kill; an older pending conflict is captured by the accept-side kill expression.
+- `no_reenable_wait_clear`: Removed !en_q_r: reset clears wait and each disabled edge already clears it through !cfg_src_en_i; no enable-edge clear is needed.
+
+- `sticky_kill_ignores_accept`: An accept requires availability: busy and gp_valid are both clear, so the sticky-kill condition is false on that edge.
+
+- `init_busy_else_removed`: INIT dispatch requires availability; no other request can become accepted or create a grant before this walk reaches its action.
+
+- `kill_w_no_off`: Disable is captured live while busy or holding a grant; an older OFF is captured at accept, so its pending copy adds no cancellation.
+
+The three controls above and the identity control each show no output divergence
+in 16 seeds of 3,000,000 cycles against the original RTL. A known live-conflict
+cancellation defect diverges in 12 of those seeds. The earlier four equivalence
+controls and the removed enable-edge term also have 16-seed lockstep receipts
+from round 2; the production logic is unchanged in this round. These are finite
+simulation checks supporting the construction arguments, not formal proofs.
+
+The separate `init_ready_no_en` performance control (review m28) can dispatch
+extra no-op visits, but the action-side enable check still prevents allocation
+for a disabled source. It must pass the documented suite bounds and is never
+counted as an equivalent trace or a killed defect.

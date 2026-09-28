@@ -317,8 +317,11 @@ tally.
   the regression — a GET_TX_STATE_COMMAND is still answered byte-exact, plus
   a PROBE_TX answered byte-exact TALKER_DEST_MAC_FAILED. Before the accept
   window existed, one unaccepted allocation parked the single talker walker
-  forever and neither answer ever came. With the allocator on: the ALLOC_DA
-  is accepted for source 0, `acmp_declaring_o[0]` is observed rising 0 -> 1,
+  forever and neither answer ever came. After the allocator becomes available,
+  one retry period plus a bounded
+  sweep acquires all eight enabled sources without another probe (issue #128).
+  The address supplied by the allocator BFM is tracked per source;
+  `acmp_declaring_o[0]` is observed rising 0 -> 1,
   the granted address is what the next GET_TX_STATE_RESPONSE carries, and the
   same address appears as the dest MAC of the Talker Advertise on the MSRP
   wire — MAAP -> DA gate -> ACMP answer -> SRP declaration, end to end.
@@ -777,3 +780,9 @@ Every edge is aligned into a clean slot of the 200 ms join cadence
 drained into the same MRPDU would change the frame. The phase costs about 3.4 s
 of simulated time on its own model, so the main DUT's timeline is untouched.
 M25 to M31 in the mutation record are its evidence.
+
+Issue #128 also updates MP3 to wait the acquisition bound before its first
+probe, which must now succeed byte-exact with the internal claim's base address.
+S10 retains a failed probe while the allocator is absent, then proves recovery
+without another probe. The standalone talker retry suite carries the detailed
+pacing, fairness, late-response and block-change mutation matrix.

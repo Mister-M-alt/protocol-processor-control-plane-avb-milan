@@ -258,13 +258,17 @@ hang differently:
 | half | bound | what an unbounded version costs |
 |---|---|---|
 | request never ACCEPTED | `P-MAAP-ACCEPT-CYC` (1024 cycles, ≈10 µs at `P-CLK-HZ`, well inside `T-BUDGET-ACMP-RESP`) | the one event-serialized walker parks in the request state — and it also answers `PROBE_TX` / `DISCONNECT_TX` / `GET_TX_STATE` for every source, so the talker half of ACMP *and* SRP goes silent |
-| request accepted, never ANSWERED | `P-MAAP-RSP-MS` (10 s) | the single-outstanding tracker is GLOBAL, so allocation stops for **every** source: no `GS_DA_OK`, no DA gate, no `DECLARE_TALKER`. Nothing wedges — dispatch outranks the pending-init flag, so the processor answers normally forever while no stream can start |
+| request accepted, never ANSWERED | `P-MAAP-RSP-MS` (10 s) | the single-outstanding tracker is GLOBAL, so allocation stops for **every** source: no `GS_DA_OK`, no DA gate, no `DECLARE_TALKER`. Nothing wedges: command service continues while no stream can start |
 
 Both abandons leave the source exactly where a refused `ALLOC_DA` leaves it — no
-DA, no declaration, `PROBE_TX` answered `TALKER_DEST_MAC_FAILED` — and the retry
-is stimulus-driven, never self-scheduled (a self-retry would hold the global
-tracker for one bound per round and starve every higher-index source, since
-pending events are picked lowest-index-first).
+DA, no declaration, `PROBE_TX` answered `TALKER_DEST_MAC_FAILED` — and enabled
+sources retry in paced, rotating rounds. The retry and command-service bounds
+are specified in [05 §6bis](05_acmp_engine.md#6bis-talker-side-stateless-responder).
+No allocator-availability event or new interface signal is required.
+A `PROBE_TX` no longer forces an immediate `ALLOC_DA` in a round that already
+attempted. Every enabled in-block source auto-acquires, so consumers allow one
+`T-ACMP-DA-RETRY` round plus the source sweep and key each response by the source
+index of its accepted request, rather than treating the last grant as source 0.
 
 `P-MAAP-RSP-MS` is derived from **IEEE Std 1722-2016 Annex B**, because
 `ALLOC_DA` maps onto a real MAAP claim walk. Table B.8 gives
@@ -274,8 +278,10 @@ pending events are picked lowest-index-first).
 intervals, so ≤ **1800 ms** per attempt, and a conflicting probe/defend/announce
 restarts it (B.3.5.3) for another ≤ 1800 ms. 10 s covers a clean acquisition plus
 four conflict restarts. It must also stay **below `T-SRP-DAFRESH`** (15 s): a
-grant arriving after the `PROBE_TX` that triggered it has gone stale cannot open
-the gate anyway. The 30 s `MAAP_ANNOUNCE_INTERVAL_BASE` is *not* in the bound —
+grant arriving after a demand-triggering `PROBE_TX` has gone stale cannot open
+the gate without a registered Listener. Enable and periodic retry rounds now
+request allocation independently of probes; the existing watchdog is retained.
+The 30 s `MAAP_ANNOUNCE_INTERVAL_BASE` is *not* in the bound —
 the address is acquired on entry to `DEFEND`, before the first announce.
 
 **`RELEASE_DA` is owed, not attempted.** The degrade rule above applies to
