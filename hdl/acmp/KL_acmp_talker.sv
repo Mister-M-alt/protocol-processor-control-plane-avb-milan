@@ -79,13 +79,14 @@
 //                    reaches GS_DA_OK, so no DA gate opens, so there is no
 //                    talker egress AND no SRP DECLARE_TALKER — while the
 //                    processor stays perfectly responsive, because
-//                    transaction dispatch outranks the pending-init flag.
+//                    commands and pending events share the walker fairly.
 //                    Bounded by P-MAAP-RSP-MS, whose value is derived from
 //                    the IEEE 1722-2016 Annex B claim walk at its
 //                    declaration.
 //                Both abandons leave the source in exactly the state a
-//                REFUSED allocation leaves it in, and retry is stimulus
-//                driven. A response that arrives after an abandon is
+//                REFUSED allocation leaves it in. Enabled NO_DA sources
+//                retry once per T-ACMP-DA-RETRY round, in rotating order.
+//                A response that arrives after an abandon is
 //                SWALLOWED: it can never install a DA (see the abort policy
 //                at the maap tracker).
 //
@@ -135,7 +136,7 @@ module KL_acmp_talker
     //! P-CLK-HZ = 100 MHz 1024 cycles is 10.24 us, ~5000x inside the 50 ms
     //! T-BUDGET-ACMP-RESP of 08 §4. NOTE it times the request HANDSHAKE
     //! only — the allocation itself (maap_rsp_valid_i, legitimately seconds
-    //! of MAAP probing) is never timed out.
+    //! of MAAP probing) has its separate MAAP_RSP_MS_P bound.
     parameter int unsigned MAAP_ACCEPT_CYC_P = 1024,
     //! P-MAAP-RSP-MS: milliseconds an ACCEPTED maap request may go
     //! unanswered before it is ABANDONED. Distinct from P-MAAP-ACCEPT-CYC
@@ -145,7 +146,7 @@ module KL_acmp_talker
     //! a single GLOBAL tracker and maap_avail_w gates every source's
     //! ALLOC_DA, so nothing reaches GS_DA_OK, no DA gate ever opens, and
     //! there is neither talker egress nor an SRP DECLARE_TALKER. It does
-    //! not wedge: transaction dispatch outranks the pending-init flag, so
+    //! not wedge: command service is interleaved with pending events, so
     //! PROBE_TX / GET_TX_STATE keep answering normally and every liveness
     //! signal stays healthy while no stream can ever start.
     //!
@@ -439,6 +440,28 @@ module KL_acmp_talker
   //! closing on an offered release.
   logic [N_STREAM_OUT_P-1:0] pe_rel_r;
 
+  //! T-ACMP-DA-RETRY (08 F08.1): one allocation attempt per enabled source
+  //! per 100 ms round, including probe/listener-driven attempts. The round
+  //! uses the shared timebase, NOT the freshness/backoff timer slot. Pending
+  //! work coalesces across rounds; the rotating picker prevents a refusing
+  //! low index from monopolising the single-outstanding allocator.
+  localparam logic [31:0] DA_RETRY_MS_C = 32'd100;
+  logic [31:0] retry_t0_r;
+  logic retry_tick_w;
+  logic [N_STREAM_OUT_P-1:0] retry_wait_r, init_ready_w;
+  logic [SRC_W_C-1:0] retry_next_r, init_src_w;
+  logic txn_turn_r;
+  assign retry_tick_w = (now_ms_i - retry_t0_r) >= DA_RETRY_MS_C;
+  assign init_ready_w = pe_init_r & cfg_src_en_i & ~retry_wait_r;
+
+  always_comb begin : init_pick
+    init_src_w = retry_next_r;
+    for (int i = int'(N_STREAM_OUT_P) - 1; i >= 0; i--) begin
+      if (init_ready_w[(int'(retry_next_r) + i) % int'(N_STREAM_OUT_P)])
+        init_src_w = SRC_W_C'((int'(retry_next_r) + i) % int'(N_STREAM_OUT_P));
+    end
+  end
+
   logic [N_STREAM_OUT_P*2-1:0] lsn_q_r;   // edge detector
   logic [N_STREAM_OUT_P-1:0]   en_q_r;    // edge detector
 
@@ -450,6 +473,14 @@ module KL_acmp_talker
   logic               gp_valid_r;
   logic [SRC_W_C-1:0] gp_src_r;
   logic [47:0]        gp_da_r;
+  //! Sticky cancellation spans acceptance through grant consumption. A
+  //! disable/re-enable or block move must not revive an earlier allocation.
+  logic               maap_kill_r;
+  logic               maap_kill_w;
+  assign maap_kill_w = !cfg_src_en_i[maap_src_r] || pe_off_r[maap_src_r]
+                       || pe_conflict_r[maap_src_r]
+                       || (maap_conflict_valid_i
+                           && maap_conflict_src_i == maap_src_r);
 
   //! Responses owed for requests this engine has ABANDONED. A shim that
   //! accepted a request will answer it eventually; that answer is STALE and
@@ -557,6 +588,13 @@ module KL_acmp_talker
   dk_e                disp_kind_w;
   evc_e               disp_code_w;
   logic [SRC_W_C-1:0] disp_src_w;
+  logic               txn_eligible_w;
+  //! Eligibility is independent of txn_valid_i: the producer may itself
+  //! qualify valid with ready (top-level scoreboard admission).
+  assign txn_eligible_w = txn_turn_r
+                         || !(|pe_off_r || |pe_conflict_r || |pe_pcp_r
+                              || |pe_tmr_r || |pe_lsn_r || |pe_rel_r
+                              || (maap_avail_w && |init_ready_w));
 
   always_comb begin : dispatcher
     disp_kind_w = DK_NONE;
@@ -566,7 +604,7 @@ module KL_acmp_talker
       if (gp_valid_r) begin
         disp_kind_w = DK_EV;  disp_code_w = EVC_GRANT;
         disp_src_w  = gp_src_r;
-      end else if (txn_valid_i) begin
+      end else if (txn_valid_i && txn_eligible_w) begin
         disp_kind_w = DK_TXN;
       end else if (|pe_off_r) begin
         disp_kind_w = DK_EV;  disp_code_w = EVC_OFF;
@@ -590,9 +628,9 @@ module KL_acmp_talker
         //! address the rejoin had just been granted.
         disp_kind_w = DK_EV;  disp_code_w = EVC_REL;
         disp_src_w  = ffs_f(pe_rel_r);
-      end else if (|pe_init_r) begin
+      end else if (maap_avail_w && |init_ready_w) begin
         disp_kind_w = DK_EV;  disp_code_w = EVC_INIT;
-        disp_src_w  = ffs_f(pe_init_r);
+        disp_src_w  = init_src_w;
       end
     end
   end
@@ -692,18 +730,24 @@ module KL_acmp_talker
 
     unique case (ev_code_r)
       EVC_GRANT: begin
-        ev_rec2_w.da       = gp_da_r;
-        ev_rec2_w.da_valid = 1'b1;
-        if (rec_w.gstate == GS_NO_DA_C) begin
-          ev_rec2_w.gstate = GS_DA_OK_C;
-        end
-        ev_we_w    = 1'b1;
-        ev_daok2_w = ev_rec2_w.da_valid && !pe_conflict_r[ev_src_r];
-        ev_gate_w  = ev_daok2_w
-                     && (fresh_f(ev_rec2_w) || lsn_reg_f(ev_src_r));
-        if ((ev_rec2_w.gstate == GS_DA_OK_C) && ev_gate_w) begin
-          ev_rec2_w.gstate = GS_DECLARING_C;
-          ev_open_w        = 1'b1;
+        if (maap_kill_r || maap_kill_w) begin
+          // The allocator granted an obsolete request. Settle its release
+          // before any new allocation, without ever publishing that DA.
+          ev_relset_w = 1'b1;
+        end else begin
+          ev_rec2_w.da       = gp_da_r;
+          ev_rec2_w.da_valid = 1'b1;
+          if (rec_w.gstate == GS_NO_DA_C) begin
+            ev_rec2_w.gstate = GS_DA_OK_C;
+          end
+          ev_we_w    = 1'b1;
+          ev_daok2_w = ev_rec2_w.da_valid && !pe_conflict_r[ev_src_r];
+          ev_gate_w  = ev_daok2_w
+                       && (fresh_f(ev_rec2_w) || lsn_reg_f(ev_src_r));
+          if ((ev_rec2_w.gstate == GS_DA_OK_C) && ev_gate_w) begin
+            ev_rec2_w.gstate = GS_DECLARING_C;
+            ev_open_w        = 1'b1;
+          end
         end
       end
 
@@ -819,7 +863,8 @@ module KL_acmp_talker
       end
 
       default: begin  // EVC_INIT
-        if (rec_w.gstate == GS_NO_DA_C) begin
+        if ((rec_w.gstate == GS_NO_DA_C) && cfg_src_en_i[ev_src_r]
+            && !pe_off_r[ev_src_r] && !pe_conflict_r[ev_src_r]) begin
           if (maap_avail_w) begin
             ev_to_maap_w = 1'b1;
           end else begin
@@ -828,6 +873,34 @@ module KL_acmp_talker
         end
       end
     endcase
+  end
+
+  always_ff @(posedge clk_i) begin : retry_round
+    if (!rst_n) begin
+      retry_t0_r   <= now_ms_i;
+      retry_wait_r <= '0;
+      retry_next_r <= '0;
+      txn_turn_r   <= 1'b1;
+    end else begin
+      if (retry_tick_w) begin
+        retry_t0_r   <= now_ms_i;
+        retry_wait_r <= '0;
+      end
+      // A new configuration lifetime or conflict starts a new acquisition.
+      for (int i = 0; i < int'(N_STREAM_OUT_P); i++) begin
+        if (!cfg_src_en_i[i] || !en_q_r[i] || set_conflict_w[i])
+          retry_wait_r[i] <= 1'b0;
+      end
+      if ((state_r == S_EV_ACT) && ev_to_maap_w && !ev_maap_rel_w)
+        retry_wait_r[ev_src_r] <= 1'b1;
+      if ((state_r == S_IDLE) && disp_kind_w == DK_EV) begin
+        txn_turn_r <= 1'b1;
+        if (disp_code_w == EVC_INIT)
+          retry_next_r <= (disp_src_w == SRC_W_C'(N_STREAM_OUT_P - 1))
+                          ? '0 : disp_src_w + SRC_W_C'(1);
+      end
+      if (state_r == S_TXN_ACT) txn_turn_r <= 1'b0;
+    end
   end
 
   // ------------------------------------------------------------- FSM regs
@@ -953,8 +1026,8 @@ module KL_acmp_talker
           // asking for RELEASE_DA, and EVC_INIT only asks for ALLOC_DA from
           // GS_NO_DA — so a dropped request leaves the source exactly where
           // a refused allocation leaves it, with no DA and no declaration.
-          // The retry is stimulus-driven (probe / listener change / timer),
-          // identical to the refused-ALLOC path of the maap tracker below.
+          // The next paced retry round revisits enabled NO_DA sources,
+          // exactly as it does after a refused allocation.
           mreq_tmo_r <= mreq_tmo_r + MTMO_W_C'(1);
           if (maap_req_ready_i || maap_tmo_w) begin
             state_r <= S_IDLE;
@@ -973,14 +1046,10 @@ module KL_acmp_talker
   //!     ALLOC_DA from GS_NO_DA. So PROBE_TX answers TALKER_DEST_MAC_FAILED
   //!     and declaring_o stays shut — the same honest degradation the
   //!     P-MAAP-ACCEPT-CYC abandon already produces.
-  //!   - NO automatic retry and NO backoff: the retry is stimulus-driven,
-  //!     identical to a refused ALLOC. A self-retry would be worse than
-  //!     useless here — the walker picks pending events by ffs_f (lowest
-  //!     index first), so a source that re-armed itself every timeout would
-  //!     hold the single global tracker for one full bound per round and
-  //!     starve every higher-index source. A controller's own PROBE_TX
-  //!     re-arms the allocation (txn_initset_w) at exactly the rate it
-  //!     actually needs the stream, which is the honest pacing.
+  //!   - automatic retries use T-ACMP-DA-RETRY rounds and a rotating
+  //!     source picker. Commands alternate with pending events; even a
+  //!     refusing or silent low-index source cannot monopolise service.
+  //!     The existing stale-credit capacity still bounds unanswered work.
   //!   - a LATE response is IGNORED and cannot install a DA: the abandon
   //!     leaves a stale credit, and while a credit is outstanding the next
   //!     response is swallowed before it can be read as an answer to
@@ -995,6 +1064,7 @@ module KL_acmp_talker
       gp_valid_r   <= 1'b0;
       gp_src_r     <= '0;
       gp_da_r      <= 48'd0;
+      maap_kill_r  <= 1'b0;
     end else begin
       // the tracked request: armed by an accept, retired by its answer or
       // by the response bound
@@ -1003,13 +1073,19 @@ module KL_acmp_talker
         maap_src_r  <= mreq_src_r;
         maap_rel_r  <= mreq_rel_r;
         maap_t0_r   <= now_ms_i;
+        maap_kill_r <= !cfg_src_en_i[mreq_src_r] || pe_off_r[mreq_src_r]
+                       || pe_conflict_r[mreq_src_r]
+                       || (maap_conflict_valid_i
+                           && maap_conflict_src_i == mreq_src_r);
       end else if (maap_rsp_live_w || maap_rsp_tmo_w) begin
         maap_busy_r <= 1'b0;
       end
+      if (!maap_accept_w && (maap_busy_r || gp_valid_r) && maap_kill_w)
+        maap_kill_r <= 1'b1;
 
       // the grant: only ever from a LIVE ALLOC response
       if (maap_rsp_live_w && !maap_rel_r && maap_rsp_ok_i) begin
-        gp_valid_r <= 1'b1;        // a failed ALLOC retries on next stimulus
+        gp_valid_r <= 1'b1;        // refusals wait for the next retry round
         gp_src_r   <= maap_src_r;
         gp_da_r    <= maap_rsp_da_i;
       end
@@ -1043,7 +1119,7 @@ module KL_acmp_talker
     set_pcp_w      = '0;
     set_tmr_w      = '0;
     set_lsn_w      = '0;
-    set_init_w     = '0;
+    set_init_w     = retry_tick_w ? cfg_src_en_i : '0;
     set_off_w      = '0;
     set_rel_w      = '0;
     clr_disp_w     = '0;
@@ -1322,9 +1398,9 @@ module KL_acmp_talker
   assign rxs_free_o      = (state_r == S_TXN_ACT) && slot_ok_w;
   assign rxs_free_slot_o = txn_r.rx_slot[RXS_W_C-1:0];
 
-  //! Ready names the cycle that latches txn_i. A pending MAAP grant outranks
-  //! the transaction in S_IDLE, so withhold ready for that one event.
-  assign txn_ready_o = (state_r == S_IDLE) && !gp_valid_r;
+  //! Ready names exactly the dispatch that latches txn_i, including the
+  //! command/event alternation and the priority grant-consumption event.
+  assign txn_ready_o = (state_r == S_IDLE) && !gp_valid_r && txn_eligible_w;
 
   assign maap_req_valid_o   = (state_r == S_EV_MAAP);
   assign maap_req_release_o = mreq_rel_r;

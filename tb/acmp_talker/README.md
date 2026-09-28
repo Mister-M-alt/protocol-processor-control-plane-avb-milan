@@ -5,7 +5,7 @@ Proves the ACMP stateless talker responder + per-source DA-gate
 (`hdl/acmp/KL_acmp_talker.sv`) against
 [05 §6bis](../../docs/architecture/05_acmp_engine.md) (F05.11 decision tree +
 F05.12 DA-gate) and the 08 §2/§5 timer contract: `make` = build + run, exit 0 =
-PASS, 839 checks. `make lint` runs the repo's zero-warning gate (no width
+PASS, 1107 checks. `make lint` runs the repo's zero-warning gate (no width
 waivers).
 
 The C++ harness is an independent model, never DUT logic: every expected
@@ -57,8 +57,7 @@ Two things the port `declaring_o` and the maap face own, checked on the PORTS:
   `maap_req_ready_i` tied 0 the request is offered for exactly
   P-MAAP-ACCEPT-CYC = 1024 cycles and then abandoned; the source lands in the
   refused-alloc state (PROBE_TX answers TALKER_DEST_MAC_FAILED, still pinging
-  freshness), every following command is still consumed and answered, each
-  new stimulus re-offers, and when maap returns the source recovers to
+  freshness), every following command is still consumed and answered, a later retry round re-offers, and when maap returns the source recovers to
   DECLARING. This is the regression test for the deadlock the single walker
   had: S_EV_MAAP was the only state with no exit but ready, and the same
   walker serves every source and every talker command.
@@ -67,7 +66,7 @@ Two things the port `declaring_o` and the maap face own, checked on the PORTS:
   GLOBAL tracker, so one request the allocator accepts and never answers
   stops allocation for *every* source — nothing reaches `GS_DA_OK`, no DA
   gate opens, and there is no SRP `DECLARE_TALKER` either. It never wedges:
-  transaction dispatch outranks the pending-init flag, so PROBE_TX and
+  commands alternate with pending events, so PROBE_TX and
   GET_TX_STATE keep answering and every liveness signal stays healthy while
   no stream can start. Section K accepts src 6's `ALLOC_DA` and goes quiet,
   then proves in order: src 2 cannot even OFFER a request (K2 — the defect);
@@ -76,8 +75,8 @@ Two things the port `declaring_o` and the maap face own, checked on the PORTS:
   the bound src 2 allocates again (K5 — the regression); src 6's LATE
   response, carrying a poison address, is swallowed and installs nothing on
   the source that is now tracked (K6); src 2's own response then completes
-  normally with its own DA (K7); and the abandoned source recovers on its
-  next stimulus with a fresh DA, never the poison one (K8).
+  normally with its own DA (K7); and the abandoned source recovers on a
+  paced retry with a fresh DA, never the poison one (K8).
 - **A RELEASE_DA is OWED, never attempted (section L).** An `ALLOC_DA` that
   cannot reach the face is safe to drop, because the stimulus that asked for
   it comes again; a `RELEASE_DA` has no such stimulus, and `EVC_OFF` wipes the
@@ -158,3 +157,72 @@ issue #46; run in a copy of the tree, the tracked files never edited):
   never reads the package. The same mutation fails `pp_top` (5), and
   `srp_stream_fsms` (4) and `srp_top` (1) through the SRP engine's own
   readers of the package.
+
+## Refused startup allocation recovery (issue #128)
+
+Section R adds 268 checks across eight independent fresh boots/scenario groups.
+The allocation BFM can supply a stable base-plus-source block, refuse out-of-range
+sources, refuse all requests, withhold ready or delay responses. All assertions
+observe ports; no internal state is forced. The parent adapter remains a separate
+integration regression in the consumer lane.
+
+| Case | Contract |
+|---|---|
+| R1 | All eight startup refusals recover automatically at 100 ms, never before; first probes succeed with the correct tuple; acquisition alone creates no declaration or timer arm; freshness still expires |
+| R2 | Repeated probes and listener changes share one attempt/source/round; disabled sources stay quiet, including listener events; every source recovers on re-enable |
+| R3 | Absent ready and continuously presented commands: every source gets a turn, each offer ends at 1024 cycles, response gap stays within 1088 cycles |
+| R4 | Successful grants invalidated by disable/re-enable or conflict are never installed; their releases precede fresh allocation |
+| R5 | Response timeout and time wrap, stale response swallowed before the retry response, silent-accept capacity saturates and resumes safely after draining |
+| R6 | Retry rounds leave conflict and PCP backoff/timer arms untouched; only conflict reallocates, while PCP retains its address |
+| R7 | Count growth, shrink and block move: every source's mapping is checked; out-of-block probes fail without a retry storm |
+| R8 | Retry deadline on both sides of the 32-bit millisecond wrap |
+
+The acquisition bound and its assumptions are in
+[05 §6bis](../../docs/architecture/05_acmp_engine.md#6bis-talker-side-stateless-responder).
+R3 deliberately compresses a millisecond into a clock so an unaccepted request
+spans several retry rounds and exercises rotating arbitration under saturation.
+R1 and R8 hold time fixed to prove the exact pacing boundary.
+
+Run the new mutations with:
+
+```sh
+python3 tb/acmp_talker/retry_mutants.py --logs /tmp/acmp-retry-mutants
+```
+
+The runner copies only build inputs into a temporary directory, requires a
+simulation tally (a compiler error cannot kill a mutant), checks nonzero exits
+and new assertion failures, then restores the original RTL and requires rc 0.
+It records a failing witness by file and line for every new assertion site in
+`coverage.txt`. All 28 mutations below were killed. Baseline and restored runs both pass
+1107 checks; all 38 new assertion sites have a killed witness (2026-09-28).
+
+| Mutant | Suite rc | New assertion failures |
+|---|---:|---:|
+| `no_round` | 2 | 22 |
+| `early_round` | 2 | 2 |
+| `late_round` | 2 | 20 |
+| `retry_wrap` | 2 | 2 |
+| `no_pacing` | 2 | 6 |
+| `fixed_priority` | 2 | 1 |
+| `command_monopoly` | 2 | 1 |
+| `retry_monopoly` | 2 | 4 |
+| `disabled_alloc` | 2 | 1 |
+| `no_accept_bound` | 2 | 3 |
+| `short_accept_bound` | 2 | 1 |
+| `refusal_is_grant` | 2 | 47 |
+| `obsolete_grant` | 2 | 10 |
+| `obsolete_release_lost` | 2 | 3 |
+| `no_response_bound` | 2 | 5 |
+| `response_wrap` | 2 | 1 |
+| `no_stale_swallow` | 2 | 3 |
+| `no_stale_capacity` | 2 | 2 |
+| `no_stale_drain` | 2 | 2 |
+| `backoff_bypass` | 2 | 2 |
+| `reallocate_owned` | 2 | 9 |
+| `half_backoff` | 2 | 2 |
+| `fresh_forever` | 2 | 1 |
+| `declare_without_demand` | 2 | 7 |
+| `source_alias` | 2 | 31 |
+| `gate_without_ownership` | 2 | 15 |
+| `no_requests` | 2 | 61 |
+| `no_command_ready` | 2 | 221 |

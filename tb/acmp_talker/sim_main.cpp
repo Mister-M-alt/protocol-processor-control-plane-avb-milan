@@ -170,6 +170,8 @@ struct Hn {
   bool auto_grant = true;
   int da_seq = 0;
   bool grant_ok = true;              // false = the allocator REFUSES the alloc
+  int block_count = -1;              // >=0: stable block allocation by source
+  uint64_t block_base = da_pool(0);
   // request-face observation (works with ready low, where no request is ever
   // accepted and the mreqs log below stays empty)
   int  offers = 0;                   // rising edges of maap_req_valid_o
@@ -181,6 +183,7 @@ struct Hn {
   int  offers_alloc = 0;
   int  hold_cur = 0;                 // cycles a request has been offered
   int  hold_last = 0;                // cycles the last request was offered
+  std::vector<MReq> offered;
   // declaring_o edge log: the gate LEVEL must be seen MOVING, not read once
   uint32_t decl_prev = 0;
   std::vector<std::pair<int, bool>> decl_edges;   // {src, rising}
@@ -258,6 +261,7 @@ struct Hn {
     if (d->maap_req_valid_o) {
       if (hold_cur == 0) {
         ++offers;
+        offered.push_back({int(d->maap_req_src_o), bool(d->maap_req_release_o)});
         if (d->maap_req_release_o) ++offers_rel; else ++offers_alloc;
       }
       ++hold_cur;
@@ -269,7 +273,12 @@ struct Hn {
       mreqs.push_back(m);
       if (auto_grant) {
         mrsp_cnt = 3; mrsp_ok = grant_ok; mrsp_rel = m.rel;
-        mrsp_da = (m.rel || !grant_ok) ? 0 : da_pool(da_seq++);
+        if (block_count >= 0) {
+          mrsp_ok = grant_ok && m.src < block_count;
+          mrsp_da = (m.rel || !mrsp_ok) ? 0 : block_base + m.src;
+        } else {
+          mrsp_da = (m.rel || !grant_ok) ? 0 : da_pool(da_seq++);
+        }
       }
     }
     {
@@ -450,6 +459,7 @@ struct Hn {
   void check_an_unanswered_accept_strands_then_resumes();
   void check_a_late_stale_response_is_swallowed();
   void check_a_teardown_while_the_maap_face_is_busy();
+  void check_retry_cases();
   int report();
   int run_suite();
 };
@@ -823,6 +833,7 @@ void Hn::check_a_refused_maap_grant_keeps_the_gate_shut() {
   // a Listener registers: the gate's OTHER term is now true, so only the
   // missing DA can still hold it shut — and the allocator refuses again
   set_lsn(6, LSN_READY);
+  d->now_ms_i += 100;                     // retries share the 100 ms pacing
   run(40);
   expect_mreq("I3 listener retries the alloc", 6, false);
   CHECK(((decl_mask() >> 6) & 1) == 0,
@@ -1153,6 +1164,8 @@ int Hn::report() {
   return fails ? 1 : 0;
 }
 
+#include "retry_cases.hpp"
+
 int Hn::run_suite() {
   configure_the_talker_and_release_reset();
   check_the_boot_walk_allocates_every_source_da();
@@ -1169,6 +1182,7 @@ int Hn::run_suite() {
   check_an_unanswered_accept_strands_then_resumes();
   check_a_late_stale_response_is_swallowed();
   check_a_teardown_while_the_maap_face_is_busy();
+  check_retry_cases();
   return report();
 }
 

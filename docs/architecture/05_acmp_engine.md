@@ -408,6 +408,46 @@ waiting forever on the response strands the GLOBAL allocation tracker so that no
 source anywhere reaches `DA_OK` — while the processor keeps answering every
 command normally.
 
+**Allocation recovery (issue #128).** Enabled `NO_DA` sources are revisited
+without a listener probe every `T-ACMP-DA-RETRY` (100 ms). One attempt per
+source per round is allowed, including probe/listener-triggered requests;
+pending work coalesces rather than accumulating. Initial enable and conflict
+start a new acquisition lifetime. The source picker rotates after each visit,
+so a refused low index cannot starve a later source when an allocation spans
+several rounds. Disabled sources do not allocate. An owned DA is kept, and
+`BACKOFF` is never eligible: neither the conflict nor PCP delay is shortened.
+The round uses `now_ms`, leaving the shared freshness/backoff slot untouched.
+Acquiring an address does not create demand or declare a stream.
+
+Commands and pending events alternate when both are present; a returned grant
+is consumed first. A retry can delay a solicited command by at most one
+`P-MAAP-ACCEPT-CYC` window plus record/dispatch overhead, rather than an
+allocator response wait. A conservative bound is `P-MAAP-ACCEPT-CYC + 64`
+core cycles for retry-induced command service. Existing PRNG service and
+higher-priority teardown/conflict event work retain their service assumptions.
+
+With no outstanding stale response debt, a stable allocator that accepts and
+answers in bounded time acquires every eligible source within one retry period
+plus a source sweep. For the parent one-cycle block adapter, conservatively
+allow `N_STREAM_OUT * (P-MAAP-ACCEPT-CYC + 64)` core clocks after the round
+boundary (8,704 clocks at the default shape, 87.04 microseconds at 100 MHz).
+Thus the late-availability bound is **100 ms + 87.04 microseconds** at that
+shape, including continuous solicited commands but excluding new configuration,
+conflict, PCP and other higher-priority event churn. A slower conforming
+allocator adds at most its bounded response latency per source. A permanently
+unanswered allocator cannot promise acquisition: the existing response
+watchdog and stale-credit capacity preserve bounded, honest failures instead.
+Rounds may meet at a boundary, so two adjacent attempts are possible; sustained
+traffic is bounded to one attempt per source per 100 ms round.
+
+A grant invalidated by disable (even followed by re-enable) or conflict while
+in flight is never installed. Its successful allocation is released before a
+new one is attempted. Timeout responses retain FIFO stale-credit handling.
+The first probe after acquisition returns the cached valid tuple immediately;
+a probe before acquisition still returns `TALKER_DEST_MAC_FAILED`. This policy
+was chosen over waiting on demand because it repairs startup independently of
+listener timing and keeps allocation response waits off the command walker.
+
 The `source removed` arc is the one that must not degrade the same way. It wipes
 the record naming the address, so the `RELEASE_DA` it asks for is the only chance
 that address ever gets to come back: it is booked per source and retried until the
