@@ -53,6 +53,8 @@
 constexpr int N_SINKS   = 8;
 constexpr int REC_BASE  = 0x20;
 constexpr int DEB_TICKS = 50;      // -GDEB_TICKS_P
+//! DR2c: cycles a failed attempt waits before the next (-GRETRY_BACKOFF_CYC_P)
+constexpr long RETRY_BACKOFF = 600;
 constexpr int RETRY_MAX = 2;
 constexpr int REG_BYTES = 64;
 //! ACMP_REC_W_C (384 b, F07.6) carried as 32-bit Verilator words.
@@ -252,6 +254,8 @@ struct Harness {
     int len;
   };
   std::vector<DevOp> ops;
+  std::vector<long> op_cyc;      //! the grant cycle of each entry of ops
+  std::vector<long> err_cyc;     //! every cycle the device raised its err
   int d_st = 0;                  // 0 idle, 1 data, 2 completing
   int d_reqwait = 0;
   bool d_gnt = false;
@@ -465,6 +469,7 @@ struct Harness {
       d_cur = {int(d->dev_op_o), int(d->dev_region_o),
                int(d->dev_offset_o), int(d->dev_len_o)};
       ops.push_back(d_cur);
+      op_cyc.push_back(cycles);
       if (d_cur.op != OP_READ && d->arb_drain_o) ++writes_in_drain;
       if (d_cur.op == OP_ERASE && first_erase < 0) {
         first_erase = cycles;
@@ -533,7 +538,10 @@ struct Harness {
         if (d_cur.op == OP_READ) last_read_done = cycles;
         if (hold_cur) { hold_cur = false; hold_done_cyc = cycles; }
       }
-      if (err_ctr  > 0 && --err_ctr  == 0) { d_err  = true; d_busy = false; d_st = 0; }
+      if (err_ctr  > 0 && --err_ctr  == 0) {
+        d_err = true; d_busy = false; d_st = 0;
+        err_cyc.push_back(cycles);
+      }
     }
   }
 
@@ -833,6 +841,7 @@ struct Harness {
   void check_volatile_only_churn_costs_no_traffic();
   void check_unbind_capture_commits();
   void check_bounded_commit_retry_and_the_alarm();
+  void check_dr2c_attempts(size_t ops_from, size_t errs_from);
   void check_boot_replay_from_a_seeded_image();
   void check_a_torn_readback_aborts_the_whole_restore();
   void check_a_change_during_restore_wins();
@@ -967,11 +976,14 @@ void Harness::check_bounded_commit_retry_and_the_alarm() {
   CHECK(!d->alarm_o, "E3 a recovered retry never alarms");
   Bind b1b = b1; b1b.started = false;
   arm_err(OP_WRITE, REC_BASE + 1, -1, -1, 100);  // fail every WRITE
+  const size_t ops_e4 = ops.size();
+  const size_t errs_e4 = err_cyc.size();
   inject(1, b1b, 0x22);
   CHECK(run_until([&] { return d->alarm_o != 0; }, 6000),
         "E4 retries exhausted -> sticky side-port alarm");
   run(100);
   CHECK(d->dbg_dirty_o == 0, "E5 given-up record drops dirty (no livelock)");
+  check_dr2c_attempts(ops_e4, errs_e4);
   disarm_err();
   size_t ops_e = ops.size();
   Bind b4{true, false, true, 4, TK_A, CTL2};
@@ -982,7 +994,39 @@ void Harness::check_bounded_commit_retry_and_the_alarm() {
         "E6 the engine still commits after an alarm");
   CHECK(store_match(4, frame(uint8_t(REC_BASE + 4), payload_of(b4))),
         "E7 post-alarm record byte-exact");
+  run(4 * RETRY_BACKOFF);
+  CHECK(d->alarm_o != 0,
+        "E11 DR2c revocation: a later successful commit and time leave the "
+        "alarm set");
   (void)ops_e;
+}
+
+//! DR2c on the binding record that failed every WRITE since ops_from: three
+//! attempts in all (an attempt is the port's ERASE then WRITE of the
+//! record), each retry starting RETRY_BACKOFF cycles or more after the
+//! failed attempt's device error, and no fourth attempt however long after
+void Harness::check_dr2c_attempts(size_t ops_from, size_t errs_from) {
+  std::vector<long> starts;
+  for (size_t i = ops_from; i < ops.size(); ++i)
+    if (ops[i].op == OP_ERASE && ops[i].region == REC_BASE + 1)
+      starts.push_back(op_cyc[i]);
+  const std::vector<long> errs(err_cyc.begin() + long(errs_from), err_cyc.end());
+  CHECK(starts.size() == 3 && errs.size() == 3,
+        "E8 DR2c count: three attempts in all (%zu started, %zu failed)",
+        starts.size(), errs.size());
+  const bool spaced = starts.size() == 3 && errs.size() >= 2
+                      && starts[1] - errs[0] >= RETRY_BACKOFF
+                      && starts[2] - errs[1] >= RETRY_BACKOFF;
+  CHECK(spaced,
+        "E9 DR2c timing: each retry starts RETRY_BACKOFF_CYC_P cycles or more "
+        "after the failed attempt's error (%ld, %ld)",
+        starts.size() > 1 && !errs.empty() ? starts[1] - errs[0] : -1,
+        starts.size() > 2 && errs.size() > 1 ? starts[2] - errs[1] : -1);
+  run(4 * RETRY_BACKOFF);
+  size_t later = 0;
+  for (size_t i = ops_from; i < ops.size(); ++i)
+    later += ops[i].op == OP_ERASE && ops[i].region == REC_BASE + 1;
+  CHECK(later == 3, "E10 DR2c count: no fourth attempt (%zu)", later);
 }
 
 // ============================================ F: boot replay, seeded image

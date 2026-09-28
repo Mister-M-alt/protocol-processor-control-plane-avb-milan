@@ -103,10 +103,18 @@
 //                (T-NVM-DEBOUNCE). Its close arms one burst that drains
 //                every dirty record in round-robin order.
 //
-//                RETRY, THIS STAGE. A failed write is relatched and retried
-//                at once, at most RETRY_MAX_P more times, then dropped with
-//                the sticky `alarm_o`: the landed binding manager's policy.
-//                The ruled DR2c backoff lands in the stage after the restore.
+//                DR2c (parent D3 §6.1): at most 1 + RETRY_MAX_P = 3 attempts
+//                per record, the initial write included; an attempt starts
+//                when the arbiter grants its WRITE. After a failed attempt
+//                BACKOFF waits RETRY_BACKOFF_CYC_P complete clk_i cycles
+//                (500 ms, ceil(CLK_HZ_P / 2)) from the err, holding neither
+//                the state bus nor the port, then relatches the whole value
+//                afresh; relatching and later changes never replenish the
+//                count. The third failure drops the record with `alarm_o`
+//                (the port's reset-sticky nvm_alarm): no later success and
+//                no time clears it. A failure the backend reports after this
+//                writer's done is not an attempt of it: from that done the
+//                backend owns the record (parent DR2c-carrier correction).
 //
 //                AN ABORT IN PASS 1 ROLLS BACK (parent D3 §8.6). The restore
 //                wrote only into reset state, so the undo is a reset: `rb_rst_o`
@@ -139,6 +147,10 @@ module KL_aecp_nvm_writer #(
     parameter int unsigned DEB_TICKS_P    = 500,
     //! additional attempts after a failed first write (F07.9)
     parameter int unsigned RETRY_MAX_P    = 2,
+    //! DR2c: clk_i cycles a failed attempt waits before the next; the top
+    //! derives it from CLK_HZ_P as ceil(CLK_HZ_P / 2) = 500 ms (this default
+    //! is 500 ms at the F01.5 default P-CLK-HZ of 100 MHz)
+    parameter int unsigned RETRY_BACKOFF_CYC_P = 50_000_000,
     //! T-NVM-RS-DEADLINE (F08.1), P-NVM-RS-TMO-CYC (F01.5): clocks a restore
     //! wait may pass without its event before the restore aborts
     parameter int unsigned RS_TMO_CYC_P   = 2_000_000,
@@ -237,6 +249,9 @@ module KL_aecp_nvm_writer #(
       || (N_STREAM_IN_P < 1) || (N_STREAM_IN_P > 16)
       || (N_STREAM_OUT_P < 1) || (N_STREAM_OUT_P > 16)) begin : g_shape_check
     $error("KL_aecp_nvm_writer: a group outgrows its record-id block");
+  end
+  if (RETRY_BACKOFF_CYC_P < 1) begin : g_backoff_check
+    $error("KL_aecp_nvm_writer: RETRY_BACKOFF_CYC_P must be at least 1");
   end
   //! zero would wrap RS_TMO_CYC_P - 1 below into a 2^32-clock deadline
   if (RS_TMO_CYC_P < 1) begin : g_rs_tmo_check
@@ -745,7 +760,7 @@ module KL_aecp_nvm_writer #(
   // ============================================================================
   // the writer in service
   // ============================================================================
-  typedef enum logic [2:0] {
+  typedef enum logic [3:0] {
     S_RUN,      // wait for the armed burst and a dirty record
     S_ACQ,      // own the bus; wait until the engine reads idle
     S_LATCH,    // one state-bus read of the record's row
@@ -753,7 +768,8 @@ module KL_aecp_nvm_writer #(
     S_CRC,      // the crc over the header without its crc, then the payload
     S_REQ,      // the commit request, held until the arbiter grants it
     S_STREAM,   // the 8 header bytes and the payload
-    S_WAIT      // the port's done or err
+    S_WAIT,     // the port's done or err
+    S_BACKOFF   // DR2c: RETRY_BACKOFF_CYC_P cycles from a failed attempt
   } sstate_e;
 
   sstate_e          ss_r;
@@ -764,6 +780,7 @@ module KL_aecp_nvm_writer #(
   logic [4:0]       cix_r;          // crc byte cursor over header 0..5 + payload
   logic [4:0]       six_r;          // stream byte cursor 0 .. 7 + plen
   logic [31:0]      attempts_r;
+  logic [31:0]      bo_cnt_r;       // the backoff's remaining cycles
   logic             taint_r;
   logic [N_REC_C-1:0] dirty_r;
   logic             alarm_r;
@@ -889,6 +906,7 @@ module KL_aecp_nvm_writer #(
       cix_r      <= 5'd0;
       six_r      <= 5'd0;
       attempts_r <= 32'd0;
+      bo_cnt_r   <= 32'd0;
     end else begin
       unique case (ss_r)
         S_RUN: begin
@@ -930,7 +948,10 @@ module KL_aecp_nvm_writer #(
         end
         S_STREAM, S_WAIT: begin
           if (write_err_w) begin
-            ss_r <= giveup_w ? S_RUN : S_ACQ;   // relatch, bounded; else drop
+            //! the third failure drops the record (alarm); an earlier one
+            //! waits out the backoff, then relatches
+            ss_r     <= giveup_w ? S_RUN : S_BACKOFF;
+            bo_cnt_r <= RETRY_BACKOFF_CYC_P;
             if (giveup_w) rr_r <= hand_r + RW_C'(1);
           end else if (ss_r == S_STREAM) begin
             if (m_wready_i) begin
@@ -941,6 +962,10 @@ module KL_aecp_nvm_writer #(
             rr_r <= hand_r + RW_C'(1);
             ss_r <= S_RUN;                      // dirty cleared (dirty_ff)
           end
+        end
+        S_BACKOFF: begin
+          if (bo_cnt_r <= 32'd1) ss_r <= S_ACQ;  // a fresh latch, attempts kept
+          else                   bo_cnt_r <= bo_cnt_r - 32'd1;
         end
         default: ss_r <= S_RUN;
       endcase

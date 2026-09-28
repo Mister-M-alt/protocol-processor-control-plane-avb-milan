@@ -58,10 +58,12 @@ tally.
   WRITE are both written after it. **D3S7** SET_CONTROL on IDENTIFY raises
   no pending and moves no NVM operation. **D3S8** (DR2b) an identical
   rewrite after convergence moves nothing, and clock source 0 on the unset
-  row, a row becoming valid at its reset value, is written. **D3S10** a
-  record whose WRITEs all fail is attempted three times, then dropped with
-  the sticky `nvm_alarm_o`; no fourth attempt follows and a later
-  successful write does not clear the alarm. **D3S11** a READ_DESCRIPTOR
+  row, a row becoming valid at its reset value, is written. **D3S10** (DR2c)
+  a record whose WRITEs all fail is attempted three times in all, each
+  retry granted `NVM_RETRY_BACKOFF_CYC_P` cycles or more after the failed
+  attempt's error (the wrap sets 50,000: 500 ms of its compressed time),
+  then dropped with the reset-sticky `nvm_alarm_o`; no fourth attempt
+  follows and a later successful write does not clear the alarm. **D3S11** a READ_DESCRIPTOR
   whose fetch the memory answers 3,000 cycles late is running when the
   debounce closes: the writer holds dispatch but not the state bus until
   it retires, then latches. **D3S9** grades every cycle of the phase: no

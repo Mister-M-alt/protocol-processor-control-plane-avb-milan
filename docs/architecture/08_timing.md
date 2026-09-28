@@ -42,6 +42,7 @@ plain-IEEE build where different; blank = same).
 | T-MRP-PERIODIC | 1000 ms (900–1500) | SRP engine (10) | periodictimer — periodic re-join transmissions | Milan Table 4.3 | |
 | T-NVM-DEBOUNCE | ≈ 500 ms (design) | NVM mgr | commit coalescing | design | |
 | T-NVM-RS-DEADLINE | `P-NVM-RS-TMO-CYC` clocks without progress (default 20 ms) | NVM mgr | the boot restore walk's read phase: expiry fails the whole walk and abandons an issued read ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) | design (persistence that wedges must not hold the entity) | a clock counter in the manager, not a timer-service slot |
+| T-NVM-RETRY-BACKOFF | `P-NVM-RETRY-BACKOFF-CYC` clocks (500 ms) from a failed record write | NVM mgr, D3 writer | DR2c: at most three attempts per record (`RETRY_MAX_P` = 2 retries), this wait before each retry, then the reset-sticky `nvm_alarm_o` | parent DR2c ruling | a clock counter in each producer, not a timer-service slot |
 | T-TX-AGING | 10 ms (design) | TX arbiter | starvation promotion | design | |
 | T-BUDGET-ACMP-RESP | ≤ 50 ms (design) | budgets | see §4 | design | |
 | T-BUDGET-AECP-TYP / -WC | ≤ 20 ms / ≤ 100 ms (design) | budgets | see §4 | design | |

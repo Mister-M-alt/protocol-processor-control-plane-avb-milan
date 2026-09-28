@@ -39,7 +39,7 @@
     <text x="464" y="470">DESC_BASE_P · RESP_BASE_P</text>
     <text x="464" y="488">DESC_LINE_BYTES_P · DESC_IDX_ENTRIES_P</text>
     <text x="464" y="506">DESC_NAME_ENTRIES_P · DESC_MEM_TMO_CYC_P</text>
-    <text x="464" y="524">NVM_RS_TMO_CYC_P</text>
+    <text x="464" y="524">NVM_RS_TMO_CYC_P · NVM_RETRY_BACKOFF_CYC_P</text>
     <text x="464" y="542">REG_TL_TIMEOUT_MS_P · LOCK_TIMEOUT_MS_P</text>
     <text x="464" y="560">SRP_DOM_DEF_VID_P</text>
   </g>

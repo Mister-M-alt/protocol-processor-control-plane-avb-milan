@@ -352,6 +352,7 @@ module pp_top_wrap (
     //! the writer's per-record dirty vector (27 records at this shape)
     output logic        dbg_d3_mgnt_o,
     output logic        dbg_d3_mdone_o,
+    output logic        dbg_d3_merr_o,
     output logic [26:0] dbg_d3_dirty_o,
     //! the writer is latching a record over the state bus in service
     output logic        dbg_d3_latch_o,
@@ -413,6 +414,9 @@ module pp_top_wrap (
       //! record read of its device model takes well under a hundred, so
       //! section BW3 sees the deadline expire at a hundredth of that
       .NVM_RS_TMO_CYC_P    (20_000),
+      //! DR2c's 500 ms backoff in this bench's compressed time (1 ms = 100
+      //! clk), as the debounce runs: the product derives ceil(CLK_HZ_P / 2)
+      .NVM_RETRY_BACKOFF_CYC_P (50_000),
       .TROM_HEX_P   ("ltn_rom.hex"),
       .UCODE_HEX_P  ("ucode.hex")
   ) u_dut (
@@ -663,6 +667,7 @@ module pp_top_wrap (
   assign dbg_aecp_head_o  = u_dut.aecp_txn_valid_w;
   assign dbg_d3_mgnt_o    = u_dut.d3_m_gnt_w;
   assign dbg_d3_mdone_o   = u_dut.d3_m_done_w;
+  assign dbg_d3_merr_o    = u_dut.d3_m_err_w;
   assign dbg_d3_dirty_o   = u_dut.u_aecp.u_d3.dirty_r;
   assign dbg_d3_latch_o   = u_dut.u_aecp.u_d3.latch_w;
   assign dbg_dyn_cfg_o    = u_dut.u_aecp.u_dyn.cfg_r;

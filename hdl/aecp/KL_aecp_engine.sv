@@ -296,6 +296,9 @@ module KL_aecp_engine
     //! T-NVM-RS-DEADLINE (F08.1), P-NVM-RS-TMO-CYC (F01.5): the D3 restore's
     //! per-wait deadline in clocks (KL_aecp_nvm_writer)
     parameter int unsigned NVM_RS_TMO_CYC_P    = 2_000_000,
+    //! DR2c: the D3 writer's backoff after a failed write attempt, clocks
+    //! (500 ms at the F01.5 default P-CLK-HZ; the top derives it)
+    parameter int unsigned NVM_RETRY_BACKOFF_CYC_P = 50_000_000,
     //! derived — do not override
     localparam int unsigned RXS_W_C  = (RX_SLOTS_P > 1) ? $clog2(RX_SLOTS_P) : 1,
     localparam int unsigned RXA_W_C  = $clog2(RX_SLOT_BYTES_P),
@@ -1808,7 +1811,8 @@ module KL_aecp_engine
       .N_STREAM_OUT_P (N_STREAM_OUT_P),
       .N_AUDIO_UNIT_P (N_AUDIO_UNIT_P),
       .N_CLK_DOMAIN_P (N_CLK_DOMAIN_P),
-      .RS_TMO_CYC_P   (NVM_RS_TMO_CYC_P)
+      .RS_TMO_CYC_P   (NVM_RS_TMO_CYC_P),
+      .RETRY_BACKOFF_CYC_P (NVM_RETRY_BACKOFF_CYC_P)
   ) u_d3 (
       .clk_i       (clk_i),
       .rst_n       (rst_n),

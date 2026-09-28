@@ -128,6 +128,12 @@ module protocol_processor_top
     //! device face can take; a silent device then ends the walk here instead
     //! of holding the listener (and an enable gated on restore_done_o) for ever.
     parameter int unsigned NVM_RS_TMO_CYC_P    = CLK_HZ_P / 32'd50,
+    //! DR2c (P-NVM-RETRY-BACKOFF-CYC, F01.5): clk_i cycles a record
+    //! producer waits after a failed write attempt before the next, for the
+    //! binding manager and the D3 writer alike: ceil(CLK_HZ_P / 2) = 500 ms,
+    //! computed without a multiply or an overflow. At most three attempts
+    //! per record, then the reset-sticky nvm_alarm_o.
+    parameter int unsigned NVM_RETRY_BACKOFF_CYC_P = (CLK_HZ_P / 32'd2) + (CLK_HZ_P % 32'd2),
     //! IEEE §7.4.37.2's 300 s TIME_LIMITED registration window and IEEE
     //! §7.4.2's 60 s lock, in ms of the (possibly TIM-compressed) timebase.
     //! Parameters for the same reason TIM_DIV_* are: a suite that needs to
@@ -2514,8 +2520,9 @@ module protocol_processor_top
   logic        d3_done_w, d3_fail_w, d3_closed_w, d3_blank_w;
 
   KL_acmp_nvm_shadow #(
-      .N_SINKS_P    (N_STREAM_IN_P),
-      .RS_TMO_CYC_P (NVM_RS_TMO_CYC_P)
+      .N_SINKS_P           (N_STREAM_IN_P),
+      .RS_TMO_CYC_P        (NVM_RS_TMO_CYC_P),
+      .RETRY_BACKOFF_CYC_P (NVM_RETRY_BACKOFF_CYC_P)
   ) u_nvm_shadow (
       .clk_i            (clk_i),
       .rst_n            (rst_n),
@@ -3407,7 +3414,8 @@ module protocol_processor_top
       .TX_STD_SLOTS_P      (TX_STD_SLOTS_P),
       .TX_STD_BYTES_P      (576),
       .TX_OVERSIZE_BYTES_P (TX_OVERSIZE_BYTES_P),
-      .NVM_RS_TMO_CYC_P    (NVM_RS_TMO_CYC_P)
+      .NVM_RS_TMO_CYC_P    (NVM_RS_TMO_CYC_P),
+      .NVM_RETRY_BACKOFF_CYC_P (NVM_RETRY_BACKOFF_CYC_P)
   ) u_aecp (
       .clk_i              (clk_i),
       .rst_n              (rst_n),

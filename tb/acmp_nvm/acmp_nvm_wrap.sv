@@ -10,8 +10,8 @@
 //  Description : Integration wrap for the KL_acmp_nvm_shadow suite: the
 //                shadow, the REAL KL_pp_nvm_port behind the REAL
 //                KL_pp_nvm_mgr_arb (the shadow is its manager 0; manager 1
-//                is a harness face, as the platform's saved-state writer
-//                will be), the REAL
+//                is a harness face here, standing where the processor's
+//                D3 writer, KL_aecp_nvm_writer, sits in the top), the REAL
 //                KL_pp_acmp_listener and the REAL KL_pp_acmp_lsn_admit wired
 //                at their landed faces, the way protocol_processor_top wires
 //                them — the shadow's capture face on the listener's record
@@ -52,6 +52,7 @@ module acmp_nvm_wrap
     parameter int unsigned  DEB_TICKS_P   = 500,
     parameter int unsigned  RETRY_MAX_P   = 2,
     parameter int unsigned  RS_TMO_CYC_P  = 3000,
+    parameter int unsigned  RETRY_BACKOFF_CYC_P = 600,
     parameter string        TROM_HEX_P    = "ltn_rom.hex",
     localparam int unsigned SINK_W_C = (N_SINKS_P > 1) ? $clog2(N_SINKS_P) : 1
 ) (
@@ -249,7 +250,8 @@ module acmp_nvm_wrap
       .REC_ID_BASE_P(REC_ID_BASE_P),
       .DEB_TICKS_P  (DEB_TICKS_P),
       .RETRY_MAX_P  (RETRY_MAX_P),
-      .RS_TMO_CYC_P (RS_TMO_CYC_P)
+      .RS_TMO_CYC_P (RS_TMO_CYC_P),
+      .RETRY_BACKOFF_CYC_P (RETRY_BACKOFF_CYC_P)
   ) u_shadow (
       .clk_i           (clk_i),
       .rst_n           (rst_n),

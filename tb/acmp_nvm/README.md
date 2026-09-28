@@ -5,14 +5,17 @@ Proves the ACMP binding NVM shadow (`hdl/acmp/KL_acmp_nvm_shadow.sv`,
 [05 §5](../../docs/architecture/05_acmp_engine.md) ≈20 B/sink shadow +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8/F07.9 +
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8): `make` = build + run,
-exit 0 = PASS, 349 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
-timing mirrors (tick_i is held high, so window = 50 cycles), and
+exit 0 = PASS, 353 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
+timing mirrors (tick_i is held high, so window = 50 cycles),
 `-GRS_TMO_CYC_P=3000` the walk's read deadline (`T-NVM-RS-DEADLINE`) that group N
-places its boundaries against.
+places its boundaries against, and `-GRETRY_BACKOFF_CYC_P=600` the DR2c wait
+after a failed commit attempt (`T-NVM-RETRY-BACKOFF`, 500 ms in the product)
+that group E grades.
 
 The wrap compiles the shadow together with the REAL `KL_pp_nvm_port` (class-F
 manager face) behind the REAL `KL_pp_nvm_mgr_arb` (the shadow is its manager 0;
-manager 1 is a harness face, as the platform's saved-state writer will be), the
+manager 1 is a harness face here; in the top it is the processor's D3 writer,
+`KL_aecp_nvm_writer`), the
 REAL `KL_pp_acmp_listener` (capture from its record write
 port, boot replay into its `pre_*` preload face) and the REAL
 `KL_pp_acmp_lsn_admit` between the listener's four work faces and their
@@ -35,7 +38,16 @@ bookkeeping, GET_RX-style — cost zero NVM traffic); T-NVM-DEBOUNCE
 coalescing (three changes in one window → one ERASE+WRITE burst of two
 records, byte-exact against the model, then quiescence); unbind rewrites the
 record with a valid=0 payload; bounded commit retry (recovered error never
-alarms) then the sticky side-port alarm with the engine still serviceable;
+alarms) then the sticky side-port alarm with the engine still serviceable,
+graded against DR2c on the record whose every WRITE fails: **E8** three
+attempts in all (each the port's ERASE then WRITE), **E9** each retry
+starting `RETRY_BACKOFF_CYC_P` cycles or more after the failed attempt's
+device error, **E10** no fourth attempt four backoffs later, and **E11** the
+alarm still set after a later successful commit and that time (these are
+this raw binding manager's facts; the top combines its restore verdicts with
+the D3 walk's). Removing the backoff, permitting a fourth attempt and
+clearing the alarm on a later success each fail E9, E8 and E11 respectively;
+those controls run from the lane's evidence packet;
 `restore_blank_o` separating a walk that validated records from one that
 read blank or unframed media (`restore_done_o` is set on BOTH, which is
 why the pin exists) and following the image rather than the history when

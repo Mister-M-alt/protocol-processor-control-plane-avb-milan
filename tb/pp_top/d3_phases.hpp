@@ -575,30 +575,50 @@ struct D3ServicePhase {
           writes(ops0, 0x0A));
   }
 
-  // D3S10: a record whose every WRITE fails is attempted 1 + RETRY_MAX_P = 3
-  // times, then dropped with the sticky alarm: pending falls with it, no
-  // fourth attempt follows, and a later successful write does not forgive
-  // it. (The ruled DR2c spacing is graded where it lands.)
+  // D3S10 (DR2c): a record whose every WRITE fails is attempted three times
+  // in all, each retry starting RETRY_BACKOFF_CYC_P cycles or more after the
+  // failed attempt's error (the wrap's 50,000: 500 ms of its compressed
+  // time), then dropped with the reset-sticky nvm_alarm_o: pending falls
+  // with it, no fourth attempt follows, and a later successful write does
+  // not forgive it.
+  static constexpr long BACKOFF = 50000;           //! the wrap's override
   void s10_bounded_attempts_then_the_sticky_alarm() {
     power_up();
     const size_t ops0 = x.nvm_ops.size();
     x.nv_err_region = 0x50;
     x.nv_err_writes = 1000;
     const bool a = set_ok(AEM_SET_STREAM_INFO, pl_ptof(0, 7000001));
-    const bool dropped = settle(3 * WINDOW);
+    std::vector<long> grants;
+    std::vector<long> errs;
+    for (long c = 0; c < 6 * WINDOW && !x.d->nvm_alarm_o; ++c) {
+      const long at = long(x.t);
+      x.step();
+      if (x.d->dbg_d3_mgnt_o) grants.push_back(at + 1);
+      if (x.d->dbg_d3_merr_o) errs.push_back(at + 1);
+    }
+    const bool dropped = settle(2 * WINDOW);
     const int failed = writes(ops0, 0x50, 3);
-    CHECK(a && dropped && failed == 3 && writes(ops0, 0x50) == 0
+    CHECK(a && dropped && failed == 3 && grants.size() == 3 && writes(ops0, 0x50) == 0
               && x.d->nvm_alarm_o && !x.d->d3_unflushed_o,
-          "D3S10: %d failed attempts of 0x50, alarm %u, unflushed %u",
-          failed, unsigned(x.d->nvm_alarm_o), unsigned(x.d->d3_unflushed_o));
-    x.idle(static_cast<int>(2 * WINDOW));
-    CHECK(writes(ops0, 0x50, 3) == 3, "D3S10: no fourth attempt (%d)",
+          "D3S10 count: %d failed attempts of 0x50 (%zu grants), alarm %u, "
+          "unflushed %u", failed, grants.size(), unsigned(x.d->nvm_alarm_o),
+          unsigned(x.d->d3_unflushed_o));
+    const bool spaced = grants.size() == 3 && errs.size() >= 2
+                        && grants[1] - errs[0] >= BACKOFF
+                        && grants[2] - errs[1] >= BACKOFF;
+    CHECK(spaced,
+          "D3S10 timing: each retry granted RETRY_BACKOFF_CYC_P cycles or more "
+          "after the failed attempt's error (%ld, %ld)",
+          grants.size() > 1 && !errs.empty() ? grants[1] - errs[0] : -1L,
+          grants.size() > 2 && errs.size() > 1 ? grants[2] - errs[1] : -1L);
+    x.idle(static_cast<int>(3 * BACKOFF));
+    CHECK(writes(ops0, 0x50, 3) == 3, "D3S10 count: no fourth attempt (%d)",
           writes(ops0, 0x50, 3));
     x.nv_err_region = -1;
     const bool b = set_ok(AEM_SET_STREAM_INFO, pl_ptof(1, 7000002));
     CHECK(b && settle(3 * WINDOW) && held(0x51, 4) == d3_record(0x51, 7000002, 4)
               && x.d->nvm_alarm_o,
-          "D3S10: a later successful write leaves the alarm set");
+          "D3S10 revocation: a later successful write leaves the alarm set");
   }
 
   // D3S11: the latch waits for a running command. A READ_DESCRIPTOR whose
