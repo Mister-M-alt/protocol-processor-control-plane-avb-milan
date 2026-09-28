@@ -386,7 +386,12 @@ module pp_top_wrap (
     output logic [31:0] dbg_d3_wd_o,
     output logic [31:0] dbg_bind_wd_o,
     //! the NVM arbiter is draining an abandoned READ (a restore deadline's)
-    output logic        dbg_nvm_drain_o
+    output logic        dbg_nvm_drain_o,
+    //! the D3 writer's aggregate count (agg_r, 0 in the accepted start's own
+    //! cycle) and its fired level (agg_o): a case that must land an event on
+    //! the bound's own cycle reads them to prove it did
+    output logic [31:0] dbg_d3_agg_o,
+    output logic        dbg_d3_agg_fired_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
@@ -702,6 +707,8 @@ module pp_top_wrap (
   assign dbg_d3_wd_o      = u_dut.u_aecp.u_d3.wd_r;
   assign dbg_bind_wd_o    = u_dut.u_nvm_shadow.rs_wd_r;
   assign dbg_nvm_drain_o  = u_dut.nvm_drain_nc_w;
+  assign dbg_d3_agg_o     = u_dut.u_aecp.u_d3.agg_r;
+  assign dbg_d3_agg_fired_o = u_dut.d3_agg_w;
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin

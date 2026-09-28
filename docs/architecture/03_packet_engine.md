@@ -264,7 +264,8 @@ Ordering rules:
   response is on the wire inside 240 ms, not merely started at it. **The boot
   hold of rule (d) is the one exception, and no deadline expiry:** the one AECP
   command held through a restore is answered after it, which the aggregate
-  bounds at 1,000 ms, so its response may come later than 240 ms; in CLOSED it
+  bounds at 1,000 ms (a roll-back or image proof it starts is then bounded per
+  wait), so its response may come later than 240 ms; in CLOSED it
   and every dropped command go unanswered until reset, the fail-closed choice
   (parent D3 §8.1). Answering them from state the restore has not decided
   would be worse than the controller's retry.

@@ -56,19 +56,28 @@
 //                is never a change (the snoop is the µCPU's).
 //
 //                THE AGGREGATE DEADLINE (parent DR3a, ratified as an enforced
-//                bound). A second count starts at the accepted restore start
-//                (`rs_go_i`, the top's restore_go_i, PP_CTRL[1]) and runs
-//                through the binding walk, both passes and the roll-back to
-//                the terminal. At RS_AGG_CYC_P cycles the walk takes the path
-//                a per-wait deadline takes in the state it is in (cause 3,
-//                a granted READ abandoned to the drain), once, and in the
-//                first cycle at or after the bound in which its wait has no
-//                event in hand (as the per-wait deadline fires): before the
-//                image is proven, the binding walk still running included,
-//                CLOSED; in pass 0 DEFAULTS; in pass 1 the roll-back, which
-//                the per-wait deadline still bounds; during the roll-back
-//                CLOSED. A device that answers every wait just inside its
-//                deadline therefore ends at this bound.
+//                bound; its clarification, processor issue #131: an
+//                aggregate expiry never closes a provable image). A second
+//                count starts at the accepted restore start (`rs_go_i`, the
+//                top's restore_go_i, PP_CTRL[1]) and runs through the
+//                binding walk, both passes and the roll-back to the
+//                terminal. At RS_AGG_CYC_P cycles it fires once, in the first
+//                cycle at or after the bound in which its wait has no event
+//                in hand (as the per-wait deadline fires), and the phase the
+//                restore is in takes its per-wait path. Before the image is
+//                proven it aborts nothing: `agg_o` makes a binding walk still
+//                reading take its own per-wait path (it fails whole and
+//                releases the listener), and the D3 walk then proves the
+//                image with no record READ and ends DEFAULTS, cause 3;
+//                CLOSED only if the image cannot be proven (cause 7, or 3
+//                for the proof's own deadline). Once the image is proven it
+//                takes the per-wait path of its state (cause 3, a granted
+//                READ abandoned to the drain): in pass 0 DEFAULTS; in pass 1
+//                the roll-back, which the per-wait deadline still bounds;
+//                during the roll-back (its debt wait or re-LOCATE) CLOSED.
+//                A device that answers every wait just inside its deadline
+//                therefore ends at this bound, or within one per-wait
+//                deadline of it.
 //
 //                THE VALUE RULES, the SET programs' own (gen_ucode.py):
 //                configuration index below configurations_count (region
@@ -194,6 +203,10 @@ module KL_aecp_nvm_writer #(
     //! aggregate deadline counts from the first cycle it reads 1
     input  wire         rs_go_i,
     input  wire         img_valid_i,    //! the descriptor store holds a validated image
+    //! level, from the cycle after the aggregate deadline fired until reset:
+    //! the binding walk (KL_acmp_nvm_shadow rs_agg_i), if its read phase
+    //! still runs, takes its own per-wait path
+    output logic        agg_o,
 
     //! ---- ownership of the AECP engine (the dispatch hold) -------------------
     //! 1 from reset to the restore terminal (for ever in CLOSED), and in
@@ -526,8 +539,9 @@ module KL_aecp_nvm_writer #(
     endcase
   end
   assign wait_expire_w = stall_w && (wd_r >= 32'(RS_TMO_CYC_P - 1));
-  //! either deadline takes the one path below
-  assign expire_w      = wait_expire_w || agg_expire_w;
+  //! either deadline takes the one path below, the aggregate only once the
+  //! image is proven: before it, the proof ends the restore (restore_ff)
+  assign expire_w      = wait_expire_w || (agg_expire_w && proven_r);
 
   always_ff @(posedge clk_i) begin : deadline_ff
     if (!rst_n)                    wd_r <= 32'd0;
@@ -540,12 +554,17 @@ module KL_aecp_nvm_writer #(
   //! until the terminal; the bound fires once, in a cycle whose wait has no
   //! event in hand (a grant, a byte, an answer), so no granted READ is
   //! orphaned and an abandoned one goes to the drain exactly as above
-  logic        agg_run_r, agg_fired_r, agg_live_w;
+  logic        agg_run_r, agg_fired_r, agg_live_w, agg_past_w;
   logic [31:0] agg_r;
 
   assign agg_live_w   = (agg_run_r || rs_go_i) && !agg_fired_r && !done_r && !closed_r;
   assign agg_expire_w = agg_live_w && (agg_r >= 32'(RS_AGG_CYC_P - 1))
                         && (stall_w || !wait_w);
+  //! the bound is reached (the count holds there): a proof at or after it
+  //! reads no record, whether the bound fired in a wait before it or lands
+  //! on the proof's own cycle
+  assign agg_past_w   = agg_run_r && (agg_r >= 32'(RS_AGG_CYC_P - 1));
+  assign agg_o        = agg_fired_r;
 
   always_ff @(posedge clk_i) begin : aggregate_ff
     if (!rst_n) begin
@@ -577,6 +596,12 @@ module KL_aecp_nvm_writer #(
                                                   abort_cause_w = CAUSE_DESC_C;
     else                                          abort_w = 1'b0;
   end
+
+  //! the image is proven this cycle: validated, or the LOCATE hit (its err
+  //! answer is an abort)
+  logic proof_w;
+  assign proof_w = ((ws_r == W_IMG) && img_valid_i)
+                   || ((ws_r == W_IMGLOC) && sb_rvalid_i && !sb_err_i);
 
   //! the rule's verdict, in the cycle it is reached
   logic accept_w, refuse_w;
@@ -627,8 +652,9 @@ module KL_aecp_nvm_writer #(
       rcount_r     <= 16'd0;
     end else if (abort_w) begin
       //! the first abort names the restore. Before the image is proven it is
-      //! CLOSED; in pass 0 nothing was applied, so it ends done on defaults;
-      //! in pass 1 it rolls back; during the roll-back it is CLOSED
+      //! CLOSED (the aggregate never aborts there: expire_w); in pass 0
+      //! nothing was applied, so it ends done on defaults; in pass 1 it
+      //! rolls back; during the roll-back it is CLOSED
       if (cause_r == CAUSE_NONE_C) cause_r <= abort_cause_w;
       fail_r   <= 1'b1;
       if ((ws_r == W_RB) || (ws_r == W_RELOC) || !proven_r) begin
@@ -778,6 +804,14 @@ module KL_aecp_nvm_writer #(
           n_ref_r <= n_ref_r + 8'd1;
           ws_r    <= W_NEXT;
         end
+      end
+      //! the image proven past the aggregate bound: DEFAULTS, cause 3, with
+      //! no record READ (nothing was read, so nothing to roll back)
+      if (proof_w && agg_past_w) begin
+        done_r  <= 1'b1;
+        fail_r  <= 1'b1;
+        cause_r <= CAUSE_DEADLINE_C;
+        ws_r    <= W_DONE;
       end
     end
   end

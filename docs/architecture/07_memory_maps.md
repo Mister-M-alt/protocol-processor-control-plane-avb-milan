@@ -612,6 +612,7 @@ was. The raw verdicts below are the binding manager's; the top's
 | ends after at least one forwarded byte and short of the record (torn) | the **whole walk** fails | 1 |
 | ends with nothing forwarded on an `err` the port names DEVICE (a device error, or a header read the device ended short) | the **whole walk** fails: a failing device is not an empty record | 2 |
 | waits `P-NVM-RS-TMO-CYC` consecutive clocks without progress (`T-NVM-RS-DEADLINE`): for the port idle before a read, or for a byte, `done` or `err` during it | the **whole walk** fails, and a read already issued is abandoned to the arbiter, which drains it ([02 §8.2](02_interfaces.md#82-two-record-managers-one-port)) | 3 |
+| is still reading when the restore's aggregate deadline fires (`T-NVM-RS-AGGREGATE`, below): at once before a read is issued, else in its first clock without a byte, `done` or `err` | the same path: the **whole walk** fails and an issued read goes to the drain | 3 |
 
 Progress is the awaited event itself, so a device that is slow but moving never trips the
 deadline, and the deadline bounds only the read phase: the preload phase is bounded by
@@ -650,18 +651,22 @@ with its valid flag. A framed record whose frame or value fails keeps its defaul
 walk goes on. Every restore wait is watched by one count of stalled clocks, and the whole
 restore by a second count: `P-NVM-RS-AGG-CYC` clocks (1,000 ms, `T-NVM-RS-AGGREGATE`)
 from the accepted restore start (`restore_go_i`), the binding walk, both passes and the
-roll-back included. At that bound the D3 walk takes the path a stalled wait takes in its
-state, once, in the first clock at or after the bound whose wait has no event in hand; a
-device that answers every wait just inside its deadline therefore ends there (parent DR3a,
-ratified as an enforced bound).
+roll-back included. At that bound the phase the restore is in takes the path a stalled
+wait takes in it, once, in the first clock at or after the bound whose wait has no event
+in hand; a device that answers every wait just inside its deadline therefore ends there,
+or within one per-wait deadline of it (parent DR3a, ratified as an enforced bound). **An
+aggregate expiry never closes a provable image** (the ratification's clarification,
+processor issue #131): a binding walk still reading takes its own per-wait path (it fails
+whole and releases the listener, table above), and the D3 walk then proves the image,
+with no record read, and ends DEFAULTS.
 
 | Event | Cause (`rs_cause_o`) | Terminal |
 |---|---|---|
 | the image cannot be proven (the LOCATE errs or finds no validated image) | 7 | **CLOSED**: fail, never done; AECP dispatch and ADP held until reset; the listener stays released and keeps its latency: at most one AECP command stays held in the ingress, and every further one is dropped at its slot gate and counted (snapshot word 37; [03 §6](03_packet_engine.md) rule (d)) |
-| the aggregate bound before the image is proven (the binding walk still running, or the image proof) | 3 | **CLOSED**, as above |
+| the aggregate bound before the image is proven: the binding walk still reading (it fails whole, table above), or the image proof under way | 3 | **DEFAULTS** once the image is proven, with no record read (done and fail; nothing was applied); **CLOSED** only if it cannot be proven (the row above, cause 7) |
 | in pass 0: a DEVICE err, a torn read, a stall of `P-NVM-RS-TMO-CYC` clocks or the aggregate bound (a granted read abandoned to the drain) | 2, 1, 3 | **DEFAULTS**: done and fail; nothing was applied |
 | in pass 1: any of those, a record whole in one pass and not the other, or a descriptor read a value rule needs that errs (never a refusal) | 2, 1, 3, 5, 6 | **ROLL-BACK**, then DEFAULTS or CLOSED |
-| during the roll-back: its debt wait or re-LOCATE stalls `P-NVM-RS-TMO-CYC` clocks, or the aggregate bound | 3 | **CLOSED** |
+| during the roll-back: its debt wait or re-LOCATE stalls `P-NVM-RS-TMO-CYC` clocks, or the aggregate bound falls in either (the roll-back could not prove the image again by the deadline) | the pass-1 abort's (the first abort names the restore) | **CLOSED** |
 | an UNFRAMED err with nothing forwarded | - | that record is blank; the walk continues |
 | pass 1 ends | - | **COMPLETE**: done |
 

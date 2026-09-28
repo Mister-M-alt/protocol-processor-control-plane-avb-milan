@@ -69,11 +69,14 @@
 //                DEVICE err with zero bytes forwarded (a failing device is
 //                not an empty record); 3 the read phase's no-progress
 //                deadline, RS_TMO_CYC_P cycles waiting on the port for its
-//                idle, a byte, a done or an err. An expiry while this
-//                manager's read is issued abandons it (nvm_abort_o) to the
-//                arbiter in front of the port, which drains it: its late
-//                bytes and its ending reach no manager. The preload phase
-//                is not watched here; KL_pp_acmp_lsn_admit bounds it.
+//                idle, a byte, a done or an err, or the D3 writer's
+//                aggregate restore deadline (DR3a, `rs_agg_i`) reached while
+//                the read phase still runs, which takes the same path. An
+//                expiry while this manager's read is issued abandons it
+//                (nvm_abort_o) to the arbiter in front of the port, which
+//                drains it: its late bytes and its ending reach no manager.
+//                The preload phase is not watched here;
+//                KL_pp_acmp_lsn_admit bounds it.
 //                (b) a complete record failing crc/layout_version/
 //                record_id/length is per-record vendor default (F07.9 crc
 //                arm), never an abort. (c) a capture during restore WINS
@@ -144,6 +147,12 @@ module KL_acmp_nvm_shadow
     //! ---- boot/debounce control ------------------------------------------
     input  wire                        tick_i,         //! debounce timebase tick
     input  wire                        restore_go_i,   //! start boot restore (07 §5.3)
+    //! level: the D3 writer's aggregate restore deadline fired (DR3a;
+    //! KL_aecp_nvm_writer agg_o). A read phase still running takes its own
+    //! deadline's path at once in H_RS_REQ, where nothing is owed, and in
+    //! H_RS_STREAM in its first cycle without a byte, done or err. Tie 0
+    //! where no D3 writer runs
+    input  wire                        rs_agg_i,
     output logic                       restore_busy_o, //! restore walk/replay running
     output logic                       restore_done_o, //! level: restore sequencing complete
     output logic                       restore_fail_o, //! level: the WHOLE restore aborted, any cause
@@ -528,7 +537,11 @@ module KL_acmp_nvm_shadow
   //! it waits for: in H_RS_REQ the port idle, in H_RS_STREAM a byte, a done
   //! or an err. Progress is that event itself, so a device that is slow but
   //! moving never trips it; expiry ends the walk as a failed one and clears
-  //! the count, so it never reads past RS_TMO_CYC_P - 1.
+  //! the count, so it never reads past RS_TMO_CYC_P - 1. The D3 writer's
+  //! aggregate deadline (rs_agg_i) takes the same path: in H_RS_REQ at once
+  //! (no read is issued, nothing is owed), in H_RS_STREAM in a stalled
+  //! cycle, so a byte in hand is never orphaned and the read goes to the
+  //! drain as below.
   logic [31:0] rs_wd_r;
   logic        rs_stall_w;
   logic        rs_tmo_w;
@@ -536,7 +549,8 @@ module KL_acmp_nvm_shadow
   assign rs_stall_w = ((hs_r == H_RS_REQ) && (nvm_busy_i || nvm_done_i || nvm_err_i))
                     || ((hs_r == H_RS_STREAM)
                         && !nvm_rvalid_i && !nvm_done_i && !nvm_err_i);
-  assign rs_tmo_w   = rs_stall_w && (rs_wd_r >= 32'(RS_TMO_CYC_P - 1));
+  assign rs_tmo_w   = (rs_stall_w && ((rs_wd_r >= 32'(RS_TMO_CYC_P - 1)) || rs_agg_i))
+                    || ((hs_r == H_RS_REQ) && rs_agg_i);
 
   always_ff @(posedge clk_i) begin : rs_wd_ff
     if (!rst_n)                       rs_wd_r <= 32'd0;

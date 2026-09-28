@@ -577,6 +577,9 @@ module KL_aecp_engine
     //! the accepted restore start (the top's restore_go_i): the writer's
     //! aggregate deadline counts from it
     input  wire         d3_rs_go_i,
+    //! level: the aggregate deadline fired (KL_aecp_nvm_writer agg_o); the
+    //! top hands it to the binding walk, which takes its own per-wait path
+    output logic        d3_agg_o,
     input  wire         d3_tick_i,          //! the debounce timebase (1 ms tick)
     output logic        d3_m_req_o,         //! op request, held until granted
     output logic        d3_m_we_o,          //! 1 = commit, 0 = restore
@@ -1845,6 +1848,7 @@ module KL_aecp_engine
       .go_i        (d3_go_i),
       .rs_go_i     (d3_rs_go_i),
       .img_valid_i (dbg_img_valid_o),
+      .agg_o       (d3_agg_o),
       .desc_debt_i (d3_desc_debt_i),
       .rb_rst_o    (d3_rb_rst_w),
       .own_o       (d3_own_w),

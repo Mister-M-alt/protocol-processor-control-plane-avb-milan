@@ -310,6 +310,21 @@ AGGREGATE = (
               " ? 32'd1 : 32'd0),\n",
          "    parameter int unsigned NVM_RS_TMO_CYC_P    = (CLK_HZ_P / 32'd50),\n"),),
         ("D3R8 deadline",)),
+    # the clarification (issue #131, 5876655419): an aggregate expiry never
+    # closes a provable image
+    Mutant("agg_closes_before_proof", PP_TOP, (
+        (WRITER, "  assign expire_w      = wait_expire_w || (agg_expire_w && proven_r);\n",
+         "  assign expire_w      = wait_expire_w || agg_expire_w;\n"),),
+        ("D3R14 image valid: DEFAULTS",)),
+    Mutant("binding_walk_ignores_aggregate", PP_TOP, (
+        (SHADOW, "  assign rs_tmo_w   = (rs_stall_w && ((rs_wd_r >= 32'(RS_TMO_CYC_P - 1)) || rs_agg_i))\n"
+                 "                    || ((hs_r == H_RS_REQ) && rs_agg_i);\n",
+         "  assign rs_tmo_w   = rs_stall_w && (rs_wd_r >= 32'(RS_TMO_CYC_P - 1));\n"),),
+        ("D3R14 image valid: the binding walk", "D3R14 image refused: the binding walk")),
+    Mutant("proof_reads_records_past_bound", PP_TOP, (
+        (WRITER, "      if (proof_w && agg_past_w) begin\n",
+         "      if (1'b0 && proof_w && agg_past_w) begin\n"),),
+        ("D3R14 image valid: DEFAULTS",)),
 )
 
 # the AECP hold admission (issue #131 ruling 5873580386)

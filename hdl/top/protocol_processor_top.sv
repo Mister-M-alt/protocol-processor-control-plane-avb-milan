@@ -135,12 +135,14 @@ module protocol_processor_top
     //! DR3a ratifies 20 ms: ceil(CLK_HZ_P / 50) clock cycles.
     parameter int unsigned NVM_RS_TMO_CYC_P    = (CLK_HZ_P / 32'd50)
                                                  + (((CLK_HZ_P % 32'd50) != 32'd0) ? 32'd1 : 32'd0),
-    //! T-NVM-RS-AGGREGATE (F08.1), P-NVM-RS-AGG-CYC (F01.5): the D3 walk
+    //! T-NVM-RS-AGGREGATE (F08.1), P-NVM-RS-AGG-CYC (F01.5): the restore
     //! takes its per-wait deadline's path this many clock cycles after the
     //! accepted restore start (restore_go_i), counting the binding walk,
     //! both passes and the roll-back, however promptly each single wait is
-    //! answered. DR3a ratifies 1,000 ms as an enforced bound: CLK_HZ_P
-    //! clock cycles.
+    //! answered. It never closes a provable image: a binding walk still
+    //! reading fails whole, and the D3 walk then proves the image and ends
+    //! DEFAULTS (rs_cause_o 3). DR3a ratifies 1,000 ms as an enforced
+    //! bound: CLK_HZ_P clock cycles.
     parameter int unsigned NVM_RS_AGG_CYC_P    = CLK_HZ_P,
     //! DR2c (P-NVM-RETRY-BACKOFF-CYC, F01.5): clk_i cycles a record
     //! producer waits after a failed write attempt before the next, for the
@@ -456,7 +458,8 @@ module protocol_processor_top
     //! level: either walk failed. The binding walk fails WHOLE, every sink
     //! not changed live at its vendor default and nothing preloaded, on a
     //! read-back torn mid-record, a device error with nothing forwarded,
-    //! or its read deadline (NVM_RS_TMO_CYC_P). The D3 walk fails on a
+    //! its read deadline (NVM_RS_TMO_CYC_P), or the aggregate deadline
+    //! while it still reads. The D3 walk fails on a
     //! device error, a torn read, passes that disagree, a descriptor fault,
     //! an unproven image, a wait's deadline or the aggregate deadline
     //! (NVM_RS_AGG_CYC_P from restore_go_i; rs_cause_o 3). A record the device
@@ -469,8 +472,10 @@ module protocol_processor_top
     //! record never reads as a clean first boot.
     output logic        restore_blank_o,
     //! level: the D3 walk ended CLOSED (its image could not be proven, or
-    //! an abort it could not recover): fail, never done, AECP held and the
-    //! ADP enable withheld until reset
+    //! its pass-1 roll-back could not prove it again: the re-LOCATE missed,
+    //! or the debt wait or re-LOCATE outlasted a deadline, the aggregate's
+    //! included; before the image is proven the aggregate never closes it):
+    //! fail, never done, AECP held and the ADP enable withheld until reset
     output logic        restore_closed_o,
     //! level: the D3 walk aborted in pass 1 and rolled both stores back to
     //! their reset state, then proved the image again: DEFAULTS (with
@@ -481,7 +486,8 @@ module protocol_processor_top
     //! 6 descriptor fault, 7 image not proven
     output logic  [2:0] rs_cause_o,
     //! the binding walk's cause (KL_acmp_nvm_shadow): 0 none, 1 torn,
-    //! 2 a device error with nothing forwarded, 3 its read deadline
+    //! 2 a device error with nothing forwarded, 3 its read deadline or the
+    //! aggregate deadline
     output logic  [1:0] restore_cause_o,
     //! sticky until reset: a record producer exhausted its write attempts,
     //! the binding manager's or the D3 writer's (both managers' alarm)
@@ -2544,6 +2550,9 @@ module protocol_processor_top
   logic [7:0]  d3_m_rdata_w;
   logic [1:0]  d3_m_err_cause_w;
   logic        d3_done_w, d3_fail_w, d3_closed_w, d3_blank_w;
+  //! the D3 writer's aggregate deadline fired: a binding walk still reading
+  //! takes its own per-wait path (DR3a, processor issue #131 clarification)
+  logic        d3_agg_w;
 
   KL_acmp_nvm_shadow #(
       .N_SINKS_P           (N_STREAM_IN_P),
@@ -2554,6 +2563,7 @@ module protocol_processor_top
       .rst_n            (rst_n),
       .tick_i           (tick_ms_w),
       .restore_go_i     (restore_go_i),
+      .rs_agg_i         (d3_agg_w),
       .restore_busy_o   (nvm_walk_busy_w),
       .restore_done_o   (nvm_walk_done_w),
       .restore_fail_o   (nvm_walk_fail_w),
@@ -3611,6 +3621,8 @@ module protocol_processor_top
       .d3_go_i            (lsn_released_w),
       //! the aggregate deadline (DR3a) counts from the accepted start
       .d3_rs_go_i         (restore_go_i),
+      //! and, fired, ends a binding walk still reading (u_nvm_shadow)
+      .d3_agg_o           (d3_agg_w),
       .d3_tick_i          (tick_ms_w),
       .d3_m_req_o         (d3_m_req_w),
       .d3_m_we_o          (d3_m_we_w),

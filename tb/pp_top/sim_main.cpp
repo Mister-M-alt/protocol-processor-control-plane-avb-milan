@@ -722,6 +722,20 @@ struct H {
   //! from the cycle the device first sees it (a device slow on each wait)
   int      nv_gnt_every = 0;
   bool     nv_gnt_seen = false;
+  //! a device slow per byte (a device answering each wait just inside its
+  //! deadline, slow per byte rather than per grant): when non-zero, each
+  //! READ byte is withheld this many cycles after the previous one moved.
+  //! The header probe (offset 0, the 8 bytes the port gathers before its
+  //! manager sees progress) and the payload READ take separate values
+  int      nv_hdr_every = 0;
+  int      nv_byte_every = 0;
+  int      nv_byte_wait = 0;
+  //! when >= 0, the command the device next sees is granted at exactly
+  //! this harness cycle (and not before), once; every other grant rule
+  //! stands aside for it
+  long     nv_gnt_at = -1;
+  //! the harness cycle of the device's last grant
+  long     nv_gnt_t = -1;
   //! a WRITE whose bytes are all taken completes no earlier than this
   //! harness cycle (-1: at once), so a completion can be placed on a chosen
   //! clock edge
@@ -1458,10 +1472,15 @@ struct H {
         nv_gnt_hold = nv_gnt_every;
         nv_gnt_seen = true;
       }
-      if (d->nvm_dev_req_o && nv_gnt_hold > 0) {
-        --nv_gnt_hold;
+      const bool at = nv_gnt_at >= 0;
+      if (d->nvm_dev_req_o && (at ? long(t) < nv_gnt_at : nv_gnt_hold > 0)) {
+        if (!at) --nv_gnt_hold;
       } else if (d->nvm_dev_req_o) {
         nv_gnt_seen = false;
+        nv_gnt_hold = 0;
+        nv_gnt_at = -1;
+        nv_gnt_t = long(t);
+        nv_byte_wait = 0;
         d->nvm_dev_gnt_i = 1;
         nv_cur = NvmOp{ static_cast<int>(d->nvm_dev_op_o),
                         static_cast<uint8_t>(d->nvm_dev_region_o),
@@ -1487,10 +1506,17 @@ struct H {
           nv_rd_fault = false;
           nv_st = NvState::NV_IDLE;
         }                                              // silent: nothing moves
+      } else if (nv_left && nv_byte_wait < (nv_cur.off == 0 ? nv_hdr_every : nv_byte_every)) {
+        ++nv_byte_wait;                                // the slow device's byte
       } else if (nv_left) {
         d->nvm_dev_rvalid_i = 1;
         d->nvm_dev_rdata_i = nv_mem[nv_cur.region][nv_rd_pos & 0xFF];
-        if (d->nvm_dev_rready_o) { nv_left--; nv_rd_pos++; nv_rd_sent++; }
+        if (d->nvm_dev_rready_o) {
+          nv_left--;
+          nv_rd_pos++;
+          nv_rd_sent++;
+          nv_byte_wait = 0;
+        }
       } else if (--nv_done_lag <= 0) {
         d->nvm_dev_done_i = 1;
         nvm_ops.push_back(nv_cur);

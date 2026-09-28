@@ -893,6 +893,10 @@ struct D3RestorePhase {
     x.nv_gnt_hold = 0;
     x.nv_gnt_every = 0;
     x.nv_gnt_seen = false;
+    x.nv_gnt_at = -1;
+    x.nv_hdr_every = 0;
+    x.nv_byte_every = 0;
+    x.nv_byte_wait = 0;
     x.nv_st = H::NvState::NV_IDLE;
     x.reset();
     x.nv_st = H::NvState::NV_IDLE;
@@ -1610,6 +1614,129 @@ struct D3RestorePhase {
           unsigned(d->restore_rb_o));
   }
 
+  //! the eight sinks' binding records, each saved bound and started, so the
+  //! binding walk reads a header and a 20-byte payload per sink
+  void seed_every_binding() {
+    for (uint8_t k = 0; k < 8; ++k) {
+      auto b = binding_record(0x00B0B0B0B0B0D400ULL + k, uint16_t(0x0D40 + k), CTLR_EID);
+      b[3] = uint8_t(0x20 + k);
+      seed(uint8_t(0x20 + k), reframe(b));
+    }
+  }
+  //! READs of D3 records (every region but the binding block) from `from`
+  int d3_reads_of(size_t from) const {
+    int n = 0;
+    for (size_t i = from; i < x.nvm_ops.size(); i++) {
+      const auto& o = x.nvm_ops[i];
+      n += (o.op == 0 || o.op == 4) && (o.region < 0x20 || o.region > 0x27);
+    }
+    return n;
+  }
+
+  // D3R14 (DR3a as clarified on processor issue #131: an aggregate expiry
+  // never closes a provable image). The device answers each READ byte just
+  // inside the per-wait deadline, slow per byte (the header probe's eight
+  // bytes RS_TMO / 8 - 400 cycles apart, each payload byte RS_TMO - 1000:
+  // the reviewers' probe D1), so with every sink's binding saved the
+  // binding walk alone outlasts the bound while no wait trips its own
+  // deadline. At the bound the binding walk takes its own per-wait path: it
+  // fails whole (restore_cause_o 3), abandons its READ to the drain and
+  // releases the listener. The D3 walk then proves the image with no record
+  // READ and ends DEFAULTS, cause 3, within one per-wait deadline of the
+  // bound, with the image valid, the enable released to ADP (graded on the
+  // engine's input, as D3R1) and AECP released: a READ_DESCRIPTOR is
+  // answered byte-exact, and once the device
+  // ends the drained READ a later SET persists. With an image the store
+  // cannot validate, the same boot ends CLOSED, cause 7, only after the
+  // listener's release: the image could not be proven.
+  void r14_an_aggregate_bound_before_the_image_proof() {
+    struct Arm { bool provable; const char* what; };
+    const std::array<Arm, 2> arms{{{true, "image valid"}, {false, "image refused"}}};
+    for (const auto& a : arms) {
+      x.dram = image;
+      if (!a.provable) x.dram[0] ^= 0xFF;          // the store refuses the magic
+      x.erase_nvm();
+      power_cycle();
+      seed_every_record();
+      seed_every_binding();
+      x.d->entity_enable_i = 1;
+      x.d->link_up_i = 1;
+      x.nv_hdr_every = static_cast<int>(RS_TMO / 8 - 400);
+      x.nv_byte_every = static_cast<int>(RS_TMO - 1000);
+      const size_t ops0 = x.nvm_ops.size();
+      long c = 0;
+      long bound = -1;                             //! the count first reads AGG - 1
+      long bind_wait = 0;
+      long d3_wait = 0;
+      const Boot b = boot_with(AGG + 2 * RS_TMO, [&] {
+        if (bound < 0 && x.d->dbg_d3_agg_o == uint32_t(AGG - 1)) bound = c;
+        bind_wait = std::max(bind_wait, long(x.d->dbg_bind_wd_o));
+        d3_wait = std::max(d3_wait, long(x.d->dbg_d3_wd_o));
+        ++c;
+      });
+      const auto* d = x.d;
+      const int d3_reads = d3_reads_of(ops0);
+      const bool draining = d->dbg_nvm_drain_o;
+      //! clocks counted as D3R13 does, the one that took restore_go_i the
+      //! first: the count reads AGG - 1 in the AGG-th, the bound's own clock,
+      //! and a level first seen at loop index c was registered by clock c + 1
+      const long bound_clk = bound + 2;
+      const long term_clk = (a.provable ? b.done : b.closed) + 1;
+      CHECK(bound_clk == AGG && bind_wait < RS_TMO && b.release + 1 > bound_clk
+                && d->restore_fail_o && d->restore_cause_o == 3
+                && (d->acmp_bound_o & 0xFF) == 0 && draining && d3_reads == 0,
+            "D3R14 %s: the binding walk (longest wait %ld of %ld) fails whole at the "
+            "bound's clock %ld (cause %u, bound sinks 0x%02x), its READ drained %u, "
+            "the listener released by clock %ld; %d D3 READs", a.what, bind_wait,
+            RS_TMO, bound_clk, unsigned(d->restore_cause_o),
+            unsigned(d->acmp_bound_o & 0xFF), unsigned(draining), b.release + 1, d3_reads);
+      const bool in_time = term_clk > bound_clk && term_clk - bound_clk < RS_TMO;
+      if (a.provable) {
+        CHECK(b.done >= 0 && b.closed < 0 && in_time && d3_wait == 0 && d->restore_done_o
+                  && d->rs_cause_o == 3 && !d->restore_rb_o && !d->restore_closed_o
+                  && d->dbg_img_valid_o && d->dbg_d3_applied_o == 0 && rows_cleared()
+                  && !d->dbg_d3_own_o && d->dbg_adp_enable_o && b.enable_early == 0
+                  && (b.adp_first < 0 || b.adp_first > b.done),
+              "D3R14 image valid: DEFAULTS by clock %ld, the D3 walk's longest wait %ld "
+              "(no record READ requested), cause %u, rolled back %u, image valid %u, "
+              "AECP owned %u, ADP enabled %u (%ld early enable cycles)", term_clk, d3_wait,
+              unsigned(d->rs_cause_o), unsigned(d->restore_rb_o),
+              unsigned(d->dbg_img_valid_o), unsigned(d->dbg_d3_own_o),
+              unsigned(d->dbg_adp_enable_o), b.enable_early);
+        x.q_aecp.clear();
+        x.feed(d3_read_entity_cmd(0xD314));
+        const auto got = x.wait_any(x.q_aecp, 50);
+        x.nv_hdr_every = 0;
+        x.nv_byte_every = 0;
+        for (long k = 0; k < RS_TMO; ++k) x.step();
+        const size_t ops1 = x.nvm_ops.size();
+        const bool set = ok(AEM_SET_STREAM_INFO, D3ServicePhase::pl_ptof(0, 4141414));
+        for (long k = 0; k < 2 * WINDOW; ++k) x.step();
+        int writes = 0;
+        for (size_t i = ops1; i < x.nvm_ops.size(); i++)
+          writes += x.nvm_ops[i].op == 1 && x.nvm_ops[i].region == 0x50;
+        CHECK(got == d3_read_entity_rsp(0xD314) && set && writes == 1
+                  && std::equal(x.nv_mem[0x50].begin(), x.nv_mem[0x50].begin() + 12,
+                                d3_record(0x50, 4141414, 4).begin()),
+              "D3R14 image valid: AECP answers a READ_DESCRIPTOR byte-exact, and once "
+              "the device ends the drained binding READ a later SET persists (%d WRITEs)",
+              writes);
+      } else {
+        CHECK(b.closed >= 0 && b.done < 0 && in_time && d->restore_closed_o
+                  && d->rs_cause_o == 7 && !d->restore_done_o && d->dbg_d3_own_o
+                  && !d->dbg_adp_enable_o,
+              "D3R14 image refused: CLOSED by clock %ld, cause %u, AECP owned %u, ADP "
+              "enabled %u", term_clk, unsigned(d->rs_cause_o), unsigned(d->dbg_d3_own_o),
+              unsigned(d->dbg_adp_enable_o));
+      }
+      x.nv_hdr_every = 0;
+      x.nv_byte_every = 0;
+      x.d->entity_enable_i = 0;
+      x.d->link_up_i = 0;
+    }
+    x.dram = image;
+  }
+
   // ---- DR3a: restore durations and the longest waits (informational) ----
   // The parent D3 contract's DR3a had the processor lane MEASURE its
   // per-wait (20 ms) and aggregate (1,000 ms) candidates; the manager
@@ -1719,6 +1846,15 @@ struct D3RestorePhase {
     x.nv_gnt_every = static_cast<int>(RS_TMO - 200);
     report("every grant 200 inside the per-wait deadline", measured(AGG + 4 * RS_TMO));
     x.nv_gnt_every = 0;
+    //! D3R14's device: the binding walk alone outlasts the bound
+    fresh();
+    seed_every_record();
+    seed_every_binding();
+    x.nv_hdr_every = static_cast<int>(RS_TMO / 8 - 400);
+    x.nv_byte_every = static_cast<int>(RS_TMO - 1000);
+    report("every READ byte just inside the per-wait deadline", measured(AGG + 4 * RS_TMO));
+    x.nv_hdr_every = 0;
+    x.nv_byte_every = 0;
     //! DR2a, this producer's share: one real SET, no other traffic, from
     //! the record reading pending to the port's done of its WRITE (the
     //! backend's window, where the integrator's own debounce begins)
@@ -1837,5 +1973,6 @@ struct D3RestorePhase {
     r11_a_roll_back_keeps_the_restored_binding();
     r12_a_roll_back_that_cannot_prove_the_image_closes();
     r13_the_aggregate_bound();
+    r14_an_aggregate_bound_before_the_image_proof();
   }
 };

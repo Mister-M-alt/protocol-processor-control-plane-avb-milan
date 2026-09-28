@@ -257,6 +257,8 @@ module acmp_nvm_wrap
       .rst_n           (rst_n),
       .tick_i          (tick_i),
       .restore_go_i    (restore_go_i),
+      //! no D3 writer in this harness, so no aggregate deadline reaches the walk
+      .rs_agg_i        (1'b0),
       .restore_busy_o  (restore_busy_o),
       .restore_done_o  (restore_done_o),
       .restore_fail_o  (restore_fail_o),
