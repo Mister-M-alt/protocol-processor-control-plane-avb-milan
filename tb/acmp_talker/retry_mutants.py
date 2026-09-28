@@ -50,18 +50,197 @@ MUTATIONS = {
                     "assign maap_req_valid_o   = 1'b0"),
     "no_command_ready": ("assign txn_ready_o = (state_r == S_IDLE) && !gp_valid_r && txn_eligible_w",
                          "assign txn_ready_o = 1'b0"),
+    "busy_tracker_blocks_commands": (
+        ("assign txn_eligible_w = txn_turn_r", "assign txn_eligible_w = !maap_busy_r && (txn_turn_r"),
+        ("|| (maap_avail_w && |init_ready_w));", "|| (maap_avail_w && |init_ready_w)));")),
+
+    # Additional lifecycle, demand-path and exact-edge regressions.
+    'no_conflict_wait_clear': (
+        ('if (!cfg_src_en_i[i] || set_conflict_w[i])', 'if (!cfg_src_en_i[i])'),
+    ),
+    'wait_on_release': (
+        ('ev_to_maap_w && !ev_maap_rel_w)\n        retry_wait_r', 'ev_to_maap_w)\n        retry_wait_r'),
+    ),
+    'tick_no_rearm': (
+        ('      if (retry_tick_w) begin\n        retry_t0_r   <= now_ms_i;\n', '      if (retry_tick_w) begin\n'),
+    ),
+    'no_rotate_advance': (
+        (
+            "          retry_next_r <= (disp_src_w == SRC_W_C'(N_STREAM_OUT_P - 1))\n"
+            "                          ? '0 : disp_src_w + SRC_W_C'(1);",
+            '          retry_next_r <= retry_next_r;',
+        ),
+    ),
+    'no_sticky_gp_window': (
+        ('(maap_busy_r || gp_valid_r) && maap_kill_w', 'maap_busy_r && maap_kill_w'),
+    ),
+    'grant_kill_reg_only': (
+        ('if (maap_kill_r || maap_kill_w)', 'if (maap_kill_r)'),
+    ),
+    'accept_kill_zero': (
+        (
+            '        maap_kill_r <= !cfg_src_en_i[mreq_src_r] || pe_off_r[mreq_src_r]\n'
+            '                       || pe_conflict_r[mreq_src_r]\n'
+            '                       || (maap_conflict_valid_i\n'
+            '                           && maap_conflict_src_i == mreq_src_r);',
+            "        maap_kill_r <= 1'b0;",
+        ),
+    ),
+    'kill_no_pending_conflict': (
+        (
+            '  assign maap_kill_w = !cfg_src_en_i[maap_src_r] || pe_off_r[maap_src_r]\n'
+            '                       || pe_conflict_r[maap_src_r]\n',
+            '  assign maap_kill_w = !cfg_src_en_i[maap_src_r] || pe_off_r[maap_src_r]\n',
+        ),
+    ),
+    'kill_no_live_conflict': (
+        (
+            '                       || pe_conflict_r[maap_src_r]\n'
+            '                       || (maap_conflict_valid_i\n'
+            '                           && maap_conflict_src_i == maap_src_r);',
+            '                       || pe_conflict_r[maap_src_r];',
+        ),
+    ),
+    'kill_no_disable': (
+        (
+            '  assign maap_kill_w = !cfg_src_en_i[maap_src_r] || pe_off_r[maap_src_r]',
+            '  assign maap_kill_w = pe_off_r[maap_src_r]',
+        ),
+    ),
+    'init_elig_no_avail': (
+        ('|| (maap_avail_w && |init_ready_w));', '|| |init_ready_w);'),
+    ),
+    'no_turn_restore': (
+        ("        txn_turn_r <= 1'b1;\n        if (disp_code_w == EVC_INIT)", '        if (disp_code_w == EVC_INIT)'),
+    ),
+    'elig_drop_rel': (
+        ('|| |pe_tmr_r || |pe_lsn_r || |pe_rel_r', '|| |pe_tmr_r || |pe_lsn_r'),
+    ),
+    'elig_drop_off': (
+        ('!(|pe_off_r || |pe_conflict_r', '!(|pe_conflict_r'),
+    ),
+    'ready_ignores_turn': (
+        (
+            'assign txn_ready_o = (state_r == S_IDLE) && !gp_valid_r && txn_eligible_w;',
+            'assign txn_ready_o = (state_r == S_IDLE) && !gp_valid_r;',
+        ),
+    ),
+    'init_ignores_off_conflict': (
+        (
+            '(rec_w.gstate == GS_NO_DA_C) && cfg_src_en_i[ev_src_r]\n'
+            '            && !pe_off_r[ev_src_r] && !pe_conflict_r[ev_src_r]',
+            '(rec_w.gstate == GS_NO_DA_C) && cfg_src_en_i[ev_src_r]',
+        ),
+    ),
+    'retry_period_200': (
+        ("DA_RETRY_MS_C = 32'd100", "DA_RETRY_MS_C = 32'd200"),
+    ),
+    'tick_ge_to_gt': (
+        ('(now_ms_i - retry_t0_r) >= DA_RETRY_MS_C', '(now_ms_i - retry_t0_r) > DA_RETRY_MS_C'),
+    ),
+    'kill_no_conflict_at_all': (
+        (
+            '                       || pe_conflict_r[maap_src_r]\n'
+            '                       || (maap_conflict_valid_i\n'
+            '                           && maap_conflict_src_i == maap_src_r);',
+            '                       ;',
+        ),
+        (
+            '        maap_kill_r <= !cfg_src_en_i[mreq_src_r] || pe_off_r[mreq_src_r]\n'
+            '                       || pe_conflict_r[mreq_src_r]\n'
+            '                       || (maap_conflict_valid_i\n'
+            '                           && maap_conflict_src_i == mreq_src_r);',
+            '        maap_kill_r <= !cfg_src_en_i[mreq_src_r] || pe_off_r[mreq_src_r];',
+        ),
+    ),
+    'kill_no_disable_at_all': (
+        (
+            '  assign maap_kill_w = !cfg_src_en_i[maap_src_r] || pe_off_r[maap_src_r]\n'
+            '                       || pe_conflict_r[maap_src_r]',
+            '  assign maap_kill_w = pe_conflict_r[maap_src_r]',
+        ),
+        (
+            '        maap_kill_r <= !cfg_src_en_i[mreq_src_r] || pe_off_r[mreq_src_r]\n'
+            '                       || pe_conflict_r[mreq_src_r]',
+            '        maap_kill_r <= pe_conflict_r[mreq_src_r]',
+        ),
+    ),
+    'kill_sticky_off': (
+        ("      if (!maap_accept_w && (maap_busy_r || gp_valid_r) && maap_kill_w)\n        maap_kill_r <= 1'b1;\n", ''),
+    ),
+    'no_probe_initset': (
+        ("    if ((state_r == S_TXN_ACT) && txn_initset_w) set_init_w[tsrc_w]   = 1'b1;\n", ''),
+    ),
+    'no_lsn_initset': (
+        ("          ev_initset_w = 1'b1;    // a listener appeared: retry allocation", ''),
+    ),
+    'no_conflict_daok_initset': (
+        (
+            '          ev_rec2_w.gstate = GS_NO_DA_C;   // nothing declared: no backoff\n'
+            "          ev_initset_w     = 1'b1;",
+            '          ev_rec2_w.gstate = GS_NO_DA_C;   // nothing declared: no backoff',
+        ),
+    ),
+    'no_backoff_exit_initset': (
+        ("            ev_initset_w     = 1'b1;   // re-allocate, then re-declare", ''),
+    ),
+    'no_enable_wait_clear': (
+        ('if (!cfg_src_en_i[i] || set_conflict_w[i])', 'if (set_conflict_w[i])'),
+    ),
+    'eligible_only_init': (
+        (
+            '|| !(|pe_off_r || |pe_conflict_r || |pe_pcp_r\n'
+            '                              || |pe_tmr_r || |pe_lsn_r || |pe_rel_r\n'
+            '                              || (maap_avail_w && |init_ready_w));',
+            '|| !(maap_avail_w && |init_ready_w);',
+        ),
+    ),
+    'accept_kill_no_disable': (
+        (
+            'maap_kill_r <= !cfg_src_en_i[mreq_src_r] || pe_off_r[mreq_src_r]',
+            "maap_kill_r <= 1'b0 && pe_off_r[mreq_src_r]",
+        ),
+    ),
+    'init_no_enable_check': (
+        ('if ((rec_w.gstate == GS_NO_DA_C) && cfg_src_en_i[ev_src_r]', 'if ((rec_w.gstate == GS_NO_DA_C)'),
+    ),
+    'eligible_ignores_init': (
+        ('|| (maap_avail_w && |init_ready_w));', ');'),
+    ),
+    'tick_keeps_wait': (
+        ("        retry_t0_r   <= now_ms_i;\n        retry_wait_r <= '0;", '        retry_t0_r   <= now_ms_i;'),
+    ),
+}
+
+
+# Equivalence is a control result, never a killed-mutant witness. These
+# single terms overlap by construction; removing the whole cause is tested
+# separately (kill_sticky_off / kill_no_conflict_at_all / kill_no_disable_at_all).
+EQUIVALENT_MUTATIONS = {
+    "no_sticky_gp_window": "Until GRANT consumes gp_valid, OFF/CONFLICT cannot dispatch; "
+        "their pending bits retain every cancellation through the grant action.",
+    "accept_kill_zero": "Cancellation on accept is pending on the next busy edge; "
+        "a response cannot be consumed as a grant before that edge latches the kill.",
+    "accept_kill_no_disable": "An accept-edge disable sets OFF, which persists and "
+        "latches the kill on the next busy edge before grant consumption.",
+    "kill_no_pending_conflict": "A conflict after accept latches the live kill; "
+        "an older pending conflict is captured by the accept-side kill expression.",
+}
+REMOVED_EQUIVALENTS = {
+    "no_reenable_wait_clear": "Removed !en_q_r: reset clears wait and each disabled "
+        "edge already clears it through !cfg_src_en_i; no enable-edge clear is needed.",
 }
 
 
 def run_case(tree: Path, name: str, log_dir: Path) -> tuple[int, list[str], set[int], set[int]]:
     """Require a completed simulation and read its assertion failures."""
     result = subprocess.run(["make", "-C", str(tree / "tb/acmp_talker")],
-                            capture_output=True, text=True, timeout=900, check=False)
+                            capture_output=True, text=True, check=False)
     output = result.stdout + result.stderr
     tally = re.search(r"(\d+) checks: (\d+) PASS, (\d+) FAIL", output)
     if tally is None:
         raise RuntimeError(f"{name}: no simulation tally\n{output[-6000:]}")
-    failures = [line for line in output.splitlines() if line.startswith("FAIL: R")]
+    failures = [line for line in output.splitlines() if line.startswith("FAIL:")]
     (log_dir / f"{name}.txt").write_text(
         f"return code: {result.returncode}\n{tally.group()}\n" + "\n".join(failures) + "\n")
     seen = {int(line) for line in re.findall(r"CHECK_LOC:.*retry_cases.hpp:(\d+)", output)}
@@ -109,9 +288,14 @@ def main() -> int:
                 mutated = mutated.replace(old, new)
             rtl.write_text(mutated)
             rc, failures, _, killed = run_case(tree, name, args.logs)
+            if name in EQUIVALENT_MUTATIONS:
+                if rc or failures:
+                    raise RuntimeError(f"{name}: equivalence control failed")
+                print(f"EQUIVALENT {name}: baseline behavior retained", flush=True)
+                continue
             if not rc or not failures:
-                raise RuntimeError(f"{name}: survived the new checks")
-            print(f"KILLED {name}: rc={rc}, {len(failures)} new assertion failures", flush=True)
+                raise RuntimeError(f"{name}: survived the committed suite")
+            print(f"KILLED {name}: rc={rc}, {len(failures)} assertion failures", flush=True)
             for line in killed:
                 witnesses[line].append(name)
         rtl.write_text(source)
@@ -124,7 +308,9 @@ def main() -> int:
         missing = [line for line, names in witnesses.items() if not names]
         if not args.only and missing:
             raise RuntimeError(f"new assertions without a killed witness: {sorted(missing)}")
-    print(f"PASS: {len(selected)} mutants killed; baseline and restored rc 0")
+    equivalents = len(set(selected) & set(EQUIVALENT_MUTATIONS))
+    print(f"PASS: {len(selected) - equivalents} mutants killed; "
+          f"{equivalents} equivalence controls; baseline and restored rc 0")
     return 0
 
 

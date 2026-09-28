@@ -279,7 +279,7 @@ silence. Recognising these four saves a lot of time.
 | `BAD_ARGUMENTS` for every `READ_DESCRIPTOR` | the descriptor image is missing, truncated or corrupt; its zero configuration count fails before locate. Check snapshot word 34 bit 0 |
 | `NO_SUCH_DESCRIPTOR` from a direct-locate command | the image is invalid, or the loaded model does not contain that descriptor. Check snapshot word 34 bit 0 |
 | `ENTITY_MISBEHAVING`, 60 bytes | the response-memory bridge failed — snapshot words 35 and 36 |
-| `TALKER_DEST_MAC_FAILED` from PROBE_TX | this source has no allocated stream address, because the MAAP allocator in the fabric is absent or did not answer |
+| `TALKER_DEST_MAC_FAILED` from PROBE_TX | this source has no allocated stream address, because the MAAP allocator in the fabric is absent, did not answer, or became available less than one `T-ACMP-DA-RETRY` round plus the source sweep ago |
 | `NOT_IMPLEMENTED` with the command echoed | that opcode is genuinely not implemented yet. It is a correct answer, not a fault |
 
 ---

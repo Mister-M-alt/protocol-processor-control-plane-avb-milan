@@ -954,8 +954,8 @@ void Hn::check_an_absent_maap_degrades_without_wedging() {
 // GLOBAL tracker and maap_avail_w gates every source's ALLOC_DA, so one
 // unanswered accept stops allocation for EVERY source — no source reaches
 // GS_DA_OK, no DA gate opens, and there is no DECLARE_TALKER for SRP
-// either. It does not wedge: dispatch outranks the pending-init flag, so
-// every liveness signal stays healthy while no stream can ever start.
+// either. It does not wedge: command service continues while the allocator
+// is busy, so every liveness signal stays healthy while no stream can ever start.
 void Hn::check_an_unanswered_accept_strands_then_resumes() {
   uint32_t tk0 = 400000; d->now_ms_i = tk0;
   clear_edges();

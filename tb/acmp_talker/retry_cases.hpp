@@ -17,6 +17,14 @@ struct RetryChecks {
   void preserved_backoff();
   void block_changes();
   void retry_wrap();
+  void silent_commands();
+  void lifetime_restarts();
+  void event_fairness();
+  void mid_round_demand();
+  void grant_boundary_cancel();
+  void allocation_boundary_cancel();
+  void release_does_not_pace_allocation();
+
 };
 
 void RetryChecks::probe(Hn& h, int src, int status, uint64_t da, const char* tag) {
@@ -257,6 +265,130 @@ void RetryChecks::retry_wrap() {
   }
 }
 
+// R9: an accepted request with no response must not turn pending INIT
+// work into a ten-second command stall. Every consecutive command is bounded.
+void RetryChecks::silent_commands() {
+  Hn h; h.auto_grant = false;
+  h.configure_the_talker_and_release_reset(); h.d->cfg_src_en_i = 3; h.run(60);
+  CHECK(h.mreqs.size() == 1, "R9 allocation accepted and unanswered");
+  for (int i = 0; i < 6; ++i)
+    probe(h, 1, ST_DMAC_FAIL, 0, "R9 consecutive command during silent allocation");
+}
+
+// R10: neither conflict nor disable/re-enable waits for a round boundary.
+void RetryChecks::lifetime_restarts() {
+  for (int disable = 0; disable < 2; ++disable) {
+    Hn h; h.grant_ok = !disable;
+    h.configure_the_talker_and_release_reset(); h.run(sweep_cycles);
+    const auto before = h.mreqs.size();
+    h.grant_ok = true;
+    if (disable) {
+      h.d->cfg_src_en_i = 0xdf; h.run(40);
+      h.d->cfg_src_en_i = 0xff;
+    } else conflict(h, 5);
+    h.run(60);
+    CHECK(h.mreqs.size() == before + 1 && h.mreqs.back().src == 5
+          && !h.mreqs.back().rel,
+          "R10 %s immediately restarts acquisition", disable ? "re-enable" : "conflict");
+  }
+}
+
+// R11: a disabled source is withdrawn and its release debt is serviced while
+// commands stay continuously presented. No idle gap can hide arbitration loss.
+void RetryChecks::event_fairness() {
+  for (int owed = 0; owed < 2; ++owed) {
+    Hn h; h.configure_the_talker_and_release_reset(); h.run(400);
+    probe(h, 1, ST_OK, da_pool(1), "R11 demand before disable");
+    h.auto_grant = false;
+    if (owed) { conflict(h, 0); h.run(60); }
+    h.resps.clear();
+    CHECK(h.send(MT_GTXS, 2, C1, 0x777, 0, 0, 0), "R11 seed command consumed");
+    h.d->txn_valid_i = 1;
+    h.d->cfg_src_en_i = 0xfd;
+    const auto before = h.resps.size();
+    if (owed) { h.run(60); h.inject_rsp(true, da_pool(40)); }
+    h.run(4 * (MAAP_TMO + 64)); h.d->txn_valid_i = 0;
+    CHECK(h.resps.size() > before + 20, "R11 commands continue during teardown");
+    CHECK((h.decl_mask() & 2) == 0, "R11 disable withdraws under continuous commands");
+    CHECK(h.offers_rel == 1, "R11 %s release serviced under continuous commands",
+          owed ? "owed" : "immediate");
+  }
+}
+
+// R12: isolate the three demand arcs between retry ticks. A round cannot
+// supply the missing INIT bit on behalf of a broken probe/listener/timer arc.
+void RetryChecks::mid_round_demand() {
+  for (int kind = 0; kind < 3; ++kind) {
+    Hn h; h.grant_ok = (kind == 2);
+    h.configure_the_talker_and_release_reset(); h.d->cfg_src_en_i = 1; h.run(100);
+    if (kind == 2) probe(h, 0, ST_OK, da_pool(0), "R12 declaring before backoff");
+    if (kind == 2) h.d->now_ms_i = 150;
+    conflict(h, 0); h.run(60);
+    const auto before = h.mreqs.size();
+    h.d->now_ms_i = 150; // between round start 100 and next boundary 200
+    if (kind == 0) probe(h, 0, ST_DMAC_FAIL, 0, "R12 probe after conflict");
+    if (kind == 1) h.set_lsn(0, LSN_READY);
+    if (kind == 2) {
+      h.d->now_ms_i = 20149; h.run(100); // drain retry tick during BACKOFF
+      h.d->now_ms_i = 20150; h.fire_expiry(0); // full two-LeaveAll deadline
+    }
+    h.run(60);
+    CHECK(h.mreqs.size() == before + 1 && h.mreqs.back().src == 0
+          && !h.mreqs.back().rel, "R12 demand arc %d allocates inside round", kind);
+  }
+}
+
+// R13: sweep cancellation over the response and its next three edges,
+// including the grant write edge. Observe only ports, requests and gate strobes.
+void RetryChecks::grant_boundary_cancel() {
+  for (int disable = 0; disable < 2; ++disable) {
+    for (int offset = 0; offset <= 3; ++offset) {
+      Hn h; h.auto_grant = false;
+      h.configure_the_talker_and_release_reset(); h.d->cfg_src_en_i = 1; h.run(60);
+      h.set_lsn(0, LSN_READY);
+      h.inject_rsp(true, poison); h.run(offset);
+      if (disable) { h.d->cfg_src_en_i = 0; h.tick(); h.d->cfg_src_en_i = 1; }
+      else conflict(h, 0);
+      h.run(40);
+      CHECK(h.gates.empty() && h.decl_mask() == 0,
+            "R13 cancellation kind%d edge%d never publishes obsolete grant", disable, offset);
+      CHECK(h.mreqs.size() == 2 && h.mreqs.back().rel,
+            "R13 cancellation kind%d edge%d releases obsolete grant", disable, offset);
+    }
+  }
+}
+
+// R14: start a retry tick from a quiescent refused source. Cancel during
+// its dispatch/read window or at its action edge, before any request is offered.
+void RetryChecks::allocation_boundary_cancel() {
+  for (int kind = 0; kind < 3; ++kind) {
+    Hn h; h.grant_ok = false;
+    h.configure_the_talker_and_release_reset(); h.d->cfg_src_en_i = 1; h.run(100);
+    const auto before = h.mreqs.size();
+    h.d->now_ms_i = 200; h.run(2); // retry tick, then dispatch
+    if (kind == 0) conflict(h, 0); // cancellation pending before allocation action
+    if (kind == 1) { h.d->cfg_src_en_i = 0; h.tick(); h.d->cfg_src_en_i = 1; }
+    if (kind == 2) { h.tick(); h.d->cfg_src_en_i = 0; }
+    h.run(2);
+    CHECK(h.mreqs.size() == before,
+          "R14 cancellation kind%d prevents obsolete allocation offer", kind);
+  }
+}
+
+// R15: a RELEASE is debt settlement, not this lifetime's allocation attempt.
+// Re-enable on the externally visible release offer, before another disabled
+// edge could clear an incorrectly charged allocation pacing bit.
+void RetryChecks::release_does_not_pace_allocation() {
+  Hn h; h.configure_the_talker_and_release_reset(); h.d->cfg_src_en_i = 1; h.run(100);
+  h.d->cfg_src_en_i = 0;
+  for (int i = 0; i < 60 && !h.d->maap_req_valid_o; ++i) h.tick();
+  CHECK(h.d->maap_req_valid_o && h.d->maap_req_release_o,
+        "R15 release offered after disable");
+  h.d->cfg_src_en_i = 1; h.run(100);
+  CHECK(h.mreqs.size() == 3 && !h.mreqs.back().rel && h.mreqs.back().src == 0,
+        "R15 release does not consume re-enabled lifetime allocation attempt");
+}
+
 void Hn::check_retry_cases() {
   RetryChecks retry{checks, fails};
   retry.late_availability();
@@ -267,4 +399,11 @@ void Hn::check_retry_cases() {
   retry.preserved_backoff();
   retry.block_changes();
   retry.retry_wrap();
+  retry.silent_commands();
+  retry.lifetime_restarts();
+  retry.event_fairness();
+  retry.mid_round_demand();
+  retry.grant_boundary_cancel();
+  retry.allocation_boundary_cancel();
+  retry.release_does_not_pace_allocation();
 }

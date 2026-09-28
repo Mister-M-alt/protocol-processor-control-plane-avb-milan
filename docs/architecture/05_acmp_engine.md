@@ -386,6 +386,7 @@ never through ACMP (Milan §5.5.2.7).
 ```mermaid
 stateDiagram-v2
     [*] --> NO_DA
+    NO_DA --> NO_DA: T-ACMP-DA-RETRY / paced ALLOC_DA
     NO_DA --> DA_OK: maap ALLOC_DA success
     DA_OK --> DECLARING: gate true [DA_OK AND (T-SRP-DAFRESH alive OR listener attr registered)] / srp DECLARE_TALKER
     DECLARING --> DA_OK: gate false / srp WITHDRAW_TALKER
@@ -409,7 +410,7 @@ source anywhere reaches `DA_OK` — while the processor keeps answering every
 command normally.
 
 **Allocation recovery (issue #128).** Enabled `NO_DA` sources are revisited
-without a listener probe every `T-ACMP-DA-RETRY` (100 ms). One attempt per
+without a listener probe every `T-ACMP-DA-RETRY`. One attempt per
 source per round is allowed, including probe/listener-triggered requests;
 pending work coalesces rather than accumulating. Initial enable and conflict
 start a new acquisition lifetime. The source picker rotates after each visit,
@@ -431,14 +432,14 @@ answers in bounded time acquires every eligible source within one retry period
 plus a source sweep. For the parent one-cycle block adapter, conservatively
 allow `N_STREAM_OUT * (P-MAAP-ACCEPT-CYC + 64)` core clocks after the round
 boundary (8,704 clocks at the default shape, 87.04 microseconds at 100 MHz).
-Thus the late-availability bound is **100 ms + 87.04 microseconds** at that
-shape, including continuous solicited commands but excluding new configuration,
+Thus the late-availability bound is **`T-ACMP-DA-RETRY` plus that sweep**,
+including continuous solicited commands but excluding new configuration,
 conflict, PCP and other higher-priority event churn. A slower conforming
 allocator adds at most its bounded response latency per source. A permanently
 unanswered allocator cannot promise acquisition: the existing response
 watchdog and stale-credit capacity preserve bounded, honest failures instead.
 Rounds may meet at a boundary, so two adjacent attempts are possible; sustained
-traffic is bounded to one attempt per source per 100 ms round.
+traffic is bounded to one attempt per source per `T-ACMP-DA-RETRY` round.
 
 A grant invalidated by disable (even followed by re-enable) or conflict while
 in flight is never installed. Its successful allocation is released before a
@@ -447,6 +448,14 @@ The first probe after acquisition returns the cached valid tuple immediately;
 a probe before acquisition still returns `TALKER_DEST_MAC_FAILED`. This policy
 was chosen over waiting on demand because it repairs startup independently of
 listener timing and keeps allocation response waits off the command walker.
+
+**Consumer-visible timing change.** A `PROBE_TX` in a round that has already
+attempted does not force an immediate `ALLOC_DA`; it returns the honest cached
+status, and allocation resumes in the next round. Every enabled in-block source
+auto-acquires, whether or not that source was probed. Consumers must allow one
+retry round plus the sweep when observing an allocation, and associate each
+grant with its accepted request's source index, never the globally last grant.
+The processor/allocator ports and parameters are unchanged.
 
 The `source removed` arc is the one that must not degrade the same way. It wipes
 the record naming the address, so the `RELEASE_DA` it asks for is the only chance

@@ -5,7 +5,7 @@ Proves the ACMP stateless talker responder + per-source DA-gate
 (`hdl/acmp/KL_acmp_talker.sv`) against
 [05 §6bis](../../docs/architecture/05_acmp_engine.md) (F05.11 decision tree +
 F05.12 DA-gate) and the 08 §2/§5 timer contract: `make` = build + run, exit 0 =
-PASS, 1107 checks. `make lint` runs the repo's zero-warning gate (no width
+PASS, 1172 checks. `make lint` runs the repo's zero-warning gate (no width
 waivers).
 
 The C++ harness is an independent model, never DUT logic: every expected
@@ -160,7 +160,7 @@ issue #46; run in a copy of the tree, the tracked files never edited):
 
 ## Refused startup allocation recovery (issue #128)
 
-Section R adds 268 checks across eight independent fresh boots/scenario groups.
+Section R adds 333 checks across fifteen independent fresh boots/scenario groups.
 The allocation BFM can supply a stable base-plus-source block, refuse out-of-range
 sources, refuse all requests, withhold ready or delay responses. All assertions
 observe ports; no internal state is forced. The parent adapter remains a separate
@@ -176,6 +176,13 @@ integration regression in the consumer lane.
 | R6 | Retry rounds leave conflict and PCP backoff/timer arms untouched; only conflict reallocates, while PCP retains its address |
 | R7 | Count growth, shrink and block move: every source's mapping is checked; out-of-block probes fail without a retry storm |
 | R8 | Retry deadline on both sides of the 32-bit millisecond wrap |
+| R9 | Six consecutive probes meet the command bound while an accepted allocation is silent and another source has INIT pending |
+| R10 | DA_OK conflict and refused-source disable/re-enable restart allocation inside the current round |
+| R11 | Continuous commands do not starve source disable/withdrawal or immediate/owed releases |
+| R12 | Probe, listener change and full backoff expiry each allocate between retry ticks; no round can mask a missing demand arc |
+| R13 | Disable and conflict swept over the response edge and following three edges never publish an obsolete grant and always release it |
+| R14 | Cancellation during allocation dispatch/read or at its action edge suppresses an obsolete request |
+| R15 | Re-enable at the release offer acquires immediately; release does not charge the allocation pacing bit |
 
 The acquisition bound and its assumptions are in
 [05 §6bis](../../docs/architecture/05_acmp_engine.md#6bis-talker-side-stateless-responder).
@@ -191,38 +198,87 @@ python3 tb/acmp_talker/retry_mutants.py --logs /tmp/acmp-retry-mutants
 
 The runner copies only build inputs into a temporary directory, requires a
 simulation tally (a compiler error cannot kill a mutant), checks nonzero exits
-and new assertion failures, then restores the original RTL and requires rc 0.
+and named assertion failures, then restores the original RTL and requires rc 0.
 It records a failing witness by file and line for every new assertion site in
-`coverage.txt`. All 28 mutations below were killed. Baseline and restored runs both pass
-1107 checks; all 38 new assertion sites have a killed witness (2026-09-28).
+`coverage.txt`. The complete table includes both review mutant sets. Equivalent single-term
+variants are controls and never count as killed witnesses; their construction
+arguments are recorded in `EQUIVALENT_MUTATIONS`. The redundant enable-edge
+clear was removed, with its reason in `REMOVED_EQUIVALENTS`. Simulation verdicts
+use DUT cycles only, with no host-time deadline. Final measured results follow.
 
-| Mutant | Suite rc | New assertion failures |
-|---|---:|---:|
-| `no_round` | 2 | 22 |
-| `early_round` | 2 | 2 |
-| `late_round` | 2 | 20 |
-| `retry_wrap` | 2 | 2 |
-| `no_pacing` | 2 | 6 |
-| `fixed_priority` | 2 | 1 |
-| `command_monopoly` | 2 | 1 |
-| `retry_monopoly` | 2 | 4 |
-| `disabled_alloc` | 2 | 1 |
-| `no_accept_bound` | 2 | 3 |
-| `short_accept_bound` | 2 | 1 |
-| `refusal_is_grant` | 2 | 47 |
-| `obsolete_grant` | 2 | 10 |
-| `obsolete_release_lost` | 2 | 3 |
-| `no_response_bound` | 2 | 5 |
-| `response_wrap` | 2 | 1 |
-| `no_stale_swallow` | 2 | 3 |
-| `no_stale_capacity` | 2 | 2 |
-| `no_stale_drain` | 2 | 2 |
-| `backoff_bypass` | 2 | 2 |
-| `reallocate_owned` | 2 | 9 |
-| `half_backoff` | 2 | 2 |
-| `fresh_forever` | 2 | 1 |
-| `declare_without_demand` | 2 | 7 |
-| `source_alias` | 2 | 31 |
-| `gate_without_ownership` | 2 | 15 |
-| `no_requests` | 2 | 61 |
-| `no_command_ready` | 2 | 221 |
+Measured on the expanded suite: 56 defect mutants killed and four equivalent
+controls retained baseline behavior; baseline and restored runs pass 1172 checks.
+All 50 assertion sites in `retry_cases.hpp` have a killed witness. Counts below
+include named failures anywhere in the committed suite; `coverage.txt` separately
+requires a witness for each retry assertion site.
+
+| Mutant | Result | Named failing assertion |
+|---|---|---|
+| `no_round` | killed, 22 failures | R1 automatic bounded acquisition |
+| `early_round` | killed, 2 failures | R1 no retry before 100 ms |
+| `late_round` | killed, 21 failures | R1 automatic bounded acquisition |
+| `retry_wrap` | killed, 2 failures | R8 wrap retry bound minus one |
+| `no_pacing` | killed, 36 failures | R2 demand cannot bypass retry pacing |
+| `fixed_priority` | killed, 1 failures | R3 every source gets an attempt under continuous commands |
+| `command_monopoly` | killed, 5 failures | R3 every source gets an attempt under continuous commands |
+| `retry_monopoly` | killed, 60 failures | R3 absent allocator src0 consumed |
+| `disabled_alloc` | killed, 2 failures | R2 disabled listener event cannot allocate |
+| `no_accept_bound` | killed, 50 failures | R3 every source gets an attempt under continuous commands |
+| `short_accept_bound` | killed, 2 failures | R3 absent request respects accept bound |
+| `refusal_is_grant` | killed, 62 failures | R1 automatic bounded acquisition |
+| `obsolete_grant` | killed, 19 failures | R4 obsolete grant rejected src0 status/tuple |
+| `obsolete_release_lost` | killed, 11 failures | R4 obsolete successful allocation released before retry |
+| `no_response_bound` | killed, 16 failures | R5 timeout retries automatically across wrap |
+| `response_wrap` | killed, 1 failures | R5 no premature response timeout across wrap |
+| `no_stale_swallow` | killed, 9 failures | R5 stale timeout response src0 status/tuple |
+| `no_stale_capacity` | killed, 2 failures | R5 silent accepts stop at stale-credit capacity |
+| `no_stale_drain` | killed, 16 failures | R5 retry response src0 status/tuple |
+| `backoff_bypass` | killed, 2 failures | R6 retries leave backoff and timer untouched |
+| `reallocate_owned` | killed, 119 failures | R1 owned addresses are never reallocated |
+| `half_backoff` | killed, 6 failures | R6 full two-LeaveAll backoff armed |
+| `fresh_forever` | killed, 93 failures | R1 freshness expiry still withdraws every source |
+| `declare_without_demand` | killed, 150 failures | R1 acquired addresses neither declare nor borrow timer slots |
+| `source_alias` | killed, 166 failures | R1 first probe after bound src0 status/tuple |
+| `gate_without_ownership` | killed, 47 failures | R1 acquired addresses neither declare nor borrow timer slots |
+| `no_requests` | killed, 206 failures | R1 one refused startup attempt per source |
+| `no_command_ready` | killed, 541 failures | R1 first probe after bound src0 consumed |
+| `busy_tracker_blocks_commands` | killed, 62 failures | R4 obsolete grant rejected src0 consumed |
+| `no_conflict_wait_clear` | killed, 3 failures | R10 conflict immediately restarts acquisition |
+| `wait_on_release` | killed, 48 failures | R15 release does not consume re-enabled lifetime allocation attempt |
+| `tick_no_rearm` | killed, 40 failures | R2 one attempt per enabled source per round |
+| `no_rotate_advance` | killed, 1 failures | R3 every source gets an attempt under continuous commands |
+| `no_sticky_gp_window` | equivalent control, rc 0 | See construction argument below |
+| `grant_kill_reg_only` | killed, 3 failures | R13 cancellation kind0 edge3 never publishes obsolete grant |
+| `accept_kill_zero` | equivalent control, rc 0 | See construction argument below |
+| `kill_no_pending_conflict` | equivalent control, rc 0 | See construction argument below |
+| `kill_no_live_conflict` | killed, 2 failures | R13 cancellation kind0 edge3 never publishes obsolete grant |
+| `kill_no_disable` | killed, 1 failures | R13 cancellation kind1 edge3 never publishes obsolete grant |
+| `init_elig_no_avail` | killed, 15 failures | R9 consecutive command during silent allocation src1 consumed |
+| `no_turn_restore` | killed, 57 failures | R3 commands never starve behind retries (gap=0) |
+| `elig_drop_rel` | killed, 1 failures | R11 owed release serviced under continuous commands |
+| `elig_drop_off` | killed, 4 failures | R11 disable withdraws under continuous commands |
+| `ready_ignores_turn` | killed, 89 failures | B4 re-ping: timer arm missing |
+| `init_ignores_off_conflict` | killed, 2 failures | R14 cancellation kind0 prevents obsolete allocation offer |
+| `retry_period_200` | killed, 21 failures | R1 automatic bounded acquisition |
+| `tick_ge_to_gt` | killed, 21 failures | R1 automatic bounded acquisition |
+| `kill_no_conflict_at_all` | killed, 10 failures | R4 obsolete grant rejected src0 status/tuple |
+| `kill_no_disable_at_all` | killed, 9 failures | R4 obsolete grant rejected src0 status/tuple |
+| `kill_sticky_off` | killed, 10 failures | R4 obsolete grant rejected src0 status/tuple |
+| `no_probe_initset` | killed, 1 failures | R12 demand arc 0 allocates inside round |
+| `no_lsn_initset` | killed, 1 failures | R12 demand arc 1 allocates inside round |
+| `no_conflict_daok_initset` | killed, 39 failures | R10 conflict immediately restarts acquisition |
+| `no_backoff_exit_initset` | killed, 1 failures | R12 demand arc 2 allocates inside round |
+| `no_enable_wait_clear` | killed, 2 failures | R10 re-enable immediately restarts acquisition |
+| `eligible_only_init` | killed, 4 failures | R11 disable withdraws under continuous commands |
+| `accept_kill_no_disable` | equivalent control, rc 0 | See construction argument below |
+| `init_no_enable_check` | killed, 1 failures | R14 cancellation kind2 prevents obsolete allocation offer |
+| `eligible_ignores_init` | killed, 1 failures | R3 every source gets an attempt under continuous commands |
+| `tick_keeps_wait` | killed, 31 failures | R1 automatic bounded acquisition |
+
+Equivalent controls are checked for a clean baseline result, not counted as kills.
+
+- `no_sticky_gp_window`: Until GRANT consumes gp_valid, OFF/CONFLICT cannot dispatch; their pending bits retain every cancellation through the grant action.
+- `accept_kill_zero`: Cancellation on accept is pending on the next busy edge; a response cannot be consumed as a grant before that edge latches the kill.
+- `accept_kill_no_disable`: An accept-edge disable sets OFF, which persists and latches the kill on the next busy edge before grant consumption.
+- `kill_no_pending_conflict`: A conflict after accept latches the live kill; an older pending conflict is captured by the accept-side kill expression.
+- `no_reenable_wait_clear`: Removed !en_q_r: reset clears wait and each disabled edge already clears it through !cfg_src_en_i; no enable-edge clear is needed.

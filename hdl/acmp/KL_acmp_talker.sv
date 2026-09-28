@@ -172,11 +172,11 @@ module KL_acmp_talker
     //! acquired on entry to DEFEND, before the first announce_timer expiry.
     //!
     //! The UPPER bound is T-SRP-DAFRESH (DAFRESH_MS_P, 15 s). An allocation
-    //! is requested by a stimulus — normally the PROBE_TX that pinged the
-    //! source — and a grant landing after that ping has gone stale cannot
-    //! open the gate anyway (fresh_f is false, and a Listener attribute may
-    //! not be registered). Waiting past T-SRP-DAFRESH buys nothing and only
-    //! lengthens the strand, so the bound must stay below it: 10 s < 15 s.
+    //! normally starts at enable or in a retry round, independently of a
+    //! probe. For a demand-triggered attempt, a grant after that ping has
+    //! gone stale cannot open the gate without a registered Listener. Keep
+    //! this existing response watchdog below the demand freshness window:
+    //! 10 s < 15 s. Automatic acquisition does not create fresh demand.
     parameter int unsigned MAAP_RSP_MS_P = 32'd10_000,
     //! derived source-index width — do not override
     localparam int unsigned SRC_W_C = (N_STREAM_OUT_P > 32'd1)
@@ -875,6 +875,13 @@ module KL_acmp_talker
     endcase
   end
 
+  logic [N_STREAM_OUT_P-1:0] set_conflict_w, set_pcp_w, set_tmr_w;
+  logic [N_STREAM_OUT_P-1:0] set_lsn_w, set_init_w, set_off_w, set_rel_w;
+  logic [N_STREAM_OUT_P-1:0] clr_disp_w;
+  logic [N_STREAM_OUT_P-1:0] clr_relq_w;
+  logic [N_STREAM_OUT_P-1:0] clr_arm_w;
+  logic [31:0]               arm_rel_w;
+
   always_ff @(posedge clk_i) begin : retry_round
     if (!rst_n) begin
       retry_t0_r   <= now_ms_i;
@@ -888,7 +895,7 @@ module KL_acmp_talker
       end
       // A new configuration lifetime or conflict starts a new acquisition.
       for (int i = 0; i < int'(N_STREAM_OUT_P); i++) begin
-        if (!cfg_src_en_i[i] || !en_q_r[i] || set_conflict_w[i])
+        if (!cfg_src_en_i[i] || set_conflict_w[i])
           retry_wait_r[i] <= 1'b0;
       end
       if ((state_r == S_EV_ACT) && ev_to_maap_w && !ev_maap_rel_w)
@@ -1107,13 +1114,6 @@ module KL_acmp_talker
   end
 
   // ------------------------------------------------------- pending events
-  logic [N_STREAM_OUT_P-1:0] set_conflict_w, set_pcp_w, set_tmr_w;
-  logic [N_STREAM_OUT_P-1:0] set_lsn_w, set_init_w, set_off_w, set_rel_w;
-  logic [N_STREAM_OUT_P-1:0] clr_disp_w;
-  logic [N_STREAM_OUT_P-1:0] clr_relq_w;
-  logic [N_STREAM_OUT_P-1:0] clr_arm_w;
-  logic [31:0]               arm_rel_w;
-
   always_comb begin : pe_sets
     set_conflict_w = '0;
     set_pcp_w      = '0;
