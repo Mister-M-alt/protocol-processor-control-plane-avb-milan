@@ -91,7 +91,8 @@ tally.
   latch that ignores the running program, a fourth attempt, an alarm
   forgiven by success, an unproven image continued, the hold released at
   the go, no dispatch hold) each fail their named check; they run from the
-  lane's evidence packet, which plants them in a scratch copy.
+  mutation driver `d3_mutants.py` in this directory, which plants each in an
+  extract of the tree (mutation record below).
   **D3R** the restore transaction over the device model, on fresh models.
   **D3R1** the nine rows D3S1 saves through real SETs come back across a
   power cycle. Before the save the volatile set is populated: the controller
@@ -177,7 +178,7 @@ tally.
   ADP enabled without the restore, done without the D3 walk, blank ignoring
   the D3 walk, ownership taken only at the walk, no roll-back, either store
   left out of it, the roll-back ignoring the guard's debt, a CLOSED re-walk
-  released) each fail their named check, from the same evidence packet.
+  released) each fail their named check, from the same driver.
   `restore_done_o` is the COMBINED terminal: the binding walk's release
   alone (S4) frees the listener, never AECP or ADP.
   The dispatch hold runs from reset, so every section that resets and then
@@ -588,6 +589,78 @@ M32 to M37 were measured on 2026-09-24 at 1,414, each in its own extract of the
 tree: M32 then fails 8 (BW1 four times, BW2, BW3's saved-record check, and BW4
 twice, because a gate that never owns makes no gap and sees no preload), M33
 and M34 the same 2 as before.
+
+### D3 negative controls (issue #131): `d3_mutants.py`
+
+`python3 d3_mutants.py --output DIR [--jobs N]` plants each control below in its own
+extract of `hdl/`, `tb/common/` and this directory, builds `gsi-build`, runs
+`--d3-only`, and counts the mutant KILLED only when the run completes with its
+tally, exits non-zero and every named check fails; a golden extract runs first and
+must pass. The same driver runs the binding manager's three DR2c controls in
+`tb/acmp_nvm` and the validator's admission control in `tb/rx_validator` (their
+READMEs record them). At the lane head all 62 are KILLED and the three goldens PASS;
+the last column is how many checks each one failed there.
+
+| Mutant | Defect planted | Named checks, each failing | Failing checks |
+|---|---|---|---|
+| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 10 |
+| `dispatch_not_held` | the engine's three dispatch gates ignore the writer's ownership | `D3O1: without the walk the writer owns every cycle` | 4 |
+| `own_taken_at_the_walk` | ownership and the bus taken only once the walk starts, not from reset | `D3R9: the held SET` | 10 |
+| `image_unproven_continues` | an unprovable image (the LOCATE's error) no longer aborts | `D3O2: CLOSED at`, `D3O3: CLOSED` | 6 |
+| `latch_ignores_program` | the service latch does not wait for a running program | `D3S9` | 3 |
+| `TRG_cfg` | configuration trigger deleted | `D3S1 cfg` | 3 |
+| `TRG_rate` | sampling-rate trigger deleted | `D3S1 rate` | 3 |
+| `TRG_clks` | clock-source trigger deleted | `D3S1 clks` | 5 |
+| `TRG_fmti` | input-format trigger deleted | `D3S1 fmti` | 4 |
+| `TRG_fmto` | output-format trigger deleted | `D3S1 fmto` | 4 |
+| `TRG_ptof` | presentation-offset trigger deleted | `D3S1 ptof` | 21 |
+| `taint_ignored` | a change after the latch no longer taints the write | `D3S4 taint` | 1 |
+| `clear_wins_same_edge` | the done's clear outranks a change on the same edge | `D3S5 same edge` | 1 |
+| `clear_by_group` | the done clears every record of the group | `D3S6 group` | 8 |
+| `clear_by_index` | the done clears every record of the same index | `D3S6 index` | 14 |
+| `identify_is_a_change` | IDENTIFY (selector 7) made a persisted change | `D3S7` | 1 |
+| `unchanged_compare_ignores_validity` | the change qualifier ignores the valid flag | `D3S8 validity` | 1 |
+| `RPL_cfg` | configuration replay deleted | `D3R1 cfg` | 5 |
+| `RPL_rate` | sampling-rate replay deleted | `D3R1 rate` | 5 |
+| `RPL_clks` | clock-source replay deleted | `D3R1 clks` | 3 |
+| `RPL_fmti` | input-format replay deleted | `D3R1 fmti` | 2 |
+| `RPL_fmto` | output-format replay deleted | `D3R1 fmto` | 2 |
+| `RPL_ptof` | presentation-offset replay deleted | `D3R1 ptof` | 6 |
+| `rule_ignored` | a SET-rule refusal applied anyway | `D3R2: COMPLETE` | 3 |
+| `passes_may_disagree` | the pass agreement removed | `D3R4:`, `D3R4b` | 3 |
+| `device_error_reads_as_blank` | a DEVICE error read as a blank record | `D3R5 device error on the header`, `D3R6: the one saved record` | 4 |
+| `unframed_reads_as_device_error` | an UNFRAMED record read as a device error | `D3R6: an erased device restores blank` | 37 |
+| `desc_error_is_a_refusal` | a rule's descriptor error read as a refusal | `D3R7` | 4 |
+| `no_restore_watchdog` | the per-wait deadline removed | `D3R8: a READ granted`, `D3R8b` | 7 |
+| `restore_writes_are_changes` | the snoop taps the shared bus, so restore writes are changes | `D3R1: no restore write is a change` | 1 |
+| `enable_not_released_by_restore` | ADP enabled by the request alone | `D3R1: the enable requested from reset` | 2 |
+| `done_without_d3` | restore done without the D3 walk | `D3R1: the enable requested from reset`, `D3R1: COMPLETE` | 31 |
+| `blank_ignores_d3` | restore blank ignores the D3 walk | `D3R1: COMPLETE` | 1 |
+| `store_not_cleared` | the sampling-rate row and its valid flag not reset | `D3R1: every row at its reset value` | 15 |
+| `valid_not_cleared` | the sampling-rate valid flag not reset | `D3R1: every row at its reset value` | 15 |
+| `quarantine_released_by_time` | the arbiter ends a drain after 1,000 cycles | `D3R5: once the device ends the drained read a later SET persists` | 3 |
+| `no_rollback` | a pass-1 abort ends DEFAULTS without the roll-back | `D3R4:` | 12 |
+| `dyn_not_rolled_back` | the dynamic-state store left out of the roll-back | `D3R4:` | 4 |
+| `store_not_rolled_back` | the descriptor store left out of the roll-back | `D3R10 5000` | 2 |
+| `rollback_ignores_debt` | the roll-back ignores the guard's debt | `D3R10 16000` | 2 |
+| `closed_releases_the_entity` | a roll-back that cannot re-prove the image ends DEFAULTS | `D3R12` | 1 |
+| `no_backoff_d3` | the writer's DR2c backoff removed | `D3S10 timing` | 2 |
+| `fourth_attempt` | the writer allows a fourth attempt | `D3S10 count` | 2 |
+| `alarm_forgiven_by_success` | a later success clears the writer's alarm | `D3S10 revocation` | 1 |
+| `backoff_derivation` | the top derives the backoff as CLK_HZ_P / 200 (5 ms) | `D3S10 timing` | 2 |
+| `backoff_holds_dispatch` | BACKOFF holds dispatch and the bus | `D3S10 backoff` | 1 |
+| `disagree_one_direction` | the agreement aborts whole-then-blank only | `D3R4b` | 1 |
+| `rollback_one_cycle` | the roll-back strobe lasts one cycle without debt | `D3R4 strobe` | 1 |
+| `pass1_read_not_drained` | a pass-1 deadline no longer abandons its READ to the drain | `D3R5b: once the device ends the drained pass-1 READ` | 1 |
+| `judge_wait_unwatched` | the format judge's wait is not watched | `D3R8b` | 1 |
+| `rate_walk_stuck_on_first_lane` | the rate walk never leaves the list's first lane | `D3R3b entry 7` | 1 |
+| `rate_walk_unbounded` | the rate walk's eight-entry bound dropped | `D3R3b entry 8` | 1 |
+| `no_aggregate_deadline` | the aggregate deadline removed | `D3R13 pass 0: DEFAULTS at clock`, `D3R13 pass 1` | 3 |
+| `aggregate_mirrored` | the aggregate a mirrored 100,000,000 instead of CLK_HZ_P | `D3R13 pass 0: DEFAULTS at clock` | 3 |
+| `aggregate_from_the_walk` | the aggregate counts from the binding walk's end | `D3R13 pass 0: DEFAULTS at clock` | 3 |
+| `per_wait_floor` | the per-wait derivation rounds down | `D3R8 deadline` | 1 |
+| `aecp_hold_unbounded` | the admission gate never drops (the unbounded hold) | `D3O5: in CLOSED each GET_RX_STATE`, `D3O6: during the slowed walk` | 6 |
+| `held_drop_uncounted` | a held drop not counted | `D3O5: one AECP command held`, `D3O6: at the terminal` | 4 |
 
 ## Recorded seams and honest limits
 

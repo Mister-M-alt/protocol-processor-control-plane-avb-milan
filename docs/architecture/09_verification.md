@@ -176,18 +176,25 @@ manager (`tb/acmp_nvm`):
 |---|---|
 | cleared first: every scalar row at its reset value, valid clear, when the D3 walk starts | D3R1 |
 | real-command save, power cycle and readback of every group, value and valid flag | D3S1 (first and last index of each group), D3R1 (GET of each) |
-| six trigger and six replay deletions, one per scalar group (`TRG_*`, `RPL_*`) | each fails its own D3S1 or D3R1 check (mutation record in the lane's evidence packet) |
+| six trigger and six replay deletions, one per scalar group (`TRG_*`, `RPL_*`) | each fails its own D3S1 or D3R1 check (driver `tb/pp_top/d3_mutants.py`, mutation record in `tb/pp_top/README.md`) |
 | taint, change-wins-done, clear by group AND index, coalescing, DR2b unchanged projection | D3S3, D3S4, D3S5, D3S6, D3S8 |
 | restore writes are no changes; IDENTIFY is no change | D3R1, D3S7 |
 | volatile exclusions after the saved-set cycle (IDENTIFY, lock, registry) | D3R1 |
 | value refusals (frame, rule) kept apart from transport faults (DEVICE, torn, deadline, unframed) | D3R2, D3R3 against D3R5, D3R6, D3R8 |
-| pass agreement, descriptor-read error never a refusal, roll-back of both stores | D3R4, D3R7 |
+| the rate rule's walk past the list's first lane to its eight-entry bound | D3R3b |
+| pass agreement in both directions, descriptor-read error never a refusal, roll-back of both stores for at least two cycles | D3R4, D3R4b, D3R7 |
+| every watched wait: a pass-1 read abandoned to the drain, a silent format judge, the per-wait deadline to the cycle | D3R5b, D3R8b, D3R8 |
+| the ratified 1,000 ms aggregate from `restore_go_i`, derived from `CLK_HZ_P`, against a device just inside every per-wait deadline | D3R13 |
+| the AECP hold admission: one AECP record in the ingress while held, the rest dropped and counted, ACMP at its idle latency | D3O5, D3O6; `tb/rx_validator` F28 |
 | guard debt held across the roll-back, watchdog recovery, CLOSED on an unprovable image | D3R10, D3R12, D3O2, D3O3, D3O4 |
 | completed bindings kept on a D3 roll-back | D3R11 |
 | AECP held from reset; ADP released only by both walks | D3O1, D3R1, D3R9, D3S9, D3S11 |
-| DR2c on both producers: three attempts, backoff timing, no forgiveness | D3S10; `tb/acmp_nvm` E8 to E11 |
+| DR2c on both producers: three attempts, the top's derived backoff, dispatch free while it runs, no forgiveness | D3S10; `tb/acmp_nvm` E8 to E11 |
 
-The name and map stages add their groups' controls when they land. The port suites'
+Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plants 62
+of them, each in its own extract, and requires its named checks to fail (all 62 KILLED
+at the lane head; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
+`tb/rx_validator` READMEs). The name and map stages add their groups' controls when they land. The port suites'
 open limitations stay theirs: issue #18 (no reset mid-commit), #19 (port mechanisms
 without coverage) and #21 (no handshake-misbehaving port model) are not closed by this
 evidence. The top-level device model does misbehave on the handshake for the walks

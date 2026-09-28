@@ -1742,18 +1742,22 @@ struct D3RestorePhase {
   // D3R8: the deadline counts cycles without progress. 0x50's header READ
   // is granted by the device RS_TMO - 200 cycles late and the restore
   // completes with it applied; granted RS_TMO + 200 late, the restore
-  // aborts at the deadline, cause 3, on defaults.
+  // aborts at the deadline, cause 3, on defaults, after exactly RS_TMO
+  // stalled cycles: the top's ceil(CLK_HZ_P / 50), which a floor misses by
+  // one at this clock.
   void r8_the_deadline_boundary() {
     const std::array<long, 2> holds{RS_TMO - 200, RS_TMO + 200};
     for (const long hold : holds) {
       fresh();
       seed(0x50, d3_record(0x50, 1500000, 4));
       bool armed = false;
+      long wait = 0;
       const Boot b = boot_with(8 * RS_TMO, [&] {
         if (!armed && x.d->nvm_dev_req_o && x.d->nvm_dev_region_o == 0x50) {
           x.nv_gnt_hold = static_cast<int>(hold);
           armed = true;
         }
+        wait = std::max(wait, long(x.d->dbg_d3_wd_o));
       });
       const bool late = hold > RS_TMO;
       CHECK(armed && b.done > b.release && x.d->restore_fail_o == late
@@ -1761,6 +1765,10 @@ struct D3RestorePhase {
               && ((x.d->aecp_pt_offset_v_o & 1) != 0) == !late,
             "D3R8: a READ granted %ld cycles late: fail %u, cause %u",
             hold, unsigned(x.d->restore_fail_o), unsigned(x.d->rs_cause_o));
+      if (late)
+        CHECK(wait + 1 == RS_TMO,
+              "D3R8 deadline: the walk aborted on the %ld-th stalled cycle, the "
+              "derived deadline is %ld", wait + 1, RS_TMO);
     }
   }
 

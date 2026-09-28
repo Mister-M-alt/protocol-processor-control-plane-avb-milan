@@ -54,7 +54,7 @@ alarm still set after a later successful commit and that time (these are
 this raw binding manager's facts; the top combines its restore verdicts with
 the D3 walk's). Removing the backoff, permitting a fourth attempt and
 clearing the alarm on a later success each fail E9, E8 and E11 respectively;
-those controls run from the lane's evidence packet;
+those controls run from `tb/pp_top/d3_mutants.py` (mutation record below);
 `restore_blank_o` separating a walk that validated records from one that
 read blank or unframed media (`restore_done_o` is set on BOTH, which is
 why the pin exists) and following the image rather than the history when
@@ -300,3 +300,16 @@ Mutation-proven 2026-09-20 for the unflushed export:
   fails 12 of 86, X1, X1b, X2, X3, X3b, X4 and X5b by name (B2 and the
   four byte-exact store checks go with them, because the suite waits on the
   same pin to know a burst drained).
+
+## Mutation record: DR2c on the binding manager (issue #131)
+
+Planted by `tb/pp_top/d3_mutants.py`, each in its own extract of `hdl/`, `tb/common/`
+and this directory, which then runs `make run`; KILLED means the run completed with its
+tally, exited non-zero and every named check failed. All three are KILLED at the lane
+head and the golden extract passes.
+
+| Mutant | Defect planted | Named check, failing | Failing checks |
+|---|---|---|---|
+| `no_backoff_binding` | the binding manager's DR2c backoff removed (`H_FL_BACKOFF` relatches at once) | `E9 DR2c timing` | 1 |
+| `fourth_attempt_binding` | the binding manager allows a fourth attempt | `E8 DR2c count` | 3 |
+| `alarm_forgiven_binding` | a later successful commit clears the binding manager's alarm | `E11 DR2c revocation` | 1 |

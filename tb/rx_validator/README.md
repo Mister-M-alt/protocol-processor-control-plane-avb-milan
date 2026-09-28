@@ -72,3 +72,4 @@ commit/abort bookkeeping).
 | M1 | h/version gate inverted (`!= 4'h0` → `== 4'hF`) | F8/F8b: `rx_version` stays 0, bad frames commit + emit hdr beats instead of aborting (8 FAILs) |
 | M2 | V1 boundary off-by-one (`pcnt_end >= cdl+12` → `>`) | F1 and every exact-fit frame: counted `rx_length` + aborted instead of committed (101 FAILs) |
 | M3 | V9 DA-alone routing (MSRP EtherType pair check dropped) | F14: 60 LLDP bytes leak onto the MRP stream (1 FAIL) |
+| M4 | V10 the AECP hold admission dropped (`held_fail_w` tied 0; `validator_admits_held_aecp` in `tb/pp_top/d3_mutants.py`, which plants it in an extract and runs this suite) | F28: the held AECP frame commits and emits a header beat, `rx_aecp_held` stays 0 (4 FAILs) |
