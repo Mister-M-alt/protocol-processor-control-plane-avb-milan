@@ -88,7 +88,7 @@ stream counts in F01.5 are product choices; the top supplies implementation defa
 | `DESC_NAME_ENTRIES_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.1 descriptor store](../architecture/07_memory_maps.md#sec-desc-memory) | Name-table capacity on chip; size from the generated image's `n_names` within the store's supported limits |
 | `DESC_MEM_TMO_CYC_P` | [Top declaration and bindings](../../hdl/top/protocol_processor_top.sv); [AECP engine](../../hdl/aecp/KL_aecp_engine.sv) | Watchdog budget in core clocks for descriptor and response memory, AECP gather waits, and the listener's stream-command handshake |
 | `NVM_RS_TMO_CYC_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-NVM-RS-TMO-CYC`; [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NVM-RS-DEADLINE` | Per-wait no-progress deadline of both boot restore walks (the binding walk's reads; every wait of the D3 walk, the roll-back's debt wait included), in core clocks; size above the slowest record read on the NVM device face and the descriptor image walk. The default is the ratified 20 ms, ceil(`CLK_HZ_P` / 50) ([08 §2](../architecture/08_timing.md#sec-08-nvm)) |
-| `NVM_RS_AGG_CYC_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-NVM-RS-AGG-CYC`; [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NVM-RS-AGGREGATE` | Aggregate restore deadline in core clocks from `restore_go_i`, both walks and the roll-back included: at it the D3 walk ends as a stalled wait would (DEFAULTS, or CLOSED before the image is proven), however promptly each single wait is answered. The default is the ratified 1,000 ms, `CLK_HZ_P` clocks; keep it derived from your clock. Shortened overrides are for verification. |
+| `NVM_RS_AGG_CYC_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-NVM-RS-AGG-CYC`; [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NVM-RS-AGGREGATE` | Aggregate restore deadline in core clocks from `restore_go_i`, both walks and the roll-back included, however promptly each single wait is answered. At it the phase the restore is in ends as a stalled wait would, and a provable image is never closed: a binding walk still reading fails whole and the D3 walk then proves the image and ends DEFAULTS; in the D3 walk's first pass DEFAULTS; in its second pass a roll-back to DEFAULTS; CLOSED only if the image cannot be proven, or if the bound falls inside that roll-back (bring-up step 3). The default is the ratified 1,000 ms, `CLK_HZ_P` clocks; keep it derived from your clock. Shortened overrides are for verification. |
 | `NVM_RETRY_BACKOFF_CYC_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-NVM-RETRY-BACKOFF-CYC`; [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NVM-RETRY-BACKOFF` | Wait after a failed record write before the next attempt, in core clocks, for the binding manager and the D3 writer alike; the default is ceil(`CLK_HZ_P` / 2) = 500 ms. Each record gets three **attempts** in all: the first write and two **retries** (`RETRY_MAX_P` = 2 inside each producer, not a top parameter), then the reset-sticky `nvm_alarm_o`. Shortened overrides are for verification. |
 | `REG_TL_TIMEOUT_MS_P` | [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NOTIF-TIMELIMITED`; [top declaration](../../hdl/top/protocol_processor_top.sv) | TIME_LIMITED registration expiry in the AECP notification registry, in milliseconds of the possibly compressed timebase. Shortened overrides are for verification. |
 | `LOCK_TIMEOUT_MS_P` | [F08.1](../architecture/08_timing.md#fig-08-constants), `T-LOCK-UNLOCK`; [top declaration](../../hdl/top/protocol_processor_top.sv) | ENTITY lock auto-unlock deadline in the AECP notification block, in milliseconds of the possibly compressed timebase. Shortened overrides are for verification. |
@@ -162,8 +162,8 @@ the bridge must not emit further beats for that request.
 
 The guard's own module port `debt_o` is the **D3 interface**
 ([memory contract](../architecture/07_memory_maps.md#sec-desc-memory)). It is not
-exposed by `protocol_processor_top`; the D3 lane will add that routing together
-with the parent consumer changes, keeping the current top-level interface intact.
+exposed by `protocol_processor_top`: the D3 writer consumes it inside the top
+(`d3_desc_debt_i`), so the top-level interface carries no debt port.
 Drive `protocol_processor_top.rst_n`, its synchronous active-low reset, only
 from a **hard reset** that also flushes the descriptor-memory path, including
 any CDC queues. Never drive it from an entity disable, store-only reset, or
@@ -172,9 +172,10 @@ future rollback reset: no pre-reset response may arrive after debt is forgotten.
 If a burst never terminates, the guard keeps requests held; the store's watchdog
 still answers each locate with an error in bounded time. The existing immediate
 error on the first locate following a fetch-response timeout is unchanged.
-The D3 writer is deferred: it will hold restorable owners while `debt_o` is set
-and use its own deadline to end CLOSED if debt does not drain. This output alone
-does not implement rollback or release those owners.
+The D3 writer holds its roll-back of both AECP stores in reset while `debt_o` is
+set, and ends the restore CLOSED if the debt outlasts `NVM_RS_TMO_CYC_P` or the
+aggregate bound falls while it waits (bring-up step 3). The guard itself
+implements no roll-back and releases no owner.
 
 ### 4.2 `resp_mem_*` — read and write
 
@@ -392,19 +393,43 @@ contract and its coherence bound are [06 F06.13](../architecture/06_aecp_engine.
      terminal releases AECP dispatch. A D3 failure rolls the AECP stores back to their
      defaults (`restore_rb_o`) and **keeps the bindings the binding walk restored**;
    - `restore_done_o` (both walks done) releases your requested enable to ADP.
+
    `restore_done_o` says the walks sequenced, not that anything came back: every
    per-record default sets it. `restore_blank_o` separates a restore from walks over
    blank, unframed or absent media, and reads 0 for any failed restore.
-   `restore_closed_o` without `restore_done_o` means the descriptor image could not be
-   proven (`rs_cause_o` 7) or a roll-back could not re-prove it: AECP and ADP stay held
-   until reset, the listener keeps serving; fix the image and reset. The saved records
-   stay on the media after any failure: only a later change replaces one, so the next
-   boot on a healthy device restores them. Budget the restore: each wait is bounded by
-   `NVM_RS_TMO_CYC_P` (20 ms of `CLK_HZ_P`; size it above the slowest single record read
-   your device face can take and above the descriptor image walk), and the whole restore
-   from `restore_go_i` to its terminal by `NVM_RS_AGG_CYC_P` (1,000 ms of `CLK_HZ_P`):
-   a device slow enough to reach that bound ends the restore on defaults (`rs_cause_o` 3)
-   rather than holding AECP and the enable. DR3a ratified both numbers
+   `restore_closed_o` without `restore_done_o` is CLOSED: AECP and ADP stay held until
+   reset, and the listener keeps serving. It has two causes, which `rs_cause_o` tells
+   apart ([07 §5.3](../architecture/07_memory_maps.md#fig-07-nvmflow)):
+   - the descriptor image could not be proven (`rs_cause_o` 7): fix the image load and
+     reset;
+   - a D3 walk that failed in its second pass rolled back and could not prove the image
+     again: the re-LOCATE missed or erred, or the roll-back's debt wait or re-LOCATE
+     outlasted `NVM_RS_TMO_CYC_P`, or the aggregate bound below fell inside it.
+     `rs_cause_o` is then the second pass's cause (1, 2, 3, 5 or 6) and `restore_rb_o`
+     reads 0: a device or descriptor-memory fault met during the restore; check both
+     and reset.
+
+   The saved records stay on the media after any failure: only a later change replaces
+   one, so the next boot on a healthy device restores them. Budget the restore: each
+   wait is bounded by `NVM_RS_TMO_CYC_P` (20 ms of `CLK_HZ_P`; size it above the slowest
+   single record read your device face can take and above the descriptor image walk),
+   and the whole restore from `restore_go_i` by `NVM_RS_AGG_CYC_P` (1,000 ms of
+   `CLK_HZ_P`). A device slow enough to reach that bound, while answering every wait
+   in time, ends the restore where the bound finds it, and it never closes a provable
+   image:
+   - the binding walk still reading (it alone outlasts 1,000 ms, e.g. a device slow per
+     byte over saved bindings): the binding walk fails whole as at its own deadline
+     (`restore_cause_o` 3, every binding at its default), the listener is released, and
+     the D3 walk proves the image, reads no record and ends **DEFAULTS**, `rs_cause_o`
+     3 (CLOSED, `rs_cause_o` 7, only if the image cannot be proven);
+   - the D3 walk's first pass: **DEFAULTS**, `rs_cause_o` 3, nothing applied;
+   - its second pass: a roll-back to **DEFAULTS** (`restore_rb_o`), `rs_cause_o` 3;
+   - inside a roll-back that another fault had started: **CLOSED**, with that fault's
+     cause (above).
+
+   The terminal follows the bound within one per-wait deadline, or within two when a
+   roll-back runs after it, so let your bounded wait for `restore_done_o` or
+   `restore_closed_o` cover 1,000 ms plus 40 ms. DR3a ratified both numbers
    ([08 §2](../architecture/08_timing.md#sec-08-nvm)).
 4. Present identity, capability and configuration inputs.
 5. Assert `entity_enable_i` when you are ready; the processor forwards it to ADP only

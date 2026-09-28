@@ -237,16 +237,24 @@ behind the NVM device face and on the descriptor image:
 | a face that answers a read with an error, or ends it before a record's 8-byte header | DEFAULTS | 0 | 1 | 1 (a device error) | 0 |
 | a face that never answers, such as an unwired backend whose grant is tied low | DEFAULTS, after the read deadlines | 0 | 1 | 1 (the deadline); the NVM port then stays blocked until reset, so no change is ever written | 0 |
 | a D3 walk that failed after applying settings (the rolled-back case, `restore_rb_o`) | DEFAULTS | 0 | 1 | 1 | 0 |
-| a descriptor image the restore cannot prove (missing, corrupt, memory silent) | **CLOSED** (`restore_closed_o`) | 0 | **0** | 1 | 0 |
+| a device that answers every read just in time but so slowly that the restore reaches its 1,000 ms aggregate deadline (`rs_cause_o` 3): while the binding walk still reads (it fails whole, every sink starts unbound, and the D3 walk proves the image and reads nothing), or in the D3 walk's first pass | DEFAULTS | 0 | 1 | 1 (the deadline) | 0 |
+| the same deadline in the D3 walk's second pass | DEFAULTS, rolled back (`restore_rb_o`) | 0 | 1 | 1 (the deadline) | 0 |
+| a descriptor image the restore cannot prove (missing, corrupt, memory silent), with or without that deadline first (`rs_cause_o` 7) | **CLOSED** (`restore_closed_o`) | 0 | **0** | 1 | 0 |
+| a D3 walk that failed in its second pass and whose roll-back could not prove the image again: the re-proof failed, or its wait for the descriptor memory or the re-proof outlasted the read deadline or the aggregate deadline (`rs_cause_o` is the second pass's cause, 1 to 6) | **CLOSED** (`restore_closed_o`) | 0 | **0** | 1 | 0 |
 
 Blank is set only for a restore that did **not** fail and in which neither walk validated
 a record: it is what separates the first two rows. Whether there is any media behind the
 device face is a fact only the integrating fabric holds, and it has to publish that too.
 
-**CLOSED** reads busy 0, done 0 and failed 1 on this word: the restore stopped because it
-could not prove the entity model it judges saved values against. AECP commands and
-advertising stay held until reset, while the listener keeps answering; fix the image
-load (check snapshot word 34) and reset. The cause of a D3 failure is on the top's
+**CLOSED** reads busy 0, done 0 and failed 1 on this word: the restore stopped without
+an entity model it can stand behind. AECP commands and advertising stay held until
+reset, while the listener keeps answering. It has two causes (the last two rows):
+the image could not be proven (`rs_cause_o` 7): fix the image load (check snapshot
+word 34) and reset; or a failed second pass rolled the settings back and could not
+prove the image again (any other `rs_cause_o`): the NVM device or the descriptor
+memory faulted during the restore; check both and reset. The 1,000 ms aggregate
+deadline alone never closes an image that can be proven: a slow device ends the
+restore on defaults (done 1, failed 1). The cause of a D3 failure is on the top's
 `rs_cause_o` (1 torn, 2 device, 3 deadline, 5 the two read passes disagreed, 6 a
 descriptor read failed, 7 image unproven) and the binding walk's on `restore_cause_o`;
 publish them beside this word if your platform surfaces diagnostics.
@@ -307,7 +315,7 @@ lot of time.
 
 | On the wire | Means |
 |---|---|
-| no AECP answer at all and no advertising, while ACMP commands are answered; control word 1 reads done 0, failed 1 | the restore ended **CLOSED**: the descriptor image it judges saved values against is missing, truncated or corrupt, or its memory stopped answering. AECP and ADP stay held until reset (§6). Check snapshot word 34 bit 0, fix the image load, reset. (Before the restore held AECP, the same fault answered `BAD_ARGUMENTS` to every `READ_DESCRIPTOR`; the image-valid flag only clears on reset, so once AECP runs the image is proven) |
+| no AECP answer at all and no advertising, while ACMP commands are answered; control word 1 reads done 0, failed 1 | the restore ended **CLOSED** (§6). Either the descriptor image it judges saved values against is missing, truncated or corrupt, or its memory stopped answering (`rs_cause_o` 7): check snapshot word 34 bit 0, fix the image load, reset. Or a failed second restore pass rolled back and could not prove the image again, because the NVM device or the descriptor memory faulted, or stayed slow past the read or the 1,000 ms aggregate deadline, inside that roll-back (any other `rs_cause_o`): check both, reset. A slow device alone ends on defaults, never here. AECP and ADP stay held until reset. (Before the restore held AECP, the same image fault answered `BAD_ARGUMENTS` to every `READ_DESCRIPTOR`; the image-valid flag only clears on reset, so once AECP runs the image is proven) |
 | `NO_SUCH_DESCRIPTOR` from a direct-locate command | the loaded model does not contain that descriptor |
 | `ENTITY_MISBEHAVING`, 60 bytes | the response-memory bridge failed — snapshot words 35 and 36 |
 | `TALKER_DEST_MAC_FAILED` from PROBE_TX | this source has no allocated stream address, because the MAAP allocator in the fabric is absent, did not answer, or became available less than one `T-ACMP-DA-RETRY` round plus the source sweep ago |

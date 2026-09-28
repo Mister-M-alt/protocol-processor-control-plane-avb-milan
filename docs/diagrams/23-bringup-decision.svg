@@ -48,9 +48,9 @@
 
   <rect x="612" y="324" width="704" height="100" rx="7" fill="#fff2f2" stroke="#a03030" stroke-width="1.2"/>
   <text x="630" y="348" font-size="12.5" font-weight="bold" fill="#16181d">Both restore walks must end first: the requested enable alone is not enough.</text>
-  <text x="630" y="370" font-size="11.5" fill="#4a5058">Busy (bit 1): a walk is running, each wait bounded by NVM_RS_TMO_CYC_P. Never busy: pulse restore_go_i.</text>
-  <text x="630" y="387" font-size="11.5" fill="#4a5058">Done 0, failed 1 is CLOSED: the descriptor image could not be proven (word 34 bit 0). AECP and ADP stay held</text>
-  <text x="630" y="404" font-size="11.5" fill="#4a5058">until reset; ACMP still answers. Fix the image, reset. Done 1 with failed 1: DEFAULTS, served on defaults.</text>
+  <text x="630" y="370" font-size="11.5" fill="#4a5058">Busy (bit 1): a walk runs; each wait, and 1,000 ms in all, bound it. Never busy: pulse restore_go_i.</text>
+  <text x="630" y="387" font-size="11.5" fill="#4a5058">Done 0, failed 1 is CLOSED, AECP and ADP held until reset, ACMP answering: rs_cause_o 7, image unproven</text>
+  <text x="630" y="404" font-size="11.5" fill="#4a5058">(word 34 bit 0), fix it; else a roll-back could not re-prove it, check NVM and memory. Done 1, failed 1: DEFAULTS.</text>
 
   <!-- STEP 4 -->
   <rect x="24" y="438" width="520" height="100" rx="7" fill="#eef7ef" stroke="#2f7d46" stroke-width="1.4"/>
