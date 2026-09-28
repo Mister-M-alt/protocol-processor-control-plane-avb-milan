@@ -39,6 +39,40 @@ tally.
   the store's 4,096-cycle watchdogs, never a hang. **D3O4** an image loaded
   after the store's boot walk failed is proven by the writer's LOCATE of
   ENTITY 0 (heal before answer), and the held command is answered from it.
+  **D3S** the writer in service, on real AECP SETs over the device model.
+  **D3S1** every persisted group at its first and last declared index
+  (configuration, sampling rate, clock source, both stream-format
+  directions, presentation offset) becomes exactly one ERASE and WRITE of
+  its own record after the 500 ms debounce, byte-exact against an
+  independent F07.8 frame builder (layout 2, CCITT-FALSE crc16), and no
+  other record id moves. **D3S2** `d3_unflushed_o` rises the cycle after
+  the store's accepting cycle, holds, and falls the cycle after the port's
+  done of that WRITE. **D3S3** two changes in one window coalesce into one
+  WRITE of the later value. **D3S4** a change while the WRITE is held at
+  the device taints it: a second WRITE carries the change. **D3S5** a
+  change accepted on the WRITE's done edge wins: the SET's latency to the
+  store is measured, the device completion is placed so the two coincide
+  (the premise is graded), and the record is rewritten. **D3S6** a done
+  clears its own record only, by group and index: the other output offset
+  and the clock source (index 0 of another group) changed during 0x50's
+  WRITE are both written after it. **D3S7** SET_CONTROL on IDENTIFY raises
+  no pending and moves no NVM operation. **D3S8** (DR2b) an identical
+  rewrite after convergence moves nothing, and clock source 0 on the unset
+  row, a row becoming valid at its reset value, is written. **D3S10** a
+  record whose WRITEs all fail is attempted three times, then dropped with
+  the sticky `nvm_alarm_o`; no fourth attempt follows and a later
+  successful write does not clear the alarm. **D3S11** a READ_DESCRIPTOR
+  whose fetch the memory answers 3,000 cycles late is running when the
+  debounce closes: the writer holds dispatch but not the state bus until
+  it retires, then latches. **D3S9** grades every cycle of the phase: no
+  command is taken while the writer owns and no latch overlaps a running
+  program. The negative controls (each trigger deleted, taint ignored,
+  clear winning the same edge, clear by group or by index alone,
+  IDENTIFY made a change, validity ignored by the change qualifier, a
+  latch that ignores the running program, a fourth attempt, an alarm
+  forgiven by success, an unproven image continued, the hold released at
+  the go, no dispatch hold) each fail their named check; they run from the
+  lane's evidence packet, which plants them in a scratch copy.
   The dispatch hold runs from reset, so every section that resets and then
   issues AECP commands starts both walks first (`H::boot_to_aecp`, U10, U11
   and the internal-MAAP model's MP0). Focused reproduction:

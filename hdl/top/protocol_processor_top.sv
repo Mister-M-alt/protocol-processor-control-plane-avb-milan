@@ -439,7 +439,9 @@ module protocol_processor_top
     //! path, so this is the only pin that tells it apart from a walk that
     //! actually put Milan 5.3.8.2/5.3.8.3 state back.
     output logic        restore_blank_o,       //! level: completed walk validated ZERO records
-    output logic        nvm_alarm_o,           //! sticky: commit retries exhausted
+    //! sticky until reset: a record producer exhausted its write attempts,
+    //! the binding manager's or the D3 writer's (both managers' alarm)
+    output logic        nvm_alarm_o,
     //! per-sink UNFLUSHED binding state, the manager's own dirty vector
     //! (KL_acmp_nvm_shadow dirty_r, a clk_i register read combinationally).
     //! Bit k rises on the cycle the manager ACCEPTS a changed persisted set
@@ -450,9 +452,18 @@ module protocol_processor_top
     //! on the same cycle nvm_alarm_o rises. A tainted commit (a capture that
     //! hit the sink mid-flush) holds it: the burst re-serializes fresh data.
     //! An integrator publishing a "saved state pending" bit ORs this vector
-    //! with aecp_dyn_dirty_o; without it a binding taken inside the
-    //! manager's debounce window reads durable.
+    //! with d3_unflushed_o below (aecp_dyn_dirty_o stays a diagnostic);
+    //! without it a binding taken inside the manager's debounce window
+    //! reads durable.
     output logic [N_STREAM_IN_P-1:0] nvm_unflushed_o,
+    //! the D3 writer's UNFLUSHED records (the OR of its per-record dirty
+    //! bits, KL_aecp_nvm_writer): 1 from the cycle after an accepted AECP
+    //! write that changed a persisted dynamic-state row (configuration,
+    //! sampling rate, clock source, stream formats, presentation offset)
+    //! until the port's done of the whole-record write that carries a value
+    //! latched after the last change, or, on attempt exhaustion, the cycle
+    //! nvm_alarm_o rises. From that done the backend's own dirty reports it.
+    output logic                     d3_unflushed_o,
 
     //! ---- NVM device face (external backend; KL_pp_nvm_port initiator) ----
     output logic        nvm_dev_req_o,         //! command request, held until gnt
@@ -2453,6 +2464,8 @@ module protocol_processor_top
   //! read either manager abandons, and one device-face initiator remains.
   logic        d3_m_req_w, d3_m_we_w, d3_m_wvalid_w, d3_m_rready_w;
   logic        d3_m_abort_w;
+  logic        d3_m_gnt_w, d3_m_wready_w, d3_m_done_w, d3_m_err_w;
+  logic        nvm_bind_alarm_w, d3_alarm_w;
   logic [7:0]  d3_m_rid_w, d3_m_wdata_w;
   logic        nvm_req_w, nvm_we_w, nvm_wvalid_w, nvm_wready_w;
   logic [7:0]  nvm_record_id_w, nvm_wdata_w, nvm_rdata_w;
@@ -2466,8 +2479,7 @@ module protocol_processor_top
   logic        np_rready_w, np_busy_w, np_done_w, np_err_w;
   logic [7:0]  np_rid_w, np_wdata_w, np_rdata_w;
   logic [1:0]  np_err_cause_w;
-  logic        nm1_gnt_nc_w, nm1_wready_nc_w, nm1_rvalid_nc_w;
-  logic        nm1_done_nc_w, nm1_err_nc_w, nvm_drain_nc_w;
+  logic        nm1_rvalid_nc_w, nvm_drain_nc_w;
   logic [7:0]  nm1_rdata_nc_w;
   logic [1:0]  nm1_err_cause_nc_w;
 
@@ -2484,7 +2496,7 @@ module protocol_processor_top
       .restore_fail_o   (restore_fail_o),
       .restore_blank_o  (restore_blank_o),
       .restore_cause_o  (nvm_restore_cause_nc_w),
-      .alarm_o          (nvm_alarm_o),
+      .alarm_o          (nvm_bind_alarm_w),
       .cap_wr_i         (lstn_recwr_w),
       .cap_sink_i       (lstn_recwr_sink_w),
       .cap_rec_i        (lstn_recwr_rec_w),
@@ -2522,6 +2534,8 @@ module protocol_processor_top
   //! must not precede them. Busy covers the gap, so the pair never reads
   //! neither-busy-nor-done once the walk has started.
   assign restore_done_o = nvm_walk_done_w && lsn_released_w;
+  //! one reset-sticky alarm for both record producers
+  assign nvm_alarm_o    = nvm_bind_alarm_w || d3_alarm_w;
   assign restore_busy_o = nvm_walk_busy_w
                           || (nvm_walk_done_w && !lsn_released_w);
 
@@ -2549,12 +2563,12 @@ module protocol_processor_top
       .m1_wvalid_i    (d3_m_wvalid_w),
       .m1_wdata_i     (d3_m_wdata_w),
       .m1_rready_i    (d3_m_rready_w),
-      .m1_gnt_o       (nm1_gnt_nc_w),
-      .m1_wready_o    (nm1_wready_nc_w),
+      .m1_gnt_o       (d3_m_gnt_w),
+      .m1_wready_o    (d3_m_wready_w),
       .m1_rvalid_o    (nm1_rvalid_nc_w),
       .m1_rdata_o     (nm1_rdata_nc_w),
-      .m1_done_o      (nm1_done_nc_w),
-      .m1_err_o       (nm1_err_nc_w),
+      .m1_done_o      (d3_m_done_w),
+      .m1_err_o       (d3_m_err_w),
       .m1_err_cause_o (nm1_err_cause_nc_w),
       .m1_abort_i     (d3_m_abort_w),
       .p_req_o        (np_req_w),
@@ -3477,6 +3491,7 @@ module protocol_processor_top
       .eff_commit_o       (aecp_eff_commit_nc_w),
       .name_wr_o          (aecp_name_wr_o),
       .d3_go_i            (lsn_released_w),
+      .d3_tick_i          (tick_ms_w),
       .d3_m_req_o         (d3_m_req_w),
       .d3_m_we_o          (d3_m_we_w),
       .d3_m_rid_o         (d3_m_rid_w),
@@ -3484,10 +3499,16 @@ module protocol_processor_top
       .d3_m_wdata_o       (d3_m_wdata_w),
       .d3_m_rready_o      (d3_m_rready_w),
       .d3_m_abort_o       (d3_m_abort_w),
+      .d3_m_gnt_i         (d3_m_gnt_w),
+      .d3_m_wready_i      (d3_m_wready_w),
+      .d3_m_done_i        (d3_m_done_w),
+      .d3_m_err_i         (d3_m_err_w),
       .d3_done_o          (d3_done_nc_w),
       .d3_fail_o          (d3_fail_nc_w),
       .d3_closed_o        (d3_closed_nc_w),
       .d3_cause_o         (d3_cause_nc_w),
+      .d3_unflushed_o     (d3_unflushed_o),
+      .d3_alarm_o         (d3_alarm_w),
       .eff_nvm_mark_o     (aecp_nvm_mark_o),
       .eff_nvm_stb_o      (aecp_nvm_stb_o),
       .eff_notify_class_o (aecp_eff_notify_cls_nc_w),

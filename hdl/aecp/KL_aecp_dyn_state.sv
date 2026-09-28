@@ -64,8 +64,12 @@
 //                WHAT THIS BLOCK DOES NOT DO. It does not check the lock
 //                (CHECK_LOCK does, in the µprogram, before the write), it does
 //                not validate a value against the descriptor's supported list
-//                (the µprogram does), and it does not persist anything — it
-//                raises `dirty_o` so the NVM manager knows a commit is owed.
+//                (the µprogram does), and it does not persist anything. The
+//                D3 writer (KL_aecp_nvm_writer) persists selectors 0 to 5 one
+//                record per row: `wr_chg_o` qualifies the µCPU's accepted
+//                write, which the engine taps on the µCPU's side of the
+//                state-bus selection, so a restore write is never a change.
+//                `dirty_o` stays a sticky diagnostic and drives no manager.
 //                An out-of-range descriptor index is dropped and counted
 //                rather than aliased onto row zero, because silently writing
 //                the wrong stream's format is worse than refusing.
@@ -121,6 +125,12 @@ module KL_aecp_dyn_state #(
     output logic [N_STREAM_OUT_P*64-1:0] fmt_out_o,     //! row k at [64k +: 64]
     output logic [N_STREAM_OUT_P-1:0]    fmt_out_v_o,
     output logic        dirty_o,           //! a persisted field was written
+    //! one cycle, with an accepted write that CHANGES a persisted row's
+    //! projection {value, valid}: selectors 0 to 5 in range, and the row
+    //! was not valid yet or the value differs within the field's width.
+    //! An identical rewrite, IDENTIFY and a dropped out-of-range write
+    //! never raise it. The D3 writer's command-side trigger qualifier.
+    output logic        wr_chg_o,
 
     //! ---- observability -------------------------------------------------
     output logic [15:0] dbg_writes_o,      //! writes accepted
@@ -251,6 +261,27 @@ module KL_aecp_dyn_state #(
   logic take_wr_w, oob_wr_w;
   assign take_wr_w = st_req_i && st_we_i && (region_w == RGN_DYN_C) && in_range_w;
   assign oob_wr_w  = st_req_i && st_we_i && (region_w == RGN_DYN_C) && !in_range_w;
+
+  //! the written field's width, so a change is judged on the bits the row
+  //! stores (the µprograms right-justify a narrower value in the lane)
+  logic [63:0] fmask_w;
+  always_comb begin : field_mask
+    unique case (sel_w)
+      13'(SEL_CFG_C):    fmask_w = 64'h0000_0000_0000_FFFF;
+      13'(SEL_RATE_C):   fmask_w = 64'h0000_0000_FFFF_FFFF;
+      13'(SEL_CLKSRC_C): fmask_w = 64'h0000_0000_0000_FFFF;
+      13'(SEL_FMTIN_C):  fmask_w = 64'hFFFF_FFFF_FFFF_FFFF;
+      13'(SEL_FMTOUT_C): fmask_w = 64'hFFFF_FFFF_FFFF_FFFF;
+      13'(SEL_PTOFF_C):  fmask_w = 64'h0000_0000_FFFF_FFFF;
+      default:           fmask_w = 64'd0;   // IDENTIFY is volatile
+    endcase
+  end
+
+  //! DR2b: only a proven unchanged projection is suppressed. A row that
+  //! becomes valid changes its projection even at its reset value.
+  //! `val_w`/`vld_w` are the addressed row BEFORE this write lands.
+  assign wr_chg_o = take_wr_w && (fmask_w != 64'd0)
+                    && (!vld_w[0] || ((st_wdata_i & fmask_w) != val_w));
 
   always_ff @(posedge clk_i) begin : dyn_core
     if (!rst_n) begin

@@ -710,6 +710,14 @@ struct H {
   uint16_t nv_rd_pos = 0;
   //! cycles the next command grant is withheld (a slow device), 0 = none
   int      nv_gnt_hold = 0;
+  //! a WRITE whose bytes are all taken completes no earlier than this
+  //! harness cycle (-1: at once), so a completion can be placed on a chosen
+  //! clock edge
+  long     nv_done_at = -1;
+  //! the next nv_err_writes WRITEs to region nv_err_region end with the
+  //! device's err instead of done, and change nothing
+  int      nv_err_region = -1;
+  int      nv_err_writes = 0;
   // MAAP allocator model (02 §4.2). OFF by default: the processor ships
   // with the allocator in the integrating fabric, and "no allocator wired
   // yet" must be a survivable wiring, not a wedge.
@@ -1056,6 +1064,15 @@ struct H {
   long rs_done_owned = 0;   // cycles restore_done_o read 1 while owned
   long rs_pre = 0;          // the walks' preload record writes and A4 arms
   long rs_pre_late = 0;     // ...of them, those at or after restore_done_o
+  //! the D3 writer's ownership, every cycle (section D3): a program that
+  //! STARTS while the writer owns the bus, a latch that overlaps a running
+  //! program, and the longest ownership window in service
+  long d3_start_owned = 0;
+  long d3_latch_busy = 0;
+  long d3_own_run = 0;
+  long d3_own_max = 0;
+  bool d3_busy_prev = false;
+  bool d3_own_prev = false;
   //! srp_domain_change_o strobes, counted once per cycle (section DV): the
   //! one-cycle DOMAIN_CHANGE has no wire shape of its own
   int domain_changes = 0;
@@ -1188,6 +1205,7 @@ struct H {
     if (d->dbg_notify_enq_o) ++notify_enqs;
     nvm_unflushed_seen |= d->nvm_unflushed_o;
     sample_restore_levels();
+    sample_d3_ownership();
     if (d->srp_domain_change_o) ++domain_changes;
 
     d->clk_i = 1; d->eval();
@@ -1212,6 +1230,21 @@ struct H {
       ++rs_pre;
       if (rs_done) ++rs_pre_late;
     }
+  }
+
+  void sample_d3_ownership() {
+    const bool busy = d->dbg_aecp_busy_o != 0;
+    //! a command is taken on the clock edge of a cycle A_IDLE saw it, so a
+    //! start is owned when the writer owned in the cycle before busy rose
+    if (d->rst_n && d3_own_prev && busy && !d3_busy_prev) ++d3_start_owned;
+    if (d->dbg_d3_latch_o && busy) ++d3_latch_busy;
+    if (d->dbg_d3_done_o && d->dbg_d3_own_o) {
+      d3_own_max = std::max(d3_own_max, ++d3_own_run);
+    } else {
+      d3_own_run = 0;
+    }
+    d3_busy_prev = busy;
+    d3_own_prev = d->dbg_d3_own_o != 0;
   }
 
   // ---- MAC TX capture ----
@@ -1418,7 +1451,13 @@ struct H {
           nv_cur.wr.push_back(static_cast<uint8_t>(d->nvm_dev_wdata_o));
           nv_left--;
         }
-      } else if (--nv_done_lag <= 0) {
+      } else if (nv_cur.region == nv_err_region && nv_err_writes > 0) {
+        d->nvm_dev_err_i = 1;                        // the device refuses it
+        --nv_err_writes;
+        nv_cur.op = 3;                               // logged as a failed WRITE
+        nvm_ops.push_back(nv_cur);
+        nv_st = NvState::NV_IDLE;
+      } else if (--nv_done_lag <= 0 && long(t) >= nv_done_at) {
         d->nvm_dev_done_i = 1;
         for (size_t i = 0; i < nv_cur.wr.size(); i++)
           nv_mem[nv_cur.region][(nv_cur.off + i) & 0xFF] = nv_cur.wr[i];
@@ -9785,6 +9824,7 @@ struct NameWritePhase {
   setup.load_descriptor_image();
   const std::vector<uint8_t> image = h.dram;
   D3OwnershipPhase{h, image}.run();
+  D3ServicePhase{h, image}.run();
   printf("D3: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 

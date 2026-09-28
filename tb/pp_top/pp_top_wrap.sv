@@ -168,6 +168,7 @@ module pp_top_wrap (
     output logic        restore_blank_o,
     output logic        nvm_alarm_o,
     output logic  [7:0] nvm_unflushed_o,
+    output logic        d3_unflushed_o,
     output logic        nvm_dev_req_o,
     input  wire         nvm_dev_gnt_i,
     output logic [1:0]  nvm_dev_op_o,
@@ -342,7 +343,14 @@ module pp_top_wrap (
     output logic        dbg_aecp_busy_o,
     //! the AECP dispatch queue's head is present (before the scoreboard
     //! admission that aecp_txn_valid_o is gated by)
-    output logic        dbg_aecp_head_o
+    output logic        dbg_aecp_head_o,
+    //! the arbiter's manager-1 grant and done (the D3 writer's own), and
+    //! the writer's per-record dirty vector (27 records at this shape)
+    output logic        dbg_d3_mgnt_o,
+    output logic        dbg_d3_mdone_o,
+    output logic [26:0] dbg_d3_dirty_o,
+    //! the writer is latching a record over the state bus in service
+    output logic        dbg_d3_latch_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
@@ -518,6 +526,7 @@ module pp_top_wrap (
       .restore_blank_o       (restore_blank_o),
       .nvm_alarm_o           (nvm_alarm_o),
       .nvm_unflushed_o       (nvm_unflushed_o),
+      .d3_unflushed_o        (d3_unflushed_o),
       .nvm_dev_req_o         (nvm_dev_req_o),
       .nvm_dev_gnt_i         (nvm_dev_gnt_i),
       .nvm_dev_op_o          (nvm_dev_op_o),
@@ -627,6 +636,10 @@ module pp_top_wrap (
   assign dbg_d3_cause_o   = u_dut.d3_cause_nc_w;
   assign dbg_aecp_busy_o  = u_dut.aecp_dbg_busy_nc_w;
   assign dbg_aecp_head_o  = u_dut.aecp_txn_valid_w;
+  assign dbg_d3_mgnt_o    = u_dut.d3_m_gnt_w;
+  assign dbg_d3_mdone_o   = u_dut.d3_m_done_w;
+  assign dbg_d3_dirty_o   = u_dut.u_aecp.u_d3.dirty_r;
+  assign dbg_d3_latch_o   = u_dut.u_aecp.u_d3.latch_w;
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin
