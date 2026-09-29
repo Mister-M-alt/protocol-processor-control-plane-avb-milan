@@ -1,0 +1,20 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -626,8 +626,7 @@
+         end
+ 
+         // 4) draw delivered: DRAW -> DELAY, arm T-ADP-DELAY(-START)
+-        if (draw_del_w && (32'(draw_del_if_w) == i)
+-            && (adv_st_r[i] == ADP_ADV_DRAW)) begin
++        if (draw_del_w && (32'(draw_del_if_w) == i)) begin
+           adv_st_r[i]         <= ADP_ADV_DELAY;
+           tpend_r[i]          <= TPEND_ARM;
+           tpend_deadline_r[i] <= now_ms_i + {16'd0, draw_del_ms_w};
+@@ -757,7 +756,6 @@
+                                                     : ADP_DRAW_KIND_DELAY_C;
+ 
+   assign draw_del_w    = prng_draw_valid_i && draw_act_r
+-                         && (adv_st_r[draw_if_r] == ADP_ADV_DRAW)
+                          && (draw_want_now_w == draw_kind_r);
+   assign draw_del_if_w = draw_if_r;
+   assign draw_del_ms_w = prng_draw_ms_i;

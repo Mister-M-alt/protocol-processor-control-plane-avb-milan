@@ -134,6 +134,12 @@ document byte offsets — never from DUT logic.
 | `./scripts/lint_hdl.sh` | Verilator `--lint-only` over every module elaborated as a top, zero warnings tolerated |
 
 Do not quote a check total here — run `./scripts/run_suites.sh` and read the summary line.
+
+Two suites are MTXW walks in the sense of [§3](#3-test-categories), each from an
+independent transcription of the specification's table and ending in a cell count:
+`tb/acmp_listener` walks F05.3, and `tb/adp_engine` walks F04.2 (Milan Table 5.51,
+with the §5.6.1 boot gate and both hardware phases of DELAY) and F04.3 (Milan
+Table 5.54 and its §5.6.4.5 guards). Their READMEs carry the tables.
 Each `tb/<suite>/README.md` states what its suite proves, its recorded limits, and where
 one exists a **mutation record**: deliberate breakages and how many checks each turned
 red. That table is the evidence a suite has teeth.

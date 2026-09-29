@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -435,7 +435,7 @@
+   assign disc_hit_w = (rx_st_r == RX_CLASSIFY)
+                       && (txn_in_valid_q_r)
+                       && (rxq_msg_r == ADP_MSG_DISCOVER_C)
+-                      && ((rxq_eid_r == 64'd0) || (rxq_eid_r == entity_id_i));
++                      && 1'b1;
+   assign disc_hit_if_w = rxq_if_r;
+ 
+   always_ff @(posedge clk_i) begin : rx_pipe

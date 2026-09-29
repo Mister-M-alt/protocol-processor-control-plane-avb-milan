@@ -1,0 +1,10 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -364,7 +364,6 @@
+           end else if (gm_dom_ok_w) begin
+             // talker-restart detector: departed + rediscovered pair
+             ev_dep_w    = 1'b1;
+-            ev_disc_w   = 1'b1;
+             rec_wr_en_w = 1'b1;
+             iter_arm_w  = 1'b1;
+           end else begin

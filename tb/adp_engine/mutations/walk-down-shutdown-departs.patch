@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -685,7 +685,7 @@
+             && (adv_st_r[i] == ADP_ADV_DELAY)) begin
+           pend_avail_r[i] <= 1'b1;
+         end
+-        if (enable_fall_w && (adv_st_r[i] != ADP_ADV_DOWN)) begin
++        if (enable_fall_w) begin
+           pend_dep_r[i]   <= 1'b1;
+           pend_avail_r[i] <= 1'b0;    // departing supersedes a queued advert
+         end
