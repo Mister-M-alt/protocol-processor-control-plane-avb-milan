@@ -80,6 +80,13 @@ MUTANTS = [
     ('mvrp-stale-expiry-honoured', 'srp_top', 'restart', 'P6:'),
     ('mvrp-passive-lost', 'srp_top', 'restart', 'P4:'),
     ('mvrp-flag-at-expiry', 'srp_top', 'restart', 'P5:'),
+    # issue #108: the stale-expiry guard holds whatever the arm-path latency
+    ('rearm-at-issue', 'srp_top', 'armdelay', 'P8:'),
+    ('r-rearm-no-inflight', 'srp_top', 'peer', 'M10:'),
+    ('r-rearm-no-inflight', 'srp_top', 'restart', 'P6:'),
+    ('r-rearm-no-deadline', 'srp_top', 'peer', 'M10:'),
+    ('r-rearm-no-deadline', 'srp_top', 'armdelay', 'P8:'),
+    ('r-flag-ignores-edge-peer', 'srp_top', 'restart', 'P7:'),
     # issue #64: Milan v1.2 Table 4.3 timer grading
     ('join-ms-400', 'srp_top', 'timers', 'Q1:'),
     ('periodic-ms-3000', 'srp_top', 'timers', 'Q2:'),
@@ -168,7 +175,7 @@ def main() -> int:
         passed, total, covered = campaign(tree, args.output, selected)
     if not args.only:
         expected = {f"{group}{i}" for group, count in
-                    [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 6), ("Q", 4), ("R", 4)]
+                    [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

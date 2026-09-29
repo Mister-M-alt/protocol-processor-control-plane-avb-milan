@@ -599,9 +599,14 @@ restart stands.
 
 *Start leavealltimer.* A fresh draw from the 10–15 s range
 ([F08.1](08_timing.md#fig-08-constants), §10.7.4.3) re-arms the application's timer
-slot, counted from the peer's LeaveAll. The draw lands within a few clocks; until
-it does, an expiry of the superseded deadline is stale and is ignored, because the
-timer the standard restarted has not run out.
+slot, counted from the peer's LeaveAll. Until the restarted deadline, an expiry of
+that slot is stale and is ignored: the timer the standard restarted has not run
+out, so it is no leavealltimer! ("the leavealltimer associated with that state
+machine expires", §10.7.5.22). The engine tells a stale expiry from its own state,
+never from the latency of the paths between it and the shared services: a draw is
+still outstanding, or `now_ms` is before the deadline the draw produced. That
+matters because the re-arm crosses the processor top's queued timer arm port, and
+until it lands the slot still holds the superseded deadline, which can still fire.
 
 *Passive.* An unaccepted own MSRP action and an MVRP flag that no drain has taken
 yet are both dropped (above). An accepted `sLA` is never retracted: its frame goes

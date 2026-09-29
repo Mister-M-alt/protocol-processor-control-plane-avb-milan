@@ -1014,14 +1014,23 @@ module KL_srp_top
   assign enc_msrp_full_w = (32'(enc_cnt_msrp_w) == ENC_DEPTH_P);
 
   // A leavealltimer restarted by rLA! re-arms through a fresh draw. Until
-  // that arm lands the slot still holds the superseded deadline: its expiry
-  // is stale, since the timer the standard restarted has not run out. A
-  // genuine expiry disarms the slot, so it never meets this condition.
-  logic [1:0] la_rearm_w;   // {MVRP, MSRP}
+  // the draw lands the slot holds the superseded deadline; once it lands,
+  // cad_dl_r holds the restarted one, but the arm still crosses an arm path
+  // whose latency this engine does not see (the processor top queues it
+  // behind other faces). So a LeaveAll-slot expiry is stale while a draw is
+  // outstanding or now_ms_i is before the intended deadline: the timer the
+  // standard restarted has not run out, which is no leavealltimer!
+  // (802.1Q-2014 §10.7.5.22, Table 10-5 rLA!). A genuine expiry fires at or
+  // after cad_dl_r (same now_ms, same wrap-safe compare as the service).
+  logic [1:0]  la_rearm_w;      // {MVRP, MSRP}
+  logic [31:0] la_msrp_age_w;   // now_ms_i - intended deadline, modular
+  logic [31:0] la_mvrp_age_w;
+  assign la_msrp_age_w = now_ms_i - cad_dl_r[CAD_LA_MSRP_C];
+  assign la_mvrp_age_w = now_ms_i - cad_dl_r[CAD_LA_MVRP_C];
   assign la_rearm_w[0] = need_draw_r[0] || (dr_inflight_r && !dr_app_r)
-                      || cad_pend_r[CAD_LA_MSRP_C];
+                      || la_msrp_age_w[31];
   assign la_rearm_w[1] = need_draw_r[1] || (dr_inflight_r && dr_app_r)
-                      || cad_pend_r[CAD_LA_MVRP_C];
+                      || la_mvrp_age_w[31];
 
   assign draw_kind_o = 3'd3;   // T-MRP-LEAVEALL range (F08.2)
 

@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **2149 checks**.
+`make` = build + run, exit 0 = PASS, **2200 checks**.
 
 Expectations are independent: an MRPDU builder/parser written here from
 802.1Q §10.8.1.2 / §35.2.2, a Σ-slope model transcribing the Milan v1.2
@@ -196,7 +196,7 @@ another slot, matching the real serializer's return to idle.
 | K: expiry phase | Ready and Ready Failed on sources 0, 3 and 7, with three sources present. Leaves at -50, -1, +1, +40 and +80 ms from the real expiry clear IN and remain stopped for two seconds. At +120 and +199 ms, accepted sLA has legitimately entered LV, so rLv retains registration. Advertise and Failed sink Leaves follow the same phase sweep. |
 | K: controls | Mismatched SID and malformed Listener Leave preserve IN; reset clears a blocked preparation; real LeaveTime expires both planes without renewal; timely rejoin preserves healthy registrations across the old deadline. |
 | L: acceptance edge | Slot allocation is delayed while a real Listener Leave is decoded. Fourteen release positions for each Ready parameter cover decoded events from -8 through +5 clocks relative to sLA, including -1, 0 and +1. Receive priority clears IN before/on the edge; after it, LV retains registration. All unaffected registrars age once. |
-| M: supersession | Each of the four MSRP types before preparation and while allocation is blocked cancels the pending own action. Rejoined registrars are never re-aged and no own flags appear. MVRP cannot cancel it. Since issue #108 an MSRP peer restarts the MSRP timer (a fresh 10-15 s deadline from the peer) and an MVRP peer leaves it unchanged (M4). Six peer/acceptance phases cover -2 through +3 clocks: the peer wins before/on acceptance, and cannot retract an accepted action. A peer at -1/0/+1 clocks around real timer expiry leaves no own action: on or after the expiry it drops the new intent, and before it the restart makes that expiry stale (M10; before #108 the -1 case still acted). A quiet canceled round waits for real content; a later own action can reuse its reserved slot. |
+| M: supersession | Each of the four MSRP types before preparation and while allocation is blocked cancels the pending own action. Rejoined registrars are never re-aged and no own flags appear. MVRP cannot cancel it. Since issue #108 an MSRP peer restarts the MSRP timer (a fresh 10-15 s deadline from the peer) and an MVRP peer leaves it unchanged (M4). Six peer/acceptance phases cover -2 through +3 clocks: the peer wins before/on acceptance, and cannot retract an accepted action. A peer from -12 to +1 clocks around real timer expiry leaves no own action: on or after the expiry it drops the new intent, and before it the restart makes that expiry stale (M10; before #108 the -1 case still acted). The sweep crosses rLA!'s draw request, the PRNG's rejection retries and the arm of the restarted deadline, and M9 grades each placement against the calibrated expiry clock, because once the restarted deadline is armed the superseded one never fires. A quiet canceled round waits for real content; a later own action can reuse its reserved slot. |
 | N: congestion | Eight sources and eight sinks exceed the 12-entry table. A previous TX request stalls across several cadence ticks; Leaves still clear IN. After acceptance, a held TX request never repeats sLA. Interim and final drains preserve all live declarations and all four type flags, and queued ticks complete. Another case fills the table before acceptance and proves that this initial full condition also drains. Allocation held across two timer expiries produces just one accepted own action. An asymmetric eight-source/one-sink walk preserves the completed walker across blocked cadence ticks. |
 
 The existing periodic-declaration and six-cycle/no-storm assertions retain their
@@ -225,9 +225,12 @@ its named assertion fails; compilation failures and timeouts do not count.
 The driver applies checked-in unified patches with `git apply --check` in a
 fresh scratch RTL copy; it never reads DUT source to derive an oracle. Only
 simulation logs are read. Original source integrity is recorded in the review
-packet. `srp_top` stops at 200,000,000 DUT clocks; the encoder and stream-FSM
+packet. `srp_top` stops at 300,000,000 DUT clocks (raised from 200,000,000
+when the P8 arm-delay sweep brought the complete run to 185,012,669); the
+encoder and stream-FSM
 walks use finite cycle bounds. Budget exits and missing tallies are unproven,
-not kills. `RUN_ARGS=phases`, `edge`, `peer`, `congestion` or `guards` selects one group for a focused run; plain `make` runs
+not kills. `RUN_ARGS=phases`, `edge`, `peer`, `congestion`, `guards`,
+`armdelay`, `restart`, `timers` or `join` selects one group for a focused run; plain `make` runs
 every existing and new check. The stream-FSM suite independently walks every
 applicant state with same-edge sLA/join acceptance.
 
@@ -352,7 +355,9 @@ DUT state is forced.
 | P3 | Each lane (MVRP, then MSRP types 1-4) 5 s before the earlier own deadline: only its application's deadline is redrawn from the peer. The superseded deadline passes silently; the restarted one fires once, 10 s or more after the peer (measured 13.2-14.0 s). |
 | P4 | MVRP Active: right after the own MVRP expiry, a peer MVRP LeaveAll drops the pending flag, the VID re-join still goes out, and the timer restarts. Control without the peer: the flag rides the next drain. |
 | P5 | MVRP Active with no VID held (no drain carries the flag): a peer MVRP LeaveAll makes it Passive, so the first VID New carries no own flag. Control: the flag rides that New. |
-| P6 | The MVRP lane at -1/0/+1 clocks around the real MVRP expiry: no own flag in any case, and a restarted timer (before the expiry the superseded deadline is stale). |
+| P6 | The MVRP lane from -12 to +1 clocks around the real MVRP expiry: no own flag in any case, and a restarted timer (before the expiry the superseded deadline is stale, or never fires once the restarted one is armed). |
+| P7 | The MVRP equal edge: after the own MVRP expiry the flag waits for the next MVRP join tick whose drain has content. A peer MVRP LeaveAll at -1 or 0 clocks of that tick drops it (Passive; the rider skips the flag on the peer's edge), at +1 the tick was tx! and the accepted own flag goes out. The timer restarts in all three. |
+| P8 (`RUN_ARGS=armdelay`) | The committed form of the reviewer's delayed-arm probe. The wrapper delays the engine's timer arms by `arm_delay_i` clocks, as the processor top's queued arm port does. At delays 3, 4, 8 and 16, one reset scenario per offset puts a peer MVRP LeaveAll around the own MVRP expiry, then a peer MSRP (Domain) LeaveAll around the own MSRP expiry, each from -(delay + 12) to +2 clocks: no offset produces an own LeaveAll of either application, every peer lands at its offset and restarts its application's timer. |
 
 The MSRP twin of P6 is M10. Mutation-proven 2026-09-29 through `mutants.py`
 (checked-in patches, each built in a scratch RTL copy):
@@ -372,6 +377,40 @@ requires, so it is retired. Five arms whose context the change moved
 `reset-retains-intent`, `my-expiry-pulse`) are regenerated with the same edit and
 re-measured: 1 (M10), 8 (M1-M4), 15 (M1, M2, M3, M10), 1 (K10) and 62 (K2, K4,
 K5, K11, K12) failing checks.
+
+### A stale expiry whatever the arm-path latency
+
+The first guard treated a LeaveAll-slot expiry as stale until the restarted
+deadline's arm was *issued*. Here that arm reaches the timer service on the
+same clock, but the processor top queues it behind other faces, and with more
+than two clocks of arm latency the superseded deadline could still fire after
+the issue and act: one own LeaveAll right after the peer's. The guard now holds
+while a draw is outstanding or `now_ms` is before the deadline the draw produced
+([10 section 6.5](../../docs/architecture/10_srp_engine.md#fig-10-leaveall)).
+M10 and P6 were widened from -1/0/+1 to -12..+1 clocks, P7 is the MVRP equal
+edge and P8 the arm-delay sweep (table above). Mutation-proven 2026-09-29 through
+`mutants.py`:
+
+| Deliberate breakage | Group | Failing checks | Named failing assertions |
+|---|---|---:|---|
+| `rearm-at-issue` (the issue-time guard restored: stale only until the arm is issued) | armdelay | 8 | P8 |
+| `r-rearm-no-inflight` (no stale window while the draw is in flight) | peer / restart | 3 / 6 | M10 / P6 |
+| `r-rearm-no-deadline` (no stale window between the draw and the restarted deadline) | peer / armdelay | 3 / 8 | M10 / P8 |
+| `r-flag-ignores-edge-peer` (the MVRP flag rides a join tick that meets a peer MVRP LeaveAll) | restart | 1 | P7 |
+
+`rearm-at-issue` leaves M10 and P6 green: on the direct arm path the issue-time
+guard holds. Under it P8 counts an own MSRP LeaveAll at 4, 4, 7 and 15 offsets
+for delays 3, 4, 8 and 16 (peer -11..-8, -11..-8, -14..-8 and -22..-8 clocks
+before the expiry), and an own MVRP LeaveAll at 2, 2, 6 and 14. At delay 0, M10
+needs the guard from -7 to -1 clocks (the draw request at -1, the draw in flight
+to -4, the restarted deadline to -7), and P6 from -7 to -1 (the MVRP draw in
+flight to -7). `draw-kind-0` is
+regenerated with the same edit (its context moved) and still fails 6 checks (Q1-Q4).
+The widened sweeps and P7 re-measure these arms: `mvrp-expiry-only-redraw` 17
+(P2, P3, P6), `stale-expiry-honoured` 7 (M10), `mvrp-stale-expiry-honoured` 7 (P6),
+`mvrp-passive-lost` 6 (P4-P7), `mvrp-flag-at-expiry` 11 (P4-P7),
+`pending-peer-ignored` 26 (M1, M2, M3, M10), `leaveall-expiry-lost` 16 (M1, M2,
+M3, M5, M8, M9, M12) and `preparation-before-slot` 21 (M1, M5, M6, M8, M11, M12).
 
 ## MRP timers graded against Milan v1.2 Table 4.3 (issue #64, REQ-SRP-001)
 
