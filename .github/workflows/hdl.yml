@@ -56,6 +56,10 @@ jobs:
         run: |
           export PATH="$HOME/verilator/bin:$PATH"
           make -C tb/srp_top mutants
+      - name: ADP mutation campaign
+        run: |
+          export PATH="$HOME/verilator/bin:$PATH"
+          make -C tb/adp_engine mutants
       - name: Traceability matrix no-drift + untested budget 0
         run: python3 scripts/gen_matrix.py --check
 

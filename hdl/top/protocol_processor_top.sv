@@ -186,7 +186,10 @@ module protocol_processor_top
     input  wire  [15:0] talker_caps_i,         //! ADPDU talker_capabilities
     input  wire  [15:0] listener_sinks_i,      //! ADPDU listener_stream_sinks
     input  wire  [15:0] listener_caps_i,       //! ADPDU listener_capabilities
-    input  wire  [15:0] current_cfg_i,         //! current_configuration_index
+    //! current_configuration_index of the ADPDU until a controller's
+    //! SET_CONFIGURATION stores one; from then on the ADPDU carries the
+    //! dynamic overlay (aecp_cur_config_o). Drive the image's configuration.
+    input  wire  [15:0] current_cfg_i,
     input  wire  [15:0] identify_index_i,      //! identify_control_index
 
     //! ---- level controls + class-D inputs (02 §6) ----
@@ -1629,6 +1632,16 @@ module protocol_processor_top
   logic        adp_txs_gnt_w;
   logic [TXS_W_C-1:0] adp_txs_gnt_slot_w;
 
+  //! The ADPDU's current_configuration_index is the entity's CURRENT
+  //! configuration (IEEE §6.2.2.18), the value GET_CONFIGURATION and the
+  //! ENTITY descriptor serve: the dynamic overlay once SET_CONFIGURATION has
+  //! written it, the image default before. The integrator supplies that
+  //! default on current_cfg_i; the overlay's own reset value is 0, which is
+  //! only the default of an image whose current configuration is 0.
+  logic        aecp_cur_cfg_v_w;
+  logic [15:0] adp_cur_cfg_w;
+  assign adp_cur_cfg_w = aecp_cur_cfg_v_w ? aecp_cur_config_o : current_cfg_i;
+
   KL_adp_engine #(
       .N_IF_P                (1),
       .N_SINK_P              (N_STREAM_IN_P),
@@ -1654,7 +1667,7 @@ module protocol_processor_top
       .talker_caps_i         (talker_caps_i),
       .listener_sinks_i      (listener_sinks_i),
       .listener_caps_i       (listener_caps_i),
-      .current_cfg_i         (current_cfg_i),
+      .current_cfg_i         (adp_cur_cfg_w),
       .identify_index_i      (identify_index_i),
       .txn_valid_i           (adp_txn_valid_w),
       .txn_i                 (adp_txn_w),
@@ -3490,6 +3503,7 @@ module protocol_processor_top
       .dbg_resp_err_o     (aecp_dbg_rerr_w),
       .dbg_resp_lane_o    (aecp_dbg_rlane_w),
       .dyn_cur_config_o   (aecp_cur_config_o),
+      .dyn_cur_config_v_o (aecp_cur_cfg_v_w),
       .dyn_identify_o     (aecp_identify_o),
       .dyn_clk_src_index_o(aecp_clk_src_index_o),
       .strm_set_valid_o   (strm_set_valid_w),

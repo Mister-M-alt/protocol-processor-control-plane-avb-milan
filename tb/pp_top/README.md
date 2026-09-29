@@ -338,6 +338,21 @@ tally.
   the reset value, the LINK_UP declaration byte-exact with all 16 bits of
   SRclassVID, the GET_TX_STATE stream VLAN, a bridge's Domain still adopted
   over it, the LINK_DOWN revert and the LINK_UP re-declaration. See section DV.
+- **AD** **the ADPDU across SET_CONFIGURATION** (issue #40; REQ-ADP-005, Milan
+  §5.6.2 note, IEEE §6.2.2.18), on a fresh processor of its own (the GI pattern:
+  its own model, erased NVM, nothing bound), so the main run's clock is
+  untouched. Its image declares two configurations with default 1, and
+  `current_cfg_i` says 1. AD1: the first ENTITY_AVAILABLE carries 1 and
+  GET_CONFIGURATION agrees. AD1b: SET_CLOCK_SOURCE writes another row of the
+  store and the next advert still carries 1. AD2: SET_CONFIGURATION(0), then
+  GET, the ENTITY descriptor and the next ENTITY_AVAILABLE all say 0, and that
+  advert equals the one before it in every wire byte but available_index
+  (50..53, +1) and current_configuration_index (64..65). AD3: the same back
+  to 1. AD4: `current_cfg_i` moves to 0 and the next advert still carries 1,
+  the set configuration. `make adp-config` runs this section alone; the
+  default run includes it. The mutation record is `tb/adp_engine`'s campaign
+  (`make -C tb/adp_engine mutants`), which runs this section against each
+  patch.
 
 ## Snapshot window map (side port 0x20000, implemented by the top)
 

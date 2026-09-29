@@ -77,7 +77,7 @@ Message types: 0 ENTITY_AVAILABLE · 1 ENTITY_DEPARTING · 2 ENTITY_DISCOVER.
 | `controller_capabilities` | constant 0 | not a controller |
 | `available_index` | available_index manager | [§5](#5-state) |
 | `gptp_grandmaster_id` / `gptp_domain_number` | class-D `gm_id[if]`, `gptp_domain[if]` | sampled at PDU build; per-interface |
-| `current_configuration_index` | dynamic overlay | ADPDU otherwise independent of configuration (Milan §5.6.2 note) |
+| `current_configuration_index` | dynamic overlay | the current configuration (IEEE §6.2.2.18), the value GET_CONFIGURATION serves: the overlay once SET_CONFIGURATION has written it, before that the image default the integrator drives on `current_cfg_i`; sampled at PDU build. The ADPDU is otherwise independent of configuration (Milan §5.6.2 note) |
 | `identify_control_index` | model metadata | same index in every configuration (Milan §5.3.3.10) |
 | `interface_index` | instance constant | per advertise-SM instance |
 | `association_id` | constant 0 | ASSOCIATION_ID not supported |

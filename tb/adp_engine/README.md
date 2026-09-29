@@ -3,7 +3,8 @@
 
 Proves the ADP engine (`hdl/adp/KL_adp_engine.sv`) against
 [04](../../docs/architecture/04_adp_engine.md) in full: `make` = build + run,
-exit 0 = PASS, 533 checks.
+exit 0 = PASS, 626 checks. `make mutants` runs the checked-in mutation
+campaign below.
 
 The top (`tb_adp_top.sv`) is pure wiring: the engine plus the **real
 `KL_pp_prng`** (draw port tapped), so the two DISTINCT delay-draw kinds are
@@ -34,6 +35,15 @@ protocol invariants accumulated over the whole run (never oversize, never a
 write before grant, alloc_req always one cycle, one TX request per
 committed 82-byte frame).
 
+P11 (issue #40, REQ-ADP-005, Milan §5.6.2 note with IEEE §6.2.2.18):
+`current_cfg_i` changes between two adverts and the second is compared with
+the first byte by byte. Only wire bytes 64..65 move to the new index, besides
+available_index (50..53), which moves by its own +1. The index also moves
+right after wire byte 64 is written: the frame carries the index sampled when
+the build began, never the high byte of one index and the low byte of the
+other. ENTITY_DEPARTING carries the current index as well. The processor-level
+half, where SET_CONFIGURATION moves the index, is `tb/pp_top` section AD.
+
 Interop note: the available_index rule implements the DOC (04 §5 /
 IEEE §6.2.2.15) and **diverges from the reference platform's
 every-ADPDU increment** — adjudication against live controllers
@@ -53,6 +63,26 @@ Mutation-proven 2026-08-11 (backup/sed/run/restore):
    escaped the too-short 5-cycle window);
 4. talker-restart detector deleted (stale index treated as fresh) —
    **1 fail** (P9e restart pair).
+
+## Mutation campaign (`make mutants`)
+
+`mutants.py` applies each reviewed patch in `mutations/` to a scratch copy of
+the tree with `git apply`, runs one suite target there, and requires the
+named check to fail in a completed simulation. It reads logs only, never
+production source. A positive control of every (suite, target) pair runs
+first. `MUTANT_OUTPUT` (default `/tmp/adp-mutants`) receives one log per arm.
+Counts below were taken on 2026-09-29 with Verilator 5.050.
+
+| Arm | Suite, target | What is broken | Failing checks |
+|---|---|---|---|
+| `cfg-read-live` | adp_engine | the builder reads `current_cfg_i` live instead of the index sampled at build (the shipped form before issue #40) | 1: P11c, the frame carries `0104`, the high byte of `0102` and the low byte of `0304` |
+| `cfg-dependent-field` | adp_engine | identify_control_index made configuration-dependent (XOR with the index) | 10: P11b bytes 66 and 67 move with the configuration, and every byte-exact frame (P2, P5, P7, P11a, P11d, P11e) |
+| `cfg-dependent-field-top` | pp_top `adp-config` | the same patch, at the processor | 5: AD1, AD2 and AD3 (a byte outside 50..53 and 64..65 moved), AD4 |
+| `cfg-frozen-at-top` | pp_top `adp-config` | the top feeds the engine `current_cfg_i` again (the wiring before issue #40) | 3: AD2 (the index stays 1 after SET_CONFIGURATION(0)), AD4 |
+| `cfg-overlay-only` | pp_top `adp-config` | the top feeds the overlay with no image-default fallback | 2: AD1 and AD1b carry the overlay's reset 0, not the image's 1 |
+| `cfg-nonzero-for-valid` | pp_top `adp-config` | the overlay counts as set when it is non-zero, instead of by its valid flag | 2: AD2, a SET to 0 advertises the default 1 |
+| `cfg-valid-not-sticky` | pp_top `adp-config` | the engine's valid flag is high only in the write cycle | 3: AD2, AD4 |
+| `cfg-valid-any-selector` | pp_top `adp-config` | the valid flag is set by a write to any row of the store | 1: AD1b, SET_CLOCK_SOURCE makes the advert carry 0 |
 
 Known limits (honestly): the suite runs the shipping shape (1 interface,
 8 sinks) only; the timer service and slot pools are modeled, not

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
 # KL_adp_engine suite — exit 0 = PASS.
 VERILATOR ?= verilator
+MUTANT_OUTPUT ?= /tmp/adp-mutants
 HDL        = ../../hdl
 TOP        = tb_adp_top
 
@@ -19,7 +20,10 @@ run:
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vadp_sim
 	./obj_dir/Vadp_sim
 
+mutants:
+	python3 mutants.py --output "$(MUTANT_OUTPUT)"
+
 clean:
 	rm -rf obj_dir
 
-.PHONY: run clean
+.PHONY: run mutants clean

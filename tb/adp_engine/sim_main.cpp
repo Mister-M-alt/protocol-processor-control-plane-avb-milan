@@ -55,7 +55,7 @@ static void putbe(uint8_t* p, uint64_t v, int n) {
   for (int i = 0; i < n; ++i) p[i] = uint8_t(v >> (8 * (n - 1 - i)));
 }
 static void model_frame(uint8_t f[kAdpduBytes], bool departing, uint64_t gm,
-                        uint8_t dom, uint32_t aidx) {
+                        uint8_t dom, uint32_t aidx, uint16_t cfg = CFGIX) {
   memset(f, 0, kAdpduBytes);
   putbe(f + 0, 0x91E0F0010000ull, 6);          // DA (03 §8)
   putbe(f + 6, MAC, 6);                        // SA
@@ -76,7 +76,7 @@ static void model_frame(uint8_t f[kAdpduBytes], bool departing, uint64_t gm,
   putbe(f + 54, gm, 8);                        // gptp_grandmaster_id
   f[62] = dom;                                 // gptp_domain_number
   f[63] = 0;                                   // reserved
-  putbe(f + 64, CFGIX, 2);
+  putbe(f + 64, cfg, 2);                       // current_configuration_index
   putbe(f + 66, IDIX, 2);
   putbe(f + 68, 0, 2);                         // interface_index (if 0)
   putbe(f + 70, 0, 8);                         // association_id
@@ -197,6 +197,11 @@ struct Harness {
   // expiry to inject this cycle
   bool     exp_pulse = false;
   unsigned exp_slot = 0;
+  // move current_cfg_i right after the slot write of this wire byte lands
+  // (-1 = off): the stimulus that could tear a live-read 16-bit field
+  int      cfg_swap_after_byte = -1;
+  uint16_t cfg_swap_to = 0;
+  bool     cfg_swap_done = false;
 
   int checks = 0;
   int fails = 0;
@@ -293,8 +298,15 @@ struct Harness {
     }
     if (d->tap_draw_valid_o)
       draws.push_back({pending_kind, static_cast<unsigned>(d->tap_draw_ms_o)});
+    const bool swap_now = cfg_swap_after_byte >= 0 && d->txs_wr_valid_o
+        && int(d->txs_wr_addr_o) == cfg_swap_after_byte;
 
     d->clk_i = 1; d->eval();
+    if (swap_now) {                            // the next byte sees the new index
+      d->current_cfg_i = cfg_swap_to;
+      cfg_swap_after_byte = -1;
+      cfg_swap_done = true;
+    }
   }
   unsigned pending_kind = 0;
 
@@ -378,6 +390,8 @@ struct Harness {
   void check_one_available_discovers_every_bound_sink();
   void check_talker_restart_and_stale_index_rules();
   void check_departing_aging_unbind_and_backpressure();
+  bool advertise_once(Frame& out);
+  void check_config_index_moves_only_its_own_bytes();
   void check_pool_protocol_invariants();
   int report();
   int run_suite();
@@ -862,6 +876,112 @@ void Harness::check_departing_aging_unbind_and_backpressure() {
   idle(3);
 }
 
+// one WAITING -> DELAY -> WAITING cycle: T-ADP-ADV expiry, the kind-2 draw,
+// the delay expiry, the committed ENTITY_AVAILABLE and its T-ADP-ADV re-arm
+bool Harness::advertise_once(Frame& out) {
+  const size_t d0 = draws.size();
+  const size_t f0 = frames.size();
+  if (!expire_slot(SLOT_ADV)) return false;
+  if (!wait_for([&]{ return draws.size() > d0; })) return false;
+  if (!expire_slot(SLOT_ADV)) return false;
+  if (!wait_for([&]{ return frames.size() > f0; })) return false;
+  out = last_frame();
+  idle(3);
+  return frames.size() == f0 + 1;
+}
+
+// ---- P11: the configuration index moves, nothing else does ----------
+// REQ-ADP-005 (Milan §5.6.2 note: the ADPDU is independent of the current
+// Configuration) with IEEE §6.2.2.18 (current_configuration_index is the
+// currently set CONFIGURATION). Between two adverts only wire bytes 64..65
+// may follow current_cfg_i; available_index (50..53) moves by its own +1
+// rule. The index is sampled at PDU build, so an index that changes while
+// the frame is being written never tears into two halves.
+constexpr uint16_t CFG_B = 0x0103;
+constexpr uint16_t CFG_C = 0x0102;
+constexpr uint16_t CFG_D = 0x0304;
+constexpr uint16_t CFG_E = 0x0001;
+
+void Harness::check_config_index_moves_only_its_own_bytes() {
+  Frame a{};
+  Frame b{};
+  CHECK((d->dbg_adv_state_o & 3) == 3, "P11 starts in WAITING");
+  CHECK(advertise_once(a), "P11a advert at the image configuration");
+  const uint32_t ia = (uint32_t(a.b[50]) << 24) | (uint32_t(a.b[51]) << 16)
+                    | (uint32_t(a.b[52]) << 8) | uint32_t(a.b[53]);
+  {
+    uint8_t exp[kAdpduBytes];
+    model_frame(exp, false, GM1, DOM0, ia, CFGIX);
+    CHECK(memcmp(a.b, exp, kAdpduBytes) == 0,
+          "P11a advert byte-exact at current_configuration_index %u", CFGIX);
+  }
+  d->current_cfg_i = CFG_B;                    // between two adverts
+  CHECK(advertise_once(b), "P11b advert after the configuration moved");
+  for (int i = 0; i < kAdpduBytes; ++i) {
+    if (i >= 50 && i <= 53) continue;          // available_index, below
+    if (i == 64 || i == 65) continue;          // the index itself, below
+    CHECK(b.b[i] == a.b[i],
+          "P11b wire byte %d did not move with the configuration: %02x -> %02x",
+          i, a.b[i], b.b[i]);
+  }
+  CHECK(b.b[64] == (CFG_B >> 8) && b.b[65] == (CFG_B & 0xFF),
+        "P11b wire bytes 64..65 carry the new index %04x, got %02x%02x",
+        CFG_B, b.b[64], b.b[65]);
+  {
+    uint8_t exp[kAdpduBytes];
+    model_frame(exp, false, GM1, DOM0, ia + 1, CFG_B);
+    CHECK(memcmp(b.b, exp, kAdpduBytes) == 0,
+          "P11b advert byte-exact: only available_index (+1) and 64..65 moved");
+  }
+
+  // (c) the index moves while the frame is being written, between its two
+  // bytes: the frame carries the index sampled when the build began
+  d->current_cfg_i = CFG_C;
+  cfg_swap_done = false;
+  cfg_swap_after_byte = 64;
+  cfg_swap_to = CFG_D;
+  CHECK(advertise_once(b), "P11c advert with a mid-build index change");
+  CHECK(cfg_swap_done, "P11c the index moved after wire byte 64 was written");
+  cfg_swap_after_byte = -1;
+  CHECK(b.b[64] == (CFG_C >> 8) && b.b[65] == (CFG_C & 0xFF),
+        "P11c the index sampled at build %04x, never torn (%04x moved in "
+        "after byte 64), got %02x%02x", CFG_C, CFG_D, b.b[64], b.b[65]);
+  CHECK(advertise_once(b), "P11c2 the next advert");
+  CHECK(b.b[64] == (CFG_D >> 8) && b.b[65] == (CFG_D & 0xFF),
+        "P11c2 the next advert carries %04x, got %02x%02x", CFG_D, b.b[64],
+        b.b[65]);
+
+  // (d) ENTITY_DEPARTING carries the current index too, and is otherwise
+  // the P7 frame: the departing index is the pre-reset available_index
+  d->current_cfg_i = CFG_E;
+  const uint32_t idx_dep = d->dbg_avail_index_o;
+  const size_t f0 = frames.size();
+  d->entity_enable_i = 0;
+  CHECK(wait_for([&]{ return frames.size() > f0; }), "P11d departing sent");
+  {
+    uint8_t exp[kAdpduBytes];
+    model_frame(exp, true, GM1, DOM0, idx_dep, CFG_E);
+    CHECK(memcmp(last_frame().b, exp, kAdpduBytes) == 0,
+          "P11d ENTITY_DEPARTING byte-exact at index %04x", CFG_E);
+  }
+  idle(3);
+  // back to the image configuration and operation for the phases after
+  d->current_cfg_i = CFGIX;
+  const size_t d0 = draws.size();
+  const size_t f1 = frames.size();
+  d->entity_enable_i = 1;
+  CHECK(wait_for([&]{ return draws.size() > d0; }), "P11e restart draw");
+  CHECK(expire_slot(SLOT_ADV), "P11e restart delay expiry");
+  CHECK(wait_for([&]{ return frames.size() > f1; }), "P11e restart advert");
+  {
+    uint8_t exp[kAdpduBytes];
+    model_frame(exp, false, GM1, DOM0, 0, CFGIX);
+    CHECK(memcmp(last_frame().b, exp, kAdpduBytes) == 0,
+          "P11e restart advert byte-exact at the image configuration");
+  }
+  idle(3);
+}
+
 // ---- P10: pool-protocol invariants accumulated over the whole run ----
 void Harness::check_pool_protocol_invariants() {
   CHECK(!oversize_seen, "P10 ADP never requests the oversize slot");
@@ -899,6 +1019,7 @@ int Harness::run_suite() {
   check_one_available_discovers_every_bound_sink();
   check_talker_restart_and_stale_index_rules();
   check_departing_aging_unbind_and_backpressure();
+  check_config_index_moves_only_its_own_bytes();
   check_pool_protocol_invariants();
   return report();
 }

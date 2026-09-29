@@ -565,6 +565,11 @@ module KL_aecp_engine
     //! writes it, so an integrator that ignores these ports sees exactly the
     //! behaviour it had before the store existed.
     output logic [15:0] dyn_cur_config_o,    //! ENTITY.current_configuration
+    //! 1 once the configuration row holds a written value: the store's own
+    //! valid flag for it, the one GET_CONFIGURATION branches on. Until then
+    //! the current configuration is the image default, which the top reads
+    //! from the integrator's current_cfg_i for the ADPDU (04 §3)
+    output logic        dyn_cur_config_v_o,
     output logic  [7:0] dyn_identify_o,      //! IDENTIFY value, 0 or 255
     output logic [15:0] dyn_clk_src_index_o, //! CLOCK_DOMAIN[0] clock source
     //! per-row: value beside its valid bit, row k of the offsets at
@@ -1653,6 +1658,40 @@ module KL_aecp_engine
   //! field that already addresses the counters, audio-map and Milan-info
   //! faces — see the module banner for why the index cannot ride the address.
   logic [15:0] dyn_writes_nc_w, dyn_oob_nc_w;
+  logic [15:0] dyn_ix_w;
+
+  //! `desc_ix_r` means DESCRIPTOR index for every command here except
+  //! SET_CONFIGURATION, whose @26 field is a CONFIGURATION index — a
+  //! different namespace that happens to land in the same walk register.
+  //! current_configuration is an ENTITY-level singleton with no descriptor
+  //! index at all, so it must address row 0. Passing the configuration
+  //! index through made the store drop the write as out-of-range for any
+  //! configuration but 0, and the command answered SUCCESS anyway.
+  assign dyn_ix_w = scfg_r ? 16'd0 : desc_ix_r;
+
+  //! ---- the configuration row's valid flag, published (04 §3) ------------
+  //! The store keeps its valid flags private, and its port list is a
+  //! consumer contract (the reference platform instantiates it by name), so
+  //! the flag is not exported from there. It has exactly one writer: an
+  //! accepted value-region write of the configuration selector at row 0,
+  //! taken in the cycle it is presented (the store's st_ready_o is
+  //! st_req_i && st_we_i), and only reset clears it. The same decode of the
+  //! same bus into one flop is therefore that flag, cycle for cycle.
+  localparam logic [12:0] SEL_CFG_C = 13'd0;   //! KL_aecp_dyn_state SEL_CFG_C
+  logic dyn_cfg_v_r;
+
+  always_ff @(posedge clk_i) begin : dyn_cfg_valid
+    if (!rst_n) begin
+      dyn_cfg_v_r <= 1'b0;
+    end else if (st_req_w && dyn_sel_w && st_we_w
+                 && (st_addr_w[19:16] == RGN_DYN_C)
+                 && (st_addr_w[15:3] == SEL_CFG_C)
+                 && (dyn_ix_w == 16'd0)) begin
+      dyn_cfg_v_r <= 1'b1;
+    end
+  end
+
+  assign dyn_cur_config_v_o = dyn_cfg_v_r;
 
   KL_aecp_dyn_state #(
       .N_STREAM_IN_P  (N_STREAM_IN_P),
@@ -1670,14 +1709,7 @@ module KL_aecp_engine
       .st_ready_o      (dyn_ready_w),
       .st_rvalid_o     (dyn_rvalid_w),
       .st_rdata_o      (dyn_rdata_w),
-      //! `desc_ix_r` means DESCRIPTOR index for every command here except
-      //! SET_CONFIGURATION, whose @26 field is a CONFIGURATION index — a
-      //! different namespace that happens to land in the same walk register.
-      //! current_configuration is an ENTITY-level singleton with no descriptor
-      //! index at all, so it must address row 0. Passing the configuration
-      //! index through made the store drop the write as out-of-range for any
-      //! configuration but 0, and the command answered SUCCESS anyway.
-      .desc_index_i    (scfg_r ? 16'd0 : desc_ix_r),
+      .desc_index_i    (dyn_ix_w),
       .cur_config_o    (dyn_cur_config_o),
       .identify_o      (dyn_identify_o),
       .clk_src_index_o (dyn_clk_src_index_o),

@@ -248,6 +248,14 @@ bytes. Zero and all-ones are invalid (Milan v1.2 §5.3.3.1, printed p. 25).
 A static-model change requires a new model identity, subject to
 IEEE 1722.1 §6.2.2.8's exclusions.
 
+Drive `current_cfg_i` with the image's configuration, the ENTITY descriptor's
+`current_configuration`. It is the ADPDU's `current_configuration_index` only
+until a controller's SET_CONFIGURATION writes the dynamic overlay; from then on
+the processor advertises the overlay (`aecp_cur_config_o`), the same value
+GET_CONFIGURATION answers, and no longer reads `current_cfg_i`. No loopback
+of `aecp_cur_config_o` is needed. Every other ADPDU field is independent of the
+configuration (Milan §5.6.2).
+
 Drive `talker_sources_i` and `listener_sinks_i` with the maximum respective
 STREAM_OUTPUT and STREAM_INPUT counts over every supported configuration
 (Milan §5.3.3.1). The ENTITY descriptor must carry those same values. Drive
