@@ -8659,6 +8659,8 @@ struct Suite {
   std::vector<uint8_t> image_clkdom;
   std::vector<uint8_t> image_spi0;
   std::vector<uint8_t> image_spi1;
+  //! when S0 raised the link, so S3 can say how long enable was held low
+  uint32_t link_up_ms = 0;
 
   explicit Suite(H& hh) : h(hh), d(hh.d) {}
 
@@ -8820,6 +8822,7 @@ struct Suite {
           "S0: restore_done_o has followed the walk's terminal (issue #92)");
     CHECK(h.snap(1) == 0x08080404u, "S0: shape word {SI,SO,RX,TX}");
     d->link_up_i = 1;
+    link_up_ms = h.now_ms();
     h.idle(50);
     uint32_t f = h.snap(3);
     CHECK((f & 0x7) == 0x6, "S0: flags {seeded, link, !enable}, got 0x%x", f);
@@ -8890,6 +8893,13 @@ struct Suite {
   // (cadence law on the wire: T-ADP-ADV 5 s re-arm + the 0-4 s pre-
   //  advertise anti-storm draw of F04.2 -> inter-frame gap in [5, 9] s)
   void entity_enable_adpdu_window_and_cadence() {
+    //! S0 to here the link has been up with entity_enable_i low; nothing
+    //! flushed the ADP queue in between (issue #41; section AD0 holds the
+    //! same state for longer than the whole T-ADP-DELAY span). A queue read
+    //! only: a host read here would move every later PRNG draw's clock.
+    CHECK(h.q_adp.empty(),
+          "S3: no ADPDU after %u ms of link up with entity_enable_i low",
+          h.now_ms() - link_up_ms);
     h.flush_all();
     uint32_t t0 = h.now_ms();
     d->entity_enable_i = 1;
@@ -9895,9 +9905,45 @@ struct AdpConfigPhase {
     return f;
   }
 
+  //! `ms` of compressed time in 100 ms steps, sampling the advertise SM
+  //! (snapshot word 31) at every step; returns the samples not in DOWN
+  int hold_ms(int ms) {
+    int not_down = 0;
+    for (int t = 0; t < ms; t += 100) {
+      io.run_ms(100);
+      if ((io.snap(31) & 3) != 0) ++not_down;
+    }
+    return not_down;
+  }
+
+  //! AD0 (issue #41; REQ-ADP-006, Milan §5.6.1): link up with the entity
+  //! not enabled, for longer than the whole T-ADP-DELAY span (0..4000 ms,
+  //! Milan §5.6.3.5.3) after each of two link rises, with nothing flushing
+  //! the ADP queue in between: a gate that let LINK_UP through would have
+  //! put an ENTITY_AVAILABLE on the wire inside either window
+  void boot_gate_holds_over_the_delay_span() {
+    CHECK(io.q_adp.empty(), "AD0: the ADP queue starts empty");
+    const uint32_t t0 = io.now_ms();
+    io.d->link_up_i = 1;
+    int not_down = hold_ms(4200);
+    io.d->link_up_i = 0;
+    io.run_ms(20);
+    io.d->link_up_i = 1;
+    not_down += hold_ms(4200);
+    const uint32_t held = io.now_ms() - t0;
+    CHECK(held > 8000, "AD0: link held up %u ms of compressed time", held);
+    CHECK(io.q_adp.empty(),
+          "AD0: no ADPDU in %u ms of link up (one bounce) with entity_enable_i low",
+          held);
+    CHECK(not_down == 0, "AD0: the advertise SM read DOWN at every 100 ms "
+          "sample, %d did not", not_down);
+    CHECK((io.snap(3) & 0x7) == 0x6, "AD0: flags {seeded, link, !enable}, got 0x%x",
+          io.snap(3) & 0x7);
+  }
+
   void run() {
     boot();
-    io.d->link_up_i = 1;
+    boot_gate_holds_over_the_delay_span();
     io.d->entity_enable_i = 1;
     const auto a = io.wait_any(io.q_adp, 2600);
     CHECK(a == avail(0, IMAGE_CFG),

@@ -29,6 +29,9 @@ MUTANTS = [
     ("cfg-nonzero-for-valid", "cfg-nonzero-for-valid", "pp_top", "adp-config", "AD2"),
     ("cfg-valid-not-sticky", "cfg-valid-not-sticky", "pp_top", "adp-config", "AD2"),
     ("cfg-valid-any-selector", "cfg-valid-any-selector", "pp_top", "adp-config", "AD1b"),
+    # issue #41: the boot gate over the full T-ADP-DELAY span
+    ("gate-enable-dropped", "gate-enable-dropped", "adp_engine", "run", "P12"),
+    ("gate-enable-dropped-top", "gate-enable-dropped", "pp_top", "adp-config", "AD0"),
 ]
 
 SUITES = ("common", "adp_engine", "pp_top")

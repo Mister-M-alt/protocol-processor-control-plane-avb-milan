@@ -194,6 +194,7 @@ struct Harness {
   // events + draws
   std::vector<Evt>  evts;
   std::vector<Draw> draws;
+  int      draw_reqs = 0;                      // draw requests seen at the tap
   // expiry to inject this cycle
   bool     exp_pulse = false;
   unsigned exp_slot = 0;
@@ -295,6 +296,7 @@ struct Harness {
     if (d->tap_draw_req_o) {
       // remember the requested kind; result pairs at tap_draw_valid_o
       pending_kind = d->tap_draw_kind_o;
+      ++draw_reqs;
     }
     if (d->tap_draw_valid_o)
       draws.push_back({pending_kind, static_cast<unsigned>(d->tap_draw_ms_o)});
@@ -322,6 +324,31 @@ struct Harness {
     exp_pulse = true; exp_slot = s;
     tick();
     return true;
+  }
+
+  // `ms` milliseconds of modeled time, four clocks per ms, with the timer
+  // service modeled end to end: an armed slot whose deadline passes fires
+  // by itself. A window graded this way can SEE a violation all the way to
+  // the wire (draw, arm, expiry, committed frame), not only its first step.
+  // Returns the clocks in which the advertise SM was not DOWN.
+  int run_modeled_ms(unsigned ms) {
+    int not_down = 0;
+    for (unsigned t = 0; t < ms; ++t) {
+      ++now;
+      for (unsigned s = 0; s < 128; ++s) {
+        if (t_armed[s] && int32_t(now - t_deadline[s]) >= 0) {
+          t_armed[s] = false;
+          exp_pulse = true;
+          exp_slot = s;
+          break;                               // one expiry per clock
+        }
+      }
+      for (int k = 0; k < 4; ++k) {
+        tick();
+        if ((d->dbg_adv_state_o & 3) != 0) ++not_down;
+      }
+    }
+    return not_down;
   }
 
   // present one txn on the dispatch face and wait for full consumption
@@ -378,6 +405,7 @@ struct Harness {
   void set_bound(unsigned s, uint64_t eid, bool on);
   void configure_the_entity_and_release_reset();
   void check_reset_state();
+  void check_the_boot_gate_holds_over_the_delay_span();
   void check_startup_draw_and_delay_arm();
   void check_first_entity_available_is_byte_exact();
   void check_advertise_cadence_restarts_per_send();
@@ -431,6 +459,40 @@ void Harness::check_reset_state() {
   CHECK((d->dbg_adv_state_o & 3) == 0, "P0 advertise SM in DOWN");
   CHECK(d->dbg_avail_index_o == 0, "P0 available_index = 0 at power-up");
   CHECK(frames.empty() && evts.empty(), "P0 quiescent");
+}
+
+// ---- P12: the boot gate over the full T-ADP-DELAY span (issue #41) ----
+// REQ-ADP-006, Milan §5.6.1: ADP starts only once the entity can accept
+// commands, i.e. never while entity_enable_i is low. A gate that let
+// LINK_UP through would draw T-ADP-DELAY (0..4000 ms, Milan §5.6.3.5.3) and
+// advertise inside that span, so each link rise is followed by MORE than
+// 4000 ms of modeled time with the timer service live: no draw request, no
+// timer arm or cancel, no committed frame, and DOWN in every clock. The link
+// bounces once in the middle (LINK_DOWN in DOWN, then a second LINK_UP).
+void Harness::check_the_boot_gate_holds_over_the_delay_span() {
+  const int r0 = draw_reqs;
+  const size_t a0 = arms.size();
+  const size_t f0 = frames.size();
+  const int t0 = txreqs;
+  CHECK(d->entity_enable_i == 0 && (d->dbg_adv_state_o & 3) == 0,
+        "P12 starts with entity_enable_i low, in DOWN");
+  d->link_up_i = 1;
+  int not_down = run_modeled_ms(4100);
+  CHECK(d->tap_prng_seeded_o == 1,
+        "P12 the link rise reached the PRNG (it seeded): the stimulus is live");
+  d->link_up_i = 0;
+  not_down += run_modeled_ms(20);
+  d->link_up_i = 1;
+  not_down += run_modeled_ms(4100);
+  CHECK(draw_reqs == r0, "P12 no draw request over 8220 ms with enable low, got %d",
+        draw_reqs - r0);
+  CHECK(arms.size() == a0, "P12 no timer arm or cancel with enable low, got %zu",
+        arms.size() - a0);
+  CHECK(frames.size() == f0 && txreqs == t0,
+        "P12 no committed frame and no TX request with enable low, got %zu",
+        frames.size() - f0);
+  CHECK(not_down == 0, "P12 dbg_adv_state DOWN in every clock, %d were not",
+        not_down);
 }
 
 // ---- P1: startup — enable with link up => kind-1 draw ---------------
@@ -1007,6 +1069,7 @@ int Harness::report() {
 int Harness::run_suite() {
   configure_the_entity_and_release_reset();
   check_reset_state();
+  check_the_boot_gate_holds_over_the_delay_span();
   check_startup_draw_and_delay_arm();
   check_first_entity_available_is_byte_exact();
   check_advertise_cadence_restarts_per_send();

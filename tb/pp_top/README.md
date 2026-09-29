@@ -287,9 +287,12 @@ tally.
 - **S2** `DECLARE_TALKER` (svc face) → Σ-slope admission equals the
   independent Milan model (sum, granted, admitted, no over-limit) → Talker
   Advertise `New` AND MVRP VID `New` byte-exact on the MAC stream.
-- **S3** entity enable → 82 B ENTITY_AVAILABLE byte-exact (aidx 0) inside
-  the T-ADP-DELAY-START window; re-advertise with aidx 1 at the T-ADP-ADV
-  5 s + 0-4 s anti-storm cadence.
+- **S3** first, before its flush: no ADPDU reached the queue between S0's link
+  rise and this enable (a queue read only, so no later clock moves; section AD0
+  holds the same state past the whole T-ADP-DELAY span). Then entity enable →
+  82 B ENTITY_AVAILABLE byte-exact (aidx 0) inside the T-ADP-DELAY-START
+  window; re-advertise with aidx 1 at the T-ADP-ADV 5 s + 0-4 s anti-storm
+  cadence.
 - **S4** ENTITY_DISCOVER in → delayed byte-exact response at the running
   available_index; zero front-end drops.
 - **S5** host face: ctrl scratch RW, status flags, firmware-window error
@@ -338,11 +341,21 @@ tally.
   the reset value, the LINK_UP declaration byte-exact with all 16 bits of
   SRclassVID, the GET_TX_STATE stream VLAN, a bridge's Domain still adopted
   over it, the LINK_DOWN revert and the LINK_UP re-declaration. See section DV.
-- **AD** **the ADPDU across SET_CONFIGURATION** (issue #40; REQ-ADP-005, Milan
-  §5.6.2 note, IEEE §6.2.2.18), on a fresh processor of its own (the GI pattern:
+- **AD** **the boot gate, and the ADPDU across SET_CONFIGURATION** (issues #41
+  and #40; REQ-ADP-006 and REQ-ADP-005, Milan §5.6.1 and the §5.6.2 note, IEEE
+  §6.2.2.18), on a fresh processor of its own (the GI pattern:
   its own model, erased NVM, nothing bound), so the main run's clock is
   untouched. Its image declares two configurations with default 1, and
-  `current_cfg_i` says 1. AD1: the first ENTITY_AVAILABLE carries 1 and
+  `current_cfg_i` says 1. AD0 (issue #41; REQ-ADP-006, Milan §5.6.1) first:
+  the link rises with `entity_enable_i` low and stays up for 4200 ms, bounces
+  for 20 ms and stays up for another 4200 ms, each window longer than the whole
+  T-ADP-DELAY span, with nothing flushing the ADP queue. The queue stays empty,
+  the advertise SM reads DOWN at every 100 ms sample (snapshot word 31) and the
+  flags word reads {seeded, link, !enable}. S3 also checks, before its flush,
+  that nothing reached the queue between S0's link rise and S3's enable, but
+  that span is shorter than T-ADP-DELAY, so AD0 is the check that can see a
+  gate defect (the record is `gate-enable-dropped-top` in `tb/adp_engine`'s
+  campaign). AD1: the first ENTITY_AVAILABLE carries 1 and
   GET_CONFIGURATION agrees. AD1b: SET_CLOCK_SOURCE writes another row of the
   store and the next advert still carries 1. AD2: SET_CONFIGURATION(0), then
   GET, the ENTITY descriptor and the next ENTITY_AVAILABLE all say 0, and that

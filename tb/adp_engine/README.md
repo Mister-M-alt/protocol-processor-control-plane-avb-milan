@@ -3,7 +3,7 @@
 
 Proves the ADP engine (`hdl/adp/KL_adp_engine.sv`) against
 [04](../../docs/architecture/04_adp_engine.md) in full: `make` = build + run,
-exit 0 = PASS, 626 checks. `make mutants` runs the checked-in mutation
+exit 0 = PASS, 632 checks. `make mutants` runs the checked-in mutation
 campaign below.
 
 The top (`tb_adp_top.sv`) is pure wiring: the engine plus the **real
@@ -34,6 +34,17 @@ and 10 s arms) with aging ⇒ DEPARTED, unbind disarm + cancel; and the pool
 protocol invariants accumulated over the whole run (never oversize, never a
 write before grant, alloc_req always one cycle, one TX request per
 committed 82-byte frame).
+
+P12 (issue #41, REQ-ADP-006, Milan §5.6.1), which runs right after P0: with
+`entity_enable_i` low the link rises, stays up for 4100 ms of modeled time,
+bounces for 20 ms and stays up for another 4100 ms. Each window is longer than
+the whole T-ADP-DELAY span (0..4000 ms, Milan §5.6.3.5.3), and the timer
+service is modeled end to end inside it (an armed slot fires by itself when
+`now` passes its deadline), so a gate that let LINK_UP through would reach the
+wire. Graded: no draw request at the PRNG tap, no timer arm or cancel, no
+committed frame or TX request, and `dbg_adv_state` DOWN in every clock. The
+PRNG's seed latch is checked too, so the link rise demonstrably reached the
+draw path.
 
 P11 (issue #40, REQ-ADP-005, Milan §5.6.2 note with IEEE §6.2.2.18):
 `current_cfg_i` changes between two adverts and the second is compared with
@@ -83,6 +94,8 @@ Counts below were taken on 2026-09-29 with Verilator 5.050.
 | `cfg-nonzero-for-valid` | pp_top `adp-config` | the overlay counts as set when it is non-zero, instead of by its valid flag | 2: AD2, a SET to 0 advertises the default 1 |
 | `cfg-valid-not-sticky` | pp_top `adp-config` | the engine's valid flag is high only in the write cycle | 3: AD2, AD4 |
 | `cfg-valid-any-selector` | pp_top `adp-config` | the valid flag is set by a write to any row of the store | 1: AD1b, SET_CLOCK_SOURCE makes the advert carry 0 |
+| `gate-enable-dropped` | adp_engine | `entity_enable_i` removed from the DOWN-exit condition (issue #41's mutant) | 25: all four P12 checks (2 draw requests, 5 timer operations, 2 frames, 32,800 clocks out of DOWN), and 21 later checks the premature adverts displace (P1 to P5) |
+| `gate-enable-dropped-top` | pp_top `adp-config` | the same patch, at the processor | 3: AD0 (an ADPDU on the wire and 84 of 84 samples out of DOWN), AD1b (the index runs one ahead). In the full default pp_top run these are the only 3 failures of 7,766: S0's 20 ms window and S3's queue check stay green, because the premature draw outlasts S0 to S3 and the early advert then passes S3 as the first one |
 
 Known limits (honestly): the suite runs the shipping shape (1 interface,
 8 sinks) only; the timer service and slot pools are modeled, not
