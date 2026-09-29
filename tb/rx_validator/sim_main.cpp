@@ -682,18 +682,25 @@ void RxValidatorSuite::v8_still_owns_the_sv_version_nibble_on_maap() {
 // demuxed to PP_PROTO_MAAP, and the status lane carries the received
 // version for the engine. 31 sets all five bits of the lane.
 void RxValidatorSuite::maap_version_2_and_0_reach_the_engine() {
-  const uint8_t versions[] = {2, 0, 31};
-  const char* const names[] = {"F28a", "F28b", "F28c"};
-  for (size_t i = 0; i < 3; ++i) {
+  struct VersionCase {
+    const char* name;
+    uint8_t version;
+  };
+  const VersionCase cases[] = {
+      {"F28a", 2},
+      {"F28b", 0},
+      {"F28c", 31},
+  };
+  for (const VersionCase& c : cases) {
     Bytes f28 = maap_pdu(DA_MAAP, 1, 16, 0x91E0F0004000ull, 8, 0, 0,
-                         /*vernib=*/0x00, versions[i]);
+                         /*vernib=*/0x00, c.version);
     const int commits0 = h.commits;
-    run_case(names[i], f28);
-    check_hdr(names[i], classify(f28, true).hdr);
+    run_case(c.name, f28);
+    check_hdr(c.name, classify(f28, true).hdr);
     CHECK(h.commits == commits0 + 1 && h.hg.protocol == P_MAAP
-          && h.hg.status == versions[i],
-          "%s maap_version %u accepted as MAAP, status lane %u", names[i],
-          unsigned(versions[i]), unsigned(h.hg.status));
+          && h.hg.status == c.version,
+          "%s maap_version %u accepted as MAAP, status lane %u", c.name,
+          unsigned(c.version), unsigned(h.hg.status));
   }
 }
 
