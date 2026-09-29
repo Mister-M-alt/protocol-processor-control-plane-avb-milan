@@ -664,9 +664,9 @@ extract of `hdl/`, `tb/common/` and this directory, builds `gsi-build`, runs
 `--d3-only`, and counts the mutant KILLED only when the run completes with its
 tally, exits non-zero and every named check fails; a golden extract runs first and
 must pass. The same driver runs the binding manager's three DR2c controls, the
-arbiter's issue-cycle control and its five own-contract controls (N11) in `tb/acmp_nvm`
+arbiter's issue-cycle control and its seven own-contract controls (N11) in `tb/acmp_nvm`
 and the validator's admission control in `tb/rx_validator` (their READMEs record
-them). At the lane head all 81 are KILLED and the three goldens PASS;
+them). At the lane head all 83 are KILLED and the three goldens PASS;
 the last column is how many checks each one failed there.
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |

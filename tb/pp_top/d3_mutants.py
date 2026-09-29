@@ -396,6 +396,22 @@ AGGREGATE = (
          "  assign arm1_w = (iss1_w && !m1_we_i && m1_abort_i)\n"
          "                  || ((own_r == O_M1) && m1_abort_i);\n"),),
         ("N11a a manager-1 WRITE presented with its abort",)),
+    # R390-5 F1 = R391-5 S1: the owned half of the owner-matched drain, which
+    # N11d grades with manager 1's abort held while manager 0 owns each READ
+    # (the reviewers' own edits: both owned terms, and manager 0's alone)
+    *(Mutant(name, ACMP_NVM, ((ARB, ARMS, arms),),
+             ("N11d manager 1's abort held while manager 0 owns each of the walk's READs",))
+      for name, arms in (
+          ("owned_arm_cross_intent",
+           "  assign arm0_w = (iss0_w && !m0_we_i && m0_abort_i)\n"
+           "                  || ((own_r == O_M0) && !we_r && (m0_abort_i || m1_abort_i));\n"
+           "  assign arm1_w = (iss1_w && !m1_we_i && m1_abort_i)\n"
+           "                  || ((own_r == O_M1) && !we_r && (m1_abort_i || m0_abort_i));\n"),
+          ("cross_own_m1_drains_m0",
+           "  assign arm0_w = (iss0_w && !m0_we_i && m0_abort_i)\n"
+           "                  || ((own_r == O_M0) && !we_r && (m0_abort_i || m1_abort_i));\n"
+           "  assign arm1_w = (iss1_w && !m1_we_i && m1_abort_i)\n"
+           "                  || ((own_r == O_M1) && !we_r && m1_abort_i);\n"))),
     # R390-3 F2 and R391-3 F2: the aggregate's pre-proof variants (the
     # reviewers' own edits)
     Mutant("agg_closes_during_proof", PP_TOP, (

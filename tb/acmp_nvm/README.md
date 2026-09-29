@@ -5,7 +5,7 @@ Proves the ACMP binding NVM shadow (`hdl/acmp/KL_acmp_nvm_shadow.sv`,
 [05 §5](../../docs/architecture/05_acmp_engine.md) ≈20 B/sink shadow +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8/F07.9 +
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8): `make` = build + run,
-exit 0 = PASS, 359 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
+exit 0 = PASS, 360 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
 timing mirrors (tick_i is held high, so window = 50 cycles),
 `-GRS_TMO_CYC_P=3000` the walk's read deadline (`T-NVM-RS-DEADLINE`) that group N
 places its boundaries against, and `-GRETRY_BACKOFF_CYC_P=600` the DR2c wait
@@ -210,20 +210,57 @@ release within four cycles, no work while owned, nothing written.
   the service's, its abort `W_RD`'s), so manager 1 is driven here; the
   binding walk's own case, its registered strobe on the aggregate's first
   clock, is `tb/pp_top`'s D3R18.
-- **N11a-c** (processor issue #131, R390-4 S1 = R391-4 S1) the arbiter's own
-  contract for inputs neither in-tree manager presents, with manager 1 driven
-  as in N10, so that a third manager, or a change to either one, meets a
-  graded rule. **N11a** only reads are abandoned: manager 1 presents a WRITE
-  with its abort, held from its strobe to the write's end; the arbiter issues
-  it as a commit and never drains it, manager 1 streams every byte and sees
-  its done, and the device holds the record byte-exact (one ERASE, one
-  WRITE). **N11b** an abort names its own manager's READ only: manager 1
-  presents its abort, alone, in the issue cycle of each of the walk's eight
-  READs; none is drained and the walk completes as saved, nothing written.
-  **N11c** the issue cycle is judged by the strobe's own intent, never by the
-  operation before it: after a completed manager-1 WRITE, a manager-1 READ
-  abandoned in its issue cycle is drained from the next cycle and ends, and
-  manager 1's next READ completes.
+- **N11a-d** (processor issue #131, R390-4 S1 = R391-4 S1; N11d R390-5 F1 =
+  R391-5 S1) the arbiter's own contract for inputs neither in-tree manager
+  presents, with manager 1 driven as in N10, so that a third manager, or a
+  change to either one, meets a graded rule. Each arm grades manager 1's half
+  of a banner rule. **N11a** only reads are abandoned: manager 1 presents a
+  WRITE with its abort, held from its strobe to the write's end; the arbiter
+  issues it as a commit and never drains it, manager 1 streams every byte and
+  sees its done, and the device holds the record byte-exact (one ERASE, one
+  WRITE). **N11b** an abort names its own manager's READ only, in the issue
+  cycle: manager 1 presents its abort, alone, in the issue cycle of each of
+  the walk's eight READs; none is drained and the walk completes as saved,
+  nothing written. **N11d** the same rule while the READ is owned: manager 1
+  presents its abort, alone, in every cycle manager 0 owns each of the walk's
+  eight READs (from the cycle after its issue through the port's done or err,
+  which the wrap publishes as `arb_end_o`) and in none of their issue cycles,
+  so N11b and N11d each grade one term. The check requires the abort in every
+  one of those owned cycles (168 over the eight READs at the lane head, at
+  least 12 of them before each READ's end, where an armed drain would take
+  it), none drained and the walk complete as saved. **N11c** the issue cycle
+  is judged by the strobe's own intent, never by the operation before it:
+  after a completed manager-1 WRITE, a manager-1 READ abandoned in its issue
+  cycle is drained from the next cycle and ends, and manager 1's next READ
+  completes.
+- **Ungraded by construction: the manager-0 halves of the same rules.**
+  Manager 0 here and in `tb/pp_top` is the real binding manager. It raises
+  its abort (`nvm_abort_o`) only in a stalled `H_RS_STREAM` clock, that is
+  only while its own READ is strobed or owned, and it leaves that state on
+  the READ's done or err or on its own abort. Its abort in the READ's issue
+  cycle needs the aggregate's expiry on that clock (its per-wait count is
+  zero there, far below any bench's deadline), which falls only inside the
+  restore walks, where both managers only read. So no in-tree bench presents manager 0's abort against manager 1's
+  operation, against a WRITE, or after one. R391-5 S1 counted six single-half
+  arbiter edits that pass every graded suite; N11d now grades one of them
+  (`cross_own_m1_drains_m0`, manager 1's half), and the five manager-0 halves
+  stay ungraded:
+
+  | Input manager 0 never presents | Reviewer edit that passes every in-tree suite | Out-of-tree probe |
+  |---|---|---|
+  | its abort in manager 1's issue (grant) cycle | `cross_iss_m0_drains_m1` (R390-5: `r5_issue_cross_m1_only`) | killed by R390-4's arbiter unit probe, case F |
+  | its abort while manager 1 owns a READ | `cross_own_m0_drains_m1` (R390-5: `r5_owned_cross_m1_only`) | not killed by the unit probe; R391-5's arbiter-input monitor finds the input absent |
+  | its WRITE strobe presented with its abort | `write_iss_m0_only` | killed by the unit probe, case B |
+  | its abort while it owns a WRITE | `write_own_m0_only` | not killed by the unit probe; the monitor finds the input absent |
+  | its READ abandoned in its issue cycle after a WRITE (the issue term judged by the previous `we_r`) | `stale_we_m0_only` | killed by the unit probe, case B (through the WRITE half of the same edit); the monitor finds the after-WRITE input absent |
+
+  R390-4's unit probe drives `KL_pp_nvm_mgr_arb` alone against a port model
+  (nine cases; carried in R390-5's packet, PR #132 comment 5884919813).
+  R391-5's monitor (`mon_unreachable_inputs`, PR #132 comment 5885492313), a
+  print-only edit of the arbiter, reports the first clocks on which either
+  manager presents one of these inputs: none occurs with both real managers
+  over the whole `tb/pp_top` default run or over 17,406 runs of that
+  reviewer's aggregate sweep.
 
 Pinned wiring: `make pinned` builds the same bench with the gate left out
 (`ACMP_NVM_PINNED_WIRING`, the producers wired straight to the listener as the
@@ -329,10 +366,11 @@ Mutation-proven 2026-09-20 for the unflushed export:
 
 Planted by `tb/pp_top/d3_mutants.py`, each in its own extract of `hdl/`, `tb/common/`
 and this directory, which then runs `make run`; KILLED means the run completed with its
-tally, exited non-zero and every named check failed. All nine are KILLED at the lane
-head and the golden extract passes. The five N11 controls change the arbiter only for
+tally, exited non-zero and every named check failed. All eleven are KILLED at the lane
+head and the golden extract passes. The seven N11 controls change the arbiter only for
 inputs neither in-tree manager presents: R390-4 and R391-4 measured the reviewers' four
-passing `tb/pp_top` and this suite's N1-N10, so N11 is what kills them.
+passing `tb/pp_top` and this suite's N1-N10, and R390-5 and R391-5 the two owned-term
+edits passing N1-N11c, so N11 is what kills them.
 
 | Mutant | Defect planted | Named check, failing | Failing checks |
 |---|---|---|---|
@@ -345,3 +383,5 @@ passing `tb/pp_top` and this suite's N1-N10, so N11 is what kills them.
 | `issue_arm_write_too` | the same defect in R391-4's own text | `N11a a manager-1 WRITE presented with its abort` | 1 |
 | `issue_arm_stale_we` | the issue cycle judged by the previous operation's `we_r` instead of the strobe's own `we` (R391-4) | `N11a a manager-1 WRITE presented with its abort`, `N11c a manager-1 READ abandoned in its issue cycle after a WRITE` | 3 |
 | `owned_arm_write_too` | the owned term drops its `!we_r` guard, so an abort while a WRITE is owned cuts it (the owned half of the same banner rule) | `N11a a manager-1 WRITE presented with its abort` | 1 |
+| `owned_arm_cross_intent` | both owned terms take either manager's abort (R390-5's `r5_owned_cross_both`) | `N11d manager 1's abort held while manager 0 owns each of the walk's READs` | 1 |
+| `cross_own_m1_drains_m0` | manager 0's owned term takes manager 1's abort (R391-5's own text; R390-5's `r5_owned_cross_m0_only`) | `N11d manager 1's abort held while manager 0 owns each of the walk's READs` | 1 |
