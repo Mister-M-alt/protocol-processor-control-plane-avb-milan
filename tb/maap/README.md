@@ -137,10 +137,12 @@ Run: `make` (exit 0 = PASS).
 
 `KL_pp_maap.sv` `W_ADDR`: an engage fall (Release! or link loss) while a
 kind-7 draw was in flight parked the walker in `W_OFF` with its draw mark
-still set. The PRNG's answer arrived unread, so the next walk's `W_IVAL`
-waited forever for an answer already given. Every later PortOperational!
-then stalled before ReserveAddress!, with no PROBE and no claim until reset
-(Table B.7 PortOperational! from INITIAL; B.3.5.9). In the top the stale
+still set. The PRNG's answer arrived unread, so the next walk waited forever
+for an answer already given. An unseeded walk waited in `W_ADDR`'s own draw
+arm, which never draws again while the mark is set, and a seeded walk waited
+in `W_IVAL`. Every later PortOperational! then stalled before
+ReserveAddress!, with no PROBE and no claim until reset (Table B.7
+PortOperational! from INITIAL; B.3.5.9). In the top the stale
 answer is steered to the MAAP engine too, so the processor wedged the same
 way. The exit now clears the mark. Before the fix U17b fails phases 1 to 3
 and U18 (6 FAIL of 89); after it the suite passes.
@@ -180,7 +182,7 @@ only simulation logs; no expectation comes from RTL text.
 
 | Arm (patch) | Planted defect | Suite | Named failures (of the suite's checks) |
 |---|---|---|---|
-| `fit-compare-forced-true` | the fit compare at `KL_pp_maap.sv:594` (issue #66's `:587` before the fix above) forced true: an overhanging draw is accepted | maap | U17 x4 (1 draw instead of 3; claim `…:FD:FF`; block ends `…:FE:FD`; PROBE bytes), and U27's redraw premise (the overhanging draw is taken): 5 FAIL of 182 |
+| `fit-compare-forced-true` | the fit compare at `KL_pp_maap.sv:633` (issue #66's `:587` at the lane's base) forced true: an overhanging draw is accepted | maap | U17 x4 (1 draw instead of 3; claim `…:FD:FF`; block ends `…:FE:FD`; PROBE bytes), and U27's redraw premise (the overhanging draw is taken): 5 FAIL of 182 |
 | `fit-compare-off-by-one` | the fit compare `<=` becomes `<`: the last fitting offset is refused | maap | U17 x3 (no PROBE, the boundary draw refused 1,745 times) and U17b x4: 7 FAIL of 181 |
 | `seed-clamp-removed` | the footnote-a seed clamp removed: the provisioned offset is probed as given | maap | U18 x4 (claim `…:FF:FF`; PROBE bytes; claim; last-source grant), U18b x2: 6 FAIL of 182 |
 | `release-keeps-draw-mark` | the fix above removed | maap | U17b phases 1 to 3, U17c x2, U18 x3 and U27 x1, each behind a wedge that the next Release! clears in `W_IVAL`: 9 FAIL of 180 |

@@ -604,6 +604,11 @@ module KL_pp_maap
             // Release!/link loss mid generate_address: nothing is armed yet.
             // A draw still in flight is abandoned (its answer lands in
             // W_OFF, unread), so its mark must not survive into the next
+            // walk; if the link is back first, the answer lands in that
+            // walk's W_ADDR, which ignores it while the mark is clear. With
+            // the mark left set, an unseeded next walk would wait in the
+            // draw arm below for an answer already given, never drawing
+            // again, and so would a seeded next
             // walk, whose W_IVAL would wait forever for an answer already
             // given: the next PortOperational! must still reach
             // ReserveAddress! (Table B.7, B.3.5.9)
