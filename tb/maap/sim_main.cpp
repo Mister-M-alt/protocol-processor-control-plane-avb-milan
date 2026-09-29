@@ -15,7 +15,10 @@
 //   the allocator seam contract (refuse fast while probing, grant base+s in
 //   DEFEND, refuse s >= count, RELEASE acked); footnote-a seeding; the
 //   engage/Release! and PortOperational! arcs; maap_version tolerance and
-//   reserved-message ignore.
+//   reserved-message ignore; the Table B.9 fit clamp's reject-and-redraw arm
+//   (a kind-7 stub in the wrapper scripts the overhanging draws) and the
+//   footnote-a seed clamp.
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -34,9 +37,11 @@ typedef std::vector<uint8_t> Bytes;
 constexpr uint64_t MAAP_DA   = 0x91E0F000FF00ull;      // Table B.10
 constexpr uint64_t POOL_HI   = 0x91E0F0000000ull;      // Table B.9 base
 constexpr unsigned POOL_SIZE = 0xFE00;                 // Table B.9 extent
+constexpr uint64_t POOL_LAST = POOL_HI + POOL_SIZE - 1; // 91:E0:F0:00:FD:FF
 constexpr uint64_t OWN_MAC   = 0x02AABBCCDDEEull;
 constexpr uint64_t EID       = 0x001BC5FFFE000042ull;
 constexpr unsigned COUNT     = 8;
+constexpr unsigned MAX_COUNT = 255;                    // the widest cfg_count_i
 
 // ---- harness scales -------------------------------------------------------
 constexpr size_t kMinFrameBytes = 60;    // the 802.3 minimum frame, padded to
@@ -91,38 +96,17 @@ struct H {
   // conflict sweep capture
   bool confl_auto = false;
   std::vector<int> confl_srcs;
+  // kind-7 stub: while the script is non-empty, draw k (counted from the
+  // last reset of addr_draws) hands the engine addr_script[k], the last
+  // entry repeating; empty = the real PRNG's value
+  std::vector<uint16_t> addr_script;
+  size_t addr_draws = 0;                   // kind-7 draws the engine consumed
 
   explicit H(Vmaap_wrap* dd) : d(dd) {}
 
   void step() {
     d->clk_i = 0; d->eval();
-    // TX arbiter lane: grant a committed request, then serialize the slot
-    d->txreq_ready_i = 0;
-    d->ser_ready_i = 1;
-    if (!ser_busy && d->txreq_valid_o) {
-      d->txreq_ready_i = 1;                // one-cycle lane grant
-      d->ser_req_i = 1;
-      d->ser_slot_i = d->txreq_slot_o;
-      ser_busy = true;
-      ser_cur.clear();
-      ser_ms = d->now_ms_o;
-    }
-    if (ser_busy && d->ser_valid_o) {
-      d->ser_req_i = 0;
-      ser_cur.push_back(d->ser_data_o);
-      if (d->ser_last_o) {
-        tx.push_back({ser_cur, ser_ms});
-        ser_busy = false;
-      }
-    }
-    // conflict ack policy
-    d->conflict_ack_i = 0;
-    if (confl_auto && d->conflict_valid_o) {
-      d->conflict_ack_i = 1;
-      confl_srcs.push_back(int(d->conflict_src_o));
-    }
-    d->eval();
-    d->clk_i = 1; d->eval();
+    step_body();
   }
   void idle(int n) { for (int i = 0; i < n; ++i) step(); }
   void run_ms(int ms) { idle(ms * kClkPerMs); }
@@ -189,10 +173,11 @@ struct H {
   }
   // the second half of step() (after the pre-edge eval in alloc())
   void step_body() {
+    // TX arbiter lane: grant a committed request, then serialize the slot
     d->txreq_ready_i = 0;
     d->ser_ready_i = 1;
     if (!ser_busy && d->txreq_valid_o) {
-      d->txreq_ready_i = 1;
+      d->txreq_ready_i = 1;                // one-cycle lane grant
       d->ser_req_i = 1;
       d->ser_slot_i = d->txreq_slot_o;
       ser_busy = true; ser_cur.clear(); ser_ms = d->now_ms_o;
@@ -202,13 +187,21 @@ struct H {
       ser_cur.push_back(d->ser_data_o);
       if (d->ser_last_o) { tx.push_back({ser_cur, ser_ms}); ser_busy = false; }
     }
+    // conflict ack policy
     d->conflict_ack_i = 0;
     if (confl_auto && d->conflict_valid_o) {
       d->conflict_ack_i = 1;
       confl_srcs.push_back(int(d->conflict_src_o));
     }
+    // kind-7 stub: the value the engine samples at this edge
+    d->addr_stub_en_i = addr_script.empty() ? 0 : 1;
+    if (!addr_script.empty()) {
+      d->addr_stub_ms_i = addr_script[std::min(addr_draws, addr_script.size() - 1)];
+    }
     d->eval();
+    const bool addr_done = d->addr_draw_o;
     d->clk_i = 1; d->eval();
+    if (addr_done) ++addr_draws;
   }
 };
 
@@ -246,6 +239,9 @@ class MaapAnnexBSuite {
   void release_parks_the_machine_without_a_pdu();
   void provisioned_seed_probes_first_and_is_not_reused();
   void alloc_is_refused_while_probing();
+  void overhanging_draws_are_redrawn_until_the_block_fits();
+  void a_release_mid_redraw_leaves_no_draw_behind();
+  void a_seed_past_the_fit_is_clamped_into_the_pool();
 
   const milan::tb::Model<Vmaap_wrap> model;
   Vmaap_wrap* const d = model.get();
@@ -266,6 +262,7 @@ void MaapAnnexBSuite::reset_leaves_the_machine_initial() {
   d->link_up_i = 0;
   d->txn_valid_i = 0; d->alloc_req_valid_i = 0; d->conflict_ack_i = 0;
   d->txreq_ready_i = 0; d->ser_req_i = 0; d->ser_slot_i = 0; d->ser_ready_i = 1;
+  d->addr_stub_en_i = 0; d->addr_stub_ms_i = 0;
   h.idle(20);
   d->rst_n = 1;
   h.idle(10);
@@ -596,6 +593,104 @@ void MaapAnnexBSuite::alloc_is_refused_while_probing() {
         "U16: the same source path grants once the claim stands");
 }
 
+// ---- U17: the fit clamp's reject arm (B.1, B.3.6.1, Table B.9) ------------
+// The widest block (255 addresses) fits the pool only at offsets up to
+// 0xFE00 - 255 = 0xFD01. The kind-7 stub hands the engine the top pool
+// offset, then the first offset past the fit, then the fit itself: the first
+// two overhang 91:E0:F0:00:FD:FF and must be redrawn, and the PROBE names the
+// third, whose block ends exactly at the top of the pool.
+void MaapAnnexBSuite::overhanging_draws_are_redrawn_until_the_block_fits() {
+  const unsigned fit = POOL_SIZE - MAX_COUNT;          // 0xFD01
+  h.confl_auto = true;
+  d->link_up_i = 0; h.idle(30);                        // Release!
+  h.confl_auto = false;
+  h.confl_srcs.clear();
+  d->cfg_count_i = MAX_COUNT;
+  h.addr_script = {uint16_t(POOL_SIZE - 1), uint16_t(fit + 1), uint16_t(fit)};
+  h.addr_draws = 0;
+  size_t n0 = h.tx.size();
+  d->link_up_i = 1;                                    // PortOperational!
+  CHECK(h.wait_frames(n0 + 1, kProbeBudgetMs), "U17: the widest block is probed");
+  CHECK(h.addr_draws == 3,
+        "U17: draws 0x%04x and 0x%04x overhang the pool and are redrawn "
+        "(%zu draws, want 3)", POOL_SIZE - 1, fit + 1, h.addr_draws);
+  const uint64_t b17 = d->addr_o;
+  CHECK(b17 == (POOL_HI | fit), "U17: the claim is the first fitting draw, got %012llx",
+        static_cast<unsigned long long>(b17));
+  CHECK(b17 + MAX_COUNT - 1 <= POOL_LAST,
+        "U17: the probed block ends at or below 91:E0:F0:00:FD:FF (ends %012llx)",
+        static_cast<unsigned long long>(b17 + MAX_COUNT - 1));
+  if (h.tx.size() > n0) {
+    Bytes p = maap_frame(MAAP_DA, OWN_MAC, 1, POOL_HI | fit, MAX_COUNT, 0, 0);
+    CHECK(h.tx[n0].b == p, "U17: PROBE byte-exact for the fitting block");
+    if (h.tx[n0].b != p) { dump("got", h.tx[n0].b); dump("exp", p); }
+  }
+  h.addr_script.clear();
+}
+
+// ---- U17b: a Release! inside the redraw loop leaves no draw behind --------
+// generate_address may redraw for as long as the draws overhang the pool,
+// and a link loss (Release!) can land while a draw is still in flight. The
+// next PortOperational! must run generate_address + ReserveAddress! (Table
+// B.7, B.3.5.9) as if that draw had never been asked for. The stub keeps
+// every draw overhanging, the link drops at each of four consecutive cycles
+// of the loop's request/answer rhythm, and each re-engage must reach its
+// first PROBE on a fitting draw.
+void MaapAnnexBSuite::a_release_mid_redraw_leaves_no_draw_behind() {
+  const unsigned fit = POOL_SIZE - MAX_COUNT;          // 0xFD01
+  d->cfg_count_i = MAX_COUNT;
+  for (int phase = 0; phase < 4; ++phase) {
+    d->link_up_i = 0; h.idle(30);                      // Release!
+    h.addr_script = {uint16_t(POOL_SIZE - 1)};         // every draw overhangs
+    h.addr_draws = 0;
+    d->link_up_i = 1;
+    for (int g = 0; g < kRxAcceptCycles && h.addr_draws < 2; ++g) h.step();
+    h.idle(phase);
+    d->link_up_i = 0; h.idle(30);                      // Release! mid-loop
+    h.addr_script = {uint16_t(fit)};
+    size_t n0 = h.tx.size();
+    d->link_up_i = 1;                                  // PortOperational!
+    CHECK(h.wait_frames(n0 + 1, kProbeBudgetMs) && d->addr_o == (POOL_HI | fit),
+          "U17b: phase %d, the walk restarts after a Release! mid-redraw", phase);
+  }
+  h.addr_script.clear();
+}
+
+// ---- U18: a mis-provisioned seed is clamped into the pool (footnote a) ----
+// A provisioned range skips generate_address. One whose block would leave
+// the Table B.9 pool (the seed here names 91:E0:F0:00:FF:FF, inside the Table
+// B.10 reserved range) probes the clamped offset 0xFE00 - count instead, so
+// the whole block still ends at 91:E0:F0:00:FD:FF.
+void MaapAnnexBSuite::a_seed_past_the_fit_is_clamped_into_the_pool() {
+  const unsigned clamp = POOL_SIZE - COUNT;            // 0xFDF8
+  d->link_up_i = 0; h.idle(30);                        // Release! re-arms the seed
+  d->cfg_count_i = COUNT;
+  d->cfg_seed_offset_i = 0xFFFF;
+  d->cfg_seed_valid_i = 1;
+  h.addr_draws = 0;
+  size_t n0 = h.tx.size();
+  d->link_up_i = 1;
+  CHECK(h.wait_frames(n0 + 1, kProbeBudgetMs), "U18: the seeded walk starts");
+  CHECK(h.addr_draws == 0,
+        "U18: the provisioned range skips generate_address (%zu draws)", h.addr_draws);
+  CHECK(d->addr_o == (POOL_HI | clamp),
+        "U18: the seed is clamped to offset 0x%04x, got %012llx", clamp,
+        static_cast<unsigned long long>(d->addr_o));
+  if (h.tx.size() > n0) {
+    Bytes p = maap_frame(MAAP_DA, OWN_MAC, 1, POOL_HI | clamp, COUNT, 0, 0);
+    CHECK(h.tx[n0].b == p, "U18: PROBE byte-exact at the clamped offset");
+    if (h.tx[n0].b != p) { dump("got", h.tx[n0].b); dump("exp", p); }
+  }
+  for (int g = 0; g < kWalkRetryRounds && !d->addr_valid_o; ++g) h.run_ms(kProbeBudgetMs);
+  CHECK(d->addr_valid_o && d->addr_o == (POOL_HI | clamp),
+        "U18: the clamped block is claimed");
+  auto r = h.alloc(COUNT - 1);
+  CHECK(r.got && r.ok && r.da == POOL_LAST,
+        "U18: the block's last source is granted 91:E0:F0:00:FD:FF (got %012llx)",
+        static_cast<unsigned long long>(r.da));
+  d->cfg_seed_valid_i = 0;
+}
+
 int MaapAnnexBSuite::run() {
   reset_leaves_the_machine_initial();
   engage_probes_a_fresh_pool_range();
@@ -615,6 +710,9 @@ int MaapAnnexBSuite::run() {
   release_parks_the_machine_without_a_pdu();
   provisioned_seed_probes_first_and_is_not_reused();
   alloc_is_refused_while_probing();
+  overhanging_draws_are_redrawn_until_the_block_fits();
+  a_release_mid_redraw_leaves_no_draw_behind();
+  a_seed_past_the_fit_is_clamped_into_the_pool();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

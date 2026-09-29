@@ -9,7 +9,7 @@ real services (KL_pp_prng kinds 5/6/7, KL_pp_timer_service compressed to
 the talker's allocator face; records are injected pre-parsed exactly as the
 validator's MAAP lanes deliver them.
 
-What it proves (U0..U16):
+What it proves (U0..U18):
 
 - cold start: `generate_address` inside the Table B.9 pool with the block
   fit, then 4 byte-exact PROBEs (1 + `MAAP_PROBE_RETRANSMITS`) at spacings
@@ -32,4 +32,58 @@ What it proves (U0..U16):
   (footnote c), PortOperational! (link bounce) restarts with a fresh range,
   and footnote-a seeding probes the provisioned offset first.
 
+The Table B.9 fit (U17, U17b, U18; issue #66, REQ-MAAP-001, B.1 and
+B.3.6.1):
+
+- **U17** the reject arm. At the widest `cfg_count_i` (255) the whole block
+  fits only at offsets up to `0xFE00 - 255 = 0xFD01`. A kind-7 stub in
+  `maap_wrap.sv` hands the engine `0xFDFF`, then `0xFD02`, then `0xFD01`: the
+  first two overhang `91:E0:F0:00:FD:FF` and are redrawn (three draws
+  consumed), and the byte-exact PROBE names `91:E0:F0:00:FD:01`, count 255,
+  whose block ends exactly at the top of the pool. The real PRNG would reject
+  only about one draw in 256 at this count, and one in 9,300 at the suite's
+  count of 8, so without the stub the arm is never driven.
+- **U17b** a Release! (link loss) inside that redraw loop, at each of four
+  consecutive cycles of its request/answer rhythm, must leave no draw
+  behind: each following PortOperational! reaches its first PROBE (Table
+  B.7, B.3.5.9). This test found the defect fixed with it (below).
+- **U18** a seeded walk whose offset (`0xFFFF`, inside the Table B.10
+  reserved range) lies past `0xFE00 - count` probes the clamped offset
+  `0xFDF8` byte-exact without drawing an address (footnote a), claims the
+  block, and grants its last source `91:E0:F0:00:FD:FF`.
+
+The kind-7 stub is the wrapper's one piece of harness logic: while the suite
+scripts values, a completed kind-7 draw hands the engine the scripted value
+instead of the PRNG's; kinds 5 and 6 always pass through. Every other
+scenario runs on the real PRNG.
+
 Run: `make` (exit 0 = PASS).
+
+## RTL fix found by U17b (issue #66)
+
+`KL_pp_maap.sv` `W_ADDR`: an engage fall (Release! or link loss) while a
+kind-7 draw was in flight parked the walker in `W_OFF` with its draw mark
+still set. The PRNG's answer arrived unread, so the next walk's `W_IVAL`
+waited forever for an answer already given. Every later PortOperational!
+then stalled before ReserveAddress!, with no PROBE and no claim until reset
+(Table B.7 PortOperational! from INITIAL; B.3.5.9). In the top the stale
+answer is steered to the MAAP engine too, so the processor wedged the same
+way. The exit now clears the mark. Before the fix U17b fails phases 1 to 3
+and U18 (6 FAIL of 89); after it the suite passes.
+
+## Mutation campaign
+
+`make mutants` (optionally `MUTANT_OUTPUT=<dir>` for the receipts; default
+`/tmp/maap-mutants`) plants each reviewed patch in `mutations/` into a
+scratch copy of `hdl/` with `git apply`. It first runs every suite target
+the arms use unmutated, then requires each arm's simulation to finish red
+with a `FAIL:` line carrying the arm's own named check. A build failure, a
+missing tally or a clean run is UNPROVEN, never a kill. The driver reads
+only simulation logs; no expectation comes from RTL text.
+
+| Arm (patch) | Planted defect | Suite | Named failures (of the suite's checks) |
+|---|---|---|---|
+| `fit-compare-forced-true` | the fit compare at `KL_pp_maap.sv:594` (issue #66's `:587` before the fix above) forced true: an overhanging draw is accepted | maap | U17 x4 (1 draw instead of 3; claim `…:FD:FF`; block ends `…:FE:FD`; PROBE bytes): 4 FAIL of 90 |
+| `fit-compare-off-by-one` | the fit compare `<=` becomes `<`: the last fitting offset is refused | maap | U17 x3 (no PROBE, the boundary draw refused 1,745 times) and U17b x4: 7 FAIL of 89 |
+| `seed-clamp-removed` | the footnote-a seed clamp removed: the provisioned offset is probed as given | maap | U18 x4 (claim `…:FF:FF`; PROBE bytes; claim; last-source grant): 4 FAIL of 90 |
+| `release-keeps-draw-mark` | the fix above removed | maap | U17b phases 1 to 3, then U18 x3 behind the wedge: 6 FAIL of 89 |

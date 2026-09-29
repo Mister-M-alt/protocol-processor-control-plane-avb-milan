@@ -567,7 +567,14 @@ module KL_pp_maap
         // ---- generate_address (B.3.6.1) ---------------------------------
         W_ADDR: begin
           if (!eng_w) begin
-            w_st_r <= W_OFF;                       // nothing armed yet
+            // Release!/link loss mid generate_address: nothing is armed yet.
+            // A draw still in flight is abandoned (its answer lands in
+            // W_OFF, unread), so its mark must not survive into the next
+            // walk, whose W_IVAL would wait forever for an answer already
+            // given: the next PortOperational! must still reach
+            // ReserveAddress! (Table B.7, B.3.5.9)
+            draw_act_r <= 1'b0;
+            w_st_r     <= W_OFF;
           end else if (cfg_seed_valid_i && !seed_used_r) begin
             // footnote a: a provisioned range skips generate_address; the
             // clamp keeps a mis-provisioned block inside the pool
