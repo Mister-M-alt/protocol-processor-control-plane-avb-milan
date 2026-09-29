@@ -22,7 +22,12 @@
 //                §4.3.2), and across the F05.12 withdraw -> re-declare flow
 //                two VIDs are briefly live — the steady state is one.
 //                LeaveAll or periodic ticks re-join EVERY VID that still
-//                has users (F10.3).
+//                has users (F10.3). Each live VID also records whether its
+//                declaration has left in an MVRP MRPDU the TX arbiter
+//                accepted since the VID was allocated (vid_sent_o): the
+//                talker's streaming licence waits for it, because a Talker
+//                PAAD "shall join the relevant VLAN via MVRP prior to
+//                sending any Stream frames" (Milan §4.3.2, 10 §6.3).
 //
 //  Decision    : the design decision that matters — the membership store
 //                follows the KL_pp_timer_service split: {vid, refcount}
@@ -31,7 +36,10 @@
 //                rate, never wire-rate), while the per-entry ACTIVE bits
 //                live in a flop vector so scan qualification and the
 //                re-join walk never need a second RAM port or a flop
-//                mirror behind a wide read mux.
+//                mirror behind a wide read mux. The one flop copy is the
+//                VID written at allocation (vid_val_o): the talker FSM
+//                compares every source's VID with every entry in the same
+//                cycle, which a serial RAM lookup cannot serve.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -61,6 +69,11 @@ module KL_srp_vlan #(
     output logic [2:0]  vlan_ev_event_o,  //! attribute event (0 New, 1 JoinIn, 5 Lv)
     output logic [15:0] vlan_ev_vid_o,    //! MVRP FirstValue (VID)
     input  wire         vlan_ev_ready_i,  //! encoder accepts the event
+    input  wire         mvrp_tx_i,        //! strobe: the TX arbiter accepted an MVRP MRPDU
+
+    // ---- declaration-on-the-wire view (talker licence, Milan §4.3.2) ------
+    output logic [N_VIDS_P-1:0]        vid_sent_o, //! per entry: live, and its New/JoinIn has been transmitted
+    output logic [N_VIDS_P-1:0][11:0]  vid_val_o,  //! per entry: the VID it holds (valid with vid_sent_o)
 
     // ---- observability ----------------------------------------------------
     output logic [N_VIDS_P-1:0] vid_active_o //! per-entry membership-live bits
@@ -80,6 +93,12 @@ module KL_srp_vlan #(
   logic [ENT_W_C-1:0] tbl_r [0:N_VIDS_P-1];
   logic [ENT_W_C-1:0] tbl_q_r;
   logic [N_VIDS_P-1:0] active_r;
+  // declaration-on-the-wire state: a join of the entry was handed to the
+  // encoder since the last MVRP transmission (queued), and one has been
+  // transmitted since the entry was allocated (sent); VID copy (banner)
+  logic [N_VIDS_P-1:0]       queued_r;
+  logic [N_VIDS_P-1:0]       sent_r;
+  logic [N_VIDS_P-1:0][11:0] vid_q_r;
 
   logic [IDX_W_C-1:0] rd_addr_w;
   logic               tbl_we_w;
@@ -162,6 +181,9 @@ module KL_srp_vlan #(
     if (!rst_n) begin
       st_r          <= V_IDLE;
       active_r      <= '0;
+      queued_r      <= '0;
+      sent_r        <= '0;
+      vid_q_r       <= '0;
       op_join_r     <= 1'b0;
       op_vid_r      <= 12'd0;
       scan_ix_r     <= '0;
@@ -180,6 +202,13 @@ module KL_srp_vlan #(
     end else begin
       user_err_o <= 1'b0;
       if (periodic_tick_i || leaveall_tick_i) rejoin_pend_r <= 1'b1;
+      // An accepted MVRP MRPDU carries every join queued before its drain
+      // started (the encoder holds MVRP pushes while that drain runs);
+      // per-entry writes below land after this and win.
+      if (mvrp_tx_i) begin
+        sent_r   <= sent_r | queued_r;
+        queued_r <= '0;
+      end
 
       unique case (st_r)
         V_IDLE: begin
@@ -225,6 +254,9 @@ module KL_srp_vlan #(
               st_r <= V_IDLE;                      // count up, silent
             end else if (free_v_r) begin
               active_r[free_ix_r] <= 1'b1;
+              queued_r[free_ix_r] <= 1'b0;         // nothing of this VID has left yet
+              sent_r[free_ix_r]   <= 1'b0;
+              vid_q_r[free_ix_r]  <= op_vid_r;
               ev_code_r <= EV_NEW_C;               // New, then JoinIn on cadence
               ev_vid_r  <= {4'd0, op_vid_r};
               st_r      <= V_EV;
@@ -235,6 +267,8 @@ module KL_srp_vlan #(
           end else begin
             if (found_v_r && (found_cnt_r == CNT_ONE_C)) begin
               active_r[found_ix_r] <= 1'b0;
+              queued_r[found_ix_r] <= 1'b0;
+              sent_r[found_ix_r]   <= 1'b0;
               ev_code_r <= EV_LV_C;                // last user gone: Lv (F10.3)
               ev_vid_r  <= {4'd0, op_vid_r};
               st_r      <= V_EV;
@@ -247,7 +281,11 @@ module KL_srp_vlan #(
           end
         end
         V_EV: begin
-          if (vlan_ev_ready_i) st_r <= V_IDLE;
+          if (vlan_ev_ready_i) begin
+            // the New of a fresh entry is now in the encoder's MVRP table
+            if (ev_code_r == EV_NEW_C) queued_r[free_ix_r] <= 1'b1;
+            st_r <= V_IDLE;
+          end
         end
         R_SEL: begin
           if (active_r[ridx_r]) begin
@@ -268,6 +306,7 @@ module KL_srp_vlan #(
         end
         R_EV: begin
           if (vlan_ev_ready_i) begin
+            queued_r[ridx_r] <= 1'b1;             // re-join JoinIn handed over
             if (ridx_r == IDX_W_C'(N_VIDS_P - 1)) begin
               st_r <= V_IDLE;
             end else begin
@@ -287,6 +326,8 @@ module KL_srp_vlan #(
   assign vlan_ev_event_o = ev_code_r;
   assign vlan_ev_vid_o   = ev_vid_r;
   assign vid_active_o    = active_r;
+  assign vid_sent_o      = active_r & sent_r;
+  assign vid_val_o       = vid_q_r;
 
 endmodule : KL_srp_vlan
 `default_nettype wire

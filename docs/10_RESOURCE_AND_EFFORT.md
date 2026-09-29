@@ -556,13 +556,13 @@ remain open.
     [08 F08.1](architecture/08_timing.md) is correct; and on a Domain-VID edge it
     re-declares the new VID immediately with no Leave of the old and no backoff,
     retagging live streams, where [10 §6.2](architecture/10_srp_engine.md)'s
-    frozen-VID refcount rule is correct (Milan Table 5.3, §4.3.2). The consumer
-    also has no restart or Passive behaviour on a received LeaveAll (802.1Q-2014
-    Table 10-5, §10.6), but that is not a point where this spec is right: its
-    leavealltimer does not restart on a received LeaveAll either. That is an open
-    deviation, stated in [10 §6.5](architecture/10_srp_engine.md#fig-10-leaveall)
-    and tracked in issue
-    [#108](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/108).
+    frozen-VID refcount rule is correct (Milan Table 5.3, §4.3.2). And the
+    consumer has no restart or Passive behaviour on a received LeaveAll
+    (802.1Q-2014 Table 10-5 rLA!, §10.6), where this spec is right: a received
+    LeaveAll restarts the receiving participant's leavealltimer and drops its
+    unsent own LeaveAll
+    ([10 §6.5](architecture/10_srp_engine.md#fig-10-leaveall), issue
+    [#108](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/108)).
 12. **NC-5 — the `srp` contract cannot drive a credit-based shaper.**
     [10 §1](architecture/10_srp_engine.md) correctly scopes FQTSS/CBS out, but
     neither [02 §4.1](architecture/02_interfaces.md)'s ops nor

@@ -577,7 +577,8 @@ module protocol_processor_top
     output logic [N_STREAM_OUT_P*2-1:0]  srp_tk_decl_state_o,     //! per-source self-declared {0 NONE, 1 ADVERTISE, 2 FAILED}
     output logic [N_STREAM_OUT_P*2-1:0]  srp_lstn_reg_state_o,    //! per-source registered Listener attr (srp_pkg::srp_decl_e)
     //! Declaring Advertise AND Listener Ready/ReadyFailed AND optimistic-or-
-    //! real admission. For confirmed admission, gate with srp_active_o AND
+    //! real admission AND the stream VID's MVRP join transmitted (Milan
+    //! 4.3.2). For confirmed admission, gate with srp_active_o AND
     //! srp_sr_admitted_o (parent #551 decision; architecture 10 section 6.3).
     output logic [N_STREAM_OUT_P-1:0]    srp_active_o,
     //! Real Σ-slope verdict for the current declaration, with no optimistic
