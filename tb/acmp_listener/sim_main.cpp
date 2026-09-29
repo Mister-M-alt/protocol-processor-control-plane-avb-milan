@@ -1216,7 +1216,9 @@ void ListenerWalk::check_probe_guard_mismatch(int sink) {
   // record write, no timer op, no action strobe, no notify, and exactly one
   // RX-slot free, of the slot the item arrived in.
 void ListenerWalk::check_foreign_message_types_are_inert(int sink) {
-  static constexpr uint8_t kTypes[] = {3, 5, 7, 9, 11, 13, 14, 15};
+  static constexpr uint8_t kTypes[] = {
+      3, 5, 7, 9, 11, 13,                // responses (Table 8-2)
+      14, 15};                           // reserved
   struct Arm { int st; uint8_t status; };
   static constexpr Arm kArms[] = {{S_PWR, ST_OK}, {S_PW2, ST_NOBW}};
   char tg[64];
