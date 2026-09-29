@@ -273,6 +273,7 @@ class MaapAnnexBSuite {
   void a_bounce_inside_the_tx_path_restarts_the_walk();
   void an_outage_behind_a_stalled_lane_withdraws_the_claim();
   void a_short_release_is_never_absorbed();
+  void every_release_rearms_the_seed();
 
   const milan::tb::Model<Vmaap_wrap> model;
   Vmaap_wrap* const d = model.get();
@@ -1108,6 +1109,59 @@ void MaapAnnexBSuite::a_short_release_is_never_absorbed() {
   for (int g = 0; g < kWalkRetryRounds && !d->addr_valid_o; ++g) h.run_ms(kProbeBudgetMs);
 }
 
+// ---- U27: every Release! re-arms the footnote-a seed ----------------------
+// Footnote a lets a Begin!/PortOperational! reuse a provisioned range. The
+// engine's rule: the seed is probed first in every engagement, and a
+// conflict inside one engagement is never answered with the seed again
+// (U15). A seeded walk is contested (PROBE / rAnnounce!, a yield with no
+// tie-break), and the Release! lands on each of the two arcs: while
+// generate_address redraws for the Restart!, and after the yield-walk's
+// first PROBE. The next engagement probes the seed both times.
+void MaapAnnexBSuite::every_release_rearms_the_seed() {
+  constexpr unsigned kSeed = 0x2000;
+  const uint64_t hi_mac = 0xF2FFEEDDCCFFull;           // PROBE/rAnnounce! yields anyway
+  h.confl_auto = true;
+  for (int arc = 0; arc < 2; ++arc) {
+    const char* tag = arc ? "the W_IDLE arc" : "the W_ADDR arc";
+    d->link_up_i = 0; h.idle(30);                      // Release!
+    h.addr_script.clear();
+    d->cfg_count_i = COUNT;
+    d->cfg_seed_offset_i = kSeed;
+    d->cfg_seed_valid_i = 1;
+    size_t n0 = h.tx.size();
+    d->link_up_i = 1;                                  // PortOperational!
+    CHECK(h.wait_frames(n0 + 1, kProbeBudgetMs) && d->addr_o == (POOL_HI | kSeed),
+          "U27: %s, premise, the seed is probed first", tag);
+    if (arc == 0) h.addr_script = {uint16_t(POOL_SIZE - 1)};   // hold the redraw loop
+    h.addr_draws = 0;
+    n0 = h.tx.size();
+    h.rx(3, hi_mac, POOL_HI | kSeed, COUNT);           // the seed is contested
+    if (arc == 0) {
+      for (int g = 0; g < 2000 && h.addr_draws < 3; ++g) h.step();
+      CHECK(h.addr_draws >= 3 && h.tx.size() == n0 && d->state_o == 0,
+            "U27: %s, premise, generate_address is redrawing (%zu draws)", tag, h.addr_draws);
+    } else {
+      CHECK(h.wait_frames(n0 + 1, kProbeBudgetMs) && d->addr_o != (POOL_HI | kSeed),
+            "U27: %s, premise, the Restart! probes a fresh range", tag);
+    }
+    d->link_up_i = 0; h.idle(30);                      // Release!
+    h.addr_script.clear();
+    n0 = h.tx.size();
+    d->link_up_i = 1;                                  // PortOperational!
+    CHECK(h.wait_frames(n0 + 1, kProbeBudgetMs) && d->addr_o == (POOL_HI | kSeed),
+          "U27: %s, the next engagement probes the seed first (got %012llx)", tag,
+          static_cast<unsigned long long>(d->addr_o));
+    if (h.tx.size() > n0) {
+      CHECK(h.tx[n0].b == maap_frame(MAAP_DA, OWN_MAC, 1, POOL_HI | kSeed, COUNT, 0, 0),
+            "U27: %s, the seeded PROBE is byte-exact", tag);
+    }
+  }
+  d->cfg_seed_valid_i = 0;
+  for (int g = 0; g < kWalkRetryRounds && !d->addr_valid_o; ++g) h.run_ms(kProbeBudgetMs);
+  h.confl_auto = false;
+  h.confl_srcs.clear();
+}
+
 int MaapAnnexBSuite::run() {
   reset_leaves_the_machine_initial();
   engage_probes_a_fresh_pool_range();
@@ -1138,6 +1192,7 @@ int MaapAnnexBSuite::run() {
   a_bounce_inside_the_tx_path_restarts_the_walk();
   an_outage_behind_a_stalled_lane_withdraws_the_claim();
   a_short_release_is_never_absorbed();
+  every_release_rearms_the_seed();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

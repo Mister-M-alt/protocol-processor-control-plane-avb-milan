@@ -1,6 +1,6 @@
 --- a/hdl/maap/KL_pp_maap.sv
 +++ b/hdl/maap/KL_pp_maap.sv
-@@ -307,7 +307,7 @@
+@@ -319,7 +319,7 @@
    assign defends_o    = defends_r;
  
    //! engage level: the machine exists only while it may transmit (B.3.5.9)
@@ -9,7 +9,7 @@
    assign eng_w = cfg_en_i && link_up_i && (cfg_count_i != 8'd0);
  
    // ------------------------------------------------- our claim, 49-bit ends
-@@ -517,6 +517,7 @@
+@@ -529,6 +529,7 @@
        seed_used_r      <= 1'b0;
        conflicts_r      <= 8'd0;
        defends_r        <= 8'd0;
@@ -17,7 +17,7 @@
        pend_probe_exp_r <= 1'b0;
        pend_ann_exp_r   <= 1'b0;
        w_st_r           <= W_OFF;
-@@ -549,6 +550,7 @@
+@@ -561,6 +562,7 @@
        // one-cycle pulses fall
        arm_v_r    <= 1'b0;
        draw_req_r <= 1'b0;
@@ -25,10 +25,10 @@
  
        // expiry latches (the walker may be mid-flow); an arm/cancel of the
        // slot below clears the matching latch in the same block
-@@ -577,7 +579,7 @@
-           // walker was still tearing down or draining is not lost
-           pstate_r   <= P_INITIAL;
-           rel_pend_r <= 1'b0;
+@@ -592,7 +594,7 @@
+           pstate_r    <= P_INITIAL;
+           seed_used_r <= 1'b0;
+           rel_pend_r  <= 1'b0;
 -          if (eng_w) begin
 +          if (eng_w && !eng_q_r) begin
              // Begin!/PortOperational!: generate_address + ReserveAddress!

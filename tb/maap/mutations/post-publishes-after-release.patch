@@ -1,6 +1,6 @@
 --- a/hdl/maap/KL_pp_maap.sv
 +++ b/hdl/maap/KL_pp_maap.sv
-@@ -687,7 +687,7 @@
+@@ -702,7 +702,7 @@
          // ---- post-send bookkeeping (the rest of the Table B.7 cell) -----
          W_POST: begin
            w_st_r <= W_IDLE;

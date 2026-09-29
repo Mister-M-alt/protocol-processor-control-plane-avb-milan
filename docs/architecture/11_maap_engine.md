@@ -135,8 +135,11 @@ observability counters.
   addresses from there.
 - **Release!** = engage fall (config drop or link down), seen in every walker
   state however short: stop both timers, INITIAL, and no send action (Table B.7;
-  B.3.5.2; footnote c: the range is then free), seed re-armed for the next engage.
-  The claim is withdrawn at the fall. A later link rise is PortOperational! and
+  B.3.5.2; footnote c: the range is then free). The claim is withdrawn at the
+  fall. Every Release! re-arms the footnote-a seed for the next engagement,
+  including one that lands while generate_address redraws after a conflict:
+  within an engagement the seed is probed once and a conflict is never answered
+  with it again, and every new engagement probes it first. A later link rise is PortOperational! and
   restarts the walk, including a rise that lands while the walker is still
   tearing down or draining a frame.
 - **A Release! in the middle of an entry.** B.3.2 executes each Table B.7 entry

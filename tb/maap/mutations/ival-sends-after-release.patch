@@ -1,6 +1,6 @@
 --- a/hdl/maap/KL_pp_maap.sv
 +++ b/hdl/maap/KL_pp_maap.sv
-@@ -627,7 +627,7 @@
+@@ -642,7 +642,7 @@
  
          // ---- Start probe/announce_timer with a fresh random period ------
          W_IVAL: begin

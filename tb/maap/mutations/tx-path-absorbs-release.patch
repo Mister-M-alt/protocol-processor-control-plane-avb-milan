@@ -1,6 +1,6 @@
 --- a/hdl/maap/KL_pp_maap.sv
 +++ b/hdl/maap/KL_pp_maap.sv
-@@ -563,7 +563,7 @@
+@@ -575,7 +575,7 @@
        // sequentially). The Release! is ordered after that entry and does
        // not wait for the frame: the claim is withdrawn now, and W_POST
        // drops the entry's state change and runs the teardown (Table B.7)

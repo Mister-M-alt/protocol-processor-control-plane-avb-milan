@@ -304,9 +304,11 @@ module KL_pp_maap
   logic        seed_used_r;    //! footnote-a seed consumed this engage — also
                                //! the no-reuse-on-conflict guard: a Restart!
                                //! can only run after the first walk consumed
-                               //! the seed, and only a Release!/engage fall
-                               //! re-arms it, so a conflicted seed is never
-                               //! probed again within one engagement
+                               //! the seed, and only W_OFF re-arms it, which
+                               //! every Release!/engage fall reaches and
+                               //! nothing else does, so a conflicted seed is
+                               //! never probed again within one engagement
+                               //! and is probed first in the next one
   logic [7:0]  conflicts_r;    //! re-address events (saturating)
   logic [7:0]  defends_r;      //! DEFENDs sent (saturating)
 
@@ -584,9 +586,12 @@ module KL_pp_maap
         W_OFF: begin
           // reached only out of reset or after a Release!, so the engage
           // LEVEL is Begin!/PortOperational!: a rise that landed while the
-          // walker was still tearing down or draining is not lost
-          pstate_r   <= P_INITIAL;
-          rel_pend_r <= 1'b0;
+          // walker was still tearing down or draining is not lost. Every
+          // Release! passes here, so here the footnote-a seed is re-armed
+          // for the next engagement
+          pstate_r    <= P_INITIAL;
+          seed_used_r <= 1'b0;
+          rel_pend_r  <= 1'b0;
           if (eng_w) begin
             // Begin!/PortOperational!: generate_address + ReserveAddress!
             w_st_r <= W_ADDR;
@@ -727,7 +732,6 @@ module KL_pp_maap
           if (!eng_w) begin
             // Release!/PortOperational-loss: Stop timers, INITIAL, no PDU
             pstate_r      <= P_INITIAL;
-            seed_used_r   <= 1'b0;                 // re-arm the footnote-a seed
             teardown_ph_r <= 1'b0;
             w_st_r        <= W_TEARDOWN;
           end else if (txn_valid_i) begin
