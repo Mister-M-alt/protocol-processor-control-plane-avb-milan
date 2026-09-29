@@ -180,15 +180,16 @@ static void fill_pat(Bytes& f, size_t upto, uint8_t seed) {
 }
 
 // an Annex B MAAP PDU (Figure B.1): the 42 real bytes, padded to the
-// 60-byte Ethernet minimum. F22 through F26 all build their frame here.
+// 60-byte Ethernet minimum. F22 through F26 and F28 all build their frame
+// here; maap_version is the 5-bit field @2[7:3] (B.2.3), 1 unless given.
 static Bytes maap_pdu(uint64_t da, uint8_t msg, uint16_t cdl,
                       uint64_t req_start, uint16_t req_cnt,
                       uint64_t con_start, uint16_t con_cnt,
-                      uint8_t vernib = 0x00) {
+                      uint8_t vernib = 0x00, uint8_t maap_version = 1) {
   Bytes f = eth(da, 0x5254001A2B3Cull, 0x22F0);
   f.push_back(0xFE);
   f.push_back(uint8_t(vernib | (msg & 0x0F)));     // sv/ver | message_type
-  f.push_back(uint8_t((1u << 3) | ((cdl >> 8) & 7)));  // maap_version 1
+  f.push_back(uint8_t(((maap_version & 0x1F) << 3) | ((cdl >> 8) & 7)));
   f.push_back(uint8_t(cdl & 0xFF));
   put64(f, 0);                                     // stream_id = 0 (B.2.4)
   put_mac(f, req_start); put16(f, req_cnt);
@@ -325,6 +326,7 @@ class RxValidatorSuite {
   void the_fabric_peers_reference_contract_frame_parses();
   void v8_still_owns_the_sv_version_nibble_on_maap();
   void probe_tx_response_carries_the_listeners_unique_id();
+  void maap_version_2_and_0_reach_the_engine();
 
   const milan::tb::Model<VKL_pp_rx_validator> model;
   VKL_pp_rx_validator* const d = model.get();
@@ -673,6 +675,28 @@ void RxValidatorSuite::v8_still_owns_the_sv_version_nibble_on_maap() {
                               /*vernib=*/0x20));
 }
 
+// ---- F28: maap_version 2, 0 and 31 cross the validator (B.2.3) --------
+// B.2.3.2: a version above ours with a known message_type is interpreted as
+// ours; B.2.3.4: a version below ours is interpreted as that version, whose
+// fields v1 contains. Neither may be dropped here: each PROBE is accepted,
+// demuxed to PP_PROTO_MAAP, and the status lane carries the received
+// version for the engine. 31 sets all five bits of the lane.
+void RxValidatorSuite::maap_version_2_and_0_reach_the_engine() {
+  const uint8_t versions[] = {2, 0, 31};
+  const char* const names[] = {"F28a", "F28b", "F28c"};
+  for (size_t i = 0; i < 3; ++i) {
+    Bytes f28 = maap_pdu(DA_MAAP, 1, 16, 0x91E0F0004000ull, 8, 0, 0,
+                         /*vernib=*/0x00, versions[i]);
+    const int commits0 = h.commits;
+    run_case(names[i], f28);
+    check_hdr(names[i], classify(f28, true).hdr);
+    CHECK(h.commits == commits0 + 1 && h.hg.protocol == P_MAAP
+          && h.hg.status == versions[i],
+          "%s maap_version %u accepted as MAAP, status lane %u", names[i],
+          unsigned(versions[i]), unsigned(h.hg.status));
+  }
+}
+
 // ---- F27: PROBE_TX_RESPONSE carries the LISTENER's unique_id ----------
 // The listener originates the probe and consumes the answer; its record is
 // addressed by listener_unique_id @38. Distinct uids are the point: the
@@ -737,6 +761,7 @@ int RxValidatorSuite::run() {
   the_fabric_peers_reference_contract_frame_parses();
   v8_still_owns_the_sv_version_nibble_on_maap();
   probe_tx_response_carries_the_listeners_unique_id();
+  maap_version_2_and_0_reach_the_engine();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

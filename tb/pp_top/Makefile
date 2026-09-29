@@ -64,6 +64,10 @@ name-writes: gsi-build
 gsi-internal: gsi-build
 	./obj_dir/Vpp_top_sim --gsi-internal-only
 
+# the MP section alone (the tb/maap mutation campaign's pp_top arms)
+maap-internal: gsi-build
+	./obj_dir/Vpp_top_sim --maap-internal-only
+
 run: fixture-guards ltn_rom.hex ucode.hex
 	@rm -f obj_dir/build_tally.txt
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vpp_top_sim
@@ -93,4 +97,4 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 clean:
 	rm -rf obj_dir obj_vid ltn_rom.hex ucode.hex
 
-.PHONY: name-writes run gsi-build gsi-internal fixture-guards fixture-guards-test clean
+.PHONY: name-writes run gsi-build gsi-internal maap-internal fixture-guards fixture-guards-test clean

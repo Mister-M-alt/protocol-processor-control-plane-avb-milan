@@ -75,9 +75,11 @@ and U18 (6 FAIL of 89); after it the suite passes.
 
 `make mutants` (optionally `MUTANT_OUTPUT=<dir>` for the receipts; default
 `/tmp/maap-mutants`) plants each reviewed patch in `mutations/` into a
-scratch copy of `hdl/` with `git apply`. It first runs every suite target
-the arms use unmutated, then requires each arm's simulation to finish red
-with a `FAIL:` line carrying the arm's own named check. A build failure, a
+scratch copy of `hdl/` with `git apply`. An arm may run on more than one
+suite (`tb/rx_validator`, and `tb/pp_top`'s `maap-internal` target, the MP
+section alone). It first runs every suite target the arms use unmutated,
+then requires each arm's simulation to finish red with a `FAIL:` line
+carrying the arm's own named check. A build failure, a
 missing tally or a clean run is UNPROVEN, never a kill. The driver reads
 only simulation logs; no expectation comes from RTL text.
 
@@ -87,3 +89,5 @@ only simulation logs; no expectation comes from RTL text.
 | `fit-compare-off-by-one` | the fit compare `<=` becomes `<`: the last fitting offset is refused | maap | U17 x3 (no PROBE, the boundary draw refused 1,745 times) and U17b x4: 7 FAIL of 89 |
 | `seed-clamp-removed` | the footnote-a seed clamp removed: the provisioned offset is probed as given | maap | U18 x4 (claim `…:FF:FF`; PROBE bytes; claim; last-source grant): 4 FAIL of 90 |
 | `release-keeps-draw-mark` | the fix above removed | maap | U17b phases 1 to 3, then U18 x3 behind the wedge: 6 FAIL of 89 |
+| `validator-maap-version-1-only` | `KL_pp_rx_validator.sv` gains a `maap_version == 1` acceptance rule (issue #67, B.2.3.2/B.2.3.4) | rx_validator | F28a/F28b/F28c: versions 2, 0 and 31 counted `rx_version` and aborted: 47 FAIL of 453 |
+| (same arm) | | pp_top `maap-internal` | MP7 x4: neither the version-2 nor the version-0 PROBE is defended: 4 FAIL of 32 |

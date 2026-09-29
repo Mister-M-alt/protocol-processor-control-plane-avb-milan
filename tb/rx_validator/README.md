@@ -2,7 +2,7 @@
 # tb/rx_validator — KL_pp_rx_validator suite
 
 Exit 0 = PASS. `make` builds with Verilator and runs `sim_main.cpp`
-(tally line: `276 checks: 276 PASS, 0 FAIL`).
+(tally line: `453 checks: 453 PASS, 0 FAIL`).
 
 ## What it proves
 
@@ -44,6 +44,12 @@ commit/abort bookkeeping).
 - **Slot protocol**: commit-on-good with byte-exact slot content; abort on
   every mid-frame rule failure; a pool-refused alloc is silent here
   (`rx_overrun` belongs to the pool) — no commit, no abort, no counter (F15).
+- **MAAP maap_version** (F28, issue #67, IEEE 1722-2016 B.2.3): PROBEs
+  carrying maap_version 2 (higher than ours, B.2.3.2), 0 (lower, B.2.3.4)
+  and 31 (all five bits of the lane) are each accepted, committed, demuxed
+  to `PP_PROTO_MAAP`, and deliver the received version in the status lane.
+  The validator owns no maap_version rule; V8 still owns the sv/version
+  nibble (F26).
 - **Robustness**: rx_valid bubbles mid-frame (F18), back-to-back
   MRP → AECP → ACMP frames with no idle gap (F19), `rx_da` saturates at
   0xFFFF and never wraps (F20), and a good frame still parses after the
@@ -67,3 +73,4 @@ commit/abort bookkeeping).
 | M1 | h/version gate inverted (`!= 4'h0` → `== 4'hF`) | F8/F8b: `rx_version` stays 0, bad frames commit + emit hdr beats instead of aborting (8 FAILs) |
 | M2 | V1 boundary off-by-one (`pcnt_end >= cdl+12` → `>`) | F1 and every exact-fit frame: counted `rx_length` + aborted instead of committed (101 FAILs) |
 | M3 | V9 DA-alone routing (MSRP EtherType pair check dropped) | F14: 60 LLDP bytes leak onto the MRP stream (1 FAIL) |
+| M4 | a `maap_version == 1` acceptance rule added to the V8 drop (`tb/maap/mutations/validator-maap-version-1-only.patch`, run by `make -C tb/maap mutants`) | F28a/F28b/F28c: each PROBE counted `rx_version`, aborted, no hdr beat (47 FAIL of 453); the same arm fails `tb/pp_top` MP7 |

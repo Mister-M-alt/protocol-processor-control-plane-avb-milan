@@ -1,0 +1,15 @@
+--- a/hdl/packet_engine/KL_pp_rx_validator.sv
++++ b/hdl/packet_engine/KL_pp_rx_validator.sv
+@@ -260,8 +260,10 @@
+                            && (da_own_r | da_mcast_r))
+                       && !((rx_data_i == SUB_MAAP_C)
+                            && (da_own_r | da_maap_r));
+-  assign ver_fail_w = pdu_byte_w && (pidx_w == 11'd1)
+-                      && (rx_data_i[7:4] != 4'h0);         // h and version (V8)
++  assign ver_fail_w = pdu_byte_w && (((pidx_w == 11'd1)
++                      && (rx_data_i[7:4] != 4'h0))         // h and version (V8)
++                      || ((pidx_w == 11'd2) && (subtype_r == SUB_MAAP_C)
++                          && (rx_data_i[7:3] != 5'd1)));   // maap_version 1 only
+   assign fail_now_w = sub_fail_w | ver_fail_w;
+ 
+   assign wr_en_w = pdu_byte_w && in_budget_w && !fail_now_w;

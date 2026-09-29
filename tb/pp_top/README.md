@@ -786,3 +786,21 @@ probe, which must now succeed byte-exact with the internal claim's base address.
 S10 retains a failed probe while the allocator is absent, then proves recovery
 without another probe. The standalone talker retry suite carries the detailed
 pacing, fairness, late-response and block-change mutation matrix.
+
+## Section MP: the internal MAAP engine (11; IEEE 1722-2016 Annex B)
+
+A second model runs the processor with `cfg_maap_internal_i = 1` from reset.
+MP1 grades the whole acquisition on the MAC stream, MP2 a byte-exact DEFEND,
+MP3 the talker granted from the internal claim, MP4 a yield to a conflicting
+ANNOUNCE, MP5 the DA-qualified subtype gate, and MP6 the descriptor path while
+MAAP runs.
+
+**MP7** (issue #67, B.2.3): every other MAAP frame in this bench carries
+maap_version 1. MP7 feeds a conflicting PROBE with maap_version 2 (B.2.3.2),
+then one with maap_version 0 (B.2.3.4), through the real validator and
+dispatch against the DEFEND-state claim. Each gets a byte-exact DEFEND that
+carries our version 1, and the claim is kept.
+
+`make maap-internal` builds the bench and runs the MP section alone (32
+checks). The `tb/maap` mutation campaign uses it: its
+`validator-maap-version-1-only` arm fails MP7 (4 FAIL of 32).

@@ -1,2 +1,3 @@
 # Unified-diff context preserves blank source lines as a single space.
 tb/srp_top/mutations/*.patch whitespace=-blank-at-eol,-blank-at-eof
+tb/maap/mutations/*.patch whitespace=-blank-at-eol,-blank-at-eof

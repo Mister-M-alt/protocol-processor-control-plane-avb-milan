@@ -25,6 +25,8 @@ MUTANTS = [
     ('fit-compare-off-by-one', 'maap', 'run', 'U17:'),
     ('seed-clamp-removed', 'maap', 'run', 'U18:'),
     ('release-keeps-draw-mark', 'maap', 'run', 'U17b:'),
+    ('validator-maap-version-1-only', 'rx_validator', 'run', 'F28'),
+    ('validator-maap-version-1-only', 'pp_top', 'maap-internal', 'MP7:'),
 ]
 
 # the two tally shapes: a suite's canonical line, and one pp_top build's line
