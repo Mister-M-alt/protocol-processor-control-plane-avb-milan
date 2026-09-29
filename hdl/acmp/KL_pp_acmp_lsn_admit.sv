@@ -61,10 +61,10 @@
 //                its last preload's A4 discovery-arm strobe gone. The
 //                manager never walks again before a reset, so the gate never
 //                owns the faces again before one. released_o is the binding
-//                walk's END: the listener's live work starts on it, and the
-//                top's restore_done_o (which releases the entity enable)
-//                takes it, so no enable precedes the last preload's record
-//                write and discovery arm.
+//                walk's END: the listener's live work and the D3 walk start
+//                on it, and the top's restore_done_o (both walks; it releases
+//                the ADP enable) takes it, so no enable precedes the last
+//                preload's record write and discovery arm.
 //
 //                Consequences, stated so no integrator relies on the
 //                opposite: an ACMP command, a talker event or a START/STOP

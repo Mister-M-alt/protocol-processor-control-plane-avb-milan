@@ -53,7 +53,7 @@ reports uncovered REQ-IDs as failures.
 | **TIM** | compressed-timer runs (prescaler factor) over every [F08.1](08_timing.md#fig-08-constants) row: advertise cadence, probe attempts + backoff, settle timeout, controller monitors, lock auto-unlock, TIME_LIMITED expiry, DA freshness; plus response-budget assertions (`T-BUDGET-*`) | every F08.1 row exercised + budget histograms |
 | **RND** | randomized multi-controller sessions (16+ controllers: register/deregister churn, concurrent SETs, lock contention, GDI batches) against the reference model | scoreboard classes interleaved; no divergence |
 | **STORM** | notification stress: counter churn at rate limit, fan-out to full registry, TX-arbiter starvation probes | pacing + ≤1/desc/s verified; no solicited deadline miss |
-| **NVM** | power-cut/restore: cut at randomized commit points, verify CRC fallback + restored bindings enter `PRB_W_AVAIL`; persisted-set completeness per REQ-PER-001 | every record type cut ≥ once |
+| **NVM** | power-cut/restore: cut at randomized commit points, verify CRC fallback + restored bindings enter `PRB_W_AVAIL`; persisted-set completeness per REQ-PER-001. For every persisted group: the stores read cleared (value and valid flag) before any restore applies; a real command saves and a real command reads back after reset; deleting the group's live trigger, or its replay, each fails a named check; a completion mark is never the oracle; volatile state (IDENTIFY, lock, registry) is populated before the cycle and absent after it; transport faults (DEVICE, torn, deadline) are kept distinct from value refusals; descriptor-memory debt and roll-back faults end DEFAULTS or CLOSED (§8.2) | every record type cut ≥ once; every group's trigger and replay mutation killed |
 
 <a id="fig-09-malformed"></a>**F09.4 — Malformed/tolerance list (TOL)**
 
@@ -165,10 +165,53 @@ and `tb/dyn_state/sim_main.cpp` (lettered sections):
 | Identify control | W12/W12b/W12c (pre-SET GET) | W12d-W12h (SET/GET cycles), W13-W13d (step legality); volatility: dyn_state E | dyn_state E |
 | started/stopped | NOT in this store: the ACMP binding record owns it and selector 6 is RETIRED (dyn_state F2) | listener suite + pp_top W21 | dyn_state F2 |
 
-Reset and persistence semantics: dyn_state A (everything invalid out of reset)
-and E (dirty marks the persisted set, and only it). The store is flops by
-design -- the fields are read continuously by the fabric -- with the area taken
-in per-field widths; the module banner carries the numbers.
+Reset and persistence semantics: dyn_state A (everything invalid out of reset),
+E (the diagnostic dirty marks the persisted set, and only it) and H (the change
+qualifier that triggers the D3 writer: an accepted write that changes the row's
+`{value, valid}` projection, never IDENTIFY). The store is flops by design -- the
+fields are read continuously by the fabric -- with the area taken in per-field
+widths; the module banner carries the numbers.
+
+### 8.2 Saved state: the scalar stage's evidence (issue #131)
+
+The parent D3 contract's processor lane 1 graded at the top, on real AECP commands over
+the device model (`tb/pp_top` section D3, focused with `--d3-only`), and on the binding
+manager (`tb/acmp_nvm`):
+
+| Property | Checks |
+|---|---|
+| cleared first: every scalar row at its reset value, valid clear, when the D3 walk starts | D3R1 |
+| real-command save, power cycle and readback of every group, value and valid flag | D3S1 (first and last index of each group), D3R1 (GET of each) |
+| six trigger and six replay deletions, one per scalar group (`TRG_*`, `RPL_*`) | each fails its own D3S1 or D3R1 check (driver `tb/pp_top/d3_mutants.py`, mutation record in `tb/pp_top/README.md`) |
+| taint, change-wins-done, clear by group AND index, coalescing, DR2b unchanged projection | D3S3, D3S4, D3S5, D3S6, D3S8 |
+| restore writes are no changes; IDENTIFY is no change | D3R1, D3S7 |
+| volatile exclusions after the saved-set cycle (IDENTIFY, lock, registry) | D3R1 |
+| value refusals (frame, rule) kept apart from transport faults (DEVICE, torn, deadline, unframed) | D3R2, D3R3 against D3R5, D3R6, D3R8 |
+| the rate rule's walk past the list's first lane to its eight-entry bound | D3R3b |
+| pass agreement in both directions, descriptor-read error never a refusal, roll-back of both stores for at least two cycles | D3R4, D3R4b, D3R7 |
+| every watched wait: a pass-1 read abandoned to the drain, a silent format judge, the per-wait deadline to the cycle | D3R5b, D3R8b, D3R8 |
+| the ratified 1,000 ms aggregate from `restore_go_i`, derived from `CLK_HZ_P`, against a device just inside every per-wait deadline | D3R13 |
+| an aggregate expiry never closes a provable image: a binding walk slowed per byte past the bound fails whole at it, and the D3 walk proves the image and ends DEFAULTS (CLOSED only with an unprovable image) | D3R14 |
+| the aggregate spans the roll-back: a bound inside its debt wait or its re-LOCATE ends it CLOSED on the bound's own clock | D3R15 |
+| the aggregate is inert after COMPLETE, DEFAULTS and CLOSED, and never fires with an event in hand: a grant on the bound's own clock is drained, and a later SET persists | D3R16, D3R17 |
+| an abort presented in the arbiter's issue cycle arms the drain, for either manager: the binding walk's READ strobe on the aggregate's first clock is drained, the port comes idle and a later SET persists | D3R18; `tb/acmp_nvm` N10 |
+| the arbiter's own contract for inputs neither in-tree manager presents, manager 1's half of each rule: its WRITE presented with an abort is never drained and completes; its abort drains none of manager 0's READs, in their issue cycle or while manager 0 owns them; after its WRITE, its READ abandoned in the issue cycle is still drained. The manager-0 halves stay ungraded by construction (the real binding manager aborts only its own READ; the `tb/acmp_nvm` README lists the five and the out-of-tree probes) | `tb/acmp_nvm` N11a; N11b (issue cycle) and N11d (owned); N11c |
+| the aggregate's pre-proof variants: an image loaded late and proven by the writer's LOCATE after the bound, a bound inside that LOCATE, a proof on the bound's own clock in `W_IMG` and in `W_IMGLOC`, all DEFAULTS with no record READ; a binding byte in hand on the expiry clock, and the walk fails whole at its next waiting clock | D3R19, D3R20, D3R21 |
+| the AECP hold admission: one AECP record in the ingress while held, the rest dropped and counted, ACMP at its idle latency; a record the optional external drain returns frees the share | D3O5, D3O6, D3O7; `tb/rx_validator` F28 |
+| guard debt held across the roll-back, watchdog recovery, CLOSED on an unprovable image | D3R10, D3R12, D3O2, D3O3, D3O4 |
+| completed bindings kept on a D3 roll-back | D3R11 |
+| AECP held from reset; ADP released only by both walks | D3O1, D3R1, D3R9, D3S9, D3S11 |
+| DR2c on both producers: three attempts, the top's derived backoff, dispatch free while it runs, no forgiveness | D3S10; `tb/acmp_nvm` E8 to E11 |
+
+Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plants 83
+of them, each in its own extract, and requires its named checks to fail (all 83 KILLED
+at the lane head; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
+`tb/rx_validator` READMEs). The name and map stages add their groups' controls when they land. The port suites'
+open limitations stay theirs: issue #18 (no reset mid-commit), #19 (port mechanisms
+without coverage) and #21 (no handshake-misbehaving port model) are not closed by this
+evidence. The top-level device model does misbehave on the handshake for the walks
+(late grant, silent header, late or erroring descriptor memory), which grades the
+walks' deadlines, not the port's.
 
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)

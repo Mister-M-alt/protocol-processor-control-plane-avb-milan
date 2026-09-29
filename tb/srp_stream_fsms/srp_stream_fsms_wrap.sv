@@ -85,6 +85,8 @@ module srp_stream_fsms_wrap #(
     output logic         t_user_join_o,
     output logic [11:0]  t_user_vid_o,
     input  wire          t_user_ready_i,
+    input  wire  [3:0]        t_vid_sent_i,  //! stand-in for KL_srp_vlan vid_sent_o (issue #65)
+    input  wire  [3:0][11:0]  t_vid_val_i,   //! stand-in for KL_srp_vlan vid_val_o
     output logic         t_arm_valid_o,
     output logic         t_arm_cancel_o,
     output logic [6:0]   t_arm_slot_o,
@@ -134,7 +136,8 @@ module srp_stream_fsms_wrap #(
       .LEAVE_MS_P  (5000),
       .SLOT_BASE_P (16),
       .SLOT_AW_P   (7),
-      .OWNER_BASE_P(8'h40)
+      .OWNER_BASE_P(8'h40),
+      .N_VIDS_P    (4)
   ) u_talker (
       .clk_i              (clk_i),
       .rst_n              (rst_n),
@@ -177,6 +180,8 @@ module srp_stream_fsms_wrap #(
       .user_join_o        (t_user_join_o),
       .user_vid_o         (t_user_vid_o),
       .user_ready_i       (t_user_ready_i),
+      .vid_sent_i         (t_vid_sent_i),
+      .vid_val_i          (t_vid_val_i),
       .now_ms_i           (now_ms_i),
       .arm_valid_o        (t_arm_valid_o),
       .arm_cancel_o       (t_arm_cancel_o),

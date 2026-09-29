@@ -40,6 +40,7 @@ module srp_tb_wrap (
     output logic         enc_txreq_valid_o,   //! committed-frame request
     output logic [2:0]   enc_txreq_slot_o,    //! committed slot handle
     input  wire          enc_txreq_ready_i,   //! harness-arbiter accept
+    output logic         enc_tx_mvrp_o,       //! an MVRP MRPDU accepted (issue #65)
     output logic [3:0]   enc_dbg_cnt_msrp_o,  //! pending MSRP events
     output logic [3:0]   enc_dbg_cnt_mvrp_o,  //! pending MVRP events
     output logic         dbg_alloc_gnt_o,     //! pool grant pulse (cadence proof)
@@ -83,6 +84,9 @@ module srp_tb_wrap (
     output logic [2:0]   vlan_ev_event_o,     //! event code
     output logic [15:0]  vlan_ev_vid_o,       //! MVRP FirstValue (VID)
     input  wire          vlan_ev_ready_i,     //! harness/bridge accepts
+    input  wire          vlan_mvrp_tx_i,      //! harness: an MVRP MRPDU was transmitted
+    output logic [3:0]   vlan_vid_sent_o,     //! per entry: its join transmitted
+    output logic [3:0][11:0] vlan_vid_val_o,  //! per entry: the VID it holds
     output logic [3:0]   vlan_vid_active_o    //! table-live bits
 );
 
@@ -130,6 +134,7 @@ module srp_tb_wrap (
       .txreq_valid_o  (enc_txreq_valid_o),
       .txreq_slot_o   (enc_txreq_slot_o),
       .txreq_ready_i  (enc_txreq_ready_i),
+      .tx_mvrp_o      (enc_tx_mvrp_o),
       .dbg_cnt_msrp_o (enc_dbg_cnt_msrp_o),
       .dbg_cnt_mvrp_o (enc_dbg_cnt_mvrp_o)
   );
@@ -198,6 +203,9 @@ module srp_tb_wrap (
       .vlan_ev_event_o (vlan_ev_event_o),
       .vlan_ev_vid_o   (vlan_ev_vid_o),
       .vlan_ev_ready_i (vlan_ev_ready_i),
+      .mvrp_tx_i       (vlan_mvrp_tx_i),
+      .vid_sent_o      (vlan_vid_sent_o),
+      .vid_val_o       (vlan_vid_val_o),
       .vid_active_o    (vlan_vid_active_o)
   );
 

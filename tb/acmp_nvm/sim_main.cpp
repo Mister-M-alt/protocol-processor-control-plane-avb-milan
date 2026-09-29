@@ -53,6 +53,8 @@
 constexpr int N_SINKS   = 8;
 constexpr int REC_BASE  = 0x20;
 constexpr int DEB_TICKS = 50;      // -GDEB_TICKS_P
+//! DR2c: cycles a failed attempt waits before the next (-GRETRY_BACKOFF_CYC_P)
+constexpr long RETRY_BACKOFF = 600;
 constexpr int RETRY_MAX = 2;
 constexpr int REG_BYTES = 64;
 //! ACMP_REC_W_C (384 b, F07.6) carried as 32-bit Verilator words.
@@ -252,6 +254,8 @@ struct Harness {
     int len;
   };
   std::vector<DevOp> ops;
+  std::vector<long> op_cyc;      //! the grant cycle of each entry of ops
+  std::vector<long> err_cyc;     //! every cycle the device raised its err
   int d_st = 0;                  // 0 idle, 1 data, 2 completing
   int d_reqwait = 0;
   bool d_gnt = false;
@@ -299,6 +303,36 @@ struct Harness {
   int m1_rid = 0;
   long m1_gnt_cyc = -1;
   long m1_end_cyc = -1;
+  //! manager 1 abandons its READ in the cycle it is issued (its abort
+  //! presented with its strobe), then accepts no byte of it
+  bool m1_abort_issue = false;
+  bool m1_abandoned = false;
+  int m1_leaks = 0;                // cycles an abandoned read reached manager 1
+  //! manager 1's WRITE (processor issue #131, N11): the framed record it
+  //! streams once granted, a byte per accepted cycle
+  bool m1_we = false;
+  std::vector<uint8_t> m1_wbytes;
+  size_t m1_widx = 0;
+  bool m1_gnt_we = false;          // the arbiter issued manager 1's op as a commit
+  bool m1_end_err = false;         // manager 1's op ended with err
+  //! manager 1 keeps its abort presented from its strobe to its op's end
+  bool m1_abort_hold = false;
+  //! manager 1 presents its abort alone in every cycle the walk's READ strobe
+  //! is out, and the monitor counts the walk's READ issues with and without it
+  bool m1_abort_on_m0 = false;
+  int m0_rd_issues = 0;
+  int m0_rd_issues_m1_abort = 0;
+  //! manager 1 presents its abort alone in every cycle manager 0 OWNS one of
+  //! the walk's READs (from the cycle after its issue to the port's done or
+  //! err that ends it, never in its issue cycle), and the monitor counts
+  //! those cycles and READs, with and without it
+  bool m1_abort_over_m0 = false;
+  bool m0_rd_own = false;          // manager 0 owns a READ this cycle
+  int m0_own_cyc = 0;              // cycles manager 0 owned a READ
+  int m0_own_cyc_m1_abort = 0;     // ...with manager 1's abort present
+  int m0_own_rds = 0;              // manager-0 READs whose ownership ended
+  int m0_own_span = 0;             // owned cycles of the current READ before its end
+  int m0_own_span_min = -1;        // ...the fewest over the READs that ended
   // targeted error injection
   int err_op = -1;
   int err_region = -1;
@@ -465,6 +499,7 @@ struct Harness {
       d_cur = {int(d->dev_op_o), int(d->dev_region_o),
                int(d->dev_offset_o), int(d->dev_len_o)};
       ops.push_back(d_cur);
+      op_cyc.push_back(cycles);
       if (d_cur.op != OP_READ && d->arb_drain_o) ++writes_in_drain;
       if (d_cur.op == OP_ERASE && first_erase < 0) {
         first_erase = cycles;
@@ -533,7 +568,10 @@ struct Harness {
         if (d_cur.op == OP_READ) last_read_done = cycles;
         if (hold_cur) { hold_cur = false; hold_done_cyc = cycles; }
       }
-      if (err_ctr  > 0 && --err_ctr  == 0) { d_err  = true; d_busy = false; d_st = 0; }
+      if (err_ctr  > 0 && --err_ctr  == 0) {
+        d_err = true; d_busy = false; d_st = 0;
+        err_cyc.push_back(cycles);
+      }
     }
   }
 
@@ -612,13 +650,16 @@ struct Harness {
     }
     if (pres) pack_txn(txq.front(), head_slot);
     d->p_txn_valid_i = pres;
+    const bool m1_live = m1_gnt_cyc >= 0 && m1_end_cyc < 0;   // its op in flight
     d->m1_req_i = m1_pend;
-    d->m1_we_i = 0;
+    d->m1_we_i = m1_we;
     d->m1_rid_i = uint8_t(m1_rid);
-    d->m1_wvalid_i = 0;
-    d->m1_wdata_i = 0;
-    d->m1_rready_i = 1;
-    d->m1_abort_i = 0;
+    d->m1_wvalid_i = m1_we && m1_live && m1_widx < m1_wbytes.size();
+    d->m1_wdata_i = d->m1_wvalid_i ? m1_wbytes[m1_widx] : 0;
+    d->m1_rready_i = !m1_abandoned;
+    d->m1_abort_i = (m1_pend && m1_abort_issue) || (m1_abort_hold && (m1_pend || m1_live))
+                    || (m1_abort_over_m0 && m0_rd_own)
+                    || (m1_abort_on_m0 && d->mgr_req_o && !d->mgr_we_o);
     while (!tkq.empty() && tkq.front().level && tkq.front().until > 0
            && cycles >= tkq.front().until) tkq.pop_front();   // a finite level ends
     const bool tk = !tkq.empty() && cycles >= tkq.front().at;
@@ -645,6 +686,22 @@ struct Harness {
     d->txs_alloc_gnt_i = gnt_pending;
     d->txs_alloc_slot_i = uint8_t(gnt_slot);
     gnt_pending = false;
+  }
+
+  //! a READ manager 0 owns: counted from the cycle after its issue through
+  //! the port's done or err, the pulse the arbiter's ownership retires on
+  void sample_m0_owned_read() {
+    if (!m0_rd_own) return;
+    ++m0_own_cyc;
+    if (d->m1_abort_i) ++m0_own_cyc_m1_abort;
+    if (!d->arb_end_o) {
+      ++m0_own_span;
+      return;
+    }
+    ++m0_own_rds;
+    if (m0_own_span_min < 0 || m0_own_span < m0_own_span_min) m0_own_span_min = m0_own_span;
+    m0_own_span = 0;
+    m0_rd_own = false;
   }
 
   void sample_producers() {
@@ -715,8 +772,24 @@ struct Harness {
       drain_off = cycles;
       if (d->dev_rvalid_i && d->dev_rready_o) ++drain_bytes;
     }
-    if (d->m1_req_i && d->m1_gnt_o) { m1_pend = false; m1_gnt_cyc = cycles; }
-    if (d->m1_done_o || d->m1_err_o) m1_end_cyc = cycles;
+    if (m1_abandoned && (d->m1_rvalid_o || d->m1_done_o || d->m1_err_o)) ++m1_leaks;
+    if (d->m1_req_i && d->m1_gnt_o) {
+      m1_pend = false;
+      m1_gnt_cyc = cycles;
+      m1_gnt_we = d->arb_we_o;
+      m1_abandoned = d->m1_abort_i && !d->m1_we_i;
+    }
+    if (d->m1_wvalid_i && d->m1_wready_o) ++m1_widx;
+    if (d->m1_done_o || d->m1_err_o) {
+      m1_end_cyc = cycles;
+      m1_end_err = d->m1_err_o;
+    }
+    sample_m0_owned_read();
+    if (d->arb_req_o && d->mgr_req_o && !d->mgr_we_o) {
+      ++m0_rd_issues;
+      if (d->m1_abort_i) ++m0_rd_issues_m1_abort;
+      m0_rd_own = true;
+    }
     if (d->gate_own_o) {
       own_states |= 1u << (d->lsn_state_o & 31);
       own_effects += d->tmr_arm_valid_o + d->txs_alloc_req_o + d->rxs_free_o
@@ -783,6 +856,13 @@ struct Harness {
     writes_in_drain = 0;
     short_region = -1; short_n = 0; short_cur = false;
     m1_pend = false; m1_gnt_cyc = -1; m1_end_cyc = -1;
+    m1_abort_issue = false; m1_abandoned = false; m1_leaks = 0;
+    m1_we = false; m1_wbytes.clear(); m1_widx = 0; m1_gnt_we = false; m1_end_err = false;
+    m1_abort_hold = false; m1_abort_on_m0 = false;
+    m0_rd_issues = 0; m0_rd_issues_m1_abort = 0;
+    m1_abort_over_m0 = false; m0_rd_own = false;
+    m0_own_cyc = 0; m0_own_cyc_m1_abort = 0; m0_own_rds = 0;
+    m0_own_span = 0; m0_own_span_min = -1;
     d->m1_req_i = 0; d->m1_abort_i = 0;
     exp_owned = exp_after = 0;
     prng_cnt = 0; prng_fire = false;
@@ -833,6 +913,7 @@ struct Harness {
   void check_volatile_only_churn_costs_no_traffic();
   void check_unbind_capture_commits();
   void check_bounded_commit_retry_and_the_alarm();
+  void check_dr2c_attempts(size_t ops_from, size_t errs_from);
   void check_boot_replay_from_a_seeded_image();
   void check_a_torn_readback_aborts_the_whole_restore();
   void check_a_change_during_restore_wins();
@@ -873,6 +954,9 @@ struct Harness {
   void check_n7_a_talker_level_at_the_deadline();
   void check_n8_a_failed_walk_keeps_the_saved_records();
   void check_n9_an_unwired_device_face();
+  void check_n10_an_abort_in_the_issue_cycle();
+  void m1_op(int rid, bool we, const std::vector<uint8_t>& bytes);
+  void check_n11_the_arbiters_own_contract();
   void check_l_reset_boundaries();
   int report();
   int run_suite();
@@ -967,11 +1051,14 @@ void Harness::check_bounded_commit_retry_and_the_alarm() {
   CHECK(!d->alarm_o, "E3 a recovered retry never alarms");
   Bind b1b = b1; b1b.started = false;
   arm_err(OP_WRITE, REC_BASE + 1, -1, -1, 100);  // fail every WRITE
+  const size_t ops_e4 = ops.size();
+  const size_t errs_e4 = err_cyc.size();
   inject(1, b1b, 0x22);
   CHECK(run_until([&] { return d->alarm_o != 0; }, 6000),
         "E4 retries exhausted -> sticky side-port alarm");
   run(100);
   CHECK(d->dbg_dirty_o == 0, "E5 given-up record drops dirty (no livelock)");
+  check_dr2c_attempts(ops_e4, errs_e4);
   disarm_err();
   size_t ops_e = ops.size();
   Bind b4{true, false, true, 4, TK_A, CTL2};
@@ -982,7 +1069,39 @@ void Harness::check_bounded_commit_retry_and_the_alarm() {
         "E6 the engine still commits after an alarm");
   CHECK(store_match(4, frame(uint8_t(REC_BASE + 4), payload_of(b4))),
         "E7 post-alarm record byte-exact");
+  run(4 * RETRY_BACKOFF);
+  CHECK(d->alarm_o != 0,
+        "E11 DR2c revocation: a later successful commit and time leave the "
+        "alarm set");
   (void)ops_e;
+}
+
+//! DR2c on the binding record that failed every WRITE since ops_from: three
+//! attempts in all (an attempt is the port's ERASE then WRITE of the
+//! record), each retry starting RETRY_BACKOFF cycles or more after the
+//! failed attempt's device error, and no fourth attempt however long after
+void Harness::check_dr2c_attempts(size_t ops_from, size_t errs_from) {
+  std::vector<long> starts;
+  for (size_t i = ops_from; i < ops.size(); ++i)
+    if (ops[i].op == OP_ERASE && ops[i].region == REC_BASE + 1)
+      starts.push_back(op_cyc[i]);
+  const std::vector<long> errs(err_cyc.begin() + long(errs_from), err_cyc.end());
+  CHECK(starts.size() == 3 && errs.size() == 3,
+        "E8 DR2c count: three attempts in all (%zu started, %zu failed)",
+        starts.size(), errs.size());
+  const bool spaced = starts.size() == 3 && errs.size() >= 2
+                      && starts[1] - errs[0] >= RETRY_BACKOFF
+                      && starts[2] - errs[1] >= RETRY_BACKOFF;
+  CHECK(spaced,
+        "E9 DR2c timing: each retry starts RETRY_BACKOFF_CYC_P cycles or more "
+        "after the failed attempt's error (%ld, %ld)",
+        starts.size() > 1 && !errs.empty() ? starts[1] - errs[0] : -1,
+        starts.size() > 2 && errs.size() > 1 ? starts[2] - errs[1] : -1);
+  run(4 * RETRY_BACKOFF);
+  size_t later = 0;
+  for (size_t i = ops_from; i < ops.size(); ++i)
+    later += ops[i].op == OP_ERASE && ops[i].region == REC_BASE + 1;
+  CHECK(later == 3, "E10 DR2c count: no fourth attempt (%zu)", later);
 }
 
 // ============================================ F: boot replay, seeded image
@@ -1186,7 +1305,8 @@ void Harness::check_a_change_during_its_own_flush_reserializes() {
 
 // ===================== X: dbg_dirty_o IS the unflushed-state contract
 // protocol_processor_top publishes this vector as nvm_unflushed_o (issue
-// #90) and an integrator ORs it into a "saved state pending" bit, so the
+// #90) and an integrator ORs it with d3_unflushed_o into a "saved state
+// pending" bit, so the
 // three edges the pin promises are graded here, at the source, cycle by
 // cycle: it rises when a change is ACCEPTED (a capture whose persisted set
 // differs), it never drops before that change is committed with done, and
@@ -2444,6 +2564,164 @@ void Harness::check_n9_an_unwired_device_face() {
   }
 }
 
+// R390-3 F1 on manager 1's side of the arbiter (processor issue #131): a
+// READ abandoned in the very cycle the arbiter issues it, its abort
+// presented with its strobe while the arbiter is still unowned. The D3
+// writer never does this (its request is W_RQ's or the service's, its abort
+// W_RD's), so manager 1 is driven here; the binding walk's case is pp_top's
+// D3R18. The drain must arm in the issue cycle: the abandoning manager
+// takes no byte, so an arbiter that armed it only for an owned READ would
+// leave the port waiting on its rready for ever. With the drain the read
+// moves in it and ends, and the port serves both managers again.
+void Harness::check_n10_an_abort_in_the_issue_cycle() {
+  const char* tag = "N10 a manager-1 READ abandoned in its issue cycle";
+  l_seed({{0, L_B0}, {L_LAST, L_B7}});
+  reset();
+  m1_rid = 0x30;
+  m1_abort_issue = true;
+  m1_pend = true;
+  run_until([&] { return m1_gnt_cyc >= 0; }, 200);
+  const long issued = m1_gnt_cyc;
+  run_until([&] { return drain_off >= 0 && !d->arb_drain_o; }, 4000);
+  run(20);
+  CHECK(issued >= 0 && m1_abandoned && drain_on == issued + 1 && drain_bytes > 0
+            && !d->arb_drain_o && m1_leaks == 0 && drain_leaks == 0 && m1_end_cyc < 0
+            && d_st == 0 && !d_busy,
+        "%s: the drain armed in the issue cycle (issued at %ld, draining from %ld), "
+        "moved %ld bytes and ended with the read; %d cycles reached manager 1",
+        tag, issued, drain_on, drain_bytes, m1_leaks);
+  //! the next READ; manager 1 takes bytes again only once it is granted
+  m1_abort_issue = false;
+  m1_gnt_cyc = -1;
+  m1_end_cyc = -1;
+  m1_pend = true;
+  go();
+  l_finish();
+  std::string why;
+  CHECK(l_walk_ok(why) && !d->restore_fail_o && d->restore_cause_o == 0
+            && m1_gnt_cyc >= 0 && m1_end_cyc > m1_gnt_cyc && !m1_pend && !d->arb_drain_o,
+        "%s: the port is free again: the walk completes as saved and manager 1's "
+        "next READ completes: %s", tag, why.c_str());
+}
+
+//! manager 1 presents one op; a commit streams `bytes`, a framed record
+void Harness::m1_op(int rid, bool we, const std::vector<uint8_t>& bytes) {
+  m1_rid = rid;
+  m1_we = we;
+  m1_wbytes = bytes;
+  m1_widx = 0;
+  m1_gnt_cyc = -1;
+  m1_end_cyc = -1;
+  m1_end_err = false;
+  m1_pend = true;
+}
+
+// The arbiter's own contract where neither in-tree manager reaches it
+// (processor issue #131, R390-4 S1 = R391-4 S1): its banner's rules for inputs
+// the binding walk and the D3 writer never present, graded with manager 1
+// driven as N10 drives it, so that a third manager, or a change to either one,
+// meets a graded rule. Only reads are abandoned: a WRITE presented with an
+// abort, held from its strobe to its end, is issued as a commit, never
+// drained, and completes (N11a). An abort names its own manager's READ only:
+// manager 1's abort in the issue cycle of each of the walk's READs drains none
+// of them (N11b), and nor does its abort held in every cycle manager 0 owns
+// one of them (N11d, R390-5 F1 = R391-5 S1). The issue cycle is judged by the
+// strobe's own intent, never by the operation before it: after a WRITE, a
+// READ abandoned in its issue cycle is still drained from the next cycle
+// (N11c). The manager-0 halves of these rules stay ungraded here: the real
+// binding manager raises its abort only while its own READ is strobed or
+// owned, so it never presents their inputs (tb/acmp_nvm/README.md lists them).
+void Harness::check_n11_the_arbiters_own_contract() {
+  const Bind b3{true, true, false, 0x0B03, 0x00A3A3A3A3A30003ull, 0x00C0C0C0C0C00003ull};
+  const std::vector<uint8_t> rec = frame(0x33, payload_of(b3));
+  constexpr int ROW_33 = (0x33 - REC_BASE) & (N_SINKS - 1);   // the row region 0x33 lands on
+  {
+    const char* tag = "N11a a manager-1 WRITE presented with its abort";
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    reset();
+    m1_abort_hold = true;
+    m1_op(0x33, true, rec);
+    run_until([&] { return m1_end_cyc >= 0; }, 4000);
+    run(20);
+    const long issued = m1_gnt_cyc;
+    CHECK(issued >= 0 && m1_gnt_we && drain_on < 0 && m1_end_cyc > issued && !m1_end_err
+              && m1_widx == rec.size() && count_ops(OP_ERASE, 0x33) == 1
+              && count_ops(OP_WRITE, 0x33) == 1 && store_match(ROW_33, rec) && d_st == 0
+              && !d_busy,
+          "%s: issued as a commit (%d), never drained (from %ld), every byte taken "
+          "(%zu of %zu) and done (granted at %ld, ended at %ld, err %d), the record in "
+          "the device byte-exact", tag, int(m1_gnt_we), drain_on, m1_widx, rec.size(),
+          issued, m1_end_cyc, int(m1_end_err));
+    m1_abort_hold = false;
+  }
+  {
+    const char* tag = "N11b manager 1's abort in the issue cycle of each of the walk's READs";
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    reset();
+    m1_abort_on_m0 = true;
+    go();
+    l_finish();
+    m1_abort_on_m0 = false;
+    std::string why;
+    std::string nvm;
+    const bool walk = l_walk_ok(why) && !d->restore_fail_o && d->restore_cause_o == 0;
+    const bool kept = l_nvm_untouched(nvm);
+    CHECK(walk && kept && m0_rd_issues == N_SINKS && m0_rd_issues_m1_abort == N_SINKS
+              && drain_on < 0 && drain_leaks == 0 && aborts == 0,
+          "%s: %d of the walk's %d READs issued with it, none drained (from %ld), and "
+          "the walk completes as saved: %s %s", tag, m0_rd_issues_m1_abort, m0_rd_issues,
+          drain_on, why.c_str(), nvm.c_str());
+  }
+  {
+    const char* tag = "N11c a manager-1 READ abandoned in its issue cycle after a WRITE";
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    reset();
+    m1_op(0x33, true, rec);
+    run_until([&] { return m1_end_cyc >= 0; }, 4000);
+    const bool wrote = m1_gnt_we && m1_end_cyc >= 0 && !m1_end_err && store_match(ROW_33, rec);
+    m1_abort_issue = true;
+    m1_op(0x30, false, {});
+    run_until([&] { return m1_gnt_cyc >= 0; }, 200);
+    const long issued = m1_gnt_cyc;
+    run_until([&] { return drain_off >= 0 && !d->arb_drain_o; }, 4000);
+    run(20);
+    CHECK(wrote && issued >= 0 && !m1_gnt_we && m1_abandoned && drain_on == issued + 1
+              && drain_bytes > 0 && !d->arb_drain_o && m1_leaks == 0 && drain_leaks == 0
+              && m1_end_cyc < 0 && d_st == 0 && !d_busy,
+          "%s: the WRITE done first (%d), then the drain armed in the READ's issue cycle "
+          "(issued at %ld, draining from %ld), moved %ld bytes and ended with the read; "
+          "%d cycles reached manager 1", tag, int(wrote), issued, drain_on, drain_bytes,
+          m1_leaks);
+    m1_abort_issue = false;
+    m1_op(0x30, false, {});
+    run_until([&] { return m1_end_cyc >= 0; }, 4000);
+    CHECK(m1_gnt_cyc >= 0 && m1_end_cyc > m1_gnt_cyc && !m1_end_err && !m1_pend
+              && !d->arb_drain_o,
+          "%s: the port is free again: manager 1's next READ completes", tag);
+  }
+  {
+    const char* tag = "N11d manager 1's abort held while manager 0 owns each of the walk's READs";
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    reset();
+    m1_abort_over_m0 = true;
+    go();
+    l_finish();
+    m1_abort_over_m0 = false;
+    std::string why;
+    std::string nvm;
+    const bool walk = l_walk_ok(why) && !d->restore_fail_o && d->restore_cause_o == 0;
+    const bool kept = l_nvm_untouched(nvm);
+    CHECK(walk && kept && m0_rd_issues == N_SINKS && m0_rd_issues_m1_abort == 0
+              && m0_own_rds == N_SINKS && m0_own_cyc > 0 && m0_own_cyc_m1_abort == m0_own_cyc
+              && m0_own_span_min > 0 && drain_on < 0 && drain_leaks == 0 && aborts == 0,
+          "%s: present in %d of the %d cycles manager 0 owned its %d READs (at least %d "
+          "before each one's end) and in none of their %d issue cycles, none drained "
+          "(from %ld), and the walk completes as saved: %s %s", tag, m0_own_cyc_m1_abort,
+          m0_own_cyc, m0_own_rds, m0_own_span_min, m0_rd_issues, drain_on, why.c_str(),
+          nvm.c_str());
+  }
+}
+
 int Harness::report() {
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
@@ -2479,6 +2757,8 @@ int Harness::run_suite() {
   check_n7_a_talker_level_at_the_deadline();
   check_n8_a_failed_walk_keeps_the_saved_records();
   check_n9_an_unwired_device_face();
+  check_n10_an_abort_in_the_issue_cycle();
+  check_n11_the_arbiters_own_contract();
   return report();
 }
 

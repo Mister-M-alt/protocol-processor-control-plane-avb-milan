@@ -11,6 +11,7 @@
 // per application off the real KL_pp_prng (kind 3) + KL_pp_timer_service.
 // Expectations are independent: MRPDU frames are built/parsed here from
 // 802.1Q §10.8/§35.2.2, never from DUT logic.
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -302,6 +303,9 @@ struct H {
   std::deque<std::vector<uint8_t>> q_msrp;
   std::deque<std::vector<uint8_t>> q_mvrp;
   std::vector<std::vector<uint8_t>> archive;   // everything ever captured
+  std::vector<uint32_t> archive_ms;            // now_ms at each frame's last byte
+  std::vector<uint64_t> archive_accept;        // clock the BFM accepted its request
+  uint64_t accept_cycle = 0;
   // strobe accounting
   int reg_cnt[8] = {};
   int unreg_cnt[8] = {};
@@ -338,10 +342,20 @@ struct H {
   std::vector<uint64_t> expiry_cycles;
   std::vector<uint64_t> join_cycles;
   std::vector<uint32_t> la_times;
+  // issue #108: peer lanes and the MVRP participant's own timer and flag
+  std::vector<uint32_t> peer_la_times;
+  std::vector<uint64_t> peer_mvrp_cycles;
+  std::vector<uint32_t> peer_mvrp_times;
+  std::vector<uint64_t> mvrp_expiry_cycles;
+  std::vector<uint32_t> mvrp_expiry_times;
+  std::vector<uint64_t> mvrp_action_cycles;
+  std::vector<uint64_t> redraw_cycles;
+  std::vector<uint64_t> mvrp_join_cycles;      // MVRP T-MRP-JOIN expiries
   bool step() {
-    // Bound every run, including decoder/timer deadlocks, by DUT clocks.
-    if (t >= 200000000ULL) {
-      std::fprintf(stderr, "CYCLE_BUDGET: SRP top exceeded 200000000 clocks\n");
+    // Bound every run, including decoder/timer deadlocks, by DUT clocks. The
+    // complete default run takes 185,012,669 (the P8 arm-delay sweep 53.3 M).
+    if (t >= 300000000ULL) {
+      std::fprintf(stderr, "CYCLE_BUDGET: SRP top exceeded 300000000 clocks\n");
       std::exit(3);
     }
     d->clk_i = 0; d->eval();
@@ -352,8 +366,13 @@ struct H {
       if (d->dbg_la_action_o) { la_cycles.push_back(t); la_times.push_back(d->now_ms_o); }
       if (d->dbg_la_expiry_o) expiry_cycles.push_back(t);
       if (d->dbg_prepare_done_o) prep_cycles.push_back(t);
-      if (d->dbg_rx_la_o) peer_la_cycles.push_back(t);
+      if (d->dbg_rx_la_o) { peer_la_cycles.push_back(t); peer_la_times.push_back(d->now_ms_o); }
       if (d->dbg_rx_event_o) rx_cycles.push_back(t);
+      if (d->dbg_rx_la_mvrp_o) { peer_mvrp_cycles.push_back(t); peer_mvrp_times.push_back(d->now_ms_o); }
+      if (d->dbg_la_mvrp_expiry_o) { mvrp_expiry_cycles.push_back(t); mvrp_expiry_times.push_back(d->now_ms_o); }
+      if (d->dbg_la_mvrp_action_o) mvrp_action_cycles.push_back(t);
+      if (d->dbg_la_redraw_o) redraw_cycles.push_back(t);
+      if (d->dbg_mvrp_join_o) mvrp_join_cycles.push_back(t);
     }
     unsigned decl = d->dbg_decl_o;
     unsigned withdraw = d->dbg_withdraw_o;
@@ -375,6 +394,8 @@ struct H {
       cur.push_back(d->ser_data_o);
       if (d->ser_last_o) {
         archive.push_back(cur);
+        archive_ms.push_back(d->now_ms_o);
+        archive_accept.push_back(accept_cycle);
         uint16_t et = cur.size() > 13 ? ((cur[12] << 8) | cur[13]) : 0;
         if (et == 0x22EA) q_msrp.push_back(cur);
         else              q_mvrp.push_back(cur);
@@ -390,6 +411,7 @@ struct H {
       d->ser_req_i = 1;
       d->ser_slot_i = d->txreq_slot_o;
       streaming = true;
+      accept_cycle = t;
       cur.clear();
     }
     d->clk_i = 1; d->eval();
@@ -410,7 +432,11 @@ struct H {
 
   void reset() {
     streaming = false; cur.clear(); q_msrp.clear(); q_mvrp.clear(); archive.clear();
+    archive_ms.clear(); archive_accept.clear();
     join_cycles.clear();
+    peer_la_times.clear(); peer_mvrp_cycles.clear(); peer_mvrp_times.clear();
+    mvrp_expiry_cycles.clear(); mvrp_expiry_times.clear(); mvrp_action_cycles.clear();
+    redraw_cycles.clear(); mvrp_join_cycles.clear();
     pause_tx = false; expiry_cycles.clear(); prep_cycles.clear(); peer_la_cycles.clear(); la_cycles.clear(); la_times.clear(); rx_cycles.clear();
     d->block_alloc_i = 0;
     d->rst_n = 0;
@@ -565,6 +591,10 @@ class SrpTopHarness {
     if (!*group || !strcmp(group,"congestion")) check_own_leaveall_congestion_and_recovery();
 
     if (!*group || !strcmp(group,"guards")) check_leaveall_guards();
+    if (!*group || !strcmp(group,"armdelay")) check_restart_across_arm_latency();
+    if (!*group || !strcmp(group,"restart")) check_received_leaveall_restarts_the_timer();
+    if (!*group || !strcmp(group,"timers")) check_mrp_timers_against_table_4_3();
+    if (!*group || !strcmp(group,"join")) check_mvrp_join_before_the_stream();
 
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
     return fails ? 1 : 0;
@@ -577,6 +607,10 @@ class SrpTopHarness {
   static constexpr uint64_t DA1  = 0x91E0F00A0B11ULL;
   static constexpr uint64_t SIDX = 0x1122334455660001ULL;
   static constexpr uint64_t DAX  = 0x91E0F0112233ULL;
+  // Clocks before an own expiry that the peer sweeps start at (M10, P6, P8):
+  // rLA!'s draw request, the PRNG's rejection retries and the arm issue of
+  // the restarted deadline, plus the arm-path delay where P8 adds one.
+  static constexpr int REARM_CLOCKS = 12;
 
   static uint64_t own_sid(int s) { return (OWN_MAC << 16) | (0x100 + s); }
   static uint64_t peer_sid(int s) { return 0x1122334455660100ULL + s; }
@@ -619,6 +653,44 @@ class SrpTopHarness {
       count += p.ok && p.msrp && la;
     }
     return count;
+  }
+  // an MVRP MRPDU declaring `vid` (New or JoinIn) has been captured
+  bool vid_joined(uint16_t vid) const {
+    for (const auto& f : h.archive)
+      if (frame_has(f, false, 1, vid, EV_NEW) || frame_has(f, false, 1, vid, EV_JOININ)) return true;
+    return false;
+  }
+  static int mvrp_leaveall_frames(const H& bfm, size_t first) {
+    int count=0;
+    for (size_t i=first;i<bfm.archive.size();i++) {
+      auto p=parse_frame(bfm.archive[i]);
+      bool la=false;
+      for (const auto& v:p.vecs) la |= v.la;
+      count += p.ok && !p.msrp && la;
+    }
+    return count;
+  }
+  // 802.1Q-2014 Table 10-5 rLA!: "Start leavealltimer". A started timer is a
+  // fresh 10.7.4.3 draw, LeaveAllTime < T < 1.5 LeaveAllTime (F08.1: 10-15 s),
+  // counted from the peer's LeaveAll; the draw lands in that ms or the next.
+  static bool restarted(uint32_t deadline, uint32_t peer_ms) {
+    return deadline >= peer_ms + 10000 && deadline <= peer_ms + 15001;
+  }
+  // F4's bridge shape against leaveall_setup's population: LeaveAll on every
+  // MSRP type, riding the bridge's re-declaration of each attribute it holds
+  std::vector<uint8_t> peer_msrp_leaveall() const {
+    Msg lr{3, 8, true, {}};
+    for (int s : {0, 3, 7})
+      lr.vecs.push_back(Vec{s == 0, 1, fv_sid(own_sid(s)), {EV_JOININ}, {DECL_READY}});
+    Msg ta{1, 25, false, {Vec{true, 1, fv_talker(peer_sid(0), peer_da(0), 2, 29, 1, 3, 1, 500),
+                              {EV_JOININ}, {}}}};
+    Msg tf{2, 34, false, {Vec{true, 1, fv_failed(peer_sid(7), peer_da(7), 2, 29, 1, 3, 1, 500,
+                                                 0x1234, 1), {EV_JOININ}, {}}}};
+    return mrpdu_body(true, {lr, ta, tf, la_only(4, 4, false)});
+  }
+  // the bridge's MVRP LeaveAll, riding its own declaration of `vid`
+  static std::vector<uint8_t> peer_mvrp_leaveall(uint16_t vid) {
+    return mrpdu_body(false, {Msg{1, 2, false, {Vec{true, 1, fv_vid(vid), {EV_JOININ}, {}}}}});
   }
 
   // K: independent oracle: an explicit Lv before sLA sees IN; an Lv
@@ -737,8 +809,10 @@ class SrpTopHarness {
     quiet_deadline=d->dbg_la_deadline_o;
     until_ms(quiet_deadline-20); d->block_alloc_i=1; d->link_up_i=0;
     until_ms(quiet_deadline+250);
-    quiet_base=h.archive.size(); uint32_t later_deadline=d->dbg_la_deadline_o;
+    quiet_base=h.archive.size();
     h.feed(mrpdu_body(true,{la_only(3,8,true)}),true);
+    h.idle(40);                        // the peer restarted the timer (#108)
+    uint32_t later_deadline=d->dbg_la_deadline_o;
     d->block_alloc_i=0; until_ms(later_deadline+700);
     CHECK(h.la_cycles.size()==1 && leaveall_frames(h,quiet_base)==1
           && !d->dbg_la_wait_o && !d->dbg_round_o,
@@ -756,7 +830,12 @@ class SrpTopHarness {
       CHECK(leaveall_frames(h,base)==(type==0?1:0), "M2: supersession agrees with the wire flags");
       CHECK(source_reg(0)==(type==0?2:1) && sink_reg(0)==(type==0?2:1) && sink_reg(7)==(type==0?2:1),
             "M3: superseded action never re-ages a peer rejoin");
-      CHECK(d->dbg_la_deadline_o==next, "M4: peer supersession leaves the timer deadline unchanged");
+      // Table 10-5 rLA! (issue #108): an MSRP lane restarts the MSRP timer;
+      // the MVRP lane is another application's and leaves it alone
+      CHECK(type==0 ? d->dbg_la_deadline_o==next
+                    : (h.peer_la_times.size()==1
+                       && restarted(d->dbg_la_deadline_o, h.peer_la_times[0])),
+            "M4: supersession restarts only the superseding application's timer type=%d", type);
     }
       // Peer rLA versus slot acceptance, including the identical edge.
     unsigned seen=0;
@@ -787,25 +866,38 @@ class SrpTopHarness {
       printf("LEAVEALL_PEER release=%d rx_minus_accept=%d actions=%zu\n",release,delta,h.la_cycles.size());
     }
     CHECK(seen==7, "M8: peer boundary covers -1, 0 and +1 clocks");
-    // Calibrate only the real timer's phase, then inject bytes so the
-    // peer lane is just before, on, or just after that expiry edge.
+    check_peer_at_own_expiry();
+  }
+
+  // M9/M10: calibrate only the real timer's phase, then inject bytes so the
+  // peer lane lands from REARM_CLOCKS before that expiry edge to one after
+  // it: across rLA!'s draw request, the PRNG's rejection retries and the arm
+  // of the restarted deadline (issue #108). Placement is graded against the
+  // calibrated edge: once the restarted deadline is armed, the superseded
+  // one never fires, so before the edge the expiry may be absent.
+  void check_peer_at_own_expiry() {
     uint32_t deadline=leaveall_setup(DECL_READY);
     until_ms(deadline-1); uint64_t mark=h.t;
     int guard=100;
     while(h.expiry_cycles.empty() && guard--) h.cycle();
     int phase=h.expiry_cycles.empty()?40:int(h.expiry_cycles[0]-mark);
-    for(int delta : {-1,0,1}) {
+    for(int delta=-REARM_CLOCKS; delta<=1; delta++) {
       deadline=leaveall_setup(DECL_READY); until_ms(deadline-1);
+      const uint64_t edge=h.t+static_cast<uint64_t>(phase);
       h.idle(phase-7+delta); size_t base=h.archive.size();
       h.feed(mrpdu_body(true,{la_only(4,4,false)}),true);
       h.run_ms(600);
-      CHECK(h.expiry_cycles.size()==1 && h.peer_la_cycles.size()==1
-            && int(h.peer_la_cycles[0]-h.expiry_cycles[0])==delta,
-            "M9: peer and real timer expiry have the requested phase");
-      bool own=delta<0; // A later timer expiry is new intent; #108 is unchanged.
-      CHECK(h.la_cycles.size()==size_t(own) && leaveall_frames(h,base)==int(own)
-            && source_reg(0)==(own?2:1) && sink_reg(7)==(own?2:1),
-            "M10: peer supersession respects expiry ordering delta=%d",delta);
+      CHECK(h.peer_la_cycles.size()==1 && static_cast<int>(h.peer_la_cycles[0]-edge)==delta
+            && (delta<0 ? h.expiry_cycles.size()<=1 : h.expiry_cycles.size()==1)
+            && (h.expiry_cycles.empty() || h.expiry_cycles[0]==edge),
+            "M9: peer and real timer expiry have the requested phase delta=%d",delta);
+      // Before the expiry, rLA! restarted the timer, so the superseded
+      // deadline's expiry is stale; on or after it, the peer drops the new
+      // intent. Either way Passive, with a restarted timer (issue #108).
+      CHECK(h.la_cycles.empty() && leaveall_frames(h,base)==0
+            && source_reg(0)==1 && sink_reg(7)==1 && h.peer_la_times.size()==1
+            && restarted(d->dbg_la_deadline_o, h.peer_la_times[0]),
+            "M10: a peer at expiry delta=%d leaves Passive with a restarted timer",delta);
       printf("LEAVEALL_EXPIRY peer_minus_expiry=%d actions=%zu\n",delta,h.la_cycles.size());
     }
   }
@@ -1067,6 +1159,639 @@ class SrpTopHarness {
     check_sink_at_acceptance();
     check_join_coalescing();
     check_empty_reservation_bound();
+  }
+
+  // P: issue #108. 802.1Q-2014 Table 10-5 maps rLA! to "Start leavealltimer,
+  // Passive" in both states, and 10.6 says why: "Reception of a LeaveAll
+  // message from another Participant causes the timer to be restarted without
+  // generating a message". The LeaveAll machine is per application (10.7.5.20
+  // NOTE), so a lane of any of its Attribute Types is its rLA! (10.7.5.20
+  // b)2)), and the two applications never touch each other's timer.
+  void check_received_leaveall_restarts_the_timer() {
+    check_peer_msrp_cadence_holds_off_own_leaveall();
+    check_peer_mvrp_cadence_holds_off_own_leaveall();
+    check_restart_per_lane();
+    check_mvrp_passive_while_active();
+    check_mvrp_passive_without_content();
+    check_mvrp_peer_at_expiry();
+    check_mvrp_peer_at_flag_tick();
+  }
+
+  // P1: F4's probe made long enough to prove it. The bridge's LeaveAll every
+  // second for 20 cycles, past the 15 s ceiling of any draw.
+  void check_peer_msrp_cadence_holds_off_own_leaveall() {
+    leaveall_setup(DECL_READY);
+    const size_t base = h.archive.size();
+    const uint32_t start = d->now_ms_o;
+    bool each = true;
+    for (int k = 0; k < 20; k++) {
+      until_ms(start + 1000u * static_cast<uint32_t>(k));
+      const size_t peers = h.peer_la_times.size();
+      h.feed(peer_msrp_leaveall(), true);   // four lanes: one per flagged type
+      h.idle(40);
+      each &= h.peer_la_times.size() == peers + 4
+           && restarted(d->dbg_la_deadline_o, h.peer_la_times.back());
+    }
+    until_ms(start + 20000);
+    CHECK(h.la_cycles.empty() && leaveall_frames(h, base) == 0,
+          "P1: 20 peer MSRP LeaveAll cycles at 1 Hz: no own MSRP LeaveAll "
+          "(%zu actions, %d flagged MRPDUs)", h.la_cycles.size(), leaveall_frames(h, base));
+    CHECK(each, "P1: every peer LeaveAll restarts the MSRP leavealltimer");
+    CHECK(mvrp_leaveall_frames(h, base) >= 1,
+          "P1: the MVRP participant keeps its own LeaveAll cycle");
+    CHECK(source_reg(0) == 1 && source_reg(3) == 1 && source_reg(7) == 1
+          && sink_reg(0) == 1 && sink_reg(7) == 1 && h.active(0) && h.active(3) && h.active(7),
+          "P1: the re-declared registrations stay IN and the sources ACTIVE");
+    // the peer stops: the own cycle resumes one restarted period after it
+    const uint32_t last = h.peer_la_times.back();
+    until_ms(last + 15500);
+    CHECK(h.la_cycles.size() == 1 && h.la_times[0] >= last + 10000
+          && h.la_times[0] <= last + 15000 + 260,
+          "P1: after the last peer LeaveAll the own one follows 10-15 s later (at +%d ms)",
+          h.la_times.empty() ? -1 : static_cast<int>(h.la_times[0] - last));
+    printf("RESTART msrp peers=20 own_after_last_ms=%d\n",
+           h.la_times.empty() ? -1 : static_cast<int>(h.la_times[0] - last));
+  }
+
+  // P2: the same for the MVRP participant, whose peer declares VID 2.
+  void check_peer_mvrp_cadence_holds_off_own_leaveall() {
+    leaveall_setup(DECL_READY);
+    const size_t base = h.archive.size();
+    const uint32_t start = d->now_ms_o;
+    bool each = true;
+    for (int k = 0; k < 20; k++) {
+      until_ms(start + 1000u * static_cast<uint32_t>(k));
+      const size_t peers = h.peer_mvrp_times.size();
+      h.feed(peer_mvrp_leaveall(2), false);
+      h.idle(40);
+      each &= h.peer_mvrp_times.size() == peers + 1
+           && restarted(d->dbg_la_mvrp_deadline_o, h.peer_mvrp_times.back());
+    }
+    until_ms(start + 20000);
+    bool lv = false;
+    for (size_t i = base; i < h.archive.size(); i++) {
+      const PFrame p = parse_frame(h.archive[i]);
+      for (const PVec& v : p.vecs) lv |= !p.msrp && !v.ev.empty() && v.ev[0] == EV_LV;
+    }
+    CHECK(h.mvrp_action_cycles.empty() && mvrp_leaveall_frames(h, base) == 0,
+          "P2: 20 peer MVRP LeaveAll cycles at 1 Hz: no own MVRP LeaveAll "
+          "(%zu actions, %d flagged MRPDUs)", h.mvrp_action_cycles.size(),
+          mvrp_leaveall_frames(h, base));
+    CHECK(each, "P2: every peer MVRP LeaveAll restarts the MVRP leavealltimer");
+    CHECK(!h.la_cycles.empty() && leaveall_frames(h, base) >= 1,
+          "P2: the MSRP participant keeps its own LeaveAll cycle");
+    CHECK(!lv && d->dbg_vid_active_o != 0, "P2: VID membership never flaps");
+  }
+
+  // P3: the restart pinned per lane, at the timer and on the wire. Mid-cycle
+  // (5 s before the earlier own deadline) a LeaveAll of one type arrives: its
+  // application's deadline is redrawn from the peer, the other one stays; the
+  // superseded deadline passes silently and the restarted one fires once.
+  void check_restart_per_lane() {
+    for (int type = 0; type <= 4; type++) {
+      const uint32_t msrp_old = leaveall_setup(DECL_READY);
+      const uint32_t mvrp_old = d->dbg_la_mvrp_deadline_o;
+      const bool msrp = type != 0;
+      until_ms(std::min(msrp_old, mvrp_old) - 5000);
+      if (msrp) h.feed(mrpdu_body(true, {la_only(type, type == 1 ? 25 : type == 2 ? 34
+                                                          : type == 3 ? 8 : 4, type == 3)}), true);
+      else      h.feed(peer_mvrp_leaveall(2), false);
+      h.idle(40);
+      const std::vector<uint32_t>& peers = msrp ? h.peer_la_times : h.peer_mvrp_times;
+      const uint32_t peer = peers.empty() ? 0 : peers[0];
+      const uint32_t fresh = msrp ? d->dbg_la_deadline_o : d->dbg_la_mvrp_deadline_o;
+      const uint32_t other = msrp ? d->dbg_la_mvrp_deadline_o : d->dbg_la_deadline_o;
+      CHECK(peers.size() == 1 && restarted(fresh, peer) && other == (msrp ? mvrp_old : msrp_old),
+            "P3: lane type=%d restarts its own application's timer only", type);
+      const uint32_t old = msrp ? msrp_old : mvrp_old;
+      const size_t base = h.archive.size();
+      until_ms(old + 700);
+      const bool silent = msrp ? h.la_cycles.empty() && leaveall_frames(h, base) == 0
+                               : h.mvrp_action_cycles.empty() && mvrp_leaveall_frames(h, base) == 0;
+      CHECK(silent, "P3: the superseded deadline passes without an own LeaveAll type=%d", type);
+      until_ms(fresh + 700);
+      int own = 0;
+      uint32_t own_ms = 0;
+      for (size_t i = base; i < h.archive.size(); i++) {
+        auto p = parse_frame(h.archive[i]);
+        bool la = false;
+        for (const auto& v : p.vecs) la |= v.la;
+        if (p.ok && p.msrp == msrp && la) { own++; if (!own_ms) own_ms = h.archive_ms[i]; }
+      }
+      CHECK(own == 1 && own_ms >= peer + 10000 && own_ms >= fresh && own_ms <= fresh + 260,
+            "P3: the restarted timer fires once, 10 s or more after the peer type=%d "
+            "(own at +%d ms)", type, static_cast<int>(own_ms - peer));
+      printf("RESTART lane=%d peer_ms=%u deadline_ms=%u own_ms=%u\n", type, peer, fresh, own_ms);
+    }
+  }
+
+  // P4: MVRP's Active state. Own expiry re-joins every held VID and keeps the
+  // LeaveAll flag for the next MVRP drain; a peer MVRP LeaveAll before that
+  // drain drops it (rLA! in Active: Passive). Control: no peer, the flag rides.
+  void check_mvrp_passive_while_active() {
+    for (bool peer : {true, false}) {
+      leaveall_setup(DECL_READY);
+      until_ms(d->dbg_la_mvrp_deadline_o - 1);
+      int guard = 200 * MS_CYC;
+      while (h.mvrp_expiry_cycles.empty() && guard-- > 0) h.cycle();
+      const bool active = h.mvrp_expiry_cycles.size() == 1 && d->dbg_la_mvrp_pending_o;
+      const size_t base = h.archive.size();
+      if (peer) h.feed(peer_mvrp_leaveall(2), false);
+      const bool passive = !d->dbg_la_mvrp_pending_o;
+      h.run_ms(1000);
+      bool rejoin = false;
+      for (size_t i = base; i < h.archive.size(); i++) rejoin |= frame_has(h.archive[i], false, 1, 2, EV_JOININ);
+      if (peer) {
+        CHECK(active && passive && h.mvrp_action_cycles.empty()
+              && mvrp_leaveall_frames(h, base) == 0 && rejoin,
+              "P4: a peer MVRP LeaveAll in Active drops the own flag; the VID re-join still goes out");
+        CHECK(restarted(d->dbg_la_mvrp_deadline_o, h.peer_mvrp_times.empty() ? 0 : h.peer_mvrp_times[0]),
+              "P4: ...and restarts the MVRP leavealltimer");
+      } else {
+        CHECK(active && h.mvrp_action_cycles.size() == 1 && mvrp_leaveall_frames(h, base) == 1
+              && rejoin, "P4: control: without a peer the own MVRP LeaveAll rides the next drain");
+      }
+    }
+  }
+
+  // P5: with no VID held an MVRP drain has nothing to carry the flag, so the
+  // machine stays Active until the first declaration. A peer MVRP LeaveAll
+  // meanwhile makes it Passive: that declaration then carries no own flag.
+  void check_mvrp_passive_without_content() {
+    for (bool peer : {true, false}) {
+      h.reset(); d->link_up_i = 1; h.run_ms(700);
+      until_ms(d->dbg_la_mvrp_deadline_o + 1000);
+      const bool waiting = h.mvrp_expiry_cycles.size() == 1 && d->dbg_la_mvrp_pending_o
+                        && h.mvrp_action_cycles.empty() && h.q_mvrp.empty();
+      if (peer) h.feed(peer_mvrp_leaveall(5), false);
+      const bool passive = !d->dbg_la_mvrp_pending_o;
+      h.q_mvrp.clear();
+      h.op(OP_DECL_TK, 0, own_sid(0), 0x91e0f0010100ULL, 2, 29, 1);
+      auto f = h.wait_frame(false, 400, [](const std::vector<uint8_t>& fr) {
+        return frame_has(fr, false, 1, 2, EV_NEW);
+      });
+      const auto p = parse_frame(f);
+      const bool flagged = !p.vecs.empty() && p.vecs.front().la;
+      if (peer) {
+        CHECK(waiting && passive && !f.empty() && !flagged,
+              "P5: after a peer MVRP LeaveAll the first VID declaration carries no own flag");
+      } else {
+        CHECK(waiting && !f.empty() && flagged,
+              "P5: control: the Active flag rides the first VID declaration");
+      }
+    }
+  }
+
+  // P6: the MVRP peer lane against the real MVRP expiry, from REARM_CLOCKS
+  // clocks before it to one after, graded against the calibrated edge as M9
+  // is. Before it the timer was restarted, so the superseded deadline's
+  // expiry is stale or never fires; on or after it the peer drops the new
+  // flag. No own flag either way.
+  void check_mvrp_peer_at_expiry() {
+    leaveall_setup(DECL_READY);
+    const uint32_t mdl = d->dbg_la_mvrp_deadline_o;
+    until_ms(mdl - 1);
+    const uint64_t mark = h.t;
+    int guard = 100;
+    while (h.mvrp_expiry_cycles.empty() && guard--) h.cycle();
+    const int phase = h.mvrp_expiry_cycles.empty() ? 40 : static_cast<int>(h.mvrp_expiry_cycles[0] - mark);
+    // feed-to-lane latency of the MVRP LeaveAll MRPDU, measured once
+    const uint64_t fed = h.t;
+    h.feed(peer_mvrp_leaveall(2), false);
+    const int lane = h.peer_mvrp_cycles.empty() ? 5 : static_cast<int>(h.peer_mvrp_cycles[0] - fed);
+    uint64_t seen = 0;
+    for (int delta = -REARM_CLOCKS; delta <= 1; delta++) {
+      leaveall_setup(DECL_READY); until_ms(mdl - 1);
+      const uint64_t edge = h.t + static_cast<uint64_t>(phase);
+      h.idle(phase - lane + delta);
+      const size_t base = h.archive.size();
+      h.feed(peer_mvrp_leaveall(2), false);
+      h.run_ms(600);
+      const bool placed = h.peer_mvrp_cycles.size() == 1
+        && static_cast<int>(h.peer_mvrp_cycles[0] - edge) == delta
+        && (delta < 0 ? h.mvrp_expiry_cycles.size() <= 1 : h.mvrp_expiry_cycles.size() == 1)
+        && (h.mvrp_expiry_cycles.empty() || h.mvrp_expiry_cycles[0] == edge);
+      if (placed) seen |= uint64_t{1} << (delta + REARM_CLOCKS);
+      CHECK(placed && h.mvrp_action_cycles.empty() && mvrp_leaveall_frames(h, base) == 0
+            && !d->dbg_la_mvrp_pending_o
+            && restarted(d->dbg_la_mvrp_deadline_o, h.peer_mvrp_times.empty() ? 0 : h.peer_mvrp_times[0]),
+            "P6: MVRP peer at own expiry delta=%d leaves Passive with a restarted timer", delta);
+      printf("RESTART mvrp_peer_minus_expiry=%d actions=%zu\n", delta, h.mvrp_action_cycles.size());
+    }
+    CHECK(seen == (uint64_t{1} << (REARM_CLOCKS + 2)) - 1,
+          "P6: MVRP peer sweep covers -%d..+1 clocks", REARM_CLOCKS);
+  }
+
+  // P7: the MVRP equal edge. After the own MVRP expiry the flag waits for the
+  // next MVRP join tick whose drain has content (the re-joins). A peer MVRP
+  // LeaveAll one clock before or on that tick is rLA! while Active: Passive,
+  // so the tick carries no own flag. One clock after it the tick was tx!
+  // (Table 10-5, Active: sLA), and an accepted own LeaveAll goes out.
+  void check_mvrp_peer_at_flag_tick() {
+    leaveall_setup(DECL_READY);
+    const uint32_t mdl = d->dbg_la_mvrp_deadline_o;
+    until_ms(mdl - 1);
+    const uint64_t mark = h.t;
+    int guard = 400 * MS_CYC;
+    while (h.mvrp_action_cycles.empty() && guard-- > 0) h.cycle();
+    // the tick is the clock before the flag reaches the encoder
+    const uint64_t at = h.mvrp_action_cycles.empty() ? mark : h.mvrp_action_cycles[0] - 1;
+    const bool ticked = !h.mvrp_action_cycles.empty() && h.mvrp_expiry_cycles.size() == 1
+      && std::count(h.mvrp_join_cycles.begin(), h.mvrp_join_cycles.end(), at) == 1;
+    const int tick = static_cast<int>(at - mark);
+    const uint64_t fed = h.t;
+    h.feed(peer_mvrp_leaveall(2), false);
+    const int lane = h.peer_mvrp_cycles.empty() ? 5 : static_cast<int>(h.peer_mvrp_cycles[0] - fed);
+    CHECK(ticked && tick > lane + 1,
+          "P7: calibration: the own MVRP flag rides an MVRP join tick (+%d clocks)", tick);
+    unsigned seen = 0;
+    for (int delta : {-1, 0, 1}) {
+      leaveall_setup(DECL_READY); until_ms(mdl - 1);
+      const uint64_t edge = h.t + static_cast<uint64_t>(tick);
+      h.idle(tick - lane + delta);
+      const size_t base = h.archive.size();
+      h.feed(peer_mvrp_leaveall(2), false);
+      h.run_ms(600);
+      const bool placed = h.peer_mvrp_cycles.size() == 1
+        && static_cast<int>(h.peer_mvrp_cycles[0] - edge) == delta
+        && std::count(h.mvrp_join_cycles.begin(), h.mvrp_join_cycles.end(), edge) == 1
+        && h.mvrp_expiry_cycles.size() == 1 && h.mvrp_expiry_cycles[0] < edge;
+      if (placed) seen |= 1u << (delta + 1);
+      const bool sent = delta > 0;
+      CHECK(placed && h.mvrp_action_cycles.size() == static_cast<size_t>(sent)
+            && mvrp_leaveall_frames(h, base) == static_cast<int>(sent) && !d->dbg_la_mvrp_pending_o
+            && restarted(d->dbg_la_mvrp_deadline_o, h.peer_mvrp_times.empty() ? 0 : h.peer_mvrp_times[0]),
+            "P7: MVRP peer at the flag's join tick delta=%d: own flag %s, timer restarted",
+            delta, sent ? "already accepted goes out" : "dropped");
+      printf("RESTART mvrp_peer_minus_flag_tick=%d actions=%zu\n", delta, h.mvrp_action_cycles.size());
+    }
+    CHECK(seen == 7, "P7: MVRP peer sweep covers -1, 0 and +1 clocks of the flag's tick");
+  }
+
+  // P8: R399-1's delayed-arm probe, committed (issue #108). The processor
+  // top queues this engine's timer arms behind higher-priority faces, so a
+  // restarted deadline can reach the timer service clocks after it is
+  // issued. With the arm path delayed N clocks (the wrapper's arm_delay_i),
+  // a peer LeaveAll from -(N + REARM_CLOCKS) to +2 clocks of each
+  // application's own expiry never produces an own LeaveAll: the superseded
+  // deadline stays stale until the restarted one, whatever the latency
+  // (Table 10-5 rLA!: Start leavealltimer, Passive; 802.1Q-2014 10.7.5.22).
+  struct ExpiryClock { int msrp_phase; int msrp_lane; int mvrp_phase; int mvrp_lane; };
+  struct ArmSweep { int offsets; int own_msrp; int own_mvrp; int misplaced; int unrestarted; };
+
+  void check_restart_across_arm_latency() {
+    const ExpiryClock clk = calibrate_expiry_clocks();
+    for (int delay : {3, 4, 8, 16}) {
+      d->arm_delay_i = static_cast<uint8_t>(delay);
+      const int first = -(delay + REARM_CLOCKS);
+      ArmSweep s{0, 0, 0, 0, 0};
+      for (int delta = first; delta <= 2; delta++) sweep_arm_offset(clk, delay, delta, s);
+      CHECK(s.own_msrp == 0, "P8: arm delay %d: no own MSRP LeaveAll after a peer at %d..+2 "
+            "clocks of the own expiry (%d of %d offsets send one)", delay, first, s.own_msrp, s.offsets);
+      CHECK(s.own_mvrp == 0, "P8: arm delay %d: no own MVRP LeaveAll after a peer at %d..+2 "
+            "clocks of the own expiry (%d of %d offsets send one)", delay, first, s.own_mvrp, s.offsets);
+      CHECK(s.misplaced == 0 && s.unrestarted == 0, "P8: arm delay %d: every peer lands at its "
+            "offset and restarts its application's timer (%d misplaced, %d not restarted)",
+            delay, s.misplaced, s.unrestarted);
+      printf("ARMDELAY delay=%d offsets=%d..+2 own_msrp=%d own_mvrp=%d\n",
+             delay, first, s.own_msrp, s.own_mvrp);
+    }
+    d->arm_delay_i = 0;
+  }
+
+  // Both own expiries' clocks from two ms before their deadlines, and each
+  // peer MRPDU's feed-to-lane latency, on the direct arm path. From reset the
+  // MVRP deadline is the earlier one, so one scenario serves both.
+  ExpiryClock calibrate_expiry_clocks() {
+    d->arm_delay_i = 0;
+    ExpiryClock c{85, 7, 85, 5};
+    leaveall_setup(DECL_READY);
+    const uint32_t mvrp_dl = d->dbg_la_mvrp_deadline_o;
+    const uint32_t msrp_dl = d->dbg_la_deadline_o;
+    until_ms(mvrp_dl - 2);
+    uint64_t mark = h.t;
+    int guard = 200;
+    while (h.mvrp_expiry_cycles.empty() && guard-- > 0) h.cycle();
+    if (!h.mvrp_expiry_cycles.empty()) c.mvrp_phase = static_cast<int>(h.mvrp_expiry_cycles[0] - mark);
+    uint64_t fed = h.t;
+    h.feed(peer_mvrp_leaveall(2), false);
+    if (!h.peer_mvrp_cycles.empty()) c.mvrp_lane = static_cast<int>(h.peer_mvrp_cycles[0] - fed);
+    until_ms(msrp_dl - 2);
+    mark = h.t;
+    guard = 200;
+    while (h.expiry_cycles.empty() && guard-- > 0) h.cycle();
+    if (!h.expiry_cycles.empty()) c.msrp_phase = static_cast<int>(h.expiry_cycles[0] - mark);
+    fed = h.t;
+    h.feed(mrpdu_body(true, {la_only(4, 4, false)}), true);
+    if (!h.peer_la_cycles.empty()) c.msrp_lane = static_cast<int>(h.peer_la_cycles[0] - fed);
+    CHECK(mvrp_dl + 1000 < msrp_dl && h.mvrp_expiry_cycles.size() == 1 && h.expiry_cycles.size() == 1
+          && h.peer_mvrp_cycles.size() == 1 && h.peer_la_cycles.size() == 1
+          && c.mvrp_phase > c.mvrp_lane + 16 + REARM_CLOCKS && c.msrp_phase > c.msrp_lane + 16 + REARM_CLOCKS,
+          "P8: calibration: the MVRP deadline comes first and both expiries and lanes are measured");
+    return c;
+  }
+
+  // One reset scenario at one offset: the MVRP peer around the own MVRP
+  // expiry, then the MSRP peer around the own MSRP expiry.
+  void sweep_arm_offset(const ExpiryClock& c, int delay, int delta, ArmSweep& s) {
+    leaveall_setup(DECL_READY);
+    const uint32_t mvrp_dl = d->dbg_la_mvrp_deadline_o;
+    const uint32_t msrp_dl = d->dbg_la_deadline_o;
+    until_ms(mvrp_dl - 2);
+    uint64_t edge = h.t + static_cast<uint64_t>(c.mvrp_phase);
+    h.idle(c.mvrp_phase - c.mvrp_lane + delta);
+    size_t base = h.archive.size();
+    h.feed(peer_mvrp_leaveall(2), false);
+    until_ms(msrp_dl - 2);   // the restarted MVRP timer is 10 s away: any own flag here is stale
+    const bool mvrp_placed = h.peer_mvrp_cycles.size() == 1
+      && static_cast<int>(h.peer_mvrp_cycles[0] - edge) == delta;
+    const bool mvrp_own = !h.mvrp_action_cycles.empty() || mvrp_leaveall_frames(h, base) != 0;
+    const bool mvrp_restarted = restarted(d->dbg_la_mvrp_deadline_o,
+                                          h.peer_mvrp_times.empty() ? 0 : h.peer_mvrp_times[0]);
+    edge = h.t + static_cast<uint64_t>(c.msrp_phase);
+    h.idle(c.msrp_phase - c.msrp_lane + delta);
+    base = h.archive.size();
+    h.feed(mrpdu_body(true, {la_only(4, 4, false)}), true);
+    h.run_ms(400);
+    const bool msrp_placed = h.peer_la_cycles.size() == 1
+      && static_cast<int>(h.peer_la_cycles[0] - edge) == delta;
+    const bool msrp_own = !h.la_cycles.empty() || leaveall_frames(h, base) != 0;
+    const bool msrp_restarted = restarted(d->dbg_la_deadline_o,
+                                          h.peer_la_times.empty() ? 0 : h.peer_la_times[0]);
+    s.offsets++;
+    s.own_msrp += msrp_own ? 1 : 0;
+    s.own_mvrp += mvrp_own ? 1 : 0;
+    s.misplaced += (mvrp_placed ? 0 : 1) + (msrp_placed ? 0 : 1);
+    s.unrestarted += (mvrp_restarted ? 0 : 1) + (msrp_restarted ? 0 : 1);
+    if (msrp_own || mvrp_own || !mvrp_placed || !msrp_placed)
+      printf("ARMDELAY delay=%d peer_minus_expiry=%d own_msrp=%d own_mvrp=%d placed=%d/%d\n",
+             delay, delta, msrp_own ? 1 : 0, mvrp_own ? 1 : 0, mvrp_placed ? 1 : 0, msrp_placed ? 1 : 0);
+  }
+
+  // R: issue #65, REQ-SRP-006. Milan v1.2 4.3.2: a Talker PAAD "shall join
+  // the relevant VLAN via MVRP prior to sending any Stream frames"; 4.4.1: a
+  // Listener PAAD "shall declare an MVRP VID attribute for each VLAN used by
+  // its settled sinks". ACTIVE is the streaming licence; an MRPDU counts as
+  // transmitted at the clock the BFM (the TX arbiter) accepted its request.
+  void check_mvrp_join_before_the_stream() {
+    check_talker_licence_waits_for_the_join();
+    check_listener_vid_is_declared_on_the_wire();
+  }
+
+  // capture index of the first MVRP MRPDU declaring `vid` with `ev`
+  int mvrp_frame_with(uint16_t vid, int ev, size_t first = 0) const {
+    for (size_t i = first; i < h.archive.size(); i++)
+      if (frame_has(h.archive[i], false, 1, vid, ev)) return static_cast<int>(i);
+    return -1;
+  }
+  // run until source s is ACTIVE (bounded); the clock it was first seen high
+  uint64_t await_active(int s, int guard_ms) {
+    for (long n = static_cast<long>(guard_ms) * MS_CYC; n > 0 && !h.active(s); n--) h.cycle();
+    return h.active(s) ? h.t : 0;
+  }
+
+  void check_talker_licence_waits_for_the_join() {
+    // R1: a Listener Ready registered right after DECLARE_TALKER, before the
+    // first join tick: no licence until the VID 2 New has been accepted
+    h.reset(); d->link_up_i = 1; h.idle(10);
+    h.op(OP_DECL_TK, 0, own_sid(0), 0x91e0f0010100ULL, 2, 29, 1);
+    listener_event(0, EV_NEW, DECL_READY);
+    const uint32_t ready_ms = d->now_ms_o;
+    const bool early = ready_ms < 200 && source_reg(0) == 1 && h.lstn_reg(0) == DECL_READY
+                    && (d->sr_admitted_o & 1) && !h.active(0) && h.q_mvrp.empty();
+    const uint64_t rise = await_active(0, 400);
+    const uint32_t rise_ms = d->now_ms_o;
+    h.run_ms(5);                           // let the frames in flight finish serializing
+    const int mv = mvrp_frame_with(2, EV_NEW);
+    int adv = -1;
+    for (size_t i = 0; i < h.archive.size() && adv < 0; i++)
+      if (frame_has(h.archive[i], true, 1, own_sid(0), EV_NEW)) adv = static_cast<int>(i);
+    const uint64_t mv_acc = mv < 0 ? 0 : h.archive_accept[mv];
+    CHECK(early && rise && mv >= 0 && rise > mv_acc && rise <= mv_acc + 3,
+          "R1: a Ready before the first join tick licenses nothing until the VID 2 New is "
+          "accepted (rise %lld clocks after it)",
+          static_cast<long long>(rise) - static_cast<long long>(mv_acc));
+    CHECK(rise && rise_ms - ready_ms <= 240,
+          "R1: the wait is at most one join-paced MRPDU (%u ms)", rise_ms - ready_ms);
+    CHECK(mv >= 0 && adv >= 0 && h.archive_accept[mv] < h.archive_accept[adv],
+          "R1: the VID New leaves ahead of the first Talker Advertise, so a Ready that "
+          "answers the Advertise never waits");
+    printf("JOIN talker ready_ms=%u rise_ms=%u mvrp_accept=%llu rise=%llu\n", ready_ms, rise_ms,
+           static_cast<unsigned long long>(mv_acc), static_cast<unsigned long long>(rise));
+
+    // R2: a second source on the same VID, whose join has already left, is
+    // licensed as soon as its Ready registers
+    h.op(OP_DECL_TK, 1, own_sid(1), 0x91e0f0010101ULL, 2, 29, 1);
+    listener_event(1, EV_NEW, DECL_READY);
+    CHECK(h.active(1) && h.active(0), "R2: a VID already joined on the wire gates nothing");
+
+    // R3: source 0 moves to VID 7: withdrawn, re-declared, Ready again; the
+    // licence waits for VID 7's own New (VID 2 stays: source 1 holds it)
+    h.op(OP_WDRW_TK, 0);
+    const size_t from = h.archive.size();
+    h.op(OP_DECL_TK, 0, own_sid(0), 0x91e0f0010100ULL, 7, 29, 1);
+    listener_event(0, EV_NEW, DECL_READY);
+    const bool held = h.lstn_reg(0) == DECL_READY && !h.active(0) && h.active(1);
+    const uint64_t rise7 = await_active(0, 400);
+    h.run_ms(5);
+    const int mv7 = mvrp_frame_with(7, EV_NEW, from);
+    CHECK(held && rise7 && mv7 >= 0 && rise7 > h.archive_accept[mv7],
+          "R3: a new VID waits for its own MVRP New");
+    CHECK(mvrp_frame_with(2, EV_LV, from) < 0 && h.active(1),
+          "R3: VID 2 stays declared for source 1");
+  }
+
+  void check_listener_vid_is_declared_on_the_wire() {
+    // R4: a sink settled on VID 7, which no source holds, declares it on the
+    // wire: byte-exact New, then JoinIn on the periodic cadence; its teardown,
+    // the VID's last user, withdraws it: byte-exact Lv
+    h.reset(); d->link_up_i = 1; h.idle(10);
+    h.op(OP_DECL_LS, 0, peer_sid(0), peer_da(0), 7, 0, 0, DECL_READY);
+    const auto exp_new = mrpdu_frame(false, {Msg{1, 2, false,
+                                           {Vec{false, 1, fv_vid(7), {EV_NEW}, {}}}}});
+    auto f = h.wait_frame(false, 400, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, false, 1, 7, EV_NEW);
+    });
+    CHECK(f == exp_new, "R4: DECLARE_LISTENER on VID 7 yields a byte-exact MVRP VID 7 New");
+    if (!f.empty() && f != exp_new) { dump("got", f); dump("exp", exp_new); }
+    const size_t base = h.archive.size();
+    h.run_ms(3300);
+    std::vector<uint32_t> joins;
+    for (size_t i = base; i < h.archive.size(); i++)
+      if (frame_has(h.archive[i], false, 1, 7, EV_JOININ)) joins.push_back(h.archive_ms[i]);
+    Gaps g;
+    CHECK(joins.size() >= 3 && spaced(joins, 900, 1500, g),
+          "R4: then JoinIn VID 7 on the periodic cadence (%zu x %u-%u ms)", joins.size(), g.lo, g.hi);
+    printf("JOIN listener vid7_joinin=%zu gaps=%u-%u\n", joins.size(), g.lo, g.hi);
+    h.sync();                              // clean slot: the Lv drains alone
+    h.op(OP_WDRW_LS, 0);
+    const auto exp_lv = mrpdu_frame(false, {Msg{1, 2, false,
+                                          {Vec{false, 1, fv_vid(7), {EV_LV}, {}}}}});
+    f = h.wait_frame(false, 400, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, false, 1, 7, EV_LV);
+    });
+    CHECK(f == exp_lv, "R4: WITHDRAW_LISTENER of the last user yields a byte-exact MVRP VID 7 Lv");
+    if (!f.empty() && f != exp_lv) { dump("got", f); dump("exp", exp_lv); }
+    CHECK(d->dbg_vid_active_o == 0, "R4: no VID membership remains");
+  }
+
+  // Q: issue #64, REQ-SRP-001. Milan v1.2 Table 4.3: joinTime 200 ms
+  // (180-240), periodictimer 1000 ms (900-1500), leavealltimer 10-15 s. Each
+  // captured MRPDU carries now_ms at its last byte; the spacing of the MRPDUs
+  // a timer paces is graded, never a DUT register.
+  struct Stamp { uint32_t ms; PFrame p; };
+  std::vector<Stamp> stamped(size_t first) const {
+    std::vector<Stamp> out;
+    for (size_t i = first; i < h.archive.size(); i++)
+      out.push_back(Stamp{h.archive_ms[i], parse_frame(h.archive[i])});
+    return out;
+  }
+  static bool carries(const PFrame& p, int type, uint64_t key, int ev) {
+    for (const PVec& v : p.vecs) {
+      if (v.type != type || v.ev.empty()) continue;
+      const uint64_t k = !p.msrp ? fv_u64(v.fv, 0, 2) : type == 4 ? v.fv[0] : fv_u64(v.fv, 0, 8);
+      if (k == key && (ev < 0 || v.ev[0] == ev)) return true;
+    }
+    return false;
+  }
+  static bool flagged(const PFrame& p) {
+    for (const PVec& v : p.vecs) if (v.la) return true;
+    return false;
+  }
+  // the smallest and largest consecutive spacing of a stamp series
+  struct Gaps { uint32_t lo = 0; uint32_t hi = 0; };
+  // every consecutive spacing of `ms` inside [lo, hi]; the extremes in `g`
+  static bool spaced(const std::vector<uint32_t>& ms, uint32_t lo, uint32_t hi, Gaps& g) {
+    bool ok = ms.size() >= 2;
+    g.lo = UINT32_MAX; g.hi = 0;
+    for (size_t i = 1; i < ms.size(); i++) {
+      const uint32_t gap = ms[i] - ms[i - 1];
+      g.lo = std::min(g.lo, gap); g.hi = std::max(g.hi, gap);
+      ok &= gap >= lo && gap <= hi;
+    }
+    return ok;
+  }
+
+  void check_mrp_timers_against_table_4_3() {
+    // Begin! at reset arms both leavealltimers (Table 10-5); the timebase
+    // restarts with it, so the arming instant is now_ms at reset release.
+    h.reset();
+    const uint32_t armed = d->now_ms_o;
+    d->link_up_i = 1; h.idle(10);
+    h.sync();
+    const size_t base = h.archive.size();
+    auto r = h.op(OP_DECL_TK, 0, own_sid(0), 0x91e0f0010100ULL, 2, 29, 1);
+    CHECK(r.got && r.status == ST_OK, "Q: DECLARE_TALKER source 0");
+    until_ms(armed + 9500);               // before any own LeaveAll can fire
+    const auto early = stamped(base);
+    const uint32_t ladder_end = check_join_time(early);
+    check_periodic_time(early, ladder_end);
+    until_ms(armed + 52000);
+    check_leaveall_time(base, armed);
+    check_leaveall_after_peer(base);
+  }
+
+  // Q1 joinTime: the Table 10-3 fresh-declaration ladder New, New, JoinMt is
+  // one message per tx!, i.e. per T-MRP-JOIN tick (clean slot, no periodic!).
+  // Returns the ladder's last stamp.
+  uint32_t check_join_time(const std::vector<Stamp>& early) {
+    std::vector<uint32_t> ladder;
+    std::vector<int> events;
+    for (const Stamp& s : early) {
+      if (!s.p.msrp || ladder.size() == 3) continue;
+      for (const PVec& v : s.p.vecs)
+        if (v.type == 1 && fv_u64(v.fv, 0, 8) == own_sid(0) && !v.ev.empty()) {
+          ladder.push_back(s.ms); events.push_back(v.ev[0]); break;
+        }
+    }
+    Gaps g;
+    const bool join_ok = ladder.size() == 3 && events == std::vector<int>{EV_NEW, EV_NEW, EV_JOINMT}
+                      && spaced(ladder, 180, 240, g);
+    CHECK(join_ok, "Q1: join-paced MRPDUs of one declaration are 180-240 ms apart "
+          "(%zu PDUs, %u-%u ms)", ladder.size(), g.lo, g.hi);
+    printf("TIMER join ladder_ms=%u,%u,%u gaps=%u-%u\n", ladder.size() > 0 ? ladder[0] : 0,
+           ladder.size() > 1 ? ladder[1] : 0, ladder.size() > 2 ? ladder[2] : 0, g.lo, g.hi);
+    return ladder.empty() ? 0 : ladder.back();
+  }
+
+  // Q2 periodictimer: a quiet declared attribute re-joins on each periodic!
+  // (QA -> AA, then JoinMt on the next tx!); the Domain and the MVRP VID
+  // re-join JoinIn on the same timer
+  void check_periodic_time(const std::vector<Stamp>& early, uint32_t after) {
+    std::vector<uint32_t> tk;
+    std::vector<uint32_t> dom;
+    std::vector<uint32_t> vid;
+    for (const Stamp& s : early) {
+      if (s.ms <= after) continue;
+      if (s.p.msrp && carries(s.p, 1, own_sid(0), EV_JOINMT)) tk.push_back(s.ms);
+      if (s.p.msrp && carries(s.p, 4, 6, EV_JOININ)) dom.push_back(s.ms);
+      if (!s.p.msrp && carries(s.p, 1, 2, EV_JOININ)) vid.push_back(s.ms);
+    }
+    Gaps gt;
+    Gaps gd;
+    Gaps gv;
+    const bool tk_ok = tk.size() >= 5 && spaced(tk, 900, 1500, gt);
+    const bool dom_ok = dom.size() >= 5 && spaced(dom, 900, 1500, gd);
+    const bool vid_ok = vid.size() >= 5 && spaced(vid, 900, 1500, gv);
+    CHECK(tk_ok && dom_ok && vid_ok,
+          "Q2: periodic! re-joins recur every 900-1500 ms (Talker %zu x %u-%u, Domain %zu x %u-%u, "
+          "VID %zu x %u-%u)", tk.size(), gt.lo, gt.hi, dom.size(), gd.lo, gd.hi, vid.size(), gv.lo, gv.hi);
+    printf("TIMER periodic talker=%zu:%u-%u domain=%zu:%u-%u vid=%zu:%u-%u\n",
+           tk.size(), gt.lo, gt.hi, dom.size(), gd.lo, gd.hi, vid.size(), gv.lo, gv.hi);
+  }
+
+  // Q3 leavealltimer: no peer LeaveAll in the window. The first own MSRP and
+  // MVRP LeaveAll no earlier than 10 s after arming, then 10-15 s apart
+  void check_leaveall_time(size_t base, uint32_t armed) {
+    std::vector<uint32_t> la_msrp;
+    std::vector<uint32_t> la_mvrp;
+    for (const Stamp& s : stamped(base)) {
+      if (!flagged(s.p)) continue;
+      (s.p.msrp ? la_msrp : la_mvrp).push_back(s.ms);
+    }
+    const bool quiet = h.peer_la_times.empty() && h.peer_mvrp_times.empty();
+    const bool first_ok = !la_msrp.empty() && !la_mvrp.empty()
+                       && la_msrp[0] >= armed + 10000 && la_mvrp[0] >= armed + 10000;
+    CHECK(quiet && first_ok, "Q3: the first own MSRP and MVRP LeaveAll come 10 s or more after "
+          "arming (at +%d / +%d ms)", la_msrp.empty() ? -1 : static_cast<int>(la_msrp[0] - armed),
+          la_mvrp.empty() ? -1 : static_cast<int>(la_mvrp[0] - armed));
+    Gaps gm;
+    Gaps gv;
+    const bool msrp_ok = la_msrp.size() >= 3 && spaced(la_msrp, 10000, 15000, gm);
+    const bool mvrp_ok = la_mvrp.size() >= 3 && spaced(la_mvrp, 10000, 15000, gv);
+    CHECK(quiet && msrp_ok && mvrp_ok,
+          "Q3: consecutive own LeaveAlls are 10-15 s apart (MSRP %zu x %u-%u, MVRP %zu x %u-%u)",
+          la_msrp.size(), gm.lo, gm.hi, la_mvrp.size(), gv.lo, gv.hi);
+    printf("TIMER leaveall first_msrp=%d first_mvrp=%d msrp=%zu:%u-%u mvrp=%zu:%u-%u\n",
+           la_msrp.empty() ? -1 : static_cast<int>(la_msrp[0] - armed),
+           la_mvrp.empty() ? -1 : static_cast<int>(la_mvrp[0] - armed),
+           la_msrp.size(), gm.lo, gm.hi, la_mvrp.size(), gv.lo, gv.hi);
+  }
+
+  // Q4 (issue #108): a peer LeaveAll restarts the timer, so the next own
+  // LeaveAll of that application comes 10 s or more after the peer's
+  void check_leaveall_after_peer(size_t base) {
+    for (bool msrp : {true, false}) {
+      // 5 s after this application's latest own LeaveAll, mid-cycle
+      uint32_t last_own = 0;
+      for (const Stamp& s : stamped(base))
+        if (s.p.msrp == msrp && flagged(s.p)) last_own = s.ms;
+      until_ms(std::max(d->now_ms_o, last_own + 5000));
+      const size_t from = h.archive.size();
+      if (msrp) h.feed(mrpdu_body(true, {la_only(4, 4, false)}), true);
+      else      h.feed(peer_mvrp_leaveall(2), false);
+      const std::vector<uint32_t>& lanes = msrp ? h.peer_la_times : h.peer_mvrp_times;
+      const uint32_t peer = lanes.empty() ? d->now_ms_o : lanes.back();
+      until_ms(peer + 15500);
+      uint32_t next = 0;
+      for (const Stamp& s : stamped(from))
+        if (s.p.msrp == msrp && flagged(s.p)) { next = s.ms; break; }
+      CHECK(lanes.size() == 1 && next >= peer + 10000 && next <= peer + 15000 + 260,
+            "Q4: after a peer %s LeaveAll the next own one comes 10-15 s later (at +%d ms)",
+            msrp ? "MSRP" : "MVRP", next ? static_cast<int>(next - peer) : -1);
+      printf("TIMER after_peer %s next_own=+%d\n", msrp ? "msrp" : "mvrp",
+             next ? static_cast<int>(next - peer) : -1);
+    }
   }
 
   void bring_up_the_port() {
@@ -1457,10 +2182,11 @@ class SrpTopHarness {
              true);
       bool ready = false;
       int cnt = 0;
-      // ~0.9-0.95 s per cycle (20 polls, minus feed/parse overhead). The
-      // 18/4 pins include the PRNG-scheduled own-LeaveAll burst landing
-      // in cycle 4; an upstream timing edit that moves that burst across
-      // a cycle boundary legitimately re-measures these two pins.
+      // ~0.9-0.95 s per cycle (20 polls, minus feed/parse overhead). Each
+      // peer LeaveAll restarts our leavealltimer (Table 10-5 rLA!, issue
+      // #108), so no own-LeaveAll burst lands in these cycles any more:
+      // the 17/4 pins are the peer-driven exchange alone (was 18/4 with
+      // the burst's one frame). P1 proves the hold-off over 20 cycles.
       for (int slice = 0; slice < 20; slice++) {
         auto f = h.wait_any(true, 50);
         if (f.empty()) continue;
@@ -1475,7 +2201,7 @@ class SrpTopHarness {
       if (cnt > worst_cycle) worst_cycle = cnt;
       if (ready) ready_cycles++;
     }
-    CHECK(total <= 18, "F4: six LeaveAll cycles emit a bounded exchange");
+    CHECK(total <= 17, "F4: six LeaveAll cycles emit a bounded exchange");
     CHECK(worst_cycle <= 4, "F4: no single cycle approaches the 11-PDU storm");
     CHECK(ready_cycles == 6, "F4: every cycle re-declares Listener Ready");
     CHECK(h.tk_reg(0) == 1, "F4: talker registration survives the cadence");
@@ -1655,6 +2381,11 @@ class SrpTopHarness {
         for (const auto& x : h.samples) cold_low &= !(x.grants & mask);
         CHECK(r.got && r.status == ST_OK && cold_low,
               "H: cold refusal never grants source %d phase %u", s, phase);
+        // the declaration's MVRP join of VID 2 leaves at the first tick; the
+        // licence waits for it (Milan 4.3.2, issue #65), so every case below
+        // starts after it
+        h.run_ms(250);
+        CHECK(vid_joined(2), "H: VID 2's MVRP join has left source %d phase %u", s, phase);
         declare(224); h.idle(64);
         h.feed(mrpdu_body(true, {Msg{3, 8, true,
           {Vec{false, 1, fv_sid(sid), {EV_NEW}, {DECL_READY}}}}}), true);
@@ -1784,7 +2515,8 @@ class SrpTopHarness {
     h.reset(); d->link_up_i = 1; h.idle(40);
     auto rl = h.op(OP_DECL_TK, 0, cross_sid(0), cross_da(0), 2, F_LO, 1);
     auto rh = h.op(OP_DECL_TK, hi, cross_sid(hi), cross_da(hi), 2, F_HI, 1);
-    h.idle(64);
+    h.run_ms(250);                        // VID 2's MVRP join leaves first (#65)
+    CHECK(vid_joined(2), "I: VID 2's MVRP join has left (source %d)", hi);
     h.feed(mrpdu_body(true, {Msg{3, 8, true,
       {Vec{false, 1, fv_sid(cross_sid(0)), {EV_NEW}, {DECL_READY}},
        Vec{false, 1, fv_sid(cross_sid(hi)), {EV_NEW}, {DECL_READY}}}}}), true);
@@ -1985,8 +2717,9 @@ int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   SrpTopHarness harness;
   const char* group = argc > 1 ? argv[1] : "";
-  if (*group && strcmp(group,"phases") && strcmp(group,"edge")
+  if (*group && strcmp(group,"armdelay") && strcmp(group,"phases") && strcmp(group,"edge")
       && strcmp(group,"peer") && strcmp(group,"congestion")
-      && strcmp(group,"guards")) return 2;
+      && strcmp(group,"guards") && strcmp(group,"restart")
+      && strcmp(group,"timers") && strcmp(group,"join")) return 2;
   return harness.run(group);
 }

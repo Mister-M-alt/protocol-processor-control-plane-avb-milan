@@ -79,6 +79,7 @@ class DynStateHarness {
   void tick();
   void reset();
   void wr(int sel, uint16_t index, uint64_t val);
+  bool wr_changed(int sel, uint16_t index, uint64_t val);
   uint64_t rd(uint32_t rgn, int sel, uint16_t index);
 
   void read_everything_invalid_out_of_reset();
@@ -89,6 +90,7 @@ class DynStateHarness {
   void publish_the_store_on_the_live_face();
   void keep_selector_six_retired();
   void leave_the_store_untouched_by_reads();
+  void qualify_a_change_by_value_and_validity();
 
   VKL_aecp_dyn_state* d = nullptr;
   long checks = 0;
@@ -117,6 +119,28 @@ void DynStateHarness::wr(int sel, uint16_t index, uint64_t val) {
   tick();
   d->st_req_i = 0; d->st_we_i = 0;
   d->eval();
+}
+
+//! the same write, reporting whether `wr_chg_o` was high in the cycle the
+//! store accepted it (the only cycle it may be)
+bool DynStateHarness::wr_changed(int sel, uint16_t index, uint64_t val) {
+  d->st_addr_i    = addr(RGN_DYN, sel);
+  d->desc_index_i = index;
+  d->st_wdata_i   = val;
+  d->st_we_i      = 1;
+  d->st_req_i     = 1;
+  bool changed = false;
+  int guard = kHandshakeGuard;
+  while (guard-- > 0) {
+    d->eval();
+    if (d->st_ready_o) { changed = d->wr_chg_o != 0; break; }
+    tick();
+  }
+  tick();
+  d->st_req_i = 0; d->st_we_i = 0;
+  d->eval();
+  if (d->wr_chg_o) changed = false;        // never outside an acceptance
+  return changed;
 }
 
 uint64_t DynStateHarness::rd(uint32_t rgn, int sel, uint16_t index) {
@@ -204,7 +228,7 @@ void DynStateHarness::refuse_an_index_the_shape_lacks() {
         "D: the out-of-range write ALIASED onto row 0");
 }
 
-// ---- E: dirty marks the persisted set, and only it ---------------------
+// ---- E: the diagnostic dirty marks the persisted set, and only it -----
 // Milan 5.3.13 & friends make these fields non-volatile; 5.3.12 makes the
 // IDENTIFY value volatile. Raising dirty for IDENTIFY would commit flash
 // every time a front panel blinked.
@@ -328,6 +352,47 @@ void DynStateHarness::leave_the_store_untouched_by_reads() {
   CHECK(d->cur_config_o == 3, "G: a read changed current_configuration");
 }
 
+// ---- H: the change qualifier the D3 writer triggers on -----------------
+// `wr_chg_o` marks an accepted write that changes a persisted row's
+// projection {value, valid}: DR2b suppresses only a PROVEN unchanged one.
+// A row becoming valid at its reset value is a change; an identical
+// rewrite is not; a value is compared within its field's width only;
+// IDENTIFY, an index past the shape and the retired selector never are.
+void DynStateHarness::qualify_a_change_by_value_and_validity() {
+  reset();
+  CHECK(wr_changed(SEL_CFG, 0, 0),
+        "H: configuration 0 on the unset row is a change (valid 0 -> 1)");
+  CHECK(!wr_changed(SEL_CFG, 0, 0),
+        "H: the identical configuration rewrite is not a change");
+  CHECK(wr_changed(SEL_CFG, 0, 1), "H: configuration 0 -> 1 is a change");
+  CHECK(!wr_changed(SEL_CFG, 0, 0xFFFF0001ull),
+        "H: bits above the 16-bit configuration field change nothing");
+  CHECK(wr_changed(SEL_RATE, 0, 48000), "H: a first sampling rate is a change");
+  CHECK(!wr_changed(SEL_RATE, 0, 48000), "H: the same rate again is not");
+  CHECK(wr_changed(SEL_RATE, 0, 96000), "H: another rate is");
+  CHECK(wr_changed(SEL_CLKSRC, 0, 0),
+        "H: clock source 0 on the unset row is a change");
+  CHECK(wr_changed(SEL_FMTIN, 0, 0x0205022000406000ull)
+            && !wr_changed(SEL_FMTIN, 0, 0x0205022000406000ull)
+            && wr_changed(SEL_FMTIN, 0, 0x0205022000406001ull),
+        "H: a format's change is judged over all 64 bits");
+  CHECK(wr_changed(SEL_FMTOUT, NSO - 1, 0x0205022002006000ull),
+        "H: the last output format row is qualified by its own row");
+  CHECK(wr_changed(SEL_PTOFF, 0, 0) && !wr_changed(SEL_PTOFF, 0, 0)
+            && !wr_changed(SEL_PTOFF, 0, 0xABCD000000000000ull),
+        "H: a presentation offset is judged over its 32 bits");
+  if (NSO >= 2) {
+    CHECK(wr_changed(SEL_PTOFF, 1, 0),
+          "H: row 1 is unset even though row 0 is valid at the same value");
+  }
+  CHECK(!wr_changed(SEL_IDENT, 0, 255) && !wr_changed(SEL_IDENT, 0, 0),
+        "H: IDENTIFY is never a persisted change");
+  CHECK(!wr_changed(SEL_FMTIN, static_cast<uint16_t>(NSI + 4), 1),
+        "H: an index past the shape is dropped, never a change");
+  CHECK(!wr_changed(SEL_RETIRED, 0, 1),
+        "H: the retired selector is never a change");
+}
+
 int DynStateHarness::run() {
   const milan::tb::Model<VKL_aecp_dyn_state> model;
   d = model.get();                  // the file's existing observing pointer
@@ -343,6 +408,7 @@ int DynStateHarness::run() {
   publish_the_store_on_the_live_face();
   keep_selector_six_retired();
   leave_the_store_untouched_by_reads();
+  qualify_a_change_by_value_and_validity();
 
   //! NOT the canonical tally shape: this binary is ONE SHAPE of the suite,
   //! and run_suites.sh takes the LAST matching line, so a per-shape tally

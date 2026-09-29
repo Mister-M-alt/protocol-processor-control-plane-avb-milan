@@ -14,7 +14,10 @@
 //                (DIV_US 2 x DIV_MS 50), which keeps the 89-slot deadline
 //                sweep (91 cycles) inside the ms tick while T-ADP-DELAY(-
 //                START), T-ADP-ADV, T-ACMP-DELAY, T-MRP-JOIN and the NVM
-//                debounce all run for real.
+//                debounce all run for real. The restore deadlines are not
+//                compressed that way: the top derives them from CLK_HZ_P,
+//                set here to 1,000,001 Hz, and no override stands in for
+//                the derivation.
 //
 //                The one decision that matters: the talker source shape is
 //                tied HERE (all 8 sources enabled, stream_id k =
@@ -74,6 +77,11 @@ module pp_top_wrap (
     // AECP pop face (kept live: an integrator may still observe/drain it)
     output logic        aecp_txn_valid_o,
     input  wire         aecp_txn_ready_i,
+    //! the optional external drain's slot return, 0 but where a case steals
+    //! a record (D3O7), and the RX slot of the head record it pops
+    input  wire         aecp_rxs_free_i,
+    input  wire  [1:0]  aecp_rxs_free_slot_i,
+    output logic [2:0]  aecp_txn_slot_o,
 
     // GET_COUNTERS read face (06 §6.6) — the C++ harness plays the
     // integrator's counter store behind it, so the counter VALUES this suite
@@ -166,8 +174,13 @@ module pp_top_wrap (
     output logic        restore_done_o,
     output logic        restore_fail_o,
     output logic        restore_blank_o,
+    output logic        restore_closed_o,
+    output logic        restore_rb_o,
+    output logic  [2:0] rs_cause_o,
+    output logic  [1:0] restore_cause_o,
     output logic        nvm_alarm_o,
     output logic  [7:0] nvm_unflushed_o,
+    output logic        d3_unflushed_o,
     output logic        nvm_dev_req_o,
     input  wire         nvm_dev_gnt_i,
     output logic [1:0]  nvm_dev_op_o,
@@ -255,7 +268,7 @@ module pp_top_wrap (
     output logic        dbg_lstn_busy_o,
     //! the binding manager's OWN terminal (KL_acmp_nvm_shadow restore_done_o),
     //! which the top's restore_done_o follows once the listener admission
-    //! gate releases
+    //! gate releases and the D3 walk is done
     output logic        dbg_walk_done_o,
     //! the listener admission gate's release (KL_pp_acmp_lsn_admit
     //! released_o), and the listener writing a preload record (X_PRELOAD)
@@ -329,12 +342,86 @@ module pp_top_wrap (
     output logic [15:0] dbg_dyn_writes_o,
     output logic        aecp_nvm_stb_o,
     output logic  [7:0] aecp_nvm_mark_o,
-    output logic        dbg_notify_enq_o
+    output logic        dbg_notify_enq_o,
+
+    //! the D3 writer inside the AECP engine (KL_aecp_nvm_writer), observed
+    //! for section D3: its ownership of the state bus and dispatch, its
+    //! restore verdicts, and whether the engine has a command in flight
+    output logic        dbg_d3_own_o,
+    output logic        dbg_d3_done_o,
+    output logic        dbg_d3_fail_o,
+    output logic        dbg_d3_closed_o,
+    output logic  [2:0] dbg_d3_cause_o,
+    output logic        dbg_aecp_busy_o,
+    //! the AECP dispatch queue's head is present (before the scoreboard
+    //! admission that aecp_txn_valid_o is gated by)
+    output logic        dbg_aecp_head_o,
+    //! the arbiter's manager-1 grant and done (the D3 writer's own), and
+    //! the writer's per-record dirty vector (27 records at this shape)
+    output logic        dbg_d3_mgnt_o,
+    output logic        dbg_d3_mdone_o,
+    output logic        dbg_d3_merr_o,
+    output logic [26:0] dbg_d3_dirty_o,
+    //! the writer is latching a record over the state bus in service
+    output logic        dbg_d3_latch_o,
+    //! the dynamic-state rows the fabric does not publish with their valid
+    //! flag (configuration, sampling rate and clock source, row 0), for the
+    //! D3 cleared-first and restored checks; and the writer's pass-1 counts
+    output logic [15:0] dbg_dyn_cfg_o,
+    output logic        dbg_dyn_cfg_v_o,
+    output logic [31:0] dbg_dyn_rate_o,
+    output logic        dbg_dyn_rate_v_o,
+    output logic [15:0] dbg_dyn_clk_o,
+    output logic        dbg_dyn_clk_v_o,
+    output logic  [7:0] dbg_d3_applied_o,
+    output logic  [7:0] dbg_d3_refused_o,
+    output logic  [7:0] dbg_d3_blank_o,
+    //! the ADP engine's enable input: the requested enable once the
+    //! restore released it
+    output logic        dbg_adp_enable_o,
+    //! the D3 roll-back strobe to both stores
+    output logic        dbg_d3_rb_rst_o,
+    //! the volatile set D3R1 populates before a saved-set cycle: the ENTITY
+    //! lock and the IDENTIFY value, the top's own outputs
+    output logic        dbg_lock_held_o,
+    output logic  [7:0] dbg_identify_o,
+    //! the two restore walks' no-progress counters (the D3 writer's wd_r,
+    //! the binding manager's rs_wd_r): the DR3a measurement reads their
+    //! maxima, the longest single wait each walk met
+    output logic [31:0] dbg_d3_wd_o,
+    output logic [31:0] dbg_bind_wd_o,
+    //! the NVM arbiter is draining an abandoned READ (a restore deadline's)
+    output logic        dbg_nvm_drain_o,
+    //! the binding manager's one-cycle READ strobe and its abort (manager 0
+    //! of the arbiter), the arbiter's owner (0 none, 1 manager 0, 2 manager
+    //! 1) and the port's busy: D3R18 lands the strobe on agg_o's first clock
+    output logic        dbg_bind_req_o,
+    output logic        dbg_bind_abort_o,
+    output logic  [1:0] dbg_nvm_own_o,
+    output logic        dbg_nvm_busy_o,
+    //! the binding manager holds a restore byte (its nvm_rvalid_i), and the
+    //! D3 walk proves the image this cycle (the writer's proof_w): D3R19 to
+    //! D3R21 place them against the aggregate bound
+    output logic        dbg_bind_rvalid_o,
+    output logic        dbg_d3_proof_o,
+    //! the D3 writer's aggregate count (agg_r, 0 in the accepted start's own
+    //! cycle) and its fired level (agg_o): a case that must land an event on
+    //! the bound's own cycle reads them to prove it did
+    output logic [31:0] dbg_d3_agg_o,
+    output logic        dbg_d3_agg_fired_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
   localparam int unsigned TB_DIV_US_C = 2;
   localparam int unsigned TB_DIV_MS_C = 50;
+  //! the nominal P-CLK-HZ the saved-state times are DERIVED from (the
+  //! prescaler above is overridden, so the timebase does not use it). A
+  //! 1 MHz clock, the parent D3 model's, makes the ratified 20 ms per-wait
+  //! deadline about 20,000 clocks and the 1,000 ms aggregate 50 of them;
+  //! the extra hertz is odd on purpose: ceil(CLK_HZ_P x t / 1000) then
+  //! differs by one clock from a floor or from a count of 1 ms ticks, so
+  //! the sections that time them grade the top's own derivation
+  localparam int unsigned TB_CLK_HZ_C = 1_000_001;
 
   // talker source shape (see banner)
   logic [7:0]       cfg_src_en_w;
@@ -349,15 +436,18 @@ module pp_top_wrap (
 
   // AECP pop face: record lane observed, payload faces DEFINED-idle
   logic [pp_pkg::PP_TXN_W_C-1:0] aecp_txn_nc_w;
+  pp_pkg::pp_txn_t aecp_txn_rec_w;
+  assign aecp_txn_rec_w  = pp_pkg::pp_txn_t'(aecp_txn_nc_w);
+  assign aecp_txn_slot_o = aecp_txn_rec_w.rx_slot;
   logic [7:0]                    aecp_rd_data_nc_w;
   logic [9:0]                    aecp_slot_len_nc_w;
-  logic                          aecp_lock_held_nc_w;
 
   protocol_processor_top #(
 `ifdef PP_TOP_SRP_DOM_DEF_VID
       //! the second build's verification-only fixture (see the banner)
       .SRP_DOM_DEF_VID_P (`PP_TOP_SRP_DOM_DEF_VID),
 `endif
+      .CLK_HZ_P     (TB_CLK_HZ_C),
       .TIM_DIV_US_P (TB_DIV_US_C),
       .TIM_DIV_MS_P (TB_DIV_MS_C),
       //! TIM compression for the registration/lock deadlines, same reason
@@ -366,11 +456,10 @@ module pp_top_wrap (
       //! million compressed cycles for them
       .REG_TL_TIMEOUT_MS_P (400),
       .LOCK_TIMEOUT_MS_P   (400),
-      //! the boot restore walk's read deadline, in clocks. The product
-      //! default is 20 ms of P-CLK-HZ, two million steps of this bench; a
-      //! record read of its device model takes well under a hundred, so
-      //! section BW3 sees the deadline expire at a hundredth of that
-      .NVM_RS_TMO_CYC_P    (20_000),
+      //! NVM_RS_TMO_CYC_P, NVM_RS_AGG_CYC_P and NVM_RETRY_BACKOFF_CYC_P are
+      //! NOT overridden: the top derives 20,001, 1,000,001 and 500,001
+      //! clocks from TB_CLK_HZ_C, and sections D3R8, D3R13 and D3S10 time
+      //! them
       .TROM_HEX_P   ("ltn_rom.hex"),
       .UCODE_HEX_P  ("ucode.hex")
   ) u_dut (
@@ -414,13 +503,13 @@ module pp_top_wrap (
       .aecp_rxs_rd_en_i      (1'b0),
       .aecp_rxs_rd_data_o    (aecp_rd_data_nc_w),
       .aecp_rxs_slot_len_o   (aecp_slot_len_nc_w),
-      .aecp_rxs_free_i       (1'b0),
-      .aecp_rxs_free_slot_i  (2'd0),
+      .aecp_rxs_free_i       (aecp_rxs_free_i),
+      .aecp_rxs_free_slot_i  (aecp_rxs_free_slot_i),
       //! Dynamic state is verified through AECP response traffic here. Keep
       //! every unused publication explicit so newly added state cannot leave
       //! a silent harness integration gap.
       .aecp_cur_config_o     (),
-      .aecp_identify_o       (),
+      .aecp_identify_o       (dbg_identify_o),
       .aecp_clk_src_index_o  (),
       .aecp_strm_started_o   (aecp_strm_started_o),
       .aecp_pt_offset_o      (aecp_pt_offset_o),
@@ -433,7 +522,7 @@ module pp_top_wrap (
       .aecp_name_wr_o        (aecp_name_wr_o),
       .aecp_nvm_stb_o        (aecp_nvm_stb_o),
       .aecp_nvm_mark_o       (aecp_nvm_mark_o),
-      .aecp_lock_held_o      (aecp_lock_held_nc_w),
+      .aecp_lock_held_o      (dbg_lock_held_o),
       .ctr_req_o             (ctr_req_o),
       .ctr_desc_type_o       (ctr_desc_type_o),
       .ctr_desc_index_o      (ctr_desc_index_o),
@@ -503,8 +592,13 @@ module pp_top_wrap (
       .restore_done_o        (restore_done_o),
       .restore_fail_o        (restore_fail_o),
       .restore_blank_o       (restore_blank_o),
+      .restore_closed_o      (restore_closed_o),
+      .restore_rb_o          (restore_rb_o),
+      .rs_cause_o            (rs_cause_o),
+      .restore_cause_o       (restore_cause_o),
       .nvm_alarm_o           (nvm_alarm_o),
       .nvm_unflushed_o       (nvm_unflushed_o),
+      .d3_unflushed_o        (d3_unflushed_o),
       .nvm_dev_req_o         (nvm_dev_req_o),
       .nvm_dev_gnt_i         (nvm_dev_gnt_i),
       .nvm_dev_op_o          (nvm_dev_op_o),
@@ -607,6 +701,40 @@ module pp_top_wrap (
   assign dbg_name_live_we_o = u_dut.u_aecp.u_store.name_we_w
                               && u_dut.u_aecp.u_store.st_ready_o;
   assign dbg_notify_enq_o = u_dut.aecp_eff_notify_stb_nc_w;
+  assign dbg_d3_own_o     = u_dut.u_aecp.d3_own_w;
+  assign dbg_d3_done_o    = u_dut.d3_done_w;
+  assign dbg_d3_fail_o    = u_dut.d3_fail_w;
+  assign dbg_d3_closed_o  = u_dut.d3_closed_w;
+  assign dbg_d3_cause_o   = u_dut.rs_cause_o;
+  assign dbg_aecp_busy_o  = u_dut.aecp_dbg_busy_nc_w;
+  assign dbg_aecp_head_o  = u_dut.aecp_txn_valid_w;
+  assign dbg_d3_mgnt_o    = u_dut.d3_m_gnt_w;
+  assign dbg_d3_mdone_o   = u_dut.d3_m_done_w;
+  assign dbg_d3_merr_o    = u_dut.d3_m_err_w;
+  assign dbg_d3_dirty_o   = u_dut.u_aecp.u_d3.dirty_r;
+  assign dbg_d3_latch_o   = u_dut.u_aecp.u_d3.latch_w;
+  assign dbg_dyn_cfg_o    = u_dut.u_aecp.u_dyn.cfg_r;
+  assign dbg_dyn_cfg_v_o  = u_dut.u_aecp.u_dyn.cfg_v_r;
+  assign dbg_dyn_rate_o   = u_dut.u_aecp.u_dyn.rate_r[0];
+  assign dbg_dyn_rate_v_o = u_dut.u_aecp.u_dyn.rate_v_r[0];
+  assign dbg_dyn_clk_o    = u_dut.u_aecp.u_dyn.clksrc_r[0];
+  assign dbg_dyn_clk_v_o  = u_dut.u_aecp.u_dyn.clksrc_v_r[0];
+  assign dbg_d3_applied_o = u_dut.u_aecp.u_d3.n_app_r;
+  assign dbg_d3_refused_o = u_dut.u_aecp.u_d3.n_ref_r;
+  assign dbg_d3_blank_o   = u_dut.u_aecp.u_d3.n_blank_r;
+  assign dbg_adp_enable_o = u_dut.u_adp.entity_enable_i;
+  assign dbg_d3_rb_rst_o  = u_dut.u_aecp.d3_rb_rst_w;
+  assign dbg_d3_wd_o      = u_dut.u_aecp.u_d3.wd_r;
+  assign dbg_bind_wd_o    = u_dut.u_nvm_shadow.rs_wd_r;
+  assign dbg_nvm_drain_o  = u_dut.nvm_drain_nc_w;
+  assign dbg_bind_req_o   = u_dut.nvm_req_w;
+  assign dbg_bind_abort_o = u_dut.nvm_abort_w;
+  assign dbg_nvm_own_o    = 2'(u_dut.u_nvm_arb.own_r);
+  assign dbg_nvm_busy_o   = u_dut.np_busy_w;
+  assign dbg_bind_rvalid_o = u_dut.nvm_rvalid_w;
+  assign dbg_d3_proof_o   = u_dut.u_aecp.u_d3.proof_w;
+  assign dbg_d3_agg_o     = u_dut.u_aecp.u_d3.agg_r;
+  assign dbg_d3_agg_fired_o = u_dut.d3_agg_w;
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin

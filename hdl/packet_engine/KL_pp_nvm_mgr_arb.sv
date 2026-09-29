@@ -11,11 +11,11 @@
 //  Description : Two record managers in front of ONE KL_pp_nvm_port. The
 //                port has one manager face and serves one operation at a
 //                time; this block puts the binding manager
-//                (KL_acmp_nvm_shadow, manager 0) and a second record writer
-//                (manager 1, the saved-state writer of the integrating
-//                platform's contract; tied idle until it lands) in front of
-//                it, so the device face keeps exactly one sequential
-//                initiator and the backend sees nothing new.
+//                (KL_acmp_nvm_shadow, manager 0) and the processor's D3
+//                saved-state writer (KL_aecp_nvm_writer inside
+//                KL_aecp_engine, manager 1; parent D3 contract §3 rule 5,
+//                §6.4) in front of it, so the device face keeps exactly one
+//                sequential initiator and the backend sees nothing new.
 //
 //                OWNERSHIP IS PER OPERATION. The manager whose request the
 //                port accepted owns every data phase and the done or err
@@ -38,8 +38,8 @@
 //                AN ABANDONED READ IS DRAINED, NEVER HANDED ON. The port
 //                answers untagged: its bytes and its done or err name no
 //                operation. So when the manager that owns a READ abandons it
-//                (m0_abort_i, the binding walk's deadline; m1_abort_i,
-//                manager 1's), this block keeps that operation as its OWN: it
+//                (m0_abort_i, the binding walk's deadline; m1_abort_i, the
+//                D3 walk's), this block keeps that operation as its OWN: it
 //                holds rready so the port can move every late byte, discards
 //                them, swallows the done or err that ends it, and keeps both
 //                managers off the port until then. A late response can only
@@ -52,6 +52,17 @@
 //                port's own open recovery contract (processor issue #15).
 //                Only reads are abandoned: an abort presented while a WRITE
 //                is owned is ignored, and a write stream is never cut here.
+//
+//                THE ISSUE CYCLE TOO. An abort presented together with a
+//                READ strobe, in the cycle this block issues it (the owner
+//                still O_NONE), arms the drain in that cycle, for either
+//                manager: that READ is abandoned from its first cycle, so no
+//                manager's timing can lose the abort. The binding walk meets
+//                it: its strobe is registered, so it is out in its first
+//                H_RS_STREAM cycle, where no byte can be in hand yet, and the
+//                D3 writer's aggregate deadline (rs_agg_i) can reach it
+//                there. The D3 writer itself never presents both (its
+//                request is W_RQ's or the service's, its abort W_RD's).
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -73,9 +84,9 @@ module KL_pp_nvm_mgr_arb (
     output logic       m0_done_o,        //! its operation completed
     output logic       m0_err_o,         //! its operation failed
     output logic [1:0] m0_err_cause_o,   //! the port's cause with m0_err_o
-    input  wire        m0_abort_i,       //! abandon the READ it owns: drain it
+    input  wire        m0_abort_i,       //! abandon the READ it owns or strobes now: drain it
 
-    //! ---- manager 1: a second record writer (request held until granted) --
+    //! ---- manager 1: the D3 writer (request held until granted) ------------
     input  wire        m1_req_i,         //! op request, held until m1_gnt_o
     input  wire        m1_we_i,          //! 1 = commit, 0 = restore
     input  wire [7:0]  m1_rid_i,         //! record id
@@ -89,7 +100,7 @@ module KL_pp_nvm_mgr_arb (
     output logic       m1_done_o,        //! its operation completed
     output logic       m1_err_o,         //! its operation failed
     output logic [1:0] m1_err_cause_o,   //! the port's cause with m1_err_o
-    input  wire        m1_abort_i,       //! abandon the READ it owns: drain it
+    input  wire        m1_abort_i,       //! abandon the READ it owns or strobes now: drain it
 
     //! ---- the port's manager face (KL_pp_nvm_port) --------------------------
     output logic       p_req_o,          //! op request (port idle only)
@@ -139,15 +150,21 @@ module KL_pp_nvm_mgr_arb (
     end
   end
 
-  //! the drain starts on its owner's abort of a READ still open and ends
-  //! with that operation's own done or err, never on time
+  //! the drain starts on a manager's abort of the READ it owns, or of the
+  //! READ it strobes in the cycle it is issued (the owner still O_NONE), and
+  //! ends with that operation's own done or err, never on time
+  logic arm0_w, arm1_w;
+  assign arm0_w = (iss0_w && !m0_we_i && m0_abort_i)
+                  || ((own_r == O_M0) && !we_r && m0_abort_i);
+  assign arm1_w = (iss1_w && !m1_we_i && m1_abort_i)
+                  || ((own_r == O_M1) && !we_r && m1_abort_i);
+
   always_ff @(posedge clk_i) begin : drain_ff
     if (!rst_n) begin
       drain_r <= 1'b0;
     end else if (end_w) begin
       drain_r <= 1'b0;
-    end else if (!we_r && (((own_r == O_M0) && m0_abort_i)
-                           || ((own_r == O_M1) && m1_abort_i))) begin
+    end else if (arm0_w || arm1_w) begin
       drain_r <= 1'b1;
     end
   end

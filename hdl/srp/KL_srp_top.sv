@@ -50,8 +50,16 @@
 //                MRPDU instead of waiting a full T-MRP-JOIN. Own MSRP
 //                expiry only retains intent: the encoder reserves a slot
 //                before sLA ages the registrars and starts both txLA!
-//                walks. Peer LeaveAll supersedes an unaccepted own action
-//                without changing the timer cadence (issue #127).
+//                walks (issue #127). Own MVRP expiry re-joins every held
+//                VID and retains its LeaveAll flag for the next MVRP drain
+//                that has content. A received LeaveAll of an application
+//                restarts that application's leavealltimer and supersedes
+//                its unaccepted own action (Table 10-5 rLA!, issue #108).
+//                The streaming licence waits for the MVRP join of the
+//                source's VID (Milan §4.3.2, issue #65): the encoder
+//                strobes each MVRP MRPDU the TX arbiter accepts,
+//                KL_srp_vlan marks the VIDs it carried, and the talker
+//                FSMs AND that into ACTIVE.
 //                P-EN-SRP-ENGINE is elaboration-time: instantiating this
 //                module IS the engine; leaving it out leaves the identical
 //                srp contract to an external stack (02 §4.1).
@@ -72,11 +80,14 @@
 //                registrars, Domain to the Domain participant; la_mvrp to
 //                VLAN only. A LeaveAll the bridge flags on its Domain
 //                message never ages a Listener Ready it had just
-//                re-declared in the same MRPDU. The leavealltimer re-arms
-//                only at its own expiry; a received LeaveAll does not
-//                restart it, which 802.1Q-2014 Table 10-5 would (rLA! ->
-//                Start leavealltimer): an open deviation, 10 §6.5,
-//                tracked in issue #108.
+//                re-declared in the same MRPDU. The LeaveAll state machine
+//                itself is per application, so every Attribute Type of the
+//                application is "the type associated with" it (§10.7.5.20
+//                b)2) and NOTE): any la_msrp lane is rLA! for the MSRP
+//                machine, la_mvrp for the MVRP machine, never across. rLA!
+//                is Table 10-5's "Start leavealltimer, Passive" in both
+//                states: a fresh 10-15 s draw re-arms that application's
+//                slot, and a pending own action is dropped (10 §6.5).
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -209,7 +220,7 @@ module KL_srp_top
     output logic                          domain_adopted_o,    //! F10.2 state (0 DEFAULTS / 1 ADOPTED)
     output logic [N_SOURCES_P-1:0][1:0]   tk_decl_state_o,     //! 0 NONE / 1 ADVERTISE / 2 FAILED (self-declared)
     output logic [N_SOURCES_P-1:0][1:0]   lstn_reg_state_o,    //! srp_decl_e code; 0 = NONE/Ignore
-    output logic [N_SOURCES_P-1:0]        active_o,            //! ACTIVE(src) streaming level (Δ14 + admission)
+    output logic [N_SOURCES_P-1:0]        active_o,            //! ACTIVE(src) streaming level (Δ14 + admission + MVRP join sent)
     output logic [N_SOURCES_P-1:0][7:0]   src_fail_code_o,     //! msrp_fail_code[src] (1 while self-declared Failed)
     output logic [N_SOURCES_P-1:0][63:0]  src_fail_bridge_o,   //! msrp_fail_bridge[src] ({16'd0, own MAC} while Failed)
     output logic [N_SINKS_P-1:0][1:0]     tk_reg_state_o,      //! 0 NONE / 1 ADVERTISE / 2 FAILED for the settled match
@@ -319,6 +330,7 @@ module KL_srp_top
   logic       p_la_mvrp_r;     // own MVRP leavealltimer expiry
   logic [1:0] enc_join_r;      // encoder drain ticks {MVRP, MSRP}
   logic       la_msrp_pend_r;  // timer intent, not a registrar event
+  logic       la_mvrp_pend_r;  // MVRP LeaveAll flag waiting for a drain
   logic       join_msrp_pend_r;
   logic       la_wait_r;
   logic       la_cancel_r;
@@ -385,6 +397,9 @@ module KL_srp_top
   logic [2:0]  vlan_ev_event_w;
   logic [15:0] vlan_ev_vid_w;
   logic        vlan_ev_ready_w;
+  logic        enc_tx_mvrp_w;   // an MVRP MRPDU left through the TX arbiter
+  logic [N_VIDS_P-1:0]       vlan_sent_w;
+  logic [N_VIDS_P-1:0][11:0] vlan_vid_w;
 
   logic        tk_user_valid_w, tk_user_join_w;
   logic [11:0] tk_user_vid_w;
@@ -423,6 +438,9 @@ module KL_srp_top
       .vlan_ev_event_o (vlan_ev_event_w),
       .vlan_ev_vid_o   (vlan_ev_vid_w),
       .vlan_ev_ready_i (vlan_ev_ready_w),
+      .mvrp_tx_i       (enc_tx_mvrp_w),
+      .vid_sent_o      (vlan_sent_w),
+      .vid_val_o       (vlan_vid_w),
       .vid_active_o    (dbg_vid_active_o)
   );
 
@@ -497,7 +515,8 @@ module KL_srp_top
       .LEAVE_MS_P   (LEAVE_MS_P),
       .SLOT_BASE_P  (TK_SLOT_BASE_P),
       .SLOT_AW_P    (SLOT_AW_P),
-      .OWNER_BASE_P (TK_OWNER_BASE_P)
+      .OWNER_BASE_P (TK_OWNER_BASE_P),
+      .N_VIDS_P     (N_VIDS_P)
   ) u_talker (
       .clk_i               (clk_i),
       .rst_n               (rst_n),
@@ -540,6 +559,8 @@ module KL_srp_top
       .user_join_o         (tk_user_join_w),
       .user_vid_o          (tk_user_vid_w),
       .user_ready_i        (tk_user_ready_w),
+      .vid_sent_i          (vlan_sent_w),
+      .vid_val_i           (vlan_vid_w),
       .now_ms_i            (now_ms_i),
       .arm_valid_o         (tk_arm_v_w),
       .arm_cancel_o        (tk_arm_cancel_w),
@@ -744,6 +765,7 @@ module KL_srp_top
       .txreq_valid_o  (txreq_valid_o),
       .txreq_slot_o   (txreq_slot_o),
       .txreq_ready_i  (txreq_ready_i),
+      .tx_mvrp_o      (enc_tx_mvrp_w),
       .dbg_cnt_msrp_o (enc_cnt_msrp_w),
       .dbg_cnt_mvrp_o (enc_cnt_mvrp_w)
   );
@@ -991,6 +1013,25 @@ module KL_srp_top
   assign join_due_w = cad_hit_w && (cad_exp_ix_w == CAD_JOIN_MSRP_C);
   assign enc_msrp_full_w = (32'(enc_cnt_msrp_w) == ENC_DEPTH_P);
 
+  // A leavealltimer restarted by rLA! re-arms through a fresh draw. Until
+  // the draw lands the slot holds the superseded deadline; once it lands,
+  // cad_dl_r holds the restarted one, but the arm still crosses an arm path
+  // whose latency this engine does not see (the processor top queues it
+  // behind other faces). So a LeaveAll-slot expiry is stale while a draw is
+  // outstanding or now_ms_i is before the intended deadline: the timer the
+  // standard restarted has not run out, which is no leavealltimer!
+  // (802.1Q-2014 §10.7.5.22, Table 10-5 rLA!). A genuine expiry fires at or
+  // after cad_dl_r (same now_ms, same wrap-safe compare as the service).
+  logic [1:0]  la_rearm_w;      // {MVRP, MSRP}
+  logic [31:0] la_msrp_age_w;   // now_ms_i - intended deadline, modular
+  logic [31:0] la_mvrp_age_w;
+  assign la_msrp_age_w = now_ms_i - cad_dl_r[CAD_LA_MSRP_C];
+  assign la_mvrp_age_w = now_ms_i - cad_dl_r[CAD_LA_MVRP_C];
+  assign la_rearm_w[0] = need_draw_r[0] || (dr_inflight_r && !dr_app_r)
+                      || la_msrp_age_w[31];
+  assign la_rearm_w[1] = need_draw_r[1] || (dr_inflight_r && dr_app_r)
+                      || la_mvrp_age_w[31];
+
   assign draw_kind_o = 3'd3;   // T-MRP-LEAVEALL range (F08.2)
 
   always_ff @(posedge clk_i) begin : timer_cadence_plane
@@ -1023,6 +1064,7 @@ module KL_srp_top
       p_join_fsm_r      <= 1'b0;
       p_periodic_r      <= 1'b0;
       la_msrp_pend_r    <= 1'b0;
+      la_mvrp_pend_r    <= 1'b0;
       join_msrp_pend_r  <= 1'b0;
       la_wait_r         <= 1'b0;
       la_cancel_r       <= 1'b0;
@@ -1155,6 +1197,13 @@ module KL_srp_top
           end
           3'(CAD_JOIN_MVRP_C): begin
             enc_join_r[1] <= 1'b1;   // event-driven pushes: drain directly
+            // tx! for the pending MVRP LeaveAll: the flag rides a drain with
+            // content (an MVRP drain has no LeaveAll-only form); a peer
+            // LeaveAll on this edge wins, as it does for MSRP
+            if (la_mvrp_pend_r && (enc_cnt_mvrp_w != '0) && !dec_la_mvrp_w) begin
+              enc_la_r[1]    <= 1'b1;
+              la_mvrp_pend_r <= 1'b0;
+            end
             cad_pend_r[CAD_JOIN_MVRP_C] <= 1'b1;
             cad_dl_r[CAD_JOIN_MVRP_C]   <= now_ms_i + JOIN_MS_P;
           end
@@ -1164,21 +1213,31 @@ module KL_srp_top
             cad_dl_r[CAD_PERIODIC_C]   <= now_ms_i + PERIODIC_MS_P;
           end
           3'(CAD_LA_MSRP_C): begin
-            la_msrp_pend_r <= 1'b1;  // wait for a supported sLA opportunity
-            need_draw_r[0] <= 1'b1;  // fresh 10-15 s draw re-arms the slot
+            if (!la_rearm_w[0]) begin
+              la_msrp_pend_r <= 1'b1;  // wait for a supported sLA opportunity
+              need_draw_r[0] <= 1'b1;  // fresh 10-15 s draw re-arms the slot
+            end
           end
           default: begin             // CAD_LA_MVRP_C
-            p_la_mvrp_r    <= 1'b1;  // VLAN re-joins every held VID
-            enc_la_r[1]    <= 1'b1;
-            need_draw_r[1] <= 1'b1;
+            if (!la_rearm_w[1]) begin
+              p_la_mvrp_r    <= 1'b1;  // VLAN re-joins every held VID
+              la_mvrp_pend_r <= 1'b1;  // the flag waits for the next drain
+              need_draw_r[1] <= 1'b1;
+            end
           end
         endcase
       end
-      // A peer supersedes only an unaccepted own sLA. Keep #108's timer
-      // cadence unchanged; neither re-arm nor request a new random draw.
+      // Table 10-5 rLA!, per application (10 §6.5): Start leavealltimer (a
+      // fresh draw re-arms the slot) and Passive (an unaccepted own action
+      // is dropped; an accepted sLA is never retracted).
       if (|dec_la_msrp_w) begin
+        need_draw_r[0] <= 1'b1;
         la_msrp_pend_r <= 1'b0;
         if (la_wait_r) la_cancel_r <= 1'b1;
+      end
+      if (dec_la_mvrp_w) begin
+        need_draw_r[1] <= 1'b1;
+        la_mvrp_pend_r <= 1'b0;
       end
     end
   end

@@ -236,6 +236,48 @@ a Domain VID change affects only *future* declarations; across the F05.12
 withdraw → re-declare flow two VIDs are briefly live. Steady state is one VID,
 because only Class A with the Domain's VID is supported.
 
+<a id="sec-10-join-before-stream"></a>**Join before the stream (issue #65).** Each
+live VID also records whether its declaration has *left*: an MVRP MRPDU carrying
+its New or a re-join JoinIn was accepted by the TX arbiter since the VID's entry was
+allocated. The encoder strobes every MVRP MRPDU the arbiter accepts, and MVRP
+pushes wait while an MVRP drain runs, so a push accepted before a transmission's
+drain started is in that MRPDU and a later one waits for the next. The talker's
+streaming licence requires this for its own VID (§6.3), so no stream frame is
+licensed before the join is on its way (Milan §4.3.2). The arbiter's acceptance is
+the last point this engine observes; the frame is serialized from there without
+preemption. A settled sink's VID is declared the same way (Milan §4.4.1); a
+listener has no ordering rule, so nothing waits on it.
+
+*The licence's added wait.* A Ready that answers this talker's Advertise finds the
+VID already sent: the MVRP drain runs on the same join tick as the MSRP one and
+leaves first. The licence adds a wait only when a Ready registers before the VID's
+first MVRP MRPDU. The wait is then at most one `T-MRP-JOIN` (the next MVRP drain)
+plus any time that MRPDU waits to be accepted for transmission: for a TX slot, for
+the TX arbiter, and in the one case where this encoder itself holds an MVRP drain
+back, behind a canceled own LeaveAll reservation waiting for content (§6.5). While
+the arbiter refuses, the licence stays closed; it rises one clock after the
+acceptance.
+
+*A full VLAN table holds the licence closed.* The table has `N_VIDS_P` entries,
+enough for the supported steady state (one VID, two across a Domain-VID change).
+A join of one more VID is refused and dropped: `KL_srp_vlan` raises `user_err_o`,
+seen outside the engine only as `KL_srp_top`'s `dbg_vlan_err_o` strobe, which the
+processor top does not export. The refused talker's VID is never declared, so its
+licence stays closed even with a Ready and admission, and it stays closed after an
+entry frees: nothing retries the dropped join. Once an entry is free, a
+re-declaration of the source (`WITHDRAW_TALKER`, then `DECLARE_TALKER`) joins again
+and opens the licence as a fresh declaration does (above).
+Before issue #65 such a source streamed with no MVRP join, which Milan §4.3.2
+forbids.
+
+*The ordering this engine assumes of the integrator.* The licence rises one clock
+after the arbiter grants the MRPDU that carries the VID's declaration. At that clock
+the MRPDU is still serializing, through the processor's TX port, onto the parent's
+egress; stream frames reach the wire through the parent's own datapath. The
+declaration precedes the first stream frame on the wire only if the parent's egress
+does not let a licensed stream frame overtake a control frame already granted.
+This engine cannot observe the wire, so that order is the integrator's to keep.
+
 ### 6.3 Talker-side stream FSM (×M)
 
 <a id="fig-10-talkersm"></a>**F10.4 — Per-source declaration + listener tracking**
@@ -256,8 +298,10 @@ In every state the FSM registers incoming **Listener** attributes for its stream
 Ready or ReadyFailed (Milan §5.3.7.3, Δ14 — exported as a level to the AVTP engine);
 `GET_TX_STATE`'s REGISTERING_FAILED reports the AskingFailed case
 ([F05.11](05_acmp_engine.md#fig-05-talker)). The streaming level additionally
-requires admission: ACTIVE(src) = declaring Advertise ∧ registering
-Ready/ReadyFailed ∧ (`optimistic[src]` ∨ `sr_admitted[src]`) — the engine computes Σ-slope admission
+requires admission, and the VLAN join of the stream VID on the wire
+([§6.2](#sec-10-join-before-stream), Milan §4.3.2): ACTIVE(src) = declaring
+Advertise ∧ registering Ready/ReadyFailed ∧ (`optimistic[src]` ∨ `sr_admitted[src]`)
+∧ VID(src) joined — the engine computes Σ-slope admission
 against the port ceiling and publishes `granted_slope_bps[src]`
 ([F02.10](02_interfaces.md#fig-02-statusdict)); the shaper consumes it, never
 computes it. **Local admission can fail**, and that failure is reported the
@@ -506,6 +550,11 @@ availability delays `sLA`; delayed arbiter acceptance after `sLA` holds the
 committed frame and never repeats the local event. Join ticks that arrive during
 a blocked round coalesce without erasing either walk's completion.
 
+An own MVRP expiry re-joins every held VID, the VLAN applicant's response to its own
+LeaveAll (it keeps no registrar), and keeps the LeaveAll flag pending. The flag
+rides the next MVRP drain that has content: an MVRP drain has no LeaveAll-only form,
+so with no VID held the flag waits for the first declaration.
+
 A peer MSRP LeaveAll received before `sLA` supersedes the pending own action,
 including on the preparation-acceptance edge. Its registrar/applicant effects still use
 the per-type routing above. If slot preparation has begun, it finishes as an
@@ -521,8 +570,8 @@ action (at most `T-MRP-LEAVEALL` plus `T-MRP-JOIN` without further peer
 cancellation or backpressure). Repeated cancellation on a down link has no
 finite release bound. Reset clears the slot pool as well as the encoder.
 An MVRP LeaveAll
-cannot cancel an MSRP action. This pending-action cancellation does not restart
-either leavealltimer; the broader receive-timer deviation below remains #108.
+cannot cancel an MSRP action, nor an MSRP LeaveAll an MVRP flag. Both
+cancellations are the Passive half of rLA!; the timer restart below is the other.
 
 An own LeaveAll still ages every registrar of its participant: "Leave All messages
 generated by this state machine also generate LeaveAll events against all the
@@ -556,18 +605,63 @@ that MRPDU reaches the Listener registrar. The decoder used to raise one
 application-wide rLA! at every flagged VectorHeader, so the Domain message re-aged
 the Listener registration and the stream stopped `T-MRP-LEAVE` later (issue #106).
 
-*Timer on receipt: an open deviation.* The own leavealltimer re-arms only at its
-own expiry, with a fresh 10–15 s draw ([F08.1](08_timing.md#fig-08-constants)); a
-received LeaveAll does not restart it. 802.1Q-2014 does restart it: Table 10-5
-(§10.7.9) maps rLA! to "Start leavealltimer" and Passive in both states, and §10.6
-says "Reception of a LeaveAll message from another Participant causes the timer to
-be restarted without generating a message, thus suppressing multiple LeaveAll
-messages from Participants connected to the same LAN." Milan v1.2 Table 4.3 sets
-only the timer's range (10–15 s, ± 0.5 s). Issue #106 leaves the behaviour
-unchanged; the deviation is tracked in issue
-[#108](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/108).
-Without the restart, both ends send a LeaveAll each cycle instead of one between
-them.
+*Timer on receipt (issue
+[#108](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/108)).*
+A received LeaveAll restarts the receiving application's leavealltimer and puts its
+LeaveAll state machine in Passive. 802.1Q-2014 Table 10-5 (§10.7.9) maps rLA! to
+"Start leavealltimer" and Passive in both states, and §10.6 gives the reason:
+"Reception of a LeaveAll message from another Participant causes the timer to be
+restarted without generating a message, thus suppressing multiple LeaveAll messages
+from Participants connected to the same LAN."
+
+*Which lanes are rLA! for the timer.* rLA! occurs for a state machine when the PDU
+"contains a Message in which the Attribute Type is the type associated with the
+state machine" (§10.7.5.20 b)2)). An applicant or registrar has one type, which is
+why the lanes above are routed per type. The LeaveAll state machine has no type of
+its own: it "operates on a per-application (not per-Attribute Type) basis", and its
+own LeaveAll flags "each Attribute Type supported by the application" (§10.7.5.20
+NOTE). Every Attribute Type of the application is therefore associated with it. A
+LeaveAll lane of any MSRP type is rLA! for the MSRP machine, and the MVRP VID lane
+for the MVRP machine. A lane never reaches the other application's machine: the
+PDU's destination address and EtherType select the application (§10.7.5.20 b)1)).
+Several flagged types in one MRPDU restart the timer once per lane; the last
+restart stands.
+
+*Start leavealltimer.* A fresh draw from the 10–15 s range
+([F08.1](08_timing.md#fig-08-constants), §10.7.4.3) re-arms the application's timer
+slot, counted from the peer's LeaveAll. Until the restarted deadline, an expiry of
+that slot is stale and is ignored: the timer the standard restarted has not run
+out, so it is no leavealltimer! ("the leavealltimer associated with that state
+machine expires", §10.7.5.22). The engine tells a stale expiry from its own state,
+never from the latency of the paths between it and the shared services: a draw is
+still outstanding, or `now_ms` is before the deadline the draw produced. That
+matters because the re-arm crosses the processor top's queued timer arm port, and
+until it lands the slot still holds the superseded deadline, which can still fire.
+
+*Passive.* An unaccepted own MSRP action and an MVRP flag that no drain has taken
+yet are both dropped (above). An accepted `sLA` is never retracted: its frame goes
+out, and the peer's LeaveAll only restarts the timer.
+
+Milan v1.2 Table 4.3 sets only the timer's range (10–15 s, ± 0.5 s). With the
+restart, one LeaveAll per cycle serves both ends of a link: the end whose timer
+expires first sends it, and the other restarts its own.
+
+*A peer that flags only some types.* The restart is per application; the aging is
+per Attribute Type. A peer MSRP LeaveAll that flags only some MSRP types still
+restarts this participant's MSRP timer (it is rLA! for the machine, above), but it
+ages only this participant's registrars of the types it flags (the lane table
+above). The registrations of the other types are then aged only by the own
+LeaveAlls this participant still sends: against a peer whose timer also draws from
+the `T-MRP-LEAVEALL` range, in about every other cycle (those in which this
+participant's timer expires first); against a peer that sends its LeaveAll more
+often than the shortest `T-MRP-LEAVEALL` draw, never. Such a peer departs from
+§10.7.5.20 as issue
+[#106](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/106)
+applies it: a LeaveAll state machine "must generate a LeaveAll Attribute for each
+Attribute Type supported by the application" (NOTE), which is how this engine
+transmits and what it expects on receipt. The engine does not compensate for such a
+peer; a registration of an unflagged type still ends at the peer's Lv (Δ13). The
+bench switch (Run B, above) flags all four MSRP types.
 
 ## 7. µcode / dispatch
 

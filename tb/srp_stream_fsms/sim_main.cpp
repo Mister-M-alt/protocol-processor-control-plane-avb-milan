@@ -244,6 +244,8 @@ struct Hn {
   void reset() {
     d->rst_n = 0; d->p2p_i = 1; d->own_mac_i = MAC;
     d->sr_admitted_i = 0xFF;
+    // the VLAN view: entry 0 holds VID 5, entry 1 VID0, both transmitted
+    d->t_vid_sent_i = 0x3; d->t_vid_val_i = (2ull << 12) | 5ull;   // 2 = VID0
     d->evt_valid_i = 0; d->join_tick_i = 0; d->periodic_tick_i = 0;
     d->leaveall_rx_i = 0; d->leaveall_own_i = 0; d->exp_valid_i = 0;
     d->gate_valid_i = 0; d->ctl_valid_i = 0; d->exp_slot_i = 0;
@@ -596,8 +598,18 @@ void SrpStreamFsmsSuite::talker_declaration_tracks_ready_and_admission() {
   CHECK(h.t_vop.size() == 1 && h.t_vop[0].join && h.t_vop[0].vid == 5,
         "T VLAN user++ on open");
   CHECK(!((d->t_active_o >> 2) & 1), "T not ACTIVE before Ready");
+  // Milan 4.3.2 (issue #65): the licence also waits until the entry holding
+  // the source's VID reports its MVRP join transmitted
+  d->t_vid_sent_i = 0x0; h.idle(1);
   h.inject(true, 3, SID0 + 2, 0, 0, 3, 2 /*Ready*/);
-  CHECK(((d->t_active_o >> 2) & 1) == 1, "T ACTIVE = declaring x Ready x admitted");
+  CHECK(!((d->t_active_o >> 2) & 1), "T not ACTIVE while the VID's join is untransmitted");
+  d->t_vid_val_i = (7ull << 12) | 5ull; d->t_vid_sent_i = 0x2; h.idle(1);
+  CHECK(!((d->t_active_o >> 2) & 1), "T not ACTIVE on another VID's transmitted join");
+  d->t_vid_val_i = (5ull << 12) | 7ull; h.idle(1);
+  CHECK(((d->t_active_o >> 2) & 1) == 1, "T ACTIVE once any entry holding the VID is transmitted");
+  d->t_vid_sent_i = 0x3; d->t_vid_val_i = (static_cast<uint64_t>(VID0) << 12) | 5ull; h.idle(1);
+  h.inject(true, 3, SID0 + 2, 0, 0, 3, 2 /*Ready*/);
+  CHECK(((d->t_active_o >> 2) & 1) == 1, "T ACTIVE = declaring x Ready x admitted x VID joined");
   // ReadyFailed also satisfies ACTIVE
   h.inject(true, 3, SID0 + 2, 0, 0, 1, 3 /*ReadyFailed*/);
   CHECK(((d->t_active_o >> 2) & 1) == 1, "T ACTIVE holds on ReadyFailed");
@@ -629,6 +641,9 @@ void SrpStreamFsmsSuite::talker_declaration_tracks_ready_and_admission() {
   h.idle(3);
   CHECK(h.t_decl(2) == 1 && h.t_fcode(2) == 0, "T back to ADVERTISE");
   CHECK(((d->t_active_o >> 2) & 1) == 1, "T ACTIVE returns with admission");
+  d->t_vid_sent_i = 0x0; h.idle(1);
+  CHECK(((d->t_active_o >> 2) & 1) == 0, "T ACTIVE drops when the VID membership is gone");
+  d->t_vid_sent_i = 0x3; h.idle(1);
   h.clear_logs();
   h.tick();
   CHECK(h.t_push.size() == 1 && h.t_push[0].type == 1 && h.t_push[0].code == 0,

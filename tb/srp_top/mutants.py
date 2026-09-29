@@ -19,7 +19,6 @@ PATCHES = Path(__file__).resolve().parent / "mutations"
 # label, suite, group, required failing assertion prefix.
 MUTANTS = [
     ('bad-listener-length', 'srp_top', 'phases', 'K12:'),
-    ('peer-restarts-timer', 'srp_top', 'peer', 'M4:'),
     ('repeated-action', 'srp_top', 'congestion', 'N4:'),
     ('expiry-event', 'srp_top', 'phases', 'K2:'),
     ('before-slot', 'srp_top', 'edge', 'L1:'),
@@ -74,6 +73,33 @@ MUTANTS = [
     ('r-reuse-without-action', 'srp_top', 'peer', 'M12:'),
     ('r-mvrp-start-during-prepare', 'srp_encoder', '', 'O8:'),
     ('canceled-content-never-drains', 'srp_top', 'guards', 'O7:'),
+    # issue #108: Table 10-5 rLA! restarts the leavealltimer and goes Passive
+    ('expiry-only-redraw', 'srp_top', 'restart', 'P1:'),
+    ('mvrp-expiry-only-redraw', 'srp_top', 'restart', 'P2:'),
+    ('stale-expiry-honoured', 'srp_top', 'peer', 'M10:'),
+    ('mvrp-stale-expiry-honoured', 'srp_top', 'restart', 'P6:'),
+    ('mvrp-passive-lost', 'srp_top', 'restart', 'P4:'),
+    ('mvrp-flag-at-expiry', 'srp_top', 'restart', 'P5:'),
+    # issue #108: the stale-expiry guard holds whatever the arm-path latency
+    ('rearm-at-issue', 'srp_top', 'armdelay', 'P8:'),
+    ('r-rearm-no-inflight', 'srp_top', 'peer', 'M10:'),
+    ('r-rearm-no-inflight', 'srp_top', 'restart', 'P6:'),
+    ('r-rearm-no-deadline', 'srp_top', 'peer', 'M10:'),
+    ('r-rearm-no-deadline', 'srp_top', 'armdelay', 'P8:'),
+    ('r-flag-ignores-edge-peer', 'srp_top', 'restart', 'P7:'),
+    # issue #64: Milan v1.2 Table 4.3 timer grading
+    ('join-ms-400', 'srp_top', 'timers', 'Q1:'),
+    ('periodic-ms-3000', 'srp_top', 'timers', 'Q2:'),
+    ('draw-kind-0', 'srp_top', 'timers', 'Q3:'),
+    # issue #65: MVRP join before the stream, both halves
+    ('licence-ignores-join', 'srp_top', 'join', 'R1:'),
+    ('licence-ignores-join', 'srp_stream_fsms', '', 'T not ACTIVE while the VID'),
+    ('join-sent-at-handover', 'srp_top', 'join', 'R1:'),
+    ('count-up-unsends', 'srp_top', 'join', 'R2:'),
+    ('listener-lane-cut', 'srp_top', 'join', 'R4:'),
+    ('join-sent-at-handover', 'srp_encoder', '', 'W2 New VID 7 handed over'),
+    ('count-up-unsends', 'srp_encoder', '', 'W4 a second user'),
+    ('tx-strobe-any-app', 'srp_encoder', '', 'W1 no strobe for an MSRP'),
 ]
 
 
@@ -149,7 +175,7 @@ def main() -> int:
         passed, total, covered = campaign(tree, args.output, selected)
     if not args.only:
         expected = {f"{group}{i}" for group, count in
-                    [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8)]
+                    [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1
