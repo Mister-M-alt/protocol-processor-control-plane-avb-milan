@@ -83,6 +83,10 @@ module acmp_nvm_wrap
     output logic                     m1_done_o,       //! its op completed
     output logic                     m1_err_o,        //! its op failed
     output logic                     arb_drain_o,     //! an abandoned read is draining
+    output logic                     arb_req_o,       //! the arbiter issues an op this cycle
+    output logic                     arb_we_o,        //! ...and it is a commit
+    output logic                     mgr_req_o,       //! the shadow's registered op strobe
+    output logic                     mgr_we_o,        //! ...and it is a commit
     output logic                     mgr_abort_o,     //! the shadow abandoned its read
     output logic [1:0]               mgr_err_cause_o, //! the cause the shadow saw with err
     output logic                     mgr_done_o,      //! the shadow's manager-face done
@@ -534,6 +538,10 @@ module acmp_nvm_wrap
   assign mgr_state_o      = 4'(u_shadow.hs_r);
   assign mgr_rs_sink_o    = u_shadow.rs_k_r;
   assign dbg_port_done_o  = nvm_done_w;
+  assign arb_req_o        = np_req_w;
+  assign arb_we_o         = np_we_w;
+  assign mgr_req_o        = nvm_req_w;
+  assign mgr_we_o         = nvm_we_w;
   assign mgr_abort_o      = nvm_abort_w;
   assign mgr_err_cause_o  = nvm_err_cause_w;
   assign mgr_done_o       = nvm_done_w;

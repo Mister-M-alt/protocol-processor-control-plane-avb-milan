@@ -5,7 +5,7 @@ Proves the ACMP binding NVM shadow (`hdl/acmp/KL_acmp_nvm_shadow.sv`,
 [05 §5](../../docs/architecture/05_acmp_engine.md) ≈20 B/sink shadow +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8/F07.9 +
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8): `make` = build + run,
-exit 0 = PASS, 355 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
+exit 0 = PASS, 359 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
 timing mirrors (tick_i is held high, so window = 50 cycles),
 `-GRS_TMO_CYC_P=3000` the walk's read deadline (`T-NVM-RS-DEADLINE`) that group N
 places its boundaries against, and `-GRETRY_BACKOFF_CYC_P=600` the DR2c wait
@@ -210,6 +210,20 @@ release within four cycles, no work while owned, nothing written.
   the service's, its abort `W_RD`'s), so manager 1 is driven here; the
   binding walk's own case, its registered strobe on the aggregate's first
   clock, is `tb/pp_top`'s D3R18.
+- **N11a-c** (processor issue #131, R390-4 S1 = R391-4 S1) the arbiter's own
+  contract for inputs neither in-tree manager presents, with manager 1 driven
+  as in N10, so that a third manager, or a change to either one, meets a
+  graded rule. **N11a** only reads are abandoned: manager 1 presents a WRITE
+  with its abort, held from its strobe to the write's end; the arbiter issues
+  it as a commit and never drains it, manager 1 streams every byte and sees
+  its done, and the device holds the record byte-exact (one ERASE, one
+  WRITE). **N11b** an abort names its own manager's READ only: manager 1
+  presents its abort, alone, in the issue cycle of each of the walk's eight
+  READs; none is drained and the walk completes as saved, nothing written.
+  **N11c** the issue cycle is judged by the strobe's own intent, never by the
+  operation before it: after a completed manager-1 WRITE, a manager-1 READ
+  abandoned in its issue cycle is drained from the next cycle and ends, and
+  manager 1's next READ completes.
 
 Pinned wiring: `make pinned` builds the same bench with the gate left out
 (`ACMP_NVM_PINNED_WIRING`, the producers wired straight to the listener as the
@@ -311,16 +325,23 @@ Mutation-proven 2026-09-20 for the unflushed export:
   four byte-exact store checks go with them, because the suite waits on the
   same pin to know a burst drained).
 
-## Mutation record: DR2c on the binding manager, and the arbiter's issue cycle (issue #131)
+## Mutation record: DR2c on the binding manager, and the arbiter's issue cycle and own contract (issue #131)
 
 Planted by `tb/pp_top/d3_mutants.py`, each in its own extract of `hdl/`, `tb/common/`
 and this directory, which then runs `make run`; KILLED means the run completed with its
-tally, exited non-zero and every named check failed. All four are KILLED at the lane
-head and the golden extract passes.
+tally, exited non-zero and every named check failed. All nine are KILLED at the lane
+head and the golden extract passes. The five N11 controls change the arbiter only for
+inputs neither in-tree manager presents: R390-4 and R391-4 measured the reviewers' four
+passing `tb/pp_top` and this suite's N1-N10, so N11 is what kills them.
 
 | Mutant | Defect planted | Named check, failing | Failing checks |
 |---|---|---|---|
 | `no_backoff_binding` | the binding manager's DR2c backoff removed (`H_FL_BACKOFF` relatches at once) | `E9 DR2c timing` | 1 |
 | `fourth_attempt_binding` | the binding manager allows a fourth attempt | `E8 DR2c count` | 3 |
 | `alarm_forgiven_binding` | a later successful commit clears the binding manager's alarm | `E11 DR2c revocation` | 1 |
-| `drain_misses_issue_cycle_m1` | the head's arbiter: the drain armed only for a READ already owned (R390-3 F1; `tb/pp_top` D3R18 grades the same edit for the binding walk) | `N10 a manager-1 READ abandoned in its issue cycle` | 2 |
+| `drain_misses_issue_cycle_m1` | the head's arbiter: the drain armed only for a READ already owned (R390-3 F1; `tb/pp_top` D3R18 grades the same edit for the binding walk) | `N10 a manager-1 READ abandoned in its issue cycle` | 4 |
+| `issue_arm_cross_intent` | the issue-cycle term takes either manager's abort (R390-4 and R391-4, the same edit) | `N11b manager 1's abort in the issue cycle of each of the walk's READs` | 1 |
+| `issue_arm_ignores_we` | the issue-cycle term drops the strobe's `!mX_we_i` guard, so a WRITE strobe with an abort arms the drain (R390-4) | `N11a a manager-1 WRITE presented with its abort` | 1 |
+| `issue_arm_write_too` | the same defect in R391-4's own text | `N11a a manager-1 WRITE presented with its abort` | 1 |
+| `issue_arm_stale_we` | the issue cycle judged by the previous operation's `we_r` instead of the strobe's own `we` (R391-4) | `N11a a manager-1 WRITE presented with its abort`, `N11c a manager-1 READ abandoned in its issue cycle after a WRITE` | 3 |
+| `owned_arm_write_too` | the owned term drops its `!we_r` guard, so an abort while a WRITE is owned cuts it (the owned half of the same banner rule) | `N11a a manager-1 WRITE presented with its abort` | 1 |

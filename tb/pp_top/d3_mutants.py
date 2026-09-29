@@ -15,8 +15,9 @@ and the review rounds on it: the aggregate restore deadline (DR3a), the AECP hol
 admission, the DR2c backoff derivation and its freedom of dispatch, both directions of
 the pass agreement, the roll-back strobe, the pass-1 drain, the watched format judge,
 the rate walk, the aggregate's terminals, span and inertness, its pre-proof
-variants, the drain of a READ abandoned in the arbiter's issue cycle, and the
-admission's resident count. The suite READMEs carry the matching mutation records.
+variants, the drain of a READ abandoned in the arbiter's issue cycle, the arbiter's
+own contract for inputs no in-tree manager presents, and the admission's resident
+count. The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/d3_mutants.py --output DIR [--verilator V] [--jobs N]
                                        [--only NAME ...]
@@ -70,6 +71,10 @@ BLANK = "                      && (m_err_cause_i == PORT_UNFRAMED_C);\n"
 DEVICE = "                      && (m_err_cause_i != PORT_UNFRAMED_C);\n"
 GROUPS = ("cfg", "rate", "clks", "fmti", "fmto", "ptof")
 AGG_LIVE = "  assign agg_live_w   = (agg_run_r || rs_go_i) && !agg_fired_r && !done_r && !closed_r;\n"
+ARMS = ("  assign arm0_w = (iss0_w && !m0_we_i && m0_abort_i)\n"
+        "                  || ((own_r == O_M0) && !we_r && m0_abort_i);\n"
+        "  assign arm1_w = (iss1_w && !m1_we_i && m1_abort_i)\n"
+        "                  || ((own_r == O_M1) && !we_r && m1_abort_i);\n")
 
 
 def trigger_deleted(sel: int) -> Mutant:
@@ -346,10 +351,7 @@ AGGREGATE = (
     # already owns, so an abort in the issue cycle is lost; graded for the
     # binding walk (manager 0) and for a manager 1 driven by acmp_nvm
     *(Mutant(name, suite, (
-        (ARB, "  assign arm0_w = (iss0_w && !m0_we_i && m0_abort_i)\n"
-              "                  || ((own_r == O_M0) && !we_r && m0_abort_i);\n"
-              "  assign arm1_w = (iss1_w && !m1_we_i && m1_abort_i)\n"
-              "                  || ((own_r == O_M1) && !we_r && m1_abort_i);\n",
+        (ARB, ARMS,
          "  assign arm0_w = (own_r == O_M0) && !we_r && m0_abort_i;\n"
          "  assign arm1_w = (own_r == O_M1) && !we_r && m1_abort_i;\n"),), checks)
       for name, suite, checks in (
@@ -357,6 +359,43 @@ AGGREGATE = (
            ("D3R18: the READ abandoned in its issue cycle", "D3R18: once the device ends")),
           ("drain_misses_issue_cycle_m1", ACMP_NVM,
            ("N10 a manager-1 READ abandoned in its issue cycle",)))),
+    # R390-4 S1 = R391-4 S1: the arbiter's own contract for inputs neither
+    # in-tree manager presents (the reviewers' own edits), graded by acmp_nvm's
+    # N11 with manager 1 driven freely
+    Mutant("issue_arm_cross_intent", ACMP_NVM, (
+        (ARB, ARMS,
+         "  assign arm0_w = (iss0_w && !m0_we_i && (m0_abort_i || m1_abort_i))\n"
+         "                  || ((own_r == O_M0) && !we_r && m0_abort_i);\n"
+         "  assign arm1_w = (iss1_w && !m1_we_i && (m1_abort_i || m0_abort_i))\n"
+         "                  || ((own_r == O_M1) && !we_r && m1_abort_i);\n"),),
+        ("N11b manager 1's abort in the issue cycle of each of the walk's READs",)),
+    Mutant("issue_arm_ignores_we", ACMP_NVM, (
+        (ARB, ARMS,
+         "  assign arm0_w = (iss0_w && m0_abort_i)\n"
+         "                  || ((own_r == O_M0) && !we_r && m0_abort_i);\n"
+         "  assign arm1_w = (iss1_w && m1_abort_i)\n"
+         "                  || ((own_r == O_M1) && !we_r && m1_abort_i);\n"),),
+        ("N11a a manager-1 WRITE presented with its abort",)),
+    Mutant("issue_arm_write_too", ACMP_NVM, (
+        (ARB, ARMS,
+         "  assign arm0_w = (iss0_w && m0_abort_i) || ((own_r == O_M0) && !we_r && m0_abort_i);\n"
+         "  assign arm1_w = (iss1_w && m1_abort_i) || ((own_r == O_M1) && !we_r && m1_abort_i);\n"),),
+        ("N11a a manager-1 WRITE presented with its abort",)),
+    Mutant("issue_arm_stale_we", ACMP_NVM, (
+        (ARB, ARMS,
+         "  assign arm0_w = (iss0_w && !we_r && m0_abort_i) || ((own_r == O_M0) && !we_r && m0_abort_i);\n"
+         "  assign arm1_w = (iss1_w && !we_r && m1_abort_i) || ((own_r == O_M1) && !we_r && m1_abort_i);\n"),),
+        ("N11a a manager-1 WRITE presented with its abort",
+         "N11c a manager-1 READ abandoned in its issue cycle after a WRITE")),
+    # the owned half of the same banner rule: an abort while a WRITE is owned is
+    # ignored, which N11a's abort, held to the write's end, grades
+    Mutant("owned_arm_write_too", ACMP_NVM, (
+        (ARB, ARMS,
+         "  assign arm0_w = (iss0_w && !m0_we_i && m0_abort_i)\n"
+         "                  || ((own_r == O_M0) && m0_abort_i);\n"
+         "  assign arm1_w = (iss1_w && !m1_we_i && m1_abort_i)\n"
+         "                  || ((own_r == O_M1) && m1_abort_i);\n"),),
+        ("N11a a manager-1 WRITE presented with its abort",)),
     # R390-3 F2 and R391-3 F2: the aggregate's pre-proof variants (the
     # reviewers' own edits)
     Mutant("agg_closes_during_proof", PP_TOP, (
