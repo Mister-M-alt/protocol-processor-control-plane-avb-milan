@@ -745,6 +745,9 @@ struct H {
   //! strobe follows that done by a fixed lag, so it can be placed on a
   //! chosen clock
   long     nv_rd_done_at = -1;
+  //! when >= 0, the READ's next byte moves on exactly this harness cycle,
+  //! whatever the per-byte waits say, once (a byte placed on a chosen clock)
+  long     nv_byte_at = -1;
   //! the next nv_err_writes WRITEs to region nv_err_region end with the
   //! device's err instead of done, and change nothing
   int      nv_err_region = -1;
@@ -1511,7 +1514,10 @@ struct H {
           nv_rd_fault = false;
           nv_st = NvState::NV_IDLE;
         }                                              // silent: nothing moves
-      } else if (nv_left && nv_byte_wait < (nv_cur.off == 0 ? nv_hdr_every : nv_byte_every)) {
+      } else if (nv_left && (nv_byte_at >= 0
+                             ? long(t) < nv_byte_at
+                             : nv_byte_wait < (nv_cur.off == 0 ? nv_hdr_every
+                                                               : nv_byte_every))) {
         ++nv_byte_wait;                                // the slow device's byte
       } else if (nv_left) {
         d->nvm_dev_rvalid_i = 1;
@@ -1521,6 +1527,7 @@ struct H {
           nv_rd_pos++;
           nv_rd_sent++;
           nv_byte_wait = 0;
+          nv_byte_at = -1;
         }
       } else if (long(t) < nv_rd_done_at) {
         nv_done_lag = 1;                               // the done on its chosen cycle

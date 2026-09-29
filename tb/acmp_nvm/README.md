@@ -311,11 +311,11 @@ Mutation-proven 2026-09-20 for the unflushed export:
   four byte-exact store checks go with them, because the suite waits on the
   same pin to know a burst drained).
 
-## Mutation record: DR2c on the binding manager (issue #131)
+## Mutation record: DR2c on the binding manager, and the arbiter's issue cycle (issue #131)
 
 Planted by `tb/pp_top/d3_mutants.py`, each in its own extract of `hdl/`, `tb/common/`
 and this directory, which then runs `make run`; KILLED means the run completed with its
-tally, exited non-zero and every named check failed. All three are KILLED at the lane
+tally, exited non-zero and every named check failed. All four are KILLED at the lane
 head and the golden extract passes.
 
 | Mutant | Defect planted | Named check, failing | Failing checks |
@@ -323,3 +323,4 @@ head and the golden extract passes.
 | `no_backoff_binding` | the binding manager's DR2c backoff removed (`H_FL_BACKOFF` relatches at once) | `E9 DR2c timing` | 1 |
 | `fourth_attempt_binding` | the binding manager allows a fourth attempt | `E8 DR2c count` | 3 |
 | `alarm_forgiven_binding` | a later successful commit clears the binding manager's alarm | `E11 DR2c revocation` | 1 |
+| `drain_misses_issue_cycle_m1` | the head's arbiter: the drain armed only for a READ already owned (R390-3 F1; `tb/pp_top` D3R18 grades the same edit for the binding walk) | `N10 a manager-1 READ abandoned in its issue cycle` | 2 |

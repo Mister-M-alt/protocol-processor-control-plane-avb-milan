@@ -945,6 +945,7 @@ struct D3RestorePhase {
     x.nv_gnt_seen = false;
     x.nv_gnt_at = -1;
     x.nv_rd_done_at = -1;
+    x.nv_byte_at = -1;
     x.nv_hdr_every = 0;
     x.nv_byte_every = 0;
     x.nv_byte_wait = 0;
@@ -2173,6 +2174,298 @@ struct D3RestorePhase {
     x.d->link_up_i = 0;
   }
 
+  // ---- the aggregate's pre-proof variants (R390-3 F2, R391-3 F2) ----------
+  //! power up for a pre-proof case: every record and every sink's binding
+  //! saved; the image valid at reset, or (`late`) absent when the store
+  //! walks at reset and loaded before PP_CTRL[1], so the D3 walk proves it
+  //! with its own LOCATE (the product order of parent D3 section 8.1)
+  void pre_proof_power_up(bool late) {
+    x.dram = image;
+    if (late) x.dram.clear();
+    x.erase_nvm();
+    power_cycle();
+    if (late) {
+      x.idle(2000);
+      x.dram = image;
+    }
+    seed_every_record();
+    seed_every_binding();
+    x.d->entity_enable_i = 1;
+    x.d->link_up_i = 1;
+  }
+  void pre_proof_power_down() {
+    x.nv_hdr_every = 0;
+    x.nv_byte_every = 0;
+    x.nv_rd_done_at = -1;
+    x.nv_byte_at = -1;
+    x.d->entity_enable_i = 0;
+    x.d->link_up_i = 0;
+    x.dram = image;
+  }
+  //! what a pre-proof boot saw, every clock in the harness's own count
+  struct PreProof {
+    Boot b;
+    long bound = -1;          //! the count reads AGG - 1: the bound's own clock
+    long d27 = -1;            //! the device's done of 0x27's payload READ
+    long held = -1;           //! the clock that done was held to (-1: none)
+    long release = -1;        //! the binding walk's terminal released (go_i)
+    long proof = -1;          //! the D3 walk proves the image (proof_w)
+    long term = -1;           //! COMPLETE, DEFAULTS or CLOSED first seen
+    bool img_at_go = false;   //! the image validated as the D3 walk started
+    long bind_wait = 0;       //! the binding walk's longest wait
+    int d3_reads = 0;         //! D3 record READs from the release on
+  };
+  //! one boot of a pre-proof case: binding payload bytes `g` clocks apart,
+  //! the headers at once; once 0x27's payload READ (the binding walk's last)
+  //! is granted, its done is held to `place(bound)` (-1: not held)
+  template <class Place>
+  PreProof pre_proof_boot(int g, Place place) {
+    x.nv_hdr_every = 0;
+    x.nv_byte_every = g;
+    PreProof p;
+    size_t ops = x.nvm_ops.size();
+    size_t ops_rel = ops;
+    bool asked = false;
+    p.b = boot_with(AGG + 2 * RS_TMO, [&] {
+      const auto* d = x.d;
+      const long now = long(x.t);
+      if (p.bound < 0) p.bound = bound_t(d->dbg_d3_agg_o);
+      while (ops < x.nvm_ops.size()) {
+        const auto& o = x.nvm_ops[ops++];
+        if (o.op == 0 && o.region == 0x27 && o.off != 0) p.d27 = now - 1;
+      }
+      if (!asked && x.nv_st == H::NvState::NV_READ && x.nv_cur.region == 0x27
+          && x.nv_cur.off != 0) {
+        p.held = place(p.bound);
+        x.nv_rd_done_at = p.held;
+        asked = true;
+      }
+      if (p.release < 0 && d->dbg_lsn_released_o) {
+        p.release = now;
+        p.img_at_go = d->dbg_img_valid_o;
+        ops_rel = x.nvm_ops.size();
+        x.nv_byte_every = 0;                     // the D3 walk's reads at once
+      }
+      if (p.proof < 0 && d->dbg_d3_proof_o) p.proof = now;
+      if (p.term < 0 && (d->restore_done_o || d->restore_closed_o)) p.term = now;
+      p.bind_wait = std::max(p.bind_wait, long(d->dbg_bind_wd_o));
+    });
+    x.nv_rd_done_at = -1;
+    x.nv_byte_every = 0;
+    p.d3_reads = d3_reads_of(ops_rel);
+    return p;
+  }
+  //! the fixed lags from the device's done of 0x27's payload READ to the
+  //! image proof, measured on boots whose device is fast: `img` with the
+  //! image valid (W_IMG, the clock after the release), `loc` with it loaded
+  //! late (the LOCATE's answer in W_IMGLOC), and that LOCATE's own length
+  struct ProofLags {
+    long img = -1;
+    long loc = -1;
+    long locate = -1;
+  };
+  ProofLags proof_lags() {
+    ProofLags l;
+    for (const bool late : {false, true}) {
+      pre_proof_power_up(late);
+      const PreProof p = pre_proof_boot(0, [](long) { return -1L; });
+      if (late) {
+        l.loc = p.proof - p.d27;
+        l.locate = p.proof - p.release;
+      } else {
+        l.img = p.proof - p.d27;
+      }
+      pre_proof_power_down();
+    }
+    return l;
+  }
+  //! a DEFAULTS end with no record read: cause 3, the image valid, AECP
+  //! released, within one per-wait deadline of the bound
+  bool defaults_unread(const PreProof& p) const {
+    const auto* d = x.d;
+    return p.b.done >= 0 && p.b.closed < 0 && p.term > p.bound && p.term - p.bound < RS_TMO
+           && d->restore_done_o && d->restore_fail_o && d->rs_cause_o == 3
+           && !d->restore_rb_o && !d->restore_closed_o && d->dbg_img_valid_o
+           && !d->dbg_d3_own_o && d->dbg_d3_applied_o == 0 && p.d3_reads == 0;
+  }
+  void report_defaults(const char* what, const PreProof& p) {
+    const auto* d = x.d;
+    const char* end = d->restore_closed_o ? "CLOSED"
+                      : !d->restore_done_o ? "no terminal"
+                      : d->restore_fail_o  ? "DEFAULTS" : "COMPLETE";
+    CHECK(defaults_unread(p),
+          "%s: DEFAULTS with no record READ; the restore ends %s %ld clocks after "
+          "the bound, cause %u, rolled back %u, image valid %u, AECP owned %u, %d D3 "
+          "record READs", what, end, p.term < 0 ? -1 : p.term - p.bound,
+          unsigned(d->rs_cause_o), unsigned(d->restore_rb_o),
+          unsigned(d->dbg_img_valid_o), unsigned(d->dbg_d3_own_o), p.d3_reads);
+  }
+  //! the binding payload spacing that ends the binding walk's natural run
+  //! about 12,000 clocks before the bound: its last done is then held
+  static constexpr int PRE_PROOF_G = static_cast<int>((AGG - 12000) / (8 * 20));
+
+  // D3R19 (R391-3 F2, R390-3 F2: the image proven by the writer's LOCATE
+  // after the bound). The image is absent at reset and loaded before
+  // PP_CTRL[1], the product order of parent D3 section 8.1, so the D3 walk
+  // proves it with its own LOCATE of ENTITY 0 (the store walks the image,
+  // hundreds of clocks). Past the bound: D3R14's per-byte device keeps the
+  // binding walk reading past the bound, it fails whole there, and the
+  // LOCATE then proves the image: DEFAULTS, cause 3, within one per-wait
+  // deadline of the bound, with no D3 record READ. Inside the LOCATE: the
+  // binding walk completes, its last done placed so the bound falls midway
+  // through the LOCATE (the aggregate fires there, in a stalled wait, while
+  // the image is not yet proven): the proof ends DEFAULTS the same way, the
+  // image valid and AECP released. A proof's DEFAULTS taken only from
+  // W_IMG reads every record and ends COMPLETE long past the bound; an
+  // aggregate that aborts inside the LOCATE closes a provable image.
+  void r19_the_image_proven_by_its_locate_after_the_bound(const ProofLags& lag) {
+    {
+      pre_proof_power_up(true);
+      const bool absent = !x.d->dbg_img_valid_o;
+      x.nv_hdr_every = static_cast<int>(RS_TMO / 8 - 400);
+      x.nv_byte_every = static_cast<int>(RS_TMO - 1000);
+      PreProof p;
+      size_t ops_rel = x.nvm_ops.size();
+      p.b = boot_with(AGG + 2 * RS_TMO, [&] {
+        const auto* d = x.d;
+        const long now = long(x.t);
+        if (p.bound < 0) p.bound = bound_t(d->dbg_d3_agg_o);
+        if (p.release < 0 && d->dbg_lsn_released_o) {
+          p.release = now;
+          p.img_at_go = d->dbg_img_valid_o;
+          ops_rel = x.nvm_ops.size();
+          x.nv_hdr_every = 0;                    // the drained READ ends at once
+          x.nv_byte_every = 0;
+        }
+        if (p.proof < 0 && d->dbg_d3_proof_o) p.proof = now;
+        if (p.term < 0 && (d->restore_done_o || d->restore_closed_o)) p.term = now;
+        p.bind_wait = std::max(p.bind_wait, long(d->dbg_bind_wd_o));
+      });
+      p.d3_reads = d3_reads_of(ops_rel);
+      CHECK(absent && !p.img_at_go && p.release > p.bound && p.proof > p.release
+                && p.bind_wait < RS_TMO && x.d->restore_cause_o == 3,
+            "D3R19 past the bound: no image at reset (%u) nor at the D3 walk's start "
+            "(%u); the binding walk (longest wait %ld of %ld) fails whole at the bound "
+            "(cause %u), released %ld clocks after it, the LOCATE proves the image %ld "
+            "clocks after the release", unsigned(absent), unsigned(p.img_at_go),
+            p.bind_wait, RS_TMO, unsigned(x.d->restore_cause_o), p.release - p.bound,
+            p.proof - p.release);
+      report_defaults("D3R19 past the bound", p);
+      pre_proof_power_down();
+    }
+    {
+      //! the bound midway through the LOCATE
+      const long off = lag.locate / 2;
+      pre_proof_power_up(true);
+      const PreProof p = pre_proof_boot(PRE_PROOF_G, [&](long bound) {
+        return bound + off - lag.loc;
+      });
+      CHECK(lag.loc > 0 && lag.locate > 2 && !p.img_at_go && p.d27 == p.held
+                && p.release < p.bound && p.proof == p.bound + off
+                && p.bind_wait < RS_TMO && x.d->restore_cause_o == 0,
+            "D3R19 inside the LOCATE: the binding walk completes (0x27 done on its "
+            "placed clock %u, longest wait %ld of %ld), the LOCATE starts %ld clocks "
+            "before the bound and proves the image %ld clocks after it (want %ld of "
+            "%ld; -1: never)", unsigned(p.d27 == p.held), p.bind_wait, RS_TMO,
+            p.bound - p.release, p.proof < 0 ? -1 : p.proof - p.bound, off, lag.locate);
+      report_defaults("D3R19 inside the LOCATE", p);
+      pre_proof_power_down();
+    }
+  }
+
+  // D3R20 (R390-3 F2, R391-3 F2: a proof on the bound's own clock). The
+  // binding walk completes, its last done placed so the image is proven on
+  // exactly the bound's own clock: in W_IMG with the image valid at reset
+  // (nothing is awaited there, so the aggregate fires on that clock too),
+  // and in W_IMGLOC with the image loaded late and the LOCATE's answer in
+  // hand (so the aggregate has not fired). Either proof is past the bound
+  // and ends DEFAULTS, cause 3, with no record READ. A rule that tests the
+  // fired level instead of the count reaching the bound starts pass 0 on
+  // that clock and reads records past it.
+  void r20_a_proof_on_the_bounds_own_clock(const ProofLags& lag) {
+    struct Arm { bool late; const char* what; };
+    const std::array<Arm, 2> arms{{{false, "D3R20 W_IMG"}, {true, "D3R20 W_IMGLOC"}}};
+    for (const auto& a : arms) {
+      const long to_proof = a.late ? lag.loc : lag.img;
+      pre_proof_power_up(a.late);
+      const PreProof p = pre_proof_boot(PRE_PROOF_G, [&](long bound) {
+        return bound - to_proof;
+      });
+      CHECK(to_proof > 0 && p.img_at_go == !a.late && p.d27 == p.held
+                && p.proof == p.bound && p.bind_wait < RS_TMO && x.d->restore_cause_o == 0,
+            "%s: the binding walk completes (0x27 done on its placed clock %u, longest "
+            "wait %ld of %ld), the image valid at the D3 walk's start %u, proven %ld "
+            "clocks after the bound (want 0; -1: never)", a.what, unsigned(p.d27 == p.held),
+            p.bind_wait, RS_TMO, unsigned(p.img_at_go), p.proof < 0 ? -1 : p.proof - p.bound);
+      report_defaults(a.what, p);
+      pre_proof_power_down();
+    }
+  }
+
+  // D3R21 (R391-3 F2: a binding byte in hand on the expiry clock). D3R14's
+  // walk, every sink's binding saved and the image valid, the header bytes
+  // RS_TMO / 8 - 400 clocks apart and each payload byte RS_TMO / 2, so the
+  // binding walk outlasts the bound; one payload byte is placed so the
+  // binding manager holds it on the bound's own clock, the clock the
+  // aggregate fires. agg_o is a level from the next clock, so the walk
+  // takes its own per-wait path at its next waiting clock: it fails whole
+  // on the clock after the bound, and the D3 walk ends DEFAULTS. A one-clock
+  // pulse would meet only the byte in hand, and the walk would read on.
+  void r21_a_binding_byte_in_hand_on_the_expiry_clock() {
+    pre_proof_power_up(false);
+    x.nv_hdr_every = static_cast<int>(RS_TMO / 8 - 400);
+    x.nv_byte_every = static_cast<int>(RS_TMO / 2);
+    long bound = -1;
+    long lag = -1;                                 //! a payload byte to the manager
+    long moved = -1;                               //! the device's last byte
+    bool moved_payload = false;
+    int sent = x.nv_rd_sent;
+    long placed = -1;
+    bool in_hand = false;
+    bool stream_next = false;
+    long failed = -1;                              //! restore_cause_o first reads 3
+    long bind_wait = 0;
+    long term = -1;
+    const Boot b = boot_with(AGG + 2 * RS_TMO, [&] {
+      const auto* d = x.d;
+      const long now = long(x.t);
+      if (bound < 0) bound = bound_t(d->dbg_d3_agg_o);
+      const bool payload = x.nv_st == H::NvState::NV_READ && x.nv_cur.off != 0;
+      if (x.nv_rd_sent != sent) {
+        sent = x.nv_rd_sent;
+        moved = now - 1;
+        moved_payload = payload;
+        const long gap = bound - lag - moved;
+        if (placed < 0 && lag > 0 && payload && x.nv_left >= 2 && gap > 10
+            && gap <= RS_TMO - 1500) {
+          placed = bound - lag;
+          x.nv_byte_at = placed;
+        }
+      }
+      if (lag < 0 && moved_payload && d->dbg_bind_rvalid_o) lag = now - moved;
+      if (now == bound) in_hand = d->dbg_bind_rvalid_o;
+      if (now == bound + 1) stream_next = !d->dbg_bind_rvalid_o;
+      if (failed < 0 && d->restore_cause_o == 3) failed = now;
+      if (term < 0 && (d->restore_done_o || d->restore_closed_o)) term = now;
+      bind_wait = std::max(bind_wait, long(d->dbg_bind_wd_o));
+    });
+    const auto* d = x.d;
+    CHECK(lag > 0 && placed == bound - lag && in_hand && stream_next && bind_wait < RS_TMO,
+          "D3R21: a binding payload byte placed at the device %ld clocks before the "
+          "bound (lag %ld) is in the binding manager's hand on the bound's own clock "
+          "(%u), none on the next (%u); longest wait %ld of %ld", bound - placed, lag,
+          unsigned(in_hand), unsigned(stream_next), bind_wait, RS_TMO);
+    CHECK(failed == bound + 2 && d->restore_fail_o && d->restore_cause_o == 3
+              && b.done >= 0 && b.closed < 0 && term - bound < RS_TMO && d->rs_cause_o == 3
+              && d->dbg_img_valid_o && !d->dbg_d3_own_o,
+          "D3R21: the binding walk fails whole at its next waiting clock, the one after "
+          "the bound (cause 3 registered %ld clocks after the bound, want 2), and the "
+          "restore ends DEFAULTS %ld clocks after the bound (cause %u)",
+          failed < 0 ? -1 : failed - bound, term < 0 ? -1 : term - bound,
+          unsigned(d->rs_cause_o));
+    pre_proof_power_down();
+  }
+
   // ---- DR3a: restore durations and the longest waits (informational) ----
   // The parent D3 contract's DR3a had the processor lane MEASURE its
   // per-wait (20 ms) and aggregate (1,000 ms) candidates; the manager
@@ -2414,5 +2707,9 @@ struct D3RestorePhase {
     r16_the_aggregate_is_inert_after_the_terminal();
     r17_the_aggregate_waits_for_a_clock_without_an_event();
     r18_an_abort_in_the_arbiters_issue_cycle();
+    const ProofLags lags = proof_lags();
+    r19_the_image_proven_by_its_locate_after_the_bound(lags);
+    r20_a_proof_on_the_bounds_own_clock(lags);
+    r21_a_binding_byte_in_hand_on_the_expiry_clock();
   }
 };

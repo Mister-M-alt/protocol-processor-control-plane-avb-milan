@@ -14,8 +14,9 @@ The controls are those of the parent D3 contract section 18.1 (processor issue #
 and the review rounds on it: the aggregate restore deadline (DR3a), the AECP hold
 admission, the DR2c backoff derivation and its freedom of dispatch, both directions of
 the pass agreement, the roll-back strobe, the pass-1 drain, the watched format judge,
-the rate walk, the aggregate's terminals, span and inertness, and the admission's
-resident count. The suite READMEs carry the matching mutation records.
+the rate walk, the aggregate's terminals, span and inertness, its pre-proof
+variants, the drain of a READ abandoned in the arbiter's issue cycle, and the
+admission's resident count. The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/d3_mutants.py --output DIR [--verilator V] [--jobs N]
                                        [--only NAME ...]
@@ -341,6 +342,43 @@ AGGREGATE = (
                  "                        && (stall_w || !wait_w);\n",
          "  assign agg_expire_w = agg_live_w && (agg_r >= 32'(RS_AGG_CYC_P - 1));\n"),),
         ("D3R17: the writer's grant", "D3R17: once the device ends")),
+    # R390-3 F1: the head's arbiter, which arms the drain only for a READ it
+    # already owns, so an abort in the issue cycle is lost; graded for the
+    # binding walk (manager 0) and for a manager 1 driven by acmp_nvm
+    *(Mutant(name, suite, (
+        (ARB, "  assign arm0_w = (iss0_w && !m0_we_i && m0_abort_i)\n"
+              "                  || ((own_r == O_M0) && !we_r && m0_abort_i);\n"
+              "  assign arm1_w = (iss1_w && !m1_we_i && m1_abort_i)\n"
+              "                  || ((own_r == O_M1) && !we_r && m1_abort_i);\n",
+         "  assign arm0_w = (own_r == O_M0) && !we_r && m0_abort_i;\n"
+         "  assign arm1_w = (own_r == O_M1) && !we_r && m1_abort_i;\n"),), checks)
+      for name, suite, checks in (
+          ("drain_misses_issue_cycle", PP_TOP,
+           ("D3R18: the READ abandoned in its issue cycle", "D3R18: once the device ends")),
+          ("drain_misses_issue_cycle_m1", ACMP_NVM,
+           ("N10 a manager-1 READ abandoned in its issue cycle",)))),
+    # R390-3 F2 and R391-3 F2: the aggregate's pre-proof variants (the
+    # reviewers' own edits)
+    Mutant("agg_closes_during_proof", PP_TOP, (
+        (WRITER, "  assign expire_w      = wait_expire_w || (agg_expire_w && proven_r);\n",
+         "  assign expire_w      = wait_expire_w || (agg_expire_w && (proven_r || (ws_r == W_IMGLOC)));\n"),),
+        ("D3R19 inside the LOCATE: DEFAULTS",)),
+    Mutant("proof_past_needs_fire", PP_TOP, (
+        (WRITER, "      if (proof_w && agg_past_w) begin\n",
+         "      if (proof_w && agg_fired_r) begin\n"),),
+        ("D3R20 W_IMG: DEFAULTS", "D3R20 W_IMGLOC: DEFAULTS")),
+    Mutant("proof_default_only_from_img", PP_TOP, (
+        (WRITER, "      if (proof_w && agg_past_w) begin\n",
+         "      if (proof_w && agg_past_w && (ws_r == W_IMG)) begin\n"),),
+        ("D3R19 past the bound: DEFAULTS", "D3R19 inside the LOCATE: DEFAULTS",
+         "D3R20 W_IMGLOC: DEFAULTS")),
+    Mutant("proof_past_bound_needs_fired", PP_TOP, (
+        (WRITER, "  assign agg_past_w   = agg_run_r && (agg_r >= 32'(RS_AGG_CYC_P - 1));\n",
+         "  assign agg_past_w   = agg_fired_r;\n"),),
+        ("D3R20 W_IMG: DEFAULTS", "D3R20 W_IMGLOC: DEFAULTS")),
+    Mutant("agg_o_pulse", PP_TOP, (
+        (WRITER, "  assign agg_o        = agg_fired_r;\n", "  assign agg_o        = agg_expire_w;\n"),),
+        ("D3R21: the binding walk fails whole",)),
 )
 
 # the AECP hold admission (issue #131 ruling 5873580386)

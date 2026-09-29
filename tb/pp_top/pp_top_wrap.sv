@@ -399,6 +399,11 @@ module pp_top_wrap (
     output logic        dbg_bind_abort_o,
     output logic  [1:0] dbg_nvm_own_o,
     output logic        dbg_nvm_busy_o,
+    //! the binding manager holds a restore byte (its nvm_rvalid_i), and the
+    //! D3 walk proves the image this cycle (the writer's proof_w): D3R19 to
+    //! D3R21 place them against the aggregate bound
+    output logic        dbg_bind_rvalid_o,
+    output logic        dbg_d3_proof_o,
     //! the D3 writer's aggregate count (agg_r, 0 in the accepted start's own
     //! cycle) and its fired level (agg_o): a case that must land an event on
     //! the bound's own cycle reads them to prove it did
@@ -726,6 +731,8 @@ module pp_top_wrap (
   assign dbg_bind_abort_o = u_dut.nvm_abort_w;
   assign dbg_nvm_own_o    = 2'(u_dut.u_nvm_arb.own_r);
   assign dbg_nvm_busy_o   = u_dut.np_busy_w;
+  assign dbg_bind_rvalid_o = u_dut.nvm_rvalid_w;
+  assign dbg_d3_proof_o   = u_dut.u_aecp.u_d3.proof_w;
   assign dbg_d3_agg_o     = u_dut.u_aecp.u_d3.agg_r;
   assign dbg_d3_agg_fired_o = u_dut.d3_agg_w;
   always_comb begin : second_originator_owner

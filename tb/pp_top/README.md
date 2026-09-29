@@ -219,7 +219,26 @@ tally.
   carries the strobe and the walk's abort with the arbiter still unowned;
   the arbiter drains the READ from the next clock, the walk fails whole
   (cause 3), the restore ends DEFAULTS, and once the device ends the
-  drained READ the port is idle and a later SET persists. The restore's negative controls (each group's replay deleted,
+  drained READ the port is idle and a later SET persists. **D3R19** to
+  **D3R21** (R390-3 F2, R391-3 F2) grade the aggregate's pre-proof variants,
+  every case with every record and every binding saved. D3R19: the image
+  absent at reset and loaded before `PP_CTRL[1]` (the product order of
+  parent D3 section 8.1), so the D3 walk proves it with its own LOCATE.
+  Past the bound, D3R14's device keeps the binding walk reading until the
+  bound fails it, and the LOCATE then proves the image: DEFAULTS, cause 3,
+  546 clocks after the bound, no D3 record READ. Inside the LOCATE, the
+  binding walk completes with its last done placed so the bound falls
+  midway through the LOCATE (271 of 542 clocks): the same DEFAULTS, image
+  valid, AECP released. D3R20: the binding walk's last done placed so the
+  image is proven on exactly the bound's own clock, in `W_IMG` (image valid
+  at reset) and in `W_IMGLOC` (loaded late, the LOCATE's answer in hand):
+  DEFAULTS on the next clock with no record READ. The done-to-proof lags
+  these placements use come from two short boots with a fast device.
+  D3R21: D3R14's walk with each payload byte `RS_TMO / 2` clocks apart and
+  one byte placed so the binding manager holds it on the bound's own clock,
+  the clock the aggregate fires: the walk fails whole at its next waiting
+  clock (cause 3 registered two clocks after the bound) and the restore
+  ends DEFAULTS. The restore's negative controls (each group's replay deleted,
   a value rule ignored, the passes allowed to disagree, a DEVICE error read
   as blank and an UNFRAMED one read as a device error, a descriptor error
   read as a refusal, no restore watchdog, restore writes counted as changes,
@@ -644,9 +663,10 @@ and M34 the same 2 as before.
 extract of `hdl/`, `tb/common/` and this directory, builds `gsi-build`, runs
 `--d3-only`, and counts the mutant KILLED only when the run completes with its
 tally, exits non-zero and every named check fails; a golden extract runs first and
-must pass. The same driver runs the binding manager's three DR2c controls in
-`tb/acmp_nvm` and the validator's admission control in `tb/rx_validator` (their
-READMEs record them). At the lane head all 69 are KILLED and the three goldens PASS;
+must pass. The same driver runs the binding manager's three DR2c controls and the
+arbiter's issue-cycle control in `tb/acmp_nvm` and the validator's admission control
+in `tb/rx_validator` (their READMEs record them). At the lane head all 76 are KILLED
+and the three goldens PASS;
 the last column is how many checks each one failed there.
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
@@ -682,7 +702,7 @@ the last column is how many checks each one failed there.
 | `no_restore_watchdog` | the per-wait deadline removed | `D3R8: a READ granted`, `D3R8b` | 7 |
 | `restore_writes_are_changes` | the snoop taps the shared bus, so restore writes are changes | `D3R1: no restore write is a change` | 1 |
 | `enable_not_released_by_restore` | ADP enabled by the request alone | `D3R1: the enable requested from reset` | 4 |
-| `done_without_d3` | restore done without the D3 walk | `D3R1: the enable requested from reset`, `D3R1: COMPLETE` | 39 |
+| `done_without_d3` | restore done without the D3 walk | `D3R1: the enable requested from reset`, `D3R1: COMPLETE` | 42 |
 | `blank_ignores_d3` | restore blank ignores the D3 walk | `D3R1: COMPLETE` | 1 |
 | `store_not_cleared` | the sampling-rate row and its valid flag not reset | `D3R1: every row at its reset value` | 17 |
 | `valid_not_cleared` | the sampling-rate valid flag not reset | `D3R1: every row at its reset value` | 17 |
@@ -703,16 +723,22 @@ the last column is how many checks each one failed there.
 | `judge_wait_unwatched` | the format judge's wait is not watched | `D3R8b` | 1 |
 | `rate_walk_stuck_on_first_lane` | the rate walk never leaves the list's first lane | `D3R3b entry 7` | 1 |
 | `rate_walk_unbounded` | the rate walk's eight-entry bound dropped | `D3R3b entry 8` | 1 |
-| `no_aggregate_deadline` | the aggregate deadline removed | `D3R13 pass 0: DEFAULTS at clock`, `D3R13 pass 1` | 13 |
-| `aggregate_mirrored` | the aggregate a mirrored 100,000,000 instead of CLK_HZ_P | `D3R13 pass 0: DEFAULTS at clock` | 13 |
-| `aggregate_from_the_walk` | the aggregate counts from the binding walk's end | `D3R13 pass 0: DEFAULTS at clock` | 15 |
+| `no_aggregate_deadline` | the aggregate deadline removed | `D3R13 pass 0: DEFAULTS at clock`, `D3R13 pass 1` | 16 |
+| `aggregate_mirrored` | the aggregate a mirrored 100,000,000 instead of CLK_HZ_P | `D3R13 pass 0: DEFAULTS at clock` | 19 |
+| `aggregate_from_the_walk` | the aggregate counts from the binding walk's end | `D3R13 pass 0: DEFAULTS at clock` | 21 |
 | `per_wait_floor` | the per-wait derivation rounds down | `D3R8 deadline` | 1 |
-| `agg_closes_before_proof` | the aggregate aborts before the image is proven (the pre-walk close) | `D3R14 image valid: DEFAULTS` | 5 |
-| `binding_walk_ignores_aggregate` | the binding walk ignores the aggregate and reads on | `D3R14 image valid: the binding walk`, `D3R14 image refused: the binding walk` | 7 |
-| `proof_reads_records_past_bound` | the image proven past the bound starts pass 0 | `D3R14 image valid: DEFAULTS` | 1 |
+| `agg_closes_before_proof` | the aggregate aborts before the image is proven (the pre-walk close) | `D3R14 image valid: DEFAULTS` | 11 |
+| `binding_walk_ignores_aggregate` | the binding walk ignores the aggregate and reads on | `D3R14 image valid: the binding walk`, `D3R14 image refused: the binding walk` | 10 |
+| `proof_reads_records_past_bound` | the image proven past the bound starts pass 0 | `D3R14 image valid: DEFAULTS` | 6 |
 | `agg_not_in_rollback` | the aggregate count paused in the roll-back and its re-LOCATE (R390-2's own edit) | `D3R15 debt wait: CLOSED`, `D3R15 re-LOCATE: CLOSED` | 4 |
 | `agg_not_stopped_at_terminal` | the aggregate keeps counting after the terminal (R391-2's own edit) | `D3R16 COMPLETE`, `D3R16 DEFAULTS`, `D3R16 CLOSED` | 3 |
 | `agg_fires_with_event_in_hand` | the aggregate fires with a grant, byte or answer in hand (R391-2's own edit) | `D3R17: the writer's grant`, `D3R17: once the device ends` | 2 |
+| `drain_misses_issue_cycle` | the head's arbiter: the drain armed only for a READ already owned, so an abort in the issue cycle is lost (R390-3 F1) | `D3R18: the READ abandoned in its issue cycle`, `D3R18: once the device ends` | 2 |
+| `agg_closes_during_proof` | the aggregate also aborts in the image proof's LOCATE (R390-3's own edit) | `D3R19 inside the LOCATE: DEFAULTS` | 2 |
+| `proof_past_needs_fire` | the proof past the bound keyed on the fired level, not the bound reached (R390-3's own edit) | `D3R20 W_IMG: DEFAULTS`, `D3R20 W_IMGLOC: DEFAULTS` | 2 |
+| `proof_default_only_from_img` | the proof's DEFAULTS taken only in `W_IMG`, never from the LOCATE (R391-3's own edit) | `D3R19 past the bound: DEFAULTS`, `D3R19 inside the LOCATE: DEFAULTS`, `D3R20 W_IMGLOC: DEFAULTS` | 3 |
+| `proof_past_bound_needs_fired` | `agg_past_w` is the fired level, so a proof on the bound's own clock reads on (R391-3's own edit) | `D3R20 W_IMG: DEFAULTS`, `D3R20 W_IMGLOC: DEFAULTS` | 2 |
+| `agg_o_pulse` | `agg_o` a one-clock pulse on the expiry instead of a level (R391-3's own edit) | `D3R21: the binding walk fails whole` | 3 |
 | `aecp_hold_unbounded` | the admission gate never drops (the unbounded hold) | `D3O5: in CLOSED each GET_RX_STATE`, `D3O6: during the slowed walk` | 7 |
 | `held_drop_uncounted` | a held drop not counted | `D3O5: one AECP command held`, `D3O6: at the terminal` | 5 |
 | `resident_never_returned` | the resident count never comes back down (R391-2's own edit) | `D3O7: the returned slot frees the share` | 1 |
