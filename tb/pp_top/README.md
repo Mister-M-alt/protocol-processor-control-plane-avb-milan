@@ -1206,12 +1206,15 @@ directory, and counts it KILLED only when the run completes with its tally,
 exits non-zero and every named check fails; a golden extract of each suite in
 use runs first and must pass. Here it builds `gsi-build` and runs
 `--acmp-only`; the same driver runs the listener controls in `tb/acmp_listener`
-(recorded in that README). Measured 2026-09-29, each in its own extract:
+and the validator control in `tb/rx_validator` (recorded in those READMEs).
+Measured 2026-09-29 at the lane head, each in its own extract: all 19 KILLED
+(14 here, 4 in `tb/acmp_listener`, 1 in `tb/rx_validator`) and the three
+goldens PASS:
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
 |---|---|---|---|
-| `msg_ok_forced` | `txn_msg_ok_w` forced to 1 in the listener | `AI3: the sink never left PRB_W_RESP` | 1 of 8 |
-| `cdl_not_44_rejected` | the validator accepts ACMP only at cdl 44 (`v1_pass_w` also requires it for subtype 0xFC) | `AL1: a 96-B UNBIND_RX`, `AL2: a 96-B BIND_RX`, `AL3: the 96-B PROBE_TX`, `AL4: no 96-B frame was dropped` | 5 of 15 |
+| `msg_ok_forced` | `txn_msg_ok_w` forced to 1 in the listener | `AI3: the sink never left PRB_W_RESP` | 1 of 42 |
+| `cdl_not_44_rejected` | the validator accepts ACMP only at cdl 44 (`v1_pass_w` also requires it for subtype 0xFC) | `AL1: a 96-B UNBIND_RX`, `AL2: a 96-B BIND_RX`, `AL3: the 96-B PROBE_TX`, `AL4: no 96-B frame was dropped` | 19 of 42 (the dropped long BIND_RX leaves AS without its binding) |
 | `st_ls_settle_as_withdraw` | `st_ls_r` issues the settle as WITHDRAW_LISTENER (op 3) | `AS4: the matching Talker Advertise yields Listener Ready New`, `AS4: class-D`, `AS5: 11.5 s after the settle` | 7 of 42 |
 | `st_ls_teardown_as_declare` | `st_ls_r` issues the teardown as DECLARE_LISTENER (op 2) | `AS6: the Listener attribute is withdrawn on the wire` | 1 of 42 |
 | `st_ls_sid_da_swapped` | `st_ls_r` carries the DA as the stream_id and the stream_id as the DA | `AS4: the matching ...`, `AS4: class-D`, `AS5: 11.5 s ...` | 7 of 42 |
