@@ -44,6 +44,7 @@ MUTANTS = [
     ('release-waits-for-draw', 'maap', 'run', 'U17c:'),
     ('idle-serves-a-latched-expiry-first', 'maap', 'run', 'U28:'),
     ('teardown-keeps-announce-timer', 'maap', 'run', 'U28:'),
+    ('drain-waits-for-the-link', 'maap', 'run', 'U23:'),
 ]
 
 # the two tally shapes: a suite's canonical line, and one pp_top build's line

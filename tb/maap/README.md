@@ -107,10 +107,16 @@ two sides apart.
 
 - **U23** sweeps the fall over 80 consecutive cycles from the 4th PROBE's lane
   grant (the probeCount! entry, sAnnounce). The 5 offsets before the
-  ANNOUNCE's slot request send nothing. The 75 from it drain the ANNOUNCE
-  byte-exact and nothing after it. No offset leaves the claim valid after the
-  first cycle the fall is seen, every one ends INITIAL, and every next
-  PortOperational! walks again.
+  ANNOUNCE's slot request send nothing. From the request on, the ANNOUNCE
+  belongs to the probeCount! entry (B.3.2) and is the one frame that drains:
+  at each of the 75 offsets it goes byte-exact, with no slot request after it,
+  and reaches the lane within 63 cycles of the fall (measured: at most 63). That
+  window runs from the slot request to the lane grant: the request, the grant
+  wait, 60 byte writes, the commit, and the lane request, granted at once in
+  this bench. At the top the shared pool and lane add their waits, and a
+  stalled egress holds the frame without bound (U25). No offset leaves the
+  claim valid after the first cycle the fall is seen, every one ends INITIAL,
+  and every next PortOperational! walks again.
 - **U24** bounces the link for 5 cycles while a frame is being built:
   (a) the sDefend answer to an rProbe! in DEFEND, and (b) the first ANNOUNCE.
   The frame drains byte-exact, the claim is not valid from the fall on, and
@@ -206,29 +212,30 @@ only simulation logs; no expectation comes from RTL text.
 
 | Arm (patch) | Planted defect | Suite | Named failures (of the suite's checks) |
 |---|---|---|---|
-| `fit-compare-forced-true` | the fit compare at `KL_pp_maap.sv:633` (issue #66's `:587` at the lane's base) forced true: an overhanging draw is accepted | maap | U17 x4 (1 draw instead of 3; claim `…:FD:FF`; block ends `…:FE:FD`; PROBE bytes), and U27's redraw premise (the overhanging draw is taken): 5 FAIL of 190 |
-| `fit-compare-off-by-one` | the fit compare `<=` becomes `<`: the last fitting offset is refused | maap | U17 x3 (no PROBE, the boundary draw refused 1,745 times) and U17b x4: 7 FAIL of 189 |
-| `seed-clamp-removed` | the footnote-a seed clamp removed: the provisioned offset is probed as given | maap | U18 x4 (claim `…:FF:FF`; PROBE bytes; claim; last-source grant), U18b x2: 6 FAIL of 190 |
-| `release-keeps-draw-mark` | the fix above removed | maap | U17b phases 1 to 3, U17c x2, U18 x3 and U27 x1, each behind a wedge that the next Release! clears in `W_IVAL`: 9 FAIL of 188 |
+| `fit-compare-forced-true` | the fit compare at `KL_pp_maap.sv:633` (issue #66's `:587` at the lane's base) forced true: an overhanging draw is accepted | maap | U17 x4 (1 draw instead of 3; claim `…:FD:FF`; block ends `…:FE:FD`; PROBE bytes), and U27's redraw premise (the overhanging draw is taken): 5 FAIL of 191 |
+| `fit-compare-off-by-one` | the fit compare `<=` becomes `<`: the last fitting offset is refused | maap | U17 x3 (no PROBE, the boundary draw refused 1,745 times) and U17b x4: 7 FAIL of 190 |
+| `seed-clamp-removed` | the footnote-a seed clamp removed: the provisioned offset is probed as given | maap | U18 x4 (claim `…:FF:FF`; PROBE bytes; claim; last-source grant), U18b x2: 6 FAIL of 191 |
+| `release-keeps-draw-mark` | the fix above removed | maap | U17b phases 1 to 3, U17c x2, U18 x3 and U27 x1, each behind a wedge that the next Release! clears in `W_IVAL`: 9 FAIL of 189 |
 | `validator-maap-version-1-only` | `KL_pp_rx_validator.sv` gains a `maap_version == 1` acceptance rule (issue #67, B.2.3.2/B.2.3.4) | rx_validator | F28a/F28b/F28c: versions 2, 0 and 31 counted `rx_version` and aborted: 47 FAIL of 453 |
 | (same arm) | | pp_top `maap-internal` | MP7 x4: neither the version-2 nor the version-0 PROBE is defended: 4 FAIL of 33 |
-| `compare-mac-forward` | `cmp_mac_true_w = own_mac_i < rxm_sa_r`: compare_MAC in forward octet order (issue #68, B.3.6.4) | maap | U7, U8, U9 x2, U10, U19 x2, U20, U21: 9 FAIL of 188 |
+| `compare-mac-forward` | `cmp_mac_true_w = own_mac_i < rxm_sa_r`: compare_MAC in forward octet order (issue #68, B.3.6.4) | maap | U7, U8, U9 x2, U10, U19 x2, U20, U21: 9 FAIL of 189 |
 | (same arm) | | pp_top `maap-internal` | MP4 x5: the rev-lower, forward-higher ANNOUNCE is ignored, nothing withdrawn: 5 FAIL of 33 |
-| `probe-rprobe-never-yields` | PROBE / rProbe! never yields | maap | U19 x2: 2 FAIL of 190 |
-| `defend-rdefend-ignored` | DEFEND / rDefend! ignored (only rAnnounce! can yield in DEFEND) | maap | U21 x4, then U22 x4 behind it: 8 FAIL of 188 |
-| `defend-rdefend-no-tiebreak` | DEFEND / rDefend! always yields (no compare_MAC) | maap | U20, then U21 (not in DEFEND): 2 FAIL of 190 |
-| `probe-rannounce-tiebreak` | PROBE / rDefend! and rAnnounce! gain a compare_MAC | maap | U10 x3, U22 x2, U27 x2 (the contest no longer yields): 7 FAIL of 190 |
-| `yield-reuses-range` | a yield re-probes the contested range instead of running generate_address | maap | U8, U10, U15, U19, U21, U22, U27 x2: 8 FAIL of 190 |
-| `ival-sends-after-release` | `W_IVAL` ignores an engage fall (the start head) | maap | U17c and U23: a Release! before the slot request still sends the frame; U28 x3: a slot request and a timer start after the fall: 5 FAIL of 190 |
-| `post-publishes-after-release` | `W_POST` ignores a Release! latched behind its frame | maap | U24 x2: the ANNOUNCE's bounce publishes DEFEND, no fresh walk: 2 FAIL of 188 |
-| `tx-path-absorbs-release` | the TX states do not latch an engage fall (the start head) | maap | U24 x4, U25 x3: the claim survives a bounce and a 100 ms outage: 7 FAIL of 184 |
-| `off-waits-for-an-edge` | `W_OFF` starts only on a rise it saw itself (the start head) | maap | U24 x2, U25 x3, U26 x3: a rise during teardown or a drain parks the machine: 8 FAIL of 183 |
-| `rx-release-returns-to-idle` | `W_RX` leaves a fall to `W_IDLE` (the start head) | maap | U26 x2: a one-cycle fall on `W_RX` is lost; U28: the claim outlives a fall on `W_RX` in DEFEND: 3 FAIL of 189 |
-| `seed-clamp-off-by-one` | the seed clamp compares against `0xFE00 - count + 1` (issue #66 round 2) | maap | U18b x2: seed `0xFDF9` is probed as given, a block ending at `…:FE:00`: 2 FAIL of 190 |
-| `release-waits-for-draw` | the `W_ADDR` fall exit waits for the draw's answer (`!eng_w && !draw_act_r`) | maap | U17c: the abandoned draw is adopted after the Release! (3 of 5 offsets): 1 FAIL of 190 |
-| `seed-rearmed-on-idle-release-only` | only the `W_IDLE` exit re-arms the footnote-a seed (the start head) | maap | U27 x2: after a Release! mid-redraw the next engagement probes a random range: 2 FAIL of 190 |
-| `idle-serves-a-latched-expiry-first` | `W_IDLE` serves a latched timer expiry before an engage fall seen in the same cycle (issue #66 round 2) | maap | U28 x3: the latched expiry sends the 4th PROBE after the fall, and a latched announce_timer expiry keeps the claim a cycle past it: 3 FAIL of 190 |
-| `teardown-keeps-announce-timer` | the teardown never stops announce_timer (issue #66 round 2) | maap | U28: announce_timer expires after the fall (3 of 17 falls): 1 FAIL of 190 |
+| `probe-rprobe-never-yields` | PROBE / rProbe! never yields | maap | U19 x2: 2 FAIL of 191 |
+| `defend-rdefend-ignored` | DEFEND / rDefend! ignored (only rAnnounce! can yield in DEFEND) | maap | U21 x4, then U22 x4 behind it: 8 FAIL of 189 |
+| `defend-rdefend-no-tiebreak` | DEFEND / rDefend! always yields (no compare_MAC) | maap | U20, then U21 (not in DEFEND): 2 FAIL of 191 |
+| `probe-rannounce-tiebreak` | PROBE / rDefend! and rAnnounce! gain a compare_MAC | maap | U10 x3, U22 x2, U27 x2 (the contest no longer yields): 7 FAIL of 191 |
+| `yield-reuses-range` | a yield re-probes the contested range instead of running generate_address | maap | U8, U10, U15, U19, U21, U22, U27 x2: 8 FAIL of 191 |
+| `ival-sends-after-release` | `W_IVAL` ignores an engage fall (the start head) | maap | U17c and U23: a Release! before the slot request still sends the frame; U28 x3: a slot request and a timer start after the fall: 5 FAIL of 191 |
+| `post-publishes-after-release` | `W_POST` ignores a Release! latched behind its frame | maap | U24 x2: the ANNOUNCE's bounce publishes DEFEND, no fresh walk: 2 FAIL of 189 |
+| `tx-path-absorbs-release` | the TX states do not latch an engage fall (the start head) | maap | U24 x4, U25 x3: the claim survives a bounce and a 100 ms outage: 7 FAIL of 185 |
+| `off-waits-for-an-edge` | `W_OFF` starts only on a rise it saw itself (the start head) | maap | U24 x2, U25 x3, U26 x3: a rise during teardown or a drain parks the machine: 8 FAIL of 184 |
+| `rx-release-returns-to-idle` | `W_RX` leaves a fall to `W_IDLE` (the start head) | maap | U26 x2: a one-cycle fall on `W_RX` is lost; U28: the claim outlives a fall on `W_RX` in DEFEND: 3 FAIL of 190 |
+| `seed-clamp-off-by-one` | the seed clamp compares against `0xFE00 - count + 1` (issue #66 round 2) | maap | U18b x2: seed `0xFDF9` is probed as given, a block ending at `…:FE:00`: 2 FAIL of 191 |
+| `release-waits-for-draw` | the `W_ADDR` fall exit waits for the draw's answer (`!eng_w && !draw_act_r`) | maap | U17c: the abandoned draw is adopted after the Release! (3 of 5 offsets): 1 FAIL of 191 |
+| `seed-rearmed-on-idle-release-only` | only the `W_IDLE` exit re-arms the footnote-a seed (the start head) | maap | U27 x2: after a Release! mid-redraw the next engagement probes a random range: 2 FAIL of 191 |
+| `idle-serves-a-latched-expiry-first` | `W_IDLE` serves a latched timer expiry before an engage fall seen in the same cycle (issue #66 round 2) | maap | U28 x3: the latched expiry sends the 4th PROBE after the fall, and a latched announce_timer expiry keeps the claim a cycle past it: 3 FAIL of 191 |
+| `teardown-keeps-announce-timer` | the teardown never stops announce_timer (issue #66 round 2) | maap | U28: announce_timer expires after the fall (3 of 17 falls): 1 FAIL of 191 |
+| `drain-waits-for-the-link` | a requested frame holds its lane request until the engage level returns (issue #66 round 2) | maap | U23 x2: the drained ANNOUNCE misses the 63-cycle window and leaves only after the next PortOperational!; U17c and U28 x2 behind it: 5 FAIL of 191 |
 
-The last run: 3 controls PASS and 23 of 23 arm runs KILLED
-(`26 checks: 26 PASS, 0 FAIL`).
+The last run: 3 controls PASS and 24 of 24 arm runs KILLED
+(`27 checks: 27 PASS, 0 FAIL`).

@@ -983,18 +983,26 @@ bool MaapAnnexBSuite::accept_record(int msg, uint64_t sa, uint64_t req_start,
 // ---- U23: a Release! swept along the ANNOUNCE's path (probeCount!) --------
 // The link drops at each cycle from the 4th PROBE's lane grant until past
 // the ANNOUNCE's. Before the ANNOUNCE's TX slot is requested the entry is
-// dropped: no ANNOUNCE. From the request on the ANNOUNCE drains byte-exact
-// and nothing follows it. At every offset the claim is not valid from the
-// first cycle the fall is seen, the machine is INITIAL, and the next
-// PortOperational! walks again.
+// dropped: no ANNOUNCE. From the request on the ANNOUNCE belongs to the
+// probeCount! entry (B.3.2) and is the one frame that drains: byte-exact,
+// with no slot request after it, and on the lane within the window below.
+// At every offset the claim is not valid from the first cycle the fall is
+// seen, the machine is INITIAL, and the next PortOperational! walks again.
 void MaapAnnexBSuite::a_release_on_the_announce_path_is_ordered_by_the_slot_request() {
   constexpr int kOffsets = 80;
   constexpr int kWatchCycles = 50 * kClkPerMs;
+  // the drain window, from the slot request to the lane grant: the request,
+  // the grant wait, 60 byte writes, the commit, then the lane request, granted
+  // at once here. At the top the shared pool and lane add their waits, and a
+  // stalled egress holds the frame without bound (U25)
+  constexpr int kDrainWindowCycles = 63;
   int dropped = 0;
   int drained = 0;
   int walk_fail = 0;
   int sent_unowed = 0;
   int drain_wrong = 0;
+  int drain_late = 0;
+  int drain_max = 0;
   int claim_after = 0;
   int not_initial = 0;
   h.confl_auto = true;
@@ -1011,17 +1019,21 @@ void MaapAnnexBSuite::a_release_on_the_announce_path_is_ordered_by_the_slot_requ
     // down: the pool samples that request at the edge the walker sees the fall
     const bool owed = h.slot_reqs > r4;
     bool valid_after = d->addr_valid_o;
+    int lane_after = (h.grants > g4) ? 0 : -1;         // cycles from the fall to the lane grant
     for (int c = 1; c < kWatchCycles; ++c) {
       h.step();
       if (d->addr_valid_o) valid_after = true;
+      if (lane_after < 0 && h.grants > g4) lane_after = c;
     }
     const size_t frames = h.tx.size() - n4;            // 4th PROBE (+ ANNOUNCE)
     if (owed) {
       ++drained;
-      if (h.grants - g4 != 1 || frames != 2
+      if (h.slot_reqs - r4 != 1 || h.grants - g4 != 1 || frames != 2
           || h.tx.back().b != maap_frame(MAAP_DA, OWN_MAC, 3, b, COUNT, 0, 0)) {
         ++drain_wrong;
       }
+      if (lane_after < 0 || lane_after > kDrainWindowCycles) ++drain_late;
+      drain_max = std::max(drain_max, lane_after);
     } else {
       ++dropped;
       if (h.grants != g4 || frames != 1 || h.slot_reqs != r4) ++sent_unowed;
@@ -1029,7 +1041,8 @@ void MaapAnnexBSuite::a_release_on_the_announce_path_is_ordered_by_the_slot_requ
     if (valid_after) ++claim_after;
     if (d->state_o != 0) ++not_initial;
   }
-  printf("  U23: %d offsets before the ANNOUNCE's slot request, %d from it\n", dropped, drained);
+  printf("  U23: %d offsets before the ANNOUNCE's slot request, %d from it; the drained "
+         "ANNOUNCE reached the lane at most %d cycles after the fall\n", dropped, drained, drain_max);
   CHECK(walk_fail == 0, "U23: every walk reached its 4th PROBE (%d did not)", walk_fail);
   CHECK(dropped > 0 && drained > 0,
         "U23: premise, the sweep lands on both sides of the ANNOUNCE's slot request "
@@ -1038,8 +1051,11 @@ void MaapAnnexBSuite::a_release_on_the_announce_path_is_ordered_by_the_slot_requ
         "U23: a Release! before the ANNOUNCE's slot request sends nothing (%d of %d offsets)",
         sent_unowed, dropped);
   CHECK(drain_wrong == 0,
-        "U23: a requested ANNOUNCE drains byte-exact and nothing follows it (%d of %d offsets)",
-        drain_wrong, drained);
+        "U23: at most the one frame requested before the fall drains: the ANNOUNCE, "
+        "byte-exact, and no slot request after it (%d of %d offsets)", drain_wrong, drained);
+  CHECK(drain_late == 0,
+        "U23: the drained ANNOUNCE reaches the lane within %d cycles of the fall "
+        "(%d of %d offsets late)", kDrainWindowCycles, drain_late, drained);
   CHECK(claim_after == 0,
         "U23: no claim is valid after the fall (%d of %d offsets)", claim_after, kOffsets);
   CHECK(not_initial == 0, "U23: INITIAL after the Release! (%d offsets)", not_initial);
