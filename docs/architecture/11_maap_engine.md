@@ -134,23 +134,37 @@ observability counters.
   `conflict_start` = max(requested_lo, ours_lo), `conflict_count` = overlapping
   addresses from there.
 - **Release!** = engage fall (config drop or link down), seen in every walker
-  state however short: stop both timers, INITIAL, and no send action (Table B.7;
-  B.3.5.2; footnote c: the range is then free). The claim is withdrawn at the
-  fall. Every Release! re-arms the footnote-a seed for the next engagement,
-  including one that lands while generate_address redraws after a conflict:
-  within an engagement the seed is probed once and a conflict is never answered
-  with it again, and every new engagement probes it first. A later link rise is PortOperational! and
+  state however short: stop both timers, INITIAL, and no PDU generated after
+  the fall (`tb/maap` U28). Table B.7's Release! row stops probe_timer in PROBE
+  and announce_timer in DEFEND and returns to INITIAL, and no Release! cell
+  carries sProbe, sAnnounce or sDefend. A stopped timer does not expire (B.3.1
+  c) and e)), so no probeTimer! or announceTimer! follows. B.3.5.2: the range is
+  no longer in use or defended, so the claim is withdrawn at the fall. Footnote
+  c: back in INITIAL, the range is free. Every Release! re-arms the footnote-a
+  seed for the next engagement, including one that lands while
+  generate_address redraws after a conflict: within an engagement the seed is
+  probed once and a conflict is never answered with it again, and every new
+  engagement probes it first. A later link rise is PortOperational! and
   restarts the walk, including a rise that lands while the walker is still
   tearing down or draining a frame.
-- **A Release! in the middle of an entry.** B.3.2 executes each Table B.7 entry
-  sequentially, so a Release! that lands while the walker is still executing an
-  entry is ordered by that entry's TX slot request:
+- **A Release! in the middle of an entry** is ordered by Table B.7, B.3.2 and
+  B.3.5.2. B.3.2 executes the functions of each Table B.7 entry sequentially, so
+  a Release! that lands while the walker is still executing an entry is ordered
+  before that entry or after it. Table B.7 gives the Release! itself no send
+  action, and B.3.5.2 ends the claim at the fall. The entry's TX slot request
+  decides the order:
   - Before the request, the Release! comes first and the entry is dropped whole:
-    no timer armed, no PDU, no state change.
-  - From the request on, the frame is past recall and drains as the entry's last
-    act. The top's pool-access arbiter holds the engine as owner until it
-    commits, and `KL_pp_tx_slots` frees a committed slot only by sending it. The
-    entry's own state change is dropped, so no claim is published after the fall.
+    no timer armed, no PDU generated after the fall, no state change.
+  - From the request on, the frame belongs to the entry that requested it and
+    drains as that entry's last act: at most that one frame, and no PDU
+    generated after the fall. The top's pool-access arbiter holds the engine as
+    owner until it commits, and `KL_pp_tx_slots` frees a committed slot only by
+    sending it. The drain window runs from the slot request to the lane grant:
+    63 cycles when the pool and the lane grant at once (the unit bench,
+    `tb/maap` U23), longer in the top where both are shared, and unbounded while
+    the egress stalls (U25). The entry's own state change is dropped, so no
+    claim is published after the fall. The timers stop once the lane has the
+    frame, and an expiry meanwhile meets INITIAL, where it is `-x-`.
 
 ## 7. µcode / dispatch
 

@@ -587,7 +587,7 @@ void MaapAnnexBSuite::release_parks_the_machine_without_a_pdu() {
   h.confl_auto = false;
   CHECK(!d->addr_valid_o && d->state_o == 0,
         "U14: INITIAL after Release!, claim withdrawn");
-  CHECK(h.tx.size() == n0, "U14: Release! sends NOTHING (footnote c)");
+  CHECK(h.tx.size() == n0, "U14: Release! sends NOTHING (Table B.7 Release!)");
   CHECK(h.confl_srcs.size() == 8, "U14: sources told the block is gone");
   h.confl_srcs.clear();
   // allocator refuses while parked, still in one cycle

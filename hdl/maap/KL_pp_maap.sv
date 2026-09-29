@@ -55,17 +55,28 @@
 //                                                   NO compare_MAC here)
 //                  rDefend!   yield+re-randomize    compare_MAC, else
 //                  rAnnounce! (no compare_MAC)      yield+re-randomize
-//                  Release!/engage-fall = Stop timers, INITIAL, and no send
-//                  action (Table B.7; B.3.5.2; footnote c: the range is then
-//                  free), seen in every walker state however short. B.3.2
-//                  executes each entry sequentially, so a Release! that
-//                  lands mid-entry is ordered by the entry's TX slot
-//                  request: before it, the entry is dropped whole (no PDU,
-//                  no timer, no state change); from it on, the frame is past
-//                  recall (the top's pool-access arbiter and KL_pp_tx_slots
-//                  offer no abort) and drains as the entry's last act, while
-//                  the claim is withdrawn at the fall and the entry's state
-//                  change is dropped.
+//                  Release!/engage-fall = Stop timers, INITIAL, and no PDU
+//                  generated after the fall, seen in every walker state
+//                  however short. The ordering rests on Table B.7 (the
+//                  Release! row stops probe_timer in PROBE and
+//                  announce_timer in DEFEND and goes to INITIAL; no Release!
+//                  cell carries sProbe, sAnnounce or sDefend), B.3.2 (each
+//                  entry's functions execute sequentially, so a Release!
+//                  that lands mid-entry is ordered before or after that
+//                  entry) and B.3.5.2 (the range is no longer in use or
+//                  defended, so the claim ends at the fall). The entry's TX
+//                  slot request decides the order: before it, the entry is
+//                  dropped whole (no frame, no timer, no state change); from
+//                  it on, the frame belongs to that entry, is past recall
+//                  (the top's pool-access arbiter and KL_pp_tx_slots offer
+//                  no abort) and drains as its last act: at most that one
+//                  frame, which reaches the lane 63 cycles after its request
+//                  when the pool and the lane grant at once, later in the
+//                  top, and only once a stalled egress resumes. The claim is
+//                  withdrawn at the fall and the entry's state change is
+//                  dropped; the timers stop once the lane has the frame, and
+//                  an expiry meanwhile meets INITIAL (-x-). Footnote c: back
+//                  in INITIAL, the range is free.
 //                compare_MAC (B.3.6.4): octet-wise REVERSED unsigned
 //                compare; TRUE (we are lower) = no further processing.
 //                A yield re-enters through INITIAL/Restart!: a FRESH

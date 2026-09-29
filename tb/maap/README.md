@@ -28,8 +28,9 @@ What it proves (U0..U28):
   accepting edge, refuse while probing or parked, grant base + s in DEFEND,
   refuse s >= count (with the count change fanning out conflicts), RELEASE
   acknowledged as a no-op;
-- the engage arcs: Release! (engage fall) tears down with **no** PDU
-  (footnote c), PortOperational! (link bounce) restarts with a fresh range,
+- the engage arcs: Release! (engage fall) tears down with no PDU generated
+  after the fall (Table B.7 Release!, B.3.5.2; footnote c: the range is then
+  free), PortOperational! (link bounce) restarts with a fresh range,
   and footnote-a seeding probes the provisioned offset first;
 - a Release! in the middle of an entry, at every walker state (U23 to U26,
   below), the footnote-a seed re-armed by every Release! (U27), and no PDU
@@ -212,7 +213,7 @@ only simulation logs; no expectation comes from RTL text.
 
 | Arm (patch) | Planted defect | Suite | Named failures (of the suite's checks) |
 |---|---|---|---|
-| `fit-compare-forced-true` | the fit compare at `KL_pp_maap.sv:633` (issue #66's `:587` at the lane's base) forced true: an overhanging draw is accepted | maap | U17 x4 (1 draw instead of 3; claim `…:FD:FF`; block ends `…:FE:FD`; PROBE bytes), and U27's redraw premise (the overhanging draw is taken): 5 FAIL of 191 |
+| `fit-compare-forced-true` | the fit compare at `KL_pp_maap.sv:644` (issue #66's `:587` at the lane's base) forced true: an overhanging draw is accepted | maap | U17 x4 (1 draw instead of 3; claim `…:FD:FF`; block ends `…:FE:FD`; PROBE bytes), and U27's redraw premise (the overhanging draw is taken): 5 FAIL of 191 |
 | `fit-compare-off-by-one` | the fit compare `<=` becomes `<`: the last fitting offset is refused | maap | U17 x3 (no PROBE, the boundary draw refused 1,745 times) and U17b x4: 7 FAIL of 190 |
 | `seed-clamp-removed` | the footnote-a seed clamp removed: the provisioned offset is probed as given | maap | U18 x4 (claim `…:FF:FF`; PROBE bytes; claim; last-source grant), U18b x2: 6 FAIL of 191 |
 | `release-keeps-draw-mark` | the fix above removed | maap | U17b phases 1 to 3, U17c x2, U18 x3 and U27 x1, each behind a wedge that the next Release! clears in `W_IVAL`: 9 FAIL of 189 |
