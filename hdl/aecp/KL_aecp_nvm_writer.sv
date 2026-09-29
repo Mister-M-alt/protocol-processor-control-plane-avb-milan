@@ -76,8 +76,10 @@
 //                the roll-back, which the per-wait deadline still bounds;
 //                during the roll-back (its debt wait or re-LOCATE) CLOSED.
 //                A device that answers every wait just inside its deadline
-//                therefore ends at this bound, or within one per-wait
-//                deadline of it.
+//                therefore ends at this bound, within one per-wait deadline
+//                of it plus a few clocks, or within two plus a few clocks
+//                when the roll-back follows (its debt wait and its re-LOCATE
+//                are each bounded by one).
 //
 //                THE VALUE RULES, the SET programs' own (gen_ucode.py):
 //                configuration index below configurations_count (region

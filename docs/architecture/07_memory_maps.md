@@ -654,7 +654,9 @@ from the accepted restore start (`restore_go_i`), the binding walk, both passes 
 roll-back included. At that bound the phase the restore is in takes the path a stalled
 wait takes in it, once, in the first clock at or after the bound whose wait has no event
 in hand; a device that answers every wait just inside its deadline therefore ends there,
-or within one per-wait deadline of it (parent DR3a, ratified as an enforced bound). **An
+within one per-wait deadline of it plus a few clocks, or within two plus a few clocks
+when a roll-back follows it (its debt wait and its re-LOCATE are each bounded by one;
+parent DR3a, ratified as an enforced bound). **An
 aggregate expiry never closes a provable image** (the ratification's clarification,
 processor issue #131): a binding walk still reading takes its own per-wait path (it fails
 whole and releases the listener, table above), and the D3 walk then proves the image,
@@ -664,6 +666,7 @@ with no record read, and ends DEFAULTS.
 |---|---|---|
 | the image cannot be proven (the LOCATE errs or finds no validated image) | 7 | **CLOSED**: fail, never done; AECP dispatch and ADP held until reset; the listener stays released and keeps its latency: at most one AECP command stays held in the ingress, and every further one is dropped at its slot gate and counted (snapshot word 37; [03 §6](03_packet_engine.md) rule (d)) |
 | the aggregate bound before the image is proven: the binding walk still reading (it fails whole, table above), or the image proof under way | 3 | **DEFAULTS** once the image is proven, with no record read (done and fail; nothing was applied); **CLOSED** only if it cannot be proven (the row above, cause 7) |
+| the image proof's own LOCATE stalls `P-NVM-RS-TMO-CYC` clocks (reachable only with `P-NVM-RS-TMO-CYC` below the store's image walk, which the integrator guide rules out) | 3 | **CLOSED**, no roll-back: nothing was read |
 | in pass 0: a DEVICE err, a torn read, a stall of `P-NVM-RS-TMO-CYC` clocks or the aggregate bound (a granted read abandoned to the drain) | 2, 1, 3 | **DEFAULTS**: done and fail; nothing was applied |
 | in pass 1: any of those, a record whole in one pass and not the other, or a descriptor read a value rule needs that errs (never a refusal) | 2, 1, 3, 5, 6 | **ROLL-BACK**, then DEFAULTS or CLOSED |
 | during the roll-back: its debt wait or re-LOCATE stalls `P-NVM-RS-TMO-CYC` clocks, or the aggregate bound falls in either (the roll-back could not prove the image again by the deadline) | the pass-1 abort's (the first abort names the restore) | **CLOSED** |

@@ -35,6 +35,16 @@
 //                alarm, which only reset clears. The shadow store is a
 //                RAM-shaped sync-read array, never a flop mirror.
 //
+//                A DIRECT INSTANTIATOR DERIVES ITS CLOCK. RETRY_BACKOFF_CYC_P
+//                and RS_TMO_CYC_P count clk_i cycles, and their defaults are
+//                the ruled 500 ms and 20 ms only at the F01.5 default
+//                P-CLK-HZ of 100 MHz. protocol_processor_top derives both from
+//                its CLK_HZ_P (NVM_RETRY_BACKOFF_CYC_P = ceil(CLK_HZ_P / 2),
+//                NVM_RS_TMO_CYC_P = ceil(CLK_HZ_P / 50)); any other
+//                instantiator must derive them from its own clock the same
+//                way, or inherit a wrong DR2c spacing and read deadline (at
+//                1 MHz the backoff default is 50 s, not 500 ms).
+//
 //                RAW VERDICTS. restore_done_o/fail_o/blank_o/cause_o are
 //                THIS walk's. protocol_processor_top combines them with the
 //                D3 walk into its own restore verdicts; a binding-walk verdict
@@ -132,7 +142,8 @@ module KL_acmp_nvm_shadow
     parameter int unsigned RETRY_MAX_P   = 2,
     //! DR2c: clk_i cycles a failed attempt waits before the next; the top
     //! derives it from CLK_HZ_P as ceil(CLK_HZ_P / 2) = 500 ms (this default
-    //! is 500 ms at the F01.5 default P-CLK-HZ of 100 MHz)
+    //! is 500 ms at the F01.5 default P-CLK-HZ of 100 MHz only: a direct
+    //! instantiator derives it from its own clock, banner)
     parameter int unsigned RETRY_BACKOFF_CYC_P = 50_000_000,
     //! T-NVM-RS-DEADLINE (F08.1) in clocks: the restore walk's read phase
     //! fails whole after this many consecutive cycles without progress (the

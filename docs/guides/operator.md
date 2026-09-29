@@ -252,7 +252,9 @@ reset, while the listener keeps answering. It has two causes (the last two rows)
 the image could not be proven (`rs_cause_o` 7): fix the image load (check snapshot
 word 34) and reset; or a failed second pass rolled the settings back and could not
 prove the image again (any other `rs_cause_o`): the NVM device or the descriptor
-memory faulted during the restore; check both and reset. The 1,000 ms aggregate
+memory faulted during the restore; check both and reset. (A third, `rs_cause_o` 3
+with no roll-back, needs a read deadline set below the image walk, which the
+integrator guide rules out.) The 1,000 ms aggregate
 deadline alone never closes an image that can be proven: a slow device ends the
 restore on defaults (done 1, failed 1). The cause of a D3 failure is on the top's
 `rs_cause_o` (1 torn, 2 device, 3 deadline, 5 the two read passes disagreed, 6 a

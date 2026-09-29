@@ -88,7 +88,7 @@ stream counts in F01.5 are product choices; the top supplies implementation defa
 | `DESC_NAME_ENTRIES_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.1 descriptor store](../architecture/07_memory_maps.md#sec-desc-memory) | Name-table capacity on chip; size from the generated image's `n_names` within the store's supported limits |
 | `DESC_MEM_TMO_CYC_P` | [Top declaration and bindings](../../hdl/top/protocol_processor_top.sv); [AECP engine](../../hdl/aecp/KL_aecp_engine.sv) | Watchdog budget in core clocks for descriptor and response memory, AECP gather waits, and the listener's stream-command handshake |
 | `NVM_RS_TMO_CYC_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-NVM-RS-TMO-CYC`; [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NVM-RS-DEADLINE` | Per-wait no-progress deadline of both boot restore walks (the binding walk's reads; every wait of the D3 walk, the roll-back's debt wait included), in core clocks; size above the slowest record read on the NVM device face and the descriptor image walk. The default is the ratified 20 ms, ceil(`CLK_HZ_P` / 50) ([08 §2](../architecture/08_timing.md#sec-08-nvm)) |
-| `NVM_RS_AGG_CYC_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-NVM-RS-AGG-CYC`; [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NVM-RS-AGGREGATE` | Aggregate restore deadline in core clocks from `restore_go_i`, both walks and the roll-back included, however promptly each single wait is answered. At it the phase the restore is in ends as a stalled wait would, and a provable image is never closed: a binding walk still reading fails whole and the D3 walk then proves the image and ends DEFAULTS; in the D3 walk's first pass DEFAULTS; in its second pass a roll-back to DEFAULTS; CLOSED only if the image cannot be proven, or if the bound falls inside that roll-back (bring-up step 3). The default is the ratified 1,000 ms, `CLK_HZ_P` clocks; keep it derived from your clock. Shortened overrides are for verification. |
+| `NVM_RS_AGG_CYC_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-NVM-RS-AGG-CYC`; [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NVM-RS-AGGREGATE` | Aggregate restore deadline in core clocks from `restore_go_i`, both walks and the roll-back included, however promptly each single wait is answered. At it the phase the restore is in ends as a stalled wait would, and a provable image is never closed: a binding walk still reading fails whole and the D3 walk then proves the image and ends DEFAULTS; in the D3 walk's first pass DEFAULTS; in its second pass a roll-back to DEFAULTS; CLOSED only if the image cannot be proven, if the bound falls inside a roll-back another fault had started, or if the roll-back the bound started cannot prove the image again (bring-up step 3). The default is the ratified 1,000 ms, `CLK_HZ_P` clocks; keep it derived from your clock. Shortened overrides are for verification. |
 | `NVM_RETRY_BACKOFF_CYC_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-NVM-RETRY-BACKOFF-CYC`; [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NVM-RETRY-BACKOFF` | Wait after a failed record write before the next attempt, in core clocks, for the binding manager and the D3 writer alike; the default is ceil(`CLK_HZ_P` / 2) = 500 ms. Each record gets three **attempts** in all: the first write and two **retries** (`RETRY_MAX_P` = 2 inside each producer, not a top parameter), then the reset-sticky `nvm_alarm_o`. Shortened overrides are for verification. |
 | `REG_TL_TIMEOUT_MS_P` | [F08.1](../architecture/08_timing.md#fig-08-constants), `T-NOTIF-TIMELIMITED`; [top declaration](../../hdl/top/protocol_processor_top.sv) | TIME_LIMITED registration expiry in the AECP notification registry, in milliseconds of the possibly compressed timebase. Shortened overrides are for verification. |
 | `LOCK_TIMEOUT_MS_P` | [F08.1](../architecture/08_timing.md#fig-08-constants), `T-LOCK-UNLOCK`; [top declaration](../../hdl/top/protocol_processor_top.sv) | ENTITY lock auto-unlock deadline in the AECP notification block, in milliseconds of the possibly compressed timebase. Shortened overrides are for verification. |
@@ -409,6 +409,10 @@ contract and its coherence bound are [06 F06.13](../architecture/06_aecp_engine.
      reads 0: a device or descriptor-memory fault met during the restore; check both
      and reset.
 
+   One more CLOSED needs a misconfiguration: the image proof's own LOCATE outlasting
+   `NVM_RS_TMO_CYC_P` (`rs_cause_o` 3, no roll-back), reachable only with that
+   parameter below the descriptor image walk, which its row above rules out.
+
    The saved records stay on the media after any failure: only a later change replaces
    one, so the next boot on a healthy device restores them. Budget the restore: each
    wait is bounded by `NVM_RS_TMO_CYC_P` (20 ms of `CLK_HZ_P`; size it above the slowest
@@ -427,10 +431,14 @@ contract and its coherence bound are [06 F06.13](../architecture/06_aecp_engine.
    - inside a roll-back that another fault had started: **CLOSED**, with that fault's
      cause (above).
 
-   The terminal follows the bound within one per-wait deadline, or within two when a
-   roll-back runs after it, so let your bounded wait for `restore_done_o` or
-   `restore_closed_o` cover 1,000 ms plus 40 ms. DR3a ratified both numbers
-   ([08 §2](../architecture/08_timing.md#sec-08-nvm)).
+   The terminal follows the bound within one per-wait deadline plus a few clocks, or
+   within two plus a few clocks when a roll-back runs after it (its debt wait and its
+   re-LOCATE are each bounded by one). The processor counts from the clock it accepts
+   `PP_CTRL[1]`, a few clocks after your write. So let your bounded wait for
+   `restore_done_o` or `restore_closed_o` cover 1,000 ms plus two per-wait deadlines
+   plus a few clocks; 1,060 ms, one more per-wait deadline, is a stated margin that
+   covers the clocks. The wait decides nothing: the processor ends the restore itself.
+   DR3a ratified both numbers ([08 §2](../architecture/08_timing.md#sec-08-nvm)).
 4. Present identity, capability and configuration inputs.
 5. Assert `entity_enable_i` when you are ready; the processor forwards it to ADP only
    once `restore_done_o` is 1. Only then may the entity advertise.
