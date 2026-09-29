@@ -42,6 +42,8 @@ MUTANTS = [
     ('seed-rearmed-on-idle-release-only', 'maap', 'run', 'U27:'),
     ('seed-clamp-off-by-one', 'maap', 'run', 'U18b:'),
     ('release-waits-for-draw', 'maap', 'run', 'U17c:'),
+    ('idle-serves-a-latched-expiry-first', 'maap', 'run', 'U28:'),
+    ('teardown-keeps-announce-timer', 'maap', 'run', 'U28:'),
 ]
 
 # the two tally shapes: a suite's canonical line, and one pp_top build's line

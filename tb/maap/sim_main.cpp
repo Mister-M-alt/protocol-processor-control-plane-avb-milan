@@ -15,13 +15,15 @@
 //   re-randomize -> per-source conflict fan-out (lowest first) -> re-probe;
 //   the allocator seam contract (refuse fast while probing, grant base+s in
 //   DEFEND, refuse s >= count, RELEASE acked); footnote-a seeding; the
-//   engage/Release! and PortOperational! arcs; maap_version tolerance and
+//   engage/Release! and PortOperational! arcs, with no PDU generated after
+//   a Release! in any walker state; maap_version tolerance and
 //   reserved-message ignore; the Table B.9 fit clamp's reject-and-redraw arm
 //   (a kind-7 stub in the wrapper scripts the overhanging draws) and the
 //   footnote-a seed clamp.
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <iterator>
 #include <vector>
 #include "Vmaap_wrap.h"
 #include "verilated.h"
@@ -55,6 +57,7 @@ constexpr uint64_t LOSE_MAC  = 0xF21122334401ull;
 constexpr size_t kMinFrameBytes = 60;    // the 802.3 minimum frame, padded to
 constexpr int kClkPerMs = 10;            // the compressed timer: 1 ms = 10 clk
 constexpr int kProbeBudgetMs = 700;      // one B.3.4.2 probe interval + slack
+constexpr int kAnnounceBudgetMs = 33000; // one B.3.4.1 announce interval + slack
 constexpr int kWalkRetryRounds = 8;      // probe walks awaited before giving up
 constexpr int kRxAcceptCycles = 200;     // guard on the txn_ready_o handshake
 constexpr int kAllocWaitCycles = 50;     // guard on the allocator-face answer
@@ -110,6 +113,8 @@ struct H {
   uint32_t ser_ms = 0;
   size_t grants = 0;                       // lane grants given
   size_t slot_reqs = 0;                    // cycles the engine requested a TX slot
+  size_t tmr_starts = 0;                   // timer starts the engine issued
+  size_t tmr_expiries = 0;                 // expiries of the engine's timers
   // conflict sweep capture
   bool confl_auto = false;
   std::vector<int> confl_srcs;
@@ -219,6 +224,8 @@ struct H {
     d->eval();
     const bool addr_done = d->addr_draw_o;
     if (d->slot_req_o) ++slot_reqs;
+    if (d->tmr_start_o) ++tmr_starts;
+    if (d->tmr_exp_o) ++tmr_expiries;
     d->clk_i = 1; d->eval();
     if (addr_done) ++addr_draws;
   }
@@ -276,6 +283,9 @@ class MaapAnnexBSuite {
   void an_outage_behind_a_stalled_lane_withdraws_the_claim();
   void a_short_release_is_never_absorbed();
   void every_release_rearms_the_seed();
+  bool run_to_walker(unsigned st, long budget_cycles);
+  bool poise_a_fall(int point);
+  void no_pdu_is_generated_after_the_fall();
 
   const milan::tb::Model<Vmaap_wrap> model;
   Vmaap_wrap* const d = model.get();
@@ -1267,6 +1277,174 @@ void MaapAnnexBSuite::every_release_rearms_the_seed() {
   h.confl_srcs.clear();
 }
 
+// ---- U28: no PDU is generated after the fall, in any walker state ---------
+// Table B.7 Release!: PROBE stops probe_timer, DEFEND stops announce_timer,
+// both go to INITIAL, and no Release! cell carries sProbe, sAnnounce or
+// sDefend. B.3.1 c) and e): a stopped timer does not expire, so no
+// probeTimer! or announceTimer! follows the Release!. Each point below
+// lands the fall so that the walker first sees it in one state, then holds
+// the link down for longer than the longest announce interval (B.3.4.1).
+// From the cycle after the first one the fall is seen: no TX slot request,
+// no timer started, no timer expiry, no claim. A frame whose slot was
+// requested by then belongs to the entry that requested it (B.3.2), and is
+// the one frame that may still drain (U23 grades its window).
+
+// KL_pp_maap's walker encoding (wstate_e), read through walker_o only to
+// land a fall in a chosen state, never as an expectation
+enum WalkerState : unsigned {
+  WK_OFF, WK_IDLE, WK_ADDR, WK_IVAL, WK_ALLOC, WK_GWAIT, WK_WRITE, WK_COMMIT,
+  WK_LANE, WK_POST, WK_RX, WK_TEARDOWN, WK_STATES
+};
+
+const char* const kWalkerName[WK_STATES] = {
+    "W_OFF", "W_IDLE", "W_ADDR", "W_IVAL", "W_ALLOC", "W_GWAIT",
+    "W_WRITE", "W_COMMIT", "W_LANE", "W_POST", "W_RX", "W_TEARDOWN"};
+
+// how a fall point is reached after the PortOperational! that starts its walk
+enum class Poise {
+  kRunTo,    // clock until the walker enters the state
+  kPark,     // 20 ms after the first PROBE, or after the claim
+  kExpiry,   // then clock until one of the engine's timers expires
+  kRecord,   // parked, then one record is taken: the walker is in W_RX
+  kBounce,   // parked, then the link falls for one cycle and rises again
+};
+
+struct FallPoint {
+  const char* what;
+  unsigned walker;                                     // the state that sees the fall
+  Poise how;
+  size_t grants;                                       // lane grants first (kRunTo, kExpiry)
+  bool defend;                                         // parked in DEFEND, not PROBE
+};
+
+const FallPoint kFallPoints[] = {
+    {"generate_address", WK_ADDR, Poise::kRunTo, 0, false},
+    {"the first PROBE's interval draw", WK_IVAL, Poise::kRunTo, 0, false},
+    {"the first PROBE's slot request", WK_ALLOC, Poise::kRunTo, 0, false},
+    {"the first PROBE's slot grant", WK_GWAIT, Poise::kRunTo, 0, false},
+    {"the first PROBE's byte writes", WK_WRITE, Poise::kRunTo, 0, false},
+    {"the first PROBE's commit", WK_COMMIT, Poise::kRunTo, 0, false},
+    {"the first PROBE's lane request", WK_LANE, Poise::kRunTo, 0, false},
+    {"the first PROBE taken by the lane", WK_POST, Poise::kRunTo, 0, false},
+    {"PROBE, parked", WK_IDLE, Poise::kPark, 0, false},
+    {"PROBE, the expiry that sends the 4th PROBE latched", WK_IDLE, Poise::kExpiry, 3, false},
+    {"PROBE, an ignored record", WK_RX, Poise::kRecord, 0, false},
+    {"a rise inside the teardown, its last cycle", WK_TEARDOWN, Poise::kBounce, 0, false},
+    {"a rise inside the teardown, the first W_OFF cycle", WK_OFF, Poise::kBounce, 0, false},
+    {"probeCount!, the ANNOUNCE's interval draw", WK_IVAL, Poise::kRunTo, 4, false},
+    {"DEFEND, parked", WK_IDLE, Poise::kPark, 0, true},
+    {"DEFEND, an announce_timer expiry latched", WK_IDLE, Poise::kExpiry, 0, true},
+    {"DEFEND, an rProbe! that sDefend would answer", WK_RX, Poise::kRecord, 0, true},
+};
+
+// clock until the walker's next edge executes state `st`
+bool MaapAnnexBSuite::run_to_walker(unsigned st, long budget_cycles) {
+  for (long c = 0; c < budget_cycles && d->walker_o != st; ++c) h.step();
+  return d->walker_o == st;
+}
+
+// Release!, PortOperational!, then clock until the walker's next edge
+// executes the state the point names, with the link still up
+bool MaapAnnexBSuite::poise_a_fall(int point) {
+  const FallPoint& f = kFallPoints[point];
+  const long walk = 6L * kProbeBudgetMs * kClkPerMs;   // a whole 4-probe walk
+  d->link_up_i = 0; h.idle(30);                        // Release!
+  const size_t g0 = h.grants;
+  d->link_up_i = 1;                                    // PortOperational!
+  for (long c = 0; c < walk && h.grants < g0 + f.grants; ++c) h.step();
+  if (h.grants != g0 + f.grants) return false;
+  if (f.how == Poise::kRunTo) return run_to_walker(f.walker, walk);
+  if (f.defend) {
+    for (int g = 0; g < kWalkRetryRounds && !d->addr_valid_o; ++g) h.run_ms(kProbeBudgetMs);
+    if (!d->addr_valid_o) return false;
+  } else if (f.how != Poise::kExpiry && !h.wait_frames(h.tx.size() + 1, kProbeBudgetMs)) {
+    return false;
+  }
+  if (f.how == Poise::kExpiry) {
+    // latched at this edge; the walker serves it at its next one
+    const size_t e0 = h.tmr_expiries;
+    for (int c = 0; c < kAnnounceBudgetMs * kClkPerMs && h.tmr_expiries == e0; ++c) h.step();
+    return h.tmr_expiries > e0 && d->walker_o == f.walker;
+  }
+  h.run_ms(20);                                        // parked
+  if (d->walker_o != WK_IDLE) return false;
+  if (f.how == Poise::kRecord) {
+    // DEFEND: a PROBE over our block (sDefend); PROBE: one far from it
+    const uint64_t start = d->addr_o + (f.defend ? 2 : 0x100);
+    if (!accept_record(1, 0x0A2233445566ull, start, f.defend ? 2 : 1)) return false;
+  } else if (f.how == Poise::kBounce) {
+    d->link_up_i = 0; h.step();                        // Release!, seen in W_IDLE
+    d->link_up_i = 1; h.step();                        // PortOperational! in the teardown
+    if (f.walker == WK_OFF) h.step();                  // ... and through its last cycle
+  }
+  return d->walker_o == f.walker;
+}
+
+void MaapAnnexBSuite::no_pdu_is_generated_after_the_fall() {
+  constexpr int kWatchCycles = kAnnounceBudgetMs * kClkPerMs;
+  constexpr int kPoints = static_cast<int>(std::size(kFallPoints));
+  int missed = 0;
+  int requested = 0;
+  int overdrained = 0;
+  int started = 0;
+  int expired = 0;
+  int claimed = 0;
+  unsigned covered = 0;
+  h.confl_auto = true;
+  for (int p = 0; p < kPoints; ++p) {
+    const FallPoint& f = kFallPoints[p];
+    if (!poise_a_fall(p)) {
+      ++missed;
+      printf("  U28: %s: the walker is in %s, not %s\n", f.what,
+             d->walker_o < WK_STATES ? kWalkerName[d->walker_o] : "?", kWalkerName[f.walker]);
+      continue;
+    }
+    covered |= 1u << f.walker;
+    d->link_up_i = 0;                                  // Release!
+    h.step();                                          // the first cycle it is seen
+    const size_t reqs = h.slot_reqs;
+    const size_t grants = h.grants;
+    const size_t starts = h.tmr_starts;
+    const size_t expiries = h.tmr_expiries;
+    const size_t owed = reqs - grants;                 // requested by now, not yet on the lane
+    bool valid_after = d->addr_valid_o;
+    for (int c = 1; c < kWatchCycles; ++c) {
+      h.step();
+      if (d->addr_valid_o) valid_after = true;
+    }
+    printf("  U28: %s (%s): %zu frame(s) owed, %zu drained\n", f.what,
+           kWalkerName[f.walker], owed, h.grants - grants);
+    if (h.slot_reqs != reqs) ++requested;
+    if (owed > 1 || h.grants - grants != owed) ++overdrained;
+    if (h.tmr_starts != starts) ++started;
+    if (h.tmr_expiries != expiries) ++expired;
+    if (valid_after || d->state_o != 0) ++claimed;
+  }
+  CHECK(missed == 0, "U28: premise, each fall is first seen in its walker state (%d of %d missed)",
+        missed, kPoints);
+  CHECK(covered == (1u << WK_STATES) - 1,
+        "U28: premise, the falls land in all %d walker states (mask 0x%03x)", WK_STATES, covered);
+  CHECK(requested == 0,
+        "U28: no TX slot request follows the fall, in any walker state, for 33 s (%d of %d falls)",
+        requested, kPoints);
+  CHECK(overdrained == 0,
+        "U28: at most the one frame requested before the fall drains (%d of %d falls)",
+        overdrained, kPoints);
+  CHECK(started == 0, "U28: no timer is started after the fall (%d of %d falls)", started, kPoints);
+  CHECK(expired == 0,
+        "U28: the timers are stopped: no expiry for 33 s after the fall (%d of %d falls)",
+        expired, kPoints);
+  CHECK(claimed == 0, "U28: no claim after the fall, and INITIAL (%d of %d falls)",
+        claimed, kPoints);
+  const size_t n0 = h.tx.size();
+  d->link_up_i = 1;                                    // PortOperational!
+  CHECK(h.wait_frames(n0 + 1, kProbeBudgetMs) && d->state_o == 1,
+        "U28: the next PortOperational! probes");
+  for (int g = 0; g < kWalkRetryRounds && !d->addr_valid_o; ++g) h.run_ms(kProbeBudgetMs);
+  h.confl_auto = false;
+  h.confl_srcs.clear();
+}
+
 int MaapAnnexBSuite::run() {
   reset_leaves_the_machine_initial();
   engage_probes_a_fresh_pool_range();
@@ -1297,6 +1475,7 @@ int MaapAnnexBSuite::run() {
   an_outage_behind_a_stalled_lane_withdraws_the_claim();
   a_short_release_is_never_absorbed();
   every_release_rearms_the_seed();
+  no_pdu_is_generated_after_the_fall();
   probe_from_a_lower_peer_yields_the_walk();
   defend_from_a_higher_peer_is_ignored();
   defend_from_a_lower_peer_yields_the_claim();
