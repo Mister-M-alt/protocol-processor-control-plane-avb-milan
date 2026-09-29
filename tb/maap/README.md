@@ -34,7 +34,7 @@ What it proves (U0..U27):
 - a Release! in the middle of an entry, at every walker state (U23 to U26,
   below), and the footnote-a seed re-armed by every Release! (U27).
 
-The Table B.9 fit (U17, U17b, U18; issue #66, REQ-MAAP-001, B.1 and
+The Table B.9 fit (U17, U17b, U18, U18b; issue #66, REQ-MAAP-001, B.1 and
 B.3.6.1):
 
 - **U17** the reject arm. At the widest `cfg_count_i` (255) the whole block
@@ -53,6 +53,10 @@ B.3.6.1):
   reserved range) lies past `0xFE00 - count` probes the clamped offset
   `0xFDF8` byte-exact without drawing an address (footnote a), claims the
   block, and grants its last source `91:E0:F0:00:FD:FF`.
+- **U18b** the seed clamp's boundary, byte-exact and with no draw, each in a
+  fresh engagement. `0xFE00 - count + 1` (`0xFDF9`) is the first seed whose
+  block would end outside the pool, at `91:E0:F0:00:FE:00`, so it is clamped to
+  `0xFDF8`. `0xFE00 - count` (`0xFDF8`) and `0xFDF7` are taken as given.
 
 The kind-7 stub is the wrapper's one piece of harness logic: while the suite
 scripts values, a completed kind-7 draw hands the engine the scripted value
@@ -168,25 +172,26 @@ only simulation logs; no expectation comes from RTL text.
 
 | Arm (patch) | Planted defect | Suite | Named failures (of the suite's checks) |
 |---|---|---|---|
-| `fit-compare-forced-true` | the fit compare at `KL_pp_maap.sv:594` (issue #66's `:587` before the fix above) forced true: an overhanging draw is accepted | maap | U17 x4 (1 draw instead of 3; claim `…:FD:FF`; block ends `…:FE:FD`; PROBE bytes), and U27's redraw premise (the overhanging draw is taken): 5 FAIL of 172 |
-| `fit-compare-off-by-one` | the fit compare `<=` becomes `<`: the last fitting offset is refused | maap | U17 x3 (no PROBE, the boundary draw refused 1,745 times) and U17b x4: 7 FAIL of 171 |
-| `seed-clamp-removed` | the footnote-a seed clamp removed: the provisioned offset is probed as given | maap | U18 x4 (claim `…:FF:FF`; PROBE bytes; claim; last-source grant): 4 FAIL of 172 |
-| `release-keeps-draw-mark` | the fix above removed | maap | U17b phases 1 to 3, U18 x3 and U27 x1, each behind a wedge that the next Release! clears in `W_IVAL`: 7 FAIL of 170 |
+| `fit-compare-forced-true` | the fit compare at `KL_pp_maap.sv:594` (issue #66's `:587` before the fix above) forced true: an overhanging draw is accepted | maap | U17 x4 (1 draw instead of 3; claim `…:FD:FF`; block ends `…:FE:FD`; PROBE bytes), and U27's redraw premise (the overhanging draw is taken): 5 FAIL of 178 |
+| `fit-compare-off-by-one` | the fit compare `<=` becomes `<`: the last fitting offset is refused | maap | U17 x3 (no PROBE, the boundary draw refused 1,745 times) and U17b x4: 7 FAIL of 177 |
+| `seed-clamp-removed` | the footnote-a seed clamp removed: the provisioned offset is probed as given | maap | U18 x4 (claim `…:FF:FF`; PROBE bytes; claim; last-source grant), U18b x2: 6 FAIL of 178 |
+| `release-keeps-draw-mark` | the fix above removed | maap | U17b phases 1 to 3, U18 x3 and U27 x1, each behind a wedge that the next Release! clears in `W_IVAL`: 7 FAIL of 176 |
 | `validator-maap-version-1-only` | `KL_pp_rx_validator.sv` gains a `maap_version == 1` acceptance rule (issue #67, B.2.3.2/B.2.3.4) | rx_validator | F28a/F28b/F28c: versions 2, 0 and 31 counted `rx_version` and aborted: 47 FAIL of 453 |
 | (same arm) | | pp_top `maap-internal` | MP7 x4: neither the version-2 nor the version-0 PROBE is defended: 4 FAIL of 33 |
-| `compare-mac-forward` | `cmp_mac_true_w = own_mac_i < rxm_sa_r`: compare_MAC in forward octet order (issue #68, B.3.6.4) | maap | U7, U8, U9 x2, U10, U19 x2, U20, U21: 9 FAIL of 170 |
+| `compare-mac-forward` | `cmp_mac_true_w = own_mac_i < rxm_sa_r`: compare_MAC in forward octet order (issue #68, B.3.6.4) | maap | U7, U8, U9 x2, U10, U19 x2, U20, U21: 9 FAIL of 176 |
 | (same arm) | | pp_top `maap-internal` | MP4 x5: the rev-lower, forward-higher ANNOUNCE is ignored, nothing withdrawn: 5 FAIL of 33 |
-| `probe-rprobe-never-yields` | PROBE / rProbe! never yields | maap | U19 x2: 2 FAIL of 172 |
-| `defend-rdefend-ignored` | DEFEND / rDefend! ignored (only rAnnounce! can yield in DEFEND) | maap | U21 x4, then U22 x4 behind it: 8 FAIL of 170 |
-| `defend-rdefend-no-tiebreak` | DEFEND / rDefend! always yields (no compare_MAC) | maap | U20, then U21 (not in DEFEND): 2 FAIL of 172 |
-| `probe-rannounce-tiebreak` | PROBE / rDefend! and rAnnounce! gain a compare_MAC | maap | U10 x3, U22 x2, U27 x2 (the contest no longer yields): 7 FAIL of 172 |
-| `yield-reuses-range` | a yield re-probes the contested range instead of running generate_address | maap | U8, U10, U15, U19, U21, U22, U27 x2: 8 FAIL of 172 |
-| `ival-sends-after-release` | `W_IVAL` ignores an engage fall (the start head) | maap | U23: a Release! before the ANNOUNCE's slot request sends it (4 of 5 offsets): 1 FAIL of 172 |
-| `post-publishes-after-release` | `W_POST` ignores a Release! latched behind its frame | maap | U24 x2: the ANNOUNCE's bounce publishes DEFEND, no fresh walk: 2 FAIL of 170 |
-| `tx-path-absorbs-release` | the TX states do not latch an engage fall (the start head) | maap | U24 x4, U25 x3: the claim survives a bounce and a 100 ms outage: 7 FAIL of 166 |
-| `off-waits-for-an-edge` | `W_OFF` starts only on a rise it saw itself (the start head) | maap | U24 x2, U25 x3, U26 x3: a rise during teardown or a drain parks the machine: 8 FAIL of 165 |
-| `rx-release-returns-to-idle` | `W_RX` leaves a fall to `W_IDLE` (the start head) | maap | U26 x2: a one-cycle fall on `W_RX` is lost: 2 FAIL of 171 |
-| `seed-rearmed-on-idle-release-only` | only the `W_IDLE` exit re-arms the footnote-a seed (the start head) | maap | U27 x2: after a Release! mid-redraw the next engagement probes a random range: 2 FAIL of 172 |
+| `probe-rprobe-never-yields` | PROBE / rProbe! never yields | maap | U19 x2: 2 FAIL of 178 |
+| `defend-rdefend-ignored` | DEFEND / rDefend! ignored (only rAnnounce! can yield in DEFEND) | maap | U21 x4, then U22 x4 behind it: 8 FAIL of 176 |
+| `defend-rdefend-no-tiebreak` | DEFEND / rDefend! always yields (no compare_MAC) | maap | U20, then U21 (not in DEFEND): 2 FAIL of 178 |
+| `probe-rannounce-tiebreak` | PROBE / rDefend! and rAnnounce! gain a compare_MAC | maap | U10 x3, U22 x2, U27 x2 (the contest no longer yields): 7 FAIL of 178 |
+| `yield-reuses-range` | a yield re-probes the contested range instead of running generate_address | maap | U8, U10, U15, U19, U21, U22, U27 x2: 8 FAIL of 178 |
+| `ival-sends-after-release` | `W_IVAL` ignores an engage fall (the start head) | maap | U23: a Release! before the ANNOUNCE's slot request sends it (4 of 5 offsets): 1 FAIL of 178 |
+| `post-publishes-after-release` | `W_POST` ignores a Release! latched behind its frame | maap | U24 x2: the ANNOUNCE's bounce publishes DEFEND, no fresh walk: 2 FAIL of 176 |
+| `tx-path-absorbs-release` | the TX states do not latch an engage fall (the start head) | maap | U24 x4, U25 x3: the claim survives a bounce and a 100 ms outage: 7 FAIL of 172 |
+| `off-waits-for-an-edge` | `W_OFF` starts only on a rise it saw itself (the start head) | maap | U24 x2, U25 x3, U26 x3: a rise during teardown or a drain parks the machine: 8 FAIL of 171 |
+| `rx-release-returns-to-idle` | `W_RX` leaves a fall to `W_IDLE` (the start head) | maap | U26 x2: a one-cycle fall on `W_RX` is lost: 2 FAIL of 177 |
+| `seed-clamp-off-by-one` | the seed clamp compares against `0xFE00 - count + 1` (issue #66 round 2) | maap | U18b x2: seed `0xFDF9` is probed as given, a block ending at `…:FE:00`: 2 FAIL of 178 |
+| `seed-rearmed-on-idle-release-only` | only the `W_IDLE` exit re-arms the footnote-a seed (the start head) | maap | U27 x2: after a Release! mid-redraw the next engagement probes a random range: 2 FAIL of 178 |
 
-The last run: 3 controls PASS and 19 of 19 arm runs KILLED
-(`22 checks: 22 PASS, 0 FAIL`).
+The last run: 3 controls PASS and 20 of 20 arm runs KILLED
+(`23 checks: 23 PASS, 0 FAIL`).

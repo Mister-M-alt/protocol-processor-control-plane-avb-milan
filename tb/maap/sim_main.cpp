@@ -261,6 +261,7 @@ class MaapAnnexBSuite {
   void overhanging_draws_are_redrawn_until_the_block_fits();
   void a_release_mid_redraw_leaves_no_draw_behind();
   void a_seed_past_the_fit_is_clamped_into_the_pool();
+  void the_seed_clamp_boundary_is_exact();
   void expect_a_yield_to_a_fresh_range(const char* tag, uint64_t contested,
                                        unsigned conflicts_before, size_t n0);
   void probe_from_a_lower_peer_yields_the_walk();
@@ -726,6 +727,43 @@ void MaapAnnexBSuite::a_seed_past_the_fit_is_clamped_into_the_pool() {
   d->cfg_seed_valid_i = 0;
 }
 
+// ---- U18b: the seed clamp's boundary (B.1, Table B.9, footnote a) --------
+// The whole block fits the pool at a seed of 0xFE00 - count and below, so
+// that seed is probed as given, and so is the one under it. 0xFE00 - count
+// + 1 is the first seed whose block would end at 91:E0:F0:00:FE:00, outside
+// the pool: it is clamped to 0xFE00 - count. Each is a fresh engagement (a
+// Release! re-arms the seed) and each PROBE is byte-exact, with no draw.
+void MaapAnnexBSuite::the_seed_clamp_boundary_is_exact() {
+  const unsigned fit = POOL_SIZE - COUNT;              // 0xFDF8
+  struct Case { unsigned seed; unsigned probed; const char* how; };
+  const Case cases[] = {
+      {fit + 1, fit, "clamped"},
+      {fit, fit, "taken as given"},
+      {fit - 1, fit - 1, "taken as given"},
+  };
+  h.confl_auto = true;
+  d->cfg_count_i = COUNT;
+  for (const Case& c : cases) {
+    d->link_up_i = 0; h.idle(30);                      // Release! re-arms the seed
+    d->cfg_seed_offset_i = uint16_t(c.seed);
+    d->cfg_seed_valid_i = 1;
+    h.addr_draws = 0;
+    const size_t n0 = h.tx.size();
+    d->link_up_i = 1;                                  // PortOperational!
+    const bool probed = h.wait_frames(n0 + 1, kProbeBudgetMs);
+    CHECK(probed && h.addr_draws == 0 && d->addr_o == (POOL_HI | c.probed),
+          "U18b: seed 0x%04x is %s: probes 0x%04x (got %012llx, %zu draws)", c.seed, c.how,
+          c.probed, static_cast<unsigned long long>(d->addr_o), h.addr_draws);
+    if (probed) {
+      CHECK(h.tx[n0].b == maap_frame(MAAP_DA, OWN_MAC, 1, POOL_HI | c.probed, COUNT, 0, 0),
+            "U18b: seed 0x%04x, the PROBE is byte-exact", c.seed);
+    }
+  }
+  d->cfg_seed_valid_i = 0;
+  h.confl_auto = false;
+  h.confl_srcs.clear();
+}
+
 // ---- the Table B.7 yield, as the scenarios below grade it ------------------
 // Stop timer + INITIAL/Restart!: one re-address counted, the claim not
 // valid, and generate_address runs again, so the next frame is a PROBE of a
@@ -1184,6 +1222,7 @@ int MaapAnnexBSuite::run() {
   overhanging_draws_are_redrawn_until_the_block_fits();
   a_release_mid_redraw_leaves_no_draw_behind();
   a_seed_past_the_fit_is_clamped_into_the_pool();
+  the_seed_clamp_boundary_is_exact();
   probe_from_a_lower_peer_yields_the_walk();
   defend_from_a_higher_peer_is_ignored();
   defend_from_a_lower_peer_yields_the_claim();
