@@ -260,6 +260,7 @@ class MaapAnnexBSuite {
   void alloc_is_refused_while_probing();
   void overhanging_draws_are_redrawn_until_the_block_fits();
   void a_release_mid_redraw_leaves_no_draw_behind();
+  void a_release_during_a_fitting_draw_abandons_it();
   void a_seed_past_the_fit_is_clamped_into_the_pool();
   void the_seed_clamp_boundary_is_exact();
   void expect_a_yield_to_a_fresh_range(const char* tag, uint64_t contested,
@@ -690,6 +691,72 @@ void MaapAnnexBSuite::a_release_mid_redraw_leaves_no_draw_behind() {
           "U17b: phase %d, the walk restarts after a Release! mid-redraw", phase);
   }
   h.addr_script.clear();
+}
+
+// ---- U17c: a Release! while a FITTING kind-7 draw is in flight ------------
+// U17b drops the link only while every draw overhangs, where abandoning the
+// draw and waiting for its answer look the same. Here every draw fits. The
+// link drops at each of the first 12 cycles after the rise, which covers the
+// kind-7 draw and the interval draw after it. A drop before the PROBE's TX
+// slot request sends nothing after the Release! (Table B.7 Release!); the
+// drops from the request on drain the PROBE, the rule U23 grades, and are
+// only counted here. A draw whose answer had not arrived by the fall is
+// abandoned, never adopted: addr_o keeps the range it held before the walk.
+// The next PortOperational! probes (B.3.5.9).
+void MaapAnnexBSuite::a_release_during_a_fitting_draw_abandons_it() {
+  constexpr int kOffsets = 12;
+  constexpr int kWatchCycles = 50 * kClkPerMs;
+  int in_draw = 0;
+  int after_draw = 0;
+  int owed = 0;
+  int sent = 0;
+  int adopted = 0;
+  int stuck = 0;
+  h.confl_auto = true;
+  d->cfg_count_i = COUNT;
+  for (int k = 0; k < kOffsets; ++k) {
+    d->link_up_i = 0; h.idle(30);                      // Release!
+    const uint64_t before = d->addr_o;
+    const uint16_t fits = ((before & 0xFFFF) == 0x1000) ? 0x2000 : 0x1000;
+    h.addr_script = {fits};                            // every draw fits
+    h.addr_draws = 0;
+    const size_t r0 = h.slot_reqs;
+    const size_t g0 = h.grants;
+    d->link_up_i = 1;                                  // PortOperational!
+    for (int i = 0; i < k; ++i) h.step();
+    const size_t answered = h.addr_draws;              // answers seen before the fall
+    d->link_up_i = 0;                                  // Release!
+    h.step();                                          // the first cycle it is seen
+    const bool requested = h.slot_reqs > r0;
+    for (int c = 1; c < kWatchCycles; ++c) h.step();
+    if (requested) {
+      ++owed;
+    } else {
+      if (answered == 0) {
+        ++in_draw;
+      } else {
+        ++after_draw;
+      }
+      if (h.grants != g0 || h.slot_reqs != r0) ++sent;
+      if (answered == 0 && d->addr_o != before) ++adopted;
+    }
+    const size_t n0 = h.tx.size();
+    d->link_up_i = 1;                                  // PortOperational!
+    if (!h.wait_frames(n0 + 1, kProbeBudgetMs) || d->addr_o != (POOL_HI | fits)) ++stuck;
+  }
+  h.addr_script.clear();
+  CHECK(in_draw >= 3 && after_draw >= 1,
+        "U17c: premise, the drops land in the kind-7 draw (%d) and after it (%d), "
+        "before the slot request (%d from it)", in_draw, after_draw, owed);
+  CHECK(sent == 0, "U17c: nothing is sent after a Release! (%d offsets)", sent);
+  CHECK(adopted == 0,
+        "U17c: a draw in flight at the fall is abandoned, never adopted (%d of %d offsets)",
+        adopted, in_draw);
+  CHECK(stuck == 0, "U17c: the next PortOperational! probes the next fitting draw "
+        "(%d offsets did not)", stuck);
+  for (int g = 0; g < kWalkRetryRounds && !d->addr_valid_o; ++g) h.run_ms(kProbeBudgetMs);
+  h.confl_auto = false;
+  h.confl_srcs.clear();
 }
 
 // ---- U18: a mis-provisioned seed is clamped into the pool (footnote a) ----
@@ -1221,6 +1288,7 @@ int MaapAnnexBSuite::run() {
   alloc_is_refused_while_probing();
   overhanging_draws_are_redrawn_until_the_block_fits();
   a_release_mid_redraw_leaves_no_draw_behind();
+  a_release_during_a_fitting_draw_abandons_it();
   a_seed_past_the_fit_is_clamped_into_the_pool();
   the_seed_clamp_boundary_is_exact();
   probe_from_a_lower_peer_yields_the_walk();

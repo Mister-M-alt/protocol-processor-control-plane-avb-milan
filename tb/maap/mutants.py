@@ -41,6 +41,7 @@ MUTANTS = [
     ('rx-release-returns-to-idle', 'maap', 'run', 'U26:'),
     ('seed-rearmed-on-idle-release-only', 'maap', 'run', 'U27:'),
     ('seed-clamp-off-by-one', 'maap', 'run', 'U18b:'),
+    ('release-waits-for-draw', 'maap', 'run', 'U17c:'),
 ]
 
 # the two tally shapes: a suite's canonical line, and one pp_top build's line
