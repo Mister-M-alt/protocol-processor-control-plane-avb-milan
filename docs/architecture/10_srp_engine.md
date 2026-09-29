@@ -646,6 +646,23 @@ Milan v1.2 Table 4.3 sets only the timer's range (10–15 s, ± 0.5 s). With the
 restart, one LeaveAll per cycle serves both ends of a link: the end whose timer
 expires first sends it, and the other restarts its own.
 
+*A peer that flags only some types.* The restart is per application; the aging is
+per Attribute Type. A peer MSRP LeaveAll that flags only some MSRP types still
+restarts this participant's MSRP timer (it is rLA! for the machine, above), but it
+ages only this participant's registrars of the types it flags (the lane table
+above). The registrations of the other types are then aged only by the own
+LeaveAlls this participant still sends: against a peer whose timer also draws from
+the `T-MRP-LEAVEALL` range, in about every other cycle (those in which this
+participant's timer expires first); against a peer that sends its LeaveAll more
+often than the shortest `T-MRP-LEAVEALL` draw, never. Such a peer departs from
+§10.7.5.20 as issue
+[#106](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/106)
+applies it: a LeaveAll state machine "must generate a LeaveAll Attribute for each
+Attribute Type supported by the application" (NOTE), which is how this engine
+transmits and what it expects on receipt. The engine does not compensate for such a
+peer; a registration of an unflagged type still ends at the peer's Lv (Δ13). The
+bench switch (Run B, above) flags all four MSRP types.
+
 ## 7. µcode / dispatch
 
 n/a — FSM array + vector codec. The encoder aggregates all pending join/leave events
