@@ -84,6 +84,15 @@ MUTANTS = [
     ('join-ms-400', 'srp_top', 'timers', 'Q1:'),
     ('periodic-ms-3000', 'srp_top', 'timers', 'Q2:'),
     ('draw-kind-0', 'srp_top', 'timers', 'Q3:'),
+    # issue #65: MVRP join before the stream, both halves
+    ('licence-ignores-join', 'srp_top', 'join', 'R1:'),
+    ('licence-ignores-join', 'srp_stream_fsms', '', 'T not ACTIVE while the VID'),
+    ('join-sent-at-handover', 'srp_top', 'join', 'R1:'),
+    ('count-up-unsends', 'srp_top', 'join', 'R2:'),
+    ('listener-lane-cut', 'srp_top', 'join', 'R4:'),
+    ('join-sent-at-handover', 'srp_encoder', '', 'W2 New VID 7 handed over'),
+    ('count-up-unsends', 'srp_encoder', '', 'W4 a second user'),
+    ('tx-strobe-any-app', 'srp_encoder', '', 'W1 no strobe for an MSRP'),
 ]
 
 
@@ -159,7 +168,7 @@ def main() -> int:
         passed, total, covered = campaign(tree, args.output, selected)
     if not args.only:
         expected = {f"{group}{i}" for group, count in
-                    [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 6), ("Q", 4)]
+                    [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 6), ("Q", 4), ("R", 4)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1

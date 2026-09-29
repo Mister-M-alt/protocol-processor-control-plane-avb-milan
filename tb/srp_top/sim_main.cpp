@@ -590,6 +590,7 @@ class SrpTopHarness {
     if (!*group || !strcmp(group,"guards")) check_leaveall_guards();
     if (!*group || !strcmp(group,"restart")) check_received_leaveall_restarts_the_timer();
     if (!*group || !strcmp(group,"timers")) check_mrp_timers_against_table_4_3();
+    if (!*group || !strcmp(group,"join")) check_mvrp_join_before_the_stream();
 
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
     return fails ? 1 : 0;
@@ -644,6 +645,12 @@ class SrpTopHarness {
       count += p.ok && p.msrp && la;
     }
     return count;
+  }
+  // an MVRP MRPDU declaring `vid` (New or JoinIn) has been captured
+  bool vid_joined(uint16_t vid) const {
+    for (const auto& f : h.archive)
+      if (frame_has(f, false, 1, vid, EV_NEW) || frame_has(f, false, 1, vid, EV_JOININ)) return true;
+    return false;
   }
   static int mvrp_leaveall_frames(const H& bfm, size_t first) {
     int count=0;
@@ -1348,6 +1355,113 @@ class SrpTopHarness {
       printf("RESTART mvrp_peer_minus_expiry=%d actions=%zu\n", delta, h.mvrp_action_cycles.size());
     }
     CHECK(seen == 7, "P6: MVRP peer sweep covers -1, 0 and +1 clocks");
+  }
+
+  // R: issue #65, REQ-SRP-006. Milan v1.2 4.3.2: a Talker PAAD "shall join
+  // the relevant VLAN via MVRP prior to sending any Stream frames"; 4.4.1: a
+  // Listener PAAD "shall declare an MVRP VID attribute for each VLAN used by
+  // its settled sinks". ACTIVE is the streaming licence; an MRPDU counts as
+  // transmitted at the clock the BFM (the TX arbiter) accepted its request.
+  void check_mvrp_join_before_the_stream() {
+    check_talker_licence_waits_for_the_join();
+    check_listener_vid_is_declared_on_the_wire();
+  }
+
+  // capture index of the first MVRP MRPDU declaring `vid` with `ev`
+  int mvrp_frame_with(uint16_t vid, int ev, size_t first = 0) const {
+    for (size_t i = first; i < h.archive.size(); i++)
+      if (frame_has(h.archive[i], false, 1, vid, ev)) return static_cast<int>(i);
+    return -1;
+  }
+  // run until source s is ACTIVE (bounded); the clock it was first seen high
+  uint64_t await_active(int s, int guard_ms) {
+    for (long n = static_cast<long>(guard_ms) * MS_CYC; n > 0 && !h.active(s); n--) h.cycle();
+    return h.active(s) ? h.t : 0;
+  }
+
+  void check_talker_licence_waits_for_the_join() {
+    // R1: a Listener Ready registered right after DECLARE_TALKER, before the
+    // first join tick: no licence until the VID 2 New has been accepted
+    h.reset(); d->link_up_i = 1; h.idle(10);
+    h.op(OP_DECL_TK, 0, own_sid(0), 0x91e0f0010100ULL, 2, 29, 1);
+    listener_event(0, EV_NEW, DECL_READY);
+    const uint32_t ready_ms = d->now_ms_o;
+    const bool early = ready_ms < 200 && source_reg(0) == 1 && h.lstn_reg(0) == DECL_READY
+                    && (d->sr_admitted_o & 1) && !h.active(0) && h.q_mvrp.empty();
+    const uint64_t rise = await_active(0, 400);
+    const uint32_t rise_ms = d->now_ms_o;
+    h.run_ms(5);                           // let the frames in flight finish serializing
+    const int mv = mvrp_frame_with(2, EV_NEW);
+    int adv = -1;
+    for (size_t i = 0; i < h.archive.size() && adv < 0; i++)
+      if (frame_has(h.archive[i], true, 1, own_sid(0), EV_NEW)) adv = static_cast<int>(i);
+    const uint64_t mv_acc = mv < 0 ? 0 : h.archive_accept[mv];
+    CHECK(early && rise && mv >= 0 && rise > mv_acc && rise <= mv_acc + 3,
+          "R1: a Ready before the first join tick licenses nothing until the VID 2 New is "
+          "accepted (rise %lld clocks after it)",
+          static_cast<long long>(rise) - static_cast<long long>(mv_acc));
+    CHECK(rise && rise_ms - ready_ms <= 240,
+          "R1: the wait is at most one join-paced MRPDU (%u ms)", rise_ms - ready_ms);
+    CHECK(mv >= 0 && adv >= 0 && h.archive_accept[mv] < h.archive_accept[adv],
+          "R1: the VID New leaves ahead of the first Talker Advertise, so a Ready that "
+          "answers the Advertise never waits");
+    printf("JOIN talker ready_ms=%u rise_ms=%u mvrp_accept=%llu rise=%llu\n", ready_ms, rise_ms,
+           static_cast<unsigned long long>(mv_acc), static_cast<unsigned long long>(rise));
+
+    // R2: a second source on the same VID, whose join has already left, is
+    // licensed as soon as its Ready registers
+    h.op(OP_DECL_TK, 1, own_sid(1), 0x91e0f0010101ULL, 2, 29, 1);
+    listener_event(1, EV_NEW, DECL_READY);
+    CHECK(h.active(1) && h.active(0), "R2: a VID already joined on the wire gates nothing");
+
+    // R3: source 0 moves to VID 7: withdrawn, re-declared, Ready again; the
+    // licence waits for VID 7's own New (VID 2 stays: source 1 holds it)
+    h.op(OP_WDRW_TK, 0);
+    const size_t from = h.archive.size();
+    h.op(OP_DECL_TK, 0, own_sid(0), 0x91e0f0010100ULL, 7, 29, 1);
+    listener_event(0, EV_NEW, DECL_READY);
+    const bool held = h.lstn_reg(0) == DECL_READY && !h.active(0) && h.active(1);
+    const uint64_t rise7 = await_active(0, 400);
+    h.run_ms(5);
+    const int mv7 = mvrp_frame_with(7, EV_NEW, from);
+    CHECK(held && rise7 && mv7 >= 0 && rise7 > h.archive_accept[mv7],
+          "R3: a new VID waits for its own MVRP New");
+    CHECK(mvrp_frame_with(2, EV_LV, from) < 0 && h.active(1),
+          "R3: VID 2 stays declared for source 1");
+  }
+
+  void check_listener_vid_is_declared_on_the_wire() {
+    // R4: a sink settled on VID 7, which no source holds, declares it on the
+    // wire: byte-exact New, then JoinIn on the periodic cadence; its teardown,
+    // the VID's last user, withdraws it: byte-exact Lv
+    h.reset(); d->link_up_i = 1; h.idle(10);
+    h.op(OP_DECL_LS, 0, peer_sid(0), peer_da(0), 7, 0, 0, DECL_READY);
+    const auto exp_new = mrpdu_frame(false, {Msg{1, 2, false,
+                                           {Vec{false, 1, fv_vid(7), {EV_NEW}, {}}}}});
+    auto f = h.wait_frame(false, 400, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, false, 1, 7, EV_NEW);
+    });
+    CHECK(f == exp_new, "R4: DECLARE_LISTENER on VID 7 yields a byte-exact MVRP VID 7 New");
+    if (!f.empty() && f != exp_new) { dump("got", f); dump("exp", exp_new); }
+    const size_t base = h.archive.size();
+    h.run_ms(3300);
+    std::vector<uint32_t> joins;
+    for (size_t i = base; i < h.archive.size(); i++)
+      if (frame_has(h.archive[i], false, 1, 7, EV_JOININ)) joins.push_back(h.archive_ms[i]);
+    uint32_t lo = 0, hi = 0;
+    CHECK(joins.size() >= 3 && spaced(joins, 900, 1500, lo, hi),
+          "R4: then JoinIn VID 7 on the periodic cadence (%zu x %u-%u ms)", joins.size(), lo, hi);
+    printf("JOIN listener vid7_joinin=%zu gaps=%u-%u\n", joins.size(), lo, hi);
+    h.sync();                              // clean slot: the Lv drains alone
+    h.op(OP_WDRW_LS, 0);
+    const auto exp_lv = mrpdu_frame(false, {Msg{1, 2, false,
+                                          {Vec{false, 1, fv_vid(7), {EV_LV}, {}}}}});
+    f = h.wait_frame(false, 400, [](const std::vector<uint8_t>& fr) {
+      return frame_has(fr, false, 1, 7, EV_LV);
+    });
+    CHECK(f == exp_lv, "R4: WITHDRAW_LISTENER of the last user yields a byte-exact MVRP VID 7 Lv");
+    if (!f.empty() && f != exp_lv) { dump("got", f); dump("exp", exp_lv); }
+    CHECK(d->dbg_vid_active_o == 0, "R4: no VID membership remains");
   }
 
   // Q: issue #64, REQ-SRP-001. Milan v1.2 Table 4.3: joinTime 200 ms
@@ -2076,6 +2190,11 @@ class SrpTopHarness {
         for (const auto& x : h.samples) cold_low &= !(x.grants & mask);
         CHECK(r.got && r.status == ST_OK && cold_low,
               "H: cold refusal never grants source %d phase %u", s, phase);
+        // the declaration's MVRP join of VID 2 leaves at the first tick; the
+        // licence waits for it (Milan 4.3.2, issue #65), so every case below
+        // starts after it
+        h.run_ms(250);
+        CHECK(vid_joined(2), "H: VID 2's MVRP join has left source %d phase %u", s, phase);
         declare(224); h.idle(64);
         h.feed(mrpdu_body(true, {Msg{3, 8, true,
           {Vec{false, 1, fv_sid(sid), {EV_NEW}, {DECL_READY}}}}}), true);
@@ -2205,7 +2324,8 @@ class SrpTopHarness {
     h.reset(); d->link_up_i = 1; h.idle(40);
     auto rl = h.op(OP_DECL_TK, 0, cross_sid(0), cross_da(0), 2, F_LO, 1);
     auto rh = h.op(OP_DECL_TK, hi, cross_sid(hi), cross_da(hi), 2, F_HI, 1);
-    h.idle(64);
+    h.run_ms(250);                        // VID 2's MVRP join leaves first (#65)
+    CHECK(vid_joined(2), "I: VID 2's MVRP join has left (source %d)", hi);
     h.feed(mrpdu_body(true, {Msg{3, 8, true,
       {Vec{false, 1, fv_sid(cross_sid(0)), {EV_NEW}, {DECL_READY}},
        Vec{false, 1, fv_sid(cross_sid(hi)), {EV_NEW}, {DECL_READY}}}}}), true);
@@ -2409,6 +2529,6 @@ int main(int argc, char** argv) {
   if (*group && strcmp(group,"phases") && strcmp(group,"edge")
       && strcmp(group,"peer") && strcmp(group,"congestion")
       && strcmp(group,"guards") && strcmp(group,"restart")
-      && strcmp(group,"timers")) return 2;
+      && strcmp(group,"timers") && strcmp(group,"join")) return 2;
   return harness.run(group);
 }

@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **2027 checks**.
+`make` = build + run, exit 0 = PASS, **2149 checks**.
 
 Expectations are independent: an MRPDU builder/parser written here from
 802.1Q §10.8.1.2 / §35.2.2, a Σ-slope model transcribing the Milan v1.2
@@ -401,3 +401,41 @@ Mutation-proven 2026-09-29 through `mutants.py` (checked-in patches):
 | `join-ms-400` (`JOIN_MS_P = 400`) | timers | 2 | Q1,Q2 |
 | `periodic-ms-3000` (`PERIODIC_MS_P = 3000`) | timers | 1 | Q2 |
 | `draw-kind-0` (`draw_kind_o = 3'd0`, the 0-1 s range) | timers | 6 | Q1,Q2,Q3,Q4 |
+
+## MVRP join before the stream (issue #65, REQ-SRP-006)
+
+Milan v1.2 4.3.2: a Talker PAAD "shall join the relevant VLAN via MVRP prior to
+sending any Stream frames"; 4.4.1: a Listener PAAD "shall declare an MVRP VID
+attribute for each VLAN used by its settled sinks". ACTIVE, the streaming
+licence, now also requires the source VID's MVRP declaration to have left: the
+encoder strobes every MVRP MRPDU the TX arbiter accepts, and KL_srp_vlan marks
+which live VIDs it carried ([10 section 6.2](../../docs/architecture/10_srp_engine.md#sec-10-join-before-stream)).
+An MRPDU counts as transmitted at the clock the BFM accepted its request.
+`RUN_ARGS=join` runs the group.
+
+| Check | Stimulus and required behavior |
+|---|---|
+| R1 | DECLARE_TALKER on VID 2, then a Listener Ready at 1 ms, before the first join tick: registered, admitted, not ACTIVE. ACTIVE rises 1 clock after the BFM accepts the VID 2 New (measured at 200 ms), within one join-paced MRPDU. The VID New is accepted ahead of the first Talker Advertise, so a Ready that answers the Advertise never waits. |
+| R2 | A second source on VID 2, already joined: ACTIVE as soon as its Ready registers. |
+| R3 | Source 0 withdrawn and re-declared on VID 7 with a new Ready: no ACTIVE until VID 7's own New is accepted; VID 2 stays declared for source 1 (no Lv). |
+| R4 | DECLARE_LISTENER sink 0 on VID 7, which no source holds: byte-exact MVRP VID 7 New, then JoinIn every 900-1500 ms (3 x 1000 ms measured), and WITHDRAW_LISTENER of its last user: byte-exact MVRP VID 7 Lv, no membership left. |
+
+H and I (issue #112) registered a Listener Ready about 2 ms after reset,
+before VID 2's MVRP join could leave: exactly the #65 case, so 184 of their
+checks fail against the gated licence (96 H, 88 I). Each case now waits 250 ms
+after its first declaration and asserts that VID 2's join was captured (24 + 88
+new checks); every LATENCY, CROSS and WINDOW measurement line is byte-identical
+to the one before the change.
+
+Mutation-proven 2026-09-29 through `mutants.py` (checked-in patches):
+
+| Deliberate breakage | Suite / group | Failing checks | Named failing assertions |
+|---|---|---:|---|
+| `licence-ignores-join` (talker ACTIVE without the VID term) | srp_top join | 3 | R1,R3 |
+| `licence-ignores-join` | srp_stream_fsms | 3 | the three VID-term checks |
+| `join-sent-at-handover` (VLAN marks a VID sent when the encoder takes its New) | srp_top join | 3 | R1,R3 |
+| `join-sent-at-handover` | srp_encoder | 3 | W2,W3,W4 |
+| `count-up-unsends` (a second user resets the VID's sent state) | srp_top join | 3 | R2,R3 |
+| `count-up-unsends` | srp_encoder | 2 | W4 |
+| `tx-strobe-any-app` (the transmission strobe also fires for MSRP) | srp_encoder | 1 | W1 |
+| `listener-lane-cut` (`vu_sel_ls_w` forced 0, the #65 acceptance arm) | srp_top join | 3 | R4 |

@@ -49,7 +49,9 @@
 //                included, per the 03 §8
 //                destination-addressing row — lands in a KL_pp_tx_slots
 //                slot; the committed handle is offered to the (not yet
-//                landed) TX arbiter as txreq_valid_o/txreq_slot_o.
+//                landed) TX arbiter as txreq_valid_o/txreq_slot_o, and
+//                tx_mvrp_o marks the acceptance of an MVRP MRPDU (the
+//                VLAN participant's "join transmitted", 10 §6.2).
 //
 //  Decision    : the design decision that matters — runs are COLLECTED
 //                FIRST and emitted only after they break, so
@@ -120,6 +122,7 @@ module KL_srp_encoder #(
     output logic         txreq_valid_o,  //! committed frame ready, held until accepted
     output logic [$bits(pp_pkg::PP_SLOT_NULL_C)-1:0] txreq_slot_o, //! committed KL_pp_tx_slots handle
     input  wire          txreq_ready_i,  //! arbiter accepts the request
+    output logic         tx_mvrp_o,      //! strobe: the arbiter accepted an MVRP MRPDU (Milan §4.3.2 join transmitted)
 
     // ---- observability ----------------------------------------------------
     output logic [$clog2(DEPTH_P+1)-1:0] dbg_cnt_msrp_o, //! pending MSRP events
@@ -775,6 +778,7 @@ module KL_srp_encoder #(
   assign wr_len_o      = waddr_r;
   assign txreq_valid_o = (st_r == E_TXREQ);
   assign txreq_slot_o  = slot_r;
+  assign tx_mvrp_o     = (st_r == E_TXREQ) && txreq_ready_i && (cur_app_r == APP_MVRP_C);
   assign dbg_cnt_msrp_o = cnt_msrp_r;
   assign dbg_cnt_mvrp_o = cnt_mvrp_r;
 

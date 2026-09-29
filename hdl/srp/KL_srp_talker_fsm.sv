@@ -26,7 +26,10 @@
 //                and Lv! on close, with the VLAN membership user++/user--
 //                riding the same edges toward KL_srp_vlan. ACTIVE(src) =
 //                declaring ∧ {Ready, ReadyFailed} registered ∧
-//                sr_admitted_i — and on admission loss the declaration
+//                sr_admitted_i ∧ the source's VID joined on the wire
+//                (vid_sent_i/vid_val_i from KL_srp_vlan; Milan §4.3.2:
+//                join "prior to sending any Stream frames") — and on
+//                admission loss the declaration
 //                swaps IN PLACE to Talker Failed, failure code 1
 //                (insufficient bandwidth) with the station's own MAC as the
 //                FailureInformation system identifier (802.1Q §35.1.2.1,
@@ -84,6 +87,8 @@ module KL_srp_talker_fsm
     parameter int unsigned SLOT_AW_P    = 7,
     //! owner tag of slot s = OWNER_BASE_P + s (echoed at expiry)
     parameter logic [7:0]  OWNER_BASE_P = 8'h40,
+    //! KL_srp_vlan membership table entries (its N_VIDS_P)
+    parameter int unsigned N_VIDS_P     = 4,
     //! derived source-index width — do not override
     localparam int unsigned SRC_W_C = (N_SOURCES_P > 1) ? $clog2(N_SOURCES_P)
                                                         : 1
@@ -142,6 +147,8 @@ module KL_srp_talker_fsm
     output logic        user_join_o,     //! 1 = join user_vid_o, 0 = leave it
     output logic [11:0] user_vid_o,      //! the source's frozen stream VID
     input  wire         user_ready_i,    //! KL_srp_vlan accepts the op
+    input  wire  [N_VIDS_P-1:0]       vid_sent_i, //! KL_srp_vlan vid_sent_o: entry live and its join transmitted
+    input  wire  [N_VIDS_P-1:0][11:0] vid_val_i,  //! KL_srp_vlan vid_val_o: the VID of each entry
 
     // ---- KL_pp_timer_service faces (exact port match) ---------------------
     input  wire  [31:0]          now_ms_i,          //! absolute ms timebase (now_ms_o)
@@ -157,7 +164,7 @@ module KL_srp_talker_fsm
     output logic [N_SOURCES_P-1:0]      lstn_reg_change_o, //! LISTENER_REG_CHANGE per source
     output logic [N_SOURCES_P-1:0][1:0] tk_decl_state_o,   //! 0 NONE / 1 ADVERTISE / 2 FAILED
     output logic [N_SOURCES_P-1:0][1:0] lstn_reg_state_o,  //! srp_decl_e code; 0 = NONE/Ignore
-    output logic [N_SOURCES_P-1:0]      active_o,          //! ACTIVE(src) streaming level (Δ14 + admission)
+    output logic [N_SOURCES_P-1:0]      active_o,          //! ACTIVE(src) streaming level (Δ14 + admission + MVRP join sent)
     output logic [N_SOURCES_P-1:0][7:0] msrp_fail_code_o,  //! 1 while self-declared Failed, else 0
     output logic [N_SOURCES_P-1:0][63:0] msrp_fail_bridge_o, //! {16'd0, own MAC} while Failed, else 0
 
@@ -790,6 +797,20 @@ module KL_srp_talker_fsm
     end
   end
 
+  // ---------------------------------------------- MVRP join-before-stream
+  // Milan §4.3.2: a Talker PAAD "shall join the relevant VLAN via MVRP prior
+  // to sending any Stream frames". The licence waits until the VLAN entry
+  // holding the source's VID has had its New/JoinIn transmitted.
+  logic [N_SOURCES_P-1:0] vid_ok_w;
+  always_comb begin : vid_joined_map
+    for (int unsigned s = 0; s < N_SOURCES_P; s++) begin
+      vid_ok_w[s] = 1'b0;
+      for (int unsigned e = 0; e < N_VIDS_P; e++) begin
+        if (vid_sent_i[e] && (vid_val_i[e] == vid_r[s])) vid_ok_w[s] = 1'b1;
+      end
+    end
+  end
+
   // ---------------------------------------------------- class-C/D outputs
   always_comb begin : status_map
     for (int unsigned s = 0; s < N_SOURCES_P; s++) begin
@@ -800,7 +821,7 @@ module KL_srp_talker_fsm
       active_o[s] = rec_valid_r[s] && app_declaring_f(app_r[s]) && !fail_r[s]
                  && ((lstn_out_w[s] == 2'(SRP_DECL_READY))
                      || (lstn_out_w[s] == 2'(SRP_DECL_READY_FAILED)))
-                 && sr_admitted_i[s];
+                 && sr_admitted_i[s] && vid_ok_w[s];
       msrp_fail_code_o[s]   = (tk_decl_state_o[s] == 2'd2) ? 8'd1 : 8'd0;
       msrp_fail_bridge_o[s] = (tk_decl_state_o[s] == 2'd2)
                             ? {16'd0, own_mac_i} : 64'd0;

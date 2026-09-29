@@ -236,6 +236,18 @@ a Domain VID change affects only *future* declarations; across the F05.12
 withdraw → re-declare flow two VIDs are briefly live. Steady state is one VID,
 because only Class A with the Domain's VID is supported.
 
+<a id="sec-10-join-before-stream"></a>**Join before the stream (issue #65).** Each
+live VID also records whether its declaration has *left*: an MVRP MRPDU carrying
+its New or a re-join JoinIn was accepted by the TX arbiter since the VID's entry was
+allocated. The encoder strobes every MVRP MRPDU the arbiter accepts, and MVRP
+pushes wait while an MVRP drain runs, so a push accepted before a transmission's
+drain started is in that MRPDU and a later one waits for the next. The talker's
+streaming licence requires this for its own VID (§6.3), so no stream frame is
+licensed before the join is on its way (Milan §4.3.2). The arbiter's acceptance is
+the last point this engine observes; the frame is serialized from there without
+preemption. A settled sink's VID is declared the same way (Milan §4.4.1); a
+listener has no ordering rule, so nothing waits on it.
+
 ### 6.3 Talker-side stream FSM (×M)
 
 <a id="fig-10-talkersm"></a>**F10.4 — Per-source declaration + listener tracking**
@@ -256,8 +268,10 @@ In every state the FSM registers incoming **Listener** attributes for its stream
 Ready or ReadyFailed (Milan §5.3.7.3, Δ14 — exported as a level to the AVTP engine);
 `GET_TX_STATE`'s REGISTERING_FAILED reports the AskingFailed case
 ([F05.11](05_acmp_engine.md#fig-05-talker)). The streaming level additionally
-requires admission: ACTIVE(src) = declaring Advertise ∧ registering
-Ready/ReadyFailed ∧ (`optimistic[src]` ∨ `sr_admitted[src]`) — the engine computes Σ-slope admission
+requires admission, and the VLAN join of the stream VID on the wire
+([§6.2](#sec-10-join-before-stream), Milan §4.3.2): ACTIVE(src) = declaring
+Advertise ∧ registering Ready/ReadyFailed ∧ (`optimistic[src]` ∨ `sr_admitted[src]`)
+∧ VID(src) joined — the engine computes Σ-slope admission
 against the port ceiling and publishes `granted_slope_bps[src]`
 ([F02.10](02_interfaces.md#fig-02-statusdict)); the shaper consumes it, never
 computes it. **Local admission can fail**, and that failure is reported the

@@ -55,6 +55,11 @@
 //                that has content. A received LeaveAll of an application
 //                restarts that application's leavealltimer and supersedes
 //                its unaccepted own action (Table 10-5 rLA!, issue #108).
+//                The streaming licence waits for the MVRP join of the
+//                source's VID (Milan §4.3.2, issue #65): the encoder
+//                strobes each MVRP MRPDU the TX arbiter accepts,
+//                KL_srp_vlan marks the VIDs it carried, and the talker
+//                FSMs AND that into ACTIVE.
 //                P-EN-SRP-ENGINE is elaboration-time: instantiating this
 //                module IS the engine; leaving it out leaves the identical
 //                srp contract to an external stack (02 §4.1).
@@ -215,7 +220,7 @@ module KL_srp_top
     output logic                          domain_adopted_o,    //! F10.2 state (0 DEFAULTS / 1 ADOPTED)
     output logic [N_SOURCES_P-1:0][1:0]   tk_decl_state_o,     //! 0 NONE / 1 ADVERTISE / 2 FAILED (self-declared)
     output logic [N_SOURCES_P-1:0][1:0]   lstn_reg_state_o,    //! srp_decl_e code; 0 = NONE/Ignore
-    output logic [N_SOURCES_P-1:0]        active_o,            //! ACTIVE(src) streaming level (Δ14 + admission)
+    output logic [N_SOURCES_P-1:0]        active_o,            //! ACTIVE(src) streaming level (Δ14 + admission + MVRP join sent)
     output logic [N_SOURCES_P-1:0][7:0]   src_fail_code_o,     //! msrp_fail_code[src] (1 while self-declared Failed)
     output logic [N_SOURCES_P-1:0][63:0]  src_fail_bridge_o,   //! msrp_fail_bridge[src] ({16'd0, own MAC} while Failed)
     output logic [N_SINKS_P-1:0][1:0]     tk_reg_state_o,      //! 0 NONE / 1 ADVERTISE / 2 FAILED for the settled match
@@ -392,6 +397,9 @@ module KL_srp_top
   logic [2:0]  vlan_ev_event_w;
   logic [15:0] vlan_ev_vid_w;
   logic        vlan_ev_ready_w;
+  logic        enc_tx_mvrp_w;   // an MVRP MRPDU left through the TX arbiter
+  logic [N_VIDS_P-1:0]       vlan_sent_w;
+  logic [N_VIDS_P-1:0][11:0] vlan_vid_w;
 
   logic        tk_user_valid_w, tk_user_join_w;
   logic [11:0] tk_user_vid_w;
@@ -430,6 +438,9 @@ module KL_srp_top
       .vlan_ev_event_o (vlan_ev_event_w),
       .vlan_ev_vid_o   (vlan_ev_vid_w),
       .vlan_ev_ready_i (vlan_ev_ready_w),
+      .mvrp_tx_i       (enc_tx_mvrp_w),
+      .vid_sent_o      (vlan_sent_w),
+      .vid_val_o       (vlan_vid_w),
       .vid_active_o    (dbg_vid_active_o)
   );
 
@@ -504,7 +515,8 @@ module KL_srp_top
       .LEAVE_MS_P   (LEAVE_MS_P),
       .SLOT_BASE_P  (TK_SLOT_BASE_P),
       .SLOT_AW_P    (SLOT_AW_P),
-      .OWNER_BASE_P (TK_OWNER_BASE_P)
+      .OWNER_BASE_P (TK_OWNER_BASE_P),
+      .N_VIDS_P     (N_VIDS_P)
   ) u_talker (
       .clk_i               (clk_i),
       .rst_n               (rst_n),
@@ -547,6 +559,8 @@ module KL_srp_top
       .user_join_o         (tk_user_join_w),
       .user_vid_o          (tk_user_vid_w),
       .user_ready_i        (tk_user_ready_w),
+      .vid_sent_i          (vlan_sent_w),
+      .vid_val_i           (vlan_vid_w),
       .now_ms_i            (now_ms_i),
       .arm_valid_o         (tk_arm_v_w),
       .arm_cancel_o        (tk_arm_cancel_w),
@@ -751,6 +765,7 @@ module KL_srp_top
       .txreq_valid_o  (txreq_valid_o),
       .txreq_slot_o   (txreq_slot_o),
       .txreq_ready_i  (txreq_ready_i),
+      .tx_mvrp_o      (enc_tx_mvrp_w),
       .dbg_cnt_msrp_o (enc_cnt_msrp_w),
       .dbg_cnt_mvrp_o (enc_cnt_mvrp_w)
   );
