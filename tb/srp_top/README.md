@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **1987 checks**.
+`make` = build + run, exit 0 = PASS, **2020 checks**.
 
 Expectations are independent: an MRPDU builder/parser written here from
 802.1Q §10.8.1.2 / §35.2.2, a Σ-slope model transcribing the Milan v1.2
@@ -196,14 +196,16 @@ another slot, matching the real serializer's return to idle.
 | K: expiry phase | Ready and Ready Failed on sources 0, 3 and 7, with three sources present. Leaves at -50, -1, +1, +40 and +80 ms from the real expiry clear IN and remain stopped for two seconds. At +120 and +199 ms, accepted sLA has legitimately entered LV, so rLv retains registration. Advertise and Failed sink Leaves follow the same phase sweep. |
 | K: controls | Mismatched SID and malformed Listener Leave preserve IN; reset clears a blocked preparation; real LeaveTime expires both planes without renewal; timely rejoin preserves healthy registrations across the old deadline. |
 | L: acceptance edge | Slot allocation is delayed while a real Listener Leave is decoded. Fourteen release positions for each Ready parameter cover decoded events from -8 through +5 clocks relative to sLA, including -1, 0 and +1. Receive priority clears IN before/on the edge; after it, LV retains registration. All unaffected registrars age once. |
-| M: supersession | Each of the four MSRP types before preparation and while allocation is blocked cancels the pending own action. Rejoined registrars are never re-aged and no own flags appear. MVRP cannot cancel it. The next timer deadline remains unchanged. Six peer/acceptance phases cover -2 through +3 clocks: the peer wins before/on acceptance, and cannot retract an accepted action. A peer at -1/0/+1 clocks around real timer expiry cancels same-edge or earlier pending intent; a later expiry still creates new intent, preserving #108. A quiet canceled round waits for real content; a later own action can reuse its reserved slot. |
+| M: supersession | Each of the four MSRP types before preparation and while allocation is blocked cancels the pending own action. Rejoined registrars are never re-aged and no own flags appear. MVRP cannot cancel it. Since issue #108 an MSRP peer restarts the MSRP timer (a fresh 10-15 s deadline from the peer) and an MVRP peer leaves it unchanged (M4). Six peer/acceptance phases cover -2 through +3 clocks: the peer wins before/on acceptance, and cannot retract an accepted action. A peer at -1/0/+1 clocks around real timer expiry leaves no own action: on or after the expiry it drops the new intent, and before it the restart makes that expiry stale (M10; before #108 the -1 case still acted). A quiet canceled round waits for real content; a later own action can reuse its reserved slot. |
 | N: congestion | Eight sources and eight sinks exceed the 12-entry table. A previous TX request stalls across several cadence ticks; Leaves still clear IN. After acceptance, a held TX request never repeats sLA. Interim and final drains preserve all live declarations and all four type flags, and queued ticks complete. Another case fills the table before acceptance and proves that this initial full condition also drains. Allocation held across two timer expiries produces just one accepted own action. An asymmetric eight-source/one-sink walk preserves the completed walker across blocked cadence ticks. |
 
 The existing periodic-declaration and six-cycle/no-storm assertions retain their
-limits. The measured six-cycle counts are 4, 3, 3, 3, 3, 2 (18 total, maximum 4).
+limits. The measured six-cycle counts were 4, 3, 3, 3, 3, 2 (18 total, maximum 4).
+Since issue #108 each peer LeaveAll restarts the timer, no own burst lands in
+F4, and the counts are 4, 3, 3, 3, 2, 2 (pinned 17 total, maximum 4).
 The accepted action precedes serialization; a Leave after that legitimate LV
 entry may still retain registration for LeaveTime. This change does not impose
-a stricter LV + rLv policy or implement the receive-timer restart in issue #108.
+a stricter LV + rLv policy. The receive-timer restart is issue #108, below.
 
 Run the mutation campaign with:
 
@@ -330,3 +332,43 @@ encoder control is 562/562. The required new reviewer edits are measured below.
 | `r-reuse-without-action` | peer | 1 | M12 |
 | `r-mvrp-start-during-prepare` | srp_encoder | 5 | B1-vlan,O8 |
 | `canceled-content-never-drains` | guards | 1 | O7 |
+
+## Received LeaveAll restarts the leavealltimer (issue #108)
+
+802.1Q-2014 Table 10-5 maps rLA! to "Start leavealltimer, Passive" in both
+states, and 10.6 says why: a LeaveAll received from another participant
+restarts the timer "without generating a message". The LeaveAll machine is per
+application (10.7.5.20 NOTE), so a lane of any of its Attribute Types is its
+rLA! (10.7.5.20 b)2)): any MSRP lane for MSRP, the VID lane for MVRP, never
+across ([10 section 6.5](../../docs/architecture/10_srp_engine.md#fig-10-leaveall)).
+`RUN_ARGS=restart` runs the group. Read-only probes add the MVRP deadline,
+pending flag, expiry, flag hand-off, decoded MVRP lane and draw requests; no
+DUT state is forced.
+
+| Check | Stimulus and required behavior |
+|---|---|
+| P1 | F4's bridge shape (LeaveAll on every MSRP type, riding its re-declarations) every second for 20 cycles, past the 15 s ceiling of any draw: no own MSRP action and no flagged own MRPDU; every peer restarts the deadline to 10-15 s after it; MVRP keeps its own cycle; registrations stay IN. After the last peer the own LeaveAll follows 10-15 s later (measured +11092 ms). |
+| P2 | The same for MVRP (peer VID 2 JoinIn flagged): no own MVRP flag in 20 cycles; MSRP keeps its own cycle; no VID Lv. |
+| P3 | Each lane (MVRP, then MSRP types 1-4) 5 s before the earlier own deadline: only its application's deadline is redrawn from the peer. The superseded deadline passes silently; the restarted one fires once, 10 s or more after the peer (measured 13.2-14.0 s). |
+| P4 | MVRP Active: right after the own MVRP expiry, a peer MVRP LeaveAll drops the pending flag, the VID re-join still goes out, and the timer restarts. Control without the peer: the flag rides the next drain. |
+| P5 | MVRP Active with no VID held (no drain carries the flag): a peer MVRP LeaveAll makes it Passive, so the first VID New carries no own flag. Control: the flag rides that New. |
+| P6 | The MVRP lane at -1/0/+1 clocks around the real MVRP expiry: no own flag in any case, and a restarted timer (before the expiry the superseded deadline is stale). |
+
+The MSRP twin of P6 is M10. Mutation-proven 2026-09-29 through `mutants.py`
+(checked-in patches, each built in a scratch RTL copy):
+
+| Deliberate breakage | Group | Failing checks | Named failing assertions |
+|---|---|---:|---|
+| `expiry-only-redraw` (MSRP peer does not restart the timer) | restart | 15 | P1,P3 |
+| `mvrp-expiry-only-redraw` (MVRP peer does not restart the timer) | restart | 6 | P2,P3,P6 |
+| `stale-expiry-honoured` (MSRP superseded deadline acts) | peer | 1 | M10 |
+| `mvrp-stale-expiry-honoured` (MVRP superseded deadline acts) | restart | 1 | P6 |
+| `mvrp-passive-lost` (MVRP peer keeps the own flag) | restart | 4 | P4,P5,P6 |
+| `mvrp-flag-at-expiry` (flag handed to the encoder at expiry, the old shape) | restart | 6 | P4,P5,P6 |
+
+The round-1 arm `peer-restarts-timer` planted exactly the behavior #108
+requires, so it is retired. Five arms whose context the change moved
+(`expiry-outranks-peer`, `mvrp-supersedes-msrp`, `pending-peer-ignored`,
+`reset-retains-intent`, `my-expiry-pulse`) are regenerated with the same edit and
+re-measured: 1 (M10), 8 (M1-M4), 15 (M1, M2, M3, M10), 1 (K10) and 62 (K2, K4,
+K5, K11, K12) failing checks.

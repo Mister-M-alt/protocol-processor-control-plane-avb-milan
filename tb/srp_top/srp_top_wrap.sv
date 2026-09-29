@@ -114,6 +114,12 @@ module srp_top_wrap (
     output wire        dbg_rx_event_o,
     output wire [3:0]  dbg_rx_la_o,
     output wire        dbg_alloc_req_o,
+    output wire [31:0] dbg_la_mvrp_deadline_o,
+    output wire        dbg_la_mvrp_pending_o,
+    output wire        dbg_la_mvrp_expiry_o,
+    output wire        dbg_la_mvrp_action_o,
+    output wire        dbg_rx_la_mvrp_o,
+    output wire        dbg_la_redraw_o,
     output logic [3:0]  dbg_vid_active_o,
     output logic        dbg_vlan_err_o,
     output logic        dbg_adm_round_o,
@@ -141,6 +147,14 @@ module srp_top_wrap (
   assign dbg_rx_event_o = u_dut.dec_evt_valid_w;
   assign dbg_rx_la_o = u_dut.dec_la_msrp_w;
   assign dbg_alloc_req_o = alloc_req_w;
+  // The MVRP leavealltimer and its LeaveAll flag handed to the encoder, the
+  // decoded MVRP lane, and any LeaveAll draw request (read-only, issue #108)
+  assign dbg_la_mvrp_deadline_o = u_dut.cad_dl_r[4];
+  assign dbg_la_mvrp_pending_o = u_dut.la_mvrp_pend_r;
+  assign dbg_la_mvrp_expiry_o = u_dut.cad_hit_w && (u_dut.cad_exp_ix_w == 4);
+  assign dbg_la_mvrp_action_o = u_dut.enc_la_r[1];
+  assign dbg_rx_la_mvrp_o = u_dut.dec_la_mvrp_w;
+  assign dbg_la_redraw_o = draw_req_w;
 
   // Read-only probes: acceptance at the real service gate, its optimistic
   // window, the T-MRP-JOIN tick of the talker walk, and the free-running

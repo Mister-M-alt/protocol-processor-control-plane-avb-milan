@@ -38,7 +38,7 @@ plain-IEEE build where different; blank = same).
 | T-MAAP-ANNOUNCE | random, strictly 30 s < T < 32 s | MAAP engine (11) | announce_timer — a fresh draw at every start | 1722-2016 B.3.4.1, Table B.8 | |
 | T-MRP-JOIN | 200 ms (180–240) | SRP engine (10) | MRP joinTime — join tx cadence + vector aggregation window | Milan Table 4.3 | |
 | T-MRP-LEAVE | 5000 ms (4500–7500) | SRP engine (10) | MRP LeaveTime — registrar LV expiry during LeaveAll (Δ13 removes the rLv path) | Milan Table 4.3 | 600–1000 ms (802.1Q Table 10-7) — coupled to Δ13: change both or neither |
-| T-MRP-LEAVEALL | random 10–15 s | SRP engine (10) | leavealltimer per participant | Milan Table 4.3 | |
+| T-MRP-LEAVEALL | random 10–15 s | SRP engine (10) | leavealltimer per participant — a fresh draw at every start: Begin! (reset), its own expiry, and a received LeaveAll of that participant (802.1Q Table 10-5 rLA!, [10 §6.5](10_srp_engine.md#fig-10-leaveall)) | Milan Table 4.3 | |
 | T-MRP-PERIODIC | 1000 ms (900–1500) | SRP engine (10) | periodictimer — periodic re-join transmissions | Milan Table 4.3 | |
 | T-NVM-DEBOUNCE | ≈ 500 ms (design) | NVM mgr | commit coalescing | design | |
 | T-NVM-RS-DEADLINE | `P-NVM-RS-TMO-CYC` clocks without progress (default 20 ms) | NVM mgr | the boot restore walk's read phase: expiry fails the whole walk and abandons an issued read ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) | design (persistence that wedges must not hold the entity) | a clock counter in the manager, not a timer-service slot |

@@ -19,7 +19,6 @@ PATCHES = Path(__file__).resolve().parent / "mutations"
 # label, suite, group, required failing assertion prefix.
 MUTANTS = [
     ('bad-listener-length', 'srp_top', 'phases', 'K12:'),
-    ('peer-restarts-timer', 'srp_top', 'peer', 'M4:'),
     ('repeated-action', 'srp_top', 'congestion', 'N4:'),
     ('expiry-event', 'srp_top', 'phases', 'K2:'),
     ('before-slot', 'srp_top', 'edge', 'L1:'),
@@ -74,6 +73,13 @@ MUTANTS = [
     ('r-reuse-without-action', 'srp_top', 'peer', 'M12:'),
     ('r-mvrp-start-during-prepare', 'srp_encoder', '', 'O8:'),
     ('canceled-content-never-drains', 'srp_top', 'guards', 'O7:'),
+    # issue #108: Table 10-5 rLA! restarts the leavealltimer and goes Passive
+    ('expiry-only-redraw', 'srp_top', 'restart', 'P1:'),
+    ('mvrp-expiry-only-redraw', 'srp_top', 'restart', 'P2:'),
+    ('stale-expiry-honoured', 'srp_top', 'peer', 'M10:'),
+    ('mvrp-stale-expiry-honoured', 'srp_top', 'restart', 'P6:'),
+    ('mvrp-passive-lost', 'srp_top', 'restart', 'P4:'),
+    ('mvrp-flag-at-expiry', 'srp_top', 'restart', 'P5:'),
 ]
 
 
@@ -149,7 +155,7 @@ def main() -> int:
         passed, total, covered = campaign(tree, args.output, selected)
     if not args.only:
         expected = {f"{group}{i}" for group, count in
-                    [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8)]
+                    [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 6)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1
