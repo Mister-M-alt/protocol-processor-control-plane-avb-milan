@@ -250,6 +250,14 @@ module pp_top_wrap (
     //! the published (debounced) binding view an integrator folds into
     //! GET_STREAM_INFO's BOUND/STREAMING_WAIT flags (06 F06.13)
     output logic [7:0]  acmp_bound_o,
+    //! ...and the bound stream's identity a fabric arms its RX filter from
+    //! (class-D, integrator guide section 8): talker entity_id, stream_id,
+    //! destination MAC and VLAN per sink, 64/64/48/12 bits each. Section AC
+    //! grades the A15 latch and the clear with the binding (issue #48)
+    output logic [8*64-1:0] acmp_bound_eid_o,
+    output logic [8*64-1:0] acmp_bound_sid_o,
+    output logic [8*48-1:0] acmp_bound_dmac_o,
+    output logic [8*12-1:0] acmp_bound_vlan_o,
 
     // the Class A Domain in force (class-D, F02.10), passed through by name:
     // these ports are where an integrator reads P-SRP-DOM-DEF-VID's effect
@@ -655,6 +663,10 @@ module pp_top_wrap (
       .maap_defends_o        (maap_defends_o),
       .acmp_declaring_o      (acmp_declaring_o),
       .acmp_bound_o          (acmp_bound_o),
+      .acmp_bound_eid_o      (acmp_bound_eid_o),
+      .acmp_bound_sid_o      (acmp_bound_sid_o),
+      .acmp_bound_dmac_o     (acmp_bound_dmac_o),
+      .acmp_bound_vlan_o     (acmp_bound_vlan_o),
       .srp_class_a_prio_o    (srp_class_a_prio_o),
       .srp_class_a_vid_o     (srp_class_a_vid_o),
       .srp_domain_adopted_o  (srp_domain_adopted_o),

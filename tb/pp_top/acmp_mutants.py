@@ -100,7 +100,66 @@ LONG_FORM = (
             "AL4: no 96-B frame was dropped")),
 )
 
-MUTANTS = INERT + LONG_FORM
+# issue #48: the top's SRP service stage for the listener (st_ls_r), the
+# class-D bound view, and the SRP listener matcher the near misses grade
+TOP = "hdl/top/protocol_processor_top.sv"
+SRP_LISTENER = "hdl/srp/KL_srp_listener_fsm.sv"
+READY_NEW = "AS4: the matching Talker Advertise yields Listener Ready New"
+READY_CLASS_D = "AS4: class-D: Listener READY declared"
+READY_TRACED = "AS4: exactly one TK_ATTR_REGISTERED{1}"
+NOTK_HELD = "AS5: 11.5 s after the settle"
+LV_ON_WIRE = "AS6: the Listener attribute is withdrawn on the wire"
+
+SETTLE_PATH = (
+    Mutant("st_ls_settle_as_withdraw", PP_TOP, (
+        (TOP, "op:    lstn_act_settle_w ? 3'd2 : 3'd3,",
+         "op:    lstn_act_settle_w ? 3'd3 : 3'd3,"),),
+        (READY_NEW, READY_CLASS_D, NOTK_HELD)),
+    Mutant("st_ls_teardown_as_declare", PP_TOP, (
+        (TOP, "op:    lstn_act_settle_w ? 3'd2 : 3'd3,",
+         "op:    lstn_act_settle_w ? 3'd2 : 3'd2,"),),
+        (LV_ON_WIRE,)),
+    Mutant("st_ls_sid_da_swapped", PP_TOP, (
+        (TOP, "sid:   lstn_act_settle_sid_w,\n                           da:    lstn_act_settle_da_w,",
+         "sid:   64'(lstn_act_settle_da_w),\n                           da:    lstn_act_settle_sid_w[47:0],"),),
+        (READY_NEW, READY_CLASS_D, NOTK_HELD)),
+    Mutant("st_ls_state_none", PP_TOP, (
+        (TOP, "lstn:  2'd2};", "lstn:  2'd0};"),),
+        (READY_NEW, READY_CLASS_D, NOTK_HELD)),
+    Mutant("st_ls_vid_dropped", PP_TOP, (
+        (TOP, "vid:   lstn_act_settle_vlan_w,", "vid:   12'd0,"),),
+        (READY_NEW, READY_CLASS_D, NOTK_HELD)),
+    Mutant("st_ls_index_zero", PP_TOP, (
+        (TOP, "index: 8'(lstn_act_sink_w),", "index: 8'd0,"),),
+        (READY_CLASS_D, READY_TRACED, NOTK_HELD)),
+    Mutant("st_ls_teardown_lost", PP_TOP, (
+        (TOP, "if (lstn_act_settle_w || lstn_act_teardown_w) begin",
+         "if (lstn_act_settle_w) begin"),),
+        (LV_ON_WIRE, "AS6: no Listener declared and no match held")),
+    Mutant("bound_view_not_latched", PP_TOP, (
+        (TOP, "      if (lstn_act_settle_w) begin\n", "      if (1'b0) begin\n"),),
+        ("AS2: acmp_bound_o/eid/sid/dmac/vlan_o[1] carry the settled stream",
+         "AS5: the bound view still carries the settled stream")),
+    Mutant("bound_dmac_from_sid", PP_TOP, (
+        (TOP, "bound_dmac_r[lstn_act_sink_w] <= lstn_act_settle_da_w;",
+         "bound_dmac_r[lstn_act_sink_w] <= 48'(lstn_act_settle_sid_w);"),),
+        ("AS2: acmp_bound_o/eid/sid/dmac/vlan_o[1] carry the settled stream",)),
+    Mutant("bound_view_not_cleared", PP_TOP, (
+        (TOP, "        bound_sid_r [lstn_act_sink_w] <= 64'd0;\n"
+              "        bound_dmac_r[lstn_act_sink_w] <= 48'd0;\n"
+              "        bound_vlan_r[lstn_act_sink_w] <= 12'd0;\n", ""),),
+        ("AS6: the bound view is cleared with the binding",)),
+    Mutant("matcher_da_ignored", PP_TOP, (
+        (SRP_LISTENER, "(evt_da_i == da_r[s])", "1'b1"),),
+        ("AS3: near misses (DA, VLAN, stream_id) put no Listener declaration",
+         "AS3: near misses register nothing", "AS3: no TK_ATTR_REGISTERED{1}")),
+    Mutant("matcher_vid_ignored", PP_TOP, (
+        (SRP_LISTENER, "&& (evt_vid_i == {4'd0, vid_r[s]});", ";"),),
+        ("AS3: near misses (DA, VLAN, stream_id) put no Listener declaration",
+         "AS3: near misses register nothing", "AS3: no TK_ATTR_REGISTERED{1}")),
+)
+
+MUTANTS = INERT + LONG_FORM + SETTLE_PATH
 TALLY = re.compile(r"^(ACMP: \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$", re.M)
 
 

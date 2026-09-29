@@ -8811,6 +8811,12 @@ struct DomainDefaultPhase {
 //       sets reach the listener through the real steer and are inert there.
 //   AL (#45, Milan 5.5.2.2): the 96-B IEEE ACMPDU is answered exactly as the
 //       56-B Milan form is, by both engines.
+//   AS (#48, Milan 5.5.3.5.18/.42/.45 and 5.3.8.5/.9): a real
+//       PROBE_TX_RESPONSE settles the sink; the listener's A15 reaches the
+//       SRP listener matcher only through the top's service stage (st_ls_r,
+//       DECLARE_LISTENER op 2 with sid/DA/VID) and comes back as
+//       TK_ATTR_REGISTERED; the class-D bound view, the GET_RX_STATE forms,
+//       the Listener declaration on the wire and its withdrawal all follow.
 // `--acmp-only` runs this phase alone; tb/pp_top/acmp_mutants.py uses it.
 struct AcmpPathPhase {
   H& h;
@@ -8848,6 +8854,96 @@ struct AcmpPathPhase {
       return f.size() >= 64 && (f[15] & 0x0F) == msg && fv_u64(f, 62, 2) == seq;
     });
   }
+
+  // ---- AS helpers ----------------------------------------------------------
+  //! one lane of a per-sink class-D vector (sink k at bits [w*k +: w])
+  template <typename W>
+  static uint64_t lane(const W& v, int k, int w) {
+    uint64_t r = 0;
+    for (int i = 0; i < w; ++i) {
+      const int b = w * k + i;
+      if ((v.at(size_t(b >> 5)) >> (b & 31)) & 1u) r |= 1ull << i;
+    }
+    return r;
+  }
+  struct View { bool bound; uint64_t eid, sid, da; unsigned vid; };
+  View view(int k) const {
+    return {((d2->acmp_bound_o >> k) & 1u) != 0,
+            lane(d2->acmp_bound_eid_o, k, 64), lane(d2->acmp_bound_sid_o, k, 64),
+            lane(d2->acmp_bound_dmac_o, k, 48),
+            unsigned(lane(d2->acmp_bound_vlan_o, k, 12))};
+  }
+  //! the SRP class-D state of sink LS: our Listener declaration (snapshot
+  //! word 14, 2 bits per sink from bit 16) and the talker registration the
+  //! matcher holds (word 12, 2 bits per sink from bit 0)
+  unsigned lstn_decl() { return (h2.snap(14) >> (16 + 2 * LS)) & 3u; }
+  unsigned tk_reg() { return (h2.snap(12) >> (2 * LS)) & 3u; }
+  //! trace records since `from` that carry TK_ATTR_REGISTERED{sink}: the
+  //! router's source k is that event for sink k (pp_evr_map starts the
+  //! tk_reg block at 0), and the payload's low byte names the sink again
+  int registered_traced(int from, int sink) {
+    int hits = 0;
+    const int n = int(h2.snap(15) & 0xFFFF);
+    for (int k = from; k < n; ++k) {
+      const uint32_t lane1 = h2.trace_lane(k & 0xFF, 1);
+      if (int((lane1 >> 24) & 0xFF) == sink && int(lane1 & 0xFF) == sink) ++hits;
+    }
+    return hits;
+  }
+  //! the bench's talker: its Talker Advertise for {sid, da, vid}
+  static std::vector<uint8_t> advertise(uint64_t sid, uint64_t da,
+                                        uint16_t vid, int ev) {
+    return mrpdu_frame(true, T1_MAC, {Msg{1, 25, false, {Vec{false, 1,
+        fv_talker(sid, da, vid, 0x0100, 1, 3, 1, 0x00012345), {ev}, {}}}}});
+  }
+  //! our Listener declaration for the settled stream, alone in an MRPDU
+  //! (802.1Q 35.2.2.7.2: FourPackedType Ready, also on the Lv of it)
+  static std::vector<uint8_t> listener_pdu(int ev) {
+    return mrpdu_frame(true, OWN_MAC, {Msg{3, 8, true, {Vec{false, 1,
+        fv_sid(SID_L), {ev}, {DECL_READY}}}}});
+  }
+  static bool has_listener(const std::vector<uint8_t>& f, int ev) {
+    for (const auto& v : parse_mrpdu(f).vecs)
+      if (v.type == 3 && v.fv.size() == 8 && fv_u64(v.fv, 0, 8) == SID_L
+          && !v.ev.empty() && (ev < 0 || v.ev[0] == ev))
+        return true;
+    return false;
+  }
+  //! GET_RX_STATE for sink LS, answered to CTLR2 (F05.14, Milan Tables
+  //! 5.37 to 5.39 by state; ACMP answers go to the multicast DA)
+  std::vector<uint8_t> get_rx_state(uint16_t seq) {
+    h2.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR2_EID, 0, EID, 0, LS, 0, 0,
+                       seq, 0, 0));
+    return wait_acmp(11, seq, 400);
+  }
+  static std::vector<uint8_t> rx_state_settled(uint16_t seq) {
+    return acmp_frame(OWN_MAC, 11, 0, SID_L, CTLR2_EID, T1_EID, EID, T1_UID,
+                      LS, DA_L, 1, seq, 0x0002, VID_L);
+  }
+  //! time advances with the bench playing a live talker: once the matching
+  //! attribute is registered it re-joins every second, as a conformant
+  //! talker's applicant does, so our LeaveAll ages nothing out
+  bool refresh = false;
+  uint32_t last_join = 0;
+  void advance(int ms) {
+    const uint32_t end = h2.now_ms() + uint32_t(ms);
+    while (h2.now_ms() < end) {
+      if (refresh && h2.now_ms() - last_join >= 1000) {
+        h2.feed(advertise(SID_L, DA_L, VID_L, EV_JOININ));
+        last_join = h2.now_ms();
+      }
+      h2.run_ms(10);
+    }
+  }
+  //! our MSRP LeaveAll (T-MRP-LEAVEALL, 10 to 15 s) folds a byte-exact
+  //! vector into its LA PDU; when fewer than need_ms of the shortest period
+  //! remain, let the next one pass first (the talker refreshed meanwhile)
+  void la_window(int need_ms) {
+    const uint32_t la0 = h2.la_msrp_ms;
+    if (h2.now_ms() - la0 < uint32_t(10000 - need_ms)) return;
+    for (int i = 0; i < 400 && h2.la_msrp_ms == la0; ++i) advance(50);
+    advance(50);
+  }
   //! RX slots free (snapshot word 25) and scoreboard holds (word 15)
   unsigned rx_free() { return (h2.snap(25) >> 3) & 0xFFFFu; }
   unsigned sb_holds() { return h2.snap(15) >> 24; }
@@ -8865,6 +8961,12 @@ struct AcmpPathPhase {
     h2.flush_all();
     ai_foreign_messages_are_inert();
     al_the_long_form_is_answered_as_the_short();
+    const uint32_t ts = as_a_real_probe_response_settles();
+    as_near_misses_register_nothing();
+    as_the_matching_advertise_declares_ready();
+    as_settled_rsv_ok_outlives_t_acmp_notk(ts);
+    as_unbind_withdraws_and_clears();
+    printf("  AC: %u ms of simulated time on its own model\n", h2.now_ms());
   }
 
   // ---- AI: response-typed and reserved messages are inert (#47) ----------
@@ -8964,6 +9066,201 @@ struct AcmpPathPhase {
           "AL4: no 96-B frame was dropped or counted at the front end "
           "(rx_length %u)", h2.snap(6) >> 16);
     CHECK(rx_free() == 4u, "AL4: no RX slot leak, %u of 4 free", rx_free());
+  }
+
+  // ---- AS1-AS2: a real PROBE_TX_RESPONSE settles sink 1 (#48 item 1) ------
+  // PROBE_TX #2 goes unanswered: the exact duplicate at T-ACMP-CMD, then
+  // PRB_W_RETRY with LISTENER_TALKER_TIMEOUT, and with no talker discovered
+  // T-ACMP-RETRY lands in PRB_W_AVAIL (F05.4). The talker's ENTITY_AVAILABLE
+  // then drives the F05.2 happy path: discovery, T-ACMP-DELAY, PROBE_TX #3,
+  // and the PROBE_TX_RESPONSE SUCCESS the bench answers with. Milan
+  // 5.5.3.5.18 step 4 records the stream's {stream_id, DA, VLAN}, starts SRP
+  // and TMR_NO_TK; 5.3.8.9 makes the recorded values exactly the response's.
+  uint32_t as_a_real_probe_response_settles() {
+    auto dup = wait_acmp(0, 1, 400);
+    CHECK(!dup.empty() && dup == probe_tx(1),
+          "AS1: PROBE_TX #2 unanswered: its exact duplicate follows");
+    h2.run_ms(4600);                          // PW2 -> PWT -> T-ACMP-RETRY
+    CHECK(h2.q_acmp.empty(),
+          "AS1: no talker discovered, so T-ACMP-RETRY re-probes nothing "
+          "(%zu ACMP frames)", h2.q_acmp.size());
+    auto g0 = get_rx_state(0x4810);
+    auto g0w = acmp_frame(OWN_MAC, 11, 0, 0, CTLR2_EID, T1_EID, EID, T1_UID,
+                          LS, 0, 1, 0x4810, 0x0002, 0);
+    CHECK(!g0.empty() && g0 == g0w,
+          "AS1: GET_RX_STATE while probing: bound values, stream fields 0 "
+          "(Milan Table 5.37), byte-exact");
+    if (!g0.empty() && g0 != g0w) { dump("got", g0); dump("exp", g0w); }
+
+    la_window(4000);                          // settle to Ready inside one LA
+    h2.feed(adp_frame(0, T1_MAC, T1_EID, 10, 1, GM0, DOM0,
+                      0xBBB0000000000001ULL, 8, TKCAP, 0, 0, 0x0000C588u, 0, 0));
+    auto p = wait_acmp(0, 2, 1300);
+    CHECK(!p.empty() && p == probe_tx(2),
+          "AS1: discovery then T-ACMP-DELAY: PROBE_TX #3 byte-exact (seq 2)");
+    if (!p.empty() && p != probe_tx(2)) { dump("got", p); dump("exp", probe_tx(2)); }
+    h2.feed(acmp_frame(T1_MAC, 1, 0, SID_L, CTLR_EID, T1_EID, EID, T1_UID, LS,
+                       DA_L, 0, 2, 0x0002, VID_L));
+    const uint32_t ts = h2.now_ms();
+    h2.run_ms(5);
+
+    const View v = view(LS);
+    CHECK(v.bound && v.eid == T1_EID && v.sid == SID_L && v.da == DA_L
+          && v.vid == VID_L,
+          "AS2: acmp_bound_o/eid/sid/dmac/vlan_o[1] carry the settled stream "
+          "(bound %d, sid %016llx, da %012llx, vid %u)", v.bound,
+          static_cast<unsigned long long>(v.sid),
+          static_cast<unsigned long long>(v.da), v.vid);
+    bool others_clear = true;
+    for (int k = 0; k < 8; ++k) {
+      if (k == LS) continue;
+      const View o = view(k);
+      others_clear &= !o.bound && o.sid == 0 && o.da == 0 && o.vid == 0;
+    }
+    CHECK(others_clear, "AS2: every other sink's bound view stays clear");
+    auto g = get_rx_state(0x4811);
+    CHECK(!g.empty() && g == rx_state_settled(0x4811),
+          "AS2: GET_RX_STATE settled: bound values and the response's "
+          "{stream_id, DA, VLAN} (Milan Table 5.38), byte-exact");
+    if (!g.empty() && g != rx_state_settled(0x4811)) {
+      dump("got", g); dump("exp", rx_state_settled(0x4811));
+    }
+    CHECK(lstn_decl() == 0 && tk_reg() == 0,
+          "AS2: nothing declared or registered before a matching talker "
+          "attribute (decl %u, reg %u)", lstn_decl(), tk_reg());
+    return ts;
+  }
+
+  // ---- AS3: a near miss registers nothing (#48 item 2, the near arm) -----
+  // Milan 5.3.8.9: a talker attribute whose parameters differ from the
+  // recorded ones is ignored. Three near misses on the stream_id, DA and
+  // VLAN each: no registration, no TK_ATTR_REGISTERED to the listener, so
+  // no SETTLED_RSV_OK, and no Listener declaration on the wire.
+  void as_near_misses_register_nothing() {
+    const int n0 = int(h2.snap(15) & 0xFFFF);
+    h2.sync_join();
+    h2.feed(advertise(SID_L, DA_L ^ 1, VID_L, EV_JOININ));       // wrong DA
+    h2.feed(advertise(SID_L, DA_L, VID_L + 1, EV_JOININ));       // wrong VLAN
+    h2.feed(advertise(SID_L + 1, DA_L, VID_L, EV_JOININ));       // wrong stream
+    h2.run_ms(700);
+    bool declared = false;
+    for (const auto& f : h2.q_msrp) declared |= has_listener(f, -1);
+    CHECK(!declared, "AS3: near misses (DA, VLAN, stream_id) put no Listener "
+          "declaration on the wire");
+    CHECK(lstn_decl() == 0 && tk_reg() == 0,
+          "AS3: near misses register nothing (decl %u, reg %u)",
+          lstn_decl(), tk_reg());
+    CHECK(registered_traced(n0, LS) == 0,
+          "AS3: no TK_ATTR_REGISTERED{1} reached the listener");
+    auto g = get_rx_state(0x4812);
+    CHECK(!g.empty() && g == rx_state_settled(0x4812),
+          "AS3: GET_RX_STATE still settled on the recorded stream");
+  }
+
+  // ---- AS4: the matching Talker Advertise yields Listener Ready (#48 item 2)
+  // Milan 5.3.8.5: with a matching Talker Advertise registered the sink
+  // declares Listener Ready; 5.5.3.5.42 takes EVT_TK_REGISTERED to
+  // SETTLED_RSV_OK. Table 5.39's form is Table 5.38's while the registered
+  // attribute is an Advertise (REGISTERING_FAILED 0); AS5 grades the state.
+  void as_the_matching_advertise_declares_ready() {
+    const int n0 = int(h2.snap(15) & 0xFFFF);
+    h2.sync_join();
+    h2.feed(advertise(SID_L, DA_L, VID_L, EV_JOININ));
+    refresh = true;
+    last_join = h2.now_ms();
+    auto f = h2.wait_frame(h2.q_msrp, 900, [](const std::vector<uint8_t>& fr) {
+      return has_listener(fr, EV_NEW);
+    });
+    CHECK(!f.empty() && f == listener_pdu(EV_NEW),
+          "AS4: the matching Talker Advertise yields Listener Ready New, "
+          "byte-exact");
+    if (!f.empty() && f != listener_pdu(EV_NEW)) {
+      dump("got", f); dump("exp", listener_pdu(EV_NEW));
+    }
+    h2.run_ms(20);
+    CHECK(lstn_decl() == 2 && tk_reg() == 1,
+          "AS4: class-D: Listener READY declared, Talker ADVERTISE registered "
+          "for sink 1 (decl %u, reg %u)", lstn_decl(), tk_reg());
+    CHECK(registered_traced(n0, LS) == 1,
+          "AS4: exactly one TK_ATTR_REGISTERED{1} reached the listener");
+    auto g = get_rx_state(0x4813);
+    CHECK(!g.empty() && g == rx_state_settled(0x4813),
+          "AS4: GET_RX_STATE in SETTLED_RSV_OK, REGISTERING_FAILED 0 (Milan "
+          "Table 5.39), byte-exact");
+  }
+
+  // ---- AS5: SETTLED_RSV_OK outlives T-ACMP-NOTK (#48 item 2, the state) ---
+  // 5.5.3.5.42 clears TMR_NO_TK. Had the sink stayed SETTLED_NO_RSV, the
+  // timer would expire 10 s after the settle (5.5.3.5.36): SRP torn down,
+  // the stream fields cleared, and with the talker discovered a re-probe.
+  void as_settled_rsv_ok_outlives_t_acmp_notk(uint32_t ts) {
+    h2.q_acmp.clear();
+    h2.q_msrp.clear();
+    advance(int(ts + 10000 + 1500 - h2.now_ms()));
+    bool lv = false;
+    for (const auto& f : h2.q_msrp) lv |= has_listener(f, EV_LV);
+    CHECK(h2.q_acmp.empty() && !lv,
+          "AS5: 11.5 s after the settle: no re-probe (%zu ACMP frames) and no "
+          "Listener Lv", h2.q_acmp.size());
+    CHECK(lstn_decl() == 2 && tk_reg() == 1,
+          "AS5: Listener READY still declared, Talker still registered "
+          "(decl %u, reg %u)", lstn_decl(), tk_reg());
+    auto g = get_rx_state(0x4814);
+    CHECK(!g.empty() && g == rx_state_settled(0x4814),
+          "AS5: GET_RX_STATE still carries the settled stream past T-ACMP-NOTK");
+    const View v = view(LS);
+    CHECK(v.bound && v.sid == SID_L && v.da == DA_L && v.vid == VID_L,
+          "AS5: the bound view still carries the settled stream");
+  }
+
+  // ---- AS6: UNBIND_RX from SETTLED_RSV_OK (#48 item 3) -------------------
+  // Milan 5.5.3.5.45: stop SRP (the Listener attribute is withdrawn: an Lv
+  // on the wire), stop discovery, clear the binding, answer SUCCESS. The
+  // talker learns of it only through SRP (5.5.2.5). The bound view clears
+  // with the binding.
+  void as_unbind_withdraws_and_clears() {
+    la_window(1500);
+    h2.sync_join();
+    refresh = false;
+    h2.q_acmp.clear();
+    h2.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
+                       0, 0, 0x4815, 0, 0));
+    auto u = wait_acmp(9, 0x4815, 400);
+    auto uw = acmp_frame(OWN_MAC, 9, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
+                         0, 0, 0x4815, 0, 0);
+    CHECK(!u.empty() && u == uw, "AS6: UNBIND_RX_RESPONSE SUCCESS byte-exact");
+    if (!u.empty() && u != uw) { dump("got", u); dump("exp", uw); }
+    auto f = h2.wait_frame(h2.q_msrp, 900, [](const std::vector<uint8_t>& fr) {
+      return has_listener(fr, EV_LV);
+    });
+    CHECK(!f.empty() && f == listener_pdu(EV_LV),
+          "AS6: the Listener attribute is withdrawn on the wire: Lv Ready, "
+          "byte-exact");
+    if (!f.empty() && f != listener_pdu(EV_LV)) {
+      dump("got", f); dump("exp", listener_pdu(EV_LV));
+    }
+    h2.run_ms(20);
+    const View v = view(LS);
+    CHECK(!v.bound && v.sid == 0 && v.da == 0 && v.vid == 0,
+          "AS6: the bound view is cleared with the binding (bound %d, sid "
+          "%016llx, da %012llx, vid %u)", v.bound,
+          static_cast<unsigned long long>(v.sid),
+          static_cast<unsigned long long>(v.da), v.vid);
+    CHECK(lstn_decl() == 0 && tk_reg() == 0,
+          "AS6: no Listener declared and no match held any more (decl %u, "
+          "reg %u)", lstn_decl(), tk_reg());
+    auto g = get_rx_state(0x4816);
+    auto gw = acmp_frame(OWN_MAC, 11, 0, 0, CTLR2_EID, 0, EID, 0, LS, 0, 0,
+                         0x4816, 0, 0);
+    CHECK(!g.empty() && g == gw,
+          "AS6: GET_RX_STATE unbound: every field 0 but the echoes, byte-exact");
+    if (!g.empty() && g != gw) { dump("got", g); dump("exp", gw); }
+    h2.run_ms(1500);
+    CHECK(wait_acmp(0, 3, 1) .empty() && h2.q_acmp.empty(),
+          "AS6: nothing probes the unbound sink");
+    CHECK(rx_free() == 4u && sb_holds() == 0u,
+          "AS6: no RX slot or scoreboard hold left (%u free, %u held)",
+          rx_free(), sb_holds());
   }
 };
 
