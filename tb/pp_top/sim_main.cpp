@@ -9256,8 +9256,9 @@ struct AcmpPathPhase {
           "AS6: GET_RX_STATE unbound: every field 0 but the echoes, byte-exact");
     if (!g.empty() && g != gw) { dump("got", g); dump("exp", gw); }
     h2.run_ms(1500);
-    CHECK(wait_acmp(0, 3, 1) .empty() && h2.q_acmp.empty(),
-          "AS6: nothing probes the unbound sink");
+    CHECK(h2.q_acmp.empty(),
+          "AS6: nothing probes the unbound sink: no ACMP frame in 1.5 s (%zu)",
+          h2.q_acmp.size());
     CHECK(rx_free() == 4u && sb_holds() == 0u,
           "AS6: no RX slot or scoreboard hold left (%u free, %u held)",
           rx_free(), sb_holds());
