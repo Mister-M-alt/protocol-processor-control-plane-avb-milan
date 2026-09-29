@@ -1291,15 +1291,16 @@ int MaapAnnexBSuite::run() {
   a_release_during_a_fitting_draw_abandons_it();
   a_seed_past_the_fit_is_clamped_into_the_pool();
   the_seed_clamp_boundary_is_exact();
-  probe_from_a_lower_peer_yields_the_walk();
-  defend_from_a_higher_peer_is_ignored();
-  defend_from_a_lower_peer_yields_the_claim();
-  announce_during_probe_yields_without_tie_break();
+  // the Release! arcs each start from a Release! of their own
   a_release_on_the_announce_path_is_ordered_by_the_slot_request();
   a_bounce_inside_the_tx_path_restarts_the_walk();
   an_outage_behind_a_stalled_lane_withdraws_the_claim();
   a_short_release_is_never_absorbed();
   every_release_rearms_the_seed();
+  probe_from_a_lower_peer_yields_the_walk();
+  defend_from_a_higher_peer_is_ignored();
+  defend_from_a_lower_peer_yields_the_claim();
+  announce_during_probe_yields_without_tie_break();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
