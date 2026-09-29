@@ -88,7 +88,8 @@ module maap_wrap
     // observability
     output logic [31:0] now_ms_o,
     output logic        rxs_free_o,
-    output logic        addr_draw_o      // a kind-7 draw completes this cycle
+    output logic        addr_draw_o,     // a kind-7 draw completes this cycle
+    output logic        slot_req_o       // the engine requests a TX slot this cycle
 );
 
   // 1 ms = 1 x 10 clk; the 4-slot sweep (6 cycles) fits inside the tick
@@ -164,6 +165,8 @@ module maap_wrap
   logic [7:0]  txs_wr_data_w;
   logic [4:0]  txs_ready_nc_w;
   logic [2:0]  txs_free_nc_w;
+
+  assign slot_req_o = txs_alloc_req_w;
 
   KL_pp_tx_slots #(
       .TX_STD_SLOTS_P      (4),

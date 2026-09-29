@@ -34,6 +34,11 @@ MUTANTS = [
     ('defend-rdefend-no-tiebreak', 'maap', 'run', 'U20:'),
     ('probe-rannounce-tiebreak', 'maap', 'run', 'U22:'),
     ('yield-reuses-range', 'maap', 'run', 'U19:'),
+    ('ival-sends-after-release', 'maap', 'run', 'U23:'),
+    ('post-publishes-after-release', 'maap', 'run', 'U24:'),
+    ('tx-path-absorbs-release', 'maap', 'run', 'U25:'),
+    ('off-waits-for-an-edge', 'maap', 'run', 'U26:'),
+    ('rx-release-returns-to-idle', 'maap', 'run', 'U26:'),
 ]
 
 # the two tally shapes: a suite's canonical line, and one pp_top build's line

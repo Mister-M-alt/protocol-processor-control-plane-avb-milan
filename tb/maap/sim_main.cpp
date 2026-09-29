@@ -105,8 +105,11 @@ struct H {
   std::vector<Frame> tx;                   // captured frames, grant-time ms
   // lane/serializer state
   bool ser_busy = false;
+  bool lane_hold = false;                  // a stalled egress: the lane grants nothing
   Bytes ser_cur;
   uint32_t ser_ms = 0;
+  size_t grants = 0;                       // lane grants given
+  size_t slot_reqs = 0;                    // cycles the engine requested a TX slot
   // conflict sweep capture
   bool confl_auto = false;
   std::vector<int> confl_srcs;
@@ -190,11 +193,12 @@ struct H {
     // TX arbiter lane: grant a committed request, then serialize the slot
     d->txreq_ready_i = 0;
     d->ser_ready_i = 1;
-    if (!ser_busy && d->txreq_valid_o) {
+    if (!ser_busy && !lane_hold && d->txreq_valid_o) {
       d->txreq_ready_i = 1;                // one-cycle lane grant
       d->ser_req_i = 1;
       d->ser_slot_i = d->txreq_slot_o;
       ser_busy = true; ser_cur.clear(); ser_ms = d->now_ms_o;
+      ++grants;
     }
     if (ser_busy && d->ser_valid_o) {
       d->ser_req_i = 0;
@@ -214,6 +218,7 @@ struct H {
     }
     d->eval();
     const bool addr_done = d->addr_draw_o;
+    if (d->slot_req_o) ++slot_reqs;
     d->clk_i = 1; d->eval();
     if (addr_done) ++addr_draws;
   }
@@ -262,6 +267,12 @@ class MaapAnnexBSuite {
   void defend_from_a_higher_peer_is_ignored();
   void defend_from_a_lower_peer_yields_the_claim();
   void announce_during_probe_yields_without_tie_break();
+  bool walk_to_the_fourth_probe();
+  bool accept_record(int msg, uint64_t sa, uint64_t req_start, uint16_t req_cnt);
+  void a_release_on_the_announce_path_is_ordered_by_the_slot_request();
+  void a_bounce_inside_the_tx_path_restarts_the_walk();
+  void an_outage_behind_a_stalled_lane_withdraws_the_claim();
+  void a_short_release_is_never_absorbed();
 
   const milan::tb::Model<Vmaap_wrap> model;
   Vmaap_wrap* const d = model.get();
@@ -813,6 +824,290 @@ void MaapAnnexBSuite::announce_during_probe_yields_without_tie_break() {
   CHECK(d->addr_valid_o, "U22: the fresh range is claimed");
 }
 
+// ---- the Release! arcs, as the scenarios below grade them ----------------
+// Table B.7 Release!: Stop timer, INITIAL, and no send action; B.3.5.2: the
+// range is no longer defended; B.3.2: the functions of each table entry
+// execute sequentially, so a Release! that lands while the walker is still
+// executing an entry is ordered before it or after it. The TX slot request
+// decides which: before it the entry is dropped whole, and from it on the
+// frame is past recall and drains as the last act of its entry. Either way
+// the claim is withdrawn at the fall and a later PortOperational! starts a
+// fresh walk.
+
+// a fresh walk from a released machine, stopped just after the lane grants
+// its 4th PROBE: the probeCount! entry (sAnnounce) runs from there
+bool MaapAnnexBSuite::walk_to_the_fourth_probe() {
+  d->link_up_i = 0; h.idle(30);                        // Release!
+  d->link_up_i = 1;                                    // PortOperational!
+  const size_t g0 = h.grants;
+  for (long c = 0; c < 6L * kProbeBudgetMs * kClkPerMs && h.grants < g0 + 4; ++c) h.step();
+  return h.grants == g0 + 4;
+}
+
+// present one record and clock until the engine takes it: the walker is in
+// W_RX for the cycle after this returns true
+bool MaapAnnexBSuite::accept_record(int msg, uint64_t sa, uint64_t req_start,
+                                    uint16_t req_cnt) {
+  d->txn_msg_i = msg & 0xF;
+  d->txn_status_i = 1;
+  d->txn_src_mac_i = sa;
+  d->txn_req_i = (req_start << 16) | req_cnt;
+  d->txn_conf_i = 0;
+  d->txn_valid_i = 1;
+  bool taken = false;
+  for (int g = 0; g < kRxAcceptCycles && !taken; ++g) {
+    d->clk_i = 0; d->eval();
+    taken = d->txn_ready_o;                            // handshake at THIS edge
+    h.step_body();
+  }
+  d->txn_valid_i = 0;
+  return taken;
+}
+
+// ---- U23: a Release! swept along the ANNOUNCE's path (probeCount!) --------
+// The link drops at each cycle from the 4th PROBE's lane grant until past
+// the ANNOUNCE's. Before the ANNOUNCE's TX slot is requested the entry is
+// dropped: no ANNOUNCE. From the request on the ANNOUNCE drains byte-exact
+// and nothing follows it. At every offset the claim is not valid from the
+// first cycle the fall is seen, the machine is INITIAL, and the next
+// PortOperational! walks again.
+void MaapAnnexBSuite::a_release_on_the_announce_path_is_ordered_by_the_slot_request() {
+  constexpr int kOffsets = 80;
+  constexpr int kWatchCycles = 50 * kClkPerMs;
+  int dropped = 0;
+  int drained = 0;
+  int walk_fail = 0;
+  int sent_unowed = 0;
+  int drain_wrong = 0;
+  int claim_after = 0;
+  int not_initial = 0;
+  h.confl_auto = true;
+  for (int k = 0; k < kOffsets; ++k) {
+    if (!walk_to_the_fourth_probe()) { ++walk_fail; continue; }
+    const size_t g4 = h.grants;
+    const size_t r4 = h.slot_reqs;
+    const size_t n4 = h.tx.size();                     // the 4th PROBE is still serializing
+    const uint64_t b = d->addr_o;
+    for (int i = 0; i < k; ++i) h.step();
+    d->link_up_i = 0;                                  // Release!
+    h.step();                                          // the first cycle it is seen
+    // requested in a cycle up to and including the first one with the link
+    // down: the pool samples that request at the edge the walker sees the fall
+    const bool owed = h.slot_reqs > r4;
+    bool valid_after = d->addr_valid_o;
+    for (int c = 1; c < kWatchCycles; ++c) {
+      h.step();
+      if (d->addr_valid_o) valid_after = true;
+    }
+    const size_t frames = h.tx.size() - n4;            // 4th PROBE (+ ANNOUNCE)
+    if (owed) {
+      ++drained;
+      if (h.grants - g4 != 1 || frames != 2
+          || h.tx.back().b != maap_frame(MAAP_DA, OWN_MAC, 3, b, COUNT, 0, 0)) {
+        ++drain_wrong;
+      }
+    } else {
+      ++dropped;
+      if (h.grants != g4 || frames != 1 || h.slot_reqs != r4) ++sent_unowed;
+    }
+    if (valid_after) ++claim_after;
+    if (d->state_o != 0) ++not_initial;
+  }
+  printf("  U23: %d offsets before the ANNOUNCE's slot request, %d from it\n", dropped, drained);
+  CHECK(walk_fail == 0, "U23: every walk reached its 4th PROBE (%d did not)", walk_fail);
+  CHECK(dropped > 0 && drained > 0,
+        "U23: premise, the sweep lands on both sides of the ANNOUNCE's slot request "
+        "(%d before, %d from it)", dropped, drained);
+  CHECK(sent_unowed == 0,
+        "U23: a Release! before the ANNOUNCE's slot request sends nothing (%d of %d offsets)",
+        sent_unowed, dropped);
+  CHECK(drain_wrong == 0,
+        "U23: a requested ANNOUNCE drains byte-exact and nothing follows it (%d of %d offsets)",
+        drain_wrong, drained);
+  CHECK(claim_after == 0,
+        "U23: no claim is valid after the fall (%d of %d offsets)", claim_after, kOffsets);
+  CHECK(not_initial == 0, "U23: INITIAL after the Release! (%d offsets)", not_initial);
+  const size_t n0 = h.tx.size();
+  d->link_up_i = 1;                                    // PortOperational!
+  CHECK(h.wait_frames(n0 + 1, kProbeBudgetMs) && d->state_o == 1,
+        "U23: the next PortOperational! probes");
+  for (int g = 0; g < kWalkRetryRounds && !d->addr_valid_o; ++g) h.run_ms(kProbeBudgetMs);
+  h.confl_auto = false;
+  h.confl_srcs.clear();
+}
+
+// ---- U24: a link bounce inside a frame's TX path is never absorbed --------
+// Release! then PortOperational! (Table B.7): INITIAL, then a fresh walk,
+// even when both land while a frame is being built. (a) DEFEND state: an
+// rProbe! is answered by sDefend and the link bounces for 5 cycles while
+// that DEFEND is built. (b) The link bounces for 5 cycles while the first
+// ANNOUNCE (probeCount!) is built. Each frame is past recall and drains, the
+// claim is not valid from the fall on, and the next frame is the first
+// PROBE of a fresh walk.
+void MaapAnnexBSuite::a_bounce_inside_the_tx_path_restarts_the_walk() {
+  constexpr int kBounceCycles = 5;
+  constexpr int kWatchCycles = 50 * kClkPerMs;
+  constexpr int kBuildCycles = 10;                     // into the 60-byte write
+  h.confl_auto = true;
+  // (a) sDefend in DEFEND state
+  for (int g = 0; g < kWalkRetryRounds && !d->addr_valid_o; ++g) h.run_ms(kProbeBudgetMs);
+  CHECK(d->addr_valid_o && d->state_o == 2, "U24: premise, DEFEND state");
+  const uint64_t b = d->addr_o;
+  const unsigned c0 = d->conflicts_o;
+  const unsigned d0 = d->defends_o;
+  const size_t n0 = h.tx.size();
+  const size_t r0 = h.slot_reqs;
+  const uint64_t prober = 0x0A2233445566ull;
+  CHECK(accept_record(1, prober, b + 2, 2), "U24: the rProbe! is taken");
+  for (int g = 0; g < kRxAcceptCycles && h.slot_reqs == r0; ++g) h.step();
+  h.idle(kBuildCycles);
+  CHECK(h.slot_reqs > r0 && d->addr_valid_o, "U24: premise, the DEFEND is being built");
+  d->link_up_i = 0;                                    // Release!
+  bool valid_after = false;
+  for (int c = 0; c < kBounceCycles; ++c) {
+    h.step();
+    if (d->addr_valid_o) valid_after = true;
+  }
+  d->link_up_i = 1;                                    // PortOperational!
+  for (int c = 0; c < kWatchCycles; ++c) {
+    h.step();
+    if (d->addr_valid_o) valid_after = true;
+  }
+  CHECK(!valid_after, "U24: sDefend path, the claim is withdrawn at the fall");
+  CHECK(h.wait_frames(n0 + 2, kProbeBudgetMs) && d->state_o == 1,
+        "U24: sDefend path, the DEFEND drains and a fresh walk probes (%zu frames, state %u)",
+        h.tx.size() - n0, unsigned(d->state_o));
+  if (h.tx.size() >= n0 + 2) {
+    CHECK(h.tx[n0].b == maap_frame(prober, OWN_MAC, 2, b + 2, 2, b + 2, 2),
+          "U24: sDefend path, the drained DEFEND is byte-exact");
+    CHECK(h.tx[n0 + 1].b == maap_frame(MAAP_DA, OWN_MAC, 1, d->addr_o, COUNT, 0, 0),
+          "U24: sDefend path, the fresh walk's PROBE is byte-exact");
+  }
+  CHECK(d->conflicts_o == c0 && d->defends_o == d0 + 1,
+        "U24: sDefend path, one DEFEND counted and no re-address");
+  // (b) sAnnounce at probeCount!
+  CHECK(walk_to_the_fourth_probe(), "U24: announce path, the walk reaches its 4th PROBE");
+  const size_t n4 = h.tx.size();
+  const size_t r4 = h.slot_reqs;
+  const uint64_t b4 = d->addr_o;
+  for (int g = 0; g < kRxAcceptCycles && h.slot_reqs == r4; ++g) h.step();
+  h.idle(kBuildCycles);
+  CHECK(h.slot_reqs > r4 && d->state_o == 1, "U24: premise, the ANNOUNCE is being built");
+  d->link_up_i = 0;                                    // Release!
+  valid_after = false;
+  for (int c = 0; c < kBounceCycles; ++c) {
+    h.step();
+    if (d->addr_valid_o) valid_after = true;
+  }
+  d->link_up_i = 1;                                    // PortOperational!
+  for (int c = 0; c < kWatchCycles; ++c) {
+    h.step();
+    if (d->addr_valid_o) valid_after = true;
+  }
+  CHECK(!valid_after, "U24: announce path, no claim is valid after the fall");
+  CHECK(h.wait_frames(n4 + 3, kProbeBudgetMs) && d->state_o == 1,
+        "U24: announce path, the ANNOUNCE drains and a fresh walk probes (%zu frames, state %u)",
+        h.tx.size() - n4, unsigned(d->state_o));
+  if (h.tx.size() >= n4 + 3) {
+    CHECK(h.tx[n4 + 1].b == maap_frame(MAAP_DA, OWN_MAC, 3, b4, COUNT, 0, 0),
+          "U24: announce path, the drained ANNOUNCE is byte-exact");
+    CHECK(h.tx[n4 + 2].b == maap_frame(MAAP_DA, OWN_MAC, 1, d->addr_o, COUNT, 0, 0),
+          "U24: announce path, the fresh walk's PROBE is byte-exact");
+  }
+  h.confl_auto = false;
+  h.confl_srcs.clear();
+}
+
+// ---- U25: a 100 ms outage while the lane grants nothing -------------------
+// W_LANE holds its request until the lane grants, and an egress may stall
+// while the link is down. A Release! must still withdraw the claim at once
+// (B.3.5.2: no longer defended, so the seam refuses), the frame drains when
+// the lane returns, and the PortOperational! gives a fresh walk.
+void MaapAnnexBSuite::an_outage_behind_a_stalled_lane_withdraws_the_claim() {
+  constexpr int kOutageMs = 100;
+  h.confl_auto = true;
+  for (int g = 0; g < kWalkRetryRounds && !d->addr_valid_o; ++g) h.run_ms(kProbeBudgetMs);
+  CHECK(d->addr_valid_o && d->state_o == 2, "U25: premise, DEFEND state");
+  const uint64_t b = d->addr_o;
+  const size_t n0 = h.tx.size();
+  const uint64_t prober = 0x0A2233445566ull;
+  h.lane_hold = true;                                  // the egress stops granting
+  CHECK(accept_record(1, prober, b + 2, 2), "U25: the rProbe! is taken");
+  h.idle(80);                                          // the DEFEND is built and waits
+  CHECK(d->txreq_valid_o && d->addr_valid_o, "U25: premise, the DEFEND waits for the lane");
+  d->link_up_i = 0;                                    // Release!
+  h.step();
+  int valid_cycles = 0;
+  for (int c = 0; c < kOutageMs * kClkPerMs; ++c) {
+    h.step();
+    if (d->addr_valid_o) ++valid_cycles;
+  }
+  CHECK(valid_cycles == 0 && d->state_o == 0,
+        "U25: the claim is withdrawn for the whole outage (%d cycles valid, state %u)",
+        valid_cycles, unsigned(d->state_o));
+  auto r = h.alloc(0);
+  CHECK(r.got && !r.ok, "U25: an ALLOC during the outage is refused");
+  d->link_up_i = 1;                                    // PortOperational!
+  h.idle(5);
+  h.lane_hold = false;                                 // the egress drains again
+  CHECK(h.wait_frames(n0 + 2, kProbeBudgetMs) && d->state_o == 1 && !d->addr_valid_o,
+        "U25: the DEFEND drains and a fresh walk probes (%zu frames, state %u)",
+        h.tx.size() - n0, unsigned(d->state_o));
+  if (h.tx.size() >= n0 + 2) {
+    CHECK(h.tx[n0].b == maap_frame(prober, OWN_MAC, 2, b + 2, 2, b + 2, 2),
+          "U25: the drained DEFEND is byte-exact");
+    CHECK(h.tx[n0 + 1].b == maap_frame(MAAP_DA, OWN_MAC, 1, d->addr_o, COUNT, 0, 0),
+          "U25: the fresh walk's PROBE is byte-exact");
+  }
+  h.confl_auto = false;
+  h.confl_srcs.clear();
+}
+
+// ---- U26: a Release! of one to four cycles is never absorbed --------------
+// The fall is seen for at most a few cycles. (a) In W_IDLE, for 1 to 4
+// cycles: the teardown outlasts the shortest falls, so the rise lands before
+// the machine is parked. (b) One cycle exactly on the W_RX cycle of an
+// ignored record. Each must give INITIAL and a fresh walk whose first PROBE
+// follows at once, not the old walk's next PROBE a probe interval later.
+void MaapAnnexBSuite::a_short_release_is_never_absorbed() {
+  constexpr int kFreshWalkMs = 50;                     // a fresh walk's first PROBE
+  for (int n = 1; n <= 5; ++n) {
+    const bool on_rx = (n == 5);
+    const char* arc = on_rx ? "W_RX" : "W_IDLE";
+    const int low = on_rx ? 1 : n;
+    d->link_up_i = 0; h.idle(30);                      // Release!
+    size_t n0 = h.tx.size();
+    d->link_up_i = 1;                                  // PortOperational!
+    CHECK(h.wait_frames(n0 + 1, kProbeBudgetMs), "U26: %s %d, premise, a walk", arc, low);
+    h.run_ms(20);                                      // parked in W_IDLE, PROBE state
+    if (on_rx) {
+      // a PROBE far from our block: ignored (footnote b), but it passes W_RX
+      CHECK(accept_record(1, 0x0A2233445566ull, d->addr_o + 0x100, 1),
+            "U26: %s, premise, the record is taken", arc);
+    }
+    n0 = h.tx.size();
+    d->link_up_i = 0;                                  // Release!
+    bool initial = false;
+    for (int c = 0; c < low; ++c) {
+      h.step();
+      if (d->state_o == 0) initial = true;
+    }
+    d->link_up_i = 1;                                  // PortOperational!
+    for (int c = 0; c < 10 && !initial; ++c) {
+      h.step();
+      if (d->state_o == 0) initial = true;
+    }
+    CHECK(initial, "U26: %s, a %d-cycle Release! gives INITIAL", arc, low);
+    CHECK(h.wait_frames(n0 + 1, kFreshWalkMs) && d->state_o == 1,
+          "U26: %s, a %d-cycle Release! is followed by a fresh walk's PROBE", arc, low);
+    if (h.tx.size() > n0) {
+      CHECK(h.tx[n0].b == maap_frame(MAAP_DA, OWN_MAC, 1, d->addr_o, COUNT, 0, 0),
+            "U26: %s %d, the fresh walk's PROBE is byte-exact", arc, low);
+    }
+  }
+  for (int g = 0; g < kWalkRetryRounds && !d->addr_valid_o; ++g) h.run_ms(kProbeBudgetMs);
+}
+
 int MaapAnnexBSuite::run() {
   reset_leaves_the_machine_initial();
   engage_probes_a_fresh_pool_range();
@@ -839,6 +1134,10 @@ int MaapAnnexBSuite::run() {
   defend_from_a_higher_peer_is_ignored();
   defend_from_a_lower_peer_yields_the_claim();
   announce_during_probe_yields_without_tie_break();
+  a_release_on_the_announce_path_is_ordered_by_the_slot_request();
+  a_bounce_inside_the_tx_path_restarts_the_walk();
+  an_outage_behind_a_stalled_lane_withdraws_the_claim();
+  a_short_release_is_never_absorbed();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

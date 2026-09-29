@@ -100,8 +100,9 @@ observability counters.
 
 ## 6. Behavior (Table B.7, executed literally)
 
-- **Begin!/PortOperational!** = the rise of `cfg_maap_internal_i AND link_up_i AND
-  cfg_maap_count_i != 0`: `generate_address` — the provisioned
+- **Begin!/PortOperational!** = `cfg_maap_internal_i AND link_up_i AND
+  cfg_maap_count_i != 0` high while the machine is released (out of reset, or
+  after a Release!): `generate_address` — the provisioned
   `cfg_maap_seed_offset_i` on the first attempt if `cfg_maap_seed_valid_i`
   (footnote a, clamped into the pool), else a kind-7 draw rejection-retried past
   `0xFE00 − count` so the fit clamp keeps the B.3.6.1 uniform distribution — then
@@ -132,9 +133,21 @@ observability counters.
 - **sDefend** (B.3.6.6): unicast to the probe's SA; `requested_*` echoed;
   `conflict_start` = max(requested_lo, ours_lo), `conflict_count` = overlapping
   addresses from there.
-- **Release!** = engage fall (config drop or link down): stop both timers, INITIAL,
-  **no PDU** (B.3.5.2 + footnote c — a local event), seed re-armed for the next
-  engage. A later link rise is PortOperational! and restarts the walk.
+- **Release!** = engage fall (config drop or link down), seen in every walker
+  state however short: stop both timers, INITIAL, and no send action (Table B.7;
+  B.3.5.2; footnote c: the range is then free), seed re-armed for the next engage.
+  The claim is withdrawn at the fall. A later link rise is PortOperational! and
+  restarts the walk, including a rise that lands while the walker is still
+  tearing down or draining a frame.
+- **A Release! in the middle of an entry.** B.3.2 executes each Table B.7 entry
+  sequentially, so a Release! that lands while the walker is still executing an
+  entry is ordered by that entry's TX slot request:
+  - Before the request, the Release! comes first and the entry is dropped whole:
+    no timer armed, no PDU, no state change.
+  - From the request on, the frame is past recall and drains as the entry's last
+    act. The top's pool-access arbiter holds the engine as owner until it
+    commits, and `KL_pp_tx_slots` frees a committed slot only by sending it. The
+    entry's own state change is dropped, so no claim is published after the fall.
 
 ## 7. µcode / dispatch
 
@@ -177,6 +190,6 @@ the `tb/pp_top` MP section (end-to-end through the real validator, dispatch, tal
 and MAC lanes); the F08.4 slots by `tb/timer_map`; the PRNG kinds by `tb/prng`; the
 RX classification by `tb/rx_validator`; the fourth queue by `tb/dispatch`
 ([09](09_verification.md)). `make -C tb/maap mutants` plants reviewed defects
-in the fit clamp, the seed clamp, the validator's maap_version handling and
-every compare_MAC cell, and requires each to fail its named check in those
-suites.
+in the fit clamp, the seed clamp, the validator's maap_version handling,
+every compare_MAC cell and the Release! arcs, and requires each to fail its
+named check in those suites.
