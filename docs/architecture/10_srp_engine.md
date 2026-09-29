@@ -248,6 +248,36 @@ the last point this engine observes; the frame is serialized from there without
 preemption. A settled sink's VID is declared the same way (Milan §4.4.1); a
 listener has no ordering rule, so nothing waits on it.
 
+*The licence's added wait.* A Ready that answers this talker's Advertise finds the
+VID already sent: the MVRP drain runs on the same join tick as the MSRP one and
+leaves first. The licence adds a wait only when a Ready registers before the VID's
+first MVRP MRPDU. The wait is then at most one `T-MRP-JOIN` (the next MVRP drain)
+plus any time that MRPDU waits to be accepted for transmission: for a TX slot, for
+the TX arbiter, and in the one case where this encoder itself holds an MVRP drain
+back, behind a canceled own LeaveAll reservation waiting for content (§6.5). While
+the arbiter refuses, the licence stays closed; it rises one clock after the
+acceptance.
+
+*A full VLAN table holds the licence closed.* The table has `N_VIDS_P` entries,
+enough for the supported steady state (one VID, two across a Domain-VID change).
+A join of one more VID is refused and dropped: `KL_srp_vlan` raises `user_err_o`,
+seen outside the engine only as `KL_srp_top`'s `dbg_vlan_err_o` strobe, which the
+processor top does not export. The refused talker's VID is never declared, so its
+licence stays closed even with a Ready and admission, and it stays closed after an
+entry frees: nothing retries the dropped join. Once an entry is free, a
+re-declaration of the source (`WITHDRAW_TALKER`, then `DECLARE_TALKER`) joins again
+and opens the licence as a fresh declaration does (above).
+Before issue #65 such a source streamed with no MVRP join, which Milan §4.3.2
+forbids.
+
+*The ordering this engine assumes of the integrator.* The licence rises one clock
+after the arbiter grants the MRPDU that carries the VID's declaration. At that clock
+the MRPDU is still serializing, through the processor's TX port, onto the parent's
+egress; stream frames reach the wire through the parent's own datapath. The
+declaration precedes the first stream frame on the wire only if the parent's egress
+does not let a licensed stream frame overtake a control frame already granted.
+This engine cannot observe the wire, so that order is the integrator's to keep.
+
 ### 6.3 Talker-side stream FSM (×M)
 
 <a id="fig-10-talkersm"></a>**F10.4 — Per-source declaration + listener tracking**
