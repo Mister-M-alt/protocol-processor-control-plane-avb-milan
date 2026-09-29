@@ -156,7 +156,7 @@ stateDiagram-v2
 | ENTITY_DEPARTING **only** on SHUTDOWN; never on link-down | Milan §5.6.3.5.6/.10 |
 | GM change ⇒ re-advertise (through DELAY) | Milan §5.6.3.5.7; also ticks GPTP_GM_CHANGED |
 | DOWN ignores DISCOVER/GM_CHANGE/SHUTDOWN; DELAY ignores DISCOVER/GM_CHANGE | Table 5.51 |
-| Held in DOWN until `entity_enable` (boot gate) | Milan §5.6.1 |
+| Held in DOWN until `entity_enable` (boot gate) | Milan §5.6.1. The engine's `entity_enable_i` is the top's **effective** enable, `entity_enable_i && restore_done_o`: the top releases the requested enable only once both restore walks are done ([07 §5.3](07_memory_maps.md#fig-07-nvmflow), the third of its three releases). The talker-discovery machines below are independent of it, and the side port's image-window lock keeps the requested enable |
 
 ### 6.2 Talker-discovery state machine (one per Stream Input; active while bound)
 

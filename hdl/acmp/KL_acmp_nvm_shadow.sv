@@ -10,9 +10,10 @@
 //                manager face; 08 §2 T-NVM-DEBOUNCE)
 //
 //  Description : The per-sink ACMP binding persistence shadow of 05 §5 —
-//                the BINDING[i] record source/sink at the class-F seam (the
-//                full multi-record NVM manager lands in P4; this block IS
-//                the manager for the ACMP binding group). Three faces:
+//                the BINDING[i] record source/sink at the class-F seam: the
+//                binding group's record producer, manager 0 of
+//                KL_pp_nvm_mgr_arb beside the D3 writer (KL_aecp_nvm_writer,
+//                manager 1, the non-binding groups). Three faces:
 //                (a) CAPTURE — watches the listener executor's record
 //                write port (KL_pp_acmp_listener dbg_recwr_*) and projects
 //                each written F07.6 record onto the persisted field set
@@ -27,10 +28,27 @@
 //                big-endian} around the 20-byte BINDING payload
 //                {flags[valid,started,sw], rsv, talker_uid, talker_eid,
 //                ctlr_eid — big-endian}. Commits are debounced
-//                (T-NVM-DEBOUNCE via tick_i, F07.9 coalescing) and retried
-//                RETRY_MAX_P times before the sticky side-port alarm; the
-//                shadow store is a RAM-shaped sync-read array, never a
-//                flop mirror.
+//                (T-NVM-DEBOUNCE via tick_i, F07.9 coalescing) and bounded
+//                by DR2c: at most 1 + RETRY_MAX_P = 3 attempts per record,
+//                each failed one followed by RETRY_BACKOFF_CYC_P cycles
+//                (500 ms) before a fresh read of the record, then the sticky
+//                alarm, which only reset clears. The shadow store is a
+//                RAM-shaped sync-read array, never a flop mirror.
+//
+//                A DIRECT INSTANTIATOR DERIVES ITS CLOCK. RETRY_BACKOFF_CYC_P
+//                and RS_TMO_CYC_P count clk_i cycles, and their defaults are
+//                the ruled 500 ms and 20 ms only at the F01.5 default
+//                P-CLK-HZ of 100 MHz. protocol_processor_top derives both from
+//                its CLK_HZ_P (NVM_RETRY_BACKOFF_CYC_P = ceil(CLK_HZ_P / 2),
+//                NVM_RS_TMO_CYC_P = ceil(CLK_HZ_P / 50)); any other
+//                instantiator must derive them from its own clock the same
+//                way, or inherit a wrong DR2c spacing and read deadline (at
+//                1 MHz the backoff default is 50 s, not 500 ms).
+//
+//                RAW VERDICTS. restore_done_o/fail_o/blank_o/cause_o are
+//                THIS walk's. protocol_processor_top combines them with the
+//                D3 walk into its own restore verdicts; a binding-walk verdict
+//                alone is not the device's restore result.
 //
 //                The one design decision that matters: the shadow is a
 //                projection cache with restore-then-replay. Capture
@@ -61,11 +79,14 @@
 //                DEVICE err with zero bytes forwarded (a failing device is
 //                not an empty record); 3 the read phase's no-progress
 //                deadline, RS_TMO_CYC_P cycles waiting on the port for its
-//                idle, a byte, a done or an err. An expiry while this
-//                manager's read is issued abandons it (nvm_abort_o) to the
-//                arbiter in front of the port, which drains it: its late
-//                bytes and its ending reach no manager. The preload phase
-//                is not watched here; KL_pp_acmp_lsn_admit bounds it.
+//                idle, a byte, a done or an err, or the D3 writer's
+//                aggregate restore deadline (DR3a, `rs_agg_i`) reached while
+//                the read phase still runs, which takes the same path. An
+//                expiry while this manager's read is issued abandons it
+//                (nvm_abort_o) to the arbiter in front of the port, which
+//                drains it: its late bytes and its ending reach no manager.
+//                The preload phase is not watched here;
+//                KL_pp_acmp_lsn_admit bounds it.
 //                (b) a complete record failing crc/layout_version/
 //                record_id/length is per-record vendor default (F07.9 crc
 //                arm), never an abort. (c) a capture during restore WINS
@@ -114,12 +135,19 @@ module KL_acmp_nvm_shadow
     //! controller happens to send START_STREAMING. Refusing them costs one
     //! re-bind and cannot be silent.
     parameter logic [7:0]  LAYOUT_VER_P  = 8'h02,
-    //! T-NVM-DEBOUNCE in tick_i units (F08.1: ≈500 ms at a 1 ms tick)
+    //! T-NVM-DEBOUNCE in tick_i units (F08.1: 500 ms at a 1 ms tick, DR2a)
     parameter int unsigned DEB_TICKS_P   = 500,
-    //! bounded commit retries before the side-port alarm (F07.9)
+    //! additional attempts after a failed first commit (F07.9, DR2c):
+    //! three attempts in all before the sticky alarm
     parameter int unsigned RETRY_MAX_P   = 2,
+    //! DR2c: clk_i cycles a failed attempt waits before the next; the top
+    //! derives it from CLK_HZ_P as ceil(CLK_HZ_P / 2) = 500 ms (this default
+    //! is 500 ms at the F01.5 default P-CLK-HZ of 100 MHz only: a direct
+    //! instantiator derives it from its own clock, banner)
+    parameter int unsigned RETRY_BACKOFF_CYC_P = 50_000_000,
     //! T-NVM-RS-DEADLINE (F08.1) in clocks: the restore walk's read phase
-    //! fails whole after this many consecutive cycles without progress
+    //! fails whole after this many consecutive cycles without progress (the
+    //! top binds the same value to the D3 walk's per-wait deadline)
     parameter int unsigned RS_TMO_CYC_P  = 2_000_000,
     //! derived — do not override
     localparam int unsigned SINK_W_C = (N_SINKS_P > 1) ? $clog2(N_SINKS_P) : 1
@@ -130,6 +158,13 @@ module KL_acmp_nvm_shadow
     //! ---- boot/debounce control ------------------------------------------
     input  wire                        tick_i,         //! debounce timebase tick
     input  wire                        restore_go_i,   //! start boot restore (07 §5.3)
+    //! level: the D3 writer's aggregate restore deadline fired (DR3a;
+    //! KL_aecp_nvm_writer agg_o). A read phase still running takes its own
+    //! deadline's path at once in H_RS_REQ, where nothing is owed, and in
+    //! H_RS_STREAM in its first cycle without a byte, done or err, which
+    //! may be the cycle its READ strobe is issued: the arbiter drains a
+    //! READ abandoned there too. Tie 0 where no D3 writer runs
+    input  wire                        rs_agg_i,
     output logic                       restore_busy_o, //! restore walk/replay running
     output logic                       restore_done_o, //! level: restore sequencing complete
     output logic                       restore_fail_o, //! level: the WHOLE restore aborted, any cause
@@ -138,7 +173,9 @@ module KL_acmp_nvm_shadow
     //! read-back torn mid-record, 2 a device error with nothing forwarded,
     //! 3 the read phase's deadline
     output logic [1:0]                 restore_cause_o,
-    output logic                       alarm_o,        //! sticky: commit retries exhausted (side-port alarm)
+    //! sticky until reset: a record's three attempts exhausted (DR2c); the
+    //! top ORs it with the D3 writer's into nvm_alarm_o
+    output logic                       alarm_o,
 
     //! ---- (a) capture face (KL_pp_acmp_listener dbg_recwr_* shadow) ---------
     input  wire                        cap_wr_i,       //! record write this cycle
@@ -204,7 +241,7 @@ module KL_acmp_nvm_shadow
   localparam int unsigned SHW_W_C = $bits(shw_t);      // 146
 
   // ---- top FSM -----------------------------------------------------------
-  typedef enum logic [3:0] {
+  typedef enum logic [4:0] {
     H_INIT,      // zero-sweep the shadow RAM after reset (captures dropped)
     H_WAIT,      // wait restore_go_i (captures live)
     H_RS_REQ,    // restore: request record read for sink rs_k_r
@@ -220,7 +257,8 @@ module KL_acmp_nvm_shadow
     H_FL_CRC,    // flush: 26-byte crc16 accumulate (header-sans-crc + payload)
     H_FL_REQ,    // flush: request the commit op (port idle)
     H_FL_STREAM, // flush: pump the 28 framed bytes
-    H_FL_WAIT    // flush: wait done (clear dirty) / err (retry then alarm)
+    H_FL_WAIT,   // flush: wait done (clear dirty) / err (backoff, then alarm)
+    H_FL_BACKOFF // flush: DR2c wait after a failed attempt, then a fresh read
   } hstate_e;
 
   hstate_e             hs_r;
@@ -368,6 +406,7 @@ module KL_acmp_nvm_shadow
   logic [4:0]          fl_cidx_r;     // crc byte cursor 0..25
   logic [4:0]          fl_sidx_r;     // stream byte cursor 0..27
   logic [31:0]         fl_retry_r;
+  logic [31:0]         fl_bo_r;       // the backoff's remaining cycles
   logic                fl_taint_r;    // capture hit fl_sink mid-flush: the
                                       // serialized image is stale, keep dirty
 
@@ -495,6 +534,10 @@ module KL_acmp_nvm_shadow
   assign wr_data_w = c1_wr_w ? SHW_W_C'(c1_proj_r) : fsm_wr_data_w;
 
   // ---- the read phase's deadline (issue #93, S3) ---------------------------
+  if (RETRY_BACKOFF_CYC_P < 1) begin : g_backoff_check
+    $error("KL_acmp_nvm_shadow: RETRY_BACKOFF_CYC_P must be at least 1");
+  end
+
   //! zero clocks would wrap RS_TMO_CYC_P - 1 below and silently turn the
   //! deadline into 2^32 clocks (the top's default is CLK_HZ_P / 50, 0 below
   //! 50 Hz)
@@ -506,7 +549,13 @@ module KL_acmp_nvm_shadow
   //! it waits for: in H_RS_REQ the port idle, in H_RS_STREAM a byte, a done
   //! or an err. Progress is that event itself, so a device that is slow but
   //! moving never trips it; expiry ends the walk as a failed one and clears
-  //! the count, so it never reads past RS_TMO_CYC_P - 1.
+  //! the count, so it never reads past RS_TMO_CYC_P - 1. The D3 writer's
+  //! aggregate deadline (rs_agg_i) takes the same path: in H_RS_REQ at once
+  //! (no read is issued, nothing is owed), in H_RS_STREAM in a stalled
+  //! cycle, so a byte in hand is never orphaned and the read goes to the
+  //! drain as below. The first H_RS_STREAM cycle is always stalled and
+  //! carries the registered strobe (nvm_req_o), so the abort can meet the
+  //! arbiter's issue cycle; KL_pp_nvm_mgr_arb arms its drain there as well.
   logic [31:0] rs_wd_r;
   logic        rs_stall_w;
   logic        rs_tmo_w;
@@ -514,7 +563,8 @@ module KL_acmp_nvm_shadow
   assign rs_stall_w = ((hs_r == H_RS_REQ) && (nvm_busy_i || nvm_done_i || nvm_err_i))
                     || ((hs_r == H_RS_STREAM)
                         && !nvm_rvalid_i && !nvm_done_i && !nvm_err_i);
-  assign rs_tmo_w   = rs_stall_w && (rs_wd_r >= 32'(RS_TMO_CYC_P - 1));
+  assign rs_tmo_w   = (rs_stall_w && ((rs_wd_r >= 32'(RS_TMO_CYC_P - 1)) || rs_agg_i))
+                    || ((hs_r == H_RS_REQ) && rs_agg_i);
 
   always_ff @(posedge clk_i) begin : rs_wd_ff
     if (!rst_n)                       rs_wd_r <= 32'd0;
@@ -667,6 +717,7 @@ module KL_acmp_nvm_shadow
       fl_cidx_r    <= 5'd0;
       fl_sidx_r    <= 5'd0;
       fl_retry_r   <= 32'd0;
+      fl_bo_r      <= 32'd0;
       done_r       <= 1'b0;
       fail_r       <= 1'b0;
       any_rec_r    <= 1'b0;
@@ -868,7 +919,8 @@ module KL_acmp_nvm_shadow
               hs_r <= H_RUN;                   // give up: alarm + dirty drop
             end else begin
               fl_retry_r <= fl_retry_r + 32'd1;
-              hs_r       <= H_FL_RD;           // bounded retry, fresh read
+              fl_bo_r    <= RETRY_BACKOFF_CYC_P;
+              hs_r       <= H_FL_BACKOFF;      // DR2c: wait, then a fresh read
             end
           end else if (nvm_wready_i) begin
             if (fl_sidx_r == 5'd27) begin
@@ -888,9 +940,18 @@ module KL_acmp_nvm_shadow
               hs_r <= H_RUN;                   // give up: alarm + dirty drop
             end else begin
               fl_retry_r <= fl_retry_r + 32'd1;
-              hs_r       <= H_FL_RD;           // bounded retry, fresh read
+              fl_bo_r    <= RETRY_BACKOFF_CYC_P;
+              hs_r       <= H_FL_BACKOFF;      // DR2c: wait, then a fresh read
             end
           end
+        end
+
+        // --------------------------------------------------- H_FL_BACKOFF
+        //! RETRY_BACKOFF_CYC_P complete cycles from the err, holding
+        //! nothing: the port serves the other manager meanwhile
+        H_FL_BACKOFF: begin
+          if (fl_bo_r <= 32'd1) hs_r    <= H_FL_RD;
+          else                  fl_bo_r <= fl_bo_r - 32'd1;
         end
 
         default: hs_r <= H_RUN;

@@ -13,7 +13,7 @@ VFLAGS = --cc --exe --build -j 0 \
          --top-module $(TOP) \
          -Wall -Wno-fatal -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDPARAM \
-         -GDEB_TICKS_P=50 -GRS_TMO_CYC_P=3000 \
+         -GDEB_TICKS_P=50 -GRS_TMO_CYC_P=3000 -GRETRY_BACKOFF_CYC_P=600 \
          -CFLAGS "-std=c++17 -O2 -I$(CURDIR) -Wall -Wextra"
 
 SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/acmp/pp_acmp_pkg.sv \

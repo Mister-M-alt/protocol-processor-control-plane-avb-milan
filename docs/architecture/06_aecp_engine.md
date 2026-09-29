@@ -18,8 +18,10 @@ Consumes: AECP queue (AEM_COMMAND, VENDOR_UNIQUE_COMMAND); MGMT-origin transacti
 triggers; snapshot reads of ACMP sink records ([05 §5](05_acmp_engine.md)) and the
 class-D dictionary ([F02.10](02_interfaces.md#fig-02-statusdict)). Produces: solicited
 responses; unsolicited responses + CONTROLLER_AVAILABLE + IDENTIFY_NOTIFICATION via
-the originator; entity-model overlay writes + NVM marks; `avtp`/`mclk`/`srp` class-B
-ops for applied settings.
+the originator; entity-model overlay writes + NVM completion marks; `avtp`/`mclk`/`srp`
+class-B ops for applied settings. The engine also contains the D3 saved-state writer
+(NVM manager 1, [07 §5.3](07_memory_maps.md#fig-07-nvmflow)), which persists and restores
+the scalar overlay rows.
 
 ## 3. PDU handling
 
@@ -113,7 +115,35 @@ flowchart LR
   lockm["lock manager (T-LOCK-UNLOCK)"] <--> ucpu
   ctrs["counters subsystem (T-CTR-OBSERVE)"] <--> ucpu
   idh["identify handler (T-IDENT-*)"] --> fan
+  d3["D3 saved-state writer (NVM manager 1)"] -. "own: dispatch hold" .-> disprom
+  d3 <-- "state bus 2:1 (bus)" --> model
+  ucpu -. "accepted changing write (snoop)" .-> d3
+  d3 -. "format judge: Milan-info kind 0 sel 15" .-> gather
 ```
+
+**The D3 writer's faces inside the engine** (`KL_aecp_nvm_writer`; the parent D3
+contract §5.1):
+
+- **State bus.** A 2:1 selection in front of the dynamic-state store and the descriptor
+  store picks the writer while its `bus` is 1: from reset to the restore terminal, and
+  in service only for one row's latch. The µCPU's contract is unchanged.
+- **Dispatch hold (`own`).** While 1, no command is taken from the queue and no
+  unsolicited work starts. It is 1 from reset to the restore terminal (for ever in
+  CLOSED), and in service from ACQUIRE to the end of one latch; the writer takes the bus
+  only once no program is in flight, so a program never loses the bus mid-run.
+- **Change snoop.** The dynamic-state store's accepted write that changes a persisted
+  row's `{value, valid}` projection (selectors 0 to 5), taken only while the µCPU drives
+  the bus: a restore write is never a change, and IDENTIFY (selector 7) is excluded.
+- **Format judge.** During the restore the writer drives the Milan-info gather face,
+  kind 0 selector 15 with `gsi_prop_fmt_o`, and reads bit 0 (supported), the same
+  integrator verdict SET_STREAM_FORMAT uses. The other value rules are the SET programs'
+  own (§6.4), read through the same descriptor-store regions.
+- **Map read/apply and name capture/replay** are the map and name stages' faces
+  (GET_AUDIO_MAP and the edit face; the name table after the image walk). They are
+  accepted in the same contract and **not implemented** in this release. The CONTROL
+  descriptor's name is a persisted user name; IDENTIFY's value is not.
+- **Roll-back.** `rb_rst` resets the dynamic-state store and the descriptor store
+  together; the descriptor-memory guard and its debt keep the hard reset only.
 
 ## 5. Command lifecycle
 
@@ -144,6 +174,10 @@ Policies:
   classes — one cached response per controller suffices with single-issue execution.
 - Scoreboard classes/keys are assigned by the dispatch ROM; the table lives in
   [03 §6](03_packet_engine.md) (single source).
+- **Dispatch waits for the D3 writer.** No command reaches CLASSIFIED while the
+  writer holds dispatch: from reset to the restore's COMPLETE or DEFAULTS terminal
+  (queued commands are then served in order), never after CLOSED, and briefly in
+  service for a row latch ([03 §6](03_packet_engine.md) rule d).
 
 ## 6. Command set
 
@@ -339,9 +373,12 @@ named descriptor exposes `object_name` at index 0. A missing descriptor returns
 `SET_NAME` checks the entity lock before changing any byte. A rejected locked
 write returns `ENTITY_LOCKED` and the current name, not the rejected command
 name. A successful change writes all eight 64-bit lanes, returns the new current
-name, and emits the naming persistence and notification triggers. Repeating the
-same value performs no write and emits no trigger. The persistence consumer is
-tracked separately; the trigger alone does not make the update survive power loss.
+name, pulses `aecp_name_wr_o` once per accepted changed lane, and emits the group-7
+completion mark and the notification. Repeating the same value performs no write and
+emits none of them. The accepted name-lane write is the name group's persistence
+trigger in the saved-state contract; the mark is only a completion notification. The
+name stage's writer and replay are **not implemented** in this release, so a name does
+not survive power loss yet.
 
 The writable name table is also patched into the currently located descriptor
 line. A later locate refreshes its line from the table after the image fetch.
@@ -362,7 +399,13 @@ Consequently `SET_NAME`, `GET_NAME`, and `READ_DESCRIPTOR` expose one value.
 | SET_STREAM_FORMAT (**implemented**, Milan §5.4.2.7) | length (cdl 24 and the walked payload) → type ∈ {STREAM_INPUT, STREAM_OUTPUT} → **per-descriptor running at dispatch** (bound input ∨ streaming output ⇒ `STREAM_IS_RUNNING`, outranking the lock like SET_CONFIGURATION's reduction and for the same reason) → lock → locate → the integrator's ONE-GATHER verdict on the proposed format (kind 0 selector 15 against `gsi_prop_fmt`): supported-for-this-stream AND every mapping-referenced channel survives, anything less ⇒ `BAD_ARGUMENTS` → WRITE_ST to SEL_FMTIN/SEL_FMTOUT + NVM mark → echo the format now in force. Every refusal after the length gate carries the CURRENT format read through GET_STREAM_FORMAT's own face word, so the two can never disagree. The supported set and the mapping reduction live integrator-side (the builder's always-live shapes; the map machinery that already validates every edit), not in a µcode walk over the image |
 | SET_SAMPLING_RATE | lock → locate (no such AUDIO_UNIT ⇒ `NO_SUCH_DESCRIPTOR`) → rate ∈ AUDIO_UNIT list (`E_SSRATE` + `E_SSRWALK`; issue #51): the rate is compared, as the whole 32-bit word including the pull field, with entries 0..`sampling_rates_count`-1 of the located descriptor's list, read at `sampling_rates_offset` 144. **Precondition, part of the image contract** ([07 §3.1 L10](07_memory_maps.md#31-descriptor-tree)): offset 144 and at most 8 entries. A state-port address is an immediate, so any other offset refuses every rate and an entry past the eighth is never accepted; both fail closed. A rate the list does not hold ⇒ `BAD_ARGUMENTS` carrying the CURRENT rate (the value GET_SAMPLING_RATE reads), with nothing stored, marked or notified. `BAD_ARGUMENTS` rather than `NOT_SUPPORTED` because Table 7-141 keeps `NOT_SUPPORTED` for a target that is not supported (an AUDIO_UNIT that exists is supported; its argument is not), and review §8 item 3 reads Milan's "UNSUPPORTED" as `NOT_SUPPORTED` for the mapping clause below only → mappings whose stream rate ≠ new rate while port has neither SRC bit ⇒ may `NOT_SUPPORTED` (Milan §5.4.2.13 — "UNSUPPORTED" typo, review §8 item 3; this MAY is not implemented) → commit + NVM |
 | SET_CLOCK_SOURCE | lock → locate (no such CLOCK_DOMAIN ⇒ `NO_SUCH_DESCRIPTOR`) → source ∈ CLOCK_DOMAIN list, tested as `clock_source_index` < the located domain's `clock_sources_count` (`E_SCLKS`; milan-fpga #389). **Precondition, part of the image contract**: the processor requires the domain's `clock_sources` list to be the identity permutation 0..count-1 ([07 §3.1 L6](07_memory_maps.md#31-descriptor-tree)); that is what makes the bound equal the membership test of IEEE §7.4.23.1. A sparse or permuted list would have unlisted indices accepted and listed ones refused. An index at or past the count ⇒ `BAD_ARGUMENTS` carrying the CURRENT index (the value GET_CLOCK_SOURCE reads), with nothing stored, marked or notified → `mclk.SET_CLOCK_SOURCE` → commit + NVM |
-| SET_NAME | configuration valid, descriptor exists, semantic name index valid, lock, compare all 64 bytes, then commit and emit persistence plus notification triggers only when changed |
+| SET_NAME | configuration valid, descriptor exists, semantic name index valid, lock, compare all 64 bytes, then commit, pulsing the accepted lane writes and emitting the completion mark and notification only when changed |
+
+"NVM mark" in these chains is the completion effect (`aecp_nvm_stb_o` /
+`aecp_nvm_mark_o`, [02 §8.1](02_interfaces.md#81-what-the-integrator-reads-while-a-commit-is-outstanding)).
+It is never a persistence trigger: the accepted `WRITE_ST` that changes the row selects
+the record for the D3 writer ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)), and the
+restore judges a saved value by the same rule the chain applies.
 
 **Two notes on SET_CONFIGURATION, both decisions rather than accidents.**
 
@@ -420,9 +463,11 @@ at commit, and use the root transaction face to update the live map atomically.
 - Input maps are changeable **any time, even while bound** (Milan §5.3.10.1).
 - Every successful ADD or REMOVE that changes the mapping sends the same
   unsolicited response to every registered controller except the requester and
-  marks the mapping persistence class dirty. A confirmed no-op succeeds without
-  a notification or dirty mark. The current NVM backend does not retain the
-  dirty class across reset; issue #70 tracks that remaining work.
+  emits the group-6 completion mark. A confirmed no-op succeeds without a
+  notification or mark. The mark is a completion notification, not a persistence
+  trigger: the saved-state contract selects a port's map record from the accepted
+  phase-5 commit beat. The map stage's writer and replay are **not implemented**
+  in this release, so maps are not retained across reset (issue #70's map lane).
 - Phase 1 acceptance is the commit reservation and point of no return. The
   integrator must reserve every resource needed for the complete transaction
   before accepting it. Phase 5 record writes and phase 2 finish then complete
@@ -871,7 +916,7 @@ GET_SAMPLING_RATE:                    SET_SAMPLING_RATE:
   READ_STATE r1 <- current_rate         CHECK_ARG  rate in sampling_rates[]
   SET_STATUS SUCCESS                    CHECK_ARG  SRC rule (may NOT_SUPPORTED)
   BUILD_HEADER; BUILD_FIELD r1          WRITE_STATE current_rate <- arg
-  SEND_RESPONSE; END                    COMMIT; NVM_MARK sampling_rate
+  SEND_RESPONSE; END                    COMMIT; NVM_MARK sampling_rate  (completion only)
                                         SET_STATUS SUCCESS
 ACQUIRE_ENTITY:                         BUILD_HEADER; BUILD_FIELD
   SET_STATUS NOT_SUPPORTED              SEND_RESPONSE
@@ -887,6 +932,11 @@ GET_DYNAMIC_INFO (as built):
   skip if result exceeds 524  ; continue with the following tuple
   seal one aggregate response ; never IN_PROGRESS
 ```
+
+In the SET_SAMPLING_RATE exemplar, the accepted `WRITE_STATE` that changes the row is
+what selects the AUDIO_UNIT's sampling-rate record for the D3 writer
+([07 §5.3](07_memory_maps.md#fig-07-nvmflow)). `NVM_MARK` remains a completion effect
+on `aecp_nvm_stb_o` / `aecp_nvm_mark_o`, with no record-selection authority.
 
 Sizing: ~35 programs × ~25 µops ⇒ `P-UCODE-ROM-DEPTH` = 2048 with ~2× margin, at `P-UCODE-ROM-W` = 48 b per µop (encoding: `hdl/aecp/ucpu_pkg.sv`).
 The dispatch ROM + response-size ROM + µcode are the artifacts generated from the
