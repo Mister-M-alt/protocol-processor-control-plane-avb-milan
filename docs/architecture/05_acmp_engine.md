@@ -157,8 +157,8 @@ The ownership contract is therefore:
 | A dispatch transaction and a talker event are **held at their producers**. | valid towards the listener **and** ready towards the producer masked: the ACMP head stays in its dispatch queue (and is not admitted to the scoreboard), the event router's sticky latch stays set. A producer pops exactly when the listener takes. |
 | A START/STOP request is **held by the AECP engine**. | its valid is masked; the listener's completion passes. The listener's holder is empty from reset, so no completion can fire while the faces are owned. |
 | A timer expiry of a listener owner is **refused and counted**. | no listener timer can be armed while the faces are owned; the count is the gate's `dbg_exp_drop_o`, whose healthy reading is 0 |
-| The faces are **released once**, when the binding walk has drained. | the shadow's terminal (`restore_done_o`, failed or not), no preload presented, the listener idle and its last A4 strobe gone. The shadow never walks again before a reset. |
-| The release is **the binding walk's end**. | the top's `restore_done_o` is the shadow's terminal AND the release, and `restore_busy_o` covers the cycles between them, so an entity enable gated on `restore_done_o` cannot precede the last preload's record write and discovery arm |
+| The faces are **released once**, when the binding walk has drained. | the shadow's own terminal (its raw `restore_done_o`, failed or not), no preload presented, the listener idle and its last A4 strobe gone. The shadow never walks again before a reset. |
+| The release is **the binding walk's end**, not the restore's. | the release starts the D3 walk ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)). The top's `restore_done_o` is the shadow's terminal AND the release AND the D3 walk's done, and `restore_busy_o` covers every cycle up to that combined terminal, so the ADP enable (`entity_enable_i && restore_done_o`) cannot precede the last preload's record write and discovery arm, nor the D3 terminal |
 
 What follows: until the release, the listener's only reachable states are `X_INIT`,
 `X_IDLE` and `X_PRELOAD`, so a preload is taken in the cycle it is offered and the only
@@ -187,14 +187,26 @@ is bounded by `T-NVM-RS-DEADLINE`: a device that stops answering fails the whole
 the deadline, with every sink at its vendor default, nothing preloaded and every saved
 record left on the media ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)). Either way the terminal comes, the faces
 are released and the listener answers, so persistence that wedges never holds ACMP
-listener service, or an enable gated on `restore_done_o`, for ever.
+listener service for ever.
+
+**The D3 walk follows and never takes the listener back.** From the release the listener
+does live work while the D3 walk restores the scalar records; AECP dispatch and the ADP
+enable wait for the D3 terminal, the listener does not. A D3 failure, its roll-back of
+the AECP stores included, never resets the listener, its admission gate or the binding
+manager: bindings the binding walk restored stay restored and a read-only poll still
+answers them (`tb/pp_top` D3R11). A CLOSED D3 terminal holds AECP and the enable until
+reset and leaves the listener released. The held AECP work cannot starve the listener
+through the shared ingress either: while AECP is held at most one AECP record occupies it,
+and every further AECP frame is dropped at its slot gate and counted
+([03 §6](03_packet_engine.md) rule (d); `tb/pp_top` D3O5, D3O6).
 
 The contract is graded with the real listener, shadow, arbiter and port in
 [`tb/acmp_nvm`](../../tb/acmp_nvm/README.md) (group L, every presentation cycle of the
 window and every other work face, with reset round trips; group N, the failed and
 bounded walk and the saved records it keeps) and at the top in
 [`tb/pp_top`](../../tb/pp_top/README.md) (section BW; BW4 grades `restore_done_o` and
-`restore_busy_o` against the release in every cycle of every walk).
+`restore_busy_o` against the release in every cycle of every walk; section D3 grades the
+D3 walk's start at the release and its terminal after it).
 
 ## 6. Listener behavior — the four-view package
 

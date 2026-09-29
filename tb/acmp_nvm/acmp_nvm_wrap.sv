@@ -10,8 +10,8 @@
 //  Description : Integration wrap for the KL_acmp_nvm_shadow suite: the
 //                shadow, the REAL KL_pp_nvm_port behind the REAL
 //                KL_pp_nvm_mgr_arb (the shadow is its manager 0; manager 1
-//                is a harness face, as the platform's saved-state writer
-//                will be), the REAL
+//                is a harness face here, standing where the processor's
+//                D3 writer, KL_aecp_nvm_writer, sits in the top), the REAL
 //                KL_pp_acmp_listener and the REAL KL_pp_acmp_lsn_admit wired
 //                at their landed faces, the way protocol_processor_top wires
 //                them — the shadow's capture face on the listener's record
@@ -52,6 +52,7 @@ module acmp_nvm_wrap
     parameter int unsigned  DEB_TICKS_P   = 500,
     parameter int unsigned  RETRY_MAX_P   = 2,
     parameter int unsigned  RS_TMO_CYC_P  = 3000,
+    parameter int unsigned  RETRY_BACKOFF_CYC_P = 600,
     parameter string        TROM_HEX_P    = "ltn_rom.hex",
     localparam int unsigned SINK_W_C = (N_SINKS_P > 1) ? $clog2(N_SINKS_P) : 1
 ) (
@@ -68,7 +69,7 @@ module acmp_nvm_wrap
     output logic [1:0]               restore_cause_o, //! why the walk failed
     output logic                     alarm_o,         //! commit-retry alarm
 
-    //! ---- manager 1 of the arbiter (a second record writer, harness) ------
+    //! ---- manager 1 of the arbiter (harness; the D3 writer in the top) ----
     input  wire                      m1_req_i,        //! op request, held until granted
     input  wire                      m1_we_i,         //! 1 = commit
     input  wire  [7:0]               m1_rid_i,        //! record id
@@ -82,6 +83,11 @@ module acmp_nvm_wrap
     output logic                     m1_done_o,       //! its op completed
     output logic                     m1_err_o,        //! its op failed
     output logic                     arb_drain_o,     //! an abandoned read is draining
+    output logic                     arb_req_o,       //! the arbiter issues an op this cycle
+    output logic                     arb_we_o,        //! ...and it is a commit
+    output logic                     arb_end_o,       //! the port's done or err ends the owned op
+    output logic                     mgr_req_o,       //! the shadow's registered op strobe
+    output logic                     mgr_we_o,        //! ...and it is a commit
     output logic                     mgr_abort_o,     //! the shadow abandoned its read
     output logic [1:0]               mgr_err_cause_o, //! the cause the shadow saw with err
     output logic                     mgr_done_o,      //! the shadow's manager-face done
@@ -249,12 +255,15 @@ module acmp_nvm_wrap
       .REC_ID_BASE_P(REC_ID_BASE_P),
       .DEB_TICKS_P  (DEB_TICKS_P),
       .RETRY_MAX_P  (RETRY_MAX_P),
-      .RS_TMO_CYC_P (RS_TMO_CYC_P)
+      .RS_TMO_CYC_P (RS_TMO_CYC_P),
+      .RETRY_BACKOFF_CYC_P (RETRY_BACKOFF_CYC_P)
   ) u_shadow (
       .clk_i           (clk_i),
       .rst_n           (rst_n),
       .tick_i          (tick_i),
       .restore_go_i    (restore_go_i),
+      //! no D3 writer in this harness, so no aggregate deadline reaches the walk
+      .rs_agg_i        (1'b0),
       .restore_busy_o  (restore_busy_o),
       .restore_done_o  (restore_done_o),
       .restore_fail_o  (restore_fail_o),
@@ -530,6 +539,11 @@ module acmp_nvm_wrap
   assign mgr_state_o      = 4'(u_shadow.hs_r);
   assign mgr_rs_sink_o    = u_shadow.rs_k_r;
   assign dbg_port_done_o  = nvm_done_w;
+  assign arb_req_o        = np_req_w;
+  assign arb_we_o         = np_we_w;
+  assign arb_end_o        = np_done_w || np_err_w;
+  assign mgr_req_o        = nvm_req_w;
+  assign mgr_we_o         = nvm_we_w;
   assign mgr_abort_o      = nvm_abort_w;
   assign mgr_err_cause_o  = nvm_err_cause_w;
   assign mgr_done_o       = nvm_done_w;

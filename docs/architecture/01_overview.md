@@ -90,21 +90,27 @@ once in [F02.10](02_interfaces.md#fig-02-statusdict).
 | SRP/MAAP · gPTP · AVTP · media-clock adapters | the four engine contracts (srp served internally by default) | [02 §4](02_interfaces.md) |
 | SRP engine | MSRP/MVRP endpoint participant: 1 Domain FSM + 1 VLAN FSM + N+M stream FSMs | [10](10_srp_engine.md) |
 | MAAP engine | Annex B block claim: probe/announce/defend SM, the internal allocator-seam server, claim publication | [11](11_maap_engine.md) |
-| NVM manager | persistence journal; boot restore | [07 §5](07_memory_maps.md) |
+| NVM managers | two record producers behind one arbiter: the binding manager (sink bindings) and the D3 writer in the AECP engine (scalar records); each walks its records at boot | [07 §5](07_memory_maps.md) |
 | Management side-port | image load, debug, NVM backing, optional firmware assist | [02 §7](02_interfaces.md) |
 | Boot/init sequencer + config/ID registers + profile ROMs | bring-up ordering; identity; profile selection | this doc §5, [§7](#7-parameter-master-table-f015) |
 | Event router | fan-out of adapter/SM events to counters, SMs, notifications | [03 §5](03_packet_engine.md) |
 
 ## 5. Operational model
 
-- **Initialization** — boot sequencer order: (1) load/validate descriptor image and
-  identity registers (side-port or ROM); (2) NVM restore of the persisted set
-  ([07 §5](07_memory_maps.md)); (3) preload engine state — a restored binding puts that
+- **Initialization** — boot order ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)):
+  (1) the platform loads and CRC-checks the descriptor image and identity registers;
+  the AECP dispatch and the listener's work faces are held from reset; (2) the
+  platform starts the restore (`restore_go_i`, on every boot); (3) the binding walk
+  restores the sink bindings and preloads the listener — a restored binding puts that
   sink's listener SM in `PRB_W_AVAIL`, and the listener takes no other work until the
-  last preload is written and armed ([05 §5.1](05_acmp_engine.md#sec-05-boot-admission));
-  (4) adapters report ready; (5) assert
-  `entity_enable` — only now may ADP advertise (Milan §5.6.1), because the entity must
-  already accept AECP commands and bind/probe requests.
+  last preload is written and armed; its drained terminal releases the listener
+  ([05 §5.1](05_acmp_engine.md#sec-05-boot-admission)); (4) the D3 walk proves the
+  descriptor image, restores the scalar records in two agreeing passes and ends
+  COMPLETE, DEFAULTS or CLOSED — an image it cannot prove ends CLOSED, which never
+  releases AECP or ADP; (5) COMPLETE or DEFAULTS releases AECP dispatch; (6) the ADP
+  engine's enable is the requested `entity_enable` AND `restore_done_o` (both walks)
+  — only now may ADP advertise (Milan §5.6.1), because the entity must already accept
+  AECP commands and bind/probe requests.
 - **Steady state** — RX commands, timer events, self-originated traffic and side-port
   accesses flow through the same normalized-transaction pipeline
   ([03 §4](03_packet_engine.md)); every state commit can trigger notifications.
@@ -167,7 +173,12 @@ values; other documents reference `P-…` IDs.
 | P-MRPDU-QUEUE-BYTES | 2048 | SRP MRPDU RX queue: one max-size frame + headroom ([10 §4](10_srp_engine.md)) | SRP engine |
 | P-SRP-DOM-DEF-VID | 2 | 16-bit; =2 in every product build (Milan §4.2.7.2.1). Any other value is a verification fixture proving the top-level binding, not a product profile | SRP Domain FSM default VID ([F10.2](10_srp_engine.md#fig-10-domsm)): declared at startup and LINK_UP, restored at LINK_DOWN; a received Class A Domain is still adopted over it |
 | P-CLK-HZ | 100 MHz | any; prescaler retuned | timebase |
-| P-NVM-RS-TMO-CYC | P-CLK-HZ / 50 (20 ms) | above the slowest single record read the NVM device face can take (`NVM_RS_TMO_CYC_P`) | boot restore walk's read deadline, `T-NVM-RS-DEADLINE` ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) |
+| P-NVM-RS-TMO-CYC | ceil(P-CLK-HZ / 50) (20 ms) | above the slowest single record read the NVM device face can take and the image walk (`NVM_RS_TMO_CYC_P`); DR3a **ratified** 20 ms after the processor lane measured it | every restore wait of both walks, `T-NVM-RS-DEADLINE` ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) |
+| P-NVM-RS-AGG-CYC | P-CLK-HZ (1,000 ms) | DR3a **ratified** as an enforced bound (`NVM_RS_AGG_CYC_P`): clocks from the accepted restore start (`restore_go_i`) to the D3 terminal, the binding walk, both passes and the roll-back included; 100,000,000 at 100 MHz, 50,000,000 at the product's 50 MHz | the whole restore, `T-NVM-RS-AGGREGATE`: at the bound the phase the restore is in takes its per-wait deadline's path, and a provable image is never closed ([08 §2](08_timing.md#sec-08-nvm)) |
+| P-NVM-RETRY-BACKOFF-CYC | ceil(P-CLK-HZ / 2) (500 ms) | DR2c ruled value: `(CLK_HZ_P / 2) + (CLK_HZ_P % 2)` clocks (`NVM_RETRY_BACKOFF_CYC_P`); 50,000,000 at 100 MHz, 25,000,000 at the product's 50 MHz | wait after a failed record write before the next attempt, both record producers, `T-NVM-RETRY-BACKOFF` |
+| P-NVM-DEB-TICKS | 500 ticks of `tick_ms` (500 ms) | DR2a ruled value; a module parameter of each producer, not a top parameter: `DEB_TICKS_P` in the binding manager, `DEB_MS_P` in the D3 writer (the same count; the writer's name states its unit, the parent D3 contract's `DEB_TICKS_P`) | `T-NVM-DEBOUNCE`, both record producers |
+| P-NVM-RETRY-MAX | 2 additional retries = 3 attempts | DR2c ruled value; a module parameter of each producer (`RETRY_MAX_P`), not a top parameter | attempts per record before `nvm_alarm_o` |
+| P-NVM-D3-SHAPE | the top's `N_AUDIO_UNIT_P`, `N_CLK_DOMAIN_P`, `N_STREAM_IN_P`, `N_STREAM_OUT_P` | the shape; one D3 record per row, ids per [07 §5.2](07_memory_maps.md#fig-07-nvmrec) | the D3 writer's record set (1 + AU + CD + SI + 2·SO records) |
 | P-INTERNAL-INGRESS-DELAY-NS | product | added to reported input latency (Milan §5.4.2.10.1) | GET_STREAM_INFO |
 | P-PT-OFFSET-DEFAULT-NS | 2 000 000 | 0..0x7FFFFFFF (Milan §5.3.7.6) | presentation time |
 | P-EN-MVU-SUID / P-EN-MVU-MCR | n/a | reserved names; neither is an RTL parameter | not implemented; October release waiver ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) |

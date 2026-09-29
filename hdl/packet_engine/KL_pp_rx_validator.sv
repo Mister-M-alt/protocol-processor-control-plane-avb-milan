@@ -27,6 +27,15 @@
 //                    for that DA class and drops with one count
 //                  - V8: h = 0 and version = 0 (cnt rx_version), and every
 //                    malformed drop is drop + count, never fatal
+//                  - THE AECP HOLD ADMISSION (processor issue #131 ruling):
+//                    while `aecp_hold_i` (the D3 writer holds AECP and one
+//                    AECP record already occupies the ingress), an AECP
+//                    frame (0xFB) is dropped at its slot gate, the subtype
+//                    byte, its slot returned, and counted (cnt
+//                    rx_aecp_held); every other subtype passes untouched,
+//                    so AECP never takes more than that one slot from ACMP,
+//                    ADP and MAAP. A dropped command gets no response and
+//                    its controller retries (IEEE 1722.1 AECP timeout)
 //                  - V1/V2: total PDU = cdl + 12; padding excluded from cdl,
 //                    so a frame >= cdl + 12 payload octets is accepted and
 //                    exactly cdl + 12 octets are parsed/stored; a frame
@@ -86,6 +95,10 @@ module KL_pp_rx_validator
     input  wire           [7:0] rx_data_i,           //! frame byte (byte 0 = first DA octet)
     input  wire                 rx_last_i,           //! final byte of the frame
     input  wire          [47:0] own_mac_i,           //! own unicast MAC ([47:40] = first wire octet)
+    //! level: drop an AECP frame at its slot gate and count it (the AECP
+    //! hold admission: the D3 writer holds AECP and one AECP record already
+    //! occupies the ingress)
+    input  wire                 aecp_hold_i,
 
     //! ---- V9 MRP pass-through (to the SRP engine's MRPDU queue) ----
     output logic                mrp_valid_o,         //! MRPDU byte strobe
@@ -123,7 +136,8 @@ module KL_pp_rx_validator
     output logic         [15:0] rx_ethertype_count_o,//! EtherType gate drops
     output logic         [15:0] rx_subtype_count_o,  //! unknown-subtype drops
     output logic         [15:0] rx_version_count_o,  //! h != 0 or version != 0 drops (V8)
-    output logic         [15:0] rx_length_count_o    //! cdl + 12 > payload drops (V1)
+    output logic         [15:0] rx_length_count_o,   //! cdl + 12 > payload drops (V1)
+    output logic         [15:0] rx_aecp_held_count_o //! AECP frames dropped while held
 );
 
   // ------------------------------------------------------------- constants
@@ -197,7 +211,7 @@ module KL_pp_rx_validator
   logic [2:0]   hdr_rx_slot_r;
 
   // ------------------------------------------------------------------ counters
-  logic [15:0] cnt_da_r, cnt_et_r, cnt_sub_r, cnt_ver_r, cnt_len_r;
+  logic [15:0] cnt_da_r, cnt_et_r, cnt_sub_r, cnt_ver_r, cnt_len_r, cnt_held_r;
 
   // ------------------------------------------------------------- combinational
   logic        acc_w;
@@ -210,7 +224,7 @@ module KL_pp_rx_validator
   logic        slot_now_w;
   logic [11:0] lim_w;
   logic        in_budget_w;
-  logic        pdu_byte_w, sub_fail_w, ver_fail_w, fail_now_w;
+  logic        pdu_byte_w, sub_fail_w, ver_fail_w, held_fail_w, fail_now_w;
   logic        wr_en_w, wlast_w;
   logic [11:0] pcnt_end_w;
   logic        v1_pass_w;
@@ -262,7 +276,11 @@ module KL_pp_rx_validator
                            && (da_own_r | da_maap_r));
   assign ver_fail_w = pdu_byte_w && (pidx_w == 11'd1)
                       && (rx_data_i[7:4] != 4'h0);         // h and version (V8)
-  assign fail_now_w = sub_fail_w | ver_fail_w;
+  //! the AECP hold admission: an AECP frame the subtype gate would pass is
+  //! dropped instead while the hold is on, the slot returned by the abort
+  assign held_fail_w = pdu_byte_w && (pidx_w == 11'd0) && aecp_hold_i
+                       && (rx_data_i == SUB_AECP_C) && (da_own_r | da_mcast_r);
+  assign fail_now_w = sub_fail_w | ver_fail_w | held_fail_w;
 
   assign wr_en_w = pdu_byte_w && in_budget_w && !fail_now_w;
   assign wlast_w = wr_en_w && cdl_known_r
@@ -346,6 +364,7 @@ module KL_pp_rx_validator
       cnt_sub_r <= '0;
       cnt_ver_r <= '0;
       cnt_len_r <= '0;
+      cnt_held_r <= '0;
     end else begin
       // defaults: one-cycle pulses fall
       alloc_req_r  <= 1'b0;
@@ -579,6 +598,7 @@ module KL_pp_rx_validator
       if (sub_fail_w && (cnt_sub_r != CNT_MAX_C)) cnt_sub_r <= cnt_sub_r + 16'd1;
       if (ver_fail_w && (cnt_ver_r != CNT_MAX_C)) cnt_ver_r <= cnt_ver_r + 16'd1;
       if (ev_len_w  && (cnt_len_r != CNT_MAX_C)) cnt_len_r <= cnt_len_r + 16'd1;
+      if (held_fail_w && (cnt_held_r != CNT_MAX_C)) cnt_held_r <= cnt_held_r + 16'd1;
     end
   end
 
@@ -694,6 +714,7 @@ module KL_pp_rx_validator
   assign rx_subtype_count_o   = cnt_sub_r;
   assign rx_version_count_o   = cnt_ver_r;
   assign rx_length_count_o    = cnt_len_r;
+  assign rx_aecp_held_count_o = cnt_held_r;
 
 endmodule
 

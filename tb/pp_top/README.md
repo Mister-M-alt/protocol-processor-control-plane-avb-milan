@@ -5,7 +5,8 @@ Builds `protocol_processor_top` (every landed module of the tree wired:
 validator + replicated RX pools + normalizer + dispatch + ADP engine + ACMP
 listener/talker + SRP engine behind `KL_mrp_strip` + TX pool/arbiter + the
 ACMP Ethernet-prepend shim + timer/PRNG muxes + scoreboard, event router,
-originator, trace ring, side port, NVM shadow + manager arbiter + port) under `pp_top_wrap`
+originator, trace ring, side port, NVM shadow + the AECP engine's D3 writer +
+manager arbiter + port) under `pp_top_wrap`
 and drives it ONLY through the top's external contract: one MAC byte stream
 in, one MAC byte stream out, the side-port host face, the SRP service face,
 the NVM device face and the descriptor-image memory master. Time is compressed to 1 ms = 100 clk (the 89-slot
@@ -22,6 +23,240 @@ tally.
 
 ## What it proves
 
+- **D3: the saved-state writer's ownership (parent D3 contract sections 3,
+  6.2 and 8.1).** `d3_phases.hpp` runs every case on a fresh model with the
+  suite's descriptor image and an erased NVM device, through the top's own
+  faces. **D3O1** a READ_DESCRIPTOR fed before `restore_go_i` waits in the
+  AECP dispatch queue for 2,000 cycles with the writer owning the state bus
+  in every one and the engine running nothing; after the boot the writer's
+  terminal follows the listener admission gate's release, its ownership
+  falls on that terminal, the engine takes the held command only after it,
+  a validated image is proven without a LOCATE, and the command is answered
+  byte-exact. **D3O2** an image whose magic the store refuses ends the
+  restore CLOSED, cause 7, with ownership kept: a command then waits 30,000
+  cycles unserved while the listener stays released. **D3O3** a descriptor
+  memory that accepts and never answers ends CLOSED, cause 7, inside two of
+  the store's 4,096-cycle watchdogs, never a hang. **D3O4** an image loaded
+  after the store's boot walk failed is proven by the writer's LOCATE of
+  ENTITY 0 (heal before answer), and the held command is answered from it.
+  **D3O5** (the AECP hold admission, processor issue #131 ruling) in CLOSED,
+  of `RX_SLOTS_P` + 2 = 6 READ_DESCRIPTORs the first is held and the other
+  five are dropped at the slot gate and counted (snapshot word 37, read over
+  the side port); a GET_RX_STATE after each is answered in exactly the 168
+  cycles it takes with no AECP traffic, none of the six is answered, and the
+  listener still answers in that time 2,000 ms later. **D3O6** the same
+  during a restore whose next D3 grant waits 15,000 cycles: six AECP
+  commands after the listener's release, then a GET_RX_STATE answered in the
+  idle latency before the D3 terminal; at the terminal the held command is
+  answered byte-exact, the five dropped ones never are, five drops are
+  counted, and a command after the terminal is served with no drop. A mutant
+  that drops nothing (the unbounded hold) fails all six checks. **D3O7**
+  (R391-2 S1, taken) the resident count comes back down: in CLOSED the
+  optional external drain (`aecp_txn_ready_i`, then `aecp_rxs_free_i` with
+  the head record's slot, which the wrap exposes for this case alone) steals
+  the held command, and of the next two AECP commands the first is held and
+  only the second is dropped and counted.
+  **D3S** the writer in service, on real AECP SETs over the device model.
+  **D3S1** every persisted group at its first and last declared index
+  (configuration, sampling rate, clock source, both stream-format
+  directions, presentation offset) becomes exactly one ERASE and WRITE of
+  its own record after the 500 ms debounce, byte-exact against an
+  independent F07.8 frame builder (layout 2, CCITT-FALSE crc16), and no
+  other record id moves. **D3S2** `d3_unflushed_o` rises the cycle after
+  the store's accepting cycle, holds, and falls the cycle after the port's
+  done of that WRITE. **D3S3** two changes in one window coalesce into one
+  WRITE of the later value. **D3S4** a change while the WRITE is held at
+  the device taints it: a second WRITE carries the change. **D3S5** a
+  change accepted on the WRITE's done edge wins: the SET's latency to the
+  store is measured, the device completion is placed so the two coincide
+  (the premise is graded), and the record is rewritten. **D3S6** a done
+  clears its own record only, by group and index: the other output offset
+  and the clock source (index 0 of another group) changed during 0x50's
+  WRITE are both written after it. **D3S7** SET_CONTROL on IDENTIFY raises
+  no pending and moves no NVM operation. **D3S8** (DR2b) an identical
+  rewrite after convergence moves nothing, and clock source 0 on the unset
+  row, a row becoming valid at its reset value, is written. **D3S10** (DR2c)
+  a record whose WRITEs all fail is attempted three times in all, each
+  retry granted after the backoff and within one relatch of it (14 cycles
+  here): the backoff is the top's own derivation, 500 ms of the wrap's
+  `CLK_HZ_P`, ceil(1,000,001 / 2) = 500,001 cycles, with no override, so a
+  product derivation of 5 ms or a count of 500 bench ticks fails it. While
+  it waits the writer owns neither dispatch nor the state bus in any cycle,
+  and a READ_DESCRIPTOR sent 1,000 cycles into it is answered byte-exact
+  (2,364 cycles later) before the retry. Then the record is dropped with the
+  reset-sticky `nvm_alarm_o`; no fourth attempt follows and a later
+  successful write does not clear the alarm. **D3S11** a READ_DESCRIPTOR
+  whose fetch the memory answers 3,000 cycles late is running when the
+  debounce closes: the writer holds dispatch but not the state bus until
+  it retires, then latches. **D3S9** grades every cycle of the phase: no
+  command is taken while the writer owns and no latch overlaps a running
+  program. The negative controls (each trigger deleted, taint ignored,
+  clear winning the same edge, clear by group or by index alone,
+  IDENTIFY made a change, validity ignored by the change qualifier, a
+  latch that ignores the running program, a fourth attempt, an alarm
+  forgiven by success, an unproven image continued, the hold released at
+  the go, no dispatch hold) each fail their named check; they run from the
+  mutation driver `d3_mutants.py` in this directory, which plants each in an
+  extract of the tree (mutation record below).
+  **D3R** the restore transaction over the device model, on fresh models.
+  **D3R1** the nine rows D3S1 saves through real SETs come back across a
+  power cycle. Before the save the volatile set is populated: the controller
+  registers for notifications (proved by the one a second controller's change
+  sends it), locks the entity and sets IDENTIFY to 255. When the D3 walk
+  starts (the admission gate's release)
+  every row of selectors 0 to 5 reads its reset value with its valid flag
+  clear, read through taps rather than the bus the restore owns; the walk
+  ends COMPLETE with exactly 9 applied, 0 refused and 18 blank of 27; each
+  group's value and valid flag are restored and a real GET reads each
+  back (GET_CONFIGURATION, GET_SAMPLING_RATE, GET_CLOCK_SOURCE, both
+  GET_STREAM_FORMAT directions, GET_STREAM_INFO's latency through the
+  integrator fold); an enable requested from reset advertises nothing
+  before the combined terminal and ADP advertises after it; no restore
+  write becomes a change (no pending, no device write, for two windows);
+  and the volatile set is gone: IDENTIFY reads 0, the lock is free (the
+  second controller's SET is accepted) and the registry is empty (that
+  change notifies nobody).
+  **D3R2** framed records a SET program would refuse keep their defaults
+  and the walk goes on: configuration 5 of 2, rate 44100 (off the list),
+  clock source 3 of 3, formats the integrator's judge refuses, an offset
+  with bit 31 set; records whose frame fails (crc, layout version,
+  another record's id, a u64 group carrying four bytes) are refused
+  before any rule; the neighbour offset applies; COMPLETE with exactly 1
+  applied and 10 refused. **D3R3** configuration 0, the rate list's second
+  entry and clock source 0 are accepted. **D3R3b** the rate rule walks the
+  AUDIO_UNIT's list as the SET program does, a lane (two entries) at a time
+  and at most eight entries: over the suite's image re-packed with a
+  ten-rate list, the eighth entry (read from the fourth lane) is restored
+  and the ninth, listed but past the bound, is refused. **D3R4** a record read whole in
+  pass 0 and erased at rest before pass 1 aborts (cause 5, the passes
+  agree record by record) after an earlier record was applied, and the
+  roll-back resets both stores: DEFAULTS (`restore_rb_o`), every row at its
+  reset value, the image walked again and AECP running; with no descriptor
+  debt owed the roll-back strobe still holds both stores in reset two cycles.
+  **D3R4b** the other direction: a record erased when pass 0 reads it and
+  framed at rest before pass 1 aborts too (cause 5) and is never applied. **D3R5** faults in pass 0 apply
+  nothing and end done and failed on defaults with AECP running: a DEVICE
+  error on a header (cause 2), a payload torn after two bytes (cause 1),
+  and a header the device never answers, abandoned at the deadline to
+  the arbiter's drain (cause 3); once the device answers the drained read
+  a later SET persists. **D3R5b** the same containment in pass 1: its header
+  READ of 0x50 never answered, the deadline aborts (cause 3) and rolls back
+  to DEFAULTS, the READ goes to the drain, and once the device ends it a
+  later SET persists with nothing left unflushed. **D3R6** an erased device restores blank and not
+  failed, an unframed record is its default, and the one saved record
+  whose every read ends in the device's error is a failure with cause 2,
+  never blank. **D3R7** the rate
+  rule's AUDIO_UNIT fetch answers an error beat: the restore aborts
+  (cause 6), never a refused value, and rolls back. **D3R8** a READ granted 200 cycles
+  inside the per-wait deadline completes; 200 cycles past it aborts (cause 3).
+  **D3R8b** the integrator's format judge is a watched wait: stuck in pass 1,
+  the per-wait deadline (not the aggregate) rolls the walk back to DEFAULTS,
+  cause 3, within twice the deadline of the release.
+  The deadline is the top's own derivation, never an override: 20 ms of the
+  wrap's `CLK_HZ_P` (1,000,001 Hz) is ceil(20,000.02) = 20,001 clocks. **D3R9** a SET held since before the walk runs after
+  the restore applied the saved value, is in force, and the next flush
+  saves it. **D3R10** the rate rule's AUDIO_UNIT fetch answers late: at
+  4,000 cycles (inside the store's 4,096-cycle watchdog) the restore
+  completes; at 5,000 and 16,000 the watchdog's error aborts it (cause 6),
+  both stores stay in reset while the guard still owes the abandoned burst
+  (its debt survives the stores' reset) and leave it only after the late
+  burst, and the re-walked image ends DEFAULTS; at 30,000 the debt outlasts
+  the deadline and the restore ends CLOSED. **D3R11** a pass-1 roll-back
+  after the binding walk restored sink 0 leaves it bound: the listener's
+  GET_RX_STATE answers the restored talker and its record is not
+  rewritten. **D3R12** a roll-back whose re-walk cannot prove the image
+  (the memory falls silent) ends CLOSED: no done, AECP held, ADP never
+  enabled. **D3R13** (DR3a, ratified as an enforced bound) a device that
+  grants every request, the binding walk's included, 200 cycles inside the
+  per-wait deadline trips no wait's deadline (the longest wait is graded
+  under 20,001) and still ends the restore at the aggregate bound, the top's
+  `NVM_RS_AGG_CYC_P` = 1,000 ms of the wrap's clock = 1,000,001 clocks from
+  the one that took `restore_go_i`: with every record saved the bound falls
+  in pass 0, DEFAULTS is registered by exactly that clock, cause 3, nothing
+  applied, and the READ in hand is drained; once the device ends it a later
+  SET persists. Over an erased device the bound falls in pass 1, which
+  rolls back to DEFAULTS within one per-wait deadline of it. Without the
+  counter the first walk runs to about 2.3 million clocks. **D3R14** (the
+  clarification of DR3a on issue #131: an aggregate expiry never closes a
+  provable image) a device slow per byte (each header-probe byte 2,100
+  clocks apart, each payload byte 19,001: the reviewers' probe D1) with
+  every sink's binding saved makes the binding walk alone outlast the bound
+  while no wait trips its own deadline (longest graded under 20,001). At
+  the bound's clock the binding walk takes its own per-wait path: it fails
+  whole (`restore_cause_o` 3, no sink bound), its READ goes to the drain and
+  the listener is released; the D3 walk then proves the image with no wait
+  and no record READ and ends DEFAULTS, cause 3, within one per-wait
+  deadline of the bound, with the image valid, AECP released (a
+  READ_DESCRIPTOR answered byte-exact) and the enable released to ADP;
+  once the device ends the drained READ a later SET persists. With the
+  image refused (its magic flipped) the same boot ends CLOSED, cause 7.
+  **D3R15** (R390-2 F3: the aggregate spans the roll-back) a pass-1 fault
+  starts a roll-back shortly before the bound while every wait stays inside
+  its deadline (the device's grants are steered so the fault's READ is
+  granted on a chosen clock): the bound falls inside the roll-back and ends
+  it CLOSED on the bound's own clock with the fault's cause, in its debt
+  wait (the rate rule's AUDIO_UNIT fetch 16,000 cycles late: cause 6, the
+  burst still owed at the bound) and in its re-LOCATE (a DEVICE error on
+  pass 1's header READ of 0x02 100 cycles before the bound: cause 2, the
+  store still walking the image at the bound). **D3R16** (R391-2 F1) the
+  aggregate is inert after the terminal: a COMPLETE restore, a DEFAULTS
+  one rolled back (cause 6) and a CLOSED one (a roll-back whose re-LOCATE
+  meets a silent memory, cause 2), each followed by a SET where AECP runs,
+  keep their verdicts, ownership and rows (the SET value included) two
+  per-wait deadlines past the bound, with no roll-back strobe after the
+  terminal. **D3R17** (R391-2 F1) it never fires with an event in hand: the
+  device's grants are steered so the writer's arbiter grant of a pass-0
+  READ lands on the bound's own clock; the aggregate waits for the next
+  clock without an event, ends DEFAULTS (cause 3) two clocks later and
+  abandons that READ to the drain, and once the device ends it a later SET
+  persists with nothing unflushed. **D3R18** (R390-3 F1) an abort in the
+  arbiter's issue cycle: the binding walk's registered READ strobe is out in
+  its first `H_RS_STREAM` clock, where no byte can be in hand, and the case
+  lands the fifth binding strobe on the first clock `agg_o` reads 1 (every
+  binding and record saved, the headers at once, each payload byte 12,350
+  clocks apart, the fourth record's done held to a clock placed from
+  the done-to-strobe lag measured earlier in the same boot). That clock
+  carries the strobe and the walk's abort with the arbiter still unowned;
+  the arbiter drains the READ from the next clock, the walk fails whole
+  (cause 3), the restore ends DEFAULTS, and once the device ends the
+  drained READ the port is idle and a later SET persists. **D3R19** to
+  **D3R21** (R390-3 F2, R391-3 F2) grade the aggregate's pre-proof variants,
+  every case with every record and every binding saved. D3R19: the image
+  absent at reset and loaded before `PP_CTRL[1]` (the product order of
+  parent D3 section 8.1), so the D3 walk proves it with its own LOCATE.
+  Past the bound, D3R14's device keeps the binding walk reading until the
+  bound fails it, and the LOCATE then proves the image: DEFAULTS, cause 3,
+  546 clocks after the bound, no D3 record READ. Inside the LOCATE, the
+  binding walk completes with its last done placed so the bound falls
+  midway through the LOCATE (271 of 542 clocks): the same DEFAULTS, image
+  valid, AECP released. D3R20: the binding walk's last done placed so the
+  image is proven on exactly the bound's own clock, in `W_IMG` (image valid
+  at reset) and in `W_IMGLOC` (loaded late, the LOCATE's answer in hand):
+  DEFAULTS on the next clock with no record READ. The done-to-proof lags
+  these placements use come from two short boots with a fast device.
+  D3R21: D3R14's walk with each payload byte `RS_TMO / 2` clocks apart and
+  one byte placed so the binding manager holds it on the bound's own clock,
+  the clock the aggregate fires: the walk fails whole at its next waiting
+  clock (cause 3 registered two clocks after the bound) and the restore
+  ends DEFAULTS. The restore's negative controls (each group's replay deleted,
+  a value rule ignored, the passes allowed to disagree, a DEVICE error read
+  as blank and an UNFRAMED one read as a device error, a descriptor error
+  read as a refusal, no restore watchdog, restore writes counted as changes,
+  ADP enabled without the restore, done without the D3 walk, blank ignoring
+  the D3 walk, ownership taken only at the walk, no roll-back, either store
+  left out of it, the roll-back ignoring the guard's debt, a CLOSED re-walk
+  released) each fail their named check, from the same driver.
+  `restore_done_o` is the COMBINED terminal: the binding walk's release
+  alone (S4) frees the listener, never AECP or ADP.
+  The dispatch hold runs from reset, so every section that resets and then
+  issues AECP commands starts both walks first (`H::boot_to_aecp`, U10, U11
+  and the internal-MAAP model's MP0). Focused reproduction:
+  `./obj_dir/Vpp_top_sim --d3-only` after `make gsi-build`.
+  `./obj_dir/Vpp_top_sim --dr3a` prints, and never grades, the restore
+  durations and longest waits the parent contract's DR3a asks this lane to
+  measure (blank and full restores at two memory latencies, the image walk,
+  pass-0 and pass-1 faults, a debt-held roll-back, a silent device, CLOSED);
+  it records no tally.
 - **NW: accepted live name writes (issue #120).** The top's `aecp_name_wr_o`
   is sampled on every accepting clock edge. Independent byte comparisons
   predict one changed lane, all eight changed lanes and an unchanged name;
@@ -247,14 +482,17 @@ tally.
   `aecp_nvm_mark_o` export (issue #90) on this face and the name store: a
   committed ADD carries mark 6 and a committed SET_NAME mark 7, one strobe
   each, and the GET between them carries none — a mark has no wire shape, so
-  the pin is the only place any of this is visible.
+  the pin is the only place any of this is visible. A mark is a completion
+  notification: R21 proves the notification, never persistence (section D3
+  grades the scalar records; maps and names are later stages).
 - **R** boot restore over a blank NVM device: all 8 BINDING regions read,
   the walk's terminal without `restore_fail`. The loop waits on the binding
   manager's own terminal (`dbg_walk_done_o`), not on `restore_done_o`, so every
   later section keeps the clock it was tuned against (section T's note).
 - **S0/S1** quiescence + snapshot identity, and `restore_done_o` has followed
-  the walk's terminal (the top's level now waits for the listener admission
-  gate's release, issue #92; BW4 grades it cycle by cycle); SRP bring-up: the FIRST MSRP
+  both walks' terminals (the top's level waits for the listener admission
+  gate's release, issue #92, and for the D3 walk; BW4 grades it cycle by
+  cycle; S0 reads it after its 20 ms so section R's clock is unchanged); SRP bring-up: the FIRST MSRP
   frame is the Domain default declaration `New {6,3,2}`, byte-exact.
 - **BW** (runs last, behind resets of its own) a read-only command in the
   boot window, at the top (issue #92): sink 0 is bound to a talker of the
@@ -265,10 +503,13 @@ tally.
   binding byte-exact after it, nothing is written to region 0x20, and the
   next reset restores the same binding. **BW3** (issue #93) the device stops
   granting the walk's next read after region 0x20 was stored: the walk fails
-  whole at its read deadline (the wrap sets `NVM_RS_TMO_CYC_P` to 20,000
-  clocks; the product default is 20 ms of `CLK_HZ_P`, two million steps here),
-  blank and nothing preloaded, and the GET held in the window answers the
-  vendor default while `entity_enable_i` is still low. Released, the device
+  whole at its read deadline (the top derives `NVM_RS_TMO_CYC_P` from the
+  wrap's `CLK_HZ_P`: 20 ms of 1,000,001 Hz, 20,001 clocks),
+  cause 3 and nothing preloaded, and the GET held in the window answers the
+  vendor default at the listener's release, while `entity_enable_i` is
+  still low and before the restore is done: the D3 walk's first read meets
+  the port the arbiter drains and ends at its own deadline on defaults
+  (`rs_cause_o` 3), within two deadlines of the silence. Released, the device
   serves the abandoned read, which the arbiter drains. Every debounce and
   flush then runs out before anything else happens, and region 0x20 must
   still hold the saved record the failed walk had stored: the held GET's
@@ -309,7 +550,9 @@ tally.
   F07.8 record (magic 0x1722) carrying the bound talker EID at the device
   face, and the `nvm_unflushed_o` export (issue #90) sampled every cycle
   across it — the sink reads unflushed while the change waits, and 0 once
-  the commit reports done.
+  the commit reports done. That is the binding manager's pending only; the
+  D3 records' is `d3_unflushed_o` (D3S2), and an integrator's pending is
+  their OR.
 - **S10** the `maap` face (02 §4.2), which the top publishes because 01 §3
   puts address allocation in the integrating fabric. Run in two halves. With
   NO allocator (`maap_req_ready_i` 0 for the whole run above): the port is
@@ -414,6 +657,92 @@ tree: M32 then fails 8 (BW1 four times, BW2, BW3's saved-record check, and BW4
 twice, because a gate that never owns makes no gap and sees no preload), M33
 and M34 the same 2 as before.
 
+### D3 negative controls (issue #131): `d3_mutants.py`
+
+`python3 d3_mutants.py --output DIR [--jobs N]` plants each control below in its own
+extract of `hdl/`, `tb/common/` and this directory, builds `gsi-build`, runs
+`--d3-only`, and counts the mutant KILLED only when the run completes with its
+tally, exits non-zero and every named check fails; a golden extract runs first and
+must pass. The same driver runs the binding manager's three DR2c controls, the
+arbiter's issue-cycle control and its seven own-contract controls (N11) in `tb/acmp_nvm`
+and the validator's admission control in `tb/rx_validator` (their READMEs record
+them). At the lane head all 83 are KILLED and the three goldens PASS;
+the last column is how many checks each one failed there.
+
+| Mutant | Defect planted | Named checks, each failing | Failing checks |
+|---|---|---|---|
+| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 16 |
+| `dispatch_not_held` | the engine's three dispatch gates ignore the writer's ownership | `D3O1: without the walk the writer owns every cycle` | 5 |
+| `own_taken_at_the_walk` | ownership and the bus taken only once the walk starts, not from reset | `D3R9: the held SET` | 10 |
+| `image_unproven_continues` | an unprovable image (the LOCATE's error) no longer aborts | `D3O2: CLOSED at`, `D3O3: CLOSED` | 9 |
+| `latch_ignores_program` | the service latch does not wait for a running program | `D3S9` | 3 |
+| `TRG_cfg` | configuration trigger deleted | `D3S1 cfg` | 3 |
+| `TRG_rate` | sampling-rate trigger deleted | `D3S1 rate` | 3 |
+| `TRG_clks` | clock-source trigger deleted | `D3S1 clks` | 5 |
+| `TRG_fmti` | input-format trigger deleted | `D3S1 fmti` | 4 |
+| `TRG_fmto` | output-format trigger deleted | `D3S1 fmto` | 4 |
+| `TRG_ptof` | presentation-offset trigger deleted | `D3S1 ptof` | 24 |
+| `taint_ignored` | a change after the latch no longer taints the write | `D3S4 taint` | 1 |
+| `clear_wins_same_edge` | the done's clear outranks a change on the same edge | `D3S5 same edge` | 1 |
+| `clear_by_group` | the done clears every record of the group | `D3S6 group` | 8 |
+| `clear_by_index` | the done clears every record of the same index | `D3S6 index` | 14 |
+| `identify_is_a_change` | IDENTIFY (selector 7) made a persisted change | `D3S7` | 1 |
+| `unchanged_compare_ignores_validity` | the change qualifier ignores the valid flag | `D3S8 validity` | 1 |
+| `RPL_cfg` | configuration replay deleted | `D3R1 cfg` | 6 |
+| `RPL_rate` | sampling-rate replay deleted | `D3R1 rate` | 6 |
+| `RPL_clks` | clock-source replay deleted | `D3R1 clks` | 3 |
+| `RPL_fmti` | input-format replay deleted | `D3R1 fmti` | 2 |
+| `RPL_fmto` | output-format replay deleted | `D3R1 fmto` | 2 |
+| `RPL_ptof` | presentation-offset replay deleted | `D3R1 ptof` | 6 |
+| `rule_ignored` | a SET-rule refusal applied anyway | `D3R2: COMPLETE` | 3 |
+| `passes_may_disagree` | the pass agreement removed | `D3R4:`, `D3R4b` | 3 |
+| `device_error_reads_as_blank` | a DEVICE error read as a blank record | `D3R5 device error on the header`, `D3R6: the one saved record` | 5 |
+| `unframed_reads_as_device_error` | an UNFRAMED record read as a device error | `D3R6: an erased device restores blank` | 38 |
+| `desc_error_is_a_refusal` | a rule's descriptor error read as a refusal | `D3R7` | 6 |
+| `no_restore_watchdog` | the per-wait deadline removed | `D3R8: a READ granted`, `D3R8b` | 7 |
+| `restore_writes_are_changes` | the snoop taps the shared bus, so restore writes are changes | `D3R1: no restore write is a change` | 1 |
+| `enable_not_released_by_restore` | ADP enabled by the request alone | `D3R1: the enable requested from reset` | 4 |
+| `done_without_d3` | restore done without the D3 walk | `D3R1: the enable requested from reset`, `D3R1: COMPLETE` | 42 |
+| `blank_ignores_d3` | restore blank ignores the D3 walk | `D3R1: COMPLETE` | 1 |
+| `store_not_cleared` | the sampling-rate row and its valid flag not reset | `D3R1: every row at its reset value` | 17 |
+| `valid_not_cleared` | the sampling-rate valid flag not reset | `D3R1: every row at its reset value` | 17 |
+| `quarantine_released_by_time` | the arbiter ends a drain after 1,000 cycles | `D3R5: once the device ends the drained read a later SET persists` | 10 |
+| `no_rollback` | a pass-1 abort ends DEFAULTS without the roll-back | `D3R4:` | 17 |
+| `dyn_not_rolled_back` | the dynamic-state store left out of the roll-back | `D3R4:` | 4 |
+| `store_not_rolled_back` | the descriptor store left out of the roll-back | `D3R10 5000` | 3 |
+| `rollback_ignores_debt` | the roll-back ignores the guard's debt | `D3R10 16000` | 3 |
+| `closed_releases_the_entity` | a roll-back that cannot re-prove the image ends DEFAULTS | `D3R12` | 2 |
+| `no_backoff_d3` | the writer's DR2c backoff removed | `D3S10 timing` | 2 |
+| `fourth_attempt` | the writer allows a fourth attempt | `D3S10 count` | 2 |
+| `alarm_forgiven_by_success` | a later success clears the writer's alarm | `D3S10 revocation` | 1 |
+| `backoff_derivation` | the top derives the backoff as CLK_HZ_P / 200 (5 ms) | `D3S10 timing` | 2 |
+| `backoff_holds_dispatch` | BACKOFF holds dispatch and the bus | `D3S10 backoff` | 1 |
+| `disagree_one_direction` | the agreement aborts whole-then-blank only | `D3R4b` | 1 |
+| `rollback_one_cycle` | the roll-back strobe lasts one cycle without debt | `D3R4 strobe` | 1 |
+| `pass1_read_not_drained` | a pass-1 deadline no longer abandons its READ to the drain | `D3R5b: once the device ends the drained pass-1 READ` | 1 |
+| `judge_wait_unwatched` | the format judge's wait is not watched | `D3R8b` | 1 |
+| `rate_walk_stuck_on_first_lane` | the rate walk never leaves the list's first lane | `D3R3b entry 7` | 1 |
+| `rate_walk_unbounded` | the rate walk's eight-entry bound dropped | `D3R3b entry 8` | 1 |
+| `no_aggregate_deadline` | the aggregate deadline removed | `D3R13 pass 0: DEFAULTS at clock`, `D3R13 pass 1` | 16 |
+| `aggregate_mirrored` | the aggregate a mirrored 100,000,000 instead of CLK_HZ_P | `D3R13 pass 0: DEFAULTS at clock` | 19 |
+| `aggregate_from_the_walk` | the aggregate counts from the binding walk's end | `D3R13 pass 0: DEFAULTS at clock` | 21 |
+| `per_wait_floor` | the per-wait derivation rounds down | `D3R8 deadline` | 1 |
+| `agg_closes_before_proof` | the aggregate aborts before the image is proven (the pre-walk close) | `D3R14 image valid: DEFAULTS` | 11 |
+| `binding_walk_ignores_aggregate` | the binding walk ignores the aggregate and reads on | `D3R14 image valid: the binding walk`, `D3R14 image refused: the binding walk` | 10 |
+| `proof_reads_records_past_bound` | the image proven past the bound starts pass 0 | `D3R14 image valid: DEFAULTS` | 6 |
+| `agg_not_in_rollback` | the aggregate count paused in the roll-back and its re-LOCATE (R390-2's own edit) | `D3R15 debt wait: CLOSED`, `D3R15 re-LOCATE: CLOSED` | 4 |
+| `agg_not_stopped_at_terminal` | the aggregate keeps counting after the terminal (R391-2's own edit) | `D3R16 COMPLETE`, `D3R16 DEFAULTS`, `D3R16 CLOSED` | 3 |
+| `agg_fires_with_event_in_hand` | the aggregate fires with a grant, byte or answer in hand (R391-2's own edit) | `D3R17: the writer's grant`, `D3R17: once the device ends` | 2 |
+| `drain_misses_issue_cycle` | the head's arbiter: the drain armed only for a READ already owned, so an abort in the issue cycle is lost (R390-3 F1) | `D3R18: the READ abandoned in its issue cycle`, `D3R18: once the device ends` | 2 |
+| `agg_closes_during_proof` | the aggregate also aborts in the image proof's LOCATE (R390-3's own edit) | `D3R19 inside the LOCATE: DEFAULTS` | 2 |
+| `proof_past_needs_fire` | the proof past the bound keyed on the fired level, not the bound reached (R390-3's own edit) | `D3R20 W_IMG: DEFAULTS`, `D3R20 W_IMGLOC: DEFAULTS` | 2 |
+| `proof_default_only_from_img` | the proof's DEFAULTS taken only in `W_IMG`, never from the LOCATE (R391-3's own edit) | `D3R19 past the bound: DEFAULTS`, `D3R19 inside the LOCATE: DEFAULTS`, `D3R20 W_IMGLOC: DEFAULTS` | 3 |
+| `proof_past_bound_needs_fired` | `agg_past_w` is the fired level, so a proof on the bound's own clock reads on (R391-3's own edit) | `D3R20 W_IMG: DEFAULTS`, `D3R20 W_IMGLOC: DEFAULTS` | 2 |
+| `agg_o_pulse` | `agg_o` a one-clock pulse on the expiry instead of a level (R391-3's own edit) | `D3R21: the binding walk fails whole` | 3 |
+| `aecp_hold_unbounded` | the admission gate never drops (the unbounded hold) | `D3O5: in CLOSED each GET_RX_STATE`, `D3O6: during the slowed walk` | 7 |
+| `held_drop_uncounted` | a held drop not counted | `D3O5: one AECP command held`, `D3O6: at the terminal` | 5 |
+| `resident_never_returned` | the resident count never comes back down (R391-2's own edit) | `D3O7: the returned slot frees the share` | 1 |
+
 ## Recorded seams and honest limits
 
 - The validator's V9 pass-through has NO msrp/mvrp select — `KL_mrp_strip`
@@ -435,10 +764,12 @@ and M34 the same 2 as before.
 - The AECP pop face is still exposed and still tied `ready = 0` here: the
   AECP head is now drained by `KL_aecp_engine` INSIDE the top, and the port
   is an additional, optional consumer (see its banner).
-- Scenario A is the only one that touches the descriptor memory. The image is
+- Scenario A and section D3 touch the descriptor memory. The image is
   loaded into the DRAM model BEFORE reset, exactly as software does before
-  `entity_enable`; the "software has not loaded it" and "no bridge at all"
-  arms live in the `desc_store` suite, which owns that face.
+  `restore_go_i` (and so before `entity_enable`); the "software has not
+  loaded it" and "no bridge at all" arms live in the `desc_store` suite,
+  which owns that face, and their effect on the restore (CLOSED, or a late
+  load healed by the restore's LOCATE) is D3O2 to D3O4.
 - The `A` expectations are byte builders from the IEEE §9.3.1 AECPDU and
   §7.2 descriptor field offsets plus the documented image layout — nothing in
   them comes from the DUT or from `gen_desc_image.py`'s output.
@@ -459,7 +790,9 @@ and M34 the same 2 as before.
   except where a section names its tap: R waits on `dbg_walk_done_o`, and
   BW4 grades the top's restore pins against the admission gate's release and
   the listener's preload write and A4 arm (`dbg_lsn_released_o`,
-  `dbg_lsn_preload_o`, `dbg_lsn_arm_o`).
+  `dbg_lsn_preload_o`, `dbg_lsn_arm_o`). Section D3 grades the writer's
+  ownership and verdicts (`dbg_d3_*`), the engine's command-in-flight level
+  (`dbg_aecp_busy_o`) and the dispatch queue's head (`dbg_aecp_head_o`).
 
 ## Section B — the response buffer lives in main memory (03 §7.1)
 
@@ -635,7 +968,13 @@ budgets, and proves that no attempt timeout starts before serializer acceptance.
 A valid command then cancels the queued exchange. The stale handle must drain,
 both solicited responses must resume, and all five TX slots must return free.
 
+U10 resets the DUT over an erased NVM device and starts both restore walks
+before its first command (`H::boot_to_aecp`): the D3 writer holds AECP
+dispatch from reset to its restore terminal.
+
 ## Section U11: non-head cancellation
+
+U11 boots the same way after its reset.
 
 U11 stalls the serializer until two independent controller probes occupy the
 originator queue. It cancels the controller owning the second handle and

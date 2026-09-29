@@ -49,7 +49,9 @@ flowchart TB
   et -- no --> drop2["drop (cnt: rx_ethertype)"]
   et -- yes --> st{"subtype FA / FB / FC?"}
   st -- no --> drop3["drop (cnt: rx_subtype)"]
-  st -- yes --> hv{"h = 0 and version = 0?"}
+  st -- yes --> held{"AECP (FB) while the D3 writer holds AECP, one AECP record resident?"}
+  held -- yes --> drop7["drop (cnt: rx_aecp_held)"]
+  held -- no --> hv{"h = 0 and version = 0?"}
   hv -- no --> drop4["drop (cnt: rx_version)"]
   hv -- yes --> len{"cdl + 12 &le; frame payload?"}
   len -- no --> drop5["drop (cnt: rx_length)"]
@@ -73,6 +75,7 @@ flowchart TB
 | V6 | AECP: `target_entity_id` ≠ own EID → drop (responses: match inflight table instead) | AECP | drop / route to originator | IEEE Fig 9-3 |
 | V7 | ACMP: responses matched on {controller EID, seq, msg_type} against inflight; unknown → ignore | ACMP | route or ignore | IEEE §8.2.1; Milan §5.5.3.1 |
 | V8 | Malformed below these gates is **never fatal**: drop + count, no state change | all | per-drop counters (trace-visible) | design rule |
+| V10 | While the D3 writer holds AECP (from reset to its COMPLETE or DEFAULTS terminal, for ever in CLOSED) at most **one** AECP record occupies the shared ingress, an RX slot and the AECP queue; each further AECP frame is dropped at its slot gate (the subtype byte, its slot returned) | AECP | drop + count (`rx_aecp_held`, snapshot word 37); no response, the controller retries on its AECP command timeout | processor issue #131 ruling (5873580386); parent D3 §8.1 |
 | V9 | With `P-EN-SRP-ENGINE`: DA `01-80-C2-00-00-0E` + EtherType `0x22EA` (MSRP) and DA `01-80-C2-00-00-21` + EtherType `0x88F5` (MVRP) bypass the 1722.1 pipeline into the SRP engine's MRPDU queue; its own tolerance rules apply ([10 §3](10_srp_engine.md)); DA alone is NOT sufficient — LLDP (0x88CC) and 802.1X share these group DAs | MRP | route | 802.1Q Table 10-1/10-2, §35.2.2.1 (constants); Milan §4.2.7 (shall support) |
 
 Field extraction uses the offset tables of the PDU reg figures
@@ -233,7 +236,23 @@ Ordering rules:
   implementations — IEEE permits pipelined controllers, §9.2.2).
 - **(c)** the unsolicited stream is an independent per-controller sequence
   ([06 §7](06_aecp_engine.md)).
-- **(d)** NVM commits are asynchronous and never delay responses.
+- **(d)** NVM media commits are asynchronous to responses: no response waits for a
+  device write. Two holds are not commits and are bounded separately. At RUNTIME
+  the D3 writer's coherent latch holds AECP dispatch from ACQUIRE until its one
+  state-bus read completes: the command already running finishes first (as it
+  would under single issue anyway), and the next one waits a few clocks more.
+  The latch adds no media time to the command-response line of rule (e). At BOOT the D3 writer owns dispatch from reset to its
+  restore terminal (COMPLETE or DEFAULTS), and for ever when the restore ends
+  CLOSED. While it does, at most **one** AECP record occupies the shared ingress
+  (an RX slot and the AECP queue, V10): that command is answered after the
+  restore, before the entity is advertised, or never in CLOSED; every further
+  AECP frame is dropped at its slot gate and counted (`rx_aecp_held`, snapshot
+  word 37) and gets no response, so its controller retries on its AECP command
+  timeout, as it does for any ingress loss. ACMP, ADP and MAAP keep the other
+  `P-RX-SLOTS` − 1 slots and the latency they have with AECP idle. The restore's
+  per-wait deadline and its 1,000 ms aggregate bound the hold before a done
+  terminal; only a reset ends CLOSED
+  ([07 §5.3](07_memory_maps.md#fig-07-nvmflow), [02 §8](02_interfaces.md#fig-02-nvmwave)).
 - **(e)** a deadline expiry **forces a response, never a silent drop** (IEEE
   1722.1-2021 §9.3.2.6: "Entities shall respond to all ATDECC commands within
   240 milliseconds"): the transaction is redirected to the FAIL_SAFE µprogram
@@ -242,7 +261,14 @@ Ordering rules:
   after that response is queued, and no partial commit survives the kill. The
   AECP deadline is **armed at `T-BUDGET-AECP-WC`**, leaving ≥ 140 ms of the
   `T-AECP-RESP` line for the FAIL_SAFE build and TX serialization — the forced
-  response is on the wire inside 240 ms, not merely started at it.
+  response is on the wire inside 240 ms, not merely started at it. **The boot
+  hold of rule (d) is the one exception, and no deadline expiry:** the one AECP
+  command held through a restore is answered after it, which the aggregate
+  bounds at 1,000 ms (a roll-back or image proof it starts is then bounded per
+  wait), so its response may come later than 240 ms; in CLOSED it
+  and every dropped command go unanswered until reset, the fail-closed choice
+  (parent D3 §8.1). Answering them from state the restore has not decided
+  would be worse than the controller's retry.
 
 ## 7. Response building and buffers
 

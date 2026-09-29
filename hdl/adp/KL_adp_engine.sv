@@ -97,7 +97,9 @@ module KL_adp_engine
     input  wire                        rst_n,              //! synchronous active-low reset
 
     // ---- level controls + class-C events in (02 §5/§6) --------------------
-    input  wire                        entity_enable_i,    //! Milan §5.6.1 boot gate (level); falling edge = SHUTDOWN
+    //! Milan §5.6.1 boot gate (level); falling edge = SHUTDOWN. The top
+    //! drives it with the effective enable: requested AND restore_done_o
+    input  wire                        entity_enable_i,
     input  wire  [N_IF_P-1:0]          link_up_i,          //! per-interface link status (level, 2FF-synced upstream)
     input  wire  [N_IF_P-1:0]          gm_change_i,        //! per-interface GM_CHANGE strobe (event router face)
 

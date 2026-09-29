@@ -19,10 +19,12 @@ disagree, the banner is right.
 
 ```
 hdl/common/         pp_pkg, the timer service, the PRNG
-hdl/packet_engine/  the shared RX and TX datapath, side port, trace ring, NVM port
+hdl/packet_engine/  the shared RX and TX datapath, side port, trace ring, NVM port and
+                    its two-manager arbiter
 hdl/adp/            discovery
 hdl/acmp/           Milan binding and probing, plus the binding persistence shadow
-hdl/aecp/           the micro-coded AEM engine, descriptor store, response buffer
+hdl/aecp/           the micro-coded AEM engine, descriptor store and its memory guard,
+                    dynamic-state store, response buffer, the D3 saved-state writer
 hdl/srp/            the MSRP/MVRP endpoint participant
 hdl/maap/           the IEEE 1722-2016 Annex B address-claim engine
 hdl/top/            protocol_processor_top and the one recorded RX seam
@@ -136,6 +138,7 @@ Allocation order and the slot budget are owned by
 | ADP | [`KL_adp_engine`](../../hdl/adp/KL_adp_engine.sv), [`pp_adp_pkg`](../../hdl/adp/pp_adp_pkg.sv) | [04](../architecture/04_adp_engine.md) | [F04.2 advertise SM](../architecture/04_adp_engine.md#fig-04-advsm), [F04.3 talker discovery](../architecture/04_adp_engine.md#fig-04-discsm) |
 | ACMP | [`KL_pp_acmp_listener`](../../hdl/acmp/KL_pp_acmp_listener.sv), [`KL_acmp_talker`](../../hdl/acmp/KL_acmp_talker.sv), [`KL_acmp_nvm_shadow`](../../hdl/acmp/KL_acmp_nvm_shadow.sv) | [05](../architecture/05_acmp_engine.md) | [F05.3 the authoritative transition matrix](../architecture/05_acmp_engine.md#fig-05-listener-matrix) |
 | AECP | [`hdl/aecp/`](../../hdl/aecp/) | [06](../architecture/06_aecp_engine.md) | [F06.14 command table](../architecture/06_aecp_engine.md#fig-06-cmdtable) |
+| Saved state (D3) | [`KL_aecp_nvm_writer`](../../hdl/aecp/KL_aecp_nvm_writer.sv) inside the AECP engine (NVM manager 1), [`KL_acmp_nvm_shadow`](../../hdl/acmp/KL_acmp_nvm_shadow.sv) (manager 0), [`KL_pp_nvm_mgr_arb`](../../hdl/packet_engine/KL_pp_nvm_mgr_arb.sv), [`KL_pp_nvm_port`](../../hdl/packet_engine/KL_pp_nvm_port.sv) | [07 §5](../architecture/07_memory_maps.md), [02 §8](../architecture/02_interfaces.md#fig-02-nvmwave); the parent D3 contract (materialization §5.1, §6, §8) | [F07.9 commit and restore](../architecture/07_memory_maps.md#fig-07-nvmflow) |
 | SRP | [`hdl/srp/`](../../hdl/srp/) | [10](../architecture/10_srp_engine.md) | [F10.1 internals](../architecture/10_srp_engine.md#fig-10-blocks) |
 | MAAP | [`KL_pp_maap`](../../hdl/maap/KL_pp_maap.sv) | [11](../architecture/11_maap_engine.md) | the Table B.7 conflict matrix ([11 §6](../architecture/11_maap_engine.md)) |
 
@@ -148,6 +151,18 @@ canonical order. That is what lets a profile change behaviour by swapping a ROM 
 without touching the datapath. **Changing listener behaviour means changing the ROM
 generator and [F05.3](../architecture/05_acmp_engine.md#fig-05-listener-matrix), not the
 executor.**
+
+### The D3 writer owns the AECP state bus at boot, and resets two stores
+
+`KL_aecp_nvm_writer` holds AECP dispatch (`own`) and the state bus (`bus`) from the
+hard reset to its restore terminal, so every restore write lands in reset state. Its
+roll-back (`rb_rst`) is a **local** reset of exactly two owners, `KL_aecp_dyn_state` and
+`KL_aecp_desc_store`, driven through the engine's `store_rst_n_w`. Keep these reset
+boundaries: `KL_aecp_desc_mem_guard` takes the hard reset only, because its `debt_o`
+must survive the stores' reset (the writer holds `rb_rst` while it is set), and nothing
+on the ACMP side ever takes `rb_rst`. The writer's change input is tapped on the µCPU's
+side of the 2:1 state-bus selection, so a restore write is never a change; do not move
+that tap. Diagram [20](../diagrams/20-rtl-dataflow.svg) shows the placement.
 
 ### The AECP path goes through the integrator's main memory
 

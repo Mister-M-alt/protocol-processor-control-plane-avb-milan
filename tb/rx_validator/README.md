@@ -2,7 +2,7 @@
 # tb/rx_validator — KL_pp_rx_validator suite
 
 Exit 0 = PASS. `make` builds with Verilator and runs `sim_main.cpp`
-(tally line: `276 checks: 276 PASS, 0 FAIL`).
+(tally line: `437 checks: 437 PASS, 0 FAIL`).
 
 ## What it proves
 
@@ -23,6 +23,11 @@ commit/abort bookkeeping).
   slot aborted (F9). FB message types demux to AEM/MVU/AA (F1/F6/F6b).
 - **V8**: `h != 0` and `version != 0` dropped + `rx_version` + abort
   (F8/F8b, F09.4 TOL rows).
+- **V10, the AECP hold admission** (processor issue #131 ruling): with
+  `aecp_hold_i` an AECP frame on the own or the AVDECC multicast DA takes its
+  slot and returns it (one alloc, one abort), commits nothing, emits no header
+  beat and counts `rx_aecp_held` and nothing else; ACMP, ADP and MAAP frames
+  pass untouched under the same hold, and AECP passes once it falls (F28).
 - **V1**: `cdl + 12 > frame payload` dropped + `rx_length` + abort (F7);
   header torn mid-common-header ditto (F17c/F17d); inbound `cdl + 12`
   beyond the slot capacity dropped (F16).
@@ -67,3 +72,4 @@ commit/abort bookkeeping).
 | M1 | h/version gate inverted (`!= 4'h0` → `== 4'hF`) | F8/F8b: `rx_version` stays 0, bad frames commit + emit hdr beats instead of aborting (8 FAILs) |
 | M2 | V1 boundary off-by-one (`pcnt_end >= cdl+12` → `>`) | F1 and every exact-fit frame: counted `rx_length` + aborted instead of committed (101 FAILs) |
 | M3 | V9 DA-alone routing (MSRP EtherType pair check dropped) | F14: 60 LLDP bytes leak onto the MRP stream (1 FAIL) |
+| M4 | V10 the AECP hold admission dropped (`held_fail_w` tied 0; `validator_admits_held_aecp` in `tb/pp_top/d3_mutants.py`, which plants it in an extract and runs this suite) | F28: the held AECP frame commits and emits a header beat, `rx_aecp_held` stays 0 (4 FAILs) |

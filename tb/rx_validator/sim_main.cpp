@@ -325,6 +325,7 @@ class RxValidatorSuite {
   void the_fabric_peers_reference_contract_frame_parses();
   void v8_still_owns_the_sv_version_nibble_on_maap();
   void probe_tx_response_carries_the_listeners_unique_id();
+  void held_aecp_frames_are_dropped_at_the_slot_gate();
 
   const milan::tb::Model<VKL_pp_rx_validator> model;
   VKL_pp_rx_validator* const d = model.get();
@@ -709,6 +710,46 @@ void RxValidatorSuite::probe_tx_response_carries_the_listeners_unique_id() {
         unsigned(h.hg.operands & 0xFFFF));
 }
 
+// ---- F28: the AECP hold admission (processor issue #131 ruling) -------
+// While aecp_hold_i, the AECP frame F1 is dropped at its slot gate: the slot
+// is taken and returned (one alloc, one abort), there is no commit and no
+// header beat, and rx_aecp_held counts it while rx_subtype does not. ACMP,
+// ADP and MAAP frames pass untouched under the same hold, AECP on the
+// AVDECC multicast DA is dropped too, and F1 passes once the hold falls.
+void RxValidatorSuite::held_aecp_frames_are_dropped_at_the_slot_gate() {
+  const unsigned held0 = d->rx_aecp_held_count_o;
+  d->aecp_hold_i = 1;
+  Bytes mcast = f1;
+  mcast[0] = 0x91; mcast[1] = 0xE0; mcast[2] = 0xF0;
+  mcast[3] = 0x01; mcast[4] = 0x00; mcast[5] = 0x00;
+  for (const Bytes* f : {&f1, &mcast}) {
+    const Snap b = snap(h);
+    h.frame(*f);
+    h.idle(40);
+    const Snap a = snap(h);
+    CHECK(a.allocs - b.allocs == 1 && a.aborts - b.aborts == 1
+              && a.commits == b.commits && a.hdrs == b.hdrs && a.sub == b.sub
+              && a.ver == b.ver && a.len == b.len,
+          "F28 held AECP: slot taken and returned, no commit, no header beat, "
+          "no other counter (allocs %d aborts %d commits %d)", a.allocs - b.allocs,
+          a.aborts - b.aborts, a.commits - b.commits);
+  }
+  CHECK(d->rx_aecp_held_count_o == held0 + 2, "F28 rx_aecp_held counts both got %u",
+        unsigned(d->rx_aecp_held_count_o - held0));
+  run_case("F28 ACMP under the hold", f3);
+  Bytes adp = eth(DA_AVDECC, 0x02AACC00DD01ull, 0x22F0);
+  adp.push_back(0xFA); adp.push_back(0x00);
+  adp.push_back(uint8_t(10 << 3)); adp.push_back(56);
+  put64(adp, 0xAA11223344556677ull);
+  fill_pat(adp, 14 + 68, 0x60);
+  run_case("F28 ADP under the hold", adp);
+  run_case("F28 MAAP under the hold", maap_pdu(DA_MAAP, 1, 16, 0x91E0F0004000ull, 8, 0, 0));
+  d->aecp_hold_i = 0;
+  run_case("F28 AECP after the hold", f1);
+  check_hdr("F28 AECP after the hold", classify(f1, true).hdr);
+  CHECK(d->rx_aecp_held_count_o == held0 + 2, "F28 nothing counted without the hold");
+}
+
 int RxValidatorSuite::run() {
   reset_zeroes_the_counters();
   aecp_aem_command_to_own_unicast_at_the_v1_boundary();
@@ -737,6 +778,7 @@ int RxValidatorSuite::run() {
   the_fabric_peers_reference_contract_frame_parses();
   v8_still_owns_the_sv_version_nibble_on_maap();
   probe_tx_response_carries_the_listeners_unique_id();
+  held_aecp_frames_are_dropped_at_the_slot_gate();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

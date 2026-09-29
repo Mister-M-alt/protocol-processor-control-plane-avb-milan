@@ -17,9 +17,10 @@
 //
 //                Only the HARD reset clears debt without a terminal beat.
 //                Never wire a store-only or D3 rollback reset here. debt_o is
-//                the D3 interface: the future writer must hold its restorable
-//                owners until debt drains, bounded by its own deadline.
-//                This guard has no timeout and does not implement that writer.
+//                the D3 interface: KL_aecp_nvm_writer holds its roll-back of
+//                both stores until debt drains, bounded by its own deadline,
+//                so a late beat never enters the re-walk. This guard has no
+//                timeout of its own.
 //
 //                Responses start after request acceptance. An accepted err
 //                terminates the burst just like last; no further beats of
