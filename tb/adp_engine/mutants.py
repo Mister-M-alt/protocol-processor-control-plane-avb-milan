@@ -29,6 +29,10 @@ MUTANTS = [
     ("cfg-nonzero-for-valid", "cfg-nonzero-for-valid", "pp_top", "adp-config", "AD2"),
     ("cfg-valid-not-sticky", "cfg-valid-not-sticky", "pp_top", "adp-config", "AD2"),
     ("cfg-valid-any-selector", "cfg-valid-any-selector", "pp_top", "adp-config", "AD1b"),
+    # the D3 writer (PR #132) on the state bus: the flag follows its restore write
+    # and its roll-back's reset
+    ("cfg-valid-ucpu-bus", "cfg-valid-ucpu-bus", "pp_top", "adp-config", "AD5"),
+    ("cfg-valid-hard-reset", "cfg-valid-hard-reset", "pp_top", "adp-config", "AD6"),
     # issue #41: the boot gate over the full T-ADP-DELAY span
     ("gate-enable-dropped", "gate-enable-dropped", "adp_engine", "run", "P12"),
     ("gate-enable-dropped-top", "gate-enable-dropped", "pp_top", "adp-config", "AD0"),

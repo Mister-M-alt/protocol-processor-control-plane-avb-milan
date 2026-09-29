@@ -252,12 +252,15 @@ A static-model change requires a new model identity, subject to
 IEEE 1722.1 §6.2.2.8's exclusions.
 
 Drive `current_cfg_i` with the image's configuration, the ENTITY descriptor's
-`current_configuration`. It is the ADPDU's `current_configuration_index` only
-until a controller's SET_CONFIGURATION writes the dynamic overlay; from then on
-the processor advertises the overlay (`aecp_cur_config_o`), the same value
-GET_CONFIGURATION answers, and no longer reads `current_cfg_i`. No loopback
-of `aecp_cur_config_o` is needed. Every other ADPDU field is independent of the
-configuration (Milan §5.6.2).
+`current_configuration`. It is the ADPDU's `current_configuration_index` while
+the dynamic overlay's configuration row is unset: from reset until a
+controller's SET_CONFIGURATION writes the row or the boot restore writes a saved
+configuration back into it
+([07 §5.3](../architecture/07_memory_maps.md#fig-07-nvmflow)), and again after a
+restore roll-back. While the row is written the processor advertises the overlay
+(`aecp_cur_config_o`), the same value GET_CONFIGURATION answers, and does not
+read `current_cfg_i`. No loopback of `aecp_cur_config_o` is needed. Every other
+ADPDU field is independent of the configuration (Milan §5.6.2).
 
 Drive `talker_sources_i` and `listener_sinks_i` with the maximum respective
 STREAM_OUTPUT and STREAM_INPUT counts over every supported configuration

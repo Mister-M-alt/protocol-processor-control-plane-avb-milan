@@ -1,8 +1,8 @@
 --- a/hdl/aecp/KL_aecp_engine.sv
 +++ b/hdl/aecp/KL_aecp_engine.sv
-@@ -1688,6 +1688,8 @@
+@@ -1808,6 +1808,8 @@
                   && (st_addr_w[15:3] == SEL_CFG_C)
-                  && (dyn_ix_w == 16'd0)) begin
+                  && (dyn_didx_w == 16'd0)) begin
        dyn_cfg_v_r <= 1'b1;
 +    end else begin
 +      dyn_cfg_v_r <= 1'b0;

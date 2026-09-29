@@ -165,18 +165,20 @@ the tree with `git apply`, runs one suite target there, and requires the
 named check to fail in a completed simulation. It reads logs only, never
 production source. A positive control of every (suite, target) pair runs
 first. `MUTANT_OUTPUT` (default `/tmp/adp-mutants`) receives one log per arm.
-Counts below were taken on 2026-09-29 with Verilator 5.050, 27 of 27 arms killed.
+Counts below were taken on 2026-09-29 with Verilator 5.050, 29 of 29 arms killed.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|
 | `cfg-read-live` | adp_engine | the builder reads `current_cfg_i` live instead of the index sampled at build (the shipped form before issue #40) | 1: P11c, the frame carries `0104`, the high byte of `0102` and the low byte of `0304` |
 | `cfg-dependent-field` | adp_engine | identify_control_index made configuration-dependent (XOR with the index) | 14: P11b bytes 66 and 67 move with the configuration, and every byte-exact frame (P2, P5, P7, P11a, P11d, P11e, and the walk's four frames) |
-| `cfg-dependent-field-top` | pp_top `adp-config` | the same patch, at the processor | 5: AD1, AD2 and AD3 (a byte outside 50..53 and 64..65 moved), AD4 |
-| `cfg-frozen-at-top` | pp_top `adp-config` | the top feeds the engine `current_cfg_i` again (the wiring before issue #40) | 3: AD2 (the index stays 1 after SET_CONFIGURATION(0)), AD4 |
-| `cfg-overlay-only` | pp_top `adp-config` | the top feeds the overlay with no image-default fallback | 2: AD1 and AD1b carry the overlay's reset 0, not the image's 1 |
-| `cfg-nonzero-for-valid` | pp_top `adp-config` | the overlay counts as set when it is non-zero, instead of by its valid flag | 2: AD2, a SET to 0 advertises the default 1 |
-| `cfg-valid-not-sticky` | pp_top `adp-config` | the engine's valid flag is high only in the write cycle | 3: AD2, AD4 |
+| `cfg-dependent-field-top` | pp_top `adp-config` | the same patch, at the processor | 6: AD1, AD2 and AD3 (a byte outside 50..53 and 64..65 moved), AD4, AD6 (the first advert after the roll-back at configuration 1) |
+| `cfg-frozen-at-top` | pp_top `adp-config` | the top feeds the engine `current_cfg_i` again (the wiring before issue #40) | 4: AD2 (the index stays 1 after SET_CONFIGURATION(0)), AD4, AD5 (the restored 0 is not advertised) |
+| `cfg-overlay-only` | pp_top `adp-config` | the top feeds the overlay with no image-default fallback | 3: AD1 and AD1b carry the overlay's reset 0, not the image's 1, and so does AD6's first advert after the roll-back |
+| `cfg-nonzero-for-valid` | pp_top `adp-config` | the overlay counts as set when it is non-zero, instead of by its valid flag | 3: AD2, a SET to 0 advertises the default 1; AD5, so does a restored 0 |
+| `cfg-valid-not-sticky` | pp_top `adp-config` | the engine's valid flag is high only in the write cycle | 6: AD2, AD4, AD5 (the restored 0 is not advertised), and the flag split from the store's in AD5 and AD6 |
 | `cfg-valid-any-selector` | pp_top `adp-config` | the valid flag is set by a write to any row of the store | 1: AD1b, SET_CLOCK_SOURCE makes the advert carry 0 |
+| `cfg-valid-ucpu-bus` | pp_top `adp-config` | the valid flag decodes the µCPU's side of the state-bus selection, so the D3 writer's restore write of the configuration row is not seen (the branch's decode kept as it was before the merge of PR #132) | 3: AD5 (the first advert after the restore carries the image default 1 while GET reads the restored 0), and the flag split from the store's in AD5 and AD6 |
+| `cfg-valid-hard-reset` | pp_top `adp-config` | the valid flag resets on the hard reset only, not with the store (so the D3 roll-back does not clear it) | 2: AD6 (after the roll-back the advert carries the overlay's reset 0 while GET reads the image default 1), and the flag split from the store's |
 | `gate-enable-dropped` | adp_engine | `entity_enable_i` removed from the DOWN-exit condition (issue #41's mutant) | 30: all four P12 checks (2 draw requests, 5 timer operations, 2 frames, 32,800 clocks out of DOWN), 21 later checks the premature adverts displace (P1 to P5), and the walk's LINK_UP and GM_CHANGE x NOT STARTED cells |
 | `gate-enable-dropped-top` | pp_top `adp-config` | the same patch, at the processor | 3: AD0 (an ADPDU on the wire and 84 of 84 samples out of DOWN), AD1b (the index runs one ahead). In the full default pp_top run these are the only 3 failures of 7,766: S0's 20 ms window and S3's queue check stay green, because the premature draw outlasts S0 to S3 and the early advert then passes S3 as the first one |
 | `walk-down-answers-discover` | adp_engine | DOWN answers RCV_ADP_DISCOVER (issue #85's named mutation) | 16: both DISCOVER rows x DOWN and x NOT STARTED, each drawing, arming and cancelling where the cell is inert |

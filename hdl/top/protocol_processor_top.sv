@@ -208,9 +208,11 @@ module protocol_processor_top
     input  wire  [15:0] talker_caps_i,         //! ADPDU talker_capabilities
     input  wire  [15:0] listener_sinks_i,      //! ADPDU listener_stream_sinks
     input  wire  [15:0] listener_caps_i,       //! ADPDU listener_capabilities
-    //! current_configuration_index of the ADPDU until a controller's
-    //! SET_CONFIGURATION stores one; from then on the ADPDU carries the
-    //! dynamic overlay (aecp_cur_config_o). Drive the image's configuration.
+    //! current_configuration_index of the ADPDU while the dynamic overlay's
+    //! configuration row is unset (from reset, and after a D3 roll-back);
+    //! once a controller's SET_CONFIGURATION or the D3 restore of a saved
+    //! record writes the row, the ADPDU carries the overlay
+    //! (aecp_cur_config_o). Drive the image's configuration.
     input  wire  [15:0] current_cfg_i,
     input  wire  [15:0] identify_index_i,      //! identify_control_index
 
@@ -1710,10 +1712,12 @@ module protocol_processor_top
 
   //! The ADPDU's current_configuration_index is the entity's CURRENT
   //! configuration (IEEE §6.2.2.18), the value GET_CONFIGURATION and the
-  //! ENTITY descriptor serve: the dynamic overlay once SET_CONFIGURATION has
-  //! written it, the image default before. The integrator supplies that
-  //! default on current_cfg_i; the overlay's own reset value is 0, which is
-  //! only the default of an image whose current configuration is 0.
+  //! ENTITY descriptor serve: the dynamic overlay while its row is written
+  //! (a SET_CONFIGURATION, or the D3 restore of the saved record), the image
+  //! default while it is unset (from reset, and after a D3 roll-back). The
+  //! integrator supplies that default on current_cfg_i; the overlay's own
+  //! reset value is 0, which is only the default of an image whose current
+  //! configuration is 0.
   logic        aecp_cur_cfg_v_w;
   logic [15:0] adp_cur_cfg_w;
   assign adp_cur_cfg_w = aecp_cur_cfg_v_w ? aecp_cur_config_o : current_cfg_i;

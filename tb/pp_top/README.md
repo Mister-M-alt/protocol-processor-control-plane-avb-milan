@@ -605,7 +605,16 @@ tally.
   advert equals the one before it in every wire byte but available_index
   (50..53, +1) and current_configuration_index (64..65). AD3: the same back
   to 1. AD4: `current_cfg_i` moves to 0 and the next advert still carries 1,
-  the set configuration. `make adp-config` runs this section alone; the
+  the set configuration. From AD5 on each arm resets the processor as a power
+  cycle and re-runs both restore walks (PR #132's D3 writer), and grades the
+  first ENTITY_AVAILABLE after the enable byte-exact, GET_CONFIGURATION, the
+  ENTITY descriptor, and the valid flag the ADPDU reads against the store's own
+  in every clock from the reset. AD5: SET_CONFIGURATION(0) is saved to record
+  0x00, the power cycle carries the device, the restore writes the row, and all
+  three views say 0 from the first advert. AD6: the restore applies that record
+  and then aborts in pass 1 (record 0x50 read whole in pass 0 and erased before
+  pass 1, D3R4's disagreement), the roll-back resets both stores, and all three
+  views fall back to the image default 1. `make adp-config` runs this section alone; the
   default run includes it. The mutation record is `tb/adp_engine`'s campaign
   (`make -C tb/adp_engine mutants`), which runs this section against each
   patch.

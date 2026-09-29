@@ -1,7 +1,7 @@
 --- a/hdl/top/protocol_processor_top.sv
 +++ b/hdl/top/protocol_processor_top.sv
-@@ -1640,7 +1640,7 @@
-   //! only the default of an image whose current configuration is 0.
+@@ -1720,7 +1720,7 @@
+   //! configuration is 0.
    logic        aecp_cur_cfg_v_w;
    logic [15:0] adp_cur_cfg_w;
 -  assign adp_cur_cfg_w = aecp_cur_cfg_v_w ? aecp_cur_config_o : current_cfg_i;

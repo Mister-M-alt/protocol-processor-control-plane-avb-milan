@@ -9995,6 +9995,9 @@ struct NameWritePhase {
 // the main run's clock is untouched. Its image's default configuration is 1,
 // and current_cfg_i says so, so the SET to 0 below is distinguishable from
 // the default, from the overlay's reset value and from a frozen index alike.
+// From AD5 on the arms reset it as a power cycle through both restore walks:
+// the configuration row, and with it the index, can also be written by the D3
+// writer's restore and cleared by its roll-back or a reset.
 struct AdpConfigPhase {
   H& h;                                        // the tally
   const milan::tb::Model<Vpp_top_wrap> model;
@@ -10141,6 +10144,125 @@ struct AdpConfigPhase {
           io.snap(3) & 0x7);
   }
 
+  // ---- AD5 on: the index across a reset and the D3 restore ---------------
+  //! T-NVM-DEBOUNCE at the wrap's 1 ms = 100 clk: the D3 writer saves a
+  //! change this long after it
+  static constexpr long SAVE_WINDOW = 500L * MS_CYC;
+  //! clocks, since the last reboot began, in which the flag the ADPDU's
+  //! index selection reads differed from the store's own valid flag
+  long flag_splits = 0;
+  void clock() {
+    io.step();
+    flag_splits += (io.d->dbg_adp_cfg_v_o != io.d->dbg_dyn_cfg_v_o) ? 1 : 0;
+  }
+
+  //! a reset of this processor as a power cycle: rst_n pulsed, the device
+  //! carried (erased first when `erase`), both restore walks from
+  //! restore_go_i to their terminal with `hook` after every clock, then
+  //! link up and enable. Returns the first ENTITY_AVAILABLE
+  template <class Hook>
+  std::vector<uint8_t> reboot(bool erase, const char* tag, Hook hook) {
+    if (erase) io.erase_nvm();
+    io.reset();
+    io.d->current_cfg_i = IMAGE_CFG;
+    flag_splits = 0;
+    io.d->restore_go_i = 1;
+    for (long c = 0; c < 400000 && !io.d->restore_done_o; ++c) {
+      if (c == 5) io.d->restore_go_i = 0;
+      clock();
+      hook();
+    }
+    io.d->restore_go_i = 0;
+    CHECK(io.d->restore_done_o && !io.d->restore_closed_o,
+          "%s: both restore walks reach a done terminal", tag);
+    io.flush_all();
+    io.q_aecp.clear();
+    io.d->link_up_i = 1;
+    for (int c = 0; c < 50; ++c) clock();
+    io.d->entity_enable_i = 1;
+    for (long c = 0; c < 2600L * MS_CYC && io.q_adp.empty(); ++c) clock();
+    if (io.q_adp.empty()) return {};
+    auto f = io.q_adp.front();
+    io.q_adp.pop_front();
+    return f;
+  }
+
+  //! after a reboot: the first ENTITY_AVAILABLE byte-exact at `cfg` (index 0,
+  //! the engine restarted), the published flag equal to the store's in every
+  //! clock from the reset, and GET_CONFIGURATION and the ENTITY descriptor
+  //! reading the same `cfg`
+  void first_advert_agrees(const std::vector<uint8_t>& f, uint16_t cfg,
+                           const char* tag, const char* what) {
+    const unsigned got = f.size() >= 66 ? ((unsigned(f[64]) << 8) | f[65]) : 999u;
+    CHECK(f == avail(0, cfg),
+          "%s: the first ENTITY_AVAILABLE carries %s %u, byte-exact (got %u)",
+          tag, what, cfg, got);
+    CHECK(flag_splits == 0,
+          "%s: the flag the ADPDU reads equals the store's in every clock from "
+          "the reset (%ld clocks differed)", tag, flag_splits);
+    CHECK(word40(ask(AEM_GET_CONFIGURATION, {})) == cfg,
+          "%s: GET_CONFIGURATION reads the same %u", tag, cfg);
+    CHECK(entity_current_configuration() == cfg,
+          "%s: ENTITY.current_configuration reads the same %u", tag, cfg);
+  }
+
+  //! AD5 (the D3 writer of PR #132; IEEE §7.4.8.2): a configuration saved and
+  //! restored is the current configuration from the first advert on.
+  //! SET_CONFIGURATION(0) reaches the device as record 0x00 after
+  //! T-NVM-DEBOUNCE; a power cycle carries the device; the restore writes the
+  //! row and its valid flag on the writer's side of the state-bus selection;
+  //! and the first ENTITY_AVAILABLE, GET_CONFIGURATION and the ENTITY
+  //! descriptor all carry 0, not the image default 1
+  void a_restored_configuration_is_advertised() {
+    io.flush_all();
+    CHECK(status(set_configuration(0)) == AECP_SUCCESS,
+          "AD5: SET_CONFIGURATION(0) SUCCESS (premise)");
+    const auto want = d3_record(0x00, 0, 2);
+    bool saved = false;
+    for (long c = 0; c < 4 * SAVE_WINDOW && !saved; ++c) {
+      io.step();
+      saved = !io.d->d3_unflushed_o && io.nv_st == H::NvState::NV_IDLE
+              && std::equal(want.begin(), want.end(), io.nv_mem[0x00].begin());
+    }
+    CHECK(saved, "AD5: the device holds record 0x00, configuration 0 (premise)");
+    const auto f = reboot(false, "AD5", [] {});
+    CHECK(io.d->dbg_dyn_cfg_v_o && io.d->dbg_dyn_cfg_o == 0,
+          "AD5: the restore wrote the row, valid, configuration 0 (premise)");
+    first_advert_agrees(f, 0, "AD5", "the restored configuration");
+  }
+
+  //! AD6 (parent D3 §8.6): a restore that applies the configuration and then
+  //! aborts in pass 1 rolls both stores back, and the flag goes with the row.
+  //! The device holds AD5's record 0x00 and a presentation-offset record 0x50
+  //! that pass 0 reads whole and that is erased before pass 1 reads it
+  //! (D3R4's disagreement, cause 5). The terminal is DEFAULTS, and the first
+  //! ENTITY_AVAILABLE, GET_CONFIGURATION and the ENTITY descriptor carry the
+  //! image default 1
+  void a_rolled_back_configuration_is_not_advertised() {
+    const auto rec = d3_record(0x50, 1500000, 4);
+    std::fill(io.nv_mem[0x50].begin(), io.nv_mem[0x50].end(), 0xFF);
+    std::copy(rec.begin(), rec.end(), io.nv_mem[0x50].begin());
+    const size_t ops0 = io.nvm_ops.size();
+    bool erased = false;
+    bool applied = false;
+    const auto f = reboot(false, "AD6", [&] {
+      int reads = 0;
+      for (size_t i = ops0; i < io.nvm_ops.size(); ++i)
+        reads += (io.nvm_ops[i].op == 0 && io.nvm_ops[i].region == 0x50) ? 1 : 0;
+      if (!erased && reads == 2) {
+        std::fill(io.nv_mem[0x50].begin(), io.nv_mem[0x50].end(), 0xFF);
+        erased = true;
+      }
+      applied = applied || io.d->dbg_dyn_cfg_v_o;
+    });
+    CHECK(erased && applied && io.d->restore_fail_o && io.d->rs_cause_o == 5
+              && io.d->restore_rb_o && !io.d->dbg_dyn_cfg_v_o,
+          "AD6: configuration 0 applied, then pass 1's disagreement rolled both "
+          "stores back (cause %u, rolled back %u) (premise)",
+          unsigned(io.d->rs_cause_o), unsigned(io.d->restore_rb_o));
+    first_advert_agrees(f, IMAGE_CFG, "AD6", "the image default");
+  }
+
   void run() {
     boot();
     boot_gate_holds_over_the_delay_span();
@@ -10172,6 +10294,8 @@ struct AdpConfigPhase {
     CHECK(e == avail(aidx_of(c) + 1, IMAGE_CFG),
           "AD4: the set configuration outranks a moved current_cfg_i");
     io.d->current_cfg_i = IMAGE_CFG;
+    a_restored_configuration_is_advertised();
+    a_rolled_back_configuration_is_not_advertised();
   }
 };
 
