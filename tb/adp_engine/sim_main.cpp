@@ -560,6 +560,7 @@ struct Harness {
   unsigned adv_state() const { return d->dbg_adv_state_o & 3; }
   void goto_adv(int col, int row);
   void apply_adv(int col, int row);
+  void check_adv_cell_cannot_happen(int row, const char* tag, const char* ref);
   void walk_advertise_cell(int row, int col);
   void goto_disc(int col, unsigned s);
   void apply_disc(int col, int row, unsigned s);
@@ -1285,6 +1286,39 @@ void Harness::apply_adv(int col, int row) {
   }
 }
 
+// an 'x' cell of Table 5.51 that no stimulus can reach: check the
+// precondition that rules its event out in the state just reached
+void Harness::check_adv_cell_cannot_happen(int row, const char* tag,
+                                           const char* ref) {
+  bool ok = false;
+  const char* why = "";
+  switch (row) {
+    case R_TDLY:
+      ok = t_armed[SLOT_ADV] && t_deadline[SLOT_ADV] == wait_arm_now + 5000;
+      why = "the shared slot carries T-ADP-ADV (+5000 ms), no T-ADP-DELAY";
+      break;
+    case R_TADV:
+      ok = t_armed[SLOT_ADV] && dly_ms <= 4000
+           && t_deadline[SLOT_ADV] == dly_arm_now + dly_ms;
+      why = "the shared slot carries the T-ADP-DELAY draw, no T-ADP-ADV";
+      break;
+    case R_LUP:
+      ok = d->link_up_i == 1;
+      why = "the link is up: a LINK_UP needs a LINK_DOWN first";
+      break;
+    case R_LDN:
+      ok = d->link_up_i == 0;
+      why = "the link is already down";
+      break;
+    case R_SHUT:
+      ok = d->entity_enable_i == 0;
+      why = "entity_enable_i is already low";
+      break;
+    default: break;
+  }
+  CHECK(ok, "%s (%s): cannot happen by construction: %s", tag, ref, why);
+}
+
 void Harness::walk_advertise_cell(int row, int col) {
   const AdvCell& c = ADV[row][col];
   char tag[96];
@@ -1302,33 +1336,7 @@ void Harness::walk_advertise_cell(int row, int col) {
     CHECK(d->tap_draw_req_o == 1 && d->tap_draw_busy_o == 0,
           "%s: reached with the delay draw requested and not yet taken", tag);
   if (c.cls == 'C') {
-    bool ok = false;
-    const char* why = "";
-    switch (row) {
-      case R_TDLY:
-        ok = t_armed[SLOT_ADV] && t_deadline[SLOT_ADV] == wait_arm_now + 5000;
-        why = "the shared slot carries T-ADP-ADV (+5000 ms), no T-ADP-DELAY";
-        break;
-      case R_TADV:
-        ok = t_armed[SLOT_ADV] && dly_ms <= 4000
-             && t_deadline[SLOT_ADV] == dly_arm_now + dly_ms;
-        why = "the shared slot carries the T-ADP-DELAY draw, no T-ADP-ADV";
-        break;
-      case R_LUP:
-        ok = d->link_up_i == 1;
-        why = "the link is up: a LINK_UP needs a LINK_DOWN first";
-        break;
-      case R_LDN:
-        ok = d->link_up_i == 0;
-        why = "the link is already down";
-        break;
-      case R_SHUT:
-        ok = d->entity_enable_i == 0;
-        why = "entity_enable_i is already low";
-        break;
-      default: break;
-    }
-    CHECK(ok, "%s (%s): cannot happen by construction: %s", tag, c.ref, why);
+    check_adv_cell_cannot_happen(row, tag, c.ref);
     return;
   }
   const size_t a0 = arms.size();
@@ -1554,9 +1562,9 @@ void Harness::check_the_mtxw_walk() {
         "P13 MTXW walked %d F04.3 cells (want 33: 11 events x 3 columns)", disc_cells);
   CHECK(arcs == N_F043_ARCS && N_F043_ARCS == 8,
         "P13 every F04.3 arc walked and graded: %d of 8", arcs);
-  int ac[4] = {0, 0, 0, 0};
-  int dc[4] = {0, 0, 0, 0};
-  static constexpr char CLS[4] = {'N', 'I', 'S', 'C'};
+  int ac[4] = {};
+  int dc[4] = {};
+  static constexpr char CLS[] = "NISC";
   for (int k = 0; k < 4; ++k) {
     for (int row = 0; row < N_AROW; ++row)
       for (int col = 0; col < N_ACOL; ++col) ac[k] += ADV[row][col].cls == CLS[k];

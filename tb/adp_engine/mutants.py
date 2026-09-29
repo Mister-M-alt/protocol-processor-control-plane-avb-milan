@@ -89,6 +89,7 @@ def plant(tree: Path, patch: str) -> None:
 
 
 def failures_of(contents: str) -> list[str]:
+    """The failing-check lines of one simulation log, in the order printed."""
     return [line for line in contents.splitlines() if line.startswith("FAIL:")]
 
 
