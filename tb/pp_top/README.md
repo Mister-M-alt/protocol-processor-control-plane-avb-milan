@@ -1145,6 +1145,19 @@ pass by accident. The legs run in wire order on one binding:
   **AI3** the exact duplicate of probe #1 follows at T-ACMP-CMD: the sink never
   left PRB_W_RESP, which a listener that took either frame as a probe response
   would have done (it settles and cancels the timer).
+- **AL** (issue #45, REQ-ACMP-001, Milan §5.5.2.2 and 03 V3; IEEE 1722.1-2021
+  §8.2.1.6 sets cdl 84 for the 96-B form of Figure 8-1). Each long command
+  carries its 40-byte IP tail filled with a pattern. **AL1** a 96-B UNBIND_RX
+  from PRB_W_RESP2 is answered by the 56-B cdl-44 UNBIND_RX_RESPONSE,
+  byte-exact. **AL2** a 96-B BIND_RX with AI1's fields and sequence_id gets
+  the same response as AI1's 56-B BIND_RX, byte for byte, and PROBE_TX #2
+  (sequence_id 1), regenerated from the record, is byte-exact, so the long
+  command's talker and controller fields reached the binding and not only the
+  echo. **AL3** a PROBE_TX to our talker, 56-B then 96-B with one
+  sequence_id, gets one byte-exact answer twice (TALKER_DEST_MAC_FAILED: no
+  allocator is wired on this model, as S10 (c) on the main DUT). **AL4** no
+  96-B frame was dropped or counted at the front end (`rx_length` 0) and all
+  four RX slots are free.
 
 ### ACMP negative controls: `acmp_mutants.py`
 
@@ -1159,3 +1172,4 @@ use runs first and must pass. Here it builds `gsi-build` and runs
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
 |---|---|---|---|
 | `msg_ok_forced` | `txn_msg_ok_w` forced to 1 in the listener | `AI3: the sink never left PRB_W_RESP` | 1 of 8 |
+| `cdl_not_44_rejected` | the validator accepts ACMP only at cdl 44 (`v1_pass_w` also requires it for subtype 0xFC) | `AL1: a 96-B UNBIND_RX`, `AL2: a 96-B BIND_RX`, `AL3: the 96-B PROBE_TX`, `AL4: no 96-B frame was dropped` | 5 of 15 |

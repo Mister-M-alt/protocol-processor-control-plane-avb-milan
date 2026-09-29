@@ -47,9 +47,11 @@ class Mutant(NamedTuple):
 
 
 ACMP_LISTENER = Suite("tb/acmp_listener", (), ("make", "run"))
+RX_VALIDATOR = Suite("tb/rx_validator", (), ("make", "run"))
 PP_TOP = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--acmp-only"))
 
 LISTENER = "hdl/acmp/KL_pp_acmp_listener.sv"
+VALIDATOR = "hdl/packet_engine/KL_pp_rx_validator.sv"
 
 MSG_OK = "  assign txn_msg_ok_w   = (txn_i.msg_type == AMSG_PROBE_TX_RESP_C)\n"
 GUARD = ("  assign probe_match_w = (ctlr_x_r == rec_r.bind_ctlr_eid)\n"
@@ -85,7 +87,20 @@ INERT = (
         ("B14 wrong talker_unique_id in PWR", "B14 wrong talker_unique_id in PW2")),
 )
 
-MUTANTS = INERT
+# issue #45: a front end that accepts ACMP only at cdl 44 (the 56-B form)
+V1_END = "                      && (lim_w <= 12'(BYTES_P));\n"
+CDL_44_ONLY = ("                      && (lim_w <= 12'(BYTES_P))\n"
+               "                      && !((subtype_r == SUB_ACMP_C) && (cdl_r != 11'd44));\n")
+
+LONG_FORM = (
+    Mutant("cdl_not_44_rejected", RX_VALIDATOR, ((VALIDATOR, V1_END, CDL_44_ONLY),),
+           ("F29 BIND_RX cdl 84", "F29 PROBE_TX cdl 84")),
+    Mutant("cdl_not_44_rejected", PP_TOP, ((VALIDATOR, V1_END, CDL_44_ONLY),),
+           ("AL1: a 96-B UNBIND_RX", "AL2: a 96-B BIND_RX", "AL3: the 96-B PROBE_TX",
+            "AL4: no 96-B frame was dropped")),
+)
+
+MUTANTS = INERT + LONG_FORM
 TALLY = re.compile(r"^(ACMP: \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$", re.M)
 
 

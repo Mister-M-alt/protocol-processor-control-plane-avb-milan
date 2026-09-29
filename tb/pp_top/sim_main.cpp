@@ -8809,6 +8809,8 @@ struct DomainDefaultPhase {
 // binding:
 //   AI (#47, Milan 5.5.3.1): ACMP messages outside the listener and talker
 //       sets reach the listener through the real steer and are inert there.
+//   AL (#45, Milan 5.5.2.2): the 96-B IEEE ACMPDU is answered exactly as the
+//       56-B Milan form is, by both engines.
 // `--acmp-only` runs this phase alone; tb/pp_top/acmp_mutants.py uses it.
 struct AcmpPathPhase {
   H& h;
@@ -8823,11 +8825,28 @@ struct AcmpPathPhase {
   static constexpr uint64_t SID_L = 0x0202000AA1A10001ULL;
   static constexpr uint64_t DA_L  = 0x91E0F0A1A101ULL;
   static constexpr uint16_t VID_L = 2;
+  //! AI1's BIND_RX_RESPONSE to the 56-B form, which AL2 compares against
+  std::vector<uint8_t> bind_rsp;
 
   //! the listener's own PROBE_TX to the bound talker (F05.13, 05 A5)
   static std::vector<uint8_t> probe_tx(uint16_t seq) {
     return acmp_frame(OWN_MAC, 0, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS, 0,
                       0, seq, 0x0002, 0);
+  }
+  //! the same ACMPDU in the 96-B IEEE 1722.1-2021 form (8.2.1.6: cdl 84;
+  //! Figure 8-1). The 40 bytes past connected_listeners_entries carry a
+  //! pattern, never zeros, so an engine that read past @55 would show it.
+  static std::vector<uint8_t> long_form(std::vector<uint8_t> f) {
+    f[16] = uint8_t((f[16] & 0xF8) | ((84 >> 8) & 7));
+    f[17] = 84;
+    for (int i = 0; i < 40; ++i) f.push_back(uint8_t(0xA5 ^ (i * 29)));
+    return f;
+  }
+  //! the next ACMP frame of one message type and sequence_id
+  std::vector<uint8_t> wait_acmp(uint8_t msg, uint16_t seq, int ms) {
+    return h2.wait_frame(h2.q_acmp, ms, [=](const std::vector<uint8_t>& f) {
+      return f.size() >= 64 && (f[15] & 0x0F) == msg && fv_u64(f, 62, 2) == seq;
+    });
   }
   //! RX slots free (snapshot word 25) and scoreboard holds (word 15)
   unsigned rx_free() { return (h2.snap(25) >> 3) & 0xFFFFu; }
@@ -8845,6 +8864,7 @@ struct AcmpPathPhase {
     h2.run_ms(50);
     h2.flush_all();
     ai_foreign_messages_are_inert();
+    al_the_long_form_is_answered_as_the_short();
   }
 
   // ---- AI: response-typed and reserved messages are inert (#47) ----------
@@ -8864,6 +8884,7 @@ struct AcmpPathPhase {
                            0, 1, SEQ_BIND, 0, 0);
     CHECK(!r.empty() && r == want, "AI1: BIND_RX sink 1 answered byte-exact");
     if (!r.empty() && r != want) { dump("got", r); dump("exp", want); }
+    bind_rsp = r;
     auto p = h2.wait_any(h2.q_acmp, 400);
     const uint32_t tp = h2.now_ms();
     CHECK(!p.empty() && p == probe_tx(0),
@@ -8887,6 +8908,62 @@ struct AcmpPathPhase {
           "AI3: the sink never left PRB_W_RESP: the exact duplicate probe "
           "follows at T-ACMP-CMD (%u ms)", dt);
     if (!dup.empty() && dup != probe_tx(0)) { dump("got", dup); dump("exp", probe_tx(0)); }
+  }
+
+  // ---- AL: the 96-B IEEE form is answered as the 56-B form is (#45) ------
+  // Milan 5.5.2.2 has a Milan device send and accept the truncated 56-B PDU
+  // and lets it accept the longer one; 03 V3 takes that option. Every answer
+  // below is the 56-B, cdl-44 Milan form whatever the command's length, and
+  // the listener's regenerated probe proves the long BIND_RX's fields landed
+  // in the record, not only in the echo.
+  void al_the_long_form_is_answered_as_the_short() {
+    // AL1: long UNBIND_RX from PRB_W_RESP2 (AI3 left the sink there)
+    h2.q_acmp.clear();
+    h2.feed(long_form(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                                 T1_UID, LS, 0, 0, 0x4502, 0, 0)));
+    auto u = wait_acmp(9, 0x4502, 400);
+    auto uw = acmp_frame(OWN_MAC, 9, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
+                         0, 0, 0x4502, 0, 0);
+    CHECK(!u.empty() && u == uw,
+          "AL1: a 96-B UNBIND_RX is answered by the 56-B cdl-44 UNBIND_RX_RESPONSE");
+    if (!u.empty() && u != uw) { dump("got", u); dump("exp", uw); }
+
+    // AL2: long BIND_RX with AI1's fields and sequence_id
+    h2.feed(long_form(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID,
+                                 T1_UID, LS, 0, 0, SEQ_BIND, 0, 0)));
+    auto b = wait_acmp(7, SEQ_BIND, 400);
+    CHECK(!b.empty() && b == bind_rsp && b.size() == 70 && b[17] == 44,
+          "AL2: a 96-B BIND_RX gets the same 56-B cdl-44 response as AI1's "
+          "truncated BIND_RX, byte for byte");
+    if (!b.empty() && b != bind_rsp) { dump("got", b); dump("exp", bind_rsp); }
+    auto p = wait_acmp(0, 1, 400);
+    CHECK(!p.empty() && p == probe_tx(1),
+          "AL2: PROBE_TX #2 regenerated from the long BIND_RX's fields, "
+          "byte-exact (seq 1)");
+    if (!p.empty() && p != probe_tx(1)) { dump("got", p); dump("exp", probe_tx(1)); }
+
+    // AL3: PROBE_TX to our talker, 56-B then 96-B, same sequence_id. No
+    // allocator is wired on this model, so the honest answer is
+    // TALKER_DEST_MAC_FAILED (status 3), as S10 (c) grades on the main DUT
+    const auto cmd = acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID, 0, 7,
+                                0, 0, 0x4503, 0x000A, 0);
+    const auto rw = acmp_frame(OWN_MAC, 1, 3, 0, CTLR_EID, EID, T1_EID, 0, 7,
+                               0, 0, 0x4503, 0x000A, 0);
+    h2.feed(cmd);
+    auto s = wait_acmp(1, 0x4503, 400);
+    CHECK(!s.empty() && s == rw,
+          "AL3: the 56-B PROBE_TX is answered byte-exact (DEST_MAC_FAILED)");
+    if (!s.empty() && s != rw) { dump("got", s); dump("exp", rw); }
+    h2.feed(long_form(cmd));
+    auto l = wait_acmp(1, 0x4503, 400);
+    CHECK(!l.empty() && l == rw && l == s,
+          "AL3: the 96-B PROBE_TX gets the same 56-B cdl-44 response, byte for byte");
+    if (!l.empty() && l != rw) { dump("got", l); dump("exp", rw); }
+
+    CHECK(no_front_end_drops() && (h2.snap(6) >> 16) == 0,
+          "AL4: no 96-B frame was dropped or counted at the front end "
+          "(rx_length %u)", h2.snap(6) >> 16);
+    CHECK(rx_free() == 4u, "AL4: no RX slot leak, %u of 4 free", rx_free());
   }
 };
 
