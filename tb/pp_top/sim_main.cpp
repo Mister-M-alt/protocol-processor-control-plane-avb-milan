@@ -8802,6 +8802,94 @@ struct DomainDefaultPhase {
   }
 };
 
+// ==== AC. the ACMP listener path end to end (issues #45, #47, #48) ==========
+// A FRESH model, as MP and DV run, so the main DUT's tuned timeline does not
+// move. Sink 1 is the one bound, never sink 0, so a stage that loses the
+// sink index cannot pass by accident. The legs run in wire order on one
+// binding:
+//   AI (#47, Milan 5.5.3.1): ACMP messages outside the listener and talker
+//       sets reach the listener through the real steer and are inert there.
+// `--acmp-only` runs this phase alone; tb/pp_top/acmp_mutants.py uses it.
+struct AcmpPathPhase {
+  H& h;
+  const milan::tb::Model<Vpp_top_wrap> model2;
+  Vpp_top_wrap* const d2;
+  H h2;
+  explicit AcmpPathPhase(H& hh) : h(hh), d2(model2.get()), h2(d2) {}
+
+  static constexpr uint16_t LS       = 1;        // the sink this phase binds
+  static constexpr uint16_t SEQ_BIND = 0x4701;
+  //! the stream the talker's PROBE_TX_RESPONSE will carry
+  static constexpr uint64_t SID_L = 0x0202000AA1A10001ULL;
+  static constexpr uint64_t DA_L  = 0x91E0F0A1A101ULL;
+  static constexpr uint16_t VID_L = 2;
+
+  //! the listener's own PROBE_TX to the bound talker (F05.13, 05 A5)
+  static std::vector<uint8_t> probe_tx(uint16_t seq) {
+    return acmp_frame(OWN_MAC, 0, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS, 0,
+                      0, seq, 0x0002, 0);
+  }
+  //! RX slots free (snapshot word 25) and scoreboard holds (word 15)
+  unsigned rx_free() { return (h2.snap(25) >> 3) & 0xFFFFu; }
+  unsigned sb_holds() { return h2.snap(15) >> 24; }
+  bool no_front_end_drops() {
+    return h2.snap(4) == 0 && h2.snap(5) == 0 && h2.snap(6) == 0;
+  }
+
+  void run() {
+    h2.dram = h.dram;                       // the same 07 SS3.3 image
+    h2.reset();
+    CHECK(h2.boot_to_aecp(), "AC0: both walks over an erased device release AECP");
+    d2->link_up_i = 1;
+    d2->entity_enable_i = 1;
+    h2.run_ms(50);
+    h2.flush_all();
+    ai_foreign_messages_are_inert();
+  }
+
+  // ---- AI: response-typed and reserved messages are inert (#47) ----------
+  // Milan 5.5.3.1 hands the listener BIND_RX / GET_RX_STATE / UNBIND_RX
+  // commands and the PROBE_TX_RESPONSE; IEEE 1722.1-2021 Table 8-2 makes 7
+  // BIND_RX_RESPONSE (CONNECT_RX_RESPONSE) and reserves 14. Both reach the
+  // listener, since the steer sends everything but {0, 2, 4, 12} there, and
+  // both are shaped as the perfect answer to the outstanding probe, so the
+  // message type alone keeps them out. A listener that took either as a
+  // probe response would settle and cancel T-ACMP-CMD: the exact duplicate
+  // probe that must follow is the proof it stayed in PRB_W_RESP.
+  void ai_foreign_messages_are_inert() {
+    h2.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
+                       0, 0, SEQ_BIND, 0, 0));
+    auto r = h2.wait_any(h2.q_acmp, 400);
+    auto want = acmp_frame(OWN_MAC, 7, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
+                           0, 1, SEQ_BIND, 0, 0);
+    CHECK(!r.empty() && r == want, "AI1: BIND_RX sink 1 answered byte-exact");
+    if (!r.empty() && r != want) { dump("got", r); dump("exp", want); }
+    auto p = h2.wait_any(h2.q_acmp, 400);
+    const uint32_t tp = h2.now_ms();
+    CHECK(!p.empty() && p == probe_tx(0),
+          "AI1: PROBE_TX #1 byte-exact (seq 0, FAST_CONNECT, listener uid 1)");
+    if (!p.empty() && p != probe_tx(0)) { dump("got", p); dump("exp", probe_tx(0)); }
+
+    for (uint8_t mm : {uint8_t(7), uint8_t(14)})
+      h2.feed(acmp_frame(T1_MAC, mm, 0, SID_L, CTLR_EID, T1_EID, EID, T1_UID,
+                         LS, DA_L, 0, 0, 0x0002, VID_L));
+    auto x = h2.wait_any(h2.q_acmp, 150 - int(h2.now_ms() - tp));
+    CHECK(x.empty(), "AI2: message types 7 and 14 raise no ACMP frame");
+    if (!x.empty()) dump("unexpected", x);
+    CHECK(rx_free() == 4u, "AI2: no RX slot leak, %u of 4 free", rx_free());
+    CHECK(sb_holds() == 0u, "AI2: no scoreboard hold left, %u held", sb_holds());
+    CHECK(no_front_end_drops(),
+          "AI2: both frames passed the front end (no drop counted)");
+
+    auto dup = h2.wait_any(h2.q_acmp, 200);
+    const uint32_t dt = h2.now_ms() - tp;
+    CHECK(!dup.empty() && dup == probe_tx(0) && dt >= 195 && dt <= 260,
+          "AI3: the sink never left PRB_W_RESP: the exact duplicate probe "
+          "follows at T-ACMP-CMD (%u ms)", dt);
+    if (!dup.empty() && dup != probe_tx(0)) { dump("got", dup); dump("exp", probe_tx(0)); }
+  }
+};
+
 #include "gsi_internal.hpp"
 
 // ---------------------------------------------------------------------------
@@ -9948,6 +10036,17 @@ struct NameWritePhase {
   D3RestorePhase{h, image, setup.image_ents}.dr3a_measurements();
 }
 
+//! Section AC on a fresh model, against the same descriptor image the suite
+//! loads; `--acmp-only` runs it alone.
+[[maybe_unused]] static void run_acmp(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  Suite setup(h);
+  setup.load_descriptor_image();
+  AcmpPathPhase{h}.run();
+  printf("ACMP: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 [[maybe_unused]] static void run_name_writes(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
@@ -9985,14 +10084,16 @@ int main(int argc, char** argv) {
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
   const bool d3_only = argc == 2 && std::strcmp(argv[1], "--d3-only") == 0;
+  const bool acmp_only = argc == 2 && std::strcmp(argv[1], "--acmp-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
   }
-  if (!gsi_only && !name_only && !d3_only) Suite(h).run();
-  if (!name_only && !d3_only) InternalStreamInfoPhase{h}.run();
-  if (!gsi_only && !d3_only) run_name_writes(h);
-  if (!gsi_only && !name_only) run_d3(h);
+  if (!gsi_only && !name_only && !d3_only && !acmp_only) Suite(h).run();
+  if (!name_only && !d3_only && !acmp_only) InternalStreamInfoPhase{h}.run();
+  if (!gsi_only && !d3_only && !acmp_only) run_name_writes(h);
+  if (!gsi_only && !name_only && !acmp_only) run_d3(h);
+  if (!gsi_only && !name_only && !d3_only) run_acmp(h);
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's two

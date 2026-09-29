@@ -749,6 +749,8 @@ class ListenerWalk {
   void check_unknown_listener_id();
   void check_foreign_eid_and_protocol_are_silent();
   void check_probe_guard_mismatch(int sink);
+  void check_foreign_message_types_are_inert(int sink);
+  void check_probe_guard_per_term(int sink);
   void check_lock_gate(int sink);
   void check_boot_preload_lands_in_pwa();
   void check_stale_expiry_is_swallowed();
@@ -1202,6 +1204,92 @@ void ListenerWalk::check_probe_guard_mismatch(int sink) {
     CHECK(h.shadow[sink].sm == S_PWR, "B8: still PRB_W_RESP"); }
 }
 
+  // B13: every ACMP message type outside the listener's set is inert (Milan
+  // §5.5.3.1, which names BIND_RX / GET_RX_STATE / UNBIND_RX commands and
+  // the PROBE_TX_RESPONSE; IEEE 1722.1-2021 Table 8-2 for the codes, 14 and
+  // 15 reserved). Each one is shaped as the PERFECT answer to the sink's
+  // outstanding probe: own listener EID, a valid listener unique_id, all four
+  // guard terms equal to the saved probe, stream fields set. Only the message
+  // type keeps it out, so a classifier that let it through would take the
+  // PROBE_TX_RESPONSE arm and settle (SUCCESS, PRB_W_RESP) or back off
+  // (TALKER_NO_BANDWIDTH, PRB_W_RESP2). Inert is every face: no frame, no
+  // record write, no timer op, no action strobe, no notify, and exactly one
+  // RX-slot free, of the slot the item arrived in.
+void ListenerWalk::check_foreign_message_types_are_inert(int sink) {
+  static constexpr uint8_t kTypes[] = {3, 5, 7, 9, 11, 13, 14, 15};
+  struct Arm { int st; uint8_t status; };
+  static constexpr Arm kArms[] = {{S_PWR, ST_OK}, {S_PW2, ST_NOBW}};
+  char tg[64];
+  for (const Arm& a : kArms) {
+    goto_state(sink, a.st, "B13");
+    for (uint8_t mm : kTypes) {
+      snprintf(tg, sizeof tg, "B13 msg %u status %u in %s", mm, a.status,
+               SN[a.st]);
+      Stim s = S_probe(sink, a.status);
+      s.uid = uint16_t(sink);
+      s.msg = mm;
+      const Rec before = h.shadow[sink];
+      const int slot = h.next_rx_slot;
+      Exp e = step(sink, s, true, tg);
+      CHECK(e.row < 0, "%s: the model admits it to no matrix row", tg);
+      CHECK(h.col.frames.empty() && h.col.wrotes == 0 && h.col.tops.empty()
+            && h.col.notifies == 0 && !h.col.settle && !h.col.teardown
+            && !h.col.disc_arm && !h.col.disc_disarm && !h.col.nvm,
+            "%s: inert (frames %zu, writes %d, timer ops %zu, notifies %d, "
+            "strobes st%d td%d da%d dd%d nv%d)", tg, h.col.frames.size(),
+            h.col.wrotes, h.col.tops.size(), h.col.notifies, h.col.settle,
+            h.col.teardown, h.col.disc_arm, h.col.disc_disarm, h.col.nvm);
+      CHECK(h.col.frees == 1 && h.col.free_slot == slot,
+            "%s: one RX free of slot %d (got %d frees, slot %u)", tg, slot,
+            h.col.frees, h.col.free_slot);
+      CHECK(h.shadow[sink] == before && h.shadow[sink].sm == a.st,
+            "%s: record untouched, still %s (got %s)", tg, SN[a.st],
+            SN[h.shadow[sink].sm & 7]);
+    }
+  }
+}
+
+  // B14: the probe-response guard graded per term (Milan §5.5.3.5.18 step 1
+  // in PRB_W_RESP, §5.5.3.5.25 step 1 in PRB_W_RESP2): a response that
+  // differs from the saved probe in ONE of controller_entity_id,
+  // talker_entity_id or talker_unique_id is ignored exactly as B8's wrong
+  // sequence_id is. The exact answer then settles, so a guard that rejected
+  // everything would fail here instead of passing B8 and B14 vacuously.
+void ListenerWalk::check_probe_guard_per_term(int sink) {
+  struct Term { const char* what; };
+  static constexpr Term kTerms[] = {{"controller_entity_id"},
+                                    {"talker_entity_id"},
+                                    {"talker_unique_id"}};
+  char tg[80];
+  for (int st : {S_PWR, S_PW2}) {
+    goto_state(sink, st, "B14");
+    for (int t = 0; t < 3; ++t) {
+      snprintf(tg, sizeof tg, "B14 wrong %s in %s", kTerms[t].what, SN[st]);
+      Stim s = S_probe(sink, ST_OK);
+      s.uid = uint16_t(sink);
+      if (t == 0) s.ctlr = CTL2;         // goto_state bound CTL1 ...
+      if (t == 1) s.tk_eid = TK_B;       // ... to TK_A ...
+      if (t == 2) s.tk_uid = TKUID_B;    // ... source TKUID_A
+      const Rec before = h.shadow[sink];
+      Exp e = step(sink, s, true, tg);
+      CHECK(e.row < 0 && h.col.wrotes == 0 && h.col.frames.empty()
+            && h.col.tops.empty() && !h.col.settle && h.col.frees == 1,
+            "%s: silently ignored (writes %d, frames %zu, timer ops %zu, "
+            "settle %d, frees %d)", tg, h.col.wrotes, h.col.frames.size(),
+            h.col.tops.size(), h.col.settle, h.col.frees);
+      CHECK(h.shadow[sink] == before && h.shadow[sink].sm == st,
+            "%s: record untouched, still %s", tg, SN[st]);
+    }
+    snprintf(tg, sizeof tg, "B14 exact answer in %s", SN[st]);
+    Stim p = S_probe(sink, ST_OK);
+    p.uid = uint16_t(sink);
+    step(sink, p, true, tg);
+    CHECK(h.shadow[sink].sm == S_SNR && h.col.settle,
+          "%s: the unaltered response settles (got %s)", tg,
+          SN[h.shadow[sink].sm & 7]);
+  }
+}
+
   // B9: A1 lock gate — BIND/UNBIND blocked for a foreign holder,
   // unaffected for the holder itself and for GET_RX_STATE
 void ListenerWalk::check_lock_gate(int sink) {
@@ -1650,6 +1738,9 @@ int ListenerWalk::run() {
   check_unknown_listener_id();
   check_foreign_eid_and_protocol_are_silent();
   check_probe_guard_mismatch(sink);
+  check_foreign_message_types_are_inert(sink);
+  check_probe_guard_per_term(sink);
+  goto_state(sink, S_PWR, "B9 entry");   // B9 starts where B8 left it
   check_lock_gate(sink);
   check_boot_preload_lands_in_pwa();
   check_stale_expiry_is_swallowed();

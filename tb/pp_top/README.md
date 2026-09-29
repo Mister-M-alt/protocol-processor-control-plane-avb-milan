@@ -1125,3 +1125,37 @@ probe, which must now succeed byte-exact with the internal claim's base address.
 S10 retains a failed probe while the allocator is absent, then proves recovery
 without another probe. The standalone talker retry suite carries the detailed
 pacing, fairness, late-response and block-change mutation matrix.
+
+## Section AC: the ACMP listener path end to end (issues #45, #47, #48)
+
+AC runs on a fresh model with the suite's descriptor image and an erased NVM
+device, after both restore walks, with the link up and the entity enabled, so
+the main DUT's timeline is untouched. `./obj_dir/Vpp_top_sim --acmp-only`
+(after `make gsi-build`) runs it alone and prints its own `ACMP:` tally. Sink 1
+is the one bound, never sink 0, so a stage that loses the sink index cannot
+pass by accident. The legs run in wire order on one binding:
+
+- **AI** (issue #47, REQ-ACMP-012, Milan §5.5.3.1). **AI1** BIND_RX for sink 1
+  is answered byte-exact and PROBE_TX #1 (sequence_id 0, FAST_CONNECT,
+  listener_unique_id 1) follows byte-exact. **AI2** a BIND_RX_RESPONSE (7, a
+  response type of IEEE 1722.1-2021 Table 8-2) and a reserved type (14) arrive
+  shaped as the perfect answer to that probe: the steer delivers both to the
+  listener, and neither raises an ACMP frame, both pass the front end with no
+  drop counted, all four RX slots are free and no scoreboard hold is left.
+  **AI3** the exact duplicate of probe #1 follows at T-ACMP-CMD: the sink never
+  left PRB_W_RESP, which a listener that took either frame as a probe response
+  would have done (it settles and cancels the timer).
+
+### ACMP negative controls: `acmp_mutants.py`
+
+`python3 acmp_mutants.py --output DIR [--jobs N] [--only NAME ...]` plants each
+control in its own extract of `hdl/`, `tb/common/` and the grading suite's
+directory, and counts it KILLED only when the run completes with its tally,
+exits non-zero and every named check fails; a golden extract of each suite in
+use runs first and must pass. Here it builds `gsi-build` and runs
+`--acmp-only`; the same driver runs the listener controls in `tb/acmp_listener`
+(recorded in that README). Measured 2026-09-29, each in its own extract:
+
+| Mutant | Defect planted | Named checks, each failing | Failing checks |
+|---|---|---|---|
+| `msg_ok_forced` | `txn_msg_ok_w` forced to 1 in the listener | `AI3: the sink never left PRB_W_RESP` | 1 of 8 |
