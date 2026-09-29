@@ -9,7 +9,8 @@
 //   spacings measured inside the exclusive (500, 600) ms bounds -> the
 //   first ANNOUNCE back-to-back with the fourth -> the (30, 32) s announce
 //   cadence; the claim publication (addr/valid/state) at each step; the
-//   full Table B.7 conflict matrix including both compare_MAC tie-breaks;
+//   full Table B.7 conflict matrix including both compare_MAC tie-breaks,
+//   each driven with a MAC pair whose forward and reversed orders disagree;
 //   DEFEND byte-exact with the B.3.6.6 overlap fields; yield ->
 //   re-randomize -> per-source conflict fan-out (lowest first) -> re-probe;
 //   the allocator seam contract (refuse fast while probing, grant base+s in
@@ -42,6 +43,13 @@ constexpr uint64_t OWN_MAC   = 0x02AABBCCDDEEull;
 constexpr uint64_t EID       = 0x001BC5FFFE000042ull;
 constexpr unsigned COUNT     = 8;
 constexpr unsigned MAX_COUNT = 255;                    // the widest cfg_count_i
+// compare_MAC operands whose FORWARD and octet-REVERSED orders against
+// OWN_MAC disagree (B.3.6.4), so a forward compare decides every tie-break
+// they take part in the wrong way:
+//   WIN_MAC  forward-lower, reversed-higher: compare_MAC TRUE, we win
+//   LOSE_MAC forward-higher, reversed-lower: compare_MAC FALSE, we lose
+constexpr uint64_t WIN_MAC   = 0x0011223344FFull;
+constexpr uint64_t LOSE_MAC  = 0xF21122334401ull;
 
 // ---- harness scales -------------------------------------------------------
 constexpr size_t kMinFrameBytes = 60;    // the 802.3 minimum frame, padded to
@@ -83,6 +91,12 @@ static bool rev_lower(uint64_t a, uint64_t b) {
     rb = (rb << 8) | ((b >> (8 * i)) & 0xFF);
   }
   return ra < rb;
+}
+
+// the premise of every tie-break scenario: the reversed order says `winner`
+// is lower than `loser`, and the forward order says the opposite
+static bool only_reversed_lower(uint64_t winner, uint64_t loser) {
+  return rev_lower(winner, loser) && loser < winner;
 }
 
 // ---- harness --------------------------------------------------------------
@@ -242,6 +256,12 @@ class MaapAnnexBSuite {
   void overhanging_draws_are_redrawn_until_the_block_fits();
   void a_release_mid_redraw_leaves_no_draw_behind();
   void a_seed_past_the_fit_is_clamped_into_the_pool();
+  void expect_a_yield_to_a_fresh_range(const char* tag, uint64_t contested,
+                                       unsigned conflicts_before, size_t n0);
+  void probe_from_a_lower_peer_yields_the_walk();
+  void defend_from_a_higher_peer_is_ignored();
+  void defend_from_a_lower_peer_yields_the_claim();
+  void announce_during_probe_yields_without_tie_break();
 
   const milan::tb::Model<Vmaap_wrap> model;
   Vmaap_wrap* const d = model.get();
@@ -409,22 +429,24 @@ void MaapAnnexBSuite::non_overlapping_probe_is_ignored() {
 }
 
 // ---- U7: rAnnounce! in DEFEND, we are rev-lower -> compare_MAC ignores ----
+// the announcer is forward-LOWER than us: only the reversed compare wins
 void MaapAnnexBSuite::announce_from_a_higher_peer_is_ignored() {
-  const uint64_t hi_mac = 0xF2FFEEDDCCFFull;     // rev-HIGHER than ours
-  CHECK(rev_lower(OWN_MAC, hi_mac), "U7: premise — we are rev-lower");
-  h.rx(3, hi_mac, base, COUNT);
+  CHECK(only_reversed_lower(OWN_MAC, WIN_MAC),
+        "U7: premise — we are rev-lower, forward-higher");
+  h.rx(3, WIN_MAC, base, COUNT);
   h.run_ms(50);
   CHECK(d->addr_valid_o && d->addr_o == base && d->conflicts_o == 0,
         "U7: claim kept — compare_MAC TRUE takes no action");
 }
 
 // ---- U8: rAnnounce! in DEFEND, we are rev-higher -> yield -----------------
+// the announcer is forward-HIGHER than us: only the reversed compare loses
 void MaapAnnexBSuite::announce_from_a_lower_peer_yields_and_reprobes() {
   size_t n0 = h.tx.size();
-  const uint64_t lo_mac = 0x010000000000ull;     // rev-lower than ours
-  CHECK(rev_lower(lo_mac, OWN_MAC), "U8: premise — they are rev-lower");
+  CHECK(only_reversed_lower(LOSE_MAC, OWN_MAC),
+        "U8: premise — they are rev-lower, forward-higher");
   h.confl_auto = true;
-  h.rx(3, lo_mac, base, COUNT);
+  h.rx(3, LOSE_MAC, base, COUNT);
   h.idle(50);
   CHECK(!d->addr_valid_o && d->conflicts_o == 1,
         "U8: yielded — claim invalid, re-address counted");
@@ -461,8 +483,9 @@ void MaapAnnexBSuite::probe_from_a_higher_peer_leaves_our_walk_unmoved() {
   CHECK(h.wait_frames(n0 + 1, kProbeBudgetMs), "U9: walk restarted on link return");
   uint64_t b9 = d->addr_o;
   CHECK(d->state_o == 1, "U9: PROBE state");
-  const uint64_t hi_mac = 0xF2FFEEDDCCFFull;
-  h.rx(1, hi_mac, b9, COUNT);                    // their probe, we are lower
+  CHECK(only_reversed_lower(OWN_MAC, WIN_MAC),
+        "U9: premise — we are rev-lower, forward-higher");
+  h.rx(1, WIN_MAC, b9, COUNT);                   // their probe, we are rev-lower
   h.run_ms(20);
   CHECK(d->addr_o == b9 && d->conflicts_o == 1,
         "U9: compare_MAC TRUE — our probe walk continues unmoved");
@@ -691,6 +714,105 @@ void MaapAnnexBSuite::a_seed_past_the_fit_is_clamped_into_the_pool() {
   d->cfg_seed_valid_i = 0;
 }
 
+// ---- the Table B.7 yield, as the scenarios below grade it ------------------
+// Stop timer + INITIAL/Restart!: one re-address counted, the claim not
+// valid, and generate_address runs again, so the next frame is a PROBE of a
+// FRESH range inside the pool, never the contested one (B.3.5.3).
+void MaapAnnexBSuite::expect_a_yield_to_a_fresh_range(const char* tag,
+                                                      uint64_t contested,
+                                                      unsigned conflicts_before,
+                                                      size_t n0) {
+  CHECK(d->conflicts_o == conflicts_before + 1 && !d->addr_valid_o,
+        "%s: yielded, one re-address counted (%u -> %u)", tag, conflicts_before,
+        unsigned(d->conflicts_o));
+  CHECK(h.wait_frames(n0 + 1, kProbeBudgetMs), "%s: Restart! probes again", tag);
+  const uint64_t fresh = d->addr_o;
+  CHECK(fresh != contested && (fresh >> 16) == (POOL_HI >> 16)
+        && (fresh & 0xFFFF) <= POOL_SIZE - COUNT,
+        "%s: the range is re-randomized inside the pool (%012llx after %012llx)",
+        tag, static_cast<unsigned long long>(fresh),
+        static_cast<unsigned long long>(contested));
+  if (h.tx.size() > n0) {
+    Bytes p = maap_frame(MAAP_DA, OWN_MAC, 1, fresh, COUNT, 0, 0);
+    CHECK(h.tx[n0].b == p, "%s: the fresh range's PROBE is byte-exact", tag);
+  }
+}
+
+// ---- U19: rProbe! in PROBE from a rev-lower peer -> yield -----------------
+// compare_MAC FALSE (the prober is reversed-lower, forward-HIGHER): Stop
+// probe_timer, INITIAL/Restart! with a fresh range
+void MaapAnnexBSuite::probe_from_a_lower_peer_yields_the_walk() {
+  CHECK(only_reversed_lower(LOSE_MAC, OWN_MAC),
+        "U19: premise — they are rev-lower, forward-higher");
+  h.confl_auto = true;                                 // U18's claim goes
+  d->link_up_i = 0; h.idle(30);                        // Release!
+  h.confl_auto = false;
+  h.confl_srcs.clear();
+  size_t n0 = h.tx.size();
+  d->link_up_i = 1;
+  CHECK(h.wait_frames(n0 + 1, kProbeBudgetMs) && d->state_o == 1, "U19: probing");
+  const uint64_t contested = d->addr_o;
+  const unsigned c0 = d->conflicts_o;
+  const size_t n1 = h.tx.size();
+  h.rx(1, LOSE_MAC, contested, COUNT);
+  h.idle(20);
+  expect_a_yield_to_a_fresh_range("U19", contested, c0, n1);
+}
+
+// ---- U20: rDefend! in DEFEND from a rev-higher peer -> ignored ------------
+// compare_MAC TRUE (the defender is reversed-higher, forward-LOWER): no
+// further processing, the claim stands and nothing is sent (footnote d)
+void MaapAnnexBSuite::defend_from_a_higher_peer_is_ignored() {
+  CHECK(only_reversed_lower(OWN_MAC, WIN_MAC),
+        "U20: premise — we are rev-lower, forward-higher");
+  for (int g = 0; g < kWalkRetryRounds && !d->addr_valid_o; ++g) h.run_ms(kProbeBudgetMs);
+  CHECK(d->addr_valid_o && d->state_o == 2, "U20: DEFEND state");
+  const uint64_t b = d->addr_o;
+  const unsigned c0 = d->conflicts_o;
+  const size_t n0 = h.tx.size();
+  // a DEFEND whose ranges overlap ours (B.3.5.6)
+  h.rx(2, WIN_MAC, b + 2, 2, b + 2, 2);
+  h.run_ms(50);
+  CHECK(d->addr_valid_o && d->addr_o == b && d->conflicts_o == c0 && h.tx.size() == n0,
+        "U20: compare_MAC TRUE — the claim stands, nothing sent");
+}
+
+// ---- U21: rDefend! in DEFEND from a rev-lower peer -> yield ---------------
+void MaapAnnexBSuite::defend_from_a_lower_peer_yields_the_claim() {
+  CHECK(only_reversed_lower(LOSE_MAC, OWN_MAC),
+        "U21: premise — they are rev-lower, forward-higher");
+  CHECK(d->addr_valid_o && d->state_o == 2, "U21: DEFEND state");
+  const uint64_t b = d->addr_o;
+  const unsigned c0 = d->conflicts_o;
+  const size_t n0 = h.tx.size();
+  h.confl_auto = true;
+  h.rx(2, LOSE_MAC, b + 2, 2, b + 2, 2);
+  h.idle(20);
+  expect_a_yield_to_a_fresh_range("U21", b, c0, n0);
+  h.confl_auto = false;
+  CHECK(h.confl_srcs.size() == 8, "U21: the withdrawn claim told all 8 sources (%zu)",
+        h.confl_srcs.size());
+  h.confl_srcs.clear();
+}
+
+// ---- U22: rAnnounce! in PROBE from a rev-higher peer -> still yields ------
+// PROBE/rAnnounce! has no compare_MAC: even a peer we beat in BOTH orders
+// takes the range
+void MaapAnnexBSuite::announce_during_probe_yields_without_tie_break() {
+  const uint64_t hi_mac = 0xF2FFEEDDCCFFull;
+  CHECK(rev_lower(OWN_MAC, hi_mac) && OWN_MAC < hi_mac,
+        "U22: premise — we are lower in both orders");
+  CHECK(d->state_o == 1, "U22: probing (the walk U21 restarted)");
+  const uint64_t contested = d->addr_o;
+  const unsigned c0 = d->conflicts_o;
+  const size_t n0 = h.tx.size();
+  h.rx(3, hi_mac, contested, COUNT);
+  h.idle(20);
+  expect_a_yield_to_a_fresh_range("U22", contested, c0, n0);
+  for (int g = 0; g < kWalkRetryRounds && !d->addr_valid_o; ++g) h.run_ms(kProbeBudgetMs);
+  CHECK(d->addr_valid_o, "U22: the fresh range is claimed");
+}
+
 int MaapAnnexBSuite::run() {
   reset_leaves_the_machine_initial();
   engage_probes_a_fresh_pool_range();
@@ -713,6 +835,10 @@ int MaapAnnexBSuite::run() {
   overhanging_draws_are_redrawn_until_the_block_fits();
   a_release_mid_redraw_leaves_no_draw_behind();
   a_seed_past_the_fit_is_clamped_into_the_pool();
+  probe_from_a_lower_peer_yields_the_walk();
+  defend_from_a_higher_peer_is_ignored();
+  defend_from_a_lower_peer_yields_the_claim();
+  announce_during_probe_yields_without_tie_break();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

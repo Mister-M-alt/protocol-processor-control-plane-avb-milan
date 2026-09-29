@@ -1,0 +1,11 @@
+--- a/hdl/maap/KL_pp_maap.sv
++++ b/hdl/maap/KL_pp_maap.sv
+@@ -422,7 +422,7 @@
+       if (ev_hit_w && (pstate_r == P_PROBE)) begin
+         act_yield_w = 1'b1;                     // no tie-break in PROBE
+       end else if (ev_hit_w && (pstate_r == P_DEFEND)) begin
+-        act_yield_w = !cmp_mac_true_w;          // tie-break in DEFEND
++        act_yield_w = !cmp_mac_true_w && (rxm_msg_r == MSG_ANNOUNCE_C);
+       end
+     end
+     // reserved message_types: ignored (B.2.2)

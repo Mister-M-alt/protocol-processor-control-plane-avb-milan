@@ -27,6 +27,13 @@ MUTANTS = [
     ('release-keeps-draw-mark', 'maap', 'run', 'U17b:'),
     ('validator-maap-version-1-only', 'rx_validator', 'run', 'F28'),
     ('validator-maap-version-1-only', 'pp_top', 'maap-internal', 'MP7:'),
+    ('compare-mac-forward', 'maap', 'run', 'U7:'),
+    ('compare-mac-forward', 'pp_top', 'maap-internal', 'MP4:'),
+    ('probe-rprobe-never-yields', 'maap', 'run', 'U19:'),
+    ('defend-rdefend-ignored', 'maap', 'run', 'U21:'),
+    ('defend-rdefend-no-tiebreak', 'maap', 'run', 'U20:'),
+    ('probe-rannounce-tiebreak', 'maap', 'run', 'U22:'),
+    ('yield-reuses-range', 'maap', 'run', 'U19:'),
 ]
 
 # the two tally shapes: a suite's canonical line, and one pp_top build's line

@@ -176,4 +176,7 @@ service and PRNG of [08](08_timing.md), the TX pool and arbiter of
 the `tb/pp_top` MP section (end-to-end through the real validator, dispatch, talker
 and MAC lanes); the F08.4 slots by `tb/timer_map`; the PRNG kinds by `tb/prng`; the
 RX classification by `tb/rx_validator`; the fourth queue by `tb/dispatch`
-([09](09_verification.md)).
+([09](09_verification.md)). `make -C tb/maap mutants` plants reviewed defects
+in the fit clamp, the seed clamp, the validator's maap_version handling and
+every compare_MAC cell, and requires each to fail its named check in those
+suites.

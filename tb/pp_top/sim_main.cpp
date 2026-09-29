@@ -8434,9 +8434,19 @@ struct InternalMaapPhase {
   }
 
   // ---- MP4: a conflicting ANNOUNCE from a rev-lower peer -> yield -----
+  // The winner is octet-reversed LOWER than OWN_MAC but forward HIGHER
+  // (B.3.6.4): only the reversed compare_MAC yields to it (issue #68).
   uint64_t mp4_a_conflicting_announce_yields(uint64_t base) {
     h2.q_maap.clear();
-    const uint64_t winner = 0x010000000001ull;     // reversed-octet lower
+    const uint64_t winner = 0xF21122334401ull;
+    uint64_t rev_own = 0;
+    uint64_t rev_winner = 0;
+    for (int i = 0; i < 6; ++i) {
+      rev_own = (rev_own << 8) | ((OWN_MAC >> (8 * i)) & 0xFF);
+      rev_winner = (rev_winner << 8) | ((winner >> (8 * i)) & 0xFF);
+    }
+    CHECK(rev_winner < rev_own && OWN_MAC < winner,
+          "MP4: premise — the winner is rev-lower, forward-higher");
     h2.feed(maap_frame(0x91E0F000FF00ull, winner, 3, base, 8, 0, 0));
     for (int i = 0; i < 200 && (d2->acmp_declaring_o & 1); i++) h2.idle(10);
     CHECK(h2.saw_decl_edge(0, false),
