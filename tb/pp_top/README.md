@@ -614,7 +614,10 @@ tally.
   three views say 0 from the first advert. AD6: the restore applies that record
   and then aborts in pass 1 (record 0x50 read whole in pass 0 and erased before
   pass 1, D3R4's disagreement), the roll-back resets both stores, and all three
-  views fall back to the image default 1. `make adp-config` runs this section alone; the
+  views fall back to the image default 1. AD7 (review R406-1 F-1): a SUCCESS
+  SET_CONFIGURATION(0), then a reset with nothing to restore (an erased device):
+  the valid flag clears with the row, and all three views carry the image default
+  1. `make adp-config` runs this section alone; the
   default run includes it. The mutation record is `tb/adp_engine`'s campaign
   (`make -C tb/adp_engine mutants`), which runs this section against each
   patch.

@@ -33,6 +33,8 @@ MUTANTS = [
     # and its roll-back's reset
     ("cfg-valid-ucpu-bus", "cfg-valid-ucpu-bus", "pp_top", "adp-config", "AD5"),
     ("cfg-valid-hard-reset", "cfg-valid-hard-reset", "pp_top", "adp-config", "AD6"),
+    # review R406-1 F-1: the flag's own reset
+    ("cfg-valid-no-reset", "cfg-valid-no-reset", "pp_top", "adp-config", "AD7"),
     # issue #41: the boot gate over the full T-ADP-DELAY span
     ("gate-enable-dropped", "gate-enable-dropped", "adp_engine", "run", "P12"),
     ("gate-enable-dropped-top", "gate-enable-dropped", "pp_top", "adp-config", "AD0"),

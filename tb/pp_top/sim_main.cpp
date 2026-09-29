@@ -10263,6 +10263,25 @@ struct AdpConfigPhase {
     first_advert_agrees(f, IMAGE_CFG, "AD6", "the image default");
   }
 
+  //! AD7 (R406-1 F-1; REQ-ADP-005): the flag's own reset. SET_CONFIGURATION
+  //! to the non-default 0 succeeds, then a reset with nothing to restore (an
+  //! erased device; a saved record would come back, as AD5 shows): the row
+  //! and its flag clear together, so the first ENTITY_AVAILABLE,
+  //! GET_CONFIGURATION and the ENTITY descriptor all carry the image default
+  void a_reset_returns_to_the_image_default() {
+    io.flush_all();
+    const auto s = set_configuration(0);
+    const auto g = ask(AEM_GET_CONFIGURATION, {});
+    CHECK(status(s) == AECP_SUCCESS && word40(g) == 0 && io.d->dbg_adp_cfg_v_o
+              && io.nv_st == H::NvState::NV_IDLE,
+          "AD7: SET_CONFIGURATION(0) SUCCESS, GET reads 0, the flag set, the "
+          "device idle (premise)");
+    const auto f = reboot(true, "AD7", [] {});
+    CHECK(!io.d->dbg_dyn_cfg_v_o && io.d->restore_blank_o,
+          "AD7: nothing restored, the row unset (premise)");
+    first_advert_agrees(f, IMAGE_CFG, "AD7", "the image default");
+  }
+
   void run() {
     boot();
     boot_gate_holds_over_the_delay_span();
@@ -10296,6 +10315,7 @@ struct AdpConfigPhase {
     io.d->current_cfg_i = IMAGE_CFG;
     a_restored_configuration_is_advertised();
     a_rolled_back_configuration_is_not_advertised();
+    a_reset_returns_to_the_image_default();
   }
 };
 
