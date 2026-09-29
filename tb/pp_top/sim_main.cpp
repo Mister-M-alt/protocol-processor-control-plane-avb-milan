@@ -10151,7 +10151,7 @@ struct AdpConfigPhase {
   //! clocks, since the last reboot began, in which the flag the ADPDU's
   //! index selection reads differed from the store's own valid flag
   long flag_splits = 0;
-  void clock() {
+  void graded_step() {
     io.step();
     flag_splits += (io.d->dbg_adp_cfg_v_o != io.d->dbg_dyn_cfg_v_o) ? 1 : 0;
   }
@@ -10169,7 +10169,7 @@ struct AdpConfigPhase {
     io.d->restore_go_i = 1;
     for (long c = 0; c < 400000 && !io.d->restore_done_o; ++c) {
       if (c == 5) io.d->restore_go_i = 0;
-      clock();
+      graded_step();
       hook();
     }
     io.d->restore_go_i = 0;
@@ -10178,9 +10178,9 @@ struct AdpConfigPhase {
     io.flush_all();
     io.q_aecp.clear();
     io.d->link_up_i = 1;
-    for (int c = 0; c < 50; ++c) clock();
+    for (int c = 0; c < 50; ++c) graded_step();
     io.d->entity_enable_i = 1;
-    for (long c = 0; c < 2600L * MS_CYC && io.q_adp.empty(); ++c) clock();
+    for (long c = 0; c < 2600L * MS_CYC && io.q_adp.empty(); ++c) graded_step();
     if (io.q_adp.empty()) return {};
     auto f = io.q_adp.front();
     io.q_adp.pop_front();
