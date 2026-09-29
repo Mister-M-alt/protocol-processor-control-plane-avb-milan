@@ -589,6 +589,7 @@ class SrpTopHarness {
 
     if (!*group || !strcmp(group,"guards")) check_leaveall_guards();
     if (!*group || !strcmp(group,"restart")) check_received_leaveall_restarts_the_timer();
+    if (!*group || !strcmp(group,"timers")) check_mrp_timers_against_table_4_3();
 
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
     return fails ? 1 : 0;
@@ -1347,6 +1348,145 @@ class SrpTopHarness {
       printf("RESTART mvrp_peer_minus_expiry=%d actions=%zu\n", delta, h.mvrp_action_cycles.size());
     }
     CHECK(seen == 7, "P6: MVRP peer sweep covers -1, 0 and +1 clocks");
+  }
+
+  // Q: issue #64, REQ-SRP-001. Milan v1.2 Table 4.3: joinTime 200 ms
+  // (180-240), periodictimer 1000 ms (900-1500), leavealltimer 10-15 s. Each
+  // captured MRPDU carries now_ms at its last byte; the spacing of the MRPDUs
+  // a timer paces is graded, never a DUT register.
+  struct Stamp { uint32_t ms; PFrame p; };
+  std::vector<Stamp> stamped(size_t first) const {
+    std::vector<Stamp> out;
+    for (size_t i = first; i < h.archive.size(); i++)
+      out.push_back(Stamp{h.archive_ms[i], parse_frame(h.archive[i])});
+    return out;
+  }
+  static bool carries(const PFrame& p, int type, uint64_t key, int ev) {
+    for (const PVec& v : p.vecs) {
+      if (v.type != type || v.ev.empty()) continue;
+      const uint64_t k = !p.msrp ? fv_u64(v.fv, 0, 2) : type == 4 ? v.fv[0] : fv_u64(v.fv, 0, 8);
+      if (k == key && (ev < 0 || v.ev[0] == ev)) return true;
+    }
+    return false;
+  }
+  static bool flagged(const PFrame& p) {
+    for (const PVec& v : p.vecs) if (v.la) return true;
+    return false;
+  }
+  // every consecutive spacing of `ms` inside [lo, hi]; the worst ones returned
+  static bool spaced(const std::vector<uint32_t>& ms, uint32_t lo, uint32_t hi,
+                     uint32_t& min_gap, uint32_t& max_gap) {
+    bool ok = ms.size() >= 2;
+    min_gap = UINT32_MAX; max_gap = 0;
+    for (size_t i = 1; i < ms.size(); i++) {
+      const uint32_t g = ms[i] - ms[i - 1];
+      min_gap = std::min(min_gap, g); max_gap = std::max(max_gap, g);
+      ok &= g >= lo && g <= hi;
+    }
+    return ok;
+  }
+
+  void check_mrp_timers_against_table_4_3() {
+    // Begin! at reset arms both leavealltimers (Table 10-5); the timebase
+    // restarts with it, so the arming instant is now_ms at reset release.
+    h.reset();
+    const uint32_t armed = d->now_ms_o;
+    d->link_up_i = 1; h.idle(10);
+    h.sync();
+    const size_t base = h.archive.size();
+    const uint64_t sid = own_sid(0);
+    auto r = h.op(OP_DECL_TK, 0, sid, 0x91e0f0010100ULL, 2, 29, 1);
+    CHECK(r.got && r.status == ST_OK, "Q: DECLARE_TALKER source 0");
+    until_ms(armed + 9500);               // before any own LeaveAll can fire
+    auto early = stamped(base);
+
+    // Q1 joinTime: the Table 10-3 fresh-declaration ladder New, New, JoinMt
+    // is one message per tx!, i.e. per T-MRP-JOIN tick (clean slot, no periodic!)
+    std::vector<uint32_t> ladder;
+    std::vector<int> events;
+    for (const Stamp& s : early) {
+      if (!s.p.msrp || ladder.size() == 3) continue;
+      for (const PVec& v : s.p.vecs)
+        if (v.type == 1 && fv_u64(v.fv, 0, 8) == sid && !v.ev.empty()) {
+          ladder.push_back(s.ms); events.push_back(v.ev[0]); break;
+        }
+    }
+    uint32_t lo = 0, hi = 0;
+    const bool join_ok = ladder.size() == 3 && events == std::vector<int>{EV_NEW, EV_NEW, EV_JOINMT}
+                      && spaced(ladder, 180, 240, lo, hi);
+    CHECK(join_ok, "Q1: join-paced MRPDUs of one declaration are 180-240 ms apart "
+          "(%zu PDUs, %u-%u ms)", ladder.size(), lo, hi);
+    printf("TIMER join ladder_ms=%u,%u,%u gaps=%u-%u\n", ladder.size() > 0 ? ladder[0] : 0,
+           ladder.size() > 1 ? ladder[1] : 0, ladder.size() > 2 ? ladder[2] : 0, lo, hi);
+
+    // Q2 periodictimer: a quiet declared attribute re-joins on each periodic!
+    // (QA -> AA, then JoinMt on the next tx!); the Domain and the MVRP VID
+    // re-join JoinIn on the same timer
+    std::vector<uint32_t> tk, dom, vid;
+    for (const Stamp& s : early) {
+      if (!ladder.empty() && s.ms <= ladder.back()) continue;
+      if (s.p.msrp && carries(s.p, 1, sid, EV_JOINMT)) tk.push_back(s.ms);
+      if (s.p.msrp && carries(s.p, 4, 6, EV_JOININ)) dom.push_back(s.ms);
+      if (!s.p.msrp && carries(s.p, 1, 2, EV_JOININ)) vid.push_back(s.ms);
+    }
+    uint32_t tlo = 0, thi = 0, dlo = 0, dhi = 0, vlo = 0, vhi = 0;
+    const bool tk_ok = tk.size() >= 5 && spaced(tk, 900, 1500, tlo, thi);
+    const bool dom_ok = dom.size() >= 5 && spaced(dom, 900, 1500, dlo, dhi);
+    const bool vid_ok = vid.size() >= 5 && spaced(vid, 900, 1500, vlo, vhi);
+    CHECK(tk_ok && dom_ok && vid_ok,
+          "Q2: periodic! re-joins recur every 900-1500 ms (Talker %zu x %u-%u, Domain %zu x %u-%u, "
+          "VID %zu x %u-%u)", tk.size(), tlo, thi, dom.size(), dlo, dhi, vid.size(), vlo, vhi);
+    printf("TIMER periodic talker=%zu:%u-%u domain=%zu:%u-%u vid=%zu:%u-%u\n",
+           tk.size(), tlo, thi, dom.size(), dlo, dhi, vid.size(), vlo, vhi);
+
+    // Q3 leavealltimer: no peer LeaveAll in the window. The first own MSRP
+    // and MVRP LeaveAll no earlier than 10 s after arming, then 10-15 s apart
+    until_ms(armed + 52000);
+    std::vector<uint32_t> la_msrp, la_mvrp;
+    for (const Stamp& s : stamped(base)) {
+      if (!flagged(s.p)) continue;
+      (s.p.msrp ? la_msrp : la_mvrp).push_back(s.ms);
+    }
+    const bool quiet = h.peer_la_times.empty() && h.peer_mvrp_times.empty();
+    uint32_t mlo = 0, mhi = 0, vlo2 = 0, vhi2 = 0;
+    const bool first_ok = !la_msrp.empty() && !la_mvrp.empty()
+                       && la_msrp[0] >= armed + 10000 && la_mvrp[0] >= armed + 10000;
+    CHECK(quiet && first_ok, "Q3: the first own MSRP and MVRP LeaveAll come 10 s or more after "
+          "arming (at +%d / +%d ms)", la_msrp.empty() ? -1 : static_cast<int>(la_msrp[0] - armed),
+          la_mvrp.empty() ? -1 : static_cast<int>(la_mvrp[0] - armed));
+    const bool msrp_ok = la_msrp.size() >= 3 && spaced(la_msrp, 10000, 15000, mlo, mhi);
+    const bool mvrp_ok = la_mvrp.size() >= 3 && spaced(la_mvrp, 10000, 15000, vlo2, vhi2);
+    CHECK(quiet && msrp_ok && mvrp_ok,
+          "Q3: consecutive own LeaveAlls are 10-15 s apart (MSRP %zu x %u-%u, MVRP %zu x %u-%u)",
+          la_msrp.size(), mlo, mhi, la_mvrp.size(), vlo2, vhi2);
+    printf("TIMER leaveall first_msrp=%d first_mvrp=%d msrp=%zu:%u-%u mvrp=%zu:%u-%u\n",
+           la_msrp.empty() ? -1 : static_cast<int>(la_msrp[0] - armed),
+           la_mvrp.empty() ? -1 : static_cast<int>(la_mvrp[0] - armed),
+           la_msrp.size(), mlo, mhi, la_mvrp.size(), vlo2, vhi2);
+
+    // Q4 (issue #108): a peer LeaveAll restarts the timer, so the next own
+    // LeaveAll of that application comes 10 s or more after the peer's
+    for (bool msrp : {true, false}) {
+      // 5 s after this application's latest own LeaveAll, mid-cycle
+      uint32_t last_own = 0;
+      for (const Stamp& s : stamped(base))
+        if (s.p.msrp == msrp && flagged(s.p)) last_own = s.ms;
+      until_ms(std::max(d->now_ms_o, last_own + 5000));
+      const size_t from = h.archive.size();
+      if (msrp) h.feed(mrpdu_body(true, {la_only(4, 4, false)}), true);
+      else      h.feed(peer_mvrp_leaveall(2), false);
+      const std::vector<uint32_t>& lanes = msrp ? h.peer_la_times : h.peer_mvrp_times;
+      const uint32_t peer = lanes.empty() ? d->now_ms_o : lanes.back();
+      until_ms(peer + 15500);
+      uint32_t next = 0;
+      for (const Stamp& s : stamped(from))
+        if (s.p.msrp == msrp && flagged(s.p)) { next = s.ms; break; }
+      CHECK(lanes.size() == 1 && next >= peer + 10000 && next <= peer + 15000 + 260,
+            "Q4: after a peer %s LeaveAll the next own one comes 10-15 s later (at +%d ms)",
+            msrp ? "MSRP" : "MVRP", next ? static_cast<int>(next - peer) : -1);
+      printf("TIMER after_peer %s next_own=+%d\n", msrp ? "msrp" : "mvrp",
+             next ? static_cast<int>(next - peer) : -1);
+    }
   }
 
   void bring_up_the_port() {
@@ -2268,6 +2408,7 @@ int main(int argc, char** argv) {
   const char* group = argc > 1 ? argv[1] : "";
   if (*group && strcmp(group,"phases") && strcmp(group,"edge")
       && strcmp(group,"peer") && strcmp(group,"congestion")
-      && strcmp(group,"guards") && strcmp(group,"restart")) return 2;
+      && strcmp(group,"guards") && strcmp(group,"restart")
+      && strcmp(group,"timers")) return 2;
   return harness.run(group);
 }

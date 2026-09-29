@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **2020 checks**.
+`make` = build + run, exit 0 = PASS, **2027 checks**.
 
 Expectations are independent: an MRPDU builder/parser written here from
 802.1Q §10.8.1.2 / §35.2.2, a Σ-slope model transcribing the Milan v1.2
@@ -372,3 +372,32 @@ requires, so it is retired. Five arms whose context the change moved
 `reset-retains-intent`, `my-expiry-pulse`) are regenerated with the same edit and
 re-measured: 1 (M10), 8 (M1-M4), 15 (M1, M2, M3, M10), 1 (K10) and 62 (K2, K4,
 K5, K11, K12) failing checks.
+
+## MRP timers graded against Milan v1.2 Table 4.3 (issue #64, REQ-SRP-001)
+
+Every captured MRPDU carries `now_ms_o` at its last byte (`archive_ms`), and the
+BFM clock that accepted its request (`archive_accept`). `RUN_ARGS=timers` runs
+one bring-up from reset: Begin! arms both leavealltimers at reset release, a
+talker declaration on VID 2 in a clean slot, then 52 s with no peer LeaveAll,
+then one peer LeaveAll per application. Only MRPDU spacing is graded, never a
+DUT register.
+
+| Check | Timer (Table 4.3 range) | Measured |
+|---|---|---|
+| Q1 | joinTime 180-240 ms: the Table 10-3 ladder New, New, JoinMt of one fresh declaration is one MRPDU per T-MRP-JOIN tick | 200, 200 ms |
+| Q2 | periodictimer 900-1500 ms: a quiet declared Talker Advertise re-joins (JoinMt) on each periodic!, and so do the Domain and the MVRP VID (JoinIn); at least five of each before the first LeaveAll | 9 x 1000 ms each |
+| Q3 | leavealltimer 10-15 s: the first own MSRP and MVRP LeaveAll no earlier than 10 s after arming, and consecutive own LeaveAlls 10-15 s apart, at least three per application | first +14206 / +10601 ms; MSRP 10000-12800 ms, MVRP 11000-13200 ms |
+| Q4 | issue #108 on the wire: a peer LeaveAll 5 s after the latest own one restarts the timer, so the next own LeaveAll of that application comes 10-15 s after the peer's | MSRP +11000 ms, MVRP +14495 ms |
+
+The own MSRP LeaveAll rides the first join opportunity after the expiry, so
+its MRPDUs sit on the T-MRP-JOIN grid; with a 10-15 s draw their spacing stays
+inside 10-15 s (the Q3 minimum is exactly one 10 s draw). Milan's own tolerance
+is wider (9.5-15.5 s).
+
+Mutation-proven 2026-09-29 through `mutants.py` (checked-in patches):
+
+| Deliberate breakage | Group | Failing checks | Named failing assertions |
+|---|---|---:|---|
+| `join-ms-400` (`JOIN_MS_P = 400`) | timers | 2 | Q1,Q2 |
+| `periodic-ms-3000` (`PERIODIC_MS_P = 3000`) | timers | 1 | Q2 |
+| `draw-kind-0` (`draw_kind_o = 3'd0`, the 0-1 s range) | timers | 6 | Q1,Q2,Q3,Q4 |
