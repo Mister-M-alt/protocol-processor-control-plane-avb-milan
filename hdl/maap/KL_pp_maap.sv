@@ -24,8 +24,9 @@
 //                two are listed at the bottom of this banner.
 //
 //                THE WALK (Table B.7, executed literally):
-//                  Begin!/PortOperational! = the rise of (cfg_en_i AND
-//                  link_up_i AND cfg_count_i != 0): generate_address (the
+//                  Begin!/PortOperational! = (cfg_en_i AND link_up_i AND
+//                  cfg_count_i != 0) high while the machine is released
+//                  (out of reset or after a Release!): generate_address (the
 //                  seed on the first attempt if provisioned — footnote a —
 //                  else a PRNG kind-7 draw, rejection-clamped so the whole
 //                  block fits the pool) then ReserveAddress!:
@@ -54,8 +55,28 @@
 //                                                   NO compare_MAC here)
 //                  rDefend!   yield+re-randomize    compare_MAC, else
 //                  rAnnounce! (no compare_MAC)      yield+re-randomize
-//                  Release!/engage-fall = Stop timers, INITIAL, NO PDU
-//                  (B.3.5.2 + footnote c: a local event; nothing is sent).
+//                  Release!/engage-fall = Stop timers, INITIAL, and no PDU
+//                  generated after the fall, seen in every walker state
+//                  however short. The ordering rests on Table B.7 (the
+//                  Release! row stops probe_timer in PROBE and
+//                  announce_timer in DEFEND and goes to INITIAL; no Release!
+//                  cell carries sProbe, sAnnounce or sDefend), B.3.2 (each
+//                  entry's functions execute sequentially, so a Release!
+//                  that lands mid-entry is ordered before or after that
+//                  entry) and B.3.5.2 (the range is no longer in use or
+//                  defended, so the claim ends at the fall). The entry's TX
+//                  slot request decides the order: before it, the entry is
+//                  dropped whole (no frame, no timer, no state change); from
+//                  it on, the frame belongs to that entry, is past recall
+//                  (the top's pool-access arbiter and KL_pp_tx_slots offer
+//                  no abort) and drains as its last act: at most that one
+//                  frame, which reaches the lane 63 cycles after its request
+//                  when the pool and the lane grant at once, later in the
+//                  top, and only once a stalled egress resumes. The claim is
+//                  withdrawn at the fall and the entry's state change is
+//                  dropped; the timers stop once the lane has the frame, and
+//                  an expiry meanwhile meets INITIAL (-x-). Footnote c: back
+//                  in INITIAL, the range is free.
 //                compare_MAC (B.3.6.4): octet-wise REVERSED unsigned
 //                compare; TRUE (we are lower) = no further processing.
 //                A yield re-enters through INITIAL/Restart!: a FRESH
@@ -294,9 +315,11 @@ module KL_pp_maap
   logic        seed_used_r;    //! footnote-a seed consumed this engage — also
                                //! the no-reuse-on-conflict guard: a Restart!
                                //! can only run after the first walk consumed
-                               //! the seed, and only a Release!/engage fall
-                               //! re-arms it, so a conflicted seed is never
-                               //! probed again within one engagement
+                               //! the seed, and only W_OFF re-arms it, which
+                               //! every Release!/engage fall reaches and
+                               //! nothing else does, so a conflicted seed is
+                               //! never probed again within one engagement
+                               //! and is probed first in the next one
   logic [7:0]  conflicts_r;    //! re-address events (saturating)
   logic [7:0]  defends_r;      //! DEFENDs sent (saturating)
 
@@ -307,7 +330,7 @@ module KL_pp_maap
   assign defends_o    = defends_r;
 
   //! engage level: the machine exists only while it may transmit (B.3.5.9)
-  logic eng_w, eng_q_r;
+  logic eng_w;
   assign eng_w = cfg_en_i && link_up_i && (cfg_count_i != 8'd0);
 
   // ------------------------------------------------- our claim, 49-bit ends
@@ -349,6 +372,8 @@ module KL_pp_maap
   logic [3:0] send_msg_r;      //! frame being built (Table B.1 code)
   logic       chain_ann_r;     //! after this PROBE: probeCount! -> ANNOUNCE
   logic       teardown_ph_r;   //! W_TEARDOWN phase (0 = probe, 1 = announce)
+  logic       rel_pend_r;      //! a Release! landed behind a frame whose TX
+                               //! slot was already requested: W_POST runs it
 
   //! draw serializer state (one draw in flight, ADP's discipline)
   logic       draw_act_r;
@@ -515,7 +540,6 @@ module KL_pp_maap
       seed_used_r      <= 1'b0;
       conflicts_r      <= 8'd0;
       defends_r        <= 8'd0;
-      eng_q_r          <= 1'b0;
       pend_probe_exp_r <= 1'b0;
       pend_ann_exp_r   <= 1'b0;
       w_st_r           <= W_OFF;
@@ -523,6 +547,7 @@ module KL_pp_maap
       send_msg_r       <= 4'd0;
       chain_ann_r      <= 1'b0;
       teardown_ph_r    <= 1'b0;
+      rel_pend_r       <= 1'b0;
       draw_act_r       <= 1'b0;
       draw_req_r       <= 1'b0;
       draw_kind_r      <= 3'd0;
@@ -547,18 +572,38 @@ module KL_pp_maap
       // one-cycle pulses fall
       arm_v_r    <= 1'b0;
       draw_req_r <= 1'b0;
-      eng_q_r    <= eng_w;
 
       // expiry latches (the walker may be mid-flow); an arm/cancel of the
       // slot below clears the matching latch in the same block
       if (exp_probe_w) pend_probe_exp_r <= 1'b1;
       if (exp_ann_w)   pend_ann_exp_r   <= 1'b1;
 
+      // Release! behind a frame whose TX slot is already requested. The
+      // request is the point of no return: the top's pool-access arbiter
+      // holds this engine as owner until it commits, and KL_pp_tx_slots
+      // frees a committed slot only by sending it, so the frame drains as
+      // the last act of the entry that sent it (B.3.2: entries execute
+      // sequentially). The Release! is ordered after that entry and does
+      // not wait for the frame: the claim is withdrawn now, and W_POST
+      // drops the entry's state change and runs the teardown (Table B.7)
+      if (!eng_w && (w_st_r inside {W_ALLOC, W_GWAIT, W_WRITE, W_COMMIT,
+                                    W_LANE})) begin
+        pstate_r   <= P_INITIAL;
+        rel_pend_r <= 1'b1;
+      end
+
       unique case (w_st_r)
         // ---- not engaged: Release!/link-down parks the machine ----------
         W_OFF: begin
-          pstate_r <= P_INITIAL;
-          if (eng_w && !eng_q_r) begin
+          // reached only out of reset or after a Release!, so the engage
+          // LEVEL is Begin!/PortOperational!: a rise that landed while the
+          // walker was still tearing down or draining is not lost. Every
+          // Release! passes here, so here the footnote-a seed is re-armed
+          // for the next engagement
+          pstate_r    <= P_INITIAL;
+          seed_used_r <= 1'b0;
+          rel_pend_r  <= 1'b0;
+          if (eng_w) begin
             // Begin!/PortOperational!: generate_address + ReserveAddress!
             w_st_r <= W_ADDR;
           end
@@ -567,7 +612,19 @@ module KL_pp_maap
         // ---- generate_address (B.3.6.1) ---------------------------------
         W_ADDR: begin
           if (!eng_w) begin
-            w_st_r <= W_OFF;                       // nothing armed yet
+            // Release!/link loss mid generate_address: nothing is armed yet.
+            // A draw still in flight is abandoned (its answer lands in
+            // W_OFF, unread), so its mark must not survive into the next
+            // walk; if the link is back first, the answer lands in that
+            // walk's W_ADDR, which ignores it while the mark is clear. With
+            // the mark left set, an unseeded next walk would wait in the
+            // draw arm below for an answer already given, never drawing
+            // again, and so would a seeded next
+            // walk, whose W_IVAL would wait forever for an answer already
+            // given: the next PortOperational! must still reach
+            // ReserveAddress! (Table B.7, B.3.5.9)
+            draw_act_r <= 1'b0;
+            w_st_r     <= W_OFF;
           end else if (cfg_seed_valid_i && !seed_used_r) begin
             // footnote a: a provisioned range skips generate_address; the
             // clamp keeps a mis-provisioned block inside the pool
@@ -601,7 +658,16 @@ module KL_pp_maap
 
         // ---- Start probe/announce_timer with a fresh random period ------
         W_IVAL: begin
-          if (draw_act_r) begin
+          if (!eng_w) begin
+            // Release! before the entry's frame has a TX slot: the Release!
+            // is ordered first and the entry is dropped whole — no timer
+            // armed, no PDU, no state change (Table B.7 Release!, B.3.2).
+            // A draw in flight is abandoned as in W_ADDR
+            draw_act_r    <= 1'b0;
+            pstate_r      <= P_INITIAL;
+            teardown_ph_r <= 1'b0;
+            w_st_r        <= W_TEARDOWN;
+          end else if (draw_act_r) begin
             if (prng_draw_valid_i) begin
               draw_act_r <= 1'b0;
               arm_v_r    <= 1'b1;
@@ -652,7 +718,15 @@ module KL_pp_maap
         // ---- post-send bookkeeping (the rest of the Table B.7 cell) -----
         W_POST: begin
           w_st_r <= W_IDLE;
-          if (send_msg_r == MSG_PROBE_C) begin
+          if (!eng_w || rel_pend_r) begin
+            // the lane took the last frame of an entry a Release! landed
+            // behind: that entry's state change is dropped, so no claim is
+            // published after the fall, and the Release! runs
+            pstate_r      <= P_INITIAL;
+            chain_ann_r   <= 1'b0;
+            teardown_ph_r <= 1'b0;
+            w_st_r        <= W_TEARDOWN;
+          end else if (send_msg_r == MSG_PROBE_C) begin
             if (pstate_r != P_PROBE) begin
               pstate_r <= P_PROBE;                 // ReserveAddress! -> PROBE
             end
@@ -674,7 +748,6 @@ module KL_pp_maap
           if (!eng_w) begin
             // Release!/PortOperational-loss: Stop timers, INITIAL, no PDU
             pstate_r      <= P_INITIAL;
-            seed_used_r   <= 1'b0;                 // re-arm the footnote-a seed
             teardown_ph_r <= 1'b0;
             w_st_r        <= W_TEARDOWN;
           end else if (txn_valid_i) begin
@@ -723,7 +796,13 @@ module KL_pp_maap
         // ---- the Table B.7 row for one received PDU ---------------------
         W_RX: begin
           w_st_r <= W_IDLE;
-          if ((pstate_r != P_INITIAL) && eng_w) begin
+          if (!eng_w) begin
+            // Release!: torn down from here, since a one-cycle fall would
+            // be gone before W_IDLE could see it
+            pstate_r      <= P_INITIAL;
+            teardown_ph_r <= 1'b0;
+            w_st_r        <= W_TEARDOWN;
+          end else if (pstate_r != P_INITIAL) begin
             if (act_defend_w) begin
               // sDefend (B.3.6.6): echo the probe's requested_*, conflict_*
               // = our overlapping sub-range, unicast to the probe's SA

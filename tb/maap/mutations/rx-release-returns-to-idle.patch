@@ -1,0 +1,18 @@
+--- a/hdl/maap/KL_pp_maap.sv
++++ b/hdl/maap/KL_pp_maap.sv
+@@ -780,13 +780,13 @@
+         // ---- the Table B.7 row for one received PDU ---------------------
+         W_RX: begin
+           w_st_r <= W_IDLE;
+-          if (!eng_w) begin
++          if (1'b0) begin
+             // Release!: torn down from here, since a one-cycle fall would
+             // be gone before W_IDLE could see it
+             pstate_r      <= P_INITIAL;
+             teardown_ph_r <= 1'b0;
+             w_st_r        <= W_TEARDOWN;
+-          end else if (pstate_r != P_INITIAL) begin
++          end else if ((pstate_r != P_INITIAL) && eng_w) begin
+             if (act_defend_w) begin
+               // sDefend (B.3.6.6): echo the probe's requested_*, conflict_*
+               // = our overlapping sub-range, unicast to the probe's SA

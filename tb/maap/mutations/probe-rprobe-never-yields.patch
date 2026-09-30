@@ -1,0 +1,11 @@
+--- a/hdl/maap/KL_pp_maap.sv
++++ b/hdl/maap/KL_pp_maap.sv
+@@ -412,7 +412,7 @@
+     if (rxm_msg_r == MSG_PROBE_C) begin
+       ev_hit_w = ovl_req_w;
+       if (ev_hit_w && (pstate_r == P_PROBE)) begin
+-        act_yield_w = !cmp_mac_true_w;          // tie-break only in PROBE
++        act_yield_w = 1'b0;                     // tie-break only in PROBE
+       end else if (ev_hit_w && (pstate_r == P_DEFEND)) begin
+         act_defend_w = 1'b1;                    // always defended (no tie-break)
+       end

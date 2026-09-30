@@ -1,0 +1,11 @@
+--- a/hdl/maap/KL_pp_maap.sv
++++ b/hdl/maap/KL_pp_maap.sv
+@@ -489,7 +489,7 @@
+   assign txs_wr_len_o    = TXS_LEN_W_C'(FRAME_BYTES_C);
+   assign txs_alloc_req_o = (w_st_r == W_ALLOC);
+   assign txs_oversize_o  = 1'b0;
+-  assign txreq_valid_o   = (w_st_r == W_LANE);
++  assign txreq_valid_o   = (w_st_r == W_LANE) && eng_w;
+   assign txreq_slot_o    = bld_slot_r;
+ 
+   // ------------------------------------------------------------ the walker

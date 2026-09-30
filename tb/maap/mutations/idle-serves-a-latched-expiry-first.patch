@@ -1,0 +1,11 @@
+--- a/hdl/maap/KL_pp_maap.sv
++++ b/hdl/maap/KL_pp_maap.sv
+@@ -734,7 +734,7 @@
+ 
+         // ---- engaged steady state: field work ---------------------------
+         W_IDLE: begin
+-          if (!eng_w) begin
++          if (!eng_w && !pend_probe_exp_r && !pend_ann_exp_r) begin
+             // Release!/PortOperational-loss: Stop timers, INITIAL, no PDU
+             pstate_r      <= P_INITIAL;
+             teardown_ph_r <= 1'b0;

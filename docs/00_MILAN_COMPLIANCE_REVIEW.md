@@ -464,7 +464,7 @@ verification).
 | REQ-MAAP-004 | 1722-2016 B.3.4 | probe_timer strictly inside (500, 600) ms and announce_timer strictly inside (30, 32) s, drawn fresh at every start | shall | A | [GAP-04](#gap-04) | T-MAAP-* via PRNG kinds 5/6 | 08 §2, [11](architecture/11_maap_engine.md) §8 | TIM |
 | REQ-MAAP-005 | 1722-2016 B.3.5.5–.7 + Table B.7 + B.3.6.4 | The conflict matrix: rProbe! defended in DEFEND without tie-break; compare_MAC (octet-wise reversed, TRUE = no action) in PROBE/rProbe! and DEFEND/rDefend!+rAnnounce!; every yield re-randomizes | shall | A | [GAP-04](#gap-04) | row decode | [11](architecture/11_maap_engine.md) §6 | MTXW |
 | REQ-MAAP-006 | 1722-2016 B.3.6.6 + B.2.7/B.2.8 | DEFEND echoes the probe's requested_*; conflict_start = first allocated conflicting address, conflict_count from it; both fields 0 in PROBE/ANNOUNCE | shall | A | [GAP-04](#gap-04) | defend fields | [11](architecture/11_maap_engine.md) §3 | DIR |
-| REQ-MAAP-007 | 1722-2016 B.3.5.2 + Table B.7 footnote c | Release! is a local event: stop timers, INITIAL, no PDU on the wire | shall | A | [GAP-04](#gap-04) | engage-fall arc | [11](architecture/11_maap_engine.md) §6 | DIR |
+| REQ-MAAP-007 | 1722-2016 B.3.5.2 + Table B.7 (Release! row, footnote c) + B.3.2 | Release! is a local event: stop timers, INITIAL, no PDU generated after the fall (a frame an earlier entry already requested may drain) | shall | A | [GAP-04](#gap-04) | engage-fall arc | [11](architecture/11_maap_engine.md) §6 | DIR |
 
 ### 6.10 Non-redundant scoping
 

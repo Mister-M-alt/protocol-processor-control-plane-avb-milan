@@ -1,0 +1,13 @@
+--- a/hdl/maap/KL_pp_maap.sv
++++ b/hdl/maap/KL_pp_maap.sv
+@@ -753,7 +753,9 @@
+               pstate_r    <= P_INITIAL;
+               conflicts_r <= (&conflicts_r) ? conflicts_r
+                                             : conflicts_r + 8'd1;
+-              w_st_r      <= W_ADDR;
++              probe_left_r <= PROBE_RETX_C;       // re-probe the SAME range
++              ival_ann_r   <= 1'b0;
++              w_st_r       <= W_IVAL;
+             end
+           end
+         end

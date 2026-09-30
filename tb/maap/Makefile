@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
 # KL_pp_maap (IEEE 1722-2016 Annex B) suite — exit 0 = PASS.
 VERILATOR ?= verilator
+MUTANT_OUTPUT ?= /tmp/maap-mutants
 HDL        = ../../hdl
 TOP        = maap_wrap
 
@@ -21,7 +22,11 @@ run:
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vmaap_sim
 	./obj_dir/Vmaap_sim
 
+# the mutation campaign (README): reviewed patches planted in scratch copies
+mutants:
+	python3 mutants.py --output "$(MUTANT_OUTPUT)"
+
 clean:
 	rm -rf obj_dir
 
-.PHONY: run clean
+.PHONY: run mutants clean
