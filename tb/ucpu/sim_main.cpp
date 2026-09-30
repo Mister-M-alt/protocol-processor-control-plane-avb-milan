@@ -789,7 +789,7 @@ void UcpuSuite::the_524_byte_cap_skips_on_overflow() {
 }
 
 // ---- P11b/P11c: the Δ8 APPEND (Milan 5.4.1, issue #50) ---------------
-// The same 8-byte loop with cnd D8 fills the buffer (RESP_D8_CAP_P = 592):
+// The same 8-byte loop with cnd D8 fills the buffer (RESP_D8_CAP_BYTES_P = 592):
 // 72 of 80 elements fit from cursor 12, the 73rd would end at 596. Inside a
 // GET_DYNAMIC_INFO batch the same µop still stops at 524 (IEEE §7.4.76.1).
 void UcpuSuite::the_d8_append_fills_the_buffer_but_not_a_batch() {

@@ -43,7 +43,7 @@ module KL_aecp_ucpu
     //! (cnd[0] set) may fill, cursor = cdl: KL_aecp_engine passes its buffer
     //! (16 + LINE_BYTES_P rounded up). Every other APPEND, and every APPEND of
     //! a GET_DYNAMIC_INFO batch, still skips past RESP_CAP_C (524).
-    parameter int unsigned RESP_D8_CAP_P = 592
+    parameter int unsigned RESP_D8_CAP_BYTES_P = 592
 ) (
     input  wire         clk_i,
     input  wire         rst_n,
@@ -268,12 +268,13 @@ module KL_aecp_ucpu
   //! responses Milan §5.4.1 lets exceed cdl 524 (GET_AUDIO_MAP's records,
   //! issue #50); it fills the buffer instead. A batch never does: IEEE
   //! 1722.1-2021 §7.4.76.1 still holds GET_DYNAMIC_INFO to 524.
-  if ((RESP_D8_CAP_P < RESP_CAP_C) || (RESP_D8_CAP_P > 1024)) begin : gen_g_d8_cap
-    $error("RESP_D8_CAP_P=%0d outside %0d..1024 (the 10-bit cursor)",
-           RESP_D8_CAP_P, RESP_CAP_C);
+  if ((RESP_D8_CAP_BYTES_P < RESP_CAP_C)
+      || (RESP_D8_CAP_BYTES_P > 1024)) begin : gen_g_d8_cap
+    $error("RESP_D8_CAP_BYTES_P=%0d outside %0d..1024 (the 10-bit cursor)",
+           RESP_D8_CAP_BYTES_P, RESP_CAP_C);
   end
   logic [10:0] append_cap_w;
-  assign append_cap_w = (uop_e_r.cnd[0] && !batch_r) ? 11'(RESP_D8_CAP_P)
+  assign append_cap_w = (uop_e_r.cnd[0] && !batch_r) ? 11'(RESP_D8_CAP_BYTES_P)
                                                       : 11'(RESP_CAP_C);
   logic append_skip_w;
   assign append_skip_w = (uop_e_r.op == OP_APPEND) &&

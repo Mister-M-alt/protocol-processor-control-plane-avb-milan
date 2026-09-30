@@ -973,7 +973,7 @@ not exist in a Milan PAAD):
 | Model | `DESC_ADDR`, `READ_STATE`, `WRITE_STATE`, `NAME_RD`, `NAME_WR`, `COPY_BUFFER` | image+overlay via [07 §3](07_memory_maps.md); `COPY_BUFFER` with `cnd` TAIL copies a descriptor's tail, its length less a lane-aligned start (§6.1) |
 | Checks | `CHECK_LOCK`, `CHECK_ARG`, `MAP_VALIDATE` | first failure sets status + branches |
 | Gather | `GATHER_EXT`, `READ_COUNTERS` | atomic snapshots (§6.2, §6.6) |
-| Iterate | `ITER_OPEN`, `ITER_NEXT`, `APPEND_RESP` | GDI + list responses; APPEND has skip-on-overflow semantics: it skips a field that would end past cdl 524, or, with `cnd` D8 (the Milan §5.4.1 record loop, §3) and outside a GET_DYNAMIC_INFO batch, past the response buffer (`RESP_D8_CAP_P`, 592) |
+| Iterate | `ITER_OPEN`, `ITER_NEXT`, `APPEND_RESP` | GDI + list responses; APPEND has skip-on-overflow semantics: it skips a field that would end past cdl 524, or, with `cnd` D8 (the Milan §5.4.1 record loop, §3) and outside a GET_DYNAMIC_INFO batch, past the response buffer (`RESP_D8_CAP_BYTES_P`, 592) |
 | Effects | `COMMIT`, `NVM_MARK`, `NOTIFY_ENQ` | commit is the atomicity point |
 | Respond | `SET_STATUS`, `SET_LENGTH`, `BUILD_HEADER`, `BUILD_FIELD`, `SEND_RESPONSE` | |
 

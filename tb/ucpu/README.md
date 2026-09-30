@@ -33,7 +33,7 @@ chain (state write-back strobes, COMMIT, NVM_MARK, NOTIFY_ENQ — and their
 suppression under a foreign lock), the name region select, COPY_BUFFER lanes,
 MAP_VALIDATE both ways, the 524-byte cap with §7.4.76.1 skip-on-overflow (64
 of 70 elements fit, the rest skip, iteration continues), the Δ8 APPEND of
-Milan 5.4.1 (P11b: `cnd` D8 fills the buffer, `RESP_D8_CAP_P` = 592, so 72 of
+Milan 5.4.1 (P11b: `cnd` D8 fills the buffer, `RESP_D8_CAP_BYTES_P` = 592, so 72 of
 80 elements fit; P11c: the same µop inside a GET_DYNAMIC_INFO batch still
 stops at 524, issue #50), Table 7-141 status
 codes on the wire header, write-strobe formats B/W/Q, truncating moves, 64-bit

@@ -40,7 +40,7 @@ TAIL = 1              # COPY_BUF cnd[0]: copy rf[ra] - imm bytes from imm, the
                       # descriptor's tail from a lane-aligned start (#82)
 D8 = 1                # APPEND cnd[0]: the Milan §5.4.1 record loop, which
                       # fills the response buffer instead of stopping at 524
-                      # (KL_aecp_ucpu RESP_D8_CAP_P; never inside a batch)
+                      # (KL_aecp_ucpu RESP_D8_CAP_BYTES_P; never inside a batch)
 
 # KL_aecp_desc_store state-port regions (see its banner): the µISA cannot put a
 # 48-bit locate key on a 20-bit address, so the region nibble selects what a
@@ -565,8 +565,8 @@ place(E_OVF, [
 ])
 
 # --- the Δ8 APPEND (issue #50): the same loop with cnd D8 fills the response
-# buffer (RESP_D8_CAP_P, 592 by default: 72 whole qwords from cursor 12), and
-# the same µop inside a GET_DYNAMIC_INFO batch still stops at 524 ------------
+# buffer (RESP_D8_CAP_BYTES_P, 592 by default: 72 whole qwords from cursor
+# 12), and the same µop inside a GET_DYNAMIC_INFO batch still stops at 524 ---
 place(E_OVF8, [
     u('MOVE', rd=6, imm=80),                     # 80 elements of 8 B
     u('MOVE', rd=1, imm=0xD8),

@@ -1670,8 +1670,8 @@ module KL_aecp_engine
   logic  [4:0] ucpu_st_nc_w;
 
   KL_aecp_ucpu #(
-      .UCODE_HEX_P   (UCODE_HEX_P),
-      .RESP_D8_CAP_P (RESP_BUF_C)
+      .UCODE_HEX_P         (UCODE_HEX_P),
+      .RESP_D8_CAP_BYTES_P (RESP_BUF_C)
   ) u_ucpu (
       .clk_i              (clk_i),
       .rst_n              (rst_n),
