@@ -10366,6 +10366,8 @@ int main(int argc, char** argv) {
   if (!one_section || adp_only) run_adp_config(h);
   if (!one_section || ident_only) run_identify(h);
   if (!one_section || notify_only) run_pushes(h);
+  if (!one_section || notify_only) run_storm(h);
+  if (!one_section || notify_only) run_rnd(h);
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's two

@@ -585,11 +585,504 @@ struct PushPhase : NotifyBench {
   }
 };
 
+// ==== ST. STORM: the full registry and counter churn (issue #80) =========
+// 09 section 3 STORM: fan-out to the full registry, counter churn at the rate
+// limit, and no solicited deadline miss. Milan 5.3.4.2 sizes the list at 16;
+// Milan Table 5.22 limits GET_COUNTERS to one notification per descriptor per
+// second; 08 F08.1's T-BUDGET-AECP-WC (100 ms) and T-BUDGET-ACMP-RESP (50 ms)
+// bound the solicited answers. The ms timebase is compressed (1 ms = 100
+// clocks) but the engine's work is counted in real clocks, so the budgets are
+// graded in clocks at the wrap's nominal P-CLK-HZ (1,000,001 Hz, clk_ms()):
+// a hundred times stricter than the F01.5 default clock.
+struct StormPhase : NotifyBench {
+  static constexpr uint64_t ROW_MAC = 0x020200CC0000ull;
+  static constexpr uint64_t ROW_EID = 0x9999000000000200ull;
+  static constexpr unsigned N_ROWS = 16;                // Milan 5.3.4.2
+  static constexpr unsigned N_DESC = 5;
+  uint16_t seq = 0x6D00;
+  long aecp_worst = 0;
+  long acmp_worst = 0;
+
+  using NotifyBench::NotifyBench;
+
+  static uint16_t desc_type(unsigned d) {
+    return d < 2 ? 0x0005 : d == 2 ? 0x0006 : d == 3 ? 0x0009 : 0x0024;
+  }
+  static uint16_t desc_index(unsigned d) { return d == 1 ? 1 : 0; }
+  static std::vector<uint8_t> name(const char* text) {
+    return IdentifyPhase::clock_domain_name(text);
+  }
+  //! a changed SET_NAME from {mac, eid}; the frames it pushed since `from`
+  //! are byte-exact for each registered row but the requester, each at the
+  //! count of what that row was sent before (Milan 5.4.5.1)
+  int fan_out(uint64_t mac, uint64_t eid, const char* text, unsigned rows) {
+    const auto body = name(text);
+    const size_t from = seen.size();
+    (void)ask(mac, eid, seq++, AEM_SET_NAME, body);
+    run_ms(300);
+    int good = 0;
+    for (unsigned k = 0; k < rows; ++k) {
+      if (ROW_MAC + k == mac) continue;
+      const auto v = at_mac(ROW_MAC + k, from);
+      if (v.size() != 1) continue;
+      auto want = aecp_frame(ROW_MAC + k, OWN_MAC, 1, AECP_SUCCESS, EID, ROW_EID + k,
+                             uint16_t(notified_before(ROW_MAC + k, v[0])), AEM_SET_NAME,
+                             body);
+      want[36] |= 0x80;
+      good += (seen[v[0]].f == want) ? 1 : 0;
+    }
+    return good;
+  }
+
+  // ---- ST1: all 16 registered, one change, 15 frames ------------------
+  void the_full_registry_fans_out() {
+    int ok = 0;
+    for (unsigned k = 0; k < 5; ++k) ok += register_controller(ROW_MAC + k, ROW_EID + k, seq++);
+    const int wave_a = fan_out(CTLR_MAC, CTLR_EID, "Storm Wave A", 5);
+    for (unsigned k = 5; k < 10; ++k) ok += register_controller(ROW_MAC + k, ROW_EID + k, seq++);
+    const int wave_b = fan_out(CTLR_MAC, CTLR_EID, "Storm Wave B", 10);
+    for (unsigned k = 10; k < N_ROWS; ++k) ok += register_controller(ROW_MAC + k, ROW_EID + k, seq++);
+    CHECK(ok == 16 && wave_a == 5 && wave_b == 10,
+          "ST1: 16 controllers registered in three waves, rows of each wave "
+          "notified at different sequence_ids (%d, %d, %d)", ok, wave_a, wave_b);
+    const size_t from = seen.size();
+    const int good = fan_out(ROW_MAC + 15, ROW_EID + 15, "Storm Full Registry", N_ROWS);
+    CHECK(good == 15, "ST1b: one change from row 15 reaches the other fifteen "
+          "rows byte-exact, each at its own sequence_id (0, 1 or 2), %d of 15", good);
+    CHECK(to_mac(ROW_MAC + 15, from).size() == 1,
+          "ST1c: the requester receives only its solicited response");
+  }
+
+  // ---- ST2/ST3: counter churn above 1 Hz, solicited answers timed ------
+  static constexpr uint64_t PROBE_MAC = 0x020200DD0001ull;   // not registered
+  static constexpr uint64_t PROBE_EID = 0x9999000000000300ull;
+  std::vector<std::pair<uint16_t, uint64_t>> aecp_probes;    // {seq, sent}
+  std::vector<std::pair<uint16_t, uint64_t>> acmp_probes;
+
+  void pulse(unsigned d) {
+    io.d->ctr_change_desc_type_i = desc_type(d);
+    io.d->ctr_change_desc_index_i = desc_index(d);
+    io.d->ctr_change_i = 1;
+    tick();
+    io.d->ctr_change_i = 0;
+    tick();
+  }
+  void probe(uint16_t s) {
+    feed(aecp_frame(OWN_MAC, PROBE_MAC, 0, 0, EID, PROBE_EID, s, AEM_GET_CONFIGURATION, {}));
+    aecp_probes.push_back({s, io.t - 4});
+    feed(acmp_frame(PROBE_MAC, 10, 0, 0, PROBE_EID, 0, EID, 0, 0, 0, 0, s, 0, 0));
+    acmp_probes.push_back({s, io.t - 4});
+  }
+  //! every descriptor's counters change every 100 ms (10 Hz); a solicited
+  //! AECP and an ACMP command every 700 ms
+  void churn(long ms) {
+    const uint64_t t0 = io.t;
+    long next_pulse = 0;
+    long next_probe = 50;
+    uint16_t s = 0x6E00;
+    while (long(io.t - t0) < ms * MS_CYC) {
+      const long now = long(io.t - t0);
+      if (now >= next_pulse * MS_CYC) {
+        for (unsigned d = 0; d < N_DESC; ++d) pulse(d);
+        next_pulse += 100;
+      } else if (now >= next_probe * MS_CYC) {
+        probe(s++);
+        next_probe += 700;
+      } else {
+        tick();
+      }
+    }
+  }
+  //! the first frame of each GET_COUNTERS round for descriptor d at row 0
+  std::vector<uint64_t> rounds(unsigned d, size_t from) const {
+    std::vector<uint64_t> v;
+    for (size_t i : at_mac(ROW_MAC, from)) {
+      const auto& f = seen[i].f;
+      if (unsolicited(f) && f.size() >= 42 && ct_of(f) == 0x0029
+          && ((f[38] << 8) | f[39]) == desc_type(d) && ((f[40] << 8) | f[41]) == desc_index(d))
+        v.push_back(seen[i].t);
+    }
+    return v;
+  }
+  void the_rate_limit_holds_per_descriptor(size_t from, long window_ms) {
+    for (unsigned d = 0; d < N_DESC; ++d) {
+      const auto r = rounds(d, from);
+      long closest = 1L << 40;
+      for (size_t i = 1; i < r.size(); ++i) closest = std::min(closest, long(r[i] - r[i - 1]));
+      printf("  [i] ST2: descriptor %04x:%u sent %zu rounds, closest %ld clocks apart\n",
+             unsigned(desc_type(d)), unsigned(desc_index(d)), r.size(), closest);
+      CHECK(r.size() >= 3 && long(r.size()) <= window_ms / 1000 + 1,
+            "ST2: descriptor %04x:%u churned at 10 Hz for %ld ms emitted %zu "
+            "rounds, want at least 3 and at most one per second",
+            unsigned(desc_type(d)), unsigned(desc_index(d)), window_ms, r.size());
+      CHECK(r.size() < 2 || closest >= 1000L * MS_CYC - MS_CYC,
+            "ST2b: descriptor %04x:%u rounds %ld clocks apart, want at least "
+            "1000 ms less the one tick the limiter reads (Milan Table 5.22)",
+            unsigned(desc_type(d)), unsigned(desc_index(d)), closest);
+    }
+  }
+  //! every GET_COUNTERS frame of the churn byte-exact at its row's sequence_id
+  void every_counter_frame_is_exact(size_t from) {
+    int frames = 0;
+    int bad = 0;
+    for (size_t i = from; i < seen.size(); ++i) {
+      const auto& f = seen[i].f;
+      if (!unsolicited(f) || f.size() < 42 || ct_of(f) != 0x0029) continue;
+      const uint64_t mac = da_of(f);
+      const uint16_t ty = uint16_t((f[38] << 8) | f[39]);
+      const uint16_t ix = uint16_t((f[40] << 8) | f[41]);
+      auto want = aecp_frame(mac, OWN_MAC, 1, AECP_SUCCESS, EID, ROW_EID + (mac - ROW_MAC),
+                             uint16_t(notified_before(mac, i)), AEM_GET_COUNTERS,
+                             UnsolicitedPhase::counter_body(ty, ix));
+      want[36] |= 0x80;
+      ++frames;
+      bad += (f == want) ? 0 : 1;
+    }
+    CHECK(frames >= 16 * 3 * int(N_DESC) && bad == 0,
+          "ST2c: %d GET_COUNTERS notifications, every one byte-exact at its "
+          "row's own sequence_id (%d not)", frames, bad);
+  }
+  void solicited_answers_stay_inside_their_budgets() {
+    long missing = 0;
+    for (const auto& p : aecp_probes) {
+      long lat = -1;
+      for (const auto& s : seen)
+        if (da_of(s.f) == PROBE_MAC && !unsolicited(s.f) && seq_of(s.f) == p.first) lat = long(s.t - p.second);
+      if (lat < 0) ++missing;
+      aecp_worst = std::max(aecp_worst, lat);
+    }
+    for (const auto& p : acmp_probes) {
+      long lat = -1;
+      for (const auto& s : seen_acmp)
+        if (s.f.size() >= 64 && (s.f[15] & 0x0F) == 11 && ((s.f[62] << 8) | s.f[63]) == p.first)
+          lat = long(s.t - p.second);
+      if (lat < 0) ++missing;
+      acmp_worst = std::max(acmp_worst, lat);
+    }
+    printf("  [i] ST3: worst solicited latency AECP %ld, ACMP %ld clocks\n", aecp_worst, acmp_worst);
+    CHECK(missing == 0 && !aecp_probes.empty(), "ST3: every solicited probe under "
+          "the storm was answered (%ld missing of %zu)", missing,
+          aecp_probes.size() + acmp_probes.size());
+    CHECK(aecp_worst <= clk_ms(100), "ST3b: GET_CONFIGURATION answered within "
+          "T-BUDGET-AECP-WC under the storm: worst %ld clocks, bound %ld", aecp_worst, clk_ms(100));
+    CHECK(acmp_worst <= clk_ms(50), "ST3c: GET_RX_STATE answered within "
+          "T-BUDGET-ACMP-RESP under the storm: worst %ld clocks, bound %ld", acmp_worst, clk_ms(50));
+  }
+
+  void run() {
+    boot_to_idle(true);
+    the_full_registry_fans_out();
+    const size_t from = seen.size();
+    churn(3500);
+    run_ms(1500);
+    the_rate_limit_holds_per_descriptor(from, 5000);
+    every_counter_frame_is_exact(from);
+    solicited_answers_stay_inside_their_budgets();
+  }
+};
+
+// ==== RN. RND: seeded registry, lock and SET churn against a model (#80) ==
+// 09 section 3 RND: randomized multi-controller sessions against an
+// independent model, no divergence. Twenty controllers (more than Milan
+// 5.3.4.2's sixteen, so the list fills) send a seeded xorshift32 mix of
+// REGISTER / DEREGISTER (IEEE 7.4.37 / 7.4.38, Milan 5.4.2.21 / 5.4.2.22),
+// LOCK / UNLOCK (IEEE 7.4.2, Milan 5.3.4.1 / 5.4.2.2), SET_CONTROL and
+// SET_CLOCK_SOURCE (lock-protected, notifying on a change) and GET_CONTROL.
+// The model below knows the list (capacity 16, a refresh keeps its entry's
+// sequence_id, a new entry starts at 0), the lock (one holder, keep-alive,
+// the 60 s expiry the wrap compresses to 400 ms) and the pushes (every
+// registered controller but the requester, per-entry sequence_id; an
+// automatic unlock excludes nobody). Each step's solicited response and the
+// set of unsolicited frames it caused are compared byte for byte; any other
+// frame is a divergence too. The lock is never left in the ambiguous window
+// around its expiry: once 250 ms have passed since its last LOCK, the holder
+// either refreshes it or the bench waits 600 ms for the automatic unlock.
+// The body of a lock-refused SET is issue #53's decision, so that response is
+// graded on its status and length alone.
+struct RndPhase : NotifyBench {
+  static constexpr unsigned N_CTLR = 20;
+  static constexpr uint64_t C_MAC = 0x020200EE0000ull;
+  static constexpr uint64_t C_EID = 0xAAAA000000000400ull;
+  static constexpr uint32_t SEED = 0xC6A46301u;
+  static constexpr int STEPS = 720;
+  static constexpr long LOCK_REFRESH = 250L * MS_CYC;
+
+  struct Model {
+    std::vector<bool> reg = std::vector<bool>(N_CTLR, false);
+    std::vector<uint16_t> next_seq = std::vector<uint16_t>(N_CTLR, 0);
+    int holder = -1;                            // -1: not locked
+    uint64_t lock_at = 0;                       // clock of the holder's last LOCK
+    uint8_t identify = 0;
+    uint16_t clock_source = 0;
+    unsigned count() const {
+      unsigned n = 0;
+      for (bool r : reg) n += r ? 1 : 0;
+      return n;
+    }
+  };
+  Model m;
+  uint32_t rng = SEED;
+  uint16_t seq = 0x7000;
+  long divergences = 0;
+  long frames_compared = 0;
+  //! how often each arm ran, for the anti-vacuity checks
+  long n_full = 0;
+  long n_denied = 0;
+  long n_expired = 0;
+  long n_takes = 0;
+  long n_pushes = 0;
+  long n_refused_sets = 0;
+
+  using NotifyBench::NotifyBench;
+
+  uint32_t next() {
+    rng ^= rng << 13;
+    rng ^= rng >> 17;
+    rng ^= rng << 5;
+    return rng;
+  }
+  static uint64_t mac(unsigned c) { return C_MAC + c; }
+  static uint64_t eid(unsigned c) { return C_EID + c; }
+  static std::vector<uint8_t> lock_body(uint32_t flags, uint64_t locked_id) {
+    std::vector<uint8_t> b(16, 0);
+    putbe(&b[0], flags, 4);
+    putbe(&b[4], locked_id, 8);                 // ENTITY[0] @36 stays 0
+    return b;
+  }
+  static std::vector<uint8_t> control_body(uint8_t v) {
+    return PushPhase::control_body(v);
+  }
+  static std::vector<uint8_t> clock_source_body(uint16_t ix) {
+    std::vector<uint8_t> b(8, 0);
+    putbe(&b[0], 0x0024, 2);
+    putbe(&b[4], ix, 2);                        // index @28, reserved @30
+    return b;
+  }
+  //! the model's pushes: one frame per registered controller but `excl`
+  std::vector<std::vector<uint8_t>> pushes_of(int excl, uint16_t op,
+                                              const std::vector<uint8_t>& body) {
+    std::vector<std::vector<uint8_t>> v;
+    for (unsigned c = 0; c < N_CTLR; ++c) {
+      if (!m.reg[c] || int(c) == excl) continue;
+      auto f = aecp_frame(mac(c), OWN_MAC, 1, AECP_SUCCESS, EID, eid(c), m.next_seq[c]++, op, body);
+      f[36] |= 0x80;
+      v.push_back(f);
+    }
+    n_pushes += long(v.size());
+    return v;
+  }
+
+  struct Expect {
+    std::vector<uint8_t> rsp;                   // byte-exact unless status_only
+    bool status_only = false;
+    unsigned status = 0;
+    int cdl = 0;
+    std::vector<std::vector<uint8_t>> uns;
+  };
+  //! one frame compared: counted, and reported the first few times it differs
+  void compare(bool same, const char* what, int step) {
+    ++frames_compared;
+    if (same) return;
+    if (++divergences <= 8) printf("  RN step %d: %s diverges from the model\n", step, what);
+  }
+  //! wait for the response and every expected push (bounded), then a quiet
+  //! window in which nothing else may arrive
+  void settle(size_t from, uint64_t rmac, uint16_t s, size_t n_uns) {
+    for (long c = 0; c < 150L * MS_CYC; ++c) {
+      size_t uns = 0;
+      bool rsp = false;
+      for (size_t i = from; i < seen.size(); ++i) {
+        uns += unsolicited(seen[i].f) ? 1 : 0;
+        rsp = rsp || (da_of(seen[i].f) == rmac && !unsolicited(seen[i].f) && seq_of(seen[i].f) == s);
+      }
+      if ((rsp || rmac == 0) && uns >= n_uns) break;
+      tick();
+    }
+    run_ms(5);
+  }
+  //! everything that arrived since `from` against the model's expectation
+  void judge(size_t from, uint64_t rmac, uint16_t s, Expect& e, int step) {
+    std::vector<std::vector<uint8_t>> got_uns;
+    int responses = 0;
+    for (size_t i = from; i < seen.size(); ++i) {
+      const auto& f = seen[i].f;
+      if (unsolicited(f)) {
+        got_uns.push_back(f);
+      } else if (rmac != 0 && da_of(f) == rmac && seq_of(f) == s) {
+        ++responses;
+        const int cdl = int(((f[16] & 0x07) << 8) | f[17]);
+        compare(e.status_only ? (status_of(f) == e.status && cdl == e.cdl) : (f == e.rsp),
+                "the solicited response", step);
+      } else {
+        compare(false, "an unexpected frame", step);
+      }
+    }
+    if (rmac != 0) compare(responses == 1, "the response count", step);
+    std::sort(got_uns.begin(), got_uns.end());
+    std::sort(e.uns.begin(), e.uns.end());
+    compare(got_uns == e.uns, "the set of unsolicited frames", step);
+  }
+  //! one command from controller c, judged against `e`
+  void command(unsigned c, uint16_t op, const std::vector<uint8_t>& pl, Expect& e, int step) {
+    const size_t from = seen.size();
+    const uint16_t s = seq++;
+    if (!e.status_only)
+      e.rsp = aecp_frame(mac(c), OWN_MAC, 1, e.status, EID, eid(c), s, op, e.rsp);
+    feed(aecp_frame(OWN_MAC, mac(c), 0, 0, EID, eid(c), s, op, pl));
+    settle(from, mac(c), s, e.uns.size());
+    judge(from, mac(c), s, e, step);
+  }
+
+  // ---- the model's arms: each fills an Expect, then runs the command ----
+  void do_register(unsigned c, int step) {
+    Expect e;
+    e.rsp = std::vector<uint8_t>(4, 0);         // the flags echo
+    if (m.reg[c] || m.count() < 16) {
+      if (!m.reg[c]) m.next_seq[c] = 0;         // a new entry (5.4.2.21)
+      m.reg[c] = true;
+      e.status = AECP_SUCCESS;
+    } else {
+      e.status = 8;                             // NO_RESOURCES
+      ++n_full;
+    }
+    command(c, 0x0024, std::vector<uint8_t>(4, 0), e, step);
+  }
+  void do_deregister(unsigned c, int step) {
+    Expect e;
+    m.reg[c] = false;
+    e.status = AECP_SUCCESS;
+    command(c, 0x0025, {}, e, step);
+  }
+  void do_lock(unsigned c, bool unlock, int step) {
+    Expect e;
+    const bool other = m.holder >= 0 && m.holder != int(c);
+    if (other) {
+      e.status = AECP_ENTITY_LOCKED;
+      ++n_denied;
+    } else if (!unlock) {
+      e.status = AECP_SUCCESS;
+      if (m.holder < 0) {
+        m.holder = int(c);
+        ++n_takes;
+        e.uns = pushes_of(int(c), 0x0001, lock_body(0, eid(c)));
+      }
+      m.lock_at = io.t;
+    } else {
+      e.status = AECP_SUCCESS;
+      if (m.holder == int(c)) {
+        m.holder = -1;
+        e.uns = pushes_of(int(c), 0x0001, lock_body(0, 0));
+      }
+    }
+    e.rsp = lock_body(unlock ? 1 : 0, m.holder >= 0 ? eid(unsigned(m.holder)) : 0);
+    command(c, 0x0001, lock_body(unlock ? 1 : 0, 0), e, step);
+  }
+  void do_set_control(unsigned c, uint8_t v, int step) {
+    Expect e;
+    if (m.holder >= 0 && m.holder != int(c)) {
+      e.status_only = true;
+      e.status = AECP_ENTITY_LOCKED;
+      e.cdl = 17;
+      ++n_refused_sets;
+    } else {
+      e.status = AECP_SUCCESS;
+      e.rsp = control_body(v);
+      if (v != m.identify) e.uns = pushes_of(int(c), AEM_SET_CONTROL, control_body(v));
+      m.identify = v;
+    }
+    command(c, AEM_SET_CONTROL, control_body(v), e, step);
+  }
+  void do_set_clock_source(unsigned c, uint16_t ix, int step) {
+    Expect e;
+    if (m.holder >= 0 && m.holder != int(c)) {
+      e.status_only = true;
+      e.status = AECP_ENTITY_LOCKED;
+      e.cdl = 20;
+      ++n_refused_sets;
+    } else {
+      e.status = AECP_SUCCESS;
+      e.rsp = clock_source_body(ix);
+      if (ix != m.clock_source)
+        e.uns = pushes_of(int(c), AEM_SET_CLOCK_SOURCE, clock_source_body(ix));
+      m.clock_source = ix;
+    }
+    command(c, AEM_SET_CLOCK_SOURCE, clock_source_body(ix), e, step);
+  }
+  void do_get_control(unsigned c, int step) {
+    Expect e;
+    e.status = AECP_SUCCESS;
+    e.rsp = control_body(m.identify);
+    command(c, AEM_GET_CONTROL, PushPhase::ti(0x001A, 0), e, step);
+  }
+  //! the lock is old: its holder refreshes it, or the bench lets it expire
+  void mind_the_lock(int step) {
+    if (m.holder < 0 || io.t - m.lock_at < uint64_t(LOCK_REFRESH)) return;
+    if (next() % 4 != 0) {
+      do_lock(unsigned(m.holder), false, step);
+      return;
+    }
+    Expect e;
+    const size_t from = seen.size();
+    e.uns = pushes_of(-1, 0x0001, lock_body(0, 0));   // Milan Table 5.22
+    m.holder = -1;
+    ++n_expired;
+    run_ms(600);
+    judge(from, 0, 0, e, step);
+  }
+  void one_step(int step) {
+    mind_the_lock(step);
+    const unsigned c = next() % N_CTLR;
+    const unsigned op = next() % 100;
+    if (op < 30) do_register(c, step);
+    else if (op < 37) do_deregister(c, step);
+    else if (op < 50) do_lock(c, false, step);
+    else if (op < 58) do_lock(c, true, step);
+    else if (op < 82) do_set_control(c, (next() & 1) ? 255 : 0, step);
+    else if (op < 92) do_set_clock_source(c, uint16_t(next() % 3), step);
+    else do_get_control(c, step);
+  }
+  void run() {
+    boot_to_idle(true);
+    const uint64_t t0 = io.t;
+    for (int i = 0; i < STEPS; ++i) one_step(i);
+    printf("  [i] RN: seed 0x%08X, %d steps, %ld frames compared in %ld ms; "
+           "%ld NO_RESOURCES, %ld lock denials, %ld lock takes, %ld automatic "
+           "unlocks, %ld lock-refused SETs, %ld pushes\n", unsigned(SEED), STEPS,
+           frames_compared, long((io.t - t0) / MS_CYC), n_full, n_denied, n_takes,
+           n_expired, n_refused_sets, n_pushes);
+    CHECK(divergences == 0, "RN: %d seeded steps from %u controllers, zero "
+          "divergence from the independent registry and lock model (%ld of "
+          "%ld frame comparisons diverged)", STEPS, N_CTLR, divergences, frames_compared);
+    CHECK(n_full >= 3 && n_denied >= 10 && n_takes >= 5 && n_expired >= 2
+              && n_refused_sets >= 10 && n_pushes >= 200,
+          "RN b: every arm was exercised (full %ld, denied %ld, takes %ld, "
+          "expired %ld, refused %ld, pushes %ld)", n_full, n_denied, n_takes,
+          n_expired, n_refused_sets, n_pushes);
+    CHECK(io.t - t0 < 30000ULL * MS_CYC, "RN c: the session stays under the "
+          "30 s floor of the controller monitor (Milan 5.4.5.3), %ld ms",
+          long((io.t - t0) / MS_CYC));
+  }
+};
+
+[[maybe_unused]] static void run_rnd(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  RndPhase{h}.run();
+  printf("RN: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 [[maybe_unused]] static void run_pushes(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
   PushPhase{h}.run();
   printf("NP: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
+[[maybe_unused]] static void run_storm(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  StormPhase{h}.run();
+  printf("ST: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
 [[maybe_unused]] static void run_identify(H& h) {
