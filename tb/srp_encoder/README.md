@@ -3,7 +3,7 @@
 
 Exit 0 = PASS. `make` builds `srp_tb_wrap` (encoder wired to a **real**
 `KL_pp_tx_slots` pool; Domain and VLAN singletons stand-alone) and runs
-562 checks against an **independent** C++ packer written from 802.1Q
+581 checks against an **independent** C++ packer written from 802.1Q
 §10.8.1/§35.2.2 and Milan §4.2.7 — never from the RTL — and an independent
 byte-level MRPDU parser. Every captured frame crossed the actual slot RAM
 through its serialize port.
@@ -146,3 +146,20 @@ low to exercise the original per-application injection interface;
 allocation/TX stalls, empty canceled reservations and full-table paths through
 real shared services. A canceled empty reservation waits for content or can be
 reused by a later own action; it does not emit an empty MRPDU.
+
+## Join transmitted (issue #65, Milan v1.2 4.3.2)
+
+W1..W5 grade the two faces the talker's streaming licence reads. W1: the
+encoder's `tx_mvrp_o` strobes once per MVRP MRPDU the arbiter accepts, never for
+MSRP. W2..W5: KL_srp_vlan's per-entry `vid_sent_o` (with `vid_val_o`) rises only
+at a transmission after the entry's New or re-join was handed to the encoder; a
+New still held by encoder backpressure does not count; a second user keeps it;
+the last user's leave retires it; a re-join of the VID waits for its own New;
+periodic re-joins never un-send an entry. Mutation-proven 2026-09-29 through
+[the campaign](../srp_top/mutants.py):
+
+| Mutation | Suite response |
+|---|---|
+| `tx-strobe-any-app`: the strobe fires for MSRP too | 1 FAIL — W1 |
+| `join-sent-at-handover`: sent at the hand-over, not at the transmission | 3 FAIL — W2, W3, W4 |
+| `count-up-unsends`: a second user resets the sent state | 2 FAIL — W4 |

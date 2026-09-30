@@ -38,16 +38,57 @@ plain-IEEE build where different; blank = same).
 | T-MAAP-ANNOUNCE | random, strictly 30 s < T < 32 s | MAAP engine (11) | announce_timer — a fresh draw at every start | 1722-2016 B.3.4.1, Table B.8 | |
 | T-MRP-JOIN | 200 ms (180–240) | SRP engine (10) | MRP joinTime — join tx cadence + vector aggregation window | Milan Table 4.3 | |
 | T-MRP-LEAVE | 5000 ms (4500–7500) | SRP engine (10) | MRP LeaveTime — registrar LV expiry during LeaveAll (Δ13 removes the rLv path) | Milan Table 4.3 | 600–1000 ms (802.1Q Table 10-7) — coupled to Δ13: change both or neither |
-| T-MRP-LEAVEALL | random 10–15 s | SRP engine (10) | leavealltimer per participant | Milan Table 4.3 | |
+| T-MRP-LEAVEALL | random 10–15 s | SRP engine (10) | leavealltimer per participant — a fresh draw at every start: Begin! (reset), its own expiry, and a received LeaveAll of that participant (802.1Q Table 10-5 rLA!, [10 §6.5](10_srp_engine.md#fig-10-leaveall)) | Milan Table 4.3 | |
 | T-MRP-PERIODIC | 1000 ms (900–1500) | SRP engine (10) | periodictimer — periodic re-join transmissions | Milan Table 4.3 | |
-| T-NVM-DEBOUNCE | ≈ 500 ms (design) | NVM mgr | commit coalescing | design | |
-| T-NVM-RS-DEADLINE | `P-NVM-RS-TMO-CYC` clocks without progress (default 20 ms) | NVM mgr | the boot restore walk's read phase: expiry fails the whole walk and abandons an issued read ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) | design (persistence that wedges must not hold the entity) | a clock counter in the manager, not a timer-service slot |
+| T-NVM-DEBOUNCE | 500 ms: 500 ticks of the 1 ms `tick_ms` (`DEB_TICKS_P` in the binding manager, `DEB_MS_P` in the D3 writer) | NVM mgr, D3 writer | the producer's first-dirty window: the first change opens it, its close arms one burst that drains every dirty record (the integrator's own firmware window, 1,000 ms, is separate and not this processor's) | parent DR2a ruling | a tick counter in each producer, not a timer-service slot |
+| T-NVM-RS-DEADLINE | `P-NVM-RS-TMO-CYC` clocks without progress (20 ms, ceil(`P-CLK-HZ` × 20 / 1000); **ratified**, DR3a) | NVM mgr, D3 writer | per restore wait: the binding walk's read phase, and every wait of the D3 walk (reads, descriptor reads, the judge, the roll-back's debt wait, the re-LOCATE). Expiry fails that walk and abandons an issued read to the drain ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) | parent DR3a ruling (persistence that wedges must not hold the entity) | a clock counter in each walk, not a timer-service slot |
+| T-NVM-RS-AGGREGATE | `P-NVM-RS-AGG-CYC` clocks from the accepted restore start (1,000 ms, ceil(`P-CLK-HZ` × 1000 / 1000) = `P-CLK-HZ`; **ratified** as an enforced bound, DR3a) | D3 writer | the whole restore: from `restore_go_i` through the binding walk, both D3 passes and the roll-back to the terminal. At the bound the phase the restore is in takes the path a stalled wait takes in it (cause 3), once, in the first clock whose wait has no event in hand, and a provable image is never closed: a binding walk still reading fails whole and releases the listener, and the D3 walk then proves the image with no record read and ends DEFAULTS (CLOSED only if the image cannot be proven, cause 7); in pass 0 DEFAULTS; in pass 1 the roll-back; during the roll-back (its debt wait or re-LOCATE) CLOSED ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)). A device that answers every wait just inside `T-NVM-RS-DEADLINE` ends here, within one such deadline of it plus a few clocks, or within two plus a few clocks when a roll-back follows | parent DR3a ratification (a slow but live device must not hold AECP and the enable) | a clock counter in the D3 writer, not a timer-service slot |
+| T-NVM-RETRY-BACKOFF | `P-NVM-RETRY-BACKOFF-CYC` clocks (500 ms) from a failed record write | NVM mgr, D3 writer | DR2c: at most three attempts per record (`RETRY_MAX_P` = 2 retries), this wait before each retry, then the reset-sticky `nvm_alarm_o` | parent DR2c ruling | a clock counter in each producer, not a timer-service slot |
 | T-TX-AGING | 10 ms (design) | TX arbiter | starvation promotion | design | |
 | T-BUDGET-ACMP-RESP | ≤ 50 ms (design) | budgets | see §4 | design | |
 | T-BUDGET-AECP-TYP / -WC | ≤ 20 ms / ≤ 100 ms (design) | budgets | see §4 | design | |
 
 The original document's single 187.5 ms target is **superseded** by §4
 ([GAP-07](../00_MILAN_COMPLIANCE_REVIEW.md#gap-07)).
+
+<a id="sec-08-nvm"></a>**The saved-state times, separated** (parent
+[D3 contract](https://github.com/kebag-logic/milan-fpga/blob/7a7582f0/docs/design/SAVED_STATE_MATERIALIZATION.md) §5.1, §6.1, §6.3 and its §15.1 rulings). Five different clocks
+govern persistence; none stands for another.
+
+| Time | Where it runs | Value and unit | Status |
+|---|---|---|---|
+| producer debounce | each record producer (binding manager, D3 writer) | `T-NVM-DEBOUNCE`, 500 ms of `tick_ms` | ruled (DR2a); measured acceptance-to-durable time is published per writer lane |
+| firmware debounce | the integrator's snapshot writer | 1,000 ms first-dirty window | ruled (DR2a); not this processor's |
+| producer retry | each record producer | at most **three attempts** per record (the first write and `RETRY_MAX_P` = 2 retries), each retry `P-NVM-RETRY-BACKOFF-CYC` = ceil(`P-CLK-HZ` / 2) clocks (500 ms) after the failed attempt's error; 50,000,000 clocks at 100 MHz, 25,000,000 at 50 MHz | ruled (DR2c) |
+| firmware retry | the integrator's snapshot writer | at most three transaction attempts per unchanged captured work set, 1,000 ms apart | ruled (DR2c); not this processor's |
+| per-wait restore deadline | each restore walk | `T-NVM-RS-DEADLINE`, 20 ms = ceil(`P-CLK-HZ` × 20 / 1000) clocks; 2,000,000 at 100 MHz, 1,000,000 at 50 MHz | **ratified** (DR3a) |
+| aggregate restore deadline | from the accepted restore start (`restore_go_i`, the integrator's `PP_CTRL[1]`) to COMPLETE, DEFAULTS or CLOSED, roll-back included | `T-NVM-RS-AGGREGATE`, 1,000 ms = `P-CLK-HZ` clocks; 100,000,000 at 100 MHz, 50,000,000 at 50 MHz | **ratified** as an enforced bound (DR3a): a counter in the D3 writer, not a measured budget |
+| media deadlines | the integrator's device and flash | the device's own | outside this processor; the port has no deadline of its own |
+
+One conversion and one rounding rule serve every clock count above: t ms of the core clock
+is ceil(`P-CLK-HZ` × t / 1000) clocks, which the top writes reduced (ceil(`P-CLK-HZ` / 50),
+ceil(`P-CLK-HZ` / 2), `P-CLK-HZ`) so it never multiplies or overflows. The processor lane
+measured both DR3a numbers (healthy restores end within 2,661 clocks, the longest healthy
+wait is 853) and the manager ratified them
+([parent #70](https://github.com/kebag-logic/milan-fpga/issues/70#issuecomment-5873060660)):
+20 ms per wait, and 1,000 ms in all as an **enforced** bound, because each wait alone lets a
+device that answers every wait just inside 20 ms stretch the D3 walk over some 970 waits.
+
+**One alarm.** `nvm_alarm_o` is the only reset-sticky persistence alarm, and only a
+producer's **own** write-attempt exhaustion raises it: the third failed WRITE of one
+record by the binding manager or the D3 writer. A producer's record is retired at the
+untainted `done` of its window write: from then the integrator's backend owns it
+(parent D3 §7.1), and no flash-slot outcome feeds back to the producer. A firmware
+transaction that exhausts its three attempts is therefore not a producer failure and
+raises no alarm here: it is the [FASTCONNECT §9.2](https://github.com/kebag-logic/milan-fpga/blob/7a7582f0/docs/design/SAVED_STATE_FASTCONNECT.md#92-when-it-sets-when-it-is-revoked-and-when-the-loss-is-forgiven)
+verdict loss, reported by the integrator's status without an ACK of the failed slot.
+No later success and no heartbeat clears `nvm_alarm_o`; only reset does.
+
+**What the quarantine is not.** A device that never ends an abandoned read keeps the
+port quarantined until reset ([02 §8.2](02_interfaces.md#82-two-record-managers-one-port)).
+That bounds the restore, never the port: it does not satisfy processor issue #15, whose
+reusable-service criterion still needs a real cancellation or device-reset
+acknowledgement.
 
 ## 3. Timer hardware
 
@@ -116,12 +157,16 @@ flowchart LR
 | T-SRP-DAFRESH / T-SRP-LEAVEALL2 | per source (shared slot) | 1 × SO |
 | T-NOTIF-MONITOR + T-NOTIF-TIMELIMITED | per registry entry | 2 × CTRL × IF |
 | T-AECP-TIMEOUT (CA inflight) | pool | P-CA-POOL |
-| T-LOCK-UNLOCK, T-IDENT-BURST, T-IDENT-REARM, T-CTR-OBSERVE, T-NVM-DEBOUNCE | singletons | 5 |
+| T-LOCK-UNLOCK, T-IDENT-BURST, T-IDENT-REARM, T-CTR-OBSERVE, T-NVM-DEBOUNCE | singletons (the T-NVM-DEBOUNCE slot stays reserved and unused: see below) | 5 |
 | T-MAAP-PROBE + T-MAAP-ANNOUNCE | one SM per entity (one block claim, [11](11_maap_engine.md)) | 2 |
 | T-MRP-{JOIN, LEAVEALL} × 2 participants + T-MRP-PERIODIC + registrar-leave pool (T-MRP-LEAVE, active only during LeaveAll: SI + SO stream registrars + the Domain and MVRP VID registrars) | per interface, when `P-EN-SRP-ENGINE` | (7 + SI + SO) × IF |
 
 `P-TIMER-SLOTS = IF + SI + SI + SO + 2·CTRL·IF + P-CA-POOL + 5 + 2 [+ (7 + SI + SO)·IF with the SRP engine]`
 (+`T-CTR-NOTIF` implemented as a per-descriptor last-sent timestamp, not a timer slot).
+The persistence times take no timer-service slot: each record producer counts
+`T-NVM-DEBOUNCE` in `tick_ms` ticks and `T-NVM-RETRY-BACKOFF` in clocks, and each restore
+walk counts `T-NVM-RS-DEADLINE` in clocks, all in counters of their own (two producers,
+two walks). The T-NVM-DEBOUNCE singleton keeps its reserved slot so no later base moves.
 The MAAP pair was **appended after the singletons** so every earlier base — the ones
 landed engines' default parameters already point at — stays put; only `base_end` and
 the SRP block moved, by exactly 2. Baseline example (1 IF, 8 + 8 streams, 16

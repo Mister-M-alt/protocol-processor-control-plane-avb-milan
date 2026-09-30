@@ -7,9 +7,9 @@
 //  Project     : IEEE 1722.1 protocol processor (docs/architecture/02 §8,
 //                07 §5; F02.8 handshake, F07.8 record framing)
 //
-//  Description : Class-F NVM port — the seam between the NVM manager
-//                (07 §5.3 runtime commit / boot restore, lands in P4) and
-//                the physical NVM device behind the side-port/management
+//  Description : Class-F NVM port — the seam between the record producers
+//                behind KL_pp_nvm_mgr_arb (07 §5.3: binding manager, D3 writer)
+//                and the physical NVM device behind the side-port/management
 //                processor (01 §2: "NVM physical device (behind the NVM
 //                port)"). Record-level and device-agnostic per 02 §8: the
 //                MANAGER face carries exactly the F02.8 envelope

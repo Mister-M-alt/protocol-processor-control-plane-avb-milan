@@ -15,6 +15,9 @@
 //                T-MRP-LEAVEALL all run for real; SLOTS_P = 32 keeps the
 //                sweep, 34 cycles, inside the 40-cycle ms) and KL_pp_prng
 //                (kind-3 LeaveAll draws, seeded by the first link-up).
+//                The arm face reaches the timer on a direct wire unless
+//                arm_delay_i delays it, as the processor top's queued arm
+//                port does (issue #108, check P8).
 //                Only the engine's external contract is exposed: the
 //                header-stripped MRP byte stream in, the 02 §4.1 class-B
 //                service port, the class-C strobes and the F02.10 class-D
@@ -58,6 +61,7 @@ module srp_top_wrap (
     output logic [31:0] rsp_data_o,
 
     input wire          block_alloc_i, //! delay allocation at the real slot-pool face
+    input wire   [4:0]  arm_delay_i,   //! arm-path delay to the timer service, 0..16 clocks (0 = direct)
 
     // TX capture (the C++ side is the 03 §8 arbiter)
     output logic        txreq_valid_o,
@@ -114,6 +118,13 @@ module srp_top_wrap (
     output wire        dbg_rx_event_o,
     output wire [3:0]  dbg_rx_la_o,
     output wire        dbg_alloc_req_o,
+    output wire [31:0] dbg_la_mvrp_deadline_o,
+    output wire        dbg_la_mvrp_pending_o,
+    output wire        dbg_la_mvrp_expiry_o,
+    output wire        dbg_la_mvrp_action_o,
+    output wire        dbg_rx_la_mvrp_o,
+    output wire        dbg_la_redraw_o,
+    output wire        dbg_mvrp_join_o,
     output logic [3:0]  dbg_vid_active_o,
     output logic        dbg_vlan_err_o,
     output logic        dbg_adm_round_o,
@@ -141,6 +152,16 @@ module srp_top_wrap (
   assign dbg_rx_event_o = u_dut.dec_evt_valid_w;
   assign dbg_rx_la_o = u_dut.dec_la_msrp_w;
   assign dbg_alloc_req_o = alloc_req_w;
+  // The MVRP leavealltimer and its LeaveAll flag handed to the encoder, the
+  // decoded MVRP lane, and any LeaveAll draw request (read-only, issue #108)
+  assign dbg_la_mvrp_deadline_o = u_dut.cad_dl_r[4];
+  assign dbg_la_mvrp_pending_o = u_dut.la_mvrp_pend_r;
+  assign dbg_la_mvrp_expiry_o = u_dut.cad_hit_w && (u_dut.cad_exp_ix_w == 4);
+  assign dbg_la_mvrp_action_o = u_dut.enc_la_r[1];
+  assign dbg_rx_la_mvrp_o = u_dut.dec_la_mvrp_w;
+  assign dbg_la_redraw_o = draw_req_w;
+  // the MVRP T-MRP-JOIN expiry: the tick whose drain carries a pending flag
+  assign dbg_mvrp_join_o = u_dut.cad_hit_w && (u_dut.cad_exp_ix_w == 1);
 
   // Read-only probes: acceptance at the real service gate, its optimistic
   // window, the T-MRP-JOIN tick of the talker walk, and the free-running
@@ -168,6 +189,43 @@ module srp_top_wrap (
   logic [TB_SLOT_AW_C-1:0] exp_slot_w;
   logic [7:0]              exp_owner_w;
   logic                    tick_ms_w;
+
+  // ---- arm-path latency (issue #108) ----------------------------------------
+  // Here the engine's arms reach the timer service on a direct wire. The
+  // processor top queues them behind other faces instead, so arm_delay_i
+  // delays every arm by 0 (the default) to TB_ARM_DLY_C clocks. The C++ side
+  // changes it only across a reset, which empties the line.
+  localparam int unsigned TB_ARM_DLY_C = 16;
+  localparam int unsigned TB_ARM_W_C   = 1 + TB_SLOT_AW_C + 8 + 32;
+  logic [TB_ARM_DLY_C-1:0]                 adly_valid_r;
+  logic [TB_ARM_DLY_C-1:0][TB_ARM_W_C-1:0] adly_word_r;
+  logic [3:0]                              adly_tap_w;
+  logic                    tmr_arm_valid_w;
+  logic                    tmr_arm_cancel_w;
+  logic [TB_SLOT_AW_C-1:0] tmr_arm_slot_w;
+  logic [7:0]              tmr_arm_owner_w;
+  logic [31:0]             tmr_arm_deadline_w;
+
+  always_ff @(posedge clk_i) begin : arm_delay_line
+    if (!rst_n) adly_valid_r <= '0;
+    else        adly_valid_r <= {adly_valid_r[TB_ARM_DLY_C-2:0], arm_valid_w};
+    adly_word_r <= {adly_word_r[TB_ARM_DLY_C-2:0],
+                    {arm_cancel_w, arm_slot_w, arm_owner_w, arm_deadline_w}};
+  end
+
+  assign adly_tap_w = 4'(arm_delay_i - 5'd1);
+
+  always_comb begin : arm_delay_tap
+    if (arm_delay_i == 5'd0) begin
+      tmr_arm_valid_w = arm_valid_w;
+      {tmr_arm_cancel_w, tmr_arm_slot_w, tmr_arm_owner_w, tmr_arm_deadline_w}
+        = {arm_cancel_w, arm_slot_w, arm_owner_w, arm_deadline_w};
+    end else begin
+      tmr_arm_valid_w = adly_valid_r[adly_tap_w];
+      {tmr_arm_cancel_w, tmr_arm_slot_w, tmr_arm_owner_w, tmr_arm_deadline_w}
+        = adly_word_r[adly_tap_w];
+    end
+  end
 
   // ---- prng faces -----------------------------------------------------------
   logic        draw_req_w;
@@ -314,11 +372,11 @@ module srp_top_wrap (
       .rst_n             (rst_n),
       .tick_ms_o         (tick_ms_w),
       .now_ms_o          (now_ms_o),
-      .arm_valid_i       (arm_valid_w),
-      .arm_cancel_i      (arm_cancel_w),
-      .arm_slot_i        (arm_slot_w),
-      .arm_owner_i       (arm_owner_w),
-      .arm_deadline_ms_i (arm_deadline_w),
+      .arm_valid_i       (tmr_arm_valid_w),
+      .arm_cancel_i      (tmr_arm_cancel_w),
+      .arm_slot_i        (tmr_arm_slot_w),
+      .arm_owner_i       (tmr_arm_owner_w),
+      .arm_deadline_ms_i (tmr_arm_deadline_w),
       .exp_valid_o       (exp_valid_w),
       .exp_slot_o        (exp_slot_w),
       .exp_owner_o       (exp_owner_w)

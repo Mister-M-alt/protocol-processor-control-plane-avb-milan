@@ -25,7 +25,7 @@ MUTANTS = [
     ('fit-compare-off-by-one', 'maap', 'run', 'U17:'),
     ('seed-clamp-removed', 'maap', 'run', 'U18:'),
     ('release-keeps-draw-mark', 'maap', 'run', 'U17b:'),
-    ('validator-maap-version-1-only', 'rx_validator', 'run', 'F28'),
+    ('validator-maap-version-1-only', 'rx_validator', 'run', 'F29'),
     ('validator-maap-version-1-only', 'pp_top', 'maap-internal', 'MP7:'),
     ('compare-mac-forward', 'maap', 'run', 'U7:'),
     ('compare-mac-forward', 'pp_top', 'maap-internal', 'MP4:'),

@@ -2,7 +2,7 @@
 # tb/rx_validator — KL_pp_rx_validator suite
 
 Exit 0 = PASS. `make` builds with Verilator and runs `sim_main.cpp`
-(tally line: `453 checks: 453 PASS, 0 FAIL`).
+(tally line: `497 checks: 497 PASS, 0 FAIL`).
 
 ## What it proves
 
@@ -23,6 +23,11 @@ commit/abort bookkeeping).
   slot aborted (F9). FB message types demux to AEM/MVU/AA (F1/F6/F6b).
 - **V8**: `h != 0` and `version != 0` dropped + `rx_version` + abort
   (F8/F8b, F09.4 TOL rows).
+- **V10, the AECP hold admission** (processor issue #131 ruling): with
+  `aecp_hold_i` an AECP frame on the own or the AVDECC multicast DA takes its
+  slot and returns it (one alloc, one abort), commits nothing, emits no header
+  beat and counts `rx_aecp_held` and nothing else; ACMP, ADP and MAAP frames
+  pass untouched under the same hold, and AECP passes once it falls (F28).
 - **V1**: `cdl + 12 > frame payload` dropped + `rx_length` + abort (F7);
   header torn mid-common-header ditto (F17c/F17d); inbound `cdl + 12`
   beyond the slot capacity dropped (F16).
@@ -44,7 +49,7 @@ commit/abort bookkeeping).
 - **Slot protocol**: commit-on-good with byte-exact slot content; abort on
   every mid-frame rule failure; a pool-refused alloc is silent here
   (`rx_overrun` belongs to the pool) — no commit, no abort, no counter (F15).
-- **MAAP maap_version** (F28, issue #67, IEEE 1722-2016 B.2.3): PROBEs
+- **MAAP maap_version** (F29, issue #67, IEEE 1722-2016 B.2.3): PROBEs
   carrying maap_version 2 (higher than ours, B.2.3.2), 0 (lower, B.2.3.4)
   and 31 (all five bits of the lane) are each accepted, committed, demuxed
   to `PP_PROTO_MAAP`, and deliver the received version in the status lane.
@@ -73,4 +78,5 @@ commit/abort bookkeeping).
 | M1 | h/version gate inverted (`!= 4'h0` → `== 4'hF`) | F8/F8b: `rx_version` stays 0, bad frames commit + emit hdr beats instead of aborting (8 FAILs) |
 | M2 | V1 boundary off-by-one (`pcnt_end >= cdl+12` → `>`) | F1 and every exact-fit frame: counted `rx_length` + aborted instead of committed (101 FAILs) |
 | M3 | V9 DA-alone routing (MSRP EtherType pair check dropped) | F14: 60 LLDP bytes leak onto the MRP stream (1 FAIL) |
-| M4 | a `maap_version == 1` acceptance rule added to the V8 drop (`tb/maap/mutations/validator-maap-version-1-only.patch`, run by `make -C tb/maap mutants`) | F28a/F28b/F28c: each PROBE counted `rx_version`, aborted, no hdr beat (47 FAIL of 453); the same arm fails `tb/pp_top` MP7 |
+| M4 | V10 the AECP hold admission dropped (`held_fail_w` tied 0; `validator_admits_held_aecp` in `tb/pp_top/d3_mutants.py`, which plants it in an extract and runs this suite) | F28: the held AECP frame commits and emits a header beat, `rx_aecp_held` stays 0 (4 FAILs) |
+| M5 | a `maap_version == 1` acceptance rule added to the V8 drop (`tb/maap/mutations/validator-maap-version-1-only.patch`, run by `make -C tb/maap mutants`) | F29a/F29b/F29c: each PROBE counted `rx_version`, aborted, no hdr beat (47 FAIL of 497); the same arm fails `tb/pp_top` MP7 |

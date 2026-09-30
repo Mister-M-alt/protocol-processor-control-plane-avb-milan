@@ -21,10 +21,12 @@
 // P-SRP-DOM-DEF-VID with a verification-only fixture and runs section DV
 // alone.
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <string>
 #include <utility>
 #include <vector>
 #include "Vpp_top_wrap.h"
@@ -45,6 +47,12 @@
 // TB shape
 // ---------------------------------------------------------------------------
 constexpr int         MS_CYC = 100;                  // wrap: 1 ms = 100 clk
+//! the wrap's nominal P-CLK-HZ (TB_CLK_HZ_C): the top derives its restore
+//! deadlines from it, and the suite re-derives them from the ruled ms
+constexpr long        CLK_HZ = 1000001;
+//! t ms of CLK_HZ in clocks, rounded up: ceil(CLK_HZ x t / 1000), the one
+//! conversion the parent D3 contract's DR3a states
+constexpr long clk_ms(long ms) { return (CLK_HZ * ms + 999) / 1000; }
 //! the wrap's compile-time memory map (07 §3.3 image, 03 §7 response buffer)
 constexpr uint32_t    DESC_BASE  = 0x20000000u;
 constexpr uint32_t    RESP_BASE  = 0x20100000u;
@@ -710,6 +718,51 @@ struct H {
   uint16_t nv_rd_pos = 0;
   //! cycles the next command grant is withheld (a slow device), 0 = none
   int      nv_gnt_hold = 0;
+  //! when non-zero, EVERY command's grant is withheld this many cycles
+  //! from the cycle the device first sees it (a device slow on each wait)
+  int      nv_gnt_every = 0;
+  bool     nv_gnt_seen = false;
+  //! a device slow per byte (a device answering each wait just inside its
+  //! deadline, slow per byte rather than per grant): when non-zero, each
+  //! READ byte is withheld this many cycles after the previous one moved.
+  //! The header probe (offset 0, the 8 bytes the port gathers before its
+  //! manager sees progress) and the payload READ take separate values
+  int      nv_hdr_every = 0;
+  int      nv_byte_every = 0;
+  int      nv_byte_wait = 0;
+  //! when >= 0, the command the device next sees is granted at exactly
+  //! this harness cycle (and not before), once; every other grant rule
+  //! stands aside for it
+  long     nv_gnt_at = -1;
+  //! the harness cycle of the device's last grant
+  long     nv_gnt_t = -1;
+  //! a WRITE whose bytes are all taken completes no earlier than this
+  //! harness cycle (-1: at once), so a completion can be placed on a chosen
+  //! clock edge
+  long     nv_done_at = -1;
+  //! a READ whose bytes have all moved ends with its done on exactly this
+  //! harness cycle when it is later (-1: at once): the binding walk's next
+  //! strobe follows that done by a fixed lag, so it can be placed on a
+  //! chosen clock
+  long     nv_rd_done_at = -1;
+  //! when >= 0, the READ's next byte moves on exactly this harness cycle,
+  //! whatever the per-byte waits say, once (a byte placed on a chosen clock)
+  long     nv_byte_at = -1;
+  //! the next nv_err_writes WRITEs to region nv_err_region end with the
+  //! device's err instead of done, and change nothing
+  int      nv_err_region = -1;
+  int      nv_err_writes = 0;
+  //! a fault on one READ of region nv_rd_region: the nv_rd_nth READ command
+  //! of it granted from now (1 = the next) delivers nv_rd_after bytes, then
+  //! ends with the device's err (nv_rd_silent false) or delivers nothing
+  //! more until the test clears nv_rd_fault (true)
+  int      nv_rd_region = -1;
+  int      nv_rd_nth = 0;
+  int      nv_rd_after = 0;
+  bool     nv_rd_silent = false;
+  int      nv_rd_seen = 0;
+  bool     nv_rd_fault = false;
+  int      nv_rd_sent = 0;
   // MAAP allocator model (02 §4.2). OFF by default: the processor ships
   // with the allocator in the integrating fabric, and "no allocator wired
   // yet" must be a survivable wiring, not a wedge.
@@ -734,10 +787,19 @@ struct H {
   int  dram_lat = 31;
   // Always-ready in-order request FIFO: acceptance is independent of older
   // responses, as it is across the integrator's asynchronous memory seam.
-  struct DescBurst { uint32_t addr; int beats, idx; uint64_t due; bool stuck; };
+  struct DescBurst { uint32_t addr; int beats, idx; uint64_t due; bool stuck; bool err; };
   std::deque<DescBurst> desc_fifo;
   int dram_delay_next = -1;
   bool dram_stuck_next = false;
+  //! every request from now on is accepted and never answered (a silent
+  //! memory behind a live bridge); unlike dram_stuck_next it persists
+  bool dram_silent = false;
+  //! a burst requested at this byte address answers one beat carrying the
+  //! memory's err, which ends it (0 = none); consumed by that burst
+  uint32_t dram_err_at = 0;
+  //! a burst requested at dram_late_at answers dram_late_cycles late (once)
+  uint32_t dram_late_at = 0;
+  int dram_late_cycles = 0;
   uint64_t dram_overlap_accepts = 0;
   uint64_t dram_reqs = 0;
   // AECP response-buffer memory at RESP_BASE_P (03 §7). READ + WRITE, and
@@ -1053,6 +1115,15 @@ struct H {
   long rs_done_owned = 0;   // cycles restore_done_o read 1 while owned
   long rs_pre = 0;          // the walks' preload record writes and A4 arms
   long rs_pre_late = 0;     // ...of them, those at or after restore_done_o
+  //! the D3 writer's ownership, every cycle (section D3): a program that
+  //! STARTS while the writer owns the bus, a latch that overlaps a running
+  //! program, and the longest ownership window in service
+  long d3_start_owned = 0;
+  long d3_latch_busy = 0;
+  long d3_own_run = 0;
+  long d3_own_max = 0;
+  bool d3_busy_prev = false;
+  bool d3_own_prev = false;
   //! srp_domain_change_o strobes, counted once per cycle (section DV): the
   //! one-cycle DOMAIN_CHANGE has no wire shape of its own
   int domain_changes = 0;
@@ -1185,6 +1256,7 @@ struct H {
     if (d->dbg_notify_enq_o) ++notify_enqs;
     nvm_unflushed_seen |= d->nvm_unflushed_o;
     sample_restore_levels();
+    sample_d3_ownership();
     if (d->srp_domain_change_o) ++domain_changes;
 
     d->clk_i = 1; d->eval();
@@ -1209,6 +1281,21 @@ struct H {
       ++rs_pre;
       if (rs_done) ++rs_pre_late;
     }
+  }
+
+  void sample_d3_ownership() {
+    const bool busy = d->dbg_aecp_busy_o != 0;
+    //! a command is taken on the clock edge of a cycle A_IDLE saw it, so a
+    //! start is owned when the writer owned in the cycle before busy rose
+    if (d->rst_n && d3_own_prev && busy && !d3_busy_prev) ++d3_start_owned;
+    if (d->dbg_d3_latch_o && busy) ++d3_latch_busy;
+    if (d->dbg_d3_done_o && d->dbg_d3_own_o) {
+      d3_own_max = std::max(d3_own_max, ++d3_own_run);
+    } else {
+      d3_own_run = 0;
+    }
+    d3_busy_prev = busy;
+    d3_own_prev = d->dbg_d3_own_o != 0;
   }
 
   // ---- MAC TX capture ----
@@ -1266,15 +1353,21 @@ struct H {
       d->desc_mem_rsp_data_i =
           dram_rd64(b.addr - DESC_BASE + uint32_t(8 * b.idx));
       d->desc_mem_rsp_last_i = (b.idx == b.beats - 1) ? 1 : 0;
-      if (d->desc_mem_rsp_ready_o && ++b.idx >= b.beats) {
+      d->desc_mem_rsp_err_i  = b.err ? 1 : 0;
+      if (d->desc_mem_rsp_ready_o && (b.err || ++b.idx >= b.beats)) {
         desc_fifo.pop_front();
       }
     }
     if (d->rst_n && d->desc_mem_req_valid_o) {
       if (!desc_fifo.empty()) ++dram_overlap_accepts;
       desc_fifo.push_back({d->desc_mem_req_addr_o, int(d->desc_mem_req_beats_o), 0,
-                          t + uint64_t(dram_delay_next >= 0 ? dram_delay_next : dram_lat),
-                          dram_stuck_next});
+                          t + uint64_t(dram_late_at != 0 && d->desc_mem_req_addr_o == dram_late_at
+                                       ? dram_late_cycles
+                                       : dram_delay_next >= 0 ? dram_delay_next : dram_lat),
+                          dram_stuck_next || dram_silent,
+                          dram_err_at != 0 && d->desc_mem_req_addr_o == dram_err_at});
+      if (dram_err_at != 0 && d->desc_mem_req_addr_o == dram_err_at) dram_err_at = 0;
+      if (dram_late_at != 0 && d->desc_mem_req_addr_o == dram_late_at) dram_late_at = 0;
       dram_delay_next = -1;
       dram_stuck_next = false;
       ++dram_reqs;
@@ -1383,9 +1476,19 @@ struct H {
     d->nvm_dev_err_i = 0;
     d->nvm_dev_busy_i = (nv_st != NvState::NV_IDLE);
     if (nv_st == NvState::NV_IDLE) {
-      if (d->nvm_dev_req_o && nv_gnt_hold > 0) {
-        --nv_gnt_hold;
+      if (d->nvm_dev_req_o && nv_gnt_every > 0 && !nv_gnt_seen) {
+        nv_gnt_hold = nv_gnt_every;
+        nv_gnt_seen = true;
+      }
+      const bool at = nv_gnt_at >= 0;
+      if (d->nvm_dev_req_o && (at ? long(t) < nv_gnt_at : nv_gnt_hold > 0)) {
+        if (!at) --nv_gnt_hold;
       } else if (d->nvm_dev_req_o) {
+        nv_gnt_seen = false;
+        nv_gnt_hold = 0;
+        nv_gnt_at = -1;
+        nv_gnt_t = long(t);
+        nv_byte_wait = 0;
         d->nvm_dev_gnt_i = 1;
         nv_cur = NvmOp{ static_cast<int>(d->nvm_dev_op_o),
                         static_cast<uint8_t>(d->nvm_dev_region_o),
@@ -1393,16 +1496,41 @@ struct H {
                         static_cast<uint16_t>(d->nvm_dev_len_o), {} };
         nv_left = nv_cur.len;
         nv_rd_pos = nv_cur.off;
+        if (nv_cur.op == 0 && nv_cur.region == nv_rd_region) {
+          nv_rd_fault = (++nv_rd_seen == nv_rd_nth);
+          nv_rd_sent = 0;
+        }
         nv_done_lag = 2;
         if (nv_cur.op == 0)      nv_st = NvState::NV_READ;    // NVMP_OP_READ_C
         else if (nv_cur.op == 1) nv_st = NvState::NV_WRITE;
         else                     nv_st = NvState::NV_ERASE;
       }
     } else if (nv_st == NvState::NV_READ) {
-      if (nv_left) {
+      if (nv_rd_fault && nv_rd_sent >= nv_rd_after) {
+        if (!nv_rd_silent) {                           // the device errs
+          d->nvm_dev_err_i = 1;
+          nv_cur.op = 4;                               // logged: a failed READ
+          nvm_ops.push_back(nv_cur);
+          nv_rd_fault = false;
+          nv_st = NvState::NV_IDLE;
+        }                                              // silent: nothing moves
+      } else if (nv_left && (nv_byte_at >= 0
+                             ? long(t) < nv_byte_at
+                             : nv_byte_wait < (nv_cur.off == 0 ? nv_hdr_every
+                                                               : nv_byte_every))) {
+        ++nv_byte_wait;                                // the slow device's byte
+      } else if (nv_left) {
         d->nvm_dev_rvalid_i = 1;
         d->nvm_dev_rdata_i = nv_mem[nv_cur.region][nv_rd_pos & 0xFF];
-        if (d->nvm_dev_rready_o) { nv_left--; nv_rd_pos++; }
+        if (d->nvm_dev_rready_o) {
+          nv_left--;
+          nv_rd_pos++;
+          nv_rd_sent++;
+          nv_byte_wait = 0;
+          nv_byte_at = -1;
+        }
+      } else if (long(t) < nv_rd_done_at) {
+        nv_done_lag = 1;                               // the done on its chosen cycle
       } else if (--nv_done_lag <= 0) {
         d->nvm_dev_done_i = 1;
         nvm_ops.push_back(nv_cur);
@@ -1415,7 +1543,13 @@ struct H {
           nv_cur.wr.push_back(static_cast<uint8_t>(d->nvm_dev_wdata_o));
           nv_left--;
         }
-      } else if (--nv_done_lag <= 0) {
+      } else if (nv_cur.region == nv_err_region && nv_err_writes > 0) {
+        d->nvm_dev_err_i = 1;                        // the device refuses it
+        --nv_err_writes;
+        nv_cur.op = 3;                               // logged as a failed WRITE
+        nvm_ops.push_back(nv_cur);
+        nv_st = NvState::NV_IDLE;
+      } else if (--nv_done_lag <= 0 && long(t) >= nv_done_at) {
         d->nvm_dev_done_i = 1;
         for (size_t i = 0; i < nv_cur.wr.size(); i++)
           nv_mem[nv_cur.region][(nv_cur.off + i) & 0xFF] = nv_cur.wr[i];
@@ -1557,6 +1691,22 @@ struct H {
   }
 
   void idle(int n) { for (int i = 0; i < n; i++) step(); }
+  //! the device keeps nothing: every region reads erased
+  void erase_nvm() {
+    for (auto& region : nv_mem) std::fill(region.begin(), region.end(), 0xFF);
+  }
+  //! Start both restore walks as firmware does on every boot path and
+  //! wait for the D3 writer to release AECP dispatch at its terminal.
+  //! The dispatch hold runs from reset, so a section that resets and
+  //! then issues AECP commands boots first.
+  bool boot_to_aecp() {
+    d->restore_go_i = 1;
+    idle(5);
+    d->restore_go_i = 0;
+    long guard = 400000;
+    while (d->dbg_d3_own_o && guard-- > 0) step();
+    return !d->dbg_d3_own_o;
+  }
   void run_ms(int ms) { idle(ms * MS_CYC); }
   uint32_t now_ms() { return d->dbg_now_ms_o; }
 
@@ -1580,6 +1730,8 @@ struct H {
     release_eof_hit = false;
     d->tx_ready_i = 1;
     d->aecp_txn_ready_i = 0;              // P4 uCPU seam: defined tie-off
+    d->aecp_rxs_free_i = 0;               // the external drain returns nothing
+    d->aecp_rxs_free_slot_i = 0;
     d->ctr_change_i = 0;
     d->ctr_change_desc_type_i = 0;
     d->ctr_change_desc_index_i = 0;
@@ -3793,9 +3945,11 @@ struct AudioMapEditPhase {
   // R21: THE EXPORT (issue #90). aecp_nvm_stb_o / aecp_nvm_mark_o carry the
   // uCPU's OP_NVM_MARK effect out of the top, and the mark is the micro-op
   // immediate that names the record group: 6 for the channel maps this phase
-  // edits, 7 for a user name. Nothing in this processor writes a record for
-  // either group, so the mark is the ONLY evidence an integrator's saved
-  // state has fallen behind. Graded here because a mark has no wire shape:
+  // edits, 7 for a user name. The mark is a completion notification, not a
+  // persistence trigger: the saved-state contract's map and name stages
+  // (not implemented yet) select their records from the accepted live
+  // writes, and section D3 grades the scalar records. Graded here because
+  // a mark has no wire shape:
   // the response of a marked command is identical to the response of one
   // that marked nothing, which is the third arm below.
   void r21_the_commit_mark_export_names_the_record_group() {
@@ -7853,8 +8007,12 @@ struct ControllerMonitorPhase {
 
   void run() {
     // Give the timing contract a fresh registry. Earlier sections deliberately
-    // exercise sequence advancement and repeated registrations.
+    // exercise sequence advancement and repeated registrations. The boot
+    // walks run over an erased device so no earlier binding is restored:
+    // AECP dispatch is held from reset until the D3 terminal.
+    h.erase_nvm();
     h.reset();
+    CHECK(h.boot_to_aecp(), "U10: both walks over an erased device release AECP");
     std::vector<uint8_t> fl0(4, 0);
     u10_the_monitor_controller_registers(fl0);
     u10a_a_probe_cancelled_while_its_frame_is_built();
@@ -8336,6 +8494,7 @@ struct InternalMaapPhase {
     d2->cfg_maap_seed_offset_i = 0;
     d2->cfg_maap_seed_valid_i = 0;
     h2.reset();
+    CHECK(h2.boot_to_aecp(), "MP0: both walks over an erased device release AECP");
     const uint64_t base = mp1_the_whole_acquisition_on_the_wire();
     const uint64_t prober = mp2_a_conflicting_probe_is_defended(base);
     mp3_the_talker_is_granted_from_the_internal_claim(base);
@@ -8786,7 +8945,7 @@ struct Suite {
   }
 
   // The entity model lives in the integrator's main memory (07 §3.3): load it
-  // BEFORE reset, exactly as software does before entity_enable. The image is
+  // BEFORE reset, exactly as software does before restore_go_i. The image is
   // built here from the IEEE §7.2 field offsets and the documented header /
   // index-map layout — nothing in it comes from the DUT or from the
   // generator's output.
@@ -8871,11 +9030,7 @@ struct Suite {
 
   // ==== S0. link up, pre-enable quiescence + snapshot identity ============
   void link_up_pre_enable_quiescence() {
-    //! the host reads below take far longer than the four cycles the
-    //! release may trail the walk's terminal by
     CHECK(h.snap(0) == 0x4B4C5050u, "S0: snapshot magic KLPP");
-    CHECK(d->restore_done_o == 1 && d->restore_busy_o == 0,
-          "S0: restore_done_o has followed the walk's terminal (issue #92)");
     CHECK(h.snap(1) == 0x08080404u, "S0: shape word {SI,SO,RX,TX}");
     d->link_up_i = 1;
     h.idle(50);
@@ -8886,6 +9041,11 @@ struct Suite {
     uint32_t m1 = h.snap(2);
     CHECK(m1 >= m0 + 15 && m1 <= m0 + 30,
           "S0: now_ms advances at the compressed rate (%u -> %u)", m0, m1);
+    //! read after the 20 ms, which take far longer than the D3 walk that
+    //! follows the binding walk's release; R's clock is left where the
+    //! later sections were tuned
+    CHECK(d->restore_done_o == 1 && d->restore_busy_o == 0,
+          "S0: restore_done_o has followed both walks' terminals (issue #92, D3)");
     CHECK(h.q_adp.empty() && h.q_acmp.empty(),
           "S0: no 1722.1 TX before entity enable");
   }
@@ -9207,7 +9367,7 @@ struct Suite {
     CHECK(eid_ok, "S9: committed record carries the bound talker EID");
     CHECK(d->nvm_alarm_o == 0, "S9: no commit alarm");
     //! THE EXPORT (issue #90). The integrator's "saved state pending" bit is
-    //! this vector ORed with aecp_dyn_dirty_o, so the port has to carry the
+    //! this vector ORed with d3_unflushed_o (D3S2), so the port has to carry the
     //! whole unflushed span of a binding: raised while the S6 bind waited out
     //! the debounce and the burst, and down once the commit above reported
     //! done. Sampled every cycle in H::step, because both edges are inside
@@ -9366,13 +9526,14 @@ struct Suite {
 
   // BW3 (issue #93, S3): the device stops answering in the middle of the
   // walk, after sink 0's saved record was read and stored. The walk fails
-  // WHOLE at its read deadline (the wrap's NVM_RS_TMO_CYC_P), nothing is
-  // preloaded, and the listener, released on the failed terminal, answers
-  // the GET it held on the vendor default, before the entity is enabled.
-  // When the device finally serves the abandoned read the arbiter drains
-  // it; a later BIND then persists, and the next reset restores that.
+  // WHOLE at its read deadline (the top's NVM_RS_TMO_CYC_P, 20 ms of the
+  // wrap's clock), nothing is preloaded, and the listener, released on the
+  // failed terminal, answers the GET it held on the vendor default, before
+  // the entity is enabled. When the device finally serves the abandoned
+  // read the arbiter drains it; a later BIND then persists, and the next
+  // reset restores that.
   void boot_window_read_deadline() {
-    constexpr long BW_TMO = 20000;
+    constexpr long BW_TMO = clk_ms(20);
     const uint64_t BW_TK2 = 0x00B0B0B0B0B00002ULL;
     const uint16_t BW_UID2 = 0x0B0B;
     h.reset();
@@ -9388,19 +9549,29 @@ struct Suite {
     h.nv_gnt_hold = 1 << 30;             // the next record's read: no grant
     h.feed(bw_get_cmd(0x0B31));
     long waited = 0;
-    while (!d->restore_done_o && waited < 4 * BW_TMO) { h.step(); ++waited; }
-    // blank as well: the atomic reject discards the record already taken
-    CHECK(d->restore_done_o && d->restore_fail_o && d->restore_blank_o
+    while (!d->dbg_walk_done_o && waited < 4 * BW_TMO) { h.step(); ++waited; }
+    CHECK(d->dbg_walk_done_o && d->restore_fail_o && d->restore_cause_o == 3
               && d->entity_enable_i == 0 && waited < BW_TMO + 200
               && bw_ops(ops3, 0, 0x21) == 0,
           "BW3: the walk fails whole at its deadline, %ld cycles after the "
           "silence began, the next record's read still unserved", waited);
+    //! the listener is released at that terminal, so the GET it held is
+    //! live ACMP work while the D3 walk still waits (D3 section 8.1)
     auto g4 = bw_acmp(11, 50);
     CHECK(g4 == acmp_frame(OWN_MAC, 11, 0, 0, CTLR_EID, 0, EID, 0, 0, 0, 0,
                            0x0B31, 0, 0)
-              && d->entity_enable_i == 0,
-          "BW3: the held GET is answered on the vendor default, before the "
-          "entity is enabled");
+              && d->entity_enable_i == 0 && !d->restore_done_o,
+          "BW3: the held GET is answered on the vendor default at the "
+          "listener's release, before the restore is done");
+    //! the D3 walk's first read meets the port the arbiter still drains, and
+    //! ends at its own deadline on defaults: two deadlines, never for ever
+    long waited2 = 0;
+    while (!d->restore_done_o && waited2 < 4 * BW_TMO) { h.step(); ++waited2; }
+    CHECK(d->restore_done_o && d->restore_fail_o && d->rs_cause_o == 3
+              && !d->restore_closed_o && !d->restore_blank_o
+              && waited + waited2 < 2 * BW_TMO + 1000,
+          "BW3: the D3 walk ends at its own deadline on defaults, %ld cycles "
+          "after the silence began", waited + waited2);
     if (!g4.empty() && g4 != acmp_frame(OWN_MAC, 11, 0, 0, CTLR_EID, 0, EID, 0, 0,
                                         0, 0, 0x0B31, 0, 0)) {
       dump("got", g4);
@@ -9449,9 +9620,10 @@ struct Suite {
           "BW3: a reset restores the binding made after the failed walk");
   }
 
-  // BW4 (issue #93 S4): the top's restore_done_o is the binding walk's END,
-  // the admission gate's release, so an enable gated on it cannot precede
-  // the last preload's record write and discovery arm; restore_busy_o covers
+  // BW4 (issue #93 S4): the top's restore_done_o waits for the binding walk's
+  // END, the admission gate's release (and for the D3 walk, section D3), so
+  // an enable gated on it cannot precede the last preload's record write and
+  // discovery arm; restore_busy_o covers
   // the cycles between the shadow's terminal and that release. Graded in
   // every cycle of every walk this run made (H::sample_restore_levels): the
   // blank boot of section R, the boots of BW0-BW2 with and without a saved
@@ -9582,7 +9754,9 @@ struct Suite {
   // whichever controller owns the second handle and prove that the released
   // handle is removed before its physical slot can be reused.
   void cancellation_compacts_originator_queue() {
+    h.erase_nvm();
     h.reset();
+    CHECK(h.boot_to_aecp(), "U11: both walks over an erased device release AECP");
     const uint64_t C2_MAC = 0x0202C2C2C2C2ull;
     std::vector<uint8_t> fl0(4, 0);
     auto is_seq = [](uint16_t seq) {
@@ -9810,6 +9984,32 @@ struct NameWritePhase {
   }
 };
 
+#include "d3_phases.hpp"
+
+//! Section D3 on fresh models, against the same descriptor image the
+//! suite loads; `--d3-only` runs it alone.
+[[maybe_unused]] static void run_d3(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  Suite setup(h);
+  setup.load_descriptor_image();
+  const std::vector<uint8_t> image = h.dram;
+  D3OwnershipPhase{h, image}.run();
+  D3ServicePhase{h, image}.run();
+  D3RestorePhase{h, image, setup.image_ents}.run();
+  printf("D3: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
+//! DR3a (parent D3 contract): the restore durations and longest waits,
+//! printed for the manager's ratification and never graded; `--dr3a` runs
+//! them alone and records no tally.
+[[maybe_unused]] static void run_dr3a(H& h) {
+  Suite setup(h);
+  setup.load_descriptor_image();
+  const std::vector<uint8_t> image = h.dram;
+  D3RestorePhase{h, image, setup.image_ents}.dr3a_measurements();
+}
+
 [[maybe_unused]] static void run_name_writes(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
@@ -9854,11 +10054,17 @@ int main(int argc, char** argv) {
 #else
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
+  const bool d3_only = argc == 2 && std::strcmp(argv[1], "--d3-only") == 0;
   const bool maap_only = argc == 2 && std::strcmp(argv[1], "--maap-internal-only") == 0;
+  if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
+    run_dr3a(h);
+    return 0;
+  }
   if (maap_only) run_maap_internal(h);
-  if (!gsi_only && !name_only && !maap_only) Suite(h).run();
-  if (!name_only && !maap_only) InternalStreamInfoPhase{h}.run();
-  if (!gsi_only && !maap_only) run_name_writes(h);
+  if (!gsi_only && !name_only && !d3_only && !maap_only) Suite(h).run();
+  if (!name_only && !d3_only && !maap_only) InternalStreamInfoPhase{h}.run();
+  if (!gsi_only && !d3_only && !maap_only) run_name_writes(h);
+  if (!gsi_only && !name_only && !maap_only) run_d3(h);
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's two

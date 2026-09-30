@@ -5,7 +5,7 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1215 checks.
+exit 0 = PASS, 1219 checks.
 
 The C++ model transcribes **Table 10-3 (applicant) and Table 10-4
 (registrar) independently as data matrices** — never DUT logic — including
@@ -153,3 +153,15 @@ rLv semantics are unchanged.
 
 The unmodified control executes 1215 checks; each mutation suppresses pushes
 and therefore some payload comparisons, so its executed tally is smaller.
+
+MVRP join before the stream (issue #65, Milan v1.2 4.3.2), section D. The
+talker's ACTIVE also requires that a KL_srp_vlan entry holding the source's VID
+reports its MVRP join transmitted (`vid_sent_i`/`vid_val_i`, driven here as the
+VLAN's view): not ACTIVE while the entry is unsent, nor on another VID's sent
+entry; ACTIVE once any entry holding the VID is sent; and the term drops when
+the membership is gone. Mutation-proven 2026-09-29 through
+[the campaign](../srp_top/mutants.py):
+
+| Mutation | Result |
+|---|---|
+| `licence-ignores-join`: ACTIVE without the VID term | 3 of 1219 FAIL (the three negative VID-term checks) |

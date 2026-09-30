@@ -291,6 +291,7 @@ struct H {
   int allocs = 0;
   int drops = 0;
   int own_actions = 0;
+  int mvrp_tx = 0;               // enc_tx_mvrp_o strobes
   // pre-edge samples
   bool last_enc_ready = false;
   bool last_txreq = false;
@@ -317,6 +318,7 @@ struct H {
     last_vlan_ev_valid = d->vlan_ev_valid_o;
     last_prepare_done = d->enc_la_done_o;
     if (d->enc_la_tx_o) ++own_actions;
+    if (d->enc_tx_mvrp_o) ++mvrp_tx;
     if (d->dom_ev_valid_o && d->dom_ev_ready_i)
       dom_evs.push_back({int(d->dom_ev_event_o), uint32_t(d->dom_ev_value_o)});
     if (d->vlan_ev_valid_o && d->vlan_ev_ready_i)
@@ -441,6 +443,7 @@ class SrpSuite {
   void domain_surfaces_class_a_and_reverts_on_link_down();
   void vlan_refcounts_every_vid_and_freezes_the_old_one();
   void bridge_the_fsm_declarations_onto_real_frames();
+  void track_which_vids_have_left();
 
   int checks = 0;
   int fails = 0;
@@ -462,7 +465,7 @@ void SrpSuite::bring_out_of_reset() {
   d->dom_periodic_tick_i = 0; d->dom_leaveall_tick_i = 0;
   d->dom_ev_ready_i = 1;
   d->vlan_user_valid_i = 0; d->vlan_periodic_tick_i = 0;
-  d->vlan_leaveall_tick_i = 0; d->vlan_ev_ready_i = 1;
+  d->vlan_leaveall_tick_i = 0; d->vlan_ev_ready_i = 1; d->vlan_mvrp_tx_i = 0;
   uint64_t mac = 0;
   for (int i = 0; i < 6; ++i) mac = (mac << 8) | OWN_MAC[i];
   d->enc_own_mac_i = mac;
@@ -1257,6 +1260,55 @@ void SrpSuite::arbitrate_prepare_and_mvrp() {
         "O8: deferred MVRP frame contains both accepted VIDs");
 }
 
+// W — issue #65 (Milan 4.3.2): the encoder strobes each MVRP MRPDU the
+// arbiter accepts, and the VLAN participant records per entry whether a join
+// of it has been in one since the entry was allocated.
+void SrpSuite::track_which_vids_have_left() {
+  bring_out_of_reset();
+  // W1: one strobe per accepted MVRP MRPDU, none for MSRP
+  const int tx0 = h.mvrp_tx;
+  CHECK(h.push_enc(mk_ev(1, 1, 0, 0, {0x00, 0x07})), "W1 MVRP push accepted");
+  CHECK(h.capture_pdu(1, got), "W1 MVRP PDU captured");
+  CHECK(h.mvrp_tx == tx0 + 1, "W1 one MVRP transmission strobe got %d", h.mvrp_tx - tx0);
+  CHECK(h.push_enc(mk_ev(0, 4, 0, 0, {0x06, 0x03, 0x00, 0x02})), "W1 MSRP push accepted");
+  CHECK(h.capture_pdu(0, got), "W1 MSRP PDU captured");
+  CHECK(h.mvrp_tx == tx0 + 1, "W1 no strobe for an MSRP MRPDU");
+  auto sent = [&](int e) { return (d->vlan_vid_sent_o >> e) & 1; };
+  auto vid = [&](int e) { return int((d->vlan_vid_val_o >> (12 * e)) & 0xFFF); };
+  auto transmit = [&]() { d->vlan_mvrp_tx_i = 1; h.tick(); d->vlan_mvrp_tx_i = 0; h.run(2); };
+  // W2: a new VID is live but not sent until a transmission after its New
+  CHECK(h.vlan_op(true, 7) && d->vlan_vid_active_o == 0x1 && !sent(0) && vid(0) == 7,
+        "W2 New VID 7 handed over, not yet sent");
+  transmit();
+  CHECK(sent(0) && vid(0) == 7, "W2 sent once an MVRP MRPDU leaves");
+  // W3: a New the encoder has not accepted is not in a transmission
+  d->vlan_ev_ready_i = 0;
+  d->vlan_user_join_i = 1; d->vlan_user_vid_i = 9; d->vlan_user_valid_i = 1;
+  h.tick(); d->vlan_user_valid_i = 0; h.run(30);
+  CHECK(d->vlan_vid_active_o == 0x3 && d->vlan_ev_valid_o && !sent(1), "W3 New VID 9 held");
+  transmit();
+  CHECK(!sent(1) && sent(0), "W3 a transmission before the hand-over does not count");
+  d->vlan_ev_ready_i = 1; h.run(5);
+  CHECK(!sent(1), "W3 handed over, still not sent");
+  transmit();
+  CHECK(sent(1) && vid(1) == 9, "W3 sent at the next transmission");
+  // W4: a second user keeps it; the last leave retires it; a re-join waits again
+  CHECK(h.vlan_op(true, 7) && sent(0), "W4 a second user of VID 7 keeps it sent");
+  CHECK(h.vlan_op(false, 7) && sent(0), "W4 one user left: still sent");
+  CHECK(h.vlan_op(false, 7) && !sent(0) && d->vlan_vid_active_o == 0x2,
+        "W4 last user left: retired, not sent");
+  CHECK(h.vlan_op(true, 7) && !sent(0) && sent(1), "W4 re-joined VID 7 waits for its New to leave");
+  transmit();
+  CHECK(sent(0) && vid(0) == 7, "W4 sent again after the next transmission");
+  // W5: periodic re-joins of sent entries never un-send them
+  h.vlan_evs.clear();
+  d->vlan_periodic_tick_i = 1; h.tick(); d->vlan_periodic_tick_i = 0;
+  h.run(60);
+  CHECK(h.vlan_evs.size() == 2 && sent(0) && sent(1), "W5 re-joined entries stay sent");
+  transmit();
+  CHECK(d->vlan_vid_sent_o == 0x3, "W5 and after the re-joins leave");
+}
+
 int SrpSuite::run() {
   bring_out_of_reset();
   encode_the_two_minimal_pdus();
@@ -1275,6 +1327,7 @@ int SrpSuite::run() {
   domain_surfaces_class_a_and_reverts_on_link_down();
   vlan_refcounts_every_vid_and_freezes_the_old_one();
   bridge_the_fsm_declarations_onto_real_frames();
+  track_which_vids_have_left();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
