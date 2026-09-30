@@ -18,10 +18,15 @@ name; the `GDI_*_C` whitelist members are not dispatch arms and are not
 parsed) and the `kOpcodes` initializer in `tb/pp_top/sim_main.cpp`, and refuse
 any difference in either direction. A new arm that is not in the sweep fails
 here, before any suite runs; so does a sweep entry the engine no longer names.
+Every `OP_*_C` localparam is counted, whatever its form, so one written other
+than `localparam logic [15:0] OP_NAME_C = 16'hXXXX;` (another width, radix or
+type) fails as unparsed instead of dropping out of the comparison; so does
+one opcode carried by two names.
 
-Exit 0 = the two sets are equal. Exit 1 = they are not, or a parse found
-nothing (a stale pattern is itself a failure). `--selftest` runs the parser
-and the comparison on fixed fixtures, including three that must fail.
+Exit 0 = the two sets are equal. Exit 1 = they are not, an `OP_*_C` is
+unparsed or shares its opcode, or a parse found nothing (a stale pattern is
+itself a failure). `--selftest` runs the parser and the comparison on eight
+fixed fixtures, six of which must fail.
 """
 import argparse
 import re
@@ -35,17 +40,30 @@ BENCH = ROOT / "tb" / "pp_top" / "sim_main.cpp"
 #! `localparam logic [15:0] OP_NAME_C = 16'h0004;`
 RE_ENGINE = re.compile(
     r"localparam\s+logic\s*\[15:0\]\s+(OP_[A-Z0-9_]+_C)\s*=\s*16'h([0-9A-Fa-f]{4})\s*;")
+#! any `OP_*_C` a localparam declares, in any form (the count RE_ENGINE must meet)
+RE_DECLARED = re.compile(r"\blocalparam\b[^;]*?\b(OP_[A-Z0-9_]+_C)\s*=")
 #! `static const uint16_t kOpcodes[] = { 0x0000, ... };`
 RE_BENCH = re.compile(r"static\s+const\s+uint16_t\s+kOpcodes\[\]\s*=\s*\{([^}]*)\}")
 RE_HEX = re.compile(r"0x([0-9A-Fa-f]{1,4})\b")
 
 
-def engine_opcodes(text: str) -> dict[int, str]:
-    """opcode -> the OP_*_C names that carry it (one opcode, one name)."""
+def engine_opcodes(text: str) -> tuple[dict[int, str], list[str]]:
+    """opcode -> the OP_*_C name that carries it, and what the parse refuses:
+    an OP_*_C declared in a form RE_ENGINE does not read, and one opcode under
+    two names (either would drop an arm from the comparison unseen)."""
+    code = re.sub(r"//[^\n]*", "", text)
     found: dict[int, str] = {}
-    for m in RE_ENGINE.finditer(text):
-        found[int(m.group(2), 16)] = m.group(1)
-    return found
+    problems = []
+    for m in RE_ENGINE.finditer(code):
+        op, name = int(m.group(2), 16), m.group(1)
+        if op in found:
+            problems.append(f"  0x{op:04X} is carried by both {found[op]} and {name}")
+        found.setdefault(op, name)
+    parsed = {m.group(1) for m in RE_ENGINE.finditer(code)}
+    for name in sorted({m.group(1) for m in RE_DECLARED.finditer(code)} - parsed):
+        problems.append(f"  {name} is not written `localparam logic [15:0] {name} = "
+                        "16'hXXXX;`, so this gate cannot read its opcode")
+    return found, problems
 
 
 def bench_opcodes(text: str) -> list[int]:
@@ -57,12 +75,14 @@ def bench_opcodes(text: str) -> list[int]:
     return [int(h, 16) for h in RE_HEX.findall(body)]
 
 
-def compare(engine: dict[int, str], bench: list[int]) -> list[str]:
-    """Every disagreement, one line each; empty means the gate passes."""
+def compare(engine: dict[int, str], bench: list[int],
+            refused: list[str] = ()) -> list[str]:
+    """Every disagreement, one line each, after what the engine parse refused;
+    empty means the gate passes."""
     if not engine or not bench:
         return ["  parsed nothing: the engine or the kOpcodes pattern has gone "
                 "stale, which is itself a failure"]
-    problems = []
+    problems = list(refused)
     for op in sorted(set(bench)):
         if bench.count(op) > 1:
             problems.append(f"  0x{op:04X} is listed {bench.count(op)} times in kOpcodes")
@@ -77,28 +97,34 @@ def compare(engine: dict[int, str], bench: list[int]) -> list[str]:
 
 
 def selftest() -> int:
-    """The parser and the comparison on fixed text, three fixtures failing."""
+    """The parser and the comparison on fixed text: one parse check and seven
+    cases, six of which must fail."""
     eng = ("localparam logic [15:0] OP_READ_DESCRIPTOR_C = 16'h0004;\n"
            "localparam logic [15:0] GDI_GET_VIDEO_FMT_C   = 16'h000B;\n"
-           "  localparam logic [15:0] OP_SET_NAME_C = 16'h0010;\n")
+           "  localparam logic [15:0] OP_SET_NAME_C = 16'h0010; // not OP_X_C = 1\n")
     good = "static const uint16_t kOpcodes[] = {\n  0x0004, // x 0x0099\n 0x0010,\n};"
     cases = [
-        ("equal sets pass", good, True),
-        ("a missing engine opcode fails",
+        ("equal sets pass", eng, good, True),
+        ("a missing engine opcode fails", eng,
          "static const uint16_t kOpcodes[] = { 0x0004, };", False),
-        ("an extra bench opcode fails",
+        ("an extra bench opcode fails", eng,
          "static const uint16_t kOpcodes[] = { 0x0004, 0x0010, 0x000B, };", False),
-        ("a duplicate fails",
+        ("a duplicate fails", eng,
          "static const uint16_t kOpcodes[] = { 0x0004, 0x0010, 0x0010, };", False),
-        ("no initializer fails", "static const uint16_t kOther[] = { 0x0004 };", False),
+        ("no initializer fails", eng, "static const uint16_t kOther[] = { 0x0004 };", False),
+        ("an OP_*_C in another form fails",
+         eng + "localparam int unsigned OP_GET_NAME_C = 17;\n", good, False),
+        ("one opcode under two names fails",
+         eng + "localparam logic [15:0] OP_SET_NAME2_C = 16'h0010;\n", good, False),
     ]
-    parsed = engine_opcodes(eng)
+    parsed, refused = engine_opcodes(eng)
     bad = 0
-    if sorted(parsed) != [0x0004, 0x0010]:
-        print(f"SELFTEST FAIL: the engine parse gave {sorted(parsed)}")
+    if sorted(parsed) != [0x0004, 0x0010] or refused:
+        print(f"SELFTEST FAIL: the engine parse gave {sorted(parsed)}, refused {refused}")
         bad += 1
-    for what, bench, want in cases:
-        ok = not compare(parsed, bench_opcodes(bench))
+    for what, engine, bench, want in cases:
+        found, refused_here = engine_opcodes(engine)
+        ok = not compare(found, bench_opcodes(bench), refused_here)
         if ok != want:
             print(f"SELFTEST FAIL: {what}")
             bad += 1
@@ -118,9 +144,9 @@ def main() -> int:
         if not path.exists():
             print(f"M9 OPCODE GATE: cannot read {path}", file=sys.stderr)
             return 1
-    engine = engine_opcodes(ENGINE.read_text(encoding="utf-8"))
+    engine, refused = engine_opcodes(ENGINE.read_text(encoding="utf-8"))
     bench = bench_opcodes(BENCH.read_text(encoding="utf-8"))
-    problems = compare(engine, bench)
+    problems = compare(engine, bench, refused)
     if problems:
         print("M9 OPCODE GATE: FAIL - tb/pp_top M9's kOpcodes is not the engine's "
               "OP_*_C set\n")
