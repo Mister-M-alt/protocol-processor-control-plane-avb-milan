@@ -1,6 +1,6 @@
 --- a/hdl/aecp/KL_aecp_engine.sv
 +++ b/hdl/aecp/KL_aecp_engine.sv
-@@ -3133,8 +3133,7 @@
+@@ -3120,8 +3120,7 @@
              if ((cmd_r.protocol == PP_PROTO_AEM)
                  && (cmd_r.msg_type == 4'd0)
                  && (cmd_r.opcode == OP_READ_DESCRIPTOR_C)

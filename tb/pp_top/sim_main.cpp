@@ -1965,11 +1965,6 @@ struct ReadDescriptorPhase {
     putbe(payload.data(), CFGIX, 2);
     const auto body = stream_descriptor(5, 0);
     payload.insert(payload.end(), body.begin(), body.end());
-    //! READ_DESCRIPTOR's current_format (@74) is GET_STREAM_FORMAT's, the
-    //! Milan-info face's (issue #82); nothing has set a format yet, so the
-    //! face serves its own. Every other byte is still STREAM_INPUT 0's image.
-    CHECK(!(d->aecp_fmt_in_v_o & 1), "A12: no stream format has been set yet");
-    putbe(&payload[4 + 74], H::gsi_value(0, 0x0005, 0, 1, 0), 8);
     got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 5, 0), 0xA122);
     CHECK(got == expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0xA122, payload),
           "A12: late STREAM_OUTPUT bytes reached STREAM_INPUT on the wire");
@@ -10883,8 +10878,8 @@ struct AecpResponsePhase {
     std::vector<uint8_t> pl(4, 0);
     pl.insert(pl.end(), d.begin(), d.end());
     const auto w = want(CTLR_MAC, CTLR_EID, AECP_SUCCESS, AEM_READ_DESCRIPTOR, pl);
-    CHECK(r == w, "%s: READ_DESCRIPTOR byte-exact, carrying the GET's 0x%llx at @%zu",
-          what, static_cast<unsigned long long>(cur), off);
+    CHECK(r == w, "%s: READ_DESCRIPTOR byte-exact, @%zu carrying 0x%llx", what, off,
+          static_cast<unsigned long long>(cur));
     if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
   }
   static constexpr uint64_t SFMT_ALT = 0x0205021801006000ull;  // the face's 2ch shape
@@ -10900,18 +10895,25 @@ struct AecpResponsePhase {
   void rd_fmt(uint16_t ty, uint16_t ix, const char* what) {
     rd_agrees(ty, ix, 74, 8, get_value(AEM_GET_STREAM_FORMAT, ty, ix, 8, false), what);
   }
+  //! a STREAM no SET_STREAM_FORMAT has set: its image bytes, exactly. Its GET
+  //! reads the integrator's face, which serves its own value until a SET
+  //! publishes a row, and the image need not agree with it (the face's model
+  //! here does not); the descriptor overlays only the processor's own row
+  void rd_image(uint16_t ty, uint16_t ix, const char* what) {
+    const auto d = image_desc(CFGIX, ty, ix);
+    rd_agrees(ty, ix, 74, 8, d.size() >= 82 ? rd64(&d[74]) : 0, what);
+  }
 
   //! before any SET the image is the current value of the rate and the clock
-  //! source; a STREAM's current_format is the face's, which GET_STREAM_FORMAT
-  //! reads and the image need not agree with
+  //! source, and a STREAM's descriptor is its image
   void rd_before_any_set() {
     CHECK(get_value(AEM_GET_SAMPLING_RATE, 0x0002, 0, 4, false) == 96000u
               && get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, false) == CD_IMAGE_INDEX,
           "RD0 unset rows: the GETs read the image's 96000 and clock source 2");
     rd_rate("RD0 AUDIO_UNIT 0, rate unset");
     rd_clks("RD0 CLOCK_DOMAIN 0, clock source unset");
-    rd_fmt(0x0005, 0, "RD0 STREAM_INPUT 0, format unset");
-    rd_fmt(0x0006, 1, "RD0 STREAM_OUTPUT 1, format unset");
+    rd_image(0x0005, 0, "RD0 STREAM_INPUT 0, format unset");
+    rd_image(0x0006, 1, "RD0 STREAM_OUTPUT 1, format unset");
   }
 
   //! after each SET the READ_DESCRIPTOR carries what the GET reads (the SETs'
@@ -10942,7 +10944,7 @@ struct AecpResponsePhase {
     }
     rd_fmt(0x0005, 0, "RD1 STREAM_INPUT 0 after SET_STREAM_FORMAT");
     rd_fmt(0x0006, 1, "RD1 STREAM_OUTPUT 1 after SET_STREAM_FORMAT");
-    rd_fmt(0x0006, 0, "RD1 STREAM_OUTPUT 0, never set, still the face's");
+    rd_image(0x0006, 0, "RD1 STREAM_OUTPUT 0, never set, still its image");
     ov_read(0x0024, 0, cfg1_bodies[3], false,
             "RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes");
   }

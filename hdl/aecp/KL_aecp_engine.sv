@@ -853,7 +853,8 @@ module KL_aecp_engine
   //! §7.4.7.1 at cdl 16, like the other two arms.
   localparam logic [10:0] UPC_SCFGBAD_C  = 11'd1513; // E_SCFGBAD
   localparam logic [10:0] UPC_RDESCENT_C = 11'd1568; // E_RDESCENT
-  localparam logic [10:0] UPC_RDESCSTR_C = 11'd1536; // E_RDESCSTR
+  localparam logic [10:0] UPC_RDESCSI_C  = 11'd1768; // E_RDESCSI
+  localparam logic [10:0] UPC_RDESCSO_C  = 11'd1780; // E_RDESCSO
   localparam logic [10:0] UPC_RDESCAU_C  = 11'd2000; // E_RDESCAU
   localparam logic [10:0] UPC_RDESCCD_C  = 11'd2024; // E_RDESCCD
   localparam logic [10:0] UPC_STRT_C     = 11'd1600; // E_STRT
@@ -972,10 +973,6 @@ module KL_aecp_engine
   logic        eavl_r;                   // ... an ENTITY_AVAILABLE
   logic        gcfg_r;                   // ... a GET_CONFIGURATION
   logic        gsfmt_r;                  // ... a GET_STREAM_FORMAT
-  //! ...a READ_DESCRIPTOR of a configuration-0 STREAM_INPUT/OUTPUT, re-
-  //! dispatched to E_RDESCSTR, whose current_format is GET_STREAM_FORMAT's
-  //! gather (issue #82); set at the walk's seam, never at pop
-  logic        rdstr_r;
   logic        gsrate_r;                 // ... a GET_SAMPLING_RATE
   logic        gclks_r;                  // ... a GET_CLOCK_SOURCE
   logic        ssrate_r;                 // ... a SET_SAMPLING_RATE
@@ -2064,8 +2061,7 @@ module KL_aecp_engine
   //! integrator's ruling on the PROPOSED format presented on
   //! `gsi_prop_fmt_o` - the supported set and the mapping-survival
   //! reduction both live integrator-side, where map edits already commit.
-  assign gsi_any_w = gstri_r | gavb_r | gasp_r | gsfmt_r | ssfmt_r | ssinfo_r
-                     | rdstr_r;
+  assign gsi_any_w = gstri_r | gavb_r | gasp_r | gsfmt_r | ssfmt_r | ssinfo_r;
   assign rgy_any_w = regun_r | lockc_r | eavl_r;
   assign strm_state_w = (strt_r || stop_r) && (gx_sel_w[7:4] == 4'hD);
   assign gx_alt_w  = amap_r | amap_edit_r | sname_r | rgy_any_w | gsi_any_w
@@ -2098,12 +2094,8 @@ module KL_aecp_engine
   //! while it owns dispatch from reset, so no µprogram gathers meanwhile.
   assign gsi_req_o        = d3_jd_req_w || gsi_req_u_w;
   assign gsi_kind_o       = (d3_jd_req_w || gstri_r || gsfmt_r || ssfmt_r
-                             || ssinfo_r || rdstr_r) ? 2'd0
-                                                     : (gavb_r ? 2'd1 : 2'd2);
-  //! a READ_DESCRIPTOR's type is at @28, not @24 (where its
-  //! configuration_index sits), so its stream-format gather names desc_ty_r
-  assign gsi_desc_type_o  = d3_jd_req_w ? d3_jd_type_w
-                          : rdstr_r     ? desc_ty_r : cfg_ix_r;
+                             || ssinfo_r) ? 2'd0 : (gavb_r ? 2'd1 : 2'd2);
+  assign gsi_desc_type_o  = d3_jd_req_w ? d3_jd_type_w : cfg_ix_r;
   assign gsi_desc_index_o = d3_jd_req_w ? d3_jd_index_w : desc_ix_r;
   assign gsi_sel_o        = d3_jd_req_w ? 4'd15 : gx_sel_w[3:0];
   assign gsi_ord_o        = d3_jd_req_w ? 8'd0 : amap_rec_r;
@@ -2585,7 +2577,6 @@ module KL_aecp_engine
       eavl_r       <= 1'b0;
       gcfg_r       <= 1'b0;
       gsfmt_r      <= 1'b0;
-      rdstr_r      <= 1'b0;
       gsrate_r     <= 1'b0;
       gclks_r      <= 1'b0;
       ssrate_r     <= 1'b0;
@@ -2676,7 +2667,6 @@ module KL_aecp_engine
               eavl_r     <= eavl_w;
               gcfg_r     <= gcfg_w;
               gsfmt_r    <= gsfmt_w;
-              rdstr_r    <= 1'b0;
               gsrate_r   <= gsrate_w;
               gclks_r    <= gclks_w;
               ssrate_r   <= ssrate_w;
@@ -2774,7 +2764,6 @@ module KL_aecp_engine
             eavl_r     <= 1'b0;
             gcfg_r     <= 1'b0;
             gsfmt_r    <= (uns_kind_i == PP_UNS_SFMT_C);
-            rdstr_r    <= 1'b0;
             gsrate_r   <= (uns_kind_i == PP_UNS_SRATE_C);
             gclks_r    <= (uns_kind_i == PP_UNS_CLKS_C);
             ssrate_r   <= 1'b0;
@@ -3003,7 +2992,6 @@ module KL_aecp_engine
             gcfg_r         <= g_sub_exec_w && (g_rec_cmd_r == OP_GET_CONFIG_C);
             gsfmt_r        <= g_sub_exec_w
                               && (g_rec_cmd_r == OP_GET_STREAM_FMT_C);
-            rdstr_r        <= 1'b0;
             gsrate_r       <= g_sub_exec_w
                               && (g_rec_cmd_r == OP_GET_SAMP_RATE_C);
             gclks_r        <= g_sub_exec_w
@@ -3123,13 +3111,12 @@ module KL_aecp_engine
               echo_r <= 1'b0;
             end
             //! ...and the current values a SET changes (issue #82): the
-            //! AUDIO_UNIT's sampling rate and the CLOCK_DOMAIN's clock source
-            //! from the dynamic-state rows GET_SAMPLING_RATE and
-            //! GET_CLOCK_SOURCE read, a STREAM's current_format from the face
-            //! GET_STREAM_FORMAT gathers. Configuration 0 only: that is the
-            //! configuration those GETs and their SETs locate in (the literal
-            //! cfg 0 of opd0_w's tix shape), so another configuration's
-            //! descriptor keeps its image bytes.
+            //! AUDIO_UNIT's sampling rate, the CLOCK_DOMAIN's clock source
+            //! and a STREAM's current_format, from the dynamic-state row each
+            //! SET wrote. Configuration 0 only: that is the configuration
+            //! those GETs and their SETs locate in (the literal cfg 0 of
+            //! opd0_w's tix shape), so another configuration's descriptor
+            //! keeps its image bytes.
             if ((cmd_r.protocol == PP_PROTO_AEM)
                 && (cmd_r.msg_type == 4'd0)
                 && (cmd_r.opcode == OP_READ_DESCRIPTOR_C)
@@ -3141,11 +3128,12 @@ module KL_aecp_engine
               end else if (desc_ty_r == DT_CLOCK_DOMAIN_C) begin
                 upc_r  <= UPC_RDESCCD_C;
                 echo_r <= 1'b0;
-              end else if ((desc_ty_r == DT_STREAM_INPUT_C)
-                           || (desc_ty_r == DT_STREAM_OUTPUT_C)) begin
-                upc_r   <= UPC_RDESCSTR_C;
-                echo_r  <= 1'b0;
-                rdstr_r <= 1'b1;
+              end else if (desc_ty_r == DT_STREAM_INPUT_C) begin
+                upc_r  <= UPC_RDESCSI_C;
+                echo_r <= 1'b0;
+              end else if (desc_ty_r == DT_STREAM_OUTPUT_C) begin
+                upc_r  <= UPC_RDESCSO_C;
+                echo_r <= 1'b0;
               end
             end
             //! ...and the audio-map TYPE gate at the same seam, for the same

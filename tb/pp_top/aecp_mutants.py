@@ -79,7 +79,7 @@ MUTANTS = [
     ("pg-cap-off-by-one", "pg-cap-off-by-one", "aecp-dispatch",
      "PG7 a 72-mapping page: NO_RESOURCES, no record claimed: byte-exact"),
     # issue #82: READ_DESCRIPTOR's current-value overlays, the seam that
-    # dispatches them, the configuration guard, the face routing and the
+    # dispatches them, the configuration guard, the rows they read and the
     # TAIL copy they end with
     ("rd-base-no-overlay", "rd-base-no-overlay", "aecp-dispatch",
      "RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact"),
@@ -89,13 +89,15 @@ MUTANTS = [
      "RD0 AUDIO_UNIT 0, rate unset: READ_DESCRIPTOR byte-exact"),
     ("rd-cd-image-only", "rd-cd-image-only", "aecp-dispatch",
      "RD1 CLOCK_DOMAIN 0 after SET_CLOCK_SOURCE(1): READ_DESCRIPTOR byte-exact"),
-    ("rd-gsi-type-cfg", "rd-gsi-type-cfg", "aecp-dispatch",
+    ("rd-str-unset-overlays", "rd-str-unset-overlays", "aecp-dispatch",
      "RD0 STREAM_INPUT 0, format unset: READ_DESCRIPTOR byte-exact"),
+    ("rd-so-reads-input-row", "rd-so-reads-input-row", "aecp-dispatch",
+     "RD1 STREAM_OUTPUT 1 after SET_STREAM_FORMAT: READ_DESCRIPTOR byte-exact"),
     ("rd-cfg-any", "rd-cfg-any", "aecp-dispatch",
      "RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes: "
      "the 534-byte descriptor, byte-exact"),
     ("rd-tail-uncut", "rd-tail-uncut", "aecp-dispatch",
-     "RD0 STREAM_INPUT 0, format unset: READ_DESCRIPTOR byte-exact"),
+     "RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact"),
 ]
 
 #: the scratch tree: the RTL and the two bench directories the targets build

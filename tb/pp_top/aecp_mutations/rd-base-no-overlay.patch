@@ -1,9 +1,9 @@
 --- a/hdl/aecp/KL_aecp_engine.sv
 +++ b/hdl/aecp/KL_aecp_engine.sv
-@@ -3130,24 +3130,6 @@
-             //! configuration those GETs and their SETs locate in (the literal
-             //! cfg 0 of opd0_w's tix shape), so another configuration's
-             //! descriptor keeps its image bytes.
+@@ -3117,25 +3117,6 @@
+             //! those GETs and their SETs locate in (the literal cfg 0 of
+             //! opd0_w's tix shape), so another configuration's descriptor
+             //! keeps its image bytes.
 -            if ((cmd_r.protocol == PP_PROTO_AEM)
 -                && (cmd_r.msg_type == 4'd0)
 -                && (cmd_r.opcode == OP_READ_DESCRIPTOR_C)
@@ -15,11 +15,12 @@
 -              end else if (desc_ty_r == DT_CLOCK_DOMAIN_C) begin
 -                upc_r  <= UPC_RDESCCD_C;
 -                echo_r <= 1'b0;
--              end else if ((desc_ty_r == DT_STREAM_INPUT_C)
--                           || (desc_ty_r == DT_STREAM_OUTPUT_C)) begin
--                upc_r   <= UPC_RDESCSTR_C;
--                echo_r  <= 1'b0;
--                rdstr_r <= 1'b1;
+-              end else if (desc_ty_r == DT_STREAM_INPUT_C) begin
+-                upc_r  <= UPC_RDESCSI_C;
+-                echo_r <= 1'b0;
+-              end else if (desc_ty_r == DT_STREAM_OUTPUT_C) begin
+-                upc_r  <= UPC_RDESCSO_C;
+-                echo_r <= 1'b0;
 -              end
 -            end
              //! ...and the audio-map TYPE gate at the same seam, for the same

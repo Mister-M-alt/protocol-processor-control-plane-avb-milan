@@ -1,6 +1,6 @@
 --- a/hdl/aecp/ucode/gen_ucode.py
 +++ b/hdl/aecp/ucode/gen_ucode.py
-@@ -1153,7 +1153,7 @@
+@@ -1159,7 +1159,7 @@
      u('BR_STATUS', cnd=0, imm=E_RDSTUB),
      u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CLKSRC),
      u('COMPARE', ra=3, fmt=FMT_D, imm=0),

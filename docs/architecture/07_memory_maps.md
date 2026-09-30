@@ -200,12 +200,12 @@ index) order + an **index map** per configuration (type → base pointer + count
 index map's length is the length served. READ_DESCRIPTOR answers the located
 descriptor's image bytes with the name table's current names, and, for configuration 0
 (the configuration the GET/SET family locates in), with the §3.4 overlay's current value
-in place of the image's where a GET would read it (issue #82):
-ENTITY `current_configuration` (@310), AUDIO_UNIT `current_sampling_rate` (@136) and
-CLOCK_DOMAIN `clock_source_index` (@70) once a SET or the restore has written the row,
-and STREAM_INPUT/OUTPUT `current_format` (@74) always, from the face GET_STREAM_FORMAT
-reads ([06 §6.1](06_aecp_engine.md)). Nothing is appended: there is no redundancy-tail
-assembly, since the image already carries the Table 7-8 tail (§3.2 Δ note).
+in place of the image's once a SET or the restore has written the row (issue #82):
+ENTITY `current_configuration` (@310), AUDIO_UNIT `current_sampling_rate` (@136),
+CLOCK_DOMAIN `clock_source_index` (@70) and STREAM_INPUT/OUTPUT `current_format` (@74),
+the values the GETs then read ([06 §6.1](06_aecp_engine.md)). Nothing is appended:
+there is no redundancy-tail assembly, since the image already carries the Table 7-8
+tail (§3.2 Δ note).
 
 The response ceiling of the Δ8 command set is the response buffer (§3.3.2), not the
 full frame Milan §5.4.1 permits: `16 + LINE_BYTES_P` bytes, cdl 592 and a 618-byte frame
@@ -361,7 +361,7 @@ implemented** in this release.
 | current configuration index | 16 | design decision — **yes** (review §8 item 1) |
 | per AUDIO_UNIT `current_sampling_rate` | 32 | yes (§5.3.5.1) |
 | per CLOCK_DOMAIN `clock_source_index` | 16 | yes (§5.3.11.1) |
-| per stream `current_format` (READ_DESCRIPTOR and GET_STREAM_FORMAT serve the integrator face's value, §3.3) | 64 | yes (§5.3.7.1/§5.3.8.1) |
+| per stream `current_format` (READ_DESCRIPTOR serves the row once set, §3.3; GET_STREAM_FORMAT reads the integrator's face, which serves the published row) | 64 | yes (§5.3.7.1/§5.3.8.1) |
 | per STREAM_OUTPUT presentation-time offset | 32 | yes (§5.3.7.6) |
 | per port dynamic mapping tables | 64·M | yes (§5.3.9.1/§5.3.10.1) |
 | name table: `entity_name`, `group_name`, `object_name` of every named descriptor | 64 B each | yes (§5.3.13) |

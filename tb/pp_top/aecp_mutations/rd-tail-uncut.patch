@@ -1,6 +1,6 @@
 --- a/hdl/aecp/KL_aecp_ucpu.sv
 +++ b/hdl/aecp/KL_aecp_ucpu.sv
-@@ -587,9 +587,7 @@
+@@ -588,9 +588,7 @@
                    //! the bytes from there to the end (READ_DESCRIPTOR's
                    //! current-value overlays, issue #82: the µISA has no
                    //! subtract, and the tail's length is the descriptor's)

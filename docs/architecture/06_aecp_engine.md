@@ -271,25 +271,30 @@ status (`NO_SUCH_DESCRIPTOR` / `BAD_ARGUMENTS` for a bad config index) with the 
 {type, index} stub (IEEE §7.4.5). Permitted while locked or acquired.
 
 **Current values** (issue #82). A descriptor's `current_*` field is the value its GET
-returns, so after a SET the descriptor must carry the GET's value, not the image's
+returns, so after a SET the descriptor must carry what the SET stored, not the image's
 default. The payload walk captures `descriptor_type` at @28, and at that seam the engine
 re-dispatches four types to a program that copies the image around the field and
-builds the field from the GET's own source:
+builds the field from the dynamic-state row the SET (or the D3 restore) wrote:
 
-| Type | Program | Field | Source (as the GET) |
+| Type | Program | Field | Row (and the GET that reads it) |
 |---|---|---|---|
-| ENTITY | `E_RDESCENT` | `current_configuration` @310 | the dynamic row once set, else the image (GET_CONFIGURATION) |
-| AUDIO_UNIT, configuration 0 | `E_RDESCAU` | `current_sampling_rate` @136 | the dynamic row once set, else the image (GET_SAMPLING_RATE) |
-| CLOCK_DOMAIN, configuration 0 | `E_RDESCCD` | `clock_source_index` @70 | the dynamic row once set, else the image (GET_CLOCK_SOURCE) |
-| STREAM_INPUT/OUTPUT, configuration 0 | `E_RDESCSTR` | `current_format` @74 | the Milan-info face, kind 0 selector 1 (GET_STREAM_FORMAT), with `gsi_desc_type_o` the descriptor type |
+| ENTITY | `E_RDESCENT` | `current_configuration` @310 | `SEL_CFG` (GET_CONFIGURATION) |
+| AUDIO_UNIT, configuration 0 | `E_RDESCAU` | `current_sampling_rate` @136 | `SEL_RATE` (GET_SAMPLING_RATE) |
+| CLOCK_DOMAIN, configuration 0 | `E_RDESCCD` | `clock_source_index` @70 | `SEL_CLKSRC` (GET_CLOCK_SOURCE) |
+| STREAM_INPUT / STREAM_OUTPUT, configuration 0 | `E_RDESCSI` / `E_RDESCSO`, then `E_RDESCSF` | `current_format` @74 | `SEL_FMTIN` / `SEL_FMTOUT` (GET_STREAM_FORMAT reads the Milan-info face, which serves the published row once it is valid: the settings fold) |
 
-Configuration 0 because that is where the GET/SET family locates (its literal
-locate key); another configuration's descriptor keeps its image bytes. The rest of the
-field's 8-byte lane is built from the image lane, and the descriptor's tail rides
-`COPY_BUFFER` TAIL (`cnd[0]`: the count is the descriptor length less a lane-aligned
-start, since the µISA has no subtract). A descriptor too short to hold the field's lane
-is served whole from the image. `tb/pp_top` section AX (RD0 to RD2) grades each type
-byte-exact before and after its SET, against the value the GET returns.
+A row no SET or restore has written leaves the descriptor to `E_RDESC`, whole: the
+image is the current value then, the GETs' own rule. A STREAM's GET reads the
+integrator's face even then, and the face need not agree with the image before a SET;
+the descriptor overlays only the processor's own row, so it never takes a value the
+processor did not store. Configuration 0 because that is where the GET/SET family
+locates (its literal locate key); another configuration's descriptor keeps its image
+bytes. The rest of the field's 8-byte lane is built from the image lane, and the
+descriptor's tail rides `COPY_BUFFER` TAIL (`cnd[0]`: the count is the descriptor
+length less a lane-aligned start, since the µISA has no subtract). A descriptor too
+short to hold the field's lane is served whole from the image. `tb/pp_top` section AX
+(RD0 to RD2) grades each type byte-exact before and after its SET, against the value
+the GET returns after it.
 
 ### 6.2 GET_STREAM_INFO — the Milan 80-byte response and its data lineage
 
@@ -1026,7 +1031,7 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x0000 ACQUIRE_ENTITY | Milan refusal: `NOT_SUPPORTED`, owner zero, and the full command response form |
 | 0x0001 LOCK_ENTITY | real lock, unlock, owner query, keep-alive, and expiry behavior |
 | 0x0002 ENTITY_AVAILABLE | real flags and current owner state |
-| 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor, the descriptor carrying the current value its GET returns (ENTITY, and configuration 0's AUDIO_UNIT, CLOCK_DOMAIN and STREAMs, §6.1; issue #82) and reaching cdl 592 through the oversize slot (§3); `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
+| 0x0004 READ_DESCRIPTOR | real: SUCCESS + `configuration_index`/reserved/descriptor, the descriptor carrying the current value a SET or the restore stored, which its GET then returns (ENTITY, and configuration 0's AUDIO_UNIT, CLOCK_DOMAIN and STREAMs, §6.1; issue #82) and reaching cdl 592 through the oversize slot (§3); `NO_SUCH_DESCRIPTOR` on a locate miss and `BAD_ARGUMENTS` on a bad configuration index, both with the §7.4.5 4-byte {type, index} stub |
 | 0x0006 SET_CONFIGURATION | real lock-protected **store**, with `STREAM_IS_RUNNING` while any Stream Input is bound or Stream Output is streaming. The value is recorded and republished; it does not yet re-point the served descriptor set - see the note under §6.4 |
 | 0x0007 GET_CONFIGURATION | real current configuration read |
 | 0x0008 SET_STREAM_FORMAT | real lock-protected per-stream store for both directions, with the Milan §5.4.2.7 refusals: per-descriptor `STREAM_IS_RUNNING` (bound input / streaming output, judged at dispatch off the indexed vectors), and one integrator gather that rules on the proposed format (supported set + mapping-channel survival) answering `BAD_ARGUMENTS`; every refusal carries the CURRENT format through GET_STREAM_FORMAT's own face word. The value is stored, published on the settings face and folded into the served current format; it does not yet re-shape the wire framers - the SET_CONFIGURATION precedent |

@@ -183,9 +183,11 @@ E_SCFGBAD = 1513     # ...its BAD_ARGUMENTS arm
 E_SCFGEMT = 1526     # ...the body all three share
 E_RDESCENT = 1568    # READ_DESCRIPTOR(ENTITY) with current_configuration overlay
 #! READ_DESCRIPTOR's current-value overlays of the configuration-0 AUDIO_UNIT,
-#! CLOCK_DOMAIN and STREAM_INPUT/OUTPUT (issue #82): the front of the free
-#! 1531..1567 run and the free tail after E_SSRWALK
-E_RDESCSTR = 1536    # ...a STREAM: current_format from the GSI face
+#! CLOCK_DOMAIN and STREAM_INPUT/OUTPUT (issue #82), in the free 1531..1567
+#! and 1761..1791 runs and the free tail after E_SSRWALK
+E_RDESCSF = 1536     # ...a STREAM's shared emit: current_format in r1
+E_RDESCSI = 1768     # ...a STREAM_INPUT: its SET_STREAM_FORMAT row
+E_RDESCSO = 1780     # ...a STREAM_OUTPUT: its SET_STREAM_FORMAT row
 E_RDESCAU = 2000     # ...an AUDIO_UNIT: current_sampling_rate
 E_RDESCCD = 2024     # ...a CLOCK_DOMAIN: clock_source_index
 # --- START/STOP_STREAMING (Milan §5.4.2.19/.20, IEEE §7.4.35/.36) ------------
@@ -1103,14 +1105,18 @@ def GSI(n: int) -> dict[str, int]:
 # so after a SET the descriptor must carry what the GET reads, not the image's
 # default. Each program copies the descriptor up to the field (COPY_BUF, whose
 # partial final lane is overwritten by the next field), builds the field from
-# the GET's own source, builds the rest of the field's lane out of the image
-# lane, and copies the tail from the next lane boundary with COPY_BUF TAIL
-# (the tail's length is the descriptor's, which the µISA cannot subtract).
-# A descriptor too short to hold the field's lane is served whole by E_RDESC,
-# as is an AUDIO_UNIT or CLOCK_DOMAIN whose row no SET or restore has written
-# (the image IS the current value then, the GETs' own overlay-arm rule). The
-# engine re-dispatches here for configuration 0 only, the configuration those
-# GETs locate in; the prologue is E_RDESC's.
+# the dynamic-state row its SET wrote, builds the rest of the field's lane out
+# of the image lane, and copies the tail from the next lane boundary with
+# COPY_BUF TAIL (the tail's length is the descriptor's, which the µISA cannot
+# subtract). A row no SET or restore has written leaves the descriptor to
+# E_RDESC, whole: the image IS the current value then, the GETs' own
+# overlay-arm rule. A STREAM's GET reads the integrator's face, which serves
+# the row once it is published (the settings fold) and its own value before;
+# so the row, never the face, is what READ_DESCRIPTOR takes, and an unset
+# stream keeps its image bytes. A descriptor too short to hold the field's
+# lane is served whole by E_RDESC too. The engine re-dispatches here for
+# configuration 0 only, the configuration the GETs locate in; the prologue is
+# E_RDESC's.
 AU_RATE_TAIL = AU_RATE_OFF + 8     # 144: sampling_rates_offset's lane ends
 CD_SRCIDX_OFF = 70                 # §7.2.32 clock_source_index
 CD_SRCIDX_TAIL = 72                # its lane ends: clock_sources_offset @72
@@ -1169,17 +1175,29 @@ place(E_RDESCCD, [
     u('SEND_RESP'),
     u('END'),
 ])
-place(E_RDESCSTR, [
-    u('MOVE', rd=12, ra=0, imm=0),               # reserved @26
-    u('READ_ST', rd=9, imm=RGN_NCFG),
-    u('CHECK_ARG', ra=14, rb=9, fmt=FMT_W,
-      cnd=REL_LT, imm=E_RDSTUB),
-    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # requested STREAM[index]
-    u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+def _rdesc_stream(sel):
+    """A STREAM_INPUT's or STREAM_OUTPUT's READ_DESCRIPTOR entry: its SET row
+    into r1, then the shared emit; an unset row serves the image whole."""
+    return [
+        u('MOVE', rd=12, ra=0, imm=0),           # reserved @26
+        u('READ_ST', rd=9, imm=RGN_NCFG),
+        u('CHECK_ARG', ra=14, rb=9, fmt=FMT_W,
+          cnd=REL_LT, imm=E_RDSTUB),
+        u('DESC_ADDR', ra=14, imm=RGN_LOCATE),   # requested STREAM[index]
+        u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+        u('READ_ST', rd=3, imm=RGN_DYNV + sel),  # has a SET or restore set it?
+        u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+        u('BR_STATUS', cnd=2, imm=E_RDESC),      # unset: the image is current
+        u('READ_ST', rd=1, imm=RGN_DYN + sel),   # the format SET_STREAM_FORMAT stored
+        u('BRANCH', imm=E_RDESCSF),
+    ]
+
+place(E_RDESCSI, _rdesc_stream(SEL_FMTIN))
+place(E_RDESCSO, _rdesc_stream(SEL_FMTOUT))
+place(E_RDESCSF, [
     u('READ_ST', rd=8, imm=RGN_LEN),
     u('COMPARE', ra=8, fmt=FMT_W, imm=STR_FMT_TAIL),
     u('BR_STATUS', cnd=3, imm=E_RDESC),          # too short for the lane
-    u('GATHER_EXT', rd=1, **GSI(1)),             # GET_STREAM_FORMAT's value
     u('READ_ST', rd=4, imm=RGN_DATA + STR_FMT_LANE2),  # lane 80..87
     u('SHIFT_R', rd=5, ra=4, imm=32),            # [15:0] = formats_offset @82
     u('MOVE', rd=7, ra=0, imm=STR_FMT_OFF),      # prefix length 74

@@ -1,6 +1,6 @@
 --- a/hdl/aecp/ucode/gen_ucode.py
 +++ b/hdl/aecp/ucode/gen_ucode.py
-@@ -1126,7 +1126,7 @@
+@@ -1132,7 +1132,7 @@
      u('BR_STATUS', cnd=0, imm=E_RDSTUB),
      u('READ_ST', rd=3, imm=RGN_DYNV + SEL_RATE), # has a SET or restore set it?
      u('COMPARE', ra=3, fmt=FMT_D, imm=0),

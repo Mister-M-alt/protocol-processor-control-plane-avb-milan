@@ -211,8 +211,8 @@ the accepted name-lane write (`aecp_name_wr_o`), which the saved-state contract
 names as the name group's persistence trigger; the group-7 mark is a completion
 notification, never a persistence trigger. The name stage's writer and its replay
 after power loss, after the image walk, remain in GAP-09.
-READ_DESCRIPTOR serves the current configuration, sampling rate, clock source and
-stream format a GET reads, not the image's defaults (issue #82). No stream descriptor
+After a SET, READ_DESCRIPTOR serves the configuration, sampling rate, clock source and
+stream format the SET stored, which the GET reads, not the image's defaults (issue #82). No stream descriptor
 is assembled here: the consumer's image carries each one whole in the Table 7-8 layout,
 and the L1–L10 model rules are the consumer's (07 §3.1). The oversize path is graded
 end to end up to the response buffer's cdl 592.
