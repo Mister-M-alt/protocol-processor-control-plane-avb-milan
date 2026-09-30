@@ -13,6 +13,7 @@ TOP        = pp_top_wrap
 # verification only: Milan 4.2.7.2.1 fixes the product value at 2. README
 # section DV says why this pattern
 SRP_VID_FIXTURE = 5A3C
+AECP_MUTANT_OUTPUT ?= /tmp/aecp-mutants
 .DEFAULT_GOAL := run
 
 VFLAGS = --cc --exe --build -j 0 \
@@ -68,6 +69,17 @@ gsi-internal: gsi-build
 adp-config: gsi-build
 	./obj_dir/Vpp_top_sim --adp-only
 
+# A5b and M9 alone on a booted model (the main run holds both in its own
+# timeline): the fast target the AECP mutation driver plants its arms against
+aecp-dispatch: gsi-build
+	./obj_dir/Vpp_top_sim --aecp-dispatch-only
+
+# the AECP dispatch-and-response mutation campaign (README section
+# "AECP dispatch and response negative controls"); every arm is a patch in
+# aecp_mutations/, planted in a scratch copy
+aecp-mutants:
+	python3 aecp_mutants.py --output "$(AECP_MUTANT_OUTPUT)" --verilator "$(VERILATOR)"
+
 run: fixture-guards ltn_rom.hex ucode.hex
 	@rm -f obj_dir/build_tally.txt
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vpp_top_sim
@@ -97,4 +109,5 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 clean:
 	rm -rf obj_dir obj_vid ltn_rom.hex ucode.hex
 
-.PHONY: name-writes run gsi-build gsi-internal adp-config fixture-guards fixture-guards-test clean
+.PHONY: name-writes run gsi-build gsi-internal adp-config aecp-dispatch aecp-mutants \
+        fixture-guards fixture-guards-test clean

@@ -279,9 +279,11 @@ Ordering rules:
   524-cdl cap by skipping elements ([06 §6.7](06_aecp_engine.md)).
 - Builders serialize from response templates + field writes; `control_data_length`
   computed last; padding added by the MAC path and never counted (V2).
-- Every AECP opcode — implemented or not — has a **response-size ROM** entry so
-  `NOT_IMPLEMENTED` responses are correctly sized (IEEE §9.3.5.3.3;
-  [06 §6](06_aecp_engine.md)).
+- `NOT_IMPLEMENTED` responses are correctly sized (IEEE §9.3.5.3.3) **without a
+  response-size ROM**: none ships (06 §8.1, "Dispatch decision"). The engine
+  reflects the command, so `control_data_length` is 12 + the command's own
+  payload, read back out of its RX slot, for every opcode it does not implement
+  ([06 §8.2](06_aecp_engine.md)).
 
 ### 7.1 Realization — the AECP response buffer lives in MAIN MEMORY
 

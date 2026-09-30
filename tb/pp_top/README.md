@@ -469,6 +469,20 @@ tally.
   - **M6/M7** a truncated MVU command is echoed rather than answered from bytes
     nobody read; and a READ_DESCRIPTOR after the MVU traffic is still
     byte-exact, because Hive enumerating is worth more than the gap this closes.
+  - **M9** (issues #83 and #76) every opcode the engine decodes, sent on every
+    message type whose @22..@23 is not a command_type (2, 4, 6, 8, 10, 12, 14),
+    is answered NOT_IMPLEMENTED with the command echoed whole: the `aem_w`
+    message-type guard of each dispatch arm. The list `kOpcodes` is held to
+    exactly the engine's `OP_*_C` set by `scripts/check_m9_opcodes.py`, which
+    `run_suites.sh` runs (with its self-test) before any suite; issue #76
+    found it at 23 of 30. Arms that re-dispatch on payload content get real
+    bodies (GET_AUDIO_MAP and the ADD/REMOVE pair a STREAM_PORT_INPUT), and
+    the three writers that joined with #76 (SET_STREAM_FORMAT, SET_STREAM_INFO,
+    SET_NAME) are sent once more with a whole command body, so an unguarded arm
+    reaches its write: **M9b3-M9b5** read STREAM_OUTPUT 1's published format
+    and presentation-offset rows and CLOCK_DOMAIN 0's name back unmoved, as
+    **M9b/M9b2** do the sampling rate. `make aecp-dispatch` runs A5b and M9
+    alone on a booted model (the main run holds both in its own timeline).
 - **Audio-map edit transaction**: ADD/REMOVE_AUDIO_MAPPINGS cover atomic
   validation and commit, duplicate-safe removal, static-port refusal,
   running-output refusal, state-changing success notifications with
@@ -782,6 +796,33 @@ the last column is how many checks each one failed there.
 | `aecp_hold_unbounded` | the admission gate never drops (the unbounded hold) | `D3O5: in CLOSED each GET_RX_STATE`, `D3O6: during the slowed walk` | 7 |
 | `held_drop_uncounted` | a held drop not counted | `D3O5: one AECP command held`, `D3O6: at the terminal` | 5 |
 | `resident_never_returned` | the resident count never comes back down (R391-2's own edit) | `D3O7: the returned slot frees the share` | 1 |
+
+### AECP dispatch and response negative controls: `aecp_mutants.py`
+
+`make aecp-mutants [AECP_MUTANT_OUTPUT=DIR]` (or `python3 aecp_mutants.py
+--output DIR [--only ARM,...]`) plants each arm below, an explicit patch in
+`aecp_mutations/`, into a scratch copy of `hdl/`, `tb/common/` and this
+directory with `git apply`; the driver reads only simulation logs. Every
+generated ROM and model directory is deleted before each build, so a microcode
+arm cannot leave its ROM behind. A positive control of each make target runs
+first and must pass, and an arm is KILLED only when its run completes with the
+build's tally, exits non-zero and prints the named check. `aecp-dispatch` runs
+A5b and M9 on a booted model (`--aecp-dispatch-only`). The last column is how
+many checks each arm failed at the lane head.
+
+| Arm | Defect planted | Named check | Failing checks |
+|---|---|---|---|
+| `m9-guard-set-stream-format` | `ssfmt_w` loses its `aem_w` message-type guard (issue #76) | `M9: mt=4 word 0008` | 9 |
+| `m9-guard-set-stream-info` | `ssinfo_w` loses its guard | `M9: mt=4 word 000E` | 9 |
+| `m9-guard-set-name` | `sname_w` loses its guard | `M9: mt=4 word 0010` | 9 |
+| `m9-guard-get-name` | `gname_w` loses its guard | `M9: mt=4 word 0011` | 7 |
+| `m9-guard-add-mappings` | the ADD term of `amap_edit_w` loses its guard | `M9: mt=4 word 002C` | 7 |
+| `m9-guard-remove-mappings` | the REMOVE term of `amap_edit_w`, and `amap_remove_w`, lose their guard | `M9: mt=4 word 002D` | 7 |
+| `m9-guard-dynamic-info` | `gdi_w` loses its guard | `M9: mt=4 word 004B` | 7 |
+
+Each guard arm fails its opcode's row on all seven message types; the three
+writers also fail their whole-body row and the read-back that proves the write
+landed (M9b3, M9b4, M9b5).
 
 ## Recorded seams and honest limits
 

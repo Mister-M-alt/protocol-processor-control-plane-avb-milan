@@ -2904,9 +2904,34 @@ struct MilanInfoPhase {
   // this was reachable on a real link, not a curiosity.
   void m9_an_oui_that_collides_with_an_aem_opcode() {
     const std::vector<Col> cols = m9_the_colliding_cases();
+    const M9State before = m9_state(0xC01C);
     const uint16_t sq = m9_every_colliding_case_is_refused_whole(cols);
-    m9b_and_none_of_them_wrote_anything();
+    m9b_and_none_of_them_wrote_anything(before);
     m9c_a_non_colliding_vendor_oui_round_trips_whole(sq);
+  }
+
+  //! what the writers among the arms read back through, taken before the
+  //! storm and again after it: STREAM_OUTPUT 1's published format and
+  //! presentation-offset rows (the settings face) and CLOCK_DOMAIN 0's name
+  struct M9State {
+    uint8_t fmt_out_v = 0;
+    uint64_t fmt_out1 = 0;
+    uint8_t pt_v = 0;
+    uint32_t pt1 = 0;
+    std::vector<uint8_t> cd_name;
+  };
+  M9State m9_state(uint16_t seq) {
+    M9State s;
+    s.fmt_out_v = d->aecp_fmt_out_v_o;
+    s.fmt_out1 = h.fmt_row(true, 1);
+    s.pt_v = d->aecp_pt_offset_v_o;
+    s.pt1 = d->aecp_pt_offset_o.at(1);
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, seq,
+                      AEM_GET_NAME, NamePhase::name_sel(0x0024, 0, 0)));
+    const auto g = h.wait_any(h.q_aecp, 400);
+    if (g.size() >= 38 + 72) s.cd_name.assign(g.begin() + 46, g.begin() + 110);
+    return s;
   }
 
   std::vector<Col> m9_the_colliding_cases() {
@@ -2938,16 +2963,23 @@ struct MilanInfoPhase {
     //! SET_CLOCK_SOURCE, SET_CONTROL, ACQUIRE, LOCK, all state-changing --
     //! passed the whole suite. The comment above it already claimed the list
     //! came from the dispatch. It does now.
+    //! scripts/check_m9_opcodes.py (run by run_suites.sh before any suite)
+    //! holds this list to EXACTLY the engine's OP_*_C set: issue #76 found it
+    //! at 23 of the 30 opcodes the engine decodes, the seven missing ones
+    //! being every arm that landed after the list was written.
     static const uint16_t kOpcodes[] = {
-      0x0000, 0x0001, 0x0002, 0x0004, 0x0006, 0x0007, 0x0009, 0x000F,
-      0x0014, 0x0015, 0x0016, 0x0017, 0x0018, 0x0019, 0x0022, 0x0023,
-      0x0024, 0x0025, 0x0026, 0x0027, 0x0028, 0x0029, 0x002B,
+      0x0000, 0x0001, 0x0002, 0x0004, 0x0006, 0x0007, 0x0008, 0x0009,
+      0x000E, 0x000F, 0x0010, 0x0011, 0x0014, 0x0015, 0x0016, 0x0017,
+      0x0018, 0x0019, 0x0022, 0x0023, 0x0024, 0x0025, 0x0026, 0x0027,
+      0x0028, 0x0029, 0x002B, 0x002C, 0x002D, 0x004B,
     };
     //! 0x0022/0x0023 (START/STOP_STREAMING) joined this sweep with issue
-    //! #78. Every opcode the engine decodes has to be here, or the #83
-    //! guard - "the dispatch is on message_type, not on the residual
-    //! protocol bucket" - is simply untested for the newest arm, which is
-    //! exactly the one nobody has looked at yet.
+    //! #78, and SET_STREAM_FORMAT, SET_STREAM_INFO, SET_NAME, GET_NAME,
+    //! ADD/REMOVE_AUDIO_MAPPINGS and GET_DYNAMIC_INFO with issue #76. Every
+    //! opcode the engine decodes has to be here, or the #83 guard - "the
+    //! dispatch is on message_type, not on the residual protocol bucket" - is
+    //! simply untested for the newest arm, which is exactly the one nobody has
+    //! looked at yet.
     //! the residual bucket in full (KL_pp_rx_validator: 6/7 MVU, 2/3 AA,
     //! everything else AEM), plus AA itself
     static const uint8_t kMsgTypes[]
@@ -2965,6 +2997,14 @@ struct MilanInfoPhase {
     //! the only thing standing between and a corrupted protocol_id
     cols.push_back({6, 0x8004,  8, "VENDOR_UNIQUE, OUI with bit 15 set"});
     cols.push_back({4, 0x8004,  8, "AVC_COMMAND, length word with bit 15 set"});
+    //! the three WRITERS that joined with issue #76 also get a whole command
+    //! body on one message type: with the 8-byte filler each stops at its
+    //! length stub, which proves the status and nothing about the write the
+    //! guard exists to prevent. With the whole body an unguarded arm reaches
+    //! the store, and M9b3 to M9b5 read the state back
+    cols.push_back({4, 0x0008, 12, "AVC_COMMAND / SET_STREAM_FORMAT, whole body"});
+    cols.push_back({4, 0x000E, 84, "AVC_COMMAND / SET_STREAM_INFO, whole body"});
+    cols.push_back({4, 0x0010, 72, "AVC_COMMAND / SET_NAME, whole body"});
     return cols;
   }
 
@@ -3003,6 +3043,30 @@ struct MilanInfoPhase {
         putbe(&pl[2], 0x0000, 2);                 // index 0
         putbe(&pl[4], 0u, 4);                     // map_index 0
       }
+      //! ADD/REMOVE_AUDIO_MAPPINGS re-dispatch on @24..@25 AND on the record
+      //! count at @28: under the filler the type gate answers the NOT_SUPPORTED
+      //! echo, which differs from the right answer in its status byte alone.
+      //! A real STREAM_PORT_INPUT with a zero count is a whole Figure 7-71
+      //! command, so an unguarded arm runs the edit transaction itself
+      if ((c.hi == 0x002C || c.hi == 0x002D) && c.bytes == 8) {
+        putbe(&pl[0], 0x000E, 2);                 // STREAM_PORT_INPUT
+        putbe(&pl[2], 0x0000, 2);                 // index 0
+        putbe(&pl[4], 0u, 4);                     // number_of_mappings 0
+      }
+      if (c.mt == 4 && c.hi == 0x0008 && c.bytes == 12) {
+        putbe(&pl[0], 0x0006, 2);                 // STREAM_OUTPUT 1: not
+        putbe(&pl[2], 0x0001, 2);                 // streaming, so no refusal
+        putbe(&pl[4], H::SFMT_ALT_C, 8);          // a shape the verdict takes
+      }
+      if (c.mt == 4 && c.hi == 0x000E && c.bytes == 84) {
+        putbe(&pl[0], 0x0006, 2);                 // STREAM_OUTPUT 1
+        putbe(&pl[2], 0x0001, 2);
+        putbe(&pl[4], 0x20000000u, 4);            // MSRP_ACC_LAT_VALID alone
+        putbe(&pl[24], 0x00012345u, 4);           // msrp_accumulated_latency
+      }
+      if (c.mt == 4 && c.hi == 0x0010 && c.bytes == 72)
+        pl = NamePhase::name_body(0x0024, 0, 0, CFGIX,
+                                  NamePhase::name64("M9 must not land"));
       h.q_aecp.clear();
       h.feed(aecp_frame(OWN_MAC, CTLR_MAC, c.mt, 0, EID, CTLR_EID, sq,
                         c.hi, pl));
@@ -3037,7 +3101,20 @@ struct MilanInfoPhase {
   //! reached SET_SAMPLING_RATE's microprogram and WROTE the rate, then
   //! answered SUCCESS. Read the rate back through the command that serves
   //! it, because a refusal that still moved state is not a refusal.
-  void m9b_and_none_of_them_wrote_anything() {
+  void m9b_and_none_of_them_wrote_anything(const M9State& before) {
+    const M9State after = m9_state(0xC01D);
+    CHECK(after.fmt_out_v == before.fmt_out_v
+              && after.fmt_out1 == before.fmt_out1,
+          "M9b3: no SET_STREAM_FORMAT reached the store: STREAM_OUTPUT 1's "
+          "published row (valid 0x%02X -> 0x%02X) is unmoved",
+          unsigned(before.fmt_out_v), unsigned(after.fmt_out_v));
+    CHECK(after.pt_v == before.pt_v && after.pt1 == before.pt1,
+          "M9b4: no SET_STREAM_INFO reached the store: STREAM_OUTPUT 1's "
+          "presentation offset (valid 0x%02X -> 0x%02X) is unmoved",
+          unsigned(before.pt_v), unsigned(after.pt_v));
+    CHECK(after.cd_name.size() == 64 && after.cd_name == before.cd_name,
+          "M9b5: no SET_NAME reached the name table: CLOCK_DOMAIN 0's name "
+          "reads what it read before the storm");
     std::vector<uint8_t> rp(4, 0);
     putbe(&rp[0], 0x0002, 2);                 // AUDIO_UNIT, index 0
     h.q_aecp.clear();
@@ -9962,6 +10039,29 @@ struct NameWritePhase {
   D3RestorePhase{h, image, setup.image_ents}.dr3a_measurements();
 }
 
+//! `--aecp-dispatch-only` (make aecp-dispatch): the two dispatch sweeps of
+//! the main run, A5b and M9, on a model booted the NW way, for the mutation
+//! driver (aecp_mutants.py). The default build runs both inside the main
+//! run's own timeline and never here, so no check is counted twice.
+[[maybe_unused]] static void run_aecp_dispatch_focus(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  Suite setup(h);
+  setup.load_descriptor_image();
+  h.reset();
+  setup.boot_restore_over_blank_nvm();
+  h.d->link_up_i = 1;
+  h.d->entity_enable_i = 1;
+  h.idle(1000);
+  h.flush_all();
+  h.q_aecp.clear();
+  ReadDescriptorPhase{h, h.d, setup.image_entity, setup.image_clkdom}
+      .a5b_not_implemented_is_sized_by_its_command();
+  MilanInfoPhase{h, h.d, setup.image_entity}
+      .m9_an_oui_that_collides_with_an_aem_opcode();
+  printf("A5b+M9: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 [[maybe_unused]] static void run_name_writes(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
@@ -10343,12 +10443,16 @@ int main(int argc, char** argv) {
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
   const bool d3_only = argc == 2 && std::strcmp(argv[1], "--d3-only") == 0;
   const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
+  const bool aecp_only = argc == 2
+                         && std::strcmp(argv[1], "--aecp-dispatch-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
   }
-  const bool one_section = gsi_only || name_only || d3_only || adp_only;
+  const bool one_section = gsi_only || name_only || d3_only || adp_only
+                           || aecp_only;
   if (!one_section) Suite(h).run();
+  if (aecp_only) run_aecp_dispatch_focus(h);
   if (!one_section || gsi_only) InternalStreamInfoPhase{h}.run();
   if (!one_section || name_only) run_name_writes(h);
   if (!one_section || d3_only) run_d3(h);
