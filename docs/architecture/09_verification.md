@@ -216,7 +216,7 @@ walks' deadlines, not the port's.
 ### 8.3 The AECP deadline and the hazard classes (issues #81, #57, #84)
 
 The deadline engine of [03 §6](03_packet_engine.md) rule (e) and
-[08 §4](08_timing.md#4-deadline-budgets), graded in the compressed timebase of
+[08 §4](08_timing.md#4-deadline-budgets), and its budgets, graded in the compressed timebase of
 `tb/pp_top` section DL (`--deadline-only`, 1 ms = 100 clocks, so the armed
 deadline is 10,000 clocks and `T-AECP-RESP` 24,000) and at the µCPU in
 `tb/ucpu` P19. Every stall is an integrator face answering slowly but inside
@@ -234,6 +234,16 @@ its watchdog.
 | nothing leaks: every RX slot free, the next command byte-exact | DL7 |
 | the one command held through the boot restore is exempt (rule (d)) | D3O6 |
 | the redirect: before the first op, never after an effect, never cutting a waiting op, once per dispatch, dropping a partly built body, keeping a batch's cursor, the best current status kept | `tb/ucpu` P19a to P19h |
+| T-AECP-RESP for MVU (REQ-MVU-005): GET_MILAN_INFO and an unimplemented MVU command, byte-exact, at the suite's memory latency and at the reference 143 clocks, graded against their lines at `P-CLK-HZ` | TB1 |
+| the 08 §4 worst-case stimuli: an oversize READ_DESCRIPTOR (byte-exact, the oversize TX slot) and a GET_DYNAMIC_INFO carrying all thirteen getters, at both latencies | TB2 |
+| the engine busy: each of those behind a 15-frame notification fan-out, answered as idle, within one job plus its idle latency of the fan-out's last frame; GET_MILAN_INFO against a response memory stalled short of its watchdog | TB3, TB4 |
+| `T-BUDGET-ACMP-RESP`: ACMP answers idle and beside that load, later than idle by at most one frame on the wire | TB5 |
+| the deadline never fired while the budgets were measured | TB |
+
+Section TB runs in the suite's third build (`make budget`), whose timebase is the
+nominal clock's own (1 ms = 1,000 clocks), so the deadline never cuts a measurement;
+it prints the latency histogram ([08 §4](08_timing.md#4-deadline-budgets) records
+it).
 
 The negative controls run from `tb/pp_top/aecp_mutants.py` (`make -C tb/pp_top
 aecp-mutants`): each is a reviewed patch in `tb/pp_top/mutations/` applied to a

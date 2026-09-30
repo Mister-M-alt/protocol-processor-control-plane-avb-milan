@@ -1,0 +1,11 @@
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -1457,7 +1457,7 @@
+             || (hz_opcode_w == HZ_OP_REMOVE_AUDIO_MAP_C))
+           hz_class_w = 4'(PP_HZ_MAP_CFG);
+         else
+-          hz_class_w = 4'(PP_HZ_RO_SNAPSHOT);
++          hz_class_w = 4'(PP_HZ_MAP_CFG);
+       end
+       default:           hz_class_w = 4'(PP_HZ_RO_SNAPSHOT);
+     endcase

@@ -29,7 +29,10 @@
 //                The one parameter the suite builds twice: SRP_DOM_DEF_VID_P
 //                is overridden ONLY when the second build defines
 //                PP_TOP_SRP_DOM_DEF_VID (Makefile), so the first build grades
-//                the top's own default and never a copy of it.
+//                the top's own default and never a copy of it. The third
+//                build defines PP_TOP_TIM_REAL and runs the timebase at
+//                1 ms = 1,000 clk, the nominal clock's own, for section TB's
+//                response budgets.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -425,9 +428,17 @@ module pp_top_wrap (
     output logic        dbg_ucpu_pre_o
 );
 
+`ifdef PP_TOP_TIM_REAL
+  // section TB's build (the Makefile's third): 1 ms = 1 x 1000 = 1,000 clk,
+  // the nominal TB_CLK_HZ_C's own rate, so no response budget measured there
+  // is cut short by the compressed AECP deadline
+  localparam int unsigned TB_DIV_US_C = 1;
+  localparam int unsigned TB_DIV_MS_C = 1000;
+`else
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
   localparam int unsigned TB_DIV_US_C = 2;
   localparam int unsigned TB_DIV_MS_C = 50;
+`endif
   //! the nominal P-CLK-HZ the saved-state times are DERIVED from (the
   //! prescaler above is overridden, so the timebase does not use it). A
   //! 1 MHz clock, the parent D3 model's, makes the ratified 20 ms per-wait

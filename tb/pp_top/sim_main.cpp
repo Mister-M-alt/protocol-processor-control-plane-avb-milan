@@ -17,9 +17,10 @@
 // maap face both ways — with no allocator the talker still answers (the
 // walker must not wedge on an unaccepted request), with one the granted
 // address reaches acmp_declaring_o, the ACMP answer and the SRP wire.
-// The suite builds twice (Makefile): the second build overrides the top's
-// P-SRP-DOM-DEF-VID with a verification-only fixture and runs section DV
-// alone.
+// The suite builds three times (Makefile): the second build overrides the
+// top's P-SRP-DOM-DEF-VID with a verification-only fixture and runs section
+// DV alone; the third runs the timebase at the nominal clock's rate and runs
+// section TB alone.
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -46,7 +47,14 @@
 // ---------------------------------------------------------------------------
 // TB shape
 // ---------------------------------------------------------------------------
+#ifdef PP_TOP_TIM_REAL
+//! section TB's build: the wrap runs the timebase at the nominal clock's own
+//! rate, 1 ms = 1,000 clocks of CLK_HZ, so the deadline engine (100 ms here)
+//! never cuts a measurement
+constexpr int         MS_CYC = 1000;
+#else
 constexpr int         MS_CYC = 100;                  // wrap: 1 ms = 100 clk
+#endif
 //! the wrap's nominal P-CLK-HZ (TB_CLK_HZ_C): the top derives its restore
 //! deadlines from it, and the suite re-derives them from the ruled ms
 constexpr long        CLK_HZ = 1000001;
@@ -827,9 +835,10 @@ struct H {
   uint64_t rm_writes = 0;
   vluint64_t aecp_rx_t = 0;
   //! the clock of the first byte of the frame being captured, and of the
-  //! last complete AECP frame's first byte (section DL's response line)
+  //! last complete AECP and ACMP frames' first bytes (sections DL and TB)
   vluint64_t cur_sof_t = 0;
   vluint64_t aecp_sof_t = 0;
+  vluint64_t acmp_sof_t = 0;
   std::deque<std::vector<uint8_t>> q_aecp;
   //! MAAP frames (subtype 0xFE) with their eof-time compressed ms
   std::deque<std::pair<std::vector<uint8_t>, uint32_t>> q_maap;
@@ -1372,6 +1381,7 @@ struct H {
           q_adp.push_back(cur);
         } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFC) {
           q_acmp.push_back(cur);
+          acmp_sof_t = cur_sof_t;
         } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFB) {
           q_aecp.push_back(cur);
           aecp_rx_t = t;                       // for the response-cost check
@@ -8869,6 +8879,7 @@ struct Suite {
   std::vector<uint8_t> image_clkdom;
   std::vector<uint8_t> image_spi0;
   std::vector<uint8_t> image_spi1;
+  std::vector<uint8_t> image_sigmux;
   //! when S0 raised the link, so S3 can say how long enable was held low
   uint32_t link_up_ms = 0;
 
@@ -8942,8 +8953,12 @@ struct Suite {
   // generator's output.
   //! `entity_cfg` is the ENTITY descriptor's current_configuration, the image
   //! default every unset-row answer falls back to; section AD boots an image
-  //! whose default is 1 so that a SET back to 0 is not also the default
-  void load_descriptor_image(uint16_t entity_cfg = CFGIX) {
+  //! whose default is 1 so that a SET back to 0 is not also the default.
+  //! `sigmux_len` sizes the test-only SIGNAL_MULTIPLEXER: section TB makes it
+  //! the whole 576-byte line buffer, the 08 §4 oversize READ_DESCRIPTOR
+  //! (a 580-byte payload, a 618-byte frame in the oversize TX slot)
+  void load_descriptor_image(uint16_t entity_cfg = CFGIX,
+                             uint16_t sigmux_len = 312) {
     image_ents = {
       {CFGIX, 0x0000, 1, 312, 0, 312, 0},          // ENTITY
       {CFGIX, 0x0024, 1,  82, 2,  88, 0},          // CLOCK_DOMAIN (not %8)
@@ -8967,7 +8982,7 @@ struct Suite {
       //! IDENTIFY control exist in every configuration at the same index
       {CFGIX, 0x001A, 1, 112, 9, 112, 0},          // CONTROL (Identify)
       //! Test-only shape that makes E_RDESCENT's type guard load-bearing.
-      {CFGIX, 0x0022, 1, 312, 10, 312, 0},         // SIGNAL_MULTIPLEXER
+      {CFGIX, 0x0022, 1, sigmux_len, 10, sigmux_len, 0}, // SIGNAL_MULTIPLEXER
     };
     image_entity = entity_descriptor();
     putbe(&image_entity[310], entity_cfg, 2);  // current_configuration
@@ -8976,6 +8991,8 @@ struct Suite {
     //! page of 8), port 1 = 24 clusters at base 8 (three pages of 8)
     image_spi0 = stream_port_descriptor(0x000E, 0, 8, 0);
     image_spi1 = stream_port_descriptor(0x000E, 1, 24, 8);
+    image_sigmux = non_entity_312_descriptor(0);
+    image_sigmux.resize(sigmux_len, 0x5A);
     h.dram = build_image(image_ents,
                          {image_entity, image_clkdom, image_spi0, image_spi1,
                           stream_descriptor(0x0005, 0), stream_descriptor(0x0005, 1),
@@ -8987,7 +9004,7 @@ struct Suite {
                           audio_map_descriptor(0, 0),
                           audio_unit_descriptor(0, 96000u),
                           control_descriptor(0),
-                          non_entity_312_descriptor(0)},
+                          image_sigmux},
                          //! TWO configurations, so SET_CONFIGURATION has a
                          //! legal non-zero index to be tested with. Only
                          //! configuration 0 carries descriptors, which is a
@@ -10724,6 +10741,437 @@ struct DeadlinePhase {
   printf("DL: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+// ==== TB. Response budgets under the 08 §4 worst-case stimuli ==============
+// Issue #57 (REQ-MVU-005: MVU answered within T-AECP-RESP, Milan v1.2
+// §5.4.3.4) and issue #81 (08 §4: AECP within T-AECP-RESP and its design
+// budget T-BUDGET-AECP-WC, ACMP within T-BUDGET-ACMP-RESP, under an oversize
+// READ_DESCRIPTOR, a full GET_DYNAMIC_INFO batch and a 16-way notification
+// fan-out). It runs in the suite's third build, whose timebase is the nominal
+// clock's own (1 ms = 1,000 clocks), so the deadline engine never cuts a
+// measurement here: every answer below is the command's own, and the section
+// also proves the deadline never fired. Latency is MAC command byte 0 to MAC
+// response byte 0 in clocks, graded the way B4/B4b grade READ_DESCRIPTOR,
+// against its line at P-CLK-HZ = 100 MHz (F01.5), at the suite's memory
+// latency and at the reference SoC's 143 clocks (~1424 ns, 07 §3.3). Two
+// arms carry tighter, structural bounds: a solicited answer behind a fan-out
+// waits for at most the one unsolicited job in flight (a solicited head wins
+// the engine's idle arbitration), and an ACMP answer waits for at most the
+// one frame on the wire (ACMP is the TX arbiter's first priority, F03.5).
+struct BudgetPhase {
+  H& h;                                        // the tally
+  const milan::tb::Model<Vpp_top_wrap> model;
+  H io;
+  Suite image;
+  static constexpr long PCLK_MS = 100000;      // P-CLK-HZ / 1000 (F01.5)
+  static constexpr long AECP_RESP = 240 * PCLK_MS;   // T-AECP-RESP
+  static constexpr long AECP_WC = 100 * PCLK_MS;     // T-BUDGET-AECP-WC
+  static constexpr long ACMP_RESP = 50 * PCLK_MS;    // T-BUDGET-ACMP-RESP
+  static constexpr uint8_t VU_COMMAND = 6;
+  static constexpr uint8_t VU_RESPONSE = 7;
+  static constexpr uint16_t MVU_PID_HI = 0x001B;
+  static constexpr uint32_t MVU_PID_LO = 0xC50AC100u;
+  static constexpr uint16_t DT_SIGMUX = 0x0022;
+  static constexpr uint16_t SIGMUX_LEN = 576;
+  static constexpr int FANOUT = 16;
+  struct Sample {
+    std::string what;
+    long clocks;
+    bool acmp;
+  };
+  std::vector<Sample> hist;
+  uint16_t seq = 0xB000;
+
+  explicit BudgetPhase(H& tally) : h(tally), io(model.get()), image(io) {}
+
+  static uint64_t mac_of(int k) { return CTLR_MAC + static_cast<uint64_t>(k); }
+  static uint64_t eid_of(int k) { return CTLR_EID + static_cast<uint64_t>(k); }
+  static std::vector<uint8_t> mvu_pl(uint16_t ct) {
+    std::vector<uint8_t> p(8, 0);
+    putbe(&p[0], MVU_PID_LO, 4);
+    putbe(&p[4], ct, 2);
+    return p;
+  }
+  static std::vector<uint8_t> milan_info_body() {
+    std::vector<uint8_t> b(20, 0);
+    putbe(&b[0], MVU_PID_LO, 4);
+    putbe(&b[8], 1u, 4);                       // protocol_version 1
+    return b;
+  }
+  static std::vector<uint8_t> ti(uint16_t ty, uint16_t ix) {
+    std::vector<uint8_t> p(4, 0);
+    putbe(&p[0], ty, 2);
+    putbe(&p[2], ix, 2);
+    return p;
+  }
+  static int status(const std::vector<uint8_t>& f) {
+    return f.size() > 16 ? ((f[16] >> 3) & 0x1F) : -1;
+  }
+  static bool unsolicited(const std::vector<uint8_t>& f) {
+    return f.size() > 36 && (f[15] & 0x0F) == 1 && (f[36] & 0x80) != 0;
+  }
+
+  //! one AECP command from controller `k`; its answer, and the latency from
+  //! the command's first byte to the answer's first byte in `*clocks`. The
+  //! answer is the frame to that controller's MAC carrying the sequence_id;
+  //! every other AECP frame (the fan-out's) is counted and set aside
+  std::vector<uint8_t> ask(int k, uint8_t mt, uint16_t op,
+                           const std::vector<uint8_t>& pl, long* clocks) {
+    const uint16_t s = seq++;
+    const long t0 = static_cast<long>(io.t);
+    io.feed(aecp_frame(OWN_MAC, mac_of(k), mt, 0, EID, eid_of(k), s,
+                       mt == VU_COMMAND ? MVU_PID_HI : op, pl));
+    for (long c = 0; c < 400L * MS_CYC; ++c) {
+      while (!io.q_aecp.empty()) {
+        auto f = io.q_aecp.front();
+        io.q_aecp.pop_front();
+        if (unsolicited(f)) {
+          uns_first.push_back(static_cast<long>(io.aecp_sof_t));
+          continue;
+        }
+        if (rd64(&f[0]) >> 16 == mac_of(k) && f.size() > 35
+            && ((f[34] << 8) | f[35]) == s) {
+          *clocks = static_cast<long>(io.aecp_sof_t) - t0;
+          return f;
+        }
+      }
+      io.step();
+    }
+    *clocks = -1;
+    return {};
+  }
+  std::vector<long> uns_first;                 // first bytes of fan-out frames
+
+  //! one ACMP GET_RX_STATE (message 10) of sink 0, or GET_TX_STATE (4) of
+  //! source 0, and its latency in `*clocks`, first byte to first byte
+  std::vector<uint8_t> acmp(uint8_t msg, long* clocks) {
+    const uint16_t s = seq++;
+    const bool tx = msg == 4;
+    const long t0 = static_cast<long>(io.t);
+    io.feed(acmp_frame(CTLR_MAC, msg, 0, 0, CTLR_EID, tx ? EID : 0,
+                       tx ? 0 : EID, 0, 0, 0, 0, s, 0, 0));
+    for (long c = 0; c < 400L * MS_CYC; ++c) {
+      while (!io.q_acmp.empty()) {
+        auto f = io.q_acmp.front();
+        io.q_acmp.pop_front();
+        if (f.size() == 70 && (f[15] & 0x0F) == msg + 1 && fv_u64(f, 62, 2) == s) {
+          *clocks = static_cast<long>(io.acmp_sof_t) - t0;
+          return f;
+        }
+      }
+      io.step();
+    }
+    *clocks = -1;
+    return {};
+  }
+
+  //! the budget lines, and the histogram row
+  void grade(const std::string& what, long clocks, bool is_acmp) {
+    hist.push_back({what, clocks, is_acmp});
+    if (is_acmp) {
+      CHECK(clocks >= 0 && clocks < ACMP_RESP,
+            "TB %s: %ld clocks inside T-BUDGET-ACMP-RESP (%ld at P-CLK-HZ)",
+            what.c_str(), clocks, ACMP_RESP);
+      return;
+    }
+    CHECK(clocks >= 0 && clocks < AECP_RESP,
+          "TB %s: %ld clocks inside T-AECP-RESP (%ld at P-CLK-HZ)",
+          what.c_str(), clocks, AECP_RESP);
+    CHECK(clocks >= 0 && clocks < AECP_WC,
+          "TB %s: %ld clocks inside T-BUDGET-AECP-WC (%ld at P-CLK-HZ)",
+          what.c_str(), clocks, AECP_WC);
+  }
+
+  void set_latency(int lat) {
+    io.dram_lat = lat;
+    io.rmem_rlat = lat;
+    io.rmem_wlat = lat;
+  }
+
+  void boot() {
+    image.load_descriptor_image(CFGIX, SIGMUX_LEN);
+    io.reset();
+    CHECK(io.boot_to_aecp() && io.d->restore_done_o && !io.d->restore_fail_o,
+          "TB boot: both restore walks end done over a blank device");
+    io.flush_all();
+    io.q_aecp.clear();
+    io.dl_clear();
+  }
+
+  //! TB1 (#57 acceptance 1): GET_MILAN_INFO and an unimplemented MVU command
+  //! (GET_SYSTEM_UNIQUE_ID, waived for October), each byte-exact, at the
+  //! suite's memory latency and at the reference 143 clocks
+  void tb1_the_mvu_answers_at_both_latencies() {
+    for (const int lat : {-1, 143}) {
+      if (lat > 0) set_latency(lat);
+      const std::string at = lat > 0 ? " at 143 clocks per access"
+                                     : " at the suite latency";
+      long c = -1;
+      auto f = ask(0, VU_COMMAND, 0, mvu_pl(0x0000), &c);
+      CHECK(f == aecp_frame(mac_of(0), OWN_MAC, VU_RESPONSE, AECP_SUCCESS, EID,
+                            eid_of(0), static_cast<uint16_t>(seq - 1),
+                            MVU_PID_HI, milan_info_body()),
+            "TB1 GET_MILAN_INFO%s: the Figure 5.4 answer, byte-exact",
+            at.c_str());
+      grade("TB1 GET_MILAN_INFO" + at, c, false);
+      f = ask(0, VU_COMMAND, 0, mvu_pl(0x0002), &c);
+      CHECK(f == aecp_frame(mac_of(0), OWN_MAC, VU_RESPONSE,
+                            AECP_NOT_IMPLEMENTED, EID, eid_of(0),
+                            static_cast<uint16_t>(seq - 1), MVU_PID_HI,
+                            mvu_pl(0x0002)),
+            "TB1 GET_SYSTEM_UNIQUE_ID%s: NOT_IMPLEMENTED, the command echoed",
+            at.c_str());
+      grade("TB1 GET_SYSTEM_UNIQUE_ID (not implemented)" + at, c, false);
+    }
+    set_latency(31);
+    io.rmem_rlat = 23;
+    io.rmem_wlat = 17;
+  }
+
+  //! TB2 (#81 acceptance 3, 08 §4's first two stimuli): READ_DESCRIPTOR of a
+  //! descriptor that fills the 576-byte line buffer (a 580-byte payload, a
+  //! 618-byte frame in the oversize TX slot, Δ8), byte-exact, and a
+  //! GET_DYNAMIC_INFO carrying all thirteen §7.4.76.2 getters, SUCCESS inside
+  //! the 524-octet cap; each at both memory latencies
+  void tb2_the_oversize_descriptor_and_the_full_batch() {
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2);
+    putbe(&rd[4], DT_SIGMUX, 2);
+    std::vector<uint8_t> epl(4, 0);
+    putbe(&epl[0], CFGIX, 2);
+    epl.insert(epl.end(), image.image_sigmux.begin(), image.image_sigmux.end());
+    const std::vector<uint16_t> getters = {0x0007, 0x0009, 0x000B, 0x000D,
+                                           0x000F, 0x0011, 0x0013, 0x0015,
+                                           0x0017, 0x001D, 0x0029, 0x0048,
+                                           0x004A};
+    //! each getter's own command data, aimed at a descriptor it serves
+    auto data_of = [](uint16_t op) {
+      if (op == 0x0007) return std::vector<uint8_t>{};         // no data
+      if (op == 0x0011) {                                      // GET_NAME
+        std::vector<uint8_t> n = ti(0x0024, 0);
+        n.resize(8, 0);
+        return n;
+      }
+      if (op == 0x0015) return ti(0x0002, 0);                  // AUDIO_UNIT
+      if (op == 0x0017) return ti(0x0024, 0);                  // CLOCK_DOMAIN
+      return ti(0x0005, 0);                                    // STREAM_INPUT
+    };
+    std::vector<uint8_t> batch;
+    for (const uint16_t op : getters) {
+      std::vector<uint8_t> r(8, 0);
+      const auto data = data_of(op);
+      putbe(&r[0], data.size(), 2);
+      putbe(&r[6], op, 2);
+      r.insert(r.end(), data.begin(), data.end());
+      batch.insert(batch.end(), r.begin(), r.end());
+    }
+    tb2_batch = batch;
+    for (const int lat : {-1, 143}) {
+      if (lat > 0) set_latency(lat);
+      const std::string at = lat > 0 ? " at 143 clocks per access"
+                                     : " at the suite latency";
+      long c = -1;
+      auto f = ask(0, 0, AEM_READ_DESCRIPTOR, rd, &c);
+      CHECK(f.size() == 38 + epl.size()
+                && f == aecp_frame(mac_of(0), OWN_MAC, 1, AECP_SUCCESS, EID,
+                                   eid_of(0), static_cast<uint16_t>(seq - 1),
+                                   AEM_READ_DESCRIPTOR, epl),
+            "TB2 READ_DESCRIPTOR of the 576-byte descriptor%s: the 618-byte "
+            "frame, byte-exact (%zu bytes)", at.c_str(), f.size());
+      grade("TB2 oversize READ_DESCRIPTOR" + at, c, false);
+      f = ask(0, 0, AEM_GET_DYNAMIC_INFO, batch, &c);
+      const unsigned cdl = f.size() > 17
+                           ? ((unsigned(f[16] & 7) << 8) | f[17]) : 0u;
+      CHECK(status(f) == AECP_SUCCESS && cdl > 12 + 13 * 8 && cdl <= 524,
+            "TB2 the full GET_DYNAMIC_INFO batch%s: SUCCESS, cdl %u within "
+            "524", at.c_str(), cdl);
+      grade("TB2 full GET_DYNAMIC_INFO batch" + at, c, false);
+    }
+    set_latency(31);
+    io.rmem_rlat = 23;
+    io.rmem_wlat = 17;
+  }
+
+  //! step until `n` fan-out frames have been seen in all, or `ms` pass
+  void drain_fanout(size_t n, int ms) {
+    for (long c = 0; c < static_cast<long>(ms) * MS_CYC && uns_first.size() < n;
+         ++c) {
+      while (!io.q_aecp.empty()) {
+        if (unsolicited(io.q_aecp.front()))
+          uns_first.push_back(static_cast<long>(io.aecp_sof_t));
+        io.q_aecp.pop_front();
+      }
+      io.step();
+    }
+  }
+  //! the longest spacing of two consecutive fan-out frames' first bytes:
+  //! one unsolicited job's time through the engine and the wire
+  long job_spacing() const {
+    long most = 0;
+    for (size_t i = 1; i < uns_first.size(); ++i)
+      most = std::max(most, uns_first[i] - uns_first[i - 1]);
+    return most;
+  }
+
+  //! TB3 (#57 acceptance 2, 08 §4's third stimulus): sixteen controllers
+  //! register (every registry row) and controller 0's SET_CLOCK_SOURCE
+  //! changes the clock source, so fifteen unsolicited responses run through
+  //! the engine. Each of GET_MILAN_INFO, the oversize READ_DESCRIPTOR and the
+  //! full batch is asked while such a fan-out is in flight, at 143 clocks per
+  //! access, and is answered as it is idle (byte-exact; the batch SUCCESS at
+  //! the same length, since its GET_CLOCK_SOURCE member reads the new source)
+  //! inside its lines. KL_aecp_notify holds the command path while a class
+  //! drains (its event queue stays lossless), so the answer follows the
+  //! fan-out's last frame, by at most one job plus its own idle latency
+  void tb3_the_mvu_answer_behind_a_sixteen_way_fan_out() {
+    const std::vector<uint8_t> fl(4, 0);
+    long c = -1;
+    int registered = 0;
+    for (int k = 0; k < FANOUT; ++k)
+      registered += status(ask(k, 0, 0x0024, fl, &c)) == AECP_SUCCESS ? 1 : 0;
+    CHECK(registered == FANOUT, "TB3 premise: %d of %d controllers registered",
+          registered, FANOUT);
+    set_latency(143);
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2);
+    putbe(&rd[4], DT_SIGMUX, 2);
+    const std::vector<std::string> names = {
+        "GET_MILAN_INFO", "oversize READ_DESCRIPTOR",
+        "full GET_DYNAMIC_INFO batch"};
+    for (size_t i = 0; i < names.size(); ++i) {
+      const uint8_t mt = i == 0 ? VU_COMMAND : 0;
+      const uint16_t op = i == 1 ? AEM_READ_DESCRIPTOR
+                          : (i == 2 ? AEM_GET_DYNAMIC_INFO : 0);
+      const auto pl = i == 0 ? mvu_pl(0) : (i == 1 ? rd : tb2_batch);
+      long idle = -1;
+      const auto want = ask(1, mt, op, pl, &idle);
+      std::vector<uint8_t> cs(8, 0);
+      putbe(&cs[0], 0x0024, 2);
+      putbe(&cs[4], (i % 2 == 0) ? 1 : 0, 2);  // a change every time
+      uns_first.clear();
+      CHECK(status(ask(0, 0, AEM_SET_CLOCK_SOURCE, cs, &c)) == AECP_SUCCESS,
+            "TB3 premise: the SET_CLOCK_SOURCE ahead of the %s is accepted",
+            names[i].c_str());
+      const size_t sent = uns_first.size();
+      const auto f = ask(1, mt, op, pl, &c);
+      const long first = static_cast<long>(io.aecp_sof_t);
+      drain_fanout(FANOUT - 1, 200);
+      const bool same = (i == 2)
+          ? (status(f) == AECP_SUCCESS && f.size() == want.size())
+          : (f.size() == want.size() && f.size() > 38
+             && std::equal(f.begin() + 38, f.end(), want.begin() + 38)
+             && status(f) == status(want));
+      CHECK(same, "TB3 %s behind the fan-out is answered as it is idle",
+            names[i].c_str());
+      CHECK(uns_first.size() == FANOUT - 1 && sent + 1 < FANOUT - 1,
+            "TB3 %s: premise: asked with the fan-out in flight (%zu of %d "
+            "frames sent, %zu in all)", names[i].c_str(), sent, FANOUT - 1,
+            uns_first.size());
+      const long after = uns_first.empty() ? -1 : first - uns_first.back();
+      CHECK(after >= 0 && after <= job_spacing() + idle + 200,
+            "TB3 %s: answered %ld clocks after the fan-out's last frame, at "
+            "most one job (%ld) plus its idle latency (%ld)",
+            names[i].c_str(), after, job_spacing(), idle);
+      grade("TB3 " + names[i] + " behind a 15-frame fan-out, at 143", c,
+            false);
+    }
+    set_latency(31);
+    io.rmem_rlat = 23;
+    io.rmem_wlat = 17;
+  }
+  std::vector<uint8_t> tb2_batch;              // TB2's full batch, reused
+
+  //! TB4 (#57 acceptance 2, the other stimulus): a response memory taking
+  //! 4,000 clocks for every read and every lane write, short of its 4,096
+  //! watchdog. GET_MILAN_INFO is still answered byte-exact inside its lines
+  void tb4_the_mvu_answer_against_a_stalled_response_memory() {
+    io.rmem_rlat = 4000;
+    io.rmem_wlat = 4000;
+    long c = -1;
+    const auto f = ask(2, VU_COMMAND, 0, mvu_pl(0), &c);
+    io.rmem_rlat = 23;
+    io.rmem_wlat = 17;
+    CHECK(f == aecp_frame(mac_of(2), OWN_MAC, VU_RESPONSE, AECP_SUCCESS, EID,
+                          eid_of(2), static_cast<uint16_t>(seq - 1),
+                          MVU_PID_HI, milan_info_body()),
+          "TB4 GET_MILAN_INFO against a stalled response memory: the Figure "
+          "5.4 answer, byte-exact");
+    grade("TB4 GET_MILAN_INFO, response memory at 4,000 clocks", c, false);
+  }
+
+  //! TB5 (#81 acceptance 3, T-BUDGET-ACMP-RESP): GET_RX_STATE and
+  //! GET_TX_STATE idle, then GET_RX_STATE while the oversize READ_DESCRIPTOR
+  //! runs at 143 clocks per access and GET_TX_STATE while a fan-out runs:
+  //! each inside its line, and later than idle by at most one maximum frame
+  //! on the wire (ACMP is the TX arbiter's first priority, F03.5)
+  void tb5_acmp_under_the_worst_aecp_load() {
+    long rx0 = -1;
+    long tx0 = -1;
+    const auto r0 = acmp(10, &rx0);
+    const auto t0 = acmp(4, &tx0);
+    CHECK(!r0.empty() && !t0.empty(), "TB5 GET_RX_STATE and GET_TX_STATE "
+          "answered idle");
+    grade("TB5 GET_RX_STATE, idle", rx0, true);
+    grade("TB5 GET_TX_STATE, idle", tx0, true);
+    constexpr long FRAME_MAX = 618 + 64;       // the oversize frame + slack
+    set_latency(143);
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2);
+    putbe(&rd[4], DT_SIGMUX, 2);
+    io.feed(aecp_frame(OWN_MAC, mac_of(3), 0, 0, EID, eid_of(3), seq++,
+                       AEM_READ_DESCRIPTOR, rd));
+    long c = -1;
+    const auto r1 = acmp(10, &c);
+    CHECK(r1 == r0 || (r1.size() == r0.size() && !r1.empty()),
+          "TB5 GET_RX_STATE answered while the READ_DESCRIPTOR runs");
+    CHECK(c <= rx0 + FRAME_MAX, "TB5 GET_RX_STATE beside the oversize "
+          "READ_DESCRIPTOR: %ld clocks, at most idle %ld plus one frame",
+          c, rx0);
+    grade("TB5 GET_RX_STATE beside an oversize READ_DESCRIPTOR, at 143", c,
+          true);
+    io.run_ms(40);                             // the READ_DESCRIPTOR retires
+    io.q_aecp.clear();
+    std::vector<uint8_t> cs(8, 0);
+    putbe(&cs[0], 0x0024, 2);
+    putbe(&cs[4], 0, 2);                       // TB3 left it at 1: a change
+    uns_first.clear();
+    (void)ask(0, 0, AEM_SET_CLOCK_SOURCE, cs, &c);
+    const auto t1 = acmp(4, &c);
+    CHECK(!t1.empty() && c <= tx0 + FRAME_MAX,
+          "TB5 GET_TX_STATE during the fan-out: %ld clocks, at most idle %ld "
+          "plus one frame", c, tx0);
+    grade("TB5 GET_TX_STATE during a 15-frame fan-out, at 143", c, true);
+    drain_fanout(FANOUT - 1, 200);
+    set_latency(31);
+    io.rmem_rlat = 23;
+    io.rmem_wlat = 17;
+  }
+
+  void run() {
+    boot();
+    tb1_the_mvu_answers_at_both_latencies();
+    tb2_the_oversize_descriptor_and_the_full_batch();
+    tb3_the_mvu_answer_behind_a_sixteen_way_fan_out();
+    tb4_the_mvu_answer_against_a_stalled_response_memory();
+    tb5_acmp_under_the_worst_aecp_load();
+    CHECK(io.dl_kill_first < 0 && io.dl_pre_rises == 0,
+          "TB: the deadline never fired in the whole section (every answer "
+          "above is the command's own)");
+    printf("  [TB] histogram, MAC command byte 0 to MAC response byte 0:\n");
+    for (const auto& r : hist)
+      printf("  [TB]   %-58s %8ld clocks  %.4f %% of %s\n", r.what.c_str(),
+             r.clocks, 100.0 * static_cast<double>(r.clocks)
+                       / static_cast<double>(r.acmp ? ACMP_RESP : AECP_RESP),
+             r.acmp ? "T-BUDGET-ACMP-RESP" : "T-AECP-RESP");
+  }
+};
+
+[[maybe_unused]] static void run_budgets(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  BudgetPhase{h}.run();
+  printf("TB: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   //! the harness that owns the tally. Section DV runs on a model of its own
@@ -10736,6 +11184,10 @@ int main(int argc, char** argv) {
   //! first build grades; the fixture build runs section DV alone
   DomainDefaultPhase{h}.run();
   const char* const build = "fixture";
+#elif defined(PP_TOP_TIM_REAL)
+  //! the third build runs section TB alone, at the nominal timebase
+  run_budgets(h);
+  const char* const build = "timebase";
 #else
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
@@ -10756,10 +11208,10 @@ int main(int argc, char** argv) {
   if (!one_section || dl_only) run_deadlines(h);
   const char* const build = "default";
 #endif
-  //! NOT the canonical tally shape: this binary is ONE of the suite's two
+  //! NOT the canonical tally shape: this binary is ONE of the suite's three
   //! builds, and run_suites.sh reads only the LAST matching line, so a
-  //! canonical line here would drop the other build's checks from the total.
-  //! The Makefile sums both builds and prints the one canonical line.
+  //! canonical line here would drop the other builds' checks from the total.
+  //! The Makefile sums the three builds and prints the one canonical line.
   printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x] %d checks, %d failures\n",
          build, unsigned(SRP_DEF_VID), h.checks, h.fails);
   FILE* acc = fopen("obj_dir/build_tally.txt", "a");

@@ -46,9 +46,17 @@ MUTANTS = [
      "P19a completes"),
     ("dlkill-always-misbehaving", "dlkill-always-misbehaving", "ucpu", "run",
      "P19d ENTITY_LOCKED kept"),
-    # issue #57 (REQ-MVU-005): the MVU answer under the deadline
+    # issue #57 (REQ-MVU-005): the MVU answer under the deadline, and its
+    # latency against T-AECP-RESP (section TB, the third build)
     ("dl-mvu-forced-status-10", "dl-mvu-forced-status-10", "pp_top",
      "deadline", "DL3: the queued GET_MILAN_INFO"),
+    ("mvu-silent", "mvu-silent", "pp_top", "budget",
+     "TB1 GET_MILAN_INFO at the suite latency"),
+    ("fanout-never-ends", "fanout-never-ends", "pp_top", "budget",
+     "TB3 GET_MILAN_INFO behind the fan-out is answered as it is idle"),
+    # issue #81 acceptance 3: ACMP inside T-BUDGET-ACMP-RESP under AECP load
+    ("acmp-waits-for-aecp", "acmp-waits-for-aecp", "pp_top", "budget",
+     "TB5 GET_RX_STATE beside the oversize READ_DESCRIPTOR"),
 ]
 
 SUITES = ("common", "ucpu", "pp_top")
@@ -62,9 +70,22 @@ def run(tree: Path, suite: str, target: str, log: Path) -> tuple[int, str]:
     return result.returncode, log.read_text()
 
 
+def forget_generated_roms(tree: Path) -> None:
+    """Drop every ROM image the suites generate, so the next build regenerates it.
+
+    The restored generators keep their original timestamps, which are older
+    than an image an earlier arm generated from a patched generator: without
+    this, make would keep that stale image for every later arm.
+    """
+    for suite in SUITES:
+        for image in ("ucode.hex", "ltn_rom.hex"):
+            (tree / "tb" / suite / image).unlink(missing_ok=True)
+
+
 def plant(tree: Path, patch: str) -> None:
     """Restore the scratch RTL and apply one explicit patch, refusing drift."""
     shutil.copytree(ROOT / "hdl", tree / "hdl", dirs_exist_ok=True)
+    forget_generated_roms(tree)
     path = str(PATCHES / (patch + ".patch"))
     subprocess.run(["git", "apply", "--check", path], cwd=tree, check=True)
     subprocess.run(["git", "apply", path], cwd=tree, check=True)

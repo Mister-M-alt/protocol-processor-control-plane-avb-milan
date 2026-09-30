@@ -163,6 +163,27 @@ one AECP record held through the boot restore is re-armed at its admission
 (rule (d)). ACMP's stamped deadline has no kill consumer: the budget above is a
 design target the TIM suite asserts ([09 §8.3](09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)).
 
+**Measured (issues #57 and #81, `tb/pp_top` section TB).** MAC command byte 0
+to MAC response byte 0, in the suite's third build, whose timebase is the nominal
+clock's own so the deadline never cuts a measurement, at the reference SoC's 143
+clocks per memory access unless stated:
+
+| Stimulus | Clocks | Share of its line at `P-CLK-HZ` |
+|---|---|---|
+| GET_MILAN_INFO / an unimplemented MVU command | 746 / 169 | 0.003 % of `T-AECP-RESP` |
+| oversize READ_DESCRIPTOR (576-byte descriptor, 618-byte frame) | 12,587 | 0.052 % |
+| GET_DYNAMIC_INFO with all thirteen §7.4.76.2 getters | 12,852 | 0.054 % |
+| the same three behind a 15-frame notification fan-out | 12,709 / 24,550 / 24,681 | at most 0.103 % |
+| GET_MILAN_INFO, response memory at 4,000 clocks per access | 16,174 | 0.067 % |
+| ACMP GET_RX_STATE / GET_TX_STATE, idle and under that load | 172 / 154, unchanged | 0.003 % of `T-BUDGET-ACMP-RESP` |
+
+The budget table's "Unsolicited fan-out" row states a design target the RTL
+does not meet as written: `KL_aecp_notify` holds the AECP command path while a
+notification class drains, so its event queue stays lossless, and a solicited
+command that arrives during a fan-out waits for that class's last frame, then
+runs. The wait is bounded by the queue, and it is measured above; it is
+recorded as a finding, not changed here.
+
 ## 5. Timer allocation and sizing
 
 <a id="fig-08-alloc"></a>**F08.4 — Ownership × multiplicity → `P-TIMER-SLOTS`**

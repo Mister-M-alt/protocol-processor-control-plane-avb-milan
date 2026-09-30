@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
 # protocol_processor_top end-to-end suite — exit 0 = PASS.
 #
-# Two builds of one bench. The first overrides nothing and runs every
+# Three builds of one bench. The first overrides nothing and runs every
 # section; the second overrides P-SRP-DOM-DEF-VID with SRP_VID_FIXTURE and
 # runs section DV alone (README). The SRP engine's own default is 2 as well,
 # so only a value the child cannot produce shows a dropped or misbound
-# top-level connection. Each binary prints its own build's count; the last
-# line is the one canonical tally, summed over both builds.
+# top-level connection. The third runs the timebase at the nominal clock's
+# rate and section TB alone. Each binary prints its own build's count; the
+# last line is the one canonical tally, summed over the three builds.
 VERILATOR ?= verilator
 HDL        = ../../hdl
 TOP        = pp_top_wrap
@@ -88,8 +89,21 @@ run: fixture-guards ltn_rom.hex ucode.hex
 	    -CFLAGS "-DPP_TOP_SRP_DOM_DEF_VID=0x$(SRP_VID_FIXTURE) -Wall -Wextra" \
 	    --Mdir obj_vid $(SRCS) $(CPP) -o Vpp_top_vid
 	./obj_vid/Vpp_top_vid
-	@awk '{c += $$1; f += $$2} END {if (NR != 2) {print "FAIL: " NR " build tallies, expected 2"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
+	$(MAKE) budget
+	@awk '{c += $$1; f += $$2} END {if (NR != 3) {print "FAIL: " NR " build tallies, expected 3"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
 	    obj_dir/build_tally.txt
+
+# The third build (section TB): the wrap's timebase at the nominal clock's
+# own rate, 1 ms = 1,000 clocks, so no budget measurement is cut by the
+# compressed AECP deadline. Its tally lands beside the other two.
+budget-build: ltn_rom.hex ucode.hex
+	$(VERILATOR) $(VFLAGS) "+define+PP_TOP_TIM_REAL" \
+	    -CFLAGS "-DPP_TOP_TIM_REAL -Wall -Wextra" \
+	    --Mdir obj_tim $(SRCS) $(CPP) -o Vpp_top_tim
+
+budget: budget-build
+	@mkdir -p obj_dir
+	./obj_tim/Vpp_top_tim
 
 # Compile the actual bench with four fixture settings in a temporary model dir.
 # No simulation or source mutation; bad fixtures must fail for the named guards.
@@ -107,6 +121,6 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 	python3 $< -o $@
 
 clean:
-	rm -rf obj_dir obj_vid ltn_rom.hex ucode.hex
+	rm -rf obj_dir obj_vid obj_tim ltn_rom.hex ucode.hex
 
-.PHONY: name-writes run gsi-build gsi-internal adp-config deadline d3 aecp-mutants fixture-guards fixture-guards-test clean
+.PHONY: name-writes run gsi-build gsi-internal adp-config deadline d3 budget budget-build aecp-mutants fixture-guards fixture-guards-test clean

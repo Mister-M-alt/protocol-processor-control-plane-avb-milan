@@ -17,9 +17,9 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make`: exit 0 = PASS. It builds the bench twice (section DV): each executable
-prints its own build's tally, and the last line sums both into the one canonical
-tally.
+`make`: exit 0 = PASS. It builds the bench three times (sections DV and TB):
+each executable prints its own build's tally, and the last line sums the three
+into the one canonical tally.
 
 ## What it proves
 
@@ -662,6 +662,32 @@ tally.
   The taps are `dbg_aecp_dl_kill_o`, `dbg_aecp_dl_queued_o`,
   `dbg_sb_kill_ack_o`, `dbg_aecp_sb_id_o`, `dbg_sb_holds_o` and
   `dbg_ucpu_pre_o`; the mutation record is below (`aecp_mutants.py`).
+- **TB** **response budgets under the 08 §4 worst-case stimuli** (issue #57,
+  REQ-MVU-005, Milan v1.2 §5.4.3.4; issue #81 acceptance 3), on a fresh
+  processor of its own in the third build, whose timebase is the nominal clock's
+  own (1 ms = 1,000 clocks): the deadline (100 ms, 100,000 clocks there) never
+  cuts a measurement, and the section ends by proving it never fired. Latency is
+  MAC command byte 0 to MAC response byte 0, graded like B4/B4b against its line
+  at P-CLK-HZ = 100 MHz: T-AECP-RESP 24,000,000 clocks and T-BUDGET-AECP-WC
+  10,000,000 for AECP, T-BUDGET-ACMP-RESP 5,000,000 for ACMP. The image's
+  SIGNAL_MULTIPLEXER fills the whole 576-byte line buffer here. **TB1**
+  GET_MILAN_INFO and GET_SYSTEM_UNIQUE_ID (waived, so NOT_IMPLEMENTED with the
+  command echoed), byte-exact, at the suite latency and at 143 clocks per
+  access. **TB2** READ_DESCRIPTOR of the 576-byte descriptor (a 618-byte frame
+  in the oversize TX slot) byte-exact, and a GET_DYNAMIC_INFO carrying all
+  thirteen §7.4.76.2 getters (SUCCESS, cdl within 524), at both latencies.
+  **TB3** sixteen controllers register (every registry row) and a
+  SET_CLOCK_SOURCE fans fifteen unsolicited responses through the engine; each
+  of the three commands above, asked with such a fan-out in flight at 143
+  clocks, is answered as it is idle and follows the fan-out's last frame by at
+  most one job plus its own idle latency: KL_aecp_notify holds the command
+  path while a class drains, so the 08 §4 "≤ 1 frame-time gap" row is not what
+  the RTL does (a recorded finding, 08 §4). **TB4** GET_MILAN_INFO against a
+  response memory taking 4,000 clocks per access, short of its 4,096 watchdog.
+  **TB5** GET_RX_STATE and GET_TX_STATE idle, and beside the oversize
+  READ_DESCRIPTOR and a fan-out: unchanged, and never later than idle by more
+  than one frame on the wire. The histogram it prints is recorded in 08 §4.
+  `make budget` runs this build alone; `make` runs all three.
 
 ## Snapshot window map (side port 0x20000, implemented by the top)
 
@@ -849,6 +875,9 @@ and must pass. Counts below were taken on 2026-09-30 with Verilator 5.052.
 | `ucpu-preempt-keeps-the-body` | ucpu `run` | the cursor not returned to 12 | 1: P19f (length 36 with a partly built counters block) |
 | `ucpu-preempt-repeats` | ucpu `run` | the redirect not limited to once per dispatch | 18: P19a to P19h (E_DLKILL redirected into itself, never sends) |
 | `dlkill-always-misbehaving` | ucpu `run` | E_DLKILL overwrites a refusal already chosen | 1: P19d (ENTITY_LOCKED became status 10) |
+| `mvu-silent` | pp_top `budget` | GET_MILAN_INFO retires without its SEND_RESPONSE | 12: TB1, TB3 and TB4, every GET_MILAN_INFO unanswered |
+| `fanout-never-ends` | pp_top `budget` | the notification walk never ends its class, so the command-path hold never drops | 23: TB3 to TB5, nothing answered once the fan-out starts |
+| `acmp-waits-for-aecp` | pp_top `budget` | every AEM command classified MAP_CFG, so ACMP waits behind unrelated AECP work | 2: TB5 (GET_RX_STATE 13,144 clocks beside the READ_DESCRIPTOR, GET_TX_STATE 977 during the fan-out) |
 
 ## Recorded seams and honest limits
 
@@ -1164,12 +1193,13 @@ revert on LINK_DOWN (10 §6.1 F10.2).
 A build that only runs the product value cannot see that binding. The child's
 own default is also 2, so a dropped or misbound connection produces exactly the
 frames the default build expects (M25: 0 failures there). The Makefile therefore
-builds the bench twice:
+builds the bench a second time, and a third for section TB's timebase:
 
 | Build | Override | Runs | Expects |
 |---|---|---|---|
-| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV last | 2 (Milan §4.2.7.2.1) |
+| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV and DL among them | 2 (Milan §4.2.7.2.1) |
 | `obj_vid/Vpp_top_vid` | `SRP_DOM_DEF_VID_P = 0x5A3C` (`SRP_VID_FIXTURE`) | DV alone | 0x5A3C |
+| `obj_tim/Vpp_top_tim` | the wrap's timebase at the nominal clock's rate (`PP_TOP_TIM_REAL`: 1 ms = 1,000 clocks) | TB alone (`make budget`) | the product default |
 
 The fixture is a verification value, not a product profile: Milan §4.2.7.2.1
 fixes a shipping build at 2. It is chosen so that each plausible fault gives a

@@ -323,7 +323,9 @@ transaction deadline instead ([03 §6](../architecture/03_packet_engine.md) rule
 well-formed 60-byte `ENTITY_MISBEHAVING` (a Milan Vendor Unique command with
 `NOT_IMPLEMENTED`, the command echoed), inside `T-AECP-RESP`. A command that had already
 changed state when the deadline passed answers for itself instead, so nothing is left
-half-committed.
+half-committed. Size your faces so a command's worst case stays well inside the budget:
+`tb/pp_top` section TB measures the worst stimuli at the reference 143 clocks per memory
+access ([08 §4](../architecture/08_timing.md#4-deadline-budgets)).
 
 | Face | Ports | Tie it off and… |
 |---|---|---|
