@@ -26,10 +26,12 @@
 //                lanes only feed talker-command flows this suite does not
 //                byte-check.
 //
-//                The one parameter the suite builds twice: SRP_DOM_DEF_VID_P
+//                The two parameters the suite builds again: SRP_DOM_DEF_VID_P
 //                is overridden ONLY when the second build defines
-//                PP_TOP_SRP_DOM_DEF_VID (Makefile), so the first build grades
-//                the top's own default and never a copy of it.
+//                PP_TOP_SRP_DOM_DEF_VID (Makefile), and EN_IDENTIFY_NOTIF_P
+//                is set to 1 ONLY when the third build defines
+//                PP_TOP_EN_IDENT, so the first build grades the top's own
+//                defaults and never a copy of them.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -47,6 +49,9 @@ module pp_top_wrap (
     input  wire  [15:0] listener_caps_i,
     input  wire  [15:0] current_cfg_i,
     input  wire  [15:0] identify_index_i,
+    //! identifyButtonPressed; the third build (PP_TOP_EN_IDENT) is the only
+    //! one whose top reads it
+    input  wire         identify_button_i,
 
     // level controls + class-D in
     input  wire         entity_enable_i,
@@ -451,6 +456,11 @@ module pp_top_wrap (
       //! the second build's verification-only fixture (see the banner)
       .SRP_DOM_DEF_VID_P (`PP_TOP_SRP_DOM_DEF_VID),
 `endif
+`ifdef PP_TOP_EN_IDENT
+      //! the third build: P-EN-IDENTIFY-NOTIFICATION = 1 (see the banner);
+      //! the first two grade the top's own default, 0
+      .EN_IDENTIFY_NOTIF_P (1'b1),
+`endif
       .CLK_HZ_P     (TB_CLK_HZ_C),
       .TIM_DIV_US_P (TB_DIV_US_C),
       .TIM_DIV_MS_P (TB_DIV_MS_C),
@@ -478,6 +488,7 @@ module pp_top_wrap (
       .listener_caps_i       (listener_caps_i),
       .current_cfg_i         (current_cfg_i),
       .identify_index_i      (identify_index_i),
+      .identify_button_i     (identify_button_i),
       .entity_enable_i       (entity_enable_i),
       .link_up_i             (link_up_i),
       .gm_change_i           (gm_change_i),

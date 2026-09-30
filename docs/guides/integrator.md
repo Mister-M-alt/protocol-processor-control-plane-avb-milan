@@ -29,12 +29,15 @@ There is exactly one clock and one reset.
 | `clk_i` | the single core clock. `CLK_HZ_P` tells the timer prescaler what it is. |
 | `rst_n` | **synchronous**, active low. It needs a running clock to take effect. |
 
-**No clock-domain crossing lives inside this processor.** Every crossing is yours:
+**No clock-domain crossing lives inside this processor but one.** Every crossing is yours:
 
 - the MAC boundaries — put your asynchronous FIFOs outside, and present the byte streams
   below in the `clk_i` domain;
 - `link_up_i` and `gm_change_i` — level and strobe inputs from other domains. Give them a
   two-flop synchroniser before they arrive;
+- the one exception is `identify_button_i` (section 6): with `EN_IDENTIFY_NOTIF_P` = 1 the
+  processor passes it through its own two-flop synchroniser, so it may come straight
+  from a pin. Debouncing it is still yours;
 - the class-D status outputs are combinational reads of `clk_i`-domain registers. A
   consumer in another domain owns its own synchroniser.
 
@@ -94,6 +97,7 @@ stream counts in F01.5 are product choices; the top supplies implementation defa
 | `LOCK_TIMEOUT_MS_P` | [F08.1](../architecture/08_timing.md#fig-08-constants), `T-LOCK-UNLOCK`; [top declaration](../../hdl/top/protocol_processor_top.sv) | ENTITY lock auto-unlock deadline in the AECP notification block, in milliseconds of the possibly compressed timebase. Shortened overrides are for verification. |
 | `RESP_BASE_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.2 response-buffer contract](../architecture/07_memory_maps.md#sec-resp-memory) | Base of the AECP response buffer in **your** memory |
 | `SRP_DOM_DEF_VID_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-SRP-DOM-DEF-VID`; [F10.2 Domain FSM](../architecture/10_srp_engine.md#fig-10-domsm) | Class A Domain VID declared at startup and link-up, and restored on link-down. A bridge's differing Class A Domain is adopted at runtime. **Keep the F01.5 Milan value in a product build**; alternatives are verification fixtures. |
+| `EN_IDENTIFY_NOTIF_P` | [F01.5](../architecture/01_overview.md#fig-01-params), `P-EN-IDENTIFY-NOTIFICATION`; [06 §7, F06.16](../architecture/06_aecp_engine.md#fig-06-identify) | 1 builds the identify sequencer behind `identify_button_i` (section 6): a press sends IDENTIFY_NOTIFICATION three times, 150 ms apart, to 91-E0-F0-01-00-01, and again every second while held (IEEE 1722.1-2021 §7.5.1; Milan §5.4.5.4). 0 builds none of it and never reads the button. Set it to 1 only when your product gives the user a way to ask the entity to report itself. |
 
 Three traps worth stating plainly:
 
@@ -243,6 +247,7 @@ updated at runtime under the event contracts below.
 | Advertised capability | `talker_sources_i[15:0]`, `talker_caps_i[15:0]`, `listener_sinks_i[15:0]`, `listener_caps_i[15:0]` |
 | Dynamic gPTP state | `gm_change_i`, `gm_id_i[63:0]`, `gptp_domain_i[7:0]` |
 | Level controls | `entity_enable_i`, `link_up_i` |
+| Identification button | `identify_button_i` (read only with `EN_IDENTIFY_NOTIF_P` = 1) |
 | SRP | `p2p_i`, `cfg_rank_i`, `cfg_acc_lat_ns_i[31:0]`, `port_rate_bps_i[31:0]`, `cfg_tspec_max_frame_i[15:0]` |
 | Talker sources | `cfg_src_en_i`, `cfg_src_iface_i`, `cfg_stream_id_i` |
 
@@ -286,6 +291,16 @@ answer commands before it announces itself. Deasserting the request later **is**
 shutdown: it emits ENTITY_DEPARTING and resets `available_index`. There is no separate
 shutdown port. The side port's image-window write lock follows the request itself, not
 the effective enable, so a readback of your control register shows what you asked for.
+
+`identify_button_i` is IEEE 1722.1-2021 Figure 7-142's `identifyButtonPressed`: hold it
+at 1 while the user wants the entity to report itself to the controllers (Milan
+§5.4.5.4, the entity-to-controller direction; the IDENTIFY control is the other one and
+does not use this pin). It is a level, taken through a two-flop synchroniser inside the
+processor. **Debounce it yourself**: a bounce reads as a release and a new press, and a
+new press after a release starts another burst as soon as the running one ends. With
+`EN_IDENTIFY_NOTIF_P` = 0, the default, the pin is never read: tie it to `1'b0`. A burst
+needs no registered controller and is not refused by a controller's lock; it goes to
+the multicast address with the IDENTIFY control's index from `identify_index_i`.
 
 `gm_change_i` is a one-cycle **ADP / GET_AVB_INFO** event, not a
 `GET_AS_PATH` event. Raise it after atomically publishing a changed `gm_id_i`

@@ -183,7 +183,7 @@ values; other documents reference `P-…` IDs.
 | P-PT-OFFSET-DEFAULT-NS | 2 000 000 | 0..0x7FFFFFFF (Milan §5.3.7.6) | presentation time |
 | P-EN-MVU-SUID / P-EN-MVU-MCR | n/a | reserved names; neither is an RTL parameter | not implemented; October release waiver ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) |
 | `MILAN_FEATURES_FLAGS.TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING` | 0 | GET_MILAN_INFO feature 0x2 remains clear | µcode constant + root-integrator mapping validation |
-| P-EN-IDENTIFY-NOTIFICATION | 1 | "should" (Milan §5.4.5.4) | identify handler |
+| P-EN-IDENTIFY-NOTIFICATION | 0 | "should" (Milan §5.4.5.4) for a PAAD that gives its user a way to report itself; 1 only with a debounced `identify_button_i`. 0 builds no sequencer and never reads the pin (manager ruling, processor #80) | identify sequencer in `KL_aecp_notify` (`EN_IDENTIFY_NOTIF_P`), F06.16 |
 | P-EN-ADDRESS-ACCESS / P-EN-FIRMWARE-ASSIST | 0 / 0 | IEEE-optional ([GAP-13](../00_MILAN_COMPLIANCE_REVIEW.md#gap-13)) | side-port features |
 | P-EN-SRP-ENGINE | 1 | 1 = internal SRP engine ([10](10_srp_engine.md)) serves the `srp` contract; 0 = external stack | SRP engine, MRP timers, V9 filter |
 | P-EN-PLAIN-IEEE-PROFILE | 0 | selects IEEE ROM columns (below) | profiles |

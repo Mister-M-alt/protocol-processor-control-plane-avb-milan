@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
 # protocol_processor_top end-to-end suite — exit 0 = PASS.
 #
-# Two builds of one bench. The first overrides nothing and runs every
+# Three builds of one bench. The first overrides nothing and runs every
 # section; the second overrides P-SRP-DOM-DEF-VID with SRP_VID_FIXTURE and
 # runs section DV alone (README). The SRP engine's own default is 2 as well,
 # so only a value the child cannot produce shows a dropped or misbound
-# top-level connection. Each binary prints its own build's count; the last
-# line is the one canonical tally, summed over both builds.
+# top-level connection. The third sets P-EN-IDENTIFY-NOTIFICATION to 1 and
+# runs section ID alone; the first grades the default 0 (section ID0). Each
+# binary prints its own build's count; the last line is the one canonical
+# tally, summed over the three builds.
 VERILATOR ?= verilator
 HDL        = ../../hdl
 TOP        = pp_top_wrap
@@ -68,6 +70,17 @@ gsi-internal: gsi-build
 adp-config: gsi-build
 	./obj_dir/Vpp_top_sim --adp-only
 
+# the third build alone (section ID), for the identify mutation campaign
+identify-build: ltn_rom.hex ucode.hex
+	@mkdir -p obj_dir
+	$(VERILATOR) $(VFLAGS) "+define+PP_TOP_EN_IDENT" \
+	    -CFLAGS "-DPP_TOP_EN_IDENT -Wall -Wextra" \
+	    --Mdir obj_idn $(SRCS) $(CPP) -o Vpp_top_idn
+
+identify: identify-build gsi-build
+	./obj_idn/Vpp_top_idn
+	./obj_dir/Vpp_top_sim --identify-only
+
 run: fixture-guards ltn_rom.hex ucode.hex
 	@rm -f obj_dir/build_tally.txt
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vpp_top_sim
@@ -76,7 +89,11 @@ run: fixture-guards ltn_rom.hex ucode.hex
 	    -CFLAGS "-DPP_TOP_SRP_DOM_DEF_VID=0x$(SRP_VID_FIXTURE) -Wall -Wextra" \
 	    --Mdir obj_vid $(SRCS) $(CPP) -o Vpp_top_vid
 	./obj_vid/Vpp_top_vid
-	@awk '{c += $$1; f += $$2} END {if (NR != 2) {print "FAIL: " NR " build tallies, expected 2"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
+	$(VERILATOR) $(VFLAGS) "+define+PP_TOP_EN_IDENT" \
+	    -CFLAGS "-DPP_TOP_EN_IDENT -Wall -Wextra" \
+	    --Mdir obj_idn $(SRCS) $(CPP) -o Vpp_top_idn
+	./obj_idn/Vpp_top_idn
+	@awk '{c += $$1; f += $$2} END {if (NR != 3) {print "FAIL: " NR " build tallies, expected 3"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
 	    obj_dir/build_tally.txt
 
 # Compile the actual bench with four fixture settings in a temporary model dir.
@@ -95,6 +112,6 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 	python3 $< -o $@
 
 clean:
-	rm -rf obj_dir obj_vid ltn_rom.hex ucode.hex
+	rm -rf obj_dir obj_vid obj_idn ltn_rom.hex ucode.hex
 
-.PHONY: name-writes run gsi-build gsi-internal adp-config fixture-guards fixture-guards-test clean
+.PHONY: name-writes run gsi-build gsi-internal adp-config identify-build identify fixture-guards fixture-guards-test clean

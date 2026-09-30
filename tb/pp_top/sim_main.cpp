@@ -1717,6 +1717,7 @@ struct H {
     d->talker_sources_i = TKSRC; d->talker_caps_i = TKCAP;
     d->listener_sinks_i = LSNK;  d->listener_caps_i = LSCAP;
     d->current_cfg_i = CFGIX;    d->identify_index_i = IDIX;
+    d->identify_button_i = 0;
     d->entity_enable_i = 0; d->link_up_i = 0; d->gm_change_i = 0;
     d->gm_id_i = GM0; d->gptp_domain_i = DOM0;
     d->p2p_i = 1; d->cfg_rank_i = 1;
@@ -10326,6 +10327,8 @@ struct AdpConfigPhase {
   printf("AD: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+#include "notify_phases.hpp"
+
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   //! the harness that owns the tally. Section DV runs on a model of its own
@@ -10333,26 +10336,33 @@ int main(int argc, char** argv) {
   //! model is never clocked.
   const milan::tb::Model<Vpp_top_wrap> model;
   H h(model.get());
-#ifdef PP_TOP_SRP_DOM_DEF_VID
+#if defined(PP_TOP_SRP_DOM_DEF_VID)
   //! every other section is written against the product default, which the
   //! first build grades; the fixture build runs section DV alone
   DomainDefaultPhase{h}.run();
   const char* const build = "fixture";
+#elif defined(PP_TOP_EN_IDENT)
+  //! the third build sets P-EN-IDENTIFY-NOTIFICATION to 1 and runs section
+  //! ID alone; the first grades the default 0 (section ID0 among the rest)
+  run_identify(h);
+  const char* const build = "identify";
 #else
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
   const bool d3_only = argc == 2 && std::strcmp(argv[1], "--d3-only") == 0;
   const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
+  const bool ident_only = argc == 2 && std::strcmp(argv[1], "--identify-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
   }
-  const bool one_section = gsi_only || name_only || d3_only || adp_only;
+  const bool one_section = gsi_only || name_only || d3_only || adp_only || ident_only;
   if (!one_section) Suite(h).run();
   if (!one_section || gsi_only) InternalStreamInfoPhase{h}.run();
   if (!one_section || name_only) run_name_writes(h);
   if (!one_section || d3_only) run_d3(h);
   if (!one_section || adp_only) run_adp_config(h);
+  if (!one_section || ident_only) run_identify(h);
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's two

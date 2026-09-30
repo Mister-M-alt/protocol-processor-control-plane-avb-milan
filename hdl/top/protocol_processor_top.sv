@@ -173,6 +173,13 @@ module protocol_processor_top
     //! value is a verification fixture proving this binding, never a product
     //! profile. Bound to KL_srp_top.DOM_DEF_VID_P at the same 16-bit width.
     parameter logic [15:0] SRP_DOM_DEF_VID_P   = 16'd2,
+    //! ---- entity-to-controller identification (06 §7, F06.16) ----------
+    //! P-EN-IDENTIFY-NOTIFICATION (F01.5): 1 builds the identify sequencer
+    //! behind identify_button_i, which sends IDENTIFY_NOTIFICATION (IEEE
+    //! 1722.1-2021 §7.4.39, §7.5.1; Milan §5.4.5.4, a "should" for a PAAD
+    //! that gives its user a way to report itself). 0, the default, builds
+    //! none of it: no flop, no gate, and identify_button_i is not read.
+    parameter bit          EN_IDENTIFY_NOTIF_P = 1'b0,
     //! derived — do not override
     //! F08.4 timer-slot map for THIS shape. Every base below is the running
     //! sum of the group extents before it (pp_pkg::pp_timer_map is the ONE
@@ -215,6 +222,15 @@ module protocol_processor_top
     //! (aecp_cur_config_o). Drive the image's configuration.
     input  wire  [15:0] current_cfg_i,
     input  wire  [15:0] identify_index_i,      //! identify_control_index
+
+    //! ---- entity-to-controller identification (02 §6, 06 F06.16) ----
+    //! Figure 7-142's identifyButtonPressed (IEEE 1722.1-2021 §7.5.1.3): 1
+    //! while the user wants the entity to report itself. A level, sampled
+    //! through a 2FF synchroniser in clk_i, so it may come from any domain or
+    //! a pin; the INTEGRATOR debounces it (Milan §5.4.5.4 leaves its mapping
+    //! to the user's action vendor-specific). Read only with
+    //! EN_IDENTIFY_NOTIF_P = 1; tie it 1'b0 otherwise.
+    input  wire         identify_button_i,
 
     //! ---- level controls + class-D inputs (02 §6) ----
     //! Milan §5.6.1 boot gate (level), as a REQUEST: ADP sees it AND
@@ -761,9 +777,11 @@ module protocol_processor_top
   localparam int unsigned TMR_ADP_NOADP_BASE_C = TMR_MAP_C.adp_noadp;  // SI slots
   localparam int unsigned TMR_LSTN_BASE_C      = TMR_MAP_C.lstn;       // SI (shared SM)
   localparam int unsigned TMR_TKR_BASE_C       = TMR_MAP_C.tkr;        // SO (DAFRESH/LA2)
-  // TMR_MAP_C.regmon (2*CTRL*IF registry monitors, P4), .capool (CA pool,
-  // originator) and .single (5 singletons, P4) are reserved and unused this
-  // phase — but they are SPACED, so landing them cannot move anything below.
+  // TMR_MAP_C.regmon (2*CTRL*IF registry monitors), .capool (CA pool,
+  // originator) and .single (5 singletons: +0 the ENTITY lock, +1/+2
+  // IDENT-BURST/IDENT-REARM with P-EN-IDENTIFY-NOTIFICATION, +3/+4 still
+  // reserved) belong to KL_aecp_notify and the originator — and they are
+  // SPACED, so landing a user cannot move anything below.
   localparam int unsigned TMR_MAAP_BASE_C      = TMR_MAP_C.maap;       // 2: probe + announce
   localparam int unsigned TMR_SRP_CAD_BASE_C   = TMR_MAP_C.srp_cad;    // 5 cadence + 2 fixed
   localparam int unsigned TMR_SRP_TK_BASE_C    = TMR_MAP_C.srp_tk;     // SO registrar-leave
@@ -826,7 +844,8 @@ module protocol_processor_top
       || (OWN_SRPCAD_END_C > 32'(PP_OWN_MAAP_C))
       || (OWN_MAAP_END_C   > 32'(PP_OWN_NTFY_C))
       || (32'(PP_OWN_NTFY_C) + PP_N_CTRL_C > 32'(PP_OWN_LOCK_C))
-      || (32'(PP_OWN_LOCK_C) + 32'd1 > 32'h0000_00C0)  // originator tag nibble
+      || (32'(PP_OWN_LOCK_C) + 32'd1 > 32'(PP_OWN_IDENT_C))
+      || (32'(PP_OWN_IDENT_C) + PP_OWN_IDENT_N_C > 32'h0000_00C0)  // originator tag nibble
       || (OWN_MAAP_END_C   > 32'd256)) begin : gen_g_owner_overlap
     $error("F08.4: owner tags OVERLAP at SI=%0d SO=%0d (8-bit expiry bus)",
            N_STREAM_IN_P, N_STREAM_OUT_P);
@@ -838,8 +857,8 @@ module protocol_processor_top
   localparam logic [15:0] BUDGET_AECP_MS_C = 16'd100;   // T-BUDGET-AECP-WC
 
   // ---- TX arbiter lane map (F03.5) ----------------------------------------
-  localparam int unsigned LANE_AECP_SOL_C = 0;  // idle until P4
-  localparam int unsigned LANE_AECP_UNS_C = 1;  // idle until P4
+  localparam int unsigned LANE_AECP_SOL_C = 0;  // AECP engine: solicited answers
+  localparam int unsigned LANE_AECP_UNS_C = 1;  // AECP engine: unsolicited SELF jobs
   localparam int unsigned LANE_ACMP_C     = 2;  // listener PDUs (56 B)
   localparam int unsigned LANE_ADP_C      = 3;  // whole 82 B frames
   localparam int unsigned LANE_SRP_C      = 4;  // whole MRPDU frames
@@ -1487,13 +1506,18 @@ module protocol_processor_top
       .hz_opcode_o         (hz_opcode_w),
       .hz_class_i          (hz_class_w),
       .hz_key_i            (hz_key_w),
-      .tmr_valid_i         (1'b0),                 // TIMER producer: P4
+      //! 03 §5, the landed producer set: dispatch is RX-only. Expiries reach
+      //! their owners on the timer's expiry bus; entity-originated AECP
+      //! responses are KL_aecp_engine's own SELF jobs (KL_aecp_notify's uns_*
+      //! face), CONTROLLER_AVAILABLE goes through KL_pp_originator, PROBE_TX
+      //! stays in the listener; this build has no MGMT origin at all
+      .tmr_valid_i         (1'b0),                 // TIMER: the expiry bus
       .tmr_txn_i           ({PP_TXN_W_C{1'b0}}),
       .tmr_ready_o         (nrm_tmr_ready_nc_w),
-      .self_valid_i        (1'b0),                 // SELF producer: P4 (CA)
+      .self_valid_i        (1'b0),                 // SELF: engine-internal jobs
       .self_txn_i          ({PP_TXN_W_C{1'b0}}),
       .self_ready_o        (nrm_self_ready_nc_w),
-      .mgmt_valid_i        (1'b0),                 // MGMT producer: P4
+      .mgmt_valid_i        (1'b0),                 // MGMT: not supported
       .mgmt_txn_i          ({PP_TXN_W_C{1'b0}}),
       .mgmt_ready_o        (nrm_mgmt_ready_nc_w),
       .txn_valid_o         (nrm_txn_valid_w),
@@ -3513,7 +3537,8 @@ module protocol_processor_top
       .TX_OVERSIZE_BYTES_P (TX_OVERSIZE_BYTES_P),
       .NVM_RS_TMO_CYC_P    (NVM_RS_TMO_CYC_P),
       .NVM_RS_AGG_CYC_P    (NVM_RS_AGG_CYC_P),
-      .NVM_RETRY_BACKOFF_CYC_P (NVM_RETRY_BACKOFF_CYC_P)
+      .NVM_RETRY_BACKOFF_CYC_P (NVM_RETRY_BACKOFF_CYC_P),
+      .EN_IDENTIFY_NOTIF_P (EN_IDENTIFY_NOTIF_P)
   ) u_aecp (
       .clk_i              (clk_i),
       .rst_n              (rst_n),
@@ -3725,7 +3750,11 @@ module protocol_processor_top
       //! second half stays reserved for the Milan §5.4.5.3 CA monitor);
       //! the lock owns the first singleton (pp_pkg: "LOCK, IDENT-BURST, ...")
       .TMR_REGMON_BASE_P (TMR_MAP_C.regmon),
-      .TMR_LOCK_SLOT_P   (TMR_MAP_C.single)
+      .TMR_LOCK_SLOT_P   (TMR_MAP_C.single),
+      //! ... and the next two, IDENT-BURST and IDENT-REARM, with the
+      //! identify sequencer (built only with P-EN-IDENTIFY-NOTIFICATION)
+      .TMR_IDENT_SLOT_P  (TMR_MAP_C.single + 1),
+      .EN_IDENTIFY_NOTIF_P (EN_IDENTIFY_NOTIF_P)
   ) u_notify (
       .clk_i                 (clk_i),
       .rst_n                 (rst_n),
@@ -3791,6 +3820,8 @@ module protocol_processor_top
       .ev_cmd_arg0_i         (aecp_eff_notify_arg0_w),
       .ev_cmd_arg1_i         (aecp_eff_notify_arg1_w),
       .ev_cmd_excl_eid_i     (aecp_eff_notify_excl_w),
+      .identify_button_i     (identify_button_i),
+      .identify_index_i      (identify_index_i),
       //! Enumerate the six defined AECP command message types. PP_PROTO_AEM
       //! is the validator's residual bucket and therefore also carries AVC,
       //! HDCP_APM, EXTENDED, and the reserved 10/12 types. The reserved types
