@@ -1190,7 +1190,9 @@ pass by accident. The legs run in wire order on one binding:
   UNBIND_RX from SETTLED_RSV_OK: UNBIND_RX_RESPONSE byte-exact, the Listener
   Lv (FourPackedType Ready, 802.1Q §35.2.2.7.2) byte-exact on the wire, the
   bound view cleared, no declaration or match held, GET_RX_STATE unbound
-  byte-exact, nothing probes the sink afterwards, and no RX slot or
+  byte-exact, nothing probes the sink from the unbind on (no ACMP frame
+  between the UNBIND_RX_RESPONSE and the GET_RX_STATE, whose answer is the
+  next ACMP frame, and none in the 1.5 s after it), and no RX slot or
   scoreboard hold is left.
 
 Every byte-exact MRPDU check is aligned into a clean slot of the join

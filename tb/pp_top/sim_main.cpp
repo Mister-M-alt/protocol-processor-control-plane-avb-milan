@@ -8910,11 +8910,13 @@ struct AcmpPathPhase {
     return false;
   }
   //! GET_RX_STATE for sink LS, answered to CTLR2 (F05.14, Milan Tables
-  //! 5.37 to 5.39 by state; ACMP answers go to the multicast DA)
-  std::vector<uint8_t> get_rx_state(uint16_t seq) {
+  //! 5.37 to 5.39 by state; ACMP answers go to the multicast DA). With
+  //! `next`, the answer is the next ACMP frame whatever it is, so no frame
+  //! queued ahead of it is skipped unseen
+  std::vector<uint8_t> get_rx_state(uint16_t seq, bool next = false) {
     h2.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR2_EID, 0, EID, 0, LS, 0, 0,
                        seq, 0, 0));
-    return wait_acmp(11, seq, 400);
+    return next ? h2.wait_any(h2.q_acmp, 400) : wait_acmp(11, seq, 400);
   }
   static std::vector<uint8_t> rx_state_settled(uint16_t seq) {
     return acmp_frame(OWN_MAC, 11, 0, SID_L, CTLR2_EID, T1_EID, EID, T1_UID,
@@ -9218,7 +9220,9 @@ struct AcmpPathPhase {
   // Milan 5.5.3.5.45: stop SRP (the Listener attribute is withdrawn: an Lv
   // on the wire), stop discovery, clear the binding, answer SUCCESS. The
   // talker learns of it only through SRP (5.5.2.5). The bound view clears
-  // with the binding.
+  // with the binding. Nothing may probe the sink from the unbind on: no ACMP
+  // frame follows the UNBIND_RX_RESPONSE before the GET_RX_STATE, whose
+  // answer must be the next ACMP frame, and none in the 1.5 s after it.
   void as_unbind_withdraws_and_clears() {
     la_window(1500);
     h2.sync_join();
@@ -9250,7 +9254,11 @@ struct AcmpPathPhase {
     CHECK(lstn_decl() == 0 && tk_reg() == 0,
           "AS6: no Listener declared and no match held any more (decl %u, "
           "reg %u)", lstn_decl(), tk_reg());
-    auto g = get_rx_state(0x4816);
+    CHECK(h2.q_acmp.empty(),
+          "AS6: no ACMP frame from the UNBIND_RX_RESPONSE to the GET_RX_STATE "
+          "(%zu)", h2.q_acmp.size());
+    h2.q_acmp.clear();                        // a stray frame counts once
+    auto g = get_rx_state(0x4816, true);
     auto gw = acmp_frame(OWN_MAC, 11, 0, 0, CTLR2_EID, 0, EID, 0, LS, 0, 0,
                          0x4816, 0, 0);
     CHECK(!g.empty() && g == gw,
