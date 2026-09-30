@@ -66,14 +66,15 @@ Mutation-proven 2026-08-11 (backup/sed/run/restore):
 Messages outside the listener set, and the probe-response guard per term
 (issue #47, REQ-ACMP-012, Milan §5.5.3.1). **B13** drives every ACMP
 message type the listener does not own — 3, 5, 7, 9, 11, 13 (the responses
-of IEEE 1722.1-2021 Table 8-2 that are not PROBE_TX_RESPONSE) and 14, 15
-(reserved) — with the own listener_entity_id and a valid listener_unique_id,
-in PRB_W_RESP with status SUCCESS and in PRB_W_RESP2 with
-TALKER_NO_BANDWIDTH. Each is shaped as the perfect answer to the outstanding
-probe (all four guard terms equal to the saved probe, stream fields set), so
-only its message type keeps it out; each must be fully inert: no frame, no
-record write, no timer op, no action strobe, no notify, the record unchanged,
-and exactly one RX-slot free of the slot it arrived in. **B14** grades the
+of IEEE 1722.1-2021 Table 8-2, Table 8.1 in IEEE 1722.1-2013, that are not
+PROBE_TX_RESPONSE) and 14, 15 (reserved) — with the own listener_entity_id
+and a valid listener_unique_id, in PRB_W_RESP with status SUCCESS and in
+PRB_W_RESP2 with TALKER_NO_BANDWIDTH. Each is shaped as the perfect answer
+to the outstanding probe (all four guard terms equal to the saved probe,
+stream fields set), so only its message type keeps it out; each must be
+fully inert: no frame, no record write, no timer op, no action strobe, no
+notify, the record unchanged, and exactly one RX-slot free of the slot it
+arrived in. **B14** grades the
 §5.5.3.5.18 / .25 step-1 guard term by term: a response with the wrong
 controller_entity_id, talker_entity_id or talker_unique_id is ignored in
 both probing states exactly as B8's wrong sequence_id is, and the unaltered

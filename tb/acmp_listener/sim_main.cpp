@@ -1207,18 +1207,19 @@ void ListenerWalk::check_probe_guard_mismatch(int sink) {
   // B13: every ACMP message type outside the listener's set is inert (Milan
   // §5.5.3.1, which names BIND_RX / GET_RX_STATE / UNBIND_RX commands and
   // the PROBE_TX_RESPONSE; IEEE 1722.1-2021 Table 8-2 for the codes, 14 and
-  // 15 reserved). Each one is shaped as the PERFECT answer to the sink's
-  // outstanding probe: own listener EID, a valid listener unique_id, all four
-  // guard terms equal to the saved probe, stream fields set. Only the message
-  // type keeps it out, so a classifier that let it through would take the
-  // PROBE_TX_RESPONSE arm and settle (SUCCESS, PRB_W_RESP) or back off
-  // (TALKER_NO_BANDWIDTH, PRB_W_RESP2). Inert is every face: no frame, no
-  // record write, no timer op, no action strobe, no notify, and exactly one
-  // RX-slot free, of the slot the item arrived in.
+  // 15 reserved, as in IEEE 1722.1-2013 Table 8.1). Each one is shaped as
+  // the PERFECT answer to the sink's outstanding probe: own listener EID, a
+  // valid listener unique_id, all four guard terms equal to the saved probe,
+  // stream fields set. Only the message type keeps it out, so a classifier
+  // that let it through would take the PROBE_TX_RESPONSE arm and settle
+  // (SUCCESS, PRB_W_RESP) or back off (TALKER_NO_BANDWIDTH, PRB_W_RESP2).
+  // Inert is every face: no frame, no record write, no timer op, no action
+  // strobe, no notify, and exactly one RX-slot free, of the slot the item
+  // arrived in.
 void ListenerWalk::check_foreign_message_types_are_inert(int sink) {
   static constexpr uint8_t kTypes[] = {
-      3, 5, 7, 9, 11, 13,                // responses (Table 8-2)
-      14, 15};                           // reserved
+      3, 5, 7, 9, 11, 13,  // responses (IEEE 1722.1-2021 Table 8-2)
+      14, 15};             // reserved
   struct Arm { int st; uint8_t status; };
   static constexpr Arm kArms[] = {{S_PWR, ST_OK}, {S_PW2, ST_NOBW}};
   char tg[64];

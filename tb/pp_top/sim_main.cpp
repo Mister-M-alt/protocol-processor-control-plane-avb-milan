@@ -8809,8 +8809,8 @@ struct DomainDefaultPhase {
 // binding:
 //   AI (#47, Milan 5.5.3.1): ACMP messages outside the listener and talker
 //       sets reach the listener through the real steer and are inert there.
-//   AL (#45, Milan 5.5.2.2): the 96-B IEEE ACMPDU is answered exactly as the
-//       56-B Milan form is, by both engines.
+//   AL (#45, Milan 5.5.2.2): the 96-B IEEE 1722.1-2021 ACMPDU is answered
+//       exactly as the 56-B Milan form is, by both engines.
 //   AS (#48, Milan 5.5.3.5.18/.42/.45 and 5.3.8.5/.9): a real
 //       PROBE_TX_RESPONSE settles the sink; the listener's A15 reaches the
 //       SRP listener matcher only through the top's service stage (st_ls_r,
@@ -8971,13 +8971,14 @@ struct AcmpPathPhase {
 
   // ---- AI: response-typed and reserved messages are inert (#47) ----------
   // Milan 5.5.3.1 hands the listener BIND_RX / GET_RX_STATE / UNBIND_RX
-  // commands and the PROBE_TX_RESPONSE; IEEE 1722.1-2021 Table 8-2 makes 7
-  // BIND_RX_RESPONSE (CONNECT_RX_RESPONSE) and reserves 14. Both reach the
-  // listener, since the steer sends everything but {0, 2, 4, 12} there, and
-  // both are shaped as the perfect answer to the outstanding probe, so the
-  // message type alone keeps them out. A listener that took either as a
-  // probe response would settle and cancel T-ACMP-CMD: the exact duplicate
-  // probe that must follow is the proof it stayed in PRB_W_RESP.
+  // commands and the PROBE_TX_RESPONSE; IEEE 1722.1-2021 Table 8-2 (Table 8.1
+  // in IEEE 1722.1-2013) makes 7 BIND_RX_RESPONSE (CONNECT_RX_RESPONSE) and
+  // reserves 14. Both reach the listener, since the steer sends everything
+  // but {0, 2, 4, 12} there, and both are shaped as the perfect answer to the
+  // outstanding probe, so the message type alone keeps them out. A listener
+  // that took either as a probe response would settle and cancel T-ACMP-CMD:
+  // the exact duplicate probe that must follow is the proof it stayed in
+  // PRB_W_RESP.
   void ai_foreign_messages_are_inert() {
     h2.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
                        0, 0, SEQ_BIND, 0, 0));
@@ -9012,7 +9013,7 @@ struct AcmpPathPhase {
     if (!dup.empty() && dup != probe_tx(0)) { dump("got", dup); dump("exp", probe_tx(0)); }
   }
 
-  // ---- AL: the 96-B IEEE form is answered as the 56-B form is (#45) ------
+  // ---- AL: the 96-B IEEE 1722.1-2021 form is answered as the 56-B (#45) --
   // Milan 5.5.2.2 has a Milan device send and accept the truncated 56-B PDU
   // and lets it accept the longer one; 03 V3 takes that option. Every answer
   // below is the 56-B, cdl-44 Milan form whatever the command's length, and

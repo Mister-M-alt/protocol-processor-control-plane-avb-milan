@@ -173,7 +173,8 @@ struct Accept {
 // ---- the 56-byte Milan ACMPDU (F05.13 offsets, big-endian fields) ---------
 constexpr int PDU_BYTES = 56;
 constexpr uint64_t OUR_EID = 0x0A0B0C0D0E0F1011ull;   // the wrap's entity_id
-// IEEE 1722.1 Table 8.1 message types under their Milan names (Milan 5.5.2)
+// IEEE 1722.1-2021 Table 8-2 (IEEE 1722.1-2013 Table 8.1) message types under
+// their Milan names (Milan 5.5.2)
 constexpr uint8_t M_PROBE_TX_CMD = 0;
 constexpr uint8_t M_BIND_RX_CMD  = 6;
 constexpr uint8_t M_BIND_RX_RSP  = 7;
@@ -181,7 +182,7 @@ constexpr uint8_t M_UNBIND_CMD   = 8;
 constexpr uint8_t M_UNBIND_RSP   = 9;
 constexpr uint8_t M_GETRX_CMD    = 10;
 constexpr uint8_t M_GETRX_RSP    = 11;
-// ACMP flags (IEEE 1722.1 Table 8.2)
+// ACMP flags (IEEE 1722.1-2021 Table 8-4; IEEE 1722.1-2013 Table 8.3)
 constexpr uint16_t F_FAST_CONNECT   = 0x0002;
 constexpr uint16_t F_STREAMING_WAIT = 0x0008;
 

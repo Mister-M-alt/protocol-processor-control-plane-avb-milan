@@ -1138,10 +1138,11 @@ pass by accident. The legs run in wire order on one binding:
 - **AI** (issue #47, REQ-ACMP-012, Milan §5.5.3.1). **AI1** BIND_RX for sink 1
   is answered byte-exact and PROBE_TX #1 (sequence_id 0, FAST_CONNECT,
   listener_unique_id 1) follows byte-exact. **AI2** a BIND_RX_RESPONSE (7, a
-  response type of IEEE 1722.1-2021 Table 8-2) and a reserved type (14) arrive
-  shaped as the perfect answer to that probe: the steer delivers both to the
-  listener, and neither raises an ACMP frame, both pass the front end with no
-  drop counted, all four RX slots are free and no scoreboard hold is left.
+  response type of IEEE 1722.1-2021 Table 8-2, Table 8.1 in IEEE 1722.1-2013)
+  and a reserved type (14) arrive shaped as the perfect answer to that probe:
+  the steer delivers both to the listener, and neither raises an ACMP frame,
+  both pass the front end with no drop counted, all four RX slots are free
+  and no scoreboard hold is left.
   **AI3** the exact duplicate of probe #1 follows at T-ACMP-CMD: the sink never
   left PRB_W_RESP, which a listener that took either frame as a probe response
   would have done (it settles and cancels the timer).

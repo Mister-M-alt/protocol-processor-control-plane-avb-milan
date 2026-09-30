@@ -751,7 +751,7 @@ void RxValidatorSuite::held_aecp_frames_are_dropped_at_the_slot_gate() {
   CHECK(d->rx_aecp_held_count_o == held0 + 2, "F28 nothing counted without the hold");
 }
 
-// ---- F29: the 96-B IEEE ACMPDU, cdl 84 (V3; F09.4 row; issue #45) -----
+// ---- F29: the 96-B IEEE 1722.1-2021 ACMPDU, cdl 84 (V3; F09.4; #45) ---
 // Milan §5.5.2.2: a Milan device sends and accepts the truncated 56-B PDU and
 // may accept the longer one; 03 V3 takes that option. IEEE 1722.1-2021
 // §8.2.1.6 sets cdl to 84 (Figure 8-1: ip_flags, reserved, source_port,
