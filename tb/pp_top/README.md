@@ -394,8 +394,13 @@ tally.
     READ_DESCRIPTOR answers `BAD_ARGUMENTS` rather than locating whatever
     followed the header.
   - **A5b** the NOT_IMPLEMENTED response is sized by ITS OWN command, swept
-    over payloads of 0, 4, 8, 16 and 72 octets and two opcodes Table 7-140
-    leaves unassigned: `control_data_length` is read off the wire (not
+    over payloads of 0, 4, 8, 12, 16 and 72 octets, two opcodes Table 7-140
+    leaves unassigned, and (issue #74, REQ-FWX-001) the six the row names as
+    outer AEM commands at their own IEEE 1722.1-2021 command lengths: REBOOT
+    (0x002A, 4), START_OPERATION (0x0037, 12), ABORT_OPERATION (0x0038, 8),
+    OPERATION_STATUS sent as a command (0x0039, 8), SET_MEMORY_OBJECT_LENGTH
+    (0x0047, 12) and GET_MEMORY_OBJECT_LENGTH (0x0048, 4, a GET_DYNAMIC_INFO
+    whitelist member and still no outer command). `control_data_length` is read off the wire (not
     compared to the builder, which would share any bug) and must be 12 + the
     command's payload, the echoed bytes are a non-zero pattern, and the frame
     is the padded 60 octets only where the payload is genuinely short. A5
@@ -819,10 +824,12 @@ many checks each arm failed at the lane head.
 | `m9-guard-add-mappings` | the ADD term of `amap_edit_w` loses its guard | `M9: mt=4 word 002C` | 7 |
 | `m9-guard-remove-mappings` | the REMOVE term of `amap_edit_w`, and `amap_remove_w`, lose their guard | `M9: mt=4 word 002D` | 7 |
 | `m9-guard-dynamic-info` | `gdi_w` loses its guard | `M9: mt=4 word 004B` | 7 |
+| `a5b-reboot-success-arm` | the pop decode answers REBOOT (0x002A) SUCCESS with the command echoed (issue #74) | `A5b: REBOOT (7.4.43, Figure 7-68): the response is not the echoed command` | 1 |
 
 Each guard arm fails its opcode's row on all seven message types; the three
 writers also fail their whole-body row and the read-back that proves the write
-landed (M9b3, M9b4, M9b5).
+landed (M9b3, M9b4, M9b5). The REBOOT arm answers at the right length and cdl,
+so only the byte-exact echo can see it, and it does.
 
 ## Recorded seams and honest limits
 

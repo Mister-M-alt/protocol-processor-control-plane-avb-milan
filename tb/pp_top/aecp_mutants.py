@@ -35,6 +35,9 @@ MUTANTS = [
     ("m9-guard-remove-mappings", "m9-guard-remove-mappings", "aecp-dispatch",
      "M9: mt=4 word 002D"),
     ("m9-guard-dynamic-info", "m9-guard-dynamic-info", "aecp-dispatch", "M9: mt=4 word 004B"),
+    # issue #74: a SUCCESS arm for REBOOT, the first opcode REQ-FWX-001 names
+    ("a5b-reboot-success-arm", "a5b-reboot-success-arm", "aecp-dispatch",
+     "A5b: REBOOT (7.4.43, Figure 7-68): the response is not the echoed command"),
 ]
 
 #: the scratch tree: the RTL and the two bench directories the targets build

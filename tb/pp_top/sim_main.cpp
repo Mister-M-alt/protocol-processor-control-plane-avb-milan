@@ -2108,6 +2108,19 @@ struct ReadDescriptorPhase {
       {0x7FFC, 16, "unassigned opcode, 16-byte payload"},
       {0x7FFD, 72, "unassigned opcode, past the 60-octet floor"},
       {0x004D,  4, "GET_MAX_TRANSIT_TIME again, after a 72-byte command"},
+      //! REQ-FWX-001 (issue #74): the opcodes the row NAMES, each sent as an
+      //! outer AEM command at its own IEEE 1722.1-2021 command length. None
+      //! is decoded (no firmware update, REBOOT, operation or MEMORY_OBJECT
+      //! command in this build), so each takes the unknown-opcode path; a
+      //! future arm on any of them turns its row red
+      {0x002A,  4, "REBOOT (7.4.43, Figure 7-68)"},
+      {0x0037, 12, "START_OPERATION (7.4.53, Figure 7-72), four value bytes"},
+      {0x0038,  8, "ABORT_OPERATION (7.4.54, Figure 7-73)"},
+      {0x0039,  8, "OPERATION_STATUS sent as a command (7.4.55 never sends one)"},
+      {0x0047, 12, "SET_MEMORY_OBJECT_LENGTH (7.4.72, Figure 7-90)"},
+      //! a GET_DYNAMIC_INFO whitelist member (7.4.76.2), and still no outer
+      //! command: membership in the batch list is not a dispatch arm
+      {0x0048,  4, "GET_MEMORY_OBJECT_LENGTH (7.4.73, Figure 7-91)"},
     };
     uint16_t niseq = 0x5560;
     for (auto& c : nisz) {
