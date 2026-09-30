@@ -1,0 +1,10 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -718,7 +718,6 @@
+         aidx_r[bld_done_if_w] <= aidx_r[bld_done_if_w] + 32'd1;
+       end
+       if (bld_done_dep_w) begin
+-        aidx_r[bld_done_if_w] <= 32'd0;
+       end
+     end
+   end

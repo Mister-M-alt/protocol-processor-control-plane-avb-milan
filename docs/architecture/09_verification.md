@@ -134,6 +134,12 @@ document byte offsets — never from DUT logic.
 | `./scripts/lint_hdl.sh` | Verilator `--lint-only` over every module elaborated as a top, zero warnings tolerated |
 
 Do not quote a check total here — run `./scripts/run_suites.sh` and read the summary line.
+
+Two suites are MTXW walks in the sense of [§3](#3-test-categories), each from an
+independent transcription of the specification's table and ending in a cell count:
+`tb/acmp_listener` walks F05.3, and `tb/adp_engine` walks F04.2 (Milan Table 5.51,
+with the §5.6.1 boot gate and both hardware phases of DELAY) and F04.3 (Milan
+Table 5.54 and its §5.6.4.5 guards). Their READMEs carry the tables.
 Each `tb/<suite>/README.md` states what its suite proves, its recorded limits, and where
 one exists a **mutation record**: deliberate breakages and how many checks each turned
 red. That table is the evidence a suite has teeth.
@@ -151,7 +157,7 @@ and `tb/dyn_state/sim_main.cpp` (lettered sections):
 
 | Field | A: image fallback | B: written overlay | Isolation / fail-closed |
 |---|---|---|---|
-| current_configuration | W3c, W3d, W16a | W18/W18b/W18c/W18c3; W22a (SUCCESS-arm reachability after W21u's unbind) + W22d (residue displacement) | mechanism-level: dyn_state C, D (row addressing shared across selectors) |
+| current_configuration | W3c, W3d, W16a; AD1/AD1b (the ADPDU carries the image default while the row is unset); AD6 (a restore that applied the row and rolled back advertises the image default); AD7 (a reset after a SUCCESS SET_CONFIGURATION, with nothing to restore, advertises the image default) | W18/W18b/W18c/W18c3; W22a (SUCCESS-arm reachability after W21u's unbind) + W22d (residue displacement); AD2-AD4 (the next ADPDU carries the written overlay, only wire bytes 64..65 and available_index move); AD5 (a configuration the D3 writer saved and restored is advertised from the first ADPDU, and GET agrees) | mechanism-level: dyn_state C, D (row addressing shared across selectors) |
 | sampling_rate | W5 (byte-exact image 96000); W9i (a rate the AUDIO_UNIT list does not hold is refused on the unset row carrying the image's 96000, GET still reads it) | W9/W9b/W9c (48000, GET and the GET_DYNAMIC_INFO member); the list check (issue #51) on a set row: W9j (refusal carries the stored rate), W9k (refusals of an unlisted, a pulled and a zero rate write, mark and notify nothing, graded at the effect strobes and a second registered controller; the accepted listed rate moves each once), W9l (count, entries and offset are the image's, patched in place), W9m (the lock outranks the list check) | mechanism-level: dyn_state C, D |
 | clock_source | W6/W6b; W10i (a refusal on the unset row carries the image's index, GET still reads it) | W10/W10d; the accepted SET answers the index it stored, not the one it replaced, on the unset row (W10j7b, 0 to 1) and on a set row (W10b, 1 to 2); refusals write nothing: W10e-W10h; refusals mark and notify nothing, graded at the effect strobes and a second registered controller: W10j | mechanism-level: dyn_state C, D |
 | stream formats (in/out) | W4 per type and index | W23a/W23a2 (SET, both the echo and the published row), W23b (GET_STREAM_FORMAT serves the setting through the fold), W23i (the output row); refusals write nothing: W23c-W23h, W25a | dyn_state C, D + the per-row face checks F |

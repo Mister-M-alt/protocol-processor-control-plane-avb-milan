@@ -115,7 +115,10 @@ module KL_adp_engine
     input  wire  [15:0]                talker_caps_i,      //! talker_capabilities (review §8 item 6)
     input  wire  [15:0]                listener_sinks_i,   //! listener_stream_sinks (max across configs)
     input  wire  [15:0]                listener_caps_i,    //! listener_capabilities (review §8 item 6)
-    input  wire  [15:0]                current_cfg_i,      //! current_configuration_index (dynamic overlay)
+    //! current_configuration_index. The top drives the dynamic overlay once a
+    //! SET_CONFIGURATION has stored one, so it can move between (and during)
+    //! adverts: it is sampled at PDU build like gm_id/domain (IEEE §6.2.2.18)
+    input  wire  [15:0]                current_cfg_i,
     input  wire  [15:0]                identify_index_i,   //! identify_control_index (model metadata)
 
     // ---- dispatch-in (KL_pp_dispatch ADP pop face) ------------------------
@@ -806,6 +809,10 @@ module KL_adp_engine
   logic [63:0]       bld_gm_r;       // gm_id sampled at PDU build (04 §3)
   logic [7:0]        bld_dom_r;
   logic [31:0]       bld_aidx_r;
+  //! current_configuration_index sampled at PDU build: read live, a
+  //! SET_CONFIGURATION landing between wire bytes 64 and 65 would put the
+  //! high byte of one index and the low byte of the other on the wire
+  logic [15:0]       bld_cfg_r;
 
   // builder pick (departing outranks a queued advert)
   logic              pick_vld_w;
@@ -843,7 +850,8 @@ module KL_adp_engine
       input logic [IF_W_C-1:0] ifx,
       input logic [63:0]       gm,
       input logic [7:0]        dom,
-      input logic [31:0]       aidx);
+      input logic [31:0]       aidx,
+      input logic [15:0]       cfg);
     int unsigned i;
     logic [7:0] b;
     i = 32'(idx);
@@ -869,7 +877,7 @@ module KL_adp_engine
     else if (i < 62)  b = byte64_f(gm, i - 54);                   // gm @54
     else if (i == 62) b = dom;                                    // domain
     else if (i == 63) b = 8'h00;                                  // reserved
-    else if (i < 66)  b = byte16_f(current_cfg_i, i - 64);
+    else if (i < 66)  b = byte16_f(cfg, i - 64);                  // cur cfg @64
     else if (i < 68)  b = byte16_f(identify_index_i, i - 66);
     else if (i < 70)  b = byte16_f({{(16-IF_W_C){1'b0}}, ifx}, i - 68);
     else              b = 8'h00;               // association_id + reserved
@@ -886,6 +894,7 @@ module KL_adp_engine
       bld_gm_r   <= 64'd0;
       bld_dom_r  <= 8'd0;
       bld_aidx_r <= 32'd0;
+      bld_cfg_r  <= 16'd0;
     end else begin
       unique case (bld_st_r)
         B_IDLE: begin
@@ -899,6 +908,7 @@ module KL_adp_engine
           bld_gm_r   <= gm_slice_f(bld_if_r);       // sampled at PDU build
           bld_dom_r  <= dom_slice_f(bld_if_r);
           bld_aidx_r <= aidx_r[bld_if_r];           // pre-increment value
+          bld_cfg_r  <= current_cfg_i;              // sampled at PDU build
           bld_st_r   <= B_ALLOC;
         end
         B_ALLOC: begin
@@ -937,7 +947,8 @@ module KL_adp_engine
   assign txs_wr_addr_o   = TXS_LEN_W_C'(bld_idx_r);
   assign txs_wr_valid_o  = (bld_st_r == B_WRITE);
   assign txs_wr_data_o   = frame_byte_f(bld_idx_r, bld_dep_r, bld_if_r,
-                                        bld_gm_r, bld_dom_r, bld_aidx_r);
+                                        bld_gm_r, bld_dom_r, bld_aidx_r,
+                                        bld_cfg_r);
   assign txs_wr_commit_o = (bld_st_r == B_COMMIT);
   assign txs_wr_len_o    = TXS_LEN_W_C'(ADP_FRAME_BYTES_C);
 

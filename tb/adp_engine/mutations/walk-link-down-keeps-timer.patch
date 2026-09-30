@@ -1,0 +1,10 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -643,7 +643,6 @@
+         // 6) LINK_DOWN: -> DOWN, stop timers, NO departing (Milan §5.6.3.5.6)
+         if (link_fall_w[i] && (adv_st_r[i] != ADP_ADV_DOWN)) begin
+           adv_st_r[i] <= ADP_ADV_DOWN;
+-          tpend_r[i]  <= TPEND_CANCEL;
+         end
+ 
+         // 7) entity disable = SHUTDOWN: departing from any advertising state

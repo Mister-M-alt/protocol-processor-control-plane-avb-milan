@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -1005,7 +1005,7 @@
+       ucancel_pend_r <= '0;
+     end else begin
+       for (int unsigned s = 0; s < N_SINK_P; s++) begin
+-        if (bound_fall_w[s] && disc_st_r[s]) begin
++        if (1'b0) begin
+           ucancel_pend_r[s] <= 1'b1;
+         end
+       end
