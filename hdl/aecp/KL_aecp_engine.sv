@@ -891,6 +891,8 @@ module KL_aecp_engine
   //! IDENTIFY_NOTIFICATION's unsolicited body (IEEE 7.4.39.1, Figure 7-61),
   //! dispatched only with EN_IDENTIFY_NOTIF_P
   localparam logic [10:0] UPC_IDNOTIF_C  = 11'd2000; // E_IDNOTIF
+  //! the unsolicited SET_STREAM_INFO's own body (IEEE 7.4.15.1, Figure 7-40)
+  localparam logic [10:0] UPC_SINFOUNS_C = 11'd2016; // E_SINFOUNS
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -1367,8 +1369,10 @@ module KL_aecp_engine
                             uns_upc_w = UPC_GCFG_C;    end
       PP_UNS_SFMT_C:  begin uns_ct_w = OP_SET_STREAM_FMT_C;
                             uns_upc_w = UPC_GSFMT_C;   end
+      //! IEEE 7.4.15.1: SET_STREAM_INFO's response is Figure 7-40, not the
+      //! Milan GET_STREAM_INFO body (Milan 5.4.2.10 replaces the GET form)
       PP_UNS_SINFO_C: begin uns_ct_w = OP_SET_STREAM_INFO_C;
-                            uns_upc_w = UPC_GSTRI_C;   end
+                            uns_upc_w = UPC_SINFOUNS_C; end
       PP_UNS_CTRL_C:  begin uns_ct_w = OP_SET_CONTROL_C;
                             uns_upc_w = UPC_GCTRL_C;   end
       PP_UNS_CLKS_C:  begin uns_ct_w = OP_SET_CLOCK_SRC_C;

@@ -10352,17 +10352,20 @@ int main(int argc, char** argv) {
   const bool d3_only = argc == 2 && std::strcmp(argv[1], "--d3-only") == 0;
   const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
   const bool ident_only = argc == 2 && std::strcmp(argv[1], "--identify-only") == 0;
+  const bool notify_only = argc == 2 && std::strcmp(argv[1], "--notify-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
   }
-  const bool one_section = gsi_only || name_only || d3_only || adp_only || ident_only;
+  const bool one_section = gsi_only || name_only || d3_only || adp_only || ident_only
+                           || notify_only;
   if (!one_section) Suite(h).run();
   if (!one_section || gsi_only) InternalStreamInfoPhase{h}.run();
   if (!one_section || name_only) run_name_writes(h);
   if (!one_section || d3_only) run_d3(h);
   if (!one_section || adp_only) run_adp_config(h);
   if (!one_section || ident_only) run_identify(h);
+  if (!one_section || notify_only) run_pushes(h);
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's two

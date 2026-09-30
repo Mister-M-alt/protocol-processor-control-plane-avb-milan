@@ -440,6 +440,158 @@ struct IdentifyOffPhase : NotifyBench {
   }
 };
 
+// ==== NP. A wire-level push for each command class (issue #58) ===========
+// Milan 5.4.5.2: each successful response to a command of the IEEE 7.5.2 list
+// that modifies the state sends an unsolicited notification to every
+// registered controller except the requester; 5.4.5.1: each copy carries that
+// controller's own DA, controller_entity_id and sequence_id, and the entry's
+// sequence_id counts up by one per notification sent to it. IEEE 7.5.2: the
+// notification IS an unsolicited response to the command, so its body is the
+// command's response format (7.4.7.1, 7.4.9.1, 7.4.15.1, 7.4.25.1, 7.4.21.1,
+// 7.4.35.1 / 7.4.36.1).
+//
+// Two controllers are registered: the requester A and B. The per-entry
+// sequence_id is modelled from the wire alone: the count of unsolicited
+// frames addressed to that controller before this one.
+struct PushPhase : NotifyBench {
+  static constexpr uint64_t B_MAC = 0x0202C2C2C2C2ull;
+  static constexpr uint64_t B_EID = CTLR2_EID;
+  static constexpr uint32_t ACC_LAT_VALID = 0x20000000u;   // Table 7-145
+  uint16_t seq = 0x6C00;
+
+  using NotifyBench::NotifyBench;
+
+  static std::vector<uint8_t> ti(uint16_t ty, uint16_t ix) {
+    std::vector<uint8_t> p(4, 0);
+    putbe(&p[0], ty, 2);
+    putbe(&p[2], ix, 2);
+    return p;
+  }
+  static std::vector<uint8_t> cfg_body(uint16_t ix) {
+    std::vector<uint8_t> p(4, 0);
+    putbe(&p[2], ix, 2);                        // reserved @24, index @26
+    return p;
+  }
+  static std::vector<uint8_t> control_body(uint8_t value) {
+    auto p = ti(0x001A, 0);
+    p.push_back(value);                         // one CONTROL_LINEAR_UINT8
+    return p;
+  }
+  //! 1722.1-2021 Figure 7-40, the whole 84-byte body: {type, index}, flags,
+  //! stream_format, stream_id, msrp_accumulated_latency @48, then zeros
+  static std::vector<uint8_t> stream_info_body(uint16_t ix, uint32_t latency) {
+    std::vector<uint8_t> p(84, 0);
+    putbe(&p[0], 0x0006, 2);
+    putbe(&p[2], ix, 2);
+    putbe(&p[4], ACC_LAT_VALID, 4);
+    putbe(&p[24], latency, 4);
+    return p;
+  }
+  //! the unsolicited frames of command_type `op` addressed to `mac` since
+  //! `from`, with their log indices
+  std::vector<size_t> pushes(uint64_t mac, unsigned op, size_t from) const {
+    std::vector<size_t> v;
+    for (size_t i = from; i < seen.size(); ++i)
+      if (da_of(seen[i].f) == mac && unsolicited(seen[i].f) && ct_of(seen[i].f) == op)
+        v.push_back(i);
+    return v;
+  }
+
+  //! one state-changing SET from {req_mac, req_eid}: the solicited response
+  //! byte-exact, exactly one unsolicited response of the same type at the
+  //! other controller, byte-exact at its modelled sequence_id, and none at
+  //! the requester
+  void push_step(const char* tag, uint16_t op, const std::vector<uint8_t>& cmd,
+                 const std::vector<uint8_t>& body, bool from_b = false) {
+    const uint64_t req_mac = from_b ? B_MAC : CTLR_MAC;
+    const uint64_t req_eid = from_b ? B_EID : CTLR_EID;
+    const uint64_t other_mac = from_b ? CTLR_MAC : B_MAC;
+    const uint64_t other_eid = from_b ? CTLR_EID : B_EID;
+    const size_t from = seen.size();
+    const uint16_t s = seq++;
+    const auto r = ask(req_mac, req_eid, s, op, cmd);
+    CHECK(r == aecp_frame(req_mac, OWN_MAC, 1, AECP_SUCCESS, EID, req_eid, s, op, body),
+          "%s: the solicited response is SUCCESS, byte-exact (premise)", tag);
+    run_ms(200);
+    const auto at_other = pushes(other_mac, op, from);
+    CHECK(at_other.size() == 1, "%s: exactly one unsolicited response of this "
+          "command at the other registered controller, got %zu", tag, at_other.size());
+    if (!at_other.empty()) {
+      const size_t i = at_other[0];
+      const unsigned want_seq = notified_before(other_mac, i);
+      auto want = aecp_frame(other_mac, OWN_MAC, 1, AECP_SUCCESS, EID, other_eid,
+                             uint16_t(want_seq), op, body);
+      want[36] |= 0x80;
+      CHECK(seen[i].f == want, "%s: it is byte-exact: u = 1, that controller's "
+            "DA and entity_id, its own sequence_id %u, the response body (Milan "
+            "5.4.5.1, IEEE 7.5.2)", tag, want_seq);
+      if (seen[i].f != want) { dump("got", seen[i].f); dump("exp", want); }
+    }
+    CHECK(pushes(req_mac, op, from).empty(),
+          "%s: the requester receives no unsolicited response (Milan 5.4.5.2)", tag);
+  }
+  //! a SET that changes nothing still answers SUCCESS and pushes nothing
+  void no_push_step(const char* tag, uint16_t op, const std::vector<uint8_t>& cmd) {
+    const size_t from = seen.size();
+    const uint16_t s = seq++;
+    const auto r = ask(CTLR_MAC, CTLR_EID, s, op, cmd);
+    CHECK(status_of(r) == AECP_SUCCESS, "%s: the unchanged SET answers SUCCESS", tag);
+    run_ms(200);
+    CHECK(pushes(B_MAC, op, from).empty() && pushes(CTLR_MAC, op, from).empty(),
+          "%s: a SET that modifies nothing pushes nothing (Milan 5.4.5.2)", tag);
+  }
+
+  void configuration_format_and_info() {
+    push_step("NP1 SET_CONFIGURATION(1)", AEM_SET_CONFIGURATION, cfg_body(1), cfg_body(1));
+    push_step("NP1b SET_CONFIGURATION(0)", AEM_SET_CONFIGURATION, cfg_body(0), cfg_body(0));
+    const auto fmt = SetStreamFormatPhase::sf_pl(0x0005, 0, H::SFMT_MAIN_C);
+    push_step("NP2 SET_STREAM_FORMAT", AEM_SET_STREAM_FORMAT, fmt, fmt);
+    const auto info = stream_info_body(0, 1000000u);
+    push_step("NP3 SET_STREAM_INFO", AEM_SET_STREAM_INFO, info, info);
+  }
+  void control_and_rate() {
+    push_step("NP4 SET_CONTROL(IDENTIFY 255)", AEM_SET_CONTROL, control_body(255),
+              control_body(255));
+    push_step("NP4b SET_CONTROL(IDENTIFY 0)", AEM_SET_CONTROL, control_body(0),
+              control_body(0));
+    const auto rate = SamplingRateTools::rate_cmd(48000u);
+    push_step("NP5 SET_SAMPLING_RATE(48000)", AEM_SET_SAMPLING_RATE, rate, rate);
+  }
+  void start_and_stop() {
+    io.q_acmp.clear();
+    feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, 0, 0, 0,
+                    0x6CF0, 0, 0));
+    run_ms(100);
+    CHECK((io.d->acmp_bound_o & 1) && (io.d->aecp_strm_started_o & 1),
+          "NP6: sink 0 bound with STREAMING_WAIT clear, so started (premise)");
+    push_step("NP6 STOP_STREAMING", 0x0023, ti(0x0005, 0), ti(0x0005, 0));
+    push_step("NP7 START_STREAMING", 0x0022, ti(0x0005, 0), ti(0x0005, 0));
+  }
+  void run() {
+    boot_to_idle(true);
+    CHECK(register_controller(CTLR_MAC, CTLR_EID, seq++)
+              && register_controller(B_MAC, B_EID, seq++),
+          "NP0: the requester and a second controller registered");
+    configuration_format_and_info();
+    control_and_rate();
+    start_and_stop();
+    //! the requester's own entry never moved while it was excluded: a SET
+    //! from B reaches it at the count of what it was actually sent
+    push_step("NP8 SET_CONTROL(IDENTIFY 255) from B", AEM_SET_CONTROL,
+              control_body(255), control_body(255), true);
+    no_push_step("NP9 SET_CONTROL(IDENTIFY 255) again", AEM_SET_CONTROL,
+                 control_body(255));
+    no_push_step("NP9b START_STREAMING again", 0x0022, ti(0x0005, 0));
+  }
+};
+
+[[maybe_unused]] static void run_pushes(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  PushPhase{h}.run();
+  printf("NP: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 [[maybe_unused]] static void run_identify(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
