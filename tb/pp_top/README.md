@@ -799,12 +799,17 @@ must pass. The same driver runs the binding manager's three DR2c controls, the
 arbiter's issue-cycle control and its seven own-contract controls (N11) in `tb/acmp_nvm`
 and the validator's admission control in `tb/rx_validator` (their READMEs record
 them). At the lane head all 83 are KILLED and the three goldens PASS;
-the last column is how many checks each one failed there.
+the last column is how many checks each one failed there. Since the AECP
+deadline kill (issue #81, section DL), `hold_released_at_go` and
+`dispatch_not_held` each fail D3O6 as well (17 and 6). Both let the held
+command run during the slowed restore, and it is no longer exempt from its
+deadline: rule (d) exempts only a command held until the terminal. With the
+kill tied off, the counts are 16 and 5 again.
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
 |---|---|---|---|
-| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 16 |
-| `dispatch_not_held` | the engine's three dispatch gates ignore the writer's ownership | `D3O1: without the walk the writer owns every cycle` | 5 |
+| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 17 |
+| `dispatch_not_held` | the engine's three dispatch gates ignore the writer's ownership | `D3O1: without the walk the writer owns every cycle` | 6 |
 | `own_taken_at_the_walk` | ownership and the bus taken only once the walk starts, not from reset | `D3R9: the held SET` | 10 |
 | `image_unproven_continues` | an unprovable image (the LOCATE's error) no longer aborts | `D3O2: CLOSED at`, `D3O3: CLOSED` | 9 |
 | `latch_ignores_program` | the service latch does not wait for a running program | `D3S9` | 3 |
