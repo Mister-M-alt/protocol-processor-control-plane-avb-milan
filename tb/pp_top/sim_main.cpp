@@ -8565,16 +8565,19 @@ struct InternalMaapPhase {
   H h2;
   explicit InternalMaapPhase(H& hh) : h(hh), d2(model2.get()), h2(d2) {}
 
-  // Annex B frame builder (Figure B.1; 42 real bytes padded to 60)
+  // Annex B frame builder (Figure B.1; 42 real bytes padded to 60);
+  // maap_version is the 5-bit field @16[7:3] (B.2.3), 1 unless given
   static std::vector<uint8_t> maap_frame(uint64_t da, uint64_t sa, int msg,
                                          uint64_t req_s, uint16_t req_c,
-                                         uint64_t con_s, uint16_t con_c) {
+                                         uint64_t con_s, uint16_t con_c,
+                                         int maap_version = 1) {
       std::vector<uint8_t> f;
       for (int i = 5; i >= 0; --i) f.push_back(uint8_t(da >> (8 * i)));
       for (int i = 5; i >= 0; --i) f.push_back(uint8_t(sa >> (8 * i)));
       f.push_back(0x22); f.push_back(0xF0);
       f.push_back(0xFE); f.push_back(uint8_t(msg & 0x0F));
-      f.push_back(0x08); f.push_back(0x10);            // maap_ver 1, cdl 16
+      f.push_back(uint8_t((maap_version & 0x1F) << 3));  // maap_version, cdl[10:8]
+      f.push_back(0x10);                               // cdl 16
       for (int i = 0; i < 8; ++i) f.push_back(0x00);   // stream_id
       for (int i = 5; i >= 0; --i) f.push_back(uint8_t(req_s >> (8 * i)));
       f.push_back(uint8_t(req_c >> 8)); f.push_back(uint8_t(req_c));
@@ -8603,6 +8606,7 @@ struct InternalMaapPhase {
     const uint64_t base2 = mp4_a_conflicting_announce_yields(base);
     mp5_a_mis_addressed_probe_is_not_for_us(prober, base2);
     mp6_the_descriptor_path_is_untouched();
+    mp7_other_maap_versions_are_defended(base2);
   }
 
   // ---- MP1: link up -> the whole Table B.7 acquisition on the wire ----
@@ -8694,9 +8698,19 @@ struct InternalMaapPhase {
   }
 
   // ---- MP4: a conflicting ANNOUNCE from a rev-lower peer -> yield -----
+  // The winner is octet-reversed LOWER than OWN_MAC but forward HIGHER
+  // (B.3.6.4): only the reversed compare_MAC yields to it (issue #68).
   uint64_t mp4_a_conflicting_announce_yields(uint64_t base) {
     h2.q_maap.clear();
-    const uint64_t winner = 0x010000000001ull;     // reversed-octet lower
+    const uint64_t winner = 0xF21122334401ull;
+    uint64_t rev_own = 0;
+    uint64_t rev_winner = 0;
+    for (int i = 0; i < 6; ++i) {
+      rev_own = (rev_own << 8) | ((OWN_MAC >> (8 * i)) & 0xFF);
+      rev_winner = (rev_winner << 8) | ((winner >> (8 * i)) & 0xFF);
+    }
+    CHECK(rev_winner < rev_own && OWN_MAC < winner,
+          "MP4: premise — the winner is rev-lower, forward-higher");
     h2.feed(maap_frame(0x91E0F000FF00ull, winner, 3, base, 8, 0, 0));
     for (int i = 0; i < 200 && (d2->acmp_declaring_o & 1); i++) h2.idle(10);
     CHECK(h2.saw_decl_edge(0, false),
@@ -8738,6 +8752,54 @@ struct InternalMaapPhase {
                            CTLR_EID, 0x6003, AEM_READ_DESCRIPTOR, epl);
     CHECK(!got.empty(), "MP6: READ_DESCRIPTOR answered with MAAP running");
     CHECK(got == want, "MP6: READ_DESCRIPTOR byte-exact with MAAP running");
+  }
+
+  //! the first DEFEND (message_type 2) captured within the budget, or empty
+  std::vector<uint8_t> wait_defend(int budget_ms) {
+      long cyc = long(budget_ms) * MS_CYC;
+      while (cyc-- > 0) {
+        for (const auto& fr : h2.q_maap) {
+          if (fr.first.size() > 15 && (fr.first[15] & 0x0F) == 2) return fr.first;
+        }
+        h2.step();
+      }
+      return {};
+  }
+
+  // ---- MP7: maap_version 2 and 0 through the real validator (B.2.3) ------
+  // Every MAAP frame above carries maap_version 1. A PROBE of a later
+  // version with a known message_type is interpreted as ours (B.2.3.2); one
+  // of version 0 as that version, whose fields version 1 contains (B.2.3.4).
+  // Both cross the real validator and dispatch into the engine, and one
+  // conflicting with the DEFEND-state claim is answered by a byte-exact
+  // DEFEND carrying our own version 1.
+  void mp7_other_maap_versions_are_defended(uint64_t base2) {
+    struct VersionProbe {
+      int version;
+      uint64_t prober;
+      uint64_t start;       //! requested_start: 8 addresses from here
+      uint16_t overlap;     //! addresses of our 8 from start (B.3.6.6)
+    };
+    const VersionProbe probes[] = {
+        {2, 0x0A2233445566ull, base2 + 2, 6},
+        {0, 0x0A3344556677ull, base2 + 5, 3},
+    };
+    uint8_t defends = d2->maap_defends_o;
+    for (const VersionProbe& p : probes) {
+      h2.q_maap.clear();
+      h2.feed(maap_frame(0x91E0F000FF00ull, p.prober, 1, p.start, 8, 0, 0,
+                         p.version));
+      const auto got = wait_defend(200);
+      const auto dexp = maap_frame(p.prober, OWN_MAC, 2, p.start, 8,
+                                   p.start, p.overlap);
+      CHECK(got == dexp,
+            "MP7: a maap_version %d PROBE gets a byte-exact DEFEND", p.version);
+      if (got != dexp) { dump("got", got); dump("exp", dexp); }
+      ++defends;
+      CHECK(d2->maap_defends_o == defends && d2->maap_addr_valid_o
+            && d2->maap_addr_o == base2,
+            "MP7: maap_version %d PROBE defended, claim kept", p.version);
+    }
   }
 };
 
@@ -10120,6 +10182,14 @@ struct NameWritePhase {
   printf("NW: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+//! the MP section alone, for the MAAP mutation campaign (tb/maap README):
+//! its second model needs only the descriptor image the main harness loads
+[[maybe_unused]] static void run_maap_internal(H& h) {
+  Suite setup(h);
+  setup.load_descriptor_image();
+  InternalMaapPhase{h}.run();
+}
+
 // ==== AD. The ADPDU across SET_CONFIGURATION (issue #40) =================
 // REQ-ADP-005 (Milan §5.6.2 note) with IEEE §6.2.2.18: every ADPDU field is
 // independent of the current Configuration except current_configuration_index,
@@ -10982,6 +11052,7 @@ int main(int argc, char** argv) {
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
   const bool d3_only = argc == 2 && std::strcmp(argv[1], "--d3-only") == 0;
+  const bool maap_only = argc == 2 && std::strcmp(argv[1], "--maap-internal-only") == 0;
   const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
   const bool aecp_only = argc == 2
                          && std::strcmp(argv[1], "--aecp-dispatch-only") == 0;
@@ -10990,7 +11061,8 @@ int main(int argc, char** argv) {
     return 0;
   }
   const bool one_section = gsi_only || name_only || d3_only || adp_only
-                           || aecp_only;
+                           || maap_only || aecp_only;
+  if (maap_only) run_maap_internal(h);
   if (!one_section) Suite(h).run();
   if (aecp_only) run_aecp_dispatch_focus(h);
   if (!one_section || gsi_only) InternalStreamInfoPhase{h}.run();

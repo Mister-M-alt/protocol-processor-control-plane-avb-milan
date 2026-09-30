@@ -56,6 +56,10 @@ jobs:
         run: |
           export PATH="$HOME/verilator/bin:$PATH"
           make -C tb/srp_top mutants
+      - name: MAAP mutation campaign
+        run: |
+          export PATH="$HOME/verilator/bin:$PATH"
+          make -C tb/maap mutants
       - name: ADP mutation campaign
         run: |
           export PATH="$HOME/verilator/bin:$PATH"
