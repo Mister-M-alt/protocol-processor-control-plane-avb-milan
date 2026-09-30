@@ -213,6 +213,24 @@ evidence. The top-level device model does misbehave on the handshake for the wal
 (late grant, silent header, late or erroring descriptor memory), which grades the
 walks' deadlines, not the port's.
 
+### 8.3 Notifications and identify: the RND and STORM evidence (issues #54, #58, #80, #86)
+
+Each section runs on a fresh processor of its own in `tb/pp_top` (`--notify-only`,
+`--identify-only`, and the suite's third build for section ID), plus one section of
+the originator's unit suite:
+
+| Category | Section | What it proves |
+|---|---|---|
+| TIM | ID (third build, `P-EN-IDENTIFY-NOTIFICATION` = 1) | IDENTIFY_NOTIFICATION byte-exact to 91-E0-F0-01-00-01, three frames spaced `T-IDENT-BURST` (never less), identifySequenceID per burst, the `T-IDENT-REARM` re-arm while held, release, a release and press inside a burst, a held engine, a 15-row fan-out, the command forms |
+| DIR | ID0 (the default 0) | the button puts nothing on the wire |
+| DIR | NP | every notifying command class pushes one byte-exact u = 1 response to a second registered controller, none to the requester, at the entry's own sequence_id |
+| STORM | ST | one change fans out to all 16 rows byte-exact; GET_COUNTERS churned at 10 Hz on five descriptors emits at most once per descriptor per second; solicited AECP and ACMP answers stay inside `T-BUDGET-AECP-WC` / `T-BUDGET-ACMP-RESP` under the load |
+| RND | RN | a seeded REGISTER / DEREGISTER / LOCK / UNLOCK / SET / GET session from 20 controllers against an independent registry and lock model, zero divergence |
+| RND | `tb/originator` R | a seeded session of 16 owners' overlapping CONTROLLER_AVAILABLE-shaped inflights, responses, expiries and cancellations in random order against an independent inflight model |
+
+The mutation records are in the two suites' READMEs; `tb/pp_top/notify_mutants.py`
+plants the pp_top controls.
+
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)
 per the scope rules in [docs/README §2](../README.md).

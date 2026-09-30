@@ -26,11 +26,11 @@ and TX arbitration. The three engines ([04](04_adp_engine.md)/[05](05_acmp_engin
 | RX async FIFO + filter/parser/validator | one per AVB interface; frame-atomic |
 | RX slot RAM | `P-RX-SLOTS` × `P-RX-SLOT-BYTES`; zero-copy payload handles |
 | Transaction normalizer | builds the record of [§4](#4-normalized-transaction) |
-| Per-engine dispatch FIFOs | ADP / ACMP / AECP queues + the TIMER/SELF/MGMT injection ports |
+| Per-engine dispatch FIFOs | ADP / ACMP / AECP queues. The normalizer's TIMER/SELF/MGMT injection ports exist and are tied off at the top ([§5](#5-origins-originator-and-event-router) gives each origin's landed home) |
 | Scoreboard | admission control per hazard class/key ([§6](#6-scoreboard-hazard-classes-and-ordering)) |
 | State-RAM port arbiters | overlay, dynamic state, registry, counters — each RAM single-ported with a small priority mux (engines never stall the RX path). The **descriptor image is not among them**: it lives in the integrator's main memory ([07 §3.3](07_memory_maps.md)), and only a one-descriptor line buffer and the cached index map are on chip |
 | Response builders + TX slot RAM | `P-TX-STD-SLOTS` standard + 1 oversize slot ([§7](#7-response-building-and-buffers)) |
-| Originator + inflight table | entity-initiated PDUs; response matching ([§5](#5-origins-originator-and-event-router)) |
+| Originator + inflight table | CONTROLLER_AVAILABLE, the one originated command PDU at the top; response matching and the central retry ([§5](#5-origins-originator-and-event-router)) |
 | TX arbiter → TX async FIFO | frame-atomic priority merge ([§8](#8-tx-arbitration)) |
 | Event router | sticky-event fan-out (catalog in [02 §5](02_interfaces.md)) |
 
@@ -110,7 +110,7 @@ One record shape for all work items, regardless of origin:
 
 | Field | Width | Notes |
 |---|---|---|
-| `origin` | 2 | RX / TIMER / SELF / MGMT |
+| `origin` | 2 | RX / TIMER / SELF / MGMT. The landed top stamps RX on every dispatched record; SELF marks the AECP engine's internal unsolicited-job record; TIMER and MGMT have no producer ([§5](#5-origins-originator-and-event-router)) |
 | `interface_index` | log2(P-N-AVB-INTERFACES) | ingress port (or target port for SELF) |
 | `arrival_ts` | 32 (ms) | deadline base = completion of reception (last byte) |
 | `protocol` | 3 | ADP / ACMP / AEM / MVU / AA |
@@ -132,7 +132,7 @@ One record shape for all work items, regardless of origin:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> ALLOC: origin RX / TIMER / SELF / MGMT
+    [*] --> ALLOC: origin RX (the landed producer set, section 5)
     ALLOC --> DECODED: normalizer
     DECODED --> DISPATCHED: engine queue
     DISPATCHED --> WAIT_SB: scoreboard busy on key
@@ -151,21 +151,44 @@ state: commits are atomic at EXECUTE end, [06 §5](06_aecp_engine.md)).
 
 ## 5. Origins, originator, and event router
 
-The pipeline has **four producers** into the same dispatch stage:
+The record reserves **four origins**, and the normalizer has a producer port for each.
+The landed top wires one of them into dispatch and gives each of the other three a
+landed home instead. This is the normative shape; the normalizer's `tmr`, `self` and
+`mgmt` producer ports are tied off at the top with these dispositions, and their
+four-way arbitration stays graded at module level (`tb/dispatch`).
 
-1. **RX** — parsed frames (above).
-2. **TIMER** — expiry events re-enter as transactions targeting their owner engine
-   (e.g. `TMR_ADVERTISE` → ADP; monitor expiry → registry probe flow).
-3. **SELF** — the **originator**: single service point where engines request
-   entity-initiated PDUs: ACMP `PROBE_TX` (from the listener SM), AECP
-   `CONTROLLER_AVAILABLE` (from the registry monitor), unsolicited responses (from the
-   fan-out engine), `IDENTIFY_NOTIFICATION`, ADP TX. The originator:
+1. **RX** — parsed frames (above). The only origin the top stamps into dispatch.
+2. **TIMER** — expiries do **not** re-enter as transactions. The shared timer
+   service ([08 §5](08_timing.md)) puts each expiry on its expiry bus as {slot, owner
+   tag}, and the owner engine consumes it directly: ADP and SRP by slot; the ACMP
+   listener and talker, the originator, and `KL_aecp_notify` (TIME_LIMITED rows, the
+   CONTROLLER_AVAILABLE monitor, the ENTITY lock, and with
+   `P-EN-IDENTIFY-NOTIFICATION` the IDENT-BURST and IDENT-REARM singletons) by owner tag.
+3. **SELF** — entity-initiated PDUs, each produced where its state lives:
+   - **AECP unsolicited responses** are engine-internal SELF jobs:
+     `KL_aecp_notify` presents one job at a time on the engine's `uns_*` face (the
+     fan-out of a command or a Table 5.22 event, the targeted DEREGISTER, the LOCK
+     auto-unlock, and IDENTIFY_NOTIFICATION to its multicast address), and
+     `KL_aecp_engine` synthesizes a record with origin SELF and no RX slot and runs
+     the SAME µprogram, response buffer and builder as the solicited answer, on
+     `LANE_AECP_UNS`. The per-controller `sequence_id` is the registry row's
+     ([06 §7](06_aecp_engine.md)); IDENTIFY_NOTIFICATION's is identifySequenceID.
+     These are responses: nothing matches or retries them.
+   - **CONTROLLER_AVAILABLE** is the one command PDU that goes through the
+     **originator** (`KL_pp_originator`, below).
+   - **PROBE_TX** is built, sent and retried by the ACMP listener itself: its exact
+     duplicate retry and T-ACMP-CMD live in `KL_pp_acmp_listener`
+     ([05 §6.4](05_acmp_engine.md)), and the top instantiates the originator with
+     `PROBE_SLOTS_P = 0`.
+   - **ADP TX**: `KL_adp_engine` writes its own frames into the TX slot pool.
+
+   The originator:
    - accepts a PDU already serialized into a TX slot, then holds that immutable slot
      across the exchange so a retry sends the exact same bytes
      ([05 §6.4](05_acmp_engine.md));
-   - assigns `sequence_id` from the owner's counter (per-controller for unsolicited,
-     [06 §7](06_aecp_engine.md));
-   - for command-type PDUs (PROBE_TX, CONTROLLER_AVAILABLE) writes an **inflight
+   - assigns `sequence_id` from the owner's counter;
+   - for command-type PDUs (CONTROLLER_AVAILABLE; PROBE_TX only in a build with
+     `PROBE_SLOTS_P` > 0) writes an **inflight
      entry** `{owner, key, seq, deadline T-ID, retried}` so V7/V6 route the response
      back. The response timer starts only when the TX arbiter grants the handle to
      the serializer, so time spent in the lane queue cannot consume an attempt
@@ -174,8 +197,9 @@ The pipeline has **four producers** into the same dispatch stage:
      lose either event.
      On deadline expiry with `retried = 0` it re-sends the held slot once;
      the retry timer likewise starts only after serializer acceptance. A second
-     expiry reports timeout to the owner. IEEE's one-retry rule is thereby central,
-     not per-engine (IEEE §9.3.6.1.2, §8.2.2.1.5). The CONTROLLER_AVAILABLE key is
+     expiry reports timeout to the owner. IEEE's one-retry rule (IEEE §9.3.6.1.2,
+     §8.2.2.1.5) is central for CONTROLLER_AVAILABLE and the listener's own for
+     PROBE_TX. The CONTROLLER_AVAILABLE key is
      the full `{controller Entity ID, controller MAC}` tuple, so a folded-MAC
      collision or a response for another target cannot complete the exchange;
    - releases cancelled or completed slots through a per-slot pending merge. Two
@@ -184,8 +208,15 @@ The pipeline has **four producers** into the same dispatch stage:
      A selected handle remains withdrawable until the slot pool accepts its
      serializer start. The arbiter grants only on that acceptance boundary;
      later release clears the hold so the final serializer beat frees the slot.
-4. **MGMT** — side-port operations that mirror ATDECC changes enter as transactions so
-   lock checks, commits and notifications follow the same path ([02 §7](02_interfaces.md)).
+4. **MGMT** — **not supported by this build.** No side-port operation changes
+   ATDECC-visible state: the image and debug windows are tied off and the control
+   window holds scratch and restore status only ([02 §7](02_interfaces.md)), and the
+   dynamic-state store's only writers are the AECP µcode and the D3 restore. So there
+   is no MGMT origin, no non-ATDECC change to lock-check, and no MGMT-origin
+   notification: Milan §5.4.5.2's second paragraph has no trigger in this build
+   ([06 §7](06_aecp_engine.md#7-registry-notifications-liveness-identify) trigger
+   class 2). A product that changes such state outside ATDECC needs a new face,
+   which is a parent-visible change.
 
 The **event router** delivers sticky events (catalog [02 §5](02_interfaces.md)) to
 their consumers; consumers that are state machines treat them as SM events, the

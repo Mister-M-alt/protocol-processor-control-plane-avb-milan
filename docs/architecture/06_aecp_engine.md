@@ -12,13 +12,16 @@ per-command FSMs ([review §4](../00_MILAN_COMPLIANCE_REVIEW.md)).
 
 ## 2. External contract
 
-Consumes: AECP queue (AEM_COMMAND, VENDOR_UNIQUE_COMMAND); MGMT-origin transactions
-(front-panel-equivalent changes); timer expiries (`T-NOTIF-MONITOR`, `T-LOCK-UNLOCK`,
-`T-NOTIF-TIMELIMITED`, `T-CTR-OBSERVE`, `T-IDENT-*`); events routed for notification
-triggers; snapshot reads of ACMP sink records ([05 §5](05_acmp_engine.md)) and the
-class-D dictionary ([F02.10](02_interfaces.md#fig-02-statusdict)). Produces: solicited
-responses; unsolicited responses + CONTROLLER_AVAILABLE + IDENTIFY_NOTIFICATION via
-the originator; entity-model overlay writes + NVM completion marks; `avtp`/`mclk`/`srp`
+Consumes: AECP queue (AEM_COMMAND, VENDOR_UNIQUE_COMMAND); timer expiries on the
+shared expiry bus (`T-NOTIF-MONITOR`, `T-LOCK-UNLOCK`, `T-NOTIF-TIMELIMITED`, and
+`T-IDENT-*` with `P-EN-IDENTIFY-NOTIFICATION`); `identify_button_i` with the same
+parameter; events routed for notification triggers; snapshot reads of ACMP sink
+records ([05 §5](05_acmp_engine.md)) and the class-D dictionary
+([F02.10](02_interfaces.md#fig-02-statusdict)). There are no MGMT-origin transactions in
+this build ([03 §5](03_packet_engine.md#5-origins-originator-and-event-router)).
+Produces: solicited responses; unsolicited responses (IDENTIFY_NOTIFICATION among them)
+as engine-internal SELF jobs, and CONTROLLER_AVAILABLE through the originator;
+entity-model overlay writes + NVM completion marks; `avtp`/`mclk`/`srp`
 class-B ops for applied settings. The engine also contains the D3 saved-state writer
 (NVM manager 1, [07 §5.3](07_memory_maps.md#fig-07-nvmflow)), which persists and restores
 the scalar overlay rows.
@@ -768,8 +771,32 @@ partially built TX slot and unlocks the shared writer. Emission jobs run
 through the engine one at a time (same µprograms, buffer and builder as solicited
 answers; `LANE_AECP_UNS`). Successful state-changing commands retain their response
 kind and requester exclusion in a bounded queue. GET_COUNTERS changes are coalesced
-per served descriptor and cannot begin emission more than once per second. Identify
-machinery remains absent.
+per served descriptor and cannot begin emission more than once per second.
+
+**Identify (lane C6, 2026-09-30).** Both directions are landed. Controller to entity:
+SET/GET_CONTROL on the IDENTIFY control (Milan §5.4.2.17/§5.4.2.18, §5.3.12; volatile
+0/255, published on `aecp_identify_o`; `tb/pp_top` W12/W13). Entity to controller:
+IDENTIFY_NOTIFICATION origination (IEEE §7.4.39, §7.5.1 and Figure 7-142; Milan
+§5.4.5.4), built only with `P-EN-IDENTIFY-NOTIFICATION` (default 0: no sequencer, no
+area, `identify_button_i` not read). With it, a press of the 2FF-synchronised
+`identify_button_i` sends three u = 1 IDENTIFY_NOTIFICATION responses to
+91-E0-F0-01-00-01 with controller_entity_id 90-E0-F0-FF-FE-01-00-01 and descriptor
+CONTROL / `identify_index_i`, all at identifySequenceID (0 from reset, +1 per burst),
+spaced `T-IDENT-BURST` through the IDENT-BURST singleton; while the button is held the
+next burst starts `T-IDENT-REARM` after the previous one's first frame (IDENT-REARM),
+and a release returns to WAITING without cutting a burst short. Graded on the wire in
+the `tb/pp_top` third build (section ID) and silent at 0 (section ID0); the command
+form keeps its `BAD_ARGUMENTS` (A6, ID4). **What identify work remains:** none in this
+repository. Adopting it is the integrator's: a debounced board button on
+`identify_button_i` and the parameter set to 1 (the parent ties the pin to 0 until it
+has one).
+
+**Verification categories.** The RND and STORM suites of [09 §3](09_verification.md)
+exist for this section: `tb/pp_top` RN (seeded REGISTER/DEREGISTER/LOCK/SET churn from
+20 controllers against an independent registry and lock model), ST (fan-out to all 16
+rows, GET_COUNTERS churn above 1 Hz on five descriptors, solicited deadlines under the
+load) and NP (a byte-exact push at a second controller for every command class of
+[F06.14](#fig-06-cmdtable) that notifies).
 
 Registry entry ([F07.7](07_memory_maps.md#fig-07-regrec)): {controller EID, MAC, port,
 next unsolicited `sequence_id` (init 0), TIME_LIMITED deadline, monitor deadline,
@@ -814,8 +841,15 @@ sequenceDiagram
 ```
 
 Trigger classes: (1) every successful state-changing command (regenerated as the
-corresponding response, requester excluded); (2) MGMT/front-panel-equivalent changes
-while unlocked — read-only objects use the GET_ form (IEEE §7.5.2); (3) async
+corresponding response, requester excluded: the body is the command's own response
+format from current state, so an unsolicited SET_STREAM_INFO carries 1722.1-2021
+Figure 7-40's complete 84-byte body, MSRP_ACC_LAT_VALID with the presentation-time
+offset in force, never Milan's GET_STREAM_INFO form, which §5.4.2.10 substitutes for the
+GET response alone); (2) MGMT/front-panel-equivalent changes while unlocked — read-only
+objects use the GET_ form (IEEE §7.5.2). **MGMT-origin changes are not supported by
+this build**: nothing outside ATDECC can change command-settable state (no MGMT
+producer, [03 §5](03_packet_engine.md#5-origins-originator-and-event-router)), so Milan
+§5.4.5.2's non-ATDECC duty has no trigger here; (3) async
 Table 5.22 set: GET_STREAM_INFO field changes (input/output splits per F06.13),
 GET_AVB_INFO (GM, prop delay, domain, asCapable, class-A prio/VID), GET_AS_PATH,
 GET_COUNTERS (`T-CTR-NOTIF`-limited), LOCK_ENTITY auto-unlock, targeted DEREGISTER.
@@ -868,10 +902,12 @@ sequenceDiagram
     AECP->>DEV: identify_active = 1
     AECP-->>CTRL: response + unsolicited to others
     Note over AECP: value stays 255 until SET_CONTROL 0 (reset default 0)
-    Note over AECP,DEV: button variant (P-EN-IDENTIFY-NOTIFICATION)
-    DEV->>AECP: identify_button pressed
-    AECP->>AECP: IDENTIFY_NOTIFICATION x3 @ T-IDENT-BURST, re-arm T-IDENT-REARM while held
-    Note over AECP: multicast 91-E0-F0-01-00-01, controller_entity_id 90-E0-F0-FF-FE-01-00-01, identifySequenceID++
+    Note over AECP,DEV: button variant (P-EN-IDENTIFY-NOTIFICATION, default 0)
+    DEV->>AECP: identify_button_i pressed (2FF, debounced by the integrator)
+    AECP-->>CTRL: IDENTIFY_NOTIFICATION x3, T-IDENT-BURST apart, all at identifySequenceID
+    Note over AECP: multicast 91-E0-F0-01-00-01, controller_entity_id 90-E0-F0-FF-FE-01-00-01, u = 1, CONTROL identify_index_i
+    AECP-->>CTRL: still held after T-IDENT-REARM from the first frame: the next burst, identifySequenceID + 1
+    DEV->>AECP: released: WAITING (a running burst still ends)
 ```
 
 ## 8. µcode architecture
@@ -972,7 +1008,7 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x002C ADD_AUDIO_MAPPINGS | real atomic whole-command validation and commit for dynamic Stream Port Input and Output targets; static targets return `NOT_SUPPORTED`; every success emits the required unsolicited response |
 | 0x002D REMOVE_AUDIO_MAPPINGS | real atomic whole-command validation and commit with duplicate-safe removal; static targets return `NOT_SUPPORTED`; every success emits the required unsolicited response |
 | 0x004B GET_DYNAMIC_INFO | real two-pass batch execution: exact fixed-get whitelist, whole-command `BAD_ARGUMENTS` before processing on a forbidden member, ordinary getter results with per-record status, `NOT_SUPPORTED` plus copied command data for legal unimplemented members, and silent skip with continued processing when a result would exceed cdl 524 |
-| 0x0026 IDENTIFY_NOTIFICATION | `BAD_ARGUMENTS`, using the opcode-specific §7.4.39.2 rule over §9.3.5.3.3 |
+| 0x0026 IDENTIFY_NOTIFICATION | `BAD_ARGUMENTS`, using the opcode-specific §7.4.39.2 rule over §9.3.5.3.3; originated only as the unsolicited response of §7.5.1, with `P-EN-IDENTIFY-NOTIFICATION` (§7) |
 | MVU 0x0000 GET_MILAN_INFO | real: SUCCESS + the Figure 5.4 body, `protocol_version` 1, `features_flags` 0, `certification_version` 0 (§6.9 and the honesty note below); AECPDU 44 B, cdl 32 |
 | everything else, all message types | `NOT_IMPLEMENTED` with the command **echoed** (F06.14 / §9.3.5.3.3) |
 

@@ -47,6 +47,7 @@ Two things it deliberately does **not** do, and which you should not go looking 
 | Reading the model | descriptors served out of the integrator's main memory. If the image was never loaded, every `READ_DESCRIPTOR` answers `BAD_ARGUMENTS` because the store reports zero configurations, never a garbage descriptor |
 | An unimplemented command | `NOT_IMPLEMENTED` with the command **echoed back**, correctly sized. Never silence, never a malformed frame |
 | `IDENTIFY_NOTIFICATION` sent as a command | `BAD_ARGUMENTS` — the opcode-specific rule of IEEE 1722.1-2021 §7.4.39.2 beats the general fallback of §9.3.5.3.3 |
+| The user presses the identify button (only in a build with `EN_IDENTIFY_NOTIF_P` = 1 and the button wired) | three unsolicited `IDENTIFY_NOTIFICATION` frames to 91:E0:F0:01:00:01, 150 ms apart, all with the same `sequence_id`, and another three every second while it is held (IEEE 1722.1-2021 §7.5.1). A controller must join that group to see them. The default build sends none |
 | `ACQUIRE_ENTITY` | `NOT_SUPPORTED`. Milan §5.4.2.1 says acquisition shall never succeed |
 | `DISCONNECT_TX` | always `SUCCESS`, and it changes nothing. The Milan talker is stateless |
 | `GET_TX_CONNECTION` | `NOT_SUPPORTED`, for the same reason |
