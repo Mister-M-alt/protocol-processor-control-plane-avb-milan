@@ -826,6 +826,10 @@ struct H {
   uint64_t rm_reqs = 0;
   uint64_t rm_writes = 0;
   vluint64_t aecp_rx_t = 0;
+  //! the clock of the first byte of the frame being captured, and of the
+  //! last complete AECP frame's first byte (section DL's response line)
+  vluint64_t cur_sof_t = 0;
+  vluint64_t aecp_sof_t = 0;
   std::deque<std::vector<uint8_t>> q_aecp;
   //! MAAP frames (subtype 0xFE) with their eof-time compressed ms
   std::deque<std::pair<std::vector<uint8_t>, uint32_t>> q_maap;
@@ -1127,6 +1131,30 @@ struct H {
   //! srp_domain_change_o strobes, counted once per cycle (section DV): the
   //! one-cycle DOMAIN_CHANGE has no wire shape of its own
   int domain_changes = 0;
+  //! the AECP deadline face (section DL), every cycle since `dl_clear()`:
+  //! the first clock the top held a kill of the AECP hold and that hold's
+  //! id, the clocks the scoreboard honoured a kill and the engine handed a
+  //! solicited response to its lane, the cycles the killed hold's bit was
+  //! clear between the expiry and the first hand-off (it must stay held),
+  //! the bit in the clock after that hand-off, and the µCPU's redirects
+  long dl_kill_first = -1;
+  int  dl_kill_id = -1;
+  std::vector<long> dl_acks;
+  std::vector<long> dl_queued;
+  long dl_hold_gap = 0;
+  int  dl_hold_after_queue = -1;
+  int  dl_pre_rises = 0;
+  bool dl_pre_prev = false;
+  void dl_clear() {
+    dl_kill_first = -1;
+    dl_kill_id = -1;
+    dl_acks.clear();
+    dl_queued.clear();
+    dl_hold_gap = 0;
+    dl_hold_after_queue = -1;
+    dl_pre_rises = 0;
+    dl_pre_prev = d->dbg_ucpu_pre_o != 0;
+  }
   // ---- the SET_STREAM_FORMAT verdict (kind 0 selector 15) and the
   // settings fold. The verdict is the integrator's ruling on the PROPOSED
   // format riding gsi_prop_fmt_o: bit 0 = the format is one of the
@@ -1257,6 +1285,7 @@ struct H {
     nvm_unflushed_seen |= d->nvm_unflushed_o;
     sample_restore_levels();
     sample_d3_ownership();
+    sample_deadline_face();
     if (d->srp_domain_change_o) ++domain_changes;
 
     d->clk_i = 1; d->eval();
@@ -1281,6 +1310,27 @@ struct H {
       ++rs_pre;
       if (rs_done) ++rs_pre_late;
     }
+  }
+
+  void sample_deadline_face() {
+    if (!d->rst_n) return;
+    const long now = static_cast<long>(t);
+    const bool queued_seen = !dl_queued.empty();
+    if (dl_kill_id >= 0 && queued_seen && dl_hold_after_queue < 0
+        && now == dl_queued.front() + 1)
+      dl_hold_after_queue = (d->dbg_sb_holds_o >> dl_kill_id) & 1;
+    if (d->dbg_aecp_dl_kill_o && dl_kill_first < 0) {
+      dl_kill_first = now;
+      dl_kill_id = static_cast<int>(d->dbg_aecp_sb_id_o);
+    }
+    if (dl_kill_id >= 0 && !queued_seen
+        && !((d->dbg_sb_holds_o >> dl_kill_id) & 1))
+      ++dl_hold_gap;
+    if (d->dbg_sb_kill_ack_o) dl_acks.push_back(now);
+    if (d->dbg_aecp_dl_queued_o) dl_queued.push_back(now);
+    const bool pre = d->dbg_ucpu_pre_o != 0;
+    if (pre && !dl_pre_prev) ++dl_pre_rises;
+    dl_pre_prev = pre;
   }
 
   void sample_d3_ownership() {
@@ -1311,7 +1361,7 @@ struct H {
     }
     d->tx_ready_i = mac_tx_ready;
     if (d->tx_valid_o && mac_tx_ready) {
-      if (d->tx_sof_o) { cur.clear(); in_frame = true; }
+      if (d->tx_sof_o) { cur.clear(); in_frame = true; cur_sof_t = t; }
       if (in_frame) cur.push_back(d->tx_data_o);
       if (d->tx_eof_o && in_frame) {
         in_frame = false;
@@ -1325,6 +1375,7 @@ struct H {
         } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFB) {
           q_aecp.push_back(cur);
           aecp_rx_t = t;                       // for the response-cost check
+          aecp_sof_t = cur_sof_t;
         } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFE) {
           q_maap.push_back({cur, uint32_t(d->dbg_now_ms_o)});
         } else if (et == 0x22EA) {
@@ -10326,6 +10377,353 @@ struct AdpConfigPhase {
   printf("AD: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+// ==== DL. The AECP transaction deadline (issue #81, GAP-07) ================
+// 03 §6 rule (e) with 08 §4: the normalizer stamps every AECP transaction
+// with a deadline T-BUDGET-AECP-WC (100 ms) after its reception, the top
+// reads it at admission, and a command still executing when it passes is
+// preempted into the forced FAIL_SAFE response, which must be on the wire
+// inside T-AECP-RESP (240 ms: IEEE 1722.1-2021 §9.3.2.6, and Milan v1.2
+// §5.4.3.4 for MVU). The suite's timebase is compressed (1 ms = 100 clk), so
+// the budget is 10,000 clocks and the response line 24,000. Every stall below
+// is an integrator face answering slowly but inside its 4,096-clock
+// watchdog: a slow but live integrator, which no watchdog catches, is exactly
+// what the deadline exists for. A fresh processor of its own (the AD
+// pattern); the main run's clock is untouched.
+struct DeadlinePhase {
+  H& h;                                        // the tally
+  const milan::tb::Model<Vpp_top_wrap> model;
+  H io;
+  Suite image;
+  static constexpr long BUDGET_CYC = 100L * MS_CYC;   // T-BUDGET-AECP-WC
+  static constexpr long RESP_CYC = 240L * MS_CYC;     // T-AECP-RESP
+  static constexpr uint8_t VU_COMMAND = 6;
+  static constexpr uint8_t VU_RESPONSE = 7;
+  static constexpr uint16_t MVU_PID_HI = 0x001B;
+  static constexpr uint32_t MVU_PID_LO = 0xC50AC100u;
+  static constexpr uint16_t GDI_GET_VIDEO_FMT = 0x000B;
+
+  explicit DeadlinePhase(H& tally) : h(tally), io(model.get()), image(io) {}
+
+  static std::vector<uint8_t> ti(uint16_t ty, uint16_t ix) {
+    std::vector<uint8_t> p(4, 0);
+    putbe(&p[0], ty, 2);
+    putbe(&p[2], ix, 2);
+    return p;
+  }
+  static std::vector<uint8_t> mvu_pl() {
+    std::vector<uint8_t> p(8, 0);
+    putbe(&p[0], MVU_PID_LO, 4);               // GET_MILAN_INFO, Figure 5.3
+    return p;
+  }
+  //! the forced response: unicast to the requester, message_type + 1, the
+  //! sequence_id echoed, ENTITY_MISBEHAVING, header only (60 bytes on the wire)
+  static std::vector<uint8_t> forced(uint16_t seq, uint16_t op) {
+    return aecp_frame(CTLR_MAC, OWN_MAC, 1, 10, EID, CTLR_EID, seq, op, {});
+  }
+  static int status(const std::vector<uint8_t>& f) {
+    return f.size() > 16 ? ((f[16] >> 3) & 0x1F) : -1;
+  }
+  static uint16_t seq_of(const std::vector<uint8_t>& f) {
+    return f.size() > 35 ? static_cast<uint16_t>((f[34] << 8) | f[35]) : 0;
+  }
+  //! feed one AEM command; returns the clock its last byte left the trunk
+  long send(uint16_t op, const std::vector<uint8_t>& pl, uint16_t seq,
+            uint8_t mt = 0) {
+    io.feed(aecp_frame(OWN_MAC, CTLR_MAC, mt, 0, EID, CTLR_EID, seq,
+                       mt == VU_COMMAND ? MVU_PID_HI : op, pl));
+    return static_cast<long>(io.t) - 4;        // feed idles 4 after the byte
+  }
+  //! the AECP response carrying `seq`, with the clock of its first byte
+  std::vector<uint8_t> answer(uint16_t seq, long* first) {
+    for (long c = 0; c < 400L * MS_CYC; ++c) {
+      while (!io.q_aecp.empty()) {
+        auto f = io.q_aecp.front();
+        io.q_aecp.pop_front();
+        if (seq_of(f) == seq) {
+          *first = static_cast<long>(io.aecp_sof_t);
+          return f;
+        }
+      }
+      io.step();
+    }
+    *first = -1;
+    return {};
+  }
+
+  void boot() {
+    image.load_descriptor_image();
+    io.reset();
+    CHECK(io.boot_to_aecp() && io.d->restore_done_o && !io.d->restore_fail_o,
+          "DL boot: both restore walks end done over a blank device");
+    io.flush_all();
+    io.q_aecp.clear();
+  }
+
+  //! DL1 (#81 acceptance 2, 09 F09.4's last row): a GET_COUNTERS whose
+  //! counter store answers each quadlet 1,000 clocks late (inside the 4,096
+  //! watchdog; 33 of them would take about 330 ms) is preempted at the
+  //! deadline and answered by the forced response, never a silent retire
+  void dl1_a_stalled_command_is_answered_by_the_forced_response() {
+    io.q_aecp.clear();
+    io.dl_clear();
+    io.ctr_hold = 1000;
+    const uint64_t reads0 = io.ctr_reads;
+    const long t0 = send(AEM_GET_COUNTERS, ti(0x0005, 0), 0xD101);
+    long first = -1;
+    const auto f = answer(0xD101, &first);
+    io.ctr_hold = 2;
+    const long kill = io.dl_kill_first - t0;
+    printf("  [DL1] kill %ld clocks after reception, forced response's first "
+           "byte at %ld (budget %ld, T-AECP-RESP %ld)\n", kill, first - t0,
+           BUDGET_CYC, RESP_CYC);
+    CHECK(f == forced(0xD101, AEM_GET_COUNTERS),
+          "DL1: the stalled GET_COUNTERS is answered ENTITY_MISBEHAVING, "
+          "header only, byte-exact (status %d, %zu bytes)", status(f),
+          f.size());
+    CHECK(io.dl_kill_first >= 0 && kill >= BUDGET_CYC - MS_CYC - 20
+              && kill <= BUDGET_CYC + 20,
+          "DL1: the kill rose at the T-BUDGET-AECP-WC deadline, %ld clocks "
+          "after reception", kill);
+    CHECK(first > io.dl_kill_first && first - t0 < RESP_CYC,
+          "DL1: the forced response's first byte %ld clocks after reception, "
+          "after the deadline and inside T-AECP-RESP (%ld)", first - t0,
+          RESP_CYC);
+    CHECK(io.ctr_reads - reads0 < 33,
+          "DL1: the program stopped at an op boundary: %llu of 33 quadlets "
+          "asked", static_cast<unsigned long long>(io.ctr_reads - reads0));
+    CHECK(io.dl_pre_rises == 1, "DL1: the µCPU was redirected once (%d)",
+          io.dl_pre_rises);
+    CHECK(io.dl_acks.size() == 1 && io.dl_queued.size() == 1
+              && io.dl_acks.front() == io.dl_queued.front(),
+          "DL1: the scoreboard honoured the kill once, in the clock the "
+          "forced response was queued (%zu kills, %zu queued)",
+          io.dl_acks.size(), io.dl_queued.size());
+    CHECK(io.dl_hold_gap == 0 && io.dl_hold_after_queue == 0,
+          "DL1: the key stayed held from the expiry to the forced response's "
+          "hand-off (%ld clocks free) and was free after it (%d)",
+          io.dl_hold_gap, io.dl_hold_after_queue);
+  }
+
+  //! DL2 (rule (e): no partial commit survives): a SET_NAME on CLOCK_DOMAIN
+  //! 0 whose descriptor fetch is 3,000 clocks late writes its name lanes
+  //! (its first effect) before the deadline, then builds its nine-lane
+  //! response against a response memory taking 1,500 clocks per lane write,
+  //! and the deadline passes in the middle of that body. Past its first
+  //! effect the program is not preempted: its own SUCCESS goes out (late in
+  //! this compressed timebase: every remaining op is watchdog-bounded, well
+  //! under a millisecond at P-CLK-HZ), the name reads back and its NVM mark
+  //! lands once
+  void dl2_past_its_first_effect_a_command_answers_for_itself() {
+    std::vector<uint8_t> pl(8, 0);
+    putbe(&pl[0], 0x0024, 2);                  // CLOCK_DOMAIN 0, name 0
+    putbe(&pl[6], CFGIX, 2);
+    const char* const name = "Clock Domain Past Its Deadline";
+    for (size_t i = 0; i < 64; ++i)
+      pl.push_back(i < std::strlen(name) ? static_cast<uint8_t>(name[i]) : 0);
+    io.q_aecp.clear();
+    io.dl_clear();
+    const uint64_t marks0 = io.nvm_marks;
+    io.dram_delay_next = 3000;
+    io.rmem_wlat = 1500;
+    const long t0 = send(AEM_SET_NAME, pl, 0xD201);
+    long first = -1;
+    const auto f = answer(0xD201, &first);
+    io.rmem_wlat = 17;
+    printf("  [DL2] kill %ld clocks after reception, the SET_NAME's own "
+           "response at %ld\n", io.dl_kill_first - t0, first - t0);
+    CHECK(io.dl_kill_first > t0 && io.dl_kill_first < first,
+          "DL2: premise: the deadline passed while the SET_NAME was in flight "
+          "(kill at %ld, response at %ld)", io.dl_kill_first - t0, first - t0);
+    CHECK(f == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                          0xD201, AEM_SET_NAME, pl),
+          "DL2: past its NAME_WR the SET_NAME answers its own SUCCESS, "
+          "byte-exact (status %d)", status(f));
+    CHECK(io.dl_pre_rises == 0, "DL2: the µCPU was never redirected (%d)",
+          io.dl_pre_rises);
+    CHECK(io.nvm_marks == marks0 + 1, "DL2: its NVM mark landed once (%llu)",
+          static_cast<unsigned long long>(io.nvm_marks - marks0));
+    std::vector<uint8_t> sel(pl.begin(), pl.begin() + 8);
+    (void)send(AEM_GET_NAME, sel, 0xD202);
+    const auto r = answer(0xD202, &first);
+    CHECK(r == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                          0xD202, AEM_GET_NAME, pl),
+          "DL2: GET_NAME reads the stored name back");
+  }
+
+  //! DL3 (08 §4: the deadline is armed at reception; Milan v1.2 §5.4.3.3
+  //! Table 5.19, §5.4.3.4): a GET_MILAN_INFO queued behind DL1's stall
+  //! waits past its own deadline and is preempted at its first op boundary.
+  //! Its forced answer is the MVU refusal form, NOT_IMPLEMENTED with the
+  //! command echoed, since Table 5.19 has no status 10, and it is on the wire
+  //! inside T-AECP-RESP of its own reception
+  void dl3_the_deadline_counts_from_reception_and_mvu_answers_not_implemented() {
+    io.q_aecp.clear();
+    io.dl_clear();
+    io.ctr_hold = 1000;
+    const long ta = send(AEM_GET_COUNTERS, ti(0x0005, 0), 0xD301);
+    const long tb = send(0, mvu_pl(), 0xD302, VU_COMMAND);
+    long fa_first = -1;
+    long fb_first = -1;
+    const auto fa = answer(0xD301, &fa_first);
+    const auto fb = answer(0xD302, &fb_first);
+    io.ctr_hold = 2;
+    printf("  [DL3] the stall answered at %ld, the queued GET_MILAN_INFO at "
+           "%ld clocks after its reception\n", fa_first - ta, fb_first - tb);
+    CHECK(fa == forced(0xD301, AEM_GET_COUNTERS),
+          "DL3: the stall ahead of it is answered by the forced response "
+          "(status %d)", status(fa));
+    CHECK(fb == aecp_frame(CTLR_MAC, OWN_MAC, VU_RESPONSE, AECP_NOT_IMPLEMENTED,
+                           EID, CTLR_EID, 0xD302, MVU_PID_HI, mvu_pl()),
+          "DL3: the queued GET_MILAN_INFO past its deadline answers MVU "
+          "NOT_IMPLEMENTED with the command echoed, byte-exact (status %d, "
+          "%zu bytes)", status(fb), fb.size());
+    CHECK(fb_first - tb > BUDGET_CYC && fb_first - tb < RESP_CYC,
+          "DL3: its first byte %ld clocks after its own reception: past "
+          "T-BUDGET-AECP-WC and inside T-AECP-RESP", fb_first - tb);
+    CHECK(fa_first - ta < RESP_CYC, "DL3: the stall's answer inside "
+          "T-AECP-RESP too (%ld)", fa_first - ta);
+    CHECK(io.dl_pre_rises == 2 && io.dl_acks.size() == 2,
+          "DL3: both preempted, both keys released at their responses (%d "
+          "redirects, %zu kills)", io.dl_pre_rises, io.dl_acks.size());
+  }
+
+  //! DL4: a GET_DYNAMIC_INFO of twelve GET_VIDEO_FORMAT records (permitted,
+  //! not implemented: each copies its data under NOT_SUPPORTED) against a
+  //! response memory taking 3,900 clocks per lane write would build for about
+  //! 700 ms. Past the deadline no further record runs and the aggregate is
+  //! voided: ENTITY_MISBEHAVING, empty, inside T-AECP-RESP
+  void dl4_a_dynamic_info_batch_past_its_deadline_is_voided() {
+    std::vector<uint8_t> req;
+    for (uint16_t k = 0; k < 12; ++k) {
+      std::vector<uint8_t> r(8, 0);
+      putbe(&r[0], 4, 2);                      // four bytes of command data
+      putbe(&r[6], GDI_GET_VIDEO_FMT, 2);
+      const auto data = ti(0x0005, k);
+      r.insert(r.end(), data.begin(), data.end());
+      req.insert(req.end(), r.begin(), r.end());
+    }
+    io.q_aecp.clear();
+    io.dl_clear();
+    io.rmem_wlat = 3900;
+    const long t0 = send(AEM_GET_DYNAMIC_INFO, req, 0xD401);
+    long first = -1;
+    const auto f = answer(0xD401, &first);
+    io.rmem_wlat = 17;
+    printf("  [DL4] the voided batch answered %ld clocks after reception\n",
+           first - t0);
+    CHECK(f == forced(0xD401, AEM_GET_DYNAMIC_INFO),
+          "DL4: the batch past its deadline is voided: ENTITY_MISBEHAVING, "
+          "empty, byte-exact (status %d, %zu bytes)", status(f), f.size());
+    CHECK(first > io.dl_kill_first && first - t0 < RESP_CYC,
+          "DL4: its first byte %ld clocks after reception, after the "
+          "deadline and inside T-AECP-RESP", first - t0);
+    CHECK(io.dl_acks.size() == 1, "DL4: the key released at the response");
+  }
+
+  //! DL5 (the kill face releases only with a response queued): an AECP
+  //! RESPONSE frame arriving as input is owed no response (IEEE Figure 9-3,
+  //! V6). Queued behind a stall it is admitted past its deadline, dropped,
+  //! and retires through the normal release: no answer, one kill honoured
+  //! (the stall's), every hold free, and a later command answered normally
+  void dl5_an_expired_frame_owed_no_response_releases_normally() {
+    io.q_aecp.clear();
+    io.dl_clear();
+    io.ctr_hold = 1000;
+    const uint16_t drops0 = io.d->dbg_aecp_drop_o;
+    (void)send(AEM_GET_COUNTERS, ti(0x0005, 0), 0xD501);
+    (void)send(AEM_GET_CONFIGURATION, {}, 0xD502, 1);  // an AEM_RESPONSE
+    long first = -1;
+    const auto fa = answer(0xD501, &first);
+    io.ctr_hold = 2;
+    const auto fb = answer(0xD502, &first);
+    CHECK(fa == forced(0xD501, AEM_GET_COUNTERS) && fb.empty(),
+          "DL5: the stall is answered and the response frame is not (%zu "
+          "bytes)", fb.size());
+    CHECK(static_cast<uint16_t>(io.d->dbg_aecp_drop_o - drops0) == 1
+              && io.dl_acks.size() == 1 && io.d->dbg_sb_holds_o == 0,
+          "DL5: the frame was dropped, one kill honoured, every hold free "
+          "(drops %u, kills %zu, holds %02x)",
+          unsigned(io.d->dbg_aecp_drop_o - drops0), io.dl_acks.size(),
+          unsigned(io.d->dbg_sb_holds_o));
+    (void)send(AEM_GET_CONFIGURATION, {}, 0xD503);
+    const auto g = answer(0xD503, &first);
+    CHECK(status(g) == AECP_SUCCESS && g.size() == 60,
+          "DL5: a later GET_CONFIGURATION is answered SUCCESS (status %d)",
+          status(g));
+  }
+
+  //! DL6 (the three commands never preempted): an ADD_AUDIO_MAPPINGS whose
+  //! edit face holds every validation request 3,000 clocks (inside the
+  //! watchdog) is still validating at the deadline. Its change rides the edit
+  //! face, whose phase 1 is its point of no return, so it runs to its own
+  //! SUCCESS and both records are committed
+  void dl6_an_edit_past_its_point_of_no_return_is_not_preempted() {
+    const std::vector<uint64_t> rows = {AudioMapEditPhase::row(0, 3, 3),
+                                        AudioMapEditPhase::row(0, 4, 4)};
+    const auto p = AudioMapEditPhase::edit_pl(AudioMapEditPhase::DT_SPI, 0,
+                                              rows);
+    io.amap_edit_mode = true;
+    io.amap_edit_in0.clear();
+    io.q_aecp.clear();
+    io.dl_clear();
+    io.amap_edit_hold = 3000;
+    const long t0 = send(AudioMapEditPhase::ADD, p, 0xD601);
+    long first = -1;
+    const auto f = answer(0xD601, &first);
+    io.amap_edit_hold = 0;
+    printf("  [DL6] kill %ld clocks after reception, the edit's own response "
+           "at %ld\n", io.dl_kill_first - t0, first - t0);
+    CHECK(io.dl_kill_first > t0 && io.dl_kill_first < first,
+          "DL6: premise: the deadline passed while the edit validated (kill "
+          "at %ld, response at %ld)", io.dl_kill_first - t0, first - t0);
+    CHECK(f == AudioMapEditPhase::expect(AECP_SUCCESS, AudioMapEditPhase::ADD,
+                                         0xD601, p),
+          "DL6: the edit answers its own SUCCESS, byte-exact (status %d)",
+          status(f));
+    CHECK(io.amap_edit_in0 == rows && io.dl_pre_rises == 0,
+          "DL6: both records committed, the µCPU never redirected (%zu rows, "
+          "%d redirects)", io.amap_edit_in0.size(), io.dl_pre_rises);
+  }
+
+  //! DL7: none of it leaked: every RX slot free, and READ_DESCRIPTOR of the
+  //! ENTITY answers byte-exact
+  void dl7_nothing_leaked() {
+    io.run_ms(20);
+    CHECK(((io.snap(25) >> 3) & 0xFFFFu) == 4u,
+          "DL7: %u of 4 RX slots free after the deadline arms",
+          (io.snap(25) >> 3) & 0xFFFFu);
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2);
+    std::vector<uint8_t> epl(4, 0);
+    putbe(&epl[0], CFGIX, 2);
+    epl.insert(epl.end(), image.image_entity.begin(), image.image_entity.end());
+    (void)send(AEM_READ_DESCRIPTOR, rd, 0xD701);
+    long first = -1;
+    const auto f = answer(0xD701, &first);
+    CHECK(f == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                          0xD701, AEM_READ_DESCRIPTOR, epl),
+          "DL7: READ_DESCRIPTOR(ENTITY) after the arms is byte-exact");
+  }
+
+  void run() {
+    boot();
+    dl1_a_stalled_command_is_answered_by_the_forced_response();
+    dl2_past_its_first_effect_a_command_answers_for_itself();
+    dl3_the_deadline_counts_from_reception_and_mvu_answers_not_implemented();
+    dl4_a_dynamic_info_batch_past_its_deadline_is_voided();
+    dl5_an_expired_frame_owed_no_response_releases_normally();
+    dl6_an_edit_past_its_point_of_no_return_is_not_preempted();
+    dl7_nothing_leaked();
+  }
+};
+
+[[maybe_unused]] static void run_deadlines(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  DeadlinePhase{h}.run();
+  printf("DL: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   //! the harness that owns the tally. Section DV runs on a model of its own
@@ -10343,16 +10741,19 @@ int main(int argc, char** argv) {
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
   const bool d3_only = argc == 2 && std::strcmp(argv[1], "--d3-only") == 0;
   const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
+  const bool dl_only = argc == 2 && std::strcmp(argv[1], "--deadline-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
   }
-  const bool one_section = gsi_only || name_only || d3_only || adp_only;
+  const bool one_section = gsi_only || name_only || d3_only || adp_only
+                           || dl_only;
   if (!one_section) Suite(h).run();
   if (!one_section || gsi_only) InternalStreamInfoPhase{h}.run();
   if (!one_section || name_only) run_name_writes(h);
   if (!one_section || d3_only) run_d3(h);
   if (!one_section || adp_only) run_adp_config(h);
+  if (!one_section || dl_only) run_deadlines(h);
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's two

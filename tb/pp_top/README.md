@@ -621,6 +621,47 @@ tally.
   default run includes it. The mutation record is `tb/adp_engine`'s campaign
   (`make -C tb/adp_engine mutants`), which runs this section against each
   patch.
+- **DL** **the AECP transaction deadline** (issue #81, GAP-07; 03 §6 rule (e),
+  08 §4; IEEE 1722.1-2021 §9.3.2.6, Milan v1.2 §5.4.3.4), on a fresh processor
+  of its own. The normalizer stamps each AECP transaction's deadline
+  T-BUDGET-AECP-WC after its reception, the top reads it at admission, and a
+  command still executing when it passes is preempted into the forced FAIL_SAFE
+  response, which must be on the wire inside T-AECP-RESP. In this timebase the
+  deadline is 10,000 clocks and the response line 24,000. Every stall is a face
+  answering slowly but inside its 4,096-clock watchdog, the case no watchdog
+  catches. **DL1** a GET_COUNTERS whose counter store answers each quadlet
+  1,000 clocks late (33 quadlets, about 330 ms) is answered ENTITY_MISBEHAVING,
+  header only, byte-exact: the kill rises at the deadline, the first byte lands
+  after it and inside T-AECP-RESP, the program stopped at an op boundary (fewer
+  than 33 quadlets asked), the µCPU was redirected once, and the scoreboard
+  honoured the kill once, in the clock the forced response was handed to its
+  lane, the killed hold's bit set in every clock from the expiry to that hand-off
+  and clear after it. **DL2** (no partial commit) a SET_NAME whose descriptor
+  fetch is 3,000 clocks late writes its name lanes before the deadline and
+  builds its nine-lane body against a response memory taking 1,500 clocks per
+  lane write, so the deadline passes inside the body: it answers its own
+  SUCCESS byte-exact (late in this timebase; each remaining op is
+  watchdog-bounded, well under a millisecond at P-CLK-HZ), the µCPU is never
+  redirected, its NVM mark lands once and GET_NAME reads the name back. **DL3**
+  a GET_MILAN_INFO queued behind DL1's stall waits past its own deadline (the
+  deadline counts from reception) and is preempted at its first op boundary:
+  it answers MVU NOT_IMPLEMENTED with the command echoed (Milan Table 5.19 has
+  no status 10), byte-exact, past T-BUDGET-AECP-WC and inside T-AECP-RESP of
+  its own reception. **DL4** a GET_DYNAMIC_INFO of twelve GET_VIDEO_FORMAT
+  records against a response memory taking 3,900 clocks per lane write (about
+  700 ms of copying) is voided past the deadline: ENTITY_MISBEHAVING, empty,
+  inside T-AECP-RESP. **DL5** an AECP RESPONSE arriving as input, queued behind
+  a stall and admitted past its deadline, is dropped and owed nothing: no answer,
+  one kill honoured (the stall's), every hold free, and a later
+  GET_CONFIGURATION is answered. **DL6** an ADD_AUDIO_MAPPINGS whose edit face
+  holds each validation request 3,000 clocks is still validating at the
+  deadline and is never preempted: its own SUCCESS, both records committed.
+  **DL7** every RX slot is free afterwards and READ_DESCRIPTOR(ENTITY) is
+  byte-exact. The boot-held command's exemption (rule (d)) is D3O6's 150 ms
+  hold. `make deadline` runs this section alone; the default run includes it.
+  The taps are `dbg_aecp_dl_kill_o`, `dbg_aecp_dl_queued_o`,
+  `dbg_sb_kill_ack_o`, `dbg_aecp_sb_id_o`, `dbg_sb_holds_o` and
+  `dbg_ucpu_pre_o`; the mutation record is below (`aecp_mutants.py`).
 
 ## Snapshot window map (side port 0x20000, implemented by the top)
 
@@ -782,6 +823,32 @@ the last column is how many checks each one failed there.
 | `aecp_hold_unbounded` | the admission gate never drops (the unbounded hold) | `D3O5: in CLOSED each GET_RX_STATE`, `D3O6: during the slowed walk` | 7 |
 | `held_drop_uncounted` | a held drop not counted | `D3O5: one AECP command held`, `D3O6: at the terminal` | 5 |
 | `resident_never_returned` | the resident count never comes back down (R391-2's own edit) | `D3O7: the returned slot frees the share` | 1 |
+
+### AECP deadline and hazard-class controls (lane C5a): `aecp_mutants.py`
+
+`make aecp-mutants` (`python3 aecp_mutants.py --output DIR [--only a,b]`)
+applies each reviewed patch in `mutations/` to a scratch copy of `hdl/`,
+`tb/common/`, `tb/ucpu/` and this directory with `git apply`, runs one suite
+target there, and counts the arm KILLED only when the simulation completed with
+its tally, failed, and printed its named check. It reads logs only, never
+production source. A positive control of every (suite, target) pair runs first
+and must pass. Counts below were taken on 2026-09-30 with Verilator 5.052.
+
+| Arm | Suite, target | What is broken | Failing checks |
+|---|---|---|---|
+| `dl-kill-tied-off` | pp_top `deadline` | the kill face tied off again, and the engine's `dl_kill_i` with it (the wiring before issue #81) | 16: every DL1 check (the stall answers its own SUCCESS after 33,505 clocks), DL3 (both answered for real, the MVU one SUCCESS), DL4 (no answer inside the wait), DL5 |
+| `dl-released-before-queued` | pp_top `deadline` | `kill_resp_queued_i` tied 1, so the key is released at the expiry | 3: DL1 (the kill honoured 3,410 clocks before the forced response's hand-off, the hold free for them), DL5 (the dropped frame's kill honoured too) |
+| `dl-armed-at-admission` | pp_top `deadline` | the deadline re-armed at every admission instead of read from the record | 2: DL3 (the queued GET_MILAN_INFO runs and answers SUCCESS, one redirect) |
+| `dl-boot-hold-not-exempt` | pp_top `d3` | rule (d)'s exception removed: the command held through the boot keeps its stamped deadline | 1: D3O6 (the command held 150 ms is answered by the forced response, not byte-exact) |
+| `dl-gdi-runs-on` | pp_top `deadline` | the GET_DYNAMIC_INFO voids removed | 4: DL4 (the batch keeps copying, no answer inside the wait), DL5 |
+| `dl-edit-preempted` | pp_top `deadline` | the edit, registry and lock commands preempted like the rest | 2: DL6 (ENTITY_MISBEHAVING mid-validation, no record committed) |
+| `dl-preempt-after-effect-top` | pp_top `deadline` | the µCPU redirects after an effect op | 2: DL2 (the SET_NAME that wrote its name answers ENTITY_MISBEHAVING) |
+| `dl-mvu-forced-status-10` | pp_top `deadline` | the MVU forced answer left at status 10 | 1: DL3 (status 10, which Milan Table 5.19 reserves) |
+| `dl-preempt-after-effect` | ucpu `run` | the same µCPU patch, at the unit | 4: P19c (status 10 after the write, commit and mark, the notification lost), P19d |
+| `ucpu-preempt-cuts-a-wait` | ucpu `run` | the redirect taken while an op waits on its face | 2: P19e (the waiting locate abandoned, no read answered) |
+| `ucpu-preempt-keeps-the-body` | ucpu `run` | the cursor not returned to 12 | 1: P19f (length 36 with a partly built counters block) |
+| `ucpu-preempt-repeats` | ucpu `run` | the redirect not limited to once per dispatch | 18: P19a to P19h (E_DLKILL redirected into itself, never sends) |
+| `dlkill-always-misbehaving` | ucpu `run` | E_DLKILL overwrites a refusal already chosen | 1: P19d (ENTITY_LOCKED became status 10) |
 
 ## Recorded seams and honest limits
 

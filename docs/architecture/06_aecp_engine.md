@@ -887,7 +887,8 @@ moves, status register. **FAIL_SAFE entry**: a fixed µPC holds the
 forced-respond arm (`SET_STATUS` best-current → `BUILD_HEADER` →
 `SEND_RESPONSE` → `END`); the deadline engine preempts a running µprogram by
 redirecting the sequencer there, so a command retires with a response in every
-outcome ([03 §6](03_packet_engine.md) rule (e), IEEE §9.3.2.6).
+outcome ([03 §6](03_packet_engine.md) rule (e), IEEE §9.3.2.6). Realized through
+the `E_DLKILL` arm in front of it (§8.1, "The deadline kill").
 
 **µISA (29 operations)** — revised from the original document
 ([review §4](../00_MILAN_COMPLIANCE_REVIEW.md); dropped ops targeted objects that do
@@ -1091,6 +1092,36 @@ been run against this change.
 Delta 7 ACQUIRE_ENTITY is distinguished from the generic fallback. It returns
 `NOT_SUPPORTED`, preserves the command form, and carries the required zero
 `owner_id`. LOCK_ENTITY and ENTITY_AVAILABLE take their own registered paths.
+
+**The deadline kill (issue #81; [03 §6](03_packet_engine.md) rule (e)).** The
+top reads the transaction deadline at admission and raises `dl_kill_i` once it
+passes. The engine then asserts the µCPU's `preempt_i`, and the µCPU redirects
+its sequencer to `E_DLKILL` (µPC 6, two words in front of `E_FAILSAFE`) at the
+next instruction boundary, exactly like a taken branch, with the response
+cursor back at 12. `E_DLKILL` keeps a refusal status the program already chose
+and turns a SUCCESS it had not finished building into ENTITY_MISBEHAVING (IEEE
+Table 7-141 status 10), then falls into `E_FAILSAFE` (BUILD_HEADER,
+SEND_RESPONSE, END), which is unchanged. Two rules keep it from ever
+half-committing:
+
+- an op that is waiting on its face (a state read, a gather, a response-buffer
+  write) is never cut; the redirect waits for it to retire, and every such wait
+  is watchdog-bounded;
+- once a program has retired an effect op (WRITE_STATE, NAME_WR, COMMIT,
+  NVM_MARK, NOTIFY_ENQ, SEND_RESPONSE) it is never redirected: it has changed
+  state or sent its answer, and it ends with its own response. The three
+  commands whose change rides a gather face instead (REGISTER/DEREGISTER and
+  LOCK_ENTITY on the registry face, ADD/REMOVE_AUDIO_MAPPINGS on the edit face,
+  whose phase-1 acceptance is its point of no return) are never preempted.
+
+A preempted MVU command answers `NOT_IMPLEMENTED` with the command echoed,
+because Milan v1.2 §5.4.3.3 Table 5.19 defines no other failure code. A
+preempted GET_DYNAMIC_INFO getter voids the aggregate, and past the deadline no
+further record runs: the batch answers ENTITY_MISBEHAVING, empty, through the
+same void its shape check uses. The engine reports the forced response's
+hand-off to TX lane 0 on `dl_queued_o`, the scoreboard's `kill_resp_queued_i`.
+`tb/ucpu` P19 grades the redirect and `tb/pp_top` section DL the whole seam
+([09 §8.3](09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)).
 
 **Dispatch decision (this section specifies a ROM; the tree ships none).** §4 names a
 dispatch ROM and §8 fixes its 48-bit entry, but no ROM and no generator for it exist.

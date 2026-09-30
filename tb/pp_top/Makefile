@@ -13,6 +13,7 @@ TOP        = pp_top_wrap
 # verification only: Milan 4.2.7.2.1 fixes the product value at 2. README
 # section DV says why this pattern
 SRP_VID_FIXTURE = 5A3C
+MUTANT_OUTPUT ?= /tmp/aecp-mutants
 .DEFAULT_GOAL := run
 
 VFLAGS = --cc --exe --build -j 0 \
@@ -68,6 +69,17 @@ gsi-internal: gsi-build
 adp-config: gsi-build
 	./obj_dir/Vpp_top_sim --adp-only
 
+deadline: gsi-build
+	./obj_dir/Vpp_top_sim --deadline-only
+
+d3: gsi-build
+	./obj_dir/Vpp_top_sim --d3-only
+
+# lane C5a's campaign (issues #81, #57, #84): reviewed patches in mutations/,
+# each applied to a scratch copy, each required to fail its named check
+aecp-mutants:
+	python3 aecp_mutants.py --output "$(MUTANT_OUTPUT)"
+
 run: fixture-guards ltn_rom.hex ucode.hex
 	@rm -f obj_dir/build_tally.txt
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vpp_top_sim
@@ -97,4 +109,4 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 clean:
 	rm -rf obj_dir obj_vid ltn_rom.hex ucode.hex
 
-.PHONY: name-writes run gsi-build gsi-internal adp-config fixture-guards fixture-guards-test clean
+.PHONY: name-writes run gsi-build gsi-internal adp-config deadline d3 aecp-mutants fixture-guards fixture-guards-test clean

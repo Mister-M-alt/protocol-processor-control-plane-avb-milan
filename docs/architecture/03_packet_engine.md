@@ -270,6 +270,33 @@ Ordering rules:
   (parent D3 §8.1). Answering them from state the restore has not decided
   would be worse than the controller's retry.
 
+  **Realization (issue #81).** `protocol_processor_top` reads `deadline` at the
+  AECP admission (the scoreboard owner block) and compares it with the ms
+  timebase every clock: one register and one comparator, since the engine is
+  single-issue, and no timer-service slot ([F08.4](08_timing.md#fig-08-alloc)
+  is unchanged). The head held through the boot restore is re-armed at its
+  admission, which is rule (d)'s exception. From the expiry the scoreboard sees
+  a kill of the AECP hold and honours it only in the clock the engine hands the
+  forced response to its TX lane; a frame the engine drops owes no response and
+  retires through the normal release. The engine preempts the µCPU into the
+  `E_DLKILL` arm in front of FAIL_SAFE ([06 §8](06_aecp_engine.md)) at the next
+  instruction boundary, and only before the program's first effect op
+  (WRITE_STATE, NAME_WR, COMMIT, NVM_MARK, NOTIFY_ENQ, SEND_RESPONSE): a program
+  that has changed state answers for itself, every remaining wait bounded by
+  its face's watchdog, so no partial commit survives. REGISTER/DEREGISTER,
+  LOCK_ENTITY and ADD/REMOVE_AUDIO_MAPPINGS change state through a gather face
+  and are never preempted. The forced response is ENTITY_MISBEHAVING (or a
+  refusal the program had already chosen), header only; a Milan Vendor Unique
+  command answers NOT_IMPLEMENTED with the command echoed, the only failure
+  code Milan Table 5.19 defines; a GET_DYNAMIC_INFO is voided at its next
+  record boundary. An op in progress is never cut, so the forced response
+  follows the expiry within one op's watchdog-bounded wait, at most one
+  descriptor burst's ([08 §4](08_timing.md#4-deadline-budgets) states the
+  bound). The ACMP transaction's deadline
+  has no kill consumer: the ACMP executors have no forced-respond program, and
+  `T-BUDGET-ACMP-RESP` is asserted by the TIM suite instead
+  ([09 §8.3](09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)).
+
 ## 7. Response building and buffers
 
 - TX slot classes: `P-TX-STD-SLOTS` × 576 B (covers every ≤ 524-cdl PDU) and **one

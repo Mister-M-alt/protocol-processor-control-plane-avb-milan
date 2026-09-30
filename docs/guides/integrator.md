@@ -315,6 +315,16 @@ the ACMP listener keeps serving at its normal latency: one AECP command stays he
 ingress and every further one is dropped at the slot gate and counted (snapshot word 37). Erased NVM behind a proven image is not a failure: the
 restore ends on defaults and everything is served.
 
+**Slow but live is bounded too.** A watchdog catches a face that stops answering, not
+one that answers every request just inside it. For AECP that case is bounded by the
+transaction deadline instead ([03 §6](../architecture/03_packet_engine.md) rule (e),
+[08 §4](../architecture/08_timing.md#4-deadline-budgets)): a command still executing
+`T-BUDGET-AECP-WC` after its reception is answered at its next instruction boundary with a
+well-formed 60-byte `ENTITY_MISBEHAVING` (a Milan Vendor Unique command with
+`NOT_IMPLEMENTED`, the command echoed), inside `T-AECP-RESP`. A command that had already
+changed state when the deadline passed answers for itself instead, so nothing is left
+half-committed.
+
 | Face | Ports | Tie it off and… |
 |---|---|---|
 | MAAP allocation | `maap_req_valid_o`, `maap_req_release_o`, `maap_req_src_o`, `maap_conflict_ack_o` / `maap_req_ready_i`, `maap_rsp_valid_i`, `maap_rsp_ok_i`, `maap_rsp_da_i[47:0]`, `maap_conflict_valid_i`, `maap_conflict_src_i` | **no source ever declares.** `acmp_declaring_o` is structurally 0 and PROBE_TX answers `TALKER_DEST_MAC_FAILED`. Commands are still answered normally. |

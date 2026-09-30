@@ -32,6 +32,7 @@ FMT_B, FMT_W, FMT_D, FMT_Q = 0, 1, 2, 3
 ST_OK, ST_NIMPL, ST_BADARG, ST_NSUPP = 0, 1, 7, 11
 ST_NORES = 8          # Table 7-141 NO_RESOURCES (Milan SS5.4.2.21's refusal)
 ST_LOCKED = 3         # Table 7-141 ENTITY_LOCKED (the LOCK denial arm)
+ST_EMISB = 10         # Table 7-141 ENTITY_MISBEHAVING (the deadline kill's arm)
 ST_STRMRUN = 12       # Table 7-141 STREAM_IS_RUNNING — Milan's refusal for a
                       # SET aimed at a bound Stream Input or a streaming
                       # Stream Output (SS5.4.2.5 / SS5.4.2.7 / SS5.4.2.9)
@@ -74,6 +75,7 @@ def u(op: str, **fields: int) -> int:
 
 
 # Entry points — tb/ucpu/sim_main.cpp mirrors these constants.
+E_DLKILL  = 6        # 03 §6 rule (e): the deadline kill's arm, falls into E_FAILSAFE
 E_FAILSAFE = 8       # 06 §8: the forced-respond arm (IEEE §9.3.2.6)
 E_GETSR   = 16
 E_FAIL    = 40
@@ -364,6 +366,18 @@ def place(at: int, words: list[int]) -> None:
         rom[at + i] = w
     placed.append(at)
 
+
+# --- the deadline kill (03 §6 rule (e), 08 §4) -------------------------------
+# KL_aecp_ucpu redirects a preempted program here, at an instruction boundary
+# before its first effect, with the cursor back at 12. A refusal the program
+# already chose is the best current status and is kept; a SUCCESS it has not
+# finished building is not one, so it becomes ENTITY_MISBEHAVING (IEEE
+# 1722.1-2021 Table 7-141: an internal error). The stub falls into E_FAILSAFE.
+place(E_DLKILL, [
+    u('BR_STATUS', cnd=0, imm=E_FAILSAFE),
+    u('SET_STATUS', imm=ST_EMISB),
+])
+assert E_DLKILL + 2 == E_FAILSAFE, "E_DLKILL must fall into E_FAILSAFE"
 
 # --- FAIL_SAFE: respond with the best current status, always ----------------
 place(E_FAILSAFE, [

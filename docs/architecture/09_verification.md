@@ -75,7 +75,7 @@ reports uncovered REQ-IDs as failures.
 | IDENTIFY_NOTIFICATION received as a command | `BAD_ARGUMENTS`, correctly sized (IEEE §7.4.39.2) |
 | duplicate BIND_RX (same seq) replay | idempotent / cached response |
 | MRPDU with a malformed vector attribute mid-PDU | prefix processed; rest of that list + subsequent messages discarded (V9, Milan §4.2.7.1.2) |
-| deadline expiry mid-command (TIM, compressed timers) | forced FAIL_SAFE response emitted — never a silent retire (03 §6 rule (e)) |
+| deadline expiry mid-command (TIM, compressed timers) | forced FAIL_SAFE response emitted — never a silent retire (03 §6 rule (e)); `tb/pp_top` DL1 to DL6 ([§8.3](#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)) |
 
 ## 4. Reference-model contract
 
@@ -212,6 +212,33 @@ without coverage) and #21 (no handshake-misbehaving port model) are not closed b
 evidence. The top-level device model does misbehave on the handshake for the walks
 (late grant, silent header, late or erroring descriptor memory), which grades the
 walks' deadlines, not the port's.
+
+### 8.3 The AECP deadline and the hazard classes (issues #81, #57, #84)
+
+The deadline engine of [03 §6](03_packet_engine.md) rule (e) and
+[08 §4](08_timing.md#4-deadline-budgets), graded in the compressed timebase of
+`tb/pp_top` section DL (`--deadline-only`, 1 ms = 100 clocks, so the armed
+deadline is 10,000 clocks and `T-AECP-RESP` 24,000) and at the µCPU in
+`tb/ucpu` P19. Every stall is an integrator face answering slowly but inside
+its watchdog.
+
+| Property | Checks |
+|---|---|
+| a command stalled past its budget is answered by a well-formed forced response (ENTITY_MISBEHAVING, header only, byte-exact) inside `T-AECP-RESP`, never a silent retire; the kill rises at the deadline; the program stops at an op boundary | DL1 |
+| the key stays held from the expiry to the forced response's hand-off to its lane and is released in that clock, once | DL1 |
+| a program past its first effect is not preempted: its own response, every effect once, the state reads back | DL2; `tb/ucpu` P19c |
+| the deadline counts from reception, queue wait included; a Milan Vendor Unique command answers NOT_IMPLEMENTED with the command echoed | DL3 |
+| a GET_DYNAMIC_INFO past its deadline runs no further record and is voided | DL4 |
+| a frame owed no response retires through the normal release | DL5 |
+| an edit riding the edit face is never preempted | DL6 |
+| nothing leaks: every RX slot free, the next command byte-exact | DL7 |
+| the one command held through the boot restore is exempt (rule (d)) | D3O6 |
+| the redirect: before the first op, never after an effect, never cutting a waiting op, once per dispatch, dropping a partly built body, keeping a batch's cursor, the best current status kept | `tb/ucpu` P19a to P19h |
+
+The negative controls run from `tb/pp_top/aecp_mutants.py` (`make -C tb/pp_top
+aecp-mutants`): each is a reviewed patch in `tb/pp_top/mutations/` applied to a
+scratch copy, and each must fail its named check. The mutation record is in
+the [`tb/pp_top` README](../../tb/pp_top/README.md).
 
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)

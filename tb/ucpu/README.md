@@ -3,7 +3,7 @@
 
 Proves the µCPU skeleton (`hdl/aecp/KL_aecp_ucpu.sv`) actually executes the
 [06 §8](../../docs/architecture/06_aecp_engine.md) µISA before anyone quotes its
-area: `make` = build + run, exit 0 = PASS, 342 checks.
+area: `make` = build + run, exit 0 = PASS, 415 checks (2026-09-30).
 
 The C++ harness is an independent model, never DUT logic: it implements the
 state port (2-cycle read latency, locate mapping, forced miss), the gather port
@@ -61,6 +61,22 @@ writes the buffer ACCEPTS must be identical too (a stalled write that is
 duplicated or lost changes it); a REFUSED write must be re-presented
 byte-for-byte identically while it is held; and the zero-stall run must be
 held zero cycles, so the invariance is not vacuous.
+
+Covered by P19 — **the deadline preempt** (03 §6 rule (e), issue #81). The
+harness raises `preempt_i` on an observed trigger and holds it, as the engine's
+level is held: from the dispatch (P19a, P19b), once the first state write was
+accepted (P19c), once the status left SUCCESS (P19d), while a state read waits
+(P19e, with 40 extra cycles of read latency), after six gathers (P19f) and in a
+GET_DYNAMIC_INFO batch (P19g). The µCPU must redirect to `E_DLKILL` only at an
+instruction boundary and only before the program's first effect op, answer
+once with the cursor back at 12, keep a refusal already chosen (ENTITY_LOCKED)
+and turn an unfinished SUCCESS into ENTITY_MISBEHAVING, never cut a waiting
+op, keep a batch's base cursor and suppressed header, and leave the next
+dispatch clean (P19h). Its mutation arms (`dl-preempt-after-effect`,
+`ucpu-preempt-cuts-a-wait`, `ucpu-preempt-keeps-the-body`,
+`ucpu-preempt-repeats`, `dlkill-always-misbehaving`) run from
+`tb/pp_top/aecp_mutants.py`; the record is in the
+[`tb/pp_top` README](../pp_top/README.md).
 
 Mutation-proven 2026-08-14 (P17): `MILAN_PROTOCOL_VERSION` 1 -> 2 in
 `gen_ucode.py` fails 1 of 181; `MILAN_FEATURES_FLAGS` 0 -> 0x2 (claiming

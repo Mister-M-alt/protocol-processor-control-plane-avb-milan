@@ -145,6 +145,24 @@ flowchart LR
 | ADP DISCOVER response | within the delay window | `T-ADP-DELAY` draw | anti-storm by design |
 | Unsolicited fan-out | no protocol deadline | ≤ 1 frame-time gap injection | never starves solicited traffic ([03 §8](03_packet_engine.md)) |
 
+**Realized for AECP (issue #81).** The normalizer stamps every transaction's
+`deadline` as its reception plus the class budget (`T-BUDGET-AECP-WC` for AEM,
+MVU and AA). `protocol_processor_top` reads it at the AECP admission and
+compares it with the ms timebase every clock: one register and one comparator,
+because the engine is single-issue, and no timer-service slot, so F08.4 is
+unchanged. A command still executing when it passes is preempted into the forced
+FAIL_SAFE response ([03 §6](03_packet_engine.md) rule (e)). The redirect waits
+for the op in progress, whose wait is watchdog-bounded: the longest is a
+descriptor burst of at most 72 beats of `DESC_MEM_TMO_CYC_P` = 4,096 clocks,
+about 2.95 ms at `P-CLK-HZ`, and `E_DLKILL` plus FAIL_SAFE then cost about
+twenty clocks and one response-buffer lane write. The forced response is
+therefore queued a few milliseconds after the 100 ms line, well inside the
+140 ms rule (e) keeps before `T-AECP-RESP`. A program already past its first
+effect answers for itself, and each op it has left is bounded the same way. The
+one AECP record held through the boot restore is re-armed at its admission
+(rule (d)). ACMP's stamped deadline has no kill consumer: the budget above is a
+design target the TIM suite asserts ([09 §8.3](09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)).
+
 ## 5. Timer allocation and sizing
 
 <a id="fig-08-alloc"></a>**F08.4 — Ownership × multiplicity → `P-TIMER-SLOTS`**

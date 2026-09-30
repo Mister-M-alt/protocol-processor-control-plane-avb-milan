@@ -52,7 +52,12 @@
 //                    depth 4 each, drops counted (never silent);
 //                  - PRNG draw mux: pending-latch per client with owner
 //                    routing of draw_valid (a broadcast valid would complete
-//                    the wrong client's draw).
+//                    the wrong client's draw);
+//                  - AECP transaction deadline: pp_txn_t.deadline read at
+//                    the AECP admission, the scoreboard's rule (e) kill face
+//                    driven from its expiry and honoured at the forced
+//                    response's hand-off (03 §6, 08 §4; the deadline block
+//                    beside the scoreboard owners).
 //
 //                The one design decision that matters: the RX slot pool is
 //                REPLICATED once per reader (ADP / listener / talker / AECP
@@ -964,7 +969,12 @@ module protocol_processor_top
   logic [2:0] sb_id_w;
   logic       sb_rel_valid_w;
   logic [2:0] sb_rel_id_w;
-  logic       sb_kill_ack_nc_w;
+  //! 03 §6 rule (e): the AECP hold's deadline has passed, the forced (or
+  //! late) response was handed to its lane, and the scoreboard honoured the
+  //! kill (see the deadline block beside the owners below)
+  logic       aecp_dl_kill_w;
+  logic       aecp_dl_queued_w;
+  logic       sb_kill_ack_w;
   logic [7:0] sb_holds_w;
   logic       sb_full_w, sb_barrier_w;
   logic       acmp_sb_grant_w, aecp_sb_grant_w;
@@ -985,10 +995,10 @@ module protocol_processor_top
       .adm_id_o           (sb_id_w),
       .rel_valid_i        (sb_rel_valid_w),
       .rel_id_i           (sb_rel_id_w),
-      .kill_valid_i       (1'b0),
-      .kill_id_i          (3'd0),
-      .kill_resp_queued_i (1'b0),
-      .kill_ack_o         (sb_kill_ack_nc_w),
+      .kill_valid_i       (aecp_dl_kill_w),
+      .kill_id_i          (aecp_sb_id_r),
+      .kill_resp_queued_i (aecp_dl_queued_w),
+      .kill_ack_o         (sb_kill_ack_w),
       .holds_o            (sb_holds_w),
       .full_o             (sb_full_w),
       .barrier_pend_o     (sb_barrier_w)
@@ -3462,12 +3472,57 @@ module protocol_processor_top
         acmp_sb_active_r       <= 1'b0;
         acmp_sb_done_pending_r <= 1'b0;
       end
-      if (sb_rel_aecp_w) begin
+      //! a kill the scoreboard honoured has released the hold: the RX-slot
+      //! return one clock later must not release its id again, since a new
+      //! admission may already own it
+      if (sb_rel_aecp_w || sb_kill_ack_w) begin
         aecp_sb_active_r       <= 1'b0;
         aecp_sb_done_pending_r <= 1'b0;
       end
     end
   end
+
+  // ---- the AECP transaction deadline (03 §6 rule (e), 08 §4) ---------------
+  //! THE DEADLINE IS READ HERE, at the AECP admission: `pp_txn_t.deadline`,
+  //! which the normalizer stamps as the end of reception plus
+  //! BUDGET_AECP_MS_C (T-BUDGET-AECP-WC). The engine is single-issue, so one
+  //! AECP deadline is live at a time: one register and one comparator, no
+  //! timer-service slot. Expired once `now - deadline` (mod 2^32 ms, the
+  //! normalizer's arithmetic) is non-negative. Rule (d)'s one exception: a
+  //! head resident while the D3 writer had not reached its done terminal
+  //! waited on the restore, not on its own execution, and is answered after
+  //! it; its deadline is re-armed at its admission. After the terminal the
+  //! writer's in-service latch holds dispatch for a few clocks and the
+  //! stamped deadline stands.
+  //!
+  //! THE KILL FACE. From the expiry until the hold ends the scoreboard sees
+  //! a kill of the AECP hold, and the engine preempts its µprogram into the
+  //! forced response (KL_aecp_engine, DEADLINE KILL). The scoreboard honours
+  //! the kill only in the clock that response is handed to its lane
+  //! (`aecp_dl_queued_w`), so the key is never released before the response
+  //! is queued. A frame the engine drops owes no response, queues none, and
+  //! retires through the normal release.
+  logic [31:0] aecp_dl_r;
+  logic        aecp_boot_held_r;
+  logic [31:0] aecp_dl_past_w;
+
+  always_ff @(posedge clk_i) begin : aecp_deadline
+    if (!rst_n) begin
+      aecp_dl_r        <= 32'd0;
+      aecp_boot_held_r <= 1'b0;
+    end else if (aecp_sb_accept_w) begin
+      aecp_dl_r        <= aecp_boot_held_r
+                          ? (now_ms_w + 32'(BUDGET_AECP_MS_C))
+                          : aecp_head_w.deadline;
+      aecp_boot_held_r <= 1'b0;
+    end else if (aecp_txn_valid_w && !d3_done_w) begin
+      aecp_boot_held_r <= 1'b1;
+    end
+  end
+
+  assign aecp_dl_past_w = now_ms_w - aecp_dl_r;
+  assign aecp_dl_kill_w = aecp_sb_active_r && !aecp_sb_done_pending_r
+                        && !aecp_dl_past_w[31];
 
   //! Preserve memory debt independently of the engine/store watchdog and any
   //! future D3 owner reset. Only the top-level hard reset reaches this guard.
@@ -3542,6 +3597,8 @@ module protocol_processor_top
       .txreq_valid_o      (aecp_txreq_valid_w),
       .txreq_slot_o       (aecp_txreq_slot_w),
       .txreq_ready_i      (aecp_txreq_ready_w),
+      .dl_kill_i          (aecp_dl_kill_w),
+      .dl_queued_o        (aecp_dl_queued_w),
       .rgy_req_o          (aecp_rgy_req_w),
       .rgy_state_o        (aecp_rgy_state_w),
       .rgy_op_o           (aecp_rgy_op_w),

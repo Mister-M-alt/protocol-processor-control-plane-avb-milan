@@ -31,6 +31,15 @@
 //                cycle). Branches resolve in E and flush F/D (2-cycle
 //                penalty). Multi-cycle operations (state, gather, copy,
 //                header, send) hold E; F and D hold with it.
+//
+//                THE DEADLINE PREEMPT (03 §6 rule (e), 06 §8): `preempt_i`
+//                redirects the sequencer like a taken branch, to the
+//                engine's E_DLKILL arm, at the first instruction boundary
+//                of a program that has retired no effect op. It never cuts
+//                a stalled op (the wait belongs to a watchdog-bounded face)
+//                and never follows an effect, so a program either leaves
+//                every state as it found it and answers from E_FAILSAFE, or
+//                commits and answers for itself: never half-committed.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -62,6 +71,17 @@ module KL_aecp_ucpu
     //! and fields begin at the supplied absolute response-buffer cursor.
     input  wire         disp_batch_i,
     input  wire   [9:0] disp_resp_base_i,
+    //! 03 §6 rule (e): the deadline engine's preempt. While 1, the sequencer
+    //! is redirected to `preempt_upc_i` at the next instruction boundary (an
+    //! op retiring, or an empty E stage), once per dispatch, and only before
+    //! the program's first effect op (WRITE_ST, NAME_WR, COMMIT, NVM_MARK,
+    //! NOTIFY_ENQ, SEND_RESP), never as one retires: a program that has
+    //! changed state or sent its answer ends with its own response. Outside a
+    //! batch the response cursor and length return to 12, so the forced
+    //! response carries no partial body. Tie 0 where no deadline engine runs.
+    input  wire         preempt_i,
+    //! the redirect target: the E_DLKILL entry (gen_ucode.py)
+    input  wire  [10:0] preempt_upc_i,
 
     //! state port: descriptor image + overlay + names (07 §3), 1RW
     output logic        st_req_o,
@@ -107,6 +127,10 @@ module KL_aecp_ucpu
     output logic        eff_nvm_stb_o,
     output logic  [3:0] eff_notify_class_o,
     output logic        eff_notify_stb_o,
+
+    //! this dispatch was redirected by `preempt_i`: a level from the redirect
+    //! until the next dispatch
+    output logic        preempted_o,
 
     //! observability (keeps the experiment honest and the TB wrap-free)
     output logic        busy_o,
@@ -441,6 +465,25 @@ module KL_aecp_ucpu
     resp_status_o      = status_r;
   end
 
+  // ------------------------------------------- the deadline preempt (rule e)
+  //! An EFFECT op changes state or emits the response. Once one has retired
+  //! the program is past its point of no return and the preempt is ignored
+  //! until its END; the op retiring in the redirect's own cycle must not be
+  //! one either, or its effect would land and its answer would not. A stalled
+  //! op is never cut: its wait is the face's, watchdog-bounded, and the
+  //! redirect waits for it to retire.
+  logic pre_seen_r;    // an effect op of this program has retired
+  logic pre_taken_r;   // this program has been redirected
+  logic pre_eff_w;
+  logic pre_go_w;
+
+  assign pre_eff_w = uop_e_r.op inside {OP_WRITE_ST, OP_NAME_WR, OP_COMMIT,
+                                        OP_NVM_MARK, OP_NOTIFY_ENQ,
+                                        OP_SEND_RESP, OP_END};
+  assign pre_go_w  = preempt_i && (ms_r == S_RUN) && !pre_taken_r
+                     && !pre_seen_r
+                     && (!vld_e_r || (advance_e_w && !pre_eff_w));
+
   // --------------------------------------------------------- W writeback
   always_comb begin : writeback_mux
     rf_we_w    = wb_we_r;
@@ -490,6 +533,8 @@ module KL_aecp_ucpu
       opb_e_r     <= '0;
       opd_e_r     <= '0;
       done_o      <= 1'b0;
+      pre_seen_r  <= 1'b0;
+      pre_taken_r <= 1'b0;
     end else begin
       done_o  <= 1'b0;
       wb_we_r <= 1'b0;
@@ -513,6 +558,8 @@ module KL_aecp_ucpu
             eseq_r      <= '0;
             copy_go_r   <= 1'b0;
             copy_left_r <= '0;
+            pre_seen_r  <= 1'b0;
+            pre_taken_r <= 1'b0;
           end
         end
         S_PRE3: ms_r <= S_PRE2;
@@ -665,6 +712,21 @@ module KL_aecp_ucpu
               end
             end
           end
+
+          // ---------------- the deadline preempt: last, so it outranks the
+          // fetch, the D -> E latch and a branch retiring in the same cycle
+          if (advance_e_w && pre_eff_w) pre_seen_r <= 1'b1;
+          if (pre_go_w) begin
+            upc_r       <= preempt_upc_i;
+            vld_d_r     <= 1'b0;
+            vld_e_r     <= 1'b0;
+            eseq_r      <= '0;
+            pre_taken_r <= 1'b1;
+            if (!batch_r) begin
+              cursor_r   <= 10'd12;
+              resp_len_r <= 11'd12;
+            end
+          end
         end
         default: ms_r <= S_IDLE;
       endcase
@@ -672,6 +734,7 @@ module KL_aecp_ucpu
   end
 
   assign disp_ready_o = (ms_r == S_IDLE);
+  assign preempted_o  = pre_taken_r;
   assign busy_o       = (ms_r != S_IDLE);
   assign dbg_upc_o    = upc_r;
   assign dbg_status_o = status_r;

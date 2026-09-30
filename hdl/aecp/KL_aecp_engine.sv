@@ -361,6 +361,18 @@ module KL_aecp_engine
     output logic [TXS_W_C-1:0] txreq_slot_o,
     input  wire                txreq_ready_i,
 
+    //! ---- the transaction deadline (03 §6 rule (e), 08 §4) ----
+    //! level from the top: the solicited command in flight is past its
+    //! T-BUDGET-AECP-WC deadline. Its µprogram is preempted into E_DLKILL at
+    //! the next instruction boundary before its first effect (see the
+    //! DEADLINE KILL banner); a command whose change rides a gather face
+    //! (REGISTER/DEREGISTER, LOCK_ENTITY, ADD/REMOVE_AUDIO_MAPPINGS) runs to
+    //! its own answer.
+    input  wire                dl_kill_i,
+    //! one clock: a solicited response was handed to its TX lane (the
+    //! scoreboard's kill_resp_queued_i: rule (e) releases the key only then)
+    output logic               dl_queued_o,
+
     //! ---- descriptor memory master (read-only; see KL_aecp_desc_store) ----
     output logic        mem_req_valid_o,
     input  wire         mem_req_ready_i,
@@ -807,6 +819,9 @@ module KL_aecp_engine
   localparam logic [10:0] MVU_CMD_PLD_C = 11'd8;
 
   // ---- µPC entry points (hdl/aecp/ucode/gen_ucode.py) ---------------------
+  //! the deadline kill's arm (03 §6 rule (e)): never a dispatch entry, the
+  //! µCPU's preempt redirect target; it falls into E_FAILSAFE
+  localparam logic [10:0] UPC_DLKILL_C  = 11'd6;     // E_DLKILL
   localparam logic [10:0] UPC_NOTIMPL_C = 11'd560;   // E_NOTIMPL
   localparam logic [10:0] UPC_RDESC_C   = 11'd640;   // E_RDESC
   localparam logic [10:0] UPC_BADARG_C  = 11'd704;   // E_BADARG
@@ -1655,6 +1670,36 @@ module KL_aecp_engine
   logic [10:0] ucpu_upc_nc_w;
   logic  [4:0] ucpu_st_nc_w;
 
+  // ---- THE DEADLINE KILL (03 §6 rule (e), 06 §8, 08 §4) -------------------
+  //! The top reads the transaction deadline at admission and holds
+  //! `dl_kill_i` from its expiry until the hold ends; it is taken here only
+  //! for the solicited command in flight and kept until that command retires.
+  //! The µCPU is then preempted into E_DLKILL, which answers the best current
+  //! status through E_FAILSAFE (a SUCCESS not yet built becomes
+  //! ENTITY_MISBEHAVING), unless the program has already produced an effect:
+  //! then it ends with its own answer, so no partial commit survives. Three
+  //! commands are never preempted, because their change rides a gather face
+  //! the µCPU cannot see as an effect: REGISTER/DEREGISTER and LOCK_ENTITY on
+  //! the registry face, ADD/REMOVE_AUDIO_MAPPINGS on the edit face (phase 1
+  //! is its point of no return). Each wait they make is watchdog-bounded.
+  //! A preempted MVU command answers NOT_IMPLEMENTED with the command echoed,
+  //! because Milan v1.2 §5.4.3.3 Table 5.19 reserves every other code; a
+  //! GET_DYNAMIC_INFO is voided at its next record boundary. The key is
+  //! released at `dl_queued_o`, the forced response's hand-off to its lane.
+  logic dl_kill_r;
+  logic ucpu_preempt_w;
+  logic ucpu_pre_w;
+
+  always_ff @(posedge clk_i) begin : deadline_kill
+    if (!rst_n)                   dl_kill_r <= 1'b0;
+    else if (a_st_r == A_IDLE)    dl_kill_r <= 1'b0;
+    else if (dl_kill_i && !uns_r) dl_kill_r <= 1'b1;
+  end
+
+  assign ucpu_preempt_w = dl_kill_r && (a_st_r == A_RUN)
+                          && !regun_r && !lockc_r && !amap_edit_r;
+  assign dl_queued_o    = (a_st_r == A_TXW) && !uns_r && txreq_ready_i;
+
   KL_aecp_ucpu #(
       .UCODE_HEX_P (UCODE_HEX_P)
   ) u_ucpu (
@@ -1669,6 +1714,9 @@ module KL_aecp_engine
       .disp_opd2_i        (opd2_r),
       .disp_batch_i       (gdi_r),
       .disp_resp_base_i   (10'(g_out_r + 11'd8)),
+      .preempt_i          (ucpu_preempt_w),
+      .preempt_upc_i      (UPC_DLKILL_C),
+      .preempted_o        (ucpu_pre_w),
       .st_req_o           (u_st_req_w),
       .st_we_o            (u_st_we_w),
       .st_name_o          (u_st_name_w),
@@ -2948,7 +2996,14 @@ module KL_aecp_engine
 
         // ---- decide response shape, including silent overflow skip -------
         A_GDEC: begin
-          if ((g_out_r + 11'd8 + g_sub_rlen_w)
+          //! past the deadline no further record runs: the aggregate is
+          //! voided through the shape check's own arm (rule (e))
+          if (dl_kill_r) begin
+            g_shape_fault_r <= 1'b1;
+            pld_r           <= 11'd0;
+            echo_r          <= 1'b0;
+            a_st_r          <= A_GDONE;
+          end else if ((g_out_r + 11'd8 + g_sub_rlen_w)
               > 11'(ucpu_pkg::RESP_CAP_C)) begin
             g_rd_pos_r      <= g_next_pos_r;
             g_hdr_ix_r      <= 3'd0;
@@ -3551,6 +3606,14 @@ module KL_aecp_engine
               end else begin
                 pld_r <= pld_cmd_r;
               end
+              //! a preempted MVU command: Milan Table 5.19 has no status 10,
+              //! so the forced answer is the MVU refusal form, NOT_IMPLEMENTED
+              //! with the command echoed
+              if (ucpu_pre_w && (cmd_r.protocol == PP_PROTO_MVU)) begin
+                status_r <= ST_NOT_IMPLEMENTED_C;
+                echo_r   <= 1'b1;
+                pld_r    <= pld_cmd_r;
+              end
             end
           end
           if (ucpu_done_w) begin
@@ -3559,9 +3622,10 @@ module KL_aecp_engine
               //! resp_len_w is the getter's actual cursor. A future getter
               //! edit must not silently misalign every following record or
               //! expose stale response memory. Void the aggregate if the two
-              //! authorities disagree.
-              if ((resp_send_w ? resp_len_w : g_sub_end_r)
-                  != (g_out_r + 11'd8 + g_rec_rlen_r)) begin
+              //! authorities disagree, and past the deadline (rule (e)).
+              if (dl_kill_r
+                  || ((resp_send_w ? resp_len_w : g_sub_end_r)
+                      != (g_out_r + 11'd8 + g_rec_rlen_r))) begin
                 g_shape_fault_r <= 1'b1;
                 pld_r           <= 11'd0;
                 echo_r          <= 1'b0;
