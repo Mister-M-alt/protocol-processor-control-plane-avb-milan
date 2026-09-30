@@ -16,7 +16,8 @@
 //   the allocator seam contract (refuse fast while probing, grant base+s in
 //   DEFEND, refuse s >= count, RELEASE acked); footnote-a seeding; the
 //   engage/Release! and PortOperational! arcs, with no PDU generated after
-//   a Release! in any walker state; maap_version tolerance and
+//   a Release! in any walker state and a one-cycle Release! inside an entry
+//   never absorbed; maap_version tolerance and
 //   reserved-message ignore; the Table B.9 fit clamp's reject-and-redraw arm
 //   (a kind-7 stub in the wrapper scripts the overhanging draws) and the
 //   footnote-a seed clamp.
@@ -241,6 +242,8 @@ static void dump(const char* nm, const Bytes& f) {
 // One object owns the model, the lane BFM and the tally, so every scenario
 // below is a named member function rather than another thousand lines of
 // `main` reading state nobody can scope (Core Guidelines I.2, F.3).
+enum class Entry;                          // the entry U29 lands its falls in
+
 namespace {
 class MaapAnnexBSuite {
  public:
@@ -286,6 +289,8 @@ class MaapAnnexBSuite {
   bool run_to_walker(unsigned st, long budget_cycles);
   bool poise_a_fall(int point);
   void no_pdu_is_generated_after_the_fall();
+  bool start_an_entry(Entry entry, uint64_t prober);
+  void a_one_cycle_release_inside_an_entry_is_never_absorbed();
 
   const milan::tb::Model<Vmaap_wrap> model;
   Vmaap_wrap* const d = model.get();
@@ -1461,6 +1466,147 @@ void MaapAnnexBSuite::no_pdu_is_generated_after_the_fall() {
   h.confl_srcs.clear();
 }
 
+// ---- U29: a one-cycle Release! inside an entry is never absorbed ----------
+// Table B.7: Release! goes to INITIAL, and the PortOperational! that follows
+// in INITIAL runs generate_address and ReserveAddress!, so a fall and an
+// immediate rise must still end the walk and start a fresh one, however
+// short the fall. U28's falls last 33 s, so a TX state that missed one would
+// hand it to the next; here the link falls for exactly one cycle, first seen
+// in each state an entry passes through: the interval draw (W_IVAL), each TX
+// state and W_POST. Three entries: a mid-walk PROBE (the probe_timer expiry
+// that sends the 2nd PROBE), the sDefend answer to an rProbe! in DEFEND
+// (which draws no interval), and a DEFEND re-announce (an announce_timer
+// expiry). Each fall must give INITIAL, no claim until the fresh walk claims,
+// and a fresh walk: 4 byte-exact PROBEs of one range, then its ANNOUNCE. A
+// frame whose slot was requested by the fall drains first (B.3.2; U23 grades
+// its window), and here must be the entry's own.
+enum class Entry { kProbe, kSDefend, kReannounce };
+
+struct EntryFall {
+  const char* what;
+  Entry entry;
+  unsigned walker;                                     // the state that sees the fall
+};
+
+const EntryFall kEntryFalls[] = {
+    {"a mid-walk PROBE", Entry::kProbe, WK_IVAL},
+    {"a mid-walk PROBE", Entry::kProbe, WK_ALLOC},
+    {"a mid-walk PROBE", Entry::kProbe, WK_GWAIT},
+    {"a mid-walk PROBE", Entry::kProbe, WK_WRITE},
+    {"a mid-walk PROBE", Entry::kProbe, WK_COMMIT},
+    {"a mid-walk PROBE", Entry::kProbe, WK_LANE},
+    {"a mid-walk PROBE", Entry::kProbe, WK_POST},
+    {"sDefend", Entry::kSDefend, WK_ALLOC},
+    {"sDefend", Entry::kSDefend, WK_GWAIT},
+    {"sDefend", Entry::kSDefend, WK_WRITE},
+    {"sDefend", Entry::kSDefend, WK_COMMIT},
+    {"sDefend", Entry::kSDefend, WK_LANE},
+    {"sDefend", Entry::kSDefend, WK_POST},
+    {"a DEFEND re-announce", Entry::kReannounce, WK_IVAL},
+    {"a DEFEND re-announce", Entry::kReannounce, WK_ALLOC},
+    {"a DEFEND re-announce", Entry::kReannounce, WK_GWAIT},
+    {"a DEFEND re-announce", Entry::kReannounce, WK_WRITE},
+    {"a DEFEND re-announce", Entry::kReannounce, WK_COMMIT},
+    {"a DEFEND re-announce", Entry::kReannounce, WK_LANE},
+    {"a DEFEND re-announce", Entry::kReannounce, WK_POST},
+};
+
+// Release!, PortOperational!, then clock until the entry has started: the
+// probe_timer expiry after the first PROBE, the rProbe! taken in DEFEND, or
+// the announce_timer expiry in DEFEND
+bool MaapAnnexBSuite::start_an_entry(Entry entry, uint64_t prober) {
+  d->link_up_i = 0; h.idle(30);                        // Release!
+  const size_t n0 = h.tx.size();
+  d->link_up_i = 1;                                    // PortOperational!
+  if (!h.wait_frames(n0 + 1, kProbeBudgetMs)) return false;
+  if (entry != Entry::kProbe) {
+    for (int g = 0; g < kWalkRetryRounds && !d->addr_valid_o; ++g) h.run_ms(kProbeBudgetMs);
+    if (!d->addr_valid_o) return false;
+  }
+  if (entry == Entry::kSDefend) return accept_record(1, prober, d->addr_o + 2, 2);
+  const int budget_ms = (entry == Entry::kProbe) ? kProbeBudgetMs : kAnnounceBudgetMs;
+  const size_t e0 = h.tmr_expiries;
+  for (long c = 0; c < long(budget_ms) * kClkPerMs && h.tmr_expiries == e0; ++c) h.step();
+  return h.tmr_expiries > e0;
+}
+
+void MaapAnnexBSuite::a_one_cycle_release_inside_an_entry_is_never_absorbed() {
+  constexpr int kPoints = static_cast<int>(std::size(kEntryFalls));
+  constexpr long kFreshWalkCycles = 6L * kProbeBudgetMs * kClkPerMs;
+  const uint64_t prober = 0x0A2233445566ull;
+  int missed = 0;
+  int not_initial = 0;
+  int claimed = 0;
+  int wrong_drain = 0;
+  int absorbed = 0;
+  h.confl_auto = true;
+  for (int p = 0; p < kPoints; ++p) {
+    const EntryFall& f = kEntryFalls[p];
+    const bool started = start_an_entry(f.entry, prober);
+    const uint64_t b = d->addr_o;                      // the range the entry names
+    const size_t r0 = h.slot_reqs;
+    const size_t g0 = h.grants;
+    if (!started || !run_to_walker(f.walker, kRxAcceptCycles)) {
+      ++missed;
+      printf("  U29: %s: the walker is in %s, not %s\n", f.what,
+             d->walker_o < WK_STATES ? kWalkerName[d->walker_o] : "?", kWalkerName[f.walker]);
+      continue;
+    }
+    d->link_up_i = 0;                                  // Release!
+    h.step();                                          // seen for this one cycle only
+    d->link_up_i = 1;                                  // PortOperational!
+    // requested by the fall and not yet on the lane; a frame the lane took
+    // by then is still serializing, and is not one of the frames after it
+    const size_t owed = (h.slot_reqs - r0) - (h.grants - g0);
+    const size_t first = h.tx.size() + (h.ser_busy ? 1 : 0);
+    const size_t fresh0 = first + owed;                // the fresh walk's first PROBE
+    bool initial = d->state_o == 0;
+    bool valid = d->addr_valid_o;
+    for (long c = 0; c < kFreshWalkCycles && h.tx.size() < fresh0 + 5; ++c) {
+      h.step();
+      if (h.tx.size() <= fresh0 && d->state_o == 0) initial = true;
+      if (h.tx.size() < fresh0 + 4 && d->addr_valid_o) valid = true;
+    }
+    if (!initial) ++not_initial;
+    if (valid) ++claimed;
+    if (owed > 1) {
+      ++wrong_drain;
+    } else if (owed == 1 && h.tx.size() > first) {
+      const Bytes own = (f.entry == Entry::kProbe)
+                            ? maap_frame(MAAP_DA, OWN_MAC, 1, b, COUNT, 0, 0)
+                        : (f.entry == Entry::kSDefend)
+                            ? maap_frame(prober, OWN_MAC, 2, b + 2, 2, b + 2, 2)
+                            : maap_frame(MAAP_DA, OWN_MAC, 3, b, COUNT, 0, 0);
+      if (h.tx[first].b != own) ++wrong_drain;
+    }
+    const uint64_t fresh = d->addr_o;
+    bool walked = h.tx.size() >= fresh0 + 5 && d->addr_valid_o;
+    for (size_t k = 0; walked && k < 4; ++k) {
+      walked = h.tx[fresh0 + k].b == maap_frame(MAAP_DA, OWN_MAC, 1, fresh, COUNT, 0, 0);
+    }
+    walked = walked && h.tx[fresh0 + 4].b == maap_frame(MAAP_DA, OWN_MAC, 3, fresh, COUNT, 0, 0);
+    if (!walked) ++absorbed;
+    printf("  U29: %s, a one-cycle fall in %s: %zu frame(s) owed, INITIAL %d, %s\n", f.what,
+           kWalkerName[f.walker], owed, int(initial), walked ? "a fresh walk" : "ABSORBED");
+  }
+  CHECK(missed == 0,
+        "U29: premise, each one-cycle fall is first seen in its walker state (%d of %d missed)",
+        missed, kPoints);
+  CHECK(not_initial == 0, "U29: a one-cycle Release! gives INITIAL (%d of %d falls did not)",
+        not_initial, kPoints);
+  CHECK(claimed == 0,
+        "U29: no claim is valid after a one-cycle Release! until the fresh walk claims "
+        "(%d of %d falls)", claimed, kPoints);
+  CHECK(wrong_drain == 0,
+        "U29: at most the entry's own frame, requested by the fall, drains before the fresh "
+        "walk (%d of %d falls)", wrong_drain, kPoints);
+  CHECK(absorbed == 0,
+        "U29: a one-cycle Release! is followed by a fresh walk: 4 byte-exact PROBEs of one "
+        "range, then its ANNOUNCE (%d of %d falls absorbed)", absorbed, kPoints);
+  h.confl_auto = false;
+  h.confl_srcs.clear();
+}
+
 int MaapAnnexBSuite::run() {
   reset_leaves_the_machine_initial();
   engage_probes_a_fresh_pool_range();
@@ -1492,6 +1638,7 @@ int MaapAnnexBSuite::run() {
   a_short_release_is_never_absorbed();
   every_release_rearms_the_seed();
   no_pdu_is_generated_after_the_fall();
+  a_one_cycle_release_inside_an_entry_is_never_absorbed();
   probe_from_a_lower_peer_yields_the_walk();
   defend_from_a_higher_peer_is_ignored();
   defend_from_a_lower_peer_yields_the_claim();

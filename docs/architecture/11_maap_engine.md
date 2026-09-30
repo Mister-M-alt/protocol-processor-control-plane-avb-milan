@@ -134,8 +134,8 @@ observability counters.
   `conflict_start` = max(requested_lo, ours_lo), `conflict_count` = overlapping
   addresses from there.
 - **Release!** = engage fall (config drop or link down), seen in every walker
-  state however short: stop both timers, INITIAL, and no PDU generated after
-  the fall (`tb/maap` U28). Table B.7's Release! row stops probe_timer in PROBE
+  state however short (a one-cycle fall: `tb/maap` U26 and U29): stop both
+  timers, INITIAL, and no PDU generated after the fall (U28). Table B.7's Release! row stops probe_timer in PROBE
   and announce_timer in DEFEND and returns to INITIAL, and no Release! cell
   carries sProbe, sAnnounce or sDefend. A stopped timer does not expire (B.3.1
   c) and e)), so no probeTimer! or announceTimer! follows. B.3.5.2: the range is

@@ -9,7 +9,7 @@ real services (KL_pp_prng kinds 5/6/7, KL_pp_timer_service compressed to
 the talker's allocator face; records are injected pre-parsed exactly as the
 validator's MAAP lanes deliver them.
 
-What it proves (U0..U28):
+What it proves (U0..U29):
 
 - cold start: `generate_address` inside the Table B.9 pool with the block
   fit, then 4 byte-exact PROBEs (1 + `MAAP_PROBE_RETRANSMITS`) at spacings
@@ -33,8 +33,9 @@ What it proves (U0..U28):
   free), PortOperational! (link bounce) restarts with a fresh range,
   and footnote-a seeding probes the provisioned offset first;
 - a Release! in the middle of an entry, at every walker state (U23 to U26,
-  below), the footnote-a seed re-armed by every Release! (U27), and no PDU
-  generated after the fall in any of the 12 walker states (U28).
+  below), the footnote-a seed re-armed by every Release! (U27), no PDU
+  generated after the fall in any of the 12 walker states (U28), and a
+  one-cycle Release! never absorbed in any state of an entry (U29).
 
 The Table B.9 fit (U17, U17b, U17c, U18, U18b; issue #66, REQ-MAAP-001, B.1
 and B.3.6.1):
@@ -162,6 +163,23 @@ window. The wrapper exposes the walker state (`walker_o`, a hierarchical read
 used only to land each fall), timer starts (`tmr_start_o`) and timer expiries
 (`tmr_exp_o`), all wiring.
 
+**U29** grades that a one-cycle Release! inside an entry is never absorbed
+(issue #66 round 3; Table B.7 Release!, then PortOperational! in INITIAL:
+generate_address and ReserveAddress!). U28's falls last 33 s, so a TX state
+that missed the fall would leave it to the next TX state, and U24 and U25
+bounce only in `W_WRITE` and `W_LANE`. Here the link falls for exactly one
+cycle, first seen in each state an entry passes through: `W_IVAL`, `W_ALLOC`,
+`W_GWAIT`, `W_WRITE`, `W_COMMIT`, `W_LANE` and `W_POST`. It does so in three
+entries: a mid-walk PROBE (the probe_timer expiry that sends the 2nd PROBE),
+the sDefend answer to an rProbe! in DEFEND (which draws no interval, so it
+has no `W_IVAL` point), and a DEFEND re-announce (an announce_timer expiry).
+That makes 20 falls. Each must give INITIAL, no claim until the fresh walk
+claims, and a fresh walk: 4 byte-exact PROBEs of one range, then its
+ANNOUNCE. The frame requested by the fall (the falls in `W_ALLOC` to
+`W_COMMIT`) drains first and must be the entry's own. A TX state left out of
+the Release! latch absorbs the fall: the old walk goes on, or the claim
+survives in DEFEND. The campaign's five `tx-set-omits-*` arms each plant that.
+
 Run: `make` (exit 0 = PASS).
 
 ## RTL fix found by U17b (issue #66)
@@ -213,30 +231,35 @@ only simulation logs; no expectation comes from RTL text.
 
 | Arm (patch) | Planted defect | Suite | Named failures (of the suite's checks) |
 |---|---|---|---|
-| `fit-compare-forced-true` | the fit compare at `KL_pp_maap.sv:644` (issue #66's `:587` at the lane's base) forced true: an overhanging draw is accepted | maap | U17 x4 (1 draw instead of 3; claim `…:FD:FF`; block ends `…:FE:FD`; PROBE bytes), and U27's redraw premise (the overhanging draw is taken): 5 FAIL of 191 |
-| `fit-compare-off-by-one` | the fit compare `<=` becomes `<`: the last fitting offset is refused | maap | U17 x3 (no PROBE, the boundary draw refused 1,745 times) and U17b x4: 7 FAIL of 190 |
-| `seed-clamp-removed` | the footnote-a seed clamp removed: the provisioned offset is probed as given | maap | U18 x4 (claim `…:FF:FF`; PROBE bytes; claim; last-source grant), U18b x2: 6 FAIL of 191 |
-| `release-keeps-draw-mark` | the fix above removed | maap | U17b phases 1 to 3, U17c x2, U18 x3 and U27 x1, each behind a wedge that the next Release! clears in `W_IVAL`: 9 FAIL of 189 |
+| `fit-compare-forced-true` | the fit compare at `KL_pp_maap.sv:644` (issue #66's `:587` at the lane's base) forced true: an overhanging draw is accepted | maap | U17 x4 (1 draw instead of 3; claim `…:FD:FF`; block ends `…:FE:FD`; PROBE bytes), and U27's redraw premise (the overhanging draw is taken): 5 FAIL of 196 |
+| `fit-compare-off-by-one` | the fit compare `<=` becomes `<`: the last fitting offset is refused | maap | U17 x3 (no PROBE, the boundary draw refused 1,745 times) and U17b x4: 7 FAIL of 195 |
+| `seed-clamp-removed` | the footnote-a seed clamp removed: the provisioned offset is probed as given | maap | U18 x4 (claim `…:FF:FF`; PROBE bytes; claim; last-source grant), U18b x2: 6 FAIL of 196 |
+| `release-keeps-draw-mark` | the fix above removed | maap | U17b phases 1 to 3, U17c x2, U18 x3 and U27 x1, each behind a wedge that the next Release! clears in `W_IVAL`: 9 FAIL of 194 |
 | `validator-maap-version-1-only` | `KL_pp_rx_validator.sv` gains a `maap_version == 1` acceptance rule (issue #67, B.2.3.2/B.2.3.4) | rx_validator | F29a/F29b/F29c: versions 2, 0 and 31 counted `rx_version` and aborted: 47 FAIL of 497 |
 | (same arm) | | pp_top `maap-internal` | MP7 x4: neither the version-2 nor the version-0 PROBE is defended: 4 FAIL of 34 |
-| `compare-mac-forward` | `cmp_mac_true_w = own_mac_i < rxm_sa_r`: compare_MAC in forward octet order (issue #68, B.3.6.4) | maap | U7, U8, U9 x2, U10, U19 x2, U20, U21: 9 FAIL of 189 |
+| `compare-mac-forward` | `cmp_mac_true_w = own_mac_i < rxm_sa_r`: compare_MAC in forward octet order (issue #68, B.3.6.4) | maap | U7, U8, U9 x2, U10, U19 x2, U20, U21: 9 FAIL of 194 |
 | (same arm) | | pp_top `maap-internal` | MP4 x5: the rev-lower, forward-higher ANNOUNCE is ignored, nothing withdrawn: 5 FAIL of 34 |
-| `probe-rprobe-never-yields` | PROBE / rProbe! never yields | maap | U19 x2: 2 FAIL of 191 |
-| `defend-rdefend-ignored` | DEFEND / rDefend! ignored (only rAnnounce! can yield in DEFEND) | maap | U21 x4, then U22 x4 behind it: 8 FAIL of 189 |
-| `defend-rdefend-no-tiebreak` | DEFEND / rDefend! always yields (no compare_MAC) | maap | U20, then U21 (not in DEFEND): 2 FAIL of 191 |
-| `probe-rannounce-tiebreak` | PROBE / rDefend! and rAnnounce! gain a compare_MAC | maap | U10 x3, U22 x2, U27 x2 (the contest no longer yields): 7 FAIL of 191 |
-| `yield-reuses-range` | a yield re-probes the contested range instead of running generate_address | maap | U8, U10, U15, U19, U21, U22, U27 x2: 8 FAIL of 191 |
-| `ival-sends-after-release` | `W_IVAL` ignores an engage fall (the start head) | maap | U17c and U23: a Release! before the slot request still sends the frame; U28 x3: a slot request and a timer start after the fall: 5 FAIL of 191 |
-| `post-publishes-after-release` | `W_POST` ignores a Release! latched behind its frame | maap | U24 x2: the ANNOUNCE's bounce publishes DEFEND, no fresh walk: 2 FAIL of 189 |
-| `tx-path-absorbs-release` | the TX states do not latch an engage fall (the start head) | maap | U24 x4, U25 x3: the claim survives a bounce and a 100 ms outage: 7 FAIL of 185 |
-| `off-waits-for-an-edge` | `W_OFF` starts only on a rise it saw itself (the start head) | maap | U24 x2, U25 x3, U26 x3: a rise during teardown or a drain parks the machine: 8 FAIL of 184 |
-| `rx-release-returns-to-idle` | `W_RX` leaves a fall to `W_IDLE` (the start head) | maap | U26 x2: a one-cycle fall on `W_RX` is lost; U28: the claim outlives a fall on `W_RX` in DEFEND: 3 FAIL of 190 |
-| `seed-clamp-off-by-one` | the seed clamp compares against `0xFE00 - count + 1` (issue #66 round 2) | maap | U18b x2: seed `0xFDF9` is probed as given, a block ending at `…:FE:00`: 2 FAIL of 191 |
-| `release-waits-for-draw` | the `W_ADDR` fall exit waits for the draw's answer (`!eng_w && !draw_act_r`) | maap | U17c: the abandoned draw is adopted after the Release! (3 of 5 offsets): 1 FAIL of 191 |
-| `seed-rearmed-on-idle-release-only` | only the `W_IDLE` exit re-arms the footnote-a seed (the start head) | maap | U27 x2: after a Release! mid-redraw the next engagement probes a random range: 2 FAIL of 191 |
-| `idle-serves-a-latched-expiry-first` | `W_IDLE` serves a latched timer expiry before an engage fall seen in the same cycle (issue #66 round 2) | maap | U28 x3: the latched expiry sends the 4th PROBE after the fall, and a latched announce_timer expiry keeps the claim a cycle past it: 3 FAIL of 191 |
-| `teardown-keeps-announce-timer` | the teardown never stops announce_timer (issue #66 round 2) | maap | U28: announce_timer expires after the fall (3 of 17 falls): 1 FAIL of 191 |
-| `drain-waits-for-the-link` | a requested frame holds its lane request until the engage level returns (issue #66 round 2) | maap | U23 x2: the drained ANNOUNCE misses the 63-cycle window and leaves only after the next PortOperational!; U17c and U28 x2 behind it: 5 FAIL of 191 |
+| `probe-rprobe-never-yields` | PROBE / rProbe! never yields | maap | U19 x2: 2 FAIL of 196 |
+| `defend-rdefend-ignored` | DEFEND / rDefend! ignored (only rAnnounce! can yield in DEFEND) | maap | U21 x4, then U22 x4 behind it: 8 FAIL of 194 |
+| `defend-rdefend-no-tiebreak` | DEFEND / rDefend! always yields (no compare_MAC) | maap | U20, then U21 (not in DEFEND): 2 FAIL of 196 |
+| `probe-rannounce-tiebreak` | PROBE / rDefend! and rAnnounce! gain a compare_MAC | maap | U10 x3, U22 x2, U27 x2 (the contest no longer yields): 7 FAIL of 196 |
+| `yield-reuses-range` | a yield re-probes the contested range instead of running generate_address | maap | U8, U10, U15, U19, U21, U22, U27 x2: 8 FAIL of 196 |
+| `ival-sends-after-release` | `W_IVAL` ignores an engage fall (the start head) | maap | U17c and U23: a Release! before the slot request still sends the frame; U28 x3: a slot request and a timer start after the fall; U29 x3: a one-cycle fall in `W_IVAL` is absorbed (a mid-walk PROBE, a re-announce): 8 FAIL of 196 |
+| `post-publishes-after-release` | `W_POST` ignores a Release! latched behind its frame | maap | U24 x2: the ANNOUNCE's bounce publishes DEFEND, no fresh walk; U29 x2: a one-cycle fall in a PROBE or re-announce TX state publishes the entry's state, no fresh walk (10 of 20 falls): 4 FAIL of 194 |
+| `tx-path-absorbs-release` | the TX states do not latch an engage fall (the start head) | maap | U24 x4, U25 x3: the claim survives a bounce and a 100 ms outage; U29 x3: every one-cycle fall in a TX state is absorbed (15 of 20 falls): 10 FAIL of 190 |
+| `off-waits-for-an-edge` | `W_OFF` starts only on a rise it saw itself (the start head) | maap | U24 x2, U25 x3, U26 x3: a rise during teardown or a drain parks the machine; U29: no one-cycle fall is followed by a fresh walk (20 of 20 falls): 9 FAIL of 189 |
+| `rx-release-returns-to-idle` | `W_RX` leaves a fall to `W_IDLE` (the start head) | maap | U26 x2: a one-cycle fall on `W_RX` is lost; U28: the claim outlives a fall on `W_RX` in DEFEND: 3 FAIL of 195 |
+| `seed-clamp-off-by-one` | the seed clamp compares against `0xFE00 - count + 1` (issue #66 round 2) | maap | U18b x2: seed `0xFDF9` is probed as given, a block ending at `…:FE:00`: 2 FAIL of 196 |
+| `release-waits-for-draw` | the `W_ADDR` fall exit waits for the draw's answer (`!eng_w && !draw_act_r`) | maap | U17c: the abandoned draw is adopted after the Release! (3 of 5 offsets): 1 FAIL of 196 |
+| `seed-rearmed-on-idle-release-only` | only the `W_IDLE` exit re-arms the footnote-a seed (the start head) | maap | U27 x2: after a Release! mid-redraw the next engagement probes a random range: 2 FAIL of 196 |
+| `idle-serves-a-latched-expiry-first` | `W_IDLE` serves a latched timer expiry before an engage fall seen in the same cycle (issue #66 round 2) | maap | U28 x3: the latched expiry sends the 4th PROBE after the fall, and a latched announce_timer expiry keeps the claim a cycle past it: 3 FAIL of 196 |
+| `teardown-keeps-announce-timer` | the teardown never stops announce_timer (issue #66 round 2) | maap | U28: announce_timer expires after the fall (3 of 17 falls): 1 FAIL of 196 |
+| `drain-waits-for-the-link` | a requested frame holds its lane request until the engage level returns (issue #66 round 2) | maap | U23 x2: the drained ANNOUNCE misses the 63-cycle window and leaves only after the next PortOperational!; U17c and U28 x2 behind it: 5 FAIL of 196 |
+| `tx-set-omits-alloc` | the Release! latch at `KL_pp_maap.sv:589-590` leaves out `W_ALLOC` (R400-2-F1) | maap | U29 x3: a one-cycle fall in `W_ALLOC` is absorbed in all three entries, with no INITIAL: the old walk goes on, or the claim survives in DEFEND: 3 FAIL of 196 |
+| `tx-set-omits-gwait` | the latch leaves out `W_GWAIT` (R400-2-F1) | maap | U29 x3, the same in `W_GWAIT`: 3 FAIL of 196 |
+| `tx-set-omits-write` | the latch leaves out `W_WRITE` | maap | U29 x3, the same in `W_WRITE`; U24 x4 (its 5-cycle bounces land in `W_WRITE`): 7 FAIL of 192 |
+| `tx-set-omits-commit` | the latch leaves out `W_COMMIT` (R400-2-F1) | maap | U29 x3, the same in `W_COMMIT`: 3 FAIL of 196 |
+| `tx-set-omits-lane` | the latch leaves out `W_LANE` | maap | U29 x3, the same in `W_LANE`; U25 x3 (its outage lands in `W_LANE`): 6 FAIL of 194 |
 
-The last run: 3 controls PASS and 24 of 24 arm runs KILLED
-(`27 checks: 27 PASS, 0 FAIL`).
+The last run: 3 controls PASS and 29 of 29 arm runs KILLED
+(`32 checks: 32 PASS, 0 FAIL`).

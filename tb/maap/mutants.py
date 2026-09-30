@@ -45,6 +45,11 @@ MUTANTS = [
     ('idle-serves-a-latched-expiry-first', 'maap', 'run', 'U28:'),
     ('teardown-keeps-announce-timer', 'maap', 'run', 'U28:'),
     ('drain-waits-for-the-link', 'maap', 'run', 'U23:'),
+    ('tx-set-omits-alloc', 'maap', 'run', 'U29:'),
+    ('tx-set-omits-gwait', 'maap', 'run', 'U29:'),
+    ('tx-set-omits-write', 'maap', 'run', 'U29:'),
+    ('tx-set-omits-commit', 'maap', 'run', 'U29:'),
+    ('tx-set-omits-lane', 'maap', 'run', 'U29:'),
 ]
 
 # the two tally shapes: a suite's canonical line, and one pp_top build's line
