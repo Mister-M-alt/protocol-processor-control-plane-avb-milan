@@ -82,10 +82,38 @@ wire order, `@n` byte offsets authoritative)
 
 </details>
 
-Oversize rule (Δ8): responses of READ_DESCRIPTOR, GET_AVB_INFO, GET_AS_PATH,
-GET_AUDIO_MAP, ADD/REMOVE_AUDIO_MAPPINGS may exceed cdl 524 up to a full frame —
-these serialize into the oversize TX slot ([03 §7](03_packet_engine.md)). Everything
-else, including GET_DYNAMIC_INFO, is capped at cdl 524.
+Oversize rule (Δ8): Milan §5.4.1 lets the responses of READ_DESCRIPTOR, GET_AVB_INFO,
+GET_AS_PATH, GET_AUDIO_MAP and ADD/REMOVE_AUDIO_MAPPINGS exceed cdl 524, up to a full
+frame. What this engine does with that permission, command by command (issue #50):
+
+The ceiling is the response buffer, `16 + LINE_BYTES_P` bytes rounded up to 16: 592
+at the default 576-byte line, so cdl 592, a 580-byte payload and a 618-byte frame. The
+engine asks for the oversize TX slot (`txs_oversize_o`) whenever the frame is longer
+than a 576-byte standard slot ([03 §7](03_packet_engine.md)), for whichever command
+built it.
+
+- **READ_DESCRIPTOR** copies the whole descriptor (cdl 16 + L, frame 42 + L for an
+  L-byte descriptor), and a descriptor may fill the line. A descriptor of 509 to 534
+  bytes answers above cdl 524 from a standard slot, and one of 535 to 576 bytes from
+  the oversize slot.
+- **GET_AUDIO_MAP** emits its records with the Δ8 `APPEND` (§8, `cnd` D8), which
+  fills the response buffer instead of stopping at cdl 524. A page of M mappings is
+  cdl 24 + 8·M and a 50 + 8·M-byte frame: above cdl 524 from 63 records, the
+  oversize slot from 66, and at most `P-MAP-SUBSET-CH-MAX` = 71 records
+  ([F01.5](01_overview.md#fig-01-params)), cdl 592. A page the face reports above 71
+  answers `NO_RESOURCES` with `number_of_mappings` 0 and no record, so the count
+  never names a record the response does not carry (§6.5). Milan §5.4.2.26 permits
+  subsets of up to 176 channels; this build carries 71, and `KL_aecp_engine` refuses
+  to elaborate a line below 561 bytes, whose buffer could not hold the page.
+- **GET_AVB_INFO and GET_AS_PATH** keep the plain `APPEND`, which skips any record
+  that would end past cdl 524. Their faces never come near it: GET_AS_PATH serves at
+  most eight ClockIdentities (cdl 80) and GET_AVB_INFO one 4-byte msrp_mapping per SR
+  class (cdl 32 + 4·k, §6.10), so they stay in a standard slot.
+- **ADD/REMOVE_AUDIO_MAPPINGS** mirror their command, which §9.2.2.6 caps at cdl 524
+  (below), so they never exceed it.
+
+Everything else, including GET_DYNAMIC_INFO, is capped at cdl 524: its getters run
+as a batch, in which even the Δ8 `APPEND` stops at 524 (§7.4.76.1).
 
 The exception is response-only. IEEE 1722.1-2021 9.2.2.6 still caps every
 command at cdl 524. An ADD/REMOVE_AUDIO_MAPPINGS command uses 20 + 8N octets,
@@ -450,7 +478,11 @@ at commit, and use the root transaction face to update the live map atomically.
 - Channel space of each **dynamically mapped** stream port is **partitioned at model-build time** into fixed
   subsets ≤ `P-MAP-SUBSET-CH-MAX`; `number_of_maps` always reports the partition
   count N regardless of dynamic content; `GET_AUDIO_MAP(map_index = P)` returns all and
-  only the dynamic mappings of subset P.
+  only the dynamic mappings of subset P. Milan §5.4.2.26 allows subsets of up to 176
+  channels; this build's `P-MAP-SUBSET-CH-MAX` is 71, the page one response buffer
+  carries whole (§3: above cdl 524 from 63 records, the oversize slot from 66), and
+  `E_GAMAP` answers a page the face reports above it `NO_RESOURCES` with
+  `number_of_mappings` 0, never a count its records do not carry (issue #50).
 - `ADD_AUDIO_MAPPINGS`: **all-or-nothing**. Any invalid mapping returns
   `BAD_ARGUMENTS` and adds nothing (`MAP_VALID` primitive). Invalid means it references a channel absent from
   the current format; or references a streaming output under the reference
@@ -920,7 +952,7 @@ not exist in a Milan PAAD):
 | Model | `DESC_ADDR`, `READ_STATE`, `WRITE_STATE`, `NAME_RD`, `NAME_WR`, `COPY_BUFFER` | image+overlay via [07 §3](07_memory_maps.md) |
 | Checks | `CHECK_LOCK`, `CHECK_ARG`, `MAP_VALIDATE` | first failure sets status + branches |
 | Gather | `GATHER_EXT`, `READ_COUNTERS` | atomic snapshots (§6.2, §6.6) |
-| Iterate | `ITER_OPEN`, `ITER_NEXT`, `APPEND_RESP` | GDI + list responses; APPEND has skip-on-overflow semantics |
+| Iterate | `ITER_OPEN`, `ITER_NEXT`, `APPEND_RESP` | GDI + list responses; APPEND has skip-on-overflow semantics: it skips a field that would end past cdl 524, or, with `cnd` D8 (the Milan §5.4.1 record loop, §3) and outside a GET_DYNAMIC_INFO batch, past the response buffer (`RESP_D8_CAP_P`, 592) |
 | Effects | `COMMIT`, `NVM_MARK`, `NOTIFY_ENQ` | commit is the atomicity point |
 | Respond | `SET_STATUS`, `SET_LENGTH`, `BUILD_HEADER`, `BUILD_FIELD`, `SEND_RESPONSE` | |
 
@@ -988,7 +1020,7 @@ single-source command model ([09 §1](09_verification.md)).
 | 0x0027 GET_AVB_INFO | real AVB Interface response from the integrator state face |
 | 0x0028 GET_AS_PATH | real gPTP path response from the integrator state face |
 | 0x0029 GET_COUNTERS | real for STREAM_INPUT, STREAM_OUTPUT, AVB_INTERFACE and CLOCK_DOMAIN: SUCCESS + `descriptor_type`/`descriptor_index`/`counters_valid` + all 32 quadlets (payload 136, cdl 148), the values coming from the integrator's counter face; `BAD_ARGUMENTS` on a command short of §7.4.42.1's four bytes |
-| 0x002B GET_AUDIO_MAP | real for both Stream Port directions: SUCCESS + the §7.4.44.2 fixed part + 8-byte records (payload 12 + 8·M, cdl 24 + 8·M), geometry and records from the integrator's audio-map face; `BAD_ARGUMENTS` on `map_index` ≥ `number_of_maps` (§7.4.44.1) or a command short of §7.4.44.1's eight bytes; `NO_SUCH_DESCRIPTOR` where the descriptor store misses the locate |
+| 0x002B GET_AUDIO_MAP | real for both Stream Port directions: SUCCESS + the §7.4.44.2 fixed part + 8-byte records (payload 12 + 8·M, cdl 24 + 8·M), geometry and records from the integrator's audio-map face; `BAD_ARGUMENTS` on `map_index` ≥ `number_of_maps` (§7.4.44.1) or a command short of §7.4.44.1's eight bytes; `NO_SUCH_DESCRIPTOR` where the descriptor store misses the locate; a page of up to `P-MAP-SUBSET-CH-MAX` (71) records served whole, above cdl 524 and through the oversize slot where it needs them (§3's oversize rule); `NO_RESOURCES` with `number_of_mappings` 0 and no record for a page above it (issue #50) |
 | 0x002C ADD_AUDIO_MAPPINGS | real atomic whole-command validation and commit for dynamic Stream Port Input and Output targets; static targets return `NOT_SUPPORTED`; every success emits the required unsolicited response |
 | 0x002D REMOVE_AUDIO_MAPPINGS | real atomic whole-command validation and commit with duplicate-safe removal; static targets return `NOT_SUPPORTED`; every success emits the required unsolicited response |
 | 0x004B GET_DYNAMIC_INFO | real two-pass batch execution: exact fixed-get whitelist, whole-command `BAD_ARGUMENTS` before processing on a forbidden member, ordinary getter results with per-record status, `NOT_SUPPORTED` plus copied command data for legal unimplemented members, and silent skip with continued processing when a result would exceed cdl 524 |

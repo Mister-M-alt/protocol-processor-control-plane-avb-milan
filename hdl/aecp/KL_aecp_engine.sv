@@ -907,6 +907,15 @@ module KL_aecp_engine
            RESP_BUF_C, ucpu_pkg::RESP_CAP_C);
   end
 
+  //! E_GAMAP serves a page of up to GAMAP_PAGE_MAX_C records whole (its
+  //! APPEND fills this buffer, Milan §5.4.1) and answers NO_RESOURCES above
+  //! it. A buffer too small for that page would drop records a SUCCESS still
+  //! counts, so a line below 561 bytes is refused here (issue #50).
+  if (RESP_BUF_C < 24 + 8 * ucpu_pkg::GAMAP_PAGE_MAX_C) begin : gen_g_gamap_page_fit
+    $error("response buffer (%0d B) cannot carry a %0d-record GET_AUDIO_MAP page (%0d B)",
+           RESP_BUF_C, ucpu_pkg::GAMAP_PAGE_MAX_C, 24 + 8 * ucpu_pkg::GAMAP_PAGE_MAX_C);
+  end
+
   pp_txn_t txn_w;
   assign txn_w = pp_txn_t'(txn_i);
 
@@ -1654,7 +1663,8 @@ module KL_aecp_engine
   logic  [4:0] ucpu_st_nc_w;
 
   KL_aecp_ucpu #(
-      .UCODE_HEX_P (UCODE_HEX_P)
+      .UCODE_HEX_P   (UCODE_HEX_P),
+      .RESP_D8_CAP_P (RESP_BUF_C)
   ) u_ucpu (
       .clk_i              (clk_i),
       .rst_n              (rst_n),

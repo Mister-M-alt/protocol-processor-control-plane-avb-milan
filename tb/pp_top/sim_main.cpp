@@ -1045,8 +1045,15 @@ struct H {
                        ? amap_rec(ty, ix, page, rec) : 0;
     return 0;
   }
+  //! section AX: when non-zero, STREAM_PORT_INPUT 1's page 0 holds this many
+  //! mappings instead of none, to put a page above the 62 a response carries
+  uint16_t amap_big_page = 0;
   uint64_t amap_query_value(uint16_t ty, uint16_t ix, uint16_t page,
                             uint8_t sel, uint8_t rec) {
+    if (amap_big_page != 0 && ty == 0x000E && ix == 1 && page == 0) {
+      if (sel == 1) return (uint64_t(amap_nmaps(ty, ix)) << 16) | amap_big_page;
+      if (sel == 2) return rec < amap_big_page ? amap_rec(ty, ix, page, rec) : 0;
+    }
     if (!amap_edit_mode) return amap_value(ty, ix, page, sel, rec);
     if ((ty != 0x000E && ty != 0x000F) || ix >= 2) return 0;
     uint16_t pages = ty == 0x000E ? 1 : 4;
@@ -1091,6 +1098,10 @@ struct H {
   uint64_t name_wr_mismatches = 0;
   uint64_t name_mark_cycle = 0;
   uint64_t notify_enqs = 0;
+  //! section AX: every AECP TX-slot grant as {slot, the engine's oversize
+  //! request}, and the slot of every serializer start, in order
+  std::vector<std::pair<uint8_t, bool>> aecp_grants;
+  std::vector<uint8_t> ser_start_slots;
   //! the exported mark CODE beside the strobe (issue #90): the code is only
   //! meaningful while the strobe is 1, so it is sampled there and counted
   //! per group — 1 dynamic-state field, 6 channel maps, 7 user names
@@ -1254,6 +1265,10 @@ struct H {
       if (d->aecp_nvm_mark_o == 7) ++nvm_marks_cls7;
     }
     if (d->dbg_notify_enq_o) ++notify_enqs;
+    if (d->dbg_aecp_txs_gnt_o)
+      aecp_grants.emplace_back(uint8_t(d->dbg_aecp_txs_slot_o),
+                               d->dbg_aecp_txs_ovs_o != 0);
+    if (d->dbg_ser_start_o) ser_start_slots.push_back(uint8_t(d->dbg_ser_slot_o));
     nvm_unflushed_seen |= d->nvm_unflushed_o;
     sample_restore_levels();
     sample_d3_ownership();
@@ -8982,7 +8997,12 @@ struct Suite {
   //! `entity_cfg` is the ENTITY descriptor's current_configuration, the image
   //! default every unset-row answer falls back to; section AD boots an image
   //! whose default is 1 so that a SET back to 0 is not also the default
-  void load_descriptor_image(uint16_t entity_cfg = CFGIX) {
+  //! `extra_ents`/`extra_bodies` append rows after every configuration-0
+  //! row (section AX puts its configuration-1 descriptors there); the main
+  //! run passes none, so its image is byte for byte what it was
+  void load_descriptor_image(
+      uint16_t entity_cfg = CFGIX, const std::vector<ImgEnt>& extra_ents = {},
+      const std::vector<std::vector<uint8_t>>& extra_bodies = {}) {
     image_ents = {
       {CFGIX, 0x0000, 1, 312, 0, 312, 0},          // ENTITY
       {CFGIX, 0x0024, 1,  82, 2,  88, 0},          // CLOCK_DOMAIN (not %8)
@@ -9008,6 +9028,7 @@ struct Suite {
       //! Test-only shape that makes E_RDESCENT's type guard load-bearing.
       {CFGIX, 0x0022, 1, 312, 10, 312, 0},         // SIGNAL_MULTIPLEXER
     };
+    image_ents.insert(image_ents.end(), extra_ents.begin(), extra_ents.end());
     image_entity = entity_descriptor();
     putbe(&image_entity[310], entity_cfg, 2);  // current_configuration
     image_clkdom = clock_domain_descriptor();
@@ -9015,23 +9036,26 @@ struct Suite {
     //! page of 8), port 1 = 24 clusters at base 8 (three pages of 8)
     image_spi0 = stream_port_descriptor(0x000E, 0, 8, 0);
     image_spi1 = stream_port_descriptor(0x000E, 1, 24, 8);
-    h.dram = build_image(image_ents,
-                         {image_entity, image_clkdom, image_spi0, image_spi1,
-                          stream_descriptor(0x0005, 0), stream_descriptor(0x0005, 1),
-                          stream_descriptor(0x0006, 0), stream_descriptor(0x0006, 1),
-                          avb_interface_descriptor(0),
-                          stream_port_descriptor(0x000F, 0, 8, 0),
-                          stream_port_descriptor(0x000F, 1, 8, 8),
-                          stream_port_descriptor(0x000F, 2, 8, 16, 1, 0),
-                          audio_map_descriptor(0, 0),
-                          audio_unit_descriptor(0, 96000u),
-                          control_descriptor(0),
-                          non_entity_312_descriptor(0)},
+    std::vector<std::vector<uint8_t>> bodies = {
+        image_entity, image_clkdom, image_spi0, image_spi1,
+        stream_descriptor(0x0005, 0), stream_descriptor(0x0005, 1),
+        stream_descriptor(0x0006, 0), stream_descriptor(0x0006, 1),
+        avb_interface_descriptor(0),
+        stream_port_descriptor(0x000F, 0, 8, 0),
+        stream_port_descriptor(0x000F, 1, 8, 8),
+        stream_port_descriptor(0x000F, 2, 8, 16, 1, 0),
+        audio_map_descriptor(0, 0),
+        audio_unit_descriptor(0, 96000u),
+        control_descriptor(0),
+        non_entity_312_descriptor(0)};
+    bodies.insert(bodies.end(), extra_bodies.begin(), extra_bodies.end());
+    h.dram = build_image(image_ents, bodies,
                          //! TWO configurations, so SET_CONFIGURATION has a
                          //! legal non-zero index to be tested with. Only
                          //! configuration 0 carries descriptors, which is a
                          //! legitimate shape and makes configuration 1 a clean
-                         //! NO_SUCH_DESCRIPTOR target for READ_DESCRIPTOR.
+                         //! NO_SUCH_DESCRIPTOR target for READ_DESCRIPTOR
+                         //! (section AX adds configuration-1 rows of its own).
                          //! A3's out-of-range probe uses index 3 and is
                          //! unaffected.
                          {"PP Reference Entity", "Milan Endpoints",
@@ -10503,11 +10527,51 @@ struct AecpResponsePhase {
     return tiv(0x001A, ix, v, 1);
   }
 
+  //! Figure 7-32's AUDIO_MAP with `n` static mappings, every record distinct
+  static std::vector<uint8_t> big_audio_map(uint16_t ix, uint16_t n) {
+    std::vector<uint8_t> d(8 + 8 * size_t(n), 0);
+    putbe(&d[0], 0x0017, 2);
+    putbe(&d[2], ix, 2);
+    putbe(&d[4], 8, 2);                            // mappings_offset
+    putbe(&d[6], n, 2);                            // number_of_mappings
+    for (uint16_t k = 0; k < n; ++k)
+      putbe(&d[8 + 8 * size_t(k)],
+            (uint64_t(0xA000u | ix) << 48) | (uint64_t(k) << 32)
+                | (uint64_t(0x5000u + k) << 16) | uint64_t(0x0100u + k), 8);
+    return d;
+  }
+  //! 7.2.32's CLOCK_DOMAIN with `n` clock sources, the identity list
+  static std::vector<uint8_t> wide_clock_domain(uint16_t ix, uint16_t n) {
+    std::vector<uint8_t> d(76 + 2 * size_t(n), 0);
+    putbe(&d[0], 0x0024, 2);
+    putbe(&d[2], ix, 2);
+    const char* nm = "Clock Domain C1";
+    memcpy(&d[4], nm, strlen(nm));
+    putbe(&d[68], 0xFFFF, 2);                      // localized_description
+    putbe(&d[72], 76, 2);                          // clock_sources_offset
+    putbe(&d[74], n, 2);                           // clock_sources_count
+    for (uint16_t k = 0; k < n; ++k) putbe(&d[76 + 2 * size_t(k)], k, 2);
+    return d;
+  }
+  //! configuration 1 holds the OV section's descriptors, on either side of
+  //! the 576-byte standard slot (frame = 38 + 4 + length)
+  static constexpr uint16_t CFG1 = 1;
+  std::vector<std::vector<uint8_t>> cfg1_bodies = {
+      big_audio_map(0, 71),          // 576 B, the line: cdl 592, frame 618
+      big_audio_map(1, 66),          // 536 B: cdl 552, frame 578
+      big_audio_map(2, 65),          // 528 B: cdl 544, frame 570
+      wide_clock_domain(0, 229)};    // 534 B: cdl 550, frame 576 exactly
+
   void boot() {
     Suite image(io);
-    image.load_descriptor_image();
+    const std::vector<ImgEnt> cfg1 = {
+        {CFG1, 0x0017, 1, 576, 0xFFFF, 576, 0},
+        {CFG1, 0x0017, 1, 536, 0xFFFF, 536, 0},
+        {CFG1, 0x0017, 1, 528, 0xFFFF, 528, 0},
+        {CFG1, 0x0024, 1, 534, 0xFFFF, 536, 0}};
+    image.load_descriptor_image(CFGIX, cfg1, cfg1_bodies);
     for (const auto& e : image.image_ents)
-      if (e.type == 0x0024) putbe(&io.dram[e.off + 70], CD_IMAGE_INDEX, 2);
+      if (e.cfg == CFGIX && e.type == 0x0024) putbe(&io.dram[e.off + 70], CD_IMAGE_INDEX, 2);
     io.reset();
     io.d->restore_go_i = 1;
     io.idle(5);
@@ -10674,9 +10738,124 @@ struct AecpResponsePhase {
     lk_the_holder_is_still_served();
   }
 
+  // ---- OV: a response above cdl 524 through the oversize slot (#50, #82) --
+  static std::vector<uint8_t> rdesc(uint16_t cfg, uint16_t ty, uint16_t ix) {
+    std::vector<uint8_t> p(8, 0);
+    putbe(&p[0], cfg, 2);
+    putbe(&p[4], ty, 2);
+    putbe(&p[6], ix, 2);
+    return p;
+  }
+  //! one READ_DESCRIPTOR of configuration 1 against the descriptor's own
+  //! bytes, and the TX slot the response left through
+  void ov_read(uint16_t ty, uint16_t ix, const std::vector<uint8_t>& desc,
+               bool oversize, const char* what) {
+    io.aecp_grants.clear();
+    io.ser_start_slots.clear();
+    ++seq;
+    const auto r = ask(AEM_READ_DESCRIPTOR, rdesc(CFG1, ty, ix));
+    std::vector<uint8_t> pl(4, 0);
+    putbe(&pl[0], CFG1, 2);
+    pl.insert(pl.end(), desc.begin(), desc.end());
+    const auto w = want(CTLR_MAC, CTLR_EID, AECP_SUCCESS, AEM_READ_DESCRIPTOR, pl);
+    CHECK(r == w, "%s: the %zu-byte descriptor, byte-exact", what, desc.size());
+    if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
+    const int want_cdl = int(12 + pl.size());
+    CHECK(cdl(r) == want_cdl && want_cdl > 524,
+          "%s: cdl %d off the wire, want %d (above 524)", what, cdl(r), want_cdl);
+    CHECK(r.size() == 38 + pl.size(), "%s: %zu octets on the wire, want %zu",
+          what, r.size(), 38 + pl.size());
+    slot_used(oversize, what);
+  }
+  //! the one response since the grant log was cleared took one TX-slot
+  //! grant, slot 4 exactly when the engine raised its oversize request, left
+  //! through slot 4 exactly then, and slot 4 is free again afterwards
+  void slot_used(bool oversize, const char* what) {
+    const bool granted = io.aecp_grants.size() == 1;
+    const unsigned slot = granted ? io.aecp_grants[0].first : 99u;
+    CHECK(granted && (slot == 4) == oversize && io.aecp_grants[0].second == oversize,
+          "%s: one TX-slot grant, the oversize request %s, slot %u", what,
+          oversize ? "raised" : "clear", slot);
+    const bool left4 = std::find(io.ser_start_slots.begin(), io.ser_start_slots.end(),
+                                 uint8_t(4)) != io.ser_start_slots.end();
+    CHECK(left4 == oversize, "%s: the frame %s through slot 4", what,
+          oversize ? "left" : "did not leave");
+    io.idle(20);
+    CHECK(io.d->dbg_txs_slot4_free_o, "%s: slot 4 is free again", what);
+  }
+
+  void ov_responses_above_cdl_524() {
+    ov_read(0x0017, 0, cfg1_bodies[0], true,
+            "OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618)");
+    ov_read(0x0017, 1, cfg1_bodies[1], true,
+            "OV2 AUDIO_MAP 1 (536 B: cdl 552, frame 578)");
+    ov_read(0x0017, 2, cfg1_bodies[2], false,
+            "OV3 AUDIO_MAP 2 (528 B: cdl 544, frame 570, a standard slot)");
+    ov_read(0x0024, 0, cfg1_bodies[3], false,
+            "OV4 CLOCK_DOMAIN 0 (534 B: frame 576, the standard slot's own size)");
+    ov_read(0x0017, 0, cfg1_bodies[0], true,
+            "OV5 AUDIO_MAP 0 again: slot 4 is reusable");
+  }
+
+  // ---- PG: the GET_AUDIO_MAP page (#50) ---------------------------------
+  static constexpr int NO_RESOURCES = 8;       // IEEE 1722.1-2021 Table 7-141
+  static constexpr uint16_t PAGE_MAX = 71;     // ucpu_pkg::GAMAP_PAGE_MAX_C
+  //! STREAM_PORT_INPUT 1's page 0 at `n` mappings (the face's override). A
+  //! page of up to PAGE_MAX records is served whole (cdl 24 + 8n: above 524
+  //! from 63 records, Milan 5.4.1; frame 50 + 8n: the oversize slot from 66),
+  //! and a page above it is answered NO_RESOURCES with no record claimed
+  void pg_page(uint16_t n, const char* what) {
+    io.aecp_grants.clear();
+    io.ser_start_slots.clear();
+    io.amap_big_page = n;
+    std::vector<uint8_t> cmd(8, 0);
+    putbe(&cmd[0], 0x000E, 2);
+    putbe(&cmd[2], 1, 2);                          // map_index 0, reserved 0
+    ++seq;
+    const auto r = ask(AEM_GET_AUDIO_MAP, cmd);
+    io.amap_big_page = 0;
+    const bool fits = n <= PAGE_MAX;
+    std::vector<uint8_t> body(12, 0);
+    putbe(&body[0], 0x000E, 2);
+    putbe(&body[2], 1, 2);
+    putbe(&body[6], H::amap_nmaps(0x000E, 1), 2);
+    putbe(&body[8], fits ? n : 0, 2);
+    for (uint16_t k = 0; fits && k < n; ++k) {
+      body.resize(body.size() + 8);
+      putbe(&body[12 + 8 * size_t(k)], H::amap_rec(0x000E, 1, 0, uint8_t(k)), 8);
+    }
+    const auto w = want(CTLR_MAC, CTLR_EID, fits ? AECP_SUCCESS : NO_RESOURCES,
+                        AEM_GET_AUDIO_MAP, body);
+    CHECK(r == w, "%s: byte-exact (status %d, cdl %d)", what, st(r), cdl(r));
+    if (!r.empty() && r != w && r.size() < 120) { dump("got", r); dump("exp", w); }
+    const unsigned claimed = r.size() >= 48 ? ((unsigned(r[46]) << 8) | r[47]) : 0xFFFFu;
+    const int carried = cdl(r) >= 24 ? (cdl(r) - 24) / 8 : -1;
+    CHECK(int(claimed) == carried,
+          "%s: number_of_mappings %u names exactly the %d records carried", what,
+          claimed, carried);
+    slot_used(fits && 50 + 8 * n > 576, what);
+  }
+
+  void pg_the_page() {
+    pg_page(62, "PG1 a 62-mapping page: SUCCESS, cdl 520, a standard slot");
+    pg_page(63, "PG2 a 63-mapping page: SUCCESS above cdl 524 (528), a standard slot");
+    pg_page(64, "PG3 a 64-mapping page (eight 8-channel Stream Outputs in one "
+                "subset): SUCCESS, cdl 536");
+    pg_page(65, "PG4 a 65-mapping page: SUCCESS, cdl 544, frame 570, a standard slot");
+    pg_page(66, "PG5 a 66-mapping page: SUCCESS, cdl 552, frame 578, the oversize slot");
+    pg_page(71, "PG6 a 71-mapping page, the cap: SUCCESS, cdl 592, frame 618, "
+                "the oversize slot");
+    pg_page(72, "PG7 a 72-mapping page: NO_RESOURCES, no record claimed");
+    pg_page(176, "PG8 a 176-mapping page (Milan 5.4.2.26's ceiling): NO_RESOURCES");
+    pg_page(256, "PG9 a 256-mapping page (the count's low byte is 0): NO_RESOURCES");
+    pg_page(3, "PG10 the same page at 3 mappings is served whole again");
+  }
+
   void run() {
     boot();
     lk_the_entity_locked_arm();
+    ov_responses_above_cdl_524();
+    pg_the_page();
   }
 };
 

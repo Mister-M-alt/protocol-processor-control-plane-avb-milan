@@ -121,6 +121,12 @@ package ucpu_pkg;
   // ---- response buffer geometry (Milan §5.4.2.5: 524-byte payload cap) ---
   localparam int unsigned RESP_BYTES_C = 576;   // one TX slot, 03 §2
   localparam int unsigned RESP_CAP_C   = 524;   // APPEND_RESP overflow line
+  //! the most 8-byte GET_AUDIO_MAP records E_GAMAP serves in one page: the
+  //! 592-byte response buffer of the default 576-byte descriptor line, less
+  //! the 24 bytes (cdl) ahead of the first record. gen_ucode.py's
+  //! GAMAP_PAGE_MAX is this number (scripts/check_upc_map.py holds the two
+  //! together); a page above it answers NO_RESOURCES (issue #50).
+  localparam int unsigned GAMAP_PAGE_MAX_C = 71;
 
 endpackage : ucpu_pkg
 `default_nettype wire

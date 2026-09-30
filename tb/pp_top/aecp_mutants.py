@@ -59,6 +59,25 @@ MUTANTS = [
     ("lk-prefix-zero-body", "lk-prefix-zero-body", "aecp-dispatch",
      "LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: "
      "ENTITY_LOCKED byte-exact"),
+    # issue #50 (and #82's oversize path): the engine's Delta-8 request, its
+    # comparator and the top's routing of it; the GET_AUDIO_MAP page, its
+    # buffer-wide APPEND and its cap
+    ("ov-oversize-never", "ov-oversize-never", "aecp-dispatch",
+     "OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618): "
+     "the 576-byte descriptor, byte-exact"),
+    ("ov-oversize-at-576", "ov-oversize-at-576", "aecp-dispatch",
+     "OV4 CLOCK_DOMAIN 0 (534 B: frame 576, the standard slot's own size): "
+     "one TX-slot grant"),
+    ("ov-top-oversize-dropped", "ov-top-oversize-dropped", "aecp-dispatch",
+     "OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618): "
+     "the 576-byte descriptor, byte-exact"),
+    ("pg-append-524", "pg-append-524", "aecp-dispatch",
+     "PG2 a 63-mapping page: SUCCESS above cdl 524 (528), a standard slot: "
+     "number_of_mappings"),
+    ("pg-cap-dropped", "pg-cap-dropped", "aecp-dispatch",
+     "PG7 a 72-mapping page: NO_RESOURCES, no record claimed: number_of_mappings"),
+    ("pg-cap-off-by-one", "pg-cap-off-by-one", "aecp-dispatch",
+     "PG7 a 72-mapping page: NO_RESOURCES, no record claimed: byte-exact"),
 ]
 
 #: the scratch tree: the RTL and the two bench directories the targets build

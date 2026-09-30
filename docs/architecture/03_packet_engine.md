@@ -275,8 +275,16 @@ Ordering rules:
 - TX slot classes: `P-TX-STD-SLOTS` × 576 B (covers every ≤ 524-cdl PDU) and **one
   full-frame oversize slot** (`P-TX-OVERSIZE-BYTES`) reserved for the Δ8 command set
   (READ_DESCRIPTOR, GET_AVB_INFO, GET_AS_PATH, GET_AUDIO_MAP, ADD/REMOVE_AUDIO_MAPPINGS
-  — Milan §5.4.1). GET_DYNAMIC_INFO is **not** oversize-allowed and enforces the
-  524-cdl cap by skipping elements ([06 §6.7](06_aecp_engine.md)).
+  — Milan §5.4.1). The AECP engine requests it for any response frame longer than
+  576 B, and the top grants it to the AECP engine alone. The actual Δ8 ceiling is the
+  response buffer (§7.1): cdl 592, a 618-byte frame at the default 576-byte line,
+  far inside the 1600-byte slot. Two commands reach past cdl 524 in this build:
+  READ_DESCRIPTOR of a descriptor of 509 bytes or more (the oversize slot from 535),
+  and GET_AUDIO_MAP from 63 records (the oversize slot from 66, at most 71 records).
+  GET_AVB_INFO and GET_AS_PATH stay below cdl 524 and ADD/REMOVE_AUDIO_MAPPINGS mirror
+  a command capped there ([06 §3](06_aecp_engine.md#3-pdu-handling)).
+  GET_DYNAMIC_INFO is **not** oversize-allowed and enforces the 524-cdl cap by
+  skipping elements ([06 §6.7](06_aecp_engine.md)).
 - Builders serialize from response templates + field writes; `control_data_length`
   computed last; padding added by the MAC path and never counted (V2).
 - `NOT_IMPLEMENTED` responses are correctly sized (IEEE §9.3.5.3.3) **without a

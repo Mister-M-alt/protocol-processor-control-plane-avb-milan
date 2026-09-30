@@ -70,7 +70,8 @@ reports uncovered REQ-IDs as failures.
 | GET_DYNAMIC_INFO with a **non-§7.4.76.2** command inside (variable-size GET or non-GET) | `BAD_ARGUMENTS`, nothing processed |
 | GET_DYNAMIC_INFO batching **all 13** §7.4.76.2 commands | accepted; unimplemented members answered per-element `NOT_SUPPORTED`, implemented ones with data |
 | GET_DYNAMIC_INFO batch overflowing 524 cdl | overflowing elements skipped, rest answered |
-| oversize READ_DESCRIPTOR response path | > 524-cdl frame emitted correctly (Δ8) |
+| oversize READ_DESCRIPTOR response path | > 524-cdl frame emitted correctly (Δ8): byte-exact, through TX slot 4 above a 576-byte frame and freed after (tb/pp_top AX OV) |
+| GET_AUDIO_MAP page above 62 records | served whole up to 71 (above cdl 524, the oversize slot from 66); above 71 `NO_RESOURCES`, `number_of_mappings` 0 (tb/pp_top AX PG) |
 | ACMP responses with mismatched {controller, seq} | silently ignored |
 | IDENTIFY_NOTIFICATION received as a command | `BAD_ARGUMENTS`, correctly sized (IEEE §7.4.39.2) |
 | duplicate BIND_RX (same seq) replay | idempotent / cached response |

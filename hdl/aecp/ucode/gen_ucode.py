@@ -36,6 +36,9 @@ ST_STRMRUN = 12       # Table 7-141 STREAM_IS_RUNNING — Milan's refusal for a
                       # SET aimed at a bound Stream Input or a streaming
                       # Stream Output (SS5.4.2.5 / SS5.4.2.7 / SS5.4.2.9)
 REL_EQ, REL_NE, REL_LT, REL_GE = 0, 1, 2, 3
+D8 = 1                # APPEND cnd[0]: the Milan §5.4.1 record loop, which
+                      # fills the response buffer instead of stopping at 524
+                      # (KL_aecp_ucpu RESP_D8_CAP_P; never inside a batch)
 
 # KL_aecp_desc_store state-port regions (see its banner): the µISA cannot put a
 # 48-bit locate key on a 20-bit address, so the region nibble selects what a
@@ -88,6 +91,7 @@ E_COPY    = 352
 E_MAPV    = 384
 E_MAPVF   = 400
 E_OVF     = 416      # 524-byte cap + skip-on-overflow (§7.4.76.1)
+E_OVF8    = 432      # the Δ8 APPEND: fills the buffer, 524 in a batch (#50)
 E_FMT     = 512
 E_NOTIMPL = 560      # unknown-opcode path (IEEE §9.3.5.3.3, REQ-FWX-001)
 E_ACQ     = 576      # ACQUIRE_ENTITY exemplar (Milan Δ7: NOT_SUPPORTED)
@@ -538,6 +542,26 @@ place(E_OVF, [
     u('END'),
 ])
 
+# --- the Δ8 APPEND (issue #50): the same loop with cnd D8 fills the response
+# buffer (RESP_D8_CAP_P, 592 by default: 72 whole qwords from cursor 12), and
+# the same µop inside a GET_DYNAMIC_INFO batch still stops at 524 ------------
+place(E_OVF8, [
+    u('MOVE', rd=6, imm=80),                     # 80 elements of 8 B
+    u('MOVE', rd=1, imm=0xD8),
+    u('ITER_OPEN', ra=6),
+    u('APPEND', ra=1, fmt=FMT_Q, cnd=D8),        # loop: 72 fit, rest skip
+    u('ITER_NEXT'),
+    u('BR_STATUS', cnd=1, imm=E_OVF8 + 7),
+    u('BRANCH', imm=E_OVF8 + 3),
+    u('BR_STATUS', cnd=4, imm=E_OVF8 + 10),      # out: ovf? ->
+    u('SET_STATUS', imm=ST_OK),                  # (no-ovf path)
+    u('BRANCH', imm=E_OVF8 + 11),
+    u('SET_STATUS', imm=ST_NSUPP),               # ovf marker for the TB
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+])
+
 # --- formats: write strobes, truncating moves, 64-bit compare, rb-RAW -------
 place(E_FMT, [
     u('DESC_ADDR', ra=14, imm=0x00100),
@@ -839,6 +863,27 @@ place(E_GCTRSNS, [
 # constant, and every other descriptor type keeps the NOT_IMPLEMENTED echo.
 # r14[15:0], where other programs keep the @24 field, is the locate key's cfg
 # half instead.
+#
+# THE PAGE CAP (issue #50). Milan §5.4.1 lets a GET_AUDIO_MAP response exceed
+# cdl 524, so the records ride the Δ8 APPEND (cnd D8), which fills the
+# engine's response buffer instead of skipping at RESP_CAP_C: 592 bytes at the
+# default 576-byte line, cursor = cdl, so the header record's 12 bytes and the
+# fixed part's 12 leave room for GAMAP_PAGE_MAX = 71 whole 8-byte records,
+# cdl 592 and a 618-byte frame, which leaves through the oversize TX slot. A
+# page the face reports above that could not be carried whole, and the loop
+# would drop its tail while number_of_mappings still named every record. So
+# the count is taken to 0 on every arm when it exceeds the cap (the error
+# stubs carry no records either way), and a page the command would otherwise
+# answer SUCCESS is answered NO_RESOURCES (Table 7-141: "cannot complete the
+# command because it does not have the resources to support it"):
+# number_of_mappings never names a record the response does not carry.
+# P-MAP-SUBSET-CH-MAX (F01.5) is the matching integrator contract: Milan
+# §5.4.2.26 lets a PAAD partition into subsets of up to 176 channels, and this
+# build's responses carry 71. ucpu_pkg::GAMAP_PAGE_MAX_C is the same number and
+# KL_aecp_engine refuses to elaborate a buffer that cannot hold the page.
+GAMAP_PAGE_MAX = (16 + 576 - 24) // 8
+assert GAMAP_PAGE_MAX == 71
+GAMAP_EMIT = E_GAMAP + 15                        # every status's emit
 place(E_GAMAP, [
     #! the type constant loads FIRST so E_GAMAPO below can override it and
     #! fall into the shared tail - one program, two Table 7-1 types
@@ -847,26 +892,35 @@ place(E_GAMAP, [
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
     u('GATHER_EXT', rd=5, **AM_NMAPS),           # r5 = number_of_maps
     u('GATHER_EXT', rd=6, **AM_GEOM),            # r6 = {nmaps, nmappings}
-    u('BR_STATUS', cnd=0, imm=E_GAMAP + 9),      # NSD: skip to the emit
+    u('COMPARE', ra=6, fmt=FMT_W,                # lt: the page fits the cap
+      imm=GAMAP_PAGE_MAX + 1),
+    u('BR_STATUS', cnd=3, imm=E_GAMAP + 9),
+    u('MOVE', rd=10, ra=0, imm=0xFFFF),          # above it: number_of_mappings
+    u('SET_MASKED', rd=6, ra=12, rb=10),         # := 0, and no record emitted
+    u('BR_STATUS', cnd=0, imm=GAMAP_EMIT),       # E_GAMAP + 9, NSD: the emit
     u('SET_STATUS', imm=ST_OK),
     u('CHECK_ARG', ra=5, rb=12, fmt=FMT_W,       # number_of_maps != 0;
-      cnd=8 | REL_NE, imm=E_GAMAP + 9),          # zero -> NOT_SUPPORTED
+      cnd=8 | REL_NE, imm=GAMAP_EMIT),           # zero -> NOT_SUPPORTED
     u('CHECK_ARG', ra=13, rb=5, fmt=FMT_W,       # map_index < number_of_maps
-      cnd=REL_LT, imm=E_GAMAP + 9),              # else BAD_ARGUMENTS (§7.4.44.1)
-    u('BUILD_HDR', ra=15, rb=13),                # emit (all three statuses):
+      cnd=REL_LT, imm=GAMAP_EMIT),               # else BAD_ARGUMENTS (§7.4.44.1)
+    u('BR_STATUS', cnd=3, imm=GAMAP_EMIT),       # the page fits (lt of +5)
+    u('SET_STATUS', imm=ST_NORES),               # it does not: NO_RESOURCES
+    u('BUILD_HDR', ra=15, rb=13),                # GAMAP_EMIT, all statuses:
     u('BUILD_FLD', ra=8, fmt=FMT_W),             # descriptor_type       @24
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # descriptor_index @26 + map_index @28
     u('BUILD_FLD', ra=6, fmt=FMT_D),             # number_of_maps @30 + number_of_mappings @32
     u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved              @34
     u('ITER_OPEN', ra=6),                        # count = number_of_mappings
-    u('BR_STATUS', cnd=1, imm=E_GAMAP + 20),     # loop: 0-trip safe (test FIRST)
+    u('BR_STATUS', cnd=1, imm=E_GAMAP + 26),     # E_GAMAP + 21, loop: 0-trip safe
     u('GATHER_EXT', rd=7, **AM_REC),             # record amap_rec_o, 8 B
-    u('APPEND', ra=7, fmt=FMT_Q),
+    u('APPEND', ra=7, fmt=FMT_Q, cnd=D8),        # fills the buffer (§5.4.1)
     u('ITER_NEXT'),
-    u('BRANCH', imm=E_GAMAP + 15),
-    u('SEND_RESP'),                              # out:
+    u('BRANCH', imm=E_GAMAP + 21),
+    u('SEND_RESP'),                              # E_GAMAP + 26, out:
     u('END'),
 ])
+assert rom[GAMAP_EMIT] == u('BUILD_HDR', ra=15, rb=13)
+assert rom[E_GAMAP + 26] == u('SEND_RESP')
 
 # --- gather selectors the registry/lock face answers (06 §6.4/§6.7) ----------
 # The SAME command-routed 8-bit sel space as the other faces. Engine mapping:

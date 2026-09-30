@@ -487,7 +487,8 @@ tally.
     reaches its write: **M9b3-M9b5** read STREAM_OUTPUT 1's published format
     and presentation-offset rows and CLOCK_DOMAIN 0's name back unmoved, as
     **M9b/M9b2** do the sampling rate. `make aecp-dispatch` runs A5b and M9
-    alone on a booted model (the main run holds both in its own timeline).
+    alone on a booted model (the main run holds both in its own timeline), then
+    section AX.
 - **Audio-map edit transaction**: ADD/REMOVE_AUDIO_MAPPINGS cover atomic
   validation and commit, duplicate-safe removal, static-port refusal,
   running-output refusal, state-changing success notifications with
@@ -812,7 +813,8 @@ generated ROM and model directory is deleted before each build, so a microcode
 arm cannot leave its ROM behind. A positive control of each make target runs
 first and must pass, and an arm is KILLED only when its run completes with the
 build's tally, exits non-zero and prints the named check. `aecp-dispatch` runs
-A5b and M9 on a booted model (`--aecp-dispatch-only`). The last column is how
+A5b and M9 on a booted model, then section AX on its own processor
+(`--aecp-dispatch-only`). The last column is how
 many checks each arm failed at the lane head.
 
 | Arm | Defect planted | Named check | Failing checks |
@@ -832,6 +834,12 @@ many checks each arm failed at the lane head.
 | `lk-sctrl-lock-nop` | E_SCTRL's CHECK_LOCK (E_SCTRL+4) replaced with NOP | `LK1 IDENTIFY at its reset 0, ...: ENTITY_LOCKED byte-exact` | 9 |
 | `lk-sctrl-miss-lock-nop` | E_SCTRL's locate-miss CHECK_LOCK (E_SCTRL+21) replaced with NOP | `LK4 foreign SET_CONTROL on CONTROL 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
 | `lk-prefix-zero-body` | the microcode generator as it stood at the lane base (`0451d83d`): the lock checked first and refused through the zero-bodied E_LOCKED4/E_LOCKED1 stubs, the issue #53 reproduction | `LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: ENTITY_LOCKED byte-exact` | 5 |
+| `ov-oversize-never` | the engine's `txs_oversize_o` forced to 0 (issue #50's acceptance 2) | `OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618): the 576-byte descriptor, byte-exact` | 18 |
+| `ov-oversize-at-576` | the engine asks for the oversize slot at a 576-byte frame (`>=` for `>`) | `OV4 CLOCK_DOMAIN 0 (534 B: frame 576, the standard slot's own size): one TX-slot grant` | 2 |
+| `ov-top-oversize-dropped` | the top's `pool_oversize_w` tied to 0, so the request never reaches the pool | `OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618): the 576-byte descriptor, byte-exact` | 18 |
+| `pg-append-524` | E_GAMAP's record APPEND loses its Δ8 flag and stops at cdl 524 again, the issue #50 reproduction | `PG2 a 63-mapping page: SUCCESS above cdl 524 (528), a standard slot: number_of_mappings` | 14 |
+| `pg-cap-dropped` | E_GAMAP's page cap keeps the count and the SUCCESS (its SET_MASKED and SET_STATUS NO_RESOURCES replaced with NOP) | `PG7 a 72-mapping page: NO_RESOURCES, no record claimed: number_of_mappings` | 10 |
+| `pg-cap-off-by-one` | the page cap compares against 73 instead of 72, so a 72-mapping page is answered SUCCESS | `PG7 a 72-mapping page: NO_RESOURCES, no record claimed: byte-exact` | 4 |
 
 Each guard arm fails its opcode's row on all seven message types; the three
 writers also fail their whole-body row and the read-back that proves the write
@@ -841,7 +849,13 @@ main-path NOP lets the foreign SET write: its byte-exact check, the holder's
 unsolicited frame, the effect counters and the next holder SET's notification
 count all fail. The reproduction fails exactly the five LK1/LK3 bodies that
 are not zero (status 3 and cdl are right; LK1's SET_CONTROL at IDENTIFY's reset
-0 passes, because zero is its value in force).
+0 passes, because zero is its value in force). With no oversize request (from the
+engine or through the top) the three oversize READ_DESCRIPTORs leave truncated to a
+576-byte standard slot: byte-exact, wire length, grant and slot 4 fail on each, and
+OV5 with them; the request at 576 moves OV4 alone into slot 4. The page-cap arms
+fail the pages they reach: the Δ8 flag removed, PG2 to PG6 (62 records, the full
+count); the cap dropped, PG7 to PG9 (the count kept, 71 records or none carried);
+the cap one late, PG7 alone.
 
 ## Recorded seams and honest limits
 
@@ -1251,3 +1265,26 @@ the zero a stub would carry.
   holder asking the same is answered NO_SUCH_DESCRIPTOR; **LK6**: the holder,
   still holding the lock, is served, one store write and one notification per
   changing SET, and each GET reads what it stored.
+- **OV** a response above cdl 524 through the oversize TX slot (Milan 5.4.1; issue
+  #50, #82's oversize path). The image's configuration 1 holds four descriptors on
+  either side of the 576-byte standard slot (frame = 42 + length): AUDIO_MAPs of 576
+  bytes (the whole line: cdl 592, frame 618), 536 (cdl 552, frame 578) and 528 (cdl
+  544, frame 570), and a 534-byte CLOCK_DOMAIN (229 clock sources: frame 576, the
+  standard slot's own size). Each READ_DESCRIPTOR is graded byte-exact against the
+  descriptor's own bytes, with cdl off the wire (above 524) and the wire length, and
+  the wrap's taps of the engine's grant, its oversize request, the serializer's start
+  and slot 4's state show that **OV1**, **OV2** and **OV5** (the 576-byte one again,
+  so slot 4 is reusable) took one grant of slot 4 with the request raised, left
+  through slot 4 and freed it, while **OV3** and **OV4** used a standard slot with the
+  request clear. Configuration 0, the main run's image, is unchanged.
+- **PG** the GET_AUDIO_MAP page (issue #50). The audio-map face serves STREAM_PORT_INPUT
+  1's page 0 at M mappings, every record distinct, and each response is graded
+  byte-exact, its `number_of_mappings` against the records its cdl carries, and its TX
+  slot as in OV. **PG1** to **PG6** (62, 63, 64, 65, 66 and 71 mappings) are served
+  whole with SUCCESS: cdl 24 + 8M passes 524 from 63, the frame (50 + 8M) takes the
+  oversize slot from 66, and 71 is the cap (cdl 592, frame 618). **PG7** to **PG9** (72,
+  176 and 256, whose count's low byte is 0) answer NO_RESOURCES with
+  `number_of_mappings` 0 and no record, and **PG10** serves the 3-mapping page whole
+  again. At the lane base PG2 to PG6 fail: the records stopped at cdl 524, 62 of
+  them, while `number_of_mappings` still named every one (the `pg-append-524` arm
+  below restores exactly that).
