@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -875,7 +875,7 @@
+     else if (i < 62)  b = byte64_f(gm, i - 54);                   // gm @54
+     else if (i == 62) b = dom;                                    // domain
+     else if (i == 63) b = 8'h00;                                  // reserved
+-    else if (i < 66)  b = byte16_f(cfg, i - 64);                  // cur cfg @64
++    else if (i < 66)  b = byte16_f(current_cfg_i, i - 64);        // cur cfg @64
+     else if (i < 68)  b = byte16_f(identify_index_i, i - 66);
+     else if (i < 70)  b = byte16_f({{(16-IF_W_C){1'b0}}, ifx}, i - 68);
+     else              b = 8'h00;               // association_id + reserved

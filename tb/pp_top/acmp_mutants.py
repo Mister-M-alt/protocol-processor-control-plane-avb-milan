@@ -94,7 +94,7 @@ CDL_44_ONLY = ("                      && (lim_w <= 12'(BYTES_P))\n"
 
 LONG_FORM = (
     Mutant("cdl_not_44_rejected", RX_VALIDATOR, ((VALIDATOR, V1_END, CDL_44_ONLY),),
-           ("F29 BIND_RX cdl 84", "F29 PROBE_TX cdl 84")),
+           ("F30 BIND_RX cdl 84", "F30 PROBE_TX cdl 84")),
     Mutant("cdl_not_44_rejected", PP_TOP, ((VALIDATOR, V1_END, CDL_44_ONLY),),
            ("AL1: a 96-B UNBIND_RX", "AL2: a 96-B BIND_RX", "AL3: the 96-B PROBE_TX",
             "AL4: no 96-B frame was dropped")),

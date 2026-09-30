@@ -1,0 +1,17 @@
+--- a/hdl/aecp/KL_aecp_engine.sv
++++ b/hdl/aecp/KL_aecp_engine.sv
+@@ -1803,10 +1803,10 @@
+   always_ff @(posedge clk_i) begin : dyn_cfg_valid
+     if (!store_rst_n_w) begin
+       dyn_cfg_v_r <= 1'b0;
+-    end else if (st_req_w && dyn_sel_w && st_we_w
+-                 && (st_addr_w[19:16] == RGN_DYN_C)
+-                 && (st_addr_w[15:3] == SEL_CFG_C)
+-                 && (dyn_didx_w == 16'd0)) begin
++    end else if (u_st_req_w && !u_st_name_w && u_st_we_w
++                 && (u_st_addr_w[19:16] == RGN_DYN_C)
++                 && (u_st_addr_w[15:3] == SEL_CFG_C)
++                 && (u_dyn_didx_w == 16'd0)) begin
+       dyn_cfg_v_r <= 1'b1;
+     end
+   end

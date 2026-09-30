@@ -1,0 +1,11 @@
+--- a/hdl/maap/KL_pp_maap.sv
++++ b/hdl/maap/KL_pp_maap.sv
+@@ -591,7 +591,7 @@
+               // rejection keeps the draw uniform over the offsets the whole
+               // block fits at (B.3.6.1 uniform-distribution rule): a raw
+               // clamp would pile the top counts onto one offset
+-              if (prng_draw_ms_i <= (POOL_SIZE_C - {8'd0, cfg_count_i})) begin
++              if (1'b1) begin
+                 offset_r     <= prng_draw_ms_i;
+                 probe_left_r <= PROBE_RETX_C;      // init_maap_probe_count
+                 ival_ann_r   <= 1'b0;

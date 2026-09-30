@@ -100,8 +100,9 @@ observability counters.
 
 ## 6. Behavior (Table B.7, executed literally)
 
-- **Begin!/PortOperational!** = the rise of `cfg_maap_internal_i AND link_up_i AND
-  cfg_maap_count_i != 0`: `generate_address` — the provisioned
+- **Begin!/PortOperational!** = `cfg_maap_internal_i AND link_up_i AND
+  cfg_maap_count_i != 0` high while the machine is released (out of reset, or
+  after a Release!): `generate_address` — the provisioned
   `cfg_maap_seed_offset_i` on the first attempt if `cfg_maap_seed_valid_i`
   (footnote a, clamped into the pool), else a kind-7 draw rejection-retried past
   `0xFE00 − count` so the fit clamp keeps the B.3.6.1 uniform distribution — then
@@ -132,9 +133,38 @@ observability counters.
 - **sDefend** (B.3.6.6): unicast to the probe's SA; `requested_*` echoed;
   `conflict_start` = max(requested_lo, ours_lo), `conflict_count` = overlapping
   addresses from there.
-- **Release!** = engage fall (config drop or link down): stop both timers, INITIAL,
-  **no PDU** (B.3.5.2 + footnote c — a local event), seed re-armed for the next
-  engage. A later link rise is PortOperational! and restarts the walk.
+- **Release!** = engage fall (config drop or link down), seen in every walker
+  state however short (a one-cycle fall: `tb/maap` U26 and U29): stop both
+  timers, INITIAL, and no PDU generated after the fall (U28). Table B.7's Release! row stops probe_timer in PROBE
+  and announce_timer in DEFEND and returns to INITIAL, and no Release! cell
+  carries sProbe, sAnnounce or sDefend. A stopped timer does not expire (B.3.1
+  c) and e)), so no probeTimer! or announceTimer! follows. B.3.5.2: the range is
+  no longer in use or defended, so the claim is withdrawn at the fall. Footnote
+  c: back in INITIAL, the range is free. Every Release! re-arms the footnote-a
+  seed for the next engagement, including one that lands while
+  generate_address redraws after a conflict: within an engagement the seed is
+  probed once and a conflict is never answered with it again, and every new
+  engagement probes it first. A later link rise is PortOperational! and
+  restarts the walk, including a rise that lands while the walker is still
+  tearing down or draining a frame.
+- **A Release! in the middle of an entry** is ordered by Table B.7, B.3.2 and
+  B.3.5.2. B.3.2 executes the functions of each Table B.7 entry sequentially, so
+  a Release! that lands while the walker is still executing an entry is ordered
+  before that entry or after it. Table B.7 gives the Release! itself no send
+  action, and B.3.5.2 ends the claim at the fall. The entry's TX slot request
+  decides the order:
+  - Before the request, the Release! comes first and the entry is dropped whole:
+    no timer armed, no PDU generated after the fall, no state change.
+  - From the request on, the frame belongs to the entry that requested it and
+    drains as that entry's last act: at most that one frame, and no PDU
+    generated after the fall. The top's pool-access arbiter holds the engine as
+    owner until it commits, and `KL_pp_tx_slots` frees a committed slot only by
+    sending it. The drain window runs from the slot request to the lane grant:
+    63 cycles when the pool and the lane grant at once (the unit bench,
+    `tb/maap` U23), longer in the top where both are shared, and unbounded while
+    the egress stalls (U25). The entry's own state change is dropped, so no
+    claim is published after the fall. The timers stop once the lane has the
+    frame, and an expiry meanwhile meets INITIAL, where it is `-x-`.
 
 ## 7. µcode / dispatch
 
@@ -176,4 +206,7 @@ service and PRNG of [08](08_timing.md), the TX pool and arbiter of
 the `tb/pp_top` MP section (end-to-end through the real validator, dispatch, talker
 and MAC lanes); the F08.4 slots by `tb/timer_map`; the PRNG kinds by `tb/prng`; the
 RX classification by `tb/rx_validator`; the fourth queue by `tb/dispatch`
-([09](09_verification.md)).
+([09](09_verification.md)). `make -C tb/maap mutants` plants reviewed defects
+in the fit clamp, the seed clamp, the validator's maap_version handling,
+every compare_MAC cell and the Release! arcs, and requires each to fail its
+named check in those suites.

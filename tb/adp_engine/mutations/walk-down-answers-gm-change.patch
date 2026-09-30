@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -619,7 +619,7 @@
+         end
+ 
+         // 3) GM_CHANGE: WAITING only (Milan §5.6.3.5.7)
+-        if (gm_change_i[i] && (adv_st_r[i] == ADP_ADV_WAITING)) begin
++        if (gm_change_i[i] && ((adv_st_r[i] == ADP_ADV_WAITING) || (adv_st_r[i] == ADP_ADV_DOWN))) begin
+           adv_st_r[i]      <= ADP_ADV_DRAW;
+           adv_startup_r[i] <= 1'b0;
+           tpend_r[i]       <= TPEND_CANCEL;

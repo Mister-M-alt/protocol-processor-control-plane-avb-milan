@@ -2,7 +2,7 @@
 # tb/rx_validator — KL_pp_rx_validator suite
 
 Exit 0 = PASS. `make` builds with Verilator and runs `sim_main.cpp`
-(tally line: `495 checks: 495 PASS, 0 FAIL`).
+(tally line: `555 checks: 555 PASS, 0 FAIL`).
 
 ## What it proves
 
@@ -37,7 +37,7 @@ commit/abort bookkeeping).
   IEEE 2013 short form accepted with tail fields (sequence_id @48,
   unique_ids) read as 0 (F4); the 96-B IEEE 1722.1-2021 form (cdl 84,
   §8.2.1.6 and Figure 8-1, its 40-byte IP tail filled with a pattern)
-  accepted whole, as a BIND_RX and as a PROBE_TX (F29, issue #45): committed
+  accepted whole, as a BIND_RX and as a PROBE_TX (F30, issue #45): committed
   with no counter moving (rx_length above all), the slot holding all
   cdl + 12 = 96 bytes, and one header beat field-exact and equal to the
   truncated form's but for cdl, the listener or talker unique_id included.
@@ -54,6 +54,12 @@ commit/abort bookkeeping).
 - **Slot protocol**: commit-on-good with byte-exact slot content; abort on
   every mid-frame rule failure; a pool-refused alloc is silent here
   (`rx_overrun` belongs to the pool) — no commit, no abort, no counter (F15).
+- **MAAP maap_version** (F29, issue #67, IEEE 1722-2016 B.2.3): PROBEs
+  carrying maap_version 2 (higher than ours, B.2.3.2), 0 (lower, B.2.3.4)
+  and 31 (all five bits of the lane) are each accepted, committed, demuxed
+  to `PP_PROTO_MAAP`, and deliver the received version in the status lane.
+  The validator owns no maap_version rule; V8 still owns the sv/version
+  nibble (F26).
 - **Robustness**: rx_valid bubbles mid-frame (F18), back-to-back
   MRP → AECP → ACMP frames with no idle gap (F19), `rx_da` saturates at
   0xFFFF and never wraps (F20), and a good frame still parses after the
@@ -78,4 +84,5 @@ commit/abort bookkeeping).
 | M2 | V1 boundary off-by-one (`pcnt_end >= cdl+12` → `>`) | F1 and every exact-fit frame: counted `rx_length` + aborted instead of committed (101 FAILs) |
 | M3 | V9 DA-alone routing (MSRP EtherType pair check dropped) | F14: 60 LLDP bytes leak onto the MRP stream (1 FAIL) |
 | M4 | V10 the AECP hold admission dropped (`held_fail_w` tied 0; `validator_admits_held_aecp` in `tb/pp_top/d3_mutants.py`, which plants it in an extract and runs this suite) | F28: the held AECP frame commits and emits a header beat, `rx_aecp_held` stays 0 (4 FAILs) |
-| M5 | ACMP accepted only at cdl 44: `v1_pass_w` also requires `cdl == 44` for subtype 0xFC (`cdl_not_44_rejected` in `tb/pp_top/acmp_mutants.py`, which plants it in an extract and runs this suite) | F29: both 96-B forms abort and count `rx_length`, with no commit and no header beat; F4's cdl-24 short form fails the same way (27 FAILs) |
+| M5 | a `maap_version == 1` acceptance rule added to the V8 drop (`tb/maap/mutations/validator-maap-version-1-only.patch`, run by `make -C tb/maap mutants`) | F29a/F29b/F29c: each PROBE counted `rx_version`, aborted, no hdr beat (47 FAIL of 497); the same arm fails `tb/pp_top` MP7 |
+| M6 | ACMP accepted only at cdl 44: `v1_pass_w` also requires `cdl == 44` for subtype 0xFC (`cdl_not_44_rejected` in `tb/pp_top/acmp_mutants.py`, which plants it in an extract and runs this suite) | F30: both 96-B forms abort and count `rx_length`, with no commit and no header beat; F4's cdl-24 short form fails the same way (27 FAILs) |

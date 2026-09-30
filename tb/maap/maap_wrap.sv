@@ -16,6 +16,19 @@
 //                wiring, no logic that could shadow the DUT. The timer
 //                slots are deliberately based at 1 (not 0) so a
 //                base-parameterization defect cannot hide.
+//
+//                The one piece of harness logic: a kind-7 stub. With
+//                addr_stub_en_i high, a completed kind-7 (pool offset) draw
+//                hands the DUT addr_stub_ms_i instead of the PRNG's value,
+//                so the suite can script offsets the real PRNG only rarely
+//                produces (the fit clamp's reject arm, issue #66). The kind
+//                is latched at the request the PRNG accepts, exactly as the
+//                PRNG latches it; kinds 5/6 always pass through untouched.
+//
+//                The observability ports are wiring too. walker_o reads the
+//                engine's walker state by hierarchical reference, only so
+//                the suite can land a Release! in a chosen state (U28); no
+//                expectation is derived from it.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -73,9 +86,18 @@ module maap_wrap
     output logic        ser_last_o,
     input  wire         ser_ready_i,
 
+    // kind-7 stub (harness only; see the banner)
+    input  wire         addr_stub_en_i,
+    input  wire  [15:0] addr_stub_ms_i,
+
     // observability
     output logic [31:0] now_ms_o,
-    output logic        rxs_free_o
+    output logic        rxs_free_o,
+    output logic        addr_draw_o,     // a kind-7 draw completes this cycle
+    output logic        slot_req_o,      // the engine requests a TX slot this cycle
+    output logic        tmr_start_o,     // the engine starts a timer this cycle
+    output logic        tmr_exp_o,       // one of the engine's timers expires this cycle
+    output logic [3:0]  walker_o         // the engine's walker state (read, never driven)
 );
 
   // 1 ms = 1 x 10 clk; the 4-slot sweep (6 cycles) fits inside the tick
@@ -101,6 +123,19 @@ module maap_wrap
       .dbg_lfsr_o   (prng_lfsr_nc_w),
       .dbg_seeded_o (prng_seeded_nc_w)
   );
+
+  // ---- kind-7 stub: the kind of the draw in flight, latched at acceptance
+  logic [2:0]  prng_kind_q_r;
+  logic [15:0] prng_ms_dut_w;
+
+  always_ff @(posedge clk_i) begin : kind_latch
+    if (!rst_n)                          prng_kind_q_r <= 3'd0;
+    else if (prng_req_w && !prng_busy_w) prng_kind_q_r <= prng_kind_w;
+  end
+
+  assign addr_draw_o   = prng_valid_w && (prng_kind_q_r == 3'd7);
+  assign prng_ms_dut_w = (addr_stub_en_i && (prng_kind_q_r == 3'd7))
+                         ? addr_stub_ms_i : prng_ms_w;
 
   logic        tick_ms_nc_w;
   logic        arm_valid_w, arm_cancel_w;
@@ -138,6 +173,11 @@ module maap_wrap
   logic [7:0]  txs_wr_data_w;
   logic [4:0]  txs_ready_nc_w;
   logic [2:0]  txs_free_nc_w;
+
+  assign slot_req_o  = txs_alloc_req_w;
+  assign tmr_start_o = arm_valid_w && !arm_cancel_w;
+  assign tmr_exp_o   = exp_valid_w;
+  assign walker_o    = 4'(u_dut.w_st_r);
 
   KL_pp_tx_slots #(
       .TX_STD_SLOTS_P      (4),
@@ -214,7 +254,7 @@ module maap_wrap
       .prng_draw_kind_o    (prng_kind_w),
       .prng_draw_busy_i    (prng_busy_w),
       .prng_draw_valid_i   (prng_valid_w),
-      .prng_draw_ms_i      (prng_ms_w),
+      .prng_draw_ms_i      (prng_ms_dut_w),
       .now_ms_i            (now_ms_o),
       .tmr_arm_valid_o     (arm_valid_w),
       .tmr_arm_cancel_o    (arm_cancel_w),

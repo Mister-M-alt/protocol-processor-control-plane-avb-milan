@@ -377,6 +377,10 @@ module pp_top_wrap (
     //! D3 cleared-first and restored checks; and the writer's pass-1 counts
     output logic [15:0] dbg_dyn_cfg_o,
     output logic        dbg_dyn_cfg_v_o,
+    //! the configuration row's valid flag as the AECP engine publishes it
+    //! (dyn_cur_config_v_o), the one the ADPDU's index selection reads, for
+    //! section AD's every-cycle comparison with the store's own above
+    output logic        dbg_adp_cfg_v_o,
     output logic [31:0] dbg_dyn_rate_o,
     output logic        dbg_dyn_rate_v_o,
     output logic [15:0] dbg_dyn_clk_o,
@@ -727,6 +731,7 @@ module pp_top_wrap (
   assign dbg_d3_latch_o   = u_dut.u_aecp.u_d3.latch_w;
   assign dbg_dyn_cfg_o    = u_dut.u_aecp.u_dyn.cfg_r;
   assign dbg_dyn_cfg_v_o  = u_dut.u_aecp.u_dyn.cfg_v_r;
+  assign dbg_adp_cfg_v_o  = u_dut.aecp_cur_cfg_v_w;
   assign dbg_dyn_rate_o   = u_dut.u_aecp.u_dyn.rate_r[0];
   assign dbg_dyn_rate_v_o = u_dut.u_aecp.u_dyn.rate_v_r[0];
   assign dbg_dyn_clk_o    = u_dut.u_aecp.u_dyn.clksrc_r[0];
