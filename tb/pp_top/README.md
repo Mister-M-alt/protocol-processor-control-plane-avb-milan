@@ -840,6 +840,13 @@ many checks each arm failed at the lane head.
 | `pg-append-524` | E_GAMAP's record APPEND loses its Δ8 flag and stops at cdl 524 again, the issue #50 reproduction | `PG2 a 63-mapping page: SUCCESS above cdl 524 (528), a standard slot: number_of_mappings` | 14 |
 | `pg-cap-dropped` | E_GAMAP's page cap keeps the count and the SUCCESS (its SET_MASKED and SET_STATUS NO_RESOURCES replaced with NOP) | `PG7 a 72-mapping page: NO_RESOURCES, no record claimed: number_of_mappings` | 10 |
 | `pg-cap-off-by-one` | the page cap compares against 73 instead of 72, so a 72-mapping page is answered SUCCESS | `PG7 a 72-mapping page: NO_RESOURCES, no record claimed: byte-exact` | 4 |
+| `rd-base-no-overlay` | the engine's issue #82 re-dispatch removed, so AUDIO_UNIT, CLOCK_DOMAIN and STREAM reads are the image's, the issue reproduction | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 8 |
+| `rd-au-image-only` | E_RDESCAU always branches to the image (its unset test a BRANCH) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 1 |
+| `rd-au-unset-overlays` | E_RDESCAU's unset test removed, so an unset row overlays its zero | `RD0 AUDIO_UNIT 0, rate unset: READ_DESCRIPTOR byte-exact` | 1 |
+| `rd-cd-image-only` | E_RDESCCD always branches to the image | `RD1 CLOCK_DOMAIN 0 after SET_CLOCK_SOURCE(1): READ_DESCRIPTOR byte-exact` | 2 |
+| `rd-gsi-type-cfg` | the stream-format gather names the configuration_index (@24) as its descriptor type, not @28's | `RD0 STREAM_INPUT 0, format unset: READ_DESCRIPTOR byte-exact` | 4 |
+| `rd-cfg-any` | the configuration-0 guard of the re-dispatch dropped | `RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes: the 534-byte descriptor, byte-exact` | 2 |
+| `rd-tail-uncut` | the µCPU's COPY_BUFFER TAIL copies the whole length from its start (no subtract) | `RD0 STREAM_INPUT 0, format unset: READ_DESCRIPTOR byte-exact` | 8 |
 
 Each guard arm fails its opcode's row on all seven message types; the three
 writers also fail their whole-body row and the read-back that proves the write
@@ -855,7 +862,13 @@ engine or through the top) the three oversize READ_DESCRIPTORs leave truncated t
 OV5 with them; the request at 576 moves OV4 alone into slot 4. The page-cap arms
 fail the pages they reach: the Δ8 flag removed, PG2 to PG6 (62 records, the full
 count); the cap dropped, PG7 to PG9 (the count kept, 71 records or none carried);
-the cap one late, PG7 alone.
+the cap one late, PG7 alone. The overlay arms fail the reads they reach: without
+the re-dispatch every overlaid read but RD0's unset rate and clock source (which equal
+the image); each image-only program its own type's RD1 reads; the unset test removed,
+RD0's unset rate; the gather misrouted, the stream reads whose type the face serves
+under the configuration index (STREAM_INPUT 0 after its SET happens to read the same
+value either way); the configuration guard dropped, RD2 and OV4; the TAIL count uncut,
+every overlaid read, whose response runs past the descriptor.
 
 ## Recorded seams and honest limits
 
@@ -1277,6 +1290,20 @@ the zero a stub would carry.
   so slot 4 is reusable) took one grant of slot 4 with the request raised, left
   through slot 4 and freed it, while **OV3** and **OV4** used a standard slot with the
   request clear. Configuration 0, the main run's image, is unchanged.
+- **RD** READ_DESCRIPTOR carries the value the GET returns (issue #82). Each arm reads
+  the GET off the wire, then grades READ_DESCRIPTOR of configuration 0's descriptor
+  byte-exact against its image bytes with that value in the field: AUDIO_UNIT 0
+  `current_sampling_rate` @136, CLOCK_DOMAIN 0 `clock_source_index` @70, and
+  STREAM_INPUT 0 / STREAM_OUTPUT 0 and 1 `current_format` @74. **RD0**, right after
+  boot, before any SET: the rate and clock source read the image's (96000, 2), and a
+  stream's format is the face's, which the image need not match. **RD1**, after the
+  other sections: SET_SAMPLING_RATE(48000), SET_CLOCK_SOURCE(0) then (1), and
+  SET_STREAM_FORMAT(2ch) on STREAM_INPUT 0 and STREAM_OUTPUT 1, each followed by its
+  GET and the READ_DESCRIPTOR that must agree; STREAM_OUTPUT 0, never set, still
+  carries the face's format. **RD2**: configuration 1's CLOCK_DOMAIN 0 keeps its image
+  bytes (index 0) while configuration 0's row holds 1. At the lane base RD0's streams
+  and every RD1 read fail (the image's defaults); `rd-base-no-overlay` below restores
+  exactly that.
 - **PG** the GET_AUDIO_MAP page (issue #50). The audio-map face serves STREAM_PORT_INPUT
   1's page 0 at M mappings, every record distinct, and each response is graded
   byte-exact, its `number_of_mappings` against the records its cdl carries, and its TX

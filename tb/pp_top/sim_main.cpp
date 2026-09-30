@@ -1965,6 +1965,11 @@ struct ReadDescriptorPhase {
     putbe(payload.data(), CFGIX, 2);
     const auto body = stream_descriptor(5, 0);
     payload.insert(payload.end(), body.begin(), body.end());
+    //! READ_DESCRIPTOR's current_format (@74) is GET_STREAM_FORMAT's, the
+    //! Milan-info face's (issue #82); nothing has set a format yet, so the
+    //! face serves its own. Every other byte is still STREAM_INPUT 0's image.
+    CHECK(!(d->aecp_fmt_in_v_o & 1), "A12: no stream format has been set yet");
+    putbe(&payload[4 + 74], H::gsi_value(0, 0x0005, 0, 1, 0), 8);
     got = cmd(AEM_READ_DESCRIPTOR, rdesc_pl(CFGIX, 5, 0), 0xA122);
     CHECK(got == expect(AECP_SUCCESS, AEM_READ_DESCRIPTOR, 0xA122, payload),
           "A12: late STREAM_OUTPUT bytes reached STREAM_INPUT on the wire");
@@ -10572,6 +10577,7 @@ struct AecpResponsePhase {
     image.load_descriptor_image(CFGIX, cfg1, cfg1_bodies);
     for (const auto& e : image.image_ents)
       if (e.cfg == CFGIX && e.type == 0x0024) putbe(&io.dram[e.off + 70], CD_IMAGE_INDEX, 2);
+    ents = image.image_ents;
     io.reset();
     io.d->restore_go_i = 1;
     io.idle(5);
@@ -10851,11 +10857,103 @@ struct AecpResponsePhase {
     pg_page(3, "PG10 the same page at 3 mappings is served whole again");
   }
 
+  // ---- RD: READ_DESCRIPTOR carries the GET's current value (#82) --------
+  std::vector<ImgEnt> ents;                    // the loaded image's rows
+  //! configuration `cfg`'s descriptor `ty`[`ix`], as the image holds it
+  std::vector<uint8_t> image_desc(uint16_t cfg, uint16_t ty, uint16_t ix) const {
+    for (const auto& e : ents)
+      if (e.cfg == cfg && e.type == ty && ix < e.count) {
+        const size_t at = e.off + size_t(ix) * e.stride;
+        if (io.dram.size() >= at + e.len)
+          return std::vector<uint8_t>(io.dram.begin() + long(at),
+                                      io.dram.begin() + long(at + e.len));
+      }
+    return {};
+  }
+  //! READ_DESCRIPTOR of configuration 0's `ty`[`ix`] is its image bytes with
+  //! the `n` at `off` carrying `cur`, the value the GET has just returned
+  void rd_agrees(uint16_t ty, uint16_t ix, size_t off, int n, uint64_t cur,
+                 const char* what) {
+    auto d = image_desc(CFGIX, ty, ix);
+    CHECK(d.size() >= off + size_t(n), "%s: the image holds the descriptor", what);
+    if (d.size() < off + size_t(n)) return;
+    putbe(&d[off], cur, n);
+    ++seq;
+    const auto r = ask(AEM_READ_DESCRIPTOR, rdesc(CFGIX, ty, ix));
+    std::vector<uint8_t> pl(4, 0);
+    pl.insert(pl.end(), d.begin(), d.end());
+    const auto w = want(CTLR_MAC, CTLR_EID, AECP_SUCCESS, AEM_READ_DESCRIPTOR, pl);
+    CHECK(r == w, "%s: READ_DESCRIPTOR byte-exact, carrying the GET's 0x%llx at @%zu",
+          what, static_cast<unsigned long long>(cur), off);
+    if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
+  }
+  static constexpr uint64_t SFMT_ALT = 0x0205021801006000ull;  // the face's 2ch shape
+  //! a GET's value, then the READ_DESCRIPTOR that must carry it
+  void rd_rate(const char* what) {
+    rd_agrees(0x0002, 0, 136, 4, get_value(AEM_GET_SAMPLING_RATE, 0x0002, 0, 4, false),
+              what);
+  }
+  void rd_clks(const char* what) {
+    rd_agrees(0x0024, 0, 70, 2, get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, false),
+              what);
+  }
+  void rd_fmt(uint16_t ty, uint16_t ix, const char* what) {
+    rd_agrees(ty, ix, 74, 8, get_value(AEM_GET_STREAM_FORMAT, ty, ix, 8, false), what);
+  }
+
+  //! before any SET the image is the current value of the rate and the clock
+  //! source; a STREAM's current_format is the face's, which GET_STREAM_FORMAT
+  //! reads and the image need not agree with
+  void rd_before_any_set() {
+    CHECK(get_value(AEM_GET_SAMPLING_RATE, 0x0002, 0, 4, false) == 96000u
+              && get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, false) == CD_IMAGE_INDEX,
+          "RD0 unset rows: the GETs read the image's 96000 and clock source 2");
+    rd_rate("RD0 AUDIO_UNIT 0, rate unset");
+    rd_clks("RD0 CLOCK_DOMAIN 0, clock source unset");
+    rd_fmt(0x0005, 0, "RD0 STREAM_INPUT 0, format unset");
+    rd_fmt(0x0006, 1, "RD0 STREAM_OUTPUT 1, format unset");
+  }
+
+  //! after each SET the READ_DESCRIPTOR carries what the GET reads (the SETs'
+  //! values differ from the image's), and configuration 1 keeps its image
+  void rd_after_each_set() {
+    holder_set(AEM_SET_SAMPLING_RATE, rate_body(0, 48000u), true, "RD1 rate 48000");
+    CHECK(get_value(AEM_GET_SAMPLING_RATE, 0x0002, 0, 4, false) == 48000u,
+          "RD1 GET_SAMPLING_RATE reads 48000");
+    rd_rate("RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000)");
+    holder_set(AEM_SET_CLOCK_SOURCE, clks_body(0, 0), true, "RD1 clock source 0");
+    rd_clks("RD1 CLOCK_DOMAIN 0 after SET_CLOCK_SOURCE(0)");
+    //! ...and it ends at 1, which configuration 1's CLOCK_DOMAIN (index 0 in
+    //! its image) does not hold, so RD2 below sees an overlay it must not get
+    holder_set(AEM_SET_CLOCK_SOURCE, clks_body(0, 1), true, "RD1 clock source 1");
+    CHECK(get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, false) == 1u,
+          "RD1 GET_CLOCK_SOURCE reads 1");
+    rd_clks("RD1 CLOCK_DOMAIN 0 after SET_CLOCK_SOURCE(1)");
+    for (const auto& t : {std::pair<uint16_t, uint16_t>{0x0005, 0}, {0x0006, 1}}) {
+      ++seq;
+      const auto r = ask(AEM_SET_STREAM_FORMAT, tiv(t.first, t.second, SFMT_ALT, 8));
+      CHECK(r == want(CTLR_MAC, CTLR_EID, AECP_SUCCESS, AEM_SET_STREAM_FORMAT,
+                      tiv(t.first, t.second, SFMT_ALT, 8)),
+            "RD1 SET_STREAM_FORMAT(2ch) on type 0x%04x index %u is served (status %d)",
+            t.first, t.second, st(r));
+      CHECK(get_value(AEM_GET_STREAM_FORMAT, t.first, t.second, 8, false) == SFMT_ALT,
+            "RD1 GET_STREAM_FORMAT on type 0x%04x index %u reads the 2ch format",
+            t.first, t.second);
+    }
+    rd_fmt(0x0005, 0, "RD1 STREAM_INPUT 0 after SET_STREAM_FORMAT");
+    rd_fmt(0x0006, 1, "RD1 STREAM_OUTPUT 1 after SET_STREAM_FORMAT");
+    rd_fmt(0x0006, 0, "RD1 STREAM_OUTPUT 0, never set, still the face's");
+    ov_read(0x0024, 0, cfg1_bodies[3], false,
+            "RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes");
+  }
+
   void run() {
     boot();
+    rd_before_any_set();
     lk_the_entity_locked_arm();
     ov_responses_above_cdl_524();
     pg_the_page();
+    rd_after_each_set();
   }
 };
 

@@ -582,7 +582,14 @@ module KL_aecp_ucpu
               OP_COPY_BUF: begin
                 if (!copy_go_r) begin
                   copy_go_r   <= 1'b1;
-                  copy_left_r <= opa_e_r[15:0];
+                  //! cnd[0], the TAIL copy: rf[ra] is the descriptor's whole
+                  //! length and imm its lane-aligned start, so the count is
+                  //! the bytes from there to the end (READ_DESCRIPTOR's
+                  //! current-value overlays, issue #82: the µISA has no
+                  //! subtract, and the tail's length is the descriptor's)
+                  copy_left_r <= uop_e_r.cnd[0]
+                               ? (opa_e_r[15:0] - {4'd0, uop_e_r.imm[11:0]})
+                               : opa_e_r[15:0];
                   copy_idx_r  <= '0;
                 end else if ((eseq_r == 4'd0) && st_rvalid_i &&
                              (copy_left_r != 16'd0)) begin

@@ -37,6 +37,7 @@ constexpr uint16_t E_MAPV = 384;
 constexpr uint16_t E_MAPVF = 400;
 constexpr uint16_t E_OVF = 416;
 constexpr uint16_t E_OVF8 = 432;
+constexpr uint16_t E_COPYT = 448;
 constexpr uint16_t E_FMT = 512;
 constexpr uint16_t E_NOTIMPL = 560;
 constexpr uint16_t E_ACQ = 576;
@@ -759,6 +760,12 @@ void UcpuSuite::copy_buffer_moves_descriptor_bytes_into_the_response() {
         "P9 lanes %08x %08x %08x %08x",
         h.w32(12), h.w32(16), h.w32(20), h.w32(24));
   CHECK(h.last_len == 28, "P9 len got %u", h.last_len);
+  // P9b: the TAIL copy (issue #82) takes rf[ra] - start bytes from start
+  CHECK(h.run(E_COPYT, IDX_OK, false), "P9b completes");
+  CHECK(h.w32(12) == 0x33333333u && h.w32(16) == 0x44444444u && h.w32(20) == 0,
+        "P9b the tail is lane 1 alone: %08x %08x %08x",
+        h.w32(12), h.w32(16), h.w32(20));
+  CHECK(h.last_len == 20, "P9b len 20 (48 - 40 bytes) got %u", h.last_len);
 }
 
 // ---- P10: MAP_VALIDATE pass and fail --------------------------------

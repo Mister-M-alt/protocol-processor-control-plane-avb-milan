@@ -1,0 +1,11 @@
+--- a/hdl/aecp/KL_aecp_engine.sv
++++ b/hdl/aecp/KL_aecp_engine.sv
+@@ -2103,7 +2103,7 @@
+   //! a READ_DESCRIPTOR's type is at @28, not @24 (where its
+   //! configuration_index sits), so its stream-format gather names desc_ty_r
+   assign gsi_desc_type_o  = d3_jd_req_w ? d3_jd_type_w
+-                          : rdstr_r     ? desc_ty_r : cfg_ix_r;
++                          : cfg_ix_r;
+   assign gsi_desc_index_o = d3_jd_req_w ? d3_jd_index_w : desc_ix_r;
+   assign gsi_sel_o        = d3_jd_req_w ? 4'd15 : gx_sel_w[3:0];
+   assign gsi_ord_o        = d3_jd_req_w ? 8'd0 : amap_rec_r;

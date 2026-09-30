@@ -3,7 +3,7 @@
 
 Proves the µCPU skeleton (`hdl/aecp/KL_aecp_ucpu.sv`) actually executes the
 [06 §8](../../docs/architecture/06_aecp_engine.md) µISA before anyone quotes its
-area: `make` = build + run, exit 0 = PASS, 395 checks.
+area: `make` = build + run, exit 0 = PASS, 398 checks.
 
 The C++ harness is an independent model, never DUT logic: it implements the
 state port (2-cycle read latency, locate mapping, forced miss), the gather port
@@ -37,7 +37,9 @@ Milan 5.4.1 (P11b: `cnd` D8 fills the buffer, `RESP_D8_CAP_P` = 592, so 72 of
 80 elements fit; P11c: the same µop inside a GET_DYNAMIC_INFO batch still
 stops at 524, issue #50), Table 7-141 status
 codes on the wire header, write-strobe formats B/W/Q, truncating moves, 64-bit
-compares, the unknown-opcode NOT_IMPLEMENTED path, the ACQUIRE_ENTITY Milan Δ7
+compares, COPY_BUFFER TAIL (P9b: `cnd` TAIL copies rf[ra] less the start, the
+tail of a descriptor from a lane-aligned offset, issue #82), the
+unknown-opcode NOT_IMPLEMENTED path, the ACQUIRE_ENTITY Milan Δ7
 exemplar, and the §9.3.2.6 FAIL_SAFE arm preserving the best current status.
 
 Covered by P17 — the **MVU GET_MILAN_INFO** body of Milan v1.2 Figure 5.4
@@ -79,6 +81,8 @@ buffer just declined.
 Mutation-proven 2026-09-30 (P11b/P11c, issue #50): the Δ8 flag ignored (every
 APPEND stops at 524) fails 2 of 395, both P11b; the batch exception dropped
 (the Δ8 cap applied inside a GET_DYNAMIC_INFO batch) fails 2 of 395, both P11c.
+The TAIL count not subtracted (tb/pp_top's `rd-tail-uncut` arm) fails 1 of 398,
+P9b's length.
 
 Mutation-proven 2026-08-11: RAW interlock off fails 11 of 92; branch flush
 removed fails 2; the 524 cap widened fails 4; the COMMIT strobe killed fails 1.

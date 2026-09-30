@@ -167,7 +167,11 @@ open under #89 and the parent matrix's F6.
 | CLOCK_DOMAIN | 0x0024 | 76 | + 2·clock_sources |
 
 > Δ note — two stream layouts exist; **IEEE Std 1722.1-2021 Table 7-8 is the one this
-> design emits**. Table 7-8 (§7.2.6) places `redundant_offset` at 132,
+> design's images carry**. The consumer's generator builds it, whole, under the §3.1
+> ownership (the parent's L4 row emits Table 7-8, formats at 138, R = 0); the processor
+> assembles no stream descriptor and adds no redundancy tail. It serves the image's bytes
+> and reads only `current_format` (@74, the same offset in both layouts) and the lane
+> after it (§3.3). Table 7-8 (§7.2.6) places `redundant_offset` at 132,
 > `number_of_redundant_streams` at 134, `timing` at 136 and `formats` at 138, for
 > 138+8F+2R octets. Milan v1.2 §5.3.3.4 binds the descriptor to it: these descriptors
 > "shall have the format specified in [ATDECC, Clause 7.2.6]". Milan v1.2 clause 2
@@ -192,8 +196,24 @@ open under #89 and the parent matrix's F6.
 
 Read-only at runtime. Layout = concatenated descriptors in (configuration, type,
 index) order + an **index map** per configuration (type → base pointer + count) used by
-`DESC_ADDR`. READ_DESCRIPTOR assembles: image bytes, then overlay patches
-(current values, names), then the Table 7-8 redundancy tail with R = 0.
+`DESC_ADDR`. Each descriptor sits in the image whole, as the consumer built it; the
+index map's length is the length served. READ_DESCRIPTOR answers the located
+descriptor's image bytes with the name table's current names, and, for configuration 0
+(the configuration the GET/SET family locates in), with the §3.4 overlay's current value
+in place of the image's where a GET would read it (issue #82):
+ENTITY `current_configuration` (@310), AUDIO_UNIT `current_sampling_rate` (@136) and
+CLOCK_DOMAIN `clock_source_index` (@70) once a SET or the restore has written the row,
+and STREAM_INPUT/OUTPUT `current_format` (@74) always, from the face GET_STREAM_FORMAT
+reads ([06 §6.1](06_aecp_engine.md)). Nothing is appended: there is no redundancy-tail
+assembly, since the image already carries the Table 7-8 tail (§3.2 Δ note).
+
+The response ceiling of the Δ8 command set is the response buffer (§3.3.2), not the
+full frame Milan §5.4.1 permits: `16 + LINE_BYTES_P` bytes, cdl 592 and a 618-byte frame
+through the oversize TX slot at the default 576-byte line. READ_DESCRIPTOR reaches it
+with a 576-byte descriptor and GET_AUDIO_MAP with a 71-record page (`P-MAP-SUBSET-CH-MAX`);
+GET_AVB_INFO and GET_AS_PATH stay below cdl 524, and ADD/REMOVE_AUDIO_MAPPINGS mirror a
+command capped there ([06 §3](06_aecp_engine.md#3-pdu-handling),
+[03 §7](03_packet_engine.md)).
 
 Software loads it into the integrator's main memory at `DESC_BASE_P`, and checks it,
 before it starts the restore (`restore_go_i`, which judges saved values against it; §5.3)
@@ -341,7 +361,7 @@ implemented** in this release.
 | current configuration index | 16 | design decision — **yes** (review §8 item 1) |
 | per AUDIO_UNIT `current_sampling_rate` | 32 | yes (§5.3.5.1) |
 | per CLOCK_DOMAIN `clock_source_index` | 16 | yes (§5.3.11.1) |
-| per stream `current_format` | 64 | yes (§5.3.7.1/§5.3.8.1) |
+| per stream `current_format` (READ_DESCRIPTOR and GET_STREAM_FORMAT serve the integrator face's value, §3.3) | 64 | yes (§5.3.7.1/§5.3.8.1) |
 | per STREAM_OUTPUT presentation-time offset | 32 | yes (§5.3.7.6) |
 | per port dynamic mapping tables | 64·M | yes (§5.3.9.1/§5.3.10.1) |
 | name table: `entity_name`, `group_name`, `object_name` of every named descriptor | 64 B each | yes (§5.3.13) |

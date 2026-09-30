@@ -36,6 +36,8 @@ ST_STRMRUN = 12       # Table 7-141 STREAM_IS_RUNNING — Milan's refusal for a
                       # SET aimed at a bound Stream Input or a streaming
                       # Stream Output (SS5.4.2.5 / SS5.4.2.7 / SS5.4.2.9)
 REL_EQ, REL_NE, REL_LT, REL_GE = 0, 1, 2, 3
+TAIL = 1              # COPY_BUF cnd[0]: copy rf[ra] - imm bytes from imm, the
+                      # descriptor's tail from a lane-aligned start (#82)
 D8 = 1                # APPEND cnd[0]: the Milan §5.4.1 record loop, which
                       # fills the response buffer instead of stopping at 524
                       # (KL_aecp_ucpu RESP_D8_CAP_P; never inside a batch)
@@ -92,6 +94,7 @@ E_MAPV    = 384
 E_MAPVF   = 400
 E_OVF     = 416      # 524-byte cap + skip-on-overflow (§7.4.76.1)
 E_OVF8    = 432      # the Δ8 APPEND: fills the buffer, 524 in a batch (#50)
+E_COPYT   = 448      # COPY_BUFFER TAIL: rf[ra] - start bytes from start (#82)
 E_FMT     = 512
 E_NOTIMPL = 560      # unknown-opcode path (IEEE §9.3.5.3.3, REQ-FWX-001)
 E_ACQ     = 576      # ACQUIRE_ENTITY exemplar (Milan Δ7: NOT_SUPPORTED)
@@ -179,6 +182,12 @@ E_SCFGLK  = 1500     # ...its ENTITY_LOCKED arm
 E_SCFGBAD = 1513     # ...its BAD_ARGUMENTS arm
 E_SCFGEMT = 1526     # ...the body all three share
 E_RDESCENT = 1568    # READ_DESCRIPTOR(ENTITY) with current_configuration overlay
+#! READ_DESCRIPTOR's current-value overlays of the configuration-0 AUDIO_UNIT,
+#! CLOCK_DOMAIN and STREAM_INPUT/OUTPUT (issue #82): the front of the free
+#! 1531..1567 run and the free tail after E_SSRWALK
+E_RDESCSTR = 1536    # ...a STREAM: current_format from the GSI face
+E_RDESCAU = 2000     # ...an AUDIO_UNIT: current_sampling_rate
+E_RDESCCD = 2024     # ...a CLOCK_DOMAIN: clock_source_index
 # --- START/STOP_STREAMING (Milan §5.4.2.19/.20, IEEE §7.4.35/.36) ------------
 # 32-word slots in the free tail, so each can grow an arm without renumbering
 # its neighbour.
@@ -502,6 +511,19 @@ place(E_COPY, [
     u('BR_STATUS', cnd=0, imm=E_FAIL),
     u('MOVE', rd=8, imm=16),
     u('COPY_BUF', ra=8, imm=0x20),
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- COPY_BUFFER TAIL (issue #82): the count is rf[ra] less the start, the
+# bytes from a lane-aligned start to the end of a descriptor rf[ra] long -----
+place(E_COPYT, [
+    u('DESC_ADDR', ra=14, imm=0x00100),
+    u('BR_STATUS', cnd=0, imm=E_FAIL),
+    u('MOVE', rd=8, imm=0x30),                   # a 48-byte "descriptor"
+    u('COPY_BUF', ra=8, cnd=TAIL, imm=0x28),     # its last 8 bytes, lane 1
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
     u('SEND_RESP'),
@@ -1072,6 +1094,107 @@ place(E_LOCKUNS, [
 def GSI(n: int) -> dict[str, int]:
     """GET_STREAM_INFO word `n` as the cnd/imm pair a GATHER_EXT carries."""
     return dict(cnd=0xB, imm=n)
+
+# --- READ_DESCRIPTOR's current-value overlays (issue #82) --------------------
+# The same assembly as E_RDESCENT, in the middle of a descriptor instead of at
+# its end: IEEE 1722.1-2021 §7.2.3 current_sampling_rate, §7.2.32
+# clock_source_index and §7.2.6 current_format are the values GET_SAMPLING_RATE
+# (§7.4.22), GET_CLOCK_SOURCE (§7.4.24) and GET_STREAM_FORMAT (§7.4.10) return,
+# so after a SET the descriptor must carry what the GET reads, not the image's
+# default. Each program copies the descriptor up to the field (COPY_BUF, whose
+# partial final lane is overwritten by the next field), builds the field from
+# the GET's own source, builds the rest of the field's lane out of the image
+# lane, and copies the tail from the next lane boundary with COPY_BUF TAIL
+# (the tail's length is the descriptor's, which the µISA cannot subtract).
+# A descriptor too short to hold the field's lane is served whole by E_RDESC,
+# as is an AUDIO_UNIT or CLOCK_DOMAIN whose row no SET or restore has written
+# (the image IS the current value then, the GETs' own overlay-arm rule). The
+# engine re-dispatches here for configuration 0 only, the configuration those
+# GETs locate in; the prologue is E_RDESC's.
+AU_RATE_TAIL = AU_RATE_OFF + 8     # 144: sampling_rates_offset's lane ends
+CD_SRCIDX_OFF = 70                 # §7.2.32 clock_source_index
+CD_SRCIDX_TAIL = 72                # its lane ends: clock_sources_offset @72
+STR_FMT_OFF = 74                   # §7.2.6 current_format, 8 bytes
+STR_FMT_LANE2 = 80                 # its second lane: format tail, @82, @84..87
+STR_FMT_TAIL = 88                  # that lane ends inside backup_talker_0
+place(E_RDESCAU, [
+    u('MOVE', rd=12, ra=0, imm=0),               # reserved @26
+    u('READ_ST', rd=9, imm=RGN_NCFG),
+    u('CHECK_ARG', ra=14, rb=9, fmt=FMT_W,
+      cnd=REL_LT, imm=E_RDSTUB),
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # requested AUDIO_UNIT[index]
+    u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+    u('READ_ST', rd=3, imm=RGN_DYNV + SEL_RATE), # has a SET or restore set it?
+    u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_RDESC),          # unset: the image is current
+    u('READ_ST', rd=8, imm=RGN_LEN),
+    u('COMPARE', ra=8, fmt=FMT_W, imm=AU_RATE_TAIL),
+    u('BR_STATUS', cnd=3, imm=E_RDESC),          # too short for the lane
+    u('READ_ST', rd=1, imm=RGN_DYN + SEL_RATE),  # GET_SAMPLING_RATE's value
+    u('READ_ST', rd=4, imm=RGN_DATA + AU_RATE_OFF),   # lane 136: [31:0] = @140
+    u('MOVE', rd=7, ra=0, imm=AU_RATE_OFF),      # prefix length 136
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
+    u('COPY_BUF', ra=7, imm=RGN_DATA),           # bytes 0..135
+    u('BUILD_FLD', ra=1, fmt=FMT_D),             # current_sampling_rate 136
+    u('BUILD_FLD', ra=4, fmt=FMT_D),             # offset + count 140..143
+    u('COPY_BUF', ra=8, cnd=TAIL, imm=RGN_DATA + AU_RATE_TAIL),  # 144..
+    u('SEND_RESP'),
+    u('END'),
+])
+place(E_RDESCCD, [
+    u('MOVE', rd=12, ra=0, imm=0),               # reserved @26
+    u('READ_ST', rd=9, imm=RGN_NCFG),
+    u('CHECK_ARG', ra=14, rb=9, fmt=FMT_W,
+      cnd=REL_LT, imm=E_RDSTUB),
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # requested CLOCK_DOMAIN[index]
+    u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+    u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CLKSRC),
+    u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_RDESC),          # unset: the image is current
+    u('READ_ST', rd=8, imm=RGN_LEN),
+    u('COMPARE', ra=8, fmt=FMT_W, imm=CD_SRCIDX_TAIL),
+    u('BR_STATUS', cnd=3, imm=E_RDESC),          # too short for the lane
+    u('READ_ST', rd=1, imm=RGN_DYN + SEL_CLKSRC),  # GET_CLOCK_SOURCE's value
+    u('MOVE', rd=7, ra=0, imm=CD_SRCIDX_OFF),    # prefix length 70
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
+    u('COPY_BUF', ra=7, imm=RGN_DATA),           # bytes 0..69
+    u('BUILD_FLD', ra=1, fmt=FMT_W),             # clock_source_index 70..71
+    u('COPY_BUF', ra=8, cnd=TAIL, imm=RGN_DATA + CD_SRCIDX_TAIL),  # 72..
+    u('SEND_RESP'),
+    u('END'),
+])
+place(E_RDESCSTR, [
+    u('MOVE', rd=12, ra=0, imm=0),               # reserved @26
+    u('READ_ST', rd=9, imm=RGN_NCFG),
+    u('CHECK_ARG', ra=14, rb=9, fmt=FMT_W,
+      cnd=REL_LT, imm=E_RDSTUB),
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # requested STREAM[index]
+    u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+    u('READ_ST', rd=8, imm=RGN_LEN),
+    u('COMPARE', ra=8, fmt=FMT_W, imm=STR_FMT_TAIL),
+    u('BR_STATUS', cnd=3, imm=E_RDESC),          # too short for the lane
+    u('GATHER_EXT', rd=1, **GSI(1)),             # GET_STREAM_FORMAT's value
+    u('READ_ST', rd=4, imm=RGN_DATA + STR_FMT_LANE2),  # lane 80..87
+    u('SHIFT_R', rd=5, ra=4, imm=32),            # [15:0] = formats_offset @82
+    u('MOVE', rd=7, ra=0, imm=STR_FMT_OFF),      # prefix length 74
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
+    u('COPY_BUF', ra=7, imm=RGN_DATA),           # bytes 0..73
+    u('BUILD_FLD', ra=1, fmt=FMT_Q),             # current_format 74..81
+    u('BUILD_FLD', ra=5, fmt=FMT_W),             # formats_offset 82..83
+    u('BUILD_FLD', ra=4, fmt=FMT_D),             # number_of_formats, 84..87
+    u('COPY_BUF', ra=8, cnd=TAIL, imm=RGN_DATA + STR_FMT_TAIL),  # 88..
+    u('SEND_RESP'),
+    u('END'),
+])
 
 # --- GET_STREAM_INFO (IEEE §7.4.16, Milan §5.4.2.10) -------------------------
 # Milan replaces §7.4.15.1's response with the 80-byte Figure 5.1 layout:
