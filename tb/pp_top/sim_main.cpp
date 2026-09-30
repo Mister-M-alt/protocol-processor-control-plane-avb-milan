@@ -10439,6 +10439,254 @@ struct AdpConfigPhase {
   printf("AD: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+// ==== AX. AECP dispatch and response (issues #53, #50, #82) ==============
+// A fresh processor of its own (the AD pattern), so the main run's clock is
+// untouched and every value these arms read back is one they set.
+//   LK  the ENTITY_LOCKED arm of SET_SAMPLING_RATE, SET_CLOCK_SOURCE and
+//       SET_CONTROL (Milan 5.4.2.13/.15/.17), graded byte-exact: the refusal
+//       carries the value in force (IEEE 1722.1-2021 7.4.21.1, 7.4.23.1,
+//       7.4.25.1 "the old value if it fails"), moves nothing, and the holder
+//       is still served.
+// The image is the main run's with ONE change: CLOCK_DOMAIN 0's
+// clock_source_index defaults to 2, so an unset row's current index is not
+// also the zero a stub would carry.
+struct AecpResponsePhase {
+  H& h;                                        // the tally
+  const milan::tb::Model<Vpp_top_wrap> model;
+  H io;
+  uint16_t seq = 0x7C00;
+  static constexpr uint64_t C2_MAC = 0x0202C2C2C2C2ull;
+  static constexpr uint16_t CD_IMAGE_INDEX = 2;
+
+  explicit AecpResponsePhase(H& tally) : h(tally), io(model.get()) {}
+
+  static int st(const std::vector<uint8_t>& f) {
+    return f.size() > 16 ? ((f[16] >> 3) & 0x1F) : -1;
+  }
+  static int cdl(const std::vector<uint8_t>& f) {
+    return f.size() > 17 ? (((f[16] & 0x07) << 8) | f[17]) : -1;
+  }
+  std::vector<uint8_t> ask_from(uint64_t mac, uint64_t eid, uint16_t op,
+                                const std::vector<uint8_t>& pl) {
+    io.q_aecp.clear();
+    io.feed(aecp_frame(OWN_MAC, mac, 0, 0, EID, eid, seq, op, pl));
+    return io.wait_frame(io.q_aecp, 600, [mac](const std::vector<uint8_t>& f) {
+      return f.size() >= 12 && (rd64(&f[0]) >> 16) == mac && (f[36] & 0x80) == 0;
+    });
+  }
+  std::vector<uint8_t> ask(uint16_t op, const std::vector<uint8_t>& pl) {
+    return ask_from(CTLR_MAC, CTLR_EID, op, pl);
+  }
+  std::vector<uint8_t> ask2(uint16_t op, const std::vector<uint8_t>& pl) {
+    return ask_from(C2_MAC, CTLR2_EID, op, pl);
+  }
+  //! the whole response to the last command, byte for byte
+  std::vector<uint8_t> want(uint64_t mac, uint64_t eid, int status, uint16_t op,
+                            const std::vector<uint8_t>& body) const {
+    return aecp_frame(mac, OWN_MAC, 1, uint8_t(status), EID, eid, seq, op, body);
+  }
+  static std::vector<uint8_t> tiv(uint16_t ty, uint16_t ix, uint64_t v, int n) {
+    std::vector<uint8_t> p(4 + size_t(n), 0);
+    putbe(&p[0], ty, 2);
+    putbe(&p[2], ix, 2);
+    putbe(&p[4], v, n);
+    return p;
+  }
+  static std::vector<uint8_t> rate_body(uint16_t ix, uint32_t r) {
+    return tiv(0x0002, ix, r, 4);
+  }
+  //! Figure 7-47: clock_source_index @28, reserved @30
+  static std::vector<uint8_t> clks_body(uint16_t ix, uint16_t i) {
+    return tiv(0x0024, ix, uint64_t(i) << 16, 4);
+  }
+  static std::vector<uint8_t> ctrl_body(uint16_t ix, uint8_t v) {
+    return tiv(0x001A, ix, v, 1);
+  }
+
+  void boot() {
+    Suite image(io);
+    image.load_descriptor_image();
+    for (const auto& e : image.image_ents)
+      if (e.type == 0x0024) putbe(&io.dram[e.off + 70], CD_IMAGE_INDEX, 2);
+    io.reset();
+    io.d->restore_go_i = 1;
+    io.idle(5);
+    io.d->restore_go_i = 0;
+    unsigned budget = 400000;
+    while (!io.d->restore_done_o && budget-- != 0) io.step();
+    CHECK(io.d->restore_done_o && !io.d->restore_fail_o,
+          "AX boot: blank NVM releases the entity");
+    io.d->link_up_i = 1;
+    io.d->entity_enable_i = 1;
+    io.idle(1000);
+    io.flush_all();
+    io.q_aecp.clear();
+  }
+
+  // ---- LK: the ENTITY_LOCKED arm of the three SETs (issue #53) ----------
+  struct Effects {
+    unsigned writes;
+    uint64_t marks;
+    uint64_t notifies;
+  };
+  Effects effects() const {
+    return {static_cast<unsigned>(io.d->dbg_dyn_writes_o), io.nvm_marks,
+            io.notify_enqs};
+  }
+  void lock(bool take, const char* what) {
+    std::vector<uint8_t> lk(16, 0);
+    if (!take) putbe(&lk[2], 1, 2);                // flags = UNLOCK
+    ++seq;
+    const auto l = ask(0x0001, lk);
+    CHECK(st(l) == AECP_SUCCESS, "%s: the bench %s the lock, got status %d",
+          what, take ? "takes" : "releases", st(l));
+  }
+  //! a foreign SET under the bench's lock: ENTITY_LOCKED at the response
+  //! form's cdl, carrying `carried`, and not one effect. The wrap compresses
+  //! the 60 s lock window to 400 ms (LOCK_TIMEOUT_MS_P), so the holder
+  //! re-locks first (the 7.4.2 keep-alive) and the quiet window that follows
+  //! stays well inside it: an expiry would itself notify the holder
+  void foreign(uint16_t op, const std::vector<uint8_t>& sent,
+               const std::vector<uint8_t>& carried, int form_cdl,
+               const char* what) {
+    lock(true, what);
+    const Effects e0 = effects();
+    ++seq;
+    const auto r = ask2(op, sent);
+    const auto w = want(C2_MAC, CTLR2_EID, AECP_ENTITY_LOCKED, op, carried);
+    CHECK(r == w, "%s: ENTITY_LOCKED byte-exact (status %d, cdl %d)", what,
+          st(r), cdl(r));
+    if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
+    CHECK(cdl(r) == form_cdl, "%s: ...at the response form's cdl %d, got %d",
+          what, form_cdl, cdl(r));
+    const auto uns = io.wait_frame(io.q_aecp, 120, [](const std::vector<uint8_t>& f) {
+      return f.size() > 36 && (f[36] & 0x80) != 0;
+    });
+    CHECK(uns.empty(), "%s: no unsolicited frame reached the registered holder",
+          what);
+    if (!uns.empty()) dump("unsolicited", uns);
+    const Effects e1 = effects();
+    CHECK(e1.writes == e0.writes && e1.marks == e0.marks
+              && e1.notifies == e0.notifies,
+          "%s: no dynamic-store write, NVM mark or notification (%u, %u, %u)",
+          what, e1.writes - e0.writes, unsigned(e1.marks - e0.marks),
+          unsigned(e1.notifies - e0.notifies));
+  }
+  //! the value a GET answers, off the wire, from either controller
+  uint64_t get_value(uint16_t op, uint16_t ty, uint16_t ix, int n, bool foreign_ctlr) {
+    ++seq;
+    const auto g = foreign_ctlr ? ask2(op, tiv(ty, ix, 0, 0)) : ask(op, tiv(ty, ix, 0, 0));
+    uint64_t v = 0;
+    for (int i = 0; i < n && g.size() > size_t(42 + i); ++i) v = (v << 8) | g[42 + i];
+    return st(g) == AECP_SUCCESS ? v : 0xDEADu;
+  }
+  //! the holder's own SET, and its effects: exactly one of each
+  void holder_set(uint16_t op, const std::vector<uint8_t>& body, bool changes,
+                  const char* what) {
+    const Effects e0 = effects();
+    ++seq;
+    const auto r = ask(op, body);
+    const auto w = want(CTLR_MAC, CTLR_EID, AECP_SUCCESS, op, body);
+    CHECK(r == w, "%s: the holder's SET is served, byte-exact", what);
+    if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
+    const Effects e1 = effects();
+    const unsigned one = changes ? 1u : 0u;
+    CHECK(e1.writes == e0.writes + 1 && e1.notifies == e0.notifies + one,
+          "%s: ...one store write and %u notification enqueued (%u, %u)", what,
+          one, e1.writes - e0.writes, unsigned(e1.notifies - e0.notifies));
+  }
+
+  void lk_on_the_unset_rows() {
+    foreign(AEM_SET_SAMPLING_RATE, rate_body(0, 48000u), rate_body(0, 96000u), 20,
+            "LK1 unset rate row, foreign SET_SAMPLING_RATE(48000) carries the image's 96000");
+    foreign(AEM_SET_CLOCK_SOURCE, clks_body(0, 1), clks_body(0, CD_IMAGE_INDEX), 20,
+            "LK1 unset clock-source row, foreign SET_CLOCK_SOURCE(1) carries the image's 2");
+    foreign(AEM_SET_CONTROL, ctrl_body(0, 255), ctrl_body(0, 0), 17,
+            "LK1 IDENTIFY at its reset 0, foreign SET_CONTROL(255) carries 0");
+    lock(false, "LK1");
+  }
+
+  void lk_on_the_set_rows() {
+    holder_set(AEM_SET_SAMPLING_RATE, rate_body(0, 48000u), true, "LK2 rate 48000");
+    holder_set(AEM_SET_CLOCK_SOURCE, clks_body(0, 1), true, "LK2 clock source 1");
+    holder_set(AEM_SET_CONTROL, ctrl_body(0, 255), true, "LK2 IDENTIFY 255");
+    foreign(AEM_SET_SAMPLING_RATE, rate_body(0, 96000u), rate_body(0, 48000u), 20,
+            "LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000");
+    CHECK(get_value(AEM_GET_SAMPLING_RATE, 0x0002, 0, 4, true) == 48000u,
+          "LK3 ...and GET_SAMPLING_RATE still reads 48000");
+    foreign(AEM_SET_CLOCK_SOURCE, clks_body(0, 2), clks_body(0, 1), 20,
+            "LK3 foreign SET_CLOCK_SOURCE(2) carries the stored 1");
+    CHECK(get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, true) == 1u,
+          "LK3 ...and GET_CLOCK_SOURCE still reads 1");
+    foreign(AEM_SET_CONTROL, ctrl_body(0, 0), ctrl_body(0, 255), 17,
+            "LK3 foreign SET_CONTROL(0) carries the stored 255");
+    CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, true) == 255u
+              && io.d->dbg_identify_o == 255,
+          "LK3 ...and the IDENTIFY value is still 255, on GET and on the face");
+  }
+
+  //! the lock outranks a locate miss for all three (06 section 6.4: lock,
+  //! then locate), and a missing descriptor has no value to carry; the
+  //! holder, asking the same, is answered NO_SUCH_DESCRIPTOR
+  void lk_the_lock_outranks_a_locate_miss() {
+    foreign(AEM_SET_SAMPLING_RATE, rate_body(3, 96000u), rate_body(3, 0), 20,
+            "LK4 foreign SET_SAMPLING_RATE on AUDIO_UNIT 3 (absent)");
+    foreign(AEM_SET_CLOCK_SOURCE, clks_body(3, 1), clks_body(3, 0), 20,
+            "LK4 foreign SET_CLOCK_SOURCE on CLOCK_DOMAIN 3 (absent)");
+    foreign(AEM_SET_CONTROL, ctrl_body(3, 0), ctrl_body(3, 0), 17,
+            "LK4 foreign SET_CONTROL on CONTROL 3 (absent)");
+    const struct { uint16_t op; std::vector<uint8_t> sent; std::vector<uint8_t> carried;
+                   const char* what; } miss[] = {
+      {AEM_SET_SAMPLING_RATE, rate_body(3, 96000u), rate_body(3, 0), "rate"},
+      {AEM_SET_CLOCK_SOURCE, clks_body(3, 1), clks_body(3, 0), "clock source"},
+      {AEM_SET_CONTROL, ctrl_body(3, 0), ctrl_body(3, 0), "control"},
+    };
+    for (const auto& m : miss) {
+      ++seq;
+      const auto r = ask(m.op, m.sent);
+      CHECK(r == want(CTLR_MAC, CTLR_EID, AECP_NO_SUCH_DESCRIPTOR, m.op, m.carried),
+            "LK5 the holder's SET (%s) on an absent descriptor is NO_SUCH_DESCRIPTOR, "
+            "zero body (status %d)", m.what, st(r));
+    }
+  }
+
+  void lk_the_holder_is_still_served() {
+    lock(true, "LK6");
+    CHECK(io.d->dbg_lock_held_o, "LK6: the bench holds the lock while it is served");
+    holder_set(AEM_SET_SAMPLING_RATE, rate_body(0, 96000u), true, "LK6 rate 96000");
+    holder_set(AEM_SET_CLOCK_SOURCE, clks_body(0, 2), true, "LK6 clock source 2");
+    holder_set(AEM_SET_CONTROL, ctrl_body(0, 0), true, "LK6 IDENTIFY 0");
+    CHECK(get_value(AEM_GET_SAMPLING_RATE, 0x0002, 0, 4, false) == 96000u
+              && get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, false) == 2u
+              && get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false) == 0u,
+          "LK6 ...and each GET reads what the holder stored");
+    lock(false, "LK6");
+  }
+
+  void lk_the_entity_locked_arm() {
+    ++seq;
+    const auto r = ask(0x0024, std::vector<uint8_t>(4, 0));
+    CHECK(st(r) == AECP_SUCCESS, "LK0: the bench registers for unsolicited "
+          "notifications, got %d", st(r));
+    lk_on_the_unset_rows();
+    lk_on_the_set_rows();
+    lk_the_lock_outranks_a_locate_miss();
+    lk_the_holder_is_still_served();
+  }
+
+  void run() {
+    boot();
+    lk_the_entity_locked_arm();
+  }
+};
+
+[[maybe_unused]] static void run_aecp_response(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  AecpResponsePhase{h}.run();
+  printf("AX: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   //! the harness that owns the tally. Section DV runs on a model of its own
@@ -10470,6 +10718,7 @@ int main(int argc, char** argv) {
   if (!one_section || name_only) run_name_writes(h);
   if (!one_section || d3_only) run_d3(h);
   if (!one_section || adp_only) run_adp_config(h);
+  if (!one_section || aecp_only) run_aecp_response(h);
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's two

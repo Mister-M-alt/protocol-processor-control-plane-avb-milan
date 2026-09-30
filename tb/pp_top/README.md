@@ -825,11 +825,23 @@ many checks each arm failed at the lane head.
 | `m9-guard-remove-mappings` | the REMOVE term of `amap_edit_w`, and `amap_remove_w`, lose their guard | `M9: mt=4 word 002D` | 7 |
 | `m9-guard-dynamic-info` | `gdi_w` loses its guard | `M9: mt=4 word 004B` | 7 |
 | `a5b-reboot-success-arm` | the pop decode answers REBOOT (0x002A) SUCCESS with the command echoed (issue #74) | `A5b: REBOOT (7.4.43, Figure 7-68): the response is not the echoed command` | 1 |
+| `lk-ssrate-lock-nop` | E_SSRATE's CHECK_LOCK (E_SSRATE+9) replaced with NOP (issue #53) | `LK1 unset rate row, ...: ENTITY_LOCKED byte-exact` | 9 |
+| `lk-ssrate-miss-lock-nop` | E_SSRATE's locate-miss CHECK_LOCK (SSR_REFUSE) replaced with NOP | `LK4 foreign SET_SAMPLING_RATE on AUDIO_UNIT 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
+| `lk-sclks-lock-nop` | E_SCLKS's CHECK_LOCK (E_SCLKS+9) replaced with NOP | `LK1 unset clock-source row, ...: ENTITY_LOCKED byte-exact` | 9 |
+| `lk-sclks-miss-lock-nop` | E_SCLKS's locate-miss CHECK_LOCK (E_SCLKSRF) replaced with NOP | `LK4 foreign SET_CLOCK_SOURCE on CLOCK_DOMAIN 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
+| `lk-sctrl-lock-nop` | E_SCTRL's CHECK_LOCK (E_SCTRL+4) replaced with NOP | `LK1 IDENTIFY at its reset 0, ...: ENTITY_LOCKED byte-exact` | 9 |
+| `lk-sctrl-miss-lock-nop` | E_SCTRL's locate-miss CHECK_LOCK (E_SCTRL+21) replaced with NOP | `LK4 foreign SET_CONTROL on CONTROL 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
+| `lk-prefix-zero-body` | the microcode generator as it stood at the lane base (`0451d83d`): the lock checked first and refused through the zero-bodied E_LOCKED4/E_LOCKED1 stubs, the issue #53 reproduction | `LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: ENTITY_LOCKED byte-exact` | 5 |
 
 Each guard arm fails its opcode's row on all seven message types; the three
 writers also fail their whole-body row and the read-back that proves the write
 landed (M9b3, M9b4, M9b5). The REBOOT arm answers at the right length and cdl,
-so only the byte-exact echo can see it, and it does.
+so only the byte-exact echo can see it, and it does. Each lock arm's
+main-path NOP lets the foreign SET write: its byte-exact check, the holder's
+unsolicited frame, the effect counters and the next holder SET's notification
+count all fail. The reproduction fails exactly the five LK1/LK3 bodies that
+are not zero (status 3 and cdl are right; LK1's SET_CONTROL at IDENTIFY's reset
+0 passes, because zero is its value in force).
 
 ## Recorded seams and honest limits
 
@@ -1124,7 +1136,8 @@ notified. Before the check, `E_SSRATE` stored any 32-bit rate, answered
   everything (the walk reads the list at 144 only, 07 §3.1 L10).
 - **W9m** proves the lock outranks the list check: a foreign controller is
   `ENTITY_LOCKED` for a listed and an unlisted rate alike and moves nothing.
-  The body of that refusal is issue #53's decision and is not graded here.
+  The body of that refusal is issue #53's decision, graded byte-exact in
+  section AX (LK).
 
 W9k, W9l and W9m run LAST on the main DUT, after section T, for section T's
 reason: their empty notification windows cost about 1.3 s of simulated time,
@@ -1213,3 +1226,28 @@ probe, which must now succeed byte-exact with the internal claim's base address.
 S10 retains a failed probe while the allocator is absent, then proves recovery
 without another probe. The standalone talker retry suite carries the detailed
 pacing, fairness, late-response and block-change mutation matrix.
+
+## Section AX: AECP dispatch and response (issues #53, #50, #82)
+
+A fresh processor of its own (the AD pattern), after AD in the default build and
+by `make aecp-dispatch` (with A5b and M9) for the mutation driver, so the main
+run's clock is untouched. Its image is the main run's with CLOCK_DOMAIN 0's
+`clock_source_index` defaulting to 2, so an unset row's current index is not also
+the zero a stub would carry.
+
+- **LK** the ENTITY_LOCKED arm of SET_SAMPLING_RATE, SET_CLOCK_SOURCE and
+  SET_CONTROL (Milan 5.4.2.13/.15/.17). The bench (the lock holder) registers for
+  unsolicited notifications and re-locks before each foreign command: the wrap
+  compresses the 60 s lock window to 400 ms, and an expiry would itself notify
+  the holder. A second controller's SET is then answered ENTITY_LOCKED at the
+  response form's cdl (20, 20, 17), byte-exact, carrying the value in force
+  (06 section 6.8, IEEE 1722.1-2021 7.4.21.1/7.4.23.1/7.4.25.1): **LK1** on the
+  unset rows (the image's 96000 and clock source 2; IDENTIFY's reset 0), **LK3**
+  on rows the holder set in **LK2** (48000, 1, 255), each followed by a GET that
+  still reads it. Every refusal writes, marks and notifies nothing (the dynamic
+  store's accepted-write counter, OP_NVM_MARK and OP_NOTIFY_ENQ, and no
+  unsolicited frame at the registered holder). **LK4**: the lock outranks a
+  locate miss (AUDIO_UNIT, CLOCK_DOMAIN and CONTROL 3), zero body; **LK5**: the
+  holder asking the same is answered NO_SUCH_DESCRIPTOR; **LK6**: the holder,
+  still holding the lock, is served, one store write and one notification per
+  changing SET, and each GET reads what it stored.

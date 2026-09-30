@@ -63,7 +63,6 @@ constexpr uint16_t E_SSRATE = 1152;
 constexpr uint16_t E_SCLKS = 1184;
 constexpr uint16_t E_TIZ8NS = 1216;
 constexpr uint16_t E_TIZ4NS = 1224;
-constexpr uint16_t E_LOCKED4 = 1232;
 constexpr uint16_t E_BADARG4 = 1240;
 constexpr uint16_t E_STRT = 1600;
 constexpr uint16_t E_SFMTI = 1792;

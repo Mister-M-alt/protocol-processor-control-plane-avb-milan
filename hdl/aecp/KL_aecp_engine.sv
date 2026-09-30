@@ -838,11 +838,9 @@ module KL_aecp_engine
   //! {clock_source_index, reserved} pair, so three type gates need two stubs
   localparam logic [10:0] UPC_TIZ8NS_C  = 11'd1216;  // E_TIZ8NS
   localparam logic [10:0] UPC_TIZ4NS_C  = 11'd1224;  // E_TIZ4NS
-  localparam logic [10:0] UPC_LOCKED4_C = 11'd1232;  // E_LOCKED4
   localparam logic [10:0] UPC_BADARG4_C = 11'd1240;  // E_BADARG4
   localparam logic [10:0] UPC_GCTRL_C   = 11'd1248;  // E_GCTRL
   localparam logic [10:0] UPC_SCTRL_C   = 11'd1280;  // E_SCTRL
-  localparam logic [10:0] UPC_LOCKED1_C = 11'd1312;  // E_LOCKED1
   localparam logic [10:0] UPC_BADARG1_C = 11'd1320;  // E_BADARG1
   localparam logic [10:0] UPC_NSUPP1_C  = 11'd1328;  // E_NSUPP1
   localparam logic [10:0] UPC_SCFG_C     = 11'd1456; // E_SCFG

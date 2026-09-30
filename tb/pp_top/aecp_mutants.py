@@ -38,6 +38,27 @@ MUTANTS = [
     # issue #74: a SUCCESS arm for REBOOT, the first opcode REQ-FWX-001 names
     ("a5b-reboot-success-arm", "a5b-reboot-success-arm", "aecp-dispatch",
      "A5b: REBOOT (7.4.43, Figure 7-68): the response is not the echoed command"),
+    # issue #53: every CHECK_LOCK of the three SETs replaced with NOP, on the
+    # main path and on the locate-miss path, and the lane base's microcode
+    # (the zero-bodied ENTITY_LOCKED the issue records)
+    ("lk-ssrate-lock-nop", "lk-ssrate-lock-nop", "aecp-dispatch",
+     "LK1 unset rate row, foreign SET_SAMPLING_RATE(48000) carries the image's 96000: "
+     "ENTITY_LOCKED byte-exact"),
+    ("lk-ssrate-miss-lock-nop", "lk-ssrate-miss-lock-nop", "aecp-dispatch",
+     "LK4 foreign SET_SAMPLING_RATE on AUDIO_UNIT 3 (absent): ENTITY_LOCKED byte-exact"),
+    ("lk-sclks-lock-nop", "lk-sclks-lock-nop", "aecp-dispatch",
+     "LK1 unset clock-source row, foreign SET_CLOCK_SOURCE(1) carries the image's 2: "
+     "ENTITY_LOCKED byte-exact"),
+    ("lk-sclks-miss-lock-nop", "lk-sclks-miss-lock-nop", "aecp-dispatch",
+     "LK4 foreign SET_CLOCK_SOURCE on CLOCK_DOMAIN 3 (absent): ENTITY_LOCKED byte-exact"),
+    ("lk-sctrl-lock-nop", "lk-sctrl-lock-nop", "aecp-dispatch",
+     "LK1 IDENTIFY at its reset 0, foreign SET_CONTROL(255) carries 0: "
+     "ENTITY_LOCKED byte-exact"),
+    ("lk-sctrl-miss-lock-nop", "lk-sctrl-miss-lock-nop", "aecp-dispatch",
+     "LK4 foreign SET_CONTROL on CONTROL 3 (absent): ENTITY_LOCKED byte-exact"),
+    ("lk-prefix-zero-body", "lk-prefix-zero-body", "aecp-dispatch",
+     "LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: "
+     "ENTITY_LOCKED byte-exact"),
 ]
 
 #: the scratch tree: the RTL and the two bench directories the targets build
