@@ -835,7 +835,7 @@ many checks each arm failed at the lane head.
 | `lk-sctrl-miss-lock-nop` | E_SCTRL's locate-miss CHECK_LOCK (E_SCTRL+21) replaced with NOP | `LK4 foreign SET_CONTROL on CONTROL 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
 | `lk-prefix-zero-body` | the microcode generator as it stood at the lane base (`0451d83d`): the lock checked first and refused through the zero-bodied E_LOCKED4/E_LOCKED1 stubs, the issue #53 reproduction | `LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: ENTITY_LOCKED byte-exact` | 5 |
 | `ov-oversize-never` | the engine's `txs_oversize_o` forced to 0 (issue #50's acceptance 2) | `OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618): the 576-byte descriptor, byte-exact` | 18 |
-| `ov-oversize-at-576` | the engine asks for the oversize slot at a 576-byte frame (`>=` for `>`) | `OV4 CLOCK_DOMAIN 0 (534 B: frame 576, the standard slot's own size): one TX-slot grant` | 2 |
+| `ov-oversize-at-576` | the engine asks for the oversize slot at a 576-byte frame (`>=` for `>`) | `OV4 CLOCK_DOMAIN 0 (534 B: frame 576, the standard slot's own size): one TX-slot grant` | 4 |
 | `ov-top-oversize-dropped` | the top's `pool_oversize_w` tied to 0, so the request never reaches the pool | `OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618): the 576-byte descriptor, byte-exact` | 18 |
 | `pg-append-524` | E_GAMAP's record APPEND loses its Δ8 flag and stops at cdl 524 again, the issue #50 reproduction | `PG2 a 63-mapping page: SUCCESS above cdl 524 (528), a standard slot: number_of_mappings` | 14 |
 | `pg-cap-dropped` | E_GAMAP's page cap keeps the count and the SUCCESS (its SET_MASKED and SET_STATUS NO_RESOURCES replaced with NOP) | `PG7 a 72-mapping page: NO_RESOURCES, no record claimed: number_of_mappings` | 10 |
@@ -859,7 +859,8 @@ are not zero (status 3 and cdl are right; LK1's SET_CONTROL at IDENTIFY's reset
 0 passes, because zero is its value in force). With no oversize request (from the
 engine or through the top) the three oversize READ_DESCRIPTORs leave truncated to a
 576-byte standard slot: byte-exact, wire length, grant and slot 4 fail on each, and
-OV5 with them; the request at 576 moves OV4 alone into slot 4. The page-cap arms
+OV5 with them; the request at 576 moves OV4, and RD2's read of the same 534-byte
+descriptor, into slot 4. The page-cap arms
 fail the pages they reach: the Δ8 flag removed, PG2 to PG6 (62 records, the full
 count); the cap dropped, PG7 to PG9 (the count kept, 71 records or none carried);
 the cap one late, PG7 alone. The overlay arms fail the reads they reach: without
