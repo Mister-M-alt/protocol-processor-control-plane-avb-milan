@@ -7,8 +7,11 @@ once) planted in a private copy of hdl/, tb/common/ and the one suite that grade
 it. The copy is built and run in the foreground. A mutant is KILLED only when its
 build succeeds, its run completes with the suite's tally, exits non-zero, and every
 check named for it fails. A refused edit, a failed build, a crash or a missing tally
-never counts as a kill. A golden copy of every suite in use runs first and must pass;
-the tree this script lives in is never touched.
+never counts as a kill. Each build and each run has a per-run timeout: a command
+still running at it is killed with every process it started and the copy is
+recorded SURVIVED/TIMEOUT (a golden BROKEN/TIMEOUT), never KILLED, so a planted
+hang fails the campaign instead of stalling it. A golden copy of every suite in
+use runs first and must pass; the tree this script lives in is never touched.
 
 The controls are those of processor issues #47 (ACMP messages outside the listener
 and talker sets are inert; the probe-response guard per term), #45 (ACMPDUs longer
@@ -17,15 +20,18 @@ through the top's SRP service stage to the SRP listener matcher and back). The
 suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/acmp_mutants.py --output DIR [--verilator V] [--jobs N]
-                                         [--only NAME ...]
+                                         [--timeout SECONDS] [--only NAME ...]
 """
 
 import argparse
 import concurrent.futures
+import contextlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 from typing import NamedTuple
@@ -161,6 +167,14 @@ SETTLE_PATH = (
 
 MUTANTS = INERT + LONG_FORM + SETTLE_PATH
 TALLY = re.compile(r"^(ACMP: \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$", re.M)
+#: the default per-run timeout, in seconds, for each build and each run. A
+#: cold `gsi-build` of tb/pp_top and its section AC run each take minutes even
+#: with several copies building at once; an hour is far past both.
+RUN_TIMEOUT_S = 3600.0
+
+
+class Hang(Exception):
+    """A command outlived the per-run timeout; it and its children were killed."""
 
 
 def plant(tree: Path, edits: tuple[tuple[str, str, str], ...]) -> str:
@@ -181,18 +195,34 @@ def copy_tree(root: Path, tree: Path, suite: Suite) -> None:
         shutil.copytree(root / directory, tree / directory, ignore=skip)
 
 
-def execute(command: tuple[str, ...], cwd: Path, log: Path, verilator: str) -> int:
-    """Run one command in the foreground, appending its output to the log."""
+def execute(command: tuple[str, ...], cwd: Path, log: Path, verilator: str,
+            timeout: float) -> int:
+    """Run one command in the foreground, appending its output to the log.
+
+    The command leads its own process group, so at the timeout make, the
+    compiler and the simulator are killed together, the log says so, and Hang
+    is raised: a hang has no exit status to grade.
+    """
     argv = list(command) + (["VERILATOR=" + verilator] if command[0] == "make" else [])
-    with log.open("a") as stream:
-        return subprocess.run(argv, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT,
-                              check=False).returncode
+    with log.open("a") as stream, subprocess.Popen(argv, cwd=cwd, stdout=stream,
+                                                   stderr=subprocess.STDOUT,
+                                                   start_new_session=True) as proc:
+        try:
+            return proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+            reason = f"{' '.join(command)} still running after {timeout:g} s"
+            stream.write(f"\nTIMEOUT: {reason}; its process group was killed\n")
+            raise Hang(reason) from None
 
 
 def judge(label: str, suite: Suite, edits: tuple, checks: tuple[str, ...],
-          work: tuple[Path, Path, str]) -> dict[str, object]:
+          work: tuple[Path, Path, str, float]) -> dict[str, object]:
     """Build and run one copy (a golden when `edits` is empty) and grade the run."""
-    root, output, verilator = work
+    root, output, verilator, timeout = work
+    build_rc, run_rc, hang = None, None, ""
     with tempfile.TemporaryDirectory(prefix="pp-acmp-mutant-") as temp:
         tree = Path(temp)
         copy_tree(root, tree, suite)
@@ -202,19 +232,25 @@ def judge(label: str, suite: Suite, edits: tuple, checks: tuple[str, ...],
         if refusal:
             return {"mutant": label, "verdict": "REFUSED", "reason": refusal}
         cwd = tree / suite.directory
-        build_rc = execute(suite.build, cwd, log, verilator) if suite.build else 0
-        run_rc = execute(suite.run, cwd, log, verilator) if build_rc == 0 else None
+        try:
+            build_rc = execute(suite.build, cwd, log, verilator, timeout) if suite.build else 0
+            run_rc = execute(suite.run, cwd, log, verilator, timeout) if build_rc == 0 else None
+        except Hang as stalled:
+            hang = str(stalled)
     text = log.read_text(errors="replace")
     fails = [line[len("FAIL: "):] for line in text.splitlines() if line.startswith("FAIL: ")]
     completed = bool(TALLY.search(text))
     missing = [c for c in checks if not any(f.startswith(c) for f in fails)]
-    if not edits:
+    if hang:
+        # whatever the log holds by then, a run that never ended is no kill
+        verdict = "SURVIVED/TIMEOUT" if edits else "BROKEN/TIMEOUT"
+    elif not edits:
         verdict = "PASS" if (run_rc == 0 and completed and not fails) else "BROKEN"
     else:
         verdict = "KILLED" if (run_rc not in (0, None) and completed and not missing) else "SURVIVED"
     return {"mutant": label, "suite": suite.directory, "build_rc": build_rc, "run_rc": run_rc,
             "completed": completed, "named_checks": list(checks), "missing": missing,
-            "failing_checks": fails, "verdict": verdict}
+            "failing_checks": fails, "timeout": hang, "verdict": verdict}
 
 
 def label_of(mutant: Mutant) -> str:
@@ -229,6 +265,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--verilator", default="verilator")
     parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument("--timeout", type=float, default=RUN_TIMEOUT_S,
+                        help="seconds each build and each run may take (default %(default)g)")
     parser.add_argument("--only", nargs="*", default=None)
     args = parser.parse_args()
     output = args.output.resolve()
@@ -239,11 +277,11 @@ def main() -> int:
     if unknown:
         parser.error("unknown mutant(s): " + " ".join(unknown))
     chosen = [m for m in MUTANTS if not args.only or m.name in args.only]
-    work = (root, output, args.verilator)
+    work = (root, output, args.verilator, args.timeout)
     suites = {m.suite.directory: m.suite for m in chosen}
     records = [judge("golden-" + Path(d).name, s, (), (), work) for d, s in sorted(suites.items())]
     for record in records:
-        print(json.dumps({k: record[k] for k in ("mutant", "verdict")}), flush=True)
+        print(json.dumps({k: record.get(k) for k in ("mutant", "verdict", "timeout")}), flush=True)
     if all(r["verdict"] == "PASS" for r in records):
         with concurrent.futures.ThreadPoolExecutor(max(1, args.jobs)) as pool:
             futures = [pool.submit(judge, label_of(m), m.suite, m.edits, m.checks, work)
@@ -251,8 +289,8 @@ def main() -> int:
             for future in concurrent.futures.as_completed(futures):
                 record = future.result()
                 records.append(record)
-                print(json.dumps({k: record.get(k) for k in ("mutant", "verdict", "missing")}),
-                      flush=True)
+                print(json.dumps({k: record.get(k) for k in ("mutant", "verdict", "missing",
+                                                              "timeout")}), flush=True)
     (output / "results.json").write_text(json.dumps(records, indent=1) + "\n")
     killed = sum(r["verdict"] == "KILLED" for r in records)
     goldens = [r for r in records if r["mutant"].startswith("golden-")]

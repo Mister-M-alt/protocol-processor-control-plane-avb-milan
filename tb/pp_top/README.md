@@ -1201,11 +1201,14 @@ about 19 s of simulated time on its own model (it prints the figure).
 
 ### ACMP negative controls: `acmp_mutants.py`
 
-`python3 acmp_mutants.py --output DIR [--jobs N] [--only NAME ...]` plants each
-control in its own extract of `hdl/`, `tb/common/` and the grading suite's
-directory, and counts it KILLED only when the run completes with its tally,
-exits non-zero and every named check fails; a golden extract of each suite in
-use runs first and must pass. Here it builds `gsi-build` and runs
+`python3 acmp_mutants.py --output DIR [--jobs N] [--timeout SECONDS] [--only NAME ...]`
+plants each control in its own extract of `hdl/`, `tb/common/` and the grading
+suite's directory, and counts it KILLED only when the run completes with its
+tally, exits non-zero and every named check fails. A build or run still going
+at the per-run timeout (default one hour) is killed with every process it
+started and recorded SURVIVED/TIMEOUT (a golden BROKEN/TIMEOUT), never KILLED,
+so a planted hang fails the campaign rather than stalling it. A golden extract
+of each suite in use runs first and must pass. Here it builds `gsi-build` and runs
 `--acmp-only`; the same driver runs the listener controls in `tb/acmp_listener`
 and the validator control in `tb/rx_validator` (recorded in those READMEs).
 Measured 2026-09-29 at the lane head, each in its own extract: all 19 KILLED
