@@ -210,15 +210,39 @@ control per class/key — the load-bearing role is **cross-engine interlock** (t
 | REGISTRY_OP | REGISTER/DEREGISTER, monitor removals, TIME_LIMITED expiry | registry | serialized on the registry |
 | IDENTIFY | SET_CONTROL(identify), notification bursts | identify | serialized |
 
-The current top-level classifier maps every ACMP transaction to `STREAM_CFG`
-and maps AECP opcodes `0x002C` and `0x002D` to `MAP_CFG`. The scoreboard uses
-the documented class-wide exclusion, so an ACMP stream-state transition cannot
-enter after mapping commit-begin and before the mapping response releases its
-hold.
+**The landed classifier (issue #84).** `protocol_processor_top` answers the
+normalizer's dispatch-ROM seam with every transaction's class and key, so all
+nine classes reach the scoreboard. An AEM command for this entity takes its
+opcode's class: SET_CONFIGURATION `CFG_BARRIER`; SET_STREAM_FORMAT,
+SET_STREAM_INFO and START/STOP_STREAMING `STREAM_CFG`; ADD/REMOVE_AUDIO_MAPPINGS
+`MAP_CFG`; SET_SAMPLING_RATE and SET_CLOCK_SOURCE `CLOCK_CFG`; SET_NAME
+`NAME_WR`; LOCK_ENTITY `LOCK_OP`; REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION
+`REGISTRY_OP`; SET_CONTROL `IDENTIFY`; every other command `RO_SNAPSHOT`. An
+ACMP GET_RX_STATE, GET_TX_STATE or GET_TX_CONNECTION is `RO_SNAPSHOT`; every
+other ACMP step is its stream's `STREAM_CFG`. A key names what the transaction
+reads or writes, `{descriptor_type[5:0], descriptor_index[9:0]}`: an AECP
+command on STREAM_INPUT k and an ACMP step of sink k share a key (the validator
+hands the classifier the consuming engine's unique_id), as do STREAM_OUTPUT k and
+talker source k. Descriptor type 0x3F, which names none, holds the registry key
+and the key of reads that address no single descriptor (READ_DESCRIPTOR, whose
+descriptor sits at @28, outside the record; GET_DYNAMIC_INFO, which reads several).
+`CFG_BARRIER` and `LOCK_OP` are global. A frame the engine drops (an AECP
+response as input, a command for another entity_id), MVU and ADDRESS_ACCESS are
+`RO_SNAPSHOT` with that no-descriptor key, so they never drain the table. The
+`MAP_CFG` cross-lock stays class-wide (the module banner says why), and an ACMP
+stream-state transition cannot enter after mapping commit-begin and before the
+mapping response releases its hold. With two single-issue clients the matrix
+admits no conflict between `CLOCK_CFG`, `NAME_WR`, `REGISTRY_OP` or `IDENTIFY`
+and any class ACMP presents: those four are graded by the class and key the
+scoreboard is presented, and by running beside a held ACMP step
+([09 §8.3](09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)).
 
 The top has one live admission port. Ready ACMP and AECP heads use round-robin
 choice, and neither dispatch queue pops unless the scoreboard grants that
-head. This prevents a continuous ACMP stream from starving a conflicting AECP
+head. While a refused `CFG_BARRIER` drain is pending the AECP head wins the
+choice: the barrier can only be an AECP head, and with the round-robin alone an
+ACMP head picked and refused in every clock would keep it from ever being
+presented again. This prevents a continuous ACMP stream from starving a conflicting AECP
 write. The selected engine records the granted hold id and RX slot. The hold
 is released only when that same engine returns the matching RX slot, after its
 solicited response request has been queued or after a defined silent

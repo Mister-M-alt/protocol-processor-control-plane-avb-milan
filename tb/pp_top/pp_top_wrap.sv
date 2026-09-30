@@ -425,7 +425,17 @@ module pp_top_wrap (
     output logic        dbg_sb_kill_ack_o,
     output logic  [2:0] dbg_aecp_sb_id_o,
     output logic  [7:0] dbg_sb_holds_o,
-    output logic        dbg_ucpu_pre_o
+    output logic        dbg_ucpu_pre_o,
+    //! the scoreboard's admission port (section HZ, 03 §6 F03.7): the class
+    //! and key presented, the AECP and ACMP heads it accepted this clock, the
+    //! two owners' live holds, and the pending CFG_BARRIER drain
+    output logic  [3:0] dbg_sb_class_o,
+    output logic [15:0] dbg_sb_key_o,
+    output logic        dbg_sb_acc_aecp_o,
+    output logic        dbg_sb_acc_acmp_o,
+    output logic        dbg_aecp_sb_active_o,
+    output logic        dbg_acmp_sb_active_o,
+    output logic        dbg_sb_barrier_o
 );
 
 `ifdef PP_TOP_TIM_REAL
@@ -767,6 +777,13 @@ module pp_top_wrap (
   assign dbg_aecp_sb_id_o     = u_dut.aecp_sb_id_r;
   assign dbg_sb_holds_o       = u_dut.sb_holds_w;
   assign dbg_ucpu_pre_o       = u_dut.u_aecp.ucpu_pre_w;
+  assign dbg_sb_class_o       = u_dut.sb_adm_class_w;
+  assign dbg_sb_key_o         = u_dut.sb_adm_key_w;
+  assign dbg_sb_acc_aecp_o    = u_dut.aecp_sb_accept_w;
+  assign dbg_sb_acc_acmp_o    = u_dut.acmp_sb_accept_w;
+  assign dbg_aecp_sb_active_o = u_dut.aecp_sb_active_r;
+  assign dbg_acmp_sb_active_o = u_dut.acmp_sb_active_r;
+  assign dbg_sb_barrier_o     = u_dut.sb_barrier_w;
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin

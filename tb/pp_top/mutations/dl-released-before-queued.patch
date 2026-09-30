@@ -1,6 +1,6 @@
 --- a/hdl/top/protocol_processor_top.sv
 +++ b/hdl/top/protocol_processor_top.sv
-@@ -992,7 +992,7 @@
+@@ -999,7 +999,7 @@
        .rel_id_i           (sb_rel_id_w),
        .kill_valid_i       (aecp_dl_kill_w),
        .kill_id_i          (aecp_sb_id_r),

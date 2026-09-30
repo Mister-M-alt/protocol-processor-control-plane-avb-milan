@@ -76,6 +76,9 @@ deadline: gsi-build
 d3: gsi-build
 	./obj_dir/Vpp_top_sim --d3-only
 
+hazards: gsi-build
+	./obj_dir/Vpp_top_sim --hazards-only
+
 # lane C5a's campaign (issues #81, #57, #84): reviewed patches in mutations/,
 # each applied to a scratch copy, each required to fail its named check
 aecp-mutants:
@@ -123,4 +126,4 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 clean:
 	rm -rf obj_dir obj_vid obj_tim ltn_rom.hex ucode.hex
 
-.PHONY: name-writes run gsi-build gsi-internal adp-config deadline d3 budget budget-build aecp-mutants fixture-guards fixture-guards-test clean
+.PHONY: name-writes run gsi-build gsi-internal adp-config deadline d3 hazards budget budget-build aecp-mutants fixture-guards fixture-guards-test clean

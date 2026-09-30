@@ -239,14 +239,23 @@ its watchdog.
 | the engine busy: each of those behind a 15-frame notification fan-out, answered as idle, within one job plus its idle latency of the fan-out's last frame; GET_MILAN_INFO against a response memory stalled short of its watchdog | TB3, TB4 |
 | `T-BUDGET-ACMP-RESP`: ACMP answers idle and beside that load, later than idle by at most one frame on the wire | TB5 |
 | the deadline never fired while the budgets were measured | TB |
+| every transaction presents its F03.7 class and key: 33 AECP rows (all nine classes, the GETs' descriptor keys, the no-descriptor key of READ_DESCRIPTOR, GET_DYNAMIC_INFO, MVU and of frames the engine drops) and 6 ACMP rows | HZ1 |
+| CFG_BARRIER drains an in-flight ACMP step before executing and blocks a later ACMP head behind it | HZ2 |
+| a pending barrier is never starved by the round-robin (the wedge the fix removes) | HZ3 |
+| LOCK_OP waits for an ACMP stream step and runs beside an ACMP read | HZ4 |
+| STREAM_CFG and RO_SNAPSHOT conflict per key; two reads run together; MAP_CFG waits for any stream step | HZ5 to HZ7 |
+| CLOCK_CFG, NAME_WR, REGISTRY_OP, IDENTIFY and READ_DESCRIPTOR run beside an ACMP stream step | HZ8 |
 
 Section TB runs in the suite's third build (`make budget`), whose timebase is the
 nominal clock's own (1 ms = 1,000 clocks), so the deadline never cuts a measurement;
 it prints the latency histogram ([08 §4](08_timing.md#4-deadline-budgets) records
 it).
 
-The negative controls run from `tb/pp_top/aecp_mutants.py` (`make -C tb/pp_top
-aecp-mutants`): each is a reviewed patch in `tb/pp_top/mutations/` applied to a
+Section HZ (`--hazards-only`) holds an ACMP transaction in flight by stalling the
+MAC until four answers fill the standard TX slots, so the next ACMP command is
+admitted and keeps its key until the MAC restarts; it grades every admission at
+the scoreboard's port. The negative controls run from `tb/pp_top/aecp_mutants.py`
+(`make -C tb/pp_top aecp-mutants`): each is a reviewed patch in `tb/pp_top/mutations/` applied to a
 scratch copy, and each must fail its named check. The mutation record is in
 the [`tb/pp_top` README](../../tb/pp_top/README.md).
 

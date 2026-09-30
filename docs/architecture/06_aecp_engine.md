@@ -197,7 +197,7 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x0002 | ENTITY_AVAILABLE | shall | — | RO | — | — | — | — | 44 B (2021 form w/ flags + acquired/locked IDs) |
 | 0x0003 | CONTROLLER_AVAILABLE | responder: n/i (not a controller); **originator**: §7 | — | — | — | — | — | — | 24 B echo |
 | 0x0004 | READ_DESCRIPTOR | shall | allowed while locked | RO | no | — | **yes** | — | 28 + descriptor (4-B stub on failure) |
-| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER *(architectural class; the current single AECP engine serializes AEM commands while the dispatch scoreboard remains unwired)* | yes | - | - | success with state change, requester excluded | 28 B |
+| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER (assigned by the top's classifier, [03 §6](03_packet_engine.md)) | yes | - | - | success with state change, requester excluded | 28 B |
 | 0x0007 | GET_CONFIGURATION | shall | — | RO | — | yes | — | — | 28 B |
 | 0x0008 | SET_STREAM_FORMAT | shall | per stream, both directions; §6.4 chain | STREAM_CFG | yes | - | - | success with state change, requester excluded | 36 B |
 | 0x0009 | GET_STREAM_FORMAT | shall | - | RO | - | yes | - | - | 36 B |
@@ -1125,7 +1125,10 @@ hand-off to TX lane 0 on `dl_queued_o`, the scoreboard's `kill_resp_queued_i`.
 
 **Dispatch decision (this section specifies a ROM; the tree ships none).** §4 names a
 dispatch ROM and §8 fixes its 48-bit entry, but no ROM and no generator for it exist.
-The engine therefore uses a two-stage direct decode. The timing-sensitive pop stage
+Its hazard class and key half is realized in `protocol_processor_top`: the F03.7
+classifier answers the normalizer's seam per opcode, and every class reaches the
+scoreboard ([03 §6](03_packet_engine.md), issue #84). The engine uses a two-stage
+direct decode for the rest. The timing-sensitive pop stage
 selects READ_DESCRIPTOR, GET_COUNTERS, GET_AUDIO_MAP, and opcode-specific
 BAD_ARGUMENTS paths. Registered discriminator bits select the remaining implemented
 AEM programs at the payload-walk exit, after all operand bytes have settled. A ROM
