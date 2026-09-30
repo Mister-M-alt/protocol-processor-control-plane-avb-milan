@@ -111,8 +111,8 @@ two sides apart.
   grant (the probeCount! entry, sAnnounce). The 5 offsets before the
   ANNOUNCE's slot request send nothing. From the request on, the ANNOUNCE
   belongs to the probeCount! entry (B.3.2) and is the one frame that drains:
-  at each of the 75 offsets it goes byte-exact, with no slot request after it,
-  and reaches the lane within 63 cycles of the fall (measured: at most 63). That
+  at each of the 75 offsets it goes byte-exact, with no new slot request after
+  it, and reaches the lane within 63 cycles of the fall (measured: at most 63). That
   window runs from the slot request to the lane grant: the request, the grant
   wait, 60 byte writes, the commit, and the lane request, granted at once in
   this bench. At the top the shared pool and lane add their waits, and a
@@ -155,11 +155,14 @@ fall in a chosen state, covering all 12 walker states:
 - `W_TEARDOWN` and `W_OFF`, after a rise inside the teardown.
 
 The link then stays down for 33 s, longer than the longest announce interval
-(B.3.4.1). From the cycle after the first one the fall is seen there is no TX
-slot request, no timer started, no timer expiry, and no claim, and the machine
-ends INITIAL. The one frame that may still drain is the one whose slot was
-requested by then (the falls in `W_ALLOC` to `W_COMMIT`); U23 grades its
-window. The wrapper exposes the walker state (`walker_o`, a hierarchical read
+(B.3.4.1). From the cycle after the first one the fall is seen there is no new
+TX slot request, no timer started, no timer expiry, and no claim, and the
+machine ends INITIAL. The one frame that may still drain is the one whose slot
+was requested by then (the falls in `W_ALLOC` to `W_COMMIT`); U23 grades its
+window. A request already pending is retried until granted: at the top, a
+request that finds the pool busy goes back from `W_GWAIT` to `W_ALLOC` and
+asks again, and a retry after the fall is that same frame's. This bench's pool
+grants at once, so here any request after the fall would be a new one. The wrapper exposes the walker state (`walker_o`, a hierarchical read
 used only to land each fall), timer starts (`tmr_start_o`) and timer expiries
 (`tmr_exp_o`), all wiring.
 

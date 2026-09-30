@@ -990,7 +990,7 @@ bool MaapAnnexBSuite::accept_record(int msg, uint64_t sa, uint64_t req_start,
 // the ANNOUNCE's. Before the ANNOUNCE's TX slot is requested the entry is
 // dropped: no ANNOUNCE. From the request on the ANNOUNCE belongs to the
 // probeCount! entry (B.3.2) and is the one frame that drains: byte-exact,
-// with no slot request after it, and on the lane within the window below.
+// with no new slot request after it, and on the lane within the window below.
 // At every offset the claim is not valid from the first cycle the fall is
 // seen, the machine is INITIAL, and the next PortOperational! walks again.
 void MaapAnnexBSuite::a_release_on_the_announce_path_is_ordered_by_the_slot_request() {
@@ -1057,7 +1057,7 @@ void MaapAnnexBSuite::a_release_on_the_announce_path_is_ordered_by_the_slot_requ
         sent_unowed, dropped);
   CHECK(drain_wrong == 0,
         "U23: at most the one frame requested before the fall drains: the ANNOUNCE, "
-        "byte-exact, and no slot request after it (%d of %d offsets)", drain_wrong, drained);
+        "byte-exact, and no new slot request after it (%d of %d offsets)", drain_wrong, drained);
   CHECK(drain_late == 0,
         "U23: the drained ANNOUNCE reaches the lane within %d cycles of the fall "
         "(%d of %d offsets late)", kDrainWindowCycles, drain_late, drained);
@@ -1305,10 +1305,13 @@ void MaapAnnexBSuite::every_release_rearms_the_seed() {
 // probeTimer! or announceTimer! follows the Release!. Each point below
 // lands the fall so that the walker first sees it in one state, then holds
 // the link down for longer than the longest announce interval (B.3.4.1).
-// From the cycle after the first one the fall is seen: no TX slot request,
-// no timer started, no timer expiry, no claim. A frame whose slot was
-// requested by then belongs to the entry that requested it (B.3.2), and is
-// the one frame that may still drain (U23 grades its window).
+// From the cycle after the first one the fall is seen: no new TX slot
+// request, no timer started, no timer expiry, no claim. A frame whose slot
+// was requested by then belongs to the entry that requested it (B.3.2), and
+// is the one frame that may still drain (U23 grades its window). At the top
+// a request that finds the pool busy is retried until granted, and a retry
+// after the fall is that frame's, not a new one; this bench's pool grants at
+// once, so here any request after the fall would be a new one.
 
 // KL_pp_maap's walker encoding (wstate_e), read through walker_o only to
 // land a fall in a chosen state, never as an expectation
@@ -1446,7 +1449,8 @@ void MaapAnnexBSuite::no_pdu_is_generated_after_the_fall() {
   CHECK(covered == (1u << WK_STATES) - 1,
         "U28: premise, the falls land in all %d walker states (mask 0x%03x)", WK_STATES, covered);
   CHECK(requested == 0,
-        "U28: no TX slot request follows the fall, in any walker state, for 33 s (%d of %d falls)",
+        "U28: no new TX slot request follows the fall (a request already pending is retried "
+        "until granted), in any walker state, for 33 s (%d of %d falls)",
         requested, kPoints);
   CHECK(overdrained == 0,
         "U28: at most the one frame requested before the fall drains (%d of %d falls)",
