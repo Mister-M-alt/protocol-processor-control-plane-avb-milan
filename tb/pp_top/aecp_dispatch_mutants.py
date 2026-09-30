@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
 """Plant the AECP dispatch-and-response arms in scratch; require named failures.
 
-Each arm is an explicit patch in aecp_mutations/, applied with git apply to a
+Each arm is an explicit patch in aecp_dispatch_mutations/, applied with git apply to a
 scratch copy of the tree; this driver reads only simulation and lint logs,
 never production source. Every simulation it runs is cycle-bounded. A
 positive control of each make target runs first and must pass; an arm is
@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-PATCHES = Path(__file__).resolve().parent / "aecp_mutations"
+PATCHES = Path(__file__).resolve().parent / "aecp_dispatch_mutations"
 
 #: arm, patch, make target, the check that must fail (its label prefix)
 MUTANTS = [
@@ -202,7 +202,7 @@ def main() -> int:
         parser.error(f"unknown mutation arms: {sorted(unknown)}")
     selected = [m for m in MUTANTS if m[0] in requested]
     args.output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="aecp-mutants-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="aecp-dispatch-mutants-") as tmp:
         tree = Path(tmp)
         for parts in TREES:
             shutil.copytree(ROOT.joinpath(*parts), tree.joinpath(*parts),

@@ -803,11 +803,12 @@ the last column is how many checks each one failed there.
 | `held_drop_uncounted` | a held drop not counted | `D3O5: one AECP command held`, `D3O6: at the terminal` | 5 |
 | `resident_never_returned` | the resident count never comes back down (R391-2's own edit) | `D3O7: the returned slot frees the share` | 1 |
 
-### AECP dispatch and response negative controls: `aecp_mutants.py`
+### AECP dispatch and response negative controls: `aecp_dispatch_mutants.py`
 
-`make aecp-mutants [AECP_MUTANT_OUTPUT=DIR]` (or `python3 aecp_mutants.py
---output DIR [--only ARM,...]`) plants each arm below, an explicit patch in
-`aecp_mutations/`, into a scratch copy of `hdl/`, `tb/common/` and this
+`make aecp-dispatch-mutants [AECP_DISPATCH_MUTANT_OUTPUT=DIR]` (or
+`python3 aecp_dispatch_mutants.py --output DIR [--only ARM,...]`) plants each
+arm below, an explicit patch in `aecp_dispatch_mutations/`, into a scratch
+copy of `hdl/`, `tb/common/` and this
 directory with `git apply`; the driver reads only simulation and lint logs.
 Every generated ROM and model directory is deleted before each build, so a
 microcode arm cannot leave its ROM behind. A positive control of each make

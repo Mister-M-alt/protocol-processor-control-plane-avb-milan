@@ -19,7 +19,7 @@ SRP_VID_FIXTURE = 5A3C
 # verification only: a legal non-default line (576..1008 in steps of 8) whose
 # 16 + line reservation is not a multiple of 16 (README section AX, RB)
 LINE_FIXTURE = 584
-AECP_MUTANT_OUTPUT ?= /tmp/aecp-mutants
+AECP_DISPATCH_MUTANT_OUTPUT ?= /tmp/aecp-dispatch-mutants
 .DEFAULT_GOAL := run
 
 VFLAGS = --cc --exe --build -j 0 \
@@ -83,11 +83,11 @@ adp-config: gsi-build
 	./obj_dir/Vpp_top_sim --adp-only
 
 # A5b and M9 alone on a booted model (the main run holds both in its own
-# timeline): the fast target the AECP mutation driver plants its arms against
+# timeline): the fast target aecp_dispatch_mutants.py plants its arms against
 aecp-dispatch: gsi-build
 	./obj_dir/Vpp_top_sim --aecp-dispatch-only
 
-# section AX alone in the line build (the mutation driver's line arms); its
+# section AX alone in the line build (aecp_dispatch_mutants.py's line arms); its
 # tally goes where the full run's builds put theirs
 line-build: ltn_rom.hex ucode.hex
 	$(VERILATOR) $(VFLAGS) $(LINE_VFLAGS) $(SRCS) $(CPP) -o Vpp_top_line
@@ -98,9 +98,10 @@ aecp-line: line-build
 
 # the AECP dispatch-and-response mutation campaign (README section
 # "AECP dispatch and response negative controls"); every arm is a patch in
-# aecp_mutations/, planted in a scratch copy
-aecp-mutants:
-	python3 aecp_mutants.py --output "$(AECP_MUTANT_OUTPUT)" --verilator "$(VERILATOR)"
+# aecp_dispatch_mutations/, planted in a scratch copy
+aecp-dispatch-mutants:
+	python3 aecp_dispatch_mutants.py --output "$(AECP_DISPATCH_MUTANT_OUTPUT)" \
+	    --verilator "$(VERILATOR)"
 
 run: fixture-guards line-guards ltn_rom.hex ucode.hex
 	@rm -f obj_dir/build_tally.txt
@@ -139,4 +140,4 @@ clean:
 	rm -rf obj_dir obj_vid obj_line ltn_rom.hex ucode.hex
 
 .PHONY: name-writes run gsi-build gsi-internal maap-internal adp-config aecp-dispatch \
-        line-build aecp-line aecp-mutants fixture-guards fixture-guards-test line-guards clean
+        line-build aecp-line aecp-dispatch-mutants fixture-guards fixture-guards-test line-guards clean

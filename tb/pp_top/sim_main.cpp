@@ -10164,7 +10164,7 @@ struct NameWritePhase {
 
 //! `--aecp-dispatch-only` (make aecp-dispatch): the two dispatch sweeps of
 //! the main run, A5b and M9, on a model booted the NW way, for the mutation
-//! driver (aecp_mutants.py). The default build runs both inside the main
+//! driver (aecp_dispatch_mutants.py). The default build runs both inside the main
 //! run's own timeline and never here, so no check is counted twice.
 [[maybe_unused]] static void run_aecp_dispatch_focus(H& h) {
   const int checks0 = h.checks;
