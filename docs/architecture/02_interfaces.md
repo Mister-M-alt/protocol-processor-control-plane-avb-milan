@@ -91,7 +91,11 @@ Rules (behavioral — no vendor primitives):
    inputs (`identify_button`, link status if raw) pass 2-flop synchronizers.
 4. **Quasi-static configuration** (descriptor image, identity registers, parameters
    loaded via `mgmt`) is written only while `entity_enable = 0` and is treated as
-   stable afterwards — no CDC needed post-enable.
+   stable afterwards — no CDC needed post-enable. The configuration index is the
+   one such value a controller supersedes at run time: `current_cfg_i` is the image
+   default, and while the dynamic overlay's configuration row is written (by
+   SET_CONFIGURATION, or by the boot restore of a saved configuration) the ADPDU
+   carries that instead ([04 §3](04_adp_engine.md#3-pdu-handling)).
 5. Reset: asynchronous assert, synchronous release, released in the boot-sequencer
    order ([01 §5](01_overview.md)); `entity_enable` is the master gate implementing
    ADP start gating (Milan §5.6.1), a request the processor forwards to ADP only once

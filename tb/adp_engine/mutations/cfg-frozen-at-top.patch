@@ -1,0 +1,11 @@
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -1667,7 +1667,7 @@
+       .talker_caps_i         (talker_caps_i),
+       .listener_sinks_i      (listener_sinks_i),
+       .listener_caps_i       (listener_caps_i),
+-      .current_cfg_i         (adp_cur_cfg_w),
++      .current_cfg_i         (current_cfg_i),
+       .identify_index_i      (identify_index_i),
+       .txn_valid_i           (adp_txn_valid_w),
+       .txn_i                 (adp_txn_w),

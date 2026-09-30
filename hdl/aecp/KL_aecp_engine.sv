@@ -645,6 +645,13 @@ module KL_aecp_engine
     //! writes it, so an integrator that ignores these ports sees exactly the
     //! behaviour it had before the store existed.
     output logic [15:0] dyn_cur_config_o,    //! ENTITY.current_configuration
+    //! 1 once the configuration row holds a written value (a
+    //! SET_CONFIGURATION, or the D3 restore of its saved record): the
+    //! store's own valid flag for it, the one GET_CONFIGURATION branches on,
+    //! cleared with the store (reset, D3 roll-back). Until then the current
+    //! configuration is the image default, which the top reads from the
+    //! integrator's current_cfg_i for the ADPDU (04 §3)
+    output logic        dyn_cur_config_v_o,
     output logic  [7:0] dyn_identify_o,      //! IDENTIFY value, 0 or 255
     output logic [15:0] dyn_clk_src_index_o, //! CLOCK_DOMAIN[0] clock source
     //! per-row: value beside its valid bit, row k of the offsets at
@@ -1776,6 +1783,35 @@ module KL_aecp_engine
   logic        dyn_chg_w;
   assign u_dyn_didx_w = scfg_r ? 16'd0 : desc_ix_r;
   assign dyn_didx_w   = d3_bus_w ? d3_sb_didx_w : u_dyn_didx_w;
+
+  //! ---- the configuration row's valid flag, published (04 §3) ------------
+  //! The store keeps its valid flags private, and its port list is a
+  //! consumer contract (the reference platform instantiates it by name), so
+  //! the flag is not exported from there. It is set by an accepted
+  //! value-region write of the configuration selector at row 0, taken in
+  //! the cycle it is presented (the store's st_ready_o is st_req_i &&
+  //! st_we_i), and cleared only by the store's own reset. The decode reads
+  //! the bus the store takes, AFTER the state-bus selection: the µCPU's
+  //! SET_CONFIGURATION, and the D3 writer's restore of record 0x00 while it
+  //! owns the bus, each judged by the row that client names (`dyn_didx_w`).
+  //! The reset is the store's too (`store_rst_n_w`), so the D3 roll-back
+  //! clears it with the row. The same decode of the same bus into one flop
+  //! under the same reset is therefore that flag, cycle for cycle.
+  localparam logic [12:0] SEL_CFG_C = 13'd0;   //! KL_aecp_dyn_state SEL_CFG_C
+  logic dyn_cfg_v_r;
+
+  always_ff @(posedge clk_i) begin : dyn_cfg_valid
+    if (!store_rst_n_w) begin
+      dyn_cfg_v_r <= 1'b0;
+    end else if (st_req_w && dyn_sel_w && st_we_w
+                 && (st_addr_w[19:16] == RGN_DYN_C)
+                 && (st_addr_w[15:3] == SEL_CFG_C)
+                 && (dyn_didx_w == 16'd0)) begin
+      dyn_cfg_v_r <= 1'b1;
+    end
+  end
+
+  assign dyn_cur_config_v_o = dyn_cfg_v_r;
 
   KL_aecp_dyn_state #(
       .N_STREAM_IN_P  (N_STREAM_IN_P),

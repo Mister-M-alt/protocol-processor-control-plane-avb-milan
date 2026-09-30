@@ -8818,6 +8818,8 @@ struct Suite {
   std::vector<uint8_t> image_clkdom;
   std::vector<uint8_t> image_spi0;
   std::vector<uint8_t> image_spi1;
+  //! when S0 raised the link, so S3 can say how long enable was held low
+  uint32_t link_up_ms = 0;
 
   explicit Suite(H& hh) : h(hh), d(hh.d) {}
 
@@ -8887,7 +8889,10 @@ struct Suite {
   // built here from the IEEE §7.2 field offsets and the documented header /
   // index-map layout — nothing in it comes from the DUT or from the
   // generator's output.
-  void load_descriptor_image() {
+  //! `entity_cfg` is the ENTITY descriptor's current_configuration, the image
+  //! default every unset-row answer falls back to; section AD boots an image
+  //! whose default is 1 so that a SET back to 0 is not also the default
+  void load_descriptor_image(uint16_t entity_cfg = CFGIX) {
     image_ents = {
       {CFGIX, 0x0000, 1, 312, 0, 312, 0},          // ENTITY
       {CFGIX, 0x0024, 1,  82, 2,  88, 0},          // CLOCK_DOMAIN (not %8)
@@ -8914,6 +8919,7 @@ struct Suite {
       {CFGIX, 0x0022, 1, 312, 10, 312, 0},         // SIGNAL_MULTIPLEXER
     };
     image_entity = entity_descriptor();
+    putbe(&image_entity[310], entity_cfg, 2);  // current_configuration
     image_clkdom = clock_domain_descriptor();
     //! geometry consistent with H::amap_*: port 0 = 8 clusters at base 0 (one
     //! page of 8), port 1 = 24 clusters at base 8 (three pages of 8)
@@ -8971,6 +8977,7 @@ struct Suite {
     CHECK(h.snap(0) == 0x4B4C5050u, "S0: snapshot magic KLPP");
     CHECK(h.snap(1) == 0x08080404u, "S0: shape word {SI,SO,RX,TX}");
     d->link_up_i = 1;
+    link_up_ms = h.now_ms();
     h.idle(50);
     uint32_t f = h.snap(3);
     CHECK((f & 0x7) == 0x6, "S0: flags {seeded, link, !enable}, got 0x%x", f);
@@ -9046,6 +9053,13 @@ struct Suite {
   // (cadence law on the wire: T-ADP-ADV 5 s re-arm + the 0-4 s pre-
   //  advertise anti-storm draw of F04.2 -> inter-frame gap in [5, 9] s)
   void entity_enable_adpdu_window_and_cadence() {
+    //! S0 to here the link has been up with entity_enable_i low; nothing
+    //! flushed the ADP queue in between (issue #41; section AD0 holds the
+    //! same state for longer than the whole T-ADP-DELAY span). A queue read
+    //! only: a host read here would move every later PRNG draw's clock.
+    CHECK(h.q_adp.empty(),
+          "S3: no ADPDU after %u ms of link up with entity_enable_i low",
+          h.now_ms() - link_up_ms);
     h.flush_all();
     uint32_t t0 = h.now_ms();
     d->entity_enable_i = 1;
@@ -9969,6 +9983,349 @@ struct NameWritePhase {
   printf("NW: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+// ==== AD. The ADPDU across SET_CONFIGURATION (issue #40) =================
+// REQ-ADP-005 (Milan §5.6.2 note) with IEEE §6.2.2.18: every ADPDU field is
+// independent of the current Configuration except current_configuration_index,
+// which is the currently set CONFIGURATION. That value is the dynamic overlay
+// once SET_CONFIGURATION has written it and the image default before, and it
+// must be the one GET_CONFIGURATION and the ENTITY descriptor serve.
+//
+// A fresh processor of its own (the GI pattern: its own model, erased NVM,
+// nothing bound, so SET_CONFIGURATION is not refused STREAM_IS_RUNNING), and
+// the main run's clock is untouched. Its image's default configuration is 1,
+// and current_cfg_i says so, so the SET to 0 below is distinguishable from
+// the default, from the overlay's reset value and from a frozen index alike.
+// From AD5 on the arms reset it as a power cycle through both restore walks:
+// the configuration row, and with it the index, can also be written by the D3
+// writer's restore and cleared by its roll-back or a reset.
+struct AdpConfigPhase {
+  H& h;                                        // the tally
+  const milan::tb::Model<Vpp_top_wrap> model;
+  H io;
+  uint16_t sequence = 0x7A00;
+  static constexpr uint16_t IMAGE_CFG = 1;
+
+  explicit AdpConfigPhase(H& tally) : h(tally), io(model.get()) {}
+
+  static std::vector<uint8_t> avail(uint32_t aidx, uint16_t cfg) {
+    return adp_frame(0, OWN_MAC, EID, 10, aidx, GM0, DOM0, EMID,
+                     TKSRC, TKCAP, LSNK, LSCAP, 0x0000C588u, cfg, IDIX);
+  }
+  static unsigned word40(const std::vector<uint8_t>& f) {
+    return f.size() >= 42 ? ((unsigned(f[40]) << 8) | f[41]) : 999u;
+  }
+  static int status(const std::vector<uint8_t>& f) {
+    return f.size() > 16 ? ((f[16] >> 3) & 0x1F) : -1;
+  }
+  std::vector<uint8_t> ask(uint16_t op, const std::vector<uint8_t>& pl) {
+    io.q_aecp.clear();
+    io.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, sequence++,
+                       op, pl));
+    return io.wait_any(io.q_aecp, 600);
+  }
+  std::vector<uint8_t> set_configuration(uint16_t ix) {
+    std::vector<uint8_t> pl(4, 0);
+    putbe(&pl[2], ix, 2);
+    return ask(AEM_SET_CONFIGURATION, pl);
+  }
+  //! ENTITY.current_configuration, the final word of the 312-byte
+  //! descriptor at response bytes 352..353 (W18c2)
+  unsigned entity_current_configuration() {
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2);
+    putbe(&rd[4], 0x0000, 2);
+    const auto e = ask(AEM_READ_DESCRIPTOR, rd);
+    return e.size() >= 354 ? ((unsigned(e[352]) << 8) | e[353]) : 998u;
+  }
+  static uint32_t aidx_of(const std::vector<uint8_t>& f) {
+    return f.size() >= 54 ? ((uint32_t(f[50]) << 24) | (uint32_t(f[51]) << 16)
+                            | (uint32_t(f[52]) << 8) | uint32_t(f[53]))
+                          : 0xFFFFFFFFu;
+  }
+
+  void boot() {
+    Suite image(io);
+    image.load_descriptor_image(IMAGE_CFG);
+    io.reset();
+    io.d->current_cfg_i = IMAGE_CFG;           // quasi-static, before enable
+    io.d->restore_go_i = 1;
+    io.idle(5);
+    io.d->restore_go_i = 0;
+    unsigned budget = 400000;
+    while (!io.d->restore_done_o && budget-- != 0) io.step();
+    CHECK(io.d->restore_done_o && !io.d->restore_fail_o,
+          "AD boot: blank NVM releases the listener");
+    io.flush_all();
+    io.q_aecp.clear();
+  }
+
+  //! `now` against `before`: every wire byte equal except available_index
+  //! (50..53, which moves by its own +1) and current_configuration_index
+  //! (64..65), which must carry `cfg`
+  void only_the_index_moved(const std::vector<uint8_t>& before,
+                            const std::vector<uint8_t>& now, uint16_t cfg,
+                            const char* tag) {
+    CHECK(before.size() == 82 && now.size() == 82,
+          "%s: two 82-byte ENTITY_AVAILABLE frames (%zu, %zu)", tag,
+          before.size(), now.size());
+    if (before.size() != 82 || now.size() != 82) return;
+    int moved = 0;
+    for (int i = 0; i < 82; ++i)
+      if (!(i >= 50 && i <= 53) && i != 64 && i != 65 && now[i] != before[i])
+        ++moved;
+    CHECK(moved == 0, "%s: %d wire bytes outside 50..53 and 64..65 moved",
+          tag, moved);
+    CHECK(aidx_of(now) == aidx_of(before) + 1,
+          "%s: available_index %u follows %u", tag, aidx_of(now),
+          aidx_of(before));
+    CHECK(((unsigned(now[64]) << 8) | now[65]) == cfg,
+          "%s: wire bytes 64..65 carry configuration %u, got %u", tag, cfg,
+          (unsigned(now[64]) << 8) | now[65]);
+  }
+
+  //! SET_CONFIGURATION(ix) succeeds, GET and the ENTITY descriptor agree,
+  //! and the NEXT ENTITY_AVAILABLE differs from `before` in the index alone
+  std::vector<uint8_t> set_and_readvertise(uint16_t ix,
+                                           const std::vector<uint8_t>& before,
+                                           const char* tag) {
+    io.flush_all();
+    const auto s = set_configuration(ix);
+    CHECK(status(s) == AECP_SUCCESS && word40(s) == ix,
+          "%s: SET_CONFIGURATION(%u) SUCCESS echoing %u, got status %d index %u",
+          tag, ix, ix, status(s), word40(s));
+    const auto g = ask(AEM_GET_CONFIGURATION, {});
+    CHECK(word40(g) == ix, "%s: GET_CONFIGURATION reads %u, got %u", tag, ix,
+          word40(g));
+    CHECK(entity_current_configuration() == ix,
+          "%s: ENTITY.current_configuration reads %u", tag, ix);
+    CHECK(io.q_adp.empty(), "%s: no advert between the SET and the cadence",
+          tag);
+    const auto f = io.wait_any(io.q_adp, 9800);
+    CHECK(!f.empty(), "%s: the next ENTITY_AVAILABLE arrives", tag);
+    only_the_index_moved(before, f, ix, tag);
+    CHECK(f == avail(aidx_of(before) + 1, ix),
+          "%s: ENTITY_AVAILABLE byte-exact at configuration %u", tag, ix);
+    return f;
+  }
+
+  //! `ms` of compressed time in 100 ms steps, sampling the advertise SM
+  //! (snapshot word 31) at every step; returns the samples not in DOWN
+  int hold_ms(int ms) {
+    int not_down = 0;
+    for (int t = 0; t < ms; t += 100) {
+      io.run_ms(100);
+      if ((io.snap(31) & 3) != 0) ++not_down;
+    }
+    return not_down;
+  }
+
+  //! AD0 (issue #41; REQ-ADP-006, Milan §5.6.1): link up with the entity
+  //! not enabled, for longer than the whole T-ADP-DELAY span (0..4000 ms,
+  //! Milan §5.6.3.5.3) after each of two link rises, with nothing flushing
+  //! the ADP queue in between: a gate that let LINK_UP through would have
+  //! put an ENTITY_AVAILABLE on the wire inside either window
+  void boot_gate_holds_over_the_delay_span() {
+    CHECK(io.q_adp.empty(), "AD0: the ADP queue starts empty");
+    const uint32_t t0 = io.now_ms();
+    io.d->link_up_i = 1;
+    int not_down = hold_ms(4200);
+    io.d->link_up_i = 0;
+    io.run_ms(20);
+    io.d->link_up_i = 1;
+    not_down += hold_ms(4200);
+    const uint32_t held = io.now_ms() - t0;
+    CHECK(held > 8000, "AD0: link held up %u ms of compressed time", held);
+    CHECK(io.q_adp.empty(),
+          "AD0: no ADPDU in %u ms of link up (one bounce) with entity_enable_i low",
+          held);
+    CHECK(not_down == 0, "AD0: the advertise SM read DOWN at every 100 ms "
+          "sample, %d did not", not_down);
+    CHECK((io.snap(3) & 0x7) == 0x6, "AD0: flags {seeded, link, !enable}, got 0x%x",
+          io.snap(3) & 0x7);
+  }
+
+  // ---- AD5 on: the index across a reset and the D3 restore ---------------
+  //! T-NVM-DEBOUNCE at the wrap's 1 ms = 100 clk: the D3 writer saves a
+  //! change this long after it
+  static constexpr long SAVE_WINDOW = 500L * MS_CYC;
+  //! clocks, since the last reboot began, in which the flag the ADPDU's
+  //! index selection reads differed from the store's own valid flag
+  long flag_splits = 0;
+  void graded_step() {
+    io.step();
+    flag_splits += (io.d->dbg_adp_cfg_v_o != io.d->dbg_dyn_cfg_v_o) ? 1 : 0;
+  }
+
+  //! a reset of this processor as a power cycle: rst_n pulsed, the device
+  //! carried (erased first when `erase`), both restore walks from
+  //! restore_go_i to their terminal with `hook` after every clock, then
+  //! link up and enable. Returns the first ENTITY_AVAILABLE
+  template <class Hook>
+  std::vector<uint8_t> reboot(bool erase, const char* tag, Hook hook) {
+    if (erase) io.erase_nvm();
+    io.reset();
+    io.d->current_cfg_i = IMAGE_CFG;
+    flag_splits = 0;
+    io.d->restore_go_i = 1;
+    for (long c = 0; c < 400000 && !io.d->restore_done_o; ++c) {
+      if (c == 5) io.d->restore_go_i = 0;
+      graded_step();
+      hook();
+    }
+    io.d->restore_go_i = 0;
+    CHECK(io.d->restore_done_o && !io.d->restore_closed_o,
+          "%s: both restore walks reach a done terminal", tag);
+    io.flush_all();
+    io.q_aecp.clear();
+    io.d->link_up_i = 1;
+    for (int c = 0; c < 50; ++c) graded_step();
+    io.d->entity_enable_i = 1;
+    for (long c = 0; c < 2600L * MS_CYC && io.q_adp.empty(); ++c) graded_step();
+    if (io.q_adp.empty()) return {};
+    auto f = io.q_adp.front();
+    io.q_adp.pop_front();
+    return f;
+  }
+
+  //! after a reboot: the first ENTITY_AVAILABLE byte-exact at `cfg` (index 0,
+  //! the engine restarted), the published flag equal to the store's in every
+  //! clock from the reset, and GET_CONFIGURATION and the ENTITY descriptor
+  //! reading the same `cfg`
+  void first_advert_agrees(const std::vector<uint8_t>& f, uint16_t cfg,
+                           const char* tag, const char* what) {
+    const unsigned got = f.size() >= 66 ? ((unsigned(f[64]) << 8) | f[65]) : 999u;
+    CHECK(f == avail(0, cfg),
+          "%s: the first ENTITY_AVAILABLE carries %s %u, byte-exact (got %u)",
+          tag, what, cfg, got);
+    CHECK(flag_splits == 0,
+          "%s: the flag the ADPDU reads equals the store's in every clock from "
+          "the reset (%ld clocks differed)", tag, flag_splits);
+    CHECK(word40(ask(AEM_GET_CONFIGURATION, {})) == cfg,
+          "%s: GET_CONFIGURATION reads the same %u", tag, cfg);
+    CHECK(entity_current_configuration() == cfg,
+          "%s: ENTITY.current_configuration reads the same %u", tag, cfg);
+  }
+
+  //! AD5 (the D3 writer of PR #132; IEEE §7.4.8.2): a configuration saved and
+  //! restored is the current configuration from the first advert on.
+  //! SET_CONFIGURATION(0) reaches the device as record 0x00 after
+  //! T-NVM-DEBOUNCE; a power cycle carries the device; the restore writes the
+  //! row and its valid flag on the writer's side of the state-bus selection;
+  //! and the first ENTITY_AVAILABLE, GET_CONFIGURATION and the ENTITY
+  //! descriptor all carry 0, not the image default 1
+  void a_restored_configuration_is_advertised() {
+    io.flush_all();
+    CHECK(status(set_configuration(0)) == AECP_SUCCESS,
+          "AD5: SET_CONFIGURATION(0) SUCCESS (premise)");
+    const auto want = d3_record(0x00, 0, 2);
+    bool saved = false;
+    for (long c = 0; c < 4 * SAVE_WINDOW && !saved; ++c) {
+      io.step();
+      saved = !io.d->d3_unflushed_o && io.nv_st == H::NvState::NV_IDLE
+              && std::equal(want.begin(), want.end(), io.nv_mem[0x00].begin());
+    }
+    CHECK(saved, "AD5: the device holds record 0x00, configuration 0 (premise)");
+    const auto f = reboot(false, "AD5", [] {});
+    CHECK(io.d->dbg_dyn_cfg_v_o && io.d->dbg_dyn_cfg_o == 0,
+          "AD5: the restore wrote the row, valid, configuration 0 (premise)");
+    first_advert_agrees(f, 0, "AD5", "the restored configuration");
+  }
+
+  //! AD6 (parent D3 §8.6): a restore that applies the configuration and then
+  //! aborts in pass 1 rolls both stores back, and the flag goes with the row.
+  //! The device holds AD5's record 0x00 and a presentation-offset record 0x50
+  //! that pass 0 reads whole and that is erased before pass 1 reads it
+  //! (D3R4's disagreement, cause 5). The terminal is DEFAULTS, and the first
+  //! ENTITY_AVAILABLE, GET_CONFIGURATION and the ENTITY descriptor carry the
+  //! image default 1
+  void a_rolled_back_configuration_is_not_advertised() {
+    const auto rec = d3_record(0x50, 1500000, 4);
+    std::fill(io.nv_mem[0x50].begin(), io.nv_mem[0x50].end(), 0xFF);
+    std::copy(rec.begin(), rec.end(), io.nv_mem[0x50].begin());
+    const size_t ops0 = io.nvm_ops.size();
+    bool erased = false;
+    bool applied = false;
+    const auto f = reboot(false, "AD6", [&] {
+      int reads = 0;
+      for (size_t i = ops0; i < io.nvm_ops.size(); ++i)
+        reads += (io.nvm_ops[i].op == 0 && io.nvm_ops[i].region == 0x50) ? 1 : 0;
+      if (!erased && reads == 2) {
+        std::fill(io.nv_mem[0x50].begin(), io.nv_mem[0x50].end(), 0xFF);
+        erased = true;
+      }
+      applied = applied || io.d->dbg_dyn_cfg_v_o;
+    });
+    CHECK(erased && applied && io.d->restore_fail_o && io.d->rs_cause_o == 5
+              && io.d->restore_rb_o && !io.d->dbg_dyn_cfg_v_o,
+          "AD6: configuration 0 applied, then pass 1's disagreement rolled both "
+          "stores back (cause %u, rolled back %u) (premise)",
+          unsigned(io.d->rs_cause_o), unsigned(io.d->restore_rb_o));
+    first_advert_agrees(f, IMAGE_CFG, "AD6", "the image default");
+  }
+
+  //! AD7 (R406-1 F-1; REQ-ADP-005): the flag's own reset. SET_CONFIGURATION
+  //! to the non-default 0 succeeds, then a reset with nothing to restore (an
+  //! erased device; a saved record would come back, as AD5 shows): the row
+  //! and its flag clear together, so the first ENTITY_AVAILABLE,
+  //! GET_CONFIGURATION and the ENTITY descriptor all carry the image default
+  void a_reset_returns_to_the_image_default() {
+    io.flush_all();
+    const auto s = set_configuration(0);
+    const auto g = ask(AEM_GET_CONFIGURATION, {});
+    CHECK(status(s) == AECP_SUCCESS && word40(g) == 0 && io.d->dbg_adp_cfg_v_o
+              && io.nv_st == H::NvState::NV_IDLE,
+          "AD7: SET_CONFIGURATION(0) SUCCESS, GET reads 0, the flag set, the "
+          "device idle (premise)");
+    const auto f = reboot(true, "AD7", [] {});
+    CHECK(!io.d->dbg_dyn_cfg_v_o && io.d->restore_blank_o,
+          "AD7: nothing restored, the row unset (premise)");
+    first_advert_agrees(f, IMAGE_CFG, "AD7", "the image default");
+  }
+
+  void run() {
+    boot();
+    boot_gate_holds_over_the_delay_span();
+    io.d->entity_enable_i = 1;
+    const auto a = io.wait_any(io.q_adp, 2600);
+    CHECK(a == avail(0, IMAGE_CFG),
+          "AD1: first ENTITY_AVAILABLE carries the image configuration %u "
+          "(current_cfg_i, nothing set yet)", IMAGE_CFG);
+    CHECK(word40(ask(AEM_GET_CONFIGURATION, {})) == IMAGE_CFG,
+          "AD1: GET_CONFIGURATION reads the same image default");
+    // another row of the same store is written first: the configuration row
+    // is still unset, so the next advert still carries the image default
+    std::vector<uint8_t> cs(8, 0);
+    putbe(&cs[0], 0x0024, 2);                  // CLOCK_DOMAIN 0
+    putbe(&cs[4], 0x0001, 2);                  // clock_source_index 1
+    io.flush_all();
+    CHECK(status(ask(AEM_SET_CLOCK_SOURCE, cs)) == AECP_SUCCESS,
+          "AD1b: SET_CLOCK_SOURCE(1) writes another row of the store");
+    const auto a2 = io.wait_any(io.q_adp, 9800);
+    only_the_index_moved(a, a2, IMAGE_CFG, "AD1b");
+    // to 0: not the default, and the overlay row's own reset value
+    const auto b = set_and_readvertise(0, a2, "AD2");
+    // and back to 1, now from the written row
+    const auto c = set_and_readvertise(IMAGE_CFG, b, "AD3");
+    // once a configuration is set, the integrator's input is not read: it
+    // moves here (outside its quasi-static contract) and the wire does not
+    io.d->current_cfg_i = 0;
+    const auto e = io.wait_any(io.q_adp, 9800);
+    CHECK(e == avail(aidx_of(c) + 1, IMAGE_CFG),
+          "AD4: the set configuration outranks a moved current_cfg_i");
+    io.d->current_cfg_i = IMAGE_CFG;
+    a_restored_configuration_is_advertised();
+    a_rolled_back_configuration_is_not_advertised();
+    a_reset_returns_to_the_image_default();
+  }
+};
+
+[[maybe_unused]] static void run_adp_config(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  AdpConfigPhase{h}.run();
+  printf("AD: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   //! the harness that owns the tally. Section DV runs on a model of its own
@@ -9985,14 +10342,17 @@ int main(int argc, char** argv) {
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
   const bool d3_only = argc == 2 && std::strcmp(argv[1], "--d3-only") == 0;
+  const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
   }
-  if (!gsi_only && !name_only && !d3_only) Suite(h).run();
-  if (!name_only && !d3_only) InternalStreamInfoPhase{h}.run();
-  if (!gsi_only && !d3_only) run_name_writes(h);
-  if (!gsi_only && !name_only) run_d3(h);
+  const bool one_section = gsi_only || name_only || d3_only || adp_only;
+  if (!one_section) Suite(h).run();
+  if (!one_section || gsi_only) InternalStreamInfoPhase{h}.run();
+  if (!one_section || name_only) run_name_writes(h);
+  if (!one_section || d3_only) run_d3(h);
+  if (!one_section || adp_only) run_adp_config(h);
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's two

@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -612,7 +612,7 @@
+ 
+         // 2) RCV_ADP_DISCOVER: WAITING only (Table 5.51: DELAY/DOWN ignore)
+         if (disc_hit_w && (32'(disc_hit_if_w) == i)
+-            && (adv_st_r[i] == ADP_ADV_WAITING)) begin
++            && (adv_st_r[i] != ADP_ADV_DOWN)) begin
+           adv_st_r[i]      <= ADP_ADV_DRAW;
+           adv_startup_r[i] <= 1'b0;
+           tpend_r[i]       <= TPEND_CANCEL;   // stop T-ADP-ADV
