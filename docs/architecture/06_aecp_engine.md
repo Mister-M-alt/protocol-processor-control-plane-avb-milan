@@ -736,7 +736,8 @@ answers `NO_SUCH_DESCRIPTOR` (a foreign controller is told `ENTITY_LOCKED`; with
 descriptor there is no value, so that body is zero). The same shared tail answers
 SET_CONTROL's out-of-range `BAD_ARGUMENTS` with the value in force.
 `tb/pp_top` section AX (LK1 to LK6) grades each byte-exact on an unset and a set
-row, proves the refusal writes, marks and notifies nothing, and serves the holder.
+row, proves the refusal writes, marks and notifies nothing, and serves the holder;
+LK3b and LK3c grade the out-of-range refusal the same way while IDENTIFY holds 255.
 
 ### 6.9 MVU commands
 

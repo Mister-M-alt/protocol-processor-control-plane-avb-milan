@@ -10685,21 +10685,35 @@ struct AecpResponsePhase {
                const std::vector<uint8_t>& carried, int form_cdl,
                const char* what) {
     lock(true, what);
+    refused(true, op, sent, carried, AECP_ENTITY_LOCKED, "ENTITY_LOCKED", form_cdl,
+            what);
+  }
+  //! a refused SET from the second controller or the holder: `status` at the
+  //! response form's cdl, carrying `carried`, and not one effect. Only a
+  //! second controller's command can notify the holder (a notification goes
+  //! to every registered controller but the one that asked), so only its
+  //! refusal waits for an unsolicited frame there
+  void refused(bool from_second, uint16_t op, const std::vector<uint8_t>& sent,
+               const std::vector<uint8_t>& carried, int status, const char* named,
+               int form_cdl, const char* what) {
     const Effects e0 = effects();
     ++seq;
-    const auto r = ask2(op, sent);
-    const auto w = want(C2_MAC, CTLR2_EID, AECP_ENTITY_LOCKED, op, carried);
-    CHECK(r == w, "%s: ENTITY_LOCKED byte-exact (status %d, cdl %d)", what,
-          st(r), cdl(r));
+    const auto r = from_second ? ask2(op, sent) : ask(op, sent);
+    const auto w = from_second ? want(C2_MAC, CTLR2_EID, status, op, carried)
+                               : want(CTLR_MAC, CTLR_EID, status, op, carried);
+    CHECK(r == w, "%s: %s byte-exact (status %d, cdl %d)", what, named, st(r),
+          cdl(r));
     if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
     CHECK(cdl(r) == form_cdl, "%s: ...at the response form's cdl %d, got %d",
           what, form_cdl, cdl(r));
-    const auto uns = io.wait_frame(io.q_aecp, 120, [](const std::vector<uint8_t>& f) {
-      return f.size() > 36 && (f[36] & 0x80) != 0;
-    });
-    CHECK(uns.empty(), "%s: no unsolicited frame reached the registered holder",
-          what);
-    if (!uns.empty()) dump("unsolicited", uns);
+    if (from_second) {
+      const auto uns = io.wait_frame(io.q_aecp, 120, [](const std::vector<uint8_t>& f) {
+        return f.size() > 36 && (f[36] & 0x80) != 0;
+      });
+      CHECK(uns.empty(), "%s: no unsolicited frame reached the registered holder",
+            what);
+      if (!uns.empty()) dump("unsolicited", uns);
+    }
     const Effects e1 = effects();
     CHECK(e1.writes == e0.writes && e1.marks == e0.marks
               && e1.notifies == e0.notifies,
@@ -10758,6 +10772,28 @@ struct AecpResponsePhase {
     CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, true) == 255u
               && io.d->dbg_identify_o == 255,
           "LK3 ...and the IDENTIFY value is still 255, on GET and on the face");
+    sctrl_out_of_range_carries_255();
+  }
+
+  //! SET_CONTROL's out-of-range refusal shares the locked refusal's tail, so
+  //! it too carries the value in force (IEEE 1722.1-2021 7.4.25.1 "the old
+  //! value if it fails"). While IDENTIFY holds 255, a zero body and the value
+  //! in force differ (at its reset 0, W13 cannot tell them apart): 128 is
+  //! neither 0 nor 255 (7.3.5.2's step 255), so the holder under its own lock
+  //! and then a second controller with no lock held are each answered
+  //! BAD_ARGUMENTS carrying 255, and nothing moves
+  void sctrl_out_of_range_carries_255() {
+    refused(false, AEM_SET_CONTROL, ctrl_body(0, 128), ctrl_body(0, 255),
+            AECP_BAD_ARGUMENTS, "BAD_ARGUMENTS", 17,
+            "LK3b IDENTIFY at 255, the holder's SET_CONTROL(128) carries 255");
+    lock(false, "LK3c");
+    refused(true, AEM_SET_CONTROL, ctrl_body(0, 128), ctrl_body(0, 255),
+            AECP_BAD_ARGUMENTS, "BAD_ARGUMENTS", 17,
+            "LK3c IDENTIFY at 255, unlocked, a second controller's SET_CONTROL(128) "
+            "carries 255");
+    CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, true) == 255u
+              && io.d->dbg_identify_o == 255,
+          "LK3c ...and the IDENTIFY value is still 255, on GET and on the face");
   }
 
   //! the lock outranks a locate miss for all three (06 section 6.4: lock,

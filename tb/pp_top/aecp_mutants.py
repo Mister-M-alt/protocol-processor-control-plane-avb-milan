@@ -59,6 +59,11 @@ MUTANTS = [
     ("lk-prefix-zero-body", "lk-prefix-zero-body", "aecp-dispatch",
      "LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: "
      "ENTITY_LOCKED byte-exact"),
+    # R416-1 F1: SET_CONTROL's out-of-range BAD_ARGUMENTS back on the lane
+    # base's zero-bodied stub, while IDENTIFY holds 255
+    ("sctrl-badarg-zero-body", "sctrl-badarg-zero-body", "aecp-dispatch",
+     "LK3b IDENTIFY at 255, the holder's SET_CONTROL(128) carries 255: "
+     "BAD_ARGUMENTS byte-exact"),
     # issue #50 (and #82's oversize path): the engine's Delta-8 request, its
     # comparator and the top's routing of it; the GET_AUDIO_MAP page, its
     # buffer-wide APPEND and its cap

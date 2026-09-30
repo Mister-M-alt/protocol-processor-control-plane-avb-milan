@@ -831,9 +831,10 @@ many checks each arm failed at the lane head.
 | `lk-ssrate-miss-lock-nop` | E_SSRATE's locate-miss CHECK_LOCK (SSR_REFUSE) replaced with NOP | `LK4 foreign SET_SAMPLING_RATE on AUDIO_UNIT 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
 | `lk-sclks-lock-nop` | E_SCLKS's CHECK_LOCK (E_SCLKS+9) replaced with NOP | `LK1 unset clock-source row, ...: ENTITY_LOCKED byte-exact` | 9 |
 | `lk-sclks-miss-lock-nop` | E_SCLKS's locate-miss CHECK_LOCK (E_SCLKSRF) replaced with NOP | `LK4 foreign SET_CLOCK_SOURCE on CLOCK_DOMAIN 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
-| `lk-sctrl-lock-nop` | E_SCTRL's CHECK_LOCK (E_SCTRL+4) replaced with NOP | `LK1 IDENTIFY at its reset 0, ...: ENTITY_LOCKED byte-exact` | 9 |
+| `lk-sctrl-lock-nop` | E_SCTRL's CHECK_LOCK (E_SCTRL+4) replaced with NOP | `LK1 IDENTIFY at its reset 0, ...: ENTITY_LOCKED byte-exact` | 12 |
 | `lk-sctrl-miss-lock-nop` | E_SCTRL's locate-miss CHECK_LOCK (E_SCTRL+21) replaced with NOP | `LK4 foreign SET_CONTROL on CONTROL 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
-| `lk-prefix-zero-body` | the microcode generator as it stood at the lane base (`0451d83d`): the lock checked first and refused through the zero-bodied E_LOCKED4/E_LOCKED1 stubs, the issue #53 reproduction | `LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: ENTITY_LOCKED byte-exact` | 5 |
+| `lk-prefix-zero-body` | the microcode generator as it stood at the lane base (`0451d83d`): the lock checked first and refused through the zero-bodied E_LOCKED4/E_LOCKED1 stubs, the issue #53 reproduction | `LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: ENTITY_LOCKED byte-exact` || 7 |
+| `sctrl-badarg-zero-body` | E_SCTRL's out-of-range arm branches to the zero-bodied E_BADARG1 again, as at the lane base (R416-1 F1) | `LK3b IDENTIFY at 255, the holder's SET_CONTROL(128) carries 255: BAD_ARGUMENTS byte-exact` | 2 |
 | `ov-oversize-never` | the engine's `txs_oversize_o` forced to 0 (issue #50's acceptance 2) | `OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618): the 576-byte descriptor, byte-exact` | 18 |
 | `ov-oversize-at-576` | the engine asks for the oversize slot at a 576-byte frame (`>=` for `>`) | `OV4 CLOCK_DOMAIN 0 (534 B: frame 576, the standard slot's own size): one TX-slot grant` | 4 |
 | `ov-top-oversize-dropped` | the top's `pool_oversize_w` tied to 0, so the request never reaches the pool | `OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618): the 576-byte descriptor, byte-exact` | 18 |
@@ -855,9 +856,12 @@ landed (M9b3, M9b4, M9b5). The REBOOT arm answers at the right length and cdl,
 so only the byte-exact echo can see it, and it does. Each lock arm's
 main-path NOP lets the foreign SET write: its byte-exact check, the holder's
 unsolicited frame, the effect counters and the next holder SET's notification
-count all fail. The reproduction fails exactly the five LK1/LK3 bodies that
-are not zero (status 3 and cdl are right; LK1's SET_CONTROL at IDENTIFY's reset
-0 passes, because zero is its value in force). With no oversize request (from the
+count all fail (SET_CONTROL's also LK3b and LK3c, which then carry the 0 LK3
+wrote). The reproduction fails exactly the five LK1/LK3 bodies that are not
+zero (status 3 and cdl are right; LK1's SET_CONTROL at IDENTIFY's reset 0
+passes, because zero is its value in force) and, since the base's out-of-range
+arm was the same zero-bodied stub, LK3b and LK3c, the two checks the
+`sctrl-badarg-zero-body` arm fails. With no oversize request (from the
 engine or through the top) the three oversize READ_DESCRIPTORs leave truncated to a
 576-byte standard slot: byte-exact, wire length, grant and slot 4 fail on each, and
 OV5 with them; the request at 576 moves OV4, and RD2's read of the same 534-byte
@@ -1298,7 +1302,13 @@ the zero a stub would carry.
   on rows the holder set in **LK2** (48000, 1, 255), each followed by a GET that
   still reads it. Every refusal writes, marks and notifies nothing (the dynamic
   store's accepted-write counter, OP_NVM_MARK and OP_NOTIFY_ENQ, and no
-  unsolicited frame at the registered holder). **LK4**: the lock outranks a
+  unsolicited frame at the registered holder). SET_CONTROL's out-of-range
+  refusal shares that tail (R416-1 F1): while IDENTIFY holds 255, where a zero
+  body and the value in force differ (W13 runs at IDENTIFY's reset 0), 128 is
+  answered BAD_ARGUMENTS at cdl 17 carrying 255, byte-exact and with no effect,
+  to the holder under its own lock (**LK3b**) and, the lock released, to a
+  second controller (**LK3c**, where a notification would reach the registered
+  holder); GET and the face still read 255. **LK4**: the lock outranks a
   locate miss (AUDIO_UNIT, CLOCK_DOMAIN and CONTROL 3), zero body; **LK5**: the
   holder asking the same is answered NO_SUCH_DESCRIPTOR; **LK6**: the holder,
   still holding the lock, is served, one store write and one notification per
