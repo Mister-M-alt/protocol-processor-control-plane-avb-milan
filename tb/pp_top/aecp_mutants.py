@@ -3,14 +3,14 @@
 """Plant the AECP dispatch-and-response arms in scratch; require named failures.
 
 Each arm is an explicit patch in aecp_mutations/, applied with git apply to a
-scratch copy of the tree; this driver reads only simulation logs, never
-production source. Every simulation it runs is cycle-bounded. A positive
-control of each make target runs first and must pass; an arm is KILLED only
-when its simulation completed (the build's tally line was printed), failed,
-and printed the required check. A build failure or a missing tally never
-counts as a kill. The generated ROMs and every model directory are deleted
-before each build, so a microcode arm can never leave its ROM behind for the
-next one.
+scratch copy of the tree; this driver reads only simulation and lint logs,
+never production source. Every simulation it runs is cycle-bounded. A
+positive control of each make target runs first and must pass; an arm is
+KILLED only when its target completed (a build's tally line, or the line
+guards' summary, was printed), failed, and printed the required check. A
+build failure or a missing tally never counts as a kill. The generated ROMs
+and every model directory are deleted before each build, so a microcode arm
+can never leave its ROM behind for the next one.
 """
 import argparse
 import json
@@ -103,12 +103,25 @@ MUTANTS = [
      "the 534-byte descriptor, byte-exact"),
     ("rd-tail-uncut", "rd-tail-uncut", "aecp-dispatch",
      "RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact"),
+    # R416-1 F2, R417-1 F1: the DESC_LINE_BYTES_P range and the response
+    # buffer as the 16 + line reservation, at the range's edges (line-guards)
+    # and at the line build's non-default 584-byte line (aecp-line)
+    ("line-floor-rounded", "line-floor-rounded", "line-guards", "line guard 568"),
+    ("line-ceiling-dropped", "line-ceiling-dropped", "line-guards", "line guard 1016"),
+    ("line-buffer-fixed-592", "line-buffer-fixed-592", "aecp-line",
+     "OV1 AUDIO_MAP 0 (584 B, the whole line: cdl 600, frame 626): "
+     "the 584-byte descriptor, byte-exact"),
+    ("rb-rounded-buffer-no-page-cap", "rb-rounded-buffer-no-page-cap", "aecp-line",
+     "RB no response byte written at or past RESP_BASE_P + 16 + DESC_LINE_BYTES_P"),
 ]
 
 #: the scratch tree: the RTL and the two bench directories the targets build
 TREES = (("hdl",), ("tb", "common"), ("tb", "pp_top"))
 #: generated in the bench directory by the targets; never carried between arms
-GENERATED = ("obj_dir", "obj_vid", "ucode.hex", "ltn_rom.hex")
+GENERATED = ("obj_dir", "obj_vid", "obj_line", "ucode.hex", "ltn_rom.hex")
+#: what each target prints once it has run to its end
+COMPLETE = {"aecp-dispatch": "[build default,", "aecp-line": "[build line,",
+            "line-guards": "line guards: "}
 
 
 def run(tree: Path, target: str, verilator: str, log: Path) -> tuple[int, str]:
@@ -140,9 +153,9 @@ def failures_of(contents: str) -> list[str]:
     return [line for line in contents.splitlines() if line.startswith("FAIL:")]
 
 
-def completed(contents: str) -> bool:
-    """The default build printed its tally: the simulation ran to its end."""
-    return "[build default," in contents
+def completed(contents: str, target: str) -> bool:
+    """The target printed its tally or summary: it ran to its end."""
+    return COMPLETE[target] in contents
 
 
 def campaign(tree: Path, output: Path, selected: list[tuple], verilator: str) -> list[dict]:
@@ -150,7 +163,7 @@ def campaign(tree: Path, output: Path, selected: list[tuple], verilator: str) ->
     records: list[dict] = []
     for target in sorted({m[2] for m in selected}):
         rc, contents = run(tree, target, verilator, output / f"control-{target}.log")
-        ok = rc == 0 and completed(contents) and not failures_of(contents)
+        ok = rc == 0 and completed(contents, target) and not failures_of(contents)
         records.append({"arm": f"control {target}", "rc": rc, "verdict": "PASS" if ok else "FAIL"})
         print(f"control {target}: rc={rc} {'PASS' if ok else 'FAIL'}", flush=True)
         if not ok:
@@ -161,7 +174,7 @@ def campaign(tree: Path, output: Path, selected: list[tuple], verilator: str) ->
         rc, contents = run(tree, target, verilator, output / f"{arm}.log")
         failures = failures_of(contents)
         named = [line for line in failures if line[len("FAIL:"):].strip().startswith(expected)]
-        ok = rc != 0 and completed(contents) and bool(named)
+        ok = rc != 0 and completed(contents, target) and bool(named)
         verdict = "KILLED" if ok else "UNPROVEN"
         records.append({"arm": arm, "patch": patch, "target": target, "rc": rc,
                         "failures": len(failures), "named": len(named), "verdict": verdict})

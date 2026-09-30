@@ -284,7 +284,11 @@ where caching the image is not — and a located descriptor is fetched **once, a
 single burst**, into a `LINE_BYTES_P` line buffer that every subsequent `READ_STATE` /
 `COPY_BUFFER` beat reads on chip. One command pays one memory latency, not one per
 byte. `LINE_BYTES_P` defaults to 576 = the largest descriptor §3.2 can produce, rounded
-to the [03 §2](03_packet_engine.md) slot size. That worst case is a
+to the [03 §2](03_packet_engine.md) slot size. The legal line is `P-DESC-LINE-BYTES`
+([F01.5](../architecture/01_overview.md#fig-01-params)): a multiple of 8 from 576 to 1008,
+and `KL_aecp_engine` refuses any other at elaboration with a message naming the top's
+`DESC_LINE_BYTES_P`. Below 576 the response reservation (§3.3.2) cannot hold a whole
+GET_AUDIO_MAP page; above 1008 it passes the 1024 bytes the response cursor addresses. That worst case is a
 STREAM_INPUT/OUTPUT at Table 7-8's caps of F ≤ 47 formats and R ≤ 8 redundant streams:
 138 + 8·47 + 2·8 = 530 B. The Annex C layout of the Δ note is 2 B shorter at the same
 caps (528 B), so 576 covers a model assembled either way. A descriptor longer than
@@ -308,7 +312,9 @@ lives in main memory too, at its own compile-time `RESP_BASE_P`, behind a second
 vendor-neutral master (`resp_mem_*`) that is READ **and** WRITE. The integrator
 reserves `16 + LINE_BYTES_P` bytes there; unlike the image it is written by the
 processor, so an overlap with `DESC_BASE_P` is silent corruption of the entity model
-and neither base may be a register.
+and neither base may be a register. The response buffer is exactly that reservation:
+no response byte is written past it (`tb/pp_top` AX RB grades it at the default line
+and at a non-default one).
 
 <a id="fig-07-image"></a>**F07.4 — flat image layout** (generator:
 `hdl/aecp/desc/gen_desc_image.py`; all fields big-endian)

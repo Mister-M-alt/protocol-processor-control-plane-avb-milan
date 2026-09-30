@@ -56,7 +56,22 @@ constexpr long clk_ms(long ms) { return (CLK_HZ * ms + 999) / 1000; }
 //! the wrap's compile-time memory map (07 §3.3 image, 03 §7 response buffer)
 constexpr uint32_t    DESC_BASE  = 0x20000000u;
 constexpr uint32_t    RESP_BASE  = 0x20100000u;
-constexpr uint32_t    RESP_BYTES = 592u;             // 16 + DESC_LINE_BYTES_P
+//! DESC_LINE_BYTES_P as THIS build asked for it (section AX RB). The first
+//! build overrides nothing, so it expects the top's 576; the line build is
+//! compiled with the fixture the Makefile also hands the wrap. RB grades that
+//! the top elaborated it.
+#ifdef PP_TOP_DESC_LINE_BYTES
+constexpr uint32_t    DESC_LINE_BYTES = PP_TOP_DESC_LINE_BYTES;
+//! A default-equivalent fixture cannot show a line-derived size that is not.
+static_assert(DESC_LINE_BYTES != 576u, "line fixture must differ from the default 576");
+static_assert(DESC_LINE_BYTES % 8u == 0u && DESC_LINE_BYTES >= 576u
+                  && DESC_LINE_BYTES <= 1008u,
+              "line fixture must be a legal DESC_LINE_BYTES_P: 576..1008 in steps of 8");
+#else
+constexpr uint32_t    DESC_LINE_BYTES = 576u;
+#endif
+//! the response buffer's reservation at RESP_BASE_P: 16 + DESC_LINE_BYTES_P
+constexpr uint32_t    RESP_BYTES = 16u + DESC_LINE_BYTES;
 constexpr uint64_t    OWN_MAC = 0x0A0B0C0D0E0FULL;
 constexpr uint64_t    EID     = 0x123456789ABCDEF0ULL;
 constexpr uint64_t    EMID    = 0x00E0DECAFB0B0001ULL;
@@ -825,6 +840,10 @@ struct H {
   int  rm_wcnt = 0;
   uint64_t rm_reqs = 0;
   uint64_t rm_writes = 0;
+  //! section AX RB: strobed bytes written outside the reservation (at or past
+  //! RESP_BYTES, or below RESP_BASE), and one past the highest written inside
+  uint64_t rmem_past = 0;
+  uint32_t rmem_top = 0;
   vluint64_t aecp_rx_t = 0;
   std::deque<std::vector<uint8_t>> q_aecp;
   //! MAAP frames (subtype 0xFE) with their eof-time compressed ms
@@ -1431,12 +1450,17 @@ struct H {
       }
     } else if (--rm_wcnt <= 0) {
       // byte n of the lane is bits [63-8n -: 8]; a byte whose strobe is 0 is
-      // NOT modified — the model enforces the contract it documents
-      if (!rmem_werr) {
-        for (int i = 0; i < 8; ++i) {
-          if ((rm_wstrb >> i) & 1) {
-            uint32_t k = rm_waddr - RESP_BASE + uint32_t(i);
-            if (k < rmem.size()) rmem[k] = uint8_t(rm_wdata >> (56 - 8 * i));
+      // NOT modified — the model enforces the contract it documents. A byte
+      // outside the reservation is not stored: it is counted, never dropped
+      // unseen (section AX RB)
+      for (int i = 0; i < 8; ++i) {
+        if ((rm_wstrb >> i) & 1) {
+          uint32_t k = rm_waddr - RESP_BASE + uint32_t(i);
+          if (k >= rmem.size()) {
+            ++rmem_past;
+          } else {
+            rmem_top = std::max(rmem_top, k + 1);
+            if (!rmem_werr) rmem[k] = uint8_t(rm_wdata >> (56 - 8 * i));
           }
         }
       }
@@ -10624,18 +10648,24 @@ struct AecpResponsePhase {
     return d;
   }
   //! configuration 1 holds the OV section's descriptors, on either side of
-  //! the 576-byte standard slot (frame = 38 + 4 + length)
+  //! the 576-byte standard slot (frame = 38 + 4 + length). The first fills
+  //! the build's line: 576 B by default (cdl 592, frame 618), 584 B in the
+  //! line build (cdl 600, frame 626)
   static constexpr uint16_t CFG1 = 1;
   std::vector<std::vector<uint8_t>> cfg1_bodies = {
-      big_audio_map(0, 71),          // 576 B, the line: cdl 592, frame 618
+      big_audio_map(0, uint16_t((DESC_LINE_BYTES - 8) / 8)),  // the whole line
       big_audio_map(1, 66),          // 536 B: cdl 552, frame 578
       big_audio_map(2, 65),          // 528 B: cdl 544, frame 570
       wide_clock_domain(0, 229)};    // 534 B: cdl 550, frame 576 exactly
+  //! OV1's label: the whole line, its cdl (16 + line) and its frame (42 + line)
+  const std::string ov1 = "OV1 AUDIO_MAP 0 (" + std::to_string(DESC_LINE_BYTES)
+                          + " B, the whole line: cdl " + std::to_string(16 + DESC_LINE_BYTES)
+                          + ", frame " + std::to_string(42 + DESC_LINE_BYTES) + ")";
 
   void boot() {
     Suite image(io);
     const std::vector<ImgEnt> cfg1 = {
-        {CFG1, 0x0017, 1, 576, 0xFFFF, 576, 0},
+        {CFG1, 0x0017, 1, uint16_t(DESC_LINE_BYTES), 0xFFFF, uint16_t(DESC_LINE_BYTES), 0},
         {CFG1, 0x0017, 1, 536, 0xFFFF, 536, 0},
         {CFG1, 0x0017, 1, 528, 0xFFFF, 528, 0},
         {CFG1, 0x0024, 1, 534, 0xFFFF, 536, 0}};
@@ -10892,8 +10922,7 @@ struct AecpResponsePhase {
   }
 
   void ov_responses_above_cdl_524() {
-    ov_read(0x0017, 0, cfg1_bodies[0], true,
-            "OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618)");
+    ov_read(0x0017, 0, cfg1_bodies[0], true, ov1.c_str());
     ov_read(0x0017, 1, cfg1_bodies[1], true,
             "OV2 AUDIO_MAP 1 (536 B: cdl 552, frame 578)");
     ov_read(0x0017, 2, cfg1_bodies[2], false,
@@ -11055,6 +11084,25 @@ struct AecpResponsePhase {
             "RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes");
   }
 
+  // ---- RB: every response write inside the reservation (R417-1 F1) ------
+  //! The integrator reserves 16 + DESC_LINE_BYTES_P bytes at RESP_BASE_P and
+  //! nothing else writes there (integrator guide section 5, 07 section 3.3.2),
+  //! so the processor may write nothing past it. The memory model counted
+  //! every strobed byte of this section's responses, and OV1/OV5 read the
+  //! whole-line descriptor, so the largest ends on the reservation's last
+  //! byte. The line build runs this at a non-default line, 584.
+  void rb_writes_stay_in_the_reservation() {
+    CHECK(io.d->dbg_desc_line_bytes_o == DESC_LINE_BYTES,
+          "RB the top elaborated DESC_LINE_BYTES_P %u, the line this build reserves for (%u)",
+          unsigned(io.d->dbg_desc_line_bytes_o), DESC_LINE_BYTES);
+    CHECK(io.rmem_past == 0,
+          "RB no response byte written at or past RESP_BASE_P + 16 + DESC_LINE_BYTES_P "
+          "(%u): %llu", RESP_BYTES, static_cast<unsigned long long>(io.rmem_past));
+    CHECK(io.rmem_top == RESP_BYTES,
+          "RB the whole-line READ_DESCRIPTOR reached the reservation's last byte: "
+          "%u bytes written, %u reserved", io.rmem_top, RESP_BYTES);
+  }
+
   void run() {
     boot();
     rd_before_any_set();
@@ -11062,6 +11110,7 @@ struct AecpResponsePhase {
     ov_responses_above_cdl_524();
     pg_the_page();
     rd_after_each_set();
+    rb_writes_stay_in_the_reservation();
   }
 };
 
@@ -11074,9 +11123,9 @@ struct AecpResponsePhase {
 
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
-  //! the harness that owns the tally. Section DV runs on a model of its own
-  //! in both builds, so its code is one path; in the fixture build this
-  //! model is never clocked.
+  //! the harness that owns the tally. Sections DV and AX run on models of
+  //! their own in two builds each, so each has one path; in the fixture and
+  //! line builds this model is never clocked.
   const milan::tb::Model<Vpp_top_wrap> model;
   H h(model.get());
 #ifdef PP_TOP_SRP_DOM_DEF_VID
@@ -11084,6 +11133,10 @@ int main(int argc, char** argv) {
   //! first build grades; the fixture build runs section DV alone
   DomainDefaultPhase{h}.run();
   const char* const build = "fixture";
+#elif defined(PP_TOP_DESC_LINE_BYTES)
+  //! the line build runs section AX alone, on its non-default line
+  run_aecp_response(h);
+  const char* const build = "line";
 #else
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
@@ -11108,12 +11161,12 @@ int main(int argc, char** argv) {
   if (!one_section || aecp_only) run_aecp_response(h);
   const char* const build = "default";
 #endif
-  //! NOT the canonical tally shape: this binary is ONE of the suite's two
+  //! NOT the canonical tally shape: this binary is ONE of the suite's three
   //! builds, and run_suites.sh reads only the LAST matching line, so a
-  //! canonical line here would drop the other build's checks from the total.
-  //! The Makefile sums both builds and prints the one canonical line.
-  printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x] %d checks, %d failures\n",
-         build, unsigned(SRP_DEF_VID), h.checks, h.fails);
+  //! canonical line here would drop the other builds' checks from the total.
+  //! The Makefile sums the builds and prints the one canonical line.
+  printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x, DESC_LINE_BYTES_P %u] %d checks, %d failures\n",
+         build, unsigned(SRP_DEF_VID), unsigned(DESC_LINE_BYTES), h.checks, h.fails);
   FILE* acc = fopen("obj_dir/build_tally.txt", "a");
   if (acc == nullptr) {
     printf("FAIL: this build's tally cannot be recorded for the Makefile\n");

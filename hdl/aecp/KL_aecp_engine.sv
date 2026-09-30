@@ -895,11 +895,16 @@ module KL_aecp_engine
   localparam int unsigned FRAME_HDR_C  = ETH_HDR_C + AECP_HDR_C;      // 38
   localparam int unsigned ETH_MIN_C    = 60;
   //! response buffer: the µCPU's 12 header bytes + the 4-byte
-  //! {configuration_index, reserved} prefix + one whole descriptor, rounded to
-  //! the 8-byte lane the memory face moves
-  localparam int unsigned RESP_BUF_C   = ((16 + LINE_BYTES_P) + 15) & ~32'd15;
+  //! {configuration_index, reserved} prefix + one whole descriptor. That is
+  //! exactly the `16 + DESC_LINE_BYTES_P` bytes the integrator reserves at
+  //! RESP_BASE_P (07 §3.3.2), and it bounds every response write: the buffer
+  //! drops a byte at or past it, and the Δ8 APPEND stops at it. The line is a
+  //! multiple of 8 (below), so the buffer is whole 8-byte memory lanes.
+  localparam int unsigned RESP_BUF_C   = 16 + LINE_BYTES_P;
   localparam int unsigned PLD_MAX_C    = RESP_BUF_C - 12;
   localparam int unsigned FRAME_MAX_C  = FRAME_HDR_C + PLD_MAX_C;
+  //! the bytes the µCPU's 10-bit response cursor addresses
+  localparam int unsigned RESP_CURSOR_BYTES_C = 1024;
 
   if (FRAME_MAX_C > TX_OVERSIZE_BYTES_P) begin : gen_g_frame_fit
     $error("a maximum AECP response (%0d B) exceeds the oversize slot (%0d B)",
@@ -911,13 +916,27 @@ module KL_aecp_engine
            RESP_BUF_C, ucpu_pkg::RESP_CAP_C);
   end
 
-  //! E_GAMAP serves a page of up to GAMAP_PAGE_MAX_C records whole (its
-  //! APPEND fills this buffer, Milan §5.4.1) and answers NO_RESOURCES above
-  //! it. A buffer too small for that page would drop records a SUCCESS still
-  //! counts, so a line below 561 bytes is refused here (issue #50).
+  //! THE LEGAL LINE (issue #50): a multiple of 8 from LINE_MIN_BYTES_C (576)
+  //! to LINE_MAX_BYTES_C (1008), each refusal naming the top's
+  //! DESC_LINE_BYTES_P, the parameter an integrator sets. The floor: E_GAMAP
+  //! serves a page of up to GAMAP_PAGE_MAX_C records whole (its APPEND fills
+  //! this buffer, Milan §5.4.1) and answers NO_RESOURCES above it, so the
+  //! reservation must hold that page, or records a SUCCESS still counts would
+  //! be dropped. The ceiling: the reservation may not pass the cursor. The
+  //! step: the line and this buffer move 8-byte lanes.
+  localparam int unsigned LINE_MIN_BYTES_C = 24 + 8 * ucpu_pkg::GAMAP_PAGE_MAX_C - 16;
+  localparam int unsigned LINE_MAX_BYTES_C = RESP_CURSOR_BYTES_C - 16;
+  if ((LINE_BYTES_P % 8) != 0) begin : gen_g_line_step
+    $error("DESC_LINE_BYTES_P=%0d is not a multiple of 8 (legal: %0d..%0d in steps of 8)",
+           LINE_BYTES_P, LINE_MIN_BYTES_C, LINE_MAX_BYTES_C);
+  end
   if (RESP_BUF_C < 24 + 8 * ucpu_pkg::GAMAP_PAGE_MAX_C) begin : gen_g_gamap_page_fit
-    $error("response buffer (%0d B) cannot carry a %0d-record GET_AUDIO_MAP page (%0d B)",
-           RESP_BUF_C, ucpu_pkg::GAMAP_PAGE_MAX_C, 24 + 8 * ucpu_pkg::GAMAP_PAGE_MAX_C);
+    $error("DESC_LINE_BYTES_P=%0d is below %0d: no room for a %0d-record GET_AUDIO_MAP page",
+           LINE_BYTES_P, LINE_MIN_BYTES_C, ucpu_pkg::GAMAP_PAGE_MAX_C);
+  end
+  if (RESP_BUF_C > RESP_CURSOR_BYTES_C) begin : gen_g_line_ceiling
+    $error("DESC_LINE_BYTES_P=%0d is above %0d: 16 + line passes the %0d-byte cursor",
+           LINE_BYTES_P, LINE_MAX_BYTES_C, RESP_CURSOR_BYTES_C);
   end
 
   pp_txn_t txn_w;

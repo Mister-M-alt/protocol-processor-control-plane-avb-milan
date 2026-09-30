@@ -40,8 +40,8 @@ module KL_aecp_ucpu
     //! path of the µcode ROM image (2048 lines of 12 hex digits)
     parameter string UCODE_HEX_P = "ucode.hex",
     //! the response-buffer bytes an APPEND of the Milan §5.4.1 command set
-    //! (cnd[0] set) may fill, cursor = cdl: KL_aecp_engine passes its buffer
-    //! (16 + LINE_BYTES_P rounded up). Every other APPEND, and every APPEND of
+    //! (cnd[0] set) may fill, cursor = cdl: KL_aecp_engine passes its buffer,
+    //! 16 + LINE_BYTES_P, the reservation. Every other APPEND, and every APPEND of
     //! a GET_DYNAMIC_INFO batch, still skips past RESP_CAP_C (524).
     parameter int unsigned RESP_D8_CAP_BYTES_P = 592
 ) (

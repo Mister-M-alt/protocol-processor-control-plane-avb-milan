@@ -114,7 +114,9 @@ module protocol_processor_top
     //! the D3 restore, which cannot prove the image, ends CLOSED with AECP
     //! held: never a garbage descriptor on the wire.
     parameter logic [31:0] DESC_BASE_P         = 32'h2000_0000,
-    //! on-chip line buffer for ONE located descriptor (07 §3.2 worst case)
+    //! on-chip line buffer for ONE located descriptor (07 §3.2 worst case).
+    //! P-DESC-LINE-BYTES: a multiple of 8 from 576 to 1008; KL_aecp_engine
+    //! refuses any other at elaboration (07 §3.3.1)
     parameter int unsigned DESC_LINE_BYTES_P   = 576,
     //! cached index-map entries, one per (configuration, descriptor_type)
     parameter int unsigned DESC_IDX_ENTRIES_P  = 32,
@@ -156,14 +158,15 @@ module protocol_processor_top
     parameter int unsigned REG_TL_TIMEOUT_MS_P = 300_000,
     parameter int unsigned LOCK_TIMEOUT_MS_P   = 60_000,
     //! ---- AECP response buffer in the integrator's MAIN MEMORY (03 §7) ---
-    //! The response an AECP command builds is up to 592 bytes and it does not
-    //! live on chip either. Held as fabric state it measured 5,079 flip-flops
-    //! on the reference part and was the state the placer could not pack on a
-    //! die whose block RAM was already 100 % used. Same rule as the image
-    //! above: a COMPILE-TIME base, never a register. UNLIKE the image this
-    //! region is WRITTEN by the processor, so the integrator must reserve
+    //! The response an AECP command builds is up to 16 + DESC_LINE_BYTES_P
+    //! bytes (592 at the default line), and it does not live on chip either.
+    //! Held as fabric state it measured 5,079 flip-flops on the reference
+    //! part and was the state the placer could not pack on a die whose block
+    //! RAM was already 100 % used. Same rule as the image above: a
+    //! COMPILE-TIME base, never a register. UNLIKE the image this region is
+    //! WRITTEN by the processor, so the integrator must reserve
     //! `16 + DESC_LINE_BYTES_P` bytes there that nothing else writes, and it
-    //! must not overlap `DESC_BASE_P`.
+    //! must not overlap `DESC_BASE_P`. The processor writes nothing past them.
     parameter logic [31:0] RESP_BASE_P         = 32'h2010_0000,
     //! ---- SRP Class A Domain default (10 §6.1 F10.2) --------------------
     //! P-SRP-DOM-DEF-VID (F01.5): the SRclassVID the Domain FSM declares at

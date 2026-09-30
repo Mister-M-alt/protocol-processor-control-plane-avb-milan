@@ -17,9 +17,9 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make`: exit 0 = PASS. It builds the bench twice (section DV): each executable
-prints its own build's tally, and the last line sums both into the one canonical
-tally.
+`make`: exit 0 = PASS. It builds the bench three times (sections DV and AX):
+each executable prints its own build's tally, and the last line sums them into
+the one canonical tally.
 
 ## What it proves
 
@@ -808,14 +808,15 @@ the last column is how many checks each one failed there.
 `make aecp-mutants [AECP_MUTANT_OUTPUT=DIR]` (or `python3 aecp_mutants.py
 --output DIR [--only ARM,...]`) plants each arm below, an explicit patch in
 `aecp_mutations/`, into a scratch copy of `hdl/`, `tb/common/` and this
-directory with `git apply`; the driver reads only simulation logs. Every
-generated ROM and model directory is deleted before each build, so a microcode
-arm cannot leave its ROM behind. A positive control of each make target runs
-first and must pass, and an arm is KILLED only when its run completes with the
-build's tally, exits non-zero and prints the named check. `aecp-dispatch` runs
-A5b and M9 on a booted model, then section AX on its own processor
-(`--aecp-dispatch-only`). The last column is how
-many checks each arm failed at the lane head.
+directory with `git apply`; the driver reads only simulation and lint logs.
+Every generated ROM and model directory is deleted before each build, so a
+microcode arm cannot leave its ROM behind. A positive control of each make
+target runs first and must pass, and an arm is KILLED only when its run
+completes with the build's tally (or the line guards' summary), exits non-zero
+and prints the named check. `aecp-dispatch` runs A5b and M9 on a booted model,
+then section AX on its own processor (`--aecp-dispatch-only`); `aecp-line`
+runs section AX in the line build; `line-guards` lints the top across the line
+range. The last column is how many checks each arm failed at the lane head.
 
 | Arm | Defect planted | Named check | Failing checks |
 |---|---|---|---|
@@ -849,6 +850,10 @@ many checks each arm failed at the lane head.
 | `rd-so-reads-input-row` | E_RDESCSO reads the STREAM_INPUT row (`SEL_FMTIN`) instead of its own | `RD1 STREAM_OUTPUT 1 after SET_STREAM_FORMAT: READ_DESCRIPTOR byte-exact` | 2 |
 | `rd-cfg-any` | the configuration-0 guard of the re-dispatch dropped | `RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes: the 534-byte descriptor, byte-exact` | 2 |
 | `rd-tail-uncut` | the µCPU's COPY_BUFFER TAIL copies the whole length from its start (no subtract) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 5 |
+| `line-floor-rounded` | the engine's line floor judged on the buffer rounded up to 16, as at 54c1e2b1 (R417-1 F1), so a 568-byte line elaborates (`line-guards`) | `line guard 568` | 1 |
+| `line-ceiling-dropped` | the engine's line ceiling removed, so 1016 is refused only by the µCPU's own cap, which does not name `DESC_LINE_BYTES_P` (R416-1 F2; `line-guards`) | `line guard 1016` | 1 |
+| `line-buffer-fixed-592` | the response buffer fixed at the default line's 592 bytes instead of `16 + LINE_BYTES_P` (`aecp-line`) | `OV1 AUDIO_MAP 0 (584 B, the whole line: cdl 600, frame 626): the 584-byte descriptor, byte-exact` | 7 |
+| `rb-rounded-buffer-no-page-cap` | the buffer rounded up to 16 as at 54c1e2b1 AND E_GAMAP's page cap dropped (`pg-cap-dropped`'s two NOPs), so a page fills the rounded 608 bytes (`aecp-line`) | `RB no response byte written at or past RESP_BASE_P + 16 + DESC_LINE_BYTES_P` | 10 |
 
 Each guard arm fails its opcode's row on all seven message types; the three
 writers also fail their whole-body row and the read-back that proves the write
@@ -873,7 +878,18 @@ the re-dispatch, or with the TAIL count uncut (the response runs past the descri
 the five RD1 reads after a SET; each image-only program its own type's RD1 reads; the
 unset test removed, the unset rows it serves (RD0's rate; RD0's two streams and RD1's
 never-set STREAM_OUTPUT 0); the output program on the input row, both STREAM_OUTPUT
-reads of RD1; the configuration guard dropped, RD2 and OV4.
+reads of RD1; the configuration guard dropped, RD2 and OV4. The line arms: the floor
+on the rounded buffer lets 568 lint clean, and without the engine's ceiling 1016 is
+refused only by the µCPU's `RESP_D8_CAP_BYTES_P` message; a buffer fixed at 592
+truncates OV1 and OV5's 584-byte descriptor at the line build (byte-exact, cdl and
+wire length each) and leaves RB 8 bytes short of the reservation. RB's own arm
+needs two sites, because at a legal line every response is bounded twice: the
+page cap and the store's line bound keep each writer inside `16 + line`, and the
+buffer, exactly that reservation, drops a byte past it. The rounding alone changes
+no write at any legal line, and `pg-cap-dropped` alone is fenced at the
+reservation (a 176-record page carries 72 records, 600 bytes, at 584). Together
+the 176-record page carries 73, and RB counts the 8 bytes past 600, besides
+PG7 to PG9.
 
 ## Recorded seams and honest limits
 
@@ -1190,12 +1206,13 @@ revert on LINK_DOWN (10 §6.1 F10.2).
 A build that only runs the product value cannot see that binding. The child's
 own default is also 2, so a dropped or misbound connection produces exactly the
 frames the default build expects (M25: 0 failures there). The Makefile therefore
-builds the bench twice:
+builds the bench a second time (the third build is section AX's line build):
 
 | Build | Override | Runs | Expects |
 |---|---|---|---|
-| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV last | 2 (Milan §4.2.7.2.1) |
+| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV and AX last | 2 (Milan §4.2.7.2.1) |
 | `obj_vid/Vpp_top_vid` | `SRP_DOM_DEF_VID_P = 0x5A3C` (`SRP_VID_FIXTURE`) | DV alone | 0x5A3C |
+| `obj_line/Vpp_top_line` | `DESC_LINE_BYTES_P = 584` (`LINE_FIXTURE`) | AX alone | 2 |
 
 The fixture is a verification value, not a product profile: Milan §4.2.7.2.1
 fixes a shipping build at 2. It is chosen so that each plausible fault gives a
@@ -1316,9 +1333,9 @@ the zero a stub would carry.
 - **OV** a response above cdl 524 through the oversize TX slot (Milan 5.4.1; issue
   #50, #82's oversize path). The image's configuration 1 holds four descriptors on
   either side of the 576-byte standard slot (frame = 42 + length): AUDIO_MAPs of 576
-  bytes (the whole line: cdl 592, frame 618), 536 (cdl 552, frame 578) and 528 (cdl
-  544, frame 570), and a 534-byte CLOCK_DOMAIN (229 clock sources: frame 576, the
-  standard slot's own size). Each READ_DESCRIPTOR is graded byte-exact against the
+  bytes (the whole line: cdl 592, frame 618; 584 bytes, cdl 600 and frame 626, in
+  the line build), 536 (cdl 552, frame 578) and 528 (cdl 544, frame 570), and a
+  534-byte CLOCK_DOMAIN (229 clock sources: frame 576, the standard slot's own size). Each READ_DESCRIPTOR is graded byte-exact against the
   descriptor's own bytes, with cdl off the wire (above 524) and the wire length, and
   the wrap's taps of the engine's grant, its oversize request, the serializer's start
   and slot 4's state show that **OV1**, **OV2** and **OV5** (the 576-byte one again,
@@ -1350,3 +1367,21 @@ the zero a stub would carry.
   again. At the lane base PG2 to PG6 fail: the records stopped at cdl 524, 62 of
   them, while `number_of_mappings` still named every one (the `pg-append-524` arm
   below restores exactly that).
+- **RB** every response write stays inside the reservation (R417-1 F1). The
+  integrator reserves `16 + DESC_LINE_BYTES_P` bytes at `RESP_BASE_P` and nothing
+  else writes there (integrator guide section 5, 07 section 3.3.2), and the
+  engine's response buffer is exactly that. The response-memory model counts
+  every strobed byte it is asked to write outside the reservation instead of
+  dropping it unseen, and after the other arms RB demands none, that the top
+  elaborated the line the bench reserves for (the wrap's `dbg_desc_line_bytes_o`),
+  and that OV1's whole-line descriptor reached the reservation's last byte.
+
+The third build, `obj_line` (`make aecp-line` alone), runs section AX at
+`DESC_LINE_BYTES_P = 584` (`LINE_FIXTURE`), a legal line that is not the default and
+whose 600-byte reservation is not a multiple of 16: OV1 reads a 584-byte descriptor
+(cdl 600, frame 626) and RB bounds every write by 600. `make line-guards` (run by
+`make`) lints the real top, with `scripts/lint_hdl.sh`'s flags, at 576, 584 and
+1008, which must lint clean, and at 568, 1016 and 580, which the engine must refuse
+by name (`DESC_LINE_BYTES_P=568 is below 576`, `...=1016 is above 1008`, `...=580 is
+not a multiple of 8`). Verilator reports an elaboration `$error` as a warning that a
+`-Wno-fatal` build carries past, so the verdict is a lint's, which tolerates none.

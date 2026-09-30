@@ -86,8 +86,8 @@ Oversize rule (Δ8): Milan §5.4.1 lets the responses of READ_DESCRIPTOR, GET_AV
 GET_AS_PATH, GET_AUDIO_MAP and ADD/REMOVE_AUDIO_MAPPINGS exceed cdl 524, up to a full
 frame. What this engine does with that permission, command by command (issue #50):
 
-The ceiling is the response buffer, `16 + LINE_BYTES_P` bytes rounded up to 16: 592
-at the default 576-byte line, so cdl 592, a 580-byte payload and a 618-byte frame. The
+The ceiling is the response buffer, exactly the `16 + LINE_BYTES_P` bytes the integrator
+reserves ([07 §3.3.2](07_memory_maps.md#sec-resp-memory)): 592 at the default 576-byte line, so cdl 592, a 580-byte payload and a 618-byte frame. The
 engine asks for the oversize TX slot (`txs_oversize_o`) whenever the frame is longer
 than a 576-byte standard slot ([03 §7](03_packet_engine.md)), for whichever command
 built it.
@@ -104,7 +104,8 @@ built it.
   answers `NO_RESOURCES` with `number_of_mappings` 0 and no record, so the count
   never names a record the response does not carry (§6.5). Milan §5.4.2.26 permits
   subsets of up to 176 channels; this build carries 71, and `KL_aecp_engine` refuses
-  to elaborate a line below 561 bytes, whose buffer could not hold the page.
+  to elaborate a line below 576 bytes (`P-DESC-LINE-BYTES`,
+  [F01.5](01_overview.md#fig-01-params)), whose reservation could not hold the page.
 - **GET_AVB_INFO and GET_AS_PATH** keep the plain `APPEND`, which skips any record
   that would end past cdl 524. Their faces never come near it: GET_AS_PATH serves at
   most eight ClockIdentities (cdl 80) and GET_AVB_INFO one 4-byte msrp_mapping per SR
