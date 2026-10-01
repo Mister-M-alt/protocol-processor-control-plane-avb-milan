@@ -226,6 +226,15 @@ hands the classifier the consuming engine's unique_id), as do STREAM_OUTPUT k an
 talker source k. Descriptor type 0x3F, which names none, holds the registry key
 and the key of reads that address no single descriptor (READ_DESCRIPTOR, whose
 descriptor sits at @28, outside the record; GET_DYNAMIC_INFO, which reads several).
+That key costs READ_DESCRIPTOR nothing, because no ACMP step writes a
+descriptor-image field. For GET_DYNAMIC_INFO it is a known limitation. IEEE
+1722.1-2021 §7.4.76.1 handles each record as if it were an independent command,
+but a GET_STREAM_INFO record of STREAM_INPUT k reads sink k's listener binding
+record (Milan §5.4.2.10's probing and ACMP status), which ACMP listener steps
+write, and the batch is not serialized against them. A stand-alone
+GET_STREAM_INFO of STREAM_INPUT 1 waits for a held UNBIND_RX of sink 1 (HZ6). A
+GET_DYNAMIC_INFO carrying the same record is admitted beside it. Serializing a
+batch against the streams its records name is left to a later issue #84 item.
 `CFG_BARRIER` and `LOCK_OP` are global. A frame the engine drops (an AECP
 response as input, a command for another entity_id), MVU and ADDRESS_ACCESS are
 `RO_SNAPSHOT` with that no-descriptor key, so they never drain the table. The

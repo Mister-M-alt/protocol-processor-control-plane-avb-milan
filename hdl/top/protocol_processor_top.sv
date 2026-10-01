@@ -1463,7 +1463,12 @@ module protocol_processor_top
   //! with the NONE key: a frame the engine will drop must not drain the
   //! table. READ_DESCRIPTOR addresses its descriptor at @28 (not in the
   //! record) and GET_DYNAMIC_INFO several at once, so both take the NONE
-  //! key: no ACMP step writes a field either serves.
+  //! key. READ_DESCRIPTOR loses nothing by it: no ACMP step writes a
+  //! descriptor-image field. GET_DYNAMIC_INFO does, a known gap (03 §6):
+  //! its GET_STREAM_INFO records of a STREAM_INPUT read the listener
+  //! binding record (the probing and ACMP status, `lstn_gsi_status_r`
+  //! below), which ACMP listener steps write, so the batch is NOT
+  //! serialized against them, where a stand-alone GET_STREAM_INFO is.
   logic        hz_valid_nc_w;
   logic [2:0]  hz_protocol_w;
   logic [15:0] hz_opcode_w;
