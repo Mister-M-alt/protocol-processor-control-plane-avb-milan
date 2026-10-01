@@ -412,8 +412,10 @@ struct IdentifyPhase : NotifyBench {
   //! never short (a deadline chained from the first frame would leave it
   //! short by frame 2's delay). Sequence_ids 7, 8 and 9 follow ID5's 6.
   void a_fan_out_at_frame_2_never_shortens_a_gap() {
-    static constexpr long OFFSETS[] = {BURST - 550, BURST - 300, BURST - 50};
-    long min_gap = 1L << 40, max_g12 = 0;
+    static constexpr long OFFSETS[] = {
+        BURST - 550, BURST - 300, BURST - 50};
+    long min_gap = 1L << 40;
+    long max_g12 = 0;
     int bursts = 0;
     unsigned n = 0;
     for (const long off : OFFSETS) {
@@ -487,16 +489,22 @@ struct IdentifyPhase : NotifyBench {
     return io.in_frame && io.cur.size() >= 6 && da_of(io.cur) == IDENT_MAC;
   }
   void a_tx_stall_mid_burst_never_bunches_it() {
-    // ID7: the MAC stops for 400 ms in the middle of frame 1, which the
-    // engine retired at its grant: frame 2 waits for frame 1 to leave
-    size_t from = seen.size();
+    a_stall_inside_frame_1();
+    a_stall_after_frame_1();
+    a_stall_after_frame_2();
+    a_stall_past_the_timeout();
+  }
+  //! ID7: the MAC stops for 400 ms in the middle of frame 1, which the
+  //! engine retired at its grant: frame 2 waits for frame 1 to leave
+  void a_stall_inside_frame_1() {
+    const size_t from = seen.size();
     const uint64_t pressed = io.t;
     press(true);
     for (long c = 0; c < 50L * MS_CYC && !mid_ident_frame(); ++c) tick();
     press(false);
     stall_mac(400);
     run_ms(1500);
-    auto v = idents(from);
+    const auto v = idents(from);
     CHECK(v.size() == 3, "ID7: a 400 ms MAC stall inside frame 1 still sends "
           "a burst of three, got %zu", v.size());
     if (v.size() == 3) {
@@ -513,15 +521,17 @@ struct IdentifyPhase : NotifyBench {
       CHECK(gap_of(v, 1) >= BURST && gap_of(v, 1) <= BURST + SLACK,
             "ID7e: frame 3 keeps its gap, %ld clocks", gap_of(v, 1));
     }
-    // ID7f: 400 ms between frames 1 and 2 (R420-1's probe): frame 3 is due
-    // T-IDENT-BURST after frame 2 left, not at a deadline from frame 1
-    from = seen.size();
+  }
+  //! ID7f: 400 ms between frames 1 and 2 (R420-1's probe): frame 3 is due
+  //! T-IDENT-BURST after frame 2 left, not at a deadline from frame 1
+  void a_stall_after_frame_1() {
+    const size_t from = seen.size();
     press(true);
     wait_idents(from, 1);
     press(false);
     stall_mac(400);
     run_ms(1500);
-    v = idents(from);
+    const auto v = idents(from);
     CHECK(v.size() == 3, "ID7f: a 400 ms MAC stall after frame 1 still sends "
           "a burst of three, got %zu", v.size());
     if (v.size() == 3) {
@@ -535,15 +545,17 @@ struct IdentifyPhase : NotifyBench {
             "deadline from frame 1: %ld clocks, want %ld to %ld", gap_of(v, 1),
             BURST, BURST + SLACK);
     }
-    // ID7j: 250 ms after frame 2
-    from = seen.size();
+  }
+  //! ID7j: 250 ms after frame 2
+  void a_stall_after_frame_2() {
+    const size_t from = seen.size();
     press(true);
     wait_idents(from, 1);
     press(false);
     wait_idents(from, 2);
     stall_mac(250);
     run_ms(1500);
-    v = idents(from);
+    const auto v = idents(from);
     CHECK(v.size() == 3, "ID7j: a 250 ms MAC stall after frame 2 still sends "
           "a burst of three, got %zu", v.size());
     if (v.size() == 3) {
@@ -555,17 +567,19 @@ struct IdentifyPhase : NotifyBench {
       CHECK(gap_of(v, 1) >= 250L * MS_CYC, "ID7m: the stall held frame 3: gap "
             "2->3 %ld clocks, at least the 250 ms stall", gap_of(v, 1));
     }
-    // ID7n: held, 900 ms after frame 1: the burst outlasts T-IDENT-REARM, so
-    // the timeout has passed when its third frame leaves. Released once the
-    // next burst is out, so no third burst is due
-    from = seen.size();
+  }
+  //! ID7n: held, 900 ms after frame 1: the burst outlasts T-IDENT-REARM, so
+  //! the timeout has passed when its third frame leaves. Released once the
+  //! next burst is out, so no third burst is due
+  void a_stall_past_the_timeout() {
+    const size_t from = seen.size();
     press(true);
     wait_idents(from, 1);
     stall_mac(900);
     wait_idents(from, 6);
     press(false);
     run_ms(1500);
-    v = idents(from);
+    const auto v = idents(from);
     CHECK(v.size() == 6, "ID7n: held through a 900 ms MAC stall after frame 1: "
           "the stretched burst and one more, got %zu", v.size());
     if (v.size() == 6) {

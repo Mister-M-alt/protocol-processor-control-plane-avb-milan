@@ -107,8 +107,9 @@ IDENTIFY = (
         ("ID2d: burst 3 starts",)),
     # round 2 (R420-1 F1, R421-1 F1): every frame from the previous one's departure
     Mutant("ident_burst_from_t0", IDENT, (
-        (NTFY, BURST_DL, "    assign id_arm_deadline_w = armb_r ? t0_r + ((ix_r == 2'd1) ? 32'(IDENT_BURST_MS_C)\n"
-                         "                                                             : 32'(2 * IDENT_BURST_MS_C))\n"),),
+        (NTFY, BURST_DL,
+         "    assign id_arm_deadline_w = armb_r ? t0_r + ((ix_r == 2'd1) ? 32'(IDENT_BURST_MS_C)\n"
+         "                                                             : 32'(2 * IDENT_BURST_MS_C))\n"),),
         ("ID7i:", "ID5k:")),
     Mutant("ident_departure_is_retirement", IDENT, (
         (NTFY, DEPART, "    assign dep_w   = done_w;\n"),),
