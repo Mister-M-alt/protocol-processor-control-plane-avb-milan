@@ -173,3 +173,44 @@ remaps unchanged modules, so the total LUT decrease is not a claim that the
 trigger saves logic. These are post-synthesis area estimates. Both builds
 have negative OOC slack at 10 ns (-10.089 ns base, -8.192 ns change); this
 measurement makes no routed timing or hardware claim.
+
+## AECP deadline and hazard classes - issues #81, #57, #84
+
+Measured 2026-10-01 with the complete-processor recipe above, default
+8-input / 8-output shape, `xc7a100tfgg484-2`, 10 ns clock, Vivado 2026.1.
+The same recipe ran in separate empty build directories against base
+`0451d83d` and the change's RTL at `88e3459`, with all top-level ports
+present.
+
+| Resource | Base | Change | Delta |
+|---|---:|---:|---:|
+| Slice LUTs | 30,334 | 30,645 | +311 |
+| Registers | 31,820 | 31,994 | +174 |
+| LUT as distributed RAM | 1,206 | 1,222 | +16 |
+| RAMB36 / RAMB18 / DSP | 23 / 2 / 4 | 23 / 2 / 4 | 0 |
+
+The change edits only the AECP engine, the µCPU, the ROM generator and the
+top. Most of the new registers are in modules it does not edit. Their class,
+key and kill inputs were constants under the base's classifier stub and
+tied-off kill face, and now carry live values:
+
+| Instance | LUTs | Registers |
+|---|---|---|
+| `u_scoreboard` | 101 -> 137 | 73 -> 169 |
+| `u_dispatch` | 890 -> 904 | 903 -> 926 |
+| `u_normalizer` | 27 -> 91 | 366 -> 384 |
+
+The changed instances:
+
+- The top's own logic is 358 -> 365 LUTs and 4,689 -> 4,722 registers. That
+  is the 32-bit deadline register and the boot-hold bit.
+- `u_aecp` is 6,430 -> 6,584 LUTs, with registers unchanged at 4,528.
+  - The engine's own logic is 1,439 -> 1,504 LUTs.
+  - `u_ucpu` is 2,033 -> 2,016 LUTs and 490 -> 493 registers.
+  - `u_d3`, which the change does not edit, is 1,006 -> 1,132 LUTs.
+
+LUT moves of a few tens in modules the change does not touch (`u_timer`
++53, `u_talker` -48) are synthesis variance. These are post-synthesis area
+estimates. Both builds have negative OOC slack at 10 ns (-10.114 ns base,
+-8.922 ns change), so this measurement makes no routed timing or hardware
+claim.
