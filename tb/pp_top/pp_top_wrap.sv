@@ -418,11 +418,13 @@ module pp_top_wrap (
     output logic        dbg_d3_agg_fired_o,
     //! the AECP transaction deadline (section DL, 03 §6 rule (e)): the top's
     //! kill of the AECP hold, the engine's solicited-response hand-off, the
-    //! scoreboard's honoured kill, the AECP hold's id and the live-hold mask,
-    //! and the µCPU's redirect level
+    //! scoreboard's honoured kill, its normal release port, the AECP hold's id
+    //! and the live-hold mask, and the µCPU's redirect level
     output logic        dbg_aecp_dl_kill_o,
     output logic        dbg_aecp_dl_queued_o,
     output logic        dbg_sb_kill_ack_o,
+    output logic        dbg_sb_rel_o,
+    output logic  [2:0] dbg_sb_rel_id_o,
     output logic  [2:0] dbg_aecp_sb_id_o,
     output logic  [7:0] dbg_sb_holds_o,
     output logic        dbg_ucpu_pre_o,
@@ -777,6 +779,8 @@ module pp_top_wrap (
   assign dbg_aecp_dl_kill_o   = u_dut.aecp_dl_kill_w;
   assign dbg_aecp_dl_queued_o = u_dut.aecp_dl_queued_w;
   assign dbg_sb_kill_ack_o    = u_dut.sb_kill_ack_w;
+  assign dbg_sb_rel_o         = u_dut.sb_rel_valid_w;
+  assign dbg_sb_rel_id_o      = u_dut.sb_rel_id_w;
   assign dbg_aecp_sb_id_o     = u_dut.aecp_sb_id_r;
   assign dbg_sb_holds_o       = u_dut.sb_holds_w;
   assign dbg_ucpu_pre_o       = u_dut.u_aecp.ucpu_pre_w;

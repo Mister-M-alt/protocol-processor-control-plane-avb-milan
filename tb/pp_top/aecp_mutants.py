@@ -34,6 +34,13 @@ MUTANTS = [
      "DL4: the batch past its deadline is voided"),
     ("dl-edit-preempted", "dl-edit-preempted", "pp_top", "deadline",
      "DL6: the edit answers its own SUCCESS"),
+    ("dl-registry-preempted", "dl-registry-preempted", "pp_top", "deadline",
+     "DL10 REGISTER_UNSOLICITED_NOTIFICATION past its deadline answers its "
+     "own SUCCESS"),
+    ("dl-lock-preempted", "dl-lock-preempted", "pp_top", "deadline",
+     "DL10 LOCK_ENTITY past its deadline answers its own SUCCESS"),
+    ("dl-kill-ack-keeps-owner", "dl-kill-ack-keeps-owner", "pp_top",
+     "deadline", "DL1: the honoured kill ended the AECP owner"),
     ("dl-preempt-after-effect", "dl-preempt-after-effect", "ucpu", "run",
      "P19c the program's own SUCCESS"),
     ("dl-preempt-after-effect-top", "dl-preempt-after-effect", "pp_top",

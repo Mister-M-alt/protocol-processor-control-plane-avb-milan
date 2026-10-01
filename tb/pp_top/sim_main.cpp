@@ -1145,7 +1145,8 @@ struct H {
   //! id, the clocks the scoreboard honoured a kill and the engine handed a
   //! solicited response to its lane, the cycles the killed hold's bit was
   //! clear between the expiry and the first hand-off (it must stay held),
-  //! the bit in the clock after that hand-off, and the µCPU's redirects
+  //! the bit in the clock after that hand-off, the µCPU's redirects, and the
+  //! normal releases that named a hold not live (also counted since reset)
   long dl_kill_first = -1;
   int  dl_kill_id = -1;
   std::vector<long> dl_acks;
@@ -1154,6 +1155,8 @@ struct H {
   int  dl_hold_after_queue = -1;
   int  dl_pre_rises = 0;
   bool dl_pre_prev = false;
+  long dl_stray_rel = 0;
+  long dl_stray_rel_all = 0;
   //! every scoreboard admission (section HZ): which head, the class and key
   //! it presented, and the clock; the clocks the scoreboard was asked about
   //! each head and refused it; and the clocks each owner's hold ended and
@@ -1208,6 +1211,7 @@ struct H {
     dl_hold_after_queue = -1;
     dl_pre_rises = 0;
     dl_pre_prev = d->dbg_ucpu_pre_o != 0;
+    dl_stray_rel = 0;
   }
   // ---- the SET_STREAM_FORMAT verdict (kind 0 selector 15) and the
   // settings fold. The verdict is the integrator's ruling on the PROPOSED
@@ -1383,6 +1387,10 @@ struct H {
       ++dl_hold_gap;
     if (d->dbg_sb_kill_ack_o) dl_acks.push_back(now);
     if (d->dbg_aecp_dl_queued_o) dl_queued.push_back(now);
+    if (d->dbg_sb_rel_o && !((d->dbg_sb_holds_o >> d->dbg_sb_rel_id_o) & 1)) {
+      ++dl_stray_rel;
+      ++dl_stray_rel_all;
+    }
     const bool pre = d->dbg_ucpu_pre_o != 0;
     if (pre && !dl_pre_prev) ++dl_pre_rises;
     dl_pre_prev = pre;
@@ -10464,6 +10472,7 @@ struct DeadlinePhase {
   static constexpr uint16_t MVU_PID_HI = 0x001B;
   static constexpr uint32_t MVU_PID_LO = 0xC50AC100u;
   static constexpr uint16_t GDI_GET_VIDEO_FMT = 0x000B;
+  static constexpr uint64_t OTHER_MAC = 0x0202C2C2C2C2ull;   // CTLR2_EID's
 
   explicit DeadlinePhase(H& tally) : h(tally), io(model.get()), image(io) {}
 
@@ -10565,6 +10574,10 @@ struct DeadlinePhase {
           "DL1: the key stayed held from the expiry to the forced response's "
           "hand-off (%ld clocks free) and was free after it (%d)",
           io.dl_hold_gap, io.dl_hold_after_queue);
+    CHECK(io.dl_stray_rel == 0,
+          "DL1: the honoured kill ended the AECP owner, so the RX-slot return "
+          "after it released no hold id again (%ld stray releases)",
+          io.dl_stray_rel);
   }
 
   //! DL2 (rule (e): no partial commit survives): a SET_NAME on CLOCK_DOMAIN
@@ -10890,6 +10903,94 @@ struct DeadlinePhase {
     }
   }
 
+  //! DL10 (03 §6 rule (e): no partial commit survives). REGISTER_UNSOLICITED
+  //! _NOTIFICATION and LOCK_ENTITY change state in their first op, a
+  //! registry-face gather the µCPU does not see as an effect, so they are
+  //! never preempted. Each, queued behind DL1's stall past its own deadline,
+  //! answers its own SUCCESS byte-exact with no redirect of its own, and its
+  //! effect is there: a SET_NAME by another controller is then pushed to the
+  //! registered one (u = 1), and the lock is held. Both are undone after
+  void dl10_a_registry_or_lock_command_past_its_deadline_answers_for_itself() {
+    struct Cmd {
+      const char* what;
+      uint16_t op;
+      std::vector<uint8_t> pl;
+      std::vector<uint8_t> rsp;
+    };
+    std::vector<uint8_t> lock_rsp(16, 0);
+    putbe(&lock_rsp[4], CTLR_EID, 8);          // locked_id: the holder
+    const Cmd cmds[] = {
+        {"REGISTER_UNSOLICITED_NOTIFICATION", 0x0024,
+         std::vector<uint8_t>(4, 0), std::vector<uint8_t>(4, 0)},
+        {"LOCK_ENTITY", 0x0001, std::vector<uint8_t>(16, 0), lock_rsp},
+    };
+    uint16_t s = 0xDA01;
+    for (const Cmd& c : cmds) {
+      io.q_aecp.clear();
+      io.dl_clear();
+      io.ctr_hold = 1000;
+      (void)send(AEM_GET_COUNTERS, ti(0x0005, 0), s);
+      const long tq = send(c.op, c.pl, uint16_t(s + 1));
+      long first = -1;
+      const auto fa = answer(s, &first);
+      long qfirst = -1;
+      const auto fb = answer(uint16_t(s + 1), &qfirst);
+      io.ctr_hold = 2;
+      CHECK(fa == forced(s, AEM_GET_COUNTERS) && qfirst - tq > BUDGET_CYC,
+            "DL10 %s: premise: the stall ahead is forced and the command is "
+            "answered past its own deadline (%ld clocks)", c.what, qfirst - tq);
+      CHECK(fb == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                             uint16_t(s + 1), c.op, c.rsp)
+                && io.dl_pre_rises == 1,
+            "DL10 %s past its deadline answers its own SUCCESS, byte-exact, "
+            "and is never redirected (status %d, %d redirects)", c.what,
+            status(fb), io.dl_pre_rises);
+      s = uint16_t(s + 2);
+    }
+    CHECK(io.d->dbg_lock_held_o != 0,
+          "DL10 LOCK_ENTITY: the lock it answered for is held");
+    std::vector<uint8_t> name(8, 0);
+    putbe(&name[0], 0x0024, 2);                // CLOCK_DOMAIN 0, name 0
+    putbe(&name[6], CFGIX, 2);
+    const char* const text = "Clock Domain Renamed By Another";
+    for (size_t i = 0; i < 64; ++i)
+      name.push_back(i < std::strlen(text) ? static_cast<uint8_t>(text[i]) : 0);
+    std::vector<uint8_t> unlock(16, 0);
+    putbe(&unlock[0], 1, 4);
+    (void)send(0x0001, unlock, s);             // the other controller may write
+    long first = -1;
+    (void)answer(s, &first);
+    io.q_aecp.clear();
+    io.feed(aecp_frame(OWN_MAC, OTHER_MAC, 0, 0, EID, CTLR2_EID,
+                       uint16_t(s + 1), AEM_SET_NAME, name));
+    bool pushed = false;
+    for (long c = 0; c < 40L * MS_CYC && !pushed; ++c) {
+      while (!io.q_aecp.empty()) {
+        const auto f = io.q_aecp.front();
+        io.q_aecp.pop_front();
+        pushed = pushed
+                 || (f.size() > 37 && fv_u64(f, 0, 6) == CTLR_MAC
+                     && (f[36] & 0x80) != 0
+                     && (((f[36] & 0x7F) << 8) | f[37]) == AEM_SET_NAME);
+      }
+      io.step();
+    }
+    CHECK(pushed, "DL10 REGISTER_UNSOLICITED_NOTIFICATION: the registration "
+          "took effect, another controller's SET_NAME is pushed to it");
+    (void)send(0x0025, {}, uint16_t(s + 2));   // DEREGISTER
+    (void)answer(uint16_t(s + 2), &first);
+  }
+
+  //! DL11 (the owner a kill ends): a kill the scoreboard honours frees the
+  //! AECP hold, and the RX-slot return a clock later must not release that id
+  //! again, since a new admission may already own it. Across every arm above,
+  //! each normal release named a live hold
+  void dl11_every_release_named_a_live_hold() {
+    CHECK(io.dl_stray_rel_all == 0,
+          "DL11: across the section every normal release named a live hold "
+          "(%ld named a free one)", io.dl_stray_rel_all);
+  }
+
   void run() {
     boot();
     dl1_a_stalled_command_is_answered_by_the_forced_response();
@@ -10901,6 +11002,8 @@ struct DeadlinePhase {
     dl7_nothing_leaked();
     dl8_an_mvu_response_whose_memory_fails_answers_not_implemented();
     dl9_every_other_message_type_is_forced_to_not_implemented();
+    dl10_a_registry_or_lock_command_past_its_deadline_answers_for_itself();
+    dl11_every_release_named_a_live_hold();
   }
 };
 

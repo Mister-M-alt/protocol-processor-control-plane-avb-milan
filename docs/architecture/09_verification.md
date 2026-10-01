@@ -231,6 +231,8 @@ its watchdog.
 | a GET_DYNAMIC_INFO past its deadline runs no further record and is voided | DL4 |
 | a frame owed no response retires through the normal release | DL5 |
 | an edit riding the edit face is never preempted | DL6 |
+| neither are the registry and lock commands, whose first op commits on the registry face: a REGISTER_UNSOLICITED_NOTIFICATION and a LOCK_ENTITY queued past their deadline answer their own SUCCESS, never redirected, and the registration and the lock take effect | DL10 |
+| an honoured kill ends the AECP owner: the RX-slot return after it releases nothing, and across the section every normal release names a live hold | DL1, DL11 |
 | nothing leaks: every RX slot free, the next command byte-exact | DL7 |
 | every message type but AEM's, past its deadline: an ADDRESS_ACCESS, an AVC, an HDCP_APM and an EXTENDED command queued behind a stall answer NOT_IMPLEMENTED with the command echoed, as idle, never status 10 (IEEE Table 9-2) | DL9 |
 | REQ-MVU-005 on the fault path: an MVU response whose memory fails (a read error, a write error, a tied-off master, and a 540-byte command whose echo needs the oversize slot) answers NOT_IMPLEMENTED with the command echoed, as the deadline's does, and is counted; an AEM one still answers ENTITY_MISBEHAVING | DL8 |

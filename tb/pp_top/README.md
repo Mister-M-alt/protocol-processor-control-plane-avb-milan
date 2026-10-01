@@ -667,7 +667,16 @@ into the one canonical tally.
   status 10 is AEM's alone) an ADDRESS_ACCESS, an AVC, an HDCP_APM and an
   EXTENDED command each answer NOT_IMPLEMENTED with the command echoed idle,
   and the same frame, byte-exact, when queued behind DL1's stall past their
-  deadline and preempted, inside T-AECP-RESP of their reception. The boot-held command's exemption (rule (d)) is D3O6's 150 ms
+  deadline and preempted, inside T-AECP-RESP of their reception. **DL10**
+  REGISTER_UNSOLICITED_NOTIFICATION and LOCK_ENTITY commit on the registry face
+  in their first op, which the µCPU cannot see as an effect, so they are never
+  preempted: each, queued behind DL1's stall past its own deadline, answers its
+  own SUCCESS byte-exact with no redirect, the lock is then held, and after the
+  unlock a SET_NAME by another controller is pushed to the registered one.
+  **DL11** a kill the scoreboard honours ends the AECP owner, so the RX-slot
+  return after it releases nothing (DL1 checks this at the kill too): across
+  the section every normal release names a live hold (`dbg_sb_rel_o`,
+  `dbg_sb_rel_id_o`). The boot-held command's exemption (rule (d)) is D3O6's 150 ms
   hold. `make deadline` runs this section alone; the default run includes it.
   The taps are `dbg_aecp_dl_kill_o`, `dbg_aecp_dl_queued_o`,
   `dbg_sb_kill_ack_o`, `dbg_aecp_sb_id_o`, `dbg_sb_holds_o` and
@@ -932,7 +941,10 @@ and must pass. Counts below were taken on 2026-09-30 with Verilator 5.052.
 | `dl-armed-at-admission` | pp_top `deadline` | the deadline re-armed at every admission instead of read from the record | 2: DL3 (the queued GET_MILAN_INFO runs and answers SUCCESS, one redirect) |
 | `dl-boot-hold-not-exempt` | pp_top `d3` | rule (d)'s exception removed: the command held through the boot keeps its stamped deadline | 1: D3O6 (the command held 150 ms is answered by the forced response, not byte-exact) |
 | `dl-gdi-runs-on` | pp_top `deadline` | the GET_DYNAMIC_INFO voids removed | 4: DL4 (the batch keeps copying, no answer inside the wait), DL5 |
-| `dl-edit-preempted` | pp_top `deadline` | the edit, registry and lock commands preempted like the rest | 2: DL6 (ENTITY_MISBEHAVING mid-validation, no record committed) |
+| `dl-edit-preempted` | pp_top `deadline` | the edit, registry and lock commands preempted like the rest | 6: DL6 (ENTITY_MISBEHAVING mid-validation, no record committed), DL10 x4 |
+| `dl-registry-preempted` | pp_top `deadline` | REGISTER/DEREGISTER preempted like the rest | 2: DL10 (the queued REGISTER answers status 10 and never registers) |
+| `dl-lock-preempted` | pp_top `deadline` | LOCK_ENTITY preempted like the rest | 2: DL10 (the queued LOCK_ENTITY answers status 10 and the lock is not held) |
+| `dl-kill-ack-keeps-owner` | pp_top `deadline` | an honoured kill no longer ends the AECP owner | 2: DL1 (the RX-slot return releases the freed id again), DL11 (19 such releases in the section) |
 | `dl-preempt-after-effect-top` | pp_top `deadline` | the µCPU redirects after an effect op | 2: DL2 (the SET_NAME that wrote its name answers ENTITY_MISBEHAVING) |
 | `dl-mvu-forced-status-10` | pp_top `deadline` | the forced answer left at status 10 for every message type | 5: DL3 (status 10, which Milan Table 5.19 reserves), DL9 x4 |
 | `dl-non-aem-forced-status-10` | pp_top `deadline` | the forced NOT_IMPLEMENTED answer for MVU alone (the round-1 rule) | 4: DL9, ADDRESS_ACCESS, AVC, HDCP_APM and EXTENDED each answered status 10 |
