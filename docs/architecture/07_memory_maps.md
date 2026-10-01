@@ -284,16 +284,16 @@ where caching the image is not — and a located descriptor is fetched **once, a
 single burst**, into a `LINE_BYTES_P` line buffer that every subsequent `READ_STATE` /
 `COPY_BUFFER` beat reads on chip. One command pays one memory latency, not one per
 byte. `LINE_BYTES_P` defaults to 576 = the largest descriptor §3.2 can produce, rounded
-to the [03 §2](03_packet_engine.md) slot size. The legal line is `P-DESC-LINE-BYTES`
-([F01.5](../architecture/01_overview.md#fig-01-params)): a multiple of 8 from 576 to 1008,
-and `KL_aecp_engine` refuses any other at elaboration with a message naming the top's
-`DESC_LINE_BYTES_P`. Below 576 the response reservation (§3.3.2) cannot hold a whole
-GET_AUDIO_MAP page; above 1008 it passes the 1024 bytes the response cursor addresses. That worst case is a
+to the [03 §2](03_packet_engine.md) slot size. That worst case is a
 STREAM_INPUT/OUTPUT at Table 7-8's caps of F ≤ 47 formats and R ≤ 8 redundant streams:
 138 + 8·47 + 2·8 = 530 B. The Annex C layout of the Δ note is 2 B shorter at the same
-caps (528 B), so 576 covers a model assembled either way. A descriptor longer than
-the line is refused at load time (header `desc_max_len`) and at locate time, never
-truncated.
+caps (528 B), so 576 covers a model assembled either way. The legal line is
+`P-DESC-LINE-BYTES` ([F01.5](../architecture/01_overview.md#fig-01-params)): a multiple
+of 8 from 576 to 1008, and `KL_aecp_engine` refuses any other at elaboration with a
+message naming the top's `DESC_LINE_BYTES_P`. Below 576 the response reservation
+(§3.3.2) cannot hold a whole GET_AUDIO_MAP page; above 1008 it passes the 1024 bytes the
+response cursor addresses. A descriptor longer than the line is refused at load time
+(header `desc_max_len`) and at locate time, never truncated.
 
 The writable name table is loaded into its own on-chip overlay during the same
 validation walk. A request can carry at most 511 beats, so the loader uses
