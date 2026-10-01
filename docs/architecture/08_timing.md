@@ -185,15 +185,29 @@ runs. The wait is bounded by the queue, and it is measured above; it is
 recorded as a finding, not changed here.
 
 `T-BUDGET-ACMP-RESP` is measured beside AECP work an ACMP transaction does not
-conflict with. One that conflicts with an AECP hold under F03.7 (a
-SET_CONFIGURATION barrier, a LOCK_ENTITY against a stream step, or an AECP
-command on the same stream key, [03 §6](03_packet_engine.md)) waits at
-admission for that hold to end, and the hold is bounded only by the AECP
-command's own budget: up to `T-BUDGET-AECP-WC` from the AECP command's
-reception plus its forced response, a few milliseconds. Such an ACMP answer can
-therefore come later than the 50 ms design budget, though inside `T-ACMP-CMD`
-of the first attempt. Section HZ grades that the ACMP transaction waits; how
-long it waits is not measured.
+conflict with. One that conflicts with an AECP hold under F03.7 waits at
+admission for that hold to end ([03 §6](03_packet_engine.md)). The holds it can
+meet are a SET_CONFIGURATION barrier, a LOCK_ENTITY against a stream step, an
+ADD/REMOVE_AUDIO_MAPPINGS against any stream step (the `MAP_CFG` class-wide
+cross-lock), and an AECP command on the same stream key. The AECP command
+bounds each hold in one of two ways:
+
+- A command the deadline preempts holds until its forced response at the
+  latest: up to `T-BUDGET-AECP-WC` from its reception, plus the op in progress
+  and the forced response, a few milliseconds (above).
+- LOCK_ENTITY and ADD/REMOVE_AUDIO_MAPPINGS are never preempted, because their
+  change rides a gather face ([06 §8.1](06_aecp_engine.md)). Past their
+  deadline they run the rest of their own program to its END. The engine's
+  shared gather watchdog bounds each face wait in it, at `DESC_MEM_TMO_CYC_P`
+  = 4,096 clocks at this top. LOCK_ENTITY makes two registry-face waits, about
+  82 µs at `P-CLK-HZ`. A mapping edit of N mappings makes at most 2N + 3
+  edit-face waits. N is at most 63, because the engine refuses a cdl past 524,
+  so that is at most 528,384 clocks, about 5.3 ms. REGISTER and DEREGISTER,
+  also never preempted, meet no ACMP transaction.
+
+Such an ACMP answer can therefore come later than the 50 ms design budget,
+though inside `T-ACMP-CMD` of the first attempt. Section HZ grades that the
+ACMP transaction waits; how long it waits is not measured.
 
 ## 5. Timer allocation and sizing
 

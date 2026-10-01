@@ -11354,7 +11354,8 @@ struct DeadlinePhase {
         {"a response-memory read error", &H::rmem_rerr, 0},
         {"a response-memory write error", &H::rmem_werr, 0},
         {"a tied-off response memory", &H::rmem_off, 0},
-        {"a read error under a 540-byte command", &H::rmem_rerr, 532},
+        {"a read error under a command padded to 540 payload bytes",
+         &H::rmem_rerr, 532},
     };
     uint16_t s = 0xD801;
     for (const Fault& x : faults) {

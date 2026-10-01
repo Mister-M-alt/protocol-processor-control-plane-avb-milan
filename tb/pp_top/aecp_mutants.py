@@ -65,8 +65,8 @@ MUTANTS = [
      "DL8 a response-memory read error: GET_MILAN_INFO answers MVU "
      "NOT_IMPLEMENTED"),
     ("mvu-echo-slot-std", "mvu-echo-slot-std", "pp_top", "deadline",
-     "DL8 a read error under a 540-byte command: GET_MILAN_INFO answers MVU "
-     "NOT_IMPLEMENTED"),
+     "DL8 a read error under a command padded to 540 payload bytes: "
+     "GET_MILAN_INFO answers MVU NOT_IMPLEMENTED"),
     ("mvu-silent", "mvu-silent", "pp_top", "budget",
      "TB1 GET_MILAN_INFO at the suite latency"),
     ("fanout-never-ends", "fanout-never-ends", "pp_top", "budget",
