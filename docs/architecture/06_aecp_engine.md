@@ -782,9 +782,12 @@ area, `identify_button_i` not read). With it, a press of the 2FF-synchronised
 `identify_button_i` sends three u = 1 IDENTIFY_NOTIFICATION responses to
 91-E0-F0-01-00-01 with controller_entity_id 90-E0-F0-FF-FE-01-00-01 and descriptor
 CONTROL / `identify_index_i`, all at identifySequenceID (0 from reset, +1 per burst),
-spaced `T-IDENT-BURST` through the IDENT-BURST singleton; while the button is held the
-next burst starts `T-IDENT-REARM` after the previous one's first frame (IDENT-REARM),
-and a release returns to WAITING without cutting a burst short. Graded on the wire in
+each due `T-IDENT-BURST` after the previous one left the processor (its last byte to
+the MAC; IDENT-BURST singleton), so a busy lane or a stalled MAC delays the rest of a
+burst and never shortens a gap; while the button is held the next burst starts
+`T-IDENT-REARM` after the previous one's first frame (IDENT-REARM) and no sooner than
+`T-IDENT-BURST` after its third, and a release returns to WAITING without cutting a
+burst short. Graded on the wire in
 the `tb/pp_top` third build (section ID) and silent at 0 (section ID0); the command
 form keeps its `BAD_ARGUMENTS` (A6, ID4). **What identify work remains:** none in this
 repository. Adopting it is the integrator's: a debounced board button on

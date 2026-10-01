@@ -1324,22 +1324,25 @@ The wrap adds `identify_button_i` and sets the parameter only under
 IEEE 1722.1-2021 §7.4.39.1 (Figure 7-61), §7.5.1, §7.5.1.2.1 and Figure 7-142;
 Milan §5.4.5.4. The expected frame is `aecp_frame(91-E0-F0-01-00-01, own MAC,
 AEM_RESPONSE, SUCCESS, entity_id, 90-E0-F0-FF-FE-01-00-01, seq, 0x0026, {CONTROL,
-IDIX})` with u = 1: 42 bytes padded to 60, cdl 16. Spacing is graded at least the
-T- value (150 ms = 15,000 clocks, 1 s = 100,000 clocks) and at most `SLACK` = 300
-clocks more: one tick of the ms timebase (the burst's t0 is the first frame's next
-ms boundary) plus the job's build and serialization, measured at 164 clocks here.
+IDIX})` with u = 1: 42 bytes padded to 60, cdl 16. Every frame is due
+T-IDENT-BURST after the previous one left (its last byte to the MAC), so spacing
+is graded at least the T- value (150 ms = 15,000 clocks, 1 s = 100,000 clocks) and
+at most `SLACK` = 400 clocks more: one tick of the ms timebase (each deadline
+counts from the next ms boundary after a departure), the sweep's walk to the
+identify slots (at most 91 cycles) and the job's build and serialization (under
+200 clocks here). The largest gap measured in the section is 15,309 clocks.
 
 - **ID1** one press (40 ms): exactly three frames, each byte-exact at sequence_id
-  0, gaps of 15,264 and 15,000 clocks (the third frame's deadline chains from the
-  same t0, so its gap is exact), and nothing else on the wire; no controller is
-  registered.
+  0, gaps of 15,264 and 15,300 clocks, and nothing else on the wire; no controller
+  is registered.
 - **ID2** held 2.5 s: three bursts, sequence_id 1, 2, 3 (one per burst), each
-  spaced as ID1, each burst 100,000 to 100,300 clocks after the previous one's
-  first frame (Figure 7-142's timeout), and none after the release.
+  spaced as ID1, each burst 100,000 to 100,400 clocks after the previous one's
+  first frame (Figure 7-142's timeout; 100,265 and 100,300 measured), and none
+  after the release.
 - **ID3** a release and a press inside a burst: the running burst is not cut
-  (sequence_id 4, three frames), the new press's burst (sequence_id 5) follows its
-  third frame at once (106 clocks), and the second release stops it before its
-  timeout.
+  (sequence_id 4, three frames), the new press's burst (sequence_id 5) starts
+  T-IDENT-BURST after its third frame left (15,301 clocks), and the second release
+  stops it before its timeout.
 - **ID4** the controller-to-entity forms start nothing: IDENTIFY_NOTIFICATION as a
   command still answers BAD_ARGUMENTS byte-exact (§7.4.39.2, the A6 contract in
   this build), and SET_CONTROL IDENTIFY 255 and back to 0 sends no frame to the
@@ -1348,11 +1351,33 @@ ms boundary) plus the job's build and serialization, measured at 164 clocks here
   delays the burst by at most two fan-out frames (the job in flight and the one
   the engine already took), the burst keeps its bytes and spacing, all fifteen
   rows receive their notification byte-exact, and the next fan-out is at
-  sequence_id 1 on every row: the identify job touched none.
+  sequence_id 1 on every row: the identify job touched none. **ID5i-ID5l** (the
+  shape of review R421-1's probe P1): a fan-out fed 550, 300 and 50 ms-ticks before
+  frame 2 is due (frame 1 + 14,450, 14,700 and 14,950 clocks) holds the engine, so
+  frame 2 leaves late (gap 1->2 up to 16,147 clocks, ID5l: some fan-out did delay
+  it); frame 3 is due T-IDENT-BURST after frame 2 left, so no gap is short (the
+  smallest of the six is 15,240; a deadline chained from the first frame leaves
+  14,109).
 - **ID6** a press before the restore (AECP held from reset): nothing leaves while
   held; at the release the burst goes out at sequence_id 0 (the reset restarted
-  identifySequenceID, §7.5.1) and keeps its spacing: a held engine delays a burst
-  but never bunches it.
+  identifySequenceID, §7.5.1) and keeps its spacing. The hold is before the first
+  frame; ID7 grades a stall between frames.
+- **ID7** a TX stall mid-burst (the MAC's `tx_ready_i` low, as a full MAC FIFO
+  holds it), sequence_ids 1 to 5 after ID6's reset. The engine retires a job at
+  its lane grant, so a stall can hold a frame the engine has already let go:
+  - **ID7-ID7e** 400 ms inside frame 1: frame 1 leaves 40,167 clocks after the
+    press, and frame 2 follows it by 15,270 (not 63, as from the retirement);
+  - **ID7f-ID7i** 400 ms after frame 1 (review R420-1's probe): gap 1->2 40,093,
+    gap 2->3 15,264 (not 164, as from t0);
+  - **ID7j-ID7m** 250 ms after frame 2: gaps 15,290 and 25,093;
+  - **ID7n-ID7t** held through 900 ms after frame 1, so Figure 7-142's timeout
+    passes before the third frame leaves: gaps 90,060 and 15,273, then the next
+    burst T-IDENT-BURST after the third frame (15,301, not at once), spaced as
+    ID1 and still at least T-IDENT-REARM after the first frame.
+
+  On the round-1 RTL (every frame from t0, the next burst at once) the section
+  fails seven checks: ID3f (106 clocks), ID5k (14,109), ID7d (63), ID7e (207),
+  ID7i (164), ID7q (63) and ID7r (10,111).
 
 ### Section ID0: the default build (the parameter at 0)
 
@@ -1426,19 +1451,24 @@ monitor's 30 s floor, so no CONTROLLER_AVAILABLE is due).
 `python3 tb/pp_top/notify_mutants.py --output DIR` plants each control in a
 private copy (the `d3_mutants.py` rules: exact edits, goldens first, KILLED only
 with a completed run, a non-zero exit and every named check failing). Results at
-the lane head, 30 of 30 KILLED:
+the lane head, 34 of 34 KILLED (the four `ident_*` controls after
+`ident_t0_at_request` are round 2's):
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
-| `ident_two_frames` | a burst of two | 19, ID1 first |
-| `ident_seq_per_frame` | identifySequenceID per frame | 22, ID1b first |
-| `ident_no_rearm` | IDENT-REARM never armed | 12, ID2 first |
-| `ident_rearm_from_third_frame` | re-arm at t0 + 1.3 s | 12, ID2 and ID2d |
-| `ident_burst_100ms` | T-IDENT-BURST 100 ms | 20, ID1c first |
-| `ident_t0_at_request` | t0 at the press, not the first frame | 22, ID6d among them |
-| `ident_cut_on_release` | a release ends the burst | 22, ID1 first |
+| `ident_two_frames` | a burst of two | 21, ID1 first |
+| `ident_seq_per_frame` | identifySequenceID per frame | 46, ID1b first |
+| `ident_no_rearm` | IDENT-REARM never armed | 22, ID2 first |
+| `ident_rearm_from_third_frame` | re-arm at t0 + 1.3 s | 22, ID2 and ID2d |
+| `ident_burst_100ms` | T-IDENT-BURST 100 ms | 27, ID1c first |
+| `ident_t0_at_request` | t0 at the press, not the first frame's departure | 22, ID2d (burst 3) among them |
+| `ident_burst_from_t0` | frames 2 and 3 due t0 + 150 and t0 + 300 ms (round 1's schedule) | 5: ID3f, ID5k, ID7i, ID7q, ID7r |
+| `ident_departure_is_retirement` | the departure taken at the engine's retirement (the lane grant) | 2: ID7d, ID7q |
+| `ident_departure_unwired` | `uns_tx_busy_i` tied 0 at the top | 2: ID7d, ID7q |
+| `ident_next_burst_at_once` | the next burst not held for T-IDENT-BURST after a third frame | 2: ID3f, ID7r |
+| `ident_cut_on_release` | a release ends the burst | 25, ID1 first |
 | `ident_release_ignored` | a release never returns to WAITING | 35, ID1 first |
-| `ident_unicast_da` | the job's DA is the registry tuple's | 7, ID1 first |
+| `ident_unicast_da` | the job's DA is the registry tuple's | 11, ID1 first |
 | `ident_face_taken_mid_job` | the uns face taken while a registry job is presented | 3: ID5b, ID5c, ID5f |
 | `ident_built_at_default` | the sequencer built at the default | 2: ID0, ID0b |
 | `enq_dropped_configuration` | E_SCFG's NOTIFY_ENQ a NOP | 2: NP1, NP1b |

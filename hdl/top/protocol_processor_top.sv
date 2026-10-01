@@ -3220,6 +3220,7 @@ module protocol_processor_top
   logic [63:0] aecp_rgy_eid_w, aecp_rgy_data_w;
   logic [47:0] aecp_rgy_mac_w;
   logic        uns_valid_w, uns_done_w;
+  logic        uns_tx_busy_w;          // the identify schedule's departure (below)
   logic [3:0]  uns_kind_w;
   logic [15:0] uns_dt_w, uns_di_w, uns_seq_w;
   logic [15:0] uns_arg0_w, uns_arg1_w;
@@ -3866,6 +3867,7 @@ module protocol_processor_top
       .uns_arg0_o            (uns_arg0_w),
       .uns_arg1_o            (uns_arg1_w),
       .uns_done_i            (uns_done_w),
+      .uns_tx_busy_i         (uns_tx_busy_w),
       .amap_busy_o           (ntfy_amap_busy_w),
       .lock_held_o           (ntfy_lock_held_w),
       .lock_ctlr_o           (ntfy_lock_ctlr_w),
@@ -4302,6 +4304,25 @@ module protocol_processor_top
       .tx_eof_o    (arb_tx_eof_w),
       .tx_ready_i  (arb_tx_ready_w)
   );
+
+  //! The departure of an unsolicited AECP frame, for the identify sequencer
+  //! (IEEE 1722.1-2021 7.5.1: a 150 ms delay between transmissions). The
+  //! engine retires a job at its lane grant, while a stalled MAC can still
+  //! hold the frame; grants are frame-atomic (the shim below relies on the
+  //! same), so the first eof the MAC takes after a LANE_AECP_UNS grant is that
+  //! frame's last byte. Built only with P-EN-IDENTIFY-NOTIFICATION.
+  if (EN_IDENTIFY_NOTIF_P) begin : gen_uns_departure
+    logic busy_r;
+    always_ff @(posedge clk_i) begin : uns_departure
+      if (!rst_n)                                  busy_r <= 1'b0;
+      else if (arb_gnt_w[LANE_AECP_UNS_C])         busy_r <= 1'b1;
+      else if (arb_tx_valid_w && arb_tx_eof_w && arb_tx_ready_w)
+                                                   busy_r <= 1'b0;
+    end
+    assign uns_tx_busy_w = busy_r;
+  end else begin : gen_no_uns_departure
+    assign uns_tx_busy_w = 1'b0;
+  end
 
   // ---- ACMP Ethernet-header prepend shim (banner): lanes 2/5 carry bare
   // 56-byte ACMPDUs (the listener and the talker builder commit PDUs, ADP

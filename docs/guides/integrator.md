@@ -297,7 +297,9 @@ at 1 while the user wants the entity to report itself to the controllers (Milan
 §5.4.5.4, the entity-to-controller direction; the IDENTIFY control is the other one and
 does not use this pin). It is a level, taken through a two-flop synchroniser inside the
 processor. **Debounce it yourself**: a bounce reads as a release and a new press, and a
-new press after a release starts another burst as soon as the running one ends. With
+new press after a release starts another burst `T-IDENT-BURST` after the running one
+ends. A stalled `tx_ready_i` delays the frames behind it and never bunches them: each
+frame is due `T-IDENT-BURST` after the previous one's last byte left. With
 `EN_IDENTIFY_NOTIF_P` = 0, the default, the pin is never read: tie it to `1'b0`. A burst
 needs no registered controller and is not refused by a controller's lock; it goes to
 the multicast address with the IDENTIFY control's index from `identify_index_i`.

@@ -58,11 +58,13 @@ TOP = "hdl/top/protocol_processor_top.sv"
 ORIG = "hdl/packet_engine/KL_pp_originator.sv"
 
 FRAME2 = ("              end else if (ix_r == 2'd1) begin\n"
-          "                armb_r  <= 1'b1;\n"
           "                ix_r    <= 2'd2;\n"
           "                i_st_r  <= I_GAP;\n")
 T0 = "                t0_r    <= now_ms_i + 32'd1;\n"
-WAIT = "          I_WAIT: if (btn_q2_r) begin\n            job_r  <= 1'b1;\n"
+WAIT = "          I_WAIT: if (btn_q2_r && !gap_r) begin\n            job_r  <= 1'b1;\n"
+BURST_DL = "    assign id_arm_deadline_w = armb_r ? now_ms_i + 32'(IDENT_BURST_MS_C + 1)\n"
+DEPART = "    assign dep_w   = (done_w || left_r) && !uns_tx_busy_i;\n"
+HOLD_GO = "            end else if ((rel_r || fired_r || exp_r_w) && !gap_r) begin\n"
 HOLD = ("            if (!btn_q2_r) begin\n"
         "              i_st_r <= I_WAIT;        // !identifyButtonPressed\n")
 TAKE = ("                  lockx_eid_r <= rgy_eid_i;\n"
@@ -91,8 +93,8 @@ IDENTIFY = (
         (NTFY, "                armr_r  <= 1'b1;\n", ""),),
         ("ID2: held 2.5 s",)),
     Mutant("ident_rearm_from_third_frame", IDENT, (
-        (NTFY, "    assign id_arm_deadline_w = t0_r + (!armb_r        ? 32'(IDENT_REARM_MS_C)\n",
-         "    assign id_arm_deadline_w = t0_r + (!armb_r        ? 32'(IDENT_REARM_MS_C + 2 * IDENT_BURST_MS_C)\n"),),
+        (NTFY, "                                      : t0_r + 32'(IDENT_REARM_MS_C);\n",
+         "                                      : t0_r + 32'(IDENT_REARM_MS_C + 2 * IDENT_BURST_MS_C);\n"),),
         ("ID2: held 2.5 s", "ID2d: burst 2 starts")),
     Mutant("ident_burst_100ms", IDENT, (
         (NTFY, "  localparam int unsigned IDENT_BURST_MS_C = 150;\n",
@@ -100,9 +102,25 @@ IDENTIFY = (
         ("ID1c:",)),
     Mutant("ident_t0_at_request", IDENT, (
         (NTFY, T0, ""),
-        (NTFY, WAIT, "          I_WAIT: if (btn_q2_r) begin\n            t0_r   <= now_ms_i + 32'd1;\n"
+        (NTFY, WAIT, "          I_WAIT: if (btn_q2_r && !gap_r) begin\n            t0_r   <= now_ms_i + 32'd1;\n"
                      "            job_r  <= 1'b1;\n")),
-        ("ID6d:",)),
+        ("ID2d: burst 3 starts",)),
+    # round 2 (R420-1 F1, R421-1 F1): every frame from the previous one's departure
+    Mutant("ident_burst_from_t0", IDENT, (
+        (NTFY, BURST_DL, "    assign id_arm_deadline_w = armb_r ? t0_r + ((ix_r == 2'd1) ? 32'(IDENT_BURST_MS_C)\n"
+                         "                                                             : 32'(2 * IDENT_BURST_MS_C))\n"),),
+        ("ID7i:", "ID5k:")),
+    Mutant("ident_departure_is_retirement", IDENT, (
+        (NTFY, DEPART, "    assign dep_w   = done_w;\n"),),
+        ("ID7d:",)),
+    Mutant("ident_departure_unwired", IDENT, (
+        (TOP, "      .uns_tx_busy_i         (uns_tx_busy_w),\n",
+         "      .uns_tx_busy_i         (1'b0),\n"),),
+        ("ID7d:",)),
+    Mutant("ident_next_burst_at_once", IDENT, (
+        (NTFY, HOLD_GO, "            end else if (rel_r || fired_r || exp_r_w) begin\n"),
+        (NTFY, WAIT, "          I_WAIT: if (btn_q2_r) begin\n            job_r  <= 1'b1;\n")),
+        ("ID3f:", "ID7r:")),
     Mutant("ident_cut_on_release", IDENT, (
         (NTFY, "          I_GAP: begin\n            if (!btn_q2_r) rel_r <= 1'b1;\n",
          "          I_GAP: begin\n            if (!btn_q2_r) i_st_r <= I_WAIT;\n"),),

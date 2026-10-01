@@ -151,16 +151,23 @@
 //                specific). A press sends txIdentify()'s three frames
 //                (SS7.5.1.2.1) to the Table B.1 address with the Table 7-180
 //                controller_entity_id, all carrying identifySequenceID, which
-//                counts one per burst from 0 at reset. The burst's first
-//                frame sets t0 (the next ms boundary) when the engine retires
-//                it; the second and third are due at t0 + T-IDENT-BURST and
-//                t0 + 2 x T-IDENT-BURST, and each is armed only once the
-//                frame before it has gone, so a held engine delays a burst
-//                but never bunches it.
-//                t0 + T-IDENT-REARM is Figure 7-142's timeout: a button still
-//                held then starts the next burst; a release returns to
+//                counts one per burst from 0 at reset. Every frame is
+//                scheduled from the DEPARTURE of the one before it: the
+//                engine retires a job when the TX arbiter grants its frame,
+//                but a stalled MAC can still hold that frame, so the
+//                sequencer waits for uns_tx_busy_i to fall (the frame's last
+//                byte left the processor) and only then arms IDENT-BURST,
+//                due T-IDENT-BURST after the next ms boundary. A late frame
+//                therefore delays the rest of the burst and never shortens a
+//                gap below T-IDENT-BURST; that gap also holds from a burst's
+//                third frame to the next burst's first, so a TX stall long
+//                enough to outlast the timeout cannot bunch two bursts.
+//                The first frame's departure sets t0 (its next ms boundary),
+//                and t0 + T-IDENT-REARM is Figure 7-142's timeout: a button
+//                still held then starts the next burst; a release returns to
 //                WAITING, and a release and a press inside a burst start the
-//                next one as soon as it ends (a burst is never cut short).
+//                next one T-IDENT-BURST after it ends (a burst is never cut
+//                short).
 //                Both timers are the shared service's IDENT-BURST and
 //                IDENT-REARM singletons (F08.4), armed through this block's
 //                one arm output in a cycle the registry machine leaves free.
@@ -278,6 +285,9 @@ module KL_aecp_notify
     output logic [15:0] uns_arg0_o,
     output logic [15:0] uns_arg1_o,
     input  wire         uns_done_i,          //! engine retired the job (sent or voided)
+    //! an unsolicited frame is granted and its last byte has not left yet
+    //! (read only with EN_IDENTIFY_NOTIF_P: the identify frame's departure)
+    input  wire         uns_tx_busy_i,
     output logic        amap_busy_o,         //! preserve the engine staging RAM
 
     //! ---- lock state, published (06 SS6.4 consumers: engine + listener A1) ----
@@ -693,21 +703,23 @@ module KL_aecp_notify
   if (EN_IDENTIFY_NOTIF_P) begin : gen_ident
     //! Figure 7-142 WAITING; IDENTIFY split into its frames and their gaps
     localparam logic [1:0] I_WAIT = 2'd0;   // WAITING
-    localparam logic [1:0] I_SEND = 2'd1;   // a frame is with the engine
+    localparam logic [1:0] I_SEND = 2'd1;   // a frame is with the engine, then leaving
     localparam logic [1:0] I_GAP  = 2'd2;   // T-IDENT-BURST to the next frame
     localparam logic [1:0] I_HOLD = 2'd3;   // burst sent, until the timeout
     logic [1:0]  i_st_r;
     logic        btn_q1_r, btn_q2_r;   //! the 2FF synchroniser
     logic        job_r;                //! a frame is owed to the engine
     logic        own_r;                //! ... and holds the uns face
+    logic        left_r;               //! retired; its frame is still in the TX path
     logic [1:0]  ix_r;                 //! the frame of the burst: 0, 1, 2
     logic [15:0] seq_r;                //! identifySequenceID
-    logic [31:0] t0_r;                 //! the burst's first frame, ms
+    logic [31:0] t0_r;                 //! the burst's first frame left, ms
     logic        gen_r;                //! the REARM generation armed last
     logic        rel_r;                //! a release seen inside the burst
     logic        fired_r;              //! REARM expired: timeout <= currentTime
+    logic        gap_r;                //! T-IDENT-BURST from the last departure runs
     logic        armb_r, armr_r;       //! a BURST / REARM arm is owed
-    logic        exp_b_w, exp_r_w, done_w;
+    logic        exp_b_w, exp_r_w, done_w, dep_w;
     logic [7:0]  rearm_owner_w;
 
     assign rearm_owner_w = PP_OWN_IDENT_C + 8'd1 + {7'd0, gen_r};
@@ -716,6 +728,9 @@ module KL_aecp_notify
     assign exp_r_w = tmr_exp_valid_i && (tmr_exp_owner_i == rearm_owner_w)
                      && (tmr_exp_slot_i == TMR_AW_C'(TMR_IDENT_SLOT_P + 1));
     assign done_w  = own_r && uns_done_i;
+    //! the frame this job built has left: its last byte went to the MAC, or
+    //! the job retired with nothing granted (the TX path is idle at once)
+    assign dep_w   = (done_w || left_r) && !uns_tx_busy_i;
 
     assign id_own_w          = own_r;
     assign core_done_w       = uns_done_i && !own_r;
@@ -723,9 +738,10 @@ module KL_aecp_notify
     assign id_arm_slot_w     = armb_r ? TMR_AW_C'(TMR_IDENT_SLOT_P)
                                       : TMR_AW_C'(TMR_IDENT_SLOT_P + 1);
     assign id_arm_owner_w    = armb_r ? PP_OWN_IDENT_C : rearm_owner_w;
-    assign id_arm_deadline_w = t0_r + (!armb_r        ? 32'(IDENT_REARM_MS_C)
-                                     : (ix_r == 2'd1) ? 32'(IDENT_BURST_MS_C)
-                                                      : 32'(2 * IDENT_BURST_MS_C));
+    //! BURST is armed at or after the departure, so its deadline from the
+    //! next ms boundary is at least T-IDENT-BURST after the frame left
+    assign id_arm_deadline_w = armb_r ? now_ms_i + 32'(IDENT_BURST_MS_C + 1)
+                                      : t0_r + 32'(IDENT_REARM_MS_C);
 
     assign uns_valid_o      = own_r || (n_st_r == N_EMIT_WAIT);
     assign uns_kind_o       = own_r ? PP_UNS_IDENT_C : em_kind_r;
@@ -742,12 +758,14 @@ module KL_aecp_notify
         btn_q2_r <= 1'b0;
         job_r    <= 1'b0;
         own_r    <= 1'b0;
+        left_r   <= 1'b0;
         ix_r     <= 2'd0;
         seq_r    <= 16'd0;             // SS7.5.1: zero at power up or reboot
         t0_r     <= 32'd0;
         gen_r    <= 1'b0;
         rel_r    <= 1'b0;
         fired_r  <= 1'b0;
+        gap_r    <= 1'b0;
         armb_r   <= 1'b0;
         armr_r   <= 1'b0;
       end else begin
@@ -764,9 +782,13 @@ module KL_aecp_notify
           own_r <= 1'b0;
           job_r <= 1'b0;
         end
+        //! the face is free at retirement; the schedule waits for the frame
+        if (dep_w)       left_r <= 1'b0;
+        else if (done_w) left_r <= 1'b1;
+        if (exp_b_w) gap_r <= 1'b0;
         if (exp_r_w && (i_st_r != I_WAIT)) fired_r <= 1'b1;
         unique case (i_st_r)
-          I_WAIT: if (btn_q2_r) begin
+          I_WAIT: if (btn_q2_r && !gap_r) begin
             job_r  <= 1'b1;
             ix_r   <= 2'd0;
             rel_r  <= 1'b0;
@@ -774,22 +796,25 @@ module KL_aecp_notify
           end
           I_SEND: begin
             if (!btn_q2_r) rel_r <= 1'b1;
-            if (done_w) begin
+            if (dep_w) begin
+              //! SS7.5.1: "a 150 ms delay between transmissions". The next
+              //! frame, or the next burst's first, is due T-IDENT-BURST
+              //! after this one LEFT, whenever that was
+              armb_r <= 1'b1;
+              gap_r  <= 1'b1;
               if (ix_r == 2'd0) begin
                 //! Figure 7-142 IDENTIFY: timeout = currentTime + 1 s, from
                 //! the first frame. t0 is the NEXT boundary of the ms
-                //! timebase, so every delay below is at least its T- value
-                //! and under one tick more. A new generation, so a REARM
-                //! armed for an abandoned wait can never pass for this one
+                //! timebase, so the timeout is at least T-IDENT-REARM and
+                //! under one tick more. A new generation, so a REARM armed
+                //! for an abandoned wait can never pass for this one
                 t0_r    <= now_ms_i + 32'd1;
                 gen_r   <= !gen_r;
                 fired_r <= 1'b0;
-                armb_r  <= 1'b1;
                 armr_r  <= 1'b1;
                 ix_r    <= 2'd1;
                 i_st_r  <= I_GAP;
               end else if (ix_r == 2'd1) begin
-                armb_r  <= 1'b1;
                 ix_r    <= 2'd2;
                 i_st_r  <= I_GAP;
               end else begin
@@ -809,7 +834,7 @@ module KL_aecp_notify
           I_HOLD: begin
             if (!btn_q2_r) begin
               i_st_r <= I_WAIT;        // !identifyButtonPressed
-            end else if (rel_r || fired_r || exp_r_w) begin
+            end else if ((rel_r || fired_r || exp_r_w) && !gap_r) begin
               job_r  <= 1'b1;          // a new press, or timeout <= currentTime
               ix_r   <= 2'd0;
               rel_r  <= 1'b0;
@@ -822,7 +847,8 @@ module KL_aecp_notify
     end
   end else begin : gen_no_ident
     //! P-EN-IDENTIFY-NOTIFICATION = 0: the registry machine alone drives the
-    //! face, and identify_button_i and identify_index_i are never read
+    //! face, and identify_button_i, identify_index_i and uns_tx_busy_i are
+    //! never read
     assign id_own_w          = 1'b0;
     assign id_arm_gnt_w      = 1'b0;
     assign id_arm_slot_w     = '0;

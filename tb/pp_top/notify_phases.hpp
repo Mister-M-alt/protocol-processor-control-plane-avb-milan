@@ -161,15 +161,20 @@ struct NotifyBench {
 // The bench compresses 1 ms to 100 clocks, so the job's own build (the
 // µprogram, the response-memory round trip, the TX slot) is visible beside
 // T-IDENT-BURST: spacing is graded as at least the T- value and at most one
-// tick of the ms timebase plus that build (SLACK) more.
+// tick of the ms timebase, the timer sweep and that build (SLACK) more. Every
+// frame is due T-IDENT-BURST after the one before it LEFT (its last byte), so
+// a stalled MAC or a busy lane delays the rest of a burst and never shortens
+// a gap (ID5i, ID7).
 struct IdentifyPhase : NotifyBench {
   static constexpr uint64_t IDENT_MAC = 0x91E0F0010001ull;      // Table B.1
   static constexpr uint64_t IDENT_EID = 0x90E0F0FFFE010001ull;  // Table 7-180
   static constexpr long BURST = 150L * MS_CYC;                  // T-IDENT-BURST
   static constexpr long REARM = 1000L * MS_CYC;                 // T-IDENT-REARM
-  //! one tick (100 clocks) plus the job's build and serialization in this
-  //! bench (measured at under 200 clocks, README section ID)
-  static constexpr long SLACK = 300;
+  //! one tick (100 clocks: a deadline counts from the next ms boundary after
+  //! the departure), the sweep's walk to the identify slots (at most 91
+  //! cycles, F08.4) and the job's build and serialization in this bench
+  //! (measured at under 200 clocks, README section ID)
+  static constexpr long SLACK = 400;
 
   using NotifyBench::NotifyBench;
 
@@ -196,7 +201,7 @@ struct IdentifyPhase : NotifyBench {
       if (v[i].f != ident(seq)) { dump("got", v[i].f); dump("exp", ident(seq)); }
     }
   }
-  //! the two gaps of the burst at v[first] are T-IDENT-BURST, never less
+  //! the two gaps of the burst at v[first] are T-IDENT-BURST, at most SLACK more
   void burst_spacing(const std::vector<Seen>& v, size_t first, const char* tag) {
     if (first + 2 < v.size())
       printf("  [i] %s: gaps %ld and %ld clocks\n", tag,
@@ -206,7 +211,7 @@ struct IdentifyPhase : NotifyBench {
       const long gap = long(v[k + 1].t - v[k].t);
       CHECK(gap >= BURST && gap <= BURST + SLACK,
             "%s: frame %zu to %zu spaced %ld clocks, want T-IDENT-BURST %ld "
-            "to %ld (150 ms at 100 clocks/ms, never less)", tag, k - first + 1,
+            "to %ld (150 ms at 100 clocks/ms)", tag, k - first + 1,
             k - first + 2, gap, BURST, BURST + SLACK);
     }
   }
@@ -282,9 +287,10 @@ struct IdentifyPhase : NotifyBench {
     burst_spacing(v, 3, "ID3e");
     const long gap = long(v[3].t - v[2].t);
     printf("  [i] ID3f: the new burst follows the third frame by %ld clocks\n", gap);
-    CHECK(gap <= SLACK, "ID3f: the new press's burst follows the running "
-          "one's third frame at once (WAITING, then IDENTIFY), %ld clocks "
-          "later", gap);
+    CHECK(gap >= BURST && gap <= BURST + SLACK, "ID3f: the new press's burst "
+          "starts T-IDENT-BURST after the running one's third frame left "
+          "(WAITING, then IDENTIFY; never two frames closer), %ld clocks, want "
+          "%ld to %ld", gap, BURST, BURST + SLACK);
   }
 
   // ---- ID4: the controller-to-entity forms start nothing ---------------
@@ -312,6 +318,20 @@ struct IdentifyPhase : NotifyBench {
           "IDENTIFY control (the controller-to-entity direction, Milan "
           "5.4.5.4) sends an identification notification, got %zu",
           idents(from).size());
+  }
+
+  //! run until `n` identify frames arrived since `from` (or 2 s passed)
+  void wait_idents(size_t from, size_t n) {
+    for (long c = 0; c < 2000L * MS_CYC && idents(from).size() < n; ++c) tick();
+  }
+  //! the MAC takes no byte for `ms`: tx_ready_i low, as a full MAC FIFO holds it
+  void stall_mac(long ms) {
+    io.mac_tx_ready = false;
+    run_ms(ms);
+    io.mac_tx_ready = true;
+  }
+  static long gap_of(const std::vector<Seen>& v, size_t k) {
+    return long(v[k + 1].t - v[k].t);
   }
 
   // ---- ID5: a 15-row fan-out delays the burst by at most one job -------
@@ -378,18 +398,67 @@ struct IdentifyPhase : NotifyBench {
     (void)ask(CTLR_MAC, CTLR_EID, 0x6B21, AEM_SET_NAME, name2);
     run_ms(100);
     fan_out_exact(from2, 1, name2, "ID5g");
+    a_fan_out_at_frame_2_never_shortens_a_gap();
     ok = 0;
     for (unsigned k = 0; k < 15; ++k)
       ok += deregister_controller(FAN_MAC + k, FAN_EID + k, uint16_t(0x6B30 + k)) ? 1 : 0;
     CHECK(ok == 15, "ID5h: fifteen controllers deregistered (%d)", ok);
   }
 
-  // ---- ID6: a held engine delays a burst but never bunches it ----------
+  // ---- ID5i: a fan-out at frame 2's deadline never shortens a gap -------
+  //! The fifteen rows of ID5 are still registered. A SET_NAME fan-out fed
+  //! just before frame 2 is due holds the engine, so frame 2 leaves late;
+  //! frame 3 is due T-IDENT-BURST after frame 2 LEFT, so the second gap is
+  //! never short (a deadline chained from the first frame would leave it
+  //! short by frame 2's delay). Sequence_ids 7, 8 and 9 follow ID5's 6.
+  void a_fan_out_at_frame_2_never_shortens_a_gap() {
+    static constexpr long OFFSETS[] = {BURST - 550, BURST - 300, BURST - 50};
+    long min_gap = 1L << 40, max_g12 = 0;
+    int bursts = 0;
+    unsigned n = 0;
+    for (const long off : OFFSETS) {
+      char text[32];
+      snprintf(text, sizeof text, "Identify Contention %u", n);
+      const auto body = clock_domain_name(text);
+      const uint16_t seq = uint16_t(7 + n);
+      const size_t from = seen.size();
+      press(true);
+      wait_idents(from, 1);
+      press(false);
+      if (idents(from).empty()) break;
+      const uint64_t t1 = idents(from)[0].t;
+      while (io.t < t1 + uint64_t(off)) tick();
+      feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, uint16_t(0x6B40 + n),
+                      AEM_SET_NAME, body));
+      run_ms(1500);
+      ++n;
+      const auto v = idents(from);
+      if (v.size() != 3) continue;
+      ++bursts;
+      burst_exact(v, 0, seq, "ID5j");
+      printf("  [i] ID5i: fan-out at frame 1 + %ld clocks: gaps %ld and %ld\n", off,
+             gap_of(v, 0), gap_of(v, 1));
+      min_gap = std::min({min_gap, gap_of(v, 0), gap_of(v, 1)});
+      max_g12 = std::max(max_g12, gap_of(v, 0));
+    }
+    CHECK(bursts == 3, "ID5i: three presses, each a burst of three, with a "
+          "fan-out fed at frame 1 + %ld, %ld and %ld clocks (%d)", OFFSETS[0],
+          OFFSETS[1], OFFSETS[2], bursts);
+    CHECK(min_gap >= BURST, "ID5k: no gap shorter than T-IDENT-BURST: the "
+          "smallest of the six is %ld clocks, want at least %ld", min_gap, BURST);
+    //! anti-vacuity: some fan-out really held frame 2 past its uncontended
+    //! departure (one tick, the sweep and the build: SLACK)
+    CHECK(max_g12 > BURST + SLACK, "ID5l: a fan-out delayed frame 2 (largest "
+          "gap 1->2 %ld clocks, more than %ld)", max_g12, BURST + SLACK);
+  }
+
+  // ---- ID6: a press before the restore goes out at the release ---------
   //! AECP is held from reset to the D3 terminal (PR #132): the burst pressed
   //! before the restore waits for the release, then keeps its spacing, and
   //! identifySequenceID restarted at 0 with the reset (7.5.1: "starts at zero
-  //! (0) on power up or reboot")
-  void a_held_engine_never_bunches_a_burst() {
+  //! (0) on power up or reboot"). The hold is before the first frame; ID7
+  //! grades a stall between frames
+  void a_press_before_the_restore_goes_out_at_the_release() {
     boot_to_idle(false);
     press(true);
     run_ms(30);
@@ -406,6 +475,119 @@ struct IdentifyPhase : NotifyBench {
     burst_spacing(v, 0, "ID6d");
   }
 
+  // ---- ID7: a TX stall mid-burst delays the rest, never bunches it -----
+  //! The MAC takes no byte (tx_ready_i low) inside a burst. The engine
+  //! retires a job at its lane grant, so a stall can hold a frame the engine
+  //! has already let go; every later frame is due T-IDENT-BURST after the one
+  //! before it LEFT (IEEE 7.5.1: "a 150 ms delay between transmissions"), and
+  //! the next burst's first frame keeps the same gap after a third frame the
+  //! stall pushed past the timeout. Sequence_ids 1 to 5 follow ID6's 0.
+  //! true while an identify frame is part-way out to the MAC
+  bool mid_ident_frame() const {
+    return io.in_frame && io.cur.size() >= 6 && da_of(io.cur) == IDENT_MAC;
+  }
+  void a_tx_stall_mid_burst_never_bunches_it() {
+    // ID7: the MAC stops for 400 ms in the middle of frame 1, which the
+    // engine retired at its grant: frame 2 waits for frame 1 to leave
+    size_t from = seen.size();
+    const uint64_t pressed = io.t;
+    press(true);
+    for (long c = 0; c < 50L * MS_CYC && !mid_ident_frame(); ++c) tick();
+    press(false);
+    stall_mac(400);
+    run_ms(1500);
+    auto v = idents(from);
+    CHECK(v.size() == 3, "ID7: a 400 ms MAC stall inside frame 1 still sends "
+          "a burst of three, got %zu", v.size());
+    if (v.size() == 3) {
+      burst_exact(v, 0, 1, "ID7b");
+      printf("  [i] ID7: stall inside frame 1: it left %ld clocks after the "
+             "press; gaps %ld and %ld\n", long(v[0].t - pressed), gap_of(v, 0),
+             gap_of(v, 1));
+      CHECK(long(v[0].t - pressed) >= 400L * MS_CYC, "ID7c: the stall held "
+            "frame 1 (it left %ld clocks after the press)", long(v[0].t - pressed));
+      CHECK(gap_of(v, 0) >= BURST && gap_of(v, 0) <= BURST + SLACK,
+            "ID7d: frame 2 leaves T-IDENT-BURST after frame 1 left, not after "
+            "the engine retired it: %ld clocks, want %ld to %ld", gap_of(v, 0),
+            BURST, BURST + SLACK);
+      CHECK(gap_of(v, 1) >= BURST && gap_of(v, 1) <= BURST + SLACK,
+            "ID7e: frame 3 keeps its gap, %ld clocks", gap_of(v, 1));
+    }
+    // ID7f: 400 ms between frames 1 and 2 (R420-1's probe): frame 3 is due
+    // T-IDENT-BURST after frame 2 left, not at a deadline from frame 1
+    from = seen.size();
+    press(true);
+    wait_idents(from, 1);
+    press(false);
+    stall_mac(400);
+    run_ms(1500);
+    v = idents(from);
+    CHECK(v.size() == 3, "ID7f: a 400 ms MAC stall after frame 1 still sends "
+          "a burst of three, got %zu", v.size());
+    if (v.size() == 3) {
+      burst_exact(v, 0, 2, "ID7g");
+      printf("  [i] ID7f: stall after frame 1: gaps %ld and %ld clocks\n",
+             gap_of(v, 0), gap_of(v, 1));
+      CHECK(gap_of(v, 0) >= 400L * MS_CYC, "ID7h: the stall held frame 2: gap "
+            "1->2 %ld clocks, at least the 400 ms stall", gap_of(v, 0));
+      CHECK(gap_of(v, 1) >= BURST && gap_of(v, 1) <= BURST + SLACK,
+            "ID7i: frame 3 leaves T-IDENT-BURST after frame 2 left, not at a "
+            "deadline from frame 1: %ld clocks, want %ld to %ld", gap_of(v, 1),
+            BURST, BURST + SLACK);
+    }
+    // ID7j: 250 ms after frame 2
+    from = seen.size();
+    press(true);
+    wait_idents(from, 1);
+    press(false);
+    wait_idents(from, 2);
+    stall_mac(250);
+    run_ms(1500);
+    v = idents(from);
+    CHECK(v.size() == 3, "ID7j: a 250 ms MAC stall after frame 2 still sends "
+          "a burst of three, got %zu", v.size());
+    if (v.size() == 3) {
+      burst_exact(v, 0, 3, "ID7k");
+      printf("  [i] ID7j: stall after frame 2: gaps %ld and %ld clocks\n",
+             gap_of(v, 0), gap_of(v, 1));
+      CHECK(gap_of(v, 0) >= BURST && gap_of(v, 0) <= BURST + SLACK,
+            "ID7l: frame 2 kept its gap, %ld clocks", gap_of(v, 0));
+      CHECK(gap_of(v, 1) >= 250L * MS_CYC, "ID7m: the stall held frame 3: gap "
+            "2->3 %ld clocks, at least the 250 ms stall", gap_of(v, 1));
+    }
+    // ID7n: held, 900 ms after frame 1: the burst outlasts T-IDENT-REARM, so
+    // the timeout has passed when its third frame leaves. Released once the
+    // next burst is out, so no third burst is due
+    from = seen.size();
+    press(true);
+    wait_idents(from, 1);
+    stall_mac(900);
+    wait_idents(from, 6);
+    press(false);
+    run_ms(1500);
+    v = idents(from);
+    CHECK(v.size() == 6, "ID7n: held through a 900 ms MAC stall after frame 1: "
+          "the stretched burst and one more, got %zu", v.size());
+    if (v.size() == 6) {
+      burst_exact(v, 0, 4, "ID7o");
+      burst_exact(v, 3, 5, "ID7o");
+      printf("  [i] ID7n: gaps %ld, %ld | %ld | %ld, %ld clocks\n", gap_of(v, 0),
+             gap_of(v, 1), gap_of(v, 2), gap_of(v, 3), gap_of(v, 4));
+      CHECK(gap_of(v, 0) >= 900L * MS_CYC, "ID7p: the stall held frame 2: gap "
+            "1->2 %ld clocks, at least the 900 ms stall", gap_of(v, 0));
+      CHECK(gap_of(v, 1) >= BURST && gap_of(v, 1) <= BURST + SLACK,
+            "ID7q: frame 3 leaves T-IDENT-BURST after frame 2 left, %ld clocks",
+            gap_of(v, 1));
+      CHECK(gap_of(v, 2) >= BURST && gap_of(v, 2) <= BURST + SLACK,
+            "ID7r: the timeout passed during the stall, and the next burst "
+            "starts T-IDENT-BURST after the third frame left, never at once: "
+            "%ld clocks, want %ld to %ld", gap_of(v, 2), BURST, BURST + SLACK);
+      burst_spacing(v, 3, "ID7s");
+      CHECK(long(v[3].t - v[0].t) >= REARM, "ID7t: still no faster than "
+            "T-IDENT-REARM from the first frame (%ld clocks)", long(v[3].t - v[0].t));
+    }
+  }
+
   void run() {
     boot_to_idle(true);
     one_press_sends_one_burst();
@@ -413,7 +595,8 @@ struct IdentifyPhase : NotifyBench {
     a_release_and_press_inside_a_burst();
     the_command_forms_start_nothing();
     a_fan_out_delays_the_burst_by_one_job();
-    a_held_engine_never_bunches_a_burst();
+    a_press_before_the_restore_goes_out_at_the_release();
+    a_tx_stall_mid_burst_never_bunches_it();
   }
 };
 
