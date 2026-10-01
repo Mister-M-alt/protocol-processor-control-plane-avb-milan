@@ -18,15 +18,15 @@ name; the `GDI_*_C` whitelist members are not dispatch arms and are not
 parsed) and the `kOpcodes` initializer in `tb/pp_top/sim_main.cpp`, and refuse
 any difference in either direction. A new arm that is not in the sweep fails
 here, before any suite runs; so does a sweep entry the engine no longer names.
-Every `OP_*_C` localparam is counted, whatever its form, so one written other
-than `localparam logic [15:0] OP_NAME_C = 16'hXXXX;` (another width, radix or
-type) fails as unparsed instead of dropping out of the comparison; so does
-one opcode carried by two names.
+Every `OP_*_C` a localparam or parameter declares is counted, whatever its
+form, so one written other than `localparam logic [15:0] OP_NAME_C = 16'hXXXX;`
+(another keyword, width, radix or type) fails as unparsed instead of dropping
+out of the comparison; so does one opcode carried by two names.
 
 Exit 0 = the two sets are equal. Exit 1 = they are not, an `OP_*_C` is
 unparsed or shares its opcode, or a parse found nothing (a stale pattern is
-itself a failure). `--selftest` runs the parser and the comparison on eight
-fixed fixtures, six of which must fail.
+itself a failure). `--selftest` runs the parser and the comparison on nine
+fixed fixtures, seven of which must fail.
 """
 import argparse
 import re
@@ -40,8 +40,9 @@ BENCH = ROOT / "tb" / "pp_top" / "sim_main.cpp"
 #! `localparam logic [15:0] OP_NAME_C = 16'h0004;`
 RE_ENGINE = re.compile(
     r"localparam\s+logic\s*\[15:0\]\s+(OP_[A-Z0-9_]+_C)\s*=\s*16'h([0-9A-Fa-f]{4})\s*;")
-#! any `OP_*_C` a localparam declares, in any form (the count RE_ENGINE must meet)
-RE_DECLARED = re.compile(r"\blocalparam\b[^;]*?\b(OP_[A-Z0-9_]+_C)\s*=")
+#! any `OP_*_C` a localparam or parameter declares, in any form (the count
+#! RE_ENGINE must meet)
+RE_DECLARED = re.compile(r"\b(?:localparam|parameter)\b[^;]*?\b(OP_[A-Z0-9_]+_C)\s*=")
 #! `static const uint16_t kOpcodes[] = { 0x0000, ... };`
 RE_BENCH = re.compile(r"static\s+const\s+uint16_t\s+kOpcodes\[\]\s*=\s*\{([^}]*)\}")
 RE_HEX = re.compile(r"0x([0-9A-Fa-f]{1,4})\b")
@@ -97,8 +98,8 @@ def compare(engine: dict[int, str], bench: list[int],
 
 
 def selftest() -> int:
-    """The parser and the comparison on fixed text: one parse check and seven
-    cases, six of which must fail."""
+    """The parser and the comparison on fixed text: one parse check and eight
+    cases, seven of which must fail."""
     eng = ("localparam logic [15:0] OP_READ_DESCRIPTOR_C = 16'h0004;\n"
            "localparam logic [15:0] GDI_GET_VIDEO_FMT_C   = 16'h000B;\n"
            "  localparam logic [15:0] OP_SET_NAME_C = 16'h0010; // not OP_X_C = 1\n")
@@ -114,6 +115,8 @@ def selftest() -> int:
         ("no initializer fails", eng, "static const uint16_t kOther[] = { 0x0004 };", False),
         ("an OP_*_C in another form fails",
          eng + "localparam int unsigned OP_GET_NAME_C = 17;\n", good, False),
+        ("an OP_*_C parameter fails",
+         eng + "parameter logic [15:0] OP_GET_NAME_C = 16'h0011;\n", good, False),
         ("one opcode under two names fails",
          eng + "localparam logic [15:0] OP_SET_NAME2_C = 16'h0010;\n", good, False),
     ]
