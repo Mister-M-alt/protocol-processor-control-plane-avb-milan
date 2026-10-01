@@ -4,7 +4,7 @@
 Proves the ROM-driven Milan listener-SM executor
 (`hdl/acmp/KL_pp_acmp_listener.sv`) against the full F05.3 transition matrix of
 [05 §6.3](../../docs/architecture/05_acmp_engine.md): `make` = generate the
-ROM + build + run, exit 0 = PASS, 2544 checks.
+ROM + build + run, exit 0 = PASS, 2988 checks.
 
 **The MTXW walk** ([09 §3](../../docs/architecture/09_verification.md)):
 every one of the 112 cells (14 events x 8 states) is driven against an
@@ -62,6 +62,36 @@ Mutation-proven 2026-08-11 (backup/sed/run/restore):
 - **M4** RTL: same-bind classification disabled (every BIND treated as
   new/different source) -> 389 FAIL (the whole BIND_SAME row re-probes and
   churns SRP instead of the v1.2 A6 short-circuit).
+
+Messages outside the listener set, and the probe-response guard per term
+(issue #47, REQ-ACMP-012, Milan §5.5.3.1). **B13** drives every ACMP
+message type the listener does not own — 3, 5, 7, 9, 11, 13 (the responses
+of IEEE 1722.1-2021 Table 8-2, Table 8.1 in IEEE 1722.1-2013, that are not
+PROBE_TX_RESPONSE) and 14, 15 (reserved) — with the own listener_entity_id
+and a valid listener_unique_id, in PRB_W_RESP with status SUCCESS and in
+PRB_W_RESP2 with TALKER_NO_BANDWIDTH. Each is shaped as the perfect answer
+to the outstanding probe (all four guard terms equal to the saved probe,
+stream fields set), so only its message type keeps it out; each must be
+fully inert: no frame, no record write, no timer op, no action strobe, no
+notify, the record unchanged, and exactly one RX-slot free of the slot it
+arrived in. **B14** grades the
+§5.5.3.5.18 / .25 step-1 guard term by term: a response with the wrong
+controller_entity_id, talker_entity_id or talker_unique_id is ignored in
+both probing states exactly as B8's wrong sequence_id is, and the unaltered
+response then settles, so a guard that rejected everything cannot pass.
+
+Mutation-proven 2026-09-29 by `tb/pp_top/acmp_mutants.py`, each mutant in its
+own extract of the tree, KILLED only when every named check fails:
+
+| Mutant | Defect planted | Named checks | Result |
+|---|---|---|---|
+| `msg_ok_forced` | `txn_msg_ok_w` forced to 1: every message type is classified, the others through the PROBE_TX_RESPONSE default arm | B13 msg 7 / 14 in PWR, msg 3 / 15 in PW2 | 93 of 2988 FAIL: all 16 B13 arms settle (SUCCESS) or back off (NO_BANDWIDTH) |
+| `guard_ctlr_dropped` | the controller_entity_id term of `probe_match_w` tied true | B14 wrong controller_entity_id in PWR / PW2 | 50 of 2984 FAIL |
+| `guard_talker_eid_dropped` | the talker_entity_id term tied true | B14 wrong talker_entity_id in PWR / PW2 | 40 of 2984 FAIL |
+| `guard_talker_uid_dropped` | the talker_unique_id term tied true | B14 wrong talker_unique_id in PWR / PW2 | 30 of 2984 FAIL |
+
+The same `msg_ok_forced` edit also fails `tb/pp_top` AI3 (the top-level leg,
+recorded there).
 
 Re-bind started/stopped trigger (RV8, issues #43/#49): a BIND_NEW onto a bound
 sink with STREAMING_WAIT flipped (A2 without A10) raises `act_strt_chg_o`

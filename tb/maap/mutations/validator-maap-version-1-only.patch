@@ -1,0 +1,15 @@
+--- a/hdl/packet_engine/KL_pp_rx_validator.sv
++++ b/hdl/packet_engine/KL_pp_rx_validator.sv
+@@ -274,8 +274,10 @@
+                            && (da_own_r | da_mcast_r))
+                       && !((rx_data_i == SUB_MAAP_C)
+                            && (da_own_r | da_maap_r));
+-  assign ver_fail_w = pdu_byte_w && (pidx_w == 11'd1)
+-                      && (rx_data_i[7:4] != 4'h0);         // h and version (V8)
++  assign ver_fail_w = pdu_byte_w && (((pidx_w == 11'd1)
++                      && (rx_data_i[7:4] != 4'h0))         // h and version (V8)
++                      || ((pidx_w == 11'd2) && (subtype_r == SUB_MAAP_C)
++                          && (rx_data_i[7:3] != 5'd1)));   // maap_version 1 only
+   //! the AECP hold admission: an AECP frame the subtype gate would pass is
+   //! dropped instead while the hold is on, the slot returned by the abort
+   assign held_fail_w = pdu_byte_w && (pidx_w == 11'd0) && aecp_hold_i
