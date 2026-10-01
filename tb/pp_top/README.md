@@ -810,6 +810,7 @@ the last column is how many checks each one failed there.
 arm below, an explicit patch in `aecp_dispatch_mutations/`, into a scratch
 copy of `hdl/`, `tb/common/` and this
 directory with `git apply`; the driver reads only simulation and lint logs.
+The HDL workflow runs the whole campaign through the make target.
 Every generated ROM and model directory is deleted before each build, so a
 microcode arm cannot leave its ROM behind. A positive control of each make
 target runs first and must pass, and an arm is KILLED only when its run
