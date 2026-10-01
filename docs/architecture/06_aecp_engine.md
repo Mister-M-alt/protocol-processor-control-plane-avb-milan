@@ -1125,7 +1125,7 @@ preempted GET_DYNAMIC_INFO getter voids the aggregate, and past the deadline no
 further record runs: the batch answers ENTITY_MISBEHAVING, empty, through the
 same void its shape check uses. The engine reports the forced response's
 hand-off to TX lane 0 on `dl_queued_o`, the scoreboard's `kill_resp_queued_i`.
-`tb/ucpu` P19 grades the redirect and `tb/pp_top` section DL the whole seam,
+`tb/ucpu` P20 grades the redirect and `tb/pp_top` section DL the whole seam,
 the three never-preempted commands included (DL6, DL10)
 ([09 §8.3](09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)).
 

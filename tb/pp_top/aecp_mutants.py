@@ -42,17 +42,17 @@ MUTANTS = [
     ("dl-kill-ack-keeps-owner", "dl-kill-ack-keeps-owner", "pp_top",
      "deadline", "DL1: the honoured kill ended the AECP owner"),
     ("dl-preempt-after-effect", "dl-preempt-after-effect", "ucpu", "run",
-     "P19c the program's own SUCCESS"),
+     "P20c the program's own SUCCESS"),
     ("dl-preempt-after-effect-top", "dl-preempt-after-effect", "pp_top",
      "deadline", "DL2: past its NAME_WR the SET_NAME answers its own SUCCESS"),
     ("ucpu-preempt-cuts-a-wait", "ucpu-preempt-cuts-a-wait", "ucpu", "run",
-     "P19e the waiting locate was answered"),
+     "P20e the waiting locate was answered"),
     ("ucpu-preempt-keeps-the-body", "ucpu-preempt-keeps-the-body", "ucpu",
-     "run", "P19f header only"),
+     "run", "P20f header only"),
     ("ucpu-preempt-repeats", "ucpu-preempt-repeats", "ucpu", "run",
-     "P19a completes"),
+     "P20a completes: one redirect"),
     ("dlkill-always-misbehaving", "dlkill-always-misbehaving", "ucpu", "run",
-     "P19d ENTITY_LOCKED kept"),
+     "P20d ENTITY_LOCKED kept"),
     # issue #57 (REQ-MVU-005): the MVU answer under the deadline, and its
     # latency against T-AECP-RESP (section TB, the third build)
     ("dl-mvu-forced-status-10", "dl-mvu-forced-status-10", "pp_top",
@@ -82,13 +82,13 @@ MUTANTS = [
     ("hz-lock-not-lockop", "hz-lock-not-lockop", "pp_top", "hazards",
      "HZ4: LOCK_ENTITY is not admitted while an ACMP stream step holds"),
     ("hz-stream-key-none", "hz-stream-key-none", "pp_top", "hazards",
-     "HZ HZ5 START_STREAMING on the held sink's key: not admitted"),
+     "HZ5 START_STREAMING on the held sink's key: not admitted"),
     ("hz-reads-keyed-none", "hz-reads-keyed-none", "pp_top", "hazards",
-     "HZ HZ6 GET_STREAM_INFO on the held sink's key: not admitted"),
+     "HZ6 GET_STREAM_INFO on the held sink's key: not admitted"),
     ("hz-clock-as-ro", "hz-clock-as-ro", "pp_top", "hazards",
      "HZ1 SET_SAMPLING_RATE AUDIO_UNIT 0: admitted"),
     ("hz-clock-as-lock", "hz-clock-as-lock", "pp_top", "hazards",
-     "HZ HZ8 SET_SAMPLING_RATE (CLOCK_CFG): admitted beside"),
+     "HZ8 SET_SAMPLING_RATE (CLOCK_CFG): admitted beside"),
     ("hz-name-as-ro", "hz-name-as-ro", "pp_top", "hazards",
      "HZ1 SET_NAME CLOCK_DOMAIN 0: admitted"),
     ("hz-registry-as-ro", "hz-registry-as-ro", "pp_top", "hazards",
@@ -106,60 +106,60 @@ MUTANTS = [
     # issue #84 acceptance 2: every class and key pair that can conflict at
     # this top, on the listener's and the talker's keys, one arm each
     ("hz-name-key-none", "hz-name-key-none", "pp_top", "hazards",
-     "HZ HZ9a SET_NAME on STREAM_INPUT 1 vs a held GET_RX_STATE of sink 1: "
+     "HZ9a SET_NAME on STREAM_INPUT 1 vs a held GET_RX_STATE of sink 1: "
      "not admitted"),
     ("hz-name-key-none-talker", "hz-name-key-none", "pp_top", "hazards",
-     "HZ HZ9d a GET_TX_STATE of source 1 vs a held SET_NAME on STREAM_OUTPUT "
+     "HZ9d a GET_TX_STATE of source 1 vs a held SET_NAME on STREAM_OUTPUT "
      "1: not admitted"),
     ("hz-name-key-none-held", "hz-name-key-none", "pp_top", "hazards",
-     "HZ HZ9f a GET_RX_STATE of sink 1 vs a held SET_NAME on STREAM_INPUT 1: "
+     "HZ9f a GET_RX_STATE of sink 1 vs a held SET_NAME on STREAM_INPUT 1: "
      "not admitted"),
     ("hz-name-as-stream", "hz-name-as-stream", "pp_top", "hazards",
-     "HZ HZ9c SET_NAME on STREAM_INPUT 1 vs a held UNBIND_RX of sink 1: "
+     "HZ9c SET_NAME on STREAM_INPUT 1 vs a held UNBIND_RX of sink 1: "
      "admitted beside"),
     ("hz-stream-key-none-vs-read", "hz-stream-key-none", "pp_top", "hazards",
-     "HZ HZ10a STOP_STREAMING on STREAM_INPUT 1 vs a held GET_RX_STATE of "
+     "HZ10a STOP_STREAMING on STREAM_INPUT 1 vs a held GET_RX_STATE of "
      "sink 1: not admitted"),
     ("hz-stream-key-none-talker-read", "hz-stream-key-none", "pp_top",
-     "hazards", "HZ HZ10b a GET_TX_STATE of source 1 vs a held STOP_STREAMING "
+     "hazards", "HZ10b a GET_TX_STATE of source 1 vs a held STOP_STREAMING "
      "on STREAM_OUTPUT 1: not admitted"),
     ("hz-stream-key-none-talker-step", "hz-stream-key-none", "pp_top",
-     "hazards", "HZ HZ10c a DISCONNECT_TX of source 1 vs a held "
+     "hazards", "HZ10c a DISCONNECT_TX of source 1 vs a held "
      "STOP_STREAMING on STREAM_OUTPUT 1: not admitted"),
     ("hz-talker-keyed-as-listener", "hz-talker-keyed-as-listener", "pp_top",
-     "hazards", "HZ HZ10c a DISCONNECT_TX of source 1 vs a held "
+     "hazards", "HZ10c a DISCONNECT_TX of source 1 vs a held "
      "STOP_STREAMING on STREAM_OUTPUT 1: not admitted"),
     ("hz-reads-keyed-none-talker", "hz-reads-keyed-none", "pp_top", "hazards",
-     "HZ HZ10e a DISCONNECT_TX of source 1 vs a held GET_STREAM_INFO on "
+     "HZ10e a DISCONNECT_TX of source 1 vs a held GET_STREAM_INFO on "
      "STREAM_OUTPUT 1: not admitted"),
     ("hz-setcfg-not-barrier-talker", "hz-setcfg-not-barrier", "pp_top",
-     "hazards", "HZ HZ11a a GET_TX_STATE of source 1 vs a held "
+     "hazards", "HZ11a a GET_TX_STATE of source 1 vs a held "
      "SET_CONFIGURATION: not admitted"),
     ("hz-lock-not-lockop-talker", "hz-lock-not-lockop", "pp_top", "hazards",
-     "HZ HZ11b a DISCONNECT_TX of source 1 vs a held LOCK_ENTITY: not "
+     "HZ11b a DISCONNECT_TX of source 1 vs a held LOCK_ENTITY: not "
      "admitted"),
     ("hz-map-as-ro", "hz-map-as-ro", "pp_top", "hazards",
-     "HZ HZ7 ADD_AUDIO_MAPPINGS beside any stream step: not admitted"),
+     "HZ7 ADD_AUDIO_MAPPINGS beside any stream step: not admitted"),
     ("hz-map-as-ro-talker", "hz-map-as-ro", "pp_top", "hazards",
-     "HZ HZ11d a DISCONNECT_TX of source 1 vs a held ADD_AUDIO_MAPPINGS: not "
+     "HZ11d a DISCONNECT_TX of source 1 vs a held ADD_AUDIO_MAPPINGS: not "
      "admitted"),
     ("hz-clock-key-none", "hz-clock-key-none", "pp_top", "hazards",
-     "HZ HZ12a SET_SAMPLING_RATE (CLOCK_CFG) naming STREAM_INPUT 1 vs a held "
+     "HZ12a SET_SAMPLING_RATE (CLOCK_CFG) naming STREAM_INPUT 1 vs a held "
      "GET_RX_STATE of sink 1: not admitted"),
     ("hz-clock-key-none-talker", "hz-clock-key-none", "pp_top", "hazards",
-     "HZ HZ12a a GET_TX_STATE of source 1 vs a held SET_SAMPLING_RATE "
+     "HZ12a a GET_TX_STATE of source 1 vs a held SET_SAMPLING_RATE "
      "(CLOCK_CFG) naming STREAM_OUTPUT 1: not admitted"),
     ("hz-identify-key-none", "hz-identify-key-none", "pp_top", "hazards",
-     "HZ HZ12b SET_CONTROL (IDENTIFY) naming STREAM_INPUT 1 vs a held "
+     "HZ12b SET_CONTROL (IDENTIFY) naming STREAM_INPUT 1 vs a held "
      "GET_RX_STATE of sink 1: not admitted"),
     ("hz-identify-key-none-talker", "hz-identify-key-none", "pp_top",
-     "hazards", "HZ HZ12b a GET_TX_STATE of source 1 vs a held SET_CONTROL "
+     "hazards", "HZ12b a GET_TX_STATE of source 1 vs a held SET_CONTROL "
      "(IDENTIFY) naming STREAM_OUTPUT 1: not admitted"),
     ("hz-map-key-none", "hz-map-key-none", "pp_top", "hazards",
-     "HZ HZ12c ADD_AUDIO_MAPPINGS (MAP_CFG) naming STREAM_INPUT 1 vs a held "
+     "HZ12c ADD_AUDIO_MAPPINGS (MAP_CFG) naming STREAM_INPUT 1 vs a held "
      "GET_RX_STATE of sink 1: not admitted"),
     ("hz-map-key-none-talker", "hz-map-key-none", "pp_top", "hazards",
-     "HZ HZ12c a GET_TX_STATE of source 1 vs a held ADD_AUDIO_MAPPINGS "
+     "HZ12c a GET_TX_STATE of source 1 vs a held ADD_AUDIO_MAPPINGS "
      "(MAP_CFG) naming STREAM_OUTPUT 1: not admitted"),
 ]
 

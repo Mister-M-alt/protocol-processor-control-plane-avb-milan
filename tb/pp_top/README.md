@@ -950,11 +950,11 @@ and must pass. Counts below were taken on 2026-09-30 with Verilator 5.052.
 | `dl-non-aem-forced-status-10` | pp_top `deadline` | the forced NOT_IMPLEMENTED answer for MVU alone (the round-1 rule) | 4: DL9, ADDRESS_ACCESS, AVC, HDCP_APM and EXTENDED each answered status 10 |
 | `mvu-fault-status-10` | pp_top `deadline` | the MVU fault answer removed: a voided MVU response is rebuilt as status 10, header only | 4: DL8 under every fault (status 10, 60 bytes) |
 | `mvu-echo-slot-std` | pp_top `deadline` | an MVU response's slot sized for its built answer only | 1: DL8 (the 578-byte echo clipped to the 576-byte standard slot) |
-| `dl-preempt-after-effect` | ucpu `run` | the same µCPU patch, at the unit | 4: P19c (status 10 after the write, commit and mark, the notification lost), P19d |
-| `ucpu-preempt-cuts-a-wait` | ucpu `run` | the redirect taken while an op waits on its face | 2: P19e (the waiting locate abandoned, no read answered) |
-| `ucpu-preempt-keeps-the-body` | ucpu `run` | the cursor not returned to 12 | 1: P19f (length 36 with a partly built counters block) |
-| `ucpu-preempt-repeats` | ucpu `run` | the redirect not limited to once per dispatch | 18: P19a to P19h (E_DLKILL redirected into itself, never sends) |
-| `dlkill-always-misbehaving` | ucpu `run` | E_DLKILL overwrites a refusal already chosen | 1: P19d (ENTITY_LOCKED became status 10) |
+| `dl-preempt-after-effect` | ucpu `run` | the same µCPU patch, at the unit | 4: P20c (status 10 after the write, commit and mark, the notification lost), P20d |
+| `ucpu-preempt-cuts-a-wait` | ucpu `run` | the redirect taken while an op waits on its face | 2: P20e (the waiting locate abandoned, no read answered) |
+| `ucpu-preempt-keeps-the-body` | ucpu `run` | the cursor not returned to 12 | 1: P20f (length 36 with a partly built counters block) |
+| `ucpu-preempt-repeats` | ucpu `run` | the redirect not limited to once per dispatch | 18: P20a to P20h (E_DLKILL redirected into itself, never sends) |
+| `dlkill-always-misbehaving` | ucpu `run` | E_DLKILL overwrites a refusal already chosen | 1: P20d (ENTITY_LOCKED became status 10) |
 | `mvu-silent` | pp_top `budget` | GET_MILAN_INFO retires without its SEND_RESPONSE | 12: TB1, TB3 and TB4, every GET_MILAN_INFO unanswered |
 | `fanout-never-ends` | pp_top `budget` | the notification walk never ends its class, so the command-path hold never drops | 23: TB3 to TB5, nothing answered once the fan-out starts |
 | `acmp-waits-for-aecp` | pp_top `budget` | READ_DESCRIPTOR classified CFG_BARRIER, so ACMP waits behind unrelated AECP work | 2: TB5 (GET_RX_STATE 13,144 clocks beside the READ_DESCRIPTOR, GET_TX_STATE 977 during the fan-out) |

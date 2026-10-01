@@ -62,17 +62,17 @@ duplicated or lost changes it); a REFUSED write must be re-presented
 byte-for-byte identically while it is held; and the zero-stall run must be
 held zero cycles, so the invariance is not vacuous.
 
-Covered by P19 — **the deadline preempt** (03 §6 rule (e), issue #81). The
+Covered by P20 — **the deadline preempt** (03 §6 rule (e), issue #81). The
 harness raises `preempt_i` on an observed trigger and holds it, as the engine's
-level is held: from the dispatch (P19a, P19b), once the first state write was
-accepted (P19c), once the status left SUCCESS (P19d), while a state read waits
-(P19e, with 40 extra cycles of read latency), after six gathers (P19f) and in a
-GET_DYNAMIC_INFO batch (P19g). The µCPU must redirect to `E_DLKILL` only at an
+level is held: from the dispatch (P20a, P20b), once the first state write was
+accepted (P20c), once the status left SUCCESS (P20d), while a state read waits
+(P20e, with 40 extra cycles of read latency), after six gathers (P20f) and in a
+GET_DYNAMIC_INFO batch (P20g). The µCPU must redirect to `E_DLKILL` only at an
 instruction boundary and only before the program's first effect op, answer
 once with the cursor back at 12, keep a refusal already chosen (ENTITY_LOCKED)
 and turn an unfinished SUCCESS into ENTITY_MISBEHAVING, never cut a waiting
 op, keep a batch's base cursor and suppressed header, and leave the next
-dispatch clean (P19h). Its mutation arms (`dl-preempt-after-effect`,
+dispatch clean (P20h). Its mutation arms (`dl-preempt-after-effect`,
 `ucpu-preempt-cuts-a-wait`, `ucpu-preempt-keeps-the-body`,
 `ucpu-preempt-repeats`, `dlkill-always-misbehaving`) run from
 `tb/pp_top/aecp_mutants.py`; the record is in the

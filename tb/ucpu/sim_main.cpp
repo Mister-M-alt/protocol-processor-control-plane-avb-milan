@@ -1503,7 +1503,7 @@ void UcpuSuite::set_stream_info_writes_only_the_presentation_offset() {
   }
 }
 
-// ---- P19: the deadline preempt (03 §6 rule (e), IEEE §9.3.2.6) -------
+// ---- P20: the deadline preempt (03 §6 rule (e), IEEE §9.3.2.6) -------
 // The engine raises `preempt_i` once the command in flight is past its
 // T-BUDGET-AECP-WC deadline, and holds it. The µCPU must redirect to
 // E_DLKILL at an instruction boundary and only before the program's first
@@ -1515,97 +1515,97 @@ constexpr uint64_t CT_KEY  = 0x0000000700050000ull;   // STREAM_INPUT[7], hit
 constexpr uint64_t CT_TYIX = 0x0000000000050007ull;
 
 void UcpuSuite::the_deadline_preempt_answers_before_any_effect() {
-  // P19a: raised from the dispatch on: redirected before the first op
+  // P20a: raised from the dispatch on: redirected before the first op
   h.pre_now = true;
-  CHECK(h.run(E_GETSR, IDX_OK, false), "P19a completes: one redirect, no loop");
+  CHECK(h.run(E_GETSR, IDX_OK, false), "P20a completes: one redirect, no loop");
   CHECK(h.sends == 1 && h.last_status == ST_MISBEHAVING && h.last_len == 12,
-        "P19a one header-only ENTITY_MISBEHAVING answer: sends %d status %u "
+        "P20a one header-only ENTITY_MISBEHAVING answer: sends %d status %u "
         "len %u", h.sends, h.last_status, h.last_len);
-  CHECK(h.w32(8) == hdr2(ST_MISBEHAVING), "P19a the header record carries "
+  CHECK(h.w32(8) == hdr2(ST_MISBEHAVING), "P20a the header record carries "
         "status 10, got %08x", h.w32(8));
   CHECK(h.st_reads == 0 && h.gx_sels.empty(),
-        "P19a nothing was read: %d state reads, %zu gathers", h.st_reads,
+        "P20a nothing was read: %d state reads, %zu gathers", h.st_reads,
         h.gx_sels.size());
-  CHECK(dut->preempted_o, "P19a preempted_o reports the redirect");
+  CHECK(dut->preempted_o, "P20a preempted_o reports the redirect");
   h.clear_preempt();
-  // P19b: a SET preempted before its WRITE_ST writes nothing, emits nothing
+  // P20b: a SET preempted before its WRITE_ST writes nothing, emits nothing
   h.pre_now = true;
-  CHECK(h.run(E_SETSR, IDX_OK, false), "P19b completes");
+  CHECK(h.run(E_SETSR, IDX_OK, false), "P20b completes");
   CHECK(h.stw.empty() && h.commits == 0 && h.nvm_marks.empty()
             && h.notify_classes.empty(),
-        "P19b no state write and no effect: %zu writes, %d commits",
+        "P20b no state write and no effect: %zu writes, %d commits",
         h.stw.size(), h.commits);
   CHECK(h.sends == 1 && h.last_status == ST_MISBEHAVING && h.last_len == 12,
-        "P19b one header-only ENTITY_MISBEHAVING: status %u len %u",
+        "P20b one header-only ENTITY_MISBEHAVING: status %u len %u",
         h.last_status, h.last_len);
   h.clear_preempt();
-  // P19c: raised once the WRITE_ST retired: past its first effect the
+  // P20c: raised once the WRITE_ST retired: past its first effect the
   // program answers for itself and every effect lands once
   h.pre_on_writes = 1;
-  CHECK(h.run(E_SETSR, IDX_OK, false), "P19c completes");
-  CHECK(h.pre_raised, "P19c premise: the preempt was raised during the run");
+  CHECK(h.run(E_SETSR, IDX_OK, false), "P20c completes");
+  CHECK(h.pre_raised, "P20c premise: the preempt was raised during the run");
   CHECK(h.last_status == ST_OK && h.last_len == 16 && h.w32(12) == 0xBB80,
-        "P19c the program's own SUCCESS carrying the rate: status %u len %u",
+        "P20c the program's own SUCCESS carrying the rate: status %u len %u",
         h.last_status, h.last_len);
   CHECK(h.stw.size() == 1 && h.commits == 1 && h.nvm_marks.size() == 1
             && h.notify_classes.size() == 1 && h.sends == 1,
-        "P19c every effect exactly once, no partial commit: %zu writes, %d "
+        "P20c every effect exactly once, no partial commit: %zu writes, %d "
         "commits, %zu marks, %zu notifies", h.stw.size(), h.commits,
         h.nvm_marks.size(), h.notify_classes.size());
   CHECK(!dut->preempted_o && h.pre_taken_at < 0,
-        "P19c never redirected after an effect");
+        "P20c never redirected after an effect");
   h.clear_preempt();
-  // P19d: a refusal already chosen is the best current status and is kept
+  // P20d: a refusal already chosen is the best current status and is kept
   h.pre_on_refusal = true;
-  CHECK(h.run(E_SETSR, IDX_OK, true), "P19d completes");
+  CHECK(h.run(E_SETSR, IDX_OK, true), "P20d completes");
   CHECK(h.pre_taken_at >= 0,
-        "P19d premise: redirected after CHECK_LOCK chose ENTITY_LOCKED");
+        "P20d premise: redirected after CHECK_LOCK chose ENTITY_LOCKED");
   CHECK(h.sends == 1 && h.last_status == ST_LOCKED && h.last_len == 12,
-        "P19d ENTITY_LOCKED kept, header only: status %u len %u",
+        "P20d ENTITY_LOCKED kept, header only: status %u len %u",
         h.last_status, h.last_len);
-  CHECK(h.stw.empty() && h.commits == 0, "P19d nothing written");
+  CHECK(h.stw.empty() && h.commits == 0, "P20d nothing written");
   h.clear_preempt();
 }
 
 void UcpuSuite::the_deadline_preempt_waits_for_a_boundary() {
-  // P19e: an op waiting on its face is never cut: the redirect follows the
+  // P20e: an op waiting on its face is never cut: the redirect follows the
   // answer of the locate it was raised under, and no further read issues
   h.st_extra = 40;
   h.pre_on_read_wait = true;
-  CHECK(h.run(E_GETSR, IDX_OK, false), "P19e completes");
+  CHECK(h.run(E_GETSR, IDX_OK, false), "P20e completes");
   CHECK(h.st_reads == 1,
-        "P19e the waiting locate was answered and no further read issued: "
+        "P20e the waiting locate was answered and no further read issued: "
         "%d reads", h.st_reads);
   CHECK(h.last_rvalid_at >= 0 && h.pre_taken_at >= h.last_rvalid_at,
-        "P19e the redirect came at or after the read's answer (%ld, %ld)",
+        "P20e the redirect came at or after the read's answer (%ld, %ld)",
         h.pre_taken_at, h.last_rvalid_at);
   CHECK(h.sends == 1 && h.last_status == ST_MISBEHAVING && h.last_len == 12,
-        "P19e one header-only ENTITY_MISBEHAVING");
+        "P20e one header-only ENTITY_MISBEHAVING");
   h.clear_preempt();
-  // P19f: a body partly built is dropped: the cursor returns to 12
+  // P20f: a body partly built is dropped: the cursor returns to 12
   h.pre_on_gathers = 6;
-  CHECK(h.run(E_GCTRS, CT_KEY, false, 2000, CT_TYIX), "P19f completes");
+  CHECK(h.run(E_GCTRS, CT_KEY, false, 2000, CT_TYIX), "P20f completes");
   CHECK(h.sends == 1 && h.last_status == ST_MISBEHAVING && h.last_len == 12,
-        "P19f header only after 20+ body bytes were built: status %u len %u",
+        "P20f header only after 20+ body bytes were built: status %u len %u",
         h.last_status, h.last_len);
   CHECK(h.gx_sels.size() >= 6 && h.gx_sels.size() < 33,
-        "P19f the block stopped at a boundary: %zu of 33 gathers",
+        "P20f the block stopped at a boundary: %zu of 33 gathers",
         h.gx_sels.size());
   h.clear_preempt();
-  // P19g: in a GET_DYNAMIC_INFO batch the cursor and header are the engine's
+  // P20g: in a GET_DYNAMIC_INFO batch the cursor and header are the engine's
   h.batch_base = 40;
   h.pre_now = true;
-  CHECK(h.run(E_GETSR, IDX_OK, false), "P19g completes");
+  CHECK(h.run(E_GETSR, IDX_OK, false), "P20g completes");
   CHECK(h.sends == 1 && h.last_len == 40 && h.last_status == ST_MISBEHAVING,
-        "P19g the batch keeps its base: len %u status %u", h.last_len,
+        "P20g the batch keeps its base: len %u status %u", h.last_len,
         h.last_status);
-  CHECK(h.w32(8) == 0, "P19g no header record in a batch");
+  CHECK(h.w32(8) == 0, "P20g no header record in a batch");
   h.clear_preempt();
-  // P19h: the next dispatch is clean
-  CHECK(h.run(E_GETSR, IDX_OK, false), "P19h completes");
+  // P20h: the next dispatch is clean
+  CHECK(h.run(E_GETSR, IDX_OK, false), "P20h completes");
   CHECK(h.last_status == ST_OK && h.last_len == 16 && h.w32(12) == 0xBB80
             && !dut->preempted_o && h.pre_taken_at < 0,
-        "P19h a dispatch after a preempted one answers normally: status %u "
+        "P20h a dispatch after a preempted one answers normally: status %u "
         "len %u", h.last_status, h.last_len);
 }
 

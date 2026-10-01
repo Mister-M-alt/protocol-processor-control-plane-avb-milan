@@ -11446,10 +11446,13 @@ struct BudgetPhase {
 // F03.7 and F06.14, never the classifier's own table: the classes in F03.7
 // row order (pp_pkg's encoding: RO_SNAPSHOT 0, CFG_BARRIER 1, STREAM_CFG 2,
 // MAP_CFG 3, CLOCK_CFG 4, NAME_WR 5, LOCK_OP 6, REGISTRY_OP 7, IDENTIFY 8)
-// and the key a descriptor's {type[5:0], index[9:0]}. An ACMP transaction is
-// held in flight by a PROBE_TX the talker cannot answer yet: with no MAAP
-// allocator the talker holds its DA request for P-MAAP-ACCEPT-CYC. A fresh
-// processor of its own; the main run's clock is untouched.
+// and the key a descriptor's {type[5:0], index[9:0]}. A transaction is held
+// in flight by stalling the MAC until four GET_RX_STATE answers fill the
+// standard TX slots (`fill_tx_pool`): the next ACMP command (`hold_acmp`) or
+// AECP command (`hold_aecp`) is admitted, runs, and keeps its key because its
+// response cannot get a slot, until the MAC restarts. A MAAP allocator
+// answers, so the talker is free to take commands. A fresh processor of its
+// own; the main run's clock is untouched.
 struct HazardPhase {
   H& h;                                        // the tally
   const milan::tb::Model<Vpp_top_wrap> model;
@@ -11900,17 +11903,17 @@ struct HazardPhase {
     const bool held_now = io.d->dbg_acmp_sb_active_o != 0;
     if (beside) {
       CHECK(b != nullptr && held_now,
-            "HZ %s: admitted beside the held ACMP command", what);
+            "%s: admitted beside the held ACMP command", what);
     } else {
       CHECK(b == nullptr && held_now && io.hz_aecp_refused > 0,
-            "HZ %s: not admitted while the held ACMP command keeps its key "
+            "%s: not admitted while the held ACMP command keeps its key "
             "(refused %ld clocks)", what, io.hz_aecp_refused);
     }
     release_mac();
     if (!beside) {
       b = aecp_adm_after(a.adm);
       CHECK(b != nullptr && acmp_end() >= 0 && b->t >= acmp_end(),
-            "HZ %s: admitted after the ACMP key frees", what);
+            "%s: admitted after the ACMP key frees", what);
     }
     long first = -1;
     return aecp_answer(s, 40, &first);
@@ -11932,21 +11935,21 @@ struct HazardPhase {
     const bool held_now = io.d->dbg_aecp_sb_active_o != 0;
     if (beside) {
       CHECK(b != nullptr && held_now,
-            "HZ %s: admitted beside the held AECP command", what);
+            "%s: admitted beside the held AECP command", what);
     } else {
       CHECK(b == nullptr && held_now && io.hz_acmp_refused > 0,
-            "HZ %s: not admitted while the held AECP command keeps its key "
+            "%s: not admitted while the held AECP command keeps its key "
             "(refused %ld clocks)", what, io.hz_acmp_refused);
     }
     release_mac();
     if (!beside) {
       b = acmp_adm_after(a.adm);
       CHECK(b != nullptr && aecp_end() >= 0 && b->t >= aecp_end(),
-            "HZ %s: admitted after the AECP key frees", what);
+            "%s: admitted after the AECP key frees", what);
     }
     long first = -1;
     CHECK(!acmp_answer(s, 40, &first).empty(),
-          "HZ %s: the ACMP command is answered", what);
+          "%s: the ACMP command is answered", what);
     return aecp_answer(sa, 40, &first);
   }
 

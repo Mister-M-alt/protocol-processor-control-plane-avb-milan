@@ -219,14 +219,14 @@ The deadline engine of [03 §6](03_packet_engine.md) rule (e) and
 [08 §4](08_timing.md#4-deadline-budgets), and its budgets, graded in the compressed timebase of
 `tb/pp_top` section DL (`--deadline-only`, 1 ms = 100 clocks, so the armed
 deadline is 10,000 clocks and `T-AECP-RESP` 24,000) and at the µCPU in
-`tb/ucpu` P19. Every stall is an integrator face answering slowly but inside
+`tb/ucpu` P20. Every stall is an integrator face answering slowly but inside
 its watchdog.
 
 | Property | Checks |
 |---|---|
 | a command stalled past its budget is answered by a well-formed forced response (ENTITY_MISBEHAVING, header only, byte-exact) inside `T-AECP-RESP`, never a silent retire; the kill rises at the deadline; the program stops at an op boundary | DL1 |
 | the key stays held from the expiry to the forced response's hand-off to its lane and is released in that clock, once | DL1 |
-| a program past its first effect is not preempted: its own response, every effect once, the state reads back | DL2; `tb/ucpu` P19c |
+| a program past its first effect is not preempted: its own response, every effect once, the state reads back | DL2; `tb/ucpu` P20c |
 | the deadline counts from reception, queue wait included; a Milan Vendor Unique command answers NOT_IMPLEMENTED with the command echoed | DL3 |
 | a GET_DYNAMIC_INFO past its deadline runs no further record and is voided | DL4 |
 | a frame owed no response retires through the normal release | DL5 |
@@ -237,7 +237,7 @@ its watchdog.
 | every message type but AEM's, past its deadline: an ADDRESS_ACCESS, an AVC, an HDCP_APM and an EXTENDED command queued behind a stall answer NOT_IMPLEMENTED with the command echoed, as idle, never status 10 (IEEE Table 9-2) | DL9 |
 | REQ-MVU-005 on the fault path: an MVU response whose memory fails (a read error, a write error, a tied-off master, and a 540-byte command whose echo needs the oversize slot) answers NOT_IMPLEMENTED with the command echoed, as the deadline's does, and is counted; an AEM one still answers ENTITY_MISBEHAVING | DL8 |
 | the one command held through the boot restore is exempt (rule (d)) | D3O6 |
-| the redirect: before the first op, never after an effect, never cutting a waiting op, once per dispatch, dropping a partly built body, keeping a batch's cursor, the best current status kept | `tb/ucpu` P19a to P19h |
+| the redirect: before the first op, never after an effect, never cutting a waiting op, once per dispatch, dropping a partly built body, keeping a batch's cursor, the best current status kept | `tb/ucpu` P20a to P20h |
 | T-AECP-RESP for MVU (REQ-MVU-005): GET_MILAN_INFO and an unimplemented MVU command, byte-exact, at the suite's memory latency and at the reference 143 clocks, graded against their lines at `P-CLK-HZ` | TB1 |
 | the 08 §4 worst-case stimuli: an oversize READ_DESCRIPTOR (byte-exact, the oversize TX slot) and a GET_DYNAMIC_INFO carrying all thirteen getters, at both latencies | TB2 |
 | the engine busy: each of those behind a 15-frame notification fan-out, answered as idle, within one job plus its idle latency of the fan-out's last frame; GET_MILAN_INFO against a response memory stalled short of its watchdog | TB3, TB4 |
