@@ -1419,7 +1419,11 @@ zeros elsewhere, the same bytes as the successful solicited answer
   AVB_INTERFACE 0, CLOCK_DOMAIN 0) changes every 100 ms for 3.5 s: each emits at
   least three and at most one round per second (5 or 4 in 5 s, the closest two
   99,994 clocks apart: the limiter reads one tick), and every GET_COUNTERS frame is
-  byte-exact at its row's own sequence_id.
+  byte-exact at its row's own sequence_id. The one-tick tolerance is a recorded
+  decision (review R420-1 S4, retained): the limiter predates this lane and counts
+  Milan Table 5.22's "once per second" on the 1 ms timebase like every T- value (08
+  §3: 1 ms resolution), so two rounds are at least 1,000 ticks apart: in core
+  clocks, at most one tick short of a second.
 - **ST3** a GET_CONFIGURATION and an ACMP GET_RX_STATE every 700 ms of the churn
   are all answered, within T-BUDGET-AECP-WC and T-BUDGET-ACMP-RESP counted in
   clocks at the wrap's nominal clock (clk_ms(100), clk_ms(50)): worst 70,958 and
@@ -1493,3 +1497,13 @@ the lane head, 34 of 34 KILLED (the four `ident_*` controls after
 
 RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
 every RND control is killed by the divergence check alone.
+
+**Retained controls, which survive by design** (review R420-1 S1; re-run at the round-2
+head with the reviewer's own driver, all three SURVIVED with every section-ID check
+passing). They are kept as defensive structure and are not graded:
+
+| Control | Planted | Why no check kills it |
+|---|---|---|
+| `x_ident_arm_ignores_core_arm` | the identify arm stops yielding to the registry machine's arm sites (`&& !core_arm_w` dropped) | a collision needs a registry op to arm (N_APPLY, or N_IDLE with a new op) in the very cycle the identify arm is owed, the one after a frame's departure; a directed check would have to sweep a command's arrival cycle by cycle |
+| `x_ident_rearm_single_generation` | the REARM generation never flips | a stale REARM can only fire in the cycles between a first frame's departure and the new REARM arm landing (a few cycles), and the departure itself clears `fired_r` |
+| `x_ident_no_sync_second_flop` | the synchroniser loses its second flop | CDC hygiene: metastability is invisible to a two-state simulation |

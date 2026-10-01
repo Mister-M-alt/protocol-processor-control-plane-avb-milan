@@ -37,7 +37,10 @@ There is exactly one clock and one reset.
   two-flop synchroniser before they arrive;
 - the one exception is `identify_button_i` (section 6): with `EN_IDENTIFY_NOTIF_P` = 1 the
   processor passes it through its own two-flop synchroniser, so it may come straight
-  from a pin. Debouncing it is still yours;
+  from a pin. Debouncing it is still yours, and so is the timing constraint: the two
+  flops (`u_notify.gen_ident.btn_q1_r`, `btn_q2_r`) carry `ASYNC_REG`, and the path from
+  the pin to `btn_q1_r` is an asynchronous input to declare as such (a false path or a
+  max-delay exception);
 - the class-D status outputs are combinational reads of `clk_i`-domain registers. A
   consumer in another domain owns its own synchroniser.
 

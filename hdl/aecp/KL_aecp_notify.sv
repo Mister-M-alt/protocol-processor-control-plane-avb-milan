@@ -707,7 +707,10 @@ module KL_aecp_notify
     localparam logic [1:0] I_GAP  = 2'd2;   // T-IDENT-BURST to the next frame
     localparam logic [1:0] I_HOLD = 2'd3;   // burst sent, until the timeout
     logic [1:0]  i_st_r;
-    logic        btn_q1_r, btn_q2_r;   //! the 2FF synchroniser
+    //! the 2FF synchroniser, the one CDC inside the core (integrator guide
+    //! section 1: the pin to btn_q1_r is the integrator's to constrain)
+    (* ASYNC_REG = "TRUE" *) logic btn_q1_r;
+    (* ASYNC_REG = "TRUE" *) logic btn_q2_r;
     logic        job_r;                //! a frame is owed to the engine
     logic        own_r;                //! ... and holds the uns face
     logic        left_r;               //! retired; its frame is still in the TX path

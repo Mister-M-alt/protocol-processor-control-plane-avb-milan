@@ -787,7 +787,10 @@ the MAC; IDENT-BURST singleton), so a busy lane or a stalled MAC delays the rest
 burst and never shortens a gap; while the button is held the next burst starts
 `T-IDENT-REARM` after the previous one's first frame (IDENT-REARM) and no sooner than
 `T-IDENT-BURST` after its third, and a release returns to WAITING without cutting a
-burst short. Graded on the wire in
+burst short. A release and a new press inside a burst are read as a new IDENTIFY entry
+latched while txIdentify runs: the next burst starts `T-IDENT-BURST` after the running
+one's third frame, not at the 1 s timeout a level sampled only after txIdentify would
+wait for (a deliberate reading of Figure 7-142, graded by ID3). Graded on the wire in
 the `tb/pp_top` third build (section ID) and silent at 0 (section ID0); the command
 form keeps its `BAD_ARGUMENTS` (A6, ID4). **What identify work remains:** none in this
 repository. Adopting it is the integrator's: a debounced board button on
@@ -907,10 +910,11 @@ sequenceDiagram
     Note over AECP: value stays 255 until SET_CONTROL 0 (reset default 0)
     Note over AECP,DEV: button variant (P-EN-IDENTIFY-NOTIFICATION, default 0)
     DEV->>AECP: identify_button_i pressed (2FF, debounced by the integrator)
-    AECP-->>CTRL: IDENTIFY_NOTIFICATION x3, T-IDENT-BURST apart, all at identifySequenceID
+    AECP-->>CTRL: IDENTIFY_NOTIFICATION x3, each T-IDENT-BURST after the previous one left, all at identifySequenceID
     Note over AECP: multicast 91-E0-F0-01-00-01, controller_entity_id 90-E0-F0-FF-FE-01-00-01, u = 1, CONTROL identify_index_i
     AECP-->>CTRL: still held after T-IDENT-REARM from the first frame: the next burst, identifySequenceID + 1
     DEV->>AECP: released: WAITING (a running burst still ends)
+    Note over AECP: released and pressed again inside a burst: the next burst T-IDENT-BURST after its third frame
 ```
 
 ## 8. µcode architecture

@@ -2757,6 +2757,8 @@ module KL_aecp_engine
             regun_r    <= (uns_kind_i == PP_UNS_LOCK_C);
             acq_r      <= 1'b0;
             lockc_r    <= 1'b0;
+            //! SET_STREAM_INFO keeps this flag for tix_w alone: E_SINFOUNS
+            //! builds {type, index} from that operand shape and gathers nothing
             gstri_r    <= (uns_kind_i == PP_UNS_STRI_C)
                           || (uns_kind_i == PP_UNS_SINFO_C);
             gavb_r     <= (uns_kind_i == PP_UNS_AVB_C);
