@@ -843,14 +843,15 @@ range. The last column is how many checks each arm failed at the lane head.
 | `pg-append-524` | E_GAMAP's record APPEND loses its Δ8 flag and stops at cdl 524 again, the issue #50 reproduction | `PG2 a 63-mapping page: SUCCESS above cdl 524 (528), a standard slot: number_of_mappings` | 14 |
 | `pg-cap-dropped` | E_GAMAP's page cap keeps the count and the SUCCESS (its SET_MASKED and SET_STATUS NO_RESOURCES replaced with NOP) | `PG7 a 72-mapping page: NO_RESOURCES, no record claimed: number_of_mappings` | 10 |
 | `pg-cap-off-by-one` | the page cap compares against 73 instead of 72, so a 72-mapping page is answered SUCCESS | `PG7 a 72-mapping page: NO_RESOURCES, no record claimed: byte-exact` | 4 |
-| `rd-base-no-overlay` | the engine's issue #82 re-dispatch removed, so AUDIO_UNIT, CLOCK_DOMAIN and STREAM reads are the image's, the issue reproduction | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 5 |
-| `rd-au-image-only` | E_RDESCAU always branches to the image (its unset test a BRANCH) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 1 |
+| `rd-base-no-overlay` | the engine's issue #82 re-dispatch removed, so AUDIO_UNIT, CLOCK_DOMAIN and STREAM reads are the image's, the issue reproduction | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 9 |
+| `rd-au-image-only` | E_RDESCAU always branches to the image (its unset test a BRANCH) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 2 |
 | `rd-au-unset-overlays` | E_RDESCAU's unset test removed, so an unset row overlays its zero | `RD0 AUDIO_UNIT 0, rate unset: READ_DESCRIPTOR byte-exact` | 1 |
-| `rd-cd-image-only` | E_RDESCCD always branches to the image | `RD1 CLOCK_DOMAIN 0 after SET_CLOCK_SOURCE(1): READ_DESCRIPTOR byte-exact` | 2 |
-| `rd-str-unset-overlays` | the STREAM programs' unset test removed, so an unset row overlays its zero | `RD0 STREAM_INPUT 0, format unset: READ_DESCRIPTOR byte-exact` | 3 |
-| `rd-so-reads-input-row` | E_RDESCSO reads the STREAM_INPUT row (`SEL_FMTIN`) instead of its own | `RD1 STREAM_OUTPUT 1 after SET_STREAM_FORMAT: READ_DESCRIPTOR byte-exact` | 2 |
+| `rd-cd-image-only` | E_RDESCCD always branches to the image | `RD1 CLOCK_DOMAIN 0 after SET_CLOCK_SOURCE(1): READ_DESCRIPTOR byte-exact` | 3 |
+| `rd-str-unset-overlays` | the STREAM programs' unset test removed, so an unset row overlays its zero | `RD0 STREAM_INPUT 0, format unset: READ_DESCRIPTOR byte-exact` | 4 |
+| `rd-so-reads-input-row` | E_RDESCSO reads the STREAM_INPUT row (`SEL_FMTIN`) instead of its own | `RD1 STREAM_OUTPUT 1 after SET_STREAM_FORMAT: READ_DESCRIPTOR byte-exact` | 4 |
 | `rd-cfg-any` | the configuration-0 guard of the re-dispatch dropped | `RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes: the 534-byte descriptor, byte-exact` | 2 |
-| `rd-tail-uncut` | the µCPU's COPY_BUFFER TAIL copies the whole length from its start (no subtract) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 5 |
+| `rd-tail-uncut` | the µCPU's COPY_BUFFER TAIL copies the whole length from its start (no subtract) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 9 |
+| `rd-str-short-guard-nop` | E_RDESCSF's too-short guard replaced with NOP, so a STREAM short of the lane takes the overlay with a wrapped TAIL count (R416-1 S1) | `RD4 STREAM_OUTPUT 1 of 80 bytes with a set row: READ_DESCRIPTOR byte-exact` | 1 |
 | `line-floor-rounded` | the engine's line floor judged on the buffer rounded up to 16, as at 54c1e2b1 (R417-1 F1), so a 568-byte line elaborates (`line-guards`) | `line guard 568` | 1 |
 | `line-ceiling-dropped` | the engine's line ceiling removed, so 1016 is refused only by the µCPU's own cap, which does not name `DESC_LINE_BYTES_P` (R416-1 F2; `line-guards`) | `line guard 1016` | 1 |
 | `line-buffer-fixed-592` | the response buffer fixed at the default line's 592 bytes instead of `16 + LINE_BYTES_P` (`aecp-line`) | `OV1 AUDIO_MAP 0 (584 B, the whole line: cdl 600, frame 626): the 584-byte descriptor, byte-exact` | 7 |
@@ -876,10 +877,13 @@ fail the pages they reach: the Δ8 flag removed, PG2 to PG6 (62 records, the ful
 count); the cap dropped, PG7 to PG9 (the count kept, 71 records or none carried);
 the cap one late, PG7 alone. The overlay arms fail the reads they reach: without
 the re-dispatch, or with the TAIL count uncut (the response runs past the descriptor),
-the five RD1 reads after a SET; each image-only program its own type's RD1 reads; the
-unset test removed, the unset rows it serves (RD0's rate; RD0's two streams and RD1's
-never-set STREAM_OUTPUT 0); the output program on the input row, both STREAM_OUTPUT
-reads of RD1; the configuration guard dropped, RD2 and OV4. The line arms: the floor
+the five RD1 reads after a SET and the four RD3 reads after the restore; each
+image-only program its own type's RD1 and RD3 reads; the unset test removed, the
+unset rows it serves (RD0's rate; RD0's two streams and the never-set STREAM_OUTPUT 0
+of RD1 and RD3); the output program on the input row, both STREAM_OUTPUT reads of RD1
+and of RD3; the configuration guard dropped, RD2 and OV4; the STREAM guard removed,
+RD4, whose 80-byte descriptor (a TAIL count of 80 less 88, wrapped) gets no response
+inside the bound at all. The line arms: the floor
 on the rounded buffer lets 568 lint clean, and without the engine's ceiling 1016 is
 refused only by the µCPU's `RESP_D8_CAP_BYTES_P` message; a buffer fixed at 592
 truncates OV1 and OV5's 584-byte descriptor at the line build (byte-exact, cdl and
@@ -1355,7 +1359,17 @@ the zero a stub would carry.
   STREAM_INPUT 0 and STREAM_OUTPUT 1, each followed by its GET and the READ_DESCRIPTOR
   that must carry the GET's value; STREAM_OUTPUT 0, never set, is still its image.
   **RD2**: configuration 1's CLOCK_DOMAIN 0 keeps its image bytes (index 0) while
-  configuration 0's row holds 1. At the lane base every RD1 read after a SET fails
+  configuration 0's row holds 1. **RD3** (R417-1 S2): once RD1's rows reach the NVM
+  device, a power cycle carries it and both restore walks write the rows back; with
+  no SET since the reset the GETs read 48000, clock source 1 and the 2ch format, and
+  each READ_DESCRIPTOR carries them, STREAM_OUTPUT 0 still its image. **RD4** (R416-1
+  S1): the index map gives configuration 0's STREAM_OUTPUTs 80 bytes, short of
+  `current_format`'s second lane (88), a power cycle walks it again and the holder
+  sets STREAM_OUTPUT 1's format; READ_DESCRIPTOR serves its 80 image bytes whole.
+  The AUDIO_UNIT and CLOCK_DOMAIN programs' guards cannot be reached this way: a rate
+  or clock source, set or restored, is judged against the descriptor's own list or
+  count, which a descriptor short of the lane does not hold, while a stream format is
+  judged by the integrator's face. At the lane base every RD1 read after a SET fails
   (the image's defaults); `rd-base-no-overlay` below restores exactly that.
 - **PG** the GET_AUDIO_MAP page (issue #50). The audio-map face serves STREAM_PORT_INPUT
   1's page 0 at M mappings, every record distinct, and each response is graded

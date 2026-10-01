@@ -10673,14 +10673,18 @@ struct AecpResponsePhase {
     for (const auto& e : image.image_ents)
       if (e.cfg == CFGIX && e.type == 0x0024) putbe(&io.dram[e.off + 70], CD_IMAGE_INDEX, 2);
     ents = image.image_ents;
+    restart("AX boot: blank NVM releases the entity");
+  }
+  //! reset (a power cycle: the NVM device is carried), both restore walks to
+  //! their terminal, then link up and enable
+  void restart(const char* what) {
     io.reset();
     io.d->restore_go_i = 1;
     io.idle(5);
     io.d->restore_go_i = 0;
     unsigned budget = 400000;
     while (!io.d->restore_done_o && budget-- != 0) io.step();
-    CHECK(io.d->restore_done_o && !io.d->restore_fail_o,
-          "AX boot: blank NVM releases the entity");
+    CHECK(io.d->restore_done_o && !io.d->restore_fail_o, "%s", what);
     io.d->link_up_i = 1;
     io.d->entity_enable_i = 1;
     io.idle(1000);
@@ -11084,6 +11088,70 @@ struct AecpResponsePhase {
             "RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes");
   }
 
+  //! RD3 (R417-1 S2): a row the D3 restore wrote, not a SET. RD1's rows reach
+  //! the device once the writer's debounce closes; a power cycle carries the
+  //! device and both restore walks write the rows back; with no SET since the
+  //! reset, each READ_DESCRIPTOR carries what its GET reads: 48000, clock
+  //! source 1 and the 2ch format on STREAM_INPUT 0 and STREAM_OUTPUT 1
+  void rd_after_the_restore() {
+    bool settled = false;
+    for (long c = 0; c < 1500L * MS_CYC && !settled; ++c) {
+      io.step();
+      settled = c > 16 && !io.d->d3_unflushed_o && io.nv_st == H::NvState::NV_IDLE
+                && !io.d->nvm_dev_req_o;
+    }
+    CHECK(settled, "RD3 RD1's rows reached the device before the power cycle (premise)");
+    restart("RD3 the power cycle's restore releases the entity");
+    CHECK(io.d->dbg_dyn_rate_v_o && io.d->dbg_dyn_clk_v_o
+              && get_value(AEM_GET_SAMPLING_RATE, 0x0002, 0, 4, false) == 48000u
+              && get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, false) == 1u
+              && get_value(AEM_GET_STREAM_FORMAT, 0x0005, 0, 8, false) == SFMT_ALT
+              && get_value(AEM_GET_STREAM_FORMAT, 0x0006, 1, 8, false) == SFMT_ALT,
+          "RD3 the restore wrote the rows back: the GETs read 48000, 1 and the 2ch "
+          "format (premise)");
+    rd_rate("RD3 AUDIO_UNIT 0 after the restore, no SET since the reset");
+    rd_clks("RD3 CLOCK_DOMAIN 0 after the restore, no SET since the reset");
+    rd_fmt(0x0005, 0, "RD3 STREAM_INPUT 0 after the restore, no SET since the reset");
+    rd_fmt(0x0006, 1, "RD3 STREAM_OUTPUT 1 after the restore, no SET since the reset");
+    rd_image(0x0006, 0, "RD3 STREAM_OUTPUT 0, never set, still its image");
+  }
+
+  //! RD4 (R416-1 S1): a configuration-0 STREAM too short for current_format's
+  //! second lane (88 bytes) is served whole from its image, set row or not:
+  //! the TAIL count would otherwise be its length less 88, wrapped. Only a
+  //! STREAM's row can be set over such a descriptor, because SET_STREAM_FORMAT
+  //! is judged by the integrator's face; SET_SAMPLING_RATE, SET_CLOCK_SOURCE
+  //! and their restore rules are judged against the descriptor's own list and
+  //! count, which a descriptor short of the lane does not hold. The index map
+  //! (outside the header checksum) gives STREAM_OUTPUT 80 bytes, a power cycle
+  //! walks it again, and the holder sets STREAM_OUTPUT 1's format
+  static constexpr uint16_t SHORT_STREAM = 80;
+  void rd_a_short_stream_keeps_its_image() {
+    for (size_t i = 0; i < ents.size(); ++i)
+      if (ents[i].cfg == CFGIX && ents[i].type == 0x0006) {
+        ents[i].len = SHORT_STREAM;
+        putbe(&io.dram[32 + 16 * i + 6], SHORT_STREAM, 2);
+      }
+    restart("RD4 the power cycle over 80-byte STREAM_OUTPUTs releases the entity");
+    ++seq;
+    const auto set = ask(AEM_SET_STREAM_FORMAT, tiv(0x0006, 1, SFMT_ALT, 8));
+    CHECK(st(set) == AECP_SUCCESS && (io.d->aecp_fmt_out_v_o & 0x2) != 0
+              && get_value(AEM_GET_STREAM_FORMAT, 0x0006, 1, 8, false) == SFMT_ALT,
+          "RD4 STREAM_OUTPUT 1's row holds the 2ch format: SET status %d (premise)",
+          st(set));
+    const auto d = image_desc(CFGIX, 0x0006, 1);
+    CHECK(d.size() == SHORT_STREAM, "RD4 the image serves STREAM_OUTPUT 1 at %u bytes",
+          unsigned(d.size()));
+    ++seq;
+    const auto r = ask(AEM_READ_DESCRIPTOR, rdesc(CFGIX, 0x0006, 1));
+    std::vector<uint8_t> pl(4, 0);
+    pl.insert(pl.end(), d.begin(), d.end());
+    const auto w = want(CTLR_MAC, CTLR_EID, AECP_SUCCESS, AEM_READ_DESCRIPTOR, pl);
+    CHECK(r == w, "RD4 STREAM_OUTPUT 1 of 80 bytes with a set row: READ_DESCRIPTOR "
+          "byte-exact, its image whole (cdl %d)", cdl(r));
+    if (!r.empty() && r != w && r.size() < 200) { dump("got", r); dump("exp", w); }
+  }
+
   // ---- RB: every response write inside the reservation (R417-1 F1) ------
   //! The integrator reserves 16 + DESC_LINE_BYTES_P bytes at RESP_BASE_P and
   //! nothing else writes there (integrator guide section 5, 07 section 3.3.2),
@@ -11110,6 +11178,8 @@ struct AecpResponsePhase {
     ov_responses_above_cdl_524();
     pg_the_page();
     rd_after_each_set();
+    rd_after_the_restore();
+    rd_a_short_stream_keeps_its_image();
     rb_writes_stay_in_the_reservation();
   }
 };

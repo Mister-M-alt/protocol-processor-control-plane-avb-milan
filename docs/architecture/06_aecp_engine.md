@@ -295,7 +295,13 @@ descriptor's tail rides `COPY_BUFFER` TAIL (`cnd[0]`: the count is the descripto
 length less a lane-aligned start, since the µISA has no subtract). A descriptor too
 short to hold the field's lane is served whole from the image. `tb/pp_top` section AX
 (RD0 to RD2) grades each type byte-exact before and after its SET, against the value
-the GET returns after it.
+the GET returns after it; RD3 does the same after a power cycle, with every row
+written back by the D3 restore and no SET since the reset; RD4 serves an 80-byte
+STREAM_OUTPUT with a set row as its image, whole. Only the STREAM guard can be
+reached that way: SET_STREAM_FORMAT is judged by the integrator's face, while a
+sampling rate or clock source (set or restored) is judged against the AUDIO_UNIT's
+own list and the CLOCK_DOMAIN's own count, which a descriptor short of the lane does
+not hold.
 
 ### 6.2 GET_STREAM_INFO — the Milan 80-byte response and its data lineage
 

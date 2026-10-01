@@ -103,6 +103,9 @@ MUTANTS = [
      "the 534-byte descriptor, byte-exact"),
     ("rd-tail-uncut", "rd-tail-uncut", "aecp-dispatch",
      "RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact"),
+    # R416-1 S1: the STREAM programs' too-short guard, the one a SET can reach
+    ("rd-str-short-guard-nop", "rd-str-short-guard-nop", "aecp-dispatch",
+     "RD4 STREAM_OUTPUT 1 of 80 bytes with a set row: READ_DESCRIPTOR byte-exact"),
     # R416-1 F2, R417-1 F1: the DESC_LINE_BYTES_P range and the response
     # buffer as the 16 + line reservation, at the range's edges (line-guards)
     # and at the line build's non-default 584-byte line (aecp-line)
