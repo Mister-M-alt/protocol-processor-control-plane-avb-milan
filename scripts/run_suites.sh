@@ -23,6 +23,15 @@ if ! python3 scripts/check_upc_map.py; then
   exit 1
 fi
 
+# tb/pp_top M9 proves the aem_w message-type guard of every opcode it lists,
+# and nothing else; an arm missing from its list is an untested guard that
+# every suite passes (issue #76). Hold the list to the engine's OP_*_C set.
+if ! python3 scripts/check_m9_opcodes.py --selftest \
+   || ! python3 scripts/check_m9_opcodes.py; then
+  echo "FAIL check_m9_opcodes (a decoded opcode is missing from the M9 sweep)"
+  exit 1
+fi
+
 for d in tb/*/; do
   [ -f "$d/Makefile" ] || continue
   name=$(basename "$d")

@@ -26,13 +26,14 @@
 //                lanes only feed talker-command flows this suite does not
 //                byte-check.
 //
-//                The one parameter the suite builds twice: SRP_DOM_DEF_VID_P
+//                The two parameters the suite builds again: SRP_DOM_DEF_VID_P
 //                is overridden ONLY when the second build defines
-//                PP_TOP_SRP_DOM_DEF_VID (Makefile), so the first build grades
-//                the top's own default and never a copy of it. The third
-//                build defines PP_TOP_TIM_REAL and runs the timebase at
-//                1 ms = 1,000 clk, the nominal clock's own, for section TB's
-//                response budgets.
+//                PP_TOP_SRP_DOM_DEF_VID, and DESC_LINE_BYTES_P ONLY when the
+//                third defines PP_TOP_DESC_LINE_BYTES (Makefile), so the first
+//                build grades the top's own defaults and never a copy of them.
+//                The fourth build defines PP_TOP_TIM_REAL and runs the
+//                timebase at 1 ms = 1,000 clk, the nominal clock's own, for
+//                section TB's response budgets.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -448,11 +449,25 @@ module pp_top_wrap (
     output logic        dbg_sb_ref_acmp_o,
     output logic        dbg_aecp_sb_active_o,
     output logic        dbg_acmp_sb_active_o,
-    output logic        dbg_sb_barrier_o
+    output logic        dbg_sb_barrier_o,
+    //! section AX: the AECP engine's TX-slot grant, the slot it names and the
+    //! engine's own Delta-8 oversize request beside it; the pool's serializer
+    //! start and the slot it streams; and slot 4 (the oversize slot) FREE, so
+    //! an oversize response is seen to leave through slot 4 and free it
+    output logic        dbg_aecp_txs_gnt_o,
+    output logic  [2:0] dbg_aecp_txs_slot_o,
+    output logic        dbg_aecp_txs_ovs_o,
+    output logic        dbg_ser_start_o,
+    output logic  [2:0] dbg_ser_slot_o,
+    output logic        dbg_txs_slot4_free_o,
+    //! section AX: the DESC_LINE_BYTES_P the top elaborated, in bytes, so the
+    //! bench bounds response writes by the reservation (16 + it) the top
+    //! really has, the default in the first build and the line build's own
+    output logic [15:0] dbg_desc_line_bytes_o
 );
 
 `ifdef PP_TOP_TIM_REAL
-  // section TB's build (the Makefile's third): 1 ms = 1 x 1000 = 1,000 clk,
+  // section TB's build (the Makefile's fourth): 1 ms = 1 x 1000 = 1,000 clk,
   // the nominal TB_CLK_HZ_C's own rate, so no response budget measured there
   // is cut short by the compressed AECP deadline
   localparam int unsigned TB_DIV_US_C = 1;
@@ -494,6 +509,10 @@ module pp_top_wrap (
 `ifdef PP_TOP_SRP_DOM_DEF_VID
       //! the second build's verification-only fixture (see the banner)
       .SRP_DOM_DEF_VID_P (`PP_TOP_SRP_DOM_DEF_VID),
+`endif
+`ifdef PP_TOP_DESC_LINE_BYTES
+      //! the third build's verification-only fixture (see the banner)
+      .DESC_LINE_BYTES_P (`PP_TOP_DESC_LINE_BYTES),
 `endif
       .CLK_HZ_P     (TB_CLK_HZ_C),
       .TIM_DIV_US_P (TB_DIV_US_C),
@@ -805,6 +824,13 @@ module pp_top_wrap (
   assign dbg_aecp_sb_active_o = u_dut.aecp_sb_active_r;
   assign dbg_acmp_sb_active_o = u_dut.acmp_sb_active_r;
   assign dbg_sb_barrier_o     = u_dut.sb_barrier_w;
+  assign dbg_aecp_txs_gnt_o  = u_dut.aecp_txs_gnt_w;
+  assign dbg_aecp_txs_slot_o = 3'(u_dut.aecp_txs_gnt_slot_w);
+  assign dbg_aecp_txs_ovs_o  = u_dut.aecp_txs_oversize_w;
+  assign dbg_ser_start_o     = u_dut.u_tx_slots.ser_start_w;
+  assign dbg_ser_slot_o      = 3'(u_dut.ser_slot_w);
+  assign dbg_txs_slot4_free_o = (u_dut.u_tx_slots.st_r[4] == 2'd0);
+  assign dbg_desc_line_bytes_o = 16'(u_dut.DESC_LINE_BYTES_P);
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin

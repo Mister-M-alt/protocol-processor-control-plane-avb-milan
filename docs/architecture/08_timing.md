@@ -164,7 +164,7 @@ one AECP record held through the boot restore is re-armed at its admission
 design target the TIM suite asserts ([09 §8.3](09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)).
 
 **Measured (issues #57 and #81, `tb/pp_top` section TB).** MAC command byte 0
-to MAC response byte 0, in the suite's third build, whose timebase is the nominal
+to MAC response byte 0, in the suite's fourth build, whose timebase is the nominal
 clock's own so the deadline never cuts a measurement, at the reference SoC's 143
 clocks per memory access unless stated:
 
