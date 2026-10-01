@@ -693,25 +693,50 @@ into the one canonical tally.
   transcription of F03.7 and F06.14: the class in F03.7 row order and the key a
   descriptor's `{type[5:0], index[9:0]}`. The taps are the scoreboard's
   admission port (`dbg_sb_class_o`, `dbg_sb_key_o`, `dbg_sb_acc_aecp_o`,
-  `dbg_sb_acc_acmp_o`), the two owners' holds and the pending drain
+  `dbg_sb_acc_acmp_o`, and `dbg_sb_ref_aecp_o`/`dbg_sb_ref_acmp_o`, the head it
+  was asked about and refused), the two owners' holds and the pending drain
   (`dbg_sb_barrier_o`). **HZ1** 33 AECP transactions (every class, the GETs'
   descriptor keys, READ_DESCRIPTOR, GET_DYNAMIC_INFO, MVU, an AECP response as
   input and a command for another entity_id) and 6 ACMP ones each present their
   class and key. An ACMP transaction is held in flight by stalling the MAC until
   four GET_RX_STATE answers fill the standard TX slots, so the next ACMP command
-  is admitted and keeps its key until the MAC restarts. **HZ2** SET_CONFIGURATION
-  latches the drain while an UNBIND_RX holds, is admitted once that key frees,
-  keeps a later ACMP head behind it, and answers SUCCESS. **HZ3** with ACMP
-  preferred by the round-robin (an AECP frame for another entity admitted beside
-  the held step) and a GET_RX_STATE queued behind the pending barrier, both are
-  answered, the barrier first: without the barrier's priority the admission port
-  wedges for good. **HZ4** LOCK_ENTITY waits for a held UNBIND_RX and the unlock
-  runs beside a held GET_RX_STATE. **HZ5** START_STREAMING waits for the held
-  sink's key and runs beside another sink's; **HZ6** GET_STREAM_INFO likewise,
-  and beside a GET_RX_STATE of the same sink (two reads); **HZ7**
-  ADD_AUDIO_MAPPINGS waits for any stream step. **HZ8** SET_SAMPLING_RATE,
-  SET_NAME, REGISTER_UNSOLICITED_NOTIFICATION, SET_CONTROL and READ_DESCRIPTOR
-  each run beside a held stream step. `make hazards` runs this section alone;
+  is admitted and keeps its key until the MAC restarts. The same stall holds an
+  AECP command, whose response waits for a standard slot: the talker returns its
+  RX slot once it has read a frame, so a talker transaction keeps its key a few
+  clocks only and every talker-side pair is graded with the AECP command held.
+  Every "waits" check requires the scoreboard to have refused the head at least
+  once while the other holds, and a MAAP allocator answers, so the talker is
+  free to take commands (without one it spends each retry round in its MAAP
+  request wait). **HZ2** SET_CONFIGURATION latches the drain while an UNBIND_RX
+  holds, is admitted once that key frees, keeps a later ACMP head behind it, and
+  answers SUCCESS. **HZ3** with ACMP preferred by the round-robin (an AECP frame
+  for another entity admitted beside the held step) and a GET_RX_STATE queued
+  behind the pending barrier, both are answered, the barrier first: without the
+  barrier's priority the admission port wedges for good. **HZ4** LOCK_ENTITY
+  waits for a held UNBIND_RX and the unlock runs beside a held GET_RX_STATE.
+  **HZ5** START_STREAMING waits for the held sink's key and runs beside another
+  sink's; **HZ6** GET_STREAM_INFO likewise, and beside a GET_RX_STATE of the same
+  sink (two reads); **HZ7** ADD_AUDIO_MAPPINGS waits for any stream step.
+  **HZ8** SET_SAMPLING_RATE, SET_NAME, REGISTER_UNSOLICITED_NOTIFICATION,
+  SET_CONTROL and READ_DESCRIPTOR each run beside a held stream step, and the
+  REGISTER beside a held GET_RX_STATE: REGISTRY_OP is the one class with no
+  reachable conflict at this top. **HZ9** (NAME_WR) a SET_NAME on STREAM_INPUT 1
+  waits for a held GET_RX_STATE of sink 1, then answers SUCCESS and GET_NAME
+  reads the name back; on STREAM_INPUT 0 it runs beside that read, and on
+  STREAM_INPUT 1 beside an UNBIND_RX of sink 1; held, a SET_NAME on
+  STREAM_OUTPUT 1 holds back a GET_TX_STATE of source 1 and not one of source 2,
+  and one on STREAM_INPUT 1 a GET_RX_STATE of sink 1. **HZ10** STOP_STREAMING on
+  STREAM_INPUT 1 waits for a held GET_RX_STATE of sink 1; held on STREAM_OUTPUT
+  1 it holds back a GET_TX_STATE and a DISCONNECT_TX of source 1 and not a
+  DISCONNECT_TX of source 2; a held GET_STREAM_INFO on STREAM_OUTPUT 1 holds
+  back the DISCONNECT_TX and not the GET_TX_STATE. **HZ11** a held
+  SET_CONFIGURATION holds back a GET_TX_STATE; a held LOCK_ENTITY or
+  ADD_AUDIO_MAPPINGS holds back a DISCONNECT_TX and not a GET_TX_STATE.
+  **HZ12** SET_SAMPLING_RATE, SET_CONTROL and ADD_AUDIO_MAPPINGS naming a stream
+  descriptor (which none may legally name) each wait for a held GET_RX_STATE of
+  sink 1 when they name STREAM_INPUT 1 and are then refused NOT_SUPPORTED, run
+  beside it when they name STREAM_INPUT 0, and, held naming STREAM_OUTPUT 1,
+  hold back a GET_TX_STATE of source 1. `make hazards` runs this section alone;
   the default run includes it.
 
 ## Snapshot window map (side port 0x20000, implemented by the top)
@@ -908,18 +933,29 @@ and must pass. Counts below were taken on 2026-09-30 with Verilator 5.052.
 | `mvu-silent` | pp_top `budget` | GET_MILAN_INFO retires without its SEND_RESPONSE | 12: TB1, TB3 and TB4, every GET_MILAN_INFO unanswered |
 | `fanout-never-ends` | pp_top `budget` | the notification walk never ends its class, so the command-path hold never drops | 23: TB3 to TB5, nothing answered once the fan-out starts |
 | `acmp-waits-for-aecp` | pp_top `budget` | READ_DESCRIPTOR classified CFG_BARRIER, so ACMP waits behind unrelated AECP work | 2: TB5 (GET_RX_STATE 13,144 clocks beside the READ_DESCRIPTOR, GET_TX_STATE 977 during the fan-out) |
-| `hz-stub-restored` | pp_top `hazards` | the dispatch-ROM stub the classifier replaced (ACMP STREAM_CFG and the audio-map pair MAP_CFG, keyed by protocol; everything else RO) | 46: HZ1 (34 rows), HZ2 x3, HZ3 x2, HZ4 x3, and HZ5 and HZ6 on the held sink's key |
-| `hz-setcfg-not-barrier` | pp_top `hazards` | SET_CONFIGURATION classified RO_SNAPSHOT | 5: HZ1, HZ2, HZ3 |
-| `hz-lock-not-lockop` | pp_top `hazards` | LOCK_ENTITY classified RO_SNAPSHOT | 5: HZ1 x2, HZ4 x3 |
-| `hz-stream-key-none` | pp_top `hazards` | AECP STREAM_CFG keyed by nothing | 6: HZ1 x4, HZ5 x2 |
-| `hz-reads-keyed-none` | pp_top `hazards` | the descriptor GETs keyed by nothing | 11: HZ1 x9, HZ6 x2 |
-| `hz-clock-as-ro` | pp_top `hazards` | CLOCK_CFG classified RO_SNAPSHOT | 2: HZ1 |
+| `hz-stub-restored` | pp_top `hazards` | the dispatch-ROM stub the classifier replaced (ACMP STREAM_CFG and the audio-map pair MAP_CFG, keyed by protocol; everything else RO) | 74: HZ1 (34 rows), HZ2 x3, HZ3 x2, HZ4 x3, HZ5, HZ6 and every keyed pair of HZ9 to HZ12 |
+| `hz-setcfg-not-barrier` | pp_top `hazards` | SET_CONFIGURATION classified RO_SNAPSHOT | 7: HZ1, HZ2 x2, HZ3 x2, HZ11a x2 |
+| `hz-setcfg-not-barrier-talker` | pp_top `hazards` | the same patch, named on the talker | the same 7; named HZ11a |
+| `hz-lock-not-lockop` | pp_top `hazards` | LOCK_ENTITY classified RO_SNAPSHOT | 7: HZ1 x2, HZ4 x3, HZ11b x2 |
+| `hz-lock-not-lockop-talker` | pp_top `hazards` | the same patch, named on the talker | the same 7; named HZ11b |
+| `hz-stream-key-none` | pp_top `hazards` | AECP STREAM_CFG keyed by nothing | 12: HZ1 x4, HZ5 x2, HZ10a x2, HZ10b x2, HZ10c x2 |
+| `hz-stream-key-none-vs-read`, `-talker-read`, `-talker-step` | pp_top `hazards` | the same patch, named on STREAM_CFG against an ACMP read, against the talker's read and against its step | the same 12; named HZ10a, HZ10b, HZ10c |
+| `hz-reads-keyed-none` | pp_top `hazards` | the descriptor GETs keyed by nothing | 13: HZ1 x9, HZ6 x2, HZ10e x2 |
+| `hz-reads-keyed-none-talker` | pp_top `hazards` | the same patch, named on the talker's step | the same 13; named HZ10e |
+| `hz-talker-keyed-as-listener` | pp_top `hazards` | the talker's transactions keyed as STREAM_INPUT | 18: HZ1 x4, HZ9d x2, HZ10b x2, HZ10c x2, HZ10e x2, HZ12a x2, HZ12b x2, HZ12c x2 |
+| `hz-clock-as-ro` | pp_top `hazards` | CLOCK_CFG classified RO_SNAPSHOT | 6: HZ1 x2, HZ12a x4 |
 | `hz-clock-as-lock` | pp_top `hazards` | CLOCK_CFG classified LOCK_OP (over-serialized) | 3: HZ1 x2, HZ8 |
-| `hz-name-as-ro` | pp_top `hazards` | NAME_WR classified RO_SNAPSHOT | 1: HZ1 |
+| `hz-clock-key-none`, `-talker` | pp_top `hazards` | CLOCK_CFG keyed by nothing | 6: HZ1 x2, HZ12a x4; named on STREAM_INPUT 1 and on the talker |
+| `hz-name-as-ro` | pp_top `hazards` | NAME_WR classified RO_SNAPSHOT | 8: HZ1, HZ9a x2, HZ9c, HZ9d x2, HZ9f x2 |
+| `hz-name-as-stream` | pp_top `hazards` | NAME_WR classified STREAM_CFG (over-serialized) | 2: HZ1, HZ9c (it waits for an UNBIND_RX of its sink) |
+| `hz-name-key-none`, `-talker`, `-held` | pp_top `hazards` | NAME_WR keyed by nothing | 7: HZ1, HZ9a x2, HZ9d x2, HZ9f x2; named HZ9a, HZ9d, HZ9f |
 | `hz-registry-as-ro` | pp_top `hazards` | REGISTRY_OP classified RO_SNAPSHOT | 2: HZ1 |
-| `hz-identify-as-ro` | pp_top `hazards` | IDENTIFY classified RO_SNAPSHOT | 1: HZ1 |
-| `hz-acmp-reads-as-steps` | pp_top `hazards` | ACMP GET_RX/TX_STATE and GET_TX_CONNECTION classified STREAM_CFG | 5: HZ1 x3, HZ4, HZ6 (two reads) |
-| `hz-barrier-no-priority` | pp_top `hazards` | the pending barrier's priority removed from the round-robin | 33: HZ3, then every later arm (the admission port stays wedged) |
+| `hz-identify-as-ro` | pp_top `hazards` | IDENTIFY classified RO_SNAPSHOT | 5: HZ1, HZ12b x4 |
+| `hz-identify-key-none`, `-talker` | pp_top `hazards` | IDENTIFY keyed by nothing | 5: HZ1, HZ12b x4; named on STREAM_INPUT 1 and on the talker |
+| `hz-map-as-ro`, `-talker` | pp_top `hazards` | MAP_CFG classified RO_SNAPSHOT, so the cross-lock is lost | 10: HZ1 x2, HZ7 x2, HZ11d x2, HZ12c x4; named HZ7 and HZ11d |
+| `hz-map-key-none`, `-talker` | pp_top `hazards` | MAP_CFG keyed by nothing (the class-wide cross-lock still holds) | 6: HZ1 x2, HZ12c x4; named on STREAM_INPUT 1 and on the talker |
+| `hz-acmp-reads-as-steps` | pp_top `hazards` | ACMP GET_RX/TX_STATE and GET_TX_CONNECTION classified STREAM_CFG | 23: HZ1 x3, HZ4, HZ6 (two reads), and every read of HZ9 to HZ12 |
+| `hz-barrier-no-priority` | pp_top `hazards` | the pending barrier's priority removed from the round-robin | 127: HZ3, then every later arm (the admission port stays wedged) |
 | `hz-foreign-target-classified` | pp_top `hazards` | a command for another entity_id classified by its opcode | 1: HZ1 (CFG_BARRIER for a frame the engine drops) |
 | `hz-response-classified` | pp_top `hazards` | an AECP response arriving as input classified by its opcode | 1: HZ1 |
 

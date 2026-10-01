@@ -1155,7 +1155,8 @@ struct H {
   int  dl_pre_rises = 0;
   bool dl_pre_prev = false;
   //! every scoreboard admission (section HZ): which head, the class and key
-  //! it presented, and the clock; and the clocks each owner's hold ended and
+  //! it presented, and the clock; the clocks the scoreboard was asked about
+  //! each head and refused it; and the clocks each owner's hold ended and
   //! the pending CFG_BARRIER drain was seen, all since `hz_clear()`
   struct Adm {
     bool aecp;
@@ -1166,6 +1167,8 @@ struct H {
   std::vector<Adm> hz_adms;
   std::vector<long> hz_acmp_ends;
   std::vector<long> hz_aecp_ends;
+  long hz_aecp_refused = 0;
+  long hz_acmp_refused = 0;
   long hz_barrier_seen = -1;
   bool hz_acmp_prev = false;
   bool hz_aecp_prev = false;
@@ -1173,6 +1176,8 @@ struct H {
     hz_adms.clear();
     hz_acmp_ends.clear();
     hz_aecp_ends.clear();
+    hz_aecp_refused = 0;
+    hz_acmp_refused = 0;
     hz_barrier_seen = -1;
     hz_acmp_prev = d->dbg_acmp_sb_active_o != 0;
     hz_aecp_prev = d->dbg_aecp_sb_active_o != 0;
@@ -1184,6 +1189,8 @@ struct H {
       hz_adms.push_back({d->dbg_sb_acc_aecp_o != 0,
                          static_cast<unsigned>(d->dbg_sb_class_o),
                          static_cast<unsigned>(d->dbg_sb_key_o), now});
+    if (d->dbg_sb_ref_aecp_o) ++hz_aecp_refused;
+    if (d->dbg_sb_ref_acmp_o) ++hz_acmp_refused;
     const bool acmp = d->dbg_acmp_sb_active_o != 0;
     const bool aecp = d->dbg_aecp_sb_active_o != 0;
     if (hz_acmp_prev && !acmp) hz_acmp_ends.push_back(now);
@@ -11315,7 +11322,10 @@ struct HazardPhase {
           "HZ boot: both restore walks end done over a blank device");
     io.flush_all();
     io.q_aecp.clear();
-    io.maap_on = false;                        // no allocator: PROBE_TX waits
+    //! an allocator answers: without one the talker spends each retry round
+    //! in its MAAP request wait, where it takes no transaction, so a talker
+    //! command would wait for the talker rather than for its key
+    io.maap_on = true;
   }
 
   static const char* cls_name(unsigned c) {
@@ -11509,6 +11519,36 @@ struct HazardPhase {
   long acmp_end() const {
     return io.hz_acmp_ends.empty() ? -1 : io.hz_acmp_ends.front();
   }
+  //! the first admission of an ACMP head at or after clock `from`
+  const H::Adm* acmp_adm_after(long from) const {
+    for (const auto& a : io.hz_adms)
+      if (!a.aecp && a.t >= from) return &a;
+    return nullptr;
+  }
+  //! the first clock the AECP owner read free since `hz_clear()`
+  long aecp_end() const {
+    return io.hz_aecp_ends.empty() ? -1 : io.hz_aecp_ends.front();
+  }
+  //! the same stall in the other direction: with every standard TX slot
+  //! taken, an AECP command is admitted, runs, and then waits for a slot for
+  //! its response (the oversize slot is granted only to an oversize frame),
+  //! so its hold keeps its key until the MAC restarts. The talker returns a
+  //! transaction's RX slot once it has read the frame and parked its answer
+  //! in a register of its own, queued or not, so a talker transaction keeps
+  //! its key a few clocks only: a talker-side pair is held from the AECP side
+  Held hold_aecp(uint16_t op, const std::vector<uint8_t>& pl, uint16_t s) {
+    io.hz_clear();
+    fill_tx_pool();
+    io.hz_clear();
+    (void)send_aecp(0, op, pl, s);
+    for (int c = 0; c < 2000 && last_adm(true) == nullptr; ++c) io.step();
+    io.idle(300);
+    const auto* a = last_adm(true);
+    const bool held = a != nullptr && io.d->dbg_aecp_sb_active_o;
+    CHECK(held, "HZ premise: the AECP command 0x%04x is admitted and held "
+          "behind the stalled MAC", unsigned(op));
+    return held ? Held{a->t, a->cls, a->key} : Held{-1, 0, 0};
+  }
 
   //! HZ2 (#84 acceptance 2's example; F03.7 CFG_BARRIER "drain all
   //! in-flight, block admission, then execute"): with an ACMP UNBIND_RX
@@ -11595,9 +11635,9 @@ struct HazardPhase {
     const uint16_t sl = seq++;
     (void)send_aecp(0, 0x0001, lock, sl);
     io.idle(500);
-    CHECK(aecp_adm_after(a.adm) == nullptr,
+    CHECK(aecp_adm_after(a.adm) == nullptr && io.hz_aecp_refused > 0,
           "HZ4: LOCK_ENTITY is not admitted while an ACMP stream step holds "
-          "its key");
+          "its key (refused %ld clocks)", io.hz_aecp_refused);
     release_mac();
     const auto* b = aecp_adm_after(a.adm);
     CHECK(b != nullptr && b->cls == LOCK && acmp_end() >= 0
@@ -11635,9 +11675,9 @@ struct HazardPhase {
       CHECK(b != nullptr && held_now,
             "HZ %s: admitted beside the held ACMP command", what);
     } else {
-      CHECK(b == nullptr && held_now,
-            "HZ %s: not admitted while the held ACMP command keeps its key",
-            what);
+      CHECK(b == nullptr && held_now && io.hz_aecp_refused > 0,
+            "HZ %s: not admitted while the held ACMP command keeps its key "
+            "(refused %ld clocks)", what, io.hz_aecp_refused);
     }
     release_mac();
     if (!beside) {
@@ -11647,6 +11687,57 @@ struct HazardPhase {
     }
     long first = -1;
     return aecp_answer(s, 40, &first);
+  }
+
+  //! one ACMP command sent while an AECP command is held: admitted beside
+  //! it (`beside`) or only after the AECP key frees, and answered either
+  //! way; returns the held AECP command's own answer
+  std::vector<uint8_t> acmp_beside_or_after(uint16_t op,
+                                            const std::vector<uint8_t>& pl,
+                                            uint8_t msg, uint16_t uid,
+                                            bool beside, const char* what) {
+    const uint16_t sa = seq++;
+    const Held a = hold_aecp(op, pl, sa);
+    const uint16_t s = seq++;
+    (void)send_acmp(msg, uid, s);
+    io.idle(500);
+    const auto* b = acmp_adm_after(a.adm);
+    const bool held_now = io.d->dbg_aecp_sb_active_o != 0;
+    if (beside) {
+      CHECK(b != nullptr && held_now,
+            "HZ %s: admitted beside the held AECP command", what);
+    } else {
+      CHECK(b == nullptr && held_now && io.hz_acmp_refused > 0,
+            "HZ %s: not admitted while the held AECP command keeps its key "
+            "(refused %ld clocks)", what, io.hz_acmp_refused);
+    }
+    release_mac();
+    if (!beside) {
+      b = acmp_adm_after(a.adm);
+      CHECK(b != nullptr && aecp_end() >= 0 && b->t >= aecp_end(),
+            "HZ %s: admitted after the AECP key frees", what);
+    }
+    long first = -1;
+    CHECK(!acmp_answer(s, 40, &first).empty(),
+          "HZ %s: the ACMP command is answered", what);
+    return aecp_answer(sa, 40, &first);
+  }
+
+  //! a SET_NAME payload: {descriptor_type, descriptor_index, name_index 0,
+  //! configuration_index} and the 64-byte name
+  static std::vector<uint8_t> name_pl(uint16_t ty, uint16_t ix,
+                                      const char* name) {
+    std::vector<uint8_t> p = ti(ty, ix, 72);
+    putbe(&p[6], CFGIX, 2);
+    for (size_t i = 0; i < 64 && name[i] != 0; ++i)
+      p[8 + i] = static_cast<uint8_t>(name[i]);
+    return p;
+  }
+  //! a SET_SAMPLING_RATE payload naming {ty, ix}, 96 kHz
+  static std::vector<uint8_t> rate_pl(uint16_t ty, uint16_t ix) {
+    std::vector<uint8_t> p = ti(ty, ix, 8);
+    putbe(&p[4], 96000u, 4);
+    return p;
   }
 
   //! HZ5 (F03.7 STREAM_CFG "serialized per key"): START_STREAMING on
@@ -11671,19 +11762,22 @@ struct HazardPhase {
                           "HZ7 ADD_AUDIO_MAPPINGS beside any stream step");
   }
 
-  //! HZ8 (no over-serialization): CLOCK_CFG, NAME_WR, REGISTRY_OP, IDENTIFY
-  //! and a READ_DESCRIPTOR share no key or class with a stream step, so
-  //! each is admitted beside a held ACMP UNBIND_RX. A LOCK_OP or CFG_BARRIER
-  //! class on any of them would hold it back
+  //! HZ8 (no over-serialization): the matrix gives CLOCK_CFG, NAME_WR,
+  //! REGISTRY_OP and IDENTIFY no conflict with STREAM_CFG on any key (F03.7
+  //! rule (6), disjoint resources), and a READ_DESCRIPTOR keyed NONE shares
+  //! no key with a stream step, so each is admitted beside a held ACMP
+  //! UNBIND_RX. A LOCK_OP or CFG_BARRIER class on any of them would hold it
+  //! back. REGISTRY_OP's key, the registry's, is one no ACMP transaction
+  //! presents, so it is admitted beside a held ACMP read too: it is the one
+  //! class with no reachable conflict at this top (HZ9 to HZ12 grade the
+  //! other three against an ACMP read of their key)
   void hz8_the_other_classes_run_beside_a_stream_step() {
-    std::vector<uint8_t> rate = ti(0x0002, 0, 8);
-    putbe(&rate[4], 96000u, 4);
     std::vector<uint8_t> name = ti(0x0024, 0, 72);
     putbe(&name[6], CFGIX, 2);
     std::vector<uint8_t> rd(8, 0);
     putbe(&rd[0], CFGIX, 2);
     putbe(&rd[4], 0x0024, 2);
-    (void)beside_or_after(8, 1, 0x0014, rate, true,
+    (void)beside_or_after(8, 1, 0x0014, rate_pl(0x0002, 0), true,
                           "HZ8 SET_SAMPLING_RATE (CLOCK_CFG)");
     (void)beside_or_after(8, 1, 0x0010, name, true, "HZ8 SET_NAME (NAME_WR)");
     (void)beside_or_after(8, 1, 0x0024, std::vector<uint8_t>(4, 0), true,
@@ -11692,6 +11786,164 @@ struct HazardPhase {
                           "HZ8 SET_CONTROL (IDENTIFY)");
     (void)beside_or_after(8, 1, 0x0004, rd, true,
                           "HZ8 READ_DESCRIPTOR (RO_SNAPSHOT, no descriptor key)");
+    (void)beside_or_after(10, 1, 0x0024, std::vector<uint8_t>(4, 0), true,
+                          "HZ8 REGISTER_UNSOLICITED_NOTIFICATION (REGISTRY_OP) "
+                          "beside a GET_RX_STATE");
+  }
+
+  //! HZ9 (#84 acceptance 2 for NAME_WR; F03.7 RO_SNAPSHOT "blocked only vs
+  //! in-flight write on the same key"; IEEE 1722.1-2021 §7.4.17: SET_NAME
+  //! sets a name field of a descriptor, a STREAM_INPUT's or STREAM_OUTPUT's
+  //! object_name among them): a SET_NAME keys the
+  //! descriptor it names, so on STREAM_INPUT 1 it waits for an ACMP
+  //! GET_RX_STATE of sink 1, then answers SUCCESS and the name reads back;
+  //! on STREAM_INPUT 0 it runs beside that read, and on STREAM_INPUT 1 it
+  //! runs beside an UNBIND_RX of sink 1 (NAME_WR and STREAM_CFG touch
+  //! disjoint fields, rule (6)). Held itself, a SET_NAME on STREAM_OUTPUT 1
+  //! holds back an ACMP GET_TX_STATE of source 1 and not one of source 2,
+  //! and one on STREAM_INPUT 1 holds back a GET_RX_STATE of sink 1
+  void hz9_name_wr_conflicts_with_an_acmp_read_of_its_stream() {
+    const auto si1 = name_pl(DT_SI, 1, "HZ9 sink one");
+    auto r = beside_or_after(10, 1, AEM_SET_NAME, si1, false,
+                             "HZ9a SET_NAME on STREAM_INPUT 1 vs a held "
+                             "GET_RX_STATE of sink 1");
+    CHECK(status(r) == AECP_SUCCESS,
+          "HZ9a: the SET_NAME then answers SUCCESS (status %d)", status(r));
+    const uint16_t sg = seq++;
+    (void)send_aecp(0, AEM_GET_NAME,
+                    std::vector<uint8_t>(si1.begin(), si1.begin() + 8), sg);
+    long first = -1;
+    CHECK(aecp_answer(sg, 40, &first)
+              == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                            sg, AEM_GET_NAME, si1),
+          "HZ9a: GET_NAME of STREAM_INPUT 1 reads the name back, byte-exact");
+    (void)beside_or_after(10, 1, AEM_SET_NAME,
+                          name_pl(DT_SI, 0, "HZ9 sink zero"), true,
+                          "HZ9b SET_NAME on STREAM_INPUT 0 vs a held "
+                          "GET_RX_STATE of sink 1");
+    (void)beside_or_after(8, 1, AEM_SET_NAME, si1, true,
+                          "HZ9c SET_NAME on STREAM_INPUT 1 vs a held UNBIND_RX "
+                          "of sink 1");
+    r = acmp_beside_or_after(AEM_SET_NAME, name_pl(DT_SO, 1, "HZ9 source one"),
+                             4, 1, false,
+                             "HZ9d a GET_TX_STATE of source 1 vs a held "
+                             "SET_NAME on STREAM_OUTPUT 1");
+    CHECK(status(r) == AECP_SUCCESS,
+          "HZ9d: the held SET_NAME answers SUCCESS (status %d)", status(r));
+    (void)acmp_beside_or_after(AEM_SET_NAME,
+                               name_pl(DT_SO, 1, "HZ9 source one"), 4, 2, true,
+                               "HZ9e a GET_TX_STATE of source 2 vs a held "
+                               "SET_NAME on STREAM_OUTPUT 1");
+    (void)acmp_beside_or_after(AEM_SET_NAME, si1, 10, 1, false,
+                               "HZ9f a GET_RX_STATE of sink 1 vs a held "
+                               "SET_NAME on STREAM_INPUT 1");
+  }
+
+  //! HZ10 (F03.7 STREAM_CFG "serialized per key" and RO_SNAPSHOT "blocked
+  //! only vs in-flight write on the same key", the pairs HZ5 and HZ6 leave):
+  //! a STOP_STREAMING on STREAM_INPUT 1 waits for an ACMP GET_RX_STATE of
+  //! sink 1, a write against a read. On the talker's keys, held from the
+  //! AECP side: a STOP_STREAMING on STREAM_OUTPUT 1 holds back a GET_TX_STATE
+  //! and a DISCONNECT_TX of source 1 and not a DISCONNECT_TX of source 2; a
+  //! GET_STREAM_INFO on STREAM_OUTPUT 1 holds back the DISCONNECT_TX and not
+  //! the GET_TX_STATE, two reads
+  void hz10_stream_steps_and_reads_on_both_engines_keys() {
+    (void)beside_or_after(10, 1, 0x0023, ti(DT_SI, 1), false,
+                          "HZ10a STOP_STREAMING on STREAM_INPUT 1 vs a held "
+                          "GET_RX_STATE of sink 1");
+    (void)acmp_beside_or_after(0x0023, ti(DT_SO, 1), 4, 1, false,
+                               "HZ10b a GET_TX_STATE of source 1 vs a held "
+                               "STOP_STREAMING on STREAM_OUTPUT 1");
+    (void)acmp_beside_or_after(0x0023, ti(DT_SO, 1), 2, 1, false,
+                               "HZ10c a DISCONNECT_TX of source 1 vs a held "
+                               "STOP_STREAMING on STREAM_OUTPUT 1");
+    (void)acmp_beside_or_after(0x0023, ti(DT_SO, 1), 2, 2, true,
+                               "HZ10d a DISCONNECT_TX of source 2 vs a held "
+                               "STOP_STREAMING on STREAM_OUTPUT 1");
+    (void)acmp_beside_or_after(0x000F, ti(DT_SO, 1), 2, 1, false,
+                               "HZ10e a DISCONNECT_TX of source 1 vs a held "
+                               "GET_STREAM_INFO on STREAM_OUTPUT 1");
+    (void)acmp_beside_or_after(0x000F, ti(DT_SO, 1), 4, 1, true,
+                               "HZ10f a GET_TX_STATE of source 1 vs a held "
+                               "GET_STREAM_INFO on STREAM_OUTPUT 1");
+  }
+
+  //! HZ11 (F03.7 CFG_BARRIER, LOCK_OP and MAP_CFG against the talker): a held
+  //! SET_CONFIGURATION holds back a GET_TX_STATE (the barrier blocks every
+  //! admission); a held LOCK_ENTITY holds back a DISCONNECT_TX, a
+  //! lock-protected step, and not a GET_TX_STATE, a read on a stream key; a
+  //! held ADD_AUDIO_MAPPINGS holds back a DISCONNECT_TX (the class-wide
+  //! cross-lock) and not a GET_TX_STATE
+  void hz11_the_global_classes_and_the_map_cross_lock_vs_the_talker() {
+    (void)acmp_beside_or_after(0x0006, std::vector<uint8_t>(4, 0), 4, 1, false,
+                               "HZ11a a GET_TX_STATE of source 1 vs a held "
+                               "SET_CONFIGURATION");
+    std::vector<uint8_t> lock(16, 0);
+    (void)acmp_beside_or_after(0x0001, lock, 2, 1, false,
+                               "HZ11b a DISCONNECT_TX of source 1 vs a held "
+                               "LOCK_ENTITY");
+    (void)acmp_beside_or_after(0x0001, lock, 4, 1, true,
+                               "HZ11c a GET_TX_STATE of source 1 vs a held "
+                               "LOCK_ENTITY");
+    std::vector<uint8_t> unlock(16, 0);
+    putbe(&unlock[0], 1, 4);
+    const uint16_t su = seq++;
+    (void)send_aecp(0, 0x0001, unlock, su);
+    long first = -1;
+    CHECK(status(aecp_answer(su, 40, &first)) == AECP_SUCCESS,
+          "HZ11c: the entity is unlocked again");
+    (void)acmp_beside_or_after(0x002C, ti(0x000E, 0, 8), 2, 1, false,
+                               "HZ11d a DISCONNECT_TX of source 1 vs a held "
+                               "ADD_AUDIO_MAPPINGS");
+    (void)acmp_beside_or_after(0x002C, ti(0x000E, 0, 8), 4, 1, true,
+                               "HZ11e a GET_TX_STATE of source 1 vs a held "
+                               "ADD_AUDIO_MAPPINGS");
+  }
+
+  //! HZ12 (F03.7 rule (2) on a key read from the wire): CLOCK_CFG, IDENTIFY
+  //! and MAP_CFG key the {descriptor_type, descriptor_index} a command
+  //! carries, so one naming a stream descriptor shares a key with an ACMP
+  //! read of that stream. No legal command of these classes names one
+  //! (SET_SAMPLING_RATE an AUDIO_UNIT, VIDEO_CLUSTER or SENSOR_CLUSTER, IEEE
+  //! 1722.1-2021 §7.4.21.1; SET_CONTROL a CONTROL, §7.4.25.1;
+  //! ADD_AUDIO_MAPPINGS a STREAM_PORT_INPUT or STREAM_PORT_OUTPUT,
+  //! §7.4.45.1), and the engine refuses each once admitted
+  //! (NOT_SUPPORTED, Table 7-141: the target is not supported), but the
+  //! conflict is reachable at this top: each waits for a GET_RX_STATE of
+  //! sink 1 when it names STREAM_INPUT 1, runs beside it when it names
+  //! STREAM_INPUT 0, and, held itself naming STREAM_OUTPUT 1, holds back a
+  //! GET_TX_STATE of source 1
+  void hz12_a_stream_named_by_another_class_conflicts_with_its_read() {
+    struct Row {
+      const char* id;
+      const char* cmd;
+      uint16_t op;
+      std::vector<uint8_t> (*pl)(uint16_t, uint16_t);
+    };
+    const Row rows[] = {
+        {"HZ12a", "SET_SAMPLING_RATE (CLOCK_CFG)", 0x0014,
+         [](uint16_t ty, uint16_t ix) { return rate_pl(ty, ix); }},
+        {"HZ12b", "SET_CONTROL (IDENTIFY)", 0x0018,
+         [](uint16_t ty, uint16_t ix) { return ti(ty, ix, 5); }},
+        {"HZ12c", "ADD_AUDIO_MAPPINGS (MAP_CFG)", 0x002C,
+         [](uint16_t ty, uint16_t ix) { return ti(ty, ix, 8); }},
+    };
+    char what[160];
+    for (const Row& w : rows) {
+      snprintf(what, sizeof what, "%s %s naming STREAM_INPUT 1 vs a held "
+               "GET_RX_STATE of sink 1", w.id, w.cmd);
+      auto r = beside_or_after(10, 1, w.op, w.pl(DT_SI, 1), false, what);
+      CHECK(status(r) == AECP_NOT_SUPPORTED,
+            "%s: the %s naming a stream is then refused NOT_SUPPORTED, a "
+            "target the command does not serve (status %d)", w.id, w.cmd,
+            status(r));
+      snprintf(what, sizeof what, "%s %s naming STREAM_INPUT 0 vs a held "
+               "GET_RX_STATE of sink 1", w.id, w.cmd);
+      (void)beside_or_after(10, 1, w.op, w.pl(DT_SI, 0), true, what);
+      snprintf(what, sizeof what, "%s a GET_TX_STATE of source 1 vs a held "
+               "%s naming STREAM_OUTPUT 1", w.id, w.cmd);
+      (void)acmp_beside_or_after(w.op, w.pl(DT_SO, 1), 4, 1, false, what);
+    }
   }
 
   void run() {
@@ -11702,6 +11954,10 @@ struct HazardPhase {
     hz4_lock_entity_waits_for_a_stream_step_not_for_a_read();
     hz5_to_hz7_stream_keys_reads_and_the_map_cross_lock();
     hz8_the_other_classes_run_beside_a_stream_step();
+    hz9_name_wr_conflicts_with_an_acmp_read_of_its_stream();
+    hz10_stream_steps_and_reads_on_both_engines_keys();
+    hz11_the_global_classes_and_the_map_cross_lock_vs_the_talker();
+    hz12_a_stream_named_by_another_class_conflicts_with_its_read();
   }
 };
 

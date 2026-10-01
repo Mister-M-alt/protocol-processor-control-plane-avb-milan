@@ -244,7 +244,11 @@ its watchdog.
 | a pending barrier is never starved by the round-robin (the wedge the fix removes) | HZ3 |
 | LOCK_OP waits for an ACMP stream step and runs beside an ACMP read | HZ4 |
 | STREAM_CFG and RO_SNAPSHOT conflict per key; two reads run together; MAP_CFG waits for any stream step | HZ5 to HZ7 |
-| CLOCK_CFG, NAME_WR, REGISTRY_OP, IDENTIFY and READ_DESCRIPTOR run beside an ACMP stream step | HZ8 |
+| CLOCK_CFG, NAME_WR, REGISTRY_OP, IDENTIFY and READ_DESCRIPTOR run beside an ACMP stream step; REGISTRY_OP, the one class with no reachable conflict, runs beside an ACMP read too | HZ8 |
+| NAME_WR and an ACMP read of the stream it names exclude each other, either one held, on both engines' keys: a SET_NAME on STREAM_INPUT 1 waits for a GET_RX_STATE of sink 1, then answers SUCCESS and the name reads back; it runs beside a read of another sink and beside an UNBIND_RX of the same one; held, a SET_NAME on STREAM_OUTPUT 1 holds back a GET_TX_STATE of source 1 and not one of source 2 | HZ9 |
+| STREAM_CFG against an ACMP read of its key; on the talker's keys, STREAM_CFG against a GET_TX_STATE and a DISCONNECT_TX per key, and RO_SNAPSHOT against a DISCONNECT_TX, not against a read | HZ10 |
+| CFG_BARRIER, LOCK_OP and the MAP_CFG cross-lock against the talker: the barrier holds back a read, the lock and a mapping edit hold back a step and not a read | HZ11 |
+| CLOCK_CFG, IDENTIFY and MAP_CFG commands naming a stream descriptor conflict with an ACMP read of it, either one held, and are then refused NOT_SUPPORTED | HZ12 |
 
 Section TB runs in the suite's third build (`make budget`), whose timebase is the
 nominal clock's own (1 ms = 1,000 clocks), so the deadline never cuts a measurement;
@@ -254,7 +258,12 @@ it).
 Section HZ (`--hazards-only`) holds an ACMP transaction in flight by stalling the
 MAC until four answers fill the standard TX slots, so the next ACMP command is
 admitted and keeps its key until the MAC restarts; it grades every admission at
-the scoreboard's port. The negative controls run from `tb/pp_top/aecp_mutants.py`
+the scoreboard's port. The same stall holds an AECP command, whose response
+waits for a standard slot. The talker returns its RX slot once it has read a
+frame, so a talker transaction keeps its key a few clocks only, and a
+talker-side pair is graded with the AECP command held. A check that a head
+waits requires the scoreboard to have been asked about it and to have refused
+it, and a MAAP allocator answers, so the talker is free to take commands. The negative controls run from `tb/pp_top/aecp_mutants.py`
 (`make -C tb/pp_top aecp-mutants`): each is a reviewed patch in `tb/pp_top/mutations/` applied to a
 scratch copy, and each must fail its named check. The mutation record is in
 the [`tb/pp_top` README](../../tb/pp_top/README.md).

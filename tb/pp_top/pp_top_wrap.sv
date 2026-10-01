@@ -428,11 +428,14 @@ module pp_top_wrap (
     output logic        dbg_ucpu_pre_o,
     //! the scoreboard's admission port (section HZ, 03 §6 F03.7): the class
     //! and key presented, the AECP and ACMP heads it accepted this clock, the
-    //! two owners' live holds, and the pending CFG_BARRIER drain
+    //! head it was asked about and refused this clock, the two owners' live
+    //! holds, and the pending CFG_BARRIER drain
     output logic  [3:0] dbg_sb_class_o,
     output logic [15:0] dbg_sb_key_o,
     output logic        dbg_sb_acc_aecp_o,
     output logic        dbg_sb_acc_acmp_o,
+    output logic        dbg_sb_ref_aecp_o,
+    output logic        dbg_sb_ref_acmp_o,
     output logic        dbg_aecp_sb_active_o,
     output logic        dbg_acmp_sb_active_o,
     output logic        dbg_sb_barrier_o
@@ -781,6 +784,8 @@ module pp_top_wrap (
   assign dbg_sb_key_o         = u_dut.sb_adm_key_w;
   assign dbg_sb_acc_aecp_o    = u_dut.aecp_sb_accept_w;
   assign dbg_sb_acc_acmp_o    = u_dut.acmp_sb_accept_w;
+  assign dbg_sb_ref_aecp_o    = u_dut.sb_pick_aecp_w && !u_dut.sb_gnt_w;
+  assign dbg_sb_ref_acmp_o    = u_dut.sb_pick_acmp_w && !u_dut.sb_gnt_w;
   assign dbg_aecp_sb_active_o = u_dut.aecp_sb_active_r;
   assign dbg_acmp_sb_active_o = u_dut.acmp_sb_active_r;
   assign dbg_sb_barrier_o     = u_dut.sb_barrier_w;

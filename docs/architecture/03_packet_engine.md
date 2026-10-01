@@ -231,10 +231,23 @@ response as input, a command for another entity_id), MVU and ADDRESS_ACCESS are
 `RO_SNAPSHOT` with that no-descriptor key, so they never drain the table. The
 `MAP_CFG` cross-lock stays class-wide (the module banner says why), and an ACMP
 stream-state transition cannot enter after mapping commit-begin and before the
-mapping response releases its hold. With two single-issue clients the matrix
-admits no conflict between `CLOCK_CFG`, `NAME_WR`, `REGISTRY_OP` or `IDENTIFY`
-and any class ACMP presents: those four are graded by the class and key the
-scoreboard is presented, and by running beside a held ACMP step
+mapping response releases its hold.
+
+ACMP presents only `RO_SNAPSHOT` (its state reads) and `STREAM_CFG` (every
+other step), always on a stream key, so an AECP class conflicts with ACMP
+wherever the matrix makes it conflict with one of those two on such a key.
+`NAME_WR` does with a legal command: a SET_NAME on STREAM_INPUT k and an ACMP
+GET_RX_STATE of sink k exclude each other, as do one on STREAM_OUTPUT k and a
+GET_TX_STATE or GET_TX_CONNECTION of source k. `CLOCK_CFG`, `IDENTIFY` and
+`MAP_CFG` key the descriptor the command names, so they meet an ACMP read only
+through a command naming a stream descriptor. No legal command of theirs names
+one, and the engine refuses such a command `NOT_SUPPORTED` once admitted, but
+its admission still waits. Of the four, only `MAP_CFG` conflicts with an ACMP
+`STREAM_CFG` step (the cross-lock). `REGISTRY_OP` is the one class with no
+reachable conflict at this top: its key, the registry's, is one no ACMP
+transaction presents, and the single-issue AECP engine never holds two
+transactions at once. Every reachable pair is graded on the listener's and the
+talker's keys
 ([09 §8.3](09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)).
 
 The top has one live admission port. Ready ACMP and AECP heads use round-robin
