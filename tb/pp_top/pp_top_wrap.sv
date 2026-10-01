@@ -31,6 +31,9 @@
 //                PP_TOP_SRP_DOM_DEF_VID, and DESC_LINE_BYTES_P ONLY when the
 //                third defines PP_TOP_DESC_LINE_BYTES (Makefile), so the first
 //                build grades the top's own defaults and never a copy of them.
+//                The fourth build defines PP_TOP_TIM_REAL and runs the
+//                timebase at 1 ms = 1,000 clk, the nominal clock's own, for
+//                section TB's response budgets.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -422,6 +425,31 @@ module pp_top_wrap (
     //! the bound's own cycle reads them to prove it did
     output logic [31:0] dbg_d3_agg_o,
     output logic        dbg_d3_agg_fired_o,
+    //! the AECP transaction deadline (section DL, 03 §6 rule (e)): the top's
+    //! kill of the AECP hold, the engine's solicited-response hand-off, the
+    //! scoreboard's honoured kill, its normal release port, the AECP hold's id
+    //! and the live-hold mask, and the µCPU's redirect level
+    output logic        dbg_aecp_dl_kill_o,
+    output logic        dbg_aecp_dl_queued_o,
+    output logic        dbg_sb_kill_ack_o,
+    output logic        dbg_sb_rel_o,
+    output logic  [2:0] dbg_sb_rel_id_o,
+    output logic  [2:0] dbg_aecp_sb_id_o,
+    output logic  [7:0] dbg_sb_holds_o,
+    output logic        dbg_ucpu_pre_o,
+    //! the scoreboard's admission port (section HZ, 03 §6 F03.7): the class
+    //! and key presented, the AECP and ACMP heads it accepted this clock, the
+    //! head it was asked about and refused this clock, the two owners' live
+    //! holds, and the pending CFG_BARRIER drain
+    output logic  [3:0] dbg_sb_class_o,
+    output logic [15:0] dbg_sb_key_o,
+    output logic        dbg_sb_acc_aecp_o,
+    output logic        dbg_sb_acc_acmp_o,
+    output logic        dbg_sb_ref_aecp_o,
+    output logic        dbg_sb_ref_acmp_o,
+    output logic        dbg_aecp_sb_active_o,
+    output logic        dbg_acmp_sb_active_o,
+    output logic        dbg_sb_barrier_o,
     //! section AX: the AECP engine's TX-slot grant, the slot it names and the
     //! engine's own Delta-8 oversize request beside it; the pool's serializer
     //! start and the slot it streams; and slot 4 (the oversize slot) FREE, so
@@ -438,9 +466,17 @@ module pp_top_wrap (
     output logic [15:0] dbg_desc_line_bytes_o
 );
 
+`ifdef PP_TOP_TIM_REAL
+  // section TB's build (the Makefile's fourth): 1 ms = 1 x 1000 = 1,000 clk,
+  // the nominal TB_CLK_HZ_C's own rate, so no response budget measured there
+  // is cut short by the compressed AECP deadline
+  localparam int unsigned TB_DIV_US_C = 1;
+  localparam int unsigned TB_DIV_MS_C = 1000;
+`else
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
   localparam int unsigned TB_DIV_US_C = 2;
   localparam int unsigned TB_DIV_MS_C = 50;
+`endif
   //! the nominal P-CLK-HZ the saved-state times are DERIVED from (the
   //! prescaler above is overridden, so the timebase does not use it). A
   //! 1 MHz clock, the parent D3 model's, makes the ratified 20 ms per-wait
@@ -771,6 +807,23 @@ module pp_top_wrap (
   assign dbg_d3_proof_o   = u_dut.u_aecp.u_d3.proof_w;
   assign dbg_d3_agg_o     = u_dut.u_aecp.u_d3.agg_r;
   assign dbg_d3_agg_fired_o = u_dut.d3_agg_w;
+  assign dbg_aecp_dl_kill_o   = u_dut.aecp_dl_kill_w;
+  assign dbg_aecp_dl_queued_o = u_dut.aecp_dl_queued_w;
+  assign dbg_sb_kill_ack_o    = u_dut.sb_kill_ack_w;
+  assign dbg_sb_rel_o         = u_dut.sb_rel_valid_w;
+  assign dbg_sb_rel_id_o      = u_dut.sb_rel_id_w;
+  assign dbg_aecp_sb_id_o     = u_dut.aecp_sb_id_r;
+  assign dbg_sb_holds_o       = u_dut.sb_holds_w;
+  assign dbg_ucpu_pre_o       = u_dut.u_aecp.ucpu_pre_w;
+  assign dbg_sb_class_o       = u_dut.sb_adm_class_w;
+  assign dbg_sb_key_o         = u_dut.sb_adm_key_w;
+  assign dbg_sb_acc_aecp_o    = u_dut.aecp_sb_accept_w;
+  assign dbg_sb_acc_acmp_o    = u_dut.acmp_sb_accept_w;
+  assign dbg_sb_ref_aecp_o    = u_dut.sb_pick_aecp_w && !u_dut.sb_gnt_w;
+  assign dbg_sb_ref_acmp_o    = u_dut.sb_pick_acmp_w && !u_dut.sb_gnt_w;
+  assign dbg_aecp_sb_active_o = u_dut.aecp_sb_active_r;
+  assign dbg_acmp_sb_active_o = u_dut.acmp_sb_active_r;
+  assign dbg_sb_barrier_o     = u_dut.sb_barrier_w;
   assign dbg_aecp_txs_gnt_o  = u_dut.aecp_txs_gnt_w;
   assign dbg_aecp_txs_slot_o = 3'(u_dut.aecp_txs_gnt_slot_w);
   assign dbg_aecp_txs_ovs_o  = u_dut.aecp_txs_oversize_w;

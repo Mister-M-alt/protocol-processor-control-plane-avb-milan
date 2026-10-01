@@ -226,7 +226,7 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x0002 | ENTITY_AVAILABLE | shall | — | RO | — | — | — | — | 44 B (2021 form w/ flags + acquired/locked IDs) |
 | 0x0003 | CONTROLLER_AVAILABLE | responder: n/i (not a controller); **originator**: §7 | — | — | — | — | — | — | 24 B echo |
 | 0x0004 | READ_DESCRIPTOR | shall | allowed while locked | RO | no | — | **yes** | — | 28 + descriptor (4-B stub on failure) |
-| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER *(architectural class; the current single AECP engine serializes AEM commands while the dispatch scoreboard remains unwired)* | yes | - | - | success with state change, requester excluded | 28 B |
+| 0x0006 | SET_CONFIGURATION | shall | STREAM_IS_RUNNING guard §6.4 | CFG_BARRIER (assigned by the top's classifier, [03 §6](03_packet_engine.md)) | yes | - | - | success with state change, requester excluded | 28 B |
 | 0x0007 | GET_CONFIGURATION | shall | — | RO | — | yes | — | — | 28 B |
 | 0x0008 | SET_STREAM_FORMAT | shall | per stream, both directions; §6.4 chain | STREAM_CFG | yes | - | - | success with state change, requester excluded | 36 B |
 | 0x0009 | GET_STREAM_FORMAT | shall | - | RO | - | yes | - | - | 36 B |
@@ -769,7 +769,7 @@ are resolved by recording this waiver and the tested fallback, not by adding sup
 
 | Command | Current behavior |
 |---|---|
-| GET_MILAN_INFO (0x0000, shall) | implemented: F06.11, SUCCESS, 44-B AECPDU / cdl 32; protocol_version 1, features_flags 0, certification_version 0 (microcode constants). The per-configuration compliance gate and certification register are not implemented (§8.1) |
+| GET_MILAN_INFO (0x0000, shall) | implemented: F06.11, SUCCESS, 44-B AECPDU / cdl 32; protocol_version 1, features_flags 0, certification_version 0 (microcode constants). A response whose memory fails, and one past its deadline (§8.1), answers MVU status 1 `NOT_IMPLEMENTED` with the command echoed, the only failure code Table 5.19 defines. The per-configuration compliance gate and certification register are not implemented (§8.1) |
 | SET/GET_SYSTEM_UNIQUE_ID (0x0001/0x0002, rec) | waived; VU response with MVU status 1 `NOT_IMPLEMENTED`, echoing the command body and length; no ID storage, SET validation, persistence or notification |
 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO (0x0003/0x0004, rec) | waived; VU response with MVU status 1 `NOT_IMPLEMENTED`, echoing the command body and length; no priority/name storage, default-priority interface, SET validation, persistence or notification |
 | any other MVU type | VU response, MVU status 1 `NOT_IMPLEMENTED` |
@@ -973,7 +973,8 @@ moves, status register. **FAIL_SAFE entry**: a fixed µPC holds the
 forced-respond arm (`SET_STATUS` best-current → `BUILD_HEADER` →
 `SEND_RESPONSE` → `END`); the deadline engine preempts a running µprogram by
 redirecting the sequencer there, so a command retires with a response in every
-outcome ([03 §6](03_packet_engine.md) rule (e), IEEE §9.3.2.6).
+outcome ([03 §6](03_packet_engine.md) rule (e), IEEE §9.3.2.6). Realized through
+the `E_DLKILL` arm in front of it (§8.1, "The deadline kill").
 
 **µISA (29 operations)** — revised from the original document
 ([review §4](../00_MILAN_COMPLIANCE_REVIEW.md); dropped ops targeted objects that do
@@ -1178,9 +1179,56 @@ Delta 7 ACQUIRE_ENTITY is distinguished from the generic fallback. It returns
 `NOT_SUPPORTED`, preserves the command form, and carries the required zero
 `owner_id`. LOCK_ENTITY and ENTITY_AVAILABLE take their own registered paths.
 
+**The deadline kill (issue #81; [03 §6](03_packet_engine.md) rule (e)).** The
+top reads the transaction deadline at admission and raises `dl_kill_i` once it
+passes. The engine then asserts the µCPU's `preempt_i`, and the µCPU redirects
+its sequencer to `E_DLKILL` (µPC 6, two words in front of `E_FAILSAFE`) at the
+next instruction boundary, exactly like a taken branch, with the response
+cursor back at 12. `E_DLKILL` keeps a refusal status the program already chose
+and turns a SUCCESS it had not finished building into ENTITY_MISBEHAVING (IEEE
+Table 7-141 status 10), then falls into `E_FAILSAFE` (BUILD_HEADER,
+SEND_RESPONSE, END), which is unchanged. Two rules keep it from ever
+half-committing:
+
+- an op that is waiting on its face (a state read, a gather, a response-buffer
+  write) is never cut; the redirect waits for it to retire, and every such wait
+  is watchdog-bounded;
+- once a program has retired an effect op (WRITE_STATE, NAME_WR, COMMIT,
+  NVM_MARK, NOTIFY_ENQ, SEND_RESPONSE) it is never redirected: it has changed
+  state or sent its answer, and it ends with its own response. The three
+  commands whose change rides a gather face instead (REGISTER/DEREGISTER and
+  LOCK_ENTITY on the registry face, ADD/REMOVE_AUDIO_MAPPINGS on the edit face,
+  whose phase-1 acceptance is its point of no return) are never preempted.
+
+A preempted command of any message type but AEM_COMMAND (Milan Vendor
+Unique, ADDRESS_ACCESS, AV/C, HDCP APM, EXTENDED) answers `NOT_IMPLEMENTED`
+with the command echoed: status 10 is AEM's (IEEE Table 7-141), and
+`NOT_IMPLEMENTED` is the one failure code every AECP message type shares (IEEE
+Table 9-2; for MVU, Milan v1.2 §5.4.3.3 Table 5.19 defines no other). A
+response the response memory voids gets the same answer for such a command,
+in a TX slot sized for the echo when the slot was granted. The trade-off this
+makes for GET_MILAN_INFO is deliberate: it is implemented and mandatory, and a
+controller may read its NOT_IMPLEMENTED as a device that is not a PAAD-AE. It
+is answered so only when it was still waiting or running at
+`T-BUDGET-AECP-WC`, behind a slow face (`tb/pp_top` DL3), or when its response
+memory failed (DL8). Its own program is short and watchdog-bounded (TB4), so
+exempting MVU from the preempt would usually still answer SUCCESS inside
+`T-AECP-RESP`, but nothing but that program's length would then bound it: rule
+(e)'s bound is kept the same for every command instead. A
+preempted GET_DYNAMIC_INFO getter voids the aggregate, and past the deadline no
+further record runs: the batch answers ENTITY_MISBEHAVING, empty, through the
+same void its shape check uses. The engine reports the forced response's
+hand-off to TX lane 0 on `dl_queued_o`, the scoreboard's `kill_resp_queued_i`.
+`tb/ucpu` P20 grades the redirect and `tb/pp_top` section DL the whole seam,
+the three never-preempted commands included (DL6, DL10)
+([09 §8.3](09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)).
+
 **Dispatch decision (this section specifies a ROM; the tree ships none).** §4 names a
 dispatch ROM and §8 fixes its 48-bit entry, but no ROM and no generator for it exist.
-The engine therefore uses a two-stage direct decode. The timing-sensitive pop stage
+Its hazard class and key half is realized in `protocol_processor_top`: the F03.7
+classifier answers the normalizer's seam per opcode, and every class reaches the
+scoreboard ([03 §6](03_packet_engine.md), issue #84). The engine uses a two-stage
+direct decode for the rest. The timing-sensitive pop stage
 selects READ_DESCRIPTOR, GET_COUNTERS, GET_AUDIO_MAP, and opcode-specific
 BAD_ARGUMENTS paths. Registered discriminator bits select the remaining implemented
 AEM programs at the payload-walk exit, after all operand bytes have settled. A ROM

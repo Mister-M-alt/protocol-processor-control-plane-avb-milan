@@ -23,6 +23,7 @@
 } while (0)
 
 // entry points — mirror gen_ucode.py
+constexpr uint16_t E_DLKILL = 6;
 constexpr uint16_t E_FAILSAFE = 8;
 constexpr uint16_t E_GETSR = 16;
 constexpr uint16_t E_ALU = 64;
@@ -133,6 +134,23 @@ struct Harness {
   uint32_t rb_h_addr = 0;
   uint32_t rb_h_data = 0;
   uint8_t  rb_h_strb = 0;
+
+  // ---- the deadline preempt (03 §6 rule (e)): WHEN the engine asserts it.
+  // Each trigger is a fact the harness observes, never a cycle count read
+  // off the DUT's pipeline, and once raised the preempt stays raised to the
+  // end of the run, as the engine's level does.
+  bool     pre_now = false;       // from the dispatch on
+  int      pre_on_gathers = -1;   // once this many gathers have completed
+  int      pre_on_writes = -1;    // once this many state writes were accepted
+  bool     pre_on_refusal = false;// once the status register left SUCCESS
+  bool     pre_on_read_wait = false;// while a state read is waiting
+  bool     pre_raised = false;
+  int      st_extra = 0;          // extra state-read latency, in cycles
+  int      st_reads = 0;          // state reads answered (rvalid)
+  int      batch_base = -1;       // >= 0: dispatch as a GDI batch member
+  long     cyc = 0;               // clocks since the dispatch
+  long     pre_taken_at = -1;     // clock preempted_o rose
+  long     last_rvalid_at = -1;   // clock of the latest state-read answer
 
   // the program being run + its dispatch operands: the gather model below is
   // PER-PROGRAM, because the engine routes the gather bus by command - two
@@ -274,9 +292,25 @@ struct Harness {
     dut->st_ready_i  = 1;
     dut->lock_held_i = lock_scenario;
     dut->lock_ctlr_i = 0x1122334455667788ull;
+    raise_preempt();
+    dut->preempt_i     = pre_raised ? 1 : 0;
+    dut->preempt_upc_i = E_DLKILL;
   }
 
-  // the state port: a read is answered two cycles after it is presented
+  // the engine's preempt is a LEVEL: raised on its trigger (observed in the
+  // cycles before this one), then held to the end of the run
+  void raise_preempt() {
+    const bool gathered = pre_on_gathers >= 0
+                          && static_cast<int>(gx_sels.size()) >= pre_on_gathers;
+    const bool wrote = pre_on_writes >= 0
+                       && static_cast<int>(stw.size()) >= pre_on_writes;
+    const bool refused = pre_on_refusal && dut->dbg_status_o != ST_OK;
+    const bool waiting = pre_on_read_wait && st_lat > 0;
+    if (pre_now || gathered || wrote || refused || waiting) pre_raised = true;
+  }
+
+  // the state port: a read is answered two cycles (plus `st_extra`) after it
+  // is presented
   void serve_state_port() {
     if (dut->st_req_o && !dut->st_we_o) {
       if (st_lat == 0) {
@@ -284,11 +318,13 @@ struct Harness {
         st_data_next = st_read(dut->st_addr_o, dut->st_name_o,
                                dut->st_wdata_o, &err);
         st_err_next = err;
-        st_lat = 2;
+        st_lat = 2 + st_extra;
       } else if (--st_lat == 0) {
         dut->st_rvalid_i = 1;
         dut->st_rdata_i  = st_data_next;
         dut->st_err_i    = st_err_next;
+        ++st_reads;
+        last_rvalid_at = cyc;
       }
     } else st_lat = 0;
   }
@@ -411,6 +447,19 @@ struct Harness {
 
     // rising edge: registers update
     dut->clk_i = 1; dut->eval();
+    if (dut->preempted_o && pre_taken_at < 0) pre_taken_at = cyc;
+    ++cyc;
+  }
+
+  //! every preempt knob back to "never", for the next arm
+  void clear_preempt() {
+    pre_now = false;
+    pre_on_gathers = -1;
+    pre_on_writes = -1;
+    pre_on_refusal = false;
+    pre_on_read_wait = false;
+    st_extra = 0;
+    batch_base = -1;
   }
 
   uint32_t w32(uint32_t a) const {
@@ -427,14 +476,16 @@ struct Harness {
     stw.clear(); commits = 0; nvm_marks.clear(); notify_classes.clear();
     cur_upc = upc; cur_opd0 = opd0; cur_opd1 = opd1; cur_opd2 = opd2;
     amap_recs = 0; gsi_recs = 0; gx_sels.clear();
+    pre_raised = false; st_reads = 0; cyc = 0;
+    pre_taken_at = -1; last_rvalid_at = -1;
     tx_wait = 3;
     dut->disp_upc_i = upc;
     dut->disp_ctlr_eid_i = CTLR;
     dut->disp_opd0_i = opd0;
     dut->disp_opd1_i = opd1;
     dut->disp_opd2_i = opd2;
-    dut->disp_batch_i = batch;
-    dut->disp_resp_base_i = 12;
+    dut->disp_batch_i = (batch || batch_base >= 0) ? 1 : 0;
+    dut->disp_resp_base_i = batch_base >= 0 ? batch_base : 12;
     dut->disp_valid_i = 1;
     tick();
     dut->disp_valid_i = 0;
@@ -494,6 +545,8 @@ class UcpuSuite {
   void start_streaming_carries_the_write_completion_status();
   void the_set_stream_format_family_writes_or_refuses();
   void set_stream_info_writes_only_the_presentation_offset();
+  void the_deadline_preempt_answers_before_any_effect();
+  void the_deadline_preempt_waits_for_a_boundary();
 
   // P8b's shared fixture: the name lanes the state model starts with, and
   // the response comparison every GET_NAME / SET_NAME arm performs.
@@ -1479,6 +1532,112 @@ void UcpuSuite::set_stream_info_writes_only_the_presentation_offset() {
   }
 }
 
+// ---- P20: the deadline preempt (03 §6 rule (e), IEEE §9.3.2.6) -------
+// The engine raises `preempt_i` once the command in flight is past its
+// T-BUDGET-AECP-WC deadline, and holds it. The µCPU must redirect to
+// E_DLKILL at an instruction boundary and only before the program's first
+// effect op, never cut an op that is waiting on its face, answer exactly
+// once, and leave the next dispatch clean. E_DLKILL keeps a refusal the
+// program already chose (06 §8 "best current status") and turns a SUCCESS it
+// had not finished building into ENTITY_MISBEHAVING (Table 7-141 status 10).
+constexpr uint64_t CT_KEY  = 0x0000000700050000ull;   // STREAM_INPUT[7], hit
+constexpr uint64_t CT_TYIX = 0x0000000000050007ull;
+
+void UcpuSuite::the_deadline_preempt_answers_before_any_effect() {
+  // P20a: raised from the dispatch on: redirected before the first op
+  h.pre_now = true;
+  CHECK(h.run(E_GETSR, IDX_OK, false), "P20a completes: one redirect, no loop");
+  CHECK(h.sends == 1 && h.last_status == ST_MISBEHAVING && h.last_len == 12,
+        "P20a one header-only ENTITY_MISBEHAVING answer: sends %d status %u "
+        "len %u", h.sends, h.last_status, h.last_len);
+  CHECK(h.w32(8) == hdr2(ST_MISBEHAVING), "P20a the header record carries "
+        "status 10, got %08x", h.w32(8));
+  CHECK(h.st_reads == 0 && h.gx_sels.empty(),
+        "P20a nothing was read: %d state reads, %zu gathers", h.st_reads,
+        h.gx_sels.size());
+  CHECK(dut->preempted_o, "P20a preempted_o reports the redirect");
+  h.clear_preempt();
+  // P20b: a SET preempted before its WRITE_ST writes nothing, emits nothing
+  h.pre_now = true;
+  CHECK(h.run(E_SETSR, IDX_OK, false), "P20b completes");
+  CHECK(h.stw.empty() && h.commits == 0 && h.nvm_marks.empty()
+            && h.notify_classes.empty(),
+        "P20b no state write and no effect: %zu writes, %d commits",
+        h.stw.size(), h.commits);
+  CHECK(h.sends == 1 && h.last_status == ST_MISBEHAVING && h.last_len == 12,
+        "P20b one header-only ENTITY_MISBEHAVING: status %u len %u",
+        h.last_status, h.last_len);
+  h.clear_preempt();
+  // P20c: raised once the WRITE_ST retired: past its first effect the
+  // program answers for itself and every effect lands once
+  h.pre_on_writes = 1;
+  CHECK(h.run(E_SETSR, IDX_OK, false), "P20c completes");
+  CHECK(h.pre_raised, "P20c premise: the preempt was raised during the run");
+  CHECK(h.last_status == ST_OK && h.last_len == 16 && h.w32(12) == 0xBB80,
+        "P20c the program's own SUCCESS carrying the rate: status %u len %u",
+        h.last_status, h.last_len);
+  CHECK(h.stw.size() == 1 && h.commits == 1 && h.nvm_marks.size() == 1
+            && h.notify_classes.size() == 1 && h.sends == 1,
+        "P20c every effect exactly once, no partial commit: %zu writes, %d "
+        "commits, %zu marks, %zu notifies", h.stw.size(), h.commits,
+        h.nvm_marks.size(), h.notify_classes.size());
+  CHECK(!dut->preempted_o && h.pre_taken_at < 0,
+        "P20c never redirected after an effect");
+  h.clear_preempt();
+  // P20d: a refusal already chosen is the best current status and is kept
+  h.pre_on_refusal = true;
+  CHECK(h.run(E_SETSR, IDX_OK, true), "P20d completes");
+  CHECK(h.pre_taken_at >= 0,
+        "P20d premise: redirected after CHECK_LOCK chose ENTITY_LOCKED");
+  CHECK(h.sends == 1 && h.last_status == ST_LOCKED && h.last_len == 12,
+        "P20d ENTITY_LOCKED kept, header only: status %u len %u",
+        h.last_status, h.last_len);
+  CHECK(h.stw.empty() && h.commits == 0, "P20d nothing written");
+  h.clear_preempt();
+}
+
+void UcpuSuite::the_deadline_preempt_waits_for_a_boundary() {
+  // P20e: an op waiting on its face is never cut: the redirect follows the
+  // answer of the locate it was raised under, and no further read issues
+  h.st_extra = 40;
+  h.pre_on_read_wait = true;
+  CHECK(h.run(E_GETSR, IDX_OK, false), "P20e completes");
+  CHECK(h.st_reads == 1,
+        "P20e the waiting locate was answered and no further read issued: "
+        "%d reads", h.st_reads);
+  CHECK(h.last_rvalid_at >= 0 && h.pre_taken_at >= h.last_rvalid_at,
+        "P20e the redirect came at or after the read's answer (%ld, %ld)",
+        h.pre_taken_at, h.last_rvalid_at);
+  CHECK(h.sends == 1 && h.last_status == ST_MISBEHAVING && h.last_len == 12,
+        "P20e one header-only ENTITY_MISBEHAVING");
+  h.clear_preempt();
+  // P20f: a body partly built is dropped: the cursor returns to 12
+  h.pre_on_gathers = 6;
+  CHECK(h.run(E_GCTRS, CT_KEY, false, 2000, CT_TYIX), "P20f completes");
+  CHECK(h.sends == 1 && h.last_status == ST_MISBEHAVING && h.last_len == 12,
+        "P20f header only after 20+ body bytes were built: status %u len %u",
+        h.last_status, h.last_len);
+  CHECK(h.gx_sels.size() >= 6 && h.gx_sels.size() < 33,
+        "P20f the block stopped at a boundary: %zu of 33 gathers",
+        h.gx_sels.size());
+  h.clear_preempt();
+  // P20g: in a GET_DYNAMIC_INFO batch the cursor and header are the engine's
+  h.batch_base = 40;
+  h.pre_now = true;
+  CHECK(h.run(E_GETSR, IDX_OK, false), "P20g completes");
+  CHECK(h.sends == 1 && h.last_len == 40 && h.last_status == ST_MISBEHAVING,
+        "P20g the batch keeps its base: len %u status %u", h.last_len,
+        h.last_status);
+  CHECK(h.w32(8) == 0, "P20g no header record in a batch");
+  h.clear_preempt();
+  // P20h: the next dispatch is clean
+  CHECK(h.run(E_GETSR, IDX_OK, false), "P20h completes");
+  CHECK(h.last_status == ST_OK && h.last_len == 16 && h.w32(12) == 0xBB80
+            && !dut->preempted_o && h.pre_taken_at < 0,
+        "P20h a dispatch after a preempted one answers normally: status %u "
+        "len %u", h.last_status, h.last_len);
+}
+
 int UcpuSuite::run() {
   const milan::tb::Model<VKL_aecp_ucpu> model;
   dut = model.get();
@@ -1518,6 +1677,8 @@ int UcpuSuite::run() {
   start_streaming_carries_the_write_completion_status();
   the_set_stream_format_family_writes_or_refuses();
   set_stream_info_writes_only_the_presentation_offset();
+  the_deadline_preempt_answers_before_any_effect();
+  the_deadline_preempt_waits_for_a_boundary();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

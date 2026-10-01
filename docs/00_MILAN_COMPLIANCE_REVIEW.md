@@ -402,7 +402,7 @@ verification).
 | REQ-MVU-002 | Milan §5.4.4.1, §4.2.4 | GET_MILAN_INFO: protocol_version = 1; features (REDUNDANCY=0; TALKER_DYNAMIC_MAPPINGS optional); certification_version | shall | A | [GAP-03](#gap-03) | F06.11 | 06 §6.9 | DIR |
 | REQ-MVU-003 | Milan v1.2 §5.4.4.2/.3 | SET/GET_SYSTEM_UNIQUE_ID: recommended; October release waiver, not implemented (owner decision in GAP-03); revisit at P4 if the lab requires it or a targeted Milan revision makes it mandatory | rec | A | [GAP-03](#gap-03) | NOT_IMPLEMENTED command echo; pp_top M4 verifies fallback only | 06 §6.9 | DIR |
 | REQ-MVU-004 | Milan v1.2 §5.4.4.4/.5, §7.6 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO: recommended; October release waiver, not implemented (owner decision in GAP-03); revisit at P4 if the lab requires it or a targeted Milan revision makes it mandatory | rec | A | [GAP-03](#gap-03) | NOT_IMPLEMENTED command echo; pp_top M4 verifies fallback only | 06 §6.9 | DIR |
-| REQ-MVU-005 | Milan §5.4.3.3/.4 | MVU status {SUCCESS, NOT_IMPLEMENTED}; 250 ms timeout / respond ≤240 ms | shall | A | [GAP-03](#gap-03) | deadline engine | 08 §2 | TIM |
+| REQ-MVU-005 | Milan §5.4.3.3/.4 | MVU status {SUCCESS, NOT_IMPLEMENTED}; 250 ms timeout / respond ≤240 ms | shall | A | [GAP-03](#gap-03) | deadline engine; NOT_IMPLEMENTED echo for a voided MVU response | 08 §2, 06 §6.9 | TIM |
 
 ### 6.5 Notifications and registry
 
@@ -499,7 +499,7 @@ verification).
 |---|---|---|---|---|---|
 | [GAP-01](#gap-01) | Blocker | Full command/descriptor inventory + per-command rules | [F06.14](architecture/06_aecp_engine.md#fig-06-cmdtable), §6 matrix | DIR/TOL | [#76](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/76) |
 | [GAP-02](#gap-02) | Blocker | Milan-native ACMP: stateless talker + listener SM package | [05](architecture/05_acmp_engine.md) | MTXW | none found |
-| [GAP-03](#gap-03) | Major | MVU sub-decoder + one implemented group (GET_MILAN_INFO); SUID/MCR pairs waived for October by the linked owner decision; reserved enable names have no RTL consumer | [06 §6.9](architecture/06_aecp_engine.md#69-mvu-commands), [F01.5](architecture/01_overview.md#fig-01-params) | DIR: pp_top M1/M2 feature fields and M4 four refusals; no implementation claim for the waived pairs | [#55](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/55), [#56](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/56), [#77](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/77) resolved by waiver; timing remains [#57](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/57) |
+| [GAP-03](#gap-03) | Major | MVU sub-decoder + one implemented group (GET_MILAN_INFO); SUID/MCR pairs waived for October by the linked owner decision; reserved enable names have no RTL consumer | [06 §6.9](architecture/06_aecp_engine.md#69-mvu-commands), [F01.5](architecture/01_overview.md#fig-01-params) | DIR: pp_top M1/M2 feature fields and M4 four refusals; no implementation claim for the waived pairs | [#55](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/55), [#56](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/56), [#77](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/77) resolved by waiver; timing and the voided-response status: [#57](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/57), graded by the deadline engine and `tb/pp_top` sections DL (DL3 and DL8 the MVU answers) and TB ([09 §8.3](architecture/09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)) |
 | [GAP-04](#gap-04) | Blocker | Interface classes A–F; SRP/MAAP, gPTP, AVTP, media-clock adapters; status dictionary; in-scope SRP engine | [02](architecture/02_interfaces.md), [10](architecture/10_srp_engine.md) | DIR/MTXW/TOL/TIM | [#78](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/78) |
 | [GAP-05](#gap-05) | Major | Counters subsystem with Milan-precedence masks | [06 §6.6](architecture/06_aecp_engine.md), [07 §4](architecture/07_memory_maps.md) | DIR | [#79](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/79) |
 | [GAP-06](#gap-06) | Major | Registry + monitor + fan-out + lock manager + identify | [06 §7](architecture/06_aecp_engine.md) | RND/STORM/TIM | [#80](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/80) |
@@ -520,7 +520,8 @@ checked against what `hdl/` and `tb/` carry, not against this table. A linked is
 still unimplemented or ungraded for that finding and lists the requirement tickets under it;
 "none found" means the resolution is implemented and a suite of the named category grades it.
 GAP-03 carries the later October-release waiver above; it does not re-grade the
-original-document Cov column or close REQ-MVU-005's timing evidence.
+original-document Cov column. REQ-MVU-005's timing evidence is the deadline engine and
+`tb/pp_top` sections DL and TB (issue #57).
 
 ## 8. Residual risks and open decisions
 

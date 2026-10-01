@@ -76,7 +76,7 @@ reports uncovered REQ-IDs as failures.
 | IDENTIFY_NOTIFICATION received as a command | `BAD_ARGUMENTS`, correctly sized (IEEE §7.4.39.2) |
 | duplicate BIND_RX (same seq) replay | idempotent / cached response |
 | MRPDU with a malformed vector attribute mid-PDU | prefix processed; rest of that list + subsequent messages discarded (V9, Milan §4.2.7.1.2) |
-| deadline expiry mid-command (TIM, compressed timers) | forced FAIL_SAFE response emitted — never a silent retire (03 §6 rule (e)) |
+| deadline expiry mid-command (TIM, compressed timers) | forced FAIL_SAFE response emitted — never a silent retire (03 §6 rule (e)); `tb/pp_top` DL1 to DL6 ([§8.3](#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)) |
 
 ## 4. Reference-model contract
 
@@ -213,6 +213,65 @@ without coverage) and #21 (no handshake-misbehaving port model) are not closed b
 evidence. The top-level device model does misbehave on the handshake for the walks
 (late grant, silent header, late or erroring descriptor memory), which grades the
 walks' deadlines, not the port's.
+
+### 8.3 The AECP deadline and the hazard classes (issues #81, #57, #84)
+
+The deadline engine of [03 §6](03_packet_engine.md) rule (e) and
+[08 §4](08_timing.md#4-deadline-budgets), and its budgets, graded in the compressed timebase of
+`tb/pp_top` section DL (`--deadline-only`, 1 ms = 100 clocks, so the armed
+deadline is 10,000 clocks and `T-AECP-RESP` 24,000) and at the µCPU in
+`tb/ucpu` P20. Every stall is an integrator face answering slowly but inside
+its watchdog.
+
+| Property | Checks |
+|---|---|
+| a command stalled past its budget is answered by a well-formed forced response (ENTITY_MISBEHAVING, header only, byte-exact) inside `T-AECP-RESP`, never a silent retire; the kill rises at the deadline; the program stops at an op boundary | DL1 |
+| the key stays held from the expiry to the forced response's hand-off to its lane and is released in that clock, once | DL1 |
+| a program past its first effect is not preempted: its own response, every effect once, the state reads back | DL2; `tb/ucpu` P20c |
+| the deadline counts from reception, queue wait included; a Milan Vendor Unique command answers NOT_IMPLEMENTED with the command echoed | DL3 |
+| a GET_DYNAMIC_INFO past its deadline runs no further record and is voided | DL4 |
+| a frame owed no response retires through the normal release | DL5 |
+| an edit riding the edit face is never preempted | DL6 |
+| neither are the registry and lock commands, whose first op commits on the registry face: a REGISTER_UNSOLICITED_NOTIFICATION and a LOCK_ENTITY queued past their deadline answer their own SUCCESS, never redirected, and the registration and the lock take effect | DL10 |
+| an honoured kill ends the AECP owner: the RX-slot return after it releases nothing, and across the section every normal release names a live hold | DL1, DL11 |
+| nothing leaks: every RX slot free, the next command byte-exact | DL7 |
+| every message type but AEM's, past its deadline: an ADDRESS_ACCESS, an AVC, an HDCP_APM and an EXTENDED command queued behind a stall answer NOT_IMPLEMENTED with the command echoed, as idle, never status 10 (IEEE Table 9-2) | DL9 |
+| REQ-MVU-005 on the fault path: an MVU response whose memory fails (a read error, a write error, a tied-off master, and a command padded to 540 payload bytes, whose 578-byte echo needs the oversize slot) answers NOT_IMPLEMENTED with the command echoed, as the deadline's does, and is counted; an AEM one still answers ENTITY_MISBEHAVING | DL8 |
+| the one command held through the boot restore is exempt (rule (d)) | D3O6 |
+| the redirect: before the first op, never after an effect, never cutting a waiting op, once per dispatch, dropping a partly built body, keeping a batch's cursor, the best current status kept | `tb/ucpu` P20a to P20h |
+| T-AECP-RESP for MVU (REQ-MVU-005): GET_MILAN_INFO and an unimplemented MVU command, byte-exact, at the suite's memory latency and at the reference 143 clocks, graded against their lines at `P-CLK-HZ` | TB1 |
+| the 08 §4 worst-case stimuli: an oversize READ_DESCRIPTOR (byte-exact, the oversize TX slot) and a GET_DYNAMIC_INFO carrying all thirteen getters, at both latencies | TB2 |
+| the engine busy: each of those behind a 15-frame notification fan-out, answered as idle, within one job plus its idle latency of the fan-out's last frame; GET_MILAN_INFO against a response memory stalled short of its watchdog | TB3, TB4 |
+| `T-BUDGET-ACMP-RESP`: ACMP answers idle and beside that load, later than idle by at most one frame on the wire | TB5 |
+| the deadline never fired while the budgets were measured | TB |
+| every transaction presents its F03.7 class and key: 33 AECP rows (all nine classes, the GETs' descriptor keys, the no-descriptor key of READ_DESCRIPTOR, GET_DYNAMIC_INFO, MVU and of frames the engine drops) and 6 ACMP rows | HZ1 |
+| CFG_BARRIER drains an in-flight ACMP step before executing and blocks a later ACMP head behind it | HZ2 |
+| a pending barrier is never starved by the round-robin (the wedge the fix removes) | HZ3 |
+| LOCK_OP waits for an ACMP stream step and runs beside an ACMP read | HZ4 |
+| STREAM_CFG and RO_SNAPSHOT conflict per key; two reads run together; MAP_CFG waits for any stream step | HZ5 to HZ7 |
+| CLOCK_CFG, NAME_WR, REGISTRY_OP, IDENTIFY and READ_DESCRIPTOR run beside an ACMP stream step; REGISTRY_OP, the one class with no reachable conflict, runs beside an ACMP read too | HZ8 |
+| NAME_WR and an ACMP read of the stream it names exclude each other, either one held, on both engines' keys: a SET_NAME on STREAM_INPUT 1 waits for a GET_RX_STATE of sink 1, then answers SUCCESS and the name reads back; it runs beside a read of another sink and beside an UNBIND_RX of the same one; held, a SET_NAME on STREAM_OUTPUT 1 holds back a GET_TX_STATE of source 1 and not one of source 2 | HZ9 |
+| STREAM_CFG against an ACMP read of its key; on the talker's keys, STREAM_CFG against a GET_TX_STATE and a DISCONNECT_TX per key, and RO_SNAPSHOT against a DISCONNECT_TX, not against a read | HZ10 |
+| CFG_BARRIER, LOCK_OP and the MAP_CFG cross-lock against the talker: the barrier holds back a read, the lock and a mapping edit hold back a step and not a read | HZ11 |
+| CLOCK_CFG, IDENTIFY and MAP_CFG commands naming a stream descriptor conflict with an ACMP read of it, either one held, and are then refused NOT_SUPPORTED | HZ12 |
+
+Section TB runs in the suite's fourth build (`make budget`), whose timebase is the
+nominal clock's own (1 ms = 1,000 clocks), so the deadline never cuts a measurement;
+it prints the latency histogram ([08 §4](08_timing.md#4-deadline-budgets) records
+it).
+
+Section HZ (`--hazards-only`) holds an ACMP transaction in flight by stalling the
+MAC until four answers fill the standard TX slots, so the next ACMP command is
+admitted and keeps its key until the MAC restarts; it grades every admission at
+the scoreboard's port. The same stall holds an AECP command, whose response
+waits for a standard slot. The talker returns its RX slot once it has read a
+frame, so a talker transaction keeps its key a few clocks only, and a
+talker-side pair is graded with the AECP command held. A check that a head
+waits requires the scoreboard to have been asked about it and to have refused
+it, and a MAAP allocator answers, so the talker is free to take commands. The negative controls run from `tb/pp_top/aecp_mutants.py`
+(`make -C tb/pp_top aecp-mutants`): each is a reviewed patch in `tb/pp_top/mutations/` applied to a
+scratch copy, and each must fail its named check. The mutation record is in
+the [`tb/pp_top` README](../../tb/pp_top/README.md).
 
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)

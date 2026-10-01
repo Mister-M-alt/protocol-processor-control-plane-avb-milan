@@ -17,9 +17,11 @@
 // maap face both ways — with no allocator the talker still answers (the
 // walker must not wedge on an unaccepted request), with one the granted
 // address reaches acmp_declaring_o, the ACMP answer and the SRP wire.
-// The suite builds twice (Makefile): the second build overrides the top's
-// P-SRP-DOM-DEF-VID with a verification-only fixture and runs section DV
-// alone.
+// The suite builds four times (Makefile): the second build overrides the
+// top's P-SRP-DOM-DEF-VID with a verification-only fixture and runs section
+// DV alone; the third overrides DESC_LINE_BYTES_P and runs section AX alone;
+// the fourth runs the timebase at the nominal clock's rate and runs section
+// TB alone.
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -46,7 +48,14 @@
 // ---------------------------------------------------------------------------
 // TB shape
 // ---------------------------------------------------------------------------
+#ifdef PP_TOP_TIM_REAL
+//! section TB's build: the wrap runs the timebase at the nominal clock's own
+//! rate, 1 ms = 1,000 clocks of CLK_HZ, so the deadline engine (100 ms here)
+//! never cuts a measurement
+constexpr int         MS_CYC = 1000;
+#else
 constexpr int         MS_CYC = 100;                  // wrap: 1 ms = 100 clk
+#endif
 //! the wrap's nominal P-CLK-HZ (TB_CLK_HZ_C): the top derives its restore
 //! deadlines from it, and the suite re-derives them from the ruled ms
 constexpr long        CLK_HZ = 1000001;
@@ -845,6 +854,11 @@ struct H {
   uint64_t rmem_past = 0;
   uint32_t rmem_top = 0;
   vluint64_t aecp_rx_t = 0;
+  //! the clock of the first byte of the frame being captured, and of the
+  //! last complete AECP and ACMP frames' first bytes (sections DL and TB)
+  vluint64_t cur_sof_t = 0;
+  vluint64_t aecp_sof_t = 0;
+  vluint64_t acmp_sof_t = 0;
   std::deque<std::vector<uint8_t>> q_aecp;
   //! MAAP frames (subtype 0xFE) with their eof-time compressed ms
   std::deque<std::pair<std::vector<uint8_t>, uint32_t>> q_maap;
@@ -1157,6 +1171,79 @@ struct H {
   //! srp_domain_change_o strobes, counted once per cycle (section DV): the
   //! one-cycle DOMAIN_CHANGE has no wire shape of its own
   int domain_changes = 0;
+  //! the AECP deadline face (section DL), every cycle since `dl_clear()`:
+  //! the first clock the top held a kill of the AECP hold and that hold's
+  //! id, the clocks the scoreboard honoured a kill and the engine handed a
+  //! solicited response to its lane, the cycles the killed hold's bit was
+  //! clear between the expiry and the first hand-off (it must stay held),
+  //! the bit in the clock after that hand-off, the µCPU's redirects, and the
+  //! normal releases that named a hold not live (also counted since reset)
+  long dl_kill_first = -1;
+  int  dl_kill_id = -1;
+  std::vector<long> dl_acks;
+  std::vector<long> dl_queued;
+  long dl_hold_gap = 0;
+  int  dl_hold_after_queue = -1;
+  int  dl_pre_rises = 0;
+  bool dl_pre_prev = false;
+  long dl_stray_rel = 0;
+  long dl_stray_rel_all = 0;
+  //! every scoreboard admission (section HZ): which head, the class and key
+  //! it presented, and the clock; the clocks the scoreboard was asked about
+  //! each head and refused it; and the clocks each owner's hold ended and
+  //! the pending CFG_BARRIER drain was seen, all since `hz_clear()`
+  struct Adm {
+    bool aecp;
+    unsigned cls;
+    unsigned key;
+    long t;
+  };
+  std::vector<Adm> hz_adms;
+  std::vector<long> hz_acmp_ends;
+  std::vector<long> hz_aecp_ends;
+  long hz_aecp_refused = 0;
+  long hz_acmp_refused = 0;
+  long hz_barrier_seen = -1;
+  bool hz_acmp_prev = false;
+  bool hz_aecp_prev = false;
+  void hz_clear() {
+    hz_adms.clear();
+    hz_acmp_ends.clear();
+    hz_aecp_ends.clear();
+    hz_aecp_refused = 0;
+    hz_acmp_refused = 0;
+    hz_barrier_seen = -1;
+    hz_acmp_prev = d->dbg_acmp_sb_active_o != 0;
+    hz_aecp_prev = d->dbg_aecp_sb_active_o != 0;
+  }
+  void sample_admissions() {
+    if (!d->rst_n) return;
+    const long now = static_cast<long>(t);
+    if (d->dbg_sb_acc_aecp_o || d->dbg_sb_acc_acmp_o)
+      hz_adms.push_back({d->dbg_sb_acc_aecp_o != 0,
+                         static_cast<unsigned>(d->dbg_sb_class_o),
+                         static_cast<unsigned>(d->dbg_sb_key_o), now});
+    if (d->dbg_sb_ref_aecp_o) ++hz_aecp_refused;
+    if (d->dbg_sb_ref_acmp_o) ++hz_acmp_refused;
+    const bool acmp = d->dbg_acmp_sb_active_o != 0;
+    const bool aecp = d->dbg_aecp_sb_active_o != 0;
+    if (hz_acmp_prev && !acmp) hz_acmp_ends.push_back(now);
+    if (hz_aecp_prev && !aecp) hz_aecp_ends.push_back(now);
+    hz_acmp_prev = acmp;
+    hz_aecp_prev = aecp;
+    if (d->dbg_sb_barrier_o && hz_barrier_seen < 0) hz_barrier_seen = now;
+  }
+  void dl_clear() {
+    dl_kill_first = -1;
+    dl_kill_id = -1;
+    dl_acks.clear();
+    dl_queued.clear();
+    dl_hold_gap = 0;
+    dl_hold_after_queue = -1;
+    dl_pre_rises = 0;
+    dl_pre_prev = d->dbg_ucpu_pre_o != 0;
+    dl_stray_rel = 0;
+  }
   // ---- the SET_STREAM_FORMAT verdict (kind 0 selector 15) and the
   // settings fold. The verdict is the integrator's ruling on the PROPOSED
   // format riding gsi_prop_fmt_o: bit 0 = the format is one of the
@@ -1291,6 +1378,8 @@ struct H {
     nvm_unflushed_seen |= d->nvm_unflushed_o;
     sample_restore_levels();
     sample_d3_ownership();
+    sample_deadline_face();
+    sample_admissions();
     if (d->srp_domain_change_o) ++domain_changes;
 
     d->clk_i = 1; d->eval();
@@ -1315,6 +1404,31 @@ struct H {
       ++rs_pre;
       if (rs_done) ++rs_pre_late;
     }
+  }
+
+  void sample_deadline_face() {
+    if (!d->rst_n) return;
+    const long now = static_cast<long>(t);
+    const bool queued_seen = !dl_queued.empty();
+    if (dl_kill_id >= 0 && queued_seen && dl_hold_after_queue < 0
+        && now == dl_queued.front() + 1)
+      dl_hold_after_queue = (d->dbg_sb_holds_o >> dl_kill_id) & 1;
+    if (d->dbg_aecp_dl_kill_o && dl_kill_first < 0) {
+      dl_kill_first = now;
+      dl_kill_id = static_cast<int>(d->dbg_aecp_sb_id_o);
+    }
+    if (dl_kill_id >= 0 && !queued_seen
+        && !((d->dbg_sb_holds_o >> dl_kill_id) & 1))
+      ++dl_hold_gap;
+    if (d->dbg_sb_kill_ack_o) dl_acks.push_back(now);
+    if (d->dbg_aecp_dl_queued_o) dl_queued.push_back(now);
+    if (d->dbg_sb_rel_o && !((d->dbg_sb_holds_o >> d->dbg_sb_rel_id_o) & 1)) {
+      ++dl_stray_rel;
+      ++dl_stray_rel_all;
+    }
+    const bool pre = d->dbg_ucpu_pre_o != 0;
+    if (pre && !dl_pre_prev) ++dl_pre_rises;
+    dl_pre_prev = pre;
   }
 
   void sample_d3_ownership() {
@@ -1345,7 +1459,7 @@ struct H {
     }
     d->tx_ready_i = mac_tx_ready;
     if (d->tx_valid_o && mac_tx_ready) {
-      if (d->tx_sof_o) { cur.clear(); in_frame = true; }
+      if (d->tx_sof_o) { cur.clear(); in_frame = true; cur_sof_t = t; }
       if (in_frame) cur.push_back(d->tx_data_o);
       if (d->tx_eof_o && in_frame) {
         in_frame = false;
@@ -1356,9 +1470,11 @@ struct H {
           q_adp.push_back(cur);
         } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFC) {
           q_acmp.push_back(cur);
+          acmp_sof_t = cur_sof_t;
         } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFB) {
           q_aecp.push_back(cur);
           aecp_rx_t = t;                       // for the response-cost check
+          aecp_sof_t = cur_sof_t;
         } else if (et == 0x22F0 && cur.size() > 14 && cur[14] == 0xFE) {
           q_maap.push_back({cur, uint32_t(d->dbg_now_ms_o)});
         } else if (et == 0x22EA) {
@@ -9481,6 +9597,7 @@ struct Suite {
   std::vector<uint8_t> image_clkdom;
   std::vector<uint8_t> image_spi0;
   std::vector<uint8_t> image_spi1;
+  std::vector<uint8_t> image_sigmux;
   //! when S0 raised the link, so S3 can say how long enable was held low
   uint32_t link_up_ms = 0;
 
@@ -9554,13 +9671,17 @@ struct Suite {
   // generator's output.
   //! `entity_cfg` is the ENTITY descriptor's current_configuration, the image
   //! default every unset-row answer falls back to; section AD boots an image
-  //! whose default is 1 so that a SET back to 0 is not also the default
+  //! whose default is 1 so that a SET back to 0 is not also the default.
   //! `extra_ents`/`extra_bodies` append rows after every configuration-0
   //! row (section AX puts its configuration-1 descriptors there); the main
-  //! run passes none, so its image is byte for byte what it was
+  //! run passes none, so its image is byte for byte what it was.
+  //! `sigmux_len` sizes the test-only SIGNAL_MULTIPLEXER: section TB makes it
+  //! the whole 576-byte line buffer, the 08 §4 oversize READ_DESCRIPTOR
+  //! (a 580-byte payload, a 618-byte frame in the oversize TX slot)
   void load_descriptor_image(
       uint16_t entity_cfg = CFGIX, const std::vector<ImgEnt>& extra_ents = {},
-      const std::vector<std::vector<uint8_t>>& extra_bodies = {}) {
+      const std::vector<std::vector<uint8_t>>& extra_bodies = {},
+      uint16_t sigmux_len = 312) {
     image_ents = {
       {CFGIX, 0x0000, 1, 312, 0, 312, 0},          // ENTITY
       {CFGIX, 0x0024, 1,  82, 2,  88, 0},          // CLOCK_DOMAIN (not %8)
@@ -9584,7 +9705,7 @@ struct Suite {
       //! IDENTIFY control exist in every configuration at the same index
       {CFGIX, 0x001A, 1, 112, 9, 112, 0},          // CONTROL (Identify)
       //! Test-only shape that makes E_RDESCENT's type guard load-bearing.
-      {CFGIX, 0x0022, 1, 312, 10, 312, 0},         // SIGNAL_MULTIPLEXER
+      {CFGIX, 0x0022, 1, sigmux_len, 10, sigmux_len, 0}, // SIGNAL_MULTIPLEXER
     };
     image_ents.insert(image_ents.end(), extra_ents.begin(), extra_ents.end());
     image_entity = entity_descriptor();
@@ -9594,6 +9715,8 @@ struct Suite {
     //! page of 8), port 1 = 24 clusters at base 8 (three pages of 8)
     image_spi0 = stream_port_descriptor(0x000E, 0, 8, 0);
     image_spi1 = stream_port_descriptor(0x000E, 1, 24, 8);
+    image_sigmux = non_entity_312_descriptor(0);
+    image_sigmux.resize(sigmux_len, 0x5A);
     std::vector<std::vector<uint8_t>> bodies = {
         image_entity, image_clkdom, image_spi0, image_spi1,
         stream_descriptor(0x0005, 0), stream_descriptor(0x0005, 1),
@@ -9605,7 +9728,7 @@ struct Suite {
         audio_map_descriptor(0, 0),
         audio_unit_descriptor(0, 96000u),
         control_descriptor(0),
-        non_entity_312_descriptor(0)};
+        image_sigmux};
     bodies.insert(bodies.end(), extra_bodies.begin(), extra_bodies.end());
     h.dram = build_image(image_ents, bodies,
                          //! TWO configurations, so SET_CONFIGURATION has a
@@ -11674,6 +11797,1765 @@ struct AecpResponsePhase {
   printf("AX: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+// ==== DL. The AECP transaction deadline (issue #81, GAP-07) ================
+// 03 §6 rule (e) with 08 §4: the normalizer stamps every AECP transaction
+// with a deadline T-BUDGET-AECP-WC (100 ms) after its reception, the top
+// reads it at admission, and a command still executing when it passes is
+// preempted into the forced FAIL_SAFE response, which must be on the wire
+// inside T-AECP-RESP (240 ms: IEEE 1722.1-2021 §9.3.2.6, and Milan v1.2
+// §5.4.3.4 for MVU). The suite's timebase is compressed (1 ms = 100 clk), so
+// the budget is 10,000 clocks and the response line 24,000. Every stall below
+// is an integrator face answering slowly but inside its 4,096-clock
+// watchdog: a slow but live integrator, which no watchdog catches, is exactly
+// what the deadline exists for. A fresh processor of its own (the AD
+// pattern); the main run's clock is untouched.
+struct DeadlinePhase {
+  H& h;                                        // the tally
+  const milan::tb::Model<Vpp_top_wrap> model;
+  H io;
+  Suite image;
+  static constexpr long BUDGET_CYC = 100L * MS_CYC;   // T-BUDGET-AECP-WC
+  static constexpr long RESP_CYC = 240L * MS_CYC;     // T-AECP-RESP
+  static constexpr uint8_t VU_COMMAND = 6;
+  static constexpr uint8_t VU_RESPONSE = 7;
+  static constexpr uint16_t MVU_PID_HI = 0x001B;
+  static constexpr uint32_t MVU_PID_LO = 0xC50AC100u;
+  static constexpr uint16_t GDI_GET_VIDEO_FMT = 0x000B;
+  static constexpr uint64_t OTHER_MAC = 0x0202C2C2C2C2ull;   // CTLR2_EID's
+
+  explicit DeadlinePhase(H& tally) : h(tally), io(model.get()), image(io) {}
+
+  static std::vector<uint8_t> ti(uint16_t ty, uint16_t ix) {
+    std::vector<uint8_t> p(4, 0);
+    putbe(&p[0], ty, 2);
+    putbe(&p[2], ix, 2);
+    return p;
+  }
+  static std::vector<uint8_t> mvu_pl() {
+    std::vector<uint8_t> p(8, 0);
+    putbe(&p[0], MVU_PID_LO, 4);               // GET_MILAN_INFO, Figure 5.3
+    return p;
+  }
+  //! the forced response: unicast to the requester, message_type + 1, the
+  //! sequence_id echoed, ENTITY_MISBEHAVING, header only (60 bytes on the wire)
+  static std::vector<uint8_t> forced(uint16_t seq, uint16_t op) {
+    return aecp_frame(CTLR_MAC, OWN_MAC, 1, 10, EID, CTLR_EID, seq, op, {});
+  }
+  static int status(const std::vector<uint8_t>& f) {
+    return f.size() > 16 ? ((f[16] >> 3) & 0x1F) : -1;
+  }
+  static uint16_t seq_of(const std::vector<uint8_t>& f) {
+    return f.size() > 35 ? static_cast<uint16_t>((f[34] << 8) | f[35]) : 0;
+  }
+  //! feed one AEM command; returns the clock its last byte left the trunk
+  long send(uint16_t op, const std::vector<uint8_t>& pl, uint16_t seq,
+            uint8_t mt = 0) {
+    io.feed(aecp_frame(OWN_MAC, CTLR_MAC, mt, 0, EID, CTLR_EID, seq,
+                       mt == VU_COMMAND ? MVU_PID_HI : op, pl));
+    return static_cast<long>(io.t) - 4;        // feed idles 4 after the byte
+  }
+  //! the AECP response carrying `seq`, with the clock of its first byte
+  std::vector<uint8_t> answer(uint16_t seq, long* first) {
+    for (long c = 0; c < 400L * MS_CYC; ++c) {
+      while (!io.q_aecp.empty()) {
+        auto f = io.q_aecp.front();
+        io.q_aecp.pop_front();
+        if (seq_of(f) == seq) {
+          *first = static_cast<long>(io.aecp_sof_t);
+          return f;
+        }
+      }
+      io.step();
+    }
+    *first = -1;
+    return {};
+  }
+
+  void boot() {
+    image.load_descriptor_image();
+    io.reset();
+    CHECK(io.boot_to_aecp() && io.d->restore_done_o && !io.d->restore_fail_o,
+          "DL boot: both restore walks end done over a blank device");
+    io.flush_all();
+    io.q_aecp.clear();
+  }
+
+  //! DL1 (#81 acceptance 2, 09 F09.4's last row): a GET_COUNTERS whose
+  //! counter store answers each quadlet 1,000 clocks late (inside the 4,096
+  //! watchdog; 33 of them would take about 330 ms) is preempted at the
+  //! deadline and answered by the forced response, never a silent retire
+  void dl1_a_stalled_command_is_answered_by_the_forced_response() {
+    io.q_aecp.clear();
+    io.dl_clear();
+    io.ctr_hold = 1000;
+    const uint64_t reads0 = io.ctr_reads;
+    const long t0 = send(AEM_GET_COUNTERS, ti(0x0005, 0), 0xD101);
+    long first = -1;
+    const auto f = answer(0xD101, &first);
+    io.ctr_hold = 2;
+    const long kill = io.dl_kill_first - t0;
+    printf("  [DL1] kill %ld clocks after reception, forced response's first "
+           "byte at %ld (budget %ld, T-AECP-RESP %ld)\n", kill, first - t0,
+           BUDGET_CYC, RESP_CYC);
+    CHECK(f == forced(0xD101, AEM_GET_COUNTERS),
+          "DL1: the stalled GET_COUNTERS is answered ENTITY_MISBEHAVING, "
+          "header only, byte-exact (status %d, %zu bytes)", status(f),
+          f.size());
+    CHECK(io.dl_kill_first >= 0 && kill >= BUDGET_CYC - MS_CYC - 20
+              && kill <= BUDGET_CYC + 20,
+          "DL1: the kill rose at the T-BUDGET-AECP-WC deadline, %ld clocks "
+          "after reception", kill);
+    CHECK(first > io.dl_kill_first && first - t0 < RESP_CYC,
+          "DL1: the forced response's first byte %ld clocks after reception, "
+          "after the deadline and inside T-AECP-RESP (%ld)", first - t0,
+          RESP_CYC);
+    CHECK(io.ctr_reads - reads0 < 33,
+          "DL1: the program stopped at an op boundary: %llu of 33 quadlets "
+          "asked", static_cast<unsigned long long>(io.ctr_reads - reads0));
+    CHECK(io.dl_pre_rises == 1, "DL1: the µCPU was redirected once (%d)",
+          io.dl_pre_rises);
+    CHECK(io.dl_acks.size() == 1 && io.dl_queued.size() == 1
+              && io.dl_acks.front() == io.dl_queued.front(),
+          "DL1: the scoreboard honoured the kill once, in the clock the "
+          "forced response was queued (%zu kills, %zu queued)",
+          io.dl_acks.size(), io.dl_queued.size());
+    CHECK(io.dl_hold_gap == 0 && io.dl_hold_after_queue == 0,
+          "DL1: the key stayed held from the expiry to the forced response's "
+          "hand-off (%ld clocks free) and was free after it (%d)",
+          io.dl_hold_gap, io.dl_hold_after_queue);
+    CHECK(io.dl_stray_rel == 0,
+          "DL1: the honoured kill ended the AECP owner, so the RX-slot return "
+          "after it released no hold id again (%ld stray releases)",
+          io.dl_stray_rel);
+  }
+
+  //! DL2 (rule (e): no partial commit survives): a SET_NAME on CLOCK_DOMAIN
+  //! 0 whose descriptor fetch is 3,000 clocks late writes its name lanes
+  //! (its first effect) before the deadline, then builds its nine-lane
+  //! response against a response memory taking 1,500 clocks per lane write,
+  //! and the deadline passes in the middle of that body. Past its first
+  //! effect the program is not preempted: its own SUCCESS goes out (late in
+  //! this compressed timebase: every remaining op is watchdog-bounded, well
+  //! under a millisecond at P-CLK-HZ), the name reads back and its NVM mark
+  //! lands once
+  void dl2_past_its_first_effect_a_command_answers_for_itself() {
+    std::vector<uint8_t> pl(8, 0);
+    putbe(&pl[0], 0x0024, 2);                  // CLOCK_DOMAIN 0, name 0
+    putbe(&pl[6], CFGIX, 2);
+    const char* const name = "Clock Domain Past Its Deadline";
+    for (size_t i = 0; i < 64; ++i)
+      pl.push_back(i < std::strlen(name) ? static_cast<uint8_t>(name[i]) : 0);
+    io.q_aecp.clear();
+    io.dl_clear();
+    const uint64_t marks0 = io.nvm_marks;
+    io.dram_delay_next = 3000;
+    io.rmem_wlat = 1500;
+    const long t0 = send(AEM_SET_NAME, pl, 0xD201);
+    long first = -1;
+    const auto f = answer(0xD201, &first);
+    io.rmem_wlat = 17;
+    printf("  [DL2] kill %ld clocks after reception, the SET_NAME's own "
+           "response at %ld\n", io.dl_kill_first - t0, first - t0);
+    CHECK(io.dl_kill_first > t0 && io.dl_kill_first < first,
+          "DL2: premise: the deadline passed while the SET_NAME was in flight "
+          "(kill at %ld, response at %ld)", io.dl_kill_first - t0, first - t0);
+    CHECK(f == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                          0xD201, AEM_SET_NAME, pl),
+          "DL2: past its NAME_WR the SET_NAME answers its own SUCCESS, "
+          "byte-exact (status %d)", status(f));
+    CHECK(io.dl_pre_rises == 0, "DL2: the µCPU was never redirected (%d)",
+          io.dl_pre_rises);
+    CHECK(io.nvm_marks == marks0 + 1, "DL2: its NVM mark landed once (%llu)",
+          static_cast<unsigned long long>(io.nvm_marks - marks0));
+    std::vector<uint8_t> sel(pl.begin(), pl.begin() + 8);
+    (void)send(AEM_GET_NAME, sel, 0xD202);
+    const auto r = answer(0xD202, &first);
+    CHECK(r == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                          0xD202, AEM_GET_NAME, pl),
+          "DL2: GET_NAME reads the stored name back");
+  }
+
+  //! DL3 (08 §4: the deadline is armed at reception; Milan v1.2 §5.4.3.3
+  //! Table 5.19, §5.4.3.4): a GET_MILAN_INFO queued behind DL1's stall
+  //! waits past its own deadline and is preempted at its first op boundary.
+  //! Its forced answer is the MVU refusal form, NOT_IMPLEMENTED with the
+  //! command echoed, since Table 5.19 has no status 10, and it is on the wire
+  //! inside T-AECP-RESP of its own reception
+  void dl3_the_deadline_counts_from_reception_and_mvu_answers_not_implemented() {
+    io.q_aecp.clear();
+    io.dl_clear();
+    io.ctr_hold = 1000;
+    const long ta = send(AEM_GET_COUNTERS, ti(0x0005, 0), 0xD301);
+    const long tb = send(0, mvu_pl(), 0xD302, VU_COMMAND);
+    long fa_first = -1;
+    long fb_first = -1;
+    const auto fa = answer(0xD301, &fa_first);
+    const auto fb = answer(0xD302, &fb_first);
+    io.ctr_hold = 2;
+    printf("  [DL3] the stall answered at %ld, the queued GET_MILAN_INFO at "
+           "%ld clocks after its reception\n", fa_first - ta, fb_first - tb);
+    CHECK(fa == forced(0xD301, AEM_GET_COUNTERS),
+          "DL3: the stall ahead of it is answered by the forced response "
+          "(status %d)", status(fa));
+    CHECK(fb == aecp_frame(CTLR_MAC, OWN_MAC, VU_RESPONSE, AECP_NOT_IMPLEMENTED,
+                           EID, CTLR_EID, 0xD302, MVU_PID_HI, mvu_pl()),
+          "DL3: the queued GET_MILAN_INFO past its deadline answers MVU "
+          "NOT_IMPLEMENTED with the command echoed, byte-exact (status %d, "
+          "%zu bytes)", status(fb), fb.size());
+    CHECK(fb_first - tb > BUDGET_CYC && fb_first - tb < RESP_CYC,
+          "DL3: its first byte %ld clocks after its own reception: past "
+          "T-BUDGET-AECP-WC and inside T-AECP-RESP", fb_first - tb);
+    CHECK(fa_first - ta < RESP_CYC, "DL3: the stall's answer inside "
+          "T-AECP-RESP too (%ld)", fa_first - ta);
+    CHECK(io.dl_pre_rises == 2 && io.dl_acks.size() == 2,
+          "DL3: both preempted, both keys released at their responses (%d "
+          "redirects, %zu kills)", io.dl_pre_rises, io.dl_acks.size());
+  }
+
+  //! DL4: a GET_DYNAMIC_INFO of twelve GET_VIDEO_FORMAT records (permitted,
+  //! not implemented: each copies its data under NOT_SUPPORTED) against a
+  //! response memory taking 3,900 clocks per lane write would build for about
+  //! 700 ms. Past the deadline no further record runs and the aggregate is
+  //! voided: ENTITY_MISBEHAVING, empty, inside T-AECP-RESP
+  void dl4_a_dynamic_info_batch_past_its_deadline_is_voided() {
+    std::vector<uint8_t> req;
+    for (uint16_t k = 0; k < 12; ++k) {
+      std::vector<uint8_t> r(8, 0);
+      putbe(&r[0], 4, 2);                      // four bytes of command data
+      putbe(&r[6], GDI_GET_VIDEO_FMT, 2);
+      const auto data = ti(0x0005, k);
+      r.insert(r.end(), data.begin(), data.end());
+      req.insert(req.end(), r.begin(), r.end());
+    }
+    io.q_aecp.clear();
+    io.dl_clear();
+    io.rmem_wlat = 3900;
+    const long t0 = send(AEM_GET_DYNAMIC_INFO, req, 0xD401);
+    long first = -1;
+    const auto f = answer(0xD401, &first);
+    io.rmem_wlat = 17;
+    printf("  [DL4] the voided batch answered %ld clocks after reception\n",
+           first - t0);
+    CHECK(f == forced(0xD401, AEM_GET_DYNAMIC_INFO),
+          "DL4: the batch past its deadline is voided: ENTITY_MISBEHAVING, "
+          "empty, byte-exact (status %d, %zu bytes)", status(f), f.size());
+    CHECK(first > io.dl_kill_first && first - t0 < RESP_CYC,
+          "DL4: its first byte %ld clocks after reception, after the "
+          "deadline and inside T-AECP-RESP", first - t0);
+    CHECK(io.dl_acks.size() == 1, "DL4: the key released at the response");
+  }
+
+  //! DL5 (the kill face releases only with a response queued): an AECP
+  //! RESPONSE frame arriving as input is owed no response (IEEE Figure 9-3,
+  //! V6). Queued behind a stall it is admitted past its deadline, dropped,
+  //! and retires through the normal release: no answer, one kill honoured
+  //! (the stall's), every hold free, and a later command answered normally
+  void dl5_an_expired_frame_owed_no_response_releases_normally() {
+    io.q_aecp.clear();
+    io.dl_clear();
+    io.ctr_hold = 1000;
+    const uint16_t drops0 = io.d->dbg_aecp_drop_o;
+    (void)send(AEM_GET_COUNTERS, ti(0x0005, 0), 0xD501);
+    (void)send(AEM_GET_CONFIGURATION, {}, 0xD502, 1);  // an AEM_RESPONSE
+    long first = -1;
+    const auto fa = answer(0xD501, &first);
+    io.ctr_hold = 2;
+    const auto fb = answer(0xD502, &first);
+    CHECK(fa == forced(0xD501, AEM_GET_COUNTERS) && fb.empty(),
+          "DL5: the stall is answered and the response frame is not (%zu "
+          "bytes)", fb.size());
+    CHECK(static_cast<uint16_t>(io.d->dbg_aecp_drop_o - drops0) == 1
+              && io.dl_acks.size() == 1 && io.d->dbg_sb_holds_o == 0,
+          "DL5: the frame was dropped, one kill honoured, every hold free "
+          "(drops %u, kills %zu, holds %02x)",
+          unsigned(io.d->dbg_aecp_drop_o - drops0), io.dl_acks.size(),
+          unsigned(io.d->dbg_sb_holds_o));
+    (void)send(AEM_GET_CONFIGURATION, {}, 0xD503);
+    const auto g = answer(0xD503, &first);
+    CHECK(status(g) == AECP_SUCCESS && g.size() == 60,
+          "DL5: a later GET_CONFIGURATION is answered SUCCESS (status %d)",
+          status(g));
+  }
+
+  //! DL6 (the three commands never preempted): an ADD_AUDIO_MAPPINGS whose
+  //! edit face holds every validation request 3,000 clocks (inside the
+  //! watchdog) is still validating at the deadline. Its change rides the edit
+  //! face, whose phase 1 is its point of no return, so it runs to its own
+  //! SUCCESS and both records are committed
+  void dl6_an_edit_past_its_point_of_no_return_is_not_preempted() {
+    const std::vector<uint64_t> rows = {AudioMapEditPhase::row(0, 3, 3),
+                                        AudioMapEditPhase::row(0, 4, 4)};
+    const auto p = AudioMapEditPhase::edit_pl(AudioMapEditPhase::DT_SPI, 0,
+                                              rows);
+    io.amap_edit_mode = true;
+    io.amap_edit_in0.clear();
+    io.q_aecp.clear();
+    io.dl_clear();
+    io.amap_edit_hold = 3000;
+    const long t0 = send(AudioMapEditPhase::ADD, p, 0xD601);
+    long first = -1;
+    const auto f = answer(0xD601, &first);
+    io.amap_edit_hold = 0;
+    printf("  [DL6] kill %ld clocks after reception, the edit's own response "
+           "at %ld\n", io.dl_kill_first - t0, first - t0);
+    CHECK(io.dl_kill_first > t0 && io.dl_kill_first < first,
+          "DL6: premise: the deadline passed while the edit validated (kill "
+          "at %ld, response at %ld)", io.dl_kill_first - t0, first - t0);
+    CHECK(f == AudioMapEditPhase::expect(AECP_SUCCESS, AudioMapEditPhase::ADD,
+                                         0xD601, p),
+          "DL6: the edit answers its own SUCCESS, byte-exact (status %d)",
+          status(f));
+    CHECK(io.amap_edit_in0 == rows && io.dl_pre_rises == 0,
+          "DL6: both records committed, the µCPU never redirected (%zu rows, "
+          "%d redirects)", io.amap_edit_in0.size(), io.dl_pre_rises);
+  }
+
+  //! DL7: none of it leaked: every RX slot free, and READ_DESCRIPTOR of the
+  //! ENTITY answers byte-exact
+  void dl7_nothing_leaked() {
+    io.run_ms(20);
+    CHECK(((io.snap(25) >> 3) & 0xFFFFu) == 4u,
+          "DL7: %u of 4 RX slots free after the deadline arms",
+          (io.snap(25) >> 3) & 0xFFFFu);
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2);
+    std::vector<uint8_t> epl(4, 0);
+    putbe(&epl[0], CFGIX, 2);
+    epl.insert(epl.end(), image.image_entity.begin(), image.image_entity.end());
+    (void)send(AEM_READ_DESCRIPTOR, rd, 0xD701);
+    long first = -1;
+    const auto f = answer(0xD701, &first);
+    CHECK(f == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                          0xD701, AEM_READ_DESCRIPTOR, epl),
+          "DL7: READ_DESCRIPTOR(ENTITY) after the arms is byte-exact");
+  }
+
+  //! DL8 (REQ-MVU-005; Milan v1.2 §5.4.3.3 Table 5.19: an MVU status is
+  //! SUCCESS or NOT_IMPLEMENTED): the other answer the engine forces, when a
+  //! response's memory fails, is DL3's for an MVU command too, NOT_IMPLEMENTED
+  //! with the command echoed, never IEEE's status 10. GET_MILAN_INFO builds its
+  //! body in the response memory, so a read error (the rebuild after its slot
+  //! is granted), a write error and a tied-off master each void it, and each
+  //! void is counted. A GET_MILAN_INFO padded to 540 payload bytes, past cdl
+  //! 524, echoes a 578-byte frame, so its slot must be the oversize one. An
+  //! AEM command under the same fault still answers ENTITY_MISBEHAVING, header
+  //! only. Afterwards every RX slot is free and GET_MILAN_INFO answers SUCCESS
+  void dl8_an_mvu_response_whose_memory_fails_answers_not_implemented() {
+    struct Fault {
+      const char* what;
+      bool H::*knob;
+      size_t pad;
+    };
+    const Fault faults[] = {
+        {"a response-memory read error", &H::rmem_rerr, 0},
+        {"a response-memory write error", &H::rmem_werr, 0},
+        {"a tied-off response memory", &H::rmem_off, 0},
+        {"a read error under a command padded to 540 payload bytes",
+         &H::rmem_rerr, 532},
+    };
+    uint16_t s = 0xD801;
+    for (const Fault& x : faults) {
+      std::vector<uint8_t> pl = mvu_pl();
+      pl.resize(pl.size() + x.pad, 0);
+      io.q_aecp.clear();
+      const uint16_t err0 = io.d->dbg_resp_err_o;
+      io.*x.knob = true;
+      (void)send(0, pl, s, VU_COMMAND);
+      long first = -1;
+      const auto f = answer(s, &first);
+      io.*x.knob = false;
+      CHECK(f == aecp_frame(CTLR_MAC, OWN_MAC, VU_RESPONSE,
+                            AECP_NOT_IMPLEMENTED, EID, CTLR_EID, s,
+                            MVU_PID_HI, pl),
+            "DL8 %s: GET_MILAN_INFO answers MVU NOT_IMPLEMENTED with the "
+            "command echoed, byte-exact (status %d, %zu bytes)", x.what,
+            status(f), f.size());
+      CHECK(static_cast<uint16_t>(io.d->dbg_resp_err_o - err0) == 1,
+            "DL8 %s: the voided response is counted (%u)", x.what,
+            unsigned(static_cast<uint16_t>(io.d->dbg_resp_err_o - err0)));
+      ++s;
+    }
+    io.rmem_rerr = true;
+    (void)send(AEM_GET_CONFIGURATION, {}, s);
+    long first = -1;
+    const auto g = answer(s, &first);
+    io.rmem_rerr = false;
+    CHECK(g == forced(s, AEM_GET_CONFIGURATION),
+          "DL8: an AEM command under the read error still answers "
+          "ENTITY_MISBEHAVING, header only (status %d)", status(g));
+    io.run_ms(20);
+    CHECK(((io.snap(25) >> 3) & 0xFFFFu) == 4u,
+          "DL8: %u of 4 RX slots free after the faults",
+          (io.snap(25) >> 3) & 0xFFFFu);
+    std::vector<uint8_t> info(20, 0);
+    putbe(&info[0], MVU_PID_LO, 4);            // protocol_id @24..@27
+    putbe(&info[8], 1u, 4);                    // protocol_version 1
+    ++s;
+    (void)send(0, mvu_pl(), s, VU_COMMAND);
+    CHECK(answer(s, &first) == aecp_frame(CTLR_MAC, OWN_MAC, VU_RESPONSE,
+                                          AECP_SUCCESS, EID, CTLR_EID, s,
+                                          MVU_PID_HI, info),
+          "DL8: the memory healed, GET_MILAN_INFO answers SUCCESS byte-exact");
+  }
+
+  //! DL9 (IEEE 1722.1-2021 Table 9-2: SUCCESS and NOT_IMPLEMENTED are the
+  //! only codes every AECP message type shares; status 10 is AEM's, Table
+  //! 7-141, while ADDRESS_ACCESS defines 0 to 7, AV/C and HDCP APM 0 to 2,
+  //! Tables 9-4, 9-5 and 9-8): an ADDRESS_ACCESS, an AVC, an HDCP_APM and an
+  //! EXTENDED command each answer NOT_IMPLEMENTED with the command echoed when
+  //! idle, and the same frame, byte-exact, when queued behind DL1's stall
+  //! past its own deadline and preempted, inside T-AECP-RESP of its reception
+  //! (§9.4.2.5 gives ADDRESS_ACCESS the same 240 ms)
+  void dl9_every_other_message_type_is_forced_to_not_implemented() {
+    struct Type {
+      uint8_t mt;
+      const char* what;
+    };
+    const Type types[] = {{2, "ADDRESS_ACCESS"}, {4, "AVC"}, {8, "HDCP_APM"},
+                          {14, "EXTENDED"}};
+    std::vector<uint8_t> pl(10, 0);
+    putbe(&pl[0], 0x0004, 2);                  // an ADDRESS_ACCESS READ TLV
+    uint16_t s = 0xD901;
+    for (const Type& x : types) {
+      const auto want = [&](uint16_t q) {
+        return aecp_frame(CTLR_MAC, OWN_MAC, uint8_t(x.mt + 1),
+                          AECP_NOT_IMPLEMENTED, EID, CTLR_EID, q, 0x0001, pl);
+      };
+      io.q_aecp.clear();
+      io.feed(aecp_frame(OWN_MAC, CTLR_MAC, x.mt, 0, EID, CTLR_EID, s, 0x0001,
+                         pl));
+      long first = -1;
+      CHECK(answer(s, &first) == want(s),
+            "DL9 %s idle: NOT_IMPLEMENTED with the command echoed, byte-exact",
+            x.what);
+      ++s;
+      io.dl_clear();
+      io.ctr_hold = 1000;
+      (void)send(AEM_GET_COUNTERS, ti(0x0005, 0), s);
+      io.feed(aecp_frame(OWN_MAC, CTLR_MAC, x.mt, 0, EID, CTLR_EID,
+                         uint16_t(s + 1), 0x0001, pl));
+      const long tq = static_cast<long>(io.t) - 4;
+      const auto fa = answer(s, &first);
+      long qfirst = -1;
+      const auto fb = answer(uint16_t(s + 1), &qfirst);
+      io.ctr_hold = 2;
+      CHECK(fa == forced(s, AEM_GET_COUNTERS) && io.dl_pre_rises == 2,
+            "DL9 %s: premise: the stall ahead is forced and the queued command "
+            "preempted too (%d redirects)", x.what, io.dl_pre_rises);
+      CHECK(fb == want(uint16_t(s + 1)),
+            "DL9 %s past its deadline: NOT_IMPLEMENTED with the command "
+            "echoed, byte-exact, never status 10 (status %d, %zu bytes)",
+            x.what, status(fb), fb.size());
+      CHECK(qfirst - tq > BUDGET_CYC && qfirst - tq < RESP_CYC,
+            "DL9 %s: its first byte %ld clocks after its reception: past "
+            "T-BUDGET-AECP-WC and inside T-AECP-RESP", x.what, qfirst - tq);
+      s = uint16_t(s + 2);
+    }
+  }
+
+  //! DL10 (03 §6 rule (e): no partial commit survives). REGISTER_UNSOLICITED
+  //! _NOTIFICATION and LOCK_ENTITY change state in their first op, a
+  //! registry-face gather the µCPU does not see as an effect, so they are
+  //! never preempted. Each, queued behind DL1's stall past its own deadline,
+  //! answers its own SUCCESS byte-exact with no redirect of its own, and its
+  //! effect is there: a SET_NAME by another controller is then pushed to the
+  //! registered one (u = 1), and the lock is held. Both are undone after
+  void dl10_a_registry_or_lock_command_past_its_deadline_answers_for_itself() {
+    struct Cmd {
+      const char* what;
+      uint16_t op;
+      std::vector<uint8_t> pl;
+      std::vector<uint8_t> rsp;
+    };
+    std::vector<uint8_t> lock_rsp(16, 0);
+    putbe(&lock_rsp[4], CTLR_EID, 8);          // locked_id: the holder
+    const Cmd cmds[] = {
+        {"REGISTER_UNSOLICITED_NOTIFICATION", 0x0024,
+         std::vector<uint8_t>(4, 0), std::vector<uint8_t>(4, 0)},
+        {"LOCK_ENTITY", 0x0001, std::vector<uint8_t>(16, 0), lock_rsp},
+    };
+    uint16_t s = 0xDA01;
+    for (const Cmd& c : cmds) {
+      io.q_aecp.clear();
+      io.dl_clear();
+      io.ctr_hold = 1000;
+      (void)send(AEM_GET_COUNTERS, ti(0x0005, 0), s);
+      const long tq = send(c.op, c.pl, uint16_t(s + 1));
+      long first = -1;
+      const auto fa = answer(s, &first);
+      long qfirst = -1;
+      const auto fb = answer(uint16_t(s + 1), &qfirst);
+      io.ctr_hold = 2;
+      CHECK(fa == forced(s, AEM_GET_COUNTERS) && qfirst - tq > BUDGET_CYC,
+            "DL10 %s: premise: the stall ahead is forced and the command is "
+            "answered past its own deadline (%ld clocks)", c.what, qfirst - tq);
+      CHECK(fb == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                             uint16_t(s + 1), c.op, c.rsp)
+                && io.dl_pre_rises == 1,
+            "DL10 %s past its deadline answers its own SUCCESS, byte-exact, "
+            "and is never redirected (status %d, %d redirects)", c.what,
+            status(fb), io.dl_pre_rises);
+      s = uint16_t(s + 2);
+    }
+    CHECK(io.d->dbg_lock_held_o != 0,
+          "DL10 LOCK_ENTITY: the lock it answered for is held");
+    std::vector<uint8_t> name(8, 0);
+    putbe(&name[0], 0x0024, 2);                // CLOCK_DOMAIN 0, name 0
+    putbe(&name[6], CFGIX, 2);
+    const char* const text = "Clock Domain Renamed By Another";
+    for (size_t i = 0; i < 64; ++i)
+      name.push_back(i < std::strlen(text) ? static_cast<uint8_t>(text[i]) : 0);
+    std::vector<uint8_t> unlock(16, 0);
+    putbe(&unlock[0], 1, 4);
+    (void)send(0x0001, unlock, s);             // the other controller may write
+    long first = -1;
+    (void)answer(s, &first);
+    io.q_aecp.clear();
+    io.feed(aecp_frame(OWN_MAC, OTHER_MAC, 0, 0, EID, CTLR2_EID,
+                       uint16_t(s + 1), AEM_SET_NAME, name));
+    bool pushed = false;
+    for (long c = 0; c < 40L * MS_CYC && !pushed; ++c) {
+      while (!io.q_aecp.empty()) {
+        const auto f = io.q_aecp.front();
+        io.q_aecp.pop_front();
+        pushed = pushed
+                 || (f.size() > 37 && fv_u64(f, 0, 6) == CTLR_MAC
+                     && (f[36] & 0x80) != 0
+                     && (((f[36] & 0x7F) << 8) | f[37]) == AEM_SET_NAME);
+      }
+      io.step();
+    }
+    CHECK(pushed, "DL10 REGISTER_UNSOLICITED_NOTIFICATION: the registration "
+          "took effect, another controller's SET_NAME is pushed to it");
+    (void)send(0x0025, {}, uint16_t(s + 2));   // DEREGISTER
+    (void)answer(uint16_t(s + 2), &first);
+  }
+
+  //! DL11 (the owner a kill ends): a kill the scoreboard honours frees the
+  //! AECP hold, and the RX-slot return a clock later must not release that id
+  //! again, since a new admission may already own it. Across every arm above,
+  //! each normal release named a live hold
+  void dl11_every_release_named_a_live_hold() {
+    CHECK(io.dl_stray_rel_all == 0,
+          "DL11: across the section every normal release named a live hold "
+          "(%ld named a free one)", io.dl_stray_rel_all);
+  }
+
+  void run() {
+    boot();
+    dl1_a_stalled_command_is_answered_by_the_forced_response();
+    dl2_past_its_first_effect_a_command_answers_for_itself();
+    dl3_the_deadline_counts_from_reception_and_mvu_answers_not_implemented();
+    dl4_a_dynamic_info_batch_past_its_deadline_is_voided();
+    dl5_an_expired_frame_owed_no_response_releases_normally();
+    dl6_an_edit_past_its_point_of_no_return_is_not_preempted();
+    dl7_nothing_leaked();
+    dl8_an_mvu_response_whose_memory_fails_answers_not_implemented();
+    dl9_every_other_message_type_is_forced_to_not_implemented();
+    dl10_a_registry_or_lock_command_past_its_deadline_answers_for_itself();
+    dl11_every_release_named_a_live_hold();
+  }
+};
+
+[[maybe_unused]] static void run_deadlines(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  DeadlinePhase{h}.run();
+  printf("DL: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
+// ==== TB. Response budgets under the 08 §4 worst-case stimuli ==============
+// Issue #57 (REQ-MVU-005: MVU answered within T-AECP-RESP, Milan v1.2
+// §5.4.3.4) and issue #81 (08 §4: AECP within T-AECP-RESP and its design
+// budget T-BUDGET-AECP-WC, ACMP within T-BUDGET-ACMP-RESP, under an oversize
+// READ_DESCRIPTOR, a GET_DYNAMIC_INFO of all thirteen getters (the 08 §4
+// "full batch", each getter once) and a 16-way notification
+// fan-out). It runs in the suite's fourth build, whose timebase is the nominal
+// clock's own (1 ms = 1,000 clocks), so the deadline engine never cuts a
+// measurement here: every answer below is the command's own, and the section
+// also proves the deadline never fired. Latency is MAC command byte 0 to MAC
+// response byte 0 in clocks, graded the way B4/B4b grade READ_DESCRIPTOR,
+// against its line at P-CLK-HZ = 100 MHz (F01.5), at the suite's memory
+// latency and at the reference SoC's 143 clocks (~1424 ns, 07 §3.3). Two
+// arms carry tighter, structural bounds: a solicited answer behind a fan-out
+// waits for at most the one unsolicited job in flight (a solicited head wins
+// the engine's idle arbitration), and an ACMP answer waits for at most the
+// one frame on the wire (ACMP is the TX arbiter's first priority, F03.5).
+struct BudgetPhase {
+  H& h;                                        // the tally
+  const milan::tb::Model<Vpp_top_wrap> model;
+  H io;
+  Suite image;
+  static constexpr long PCLK_MS = 100000;      // P-CLK-HZ / 1000 (F01.5)
+  static constexpr long AECP_RESP = 240 * PCLK_MS;   // T-AECP-RESP
+  static constexpr long AECP_WC = 100 * PCLK_MS;     // T-BUDGET-AECP-WC
+  static constexpr long ACMP_RESP = 50 * PCLK_MS;    // T-BUDGET-ACMP-RESP
+  static constexpr uint8_t VU_COMMAND = 6;
+  static constexpr uint8_t VU_RESPONSE = 7;
+  static constexpr uint16_t MVU_PID_HI = 0x001B;
+  static constexpr uint32_t MVU_PID_LO = 0xC50AC100u;
+  static constexpr uint16_t DT_SIGMUX = 0x0022;
+  static constexpr uint16_t SIGMUX_LEN = 576;
+  static constexpr int FANOUT = 16;
+  struct Sample {
+    std::string what;
+    long clocks;
+    bool acmp;
+  };
+  std::vector<Sample> hist;
+  uint16_t seq = 0xB000;
+
+  explicit BudgetPhase(H& tally) : h(tally), io(model.get()), image(io) {}
+
+  static uint64_t mac_of(int k) { return CTLR_MAC + static_cast<uint64_t>(k); }
+  static uint64_t eid_of(int k) { return CTLR_EID + static_cast<uint64_t>(k); }
+  static std::vector<uint8_t> mvu_pl(uint16_t ct) {
+    std::vector<uint8_t> p(8, 0);
+    putbe(&p[0], MVU_PID_LO, 4);
+    putbe(&p[4], ct, 2);
+    return p;
+  }
+  static std::vector<uint8_t> milan_info_body() {
+    std::vector<uint8_t> b(20, 0);
+    putbe(&b[0], MVU_PID_LO, 4);
+    putbe(&b[8], 1u, 4);                       // protocol_version 1
+    return b;
+  }
+  static std::vector<uint8_t> ti(uint16_t ty, uint16_t ix) {
+    std::vector<uint8_t> p(4, 0);
+    putbe(&p[0], ty, 2);
+    putbe(&p[2], ix, 2);
+    return p;
+  }
+  static int status(const std::vector<uint8_t>& f) {
+    return f.size() > 16 ? ((f[16] >> 3) & 0x1F) : -1;
+  }
+  static bool unsolicited(const std::vector<uint8_t>& f) {
+    return f.size() > 36 && (f[15] & 0x0F) == 1 && (f[36] & 0x80) != 0;
+  }
+
+  //! one AECP command from controller `k`; its answer, and the latency from
+  //! the command's first byte to the answer's first byte in `*clocks`. The
+  //! answer is the frame to that controller's MAC carrying the sequence_id;
+  //! every other AECP frame (the fan-out's) is counted and set aside
+  std::vector<uint8_t> ask(int k, uint8_t mt, uint16_t op,
+                           const std::vector<uint8_t>& pl, long* clocks) {
+    const uint16_t s = seq++;
+    const long t0 = static_cast<long>(io.t);
+    io.feed(aecp_frame(OWN_MAC, mac_of(k), mt, 0, EID, eid_of(k), s,
+                       mt == VU_COMMAND ? MVU_PID_HI : op, pl));
+    for (long c = 0; c < 400L * MS_CYC; ++c) {
+      while (!io.q_aecp.empty()) {
+        auto f = io.q_aecp.front();
+        io.q_aecp.pop_front();
+        if (unsolicited(f)) {
+          uns_first.push_back(static_cast<long>(io.aecp_sof_t));
+          continue;
+        }
+        if (rd64(&f[0]) >> 16 == mac_of(k) && f.size() > 35
+            && ((f[34] << 8) | f[35]) == s) {
+          *clocks = static_cast<long>(io.aecp_sof_t) - t0;
+          return f;
+        }
+      }
+      io.step();
+    }
+    *clocks = -1;
+    return {};
+  }
+  std::vector<long> uns_first;                 // first bytes of fan-out frames
+
+  //! one ACMP GET_RX_STATE (message 10) of sink 0, or GET_TX_STATE (4) of
+  //! source 0, and its latency in `*clocks`, first byte to first byte
+  std::vector<uint8_t> acmp(uint8_t msg, long* clocks) {
+    const uint16_t s = seq++;
+    const bool tx = msg == 4;
+    const long t0 = static_cast<long>(io.t);
+    io.feed(acmp_frame(CTLR_MAC, msg, 0, 0, CTLR_EID, tx ? EID : 0,
+                       tx ? 0 : EID, 0, 0, 0, 0, s, 0, 0));
+    for (long c = 0; c < 400L * MS_CYC; ++c) {
+      while (!io.q_acmp.empty()) {
+        auto f = io.q_acmp.front();
+        io.q_acmp.pop_front();
+        if (f.size() == 70 && (f[15] & 0x0F) == msg + 1 && fv_u64(f, 62, 2) == s) {
+          *clocks = static_cast<long>(io.acmp_sof_t) - t0;
+          return f;
+        }
+      }
+      io.step();
+    }
+    *clocks = -1;
+    return {};
+  }
+
+  //! the budget lines, and the histogram row
+  void grade(const std::string& what, long clocks, bool is_acmp) {
+    hist.push_back({what, clocks, is_acmp});
+    if (is_acmp) {
+      CHECK(clocks >= 0 && clocks < ACMP_RESP,
+            "TB %s: %ld clocks inside T-BUDGET-ACMP-RESP (%ld at P-CLK-HZ)",
+            what.c_str(), clocks, ACMP_RESP);
+      return;
+    }
+    CHECK(clocks >= 0 && clocks < AECP_RESP,
+          "TB %s: %ld clocks inside T-AECP-RESP (%ld at P-CLK-HZ)",
+          what.c_str(), clocks, AECP_RESP);
+    CHECK(clocks >= 0 && clocks < AECP_WC,
+          "TB %s: %ld clocks inside T-BUDGET-AECP-WC (%ld at P-CLK-HZ)",
+          what.c_str(), clocks, AECP_WC);
+  }
+
+  void set_latency(int lat) {
+    io.dram_lat = lat;
+    io.rmem_rlat = lat;
+    io.rmem_wlat = lat;
+  }
+
+  void boot() {
+    image.load_descriptor_image(CFGIX, {}, {}, SIGMUX_LEN);
+    io.reset();
+    CHECK(io.boot_to_aecp() && io.d->restore_done_o && !io.d->restore_fail_o,
+          "TB boot: both restore walks end done over a blank device");
+    io.flush_all();
+    io.q_aecp.clear();
+    io.dl_clear();
+  }
+
+  //! TB1 (#57 acceptance 1): GET_MILAN_INFO and an unimplemented MVU command
+  //! (GET_SYSTEM_UNIQUE_ID, waived for October), each byte-exact, at the
+  //! suite's memory latency and at the reference 143 clocks
+  void tb1_the_mvu_answers_at_both_latencies() {
+    for (const int lat : {-1, 143}) {
+      if (lat > 0) set_latency(lat);
+      const std::string at = lat > 0 ? " at 143 clocks per access"
+                                     : " at the suite latency";
+      long c = -1;
+      auto f = ask(0, VU_COMMAND, 0, mvu_pl(0x0000), &c);
+      CHECK(f == aecp_frame(mac_of(0), OWN_MAC, VU_RESPONSE, AECP_SUCCESS, EID,
+                            eid_of(0), static_cast<uint16_t>(seq - 1),
+                            MVU_PID_HI, milan_info_body()),
+            "TB1 GET_MILAN_INFO%s: the Figure 5.4 answer, byte-exact",
+            at.c_str());
+      grade("TB1 GET_MILAN_INFO" + at, c, false);
+      f = ask(0, VU_COMMAND, 0, mvu_pl(0x0002), &c);
+      CHECK(f == aecp_frame(mac_of(0), OWN_MAC, VU_RESPONSE,
+                            AECP_NOT_IMPLEMENTED, EID, eid_of(0),
+                            static_cast<uint16_t>(seq - 1), MVU_PID_HI,
+                            mvu_pl(0x0002)),
+            "TB1 GET_SYSTEM_UNIQUE_ID%s: NOT_IMPLEMENTED, the command echoed",
+            at.c_str());
+      grade("TB1 GET_SYSTEM_UNIQUE_ID (not implemented)" + at, c, false);
+    }
+    set_latency(31);
+    io.rmem_rlat = 23;
+    io.rmem_wlat = 17;
+  }
+
+  //! TB2 (#81 acceptance 3, 08 §4's first two stimuli): READ_DESCRIPTOR of a
+  //! descriptor that fills the 576-byte line buffer (a 580-byte payload, a
+  //! 618-byte frame in the oversize TX slot, Δ8), byte-exact, and a
+  //! GET_DYNAMIC_INFO carrying all thirteen §7.4.76.2 getters, SUCCESS inside
+  //! the 524-octet cap; each at both memory latencies
+  void tb2_the_oversize_descriptor_and_the_full_batch() {
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2);
+    putbe(&rd[4], DT_SIGMUX, 2);
+    std::vector<uint8_t> epl(4, 0);
+    putbe(&epl[0], CFGIX, 2);
+    epl.insert(epl.end(), image.image_sigmux.begin(), image.image_sigmux.end());
+    const std::vector<uint16_t> getters = {0x0007, 0x0009, 0x000B, 0x000D,
+                                           0x000F, 0x0011, 0x0013, 0x0015,
+                                           0x0017, 0x001D, 0x0029, 0x0048,
+                                           0x004A};
+    //! each getter's own command data, aimed at a descriptor it serves
+    auto data_of = [](uint16_t op) {
+      if (op == 0x0007) return std::vector<uint8_t>{};         // no data
+      if (op == 0x0011) {                                      // GET_NAME
+        std::vector<uint8_t> n = ti(0x0024, 0);
+        n.resize(8, 0);
+        return n;
+      }
+      if (op == 0x0015) return ti(0x0002, 0);                  // AUDIO_UNIT
+      if (op == 0x0017) return ti(0x0024, 0);                  // CLOCK_DOMAIN
+      return ti(0x0005, 0);                                    // STREAM_INPUT
+    };
+    std::vector<uint8_t> batch;
+    for (const uint16_t op : getters) {
+      std::vector<uint8_t> r(8, 0);
+      const auto data = data_of(op);
+      putbe(&r[0], data.size(), 2);
+      putbe(&r[6], op, 2);
+      r.insert(r.end(), data.begin(), data.end());
+      batch.insert(batch.end(), r.begin(), r.end());
+    }
+    tb2_batch = batch;
+    for (const int lat : {-1, 143}) {
+      if (lat > 0) set_latency(lat);
+      const std::string at = lat > 0 ? " at 143 clocks per access"
+                                     : " at the suite latency";
+      long c = -1;
+      auto f = ask(0, 0, AEM_READ_DESCRIPTOR, rd, &c);
+      CHECK(f.size() == 38 + epl.size()
+                && f == aecp_frame(mac_of(0), OWN_MAC, 1, AECP_SUCCESS, EID,
+                                   eid_of(0), static_cast<uint16_t>(seq - 1),
+                                   AEM_READ_DESCRIPTOR, epl),
+            "TB2 READ_DESCRIPTOR of the 576-byte descriptor%s: the 618-byte "
+            "frame, byte-exact (%zu bytes)", at.c_str(), f.size());
+      grade("TB2 oversize READ_DESCRIPTOR" + at, c, false);
+      f = ask(0, 0, AEM_GET_DYNAMIC_INFO, batch, &c);
+      const unsigned cdl = f.size() > 17
+                           ? ((unsigned(f[16] & 7) << 8) | f[17]) : 0u;
+      CHECK(status(f) == AECP_SUCCESS && cdl > 12 + 13 * 8 && cdl <= 524,
+            "TB2 GET_DYNAMIC_INFO with all thirteen getters%s: SUCCESS, cdl %u within "
+            "524", at.c_str(), cdl);
+      grade("TB2 GET_DYNAMIC_INFO with all thirteen getters" + at, c, false);
+    }
+    set_latency(31);
+    io.rmem_rlat = 23;
+    io.rmem_wlat = 17;
+  }
+
+  //! step until `n` fan-out frames have been seen in all, or `ms` pass
+  void drain_fanout(size_t n, int ms) {
+    for (long c = 0; c < static_cast<long>(ms) * MS_CYC && uns_first.size() < n;
+         ++c) {
+      while (!io.q_aecp.empty()) {
+        if (unsolicited(io.q_aecp.front()))
+          uns_first.push_back(static_cast<long>(io.aecp_sof_t));
+        io.q_aecp.pop_front();
+      }
+      io.step();
+    }
+  }
+  //! the longest spacing of two consecutive fan-out frames' first bytes:
+  //! one unsolicited job's time through the engine and the wire
+  long job_spacing() const {
+    long most = 0;
+    for (size_t i = 1; i < uns_first.size(); ++i)
+      most = std::max(most, uns_first[i] - uns_first[i - 1]);
+    return most;
+  }
+
+  //! TB3 (#57 acceptance 2, 08 §4's third stimulus): sixteen controllers
+  //! register (every registry row) and controller 0's SET_CLOCK_SOURCE
+  //! changes the clock source, so fifteen unsolicited responses run through
+  //! the engine. Each of GET_MILAN_INFO, the oversize READ_DESCRIPTOR and the
+  //! full batch is asked while such a fan-out is in flight, at 143 clocks per
+  //! access, and is answered as it is idle (byte-exact; the batch SUCCESS at
+  //! the same length, since its GET_CLOCK_SOURCE member reads the new source)
+  //! inside its lines. KL_aecp_notify holds the command path while a class
+  //! drains (its event queue stays lossless), so the answer follows the
+  //! fan-out's last frame, by at most one job plus its own idle latency
+  void tb3_the_mvu_answer_behind_a_sixteen_way_fan_out() {
+    const std::vector<uint8_t> fl(4, 0);
+    long c = -1;
+    int registered = 0;
+    for (int k = 0; k < FANOUT; ++k)
+      registered += status(ask(k, 0, 0x0024, fl, &c)) == AECP_SUCCESS ? 1 : 0;
+    CHECK(registered == FANOUT, "TB3 premise: %d of %d controllers registered",
+          registered, FANOUT);
+    set_latency(143);
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2);
+    putbe(&rd[4], DT_SIGMUX, 2);
+    const std::vector<std::string> names = {
+        "GET_MILAN_INFO", "oversize READ_DESCRIPTOR",
+        "GET_DYNAMIC_INFO with all thirteen getters"};
+    for (size_t i = 0; i < names.size(); ++i) {
+      const uint8_t mt = i == 0 ? VU_COMMAND : 0;
+      const uint16_t op = i == 1 ? AEM_READ_DESCRIPTOR
+                          : (i == 2 ? AEM_GET_DYNAMIC_INFO : 0);
+      const auto pl = i == 0 ? mvu_pl(0) : (i == 1 ? rd : tb2_batch);
+      long idle = -1;
+      const auto want = ask(1, mt, op, pl, &idle);
+      std::vector<uint8_t> cs(8, 0);
+      putbe(&cs[0], 0x0024, 2);
+      putbe(&cs[4], (i % 2 == 0) ? 1 : 0, 2);  // a change every time
+      uns_first.clear();
+      CHECK(status(ask(0, 0, AEM_SET_CLOCK_SOURCE, cs, &c)) == AECP_SUCCESS,
+            "TB3 premise: the SET_CLOCK_SOURCE ahead of the %s is accepted",
+            names[i].c_str());
+      const size_t sent = uns_first.size();
+      const auto f = ask(1, mt, op, pl, &c);
+      const long first = static_cast<long>(io.aecp_sof_t);
+      drain_fanout(FANOUT - 1, 200);
+      const bool same = (i == 2)
+          ? (status(f) == AECP_SUCCESS && f.size() == want.size())
+          : (f.size() == want.size() && f.size() > 38
+             && std::equal(f.begin() + 38, f.end(), want.begin() + 38)
+             && status(f) == status(want));
+      CHECK(same, "TB3 %s behind the fan-out is answered as it is idle",
+            names[i].c_str());
+      CHECK(uns_first.size() == FANOUT - 1 && sent + 1 < FANOUT - 1,
+            "TB3 %s: premise: asked with the fan-out in flight (%zu of %d "
+            "frames sent, %zu in all)", names[i].c_str(), sent, FANOUT - 1,
+            uns_first.size());
+      const long after = uns_first.empty() ? -1 : first - uns_first.back();
+      CHECK(after >= 0 && after <= job_spacing() + idle + 200,
+            "TB3 %s: answered %ld clocks after the fan-out's last frame, at "
+            "most one job (%ld) plus its idle latency (%ld)",
+            names[i].c_str(), after, job_spacing(), idle);
+      grade("TB3 " + names[i] + " behind a 15-frame fan-out, at 143", c,
+            false);
+    }
+    set_latency(31);
+    io.rmem_rlat = 23;
+    io.rmem_wlat = 17;
+  }
+  std::vector<uint8_t> tb2_batch;              // TB2's full batch, reused
+
+  //! TB4 (#57 acceptance 2, the other stimulus): a response memory taking
+  //! 4,000 clocks for every read and every lane write, short of its 4,096
+  //! watchdog. GET_MILAN_INFO is still answered byte-exact inside its lines
+  void tb4_the_mvu_answer_against_a_stalled_response_memory() {
+    io.rmem_rlat = 4000;
+    io.rmem_wlat = 4000;
+    long c = -1;
+    const auto f = ask(2, VU_COMMAND, 0, mvu_pl(0), &c);
+    io.rmem_rlat = 23;
+    io.rmem_wlat = 17;
+    CHECK(f == aecp_frame(mac_of(2), OWN_MAC, VU_RESPONSE, AECP_SUCCESS, EID,
+                          eid_of(2), static_cast<uint16_t>(seq - 1),
+                          MVU_PID_HI, milan_info_body()),
+          "TB4 GET_MILAN_INFO against a stalled response memory: the Figure "
+          "5.4 answer, byte-exact");
+    grade("TB4 GET_MILAN_INFO, response memory at 4,000 clocks", c, false);
+  }
+
+  //! TB5 (#81 acceptance 3, T-BUDGET-ACMP-RESP): GET_RX_STATE and
+  //! GET_TX_STATE idle, then GET_RX_STATE while the oversize READ_DESCRIPTOR
+  //! runs at 143 clocks per access and GET_TX_STATE while a fan-out runs:
+  //! each inside its line, and later than idle by at most one maximum frame
+  //! on the wire (ACMP is the TX arbiter's first priority, F03.5)
+  void tb5_acmp_under_the_worst_aecp_load() {
+    long rx0 = -1;
+    long tx0 = -1;
+    const auto r0 = acmp(10, &rx0);
+    const auto t0 = acmp(4, &tx0);
+    CHECK(!r0.empty() && !t0.empty(), "TB5 GET_RX_STATE and GET_TX_STATE "
+          "answered idle");
+    grade("TB5 GET_RX_STATE, idle", rx0, true);
+    grade("TB5 GET_TX_STATE, idle", tx0, true);
+    constexpr long FRAME_MAX = 618 + 64;       // the oversize frame + slack
+    set_latency(143);
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2);
+    putbe(&rd[4], DT_SIGMUX, 2);
+    io.feed(aecp_frame(OWN_MAC, mac_of(3), 0, 0, EID, eid_of(3), seq++,
+                       AEM_READ_DESCRIPTOR, rd));
+    long c = -1;
+    const auto r1 = acmp(10, &c);
+    CHECK(r1 == r0 || (r1.size() == r0.size() && !r1.empty()),
+          "TB5 GET_RX_STATE answered while the READ_DESCRIPTOR runs");
+    CHECK(c <= rx0 + FRAME_MAX, "TB5 GET_RX_STATE beside the oversize "
+          "READ_DESCRIPTOR: %ld clocks, at most idle %ld plus one frame",
+          c, rx0);
+    grade("TB5 GET_RX_STATE beside an oversize READ_DESCRIPTOR, at 143", c,
+          true);
+    io.run_ms(40);                             // the READ_DESCRIPTOR retires
+    io.q_aecp.clear();
+    std::vector<uint8_t> cs(8, 0);
+    putbe(&cs[0], 0x0024, 2);
+    putbe(&cs[4], 0, 2);                       // TB3 left it at 1: a change
+    uns_first.clear();
+    (void)ask(0, 0, AEM_SET_CLOCK_SOURCE, cs, &c);
+    const auto t1 = acmp(4, &c);
+    CHECK(!t1.empty() && c <= tx0 + FRAME_MAX,
+          "TB5 GET_TX_STATE during the fan-out: %ld clocks, at most idle %ld "
+          "plus one frame", c, tx0);
+    grade("TB5 GET_TX_STATE during a 15-frame fan-out, at 143", c, true);
+    drain_fanout(FANOUT - 1, 200);
+    set_latency(31);
+    io.rmem_rlat = 23;
+    io.rmem_wlat = 17;
+  }
+
+  void run() {
+    boot();
+    tb1_the_mvu_answers_at_both_latencies();
+    tb2_the_oversize_descriptor_and_the_full_batch();
+    tb3_the_mvu_answer_behind_a_sixteen_way_fan_out();
+    tb4_the_mvu_answer_against_a_stalled_response_memory();
+    tb5_acmp_under_the_worst_aecp_load();
+    CHECK(io.dl_kill_first < 0 && io.dl_pre_rises == 0,
+          "TB: the deadline never fired in the whole section (every answer "
+          "above is the command's own)");
+    printf("  [TB] histogram, MAC command byte 0 to MAC response byte 0:\n");
+    for (const auto& r : hist)
+      printf("  [TB]   %-58s %8ld clocks  %.4f %% of %s\n", r.what.c_str(),
+             r.clocks, 100.0 * static_cast<double>(r.clocks)
+                       / static_cast<double>(r.acmp ? ACMP_RESP : AECP_RESP),
+             r.acmp ? "T-BUDGET-ACMP-RESP" : "T-AECP-RESP");
+  }
+};
+
+// ==== HZ. The nine F03.7 hazard classes at the top (issue #84, GAP-10) =====
+// 03 §6 F03.7: every F06.14 state-changing opcode takes its class and key, so
+// all nine classes reach the scoreboard, and the admission conflicts the
+// matrix defines between the two live clients (the single-issue ACMP and AECP
+// heads) hold end to end. The expectation is an independent transcription of
+// F03.7 and F06.14, never the classifier's own table: the classes in F03.7
+// row order (pp_pkg's encoding: RO_SNAPSHOT 0, CFG_BARRIER 1, STREAM_CFG 2,
+// MAP_CFG 3, CLOCK_CFG 4, NAME_WR 5, LOCK_OP 6, REGISTRY_OP 7, IDENTIFY 8)
+// and the key a descriptor's {type[5:0], index[9:0]}. A transaction is held
+// in flight by stalling the MAC until four GET_RX_STATE answers fill the
+// standard TX slots (`fill_tx_pool`): the next ACMP command (`hold_acmp`) or
+// AECP command (`hold_aecp`) is admitted, runs, and keeps its key because its
+// response cannot get a slot, until the MAC restarts. A MAAP allocator
+// answers, so the talker is free to take commands. A fresh processor of its
+// own; the main run's clock is untouched.
+struct HazardPhase {
+  H& h;                                        // the tally
+  const milan::tb::Model<Vpp_top_wrap> model;
+  H io;
+  Suite image;
+  uint16_t seq = 0xE500;
+  static constexpr unsigned RO = 0;
+  static constexpr unsigned BARRIER = 1;
+  static constexpr unsigned STREAM = 2;
+  static constexpr unsigned MAP = 3;
+  static constexpr unsigned CLOCK = 4;
+  static constexpr unsigned NAME = 5;
+  static constexpr unsigned LOCK = 6;
+  static constexpr unsigned REGISTRY = 7;
+  static constexpr unsigned IDENTIFY = 8;
+  static constexpr unsigned NONE = (0x3Fu << 10);
+  static constexpr unsigned REGISTRY_KEY = (0x3Fu << 10) | 1u;
+  static constexpr unsigned ANY_KEY = 0xFFFFFFFFu;
+  static constexpr uint16_t DT_SI = 0x0005;
+  static constexpr uint16_t DT_SO = 0x0006;
+  static constexpr uint64_t OTHER_EID = 0x0123456789ABCDEFull;
+
+  explicit HazardPhase(H& tally) : h(tally), io(model.get()), image(io) {}
+
+  static unsigned key(uint16_t ty, uint16_t ix) {
+    return ((ty & 0x3Fu) << 10) | (ix & 0x3FFu);
+  }
+  static std::vector<uint8_t> ti(uint16_t ty, uint16_t ix, size_t len = 4) {
+    std::vector<uint8_t> p(len, 0);
+    putbe(&p[0], ty, 2);
+    putbe(&p[2], ix, 2);
+    return p;
+  }
+  static int status(const std::vector<uint8_t>& f) {
+    return f.size() > 16 ? ((f[16] >> 3) & 0x1F) : -1;
+  }
+  //! feed one AECP frame; returns the clock of its first byte
+  long send_aecp(uint8_t mt, uint16_t op, const std::vector<uint8_t>& pl,
+                 uint16_t s, uint64_t target = EID) {
+    const long t0 = static_cast<long>(io.t);
+    io.feed(aecp_frame(OWN_MAC, CTLR_MAC, mt, 0, target, CTLR_EID, s,
+                       mt == 6 ? 0x001B : op, pl));
+    return t0;
+  }
+  //! the AECP answer carrying `s`, or nothing within `ms`
+  std::vector<uint8_t> aecp_answer(uint16_t s, int ms, long* first) {
+    for (long c = 0; c < static_cast<long>(ms) * MS_CYC; ++c) {
+      while (!io.q_aecp.empty()) {
+        auto f = io.q_aecp.front();
+        io.q_aecp.pop_front();
+        if (f.size() > 35 && ((f[34] << 8) | f[35]) == s) {
+          *first = static_cast<long>(io.aecp_sof_t);
+          return f;
+        }
+      }
+      io.step();
+    }
+    *first = -1;
+    return {};
+  }
+  //! feed one ACMP command (message `msg`; the talker's for 0/2/4/12)
+  long send_acmp(uint8_t msg, uint16_t uid, uint16_t s) {
+    const bool tkr = msg == 0 || msg == 2 || msg == 4 || msg == 12;
+    const long t0 = static_cast<long>(io.t);
+    io.feed(acmp_frame(CTLR_MAC, msg, 0, 0, CTLR_EID, tkr ? EID : T1_EID,
+                       tkr ? T1_EID : EID, tkr ? uid : 0, tkr ? 0 : uid, 0, 0,
+                       s, 0, 0));
+    return t0;
+  }
+  //! the ACMP response to `s`, or nothing within `ms`
+  std::vector<uint8_t> acmp_answer(uint16_t s, int ms, long* first) {
+    for (long c = 0; c < static_cast<long>(ms) * MS_CYC; ++c) {
+      while (!io.q_acmp.empty()) {
+        auto f = io.q_acmp.front();
+        io.q_acmp.pop_front();
+        if (f.size() == 70 && fv_u64(f, 62, 2) == s && (f[15] & 1) != 0) {
+          *first = static_cast<long>(io.acmp_sof_t);
+          return f;
+        }
+      }
+      io.step();
+    }
+    *first = -1;
+    return {};
+  }
+  //! the last admission of the given head since `hz_clear()`, or none
+  const H::Adm* last_adm(bool aecp) const {
+    for (auto it = io.hz_adms.rbegin(); it != io.hz_adms.rend(); ++it)
+      if (it->aecp == aecp) return &*it;
+    return nullptr;
+  }
+
+  void boot() {
+    image.load_descriptor_image();
+    io.reset();
+    CHECK(io.boot_to_aecp() && io.d->restore_done_o && !io.d->restore_fail_o,
+          "HZ boot: both restore walks end done over a blank device");
+    io.flush_all();
+    io.q_aecp.clear();
+    //! an allocator answers: without one the talker spends each retry round
+    //! in its MAAP request wait, where it takes no transaction, so a talker
+    //! command would wait for the talker rather than for its key
+    io.maap_on = true;
+  }
+
+  static const char* cls_name(unsigned c) {
+    static const char* const names[] = {
+        "RO_SNAPSHOT", "CFG_BARRIER", "STREAM_CFG", "MAP_CFG", "CLOCK_CFG",
+        "NAME_WR", "LOCK_OP", "REGISTRY_OP", "IDENTIFY"};
+    return c < 9 ? names[c] : "?";
+  }
+
+  //! one row of the F03.7 / F06.14 transcription: a transaction, the class
+  //! it must present to the scoreboard, and its key
+  struct Probe {
+    std::string what;
+    uint8_t mt;
+    uint16_t op;
+    std::vector<uint8_t> pl;
+    uint64_t target;
+    unsigned cls;
+    unsigned key;
+  };
+  static std::vector<Probe> aecp_probes() {
+    std::vector<uint8_t> lock(16, 0);
+    std::vector<uint8_t> unlock(16, 0);
+    putbe(&unlock[0], 1, 4);                   // LOCK_ENTITY's UNLOCK flag
+    std::vector<uint8_t> sfmt = ti(DT_SO, 1, 12);
+    putbe(&sfmt[4], H::SFMT_MAIN_C, 8);
+    std::vector<uint8_t> sinfo = ti(DT_SO, 1, 84);
+    putbe(&sinfo[4], 0x20000000u, 4);          // MSRP_ACC_LAT_VALID
+    std::vector<uint8_t> rate = ti(0x0002, 0, 8);
+    putbe(&rate[4], 96000u, 4);
+    std::vector<uint8_t> name = ti(0x0024, 0, 72);
+    putbe(&name[6], CFGIX, 2);
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2);
+    putbe(&rd[4], 0x0024, 2);
+    std::vector<uint8_t> gdi(8, 0);
+    putbe(&gdi[6], 0x0007, 2);                 // one GET_CONFIGURATION record
+    std::vector<uint8_t> mvu(8, 0);
+    putbe(&mvu[0], 0xC50AC100u, 4);
+    return {
+        {"SET_CONFIGURATION", 0, 0x0006, std::vector<uint8_t>(4, 0), EID,
+         BARRIER, ANY_KEY},
+        {"LOCK_ENTITY (lock)", 0, 0x0001, lock, EID, LOCK, ANY_KEY},
+        {"LOCK_ENTITY (unlock)", 0, 0x0001, unlock, EID, LOCK, ANY_KEY},
+        {"SET_STREAM_FORMAT STREAM_OUTPUT 1", 0, 0x0008, sfmt, EID, STREAM,
+         key(DT_SO, 1)},
+        {"SET_STREAM_INFO STREAM_OUTPUT 1", 0, 0x000E, sinfo, EID, STREAM,
+         key(DT_SO, 1)},
+        {"START_STREAMING STREAM_INPUT 1", 0, 0x0022, ti(DT_SI, 1), EID, STREAM,
+         key(DT_SI, 1)},
+        {"STOP_STREAMING STREAM_INPUT 1", 0, 0x0023, ti(DT_SI, 1), EID, STREAM,
+         key(DT_SI, 1)},
+        {"ADD_AUDIO_MAPPINGS STREAM_PORT_INPUT 0", 0, 0x002C,
+         ti(0x000E, 0, 8), EID, MAP, key(0x000E, 0)},
+        {"REMOVE_AUDIO_MAPPINGS STREAM_PORT_INPUT 0", 0, 0x002D,
+         ti(0x000E, 0, 8), EID, MAP, key(0x000E, 0)},
+        {"SET_SAMPLING_RATE AUDIO_UNIT 0", 0, 0x0014, rate, EID, CLOCK,
+         key(0x0002, 0)},
+        {"SET_CLOCK_SOURCE CLOCK_DOMAIN 0", 0, 0x0016, ti(0x0024, 0, 8), EID,
+         CLOCK, key(0x0024, 0)},
+        {"SET_NAME CLOCK_DOMAIN 0", 0, 0x0010, name, EID, NAME, key(0x0024, 0)},
+        {"REGISTER_UNSOLICITED_NOTIFICATION", 0, 0x0024,
+         std::vector<uint8_t>(4, 0), EID, REGISTRY, REGISTRY_KEY},
+        {"DEREGISTER_UNSOLICITED_NOTIFICATION", 0, 0x0025, {}, EID, REGISTRY,
+         REGISTRY_KEY},
+        {"SET_CONTROL CONTROL 0 (identify)", 0, 0x0018, ti(0x001A, 0, 5), EID,
+         IDENTIFY, key(0x001A, 0)},
+        {"GET_STREAM_FORMAT STREAM_OUTPUT 1", 0, 0x0009, ti(DT_SO, 1), EID, RO,
+         key(DT_SO, 1)},
+        {"GET_STREAM_INFO STREAM_INPUT 1", 0, 0x000F, ti(DT_SI, 1), EID, RO,
+         key(DT_SI, 1)},
+        {"GET_NAME CLOCK_DOMAIN 0", 0, 0x0011, ti(0x0024, 0, 8), EID, RO,
+         key(0x0024, 0)},
+        {"GET_SAMPLING_RATE AUDIO_UNIT 0", 0, 0x0015, ti(0x0002, 0), EID, RO,
+         key(0x0002, 0)},
+        {"GET_CLOCK_SOURCE CLOCK_DOMAIN 0", 0, 0x0017, ti(0x0024, 0), EID, RO,
+         key(0x0024, 0)},
+        {"GET_CONTROL CONTROL 0", 0, 0x0019, ti(0x001A, 0), EID, RO,
+         key(0x001A, 0)},
+        {"GET_AVB_INFO AVB_INTERFACE 0", 0, 0x0027, ti(0x0009, 0), EID, RO,
+         key(0x0009, 0)},
+        {"GET_COUNTERS STREAM_INPUT 1", 0, 0x0029, ti(DT_SI, 1), EID, RO,
+         key(DT_SI, 1)},
+        {"GET_AUDIO_MAP STREAM_PORT_INPUT 0", 0, 0x002B, ti(0x000E, 0, 8), EID,
+         RO, key(0x000E, 0)},
+        {"GET_AS_PATH AVB_INTERFACE 0", 0, 0x0028, std::vector<uint8_t>(4, 0),
+         EID, RO, key(0x0009, 0)},
+        {"ENTITY_AVAILABLE", 0, 0x0002, {}, EID, RO, key(0x0000, 0)},
+        {"GET_CONFIGURATION", 0, 0x0007, {}, EID, RO, key(0x0000, 0)},
+        {"ACQUIRE_ENTITY", 0, 0x0000, std::vector<uint8_t>(16, 0), EID, RO,
+         key(0x0000, 0)},
+        {"READ_DESCRIPTOR CLOCK_DOMAIN 0", 0, 0x0004, rd, EID, RO, NONE},
+        {"GET_DYNAMIC_INFO", 0, 0x004B, gdi, EID, RO, NONE},
+        {"MVU GET_MILAN_INFO", 6, 0, mvu, EID, RO, NONE},
+        {"an AEM_RESPONSE arriving as input", 1, 0x0006,
+         std::vector<uint8_t>(4, 0), EID, RO, NONE},
+        {"a SET_CONFIGURATION for another entity_id", 0, 0x0006,
+         std::vector<uint8_t>(4, 0), OTHER_EID, RO, NONE},
+    };
+  }
+
+  //! HZ1 (#84 acceptance 1 and 2's premise): every transaction presents its
+  //! F03.7 class and key at the scoreboard's admission port. A global class
+  //! (CFG_BARRIER, LOCK_OP) is keyed 0 and its key is not graded
+  void hz1_every_transaction_presents_its_class_and_key() {
+    for (const auto& p : aecp_probes()) {
+      io.hz_clear();
+      const uint16_t s = seq++;
+      (void)send_aecp(p.mt, p.op, p.pl, s, p.target);
+      long first = -1;
+      (void)aecp_answer(s, 20, &first);
+      const auto* a = last_adm(true);
+      const bool ok = a != nullptr && a->cls == p.cls
+                      && (p.key == ANY_KEY || a->key == p.key);
+      CHECK(ok, "HZ1 %s: admitted %s key 0x%04x (want %s, key 0x%04x)",
+            p.what.c_str(), a ? cls_name(a->cls) : "nothing",
+            a ? a->key : 0u, cls_name(p.cls), p.key == ANY_KEY ? 0u : p.key);
+    }
+    struct AcmpProbe {
+      const char* what;
+      uint8_t msg;
+      uint16_t uid;
+      unsigned cls;
+      unsigned key;
+    };
+    const AcmpProbe acmp_probes[] = {
+        {"ACMP GET_RX_STATE sink 1", 10, 1, RO, key(DT_SI, 1)},
+        {"ACMP UNBIND_RX sink 3", 8, 3, STREAM, key(DT_SI, 3)},
+        {"ACMP GET_TX_STATE source 2", 4, 2, RO, key(DT_SO, 2)},
+        {"ACMP GET_TX_CONNECTION source 2", 12, 2, RO, key(DT_SO, 2)},
+        {"ACMP PROBE_TX source 2", 0, 2, STREAM, key(DT_SO, 2)},
+        {"ACMP DISCONNECT_TX source 2", 2, 2, STREAM, key(DT_SO, 2)},
+    };
+    for (const auto& p : acmp_probes) {
+      io.hz_clear();
+      const uint16_t s = seq++;
+      (void)send_acmp(p.msg, p.uid, s);
+      long first = -1;
+      (void)acmp_answer(s, 20, &first);
+      const auto* a = last_adm(false);
+      CHECK(a != nullptr && a->cls == p.cls && a->key == p.key,
+            "HZ1 %s: admitted %s key 0x%04x (want %s, key 0x%04x)", p.what,
+            a ? cls_name(a->cls) : "nothing", a ? a->key : 0u,
+            cls_name(p.cls), p.key);
+    }
+  }
+
+  //! stall the MAC and let four GET_RX_STATE answers take every standard TX
+  //! slot: the next ACMP transaction is admitted and then held, because it
+  //! cannot queue its response, so its engine keeps its key
+  void fill_tx_pool() {
+    io.mac_tx_ready = false;
+    for (int k = 0; k < 4; ++k) (void)send_acmp(10, 0, seq++);
+    for (int c = 0; c < 3000 && (io.d->dbg_acmp_sb_active_o
+                                 || io.d->dbg_txs_free_o != 1); ++c)
+      io.step();
+  }
+  //! one ACMP command admitted and held by the stalled MAC: its admission
+  struct Held {
+    long adm;
+    unsigned cls;
+    unsigned key;
+  };
+  Held hold_acmp(uint8_t msg, uint16_t uid) {
+    io.hz_clear();
+    fill_tx_pool();
+    io.hz_clear();
+    (void)send_acmp(msg, uid, seq++);
+    for (int c = 0; c < 2000 && io.hz_adms.empty(); ++c) io.step();
+    io.idle(300);
+    const auto* a = last_adm(false);
+    const bool held = a != nullptr && io.d->dbg_acmp_sb_active_o;
+    CHECK(held, "HZ premise: the ACMP command (message %u) is admitted and "
+          "held behind the stalled MAC", unsigned(msg));
+    return held ? Held{a->t, a->cls, a->key} : Held{-1, 0, 0};
+  }
+  //! restart the MAC; every queued frame drains
+  void release_mac() {
+    io.mac_tx_ready = true;
+    io.idle(4000);
+  }
+  //! the first admission of an AECP head at or after clock `from`
+  const H::Adm* aecp_adm_after(long from) const {
+    for (const auto& a : io.hz_adms)
+      if (a.aecp && a.t >= from) return &a;
+    return nullptr;
+  }
+  //! the first clock the ACMP owner read free: a head refused for its key
+  //! is admitted in that clock at the earliest, since the scoreboard frees
+  //! the key on the edge that ends the one before it
+  long acmp_end() const {
+    return io.hz_acmp_ends.empty() ? -1 : io.hz_acmp_ends.front();
+  }
+  //! the first admission of an ACMP head at or after clock `from`
+  const H::Adm* acmp_adm_after(long from) const {
+    for (const auto& a : io.hz_adms)
+      if (!a.aecp && a.t >= from) return &a;
+    return nullptr;
+  }
+  //! the first clock the AECP owner read free since `hz_clear()`
+  long aecp_end() const {
+    return io.hz_aecp_ends.empty() ? -1 : io.hz_aecp_ends.front();
+  }
+  //! the same stall in the other direction: with every standard TX slot
+  //! taken, an AECP command is admitted, runs, and then waits for a slot for
+  //! its response (the oversize slot is granted only to an oversize frame),
+  //! so its hold keeps its key until the MAC restarts. The talker returns a
+  //! transaction's RX slot once it has read the frame and parked its answer
+  //! in a register of its own, queued or not, so a talker transaction keeps
+  //! its key a few clocks only: a talker-side pair is held from the AECP side
+  Held hold_aecp(uint16_t op, const std::vector<uint8_t>& pl, uint16_t s) {
+    io.hz_clear();
+    fill_tx_pool();
+    io.hz_clear();
+    (void)send_aecp(0, op, pl, s);
+    for (int c = 0; c < 2000 && last_adm(true) == nullptr; ++c) io.step();
+    io.idle(300);
+    const auto* a = last_adm(true);
+    const bool held = a != nullptr && io.d->dbg_aecp_sb_active_o;
+    CHECK(held, "HZ premise: the AECP command 0x%04x is admitted and held "
+          "behind the stalled MAC", unsigned(op));
+    return held ? Held{a->t, a->cls, a->key} : Held{-1, 0, 0};
+  }
+
+  //! HZ2 (#84 acceptance 2's example; F03.7 CFG_BARRIER "drain all
+  //! in-flight, block admission, then execute"): with an ACMP UNBIND_RX
+  //! held in flight, SET_CONFIGURATION is refused and latches the drain; an
+  //! ACMP head that arrives after it waits for it; the barrier is admitted
+  //! only once the ACMP key is free, and answers SUCCESS
+  void hz2_set_configuration_drains_an_in_flight_acmp_hold() {
+    const Held a = hold_acmp(8, 1);
+    CHECK(a.cls == STREAM && a.key == key(DT_SI, 1),
+          "HZ2: premise: the held UNBIND_RX is STREAM_CFG on {STREAM_INPUT, 1}");
+    const uint16_t sc = seq++;
+    (void)send_aecp(0, 0x0006, std::vector<uint8_t>(4, 0), sc);
+    io.idle(500);
+    const long pending = io.hz_barrier_seen;
+    (void)send_acmp(10, 2, seq++);              // a later ACMP head
+    io.idle(500);
+    CHECK(pending >= 0 && aecp_adm_after(a.adm) == nullptr,
+          "HZ2: SET_CONFIGURATION is refused and latches the drain while the "
+          "ACMP key is held (pending %ld)", pending);
+    release_mac();
+    const auto* b = aecp_adm_after(a.adm);
+    long later = -1;
+    for (const auto& x : io.hz_adms)
+      if (!x.aecp && x.t > a.adm && later < 0) later = x.t;
+    CHECK(b != nullptr && b->cls == BARRIER && acmp_end() >= 0
+              && b->t >= acmp_end(),
+          "HZ2: the barrier is admitted after the ACMP key is released (%ld "
+          "after %ld)", b ? b->t : -1, acmp_end());
+    CHECK(b != nullptr && later > b->t,
+          "HZ2: the ACMP head that arrived behind the barrier is admitted "
+          "after it (%ld, barrier %ld)", later, b ? b->t : -1);
+    long first = -1;
+    const auto f = aecp_answer(sc, 40, &first);
+    CHECK(status(f) == AECP_SUCCESS, "HZ2: SET_CONFIGURATION then answers "
+          "SUCCESS (status %d)", status(f));
+  }
+
+  //! HZ3 (the round-robin fix): the drain must not wedge the admission port.
+  //! An ACMP GET_RX_STATE is held; a frame for another entity is admitted
+  //! beside it and dropped, so the round-robin now prefers ACMP;
+  //! SET_CONFIGURATION latches the drain; another GET_RX_STATE queues. When
+  //! the held key frees, both heads are candidates: the barrier must win and
+  //! answer, and the queued ACMP command after it
+  void hz3_a_pending_barrier_is_not_starved_by_the_round_robin() {
+    const Held a = hold_acmp(10, 1);
+    (void)send_aecp(0, 0x0007, {}, seq++, OTHER_EID);  // admitted, dropped
+    io.idle(300);
+    const auto* x = aecp_adm_after(a.adm);
+    CHECK(x != nullptr && x->t > a.adm,
+          "HZ3: premise: an AECP head was admitted after the held ACMP one, "
+          "so ACMP is preferred next");
+    const uint16_t sc = seq++;
+    (void)send_aecp(0, 0x0006, std::vector<uint8_t>(4, 0), sc);
+    io.idle(300);
+    const uint16_t sb = seq++;
+    (void)send_acmp(10, 2, sb);
+    io.idle(300);
+    CHECK(io.hz_barrier_seen >= 0, "HZ3: premise: the barrier's drain is "
+          "pending while the ACMP key is held");
+    release_mac();
+    long first = -1;
+    const auto f = aecp_answer(sc, 60, &first);
+    const auto g = acmp_answer(sb, 60, &first);
+    const H::Adm* bar = nullptr;
+    for (const auto& y : io.hz_adms)
+      if (y.aecp && y.cls == BARRIER && bar == nullptr) bar = &y;
+    long bt = -1;
+    for (const auto& y : io.hz_adms)
+      if (!y.aecp && bar != nullptr && y.t > bar->t - 1 && bt < 0) bt = y.t;
+    CHECK(status(f) == AECP_SUCCESS && !g.empty(),
+          "HZ3: both the barrier and the queued ACMP command are answered "
+          "(status %d, %zu bytes)", status(f), g.size());
+    CHECK(bar != nullptr && bt > bar->t,
+          "HZ3: the barrier is admitted first, the queued ACMP head after it "
+          "(%ld, %ld)", bar ? bar->t : -1, bt);
+  }
+
+  //! HZ4 (F03.7 LOCK_OP "serialized vs every lock-protected member (incl.
+  //! ACMP BIND/UNBIND)"): LOCK_ENTITY waits for a held ACMP UNBIND_RX
+  //! (STREAM_CFG), and is admitted beside a held GET_RX_STATE (a read)
+  void hz4_lock_entity_waits_for_a_stream_step_not_for_a_read() {
+    const Held a = hold_acmp(8, 1);
+    std::vector<uint8_t> lock(16, 0);
+    const uint16_t sl = seq++;
+    (void)send_aecp(0, 0x0001, lock, sl);
+    io.idle(500);
+    CHECK(aecp_adm_after(a.adm) == nullptr && io.hz_aecp_refused > 0,
+          "HZ4: LOCK_ENTITY is not admitted while an ACMP stream step holds "
+          "its key (refused %ld clocks)", io.hz_aecp_refused);
+    release_mac();
+    const auto* b = aecp_adm_after(a.adm);
+    CHECK(b != nullptr && b->cls == LOCK && acmp_end() >= 0
+              && b->t >= acmp_end(),
+          "HZ4: LOCK_ENTITY is admitted after the stream step's key frees");
+    long first = -1;
+    CHECK(status(aecp_answer(sl, 40, &first)) == AECP_SUCCESS,
+          "HZ4: LOCK_ENTITY answers SUCCESS");
+    const Held r = hold_acmp(10, 1);
+    std::vector<uint8_t> unlock(16, 0);
+    putbe(&unlock[0], 1, 4);
+    const uint16_t su = seq++;
+    (void)send_aecp(0, 0x0001, unlock, su);
+    io.idle(500);
+    const auto* u = aecp_adm_after(r.adm);
+    CHECK(u != nullptr && u->cls == LOCK && io.d->dbg_acmp_sb_active_o,
+          "HZ4: the unlock is admitted beside a held GET_RX_STATE, a read");
+    release_mac();
+    CHECK(status(aecp_answer(su, 40, &first)) == AECP_SUCCESS,
+          "HZ4: the unlock answers SUCCESS");
+  }
+
+  //! one AECP command sent while an ACMP command is held: admitted beside
+  //! it (`beside`) or only after its key frees; returns the answer
+  std::vector<uint8_t> beside_or_after(uint8_t msg, uint16_t uid, uint16_t op,
+                                       const std::vector<uint8_t>& pl,
+                                       bool beside, const char* what) {
+    const Held a = hold_acmp(msg, uid);
+    const uint16_t s = seq++;
+    (void)send_aecp(0, op, pl, s);
+    io.idle(500);
+    const auto* b = aecp_adm_after(a.adm);
+    const bool held_now = io.d->dbg_acmp_sb_active_o != 0;
+    if (beside) {
+      CHECK(b != nullptr && held_now,
+            "%s: admitted beside the held ACMP command", what);
+    } else {
+      CHECK(b == nullptr && held_now && io.hz_aecp_refused > 0,
+            "%s: not admitted while the held ACMP command keeps its key "
+            "(refused %ld clocks)", what, io.hz_aecp_refused);
+    }
+    release_mac();
+    if (!beside) {
+      b = aecp_adm_after(a.adm);
+      CHECK(b != nullptr && acmp_end() >= 0 && b->t >= acmp_end(),
+            "%s: admitted after the ACMP key frees", what);
+    }
+    long first = -1;
+    return aecp_answer(s, 40, &first);
+  }
+
+  //! one ACMP command sent while an AECP command is held: admitted beside
+  //! it (`beside`) or only after the AECP key frees, and answered either
+  //! way; returns the held AECP command's own answer
+  std::vector<uint8_t> acmp_beside_or_after(uint16_t op,
+                                            const std::vector<uint8_t>& pl,
+                                            uint8_t msg, uint16_t uid,
+                                            bool beside, const char* what) {
+    const uint16_t sa = seq++;
+    const Held a = hold_aecp(op, pl, sa);
+    const uint16_t s = seq++;
+    (void)send_acmp(msg, uid, s);
+    io.idle(500);
+    const auto* b = acmp_adm_after(a.adm);
+    const bool held_now = io.d->dbg_aecp_sb_active_o != 0;
+    if (beside) {
+      CHECK(b != nullptr && held_now,
+            "%s: admitted beside the held AECP command", what);
+    } else {
+      CHECK(b == nullptr && held_now && io.hz_acmp_refused > 0,
+            "%s: not admitted while the held AECP command keeps its key "
+            "(refused %ld clocks)", what, io.hz_acmp_refused);
+    }
+    release_mac();
+    if (!beside) {
+      b = acmp_adm_after(a.adm);
+      CHECK(b != nullptr && aecp_end() >= 0 && b->t >= aecp_end(),
+            "%s: admitted after the AECP key frees", what);
+    }
+    long first = -1;
+    CHECK(!acmp_answer(s, 40, &first).empty(),
+          "%s: the ACMP command is answered", what);
+    return aecp_answer(sa, 40, &first);
+  }
+
+  //! a SET_NAME payload: {descriptor_type, descriptor_index, name_index 0,
+  //! configuration_index} and the 64-byte name
+  static std::vector<uint8_t> name_pl(uint16_t ty, uint16_t ix,
+                                      const char* name) {
+    std::vector<uint8_t> p = ti(ty, ix, 72);
+    putbe(&p[6], CFGIX, 2);
+    for (size_t i = 0; i < 64 && name[i] != 0; ++i)
+      p[8 + i] = static_cast<uint8_t>(name[i]);
+    return p;
+  }
+  //! a SET_SAMPLING_RATE payload naming {ty, ix}, 96 kHz
+  static std::vector<uint8_t> rate_pl(uint16_t ty, uint16_t ix) {
+    std::vector<uint8_t> p = ti(ty, ix, 8);
+    putbe(&p[4], 96000u, 4);
+    return p;
+  }
+
+  //! HZ5 (F03.7 STREAM_CFG "serialized per key"): START_STREAMING on
+  //! STREAM_INPUT 1 waits for an ACMP UNBIND_RX of sink 1, and on
+  //! STREAM_INPUT 0 runs beside it. HZ6 (RO_SNAPSHOT "blocked only vs
+  //! in-flight write on the same key"): GET_STREAM_INFO likewise. HZ7
+  //! (MAP_CFG's class-wide cross-lock): ADD_AUDIO_MAPPINGS waits for any
+  //! stream step
+  void hz5_to_hz7_stream_keys_reads_and_the_map_cross_lock() {
+    (void)beside_or_after(8, 1, 0x0022, ti(DT_SI, 1), false,
+                          "HZ5 START_STREAMING on the held sink's key");
+    (void)beside_or_after(8, 1, 0x0022, ti(DT_SI, 0), true,
+                          "HZ5 START_STREAMING on another sink's key");
+    (void)beside_or_after(8, 1, 0x000F, ti(DT_SI, 1), false,
+                          "HZ6 GET_STREAM_INFO on the held sink's key");
+    (void)beside_or_after(8, 1, 0x000F, ti(DT_SI, 0), true,
+                          "HZ6 GET_STREAM_INFO on another sink's key");
+    (void)beside_or_after(10, 1, 0x000F, ti(DT_SI, 1), true,
+                          "HZ6 GET_STREAM_INFO beside a GET_RX_STATE of the "
+                          "same sink (two reads)");
+    (void)beside_or_after(8, 1, 0x002C, ti(0x000E, 0, 8), false,
+                          "HZ7 ADD_AUDIO_MAPPINGS beside any stream step");
+  }
+
+  //! HZ8 (no over-serialization): the matrix gives CLOCK_CFG, NAME_WR,
+  //! REGISTRY_OP and IDENTIFY no conflict with STREAM_CFG on any key (F03.7
+  //! rule (6), disjoint resources), and a READ_DESCRIPTOR keyed NONE shares
+  //! no key with a stream step, so each is admitted beside a held ACMP
+  //! UNBIND_RX. A LOCK_OP or CFG_BARRIER class on any of them would hold it
+  //! back. REGISTRY_OP's key, the registry's, is one no ACMP transaction
+  //! presents, so it is admitted beside a held ACMP read too: it is the one
+  //! class with no reachable conflict at this top (HZ9 to HZ12 grade the
+  //! other three against an ACMP read of their key)
+  void hz8_the_other_classes_run_beside_a_stream_step() {
+    std::vector<uint8_t> name = ti(0x0024, 0, 72);
+    putbe(&name[6], CFGIX, 2);
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2);
+    putbe(&rd[4], 0x0024, 2);
+    (void)beside_or_after(8, 1, 0x0014, rate_pl(0x0002, 0), true,
+                          "HZ8 SET_SAMPLING_RATE (CLOCK_CFG)");
+    (void)beside_or_after(8, 1, 0x0010, name, true, "HZ8 SET_NAME (NAME_WR)");
+    (void)beside_or_after(8, 1, 0x0024, std::vector<uint8_t>(4, 0), true,
+                          "HZ8 REGISTER_UNSOLICITED_NOTIFICATION (REGISTRY_OP)");
+    (void)beside_or_after(8, 1, 0x0018, ti(0x001A, 0, 5), true,
+                          "HZ8 SET_CONTROL (IDENTIFY)");
+    (void)beside_or_after(8, 1, 0x0004, rd, true,
+                          "HZ8 READ_DESCRIPTOR (RO_SNAPSHOT, no descriptor key)");
+    (void)beside_or_after(10, 1, 0x0024, std::vector<uint8_t>(4, 0), true,
+                          "HZ8 REGISTER_UNSOLICITED_NOTIFICATION (REGISTRY_OP) "
+                          "beside a GET_RX_STATE");
+  }
+
+  //! HZ9 (#84 acceptance 2 for NAME_WR; F03.7 RO_SNAPSHOT "blocked only vs
+  //! in-flight write on the same key"; IEEE 1722.1-2021 §7.4.17: SET_NAME
+  //! sets a name field of a descriptor, a STREAM_INPUT's or STREAM_OUTPUT's
+  //! object_name among them): a SET_NAME keys the
+  //! descriptor it names, so on STREAM_INPUT 1 it waits for an ACMP
+  //! GET_RX_STATE of sink 1, then answers SUCCESS and the name reads back;
+  //! on STREAM_INPUT 0 it runs beside that read, and on STREAM_INPUT 1 it
+  //! runs beside an UNBIND_RX of sink 1 (NAME_WR and STREAM_CFG touch
+  //! disjoint fields, rule (6)). Held itself, a SET_NAME on STREAM_OUTPUT 1
+  //! holds back an ACMP GET_TX_STATE of source 1 and not one of source 2,
+  //! and one on STREAM_INPUT 1 holds back a GET_RX_STATE of sink 1
+  void hz9_name_wr_conflicts_with_an_acmp_read_of_its_stream() {
+    const auto si1 = name_pl(DT_SI, 1, "HZ9 sink one");
+    auto r = beside_or_after(10, 1, AEM_SET_NAME, si1, false,
+                             "HZ9a SET_NAME on STREAM_INPUT 1 vs a held "
+                             "GET_RX_STATE of sink 1");
+    CHECK(status(r) == AECP_SUCCESS,
+          "HZ9a: the SET_NAME then answers SUCCESS (status %d)", status(r));
+    const uint16_t sg = seq++;
+    (void)send_aecp(0, AEM_GET_NAME,
+                    std::vector<uint8_t>(si1.begin(), si1.begin() + 8), sg);
+    long first = -1;
+    CHECK(aecp_answer(sg, 40, &first)
+              == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                            sg, AEM_GET_NAME, si1),
+          "HZ9a: GET_NAME of STREAM_INPUT 1 reads the name back, byte-exact");
+    (void)beside_or_after(10, 1, AEM_SET_NAME,
+                          name_pl(DT_SI, 0, "HZ9 sink zero"), true,
+                          "HZ9b SET_NAME on STREAM_INPUT 0 vs a held "
+                          "GET_RX_STATE of sink 1");
+    (void)beside_or_after(8, 1, AEM_SET_NAME, si1, true,
+                          "HZ9c SET_NAME on STREAM_INPUT 1 vs a held UNBIND_RX "
+                          "of sink 1");
+    r = acmp_beside_or_after(AEM_SET_NAME, name_pl(DT_SO, 1, "HZ9 source one"),
+                             4, 1, false,
+                             "HZ9d a GET_TX_STATE of source 1 vs a held "
+                             "SET_NAME on STREAM_OUTPUT 1");
+    CHECK(status(r) == AECP_SUCCESS,
+          "HZ9d: the held SET_NAME answers SUCCESS (status %d)", status(r));
+    (void)acmp_beside_or_after(AEM_SET_NAME,
+                               name_pl(DT_SO, 1, "HZ9 source one"), 4, 2, true,
+                               "HZ9e a GET_TX_STATE of source 2 vs a held "
+                               "SET_NAME on STREAM_OUTPUT 1");
+    (void)acmp_beside_or_after(AEM_SET_NAME, si1, 10, 1, false,
+                               "HZ9f a GET_RX_STATE of sink 1 vs a held "
+                               "SET_NAME on STREAM_INPUT 1");
+  }
+
+  //! HZ10 (F03.7 STREAM_CFG "serialized per key" and RO_SNAPSHOT "blocked
+  //! only vs in-flight write on the same key", the pairs HZ5 and HZ6 leave):
+  //! a STOP_STREAMING on STREAM_INPUT 1 waits for an ACMP GET_RX_STATE of
+  //! sink 1, a write against a read. On the talker's keys, held from the
+  //! AECP side: a STOP_STREAMING on STREAM_OUTPUT 1 holds back a GET_TX_STATE
+  //! and a DISCONNECT_TX of source 1 and not a DISCONNECT_TX of source 2; a
+  //! GET_STREAM_INFO on STREAM_OUTPUT 1 holds back the DISCONNECT_TX and not
+  //! the GET_TX_STATE, two reads
+  void hz10_stream_steps_and_reads_on_both_engines_keys() {
+    (void)beside_or_after(10, 1, 0x0023, ti(DT_SI, 1), false,
+                          "HZ10a STOP_STREAMING on STREAM_INPUT 1 vs a held "
+                          "GET_RX_STATE of sink 1");
+    (void)acmp_beside_or_after(0x0023, ti(DT_SO, 1), 4, 1, false,
+                               "HZ10b a GET_TX_STATE of source 1 vs a held "
+                               "STOP_STREAMING on STREAM_OUTPUT 1");
+    (void)acmp_beside_or_after(0x0023, ti(DT_SO, 1), 2, 1, false,
+                               "HZ10c a DISCONNECT_TX of source 1 vs a held "
+                               "STOP_STREAMING on STREAM_OUTPUT 1");
+    (void)acmp_beside_or_after(0x0023, ti(DT_SO, 1), 2, 2, true,
+                               "HZ10d a DISCONNECT_TX of source 2 vs a held "
+                               "STOP_STREAMING on STREAM_OUTPUT 1");
+    (void)acmp_beside_or_after(0x000F, ti(DT_SO, 1), 2, 1, false,
+                               "HZ10e a DISCONNECT_TX of source 1 vs a held "
+                               "GET_STREAM_INFO on STREAM_OUTPUT 1");
+    (void)acmp_beside_or_after(0x000F, ti(DT_SO, 1), 4, 1, true,
+                               "HZ10f a GET_TX_STATE of source 1 vs a held "
+                               "GET_STREAM_INFO on STREAM_OUTPUT 1");
+  }
+
+  //! HZ11 (F03.7 CFG_BARRIER, LOCK_OP and MAP_CFG against the talker): a held
+  //! SET_CONFIGURATION holds back a GET_TX_STATE (the barrier blocks every
+  //! admission); a held LOCK_ENTITY holds back a DISCONNECT_TX, a
+  //! lock-protected step, and not a GET_TX_STATE, a read on a stream key; a
+  //! held ADD_AUDIO_MAPPINGS holds back a DISCONNECT_TX (the class-wide
+  //! cross-lock) and not a GET_TX_STATE
+  void hz11_the_global_classes_and_the_map_cross_lock_vs_the_talker() {
+    (void)acmp_beside_or_after(0x0006, std::vector<uint8_t>(4, 0), 4, 1, false,
+                               "HZ11a a GET_TX_STATE of source 1 vs a held "
+                               "SET_CONFIGURATION");
+    std::vector<uint8_t> lock(16, 0);
+    (void)acmp_beside_or_after(0x0001, lock, 2, 1, false,
+                               "HZ11b a DISCONNECT_TX of source 1 vs a held "
+                               "LOCK_ENTITY");
+    (void)acmp_beside_or_after(0x0001, lock, 4, 1, true,
+                               "HZ11c a GET_TX_STATE of source 1 vs a held "
+                               "LOCK_ENTITY");
+    std::vector<uint8_t> unlock(16, 0);
+    putbe(&unlock[0], 1, 4);
+    const uint16_t su = seq++;
+    (void)send_aecp(0, 0x0001, unlock, su);
+    long first = -1;
+    CHECK(status(aecp_answer(su, 40, &first)) == AECP_SUCCESS,
+          "HZ11c: the entity is unlocked again");
+    (void)acmp_beside_or_after(0x002C, ti(0x000E, 0, 8), 2, 1, false,
+                               "HZ11d a DISCONNECT_TX of source 1 vs a held "
+                               "ADD_AUDIO_MAPPINGS");
+    (void)acmp_beside_or_after(0x002C, ti(0x000E, 0, 8), 4, 1, true,
+                               "HZ11e a GET_TX_STATE of source 1 vs a held "
+                               "ADD_AUDIO_MAPPINGS");
+  }
+
+  //! HZ12 (F03.7 rule (2) on a key read from the wire): CLOCK_CFG, IDENTIFY
+  //! and MAP_CFG key the {descriptor_type, descriptor_index} a command
+  //! carries, so one naming a stream descriptor shares a key with an ACMP
+  //! read of that stream. No legal command of these classes names one
+  //! (SET_SAMPLING_RATE an AUDIO_UNIT, VIDEO_CLUSTER or SENSOR_CLUSTER, IEEE
+  //! 1722.1-2021 §7.4.21.1; SET_CONTROL a CONTROL, §7.4.25.1;
+  //! ADD_AUDIO_MAPPINGS a STREAM_PORT_INPUT or STREAM_PORT_OUTPUT,
+  //! §7.4.45.1), and the engine refuses each once admitted
+  //! (NOT_SUPPORTED, Table 7-141: the target is not supported), but the
+  //! conflict is reachable at this top: each waits for a GET_RX_STATE of
+  //! sink 1 when it names STREAM_INPUT 1, runs beside it when it names
+  //! STREAM_INPUT 0, and, held itself naming STREAM_OUTPUT 1, holds back a
+  //! GET_TX_STATE of source 1
+  void hz12_a_stream_named_by_another_class_conflicts_with_its_read() {
+    struct Row {
+      const char* id;
+      const char* cmd;
+      uint16_t op;
+      std::vector<uint8_t> (*pl)(uint16_t, uint16_t);
+    };
+    const Row rows[] = {
+        {"HZ12a", "SET_SAMPLING_RATE (CLOCK_CFG)", 0x0014,
+         [](uint16_t ty, uint16_t ix) { return rate_pl(ty, ix); }},
+        {"HZ12b", "SET_CONTROL (IDENTIFY)", 0x0018,
+         [](uint16_t ty, uint16_t ix) { return ti(ty, ix, 5); }},
+        {"HZ12c", "ADD_AUDIO_MAPPINGS (MAP_CFG)", 0x002C,
+         [](uint16_t ty, uint16_t ix) { return ti(ty, ix, 8); }},
+    };
+    char what[160];
+    for (const Row& w : rows) {
+      snprintf(what, sizeof what, "%s %s naming STREAM_INPUT 1 vs a held "
+               "GET_RX_STATE of sink 1", w.id, w.cmd);
+      auto r = beside_or_after(10, 1, w.op, w.pl(DT_SI, 1), false, what);
+      CHECK(status(r) == AECP_NOT_SUPPORTED,
+            "%s: the %s naming a stream is then refused NOT_SUPPORTED, a "
+            "target the command does not serve (status %d)", w.id, w.cmd,
+            status(r));
+      snprintf(what, sizeof what, "%s %s naming STREAM_INPUT 0 vs a held "
+               "GET_RX_STATE of sink 1", w.id, w.cmd);
+      (void)beside_or_after(10, 1, w.op, w.pl(DT_SI, 0), true, what);
+      snprintf(what, sizeof what, "%s a GET_TX_STATE of source 1 vs a held "
+               "%s naming STREAM_OUTPUT 1", w.id, w.cmd);
+      (void)acmp_beside_or_after(w.op, w.pl(DT_SO, 1), 4, 1, false, what);
+    }
+  }
+
+  void run() {
+    boot();
+    hz1_every_transaction_presents_its_class_and_key();
+    hz2_set_configuration_drains_an_in_flight_acmp_hold();
+    hz3_a_pending_barrier_is_not_starved_by_the_round_robin();
+    hz4_lock_entity_waits_for_a_stream_step_not_for_a_read();
+    hz5_to_hz7_stream_keys_reads_and_the_map_cross_lock();
+    hz8_the_other_classes_run_beside_a_stream_step();
+    hz9_name_wr_conflicts_with_an_acmp_read_of_its_stream();
+    hz10_stream_steps_and_reads_on_both_engines_keys();
+    hz11_the_global_classes_and_the_map_cross_lock_vs_the_talker();
+    hz12_a_stream_named_by_another_class_conflicts_with_its_read();
+  }
+};
+
+[[maybe_unused]] static void run_hazards(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  HazardPhase{h}.run();
+  printf("HZ: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
+[[maybe_unused]] static void run_budgets(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  BudgetPhase{h}.run();
+  printf("TB: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   //! the harness that owns the tally. Sections DV and AX run on models of
@@ -11690,6 +13572,10 @@ int main(int argc, char** argv) {
   //! the line build runs section AX alone, on its non-default line
   run_aecp_response(h);
   const char* const build = "line";
+#elif defined(PP_TOP_TIM_REAL)
+  //! the fourth build runs section TB alone, at the nominal timebase
+  run_budgets(h);
+  const char* const build = "timebase";
 #else
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
@@ -11699,12 +13585,14 @@ int main(int argc, char** argv) {
   const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
   const bool aecp_only = argc == 2
                          && std::strcmp(argv[1], "--aecp-dispatch-only") == 0;
+  const bool dl_only = argc == 2 && std::strcmp(argv[1], "--deadline-only") == 0;
+  const bool hz_only = argc == 2 && std::strcmp(argv[1], "--hazards-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
   }
   const bool one_section = gsi_only || name_only || d3_only || acmp_only || adp_only
-                           || maap_only || aecp_only;
+                           || maap_only || aecp_only || dl_only || hz_only;
   if (maap_only) run_maap_internal(h);
   if (!one_section) Suite(h).run();
   if (aecp_only) run_aecp_dispatch_focus(h);
@@ -11714,12 +13602,14 @@ int main(int argc, char** argv) {
   if (!one_section || acmp_only) run_acmp(h);
   if (!one_section || adp_only) run_adp_config(h);
   if (!one_section || aecp_only) run_aecp_response(h);
+  if (!one_section || dl_only) run_deadlines(h);
+  if (!one_section || hz_only) run_hazards(h);
   const char* const build = "default";
 #endif
-  //! NOT the canonical tally shape: this binary is ONE of the suite's three
+  //! NOT the canonical tally shape: this binary is ONE of the suite's four
   //! builds, and run_suites.sh reads only the LAST matching line, so a
   //! canonical line here would drop the other builds' checks from the total.
-  //! The Makefile sums the builds and prints the one canonical line.
+  //! The Makefile sums the four builds and prints the one canonical line.
   printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x, DESC_LINE_BYTES_P %u] %d checks, %d failures\n",
          build, unsigned(SRP_DEF_VID), unsigned(DESC_LINE_BYTES), h.checks, h.fails);
   FILE* acc = fopen("obj_dir/build_tally.txt", "a");

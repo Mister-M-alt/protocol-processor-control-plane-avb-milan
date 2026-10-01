@@ -143,7 +143,71 @@ flowchart LR
 | ACMP responses | initiator times out at `T-ACMP-CMD` (200 ms, 2 attempts) | **T-BUDGET-ACMP-RESP ≤ 50 ms** | leaves ≥ 150 ms network + initiator margin inside a single attempt |
 | AECP/MVU responses | respond ≤ `T-AECP-RESP` (240 ms) | **≤ 20 ms typical; ≤ 100 ms worst-case** (oversize READ_DESCRIPTOR, full GET_DYNAMIC_INFO batch, 16-way fan-out contention) | 2.4× margin at worst case |
 | ADP DISCOVER response | within the delay window | `T-ADP-DELAY` draw | anti-storm by design |
-| Unsolicited fan-out | no protocol deadline | ≤ 1 frame-time gap injection | never starves solicited traffic ([03 §8](03_packet_engine.md)) |
+| Unsolicited fan-out | no protocol deadline | ≤ 1 frame-time gap injection (not met as written: the finding below) | never starves solicited traffic ([03 §8](03_packet_engine.md)) |
+
+**Realized for AECP (issue #81).** The normalizer stamps every transaction's
+`deadline` as its reception plus the class budget (`T-BUDGET-AECP-WC` for AEM,
+MVU and AA). `protocol_processor_top` reads it at the AECP admission and
+compares it with the ms timebase every clock: one register and one comparator,
+because the engine is single-issue, and no timer-service slot, so F08.4 is
+unchanged. A command still executing when it passes is preempted into the forced
+FAIL_SAFE response ([03 §6](03_packet_engine.md) rule (e)). The redirect waits
+for the op in progress, whose wait is watchdog-bounded: the longest is a
+descriptor burst of at most 72 beats of `DESC_MEM_TMO_CYC_P` = 4,096 clocks,
+about 2.95 ms at `P-CLK-HZ`, and `E_DLKILL` plus FAIL_SAFE then cost about
+twenty clocks and one response-buffer lane write. The forced response is
+therefore queued a few milliseconds after the 100 ms line, well inside the
+140 ms rule (e) keeps before `T-AECP-RESP`. A program already past its first
+effect answers for itself, and each op it has left is bounded the same way. The
+one AECP record held through the boot restore is re-armed at its admission
+(rule (d)). ACMP's stamped deadline has no kill consumer: the budget above is a
+design target the TIM suite asserts ([09 §8.3](09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)).
+
+**Measured (issues #57 and #81, `tb/pp_top` section TB).** MAC command byte 0
+to MAC response byte 0, in the suite's fourth build, whose timebase is the nominal
+clock's own so the deadline never cuts a measurement, at the reference SoC's 143
+clocks per memory access unless stated:
+
+| Stimulus | Clocks | Share of its line at `P-CLK-HZ` |
+|---|---|---|
+| GET_MILAN_INFO / an unimplemented MVU command | 746 / 169 | 0.003 % of `T-AECP-RESP` |
+| oversize READ_DESCRIPTOR (576-byte descriptor, 618-byte frame) | 12,587 | 0.052 % |
+| GET_DYNAMIC_INFO with all thirteen §7.4.76.2 getters, once each (not a batch that fills the 524-octet response) | 12,852 | 0.054 % |
+| the same three behind a 15-frame notification fan-out | 12,709 / 24,550 / 24,681 | at most 0.103 % |
+| GET_MILAN_INFO, response memory at 4,000 clocks per access | 16,174 | 0.067 % |
+| ACMP GET_RX_STATE / GET_TX_STATE, idle and under that load | 172 / 154, unchanged | 0.003 % of `T-BUDGET-ACMP-RESP` |
+
+The budget table's "Unsolicited fan-out" row states a design target the RTL
+does not meet as written: `KL_aecp_notify` holds the AECP command path while a
+notification class drains, so its event queue stays lossless, and a solicited
+command that arrives during a fan-out waits for that class's last frame, then
+runs. The wait is bounded by the queue, and it is measured above; it is
+recorded as a finding, not changed here.
+
+`T-BUDGET-ACMP-RESP` is measured beside AECP work an ACMP transaction does not
+conflict with. One that conflicts with an AECP hold under F03.7 waits at
+admission for that hold to end ([03 §6](03_packet_engine.md)). The holds it can
+meet are a SET_CONFIGURATION barrier, a LOCK_ENTITY against a stream step, an
+ADD/REMOVE_AUDIO_MAPPINGS against any stream step (the `MAP_CFG` class-wide
+cross-lock), and an AECP command on the same stream key. The AECP command
+bounds each hold in one of two ways:
+
+- A command the deadline preempts holds until its forced response at the
+  latest: up to `T-BUDGET-AECP-WC` from its reception, plus the op in progress
+  and the forced response, a few milliseconds (above).
+- LOCK_ENTITY and ADD/REMOVE_AUDIO_MAPPINGS are never preempted, because their
+  change rides a gather face ([06 §8.1](06_aecp_engine.md)). Past their
+  deadline they run the rest of their own program to its END. The engine's
+  shared gather watchdog bounds each face wait in it, at `DESC_MEM_TMO_CYC_P`
+  = 4,096 clocks at this top. LOCK_ENTITY makes two registry-face waits, about
+  82 µs at `P-CLK-HZ`. A mapping edit of N mappings makes at most 2N + 3
+  edit-face waits. N is at most 63, because the engine refuses a cdl past 524,
+  so that is at most 528,384 clocks, about 5.3 ms. REGISTER and DEREGISTER,
+  also never preempted, meet no ACMP transaction.
+
+Such an ACMP answer can therefore come later than the 50 ms design budget,
+though inside `T-ACMP-CMD` of the first attempt. Section HZ grades that the
+ACMP transaction waits; how long it waits is not measured.
 
 ## 5. Timer allocation and sizing
 

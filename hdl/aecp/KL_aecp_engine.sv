@@ -232,7 +232,11 @@
 //                60-byte ENTITY_MISBEHAVING response (IEEE §7.4 status 10)
 //                with an empty payload, built entirely from registers. Never a
 //                leak, never a hang, and never a SUCCESS carrying bytes this
-//                block did not read.
+//                block did not read. A command of any other message type
+//                than AEM_COMMAND has no status 10 (an MVU one: Milan v1.2
+//                §5.4.3.3 Table 5.19), so it is rewritten instead as its
+//                refusal: NOT_IMPLEMENTED with the command echoed from its RX
+//                slot, in a slot sized for that echo when it was granted.
 //
 //                ADDRESSING (03 §8): an AECP response is UNICAST back to the
 //                requester's src_mac. A frame shorter than the 60-octet
@@ -360,6 +364,18 @@ module KL_aecp_engine
     output logic               txreq_valid_o,
     output logic [TXS_W_C-1:0] txreq_slot_o,
     input  wire                txreq_ready_i,
+
+    //! ---- the transaction deadline (03 §6 rule (e), 08 §4) ----
+    //! level from the top: the solicited command in flight is past its
+    //! T-BUDGET-AECP-WC deadline. Its µprogram is preempted into E_DLKILL at
+    //! the next instruction boundary before its first effect (see the
+    //! DEADLINE KILL banner); a command whose change rides a gather face
+    //! (REGISTER/DEREGISTER, LOCK_ENTITY, ADD/REMOVE_AUDIO_MAPPINGS) runs to
+    //! its own answer.
+    input  wire                dl_kill_i,
+    //! one clock: a solicited response was handed to its TX lane (the
+    //! scoreboard's kill_resp_queued_i: rule (e) releases the key only then)
+    output logic               dl_queued_o,
 
     //! ---- descriptor memory master (read-only; see KL_aecp_desc_store) ----
     output logic        mem_req_valid_o,
@@ -807,6 +823,9 @@ module KL_aecp_engine
   localparam logic [10:0] MVU_CMD_PLD_C = 11'd8;
 
   // ---- µPC entry points (hdl/aecp/ucode/gen_ucode.py) ---------------------
+  //! the deadline kill's arm (03 §6 rule (e)): never a dispatch entry, the
+  //! µCPU's preempt redirect target; it falls into E_FAILSAFE
+  localparam logic [10:0] UPC_DLKILL_C  = 11'd6;     // E_DLKILL
   localparam logic [10:0] UPC_NOTIMPL_C = 11'd560;   // E_NOTIMPL
   localparam logic [10:0] UPC_RDESC_C   = 11'd640;   // E_RDESC
   localparam logic [10:0] UPC_BADARG_C  = 11'd704;   // E_BADARG
@@ -1028,7 +1047,7 @@ module KL_aecp_engine
   logic [4:0]  status_r;
   logic [10:0] bidx_r;                   // frame byte being written
   logic [10:0] frame_len_r;
-  logic        err_mode_r;               // rebuilding as ENTITY_MISBEHAVING
+  logic        err_mode_r;               // rebuilding the voided answer
   logic [TXS_W_C-1:0] tx_slot_r;
   logic [15:0] cmd_cnt_r, resp_cnt_r, drop_cnt_r, rerr_cnt_r;
 
@@ -1685,6 +1704,52 @@ module KL_aecp_engine
   logic [10:0] ucpu_upc_nc_w;
   logic  [4:0] ucpu_st_nc_w;
 
+  // ---- THE DEADLINE KILL (03 §6 rule (e), 06 §8, 08 §4) -------------------
+  //! The top reads the transaction deadline at admission and holds
+  //! `dl_kill_i` from its expiry until the hold ends; it is taken here only
+  //! for the solicited command in flight and kept until that command retires.
+  //! The µCPU is then preempted into E_DLKILL, which answers the best current
+  //! status through E_FAILSAFE (a SUCCESS not yet built becomes
+  //! ENTITY_MISBEHAVING), unless the program has already produced an effect:
+  //! then it ends with its own answer, so no partial commit survives. Three
+  //! commands are never preempted, because their change rides a gather face
+  //! the µCPU cannot see as an effect: REGISTER/DEREGISTER and LOCK_ENTITY on
+  //! the registry face, ADD/REMOVE_AUDIO_MAPPINGS on the edit face (phase 1
+  //! is its point of no return). Each wait they make is watchdog-bounded.
+  //! A preempted command of any message type but AEM_COMMAND answers
+  //! NOT_IMPLEMENTED with the command echoed (`st_echo_w`); a
+  //! GET_DYNAMIC_INFO is voided at its next record boundary. The key is
+  //! released at `dl_queued_o`, the forced response's hand-off to its lane.
+  logic dl_kill_r;
+  logic ucpu_preempt_w;
+  logic ucpu_pre_w;
+
+  //! IEEE 1722.1-2021 Table 7-141's status 10 is an AEM_COMMAND's alone.
+  //! Every other AECP message type shares only SUCCESS and NOT_IMPLEMENTED
+  //! with it (Table 9-2) and defines its own codes above them
+  //! (ADDRESS_ACCESS Table 9-4, AV/C Table 9-5, HDCP APM Table 9-8, MVU Milan
+  //! v1.2 §5.4.3.3 Table 5.19), so an answer the engine forces on one, past
+  //! its deadline (A_RUN) or when its response memory fails (A_ALLOC, A_WR),
+  //! is NOT_IMPLEMENTED with the command echoed. `PP_PROTO_AEM` is the
+  //! validator's residual bucket, so message_type 0 is what says AEM.
+  logic st_echo_w;
+  assign st_echo_w = !((cmd_r.protocol == PP_PROTO_AEM)
+                       && (cmd_r.msg_type == 4'd0));
+
+  //! `!uns_r` in `dl_kill_r` and in `dl_queued_o` below is defence in depth:
+  //! the top raises `dl_kill_i` only while a solicited command owns the AECP
+  //! hold, and an unsolicited job holds no scoreboard key, so neither term
+  //! decides anything at this top.
+  always_ff @(posedge clk_i) begin : deadline_kill
+    if (!rst_n)                   dl_kill_r <= 1'b0;
+    else if (a_st_r == A_IDLE)    dl_kill_r <= 1'b0;
+    else if (dl_kill_i && !uns_r) dl_kill_r <= 1'b1;
+  end
+
+  assign ucpu_preempt_w = dl_kill_r && (a_st_r == A_RUN)
+                          && !regun_r && !lockc_r && !amap_edit_r;
+  assign dl_queued_o    = (a_st_r == A_TXW) && !uns_r && txreq_ready_i;
+
   KL_aecp_ucpu #(
       .UCODE_HEX_P         (UCODE_HEX_P),
       .RESP_D8_CAP_BYTES_P (RESP_BUF_C)
@@ -1700,6 +1765,9 @@ module KL_aecp_engine
       .disp_opd2_i        (opd2_r),
       .disp_batch_i       (gdi_r),
       .disp_resp_base_i   (10'(g_out_r + 11'd8)),
+      .preempt_i          (ucpu_preempt_w),
+      .preempt_upc_i      (UPC_DLKILL_C),
+      .preempted_o        (ucpu_pre_w),
       .st_req_o           (u_st_req_w),
       .st_we_o            (u_st_we_w),
       .st_name_o          (u_st_name_w),
@@ -2504,8 +2572,17 @@ module KL_aecp_engine
   //! writer's restore terminal, and is then taken first.
   assign txn_ready_o     = (a_st_r == A_IDLE) && !rsp_busy_w
                            && !amap_notify_busy_i && !d3_own_w;
+  //! A command that is not an AEM_COMMAND answers the command echoed when its
+  //! response memory fails (A_ALLOC, A_WR, `st_echo_w`), and the failure can
+  //! come after its slot is granted, so its response takes the oversize slot
+  //! whenever that echo would need it
+  logic [10:0] echo_len_w;
+  assign echo_len_w      = (11'(FRAME_HDR_C) + pld_cmd_r < 11'(ETH_MIN_C))
+                           ? 11'(ETH_MIN_C) : (11'(FRAME_HDR_C) + pld_cmd_r);
   assign txs_alloc_req_o = (a_st_r == A_ALLOC);
-  assign txs_oversize_o  = (frame_len_r > 11'(TX_STD_BYTES_P));
+  assign txs_oversize_o  = (frame_len_r > 11'(TX_STD_BYTES_P))
+                           || (st_echo_w
+                               && (echo_len_w > 11'(TX_STD_BYTES_P)));
   assign txs_wr_slot_o   = tx_slot_r;
   assign txs_wr_addr_o   = TXA_W_C'(bidx_r);
   assign txs_wr_valid_o  = (a_st_r == A_WR) && byte_ok_w;
@@ -2561,7 +2638,10 @@ module KL_aecp_engine
                           ? 11'd0 : pld_r;
 
   //! A response source failed under a frame that is already partly written.
-  //! Rebuild it from registers; mapping edits also retain their staged body.
+  //! Rebuild it from registers; mapping edits also retain their staged body,
+  //! and a command that is not an AEM_COMMAND answers NOT_IMPLEMENTED with
+  //! the command echoed from its RX slot, which the response memory never
+  //! held (`st_echo_w`).
   logic rsp_fail_w;
   assign rsp_fail_w = (rsp_err_w || gxf_fail_r) && !err_mode_r
                       && (!echo_r || amap_edit_r);
@@ -2979,7 +3059,14 @@ module KL_aecp_engine
 
         // ---- decide response shape, including silent overflow skip -------
         A_GDEC: begin
-          if ((g_out_r + 11'd8 + g_sub_rlen_w)
+          //! past the deadline no further record runs: the aggregate is
+          //! voided through the shape check's own arm (rule (e))
+          if (dl_kill_r) begin
+            g_shape_fault_r <= 1'b1;
+            pld_r           <= 11'd0;
+            echo_r          <= 1'b0;
+            a_st_r          <= A_GDONE;
+          end else if ((g_out_r + 11'd8 + g_sub_rlen_w)
               > 11'(ucpu_pkg::RESP_CAP_C)) begin
             g_rd_pos_r      <= g_next_pos_r;
             g_hdr_ix_r      <= 3'd0;
@@ -3608,6 +3695,14 @@ module KL_aecp_engine
               end else begin
                 pld_r <= pld_cmd_r;
               end
+              //! a preempted command that is not an AEM_COMMAND has no status
+              //! 10, so the forced answer is its refusal form, NOT_IMPLEMENTED
+              //! with the command echoed (`st_echo_w`)
+              if (ucpu_pre_w && st_echo_w) begin
+                status_r <= ST_NOT_IMPLEMENTED_C;
+                echo_r   <= 1'b1;
+                pld_r    <= pld_cmd_r;
+              end
             end
           end
           if (ucpu_done_w) begin
@@ -3616,9 +3711,10 @@ module KL_aecp_engine
               //! resp_len_w is the getter's actual cursor. A future getter
               //! edit must not silently misalign every following record or
               //! expose stale response memory. Void the aggregate if the two
-              //! authorities disagree.
-              if ((resp_send_w ? resp_len_w : g_sub_end_r)
-                  != (g_out_r + 11'd8 + g_rec_rlen_r)) begin
+              //! authorities disagree, and past the deadline (rule (e)).
+              if (dl_kill_r
+                  || ((resp_send_w ? resp_len_w : g_sub_end_r)
+                      != (g_out_r + 11'd8 + g_rec_rlen_r))) begin
                 g_shape_fault_r <= 1'b1;
                 pld_r           <= 11'd0;
                 echo_r          <= 1'b0;
@@ -3650,6 +3746,16 @@ module KL_aecp_engine
                               ? 11'(ETH_MIN_C)
                               : 11'(FRAME_HDR_C) + amap_edit_pld_w)
                            : 11'(ETH_MIN_C);
+            //! Milan v1.2 §5.4.3.3 Table 5.19: an MVU status is SUCCESS or
+            //! NOT_IMPLEMENTED, so a voided MVU answer, like that of every
+            //! other message type but AEM's, is its refusal form, the
+            //! command echoed, as the deadline's is (A_RUN, `st_echo_w`)
+            if (st_echo_w) begin
+              status_r    <= ST_NOT_IMPLEMENTED_C;
+              echo_r      <= 1'b1;
+              pld_r       <= pld_cmd_r;
+              frame_len_r <= echo_len_w;
+            end
             bidx_r      <= 11'd0;
             if (rerr_cnt_r != 16'hFFFF) rerr_cnt_r <= rerr_cnt_r + 16'd1;
           end else if (txs_alloc_gnt_i) begin
@@ -3672,6 +3778,14 @@ module KL_aecp_engine
                               ? 11'(ETH_MIN_C)
                               : 11'(FRAME_HDR_C) + amap_edit_pld_w)
                            : 11'(ETH_MIN_C);
+            //! the command echoed, as at A_ALLOC; its slot was sized for the
+            //! echo (txs_oversize_o)
+            if (st_echo_w) begin
+              status_r    <= ST_NOT_IMPLEMENTED_C;
+              echo_r      <= 1'b1;
+              pld_r       <= pld_cmd_r;
+              frame_len_r <= echo_len_w;
+            end
             bidx_r      <= 11'd0;
             if (rerr_cnt_r != 16'hFFFF) rerr_cnt_r <= rerr_cnt_r + 16'd1;
           end else if (byte_ok_w) begin
