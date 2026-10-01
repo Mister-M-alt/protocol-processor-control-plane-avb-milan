@@ -932,13 +932,14 @@ applies each reviewed patch in `mutations/` to a scratch copy of `hdl/`,
 target there, and counts the arm KILLED only when the simulation completed with
 its tally, failed, and printed its named check. It reads logs only, never
 production source. A positive control of every (suite, target) pair runs first
-and must pass. Counts below were taken on 2026-09-30 with Verilator 5.052.
+and must pass. Counts below were taken on 2026-10-01 with Verilator 5.050, the
+CI pin: 5 controls PASS and 55 arms KILLED.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|
-| `dl-kill-tied-off` | pp_top `deadline` | the kill face tied off again, and the engine's `dl_kill_i` with it (the wiring before issue #81) | 16: every DL1 check (the stall answers its own SUCCESS after 33,505 clocks), DL3 (both answered for real, the MVU one SUCCESS), DL4 (no answer inside the wait), DL5 |
+| `dl-kill-tied-off` | pp_top `deadline` | the kill face tied off again, and the engine's `dl_kill_i` with it (the wiring before issue #81) | 28: every DL1 check (the stall answers its own SUCCESS after 33,505 clocks), DL3 (both answered for real, the MVU one SUCCESS), DL4 (no answer inside the wait), DL5, DL9 x8 (each stall and each queued command answered for real), DL10 x4 |
 | `dl-released-before-queued` | pp_top `deadline` | `kill_resp_queued_i` tied 1, so the key is released at the expiry | 3: DL1 (the kill honoured 3,410 clocks before the forced response's hand-off, the hold free for them), DL5 (the dropped frame's kill honoured too) |
-| `dl-armed-at-admission` | pp_top `deadline` | the deadline re-armed at every admission instead of read from the record | 2: DL3 (the queued GET_MILAN_INFO runs and answers SUCCESS, one redirect) |
+| `dl-armed-at-admission` | pp_top `deadline` | the deadline re-armed at every admission instead of read from the record | 6: DL3 (the queued GET_MILAN_INFO runs and answers SUCCESS, one redirect), DL9 x4 |
 | `dl-boot-hold-not-exempt` | pp_top `d3` | rule (d)'s exception removed: the command held through the boot keeps its stamped deadline | 1: D3O6 (the command held 150 ms is answered by the forced response, not byte-exact) |
 | `dl-gdi-runs-on` | pp_top `deadline` | the GET_DYNAMIC_INFO voids removed | 4: DL4 (the batch keeps copying, no answer inside the wait), DL5 |
 | `dl-edit-preempted` | pp_top `deadline` | the edit, registry and lock commands preempted like the rest | 6: DL6 (ENTITY_MISBEHAVING mid-validation, no record committed), DL10 x4 |
