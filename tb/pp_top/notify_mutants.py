@@ -234,8 +234,8 @@ STORM_RND = (
          "          if (!valid_r[wk_ix_r] && !wk_free_r && (wk_ix_r != CIX_W_C'(N_CTRL_P - 1))) begin\n"),),
         ("RN: 720 seeded steps",)),
     Mutant("set_control_ignores_lock", NOTIFY, (
-        (UCODE, "    u('CHECK_LOCK', ra=15, imm=E_LOCKED1),       # held by another controller?\n",
-         nop_for("u('CHECK_LOCK', ra=15, imm=E_LOCKED1)")),),
+        (UCODE, "    u('CHECK_LOCK', ra=15, imm=SCTRL_EMIT),      # held by another controller?\n",
+         nop_for("u('CHECK_LOCK', ra=15, imm=SCTRL_EMIT)")),),
         ("RN: 720 seeded steps",)),
 )
 
@@ -259,7 +259,8 @@ INFLIGHT = (
 )
 
 MUTANTS = IDENTIFY + PUSHES + STORM_RND + INFLIGHT
-TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+\] \d+ checks, \d+ failures"
+TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
+                   r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"
                    r"|\d+ checks: \d+ PASS, \d+ FAIL)$", re.M)
 

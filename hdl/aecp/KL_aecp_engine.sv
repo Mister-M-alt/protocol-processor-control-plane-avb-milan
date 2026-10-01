@@ -841,11 +841,9 @@ module KL_aecp_engine
   //! {clock_source_index, reserved} pair, so three type gates need two stubs
   localparam logic [10:0] UPC_TIZ8NS_C  = 11'd1216;  // E_TIZ8NS
   localparam logic [10:0] UPC_TIZ4NS_C  = 11'd1224;  // E_TIZ4NS
-  localparam logic [10:0] UPC_LOCKED4_C = 11'd1232;  // E_LOCKED4
   localparam logic [10:0] UPC_BADARG4_C = 11'd1240;  // E_BADARG4
   localparam logic [10:0] UPC_GCTRL_C   = 11'd1248;  // E_GCTRL
   localparam logic [10:0] UPC_SCTRL_C   = 11'd1280;  // E_SCTRL
-  localparam logic [10:0] UPC_LOCKED1_C = 11'd1312;  // E_LOCKED1
   localparam logic [10:0] UPC_BADARG1_C = 11'd1320;  // E_BADARG1
   localparam logic [10:0] UPC_NSUPP1_C  = 11'd1328;  // E_NSUPP1
   localparam logic [10:0] UPC_SCFG_C     = 11'd1456; // E_SCFG
@@ -858,6 +856,10 @@ module KL_aecp_engine
   //! §7.4.7.1 at cdl 16, like the other two arms.
   localparam logic [10:0] UPC_SCFGBAD_C  = 11'd1513; // E_SCFGBAD
   localparam logic [10:0] UPC_RDESCENT_C = 11'd1568; // E_RDESCENT
+  localparam logic [10:0] UPC_RDESCSI_C  = 11'd1768; // E_RDESCSI
+  localparam logic [10:0] UPC_RDESCSO_C  = 11'd1780; // E_RDESCSO
+  localparam logic [10:0] UPC_RDESCAU_C  = 11'd2000; // E_RDESCAU
+  localparam logic [10:0] UPC_RDESCCD_C  = 11'd2024; // E_RDESCCD
   localparam logic [10:0] UPC_STRT_C     = 11'd1600; // E_STRT
   localparam logic [10:0] UPC_STOP_C     = 11'd1632; // E_STOP
   localparam logic [10:0] UPC_STRMNS_C   = 11'd1664; // E_STRMNS
@@ -890,9 +892,9 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_SIRUN_C    = 11'd1936; // E_SIRUN
   //! IDENTIFY_NOTIFICATION's unsolicited body (IEEE 7.4.39.1, Figure 7-61),
   //! dispatched only with EN_IDENTIFY_NOTIF_P
-  localparam logic [10:0] UPC_IDNOTIF_C  = 11'd2000; // E_IDNOTIF
+  localparam logic [10:0] UPC_IDNOTIF_C  = 11'd464;  // E_IDNOTIF
   //! the unsolicited SET_STREAM_INFO's own body (IEEE 7.4.15.1, Figure 7-40)
-  localparam logic [10:0] UPC_SINFOUNS_C = 11'd2016; // E_SINFOUNS
+  localparam logic [10:0] UPC_SINFOUNS_C = 11'd480;  // E_SINFOUNS
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -901,11 +903,16 @@ module KL_aecp_engine
   localparam int unsigned FRAME_HDR_C  = ETH_HDR_C + AECP_HDR_C;      // 38
   localparam int unsigned ETH_MIN_C    = 60;
   //! response buffer: the µCPU's 12 header bytes + the 4-byte
-  //! {configuration_index, reserved} prefix + one whole descriptor, rounded to
-  //! the 8-byte lane the memory face moves
-  localparam int unsigned RESP_BUF_C   = ((16 + LINE_BYTES_P) + 15) & ~32'd15;
+  //! {configuration_index, reserved} prefix + one whole descriptor. That is
+  //! exactly the `16 + DESC_LINE_BYTES_P` bytes the integrator reserves at
+  //! RESP_BASE_P (07 §3.3.2), and it bounds every response write: the buffer
+  //! drops a byte at or past it, and the Δ8 APPEND stops at it. The line is a
+  //! multiple of 8 (below), so the buffer is whole 8-byte memory lanes.
+  localparam int unsigned RESP_BUF_C   = 16 + LINE_BYTES_P;
   localparam int unsigned PLD_MAX_C    = RESP_BUF_C - 12;
   localparam int unsigned FRAME_MAX_C  = FRAME_HDR_C + PLD_MAX_C;
+  //! the bytes the µCPU's 10-bit response cursor addresses
+  localparam int unsigned RESP_CURSOR_BYTES_C = 1024;
 
   if (FRAME_MAX_C > TX_OVERSIZE_BYTES_P) begin : gen_g_frame_fit
     $error("a maximum AECP response (%0d B) exceeds the oversize slot (%0d B)",
@@ -915,6 +922,29 @@ module KL_aecp_engine
   if (RESP_BUF_C < ucpu_pkg::RESP_CAP_C) begin : gen_g_resp_cap_fit
     $error("response buffer (%0d B) is smaller than GET_DYNAMIC_INFO limit (%0d B)",
            RESP_BUF_C, ucpu_pkg::RESP_CAP_C);
+  end
+
+  //! THE LEGAL LINE (issue #50): a multiple of 8 from LINE_MIN_BYTES_C (576)
+  //! to LINE_MAX_BYTES_C (1008), each refusal naming the top's
+  //! DESC_LINE_BYTES_P, the parameter an integrator sets. The floor: E_GAMAP
+  //! serves a page of up to GAMAP_PAGE_MAX_C records whole (its APPEND fills
+  //! this buffer, Milan §5.4.1) and answers NO_RESOURCES above it, so the
+  //! reservation must hold that page, or records a SUCCESS still counts would
+  //! be dropped. The ceiling: the reservation may not pass the cursor. The
+  //! step: the line and this buffer move 8-byte lanes.
+  localparam int unsigned LINE_MIN_BYTES_C = 24 + 8 * ucpu_pkg::GAMAP_PAGE_MAX_C - 16;
+  localparam int unsigned LINE_MAX_BYTES_C = RESP_CURSOR_BYTES_C - 16;
+  if ((LINE_BYTES_P % 8) != 0) begin : gen_g_line_step
+    $error("DESC_LINE_BYTES_P=%0d is not a multiple of 8 (legal: %0d..%0d in steps of 8)",
+           LINE_BYTES_P, LINE_MIN_BYTES_C, LINE_MAX_BYTES_C);
+  end
+  if (RESP_BUF_C < 24 + 8 * ucpu_pkg::GAMAP_PAGE_MAX_C) begin : gen_g_gamap_page_fit
+    $error("DESC_LINE_BYTES_P=%0d is below %0d: no room for a %0d-record GET_AUDIO_MAP page",
+           LINE_BYTES_P, LINE_MIN_BYTES_C, ucpu_pkg::GAMAP_PAGE_MAX_C);
+  end
+  if (RESP_BUF_C > RESP_CURSOR_BYTES_C) begin : gen_g_line_ceiling
+    $error("DESC_LINE_BYTES_P=%0d is above %0d: 16 + line passes the %0d-byte cursor",
+           LINE_BYTES_P, LINE_MAX_BYTES_C, RESP_CURSOR_BYTES_C);
   end
 
   pp_txn_t txn_w;
@@ -1672,7 +1702,8 @@ module KL_aecp_engine
   logic  [4:0] ucpu_st_nc_w;
 
   KL_aecp_ucpu #(
-      .UCODE_HEX_P (UCODE_HEX_P)
+      .UCODE_HEX_P         (UCODE_HEX_P),
+      .RESP_D8_CAP_BYTES_P (RESP_BUF_C)
   ) u_ucpu (
       .clk_i              (clk_i),
       .rst_n              (rst_n),
@@ -3115,6 +3146,32 @@ module KL_aecp_engine
                 && (desc_ty_r == DT_ENTITY_C)) begin
               upc_r  <= UPC_RDESCENT_C;
               echo_r <= 1'b0;
+            end
+            //! ...and the current values a SET changes (issue #82): the
+            //! AUDIO_UNIT's sampling rate, the CLOCK_DOMAIN's clock source
+            //! and a STREAM's current_format, from the dynamic-state row each
+            //! SET wrote. Configuration 0 only: that is the configuration
+            //! those GETs and their SETs locate in (the literal cfg 0 of
+            //! opd0_w's tix shape), so another configuration's descriptor
+            //! keeps its image bytes.
+            if ((cmd_r.protocol == PP_PROTO_AEM)
+                && (cmd_r.msg_type == 4'd0)
+                && (cmd_r.opcode == OP_READ_DESCRIPTOR_C)
+                && (cmd_r.cdl >= 11'd20)
+                && (cfg_ix_r == 16'd0)) begin
+              if (desc_ty_r == DT_AUDIO_UNIT_C) begin
+                upc_r  <= UPC_RDESCAU_C;
+                echo_r <= 1'b0;
+              end else if (desc_ty_r == DT_CLOCK_DOMAIN_C) begin
+                upc_r  <= UPC_RDESCCD_C;
+                echo_r <= 1'b0;
+              end else if (desc_ty_r == DT_STREAM_INPUT_C) begin
+                upc_r  <= UPC_RDESCSI_C;
+                echo_r <= 1'b0;
+              end else if (desc_ty_r == DT_STREAM_OUTPUT_C) begin
+                upc_r  <= UPC_RDESCSO_C;
+                echo_r <= 1'b0;
+              end
             end
             //! ...and the audio-map TYPE gate at the same seam, for the same
             //! reason: descriptor_type is at @24 and cannot be judged at pop.

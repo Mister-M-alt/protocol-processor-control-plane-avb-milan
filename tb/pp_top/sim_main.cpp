@@ -17,10 +17,12 @@
 // maap face both ways — with no allocator the talker still answers (the
 // walker must not wedge on an unaccepted request), with one the granted
 // address reaches acmp_declaring_o, the ACMP answer and the SRP wire.
-// The suite builds three times (Makefile): the second build overrides the
+// The suite builds four times (Makefile): the second build overrides the
 // top's P-SRP-DOM-DEF-VID with a verification-only fixture and runs section
 // DV alone; the third sets P-EN-IDENTIFY-NOTIFICATION to 1 and runs section
-// ID alone (notify_phases.hpp).
+// ID alone (notify_phases.hpp); the fourth, the line build, overrides
+// DESC_LINE_BYTES_P with a verification-only fixture and runs section AX
+// alone.
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -57,7 +59,22 @@ constexpr long clk_ms(long ms) { return (CLK_HZ * ms + 999) / 1000; }
 //! the wrap's compile-time memory map (07 §3.3 image, 03 §7 response buffer)
 constexpr uint32_t    DESC_BASE  = 0x20000000u;
 constexpr uint32_t    RESP_BASE  = 0x20100000u;
-constexpr uint32_t    RESP_BYTES = 592u;             // 16 + DESC_LINE_BYTES_P
+//! DESC_LINE_BYTES_P as THIS build asked for it (section AX RB). The first
+//! build overrides nothing, so it expects the top's 576; the line build is
+//! compiled with the fixture the Makefile also hands the wrap. RB grades that
+//! the top elaborated it.
+#ifdef PP_TOP_DESC_LINE_BYTES
+constexpr uint32_t    DESC_LINE_BYTES = PP_TOP_DESC_LINE_BYTES;
+//! A default-equivalent fixture cannot show a line-derived size that is not.
+static_assert(DESC_LINE_BYTES != 576u, "line fixture must differ from the default 576");
+static_assert(DESC_LINE_BYTES % 8u == 0u && DESC_LINE_BYTES >= 576u
+                  && DESC_LINE_BYTES <= 1008u,
+              "line fixture must be a legal DESC_LINE_BYTES_P: 576..1008 in steps of 8");
+#else
+constexpr uint32_t    DESC_LINE_BYTES = 576u;
+#endif
+//! the response buffer's reservation at RESP_BASE_P: 16 + DESC_LINE_BYTES_P
+constexpr uint32_t    RESP_BYTES = 16u + DESC_LINE_BYTES;
 constexpr uint64_t    OWN_MAC = 0x0A0B0C0D0E0FULL;
 constexpr uint64_t    EID     = 0x123456789ABCDEF0ULL;
 constexpr uint64_t    EMID    = 0x00E0DECAFB0B0001ULL;
@@ -826,6 +843,10 @@ struct H {
   int  rm_wcnt = 0;
   uint64_t rm_reqs = 0;
   uint64_t rm_writes = 0;
+  //! section AX RB: strobed bytes written outside the reservation (at or past
+  //! RESP_BYTES, or below RESP_BASE), and one past the highest written inside
+  uint64_t rmem_past = 0;
+  uint32_t rmem_top = 0;
   vluint64_t aecp_rx_t = 0;
   std::deque<std::vector<uint8_t>> q_aecp;
   //! MAAP frames (subtype 0xFE) with their eof-time compressed ms
@@ -1046,8 +1067,15 @@ struct H {
                        ? amap_rec(ty, ix, page, rec) : 0;
     return 0;
   }
+  //! section AX: when non-zero, STREAM_PORT_INPUT 1's page 0 holds this many
+  //! mappings instead of none, to put a page above the 62 a response carries
+  uint16_t amap_big_page = 0;
   uint64_t amap_query_value(uint16_t ty, uint16_t ix, uint16_t page,
                             uint8_t sel, uint8_t rec) {
+    if (amap_big_page != 0 && ty == 0x000E && ix == 1 && page == 0) {
+      if (sel == 1) return (uint64_t(amap_nmaps(ty, ix)) << 16) | amap_big_page;
+      if (sel == 2) return rec < amap_big_page ? amap_rec(ty, ix, page, rec) : 0;
+    }
     if (!amap_edit_mode) return amap_value(ty, ix, page, sel, rec);
     if ((ty != 0x000E && ty != 0x000F) || ix >= 2) return 0;
     uint16_t pages = ty == 0x000E ? 1 : 4;
@@ -1092,6 +1120,10 @@ struct H {
   uint64_t name_wr_mismatches = 0;
   uint64_t name_mark_cycle = 0;
   uint64_t notify_enqs = 0;
+  //! section AX: every AECP TX-slot grant as {slot, the engine's oversize
+  //! request}, and the slot of every serializer start, in order
+  std::vector<std::pair<uint8_t, bool>> aecp_grants;
+  std::vector<uint8_t> ser_start_slots;
   //! the exported mark CODE beside the strobe (issue #90): the code is only
   //! meaningful while the strobe is 1, so it is sampled there and counted
   //! per group — 1 dynamic-state field, 6 channel maps, 7 user names
@@ -1255,6 +1287,10 @@ struct H {
       if (d->aecp_nvm_mark_o == 7) ++nvm_marks_cls7;
     }
     if (d->dbg_notify_enq_o) ++notify_enqs;
+    if (d->dbg_aecp_txs_gnt_o)
+      aecp_grants.emplace_back(uint8_t(d->dbg_aecp_txs_slot_o),
+                               d->dbg_aecp_txs_ovs_o != 0);
+    if (d->dbg_ser_start_o) ser_start_slots.push_back(uint8_t(d->dbg_ser_slot_o));
     nvm_unflushed_seen |= d->nvm_unflushed_o;
     sample_restore_levels();
     sample_d3_ownership();
@@ -1417,12 +1453,17 @@ struct H {
       }
     } else if (--rm_wcnt <= 0) {
       // byte n of the lane is bits [63-8n -: 8]; a byte whose strobe is 0 is
-      // NOT modified — the model enforces the contract it documents
-      if (!rmem_werr) {
-        for (int i = 0; i < 8; ++i) {
-          if ((rm_wstrb >> i) & 1) {
-            uint32_t k = rm_waddr - RESP_BASE + uint32_t(i);
-            if (k < rmem.size()) rmem[k] = uint8_t(rm_wdata >> (56 - 8 * i));
+      // NOT modified — the model enforces the contract it documents. A byte
+      // outside the reservation is not stored: it is counted, never dropped
+      // unseen (section AX RB)
+      for (int i = 0; i < 8; ++i) {
+        if ((rm_wstrb >> i) & 1) {
+          uint32_t k = rm_waddr - RESP_BASE + uint32_t(i);
+          if (k >= rmem.size()) {
+            ++rmem_past;
+          } else {
+            rmem_top = std::max(rmem_top, k + 1);
+            if (!rmem_werr) rmem[k] = uint8_t(rm_wdata >> (56 - 8 * i));
           }
         }
       }
@@ -2110,6 +2151,19 @@ struct ReadDescriptorPhase {
       {0x7FFC, 16, "unassigned opcode, 16-byte payload"},
       {0x7FFD, 72, "unassigned opcode, past the 60-octet floor"},
       {0x004D,  4, "GET_MAX_TRANSIT_TIME again, after a 72-byte command"},
+      //! REQ-FWX-001 (issue #74): the opcodes the row NAMES, each sent as an
+      //! outer AEM command at its own IEEE 1722.1-2021 command length. None
+      //! is decoded (no firmware update, REBOOT, operation or MEMORY_OBJECT
+      //! command in this build), so each takes the unknown-opcode path; a
+      //! future arm on any of them turns its row red
+      {0x002A,  4, "REBOOT (7.4.43, Figure 7-68)"},
+      {0x0037, 12, "START_OPERATION (7.4.53, Figure 7-72), four value bytes"},
+      {0x0038,  8, "ABORT_OPERATION (7.4.54, Figure 7-73)"},
+      {0x0039,  8, "OPERATION_STATUS sent as a command (7.4.55 never sends one)"},
+      {0x0047, 12, "SET_MEMORY_OBJECT_LENGTH (7.4.72, Figure 7-90)"},
+      //! a GET_DYNAMIC_INFO whitelist member (7.4.76.2), and still no outer
+      //! command: membership in the batch list is not a dispatch arm
+      {0x0048,  4, "GET_MEMORY_OBJECT_LENGTH (7.4.73, Figure 7-91)"},
     };
     uint16_t niseq = 0x5560;
     for (auto& c : nisz) {
@@ -2906,9 +2960,34 @@ struct MilanInfoPhase {
   // this was reachable on a real link, not a curiosity.
   void m9_an_oui_that_collides_with_an_aem_opcode() {
     const std::vector<Col> cols = m9_the_colliding_cases();
+    const M9State before = m9_state(0xC01C);
     const uint16_t sq = m9_every_colliding_case_is_refused_whole(cols);
-    m9b_and_none_of_them_wrote_anything();
+    m9b_and_none_of_them_wrote_anything(before);
     m9c_a_non_colliding_vendor_oui_round_trips_whole(sq);
+  }
+
+  //! what the writers among the arms read back through, taken before the
+  //! storm and again after it: STREAM_OUTPUT 1's published format and
+  //! presentation-offset rows (the settings face) and CLOCK_DOMAIN 0's name
+  struct M9State {
+    uint8_t fmt_out_v = 0;
+    uint64_t fmt_out1 = 0;
+    uint8_t pt_v = 0;
+    uint32_t pt1 = 0;
+    std::vector<uint8_t> cd_name;
+  };
+  M9State m9_state(uint16_t seq) {
+    M9State s;
+    s.fmt_out_v = d->aecp_fmt_out_v_o;
+    s.fmt_out1 = h.fmt_row(true, 1);
+    s.pt_v = d->aecp_pt_offset_v_o;
+    s.pt1 = d->aecp_pt_offset_o.at(1);
+    h.q_aecp.clear();
+    h.feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, seq,
+                      AEM_GET_NAME, NamePhase::name_sel(0x0024, 0, 0)));
+    const auto g = h.wait_any(h.q_aecp, 400);
+    if (g.size() >= 38 + 72) s.cd_name.assign(g.begin() + 46, g.begin() + 110);
+    return s;
   }
 
   std::vector<Col> m9_the_colliding_cases() {
@@ -2940,16 +3019,23 @@ struct MilanInfoPhase {
     //! SET_CLOCK_SOURCE, SET_CONTROL, ACQUIRE, LOCK, all state-changing --
     //! passed the whole suite. The comment above it already claimed the list
     //! came from the dispatch. It does now.
+    //! scripts/check_m9_opcodes.py (run by run_suites.sh before any suite)
+    //! holds this list to EXACTLY the engine's OP_*_C set: issue #76 found it
+    //! at 23 of the 30 opcodes the engine decodes, the seven missing ones
+    //! being every arm that landed after the list was written.
     static const uint16_t kOpcodes[] = {
-      0x0000, 0x0001, 0x0002, 0x0004, 0x0006, 0x0007, 0x0009, 0x000F,
-      0x0014, 0x0015, 0x0016, 0x0017, 0x0018, 0x0019, 0x0022, 0x0023,
-      0x0024, 0x0025, 0x0026, 0x0027, 0x0028, 0x0029, 0x002B,
+      0x0000, 0x0001, 0x0002, 0x0004, 0x0006, 0x0007, 0x0008, 0x0009,
+      0x000E, 0x000F, 0x0010, 0x0011, 0x0014, 0x0015, 0x0016, 0x0017,
+      0x0018, 0x0019, 0x0022, 0x0023, 0x0024, 0x0025, 0x0026, 0x0027,
+      0x0028, 0x0029, 0x002B, 0x002C, 0x002D, 0x004B,
     };
     //! 0x0022/0x0023 (START/STOP_STREAMING) joined this sweep with issue
-    //! #78. Every opcode the engine decodes has to be here, or the #83
-    //! guard - "the dispatch is on message_type, not on the residual
-    //! protocol bucket" - is simply untested for the newest arm, which is
-    //! exactly the one nobody has looked at yet.
+    //! #78, and SET_STREAM_FORMAT, SET_STREAM_INFO, SET_NAME, GET_NAME,
+    //! ADD/REMOVE_AUDIO_MAPPINGS and GET_DYNAMIC_INFO with issue #76. Every
+    //! opcode the engine decodes has to be here, or the #83 guard - "the
+    //! dispatch is on message_type, not on the residual protocol bucket" - is
+    //! simply untested for the newest arm, which is exactly the one nobody has
+    //! looked at yet.
     //! the residual bucket in full (KL_pp_rx_validator: 6/7 MVU, 2/3 AA,
     //! everything else AEM), plus AA itself
     static const uint8_t kMsgTypes[]
@@ -2967,6 +3053,14 @@ struct MilanInfoPhase {
     //! the only thing standing between and a corrupted protocol_id
     cols.push_back({6, 0x8004,  8, "VENDOR_UNIQUE, OUI with bit 15 set"});
     cols.push_back({4, 0x8004,  8, "AVC_COMMAND, length word with bit 15 set"});
+    //! the three WRITERS that joined with issue #76 also get a whole command
+    //! body on one message type: with the 8-byte filler each stops at its
+    //! length stub, which proves the status and nothing about the write the
+    //! guard exists to prevent. With the whole body an unguarded arm reaches
+    //! the store, and M9b3 to M9b5 read the state back
+    cols.push_back({4, 0x0008, 12, "AVC_COMMAND / SET_STREAM_FORMAT, whole body"});
+    cols.push_back({4, 0x000E, 84, "AVC_COMMAND / SET_STREAM_INFO, whole body"});
+    cols.push_back({4, 0x0010, 72, "AVC_COMMAND / SET_NAME, whole body"});
     return cols;
   }
 
@@ -3005,6 +3099,30 @@ struct MilanInfoPhase {
         putbe(&pl[2], 0x0000, 2);                 // index 0
         putbe(&pl[4], 0u, 4);                     // map_index 0
       }
+      //! ADD/REMOVE_AUDIO_MAPPINGS re-dispatch on @24..@25 AND on the record
+      //! count at @28: under the filler the type gate answers the NOT_SUPPORTED
+      //! echo, which differs from the right answer in its status byte alone.
+      //! A real STREAM_PORT_INPUT with a zero count is a whole Figure 7-71
+      //! command, so an unguarded arm runs the edit transaction itself
+      if ((c.hi == 0x002C || c.hi == 0x002D) && c.bytes == 8) {
+        putbe(&pl[0], 0x000E, 2);                 // STREAM_PORT_INPUT
+        putbe(&pl[2], 0x0000, 2);                 // index 0
+        putbe(&pl[4], 0u, 4);                     // number_of_mappings 0
+      }
+      if (c.mt == 4 && c.hi == 0x0008 && c.bytes == 12) {
+        putbe(&pl[0], 0x0006, 2);                 // STREAM_OUTPUT 1: not
+        putbe(&pl[2], 0x0001, 2);                 // streaming, so no refusal
+        putbe(&pl[4], H::SFMT_ALT_C, 8);          // a shape the verdict takes
+      }
+      if (c.mt == 4 && c.hi == 0x000E && c.bytes == 84) {
+        putbe(&pl[0], 0x0006, 2);                 // STREAM_OUTPUT 1
+        putbe(&pl[2], 0x0001, 2);
+        putbe(&pl[4], 0x20000000u, 4);            // MSRP_ACC_LAT_VALID alone
+        putbe(&pl[24], 0x00012345u, 4);           // msrp_accumulated_latency
+      }
+      if (c.mt == 4 && c.hi == 0x0010 && c.bytes == 72)
+        pl = NamePhase::name_body(0x0024, 0, 0, CFGIX,
+                                  NamePhase::name64("M9 must not land"));
       h.q_aecp.clear();
       h.feed(aecp_frame(OWN_MAC, CTLR_MAC, c.mt, 0, EID, CTLR_EID, sq,
                         c.hi, pl));
@@ -3039,7 +3157,20 @@ struct MilanInfoPhase {
   //! reached SET_SAMPLING_RATE's microprogram and WROTE the rate, then
   //! answered SUCCESS. Read the rate back through the command that serves
   //! it, because a refusal that still moved state is not a refusal.
-  void m9b_and_none_of_them_wrote_anything() {
+  void m9b_and_none_of_them_wrote_anything(const M9State& before) {
+    const M9State after = m9_state(0xC01D);
+    CHECK(after.fmt_out_v == before.fmt_out_v
+              && after.fmt_out1 == before.fmt_out1,
+          "M9b3: no SET_STREAM_FORMAT reached the store: STREAM_OUTPUT 1's "
+          "published row (valid 0x%02X -> 0x%02X) is unmoved",
+          unsigned(before.fmt_out_v), unsigned(after.fmt_out_v));
+    CHECK(after.pt_v == before.pt_v && after.pt1 == before.pt1,
+          "M9b4: no SET_STREAM_INFO reached the store: STREAM_OUTPUT 1's "
+          "presentation offset (valid 0x%02X -> 0x%02X) is unmoved",
+          unsigned(before.pt_v), unsigned(after.pt_v));
+    CHECK(after.cd_name.size() == 64 && after.cd_name == before.cd_name,
+          "M9b5: no SET_NAME reached the name table: CLOCK_DOMAIN 0's name "
+          "reads what it read before the storm");
     std::vector<uint8_t> rp(4, 0);
     putbe(&rp[0], 0x0002, 2);                 // AUDIO_UNIT, index 0
     h.q_aecp.clear();
@@ -9428,7 +9559,12 @@ struct Suite {
   //! `entity_cfg` is the ENTITY descriptor's current_configuration, the image
   //! default every unset-row answer falls back to; section AD boots an image
   //! whose default is 1 so that a SET back to 0 is not also the default
-  void load_descriptor_image(uint16_t entity_cfg = CFGIX) {
+  //! `extra_ents`/`extra_bodies` append rows after every configuration-0
+  //! row (section AX puts its configuration-1 descriptors there); the main
+  //! run passes none, so its image is byte for byte what it was
+  void load_descriptor_image(
+      uint16_t entity_cfg = CFGIX, const std::vector<ImgEnt>& extra_ents = {},
+      const std::vector<std::vector<uint8_t>>& extra_bodies = {}) {
     image_ents = {
       {CFGIX, 0x0000, 1, 312, 0, 312, 0},          // ENTITY
       {CFGIX, 0x0024, 1,  82, 2,  88, 0},          // CLOCK_DOMAIN (not %8)
@@ -9454,6 +9590,7 @@ struct Suite {
       //! Test-only shape that makes E_RDESCENT's type guard load-bearing.
       {CFGIX, 0x0022, 1, 312, 10, 312, 0},         // SIGNAL_MULTIPLEXER
     };
+    image_ents.insert(image_ents.end(), extra_ents.begin(), extra_ents.end());
     image_entity = entity_descriptor();
     putbe(&image_entity[310], entity_cfg, 2);  // current_configuration
     image_clkdom = clock_domain_descriptor();
@@ -9461,23 +9598,26 @@ struct Suite {
     //! page of 8), port 1 = 24 clusters at base 8 (three pages of 8)
     image_spi0 = stream_port_descriptor(0x000E, 0, 8, 0);
     image_spi1 = stream_port_descriptor(0x000E, 1, 24, 8);
-    h.dram = build_image(image_ents,
-                         {image_entity, image_clkdom, image_spi0, image_spi1,
-                          stream_descriptor(0x0005, 0), stream_descriptor(0x0005, 1),
-                          stream_descriptor(0x0006, 0), stream_descriptor(0x0006, 1),
-                          avb_interface_descriptor(0),
-                          stream_port_descriptor(0x000F, 0, 8, 0),
-                          stream_port_descriptor(0x000F, 1, 8, 8),
-                          stream_port_descriptor(0x000F, 2, 8, 16, 1, 0),
-                          audio_map_descriptor(0, 0),
-                          audio_unit_descriptor(0, 96000u),
-                          control_descriptor(0),
-                          non_entity_312_descriptor(0)},
+    std::vector<std::vector<uint8_t>> bodies = {
+        image_entity, image_clkdom, image_spi0, image_spi1,
+        stream_descriptor(0x0005, 0), stream_descriptor(0x0005, 1),
+        stream_descriptor(0x0006, 0), stream_descriptor(0x0006, 1),
+        avb_interface_descriptor(0),
+        stream_port_descriptor(0x000F, 0, 8, 0),
+        stream_port_descriptor(0x000F, 1, 8, 8),
+        stream_port_descriptor(0x000F, 2, 8, 16, 1, 0),
+        audio_map_descriptor(0, 0),
+        audio_unit_descriptor(0, 96000u),
+        control_descriptor(0),
+        non_entity_312_descriptor(0)};
+    bodies.insert(bodies.end(), extra_bodies.begin(), extra_bodies.end());
+    h.dram = build_image(image_ents, bodies,
                          //! TWO configurations, so SET_CONFIGURATION has a
                          //! legal non-zero index to be tested with. Only
                          //! configuration 0 carries descriptors, which is a
                          //! legitimate shape and makes configuration 1 a clean
-                         //! NO_SUCH_DESCRIPTOR target for READ_DESCRIPTOR.
+                         //! NO_SUCH_DESCRIPTOR target for READ_DESCRIPTOR
+                         //! (section AX adds configuration-1 rows of its own).
                          //! A3's out-of-range probe uses index 3 and is
                          //! unaffected.
                          {"PP Reference Entity", "Milan Endpoints",
@@ -10498,6 +10638,29 @@ struct NameWritePhase {
   D3RestorePhase{h, image, setup.image_ents}.dr3a_measurements();
 }
 
+//! `--aecp-dispatch-only` (make aecp-dispatch): the two dispatch sweeps of
+//! the main run, A5b and M9, on a model booted the NW way, for the mutation
+//! driver (aecp_dispatch_mutants.py). The default build runs both inside the main
+//! run's own timeline and never here, so no check is counted twice.
+[[maybe_unused]] static void run_aecp_dispatch_focus(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  Suite setup(h);
+  setup.load_descriptor_image();
+  h.reset();
+  setup.boot_restore_over_blank_nvm();
+  h.d->link_up_i = 1;
+  h.d->entity_enable_i = 1;
+  h.idle(1000);
+  h.flush_all();
+  h.q_aecp.clear();
+  ReadDescriptorPhase{h, h.d, setup.image_entity, setup.image_clkdom}
+      .a5b_not_implemented_is_sized_by_its_command();
+  MilanInfoPhase{h, h.d, setup.image_entity}
+      .m9_an_oui_that_collides_with_an_aem_opcode();
+  printf("A5b+M9: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 //! Section AC on a fresh model, against the same descriptor image the suite
 //! loads; `--acmp-only` runs it alone.
 [[maybe_unused]] static void run_acmp(H& h) {
@@ -10881,13 +11044,647 @@ struct AdpConfigPhase {
   printf("AD: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+// ==== AX. AECP dispatch and response (issues #53, #50, #82) ==============
+// A fresh processor of its own (the AD pattern), so the main run's clock is
+// untouched and every value these arms read back is one they set.
+//   LK  the ENTITY_LOCKED arm of SET_SAMPLING_RATE, SET_CLOCK_SOURCE and
+//       SET_CONTROL (Milan 5.4.2.13/.15/.17), graded byte-exact: the refusal
+//       carries the value in force (IEEE 1722.1-2021 7.4.21.1, 7.4.23.1,
+//       7.4.25.1 "the old value if it fails"), moves nothing, and the holder
+//       is still served.
+// The image is the main run's with ONE change: CLOCK_DOMAIN 0's
+// clock_source_index defaults to 2, so an unset row's current index is not
+// also the zero a stub would carry.
+struct AecpResponsePhase {
+  H& h;                                        // the tally
+  const milan::tb::Model<Vpp_top_wrap> model;
+  H io;
+  uint16_t seq = 0x7C00;
+  static constexpr uint64_t C2_MAC = 0x0202C2C2C2C2ull;
+  static constexpr uint16_t CD_IMAGE_INDEX = 2;
+
+  explicit AecpResponsePhase(H& tally) : h(tally), io(model.get()) {}
+
+  static int st(const std::vector<uint8_t>& f) {
+    return f.size() > 16 ? ((f[16] >> 3) & 0x1F) : -1;
+  }
+  static int cdl(const std::vector<uint8_t>& f) {
+    return f.size() > 17 ? (((f[16] & 0x07) << 8) | f[17]) : -1;
+  }
+  std::vector<uint8_t> ask_from(uint64_t mac, uint64_t eid, uint16_t op,
+                                const std::vector<uint8_t>& pl) {
+    io.q_aecp.clear();
+    io.feed(aecp_frame(OWN_MAC, mac, 0, 0, EID, eid, seq, op, pl));
+    return io.wait_frame(io.q_aecp, 600, [mac](const std::vector<uint8_t>& f) {
+      return f.size() >= 12 && (rd64(&f[0]) >> 16) == mac && (f[36] & 0x80) == 0;
+    });
+  }
+  std::vector<uint8_t> ask(uint16_t op, const std::vector<uint8_t>& pl) {
+    return ask_from(CTLR_MAC, CTLR_EID, op, pl);
+  }
+  std::vector<uint8_t> ask2(uint16_t op, const std::vector<uint8_t>& pl) {
+    return ask_from(C2_MAC, CTLR2_EID, op, pl);
+  }
+  //! the whole response to the last command, byte for byte
+  std::vector<uint8_t> want(uint64_t mac, uint64_t eid, int status, uint16_t op,
+                            const std::vector<uint8_t>& body) const {
+    return aecp_frame(mac, OWN_MAC, 1, uint8_t(status), EID, eid, seq, op, body);
+  }
+  static std::vector<uint8_t> tiv(uint16_t ty, uint16_t ix, uint64_t v, int n) {
+    std::vector<uint8_t> p(4 + size_t(n), 0);
+    putbe(&p[0], ty, 2);
+    putbe(&p[2], ix, 2);
+    putbe(&p[4], v, n);
+    return p;
+  }
+  static std::vector<uint8_t> rate_body(uint16_t ix, uint32_t r) {
+    return tiv(0x0002, ix, r, 4);
+  }
+  //! Figure 7-47: clock_source_index @28, reserved @30
+  static std::vector<uint8_t> clks_body(uint16_t ix, uint16_t i) {
+    return tiv(0x0024, ix, uint64_t(i) << 16, 4);
+  }
+  static std::vector<uint8_t> ctrl_body(uint16_t ix, uint8_t v) {
+    return tiv(0x001A, ix, v, 1);
+  }
+
+  //! Figure 7-32's AUDIO_MAP with `n` static mappings, every record distinct
+  static std::vector<uint8_t> big_audio_map(uint16_t ix, uint16_t n) {
+    std::vector<uint8_t> d(8 + 8 * size_t(n), 0);
+    putbe(&d[0], 0x0017, 2);
+    putbe(&d[2], ix, 2);
+    putbe(&d[4], 8, 2);                            // mappings_offset
+    putbe(&d[6], n, 2);                            // number_of_mappings
+    for (uint16_t k = 0; k < n; ++k)
+      putbe(&d[8 + 8 * size_t(k)],
+            (uint64_t(0xA000u | ix) << 48) | (uint64_t(k) << 32)
+                | (uint64_t(0x5000u + k) << 16) | uint64_t(0x0100u + k), 8);
+    return d;
+  }
+  //! 7.2.32's CLOCK_DOMAIN with `n` clock sources, the identity list
+  static std::vector<uint8_t> wide_clock_domain(uint16_t ix, uint16_t n) {
+    std::vector<uint8_t> d(76 + 2 * size_t(n), 0);
+    putbe(&d[0], 0x0024, 2);
+    putbe(&d[2], ix, 2);
+    const char* nm = "Clock Domain C1";
+    memcpy(&d[4], nm, strlen(nm));
+    putbe(&d[68], 0xFFFF, 2);                      // localized_description
+    putbe(&d[72], 76, 2);                          // clock_sources_offset
+    putbe(&d[74], n, 2);                           // clock_sources_count
+    for (uint16_t k = 0; k < n; ++k) putbe(&d[76 + 2 * size_t(k)], k, 2);
+    return d;
+  }
+  //! configuration 1 holds the OV section's descriptors, on either side of
+  //! the 576-byte standard slot (frame = 38 + 4 + length). The first fills
+  //! the build's line: 576 B by default (cdl 592, frame 618), 584 B in the
+  //! line build (cdl 600, frame 626)
+  static constexpr uint16_t CFG1 = 1;
+  std::vector<std::vector<uint8_t>> cfg1_bodies = {
+      big_audio_map(0, uint16_t((DESC_LINE_BYTES - 8) / 8)),  // the whole line
+      big_audio_map(1, 66),          // 536 B: cdl 552, frame 578
+      big_audio_map(2, 65),          // 528 B: cdl 544, frame 570
+      wide_clock_domain(0, 229)};    // 534 B: cdl 550, frame 576 exactly
+  //! OV1's label: the whole line, its cdl (16 + line) and its frame (42 + line)
+  const std::string ov1 = "OV1 AUDIO_MAP 0 (" + std::to_string(DESC_LINE_BYTES)
+                          + " B, the whole line: cdl " + std::to_string(16 + DESC_LINE_BYTES)
+                          + ", frame " + std::to_string(42 + DESC_LINE_BYTES) + ")";
+
+  void boot() {
+    Suite image(io);
+    const std::vector<ImgEnt> cfg1 = {
+        {CFG1, 0x0017, 1, uint16_t(DESC_LINE_BYTES), 0xFFFF, uint16_t(DESC_LINE_BYTES), 0},
+        {CFG1, 0x0017, 1, 536, 0xFFFF, 536, 0},
+        {CFG1, 0x0017, 1, 528, 0xFFFF, 528, 0},
+        {CFG1, 0x0024, 1, 534, 0xFFFF, 536, 0}};
+    image.load_descriptor_image(CFGIX, cfg1, cfg1_bodies);
+    for (const auto& e : image.image_ents)
+      if (e.cfg == CFGIX && e.type == 0x0024) putbe(&io.dram[e.off + 70], CD_IMAGE_INDEX, 2);
+    ents = image.image_ents;
+    restart("AX boot: blank NVM releases the entity");
+  }
+  //! reset (a power cycle: the NVM device is carried), both restore walks to
+  //! their terminal, then link up and enable
+  void restart(const char* what) {
+    io.reset();
+    io.d->restore_go_i = 1;
+    io.idle(5);
+    io.d->restore_go_i = 0;
+    unsigned budget = 400000;
+    while (!io.d->restore_done_o && budget-- != 0) io.step();
+    CHECK(io.d->restore_done_o && !io.d->restore_fail_o, "%s", what);
+    io.d->link_up_i = 1;
+    io.d->entity_enable_i = 1;
+    io.idle(1000);
+    io.flush_all();
+    io.q_aecp.clear();
+  }
+
+  // ---- LK: the ENTITY_LOCKED arm of the three SETs (issue #53) ----------
+  struct Effects {
+    unsigned writes;
+    uint64_t marks;
+    uint64_t notifies;
+  };
+  Effects effects() const {
+    return {static_cast<unsigned>(io.d->dbg_dyn_writes_o), io.nvm_marks,
+            io.notify_enqs};
+  }
+  void lock(bool take, const char* what) {
+    std::vector<uint8_t> lk(16, 0);
+    if (!take) putbe(&lk[2], 1, 2);                // flags = UNLOCK
+    ++seq;
+    const auto l = ask(0x0001, lk);
+    CHECK(st(l) == AECP_SUCCESS, "%s: the bench %s the lock, got status %d",
+          what, take ? "takes" : "releases", st(l));
+  }
+  //! a foreign SET under the bench's lock: ENTITY_LOCKED at the response
+  //! form's cdl, carrying `carried`, and not one effect. The wrap compresses
+  //! the 60 s lock window to 400 ms (LOCK_TIMEOUT_MS_P), so the holder
+  //! re-locks first (the 7.4.2 keep-alive) and the quiet window that follows
+  //! stays well inside it: an expiry would itself notify the holder
+  void foreign(uint16_t op, const std::vector<uint8_t>& sent,
+               const std::vector<uint8_t>& carried, int form_cdl,
+               const char* what) {
+    lock(true, what);
+    refused(true, op, sent, carried, AECP_ENTITY_LOCKED, "ENTITY_LOCKED", form_cdl,
+            what);
+  }
+  //! a refused SET from the second controller or the holder: `status` at the
+  //! response form's cdl, carrying `carried`, and not one effect. Only a
+  //! second controller's command can notify the holder (a notification goes
+  //! to every registered controller but the one that asked), so only its
+  //! refusal waits for an unsolicited frame there
+  void refused(bool from_second, uint16_t op, const std::vector<uint8_t>& sent,
+               const std::vector<uint8_t>& carried, int status, const char* named,
+               int form_cdl, const char* what) {
+    const Effects e0 = effects();
+    ++seq;
+    const auto r = from_second ? ask2(op, sent) : ask(op, sent);
+    const auto w = from_second ? want(C2_MAC, CTLR2_EID, status, op, carried)
+                               : want(CTLR_MAC, CTLR_EID, status, op, carried);
+    CHECK(r == w, "%s: %s byte-exact (status %d, cdl %d)", what, named, st(r),
+          cdl(r));
+    if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
+    CHECK(cdl(r) == form_cdl, "%s: ...at the response form's cdl %d, got %d",
+          what, form_cdl, cdl(r));
+    if (from_second) {
+      const auto uns = io.wait_frame(io.q_aecp, 120, [](const std::vector<uint8_t>& f) {
+        return f.size() > 36 && (f[36] & 0x80) != 0;
+      });
+      CHECK(uns.empty(), "%s: no unsolicited frame reached the registered holder",
+            what);
+      if (!uns.empty()) dump("unsolicited", uns);
+    }
+    const Effects e1 = effects();
+    CHECK(e1.writes == e0.writes && e1.marks == e0.marks
+              && e1.notifies == e0.notifies,
+          "%s: no dynamic-store write, NVM mark or notification (%u, %u, %u)",
+          what, e1.writes - e0.writes, unsigned(e1.marks - e0.marks),
+          unsigned(e1.notifies - e0.notifies));
+  }
+  //! the value a GET answers, off the wire, from either controller
+  uint64_t get_value(uint16_t op, uint16_t ty, uint16_t ix, int n, bool foreign_ctlr) {
+    ++seq;
+    const auto g = foreign_ctlr ? ask2(op, tiv(ty, ix, 0, 0)) : ask(op, tiv(ty, ix, 0, 0));
+    uint64_t v = 0;
+    for (int i = 0; i < n && g.size() > size_t(42 + i); ++i) v = (v << 8) | g[42 + i];
+    return st(g) == AECP_SUCCESS ? v : 0xDEADu;
+  }
+  //! the holder's own SET, and its effects: exactly one of each
+  void holder_set(uint16_t op, const std::vector<uint8_t>& body, bool changes,
+                  const char* what) {
+    const Effects e0 = effects();
+    ++seq;
+    const auto r = ask(op, body);
+    const auto w = want(CTLR_MAC, CTLR_EID, AECP_SUCCESS, op, body);
+    CHECK(r == w, "%s: the holder's SET is served, byte-exact", what);
+    if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
+    const Effects e1 = effects();
+    const unsigned one = changes ? 1u : 0u;
+    CHECK(e1.writes == e0.writes + 1 && e1.notifies == e0.notifies + one,
+          "%s: ...one store write and %u notification enqueued (%u, %u)", what,
+          one, e1.writes - e0.writes, unsigned(e1.notifies - e0.notifies));
+  }
+
+  void lk_on_the_unset_rows() {
+    foreign(AEM_SET_SAMPLING_RATE, rate_body(0, 48000u), rate_body(0, 96000u), 20,
+            "LK1 unset rate row, foreign SET_SAMPLING_RATE(48000) carries the image's 96000");
+    foreign(AEM_SET_CLOCK_SOURCE, clks_body(0, 1), clks_body(0, CD_IMAGE_INDEX), 20,
+            "LK1 unset clock-source row, foreign SET_CLOCK_SOURCE(1) carries the image's 2");
+    foreign(AEM_SET_CONTROL, ctrl_body(0, 255), ctrl_body(0, 0), 17,
+            "LK1 IDENTIFY at its reset 0, foreign SET_CONTROL(255) carries 0");
+    lock(false, "LK1");
+  }
+
+  void lk_on_the_set_rows() {
+    holder_set(AEM_SET_SAMPLING_RATE, rate_body(0, 48000u), true, "LK2 rate 48000");
+    holder_set(AEM_SET_CLOCK_SOURCE, clks_body(0, 1), true, "LK2 clock source 1");
+    holder_set(AEM_SET_CONTROL, ctrl_body(0, 255), true, "LK2 IDENTIFY 255");
+    foreign(AEM_SET_SAMPLING_RATE, rate_body(0, 96000u), rate_body(0, 48000u), 20,
+            "LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000");
+    CHECK(get_value(AEM_GET_SAMPLING_RATE, 0x0002, 0, 4, true) == 48000u,
+          "LK3 ...and GET_SAMPLING_RATE still reads 48000");
+    foreign(AEM_SET_CLOCK_SOURCE, clks_body(0, 2), clks_body(0, 1), 20,
+            "LK3 foreign SET_CLOCK_SOURCE(2) carries the stored 1");
+    CHECK(get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, true) == 1u,
+          "LK3 ...and GET_CLOCK_SOURCE still reads 1");
+    foreign(AEM_SET_CONTROL, ctrl_body(0, 0), ctrl_body(0, 255), 17,
+            "LK3 foreign SET_CONTROL(0) carries the stored 255");
+    CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, true) == 255u
+              && io.d->dbg_identify_o == 255,
+          "LK3 ...and the IDENTIFY value is still 255, on GET and on the face");
+    sctrl_out_of_range_carries_255();
+  }
+
+  //! SET_CONTROL's out-of-range refusal shares the locked refusal's tail, so
+  //! it too carries the value in force (IEEE 1722.1-2021 7.4.25.1 "the old
+  //! value if it fails"). While IDENTIFY holds 255, a zero body and the value
+  //! in force differ (at its reset 0, W13 cannot tell them apart): 128 is
+  //! neither 0 nor 255 (7.3.5.2's step 255), so the holder under its own lock
+  //! and then a second controller with no lock held are each answered
+  //! BAD_ARGUMENTS carrying 255, and nothing moves
+  void sctrl_out_of_range_carries_255() {
+    refused(false, AEM_SET_CONTROL, ctrl_body(0, 128), ctrl_body(0, 255),
+            AECP_BAD_ARGUMENTS, "BAD_ARGUMENTS", 17,
+            "LK3b IDENTIFY at 255, the holder's SET_CONTROL(128) carries 255");
+    lock(false, "LK3c");
+    refused(true, AEM_SET_CONTROL, ctrl_body(0, 128), ctrl_body(0, 255),
+            AECP_BAD_ARGUMENTS, "BAD_ARGUMENTS", 17,
+            "LK3c IDENTIFY at 255, unlocked, a second controller's SET_CONTROL(128) "
+            "carries 255");
+    CHECK(get_value(AEM_GET_CONTROL, 0x001A, 0, 1, true) == 255u
+              && io.d->dbg_identify_o == 255,
+          "LK3c ...and the IDENTIFY value is still 255, on GET and on the face");
+  }
+
+  //! the lock outranks a locate miss for all three (06 section 6.4: lock,
+  //! then locate), and a missing descriptor has no value to carry; the
+  //! holder, asking the same, is answered NO_SUCH_DESCRIPTOR
+  void lk_the_lock_outranks_a_locate_miss() {
+    foreign(AEM_SET_SAMPLING_RATE, rate_body(3, 96000u), rate_body(3, 0), 20,
+            "LK4 foreign SET_SAMPLING_RATE on AUDIO_UNIT 3 (absent)");
+    foreign(AEM_SET_CLOCK_SOURCE, clks_body(3, 1), clks_body(3, 0), 20,
+            "LK4 foreign SET_CLOCK_SOURCE on CLOCK_DOMAIN 3 (absent)");
+    foreign(AEM_SET_CONTROL, ctrl_body(3, 0), ctrl_body(3, 0), 17,
+            "LK4 foreign SET_CONTROL on CONTROL 3 (absent)");
+    const struct { uint16_t op; std::vector<uint8_t> sent; std::vector<uint8_t> carried;
+                   const char* what; } miss[] = {
+      {AEM_SET_SAMPLING_RATE, rate_body(3, 96000u), rate_body(3, 0), "rate"},
+      {AEM_SET_CLOCK_SOURCE, clks_body(3, 1), clks_body(3, 0), "clock source"},
+      {AEM_SET_CONTROL, ctrl_body(3, 0), ctrl_body(3, 0), "control"},
+    };
+    for (const auto& m : miss) {
+      ++seq;
+      const auto r = ask(m.op, m.sent);
+      CHECK(r == want(CTLR_MAC, CTLR_EID, AECP_NO_SUCH_DESCRIPTOR, m.op, m.carried),
+            "LK5 the holder's SET (%s) on an absent descriptor is NO_SUCH_DESCRIPTOR, "
+            "zero body (status %d)", m.what, st(r));
+    }
+  }
+
+  void lk_the_holder_is_still_served() {
+    lock(true, "LK6");
+    CHECK(io.d->dbg_lock_held_o, "LK6: the bench holds the lock while it is served");
+    holder_set(AEM_SET_SAMPLING_RATE, rate_body(0, 96000u), true, "LK6 rate 96000");
+    holder_set(AEM_SET_CLOCK_SOURCE, clks_body(0, 2), true, "LK6 clock source 2");
+    holder_set(AEM_SET_CONTROL, ctrl_body(0, 0), true, "LK6 IDENTIFY 0");
+    CHECK(get_value(AEM_GET_SAMPLING_RATE, 0x0002, 0, 4, false) == 96000u
+              && get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, false) == 2u
+              && get_value(AEM_GET_CONTROL, 0x001A, 0, 1, false) == 0u,
+          "LK6 ...and each GET reads what the holder stored");
+    lock(false, "LK6");
+  }
+
+  void lk_the_entity_locked_arm() {
+    ++seq;
+    const auto r = ask(0x0024, std::vector<uint8_t>(4, 0));
+    CHECK(st(r) == AECP_SUCCESS, "LK0: the bench registers for unsolicited "
+          "notifications, got %d", st(r));
+    lk_on_the_unset_rows();
+    lk_on_the_set_rows();
+    lk_the_lock_outranks_a_locate_miss();
+    lk_the_holder_is_still_served();
+  }
+
+  // ---- OV: a response above cdl 524 through the oversize slot (#50, #82) --
+  static std::vector<uint8_t> rdesc(uint16_t cfg, uint16_t ty, uint16_t ix) {
+    std::vector<uint8_t> p(8, 0);
+    putbe(&p[0], cfg, 2);
+    putbe(&p[4], ty, 2);
+    putbe(&p[6], ix, 2);
+    return p;
+  }
+  //! one READ_DESCRIPTOR of configuration 1 against the descriptor's own
+  //! bytes, and the TX slot the response left through
+  void ov_read(uint16_t ty, uint16_t ix, const std::vector<uint8_t>& desc,
+               bool oversize, const char* what) {
+    io.aecp_grants.clear();
+    io.ser_start_slots.clear();
+    ++seq;
+    const auto r = ask(AEM_READ_DESCRIPTOR, rdesc(CFG1, ty, ix));
+    std::vector<uint8_t> pl(4, 0);
+    putbe(&pl[0], CFG1, 2);
+    pl.insert(pl.end(), desc.begin(), desc.end());
+    const auto w = want(CTLR_MAC, CTLR_EID, AECP_SUCCESS, AEM_READ_DESCRIPTOR, pl);
+    CHECK(r == w, "%s: the %zu-byte descriptor, byte-exact", what, desc.size());
+    if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
+    const int want_cdl = int(12 + pl.size());
+    CHECK(cdl(r) == want_cdl && want_cdl > 524,
+          "%s: cdl %d off the wire, want %d (above 524)", what, cdl(r), want_cdl);
+    CHECK(r.size() == 38 + pl.size(), "%s: %zu octets on the wire, want %zu",
+          what, r.size(), 38 + pl.size());
+    slot_used(oversize, what);
+  }
+  //! the one response since the grant log was cleared took one TX-slot
+  //! grant, slot 4 exactly when the engine raised its oversize request, left
+  //! through slot 4 exactly then, and slot 4 is free again afterwards
+  void slot_used(bool oversize, const char* what) {
+    const bool granted = io.aecp_grants.size() == 1;
+    const unsigned slot = granted ? io.aecp_grants[0].first : 99u;
+    CHECK(granted && (slot == 4) == oversize && io.aecp_grants[0].second == oversize,
+          "%s: one TX-slot grant, the oversize request %s, slot %u", what,
+          oversize ? "raised" : "clear", slot);
+    const bool left4 = std::find(io.ser_start_slots.begin(), io.ser_start_slots.end(),
+                                 uint8_t(4)) != io.ser_start_slots.end();
+    CHECK(left4 == oversize, "%s: the frame %s through slot 4", what,
+          oversize ? "left" : "did not leave");
+    io.idle(20);
+    CHECK(io.d->dbg_txs_slot4_free_o, "%s: slot 4 is free again", what);
+  }
+
+  void ov_responses_above_cdl_524() {
+    ov_read(0x0017, 0, cfg1_bodies[0], true, ov1.c_str());
+    ov_read(0x0017, 1, cfg1_bodies[1], true,
+            "OV2 AUDIO_MAP 1 (536 B: cdl 552, frame 578)");
+    ov_read(0x0017, 2, cfg1_bodies[2], false,
+            "OV3 AUDIO_MAP 2 (528 B: cdl 544, frame 570, a standard slot)");
+    ov_read(0x0024, 0, cfg1_bodies[3], false,
+            "OV4 CLOCK_DOMAIN 0 (534 B: frame 576, the standard slot's own size)");
+    ov_read(0x0017, 0, cfg1_bodies[0], true,
+            "OV5 AUDIO_MAP 0 again: slot 4 is reusable");
+  }
+
+  // ---- PG: the GET_AUDIO_MAP page (#50) ---------------------------------
+  static constexpr int NO_RESOURCES = 8;       // IEEE 1722.1-2021 Table 7-141
+  static constexpr uint16_t PAGE_MAX = 71;     // ucpu_pkg::GAMAP_PAGE_MAX_C
+  //! STREAM_PORT_INPUT 1's page 0 at `n` mappings (the face's override). A
+  //! page of up to PAGE_MAX records is served whole (cdl 24 + 8n: above 524
+  //! from 63 records, Milan 5.4.1; frame 50 + 8n: the oversize slot from 66),
+  //! and a page above it is answered NO_RESOURCES with no record claimed
+  void pg_page(uint16_t n, const char* what) {
+    io.aecp_grants.clear();
+    io.ser_start_slots.clear();
+    io.amap_big_page = n;
+    std::vector<uint8_t> cmd(8, 0);
+    putbe(&cmd[0], 0x000E, 2);
+    putbe(&cmd[2], 1, 2);                          // map_index 0, reserved 0
+    ++seq;
+    const auto r = ask(AEM_GET_AUDIO_MAP, cmd);
+    io.amap_big_page = 0;
+    const bool fits = n <= PAGE_MAX;
+    std::vector<uint8_t> body(12, 0);
+    putbe(&body[0], 0x000E, 2);
+    putbe(&body[2], 1, 2);
+    putbe(&body[6], H::amap_nmaps(0x000E, 1), 2);
+    putbe(&body[8], fits ? n : 0, 2);
+    for (uint16_t k = 0; fits && k < n; ++k) {
+      body.resize(body.size() + 8);
+      putbe(&body[12 + 8 * size_t(k)], H::amap_rec(0x000E, 1, 0, uint8_t(k)), 8);
+    }
+    const auto w = want(CTLR_MAC, CTLR_EID, fits ? AECP_SUCCESS : NO_RESOURCES,
+                        AEM_GET_AUDIO_MAP, body);
+    CHECK(r == w, "%s: byte-exact (status %d, cdl %d)", what, st(r), cdl(r));
+    if (!r.empty() && r != w && r.size() < 120) { dump("got", r); dump("exp", w); }
+    const unsigned claimed = r.size() >= 48 ? ((unsigned(r[46]) << 8) | r[47]) : 0xFFFFu;
+    const int carried = cdl(r) >= 24 ? (cdl(r) - 24) / 8 : -1;
+    CHECK(int(claimed) == carried,
+          "%s: number_of_mappings %u names exactly the %d records carried", what,
+          claimed, carried);
+    slot_used(fits && 50 + 8 * n > 576, what);
+  }
+
+  void pg_the_page() {
+    pg_page(62, "PG1 a 62-mapping page: SUCCESS, cdl 520, a standard slot");
+    pg_page(63, "PG2 a 63-mapping page: SUCCESS above cdl 524 (528), a standard slot");
+    pg_page(64, "PG3 a 64-mapping page (eight 8-channel Stream Outputs in one "
+                "subset): SUCCESS, cdl 536");
+    pg_page(65, "PG4 a 65-mapping page: SUCCESS, cdl 544, frame 570, a standard slot");
+    pg_page(66, "PG5 a 66-mapping page: SUCCESS, cdl 552, frame 578, the oversize slot");
+    pg_page(71, "PG6 a 71-mapping page, the cap: SUCCESS, cdl 592, frame 618, "
+                "the oversize slot");
+    pg_page(72, "PG7 a 72-mapping page: NO_RESOURCES, no record claimed");
+    pg_page(176, "PG8 a 176-mapping page (Milan 5.4.2.26's ceiling): NO_RESOURCES");
+    pg_page(256, "PG9 a 256-mapping page (the count's low byte is 0): NO_RESOURCES");
+    pg_page(3, "PG10 the same page at 3 mappings is served whole again");
+  }
+
+  // ---- RD: READ_DESCRIPTOR carries the GET's current value (#82) --------
+  std::vector<ImgEnt> ents;                    // the loaded image's rows
+  //! configuration `cfg`'s descriptor `ty`[`ix`], as the image holds it
+  std::vector<uint8_t> image_desc(uint16_t cfg, uint16_t ty, uint16_t ix) const {
+    for (const auto& e : ents)
+      if (e.cfg == cfg && e.type == ty && ix < e.count) {
+        const size_t at = e.off + size_t(ix) * e.stride;
+        if (io.dram.size() >= at + e.len)
+          return std::vector<uint8_t>(io.dram.begin() + long(at),
+                                      io.dram.begin() + long(at + e.len));
+      }
+    return {};
+  }
+  //! READ_DESCRIPTOR of configuration 0's `ty`[`ix`] is its image bytes with
+  //! the `n` at `off` carrying `cur`, the value the GET has just returned
+  void rd_agrees(uint16_t ty, uint16_t ix, size_t off, int n, uint64_t cur,
+                 const char* what) {
+    auto d = image_desc(CFGIX, ty, ix);
+    CHECK(d.size() >= off + size_t(n), "%s: the image holds the descriptor", what);
+    if (d.size() < off + size_t(n)) return;
+    putbe(&d[off], cur, n);
+    ++seq;
+    const auto r = ask(AEM_READ_DESCRIPTOR, rdesc(CFGIX, ty, ix));
+    std::vector<uint8_t> pl(4, 0);
+    pl.insert(pl.end(), d.begin(), d.end());
+    const auto w = want(CTLR_MAC, CTLR_EID, AECP_SUCCESS, AEM_READ_DESCRIPTOR, pl);
+    CHECK(r == w, "%s: READ_DESCRIPTOR byte-exact, @%zu carrying 0x%llx", what, off,
+          static_cast<unsigned long long>(cur));
+    if (!r.empty() && r != w) { dump("got", r); dump("exp", w); }
+  }
+  static constexpr uint64_t SFMT_ALT = 0x0205021801006000ull;  // the face's 2ch shape
+  //! a GET's value, then the READ_DESCRIPTOR that must carry it
+  void rd_rate(const char* what) {
+    rd_agrees(0x0002, 0, 136, 4, get_value(AEM_GET_SAMPLING_RATE, 0x0002, 0, 4, false),
+              what);
+  }
+  void rd_clks(const char* what) {
+    rd_agrees(0x0024, 0, 70, 2, get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, false),
+              what);
+  }
+  void rd_fmt(uint16_t ty, uint16_t ix, const char* what) {
+    rd_agrees(ty, ix, 74, 8, get_value(AEM_GET_STREAM_FORMAT, ty, ix, 8, false), what);
+  }
+  //! a STREAM no SET_STREAM_FORMAT has set: its image bytes, exactly. Its GET
+  //! reads the integrator's face, which serves its own value until a SET
+  //! publishes a row, and the image need not agree with it (the face's model
+  //! here does not); the descriptor overlays only the processor's own row
+  void rd_image(uint16_t ty, uint16_t ix, const char* what) {
+    const auto d = image_desc(CFGIX, ty, ix);
+    rd_agrees(ty, ix, 74, 8, d.size() >= 82 ? rd64(&d[74]) : 0, what);
+  }
+
+  //! before any SET the image is the current value of the rate and the clock
+  //! source, and a STREAM's descriptor is its image
+  void rd_before_any_set() {
+    CHECK(get_value(AEM_GET_SAMPLING_RATE, 0x0002, 0, 4, false) == 96000u
+              && get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, false) == CD_IMAGE_INDEX,
+          "RD0 unset rows: the GETs read the image's 96000 and clock source 2");
+    rd_rate("RD0 AUDIO_UNIT 0, rate unset");
+    rd_clks("RD0 CLOCK_DOMAIN 0, clock source unset");
+    rd_image(0x0005, 0, "RD0 STREAM_INPUT 0, format unset");
+    rd_image(0x0006, 1, "RD0 STREAM_OUTPUT 1, format unset");
+  }
+
+  //! after each SET the READ_DESCRIPTOR carries what the GET reads (the SETs'
+  //! values differ from the image's), and configuration 1 keeps its image
+  void rd_after_each_set() {
+    holder_set(AEM_SET_SAMPLING_RATE, rate_body(0, 48000u), true, "RD1 rate 48000");
+    CHECK(get_value(AEM_GET_SAMPLING_RATE, 0x0002, 0, 4, false) == 48000u,
+          "RD1 GET_SAMPLING_RATE reads 48000");
+    rd_rate("RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000)");
+    holder_set(AEM_SET_CLOCK_SOURCE, clks_body(0, 0), true, "RD1 clock source 0");
+    rd_clks("RD1 CLOCK_DOMAIN 0 after SET_CLOCK_SOURCE(0)");
+    //! ...and it ends at 1, which configuration 1's CLOCK_DOMAIN (index 0 in
+    //! its image) does not hold, so RD2 below sees an overlay it must not get
+    holder_set(AEM_SET_CLOCK_SOURCE, clks_body(0, 1), true, "RD1 clock source 1");
+    CHECK(get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, false) == 1u,
+          "RD1 GET_CLOCK_SOURCE reads 1");
+    rd_clks("RD1 CLOCK_DOMAIN 0 after SET_CLOCK_SOURCE(1)");
+    for (const auto& t : {std::pair<uint16_t, uint16_t>{0x0005, 0}, {0x0006, 1}}) {
+      ++seq;
+      const auto r = ask(AEM_SET_STREAM_FORMAT, tiv(t.first, t.second, SFMT_ALT, 8));
+      CHECK(r == want(CTLR_MAC, CTLR_EID, AECP_SUCCESS, AEM_SET_STREAM_FORMAT,
+                      tiv(t.first, t.second, SFMT_ALT, 8)),
+            "RD1 SET_STREAM_FORMAT(2ch) on type 0x%04x index %u is served (status %d)",
+            t.first, t.second, st(r));
+      CHECK(get_value(AEM_GET_STREAM_FORMAT, t.first, t.second, 8, false) == SFMT_ALT,
+            "RD1 GET_STREAM_FORMAT on type 0x%04x index %u reads the 2ch format",
+            t.first, t.second);
+    }
+    rd_fmt(0x0005, 0, "RD1 STREAM_INPUT 0 after SET_STREAM_FORMAT");
+    rd_fmt(0x0006, 1, "RD1 STREAM_OUTPUT 1 after SET_STREAM_FORMAT");
+    rd_image(0x0006, 0, "RD1 STREAM_OUTPUT 0, never set, still its image");
+    ov_read(0x0024, 0, cfg1_bodies[3], false,
+            "RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes");
+  }
+
+  //! RD3 (R417-1 S2): a row the D3 restore wrote, not a SET. RD1's rows reach
+  //! the device once the writer's debounce closes; a power cycle carries the
+  //! device and both restore walks write the rows back; with no SET since the
+  //! reset, each READ_DESCRIPTOR carries what its GET reads: 48000, clock
+  //! source 1 and the 2ch format on STREAM_INPUT 0 and STREAM_OUTPUT 1
+  void rd_after_the_restore() {
+    bool settled = false;
+    for (long c = 0; c < 1500L * MS_CYC && !settled; ++c) {
+      io.step();
+      settled = c > 16 && !io.d->d3_unflushed_o && io.nv_st == H::NvState::NV_IDLE
+                && !io.d->nvm_dev_req_o;
+    }
+    CHECK(settled, "RD3 RD1's rows reached the device before the power cycle (premise)");
+    restart("RD3 the power cycle's restore releases the entity");
+    CHECK(io.d->dbg_dyn_rate_v_o && io.d->dbg_dyn_clk_v_o
+              && get_value(AEM_GET_SAMPLING_RATE, 0x0002, 0, 4, false) == 48000u
+              && get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, false) == 1u
+              && get_value(AEM_GET_STREAM_FORMAT, 0x0005, 0, 8, false) == SFMT_ALT
+              && get_value(AEM_GET_STREAM_FORMAT, 0x0006, 1, 8, false) == SFMT_ALT,
+          "RD3 the restore wrote the rows back: the GETs read 48000, 1 and the 2ch "
+          "format (premise)");
+    rd_rate("RD3 AUDIO_UNIT 0 after the restore, no SET since the reset");
+    rd_clks("RD3 CLOCK_DOMAIN 0 after the restore, no SET since the reset");
+    rd_fmt(0x0005, 0, "RD3 STREAM_INPUT 0 after the restore, no SET since the reset");
+    rd_fmt(0x0006, 1, "RD3 STREAM_OUTPUT 1 after the restore, no SET since the reset");
+    rd_image(0x0006, 0, "RD3 STREAM_OUTPUT 0, never set, still its image");
+  }
+
+  //! RD4 (R416-1 S1): a configuration-0 STREAM too short for current_format's
+  //! second lane (88 bytes) is served whole from its image, set row or not:
+  //! the TAIL count would otherwise be its length less 88, wrapped. Only a
+  //! STREAM's row can be set over such a descriptor, because SET_STREAM_FORMAT
+  //! is judged by the integrator's face; SET_SAMPLING_RATE, SET_CLOCK_SOURCE
+  //! and their restore rules are judged against the descriptor's own list and
+  //! count, which a descriptor short of the lane does not hold. The index map
+  //! (outside the header checksum) gives STREAM_OUTPUT 80 bytes, a power cycle
+  //! walks it again, and the holder sets STREAM_OUTPUT 1's format
+  static constexpr uint16_t SHORT_STREAM = 80;
+  void rd_a_short_stream_keeps_its_image() {
+    for (size_t i = 0; i < ents.size(); ++i)
+      if (ents[i].cfg == CFGIX && ents[i].type == 0x0006) {
+        ents[i].len = SHORT_STREAM;
+        putbe(&io.dram[32 + 16 * i + 6], SHORT_STREAM, 2);
+      }
+    restart("RD4 the power cycle over 80-byte STREAM_OUTPUTs releases the entity");
+    ++seq;
+    const auto set = ask(AEM_SET_STREAM_FORMAT, tiv(0x0006, 1, SFMT_ALT, 8));
+    CHECK(st(set) == AECP_SUCCESS && (io.d->aecp_fmt_out_v_o & 0x2) != 0
+              && get_value(AEM_GET_STREAM_FORMAT, 0x0006, 1, 8, false) == SFMT_ALT,
+          "RD4 STREAM_OUTPUT 1's row holds the 2ch format: SET status %d (premise)",
+          st(set));
+    const auto d = image_desc(CFGIX, 0x0006, 1);
+    CHECK(d.size() == SHORT_STREAM, "RD4 the image serves STREAM_OUTPUT 1 at %u bytes",
+          unsigned(d.size()));
+    ++seq;
+    const auto r = ask(AEM_READ_DESCRIPTOR, rdesc(CFGIX, 0x0006, 1));
+    std::vector<uint8_t> pl(4, 0);
+    pl.insert(pl.end(), d.begin(), d.end());
+    const auto w = want(CTLR_MAC, CTLR_EID, AECP_SUCCESS, AEM_READ_DESCRIPTOR, pl);
+    CHECK(r == w, "RD4 STREAM_OUTPUT 1 of 80 bytes with a set row: READ_DESCRIPTOR "
+          "byte-exact, its image whole (cdl %d)", cdl(r));
+    if (!r.empty() && r != w && r.size() < 200) { dump("got", r); dump("exp", w); }
+  }
+
+  // ---- RB: every response write inside the reservation (R417-1 F1) ------
+  //! The integrator reserves 16 + DESC_LINE_BYTES_P bytes at RESP_BASE_P and
+  //! nothing else writes there (integrator guide section 5, 07 section 3.3.2),
+  //! so the processor may write nothing past it. The memory model counted
+  //! every strobed byte of this section's responses, and OV1/OV5 read the
+  //! whole-line descriptor, so the largest ends on the reservation's last
+  //! byte. The line build runs this at a non-default line, 584.
+  void rb_writes_stay_in_the_reservation() {
+    CHECK(io.d->dbg_desc_line_bytes_o == DESC_LINE_BYTES,
+          "RB the top elaborated DESC_LINE_BYTES_P %u, the line this build reserves for (%u)",
+          unsigned(io.d->dbg_desc_line_bytes_o), DESC_LINE_BYTES);
+    CHECK(io.rmem_past == 0,
+          "RB no response byte written at or past RESP_BASE_P + 16 + DESC_LINE_BYTES_P "
+          "(%u): %llu", RESP_BYTES, static_cast<unsigned long long>(io.rmem_past));
+    CHECK(io.rmem_top == RESP_BYTES,
+          "RB the whole-line READ_DESCRIPTOR reached the reservation's last byte: "
+          "%u bytes written, %u reserved", io.rmem_top, RESP_BYTES);
+  }
+
+  void run() {
+    boot();
+    rd_before_any_set();
+    lk_the_entity_locked_arm();
+    ov_responses_above_cdl_524();
+    pg_the_page();
+    rd_after_each_set();
+    rd_after_the_restore();
+    rd_a_short_stream_keeps_its_image();
+    rb_writes_stay_in_the_reservation();
+  }
+};
+
+[[maybe_unused]] static void run_aecp_response(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  AecpResponsePhase{h}.run();
+  printf("AX: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 #include "notify_phases.hpp"
 
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
-  //! the harness that owns the tally. Section DV runs on a model of its own
-  //! in both builds, so its code is one path; in the fixture build this
-  //! model is never clocked.
+  //! the harness that owns the tally. Sections DV and AX run on models of
+  //! their own in two builds each, so each has one path; in the fixture and
+  //! line builds this model is never clocked.
   const milan::tb::Model<Vpp_top_wrap> model;
   H h(model.get());
 #if defined(PP_TOP_SRP_DOM_DEF_VID)
@@ -10900,6 +11697,10 @@ int main(int argc, char** argv) {
   //! ID alone; the first grades the default 0 (section ID0 among the rest)
   run_identify(h);
   const char* const build = "identify";
+#elif defined(PP_TOP_DESC_LINE_BYTES)
+  //! the line build runs section AX alone, on its non-default line
+  run_aecp_response(h);
+  const char* const build = "line";
 #else
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
@@ -10909,31 +11710,35 @@ int main(int argc, char** argv) {
   const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
   const bool ident_only = argc == 2 && std::strcmp(argv[1], "--identify-only") == 0;
   const bool notify_only = argc == 2 && std::strcmp(argv[1], "--notify-only") == 0;
+  const bool aecp_only = argc == 2
+                         && std::strcmp(argv[1], "--aecp-dispatch-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
   }
-  const bool one_section = gsi_only || name_only || d3_only || acmp_only || adp_only || maap_only
-                           || ident_only || notify_only;
+  const bool one_section = gsi_only || name_only || d3_only || acmp_only || adp_only
+                           || maap_only || aecp_only || ident_only || notify_only;
   if (maap_only) run_maap_internal(h);
   if (!one_section) Suite(h).run();
+  if (aecp_only) run_aecp_dispatch_focus(h);
   if (!one_section || gsi_only) InternalStreamInfoPhase{h}.run();
   if (!one_section || name_only) run_name_writes(h);
   if (!one_section || d3_only) run_d3(h);
   if (!one_section || acmp_only) run_acmp(h);
   if (!one_section || adp_only) run_adp_config(h);
+  if (!one_section || aecp_only) run_aecp_response(h);
   if (!one_section || ident_only) run_identify(h);
   if (!one_section || notify_only) run_pushes(h);
   if (!one_section || notify_only) run_storm(h);
   if (!one_section || notify_only) run_rnd(h);
   const char* const build = "default";
 #endif
-  //! NOT the canonical tally shape: this binary is ONE of the suite's three
+  //! NOT the canonical tally shape: this binary is ONE of the suite's four
   //! builds, and run_suites.sh reads only the LAST matching line, so a
   //! canonical line here would drop the other builds' checks from the total.
-  //! The Makefile sums all three builds and prints the one canonical line.
-  printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x] %d checks, %d failures\n",
-         build, unsigned(SRP_DEF_VID), h.checks, h.fails);
+  //! The Makefile sums all four builds and prints the one canonical line.
+  printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x, DESC_LINE_BYTES_P %u] %d checks, %d failures\n",
+         build, unsigned(SRP_DEF_VID), unsigned(DESC_LINE_BYTES), h.checks, h.fails);
   FILE* acc = fopen("obj_dir/build_tally.txt", "a");
   if (acc == nullptr) {
     printf("FAIL: this build's tally cannot be recorded for the Makefile\n");

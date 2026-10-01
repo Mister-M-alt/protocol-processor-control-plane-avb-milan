@@ -36,6 +36,11 @@ ST_STRMRUN = 12       # Table 7-141 STREAM_IS_RUNNING — Milan's refusal for a
                       # SET aimed at a bound Stream Input or a streaming
                       # Stream Output (SS5.4.2.5 / SS5.4.2.7 / SS5.4.2.9)
 REL_EQ, REL_NE, REL_LT, REL_GE = 0, 1, 2, 3
+TAIL = 1              # COPY_BUF cnd[0]: copy rf[ra] - imm bytes from imm, the
+                      # descriptor's tail from a lane-aligned start (#82)
+D8 = 1                # APPEND cnd[0]: the Milan §5.4.1 record loop, which
+                      # fills the response buffer instead of stopping at 524
+                      # (KL_aecp_ucpu RESP_D8_CAP_BYTES_P; never inside a batch)
 
 # KL_aecp_desc_store state-port regions (see its banner): the µISA cannot put a
 # 48-bit locate key on a 20-bit address, so the region nibble selects what a
@@ -88,6 +93,8 @@ E_COPY    = 352
 E_MAPV    = 384
 E_MAPVF   = 400
 E_OVF     = 416      # 524-byte cap + skip-on-overflow (§7.4.76.1)
+E_OVF8    = 432      # the Δ8 APPEND: fills the buffer, 524 in a batch (#50)
+E_COPYT   = 448      # COPY_BUFFER TAIL: rf[ra] - start bytes from start (#82)
 E_FMT     = 512
 E_NOTIMPL = 560      # unknown-opcode path (IEEE §9.3.5.3.3, REQ-FWX-001)
 E_ACQ     = 576      # ACQUIRE_ENTITY exemplar (Milan Δ7: NOT_SUPPORTED)
@@ -144,6 +151,7 @@ E_GCFG    = 1024     # GET_CONFIGURATION (Milan 5.4.2.6, IEEE 7.4.8)
 E_GSFMT   = 1056     # GET_STREAM_FORMAT (Milan 5.4.2.8, IEEE 7.4.10)
 E_GSRATE  = 1088     # GET_SAMPLING_RATE (Milan 5.4.2.14, IEEE 7.4.22)
 E_GCLKS   = 1120     # GET_CLOCK_SOURCE (Milan 5.4.2.16, IEEE 7.4.24)
+E_SCLKSRF = 1144     # SET_CLOCK_SOURCE's shared refusal tail (out of line)
 E_SSRATE = 1152     # SET_SAMPLING_RATE (Milan 5.4.2.13, IEEE 7.4.21)
 E_SCLKS   = 1184     # SET_CLOCK_SOURCE (Milan 5.4.2.15, IEEE 7.4.23)
 # ...and the two wrong-target refusals they share. Table 7-141's NOT_SUPPORTED
@@ -157,13 +165,11 @@ E_GCTRL   = 1248     # GET_CONTROL (Milan 5.4.2.18, IEEE 7.4.26)
 E_SCTRL   = 1280     # SET_CONTROL (Milan 5.4.2.17, IEEE 7.4.25)
 E_TIZ8NS  = 1216     # {type, index} + 8 zero bytes, NOT_SUPPORTED
 E_TIZ4NS  = 1224     # {type, index} + 4 zero bytes, NOT_SUPPORTED
-E_LOCKED4 = 1232     # {type, index} + 4 zero bytes, ENTITY_LOCKED
 E_BADARG4 = 1240     # {type, index} + 4 zero bytes, BAD_ARGUMENTS
 # ...and the same two refusals in the CONTROL response FORM. A refusal has to
 # be the size of the response it refuses (only NOT_IMPLEMENTED may answer at
 # command length), and a Milan IDENTIFY control carries ONE value byte, so its
 # body is 5 and its cdl 17 where the others are 8 and 20.
-E_LOCKED1 = 1312     # {type, index} + 1 zero byte, ENTITY_LOCKED
 E_BADARG1 = 1320     # {type, index} + 1 zero byte, BAD_ARGUMENTS
 E_NSUPP1  = 1328     # {type, index} + 1 zero byte, NOT_SUPPORTED
 # A refusal has to be the size of the response it refuses: the stubs above are
@@ -176,6 +182,14 @@ E_SCFGLK  = 1500     # ...its ENTITY_LOCKED arm
 E_SCFGBAD = 1513     # ...its BAD_ARGUMENTS arm
 E_SCFGEMT = 1526     # ...the body all three share
 E_RDESCENT = 1568    # READ_DESCRIPTOR(ENTITY) with current_configuration overlay
+#! READ_DESCRIPTOR's current-value overlays of the configuration-0 AUDIO_UNIT,
+#! CLOCK_DOMAIN and STREAM_INPUT/OUTPUT (issue #82), in the free 1531..1567
+#! and 1761..1791 runs and the free tail after E_SSRWALK
+E_RDESCSF = 1536     # ...a STREAM's shared emit: current_format in r1
+E_RDESCSI = 1768     # ...a STREAM_INPUT: its SET_STREAM_FORMAT row
+E_RDESCSO = 1780     # ...a STREAM_OUTPUT: its SET_STREAM_FORMAT row
+E_RDESCAU = 2000     # ...an AUDIO_UNIT: current_sampling_rate
+E_RDESCCD = 2024     # ...a CLOCK_DOMAIN: clock_source_index
 # --- START/STOP_STREAMING (Milan §5.4.2.19/.20, IEEE §7.4.35/.36) ------------
 # 32-word slots in the free tail, so each can grow an arm without renumbering
 # its neighbour.
@@ -213,10 +227,12 @@ E_SIRUN  = 1936     # SET_STREAM_INFO on a STREAMING output: refused whole
 #! engine entry and its 32-word slot; the walk alone is 41 words, so it takes
 #! the front of this free tail and E_SSRATE branches into it.
 E_SSRWALK = 1952    # SET_SAMPLING_RATE: is the rate on the AUDIO_UNIT's list?
-#! IDENTIFY_NOTIFICATION (IEEE 7.4.39) takes the front of the free tail after
-#! the rate walk, on a 16-word boundary.
-E_IDNOTIF = 2000    # unsolicited IDENTIFY_NOTIFICATION body (7.4.39.1)
-E_SINFOUNS = 2016   # unsolicited SET_STREAM_INFO body (7.4.15.1, Figure 7-40)
+#! IDENTIFY_NOTIFICATION (IEEE 7.4.39) and the unsolicited SET_STREAM_INFO
+#! body take the free 456..511 run after E_COPYT, each on a 16-word boundary:
+#! the tail after the rate walk holds READ_DESCRIPTOR's current-value
+#! overlays (issue #82).
+E_IDNOTIF = 464     # unsolicited IDENTIFY_NOTIFICATION body (7.4.39.1)
+E_SINFOUNS = 480    # unsolicited SET_STREAM_INFO body (7.4.15.1, Figure 7-40)
 #! The name family occupies the free 1344..1455 run. Keeping it out of the
 #! setter tail lets the notification-aware stream programs grow without
 #! interleaving unrelated entry points.
@@ -509,6 +525,19 @@ place(E_COPY, [
     u('END'),
 ])
 
+# --- COPY_BUFFER TAIL (issue #82): the count is rf[ra] less the start, the
+# bytes from a lane-aligned start to the end of a descriptor rf[ra] long -----
+place(E_COPYT, [
+    u('DESC_ADDR', ra=14, imm=0x00100),
+    u('BR_STATUS', cnd=0, imm=E_FAIL),
+    u('MOVE', rd=8, imm=0x30),                   # a 48-byte "descriptor"
+    u('COPY_BUF', ra=8, cnd=TAIL, imm=0x28),     # its last 8 bytes, lane 1
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+])
+
 # --- MAP_VALIDATE pass / fail ------------------------------------------------
 place(E_MAPV, [
     u('MAP_VALID', cnd=3, imm=E_FAIL),           # sel 0x30 -> pass
@@ -537,6 +566,26 @@ place(E_OVF, [
     u('BR_STATUS', cnd=4, imm=E_OVF + 10),       # out: ovf? ->
     u('SET_STATUS', imm=ST_OK),                  # (no-ovf path)
     u('BRANCH', imm=E_OVF + 11),
+    u('SET_STATUS', imm=ST_NSUPP),               # ovf marker for the TB
+    u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- the Δ8 APPEND (issue #50): the same loop with cnd D8 fills the response
+# buffer (RESP_D8_CAP_BYTES_P, 592 by default: 72 whole qwords from cursor
+# 12), and the same µop inside a GET_DYNAMIC_INFO batch still stops at 524 ---
+place(E_OVF8, [
+    u('MOVE', rd=6, imm=80),                     # 80 elements of 8 B
+    u('MOVE', rd=1, imm=0xD8),
+    u('ITER_OPEN', ra=6),
+    u('APPEND', ra=1, fmt=FMT_Q, cnd=D8),        # loop: 72 fit, rest skip
+    u('ITER_NEXT'),
+    u('BR_STATUS', cnd=1, imm=E_OVF8 + 7),
+    u('BRANCH', imm=E_OVF8 + 3),
+    u('BR_STATUS', cnd=4, imm=E_OVF8 + 10),      # out: ovf? ->
+    u('SET_STATUS', imm=ST_OK),                  # (no-ovf path)
+    u('BRANCH', imm=E_OVF8 + 11),
     u('SET_STATUS', imm=ST_NSUPP),               # ovf marker for the TB
     u('BUILD_HDR', ra=15, rb=13),
     u('SEND_RESP'),
@@ -844,6 +893,27 @@ place(E_GCTRSNS, [
 # constant, and every other descriptor type keeps the NOT_IMPLEMENTED echo.
 # r14[15:0], where other programs keep the @24 field, is the locate key's cfg
 # half instead.
+#
+# THE PAGE CAP (issue #50). Milan §5.4.1 lets a GET_AUDIO_MAP response exceed
+# cdl 524, so the records ride the Δ8 APPEND (cnd D8), which fills the
+# engine's response buffer instead of skipping at RESP_CAP_C: 592 bytes at the
+# default 576-byte line, cursor = cdl, so the header record's 12 bytes and the
+# fixed part's 12 leave room for GAMAP_PAGE_MAX = 71 whole 8-byte records,
+# cdl 592 and a 618-byte frame, which leaves through the oversize TX slot. A
+# page the face reports above that could not be carried whole, and the loop
+# would drop its tail while number_of_mappings still named every record. So
+# the count is taken to 0 on every arm when it exceeds the cap (the error
+# stubs carry no records either way), and a page the command would otherwise
+# answer SUCCESS is answered NO_RESOURCES (Table 7-141: "cannot complete the
+# command because it does not have the resources to support it"):
+# number_of_mappings never names a record the response does not carry.
+# P-MAP-SUBSET-CH-MAX (F01.5) is the matching integrator contract: Milan
+# §5.4.2.26 lets a PAAD partition into subsets of up to 176 channels, and this
+# build's responses carry 71. ucpu_pkg::GAMAP_PAGE_MAX_C is the same number and
+# KL_aecp_engine refuses to elaborate a buffer that cannot hold the page.
+GAMAP_PAGE_MAX = (16 + 576 - 24) // 8
+assert GAMAP_PAGE_MAX == 71
+GAMAP_EMIT = E_GAMAP + 15                        # every status's emit
 place(E_GAMAP, [
     #! the type constant loads FIRST so E_GAMAPO below can override it and
     #! fall into the shared tail - one program, two Table 7-1 types
@@ -852,26 +922,35 @@ place(E_GAMAP, [
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # miss -> NO_SUCH_DESCRIPTOR
     u('GATHER_EXT', rd=5, **AM_NMAPS),           # r5 = number_of_maps
     u('GATHER_EXT', rd=6, **AM_GEOM),            # r6 = {nmaps, nmappings}
-    u('BR_STATUS', cnd=0, imm=E_GAMAP + 9),      # NSD: skip to the emit
+    u('COMPARE', ra=6, fmt=FMT_W,                # lt: the page fits the cap
+      imm=GAMAP_PAGE_MAX + 1),
+    u('BR_STATUS', cnd=3, imm=E_GAMAP + 9),
+    u('MOVE', rd=10, ra=0, imm=0xFFFF),          # above it: number_of_mappings
+    u('SET_MASKED', rd=6, ra=12, rb=10),         # := 0, and no record emitted
+    u('BR_STATUS', cnd=0, imm=GAMAP_EMIT),       # E_GAMAP + 9, NSD: the emit
     u('SET_STATUS', imm=ST_OK),
     u('CHECK_ARG', ra=5, rb=12, fmt=FMT_W,       # number_of_maps != 0;
-      cnd=8 | REL_NE, imm=E_GAMAP + 9),          # zero -> NOT_SUPPORTED
+      cnd=8 | REL_NE, imm=GAMAP_EMIT),           # zero -> NOT_SUPPORTED
     u('CHECK_ARG', ra=13, rb=5, fmt=FMT_W,       # map_index < number_of_maps
-      cnd=REL_LT, imm=E_GAMAP + 9),              # else BAD_ARGUMENTS (§7.4.44.1)
-    u('BUILD_HDR', ra=15, rb=13),                # emit (all three statuses):
+      cnd=REL_LT, imm=GAMAP_EMIT),               # else BAD_ARGUMENTS (§7.4.44.1)
+    u('BR_STATUS', cnd=3, imm=GAMAP_EMIT),       # the page fits (lt of +5)
+    u('SET_STATUS', imm=ST_NORES),               # it does not: NO_RESOURCES
+    u('BUILD_HDR', ra=15, rb=13),                # GAMAP_EMIT, all statuses:
     u('BUILD_FLD', ra=8, fmt=FMT_W),             # descriptor_type       @24
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # descriptor_index @26 + map_index @28
     u('BUILD_FLD', ra=6, fmt=FMT_D),             # number_of_maps @30 + number_of_mappings @32
     u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved              @34
     u('ITER_OPEN', ra=6),                        # count = number_of_mappings
-    u('BR_STATUS', cnd=1, imm=E_GAMAP + 20),     # loop: 0-trip safe (test FIRST)
+    u('BR_STATUS', cnd=1, imm=E_GAMAP + 26),     # E_GAMAP + 21, loop: 0-trip safe
     u('GATHER_EXT', rd=7, **AM_REC),             # record amap_rec_o, 8 B
-    u('APPEND', ra=7, fmt=FMT_Q),
+    u('APPEND', ra=7, fmt=FMT_Q, cnd=D8),        # fills the buffer (§5.4.1)
     u('ITER_NEXT'),
-    u('BRANCH', imm=E_GAMAP + 15),
-    u('SEND_RESP'),                              # out:
+    u('BRANCH', imm=E_GAMAP + 21),
+    u('SEND_RESP'),                              # E_GAMAP + 26, out:
     u('END'),
 ])
+assert rom[GAMAP_EMIT] == u('BUILD_HDR', ra=15, rb=13)
+assert rom[E_GAMAP + 26] == u('SEND_RESP')
 
 # --- gather selectors the registry/lock face answers (06 §6.4/§6.7) ----------
 # The SAME command-routed 8-bit sel space as the other faces. Engine mapping:
@@ -1042,6 +1121,123 @@ place(E_LOCKUNS, [
 def GSI(n: int) -> dict[str, int]:
     """GET_STREAM_INFO word `n` as the cnd/imm pair a GATHER_EXT carries."""
     return dict(cnd=0xB, imm=n)
+
+# --- READ_DESCRIPTOR's current-value overlays (issue #82) --------------------
+# The same assembly as E_RDESCENT, in the middle of a descriptor instead of at
+# its end: IEEE 1722.1-2021 §7.2.3 current_sampling_rate, §7.2.32
+# clock_source_index and §7.2.6 current_format are the values GET_SAMPLING_RATE
+# (§7.4.22), GET_CLOCK_SOURCE (§7.4.24) and GET_STREAM_FORMAT (§7.4.10) return,
+# so after a SET the descriptor must carry what the GET reads, not the image's
+# default. Each program copies the descriptor up to the field (COPY_BUF, whose
+# partial final lane is overwritten by the next field), builds the field from
+# the dynamic-state row its SET wrote, builds the rest of the field's lane out
+# of the image lane, and copies the tail from the next lane boundary with
+# COPY_BUF TAIL (the tail's length is the descriptor's, which the µISA cannot
+# subtract). A row no SET or restore has written leaves the descriptor to
+# E_RDESC, whole: the image IS the current value then, the GETs' own
+# overlay-arm rule. A STREAM's GET reads the integrator's face, which serves
+# the row once it is published (the settings fold) and its own value before;
+# so the row, never the face, is what READ_DESCRIPTOR takes, and an unset
+# stream keeps its image bytes. A descriptor too short to hold the field's
+# lane is served whole by E_RDESC too. The engine re-dispatches here for
+# configuration 0 only, the configuration the GETs locate in; the prologue is
+# E_RDESC's.
+AU_RATE_TAIL = AU_RATE_OFF + 8     # 144: sampling_rates_offset's lane ends
+CD_SRCIDX_OFF = 70                 # §7.2.32 clock_source_index
+CD_SRCIDX_TAIL = 72                # its lane ends: clock_sources_offset @72
+STR_FMT_OFF = 74                   # §7.2.6 current_format, 8 bytes
+STR_FMT_LANE2 = 80                 # its second lane: format tail, @82, @84..87
+STR_FMT_TAIL = 88                  # that lane ends inside backup_talker_0
+place(E_RDESCAU, [
+    u('MOVE', rd=12, ra=0, imm=0),               # reserved @26
+    u('READ_ST', rd=9, imm=RGN_NCFG),
+    u('CHECK_ARG', ra=14, rb=9, fmt=FMT_W,
+      cnd=REL_LT, imm=E_RDSTUB),
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # requested AUDIO_UNIT[index]
+    u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+    u('READ_ST', rd=3, imm=RGN_DYNV + SEL_RATE), # has a SET or restore set it?
+    u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_RDESC),          # unset: the image is current
+    u('READ_ST', rd=8, imm=RGN_LEN),
+    u('COMPARE', ra=8, fmt=FMT_W, imm=AU_RATE_TAIL),
+    u('BR_STATUS', cnd=3, imm=E_RDESC),          # too short for the lane
+    u('READ_ST', rd=1, imm=RGN_DYN + SEL_RATE),  # GET_SAMPLING_RATE's value
+    u('READ_ST', rd=4, imm=RGN_DATA + AU_RATE_OFF),   # lane 136: [31:0] = @140
+    u('MOVE', rd=7, ra=0, imm=AU_RATE_OFF),      # prefix length 136
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
+    u('COPY_BUF', ra=7, imm=RGN_DATA),           # bytes 0..135
+    u('BUILD_FLD', ra=1, fmt=FMT_D),             # current_sampling_rate 136
+    u('BUILD_FLD', ra=4, fmt=FMT_D),             # offset + count 140..143
+    u('COPY_BUF', ra=8, cnd=TAIL, imm=RGN_DATA + AU_RATE_TAIL),  # 144..
+    u('SEND_RESP'),
+    u('END'),
+])
+place(E_RDESCCD, [
+    u('MOVE', rd=12, ra=0, imm=0),               # reserved @26
+    u('READ_ST', rd=9, imm=RGN_NCFG),
+    u('CHECK_ARG', ra=14, rb=9, fmt=FMT_W,
+      cnd=REL_LT, imm=E_RDSTUB),
+    u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # requested CLOCK_DOMAIN[index]
+    u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+    u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CLKSRC),
+    u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+    u('BR_STATUS', cnd=2, imm=E_RDESC),          # unset: the image is current
+    u('READ_ST', rd=8, imm=RGN_LEN),
+    u('COMPARE', ra=8, fmt=FMT_W, imm=CD_SRCIDX_TAIL),
+    u('BR_STATUS', cnd=3, imm=E_RDESC),          # too short for the lane
+    u('READ_ST', rd=1, imm=RGN_DYN + SEL_CLKSRC),  # GET_CLOCK_SOURCE's value
+    u('MOVE', rd=7, ra=0, imm=CD_SRCIDX_OFF),    # prefix length 70
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
+    u('COPY_BUF', ra=7, imm=RGN_DATA),           # bytes 0..69
+    u('BUILD_FLD', ra=1, fmt=FMT_W),             # clock_source_index 70..71
+    u('COPY_BUF', ra=8, cnd=TAIL, imm=RGN_DATA + CD_SRCIDX_TAIL),  # 72..
+    u('SEND_RESP'),
+    u('END'),
+])
+def _rdesc_stream(sel):
+    """A STREAM_INPUT's or STREAM_OUTPUT's READ_DESCRIPTOR entry: its SET row
+    into r1, then the shared emit; an unset row serves the image whole."""
+    return [
+        u('MOVE', rd=12, ra=0, imm=0),           # reserved @26
+        u('READ_ST', rd=9, imm=RGN_NCFG),
+        u('CHECK_ARG', ra=14, rb=9, fmt=FMT_W,
+          cnd=REL_LT, imm=E_RDSTUB),
+        u('DESC_ADDR', ra=14, imm=RGN_LOCATE),   # requested STREAM[index]
+        u('BR_STATUS', cnd=0, imm=E_RDSTUB),
+        u('READ_ST', rd=3, imm=RGN_DYNV + sel),  # has a SET or restore set it?
+        u('COMPARE', ra=3, fmt=FMT_D, imm=0),
+        u('BR_STATUS', cnd=2, imm=E_RDESC),      # unset: the image is current
+        u('READ_ST', rd=1, imm=RGN_DYN + sel),   # the format SET_STREAM_FORMAT stored
+        u('BRANCH', imm=E_RDESCSF),
+    ]
+
+place(E_RDESCSI, _rdesc_stream(SEL_FMTIN))
+place(E_RDESCSO, _rdesc_stream(SEL_FMTOUT))
+place(E_RDESCSF, [
+    u('READ_ST', rd=8, imm=RGN_LEN),
+    u('COMPARE', ra=8, fmt=FMT_W, imm=STR_FMT_TAIL),
+    u('BR_STATUS', cnd=3, imm=E_RDESC),          # too short for the lane
+    u('READ_ST', rd=4, imm=RGN_DATA + STR_FMT_LANE2),  # lane 80..87
+    u('SHIFT_R', rd=5, ra=4, imm=32),            # [15:0] = formats_offset @82
+    u('MOVE', rd=7, ra=0, imm=STR_FMT_OFF),      # prefix length 74
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # configuration_index @24
+    u('BUILD_FLD', ra=12, fmt=FMT_W),            # reserved @26
+    u('COPY_BUF', ra=7, imm=RGN_DATA),           # bytes 0..73
+    u('BUILD_FLD', ra=1, fmt=FMT_Q),             # current_format 74..81
+    u('BUILD_FLD', ra=5, fmt=FMT_W),             # formats_offset 82..83
+    u('BUILD_FLD', ra=4, fmt=FMT_D),             # number_of_formats, 84..87
+    u('COPY_BUF', ra=8, cnd=TAIL, imm=RGN_DATA + STR_FMT_TAIL),  # 88..
+    u('SEND_RESP'),
+    u('END'),
+])
 
 # --- GET_STREAM_INFO (IEEE §7.4.16, Milan §5.4.2.10) -------------------------
 # Milan replaces §7.4.15.1's response with the 80-byte Figure 5.1 layout:
@@ -1317,11 +1513,19 @@ place(E_GSRATE, [
 # figure, so the response is the same 8-byte body the getter emits and it
 # carries the value now in force.
 #
-# THE LOCK IS THE FIRST THING CHECKED, before the locate and before the write:
+# THE LOCK OUTRANKS EVERY OTHER VERDICT, and nothing is written before it:
 # Milan repeats in every SET clause that a locked PAAD "shall not accept a
 # <CMD> command from a different controller". CHECK_LOCK branches when the
 # entity is held by somebody other than r15's controller, and sets
-# ENTITY_LOCKED on the way out.
+# ENTITY_LOCKED on the way out. It runs AFTER the locate and the read of the
+# current rate, because the refusal carries that rate: IEEE 1722.1-2021
+# §7.4.21.1 "The response always contains the current value, that is it
+# contains the new value if the command succeeds or the old value if it
+# fails", and a locked refusal is a failure like any other (issue #53; the
+# end-station test plan's es-4.18 grades the same rule on SET_NAME). The
+# locate and the reads have no effect, so reading first moves nothing, and a
+# locate MISS still meets the lock before it answers NO_SUCH_DESCRIPTOR, so
+# the 06 §6.4 order (lock, then locate, then the list) is what the wire shows.
 #
 # The rate/mapping-mismatch refusal of §5.4.2.13 is a MAY, not a SHALL, and is
 # deliberately not implemented — grading a MAY as a SHALL would refuse rates
@@ -1348,35 +1552,38 @@ place(E_GSRATE, [
 # as the whole 32-bit word the list stores, pull field (bits 31:29) included:
 # 48000 x 1/1.001 is a different rate from the 48000 a pull-0 list holds.
 #
-# Two refusal arms share one tail: r6 carries the current rate, preloaded with
-# 0 so the NO_SUCH_DESCRIPTOR arm (no unit, no current value) answers zero.
+# Every refusal shares one tail: r6 carries the current rate, preloaded with 0
+# so the NO_SUCH_DESCRIPTOR arm (no unit, no current value) answers zero, and
+# the locked refusal carries it like the list refusal does.
 SSR_LIST_OFF = 144      # IEEE §7.2.3 sampling_rates_offset, this AEM version
 SSR_WALK_MAX = 8        # entries the walk consults; 07 §3.1 L10's bound
-_SSR_HEAD = 14          # E_SSRATE's words ahead of the two tails
+_SSR_HEAD = 14          # E_SSRATE's words ahead of the tails
 SSR_NOTLISTED = E_SSRATE + _SSR_HEAD         # BAD_ARGUMENTS, then the tail
-SSR_REFUSE = SSR_NOTLISTED + 1               # the tail every refusal shares
-SSR_ACCEPT = SSR_REFUSE + 5                  # store, answer, maybe notify
+SSR_REFUSE = SSR_NOTLISTED + 1               # the miss arm: the lock first
+SSR_EMIT = SSR_REFUSE + 1                    # the tail every refusal shares
+SSR_ACCEPT = SSR_EMIT + 5                    # store, answer, maybe notify
 ssrate = [
     u('MOVE', rd=6, ra=0, imm=0),                # the current rate, 0 until read
-    u('CHECK_LOCK', ra=15, imm=E_LOCKED4),       # held by another controller?
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the Audio Unit exist?
-    u('BR_STATUS', cnd=0, imm=SSR_REFUSE),       # no -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=SSR_REFUSE),       # no -> the lock, then NSD
     u('READ_ST', rd=7, imm=RGN_DATA + AU_RATE_OFF),  # {rate, offset, count}
     u('READ_ST', rd=3, imm=RGN_DYNV + SEL_RATE), # overlay already written?
     u('SHIFT_R', rd=6, ra=7, imm=32),            # the image's current rate
     u('COMPARE', ra=3, fmt=FMT_D, imm=0),
-    u('BR_STATUS', cnd=2, imm=E_SSRATE + 10),    # unset -> the image's stands
+    u('BR_STATUS', cnd=2, imm=E_SSRATE + 9),     # unset -> the image's stands
     u('READ_ST', rd=6, imm=RGN_DYN + SEL_RATE),  # set -> the controller's
-    u('MOVE', rd=9, ra=0, imm=SSR_LIST_OFF),     # E_SSRATE + 10
+    u('CHECK_LOCK', ra=15, imm=SSR_EMIT),        # E_SSRATE + 9: held by another
+    u('MOVE', rd=9, ra=0, imm=SSR_LIST_OFF),     # controller -> ENTITY_LOCKED
     u('SHIFT_R', rd=8, ra=7, imm=16),            # sampling_rates_offset [15:0]
     u('CHECK_ARG', ra=8, rb=9, fmt=FMT_W,        # the list where the walk
-      cnd=REL_EQ, imm=SSR_REFUSE),               # reads it, else BAD_ARGUMENTS
+      cnd=REL_EQ, imm=SSR_EMIT),                 # reads it, else BAD_ARGUMENTS
     u('BRANCH', imm=E_SSRWALK),                  # r7[15:0] = the count
 ]
 assert len(ssrate) == _SSR_HEAD
 ssrate += [
     u('SET_STATUS', imm=ST_BADARG),              # SSR_NOTLISTED
-    u('BUILD_HDR', ra=15, rb=13),                # SSR_REFUSE: the refusals
+    u('CHECK_LOCK', ra=15, imm=SSR_EMIT),        # SSR_REFUSE: a miss meets the lock
+    u('BUILD_HDR', ra=15, rb=13),                # SSR_EMIT: the refusals
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
     u('BUILD_FLD', ra=6, fmt=FMT_D),             # the CURRENT rate     @28
     u('SEND_RESP'),
@@ -1440,25 +1647,31 @@ place(E_SSRWALK, ssrwalk)
 # stored, read back and announced while the media plane resolved it to
 # INTERNAL. The count sits mid-lane, hence SHIFT_R + a FMT_W MOVE.
 #
-# Two refusal arms share one tail: r6 carries the current index, preloaded
-# with 0 so the NO_SUCH_DESCRIPTOR arm (no domain, no current value) answers
-# zero exactly as before. 32 words: the slot ends at E_TIZ8NS.
+# Every refusal shares one tail: r6 carries the current index, preloaded with
+# 0 so the NO_SUCH_DESCRIPTOR arm (no domain, no current value) answers zero
+# exactly as before. The lock is checked after the current index is read, for
+# E_SSRATE's reason (IEEE 1722.1-2021 §7.4.23.1: "The response always contains
+# the current value ... the old value if it fails"; issue #53), and a locate
+# miss meets it before NO_SUCH_DESCRIPTOR. The slot ends at E_TIZ8NS, so the
+# shared tail lives out of line at E_SCLKSRF.
+SCLKS_REFUSE = E_SCLKSRF                         # the miss arm: the lock first
+SCLKS_EMIT = E_SCLKSRF + 1                       # the tail every refusal shares
 place(E_SCLKS, [
     u('MOVE', rd=2, ra=0, imm=0),                # reserved @30, and the refusals
     u('MOVE', rd=6, ra=0, imm=0),                # the current index, 0 until read
-    u('CHECK_LOCK', ra=15, imm=E_LOCKED4),
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the Clock Domain exist?
-    u('BR_STATUS', cnd=0, imm=E_SCLKS + 26),     # miss -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=SCLKS_REFUSE),     # miss -> the lock, then NSD
     u('READ_ST', rd=3, imm=RGN_DYNV + SEL_CLKSRC),
     u('COMPARE', ra=3, fmt=FMT_D, imm=0),
     u('READ_ST', rd=6, imm=RGN_DATA + CD_SRCIDX_LANE),   # the image's index
-    u('BR_STATUS', cnd=2, imm=E_SCLKS + 10),     # unset -> the image's stands
+    u('BR_STATUS', cnd=2, imm=E_SCLKS + 9),      # unset -> the image's stands
     u('READ_ST', rd=6, imm=RGN_DYN + SEL_CLKSRC),        # set -> the controller's
-    u('READ_ST', rd=7, imm=RGN_DATA + CD_SRCCNT_LANE),   # E_SCLKS + 10
+    u('CHECK_LOCK', ra=15, imm=SCLKS_EMIT),      # E_SCLKS + 9: ENTITY_LOCKED
+    u('READ_ST', rd=7, imm=RGN_DATA + CD_SRCCNT_LANE),
     u('SHIFT_R', rd=7, ra=7, imm=32),            # count is lane[47:32]
     u('MOVE', rd=9, ra=7, fmt=FMT_W),            # r9 = clock_sources_count
     u('CHECK_ARG', ra=12, rb=9, fmt=FMT_W,       # index < count, else BAD_ARGS
-      cnd=REL_LT, imm=E_SCLKS + 26),
+      cnd=REL_LT, imm=SCLKS_EMIT),
     u('WRITE_ST', ra=12, fmt=FMT_W, imm=RGN_DYN + SEL_CLKSRC),
     u('NVM_MARK', imm=1),                        # completion mark (the WRITE_ST persists)
     u('SET_STATUS', imm=ST_OK),
@@ -1471,12 +1684,15 @@ place(E_SCLKS, [
     u('BR_STATUS', cnd=2, imm=E_SCLKS + 25),
     u('NOTIFY_ENQ', imm=8),                      # SET_CLOCK_SOURCE
     u('END'),                                    # E_SCLKS + 25
-    u('BUILD_HDR', ra=15, rb=13),                # E_SCLKS + 26: the refusals
+])
+place(E_SCLKSRF, [
+    u('CHECK_LOCK', ra=15, imm=SCLKS_EMIT),      # SCLKS_REFUSE: a miss meets the lock
+    u('BUILD_HDR', ra=15, rb=13),                # SCLKS_EMIT: the refusals
     u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
     u('BUILD_FLD', ra=6, fmt=FMT_W),             # the CURRENT index    @28
     u('BUILD_FLD', ra=2, fmt=FMT_W),             # reserved             @30
     u('SEND_RESP'),
-    u('END'),                                    # E_SCLKS + 31 = E_TIZ8NS - 1
+    u('END'),
 ])
 
 # --- GET_CLOCK_SOURCE (Milan §5.4.2.16, IEEE §7.4.24.2, Figure 7-47) ---------
@@ -1537,22 +1753,17 @@ place(E_TIZ4NS, [
     u('END'),
 ])
 
-# --- the SET family's two refusals, in the same full-body form --------------
-# Milan makes the lock refusal a SHALL in every SET clause, and the end-station
-# test plan's es-4.18 checks that the ENTITY_LOCKED response still carries the
-# CURRENT value rather than the rejected one. Zero is what these stubs carry,
-# which is correct for the refusal arms that reach them: a locked entity has
-# not located anything, so it has no current value to report and inventing one
-# would be worse than reporting none.
-place(E_LOCKED4, [
-    u('MOVE', rd=2, ra=0, imm=0),
-    u('SET_STATUS', imm=ST_LOCKED),
-    u('BUILD_HDR', ra=15, rb=13),
-    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
-    u('BUILD_FLD', ra=2, fmt=FMT_D),             # 4 zero bytes         @28
-    u('SEND_RESP'),
-    u('END'),
-])
+# --- the SET family's short-command refusal, in the same full-body form -----
+# The engine dispatches a SET_SAMPLING_RATE or SET_CLOCK_SOURCE too short to
+# carry its value (cdl < 20) here: the command never reached a descriptor, so
+# the body is zero. The locked refusal is NOT a stub any more (issue #53):
+# E_SSRATE and E_SCLKS locate and read the current value before the lock
+# check and answer ENTITY_LOCKED carrying it, as IEEE 1722.1-2021
+# §7.4.21.1/§7.4.23.1 require of every failed response ("the old value if it
+# fails") and as the end-station test plan's es-4.18 checks on SET_NAME. The
+# zero-bodied E_LOCKED4/E_LOCKED1 stubs that argued a locked entity had
+# nothing to report are gone: a read has no effect, so a locked entity can
+# read what is in force.
 place(E_BADARG4, [
     u('MOVE', rd=2, ra=0, imm=0),
     u('SET_STATUS', imm=ST_BADARG),
@@ -1609,18 +1820,29 @@ place(E_GCTRL, [
 # no NVM_MARK here is a separate fact about completion notifications, not the
 # persistence exclusion; persisting it would violate the clause and burn
 # erase cycles on a blinking front panel.
+#
+# EVERY REFUSAL CARRIES THE VALUE IN FORCE (issue #53): IEEE 1722.1-2021
+# §7.4.25.1 "The response always contains the current value, that is it
+# contains the new value if the command succeeds or the old value if it
+# fails". So the current value is read before the lock check and every
+# refusal - ENTITY_LOCKED, the out-of-range BAD_ARGUMENTS, and a locate miss
+# (zero: no control, no value) - shares one tail that emits it. A locate miss
+# meets the lock before NO_SUCH_DESCRIPTOR, as in E_SSRATE.
+SCTRL_REFUSE = E_SCTRL + 21                      # the miss arm: the lock first
+SCTRL_EMIT = E_SCTRL + 22                        # the tail every refusal shares
 place(E_SCTRL, [
-    u('MOVE', rd=2, ra=0, imm=0),                # the refusal arms' zero body
-    u('CHECK_LOCK', ra=15, imm=E_LOCKED1),       # held by another controller?
+    u('MOVE', rd=6, ra=0, imm=0),                # the current value, 0 until read
     u('DESC_ADDR', ra=14, imm=RGN_LOCATE),       # does the CONTROL exist?
-    u('BR_STATUS', cnd=0, imm=E_SCTRL + 20),     # no -> NO_SUCH_DESCRIPTOR
+    u('BR_STATUS', cnd=0, imm=SCTRL_REFUSE),     # no -> the lock, then NSD
+    u('READ_ST', rd=6, imm=RGN_DYN + SEL_IDENT), # the value in force
+    u('CHECK_LOCK', ra=15, imm=SCTRL_EMIT),      # held by another controller?
     u('COMPARE', ra=12, fmt=FMT_B, imm=0),       # value == 0 ?
-    u('BR_STATUS', cnd=2, imm=E_SCTRL + 9),
+    u('BR_STATUS', cnd=2, imm=E_SCTRL + 11),
     u('COMPARE', ra=12, fmt=FMT_B, imm=255),     # value == 255 ?
-    u('BR_STATUS', cnd=2, imm=E_SCTRL + 9),
-    u('BRANCH', imm=E_BADARG1),                  # neither: out of range
-    u('READ_ST', rd=6, imm=RGN_DYN + SEL_IDENT), # E_SCTRL + 9: old value
-    u('WRITE_ST', ra=12, fmt=FMT_B,
+    u('BR_STATUS', cnd=2, imm=E_SCTRL + 11),
+    u('SET_STATUS', imm=ST_BADARG),              # neither: out of range,
+    u('BRANCH', imm=SCTRL_EMIT),                 # carrying the value in force
+    u('WRITE_ST', ra=12, fmt=FMT_B,              # E_SCTRL + 11
       imm=RGN_DYN + SEL_IDENT),
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
@@ -1628,26 +1850,20 @@ place(E_SCTRL, [
     u('BUILD_FLD', ra=12, fmt=FMT_B),            # the value now in force @28
     u('SEND_RESP'),
     u('COMPARE', ra=12, rb=6, fmt=FMT_B),
-    u('BR_STATUS', cnd=2, imm=E_SCTRL + 19),
+    u('BR_STATUS', cnd=2, imm=E_SCTRL + 20),
     u('NOTIFY_ENQ', imm=4),                      # SET_CONTROL
-    u('END'),
-    u('BUILD_HDR', ra=15, rb=13),                # E_SCTRL + 20: the miss arm
-    u('BUILD_FLD', ra=13, fmt=FMT_D),
-    u('BUILD_FLD', ra=2, fmt=FMT_B),
+    u('END'),                                    # E_SCTRL + 20
+    u('CHECK_LOCK', ra=15, imm=SCTRL_EMIT),      # SCTRL_REFUSE: a miss meets the lock
+    u('BUILD_HDR', ra=15, rb=13),                # SCTRL_EMIT: the refusals
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=6, fmt=FMT_B),             # the value in force  @28
     u('SEND_RESP'),
     u('END'),
 ])
+assert rom[SCTRL_REFUSE] == u('CHECK_LOCK', ra=15, imm=SCTRL_EMIT)
+assert rom[SCTRL_EMIT] == u('BUILD_HDR', ra=15, rb=13)
 
 # --- the CONTROL-shaped refusals (cdl 17) -----------------------------------
-place(E_LOCKED1, [
-    u('MOVE', rd=2, ra=0, imm=0),
-    u('SET_STATUS', imm=ST_LOCKED),
-    u('BUILD_HDR', ra=15, rb=13),
-    u('BUILD_FLD', ra=13, fmt=FMT_D),
-    u('BUILD_FLD', ra=2, fmt=FMT_B),
-    u('SEND_RESP'),
-    u('END'),
-])
 place(E_BADARG1, [
     u('MOVE', rd=2, ra=0, imm=0),
     u('SET_STATUS', imm=ST_BADARG),

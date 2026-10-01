@@ -26,12 +26,13 @@
 //                lanes only feed talker-command flows this suite does not
 //                byte-check.
 //
-//                The two parameters the suite builds again: SRP_DOM_DEF_VID_P
-//                is overridden ONLY when the second build defines
-//                PP_TOP_SRP_DOM_DEF_VID (Makefile), and EN_IDENTIFY_NOTIF_P
-//                is set to 1 ONLY when the third build defines
-//                PP_TOP_EN_IDENT, so the first build grades the top's own
-//                defaults and never a copy of them.
+//                The three parameters the suite builds again:
+//                SRP_DOM_DEF_VID_P is overridden ONLY when the second build
+//                defines PP_TOP_SRP_DOM_DEF_VID, EN_IDENTIFY_NOTIF_P is set
+//                to 1 ONLY when the third build defines PP_TOP_EN_IDENT, and
+//                DESC_LINE_BYTES_P ONLY when the fourth defines
+//                PP_TOP_DESC_LINE_BYTES (Makefile), so the first build grades
+//                the top's own defaults and never a copy of them.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -433,7 +434,21 @@ module pp_top_wrap (
     //! build whose top has no identify sequencer
     output logic        dbg_ident_gap_arm_o,
     output logic [31:0] dbg_ident_gap_deadline_o,
-    output logic        dbg_ident_gap_end_o
+    output logic        dbg_ident_gap_end_o,
+    //! section AX: the AECP engine's TX-slot grant, the slot it names and the
+    //! engine's own Delta-8 oversize request beside it; the pool's serializer
+    //! start and the slot it streams; and slot 4 (the oversize slot) FREE, so
+    //! an oversize response is seen to leave through slot 4 and free it
+    output logic        dbg_aecp_txs_gnt_o,
+    output logic  [2:0] dbg_aecp_txs_slot_o,
+    output logic        dbg_aecp_txs_ovs_o,
+    output logic        dbg_ser_start_o,
+    output logic  [2:0] dbg_ser_slot_o,
+    output logic        dbg_txs_slot4_free_o,
+    //! section AX: the DESC_LINE_BYTES_P the top elaborated, in bytes, so the
+    //! bench bounds response writes by the reservation (16 + it) the top
+    //! really has, the default in the first build and the line build's own
+    output logic [15:0] dbg_desc_line_bytes_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
@@ -474,8 +489,12 @@ module pp_top_wrap (
 `endif
 `ifdef PP_TOP_EN_IDENT
       //! the third build: P-EN-IDENTIFY-NOTIFICATION = 1 (see the banner);
-      //! the first two grade the top's own default, 0
+      //! every other build grades the top's own default, 0
       .EN_IDENTIFY_NOTIF_P (1'b1),
+`endif
+`ifdef PP_TOP_DESC_LINE_BYTES
+      //! the fourth build's verification-only fixture (see the banner)
+      .DESC_LINE_BYTES_P (`PP_TOP_DESC_LINE_BYTES),
 `endif
       .CLK_HZ_P     (TB_CLK_HZ_C),
       .TIM_DIV_US_P (TB_DIV_US_C),
@@ -776,6 +795,13 @@ module pp_top_wrap (
   assign dbg_ident_gap_deadline_o = u_dut.tmr_arm_deadline_w;
   assign dbg_ident_gap_end_o = u_dut.exp_valid_w
                                && (u_dut.exp_owner_w == pp_pkg::PP_OWN_IDENT_C);
+  assign dbg_aecp_txs_gnt_o  = u_dut.aecp_txs_gnt_w;
+  assign dbg_aecp_txs_slot_o = 3'(u_dut.aecp_txs_gnt_slot_w);
+  assign dbg_aecp_txs_ovs_o  = u_dut.aecp_txs_oversize_w;
+  assign dbg_ser_start_o     = u_dut.u_tx_slots.ser_start_w;
+  assign dbg_ser_slot_o      = 3'(u_dut.ser_slot_w);
+  assign dbg_txs_slot4_free_o = (u_dut.u_tx_slots.st_r[4] == 2'd0);
+  assign dbg_desc_line_bytes_o = 16'(u_dut.DESC_LINE_BYTES_P);
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin
