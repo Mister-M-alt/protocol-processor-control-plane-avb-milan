@@ -17,9 +17,10 @@
 // maap face both ways — with no allocator the talker still answers (the
 // walker must not wedge on an unaccepted request), with one the granted
 // address reaches acmp_declaring_o, the ACMP answer and the SRP wire.
-// The suite builds twice (Makefile): the second build overrides the top's
-// P-SRP-DOM-DEF-VID with a verification-only fixture and runs section DV
-// alone.
+// The suite builds three times (Makefile): the second build overrides the
+// top's P-SRP-DOM-DEF-VID with a verification-only fixture and runs section
+// DV alone; the third sets P-EN-IDENTIFY-NOTIFICATION to 1 and runs section
+// ID alone (notify_phases.hpp).
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -10927,10 +10928,10 @@ int main(int argc, char** argv) {
   if (!one_section || notify_only) run_rnd(h);
   const char* const build = "default";
 #endif
-  //! NOT the canonical tally shape: this binary is ONE of the suite's two
+  //! NOT the canonical tally shape: this binary is ONE of the suite's three
   //! builds, and run_suites.sh reads only the LAST matching line, so a
-  //! canonical line here would drop the other build's checks from the total.
-  //! The Makefile sums both builds and prints the one canonical line.
+  //! canonical line here would drop the other builds' checks from the total.
+  //! The Makefile sums all three builds and prints the one canonical line.
   printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x] %d checks, %d failures\n",
          build, unsigned(SRP_DEF_VID), h.checks, h.fails);
   FILE* acc = fopen("obj_dir/build_tally.txt", "a");

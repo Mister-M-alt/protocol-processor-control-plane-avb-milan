@@ -626,7 +626,8 @@ struct IdentifyPhase : NotifyBench {
   //! its burst starts when the gap ends, however soon the button is let go;
   //! so is a new press after a release inside a burst (ID8o, ID8s). The
   //! gap's end is the IDENT-BURST expiry on the timer bus (gap_ends). Each
-  //! arm starts from a burst of its own; sequence_ids 6 to 21 follow ID7's 5.
+  //! arm starts from a burst of its own. ID8 and ID9 run after ID5, before
+  //! ID6's reset, so sequence_ids 10 to 27 follow ID5i's 9.
   struct GapPress {
     std::vector<Seen> v;                       // the frames since the first press
     uint64_t gap_end = 0;                      // the expiry ending the third frame's gap
@@ -708,7 +709,7 @@ struct IdentifyPhase : NotifyBench {
           "third frame left (inside the T-IDENT-BURST gap) still sends one "
           "burst: %zu frames in all, want 3 + 3", g.v.size());
     if (g.v.size() != 6) return;
-    burst_exact(g.v, 3, 7, "ID8b");
+    burst_exact(g.v, 3, 11, "ID8b");
     gap_after_third(g, "ID8c");
     burst_spacing(g.v, 3, "ID8d");
     CHECK(g.start > 0 && g.start <= SLACK, "ID8e: the burst started when the "
@@ -724,7 +725,7 @@ struct IdentifyPhase : NotifyBench {
           "third frame left sends one burst: %zu frames in all, want 3 + 3",
           g.v.size());
     if (g.v.size() != 6) return;
-    burst_exact(g.v, 3, 9, "ID8g");
+    burst_exact(g.v, 3, 13, "ID8g");
     gap_after_third(g, "ID8h");
     CHECK(g.start == ref_start, "ID8i: it starts at the gap's end as the "
           "latched 30 ms press did: %ld clocks after the expiry, ID8 %ld",
@@ -759,7 +760,7 @@ struct IdentifyPhase : NotifyBench {
   void a_press_at_the_gap_end_starts_with_it() {
     static constexpr long EDGES[] = {
         -1, 0, 1, 2};
-    uint16_t seq = 11;
+    uint16_t seq = 15;
     for (const long k : EDGES) {
       bool on_time = false;
       const GapPress g = press_at_gap_end(k, on_time);
@@ -812,7 +813,7 @@ struct IdentifyPhase : NotifyBench {
     const auto lead = idents(from);
     run_ms(30);
     press(false);
-    grade_owed_burst(gap_press_result(from, lead.size() == 3 ? lead[2].t : 0, 0), 18,
+    grade_owed_burst(gap_press_result(from, lead.size() == 3 ? lead[2].t : 0, 0), 22,
                      TAGS, "a release and a new press inside a burst, let go 30 ms "
                      "after its third frame left (inside the gap)");
   }
@@ -831,7 +832,7 @@ struct IdentifyPhase : NotifyBench {
     press(false);
     wait_idents(from, 3);
     const auto lead = idents(from);
-    grade_owed_burst(gap_press_result(from, lead.size() == 3 ? lead[2].t : 0, 0), 20,
+    grade_owed_burst(gap_press_result(from, lead.size() == 3 ? lead[2].t : 0, 0), 24,
                      TAGS, "a release and a new 30 ms press between frames 1 "
                      "and 2, let go before the burst ended");
   }
@@ -844,6 +845,55 @@ struct IdentifyPhase : NotifyBench {
     a_new_press_inside_a_burst_is_latched();
   }
 
+  // ---- ID9: a MAC stall on a frame's last byte ---------------------------
+  //! (R421-2 S1) The MAC holds tx_ready_i low on the eof beat itself, so the
+  //! frame is presented whole and its last byte is not taken: the frame has
+  //! not left until the MAC takes that byte, and the next frame is due
+  //! T-IDENT-BURST after it did. Sequence_ids 26 and 27 follow ID8's 25.
+  //! The bench's hook drops ready on the first eof it sees, so it is armed
+  //! once the identify frame is part-way out (frames are atomic on the MAC).
+  //! Returns the clock the stall began on (0: the frame never got there)
+  uint64_t stall_last_byte(long ms) {
+    for (long c = 0; c < 300L * MS_CYC && !mid_ident_frame(); ++c) tick();
+    if (!mid_ident_frame()) return 0;
+    io.tx_eof_stalled = false;
+    io.stall_tx_at_eof = true;
+    for (long c = 0; c < 1000 && !io.tx_eof_stalled; ++c) tick();
+    const uint64_t began = io.tx_eof_stalled ? io.t : 0;
+    run_ms(ms);
+    io.stall_tx_at_eof = false;
+    io.mac_tx_ready = true;
+    io.tx_eof_stalled = false;
+    return began;
+  }
+  //! ID9: frame 1's last byte held 400 ms; ID9e: frame 2's
+  void a_stall_on_the_last_byte_never_bunches_it() {
+    for (unsigned n = 0; n < 2; ++n) {
+      const char* const tag = n == 0 ? "ID9" : "ID9e";
+      const size_t from = seen.size();
+      press(true);
+      if (n == 1) wait_idents(from, 1);
+      const uint64_t began = stall_last_byte(400);
+      press(false);
+      run_ms(1500);
+      const auto v = idents(from);
+      CHECK(began != 0 && v.size() == 3, "%s: frame %u's last byte held 400 ms "
+            "by the MAC (premise: the stall began, %d) still sends a burst of "
+            "three, got %zu", tag, n + 1, began != 0 ? 1 : 0, v.size());
+      if (v.size() != 3 || began == 0) continue;
+      burst_exact(v, 0, uint16_t(26 + n), n == 0 ? "ID9b" : "ID9f");
+      printf("  [i] %s: frame %u's last byte was held %ld clocks; gaps %ld and %ld "
+             "clocks\n", tag, n + 1, long(v[n].t - began), gap_of(v, 0), gap_of(v, 1));
+      CHECK(long(v[n].t - began) >= 400L * MS_CYC, "%s: frame %u left only when "
+            "the MAC took its last byte, %ld clocks after it was held", n == 0 ? "ID9c"
+            : "ID9g", n + 1, long(v[n].t - began));
+      CHECK(gap_of(v, n) >= BURST && gap_of(v, n) <= BURST + SLACK, "%s: frame %u "
+            "leaves T-IDENT-BURST after frame %u's last byte was taken, not after "
+            "it was first presented: %ld clocks, want %ld to %ld", n == 0 ? "ID9d"
+            : "ID9h", n + 2, n + 1, gap_of(v, n), BURST, BURST + SLACK);
+    }
+  }
+
   void run() {
     boot_to_idle(true);
     one_press_sends_one_burst();
@@ -851,9 +901,10 @@ struct IdentifyPhase : NotifyBench {
     a_release_and_press_inside_a_burst();
     the_command_forms_start_nothing();
     a_fan_out_delays_the_burst_by_one_job();
+    a_press_in_the_gap_after_a_burst_is_never_lost();
+    a_stall_on_the_last_byte_never_bunches_it();
     a_press_before_the_restore_goes_out_at_the_release();
     a_tx_stall_mid_burst_never_bunches_it();
-    a_press_in_the_gap_after_a_burst_is_never_lost();
   }
 };
 

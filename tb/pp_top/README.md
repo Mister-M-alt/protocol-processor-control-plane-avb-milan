@@ -1381,10 +1381,12 @@ identify slots (at most 91 cycles) and the job's build and serialization (under
 - **ID8** no press is lost to a burst or to the T-IDENT-BURST gap after it
   (reviews R420-2 F1 and R421-2 F1; Figure 7-142 answers `identifyButtonPressed`
   in WAITING, and the gap only delays the answer). Each arm starts from a burst
-  of its own (a 30 ms press), sequence_ids 6 to 21. The gap's end is read off the
-  timer bus: the wrap taps the IDENT-BURST singleton's arm (with its ms
-  deadline) and its expiry (`dbg_ident_gap_*`, observe-only references into the
-  top, like the other taps), so a press can be placed against it to the clock:
+  of its own (a 30 ms press). ID8 and ID9 run after ID5 and before ID6's reset,
+  at sequence_ids 10 to 25 and 26 to 27, so section ID still ends with ID7. The
+  gap's end is read off the timer bus: the wrap taps the IDENT-BURST
+  singleton's arm (with its ms deadline) and its expiry (`dbg_ident_gap_*`,
+  observe-only references into the top, like the other taps), so a press can be
+  placed against it to the clock:
   - **ID8-ID8e** a 30 ms press made 2 ms after the third frame left, over long
     before the gap ends: one burst, byte-exact, its first frame 15,301 clocks
     after the third (the expiry came 63 clocks into its deadline's ms, and the
@@ -1405,12 +1407,26 @@ identify slots (at most 91 cycles) and the job's build and serialization (under
     long before the burst ends: one more burst at the gap's end (166).
 
   On the round-2 RTL (the WAITING start reads the button level with no latch)
-  the section fails 23 checks. Three are the lost presses: ID8 (3 frames in all,
-  want 6), ID8o and ID8s (each 3, want 6). The other twenty follow from them:
-  every later burst's identifySequenceID is one short (ID8g, ID8l), and ID8 never
-  measures the start the later arms compare against (ID8i, ID8n). ID8f and the
-  presses at the gap's end pass there: a press still held when the gap ends
-  needs no latch.
+  the section fails 29 checks. Three are the lost presses: ID8 (3 frames in all,
+  want 6), ID8o and ID8s (each 3, want 6). The other twenty-six follow from them:
+  every later burst's identifySequenceID is short by the bursts lost before it
+  (ID8g, ID8l, ID9b, ID9f), and ID8 never measures the start the later arms
+  compare against (ID8i, ID8n). ID8f and the presses at the gap's end pass
+  there: a press still held when the gap ends needs no latch.
+- **ID9** a MAC stall on a frame's last byte (review R421-2 S1): the MAC holds
+  `tx_ready_i` low on the eof beat itself (the bench's `stall_tx_at_eof` hook,
+  armed once the identify frame is part-way out), so the frame is presented
+  whole and its last byte not taken for 400 ms. **ID9-ID9d** frame 1's: it
+  leaves 40,001 clocks after the stall began, and frame 2 follows its last byte
+  by 15,232 clocks (63 when the departure is taken at the eof beat's
+  presentation, without `ready`); **ID9e-ID9h** frame 2's: frame 3 follows by
+  15,299.
+
+The one-tick margins of the schedule (each deadline counts from the next ms
+boundary, so a gap is at least the T- value rather than up to a tick short) are
+below this bench's resolution: one tick is 100 clocks here, no longer than a
+frame's build and serialization. Section FT of `tb/aecp_notify` grades them at
+the full timebase (reviews R420-2 S1 and R421-2 S2).
 
 ### Section ID0: the default build (the parameter at 0)
 
@@ -1488,27 +1504,30 @@ monitor's 30 s floor, so no CONTROLLER_AVAILABLE is due).
 `python3 tb/pp_top/notify_mutants.py --output DIR` plants each control in a
 private copy (the `d3_mutants.py` rules: exact edits, goldens first, KILLED only
 with a completed run, a non-zero exit and every named check failing). Results at
-the lane head, 37 of 37 KILLED (the four `ident_*` controls after
-`ident_t0_at_request` are round 2's, and the three after them round 3's):
+the lane head, 40 of 40 KILLED (the four `ident_*` controls after
+`ident_t0_at_request` are round 2's, and the six after them round 3's):
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
-| `ident_two_frames` | a burst of two | 33, ID1 first |
-| `ident_seq_per_frame` | identifySequenceID per frame | 76, ID1b first |
-| `ident_no_rearm` | IDENT-REARM never armed | 52, ID2 first |
-| `ident_rearm_from_third_frame` | re-arm at t0 + 1.3 s | 22, ID2 and ID2d |
-| `ident_burst_100ms` | T-IDENT-BURST 100 ms | 37, ID1c first |
-| `ident_t0_at_request` | t0 at the press, not the first frame's departure | 22, ID2d (burst 3) among them |
-| `ident_burst_from_t0` | frames 2 and 3 due t0 + 150 and t0 + 300 ms (round 1's schedule) | 19, ID3f, ID5k, ID7i, ID7q, ID7r and eight of ID8's among them |
-| `ident_departure_is_retirement` | the departure taken at the engine's retirement (the lane grant) | 7: ID7d, ID7q, ID8j, ID8n |
-| `ident_departure_unwired` | `uns_tx_busy_i` tied 0 at the top | 7: ID7d, ID7q, ID8j, ID8n |
+| `ident_two_frames` | a burst of two | 35, ID1 first |
+| `ident_seq_per_frame` | identifySequenceID per frame | 82, ID1b first |
+| `ident_no_rearm` | IDENT-REARM never armed | 58, ID2 first |
+| `ident_rearm_from_third_frame` | re-arm at t0 + 1.3 s | 58, ID2 and ID2d among them |
+| `ident_burst_100ms` | T-IDENT-BURST 100 ms | 39, ID1c first |
+| `ident_t0_at_request` | t0 at the press, not the first frame's departure | 58, ID2d (burst 3) among them |
+| `ident_burst_from_t0` | frames 2 and 3 due t0 + 150 and t0 + 300 ms (round 1's schedule) | 20, ID3f, ID5k, ID7i, ID7q and ID7r among them |
+| `ident_departure_is_retirement` | the departure taken at the engine's retirement (the lane grant) | 9, ID7d and ID7q among them |
+| `ident_departure_unwired` | `uns_tx_busy_i` tied 0 at the top | 9, ID7d and ID7q among them |
 | `ident_next_burst_at_once` | the next burst not held for T-IDENT-BURST after a third frame (both starts) | 20, ID3f, ID7r and ID8c among them |
 | `ident_wait_ignores_gap` | the WAITING start alone not held for the gap (`&& !gap_r` dropped there; the latch stays) | 18, ID8c and ID8h among them |
-| `ident_press_not_latched` | a press seen in WAITING while the gap runs not latched | 35, ID8 first |
-| `ident_burst_press_not_latched` | a new press after a release inside a burst not latched | 2: ID8o, ID8s |
-| `ident_cut_on_release` | a release ends the burst | 37, ID1 first |
-| `ident_release_ignored` | a release never returns to WAITING | 43, ID1 first |
-| `ident_unicast_da` | the job's DA is the registry tuple's | 23, ID1 first |
+| `ident_press_not_latched` | a press seen in WAITING while the gap runs not latched | 41, ID8 first |
+| `ident_burst_press_not_latched` | a new press after a release inside a burst not latched | 8, ID8o and ID8s among them |
+| `ident_departure_ignores_ready` | the departure taken at the eof beat's presentation (`&& arb_tx_ready_w` dropped at the top) | 2: ID9d, ID9h |
+| `ident_burst_deadline_one_tick_short` | the IDENT-BURST deadline from the departure's own ms (`+ 1` dropped) | 1: `tb/aecp_notify` FT2 |
+| `ident_t0_same_ms` | t0 the departure's own ms, not the next boundary | 1: `tb/aecp_notify` FT4 |
+| `ident_cut_on_release` | a release ends the burst | 39, ID1 first |
+| `ident_release_ignored` | a release never returns to WAITING | 45, ID1 first |
+| `ident_unicast_da` | the job's DA is the registry tuple's | 25, ID1 first |
 | `ident_face_taken_mid_job` | the uns face taken while a registry job is presented | 3: ID5b, ID5c, ID5f |
 | `ident_built_at_default` | the sequencer built at the default | 2: ID0, ID0b |
 | `enq_dropped_configuration` | E_SCFG's NOTIFY_ENQ a NOP | 2: NP1, NP1b |

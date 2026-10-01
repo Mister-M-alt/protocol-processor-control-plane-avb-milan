@@ -217,11 +217,12 @@ walks' deadlines, not the port's.
 
 Each section runs on a fresh processor of its own in `tb/pp_top` (`--notify-only`,
 `--identify-only`, and the suite's third build for section ID), plus one section of
-the originator's unit suite:
+the originator's unit suite and one of the notification block's:
 
 | Category | Section | What it proves |
 |---|---|---|
-| TIM | ID (third build, `P-EN-IDENTIFY-NOTIFICATION` = 1) | IDENTIFY_NOTIFICATION byte-exact to 91-E0-F0-01-00-01, three frames spaced `T-IDENT-BURST` from each previous frame's departure, identifySequenceID per burst, the `T-IDENT-REARM` re-arm while held, release, a release and press inside a burst, a held engine, a 15-row fan-out (also at frame 2's deadline), a MAC stall inside and between frames and past the timeout, the command forms, and no press lost: a short and a long press in the gap after a burst, a press on the gap's last clock and either side of it, and a new press inside a burst let go before the gap ends, each a burst of its own when the gap ends |
+| TIM | ID (third build, `P-EN-IDENTIFY-NOTIFICATION` = 1) | IDENTIFY_NOTIFICATION byte-exact to 91-E0-F0-01-00-01, three frames spaced `T-IDENT-BURST` from each previous frame's departure, identifySequenceID per burst, the `T-IDENT-REARM` re-arm while held, release, a release and press inside a burst, a held engine, a 15-row fan-out (also at frame 2's deadline), a MAC stall inside and between frames, on a frame's last byte and past the timeout, the command forms, and no press lost: a short and a long press in the gap after a burst, a press on the gap's last clock and either side of it, and a new press inside a burst let go before the gap ends, each a burst of its own when the gap ends |
+| TIM | `tb/aecp_notify` FT (second build, `P-EN-IDENTIFY-NOTIFICATION` = 1) | the schedule's one-tick margins at the full timebase (the F01.5 default `P-CLK-HZ`; the pp_top bench's compressed tick cannot resolve them): a frame that leaves two clocks before a ms boundary is followed `T-IDENT-BURST` after that boundary, never a tick sooner; Figure 7-142's timeout counts from the boundary after the first frame left |
 | DIR | ID0 (the default 0) | the button puts nothing on the wire |
 | DIR | NP | every notifying command class pushes one byte-exact u = 1 response to a second registered controller, none to the requester, at the entry's own sequence_id |
 | STORM | ST | one change fans out to all 16 rows byte-exact; GET_COUNTERS churned at 10 Hz on five descriptors emits at most once per descriptor per second; solicited AECP and ACMP answers stay inside `T-BUDGET-AECP-WC` / `T-BUDGET-ACMP-RESP` under the load |

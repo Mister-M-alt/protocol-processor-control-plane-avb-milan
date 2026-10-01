@@ -11,10 +11,11 @@ never counts as a kill. A golden copy of every suite in use runs first and must 
 the tree this script lives in is never touched.
 
 The controls cover the notification lane (processor issues #54, #58, #80, #86):
-the identify sequencer in the third build of tb/pp_top (section ID) and the
-parameter's default (section ID0), the command-class pushes (NP), the STORM and
-RND sections (ST, RN), and the originator's seeded inflight session (tb/originator
-section R). The suite READMEs carry the matching mutation records.
+the identify sequencer in the third build of tb/pp_top (section ID), its one-tick
+timer margins in the second build of tb/aecp_notify (section FT, the full
+timebase), the parameter's default (section ID0), the command-class pushes (NP),
+the STORM and RND sections (ST, RN), and the originator's seeded inflight session
+(tb/originator section R). The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
                                            [--only NAME ...]
@@ -50,6 +51,7 @@ IDENT = Suite("tb/pp_top", ("make", "identify-build"), ("./obj_idn/Vpp_top_idn",
 IDENT_OFF = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--identify-only"))
 NOTIFY = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--notify-only"))
 ORIGIN = Suite("tb/originator", (), ("make", "run"))
+TIMEBASE = Suite("tb/aecp_notify", (), ("make", "identify"))
 
 NTFY = "hdl/aecp/KL_aecp_notify.sv"
 ENGINE = "hdl/aecp/KL_aecp_engine.sv"
@@ -134,6 +136,17 @@ IDENTIFY = (
     Mutant("ident_burst_press_not_latched", IDENT, (
         (NTFY, BURST_LATCH, ""),),
         ("ID8o:", "ID8s:")),
+    Mutant("ident_departure_ignores_ready", IDENT, (
+        (TOP, "      else if (arb_tx_valid_w && arb_tx_eof_w && arb_tx_ready_w)\n",
+         "      else if (arb_tx_valid_w && arb_tx_eof_w)\n"),),
+        ("ID9d:", "ID9h:")),
+    # the one-tick margins, graded where 1 ms is 100,000 clocks (tb/aecp_notify FT)
+    Mutant("ident_burst_deadline_one_tick_short", TIMEBASE, (
+        (NTFY, BURST_DL, "    assign id_arm_deadline_w = armb_r ? now_ms_i + 32'(IDENT_BURST_MS_C)\n"),),
+        ("FT2:",)),
+    Mutant("ident_t0_same_ms", TIMEBASE, (
+        (NTFY, T0, "                t0_r    <= now_ms_i;\n"),),
+        ("FT4:",)),
     Mutant("ident_cut_on_release", IDENT, (
         (NTFY, "          I_GAP: begin\n            if (!btn_q2_r) rel_r <= 1'b1;\n",
          "          I_GAP: begin\n            if (!btn_q2_r) i_st_r <= I_WAIT;\n"),),
@@ -247,6 +260,7 @@ INFLIGHT = (
 
 MUTANTS = IDENTIFY + PUSHES + STORM_RND + INFLIGHT
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+\] \d+ checks, \d+ failures"
+                   r"|\[build \w+\] \d+ checks, \d+ failures"
                    r"|\d+ checks: \d+ PASS, \d+ FAIL)$", re.M)
 
 
