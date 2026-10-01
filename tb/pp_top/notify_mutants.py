@@ -61,7 +61,9 @@ FRAME2 = ("              end else if (ix_r == 2'd1) begin\n"
           "                ix_r    <= 2'd2;\n"
           "                i_st_r  <= I_GAP;\n")
 T0 = "                t0_r    <= now_ms_i + 32'd1;\n"
-WAIT = "          I_WAIT: if (btn_q2_r && !gap_r) begin\n            job_r  <= 1'b1;\n"
+WAIT = "            if ((btn_q2_r || prs_r) && !gap_r) begin\n              job_r  <= 1'b1;\n"
+LATCH = "            if (btn_q2_r && gap_r) prs_r <= 1'b1;\n"
+BURST_LATCH = "        if (btn_q2_r && rel_r && (i_st_r != I_WAIT)) prs_r <= 1'b1;\n"
 BURST_DL = "    assign id_arm_deadline_w = armb_r ? now_ms_i + 32'(IDENT_BURST_MS_C + 1)\n"
 DEPART = "    assign dep_w   = (done_w || left_r) && !uns_tx_busy_i;\n"
 HOLD_GO = "            end else if ((rel_r || fired_r || exp_r_w) && !gap_r) begin\n"
@@ -102,8 +104,8 @@ IDENTIFY = (
         ("ID1c:",)),
     Mutant("ident_t0_at_request", IDENT, (
         (NTFY, T0, ""),
-        (NTFY, WAIT, "          I_WAIT: if (btn_q2_r && !gap_r) begin\n            t0_r   <= now_ms_i + 32'd1;\n"
-                     "            job_r  <= 1'b1;\n")),
+        (NTFY, WAIT, "            if ((btn_q2_r || prs_r) && !gap_r) begin\n"
+                     "              t0_r   <= now_ms_i + 32'd1;\n              job_r  <= 1'b1;\n")),
         ("ID2d: burst 3 starts",)),
     # round 2 (R420-1 F1, R421-1 F1): every frame from the previous one's departure
     Mutant("ident_burst_from_t0", IDENT, (
@@ -120,8 +122,18 @@ IDENTIFY = (
         ("ID7d:",)),
     Mutant("ident_next_burst_at_once", IDENT, (
         (NTFY, HOLD_GO, "            end else if (rel_r || fired_r || exp_r_w) begin\n"),
-        (NTFY, WAIT, "          I_WAIT: if (btn_q2_r) begin\n            job_r  <= 1'b1;\n")),
+        (NTFY, WAIT, "            if (btn_q2_r || prs_r) begin\n              job_r  <= 1'b1;\n")),
         ("ID3f:", "ID7r:")),
+    # round 3 (R420-2 F1, R421-2 F1): a press inside the gap after a burst is latched
+    Mutant("ident_wait_ignores_gap", IDENT, (
+        (NTFY, WAIT, "            if (btn_q2_r || prs_r) begin\n              job_r  <= 1'b1;\n"),),
+        ("ID8c:", "ID8h:")),
+    Mutant("ident_press_not_latched", IDENT, (
+        (NTFY, LATCH, ""),),
+        ("ID8: a 30 ms press",)),
+    Mutant("ident_burst_press_not_latched", IDENT, (
+        (NTFY, BURST_LATCH, ""),),
+        ("ID8o:", "ID8s:")),
     Mutant("ident_cut_on_release", IDENT, (
         (NTFY, "          I_GAP: begin\n            if (!btn_q2_r) rel_r <= 1'b1;\n",
          "          I_GAP: begin\n            if (!btn_q2_r) i_st_r <= I_WAIT;\n"),),

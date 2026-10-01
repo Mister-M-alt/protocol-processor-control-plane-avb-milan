@@ -221,7 +221,7 @@ the originator's unit suite:
 
 | Category | Section | What it proves |
 |---|---|---|
-| TIM | ID (third build, `P-EN-IDENTIFY-NOTIFICATION` = 1) | IDENTIFY_NOTIFICATION byte-exact to 91-E0-F0-01-00-01, three frames spaced `T-IDENT-BURST` from each previous frame's departure, identifySequenceID per burst, the `T-IDENT-REARM` re-arm while held, release, a release and press inside a burst, a held engine, a 15-row fan-out (also at frame 2's deadline), a MAC stall inside and between frames and past the timeout, the command forms |
+| TIM | ID (third build, `P-EN-IDENTIFY-NOTIFICATION` = 1) | IDENTIFY_NOTIFICATION byte-exact to 91-E0-F0-01-00-01, three frames spaced `T-IDENT-BURST` from each previous frame's departure, identifySequenceID per burst, the `T-IDENT-REARM` re-arm while held, release, a release and press inside a burst, a held engine, a 15-row fan-out (also at frame 2's deadline), a MAC stall inside and between frames and past the timeout, the command forms, and no press lost: a short and a long press in the gap after a burst, a press on the gap's last clock and either side of it, and a new press inside a burst let go before the gap ends, each a burst of its own when the gap ends |
 | DIR | ID0 (the default 0) | the button puts nothing on the wire |
 | DIR | NP | every notifying command class pushes one byte-exact u = 1 response to a second registered controller, none to the requester, at the entry's own sequence_id |
 | STORM | ST | one change fans out to all 16 rows byte-exact; GET_COUNTERS churned at 10 Hz on five descriptors emits at most once per descriptor per second; solicited AECP and ACMP answers stay inside `T-BUDGET-AECP-WC` / `T-BUDGET-ACMP-RESP` under the load |

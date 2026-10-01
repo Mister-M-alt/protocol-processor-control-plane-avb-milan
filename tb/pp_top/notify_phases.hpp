@@ -27,6 +27,17 @@ struct NotifyBench {
   };
   std::vector<Seen> seen;
   std::vector<Seen> seen_acmp;                 // every ACMP frame, likewise
+  //! the IDENT-BURST singleton on the timer buses (pp_top_wrap's taps): each
+  //! arm with its ms deadline, and each expiry, the end of a T-IDENT-BURST gap
+  struct GapArm {
+    uint64_t t;
+    uint32_t deadline;
+  };
+  std::vector<GapArm> gap_arms;
+  std::vector<uint64_t> gap_ends;
+  //! the latest ms boundary of the timebase: the ms it began and its clock
+  uint32_t edge_ms = 0;
+  uint64_t edge_t = 0;
 
   explicit NotifyBench(H& tally) : h(tally), io(model.get()) {}
 
@@ -49,6 +60,12 @@ struct NotifyBench {
 
   void tick() {
     io.step();
+    if (io.d->dbg_ident_gap_arm_o) gap_arms.push_back({io.t, io.d->dbg_ident_gap_deadline_o});
+    if (io.d->dbg_ident_gap_end_o) gap_ends.push_back(io.t);
+    if (io.d->dbg_now_ms_o != edge_ms) {
+      edge_ms = io.d->dbg_now_ms_o;
+      edge_t = io.t;
+    }
     while (!io.q_aecp.empty()) {
       seen.push_back({io.q_aecp.front(), io.t});
       io.q_aecp.pop_front();
@@ -602,6 +619,231 @@ struct IdentifyPhase : NotifyBench {
     }
   }
 
+  // ---- ID8: no press is lost to a burst or to the gap after it ---------
+  //! Figure 7-142 answers identifyButtonPressed in WAITING, and the
+  //! T-IDENT-BURST gap after a burst's third frame only delays that answer
+  //! (R420-2 F1, R421-2 F1): a press seen while the gap runs is latched, and
+  //! its burst starts when the gap ends, however soon the button is let go;
+  //! so is a new press after a release inside a burst (ID8o, ID8s). The
+  //! gap's end is the IDENT-BURST expiry on the timer bus (gap_ends). Each
+  //! arm starts from a burst of its own; sequence_ids 6 to 21 follow ID7's 5.
+  struct GapPress {
+    std::vector<Seen> v;                       // the frames since the first press
+    uint64_t gap_end = 0;                      // the expiry ending the third frame's gap
+    long sweep = -1;                           // that expiry after its deadline's ms began
+    long start = -1;                           // that expiry to the next first frame
+  };
+  long ref_start = -1;                         // ID8's start, the latched press's
+  long ref_sweep = -1;                         // ID8's sweep, a timer-service constant
+
+  //! the first IDENT-BURST expiry after clock t (0 when none came)
+  uint64_t gap_end_after(uint64_t t) const {
+    for (const uint64_t e : gap_ends)
+      if (e > t) return e;
+    return 0;
+  }
+  //! the ms deadline of the first IDENT-BURST arm after clock t (0: none)
+  uint32_t gap_deadline_after(uint64_t t) const {
+    for (const GapArm& a : gap_arms)
+      if (a.t > t) return a.deadline;
+    return 0;
+  }
+  //! the clock the timebase begins ms `ms` on, before or after the latest
+  //! boundary (its prescaler is regular)
+  int64_t clock_of_ms(uint32_t ms) const {
+    return int64_t(edge_t) + (int64_t(ms) - int64_t(edge_ms)) * MS_CYC;
+  }
+  //! a 30 ms press and its burst; then, for `run`, wait for the arm of the
+  //! gap after its third frame. Returns the third frame's clock (0: no burst)
+  uint64_t lead_burst(size_t from) {
+    press(true);
+    run_ms(30);
+    press(false);
+    wait_idents(from, 3);
+    const auto lead = idents(from);
+    if (lead.size() != 3) return 0;
+    for (long c = 0; c < 10L * MS_CYC && gap_deadline_after(lead[2].t) == 0; ++c) tick();
+    return lead[2].t;
+  }
+  //! what the burst after the press shows: its frames, the gap's end, how
+  //! far into its deadline's ms the expiry came, and the start after it
+  GapPress gap_press_result(size_t from, uint64_t t3, uint32_t deadline) {
+    run_ms(1000);
+    GapPress g;
+    g.v = idents(from);
+    g.gap_end = gap_end_after(t3);
+    if (g.gap_end != 0 && deadline != 0) g.sweep = long(int64_t(g.gap_end) - clock_of_ms(deadline));
+    if (g.v.size() > 3 && g.gap_end != 0) g.start = long(g.v[3].t - g.gap_end);
+    return g;
+  }
+  //! a burst, then a press of `hold_ms` made `lead_ms` after its third
+  //! frame left, inside the gap
+  GapPress press_in_gap(long lead_ms, long hold_ms) {
+    const size_t from = seen.size();
+    const uint64_t t3 = lead_burst(from);
+    const uint32_t deadline = gap_deadline_after(t3);
+    while (t3 != 0 && io.t < t3 + uint64_t(lead_ms * MS_CYC)) tick();
+    press(true);
+    run_ms(hold_ms);
+    press(false);
+    return gap_press_result(from, t3, deadline);
+  }
+  //! the gap from the first burst's third frame to the press's first frame
+  void gap_after_third(const GapPress& g, const char* tag) {
+    const long gap = gap_of(g.v, 2);
+    printf("  [i] %s: the press's burst follows the third frame by %ld clocks, "
+           "%ld after the gap ended\n", tag, gap, g.start);
+    CHECK(gap >= BURST && gap <= BURST + SLACK, "%s: the press's burst starts "
+          "T-IDENT-BURST after the third frame left, never sooner: %ld clocks, "
+          "want %ld to %ld", tag, gap, BURST, BURST + SLACK);
+  }
+
+  //! ID8: 30 ms, made 2 ms after the third frame left: the press is over
+  //! long before the gap ends, so only the latch can answer it
+  void a_short_press_in_the_gap_is_latched() {
+    const GapPress g = press_in_gap(2, 30);
+    ref_sweep = g.sweep;
+    printf("  [i] ID8: the gap's expiry came %ld clocks into its deadline's ms\n", g.sweep);
+    CHECK(g.v.size() == 6, "ID8: a 30 ms press made 2 ms after a burst's "
+          "third frame left (inside the T-IDENT-BURST gap) still sends one "
+          "burst: %zu frames in all, want 3 + 3", g.v.size());
+    if (g.v.size() != 6) return;
+    burst_exact(g.v, 3, 7, "ID8b");
+    gap_after_third(g, "ID8c");
+    burst_spacing(g.v, 3, "ID8d");
+    CHECK(g.start > 0 && g.start <= SLACK, "ID8e: the burst started when the "
+          "gap ended: its first frame left %ld clocks after the IDENT-BURST "
+          "expiry, want 1 to %ld", g.start, SLACK);
+    ref_start = g.start;
+  }
+  //! ID8f: 200 ms, made 2 ms after the third frame left: still held when
+  //! the gap ends, so the burst starts then, exactly as the latched one did
+  void a_long_press_in_the_gap_starts_at_its_end() {
+    const GapPress g = press_in_gap(2, 200);
+    CHECK(g.v.size() == 6, "ID8f: a 200 ms press made 2 ms after a burst's "
+          "third frame left sends one burst: %zu frames in all, want 3 + 3",
+          g.v.size());
+    if (g.v.size() != 6) return;
+    burst_exact(g.v, 3, 9, "ID8g");
+    gap_after_third(g, "ID8h");
+    CHECK(g.start == ref_start, "ID8i: it starts at the gap's end as the "
+          "latched 30 ms press did: %ld clocks after the expiry, ID8 %ld",
+          g.start, ref_start);
+  }
+
+  //! a burst, then a 30 ms press timed so that its synchronised level is
+  //! first seen by the sequencer k edges after the edge that sees the
+  //! IDENT-BURST expiry (k = 0: the same edge, the gap's last). The expiry
+  //! is predicted from the arm: ref_sweep clocks into the deadline's ms.
+  //! The button is set before the step that ends on clock `at`; the two
+  //! synchroniser flops take it on the next two edges, so the sequencer
+  //! samples it on edge at + 3, and the expiry on edge gap_end + 1
+  GapPress press_at_gap_end(long k, bool& on_time) {
+    const size_t from = seen.size();
+    const uint64_t t3 = lead_burst(from);
+    const uint32_t deadline = gap_deadline_after(t3);
+    const bool known = t3 != 0 && deadline != 0 && ref_sweep >= 0;
+    const int64_t gap_end = known ? clock_of_ms(deadline) + ref_sweep : 0;
+    while (known && int64_t(io.t) < gap_end - 2 + k && io.t < t3 + uint64_t(2 * BURST)) tick();
+    press(true);
+    run_ms(30);
+    press(false);
+    const GapPress g = gap_press_result(from, t3, deadline);
+    on_time = known && int64_t(g.gap_end) == gap_end;
+    return g;
+  }
+  //! ID8j: the press reaches the sequencer one edge before the gap's end,
+  //! on it, and one and two edges after it. The first three start the
+  //! burst on the same edge as the latched press (ID8); the last one edge
+  //! later, which shows the measure resolves a single clock
+  void a_press_at_the_gap_end_starts_with_it() {
+    static constexpr long EDGES[] = {
+        -1, 0, 1, 2};
+    uint16_t seq = 11;
+    for (const long k : EDGES) {
+      bool on_time = false;
+      const GapPress g = press_at_gap_end(k, on_time);
+      CHECK(on_time, "ID8j: k = %ld: the gap ended on the clock predicted from "
+            "its arm and ID8's sweep (%ld), so the press is placed against it",
+            k, ref_sweep);
+      CHECK(g.v.size() == 6, "ID8k: k = %ld: a press at the gap's end sends "
+            "one burst, never none and never two: %zu frames in all, want 3 + 3",
+            k, g.v.size());
+      if (g.v.size() == 6) {
+        burst_exact(g.v, 3, seq, "ID8l");
+        gap_after_third(g, "ID8m");
+        const long want = ref_start + std::max(0L, k - 1);
+        printf("  [i] ID8n: k = %ld: the burst starts %ld clocks after the expiry\n",
+               k, g.start);
+        CHECK(g.start == want, "ID8n: k = %ld: the burst starts %ld clocks "
+              "after the expiry, want %ld (ID8's start, plus the edges the "
+              "press came after the gap's first free one)", k, g.start, want);
+      }
+      seq = uint16_t(seq + 2);
+    }
+  }
+
+  //! the burst owed to a new press made inside the first burst: one more,
+  //! byte-exact at seq + 1, starting at the gap's end as ID8's did
+  void grade_owed_burst(const GapPress& g, uint16_t seq, const char* const tags[4],
+                        const char* what) {
+    CHECK(g.v.size() == 6, "%s: %s: one more burst: %zu frames in all, want 3 + 3",
+          tags[0], what, g.v.size());
+    if (g.v.size() != 6) return;
+    burst_exact(g.v, 0, seq, tags[1]);
+    burst_exact(g.v, 3, uint16_t(seq + 1), tags[1]);
+    gap_after_third(g, tags[2]);
+    CHECK(g.start == ref_start, "%s: it starts at the gap's end as ID8's latched "
+          "press did: %ld clocks after the expiry, ID8 %ld", tags[3], g.start,
+          ref_start);
+  }
+  //! ID8o: a release and a new press inside a burst, the button still held
+  //! when the third frame leaves and let go 30 ms later, inside the gap
+  void a_new_press_held_past_a_burst_is_latched() {
+    static constexpr const char* TAGS[4] = {
+        "ID8o", "ID8p", "ID8q", "ID8r"};
+    const size_t from = seen.size();
+    press(true);
+    wait_idents(from, 1);
+    press(false);
+    run_ms(20);
+    press(true);
+    wait_idents(from, 3);
+    const auto lead = idents(from);
+    run_ms(30);
+    press(false);
+    grade_owed_burst(gap_press_result(from, lead.size() == 3 ? lead[2].t : 0, 0), 18,
+                     TAGS, "a release and a new press inside a burst, let go 30 ms "
+                     "after its third frame left (inside the gap)");
+  }
+  //! ID8s: a release and a new 30 ms press between frames 1 and 2, let go
+  //! long before the burst ends: the press is latched like one in the gap
+  void a_new_press_inside_a_burst_is_latched() {
+    static constexpr const char* TAGS[4] = {
+        "ID8s", "ID8t", "ID8u", "ID8v"};
+    const size_t from = seen.size();
+    press(true);
+    wait_idents(from, 1);
+    press(false);
+    run_ms(20);
+    press(true);
+    run_ms(30);
+    press(false);
+    wait_idents(from, 3);
+    const auto lead = idents(from);
+    grade_owed_burst(gap_press_result(from, lead.size() == 3 ? lead[2].t : 0, 0), 20,
+                     TAGS, "a release and a new 30 ms press between frames 1 "
+                     "and 2, let go before the burst ended");
+  }
+
+  void a_press_in_the_gap_after_a_burst_is_never_lost() {
+    a_short_press_in_the_gap_is_latched();
+    a_long_press_in_the_gap_starts_at_its_end();
+    a_press_at_the_gap_end_starts_with_it();
+    a_new_press_held_past_a_burst_is_latched();
+    a_new_press_inside_a_burst_is_latched();
+  }
+
   void run() {
     boot_to_idle(true);
     one_press_sends_one_burst();
@@ -611,6 +853,7 @@ struct IdentifyPhase : NotifyBench {
     a_fan_out_delays_the_burst_by_one_job();
     a_press_before_the_restore_goes_out_at_the_release();
     a_tx_stall_mid_burst_never_bunches_it();
+    a_press_in_the_gap_after_a_burst_is_never_lost();
   }
 };
 

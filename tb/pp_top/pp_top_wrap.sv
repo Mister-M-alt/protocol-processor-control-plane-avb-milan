@@ -425,7 +425,15 @@ module pp_top_wrap (
     //! cycle) and its fired level (agg_o): a case that must land an event on
     //! the bound's own cycle reads them to prove it did
     output logic [31:0] dbg_d3_agg_o,
-    output logic        dbg_d3_agg_fired_o
+    output logic        dbg_d3_agg_fired_o,
+    //! the IDENT-BURST singleton (owner PP_OWN_IDENT_C) on the shared timer
+    //! service's arm and expiry buses: its arm with the absolute ms deadline,
+    //! and its expiry, which ends the T-IDENT-BURST gap after a frame. Section
+    //! ID times a press against the gap's end with them; never set in a
+    //! build whose top has no identify sequencer
+    output logic        dbg_ident_gap_arm_o,
+    output logic [31:0] dbg_ident_gap_deadline_o,
+    output logic        dbg_ident_gap_end_o
 );
 
   // 1 ms = 2 x 50 = 100 clk; the 91-slot sweep (93 cycles) fits inside
@@ -763,6 +771,11 @@ module pp_top_wrap (
   assign dbg_d3_proof_o   = u_dut.u_aecp.u_d3.proof_w;
   assign dbg_d3_agg_o     = u_dut.u_aecp.u_d3.agg_r;
   assign dbg_d3_agg_fired_o = u_dut.d3_agg_w;
+  assign dbg_ident_gap_arm_o = u_dut.tmr_arm_valid_w && !u_dut.tmr_arm_cancel_w
+                               && (u_dut.tmr_arm_owner_w == pp_pkg::PP_OWN_IDENT_C);
+  assign dbg_ident_gap_deadline_o = u_dut.tmr_arm_deadline_w;
+  assign dbg_ident_gap_end_o = u_dut.exp_valid_w
+                               && (u_dut.exp_owner_w == pp_pkg::PP_OWN_IDENT_C);
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin

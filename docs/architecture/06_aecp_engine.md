@@ -787,10 +787,14 @@ the MAC; IDENT-BURST singleton), so a busy lane or a stalled MAC delays the rest
 burst and never shortens a gap; while the button is held the next burst starts
 `T-IDENT-REARM` after the previous one's first frame (IDENT-REARM) and no sooner than
 `T-IDENT-BURST` after its third, and a release returns to WAITING without cutting a
-burst short. A release and a new press inside a burst are read as a new IDENTIFY entry
-latched while txIdentify runs: the next burst starts `T-IDENT-BURST` after the running
-one's third frame, not at the 1 s timeout a level sampled only after txIdentify would
-wait for (a deliberate reading of Figure 7-142, graded by ID3). Graded on the wire in
+burst short. **No press is lost.** WAITING answers `identifyButtonPressed` (Figure
+7-142), and the gap after a third frame only delays the answer: a press seen while that
+gap runs is latched. So is a new press after a release inside a burst, read as a new
+IDENTIFY entry rather than left for the 1 s timeout a level sampled only after
+txIdentify would wait for (a deliberate reading of Figure 7-142). Either way, the burst
+the press is owed starts when the gap ends, `T-IDENT-BURST` after the running burst's
+third frame left, however soon the button is let go; a press made while a burst is
+already owed adds none (ID3, ID8). Graded on the wire in
 the `tb/pp_top` third build (section ID) and silent at 0 (section ID0); the command
 form keeps its `BAD_ARGUMENTS` (A6, ID4). **What identify work remains:** none in this
 repository. Adopting it is the integrator's: a debounced board button on
@@ -914,7 +918,7 @@ sequenceDiagram
     Note over AECP: multicast 91-E0-F0-01-00-01, controller_entity_id 90-E0-F0-FF-FE-01-00-01, u = 1, CONTROL identify_index_i
     AECP-->>CTRL: still held after T-IDENT-REARM from the first frame: the next burst, identifySequenceID + 1
     DEV->>AECP: released: WAITING (a running burst still ends)
-    Note over AECP: released and pressed again inside a burst: the next burst T-IDENT-BURST after its third frame
+    Note over AECP: a new press inside a burst or in the T-IDENT-BURST gap after it is latched, its burst starts when that gap ends
 ```
 
 ## 8. µcode architecture

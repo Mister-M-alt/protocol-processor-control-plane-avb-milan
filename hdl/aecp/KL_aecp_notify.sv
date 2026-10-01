@@ -167,7 +167,13 @@
 //                still held then starts the next burst; a release returns to
 //                WAITING, and a release and a press inside a burst start the
 //                next one T-IDENT-BURST after it ends (a burst is never cut
-//                short).
+//                short). No press is lost to a running burst or to the gap
+//                after it: WAITING answers identifyButtonPressed (Figure
+//                7-142), so a press seen while the gap after a third frame
+//                runs, and a new press after a release seen inside a burst,
+//                are latched (prs_r), and the burst they are owed starts
+//                when that gap ends, however soon the button is let go.
+//                Presses made while a burst is already owed add none.
 //                Both timers are the shared service's IDENT-BURST and
 //                IDENT-REARM singletons (F08.4), armed through this block's
 //                one arm output in a cycle the registry machine leaves free.
@@ -719,6 +725,7 @@ module KL_aecp_notify
     logic [31:0] t0_r;                 //! the burst's first frame left, ms
     logic        gen_r;                //! the REARM generation armed last
     logic        rel_r;                //! a release seen inside the burst
+    logic        prs_r;                //! a press is owed a burst when the gap ends
     logic        fired_r;              //! REARM expired: timeout <= currentTime
     logic        gap_r;                //! T-IDENT-BURST from the last departure runs
     logic        armb_r, armr_r;       //! a BURST / REARM arm is owed
@@ -767,6 +774,7 @@ module KL_aecp_notify
         t0_r     <= 32'd0;
         gen_r    <= 1'b0;
         rel_r    <= 1'b0;
+        prs_r    <= 1'b0;
         fired_r  <= 1'b0;
         gap_r    <= 1'b0;
         armb_r   <= 1'b0;
@@ -790,12 +798,23 @@ module KL_aecp_notify
         else if (done_w) left_r <= 1'b1;
         if (exp_b_w) gap_r <= 1'b0;
         if (exp_r_w && (i_st_r != I_WAIT)) fired_r <= 1'b1;
+        //! pressed again after a release seen inside the burst: a new press,
+        //! latched while txIdentify or the gap after it runs, so letting go
+        //! before the gap ends never loses it
+        if (btn_q2_r && rel_r && (i_st_r != I_WAIT)) prs_r <= 1'b1;
         unique case (i_st_r)
-          I_WAIT: if (btn_q2_r && !gap_r) begin
-            job_r  <= 1'b1;
-            ix_r   <= 2'd0;
-            rel_r  <= 1'b0;
-            i_st_r <= I_SEND;
+          I_WAIT: begin
+            //! identifyButtonPressed while the T-IDENT-BURST gap after a
+            //! burst runs is latched: the burst still starts when the gap
+            //! ends, however soon the button is let go
+            if (btn_q2_r && gap_r) prs_r <= 1'b1;
+            if ((btn_q2_r || prs_r) && !gap_r) begin
+              job_r  <= 1'b1;
+              ix_r   <= 2'd0;
+              rel_r  <= 1'b0;
+              prs_r  <= 1'b0;
+              i_st_r <= I_SEND;
+            end
           end
           I_SEND: begin
             if (!btn_q2_r) rel_r <= 1'b1;
@@ -841,6 +860,7 @@ module KL_aecp_notify
               job_r  <= 1'b1;          // a new press, or timeout <= currentTime
               ix_r   <= 2'd0;
               rel_r  <= 1'b0;
+              prs_r  <= 1'b0;
               i_st_r <= I_SEND;
             end
           end
