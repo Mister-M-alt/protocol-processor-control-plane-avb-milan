@@ -8461,16 +8461,19 @@ struct InternalMaapPhase {
   H h2;
   explicit InternalMaapPhase(H& hh) : h(hh), d2(model2.get()), h2(d2) {}
 
-  // Annex B frame builder (Figure B.1; 42 real bytes padded to 60)
+  // Annex B frame builder (Figure B.1; 42 real bytes padded to 60);
+  // maap_version is the 5-bit field @16[7:3] (B.2.3), 1 unless given
   static std::vector<uint8_t> maap_frame(uint64_t da, uint64_t sa, int msg,
                                          uint64_t req_s, uint16_t req_c,
-                                         uint64_t con_s, uint16_t con_c) {
+                                         uint64_t con_s, uint16_t con_c,
+                                         int maap_version = 1) {
       std::vector<uint8_t> f;
       for (int i = 5; i >= 0; --i) f.push_back(uint8_t(da >> (8 * i)));
       for (int i = 5; i >= 0; --i) f.push_back(uint8_t(sa >> (8 * i)));
       f.push_back(0x22); f.push_back(0xF0);
       f.push_back(0xFE); f.push_back(uint8_t(msg & 0x0F));
-      f.push_back(0x08); f.push_back(0x10);            // maap_ver 1, cdl 16
+      f.push_back(uint8_t((maap_version & 0x1F) << 3));  // maap_version, cdl[10:8]
+      f.push_back(0x10);                               // cdl 16
       for (int i = 0; i < 8; ++i) f.push_back(0x00);   // stream_id
       for (int i = 5; i >= 0; --i) f.push_back(uint8_t(req_s >> (8 * i)));
       f.push_back(uint8_t(req_c >> 8)); f.push_back(uint8_t(req_c));
@@ -8499,6 +8502,7 @@ struct InternalMaapPhase {
     const uint64_t base2 = mp4_a_conflicting_announce_yields(base);
     mp5_a_mis_addressed_probe_is_not_for_us(prober, base2);
     mp6_the_descriptor_path_is_untouched();
+    mp7_other_maap_versions_are_defended(base2);
   }
 
   // ---- MP1: link up -> the whole Table B.7 acquisition on the wire ----
@@ -8590,9 +8594,19 @@ struct InternalMaapPhase {
   }
 
   // ---- MP4: a conflicting ANNOUNCE from a rev-lower peer -> yield -----
+  // The winner is octet-reversed LOWER than OWN_MAC but forward HIGHER
+  // (B.3.6.4): only the reversed compare_MAC yields to it (issue #68).
   uint64_t mp4_a_conflicting_announce_yields(uint64_t base) {
     h2.q_maap.clear();
-    const uint64_t winner = 0x010000000001ull;     // reversed-octet lower
+    const uint64_t winner = 0xF21122334401ull;
+    uint64_t rev_own = 0;
+    uint64_t rev_winner = 0;
+    for (int i = 0; i < 6; ++i) {
+      rev_own = (rev_own << 8) | ((OWN_MAC >> (8 * i)) & 0xFF);
+      rev_winner = (rev_winner << 8) | ((winner >> (8 * i)) & 0xFF);
+    }
+    CHECK(rev_winner < rev_own && OWN_MAC < winner,
+          "MP4: premise — the winner is rev-lower, forward-higher");
     h2.feed(maap_frame(0x91E0F000FF00ull, winner, 3, base, 8, 0, 0));
     for (int i = 0; i < 200 && (d2->acmp_declaring_o & 1); i++) h2.idle(10);
     CHECK(h2.saw_decl_edge(0, false),
@@ -8634,6 +8648,54 @@ struct InternalMaapPhase {
                            CTLR_EID, 0x6003, AEM_READ_DESCRIPTOR, epl);
     CHECK(!got.empty(), "MP6: READ_DESCRIPTOR answered with MAAP running");
     CHECK(got == want, "MP6: READ_DESCRIPTOR byte-exact with MAAP running");
+  }
+
+  //! the first DEFEND (message_type 2) captured within the budget, or empty
+  std::vector<uint8_t> wait_defend(int budget_ms) {
+      long cyc = long(budget_ms) * MS_CYC;
+      while (cyc-- > 0) {
+        for (const auto& fr : h2.q_maap) {
+          if (fr.first.size() > 15 && (fr.first[15] & 0x0F) == 2) return fr.first;
+        }
+        h2.step();
+      }
+      return {};
+  }
+
+  // ---- MP7: maap_version 2 and 0 through the real validator (B.2.3) ------
+  // Every MAAP frame above carries maap_version 1. A PROBE of a later
+  // version with a known message_type is interpreted as ours (B.2.3.2); one
+  // of version 0 as that version, whose fields version 1 contains (B.2.3.4).
+  // Both cross the real validator and dispatch into the engine, and one
+  // conflicting with the DEFEND-state claim is answered by a byte-exact
+  // DEFEND carrying our own version 1.
+  void mp7_other_maap_versions_are_defended(uint64_t base2) {
+    struct VersionProbe {
+      int version;
+      uint64_t prober;
+      uint64_t start;       //! requested_start: 8 addresses from here
+      uint16_t overlap;     //! addresses of our 8 from start (B.3.6.6)
+    };
+    const VersionProbe probes[] = {
+        {2, 0x0A2233445566ull, base2 + 2, 6},
+        {0, 0x0A3344556677ull, base2 + 5, 3},
+    };
+    uint8_t defends = d2->maap_defends_o;
+    for (const VersionProbe& p : probes) {
+      h2.q_maap.clear();
+      h2.feed(maap_frame(0x91E0F000FF00ull, p.prober, 1, p.start, 8, 0, 0,
+                         p.version));
+      const auto got = wait_defend(200);
+      const auto dexp = maap_frame(p.prober, OWN_MAC, 2, p.start, 8,
+                                   p.start, p.overlap);
+      CHECK(got == dexp,
+            "MP7: a maap_version %d PROBE gets a byte-exact DEFEND", p.version);
+      if (got != dexp) { dump("got", got); dump("exp", dexp); }
+      ++defends;
+      CHECK(d2->maap_defends_o == defends && d2->maap_addr_valid_o
+            && d2->maap_addr_o == base2,
+            "MP7: maap_version %d PROBE defended, claim kept", p.version);
+    }
   }
 };
 
@@ -8800,6 +8862,478 @@ struct DomainDefaultPhase {
           unsigned(SRP_DEF_VID));
     if (!f.empty() && f != exp) { dump("got", f); dump("exp", exp); }
     CHECK(domain_is(DEF_VID12, false), "DV6: class-D is the default again");
+  }
+};
+
+// ==== AC. the ACMP listener path end to end (issues #45, #47, #48) ==========
+// A FRESH model, as MP and DV run, so the main DUT's tuned timeline does not
+// move. Sink 1 is the one bound, never sink 0, so a stage that loses the
+// sink index cannot pass by accident. The legs run in wire order on one
+// binding:
+//   AI (#47, Milan 5.5.3.1): ACMP messages outside the listener and talker
+//       sets reach the listener through the real steer and are inert there.
+//   AL (#45, Milan 5.5.2.2): the 96-B IEEE 1722.1-2021 ACMPDU is answered
+//       exactly as the 56-B Milan form is, by both engines.
+//   AS (#48, Milan 5.5.3.5.18/.42/.45 and 5.3.8.5/.9): a real
+//       PROBE_TX_RESPONSE settles the sink; the listener's A15 reaches the
+//       SRP listener matcher only through the top's service stage (st_ls_r,
+//       DECLARE_LISTENER op 2 with sid/DA/VID) and comes back as
+//       TK_ATTR_REGISTERED; the class-D bound view, the GET_RX_STATE forms,
+//       the Listener declaration on the wire and its withdrawal all follow.
+// `--acmp-only` runs this phase alone; tb/pp_top/acmp_mutants.py uses it.
+struct AcmpPathPhase {
+  H& h;
+  const milan::tb::Model<Vpp_top_wrap> model2;
+  Vpp_top_wrap* const d2;
+  H h2;
+  explicit AcmpPathPhase(H& hh) : h(hh), d2(model2.get()), h2(d2) {}
+
+  static constexpr uint16_t LS       = 1;        // the sink this phase binds
+  static constexpr uint16_t SEQ_BIND = 0x4701;
+  //! the stream the talker's PROBE_TX_RESPONSE will carry
+  static constexpr uint64_t SID_L = 0x0202000AA1A10001ULL;
+  static constexpr uint64_t DA_L  = 0x91E0F0A1A101ULL;
+  static constexpr uint16_t VID_L = 2;
+  //! AI1's BIND_RX_RESPONSE to the 56-B form, which AL2 compares against
+  std::vector<uint8_t> bind_rsp;
+
+  //! the listener's own PROBE_TX to the bound talker (F05.13, 05 A5)
+  static std::vector<uint8_t> probe_tx(uint16_t seq) {
+    return acmp_frame(OWN_MAC, 0, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS, 0,
+                      0, seq, 0x0002, 0);
+  }
+  //! the same ACMPDU in the 96-B IEEE 1722.1-2021 form (8.2.1.6: cdl 84;
+  //! Figure 8-1). The 40 bytes past connected_listeners_entries carry a
+  //! pattern, never zeros, so an engine that read past @55 would show it.
+  static std::vector<uint8_t> long_form(std::vector<uint8_t> f) {
+    f[16] = uint8_t((f[16] & 0xF8) | ((84 >> 8) & 7));
+    f[17] = 84;
+    for (int i = 0; i < 40; ++i) f.push_back(uint8_t(0xA5 ^ (i * 29)));
+    return f;
+  }
+  //! the next ACMP frame of one message type and sequence_id
+  std::vector<uint8_t> wait_acmp(uint8_t msg, uint16_t seq, int ms) {
+    return h2.wait_frame(h2.q_acmp, ms, [=](const std::vector<uint8_t>& f) {
+      return f.size() >= 64 && (f[15] & 0x0F) == msg && fv_u64(f, 62, 2) == seq;
+    });
+  }
+
+  // ---- AS helpers ----------------------------------------------------------
+  //! one lane of a per-sink class-D vector (sink k at bits [w*k +: w])
+  template <typename W>
+  static uint64_t lane(const W& v, int k, int w) {
+    uint64_t r = 0;
+    for (int i = 0; i < w; ++i) {
+      const int b = w * k + i;
+      if ((v.at(size_t(b >> 5)) >> (b & 31)) & 1u) r |= 1ull << i;
+    }
+    return r;
+  }
+  struct View { bool bound; uint64_t eid, sid, da; unsigned vid; };
+  View view(int k) const {
+    return {((d2->acmp_bound_o >> k) & 1u) != 0,
+            lane(d2->acmp_bound_eid_o, k, 64), lane(d2->acmp_bound_sid_o, k, 64),
+            lane(d2->acmp_bound_dmac_o, k, 48),
+            unsigned(lane(d2->acmp_bound_vlan_o, k, 12))};
+  }
+  //! the SRP class-D state of sink LS: our Listener declaration (snapshot
+  //! word 14, 2 bits per sink from bit 16) and the talker registration the
+  //! matcher holds (word 12, 2 bits per sink from bit 0)
+  unsigned lstn_decl() { return (h2.snap(14) >> (16 + 2 * LS)) & 3u; }
+  unsigned tk_reg() { return (h2.snap(12) >> (2 * LS)) & 3u; }
+  //! trace records since `from` that carry TK_ATTR_REGISTERED{sink}: the
+  //! router's source k is that event for sink k (pp_evr_map starts the
+  //! tk_reg block at 0), and the payload's low byte names the sink again
+  int registered_traced(int from, int sink) {
+    int hits = 0;
+    const int n = int(h2.snap(15) & 0xFFFF);
+    for (int k = from; k < n; ++k) {
+      const uint32_t lane1 = h2.trace_lane(k & 0xFF, 1);
+      if (int((lane1 >> 24) & 0xFF) == sink && int(lane1 & 0xFF) == sink) ++hits;
+    }
+    return hits;
+  }
+  //! the bench's talker: its Talker Advertise for {sid, da, vid}
+  static std::vector<uint8_t> advertise(uint64_t sid, uint64_t da,
+                                        uint16_t vid, int ev) {
+    return mrpdu_frame(true, T1_MAC, {Msg{1, 25, false, {Vec{false, 1,
+        fv_talker(sid, da, vid, 0x0100, 1, 3, 1, 0x00012345), {ev}, {}}}}});
+  }
+  //! our Listener declaration for the settled stream, alone in an MRPDU
+  //! (802.1Q 35.2.2.7.2: FourPackedType Ready, also on the Lv of it)
+  static std::vector<uint8_t> listener_pdu(int ev) {
+    return mrpdu_frame(true, OWN_MAC, {Msg{3, 8, true, {Vec{false, 1,
+        fv_sid(SID_L), {ev}, {DECL_READY}}}}});
+  }
+  static bool has_listener(const std::vector<uint8_t>& f, int ev) {
+    for (const auto& v : parse_mrpdu(f).vecs)
+      if (v.type == 3 && v.fv.size() == 8 && fv_u64(v.fv, 0, 8) == SID_L
+          && !v.ev.empty() && (ev < 0 || v.ev[0] == ev))
+        return true;
+    return false;
+  }
+  //! GET_RX_STATE for sink LS, answered to CTLR2 (F05.14, Milan Tables
+  //! 5.37 to 5.39 by state; ACMP answers go to the multicast DA). With
+  //! `next`, the answer is the next ACMP frame whatever it is, so no frame
+  //! queued ahead of it is skipped unseen
+  std::vector<uint8_t> get_rx_state(uint16_t seq, bool next = false) {
+    h2.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR2_EID, 0, EID, 0, LS, 0, 0,
+                       seq, 0, 0));
+    return next ? h2.wait_any(h2.q_acmp, 400) : wait_acmp(11, seq, 400);
+  }
+  static std::vector<uint8_t> rx_state_settled(uint16_t seq) {
+    return acmp_frame(OWN_MAC, 11, 0, SID_L, CTLR2_EID, T1_EID, EID, T1_UID,
+                      LS, DA_L, 1, seq, 0x0002, VID_L);
+  }
+  //! time advances with the bench playing a live talker: once the matching
+  //! attribute is registered it re-joins every second, as a conformant
+  //! talker's applicant does, so our LeaveAll ages nothing out
+  bool refresh = false;
+  uint32_t last_join = 0;
+  void advance(int ms) {
+    const uint32_t end = h2.now_ms() + uint32_t(ms);
+    while (h2.now_ms() < end) {
+      if (refresh && h2.now_ms() - last_join >= 1000) {
+        h2.feed(advertise(SID_L, DA_L, VID_L, EV_JOININ));
+        last_join = h2.now_ms();
+      }
+      h2.run_ms(10);
+    }
+  }
+  //! our MSRP LeaveAll (T-MRP-LEAVEALL, 10 to 15 s) folds a byte-exact
+  //! vector into its LA PDU; when fewer than need_ms of the shortest period
+  //! remain, let the next one pass first (the talker refreshed meanwhile)
+  void la_window(int need_ms) {
+    const uint32_t la0 = h2.la_msrp_ms;
+    if (h2.now_ms() - la0 < uint32_t(10000 - need_ms)) return;
+    for (int i = 0; i < 400 && h2.la_msrp_ms == la0; ++i) advance(50);
+    advance(50);
+  }
+  //! RX slots free (snapshot word 25) and scoreboard holds (word 15)
+  unsigned rx_free() { return (h2.snap(25) >> 3) & 0xFFFFu; }
+  unsigned sb_holds() { return h2.snap(15) >> 24; }
+  bool no_front_end_drops() {
+    return h2.snap(4) == 0 && h2.snap(5) == 0 && h2.snap(6) == 0;
+  }
+
+  void run() {
+    h2.dram = h.dram;                       // the same 07 SS3.3 image
+    h2.reset();
+    CHECK(h2.boot_to_aecp(), "AC0: both walks over an erased device release AECP");
+    d2->link_up_i = 1;
+    d2->entity_enable_i = 1;
+    h2.run_ms(50);
+    h2.flush_all();
+    ai_foreign_messages_are_inert();
+    al_the_long_form_is_answered_as_the_short();
+    const uint32_t ts = as_a_real_probe_response_settles();
+    as_near_misses_register_nothing();
+    as_the_matching_advertise_declares_ready();
+    as_settled_rsv_ok_outlives_t_acmp_notk(ts);
+    as_unbind_withdraws_and_clears();
+    printf("  AC: %u ms of simulated time on its own model\n", h2.now_ms());
+  }
+
+  // ---- AI: response-typed and reserved messages are inert (#47) ----------
+  // Milan 5.5.3.1 hands the listener BIND_RX / GET_RX_STATE / UNBIND_RX
+  // commands and the PROBE_TX_RESPONSE; IEEE 1722.1-2021 Table 8-2 (Table 8.1
+  // in IEEE 1722.1-2013) makes 7 BIND_RX_RESPONSE (CONNECT_RX_RESPONSE) and
+  // reserves 14. Both reach the listener, since the steer sends everything
+  // but {0, 2, 4, 12} there, and both are shaped as the perfect answer to the
+  // outstanding probe, so the message type alone keeps them out. A listener
+  // that took either as a probe response would settle and cancel T-ACMP-CMD:
+  // the exact duplicate probe that must follow is the proof it stayed in
+  // PRB_W_RESP.
+  void ai_foreign_messages_are_inert() {
+    h2.feed(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
+                       0, 0, SEQ_BIND, 0, 0));
+    auto r = h2.wait_any(h2.q_acmp, 400);
+    auto want = acmp_frame(OWN_MAC, 7, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
+                           0, 1, SEQ_BIND, 0, 0);
+    CHECK(!r.empty() && r == want, "AI1: BIND_RX sink 1 answered byte-exact");
+    if (!r.empty() && r != want) { dump("got", r); dump("exp", want); }
+    bind_rsp = r;
+    auto p = h2.wait_any(h2.q_acmp, 400);
+    const uint32_t tp = h2.now_ms();
+    CHECK(!p.empty() && p == probe_tx(0),
+          "AI1: PROBE_TX #1 byte-exact (seq 0, FAST_CONNECT, listener uid 1)");
+    if (!p.empty() && p != probe_tx(0)) { dump("got", p); dump("exp", probe_tx(0)); }
+
+    for (uint8_t mm : {uint8_t(7), uint8_t(14)})
+      h2.feed(acmp_frame(T1_MAC, mm, 0, SID_L, CTLR_EID, T1_EID, EID, T1_UID,
+                         LS, DA_L, 0, 0, 0x0002, VID_L));
+    auto x = h2.wait_any(h2.q_acmp, 150 - int(h2.now_ms() - tp));
+    CHECK(x.empty(), "AI2: message types 7 and 14 raise no ACMP frame");
+    if (!x.empty()) dump("unexpected", x);
+    CHECK(rx_free() == 4u, "AI2: no RX slot leak, %u of 4 free", rx_free());
+    CHECK(sb_holds() == 0u, "AI2: no scoreboard hold left, %u held", sb_holds());
+    CHECK(no_front_end_drops(),
+          "AI2: both frames passed the front end (no drop counted)");
+
+    auto dup = h2.wait_any(h2.q_acmp, 200);
+    const uint32_t dt = h2.now_ms() - tp;
+    CHECK(!dup.empty() && dup == probe_tx(0) && dt >= 195 && dt <= 260,
+          "AI3: the sink never left PRB_W_RESP: the exact duplicate probe "
+          "follows at T-ACMP-CMD (%u ms)", dt);
+    if (!dup.empty() && dup != probe_tx(0)) { dump("got", dup); dump("exp", probe_tx(0)); }
+  }
+
+  // ---- AL: the 96-B IEEE 1722.1-2021 form is answered as the 56-B (#45) --
+  // Milan 5.5.2.2 has a Milan device send and accept the truncated 56-B PDU
+  // and lets it accept the longer one; 03 V3 takes that option. Every answer
+  // below is the 56-B, cdl-44 Milan form whatever the command's length, and
+  // the listener's regenerated probe proves the long BIND_RX's fields landed
+  // in the record, not only in the echo.
+  void al_the_long_form_is_answered_as_the_short() {
+    // AL1: long UNBIND_RX from PRB_W_RESP2 (AI3 left the sink there)
+    h2.q_acmp.clear();
+    h2.feed(long_form(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID,
+                                 T1_UID, LS, 0, 0, 0x4502, 0, 0)));
+    auto u = wait_acmp(9, 0x4502, 400);
+    auto uw = acmp_frame(OWN_MAC, 9, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
+                         0, 0, 0x4502, 0, 0);
+    CHECK(!u.empty() && u == uw,
+          "AL1: a 96-B UNBIND_RX is answered by the 56-B cdl-44 UNBIND_RX_RESPONSE");
+    if (!u.empty() && u != uw) { dump("got", u); dump("exp", uw); }
+
+    // AL2: long BIND_RX with AI1's fields and sequence_id
+    h2.feed(long_form(acmp_frame(CTLR_MAC, 6, 0, 0, CTLR_EID, T1_EID, EID,
+                                 T1_UID, LS, 0, 0, SEQ_BIND, 0, 0)));
+    auto b = wait_acmp(7, SEQ_BIND, 400);
+    CHECK(!b.empty() && b == bind_rsp && b.size() == 70 && b[17] == 44,
+          "AL2: a 96-B BIND_RX gets the same 56-B cdl-44 response as AI1's "
+          "truncated BIND_RX, byte for byte");
+    if (!b.empty() && b != bind_rsp) { dump("got", b); dump("exp", bind_rsp); }
+    auto p = wait_acmp(0, 1, 400);
+    CHECK(!p.empty() && p == probe_tx(1),
+          "AL2: PROBE_TX #2 regenerated from the long BIND_RX's fields, "
+          "byte-exact (seq 1)");
+    if (!p.empty() && p != probe_tx(1)) { dump("got", p); dump("exp", probe_tx(1)); }
+
+    // AL3: PROBE_TX to our talker, 56-B then 96-B, same sequence_id. No
+    // allocator is wired on this model, so the honest answer is
+    // TALKER_DEST_MAC_FAILED (status 3), as S10 (c) grades on the main DUT
+    const auto cmd = acmp_frame(CTLR_MAC, 0, 0, 0, CTLR_EID, EID, T1_EID, 0, 7,
+                                0, 0, 0x4503, 0x000A, 0);
+    const auto rw = acmp_frame(OWN_MAC, 1, 3, 0, CTLR_EID, EID, T1_EID, 0, 7,
+                               0, 0, 0x4503, 0x000A, 0);
+    h2.feed(cmd);
+    auto s = wait_acmp(1, 0x4503, 400);
+    CHECK(!s.empty() && s == rw,
+          "AL3: the 56-B PROBE_TX is answered byte-exact (DEST_MAC_FAILED)");
+    if (!s.empty() && s != rw) { dump("got", s); dump("exp", rw); }
+    h2.feed(long_form(cmd));
+    auto l = wait_acmp(1, 0x4503, 400);
+    CHECK(!l.empty() && l == rw && l == s,
+          "AL3: the 96-B PROBE_TX gets the same 56-B cdl-44 response, byte for byte");
+    if (!l.empty() && l != rw) { dump("got", l); dump("exp", rw); }
+
+    CHECK(no_front_end_drops() && (h2.snap(6) >> 16) == 0,
+          "AL4: no 96-B frame was dropped or counted at the front end "
+          "(rx_length %u)", h2.snap(6) >> 16);
+    CHECK(rx_free() == 4u, "AL4: no RX slot leak, %u of 4 free", rx_free());
+  }
+
+  // ---- AS1-AS2: a real PROBE_TX_RESPONSE settles sink 1 (#48 item 1) ------
+  // PROBE_TX #2 goes unanswered: the exact duplicate at T-ACMP-CMD, then
+  // PRB_W_RETRY with LISTENER_TALKER_TIMEOUT, and with no talker discovered
+  // T-ACMP-RETRY lands in PRB_W_AVAIL (F05.4). The talker's ENTITY_AVAILABLE
+  // then drives the F05.2 happy path: discovery, T-ACMP-DELAY, PROBE_TX #3,
+  // and the PROBE_TX_RESPONSE SUCCESS the bench answers with. Milan
+  // 5.5.3.5.18 step 4 records the stream's {stream_id, DA, VLAN}, starts SRP
+  // and TMR_NO_TK; 5.3.8.9 makes the recorded values exactly the response's.
+  uint32_t as_a_real_probe_response_settles() {
+    auto dup = wait_acmp(0, 1, 400);
+    CHECK(!dup.empty() && dup == probe_tx(1),
+          "AS1: PROBE_TX #2 unanswered: its exact duplicate follows");
+    h2.run_ms(4600);                          // PW2 -> PWT -> T-ACMP-RETRY
+    CHECK(h2.q_acmp.empty(),
+          "AS1: no talker discovered, so T-ACMP-RETRY re-probes nothing "
+          "(%zu ACMP frames)", h2.q_acmp.size());
+    auto g0 = get_rx_state(0x4810);
+    auto g0w = acmp_frame(OWN_MAC, 11, 0, 0, CTLR2_EID, T1_EID, EID, T1_UID,
+                          LS, 0, 1, 0x4810, 0x0002, 0);
+    CHECK(!g0.empty() && g0 == g0w,
+          "AS1: GET_RX_STATE while probing: bound values, stream fields 0 "
+          "(Milan Table 5.37), byte-exact");
+    if (!g0.empty() && g0 != g0w) { dump("got", g0); dump("exp", g0w); }
+
+    la_window(4000);                          // settle to Ready inside one LA
+    h2.feed(adp_frame(0, T1_MAC, T1_EID, 10, 1, GM0, DOM0,
+                      0xBBB0000000000001ULL, 8, TKCAP, 0, 0, 0x0000C588u, 0, 0));
+    auto p = wait_acmp(0, 2, 1300);
+    CHECK(!p.empty() && p == probe_tx(2),
+          "AS1: discovery then T-ACMP-DELAY: PROBE_TX #3 byte-exact (seq 2)");
+    if (!p.empty() && p != probe_tx(2)) { dump("got", p); dump("exp", probe_tx(2)); }
+    h2.feed(acmp_frame(T1_MAC, 1, 0, SID_L, CTLR_EID, T1_EID, EID, T1_UID, LS,
+                       DA_L, 0, 2, 0x0002, VID_L));
+    const uint32_t ts = h2.now_ms();
+    h2.run_ms(5);
+
+    const View v = view(LS);
+    CHECK(v.bound && v.eid == T1_EID && v.sid == SID_L && v.da == DA_L
+          && v.vid == VID_L,
+          "AS2: acmp_bound_o/eid/sid/dmac/vlan_o[1] carry the settled stream "
+          "(bound %d, sid %016llx, da %012llx, vid %u)", v.bound,
+          static_cast<unsigned long long>(v.sid),
+          static_cast<unsigned long long>(v.da), v.vid);
+    bool others_clear = true;
+    for (int k = 0; k < 8; ++k) {
+      if (k == LS) continue;
+      const View o = view(k);
+      others_clear &= !o.bound && o.sid == 0 && o.da == 0 && o.vid == 0;
+    }
+    CHECK(others_clear, "AS2: every other sink's bound view stays clear");
+    auto g = get_rx_state(0x4811);
+    CHECK(!g.empty() && g == rx_state_settled(0x4811),
+          "AS2: GET_RX_STATE settled: bound values and the response's "
+          "{stream_id, DA, VLAN} (Milan Table 5.38), byte-exact");
+    if (!g.empty() && g != rx_state_settled(0x4811)) {
+      dump("got", g); dump("exp", rx_state_settled(0x4811));
+    }
+    CHECK(lstn_decl() == 0 && tk_reg() == 0,
+          "AS2: nothing declared or registered before a matching talker "
+          "attribute (decl %u, reg %u)", lstn_decl(), tk_reg());
+    return ts;
+  }
+
+  // ---- AS3: a near miss registers nothing (#48 item 2, the near arm) -----
+  // Milan 5.3.8.9: a talker attribute whose parameters differ from the
+  // recorded ones is ignored. Three near misses on the stream_id, DA and
+  // VLAN each: no registration, no TK_ATTR_REGISTERED to the listener, so
+  // no SETTLED_RSV_OK, and no Listener declaration on the wire.
+  void as_near_misses_register_nothing() {
+    const int n0 = int(h2.snap(15) & 0xFFFF);
+    h2.sync_join();
+    h2.feed(advertise(SID_L, DA_L ^ 1, VID_L, EV_JOININ));       // wrong DA
+    h2.feed(advertise(SID_L, DA_L, VID_L + 1, EV_JOININ));       // wrong VLAN
+    h2.feed(advertise(SID_L + 1, DA_L, VID_L, EV_JOININ));       // wrong stream
+    h2.run_ms(700);
+    bool declared = false;
+    for (const auto& f : h2.q_msrp) declared |= has_listener(f, -1);
+    CHECK(!declared, "AS3: near misses (DA, VLAN, stream_id) put no Listener "
+          "declaration on the wire");
+    CHECK(lstn_decl() == 0 && tk_reg() == 0,
+          "AS3: near misses register nothing (decl %u, reg %u)",
+          lstn_decl(), tk_reg());
+    CHECK(registered_traced(n0, LS) == 0,
+          "AS3: no TK_ATTR_REGISTERED{1} reached the listener");
+    auto g = get_rx_state(0x4812);
+    CHECK(!g.empty() && g == rx_state_settled(0x4812),
+          "AS3: GET_RX_STATE still settled on the recorded stream");
+  }
+
+  // ---- AS4: the matching Talker Advertise yields Listener Ready (#48 item 2)
+  // Milan 5.3.8.5: with a matching Talker Advertise registered the sink
+  // declares Listener Ready; 5.5.3.5.42 takes EVT_TK_REGISTERED to
+  // SETTLED_RSV_OK. Table 5.39's form is Table 5.38's while the registered
+  // attribute is an Advertise (REGISTERING_FAILED 0); AS5 grades the state.
+  void as_the_matching_advertise_declares_ready() {
+    const int n0 = int(h2.snap(15) & 0xFFFF);
+    h2.sync_join();
+    h2.feed(advertise(SID_L, DA_L, VID_L, EV_JOININ));
+    refresh = true;
+    last_join = h2.now_ms();
+    auto f = h2.wait_frame(h2.q_msrp, 900, [](const std::vector<uint8_t>& fr) {
+      return has_listener(fr, EV_NEW);
+    });
+    CHECK(!f.empty() && f == listener_pdu(EV_NEW),
+          "AS4: the matching Talker Advertise yields Listener Ready New, "
+          "byte-exact");
+    if (!f.empty() && f != listener_pdu(EV_NEW)) {
+      dump("got", f); dump("exp", listener_pdu(EV_NEW));
+    }
+    h2.run_ms(20);
+    CHECK(lstn_decl() == 2 && tk_reg() == 1,
+          "AS4: class-D: Listener READY declared, Talker ADVERTISE registered "
+          "for sink 1 (decl %u, reg %u)", lstn_decl(), tk_reg());
+    CHECK(registered_traced(n0, LS) == 1,
+          "AS4: exactly one TK_ATTR_REGISTERED{1} reached the listener");
+    auto g = get_rx_state(0x4813);
+    CHECK(!g.empty() && g == rx_state_settled(0x4813),
+          "AS4: GET_RX_STATE in SETTLED_RSV_OK, REGISTERING_FAILED 0 (Milan "
+          "Table 5.39), byte-exact");
+  }
+
+  // ---- AS5: SETTLED_RSV_OK outlives T-ACMP-NOTK (#48 item 2, the state) ---
+  // 5.5.3.5.42 clears TMR_NO_TK. Had the sink stayed SETTLED_NO_RSV, the
+  // timer would expire 10 s after the settle (5.5.3.5.36): SRP torn down,
+  // the stream fields cleared, and with the talker discovered a re-probe.
+  void as_settled_rsv_ok_outlives_t_acmp_notk(uint32_t ts) {
+    h2.q_acmp.clear();
+    h2.q_msrp.clear();
+    advance(int(ts + 10000 + 1500 - h2.now_ms()));
+    bool lv = false;
+    for (const auto& f : h2.q_msrp) lv |= has_listener(f, EV_LV);
+    CHECK(h2.q_acmp.empty() && !lv,
+          "AS5: 11.5 s after the settle: no re-probe (%zu ACMP frames) and no "
+          "Listener Lv", h2.q_acmp.size());
+    CHECK(lstn_decl() == 2 && tk_reg() == 1,
+          "AS5: Listener READY still declared, Talker still registered "
+          "(decl %u, reg %u)", lstn_decl(), tk_reg());
+    auto g = get_rx_state(0x4814);
+    CHECK(!g.empty() && g == rx_state_settled(0x4814),
+          "AS5: GET_RX_STATE still carries the settled stream past T-ACMP-NOTK");
+    const View v = view(LS);
+    CHECK(v.bound && v.sid == SID_L && v.da == DA_L && v.vid == VID_L,
+          "AS5: the bound view still carries the settled stream");
+  }
+
+  // ---- AS6: UNBIND_RX from SETTLED_RSV_OK (#48 item 3) -------------------
+  // Milan 5.5.3.5.45: stop SRP (the Listener attribute is withdrawn: an Lv
+  // on the wire), stop discovery, clear the binding, answer SUCCESS. The
+  // talker learns of it only through SRP (5.5.2.5). The bound view clears
+  // with the binding. Nothing may probe the sink from the unbind on: no ACMP
+  // frame follows the UNBIND_RX_RESPONSE before the GET_RX_STATE, whose
+  // answer must be the next ACMP frame, and none in the 1.5 s after it.
+  void as_unbind_withdraws_and_clears() {
+    la_window(1500);
+    h2.sync_join();
+    refresh = false;
+    h2.q_acmp.clear();
+    h2.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
+                       0, 0, 0x4815, 0, 0));
+    auto u = wait_acmp(9, 0x4815, 400);
+    auto uw = acmp_frame(OWN_MAC, 9, 0, 0, CTLR_EID, T1_EID, EID, T1_UID, LS,
+                         0, 0, 0x4815, 0, 0);
+    CHECK(!u.empty() && u == uw, "AS6: UNBIND_RX_RESPONSE SUCCESS byte-exact");
+    if (!u.empty() && u != uw) { dump("got", u); dump("exp", uw); }
+    auto f = h2.wait_frame(h2.q_msrp, 900, [](const std::vector<uint8_t>& fr) {
+      return has_listener(fr, EV_LV);
+    });
+    CHECK(!f.empty() && f == listener_pdu(EV_LV),
+          "AS6: the Listener attribute is withdrawn on the wire: Lv Ready, "
+          "byte-exact");
+    if (!f.empty() && f != listener_pdu(EV_LV)) {
+      dump("got", f); dump("exp", listener_pdu(EV_LV));
+    }
+    h2.run_ms(20);
+    const View v = view(LS);
+    CHECK(!v.bound && v.sid == 0 && v.da == 0 && v.vid == 0,
+          "AS6: the bound view is cleared with the binding (bound %d, sid "
+          "%016llx, da %012llx, vid %u)", v.bound,
+          static_cast<unsigned long long>(v.sid),
+          static_cast<unsigned long long>(v.da), v.vid);
+    CHECK(lstn_decl() == 0 && tk_reg() == 0,
+          "AS6: no Listener declared and no match held any more (decl %u, "
+          "reg %u)", lstn_decl(), tk_reg());
+    CHECK(h2.q_acmp.empty(),
+          "AS6: no ACMP frame from the UNBIND_RX_RESPONSE to the GET_RX_STATE "
+          "(%zu)", h2.q_acmp.size());
+    h2.q_acmp.clear();                        // a stray frame counts once
+    auto g = get_rx_state(0x4816, true);
+    auto gw = acmp_frame(OWN_MAC, 11, 0, 0, CTLR2_EID, 0, EID, 0, LS, 0, 0,
+                         0x4816, 0, 0);
+    CHECK(!g.empty() && g == gw,
+          "AS6: GET_RX_STATE unbound: every field 0 but the echoes, byte-exact");
+    if (!g.empty() && g != gw) { dump("got", g); dump("exp", gw); }
+    h2.run_ms(1500);
+    CHECK(h2.q_acmp.empty(),
+          "AS6: nothing probes the unbound sink: no ACMP frame in 1.5 s (%zu)",
+          h2.q_acmp.size());
+    CHECK(rx_free() == 4u && sb_holds() == 0u,
+          "AS6: no RX slot or scoreboard hold left (%u free, %u held)",
+          rx_free(), sb_holds());
   }
 };
 
@@ -9963,6 +10497,17 @@ struct NameWritePhase {
   D3RestorePhase{h, image, setup.image_ents}.dr3a_measurements();
 }
 
+//! Section AC on a fresh model, against the same descriptor image the suite
+//! loads; `--acmp-only` runs it alone.
+[[maybe_unused]] static void run_acmp(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  Suite setup(h);
+  setup.load_descriptor_image();
+  AcmpPathPhase{h}.run();
+  printf("ACMP: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 [[maybe_unused]] static void run_name_writes(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
@@ -9982,6 +10527,14 @@ struct NameWritePhase {
   phase.refused_writes();
   phase.stalled_and_aborted_writes();
   printf("NW: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
+//! the MP section alone, for the MAAP mutation campaign (tb/maap README):
+//! its second model needs only the descriptor image the main harness loads
+[[maybe_unused]] static void run_maap_internal(H& h) {
+  Suite setup(h);
+  setup.load_descriptor_image();
+  InternalMaapPhase{h}.run();
 }
 
 // ==== AD. The ADPDU across SET_CONFIGURATION (issue #40) =================
@@ -10350,6 +10903,8 @@ int main(int argc, char** argv) {
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
   const bool d3_only = argc == 2 && std::strcmp(argv[1], "--d3-only") == 0;
+  const bool acmp_only = argc == 2 && std::strcmp(argv[1], "--acmp-only") == 0;
+  const bool maap_only = argc == 2 && std::strcmp(argv[1], "--maap-internal-only") == 0;
   const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
   const bool ident_only = argc == 2 && std::strcmp(argv[1], "--identify-only") == 0;
   const bool notify_only = argc == 2 && std::strcmp(argv[1], "--notify-only") == 0;
@@ -10357,12 +10912,14 @@ int main(int argc, char** argv) {
     run_dr3a(h);
     return 0;
   }
-  const bool one_section = gsi_only || name_only || d3_only || adp_only || ident_only
-                           || notify_only;
+  const bool one_section = gsi_only || name_only || d3_only || acmp_only || adp_only || maap_only
+                           || ident_only || notify_only;
+  if (maap_only) run_maap_internal(h);
   if (!one_section) Suite(h).run();
   if (!one_section || gsi_only) InternalStreamInfoPhase{h}.run();
   if (!one_section || name_only) run_name_writes(h);
   if (!one_section || d3_only) run_d3(h);
+  if (!one_section || acmp_only) run_acmp(h);
   if (!one_section || adp_only) run_adp_config(h);
   if (!one_section || ident_only) run_identify(h);
   if (!one_section || notify_only) run_pushes(h);

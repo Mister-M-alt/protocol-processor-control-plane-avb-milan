@@ -180,15 +180,16 @@ static void fill_pat(Bytes& f, size_t upto, uint8_t seed) {
 }
 
 // an Annex B MAAP PDU (Figure B.1): the 42 real bytes, padded to the
-// 60-byte Ethernet minimum. F22 through F26 all build their frame here.
+// 60-byte Ethernet minimum. F22 through F26, F28 and F29 all build their
+// frame here; maap_version is the 5-bit field @2[7:3] (B.2.3), 1 unless given.
 static Bytes maap_pdu(uint64_t da, uint8_t msg, uint16_t cdl,
                       uint64_t req_start, uint16_t req_cnt,
                       uint64_t con_start, uint16_t con_cnt,
-                      uint8_t vernib = 0x00) {
+                      uint8_t vernib = 0x00, uint8_t maap_version = 1) {
   Bytes f = eth(da, 0x5254001A2B3Cull, 0x22F0);
   f.push_back(0xFE);
   f.push_back(uint8_t(vernib | (msg & 0x0F)));     // sv/ver | message_type
-  f.push_back(uint8_t((1u << 3) | ((cdl >> 8) & 7)));  // maap_version 1
+  f.push_back(uint8_t(((maap_version & 0x1F) << 3) | ((cdl >> 8) & 7)));
   f.push_back(uint8_t(cdl & 0xFF));
   put64(f, 0);                                     // stream_id = 0 (B.2.4)
   put_mac(f, req_start); put16(f, req_cnt);
@@ -326,6 +327,8 @@ class RxValidatorSuite {
   void v8_still_owns_the_sv_version_nibble_on_maap();
   void probe_tx_response_carries_the_listeners_unique_id();
   void held_aecp_frames_are_dropped_at_the_slot_gate();
+  void maap_version_2_and_0_reach_the_engine();
+  void the_96_byte_ieee_acmpdu_is_accepted_whole();
 
   const milan::tb::Model<VKL_pp_rx_validator> model;
   VKL_pp_rx_validator* const d = model.get();
@@ -750,6 +753,80 @@ void RxValidatorSuite::held_aecp_frames_are_dropped_at_the_slot_gate() {
   CHECK(d->rx_aecp_held_count_o == held0 + 2, "F28 nothing counted without the hold");
 }
 
+// ---- F29: maap_version 2, 0 and 31 cross the validator (B.2.3) --------
+// B.2.3.2: a version above ours with a known message_type is interpreted as
+// ours; B.2.3.4: a version below ours is interpreted as that version, whose
+// fields v1 contains. Neither may be dropped here: each PROBE is accepted,
+// demuxed to PP_PROTO_MAAP, and the status lane carries the received
+// version for the engine. 31 sets all five bits of the lane.
+void RxValidatorSuite::maap_version_2_and_0_reach_the_engine() {
+  struct VersionCase {
+    const char* name;
+    uint8_t version;
+  };
+  const VersionCase cases[] = {
+      {"F29a", 2},
+      {"F29b", 0},
+      {"F29c", 31},
+  };
+  for (const VersionCase& c : cases) {
+    Bytes f29 = maap_pdu(DA_MAAP, 1, 16, 0x91E0F0004000ull, 8, 0, 0,
+                         /*vernib=*/0x00, c.version);
+    const int commits0 = h.commits;
+    run_case(c.name, f29);
+    check_hdr(c.name, classify(f29, true).hdr);
+    CHECK(h.commits == commits0 + 1 && h.hg.protocol == P_MAAP
+          && h.hg.status == c.version,
+          "%s maap_version %u accepted as MAAP, status lane %u", c.name,
+          unsigned(c.version), unsigned(h.hg.status));
+  }
+}
+
+// ---- F30: the 96-B IEEE 1722.1-2021 ACMPDU, cdl 84 (V3; F09.4; #45) ---
+// Milan §5.5.2.2: a Milan device sends and accepts the truncated 56-B PDU and
+// may accept the longer one; 03 V3 takes that option. IEEE 1722.1-2021
+// §8.2.1.6 sets cdl to 84 (Figure 8-1: ip_flags, reserved, source_port,
+// destination_port and the two 128-bit IP addresses follow
+// connected_listeners_entries @54). The tail is filled with a pattern, never
+// zeros, so a front end that let it into any header lane would show here.
+// Both consumers' forms run: F3's BIND_RX (listener unique_id) and the same
+// fields as a PROBE_TX command (talker unique_id). Each must commit whole:
+// no counter moves (rx_length above all), one header beat field-exact and
+// equal to the truncated form's except for cdl, and a slot holding all
+// cdl + 12 = 96 bytes.
+void RxValidatorSuite::the_96_byte_ieee_acmpdu_is_accepted_whole() {
+  struct Form { const char* nm; uint8_t msg; uint16_t uid; };
+  static constexpr Form kForms[] = {{"F30 BIND_RX cdl 84", 0x06, 0x0004},
+                                    {"F30 PROBE_TX cdl 84", 0x00, 0x0003}};
+  for (const Form& fm : kForms) {
+    Bytes shortf = f3;                                 // the 56-B Milan form
+    shortf[15] = fm.msg;
+    run_case("F30 truncated reference", shortf);
+    const Hdr ref = h.hg;
+    Bytes longf = shortf;
+    longf[16] = uint8_t((longf[16] & 0xF8) | ((84 >> 8) & 7));
+    longf[17] = uint8_t(84 & 0xFF);                    // cdl 84
+    fill_pat(longf, 14 + 96, 0x5A);                    // ip_flags .. dest IP
+    const unsigned len0 = d->rx_length_count_o;
+    run_case(fm.nm, longf);
+    check_hdr(fm.nm, classify(longf, true).hdr);
+    CHECK(h.last_commit.size() == 96 && h.hg.cdl == 84,
+          "%s: the slot holds cdl + 12 = 96 bytes (got %zu) and the beat "
+          "carries cdl 84 (got %u)", fm.nm, h.last_commit.size(), h.hg.cdl);
+    CHECK(d->rx_length_count_o == len0, "%s: no rx_length count (got +%u)",
+          fm.nm, unsigned(d->rx_length_count_o - len0));
+    Hdr cmp = h.hg;
+    cmp.cdl = ref.cdl;
+    CHECK(cmp.protocol == ref.protocol && cmp.msg_type == ref.msg_type
+          && cmp.status == ref.status && cmp.src_mac == ref.src_mac
+          && cmp.ctlr == ref.ctlr && cmp.target == ref.target
+          && cmp.seq == ref.seq && cmp.opcode == ref.opcode
+          && cmp.operands == ref.operands && (h.hg.operands & 0xFFFF) == fm.uid,
+          "%s: the beat equals the truncated form's but for cdl (unique_id "
+          "%04x)", fm.nm, unsigned(h.hg.operands & 0xFFFF));
+  }
+}
+
 int RxValidatorSuite::run() {
   reset_zeroes_the_counters();
   aecp_aem_command_to_own_unicast_at_the_v1_boundary();
@@ -779,6 +856,8 @@ int RxValidatorSuite::run() {
   v8_still_owns_the_sv_version_nibble_on_maap();
   probe_tx_response_carries_the_listeners_unique_id();
   held_aecp_frames_are_dropped_at_the_slot_gate();
+  maap_version_2_and_0_reach_the_engine();
+  the_96_byte_ieee_acmpdu_is_accepted_whole();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;

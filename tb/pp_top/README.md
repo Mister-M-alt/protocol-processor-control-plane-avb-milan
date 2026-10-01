@@ -1166,6 +1166,135 @@ S10 retains a failed probe while the allocator is absent, then proves recovery
 without another probe. The standalone talker retry suite carries the detailed
 pacing, fairness, late-response and block-change mutation matrix.
 
+## Section MP: the internal MAAP engine (11; IEEE 1722-2016 Annex B)
+
+A second model runs the processor with `cfg_maap_internal_i = 1` from reset.
+MP0 starts both restore walks over an erased device, so AECP is released
+(section D3). MP1 grades the whole acquisition on the MAC stream, MP2 a
+byte-exact DEFEND, MP3 the talker granted from the internal claim, MP4 a
+yield to a conflicting ANNOUNCE, MP5 the DA-qualified subtype gate, and MP6
+the descriptor path while MAAP runs.
+
+**MP4** (issue #68, B.3.6.4): the announcer `F2:11:22:33:44:01` is
+octet-reversed lower than `OWN_MAC` (`0A:0B:0C:0D:0E:0F`) but forward higher,
+and a premise check says so. Only the reversed compare_MAC yields to it, so
+the `tb/maap` campaign's `compare-mac-forward` arm fails MP4 (5 FAIL of 34).
+
+**MP7** (issue #67, B.2.3): every other MAAP frame in this bench carries
+maap_version 1. MP7 feeds a conflicting PROBE with maap_version 2 (B.2.3.2),
+then one with maap_version 0 (B.2.3.4), through the real validator and
+dispatch against the DEFEND-state claim. Each gets a byte-exact DEFEND that
+carries our version 1, and the claim is kept.
+
+`make maap-internal` builds the bench and runs the MP section alone (34
+checks). The `tb/maap` mutation campaign uses it: its
+`validator-maap-version-1-only` arm fails MP7 (4 FAIL of 34).
+
+## Section AC: the ACMP listener path end to end (issues #45, #47, #48)
+
+AC runs on a fresh model with the suite's descriptor image and an erased NVM
+device, after both restore walks, with the link up and the entity enabled, so
+the main DUT's timeline is untouched. `./obj_dir/Vpp_top_sim --acmp-only`
+(after `make gsi-build`) runs it alone and prints its own `ACMP:` tally. Sink 1
+is the one bound, never sink 0, so a stage that loses the sink index cannot
+pass by accident. The legs run in wire order on one binding:
+
+- **AI** (issue #47, REQ-ACMP-012, Milan §5.5.3.1). **AI1** BIND_RX for sink 1
+  is answered byte-exact and PROBE_TX #1 (sequence_id 0, FAST_CONNECT,
+  listener_unique_id 1) follows byte-exact. **AI2** a BIND_RX_RESPONSE (7, a
+  response type of IEEE 1722.1-2021 Table 8-2, Table 8.1 in IEEE 1722.1-2013)
+  and a reserved type (14) arrive shaped as the perfect answer to that probe:
+  the steer delivers both to the listener, and neither raises an ACMP frame,
+  both pass the front end with no drop counted, all four RX slots are free
+  and no scoreboard hold is left.
+  **AI3** the exact duplicate of probe #1 follows at T-ACMP-CMD: the sink never
+  left PRB_W_RESP, which a listener that took either frame as a probe response
+  would have done (it settles and cancels the timer).
+- **AL** (issue #45, REQ-ACMP-001, Milan §5.5.2.2 and 03 V3; IEEE 1722.1-2021
+  §8.2.1.6 sets cdl 84 for the 96-B form of Figure 8-1). Each long command
+  carries its 40-byte IP tail filled with a pattern. **AL1** a 96-B UNBIND_RX
+  from PRB_W_RESP2 is answered by the 56-B cdl-44 UNBIND_RX_RESPONSE,
+  byte-exact. **AL2** a 96-B BIND_RX with AI1's fields and sequence_id gets
+  the same response as AI1's 56-B BIND_RX, byte for byte, and PROBE_TX #2
+  (sequence_id 1), regenerated from the record, is byte-exact, so the long
+  command's talker and controller fields reached the binding and not only the
+  echo. **AL3** a PROBE_TX to our talker, 56-B then 96-B with one
+  sequence_id, gets one byte-exact answer twice (TALKER_DEST_MAC_FAILED: no
+  allocator is wired on this model, as S10 (c) on the main DUT). **AL4** no
+  96-B frame was dropped or counted at the front end (`rx_length` 0) and all
+  four RX slots are free.
+- **AS** (issue #48, REQ-ACMP-016, Milan §5.5.3.5.18 / .36 / .42 / .45 /
+  .48 and §5.3.8.5 / .9): the listener's A15 reaches the SRP listener
+  matcher only through the top's service stage (`st_ls_r`: DECLARE_LISTENER,
+  op 2, state READY, the sink index, stream_id, DA and VID) and comes back as
+  TK_ATTR_REGISTERED through the event router. The wrap exports the class-D
+  bound view (`acmp_bound_eid_o`, `acmp_bound_sid_o`, `acmp_bound_dmac_o`,
+  `acmp_bound_vlan_o`) for this leg. **AS1** PROBE_TX #2 goes unanswered: its
+  exact duplicate follows, T-ACMP-RETRY finds no talker and re-probes
+  nothing, and GET_RX_STATE answers the probing form (Table 5.37: bound
+  values, stream fields 0) byte-exact; the talker's ENTITY_AVAILABLE then
+  drives discovery and T-ACMP-DELAY to PROBE_TX #3 byte-exact, which the
+  bench answers with a PROBE_TX_RESPONSE SUCCESS carrying {stream_id, DA,
+  VLAN}. **AS2** `acmp_bound_o`/`eid`/`sid`/`dmac`/`vlan_o[1]` carry exactly
+  the response's stream and every other sink's view stays clear;
+  GET_RX_STATE answers the settled form (Table 5.38) byte-exact; nothing is
+  declared or registered yet. **AS3** three near misses (Talker Advertise
+  with the DA, the VLAN or the stream_id off by one) put no Listener vector on
+  the wire, register nothing on the class-D face and route no
+  TK_ATTR_REGISTERED{1}; GET_RX_STATE is unchanged. **AS4** the matching
+  Talker Advertise yields Listener Ready New byte-exact, alone in its MRPDU,
+  class-D READY and ADVERTISE for sink 1, exactly one TK_ATTR_REGISTERED{1}
+  in the trace, and GET_RX_STATE in Table 5.39's form (REGISTERING_FAILED 0,
+  the same bytes as Table 5.38's). **AS5** the state: 11.5 s after the
+  settle, with the bench re-joining its Advertise every second as a live
+  talker would, there is no re-probe and no Listener Lv, the declaration and
+  registration hold, and GET_RX_STATE and the bound view still carry the
+  stream, which a sink left in SETTLED_NO_RSV cannot do past T-ACMP-NOTK
+  (§5.5.3.5.36 tears SRP down and re-probes the discovered talker). **AS6**
+  UNBIND_RX from SETTLED_RSV_OK: UNBIND_RX_RESPONSE byte-exact, the Listener
+  Lv (FourPackedType Ready, 802.1Q §35.2.2.7.2) byte-exact on the wire, the
+  bound view cleared, no declaration or match held, GET_RX_STATE unbound
+  byte-exact, nothing probes the sink from the unbind on (no ACMP frame
+  between the UNBIND_RX_RESPONSE and the GET_RX_STATE, whose answer is the
+  next ACMP frame, and none in the 1.5 s after it), and no RX slot or
+  scoreboard hold is left.
+
+Every byte-exact MRPDU check is aligned into a clean slot of the join
+cadence (`sync_join`) inside a LeaveAll-free window: the phase waits for the
+next MSRP LeaveAll when fewer than the needed milliseconds of the shortest
+T-MRP-LEAVEALL (10 s) remain, re-joining the talker meanwhile. The phase costs
+about 19 s of simulated time on its own model (it prints the figure).
+
+### ACMP negative controls: `acmp_mutants.py`
+
+`python3 acmp_mutants.py --output DIR [--jobs N] [--only NAME ...]` plants each
+control in its own extract of `hdl/`, `tb/common/` and the grading suite's
+directory, and counts it KILLED only when the run completes with its tally,
+exits non-zero and every named check fails; a golden extract of each suite in
+use runs first and must pass. Here it builds `gsi-build` and runs
+`--acmp-only`; the same driver runs the listener controls in `tb/acmp_listener`
+and the validator control in `tb/rx_validator` (recorded in those READMEs).
+Measured 2026-09-30 at the lane head, each in its own extract: all 19 KILLED
+(14 here, 4 in `tb/acmp_listener`, 1 in `tb/rx_validator`) and the three
+goldens PASS:
+
+| Mutant | Defect planted | Named checks, each failing | Failing checks |
+|---|---|---|---|
+| `msg_ok_forced` | `txn_msg_ok_w` forced to 1 in the listener | `AI3: the sink never left PRB_W_RESP` | 1 of 43 |
+| `cdl_not_44_rejected` | the validator accepts ACMP only at cdl 44 (`v1_pass_w` also requires it for subtype 0xFC) | `AL1: a 96-B UNBIND_RX`, `AL2: a 96-B BIND_RX`, `AL3: the 96-B PROBE_TX`, `AL4: no 96-B frame was dropped` | 19 of 43 (the dropped long BIND_RX leaves AS without its binding) |
+| `st_ls_settle_as_withdraw` | `st_ls_r` issues the settle as WITHDRAW_LISTENER (op 3) | `AS4: the matching Talker Advertise yields Listener Ready New`, `AS4: class-D`, `AS5: 11.5 s after the settle` | 7 of 43 |
+| `st_ls_teardown_as_declare` | `st_ls_r` issues the teardown as DECLARE_LISTENER (op 2) | `AS6: the Listener attribute is withdrawn on the wire` | 1 of 43 |
+| `st_ls_sid_da_swapped` | `st_ls_r` carries the DA as the stream_id and the stream_id as the DA | `AS4: the matching ...`, `AS4: class-D`, `AS5: 11.5 s ...` | 7 of 43 |
+| `st_ls_state_none` | `st_ls_r` declares state NONE (the teardown code) instead of READY | `AS4: the matching ...`, `AS4: class-D`, `AS5: 11.5 s ...` | 7 of 43 |
+| `st_ls_vid_dropped` | `st_ls_r` carries VID 0 | `AS4: the matching ...`, `AS4: class-D`, `AS5: 11.5 s ...` | 7 of 43 |
+| `st_ls_index_zero` | `st_ls_r` carries sink 0 whatever the sink (the wire frame is the same: only the per-sink faces and the state show it) | `AS4: class-D`, `AS4: exactly one TK_ATTR_REGISTERED{1}`, `AS5: 11.5 s ...` | 6 of 43 |
+| `st_ls_teardown_lost` | the teardown strobe never reaches `st_ls_r` | `AS6: the Listener attribute is withdrawn on the wire`, `AS6: no Listener declared and no match held` | 2 of 43 |
+| `bound_view_not_latched` | the A15 latch of the bound view removed | `AS2: acmp_bound_o/eid/sid/dmac/vlan_o[1] carry the settled stream`, `AS5: the bound view still carries the settled stream` | 2 of 43 |
+| `bound_dmac_from_sid` | the bound DA latched from the stream_id | `AS2: acmp_bound_o/eid/sid/dmac/vlan_o[1] ...` | 2 of 43 |
+| `bound_view_not_cleared` | the bound stream identity left behind on the unbind (A9) | `AS6: the bound view is cleared with the binding` | 1 of 43 |
+| `matcher_da_ignored` | the SRP listener matcher ignores the DA | `AS3: near misses (DA, VLAN, stream_id) put no Listener declaration`, `AS3: near misses register nothing`, `AS3: no TK_ATTR_REGISTERED{1}` | 5 of 43 |
+| `matcher_vid_ignored` | the SRP listener matcher ignores the VLAN | the same three AS3 checks | 5 of 43 |
+
 ## Lane C6: notifications and identify (issues #54, #58, #80, #86)
 
 `notify_phases.hpp` holds five sections, each on a fresh processor of its own
