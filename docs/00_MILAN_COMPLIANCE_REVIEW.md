@@ -511,7 +511,7 @@ verification).
 | [GAP-12](#gap-12) | Minor | Explicit non-redundant scope + parameterized seams | [01 §1/§7](architecture/01_overview.md) | DIR | [#69](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/69) |
 | [GAP-13](#gap-13) | Minor | Firmware assist optional behind side-port flag | [02 §7](architecture/02_interfaces.md) | DIR | none found |
 | [GAP-14](#gap-14) | Info | All figures Mermaid/WaveDrom/draw.io + lint | [docs/README.md](README.md), `Makefile` | lint | [#75](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/75) |
-| [GAP-15](#gap-15) | Info | Conventions + parser rules + status policies | [docs/README.md](README.md) §4, [03 §3](architecture/03_packet_engine.md) | TOL | [#45](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/45) |
+| [GAP-15](#gap-15) | Info | Conventions + parser rules + status policies | [docs/README.md](README.md) §4, [03 §3](architecture/03_packet_engine.md) | TOL | none found |
 | [GAP-16](#gap-16) | Blocker | ADP advertise SM + talker-discovery SM (entity table dropped) | [04](architecture/04_adp_engine.md) | MTXW | [#85](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/85) |
 | [GAP-17](#gap-17) | Blocker | Originator + inflight table; four transaction origins | [03 §5](architecture/03_packet_engine.md) | RND | [#86](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/86) |
 

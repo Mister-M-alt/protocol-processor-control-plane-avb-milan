@@ -59,7 +59,7 @@ reports uncovered REQ-IDs as failures.
 
 | Case | Expected |
 |---|---|
-| 2013 96-B ACMPDU and 56-B Milan ACMPDU | both accepted (V3) |
+| 96-B IEEE 1722.1-2021 ACMPDU (cdl 84) and 56-B Milan ACMPDU (cdl 44, the IEEE 1722.1-2013 length) | both accepted (V3) |
 | REGISTER_UNSOLICITED without `flags` (cdl 12) | accepted as flags = 0 (V4) |
 | padded minimum-size frames, cdl < frame length | parsed by cdl (V2) |
 | cdl + 12 > frame length | dropped + counted (V1) |
