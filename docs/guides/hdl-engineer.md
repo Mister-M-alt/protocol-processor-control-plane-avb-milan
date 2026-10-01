@@ -61,7 +61,7 @@ Directory-to-document mapping and the submodule consumption contract are in
 | Suffixes | `_i` / `_o` ports · `_P` parameters · `_C` localparams and constants · `_r` registered state · `_w` combinational nets. |
 | Clock | one clock, `clk_i`, in the `CLK_HZ_P` domain. The only annotated exception is [`KL_pp_side_port`](../../hdl/packet_engine/KL_pp_side_port.sv), which may be driven from a bridged management clock. |
 | Reset | `rst_n`, **synchronous**, active low. There are no asynchronous resets in this tree. Mixing an async reset into a synchronous tree is a review stopper. |
-| CDC | none is inside these modules. Level inputs that cross a domain (`link_up_i`, `gm_change_i`) are annotated "2FF-synced upstream" — the synchroniser is the integrator's. |
+| CDC | one synchroniser is inside these modules, on purpose: the two flops (`btn_q1_r`, `btn_q2_r`) that take `identify_button_i` into `KL_aecp_notify`, built only with `EN_IDENTIFY_NOTIF_P` = 1 (the ruling on issue #80; [integrator guide](integrator.md) §1 and §6, [02 §2](../architecture/02_interfaces.md) rule 3). Every other input that crosses a domain (`link_up_i`, `gm_change_i`) is annotated "2FF-synced upstream" — that synchroniser is the integrator's. |
 | Citations | a banner names the clause it implements in plain text: `(Milan §5.6.3)`, `(IEEE 1722.1 §9.3.5.3.3)`. |
 | Single source | timing values come from [`08_timing.md`](../architecture/08_timing.md) `F08.1` and parameter defaults from [`01_overview.md`](../architecture/01_overview.md) `F01.5`. A localparam cites the `T-…` or `P-…` ID it implements. A copied constant is a defect: it diverges in silence. |
 
