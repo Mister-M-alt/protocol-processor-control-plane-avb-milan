@@ -51,7 +51,7 @@ Two things it deliberately does **not** do, and which you should not go looking 
 | `DISCONNECT_TX` | always `SUCCESS`, and it changes nothing. The Milan talker is stateless |
 | `GET_TX_CONNECTION` | `NOT_SUPPORTED`, for the same reason |
 | A command addressed to another entity | dropped and counted. A command that is an AECP *response* is dropped too — answering a response is how a control plane builds a storm |
-| Anything, while the response memory is broken | a well-formed 60-byte `ENTITY_MISBEHAVING`. It is an honest failure, not a hang |
+| Anything, while the response memory is broken | a well-formed 60-byte `ENTITY_MISBEHAVING`, or, for a Milan Vendor Unique command, `NOT_IMPLEMENTED` with the command echoed. It is an honest failure, not a hang |
 | A command still executing at its deadline (`T-BUDGET-AECP-WC` after it arrived) because a face or a memory answers slowly | a well-formed 60-byte `ENTITY_MISBEHAVING` inside `T-AECP-RESP`, or, for a Milan Vendor Unique command, `NOT_IMPLEMENTED` with the command echoed. A command that had already changed state answers for itself |
 
 A controller that cannot see the device at all, when a capture shows the frames leaving,
@@ -322,7 +322,7 @@ lot of time.
 | `NO_SUCH_DESCRIPTOR` from a direct-locate command | the loaded model does not contain that descriptor |
 | `ENTITY_MISBEHAVING`, 60 bytes | the response-memory bridge failed — snapshot words 35 and 36 — or, when those words did not move, the command outlived its deadline: a face or memory behind it answered slowly for the whole `T-BUDGET-AECP-WC` |
 | `TALKER_DEST_MAC_FAILED` from PROBE_TX | this source has no allocated stream address, because the MAAP allocator in the fabric is absent, did not answer, or became available less than one `T-ACMP-DA-RETRY` round plus the source sweep ago |
-| `NOT_IMPLEMENTED` with the command echoed | that opcode is genuinely not implemented yet. It is a correct answer, not a fault |
+| `NOT_IMPLEMENTED` with the command echoed | that opcode is genuinely not implemented yet. It is a correct answer, not a fault. For GET_MILAN_INFO, which is implemented, it is the fault answer instead: its response memory failed (snapshot words 35 and 36 moved) or it outlived its deadline, because Milan Table 5.19 gives a Vendor Unique answer no other failure code |
 
 ---
 

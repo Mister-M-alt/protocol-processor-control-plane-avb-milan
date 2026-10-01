@@ -657,7 +657,13 @@ into the one canonical tally.
   holds each validation request 3,000 clocks is still validating at the
   deadline and is never preempted: its own SUCCESS, both records committed.
   **DL7** every RX slot is free afterwards and READ_DESCRIPTOR(ENTITY) is
-  byte-exact. The boot-held command's exemption (rule (d)) is D3O6's 150 ms
+  byte-exact. **DL8** (REQ-MVU-005, Milan Table 5.19) a GET_MILAN_INFO whose
+  response memory fails, by a read error, a write error or a tied-off master,
+  answers MVU NOT_IMPLEMENTED with the command echoed, byte-exact, and the void
+  is counted; one padded to 540 payload bytes echoes a 578-byte frame, which the
+  engine sized into the oversize slot; a GET_CONFIGURATION under the read error
+  still answers ENTITY_MISBEHAVING header only; afterwards every RX slot is free
+  and GET_MILAN_INFO answers SUCCESS. The boot-held command's exemption (rule (d)) is D3O6's 150 ms
   hold. `make deadline` runs this section alone; the default run includes it.
   The taps are `dbg_aecp_dl_kill_o`, `dbg_aecp_dl_queued_o`,
   `dbg_sb_kill_ack_o`, `dbg_aecp_sb_id_o`, `dbg_sb_holds_o` and
@@ -925,6 +931,8 @@ and must pass. Counts below were taken on 2026-09-30 with Verilator 5.052.
 | `dl-edit-preempted` | pp_top `deadline` | the edit, registry and lock commands preempted like the rest | 2: DL6 (ENTITY_MISBEHAVING mid-validation, no record committed) |
 | `dl-preempt-after-effect-top` | pp_top `deadline` | the µCPU redirects after an effect op | 2: DL2 (the SET_NAME that wrote its name answers ENTITY_MISBEHAVING) |
 | `dl-mvu-forced-status-10` | pp_top `deadline` | the MVU forced answer left at status 10 | 1: DL3 (status 10, which Milan Table 5.19 reserves) |
+| `mvu-fault-status-10` | pp_top `deadline` | the MVU fault answer removed: a voided MVU response is rebuilt as status 10, header only | 4: DL8 under every fault (status 10, 60 bytes) |
+| `mvu-echo-slot-std` | pp_top `deadline` | an MVU response's slot sized for its built answer only | 1: DL8 (the 578-byte echo clipped to the 576-byte standard slot) |
 | `dl-preempt-after-effect` | ucpu `run` | the same µCPU patch, at the unit | 4: P19c (status 10 after the write, commit and mark, the notification lost), P19d |
 | `ucpu-preempt-cuts-a-wait` | ucpu `run` | the redirect taken while an op waits on its face | 2: P19e (the waiting locate abandoned, no read answered) |
 | `ucpu-preempt-keeps-the-body` | ucpu `run` | the cursor not returned to 12 | 1: P19f (length 36 with a partly built counters block) |

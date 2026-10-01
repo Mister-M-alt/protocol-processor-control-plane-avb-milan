@@ -683,7 +683,7 @@ are resolved by recording this waiver and the tested fallback, not by adding sup
 
 | Command | Current behavior |
 |---|---|
-| GET_MILAN_INFO (0x0000, shall) | implemented: F06.11, SUCCESS, 44-B AECPDU / cdl 32; protocol_version 1, features_flags 0, certification_version 0 (microcode constants). The per-configuration compliance gate and certification register are not implemented (§8.1) |
+| GET_MILAN_INFO (0x0000, shall) | implemented: F06.11, SUCCESS, 44-B AECPDU / cdl 32; protocol_version 1, features_flags 0, certification_version 0 (microcode constants). A response whose memory fails, and one past its deadline (§8.1), answers MVU status 1 `NOT_IMPLEMENTED` with the command echoed, the only failure code Table 5.19 defines. The per-configuration compliance gate and certification register are not implemented (§8.1) |
 | SET/GET_SYSTEM_UNIQUE_ID (0x0001/0x0002, rec) | waived; VU response with MVU status 1 `NOT_IMPLEMENTED`, echoing the command body and length; no ID storage, SET validation, persistence or notification |
 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO (0x0003/0x0004, rec) | waived; VU response with MVU status 1 `NOT_IMPLEMENTED`, echoing the command body and length; no priority/name storage, default-priority interface, SET validation, persistence or notification |
 | any other MVU type | VU response, MVU status 1 `NOT_IMPLEMENTED` |

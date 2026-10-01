@@ -10768,6 +10768,73 @@ struct DeadlinePhase {
           "DL7: READ_DESCRIPTOR(ENTITY) after the arms is byte-exact");
   }
 
+  //! DL8 (REQ-MVU-005; Milan v1.2 §5.4.3.3 Table 5.19: an MVU status is
+  //! SUCCESS or NOT_IMPLEMENTED): the other answer the engine forces, when a
+  //! response's memory fails, is DL3's for an MVU command too, NOT_IMPLEMENTED
+  //! with the command echoed, never IEEE's status 10. GET_MILAN_INFO builds its
+  //! body in the response memory, so a read error (the rebuild after its slot
+  //! is granted), a write error and a tied-off master each void it, and each
+  //! void is counted. A GET_MILAN_INFO padded to 540 payload bytes, past cdl
+  //! 524, echoes a 578-byte frame, so its slot must be the oversize one. An
+  //! AEM command under the same fault still answers ENTITY_MISBEHAVING, header
+  //! only. Afterwards every RX slot is free and GET_MILAN_INFO answers SUCCESS
+  void dl8_an_mvu_response_whose_memory_fails_answers_not_implemented() {
+    struct Fault {
+      const char* what;
+      bool H::*knob;
+      size_t pad;
+    };
+    const Fault faults[] = {
+        {"a response-memory read error", &H::rmem_rerr, 0},
+        {"a response-memory write error", &H::rmem_werr, 0},
+        {"a tied-off response memory", &H::rmem_off, 0},
+        {"a read error under a 540-byte command", &H::rmem_rerr, 532},
+    };
+    uint16_t s = 0xD801;
+    for (const Fault& x : faults) {
+      std::vector<uint8_t> pl = mvu_pl();
+      pl.resize(pl.size() + x.pad, 0);
+      io.q_aecp.clear();
+      const uint16_t err0 = io.d->dbg_resp_err_o;
+      io.*x.knob = true;
+      (void)send(0, pl, s, VU_COMMAND);
+      long first = -1;
+      const auto f = answer(s, &first);
+      io.*x.knob = false;
+      CHECK(f == aecp_frame(CTLR_MAC, OWN_MAC, VU_RESPONSE,
+                            AECP_NOT_IMPLEMENTED, EID, CTLR_EID, s,
+                            MVU_PID_HI, pl),
+            "DL8 %s: GET_MILAN_INFO answers MVU NOT_IMPLEMENTED with the "
+            "command echoed, byte-exact (status %d, %zu bytes)", x.what,
+            status(f), f.size());
+      CHECK(static_cast<uint16_t>(io.d->dbg_resp_err_o - err0) == 1,
+            "DL8 %s: the voided response is counted (%u)", x.what,
+            unsigned(static_cast<uint16_t>(io.d->dbg_resp_err_o - err0)));
+      ++s;
+    }
+    io.rmem_rerr = true;
+    (void)send(AEM_GET_CONFIGURATION, {}, s);
+    long first = -1;
+    const auto g = answer(s, &first);
+    io.rmem_rerr = false;
+    CHECK(g == forced(s, AEM_GET_CONFIGURATION),
+          "DL8: an AEM command under the read error still answers "
+          "ENTITY_MISBEHAVING, header only (status %d)", status(g));
+    io.run_ms(20);
+    CHECK(((io.snap(25) >> 3) & 0xFFFFu) == 4u,
+          "DL8: %u of 4 RX slots free after the faults",
+          (io.snap(25) >> 3) & 0xFFFFu);
+    std::vector<uint8_t> info(20, 0);
+    putbe(&info[0], MVU_PID_LO, 4);            // protocol_id @24..@27
+    putbe(&info[8], 1u, 4);                    // protocol_version 1
+    ++s;
+    (void)send(0, mvu_pl(), s, VU_COMMAND);
+    CHECK(answer(s, &first) == aecp_frame(CTLR_MAC, OWN_MAC, VU_RESPONSE,
+                                          AECP_SUCCESS, EID, CTLR_EID, s,
+                                          MVU_PID_HI, info),
+          "DL8: the memory healed, GET_MILAN_INFO answers SUCCESS byte-exact");
+  }
+
   void run() {
     boot();
     dl1_a_stalled_command_is_answered_by_the_forced_response();
@@ -10777,6 +10844,7 @@ struct DeadlinePhase {
     dl5_an_expired_frame_owed_no_response_releases_normally();
     dl6_an_edit_past_its_point_of_no_return_is_not_preempted();
     dl7_nothing_leaked();
+    dl8_an_mvu_response_whose_memory_fails_answers_not_implemented();
   }
 };
 

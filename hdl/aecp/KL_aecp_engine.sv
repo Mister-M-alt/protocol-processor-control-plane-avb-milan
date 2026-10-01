@@ -232,7 +232,10 @@
 //                60-byte ENTITY_MISBEHAVING response (IEEE §7.4 status 10)
 //                with an empty payload, built entirely from registers. Never a
 //                leak, never a hang, and never a SUCCESS carrying bytes this
-//                block did not read.
+//                block did not read. An MVU command, whose status set has no
+//                10 (Milan v1.2 §5.4.3.3 Table 5.19), is rewritten instead as
+//                its refusal: NOT_IMPLEMENTED with the command echoed from its
+//                RX slot, in a slot sized for that echo when it was granted.
 //
 //                ADDRESSING (03 §8): an AECP response is UNICAST back to the
 //                requester's src_mac. A frame shorter than the 60-octet
@@ -1013,7 +1016,7 @@ module KL_aecp_engine
   logic [4:0]  status_r;
   logic [10:0] bidx_r;                   // frame byte being written
   logic [10:0] frame_len_r;
-  logic        err_mode_r;               // rebuilding as ENTITY_MISBEHAVING
+  logic        err_mode_r;               // rebuilding the voided answer
   logic [TXS_W_C-1:0] tx_slot_r;
   logic [15:0] cmd_cnt_r, resp_cnt_r, drop_cnt_r, rerr_cnt_r;
 
@@ -2521,8 +2524,18 @@ module KL_aecp_engine
   //! writer's restore terminal, and is then taken first.
   assign txn_ready_o     = (a_st_r == A_IDLE) && !rsp_busy_w
                            && !amap_notify_busy_i && !d3_own_w;
+  //! An MVU command whose response memory fails answers the command echoed
+  //! (A_ALLOC, A_WR), and the failure can come after its slot is granted, so
+  //! an MVU response takes the oversize slot whenever that echo would need it
+  logic        mvu_cmd_w;
+  logic [10:0] mvu_echo_len_w;
+  assign mvu_cmd_w       = (cmd_r.protocol == PP_PROTO_MVU);
+  assign mvu_echo_len_w  = (11'(FRAME_HDR_C) + pld_cmd_r < 11'(ETH_MIN_C))
+                           ? 11'(ETH_MIN_C) : (11'(FRAME_HDR_C) + pld_cmd_r);
   assign txs_alloc_req_o = (a_st_r == A_ALLOC);
-  assign txs_oversize_o  = (frame_len_r > 11'(TX_STD_BYTES_P));
+  assign txs_oversize_o  = (frame_len_r > 11'(TX_STD_BYTES_P))
+                           || (mvu_cmd_w
+                               && (mvu_echo_len_w > 11'(TX_STD_BYTES_P)));
   assign txs_wr_slot_o   = tx_slot_r;
   assign txs_wr_addr_o   = TXA_W_C'(bidx_r);
   assign txs_wr_valid_o  = (a_st_r == A_WR) && byte_ok_w;
@@ -2578,7 +2591,9 @@ module KL_aecp_engine
                           ? 11'd0 : pld_r;
 
   //! A response source failed under a frame that is already partly written.
-  //! Rebuild it from registers; mapping edits also retain their staged body.
+  //! Rebuild it from registers; mapping edits also retain their staged body,
+  //! and an MVU command answers NOT_IMPLEMENTED with the command echoed from
+  //! its RX slot, which the response memory never held.
   logic rsp_fail_w;
   assign rsp_fail_w = (rsp_err_w || gxf_fail_r) && !err_mode_r
                       && (!echo_r || amap_edit_r);
@@ -3657,6 +3672,15 @@ module KL_aecp_engine
                               ? 11'(ETH_MIN_C)
                               : 11'(FRAME_HDR_C) + amap_edit_pld_w)
                            : 11'(ETH_MIN_C);
+            //! Milan v1.2 §5.4.3.3 Table 5.19: an MVU status is SUCCESS or
+            //! NOT_IMPLEMENTED, so a voided MVU answer is its refusal form,
+            //! the command echoed, as the deadline's is (A_RUN)
+            if (mvu_cmd_w) begin
+              status_r    <= ST_NOT_IMPLEMENTED_C;
+              echo_r      <= 1'b1;
+              pld_r       <= pld_cmd_r;
+              frame_len_r <= mvu_echo_len_w;
+            end
             bidx_r      <= 11'd0;
             if (rerr_cnt_r != 16'hFFFF) rerr_cnt_r <= rerr_cnt_r + 16'd1;
           end else if (txs_alloc_gnt_i) begin
@@ -3679,6 +3703,14 @@ module KL_aecp_engine
                               ? 11'(ETH_MIN_C)
                               : 11'(FRAME_HDR_C) + amap_edit_pld_w)
                            : 11'(ETH_MIN_C);
+            //! an MVU answer: the command echoed, as at A_ALLOC; its slot
+            //! was sized for the echo (txs_oversize_o)
+            if (mvu_cmd_w) begin
+              status_r    <= ST_NOT_IMPLEMENTED_C;
+              echo_r      <= 1'b1;
+              pld_r       <= pld_cmd_r;
+              frame_len_r <= mvu_echo_len_w;
+            end
             bidx_r      <= 11'd0;
             if (rerr_cnt_r != 16'hFFFF) rerr_cnt_r <= rerr_cnt_r + 16'd1;
           end else if (byte_ok_w) begin

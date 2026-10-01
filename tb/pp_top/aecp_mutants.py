@@ -50,6 +50,13 @@ MUTANTS = [
     # latency against T-AECP-RESP (section TB, the third build)
     ("dl-mvu-forced-status-10", "dl-mvu-forced-status-10", "pp_top",
      "deadline", "DL3: the queued GET_MILAN_INFO"),
+    # ... and when its response memory fails (REQ-MVU-005, Table 5.19)
+    ("mvu-fault-status-10", "mvu-fault-status-10", "pp_top", "deadline",
+     "DL8 a response-memory read error: GET_MILAN_INFO answers MVU "
+     "NOT_IMPLEMENTED"),
+    ("mvu-echo-slot-std", "mvu-echo-slot-std", "pp_top", "deadline",
+     "DL8 a read error under a 540-byte command: GET_MILAN_INFO answers MVU "
+     "NOT_IMPLEMENTED"),
     ("mvu-silent", "mvu-silent", "pp_top", "budget",
      "TB1 GET_MILAN_INFO at the suite latency"),
     ("fanout-never-ends", "fanout-never-ends", "pp_top", "budget",
