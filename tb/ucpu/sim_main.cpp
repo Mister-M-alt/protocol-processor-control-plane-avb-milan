@@ -36,6 +36,8 @@ constexpr uint16_t E_COPY = 352;
 constexpr uint16_t E_MAPV = 384;
 constexpr uint16_t E_MAPVF = 400;
 constexpr uint16_t E_OVF = 416;
+constexpr uint16_t E_OVF8 = 432;
+constexpr uint16_t E_COPYT = 448;
 constexpr uint16_t E_FMT = 512;
 constexpr uint16_t E_NOTIMPL = 560;
 constexpr uint16_t E_ACQ = 576;
@@ -63,7 +65,6 @@ constexpr uint16_t E_SSRATE = 1152;
 constexpr uint16_t E_SCLKS = 1184;
 constexpr uint16_t E_TIZ8NS = 1216;
 constexpr uint16_t E_TIZ4NS = 1224;
-constexpr uint16_t E_LOCKED4 = 1232;
 constexpr uint16_t E_BADARG4 = 1240;
 constexpr uint16_t E_STRT = 1600;
 constexpr uint16_t E_SFMTI = 1792;
@@ -418,7 +419,7 @@ struct Harness {
   }
 
   bool run(uint16_t upc, uint64_t opd0, bool lock, int max_cycles = 2000,
-           uint64_t opd1 = OPD1, uint64_t opd2 = 0) {
+           uint64_t opd1 = OPD1, uint64_t opd2 = 0, bool batch = false) {
     memset(buf, 0, sizeof buf);
     bad_write = false; sends = 0; lock_scenario = lock;
     rb_accepts = 0; rb_held_cycles = 0; rb_have_held = false;
@@ -432,7 +433,7 @@ struct Harness {
     dut->disp_opd0_i = opd0;
     dut->disp_opd1_i = opd1;
     dut->disp_opd2_i = opd2;
-    dut->disp_batch_i = 0;
+    dut->disp_batch_i = batch;
     dut->disp_resp_base_i = 12;
     dut->disp_valid_i = 1;
     tick();
@@ -474,6 +475,7 @@ class UcpuSuite {
   void copy_buffer_moves_descriptor_bytes_into_the_response();
   void map_validate_passes_and_fails();
   void the_524_byte_cap_skips_on_overflow();
+  void the_d8_append_fills_the_buffer_but_not_a_batch();
   void write_strobes_truncating_moves_and_the_rb_raw();
   void an_unknown_opcode_answers_not_implemented();
   void acquire_entity_answers_not_supported();
@@ -758,6 +760,12 @@ void UcpuSuite::copy_buffer_moves_descriptor_bytes_into_the_response() {
         "P9 lanes %08x %08x %08x %08x",
         h.w32(12), h.w32(16), h.w32(20), h.w32(24));
   CHECK(h.last_len == 28, "P9 len got %u", h.last_len);
+  // P9b: the TAIL copy (issue #82) takes rf[ra] - start bytes from start
+  CHECK(h.run(E_COPYT, IDX_OK, false), "P9b completes");
+  CHECK(h.w32(12) == 0x33333333u && h.w32(16) == 0x44444444u && h.w32(20) == 0,
+        "P9b the tail is lane 1 alone: %08x %08x %08x",
+        h.w32(12), h.w32(16), h.w32(20));
+  CHECK(h.last_len == 20, "P9b len 20 (48 - 40 bytes) got %u", h.last_len);
 }
 
 // ---- P10: MAP_VALIDATE pass and fail --------------------------------
@@ -778,6 +786,27 @@ void UcpuSuite::the_524_byte_cap_skips_on_overflow() {
         h.w32(516) == 0 && h.w32(520) == 0xCAFE,
         "P11 first/last fitting elements (qword = hi word first)");
   CHECK(h.w32(524) == 0 && h.w32(528) == 0, "P11 nothing past the cap");
+}
+
+// ---- P11b/P11c: the Δ8 APPEND (Milan 5.4.1, issue #50) ---------------
+// The same 8-byte loop with cnd D8 fills the buffer (RESP_D8_CAP_BYTES_P = 592):
+// 72 of 80 elements fit from cursor 12, the 73rd would end at 596. Inside a
+// GET_DYNAMIC_INFO batch the same µop still stops at 524 (IEEE §7.4.76.1).
+void UcpuSuite::the_d8_append_fills_the_buffer_but_not_a_batch() {
+  CHECK(h.run(E_OVF8, 0, false, 1500), "P11b completes");
+  CHECK(h.last_len == 588, "P11b filled to 588 (72 qwords) got %u", h.last_len);
+  CHECK(dut->dbg_ovf_o == 1 && h.last_status == ST_NSUPP,
+        "P11b the 73rd skips: overflow flag and branch");
+  CHECK(h.w32(516) == 0 && h.w32(520) == 0xD8 && h.w32(524) == 0 &&
+        h.w32(528) == 0xD8 && h.w32(580) == 0 && h.w32(584) == 0xD8,
+        "P11b the elements past 524 are written, the 72nd at 580");
+  CHECK(h.w32(588) == 0 && h.w32(592) == 0, "P11b nothing past 588");
+  CHECK(h.run(E_OVF8, 0, false, 1500, OPD1, 0, true), "P11c completes (batch)");
+  CHECK(h.last_len == 524, "P11c in a batch capped at 524 got %u", h.last_len);
+  CHECK(dut->dbg_ovf_o == 1 && h.last_status == ST_NSUPP,
+        "P11c in a batch the 65th skips");
+  CHECK(h.w32(516) == 0 && h.w32(520) == 0xD8 && h.w32(524) == 0 &&
+        h.w32(528) == 0, "P11c in a batch nothing past 524");
 }
 
 // ---- P12: write strobes, truncating moves, 64-bit compare, rb-RAW ---
@@ -1470,6 +1499,7 @@ int UcpuSuite::run() {
   copy_buffer_moves_descriptor_bytes_into_the_response();
   map_validate_passes_and_fails();
   the_524_byte_cap_skips_on_overflow();
+  the_d8_append_fills_the_buffer_but_not_a_batch();
   write_strobes_truncating_moves_and_the_rb_raw();
   an_unknown_opcode_answers_not_implemented();
   acquire_entity_answers_not_supported();

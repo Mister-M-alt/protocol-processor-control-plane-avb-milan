@@ -31,6 +31,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 UCODE = ROOT / "hdl" / "aecp" / "ucode" / "gen_ucode.py"
 ENGINE = ROOT / "hdl" / "aecp" / "KL_aecp_engine.sv"
+PKG = ROOT / "hdl" / "aecp" / "ucpu_pkg.sv"
+
+#! The GET_AUDIO_MAP page cap is written down twice as well (issue #50): the
+#! µprogram compares against `GAMAP_PAGE_MAX` and the engine sizes its
+#! elaboration guard by `ucpu_pkg::GAMAP_PAGE_MAX_C`. A drift there elaborates
+#! a buffer that drops records a SUCCESS still counts, just as silently.
+RE_PAGE_UCODE = re.compile(r"^assert GAMAP_PAGE_MAX == (\d+)\s*$", re.M)
+RE_PAGE_PKG = re.compile(
+    r"localparam\s+int\s+unsigned\s+GAMAP_PAGE_MAX_C\s*=\s*(\d+)\s*;")
 
 #! `E_NAME = 1234` at the start of a line, comment optional. Deliberately NOT
 #! matching indented assignments: a local in a function is not an entry point.
@@ -93,6 +102,18 @@ def main() -> int:
             problems.append(
                 f"  UPC_{name}_C = {addr} but E_{name} = {want}. The engine "
                 f"dispatches {addr - want:+d} words away from the program.")
+
+    page_u = RE_PAGE_UCODE.findall(usrc)
+    page_p = RE_PAGE_PKG.findall(PKG.read_text(encoding="utf-8")) \
+        if PKG.exists() else []
+    if len(page_u) != 1 or len(page_p) != 1:
+        problems.append(
+            f"  the GET_AUDIO_MAP page cap is not written exactly once in each "
+            f"place (gen_ucode.py: {page_u}, ucpu_pkg.sv: {page_p})")
+    elif page_u != page_p:
+        problems.append(
+            f"  GAMAP_PAGE_MAX = {page_u[0]} but ucpu_pkg::GAMAP_PAGE_MAX_C = "
+            f"{page_p[0]}: the engine sizes its buffer guard for another page.")
 
     if problems:
         print("UPC MAP GATE: FAIL — the engine and the µcode disagree\n")

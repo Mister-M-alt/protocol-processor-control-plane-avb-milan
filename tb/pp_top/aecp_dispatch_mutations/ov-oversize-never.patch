@@ -1,0 +1,11 @@
+--- a/hdl/aecp/KL_aecp_engine.sv
++++ b/hdl/aecp/KL_aecp_engine.sv
+@@ -2482,7 +2482,7 @@
+   assign txn_ready_o     = (a_st_r == A_IDLE) && !rsp_busy_w
+                            && !amap_notify_busy_i && !d3_own_w;
+   assign txs_alloc_req_o = (a_st_r == A_ALLOC);
+-  assign txs_oversize_o  = (frame_len_r > 11'(TX_STD_BYTES_P));
++  assign txs_oversize_o  = 1'b0;
+   assign txs_wr_slot_o   = tx_slot_r;
+   assign txs_wr_addr_o   = TXA_W_C'(bidx_r);
+   assign txs_wr_valid_o  = (a_st_r == A_WR) && byte_ok_w;

@@ -38,7 +38,12 @@ module KL_aecp_ucpu
   import ucpu_pkg::*;
 #(
     //! path of the µcode ROM image (2048 lines of 12 hex digits)
-    parameter string UCODE_HEX_P = "ucode.hex"
+    parameter string UCODE_HEX_P = "ucode.hex",
+    //! the response-buffer bytes an APPEND of the Milan §5.4.1 command set
+    //! (cnd[0] set) may fill, cursor = cdl: KL_aecp_engine passes its buffer,
+    //! 16 + LINE_BYTES_P, the reservation. Every other APPEND, and every APPEND of
+    //! a GET_DYNAMIC_INFO batch, still skips past RESP_CAP_C (524).
+    parameter int unsigned RESP_D8_CAP_BYTES_P = 592
 ) (
     input  wire         clk_i,
     input  wire         rst_n,
@@ -259,10 +264,22 @@ module KL_aecp_ucpu
     else                           copy_adv2_w = 4'(copy_left_r[3:0] - 4'd4);
   end
 
+  //! APPEND's skip line. cnd[0] marks a record loop of the variable-length
+  //! responses Milan §5.4.1 lets exceed cdl 524 (GET_AUDIO_MAP's records,
+  //! issue #50); it fills the buffer instead. A batch never does: IEEE
+  //! 1722.1-2021 §7.4.76.1 still holds GET_DYNAMIC_INFO to 524.
+  if ((RESP_D8_CAP_BYTES_P < RESP_CAP_C)
+      || (RESP_D8_CAP_BYTES_P > 1024)) begin : gen_g_d8_cap
+    $error("RESP_D8_CAP_BYTES_P=%0d outside %0d..1024 (the 10-bit cursor)",
+           RESP_D8_CAP_BYTES_P, RESP_CAP_C);
+  end
+  logic [10:0] append_cap_w;
+  assign append_cap_w = (uop_e_r.cnd[0] && !batch_r) ? 11'(RESP_D8_CAP_BYTES_P)
+                                                      : 11'(RESP_CAP_C);
   logic append_skip_w;
   assign append_skip_w = (uop_e_r.op == OP_APPEND) &&
                          (({1'b0, cursor_r} + {7'd0, fld_len_w}) >
-                          11'(RESP_CAP_C));
+                          append_cap_w);
 
   logic is_q_field_w;
   assign is_q_field_w = (uop_e_r.op inside {OP_BUILD_FLD, OP_APPEND}) &&
@@ -566,7 +583,14 @@ module KL_aecp_ucpu
               OP_COPY_BUF: begin
                 if (!copy_go_r) begin
                   copy_go_r   <= 1'b1;
-                  copy_left_r <= opa_e_r[15:0];
+                  //! cnd[0], the TAIL copy: rf[ra] is the descriptor's whole
+                  //! length and imm its lane-aligned start, so the count is
+                  //! the bytes from there to the end (READ_DESCRIPTOR's
+                  //! current-value overlays, issue #82: the µISA has no
+                  //! subtract, and the tail's length is the descriptor's)
+                  copy_left_r <= uop_e_r.cnd[0]
+                               ? (opa_e_r[15:0] - {4'd0, uop_e_r.imm[11:0]})
+                               : opa_e_r[15:0];
                   copy_idx_r  <= '0;
                 end else if ((eseq_r == 4'd0) && st_rvalid_i &&
                              (copy_left_r != 16'd0)) begin

@@ -83,7 +83,7 @@ stream counts in F01.5 are product choices; the top supplies implementation defa
 | `TROM_HEX_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [listener ROM generator](../../hdl/acmp/rom/gen_ltn_rom.py) | File path to the ACMP listener transition-ROM image |
 | `UCODE_HEX_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [AECP µcode generator](../../hdl/aecp/ucode/gen_ucode.py) | File path to the AECP µcode ROM image |
 | `DESC_BASE_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.1 memory contract](../architecture/07_memory_maps.md#sec-desc-memory) | Base of the descriptor image in **your** memory |
-| `DESC_LINE_BYTES_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.1 descriptor store](../architecture/07_memory_maps.md#sec-desc-memory) | On-chip line capacity for one located descriptor; also sizes the response-buffer reservation |
+| `DESC_LINE_BYTES_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.1 descriptor store](../architecture/07_memory_maps.md#sec-desc-memory) | On-chip line capacity for one located descriptor; also sizes the response-buffer reservation, `16 + DESC_LINE_BYTES_P` bytes (section 5). Legal: a multiple of 8 from 576 to 1008 (`P-DESC-LINE-BYTES`, [F01.5](../architecture/01_overview.md#fig-01-params)); elaboration refuses any other line with a message naming `DESC_LINE_BYTES_P`. Below 576 the reservation could not carry a whole 71-record GET_AUDIO_MAP page (`P-MAP-SUBSET-CH-MAX`, [06 §3](../architecture/06_aecp_engine.md#3-pdu-handling)); above 1008 it would pass the 1024 bytes the response cursor addresses |
 | `DESC_IDX_ENTRIES_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.1 descriptor store](../architecture/07_memory_maps.md#sec-desc-memory) | Cached index-map capacity, per (configuration, descriptor type) |
 | `DESC_NAME_ENTRIES_P` | [Top declaration and banner](../../hdl/top/protocol_processor_top.sv); [07 §3.3.1 descriptor store](../architecture/07_memory_maps.md#sec-desc-memory) | Name-table capacity on chip; size from the generated image's `n_names` within the store's supported limits |
 | `DESC_MEM_TMO_CYC_P` | [Top declaration and bindings](../../hdl/top/protocol_processor_top.sv); [AECP engine](../../hdl/aecp/KL_aecp_engine.sv) | Watchdog budget in core clocks for descriptor and response memory, AECP gather waits, and the listener's stream-command handshake |
@@ -211,7 +211,7 @@ of both. Your memory system already arbitrates — let it.
 | Region | Size | Who writes it |
 |---|---|---|
 | `DESC_BASE_P` | your descriptor image, sized by your entity model | **your software**, before `restore_go_i` (the restore judges saved values against it) and so before `entity_enable_i`. The processor only reads it. |
-| `RESP_BASE_P` | `16 + DESC_LINE_BYTES_P` bytes | **the processor.** Nothing else may write here. |
+| `RESP_BASE_P` | `16 + DESC_LINE_BYTES_P` bytes (592 at the default line) | **the processor.** Nothing else may write here, and the processor writes nothing past it: its response buffer is exactly this reservation. |
 
 Both are 8-byte aligned, and `RESP_BASE_P` must not overlap `DESC_BASE_P`.
 

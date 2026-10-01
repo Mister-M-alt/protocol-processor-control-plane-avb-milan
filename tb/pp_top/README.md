@@ -17,9 +17,9 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make`: exit 0 = PASS. It builds the bench twice (section DV): each executable
-prints its own build's tally, and the last line sums both into the one canonical
-tally.
+`make`: exit 0 = PASS. It builds the bench three times (sections DV and AX):
+each executable prints its own build's tally, and the last line sums them into
+the one canonical tally.
 
 ## What it proves
 
@@ -394,8 +394,13 @@ tally.
     READ_DESCRIPTOR answers `BAD_ARGUMENTS` rather than locating whatever
     followed the header.
   - **A5b** the NOT_IMPLEMENTED response is sized by ITS OWN command, swept
-    over payloads of 0, 4, 8, 16 and 72 octets and two opcodes Table 7-140
-    leaves unassigned: `control_data_length` is read off the wire (not
+    over payloads of 0, 4, 8, 12, 16 and 72 octets, two opcodes Table 7-140
+    leaves unassigned, and (issue #74, REQ-FWX-001) the six the row names as
+    outer AEM commands at their own IEEE 1722.1-2021 command lengths: REBOOT
+    (0x002A, 4), START_OPERATION (0x0037, 12), ABORT_OPERATION (0x0038, 8),
+    OPERATION_STATUS sent as a command (0x0039, 8), SET_MEMORY_OBJECT_LENGTH
+    (0x0047, 12) and GET_MEMORY_OBJECT_LENGTH (0x0048, 4, a GET_DYNAMIC_INFO
+    whitelist member and still no outer command). `control_data_length` is read off the wire (not
     compared to the builder, which would share any bug) and must be 12 + the
     command's payload, the echoed bytes are a non-zero pattern, and the frame
     is the padded 60 octets only where the payload is genuinely short. A5
@@ -469,6 +474,21 @@ tally.
   - **M6/M7** a truncated MVU command is echoed rather than answered from bytes
     nobody read; and a READ_DESCRIPTOR after the MVU traffic is still
     byte-exact, because Hive enumerating is worth more than the gap this closes.
+  - **M9** (issues #83 and #76) every opcode the engine decodes, sent on every
+    message type whose @22..@23 is not a command_type (2, 4, 6, 8, 10, 12, 14),
+    is answered NOT_IMPLEMENTED with the command echoed whole: the `aem_w`
+    message-type guard of each dispatch arm. The list `kOpcodes` is held to
+    exactly the engine's `OP_*_C` set by `scripts/check_m9_opcodes.py`, which
+    `run_suites.sh` runs (with its self-test) before any suite; issue #76
+    found it at 23 of 30. Arms that re-dispatch on payload content get real
+    bodies (GET_AUDIO_MAP and the ADD/REMOVE pair a STREAM_PORT_INPUT), and
+    the three writers that joined with #76 (SET_STREAM_FORMAT, SET_STREAM_INFO,
+    SET_NAME) are sent once more with a whole command body, so an unguarded arm
+    reaches its write: **M9b3-M9b5** read STREAM_OUTPUT 1's published format
+    and presentation-offset rows and CLOCK_DOMAIN 0's name back unmoved, as
+    **M9b/M9b2** do the sampling rate. `make aecp-dispatch` runs A5b and M9
+    alone on a booted model (the main run holds both in its own timeline), then
+    section AX.
 - **Audio-map edit transaction**: ADD/REMOVE_AUDIO_MAPPINGS cover atomic
   validation and commit, duplicate-safe removal, static-port refusal,
   running-output refusal, state-changing success notifications with
@@ -783,6 +803,100 @@ the last column is how many checks each one failed there.
 | `held_drop_uncounted` | a held drop not counted | `D3O5: one AECP command held`, `D3O6: at the terminal` | 5 |
 | `resident_never_returned` | the resident count never comes back down (R391-2's own edit) | `D3O7: the returned slot frees the share` | 1 |
 
+### AECP dispatch and response negative controls: `aecp_dispatch_mutants.py`
+
+`make aecp-dispatch-mutants [AECP_DISPATCH_MUTANT_OUTPUT=DIR]` (or
+`python3 aecp_dispatch_mutants.py --output DIR [--only ARM,...]`) plants each
+arm below, an explicit patch in `aecp_dispatch_mutations/`, into a scratch
+copy of `hdl/`, `tb/common/` and this
+directory with `git apply`; the driver reads only simulation and lint logs.
+The HDL workflow runs the whole campaign through the make target.
+Every generated ROM and model directory is deleted before each build, so a
+microcode arm cannot leave its ROM behind. A positive control of each make
+target runs first and must pass, and an arm is KILLED only when its run
+completes with the build's tally (or the line guards' summary), exits non-zero
+and prints the named check. `aecp-dispatch` runs A5b and M9 on a booted model,
+then section AX on its own processor (`--aecp-dispatch-only`); `aecp-line`
+runs section AX in the line build; `line-guards` lints the top across the line
+range. The last column is how many checks each arm failed at the lane head.
+
+| Arm | Defect planted | Named check | Failing checks |
+|---|---|---|---|
+| `m9-guard-set-stream-format` | `ssfmt_w` loses its `aem_w` message-type guard (issue #76) | `M9: mt=4 word 0008` | 9 |
+| `m9-guard-set-stream-info` | `ssinfo_w` loses its guard | `M9: mt=4 word 000E` | 9 |
+| `m9-guard-set-name` | `sname_w` loses its guard | `M9: mt=4 word 0010` | 9 |
+| `m9-guard-get-name` | `gname_w` loses its guard | `M9: mt=4 word 0011` | 7 |
+| `m9-guard-add-mappings` | the ADD term of `amap_edit_w` loses its guard | `M9: mt=4 word 002C` | 7 |
+| `m9-guard-remove-mappings` | the REMOVE term of `amap_edit_w`, and `amap_remove_w`, lose their guard | `M9: mt=4 word 002D` | 7 |
+| `m9-guard-dynamic-info` | `gdi_w` loses its guard | `M9: mt=4 word 004B` | 7 |
+| `a5b-reboot-success-arm` | the pop decode answers REBOOT (0x002A) SUCCESS with the command echoed (issue #74) | `A5b: REBOOT (7.4.43, Figure 7-68): the response is not the echoed command` | 1 |
+| `lk-ssrate-lock-nop` | E_SSRATE's CHECK_LOCK (E_SSRATE+9) replaced with NOP (issue #53) | `LK1 unset rate row, ...: ENTITY_LOCKED byte-exact` | 9 |
+| `lk-ssrate-miss-lock-nop` | E_SSRATE's locate-miss CHECK_LOCK (SSR_REFUSE) replaced with NOP | `LK4 foreign SET_SAMPLING_RATE on AUDIO_UNIT 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
+| `lk-sclks-lock-nop` | E_SCLKS's CHECK_LOCK (E_SCLKS+9) replaced with NOP | `LK1 unset clock-source row, ...: ENTITY_LOCKED byte-exact` | 9 |
+| `lk-sclks-miss-lock-nop` | E_SCLKS's locate-miss CHECK_LOCK (E_SCLKSRF) replaced with NOP | `LK4 foreign SET_CLOCK_SOURCE on CLOCK_DOMAIN 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
+| `lk-sctrl-lock-nop` | E_SCTRL's CHECK_LOCK (E_SCTRL+4) replaced with NOP | `LK1 IDENTIFY at its reset 0, ...: ENTITY_LOCKED byte-exact` | 12 |
+| `lk-sctrl-miss-lock-nop` | E_SCTRL's locate-miss CHECK_LOCK (E_SCTRL+21) replaced with NOP | `LK4 foreign SET_CONTROL on CONTROL 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
+| `lk-prefix-zero-body` | the microcode generator as it stood at the lane base (`0451d83d`): the lock checked first and refused through the zero-bodied E_LOCKED4/E_LOCKED1 stubs, the issue #53 reproduction | `LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: ENTITY_LOCKED byte-exact` | 7 |
+| `sctrl-badarg-zero-body` | E_SCTRL's out-of-range arm branches to the zero-bodied E_BADARG1 again, as at the lane base (R416-1 F1) | `LK3b IDENTIFY at 255, the holder's SET_CONTROL(128) carries 255: BAD_ARGUMENTS byte-exact` | 2 |
+| `ov-oversize-never` | the engine's `txs_oversize_o` forced to 0 (issue #50's acceptance 2) | `OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618): the 576-byte descriptor, byte-exact` | 18 |
+| `ov-oversize-at-576` | the engine asks for the oversize slot at a 576-byte frame (`>=` for `>`) | `OV4 CLOCK_DOMAIN 0 (534 B: frame 576, the standard slot's own size): one TX-slot grant` | 4 |
+| `ov-top-oversize-dropped` | the top's `pool_oversize_w` tied to 0, so the request never reaches the pool | `OV1 AUDIO_MAP 0 (576 B, the whole line: cdl 592, frame 618): the 576-byte descriptor, byte-exact` | 18 |
+| `pg-append-524` | E_GAMAP's record APPEND loses its Δ8 flag and stops at cdl 524 again, the issue #50 reproduction | `PG2 a 63-mapping page: SUCCESS above cdl 524 (528), a standard slot: number_of_mappings` | 14 |
+| `pg-cap-dropped` | E_GAMAP's page cap keeps the count and the SUCCESS (its SET_MASKED and SET_STATUS NO_RESOURCES replaced with NOP) | `PG7 a 72-mapping page: NO_RESOURCES, no record claimed: number_of_mappings` | 10 |
+| `pg-cap-off-by-one` | the page cap compares against 73 instead of 72, so a 72-mapping page is answered SUCCESS | `PG7 a 72-mapping page: NO_RESOURCES, no record claimed: byte-exact` | 4 |
+| `rd-base-no-overlay` | the engine's issue #82 re-dispatch removed, so AUDIO_UNIT, CLOCK_DOMAIN and STREAM reads are the image's, the issue reproduction | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 9 |
+| `rd-au-image-only` | E_RDESCAU always branches to the image (its unset test a BRANCH) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 2 |
+| `rd-au-unset-overlays` | E_RDESCAU's unset test removed, so an unset row overlays its zero | `RD0 AUDIO_UNIT 0, rate unset: READ_DESCRIPTOR byte-exact` | 1 |
+| `rd-cd-image-only` | E_RDESCCD always branches to the image | `RD1 CLOCK_DOMAIN 0 after SET_CLOCK_SOURCE(1): READ_DESCRIPTOR byte-exact` | 3 |
+| `rd-str-unset-overlays` | the STREAM programs' unset test removed, so an unset row overlays its zero | `RD0 STREAM_INPUT 0, format unset: READ_DESCRIPTOR byte-exact` | 4 |
+| `rd-so-reads-input-row` | E_RDESCSO reads the STREAM_INPUT row (`SEL_FMTIN`) instead of its own | `RD1 STREAM_OUTPUT 1 after SET_STREAM_FORMAT: READ_DESCRIPTOR byte-exact` | 4 |
+| `rd-cfg-any` | the configuration-0 guard of the re-dispatch dropped | `RD2 configuration 1's CLOCK_DOMAIN 0 keeps its image bytes: the 534-byte descriptor, byte-exact` | 2 |
+| `rd-tail-uncut` | the µCPU's COPY_BUFFER TAIL copies the whole length from its start (no subtract) | `RD1 AUDIO_UNIT 0 after SET_SAMPLING_RATE(48000): READ_DESCRIPTOR byte-exact` | 9 |
+| `rd-str-short-guard-nop` | E_RDESCSF's too-short guard replaced with NOP, so a STREAM short of the lane takes the overlay with a wrapped TAIL count (R416-1 S1) | `RD4 STREAM_OUTPUT 1 of 80 bytes with a set row: READ_DESCRIPTOR byte-exact` | 1 |
+| `line-floor-rounded` | the engine's line floor judged on the buffer rounded up to 16, as at 54c1e2b1 (R417-1 F1), so a 568-byte line elaborates (`line-guards`) | `line guard 568` | 1 |
+| `line-ceiling-dropped` | the engine's line ceiling removed, so 1016 is refused only by the µCPU's own cap, which does not name `DESC_LINE_BYTES_P` (R416-1 F2; `line-guards`) | `line guard 1016` | 1 |
+| `line-buffer-fixed-592` | the response buffer fixed at the default line's 592 bytes instead of `16 + LINE_BYTES_P` (`aecp-line`) | `OV1 AUDIO_MAP 0 (584 B, the whole line: cdl 600, frame 626): the 584-byte descriptor, byte-exact` | 7 |
+| `rb-rounded-buffer-no-page-cap` | the buffer rounded up to 16 as at 54c1e2b1 AND E_GAMAP's page cap dropped (`pg-cap-dropped`'s two NOPs), so a page fills the rounded 608 bytes (`aecp-line`) | `RB no response byte written at or past RESP_BASE_P + 16 + DESC_LINE_BYTES_P` | 10 |
+
+Each guard arm fails its opcode's row on all seven message types; the three
+writers also fail their whole-body row and the read-back that proves the write
+landed (M9b3, M9b4, M9b5). The REBOOT arm answers at the right length and cdl,
+so only the byte-exact echo can see it, and it does. Each lock arm's
+main-path NOP lets the foreign SET write: its byte-exact check, the holder's
+unsolicited frame, the effect counters and the next holder SET's notification
+count all fail (SET_CONTROL's also LK3b and LK3c, which then carry the 0 LK3
+wrote). The reproduction fails exactly the five LK1/LK3 bodies that are not
+zero (status 3 and cdl are right; LK1's SET_CONTROL at IDENTIFY's reset 0
+passes, because zero is its value in force) and, since the base's out-of-range
+arm was the same zero-bodied stub, LK3b and LK3c, the two checks the
+`sctrl-badarg-zero-body` arm fails. With no oversize request (from the
+engine or through the top) the three oversize READ_DESCRIPTORs leave truncated to a
+576-byte standard slot: byte-exact, wire length, grant and slot 4 fail on each, and
+OV5 with them; the request at 576 moves OV4, and RD2's read of the same 534-byte
+descriptor, into slot 4. The page-cap arms
+fail the pages they reach: the Δ8 flag removed, PG2 to PG6 (62 records, the full
+count); the cap dropped, PG7 to PG9 (the count kept, 71 records or none carried);
+the cap one late, PG7 alone. The overlay arms fail the reads they reach: without
+the re-dispatch, or with the TAIL count uncut (the response runs past the descriptor),
+the five RD1 reads after a SET and the four RD3 reads after the restore; each
+image-only program its own type's RD1 and RD3 reads; the unset test removed, the
+unset rows it serves (RD0's rate; RD0's two streams and the never-set STREAM_OUTPUT 0
+of RD1 and RD3); the output program on the input row, both STREAM_OUTPUT reads of RD1
+and of RD3; the configuration guard dropped, RD2 and OV4; the STREAM guard removed,
+RD4, whose 80-byte descriptor (a TAIL count of 80 less 88, wrapped) gets no response
+inside the bound at all. The line arms: the floor
+on the rounded buffer lets 568 lint clean, and without the engine's ceiling 1016 is
+refused only by the µCPU's `RESP_D8_CAP_BYTES_P` message; a buffer fixed at 592
+truncates OV1 and OV5's 584-byte descriptor at the line build (byte-exact, cdl and
+wire length each) and leaves RB 8 bytes short of the reservation. RB's own arm
+needs two sites, because at a legal line every response is bounded twice: the
+page cap and the store's line bound keep each writer inside `16 + line`, and the
+buffer, exactly that reservation, drops a byte past it. The rounding alone changes
+no write at any legal line, and `pg-cap-dropped` alone is fenced at the
+reservation (a 176-record page carries 72 records, 600 bytes, at 584). Together
+the 176-record page carries 73, and RB counts the 8 bytes past 600, besides
+PG7 to PG9.
+
 ## Recorded seams and honest limits
 
 - The validator's V9 pass-through has NO msrp/mvrp select — `KL_mrp_strip`
@@ -1076,7 +1190,8 @@ notified. Before the check, `E_SSRATE` stored any 32-bit rate, answered
   everything (the walk reads the list at 144 only, 07 §3.1 L10).
 - **W9m** proves the lock outranks the list check: a foreign controller is
   `ENTITY_LOCKED` for a listed and an unlisted rate alike and moves nothing.
-  The body of that refusal is issue #53's decision and is not graded here.
+  The body of that refusal is issue #53's decision, graded byte-exact in
+  section AX (LK).
 
 W9k, W9l and W9m run LAST on the main DUT, after section T, for section T's
 reason: their empty notification windows cost about 1.3 s of simulated time,
@@ -1097,12 +1212,13 @@ revert on LINK_DOWN (10 §6.1 F10.2).
 A build that only runs the product value cannot see that binding. The child's
 own default is also 2, so a dropped or misbound connection produces exactly the
 frames the default build expects (M25: 0 failures there). The Makefile therefore
-builds the bench twice:
+builds the bench a second time (the third build is section AX's line build):
 
 | Build | Override | Runs | Expects |
 |---|---|---|---|
-| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV last | 2 (Milan §4.2.7.2.1) |
+| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV and AX last | 2 (Milan §4.2.7.2.1) |
 | `obj_vid/Vpp_top_vid` | `SRP_DOM_DEF_VID_P = 0x5A3C` (`SRP_VID_FIXTURE`) | DV alone | 0x5A3C |
+| `obj_line/Vpp_top_line` | `DESC_LINE_BYTES_P = 584` (`LINE_FIXTURE`) | AX alone | 2 |
 
 The fixture is a verification value, not a product profile: Milan §4.2.7.2.1
 fixes a shipping build at 2. It is chosen so that each plausible fault gives a
@@ -1294,3 +1410,99 @@ goldens PASS:
 | `bound_view_not_cleared` | the bound stream identity left behind on the unbind (A9) | `AS6: the bound view is cleared with the binding` | 1 of 43 |
 | `matcher_da_ignored` | the SRP listener matcher ignores the DA | `AS3: near misses (DA, VLAN, stream_id) put no Listener declaration`, `AS3: near misses register nothing`, `AS3: no TK_ATTR_REGISTERED{1}` | 5 of 43 |
 | `matcher_vid_ignored` | the SRP listener matcher ignores the VLAN | the same three AS3 checks | 5 of 43 |
+
+## Section AX: AECP dispatch and response (issues #53, #50, #82)
+
+A fresh processor of its own (the AD pattern), after AD in the default build and
+by `make aecp-dispatch` (with A5b and M9) for the mutation driver, so the main
+run's clock is untouched. Its image is the main run's with CLOCK_DOMAIN 0's
+`clock_source_index` defaulting to 2, so an unset row's current index is not also
+the zero a stub would carry.
+
+- **LK** the ENTITY_LOCKED arm of SET_SAMPLING_RATE, SET_CLOCK_SOURCE and
+  SET_CONTROL (Milan 5.4.2.13/.15/.17). The bench (the lock holder) registers for
+  unsolicited notifications and re-locks before each foreign command: the wrap
+  compresses the 60 s lock window to 400 ms, and an expiry would itself notify
+  the holder. A second controller's SET is then answered ENTITY_LOCKED at the
+  response form's cdl (20, 20, 17), byte-exact, carrying the value in force
+  (06 section 6.8, IEEE 1722.1-2021 7.4.21.1/7.4.23.1/7.4.25.1): **LK1** on the
+  unset rows (the image's 96000 and clock source 2; IDENTIFY's reset 0), **LK3**
+  on rows the holder set in **LK2** (48000, 1, 255), each followed by a GET that
+  still reads it. Every refusal writes, marks and notifies nothing (the dynamic
+  store's accepted-write counter, OP_NVM_MARK and OP_NOTIFY_ENQ, and no
+  unsolicited frame at the registered holder). SET_CONTROL's out-of-range
+  refusal shares that tail (R416-1 F1): while IDENTIFY holds 255, where a zero
+  body and the value in force differ (W13 runs at IDENTIFY's reset 0), 128 is
+  answered BAD_ARGUMENTS at cdl 17 carrying 255, byte-exact and with no effect,
+  to the holder under its own lock (**LK3b**) and, the lock released, to a
+  second controller (**LK3c**, where a notification would reach the registered
+  holder); GET and the face still read 255. **LK4**: the lock outranks a
+  locate miss (AUDIO_UNIT, CLOCK_DOMAIN and CONTROL 3), zero body; **LK5**: the
+  holder asking the same is answered NO_SUCH_DESCRIPTOR; **LK6**: the holder,
+  still holding the lock, is served, one store write and one notification per
+  changing SET, and each GET reads what it stored.
+- **OV** a response above cdl 524 through the oversize TX slot (Milan 5.4.1; issue
+  #50, #82's oversize path). The image's configuration 1 holds four descriptors on
+  either side of the 576-byte standard slot (frame = 42 + length): AUDIO_MAPs of 576
+  bytes (the whole line: cdl 592, frame 618; 584 bytes, cdl 600 and frame 626, in
+  the line build), 536 (cdl 552, frame 578) and 528 (cdl 544, frame 570), and a
+  534-byte CLOCK_DOMAIN (229 clock sources: frame 576, the standard slot's own size). Each READ_DESCRIPTOR is graded byte-exact against the
+  descriptor's own bytes, with cdl off the wire (above 524) and the wire length, and
+  the wrap's taps of the engine's grant, its oversize request, the serializer's start
+  and slot 4's state show that **OV1**, **OV2** and **OV5** (the 576-byte one again,
+  so slot 4 is reusable) took one grant of slot 4 with the request raised, left
+  through slot 4 and freed it, while **OV3** and **OV4** used a standard slot with the
+  request clear. Configuration 0, the main run's image, is unchanged.
+- **RD** READ_DESCRIPTOR carries the value the SET stored, which the GET returns
+  (issue #82). Each arm grades READ_DESCRIPTOR of configuration 0's descriptor
+  byte-exact against its image bytes with the expected value in the field: AUDIO_UNIT 0
+  `current_sampling_rate` @136, CLOCK_DOMAIN 0 `clock_source_index` @70, and
+  STREAM_INPUT 0 / STREAM_OUTPUT 0 and 1 `current_format` @74. **RD0**, right after
+  boot, before any SET: the rate and clock source are the image's (96000, 2), which the
+  GETs read, and each stream is its image exactly (its GET reads the face, whose model
+  here does not match the image before a SET). **RD1**, after the other sections:
+  SET_SAMPLING_RATE(48000), SET_CLOCK_SOURCE(0) then (1), and SET_STREAM_FORMAT(2ch) on
+  STREAM_INPUT 0 and STREAM_OUTPUT 1, each followed by its GET and the READ_DESCRIPTOR
+  that must carry the GET's value; STREAM_OUTPUT 0, never set, is still its image.
+  **RD2**: configuration 1's CLOCK_DOMAIN 0 keeps its image bytes (index 0) while
+  configuration 0's row holds 1. **RD3** (R417-1 S2): once RD1's rows reach the NVM
+  device, a power cycle carries it and both restore walks write the rows back; with
+  no SET since the reset the GETs read 48000, clock source 1 and the 2ch format, and
+  each READ_DESCRIPTOR carries them, STREAM_OUTPUT 0 still its image. **RD4** (R416-1
+  S1): the index map gives configuration 0's STREAM_OUTPUTs 80 bytes, short of
+  `current_format`'s second lane (88), a power cycle walks it again and the holder
+  sets STREAM_OUTPUT 1's format; READ_DESCRIPTOR serves its 80 image bytes whole.
+  The AUDIO_UNIT and CLOCK_DOMAIN programs' guards cannot be reached this way: a rate
+  or clock source, set or restored, is judged against the descriptor's own list or
+  count, which a descriptor short of the lane does not hold, while a stream format is
+  judged by the integrator's face. At the lane base every RD1 read after a SET fails
+  (the image's defaults); `rd-base-no-overlay` below restores exactly that.
+- **PG** the GET_AUDIO_MAP page (issue #50). The audio-map face serves STREAM_PORT_INPUT
+  1's page 0 at M mappings, every record distinct, and each response is graded
+  byte-exact, its `number_of_mappings` against the records its cdl carries, and its TX
+  slot as in OV. **PG1** to **PG6** (62, 63, 64, 65, 66 and 71 mappings) are served
+  whole with SUCCESS: cdl 24 + 8M passes 524 from 63, the frame (50 + 8M) takes the
+  oversize slot from 66, and 71 is the cap (cdl 592, frame 618). **PG7** to **PG9** (72,
+  176 and 256, whose count's low byte is 0) answer NO_RESOURCES with
+  `number_of_mappings` 0 and no record, and **PG10** serves the 3-mapping page whole
+  again. At the lane base PG2 to PG6 fail: the records stopped at cdl 524, 62 of
+  them, while `number_of_mappings` still named every one (the `pg-append-524` arm
+  below restores exactly that).
+- **RB** every response write stays inside the reservation (R417-1 F1). The
+  integrator reserves `16 + DESC_LINE_BYTES_P` bytes at `RESP_BASE_P` and nothing
+  else writes there (integrator guide section 5, 07 section 3.3.2), and the
+  engine's response buffer is exactly that. The response-memory model counts
+  every strobed byte it is asked to write outside the reservation instead of
+  dropping it unseen, and after the other arms RB demands none, that the top
+  elaborated the line the bench reserves for (the wrap's `dbg_desc_line_bytes_o`),
+  and that OV1's whole-line descriptor reached the reservation's last byte.
+
+The third build, `obj_line` (`make aecp-line` alone), runs section AX at
+`DESC_LINE_BYTES_P = 584` (`LINE_FIXTURE`), a legal line that is not the default and
+whose 600-byte reservation is not a multiple of 16: OV1 reads a 584-byte descriptor
+(cdl 600, frame 626) and RB bounds every write by 600. `make line-guards` (run by
+`make`) lints the real top, with `scripts/lint_hdl.sh`'s flags, at 576, 584 and
+1008, which must lint clean, and at 568, 1016 and 580, which the engine must refuse
+by name (`DESC_LINE_BYTES_P=568 is below 576`, `...=1016 is above 1008`, `...=580 is
+not a multiple of 8`). Verilator reports an elaboration `$error` as a warning that a
+`-Wno-fatal` build carries past, so the verdict is a lint's, which tolerates none.
