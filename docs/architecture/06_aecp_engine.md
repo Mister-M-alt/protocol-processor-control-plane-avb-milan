@@ -1114,8 +1114,13 @@ half-committing:
   LOCK_ENTITY on the registry face, ADD/REMOVE_AUDIO_MAPPINGS on the edit face,
   whose phase-1 acceptance is its point of no return) are never preempted.
 
-A preempted MVU command answers `NOT_IMPLEMENTED` with the command echoed,
-because Milan v1.2 §5.4.3.3 Table 5.19 defines no other failure code. A
+A preempted command of any message type but AEM_COMMAND (Milan Vendor
+Unique, ADDRESS_ACCESS, AV/C, HDCP APM, EXTENDED) answers `NOT_IMPLEMENTED`
+with the command echoed: status 10 is AEM's (IEEE Table 7-141), and
+`NOT_IMPLEMENTED` is the one failure code every AECP message type shares (IEEE
+Table 9-2; for MVU, Milan v1.2 §5.4.3.3 Table 5.19 defines no other). A
+response the response memory voids gets the same answer for such a command,
+in a TX slot sized for the echo when the slot was granted. A
 preempted GET_DYNAMIC_INFO getter voids the aggregate, and past the deadline no
 further record runs: the batch answers ENTITY_MISBEHAVING, empty, through the
 same void its shape check uses. The engine reports the forced response's

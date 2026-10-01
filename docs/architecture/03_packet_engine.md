@@ -323,9 +323,12 @@ Ordering rules:
   its face's watchdog, so no partial commit survives. REGISTER/DEREGISTER,
   LOCK_ENTITY and ADD/REMOVE_AUDIO_MAPPINGS change state through a gather face
   and are never preempted. The forced response is ENTITY_MISBEHAVING (or a
-  refusal the program had already chosen), header only; a Milan Vendor Unique
-  command answers NOT_IMPLEMENTED with the command echoed, the only failure
-  code Milan Table 5.19 defines; a GET_DYNAMIC_INFO is voided at its next
+  refusal the program had already chosen), header only. A command of any
+  other message type than AEM_COMMAND (Milan Vendor Unique, ADDRESS_ACCESS,
+  AV/C and the rest) answers NOT_IMPLEMENTED with the command echoed: status 10
+  is AEM's (IEEE 1722.1-2021 Table 7-141), and NOT_IMPLEMENTED is the one
+  failure code every AECP message type shares (Table 9-2; for MVU the only one
+  Milan Table 5.19 defines). A GET_DYNAMIC_INFO is voided at its next
   record boundary. An op in progress is never cut, so the forced response
   follows the expiry within one op's watchdog-bounded wait, at most one
   descriptor burst's ([08 §4](08_timing.md#4-deadline-budgets) states the

@@ -232,10 +232,11 @@
 //                60-byte ENTITY_MISBEHAVING response (IEEE §7.4 status 10)
 //                with an empty payload, built entirely from registers. Never a
 //                leak, never a hang, and never a SUCCESS carrying bytes this
-//                block did not read. An MVU command, whose status set has no
-//                10 (Milan v1.2 §5.4.3.3 Table 5.19), is rewritten instead as
-//                its refusal: NOT_IMPLEMENTED with the command echoed from its
-//                RX slot, in a slot sized for that echo when it was granted.
+//                block did not read. A command of any other message type
+//                than AEM_COMMAND has no status 10 (an MVU one: Milan v1.2
+//                §5.4.3.3 Table 5.19), so it is rewritten instead as its
+//                refusal: NOT_IMPLEMENTED with the command echoed from its RX
+//                slot, in a slot sized for that echo when it was granted.
 //
 //                ADDRESSING (03 §8): an AECP response is UNICAST back to the
 //                requester's src_mac. A frame shorter than the 60-octet
@@ -1685,13 +1686,25 @@ module KL_aecp_engine
   //! the µCPU cannot see as an effect: REGISTER/DEREGISTER and LOCK_ENTITY on
   //! the registry face, ADD/REMOVE_AUDIO_MAPPINGS on the edit face (phase 1
   //! is its point of no return). Each wait they make is watchdog-bounded.
-  //! A preempted MVU command answers NOT_IMPLEMENTED with the command echoed,
-  //! because Milan v1.2 §5.4.3.3 Table 5.19 reserves every other code; a
+  //! A preempted command of any message type but AEM_COMMAND answers
+  //! NOT_IMPLEMENTED with the command echoed (`st_echo_w`); a
   //! GET_DYNAMIC_INFO is voided at its next record boundary. The key is
   //! released at `dl_queued_o`, the forced response's hand-off to its lane.
   logic dl_kill_r;
   logic ucpu_preempt_w;
   logic ucpu_pre_w;
+
+  //! IEEE 1722.1-2021 Table 7-141's status 10 is an AEM_COMMAND's alone.
+  //! Every other AECP message type shares only SUCCESS and NOT_IMPLEMENTED
+  //! with it (Table 9-2) and defines its own codes above them
+  //! (ADDRESS_ACCESS Table 9-4, AV/C Table 9-5, HDCP APM Table 9-8, MVU Milan
+  //! v1.2 §5.4.3.3 Table 5.19), so an answer the engine forces on one, past
+  //! its deadline (A_RUN) or when its response memory fails (A_ALLOC, A_WR),
+  //! is NOT_IMPLEMENTED with the command echoed. `PP_PROTO_AEM` is the
+  //! validator's residual bucket, so message_type 0 is what says AEM.
+  logic st_echo_w;
+  assign st_echo_w = !((cmd_r.protocol == PP_PROTO_AEM)
+                       && (cmd_r.msg_type == 4'd0));
 
   always_ff @(posedge clk_i) begin : deadline_kill
     if (!rst_n)                   dl_kill_r <= 1'b0;
@@ -2524,18 +2537,17 @@ module KL_aecp_engine
   //! writer's restore terminal, and is then taken first.
   assign txn_ready_o     = (a_st_r == A_IDLE) && !rsp_busy_w
                            && !amap_notify_busy_i && !d3_own_w;
-  //! An MVU command whose response memory fails answers the command echoed
-  //! (A_ALLOC, A_WR), and the failure can come after its slot is granted, so
-  //! an MVU response takes the oversize slot whenever that echo would need it
-  logic        mvu_cmd_w;
-  logic [10:0] mvu_echo_len_w;
-  assign mvu_cmd_w       = (cmd_r.protocol == PP_PROTO_MVU);
-  assign mvu_echo_len_w  = (11'(FRAME_HDR_C) + pld_cmd_r < 11'(ETH_MIN_C))
+  //! A command that is not an AEM_COMMAND answers the command echoed when its
+  //! response memory fails (A_ALLOC, A_WR, `st_echo_w`), and the failure can
+  //! come after its slot is granted, so its response takes the oversize slot
+  //! whenever that echo would need it
+  logic [10:0] echo_len_w;
+  assign echo_len_w      = (11'(FRAME_HDR_C) + pld_cmd_r < 11'(ETH_MIN_C))
                            ? 11'(ETH_MIN_C) : (11'(FRAME_HDR_C) + pld_cmd_r);
   assign txs_alloc_req_o = (a_st_r == A_ALLOC);
   assign txs_oversize_o  = (frame_len_r > 11'(TX_STD_BYTES_P))
-                           || (mvu_cmd_w
-                               && (mvu_echo_len_w > 11'(TX_STD_BYTES_P)));
+                           || (st_echo_w
+                               && (echo_len_w > 11'(TX_STD_BYTES_P)));
   assign txs_wr_slot_o   = tx_slot_r;
   assign txs_wr_addr_o   = TXA_W_C'(bidx_r);
   assign txs_wr_valid_o  = (a_st_r == A_WR) && byte_ok_w;
@@ -2592,8 +2604,9 @@ module KL_aecp_engine
 
   //! A response source failed under a frame that is already partly written.
   //! Rebuild it from registers; mapping edits also retain their staged body,
-  //! and an MVU command answers NOT_IMPLEMENTED with the command echoed from
-  //! its RX slot, which the response memory never held.
+  //! and a command that is not an AEM_COMMAND answers NOT_IMPLEMENTED with
+  //! the command echoed from its RX slot, which the response memory never
+  //! held (`st_echo_w`).
   logic rsp_fail_w;
   assign rsp_fail_w = (rsp_err_w || gxf_fail_r) && !err_mode_r
                       && (!echo_r || amap_edit_r);
@@ -3621,10 +3634,10 @@ module KL_aecp_engine
               end else begin
                 pld_r <= pld_cmd_r;
               end
-              //! a preempted MVU command: Milan Table 5.19 has no status 10,
-              //! so the forced answer is the MVU refusal form, NOT_IMPLEMENTED
-              //! with the command echoed
-              if (ucpu_pre_w && (cmd_r.protocol == PP_PROTO_MVU)) begin
+              //! a preempted command that is not an AEM_COMMAND has no status
+              //! 10, so the forced answer is its refusal form, NOT_IMPLEMENTED
+              //! with the command echoed (`st_echo_w`)
+              if (ucpu_pre_w && st_echo_w) begin
                 status_r <= ST_NOT_IMPLEMENTED_C;
                 echo_r   <= 1'b1;
                 pld_r    <= pld_cmd_r;
@@ -3673,13 +3686,14 @@ module KL_aecp_engine
                               : 11'(FRAME_HDR_C) + amap_edit_pld_w)
                            : 11'(ETH_MIN_C);
             //! Milan v1.2 §5.4.3.3 Table 5.19: an MVU status is SUCCESS or
-            //! NOT_IMPLEMENTED, so a voided MVU answer is its refusal form,
-            //! the command echoed, as the deadline's is (A_RUN)
-            if (mvu_cmd_w) begin
+            //! NOT_IMPLEMENTED, so a voided MVU answer, like that of every
+            //! other message type but AEM's, is its refusal form, the
+            //! command echoed, as the deadline's is (A_RUN, `st_echo_w`)
+            if (st_echo_w) begin
               status_r    <= ST_NOT_IMPLEMENTED_C;
               echo_r      <= 1'b1;
               pld_r       <= pld_cmd_r;
-              frame_len_r <= mvu_echo_len_w;
+              frame_len_r <= echo_len_w;
             end
             bidx_r      <= 11'd0;
             if (rerr_cnt_r != 16'hFFFF) rerr_cnt_r <= rerr_cnt_r + 16'd1;
@@ -3703,13 +3717,13 @@ module KL_aecp_engine
                               ? 11'(ETH_MIN_C)
                               : 11'(FRAME_HDR_C) + amap_edit_pld_w)
                            : 11'(ETH_MIN_C);
-            //! an MVU answer: the command echoed, as at A_ALLOC; its slot
-            //! was sized for the echo (txs_oversize_o)
-            if (mvu_cmd_w) begin
+            //! the command echoed, as at A_ALLOC; its slot was sized for the
+            //! echo (txs_oversize_o)
+            if (st_echo_w) begin
               status_r    <= ST_NOT_IMPLEMENTED_C;
               echo_r      <= 1'b1;
               pld_r       <= pld_cmd_r;
-              frame_len_r <= mvu_echo_len_w;
+              frame_len_r <= echo_len_w;
             end
             bidx_r      <= 11'd0;
             if (rerr_cnt_r != 16'hFFFF) rerr_cnt_r <= rerr_cnt_r + 16'd1;

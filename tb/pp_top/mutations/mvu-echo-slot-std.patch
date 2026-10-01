@@ -1,12 +1,12 @@
 --- a/hdl/aecp/KL_aecp_engine.sv
 +++ b/hdl/aecp/KL_aecp_engine.sv
-@@ -2533,9 +2533,7 @@
-   assign mvu_echo_len_w  = (11'(FRAME_HDR_C) + pld_cmd_r < 11'(ETH_MIN_C))
+@@ -2545,9 +2545,7 @@
+   assign echo_len_w      = (11'(FRAME_HDR_C) + pld_cmd_r < 11'(ETH_MIN_C))
                             ? 11'(ETH_MIN_C) : (11'(FRAME_HDR_C) + pld_cmd_r);
    assign txs_alloc_req_o = (a_st_r == A_ALLOC);
 -  assign txs_oversize_o  = (frame_len_r > 11'(TX_STD_BYTES_P))
--                           || (mvu_cmd_w
--                               && (mvu_echo_len_w > 11'(TX_STD_BYTES_P)));
+-                           || (st_echo_w
+-                               && (echo_len_w > 11'(TX_STD_BYTES_P)));
 +  assign txs_oversize_o  = (frame_len_r > 11'(TX_STD_BYTES_P));
    assign txs_wr_slot_o   = tx_slot_r;
    assign txs_wr_addr_o   = TXA_W_C'(bidx_r);

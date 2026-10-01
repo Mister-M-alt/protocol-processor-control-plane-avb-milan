@@ -5,7 +5,7 @@
                //! 10, so the forced answer is its refusal form, NOT_IMPLEMENTED
                //! with the command echoed (`st_echo_w`)
 -              if (ucpu_pre_w && st_echo_w) begin
-+              if (1'b0) begin
++              if (ucpu_pre_w && (cmd_r.protocol == PP_PROTO_MVU)) begin
                  status_r <= ST_NOT_IMPLEMENTED_C;
                  echo_r   <= 1'b1;
                  pld_r    <= pld_cmd_r;

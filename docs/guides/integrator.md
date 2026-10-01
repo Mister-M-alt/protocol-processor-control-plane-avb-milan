@@ -320,8 +320,9 @@ one that answers every request just inside it. For AECP that case is bounded by 
 transaction deadline instead ([03 §6](../architecture/03_packet_engine.md) rule (e),
 [08 §4](../architecture/08_timing.md#4-deadline-budgets)): a command still executing
 `T-BUDGET-AECP-WC` after its reception is answered at its next instruction boundary with a
-well-formed 60-byte `ENTITY_MISBEHAVING` (a Milan Vendor Unique command with
-`NOT_IMPLEMENTED`, the command echoed), inside `T-AECP-RESP`. A command that had already
+well-formed 60-byte `ENTITY_MISBEHAVING` (a command that is not an AEM command,
+Milan Vendor Unique, ADDRESS_ACCESS or AV/C, with `NOT_IMPLEMENTED`, the command
+echoed), inside `T-AECP-RESP`. A command that had already
 changed state when the deadline passed answers for itself instead, so nothing is left
 half-committed. Size your faces so a command's worst case stays well inside the budget:
 `tb/pp_top` section TB measures the worst stimuli at the reference 143 clocks per memory

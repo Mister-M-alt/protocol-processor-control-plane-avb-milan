@@ -51,8 +51,8 @@ Two things it deliberately does **not** do, and which you should not go looking 
 | `DISCONNECT_TX` | always `SUCCESS`, and it changes nothing. The Milan talker is stateless |
 | `GET_TX_CONNECTION` | `NOT_SUPPORTED`, for the same reason |
 | A command addressed to another entity | dropped and counted. A command that is an AECP *response* is dropped too — answering a response is how a control plane builds a storm |
-| Anything, while the response memory is broken | a well-formed 60-byte `ENTITY_MISBEHAVING`, or, for a Milan Vendor Unique command, `NOT_IMPLEMENTED` with the command echoed. It is an honest failure, not a hang |
-| A command still executing at its deadline (`T-BUDGET-AECP-WC` after it arrived) because a face or a memory answers slowly | a well-formed 60-byte `ENTITY_MISBEHAVING` inside `T-AECP-RESP`, or, for a Milan Vendor Unique command, `NOT_IMPLEMENTED` with the command echoed. A command that had already changed state answers for itself |
+| Anything, while the response memory is broken | a well-formed 60-byte `ENTITY_MISBEHAVING`, or, for a command that is not an AEM command (a Milan Vendor Unique one), `NOT_IMPLEMENTED` with the command echoed. It is an honest failure, not a hang |
+| A command still executing at its deadline (`T-BUDGET-AECP-WC` after it arrived) because a face or a memory answers slowly | a well-formed 60-byte `ENTITY_MISBEHAVING` inside `T-AECP-RESP`, or, for a command that is not an AEM command (Milan Vendor Unique, ADDRESS_ACCESS, AV/C), `NOT_IMPLEMENTED` with the command echoed. A command that had already changed state answers for itself |
 
 A controller that cannot see the device at all, when a capture shows the frames leaving,
 is nearly always a controller that never joined the 91:E0:F0:01:00:00 group. Raw-socket

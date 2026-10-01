@@ -50,6 +50,9 @@ MUTANTS = [
     # latency against T-AECP-RESP (section TB, the third build)
     ("dl-mvu-forced-status-10", "dl-mvu-forced-status-10", "pp_top",
      "deadline", "DL3: the queued GET_MILAN_INFO"),
+    # every message type but AEM's under the deadline (IEEE Table 9-2)
+    ("dl-non-aem-forced-status-10", "dl-non-aem-forced-status-10", "pp_top",
+     "deadline", "DL9 ADDRESS_ACCESS past its deadline: NOT_IMPLEMENTED"),
     # ... and when its response memory fails (REQ-MVU-005, Table 5.19)
     ("mvu-fault-status-10", "mvu-fault-status-10", "pp_top", "deadline",
      "DL8 a response-memory read error: GET_MILAN_INFO answers MVU "

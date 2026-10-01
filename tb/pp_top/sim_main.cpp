@@ -10835,6 +10835,61 @@ struct DeadlinePhase {
           "DL8: the memory healed, GET_MILAN_INFO answers SUCCESS byte-exact");
   }
 
+  //! DL9 (IEEE 1722.1-2021 Table 9-2: SUCCESS and NOT_IMPLEMENTED are the
+  //! only codes every AECP message type shares; status 10 is AEM's, Table
+  //! 7-141, while ADDRESS_ACCESS defines 0 to 7, AV/C and HDCP APM 0 to 2,
+  //! Tables 9-4, 9-5 and 9-8): an ADDRESS_ACCESS, an AVC, an HDCP_APM and an
+  //! EXTENDED command each answer NOT_IMPLEMENTED with the command echoed when
+  //! idle, and the same frame, byte-exact, when queued behind DL1's stall
+  //! past its own deadline and preempted, inside T-AECP-RESP of its reception
+  //! (§9.4.2.5 gives ADDRESS_ACCESS the same 240 ms)
+  void dl9_every_other_message_type_is_forced_to_not_implemented() {
+    struct Type {
+      uint8_t mt;
+      const char* what;
+    };
+    const Type types[] = {{2, "ADDRESS_ACCESS"}, {4, "AVC"}, {8, "HDCP_APM"},
+                          {14, "EXTENDED"}};
+    std::vector<uint8_t> pl(10, 0);
+    putbe(&pl[0], 0x0004, 2);                  // an ADDRESS_ACCESS READ TLV
+    uint16_t s = 0xD901;
+    for (const Type& x : types) {
+      const auto want = [&](uint16_t q) {
+        return aecp_frame(CTLR_MAC, OWN_MAC, uint8_t(x.mt + 1),
+                          AECP_NOT_IMPLEMENTED, EID, CTLR_EID, q, 0x0001, pl);
+      };
+      io.q_aecp.clear();
+      io.feed(aecp_frame(OWN_MAC, CTLR_MAC, x.mt, 0, EID, CTLR_EID, s, 0x0001,
+                         pl));
+      long first = -1;
+      CHECK(answer(s, &first) == want(s),
+            "DL9 %s idle: NOT_IMPLEMENTED with the command echoed, byte-exact",
+            x.what);
+      ++s;
+      io.dl_clear();
+      io.ctr_hold = 1000;
+      (void)send(AEM_GET_COUNTERS, ti(0x0005, 0), s);
+      io.feed(aecp_frame(OWN_MAC, CTLR_MAC, x.mt, 0, EID, CTLR_EID,
+                         uint16_t(s + 1), 0x0001, pl));
+      const long tq = static_cast<long>(io.t) - 4;
+      const auto fa = answer(s, &first);
+      long qfirst = -1;
+      const auto fb = answer(uint16_t(s + 1), &qfirst);
+      io.ctr_hold = 2;
+      CHECK(fa == forced(s, AEM_GET_COUNTERS) && io.dl_pre_rises == 2,
+            "DL9 %s: premise: the stall ahead is forced and the queued command "
+            "preempted too (%d redirects)", x.what, io.dl_pre_rises);
+      CHECK(fb == want(uint16_t(s + 1)),
+            "DL9 %s past its deadline: NOT_IMPLEMENTED with the command "
+            "echoed, byte-exact, never status 10 (status %d, %zu bytes)",
+            x.what, status(fb), fb.size());
+      CHECK(qfirst - tq > BUDGET_CYC && qfirst - tq < RESP_CYC,
+            "DL9 %s: its first byte %ld clocks after its reception: past "
+            "T-BUDGET-AECP-WC and inside T-AECP-RESP", x.what, qfirst - tq);
+      s = uint16_t(s + 2);
+    }
+  }
+
   void run() {
     boot();
     dl1_a_stalled_command_is_answered_by_the_forced_response();
@@ -10845,6 +10900,7 @@ struct DeadlinePhase {
     dl6_an_edit_past_its_point_of_no_return_is_not_preempted();
     dl7_nothing_leaked();
     dl8_an_mvu_response_whose_memory_fails_answers_not_implemented();
+    dl9_every_other_message_type_is_forced_to_not_implemented();
   }
 };
 

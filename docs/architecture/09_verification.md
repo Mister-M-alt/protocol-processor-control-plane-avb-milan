@@ -232,6 +232,7 @@ its watchdog.
 | a frame owed no response retires through the normal release | DL5 |
 | an edit riding the edit face is never preempted | DL6 |
 | nothing leaks: every RX slot free, the next command byte-exact | DL7 |
+| every message type but AEM's, past its deadline: an ADDRESS_ACCESS, an AVC, an HDCP_APM and an EXTENDED command queued behind a stall answer NOT_IMPLEMENTED with the command echoed, as idle, never status 10 (IEEE Table 9-2) | DL9 |
 | REQ-MVU-005 on the fault path: an MVU response whose memory fails (a read error, a write error, a tied-off master, and a 540-byte command whose echo needs the oversize slot) answers NOT_IMPLEMENTED with the command echoed, as the deadline's does, and is counted; an AEM one still answers ENTITY_MISBEHAVING | DL8 |
 | the one command held through the boot restore is exempt (rule (d)) | D3O6 |
 | the redirect: before the first op, never after an effect, never cutting a waiting op, once per dispatch, dropping a partly built body, keeping a batch's cursor, the best current status kept | `tb/ucpu` P19a to P19h |
