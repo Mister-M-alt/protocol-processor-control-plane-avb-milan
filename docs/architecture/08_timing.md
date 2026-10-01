@@ -143,7 +143,7 @@ flowchart LR
 | ACMP responses | initiator times out at `T-ACMP-CMD` (200 ms, 2 attempts) | **T-BUDGET-ACMP-RESP ≤ 50 ms** | leaves ≥ 150 ms network + initiator margin inside a single attempt |
 | AECP/MVU responses | respond ≤ `T-AECP-RESP` (240 ms) | **≤ 20 ms typical; ≤ 100 ms worst-case** (oversize READ_DESCRIPTOR, full GET_DYNAMIC_INFO batch, 16-way fan-out contention) | 2.4× margin at worst case |
 | ADP DISCOVER response | within the delay window | `T-ADP-DELAY` draw | anti-storm by design |
-| Unsolicited fan-out | no protocol deadline | ≤ 1 frame-time gap injection | never starves solicited traffic ([03 §8](03_packet_engine.md)) |
+| Unsolicited fan-out | no protocol deadline | ≤ 1 frame-time gap injection (not met as written: the finding below) | never starves solicited traffic ([03 §8](03_packet_engine.md)) |
 
 **Realized for AECP (issue #81).** The normalizer stamps every transaction's
 `deadline` as its reception plus the class budget (`T-BUDGET-AECP-WC` for AEM,
@@ -172,7 +172,7 @@ clocks per memory access unless stated:
 |---|---|---|
 | GET_MILAN_INFO / an unimplemented MVU command | 746 / 169 | 0.003 % of `T-AECP-RESP` |
 | oversize READ_DESCRIPTOR (576-byte descriptor, 618-byte frame) | 12,587 | 0.052 % |
-| GET_DYNAMIC_INFO with all thirteen §7.4.76.2 getters | 12,852 | 0.054 % |
+| GET_DYNAMIC_INFO with all thirteen §7.4.76.2 getters, once each (not a batch that fills the 524-octet response) | 12,852 | 0.054 % |
 | the same three behind a 15-frame notification fan-out | 12,709 / 24,550 / 24,681 | at most 0.103 % |
 | GET_MILAN_INFO, response memory at 4,000 clocks per access | 16,174 | 0.067 % |
 | ACMP GET_RX_STATE / GET_TX_STATE, idle and under that load | 172 / 154, unchanged | 0.003 % of `T-BUDGET-ACMP-RESP` |
@@ -183,6 +183,17 @@ notification class drains, so its event queue stays lossless, and a solicited
 command that arrives during a fan-out waits for that class's last frame, then
 runs. The wait is bounded by the queue, and it is measured above; it is
 recorded as a finding, not changed here.
+
+`T-BUDGET-ACMP-RESP` is measured beside AECP work an ACMP transaction does not
+conflict with. One that conflicts with an AECP hold under F03.7 (a
+SET_CONFIGURATION barrier, a LOCK_ENTITY against a stream step, or an AECP
+command on the same stream key, [03 §6](03_packet_engine.md)) waits at
+admission for that hold to end, and the hold is bounded only by the AECP
+command's own budget: up to `T-BUDGET-AECP-WC` from the AECP command's
+reception plus its forced response, a few milliseconds. Such an ACMP answer can
+therefore come later than the 50 ms design budget, though inside `T-ACMP-CMD`
+of the first attempt. Section HZ grades that the ACMP transaction waits; how
+long it waits is not measured.
 
 ## 5. Timer allocation and sizing
 

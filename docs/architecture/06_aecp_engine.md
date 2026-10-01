@@ -1120,7 +1120,15 @@ with the command echoed: status 10 is AEM's (IEEE Table 7-141), and
 `NOT_IMPLEMENTED` is the one failure code every AECP message type shares (IEEE
 Table 9-2; for MVU, Milan v1.2 §5.4.3.3 Table 5.19 defines no other). A
 response the response memory voids gets the same answer for such a command,
-in a TX slot sized for the echo when the slot was granted. A
+in a TX slot sized for the echo when the slot was granted. The trade-off this
+makes for GET_MILAN_INFO is deliberate: it is implemented and mandatory, and a
+controller may read its NOT_IMPLEMENTED as a device that is not a PAAD-AE. It
+is answered so only when it was still waiting or running at
+`T-BUDGET-AECP-WC`, behind a slow face (`tb/pp_top` DL3), or when its response
+memory failed (DL8). Its own program is short and watchdog-bounded (TB4), so
+exempting MVU from the preempt would usually still answer SUCCESS inside
+`T-AECP-RESP`, but nothing but that program's length would then bound it: rule
+(e)'s bound is kept the same for every command instead. A
 preempted GET_DYNAMIC_INFO getter voids the aggregate, and past the deadline no
 further record runs: the batch answers ENTITY_MISBEHAVING, empty, through the
 same void its shape check uses. The engine reports the forced response's

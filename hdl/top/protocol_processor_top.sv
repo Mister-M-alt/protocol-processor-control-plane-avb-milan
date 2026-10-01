@@ -1451,7 +1451,11 @@ module protocol_processor_top
   //! NONE key of reads that address no single descriptor. A type above 63 or
   //! an index above 1023 can only make two descriptors share a key: a
   //! spurious conflict, never a missed one. CFG_BARRIER and LOCK_OP are
-  //! global, so their key is not read.
+  //! global: the matrix ignores their key against every class but
+  //! RO_SNAPSHOT, whose rule (2) compares it, so LOCK_OP's key 0, which is
+  //! also {ENTITY, 0}, would conflict with an ENTITY-addressed GET. Only AECP
+  //! presents any of the three, and the AECP engine is single-issue, so that
+  //! pair never meets at this top.
   //!
   //! Only an AEM_COMMAND for this entity takes its opcode's class. A
   //! response arriving as input, a command for another entity_id (both

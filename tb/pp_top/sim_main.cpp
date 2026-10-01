@@ -11018,7 +11018,8 @@ struct DeadlinePhase {
 // Issue #57 (REQ-MVU-005: MVU answered within T-AECP-RESP, Milan v1.2
 // §5.4.3.4) and issue #81 (08 §4: AECP within T-AECP-RESP and its design
 // budget T-BUDGET-AECP-WC, ACMP within T-BUDGET-ACMP-RESP, under an oversize
-// READ_DESCRIPTOR, a full GET_DYNAMIC_INFO batch and a 16-way notification
+// READ_DESCRIPTOR, a GET_DYNAMIC_INFO of all thirteen getters (the 08 §4
+// "full batch", each getter once) and a 16-way notification
 // fan-out). It runs in the suite's third build, whose timebase is the nominal
 // clock's own (1 ms = 1,000 clocks), so the deadline engine never cuts a
 // measurement here: every answer below is the command's own, and the section
@@ -11255,9 +11256,9 @@ struct BudgetPhase {
       const unsigned cdl = f.size() > 17
                            ? ((unsigned(f[16] & 7) << 8) | f[17]) : 0u;
       CHECK(status(f) == AECP_SUCCESS && cdl > 12 + 13 * 8 && cdl <= 524,
-            "TB2 the full GET_DYNAMIC_INFO batch%s: SUCCESS, cdl %u within "
+            "TB2 GET_DYNAMIC_INFO with all thirteen getters%s: SUCCESS, cdl %u within "
             "524", at.c_str(), cdl);
-      grade("TB2 full GET_DYNAMIC_INFO batch" + at, c, false);
+      grade("TB2 GET_DYNAMIC_INFO with all thirteen getters" + at, c, false);
     }
     set_latency(31);
     io.rmem_rlat = 23;
@@ -11309,7 +11310,7 @@ struct BudgetPhase {
     putbe(&rd[4], DT_SIGMUX, 2);
     const std::vector<std::string> names = {
         "GET_MILAN_INFO", "oversize READ_DESCRIPTOR",
-        "full GET_DYNAMIC_INFO batch"};
+        "GET_DYNAMIC_INFO with all thirteen getters"};
     for (size_t i = 0; i < names.size(); ++i) {
       const uint8_t mt = i == 0 ? VU_COMMAND : 0;
       const uint16_t op = i == 1 ? AEM_READ_DESCRIPTOR

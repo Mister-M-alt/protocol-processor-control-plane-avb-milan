@@ -477,6 +477,11 @@ module KL_aecp_ucpu
   logic pre_eff_w;
   logic pre_go_w;
 
+  //! Defence in depth: at this ROM a WRITE_ST or NAME_WR comes before any
+  //! COMMIT, NVM_MARK or NOTIFY_ENQ in every program the engine lets be
+  //! preempted (the one led by a COMMIT, E_AMADD, is exempt at the engine), so
+  //! those three never decide a redirect today. They stay in the set so a
+  //! later program that commits first is not cut after its commit.
   assign pre_eff_w = uop_e_r.op inside {OP_WRITE_ST, OP_NAME_WR, OP_COMMIT,
                                         OP_NVM_MARK, OP_NOTIFY_ENQ,
                                         OP_SEND_RESP, OP_END};

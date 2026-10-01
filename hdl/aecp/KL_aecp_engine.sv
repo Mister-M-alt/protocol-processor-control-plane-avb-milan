@@ -1706,6 +1706,10 @@ module KL_aecp_engine
   assign st_echo_w = !((cmd_r.protocol == PP_PROTO_AEM)
                        && (cmd_r.msg_type == 4'd0));
 
+  //! `!uns_r` in `dl_kill_r` and in `dl_queued_o` below is defence in depth:
+  //! the top raises `dl_kill_i` only while a solicited command owns the AECP
+  //! hold, and an unsolicited job holds no scoreboard key, so neither term
+  //! decides anything at this top.
   always_ff @(posedge clk_i) begin : deadline_kill
     if (!rst_n)                   dl_kill_r <= 1'b0;
     else if (a_st_r == A_IDLE)    dl_kill_r <= 1'b0;
