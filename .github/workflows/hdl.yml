@@ -64,6 +64,10 @@ jobs:
         run: |
           export PATH="$HOME/verilator/bin:$PATH"
           make -C tb/adp_engine mutants
+      - name: AECP deadline and hazard-class mutation campaign
+        run: |
+          export PATH="$HOME/verilator/bin:$PATH"
+          make -C tb/pp_top aecp-mutants
       - name: AECP dispatch mutation campaign
         run: |
           export PATH="$HOME/verilator/bin:$PATH"

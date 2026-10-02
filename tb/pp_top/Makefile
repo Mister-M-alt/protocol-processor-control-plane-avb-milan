@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
 # protocol_processor_top end-to-end suite — exit 0 = PASS.
 #
-# Four builds of one bench. The first overrides nothing and runs every
+# Five builds of one bench. The first overrides nothing and runs every
 # section; the second overrides P-SRP-DOM-DEF-VID with SRP_VID_FIXTURE and
 # runs section DV alone (README). The SRP engine's own default is 2 as well,
 # so only a value the child cannot produce shows a dropped or misbound
@@ -9,8 +9,9 @@
 # runs section ID alone; the first grades the default 0 (section ID0). The
 # fourth overrides DESC_LINE_BYTES_P with LINE_FIXTURE and runs section AX
 # alone, so its response writes are bounded by a reservation that is not the
-# default's. Each binary prints its own build's count; the last line is the
-# one canonical tally, summed over the four builds.
+# default's. The fifth runs the timebase at the nominal clock's rate and
+# section TB alone. Each binary prints its own build's count; the last line is
+# the one canonical tally, summed over the five builds.
 VERILATOR ?= verilator
 HDL        = ../../hdl
 TOP        = pp_top_wrap
@@ -20,6 +21,7 @@ SRP_VID_FIXTURE = 5A3C
 # verification only: a legal non-default line (576..1008 in steps of 8) whose
 # 16 + line reservation is not a multiple of 16 (README section AX, RB)
 LINE_FIXTURE = 584
+MUTANT_OUTPUT ?= /tmp/aecp-mutants
 AECP_DISPATCH_MUTANT_OUTPUT ?= /tmp/aecp-dispatch-mutants
 .DEFAULT_GOAL := run
 
@@ -115,6 +117,20 @@ aecp-dispatch-mutants:
 	python3 aecp_dispatch_mutants.py --output "$(AECP_DISPATCH_MUTANT_OUTPUT)" \
 	    --verilator "$(VERILATOR)"
 
+deadline: gsi-build
+	./obj_dir/Vpp_top_sim --deadline-only
+
+d3: gsi-build
+	./obj_dir/Vpp_top_sim --d3-only
+
+hazards: gsi-build
+	./obj_dir/Vpp_top_sim --hazards-only
+
+# lane C5a's campaign (issues #81, #57, #84): reviewed patches in mutations/,
+# each applied to a scratch copy, each required to fail its named check
+aecp-mutants:
+	python3 aecp_mutants.py --output "$(MUTANT_OUTPUT)"
+
 run: fixture-guards line-guards ltn_rom.hex ucode.hex
 	@rm -f obj_dir/build_tally.txt
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vpp_top_sim
@@ -129,8 +145,21 @@ run: fixture-guards line-guards ltn_rom.hex ucode.hex
 	./obj_idn/Vpp_top_idn
 	$(VERILATOR) $(VFLAGS) $(LINE_VFLAGS) $(SRCS) $(CPP) -o Vpp_top_line
 	./obj_line/Vpp_top_line
-	@awk '{c += $$1; f += $$2} END {if (NR != 4) {print "FAIL: " NR " build tallies, expected 4"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
+	$(MAKE) budget
+	@awk '{c += $$1; f += $$2} END {if (NR != 5) {print "FAIL: " NR " build tallies, expected 5"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
 	    obj_dir/build_tally.txt
+
+# The fifth build (section TB): the wrap's timebase at the nominal clock's
+# own rate, 1 ms = 1,000 clocks, so no budget measurement is cut by the
+# compressed AECP deadline. Its tally lands beside the other four.
+budget-build: ltn_rom.hex ucode.hex
+	$(VERILATOR) $(VFLAGS) "+define+PP_TOP_TIM_REAL" \
+	    -CFLAGS "-DPP_TOP_TIM_REAL -Wall -Wextra" \
+	    --Mdir obj_tim $(SRCS) $(CPP) -o Vpp_top_tim
+
+budget: budget-build
+	@mkdir -p obj_dir
+	./obj_tim/Vpp_top_tim
 
 # Compile the actual bench with four fixture settings in a temporary model dir.
 # No simulation or source mutation; bad fixtures must fail for the named guards.
@@ -153,8 +182,9 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 	python3 $< -o $@
 
 clean:
-	rm -rf obj_dir obj_vid obj_idn obj_line ltn_rom.hex ucode.hex
+	rm -rf obj_dir obj_vid obj_idn obj_line obj_tim ltn_rom.hex ucode.hex
 
 .PHONY: name-writes run gsi-build gsi-internal maap-internal adp-config aecp-dispatch \
         line-build aecp-line aecp-dispatch-mutants identify-build identify \
-        fixture-guards fixture-guards-test line-guards clean
+        deadline d3 hazards budget budget-build \
+        aecp-mutants fixture-guards fixture-guards-test line-guards clean

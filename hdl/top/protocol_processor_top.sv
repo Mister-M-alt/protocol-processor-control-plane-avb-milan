@@ -42,8 +42,10 @@
 //                    response builder) commit 56-byte ACMPDUs while ADP/SRP
 //                    commit whole wire frames — TX lanes 2/5 get the 14-byte
 //                    header injected on the way to the MAC;
-//                  - dispatch-ROM stub: hazard class answered from a
-//                    protocol-keyed default until the P4 dispatch ROM lands;
+//                  - F03.7 classifier on the dispatch-ROM seam: every
+//                    transaction's hazard class and key from its protocol,
+//                    opcode, message_type, target and operands (the ROM of
+//                    06 §8 does not exist; this is its class/key half);
 //                  - TX-pool access arbiter: one alloc+write port, four
 //                    builders — ownership from alloc grant to commit, the
 //                    engines' own alloc retry loops absorb the wait;
@@ -52,7 +54,12 @@
 //                    depth 4 each, drops counted (never silent);
 //                  - PRNG draw mux: pending-latch per client with owner
 //                    routing of draw_valid (a broadcast valid would complete
-//                    the wrong client's draw).
+//                    the wrong client's draw);
+//                  - AECP transaction deadline: pp_txn_t.deadline read at
+//                    the AECP admission, the scoreboard's rule (e) kill face
+//                    driven from its expiry and honoured at the forced
+//                    response's hand-off (03 §6, 08 §4; the deadline block
+//                    beside the scoreboard owners).
 //
 //                The one design decision that matters: the RX slot pool is
 //                REPLICATED once per reader (ADP / listener / talker / AECP
@@ -986,7 +993,12 @@ module protocol_processor_top
   logic [2:0] sb_id_w;
   logic       sb_rel_valid_w;
   logic [2:0] sb_rel_id_w;
-  logic       sb_kill_ack_nc_w;
+  //! 03 §6 rule (e): the AECP hold's deadline has passed, the forced (or
+  //! late) response was handed to its lane, and the scoreboard honoured the
+  //! kill (see the deadline block beside the owners below)
+  logic       aecp_dl_kill_w;
+  logic       aecp_dl_queued_w;
+  logic       sb_kill_ack_w;
   logic [7:0] sb_holds_w;
   logic       sb_full_w, sb_barrier_w;
   logic       acmp_sb_grant_w, aecp_sb_grant_w;
@@ -1007,10 +1019,10 @@ module protocol_processor_top
       .adm_id_o           (sb_id_w),
       .rel_valid_i        (sb_rel_valid_w),
       .rel_id_i           (sb_rel_id_w),
-      .kill_valid_i       (1'b0),
-      .kill_id_i          (3'd0),
-      .kill_resp_queued_i (1'b0),
-      .kill_ack_o         (sb_kill_ack_nc_w),
+      .kill_valid_i       (aecp_dl_kill_w),
+      .kill_id_i          (aecp_sb_id_r),
+      .kill_resp_queued_i (aecp_dl_queued_w),
+      .kill_ack_o         (sb_kill_ack_w),
       .holds_o            (sb_holds_w),
       .full_o             (sb_full_w),
       .barrier_pend_o     (sb_barrier_w)
@@ -1446,34 +1458,134 @@ module protocol_processor_top
     end
   end
 
-  // dispatch-ROM stub (banner): hazard class from protocol and the AECP
-  // opcode until the P4 dispatch ROM lands. ACMP serializes as STREAM_CFG;
-  // ADD/REMOVE_AUDIO_MAPPINGS serialize as MAP_CFG so the scoreboard applies
-  // its class-wide MAP_CFG x STREAM_CFG exclusion. Other commands remain
-  // read-only snapshots. The key spreads protocols apart where the hazard
-  // matrix intentionally permits parallel execution.
+  // ---- the F03.7 classifier (03 §6): hazard class and key per transaction --
+  //! Answered on the normalizer's dispatch-ROM seam in the cycle the beat is
+  //! presented, from the seam's protocol and opcode and the header latch's
+  //! message_type, target_entity_id and operands (@24 descriptor_type, @26
+  //! descriptor_index for AECP; the consuming engine's unique_id for ACMP).
+  //! Every F06.14 state-changing opcode takes its F03.7 class, so all nine
+  //! classes reach the scoreboard.
+  //!
+  //! KEYS name what a transaction reads or writes: {descriptor_type[5:0],
+  //! descriptor_index[9:0]}, so an AECP command on STREAM_INPUT k and an ACMP
+  //! step of sink k share a key, as do STREAM_OUTPUT k and talker source k.
+  //! Type 0x3F, which names no descriptor, holds the registry key and the
+  //! NONE key of reads that address no single descriptor. A type above 63 or
+  //! an index above 1023 can only make two descriptors share a key: a
+  //! spurious conflict, never a missed one. CFG_BARRIER and LOCK_OP are
+  //! global: the matrix ignores their key against every class but
+  //! RO_SNAPSHOT, whose rule (2) compares it, so LOCK_OP's key 0, which is
+  //! also {ENTITY, 0}, would conflict with an ENTITY-addressed GET. Only AECP
+  //! presents any of the three, and the AECP engine is single-issue, so that
+  //! pair never meets at this top.
+  //!
+  //! Only an AEM_COMMAND for this entity takes its opcode's class. A
+  //! response arriving as input, a command for another entity_id (both
+  //! dropped by the engine), MVU and ADDRESS_ACCESS are read-only snapshots
+  //! with the NONE key: a frame the engine will drop must not drain the
+  //! table. READ_DESCRIPTOR addresses its descriptor at @28 (not in the
+  //! record) and GET_DYNAMIC_INFO several at once, so both take the NONE
+  //! key. READ_DESCRIPTOR loses nothing by it: no ACMP step writes what it
+  //! reads, a descriptor-image field or the current sampling rate, clock
+  //! source or stream format it overlays on one (issue #82), rows only the
+  //! AECP engine's state port writes. GET_DYNAMIC_INFO does, a known gap
+  //! (03 §6): its GET_STREAM_INFO records of a STREAM_INPUT read the listener
+  //! binding record (the probing and ACMP status, `lstn_gsi_status_r`
+  //! below), which ACMP listener steps write, so the batch is NOT
+  //! serialized against them, where a stand-alone GET_STREAM_INFO is.
   logic        hz_valid_nc_w;
   logic [2:0]  hz_protocol_w;
   logic [15:0] hz_opcode_w;
   logic [3:0]  hz_class_w;
   logic [15:0] hz_key_w;
+  logic        hz_aem_cmd_w;
+  logic        hz_acmp_tkr_w;
+  logic [15:0] hz_dkey_w;
 
-  localparam logic [15:0] HZ_OP_ADD_AUDIO_MAP_C    = 16'h002C;
-  localparam logic [15:0] HZ_OP_REMOVE_AUDIO_MAP_C = 16'h002D;
+  localparam logic [15:0] HZ_KEY_GLOBAL_C   = 16'h0000;
+  localparam logic [15:0] HZ_KEY_NONE_C     = {6'h3F, 10'h000};
+  localparam logic [15:0] HZ_KEY_REGISTRY_C = {6'h3F, 10'h001};
+  localparam logic [15:0] HZ_DT_ENTITY_C    = 16'h0000;
+  localparam logic [15:0] HZ_DT_STREAM_IN_C = 16'h0005;
+  localparam logic [15:0] HZ_DT_STREAM_OUT_C = 16'h0006;
+  localparam logic [15:0] HZ_DT_AVB_IF_C    = 16'h0009;
 
-  always_comb begin : hz_stub
-    unique case (hz_protocol_w)
-      3'(PP_PROTO_ACMP): hz_class_w = 4'(PP_HZ_STREAM_CFG);
-      3'(PP_PROTO_AEM): begin
-        if ((hz_opcode_w == HZ_OP_ADD_AUDIO_MAP_C)
-            || (hz_opcode_w == HZ_OP_REMOVE_AUDIO_MAP_C))
-          hz_class_w = 4'(PP_HZ_MAP_CFG);
-        else
-          hz_class_w = 4'(PP_HZ_RO_SNAPSHOT);
+  function automatic logic [15:0] hz_key(input logic [15:0] ty,
+                                         input logic [15:0] ix);
+    return {ty[5:0], ix[9:0]};
+  endfunction
+
+  assign hz_aem_cmd_w  = (hz_protocol_w == 3'(PP_PROTO_AEM))
+                         && (hdr_msg_type_r == 4'd0)
+                         && (hdr_target_eid_r == entity_id_i);
+  //! the ACMP pop steer's talker set, term for term: PROBE_TX,
+  //! DISCONNECT_TX, GET_TX_STATE and GET_TX_CONNECTION commands
+  assign hz_acmp_tkr_w = (hdr_msg_type_r == 4'd0) || (hdr_msg_type_r == 4'd2)
+                         || (hdr_msg_type_r == 4'd4)
+                         || (hdr_msg_type_r == 4'd12);
+  assign hz_dkey_w     = hz_key(hdr_operands_r[63:48], hdr_operands_r[47:32]);
+
+  always_comb begin : hz_classify
+    hz_class_w = 4'(PP_HZ_RO_SNAPSHOT);
+    hz_key_w   = HZ_KEY_NONE_C;
+    if (hz_protocol_w == 3'(PP_PROTO_ACMP)) begin
+      //! GET_TX_STATE, GET_TX_CONNECTION and GET_RX_STATE are reads (F03.7
+      //! RO_SNAPSHOT); every other step is the stream's STREAM_CFG
+      if (hz_acmp_tkr_w) begin
+        hz_key_w   = hz_key(HZ_DT_STREAM_OUT_C, hdr_operands_r[15:0]);
+        hz_class_w = ((hdr_msg_type_r == 4'd4) || (hdr_msg_type_r == 4'd12))
+                     ? 4'(PP_HZ_RO_SNAPSHOT) : 4'(PP_HZ_STREAM_CFG);
+      end else begin
+        hz_key_w   = hz_key(HZ_DT_STREAM_IN_C, hdr_operands_r[15:0]);
+        hz_class_w = (hdr_msg_type_r == 4'd10) ? 4'(PP_HZ_RO_SNAPSHOT)
+                                               : 4'(PP_HZ_STREAM_CFG);
       end
-      default:           hz_class_w = 4'(PP_HZ_RO_SNAPSHOT);
-    endcase
-    hz_key_w = {13'd0, hz_protocol_w};
+    end else if (hz_aem_cmd_w) begin
+      unique case (hz_opcode_w)
+        16'h0006: begin                        // SET_CONFIGURATION
+          hz_class_w = 4'(PP_HZ_CFG_BARRIER);
+          hz_key_w   = HZ_KEY_GLOBAL_C;
+        end
+        16'h0001: begin                        // LOCK_ENTITY
+          hz_class_w = 4'(PP_HZ_LOCK_OP);
+          hz_key_w   = HZ_KEY_GLOBAL_C;
+        end
+        16'h0008, 16'h000E, 16'h0022, 16'h0023: begin
+          //! SET_STREAM_FORMAT, SET_STREAM_INFO, START/STOP_STREAMING
+          hz_class_w = 4'(PP_HZ_STREAM_CFG);
+          hz_key_w   = hz_dkey_w;
+        end
+        16'h002C, 16'h002D: begin              // ADD/REMOVE_AUDIO_MAPPINGS
+          hz_class_w = 4'(PP_HZ_MAP_CFG);
+          hz_key_w   = hz_dkey_w;
+        end
+        16'h0014, 16'h0016: begin              // SET_SAMPLING_RATE, SET_CLOCK_SOURCE
+          hz_class_w = 4'(PP_HZ_CLOCK_CFG);
+          hz_key_w   = hz_dkey_w;
+        end
+        16'h0010: begin                        // SET_NAME
+          hz_class_w = 4'(PP_HZ_NAME_WR);
+          hz_key_w   = hz_dkey_w;
+        end
+        16'h0024, 16'h0025: begin              // (DE)REGISTER_UNSOLICITED
+          hz_class_w = 4'(PP_HZ_REGISTRY_OP);
+          hz_key_w   = HZ_KEY_REGISTRY_C;
+        end
+        16'h0018: begin                        // SET_CONTROL (identify)
+          hz_class_w = 4'(PP_HZ_IDENTIFY);
+          hz_key_w   = hz_dkey_w;
+        end
+        //! the GETs with the {descriptor_type @24, descriptor_index @26} shape
+        16'h0009, 16'h000F, 16'h0011, 16'h0015, 16'h0017, 16'h0019,
+        16'h0027, 16'h0029, 16'h002B:
+          hz_key_w = hz_dkey_w;
+        16'h0028:                              // GET_AS_PATH: the index at @24
+          hz_key_w = hz_key(HZ_DT_AVB_IF_C, hdr_operands_r[63:48]);
+        16'h0000, 16'h0002, 16'h0007:          // the ENTITY-addressed three
+          hz_key_w = hz_key(HZ_DT_ENTITY_C, 16'd0);
+        default: ;
+      endcase
+    end
   end
 
   logic                  nrm_txn_valid_w;
@@ -3409,8 +3521,16 @@ module protocol_processor_top
                                                : lstn_txn_ready_w);
   assign aecp_sb_candidate_w = aecp_txn_valid_w && !aecp_sb_active_r
                              && (aecp_eng_ready_w || aecp_txn_ready_i);
+  //! A refused CFG_BARRIER latches the scoreboard's drain, which refuses
+  //! every other head until the barrier grants. Only SET_CONFIGURATION is a
+  //! barrier, and it is an AECP head that cannot leave its queue ungranted,
+  //! so while the drain is pending the AECP head wins the pick. With the
+  //! round-robin alone, a last grant to AECP would leave ACMP preferred, and
+  //! an ACMP head picked and refused in every clock would keep the barrier
+  //! from ever being presented again: both queues wedged for good.
   assign sb_pick_aecp_w = aecp_sb_candidate_w
-                        && (!acmp_sb_candidate_w || sb_prefer_aecp_r);
+                        && (!acmp_sb_candidate_w || sb_prefer_aecp_r
+                            || sb_barrier_w);
   assign sb_pick_acmp_w = acmp_sb_candidate_w && !sb_pick_aecp_w;
 
   always_comb begin : scoreboard_admission_mux
@@ -3490,12 +3610,57 @@ module protocol_processor_top
         acmp_sb_active_r       <= 1'b0;
         acmp_sb_done_pending_r <= 1'b0;
       end
-      if (sb_rel_aecp_w) begin
+      //! a kill the scoreboard honoured has released the hold: the RX-slot
+      //! return one clock later must not release its id again, since a new
+      //! admission may already own it
+      if (sb_rel_aecp_w || sb_kill_ack_w) begin
         aecp_sb_active_r       <= 1'b0;
         aecp_sb_done_pending_r <= 1'b0;
       end
     end
   end
+
+  // ---- the AECP transaction deadline (03 §6 rule (e), 08 §4) ---------------
+  //! THE DEADLINE IS READ HERE, at the AECP admission: `pp_txn_t.deadline`,
+  //! which the normalizer stamps as the end of reception plus
+  //! BUDGET_AECP_MS_C (T-BUDGET-AECP-WC). The engine is single-issue, so one
+  //! AECP deadline is live at a time: one register and one comparator, no
+  //! timer-service slot. Expired once `now - deadline` (mod 2^32 ms, the
+  //! normalizer's arithmetic) is non-negative. Rule (d)'s one exception: a
+  //! head resident while the D3 writer had not reached its done terminal
+  //! waited on the restore, not on its own execution, and is answered after
+  //! it; its deadline is re-armed at its admission. After the terminal the
+  //! writer's in-service latch holds dispatch for a few clocks and the
+  //! stamped deadline stands.
+  //!
+  //! THE KILL FACE. From the expiry until the hold ends the scoreboard sees
+  //! a kill of the AECP hold, and the engine preempts its µprogram into the
+  //! forced response (KL_aecp_engine, DEADLINE KILL). The scoreboard honours
+  //! the kill only in the clock that response is handed to its lane
+  //! (`aecp_dl_queued_w`), so the key is never released before the response
+  //! is queued. A frame the engine drops owes no response, queues none, and
+  //! retires through the normal release.
+  logic [31:0] aecp_dl_r;
+  logic        aecp_boot_held_r;
+  logic [31:0] aecp_dl_past_w;
+
+  always_ff @(posedge clk_i) begin : aecp_deadline
+    if (!rst_n) begin
+      aecp_dl_r        <= 32'd0;
+      aecp_boot_held_r <= 1'b0;
+    end else if (aecp_sb_accept_w) begin
+      aecp_dl_r        <= aecp_boot_held_r
+                          ? (now_ms_w + 32'(BUDGET_AECP_MS_C))
+                          : aecp_head_w.deadline;
+      aecp_boot_held_r <= 1'b0;
+    end else if (aecp_txn_valid_w && !d3_done_w) begin
+      aecp_boot_held_r <= 1'b1;
+    end
+  end
+
+  assign aecp_dl_past_w = now_ms_w - aecp_dl_r;
+  assign aecp_dl_kill_w = aecp_sb_active_r && !aecp_sb_done_pending_r
+                        && !aecp_dl_past_w[31];
 
   //! Preserve memory debt independently of the engine/store watchdog and any
   //! future D3 owner reset. Only the top-level hard reset reaches this guard.
@@ -3571,6 +3736,8 @@ module protocol_processor_top
       .txreq_valid_o      (aecp_txreq_valid_w),
       .txreq_slot_o       (aecp_txreq_slot_w),
       .txreq_ready_i      (aecp_txreq_ready_w),
+      .dl_kill_i          (aecp_dl_kill_w),
+      .dl_queued_o        (aecp_dl_queued_w),
       .rgy_req_o          (aecp_rgy_req_w),
       .rgy_state_o        (aecp_rgy_state_w),
       .rgy_op_o           (aecp_rgy_op_w),

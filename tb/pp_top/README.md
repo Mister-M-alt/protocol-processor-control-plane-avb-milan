@@ -17,9 +17,9 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make`: exit 0 = PASS. It builds the bench four times (sections DV, ID and AX):
-each executable prints its own build's tally, and the last line sums the four
-into the one canonical tally.
+`make`: exit 0 = PASS. It builds the bench five times (sections DV, ID, AX and
+TB): each executable prints its own build's tally, and the last line sums the
+five into the one canonical tally.
 
 ## What it proves
 
@@ -641,6 +641,142 @@ into the one canonical tally.
   default run includes it. The mutation record is `tb/adp_engine`'s campaign
   (`make -C tb/adp_engine mutants`), which runs this section against each
   patch.
+- **DL** **the AECP transaction deadline** (issue #81, GAP-07; 03 §6 rule (e),
+  08 §4; IEEE 1722.1-2021 §9.3.2.6, Milan v1.2 §5.4.3.4), on a fresh processor
+  of its own. The normalizer stamps each AECP transaction's deadline
+  T-BUDGET-AECP-WC after its reception, the top reads it at admission, and a
+  command still executing when it passes is preempted into the forced FAIL_SAFE
+  response, which must be on the wire inside T-AECP-RESP. In this timebase the
+  deadline is 10,000 clocks and the response line 24,000. Every stall is a face
+  answering slowly but inside its 4,096-clock watchdog, the case no watchdog
+  catches. **DL1** a GET_COUNTERS whose counter store answers each quadlet
+  1,000 clocks late (33 quadlets, about 330 ms) is answered ENTITY_MISBEHAVING,
+  header only, byte-exact: the kill rises at the deadline, the first byte lands
+  after it and inside T-AECP-RESP, the program stopped at an op boundary (fewer
+  than 33 quadlets asked), the µCPU was redirected once, and the scoreboard
+  honoured the kill once, in the clock the forced response was handed to its
+  lane, the killed hold's bit set in every clock from the expiry to that hand-off
+  and clear after it. **DL2** (no partial commit) a SET_NAME whose descriptor
+  fetch is 3,000 clocks late writes its name lanes before the deadline and
+  builds its nine-lane body against a response memory taking 1,500 clocks per
+  lane write, so the deadline passes inside the body: it answers its own
+  SUCCESS byte-exact (late in this timebase; each remaining op is
+  watchdog-bounded, well under a millisecond at P-CLK-HZ), the µCPU is never
+  redirected, its NVM mark lands once and GET_NAME reads the name back. **DL3**
+  a GET_MILAN_INFO queued behind DL1's stall waits past its own deadline (the
+  deadline counts from reception) and is preempted at its first op boundary:
+  it answers MVU NOT_IMPLEMENTED with the command echoed (Milan Table 5.19 has
+  no status 10), byte-exact, past T-BUDGET-AECP-WC and inside T-AECP-RESP of
+  its own reception. **DL4** a GET_DYNAMIC_INFO of twelve GET_VIDEO_FORMAT
+  records against a response memory taking 3,900 clocks per lane write (about
+  700 ms of copying) is voided past the deadline: ENTITY_MISBEHAVING, empty,
+  inside T-AECP-RESP. **DL5** an AECP RESPONSE arriving as input, queued behind
+  a stall and admitted past its deadline, is dropped and owed nothing: no answer,
+  one kill honoured (the stall's), every hold free, and a later
+  GET_CONFIGURATION is answered. **DL6** an ADD_AUDIO_MAPPINGS whose edit face
+  holds each validation request 3,000 clocks is still validating at the
+  deadline and is never preempted: its own SUCCESS, both records committed.
+  **DL7** every RX slot is free afterwards and READ_DESCRIPTOR(ENTITY) is
+  byte-exact. **DL8** (REQ-MVU-005, Milan Table 5.19) a GET_MILAN_INFO whose
+  response memory fails, by a read error, a write error or a tied-off master,
+  answers MVU NOT_IMPLEMENTED with the command echoed, byte-exact, and the void
+  is counted; one padded to 540 payload bytes echoes a 578-byte frame, which the
+  engine sized into the oversize slot; a GET_CONFIGURATION under the read error
+  still answers ENTITY_MISBEHAVING header only; afterwards every RX slot is free
+  and GET_MILAN_INFO answers SUCCESS. **DL9** (IEEE 1722.1-2021 Table 9-2:
+  status 10 is AEM's alone) an ADDRESS_ACCESS, an AVC, an HDCP_APM and an
+  EXTENDED command each answer NOT_IMPLEMENTED with the command echoed idle,
+  and the same frame, byte-exact, when queued behind DL1's stall past their
+  deadline and preempted, inside T-AECP-RESP of their reception. **DL10**
+  REGISTER_UNSOLICITED_NOTIFICATION and LOCK_ENTITY commit on the registry face
+  in their first op, which the µCPU cannot see as an effect, so they are never
+  preempted: each, queued behind DL1's stall past its own deadline, answers its
+  own SUCCESS byte-exact with no redirect, the lock is then held, and after the
+  unlock a SET_NAME by another controller is pushed to the registered one.
+  **DL11** a kill the scoreboard honours ends the AECP owner, so the RX-slot
+  return after it releases nothing (DL1 checks this at the kill too): across
+  the section every normal release names a live hold (`dbg_sb_rel_o`,
+  `dbg_sb_rel_id_o`). The boot-held command's exemption (rule (d)) is D3O6's 150 ms
+  hold. `make deadline` runs this section alone; the default run includes it.
+  The taps are `dbg_aecp_dl_kill_o`, `dbg_aecp_dl_queued_o`,
+  `dbg_sb_kill_ack_o`, `dbg_aecp_sb_id_o`, `dbg_sb_holds_o` and
+  `dbg_ucpu_pre_o`; the mutation record is below (`aecp_mutants.py`).
+- **TB** **response budgets under the 08 §4 worst-case stimuli** (issue #57,
+  REQ-MVU-005, Milan v1.2 §5.4.3.4; issue #81 acceptance 3), on a fresh
+  processor of its own in the fifth build, whose timebase is the nominal clock's
+  own (1 ms = 1,000 clocks): the deadline (100 ms, 100,000 clocks there) never
+  cuts a measurement, and the section ends by proving it never fired. Latency is
+  MAC command byte 0 to MAC response byte 0, graded like B4/B4b against its line
+  at P-CLK-HZ = 100 MHz: T-AECP-RESP 24,000,000 clocks and T-BUDGET-AECP-WC
+  10,000,000 for AECP, T-BUDGET-ACMP-RESP 5,000,000 for ACMP. The image's
+  SIGNAL_MULTIPLEXER fills the whole 576-byte line buffer here. **TB1**
+  GET_MILAN_INFO and GET_SYSTEM_UNIQUE_ID (waived, so NOT_IMPLEMENTED with the
+  command echoed), byte-exact, at the suite latency and at 143 clocks per
+  access. **TB2** READ_DESCRIPTOR of the 576-byte descriptor (a 618-byte frame
+  in the oversize TX slot) byte-exact, and a GET_DYNAMIC_INFO carrying all
+  thirteen §7.4.76.2 getters (SUCCESS, cdl within 524), at both latencies.
+  **TB3** sixteen controllers register (every registry row) and a
+  SET_CLOCK_SOURCE fans fifteen unsolicited responses through the engine; each
+  of the three commands above, asked with such a fan-out in flight at 143
+  clocks, is answered as it is idle and follows the fan-out's last frame by at
+  most one job plus its own idle latency: KL_aecp_notify holds the command
+  path while a class drains, so the 08 §4 "≤ 1 frame-time gap" row is not what
+  the RTL does (a recorded finding, 08 §4). **TB4** GET_MILAN_INFO against a
+  response memory taking 4,000 clocks per access, short of its 4,096 watchdog.
+  **TB5** GET_RX_STATE and GET_TX_STATE idle, and beside the oversize
+  READ_DESCRIPTOR and a fan-out: unchanged, and never later than idle by more
+  than one frame on the wire. The histogram it prints is recorded in 08 §4.
+  `make budget` runs this build alone; `make` runs all five.
+- **HZ** **the nine F03.7 hazard classes at the scoreboard** (issue #84, GAP-10;
+  03 §6), on a fresh processor of its own. The expectation is an independent
+  transcription of F03.7 and F06.14: the class in F03.7 row order and the key a
+  descriptor's `{type[5:0], index[9:0]}`. The taps are the scoreboard's
+  admission port (`dbg_sb_class_o`, `dbg_sb_key_o`, `dbg_sb_acc_aecp_o`,
+  `dbg_sb_acc_acmp_o`, and `dbg_sb_ref_aecp_o`/`dbg_sb_ref_acmp_o`, the head it
+  was asked about and refused), the two owners' holds and the pending drain
+  (`dbg_sb_barrier_o`). **HZ1** 33 AECP transactions (every class, the GETs'
+  descriptor keys, READ_DESCRIPTOR, GET_DYNAMIC_INFO, MVU, an AECP response as
+  input and a command for another entity_id) and 6 ACMP ones each present their
+  class and key. An ACMP transaction is held in flight by stalling the MAC until
+  four GET_RX_STATE answers fill the standard TX slots, so the next ACMP command
+  is admitted and keeps its key until the MAC restarts. The same stall holds an
+  AECP command, whose response waits for a standard slot: the talker returns its
+  RX slot once it has read a frame, so a talker transaction keeps its key a few
+  clocks only and every talker-side pair is graded with the AECP command held.
+  Every "waits" check requires the scoreboard to have refused the head at least
+  once while the other holds, and a MAAP allocator answers, so the talker is
+  free to take commands (without one it spends each retry round in its MAAP
+  request wait). **HZ2** SET_CONFIGURATION latches the drain while an UNBIND_RX
+  holds, is admitted once that key frees, keeps a later ACMP head behind it, and
+  answers SUCCESS. **HZ3** with ACMP preferred by the round-robin (an AECP frame
+  for another entity admitted beside the held step) and a GET_RX_STATE queued
+  behind the pending barrier, both are answered, the barrier first: without the
+  barrier's priority the admission port wedges for good. **HZ4** LOCK_ENTITY
+  waits for a held UNBIND_RX and the unlock runs beside a held GET_RX_STATE.
+  **HZ5** START_STREAMING waits for the held sink's key and runs beside another
+  sink's; **HZ6** GET_STREAM_INFO likewise, and beside a GET_RX_STATE of the same
+  sink (two reads); **HZ7** ADD_AUDIO_MAPPINGS waits for any stream step.
+  **HZ8** SET_SAMPLING_RATE, SET_NAME, REGISTER_UNSOLICITED_NOTIFICATION,
+  SET_CONTROL and READ_DESCRIPTOR each run beside a held stream step, and the
+  REGISTER beside a held GET_RX_STATE: REGISTRY_OP is the one class with no
+  reachable conflict at this top. **HZ9** (NAME_WR) a SET_NAME on STREAM_INPUT 1
+  waits for a held GET_RX_STATE of sink 1, then answers SUCCESS and GET_NAME
+  reads the name back; on STREAM_INPUT 0 it runs beside that read, and on
+  STREAM_INPUT 1 beside an UNBIND_RX of sink 1; held, a SET_NAME on
+  STREAM_OUTPUT 1 holds back a GET_TX_STATE of source 1 and not one of source 2,
+  and one on STREAM_INPUT 1 a GET_RX_STATE of sink 1. **HZ10** STOP_STREAMING on
+  STREAM_INPUT 1 waits for a held GET_RX_STATE of sink 1; held on STREAM_OUTPUT
+  1 it holds back a GET_TX_STATE and a DISCONNECT_TX of source 1 and not a
+  DISCONNECT_TX of source 2; a held GET_STREAM_INFO on STREAM_OUTPUT 1 holds
+  back the DISCONNECT_TX and not the GET_TX_STATE. **HZ11** a held
+  SET_CONFIGURATION holds back a GET_TX_STATE; a held LOCK_ENTITY or
+  ADD_AUDIO_MAPPINGS holds back a DISCONNECT_TX and not a GET_TX_STATE.
+  **HZ12** SET_SAMPLING_RATE, SET_CONTROL and ADD_AUDIO_MAPPINGS naming a stream
+  descriptor (which none may legally name) each wait for a held GET_RX_STATE of
+  sink 1 when they name STREAM_INPUT 1 and are then refused NOT_SUPPORTED, run
+  beside it when they name STREAM_INPUT 0, and, held naming STREAM_OUTPUT 1,
+  hold back a GET_TX_STATE of source 1. `make hazards` runs this section alone;
+  the default run includes it.
 
 ## Snapshot window map (side port 0x20000, implemented by the top)
 
@@ -727,12 +863,17 @@ must pass. The same driver runs the binding manager's three DR2c controls, the
 arbiter's issue-cycle control and its seven own-contract controls (N11) in `tb/acmp_nvm`
 and the validator's admission control in `tb/rx_validator` (their READMEs record
 them). At the lane head all 83 are KILLED and the three goldens PASS;
-the last column is how many checks each one failed there.
+the last column is how many checks each one failed there. Since the AECP
+deadline kill (issue #81, section DL), `hold_released_at_go` and
+`dispatch_not_held` each fail D3O6 as well (17 and 6). Both let the held
+command run during the slowed restore, and it is no longer exempt from its
+deadline: rule (d) exempts only a command held until the terminal. With the
+kill tied off, the counts are 16 and 5 again.
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
 |---|---|---|---|
-| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 16 |
-| `dispatch_not_held` | the engine's three dispatch gates ignore the writer's ownership | `D3O1: without the walk the writer owns every cycle` | 5 |
+| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 17 |
+| `dispatch_not_held` | the engine's three dispatch gates ignore the writer's ownership | `D3O1: without the walk the writer owns every cycle` | 6 |
 | `own_taken_at_the_walk` | ownership and the bus taken only once the walk starts, not from reset | `D3R9: the held SET` | 10 |
 | `image_unproven_continues` | an unprovable image (the LOCATE's error) no longer aborts | `D3O2: CLOSED at`, `D3O3: CLOSED` | 9 |
 | `latch_ignores_program` | the service latch does not wait for a running program | `D3S9` | 3 |
@@ -802,6 +943,67 @@ the last column is how many checks each one failed there.
 | `aecp_hold_unbounded` | the admission gate never drops (the unbounded hold) | `D3O5: in CLOSED each GET_RX_STATE`, `D3O6: during the slowed walk` | 7 |
 | `held_drop_uncounted` | a held drop not counted | `D3O5: one AECP command held`, `D3O6: at the terminal` | 5 |
 | `resident_never_returned` | the resident count never comes back down (R391-2's own edit) | `D3O7: the returned slot frees the share` | 1 |
+
+### AECP deadline and hazard-class controls (lane C5a): `aecp_mutants.py`
+
+`make aecp-mutants` (`python3 aecp_mutants.py --output DIR [--only a,b]`)
+applies each reviewed patch in `mutations/` to a scratch copy of `hdl/`,
+`tb/common/`, `tb/ucpu/` and this directory with `git apply`, runs one suite
+target there, and counts the arm KILLED only when the simulation completed with
+its tally, failed, and printed its named check. It reads logs only, never
+production source. A positive control of every (suite, target) pair runs first
+and must pass. Counts below were taken on 2026-10-01 with Verilator 5.050, the
+CI pin: 5 controls PASS and 55 arms KILLED.
+
+| Arm | Suite, target | What is broken | Failing checks |
+|---|---|---|---|
+| `dl-kill-tied-off` | pp_top `deadline` | the kill face tied off again, and the engine's `dl_kill_i` with it (the wiring before issue #81) | 28: every DL1 check (the stall answers its own SUCCESS after 33,505 clocks), DL3 (both answered for real, the MVU one SUCCESS), DL4 (no answer inside the wait), DL5, DL9 x8 (each stall and each queued command answered for real), DL10 x4 |
+| `dl-released-before-queued` | pp_top `deadline` | `kill_resp_queued_i` tied 1, so the key is released at the expiry | 3: DL1 (the kill honoured 3,410 clocks before the forced response's hand-off, the hold free for them), DL5 (the dropped frame's kill honoured too) |
+| `dl-armed-at-admission` | pp_top `deadline` | the deadline re-armed at every admission instead of read from the record | 6: DL3 (the queued GET_MILAN_INFO runs and answers SUCCESS, one redirect), DL9 x4 |
+| `dl-boot-hold-not-exempt` | pp_top `d3` | rule (d)'s exception removed: the command held through the boot keeps its stamped deadline | 1: D3O6 (the command held 150 ms is answered by the forced response, not byte-exact) |
+| `dl-gdi-runs-on` | pp_top `deadline` | the GET_DYNAMIC_INFO voids removed | 4: DL4 (the batch keeps copying, no answer inside the wait), DL5 |
+| `dl-edit-preempted` | pp_top `deadline` | the edit, registry and lock commands preempted like the rest | 6: DL6 (ENTITY_MISBEHAVING mid-validation, no record committed), DL10 x4 |
+| `dl-registry-preempted` | pp_top `deadline` | REGISTER/DEREGISTER preempted like the rest | 2: DL10 (the queued REGISTER answers status 10 and never registers) |
+| `dl-lock-preempted` | pp_top `deadline` | LOCK_ENTITY preempted like the rest | 2: DL10 (the queued LOCK_ENTITY answers status 10 and the lock is not held) |
+| `dl-kill-ack-keeps-owner` | pp_top `deadline` | an honoured kill no longer ends the AECP owner | 2: DL1 (the RX-slot return releases the freed id again), DL11 (19 such releases in the section) |
+| `dl-preempt-after-effect-top` | pp_top `deadline` | the µCPU redirects after an effect op | 2: DL2 (the SET_NAME that wrote its name answers ENTITY_MISBEHAVING) |
+| `dl-mvu-forced-status-10` | pp_top `deadline` | the forced answer left at status 10 for every message type | 5: DL3 (status 10, which Milan Table 5.19 reserves), DL9 x4 |
+| `dl-non-aem-forced-status-10` | pp_top `deadline` | the forced NOT_IMPLEMENTED answer for MVU alone (the round-1 rule) | 4: DL9, ADDRESS_ACCESS, AVC, HDCP_APM and EXTENDED each answered status 10 |
+| `mvu-fault-status-10` | pp_top `deadline` | the MVU fault answer removed: a voided MVU response is rebuilt as status 10, header only | 4: DL8 under every fault (status 10, 60 bytes) |
+| `mvu-echo-slot-std` | pp_top `deadline` | an MVU response's slot sized for its built answer only | 1: DL8 (the 578-byte echo clipped to the 576-byte standard slot) |
+| `dl-preempt-after-effect` | ucpu `run` | the same µCPU patch, at the unit | 4: P20c (status 10 after the write, commit and mark, the notification lost), P20d |
+| `ucpu-preempt-cuts-a-wait` | ucpu `run` | the redirect taken while an op waits on its face | 2: P20e (the waiting locate abandoned, no read answered) |
+| `ucpu-preempt-keeps-the-body` | ucpu `run` | the cursor not returned to 12 | 1: P20f (length 36 with a partly built counters block) |
+| `ucpu-preempt-repeats` | ucpu `run` | the redirect not limited to once per dispatch | 18: P20a to P20h (E_DLKILL redirected into itself, never sends) |
+| `dlkill-always-misbehaving` | ucpu `run` | E_DLKILL overwrites a refusal already chosen | 1: P20d (ENTITY_LOCKED became status 10) |
+| `mvu-silent` | pp_top `budget` | GET_MILAN_INFO retires without its SEND_RESPONSE | 12: TB1, TB3 and TB4, every GET_MILAN_INFO unanswered |
+| `fanout-never-ends` | pp_top `budget` | the notification walk never ends its class, so the command-path hold never drops | 23: TB3 to TB5, nothing answered once the fan-out starts |
+| `acmp-waits-for-aecp` | pp_top `budget` | READ_DESCRIPTOR classified CFG_BARRIER, so ACMP waits behind unrelated AECP work | 2: TB5 (GET_RX_STATE 13,144 clocks beside the READ_DESCRIPTOR, GET_TX_STATE 977 during the fan-out) |
+| `hz-stub-restored` | pp_top `hazards` | the dispatch-ROM stub the classifier replaced (ACMP STREAM_CFG and the audio-map pair MAP_CFG, keyed by protocol; everything else RO) | 74: HZ1 (34 rows), HZ2 x3, HZ3 x2, HZ4 x3, HZ5, HZ6 and every keyed pair of HZ9 to HZ12 |
+| `hz-setcfg-not-barrier` | pp_top `hazards` | SET_CONFIGURATION classified RO_SNAPSHOT | 7: HZ1, HZ2 x2, HZ3 x2, HZ11a x2 |
+| `hz-setcfg-not-barrier-talker` | pp_top `hazards` | the same patch, named on the talker | the same 7; named HZ11a |
+| `hz-lock-not-lockop` | pp_top `hazards` | LOCK_ENTITY classified RO_SNAPSHOT | 7: HZ1 x2, HZ4 x3, HZ11b x2 |
+| `hz-lock-not-lockop-talker` | pp_top `hazards` | the same patch, named on the talker | the same 7; named HZ11b |
+| `hz-stream-key-none` | pp_top `hazards` | AECP STREAM_CFG keyed by nothing | 12: HZ1 x4, HZ5 x2, HZ10a x2, HZ10b x2, HZ10c x2 |
+| `hz-stream-key-none-vs-read`, `-talker-read`, `-talker-step` | pp_top `hazards` | the same patch, named on STREAM_CFG against an ACMP read, against the talker's read and against its step | the same 12; named HZ10a, HZ10b, HZ10c |
+| `hz-reads-keyed-none` | pp_top `hazards` | the descriptor GETs keyed by nothing | 13: HZ1 x9, HZ6 x2, HZ10e x2 |
+| `hz-reads-keyed-none-talker` | pp_top `hazards` | the same patch, named on the talker's step | the same 13; named HZ10e |
+| `hz-talker-keyed-as-listener` | pp_top `hazards` | the talker's transactions keyed as STREAM_INPUT | 18: HZ1 x4, HZ9d x2, HZ10b x2, HZ10c x2, HZ10e x2, HZ12a x2, HZ12b x2, HZ12c x2 |
+| `hz-clock-as-ro` | pp_top `hazards` | CLOCK_CFG classified RO_SNAPSHOT | 6: HZ1 x2, HZ12a x4 |
+| `hz-clock-as-lock` | pp_top `hazards` | CLOCK_CFG classified LOCK_OP (over-serialized) | 3: HZ1 x2, HZ8 |
+| `hz-clock-key-none`, `-talker` | pp_top `hazards` | CLOCK_CFG keyed by nothing | 6: HZ1 x2, HZ12a x4; named on STREAM_INPUT 1 and on the talker |
+| `hz-name-as-ro` | pp_top `hazards` | NAME_WR classified RO_SNAPSHOT | 8: HZ1, HZ9a x2, HZ9c, HZ9d x2, HZ9f x2 |
+| `hz-name-as-stream` | pp_top `hazards` | NAME_WR classified STREAM_CFG (over-serialized) | 2: HZ1, HZ9c (it waits for an UNBIND_RX of its sink) |
+| `hz-name-key-none`, `-talker`, `-held` | pp_top `hazards` | NAME_WR keyed by nothing | 7: HZ1, HZ9a x2, HZ9d x2, HZ9f x2; named HZ9a, HZ9d, HZ9f |
+| `hz-registry-as-ro` | pp_top `hazards` | REGISTRY_OP classified RO_SNAPSHOT | 2: HZ1 |
+| `hz-identify-as-ro` | pp_top `hazards` | IDENTIFY classified RO_SNAPSHOT | 5: HZ1, HZ12b x4 |
+| `hz-identify-key-none`, `-talker` | pp_top `hazards` | IDENTIFY keyed by nothing | 5: HZ1, HZ12b x4; named on STREAM_INPUT 1 and on the talker |
+| `hz-map-as-ro`, `-talker` | pp_top `hazards` | MAP_CFG classified RO_SNAPSHOT, so the cross-lock is lost | 10: HZ1 x2, HZ7 x2, HZ11d x2, HZ12c x4; named HZ7 and HZ11d |
+| `hz-map-key-none`, `-talker` | pp_top `hazards` | MAP_CFG keyed by nothing (the class-wide cross-lock still holds) | 6: HZ1 x2, HZ12c x4; named on STREAM_INPUT 1 and on the talker |
+| `hz-acmp-reads-as-steps` | pp_top `hazards` | ACMP GET_RX/TX_STATE and GET_TX_CONNECTION classified STREAM_CFG | 23: HZ1 x3, HZ4, HZ6 (two reads), and every read of HZ9 to HZ12 |
+| `hz-barrier-no-priority` | pp_top `hazards` | the pending barrier's priority removed from the round-robin | 127: HZ3, then every later arm (the admission port stays wedged) |
+| `hz-foreign-target-classified` | pp_top `hazards` | a command for another entity_id classified by its opcode | 1: HZ1 (CFG_BARRIER for a frame the engine drops) |
+| `hz-response-classified` | pp_top `hazards` | an AECP response arriving as input classified by its opcode | 1: HZ1 |
 
 ### AECP dispatch and response negative controls: `aecp_dispatch_mutants.py`
 
@@ -1212,15 +1414,16 @@ revert on LINK_DOWN (10 §6.1 F10.2).
 A build that only runs the product value cannot see that binding. The child's
 own default is also 2, so a dropped or misbound connection produces exactly the
 frames the default build expects (M25: 0 failures there). The Makefile therefore
-builds the bench a second time (the third build is section ID's identify build,
-the fourth section AX's line build):
+builds the bench a second time; the third build is section ID's identify build,
+the fourth section AX's line build, and the fifth section TB's timebase:
 
 | Build | Override | Runs | Expects |
 |---|---|---|---|
-| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV, AX and lane C6's ID0, NP, ST and RN last | 2 (Milan §4.2.7.2.1) |
+| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV, AX and DL among them, and lane C6's ID0, NP, ST and RN last | 2 (Milan §4.2.7.2.1) |
 | `obj_vid/Vpp_top_vid` | `SRP_DOM_DEF_VID_P = 0x5A3C` (`SRP_VID_FIXTURE`) | DV alone | 0x5A3C |
 | `obj_idn/Vpp_top_idn` | `EN_IDENTIFY_NOTIF_P = 1` (`PP_TOP_EN_IDENT`) | ID alone | 2 |
 | `obj_line/Vpp_top_line` | `DESC_LINE_BYTES_P = 584` (`LINE_FIXTURE`) | AX alone | 2 |
+| `obj_tim/Vpp_top_tim` | the wrap's timebase at the nominal clock's rate (`PP_TOP_TIM_REAL`: 1 ms = 1,000 clocks) | TB alone (`make budget`) | the product default |
 
 The fixture is a verification value, not a product profile: Milan §4.2.7.2.1
 fixes a shipping build at 2. It is chosen so that each plausible fault gives a
@@ -1530,6 +1733,7 @@ the count of unsolicited frames that controller was sent before (Milan §5.4.5.1
 | `obj_vid/Vpp_top_vid` | `SRP_DOM_DEF_VID_P` (section DV) | DV alone |
 | `obj_idn/Vpp_top_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`PP_TOP_EN_IDENT`) | ID alone |
 | `obj_line/Vpp_top_line` | `DESC_LINE_BYTES_P` (section AX) | AX alone |
+| `obj_tim/Vpp_top_tim` | the wrap's timebase at the nominal clock's rate (section TB) | TB alone |
 
 The wrap adds `identify_button_i` and sets the parameter only under
 `PP_TOP_EN_IDENT`, so the first build grades the top's own default.

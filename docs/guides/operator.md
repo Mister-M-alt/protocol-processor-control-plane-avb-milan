@@ -52,7 +52,8 @@ Two things it deliberately does **not** do, and which you should not go looking 
 | `DISCONNECT_TX` | always `SUCCESS`, and it changes nothing. The Milan talker is stateless |
 | `GET_TX_CONNECTION` | `NOT_SUPPORTED`, for the same reason |
 | A command addressed to another entity | dropped and counted. A command that is an AECP *response* is dropped too — answering a response is how a control plane builds a storm |
-| Anything, while the response memory is broken | a well-formed 60-byte `ENTITY_MISBEHAVING`. It is an honest failure, not a hang |
+| Anything, while the response memory is broken | a well-formed 60-byte `ENTITY_MISBEHAVING`, or, for a command that is not an AEM command (a Milan Vendor Unique one), `NOT_IMPLEMENTED` with the command echoed. It is an honest failure, not a hang |
+| A command still executing at its deadline (`T-BUDGET-AECP-WC` after it arrived) because a face or a memory answers slowly | a well-formed 60-byte `ENTITY_MISBEHAVING` inside `T-AECP-RESP`, or, for a command that is not an AEM command (Milan Vendor Unique, ADDRESS_ACCESS, AV/C), `NOT_IMPLEMENTED` with the command echoed. A command that had already changed state answers for itself |
 
 A controller that cannot see the device at all, when a capture shows the frames leaving,
 is nearly always a controller that never joined the 91:E0:F0:01:00:00 group. Raw-socket
@@ -320,9 +321,9 @@ lot of time.
 |---|---|
 | no AECP answer at all and no advertising, while ACMP commands are answered; control word 1 reads done 0, failed 1 | the restore ended **CLOSED** (§6). Either the descriptor image it judges saved values against is missing, truncated or corrupt, or its memory stopped answering (`rs_cause_o` 7): check snapshot word 34 bit 0, fix the image load, reset. Or a failed second restore pass rolled back and could not prove the image again, because the NVM device or the descriptor memory faulted, or stayed slow past the read or the 1,000 ms aggregate deadline, inside that roll-back (any other `rs_cause_o`): check both, reset. A slow device alone ends on defaults, never here. AECP and ADP stay held until reset. (Before the restore held AECP, the same image fault answered `BAD_ARGUMENTS` to every `READ_DESCRIPTOR`; the image-valid flag only clears on reset, so once AECP runs the image is proven) |
 | `NO_SUCH_DESCRIPTOR` from a direct-locate command | the loaded model does not contain that descriptor |
-| `ENTITY_MISBEHAVING`, 60 bytes | the response-memory bridge failed — snapshot words 35 and 36 |
+| `ENTITY_MISBEHAVING`, 60 bytes | the response-memory bridge failed — snapshot words 35 and 36 — or, when those words did not move, the command outlived its deadline: a face or memory behind it answered slowly for the whole `T-BUDGET-AECP-WC` |
 | `TALKER_DEST_MAC_FAILED` from PROBE_TX | this source has no allocated stream address, because the MAAP allocator in the fabric is absent, did not answer, or became available less than one `T-ACMP-DA-RETRY` round plus the source sweep ago |
-| `NOT_IMPLEMENTED` with the command echoed | that opcode is genuinely not implemented yet. It is a correct answer, not a fault |
+| `NOT_IMPLEMENTED` with the command echoed | that opcode is genuinely not implemented yet. It is a correct answer, not a fault. For GET_MILAN_INFO, which is implemented, it is the fault answer instead: its response memory failed (snapshot words 35 and 36 moved) or it outlived its deadline, because Milan Table 5.19 gives a Vendor Unique answer no other failure code |
 
 ---
 

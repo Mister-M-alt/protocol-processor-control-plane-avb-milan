@@ -338,11 +338,24 @@ the ACMP listener keeps serving at its normal latency: one AECP command stays he
 ingress and every further one is dropped at the slot gate and counted (snapshot word 37). Erased NVM behind a proven image is not a failure: the
 restore ends on defaults and everything is served.
 
+**Slow but live is bounded too.** A watchdog catches a face that stops answering, not
+one that answers every request just inside it. For AECP that case is bounded by the
+transaction deadline instead ([03 §6](../architecture/03_packet_engine.md) rule (e),
+[08 §4](../architecture/08_timing.md#4-deadline-budgets)): a command still executing
+`T-BUDGET-AECP-WC` after its reception is answered at its next instruction boundary with a
+well-formed 60-byte `ENTITY_MISBEHAVING` (a command that is not an AEM command,
+Milan Vendor Unique, ADDRESS_ACCESS or AV/C, with `NOT_IMPLEMENTED`, the command
+echoed), inside `T-AECP-RESP`. A command that had already
+changed state when the deadline passed answers for itself instead, so nothing is left
+half-committed. Size your faces so a command's worst case stays well inside the budget:
+`tb/pp_top` section TB measures the worst stimuli at the reference 143 clocks per memory
+access ([08 §4](../architecture/08_timing.md#4-deadline-budgets)).
+
 | Face | Ports | Tie it off and… |
 |---|---|---|
 | MAAP allocation | `maap_req_valid_o`, `maap_req_release_o`, `maap_req_src_o`, `maap_conflict_ack_o` / `maap_req_ready_i`, `maap_rsp_valid_i`, `maap_rsp_ok_i`, `maap_rsp_da_i[47:0]`, `maap_conflict_valid_i`, `maap_conflict_src_i` | **no source ever declares.** `acmp_declaring_o` is structurally 0 and PROBE_TX answers `TALKER_DEST_MAC_FAILED`. Commands are still answered normally. |
 | Descriptor memory | `desc_mem_*` | the saved-state restore cannot prove the image and ends **CLOSED** (`restore_closed_o`, `rs_cause_o` 7): AECP dispatch and ADP stay held until reset, so no AECP command is answered. The ACMP listener keeps serving at its normal latency: at most one AECP command occupies the shared ingress, and every further one is dropped at the slot gate, counted in snapshot word 37 and never answered, so ACMP, ADP and MAAP keep the other `RX_SLOTS_P` − 1 slots. (Without the restore's hold, the failed header probe leaves zero configurations and every `READ_DESCRIPTOR` would answer `BAD_ARGUMENTS`; the store still behaves so.) |
-| Response memory | `resp_mem_*` | every built response becomes a well-formed 60-byte `ENTITY_MISBEHAVING`. |
+| Response memory | `resp_mem_*` | every built response becomes a well-formed 60-byte `ENTITY_MISBEHAVING`, and a Milan Vendor Unique one `NOT_IMPLEMENTED` with the command echoed. |
 | NVM device | `nvm_dev_*`, plus `restore_go_i`, `restore_busy_o`, `restore_done_o`, `restore_fail_o`, `restore_blank_o`, `restore_closed_o`, `restore_rb_o`, `rs_cause_o`, `restore_cause_o`, `nvm_alarm_o`, `nvm_unflushed_o`, `d3_unflushed_o` | no saved state survives a power cycle: neither bindings nor the scalar settings. **`restore_go_i` is not part of the tie-off:** pulse it on every boot. The ACMP listener serves nothing until the binding walk has ended ([05 §5.1](../architecture/05_acmp_engine.md#sec-05-boot-admission)), AECP nothing until the D3 walk has, and what the walks report depends on how you tie the face off. Tie it off **as erased media**: grant each READ, deliver the bytes it asks for as `0xFF`, then `done`. Both walks then end with `restore_done_o`, no `restore_fail_o` and `restore_blank_o`, the same done-without-fail as a successful restore, so publish `restore_blank_o` beside them and report not-successful when you know there is no media. A face that answers with `err`, or with `done` before the eight header bytes, is a failing device: the walks fail (`restore_fail_o`, a device error, with `restore_done_o` on defaults). A face that never answers fails each walk at `NVM_RS_TMO_CYC_P` (`restore_fail_o`, the deadline) and leaves the port quarantined until reset ([07 §5.3](../architecture/07_memory_maps.md#fig-07-nvmflow)). Nothing else changes **in this plane**. |
 | Management side port | `host_*` | you lose all diagnostics. The plane still runs. |
 | SRP service | `svc_*` | nothing declares through the configuration plane. When it is driven, each accepted declaration holds every admission verdict until its new slope has been evaluated, which takes up to three rounds (`3*N_STREAM_OUT_P` clocks), and each declaration or withdrawal restarts the partial round. If they keep arriving faster than that, no verdict publishes for any source until they pause ([10 §6.3](../architecture/10_srp_engine.md#sec-10-admission-freshness)). |
