@@ -109,6 +109,8 @@ CRF_MILAN = 0x041060010000BB80          # Milan v1.2 §7.3.4 Table 7.1
 IDENTIFY = 0x90E0F00000000001           # IEEE 1722.1-2021 Table 7-98
 BUFFER_MIN_NS = 2_126_000               # Milan v1.2 §5.3.3.4
 FORMATS_OFFSET = 138                    # IEEE 1722.1-2021 Table 7-8
+ANNEX_C_OFFSET = 136                    # Milan v1.2 Annex C Table C.1
+REDUNDANT_MAX = 8                       # number_of_redundant_streams, both tables
 FORMATS_MAX = 46                        # (508 - 138) // 8, IEEE §7.2
 RATES_OFFSET = 144                      # IEEE 1722.1-2021 §7.2.3
 RATES_MAX = 8                           # the SET_SAMPLING_RATE walk, 07 §3.1
@@ -160,8 +162,9 @@ CHECKS = {
     "format-family": ("L4", MILAN + "§5.3.3.4", "CRF and AAF never share a format list"),
     "current-format": ("L4", MILAN + "§5.3.3.4", "current_format is in the format list"),
     "format-count": ("L4", IEEE + "§7.2, §7.2.6 Table 7-8", "number_of_formats <= 46"),
-    "stream-layout": ("L4", MILAN + "§5.3.3.4; " + IEEE + "§7.2.6 Table 7-8",
-                      "formats at 138, no redundancy tail (non-redundant PAAD)"),
+    "stream-layout": ("L4", MILAN + "§5.3.3.4, Annex C Table C.1; " + IEEE + "§7.2.6 Table 7-8",
+                      "Table 7-8 (formats at 138, no redundancy tail) or Annex C (formats at "
+                      "136, at most 8 redundant streams), offsets agreeing with the length"),
     "interface-index": ("L5", MILAN + "§5.3.3.5",
                         "a port_number keeps its AVB_INTERFACE index in every configuration "
                         "that holds it"),
@@ -621,21 +624,32 @@ def _rule_stream_fields(ctx: RuleContext) -> None:
 
 
 def _stream_layout(ctx: RuleContext, where: Where, count: int) -> None:
-    """The Table 7-8 layout with R = 0: formats at 138, then nothing."""
+    """One of the two layouts Milan v1.2 §5.3.3.4 allows: IEEE 1722.1-2021
+    Table 7-8 (formats at 138, then no redundancy tail, since §5.3.3.4 puts the
+    streams of a redundant pair in Annex C), or Annex C Table C.1 (formats at
+    136, then R <= 8 two-octet redundant_streams). Which streams pair is not
+    linted (07 §3.1)."""
     offset = ctx.read("stream-layout", where, 82, 2)
     redundant = ctx.read("stream-layout", where, 132, 2)
-    tail = ctx.read("stream-layout", where, 134, 2)
+    tail = ctx.read("stream-layout", where, 134, 2) or 0
     body = ctx.of(where[0], where[1])[where[2]]
-    end = FORMATS_OFFSET + 8 * count
-    if offset is not None and offset != FORMATS_OFFSET:
-        ctx.bad("stream-layout", where, f"formats_offset {offset}, not {FORMATS_OFFSET}")
-    if redundant is not None and redundant != end:
-        ctx.bad("stream-layout", where, f"redundant_offset {redundant}, not {end}")
-    if tail:
-        ctx.bad("stream-layout", where, f"number_of_redundant_streams {tail} on a "
-                                        "non-redundant PAAD")
+    annex_c = offset == ANNEX_C_OFFSET
+    formats_end = (ANNEX_C_OFFSET if annex_c else FORMATS_OFFSET) + 8 * count
+    if offset is not None and offset not in (FORMATS_OFFSET, ANNEX_C_OFFSET):
+        ctx.bad("stream-layout", where, f"formats_offset {offset}, not {FORMATS_OFFSET} "
+                                        f"(Table 7-8) or {ANNEX_C_OFFSET} (Annex C)")
+    if redundant is not None and redundant != formats_end:
+        ctx.bad("stream-layout", where, f"redundant_offset {redundant}, not {formats_end}")
+    if tail and not annex_c:
+        ctx.bad("stream-layout", where, f"number_of_redundant_streams {tail} in the Table 7-8 "
+                                        "layout; a redundant pair's streams use Annex C")
+    if tail > REDUNDANT_MAX:
+        ctx.bad("stream-layout", where, f"number_of_redundant_streams {tail}, above "
+                                        f"{REDUNDANT_MAX}")
+    end = formats_end + 2 * tail
+    made = f"{count} formats" + (f" and {tail} redundant streams" if tail else "")
     if len(body) != end:
-        ctx.bad("stream-layout", where, f"is {len(body)} bytes; {count} formats make {end}")
+        ctx.bad("stream-layout", where, f"is {len(body)} bytes; {made} make {end}")
 
 
 def _rule_interfaces(ctx: RuleContext) -> None:

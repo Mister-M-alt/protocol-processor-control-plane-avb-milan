@@ -260,11 +260,12 @@ class LintTest(unittest.TestCase):
         self.assertIn("semantic lint: on", gen_desc_image.build(model)[1])
 
     def test_example_is_a_layout_vector(self) -> None:
-        """example_milan_8.json packs with the lint off, and is no Milan model."""
+        """example_milan_8.json packs with the lint off, and is no Milan model:
+        the lint refuses it, though not for its Annex C streams (R434-2 F1)."""
         _, report = gen_desc_image.build(EXAMPLE, lint=False)
         self.assertTrue(report.endswith("\nsemantic lint: off\n"))
         lines = refusal(EXAMPLE)
-        self.assertTrue(any(line.startswith("L4 stream-layout:") for line in lines))
+        self.assertFalse(any(line.startswith("L4 stream-layout:") for line in lines), lines)
 
     def test_every_check_has_a_mutation(self) -> None:
         """One negative case per refusal: no check of the lint goes untested."""
@@ -378,6 +379,19 @@ class ConformingModelTest(unittest.TestCase):
         mut.second_configuration(model)
         mut.put(model, (mut.AVB_INTERFACE, 1, 1), 96, 3)
         self.packs(model)       # configuration 1 holds port 3 where configuration 0 holds port 2
+
+    def test_annex_c_layout(self) -> None:
+        """Every stream re-laid in Milan v1.2 Annex C Table C.1 with R = 0 packs,
+        and so does a redundant pair of Stream Outputs in Annex C, each naming
+        the other (R = 1): §5.3.3.4 allows Annex C for any stream and requires
+        it for a redundant pair (R434-2 F1, R435-2 F1)."""
+        model = normalised(MILAN_MIN)
+        for at in ((mut.STREAM_INPUT, 0, 0), (mut.STREAM_INPUT, 1, 0), (mut.STREAM_OUTPUT, 0, 0)):
+            mut.annex_c(model, at)
+        self.packs(model)
+        model = normalised(MILAN_MIN)
+        mut.redundant_outputs(model)
+        self.packs(model)
 
     def test_single_level_ranges_have_no_order(self) -> None:
         """The output port's clusters numbered before the input port's: §7.2

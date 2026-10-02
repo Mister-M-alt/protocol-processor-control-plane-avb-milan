@@ -128,6 +128,30 @@ def set_formats(model: Model, at: tuple[int, int, int], words: list[int],
     store(model, at, bytes(data) + b"".join(w.to_bytes(8, "big") for w in words))
 
 
+def annex_c(model: Model, at: tuple[int, int, int], streams: tuple[int, ...] = ()) -> None:
+    """Re-lay a Table 7-8 stream in Milan v1.2 Annex C Table C.1: no `timing`,
+    the formats at 136, then `streams` as its two-octet redundant_streams."""
+    data = body(model, *at)
+    count = struct.unpack_from(">H", data, 84)[0]
+    head = data[:136]
+    struct.pack_into(">H", head, 82, 136)
+    struct.pack_into(">HH", head, 132, 136 + 8 * count, len(streams))
+    store(model, at, bytes(head) + data[138:138 + 8 * count]
+          + struct.pack(f">{len(streams)}H", *streams))
+
+
+def redundant_outputs(model: Model) -> None:
+    """STREAM_OUTPUT 1 on AVB_INTERFACE 1 (port 2) beside STREAM_OUTPUT 0, both
+    in Annex C and each naming the other: a redundant pair (Milan v1.2 Annex C)."""
+    second_interface(model)
+    output = body(model, STREAM_OUTPUT, 0)
+    struct.pack_into(">H", output, 126, 1)
+    add(model, (STREAM_OUTPUT, 1, 0), output)
+    put(model, (ENTITY, 0, 0), 24, 2)
+    annex_c(model, (STREAM_OUTPUT, 0, 0), (1,))
+    annex_c(model, (STREAM_OUTPUT, 1, 0), (0,))
+
+
 def set_rates(model: Model, rates: list[int], current: int = 48000) -> None:
     """Rewrite AUDIO_UNIT 0's sampling-rate list at 144."""
     data = body(model, AUDIO_UNIT, 0)[:144]
@@ -396,6 +420,19 @@ MUTATIONS = (
              lambda m: set_formats(m, (STREAM_INPUT, 0, 0), [BASE_IN] * 47)),
     Mutation("output with a redundant stream", "stream-layout",
              _p((STREAM_OUTPUT, 0), 134, 1), detail="number_of_redundant_streams 1"),
+    Mutation("Table 7-8 output naming one redundant stream, its tail present", "stream-layout",
+             lambda m: (put(m, (STREAM_OUTPUT, 0, 0), 134, 1),
+                        store(m, (STREAM_OUTPUT, 0, 0), body(m, STREAM_OUTPUT, 0) + bytes(2))),
+             detail="number_of_redundant_streams 1 in the Table 7-8 layout"),
+    Mutation("Annex C output naming nine redundant streams", "stream-layout",
+             lambda m: annex_c(m, (STREAM_OUTPUT, 0, 0), tuple(range(9))),
+             detail="number_of_redundant_streams 9, above 8"),
+    Mutation("Annex C output with Table 7-8's redundant_offset", "stream-layout",
+             lambda m: (annex_c(m, (STREAM_OUTPUT, 0, 0)), put(m, (STREAM_OUTPUT, 0, 0), 132, 146)),
+             detail="redundant_offset 146, not 144"),
+    Mutation("Annex C output counting one redundant stream it lacks", "stream-layout",
+             lambda m: (annex_c(m, (STREAM_OUTPUT, 0, 0)), put(m, (STREAM_OUTPUT, 0, 0), 134, 1)),
+             detail="is 144 bytes; 1 formats and 1 redundant streams make 146"),
     Mutation("output formats_offset 146, the list moved there", "stream-layout",
              lambda m: (store(m, (STREAM_OUTPUT, 0, 0), body(m, STREAM_OUTPUT, 0)[:138] + bytes(8)
                               + body(m, STREAM_OUTPUT, 0)[138:]),
