@@ -37,7 +37,12 @@ image.bin: $(HDL)/aecp/desc/gen_desc_image.py $(HDL)/aecp/desc/model_lint.py \
 generator-check:
 	python3 -B test_gen_desc_image.py
 
+# the gate's check-suppression proof: each lint check, its findings dropped
+# alone, must make generator-check fail (README, "Mutation proof")
+lint-suppression:
+	python3 -B lint_suppression.py --jobs 8
+
 clean:
 	rm -rf obj_dir image.bin image.map
 
-.PHONY: run generator-check clean
+.PHONY: run generator-check lint-suppression clean

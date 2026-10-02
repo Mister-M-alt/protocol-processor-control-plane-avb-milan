@@ -272,7 +272,8 @@ class LintTest(unittest.TestCase):
                          sorted(gen_desc_image.model_lint.CHECKS))
 
     def test_mutations(self) -> None:
-        """Each mutation is refused with its check and packs with the lint off."""
+        """Each mutation is refused with its check, on the arm its detail names,
+        and packs with the lint off."""
         for mutation in mut.MUTATIONS:
             with self.subTest(mutation=mutation.name):
                 model = normalised(MILAN_MIN)
@@ -282,8 +283,29 @@ class LintTest(unittest.TestCase):
                 rule = gen_desc_image.model_lint.CHECKS[mutation.check][0]
                 lines = refusal(model, **checks)
                 self.assertTrue(any(line.startswith(f"{rule} {mutation.check}: ")
-                                    for line in lines), lines)
+                                    and mutation.detail in line for line in lines), lines)
                 self.assertEqual(gen_desc_image.build(model, lint=False)[0][:4], b"AEMI")
+
+    def test_boundaries_pack(self) -> None:
+        """The caps accept their own value: 46 formats (IEEE 1722.1-2021 Table
+        7-8), 8 sampling rates (07 §3.1 L10); and a CRF input's source beside one
+        at an AAF input (Milan v1.2 §5.3.3.6 limits only the CRF input's)."""
+        formats, rates, sources = (normalised(MILAN_MIN) for _ in range(3))
+        mut.set_formats(formats, (mut.STREAM_INPUT, 0, 0), [mut.BASE_IN] * 46)
+        mut.set_rates(rates, [48000, 96000, 192000, 44100, 88200, 176400, 32000, 24000])
+        source = mut.body(sources, mut.CLOCK_SOURCE, 1)
+        struct.pack_into(">H", source, 84, 0)
+        mut.add(sources, (mut.CLOCK_SOURCE, 2, 0), source)
+        mut.set_sources(sources, [0, 1, 2])
+        for model in (formats, rates, sources):
+            self.assertIn("lint waivers applied: 0", gen_desc_image.build(model)[1])
+
+    def test_short_descriptor(self) -> None:
+        """A field a rule needs past the descriptor's end is that rule's finding."""
+        model = normalised(MILAN_MIN)
+        mut.store(model, (mut.CLOCK_SOURCE, 0, 0), mut.body(model, mut.CLOCK_SOURCE, 0)[:80])
+        self.assertIn("L6 crf-input-source: cfg 0 CLOCK_SOURCE 0: is 80 bytes; the field at 82 "
+                      "needs 84 (Milan v1.2 §5.3.3.6)", refusal(model))
 
 
 class ConformingModelTest(unittest.TestCase):
@@ -326,13 +348,19 @@ class ConformingModelTest(unittest.TestCase):
 
     def test_second_interface_optional_per_configuration(self) -> None:
         """Configuration 0 holds ports 1 and 2, configuration 1 only port 1 at
-        the same index: Milan v1.2 §5.3.3.5 is kept (R435-1 probe C)."""
+        the same index (R435-1 probe C), or ports 1 and 3: Milan v1.2 §5.3.3.5
+        binds an index to a physical port, not a port to an index."""
         model = normalised(MILAN_MIN)
         mut.second_interface(model)
         mut.second_configuration(model)
         mut.drop(model, mut.AVB_INTERFACE, 1, 1)
         mut.set_count(model, mut.AVB_INTERFACE, 1, 1)
         self.packs(model)
+        model = normalised(MILAN_MIN)
+        mut.second_interface(model)
+        mut.second_configuration(model)
+        mut.put(model, (mut.AVB_INTERFACE, 1, 1), 96, 3)
+        self.packs(model)       # configuration 1 holds port 3 where configuration 0 holds port 2
 
     def test_single_level_ranges_have_no_order(self) -> None:
         """The output port's clusters numbered before the input port's: §7.2
@@ -400,6 +428,38 @@ class WaiverTest(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertTrue(lines[0].startswith("L7 cluster-channels: cfg 0 AUDIO_CLUSTER 2:"))
 
+    def test_waiver_scope_is_its_type(self) -> None:
+        """A STREAM_PORT_INPUT 0 waiver does not excuse STREAM_PORT_OUTPUT 0:
+        the output port is refused and the waiver is stale."""
+        model = normalised(MILAN_MIN)
+        mut.output_port_without_clusters(model)
+        model["lint_waivers"] = [WAIVER]
+        self.assertEqual([line.split(" (Milan")[0] for line in refusal(model)], [
+            "L1 port-cluster-minimum: cfg 0 STREAM_PORT_OUTPUT 0: number_of_clusters 0; a "
+            "Stream Port contains at least one AUDIO_CLUSTER",
+            "lint waiver 0 (L1 port-cluster-minimum: cfg 0 STREAM_PORT_INPUT 0) is stale: its "
+            "check passes for STREAM_PORT_INPUT 0; remove or narrow it"])
+
+    def test_waiver_scope_is_its_configuration(self) -> None:
+        """A configuration 0 waiver does not excuse the same port in
+        configuration 1: that port is refused and the waiver is stale."""
+        model = normalised(MILAN_MIN)
+        mut.second_configuration(model)
+        mut.input_port_without_clusters(model, 1)
+        model["lint_waivers"] = [WAIVER]
+        self.assertEqual([line.split(" (Milan")[0] for line in refusal(model)], [
+            "L1 port-cluster-minimum: cfg 1 STREAM_PORT_INPUT 0: number_of_clusters 0; a "
+            "Stream Port contains at least one AUDIO_CLUSTER",
+            "lint waiver 0 (L1 port-cluster-minimum: cfg 0 STREAM_PORT_INPUT 0) is stale: its "
+            "check passes for STREAM_PORT_INPUT 0; remove or narrow it"])
+
+    def test_waiver_naming_a_missing_configuration_is_stale(self) -> None:
+        """A waiver for configuration 1 of a one-configuration model is refused."""
+        lines = refusal(self.waived([WAIVER, dict(WAIVER, configuration=1)]))
+        self.assertEqual(lines, ["lint waiver 1 (L1 port-cluster-minimum: cfg 1 "
+                                 "STREAM_PORT_INPUT 0) is stale: configuration 1 does not "
+                                 "exist; remove or narrow it"])
+
     def test_configuration_scope(self) -> None:
         """A check that names a configuration takes a waiver without a range."""
         model = normalised(MILAN_MIN)
@@ -422,12 +482,24 @@ class WaiverTest(unittest.TestCase):
                  ({k: v for k, v in WAIVER.items() if k != "last"},
                   "gives one of first and last"),
                  (dict(WAIVER, type="NOT_A_TYPE"), "unknown descriptor type 'NOT_A_TYPE'"),
-                 (dict(WAIVER, scope="all"), "unknown keys ['scope']"))
+                 (dict(WAIVER, scope="all"), "unknown keys ['scope']"),
+                 (["L1", "port-cluster-minimum"], "is not an object"),
+                 (dict(WAIVER, first=1, last=0), "has the empty range 1..0"))
         for waiver, message in cases:
             with self.subTest(message=message):
                 lines = refusal(self.waived([waiver]))
                 self.assertTrue(lines[0].startswith("lint waiver 0 "), lines)
                 self.assertIn(message, lines[0])
+
+    def test_waivers_are_a_list(self) -> None:
+        """A lint_waivers that is not a list is refused, lint on or off."""
+        model = self.waived([])
+        model["lint_waivers"] = WAIVER
+        for lint in (True, False):
+            with self.subTest(lint=lint):
+                with self.assertRaises(gen_desc_image.ImageError) as caught:
+                    gen_desc_image.build(model, lint=lint)
+                self.assertEqual(str(caught.exception), "lint_waivers is not a list")
 
     def test_lint_off_reports_unevaluated_waivers(self) -> None:
         """With the lint off the waivers are counted, not judged."""

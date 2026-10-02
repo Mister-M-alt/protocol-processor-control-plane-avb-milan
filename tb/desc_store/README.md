@@ -77,10 +77,15 @@ rules L1 to L11 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's e
 
 - `milan_min.json` packs with every check on, and its digest equals the one
   recorded in `model_ids.json`.
-- Each of the 59 named mutations in `lint_mutations.py` is refused with its
-  rule and check. The same mutated bytes pack with the lint off, so every
-  refusal counted is the lint's. Every one of the 53 checks has at least one
-  mutation, and a test holds that set equal to `model_lint.CHECKS`.
+- Each of the 73 named mutations in `lint_mutations.py` is refused with its
+  rule and check. Where a check has several arms, the mutation's `detail`
+  names the arm, and the refusal must carry it. The same mutated bytes pack
+  with the lint off, so every refusal counted is the lint's. Every one of the
+  53 checks has at least one mutation, and a test holds that set equal to
+  `model_lint.CHECKS`.
+- The caps accept their own value: 46 formats and 8 sampling rates pack, and
+  so does a CRF input's clock source beside one at an AAF input. A field past
+  a descriptor's end is the finding of the rule that needs it.
 - Standard-conforming models pack: CONTROLs a Unit and its Port own in the
   order IEEE 1722.1-2021 §7.2 walks them, a JACK's CONTROL and a Unit's
   SIGNAL_SELECTOR outside the top-level counts, cluster ranges in either
@@ -89,9 +94,11 @@ rules L1 to L11 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's e
   index gap, a duplicate key, a mixed named and unnamed run, an ENTITY at
   index 1, a configuration gap.
 - Waivers: a waiver applies and is reported. Without it the L1 refusal comes
-  back. On a fixed model, or past the descriptors, it is refused as stale. It
-  excuses no other check and no other scope. Seven malformed waivers are each
-  refused.
+  back. On a fixed model, past the descriptors, or naming a configuration the
+  model lacks, it is refused as stale. It excuses no other check, index,
+  descriptor type or configuration: a finding that differs from the waiver in
+  any one of them is refused, and the waiver is stale. Nine malformed waivers
+  are each refused, and so is a `lint_waivers` that is not a list.
 - The ADP values and the digest: driven values that agree pass. The §6.2.2.8
   exclusions leave the digest unchanged, and the structural fields beside them
   move it, field by field. A selector CONTROL's option change under a recorded
@@ -99,14 +106,37 @@ rules L1 to L11 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's e
 - The command line: the positive model with every check, and a refusal that
   exits 1 and writes nothing.
 
-Mutation proof (2026-10-02): each of the 53 checks was suppressed in turn.
-Only that check's findings were dropped, by replacing the lint's finding
-recorder in the test process; no file changed.
+Mutation proof: each check is suppressed in turn. Only that check's
+findings are dropped, by replacing the lint's finding recorder in a child
+process; no file changes. `lint_suppression.py` runs it
+(`make -C tb/desc_store lint-suppression`); it exits 0 only when the control
+passes and every check is killed.
 
 | Probe | Result |
 |---|---|
-| Control: nothing suppressed | `test_mutations` and `WaiverTest` pass |
-| Each check suppressed alone | 53 of 53 checks make `test_mutations` fail. `WaiverTest` fails as well for `port-cluster-minimum` (4 tests), `has-parent`, `cluster-channels` and `talker-base-format` (1 each) |
+| Control: nothing suppressed | the gate passes |
+| Each check suppressed alone, round 1 (2026-10-02, at e6cca1ff) | 53 of 53 checks make `test_mutations` fail. `WaiverTest` fails as well for `port-cluster-minimum` (4 tests), `has-parent`, `cluster-channels` and `talker-base-format` (1 each) |
+| Each check suppressed alone, round 2 (2026-10-02, the committed driver) | 53 of 53 checks killed. `port-cluster-minimum` also fails 7 `WaiverTest` tests; `has-parent`, `cluster-channels` and `talker-base-format` fail one each |
+
+Planted defects (round 2, 2026-10-02): the two round-1 reviews planted 22
+and 32 textual defects in the lint and the packer, one per disposable copy,
+47 distinct. 12 distinct ones survived the round-1 gate. Round 2 planted 46 of
+them again on its own code; the 47th, L2 restricted to CONTROL, is now the
+rule. With 8 more beside the rules round 2 rewrote, that is 54 plants, and the
+gate kills every one. Each survivor now fails a named test:
+
+| Survivor | Fails |
+|---|---|
+| a waiver ignores its descriptor type | `WaiverTest.test_waiver_scope_is_its_type` |
+| a waiver ignores its configuration | `WaiverTest.test_waiver_scope_is_its_configuration` |
+| mapping uniqueness reset per AUDIO_MAP | `test_mutations`: "AUDIO_MAP 1 repeats AUDIO_MAP 0" |
+| L2's configuration-level CONTROL arm deleted | `test_mutations`: "a configuration-level CONTROL after a unit-owned one" |
+| `stream-layout`'s length arm deleted | `test_mutations`: "output 8 bytes past its formats, offsets consistent" |
+| a `ut` current_format covered by a wider `ut` entry (the round-1 arm was redundant and is gone; the plant clears current's `ut` bit instead) | `test_mutations`: "input current_format carries ut, under a wider ut entry" |
+| the format cap 45, the rate cap 7 | `LintTest.test_boundaries_pack` |
+| "exactly one" weakened to "at least one", at a CRF input and at the AAF inputs | `test_mutations`: "two INPUT_STREAM sources at the CRF input", "no CRF input, an INPUT_STREAM source at each AAF input" |
+| an ENTITY outside configuration 0 accepted | `test_mutations`: "an ENTITY in configuration 1" |
+| L5 compared index by index on the indices two configurations share | `ConformingModelTest.test_second_interface_optional_per_configuration` |
 
 ### Body/key agreement
 

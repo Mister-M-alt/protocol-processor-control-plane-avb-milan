@@ -299,12 +299,14 @@ def base_formats(word: int) -> set[tuple[int, int]]:
 def _covers(entry: int, current: int) -> bool:
     """Whether a format-list entry covers `current`: equal, or an AAF entry
     with the `ut` bit whose channel count is at least current's (AVTP Annex
-    I.2.4, Milan v1.2 §5.3.3.4), all other fields equal."""
+    I.2.4, Milan v1.2 §5.3.3.4), all other fields equal. Only the entry's `ut`
+    bit is cleared for the comparison, so a `ut`-carrying current_format is
+    covered by an equal entry alone."""
     if entry == current:
         return True
     up_to = 0x0010 << 48
     channels = 0x3FF << 22
-    if entry >> 56 != 0x02 or not entry & up_to or current & up_to:
+    if entry >> 56 != 0x02 or not entry & up_to:
         return False
     return ((entry ^ up_to) & ~channels == current & ~channels
             and (current & channels) <= (entry & channels))

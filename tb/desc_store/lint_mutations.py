@@ -154,16 +154,24 @@ def second_configuration(model: Model) -> None:
     put(model, (ENTITY, 0, 0), 308, 2)
 
 
-def input_port_without_clusters(model: Model) -> None:
-    """Stream Port Input 0 with no AUDIO_CLUSTER; its two clusters leave the tree."""
-    put(model, (STREAM_PORT_INPUT, 0, 0), 12, 0)
+def input_port_without_clusters(model: Model, cfg: int = 0) -> None:
+    """Stream Port Input 0 of configuration `cfg` with no AUDIO_CLUSTER; its
+    two clusters leave the tree."""
+    put(model, (STREAM_PORT_INPUT, 0, cfg), 12, 0)
     for index in (0, 1):
-        drop(model, AUDIO_CLUSTER, index)
+        drop(model, AUDIO_CLUSTER, index, cfg)
     for old, new in ((2, 0), (3, 1)):
-        row = find(model, AUDIO_CLUSTER, old)
+        row = find(model, AUDIO_CLUSTER, old, cfg)
         row["index"] = new
-        put(model, (AUDIO_CLUSTER, new, 0), 2, new)
-    put(model, (STREAM_PORT_OUTPUT, 0, 0), 14, 0)
+        put(model, (AUDIO_CLUSTER, new, cfg), 2, new)
+    put(model, (STREAM_PORT_OUTPUT, 0, cfg), 14, 0)
+
+
+def output_port_without_clusters(model: Model) -> None:
+    """Stream Port Output 0 with no AUDIO_CLUSTER; its two clusters leave the tree."""
+    put(model, (STREAM_PORT_OUTPUT, 0, 0), 12, 0)
+    for index in (2, 3):
+        drop(model, AUDIO_CLUSTER, index)
 
 
 def _crf_input_becomes_aaf(model: Model) -> None:
@@ -217,13 +225,16 @@ def _second_talker_in_configuration_1(model: Model) -> None:
 
 @dataclass(frozen=True)
 class Mutation:
-    """One negative case: the edit, the check it must trip, and the checks
-    the build runs with (driven ADP values; the recorded digests)."""
+    """One negative case: the edit, the check it must trip, the text that
+    names the arm of that check (a check with several arms has one mutation
+    per arm), and the checks the build runs with (driven ADP values; the
+    recorded digests)."""
     name: str
     check: str
     edit: Callable[[Model], None]
     adp: dict[str, int] = field(default_factory=dict)
     recorded: bool = False
+    detail: str = ""
 
 
 def _p(at: tuple[int, int], offset: int, value: int, size: int = 2) -> Callable[[Model], None]:
@@ -248,6 +259,48 @@ def _configuration_control_after_unit_control(model: Model) -> None:
     add(model, (CONTROL, 2, 0), control(model))
 
 
+def _entity_in_configuration_1(model: Model) -> None:
+    """A second ENTITY, in configuration 1 (Milan v1.2 §5.3.3.1: exactly one)."""
+    second_configuration(model)
+    model["descriptors"].append(dict(find(model, ENTITY, 0), configuration=1))
+
+
+def _configuration_in_configuration_1(model: Model) -> None:
+    """CONFIGURATION 0 copied into configuration 1, beside configuration 0's two."""
+    second_configuration(model)
+    add(model, (CONFIGURATION, 0, 1), body(model, CONFIGURATION, 0))
+
+
+def _counts_list(model: Model, extra: bytes, count: int) -> None:
+    """CONFIGURATION 0's descriptor_counts with `extra` pairs appended and a
+    descriptor_counts_count raised by `count`."""
+    data = body(model, CONFIGURATION, 0) + extra
+    struct.pack_into(">H", data, 70, struct.unpack_from(">H", data, 70)[0] + count)
+    store(model, (CONFIGURATION, 0, 0), data)
+
+
+def _two_sources_at_crf_input(model: Model) -> None:
+    """A second INPUT_STREAM CLOCK_SOURCE at the CRF input (STREAM_INPUT 1)."""
+    add(model, (CLOCK_SOURCE, 2, 0), body(model, CLOCK_SOURCE, 1))
+    set_sources(model, [0, 1, 2])
+
+
+def _a_source_at_each_aaf_input(model: Model) -> None:
+    """No CRF input, and an INPUT_STREAM source at each of the two AAF inputs."""
+    _crf_input_becomes_aaf(model)
+    source = body(model, CLOCK_SOURCE, 1)
+    struct.pack_into(">H", source, 84, 0)
+    add(model, (CLOCK_SOURCE, 2, 0), source)
+    set_sources(model, [0, 1, 2])
+
+
+def _mapping_repeated_in_a_second_map(model: Model) -> None:
+    """AUDIO_MAP 1 on the output port repeats AUDIO_MAP 0's mappings
+    (Milan v1.2 §5.3.3.9: unique across all AUDIO_MAPs)."""
+    add(model, (AUDIO_MAP, 1, 0), body(model, AUDIO_MAP, 0))
+    put(model, (STREAM_PORT_OUTPUT, 0, 0), 16, 2)
+
+
 def _no_streams(model: Model) -> None:
     """Every STREAM_INPUT and STREAM_OUTPUT removed."""
     for dtype, index in ((STREAM_INPUT, 0), (STREAM_INPUT, 1), (STREAM_OUTPUT, 0)):
@@ -255,13 +308,27 @@ def _no_streams(model: Model) -> None:
 
 
 MUTATIONS = (
-    Mutation("no ENTITY", "entity-count", lambda m: drop(m, ENTITY, 0)),
+    Mutation("no ENTITY", "entity-count", lambda m: drop(m, ENTITY, 0),
+             detail="no ENTITY descriptor"),
+    Mutation("an ENTITY in configuration 1", "entity-count", _entity_in_configuration_1,
+             detail="cfg 1 ENTITY 0: an ENTITY outside configuration 0"),
     Mutation("configurations_count 2", "configurations-count", _p((ENTITY, 0), 308, 2)),
     Mutation("current_configuration 1", "current-configuration", _p((ENTITY, 0), 310, 1)),
     Mutation("no CONFIGURATION", "configuration-descriptors",
-             lambda m: drop(m, CONFIGURATION, 0)),
+             lambda m: drop(m, CONFIGURATION, 0), detail="CONFIGURATION indices []"),
+    Mutation("a CONFIGURATION in configuration 1", "configuration-descriptors",
+             _configuration_in_configuration_1,
+             detail="cfg 1 CONFIGURATION 0: a CONFIGURATION outside configuration 0"),
     Mutation("descriptor_counts says 3 STREAM_INPUTs", "descriptor-counts",
-             _p((CONFIGURATION, 0), 80, 3)),
+             _p((CONFIGURATION, 0), 80, 3), detail="STREAM_INPUT 3; configuration 0 holds 2"),
+    Mutation("descriptor_counts lists CONTROL twice", "descriptor-counts",
+             lambda m: _counts_list(m, struct.pack(">HH", CONTROL, 0), 1),
+             detail="lists CONTROL twice"),
+    Mutation("descriptor_counts lists STREAM_PORT_INPUT", "descriptor-counts",
+             lambda m: _counts_list(m, struct.pack(">HH", STREAM_PORT_INPUT, 1), 1),
+             detail="lists STREAM_PORT_INPUT, which is not a top-level type"),
+    Mutation("descriptor_counts_count one past the list", "descriptor-counts",
+             lambda m: _counts_list(m, b"", 1), detail="8 counts at 74 run past"),
     Mutation("no AVB_INTERFACE", "required-type", lambda m: drop(m, AVB_INTERFACE, 0)),
     Mutation("no AUDIO_UNIT", "audio-unit-for-aaf", lambda m: drop(m, AUDIO_UNIT, 0)),
     Mutation("AUDIO_UNIT owns no output port", "stream-port-for-aaf",
@@ -274,9 +341,11 @@ MUTATIONS = (
              _p((STREAM_PORT_INPUT, 0), 12, 3)),
     Mutation("AUDIO_MAP 0 has no port", "has-parent", _p((STREAM_PORT_OUTPUT, 0), 16, 0)),
     Mutation("the input port's CONTROL numbered before its unit's", "parent-order",
-             _port_control_before_unit_control),
+             _port_control_before_unit_control,
+             detail="STREAM_PORT_INPUT 0: its CONTROL range starts at 1, before the end 3"),
     Mutation("a configuration-level CONTROL after a unit-owned one", "parent-order",
-             _configuration_control_after_unit_control),
+             _configuration_control_after_unit_control,
+             detail="CONTROL 2: a configuration-level CONTROL after CONTROL 1"),
     Mutation("no stream at all", "stream-presence", _no_streams),
     Mutation("output format 24-bit", "talker-base-format",
              lambda m: set_formats(m, (STREAM_OUTPUT, 0, 0), [0x0205021800806000],
@@ -303,10 +372,25 @@ MUTATIONS = (
              lambda m: set_formats(m, (STREAM_INPUT, 1, 0), [CRF, BASE_IN])),
     Mutation("output current_format 96 kHz", "current-format",
              _p((STREAM_OUTPUT, 0), 74, 0x020702200080C000, 8)),
+    Mutation("input current_format carries ut, under a wider ut entry", "current-format",
+             _p((STREAM_INPUT, 0), 74, 0x0215022000806000, 8),
+             detail="current_format 0x0215022000806000 is not in its list"),
     Mutation("input with 47 formats", "format-count",
              lambda m: set_formats(m, (STREAM_INPUT, 0, 0), [BASE_IN] * 47)),
     Mutation("output with a redundant stream", "stream-layout",
-             _p((STREAM_OUTPUT, 0), 134, 1)),
+             _p((STREAM_OUTPUT, 0), 134, 1), detail="number_of_redundant_streams 1"),
+    Mutation("output formats_offset 146, the list moved there", "stream-layout",
+             lambda m: (store(m, (STREAM_OUTPUT, 0, 0), body(m, STREAM_OUTPUT, 0)[:138] + bytes(8)
+                              + body(m, STREAM_OUTPUT, 0)[138:]),
+                        put(m, (STREAM_OUTPUT, 0, 0), 82, 146)),
+             detail="formats_offset 146, not 138"),
+    Mutation("output redundant_offset 0", "stream-layout", _p((STREAM_OUTPUT, 0), 132, 0),
+             detail="redundant_offset 0, not 146"),
+    Mutation("output 8 bytes past its formats, offsets consistent", "stream-layout",
+             lambda m: store(m, (STREAM_OUTPUT, 0, 0), body(m, STREAM_OUTPUT, 0) + bytes(8)),
+             detail="is 154 bytes; 1 formats make 146"),
+    Mutation("output number_of_formats 2 with one format", "stream-layout",
+             _p((STREAM_OUTPUT, 0), 84, 2), detail="2 formats at 138 run past its 146 bytes"),
     Mutation("configuration 1 moves port 1 to AVB_INTERFACE 1", "interface-index",
              _port_moves_in_configuration_1),
     Mutation("clock_sources_offset 78", "domain-source-offset", _p((CLOCK_DOMAIN, 0), 72, 78)),
@@ -317,22 +401,34 @@ MUTATIONS = (
     Mutation("clock_sources [1, 0]", "domain-source-identity", lambda m: set_sources(m, [1, 0])),
     Mutation("domain names CLOCK_SOURCE 2", "domain-source-exists",
              lambda m: set_sources(m, [0, 1, 2])),
-    Mutation("CRF source at the AAF input", "crf-input-source", _p((CLOCK_SOURCE, 1), 84, 0)),
+    Mutation("CRF source at the AAF input", "crf-input-source", _p((CLOCK_SOURCE, 1), 84, 0),
+             detail="a CRF input with 0 INPUT_STREAM sources"),
+    Mutation("two INPUT_STREAM sources at the CRF input", "crf-input-source",
+             _two_sources_at_crf_input, detail="a CRF input with 2 INPUT_STREAM sources"),
     Mutation("no CRF input and no INPUT_STREAM source", "aaf-input-source",
-             _no_crf_and_no_aaf_source),
+             _no_crf_and_no_aaf_source, detail="no CRF input, and 0 INPUT_STREAM sources"),
+    Mutation("no CRF input, an INPUT_STREAM source at each AAF input", "aaf-input-source",
+             _a_source_at_each_aaf_input, detail="no CRF input, and 2 INPUT_STREAM sources"),
     Mutation("no INTERNAL source", "internal-source", _p((CLOCK_SOURCE, 0), 72, EXTERNAL)),
     Mutation("gPTP media clock with two interfaces", "gptp-source-interfaces",
              _gptp_with_two_interfaces),
     Mutation("input port owns AUDIO_MAP 0", "input-port-maps",
              _p((STREAM_PORT_INPUT, 0), 16, 1)),
-    Mutation("stream 0 channel 0 mapped twice", "unique-mapping", _p((AUDIO_MAP, 0), 18, 0)),
+    Mutation("stream 0 channel 0 mapped twice", "unique-mapping", _p((AUDIO_MAP, 0), 18, 0),
+             detail="AUDIO_MAP 0: stream 0 channel 0 is also mapped by AUDIO_MAP 0"),
+    Mutation("AUDIO_MAP 1 repeats AUDIO_MAP 0", "unique-mapping",
+             _mapping_repeated_in_a_second_map,
+             detail="AUDIO_MAP 1: stream 0 channel 0 is also mapped by AUDIO_MAP 0"),
+    Mutation("AUDIO_MAP 0 number_of_mappings 3 with two", "unique-mapping",
+             _p((AUDIO_MAP, 0), 6, 3), detail="its mappings run past the descriptor"),
     Mutation("stereo AUDIO_CLUSTER 3", "cluster-channels", _p((AUDIO_CLUSTER, 3), 84, 2)),
-    Mutation("no IDENTIFY CONTROL", "identify-index",
-             _p((CONTROL, 0), 82, 0x90E0F00000000002, 8)),
+    Mutation("no IDENTIFY CONTROL", "identify-index", _p((CONTROL, 0), 82, MUTE, 8)),
     Mutation("IDENTIFY at index 0, then 1", "identify-index", _identify_moves),
     Mutation("identify_index_i 1", "identify-driven", lambda m: None, {"identify_index": 1}),
-    Mutation("entity_model_id 0", "model-id-valid", _p((ENTITY, 0), 12, 0, 8)),
-    Mutation("entity_model_id all ones", "model-id-valid", _p((ENTITY, 0), 12, (1 << 64) - 1, 8)),
+    Mutation("entity_model_id 0", "model-id-valid", _p((ENTITY, 0), 12, 0, 8),
+             detail="0x0000000000000000"),
+    Mutation("entity_model_id all ones", "model-id-valid", _p((ENTITY, 0), 12, (1 << 64) - 1, 8),
+             detail="0xFFFFFFFFFFFFFFFF"),
     Mutation("entity_model_id_i differs", "model-id-driven", lambda m: None,
              {"entity_model_id": 0x020000FFFE00C802}),
     Mutation("an unrecorded entity_model_id", "model-id-recorded",
@@ -348,9 +444,11 @@ MUTATIONS = (
              lambda m: (set_rates(m, [48000]), store(m, (AUDIO_UNIT, 0, 0),
                                                      body(m, AUDIO_UNIT, 0) + bytes(4)))),
     Mutation("current_sampling_rate 96000", "current-rate", _p((AUDIO_UNIT, 0), 136, 96000, 4)),
-    Mutation("talker_stream_sources 2", "talker-sources", _p((ENTITY, 0), 24, 2)),
+    Mutation("talker_stream_sources 2", "talker-sources", _p((ENTITY, 0), 24, 2),
+             detail="talker_stream_sources 2; the most STREAM_OUTPUTs of any configuration is 1"),
     Mutation("configuration 1 has two talkers", "talker-sources",
-             _second_talker_in_configuration_1),
+             _second_talker_in_configuration_1,
+             detail="talker_stream_sources 1; the most STREAM_OUTPUTs of any configuration is 2"),
     Mutation("listener_stream_sinks 1", "listener-sinks", _p((ENTITY, 0), 28, 1)),
     Mutation("talker_sources_i 2", "talker-sources-driven", lambda m: None,
              {"talker_sources": 2}),
