@@ -273,6 +273,30 @@ it, and a MAAP allocator answers, so the talker is free to take commands. The ne
 scratch copy, and each must fail its named check. The mutation record is in
 the [`tb/pp_top` README](../../tb/pp_top/README.md).
 
+### 8.4 The descriptor model lint (issues #38, #39, #60, #89)
+
+The packer's self-test gate is `tb/desc_store/test_gen_desc_image.py`. `make` in
+`tb/desc_store` runs it as `generator-check` before the RTL suite, so
+`./scripts/run_suites.sh` and the `hdl` workflow gate it. It drives only `build()` and
+the command line. The lint's negative cases are named mutations of the positive model
+`milan_min.json`, in `tb/desc_store/lint_mutations.py`. The rules and their checks are
+listed in [07 §3.1](07_memory_maps.md#model-lint).
+
+| Property | Checks |
+|---|---|
+| the positive model packs with the lint on and reports `entity_model_id_i`, `talker_sources_i`, `listener_sinks_i`, `identify_index_i` and the recorded digest | `LintTest.test_milan_min_packs` |
+| every check of `model_lint.CHECKS` has a mutation: one negative image per refusal | `LintTest.test_every_check_has_a_mutation` |
+| each mutation is refused with its rule and check, and the same bytes pack with the lint off, so the refusal is the lint's and not a layout refusal (L1 to L11, 56 mutations; L9's 0 and all-ones, L8's index moving between two configurations, L11's two-configuration maximum among them) | `LintTest.test_mutations` |
+| `example_milan_8.json` packs with the lint off, and is refused with it on (it is a layout vector, not a Milan model) | `LintTest.test_example_is_a_layout_vector`, `CommandLineTest.test_example_needs_no_lint` |
+| each layout refusal the packer had before the lint has a negative case: an index gap, a duplicate key, a mixed named and unnamed run, an ENTITY at index 1, a configuration gap | `LayoutRefusalTest` |
+| a waiver excuses one check on one scope and is listed in the report; removing it brings the L1 refusal back; on a fixed model, or past the descriptors, it is refused as stale; it excuses no other check and no other scope; each malformed waiver is refused | `WaiverTest` |
+| driven ADP values that agree pass; a check asked for with the lint off is refused; the §6.2.2.8 exclusions and the unit identity leave the digest unchanged; `model_ids.json` is current | `IdentityTest` |
+| the command line: the positive model with every check; a refusal exits 1 and writes nothing | `CommandLineTest` |
+
+Mutation record, 2026-10-02: each of the 53 checks was suppressed in turn (its findings
+dropped, nothing else changed). `test_mutations` failed for each one, so 53 of 53 were
+killed. The record is in the [`tb/desc_store` README](../../tb/desc_store/README.md).
+
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)
 per the scope rules in [docs/README §2](../README.md).

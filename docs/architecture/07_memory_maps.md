@@ -88,7 +88,9 @@ The `1..*` cluster minimum on both Stream Port directions follows Milan §5.3.3.
 zero-cluster 8×8 input pools conflict with that Milan requirement. The [#122 clause disposition](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/122#issuecomment-5853884588)
 retains F07.2's minimum; the parent owns the D8 product correction under
 [milan-fpga#584](https://github.com/kebag-logic/milan-fpga/issues/584).
-Successful packing is not a waiver.
+The processor lint below refuses those pools (L1 `port-cluster-minimum`). The parent's
+8×8 model packs only with a waiver that names #584, which its layout report lists and
+which is refused as stale once the pools carry clusters.
 
 The consuming product owns its shipping-model semantics. For the parent end-station,
 the allocation and measured enforcement are recorded in
@@ -97,11 +99,12 @@ That contract distinguishes construction from discriminating refusal. The proces
 owns generic packed-image structure and validation: image extents, directory
 well-formedness, dense indices, name binding, line-buffer bounds and descriptor
 type/index consistency. An ownership assignment is not evidence that every check
-is implemented. At processor commit `493e5e4b`, the
-[packer](../../hdl/aecp/desc/gen_desc_image.py) rejects configuration and per-type
-index gaps, duplicate keys, invalid name bindings and descriptors exceeding the
-configured line-buffer bound. It also rejects disagreement between the descriptor
-body's type/index and its directory key, including both `fields` and `bytes` inputs.
+is implemented. The [packer](../../hdl/aecp/desc/gen_desc_image.py) rejects
+configuration and per-type index gaps, duplicate keys, invalid name bindings and
+descriptors exceeding the configured line-buffer bound. It also rejects disagreement
+between the descriptor body's type/index and its directory key, including both
+`fields` and `bytes` inputs. Each of these refusals has a negative case in
+`tb/desc_store` ([09 §8.4](09_verification.md#84-the-descriptor-model-lint-issues-38-39-60-89)).
 
 Parent shipping checks are authoritative for all generated model content,
 including every L1–L10 model obligation below: L1 partition and cardinalities
@@ -112,41 +115,75 @@ across supported configurations. All processor semantic checks, including those
 retained or added under #60, provide defence in depth. Generic packer checks
 remain authoritative for packed-image acceptance, including L2's index density.
 Neither construction nor byte-exact serving substitutes for a negative validation
-case. Open obligations remain under
-[#38](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/38)
-(identity validity and evolution),
-[#39](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/39)
-(ADP maxima),
-[#60](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/60)
-(model-rule coverage as defence in depth),
-[#89](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/89)
-(L6/L10 image checks), and the parent matrix's linked follow-ups.
+case.
 
-The rules below are model obligations, not a claim that a complete build-time
-model lint is implemented (see [09 §1](09_verification.md)):
+<a id="model-lint"></a>**The processor model lint** is that defence in depth, placed on
+the packing path so that one check guards every consumer of the packer (issue #89):
 
-| # | Rule | Clause |
-|---|---|---|
-| L1 | Every descriptor except ENTITY/CONFIGURATION has exactly one parent; no cross-subtree sharing | Milan §5.3.2 |
-| L2 | Indices dense, restart at 0 per configuration, IEEE ordering for multi-level types | IEEE §7.2 |
-| L3 | ≥1 STREAM_INPUT or STREAM_OUTPUT per configuration; each with a Base format (talker §6.3 / listener §6.4 incl. rate-completeness + configuration-uniformity) | Milan §5.3.3.4, §6.3/§6.4 |
-| L4 | STREAM_INPUT `buffer_length` ≥ 2 126 000 ns; CLASS_A flag set; CRF and AAF never mixed in one format list; `current_format` ∈ list; N formats ≤ 47 | Milan §5.3.3.4; IEEE 1722.1-2021 Table 7-8 (the N cap) |
-| L5 | Same AVB_INTERFACE index for the same physical port in every configuration | Milan §5.3.3.5 |
-| L6 | CLOCK_SOURCE construction: one INPUT_STREAM per CRF-capable input (or the single AAF input when no CRF input exists); ≥1 INTERNAL if any output; ≥1 CLOCK_SOURCE per CLOCK_DOMAIN; each CLOCK_DOMAIN's `clock_sources` list is the identity permutation 0..count-1 (dense, zero-based, in order): the processor's SET_CLOCK_SOURCE range check tests `clock_source_index` < `clock_sources_count` and relies on this list shape to be the IEEE §7.4.23.1 membership test ([06 §6.4](06_aecp_engine.md#64-validation-chains-order-matters-first-failure-responds)); gPTP-as-media-clock chain only in non-redundant single-interface models | Milan §5.3.3.6, §7.5; IEEE §7.4.23.1 |
-| L7 | STREAM_PORT_INPUT owns no AUDIO_MAP; ≤1 static mapping per output stream channel; AUDIO_CLUSTER `channel_count` = 1 | Milan §5.3.3.7–.9 |
-| L8 | Primary IDENTIFY CONTROL present in all configurations at the same index | Milan §5.3.3.10 |
-| L9 | `entity_model_id` ≠ 0 / ≠ all-1s; changes whenever the static model changes | Milan v1.2 §5.3.1, §5.3.3.1 |
-| L10 | AUDIO_UNIT `sampling_rates_offset` = 144 and `sampling_rates_count` ≤ 8, each entry the full sampling-rate word (pull field included): the processor's SET_SAMPLING_RATE reads the list at 144 and consults at most its first 8 entries ([06 §6.4](06_aecp_engine.md#64-validation-chains-order-matters-first-failure-responds)). Another offset refuses every rate, and a rate listed past the eighth entry is refused; neither can accept an unlisted rate | IEEE §7.2.3, §7.4.21.1; Milan §5.3.3.3 |
+- **Where it runs.** [`model_lint.py`](../../hdl/aecp/desc/model_lint.py), with its rules in
+  [`model_rules.py`](../../hdl/aecp/desc/model_rules.py), which
+  `gen_desc_image.build()` calls by default after the layout checks above and before it
+  renders the image. It judges the bytes that are packed, at the IEEE 1722.1-2021 §7.2
+  wire offsets, and reads every variable part through the descriptor's own offset field.
+  The opt-out is explicit, `build(..., lint=False)` or `--no-lint`. It exists for layout
+  vectors and for deliberate negative cases that another checker must name. The layout
+  report then says `semantic lint: off`.
+- **How a consumer sees a refusal.** `ImageError`, one line per finding, each naming the
+  rule, one check, the descriptor and the clause, for example
+  `L10 rate-offset: cfg 0 AUDIO_UNIT 0: sampling_rates_offset 143; SET_SAMPLING_RATE reads the list at 144 (...)`.
+  The command line prints it, exits 1 and writes no file.
+- **Waivers.** A waiver excuses one check on a named descriptor scope, never a whole
+  rule. It travels in the document the packer consumes (`lint_waivers`) and carries a
+  reason that names its tracking issue. The report lists every applied waiver. A waiver
+  is refused when it is malformed, and when it is stale: when any descriptor in its scope
+  does not exist, or passes its check.
+- **What it reports and checks.** The values the integrator drives on
+  `entity_model_id_i`, `talker_sources_i`, `listener_sinks_i` and `identify_index_i`,
+  and the model digest. These stay integrator inputs, and no generated constant replaces
+  one. `build(adp=...)` (`--adp-*`) refuses a driven value that disagrees with the model,
+  and `build(model_ids=...)` (`--model-ids`) refuses a recorded entity_model_id whose
+  digest moved.
+  - The digest is SHA-256 over every descriptor, with the IEEE 1722.1-2021 §6.2.2.8
+    exclusions, `entity_id` and `entity_model_id` zeroed.
+  - This repository records its own models in
+    [`model_ids.json`](../../hdl/aecp/desc/model_ids.json). A consumer records nothing.
+- **Its models.** [`milan_min.json`](../../hdl/aecp/desc/milan_min.json) is a minimal
+  Milan model and the lint's positive case. The gate derives every negative case from it
+  by one named mutation ([09 §8.4](09_verification.md#84-the-descriptor-model-lint-issues-38-39-60-89)).
+  [`example_milan_8.json`](../../hdl/aecp/desc/example_milan_8.json) stays a layout
+  vector (the §3.2 Δ note) and packs with the lint off. The `tb/pp_top` fixture image is
+  built in C++, never through `build()`, and is not a Milan model either.
+
+The rules, each with the checks that implement it (`CHECKS` in `model_rules.py`; each
+check has a negative case in the gate):
+
+| # | Rule | Clause | Checks |
+|---|---|---|---|
+| L1 | Every descriptor except ENTITY/CONFIGURATION has exactly one parent; no cross-subtree sharing. F07.2's cardinalities: exactly one ENTITY, one CONFIGURATION per configuration with matching `descriptor_counts`; per configuration at least one AVB_INTERFACE, CLOCK_DOMAIN and CLOCK_SOURCE, an AUDIO_UNIT and a Stream Port of the stream's direction where a stream carries AAF, and at least one AUDIO_CLUSTER per Stream Port | Milan §5.3.2, §5.3.3.1, §5.3.3.3, §5.3.3.5–.8, §5.3.3.11; IEEE §7.2.1, §7.2.2 | `entity-count`, `configurations-count`, `current-configuration`, `configuration-descriptors`, `descriptor-counts`, `required-type`, `audio-unit-for-aaf`, `stream-port-for-aaf`, `port-cluster-minimum`, `child-exists`, `single-parent`, `has-parent` |
+| L2 | Indices dense, restart at 0 per configuration (the packer's own refusal), IEEE ordering for multi-level types: child ranges ascend in the order the hierarchy is walked, configuration-level CONTROLs first | IEEE §7.2 | `parent-order` |
+| L3 | ≥1 STREAM_INPUT or STREAM_OUTPUT per configuration. A Talker has a Stream Output, and a Listener a Stream Input, advertising a Base format (§6.3, §6.4), with rate-completeness (every Base channel count at each Base rate an input advertises) and configuration-uniformity (one set of Base rates per configuration). A CRF stream lists 0x041060010000BB80 | Milan §5.3.3.4, §6.3/§6.4, §7.3 | `stream-presence`, `talker-base-format`, `listener-base-format`, `base-channel-completeness`, `base-rate-uniformity`, `crf-format` |
+| L4 | STREAM_INPUT `buffer_length` ≥ 2 126 000 ns; CLASS_A flag set; CRF and AAF never mixed in one format list; `current_format` ∈ list (an `ut` entry covers the counts up to its own); N formats ≤ 46; the Table 7-8 layout with no redundancy tail (REQ-MDL-003) | Milan §5.3.3.4; IEEE 1722.1-2021 §7.2, Table 7-8 (the N cap: 508-octet descriptor, formats at 138) | `buffer-length`, `class-a`, `format-family`, `current-format`, `format-count`, `stream-layout` |
+| L5 | Same AVB_INTERFACE index for the same physical port in every configuration | Milan §5.3.3.5 | `interface-index` |
+| L6 | CLOCK_SOURCE construction: one INPUT_STREAM per CRF-capable input (or the single AAF input when no CRF input exists); ≥1 INTERNAL if any output; ≥1 CLOCK_SOURCE per CLOCK_DOMAIN; each CLOCK_DOMAIN's `clock_sources` list sits at 76, is `76 + 2 × count` long and is the identity permutation 0..count-1 (dense, zero-based, in order): the processor's SET_CLOCK_SOURCE range check tests `clock_source_index` < `clock_sources_count` and relies on this list shape to be the IEEE §7.4.23.1 membership test ([06 §6.4](06_aecp_engine.md#64-validation-chains-order-matters-first-failure-responds)); gPTP-as-media-clock chain only in non-redundant single-interface models | Milan §5.3.3.6, §7.5; IEEE §7.2.32, §7.4.23.1 | `domain-source-offset`, `domain-source-count`, `domain-source-length`, `domain-source-identity`, `domain-source-exists`, `crf-input-source`, `aaf-input-source`, `internal-source`, `gptp-source-interfaces` |
+| L7 | STREAM_PORT_INPUT owns no AUDIO_MAP; ≤1 static mapping per output stream channel; AUDIO_CLUSTER `channel_count` = 1 | Milan §5.3.3.7–.9 | `input-port-maps`, `unique-mapping`, `cluster-channels` |
+| L8 | Primary IDENTIFY CONTROL present in all configurations at the same index, and `identify_index_i` names it. The ADPDU always sets AEM_IDENTIFY_CONTROL_INDEX_VALID (Milan §5.6.2, [F04.6](04_adp_engine.md#fig-04-caps)), so a model without one is refused | Milan §5.3.3.10, §5.6.2 | `identify-index`, `identify-driven` |
+| L9 | `entity_model_id` ≠ 0 / ≠ all-1s; equal to `entity_model_id_i`; changes whenever the static model changes (the recorded digest) | Milan v1.2 §5.3.1, §5.3.3.1, §5.6.2; IEEE §6.2.2.8, §7.2.1 | `model-id-valid`, `model-id-driven`, `model-id-recorded`, `model-digest` |
+| L10 | AUDIO_UNIT `sampling_rates_offset` = 144 and `sampling_rates_count` ≤ 8, each entry the full sampling-rate word (pull field included): the processor's SET_SAMPLING_RATE reads the list at 144 and consults at most its first 8 entries ([06 §6.4](06_aecp_engine.md#64-validation-chains-order-matters-first-failure-responds)). Another offset refuses every rate, and a rate listed past the eighth entry is refused; neither can accept an unlisted rate. The list is not empty, the descriptor is `144 + 4 × count` long, and `current_sampling_rate` is one of its words | IEEE §7.2.3, §7.4.21.1; Milan §5.3.3.3 | `rate-offset`, `rate-count`, `rate-empty`, `rate-length`, `current-rate` |
+| L11 | ENTITY `talker_stream_sources` and `listener_stream_sinks` are the most STREAM_OUTPUTs and STREAM_INPUTs of any configuration, and equal `talker_sources_i` and `listener_sinks_i` | Milan §5.3.3.1, §5.6.2 | `talker-sources`, `listener-sinks`, `talker-sources-driven`, `listener-sinks-driven` |
+
+Not linted, and left to the consumer's shipping checks: the formats a statically mapped
+Stream Output may list, `interface_flags` and `entity_capabilities` bit values, the CRF
+Media Clock Input and Output obligations of Milan §7.2.2 and §7.2.3, and whether a
+sampling-rate list matches what the Audio Unit does (Milan §5.3.3.3, §5.3.3.4,
+§5.3.3.5).
 
 The AUDIO_UNIT descriptor extent must equal `144 + 4 × sampling_rates_count`
 bytes, excluding packed-image stride padding. The parent currently emits one
 configuration per image, with one or three rate words. Its loader permits at most
 eight distinct entries, but its image conversion currently supports only 48000,
 96000 and 192000 Hz. These are separate limits, as the parent ownership matrix
-records. The processor packer at `493e5e4b` enforces the generic packed-image
-checks listed in the §3.1 introduction; it does not enforce L10's semantic
-offset/count/length checks or L6's identity clock-source list. Those checks remain
-open under #89 and the parent matrix's F6.
+records. The processor lint enforces L10's offset, count, extent and current-rate
+checks and L6's identity clock-source list (#89).
 
 ### 3.2 Descriptor sizing
 
@@ -157,7 +194,7 @@ open under #89 and the parent matrix's F6.
 | ENTITY | 0x0000 | 312 | — |
 | CONFIGURATION | 0x0001 | 74 | + 4·descriptor_counts |
 | AUDIO_UNIT | 0x0002 | 144 | + 4·sampling_rates |
-| STREAM_INPUT / OUTPUT | 0x0005/6 | 138 | + 8·F formats (F ≤ 47, `formats_offset` = 138) + redundancy tail `redundant_offset` = 138+8F, **R = 0 emitted** (Table 7-8; see the Δ note) |
+| STREAM_INPUT / OUTPUT | 0x0005/6 | 138 | + 8·F formats (F ≤ 46, the 508-octet descriptor maximum of IEEE §7.2; `formats_offset` = 138) + redundancy tail `redundant_offset` = 138+8F, **R = 0 emitted** (Table 7-8; see the Δ note) |
 | AVB_INTERFACE | 0x0009 | 102 | — |
 | CLOCK_SOURCE | 0x000A | 86 | — |
 | STREAM_PORT_IN/OUT | 0x000E/F | 20 | — (no name field) |
@@ -284,10 +321,11 @@ where caching the image is not — and a located descriptor is fetched **once, a
 single burst**, into a `LINE_BYTES_P` line buffer that every subsequent `READ_STATE` /
 `COPY_BUFFER` beat reads on chip. One command pays one memory latency, not one per
 byte. `LINE_BYTES_P` defaults to 576 = the largest descriptor §3.2 can produce, rounded
-to the [03 §2](03_packet_engine.md) slot size. That worst case is a
-STREAM_INPUT/OUTPUT at Table 7-8's caps of F ≤ 47 formats and R ≤ 8 redundant streams:
-138 + 8·47 + 2·8 = 530 B. The Annex C layout of the Δ note is 2 B shorter at the same
-caps (528 B), so 576 covers a model assembled either way. The legal line is
+to the [03 §2](03_packet_engine.md) slot size. IEEE §7.2 caps any descriptor at 508
+octets, which a Table 7-8 STREAM_INPUT/OUTPUT reaches at F = 46 formats with R = 0
+(506 B). Even the field limits alone, F ≤ 47 formats and R ≤ 8 redundant streams, give
+138 + 8·47 + 2·8 = 530 B, and the Annex C layout of the Δ note is 2 B shorter at the
+same caps (528 B), so 576 covers a model assembled either way. The legal line is
 `P-DESC-LINE-BYTES` ([F01.5](../architecture/01_overview.md#fig-01-params)): a multiple
 of 8 from 576 to 1008, and `KL_aecp_engine` refuses any other at elaboration with a
 message naming the top's `DESC_LINE_BYTES_P`. Below 576 the response reservation
