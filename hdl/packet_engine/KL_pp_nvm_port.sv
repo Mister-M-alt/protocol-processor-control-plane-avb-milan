@@ -68,19 +68,19 @@
 //
 //  Deadline    : (processor issue #15) 02 §8 leaves the device face free,
 //                but not silent: the device presents each event it OWES the
-//                port within MEM_TIMEOUT_CYC_P clocks of the previous one. It
-//                owes one in every cycle the port waits on it: a grant while
-//                a request is up, a write byte the port presents, a read
-//                byte the port is ready for, the terminal of a command whose
-//                data phase is over. It owes nothing while the port or the
-//                manager holds the operation (header collection and forward,
-//                a stalled manager byte). Every grant, byte and terminal
-//                restarts the count, so a device that is slow but moving is
-//                never refused however long the whole operation runs. On the
-//                (MEM_TIMEOUT_CYC_P + 1)-th owed cycle in a row without its
-//                event the operation ends: one err, cause DEADLINE, never
-//                done, busy low at the pulse, MEM_TIMEOUT_CYC_P + 2 clocks
-//                after the last handshake on either face.
+//                port within MEM_TIMEOUT_CYC_P owed clocks of the previous
+//                one: a grant while a request is up, a byte the port presents
+//                or is ready for, a terminal not yet latched once the data
+//                phase is over. It owes nothing while the port or the manager
+//                holds the operation (header collection and forward, a
+//                stalled manager byte), and such a cycle PAUSES the count:
+//                only a grant, byte or terminal restarts it, and each
+//                operation starts at zero, so a slow device that keeps moving
+//                is never refused and no manager handshake pattern holds a
+//                silent one off. On the (MEM_TIMEOUT_CYC_P + 1)-th owed cycle
+//                without its event the operation ends: one err, cause
+//                DEADLINE, never done, busy low at the pulse, MEM_TIMEOUT_CYC_P
+//                + 2 clocks after the last restart plus every paused cycle.
 //
 //                A deadline ends the OPERATION, never the device's command.
 //                A command the device accepted and has not ended stays OWED:
@@ -245,9 +245,9 @@ module KL_pp_nvm_port #(
 
   // ---- the deadline (banner; processor issue #15) --------------------------
   //! the device owes the port its next event: a grant (or, while a command
-  //! is owed, that command's terminal) in a request state, a terminal in a
-  //! wait state, a byte the port presents or is ready for in a data phase.
-  //! A data phase whose manager stalls owes nothing.
+  //! is owed, that command's terminal) in a request state, a terminal not
+  //! yet latched in a wait state, a byte the port presents or is ready for in
+  //! a data phase. A data phase whose manager stalls owes nothing.
   logic req_st_w, rd_st_w, owe_w, prog_w, tmo_hit_w, dl_w;
 
   assign req_st_w = (state_r == S_WEREQ) || (state_r == S_WWREQ)
@@ -256,8 +256,8 @@ module KL_pp_nvm_port #(
                   || (state_r == S_RHWAIT) || (state_r == S_RPREQ)
                   || (state_r == S_RPPUMP) || (state_r == S_RPWAIT);
   assign owe_w    = req_st_w
-                  || (state_r == S_WEWAIT) || (state_r == S_WWAIT)
-                  || (state_r == S_RHWAIT) || (state_r == S_RPWAIT)
+                  || (((state_r == S_WEWAIT) || (state_r == S_WWAIT) || (state_r == S_RHWAIT)
+                       || (state_r == S_RPWAIT)) && !done_seen_r)
                   || (state_r == S_WHPUMP) || (state_r == S_RHCOLL)
                   || ((state_r == S_WDPUMP) && nvm_wvalid_i)
                   || ((state_r == S_RPPUMP) && nvm_rready_i);
@@ -270,15 +270,15 @@ module KL_pp_nvm_port #(
                   || (dev_wvalid_o && dev_wready_i)
                   || (dev_rvalid_i && dev_rready_o);
   assign tmo_hit_w = (tmo_r == TMO_W_C'(MEM_TIMEOUT_CYC_P));
-  //! the verdict: owed, still nothing, MEM_TIMEOUT_CYC_P cycles already
-  //! counted. An event in this very cycle is progress and wins, so a live
-  //! terminal can never be pending at a verdict.
+  //! the verdict: owed, still nothing, MEM_TIMEOUT_CYC_P owed cycles already
+  //! counted since the last restart. An event in this very cycle is progress
+  //! and wins, so a live terminal can never be pending at a verdict.
   assign dl_w = owe_w && !prog_w && tmo_hit_w;
 
   always_ff @(posedge clk_i) begin : nvm_port_tmo
-    if (!rst_n)                tmo_r <= '0;
-    else if (!owe_w || prog_w) tmo_r <= '0;
-    else if (!tmo_hit_w)       tmo_r <= tmo_r + TMO_W_C'(1);
+    if (!rst_n)                             tmo_r <= '0;
+    else if (prog_w || (state_r == S_IDLE)) tmo_r <= '0;   // restart; zero between ops
+    else if (owe_w && !tmo_hit_w)           tmo_r <= tmo_r + TMO_W_C'(1);  // else held
   end
 
   //! the owed command. Set when a deadline abandons a command the device

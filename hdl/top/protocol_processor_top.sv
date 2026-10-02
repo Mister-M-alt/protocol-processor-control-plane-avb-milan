@@ -162,7 +162,7 @@ module protocol_processor_top
     //! port's device-face deadline (KL_pp_nvm_port MEM_TIMEOUT_CYC_P, class
     //! E's name). The device must present each event it owes the port (a
     //! grant, a byte, the terminal of a command whose data phase is over)
-    //! within this many clock cycles of the previous one; otherwise the
+    //! within this many owed clock cycles of the previous one; otherwise the
     //! operation ends with err, cause DEADLINE, and the abandoned command
     //! stays owed until the device ends it or a reset. Derived, processor
     //! issue #15's ruling: 20 times the parent backend's longest legal

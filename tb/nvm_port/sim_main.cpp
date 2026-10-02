@@ -246,6 +246,7 @@ struct Harness {
   long last_evt = 0;                      // cycle of the last handshake, either face
   long pulse_cyc = -1;                    // cycle of this op's first pulse
   long pulse_gap = -1;                    // ...and its distance from the last event
+  int  pulse_held = -1;                   // ...of which the manager held its strobe
 
   // ---- what the port owes whichever neighbour it is talking to ----
   // Read off the BUS against the model's own record of a command it accepted
@@ -283,6 +284,10 @@ struct Harness {
   int m_stall = 0;
   int mgr_wstall = 0;
   int mgr_rstall = 0;
+  // the manager drops its strobe (wvalid or rready) one cycle in every
+  // `mgr_drop_every`, a pattern a manager is free to present: T29
+  int mgr_drop_every = 0;
+  int held_since_evt = 0;                 // strobe cycles dropped since the last event
 
   // per-op capture
   int done_pulses = 0;
@@ -648,20 +653,27 @@ struct Harness {
         || (dut->dev_rvalid_i && dut->dev_rready_o)
         || (dut->nvm_wvalid_i && dut->nvm_wready_o)
         || (dut->nvm_rvalid_o && dut->nvm_rready_i)
-        || (dut->nvm_req_i && !dut->nvm_busy_o && !dut->nvm_done_o && !dut->nvm_err_o))
+        || (dut->nvm_req_i && !dut->nvm_busy_o && !dut->nvm_done_o && !dut->nvm_err_o)) {
       last_evt = cycles;
+      held_since_evt = 0;
+    }
   }
 
   void tick() {
-    // manager drive
+    // manager drive; a strobe the manager would present and drops is HELD
+    const bool drop = mgr_drop_every > 0 && cycles % mgr_drop_every == 0;
+    bool held = false;
     if (m_mode == 1) {
-      bool v = (m_widx < m_wbytes.size() && m_stall == 0);
+      const bool would = (m_widx < m_wbytes.size() && m_stall == 0);
+      const bool v = would && !drop;
+      held = would && drop;
       dut->nvm_wvalid_i = v;
       dut->nvm_wdata_i  = v ? m_wbytes[m_widx] : 0;
       dut->nvm_rready_i = 0;
     } else if (m_mode == 2) {
       dut->nvm_wvalid_i = 0;
-      dut->nvm_rready_i = (m_stall == 0);
+      dut->nvm_rready_i = (m_stall == 0) && !drop;
+      held = (m_stall == 0) && drop;
     } else {
       dut->nvm_wvalid_i = 0;
       dut->nvm_rready_i = 0;
@@ -673,10 +685,11 @@ struct Harness {
 
     // pre-edge sampling: what the registers (and both neighbors) see
     if ((dut->nvm_done_o || dut->nvm_err_o) && pulse_cyc < 0) {
-      pulse_cyc = cycles; pulse_gap = cycles - last_evt;
+      pulse_cyc = cycles; pulse_gap = cycles - last_evt; pulse_held = held_since_evt;
       if (d_busy) cmd_orphan = true;      // answered while the device still carries it
     }
     note_events();
+    if (held && last_evt != cycles) ++held_since_evt;
     if (dut->nvm_done_o) ++done_pulses;
     if (dut->nvm_err_o)  ++err_pulses;
     if (dut->nvm_err_o)  last_cause = dut->nvm_err_cause_o;
@@ -727,6 +740,7 @@ struct Harness {
     req_while_owed = 0; pulse_while_owed = 0; fwd_while_owed = 0;
     gnt_done_pairs = 0; coinc_dones = 0;
     short_in_op = false; pulse_cyc = -1; pulse_gap = -1; late_gnts = 0;
+    pulse_held = -1; held_since_evt = 0;
     dev_errs_own = 0;
   }
 
@@ -844,6 +858,7 @@ class NvmPortSuite {
   bool wait_on_owed(bool we, const std::vector<uint8_t>& f, int cycles);
   void owed_terminals_are_credited_to_no_operation();
   void owed_events_restart_a_waiting_request();
+  void a_manager_strobe_never_holds_the_deadline_off();
   void reset_mid_commit_at_six_stages();
   bool run_to_stage(int stage, size_t record_bytes);
   int  power_cut();
@@ -2065,6 +2080,47 @@ void NvmPortSuite::an_abandoned_write_is_contained() {
   h.deadline_ok = false;
 }
 
+// ---------------------------------------------------------------- T29
+// The count PAUSES on a cycle the device owes nothing, so no manager strobe
+// pattern holds a silent device off the deadline. The manager drops its
+// strobe one cycle in every TMO / 2 against a device that never presents the
+// byte it owes, in the restore's payload pump (rready) and in the commit's
+// (wvalid): a dropped cycle owes nothing and neither counts nor restarts, a
+// presented one counts, and the verdict lands on the (TMO + 1)-th owed cycle,
+// TMO + 2 cycles after the device's last byte plus the cycles the manager
+// held. A count that restarted on every cycle owing nothing never reached its
+// bound here, and the operation was never answered.
+void NvmPortSuite::a_manager_strobe_never_holds_the_deadline_off() {
+  fresh_reset();
+  h.deadline_ok = true;
+  const std::vector<uint8_t> rec = frame(2, pattern(40, 0x2E));
+  CHECK(h.commit(2, rec) == 0, "T29 setup: region 2 committed");
+  h.mgr_drop_every = TMO / 2;
+  int rc = silenced(false, rec, SIL_BYTE, 1, -1, 10);   // payload byte 10 never comes
+  h.mgr_drop_every = 0;
+  CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0 && h.last_cause == 3
+            && h.pulse_held > 0 && h.pulse_gap == TMO + 2 + h.pulse_held,
+        "T29a a payload READ whose device never presents byte 10, the manager "
+        "dropping rready one cycle in %d: one err DEADLINE, %ld cycles after the "
+        "last byte, %d of them held by the manager (rc %d, cause %d)",
+        TMO / 2, h.pulse_gap, h.pulse_held, rc, h.last_cause);
+  fresh_reset();                          // the owed READ: this device never ends it
+
+  CHECK(h.commit(2, rec) == 0, "T29 setup: region 2 committed again");
+  h.mgr_drop_every = TMO / 2;
+  rc = silenced(true, rec, SIL_BYTE, 1, -1, 20);        // WRITE byte 20 never taken
+  h.mgr_drop_every = 0;
+  CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0 && h.last_cause == 3
+            && h.sent.size() == 20 && h.pulse_held > 0
+            && h.pulse_gap == TMO + 2 + h.pulse_held,
+        "T29b a WRITE whose device never takes byte 20, the manager dropping "
+        "wvalid one cycle in %d: one err DEADLINE, %ld cycles after the last "
+        "byte, %d of them held by the manager (rc %d, cause %d)",
+        TMO / 2, h.pulse_gap, h.pulse_held, rc, h.last_cause);
+  fresh_reset();                          // the contained WRITE ends only at a reset
+  h.deadline_ok = false;
+}
+
 // Start the next operation while the device still carries an owed command and
 // tick until it waits in its request state, a restore at once and a commit
 // once its eight header bytes have moved, then `cycles` more. True if the port
@@ -2513,6 +2569,7 @@ int NvmPortSuite::run() {
   an_abandoned_write_is_contained();
   owed_terminals_are_credited_to_no_operation();
   owed_events_restart_a_waiting_request();
+  a_manager_strobe_never_holds_the_deadline_off();
   reset_mid_commit_at_six_stages();
   reset_of_the_port_alone_mid_commit();
   a_short_command_is_a_device_error();

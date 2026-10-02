@@ -529,14 +529,17 @@ DEVICE: a failed walk, a failed write attempt ([07 §5.3](07_memory_maps.md#fig-
 
 <a id="sec-02-nvm-deadline"></a>**The port's deadline** (processor issue #15,
 `T-NVM-PORT-DEADLINE`, `P-NVM-MEM-TMO-CYC`). The device face is free, but not silent: the
-device presents each event it **owes** the port within `P-NVM-MEM-TMO-CYC` clocks of the
-previous one. It owes one in every cycle the port waits on it (a grant while a request is
-up, a write byte the port presents, a read byte the port is ready for, the terminal of a
-command whose data phase is over) and nothing while the port or the manager holds the
-operation. Every grant, byte and terminal restarts the count, so a slow device that keeps
-moving is never refused. On the (`P-NVM-MEM-TMO-CYC` + 1)-th owed clock in a row without
-its event the operation ends: one `err`, cause DEADLINE, never `done`, `busy` low at the
-pulse. The deadline ends the **operation**, never the device's command: a command the
+device presents each event it **owes** the port within `P-NVM-MEM-TMO-CYC` owed clocks of
+the previous one. It owes one in every cycle the port waits on it (a grant while a request
+is up, a write byte the port presents, a read byte the port is ready for, the terminal of a
+command whose data phase is over, unless that terminal is already latched) and nothing
+while the port or the manager holds the operation. Every grant, byte and terminal restarts
+the count, so a slow device that keeps moving is never refused. A clock in which the device
+owes nothing **pauses** the count and never restarts it, and each operation starts from
+zero, so no handshake pattern on the manager face, `wvalid` or `rready` dropped however
+often, keeps a silent device from the deadline. On the (`P-NVM-MEM-TMO-CYC` + 1)-th owed
+clock without its event the operation ends: one `err`, cause DEADLINE, never `done`,
+`busy` low at the pulse. The deadline ends the **operation**, never the device's command: a command the
 device accepted and has not ended stays **owed**, the port requests nothing over it, takes
 and discards the bytes of an owed READ, and takes the device's next `done` or `err` as its
 end, credited to no operation. A request that arrives meanwhile is answered within the

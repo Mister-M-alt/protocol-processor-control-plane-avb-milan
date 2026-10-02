@@ -17,7 +17,7 @@ WHAT IT COVERS. Every figure in the README, and the covered set is DERIVED
 rather than asserted: each `N of M` and `N PASS, M FAIL` in the file is a claim
 by default, satisfied only by a measurement here or by an explicit entry in
 WAIVERS whose reason is printed on every clean run. Twelve arm rows plus the arm
-COUNT read from the RTL; fifty-five mutations and probes; ten device-model result
+COUNT read from the RTL; fifty-nine mutations and probes; ten device-model result
 rows, under each of which the run-wide RW checks must pass by name; and all
 thirty cells of the pre-fix matrix.
 
@@ -331,7 +331,8 @@ MUTATIONS = [
         (RTL, "  assign tmo_hit_w = (tmo_r == TMO_W_C'(MEM_TIMEOUT_CYC_P));",
               "  assign tmo_hit_w = (tmo_r == TMO_W_C'(MEM_TIMEOUT_CYC_P + 1));")]),
     ("D4", r"\*\*D4\*\*.*?\*\*fails (\d+) of", [
-        (RTL, "    else if (!owe_w || prog_w) tmo_r <= '0;", "    else if (!owe_w) tmo_r <= '0;")]),
+        (RTL, "    else if (prog_w || (state_r == S_IDLE)) tmo_r <= '0;",
+              "    else if (state_r == S_IDLE)           tmo_r <= '0;")]),
     ("D5", r"\*\*D5\*\*.*?\*\*fails (\d+) of", [
         (RTL, "                  || ((state_r == S_WDPUMP) && nvm_wvalid_i)\n"
               "                  || ((state_r == S_RPPUMP) && nvm_rready_i);",
@@ -396,6 +397,23 @@ MUTATIONS = [
               "        S_WWREQ: begin"),
         (RTL, "        S_RPREQ: if (!owed_r) begin   // an owed command blocks the request",
               "        S_RPREQ: begin")]),
+    # The count PAUSES on a cycle that owes nothing (T29). D24 is the round-1
+    # count, cleared there instead, which a manager dropping its strobe kept
+    # off a silent device for ever; D25 the count never zeroed between
+    # operations; D26 the wait state that consumes a latched done still owing
+    # it, which a pause carries into the next request: the coincident model's.
+    ("D24", r"\*\*D24\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "    else if (prog_w || (state_r == S_IDLE)) tmo_r <= '0;",
+              "    else if (prog_w || !owe_w)             tmo_r <= '0;")]),
+    ("D25", r"\*\*D25\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "    else if (prog_w || (state_r == S_IDLE)) tmo_r <= '0;",
+              "    else if (prog_w)                        tmo_r <= '0;")]),
+    ("D26", r"\*\*D26\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "                       || (state_r == S_RPWAIT)) && !done_seen_r)",
+              "                       || (state_r == S_RPWAIT)))")]),
+    ("D26/coincident", r"D26 under the coincident model \*\*fails (\d+) of",
+     _COINCIDENT + [(RTL, "                       || (state_r == S_RPWAIT)) && !done_seen_r)",
+                          "                       || (state_r == S_RPWAIT)))")]),
     # ---- refusal (d): a short command in each data phase ----------------------
     ("S1", r"\*\*S1\*\*.*?\*\*fails (\d+) of", [
         (RTL, "          end else if (done_seen_r || (dev_done_i\n"
@@ -592,7 +610,7 @@ WAIVERS = [
     # correct and is the mechanism working: they are waived by a pattern narrow
     # enough to reach only that sentence, so a real `22 out of 90` anywhere else
     # is still a hard error.
-    (r"`fails 22 of the 339 checks` and `fails\s+22 out of 339`",
+    (r"`fails 22 of the 343 checks` and `fails\s+22 out of 343`",
      "two illustrative phrasings quoted inside the paragraph explaining what "
      "the inverted default does not close; not claims about this suite"),
 ]
