@@ -385,6 +385,7 @@ access ([08 §4](../architecture/08_timing.md#4-deadline-budgets)).
 | Response memory | `resp_mem_*` | every built response becomes a well-formed 60-byte `ENTITY_MISBEHAVING`, and a Milan Vendor Unique one `NOT_IMPLEMENTED` with the command echoed. |
 | NVM device | `nvm_dev_*`, plus `restore_go_i`, `restore_busy_o`, `restore_done_o`, `restore_fail_o`, `restore_blank_o`, `restore_closed_o`, `restore_rb_o`, `rs_cause_o`, `restore_cause_o`, `nvm_alarm_o`, `nvm_unflushed_o`, `d3_unflushed_o` | no saved state survives a power cycle: neither bindings nor the scalar settings. **`restore_go_i` is not part of the tie-off:** pulse it on every boot. The ACMP listener serves nothing until the binding walk has ended ([05 §5.1](../architecture/05_acmp_engine.md#sec-05-boot-admission)), AECP nothing until the D3 walk has, and what the walks report depends on how you tie the face off. Tie it off **as erased media**: grant each READ, deliver the bytes it asks for as `0xFF`, then `done`. Both walks then end with `restore_done_o`, no `restore_fail_o` and `restore_blank_o`, the same done-without-fail as a successful restore, so publish `restore_blank_o` beside them and report not-successful when you know there is no media. A face that answers with `err`, or with `done` before the eight header bytes, is a failing device: the walks fail (`restore_fail_o`, a device error, with `restore_done_o` on defaults). A face that never answers fails each walk at `NVM_RS_TMO_CYC_P` (`restore_fail_o`, the deadline) and leaves the port quarantined until reset ([07 §5.3](../architecture/07_memory_maps.md#fig-07-nvmflow)). Nothing else changes **in this plane**. |
 | Management side port | `host_*` | you lose all diagnostics. The plane still runs. |
+| Counters | `ctr_req_o`, `ctr_desc_type_o[15:0]`, `ctr_desc_index_o[15:0]`, `ctr_word_o[5:0]` / `ctr_data_i[31:0]`, `ctr_wait_i`, `ctr_change_i`, `ctr_change_desc_type_i[15:0]`, `ctr_change_desc_index_i[15:0]` | every GET_COUNTERS on a supported object answers SUCCESS with `counters_valid` 0 and a zero block, and no counter notification is ever sent. That is honest (IEEE 1722.1-2021 §7.4.42.2: no bit set, no counter claimed) and **not Milan-conformant**: Milan v1.2 §5.4.2.25 requires the counters of [section 7.1](#counters-face). |
 | SRP service | `svc_*` | nothing declares through the configuration plane. When it is driven, each accepted declaration holds every admission verdict until its new slope has been evaluated, which takes up to three rounds (`3*N_STREAM_OUT_P` clocks), and each declaration or withdrawal restarts the partial round. If they keep arriving faster than that, no verdict publishes for any source until they pause ([10 §6.3](../architecture/10_srp_engine.md#sec-10-admission-freshness)). |
 | AECP pop face | `aecp_txn_*`, `aecp_rxs_*` | **tie `aecp_txn_ready_i` low.** The internal AECP engine already drains this queue; this face is an *additional* observer. Driving it steals records from the engine. |
 
@@ -401,6 +402,112 @@ gate talker egress on `maap_addr_valid_o`, read source s's DA as `maap_addr_o + 
 (`maap_state_o`/`maap_conflicts_o`/`maap_defends_o` are the observability trio), leave
 the whole external `maap_*` port group unconnected — it is quiesced — and retire your
 allocator.
+
+<a id="counters-face"></a>
+### 7.1 `ctr_*` — the counters face, and what you must count
+
+GET_COUNTERS (IEEE 1722.1-2021 §7.4.42, Milan v1.2 §5.4.2.25) is the processor's
+command, and **the counters are yours**. The processor parses the command, proves the
+object exists in the descriptor image, lays out Figure 7-67's fixed 160-byte response
+and asks you for one word at a time. It keeps no counter, no mask and no observation
+tick of its own: every event these counters count happens in your datapath (the PHY
+link, gPTP, the media clock, the AVTP talkers and listeners), so you already have it.
+
+| Port | Dir | Contract |
+|---|---|---|
+| `ctr_req_o` | out | a word of one GET_COUNTERS response is being asked for; a level, held while the beat waits |
+| `ctr_desc_type_o[15:0]`, `ctr_desc_index_o[15:0]` | out | the object: the command's `descriptor_type` and `descriptor_index` (AECPDU @24, @26, Figure 7-66) |
+| `ctr_word_o[5:0]` | out | 32 = `counters_valid`; 0 to 31 = quadlet *n* of `counters_block`, block byte 4·*n* |
+| `ctr_data_i[31:0]` | in | that word: an unsigned 32-bit count, or the mask |
+| `ctr_wait_i` | in | **hold**, not ready: 1 keeps the beat, 0 says `ctr_data_i` is the answer now |
+| `ctr_change_i`, `ctr_change_desc_type_i[15:0]`, `ctr_change_desc_index_i[15:0]` | in | one `clk_i` cycle per served descriptor whose counters changed, named by the same {type, index} pair |
+
+The read face's rules:
+
+1. **Which objects reach you.** Only STREAM_INPUT (0x0005), STREAM_OUTPUT (0x0006),
+   AVB_INTERFACE (0x0009) and CLOCK_DOMAIN (0x0024), and only an index the descriptor
+   image holds: the processor locates the descriptor first and answers
+   NO_SUCH_DESCRIPTOR without asking you otherwise. Every other type is refused
+   NOT_SUPPORTED without asking (ENTITY has only ENTITY_SPECIFIC counters, Table 7-150,
+   and PTP_PORT is outside Milan's set).
+2. **Order.** For each response the mask first (`ctr_word_o` = 32), then quadlets 0 to 31
+   in order. While the response buffer pushes back, the same word is asked again; the
+   word never moves under a held beat.
+3. **Wrong object.** Answer zero data and a zero mask for any {type, index} you keep
+   nothing for. Never answer one object's counters for another's.
+4. **Hold.** `ctr_wait_i` may stay 1 as long as you need, up to the `DESC_MEM_TMO_CYC_P`
+   watchdog; past it the response is voided and the command answered
+   ENTITY_MISBEHAVING, and the descriptor path keeps working. A registered answer
+   server is fine: register the selectors, answer from a register a cycle or two later,
+   and drop `ctr_wait_i` only while the word presented is still the one your register
+   holds the answer for.
+5. **`counters_valid`.** Bit *n* set says quadlet *n* is a counter you keep: mask value
+   `1 << n`, so Milan's `0x00000001` is quadlet 0 (the MSB-first bit numbers in the
+   tables are not shift counts). Claim exactly what you keep, and a quadlet whose bit
+   is clear reads 0. The processor carries your mask unchanged and never invents one.
+
+What each type must carry, the floor set by Milan v1.2 §5.4.2.25 (quadlet = block
+index; the IEEE offsets are four times it):
+
+| Type | `counters_valid` | Quadlets |
+|---|---|---|
+| AVB_INTERFACE (Table 5.13) | `0x00000023`; add `0x04`, `0x08`, `0x10` for the optional FRAMES_TX, FRAMES_RX, RX_CRC_ERROR (Table 5.14) | 0 LINK_UP, 1 LINK_DOWN, 5 GPTP_GM_CHANGED (IEEE Table 7-153 offsets 0, 4, 20) |
+| CLOCK_DOMAIN (Table 5.15) | `0x00000003` | 0 LOCKED, 1 UNLOCKED (Table 7-155) |
+| STREAM_INPUT (Table 5.16), every input of the current configuration, a CRF media-clock input included | `0x00000F3F`, or `0x00000FFF` with the IEEE-only TIMESTAMP_VALID and TIMESTAMP_NOT_VALID | 0 MEDIA_LOCKED, 1 MEDIA_UNLOCKED, 2 STREAM_INTERRUPTED, 3 SEQ_NUM_MISMATCH, 4 MEDIA_RESET, 5 TIMESTAMP_UNCERTAIN, (6, 7), 8 UNSUPPORTED_FORMAT, 9 LATE_TIMESTAMP, 10 EARLY_TIMESTAMP, 11 FRAMES_RX (Table 7-157) |
+| STREAM_OUTPUT (Table 5.17) | `0x0000001F` | 0 STREAM_START, 1 STREAM_STOP, 2 MEDIA_RESET, 3 TIMESTAMP_UNCERTAIN, 4 FRAMES_TX: Milan's compacted layout, **not** IEEE Tables 7-158 and 7-159 ([Δ9](../architecture/01_overview.md#fig-01-deltas)) |
+
+What each counter counts. Every counter is a 32-bit unsigned integer that **wraps** to
+zero past its maximum, never saturating (Milan v1.2 §5.3.6.3, §5.3.7.7, §5.3.8.10,
+§5.3.11.2), and every counter resets to zero with your reset ("since boot").
+
+| Counter | Counts | Also reset to zero |
+|---|---|---|
+| LINK_UP / LINK_DOWN (Table 5.1) | each down-to-up / up-to-down change of the level you drive on `link_up_i` | never |
+| GPTP_GM_CHANGED (Table 5.1) | each grandmaster identity you publish on `gm_id_i` that differs from the one in force | never |
+| LOCKED / UNLOCKED (Table 5.7) | each lock / unlock of the clock domain's media clock, as you define locked | never |
+| MEDIA_LOCKED / MEDIA_UNLOCKED, STREAM_INTERRUPTED (Table 5.6) | each lock / unlock of the input's media clock; each playback interruption that is not a controller unbind | the whole input bank, each time that input goes from not bound to bound (`acmp_bound_o` rising), never on unbind (§5.3.8.10) |
+| SEQ_NUM_MISMATCH, MEDIA_RESET, TIMESTAMP_UNCERTAIN, UNSUPPORTED_FORMAT, LATE_TIMESTAMP, EARLY_TIMESTAMP, FRAMES_RX (Table 5.6) | one at the end of every observation interval in which the event was seen at least once; the interval is yours, at most 1 s (`T-CTR-OBSERVE`) | as the row above |
+| STREAM_START / STREAM_STOP (Table 5.4) | each start / stop of the talker's stream | never |
+| MEDIA_RESET, TIMESTAMP_UNCERTAIN, FRAMES_TX (Table 5.4) | one at the end of every observation interval, at most 1 s, in which a transmitted AVTPDU toggled mr, set tu, or was sent | each time the talker starts streaming |
+
+The four pairs keep Milan's invariants by construction when each pair counts the two
+edges of one level and the edge detector's previous value resets to the inactive state
+(link down, clock unlocked, not streaming): LINK_UP = LINK_DOWN or LINK_DOWN + 1, and
+likewise LOCKED / UNLOCKED, STREAM_START / STREAM_STOP and MEDIA_LOCKED /
+MEDIA_UNLOCKED. A link already up when reset releases is then one LINK_UP.
+
+**The AVB_INTERFACE duty** (processor issue #44). The processor hands you no counter
+tick, because the events are your own inputs to it:
+
+- LINK_UP and LINK_DOWN count the level you drive on `link_up_i`: the level the
+  advertise machine, the SRP Domain and the GET_AVB_INFO notification see, so the
+  counters and the entity's behaviour never disagree.
+- GPTP_GM_CHANGED counts grandmaster changes only (Table 5.1: "Number of gPTP GM
+  changes"). `gm_change_i` is wider: section 6 asks you to raise it for a domain-only
+  change too, because both are ADPDU fields. So count the identity change itself, the
+  update for which you raise `gm_change_i` **and** `gsi_asp_chg_i`, never every
+  `gm_change_i`. (The ADP engine used to carry a one-clock-late copy of `gm_change_i`
+  as a GPTP_GM_CHANGED tick. It reached no port, counted domain-only changes, and is
+  removed.)
+- One bank per AVB_INTERFACE descriptor, answered at its own `ctr_desc_index_o`. This
+  build has one interface (`link_up_i`, `gm_id_i` and `gptp_domain_i` are interface 0);
+  the read face needs no change for a second.
+
+**The change strobe.** Milan Table 5.22 sends an unsolicited GET_COUNTERS "when one of
+the counters is updated", at most once per descriptor per second. Pulse `ctr_change_i`
+for one cycle, with the descriptor's type and index, whenever a quadlet you serve for it
+changes: an increment, or a reset rule that clears a non-zero count. One descriptor per
+cycle: serialise simultaneous changes yourself, losing none. The processor marks the
+descriptor, coalesces repeats and sends one GET_COUNTERS response with u = 1 to every
+registered controller. It gathers that response from this face when it is emitted, so it
+carries the counts of that moment; a change inside the second after an emission waits
+and goes out once, when the second has passed (`T-CTR-NOTIF`). Descriptors are throttled
+independently. A strobe the processor has no slot for is ignored: it keeps one for every
+Stream Input and Stream Output index of the shape (`N_STREAM_IN_P`, `N_STREAM_OUT_P`),
+for AVB_INTERFACE 0 and for CLOCK_DOMAIN 0.
+
+On the reference platform every counter above lives in `milan_datapath`, behind this
+same face.
 
 ---
 

@@ -81,7 +81,7 @@ once in [F02.10](02_interfaces.md#fig-02-statusdict).
 | AECP engine (µCPU) | AEM+MVU decode/dispatch/µcode; validation chains; response assembly | [06](06_aecp_engine.md) |
 | Controller registry + monitor + notification fan-out | registration tuples; liveness; unsolicited generation + rate limits | [06 §7](06_aecp_engine.md) |
 | Lock manager | ENTITY lock, `T-LOCK-UNLOCK` auto-unlock, lock checks for AECP/ACMP/side-port | [06 §6.8](06_aecp_engine.md) |
-| Counters subsystem | per-descriptor banks, invariants, observation latching | [06 §6.6](06_aecp_engine.md), [07 §4](07_memory_maps.md) |
+| GET_COUNTERS read path | the command and its Table 5.22 push over the `ctr_*` face; the banks, invariants and observation intervals are the integrator's (owner decision 2026-09-19) | [06 §6.6](06_aecp_engine.md#sec-06-counters), [02 §4.6](02_interfaces.md#sec-02-ctr), [integrator guide §7.1](../guides/integrator.md#counters-face) |
 | Identify handler | identify value/output; notification bursts | [06 §7](06_aecp_engine.md) |
 | Entity-model store | static image + dynamic overlay + names; descriptor assembly | [07 §3](07_memory_maps.md) |
 | Originator + inflight table | entity-initiated PDUs; response routing back to owners | [03 §5](03_packet_engine.md) |

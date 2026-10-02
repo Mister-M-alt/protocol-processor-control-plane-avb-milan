@@ -219,9 +219,10 @@ four-way arbitration stays graded at module level (`tb/dispatch`).
    which is a parent-visible change.
 
 The **event router** delivers sticky events (catalog [02 §5](02_interfaces.md)) to
-their consumers; consumers that are state machines treat them as SM events, the
-counters subsystem latches ticks at the observation tick, and the notification engine
-turns the Table 5.22 subset into triggers.
+their consumers; consumers that are state machines treat them as SM events and the
+notification engine turns the Table 5.22 subset into triggers. No event feeds a counter
+here: the GET_COUNTERS counters are the integrator's, which strobes `ctr_change_i`
+when one moves ([06 §6.6](06_aecp_engine.md#sec-06-counters)).
 
 ## 6. Scoreboard: hazard classes and ordering
 

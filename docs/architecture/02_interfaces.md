@@ -344,26 +344,8 @@ Events (per sink, feed the STREAM_INPUT counter bank and Table 5.22 notification
 `TIMESTAMP_UNCERTAIN`, `UNSUPPORTED_FORMAT`, `LATE/EARLY_TIMESTAMP`, `FRAMES_RX_TICK`;
 per source: `STREAM_START/STOP`, `MEDIA_RESET`, `TIMESTAMP_UNCERTAIN`, `FRAMES_TX_TICK`.
 
-**Landed shape of the counter read (`ctr_*` on `protocol_processor_top`).** The
-event list above is how a complete implementation would *feed* a counter bank
-inside the processor; the tree ships the other direction, because the counters
-already exist in the integrator's datapath and mirroring them here would cost a
-second copy of every tally. GET_COUNTERS therefore READS:
-
-| Signal | Dir | Meaning |
-|---|---|---|
-| `ctr_req_o` | out | a quadlet of a GET_COUNTERS response is being asked for |
-| `ctr_desc_type_o` / `ctr_desc_index_o` | out | the object, straight off AECPDU @24 / @26 |
-| `ctr_word_o` | out | 0..31 = `counters_block` quadlet at block byte 4·n (IEEE Table 7-157 for STREAM_INPUT); 32 = the `counters_valid` word itself |
-| `ctr_data_i` | in | that quadlet, 32-bit unsigned, wrapping |
-| `ctr_wait_i` | in | **HOLD** the beat; 0 means the answer is on `ctr_data_i` now |
-
-The hold polarity is the contract's safety property: an integrator who leaves the
-face unwired drives 0, every quadlet reads 0, `counters_valid` reads 0, and the
-response says "this entity keeps no counters for that object" — which is what
-§7.4.42.2 means by a clear valid bit. Claiming a bit whose quadlet never moves
-is the one answer the face must never be able to produce by accident. A face
-that holds forever is bounded by `MEM_TIMEOUT_CYC_P` ([06 §8.1](06_aecp_engine.md)).
+The events above are not inputs of this processor: the integrator counts them in its
+own datapath and GET_COUNTERS reads the counts through §4.6.
 
 ### 4.5 `mclk` — media clocking
 
@@ -373,6 +355,42 @@ that holds forever is bounded by `MEM_TIMEOUT_CYC_P` ([06 §8.1](06_aecp_engine.
 | `GET_MCR_DEFAULTS` | clock domain idx | deferred design only; no RTL face under the MVU waiver ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) |
 
 Events: `MC_LOCKED{domain}` / `MC_UNLOCKED{domain}` → CLOCK_DOMAIN counter bank.
+
+<a id="sec-02-ctr"></a>
+### 4.6 `ctr` — the GET_COUNTERS read face and change strobe
+
+**Landed shape on `protocol_processor_top`.** The counters GET_COUNTERS reports for
+AVB_INTERFACE, CLOCK_DOMAIN, STREAM_INPUT and STREAM_OUTPUT are the **integrator's**
+(owner decision 2026-09-19, processor issues #44 and #79): the events they count happen
+in its datapath, and mirroring them here would cost a second copy of every tally. The
+processor keeps no bank ([07 F07.10](07_memory_maps.md#fig-07-ctrmap)). GET_COUNTERS
+READS this face, and the integrator's change strobe drives the Table 5.22 push
+([06 §6.6](06_aecp_engine.md#sec-06-counters)):
+
+| Signal | Dir | Meaning |
+|---|---|---|
+| `ctr_req_o` | out | a quadlet of a GET_COUNTERS response is being asked for |
+| `ctr_desc_type_o` / `ctr_desc_index_o` | out | the object, straight off AECPDU @24 / @26 |
+| `ctr_word_o` | out | 0..31 = `counters_block` quadlet at block byte 4·n (IEEE Table 7-157 for STREAM_INPUT); 32 = the `counters_valid` word itself |
+| `ctr_data_i` | in | that quadlet, 32-bit unsigned, wrapping |
+| `ctr_wait_i` | in | **HOLD** the beat; 0 means the answer is on `ctr_data_i` now |
+| `ctr_change_i` | in | one-cycle strobe: a counter of the descriptor below changed (an increment, or a reset rule that cleared it); one descriptor per cycle |
+| `ctr_change_desc_type_i` / `ctr_change_desc_index_i` | in | that descriptor, valid with the strobe |
+
+The hold polarity is the contract's safety property: an integrator who leaves the
+face unwired drives 0, every quadlet reads 0, `counters_valid` reads 0, and the
+response says "this entity keeps no counters for that object" — which is what
+§7.4.42.2 means by a clear valid bit. Claiming a bit whose quadlet never moves
+is the one answer the face must never be able to produce by accident. A face
+that holds forever is bounded by `MEM_TIMEOUT_CYC_P` ([06 §8.1](06_aecp_engine.md)).
+The change strobe is the push's only trigger: tied 0, no unsolicited GET_COUNTERS is
+ever sent.
+
+What each descriptor type carries, what each counter counts, its wrap and reset rules,
+and the integrator's AVB_INTERFACE duty (the edges of `link_up_i` and the grandmaster
+identity changes) are the [integrator guide §7.1](../guides/integrator.md#counters-face).
+The face is keyed by `{descriptor_type, descriptor_index}`, so a second AVB interface is
+a second AVB_INTERFACE index on the same face.
 
 ## 5. Class C — events
 

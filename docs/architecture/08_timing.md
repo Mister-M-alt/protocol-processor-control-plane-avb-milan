@@ -29,7 +29,7 @@ plain-IEEE build where different; blank = same).
 | T-LOCK-UNLOCK | 60 s | lock mgr | auto-unlock + notification | Milan §5.4.2.2 | |
 | T-IDENT-BURST | 150 ms ×3 | identify | IDENTIFY_NOTIFICATION triple: each later frame due T-IDENT-BURST after the first ms boundary following its IDENT-BURST arm, which the previous frame's departure (its last byte to the MAC) makes on its next clock or later, so never less than T-IDENT-BURST after that departure; the next burst's first frame no sooner after the third, so a late frame or a TX stall delays the rest and never shortens a gap; a press made while a burst or that gap runs is latched and its burst starts when the gap ends | IEEE §7.5.1, §7.5.1.2.1 | |
 | T-IDENT-REARM | 1 s | identify | re-arm while button held: Figure 7-142's timeout, from the burst's first frame | IEEE §7.5.1.2.1, §7.5.1.3 | |
-| T-CTR-OBSERVE | ≤ 1 s tick | counters | observation-interval latch | Milan §5.3.8.10 | |
+| T-CTR-OBSERVE | ≤ 1 s tick | integrator's counters (`ctr_*` face) | observation-interval commit of the interval counters; the processor keeps no tick for it ([06 §6.6](06_aecp_engine.md#sec-06-counters)) | Milan §5.3.7.7, §5.3.8.10 | |
 | T-CTR-NOTIF | 1 s | notif engine | ≥ 1 s between GET_COUNTERS notifications per descriptor | Milan Table 5.22 | |
 | T-ACMP-DA-RETRY | 100 ms | talker DA gate | allocation retry round for enabled NO_DA sources; one attempt/source/round | implementation policy, [05 §6bis](05_acmp_engine.md#6bis-talker-side-stateless-responder) | |
 | T-SRP-DAFRESH | 15 s | talker DA gate | PROBE_TX freshness window for DA validity | Milan §4.3.3.1 | — |
@@ -102,8 +102,6 @@ flowchart LR
   prng["PRNG 64-bit (LFSR/xoshiro class)"] --> draw["range draw: 0-1 s / 0-2 s / 0-4 s / 10-15 s (T-MRP-LEAVEALL) / 30-60 s / 501-599 ms + 30.001-31.999 s + pool offset (MAAP kinds 5-7)"]
   seed["seed = entity_id XOR free-running counter latched at first link-up"] --> prng
   draw --> ramsweep
-  obs["T-CTR-OBSERVE tick"] --> ctrs["counters latch"]
-  ps --> obs
 ```
 
 - All protocol timers use 1 ms resolution (smallest constant 150 ms; randomized draws
@@ -230,7 +228,9 @@ ACMP transaction waits; how long it waits is not measured.
 The persistence times take no timer-service slot: each record producer counts
 `T-NVM-DEBOUNCE` in `tick_ms` ticks and `T-NVM-RETRY-BACKOFF` in clocks, and each restore
 walk counts `T-NVM-RS-DEADLINE` in clocks, all in counters of their own (two producers,
-two walks). The T-NVM-DEBOUNCE singleton keeps its reserved slot so no later base moves.
+two walks). The T-NVM-DEBOUNCE singleton keeps its reserved slot so no later base moves,
+and so does the T-CTR-OBSERVE singleton: the observation interval is the integrator's,
+which keeps the counters ([06 §6.6](06_aecp_engine.md#sec-06-counters)).
 The MAAP pair was **appended after the singletons** so every earlier base — the ones
 landed engines' default parameters already point at — stays put; only `base_end` and
 the SRP block moved, by exactly 2. Baseline example (1 IF, 8 + 8 streams, 16

@@ -5,10 +5,11 @@
 
 Executes supported AEM and MVU commands and refuses unimplemented types per F06.14.
 Owns the controller registry + unsolicited
-notification machinery, the lock manager, the counters service and the identify
-handler. This is the microcoded part of the processor: ~24 mandatory commands with
-per-command validation chains and variable-size responses justify a µsequencer over
-per-command FSMs ([review §4](../00_MILAN_COMPLIANCE_REVIEW.md)).
+notification machinery, the lock manager, the GET_COUNTERS read path (the counters
+themselves are the integrator's, §6.6) and the identify handler. This is the
+microcoded part of the processor: ~24 mandatory commands with per-command validation
+chains and variable-size responses justify a µsequencer over per-command FSMs
+([review §4](../00_MILAN_COMPLIANCE_REVIEW.md)).
 
 ## 2. External contract
 
@@ -145,7 +146,7 @@ flowchart LR
   reg[("controller registry")] <--> fan
   mon["registry monitor (T-NOTIF-MONITOR)"] --> ca["CONTROLLER_AVAILABLE via originator"]
   lockm["lock manager (T-LOCK-UNLOCK)"] <--> ucpu
-  ctrs["counters subsystem (T-CTR-OBSERVE)"] <--> ucpu
+  ctrs["ctr read face: the integrator's counters"] <--> ucpu
   idh["identify handler (T-IDENT-*)"] --> fan
   d3["D3 saved-state writer (NVM manager 1)"] -. "own: dispatch hold" .-> disprom
   d3 <-- "state bus 2:1 (bus)" --> model
@@ -547,7 +548,8 @@ at commit, and use the root transaction face to update the live map atomically.
   body. A malformed command count is never reflected as though it described
   records that are absent from the response.
 
-### 6.6 GET_COUNTERS and the counters subsystem
+<a id="sec-06-counters"></a>
+### 6.6 GET_COUNTERS and the integrator's counters
 
 **Strictness upgrade (2026-08-15, the bench probe round)** — the SUCCESS-empty-mask
 answer is now said only about a REAL object of a SUPPORTED type: `E_GCTRS` opens
@@ -582,19 +584,29 @@ See KL_aecp_desc_store's banner.
 
 Response: `descriptor_type @24`, `descriptor_index @26`, `counters_valid @28`,
 32 × u32 block @32 (cdl 148). `counters_valid` bit N (MSB-first) ⇔ block offset 4·N.
-Counters are 32-bit wrapping; interval-latched events sample at `T-CTR-OBSERVE`; adapters accumulate ticks so nothing is lost between observations.
 
-<a id="fig-06-counters"></a>**F06.15 — Mandatory counter banks**
+**Who keeps the counters** (owner decision 2026-09-19, processor issues #44 and #79):
+the integrator, behind the `ctr_*` read face
+([02 §4.6](02_interfaces.md#sec-02-ctr)); this repository keeps no bank
+([07 F07.10](07_memory_maps.md#fig-07-ctrmap)). Each counter is 32-bit and wraps, the
+interval counters commit at the integrator's own observation interval
+(`T-CTR-OBSERVE`, at most 1 s), and every reset rule belongs to the bank that applies
+it. The contract per descriptor type, every rule of F06.15 below included, is the
+[integrator guide §7.1](../guides/integrator.md#counters-face).
+
+<a id="fig-06-counters"></a>**F06.15 — The counter banks the integrator keeps** (Milan
+v1.2 §5.4.2.25 Tables 5.13 to 5.17; IEEE 1722.1-2021 Tables 7-152 to 7-159)
 
 > ⚠ Masks authoritative (MSB-first tables). **Δ9**: the STREAM_OUTPUT masks below are
-> Milan Table 5.17 and *differ from IEEE Tables 7-158/159* — the plain-IEEE profile
-> swaps this one bank's mask ROM.
+> Milan Table 5.17 and *differ from IEEE Tables 7-158/159*. The processor carries
+> whichever layout the integrator's face answers; a plain-IEEE integrator answers that
+> one bank in the IEEE layout.
 
 | Bank | Counter | Mask | Semantics / reset rule |
 |---|---|---|---|
-| AVB_INTERFACE | LINK_UP | 0x00000001 | link down→up; invariant UP = DOWN or DOWN+1 |
-| | LINK_DOWN | 0x00000002 | |
-| | GPTP_GM_CHANGED | 0x00000020 | GM changes since boot |
+| AVB_INTERFACE | LINK_UP | 0x00000001 | `link_up_i` down→up; invariant UP = DOWN or DOWN+1 |
+| | LINK_DOWN | 0x00000002 | `link_up_i` up→down |
+| | GPTP_GM_CHANGED | 0x00000020 | grandmaster identity changes since boot; a domain-only `gm_change_i` does not count |
 | | FRAMES_TX / FRAMES_RX / RX_CRC_ERROR | 0x04/0x08/0x10 | optional |
 | CLOCK_DOMAIN | LOCKED / UNLOCKED | 0x01 / 0x02 | invariant LOCKED = UNLOCKED or +1 |
 | STREAM_INPUT | MEDIA_LOCKED / MEDIA_UNLOCKED | 0x01 / 0x02 | invariant; **whole bank resets on not-bound→bound**, never on unbind |
@@ -606,8 +618,15 @@ Counters are 32-bit wrapping; interval-latched events sample at `T-CTR-OBSERVE`;
 | | TIMESTAMP_UNCERTAIN | **0x08** (Δ9) | resets on stream start |
 | | FRAMES_TX | **0x10** (Δ9) | resets on stream start |
 
-The integrator exposes per-descriptor counter-update pulses. Connecting those
-pulses to the rate-limited `T-CTR-NOTIF` scheduler is tracked separately.
+**The push.** The integrator's change strobe (`ctr_change_i` with
+`ctr_change_desc_type_i` and `ctr_change_desc_index_i`, one served descriptor per cycle)
+is wired from `protocol_processor_top` to the notification block's `ev_ctr_*`
+(`KL_aecp_notify`): one pending bit per descriptor it keeps a slot for (every Stream
+Input and Stream Output index of the shape, AVB_INTERFACE 0 and CLOCK_DOMAIN 0),
+repeats coalesced, and at most one unsolicited GET_COUNTERS per descriptor per
+`T-CTR-NOTIF` (Milan Table 5.22), throttled per descriptor and gathered through the face
+when it is emitted, so it carries the counts of that moment. A strobe without a slot is
+ignored. Graded in `tb/pp_top` U9, under load in ST (§7).
 
 **Who decides the mask.** The masks above are what a *complete* PAAD-AE owes;
 what a given build may claim is what its fabric measures, and the engine carries
@@ -1458,9 +1477,9 @@ somebody else's to fix.
 ## 9. Timing
 
 Owns `T-AECP-RESP`, `T-NOTIF-MONITOR`,
-`T-NOTIF-TIMELIMITED`, `T-LOCK-UNLOCK`, `T-CTR-OBSERVE`, `T-CTR-NOTIF`,
-`T-IDENT-BURST`, `T-IDENT-REARM`; the originator applies `T-AECP-TIMEOUT` to
-CONTROLLER_AVAILABLE inflight. Values: [F08.1](08_timing.md#fig-08-constants);
+`T-NOTIF-TIMELIMITED`, `T-LOCK-UNLOCK`, `T-CTR-NOTIF`,
+`T-IDENT-BURST`, `T-IDENT-REARM` (`T-CTR-OBSERVE` is the integrator's, §6.6); the
+originator applies `T-AECP-TIMEOUT` to CONTROLLER_AVAILABLE inflight. Values: [F08.1](08_timing.md#fig-08-constants);
 budgets: [08 §4](08_timing.md).
 
 ## 10. Milan deltas
