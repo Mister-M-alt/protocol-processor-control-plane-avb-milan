@@ -476,9 +476,9 @@ the operation with one err, cause DEADLINE. A deadline
 ends the operation, never the device's command: a command the device accepted
 and has not ended stays OWED, the port requests nothing over it, drains the
 bytes an owed READ still owes and no more, and takes the device's next done or
-err as its end. T24
-T28 and T29 grade all of it at `TMO` = 100, and again at 37 and at 20, every
-check on the bus, and T30 pins the two holds at the edge of the bound:
+err as its end. T24, T28 and T29 grade all of it at `TMO` = 100, and again at
+37 and at 20, every check on the bus, and T30 pins the two holds at the edge of
+the bound:
 
 - **the twelve owed states.** In each of the four requests, four waits and
   four data phases the device withholds the event it owes for exactly `TMO`
@@ -542,8 +542,8 @@ check on the bus, and T30 pins the two holds at the edge of the bound:
 - **a manager's strobe never holds a silent device off** (T29). The count
   pauses on a cycle that owes nothing and restarts only at the device's own
   events. A manager that drops `rready` one cycle in every `TMO` / 2 while
-  the device never presents the payload READ's 10th byte, and one that drops
-  `wvalid` likewise while the device never takes the WRITE's 20th: each ends
+  the device never presents the payload READ's 11th byte, and one that drops
+  `wvalid` likewise while the device never takes the WRITE's 21st: each ends
   in one err, cause DEADLINE, exactly `TMO` + 2 cycles after the device's last
   byte plus the cycles the manager held, which the check counts and requires
   to be more than none. The round-1 count, cleared on every such cycle,
