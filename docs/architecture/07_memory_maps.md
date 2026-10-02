@@ -349,9 +349,9 @@ single burst**, into a `LINE_BYTES_P` line buffer that every subsequent `READ_ST
 byte. `LINE_BYTES_P` defaults to 576 = the largest descriptor §3.2 can produce, rounded
 to the [03 §2](03_packet_engine.md) slot size. IEEE §7.2 caps any descriptor at 508
 octets, which a Table 7-8 STREAM_INPUT/OUTPUT reaches at F = 46 formats with R = 0
-(506 B). Even the field limits alone, F ≤ 47 formats and R ≤ 8 redundant streams, give
-138 + 8·47 + 2·8 = 530 B, and the Annex C layout of the Δ note is 2 B shorter at the
-same caps (528 B), so 576 covers a model assembled either way. The legal line is
+(506 B). Even the field limits alone, F ≤ 46 formats and R ≤ 8 redundant streams, give
+138 + 8·46 + 2·8 = 522 B, and the Annex C layout of the Δ note is 2 B shorter at the
+same caps (520 B), so 576 covers a model assembled either way. The legal line is
 `P-DESC-LINE-BYTES` ([F01.5](../architecture/01_overview.md#fig-01-params)): a multiple
 of 8 from 576 to 1008, and `KL_aecp_engine` refuses any other at elaboration with a
 message naming the top's `DESC_LINE_BYTES_P`. Below 576 the response reservation
