@@ -96,9 +96,12 @@ rules L1 to L12 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's e
   a Unit's External Port outside the top-level counts, an IDENTIFY whose value
   type carries the r or the u flag, a second AVB_INTERFACE one configuration
   omits and one that first appears in configuration 1, every stream in the
-  Milan v1.2 Annex C Table C.1 layout (R = 0), and a redundant pair of Stream
-  Outputs in that layout, each naming the other (R = 1). `example_milan_8.json`
-  is refused with the lint on, though not for its Annex C streams.
+  Milan v1.2 Annex C Table C.1 layout (R = 0), a redundant pair of Stream
+  Outputs in that layout, each naming the other (R = 1), and a CLOCK_DOMAIN
+  listing an INTERNAL source, the CRF input's INPUT_STREAM source and one
+  INPUT_STREAM source per AAF input, ten in all (07 §3.1 L6).
+  `example_milan_8.json` is refused with the lint on, though not for its
+  Annex C streams.
 - The layout refusals each have one negative case on `milan_min.json`: an
   index gap, a duplicate key, a mixed named and unnamed run, an ENTITY at
   index 1, a configuration gap.
@@ -195,6 +198,18 @@ the recorded digest re-recorded so only the lint can catch them) were run
 again: 10 are killed, the AUDIO_CLUSTER padded by four octets now by L12. The
 two that survive, `interface_flags` and `entity_capabilities` bit values, are
 on 07 §3.1's "not linted" list with their reason.
+
+Planted defects (round 4, 2026-10-02): five stricter L6 readings, one per
+disposable copy, each refusing a set 07 §3.1 L6 allows. Without
+`ConformingModelTest.test_a_source_per_aaf_input_beside_crf` the gate kills
+one of them; with it, all five, and the new test fails for each:
+
+| Plant | Also fails |
+|---|---|
+| beside a CRF input, at most one INPUT_STREAM source at the AAF inputs together | nothing |
+| beside a CRF input, no INPUT_STREAM source at an AAF input | `LintTest.test_boundaries_pack` |
+| `clock_sources_count` capped at 8, or at 9 | nothing |
+| at most two INPUT_STREAM sources in a configuration | nothing |
 
 ### Body/key agreement
 

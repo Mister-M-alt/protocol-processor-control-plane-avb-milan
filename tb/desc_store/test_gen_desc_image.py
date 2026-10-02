@@ -452,6 +452,24 @@ class ConformingModelTest(unittest.TestCase):
         mut.redundant_outputs(model)
         self.packs(model)
 
+    def test_a_source_per_aaf_input_beside_crf(self) -> None:
+        """One CLOCK_DOMAIN lists an INTERNAL source, the CRF input's
+        INPUT_STREAM source and one INPUT_STREAM source per AAF input, in the
+        order INTERNAL 0, CRF 1, AAF input k at 2 + k: eight AAF inputs and ten
+        sources, the 8x8 shape (07 §3.1 L6; Milan v1.2 §5.3.3.6's set as a
+        minimum; IEEE 1722.1-2021 §7.2.9.2 Table 7-17)."""
+        model = normalised(MILAN_MIN)
+        aaf = [0, *range(2, 9)]             # STREAM_INPUT 1 is the CRF input
+        for stream in aaf[1:]:
+            mut.add(model, (mut.STREAM_INPUT, stream, 0), mut.body(model, mut.STREAM_INPUT, 0))
+        mut.put(model, (mut.ENTITY, 0, 0), 28, len(aaf) + 1)
+        for k, stream in enumerate(aaf):
+            source = mut.body(model, mut.CLOCK_SOURCE, 1)
+            struct.pack_into(">H", source, 84, stream)
+            mut.add(model, (mut.CLOCK_SOURCE, 2 + k, 0), source)
+        mut.set_sources(model, list(range(2 + len(aaf))))
+        self.packs(model)
+
     def test_single_level_ranges_have_no_order(self) -> None:
         """The output port's clusters numbered before the input port's: §7.2
         orders only multi-level types (R435-1 probe B)."""
