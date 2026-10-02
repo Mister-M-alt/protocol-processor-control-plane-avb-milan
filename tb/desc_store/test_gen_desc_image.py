@@ -66,6 +66,11 @@ def normalised(model: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def digest(model: dict[str, Any]) -> str:
+    """The model digest the lint computes and reports."""
+    return gen_desc_image.model_lint.lint(gen_desc_image._grouped_descriptors(model)).digest
+
+
 def refusal(model: dict[str, Any], **checks: Any) -> list[str]:
     """build()'s refusal lines for a model it must refuse."""
     try:
@@ -461,6 +466,51 @@ class IdentityTest(unittest.TestCase):
                                         ((mut.CONTROL, 0, 0), 108, 1, 1)):
             mut.put(model, at, offset, value, size)
         gen_desc_image.build(model, model_ids=RECORDED)
+
+    def test_selector_structure_moves_the_digest(self) -> None:
+        """A selector CONTROL's option is structure and its current is not
+        (IEEE 1722.1-2021 §6.2.2.8, Table 7-123): under a recorded digest the
+        option change is refused and the current change packs (R435-1 F3)."""
+        model = normalised(MILAN_MIN)
+        mut.add(model, (mut.CONTROL, 1, 0), mut.selector_control([1, 2, 3]))
+        record = {"0x020000FFFE00C801": digest(model)}
+        moved, current = copy.deepcopy(model), copy.deepcopy(model)
+        mut.store(moved, (mut.CONTROL, 1, 0), mut.selector_control([1, 2, 7]))
+        mut.store(current, (mut.CONTROL, 1, 0), mut.selector_control([1, 2, 3], current=2))
+        self.assertNotEqual(digest(moved), record["0x020000FFFE00C801"])
+        self.assertTrue(refusal(moved, model_ids=record)[0].startswith("L9 model-digest: "))
+        gen_desc_image.build(current, model_ids=record)
+
+    def test_exclusions_are_the_clause(self) -> None:
+        """§6.2.2.8 field by field: each excluded field keeps the digest, and each
+        neighbour the clause does not name moves it."""
+        def body(dtype: int, size: int, fields: dict[int, int]) -> bytes:
+            data = bytearray(size)
+            struct.pack_into(">H", data, 0, dtype)
+            for offset, value in fields.items():
+                struct.pack_into(">H", data, offset, value)
+            return bytes(data)
+        linear = {80: 0x0003, 94: 104, 96: 2}                   # CONTROL_LINEAR_UINT16, N 2
+        cases = (  # (what, descriptor, offset edited, excluded)
+            ("linear current[1]", body(0x1A, 132, linear), 104 + 14 + 8, True),
+            ("linear default[1]", body(0x1A, 132, linear), 104 + 14 + 6, False),
+            ("INT8 linear current", body(0x1A, 113, {80: 0x0000, 94: 104, 96: 1}), 108, False),
+            ("array current[0]", body(0x1A, 120, {80: 0x0018, 94: 104, 96: 2}), 116, True),
+            ("array default", body(0x1A, 120, {80: 0x0018, 94: 104, 96: 2}), 110, False),
+            ("UTF-8 value", body(0x1A, 120, {80: 0x001F, 94: 104, 96: 1}), 110, True),
+            ("MATRIX selector current", body(0x1D, 110, {80: 0x000D, 94: 102, 96: 2}), 102, True),
+            ("MATRIX UTF-8 value", body(0x1D, 110, {80: 0x001F, 94: 102, 96: 1}), 104, False),
+            ("SIGNAL_SELECTOR current_signal_index", body(0x1B, 96, {80: 96}), 86, True),
+            ("SIGNAL_SELECTOR default_signal_index", body(0x1B, 96, {80: 96}), 92, False),
+            ("MEMORY_OBJECT length", body(0x0B, 108, {}), 98, True),
+            ("MATRIX_SIGNAL signal (no object_name)", body(0x1E, 14, {4: 1, 6: 8}), 10, False))
+        for what, data, offset, excluded in cases:
+            with self.subTest(what=what):
+                edited = bytearray(data)
+                edited[offset] ^= 0x5A
+                same = (gen_desc_image.model_lint.model_digest({0: {data[1]: {0: data}}})
+                        == gen_desc_image.model_lint.model_digest({0: {data[1]: {0: bytes(edited)}}}))
+                self.assertEqual(same, excluded)
 
     def test_record_is_current(self) -> None:
         """model_ids.json records milan_min.json's digest as packed today."""

@@ -286,12 +286,12 @@ listed in [07 §3.1](07_memory_maps.md#model-lint).
 |---|---|
 | the positive model packs with the lint on and reports `entity_model_id_i`, `talker_sources_i`, `listener_sinks_i`, `identify_index_i` and the recorded digest | `LintTest.test_milan_min_packs` |
 | every check of `model_lint.CHECKS` has a mutation: one negative image per refusal | `LintTest.test_every_check_has_a_mutation` |
-| each mutation is refused with its rule and check, and the same bytes pack with the lint off, so the refusal is the lint's and not a layout refusal (L1 to L11, 58 mutations; L9's 0 and all-ones, L8's index moving between two configurations, L11's two-configuration maximum among them) | `LintTest.test_mutations` |
+| each mutation is refused with its rule and check, and the same bytes pack with the lint off, so the refusal is the lint's and not a layout refusal (L1 to L11, 59 mutations; L9's 0 and all-ones, L8's index moving between two configurations, L11's two-configuration maximum among them) | `LintTest.test_mutations` |
 | `example_milan_8.json` packs with the lint off, and is refused with it on (it is a layout vector, not a Milan model) | `LintTest.test_example_is_a_layout_vector`, `CommandLineTest.test_example_needs_no_lint` |
 | standard-conforming models pack: a Unit's and its Port's CONTROLs in §7.2's walk order, a JACK's CONTROL and a Unit's SIGNAL_SELECTOR left out of the top-level counts, Stream Port cluster ranges in either order, a second AVB_INTERFACE that configuration 1 omits | `ConformingModelTest` |
 | each layout refusal the packer had before the lint has a negative case: an index gap, a duplicate key, a mixed named and unnamed run, an ENTITY at index 1, a configuration gap | `LayoutRefusalTest` |
 | a waiver excuses one check on one scope and is listed in the report; removing it brings the L1 refusal back; on a fixed model, or past the descriptors, it is refused as stale; it excuses no other check and no other scope; each malformed waiver is refused | `WaiverTest` |
-| driven ADP values that agree pass; a check asked for with the lint off is refused; the §6.2.2.8 exclusions and the unit identity leave the digest unchanged; `model_ids.json` is current | `IdentityTest` |
+| driven ADP values that agree pass; a check asked for with the lint off is refused; the §6.2.2.8 exclusions and the unit identity leave the digest unchanged, field by field against the clause (linear, selector and array current values, a CONTROL's whole UTF-8 value, SIGNAL_SELECTOR and MEMORY_OBJECT fields), while each neighbouring structural field moves it; a selector CONTROL's option change under a recorded digest is refused and its current change packs; `model_ids.json` is current | `IdentityTest` |
 | the command line: the positive model with every check; a refusal exits 1 and writes nothing | `CommandLineTest` |
 
 Mutation record, 2026-10-02: each of the 53 checks was suppressed in turn (its findings

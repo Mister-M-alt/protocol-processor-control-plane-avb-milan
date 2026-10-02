@@ -95,6 +95,16 @@ def control(model: Model) -> bytes:
     return bytes(data)
 
 
+def selector_control(options: list[int], current: int = 0, index: int = 1) -> bytes:
+    """CONTROL `index` as a CONTROL_SELECTOR_UINT8 (IEEE 1722.1-2021 Table
+    7-123): current, default, the options, then the unit."""
+    data = bytearray(104)
+    struct.pack_into(">HH", data, 0, CONTROL, index)
+    struct.pack_into(">HQ", data, 80, 0x000B, MUTE)
+    struct.pack_into(">HHH", data, 94, 104, len(options), 0xFFFF)
+    return bytes(data) + bytes([current, options[0], *options]) + bytes(2)
+
+
 def own_controls(model: Model, owner: tuple[int, int], count_at: int, base: int) -> None:
     """Give a configuration-0 descriptor one CONTROL, `base`, through its
     number_of_controls / base_control pair at `count_at`."""
@@ -329,6 +339,8 @@ MUTATIONS = (
              _p((ENTITY, 0), 12, 0x020000FFFE00C802, 8), recorded=True),
     Mutation("buffer_length edited under the recorded id", "model-digest",
              _p((STREAM_INPUT, 0), 128, 3_000_000, 4), recorded=True),
+    Mutation("IDENTIFY reset_time edited under the recorded id", "model-digest",
+             _p((CONTROL, 0), 90, 1_000_000, 4), recorded=True),
     Mutation("sampling_rates_offset 143", "rate-offset", _p((AUDIO_UNIT, 0), 140, 143)),
     Mutation("nine sampling rates", "rate-count", lambda m: set_rates(m, [48000] * 9)),
     Mutation("no sampling rate", "rate-empty", lambda m: set_rates(m, [])),

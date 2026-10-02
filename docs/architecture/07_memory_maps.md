@@ -143,8 +143,20 @@ the packing path so that one check guards every consumer of the packer (issue #8
   one. `build(adp=...)` (`--adp-*`) refuses a driven value that disagrees with the model,
   and `build(model_ids=...)` (`--model-ids`) refuses a recorded entity_model_id whose
   digest moved.
-  - The digest is SHA-256 over every descriptor, with the IEEE 1722.1-2021 §6.2.2.8
-    exclusions, `entity_id` and `entity_model_id` zeroed.
+  - The digest is SHA-256 over every descriptor, with exactly the IEEE 1722.1-2021
+    §6.2.2.8 exclusions zeroed: `object_name` in the types that carry one; the fields
+    the clause lists for ENTITY, AUDIO_UNIT, STREAM_INPUT/OUTPUT, CLOCK_SOURCE,
+    CLOCK_DOMAIN, AVB_INTERFACE, SIGNAL_SELECTOR, VIDEO_CLUSTER, SENSOR_CLUSTER and
+    MEMORY_OBJECT; and in CONTROL, MIXER, MATRIX and SIGNAL_TRANSCODER `value_details`
+    only the current subfields of the value families it names for each (the whole
+    `value_details` only for a CONTROL's UTF-8, SMPTE time, sample rate, gPTP time or
+    vendor value). A selector's options, a linear value's range and every other
+    structural field stay in the digest.
+  - The clause names each family's range from its UINT8 type, so an INT8 type's
+    current value stays in the digest. That can only demand a new `entity_model_id`,
+    never accept a changed structure.
+  - Beyond the clause, `entity_id` (the unit's own identity) and `entity_model_id`
+    (the key the digest is recorded under) are zeroed too.
   - This repository records its own models in
     [`model_ids.json`](../../hdl/aecp/desc/model_ids.json). A consumer records nothing.
 - **Its models.** [`milan_min.json`](../../hdl/aecp/desc/milan_min.json) is a minimal

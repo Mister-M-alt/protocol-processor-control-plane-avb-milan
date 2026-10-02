@@ -77,7 +77,7 @@ rules L1 to L11 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's e
 
 - `milan_min.json` packs with every check on, and its digest equals the one
   recorded in `model_ids.json`.
-- Each of the 58 named mutations in `lint_mutations.py` is refused with its
+- Each of the 59 named mutations in `lint_mutations.py` is refused with its
   rule and check. The same mutated bytes pack with the lint off, so every
   refusal counted is the lint's. Every one of the 53 checks has at least one
   mutation, and a test holds that set equal to `model_lint.CHECKS`.
@@ -93,7 +93,9 @@ rules L1 to L11 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's e
   excuses no other check and no other scope. Seven malformed waivers are each
   refused.
 - The ADP values and the digest: driven values that agree pass. The §6.2.2.8
-  exclusions leave the digest unchanged.
+  exclusions leave the digest unchanged, and the structural fields beside them
+  move it, field by field. A selector CONTROL's option change under a recorded
+  digest is refused; its current-value change packs.
 - The command line: the positive model with every check, and a refusal that
   exits 1 and writes nothing.
 
