@@ -373,9 +373,9 @@ The `gsi_*` face, shared with §4.4:
 | `gsi_wait_i` | in | **HOLD** the beat |
 | `gsi_avb_chg_i`, `gsi_asp_chg_i` | in | the two change strobes above |
 
-No `READ_AS_PATH` op exists: the GET_AS_PATH µprogram reads the count and each entry
-from the face itself. The former `AS_CAPABLE_CHANGE` and `PATH_CHANGE` events are the two
-`gsi` strobes, and no GPTP_GM_CHANGED tick leaves the processor.
+The GET_AS_PATH µprogram reads the count and each entry from the face itself. asCapable
+and path changes reach the processor only as the two `gsi` strobes, and no counter tick
+leaves it.
 
 ### 4.4 `avtp` — streaming engine control
 
@@ -384,27 +384,25 @@ datapath no requests. It publishes what that datapath needs as per-index levels 
 packed vectors, index s at `[W·s +: W]`), and the integrator answers the GET_STREAM_INFO
 words on the `gsi_*` face (§4.3).
 
-| What it serves | Landed as | Former op or event |
-|---|---|---|
-| the bound stream of each Stream Input, to arm its RX filter and stream table at settle and disarm them at teardown (Milan §5.3.8; dropping AVTPDUs of another format, §4.4.2.2, is the integrator's) | `acmp_bound_o` (debounced), `acmp_bound_eid_o`, `acmp_bound_sid_o`, `acmp_bound_dmac_o`, `acmp_bound_vlan_o` | `INPUT_CONFIGURE`, `INPUT_ENABLE`, `INPUT_DISABLE` |
-| started or stopped, per Stream Input (Milan §5.3.8.7; START/STOP_STREAMING, §5.4.2.19/.20) | `aecp_strm_started_o` | `INPUT_START`, `INPUT_STOP` |
-| the current format of each input and output (SET_STREAM_FORMAT, Milan §5.4.2.7) | `aecp_fmt_in_o` / `aecp_fmt_in_v_o`, `aecp_fmt_out_o` / `aecp_fmt_out_v_o`; the integrator's verdict on a proposed format is `gsi_prop_fmt_o` with kind 0 selector 15 | `SET_INPUT_FORMAT`, `SET_OUTPUT_FORMAT` |
-| the presentation-time offset of each Stream Output (SET_STREAM_INFO, Milan §5.4.2.9) | `aecp_pt_offset_o` / `aecp_pt_offset_v_o` | `OUTPUT_SET_PT_OFFSET` |
-| the talker's transmit licence (Milan §4.3.3.1, §5.3.7.3) | `acmp_declaring_o`, `srp_active_o`, `srp_sr_admitted_o`, per source | — |
-| whether a Stream Output is streaming, and every other GET_STREAM_INFO word the integrator owns (Milan §5.4.2.10) | `gsi_*` kind 0, selectors 0 to 7; an input's selectors 5 and 7 and selector 4's failure-code byte are served inside the processor ([06 §6.2](06_aecp_engine.md#sec-06-stri)) | `OUTPUT_STATUS` |
-| the stream-health events Milan Tables 5.4 and 5.6 count | not processor events: the integrator counts them and serves the counts on the `ctr_*` face (§4.6) | the per-sink and per-source event lists |
-
-None of the former ops or events exists as a port.
+| What it serves | Landed as |
+|---|---|
+| the bound stream of each Stream Input, to arm its RX filter and stream table at settle and disarm them at teardown (Milan §5.3.8; dropping AVTPDUs of another format, §4.4.2.2, is the integrator's) | `acmp_bound_o` (debounced), `acmp_bound_eid_o`, `acmp_bound_sid_o`, `acmp_bound_dmac_o`, `acmp_bound_vlan_o` |
+| started or stopped, per Stream Input (Milan §5.3.8.7; START/STOP_STREAMING, §5.4.2.19/.20) | `aecp_strm_started_o` |
+| the current format of each input and output (SET_STREAM_FORMAT, Milan §5.4.2.7) | `aecp_fmt_in_o` / `aecp_fmt_in_v_o`, `aecp_fmt_out_o` / `aecp_fmt_out_v_o`; the integrator's verdict on a proposed format is `gsi_prop_fmt_o` with kind 0 selector 15 |
+| the presentation-time offset of each Stream Output (SET_STREAM_INFO, Milan §5.4.2.9) | `aecp_pt_offset_o` / `aecp_pt_offset_v_o` |
+| the talker's transmit licence (Milan §4.3.3.1, §5.3.7.3) | `acmp_declaring_o`, `srp_active_o`, `srp_sr_admitted_o`, per source |
+| whether a Stream Output is streaming, and every other GET_STREAM_INFO word the integrator owns (Milan §5.4.2.10) | `gsi_*` kind 0, selectors 0 to 7; an input's selectors 5 and 7 and selector 4's failure-code byte are served inside the processor ([06 §6.2](06_aecp_engine.md#sec-06-stri)) |
+| the stream-health events Milan Tables 5.4 and 5.6 count | not processor events: the integrator counts them and serves the counts on the `ctr_*` face (§4.6) |
 
 ### 4.5 `mclk` — media clocking
 
 **Landed shape on `protocol_processor_top`.**
 
-| What it serves | Landed as | Former op or event |
-|---|---|---|
-| the clock source a controller selected for CLOCK_DOMAIN 0 (SET_CLOCK_SOURCE, Milan §5.4.2.15; saved, §5.3.11.1): the integrator switches its media clock to it | `aecp_clk_src_index_o[15:0]`, a level | `SET_CLOCK_SOURCE` |
-| the Milan media-clock reference defaults | no face: the MVU MEDIA_CLOCK_REFERENCE commands are waived ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) | `GET_MCR_DEFAULTS` |
-| whether the domain's media clock is locked | the integrator's own level; its LOCKED and UNLOCKED counters are on the `ctr_*` face (§4.6, Milan Table 5.7) | `MC_LOCKED`, `MC_UNLOCKED` |
+| What it serves | Landed as |
+|---|---|
+| the clock source a controller selected for CLOCK_DOMAIN 0 (SET_CLOCK_SOURCE, Milan §5.4.2.15; saved, §5.3.11.1): the integrator switches its media clock to it | `aecp_clk_src_index_o[15:0]`, a level |
+| the Milan media-clock reference defaults | no face: the MVU MEDIA_CLOCK_REFERENCE commands are waived ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) |
+| whether the domain's media clock is locked | the integrator's own level; its LOCKED and UNLOCKED counters are on the `ctr_*` face (§4.6, Milan Table 5.7) |
 
 No clock request and no lock event crosses the top.
 
@@ -494,8 +492,7 @@ consumers.
 | `DOMAIN_CHANGE{class}` | internal: the SRP engine, also published on `srp_domain_change_o` | strobe; traced by the router | NOTIF (GET_AVB_INFO), talker PCP flow |
 | timer expiries `{owner tag}` | internal: the timer service's expiry bus | bus | owning SM/engine ([08 §3](08_timing.md)) |
 
-The original catalog's `AS_CAPABLE_CHANGE` and `PATH_CHANGE` are the two `gsi` strobes;
-its stream-health set and `MC_LOCKED/UNLOCKED` are not processor events at all, because
+Stream-health changes and media-clock lock changes are not processor events at all:
 the integrator counts them (§4.4, §4.5, §4.6).
 
 ## 6. Class D — level status dictionary
