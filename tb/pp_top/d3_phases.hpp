@@ -855,24 +855,24 @@ struct D3ServicePhase {
   }
 };
 
-// ---- an image whose AUDIO_UNIT lists more rates than the suite's two ----
+// ---- the suite's image re-packed with one descriptor type rewritten -------
 //! The suite's image re-packed by the same independent packer with one
-//! change: the AUDIO_UNIT's sampling_rates list (count at 142, entries from
-//! 144, IEEE 1722.1 Table 7-5) is `rates`, its descriptor 4 bytes longer a
-//! rate. Every other descriptor and name is copied out of the suite's image.
-static std::vector<uint8_t> d3_image_with_rates(const std::vector<uint8_t>& img,
-                                                std::vector<ImgEnt> ents,
-                                                const std::vector<uint32_t>& rates) {
+//! change: every body of descriptor type `type` is rewritten by `edit`, and
+//! its entry takes the new length. Every other descriptor and name is copied
+//! out of the suite's image.
+template <class Edit>
+static std::vector<uint8_t> d3_image_repacked(const std::vector<uint8_t>& img,
+                                              std::vector<ImgEnt> ents,
+                                              uint16_t type, Edit edit) {
   auto rd16 = [&img](size_t o) { return uint16_t((img[o] << 8) | img[o + 1]); };
   std::vector<std::vector<uint8_t>> bodies;
   for (auto& e : ents) {
-    for (uint16_t k = 0; k < e.count; ++k) {
-      const auto* at = &img[e.off + size_t(k) * e.stride];
-      std::vector<uint8_t> body(at, at + e.len);
-      if (e.type == 0x0002) {
-        body.resize(144 + 4 * rates.size(), 0);
-        putbe(&body[142], uint16_t(rates.size()), 2);
-        for (size_t r = 0; r < rates.size(); ++r) putbe(&body[144 + 4 * r], rates[r], 4);
+    const ImgEnt was = e;
+    for (uint16_t k = 0; k < was.count; ++k) {
+      const auto* at = &img[was.off + size_t(k) * was.stride];
+      std::vector<uint8_t> body(at, at + was.len);
+      if (was.type == type) {
+        edit(body);
         e.len = uint16_t(body.size());
         e.stride = uint16_t((body.size() + 7) & ~size_t(7));
       }
@@ -888,6 +888,34 @@ static std::vector<uint8_t> d3_image_with_rates(const std::vector<uint8_t>& img,
   std::vector<const char*> name_ptrs;
   for (const auto& n : names) name_ptrs.push_back(n.c_str());
   return build_image(ents, bodies, name_ptrs, rd16(6));
+}
+
+// ---- an image whose AUDIO_UNIT lists more rates than the suite's two ----
+//! The AUDIO_UNIT's sampling_rates list (count at 142, entries from 144,
+//! IEEE 1722.1 Table 7-5) is `rates`, its descriptor 4 bytes longer a rate.
+static std::vector<uint8_t> d3_image_with_rates(const std::vector<uint8_t>& img,
+                                                std::vector<ImgEnt> ents,
+                                                const std::vector<uint32_t>& rates) {
+  return d3_image_repacked(img, std::move(ents), 0x0002, [&rates](std::vector<uint8_t>& body) {
+    body.resize(144 + 4 * rates.size(), 0);
+    putbe(&body[142], uint16_t(rates.size()), 2);
+    for (size_t r = 0; r < rates.size(); ++r) putbe(&body[144 + 4 * r], rates[r], 4);
+  });
+}
+
+// ---- an image whose CLOCK_DOMAIN lists more sources than the suite's three
+//! The CLOCK_DOMAIN's clock_sources list (count at 74, entries from 76, IEEE
+//! 1722.1-2021 Table 7-61) is the identity list 0..count-1 that 07 section
+//! 3.1 L6 requires, its descriptor 2 bytes longer a source. The current
+//! index at 70 stays the suite's 0, INTERNAL.
+static std::vector<uint8_t> d3_image_with_sources(const std::vector<uint8_t>& img,
+                                                  std::vector<ImgEnt> ents,
+                                                  uint16_t count) {
+  return d3_image_repacked(img, std::move(ents), 0x0024, [count](std::vector<uint8_t>& body) {
+    body.resize(76 + 2 * size_t(count), 0);
+    putbe(&body[74], count, 2);
+    for (uint16_t s = 0; s < count; ++s) putbe(&body[76 + 2 * size_t(s)], s, 2);
+  });
 }
 
 // ==== D3R. the restore transaction: both passes, the rules, the verdicts ===
@@ -2711,5 +2739,260 @@ struct D3RestorePhase {
     r19_the_image_proven_by_its_locate_after_the_bound(lags);
     r20_a_proof_on_the_bounds_own_clock(lags);
     r21_a_binding_byte_in_hand_on_the_expiry_clock();
+  }
+};
+
+// ==== D3C. the clock-source selection over a ten-source domain ============
+//! Issue #141 (milan-fpga #629): the selectable set grows from INTERNAL and
+//! CRF to one more INPUT_STREAM source per AAF input, ten on the 8x8 shape:
+//! INTERNAL 0, CRF 1, AAF input k at 2 + k (07 section 3.1 L6). Neither the
+//! SET program nor the restore rule changed for it: both accept an index
+//! below the located CLOCK_DOMAIN's clock_sources_count, over a list of any
+//! length. These arms grade that on a fresh model over the suite's image
+//! re-packed with a ten-source identity list, so an index and a count past
+//! the suite's three reach both. Like the suite's, the image carries no
+//! CLOCK_SOURCE descriptor: neither path reads one. The arms run in the
+//! order D3C1, D3C3's save, D3C2, D3C3's restore, D3C4, so the refusal is
+//! graded against a row already saved and a refusal that stored anything
+//! shows as a second save.
+struct D3ClockSourcePhase : D3RestorePhase {
+  //! the 8x8 shape's list, and one source shorter
+  const std::vector<uint8_t> ten;
+  const std::vector<uint8_t> nine;
+  //! AAF input 7, the last of the ten sources
+  static constexpr uint16_t LAST_AAF = 9;
+  //! the device's operations before D3C1's SET, where D3C3's save is read
+  size_t ops_at_set = 0;
+  //! the saved record as the device held it after D3C3's save
+  std::vector<uint8_t> saved;
+
+  D3ClockSourcePhase(H& tally, const std::vector<uint8_t>& img,
+                     const std::vector<ImgEnt>& ents)
+      : D3RestorePhase(tally, img, ents),
+        ten(d3_image_with_sources(img, ents, 10)),
+        nine(d3_image_with_sources(img, ents, 9)) {
+    seq = 0xDC00;
+  }
+
+  //! one command from a controller, and every AECP frame the entity sends in
+  //! the `ms` that follow it, in the order sent; `unflushed` counts the
+  //! cycles a D3 record read pending
+  std::vector<std::vector<uint8_t>> exchange(uint64_t mac, uint64_t eid, uint16_t s,
+                                             uint16_t op, const std::vector<uint8_t>& pl,
+                                             int ms, long* unflushed = nullptr) {
+    x.q_aecp.clear();
+    x.feed(aecp_frame(OWN_MAC, mac, 0, 0, EID, eid, s, op, pl));
+    for (long c = 0; c < long(ms) * MS_CYC; ++c) {
+      x.step();
+      if (unflushed != nullptr && x.d->d3_unflushed_o) ++*unflushed;
+    }
+    std::vector<std::vector<uint8_t>> got(x.q_aecp.begin(), x.q_aecp.end());
+    x.q_aecp.clear();
+    return got;
+  }
+  static std::vector<std::vector<uint8_t>> to(const std::vector<std::vector<uint8_t>>& got,
+                                              uint64_t mac) {
+    std::vector<std::vector<uint8_t>> mine;
+    for (const auto& f : got)
+      if (f.size() >= 6 && fv_u64(f, 0, 6) == mac) mine.push_back(f);
+    return mine;
+  }
+  //! the first controller's response carrying `index` (IEEE 1722.1-2021
+  //! Figure 7-47: SET_CLOCK_SOURCE's response and GET_CLOCK_SOURCE's share it)
+  static std::vector<uint8_t> answer(int status, uint16_t s, uint16_t op, uint16_t index) {
+    return aecp_frame(CTLR_MAC, OWN_MAC, 1, uint8_t(status), EID, CTLR_EID, s, op,
+                      D3ServicePhase::pl_clk(index));
+  }
+  //! the unsolicited SET_CLOCK_SOURCE response the second controller's
+  //! registration earns, its first: sequence 0
+  static std::vector<uint8_t> note(uint16_t index) {
+    auto f = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR2_EID, 0x0000,
+                        AEM_SET_CLOCK_SOURCE, D3ServicePhase::pl_clk(index));
+    f[36] |= 0x80;
+    return f;
+  }
+  std::vector<std::vector<uint8_t>> get_clock_source(uint16_t s, long* unflushed = nullptr) {
+    return exchange(CTLR_MAC, CTLR_EID, s, AEM_GET_CLOCK_SOURCE, ti(0x0024, 0), 100, unflushed);
+  }
+  static int status_of(const std::vector<uint8_t>& f) {
+    return f.size() > 16 ? (f[16] >> 3) & 0x1F : -1;
+  }
+
+  // D3C1: SET_CLOCK_SOURCE(9), AAF input 7 and the last of ten sources, is
+  // accepted and answered with the index it stored (IEEE 1722.1-2021
+  // 7.4.23.1), sends the one unsolicited response 7.4.23 requires to a
+  // registered second controller, moves each effect strobe once, and reads
+  // back over GET_CLOCK_SOURCE, the row and the exported index. The SET
+  // window ends inside the debounce, so the GET runs before the save.
+  void c1_the_last_aaf_source_is_accepted() {
+    x.dram = ten;
+    x.erase_nvm();
+    power_cycle();
+    CHECK(x.boot_to_aecp(), "D3C1: both walks over an erased device release AECP (premise)");
+    x.d->link_up_i = 1;
+    const auto reg = exchange(C2_MAC, CTLR2_EID, seq++, AEM_REGISTER_UNSOL,
+                              std::vector<uint8_t>(4, 0), 100);
+    CHECK(reg.size() == 1 && status_of(reg[0]) == AECP_SUCCESS,
+          "D3C1: the second controller registered for unsolicited notifications (premise)");
+    const unsigned w0 = x.d->dbg_dyn_writes_o;
+    const uint64_t m0 = x.nvm_marks;
+    const uint64_t n0 = x.notify_enqs;
+    ops_at_set = x.nvm_ops.size();
+    const uint16_t s = seq++;
+    const auto got = exchange(CTLR_MAC, CTLR_EID, s, AEM_SET_CLOCK_SOURCE,
+                              D3ServicePhase::pl_clk(LAST_AAF), 300);
+    const auto rsp = to(got, CTLR_MAC);
+    const auto notes = to(got, C2_MAC);
+    const auto want = answer(AECP_SUCCESS, s, AEM_SET_CLOCK_SOURCE, LAST_AAF);
+    CHECK(rsp.size() == 1 && rsp[0] == want,
+          "D3C1: SET_CLOCK_SOURCE(9) over the ten-source domain answers SUCCESS byte-exact, "
+          "carrying 9 (%zu responses)", rsp.size());
+    if (rsp.size() == 1 && rsp[0] != want) { dump("got", rsp[0]); dump("exp", want); }
+    CHECK(notes.size() == 1 && notes[0] == note(LAST_AAF),
+          "D3C1 notify: exactly one unsolicited SET_CLOCK_SOURCE carrying 9 reaches the "
+          "second controller, sequence 0 (%zu frames)", notes.size());
+    CHECK(x.d->dbg_dyn_writes_o == w0 + 1 && x.nvm_marks == m0 + 1 && x.notify_enqs == n0 + 1,
+          "D3C1 effects: one store write, one NVM_MARK, one NOTIFY_ENQ (%u, %u, %u)",
+          unsigned(x.d->dbg_dyn_writes_o - w0), unsigned(x.nvm_marks - m0),
+          unsigned(x.notify_enqs - n0));
+    const uint16_t g = seq++;
+    const auto get = get_clock_source(g);
+    CHECK(get.size() == 1 && get[0] == answer(AECP_SUCCESS, g, AEM_GET_CLOCK_SOURCE, LAST_AAF)
+              && x.d->dbg_dyn_clk_v_o && x.d->dbg_dyn_clk_o == LAST_AAF
+              && x.d->aecp_clk_src_index_o == LAST_AAF,
+          "D3C1 readback: GET_CLOCK_SOURCE reads 9 byte-exact, the row holds 9 with its "
+          "valid flag and the top exports 9 (row %u valid %u, export %u)",
+          unsigned(x.d->dbg_dyn_clk_o), unsigned(x.d->dbg_dyn_clk_v_o),
+          unsigned(x.d->aecp_clk_src_index_o));
+  }
+
+  // D3C3, the save: D3S1's grade for an AAF index. The accepted 9 becomes
+  // exactly one ERASE and one WRITE of record 0x0A (clock source, CLOCK_DOMAIN
+  // 0) after the debounce, carrying the byte-exact F07.8 frame of the u16
+  // index, and no other record moves.
+  void c3_the_aaf_index_is_saved() {
+    for (long c = 0; c < 3 * WINDOW; ++c) x.step();
+    const auto want = d3_record(0x0A, LAST_AAF, 2);
+    int erases = 0;
+    int writes = 0;
+    int stray = 0;
+    std::vector<uint8_t> wrote;
+    for (size_t i = ops_at_set; i < x.nvm_ops.size(); i++) {
+      const auto& op = x.nvm_ops[i];
+      if (op.region != 0x0A) ++stray;
+      else if (op.op == 2) ++erases;
+      else if (op.op == 1) { ++writes; wrote = op.wr; }
+    }
+    saved.assign(x.nv_mem[0x0A].begin(), x.nv_mem[0x0A].begin() + want.size());
+    CHECK(erases == 1 && writes == 1 && wrote == want && saved == want
+              && !x.d->d3_unflushed_o && stray == 0,
+          "D3C3 save: record 0x0A carrying 9 erased and written once, byte-exact, nothing "
+          "unflushed, no other record (%d erases, %d writes, %d other operations)",
+          erases, writes, stray);
+  }
+
+  // D3C2: SET_CLOCK_SOURCE(10), the count itself, is not on the list: it
+  // answers BAD_ARGUMENTS (IEEE 1722.1-2021 7.2.32, Table 7-141) carrying the
+  // 9 in force (7.4.23.1), and stores, marks, notifies and saves nothing.
+  void c2_the_count_itself_is_refused() {
+    const unsigned w0 = x.d->dbg_dyn_writes_o;
+    const uint64_t m0 = x.nvm_marks;
+    const uint64_t n0 = x.notify_enqs;
+    const size_t ops0 = x.nvm_ops.size();
+    long unflushed = 0;
+    const uint16_t s = seq++;
+    const auto got = exchange(CTLR_MAC, CTLR_EID, s, AEM_SET_CLOCK_SOURCE,
+                              D3ServicePhase::pl_clk(10), 300, &unflushed);
+    const auto rsp = to(got, CTLR_MAC);
+    const auto notes = to(got, C2_MAC);
+    const auto want = answer(AECP_BAD_ARGUMENTS, s, AEM_SET_CLOCK_SOURCE, LAST_AAF);
+    CHECK(rsp.size() == 1 && rsp[0] == want,
+          "D3C2: SET_CLOCK_SOURCE(10), the count, answers BAD_ARGUMENTS byte-exact carrying "
+          "the 9 in force (%zu responses)", rsp.size());
+    if (rsp.size() == 1 && rsp[0] != want) { dump("got", rsp[0]); dump("exp", want); }
+    CHECK(notes.empty() && x.d->dbg_dyn_writes_o == w0 && x.nvm_marks == m0
+              && x.notify_enqs == n0,
+          "D3C2 effects: the refusal writes, marks and enqueues nothing (%u, %u, %u) and "
+          "the second controller hears nothing (%zu frames)",
+          unsigned(x.d->dbg_dyn_writes_o - w0), unsigned(x.nvm_marks - m0),
+          unsigned(x.notify_enqs - n0), notes.size());
+    const uint16_t g = seq++;
+    const auto get = get_clock_source(g, &unflushed);
+    CHECK(get.size() == 1 && get[0] == answer(AECP_SUCCESS, g, AEM_GET_CLOCK_SOURCE, LAST_AAF)
+              && x.d->dbg_dyn_clk_v_o && x.d->dbg_dyn_clk_o == LAST_AAF
+              && x.d->aecp_clk_src_index_o == LAST_AAF,
+          "D3C2 readback: GET_CLOCK_SOURCE still reads 9, the row and the export hold 9 "
+          "(row %u, export %u)", unsigned(x.d->dbg_dyn_clk_o),
+          unsigned(x.d->aecp_clk_src_index_o));
+    for (long c = 0; c < 2 * WINDOW; ++c) {
+      x.step();
+      if (x.d->d3_unflushed_o) ++unflushed;
+    }
+    CHECK(unflushed == 0 && x.nvm_ops.size() == ops0,
+          "D3C2 saved: nothing pending and no device operation for two windows after the "
+          "refusal (%ld pending cycles, %zu operations)", unflushed, x.nvm_ops.size() - ops0);
+  }
+
+  // D3C3, the restore: D3R1's grade for an AAF index. Across a power cycle
+  // the walk applies record 0x0A whole and ends COMPLETE; the row reads 9
+  // with its valid flag, GET_CLOCK_SOURCE reads it, and the top exports it.
+  void c3_the_aaf_index_is_restored() {
+    power_cycle();
+    x.d->link_up_i = 1;
+    const Boot b = boot(6 * RS_TMO);
+    const auto* d = x.d;
+    CHECK(b.cleared && b.done > b.release && !d->restore_fail_o && !d->restore_closed_o
+              && d->dbg_d3_applied_o == 1 && d->dbg_d3_refused_o == 0
+              && d->dbg_d3_blank_o == 26,
+          "D3C3 restore: COMPLETE from cleared rows with the saved record applied "
+          "(applied %u refused %u blank %u of 27)", unsigned(d->dbg_d3_applied_o),
+          unsigned(d->dbg_d3_refused_o), unsigned(d->dbg_d3_blank_o));
+    const uint16_t g = seq++;
+    const auto get = get_clock_source(g);
+    CHECK(get.size() == 1 && get[0] == answer(AECP_SUCCESS, g, AEM_GET_CLOCK_SOURCE, LAST_AAF)
+              && d->dbg_dyn_clk_v_o && d->dbg_dyn_clk_o == LAST_AAF
+              && d->aecp_clk_src_index_o == LAST_AAF,
+          "D3C3 restore: clock source 9 restored with its valid flag, GET reads it and the "
+          "top exports it (row %u valid %u, export %u)", unsigned(d->dbg_dyn_clk_o),
+          unsigned(d->dbg_dyn_clk_v_o), unsigned(d->aecp_clk_src_index_o));
+  }
+
+  // D3C4: the record D3C3 saved, restored over an image whose list is
+  // shorter, at its count (nine sources) and above it (the suite's three).
+  // The restore rule is the SET program's (07 section 5.3), so each walk
+  // refuses the record and ends COMPLETE; the row stays at its reset value,
+  // invalid, and GET reads the image's index 0.
+  void c4_a_smaller_image_refuses_the_saved_index() {
+    struct Arm { const char* what; const std::vector<uint8_t>* img; unsigned count; };
+    for (const Arm& a : {Arm{"at the count", &nine, 9}, Arm{"above the count", &image, 3}}) {
+      x.dram = *a.img;
+      seed(0x0A, saved);
+      power_cycle();
+      x.d->link_up_i = 1;
+      const Boot b = boot(6 * RS_TMO);
+      const auto* d = x.d;
+      CHECK(saved == d3_record(0x0A, LAST_AAF, 2) && b.done > b.release
+                && !d->restore_fail_o && !d->restore_closed_o && d->dbg_d3_applied_o == 0
+                && d->dbg_d3_refused_o == 1 && d->dbg_d3_blank_o == 26,
+            "D3C4 %s: the saved 9 over %u sources is refused, COMPLETE (applied %u "
+            "refused %u blank %u of 27)", a.what, a.count, unsigned(d->dbg_d3_applied_o),
+            unsigned(d->dbg_d3_refused_o), unsigned(d->dbg_d3_blank_o));
+      const uint16_t g = seq++;
+      const auto get = get_clock_source(g);
+      CHECK(get.size() == 1 && get[0] == answer(AECP_SUCCESS, g, AEM_GET_CLOCK_SOURCE, 0)
+                && !d->dbg_dyn_clk_v_o && d->dbg_dyn_clk_o == 0 && d->aecp_clk_src_index_o == 0,
+            "D3C4 %s: the row stays unset and GET reads the image's 0 (row %u valid %u, "
+            "export %u)", a.what, unsigned(d->dbg_dyn_clk_o), unsigned(d->dbg_dyn_clk_v_o),
+            unsigned(d->aecp_clk_src_index_o));
+    }
+    x.dram = image;
+  }
+
+  void run() {
+    c1_the_last_aaf_source_is_accepted();
+    c3_the_aaf_index_is_saved();
+    c2_the_count_itself_is_refused();
+    c3_the_aaf_index_is_restored();
+    c4_a_smaller_image_refuses_the_saved_index();
   }
 };
