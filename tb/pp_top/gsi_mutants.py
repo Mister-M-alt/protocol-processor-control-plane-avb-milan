@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: CERN-OHL-W-2.0
-"""Build isolated GSI mutants and require a named response check to fail."""
+"""Build isolated GSI mutants and require a named response check to fail.
+
+The golden, every mutant and the final restored run each build in a temporary
+source copy of their own. `--jobs N` runs up to N of them at once; the golden
+runs first and must pass, and the results are read in the declared order.
+"""
 
 import argparse
 import json
@@ -8,7 +13,16 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+from mutant_pool import add_jobs_argument, in_order  # noqa: E402
+
+#: one variant to build: its name, its exact edit (file, old, new, sites) or
+#: None for an unmutated copy, its required failing check, the output
+#: directory and the Verilator to build with
+Variant = tuple[str, tuple[str, str, str, int] | None, str, Path, str]
 
 
 def mutations() -> list[tuple[str, str, str, str, int, str]]:
@@ -100,64 +114,78 @@ def run(command: list[str], cwd: Path, log: Path) -> int:
                               stderr=subprocess.STDOUT, check=False).returncode
 
 
-def check_variant(tree: Path, output: Path, name: str, expected: str,
-                  verilator: str) -> dict[str, object]:
-    """Compilation must pass; only a completed simulation can kill a mutant."""
-    bench = tree / "tb/pp_top"
-    build_rc = run(["make", "gsi-build", "VERILATOR=" + verilator], bench,
-                   output / (name + "-build.log"))
-    if build_rc != 0:
-        raise RuntimeError(f"{name}: build failed ({build_rc}); not a detected mutant")
+def check_variant(variant: Variant) -> dict[str, object]:
+    """Copy only sources to a build tree of its own and plant the edit, if any.
+
+    Compilation must pass; only a completed simulation can kill a mutant.
+    """
+    name, edit, expected, output, verilator = variant
+    root = Path(__file__).resolve().parents[2]
     log = output / (name + "-run.log")
-    run_rc = run(["./obj_dir/Vpp_top_sim", "--gsi-internal-only"], bench, log)
+    with tempfile.TemporaryDirectory(prefix="pp-gsi-mutants-") as temp:
+        tree = Path(temp)
+        for directory in ("hdl", "tb/common", "tb/pp_top"):
+            shutil.copytree(root / directory, tree / directory,
+                            ignore=shutil.ignore_patterns("obj*", "*.hex", "__pycache__"))
+        if edit is not None:
+            filename, old, new, count = edit
+            path = tree / filename
+            original = path.read_text()
+            if original.count(old) != count:
+                raise RuntimeError(f"{name}: expected {count} exact edit sites")
+            path.write_text(original.replace(old, new))
+        bench = tree / "tb/pp_top"
+        build_rc = run(["make", "gsi-build", "VERILATOR=" + verilator], bench,
+                       output / (name + "-build.log"))
+        if build_rc != 0:
+            raise RuntimeError(f"{name}: build failed ({build_rc}); not a detected mutant")
+        run_rc = run(["./obj_dir/Vpp_top_sim", "--gsi-internal-only"], bench, log)
     transcript = log.read_text()
     named = [line for line in transcript.splitlines()
              if line.startswith("FAIL: " + expected)] if expected else []
     complete = "[build default," in transcript
     passed = complete and ((run_rc == 1 and bool(named)) if expected
                            else (run_rc == 0 and "0 failures" in transcript))
-    result = {"variant": name, "build_rc": build_rc, "run_rc": run_rc,
-              "named_failures": named, "passed": passed}
+    return {"variant": name, "build_rc": build_rc, "run_rc": run_rc,
+            "named_failures": named, "passed": passed}
+
+
+def report(result: dict[str, object], output: Path) -> dict[str, object]:
+    """Print one variant's result; anything but its expected verdict stops the campaign."""
     print(json.dumps(result), flush=True)
-    if not passed:
-        raise RuntimeError(f"{name}: missing expected verdict; see {log}")
+    if not result["passed"]:
+        log = output / f"{result['variant']}-run.log"
+        raise RuntimeError(f"{result['variant']}: missing expected verdict; see {log}")
     return result
 
 
 def main() -> int:
-    """Copy only sources to a temporary build tree; leave the lane untouched."""
+    """Copy only sources to temporary build trees; leave the lane untouched."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--verilator", default="verilator")
+    parser.add_argument("--only", nargs="*", default=None)
+    add_jobs_argument(parser)
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    root = Path(__file__).resolve().parents[2]
+    variants = mutations()
+    unknown = sorted(set(args.only or ()) - {v[0] for v in variants})
+    if unknown:
+        parser.error("unknown mutant(s): " + " ".join(unknown))
+    chosen = [v for v in variants if not args.only or v[0] in args.only]
     # Cap the parallel builds at eight CPUs where the platform can pin them;
     # elsewhere the builds run unpinned with the same verdicts.
     if hasattr(os, "sched_setaffinity") and hasattr(os, "sched_getaffinity"):
         os.sched_setaffinity(0, sorted(os.sched_getaffinity(0))[:8])
-    records: list[dict[str, object]] = []
-    variants = mutations()
-    with tempfile.TemporaryDirectory(prefix="pp-gsi-mutants-") as temp:
-        tree = Path(temp)
-        for directory in ("hdl", "tb/common", "tb/pp_top"):
-            shutil.copytree(root / directory, tree / directory,
-                            ignore=shutil.ignore_patterns("obj*", "*.hex", "__pycache__"))
-        records.append(check_variant(tree, output, "golden", "", args.verilator))
-        for name, filename, old, new, count, expected in variants:
-            path = tree / filename
-            original = path.read_text()
-            if original.count(old) != count:
-                raise RuntimeError(f"{name}: expected {count} exact edit sites")
-            try:
-                path.write_text(original.replace(old, new))
-                records.append(check_variant(tree, output, name, expected, args.verilator))
-            finally:
-                path.write_text(original)
-        records.append(check_variant(tree, output, "restored", "", args.verilator))
+    records = [report(check_variant(("golden", None, "", output, args.verilator)), output)]
+    units: list[Variant] = [(name, (filename, old, new, count), expected, output, args.verilator)
+                            for name, filename, old, new, count, expected in chosen]
+    units.append(("restored", None, "", output, args.verilator))
+    with in_order(check_variant, units, args.jobs) as results:
+        records += [report(result, output) for result in results]
     (output / "results.json").write_text(json.dumps(records, indent=2) + "\n")
-    print(f"GSI mutations: {len(variants)} detected by named checks; "
+    print(f"GSI mutations: {len(chosen)} detected by named checks; "
           "golden and restored PASS")
     return 0
 
