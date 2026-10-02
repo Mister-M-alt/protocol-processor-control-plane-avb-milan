@@ -26,12 +26,14 @@
 //                lanes only feed talker-command flows this suite does not
 //                byte-check.
 //
-//                The two parameters the suite builds again: SRP_DOM_DEF_VID_P
-//                is overridden ONLY when the second build defines
-//                PP_TOP_SRP_DOM_DEF_VID, and DESC_LINE_BYTES_P ONLY when the
-//                third defines PP_TOP_DESC_LINE_BYTES (Makefile), so the first
-//                build grades the top's own defaults and never a copy of them.
-//                The fourth build defines PP_TOP_TIM_REAL and runs the
+//                The three parameters the suite builds again:
+//                SRP_DOM_DEF_VID_P is overridden ONLY when the second build
+//                defines PP_TOP_SRP_DOM_DEF_VID, EN_IDENTIFY_NOTIF_P is set
+//                to 1 ONLY when the third build defines PP_TOP_EN_IDENT, and
+//                DESC_LINE_BYTES_P ONLY when the fourth defines
+//                PP_TOP_DESC_LINE_BYTES (Makefile), so the first build grades
+//                the top's own defaults and never a copy of them.
+//                The fifth build defines PP_TOP_TIM_REAL and runs the
 //                timebase at 1 ms = 1,000 clk, the nominal clock's own, for
 //                section TB's response budgets.
 //---------------------------------------------------------------------------//
@@ -51,6 +53,9 @@ module pp_top_wrap (
     input  wire  [15:0] listener_caps_i,
     input  wire  [15:0] current_cfg_i,
     input  wire  [15:0] identify_index_i,
+    //! identifyButtonPressed; the third build (PP_TOP_EN_IDENT) is the only
+    //! one whose top reads it
+    input  wire         identify_button_i,
 
     // level controls + class-D in
     input  wire         entity_enable_i,
@@ -425,6 +430,14 @@ module pp_top_wrap (
     //! the bound's own cycle reads them to prove it did
     output logic [31:0] dbg_d3_agg_o,
     output logic        dbg_d3_agg_fired_o,
+    //! the IDENT-BURST singleton (owner PP_OWN_IDENT_C) on the shared timer
+    //! service's arm and expiry buses: its arm with the absolute ms deadline,
+    //! and its expiry, which ends the T-IDENT-BURST gap after a frame. Section
+    //! ID times a press against the gap's end with them; never set in a
+    //! build whose top has no identify sequencer
+    output logic        dbg_ident_gap_arm_o,
+    output logic [31:0] dbg_ident_gap_deadline_o,
+    output logic        dbg_ident_gap_end_o,
     //! the AECP transaction deadline (section DL, 03 §6 rule (e)): the top's
     //! kill of the AECP hold, the engine's solicited-response hand-off, the
     //! scoreboard's honoured kill, its normal release port, the AECP hold's id
@@ -467,7 +480,7 @@ module pp_top_wrap (
 );
 
 `ifdef PP_TOP_TIM_REAL
-  // section TB's build (the Makefile's fourth): 1 ms = 1 x 1000 = 1,000 clk,
+  // section TB's build (the Makefile's fifth): 1 ms = 1 x 1000 = 1,000 clk,
   // the nominal TB_CLK_HZ_C's own rate, so no response budget measured there
   // is cut short by the compressed AECP deadline
   localparam int unsigned TB_DIV_US_C = 1;
@@ -510,8 +523,13 @@ module pp_top_wrap (
       //! the second build's verification-only fixture (see the banner)
       .SRP_DOM_DEF_VID_P (`PP_TOP_SRP_DOM_DEF_VID),
 `endif
+`ifdef PP_TOP_EN_IDENT
+      //! the third build: P-EN-IDENTIFY-NOTIFICATION = 1 (see the banner);
+      //! every other build grades the top's own default, 0
+      .EN_IDENTIFY_NOTIF_P (1'b1),
+`endif
 `ifdef PP_TOP_DESC_LINE_BYTES
-      //! the third build's verification-only fixture (see the banner)
+      //! the fourth build's verification-only fixture (see the banner)
       .DESC_LINE_BYTES_P (`PP_TOP_DESC_LINE_BYTES),
 `endif
       .CLK_HZ_P     (TB_CLK_HZ_C),
@@ -541,6 +559,7 @@ module pp_top_wrap (
       .listener_caps_i       (listener_caps_i),
       .current_cfg_i         (current_cfg_i),
       .identify_index_i      (identify_index_i),
+      .identify_button_i     (identify_button_i),
       .entity_enable_i       (entity_enable_i),
       .link_up_i             (link_up_i),
       .gm_change_i           (gm_change_i),
@@ -807,6 +826,11 @@ module pp_top_wrap (
   assign dbg_d3_proof_o   = u_dut.u_aecp.u_d3.proof_w;
   assign dbg_d3_agg_o     = u_dut.u_aecp.u_d3.agg_r;
   assign dbg_d3_agg_fired_o = u_dut.d3_agg_w;
+  assign dbg_ident_gap_arm_o = u_dut.tmr_arm_valid_w && !u_dut.tmr_arm_cancel_w
+                               && (u_dut.tmr_arm_owner_w == pp_pkg::PP_OWN_IDENT_C);
+  assign dbg_ident_gap_deadline_o = u_dut.tmr_arm_deadline_w;
+  assign dbg_ident_gap_end_o = u_dut.exp_valid_w
+                               && (u_dut.exp_owner_w == pp_pkg::PP_OWN_IDENT_C);
   assign dbg_aecp_dl_kill_o   = u_dut.aecp_dl_kill_w;
   assign dbg_aecp_dl_queued_o = u_dut.aecp_dl_queued_w;
   assign dbg_sb_kill_ack_o    = u_dut.sb_kill_ack_w;

@@ -255,7 +255,7 @@ its watchdog.
 | CFG_BARRIER, LOCK_OP and the MAP_CFG cross-lock against the talker: the barrier holds back a read, the lock and a mapping edit hold back a step and not a read | HZ11 |
 | CLOCK_CFG, IDENTIFY and MAP_CFG commands naming a stream descriptor conflict with an ACMP read of it, either one held, and are then refused NOT_SUPPORTED | HZ12 |
 
-Section TB runs in the suite's fourth build (`make budget`), whose timebase is the
+Section TB runs in the suite's fifth build (`make budget`), whose timebase is the
 nominal clock's own (1 ms = 1,000 clocks), so the deadline never cuts a measurement;
 it prints the latency histogram ([08 §4](08_timing.md#4-deadline-budgets) records
 it).
@@ -272,6 +272,25 @@ it, and a MAAP allocator answers, so the talker is free to take commands. The ne
 (`make -C tb/pp_top aecp-mutants`): each is a reviewed patch in `tb/pp_top/mutations/` applied to a
 scratch copy, and each must fail its named check. The mutation record is in
 the [`tb/pp_top` README](../../tb/pp_top/README.md).
+
+### 8.4 Notifications and identify: the RND and STORM evidence (issues #54, #58, #80, #86)
+
+Each section runs on a fresh processor of its own in `tb/pp_top` (`--notify-only`,
+`--identify-only`, and the suite's third build for section ID), plus one section of
+the originator's unit suite and one of the notification block's:
+
+| Category | Section | What it proves |
+|---|---|---|
+| TIM | ID (third build, `P-EN-IDENTIFY-NOTIFICATION` = 1) | IDENTIFY_NOTIFICATION byte-exact to 91-E0-F0-01-00-01, three frames spaced `T-IDENT-BURST` from each previous frame's departure, identifySequenceID per burst, the `T-IDENT-REARM` re-arm while held, release, a release and press inside a burst, a held engine, a 15-row fan-out (also at frame 2's deadline), a MAC stall inside and between frames, on a frame's last byte and past the timeout, the command forms, and no press lost: a short and a long press in the gap after a burst, a press on the gap's last clock and either side of it, and a new press inside a burst let go before the gap ends, each a burst of its own when the gap ends |
+| TIM | `tb/aecp_notify` FT (second build, `P-EN-IDENTIFY-NOTIFICATION` = 1) | the schedule's one-tick margins at the full timebase (the F01.5 default `P-CLK-HZ`; the pp_top bench's compressed tick cannot resolve them): a frame that leaves two clocks before a ms boundary is followed `T-IDENT-BURST` after that boundary, never a tick sooner; Figure 7-142's timeout counts from the boundary after the first frame left |
+| DIR | ID0 (the default 0) | the button puts nothing on the wire |
+| DIR | NP | every notifying command class pushes one byte-exact u = 1 response to a second registered controller, none to the requester, at the entry's own sequence_id |
+| STORM | ST | one change fans out to all 16 rows byte-exact; GET_COUNTERS churned at 10 Hz on five descriptors emits at most once per descriptor per second; solicited AECP and ACMP answers stay inside `T-BUDGET-AECP-WC` / `T-BUDGET-ACMP-RESP` under the load |
+| RND | RN | a seeded REGISTER / DEREGISTER / LOCK / UNLOCK / SET / GET session from 20 controllers against an independent registry and lock model, zero divergence |
+| RND | `tb/originator` R | a seeded session of 16 owners' overlapping CONTROLLER_AVAILABLE-shaped inflights, responses, expiries and cancellations in random order against an independent inflight model |
+
+The mutation records are in the two suites' READMEs; `tb/pp_top/notify_mutants.py`
+plants the pp_top controls.
 
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)

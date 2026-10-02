@@ -139,6 +139,50 @@
 //                and the job re-presented. Without this, engine-waits-on-
 //                gather and notify-waits-on-done form a cycle.
 //
+//                IDENTIFY_NOTIFICATION (IEEE 1722.1-2021 SS7.4.39, SS7.5.1 and
+//                Figure 7-142; Milan SS5.4.5.4) IS THE ONE JOB THAT IS NOT A
+//                REGISTRY WALK, and it exists only with EN_IDENTIFY_NOTIF_P
+//                (P-EN-IDENTIFY-NOTIFICATION) set: at 0 the generate below
+//                leaves no flop and no gate of it, and every output reads
+//                exactly as the registry machine drives it. identify_button_i
+//                is Figure 7-142's identifyButtonPressed, a level, 2FF-
+//                synchronised here and debounced by the integrator (Milan
+//                SS5.4.5.4: its mapping to the user's action is vendor-
+//                specific). A press sends txIdentify()'s three frames
+//                (SS7.5.1.2.1) to the Table B.1 address with the Table 7-180
+//                controller_entity_id, all carrying identifySequenceID, which
+//                counts one per burst from 0 at reset. Every frame is
+//                scheduled from the DEPARTURE of the one before it: the
+//                engine retires a job when the TX arbiter grants its frame,
+//                but a stalled MAC can still hold that frame, so the
+//                sequencer waits for uns_tx_busy_i to fall (the frame's last
+//                byte left the processor) and only then arms IDENT-BURST,
+//                due T-IDENT-BURST after the next ms boundary. A late frame
+//                therefore delays the rest of the burst and never shortens a
+//                gap below T-IDENT-BURST; that gap also holds from a burst's
+//                third frame to the next burst's first, so a TX stall long
+//                enough to outlast the timeout cannot bunch two bursts.
+//                The first frame's departure sets t0 (its next ms boundary),
+//                and t0 + T-IDENT-REARM is Figure 7-142's timeout: a button
+//                still held then starts the next burst; a release returns to
+//                WAITING, and a release and a press inside a burst start the
+//                next one T-IDENT-BURST after it ends (a burst is never cut
+//                short). No press is lost to a running burst or to the gap
+//                after it: WAITING answers identifyButtonPressed (Figure
+//                7-142), so a press seen while the gap after a third frame
+//                runs, and a new press after a release seen inside a burst,
+//                are latched (prs_r), and the burst they are owed starts
+//                when that gap ends, however soon the button is let go.
+//                Presses made while a burst is already owed add none.
+//                Both timers are the shared service's IDENT-BURST and
+//                IDENT-REARM singletons (F08.4), armed through this block's
+//                one arm output in a cycle the registry machine leaves free.
+//                The job takes the uns face only between two registry jobs,
+//                owns it until the engine retires it, and holds the command
+//                path meanwhile (amap_busy_o), so a fan-out delays it by at
+//                most one job. It needs no registered controller, touches no
+//                row and is not lock-gated.
+//
 //                WHAT THIS BLOCK DOES NOT DO, on purpose: the optional
 //                CONTROLLER_AVAILABLE eviction sweep on registry overflow.
 //                A full registry returns the mandatory NO_RESOURCES status
@@ -162,6 +206,10 @@ module KL_aecp_notify
     parameter int unsigned TMR_SLOTS_P       = 89,
     parameter int unsigned TMR_REGMON_BASE_P = 25,
     parameter int unsigned TMR_LOCK_SLOT_P   = 61,
+    //! IDENT-BURST; IDENT-REARM is the next singleton (pp_pkg order)
+    parameter int unsigned TMR_IDENT_SLOT_P  = 62,
+    //! P-EN-IDENTIFY-NOTIFICATION (F01.5): 0 = no identify sequencer at all
+    parameter bit          EN_IDENTIFY_NOTIF_P = 1'b0,
     //! derived - do not override
     localparam int unsigned TMR_AW_C = (TMR_SLOTS_P > 1) ? $clog2(TMR_SLOTS_P) : 1,
     localparam int unsigned CIX_W_C  = (N_CTRL_P > 1) ? $clog2(N_CTRL_P) : 1,
@@ -205,6 +253,10 @@ module KL_aecp_notify
     input  wire  [15:0] ev_cmd_arg1_i,
     input  wire  [63:0] ev_cmd_excl_eid_i,
 
+    //! ---- IDENTIFY_NOTIFICATION (read only with EN_IDENTIFY_NOTIF_P) ----
+    input  wire         identify_button_i,   //! identifyButtonPressed, async level
+    input  wire  [15:0] identify_index_i,    //! the IDENTIFY control's index
+
     //! ---- registered-controller availability monitor --------------------
     input  wire         rx_cmd_valid_i,      //! valid AECP command at the RX validator
     input  wire  [63:0] rx_cmd_eid_i,
@@ -239,6 +291,9 @@ module KL_aecp_notify
     output logic [15:0] uns_arg0_o,
     output logic [15:0] uns_arg1_o,
     input  wire         uns_done_i,          //! engine retired the job (sent or voided)
+    //! an unsolicited frame is granted and its last byte has not left yet
+    //! (read only with EN_IDENTIFY_NOTIF_P: the identify frame's departure)
+    input  wire         uns_tx_busy_i,
     output logic        amap_busy_o,         //! preserve the engine staging RAM
 
     //! ---- lock state, published (06 SS6.4 consumers: engine + listener A1) ----
@@ -635,13 +690,203 @@ module KL_aecp_notify
   assign rgy_data_o = result_q_r ? (lk_held_r ? lk_ctlr_r : 64'd0)
                                  : {62'd0, result_r};
 
-  assign uns_valid_o      = (n_st_r == N_EMIT_WAIT);
-  assign uns_kind_o       = em_kind_r;
-  assign uns_desc_type_o  = em_dt_r;
-  assign uns_desc_index_o = em_di_r;
-  assign uns_ctlr_eid_o   = hold_eid_r;
-  assign uns_mac_o        = hold_mac_r;
-  assign uns_seq_o        = hold_seq_r;
+  // ---- IDENTIFY_NOTIFICATION (see the banner) -------------------------------
+  //! T-IDENT-BURST and T-IDENT-REARM (F08.1; IEEE SS7.5.1, SS7.5.1.3)
+  localparam int unsigned IDENT_BURST_MS_C = 150;
+  localparam int unsigned IDENT_REARM_MS_C = 1000;
+  localparam logic [15:0] DT_CONTROL_C     = 16'h001A;
+  logic                          id_own_w;      //! the identify job holds the uns face
+  logic                          id_arm_gnt_w;  //! its arm takes the arm output now
+  logic [TMR_AW_C-1:0]           id_arm_slot_w;
+  logic [PP_TIMER_OWNER_W_C-1:0] id_arm_owner_w;
+  logic [31:0]                   id_arm_deadline_w;
+  logic                          core_done_w;   //! uns_done_i as the walk sees it
+  //! the registry machine's own arm sites (an op in N_IDLE, N_APPLY): the
+  //! identify arm uses the shared output only in a cycle neither can
+  logic                          core_arm_w;
+  assign core_arm_w = (n_st_r == N_APPLY) || ((n_st_r == N_IDLE) && rgy_new_w);
+
+  if (EN_IDENTIFY_NOTIF_P) begin : gen_ident
+    //! Figure 7-142 WAITING; IDENTIFY split into its frames and their gaps
+    localparam logic [1:0] I_WAIT = 2'd0;   // WAITING
+    localparam logic [1:0] I_SEND = 2'd1;   // a frame is with the engine, then leaving
+    localparam logic [1:0] I_GAP  = 2'd2;   // T-IDENT-BURST to the next frame
+    localparam logic [1:0] I_HOLD = 2'd3;   // burst sent, until the timeout
+    logic [1:0]  i_st_r;
+    //! the 2FF synchroniser, the one CDC inside the core (integrator guide
+    //! section 1: the pin to btn_q1_r is the integrator's to constrain)
+    (* ASYNC_REG = "TRUE" *) logic btn_q1_r;
+    (* ASYNC_REG = "TRUE" *) logic btn_q2_r;
+    logic        job_r;                //! a frame is owed to the engine
+    logic        own_r;                //! ... and holds the uns face
+    logic        left_r;               //! retired; its frame is still in the TX path
+    logic [1:0]  ix_r;                 //! the frame of the burst: 0, 1, 2
+    logic [15:0] seq_r;                //! identifySequenceID
+    logic [31:0] t0_r;                 //! the burst's first frame left, ms
+    logic        gen_r;                //! the REARM generation armed last
+    logic        rel_r;                //! a release seen inside the burst
+    logic        prs_r;                //! a press is owed a burst when the gap ends
+    logic        fired_r;              //! REARM expired: timeout <= currentTime
+    logic        gap_r;                //! T-IDENT-BURST from the last departure runs
+    logic        armb_r, armr_r;       //! a BURST / REARM arm is owed
+    logic        exp_b_w, exp_r_w, done_w, dep_w;
+    logic [7:0]  rearm_owner_w;
+
+    assign rearm_owner_w = PP_OWN_IDENT_C + 8'd1 + {7'd0, gen_r};
+    assign exp_b_w = tmr_exp_valid_i && (tmr_exp_owner_i == PP_OWN_IDENT_C)
+                     && (tmr_exp_slot_i == TMR_AW_C'(TMR_IDENT_SLOT_P));
+    assign exp_r_w = tmr_exp_valid_i && (tmr_exp_owner_i == rearm_owner_w)
+                     && (tmr_exp_slot_i == TMR_AW_C'(TMR_IDENT_SLOT_P + 1));
+    assign done_w  = own_r && uns_done_i;
+    //! the frame this job built has left: its last byte went to the MAC, or
+    //! the job retired with nothing granted (the TX path is idle at once)
+    assign dep_w   = (done_w || left_r) && !uns_tx_busy_i;
+
+    assign id_own_w          = own_r;
+    assign core_done_w       = uns_done_i && !own_r;
+    assign id_arm_gnt_w      = (armb_r || armr_r) && !core_arm_w;
+    assign id_arm_slot_w     = armb_r ? TMR_AW_C'(TMR_IDENT_SLOT_P)
+                                      : TMR_AW_C'(TMR_IDENT_SLOT_P + 1);
+    assign id_arm_owner_w    = armb_r ? PP_OWN_IDENT_C : rearm_owner_w;
+    //! BURST is armed at or after the departure, so its deadline from the
+    //! next ms boundary is at least T-IDENT-BURST after the frame left
+    assign id_arm_deadline_w = armb_r ? now_ms_i + 32'(IDENT_BURST_MS_C + 1)
+                                      : t0_r + 32'(IDENT_REARM_MS_C);
+
+    assign uns_valid_o      = own_r || (n_st_r == N_EMIT_WAIT);
+    assign uns_kind_o       = own_r ? PP_UNS_IDENT_C : em_kind_r;
+    assign uns_desc_type_o  = own_r ? DT_CONTROL_C : em_dt_r;
+    assign uns_desc_index_o = own_r ? identify_index_i : em_di_r;
+    assign uns_ctlr_eid_o   = own_r ? PP_IDENT_CTLR_EID_C : hold_eid_r;
+    assign uns_mac_o        = own_r ? PP_IDENT_MCAST_MAC_C : hold_mac_r;
+    assign uns_seq_o        = own_r ? seq_r : hold_seq_r;
+
+    always_ff @(posedge clk_i) begin : identify_sequencer
+      if (!rst_n) begin
+        i_st_r   <= I_WAIT;
+        btn_q1_r <= 1'b0;
+        btn_q2_r <= 1'b0;
+        job_r    <= 1'b0;
+        own_r    <= 1'b0;
+        left_r   <= 1'b0;
+        ix_r     <= 2'd0;
+        seq_r    <= 16'd0;             // SS7.5.1: zero at power up or reboot
+        t0_r     <= 32'd0;
+        gen_r    <= 1'b0;
+        rel_r    <= 1'b0;
+        prs_r    <= 1'b0;
+        fired_r  <= 1'b0;
+        gap_r    <= 1'b0;
+        armb_r   <= 1'b0;
+        armr_r   <= 1'b0;
+      end else begin
+        btn_q1_r <= identify_button_i;
+        btn_q2_r <= btn_q1_r;
+        if (id_arm_gnt_w) begin        // BURST first, then REARM
+          if (armb_r) armb_r <= 1'b0;
+          else        armr_r <= 1'b0;
+        end
+        //! the face changes hands only between two registry jobs, so a job
+        //! the engine may already hold is never replaced under it
+        if (job_r && !own_r && (n_st_r != N_EMIT_WAIT)) own_r <= 1'b1;
+        if (done_w) begin
+          own_r <= 1'b0;
+          job_r <= 1'b0;
+        end
+        //! the face is free at retirement; the schedule waits for the frame
+        if (dep_w)       left_r <= 1'b0;
+        else if (done_w) left_r <= 1'b1;
+        if (exp_b_w) gap_r <= 1'b0;
+        if (exp_r_w && (i_st_r != I_WAIT)) fired_r <= 1'b1;
+        //! pressed again after a release seen inside the burst: a new press,
+        //! latched while txIdentify or the gap after it runs, so letting go
+        //! before the gap ends never loses it
+        if (btn_q2_r && rel_r && (i_st_r != I_WAIT)) prs_r <= 1'b1;
+        unique case (i_st_r)
+          I_WAIT: begin
+            //! identifyButtonPressed while the T-IDENT-BURST gap after a
+            //! burst runs is latched: the burst still starts when the gap
+            //! ends, however soon the button is let go
+            if (btn_q2_r && gap_r) prs_r <= 1'b1;
+            if ((btn_q2_r || prs_r) && !gap_r) begin
+              job_r  <= 1'b1;
+              ix_r   <= 2'd0;
+              rel_r  <= 1'b0;
+              prs_r  <= 1'b0;
+              i_st_r <= I_SEND;
+            end
+          end
+          I_SEND: begin
+            if (!btn_q2_r) rel_r <= 1'b1;
+            if (dep_w) begin
+              //! SS7.5.1: "a 150 ms delay between transmissions". The next
+              //! frame, or the next burst's first, is due T-IDENT-BURST
+              //! after this one LEFT, whenever that was
+              armb_r <= 1'b1;
+              gap_r  <= 1'b1;
+              if (ix_r == 2'd0) begin
+                //! Figure 7-142 IDENTIFY: timeout = currentTime + 1 s, from
+                //! the first frame. t0 is the NEXT boundary of the ms
+                //! timebase, so the timeout is at least T-IDENT-REARM and
+                //! under one tick more. A new generation, so a REARM armed
+                //! for an abandoned wait can never pass for this one
+                t0_r    <= now_ms_i + 32'd1;
+                gen_r   <= !gen_r;
+                fired_r <= 1'b0;
+                armr_r  <= 1'b1;
+                ix_r    <= 2'd1;
+                i_st_r  <= I_GAP;
+              end else if (ix_r == 2'd1) begin
+                ix_r    <= 2'd2;
+                i_st_r  <= I_GAP;
+              end else begin
+                //! the burst is sent: identifySequenceID + 1 (Figure 7-142)
+                seq_r   <= seq_r + 16'd1;
+                i_st_r  <= I_HOLD;
+              end
+            end
+          end
+          I_GAP: begin
+            if (!btn_q2_r) rel_r <= 1'b1;
+            if (exp_b_w) begin
+              job_r  <= 1'b1;
+              i_st_r <= I_SEND;
+            end
+          end
+          I_HOLD: begin
+            if (!btn_q2_r) begin
+              i_st_r <= I_WAIT;        // !identifyButtonPressed
+            end else if ((rel_r || fired_r || exp_r_w) && !gap_r) begin
+              job_r  <= 1'b1;          // a new press, or timeout <= currentTime
+              ix_r   <= 2'd0;
+              rel_r  <= 1'b0;
+              prs_r  <= 1'b0;
+              i_st_r <= I_SEND;
+            end
+          end
+          default: i_st_r <= I_WAIT;
+        endcase
+      end
+    end
+  end else begin : gen_no_ident
+    //! P-EN-IDENTIFY-NOTIFICATION = 0: the registry machine alone drives the
+    //! face, and identify_button_i, identify_index_i and uns_tx_busy_i are
+    //! never read
+    assign id_own_w          = 1'b0;
+    assign id_arm_gnt_w      = 1'b0;
+    assign id_arm_slot_w     = '0;
+    assign id_arm_owner_w    = '0;
+    assign id_arm_deadline_w = 32'd0;
+    assign core_done_w       = uns_done_i;
+    assign uns_valid_o      = (n_st_r == N_EMIT_WAIT);
+    assign uns_kind_o       = em_kind_r;
+    assign uns_desc_type_o  = em_dt_r;
+    assign uns_desc_index_o = em_di_r;
+    assign uns_ctlr_eid_o   = hold_eid_r;
+    assign uns_mac_o        = hold_mac_r;
+    assign uns_seq_o        = hold_seq_r;
+  end
+
   assign uns_amap_remove_o = em_amap_remove_r;
   assign uns_amap_count_o  = em_amap_count_r;
   assign uns_arg0_o        = em_arg0_r;
@@ -651,7 +896,7 @@ module KL_aecp_notify
   // the mapping staging RAM intact until its unsolicited body is consumed.
   assign amap_busy_o = dh_v_r || em_active_r || pe_lock_r || pe_amap_r
                        || pe_avb_r || pe_asp_r || (|pe_sin_r) || (|pe_sout_r)
-                       || (cmdq_count_r != 5'd0) || (|ctr_pend_r);
+                       || (cmdq_count_r != 5'd0) || (|ctr_pend_r) || id_own_w;
   assign prng_draw_kind_o = 3'd4;       // KL_pp_prng: uniform 30..60 seconds
 
   assign dbg_uns_cnt_o  = uns_cnt_r;
@@ -864,6 +1109,16 @@ module KL_aecp_notify
           pe_lock_r <= 1'b1;
           lockx_v_r <= 1'b0;            // a timeout excludes nobody
         end
+      end
+
+      //! the identify sequencer's IDENT-BURST / IDENT-REARM arm, in a cycle
+      //! the registry machine does not arm (constant 0 without the sequencer)
+      if (id_arm_gnt_w) begin
+        tmr_arm_valid_o       <= 1'b1;
+        tmr_arm_cancel_o      <= 1'b0;
+        tmr_arm_slot_o        <= id_arm_slot_w;
+        tmr_arm_owner_o       <= id_arm_owner_w;
+        tmr_arm_deadline_ms_o <= id_arm_deadline_w;
       end
 
       unique case (n_st_r)
@@ -1115,7 +1370,7 @@ module KL_aecp_notify
 
         // ------------------------------------------------------------------
         N_EMIT_WAIT: begin
-          if (uns_done_i) begin
+          if (core_done_w) begin
             n_st_r <= N_EMIT_WB;
           end else if (rgy_new_w) begin
             //! withdrawal (see banner): the engine is provably running a

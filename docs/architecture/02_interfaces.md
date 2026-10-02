@@ -52,7 +52,7 @@ flowchart LR
 | `mgmt` | E | in | own (sync or 4-phase async) | model store, NVM, debug, ctrl/status | optional at runtime, needed for image load unless ROM |
 | `nvm` | F | both | core | NVM manager | record-level, device-agnostic |
 | `identify_active` | D | out | core | device indicator | level, 1 = identifying |
-| `identify_button` | D | in | core (2FF sync) | identify handler | optional (P-EN-IDENTIFY-NOTIFICATION) |
+| `identify_button` | D | in | core (2FF sync) | identify sequencer (`KL_aecp_notify`) | optional (P-EN-IDENTIFY-NOTIFICATION, default 0): the top port `identify_button_i`, read only when the parameter is 1; debounced by the integrator |
 
 ## 2. Clocking, reset, CDC
 
@@ -88,7 +88,9 @@ Rules (behavioral — no vendor primitives):
 2. MAC boundaries cross via **dual-clock FIFOs** (gray-coded pointers or equivalent);
    frame-atomic handoff (a frame is visible only when complete + good, or dropped).
 3. `mgmt` is either synchronous to core or bridged by a 4-phase req/ack; single-bit
-   inputs (`identify_button`, link status if raw) pass 2-flop synchronizers.
+   inputs pass 2-flop synchronizers. The landed top takes link status already
+   synchronized (`link_up_i`); `identify_button_i` is the one input whose 2-flop
+   synchronizer is inside the core, and only with P-EN-IDENTIFY-NOTIFICATION = 1.
 4. **Quasi-static configuration** (descriptor image, identity registers, parameters
    loaded via `mgmt`) is written only while `entity_enable = 0` and is treated as
    stable afterwards — no CDC needed post-enable. The configuration index is the
@@ -445,7 +447,7 @@ internal are consumed inside the processor and add no top-level ports.
 | `streaming[src]` | 1 | avtp | level | GET_STREAM_INFO(out) derivation |
 | `mc_locked[domain]` | 1 | mclk | level + events | counters |
 | `identify_active` | 1 | identify handler | out; level | device indicator |
-| `identify_button` | 1 | pin (optional) | 2FF + debounce | identification notification |
+| `identify_button` | 1 | pin (optional) | 2FF in the core; debounce by the integrator (Milan §5.4.5.4 leaves its mapping to the user's action vendor-specific) | identification notification ([06 F06.16](06_aecp_engine.md#fig-06-identify)), `identify_button_i` |
 
 ## 7. Class E — management side-port
 

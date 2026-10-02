@@ -320,6 +320,9 @@ module KL_aecp_engine
     //! DR2c: the D3 writer's backoff after a failed write attempt, in clock
     //! cycles (500 ms at the F01.5 default P-CLK-HZ; the top derives it)
     parameter int unsigned NVM_RETRY_BACKOFF_CYC_P = 50_000_000,
+    //! P-EN-IDENTIFY-NOTIFICATION (F01.5): 0 keeps the PP_UNS_IDENT_C job
+    //! kind on the no-send arm, exactly as every other kind with no program
+    parameter bit          EN_IDENTIFY_NOTIF_P = 1'b0,
     //! derived — do not override
     localparam int unsigned RXS_W_C  = (RX_SLOTS_P > 1) ? $clog2(RX_SLOTS_P) : 1,
     localparam int unsigned RXA_W_C  = $clog2(RX_SLOT_BYTES_P),
@@ -906,6 +909,11 @@ module KL_aecp_engine
   localparam logic [10:0] UPC_SFBAD_C    = 11'd1912; // E_SFBAD
   localparam logic [10:0] UPC_SIBAD_C    = 11'd1920; // E_SIBAD
   localparam logic [10:0] UPC_SIRUN_C    = 11'd1936; // E_SIRUN
+  //! IDENTIFY_NOTIFICATION's unsolicited body (IEEE 7.4.39.1, Figure 7-61),
+  //! dispatched only with EN_IDENTIFY_NOTIF_P
+  localparam logic [10:0] UPC_IDNOTIF_C  = 11'd464;  // E_IDNOTIF
+  //! the unsolicited SET_STREAM_INFO's own body (IEEE 7.4.15.1, Figure 7-40)
+  localparam logic [10:0] UPC_SINFOUNS_C = 11'd480;  // E_SINFOUNS
 
   // ---- geometry -----------------------------------------------------------
   //! header 14 (Ethernet) + 24 (AECPDU) before the first payload byte
@@ -1410,8 +1418,10 @@ module KL_aecp_engine
                             uns_upc_w = UPC_GCFG_C;    end
       PP_UNS_SFMT_C:  begin uns_ct_w = OP_SET_STREAM_FMT_C;
                             uns_upc_w = UPC_GSFMT_C;   end
+      //! IEEE 7.4.15.1: SET_STREAM_INFO's response is Figure 7-40, not the
+      //! Milan GET_STREAM_INFO body (Milan 5.4.2.10 replaces the GET form)
       PP_UNS_SINFO_C: begin uns_ct_w = OP_SET_STREAM_INFO_C;
-                            uns_upc_w = UPC_GSTRI_C;   end
+                            uns_upc_w = UPC_SINFOUNS_C; end
       PP_UNS_CTRL_C:  begin uns_ct_w = OP_SET_CONTROL_C;
                             uns_upc_w = UPC_GCTRL_C;   end
       PP_UNS_CLKS_C:  begin uns_ct_w = OP_SET_CLOCK_SRC_C;
@@ -1419,6 +1429,12 @@ module KL_aecp_engine
       PP_UNS_STRM_C:  begin uns_ct_w = uns_arg0_i[0] ? OP_STOP_STRM_C
                                                       : OP_START_STRM_C;
                             uns_upc_w = UPC_STRMUNS_C; end
+      //! IEEE 7.4.39: {CONTROL, the IDENTIFY control's index} under the
+      //! header the job carries (Table B.1 DA, Table 7-180 controller)
+      PP_UNS_IDENT_C: begin
+        uns_ct_w  = EN_IDENTIFY_NOTIF_P ? OP_IDENTIFY_NOTIF_C : 16'd0;
+        uns_upc_w = EN_IDENTIFY_NOTIF_P ? UPC_IDNOTIF_C : UPC_NOSEND_C;
+      end
       default:        begin uns_ct_w = 16'd0;            uns_upc_w = UPC_NOSEND_C;  end
     endcase
   end
@@ -2852,6 +2868,8 @@ module KL_aecp_engine
             regun_r    <= (uns_kind_i == PP_UNS_LOCK_C);
             acq_r      <= 1'b0;
             lockc_r    <= 1'b0;
+            //! SET_STREAM_INFO keeps this flag for tix_w alone: E_SINFOUNS
+            //! builds {type, index} from that operand shape and gathers nothing
             gstri_r    <= (uns_kind_i == PP_UNS_STRI_C)
                           || (uns_kind_i == PP_UNS_SINFO_C);
             gavb_r     <= (uns_kind_i == PP_UNS_AVB_C);

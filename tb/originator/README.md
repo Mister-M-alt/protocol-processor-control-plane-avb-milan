@@ -3,7 +3,7 @@
 
 Proves the [03 §5](../../docs/architecture/03_packet_engine.md) originator +
 inflight table (`hdl/packet_engine/KL_pp_originator.sv`): `make` = build +
-run, exit 0 = PASS, 104 checks.
+run, exit 0 = PASS, 107 checks.
 
 The C++ harness is an independent model, never DUT logic: it implements a
 stub of the exact `KL_pp_timer_service` arm/expiry port protocol (arm =
@@ -52,3 +52,29 @@ The 2026-08-19 concurrent-event regression is also mutation-proven at the
 current 104-check shape. Ignoring the parked cancellation after a different
 entry's response fails 6 of 104 checks, including the busy-table, timer, hold,
 and release invariants. Restoring cancellation parking passes 104 of 104.
+
+## Section R: a seeded session against an independent inflight model (issue #86)
+
+`IflModel` restates the contract above, never the code: an issue takes the lowest
+free entry, the owner's next sequence id, a hold and a send of its TX slot; the
+serializer's acceptance arms {timer slot, {tag, id}, now + timeout}; a {key, seq}
+response routes to the owner, releases and disarms; the first expiry re-sends the
+same held slot and re-arms only at that retry's acceptance; the second fails to
+the owner and releases with no disarm; an owner's cancellation releases and
+disarms; any other response is ignored and counted.
+
+Seed 0x86A46301, 4,000 xorshift32 steps over sixteen owners (one exchange each at
+most, the notify block's CONTROLLER_AVAILABLE shape) and eight TX slots, then a
+drain: issues, acceptances, responses (to an armed exchange, or to a first attempt
+whose retry still waits in the lane), stray responses (half of them a live
+exchange's key with a sequence id it never issued), expiries fired in a random
+order among the due slots, and cancellations. Every event is applied alone and the
+module settles; every pulse lane (routes, fails, sends, resends, holds, releases,
+arm and cancel ops with their deadlines), the live-entry map and the ignored count
+are compared with the model. Result: 3,757 events, zero divergence, up to eight
+overlapping exchanges; 661 routed, 366 retried, 87 failed, 95 cancelled, 409
+strays; nothing leaks.
+
+Mutation record (`tb/pp_top/notify_mutants.py`, each KILLED with R among its
+failing checks): `inflight_highest_free_id` (15 failures), `inflight_match_ignores_seq`
+(7), `inflight_cancel_keeps_timer` (5), `inflight_shared_seq` (10).

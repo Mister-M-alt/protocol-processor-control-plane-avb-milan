@@ -229,6 +229,12 @@ E_SIRUN  = 1936     # SET_STREAM_INFO on a STREAMING output: refused whole
 #! engine entry and its 32-word slot; the walk alone is 41 words, so it takes
 #! the front of this free tail and E_SSRATE branches into it.
 E_SSRWALK = 1952    # SET_SAMPLING_RATE: is the rate on the AUDIO_UNIT's list?
+#! IDENTIFY_NOTIFICATION (IEEE 7.4.39) and the unsolicited SET_STREAM_INFO
+#! body take the free 456..511 run after E_COPYT, each on a 16-word boundary:
+#! the tail after the rate walk holds READ_DESCRIPTOR's current-value
+#! overlays (issue #82).
+E_IDNOTIF = 464     # unsolicited IDENTIFY_NOTIFICATION body (7.4.39.1)
+E_SINFOUNS = 480    # unsolicited SET_STREAM_INFO body (7.4.15.1, Figure 7-40)
 #! The name family occupies the free 1344..1455 run. Keeping it out of the
 #! setter tail lets the notification-aware stream programs grow without
 #! interleaving unrelated entry points.
@@ -1019,6 +1025,25 @@ place(E_DEREG, [
 place(E_UNSOK, [
     u('SET_STATUS', imm=ST_OK),
     u('BUILD_HDR', ra=15, rb=13),
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- unsolicited IDENTIFY_NOTIFICATION (IEEE §7.4.39, §7.5.1) ---------------
+# The first notification type of §7.5: a user asked the entity to identify
+# itself (KL_aecp_notify's identify sequencer, behind
+# P-EN-IDENTIFY-NOTIFICATION). The engine synthesizes the whole header from
+# the job: u = 1, the Table B.1 "Identification Notifications" DA, the
+# Table 7-180 controller_entity_id and identifySequenceID. §7.4.39.1's body is
+# descriptor_type CONTROL and the index of the IDENTIFY control generating it,
+# which the job's descriptor tuple lands in r14[15:0] (the job's type) and
+# r13[15:0] (its index): payload 4, cdl 16. There is no command to refuse and
+# no lock to consult - §7.5.1 has neither.
+place(E_IDNOTIF, [
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=14, fmt=FMT_W),            # descriptor_type  @24
+    u('BUILD_FLD', ra=13, fmt=FMT_W),            # descriptor_index @26
     u('SEND_RESP'),
     u('END'),
 ])
@@ -2256,6 +2281,41 @@ place(E_SIBAD, [
     u('BUILD_FLD', ra=2, fmt=FMT_Q),             # flags + format head  @28
     u('BUILD_FLD', ra=2, fmt=FMT_Q),             # format tail + sid    @36
     u('BUILD_FLD', ra=2, fmt=FMT_Q),             # sid tail + acc_lat   @44
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # dest_mac + failure   @52
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # bridge_id            @60
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # vlan + ip_flags + ports @68
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # source ip            @76
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # source ip tail       @84
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # destination ip       @92
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # destination ip tail  @100
+    u('SEND_RESP'),
+    u('END'),
+])
+
+# --- the unsolicited SET_STREAM_INFO (IEEE §7.5.2, §7.4.15.1; Milan §5.4.5) --
+# The notification is "an unsolicited response to the command" (§7.5.2), and
+# command and response share Figure 7-40, so it carries the same complete
+# 84-byte body as the solicited answer (cdl 96), never GET_STREAM_INFO's:
+# Milan §5.4.2.10 replaces the format of the GET response alone. Rebuilt from
+# current state like every other class: MSRP_ACC_LAT_VALID, the one
+# sub-command a successful SET_STREAM_INFO can have carried (Milan §5.4.2.9),
+# and the presentation-time offset now in force from the dynamic store's
+# SEL_PTOFF row; every other field zero, as in a command that set only it.
+# The flags word 0x20000000 is laid out a byte at a time: the µISA's
+# immediate is 24 bits and it has no left shift.
+place(E_SINFOUNS, [
+    u('MOVE', rd=2, ra=0, imm=0),                # the zero lane
+    u('MOVE', rd=3, ra=0, imm=0x20),             # flags' first byte
+    u('READ_ST', rd=6, imm=RGN_DYN + SEL_PTOFF), # the offset in force
+    u('SET_STATUS', imm=ST_OK),
+    u('BUILD_HDR', ra=15, rb=13),
+    u('BUILD_FLD', ra=13, fmt=FMT_D),            # type @24 + index @26
+    u('BUILD_FLD', ra=3, fmt=FMT_B),             # flags @28: MSRP_ACC_LAT_VALID
+    u('BUILD_FLD', ra=2, fmt=FMT_B),             #       @29
+    u('BUILD_FLD', ra=2, fmt=FMT_W),             #       @30
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # stream_format        @32
+    u('BUILD_FLD', ra=2, fmt=FMT_Q),             # stream_id            @40
+    u('BUILD_FLD', ra=6, fmt=FMT_D),             # msrp_accumulated_latency @48
     u('BUILD_FLD', ra=2, fmt=FMT_Q),             # dest_mac + failure   @52
     u('BUILD_FLD', ra=2, fmt=FMT_Q),             # bridge_id            @60
     u('BUILD_FLD', ra=2, fmt=FMT_Q),             # vlan + ip_flags + ports @68
