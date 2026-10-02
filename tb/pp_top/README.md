@@ -246,6 +246,37 @@ five into the one canonical tally.
   the D3 walk, ownership taken only at the walk, no roll-back, either store
   left out of it, the roll-back ignoring the guard's debt, a CLOSED re-walk
   released) each fail their named check, from the same driver.
+  **D3C** (issue #141, milan-fpga #629) the clock-source selection over a
+  ten-source domain, the 8x8 shape's INTERNAL 0, CRF 1 and AAF input k at
+  2 + k (07 §3.1 L6), on a fresh model over the suite's image re-packed with a
+  ten-source identity list. The suite's own list has three sources; neither
+  image carries a CLOCK_SOURCE descriptor, because neither path reads one.
+  **D3C1** SET_CLOCK_SOURCE(9), AAF input 7, answers SUCCESS byte-exact
+  carrying 9; a registered second controller receives exactly one unsolicited
+  SET_CLOCK_SOURCE carrying 9, sequence 0; the store write, NVM_MARK and
+  NOTIFY_ENQ strobes each move once; and GET_CLOCK_SOURCE, the row and the
+  top's exported `aecp_clk_src_index_o` read 9. **D3C2** SET_CLOCK_SOURCE(10),
+  the count itself, answers BAD_ARGUMENTS byte-exact carrying the 9 in force
+  (IEEE 1722.1-2021 §7.2.32, Table 7-141, §7.4.23.1). Nothing is written,
+  marked, enqueued or announced; GET, the row and the export still read 9;
+  and nothing is pending and the device sees no operation in the two windows
+  after it. **D3C3** the D3S1/D3R1 pair for an AAF index (REQ-AEM-013): the
+  accepted 9 is saved as exactly one ERASE and one WRITE of record 0x0A,
+  byte-exact, with no other record moving. Across a power cycle the walk
+  starts from cleared rows and applies it (1 applied, 0 refused, 26 blank of
+  27), and the row, GET and the export read 9. **D3C4** the same saved record
+  over an image whose list is shorter, at its count (nine sources) and above
+  it (the suite's three): refused, COMPLETE with 0 applied and 1 refused, the
+  row unset and GET reading the image's 0. The arms run in the order D3C1,
+  D3C3's save, D3C2, D3C3's restore, D3C4, so the refusal is graded against
+  a row already saved. Their negative controls (the SET bound fixed at three
+  or made inclusive, the row narrowed to two bits, the restore rule's count or
+  index narrowed to three bits, the restore bound made inclusive) each fail
+  their named check: the two SET arms from `aecp_dispatch_mutants.py`, the
+  rest from `d3_mutants.py`. Run in the whole default build, the SET bound
+  fixed at three fails D3C's eleven checks and nothing else, and the row
+  narrowed to two bits D3C's ten: no other check sets an index or reads a
+  count past the suite's three.
   `restore_done_o` is the COMBINED terminal: the binding walk's release
   alone (S4) frees the listener, never AECP or ADP.
   The dispatch hold runs from reset, so every section that resets and then
@@ -862,13 +893,20 @@ tally, exits non-zero and every named check fails; a golden extract runs first a
 must pass. The same driver runs the binding manager's three DR2c controls, the
 arbiter's issue-cycle control and its seven own-contract controls (N11) in `tb/acmp_nvm`
 and the validator's admission control in `tb/rx_validator` (their READMEs record
-them). At the lane head all 83 are KILLED and the three goldens PASS;
+them). At the lane head all 87 are KILLED and the three goldens PASS;
 the last column is how many checks each one failed there. Since the AECP
 deadline kill (issue #81, section DL), `hold_released_at_go` and
 `dispatch_not_held` each fail D3O6 as well (17 and 6). Both let the held
 command run during the slowed restore, and it is no longer exempt from its
 deadline: rule (d) exempts only a command held until the terminal. With the
-kill tied off, the counts are 16 and 5 again.
+kill tied off, the counts are 16 and 5 again. Since the clock-source arms
+(issue #141, section D3C), five controls fail D3C checks as well:
+`TRG_clks` (10; 5 before) D3C3's save, its two restore checks and D3C4's two
+walks, which then find no record; `RPL_clks` (5; 3 before) D3C3's two restore
+checks; `rule_ignored` (7; 3 before) D3C4's four; `unframed_reads_as_device_error`
+(42; 38 before) D3C3's two restore checks and D3C4's two walks; and
+`done_without_d3` (45; 42 before) the walk check of D3C3's restore and of each
+D3C4 arm. The last four rows are D3C's own controls.
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
 |---|---|---|---|
@@ -879,7 +917,7 @@ kill tied off, the counts are 16 and 5 again.
 | `latch_ignores_program` | the service latch does not wait for a running program | `D3S9` | 3 |
 | `TRG_cfg` | configuration trigger deleted | `D3S1 cfg` | 3 |
 | `TRG_rate` | sampling-rate trigger deleted | `D3S1 rate` | 3 |
-| `TRG_clks` | clock-source trigger deleted | `D3S1 clks` | 5 |
+| `TRG_clks` | clock-source trigger deleted | `D3S1 clks` | 10 |
 | `TRG_fmti` | input-format trigger deleted | `D3S1 fmti` | 4 |
 | `TRG_fmto` | output-format trigger deleted | `D3S1 fmto` | 4 |
 | `TRG_ptof` | presentation-offset trigger deleted | `D3S1 ptof` | 24 |
@@ -891,19 +929,19 @@ kill tied off, the counts are 16 and 5 again.
 | `unchanged_compare_ignores_validity` | the change qualifier ignores the valid flag | `D3S8 validity` | 1 |
 | `RPL_cfg` | configuration replay deleted | `D3R1 cfg` | 6 |
 | `RPL_rate` | sampling-rate replay deleted | `D3R1 rate` | 6 |
-| `RPL_clks` | clock-source replay deleted | `D3R1 clks` | 3 |
+| `RPL_clks` | clock-source replay deleted | `D3R1 clks` | 5 |
 | `RPL_fmti` | input-format replay deleted | `D3R1 fmti` | 2 |
 | `RPL_fmto` | output-format replay deleted | `D3R1 fmto` | 2 |
 | `RPL_ptof` | presentation-offset replay deleted | `D3R1 ptof` | 6 |
-| `rule_ignored` | a SET-rule refusal applied anyway | `D3R2: COMPLETE` | 3 |
+| `rule_ignored` | a SET-rule refusal applied anyway | `D3R2: COMPLETE` | 7 |
 | `passes_may_disagree` | the pass agreement removed | `D3R4:`, `D3R4b` | 3 |
 | `device_error_reads_as_blank` | a DEVICE error read as a blank record | `D3R5 device error on the header`, `D3R6: the one saved record` | 5 |
-| `unframed_reads_as_device_error` | an UNFRAMED record read as a device error | `D3R6: an erased device restores blank` | 38 |
+| `unframed_reads_as_device_error` | an UNFRAMED record read as a device error | `D3R6: an erased device restores blank` | 42 |
 | `desc_error_is_a_refusal` | a rule's descriptor error read as a refusal | `D3R7` | 6 |
 | `no_restore_watchdog` | the per-wait deadline removed | `D3R8: a READ granted`, `D3R8b` | 7 |
 | `restore_writes_are_changes` | the snoop taps the shared bus, so restore writes are changes | `D3R1: no restore write is a change` | 1 |
 | `enable_not_released_by_restore` | ADP enabled by the request alone | `D3R1: the enable requested from reset` | 4 |
-| `done_without_d3` | restore done without the D3 walk | `D3R1: the enable requested from reset`, `D3R1: COMPLETE` | 42 |
+| `done_without_d3` | restore done without the D3 walk | `D3R1: the enable requested from reset`, `D3R1: COMPLETE` | 45 |
 | `blank_ignores_d3` | restore blank ignores the D3 walk | `D3R1: COMPLETE` | 1 |
 | `store_not_cleared` | the sampling-rate row and its valid flag not reset | `D3R1: every row at its reset value` | 17 |
 | `valid_not_cleared` | the sampling-rate valid flag not reset | `D3R1: every row at its reset value` | 17 |
@@ -943,6 +981,10 @@ kill tied off, the counts are 16 and 5 again.
 | `aecp_hold_unbounded` | the admission gate never drops (the unbounded hold) | `D3O5: in CLOSED each GET_RX_STATE`, `D3O6: during the slowed walk` | 7 |
 | `held_drop_uncounted` | a held drop not counted | `D3O5: one AECP command held`, `D3O6: at the terminal` | 5 |
 | `resident_never_returned` | the resident count never comes back down (R391-2's own edit) | `D3O7: the returned slot frees the share` | 1 |
+| `clks_row_two_bits` | the clock-source row stores only the index's low two bits (issue #141) | `D3C1 readback`, `D3C3 save` | 10 |
+| `clks_restore_count_narrowed` | the restore rule reads only the low three bits of `clock_sources_count` | `D3C3 restore` | 2 |
+| `clks_restore_index_narrowed` | the restore rule compares only the low three bits of the saved index | `D3C4 at the count`, `D3C4 above the count` | 4 |
+| `clks_restore_bound_inclusive` | the restore rule accepts an index equal to the count (`<=` for `<`) | `D3C4 at the count` | 4 |
 
 ### AECP deadline and hazard-class controls (lane C5a): `aecp_mutants.py`
 
@@ -1020,7 +1062,9 @@ completes with the build's tally (or the line guards' summary), exits non-zero
 and prints the named check. `aecp-dispatch` runs A5b and M9 on a booted model,
 then section AX on its own processor (`--aecp-dispatch-only`); `aecp-line`
 runs section AX in the line build; `line-guards` lints the top across the line
-range. The last column is how many checks each arm failed at the lane head.
+range; `d3` runs section D3, whose D3C arms grade SET_CLOCK_SOURCE over a
+ten-source domain (`--d3-only`). The last column is how many checks each arm
+failed at the lane head.
 
 | Arm | Defect planted | Named check | Failing checks |
 |---|---|---|---|
@@ -1059,6 +1103,8 @@ range. The last column is how many checks each arm failed at the lane head.
 | `line-ceiling-dropped` | the engine's line ceiling removed, so 1016 is refused only by the µCPU's own cap, which does not name `DESC_LINE_BYTES_P` (R416-1 F2; `line-guards`) | `line guard 1016` | 1 |
 | `line-buffer-fixed-592` | the response buffer fixed at the default line's 592 bytes instead of `16 + LINE_BYTES_P` (`aecp-line`) | `OV1 AUDIO_MAP 0 (584 B, the whole line: cdl 600, frame 626): the 584-byte descriptor, byte-exact` | 7 |
 | `rb-rounded-buffer-no-page-cap` | the buffer rounded up to 16 as at 54c1e2b1 AND E_GAMAP's page cap dropped (`pg-cap-dropped`'s two NOPs), so a page fills the rounded 608 bytes (`aecp-line`) | `RB no response byte written at or past RESP_BASE_P + 16 + DESC_LINE_BYTES_P` | 10 |
+| `sclks-bound-three` | E_SCLKS's bound loaded as the constant 3, the suite list's count, instead of the located domain's `clock_sources_count` (issue #141; `d3`) | `D3C1: SET_CLOCK_SOURCE(9) over the ten-source domain answers SUCCESS` | 11 |
+| `sclks-bound-inclusive` | E_SCLKS's range check made inclusive, `count >= index` in place of `index < count` (issue #141; `d3`) | `D3C2: SET_CLOCK_SOURCE(10), the count, answers BAD_ARGUMENTS` | 6 |
 
 Each guard arm fails its opcode's row on all seven message types; the three
 writers also fail their whole-body row and the read-back that proves the write
@@ -1098,6 +1144,12 @@ no write at any legal line, and `pg-cap-dropped` alone is fenced at the
 reservation (a 176-record page carries 72 records, 600 bytes, at 584). Together
 the 176-record page carries 73, and RB counts the 8 bytes past 600, besides
 PG7 to PG9.
+The two clock-source arms run the `d3` target. With the bound fixed at three,
+SET_CLOCK_SOURCE(9) is refused, and every D3C check built on it fails: D3C1's
+four, D3C2's answer and read-back, both of D3C3's restore and its save, and
+D3C4's two walks, whose record is then blank. With the bound inclusive, the
+count 10 is stored, marked, announced and saved: D3C2's four checks fail, and
+D3C3's restore, whose saved 10 the restore rule refuses.
 
 ## Recorded seams and honest limits
 

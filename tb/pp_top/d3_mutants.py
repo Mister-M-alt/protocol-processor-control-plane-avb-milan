@@ -17,7 +17,8 @@ the pass agreement, the roll-back strobe, the pass-1 drain, the watched format j
 the rate walk, the aggregate's terminals, span and inertness, its pre-proof
 variants, the drain of a READ abandoned in the arbiter's issue cycle, the arbiter's
 own contract for inputs no in-tree manager presents, and the admission's resident
-count. The suite READMEs carry the matching mutation records.
+count; issue #141 adds the clock-source row and restore rule over a ten-source
+domain. The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/d3_mutants.py --output DIR [--verilator V] [--jobs N]
                                        [--only NAME ...]
@@ -457,7 +458,29 @@ ADMISSION = (
         ("F28 held AECP", "F28 rx_aecp_held counts both")),
 )
 
-MUTANTS = OWNERSHIP + SERVICE + RESTORE + ROLLBACK + DR2C + REVIEW + AGGREGATE + ADMISSION
+# issue #141: the clock-source row and the restore rule over a ten-source domain
+# (section D3C); of the D3 checks outside D3C, only the inclusive bound fails one (D3R2)
+CLOCK_RULE = "      lane_accept_w = rval_r[15:0] < sb_rdata_i[47:32];\n"
+CLOCK_SOURCES = (
+    Mutant("clks_row_two_bits", PP_TOP, (
+        (DYN, "          13'(SEL_CLKSRC_C): begin clksrc_r[cd_ix_w]  <= st_wdata_i[15:0];\n",
+         "          13'(SEL_CLKSRC_C): begin clksrc_r[cd_ix_w]  <= {14'd0, st_wdata_i[1:0]};\n"),),
+        ("D3C1 readback", "D3C3 save")),
+    Mutant("clks_restore_count_narrowed", PP_TOP, (
+        (WRITER, CLOCK_RULE,
+         "      lane_accept_w = rval_r[15:0] < {13'd0, sb_rdata_i[34:32]};\n"),),
+        ("D3C3 restore",)),
+    Mutant("clks_restore_index_narrowed", PP_TOP, (
+        (WRITER, CLOCK_RULE,
+         "      lane_accept_w = {13'd0, rval_r[2:0]} < sb_rdata_i[47:32];\n"),),
+        ("D3C4 at the count", "D3C4 above the count")),
+    Mutant("clks_restore_bound_inclusive", PP_TOP, (
+        (WRITER, CLOCK_RULE, "      lane_accept_w = rval_r[15:0] <= sb_rdata_i[47:32];\n"),),
+        ("D3C4 at the count",)),
+)
+
+MUTANTS = (OWNERSHIP + SERVICE + RESTORE + ROLLBACK + DR2C + REVIEW + AGGREGATE + ADMISSION
+           + CLOCK_SOURCES)
 TALLY = re.compile(r"^(D3: \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$", re.M)
 
 

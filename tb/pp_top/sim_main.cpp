@@ -10747,6 +10747,7 @@ struct NameWritePhase {
   D3OwnershipPhase{h, image}.run();
   D3ServicePhase{h, image}.run();
   D3RestorePhase{h, image, setup.image_ents}.run();
+  D3ClockSourcePhase{h, image, setup.image_ents}.run();
   printf("D3: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
