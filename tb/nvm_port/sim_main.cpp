@@ -183,6 +183,12 @@ struct Harness {
   bool unsol_model = false;
   bool short_model = false;
   bool silent_model = false;
+  // ...and one array model that is the same kind of switch: a backend without
+  // erase semantics, which the port's banner names, answers ERASE with done
+  // and leaves the array as it was. `measure_figures.py` turns it on for the
+  // two lazy-erase rows; T1 reads it to know whether an erase has a side
+  // effect to assert.
+  bool lazy_erase = false;
   bool stray_armed = false;               // this op's stray done is still to fire
   int  stray_dones = 0;                   // run: strays presented
   int  reads_accepted = 0;                // run: READs accepted (the short parity)
@@ -464,7 +470,7 @@ struct Harness {
         err_ctr = op_delay; d_st = 2;
       } else if (d_cur.op == OP_ERASE) {
         int r = d_cur.region % N_REGIONS;
-        memset(store[r], 0xFF, REG_BYTES);
+        if (!lazy_erase) memset(store[r], 0xFF, REG_BYTES);
         ++erase_count[r];
         if (done_rode_the_grant) { d_busy = false; d_st = 0; }
         else { schedule_completion(); }
@@ -885,7 +891,13 @@ void NvmPortSuite::commit_erases_then_writes_byte_exact() {
         "T1 op1 = WRITE region 3 off 0 len 32");
   CHECK(h.erase_count[3] == 1, "T1 erase pulsed region 3 once");
   CHECK(h.store_match(3, f1), "T1 device store byte-exact (header+crc+payload)");
-  CHECK(h.store[3][f1.size()] == 0xFF, "T1 erase visible past the record");
+  // The array past the record is the ERASE's side effect, which is the
+  // backend's business: one without erase semantics answers ERASE with done
+  // and leaves the array as it was. The port's half is on the bus above, the
+  // whole-region ERASE requested once before the WRITE, under every model;
+  // the erased tail is asserted only on a backend that has erase semantics.
+  CHECK(h.lazy_erase || h.store[3][f1.size()] == 0xFF,
+        "T1 erase visible past the record, on a backend with erase semantics");
 }
 
 // ---- T2: restore envelope — header read then payload read, byte-exact --

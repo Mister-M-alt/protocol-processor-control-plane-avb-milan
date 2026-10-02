@@ -437,11 +437,10 @@ _PAGEBUF = [
           "        if (fail_cur && d_bytes == err_after_bytes) {\n"
           "          pagebuf.clear(); err_ctr = 2; d_st = 2;\n        }"),
 ]
-_LAZY = [(SIM, "        int r = d_cur.region % N_REGIONS;\n"
-               "        memset(store[r], 0xFF, REG_BYTES);\n"
-               "        ++erase_count[r];",
-               "        int r = d_cur.region % N_REGIONS;\n"
-               "        ++erase_count[r];")]
+#: Lazy erase is the harness's own switch, as the handshake models are: the
+#: backend answers ERASE with done and leaves the array, and T1 reads the same
+#: switch to assert the erased tail only on a backend with erase semantics.
+_LAZY = [(SIM, "  bool lazy_erase = false;", "  bool lazy_erase = true;")]
 
 #: A model measurement may be quoted in more than one place. `claims` is a
 #: LIST, and every listed site must agree with the one measurement: the prose
@@ -453,9 +452,9 @@ MODELS = [
     ("half-page", [r"\| half-page \| \*\*(\d+) PASS, (\d+) FAIL\*\*",
                    r"The half-page model is (\d+) PASS, (\d+) FAIL"], [_HALFPAGE]),
     ("page-buffered NOR", [r"\| page-buffered NOR \| \*\*(\d+) PASS, (\d+) FAIL\*\*"], _PAGEBUF),
-    ("lazy erase", [r"\| lazy erase \| (\d+) PASS, (\d+) FAIL"], _LAZY),
+    ("lazy erase", [r"\| lazy erase \| \*\*(\d+) PASS, (\d+) FAIL\*\*"], _LAZY),
     ("lazy erase + page-buffered",
-     [r"\| lazy erase \+ page-buffered \| (\d+) PASS, (\d+) FAIL"], _PAGEBUF + _LAZY),
+     [r"\| lazy erase \+ page-buffered \| \*\*(\d+) PASS, (\d+) FAIL\*\*"], _PAGEBUF + _LAZY),
     ("coincident completion",
      [r"\| coincident completion \| \*\*(\d+) PASS, (\d+) FAIL\*\*"], _COINCIDENT),
     ("unsolicited completion",

@@ -31,8 +31,8 @@ still up. Four of these behaviours are standing models, left on for a whole run
 (see "The handshake models").
 
 Covered: the commit envelope ERASE_REGION → WRITE(0, 8+plen) with the device
-store byte-exact against the manager's framed record and the erase visible past
-it; the restore envelope READ(0,8) → READ(8,plen) with the returned stream
+store byte-exact against the manager's framed record and, on a backend with
+erase semantics, the erase visible past it; the restore envelope READ(0,8) → READ(8,plen) with the returned stream
 byte-exact; zero-payload records both ways (restore then issues only the header
 probe); stall torture on all four byte interfaces at once (gnt and done
 delayed); back-to-back ops with req re-asserted the cycle after the pulse;
@@ -94,14 +94,17 @@ follows a device `err` it is either moved onto the bus or conditioned on what
 the array actually holds. Claims that follow a `done` are asserted directly and
 need no condition, which is most of them. Counted in the unit the claim is
 about, CHECK sites whose condition depends on the array: **18 sites, of which 3
-condition on it and 15 do not** (T24's setup asserts after a `done`; T25's
+condition on it, 1 conditions on the backend's erase semantics instead (T1's
+erased tail) and 14 do not** (T24's setup asserts after a `done`; T25's
 header agreement conditions, as T15's does). Counting this needs care and got it wrong once:
 `T16 no other region's bytes moved` reaches the array through `other_moved`, a
 local hoisted 35 lines above its CHECK, so every text sweep for `store` missed
 it -- and that site is the #70 isolation claim itself, the most important member
-of the set. See "Where a check may read from" for the rule and its one known exception,
-`T1 erase visible past the record`, which asserts on the array after a device
-`done` and reddens under a lazy-erase backend:
+of the set. See "Where a check may read from" for the rule. Its one known
+exception was `T1 erase visible past the record`, which asserted on the array
+after a device `done` and reddened under a lazy-erase backend; it now asserts
+the erased tail only on a backend with erase semantics, and the bus carries
+the port's half. The torn commits:
 
 - **T15** a torn commit reports `err` and never `done`, with busy low at the
   pulse; the cut is proven real on the BUS (ERASE then a WRITE that stopped 12
@@ -824,11 +827,14 @@ The rule:
 > never on what the array retained.**
 
 The `done` clause carries that qualifier because a device SIDE EFFECT is not
-the port's behaviour either: `T1 erase visible past the record` asserts after a
-`done` and still reddens under lazy erase, since whether an ERASE rewrites the
-array is the backend's business. T1 is pre-existing and left as it is, named
-here as the one known remaining member rather than quietly fixed. It is the
-exception the power-cut preamble points at.
+the port's behaviour either: `T1 erase visible past the record` asserted after
+a `done` and reddened under lazy erase, since whether an ERASE rewrites the
+array is the backend's business. It was the one known remaining member, and
+issue #21 asks for every original check green under every model the port must
+tolerate, so it is no longer an exception: the erased tail is asserted only on
+a backend with erase semantics (the harness's `lazy_erase` switch, which both
+lazy-erase rows set), and T1's bus checks, the whole-region ERASE requested
+once and before the WRITE, carry the port's half under every model.
 
 **A negative claim about the array is NOT automatically safe.** An earlier
 version of this section said it was, and that was false: under lazy erase
@@ -880,8 +886,8 @@ Applied here:
 | pristine | **326 PASS, 0 FAIL** |
 | half-page | **326 PASS, 0 FAIL** |
 | page-buffered NOR | **326 PASS, 0 FAIL** |
-| lazy erase | 325 PASS, 1 FAIL, only the pre-existing `T1` |
-| lazy erase + page-buffered | 325 PASS, 1 FAIL, only `T1` |
+| lazy erase | **326 PASS, 0 FAIL** |
+| lazy erase + page-buffered | **326 PASS, 0 FAIL** |
 | coincident completion | **326 PASS, 0 FAIL** |
 | unsolicited completion | **326 PASS, 0 FAIL** |
 | short read | 251 PASS, 75 FAIL, service only: every RW check passes |
@@ -1006,9 +1012,9 @@ Recorded so the phase list does not read as closing #70:
   never supplied, and an abort would be an interface change.
 - **The RANDOMIZED cut points `09_verification.md:56` asks for are still owed**
   on both sides: T15-T18 and T25 cut at fixed points named on the bus.
-- **The `err` clause of the rule has THREE known exceptions**, and T1 is not
-  among them: T1 asserts after a `done` and reddens only under lazy erase, so
-  it is a `done`-clause exception. The three are T16's isolation checks, and a coarse-erase
+- **The `err` clause of the rule has THREE known exceptions**, and T1 was
+  never among them: it asserted after a `done` and reddened only under lazy
+  erase, a `done`-clause exception, now conditioned on erase semantics. The three are T16's isolation checks, and a coarse-erase
   model where a sector spans regions reddens all three with the RTL untouched.
   The erase-count check does not redden, which is the asymmetry the rule exists
   to describe.
