@@ -70,15 +70,15 @@ Message types: 0 ENTITY_AVAILABLE · 1 ENTITY_DEPARTING · 2 ENTITY_DISCOVER.
 | Field | Source | Rule |
 |---|---|---|
 | `valid_time` | constant | **10** (2-s units ⇒ 20 s validity; cadence `T-ADP-ADV`) — Δ5 |
-| `entity_id`, `entity_model_id` | config/ID registers | model id ≠ 0/≠ all-1s; changes on structural model change (Milan §5.3.1) |
+| `entity_id`, `entity_model_id` | config/ID registers | model id ≠ 0/≠ all-1s; changes on structural model change (Milan §5.3.1); the packer's model lint reports the value, refuses an invalid or disagreeing one and checks a recorded digest ([07 §3.1](07_memory_maps.md#model-lint) L9) |
 | `entity_capabilities` | constant | [F04.6](#fig-04-caps) |
-| `talker_stream_sources` / `listener_stream_sinks` | model metadata | **max across all configurations** (Milan §5.3.3.1) |
+| `talker_stream_sources` / `listener_stream_sinks` | model metadata | **max across all configurations** (Milan §5.3.3.1); reported and checked by the model lint ([07 §3.1](07_memory_maps.md#model-lint) L11) |
 | `talker_capabilities` / `listener_capabilities` | config registers | Milan-unconstrained; per IEEE Tables 6-3/6-4: IMPLEMENTED 0x0001 + AUDIO_SOURCE/SINK 0x4000 (+ MEDIA_CLOCK_SOURCE/SINK 0x0800 if CRF outputs/inputs) — review §8 item 6 |
 | `controller_capabilities` | constant 0 | not a controller |
 | `available_index` | available_index manager | [§5](#5-state) |
 | `gptp_grandmaster_id` / `gptp_domain_number` | class-D `gm_id[if]`, `gptp_domain[if]` | sampled at PDU build; per-interface |
 | `current_configuration_index` | dynamic overlay | the current configuration (IEEE §6.2.2.18), the value GET_CONFIGURATION serves: the overlay while its row is written (SET_CONFIGURATION, or the boot restore of a saved configuration, [07 §5.3](07_memory_maps.md#fig-07-nvmflow)), the image default the integrator drives on `current_cfg_i` while it is unset (from reset, and after a restore roll-back); sampled at PDU build. The ADPDU is otherwise independent of configuration (Milan §5.6.2 note) |
-| `identify_control_index` | model metadata | same index in every configuration (Milan §5.3.3.10) |
+| `identify_control_index` | model metadata | same index in every configuration (Milan §5.3.3.10); reported and checked by the model lint ([07 §3.1](07_memory_maps.md#model-lint) L8) |
 | `interface_index` | instance constant | per advertise-SM instance |
 | `association_id` | constant 0 | ASSOCIATION_ID not supported |
 
