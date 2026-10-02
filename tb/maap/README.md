@@ -224,13 +224,17 @@ frees a committed slot only by sending it.
 
 `make mutants` (optionally `MUTANT_OUTPUT=<dir>` for the receipts; default
 `/tmp/maap-mutants`) plants each reviewed patch in `mutations/` into a
-scratch copy of `hdl/` with `git apply`. An arm may run on more than one
-suite (`tb/rx_validator`, and `tb/pp_top`'s `maap-internal` target, the MP
-section alone). It first runs every suite target the arms use unmutated,
-then requires each arm's simulation to finish red with a `FAIL:` line
-carrying the arm's own named check. A build failure, a
+scratch copy of `hdl/` with `git apply`, one copy per arm run. An arm may run
+on more than one suite (`tb/rx_validator`, and `tb/pp_top`'s `maap-internal`
+target, the MP section alone). It first runs every suite target the arms use
+unmutated, each in its own copy, then requires each arm's simulation to finish
+red with a `FAIL:` line carrying the arm's own named check. A build failure, a
 missing tally or a clean run is UNPROVEN, never a kill. The driver reads
 only simulation logs; no expectation comes from RTL text.
+`python3 mutants.py --output DIR [--only a,b] [--jobs N]` runs it directly:
+`--jobs N` (default 4, the meaning and default of `tb/pp_top/d3_mutants.py`;
+`make mutants` runs the default) builds and runs up to N copies at once, and
+the results are printed in the table's order whatever order they finish in.
 
 | Arm (patch) | Planted defect | Suite | Named failures (of the suite's checks) |
 |---|---|---|---|
@@ -266,3 +270,7 @@ only simulation logs; no expectation comes from RTL text.
 
 The last run: 3 controls PASS and 29 of 29 arm runs KILLED
 (`32 checks: 32 PASS, 0 FAIL`).
+Measured 2026-10-02 at `85da751` with Verilator 5.050, each run pinned to 4 of
+the host's 16 CPUs: `--jobs 1` took 253 s and `--jobs 8` 194 s. Every control
+and arm run gave the same verdict and the same failing checks in both runs, the
+counts above, and both printed `32 checks: 32 PASS, 0 FAIL`.
