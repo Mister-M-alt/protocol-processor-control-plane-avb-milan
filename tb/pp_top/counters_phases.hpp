@@ -158,8 +158,11 @@ struct InterfaceCountersPhase : NotifyBench {
   // currently down), or LINK_UP=LINK_DOWN+1 (... currently up)". Each sample
   // is taken in the link state it grades, from the wire values alone.
   void k10_link_flaps_keep_the_invariant() {
-    const uint32_t want_up[4] = {1, 2, 2, 3};
-    const uint32_t want_down[4] = {1, 1, 2, 2};
+    struct Counts {
+      uint32_t up;
+      uint32_t down;
+    };
+    const Counts want[4] = {{1, 1}, {2, 1}, {2, 2}, {3, 2}};
     for (int k = 0; k < 4; ++k) {
       const bool up = (k % 2) == 1;
       set_link(up);
@@ -167,11 +170,11 @@ struct InterfaceCountersPhase : NotifyBench {
       const uint32_t lu = quadlet(f, 0);
       const uint32_t ld = quadlet(f, 1);
       const bool invariant = up ? (lu == ld + 1) : (lu == ld);
-      CHECK(!f.empty() && f == answer(AECP_SUCCESS, avb_body(want_up[k], want_down[k], 0))
+      CHECK(!f.empty() && f == answer(AECP_SUCCESS, avb_body(want[k].up, want[k].down, 0))
                 && invariant,
             "K10: link %s (flap %d): LINK_UP %u, LINK_DOWN %u, want %u and %u, "
             "and LINK_UP = LINK_DOWN%s", up ? "up" : "down", k + 1, lu, ld,
-            want_up[k], want_down[k], up ? " + 1" : "");
+            want[k].up, want[k].down, up ? " + 1" : "");
     }
   }
 
@@ -295,19 +298,22 @@ struct InterfaceCountersPhase : NotifyBench {
 
   // ---- K16: CLOCK_DOMAIN 0, from a lock level the processor never sees ----
   void k16_clock_domain_counts_and_pushes() {
-    const uint32_t want_l[3] = {1, 1, 2};
-    const uint32_t want_u[3] = {0, 1, 1};
+    struct Counts {
+      uint32_t locked;
+      uint32_t unlocked;
+    };
+    const Counts want[3] = {{1, 0}, {1, 1}, {2, 1}};
     for (int k = 0; k < 3; ++k) {
       io.mclk_locked = (k % 2) == 0;
       run_ms(5);
       const auto f = get(DT_CKD, 0);
       const uint32_t l = quadlet(f, 0);
       const uint32_t u = quadlet(f, 1);
-      CHECK(!f.empty() && f == answer(AECP_SUCCESS, ckd_body(want_l[k], want_u[k]))
+      CHECK(!f.empty() && f == answer(AECP_SUCCESS, ckd_body(want[k].locked, want[k].unlocked))
                 && (io.mclk_locked ? l == u + 1 : l == u),
             "K16: media clock %s: LOCKED %u, UNLOCKED %u, want %u and %u, "
             "and LOCKED = UNLOCKED%s", io.mclk_locked ? "locked" : "unlocked", l,
-            u, want_l[k], want_u[k], io.mclk_locked ? " + 1" : "");
+            u, want[k].locked, want[k].unlocked, io.mclk_locked ? " + 1" : "");
     }
     const size_t from = seen.size();
     strobe(DT_CKD, 0);
