@@ -3,6 +3,7 @@
     "*** NOT A COMPLIANCE REFERENCE. DO NOT COPY THESE STREAM DESCRIPTORS ***",
     "*** INTO A SHIPPING ENTITY MODEL. THEIR LAYOUT IS DELIBERATELY NOT   ***",
     "*** THE ONE THIS PROJECT SHIPS. SEE 'THE TWO LAYOUTS' BELOW.         ***",
+    "The semantic lint (model_lint.py) is off for it: pack with --no-lint.",
     "",
     "AUTHORITATIVE FOR SHIPPING DESCRIPTORS: IEEE 1722.1-2021 Table 7-8",
     "(§7.2.6). formats_offset = 138, redundant_offset = 138+8*N at offset 132,",
