@@ -17,7 +17,7 @@ WHAT IT COVERS. Every figure in the README, and the covered set is DERIVED
 rather than asserted: each `N of M` and `N PASS, M FAIL` in the file is a claim
 by default, satisfied only by a measurement here or by an explicit entry in
 WAIVERS whose reason is printed on every clean run. Twelve arm rows plus the arm
-COUNT read from the RTL; forty-nine mutations and probes; ten device-model result
+COUNT read from the RTL; fifty-five mutations and probes; ten device-model result
 rows, under each of which the run-wide RW checks must pass by name; and all
 thirty cells of the pre-fix matrix.
 
@@ -372,6 +372,30 @@ MUTATIONS = [
     ("D17", r"\*\*D17\*\*.*?\*\*fails (\d+) of", [
         (RTL, "      if (dev_done_i && dev_cmd_owned_w) done_seen_r <= 1'b1;",
               "      if (dev_done_i && (dev_cmd_owned_w || owed_r)) done_seen_r <= 1'b1;")]),
+    # The owed command's end and drain seen from a request waiting on it (T28),
+    # each a planted defect the 326-check suite passed in review: W15 = X24,
+    # W15b, W16 = X18, X17 and X12. D23 is the pair of guards that cannot be
+    # reached with a command owed, measured as such rather than asserted.
+    ("D18", r"\*\*D18\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "        S_RHREQ: if (!owed_r) begin   // an owed command blocks the request",
+              "        S_RHREQ: begin")]),
+    ("D19", r"\*\*D19\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "        S_WEREQ: if (!owed_r) begin   // an owed command blocks the request",
+              "        S_WEREQ: begin")]),
+    ("D20", r"\*\*D20\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "                  || (dev_rvalid_i && dev_rready_o);",
+              "                  || (dev_rvalid_i && dev_rready_o && !owed_r);")]),
+    ("D21", r"\*\*D21\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "                  || (dev_done_i && (dev_cmd_owned_w || owed_r))",
+              "                  || (dev_done_i && dev_cmd_owned_w)")]),
+    ("D22", r"\*\*D22\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "      end else if (dl_w && dev_cmd_owned_w) begin",
+              "      end else if (dl_w && dev_cmd_owned_w && (state_r != S_WWAIT)) begin")]),
+    ("D23", r"\*\*D23\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "        S_WWREQ: if (!owed_r) begin   // an owed command blocks the request",
+              "        S_WWREQ: begin"),
+        (RTL, "        S_RPREQ: if (!owed_r) begin   // an owed command blocks the request",
+              "        S_RPREQ: begin")]),
     # ---- refusal (d): a short command in each data phase ----------------------
     ("S1", r"\*\*S1\*\*.*?\*\*fails (\d+) of", [
         (RTL, "          end else if (done_seen_r || (dev_done_i\n"
@@ -568,7 +592,7 @@ WAIVERS = [
     # correct and is the mechanism working: they are waived by a pattern narrow
     # enough to reach only that sentence, so a real `22 out of 90` anywhere else
     # is still a hard error.
-    (r"`fails 22 of the 326 checks` and `fails\s+22 out of 326`",
+    (r"`fails 22 of the 339 checks` and `fails\s+22 out of 339`",
      "two illustrative phrasings quoted inside the paragraph explaining what "
      "the inverted default does not close; not claims about this suite"),
 ]

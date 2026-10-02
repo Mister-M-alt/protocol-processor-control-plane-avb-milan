@@ -841,6 +841,9 @@ class NvmPortSuite {
   void the_deadline_never_refuses_a_slow_device();
   void the_next_request_after_a_deadline();
   void an_abandoned_write_is_contained();
+  bool wait_on_owed(bool we, const std::vector<uint8_t>& f, int cycles);
+  void owed_terminals_are_credited_to_no_operation();
+  void owed_events_restart_a_waiting_request();
   void reset_mid_commit_at_six_stages();
   bool run_to_stage(int stage, size_t record_bytes);
   int  power_cut();
@@ -2062,6 +2065,134 @@ void NvmPortSuite::an_abandoned_write_is_contained() {
   h.deadline_ok = false;
 }
 
+// Start the next operation while the device still carries an owed command and
+// tick until it waits in its request state, a restore at once and a commit
+// once its eight header bytes have moved, then `cycles` more. True if the port
+// is then busy, the device still owes, and no command was taken meanwhile.
+bool NvmPortSuite::wait_on_owed(bool we, const std::vector<uint8_t>& f, int cycles) {
+  h.clear_capture();
+  h.ops.clear();
+  h.m_mode = we ? 1 : 2; h.m_wbytes = f; h.m_widx = 0; h.m_stall = 0;
+  h.start(we, f[3]);
+  for (int i = 0; i < 4 * TMO && we && h.m_widx < 8; ++i) h.tick();
+  for (int i = 0; i < cycles; ++i) h.tick();
+  return h.ops.empty() && dut->nvm_busy_o && h.d_busy;
+}
+
+// ---------------------------------------------------------------- T28
+// The owed command's end, seen from a request that waits on it (issue #15;
+// the port's banner). T24 ends owed commands on an idle port; here the next
+// operation is already waiting in its request state when the device ends the
+// abandoned command. That done or err is the abandoned command's own end,
+// credited to no operation, and the waiting request is then served: an err
+// taken as the request's would fail a walk or a write attempt against a
+// device that works. And a deadline in the WRITE's completion window leaves
+// the WRITE owed, as a deadline in every state that owns a command does.
+void NvmPortSuite::owed_terminals_are_credited_to_no_operation() {
+  fresh_reset();
+  h.deadline_ok = true;
+  const std::vector<uint8_t> rec = frame(2, pattern(40, 0x2B));
+  CHECK(h.commit(2, rec) == 0, "T28 setup: region 2 committed");
+
+  // (a) an owed payload READ, ended by err while a restore waits in S_RHREQ
+  int rc = silenced(false, rec, SIL_BYTE, 1, -1, 10);
+  CHECK(rc == 1 && h.last_cause == 3 && h.d_busy,
+        "T28a setup: a payload READ abandoned at its 10th byte, still owed");
+  bool waited = wait_on_owed(false, rec, TMO / 5);
+  h.end_command_now(/*with_err=*/true);
+  rc = h.run_op();
+  CHECK(waited && rc == 0 && h.err_pulses == 0 && h.rbytes == rec && h.ops.size() == 2
+            && h.req_while_owed == 0,
+        "T28a an owed READ ended by the device's err while a restore waits in "
+        "S_RHREQ: the err is credited to no operation and the restore is served "
+        "byte-exact (waited %d, rc %d, cause %d, %zu commands)",
+        int(waited), rc, h.last_cause, h.ops.size());
+
+  // (b) an owed ERASE, ended by err while a commit waits in S_WEREQ
+  rc = silenced(true, rec, SIL_DONE, 0, -1);
+  CHECK(rc == 1 && h.last_cause == 3 && h.d_busy,
+        "T28b setup: an ERASE abandoned before its done, still owed");
+  waited = wait_on_owed(true, rec, TMO / 5);
+  h.end_command_now(/*with_err=*/true);
+  rc = h.run_op();
+  CHECK(waited && rc == 0 && h.err_pulses == 0 && h.sent == rec && h.ops.size() == 2
+            && h.req_while_owed == 0,
+        "T28b an owed ERASE ended by the device's err while a commit waits in "
+        "S_WEREQ: the err is credited to no operation and the commit is served "
+        "byte-exact (waited %d, rc %d, cause %d, %zu commands)",
+        int(waited), rc, h.last_cause, h.ops.size());
+
+  // (c) a WRITE abandoned in its completion window, its done three deadlines
+  // late: the next commit, issued at once, requests nothing over it
+  rc = silenced(true, rec, SIL_DONE, 1, 3 * TMO);
+  CHECK(rc == 1 && h.last_cause == 3 && h.d_busy && h.sent == rec,
+        "T28c setup: a WRITE abandoned in its completion window (S_WWAIT), every "
+        "byte sent, still owed");
+  h.ops.clear();
+  rc = h.commit(2, rec);
+  CHECK(rc == 1 && h.last_cause == 3 && h.ops.empty() && h.sent.empty()
+            && h.req_while_owed == 0,
+        "T28c a deadline in the WRITE's completion window leaves the WRITE owed: "
+        "the next commit requests nothing over it and ends DEADLINE (rc %d, cause "
+        "%d, %d request cycles)", rc, h.last_cause, h.req_while_owed);
+  for (int i = 0; i < 4 * TMO && h.d_busy; ++i) h.tick();
+  h.ops.clear();
+  rc = h.commit(2, rec);
+  CHECK(!h.d_busy && rc == 0 && h.sent == rec && h.ops.size() == 2,
+        "T28c ...and once the device's done ends the WRITE, the next commit is "
+        "served (rc %d)", rc);
+  h.deadline_ok = false;
+}
+
+// The owed command's own events restart the count of a request waiting on it:
+// a byte drained from an owed READ, and the owed command's terminal, are the
+// device moving. So the waiting request is held to the deadline only while
+// the device is silent, and a device that drains slowly, or ends the abandoned
+// command late, each event inside the deadline, never has it refused.
+void NvmPortSuite::owed_events_restart_a_waiting_request() {
+  fresh_reset();
+  h.deadline_ok = true;
+  const std::vector<uint8_t> rec = frame(2, pattern(40, 0x2C));
+  const std::vector<uint8_t> other = frame(5, pattern(24, 0x2C));
+  CHECK(h.commit(2, rec) == 0 && h.commit(5, other) == 0,
+        "T28 setup: regions 2 and 5 committed");
+
+  // (d) an owed READ that drains one byte every TMO / 2 cycles while a
+  // restore waits on it, over many deadlines
+  h.rstall = TMO / 2;
+  int rc = silenced(false, rec, SIL_BYTE, 1, TMO + 1, 10);
+  CHECK(rc == 1 && h.last_cause == 3 && h.d_busy,
+        "T28d setup: a slow payload READ abandoned at its 10th byte, still owed");
+  bool waited = wait_on_owed(false, other, 0);
+  long span = 0;
+  for (; span < 100L * TMO && h.d_busy; ++span) h.tick();
+  const int drained = h.dev_rd;
+  h.rstall = 0;
+  rc = h.run_op();
+  CHECK(waited && span > 10 * TMO && drained >= 20 && rc == 0 && h.err_pulses == 0
+            && h.rbytes == other && h.ops.size() == 2,
+        "T28d an owed READ drained one byte every %d cycles while a restore waits: "
+        "each drained byte restarts the count, so the restore, held %ld cycles "
+        "behind %d drained bytes, is served byte-exact, never DEADLINE (rc %d, "
+        "cause %d)", TMO / 2, span, drained, rc, h.last_cause);
+
+  // (e) an owed ERASE whose done comes three fifths of a deadline into a
+  // restore's wait, and the restore's grant three fifths of a deadline later
+  rc = silenced(true, rec, SIL_DONE, 0, -1);
+  CHECK(rc == 1 && h.last_cause == 3 && h.d_busy,
+        "T28e setup: an ERASE abandoned before its done, still owed");
+  waited = wait_on_owed(false, other, 3 * TMO / 5);
+  h.end_command_now(/*with_err=*/false);
+  h.gnt_delay = 3 * TMO / 5;
+  rc = h.run_op();
+  h.gnt_delay = 1;
+  CHECK(waited && rc == 0 && h.err_pulses == 0 && h.rbytes == other && h.ops.size() == 2,
+        "T28e the owed ERASE's done, %d cycles into a restore's wait, restarts the "
+        "count: the restore, granted %d cycles after it, is served byte-exact, "
+        "never DEADLINE (rc %d, cause %d)", 3 * TMO / 5, 3 * TMO / 5, rc, h.last_cause);
+  h.deadline_ok = false;
+}
+
 // T25's cut points, named on the BUS: tick the commit until the device
 // model reaches the stage (`reset_mid_commit_at_six_stages` lists them).
 bool NvmPortSuite::run_to_stage(int stage, size_t record_bytes) {
@@ -2380,6 +2511,8 @@ int NvmPortSuite::run() {
   the_deadline_never_refuses_a_slow_device();
   the_next_request_after_a_deadline();
   an_abandoned_write_is_contained();
+  owed_terminals_are_credited_to_no_operation();
+  owed_events_restart_a_waiting_request();
   reset_mid_commit_at_six_stages();
   reset_of_the_port_alone_mid_commit();
   a_short_command_is_a_device_error();
