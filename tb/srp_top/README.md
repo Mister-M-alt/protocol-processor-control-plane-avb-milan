@@ -219,8 +219,19 @@ above. Plain `make` still runs the positive suite. The patch files retain their
 unified-diff context verbatim; `.gitattributes` exempts only those files from
 blank-at-end-of-line and blank-at-end-of-file whitespace checks.
 
-Each control and deliberate RTL defect builds in a temporary source copy.
-A mutation counts only when a simulation finishes with a nonzero result and
+`python3 tb/srp_top/mutants.py --output DIR [--only a,b] [--jobs N]` runs the
+campaign directly: `--jobs N` (default 4, the meaning and default of
+`tb/pp_top/d3_mutants.py`; the `mutants` target runs the default) builds and
+runs up to N copies at once, and the results are printed in the declared order
+whatever order they finish in. A label graded on two suites keeps one receipt,
+the later row's, as a serial run leaves it. Measured 2026-10-02 at `85da751`
+with Verilator 5.050, each run pinned to 4 of the host's 16 CPUs: `--jobs 1`
+took 2,258 s and `--jobs 8` 1,099 s. All 89 runs (11 controls, 78 arm runs)
+gave the same verdict and the same failing checks in both, and both ended
+`90 checks: 90 PASS, 0 FAIL` with assertion coverage 65/65.
+
+Each control and deliberate RTL defect builds in a temporary source copy of its
+own. A mutation counts only when a simulation finishes with a nonzero result and
 its named assertion fails; compilation failures and timeouts do not count.
 The driver applies checked-in unified patches with `git apply --check` in a
 fresh scratch RTL copy; it never reads DUT source to derive an oracle. Only

@@ -3,21 +3,26 @@
 """Plant reviewed AECP deadline and hazard-class arms in scratch and require named check failures.
 
 Lane C5a's campaign (issues #81, #57 and #84): each arm is an explicit patch in
-mutations/, applied with git apply to a scratch copy of the tree; this driver
-reads only simulation logs, never production source. Every suite it runs is
-cycle-bounded. A positive control of each (suite, target) pair runs first and
-must pass; an arm is KILLED only when its simulation completed (a tally was
-printed), failed, and printed the required check. A build failure or a missing
-tally never counts as a kill.
+mutations/, applied with git apply to a scratch copy of the tree of its own;
+this driver reads only simulation logs, never production source. Every suite it
+runs is cycle-bounded. A positive control of each (suite, target) pair runs
+first, each in its own copy, and must pass; an arm is KILLED only when its
+simulation completed (a tally was printed), failed, and printed the required
+check. A build failure or a missing tally never counts as a kill. `--jobs N`
+runs up to N copies at once; the results are read in the declared order.
 """
 import argparse
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 PATCHES = Path(__file__).resolve().parent / "mutations"
+
+sys.path.insert(0, str(ROOT / "tb" / "common"))
+from mutant_pool import add_jobs_argument, in_order  # noqa: E402
 
 # arm, patch, suite, make target, the check that must fail (its label prefix)
 MUTANTS = [
@@ -174,25 +179,29 @@ def run(tree: Path, suite: str, target: str, log: Path) -> tuple[int, str]:
     return result.returncode, log.read_text()
 
 
-def forget_generated_roms(tree: Path) -> None:
-    """Drop every ROM image the suites generate, so the next build regenerates it.
-
-    The restored generators keep their original timestamps, which are older
-    than an image an earlier arm generated from a patched generator: without
-    this, make would keep that stale image for every later arm.
-    """
-    for suite in SUITES:
-        for image in ("ucode.hex", "ltn_rom.hex"):
-            (tree / "tb" / suite / image).unlink(missing_ok=True)
-
-
 def plant(tree: Path, patch: str) -> None:
-    """Restore the scratch RTL and apply one explicit patch, refusing drift."""
-    shutil.copytree(ROOT / "hdl", tree / "hdl", dirs_exist_ok=True)
-    forget_generated_roms(tree)
+    """Apply one explicit patch to the scratch RTL, refusing drift."""
     path = str(PATCHES / (patch + ".patch"))
     subprocess.run(["git", "apply", "--check", path], cwd=tree, check=True)
     subprocess.run(["git", "apply", path], cwd=tree, check=True)
+
+
+def trial(job: tuple[str | None, str, str, Path]) -> tuple[int, str]:
+    """Copy the tree to a scratch directory of its own, plant the patch if any, and run.
+
+    The copy carries no generated ROM image (`*.hex` is not copied), so every
+    build generates its ROMs from the generators as planted.
+    """
+    patch, suite, target, log = job
+    with tempfile.TemporaryDirectory(prefix="aecp-mutants-") as tmp:
+        tree = Path(tmp)
+        shutil.copytree(ROOT / "hdl", tree / "hdl")
+        for name in SUITES:
+            shutil.copytree(ROOT / "tb" / name, tree / "tb" / name,
+                            ignore=shutil.ignore_patterns("obj_*", "*.hex", "__pycache__"))
+        if patch is not None:
+            plant(tree, patch)
+        return run(tree, suite, target, log)
 
 
 def failures_of(contents: str) -> list[str]:
@@ -205,43 +214,48 @@ def completed(contents: str) -> bool:
     return "checks" in contents
 
 
-def campaign(tree: Path, output: Path, selected: list[tuple]) -> tuple[int, int]:
+def campaign(output: Path, selected: list[tuple], jobs: int) -> tuple[int, int]:
     """Run the positive controls, then require each arm's own named check."""
     passed = 0
     total = 0
-    for suite, target in sorted({(m[2], m[3]) for m in selected}):
-        rc, contents = run(tree, suite, target, output / f"control-{suite}-{target}.log")
-        ok = rc == 0 and completed(contents) and not failures_of(contents)
-        total += 1
-        passed += ok
-        print(f"control {suite} {target}: rc={rc} {'PASS' if ok else 'FAIL'}", flush=True)
-        if not ok:
-            print(contents[-4000:])
-            return passed, total
-    for arm, patch, suite, target, expected in selected:
-        plant(tree, patch)
-        rc, contents = run(tree, suite, target, output / f"{arm}.log")
-        failures = failures_of(contents)
-        named = [line for line in failures if line[len("FAIL:"):].strip().startswith(expected)]
-        ok = rc != 0 and completed(contents) and bool(named)
-        total += 1
-        passed += ok
-        verdict = "KILLED" if ok else "UNPROVEN"
-        print(f"{arm}: rc={rc} failures={len(failures)} named={len(named)} {verdict}",
-              flush=True)
-        for line in failures:
-            print(f"    {line}", flush=True)
-        if not ok:
-            print(contents[-2500:], flush=True)
-    shutil.copytree(ROOT / "hdl", tree / "hdl", dirs_exist_ok=True)
+    pairs = sorted({(m[2], m[3]) for m in selected})
+    units = [(None, suite, target, output / f"control-{suite}-{target}.log")
+             for suite, target in pairs]
+    with in_order(trial, units, jobs) as results:
+        for (suite, target), (rc, contents) in zip(pairs, results):
+            ok = rc == 0 and completed(contents) and not failures_of(contents)
+            total += 1
+            passed += ok
+            print(f"control {suite} {target}: rc={rc} {'PASS' if ok else 'FAIL'}", flush=True)
+            if not ok:
+                print(contents[-4000:])
+                return passed, total
+    units = [(patch, suite, target, output / f"{arm}.log")
+             for arm, patch, suite, target, _ in selected]
+    with in_order(trial, units, jobs) as results:
+        for (arm, patch, suite, target, expected), (rc, contents) in zip(selected, results):
+            failures = failures_of(contents)
+            named = [line for line in failures
+                     if line[len("FAIL:"):].strip().startswith(expected)]
+            ok = rc != 0 and completed(contents) and bool(named)
+            total += 1
+            passed += ok
+            verdict = "KILLED" if ok else "UNPROVEN"
+            print(f"{arm}: rc={rc} failures={len(failures)} named={len(named)} {verdict}",
+                  flush=True)
+            for line in failures:
+                print(f"    {line}", flush=True)
+            if not ok:
+                print(contents[-2500:], flush=True)
     return passed, total
 
 
 def main() -> int:
-    """Select arms, isolate every write in a scratch tree, fail on any unproven arm."""
+    """Select arms, isolate every write in scratch trees, fail on any unproven arm."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--only", default="")
+    add_jobs_argument(parser)
     args = parser.parse_args()
     requested = set(args.only.split(",")) if args.only else {m[0] for m in MUTANTS}
     unknown = requested - {m[0] for m in MUTANTS}
@@ -249,13 +263,7 @@ def main() -> int:
         parser.error(f"unknown mutation arms: {sorted(unknown)}")
     selected = [m for m in MUTANTS if m[0] in requested]
     args.output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="aecp-mutants-") as tmp:
-        tree = Path(tmp)
-        shutil.copytree(ROOT / "hdl", tree / "hdl")
-        for suite in SUITES:
-            shutil.copytree(ROOT / "tb" / suite, tree / "tb" / suite,
-                            ignore=shutil.ignore_patterns("obj_*", "*.hex", "__pycache__"))
-        passed, total = campaign(tree, args.output, selected)
+    passed, total = campaign(args.output, selected, args.jobs)
     print(f"{total} checks: {passed} PASS, {total - passed} FAIL")
     return int(passed != total)
 

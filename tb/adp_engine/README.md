@@ -161,11 +161,20 @@ Mutation-proven 2026-08-11 (backup/sed/run/restore):
 ## Mutation campaign (`make mutants`)
 
 `mutants.py` applies each reviewed patch in `mutations/` to a scratch copy of
-the tree with `git apply`, runs one suite target there, and requires the
-named check to fail in a completed simulation. It reads logs only, never
+the tree of its own with `git apply`, runs one suite target there, and requires
+the named check to fail in a completed simulation. It reads logs only, never
 production source. A positive control of every (suite, target) pair runs
-first. `MUTANT_OUTPUT` (default `/tmp/adp-mutants`) receives one log per arm.
+first, each in its own copy. `MUTANT_OUTPUT` (default `/tmp/adp-mutants`)
+receives one log per arm. `python3 mutants.py --output DIR [--only a,b]
+[--jobs N]` runs it directly: `--jobs N` (default 4, the meaning and default of
+`tb/pp_top/d3_mutants.py`; `make mutants` runs the default) builds and runs up
+to N copies at once, and the results are printed in the table's order whatever
+order they finish in.
 Counts below were taken on 2026-09-29 with Verilator 5.050, 30 of 30 arms killed.
+Measured 2026-10-02 at `85da751` with Verilator 5.050, each run pinned to 4 of
+the host's 16 CPUs: `--jobs 1` took 502 s and `--jobs 8` 333 s. Every control
+and arm gave the same verdict and the same failing checks in both runs, the
+counts below.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|

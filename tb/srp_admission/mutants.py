@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: CERN-OHL-W-2.0
-"""Clean controls and admission mutants, built only in temporary trees."""
+"""Clean controls and admission mutants, built only in temporary trees.
+
+Every run of a suite on a control or a mutant builds in a temporary tree of its
+own. `--jobs N` runs up to N of them at once; the results are read in the
+declared order.
+"""
 import argparse
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 REPO = Path(__file__).resolve().parents[2]
 ADMISSION = "hdl/srp/KL_srp_admission.sv"
+
+sys.path.insert(0, str(REPO / "tb" / "common"))
+from mutant_pool import add_jobs_argument, in_order  # noqa: E402
 
 #: The suites every tree runs: (log name, suite directory, make arguments).
 SUITES = (
@@ -72,24 +81,35 @@ def judge(expect: str | None, status: int, contents: str) -> bool:
     return status != 0 and "checks:" in contents and expect in contents
 
 
-def campaign(tree: Path, output: Path) -> tuple[int, int]:
-    """Run the controls and every mutant; return (checks, failures)."""
+def trial(job: tuple[str, str, tuple[str, ...], Path]) -> tuple[int, str]:
+    """Build a temporary tree of its own with this admission source and run one suite."""
+    source, suite, command, log = job
+    with tempfile.TemporaryDirectory(prefix="pp112-mutants-") as tmp:
+        tree = Path(tmp)
+        build_tree(tree)
+        (tree / ADMISSION).write_text(source)
+        return run_suite(tree, suite, command, log)
+
+
+def campaign(output: Path, chosen: list[tuple], jobs: int) -> tuple[int, int]:
+    """Run the controls and every chosen mutant; return (checks, failures)."""
     original = (REPO / ADMISSION).read_text()
     variants = [("control", original, {})]
-    for label, edits, expects in MUTANTS:
+    for label, edits, expects in chosen:
         source = original
         for anchor, replacement, count in edits:
             if source.count(anchor) != count:
                 raise RuntimeError(f"{label}: expected {count} copies of {anchor!r}")
             source = source.replace(anchor, replacement)
         variants.append((label, source, expects))
+    runs = [(label, name, expects.get(suite) if expects else None)
+            for label, _, expects in variants for name, suite, _ in SUITES]
+    units = [(source, suite, command, output / f"{label}-{name}.log")
+             for label, source, _ in variants for name, suite, command in SUITES]
     checks = 0
     failed = 0
-    for label, source, expects in variants:
-        (tree / ADMISSION).write_text(source)
-        for name, suite, command in SUITES:
-            expect = expects.get(suite) if expects else None
-            status, contents = run_suite(tree, suite, command, output / f"{label}-{name}.log")
+    with in_order(trial, units, jobs) as results:
+        for (label, name, expect), (status, contents) in zip(runs, results):
             passed = judge(expect, status, contents)
             checks += 1
             failed += not passed
@@ -101,12 +121,15 @@ def main() -> int:
     """Run controls and mutants; return 0 only if every expected outcome holds."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--only", nargs="*", default=None)
+    add_jobs_argument(parser)
     args = parser.parse_args()
+    unknown = sorted(set(args.only or ()) - {m[0] for m in MUTANTS})
+    if unknown:
+        parser.error("unknown mutant(s): " + " ".join(unknown))
+    chosen = [m for m in MUTANTS if not args.only or m[0] in args.only]
     args.output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="pp112-mutants-") as tmp:
-        tree = Path(tmp)
-        build_tree(tree)
-        checks, failed = campaign(tree, args.output.resolve())
+    checks, failed = campaign(args.output.resolve(), chosen, args.jobs)
     print(f"{checks} checks: {checks - failed} PASS, {failed} FAIL")
     return int(failed != 0)
 
