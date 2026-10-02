@@ -95,8 +95,8 @@
      u('BUILD_FLD', ra=6, fmt=FMT_D),             # the CURRENT rate     @28
      u('SEND_RESP'),
 @@ -1427,31 +1417,25 @@
- # stored, read back and announced while the media plane resolved it to
- # INTERNAL. The count sits mid-lane, hence SHIFT_R + a FMT_W MOVE.
+ # backed was stored, read back and announced while the media plane resolved
+ # it to INTERNAL. The count sits mid-lane, hence SHIFT_R + a FMT_W MOVE.
  #
 -# Every refusal shares one tail: r6 carries the current index, preloaded with
 -# 0 so the NO_SUCH_DESCRIPTOR arm (no domain, no current value) answers zero

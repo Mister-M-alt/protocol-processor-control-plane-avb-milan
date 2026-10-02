@@ -339,6 +339,9 @@ module pp_top_wrap (
     output logic  [7:0] aecp_fmt_in_v_o,
     output logic [8*64-1:0] aecp_fmt_out_o,
     output logic  [7:0] aecp_fmt_out_v_o,
+    //! CLOCK_DOMAIN 0's clock_source_index as the top exports it, the face
+    //! the integrator decodes into a media-clock source (section D3C)
+    output logic [15:0] aecp_clk_src_index_o,
     //! Processor event on clk_i: one cycle per accepted live 64-bit name
     //! lane at the write edge, no ready/ack; boot, unchanged, refused and
     //! pre-acceptance aborted writes remain silent.
@@ -596,7 +599,7 @@ module pp_top_wrap (
       //! a silent harness integration gap.
       .aecp_cur_config_o     (),
       .aecp_identify_o       (dbg_identify_o),
-      .aecp_clk_src_index_o  (),
+      .aecp_clk_src_index_o  (aecp_clk_src_index_o),
       .aecp_strm_started_o   (aecp_strm_started_o),
       .aecp_pt_offset_o      (aecp_pt_offset_o),
       .aecp_pt_offset_v_o    (aecp_pt_offset_v_o),
