@@ -18,26 +18,74 @@ class D(IntEnum):
     ENTITY = 0x0000
     CONFIGURATION = 0x0001
     AUDIO_UNIT = 0x0002
+    VIDEO_UNIT = 0x0003
+    SENSOR_UNIT = 0x0004
     STREAM_INPUT = 0x0005
     STREAM_OUTPUT = 0x0006
+    JACK_INPUT = 0x0007
+    JACK_OUTPUT = 0x0008
     AVB_INTERFACE = 0x0009
     CLOCK_SOURCE = 0x000A
     LOCALE = 0x000C
     STRINGS = 0x000D
     STREAM_PORT_INPUT = 0x000E
     STREAM_PORT_OUTPUT = 0x000F
+    EXTERNAL_PORT_INPUT = 0x0010
+    EXTERNAL_PORT_OUTPUT = 0x0011
+    INTERNAL_PORT_INPUT = 0x0012
+    INTERNAL_PORT_OUTPUT = 0x0013
     AUDIO_CLUSTER = 0x0014
+    VIDEO_CLUSTER = 0x0015
+    SENSOR_CLUSTER = 0x0016
     AUDIO_MAP = 0x0017
+    VIDEO_MAP = 0x0018
+    SENSOR_MAP = 0x0019
     CONTROL = 0x001A
+    SIGNAL_SELECTOR = 0x001B
+    MIXER = 0x001C
+    MATRIX = 0x001D
+    SIGNAL_SPLITTER = 0x001F
+    SIGNAL_COMBINER = 0x0020
+    SIGNAL_DEMULTIPLEXER = 0x0021
+    SIGNAL_MULTIPLEXER = 0x0022
+    SIGNAL_TRANSCODER = 0x0023
     CLOCK_DOMAIN = 0x0024
+    CONTROL_BLOCK = 0x0025
     TIMING = 0x0026
+    PTP_INSTANCE = 0x0027
 
 
 #: IEEE 1722.1-2021 §7.2.2: the types a CONFIGURATION's descriptor_counts may
-#: list ("the counts of the top level descriptors").
+#: list ("the counts of the top level descriptors"). A descriptor of one of
+#: these types that another descriptor owns is not top-level.
 TOP_LEVEL = frozenset({0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
                        0x0B, 0x0C, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,
                        0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27})
+
+Span = tuple[int, int, int]
+#: The (count offset, base offset, child type) ranges a Unit owns (IEEE
+#: 1722.1-2021 §7.2.3 to §7.2.5): its six kinds of Port, in the order §7.2
+#: walks them for CONTROL numbering, then its CONTROLs and the other
+#: multi-level types.
+UNIT_PORTS: tuple[Span, ...] = (
+    (72, 74, D.STREAM_PORT_INPUT), (76, 78, D.STREAM_PORT_OUTPUT),
+    (80, 82, D.EXTERNAL_PORT_INPUT), (84, 86, D.EXTERNAL_PORT_OUTPUT),
+    (88, 90, D.INTERNAL_PORT_INPUT), (92, 94, D.INTERNAL_PORT_OUTPUT))
+UNIT_RANGES: tuple[Span, ...] = UNIT_PORTS + (
+    (96, 98, D.CONTROL), (100, 102, D.SIGNAL_SELECTOR), (104, 106, D.MIXER),
+    (108, 110, D.MATRIX), (112, 114, D.SIGNAL_SPLITTER), (116, 118, D.SIGNAL_COMBINER),
+    (120, 122, D.SIGNAL_DEMULTIPLEXER), (124, 126, D.SIGNAL_MULTIPLEXER),
+    (128, 130, D.SIGNAL_TRANSCODER), (132, 134, D.CONTROL_BLOCK))
+#: Units in the order §7.2 walks them, each with the cluster and map types
+#: its Stream Ports' base_cluster and base_map name (§7.2.13).
+UNITS = ((D.AUDIO_UNIT, D.AUDIO_CLUSTER, D.AUDIO_MAP),
+         (D.VIDEO_UNIT, D.VIDEO_CLUSTER, D.VIDEO_MAP),
+         (D.SENSOR_UNIT, D.SENSOR_CLUSTER, D.SENSOR_MAP))
+#: Every other §7.2 owner of a number_of_controls/base_control pair: a JACK
+#: (§7.2.7), an AVB_INTERFACE (§7.2.8), a CONTROL_BLOCK (§7.2.33) and a
+#: PTP_INSTANCE (§7.2.35). §7.2's numbering walk does not place their CONTROLs.
+CONTROL_OWNERS = ((D.JACK_INPUT, 74, 76), (D.JACK_OUTPUT, 74, 76), (D.AVB_INTERFACE, 98, 100),
+                  (D.CONTROL_BLOCK, 70, 72), (D.PTP_INSTANCE, 82, 84))
 
 CRF_MILAN = 0x041060010000BB80          # Milan v1.2 §7.3.4 Table 7.1
 IDENTIFY = 0x90E0F00000000001           # IEEE 1722.1-2021 Table 7-98
@@ -72,12 +120,14 @@ CHECKS = {
     "stream-port-for-aaf": ("L1", MILAN + "§5.3.3.7",
                             "a Stream Port in the direction of an AAF stream"),
     "port-cluster-minimum": ("L1", MILAN + "§5.3.3.8", "at least one AUDIO_CLUSTER per Stream Port"),
-    "child-exists": ("L1", MILAN + "§5.3.2; " + IEEE + "§7.2.3, §7.2.8, §7.2.13",
+    "child-exists": ("L1", MILAN + "§5.3.2; " + IEEE + "§7.2.3 to §7.2.5, §7.2.7, §7.2.8, "
+                     "§7.2.13 to §7.2.15, §7.2.33, §7.2.35",
                      "a child range names existing descriptors"),
     "single-parent": ("L1", MILAN + "§5.3.2", "no descriptor has two parents"),
     "has-parent": ("L1", MILAN + "§5.3.2",
                    "every Stream Port, AUDIO_CLUSTER and AUDIO_MAP has a parent"),
-    "parent-order": ("L2", IEEE + "§7.2", "child indices follow the hierarchy in order"),
+    "parent-order": ("L2", IEEE + "§7.2",
+                     "CONTROL indices follow the §7.2 walk: configuration first, then each Unit"),
     "stream-presence": ("L3", MILAN + "§5.3.3.4", "a STREAM_INPUT or STREAM_OUTPUT per configuration"),
     "talker-base-format": ("L3", MILAN + "§6.3", "a Talker has a Stream Output with a Base format"),
     "listener-base-format": ("L3", MILAN + "§6.4", "a Listener has a Stream Input with a Base format"),
@@ -182,7 +232,7 @@ class RuleContext:
     adp: dict[str, int]
     findings: list[Finding] = field(default_factory=list)
     claims: dict[int, dict[tuple[int, int], list[tuple[int, int]]]] = field(default_factory=dict)
-    ranges: dict[int, list[tuple[int, int, int, tuple[int, int]]]] = field(default_factory=dict)
+    walk: dict[int, list[tuple[int, int, tuple[int, int]]]] = field(default_factory=dict)
     formats: dict[tuple[int, int, int], list[int] | None] = field(default_factory=dict)
     values: dict[str, int | None] = field(default_factory=dict)
 
@@ -272,13 +322,16 @@ def _formats(ctx: RuleContext, where: Where) -> list[int] | None:
     return [int.from_bytes(body[offset + 8 * k:offset + 8 * k + 8], "big") for k in range(count)]
 
 
-def _claim_range(ctx: RuleContext, parent: Where, child: int, span: tuple[int, int]) -> None:
-    """Record that `parent` owns `child` descriptors base..base+count-1."""
+def _claim_range(ctx: RuleContext, parent: Where, child: int, span: tuple[int, int],
+                 walked: bool) -> None:
+    """Record that `parent` owns `child` descriptors base..base+count-1, and a
+    CONTROL range on the IEEE 1722.1-2021 §7.2 numbering walk in walk order."""
     cfg, ptype, pidx = parent
     base, count = span
     if count == 0:
         return
-    ctx.ranges.setdefault(cfg, []).append((child, base, count, (ptype, pidx)))
+    if walked and child == D.CONTROL:
+        ctx.walk.setdefault(cfg, []).append((base, count, (ptype, pidx)))
     claims = ctx.claims.setdefault(cfg, defaultdict(list))
     for k in range(base, base + count):
         if k not in ctx.of(cfg, child):
@@ -287,46 +340,51 @@ def _claim_range(ctx: RuleContext, parent: Where, child: int, span: tuple[int, i
             claims[(child, k)].append((ptype, pidx))
 
 
-def _claim_fields(ctx: RuleContext, where: Where, spans: tuple[tuple[int, int, int], ...]) -> bool:
-    """Claim each (count offset, base offset, child type) range of `where`."""
+def _claim_fields(ctx: RuleContext, where: Where, spans: tuple[Span, ...],
+                  walked: bool = False) -> list[tuple[int, int]] | None:
+    """Claim each (count offset, base offset, child type) range of `where`;
+    their (base, count) pairs, or None when `where` is too short."""
+    found = []
     for count_at, base_at, child in spans:
         count = ctx.read("child-exists", where, count_at, 2)
         base = ctx.read("child-exists", where, base_at, 2)
         if count is None or base is None:
-            return False
-        _claim_range(ctx, where, child, (base, count))
-    return True
+            return None
+        _claim_range(ctx, where, child, (base, count), walked)
+        found.append((base, count))
+    return found
 
 
-def _survey_unit(ctx: RuleContext, cfg: int, unit: int) -> None:
-    """One AUDIO_UNIT's ranges (§7.2.3), then those of the Stream Ports it owns
-    (§7.2.13), in the order IEEE 1722.1-2021 §7.2 numbers them."""
-    where = (cfg, D.AUDIO_UNIT, unit)
-    ports = ((72, 74, D.STREAM_PORT_INPUT), (76, 78, D.STREAM_PORT_OUTPUT))
-    if not _claim_fields(ctx, where, ((96, 98, D.CONTROL),) + ports):
+def _survey_unit(ctx: RuleContext, where: Where, cluster: int, amap: int) -> None:
+    """One Unit's ranges (§7.2.3 to §7.2.5), then those of the Ports it owns
+    (§7.2.13 to §7.2.15), in the order IEEE 1722.1-2021 §7.2 numbers CONTROLs."""
+    found = _claim_fields(ctx, where, UNIT_RANGES, walked=True)
+    if found is None:
         return
-    for count_at, base_at, ptype in ports:
-        base = ctx.of(cfg, D.AUDIO_UNIT)[unit][base_at:base_at + 2]
-        count = ctx.of(cfg, D.AUDIO_UNIT)[unit][count_at:count_at + 2]
-        first = int.from_bytes(base, "big")
-        for port in range(first, first + int.from_bytes(count, "big")):
+    cfg = where[0]
+    for (base, count), (_, _, ptype) in zip(found, UNIT_PORTS):
+        spans: tuple[Span, ...] = ((8, 10, D.CONTROL),)
+        if ptype in (D.STREAM_PORT_INPUT, D.STREAM_PORT_OUTPUT):
+            spans += ((12, 14, cluster), (16, 18, amap))
+        for port in range(base, base + count):
             if port in ctx.of(cfg, ptype):
-                _claim_fields(ctx, (cfg, ptype, port), ((8, 10, D.CONTROL),
-                                                        (12, 14, D.AUDIO_CLUSTER),
-                                                        (16, 18, D.AUDIO_MAP)))
+                _claim_fields(ctx, (cfg, ptype, port), spans, walked=True)
 
 
 def survey(ctx: RuleContext) -> None:
-    """Format lists and parent ranges, read once for every rule."""
+    """Format lists and parent ranges, read once for every rule: every Unit in
+    the §7.2 walk order with its Ports, then every other CONTROL owner."""
     for cfg in ctx.cfgs:
         ctx.claims.setdefault(cfg, defaultdict(list))
         for dtype in (D.STREAM_INPUT, D.STREAM_OUTPUT):
             for index in sorted(ctx.of(cfg, dtype)):
                 ctx.formats[(cfg, dtype, index)] = _formats(ctx, (cfg, dtype, index))
-        for unit in sorted(ctx.of(cfg, D.AUDIO_UNIT)):
-            _survey_unit(ctx, cfg, unit)
-        for index in sorted(ctx.of(cfg, D.AVB_INTERFACE)):
-            _claim_fields(ctx, (cfg, D.AVB_INTERFACE, index), ((98, 100, D.CONTROL),))
+        for unit_type, cluster, amap in UNITS:
+            for unit in sorted(ctx.of(cfg, unit_type)):
+                _survey_unit(ctx, (cfg, unit_type, unit), cluster, amap)
+        for owner, count_at, base_at in CONTROL_OWNERS:
+            for index in sorted(ctx.of(cfg, owner)):
+                _claim_fields(ctx, (cfg, owner, index), ((count_at, base_at, D.CONTROL),))
 
 
 def _entity(ctx: RuleContext) -> bytes | None:
@@ -387,8 +445,8 @@ def _descriptor_counts(ctx: RuleContext, cfg: int) -> None:
             ctx.bad("descriptor-counts", where, f"lists {type_name(dtype)} twice")
         declared[dtype] = n
     claims = ctx.claims.get(cfg, {})
-    held = {dtype: len(members) for dtype, members in ctx.model[cfg].items() if dtype in TOP_LEVEL}
-    held[D.CONTROL] = len([k for k in ctx.of(cfg, D.CONTROL) if not claims.get((D.CONTROL, k))])
+    held = {dtype: len([k for k in members if not claims.get((dtype, k))])
+            for dtype, members in ctx.model[cfg].items() if dtype in TOP_LEVEL}
     for dtype in sorted(set(declared) | {t for t, n in held.items() if n}):
         if dtype not in TOP_LEVEL:
             ctx.bad("descriptor-counts", where, f"lists {type_name(dtype)}, which is not a "
@@ -413,7 +471,8 @@ def _rule_tree(ctx: RuleContext) -> None:
                     "a stream lists an AAF format and the configuration has no AUDIO_UNIT")
         claims = ctx.claims[cfg]
         for streams, ptype in ((aaf_in, D.STREAM_PORT_INPUT), (aaf_out, D.STREAM_PORT_OUTPUT)):
-            owned = [k for k in ctx.of(cfg, ptype) if claims.get((ptype, k))]
+            owned = [k for k in ctx.of(cfg, ptype)
+                     if any(p[0] == D.AUDIO_UNIT for p in claims.get((ptype, k), []))]
             if streams and not owned:
                 ctx.bad("stream-port-for-aaf", (cfg, ptype, None),
                         f"AAF streams {streams} and no {ptype.name} in an AUDIO_UNIT")
@@ -435,26 +494,27 @@ def _rule_tree(ctx: RuleContext) -> None:
 
 
 def _rule_order(ctx: RuleContext) -> None:
-    """L2: child ranges ascend in the order IEEE 1722.1-2021 §7.2 walks the
-    hierarchy, and configuration-level CONTROLs come before every other."""
+    """L2: CONTROL, the multi-level type IEEE 1722.1-2021 §7.2 names, is
+    numbered as §7.2 walks the hierarchy: the configuration's own CONTROLs
+    first, then for each Unit (AUDIO, VIDEO, SENSOR, by index) its CONTROLs and
+    those of its Stream, External and Internal Ports. CONTROLs a JACK, an
+    AVB_INTERFACE, a CONTROL_BLOCK or a PTP_INSTANCE owns are outside that walk,
+    and single-level types have no order to keep (07 §3.1)."""
     for cfg in ctx.cfgs:
-        ends: dict[int, tuple[int, tuple[int, int]]] = {}
-        for child, base, count, parent in ctx.ranges.get(cfg, []):
-            if parent[0] == D.AVB_INTERFACE:
-                continue
-            if child in ends and base < ends[child][0]:
-                prev = ends[child][1]
+        end, prev = 0, (0, 0)
+        for base, count, parent in ctx.walk.get(cfg, []):
+            if base < end:
                 ctx.bad("parent-order", (cfg, parent[0], parent[1]),
-                        f"its {type_name(child)} range starts at {base}, before the end "
-                        f"{ends[child][0]} of the range of {type_name(prev[0])} {prev[1]}")
-            ends[child] = (max(base + count, ends.get(child, (0,))[0]), parent)
+                        f"its CONTROL range starts at {base}, before the end {end} of the "
+                        f"range of {type_name(prev[0])} {prev[1]}")
+            end, prev = max(end, base + count), parent
         claims = ctx.claims[cfg]
         top = [k for k in ctx.of(cfg, D.CONTROL) if not claims.get((D.CONTROL, k))]
-        owned = [k for k in ctx.of(cfg, D.CONTROL)
-                 if any(p[0] != D.AVB_INTERFACE for p in claims.get((D.CONTROL, k), []))]
-        if top and owned and max(top) > min(owned):
+        walked = [k for base, count, _ in ctx.walk.get(cfg, []) for k in range(base, base + count)
+                  if k in ctx.of(cfg, D.CONTROL)]
+        if top and walked and max(top) > min(walked):
             ctx.bad("parent-order", (cfg, D.CONTROL, max(top)),
-                    f"a configuration-level CONTROL after CONTROL {min(owned)}, which a "
+                    f"a configuration-level CONTROL after CONTROL {min(walked)}, which a "
                     "unit or a port owns")
 
 

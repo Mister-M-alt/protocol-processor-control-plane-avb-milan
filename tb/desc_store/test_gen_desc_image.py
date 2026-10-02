@@ -16,6 +16,7 @@ on the two models beside the generator:
 import copy
 import importlib.util
 import json
+import struct
 from pathlib import Path
 import subprocess
 import sys
@@ -278,6 +279,53 @@ class LintTest(unittest.TestCase):
                 self.assertTrue(any(line.startswith(f"{rule} {mutation.check}: ")
                                     for line in lines), lines)
                 self.assertEqual(gen_desc_image.build(model, lint=False)[0][:4], b"AEMI")
+
+
+class OwnershipTest(unittest.TestCase):
+    """L1's top-level counts and L2's order follow every IEEE 1722.1-2021 §7.2
+    owner: conforming models that own descriptors outside the Units pack."""
+
+    def packs(self, model: dict[str, Any]) -> None:
+        """The model packs with the lint on and no waiver."""
+        self.assertIn("lint waivers applied: 0", gen_desc_image.build(model)[1])
+
+    def test_unit_and_port_controls_in_walk_order(self) -> None:
+        """AUDIO_UNIT 0 owns CONTROL 1 and its input port CONTROL 2 (§7.2's walk);
+        neither is top-level, so descriptor_counts still says one CONTROL."""
+        model = normalised(MILAN_MIN)
+        for index in (1, 2):
+            mut.add(model, (mut.CONTROL, index, 0), mut.control(model), top=False)
+        mut.own_controls(model, (mut.AUDIO_UNIT, 0), 96, 1)
+        mut.own_controls(model, (mut.STREAM_PORT_INPUT, 0), 8, 2)
+        self.packs(model)
+
+    def test_jack_control_is_not_top_level(self) -> None:
+        """JACK_INPUT 0 owns CONTROL 1 (§7.2.7): descriptor_counts lists the
+        jack and the one configuration-level CONTROL (R434-1 E10)."""
+        model = normalised(MILAN_MIN)
+        jack = bytearray(78)
+        struct.pack_into(">HH", jack, 74, 1, 1)
+        mut.add(model, (mut.JACK_INPUT, 0, 0), jack)
+        mut.list_count(model, mut.JACK_INPUT, 1)
+        mut.add(model, (mut.CONTROL, 1, 0), mut.control(model), top=False)
+        self.packs(model)
+
+    def test_unit_signal_selector_is_not_top_level(self) -> None:
+        """A SIGNAL_SELECTOR AUDIO_UNIT 0 owns (§7.2.3) is not counted at the top."""
+        model = normalised(MILAN_MIN)
+        selector = bytearray(96)
+        struct.pack_into(">H", selector, 80, 96)
+        mut.add(model, (0x001B, 0, 0), selector)
+        mut.put(model, (mut.AUDIO_UNIT, 0, 0), 100, 1)
+        self.packs(model)
+
+    def test_single_level_ranges_have_no_order(self) -> None:
+        """The output port's clusters numbered before the input port's: §7.2
+        orders only multi-level types (R435-1 probe B)."""
+        model = normalised(MILAN_MIN)
+        mut.put(model, (mut.STREAM_PORT_INPUT, 0, 0), 14, 2)
+        mut.put(model, (mut.STREAM_PORT_OUTPUT, 0, 0), 14, 0)
+        self.packs(model)
 
 
 class WaiverTest(unittest.TestCase):

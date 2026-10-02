@@ -77,10 +77,14 @@ rules L1 to L11 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's e
 
 - `milan_min.json` packs with every check on, and its digest equals the one
   recorded in `model_ids.json`.
-- Each of the 57 named mutations in `lint_mutations.py` is refused with its
+- Each of the 58 named mutations in `lint_mutations.py` is refused with its
   rule and check. The same mutated bytes pack with the lint off, so every
   refusal counted is the lint's. Every one of the 53 checks has at least one
   mutation, and a test holds that set equal to `model_lint.CHECKS`.
+- Conforming ownership packs: CONTROLs a Unit and its Port own in the order
+  IEEE 1722.1-2021 §7.2 walks them, a JACK's CONTROL and a Unit's
+  SIGNAL_SELECTOR outside the top-level counts, cluster ranges in either
+  order.
 - The layout refusals each have one negative case on `milan_min.json`: an
   index gap, a duplicate key, a mixed named and unnamed run, an ENTITY at
   index 1, a configuration gap.

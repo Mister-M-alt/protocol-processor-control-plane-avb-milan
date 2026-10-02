@@ -21,7 +21,8 @@ ENTITY, CONFIGURATION, AUDIO_UNIT = 0x0000, 0x0001, 0x0002
 STREAM_INPUT, STREAM_OUTPUT, AVB_INTERFACE = 0x0005, 0x0006, 0x0009
 CLOCK_SOURCE, STREAM_PORT_INPUT, STREAM_PORT_OUTPUT = 0x000A, 0x000E, 0x000F
 AUDIO_CLUSTER, AUDIO_MAP, CONTROL, CLOCK_DOMAIN = 0x0014, 0x0017, 0x001A, 0x0024
-TIMING, EXTERNAL = 0x0026, 0x0001
+TIMING, EXTERNAL, JACK_INPUT = 0x0026, 0x0001, 0x0007
+MUTE = 0x90E0F00000000002        # a CONTROL type that is not IDENTIFY (IEEE Table 7-98)
 BASE_IN = 0x0215022002006000     # 48 kHz, up to 8 channels (Milan v1.2 Table 6.2)
 CRF = 0x041060010000BB80         # Milan v1.2 §7.3.4 Table 7.1
 
@@ -52,20 +53,44 @@ def put(model: Model, at: tuple[int, int, int], offset: int, value: int,
     store(model, at, data)
 
 
-def add(model: Model, at: tuple[int, int, int], data: bytes) -> None:
+def add(model: Model, at: tuple[int, int, int], data: bytes, top: bool = True) -> None:
     """Add a descriptor at (type, index, cfg), fixing its key bytes, and count
-    it in its CONFIGURATION when the type is top-level there."""
+    it in its CONFIGURATION when its type is listed there and `top` (no other
+    descriptor owns it)."""
     dtype, index, cfg = at
     data = bytearray(data)
     struct.pack_into(">HH", data, 0, dtype, index)
     model["descriptors"].append({"configuration": cfg, "type": dtype, "index": index,
                                  "bytes": bytes(data).hex()})
+    if not top:
+        return
     counts = body(model, CONFIGURATION, cfg)
     for k in range(struct.unpack_from(">H", counts, 70)[0]):
         listed, count = struct.unpack_from(">HH", counts, 74 + 4 * k)
         if listed == dtype:
             struct.pack_into(">H", counts, 76 + 4 * k, count + 1)
             store(model, (CONFIGURATION, cfg, 0), counts)
+
+
+def list_count(model: Model, dtype: int, count: int, cfg: int = 0) -> None:
+    """Append a (type, count) pair to configuration `cfg`'s descriptor_counts."""
+    data = body(model, CONFIGURATION, 0, cfg) + struct.pack(">HH", dtype, count)
+    struct.pack_into(">H", data, 70, struct.unpack_from(">H", data, 70)[0] + 1)
+    store(model, (CONFIGURATION, cfg, 0), data)
+
+
+def control(model: Model) -> bytes:
+    """A CONTROL body like CONTROL 0 that is a MUTE, not an IDENTIFY."""
+    data = body(model, CONTROL, 0)
+    struct.pack_into(">Q", data, 82, MUTE)
+    return bytes(data)
+
+
+def own_controls(model: Model, owner: tuple[int, int], count_at: int, base: int) -> None:
+    """Give a configuration-0 descriptor one CONTROL, `base`, through its
+    number_of_controls / base_control pair at `count_at`."""
+    put(model, (owner[0], owner[1], 0), count_at, 1)
+    put(model, (owner[0], owner[1], 0), count_at + 2, base)
 
 
 def drop(model: Model, dtype: int, index: int, cfg: int = 0) -> None:
@@ -173,6 +198,23 @@ def _p(at: tuple[int, int], offset: int, value: int, size: int = 2) -> Callable[
     return lambda model: put(model, (at[0], at[1], 0), offset, value, size)
 
 
+def _port_control_before_unit_control(model: Model) -> None:
+    """AUDIO_UNIT 0 owns CONTROL 2 and its Stream Port Input 0 owns CONTROL 1:
+    IEEE 1722.1-2021 §7.2 numbers the Unit's CONTROLs before its Ports'."""
+    for index in (1, 2):
+        add(model, (CONTROL, index, 0), control(model), top=False)
+    own_controls(model, (AUDIO_UNIT, 0), 96, 2)
+    own_controls(model, (STREAM_PORT_INPUT, 0), 8, 1)
+
+
+def _configuration_control_after_unit_control(model: Model) -> None:
+    """AUDIO_UNIT 0 owns CONTROL 1, and CONTROL 2 is the configuration's own:
+    §7.2 numbers the configuration's CONTROLs first."""
+    add(model, (CONTROL, 1, 0), control(model), top=False)
+    own_controls(model, (AUDIO_UNIT, 0), 96, 1)
+    add(model, (CONTROL, 2, 0), control(model))
+
+
 def _no_streams(model: Model) -> None:
     """Every STREAM_INPUT and STREAM_OUTPUT removed."""
     for dtype, index in ((STREAM_INPUT, 0), (STREAM_INPUT, 1), (STREAM_OUTPUT, 0)):
@@ -198,9 +240,10 @@ MUTATIONS = (
     Mutation("two ports share AUDIO_CLUSTER 2", "single-parent",
              _p((STREAM_PORT_INPUT, 0), 12, 3)),
     Mutation("AUDIO_MAP 0 has no port", "has-parent", _p((STREAM_PORT_OUTPUT, 0), 16, 0)),
-    Mutation("output clusters before input clusters", "parent-order",
-             lambda m: (put(m, (STREAM_PORT_INPUT, 0, 0), 14, 2),
-                        put(m, (STREAM_PORT_OUTPUT, 0, 0), 14, 0))),
+    Mutation("the input port's CONTROL numbered before its unit's", "parent-order",
+             _port_control_before_unit_control),
+    Mutation("a configuration-level CONTROL after a unit-owned one", "parent-order",
+             _configuration_control_after_unit_control),
     Mutation("no stream at all", "stream-presence", _no_streams),
     Mutation("output format 24-bit", "talker-base-format",
              lambda m: set_formats(m, (STREAM_OUTPUT, 0, 0), [0x0205021800806000],
