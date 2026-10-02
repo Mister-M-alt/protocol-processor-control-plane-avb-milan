@@ -99,14 +99,19 @@ rules L1 to L12 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's e
   back. On a fixed model, past the descriptors, or naming a configuration the
   model lacks, it is refused as stale. It excuses no other check, index,
   descriptor type or configuration: a finding that differs from the waiver in
-  any one of them is refused, and the waiver is stale. Nine malformed waivers
-  are each refused, and so is a `lint_waivers` that is not a list.
-- The ADP values and the digest: driven values that agree pass. The §6.2.2.8
+  any one of them is refused, and the waiver is stale. Fourteen malformed
+  waivers are each refused (five of them a value of the wrong JSON type), and
+  so are a waiver that shares a descriptor with an earlier one of its check
+  and a `lint_waivers` that is not a list.
+- The ADP values and the digest: driven values that agree pass, and a
+  malformed driven value or recorded-digest map is an `ImageError`. The §6.2.2.8
   exclusions leave the digest unchanged, and the structural fields beside them
   move it, field by field. A selector CONTROL's option change under a recorded
   digest is refused; its current-value change packs.
 - The command line: the positive model with every check, and a refusal that
-  exits 1 and writes nothing.
+  exits 1 and writes nothing, a `--model-ids` file without `models` among them.
+  Loading the packer by its path adds nothing to `sys.path` and registers no
+  `model_lint` or `model_rules` module.
 
 Mutation proof: each check is suppressed in turn. Only that check's
 findings are dropped, by replacing the lint's finding recorder in a child
@@ -139,6 +144,12 @@ gate kills every one. Each survivor now fails a named test:
 | "exactly one" weakened to "at least one", at a CRF input and at the AAF inputs | `test_mutations`: "two INPUT_STREAM sources at the CRF input", "no CRF input, an INPUT_STREAM source at each AAF input" |
 | an ENTITY outside configuration 0 accepted | `test_mutations`: "an ENTITY in configuration 1" |
 | L5 compared index by index on the indices two configurations share | `ConformingModelTest.test_second_interface_optional_per_configuration` |
+
+The external review's 12 `milan_min.json` plants (one field edited, most with
+the recorded digest re-recorded so only the lint can catch them) were run
+again: 10 are killed, the AUDIO_CLUSTER padded by four octets now by L12. The
+two that survive, `interface_flags` and `entity_capabilities` bit values, are
+on 07 §3.1's "not linted" list with their reason.
 
 ### Body/key agreement
 

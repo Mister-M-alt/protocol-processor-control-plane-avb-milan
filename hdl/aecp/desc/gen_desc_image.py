@@ -119,16 +119,25 @@ USAGE
   gen_desc_image.py -i example_milan_8.json -o image.bin --no-lint
 """
 import argparse
+import importlib.util
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
-# The lint sits beside this file; consumers import the packer by path.
-_HERE = str(Path(__file__).resolve().parent)
-if _HERE not in sys.path:
-    sys.path.insert(0, _HERE)
-import model_lint  # noqa: E402
+
+def _load_model_lint() -> Any:
+    """The lint beside this file, loaded by its path: the packer adds nothing to
+    a consumer's sys.path and shadows none of its modules."""
+    spec = importlib.util.spec_from_file_location(
+        "model_lint", Path(__file__).resolve().with_name("model_lint.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+model_lint = _load_model_lint()
 
 # IEEE 1722.1-2021 Table 7-2 descriptor types (the ones 07 §3.1 names, plus the
 # handful a Milan PAAD may still carry).  A numeric type is always accepted.
@@ -474,6 +483,39 @@ def _waiver_type(spec: Any) -> int:
         raise ValueError(str(exc)) from exc
 
 
+def _check_inputs(adp, model_ids):
+    """ImageError unless `adp` maps names to integers and `model_ids` maps a
+    hexadecimal entity_model_id to a SHA-256 hex digest: a malformed check is
+    refused like a malformed model, never raised as another exception."""
+    if adp is not None:
+        if not isinstance(adp, dict):
+            raise ImageError("adp is not an object of driven values")
+        for key, value in adp.items():
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ImageError(f"adp {key} {value!r} is not a non-negative integer")
+    if model_ids is None:
+        return
+    if not isinstance(model_ids, dict):
+        raise ImageError("model_ids is not an object of entity_model_id: digest")
+    for key, value in model_ids.items():
+        if not isinstance(key, str) or not re.fullmatch(r"(0[xX])?[0-9a-fA-F]{1,16}", key):
+            raise ImageError(f"model_ids key {key!r} is not a hexadecimal entity_model_id")
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+            raise ImageError(f"model_ids digest {value!r} for {key} is not a SHA-256 hex digest")
+
+
+def _model_ids_file(path):
+    """The 'models' object of a --model-ids file, or ImageError."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            recorded = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise ImageError(f"--model-ids {path}: {exc}") from exc
+    if not isinstance(recorded, dict) or "models" not in recorded:
+        raise ImageError(f"--model-ids {path}: no 'models' object")
+    return recorded["models"]
+
+
 def _lint_lines(groups, model, lint, checks):
     """The semantic lint's report lines, or ImageError naming every refusal.
 
@@ -481,6 +523,7 @@ def _lint_lines(groups, model, lint, checks):
     caller asking for a check it has switched off has made a mistake.
     """
     adp, model_ids = checks
+    _check_inputs(adp, model_ids)
     waivers = model.get("lint_waivers", [])
     if not isinstance(waivers, list):
         raise ImageError("lint_waivers is not a list")
@@ -557,11 +600,8 @@ def main() -> int:
         model = json.load(fh)
     adp = {k: getattr(args, k) for k in ADP_KEYS
            if getattr(args, k) is not None}
-    model_ids = None
-    if args.model_ids:
-        with open(args.model_ids, encoding="utf-8") as fh:
-            model_ids = json.load(fh)["models"]
     try:
+        model_ids = _model_ids_file(args.model_ids) if args.model_ids else None
         img, report = build(model, args.line_bytes, lint=not args.no_lint,
                             adp=adp or None, model_ids=model_ids)
     except ImageError as exc:

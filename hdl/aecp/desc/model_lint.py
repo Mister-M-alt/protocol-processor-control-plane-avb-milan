@@ -36,15 +36,32 @@ entity_id and entity_model_id beyond them. `adp` refuses a driven value that dis
 `model_ids` refuses a recorded entity_model_id whose digest moved (L9).
 """
 import hashlib
+import importlib.util
+from pathlib import Path
 import re
 import struct
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from types import ModuleType
 from typing import Any
 
-from model_rules import (CHECKS, RULES, D, Finding, RuleContext, Where, rule_identity,
-                         survey, type_name, where_text)
+
+def beside(name: str) -> ModuleType:
+    """The module `name`.py that sits beside this file, loaded by its path, so
+    a consumer's sys.path and its own modules of that name stay untouched."""
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().with_name(f"{name}.py"))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"no {name}.py beside {__file__}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+model_rules = beside("model_rules")
+CHECKS, RULES, D, Finding = model_rules.CHECKS, model_rules.RULES, model_rules.D, model_rules.Finding
+RuleContext, Where, rule_identity = model_rules.RuleContext, model_rules.Where, model_rules.rule_identity
+survey, type_name, where_text = model_rules.survey, model_rules.type_name, model_rules.where_text
 
 ISSUE_REF = re.compile(r"[\w.-]+(?:/[\w.-]+)?#\d+")
 
@@ -208,6 +225,20 @@ def model_digest(model: dict[int, dict[int, dict[int, bytes]]]) -> str:
     return digest.hexdigest()
 
 
+def _typed(item: dict[str, Any]) -> None:
+    """ValueError unless each waiver key has its JSON type: rule, check and
+    reason strings; configuration, first and last integers; type a name or a
+    code. Nothing is coerced, so 0.7 is never index 0 and true never 1."""
+    for key in ("rule", "check", "reason"):
+        if not isinstance(item[key], str):
+            raise ValueError(f"has a {key} that is not a string: {item[key]!r}")
+    for key in ("configuration", "first", "last"):
+        if key in item and (isinstance(item[key], bool) or not isinstance(item[key], int)):
+            raise ValueError(f"has a {key} that is not an integer: {item[key]!r}")
+    if isinstance(item["type"], bool) or not isinstance(item["type"], (str, int)):
+        raise ValueError(f"has a type that is neither a name nor a code: {item['type']!r}")
+
+
 def _parse_waiver(number: int, item: Any, type_code: Callable[[Any], int]) -> Waiver:
     """One `lint_waivers` entry, or ValueError saying what is wrong with it."""
     if not isinstance(item, dict):
@@ -217,22 +248,32 @@ def _parse_waiver(number: int, item: Any, type_code: Callable[[Any], int]) -> Wa
     missing = sorted({"rule", "check", "configuration", "type", "reason"} - set(item))
     if unknown or missing:
         raise ValueError(f"unknown keys {unknown}, missing keys {missing}")
-    check = str(item["check"])
+    _typed(item)
+    check = item["check"]
     if check not in CHECKS:
         raise ValueError(f"names no check {check!r}")
-    if str(item["rule"]) != CHECKS[check][0]:
+    if item["rule"] != CHECKS[check][0]:
         raise ValueError(f"names rule {item['rule']}, and {check} is a {CHECKS[check][0]} check")
-    reason = str(item["reason"]).strip()
+    reason = item["reason"].strip()
     if not ISSUE_REF.search(reason):
         raise ValueError("carries no reason naming a tracking issue (repo#N)")
     if ("first" in item) != ("last" in item):
         raise ValueError("gives one of first and last")
-    first = int(item["first"]) if "first" in item else None
-    last = int(item["last"]) if "last" in item else None
+    first, last = item.get("first"), item.get("last")
     if first is not None and last is not None and not 0 <= first <= last:
         raise ValueError(f"has the empty range {first}..{last}")
-    return Waiver(number, check, (int(item["configuration"]), type_code(item["type"]), first),
+    return Waiver(number, check, (item["configuration"], type_code(item["type"]), first),
                   last, reason)
+
+
+def _overlaps(parsed: list[Waiver], waiver: Waiver) -> Waiver | None:
+    """An earlier waiver of the same check whose scope shares a descriptor (or
+    the configuration) with `waiver`'s, else None."""
+    for other in parsed:
+        if (other.check, other.where[:2]) == (waiver.check, waiver.where[:2]) \
+                and set(other.indices()) & set(waiver.indices()):
+            return other
+    return None
 
 
 def _apply(ctx: RuleContext, waivers: list[Waiver]) -> tuple[list[Finding], list[str], list[str]]:
@@ -305,12 +346,20 @@ def lint(groups: dict[tuple[int, int], dict[int, tuple[bytes, int]]], *,
     for rule in RULES:
         rule(ctx)
     rule_identity(ctx, model_ids, digest)
-    parsed, refusals = [], []
+    parsed: list[Waiver] = []
+    refusals: list[str] = []
     for number, item in enumerate(waivers):
         try:
-            parsed.append(_parse_waiver(number, item, type_code))
+            waiver = _parse_waiver(number, item, type_code)
         except (ValueError, TypeError, KeyError) as exc:
             refusals.append(f"lint waiver {number} {exc}")
+            continue
+        other = _overlaps(parsed, waiver)
+        if other is None:
+            parsed.append(waiver)
+        else:
+            refusals.append(f"lint waiver {number} ({waiver.label()}) overlaps lint waiver "
+                            f"{other.number} ({other.label()}); one waiver per descriptor")
     left, applied, stale = _apply(ctx, parsed)
     refusals += [finding.text() for finding in left] + stale
     return LintResult(refusals, _report(ctx, applied, digest, model_ids is not None), digest)

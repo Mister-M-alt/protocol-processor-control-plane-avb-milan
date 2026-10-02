@@ -501,12 +501,28 @@ class WaiverTest(unittest.TestCase):
                  (dict(WAIVER, type="NOT_A_TYPE"), "unknown descriptor type 'NOT_A_TYPE'"),
                  (dict(WAIVER, scope="all"), "unknown keys ['scope']"),
                  (["L1", "port-cluster-minimum"], "is not an object"),
-                 (dict(WAIVER, first=1, last=0), "has the empty range 1..0"))
+                 (dict(WAIVER, first=1, last=0), "has the empty range 1..0"),
+                 (dict(WAIVER, first=0.2, last=0.9), "has a first that is not an integer: 0.2"),
+                 (dict(WAIVER, configuration=True),
+                  "has a configuration that is not an integer: True"),
+                 (dict(WAIVER, reason=["x/y#1"]), "has a reason that is not a string"),
+                 (dict(WAIVER, rule=1), "has a rule that is not a string: 1"),
+                 (dict(WAIVER, type=True), "has a type that is neither a name nor a code"))
         for waiver, message in cases:
             with self.subTest(message=message):
                 lines = refusal(self.waived([waiver]))
                 self.assertTrue(lines[0].startswith("lint waiver 0 "), lines)
                 self.assertIn(message, lines[0])
+
+    def test_overlapping_waivers_are_refused(self) -> None:
+        """A second waiver of the same check that shares a descriptor with an
+        earlier one is refused: each finding has exactly one waiver."""
+        for second in (dict(WAIVER), dict(WAIVER, reason="owner/repo#2: the same port again")):
+            with self.subTest(second=second["reason"]):
+                self.assertEqual(refusal(self.waived([WAIVER, second])), [
+                    "lint waiver 1 (L1 port-cluster-minimum: cfg 0 STREAM_PORT_INPUT 0) overlaps "
+                    "lint waiver 0 (L1 port-cluster-minimum: cfg 0 STREAM_PORT_INPUT 0); one "
+                    "waiver per descriptor"])
 
     def test_waivers_are_a_list(self) -> None:
         """A lint_waivers that is not a list is refused, lint on or off."""
@@ -542,6 +558,25 @@ class IdentityTest(unittest.TestCase):
             with self.subTest(checks=checks):
                 with self.assertRaises(gen_desc_image.ImageError):
                     gen_desc_image.build(MILAN_MIN, **checks)
+
+    def test_malformed_checks_are_refused(self) -> None:
+        """A malformed recorded-digest map or driven value is an ImageError
+        naming it, never another exception (R434-1 S1, R435-1 S1)."""
+        digest_hex = RECORDED["0x020000FFFE00C801"]
+        cases = (({"model_ids": {"not-hex": digest_hex}}, "model_ids key 'not-hex' is not a "
+                  "hexadecimal entity_model_id"),
+                 ({"model_ids": [digest_hex]}, "model_ids is not an object of entity_model_id: digest"),
+                 ({"model_ids": {"0x020000FFFE00C801": "digest"}}, "model_ids digest 'digest' "
+                  "for 0x020000FFFE00C801 is not a SHA-256 hex digest"),
+                 ({"adp": {"entity_model_id": "0x020000FFFE00C801"}},
+                  "adp entity_model_id '0x020000FFFE00C801' is not a non-negative integer"),
+                 ({"adp": {"talker_sources": True}}, "adp talker_sources True is not a "
+                  "non-negative integer"))
+        for checks, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaises(gen_desc_image.ImageError) as caught:
+                    gen_desc_image.build(MILAN_MIN, **checks)
+                self.assertEqual(str(caught.exception), message)
 
     def test_excluded_fields_keep_the_digest(self) -> None:
         """IEEE 1722.1-2021 6.2.2.8 exclusions and the unit identity move nothing."""
@@ -631,6 +666,32 @@ class CommandLineTest(unittest.TestCase):
                 "gen_desc_image: L11 listener-sinks-driven: cfg 0 ENTITY 0:"), result.stderr)
             self.assertFalse((directory / "image.bin").exists())
             self.assertFalse((directory / "image.map").exists())
+
+    def test_model_ids_file_without_models(self) -> None:
+        """A --model-ids file with no 'models' object exits 1 and writes nothing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "ids.json").write_text('{"model": {}}', encoding="utf-8")
+            result = run_cli(MILAN_MIN, directory, "--model-ids", str(directory / "ids.json"))
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stderr, f"gen_desc_image: --model-ids {directory / 'ids.json'}"
+                                            ": no 'models' object\n")
+            self.assertFalse((directory / "image.bin").exists())
+
+    def test_import_by_path_touches_no_search_path(self) -> None:
+        """Loading the packer by its path loads the lint by path too: nothing is
+        added to sys.path and no module named model_lint or model_rules can
+        shadow a consumer's own (R435-1 S3)."""
+        probe = ("import importlib.util, sys\n"
+                 f"spec = importlib.util.spec_from_file_location('packer', {str(GENERATOR)!r})\n"
+                 "module = importlib.util.module_from_spec(spec)\n"
+                 "before = list(sys.path)\n"
+                 "spec.loader.exec_module(module)\n"
+                 "print(sys.path == before, 'model_lint' in sys.modules, 'model_rules' in sys.modules,"
+                 " module.model_lint.model_rules.CHECKS is module.model_lint.CHECKS)\n")
+        result = subprocess.run([sys.executable, "-B", "-c", probe], capture_output=True,
+                                text=True, check=False)
+        self.assertEqual(result.stdout.split(), ["True", "False", "False", "True"], result.stderr)
 
     def test_example_needs_no_lint(self) -> None:
         """The layout vector packs with --no-lint and is refused without it."""

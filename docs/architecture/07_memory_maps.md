@@ -125,6 +125,8 @@ the packing path so that one check guards every consumer of the packer (issue #8
   `gen_desc_image.build()` calls by default after the layout checks above and before it
   renders the image. It judges the bytes that are packed, at the IEEE 1722.1-2021 §7.2
   wire offsets, and reads every variable part through the descriptor's own offset field.
+  The packer loads `model_lint.py`, and `model_lint.py` loads `model_rules.py`, by file
+  path: neither adds to a consumer's `sys.path` or shadows a module of the same name.
   The opt-out is explicit, `build(..., lint=False)` or `--no-lint`. It exists for layout
   vectors and for deliberate negative cases that another checker must name. The layout
   report then says `semantic lint: off`.
@@ -135,14 +137,19 @@ the packing path so that one check guards every consumer of the packer (issue #8
 - **Waivers.** A waiver excuses one check on a named descriptor scope, never a whole
   rule. It travels in the document the packer consumes (`lint_waivers`) and carries a
   reason that names its tracking issue. The report lists every applied waiver. A waiver
-  is refused when it is malformed, and when it is stale: when any descriptor in its scope
-  does not exist, or passes its check.
+  is refused when it is malformed (each key must have its JSON type; nothing is coerced),
+  when it shares a descriptor with an earlier waiver of the same check, and when it is
+  stale: when its configuration or any descriptor in its scope does not exist, or passes
+  its check. A finding in another configuration, of another type or at another index is
+  not the waiver's.
 - **What it reports and checks.** The values the integrator drives on
   `entity_model_id_i`, `talker_sources_i`, `listener_sinks_i` and `identify_index_i`,
   and the model digest. These stay integrator inputs, and no generated constant replaces
   one. `build(adp=...)` (`--adp-*`) refuses a driven value that disagrees with the model,
   and `build(model_ids=...)` (`--model-ids`) refuses a recorded entity_model_id whose
-  digest moved.
+  digest moved. A malformed `adp` value or `model_ids` map (a key that is not a
+  hexadecimal id, a digest that is not 64 hex digits, a file with no `models` object) is
+  an `ImageError` like any other refusal.
   - The digest is SHA-256 over every descriptor, with exactly the IEEE 1722.1-2021
     §6.2.2.8 exclusions zeroed: `object_name` in the types that carry one; the fields
     the clause lists for ENTITY, AUDIO_UNIT, STREAM_INPUT/OUTPUT, CLOCK_SOURCE,

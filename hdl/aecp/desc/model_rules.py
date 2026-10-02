@@ -295,7 +295,7 @@ class RuleContext:
 
 
 def _family(word: int) -> str:
-    """AVTP subtype of a stream format word (IEEE 1722.1-2021 §7.3.2)."""
+    """AVTP subtype of a stream format word (IEEE 1722.1-2021 §7.3.3)."""
     subtype = (word >> 56) & 0x7F
     return {0x02: "AAF", 0x04: "CRF"}.get(subtype, f"subtype 0x{subtype:02X}")
 
