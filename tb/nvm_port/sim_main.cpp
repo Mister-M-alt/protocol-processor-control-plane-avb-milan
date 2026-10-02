@@ -45,7 +45,14 @@ constexpr int OP_ERASE = 2;
 constexpr int N_REGIONS = 8;    // test ids stay 0..7
 constexpr int REG_BYTES = 2048;
 constexpr int MAXP      = 1024; // pinned by -GMAX_PAYLOAD_P in the Makefile
-constexpr int TMO       = 100;  // pinned by -GMEM_TIMEOUT_CYC_P in the Makefile
+// The deadline: the Makefile builds the suite twice, at -GMEM_TIMEOUT_CYC_P =
+// 100 (the bound every README figure is measured at) and at 37, and hands each
+// build's value to this file as NVM_PORT_TMO. Every harness wait that meets the
+// deadline is derived from it, so both builds grade the same contract; the
+// fixed protocol delays left (at most 9 cycles: T4, T19-T21) and the derived
+// fractions need a deadline of at least 20 to mean what their phases say.
+constexpr int TMO       = NVM_PORT_TMO;
+static_assert(TMO >= 20, "tb/nvm_port's waits are derived for MEM_TIMEOUT_CYC_P >= 20");
 
 constexpr int  kResetTicks      = 4;      // clocks held in reset before rst_n
 // armed silence (issue #15): where the device withholds the event it owes
@@ -53,8 +60,12 @@ constexpr int SIL_NONE = 0;
 constexpr int SIL_GNT  = 1;               // the grant of the armed command
 constexpr int SIL_BYTE = 2;               // one data byte of it
 constexpr int SIL_DONE = 3;               // its completion
-constexpr long kOpTimeoutCycles = 100000; // run_op guard: no done/err by then
-constexpr int  kDrainCycles     = 30;     // ticked past a pulse to catch a second
+// run_op's guard, no done or err by then: a thousand deadlines, past the
+// longest legal operation here (a manager stalling three deadlines a byte)
+constexpr long kOpTimeoutCycles = 1000L * TMO;
+constexpr int  kDrainCycles     = 3 * TMO / 10; // ticked past a pulse to catch a second
+// a legal device wait inside the deadline that a cut or a poke is staged in
+constexpr int  kStageCycles     = 2 * TMO / 5;
 
 // CRC-16/CCITT-FALSE — the manager's in-band integrity field; the DUT must
 // carry it opaquely (07 §5.3 puts computation/validation in the manager).
@@ -865,6 +876,7 @@ class NvmPortSuite {
   void reset_of_the_port_alone_mid_commit();
   void a_short_command_is_a_device_error();
   void every_operation_got_what_it_was_owed();
+  int  report();
 
   const milan::tb::Model<VKL_pp_nvm_port> model;
   VKL_pp_nvm_port* const dut = model.get();
@@ -982,13 +994,13 @@ void NvmPortSuite::back_to_back_ops_all_complete() {
 
 // ---- T6: req while busy is ignored (single outstanding, F02.8) ---------
 void NvmPortSuite::request_while_busy_is_ignored() {
-  h.gnt_delay = 8; h.op_delay = 30;
+  h.gnt_delay = 8; h.op_delay = 3 * TMO / 10;
   auto f6 = frame(7, pattern(16, 0x70));
   h.ops.clear();
   h.clear_capture();
   h.m_mode = 1; h.m_wbytes = f6; h.m_widx = 0; h.m_stall = 0;
   h.start(true, 7);
-  for (int i = 0; i < 40; ++i) h.tick();
+  for (int i = 0; i < kStageCycles; ++i) h.tick();
   CHECK(dut->nvm_busy_o, "T6 op still in flight at the poke");
   dut->nvm_req_i = 1; dut->nvm_we_i = 0; dut->nvm_record_id_i = 5;
   for (int i = 0; i < 5; ++i) h.tick();
@@ -1953,9 +1965,9 @@ void NvmPortSuite::the_next_request_after_a_deadline() {
   CHECK(h.commit(2, rec) == 0, "T24 setup: region 2 committed again");
 
   // served: a payload READ abandoned at its 10th byte, which the device
-  // resumes 60 cycles after the verdict; the next restore, issued at once,
-  // waits for the abandoned READ's end and is then served from scratch
-  int rc = silenced(false, rec, SIL_BYTE, 1, TMO + 60, 10);
+  // resumes three fifths of a deadline after the verdict; the next restore,
+  // issued at once, waits for the abandoned READ's end and is then served
+  int rc = silenced(false, rec, SIL_BYTE, 1, TMO + 3 * TMO / 5, 10);
   CHECK(rc == 1 && h.last_cause == 3 && h.d_busy,
         "T24 served branch: the restore ended DEADLINE with the READ still owed");
   h.ops.clear();
@@ -2009,7 +2021,7 @@ void NvmPortSuite::the_next_request_after_a_deadline() {
 
   // strays while a request is up and never granted hold nothing off: the
   // deadline still ends the restore TMO + 2 cycles after it was accepted
-  h.stray_every = 30;
+  h.stray_every = 3 * TMO / 10;
   h.ops.clear();
   h.arm_silence(SIL_GNT, 0, -1);
   const long t0 = h.cycles;
@@ -2256,12 +2268,12 @@ bool NvmPortSuite::run_to_stage(int stage, size_t record_bytes) {
     bool reached = false;
     switch (stage) {
       case 0: reached = h.m_widx == 4 && h.ops.empty(); break;
-      case 1: reached = dut->dev_req_o && h.ops.empty() && h.d_reqwait == 10; break;
-      case 2: reached = h.ops.size() == 1 && h.d_busy && h.done_ctr == 20; break;
+      case 1: reached = dut->dev_req_o && h.ops.empty() && h.d_reqwait == kStageCycles / 4; break;
+      case 2: reached = h.ops.size() == 1 && h.d_busy && h.done_ctr == kStageCycles / 2; break;
       case 3: reached = h.ops.size() == 2 && h.sent.size() == 5; break;
       case 4: reached = h.ops.size() == 2 && h.sent.size() == 9; break;
       default: reached = h.ops.size() == 2 && h.sent.size() == record_bytes
-                         && h.d_busy && h.done_ctr == 20; break;
+                         && h.d_busy && h.done_ctr == kStageCycles / 2; break;
     }
     if (reached) return true;
     h.tick();
@@ -2271,7 +2283,7 @@ bool NvmPortSuite::run_to_stage(int stage, size_t record_bytes) {
 
 // The power cut: port and device both lose it, the array keeping what the
 // device committed. Returns the cycles in which the port pulsed, requested or
-// moved a byte, during the reset and the 50 after it: the port owes none.
+// moved a byte, during the reset and half a deadline after it: it owes none.
 int NvmPortSuite::power_cut() {
   h.quiesce_model();
   h.m_mode = 0;
@@ -2282,7 +2294,7 @@ int NvmPortSuite::power_cut() {
     if (dut->nvm_done_o || dut->nvm_err_o || dut->nvm_rvalid_o) ++noise;
   }
   dut->rst_n = 1;
-  for (int i = 0; i < 50; ++i) {
+  for (int i = 0; i < TMO / 2; ++i) {
     h.tick();
     if (dut->nvm_busy_o || dut->nvm_done_o || dut->nvm_err_o || dut->dev_req_o
         || dut->nvm_rvalid_o || dut->dev_wvalid_o)
@@ -2311,8 +2323,8 @@ void NvmPortSuite::reset_mid_commit_at_six_stages() {
   struct Stage { const char* name; int gnt; int opd; };
   const Stage stages[] = {
     {"a the header still streaming in, nothing issued", 1, 4},
-    {"b the ERASE requested and not granted", 40, 4},
-    {"c the ERASE granted and not done", 1, 40},
+    {"b the ERASE requested and not granted", kStageCycles, 4},
+    {"c the ERASE granted and not done", 1, kStageCycles},
     {"d the WRITE's header pump, 5 bytes sent", 1, 4},
     {"e the WRITE's payload pump, 9 bytes of 32 sent", 1, 4},
     {"f the WRITE's completion window, every byte sent", 1, 4},
@@ -2323,9 +2335,9 @@ void NvmPortSuite::reset_mid_commit_at_six_stages() {
           "T25%c setup: the neighbour and the record committed", st.name[0]);
     h.gnt_delay = st.gnt; h.op_delay = st.opd;
     h.clear_capture(); h.ops.clear();
-    // stage f's window: the WRITE's completion held 40 cycles, which also
+    // stage f's window: the WRITE's completion held kStageCycles, which also
     // keeps a backend that answers on the last byte from closing it
-    if (si == 5) h.arm_silence(SIL_DONE, 1, 40);
+    if (si == 5) h.arm_silence(SIL_DONE, 1, kStageCycles);
     h.m_mode = 1; h.m_wbytes = next; h.m_widx = 0; h.m_stall = 0;
     h.start(true, 7);
     const bool reached = run_to_stage(si, next.size());
@@ -2396,16 +2408,16 @@ void NvmPortSuite::reset_of_the_port_alone_mid_commit() {
   fresh_reset();
   const std::vector<uint8_t> rec = frame(7, pattern(24, 0x55));
   for (int k = 0; k < 2; ++k) {
-    h.op_delay = 40;
+    h.op_delay = kStageCycles;
     h.clear_capture(); h.ops.clear();
-    if (k == 1) h.arm_silence(SIL_DONE, 1, 40);   // the WRITE's window, as T25f
+    if (k == 1) h.arm_silence(SIL_DONE, 1, kStageCycles);   // the WRITE's window, as T25f
     h.m_mode = 1; h.m_wbytes = rec; h.m_widx = 0; h.m_stall = 0;
     h.start(true, 7);
     bool reached = false;
     for (long i = 0; i < kOpTimeoutCycles && !reached; ++i) {
-      reached = (k == 0) ? (h.ops.size() == 1 && h.d_busy && h.done_ctr == 20)
+      reached = (k == 0) ? (h.ops.size() == 1 && h.d_busy && h.done_ctr == kStageCycles / 2)
                          : (h.ops.size() == 2 && h.sent.size() == rec.size()
-                            && h.d_busy && h.done_ctr == 20);
+                            && h.d_busy && h.done_ctr == kStageCycles / 2);
       if (!reached) h.tick();
     }
     h.m_mode = 0;
@@ -2414,7 +2426,7 @@ void NvmPortSuite::reset_of_the_port_alone_mid_commit() {
     for (int i = 0; i < kResetTicks; ++i) h.tick();
     dut->rst_n = 1;
     int noise = 0;
-    for (int i = 0; i < 60; ++i) {
+    for (int i = 0; i < 3 * TMO / 5; ++i) {
       h.tick();
       if (dut->nvm_busy_o || dut->nvm_done_o || dut->nvm_err_o || dut->dev_req_o)
         ++noise;
@@ -2467,7 +2479,7 @@ void NvmPortSuite::a_short_command_is_a_device_error() {
     h.clear_capture();
     h.m_mode = we ? 1 : 2; h.m_wbytes = rec; h.m_widx = 0; h.m_stall = 0;
     h.start(we, 2);
-    for (int i = 0; i < 200 && h.ops.empty(); ++i) h.tick();
+    for (int i = 0; i < 2 * TMO && h.ops.empty(); ++i) h.tick();
   };
   // the payload READ ended after 10 of its 40 bytes
   after_first_cmd(false);
@@ -2575,7 +2587,21 @@ int NvmPortSuite::run() {
   a_short_command_is_a_device_error();
   every_operation_got_what_it_was_owed();
 
+  return report();
+}
+
+//! Each of the suite's two builds prints its own tally and adds it to
+//! obj_dir/build_tally.txt; the Makefile prints the sum last, which is the
+//! line run_suites.sh reads.
+int NvmPortSuite::report() {
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
+  FILE* acc = fopen("obj_dir/build_tally.txt", "a");
+  if (acc == nullptr) {
+    printf("FAIL: this build's tally cannot be recorded for the Makefile\n");
+    return 1;
+  }
+  fprintf(acc, "%d %d\n", checks, fails);
+  fclose(acc);
   return fails ? 1 : 0;
 }
 

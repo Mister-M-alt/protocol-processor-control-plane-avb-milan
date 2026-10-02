@@ -293,7 +293,8 @@ plants the pp_top controls.
 ### 8.5 The NVM port: its deadline, resets and handshake models (issues #15, #18, #19, #20, #21)
 
 `tb/nvm_port` grades the port against nine device models, four of which misbehave on the
-HANDSHAKE rather than on what the array retains; `tb/acmp_nvm` grades the binding
+HANDSHAKE rather than on what the array retains, in two builds, at `MEM_TIMEOUT_CYC_P` = 100
+and 37, every harness wait derived from the bound; `tb/acmp_nvm` grades the binding
 manager's half, in two builds (the second sets the port's deadline below the walk's).
 Every figure of `tb/nvm_port` is re-measured by its gate (`make -C tb/nvm_port figures`),
 the mutation record included.

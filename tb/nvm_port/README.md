@@ -4,10 +4,16 @@
 Proves the class-F NVM port (`hdl/packet_engine/KL_pp_nvm_port.sv`,
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8 +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8): `make` = build + run,
-exit 0 = PASS, 343 checks. `-GMAX_PAYLOAD_P=1024` and `-GMEM_TIMEOUT_CYC_P=100`
-pin the geometry and the device-face deadline the C++ constants `MAXP` and `TMO`
-mirror. `make` first runs `elab_bounds.sh`, the deadline parameter's elaboration
-guard: refused by name at 0, 2^31 and 2^32 - 1, built clean at 1 and 2^31 - 1.
+exit 0 = PASS, 343 checks in each of two builds. `-GMAX_PAYLOAD_P=1024` pins the
+geometry the C++ constant `MAXP` mirrors. The device-face deadline is built
+twice: `-GMEM_TIMEOUT_CYC_P=100`, the bound every figure in this file is
+measured at, and 37, a small odd bound; the Makefile hands each build's value
+to the C++ as `TMO`. Every harness wait that meets the deadline is derived from
+`TMO` (see "Two bounds" below), so both builds grade the same contract and the
+second is where a wait written for 100 would fail. Each build prints its own
+tally, and the last line is their sum. `make` first runs `elab_bounds.sh`, the
+deadline parameter's elaboration guard: refused by name at 0, 2^31 and
+2^32 - 1, built clean at 1 and 2^31 - 1.
 
 The harness plays BOTH neighbors, independently of the RTL: a **manager BFM**
 that frames records per 07 §5.2 (magic 0x1722, layout_version, record_id,
@@ -462,7 +468,8 @@ the operation with one err, cause DEADLINE. A deadline
 ends the operation, never the device's command: a command the device accepted
 and has not ended stays OWED, the port requests nothing over it, drains an
 owed READ's bytes, and takes the device's next done or err as its end. T24
-T28 and T29 grade all of it at `TMO` = 100, every check on the bus:
+T28 and T29 grade all of it at `TMO` = 100, and again at 37 in the second
+build, every check on the bus:
 
 - **the twelve owed states.** In each of the four requests, four waits and
   four data phases the device withholds the event it owes for exactly `TMO`
@@ -486,7 +493,8 @@ T28 and T29 grade all of it at `TMO` = 100, every check on the bus:
   byte, in both directions, is never charged to the device.
 - **issue #15's criterion 2, both branches.** Busy is low at the err pulse and
   the next request is accepted. It is SERVED once the device has ended the
-  abandoned command: a payload READ resumed 60 cycles after the verdict, the
+  abandoned command: a payload READ resumed three fifths of a deadline after
+  the verdict, the
   next restore waiting for its end, issuing nothing over it, then served
   byte-exact from scratch. It is answered with one err DEADLINE, no command and
   nothing forwarded while the device stays silent: an ERASE whose done comes
@@ -593,6 +601,35 @@ Mutations, each a row of the figures gate:
   whose grant `TMO` cycles late is then refused (RW4). Paused rather than
   cleared, a stale owed cycle is carried across the header's forward; this
   term is why the pause leaves the coincident model green.
+
+### Two bounds (issue #15)
+
+Every wait in the harness that meets the deadline is a function of `TMO`, so
+the suite is evidence at any bound it is built at, and the Makefile builds it
+at two. Until it was, its waits were numbers written for 100: built at 37 the
+suite failed four checks and at 1,000 three, on the harness, not the port. The
+waits, each the same number at 100 as before:
+
+- the silences and late events T24, T28 and T29 arm: `TMO`, `TMO` + 1,
+  `TMO` + 2, `TMO` + 3 * `TMO` / 5 (the served branch), 3 * `TMO` (the
+  DEADLINE branch, the owed READ, the WRITE's completion window);
+- a slow device's every event `TMO` late, a manager's three-deadline stall,
+  the drain `TMO` / 2 a byte, the late done and grant 3 * `TMO` / 5 each, the
+  strays and the strobe drops 3 * `TMO` / 10 and `TMO` / 2 apart;
+- the waits a cut or a poke is staged in (T6, T25): 2 * `TMO` / 5, and their
+  midpoints;
+- the cycles ticked past a pulse to catch a second, 3 * `TMO` / 10; the
+  windows after a reset in which the port must stay silent, `TMO` / 2 and
+  3 * `TMO` / 5; and `run_op`'s guard, a thousand deadlines, past the
+  longest legal operation here (the manager stalling three deadlines on
+  every byte of a record).
+
+The fixed protocol delays left are the ones no deadline meets: grants and
+completions of 1 to 9 cycles (T4, T19-T21) and a device's 4-cycle settle. The
+harness refuses to build below `TMO` = 20, where those and the derived
+fractions stop meaning what their phases say. The second bound is 37: small,
+odd, and the one that failed before. The figures gate measures every row at
+100 and requires both builds green.
 
 ### Short commands (refusal (d))
 
@@ -1069,7 +1106,7 @@ Recorded so the phase list does not read as closing #70:
   parent's backend as this repository describes it; no real flash part was
   run. The deadline's default (1,000 ms, `NVM_MEM_TMO_CYC_P = CLK_HZ_P` at the
   top) is a derivation from that backend's longest legal stall, not a
-  measurement of a device, and this suite runs at `TMO` = 100 cycles.
+  measurement of a device, and this suite runs at `TMO` = 100 and 37 cycles.
 - **A contained WRITE is not recovered.** A WRITE the port abandons on a device
   that then waits for its next byte for ever keeps the port answering
   DEADLINE until the device ends it or a reset (T24). That is the ruled

@@ -49,7 +49,8 @@ NOT provided, because a figure nobody looked at is how the table went stale in
 the first place.
 
 It is slow: one Verilator build per arm, mutation, probe and device model, five
-for the matrix, plus the baseline. The exact count is DERIVED and printed at the
+for the matrix, plus the baseline and the two builds of `make run`, the second
+of which is at another legal bound and must be green as well. The exact count is DERIVED and printed at the
 start of a run rather than written here. That is not fussiness: this number was
 wrong in three consecutive rounds, and it is the one figure the inverted default
 structurally cannot reach, because it matches no FIGURE_RE shape and does not
@@ -623,7 +624,8 @@ def run_suite(want_fail_names: bool = False) -> tuple[int, int, int] | list[str]
     wants the tally can still ask which checks failed."""
     subprocess.run(["make", "-s", "clean"], cwd=HERE, check=False,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    p = subprocess.run(["make", "-s"], cwd=HERE, capture_output=True, text=True)
+    # the build at the Makefile's TMO, the bound every README figure is at
+    p = subprocess.run(["make", "-s", "primary"], cwd=HERE, capture_output=True, text=True)
     m, names = None, []
     for line in (p.stdout + p.stderr).splitlines():
         hit = TALLY_RE.search(line)
@@ -637,6 +639,23 @@ def run_suite(want_fail_names: bool = False) -> tuple[int, int, int] | list[str]
     if want_fail_names:
         return names
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+def both_builds_disagree(total: int) -> list[str]:
+    """The suite's own entry point, `make run`: the elaboration guard, then the
+    build at TMO and the build at TMO_ALT, each the same checks, and their sum.
+    The second build is where a harness wait written for 100 rather than
+    derived from the bound fails, so it is required green here as well."""
+    subprocess.run(["make", "-s", "clean"], cwd=HERE, check=False,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    p = subprocess.run(["make", "-s", "run"], cwd=HERE, capture_output=True, text=True)
+    got = [tuple(int(x) for x in m) for m in TALLY_RE.findall(p.stdout + p.stderr)]
+    print(f"make run, both builds: {got}, rc {p.returncode}")
+    want = [(total, total, 0), (total, total, 0), (2 * total, 2 * total, 0)]
+    if p.returncode != 0 or got != want:
+        return [f"make run gave {got} with rc {p.returncode}; the two builds must "
+                f"each pass all {total} checks"]
+    return []
 
 
 def apply_edits(edits: list[tuple[Path, str, str]],
@@ -897,8 +916,8 @@ def main() -> int:
                          "exits non-zero on a disagreement with or without it")
     ap.parse_args()
 
-    n_builds = 1 + len(ARMS) + len(MUTATIONS) + len(MODELS) + len(MATRIX_MODELS)
-    print(f"{n_builds} Verilator builds: 1 baseline + {len(ARMS)} arms + "
+    n_builds = 3 + len(ARMS) + len(MUTATIONS) + len(MODELS) + len(MATRIX_MODELS)
+    print(f"{n_builds} Verilator builds: 1 baseline + 2 for make run + {len(ARMS)} arms + "
           f"{len(MUTATIONS)} mutations + {len(MODELS)} models + "
           f"{len(MATRIX_MODELS)} matrix")
     total, passed, failed = run_suite()
@@ -908,7 +927,8 @@ def main() -> int:
         return 1
 
     flat = flat_readme()
-    bad = readme_figures(total, flat)
+    bad = both_builds_disagree(total)
+    bad.extend(readme_figures(total, flat))
     bad.extend(claim_coverage(flat))
     bad.extend(git_verbatim())
     bad.extend(pin_completeness())
