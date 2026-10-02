@@ -4,8 +4,10 @@
 Proves the class-F NVM port (`hdl/packet_engine/KL_pp_nvm_port.sv`,
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8 +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8): `make` = build + run,
-exit 0 = PASS, 136 checks. `-GMAX_PAYLOAD_P=1024` pins the geometry the C++
-constants mirror.
+exit 0 = PASS, 326 checks. `-GMAX_PAYLOAD_P=1024` and `-GMEM_TIMEOUT_CYC_P=100`
+pin the geometry and the device-face deadline the C++ constants `MAXP` and `TMO`
+mirror. `make` first runs `elab_bounds.sh`, the deadline parameter's elaboration
+guard: refused by name at 0, 2^31 and 2^32 - 1, built clean at 1 and 2^31 - 1.
 
 The harness plays BOTH neighbors, independently of the RTL: a **manager BFM**
 that frames records per 07 §5.2 (magic 0x1722, layout_version, record_id,
@@ -20,7 +22,13 @@ check at when the assertion must not read the array). It can also misbehave on
 the HANDSHAKE, which is the half the five array-flavoured variants never
 reached: it will pulse a `done` that belongs to no command at all, it will
 answer an ERASE on the grant cycle, and it will answer any command on the same
-edge that moves that command's final byte. See "Completion ownership" below.
+edge that moves that command's final byte (see "Completion ownership" below);
+it will end a command short, withhold any one event it owes for a set number of
+cycles or for ever, and keep a command running across the port's reset. Its
+grant is REGISTERED, as the parent's backend's is: it takes the request on the
+edge that samples it and grants a cycle later, whether or not the request is
+still up. Four of these behaviours are standing models, left on for a whole run
+(see "The handshake models").
 
 Covered: the commit envelope ERASE_REGION → WRITE(0, 8+plen) with the device
 store byte-exact against the manager's framed record and the erase visible past
@@ -38,7 +46,13 @@ length in the stored record on restore (nothing forwarded to the manager); the
 port serviceable again after every refusal; and completion ownership — a `done`
 that belongs to no command ignored in every state that owns none, on both the
 commit and the restore path, and the two completions the port must take: one
-riding its own grant, one riding a command's final byte.
+riding its own grant, one riding a command's final byte; the device-face
+deadline in each of the twelve states in which the device owes the port an
+event, at its boundary, and the owed command it leaves behind (T24); a command
+the device ends short, in every data phase (T27); a reset at six stages of a
+commit, and of the port alone (T25); and the low magic byte and the payload
+bound's legal edge (T26). Every operation of the run is also graded on what it
+was owed, whatever the device model (the RW checks, "The handshake models").
 
 Known limits (honest): the CRC16 is carried, never checked — that is the
 manager's job per 07 §5.3, so a corrupt-crc record passes this port by design
@@ -46,7 +60,15 @@ and must be caught by the NVM-manager suite (P4). The byte order of the 16-bit
 header fields on the stream is a design decision of the port (network order),
 not pinned by the doc.
 
-Power-cut coverage (issue #70, added 2026-08-20). A commit is ERASE(region)
+### Torn commits: a device `err` (T15-T18) and a reset (T25)
+
+Issue #70, added 2026-08-20; split by issue #18. Two different events tear a
+commit, and this file used to call both "power cut". **T15-T18 model a DEVICE
+that fails mid-commit and says so with `err`**: the port's own state machine
+runs on, and every phase ends in the port's `err`. **T25 models the event a
+power cut actually is**, `rst_n` asserted with the commit in flight, which the
+port cannot report at all: it resets to idle and forgets the command (see "A
+reset mid-commit"). A commit is ERASE(region)
 then WRITE(0, 8+plen). The destructive window is the WHOLE commit, not just the
 WRITE: a cut at `S_WWREQ` errs with zero bytes on the bus and `erase_count`
 already advanced, so **`err` never means "the saved set is unchanged"**. A cut
@@ -57,9 +79,11 @@ slot in place. The flash map's A/B slots are related but do NOT cover it: they
 are per record SET, whole-image with read-back-then-promote, and this port has
 no slot notion at all. What covers a torn SINGLE record is the crc16, and it IS
 implemented — in the manager, not here: `hdl/acmp/KL_acmp_nvm_shadow.sv`
-serialises it (`:402-403`), accumulates it (`:627`) and gates the record on it
-(`:316`), with the per-record vendor-default policy at `:54-55`. It is
-instantiated at `hdl/top/protocol_processor_top.sv:2238` and pinned by
+serialises it (`:482-483`), accumulates it (`:775`) and gates the record on it
+(`rrec_ok_w`, `:391-395`), with the per-record vendor-default policy at
+`:90-92`; the D3 writer gates its records the same way (`frame_ok_w`,
+`hdl/aecp/KL_aecp_nvm_writer.sv:482-485`). The shadow is
+instantiated at `hdl/top/protocol_processor_top.sv:2714` and pinned by
 `tb/acmp_nvm`. An earlier revision of this file said nothing implemented it,
 which was wrong and is the third time this file has asserted an absence without
 checking for the presence. It is NOT
@@ -69,8 +93,9 @@ the suite pins what the port DOES guarantee, and where a claim about the array
 follows a device `err` it is either moved onto the bus or conditioned on what
 the array actually holds. Claims that follow a `done` are asserted directly and
 need no condition, which is most of them. Counted in the unit the claim is
-about, CHECK sites whose condition depends on the array: **16 sites, of which 2
-condition on it and 14 do not**. Counting this needs care and got it wrong once:
+about, CHECK sites whose condition depends on the array: **18 sites, of which 3
+condition on it and 15 do not** (T24's setup asserts after a `done`; T25's
+header agreement conditions, as T15's does). Counting this needs care and got it wrong once:
 `T16 no other region's bytes moved` reaches the array through `other_moved`, a
 local hoisted 35 lines above its CHECK, so every text sweep for `store` missed
 it -- and that site is the #70 isolation claim itself, the most important member
@@ -131,19 +156,25 @@ of the set. See "Where a check may read from" for the rule and its one known exc
   is that window on the header probe, and `S_RHCOLL` is an error during the
   header collect — which sits on the boot restore walk, the one path where a
   torn image is actually consumed. All three survived the suite before T18.
+- **T25** the power cut itself: `rst_n` mid-commit at six stages, with the
+  device reset too, then the torn record graded exactly as T15 grades its own;
+  and two cuts of the port alone. See "A reset mid-commit".
 
 ### Terminal cause (issue #93, S1)
 
 `nvm_err_cause_o` names what an err was: **1 DEVICE** for every error the device
-raised, in any state, and for a header read it ended short; **2 UNFRAMED** only
-for a header this port refused, one the device delivered whole or one the manager
-streamed on a commit; 0 with done and on every cycle without err. Before it, all
+raised, in any state, and for every command it ended short (refusal (d), T27);
+**2 UNFRAMED** only for a header this port refused, one the device delivered
+whole or one the manager streamed on a commit; **3 DEADLINE** only for an
+operation the deadline ended (T24): the device said nothing; 0 with done and
+on every cycle without err. Before it, all
 of those ended in the same err with nothing forwarded, so a manager restoring a
 record could not tell a failing device from a record that is not there.
 UNFRAMED does not prove erased media, and nothing here claims it does. T23 runs
-last, after the end-of-run idle check has graded every earlier phase, and from a
+after the end-of-run idle check has graded every earlier phase, and from a
 reset of its own, so a mutation that wedged the port earlier cannot fail it as
-collateral. It grades: the header read refused at the grant (`S_RHREQ`'s
+collateral; T24, T25 and T27 after it each start from a reset of their own for
+the same reason, and the RW checks close the run. It grades: the header read refused at the grant (`S_RHREQ`'s
 error arm, which no phase reached before), a device error inside the header, a
 header read ended short at five bytes, a device error after the header and before
 its done, a device error in the payload and on a commit's ERASE, all DEVICE; an
@@ -169,7 +200,7 @@ it. The array-flavoured variants vary a different axis and none of them reaches
 this.
 
 What the port owes is now stated in its own header as refusal (c) and gated on
-it (`dev_cmd_owned_w`, `KL_pp_nvm_port.sv:162-173`): a completion is this port's
+it (`dev_cmd_owned_w`, `KL_pp_nvm_port.sv:233-244`): a completion is this port's
 from the cycle its grant is observed — that cycle may carry the completion —
 until the wait state consumes it, and ownership retires at the terminal state,
 at the next accept, and at reset. `S_WHDR`, an ungranted `*REQ`, `S_RHFWD`,
@@ -243,13 +274,15 @@ tuned -- the port may hand up a buffered header only once the read that filled
 the buffer has completed, on any backend, at any delay.
 
 The sticky latch is no longer invisible on the pristine model either: deleting the set
-line now reddens 9 of 136 here, in T21, all three T22 arms and the end-of-run
-idle check, because a commit that never gets its completion never releases
-busy, and under a coincident-completion model the same
-mutations fail 105 of 136.
+line now reddens 21 of 326 here, in T21, every arm of T22 and T27's two READs
+ended on their own grant. A completion the wait state cannot read live is lost,
+so the port reaches its deadline where it owed done, and then holds as owed a
+command the device has already ended, which takes the rest of T27 and two RW
+checks with it; under a coincident-completion model the same
+mutations fail 200 of 326.
 Narrowing ownership the other way, by dropping the grant term, reddens exactly
-the same nine: T21 is the first phase that needs a completion the wait state
-cannot read live, so the port wedges there and T22 dies with it.
+the same checks, measured: T21 is the first phase that needs a completion the
+wait state cannot read live.
 
 **Both halves of the window are pinned now, and one half was not.**
 `dev_cmd_owned_w` is the grant handshake plus eight state terms. The grant term
@@ -263,16 +296,27 @@ are load-bearing rather than dead; what was missing was a standing phase pairing
 them with the completion semantics the port's own header allows. T22 is that
 phase, and these are the measurements:
 
-- ownership narrowed to the grant handshake alone **fails 6 of 136**. The port
-  wedges on T22a and every later phase dies with it.
-- dropping the single `S_RHCOLL` term **fails 3 of 136**: the restore whose
-  header read is answered on its own eighth byte loses that completion, wedges
-  in `S_RHWAIT`, and never issues the payload read, so T22c's own witness
-  reports one coincidence where it requires two.
-- dropping the single `S_WWAIT` term **fails 0 of 136**, and that is not an
-  oversight; see the list below.
-- admitting an ungranted `S_RHREQ` into the window **fails 1 of 136**, on
-  T20a's forward counter. Before that counter existed this mutant was green.
+- ownership narrowed to the grant handshake alone **fails 41 of 326**: T22a,
+  T22b and T22c lose the completion that rode their last byte, and every T24
+  arm whose command the window no longer covers fails too (below).
+- dropping the single `S_RHCOLL` term **fails 23 of 326**: the restore whose
+  header read is answered on its own eighth byte loses that completion and
+  never issues the payload read, so T22c's own witness reports one coincidence
+  where it requires two; and T24's `S_RHCOLL` arm, whose deadline no longer
+  marks the abandoned READ owed, so the next restore is issued over it.
+- dropping the single `S_WWAIT` term **fails 1 of 326**: T24's boundary arm in
+  `S_WWAIT`, a done on the very cycle the count reaches `TMO`, which is
+  progress only for a command the port owns. Before the deadline this term
+  could not be reached at all; see the list below.
+- admitting an ungranted `S_RHREQ` into the window **fails 23 of 326**: T20a's
+  forward counter, as before (this mutant was green until that counter
+  existed), and now T24, because a deadline in that state then marks owed a
+  command the device never took.
+
+Since the deadline, the window answers two more questions than whose a `done`
+is: whether a `done` is PROGRESS for the deadline, and whether a deadline
+abandoned a command the device still owes. So every one of its terms is
+load-bearing now, through T24, as the last two rows measure for one term each.
 
 **What this does NOT establish.** Nothing here says the defect was reachable on
 any bitstream. What answers this port's device face lives in the integrating
@@ -283,95 +327,111 @@ rather than summarised because "one line of the fix" was the previous summary
 and it was too small:
 
 - **the four wait-state terms** of `dev_cmd_owned_w`: `S_WEWAIT`, `S_WWAIT`,
-  `S_RHWAIT`, `S_RPWAIT`. Each was dropped on its own and the suite stayed
-  green, and that is a property of the FSM rather than of this suite: a wait
+  `S_RHWAIT`, `S_RPWAIT`. Before the deadline each was dropped on its own with
+  the suite green, a property of the FSM rather than of this suite: a wait
   state consumes `dev_done_i` on the cycle it arrives, so the sticky set beside
-  it can never be read. They are kept because the window is stated as a
-  property of the whole outstanding command, and a later wait state that can
-  stall would need them. The `S_WWAIT` row above is that equivalence, measured:
-  if a check ever does reach it, the row goes red and this paragraph is wrong.
+  it can never be read. The deadline reads the window too, and there they are
+  not dead: a done in a wait state is progress only for a command the port
+  owns, and a deadline there marks the command owed only if the port owns it.
+  T24 grades both in every wait state; the `S_WWAIT` row above is that
+  measurement for one of them, and the row that once recorded its equivalence.
 - **the four pump and collect terms** are the opposite case and are pinned:
   `S_WHPUMP` and `S_WDPUMP` by T22a and T22b, `S_RHCOLL` and `S_RPPUMP` by
   T22c.
 - **both retirement clears.** Clearing `done_seen_r` in `S_FIN` retires
   ownership at the terminal boundary, and the accept path in `S_IDLE` clears it
   again before the next op can read it. Removing either leaves the suite green,
-  and so does removing BOTH, under every device model here: no observer can
-  separate a flag cleared twice from a flag cleared once. They are kept because
-  the invariant they state, that the flag is never set outside the window, is
-  what the ticket asks for, and a reader should not have to reconstruct it from
-  two distant clears.
-- **the grant-carried completion is proven for ERASE only.** T21 measures it on
-  the ERASE a backend without erase semantics answers at once, which is the
-  case the port's header names. The banner states the freedom for every
-  command, and for a READ the grant cycle carrying a completion is a zero-byte
-  short read: `S_RHCOLL`'s defence tests the live `dev_done_i` and not the
-  latched flag, so that completion is remembered and the port waits in
-  `S_RHCOLL` for bytes that never come. That is unchanged by this work (the
-  pre-fix latch set the flag on that cycle too), and it is the wedge class of
-  issue #15, which this suite does not model.
+  under every device model here: no observer can separate a flag cleared twice
+  from a flag cleared once. Removing BOTH used to leave it green as well, and
+  since refusal (d) it does not, measured: a flag left over from one operation
+  is read by the next one's first data phase as a short command, and T23e is
+  the first check to fail. They are kept because the invariant they state,
+  that the flag is never set outside the window, is what the ticket asks for.
+- **the grant-carried completion is a legal end for an ERASE only.** T21
+  measures it on the ERASE a backend without erase semantics answers at once,
+  which is the case the port's header names. For a READ or a WRITE a
+  completion on its own grant ends a command with bytes still to move, a
+  zero-byte short command, which refusal (d) answers with one err, cause
+  DEVICE, as soon as the data phase reads the latched flag (T27b, c and f).
+  Before refusal (d), `S_RHCOLL`'s defence tested the live `dev_done_i` only,
+  so the READ case wedged the port waiting for bytes that never came: issue
+  #15's wedge, reached by a device that did answer.
 
 Mutation-proven (backup → sed → run → restore → green). **These figures are
-against the 136-check suite; earlier revisions of this file carried 55-era
-numbers for M1 to M3 long after the suite grew.**
+against the 326-check suite; earlier revisions of this file carried figures of
+an older suite long after it grew.**
+
+**How a lost terminal reads since the deadline.** Before issue #15 a mutation
+that swallowed a device error or lost a completion WEDGED the port: `run_op`
+gave up after 100,000 cycles and every phase after it died with it. Now the
+deadline answers that operation, as DEADLINE where the device had said DEVICE
+or done, and the port then holds the command it abandoned as OWED, although the
+device already ended it, so the operations after it end DEADLINE too until a
+device terminal or a reset clears the owed state (T19a's unsolicited `done` is
+the first such terminal in the run; T23, T24, T25 and T27 each start from a
+reset). The cause checks (T7-T18 each name DEVICE now) and RW4/RW5 are what
+fail first; the rest of each count is that containment.
+
 - **C1** (2026-09-23) the cause register deleted (`nvm_err_cause_o` tied 0):
-  **fails 10 of 136**, every DEVICE and UNFRAMED case of T23.
-- **C2** the cause collapsed to DEVICE (the refusal records DEVICE): **fails 4 of 136**, the four UNFRAMED cases.
-- **C3** the cause collapsed to UNFRAMED (every active state records UNFRAMED): **fails 6 of 136**, the six DEVICE cases.
-- **C4** the cause published without its err gate: **fails 1 of 136**, T23k.
-- **M1** commit skips the ERASE: the transition INTO `S_WEREQ` (`:201`)
-  rewritten to `S_WWREQ`, so no ERASE is ever issued. **Fails 24 of 136**
-  (op-log shape, erase pulse/visibility, erase-error path).
+  **fails 57 of 326**, every check that reads a cause: T7-T9, T15-T18, T23,
+  T26a-b, T24's DEADLINE checks and T27.
+- **C2** the cause collapsed to DEVICE (the refusal records DEVICE): **fails 7 of 326**, the UNFRAMED cases of T23 and T26, and T25c, whose refused branch must read UNFRAMED.
+- **C3** the cause collapsed to UNFRAMED (every active state records UNFRAMED): **fails 23 of 326**, every DEVICE case: T7-T9, T15-T18, T23a-f, T27, RW5 and RW6.
+- **C4** the cause published without its err gate: **fails 1 of 326**, T23k.
+- **M1** commit skips the ERASE: the transition INTO `S_WEREQ` (`:345`)
+  rewritten to `S_WWREQ`, so no ERASE is ever issued. **Fails 60 of 326**
+  (op-log shape, erase pulse/visibility, erase-error path, and the T24 and T25
+  arms that name the ERASE).
   The description used to read "`S_WEREQ` target rewritten", which is ambiguous
   and the two readings differ enormously: rewriting what `S_WEREQ` itself
-  transitions to (`:215`), so the ERASE is REQUESTED but never awaited, **fails
-  only 5 of 136**. That sibling is a real coverage gap and is recorded as one
-  rather than hidden by the ambiguity.
-- **M2** magic gate dropped from `hdr_ok_w`: **fails 8 of 136** (both bad-magic
-  refusals and the nothing-forwarded check). Note this drops BOTH magic bytes;
-  the low byte alone is uncovered, see the gap list below.
+  transitions to (`:359`), so the ERASE is REQUESTED but never awaited, **fails
+  31 of 326**. That sibling was a real coverage gap at the older suite's size,
+  recorded as one rather than hidden by the ambiguity; the unsolicited,
+  coincident, deadline and reset phases have since closed it, because a WRITE
+  requested into a device still erasing is a request while owed.
+- **M2** magic gate dropped from `hdr_ok_w`: **fails 12 of 326** (both bad-magic
+  refusals, the nothing-forwarded check, T23's UNFRAMED cases and T26's low
+  byte). This drops BOTH magic bytes; the low byte alone is M2-lo, below.
 - **M3** payload pump off-by-one (`bcnt_r == plen_r` for `plen_r - 1`, both
-  directions): **fails 105 of 136** (every data-phase op times out or mismatches).
+  directions): **fails 106 of 326** (every data-phase op mismatches or ends at
+  the deadline).
 - **M4** (2026-08-20) the write phase swallows the device error (`S_WDPUMP`'s
-  `if (dev_err_i)` forced false): **fails 52 of 136**. A torn commit then looks
-  clean, which is exactly the false success #70 exists to remove. Six checks
-  survive in the phases the mutation reaches, enumerated by RUNNING the
-  mutation rather than reasoning about it,
-  because earlier versions of this file twice published a survivor list written
-  from what M4 ought to do: `T15 seed record committed` (it precedes the cut);
-  `T15 busy raised then low at the err pulse` and `T17 busy raised then low at
-  the err pulse` (a wedged port holds busy high and never pulses, so neither
-  pair is contradicted); `T15 the cut was real: ERASE then a WRITE stopped 12
-  bytes in`; and T16's two isolation checks, `erased no other region` and `no
-  other region's bytes moved`, which pass VACUOUSLY because a wedged port
-  issues no further device traffic and so nothing else can move. That vacuity
-  is what the T16 guard exists to answer. The completion-ownership phases add
-  nine survivors of the same dull kind, one per arm of T19, T20, T21, T22a and
-  T22c: their bus counters cannot fire on a port that has stopped issuing
-  anything at all, which is what the completion check beside each of them is
-  for.
+  `if (dev_err_i)` forced false): **fails 28 of 326**. Before the deadline a
+  torn commit then never answered at all; now it answers DEADLINE where the
+  device said DEVICE, which T15's cause check names first. The port then holds
+  the WRITE as owed, so T15-T18 end DEADLINE with no command issued, until
+  T19a's unsolicited `done` ends the owed state; RW4 and RW5 close the count.
+  Among the survivors, by running it: `T15 torn commit reports err, never done`
+  and its busy pair (the deadline does pulse err, with busy low), the cut checks
+  that precede the swallowed error, and T16's two isolation checks, which pass
+  VACUOUSLY because a contained port issues no further device traffic and so
+  nothing else can move. That vacuity is what the T16 guard exists to answer,
+  and it fails here: `the torn commit really did erase its own region`.
 - **M5** (2026-08-20) the completion window swallows the device error
-  (`S_WWAIT`'s `if (dev_err_i)` forced false): **fails 39 of 136**, and survives
-  the whole suite without T17. The port waits for a `done` a failed device will
-  never send, so the commit never answers at all: `run_op` returns -1 after
-  100,000 cycles. `busy_seen && busy_ok` does NOT catch this, and the comment
-  at that check says so: a wedged port holds busy high, so `busy_seen` is true
-  and no pulse arrives to contradict `busy_ok`. Everything after T17 dies with
-  it, which is why the count is so much larger than the mechanism.
+  (`S_WWAIT`'s `if (dev_err_i)` forced false): **fails 16 of 326**. The port
+  waits for a `done` a failed device will never send; before the deadline the
+  commit never answered at all (`run_op` gave up after 100,000 cycles), and
+  `busy_seen && busy_ok` did not catch that, as the comment at that check says.
+  Now the deadline answers it: T17's cause check fails first (DEADLINE where
+  the device said DEVICE), then T17's next commit and T18, which the owed WRITE
+  answers DEADLINE, and RW4 and RW5.
 - **M6** (2026-09-07) the completion latch armed in every state: the ownership
   gate removed from the set, putting the flag back the way issue #14 found it.
-  **fails 6 of 136**, one per arm of the unsolicited-completion table above and
-  nothing else in the suite — before those phases the same mutation was green.
-  The same edit plus the withdrawn one-line clear in `S_WHDR`, the fix the
-  ticket proposed first and then retracted, **fails 5 of 136**: it closes the
-  header-collection arm alone, `S_WEREQ` stays exposed on the commit side, and
-  a restore never enters `S_WHDR` at all. It is measured rather than argued
+  **fails 50 of 326**: every arm of the unsolicited-completion table above, and
+  from there a port running one command ahead of its backend, which requests
+  into a device still busy until its deadline answers DEADLINE (RW3, RW4), so
+  T21 and T22 fall as collateral. Before those phases the same mutation was
+  green. The same edit plus the withdrawn one-line clear in `S_WHDR`, the fix
+  the ticket proposed first and then retracted, **fails 47 of 326**: it closes
+  the header-collection arm alone, `S_WEREQ` stays exposed on the commit side,
+  and a restore never enters `S_WHDR` at all. It is measured rather than argued
   because "that would not have been enough" is exactly the shape of claim this
   file has had to retract before.
 - **Probes** (mutations of the TEST, not the RTL). Arming T16's tear as
   `arm_err(1, -1)`, so the WRITE fails before its first byte moves, fails 1 of
-  136. Replacing the torn commit with a bare `rc = 1` and no device traffic at
-  all — the port the T16 prose names as the threat — fails 3 of 136. Under the
+  326. Replacing the torn commit with a bare `rc = 1` and no device traffic at
+  all — the port the T16 prose names as the threat — fails 4 of 326, the cause
+  check among them. Under the
   previous guard that second probe failed only ONE check, the erase count,
   while the payload guard passed on residue from an earlier phase.
 - **Model probe**: changing only the DEVICE MODEL to roll the last 4 bytes back
@@ -379,8 +439,200 @@ numbers for M1 to M3 long after the suite grew.**
   may leave — must not redden a check about the PORT. The T17 restore check
   did exactly that, and so did the T16 byte comparison. Neither does now, by
   two different routes: T16's moved onto the bus, T17's moved to assert after
-  a `done` where the array is known. The half-page model is 136 PASS, 0 FAIL.
+  a `done` where the array is known. The half-page model is 326 PASS, 0 FAIL.
   See the matrix below for every pre-fix form against every model.
+
+### The deadline (issue #15)
+
+The port's banner states the device face's one timing obligation: the device
+presents each event it OWES the port within `MEM_TIMEOUT_CYC_P` clocks of the
+previous one. It owes one in every cycle the port waits on it (a grant while a
+request is up, a write byte the port presents, a read byte the port is ready
+for, the terminal of a command whose data phase is over) and nothing while the
+port or the manager holds the operation. Every grant, byte and terminal
+restarts the count; the (`MEM_TIMEOUT_CYC_P` + 1)-th owed cycle in a row
+without its event ends the operation with one err, cause DEADLINE. A deadline
+ends the operation, never the device's command: a command the device accepted
+and has not ended stays OWED, the port requests nothing over it, drains an
+owed READ's bytes, and takes the device's next done or err as its end. T24
+grades all of it at `TMO` = 100, every check on the bus:
+
+- **the twelve owed states.** In each of the four requests, four waits and
+  four data phases the device withholds the event it owes for exactly `TMO`
+  cycles, which the port must tolerate (done, byte-exact), and for `TMO` + 1,
+  which it must refuse: one err, cause DEADLINE, never done, busy low at the
+  pulse, exactly `TMO` + 2 cycles after the last handshake on either face, and
+  no device request while the backend owed one. The device then takes up where
+  it stopped, one cycle too late, which is the owed command: a request the
+  backend took on the very edge the deadline withdrew it is granted a cycle
+  late and owed; an owed READ's late bytes are drained and none forwarded; a
+  late terminal ends the owed state at once. After each arm the next commit and
+  restore are served byte-exact, after a reset where the abandoned command is a
+  WRITE (below).
+- **the late grant, both ways.** A late grant that carries its own done leaves
+  nothing owed (T21's rule) and the next commit's ERASE is requested at once; a
+  request withdrawn before the backend decided is never granted, and nothing is
+  owed.
+- **a slow device is not a silent one.** A backend that answers every owed
+  event `TMO` cycles late commits and restores byte-exact over more than forty
+  deadlines' worth of cycles, and a manager stalling three deadlines on every
+  byte, in both directions, is never charged to the device.
+- **issue #15's criterion 2, both branches.** Busy is low at the err pulse and
+  the next request is accepted. It is SERVED once the device has ended the
+  abandoned command: a payload READ resumed 60 cycles after the verdict, the
+  next restore waiting for its end, issuing nothing over it, then served
+  byte-exact from scratch. It is answered with one err DEADLINE, no command and
+  nothing forwarded while the device stays silent: an ERASE whose done comes
+  three deadlines late, after which the next request is served. An owed READ
+  is still drained after a later deadline, and dones for no command during an
+  ungranted request do not hold the deadline off.
+- **the abandoned WRITE is contained** (the ruling on #15). A WRITE whose device
+  stops taking bytes, its busy reading idle throughout, ends DEADLINE; two
+  commits and two restores after it each end DEADLINE with no command and no
+  byte; the device's own err ends it and the port serves again. A WRITE
+  abandoned inside its header is contained the same way until a reset of port
+  and device.
+
+Mutations, each a row of the figures gate:
+
+- **D1** the verdict forced false, no deadline at all: **fails 52 of 326**,
+  every refused arm and branch of T24, with RW1 recording the wedge that
+  returns.
+- **D2** the verdict one cycle early: **fails 33 of 326**, every tolerated arm,
+  the slow device and RW4. **D3** one cycle late: **fails 35 of 326**, every
+  refused arm's timing and the late grants it no longer meets.
+- **D4** progress no longer restarts the count: **fails 27 of 326**; a device
+  that is slow but moving is refused, from T6 on.
+- **D5** a stalled manager charged to the device in the commit's payload pump:
+  **fails 3 of 326**, and **D6** in the restore's: **fails 2 of 326**; T24's
+  manager-stall arms and RW4.
+- **D7** a done for no command counted as progress: **fails 9 of 326**; the
+  strays during an ungranted request hold the deadline off for ever, and RW1
+  records it.
+- **D8** the verdict named DEVICE: **fails 27 of 326**, every DEADLINE cause
+  check.
+- **D9** a deadline leaves nothing owed (timeout to idle): **fails 29 of 326**;
+  the next request is issued over an abandoned command (RW3).
+- **D10** the late registered grant ignored: **fails 23 of 326**, the next
+  request issued into the command the backend took late; **D11** a late grant
+  whose done rode it made owed anyway: **fails 2 of 326**.
+- **D12** the owed state released at the next deadline, by time alone:
+  **fails 4 of 326**; **D13** released when the device's busy reads idle:
+  **fails 3 of 326**; **D14** a request issued over an owed command:
+  **fails 5 of 326**.
+- **D15** the owed READ not drained: **fails 23 of 326**; **D16** a later
+  deadline overwriting the owed command's kind, which stops the drain:
+  **fails 3 of 326**.
+- **D17** the owed command's terminal latched as a completion of the next
+  operation: **fails 8 of 326**.
+
+### Short commands (refusal (d))
+
+A command the device ends before its final byte moves, by a done on an edge
+that moves no final byte or one that rode the grant of a command with bytes
+still to move, is a DEVICE error at once in all four data phases. The header
+read always refused it; a payload read ended short, or any READ completed on
+its own grant, left the port waiting for bytes that would never come. T27: a
+payload READ ended after ten of its bytes, a header READ and a payload READ
+completed on their own grant, a WRITE ended in its header pump, in its payload
+pump and on its own grant. Each: one err, cause DEVICE, never done, the cycle
+after a live completion or two after a latched one, nothing left owed, and the
+next operation served at once. The legal coincidence, a completion on the final
+byte's own edge, is T22's.
+
+- **S1** the rule off in the header pump: **fails 7 of 326**; **S2** in the
+  payload pump: **fails 5 of 326**; **S3** in the payload read: **fails 15 of
+  326**; **S4** the header read reading only the live done, not the latched one
+  (the rule as it stood before): **fails 13 of 326**. Each fails its own T27 arm
+  first; the port then reaches its deadline and holds as owed a command the
+  device already ended, which takes the later T27 arms with it.
+
+### A reset mid-commit (issue #18)
+
+T25 asserts `rst_n` mid-commit at six stages named on the bus, never by DUT
+state: (a) the header still streaming in, nothing issued; (b) the ERASE
+requested and not granted; (c) the ERASE granted and not done; (d) the
+WRITE's header pump, five bytes sent; (e) its payload pump, nine bytes of the
+record sent, which is the reviewer's case on #18, a 32-byte record cut so that
+23 bytes stay erased; (f) its completion window, every byte sent. The device
+is reset with the port (both lose power). After the release the port is idle
+and silent, no pulse, no request, no byte; a neighbour restores byte-exact;
+the next commit of the same record is byte-exact; and the torn record never
+restores as a valid one: either the port refuses it at the header (cause
+UNFRAMED) or forwards it whole and the suite's own crc16 rejects it, unless
+the old record survived, or, at (f), the new one did, and the branch the port
+took agrees with the stored header. Where nothing reached the device, (a) and
+(b), the old record restores byte-exact. Two more cuts reset the port alone,
+an SoC reset its backend does not share, in the ERASE's and the WRITE's
+completion windows: the device's late completion reaches a port that owns
+nothing and is discarded (refusal (c)), and the port serves once the device
+has ended its command.
+
+**Who refuses the torn image that restores as well-formed: the manager, by the
+crc16.** The port gates only magic and payload_length, so that it can delimit
+the stream; it forwards a torn record whose header survived WHOLE, by design,
+because integrity is in-band and validated by the manager (07 §5.3), never by
+this port (its banner). Under the pristine model (e) is exactly that case: the
+header and one payload byte survive, the port forwards all 32 bytes, and the
+crc16 rejects them. In the processor that crc16 is `KL_acmp_nvm_shadow`'s
+`rrec_ok_w` and `KL_aecp_nvm_writer`'s `frame_ok_w` (cited above), which apply
+that record's vendor default (F07.9); `tb/acmp_nvm` grades a reset in the
+middle of the binding manager's flush the same way (its group R).
+
+### The handshake models (issue #21)
+
+Four standing variants vary the HANDSHAKE, beside the four that vary what the
+array retains, each one arming of the harness's own backend that
+`measure_figures.py` leaves on for the whole run. Each is justified against
+the port's banner, and the line the rest of this file draws is kept: a model
+of a contract FREEDOM must leave every check green, and a model of a BROKEN
+backend is graded on what the port owes it, not on service.
+
+| model | what the device does | the port's clause | class |
+|---|---|---|---|
+| unsolicited completion | one done per operation for no command, in a window the bus names: a commit's header still streaming in, or a restore's being handed up | refusal (c): a completion seen while the port owns no command is discarded | freedom |
+| coincident completion | done on the edge that moves a command's final byte | the latch comment, refusal (c)'s ownership window | freedom |
+| short read | every other READ it accepts ends with done after three eighths of its bytes, rounded down (three of a header's eight) | refusal (d) | broken backend |
+| silent | every command granted, then nothing more: no byte, no terminal | the deadline, and the owed command | broken backend |
+
+The two freedoms leave all 326 checks green (the model table above). The two
+broken backends fail service, the restores a short device cannot complete and
+everything a silent one never answers, and are graded on the RW checks, which
+close the run and must pass under every model, which the figures gate enforces
+by name: **RW1** every operation answered, none past `run_op`'s guard; **RW2**
+none answered twice; **RW3** no device command requested while the backend
+still owed one; **RW4** no DEADLINE where the device was not silent; **RW5**
+every device error answered DEVICE; **RW6** every READ the device ended short
+answered with one err, cause DEVICE, never done; **RW7** under the silent
+model every operation ended in one err, never done and never DEVICE; RW8 and
+RW9 witness that the unsolicited and short-read models fired.
+
+Issue #21's four mutations, each under the model that names its device:
+
+- M6 under the unsolicited model **fails 222 of 326** (M6 alone above).
+- the latch deleted, under the coincident model: the `done_seen_r` row above.
+- M8 under the short-read model **fails 146 of 326** (M8 alone below).
+- D1 under the silent model **fails 267 of 326**, RW1, RW3 and RW7 among them:
+  the wedge issue #15 named, back.
+
+### Issue #19's four mechanisms
+
+Each mutation now fails a check whose message names its mechanism:
+
+- **the low magic byte.** T26a commits a record framed 0x17FF, refused with one
+  err, cause UNFRAMED, and no device traffic; T26b restores a stored record
+  whose byte 1 is wrong, refused with nothing forwarded. **M2-lo**, the low
+  byte's compare forced true, **fails 5 of 326**.
+- **the payload bound at both edges.** T26c and T26d commit and restore a record
+  whose payload_length is exactly `MAX_PAYLOAD_P`, byte-exact; T11 and T13 keep
+  the `MAX_PAYLOAD_P + 1` refusals. **M7**, the bound weakened from `<=` to
+  `<`, **fails 4 of 326**.
+- **the sticky `done_seen_r` latch.** T21 and T22 name it; deleting its set line
+  and the coincident-model row are measured above.
+- **the short-read defence.** T23c names it, and T27 extends it to every data
+  phase. **M8**, the header read's defence off, **fails 22 of 326**: T23c, then
+  the port reaches its deadline and holds as owed a read the device ended,
+  which takes the rest of T23 and T27's READ arms with it.
 
 ### Device-error arm coverage
 
@@ -388,8 +640,9 @@ numbers for M1 to M3 long after the suite grew.**
 `1'b0` in turn and the suite re-run, so this table is measured, not argued —
 and it is now **checked by a script rather than by hand**: `measure_figures.py`
 re-runs every arm, cross-checks the arm COUNT against the RTL, and re-measures
-**every figure in this file**: eighteen mutations and probes, seven device-model
-result rows, and all thirty cells of the pre-fix matrix. CI runs it.
+**every figure in this file**: forty-nine mutations and probes, ten device-model
+result rows, and all thirty cells of the pre-fix matrix; and under every device
+model it requires the RW checks to pass by name. CI runs it.
 
 The covered set is DERIVED, not asserted. Every `N of M` and `N PASS, N FAIL`
 here is a claim by default, satisfied only by a measurement or by an explicit
@@ -405,7 +658,7 @@ vocabulary could not grow behind the gate because English number words are a
 closed class. The argument is true and beside the point: the closed class is
 number words, the open class is ways of writing a ratio, and closing one axis
 leaves the other. Ten of thirteen phrasings still evaded, two of them using
-digits only -- `fails 22 of the 136 checks` and `fails 22 out of 136`. Both are
+digits only -- `fails 22 of the 326 checks` and `fails 22 out of 326`. Both are
 caught now, and `| Mx | 22 |`, `reddens 22 checks`, `a fifth of the suite`,
 `68/90ths` and `24%` are not. A real closure would mean treating every bare
 integer as a claim: measured, 292 numbers in this file fall outside every claim
@@ -432,8 +685,8 @@ not be re-derived at all: its recipe had never been committed. The number was
 sound; it was unverifiable rather than wrong, so the recipe was committed rather
 than the figure retracted.
 
-Run `make -C tb/nvm_port figures` after any change to this suite. About four
-minutes on two cores; it prints its own derived build count. That is the price of figures that four
+Run `make -C tb/nvm_port figures` after any change to this suite. About seven
+minutes on sixteen cores; it prints its own derived build count. That is the price of figures that four
 review rounds found stale. Two of those rounds found the arm TABLE stale; the
 other two found stale numerators elsewhere in the file, which is why the gate
 covers every figure rather than the table alone.
@@ -448,20 +701,24 @@ the whole table has to be re-swept.
 
 | line | state | checks failed |
 |---|---|---|
-| 222 | `S_WEREQ`  | **0 — uncovered** |
-| 231 | `S_WEWAIT` | 76 |
-| 241 | `S_WWREQ`  | **0 — uncovered** |
-| 251 | `S_WHPUMP` | 64 |
-| 264 | `S_WDPUMP` | 52 |
-| 274 | `S_WWAIT`  | 39 |
-| 285 | `S_RHREQ`  | 2 |
-| 295 | `S_RHCOLL` | 43 |
-| 313 | `S_RHWAIT` | 38 |
-| 340 | `S_RPREQ`  | **0 — uncovered** |
-| 350 | `S_RPPUMP` | 71 |
-| 360 | `S_RPWAIT` | 26 |
+| 355 | `S_WEREQ`  | **0 — uncovered** |
+| 364 | `S_WEWAIT` | 51 |
+| 374 | `S_WWREQ`  | **0 — uncovered** |
+| 384 | `S_WHPUMP` | 41 |
+| 401 | `S_WDPUMP` | 28 |
+| 416 | `S_WWAIT`  | 16 |
+| 427 | `S_RHREQ`  | 3 |
+| 437 | `S_RHCOLL` | 20 |
+| 456 | `S_RHWAIT` | 15 |
+| 483 | `S_RPREQ`  | **0 — uncovered** |
+| 493 | `S_RPPUMP` | 47 |
+| 508 | `S_RPWAIT` | 4 |
 
-**Nine of twelve are covered; three are not.** The survivors are three of the
+**Nine of twelve are covered; three are not.** Since the deadline, a swallowed
+error no longer wedges the port: it reaches its deadline, answers DEADLINE, and
+then holds the command as owed (see "How a lost terminal reads" above), so each
+count is the cause check of the phase that cut there plus that containment. The
+survivors are three of the
 four `*REQ` arms, where the device asserts an error before its request is
 granted. T23a added that mode to the device model (`gnt_err`: err in place of
 the grant) for the header READ, which is how `S_RHREQ` came to be reached; the
@@ -479,15 +736,15 @@ CHECKED that they reached those windows. Both were measured green under probes
 that removed the thing being tested:
 
 - moving T17's cut off the completion window, so `S_WWAIT` is never entered:
-  **136/136 green** before, now fails on `T17 the cut was in the completion
-  window: every byte sent first`.
+  the whole suite **green** before, now fails on `T17 the cut was in the
+  completion window: every byte sent first`.
 - replacing T18's three device errors with a bad stored magic, so ZERO device
-  errors occur anywhere: **136/136 green** before. The op log alone could not tell
+  errors occur anywhere: the whole suite **green** before. The op log alone could not tell
   them apart, because the port issues the header READ BEFORE validating it, so
   a refusal and a device error produce the same two ops. Distinguishing them
   needed a count of DEVICE-raised errors, separate from the port's own `err`
   pulses; `dev_errs` is that counter and each arm now pins it.
-- replacing a T18 arm with a bare `r = 1`, port never touched: now fails 3.
+- replacing a T18 arm with a bare `r = 1`, port never touched: now fails 4.
 
 The general shape: a phase that names a window is not the same as a phase that
 proves it entered one, and the evidence for the difference lived only in the
@@ -521,7 +778,7 @@ rather than quietly deleted. `T15 unless the old record survived, a torn image
 never restores as valid` was called weaker than the header-agreement check
 beside it, on the evidence of twelve arms and four models showing no
 divergence. Measured directly by moving T15's tear into the completion window:
-that check FAILS while the header check PASSES, 2 of 136. It can fail alone, so
+that check FAILS while the header check PASSES, 2 of 326. It can fail alone, so
 it is not a member of this section at all. The error is the same shape as the
 corollary retracted below -- a general claim generalised from the states that
 happened to be tried -- and this file has now made it twice, because "no
@@ -532,10 +789,11 @@ divergence across the cases I ran" is not "cannot diverge".
 
 FIVE checks in this file were written against what the flash ARRAY held and
 had to be rewritten, because what the array holds is the device MODEL's choice,
-not the port's behaviour. FIVE device models and one combination were run, RTL
-byte-identical. Four vary what the array RETAINS; the fifth, coincident
-completion, varies the HANDSHAKE instead -- the device raises `dev_done_i` on
-the same edge that moves a pump's final byte, which `KL_pp_nvm_port.sv:186-190`
+not the port's behaviour. EIGHT device models and one combination are run, RTL
+byte-identical. Four vary what the array RETAINS; four vary the HANDSHAKE
+instead, and "The handshake models" below has the other three. The first of
+those, coincident completion -- the device raises `dev_done_i` on
+the same edge that moves a pump's final byte, which `KL_pp_nvm_port.sv:319-323`
 says the sticky `done_seen_r` latch exists for. It is a contract freedom rather
 than a broken peer, and the port handles it. Its whole interest was that
 deleting that latch was INVISIBLE without it, which stopped being true when
@@ -619,12 +877,19 @@ Applied here:
 
 | model | result |
 |---|---|
-| pristine | **136 PASS, 0 FAIL** |
-| half-page | **136 PASS, 0 FAIL** |
-| page-buffered NOR | **136 PASS, 0 FAIL** |
-| lazy erase | 135 PASS, 1 FAIL, only the pre-existing `T1` |
-| lazy erase + page-buffered | 135 PASS, 1 FAIL, only `T1` |
-| coincident completion | **136 PASS, 0 FAIL** |
+| pristine | **326 PASS, 0 FAIL** |
+| half-page | **326 PASS, 0 FAIL** |
+| page-buffered NOR | **326 PASS, 0 FAIL** |
+| lazy erase | 325 PASS, 1 FAIL, only the pre-existing `T1` |
+| lazy erase + page-buffered | 325 PASS, 1 FAIL, only `T1` |
+| coincident completion | **326 PASS, 0 FAIL** |
+| unsolicited completion | **326 PASS, 0 FAIL** |
+| short read | 251 PASS, 75 FAIL, service only: every RW check passes |
+| silent | 110 PASS, 216 FAIL, service only: every RW check passes |
+
+The page-buffered model discards its buffer when it takes a new command, as a
+real NOR's buffer does; before the deadline no WRITE was ever left unfinished
+without an err, so that edit had nothing to do.
 
 A device model variant is the cheapest way to find a check that tests the
 harness rather than the DUT, and it belongs in the standing mutation set. Each
@@ -704,12 +969,13 @@ Recorded so the phase list does not read as closing #70:
   `KL_acmp_nvm_shadow`, on the synthesized path. What does not exist is A/B
   promotion. So the gap is narrower than "nothing covers it": the manager can
   reject a torn record, it just cannot recover the one it replaced.
-- **A restore failure is one signal for three situations**: a refused region, a
-  torn header, and a tear after a complete header has already been forwarded.
-  T18 pins that each reports `err`; it does not distinguish them, and the
-  specification requires the manager to. Tracked as issue #20; issue #16 stated
-  this as a port-face defect and was closed, because the manager already makes
-  the distinction — what survives is narrower and is #20.
+- **A restore failure is told apart by its cause and its byte count, and the
+  telling is the manager's.** This suite pins the port's half: the cause names
+  a device that failed or ended short (DEVICE), a record that is not one
+  (UNFRAMED) and a device that said nothing (DEADLINE), and a tear after a
+  complete header shows as bytes already forwarded. Whether a zero-byte DEVICE
+  or DEADLINE `err` is a dying flash rather than a blank region is the binding
+  manager's verdict, graded in `tb/acmp_nvm` (N1, N2, N9, N12; issue #20).
 - **NONE of the twelve `dev_err_i` arms can fire on any bitstream that exists.**
   The parent answers this port's device face with a blank-flash responder that
   ties `nvm_dev_err_i` to `1'b0` (`milan-fpga hdl/milan/KL_pp_shadow.sv:1010`).
@@ -724,35 +990,22 @@ Recorded so the phase list does not read as closing #70:
   answered outside this tree, the responder there has since been reported
   changed, and nothing here re-checks it. Read it as a statement about a parent
   revision, not as a live reachability result either way — the phases below
-  prove a contract, not a bitstream.
-- **The device model was well-behaved by construction**, and the half of the
-  contract that lives in the HANDSHAKE went untested for exactly that reason.
-  The five variants in "Where a check may read
-  from" -- pristine, half-page, page-buffered NOR, lazy erase, and lazy erase
-  plus page buffering -- all vary what the array RETAINS. Three armings vary the
-  handshake now, all of them in "Completion ownership": the `done` that belongs
-  to no command, which is what closed issue #14; the completion that rides its
-  own grant; and the completion that rides a command's final byte, whose arming
-  the coincident-completion model leaves on for a whole run rather than for one
-  phase. **#15 is still open
-  and this suite is still blind to it**: the port has no timeout, so a backend
-  that simply never answers holds it busy forever, and no phase here bounds
-  that wait or asserts anything about it.
-- **No phase asserts `rst_n` after init.** "Power cut" means "the device raised
-  `err`" throughout this file. A real reset mid-commit is the path a power cut
-  actually takes, and it is not modelled: after one, the port forwards a 32-byte
-  torn image with 23 bytes erased as a well-formed record. That is #70's
-  "half-record that restores as garbage", reached the way it actually happens.
-  Tracked as issue #18.
-- **Three of the four RTL mechanisms issue #19 lists still have zero coverage**:
-  the low magic byte (`hdr_r[1]`, since both magic tests corrupt only
-  the high byte), the payload bound's upper edge (`<=` to `<` is green, so the
-  largest legal record can be silently refused), and the short-read defence at
-  `:294`, whose failure
-  mode is a hang on the boot restore walk and which no `dev_err_i` mutation can
-  reach because it guards `dev_done_i`. The fourth was the sticky `done_seen_r`
-  latch, and it is covered now — see "Completion ownership" for what closed it
-  and by how much.
+  prove a contract, not a bitstream. The deadline is the one exception the port
+  makes reachable on its own: a backend that stops answering now ends in the
+  port's `err` with cause DEADLINE, whatever the backend's error tie-off.
+- **The device models are models.** The four that vary the handshake (see
+  "The handshake models") are drawn from the port's own contract and from the
+  parent's backend as this repository describes it; no real flash part was
+  run. The deadline's default (1,000 ms, `NVM_MEM_TMO_CYC_P = CLK_HZ_P` at the
+  top) is a derivation from that backend's longest legal stall, not a
+  measurement of a device, and this suite runs at `TMO` = 100 cycles.
+- **A contained WRITE is not recovered.** A WRITE the port abandons on a device
+  that then waits for its next byte for ever keeps the port answering
+  DEADLINE until the device ends it or a reset (T24). That is the ruled
+  behaviour: padding the WRITE would close a record whose bytes the manager
+  never supplied, and an abort would be an interface change.
+- **The RANDOMIZED cut points `09_verification.md:56` asks for are still owed**
+  on both sides: T15-T18 and T25 cut at fixed points named on the bus.
 - **The `err` clause of the rule has THREE known exceptions**, and T1 is not
   among them: T1 asserts after a `done` and reddens only under lazy erase, so
   it is a `done`-clause exception. The three are T16's isolation checks, and a coarse-erase

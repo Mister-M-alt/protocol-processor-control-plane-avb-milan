@@ -59,14 +59,71 @@
 //                next accept and at reset. Outside the window a completion
 //                belongs to nobody: remembering one there lets the NEXT wait
 //                state short-circuit on it, and a commit then reports done
-//                over a region the backend is still erasing.
+//                over a region the backend is still erasing;
+//                (d) a SHORT command: a completion on an edge that moves no
+//                final byte, or one that rode the grant of a command with
+//                bytes still to move, ends the operation with one err,
+//                cause DEVICE, at once, in all four data phases (the header
+//                read always did; processor issue #15).
+//
+//  Deadline    : (processor issue #15) 02 §8 leaves the device face free,
+//                but not silent: the device presents each event it OWES the
+//                port within MEM_TIMEOUT_CYC_P clocks of the previous one. It
+//                owes one in every cycle the port waits on it: a grant while
+//                a request is up, a write byte the port presents, a read
+//                byte the port is ready for, the terminal of a command whose
+//                data phase is over. It owes nothing while the port or the
+//                manager holds the operation (header collection and forward,
+//                a stalled manager byte). Every grant, byte and terminal
+//                restarts the count, so a device that is slow but moving is
+//                never refused however long the whole operation runs. On the
+//                (MEM_TIMEOUT_CYC_P + 1)-th owed cycle in a row without its
+//                event the operation ends: one err, cause DEADLINE, never
+//                done, busy low at the pulse, MEM_TIMEOUT_CYC_P + 2 clocks
+//                after the last handshake on either face.
+//
+//                A deadline ends the OPERATION, never the device's command.
+//                A command the device accepted and has not ended stays OWED:
+//                while it is owed the port requests nothing, takes and
+//                discards the bytes of an owed READ, and takes the device's
+//                next done or err as that command's end, credited to no
+//                operation. A request that arrives meanwhile is accepted and
+//                waits for that terminal under the same count: served once
+//                the device has ended the abandoned command, one err cause
+//                DEADLINE while it stays silent. Nothing is released on
+//                time; only the device's own terminal or a reset ends the
+//                owed state. An abandoned WRITE whose device waits for its
+//                next byte for ever is CONTAINED that way, every later
+//                request ending DEADLINE until reset: padding it would close
+//                a record whose bytes the manager never supplied, and an
+//                abort is an interface this face does not have.
+//
+//                dev_gnt_i means the device ACCEPTED the command, and it
+//                comes at most one cycle after the edge that sampled the
+//                request. A backend that registers its grant (the parent's
+//                KL_nvm_backend does) can take a request on the very edge a
+//                deadline withdraws it, so a grant in the cycle after a
+//                deadline in a request state makes that command owed, unless
+//                its terminal rides the grant.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
 module KL_pp_nvm_port #(
     //! largest accepted payload_length in bytes; must be ≤ 65527 so that
     //! dev_len_o = 8 + payload_length always fits 16 bits
-    parameter int unsigned MAX_PAYLOAD_P = 1024
+    parameter int unsigned MAX_PAYLOAD_P = 1024,
+    //! the device-face deadline (banner), in clk_i cycles: class E's
+    //! MEM_TIMEOUT_CYC_P (KL_aecp_desc_store, KL_aecp_resp_buf) on class F.
+    //! Legal 1 to 2^31 - 1, refused outside at elaboration. 100,000,000 is
+    //! 1,000 ms at the F01.5 default P-CLK-HZ of 100 MHz; the top binds
+    //! NVM_MEM_TMO_CYC_P = CLK_HZ_P (F01.5 P-NVM-MEM-TMO-CYC, F08.1
+    //! T-NVM-PORT-DEADLINE)
+    parameter int unsigned MEM_TIMEOUT_CYC_P = 100_000_000,
+    //! derived — do not override. Counted at 33 bits so an out-of-range
+    //! value still elaborates far enough for the guard to name it: at
+    //! 2^32 - 1 the 32-bit sum + 1 wraps to 0
+    localparam int unsigned TMO_W_C = (MEM_TIMEOUT_CYC_P < 1) ? 1
+                                    : $clog2(33'(MEM_TIMEOUT_CYC_P) + 33'd1)
 ) (
     input  wire         clk_i,           //! core clock (P-CLK-HZ domain)
     input  wire         rst_n,           //! synchronous active-low reset
@@ -90,12 +147,14 @@ module KL_pp_nvm_port #(
     //! read and the header failed the magic or length gate, or the manager's
     //! own commit header failed it. UNFRAMED says the device answered with
     //! something that is not a record; it does not prove erased media.
-    //! 3 is reserved for a port deadline and never produced here.
+    //! 3 DEADLINE: the device owed an event and presented none for
+    //! MEM_TIMEOUT_CYC_P + 1 cycles (banner); said nothing, beside DEVICE's
+    //! said no and UNFRAMED's not a record.
     output logic [1:0]  nvm_err_cause_o,
 
     //! ---- device face (initiator toward the side-port backend, 02 §8-free) ----
     output logic        dev_req_o,       //! command request, held until dev_gnt_i
-    input  wire         dev_gnt_i,       //! backend accepts {op, region, offset, len}
+    input  wire         dev_gnt_i,       //! backend ACCEPTED {op, region, offset, len}
     output logic [1:0]  dev_op_o,        //! NVMP_OP_READ_C / _WRITE_C / _ERASE_C
     output logic [7:0]  dev_region_o,    //! region id = record_id (one region per record)
     output logic [15:0] dev_offset_o,    //! byte offset within the region
@@ -121,6 +180,14 @@ module KL_pp_nvm_port #(
   localparam logic [7:0]  MAGIC_LO_C = 8'h22;  // magic 0x1722, byte 1
   localparam logic [15:0] HDR_LEN_C  = 16'd8;  // magic+version+id+plen+crc16
   localparam logic [15:0] MAXP_C     = 16'(MAX_PAYLOAD_P);
+
+  // ---- elaboration guard ----------------------------------------------------
+  //! 0 would make every owed cycle a deadline and 2^31 or more cannot be
+  //! counted at the width above
+  if ((MEM_TIMEOUT_CYC_P < 1) || (MEM_TIMEOUT_CYC_P > 32'h7FFF_FFFF)) begin : g_tmo_check
+    $error("KL_pp_nvm_port: MEM_TIMEOUT_CYC_P=%0d is outside 1 to 2147483647",
+           MEM_TIMEOUT_CYC_P);
+  end
 
   // ---- state machine ------------------------------------------------------
   typedef enum logic [3:0] {
@@ -150,6 +217,10 @@ module KL_pp_nvm_port #(
   logic       [15:0] plen_r;        // payload_length latched from the header
   logic        [7:0] rec_r;         // record id latched at accept
   logic              done_seen_r;   // sticky dev_done_i for the OWNED command
+  logic              owed_r;        // an abandoned device command is still owed
+  logic              owed_rd_r;     // ...and it is a READ: drain its bytes
+  logic              lg_r;          // last cycle a deadline withdrew a request
+  logic [TMO_W_C-1:0] tmo_r;        // owed cycles without the owed event
 
   // header validation view (bytes 0..5 are in hdr_r before the check fires)
   logic [15:0] hdr_plen_w;
@@ -171,6 +242,68 @@ module KL_pp_nvm_port #(
                       || (state_r == S_WDPUMP) || (state_r == S_WWAIT)
                       || (state_r == S_RHCOLL) || (state_r == S_RHWAIT)
                       || (state_r == S_RPPUMP) || (state_r == S_RPWAIT);
+
+  // ---- the deadline (banner; processor issue #15) --------------------------
+  //! the device owes the port its next event: a grant (or, while a command
+  //! is owed, that command's terminal) in a request state, a terminal in a
+  //! wait state, a byte the port presents or is ready for in a data phase.
+  //! A data phase whose manager stalls owes nothing.
+  logic req_st_w, rd_st_w, owe_w, prog_w, tmo_hit_w, dl_w;
+
+  assign req_st_w = (state_r == S_WEREQ) || (state_r == S_WWREQ)
+                  || (state_r == S_RHREQ) || (state_r == S_RPREQ);
+  assign rd_st_w  = (state_r == S_RHREQ) || (state_r == S_RHCOLL)
+                  || (state_r == S_RHWAIT) || (state_r == S_RPREQ)
+                  || (state_r == S_RPPUMP) || (state_r == S_RPWAIT);
+  assign owe_w    = req_st_w
+                  || (state_r == S_WEWAIT) || (state_r == S_WWAIT)
+                  || (state_r == S_RHWAIT) || (state_r == S_RPWAIT)
+                  || (state_r == S_WHPUMP) || (state_r == S_RHCOLL)
+                  || ((state_r == S_WDPUMP) && nvm_wvalid_i)
+                  || ((state_r == S_RPPUMP) && nvm_rready_i);
+  //! ...and gives one: a grant, a byte, an err, or a done that ends a
+  //! command of ours or the owed one. A done that belongs to nobody (refusal
+  //! (c)) is not progress.
+  assign prog_w   = dev_err_i
+                  || (dev_done_i && (dev_cmd_owned_w || owed_r))
+                  || (dev_req_o && dev_gnt_i)
+                  || (dev_wvalid_o && dev_wready_i)
+                  || (dev_rvalid_i && dev_rready_o);
+  assign tmo_hit_w = (tmo_r == TMO_W_C'(MEM_TIMEOUT_CYC_P));
+  //! the verdict: owed, still nothing, MEM_TIMEOUT_CYC_P cycles already
+  //! counted. An event in this very cycle is progress and wins, so a live
+  //! terminal can never be pending at a verdict.
+  assign dl_w = owe_w && !prog_w && tmo_hit_w;
+
+  always_ff @(posedge clk_i) begin : nvm_port_tmo
+    if (!rst_n)                tmo_r <= '0;
+    else if (!owe_w || prog_w) tmo_r <= '0;
+    else if (!tmo_hit_w)       tmo_r <= tmo_r + TMO_W_C'(1);
+  end
+
+  //! the owed command. Set when a deadline abandons a command the device
+  //! accepted (every state the ownership window names but a request), or
+  //! when the device grants a request the deadline withdrew, one cycle
+  //! late; cleared only by its done or err, which belongs to no operation,
+  //! or by reset. Its kind is taken only while nothing is owed, so a later
+  //! deadline never stops the drain of an owed READ.
+  always_ff @(posedge clk_i) begin : nvm_port_owed
+    if (!rst_n) begin
+      owed_r    <= 1'b0;
+      owed_rd_r <= 1'b0;
+      lg_r      <= 1'b0;
+    end else begin
+      lg_r <= dl_w && dev_req_o;
+      if (dl_w && !owed_r) owed_rd_r <= rd_st_w;
+      if (owed_r) begin
+        if (dev_done_i || dev_err_i) owed_r <= 1'b0;
+      end else if (dl_w && dev_cmd_owned_w) begin
+        owed_r <= 1'b1;
+      end else if (lg_r && dev_gnt_i && !dev_done_i && !dev_err_i) begin
+        owed_r <= 1'b1;
+      end
+    end
+  end
 
   always_ff @(posedge clk_i) begin : nvm_port_fsm
     if (!rst_n) begin
@@ -218,7 +351,7 @@ module KL_pp_nvm_port #(
           end
         end
 
-        S_WEREQ: begin
+        S_WEREQ: if (!owed_r) begin   // an owed command blocks the request
           if (dev_err_i) begin
             err_r   <= 1'b1;
             state_r <= S_FIN;
@@ -237,7 +370,7 @@ module KL_pp_nvm_port #(
           end
         end
 
-        S_WWREQ: begin
+        S_WWREQ: if (!owed_r) begin   // an owed command blocks the request
           if (dev_err_i) begin
             err_r   <= 1'b1;
             state_r <= S_FIN;
@@ -251,6 +384,10 @@ module KL_pp_nvm_port #(
           if (dev_err_i) begin
             err_r   <= 1'b1;
             state_r <= S_FIN;
+          end else if (done_seen_r || (dev_done_i
+                       && !(dev_wready_i && (hidx_r == 3'd7) && (plen_r == 16'd0)))) begin
+            err_r   <= 1'b1;          // refusal (d): the WRITE ended short
+            state_r <= S_FIN;
           end else if (dev_wready_i) begin
             hidx_r <= hidx_r + 3'd1;
             if (hidx_r == 3'd7) begin
@@ -263,6 +400,11 @@ module KL_pp_nvm_port #(
         S_WDPUMP: begin
           if (dev_err_i) begin
             err_r   <= 1'b1;
+            state_r <= S_FIN;
+          end else if (done_seen_r || (dev_done_i
+                       && !(nvm_wvalid_i && dev_wready_i && (bcnt_r == (plen_r - 16'd1)))))
+          begin
+            err_r   <= 1'b1;          // refusal (d): the WRITE ended short
             state_r <= S_FIN;
           end else if (nvm_wvalid_i && dev_wready_i) begin
             bcnt_r <= bcnt_r + 16'd1;
@@ -281,7 +423,7 @@ module KL_pp_nvm_port #(
         end
 
         // --------------------------------------------------------- restore
-        S_RHREQ: begin
+        S_RHREQ: if (!owed_r) begin   // an owed command blocks the request
           if (dev_err_i) begin
             err_r   <= 1'b1;
             state_r <= S_FIN;
@@ -301,8 +443,9 @@ module KL_pp_nvm_port #(
               hidx_r        <= hidx_r + 3'd1;
               if (hidx_r == 3'd7) state_r <= S_RHWAIT;
             end
-            // defensive: done with fewer than 8 bytes delivered = short read
-            if (dev_done_i && !(dev_rvalid_i && (hidx_r == 3'd7))) begin
+            // refusal (d): done with fewer than 8 bytes delivered, live or
+            // latched off the grant, is a short read
+            if (done_seen_r || (dev_done_i && !(dev_rvalid_i && (hidx_r == 3'd7)))) begin
               err_r   <= 1'b1;
               state_r <= S_FIN;
             end
@@ -336,7 +479,7 @@ module KL_pp_nvm_port #(
           end
         end
 
-        S_RPREQ: begin
+        S_RPREQ: if (!owed_r) begin   // an owed command blocks the request
           if (dev_err_i) begin
             err_r   <= 1'b1;
             state_r <= S_FIN;
@@ -349,6 +492,11 @@ module KL_pp_nvm_port #(
         S_RPPUMP: begin
           if (dev_err_i) begin
             err_r   <= 1'b1;
+            state_r <= S_FIN;
+          end else if (done_seen_r || (dev_done_i
+                       && !(dev_rvalid_i && nvm_rready_i && (bcnt_r == (plen_r - 16'd1)))))
+          begin
+            err_r   <= 1'b1;          // refusal (d): the READ ended short
             state_r <= S_FIN;
           end else if (dev_rvalid_i && nvm_rready_i) begin
             bcnt_r <= bcnt_r + 16'd1;
@@ -377,17 +525,25 @@ module KL_pp_nvm_port #(
 
         default: state_r <= S_IDLE;
       endcase
+
+      // the deadline: no transition above can fire in its cycle, since any
+      // owed event is progress
+      if (dl_w) begin
+        err_r   <= 1'b1;
+        state_r <= S_FIN;
+      end
     end
   end
 
   // ---- the terminal cause (issue #93, S1) ----------------------------------
   //! UNFRAMED only where this port itself refuses a header: one the device
   //! delivered whole (S_RHWAIT, done without err) or the manager streamed
-  //! (S_WHDR's eighth byte). Every other err is DEVICE, the short header
-  //! read included. Taken on the transition into S_FIN and held there, the
-  //! cycle nvm_err_o pulses.
+  //! (S_WHDR's eighth byte). DEADLINE only on the deadline's verdict. Every
+  //! other err is DEVICE, every short command included. Taken on the
+  //! transition into S_FIN and held there, the cycle nvm_err_o pulses.
   localparam logic [1:0] CAUSE_DEVICE_C   = 2'd1;
   localparam logic [1:0] CAUSE_UNFRAMED_C = 2'd2;
+  localparam logic [1:0] CAUSE_DEADLINE_C = 2'd3;
   logic [1:0] cause_r;
   logic       refuse_w;
 
@@ -401,6 +557,8 @@ module KL_pp_nvm_port #(
       cause_r <= 2'd0;
     end else if (refuse_w) begin
       cause_r <= CAUSE_UNFRAMED_C;
+    end else if (dl_w) begin
+      cause_r <= CAUSE_DEADLINE_C;
     end else if ((state_r != S_FIN) && (state_r != S_IDLE)) begin
       cause_r <= CAUSE_DEVICE_C;
     end
@@ -420,15 +578,15 @@ module KL_pp_nvm_port #(
   assign nvm_rdata_o  = (state_r == S_RHFWD) ? hdr_r[hidx_r] : dev_rdata_i;
 
   // ---- device face outputs -----------------------------------------------
-  assign dev_req_o    = (state_r == S_WEREQ) || (state_r == S_WWREQ)
-                      || (state_r == S_RHREQ) || (state_r == S_RPREQ);
+  assign dev_req_o    = req_st_w && !owed_r;         // never over an owed command
   assign dev_region_o = rec_r;
 
   assign dev_wvalid_o = (state_r == S_WHPUMP)
                       || ((state_r == S_WDPUMP) && nvm_wvalid_i);
   assign dev_wdata_o  = (state_r == S_WHPUMP) ? hdr_r[hidx_r] : nvm_wdata_i;
   assign dev_rready_o = (state_r == S_RHCOLL)
-                      || ((state_r == S_RPPUMP) && nvm_rready_i);
+                      || ((state_r == S_RPPUMP) && nvm_rready_i)
+                      || (owed_r && owed_rd_r);        // the owed READ's drain
 
   always_comb begin : dev_cmd
     dev_op_o     = NVMP_OP_READ_C;

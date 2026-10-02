@@ -13,10 +13,13 @@
 // (busy low at the pulse, pulses exactly once), back-to-back ops, req-
 // while-busy refusal, header refusals (bad magic / oversize length) with
 // zero device traffic, mid-op device errors surfacing exactly once, and --
-// the three things a well-behaved backend cannot show -- a `done` pulsed for
-// no command at all, which the port must not mistake for the completion of
-// the next one it issues, and the two completions it MUST take: one riding
-// its own grant, one riding a command's final byte.
+// the things a well-behaved backend cannot show -- a `done` pulsed for no
+// command at all, which the port must not mistake for the completion of the
+// next one it issues, the two completions it MUST take (one riding its own
+// grant, one riding a command's final byte), a command ended short, a device
+// that goes silent (the deadline, issue #15, and the owed command it leaves),
+// and a reset with a commit in flight (issue #18). The run closes on the RW
+// checks: what every operation was owed, under every device model.
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -42,8 +45,14 @@ constexpr int OP_ERASE = 2;
 constexpr int N_REGIONS = 8;    // test ids stay 0..7
 constexpr int REG_BYTES = 2048;
 constexpr int MAXP      = 1024; // pinned by -GMAX_PAYLOAD_P in the Makefile
+constexpr int TMO       = 100;  // pinned by -GMEM_TIMEOUT_CYC_P in the Makefile
 
 constexpr int  kResetTicks      = 4;      // clocks held in reset before rst_n
+// armed silence (issue #15): where the device withholds the event it owes
+constexpr int SIL_NONE = 0;
+constexpr int SIL_GNT  = 1;               // the grant of the armed command
+constexpr int SIL_BYTE = 2;               // one data byte of it
+constexpr int SIL_DONE = 3;               // its completion
 constexpr long kOpTimeoutCycles = 100000; // run_op guard: no done/err by then
 constexpr int  kDrainCycles     = 30;     // ticked past a pulse to catch a second
 
@@ -114,6 +123,10 @@ struct Harness {
   int  short_after = -1;                  // end the next READ with done after N bytes
   bool short_cur = false;
   int  short_after_n = 0;                 // ...the N the armed READ ends at
+  int  wshort_after = -1;                 // end the next WRITE with done after N bytes
+  bool wshort_cur = false;
+  int  wshort_n = 0;
+  bool gnt_done_on_data = false;          // the next READ or WRITE completes on its grant
 
   // ---- unsolicited completion (issue #14) ----
   // A `done` that belongs to NO command. The model above only ever completes
@@ -152,6 +165,81 @@ struct Harness {
   bool done_on_last_byte = false;         // arm: the backend answers on that edge
   bool coinc_now = false;                 // this tick's final byte carries it
   int  coinc_dones = 0;                   // final-byte completions presented
+
+  // ---- the handshake models left on for a whole run (issue #21) ----
+  // Each is an arming of this backend that `measure_figures.py` leaves on for
+  // every phase, beside the array-flavoured models. Two are contract FREEDOMS
+  // the port must take with every check green, two are BROKEN backends graded
+  // on what the port owes them; the README's model table says which is which.
+  //   unsolicited: one `done` per operation that belongs to no command, in a
+  //     window named by the bus -- a commit's header still streaming in, or a
+  //     restore's header being handed up -- with nothing requested and nothing
+  //     owed. The port's refusal (c).
+  //   coincident: `done_on_last_byte` above, left on.
+  //   short read: every other READ the backend accepts ends with `done` after
+  //     3/8 of its bytes, rounded down: 3 of a header's 8. Refusal (d).
+  //   silent: every command is granted and then nothing more, no byte and no
+  //     terminal. The deadline, and the owed command after it.
+  bool unsol_model = false;
+  bool short_model = false;
+  bool silent_model = false;
+  bool stray_armed = false;               // this op's stray done is still to fire
+  int  stray_dones = 0;                   // run: strays presented
+  int  reads_accepted = 0;                // run: READs accepted (the short parity)
+  int  short_reads = 0;                   // run: READs the backend ended short
+  bool short_in_op = false;               // this op met a short READ
+  bool silent_cmd = false;                // the accepted command is silent for ever
+
+  // ---- armed silence (issue #15) ----
+  // The backend withholds ONE event it owes -- the grant, a data byte or the
+  // completion of one command, counted from the arming -- for `quiet` cycles
+  // and then presents it, or for ever (`quiet` < 0). `quiet` counts the cycles
+  // the port waits with that event owed and absent: a grant `quiet` cycles
+  // after the request first shows, a byte `quiet` cycles after the one before
+  // it, a done `quiet` cycles after the last byte. So `quiet` = TMO is the
+  // last the port must tolerate and TMO + 1 the first it must refuse.
+  int  sil_at = SIL_NONE;
+  int  sil_op = 0;                        // command index counted from the arming
+  int  sil_byte = 0;                      // with SIL_BYTE: the byte withheld
+  int  sil_quiet = 0;
+  int  sil_base = 0;                      // commands accepted before the arming
+  bool sil_cmd = false;                   // the accepted command is the armed one
+  bool sil_block = false;                 // its byte is withheld for ever
+  bool sil_never_done = false;            // its completion is withheld for ever
+  int  late_gnts = 0;                     // grants presented after the request fell
+  // A command the port no longer owns: taken on a late grant, or still
+  // carried when the operation that issued it was answered. Its short end or
+  // its err belongs to no operation, so the run-wide accounting skips it.
+  bool cmd_orphan = false;
+  int  dev_errs_own = 0;                  // device errs of a command the op owns
+  // A reset of the port alone forgets what the device still carries, so a
+  // request into that device is not one the port could have withheld.
+  bool port_forgot = false;
+  DevOp d_pend{0, 0, 0, 0};               // the command the grant decision took
+
+  // ---- what every operation is owed, accumulated over the whole run ----
+  // Graded by the run-wide checks at the end, under every model, freedoms and
+  // broken backends alike: they are the port's side of the contract, never
+  // service. `deadline_ok` is raised by a phase that arms silence, so a
+  // deadline anywhere else is one the port invented.
+  bool deadline_ok = false;
+  // busy is informational (the port's banner): a backend may drop it while
+  // it still owes a terminal, and the port must not read that as an end
+  bool busy_never = false;
+  // strays every `stray_every` cycles while a request is up and ungranted:
+  // dones that belong to nobody (refusal (c)) and must not hold a deadline off
+  int  stray_every = 0;
+  int  wedges = 0;                        // operations run_op gave up on
+  int  doubles = 0;                       // operations answered more than once
+  int  deadline_unarmed = 0;              // DEADLINE where no silence was armed
+  int  dev_err_misnamed = 0;              // a device err answered other than DEVICE
+  int  short_bad = 0;                     // a short READ not answered err DEVICE
+  int  silent_bad = 0;                    // silent model: not one err, DEVICE never
+  int  silent_deadlines = 0;              // silent model: DEADLINE answers
+  int  req_owed_run = 0;                  // run: requests while the backend owed
+  long last_evt = 0;                      // cycle of the last handshake, either face
+  long pulse_cyc = -1;                    // cycle of this op's first pulse
+  long pulse_gap = -1;                    // ...and its distance from the last event
 
   // ---- what the port owes whichever neighbour it is talking to ----
   // Read off the BUS against the model's own record of a command it accepted
@@ -230,7 +318,46 @@ struct Harness {
   //! this very cycle, so the command is over -- or it is `op_delay` away.
   void finish_data_phase() {
     if (coinc_now) { d_busy = false; d_st = 0; }
-    else { done_ctr = op_delay; d_st = 2; }
+    else { schedule_completion(); }
+  }
+
+  //! The completion `op_delay` away, unless the armed silence stretches it or
+  //! withholds it for ever (the backend stays busy, owing it). The timer is
+  //! counted down on the tick that schedules it as well, so `op_delay` d
+  //! leaves the port d - 1 silent cycles, and the silence asks for one more.
+  void schedule_completion() {
+    d_st = 2;
+    if (sil_cmd && sil_at == SIL_DONE) {
+      sil_at = SIL_NONE;                          // spent
+      if (sil_quiet < 0) { done_ctr = 0; sil_never_done = true; }
+      else done_ctr = sil_quiet + 1;
+    } else {
+      done_ctr = op_delay;
+    }
+  }
+
+  //! Withhold the next data byte: `sil_quiet` cycles, or for ever. A stall
+  //! set at the command's accept is counted down on that tick too, hence the
+  //! one extra for the first byte.
+  void withhold_byte(bool at_accept = false) {
+    sil_at = SIL_NONE;                            // spent
+    if (sil_quiet < 0) sil_block = true;
+    else d_stall = sil_quiet + (at_accept ? 1 : 0);
+  }
+
+  //! Arm one silence: `point` of command `at_op` counted from now.
+  void arm_silence(int point, int at_op, int quiet, int byte = 0) {
+    sil_at = point; sil_op = at_op; sil_quiet = quiet; sil_byte = byte;
+    sil_base = int(ops.size());
+  }
+
+  //! The backend ends the command it is still carrying, now: its done, or its
+  //! err. For a command whose event was withheld for ever -- the abandoned
+  //! WRITE a contained port waits on -- this is the device's own terminal.
+  void end_command_now(bool with_err) {
+    if (with_err) { d_err = true; ++dev_errs; } else { d_done = true; }
+    d_busy = false; d_st = 0; sil_block = false; sil_never_done = false;
+    silent_cmd = false; done_ctr = err_ctr = 0;
   }
 
   //! Raise `dev_done_i` on the same edge that moves the command's last byte.
@@ -250,6 +377,7 @@ struct Harness {
   void present_coincident_completion() {
     coinc_now = false;
     if (!done_on_last_byte || d_st != 1) return;
+    if (sil_cmd && sil_at == SIL_DONE) return;    // the armed silence owns it
     if (fail_cur && err_after_bytes >= 0 && d_bytes + 1 == err_after_bytes) return;
     const bool last_write = (d_cur.op == OP_WRITE && d_bytes + 1 == d_cur.len
                              && dut->dev_wready_i && dut->dev_wvalid_o);
@@ -267,11 +395,11 @@ struct Harness {
     dut->dev_gnt_i  = d_gnt;
     dut->dev_done_i = d_done;
     dut->dev_err_i  = d_err;
-    dut->dev_busy_i = d_busy;
-    bool wr = (d_st == 1 && d_cur.op == OP_WRITE && d_stall == 0);
+    dut->dev_busy_i = d_busy && !busy_never;
+    bool wr = (d_st == 1 && d_cur.op == OP_WRITE && d_stall == 0 && !sil_block);
     dut->dev_wready_i = wr;
     bool rv = (d_st == 1 && d_cur.op == OP_READ && d_bytes < d_cur.len
-               && (d_stall == 0 || d_rhold));
+               && ((d_stall == 0 && !sil_block) || d_rhold));
     dut->dev_rvalid_i = rv;
     dut->dev_rdata_i  = rv
         ? store[d_cur.region % N_REGIONS][(d_cur.offset + d_bytes) % REG_BYTES]
@@ -286,7 +414,11 @@ struct Harness {
   //! array, so every counter holds under every device model. Its own function
   //! because `sample_dev` is the backend and this is a monitor of the port.
   void count_owed_traffic() {
-    if (d_busy && dut->dev_req_o) ++req_while_owed;
+    if (!d_busy) port_forgot = false;
+    if (d_busy && dut->dev_req_o) {
+      ++req_while_owed;
+      if (!port_forgot) ++req_owed_run;
+    }
     if (d_busy && (dut->nvm_done_o || dut->nvm_err_o)) ++pulse_while_owed;
     // A restore byte with no device byte behind it on the same cycle is one
     // the port buffered earlier, which it may only hand up once the read that
@@ -302,30 +434,52 @@ struct Harness {
 
     count_owed_traffic();
 
-    // command accept
-    if (drove_gnt && dut->dev_req_o) {
+    // command accept. This backend registers its grant: the command is TAKEN
+    // on the edge that sampled the request and the grant shows a cycle later,
+    // so it is accepted whether or not the request is still up then -- the
+    // port's banner makes such a grant owed. While the request is held, as it
+    // is everywhere but after a deadline, that is the same command either way.
+    if (drove_gnt) {
+      if (!dut->dev_req_o) ++late_gnts;
+      cmd_orphan = !dut->dev_req_o;
       const bool done_rode_the_grant = gnt_done_now;
       gnt_done_now = false;
-      d_cur = {int(dut->dev_op_o), int(dut->dev_region_o),
-               int(dut->dev_offset_o), int(dut->dev_len_o)};
+      d_cur = d_pend;
       ops.push_back(d_cur);
       d_busy = true; d_bytes = 0; d_stall = 0; d_rhold = false;
       fail_cur = (err_at_op >= 0 && ops_since_arm == err_at_op);
       short_cur = (short_after >= 0 && d_cur.op == OP_READ);
       if (short_cur) { short_after_n = short_after; short_after = -1; }
+      if (d_cur.op == OP_READ && short_model && (++reads_accepted % 2 == 1)
+          && !short_cur && !fail_cur) {
+        short_cur = true; short_after_n = (3 * d_cur.len) / 8;
+      }
+      sil_cmd = (sil_at == SIL_BYTE || sil_at == SIL_DONE)
+                && int(ops.size()) - 1 == sil_base + sil_op;
+      wshort_cur = (wshort_after >= 0 && d_cur.op == OP_WRITE);
+      if (wshort_cur) { wshort_n = wshort_after; wshort_after = -1; }
       ++ops_since_arm;
-      if (fail_cur && err_after_bytes < 0) {
+      if (silent_model) {
+        silent_cmd = true; d_st = 3;              // granted, then nothing more
+      } else if (done_rode_the_grant && d_cur.op != OP_ERASE) {
+        d_busy = false; d_st = 0;                 // ended on its grant, no byte moved
+        if (d_cur.op == OP_READ) { ++short_reads; if (!cmd_orphan) short_in_op = true; }
+      } else if (fail_cur && err_after_bytes < 0) {
         err_ctr = op_delay; d_st = 2;
       } else if (d_cur.op == OP_ERASE) {
         int r = d_cur.region % N_REGIONS;
         memset(store[r], 0xFF, REG_BYTES);
         ++erase_count[r];
         if (done_rode_the_grant) { d_busy = false; d_st = 0; }
-        else { done_ctr = op_delay; d_st = 2; }
+        else { schedule_completion(); }
       } else if (d_cur.len == 0) {
-        done_ctr = op_delay; d_st = 2;
+        schedule_completion();
+      } else if (short_cur && short_after_n == 0) {
+        short_cur = false; ++short_reads; short_in_op = !cmd_orphan;
+        done_ctr = op_delay; d_st = 2;            // ended short at zero bytes
       } else {
         d_st = 1;
+        if (sil_cmd && sil_at == SIL_BYTE && sil_byte == 0) withhold_byte(true);
       }
     }
 
@@ -339,6 +493,10 @@ struct Harness {
         d_stall = wstall;
         if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }
         else if (d_bytes == d_cur.len) { finish_data_phase(); }
+        else if (wshort_cur && d_bytes == wshort_n) {
+          wshort_cur = false; done_ctr = op_delay; d_st = 2;  // the WRITE ended short
+        }
+        else if (sil_cmd && sil_at == SIL_BYTE && d_bytes == sil_byte) withhold_byte();
       } else if (d_stall > 0) --d_stall;
     }
 
@@ -351,6 +509,9 @@ struct Harness {
           else if (d_bytes == d_cur.len) { finish_data_phase(); }
           else if (short_cur && d_bytes == short_after_n) {
             short_cur = false; done_ctr = op_delay; d_st = 2;   // ended short
+            ++short_reads; if (!cmd_orphan) short_in_op = true;
+          } else if (sil_cmd && sil_at == SIL_BYTE && d_bytes == sil_byte) {
+            withhold_byte();
           }
         } else {
           d_rhold = true;               // hold the byte until accepted
@@ -366,29 +527,52 @@ struct Harness {
     // a device that refuses a command outright: err in place of its grant
     if (gnt_err && d_st == 0 && !d_busy && dut->dev_req_o && !drove_gnt
         && !drove_err && !d_err) {
-      d_err = true; gnt_err = false; ++dev_errs;
+      d_err = true; gnt_err = false; ++dev_errs; ++dev_errs_own;
     }
 
-    // grant scheduling
-    if (d_st == 0 && !d_busy && dut->dev_req_o && !drove_gnt && !d_err) {
-      if (++d_reqwait >= gnt_delay) {
+    // grant scheduling. The decision TAKES the command the port is
+    // requesting now (see command accept); an armed grant silence stretches
+    // the decision, or withholds it for ever.
+    const bool sil_gnt = (sil_at == SIL_GNT && int(ops.size()) == sil_base + sil_op);
+    const int  gnt_wait = sil_gnt ? sil_quiet : gnt_delay;
+    if (!dut->dev_req_o && !d_gnt) {                // a withdrawn request restarts it
+      if (sil_gnt && d_reqwait > 0) sil_at = SIL_NONE;   // ...and spends its silence
+      d_reqwait = 0;
+    }
+    // Never on the cycle the backend answers the request with err: that err
+    // IS its answer, and a decision there would take a command nobody owns.
+    if (d_st == 0 && !d_busy && dut->dev_req_o && !drove_gnt && !d_err && !drove_err
+        && !(sil_gnt && sil_quiet < 0)) {
+      if (++d_reqwait >= gnt_wait) {
         d_gnt = true; d_reqwait = 0;
+        d_pend = {int(dut->dev_op_o), int(dut->dev_region_o),
+                  int(dut->dev_offset_o), int(dut->dev_len_o)};
+        if (sil_gnt) sil_at = SIL_NONE;           // spent
         // ...and, for a backend with no erase semantics, the completion with
         // it. `dev_op_o` is already valid: the port drives the command with
         // the request it is still holding.
         if (gnt_done_on_erase && int(dut->dev_op_o) == OP_ERASE) {
           d_done = true; gnt_done_now = true; ++gnt_done_pairs;
+        } else if (gnt_done_on_data && int(dut->dev_op_o) != OP_ERASE) {
+          // a READ or WRITE ended on its own grant: zero bytes, a short command
+          d_done = true; gnt_done_now = true; ++gnt_done_pairs; gnt_done_on_data = false;
         }
       }
     }
 
     maybe_fire_unsolicited_done(drove_gnt, drove_done, drove_err);
+    maybe_fire_stray_done(drove_gnt, drove_done, drove_err);
+    if (stray_every > 0 && dut->dev_req_o && d_st == 0 && !d_busy && !d_gnt
+        && !drove_gnt && !d_done && !drove_done && !d_err && !drove_err
+        && cycles % stray_every == 0)
+      d_done = true;                              // a done for no command
 
     // completion timers
     if (d_st == 2) {
       if (done_ctr > 0 && --done_ctr == 0) { d_done = true; d_busy = false; d_st = 0; }
       if (err_ctr  > 0 && --err_ctr  == 0) { d_err  = true; d_busy = false; d_st = 0;
-                                             ++dev_errs; }
+                                             ++dev_errs;
+                                             if (!cmd_orphan) ++dev_errs_own; }
     }
   }
 
@@ -422,6 +606,34 @@ struct Harness {
     }
   }
 
+  //! The unsolicited model's stray: once per operation, in a window the BUS
+  //! names -- a commit's header still streaming in, or a restore's header
+  //! being handed up -- with no request up and nothing owed, so it belongs to
+  //! no command, past or present. Never in a stalled wait: there it would be
+  //! the pulse a stuck port is waiting for (see the guard above).
+  void maybe_fire_stray_done(bool drove_gnt, bool drove_done, bool drove_err) {
+    if (!unsol_model || !stray_armed) return;
+    const bool hdr_window = (m_mode == 1) ? (m_widx > 0 && m_widx < 8)
+                          : (m_mode == 2) ? (!rbytes.empty() && rbytes.size() < 8)
+                                          : false;
+    if (hdr_window && dut->nvm_busy_o && !dut->dev_req_o && d_st == 0 && !d_busy
+        && !d_gnt && !drove_gnt && !d_done && !drove_done && !d_err && !drove_err) {
+      d_done = true; ++stray_dones; stray_armed = false;
+    }
+  }
+
+  //! Any handshake on either face this cycle: the origin the deadline's
+  //! timing is graded from.
+  void note_events() {
+    if ((dut->dev_req_o && dut->dev_gnt_i) || dut->dev_done_i || dut->dev_err_i
+        || (dut->dev_wvalid_o && dut->dev_wready_i)
+        || (dut->dev_rvalid_i && dut->dev_rready_o)
+        || (dut->nvm_wvalid_i && dut->nvm_wready_o)
+        || (dut->nvm_rvalid_o && dut->nvm_rready_i)
+        || (dut->nvm_req_i && !dut->nvm_busy_o && !dut->nvm_done_o && !dut->nvm_err_o))
+      last_evt = cycles;
+  }
+
   void tick() {
     // manager drive
     if (m_mode == 1) {
@@ -442,6 +654,11 @@ struct Harness {
     present_coincident_completion();
 
     // pre-edge sampling: what the registers (and both neighbors) see
+    if ((dut->nvm_done_o || dut->nvm_err_o) && pulse_cyc < 0) {
+      pulse_cyc = cycles; pulse_gap = cycles - last_evt;
+      if (d_busy) cmd_orphan = true;      // answered while the device still carries it
+    }
+    note_events();
     if (dut->nvm_done_o) ++done_pulses;
     if (dut->nvm_err_o)  ++err_pulses;
     if (dut->nvm_err_o)  last_cause = dut->nvm_err_cause_o;
@@ -469,8 +686,12 @@ struct Harness {
     d_st = 0; d_reqwait = 0; d_gnt = d_done = d_err = d_busy = false;
     d_bytes = 0; d_stall = 0; d_rhold = false; done_ctr = err_ctr = 0;
     fail_cur = false; short_cur = false; gnt_err = false; short_after = -1;
+    wshort_cur = false; wshort_after = -1; gnt_done_on_data = false;
     unsol_after_ops = -1; gnt_done_on_erase = false; gnt_done_now = false;
+    busy_never = false; stray_every = 0;
     m_mode = 0; m_stall = 0;
+    sil_at = SIL_NONE; sil_cmd = false; sil_block = false; sil_never_done = false;
+    silent_cmd = false; stray_armed = false; cmd_orphan = false; port_forgot = false;
     disarm_err();
   }
 
@@ -487,9 +708,12 @@ struct Harness {
     unsol_dones = 0; unsol_ops = -1; unsol_mgr = -1; unsol_req = false;
     req_while_owed = 0; pulse_while_owed = 0; fwd_while_owed = 0;
     gnt_done_pairs = 0; coinc_dones = 0;
+    short_in_op = false; pulse_cyc = -1; pulse_gap = -1; late_gnts = 0;
+    dev_errs_own = 0;
   }
 
   void start(bool we, uint8_t rec) {
+    stray_armed = unsol_model;
     dut->nvm_req_i = 1;
     dut->nvm_we_i  = we;
     dut->nvm_record_id_i = rec;
@@ -504,11 +728,30 @@ struct Harness {
       if (done_pulses + err_pulses > 0) {
         for (int d = 0; d < drain; ++d) tick();
         m_mode = 0;
+        account_op();
         return err_pulses ? 1 : 0;
       }
     }
     m_mode = 0;
+    ++wedges;
     return -1;
+  }
+
+  //! What this operation was owed, whatever the model: one answer; DEADLINE
+  //! only where silence was armed; a device err named DEVICE; a short READ
+  //! answered err DEVICE and never done; under the silent model one err that
+  //! a device which never answers cannot have caused as DEVICE.
+  void account_op() {
+    if (done_pulses + err_pulses > 1) ++doubles;
+    const bool deadline = err_pulses && last_cause == 3;
+    if (deadline && !deadline_ok && !silent_model) ++deadline_unarmed;
+    if (deadline && silent_model) ++silent_deadlines;
+    if (dev_errs_own > 0 && !deadline_ok && !(err_pulses == 1 && last_cause == 1))
+      ++dev_err_misnamed;
+    if (short_in_op && !(err_pulses == 1 && done_pulses == 0 && last_cause == 1))
+      ++short_bad;
+    if (silent_model && !(err_pulses == 1 && done_pulses == 0 && last_cause != 1))
+      ++silent_bad;
   }
 
   int commit(uint8_t rec, const std::vector<uint8_t>& f,
@@ -572,6 +815,18 @@ class NvmPortSuite {
   void completion_riding_the_last_byte_is_taken();
   void terminal_cause_names_the_failure();
   void the_port_is_idle_at_the_end_of_the_run();
+  void four_mechanisms_are_each_named();
+  void fresh_reset(bool reset_device = true);
+  int  silenced(bool commit, const std::vector<uint8_t>& f, int point, int at_op,
+                int quiet, int byte = 0);
+  void the_deadline_refuses_a_silent_device();
+  void the_deadline_never_refuses_a_slow_device();
+  void the_next_request_after_a_deadline();
+  void an_abandoned_write_is_contained();
+  void reset_mid_commit_at_six_stages();
+  void reset_of_the_port_alone_mid_commit();
+  void a_short_command_is_a_device_error();
+  void every_operation_got_what_it_was_owed();
 
   const milan::tb::Model<VKL_pp_nvm_port> model;
   VKL_pp_nvm_port* const dut = model.get();
@@ -717,6 +972,7 @@ void NvmPortSuite::erase_error_stops_the_commit_then_recovers() {
   CHECK(h.busy_ok, "T7 busy low at the err pulse");
   CHECK(h.ops.size() == 1 && h.ops[0].op == OP_ERASE,
         "T7 the WRITE was never issued after the erase error");
+  CHECK(h.last_cause == 1, "T7 the erase error is named DEVICE (read %d)", h.last_cause);
   h.disarm_err();
   rc = h.commit(4, f7);
   CHECK(rc == 0 && h.done_pulses == 1, "T7b port recovered: retry commits");
@@ -734,6 +990,7 @@ void NvmPortSuite::write_header_phase_error_surfaces_once() {
   CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
         "T8 write-phase error surfaces exactly once");
   CHECK(h.ops.size() == 2, "T8 no device op after the failed WRITE");
+  CHECK(h.last_cause == 1, "T8 the write error is named DEVICE (read %d)", h.last_cause);
   h.disarm_err();
 }
 
@@ -746,6 +1003,7 @@ void NvmPortSuite::read_payload_phase_error_surfaces_once() {
         "T9 read-phase error surfaces exactly once");
   CHECK(h.rbytes.size() < f2.size(), "T9 stream cut short (%zu of %zu)",
         h.rbytes.size(), f2.size());
+  CHECK(h.last_cause == 1, "T9 the read error is named DEVICE (read %d)", h.last_cause);
   h.disarm_err();
 }
 
@@ -805,7 +1063,9 @@ void NvmPortSuite::refusals_leave_the_port_serviceable() {
         "idle after the refusal phases");
 }
 
-// ---- T15: POWER CUT mid-commit (issue #70) -----------------------------
+// ---- T15: a device err tears the commit (issue #70) --------------------
+// T15-T18 model a DEVICE that fails mid-commit and says so; the power cut
+// proper, rst_n with the commit in flight, is T25 (issue #18).
 // A commit is ERASE(region) then WRITE(0, 8+plen). Cut the power inside the
 // WRITE and the region is left erased-plus-partial: the record being written
 // is gone AND so is whatever it replaced. That is a property of writing a
@@ -837,6 +1097,7 @@ void NvmPortSuite::torn_commit_never_restores_as_valid() {
   // so busy_seen is true and no pulse ever contradicts busy_ok. The wedge is
   // caught by the rc check above; this pair only pins the pulse's timing.
   CHECK(h.busy_seen && h.busy_ok, "T15 busy raised then low at the err pulse");
+  CHECK(h.last_cause == 1, "T15 the tear is named DEVICE (read %d)", h.last_cause);
 
   // The cut must be REAL, stated on the bus. Reading the array here was a
   // member of the same family as T16 and T17: under a backend that answers
@@ -913,6 +1174,7 @@ void NvmPortSuite::torn_commit_leaves_every_other_region_untouched() {
   rc = h.commit(1, torn);
   h.disarm_err();
   CHECK(rc == 1, "T16 the neighbouring commit was torn");
+  CHECK(h.last_cause == 1, "T16 the tear is named DEVICE (read %d)", h.last_cause);
 
   bool other_erased = false;
   bool other_moved = false;
@@ -968,7 +1230,7 @@ void NvmPortSuite::torn_commit_leaves_every_other_region_untouched() {
 // bytes are still moving. A real program failure is not reported then: the
 // device latches the bytes, starts the program cycle, and raises its error
 // only when that cycle ends -- after the LAST byte, with busy still high.
-// That is the port's S_WWAIT arm (KL_pp_nvm_port.sv:273-276), the widest
+// That is the port's S_WWAIT arm (KL_pp_nvm_port.sv:415-418), the widest
 // window in a commit, and no phase above enters it. Arming at exactly the
 // write length takes the device's fail branch in preference to its done
 // branch, so every byte is consumed and then err replaces done.
@@ -987,6 +1249,7 @@ void NvmPortSuite::late_write_failure_reports_err_not_done() {
   h.disarm_err();
   CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0,
         "T17 a failure in the completion window reports err, never done");
+  CHECK(h.last_cause == 1, "T17 the late failure is named DEVICE (read %d)", h.last_cause);
   // Pin that the cut actually landed in the COMPLETION window. Without this
   // the phase passes with the tear moved anywhere in the stream, and its
   // whole point is the window: every byte accepted, THEN the error. `sent`
@@ -1045,6 +1308,7 @@ void NvmPortSuite::read_completion_window_errors_report_err() {
   CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8) && h.dev_rd == 3,
         "T18 S_RHCOLL was reached: the tear landed 3 bytes into the header");
   CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
+  CHECK(h.last_cause == 1, "T18 and the port names it DEVICE (read %d)", h.last_cause);
 
   h.ops.clear();
   h.arm_err(0, 8);
@@ -1054,6 +1318,7 @@ void NvmPortSuite::read_completion_window_errors_report_err() {
   CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8) && h.dev_rd == 8,
         "T18 S_RHWAIT was reached: all 8 header bytes delivered before the error");
   CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
+  CHECK(h.last_cause == 1, "T18 and the port names it DEVICE (read %d)", h.last_cause);
 
   h.ops.clear();
   h.arm_err(1, 40);
@@ -1066,6 +1331,7 @@ void NvmPortSuite::read_completion_window_errors_report_err() {
             && h.dev_rd == 48 && h.rbytes.size() == f2.size(),
         "T18 S_RPWAIT was reached: all 48 bytes delivered, whole record forwarded");
   CHECK(h.dev_errs == 1, "T18 the DEVICE raised the error, not the port refusing");
+  CHECK(h.last_cause == 1, "T18 and the port names it DEVICE (read %d)", h.last_cause);
 
   h.ops.clear();
   r = h.restore(5);
@@ -1077,9 +1343,9 @@ void NvmPortSuite::read_completion_window_errors_report_err() {
 // Issue #14: a completion the port does NOT own, on the commit path.
 //
 // `done_seen_r` is sticky so a `done` landing on the same edge as a pump's
-// last byte is not lost (KL_pp_nvm_port.sv:186-190). The set is gated on
+// last byte is not lost (KL_pp_nvm_port.sv:319-323). The set is gated on
 // owning the command it completes -- from the grant handshake to the wait
-// state that consumes it (`dev_cmd_owned_w`, :151-162). Ungated, a stray
+// state that consumes it (`dev_cmd_owned_w`, :233-244). Ungated, a stray
 // `done` while the header is still being collected is consumed by `S_WEWAIT`
 // as the ERASE's, and the WRITE goes into a region the backend is still
 // erasing -- reported as `done`, not `err`.
@@ -1246,7 +1512,8 @@ void NvmPortSuite::completion_riding_the_grant_is_taken() {
         "T21 the backend answered ERASE on its own grant cycle (%d pairs)",
         h.gnt_done_pairs);
   CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0 && h.sent == rec,
-        "T21 the commit takes a completion that rode the grant, rc=%d", rc);
+        "T21 the sticky done_seen_r latch: the commit takes a completion that "
+        "rode the grant, rc=%d", rc);
   CHECK(h.ops.size() == 2 && op_is(h.ops[0], OP_ERASE, 6, 0, 0)
             && op_is(h.ops[1], OP_WRITE, 6, 0, static_cast<int>(rec.size())),
         "T21 ERASE then WRITE, both issued");
@@ -1276,7 +1543,7 @@ void NvmPortSuite::completion_riding_the_grant_is_taken() {
 // and says why.
 //
 // Every check here is on the bus or on the manager stream, so the phase holds
-// under every device model; `measure_figures.py` runs it under all six.
+// under every device model; `measure_figures.py` runs it under all nine.
 void NvmPortSuite::completion_riding_the_last_byte_is_taken() {
   const bool was_armed = h.done_on_last_byte;   // the gate arms it for a whole run
   h.done_on_last_byte = true;
@@ -1290,7 +1557,8 @@ void NvmPortSuite::completion_riding_the_last_byte_is_taken() {
         "T22a the backend answered the WRITE on the edge that moved its last "
         "byte (%d such completions)", h.coinc_dones);
   CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0 && h.sent == rec,
-        "T22a the commit takes a completion that rode the last byte, rc=%d", rc);
+        "T22a the sticky done_seen_r latch: the commit takes a completion that "
+        "rode the last byte, rc=%d", rc);
   CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0,
         "T22a one completion closed one command: nothing requested (%d) or "
         "answered (%d) while the backend still owed one",
@@ -1306,7 +1574,8 @@ void NvmPortSuite::completion_riding_the_last_byte_is_taken() {
         "T22b the header-only WRITE was answered on its last byte (%d, %zu ops)",
         h.coinc_dones, h.ops.size());
   CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0 && h.sent == empty,
-        "T22b the zero-payload commit completes on that completion, rc=%d", rc);
+        "T22b the sticky done_seen_r latch: the zero-payload commit completes "
+        "on that completion, rc=%d", rc);
 
   // (c) both read phases at once: the header READ's eighth byte is collected
   // in `S_RHCOLL` and the payload READ's last byte moves in `S_RPPUMP`, so one
@@ -1318,7 +1587,8 @@ void NvmPortSuite::completion_riding_the_last_byte_is_taken() {
   CHECK(h.coinc_dones == 2,
         "T22c both reads were answered on their last byte (%d)", h.coinc_dones);
   CHECK(rc == 0 && h.done_pulses == 1 && h.rbytes == f2,
-        "T22c the restore takes both completions, stream byte-exact, rc=%d", rc);
+        "T22c the sticky done_seen_r latch: the restore takes both completions, "
+        "stream byte-exact, rc=%d", rc);
   CHECK(h.req_while_owed == 0 && h.pulse_while_owed == 0 && h.fwd_while_owed == 0,
         "T22c neither read was closed early: nothing requested (%d), answered "
         "(%d) or forwarded (%d) while the backend still owed one",
@@ -1370,7 +1640,8 @@ void NvmPortSuite::terminal_cause_names_the_failure() {
   device("b a device error inside the header", h.restore(4));
   h.disarm_err();
   h.short_after = 5;
-  device("c the header read ended short at 5 bytes", h.restore(4));
+  device("c the short-read defence: the header read ended short at 5 bytes",
+         h.restore(4));
   h.arm_err(0, 8);
   device("d a device error after the header, before its done", h.restore(4));
   h.disarm_err();
@@ -1425,6 +1696,618 @@ void NvmPortSuite::the_port_is_idle_at_the_end_of_the_run() {
         "idle again at the end of the run");
 }
 
+// ---------------------------------------------------------------- T26
+// Issue #19: four port mechanisms a mutation used to leave the suite green
+// on, each now failing a check whose message names it. Two need no device
+// model at all, only the edge nobody sent: a header whose HIGH magic byte is
+// right and whose LOW one is not, and a record exactly MAX_PAYLOAD_P long.
+// The other two -- the sticky `done_seen_r` latch and the short-read defence
+// -- are named by T21/T22 and T23c, and the coincident and short-read models
+// leave them under test for a whole run.
+void NvmPortSuite::four_mechanisms_are_each_named() {
+  // the low magic byte on a commit: 0x17FF, refused before any device traffic
+  auto flow = frame(3, pattern(8, 0x26), /*magic=*/0x17FF);
+  h.ops.clear();
+  int rc = h.commit(3, flow);
+  CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0 && h.last_cause == 2,
+        "T26a the LOW magic byte: a commit framed 0x17FF is refused with one err, "
+        "cause UNFRAMED (rc %d, cause %d)", rc, h.last_cause);
+  CHECK(h.ops.empty() && h.sent.empty(),
+        "T26a the LOW magic byte: refused before any device traffic");
+
+  // ...and on a restore: the stored record's byte 1 wrong, nothing forwarded
+  const uint8_t save1 = h.store[5][1];
+  h.store[5][1] = 0x23;
+  h.ops.clear();
+  rc = h.restore(5);
+  CHECK(rc == 1 && h.err_pulses == 1 && h.rbytes.empty() && h.last_cause == 2,
+        "T26b the LOW magic byte: a stored record whose byte 1 is wrong is "
+        "refused, nothing forwarded (rc %d, cause %d)", rc, h.last_cause);
+  CHECK(h.ops.size() == 1 && op_is(h.ops[0], OP_READ, 5, 0, 8),
+        "T26b the LOW magic byte: only the header probe was issued");
+  h.store[5][1] = save1;
+
+  // the payload bound at its legal edge: payload_length == MAX_PAYLOAD_P
+  const std::vector<uint8_t> big = frame(6, pattern(MAXP, 0x61));
+  h.ops.clear();
+  rc = h.commit(6, big);
+  CHECK(rc == 0 && h.done_pulses == 1 && h.sent == big,
+        "T26c the payload bound's legal edge: the largest legal record "
+        "(payload_length == MAX_PAYLOAD_P) commits, byte-exact on the bus (rc %d)", rc);
+  CHECK(h.ops.size() == 2 && op_is(h.ops[1], OP_WRITE, 6, 0, MAXP + 8),
+        "T26c the payload bound's legal edge: one WRITE of 8 + MAX_PAYLOAD_P bytes");
+  h.ops.clear();
+  rc = h.restore(6);
+  CHECK(rc == 0 && h.rbytes == big,
+        "T26d the payload bound's legal edge: the largest legal record restores "
+        "byte-exact (rc %d, %zu bytes)", rc, h.rbytes.size());
+  CHECK(h.ops.size() == 2 && op_is(h.ops[1], OP_READ, 6, 8, MAXP),
+        "T26d the payload bound's legal edge: the payload READ asks MAX_PAYLOAD_P");
+}
+
+// Port and device back to reset, as the phases that grade from a reset of
+// their own need: nothing owed on either side, and a mutation that left the
+// port somewhere earlier cannot fail them as collateral.
+void NvmPortSuite::fresh_reset(bool reset_device) {
+  if (reset_device) h.quiesce_model();
+  dut->rst_n = 0;
+  for (int i = 0; i < kResetTicks; ++i) h.tick();
+  dut->rst_n = 1;
+  h.tick();
+}
+
+// One operation with one armed silence (see `Harness::arm_silence`).
+int NvmPortSuite::silenced(bool commit, const std::vector<uint8_t>& f, int point,
+                           int at_op, int quiet, int byte) {
+  h.ops.clear();
+  h.arm_silence(point, at_op, quiet, byte);
+  const uint8_t rec = f[3];
+  return commit ? h.commit(rec, f) : h.restore(rec);
+}
+
+// ---------------------------------------------------------------- T24
+// Issue #15: the deadline. A device that owes the port its next event and
+// presents none for MEM_TIMEOUT_CYC_P + 1 cycles in a row ends the operation:
+// one err, cause DEADLINE, never done, busy low at the pulse, TMO + 2 cycles
+// after the last event on either face. One cycle less is tolerated. Graded in
+// each of the twelve states in which the device owes something -- four
+// requests, four waits, four data phases -- and in every one the device then
+// takes up where it stopped, one cycle too late. What the port must do with
+// that late event is the owed command (banner): a late READ is drained, a late
+// terminal ends it, and a WRITE whose device is still waiting for its next
+// byte is contained, which `an_abandoned_write_is_contained` grades.
+void NvmPortSuite::the_deadline_refuses_a_silent_device() {
+  fresh_reset();
+  h.deadline_ok = true;
+  const std::vector<uint8_t> rec = frame(2, pattern(40, 0x24));   // 48 bytes
+  CHECK(h.commit(2, rec) == 0 && h.store_match(2, rec), "T24 setup: region 2 committed");
+
+  struct Arm { const char* state; bool commit; int point; int op; int byte; bool contained; };
+  const Arm arms[] = {
+    {"S_WEREQ",  true,  SIL_GNT,  0, 0,  false},
+    {"S_WEWAIT", true,  SIL_DONE, 0, 0,  false},
+    {"S_WWREQ",  true,  SIL_GNT,  1, 0,  true},
+    {"S_WHPUMP", true,  SIL_BYTE, 1, 3,  true},
+    {"S_WDPUMP", true,  SIL_BYTE, 1, 20, true},
+    {"S_WWAIT",  true,  SIL_DONE, 1, 0,  false},
+    {"S_RHREQ",  false, SIL_GNT,  0, 0,  false},
+    {"S_RHCOLL", false, SIL_BYTE, 0, 3,  false},
+    {"S_RHWAIT", false, SIL_DONE, 0, 0,  false},
+    {"S_RPREQ",  false, SIL_GNT,  1, 0,  false},
+    {"S_RPPUMP", false, SIL_BYTE, 1, 10, false},
+    {"S_RPWAIT", false, SIL_DONE, 1, 0,  false},
+  };
+  for (const Arm& a : arms) {
+    // TMO silent cycles: the last the port must tolerate
+    int rc = silenced(a.commit, rec, a.point, a.op, TMO, a.byte);
+    CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0
+              && (a.commit ? h.sent == rec : h.rbytes == rec),
+          "T24 %s: an event %d cycles late is tolerated, done and byte-exact (rc %d)",
+          a.state, TMO, rc);
+
+    // TMO + 1: the first it must refuse, and the device resumes a cycle late
+    rc = silenced(a.commit, rec, a.point, a.op, TMO + 1, a.byte);
+    CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0 && h.last_cause == 3,
+          "T24 %s: an event %d cycles late ends the operation, one err, cause "
+          "DEADLINE, never done (rc %d, cause %d)", a.state, TMO + 1, rc, h.last_cause);
+    CHECK(h.busy_ok && h.pulse_gap == TMO + 2,
+          "T24 %s: busy low at the pulse, %ld cycles after the last event (want %d)",
+          a.state, h.pulse_gap, TMO + 2);
+    CHECK(h.req_while_owed == 0,
+          "T24 %s: no device request while the backend owed one (%d)",
+          a.state, h.req_while_owed);
+    if (a.point == SIL_GNT) {
+      // the backend took the request on the edge the deadline withdrew it
+      CHECK(h.late_gnts == 1,
+            "T24 %s: the backend's registered grant came after the request "
+            "fell, and is owed (%d)", a.state, h.late_gnts);
+    }
+    if (!a.commit && a.point != SIL_DONE) {
+      // an owed READ's late bytes move on the device bus and reach nobody
+      CHECK(h.rbytes.size() == size_t(a.op == 0 ? 0 : 8 + a.byte),
+            "T24 %s: the abandoned READ's late bytes were drained, none "
+            "forwarded (%zu forwarded)", a.state, h.rbytes.size());
+    }
+    if (a.contained) {
+      fresh_reset();                       // the contained WRITE: see below
+    }
+    // ...and the port serves again once the device has ended what it owed
+    h.ops.clear();
+    rc = h.commit(2, rec);
+    const int rc2 = h.restore(2);
+    CHECK(rc == 0 && rc2 == 0 && h.rbytes == rec && h.req_while_owed == 0,
+          "T24 %s: the next commit and restore are served byte-exact (rc %d %d)",
+          a.state, rc, rc2);
+  }
+
+  // the late registered grant whose terminal rides it (T21's rule): nothing
+  // is owed, so the next commit's ERASE is requested at once
+  h.gnt_done_on_erase = true;
+  int rc = silenced(true, rec, SIL_GNT, 0, TMO + 1);
+  h.gnt_done_on_erase = false;
+  CHECK(rc == 1 && h.last_cause == 3 && h.late_gnts == 1 && h.gnt_done_pairs == 1,
+        "T24 a late grant carrying its own done: DEADLINE, the grant taken late "
+        "with its terminal (rc %d, late %d, pairs %d)", rc, h.late_gnts, h.gnt_done_pairs);
+  h.ops.clear();
+  rc = h.commit(2, rec);
+  CHECK(rc == 0 && h.sent == rec && h.ops.size() == 2,
+        "T24 nothing was owed after a late grant that carried its done: the next "
+        "commit is served (rc %d)", rc);
+
+  // a request withdrawn before the backend decided: no late grant, nothing owed
+  rc = silenced(false, rec, SIL_GNT, 0, TMO + 2);
+  CHECK(rc == 1 && h.last_cause == 3 && h.late_gnts == 0 && h.ops.empty(),
+        "T24 a grant the backend never decided: DEADLINE, no command taken "
+        "(rc %d, late %d, ops %zu)", rc, h.late_gnts, h.ops.size());
+  rc = h.restore(2);
+  CHECK(rc == 0 && h.rbytes == rec, "T24 ...and the next restore is served at once");
+  h.deadline_ok = false;
+}
+
+// A slow device is not a silent one: the deadline counts the cycles the device
+// owes an event and gives none, never the length of the operation, and never
+// a cycle the manager holds the operation up.
+void NvmPortSuite::the_deadline_never_refuses_a_slow_device() {
+  fresh_reset();
+  const std::vector<uint8_t> rec = frame(2, pattern(40, 0x25));
+  // every owed event exactly TMO silent cycles after the one before it
+  h.gnt_delay = TMO; h.op_delay = TMO; h.wstall = TMO; h.rstall = TMO;
+  long t0 = h.cycles;
+  int rc = h.commit(2, rec);
+  long took = h.cycles - t0;
+  CHECK(rc == 0 && h.done_pulses == 1 && h.sent == rec && took > 40 * TMO,
+        "T24 a device answering every event %d cycles late commits, done and "
+        "byte-exact, over %ld cycles", TMO, took);
+  t0 = h.cycles;
+  rc = h.restore(2);
+  took = h.cycles - t0;
+  CHECK(rc == 0 && h.rbytes == rec && took > 40 * TMO,
+        "T24 ...and restores byte-exact over %ld cycles", took);
+  h.gnt_delay = 1; h.op_delay = 4; h.wstall = 0; h.rstall = 0;
+
+  // the manager stalls three deadlines on every byte, both directions: the
+  // header collected and handed up, the payload pumped both ways
+  h.mgr_wstall = 3 * TMO; h.mgr_rstall = 3 * TMO;
+  rc = h.commit(2, rec);
+  CHECK(rc == 0 && h.done_pulses == 1 && h.sent == rec,
+        "T24 a manager stalling %d cycles on every commit byte is never charged "
+        "to the device: done, byte-exact (rc %d)", 3 * TMO, rc);
+  rc = h.restore(2);
+  CHECK(rc == 0 && h.rbytes == rec,
+        "T24 ...nor on every restore byte: done, byte-exact (rc %d)", rc);
+  h.mgr_wstall = 0; h.mgr_rstall = 0;
+}
+
+// Issue #15's criterion 2, both branches. After a deadline busy is low and the
+// next request is accepted. It is SERVED once the device has ended the
+// abandoned command, and answered with one err DEADLINE while the device stays
+// silent; the port never issues a command over one still owed.
+void NvmPortSuite::the_next_request_after_a_deadline() {
+  fresh_reset();
+  h.deadline_ok = true;
+  const std::vector<uint8_t> rec = frame(2, pattern(40, 0x27));
+  CHECK(h.commit(2, rec) == 0, "T24 setup: region 2 committed again");
+
+  // served: a payload READ abandoned at its 10th byte, which the device
+  // resumes 60 cycles after the verdict; the next restore, issued at once,
+  // waits for the abandoned READ's end and is then served from scratch
+  int rc = silenced(false, rec, SIL_BYTE, 1, TMO + 60, 10);
+  CHECK(rc == 1 && h.last_cause == 3 && h.d_busy,
+        "T24 served branch: the restore ended DEADLINE with the READ still owed");
+  h.ops.clear();
+  rc = h.restore(2);
+  CHECK(rc == 0 && h.rbytes == rec && h.req_while_owed == 0,
+        "T24 served branch: the next restore is served byte-exact once the device "
+        "has ended the abandoned READ, nothing requested over it (rc %d)", rc);
+  CHECK(h.ops.size() == 2 && op_is(h.ops[0], OP_READ, 2, 0, 8)
+            && op_is(h.ops[1], OP_READ, 2, 8, 40),
+        "T24 served branch: it issued its own two READs after the owed one "
+        "(%zu commands)", h.ops.size());
+
+  // DEADLINE: an ERASE whose done comes three deadlines late; the restore
+  // issued meanwhile is answered DEADLINE without a command, and the one
+  // after the device's done is served
+  rc = silenced(true, rec, SIL_DONE, 0, 3 * TMO);
+  CHECK(rc == 1 && h.last_cause == 3 && h.d_busy,
+        "T24 DEADLINE branch: the commit ended DEADLINE with the ERASE still owed");
+  h.ops.clear();
+  rc = h.restore(2);
+  CHECK(rc == 1 && h.err_pulses == 1 && h.last_cause == 3 && h.ops.empty()
+            && h.rbytes.empty() && h.req_while_owed == 0,
+        "T24 DEADLINE branch: the next request, while the device stays silent, "
+        "is answered with one err DEADLINE, no command, nothing forwarded "
+        "(rc %d, cause %d)", rc, h.last_cause);
+  for (int i = 0; i < 4 * TMO && h.d_busy; ++i) h.tick();
+  CHECK(!h.d_busy, "T24 DEADLINE branch: the device ended the abandoned ERASE");
+  h.ops.clear();
+  rc = h.commit(2, rec);
+  const int rc2 = h.restore(2);
+  CHECK(rc == 0 && rc2 == 0 && h.rbytes == rec,
+        "T24 DEADLINE branch: the request after the device's own terminal is "
+        "served byte-exact (rc %d %d)", rc, rc2);
+
+  // an owed READ outlives a later deadline: a payload READ abandoned at its
+  // 10th byte for three deadlines, a commit meanwhile answered DEADLINE, and
+  // the drain still takes every late byte so the device can end the READ
+  rc = silenced(false, rec, SIL_BYTE, 1, 3 * TMO, 10);
+  CHECK(rc == 1 && h.last_cause == 3, "T24 a READ abandoned for three deadlines");
+  h.ops.clear();
+  rc = h.commit(2, rec);
+  CHECK(rc == 1 && h.last_cause == 3 && h.ops.empty(),
+        "T24 ...a commit meanwhile ends DEADLINE with no command (rc %d)", rc);
+  for (int i = 0; i < 4 * TMO && h.d_busy; ++i) h.tick();
+  CHECK(!h.d_busy && h.dev_rd >= 30,
+        "T24 ...and the owed READ is still drained after that deadline: the "
+        "device moved its late bytes and ended it (busy %d)", int(h.d_busy));
+  h.ops.clear();
+  rc = h.restore(2);
+  CHECK(rc == 0 && h.rbytes == rec, "T24 ...then the next restore is served");
+
+  // strays while a request is up and never granted hold nothing off: the
+  // deadline still ends the restore TMO + 2 cycles after it was accepted
+  h.stray_every = 30;
+  h.ops.clear();
+  h.arm_silence(SIL_GNT, 0, -1);
+  const long t0 = h.cycles;
+  rc = h.restore(2);
+  h.stray_every = 0;
+  CHECK(rc == 1 && h.last_cause == 3 && h.pulse_cyc - t0 == TMO + 2,
+        "T24 dones for no command during an ungranted request do not hold the "
+        "deadline off (rc %d, pulse %ld cycles after the accept)", rc, h.pulse_cyc - t0);
+  h.quiesce_model();
+  h.deadline_ok = false;
+}
+
+// The abandoned WRITE (issue #15 ruling (b)). A WRITE the port stops feeding
+// leaves a device waiting for its next byte, and the parent's backend waits
+// for it for ever. The port then requests nothing and sends nothing, and
+// answers every request with err DEADLINE, until the device's own terminal or
+// a reset ends the WRITE: containment, never a release on time.
+void NvmPortSuite::an_abandoned_write_is_contained() {
+  fresh_reset();
+  h.deadline_ok = true;
+  const std::vector<uint8_t> rec = frame(2, pattern(40, 0x28));
+  CHECK(h.commit(2, rec) == 0, "T24 setup: region 2 committed for the WRITE arms");
+
+  // ...and whose busy reads idle throughout, which settles nothing
+  h.busy_never = true;
+  int rc = silenced(true, rec, SIL_BYTE, 1, -1, 20);   // never takes byte 20
+  CHECK(rc == 1 && h.last_cause == 3 && h.sent.size() == 20,
+        "T24 contained: a WRITE whose device stops taking bytes at 20 ends DEADLINE");
+  for (int k = 0; k < 2; ++k) {
+    h.ops.clear();
+    rc = h.commit(2, rec);
+    CHECK(rc == 1 && h.err_pulses == 1 && h.last_cause == 3 && h.ops.empty()
+              && h.sent.empty() && h.req_while_owed == 0,
+          "T24 contained: commit %d after it ends DEADLINE, no command, no byte "
+          "(rc %d, cause %d, ops %zu)", k, rc, h.last_cause, h.ops.size());
+    rc = h.restore(2);
+    CHECK(rc == 1 && h.err_pulses == 1 && h.last_cause == 3 && h.ops.empty()
+              && h.rbytes.empty(),
+          "T24 contained: restore %d after it ends DEADLINE, no command, nothing "
+          "forwarded (rc %d)", k, rc);
+  }
+  // the device's own terminal ends it
+  h.busy_never = false;
+  h.end_command_now(/*with_err=*/true);
+  for (int i = 0; i < 4; ++i) h.tick();
+  h.ops.clear();
+  rc = h.commit(2, rec);
+  const int rc2 = h.restore(2);
+  CHECK(rc == 0 && rc2 == 0 && h.rbytes == rec && h.ops.size() == 4,
+        "T24 contained: the device's own err ends the WRITE and the port serves "
+        "again, byte-exact (rc %d %d)", rc, rc2);
+
+  // ...and so does a reset, here of a WRITE abandoned in its header
+  rc = silenced(true, rec, SIL_BYTE, 1, -1, 3);
+  CHECK(rc == 1 && h.last_cause == 3 && h.sent.size() == 3,
+        "T24 contained: a WRITE abandoned in its header ends DEADLINE");
+  h.ops.clear();
+  rc = h.restore(2);
+  CHECK(rc == 1 && h.last_cause == 3 && h.ops.empty(),
+        "T24 contained: ...and the next request ends DEADLINE with no command");
+  fresh_reset();
+  h.ops.clear();
+  rc = h.commit(2, rec);
+  const int rc3 = h.restore(2);
+  CHECK(rc == 0 && rc3 == 0 && h.rbytes == rec,
+        "T24 contained: a reset of port and device ends it, and the port serves "
+        "byte-exact (rc %d %d)", rc, rc3);
+  h.deadline_ok = false;
+}
+
+// ---------------------------------------------------------------- T25
+// Issue #18: a reset in the middle of a commit, which is the path a power cut
+// takes, where T15-T18 model a device that raised err. rst_n is asserted at
+// six stages named on the BUS, never by DUT state, with the device reset too
+// (both lose power). After release the port must be idle and silent, a
+// neighbour must still restore byte-exact, the next commit of the same record
+// must be byte-exact, and the torn image must never restore as a valid record.
+// The port does not refuse a torn image whose header survived: it gates only
+// magic and payload_length, so it can delimit the stream, and forwards the
+// record whole. The MANAGER refuses it, on the crc16 (07 §5.3;
+// KL_acmp_nvm_shadow's `rrec_ok_w`, KL_aecp_nvm_writer's `frame_ok_w`), which
+// this suite computes itself, as T15 does.
+void NvmPortSuite::reset_mid_commit_at_six_stages() {
+  fresh_reset();
+  const std::vector<uint8_t> keep = frame(4, pattern(16, 0x52));
+  const std::vector<uint8_t> old = frame(7, pattern(24, 0x53));    // 32 bytes
+  const std::vector<uint8_t> next = frame(7, pattern(24, 0x54));
+  struct Stage { const char* name; int gnt; int opd; };
+  const Stage stages[] = {
+    {"a the header still streaming in, nothing issued", 1, 4},
+    {"b the ERASE requested and not granted", 40, 4},
+    {"c the ERASE granted and not done", 1, 40},
+    {"d the WRITE's header pump, 5 bytes sent", 1, 4},
+    {"e the WRITE's payload pump, 9 bytes of 32 sent", 1, 4},
+    {"f the WRITE's completion window, every byte sent", 1, 4},
+  };
+  int si = 0;
+  for (const Stage& st : stages) {
+    CHECK(h.commit(4, keep) == 0 && h.commit(7, old) == 0,
+          "T25%c setup: the neighbour and the record committed", st.name[0]);
+    h.gnt_delay = st.gnt; h.op_delay = st.opd;
+    h.clear_capture(); h.ops.clear();
+    // stage f's window: the WRITE's completion held 40 cycles, which also
+    // keeps a backend that answers on the last byte from closing it
+    if (si == 5) h.arm_silence(SIL_DONE, 1, 40);
+    h.m_mode = 1; h.m_wbytes = next; h.m_widx = 0; h.m_stall = 0;
+    h.start(true, 7);
+    bool reached = false;
+    for (long i = 0; i < kOpTimeoutCycles && !reached; ++i) {
+      switch (si) {
+        case 0: reached = h.m_widx == 4 && h.ops.empty(); break;
+        case 1: reached = dut->dev_req_o && h.ops.empty() && h.d_reqwait == 10; break;
+        case 2: reached = h.ops.size() == 1 && h.d_busy && h.done_ctr == 20; break;
+        case 3: reached = h.ops.size() == 2 && h.sent.size() == 5; break;
+        case 4: reached = h.ops.size() == 2 && h.sent.size() == 9; break;
+        default: reached = h.ops.size() == 2 && h.sent.size() == next.size()
+                           && h.d_busy && h.done_ctr == 20; break;
+      }
+      if (!reached) h.tick();
+    }
+    const size_t ops_at_cut = h.ops.size();
+    CHECK(reached && h.done_pulses + h.err_pulses == 0,
+          "T25%s: the cut was reached on the bus, nothing answered yet", st.name);
+    // the power cut: port and device both lose it
+    h.quiesce_model();
+    h.m_mode = 0;
+    dut->rst_n = 0;
+    int noise = 0;
+    for (int i = 0; i < kResetTicks; ++i) {
+      h.tick();
+      if (dut->nvm_done_o || dut->nvm_err_o || dut->nvm_rvalid_o) ++noise;
+    }
+    dut->rst_n = 1;
+    for (int i = 0; i < 50; ++i) {
+      h.tick();
+      if (dut->nvm_busy_o || dut->nvm_done_o || dut->nvm_err_o || dut->dev_req_o
+          || dut->nvm_rvalid_o || dut->dev_wvalid_o)
+        ++noise;
+    }
+    CHECK(noise == 0 && h.ops.size() == ops_at_cut,
+          "T25%s: after the reset the port is idle and silent, no pulse, no "
+          "request, no byte (%d)", st.name, noise);
+    h.gnt_delay = 1; h.op_delay = 4;
+
+    // a neighbour still restores byte-exact
+    int rc = h.restore(4);
+    CHECK(rc == 0 && h.rbytes == keep,
+          "T25%s: the neighbour restores byte-exact after the cut", st.name);
+
+    // the torn record: refused at the header, or forwarded whole and refused
+    // by the manager's crc16, unless the old record survived
+    h.ops.clear();
+    rc = h.restore(7);
+    const bool refused = (rc == 1 && h.rbytes.empty() && h.last_cause == 2);
+    bool crc_rejects = false;
+    if (rc == 0 && h.rbytes.size() >= 8) {
+      std::vector<uint8_t> cb(h.rbytes.begin(), h.rbytes.begin() + 6);
+      cb.insert(cb.end(), h.rbytes.begin() + 8, h.rbytes.end());
+      const uint16_t stored = uint16_t(uint16_t(h.rbytes[6] << 8) | h.rbytes[7]);
+      crc_rejects = (crc16(cb) != stored);
+    }
+    // A cut after the WRITE's last byte may leave the NEW record whole: the
+    // manager was never answered done, but what the media holds is a record,
+    // not a tear, and the crc proves it either way.
+    const bool old_intact = (rc == 0 && h.rbytes == old);
+    const bool new_whole = (rc == 0 && h.rbytes == next);
+    CHECK(old_intact || new_whole || refused || crc_rejects,
+          "T25%s: unless the old or the new record survived whole, the torn "
+          "image is refused at its header (cause UNFRAMED) or forwarded whole "
+          "and refused by the manager's crc16", st.name);
+    const bool hdr_intact = (h.store[7][0] == 0x17 && h.store[7][1] == 0x22
+                             && ((h.store[7][4] << 8) | h.store[7][5]) <= MAXP);
+    const bool asked_payload = (h.ops.size() == 2 && h.ops[1].op == OP_READ
+                                && h.ops[1].offset == 8);
+    CHECK(hdr_intact ? asked_payload : !asked_payload,
+          "T25%s: the port forwarded or refused according to the stored header",
+          st.name);
+    if (si < 2) {
+      CHECK(old_intact && ops_at_cut == 0,
+            "T25%s: no command reached the device, so the old record restores "
+            "byte-exact", st.name);
+    }
+
+    // the next commit of the same record is byte-exact
+    h.ops.clear();
+    rc = h.commit(7, next);
+    const int rc2 = h.restore(7);
+    CHECK(rc == 0 && rc2 == 0 && h.rbytes == next,
+          "T25%s: the next commit of the record is byte-exact (rc %d %d)",
+          st.name, rc, rc2);
+    ++si;
+  }
+}
+
+// The same cut with the device still powered: a reset of the port alone (an
+// SoC reset the backend does not share). The port forgets the command; the
+// device's late completion then arrives while the port owns nothing and is
+// discarded (refusal (c)); the port serves once the device has ended it.
+void NvmPortSuite::reset_of_the_port_alone_mid_commit() {
+  fresh_reset();
+  const std::vector<uint8_t> rec = frame(7, pattern(24, 0x55));
+  for (int k = 0; k < 2; ++k) {
+    h.op_delay = 40;
+    h.clear_capture(); h.ops.clear();
+    if (k == 1) h.arm_silence(SIL_DONE, 1, 40);   // the WRITE's window, as T25f
+    h.m_mode = 1; h.m_wbytes = rec; h.m_widx = 0; h.m_stall = 0;
+    h.start(true, 7);
+    bool reached = false;
+    for (long i = 0; i < kOpTimeoutCycles && !reached; ++i) {
+      reached = (k == 0) ? (h.ops.size() == 1 && h.d_busy && h.done_ctr == 20)
+                         : (h.ops.size() == 2 && h.sent.size() == rec.size()
+                            && h.d_busy && h.done_ctr == 20);
+      if (!reached) h.tick();
+    }
+    h.m_mode = 0;
+    h.port_forgot = true;
+    dut->rst_n = 0;
+    for (int i = 0; i < kResetTicks; ++i) h.tick();
+    dut->rst_n = 1;
+    int noise = 0;
+    for (int i = 0; i < 60; ++i) {
+      h.tick();
+      if (dut->nvm_busy_o || dut->nvm_done_o || dut->nvm_err_o || dut->dev_req_o)
+        ++noise;
+    }
+    CHECK(reached && !h.d_busy && noise == 0,
+          "T25%c the device's own %s completed after the port's reset and was "
+          "discarded: no pulse, no request (%d)", k ? 'h' : 'g',
+          k ? "WRITE" : "ERASE", noise);
+    h.op_delay = 4;
+    h.ops.clear();
+    const int rc = h.commit(7, rec);
+    const int rc2 = h.restore(7);
+    CHECK(rc == 0 && rc2 == 0 && h.rbytes == rec && h.ops.size() == 4,
+          "T25%c the port serves byte-exact once the device ended its command "
+          "(rc %d %d)", k ? 'h' : 'g', rc, rc2);
+  }
+}
+
+// ---------------------------------------------------------------- T27
+// Refusal (d): a command the device ends before its final byte moves. The
+// header read always refused it (T23c); the other three data phases did not,
+// and a payload read ended short, or any READ completed on its own grant,
+// left the port waiting for bytes that would never come -- issue #15's wedge
+// reached by a device that DID answer. Each arm: one err, cause DEVICE, never
+// done, on the cycle after the completion; the device owes nothing after, so
+// the next operation is served at once. The legal coincidence, a completion
+// on the final byte's own edge, is T22's.
+void NvmPortSuite::a_short_command_is_a_device_error() {
+  fresh_reset();
+  const std::vector<uint8_t> rec = frame(2, pattern(40, 0x27));   // 48 bytes
+  CHECK(h.commit(2, rec) == 0, "T27 setup: region 2 committed");
+  // A live completion is answered the next cycle; one that rode the grant is
+  // latched there and answered the cycle after the data phase reads it.
+  auto shortened = [&](const char* tag, int rc, size_t fwd, long gap) {
+    CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0 && h.last_cause == 1
+              && h.pulse_gap == gap,
+          "T27 %s: one err, cause DEVICE, never done, %ld cycles after the "
+          "completion (rc %d, cause %d, gap %ld)", tag, gap, rc, h.last_cause, h.pulse_gap);
+    CHECK(h.rbytes.size() == fwd && !h.d_busy,
+          "T27 %s: %zu bytes forwarded, nothing left owed", tag, h.rbytes.size());
+    h.ops.clear();
+    const int rc2 = h.restore(2);
+    CHECK(rc2 == 0 && h.rbytes == rec && h.ops.size() == 2,
+          "T27 %s: the next restore is served at once", tag);
+  };
+  // start an operation and tick until the device has taken its first
+  // command, so an arming made next lands on the second
+  auto after_first_cmd = [&](bool we) {
+    h.ops.clear();
+    h.clear_capture();
+    h.m_mode = we ? 1 : 2; h.m_wbytes = rec; h.m_widx = 0; h.m_stall = 0;
+    h.start(we, 2);
+    for (int i = 0; i < 200 && h.ops.empty(); ++i) h.tick();
+  };
+  // the payload READ ended after 10 of its 40 bytes
+  after_first_cmd(false);
+  h.short_after = 10;
+  shortened("a the payload READ ended after 10 of 40 bytes (S_RPPUMP)", h.run_op(), 18, 1);
+  // a header READ and a payload READ each completed on their own grant
+  h.gnt_done_on_data = true;
+  shortened("b the header READ completed on its own grant (S_RHCOLL)", h.restore(2), 0, 2);
+  after_first_cmd(false);
+  h.gnt_done_on_data = true;
+  shortened("c the payload READ completed on its own grant (S_RPPUMP)", h.run_op(), 8, 2);
+  // a WRITE ended in its header pump, in its payload pump, and on its grant
+  h.wshort_after = 5;
+  int rc = h.commit(2, rec);
+  CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0 && h.last_cause == 1
+            && h.pulse_gap == 1 && h.sent.size() == 5,
+        "T27 d the WRITE ended after 5 header bytes (S_WHPUMP): one err, cause "
+        "DEVICE, never done (rc %d, cause %d, sent %zu)", rc, h.last_cause, h.sent.size());
+  CHECK(h.commit(2, rec) == 0, "T27 d ...and the next commit is served");
+  h.wshort_after = 20;
+  rc = h.commit(2, rec);
+  CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0 && h.last_cause == 1
+            && h.pulse_gap == 1 && h.sent.size() == 20,
+        "T27 e the WRITE ended after 20 of 48 bytes (S_WDPUMP): one err, cause "
+        "DEVICE, never done (rc %d, cause %d, sent %zu)", rc, h.last_cause, h.sent.size());
+  CHECK(h.commit(2, rec) == 0, "T27 e ...and the next commit is served");
+  after_first_cmd(true);
+  h.gnt_done_on_data = true;
+  rc = h.run_op();
+  CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0 && h.last_cause == 1
+            && h.sent.empty(),
+        "T27 f the WRITE completed on its own grant (S_WHPUMP): one err, cause "
+        "DEVICE, never done, no byte sent (rc %d, cause %d)", rc, h.last_cause);
+  h.ops.clear();
+  rc = h.commit(2, rec);
+  const int rc2 = h.restore(2);
+  CHECK(rc == 0 && rc2 == 0 && h.rbytes == rec,
+        "T27 f ...and the next commit and restore are served byte-exact");
+}
+
+// The run-wide checks: what EVERY operation of the run was owed, under every
+// device model -- the freedoms and the broken backends alike. A broken backend
+// fails the checks that need service; it may never fail these.
+void NvmPortSuite::every_operation_got_what_it_was_owed() {
+  CHECK(h.wedges == 0,
+        "RW1 every operation the port accepted was answered; none ran past "
+        "run_op's guard (%d wedged)", h.wedges);
+  CHECK(h.doubles == 0, "RW2 no operation was answered twice (%d)", h.doubles);
+  CHECK(h.req_owed_run == 0,
+        "RW3 no device command was requested while the backend still owed one "
+        "(%d cycles)", h.req_owed_run);
+  CHECK(h.deadline_unarmed == 0,
+        "RW4 no DEADLINE where the device was not silent (%d)", h.deadline_unarmed);
+  CHECK(h.dev_err_misnamed == 0,
+        "RW5 every device error was answered with one err, cause DEVICE (%d not)",
+        h.dev_err_misnamed);
+  CHECK(h.short_bad == 0,
+        "RW6 every READ the device ended short was answered with one err, cause "
+        "DEVICE, never done (%d of %d not)", h.short_bad, h.short_reads);
+  CHECK(h.silent_bad == 0 && (!h.silent_model || h.silent_deadlines > 0),
+        "RW7 under silence every operation ended in one err, never done and "
+        "never DEVICE (%d not, %d DEADLINE)", h.silent_bad, h.silent_deadlines);
+  CHECK(!h.unsol_model || h.stray_dones > 20,
+        "RW8 the unsolicited model presented its strays (%d)", h.stray_dones);
+  CHECK(!h.short_model || h.short_reads > 10,
+        "RW9 the short-read model ended READs short (%d)", h.short_reads);
+}
+
 int NvmPortSuite::run() {
   reset_leaves_the_port_idle();
   commit_erases_then_writes_byte_exact();
@@ -1441,6 +2324,7 @@ int NvmPortSuite::run() {
   bad_stored_magic_is_refused_on_restore();
   oversize_stored_length_is_refused_on_restore();
   refusals_leave_the_port_serviceable();
+  four_mechanisms_are_each_named();
   torn_commit_never_restores_as_valid();
   torn_commit_leaves_every_other_region_untouched();
   late_write_failure_reports_err_not_done();
@@ -1451,6 +2335,14 @@ int NvmPortSuite::run() {
   completion_riding_the_last_byte_is_taken();
   the_port_is_idle_at_the_end_of_the_run();
   terminal_cause_names_the_failure();
+  the_deadline_refuses_a_silent_device();
+  the_deadline_never_refuses_a_slow_device();
+  the_next_request_after_a_deadline();
+  an_abandoned_write_is_contained();
+  reset_mid_commit_at_six_stages();
+  reset_of_the_port_alone_mid_commit();
+  a_short_command_is_a_device_error();
+  every_operation_got_what_it_was_owed();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
