@@ -12,11 +12,21 @@ documents reference the instance names and the dictionary
 | Class | Kind | Instances | Template |
 |---|---|---|---|
 | **A** | Packet streaming (valid/ready, sof/eof) | `mac_rx`, `mac_tx`; reused by trace port, firmware sink | [F02.3](#fig-02-rxwave)/[F02.4](#fig-02-txwave) |
-| **B** | Request/response engine API (single outstanding) | `srp`, `maap`, `gptp`, `avtp`, `mclk` | [F02.5](#fig-02-apiwave) |
-| **C** | Event pulse with ack (sticky until acked) | events from all adapters + timer expiries | [F02.6](#fig-02-evtwave) |
+| **B** | Request/response engine API (single outstanding) | `srp` (the `svc_*` face), `maap` | [F02.5](#fig-02-apiwave) |
+| **C** | Event pulse with ack (sticky until acked) | the event router's internal events and timer expiries; at the top only the `maap` conflict pair | [F02.6](#fig-02-evtwave) |
 | **D** | Level status (synchronized, sampled) | status dictionary | [F02.10](#fig-02-statusdict) |
 | **E** | Memory-mapped side-port | `mgmt` | [F02.7](#fig-02-memwave) |
 | **F** | NVM commit/restore | `nvm` | [F02.8](#fig-02-nvmwave) |
+
+**The landed shape of `gptp`, `avtp` and `mclk`.** The original design gave each of
+these a class-B op table and class-C events. The landed top serves them instead with
+class-D levels in both directions, one-cycle change strobes, and two word-at-a-time
+read faces the AECP engine gathers from (`gsi_*` and `ctr_*`); §4.3 to §4.6 give the
+landed shape of each and name no op or event that no port serves. Exposing the adapters
+is not a Milan requirement: Milan v1.2 states the wire behaviour of GET_STREAM_INFO,
+SET/GET_CLOCK_SOURCE, START/STOP_STREAMING, GET_AVB_INFO, GET_AS_PATH and GET_COUNTERS
+(§5.4.2.10, §5.4.2.15/.16, §5.4.2.19/.20, §5.4.2.23 to .25) and their Table 5.22
+notifications, never an internal adapter API, and these faces serve all of it.
 
 <a id="fig-02-landscape"></a>**F02.1 — Interface landscape**
 
@@ -27,11 +37,13 @@ flowchart LR
   end
   macrx["mac_rx (A)"] --> eng
   eng --> mactx["mac_tx (A)"]
-  eng <--> srp["srp (B) + events (C) + status (D)"]
-  eng <--> maap["maap (B) + events (C)"]
-  eng <--> gptp["gptp (B: as-path) + events (C) + status (D)"]
-  eng <--> avtp["avtp (B) + events (C) + status (D)"]
-  eng <--> mclk["mclk (B) + events (C) + status (D)"]
+  eng <--> srp["srp (B: svc) + status (D)"]
+  eng <--> maap["maap (B) + conflict event (C)"]
+  gptp["gptp: levels + change strobes (D)"] --> eng
+  eng --> avtp["avtp: binding + settings levels (D, out)"]
+  eng --> mclk["mclk: clock-source level (D, out)"]
+  eng <--> gsi["gsi read face: gPTP + stream words"]
+  eng <--> ctr["ctr read face + change strobe: the integrator's counters"]
   mgmt["mgmt (E)"] -.-> eng
   eng <--> nvm["nvm (F)"]
   eng --> ido["identify_active (D, out)"]
@@ -44,11 +56,13 @@ flowchart LR
 |---|---|---|---|---|---|
 | `mac_rx` | A | in | MAC-RX → core (async FIFO) | packet engine | one per AVB interface (P-N-AVB-INTERFACES) |
 | `mac_tx` | A | out | core → MAC-TX (async FIFO) | TX arbiter | one per AVB interface |
-| `srp` | B+C+D | both | core | ACMP, AECP gather, counters, NOTIF | talker/listener attribute ops; served by the internal SRP engine ([10](10_srp_engine.md)) or an external stack (`P-EN-SRP-ENGINE`) |
+| `srp` | B+C+D | both | core | ACMP, AECP gather, NOTIF | talker/listener attribute ops; served by the internal SRP engine ([10](10_srp_engine.md)) or an external stack (`P-EN-SRP-ENGINE`) |
 | `maap` | B+C | both | core | talker DA management | allocation + conflict events; served internally by [11](11_maap_engine.md) when `cfg_maap_internal_i` = 1 |
-| `gptp` | B+C+D | both | core | ADP, AECP gather, counters | GM/domain/asCapable/path |
-| `avtp` | B+C+D | both | core | ACMP settle, AECP, counters | per-stream control + health events |
-| `mclk` | B+C+D | both | core | AECP clock source, counters; MVU MCR deferred ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) | per clock domain |
+| `gptp` | D + strobes | in | core | ADP, NOTIF | `gm_id_i`, `gptp_domain_i`, `gm_change_i`; asCapable, propagation delay and the path are `gsi` words (§4.3) |
+| `avtp` | D (out) | out | core | the integrator's stream datapath | binding, started and settings levels; the stream words are `gsi` words (§4.4) |
+| `mclk` | D (out) | out | core | the integrator's media-clock selection | `aecp_clk_src_index_o` (§4.5); MVU MCR deferred ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) |
+| `gsi` | read face + strobes | both | core | AECP gather (GET_STREAM_INFO, GET_AVB_INFO, GET_AS_PATH, the SET_STREAM_FORMAT verdict), NOTIF | one word per beat, `gsi_wait_i` a hold (§4.3) |
+| `ctr` | read face + strobe | both | core | AECP (GET_COUNTERS), NOTIF | the integrator's counters (§4.6) |
 | `mgmt` | E | in | own (sync or 4-phase async) | model store, NVM, debug, ctrl/status | optional at runtime, needed for image load unless ROM |
 | `nvm` | F | both | core | NVM manager | record-level, device-agnostic |
 | `identify_active` | D | out | core | device indicator | level, 1 = identifying |
@@ -181,11 +195,20 @@ and EtherType 0x22F0 when the external MAC can filter; the parser re-checks rega
 
 ## 4. Class B — engine request/response APIs
 
-One template contract for all five instances: **single outstanding request per
+One template contract for the two class-B instances that cross the landed top, `srp`
+(the `svc_*` service face, §4.1) and `maap` (§4.2): **single outstanding request per
 instance**; `req_valid ∧ req_ready` accepts; exactly one `rsp_valid` follows with
-`rsp_status ∈ {OK, FAIL, UNSUPPORTED}` and instance-specific `rsp_data`. Requests are
-non-blocking for the engines: the AECP gather path snapshots class-D status instead of
-issuing class-B calls wherever possible.
+`rsp_status ∈ {OK, FAIL, UNSUPPORTED}` and instance-specific `rsp_data`. The other three
+instances of the original design, `gptp`, `avtp` and `mclk`, are not class B in the
+landed top (§1): §4.3 to §4.5 give their landed shape, and §4.6 the counters face.
+
+**The read faces** (`gsi_*`, §4.3; `ctr_*`, §4.6; and GET_AUDIO_MAP's `amap_*`,
+[06 §6.5](06_aecp_engine.md)). The AECP engine asks for one word at a time and holds its
+selector outputs while it waits. `*_wait_i` is a **hold**, not a ready: 1 keeps the
+beat, 0 says the word is on `*_data_i` now, so an unwired face answers zero at once,
+and every gather is bounded by the AECP memory watchdog (`MEM_TIMEOUT_CYC_P`,
+[06 §8.1](06_aecp_engine.md)). The engine reads these faces and the class-D levels
+instead of issuing requests.
 
 <a id="fig-02-apiwave"></a>**F02.5 — Engine-API template (all class-B instances)**
 
@@ -320,41 +343,70 @@ ever be owed.
 
 ### 4.3 `gptp` — time-sync data
 
-| Op | Args | Result |
-|---|---|---|
-| `READ_AS_PATH` | interface idx, entry idx | {path_count, path_sequence[idx]} — iterated by the GET_AS_PATH µprogram |
+**Landed shape on `protocol_processor_top`** (interface 0; `P-N-AVB-INTERFACES` is 1).
+No request reaches a gPTP stack: the integrator publishes the gPTP pair as levels,
+strobes its changes, and answers the GET_AVB_INFO and GET_AS_PATH words on the `gsi_*`
+read face.
 
-Events: `GM_CHANGE{interface}` (drives ADP re-advertise + GET_AVB_INFO notification;
-GPTP_GM_CHANGED is the integrator's counter, §4.6), `AS_CAPABLE_CHANGE{interface}`,
-`PATH_CHANGE{interface}`. Class-D: GM id, domain, propagation delay, asCapable.
+| What it serves | Landed as | Dir |
+|---|---|---|
+| the ADPDU's `gptp_grandmaster_id` and `gptp_domain_number`, and the talker-discovery guard (Milan §5.6.2, §5.6.4.5.1) | `gm_id_i[63:0]`, `gptp_domain_i[7:0]`, class D | in |
+| GM_CHANGE: the ADP re-advertise (Milan §5.6.3.5.7) and the GET_AVB_INFO notification (Milan Table 5.22) | `gm_change_i`, one cycle after a changed `gm_id_i` **or** `gptp_domain_i` is published | in |
+| the link state, for ADP, the SRP Domain and the GET_AVB_INFO notification | `link_up_i`, a level already synchronised | in |
+| GET_AVB_INFO's words (IEEE 1722.1-2021 §7.4.40.2): the grandmaster id, propagation delay, domain, flags (AS_CAPABLE and the rest of Table 7-148) and the msrp mappings | `gsi_*` kind 1: selector 0 the grandmaster id; 1 `{propagation_delay, domain, flags, msrp_mappings_count}`; 8 the msrp mapping of ordinal `gsi_ord_o` ([06 §6.10](06_aecp_engine.md#sec-06-gsi)) | out / in |
+| a changed integrator-owned GET_AVB_INFO word (asCapable, propagation delay) | `gsi_avb_chg_i`, one-cycle strobe | in |
+| GET_AS_PATH's words (§7.4.41.2): the path count and each ClockIdentity | `gsi_*` kind 2: selector 0 the count; 8 the path entry of ordinal `gsi_ord_o` | out / in |
+| a changed path sequence, entry 0 on a new grandmaster included: the GET_AS_PATH notification | `gsi_asp_chg_i`, one-cycle strobe | in |
+| the AVB_INTERFACE LINK_UP, LINK_DOWN and GPTP_GM_CHANGED counters | the integrator's, on the `ctr_*` face (§4.6) | — |
+
+The `gsi_*` face, shared with §4.4:
+
+| Signal | Dir | Meaning |
+|---|---|---|
+| `gsi_req_o` | out | a word is being asked for |
+| `gsi_kind_o[1:0]` | out | 0 GET_STREAM_INFO, 1 GET_AVB_INFO, 2 GET_AS_PATH |
+| `gsi_desc_type_o[15:0]`, `gsi_desc_index_o[15:0]` | out | the addressed descriptor |
+| `gsi_sel_o[3:0]` | out | the word within the kind ([06 §6.2](06_aecp_engine.md#sec-06-stri), [06 §6.10](06_aecp_engine.md#sec-06-gsi)); bit 3 marks a record word |
+| `gsi_ord_o[7:0]` | out | the record ordinal of a record word |
+| `gsi_prop_fmt_o[63:0]` | out | the proposed stream format while SET_STREAM_FORMAT asks for its verdict (kind 0 selector 15) |
+| `gsi_data_i[63:0]` | in | the word |
+| `gsi_wait_i` | in | **HOLD** the beat |
+| `gsi_avb_chg_i`, `gsi_asp_chg_i` | in | the two change strobes above |
+
+No `READ_AS_PATH` op exists: the GET_AS_PATH µprogram reads the count and each entry
+from the face itself. The former `AS_CAPABLE_CHANGE` and `PATH_CHANGE` events are the two
+`gsi` strobes, and no GPTP_GM_CHANGED tick leaves the processor.
 
 ### 4.4 `avtp` — streaming engine control
 
-| Op | Args | Result |
+**Landed shape on `protocol_processor_top`.** The processor sends the streaming
+datapath no requests. It publishes what that datapath needs as per-index levels (flat
+packed vectors, index s at `[W·s +: W]`), and the integrator answers the GET_STREAM_INFO
+words on the `gsi_*` face (§4.3).
+
+| What it serves | Landed as | Former op or event |
 |---|---|---|
-| `INPUT_CONFIGURE` | sink idx, {stream_id, dest MAC, VLAN} | OK — also arms RX filtering to the configured format (Milan §4.4.2.2) |
-| `INPUT_ENABLE` / `INPUT_DISABLE` | sink idx | OK — start/stop listening (settle / teardown) |
-| `INPUT_START` / `INPUT_STOP` | sink idx | OK after binding-record commit or confirmed no-op; timeout or invalid index reports failure |
-| `SET_INPUT_FORMAT` / `SET_OUTPUT_FORMAT` | idx, format (8 B) | OK/FAIL |
-| `OUTPUT_SET_PT_OFFSET` | source idx, offset ns | OK (0..0x7FFFFFFF) |
-| `OUTPUT_STATUS` | source idx | {streaming} |
+| the bound stream of each Stream Input, to arm its RX filter and stream table at settle and disarm them at teardown (Milan §5.3.8; dropping AVTPDUs of another format, §4.4.2.2, is the integrator's) | `acmp_bound_o` (debounced), `acmp_bound_eid_o`, `acmp_bound_sid_o`, `acmp_bound_dmac_o`, `acmp_bound_vlan_o` | `INPUT_CONFIGURE`, `INPUT_ENABLE`, `INPUT_DISABLE` |
+| started or stopped, per Stream Input (Milan §5.3.8.7; START/STOP_STREAMING, §5.4.2.19/.20) | `aecp_strm_started_o` | `INPUT_START`, `INPUT_STOP` |
+| the current format of each input and output (SET_STREAM_FORMAT, Milan §5.4.2.7) | `aecp_fmt_in_o` / `aecp_fmt_in_v_o`, `aecp_fmt_out_o` / `aecp_fmt_out_v_o`; the integrator's verdict on a proposed format is `gsi_prop_fmt_o` with kind 0 selector 15 | `SET_INPUT_FORMAT`, `SET_OUTPUT_FORMAT` |
+| the presentation-time offset of each Stream Output (SET_STREAM_INFO, Milan §5.4.2.9) | `aecp_pt_offset_o` / `aecp_pt_offset_v_o` | `OUTPUT_SET_PT_OFFSET` |
+| the talker's transmit licence (Milan §4.3.3.1, §5.3.7.3) | `acmp_declaring_o`, `srp_active_o`, `srp_sr_admitted_o`, per source | — |
+| whether a Stream Output is streaming, and every other GET_STREAM_INFO word the integrator owns (Milan §5.4.2.10) | `gsi_*` kind 0, selectors 0 to 7; an input's selectors 5 and 7 and selector 4's failure-code byte are served inside the processor ([06 §6.2](06_aecp_engine.md#sec-06-stri)) | `OUTPUT_STATUS` |
+| the stream-health events Milan Tables 5.4 and 5.6 count | not processor events: the integrator counts them and serves the counts on the `ctr_*` face (§4.6) | the per-sink and per-source event lists |
 
-Events (per sink, feed the STREAM_INPUT counter bank and Table 5.22 notifications):
-`MEDIA_LOCKED/UNLOCKED`, `STREAM_INTERRUPTED`, `SEQ_NUM_MISMATCH`, `MEDIA_RESET`,
-`TIMESTAMP_UNCERTAIN`, `UNSUPPORTED_FORMAT`, `LATE/EARLY_TIMESTAMP`, `FRAMES_RX_TICK`;
-per source: `STREAM_START/STOP`, `MEDIA_RESET`, `TIMESTAMP_UNCERTAIN`, `FRAMES_TX_TICK`.
-
-The events above are not inputs of this processor: the integrator counts them in its
-own datapath and GET_COUNTERS reads the counts through §4.6.
+None of the former ops or events exists as a port.
 
 ### 4.5 `mclk` — media clocking
 
-| Op | Args | Result |
-|---|---|---|
-| `SET_CLOCK_SOURCE` | clock domain idx, CLOCK_SOURCE idx | OK/FAIL |
-| `GET_MCR_DEFAULTS` | clock domain idx | deferred design only; no RTL face under the MVU waiver ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) |
+**Landed shape on `protocol_processor_top`.**
 
-Events: `MC_LOCKED{domain}` / `MC_UNLOCKED{domain}` → CLOCK_DOMAIN counter bank.
+| What it serves | Landed as | Former op or event |
+|---|---|---|
+| the clock source a controller selected for CLOCK_DOMAIN 0 (SET_CLOCK_SOURCE, Milan §5.4.2.15; saved, §5.3.11.1): the integrator switches its media clock to it | `aecp_clk_src_index_o[15:0]`, a level | `SET_CLOCK_SOURCE` |
+| the Milan media-clock reference defaults | no face: the MVU MEDIA_CLOCK_REFERENCE commands are waived ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) | `GET_MCR_DEFAULTS` |
+| whether the domain's media clock is locked | the integrator's own level; its LOCKED and UNLOCKED counters are on the `ctr_*` face (§4.6, Milan Table 5.7) | `MC_LOCKED`, `MC_UNLOCKED` |
+
+No clock request and no lock event crosses the top.
 
 <a id="sec-02-ctr"></a>
 ### 4.6 `ctr` — the GET_COUNTERS read face and change strobe
@@ -394,10 +446,14 @@ a second AVB_INTERFACE index on the same face.
 
 ## 5. Class C — events
 
-All events are **sticky until acked**, carry a small argument, and may coalesce: if the
-same event re-fires before ack, `evt_lost` is set for counting-sensitive consumers
-(counter ticks are never lost: adapters hold per-event tick accumulators read at the
-observation tick, [06 §6.6](06_aecp_engine.md)).
+The class-C template below is the **event router's** contract, inside the processor
+(`KL_pp_event_router`): an event holds with its first argument until it is
+acknowledged, and a re-fire before the ack coalesces into it and sets `evt_lost`, which
+the router counts. One class-C pair crosses the landed top: the MAAP conflict
+(`maap_conflict_valid_i` and `maap_conflict_src_i`, acknowledged on
+`maap_conflict_ack_o`). Every other event the integrator raises is a one-cycle strobe,
+or the edge of a level, on a port of its own; and no counter tick crosses the top in
+either direction, because the counters are the integrator's (§4.6).
 
 <a id="fig-02-evtwave"></a>**F02.6 — Event pulse with ack**
 
@@ -419,22 +475,28 @@ observation tick, [06 §6.6](06_aecp_engine.md)).
 
 </details>
 
-Event catalog (routed by the event router to the listed consumers):
+Event catalog of the landed top: each event, what produces it, its form and its
+consumers.
 
-| Event | Source | Consumers |
-|---|---|---|
-| `LINK_UP/DOWN{if}` | MAC/PHY (2FF sync) | ADP advertise SM, SRP domain re-declare, NOTIF (GET_AVB_INFO) |
-| `GM_CHANGE{if}` | gptp | ADP advertise SM, NOTIF (GET_AVB_INFO) |
-| `AS_CAPABLE_CHANGE{if}` / `PATH_CHANGE{if}` | gptp | NOTIF (GET_AVB_INFO / GET_AS_PATH) |
-| `TK_ATTR_REGISTERED/UNREGISTERED{sink}` | srp | ACMP listener SM (`EVT_TK_REGISTERED/UNREGISTERED`) |
-| `TK_FAILURE_CHANGE{sink}` | srp | NOTIF (GET_STREAM_INFO) only, wired directly and NOT routed: never the ACMP listener, never a Listener re-declaration ([10 §6.4](10_srp_engine.md)) |
-| `TK_LATENCY_CHANGE{sink}` | srp | committed `acc_latency[sink]` change on a registering Talker attribute; NOTIF (GET_STREAM_INFO) only, wired directly and not routed; unchanged refreshes are silent ([10 §6.4](10_srp_engine.md)) |
-| `LISTENER_REG_CHANGE{src}` | srp | talker DA-gate, NOTIF (GET_STREAM_INFO), GET_TX_STATE data |
-| `DOMAIN_CHANGE{class}` | srp | NOTIF (GET_AVB_INFO), talker PCP flow |
-| `MAAP_CONFLICT{src}` | maap | talker DA flow ([05 §6bis](05_acmp_engine.md)) |
-| stream-health set (§4.4) | avtp | counters, NOTIF (GET_COUNTERS rate-limited) |
-| `MC_LOCKED/UNLOCKED{domain}` | mclk | counters |
-| timer expiries `{owner tag}` | timer service | owning SM/engine ([08 §3](08_timing.md)) |
+| Event | Produced by | Form | Consumers |
+|---|---|---|---|
+| `LINK_UP/DOWN` | `link_up_i` (the integrator, interface 0) | the edges of a level | ADP advertise SM, SRP Domain re-declare, NOTIF (GET_AVB_INFO); traced by the router |
+| `GM_CHANGE` | `gm_change_i` (the integrator) | one-cycle strobe | ADP advertise SM, NOTIF (GET_AVB_INFO); traced by the router |
+| a changed GET_AVB_INFO word (asCapable, propagation delay) | `gsi_avb_chg_i` (the integrator) | one-cycle strobe | NOTIF (GET_AVB_INFO) |
+| a changed path sequence | `gsi_asp_chg_i` (the integrator) | one-cycle strobe | NOTIF (GET_AS_PATH) |
+| a served counter changed | `ctr_change_i` with `ctr_change_desc_type_i` / `ctr_change_desc_index_i` (the integrator) | one-cycle strobe | NOTIF (GET_COUNTERS, `T-CTR-NOTIF`-limited) |
+| `MAAP_CONFLICT{src}` | `maap_conflict_valid_i` / `maap_conflict_src_i` (the external allocator) | sticky until `maap_conflict_ack_o` | talker DA flow ([05 §6bis](05_acmp_engine.md)) |
+| `TK_ATTR_REGISTERED/UNREGISTERED{sink}` | internal: the SRP engine | router, sticky until acked | ACMP listener SM (`EVT_TK_REGISTERED/UNREGISTERED`) |
+| `EVT_TK_DISCOVERED/DEPARTED{sink}` | internal: the ADP engine | router, sticky until acked | ACMP listener SM |
+| `TK_FAILURE_CHANGE{sink}` | internal: the SRP engine | strobe, wired directly and NOT routed | NOTIF (GET_STREAM_INFO) only: never the ACMP listener, never a Listener re-declaration ([10 §6.4](10_srp_engine.md)) |
+| `TK_LATENCY_CHANGE{sink}` | internal: the SRP engine | strobe, wired directly and not routed | a committed `acc_latency[sink]` change on a registering Talker attribute; NOTIF (GET_STREAM_INFO) only; unchanged refreshes are silent ([10 §6.4](10_srp_engine.md)) |
+| `LISTENER_REG_CHANGE{src}` | internal: the SRP engine | strobe; traced by the router | talker DA-gate, NOTIF (GET_STREAM_INFO), GET_TX_STATE data |
+| `DOMAIN_CHANGE{class}` | internal: the SRP engine, also published on `srp_domain_change_o` | strobe; traced by the router | NOTIF (GET_AVB_INFO), talker PCP flow |
+| timer expiries `{owner tag}` | internal: the timer service's expiry bus | bus | owning SM/engine ([08 §3](08_timing.md)) |
+
+The original catalog's `AS_CAPABLE_CHANGE` and `PATH_CHANGE` are the two `gsi` strobes;
+its stream-health set and `MC_LOCKED/UNLOCKED` are not processor events at all, because
+the integrator counts them (§4.4, §4.5, §4.6).
 
 ## 6. Class D — level status dictionary
 
@@ -445,27 +507,27 @@ internal are consumed inside the processor and add no top-level ports.
 
 <a id="fig-02-statusdict"></a>**F02.10 — External status dictionary**
 
-| Signal (per instance) | Width | Source | Sample rule | Consumed by |
-|---|---|---|---|---|
-| `link_up[if]` | 1 | MAC/PHY | 2FF sync + event on edge | ADP SM, SRP Domain, GET_AVB_INFO notification (the integrator's LINK_UP/LINK_DOWN count the same level, §4.6) |
-| `gm_id[if]` | 64 | gptp | stable between GM_CHANGE events | ADPDU, GET_AVB_INFO, discovery-SM match |
-| `gptp_domain[if]` | 8 | gptp | idem | ADPDU, GET_AVB_INFO, discovery-SM match |
-| `as_capable[if]` | 1 | gptp | level + change event | GET_AVB_INFO + notification |
-| `prop_delay_ns[if]` | 32 | gptp | latched at read | GET_AVB_INFO |
-| `path_count[if]` | 16 | gptp | with READ_AS_PATH burst | GET_AS_PATH |
-| `class_a_prio` / `class_a_vid` | 3 / 12 | srp | level + DOMAIN_CHANGE event | GET_AVB_INFO, talker declare |
-| `tk_decl_state[src]` | 2 | srp | {NONE, ADVERTISE, FAILED — self-declared, permitted but unused by this profile ([10 §6.3](10_srp_engine.md))} | GET_STREAM_INFO(out), GET_TX_STATE |
-| `lstn_reg_state[src]` | 2 | srp | the registered Listener's FourPackedEvent (802.1Q §35.2.2.7.4): 0 NONE (Ignore), 1 ASKING_FAILED, 2 READY, 3 READY_FAILED. These codes live in ONE place, [`srp_pkg::srp_decl_e`](../../hdl/srp/srp_pkg.sv), and no module keeps a second copy; READY and READY_FAILED share bit 1, which is what the streaming reduction tests | GET_TX_STATE and GET_STREAM_INFO(out) REGISTERING_FAILED, DA-gate, the Milan §5.3.7.3 streaming reduction |
-| `tk_reg_state[sink]` | 2 | srp | {NONE, ADVERTISE, FAILED} for the settled match | GET_STREAM_INFO(in), GET_RX_STATE |
-| `msrp_fail_code[x]` / `msrp_fail_bridge[x]` | 8 / 64 | srp | valid with FAILED states; zero outside them, except the internal sink bridge, which is the raw registrar latch gated once on `tk_reg_state[sink]` FAILED after the processor's index mux; input values read live per gather beat ([06 F06.13](06_aecp_engine.md#fig-06-lineage)) | GET_STREAM_INFO: input failure-code byte of selector 4 and bridge selector 5 are processor-owned; selector 5 has no external request for inputs |
-| `pbsta[sink]` / `acmpsta[sink]` | 3 / 5 | ACMP listener record (internal) | committed record RAM write; acmpsta zero outside PROBING_ACTIVE (Milan §5.3.8.6) | GET_STREAM_INFO input selector 7, served internally with no external request; changed commits trigger notification |
-| `granted_slope_bps[src]` | 32 | srp | per-stream granted idleSlope while `sr_admitted[src]` = 1, else 0 (802.1Q §34.6.1.1) | CBS slope MUX, per-talker gate |
-| `sr_admitted[src]` | 1 | srp | reservation admitted against the Σ-slope port ceiling | AVTP per-talker gate |
-| `acc_latency[sink]` | 32 | srp | registered talker attr value | GET_STREAM_INFO(in) (+ P-INTERNAL-INGRESS-DELAY-NS) |
-| `streaming[src]` | 1 | avtp | level | GET_STREAM_INFO(out) derivation |
-| `mc_locked[domain]` | 1 | mclk | level + events | counters |
-| `identify_active` | 1 | identify handler | out; level | device indicator |
-| `identify_button` | 1 | pin (optional) | 2FF in the core; debounce by the integrator (Milan §5.4.5.4 leaves its mapping to the user's action vendor-specific) | identification notification ([06 F06.16](06_aecp_engine.md#fig-06-identify)), `identify_button_i` |
+| Signal (per instance) | Width | Source | Sample rule | Consumed by | Landed as |
+|---|---|---|---|---|---|
+| `link_up[if]` | 1 | MAC/PHY | 2FF sync (the integrator's) + edge inside | ADP SM, SRP Domain, GET_AVB_INFO notification (the integrator's LINK_UP/LINK_DOWN count the same level, §4.6) | `link_up_i` (interface 0) |
+| `gm_id[if]` | 64 | gptp | stable between GM_CHANGE events | ADPDU, discovery-SM match | `gm_id_i`; GET_AVB_INFO reads its own copy, `gsi` kind 1 selector 0 (§4.3) |
+| `gptp_domain[if]` | 8 | gptp | idem | ADPDU, discovery-SM match | `gptp_domain_i`; GET_AVB_INFO: `gsi` kind 1 selector 1, bits [31:24] |
+| `as_capable[if]` | 1 | gptp | level + change event | GET_AVB_INFO + notification | no port: the AS_CAPABLE bit of the flags byte (IEEE 1722.1-2021 Table 7-148), `gsi` kind 1 selector 1, bits [23:16]; change strobe `gsi_avb_chg_i` |
+| `prop_delay_ns[if]` | 32 | gptp | read live at the gather beat | GET_AVB_INFO | no port: `gsi` kind 1 selector 1, bits [63:32]; change strobe `gsi_avb_chg_i` |
+| `path_count[if]` | 16 | gptp | read at each GET_AS_PATH gather | GET_AS_PATH | no port: `gsi` kind 2 selector 0, the entries selector 8 at ordinal `gsi_ord_o`; change strobe `gsi_asp_chg_i` |
+| `class_a_prio` / `class_a_vid` | 3 / 12 | srp | level + DOMAIN_CHANGE event | GET_AVB_INFO, talker declare | `srp_class_a_prio_o`, `srp_class_a_vid_o` |
+| `tk_decl_state[src]` | 2 | srp | {NONE, ADVERTISE, FAILED — self-declared, permitted but unused by this profile ([10 §6.3](10_srp_engine.md))} | GET_STREAM_INFO(out), GET_TX_STATE | `srp_tk_decl_state_o` |
+| `lstn_reg_state[src]` | 2 | srp | the registered Listener's FourPackedEvent (802.1Q §35.2.2.7.4): 0 NONE (Ignore), 1 ASKING_FAILED, 2 READY, 3 READY_FAILED. These codes live in ONE place, [`srp_pkg::srp_decl_e`](../../hdl/srp/srp_pkg.sv), and no module keeps a second copy; READY and READY_FAILED share bit 1, which is what the streaming reduction tests | GET_TX_STATE and GET_STREAM_INFO(out) REGISTERING_FAILED, DA-gate, the Milan §5.3.7.3 streaming reduction | `srp_lstn_reg_state_o` |
+| `tk_reg_state[sink]` | 2 | srp | {NONE, ADVERTISE, FAILED} for the settled match | GET_STREAM_INFO(in), GET_RX_STATE | `srp_tk_reg_state_o` |
+| `msrp_fail_code[x]` / `msrp_fail_bridge[x]` | 8 / 64 | srp | valid with FAILED states; zero outside them, except the internal sink bridge, which is the raw registrar latch gated once on `tk_reg_state[sink]` FAILED after the processor's index mux; input values read live per gather beat ([06 F06.13](06_aecp_engine.md#fig-06-lineage)) | GET_STREAM_INFO: input failure-code byte of selector 4 and bridge selector 5 are processor-owned; selector 5 has no external request for inputs | `srp_src_fail_code_o`, `srp_src_fail_bridge_o`, `srp_snk_fail_code_o`; the sink bridge is internal |
+| `pbsta[sink]` / `acmpsta[sink]` | 3 / 5 | ACMP listener record (internal) | committed record RAM write; acmpsta zero outside PROBING_ACTIVE (Milan §5.3.8.6) | GET_STREAM_INFO input selector 7, served internally with no external request; changed commits trigger notification | internal, no port |
+| `granted_slope_bps[src]` | 32 | srp | per-stream granted idleSlope while `sr_admitted[src]` = 1, else 0 (802.1Q §34.6.1.1) | CBS slope MUX, per-talker gate | `srp_granted_slope_bps_o` |
+| `sr_admitted[src]` | 1 | srp | reservation admitted against the Σ-slope port ceiling | AVTP per-talker gate | `srp_sr_admitted_o` |
+| `acc_latency[sink]` | 32 | srp | registered talker attr value | GET_STREAM_INFO(in) (+ P-INTERNAL-INGRESS-DELAY-NS) | `srp_acc_latency_o` |
+| `streaming[src]` | 1 | avtp | level | GET_STREAM_INFO(out) derivation | no port: the integrator's STREAM_OUTPUT answers on `gsi` kind 0 (selector 0 flags, selector 6 flags_ex) carry it, and its STREAM_START / STREAM_STOP counters count its edges (§4.6) |
+| `mc_locked[domain]` | 1 | mclk | level, the integrator's | the integrator's CLOCK_DOMAIN counters | no port: the LOCKED / UNLOCKED counters it drives are `ctr_*` quadlets 0 and 1, mask `0x00000003` (§4.6) |
+| `identify_active` | 1 | identify handler | out; level | device indicator | `aecp_identify_o` (0 or 255) |
+| `identify_button` | 1 | pin (optional) | 2FF in the core; debounce by the integrator (Milan §5.4.5.4 leaves its mapping to the user's action vendor-specific) | identification notification ([06 F06.16](06_aecp_engine.md#fig-06-identify)), `identify_button_i` | `identify_button_i` |
 
 ## 7. Class E — management side-port
 

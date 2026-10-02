@@ -139,10 +139,14 @@ talker DA-validity gate (MAAP + 15 s probe freshness **or** listener registered;
 §4.3.3.1), MAAP-conflict recovery (withdraw → 2×LeaveAll → new DA; Table 5.3),
 MSRP domain adopt/re-declare (§4.2.7.2.1), unsolicited notifications on all of the above
 (Table 5.22).
-**Disposition**: interface classes and the four adapters in
-[02](architecture/02_interfaces.md); status dictionary [F02.10](architecture/02_interfaces.md#fig-02-statusdict);
-the `srp` contract is served in scope by the SRP engine ([10](architecture/10_srp_engine.md),
-§6.9 REQ-SRP rows, §8 item 9).
+**Disposition**: interface classes in [02](architecture/02_interfaces.md); the `srp` and
+`maap` class-B faces; gPTP, AVTP and media clocking served by class-D levels and the
+`gsi_*` and `ctr_*` read faces, with the landed shape of each in 02 §1 and §4.3 to §4.6
+(processor issue #78: correcting the text, since Milan requires the wire behaviour these
+faces serve, not an adapter API); status dictionary
+[F02.10](architecture/02_interfaces.md#fig-02-statusdict), each row naming its landed port
+or word; the `srp` contract is served in scope by the SRP engine
+([10](architecture/10_srp_engine.md), §6.9 REQ-SRP rows, §8 item 9).
 
 #### <a id="gap-05"></a>GAP-05 [Major] — Counters/diagnostics subsystem absent
 GET_COUNTERS is mandatory for every AVB_INTERFACE, CLOCK_DOMAIN, STREAM_INPUT and
@@ -473,11 +477,11 @@ verification).
 
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
 |---|---|---|---|---|---|---|---|---|
-| REQ-NET-001 | Milan §5.3.6.1 | Track per interface: gPTP GM ID, path sequence, domain, propagation delay (GET_AVB_INFO/GET_AS_PATH + notifications) | shall | P | [GAP-04](#gap-04) | E_GAVB/E_GASP + gsi face (supports live propagation delay, depth-8 path data, and independent AVB/path change strobes; the consumer owns their sources) | 02 §4, 06 §6.10 | DIR |
+| REQ-NET-001 | Milan §5.3.6.1 | Track per interface: gPTP GM ID, path sequence, domain, propagation delay (GET_AVB_INFO/GET_AS_PATH + notifications) | shall | P | [GAP-04](#gap-04) | E_GAVB/E_GASP + gsi face (supports live propagation delay, depth-8 path data, and independent AVB/path change strobes; the consumer owns their sources) | 02 §4.3, 06 §6.10 | DIR |
 | REQ-NET-002 | Milan §5.3.6.2, §4.2.7.2.1 | Track MSRP domain params (Class A priority 3, default VID 2); adopt + re-declare on differing Domain declaration; notify on change | shall | A | [GAP-04](#gap-04) | `srp` contract; SRP engine | 02 §4, 10 §6.1 | DIR |
 | REQ-NET-003 | Milan §5.3.7.2–.4, §5.3.8.8/.9 | Track SRP talker declaration + listener registration states, failure code + bridge ID, accumulated latency | shall | A | [GAP-04](#gap-04) | `srp` contract; SRP engine | 02 §4, 10 §6.3/.4 | DIR |
 | REQ-NET-004 | Milan Tables 5.1/5.13 | LINK_UP/LINK_DOWN counter invariant; GPTP_GM_CHANGED counter | shall | A | [GAP-05](#gap-05) | the integrator's AVB_INTERFACE bank behind the `ctr_*` face (owner decision 2026-09-19): `link_up_i` edges and grandmaster identity changes, per the [integrator guide §7.1](guides/integrator.md#counters-face) | integrator guide §7.1, 02 §4.6 | DIR |
-| REQ-NET-005 | Milan §4.4.2.2 | Listener discards AVTPDUs not matching configured input format (enforced in AVTP engine; control plane configures) | shall | A | [GAP-04](#gap-04) | AVTP adapter | 02 §4 | DIR |
+| REQ-NET-005 | Milan §4.4.2.2 | Listener discards AVTPDUs not matching configured input format (enforced in AVTP engine; control plane configures) | shall | A | [GAP-04](#gap-04) | the integrator's AVTP datapath, armed from the published bound view and input formats (`acmp_bound_*`, `aecp_fmt_in_o`) | 02 §4.4 | DIR |
 
 ### 6.9 SRP endpoint engine (in scope by owner decision — §8 item 9)
 
@@ -531,7 +535,7 @@ verification).
 | [GAP-01](#gap-01) | Blocker | Full command/descriptor inventory + per-command rules | [F06.14](architecture/06_aecp_engine.md#fig-06-cmdtable), §6 matrix | DIR/TOL | [#76](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/76) |
 | [GAP-02](#gap-02) | Blocker | Milan-native ACMP: stateless talker + listener SM package | [05](architecture/05_acmp_engine.md) | MTXW | none found |
 | [GAP-03](#gap-03) | Major | MVU sub-decoder + one implemented group (GET_MILAN_INFO); SUID/MCR pairs waived for October by the linked owner decision; reserved enable names have no RTL consumer | [06 §6.9](architecture/06_aecp_engine.md#69-mvu-commands), [F01.5](architecture/01_overview.md#fig-01-params) | DIR: pp_top M1/M2 feature fields and M4 four refusals; no implementation claim for the waived pairs | [#55](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/55), [#56](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/56), [#77](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/77) resolved by waiver; timing and the voided-response status: [#57](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/57), graded by the deadline engine and `tb/pp_top` sections DL (DL3 and DL8 the MVU answers) and TB ([09 §8.3](architecture/09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)) |
-| [GAP-04](#gap-04) | Blocker | Interface classes A–F; SRP/MAAP, gPTP, AVTP, media-clock adapters; status dictionary; in-scope SRP engine | [02](architecture/02_interfaces.md), [10](architecture/10_srp_engine.md) | DIR/MTXW/TOL/TIM | [#78](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/78) |
+| [GAP-04](#gap-04) | Blocker | Interface classes A–F; SRP and MAAP class-B faces; gPTP, AVTP and media clocking as class-D levels and the `gsi_*`/`ctr_*` read faces, the landed shape of each written down (02 §1, §4.3 to §4.6, §5, F02.10); status dictionary; in-scope SRP engine | [02](architecture/02_interfaces.md), [10](architecture/10_srp_engine.md) | DIR/MTXW/TOL/TIM | [#78](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/78) for the interface text; the Domain (F10.2) and VLAN (F10.3) machines are graded by directed cases, not a cell walk |
 | [GAP-05](#gap-05) | Major | **Decision (owner, 2026-09-19): the counters live in the integrator**, behind the documented `ctr_*` face with the Milan-precedence masks per descriptor type; the processor owns the GET_COUNTERS command (locate-first, type gate, fixed body) and the Table 5.22 push from `ctr_change_i`, and keeps no bank (F07.10) | [integrator guide §7.1](guides/integrator.md#counters-face), [02 §4.6](architecture/02_interfaces.md#sec-02-ctr), [06 §6.6](architecture/06_aecp_engine.md#sec-06-counters) | DIR: `tb/pp_top` K1 to K8 (the command and the face), U9 (the push), K9 to K16 (the integrator's AVB_INTERFACE and CLOCK_DOMAIN counts on the wire, their invariants, the push; [09 §8.6](architecture/09_verification.md#86-the-counters-face-issues-44-79)) | none in this repository: the counters and their rules are the integrator's to keep and grade ([#79](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/79), [#44](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/44)) |
 | [GAP-06](#gap-06) | Major | Registry + monitor + fan-out + lock manager + identify (IDENTIFY_NOTIFICATION behind `P-EN-IDENTIFY-NOTIFICATION`) | [06 §7](architecture/06_aecp_engine.md) | RND/STORM/TIM: `tb/pp_top` RN, ST, ID, NP | [#80](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/80) (lane C6); the eviction sweep is a MAY, not attempted |
 | [GAP-07](#gap-07) | Major | Master T-ID table, timer service, PRNG, budgets | [08](architecture/08_timing.md) | TIM | [#81](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/81) |

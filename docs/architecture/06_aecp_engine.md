@@ -22,8 +22,10 @@ records ([05 §5](05_acmp_engine.md)) and the class-D dictionary
 this build ([03 §5](03_packet_engine.md#5-origins-originator-and-event-router)).
 Produces: solicited responses; unsolicited responses (IDENTIFY_NOTIFICATION among them)
 as engine-internal SELF jobs, and CONTROLLER_AVAILABLE through the originator;
-entity-model overlay writes + NVM completion marks; `avtp`/`mclk`/`srp`
-class-B ops for applied settings. The engine also contains the D3 saved-state writer
+entity-model overlay writes + NVM completion marks; the applied settings as levels
+for the integrator (stream formats, presentation offsets, the clock source; no
+`avtp` or `mclk` op exists, [02 §4.4, §4.5](02_interfaces.md)). The engine also
+contains the D3 saved-state writer
 (NVM manager 1, [07 §5.3](07_memory_maps.md#fig-07-nvmflow)), which persists and restores
 the scalar overlay rows.
 
@@ -307,6 +309,7 @@ sampling rate or clock source (set or restored) is judged against the AUDIO_UNIT
 own list and the CLOCK_DOMAIN's own count, which a descriptor short of the lane does
 not hold.
 
+<a id="sec-06-stri"></a>
 ### 6.2 GET_STREAM_INFO — the Milan 80-byte response and its data lineage
 
 **Realization status (`E_GSTRI` + the internal/external gather)**: implemented for
@@ -819,6 +822,7 @@ waived pair, so this field advertises neither pair and is not a command-support
 bitmap. The reserved `P-EN-MVU-SUID` / `P-EN-MVU-MCR` names in
 [F01.5](01_overview.md#fig-01-params) have no RTL consumer or enable setting.
 
+<a id="sec-06-gsi"></a>
 ### 6.10 GET_AVB_INFO / GET_AS_PATH and the Milan-info face
 
 **Realization status (2026-08-15, `E_GAVB`/`E_GASP` + the shared `gsi_*` face).**

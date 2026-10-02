@@ -87,7 +87,7 @@ once in [F02.10](02_interfaces.md#fig-02-statusdict).
 | Originator + inflight table | entity-initiated PDUs; response routing back to owners | [03 §5](03_packet_engine.md) |
 | Response builders + TX slots + TX arbiter | PDU serialization; standard + oversize slots; priority merge | [03 §7–§8](03_packet_engine.md) |
 | Timer service + PRNG | tick generation, deadline RAM, randomized draws | [08 §3](08_timing.md) |
-| SRP/MAAP · gPTP · AVTP · media-clock adapters | the four engine contracts (srp served internally by default) | [02 §4](02_interfaces.md) |
+| SRP/MAAP faces · gPTP, AVTP and media-clock levels | the `srp` and `maap` class-B contracts (srp served internally by default); gPTP, AVTP and media clocking as class-D levels and the `gsi`/`ctr` read faces | [02 §4](02_interfaces.md) |
 | SRP engine | MSRP/MVRP endpoint participant: 1 Domain FSM + 1 VLAN FSM + N+M stream FSMs | [10](10_srp_engine.md) |
 | MAAP engine | Annex B block claim: probe/announce/defend SM, the internal allocator-seam server, claim publication | [11](11_maap_engine.md) |
 | NVM managers | two record producers behind one arbiter: the binding manager (sink bindings) and the D3 writer in the AECP engine (scalar records); each walks its records at boot | [07 §5](07_memory_maps.md) |
