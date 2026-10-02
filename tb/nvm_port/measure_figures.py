@@ -17,7 +17,7 @@ WHAT IT COVERS. Every figure in the README, and the covered set is DERIVED
 rather than asserted: each `N of M` and `N PASS, M FAIL` in the file is a claim
 by default, satisfied only by a measurement here or by an explicit entry in
 WAIVERS whose reason is printed on every clean run. Twelve arm rows plus the arm
-COUNT read from the RTL; eighty-nine mutations and probes; ten device-model result
+COUNT read from the RTL; ninety-four mutations and probes; ten device-model result
 rows, under each of which the run-wide RW checks must pass by name; and all
 thirty cells of the pre-fix matrix.
 
@@ -108,13 +108,13 @@ MK = HERE / "Makefile"
 #: against the RTL below: a THIRTEENTH arm added anywhere used to leave this
 #: gate printing "all figures agree" while the README's "twelve arms" silently
 #: became false.
-ARMS = [(355, "S_WEREQ"), (364, "S_WEWAIT"), (374, "S_WWREQ"), (384, "S_WHPUMP"),
-        (401, "S_WDPUMP"), (416, "S_WWAIT"), (427, "S_RHREQ"), (437, "S_RHCOLL"),
-        (456, "S_RHWAIT"), (483, "S_RPREQ"), (493, "S_RPPUMP"), (508, "S_RPWAIT")]
+ARMS = [(376, "S_WEREQ"), (385, "S_WEWAIT"), (395, "S_WWREQ"), (405, "S_WHPUMP"),
+        (422, "S_WDPUMP"), (437, "S_WWAIT"), (448, "S_RHREQ"), (458, "S_RHCOLL"),
+        (477, "S_RHWAIT"), (504, "S_RPREQ"), (514, "S_RPPUMP"), (529, "S_RPWAIT")]
 
 #: The coincident-completion model. Unlike every other model here it varies the
 #: HANDSHAKE, not what the array retains: the device raises `dev_done_i` on the
-#: same clock edge that moves a command's final byte. `KL_pp_nvm_port.sv:319-323`
+#: same clock edge that moves a command's final byte. `KL_pp_nvm_port.sv:340-344`
 #: says the sticky `done_seen_r` latch exists for exactly this device, so it is
 #: a documented contract freedom, not a broken peer -- and the port handles it,
 #: with the suite green on pristine RTL. Its whole interest used to be that
@@ -372,7 +372,7 @@ MUTATIONS = [
     ("D14", r"\*\*D14\*\*.*?\*\*fails (\d+) of", [
         (RTL, "  assign dev_req_o    = req_st_w && !owed_r;", "  assign dev_req_o    = req_st_w;")]),
     ("D15", r"\*\*D15\*\*.*?\*\*fails (\d+) of", [
-        (RTL, "                      || (owed_r && owed_rd_r);        // the owed READ's drain",
+        (RTL, "                      || drain_w;                      // the owed READ's drain",
               "                      ;")]),
     ("D16", r"\*\*D16\*\*.*?\*\*fails (\d+) of", [
         (RTL, "      if (dl_w && !owed_r) owed_rd_r <= rd_st_w;", "      if (dl_w) owed_rd_r <= rd_st_w;")]),
@@ -618,7 +618,7 @@ WAIVERS = [
     # correct and is the mechanism working: they are waived by a pattern narrow
     # enough to reach only that sentence, so a real `22 out of 90` anywhere else
     # is still a hard error.
-    (r"`fails 22 of the 350 checks` and `fails\s+22 out of 350`",
+    (r"`fails 22 of the 354 checks` and `fails\s+22 out of 354`",
      "two illustrative phrasings quoted inside the paragraph explaining what "
      "the inverted default does not close; not claims about this suite"),
 ]

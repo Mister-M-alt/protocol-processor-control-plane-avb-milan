@@ -23,8 +23,13 @@
 //   resume - a command abandoned by a deadline, which the device ends r cycles
 //            into the next request's wait and then keeps legal pace: that
 //            request is served if r <= TMO and ends one err DEADLINE if not.
+//   babble - a payload READ abandoned by a deadline, whose device then
+//            presents its bytes one every TMO / 2 cycles, past its length for
+//            ever, and never ends it: a broken backend. The port takes the
+//            bytes the READ still owed and no more, and the request waiting on
+//            it ends one err DEADLINE.
 //
-// Each property is ONE named check per build (FZ1 to FZ8), its message
+// Each property is ONE named check per build (FZ1 to FZ9), its message
 // carrying the counts, so the tally is the same whatever the seeds draw.
 #include <cstdint>
 #include <cstdio>
@@ -123,6 +128,8 @@ class PauseFuzz {
   int sil_n = -1;               // withhold this obligation for ever
   int err_at = -1;              // an err in place of this obligation
   bool hold_dev = false;        // hold every event until released (resume)
+  bool babble = false;          // a READ's bytes past its length, never its end
+  int babble_rx = 0;            // ...of which the port took this many
   long stray_block = 0;
   // ---- the manager ----
   int m = 0;                    // 0 idle, 1 commit, 2 restore
@@ -146,6 +153,7 @@ class PauseFuzz {
   Tally silent_dl;              // FZ5
   Tally silent_exact;           // FZ6
   Tally resume_branch;          // FZ7
+  Tally babble_dl;              // FZ9
   long served = 0;
   long refused = 0;
 
@@ -170,6 +178,7 @@ class PauseFuzz {
   void one_legal(std::vector<std::vector<uint8_t>>& good);
   void one_silent(std::vector<std::vector<uint8_t>>& good);
   void one_resume(std::vector<std::vector<uint8_t>>& good);
+  void one_babble(std::vector<std::vector<uint8_t>>& good);
   void begin_run(uint64_t seed);
   int report();
 };
@@ -253,7 +262,7 @@ void PauseFuzz::tick() {
     const bool ready = !quiet && cyc >= next_at;
     if (ready && this_err) err = true;
     else if (ready && dphase && op == kOpWrite) wr = true;
-    else if (ready && dphase) rv = true;
+    else if (ready && (dphase || babble)) rv = true;
     else if (ready) done = true;
   }
   dut->dev_gnt_i = gnt; dut->dev_err_i = err; dut->dev_wready_i = wr; dut->dev_rvalid_i = rv;
@@ -262,7 +271,7 @@ void PauseFuzz::tick() {
   // a terminal riding the final byte or an ERASE's grant, never where the
   // terminal is the withheld or the erring obligation
   const bool term_free = !(sil_n >= 0 && obl_n + 1 == sil_n) && !(err_at >= 0 && obl_n + 1 == err_at)
-                         && !hold_dev;
+                         && !hold_dev && !babble;
   const bool wx = wr && dut->dev_wvalid_o;
   const bool rx = rv && dut->dev_rready_o;
   const bool cdone = cmd && dphase && (wx || rx) && moved + 1 == len && term_free && u() < 0.5;
@@ -303,8 +312,9 @@ void PauseFuzz::device_after_edge(bool gnt, bool gdone, bool wx, bool rx, bool c
   if (wx || rx) {
     ++moved; ++obl_n;
     if (moved == len) { dphase = false; if (cdone) { cmd = false; ++obl_n; } }
-    next_at = cyc + 1 + pick_wait(TMO);
+    next_at = cyc + 1 + (babble ? TMO / 2 : pick_wait(TMO));
     stray_block = cyc + 2;
+    if (babble) ++babble_rx;
   }
   if ((done && cmd && !dphase) || err) {
     cmd = false; dphase = false; ++obl_n; stray_block = cyc + 2;
@@ -317,6 +327,7 @@ void PauseFuzz::reset_all() {
   for (int i = 0; i < 4; ++i) tick();
   dut->rst_n = 1;
   cmd = false; dphase = false; req_at = -1; sil_n = -1; err_at = -1; hold_dev = false;
+  babble = false;
   tick();
 }
 
@@ -458,6 +469,48 @@ void PauseFuzz::one_resume(std::vector<std::vector<uint8_t>>& good) {
   reset_all();
 }
 
+//! A payload READ abandoned at one of its bytes, then the next operation at
+//! once, while the device presents the READ's bytes one every TMO / 2 cycles,
+//! past its length for ever, and never ends it: FZ9.
+void PauseFuzz::one_babble(std::vector<std::vector<uint8_t>>& good) {
+  const uint8_t rec = uint8_t(rnd(0, kRegions - 1));
+  if (good[rec].size() < 10) {  // a payload of two bytes at least, one still to come
+    std::vector<uint8_t> pl(size_t(rnd(2, 24)));
+    for (auto& b : pl) b = uint8_t(rnd(0, 255));
+    pat = 0; start(true, rec, frame(rec, pl));
+    if (finish(kGuard) && o.dones == 1) good[rec] = frame(rec, pl);
+    if (cmd) reset_all();
+    return;
+  }
+  const std::vector<uint8_t> af = good[rec];
+  pat = 0;
+  sil_n = 11 + rnd(0, int(af.size()) - 10);   // a payload byte
+  start(false, rec, af);
+  if (!finish(kGuard) || o.errs != 1 || o.cause != 3 || !cmd) { reset_all(); return; }
+  sil_n = -1;
+  const int owed = len - moved;
+  const uint8_t rec2 = uint8_t((rec + 1 + rnd(0, kRegions - 2)) % kRegions);
+  const bool we2 = good[rec2].empty() || u() < 0.5;
+  std::vector<uint8_t> pl2(size_t(rnd(0, 24)));
+  for (auto& b : pl2) b = uint8_t(rnd(0, 255));
+  const std::vector<uint8_t> f2 = we2 ? frame(rec2, pl2) : good[rec2];
+  new_pattern(false);
+  hold_dev = true;
+  start(we2, rec2, f2);
+  for (long i = 0; i < kGuard && !(dut->nvm_busy_o && (!we2 || wi >= 8)); ++i) tick();
+  hold_dev = false;
+  babble = true; babble_rx = 0; next_at = cyc;
+  const bool ok = finish(400L * (TMO + 2));
+  char what[160];
+  snprintf(what, sizeof what, "cycle %ld: a %s behind a READ owing %d bytes: %d done, %d err, "
+           "cause %d, %d taken", cyc, we2 ? "commit" : "restore", owed, o.dones, o.errs,
+           o.cause, babble_rx);
+  babble_dl.grade(ok && o.dones == 0 && o.errs == 1 && o.cause == 3 && babble_rx == owed, what);
+  good[rec2].clear();
+  good[rec].clear();
+  reset_all();
+}
+
 void PauseFuzz::begin_run(uint64_t seed) {
   rng.seed(seed);
   memset(mem, 0xFF, sizeof mem);
@@ -475,6 +528,9 @@ int PauseFuzz::run() {
     begin_run(seed);
     good.assign(kRegions, {});
     for (int n = 0; n < kOps; ++n) one_resume(good);
+    begin_run(seed);
+    good.assign(kRegions, {});
+    for (int n = 0; n < kOps; ++n) one_babble(good);
   }
   return report();
 }
@@ -501,6 +557,7 @@ int PauseFuzz::report() {
   if (!both) ++fails;
   printf("%s: FZ8 both of FZ7's branches were taken (%ld served, %ld DEADLINE)\n",
          both ? "PASS" : "FAIL", served, refused);
+  check("FZ9", babble_dl, "a request behind a READ whose device presents bytes past its length ends DEADLINE, the port taking only the bytes the READ owed");
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   FILE* acc = fopen("obj_dir/build_tally.txt", "a");
   if (acc == nullptr) {

@@ -541,10 +541,12 @@ often, keeps a silent device from the deadline. On the (`P-NVM-MEM-TMO-CYC` + 1)
 clock without its event the operation ends: one `err`, cause DEADLINE, never `done`,
 `busy` low at the pulse. The deadline ends the **operation**, never the device's command: a command the
 device accepted and has not ended stays **owed**, the port requests nothing over it, takes
-and discards the bytes of an owed READ, and takes the device's next `done` or `err` as its
-end, credited to no operation. A request that arrives meanwhile is answered within the
-deadline: served once the device has ended the abandoned command, one `err` DEADLINE while
-it stays silent. Nothing is released on time; only the device's own terminal or a reset
+and discards the bytes an owed READ still owes (its length less those that moved before the
+deadline) and no more, and takes the device's next `done` or `err` as its end, credited to
+no operation. A request that arrives meanwhile is answered within the deadline: served once
+the device has ended the abandoned command, one `err` DEADLINE while it stays silent or
+presents bytes past the READ's length, which the port does not take. Nothing is released
+on time; only the device's own terminal or a reset
 ends the owed state, so a WRITE the port abandoned on a device that waits for its next byte
 for ever is **contained**: every later request ends DEADLINE until reset. `dev_gnt_i`
 means the device accepted the command, and it comes at most one cycle after the edge that

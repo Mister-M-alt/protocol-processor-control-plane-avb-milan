@@ -84,16 +84,16 @@
 //
 //                A deadline ends the OPERATION, never the device's command.
 //                A command the device accepted and has not ended stays OWED:
-//                while it is owed the port requests nothing, takes and
-//                discards the bytes of an owed READ, and takes the device's
-//                next done or err as that command's end, credited to no
-//                operation. A request that arrives meanwhile is accepted and
-//                waits for that terminal under the same count: served once
-//                the device has ended the abandoned command, one err cause
-//                DEADLINE while it stays silent. Nothing is released on
-//                time; only the device's own terminal or a reset ends the
-//                owed state. An abandoned WRITE whose device waits for its
-//                next byte for ever is CONTAINED that way, every later
+//                the port requests nothing over it, drains the bytes an owed
+//                READ still owes and no more, and takes the device's next done
+//                or err as its end, credited to no operation. A request that
+//                arrives meanwhile is accepted and waits for that terminal
+//                under the same count: served once the device has ended the
+//                abandoned command, one err cause DEADLINE while it is silent
+//                or presents bytes past the READ's length. Nothing is
+//                released on time; only the device's own terminal or a reset
+//                ends the owed state. An abandoned WRITE whose device waits
+//                for its next byte for ever is CONTAINED that way, every later
 //                request ending DEADLINE until reset: padding it would close
 //                a record whose bytes the manager never supplied, and an
 //                abort is an interface this face does not have.
@@ -219,6 +219,7 @@ module KL_pp_nvm_port #(
   logic              done_seen_r;   // sticky dev_done_i for the OWNED command
   logic              owed_r;        // an abandoned device command is still owed
   logic              owed_rd_r;     // ...and it is a READ: drain its bytes
+  logic       [15:0] owed_left_r;   // ...as many as it still owes
   logic              lg_r;          // last cycle a deadline withdrew a request
   logic [TMO_W_C-1:0] tmo_r;        // owed cycles without the owed event
 
@@ -281,12 +282,26 @@ module KL_pp_nvm_port #(
     else if (owe_w && !tmo_hit_w)           tmo_r <= tmo_r + TMO_W_C'(1);  // else held
   end
 
+  //! the bytes a READ abandoned now still owes: its length less those that
+  //! moved before the deadline, all of a request's, none in a wait state.
+  //! The drain takes them and no more, so a device that presents bytes past
+  //! the READ's length is not moving, and a request waiting on it ends
+  //! DEADLINE as against a silent one.
+  logic [15:0] left_w;
+  logic        drain_w;
+
+  assign left_w  = (state_r == S_RHCOLL) ? (HDR_LEN_C - 16'(hidx_r))
+                 : (state_r == S_RPPUMP) ? (plen_r - bcnt_r)
+                 : dev_len_o;
+  assign drain_w = owed_r && owed_rd_r && (owed_left_r != 16'd0);
+
   //! the owed command. Set when a deadline abandons a command the device
   //! accepted (every state the ownership window names but a request), or
   //! when the device grants a request the deadline withdrew, one cycle
   //! late; cleared only by its done or err, which belongs to no operation,
-  //! or by reset. Its kind is taken only while nothing is owed, so a later
-  //! deadline never stops the drain of an owed READ.
+  //! or by reset. Its kind and what it still owes are taken only while
+  //! nothing is owed, so a later deadline never stops the drain of an owed
+  //! READ, and every byte drained is one fewer owed.
   always_ff @(posedge clk_i) begin : nvm_port_owed
     if (!rst_n) begin
       owed_r    <= 1'b0;
@@ -303,6 +318,12 @@ module KL_pp_nvm_port #(
         owed_r <= 1'b1;
       end
     end
+  end
+
+  always_ff @(posedge clk_i) begin : nvm_port_owed_left
+    if (!rst_n)                       owed_left_r <= '0;
+    else if (dl_w && !owed_r)         owed_left_r <= left_w;
+    else if (drain_w && dev_rvalid_i) owed_left_r <= owed_left_r - 16'd1;
   end
 
   always_ff @(posedge clk_i) begin : nvm_port_fsm
@@ -586,7 +607,7 @@ module KL_pp_nvm_port #(
   assign dev_wdata_o  = (state_r == S_WHPUMP) ? hdr_r[hidx_r] : nvm_wdata_i;
   assign dev_rready_o = (state_r == S_RHCOLL)
                       || ((state_r == S_RPPUMP) && nvm_rready_i)
-                      || (owed_r && owed_rd_r);        // the owed READ's drain
+                      || drain_w;                      // the owed READ's drain
 
   always_comb begin : dev_cmd
     dev_op_o     = NVMP_OP_READ_C;

@@ -16,7 +16,9 @@ rather than inside it, as the pre-fix matrix's forms do.
     found the most false DEADLINEs: `make primary` is edited to build that
     instead of the suite;
   * the coincident model at TMO = 4096, with T6 as it is and as round 2 had it:
-    the Makefile's TMO is edited, so `make primary` builds the suite there.
+    the Makefile's TMO is edited, so `make primary` builds the suite there;
+  * the owed READ's drain bounded by what the READ still owes (D27-D30), the
+    unbounded drain on the randomized harness too.
 
 It reads no RTL and runs no build; the figures gate imports it.
 """
@@ -91,6 +93,19 @@ _TMO_LINE = ("TMO       = 100\n", "TMO       = {bound}\n")
 _FUZZ_AT_3 = ("primary:\n\t@mkdir -p obj_dir\n\t$(call suite,$(TMO),obj_dir)\n",
               "primary:\n\t@mkdir -p obj_dir\n\t$(call fuzz_at,3)\n")
 
+#: The owed READ's drain: unbounded, as round 2 had it (D27); what the READ
+#: still owes taken as its whole length (D28); a drained byte not counted
+#: (D29); what is owed taken again at a later deadline (D30).
+_UNBOUNDED = [("  assign drain_w = owed_r && owed_rd_r && (owed_left_r != 16'd0);",
+               "  assign drain_w = owed_r && owed_rd_r;")]
+_WHOLE_LENGTH = [("  assign left_w  = (state_r == S_RHCOLL) ? (HDR_LEN_C - 16'(hidx_r))",
+                  "  assign left_w  = (state_r == S_RHCOLL) ? HDR_LEN_C"),
+                 ("                 : (state_r == S_RPPUMP) ? (plen_r - bcnt_r)",
+                  "                 : (state_r == S_RPPUMP) ? plen_r")]
+_UNCOUNTED = [("    else if (drain_w && dev_rvalid_i) owed_left_r <= owed_left_r - 16'd1;\n", "")]
+_RETAKEN = [("    else if (dl_w && !owed_r)         owed_left_r <= left_w;",
+             "    else if (dl_w)                    owed_left_r <= left_w;")]
+
 #: The round-2 T6, its poke a fixed 2 * TMO / 5 cycles after the accept, which
 #: under the coincident model fell after the commit had ended from TMO = 500 up.
 _T6_TIMED = ("  for (long i = 0; i < kOpTimeoutCycles && !(h.ops.size() == 1 && h.d_busy); ++i) h.tick();\n"
@@ -104,7 +119,11 @@ def deadline_rows(rtl: Path, sim: Path, mk: Path,
                   coincident: list[Edit]) -> list[tuple[str, str, list[Edit]]]:
     """The rows, as edits of the working copy's RTL, harness and Makefile;
     `coincident` is the gate's own coincident-completion model."""
-    plants = {name: [(rtl, old, new) for old, new in pairs] for name, pairs in PLANTS}
+    def on_rtl(pairs: list[tuple[str, str]]) -> list[Edit]:
+        return [(rtl, old, new) for old, new in pairs]
+
+    plants = {name: on_rtl(pairs) for name, pairs in PLANTS}
+
     at_4096 = [(mk, _TMO_LINE[0], _TMO_LINE[1].format(bound=4096))]
     fuzz_at_3 = [(mk, *_FUZZ_AT_3)]
     return [
@@ -121,4 +140,11 @@ def deadline_rows(rtl: Path, sim: Path, mk: Path,
          coincident + at_4096),
         ("T6-timed/coincident/4096", r"with round 2's T6 \*\*fails (\d+) of",
          coincident + at_4096 + [(sim, *_T6_TIMED)]),
+        # the owed READ's drain, bounded by what the READ still owes
+        ("D27", r"\*\*D27\*\*.*?\*\*fails (\d+) of", on_rtl(_UNBOUNDED)),
+        ("D28", r"\*\*D28\*\*.*?\*\*fails (\d+) of", on_rtl(_WHOLE_LENGTH)),
+        ("D29", r"\*\*D29\*\*.*?\*\*fails (\d+) of", on_rtl(_UNCOUNTED)),
+        ("D30", r"\*\*D30\*\*.*?\*\*fails (\d+) of", on_rtl(_RETAKEN)),
+        ("D27/fuzz", r"D27 under the randomized harness at bound 3 \*\*fails (\d+) of",
+         fuzz_at_3 + on_rtl(_UNBOUNDED)),
     ]

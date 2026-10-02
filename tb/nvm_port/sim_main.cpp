@@ -878,6 +878,7 @@ class NvmPortSuite {
   bool wait_on_owed(bool we, const std::vector<uint8_t>& f, int cycles);
   void owed_terminals_are_credited_to_no_operation();
   void owed_events_restart_a_waiting_request();
+  void an_owed_read_drains_no_more_than_it_owes();
   void a_manager_strobe_never_holds_the_deadline_off();
   void a_paused_or_latched_cycle_is_never_charged();
   void reset_mid_commit_at_six_stages();
@@ -1303,7 +1304,7 @@ void NvmPortSuite::torn_commit_leaves_every_other_region_untouched() {
 // bytes are still moving. A real program failure is not reported then: the
 // device latches the bytes, starts the program cycle, and raises its error
 // only when that cycle ends -- after the LAST byte, with busy still high.
-// That is the port's S_WWAIT arm (KL_pp_nvm_port.sv:415-418), the widest
+// That is the port's S_WWAIT arm (KL_pp_nvm_port.sv:436-439), the widest
 // window in a commit, and no phase above enters it. Arming at exactly the
 // write length takes the device's fail branch in preference to its done
 // branch, so every byte is consumed and then err replaces done.
@@ -1416,9 +1417,9 @@ void NvmPortSuite::read_completion_window_errors_report_err() {
 // Issue #14: a completion the port does NOT own, on the commit path.
 //
 // `done_seen_r` is sticky so a `done` landing on the same edge as a pump's
-// last byte is not lost (KL_pp_nvm_port.sv:319-323). The set is gated on
+// last byte is not lost (KL_pp_nvm_port.sv:340-344). The set is gated on
 // owning the command it completes -- from the grant handshake to the wait
-// state that consumes it (`dev_cmd_owned_w`, :233-244). Ungated, a stray
+// state that consumes it (`dev_cmd_owned_w`, :234-245). Ungated, a stray
 // `done` while the header is still being collected is consumed by `S_WEWAIT`
 // as the ERASE's, and the WRITE goes into a region the backend is still
 // erasing -- reported as `done`, not `err`.
@@ -2365,6 +2366,44 @@ void NvmPortSuite::owed_events_restart_a_waiting_request() {
   h.deadline_ok = false;
 }
 
+// (f) The drain takes the bytes the owed READ still owes and no more. A
+// backend that keeps presenting the abandoned READ's bytes past its length,
+// one every TMO / 2 cycles, and never ends it, is broken: a READ owes at most
+// its length. Taken as progress, its bytes would hold a request waiting on it
+// off for ever; not taken, they are a device that is not moving, and the
+// request ends DEADLINE TMO + 2 cycles after the last byte the READ owed, as
+// against a silent device. The device's own terminal still ends the READ.
+void NvmPortSuite::an_owed_read_drains_no_more_than_it_owes() {
+  fresh_reset();
+  h.deadline_ok = true;
+  const std::vector<uint8_t> rec = frame(2, pattern(40, 0x2D));
+  CHECK(h.commit(2, rec) == 0, "T28f setup: region 2 committed");
+  int rc = silenced(false, rec, SIL_BYTE, 1, -1, 10);
+  CHECK(rc == 1 && h.last_cause == 3 && h.d_busy,
+        "T28f setup: a payload READ abandoned before its 11th byte, 30 of its 40 still owed");
+  // the device resumes, and presents the READ's bytes past its length for ever
+  h.sil_block = false;
+  h.d_cur.len = 1 << 30;
+  h.rstall = TMO / 2;
+  const bool waited = wait_on_owed(false, rec, 0);
+  rc = h.run_op();
+  h.rstall = 0;
+  CHECK(waited && rc == 1 && h.err_pulses == 1 && h.last_cause == 3 && h.dev_rd == 30
+            && h.pulse_gap == TMO + 2 && h.ops.empty() && h.d_rhold,
+        "T28f an owed READ whose device presents bytes past its length: the drain takes "
+        "the 30 it still owed and no more, and the restore waiting on it ends DEADLINE "
+        "%ld cycles after the last of them, no command taken (rc %d, cause %d, %d drained)",
+        h.pulse_gap, rc, h.last_cause, h.dev_rd);
+  h.end_command_now(/*with_err=*/false);
+  for (int i = 0; i < 4; ++i) h.tick();
+  h.ops.clear();
+  rc = h.restore(2);
+  CHECK(rc == 0 && h.rbytes == rec && h.ops.size() == 2,
+        "T28f ...the device's own done ends the READ, and the next restore is served "
+        "byte-exact (rc %d)", rc);
+  h.deadline_ok = false;
+}
+
 // T25's cut points, named on the BUS: tick the commit until the device
 // model reaches the stage (`reset_mid_commit_at_six_stages` lists them).
 bool NvmPortSuite::run_to_stage(int stage, size_t record_bytes) {
@@ -2685,6 +2724,7 @@ int NvmPortSuite::run() {
   an_abandoned_write_is_contained();
   owed_terminals_are_credited_to_no_operation();
   owed_events_restart_a_waiting_request();
+  an_owed_read_drains_no_more_than_it_owes();
   a_manager_strobe_never_holds_the_deadline_off();
   reset_mid_commit_at_six_stages();
   reset_of_the_port_alone_mid_commit();
