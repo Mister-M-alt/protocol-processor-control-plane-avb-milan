@@ -896,8 +896,8 @@ FIVE checks in this file were written against what the flash ARRAY held and
 had to be rewritten, because what the array holds is the device MODEL's choice,
 not the port's behaviour. EIGHT device models and one combination are run, RTL
 byte-identical. Four vary what the array RETAINS; four vary the HANDSHAKE
-instead, and "The handshake models" below has the other three. The first of
-those, coincident completion -- the device raises `dev_done_i` on
+instead, and "The handshake models" above has the other three. The first of
+those is coincident completion: the device raises `dev_done_i` on
 the same edge that moves a pump's final byte, which `KL_pp_nvm_port.sv:319-323`
 says the sticky `done_seen_r` latch exists for. It is a contract freedom rather
 than a broken peer, and the port handles it. Its whole interest was that
