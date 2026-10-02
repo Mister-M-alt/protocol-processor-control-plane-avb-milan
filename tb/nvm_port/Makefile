@@ -23,7 +23,7 @@ SRCS = $(HDL)/KL_pp_nvm_port.sv
 CPP  = sim_main.cpp
 
 # one build of the suite at deadline $(1) into $(2), then its run
-suite = $(VERILATOR) $(VFLAGS) -GMEM_TIMEOUT_CYC_P=$(1) -CFLAGS "-DNVM_PORT_TMO=$(1)" \
+suite = $(VERILATOR) $(VFLAGS) -GMEM_TIMEOUT_CYC_P=$(1) -CFLAGS "-DNVM_PORT_TMO=$(1) -Wall -Wextra" \
             --Mdir $(2) $(SRCS) $(CPP) -o Vnvm_port_sim && ./$(2)/Vnvm_port_sim
 
 # Each build prints its own tally and adds it to obj_dir/build_tally.txt; the
