@@ -73,7 +73,7 @@ semantic model lint, and its waivers, ADP report and digest.
 
 The packer lints the model by default (`hdl/aecp/desc/model_lint.py`, with the
 rules L1 to L12 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's evidence map is
-[09 §8.4](../../docs/architecture/09_verification.md#84-the-descriptor-model-lint-issues-38-39-60-89):
+[09 §8.5](../../docs/architecture/09_verification.md#85-the-descriptor-model-lint-issues-38-39-60-89):
 
 - `milan_min.json` packs with every check on, and its digest equals the one
   recorded in `model_ids.json`.

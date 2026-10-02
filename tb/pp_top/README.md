@@ -17,9 +17,9 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make`: exit 0 = PASS. It builds the bench four times (sections DV, AX and
+`make`: exit 0 = PASS. It builds the bench five times (sections DV, ID, AX and
 TB): each executable prints its own build's tally, and the last line sums the
-four into the one canonical tally.
+five into the one canonical tally.
 
 ## What it proves
 
@@ -703,7 +703,7 @@ four into the one canonical tally.
   `dbg_ucpu_pre_o`; the mutation record is below (`aecp_mutants.py`).
 - **TB** **response budgets under the 08 §4 worst-case stimuli** (issue #57,
   REQ-MVU-005, Milan v1.2 §5.4.3.4; issue #81 acceptance 3), on a fresh
-  processor of its own in the fourth build, whose timebase is the nominal clock's
+  processor of its own in the fifth build, whose timebase is the nominal clock's
   own (1 ms = 1,000 clocks): the deadline (100 ms, 100,000 clocks there) never
   cuts a measurement, and the section ends by proving it never fired. Latency is
   MAC command byte 0 to MAC response byte 0, graded like B4/B4b against its line
@@ -726,7 +726,7 @@ four into the one canonical tally.
   **TB5** GET_RX_STATE and GET_TX_STATE idle, and beside the oversize
   READ_DESCRIPTOR and a fan-out: unchanged, and never later than idle by more
   than one frame on the wire. The histogram it prints is recorded in 08 §4.
-  `make budget` runs this build alone; `make` runs all three.
+  `make budget` runs this build alone; `make` runs all five.
 - **HZ** **the nine F03.7 hazard classes at the scoreboard** (issue #84, GAP-10;
   03 §6), on a fresh processor of its own. The expectation is an independent
   transcription of F03.7 and F06.14: the class in F03.7 row order and the key a
@@ -1421,13 +1421,14 @@ revert on LINK_DOWN (10 §6.1 F10.2).
 A build that only runs the product value cannot see that binding. The child's
 own default is also 2, so a dropped or misbound connection produces exactly the
 frames the default build expects (M25: 0 failures there). The Makefile therefore
-builds the bench a second time; the third build is section AX's line build,
-and the fourth section TB's timebase:
+builds the bench a second time; the third build is section ID's identify build,
+the fourth section AX's line build, and the fifth section TB's timebase:
 
 | Build | Override | Runs | Expects |
 |---|---|---|---|
-| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV, AX and DL among them | 2 (Milan §4.2.7.2.1) |
+| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV, AX and DL among them, and lane C6's ID0, NP, ST and RN last | 2 (Milan §4.2.7.2.1) |
 | `obj_vid/Vpp_top_vid` | `SRP_DOM_DEF_VID_P = 0x5A3C` (`SRP_VID_FIXTURE`) | DV alone | 0x5A3C |
+| `obj_idn/Vpp_top_idn` | `EN_IDENTIFY_NOTIF_P = 1` (`PP_TOP_EN_IDENT`) | ID alone | 2 |
 | `obj_line/Vpp_top_line` | `DESC_LINE_BYTES_P = 584` (`LINE_FIXTURE`) | AX alone | 2 |
 | `obj_tim/Vpp_top_tim` | the wrap's timebase at the nominal clock's rate (`PP_TOP_TIM_REAL`: 1 ms = 1,000 clocks) | TB alone (`make budget`) | the product default |
 
@@ -1708,7 +1709,7 @@ the zero a stub would carry.
   elaborated the line the bench reserves for (the wrap's `dbg_desc_line_bytes_o`),
   and that OV1's whole-line descriptor reached the reservation's last byte.
 
-The third build, `obj_line` (`make aecp-line` alone), runs section AX at
+The fourth build, `obj_line` (`make aecp-line` alone), runs section AX at
 `DESC_LINE_BYTES_P = 584` (`LINE_FIXTURE`), a legal line that is not the default and
 whose 600-byte reservation is not a multiple of 16: OV1 reads a 584-byte descriptor
 (cdl 600, frame 626) and RB bounds every write by 600. `make line-guards` (run by
@@ -1717,3 +1718,273 @@ whose 600-byte reservation is not a multiple of 16: OV1 reads a 584-byte descrip
 by name (`DESC_LINE_BYTES_P=568 is below 576`, `...=1016 is above 1008`, `...=580 is
 not a multiple of 8`). Verilator reports an elaboration `$error` as a warning that a
 `-Wno-fatal` build carries past, so the verdict is a lint's, which tolerates none.
+
+## Lane C6: notifications and identify (issues #54, #58, #80, #86)
+
+`notify_phases.hpp` holds five sections, each on a fresh processor of its own
+(the section AD pattern: its own model, the suite's descriptor image, erased NVM,
+both restore walks, link up and enable), so the main run's clock is untouched.
+Every AECP and ACMP frame is logged with the clock its last byte left on, so
+spacing and latency are read off the wire. Every expectation is built from the
+clause byte offsets; a per-entry `sequence_id` is modelled from the wire alone, as
+the count of unsolicited frames that controller was sent before (Milan §5.4.5.1).
+
+`--identify-only` runs ID0 (default build) and `--notify-only` runs NP, ST and RN;
+`make identify` builds and runs the third build and ID0.
+
+### The third build: `P-EN-IDENTIFY-NOTIFICATION`
+
+| Build | Override | Runs |
+|---|---|---|
+| `obj_dir/Vpp_top_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | every section, ID0 among them |
+| `obj_vid/Vpp_top_vid` | `SRP_DOM_DEF_VID_P` (section DV) | DV alone |
+| `obj_idn/Vpp_top_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`PP_TOP_EN_IDENT`) | ID alone |
+| `obj_line/Vpp_top_line` | `DESC_LINE_BYTES_P` (section AX) | AX alone |
+| `obj_tim/Vpp_top_tim` | the wrap's timebase at the nominal clock's rate (section TB) | TB alone |
+
+The wrap adds `identify_button_i` and sets the parameter only under
+`PP_TOP_EN_IDENT`, so the first build grades the top's own default.
+
+### Section ID: IDENTIFY_NOTIFICATION origination (#54, REQ-AEM-026)
+
+IEEE 1722.1-2021 §7.4.39.1 (Figure 7-61), §7.5.1, §7.5.1.2.1 and Figure 7-142;
+Milan §5.4.5.4. The expected frame is `aecp_frame(91-E0-F0-01-00-01, own MAC,
+AEM_RESPONSE, SUCCESS, entity_id, 90-E0-F0-FF-FE-01-00-01, seq, 0x0026, {CONTROL,
+IDIX})` with u = 1: 42 bytes padded to 60, cdl 16. Every frame is due
+T-IDENT-BURST after the previous one left (its last byte to the MAC), so spacing
+is graded at least the T- value (150 ms = 15,000 clocks, 1 s = 100,000 clocks) and
+at most `SLACK` = 400 clocks more: one tick of the ms timebase (each deadline
+counts from the next ms boundary after a departure), the sweep's walk to the
+identify slots (at most 91 cycles) and the job's build and serialization (under
+200 clocks here). The largest gap measured in the section is 15,309 clocks.
+
+- **ID1** one press (40 ms): exactly three frames, each byte-exact at sequence_id
+  0, gaps of 15,264 and 15,300 clocks, and nothing else on the wire; no controller
+  is registered.
+- **ID2** held 2.5 s: three bursts, sequence_id 1, 2, 3 (one per burst), each
+  spaced as ID1, each burst 100,000 to 100,400 clocks after the previous one's
+  first frame (Figure 7-142's timeout; 100,265 and 100,300 measured), and none
+  after the release.
+- **ID3** a release and a press inside a burst: the running burst is not cut
+  (sequence_id 4, three frames), the new press's burst (sequence_id 5) starts
+  T-IDENT-BURST after its third frame left (15,301 clocks), and the second release
+  stops it before its timeout.
+- **ID4** the controller-to-entity forms start nothing: IDENTIFY_NOTIFICATION as a
+  command still answers BAD_ARGUMENTS byte-exact (§7.4.39.2, the A6 contract in
+  this build), and SET_CONTROL IDENTIFY 255 and back to 0 sends no frame to the
+  multicast address (Milan §5.4.5.4).
+- **ID5** fifteen controllers registered and a SET_NAME fan-out running: the press
+  delays the burst by at most two fan-out frames (the job in flight and the one
+  the engine already took), the burst keeps its bytes and spacing, all fifteen
+  rows receive their notification byte-exact, and the next fan-out is at
+  sequence_id 1 on every row: the identify job touched none. **ID5i-ID5l** (the
+  shape of review R421-1's probe P1): a fan-out fed 550, 300 and 50 ms-ticks before
+  frame 2 is due (frame 1 + 14,450, 14,700 and 14,950 clocks) holds the engine, so
+  frame 2 leaves late (gap 1->2 up to 16,147 clocks, ID5l: some fan-out did delay
+  it); frame 3 is due T-IDENT-BURST after frame 2 left, so no gap is short (the
+  smallest of the six is 15,240; a deadline chained from the first frame leaves
+  14,109).
+- **ID6** a press before the restore (AECP held from reset): nothing leaves while
+  held; at the release the burst goes out at sequence_id 0 (the reset restarted
+  identifySequenceID, §7.5.1) and keeps its spacing. The hold is before the first
+  frame; ID7 grades a stall between frames.
+- **ID7** a TX stall mid-burst (the MAC's `tx_ready_i` low, as a full MAC FIFO
+  holds it), sequence_ids 1 to 5 after ID6's reset. The engine retires a job at
+  its lane grant, so a stall can hold a frame the engine has already let go:
+  - **ID7-ID7e** 400 ms inside frame 1: frame 1 leaves 40,167 clocks after the
+    press, and frame 2 follows it by 15,270 (not 63, as from the retirement);
+  - **ID7f-ID7i** 400 ms after frame 1 (review R420-1's probe): gap 1->2 40,093,
+    gap 2->3 15,264 (not 164, as from t0);
+  - **ID7j-ID7m** 250 ms after frame 2: gaps 15,290 and 25,093;
+  - **ID7n-ID7t** held through 900 ms after frame 1, so Figure 7-142's timeout
+    passes before the third frame leaves: gaps 90,060 and 15,273, then the next
+    burst T-IDENT-BURST after the third frame (15,301, not at once), spaced as
+    ID1 and still at least T-IDENT-REARM after the first frame.
+
+  On the round-1 RTL (every frame from t0, the next burst at once) the section
+  fails seven checks: ID3f (106 clocks), ID5k (14,109), ID7d (63), ID7e (207),
+  ID7i (164), ID7q (63) and ID7r (10,111).
+- **ID8** no press is lost to a burst or to the T-IDENT-BURST gap after it
+  (reviews R420-2 F1 and R421-2 F1; Figure 7-142 answers `identifyButtonPressed`
+  in WAITING, and the gap only delays the answer). Each arm starts from a burst
+  of its own (a 30 ms press). ID8 and ID9 run after ID5 and before ID6's reset,
+  at sequence_ids 10 to 25 and 26 to 27, so section ID still ends with ID7. The
+  gap's end is read off the timer bus: the wrap taps the IDENT-BURST
+  singleton's arm (with its ms deadline) and its expiry (`dbg_ident_gap_*`,
+  observe-only references into the top, like the other taps), so a press can be
+  placed against it to the clock:
+  - **ID8-ID8e** a 30 ms press made 2 ms after the third frame left, over long
+    before the gap ends: one burst, byte-exact, its first frame 15,301 clocks
+    after the third (the expiry came 63 clocks into its deadline's ms, and the
+    burst's first frame left 166 clocks after it);
+  - **ID8f-ID8i** a 200 ms press made at the same point, still held when the gap
+    ends: one burst, starting exactly as the latched press did (166);
+  - **ID8j-ID8n** a 30 ms press whose synchronised level the sequencer first
+    samples one edge before the edge that samples the expiry, on it (k = 0: the
+    gap's last clock), and one and two edges after it. The expiry is predicted
+    from the arm's deadline and ID8's 63 (ID8j checks the prediction held), and
+    each press sends exactly one burst. The first three start on the same edge
+    as the latched press (166); the last starts one clock later (167), so the
+    measure resolves a single clock;
+  - **ID8o-ID8r** a release and a new press inside a burst, still held when its
+    third frame leaves and let go 30 ms later, inside the gap: one more burst
+    at the gap's end (166);
+  - **ID8s-ID8v** a release and a new 30 ms press between frames 1 and 2, let go
+    long before the burst ends: one more burst at the gap's end (166).
+
+  On the round-2 RTL (the WAITING start reads the button level with no latch)
+  the section fails 29 checks. Three are the lost presses: ID8 (3 frames in all,
+  want 6), ID8o and ID8s (each 3, want 6). The other twenty-six follow from them:
+  every later burst's identifySequenceID is short by the bursts lost before it
+  (ID8g, ID8l, ID9b, ID9f), and ID8 never measures the start the later arms
+  compare against (ID8i, ID8n). ID8f and the presses at the gap's end pass
+  there: a press still held when the gap ends needs no latch.
+- **ID9** a MAC stall on a frame's last byte (review R421-2 S1): the MAC holds
+  `tx_ready_i` low on the eof beat itself (the bench's `stall_tx_at_eof` hook,
+  armed once the identify frame is part-way out), so the frame is presented
+  whole and its last byte not taken for 400 ms. **ID9-ID9d** frame 1's: it
+  leaves 40,001 clocks after the stall began, and frame 2 follows its last byte
+  by 15,232 clocks (63 when the departure is taken at the eof beat's
+  presentation, without `ready`); **ID9e-ID9h** frame 2's: frame 3 follows by
+  15,299.
+
+The one-tick margins of the schedule (each deadline counts from the next ms
+boundary, so a gap is at least the T- value rather than up to a tick short) are
+below this bench's resolution: one tick is 100 clocks here, no longer than a
+frame's build and serialization. Section FT of `tb/aecp_notify` grades them at
+the full timebase (reviews R420-2 S1 and R421-2 S2).
+
+### Section ID0: the default build (the parameter at 0)
+
+The button held across two T-IDENT-REARM periods and pressed again: no AECP frame
+at all, nothing to 91-E0-F0-01-00-01. Beside it, every other section of the
+default build is the unchanged pre-lane suite. The netlists say the same: yosys
+`equiv_*` proves `KL_aecp_notify` at 0 equivalent to main's, and the engine's own
+logic at 0 equivalent to main's plus the SET_STREAM_INFO fix below (issue #80's
+lane record carries the scripts).
+
+### Section NP: a wire-level push per command class (#58)
+
+The requester A and a second controller B are registered. Each step graded: the
+solicited response byte-exact, exactly one unsolicited response of that command
+at B, byte-exact (u = 1, B's DA and entity_id, B's own sequence_id, the command's
+response body per IEEE §7.5.2), and none at the requester (Milan §5.4.5.2):
+NP1/NP1b SET_CONFIGURATION to 1 and back to 0, NP2 SET_STREAM_FORMAT, NP3
+SET_STREAM_INFO, NP4/NP4b SET_CONTROL IDENTIFY 255 and 0, NP5
+SET_SAMPLING_RATE(48000), NP6 STOP_STREAMING and NP7 START_STREAMING on a sink
+bound with STREAMING_WAIT clear, NP8 a SET from B reaching A at the count of
+what A was actually sent, and NP9/NP9b unchanged SETs pushing nothing.
+
+**Found by NP3 and fixed.** On the landed RTL the unsolicited SET_STREAM_INFO
+carried Milan's 56-byte GET_STREAM_INFO body (cdl 68, the GET program's
+integrator words) under the SET_STREAM_INFO command type. IEEE §7.4.15.1 gives
+the SET_STREAM_INFO response Figure 7-40's complete 84-byte body (cdl 96), and
+Milan §5.4.2.10 replaces the format of the GET response alone. The job now runs
+`E_SINFOUNS`: {type, index}, MSRP_ACC_LAT_VALID alone and the offset in force,
+zeros elsewhere, the same bytes as the successful solicited answer
+(`stream_info_get_body` in the record below puts the old mapping back).
+
+### Section ST: STORM (#80 acceptance 2)
+
+- **ST1** sixteen controllers registered in three waves with a change after each
+  of the first two, so the rows carry sequence_ids 2, 1 and 0: one SET_NAME from
+  row 15 reaches the other fifteen byte-exact, each at its own sequence_id, and
+  the requester receives only its answer.
+- **ST2** every served descriptor of five (STREAM_INPUT 0 and 1, STREAM_OUTPUT 0,
+  AVB_INTERFACE 0, CLOCK_DOMAIN 0) changes every 100 ms for 3.5 s: each emits at
+  least three and at most one round per second (5 or 4 in 5 s, the closest two
+  99,994 clocks apart: the limiter reads one tick), and every GET_COUNTERS frame is
+  byte-exact at its row's own sequence_id. The one-tick tolerance is a recorded
+  decision (review R420-1 S4, retained): the limiter predates this lane and counts
+  Milan Table 5.22's "once per second" on the 1 ms timebase like every T- value (08
+  §3: 1 ms resolution), so two rounds are at least 1,000 ticks apart: in core
+  clocks, at most one tick short of a second.
+- **ST3** a GET_CONFIGURATION and an ACMP GET_RX_STATE every 700 ms of the churn
+  are all answered, within T-BUDGET-AECP-WC and T-BUDGET-ACMP-RESP counted in
+  clocks at the wrap's nominal clock (clk_ms(100), clk_ms(50)): worst 70,958 and
+  249 clocks. The ms timebase is compressed a thousandfold while the engine's
+  work is counted in real clocks, so the notifications a real second allows are
+  packed into 100,000 clocks here; the bound is a hundred times stricter than the
+  F01.5 default clock's.
+
+### Section RN: RND (#80 acceptance 3)
+
+Seed 0xC6A46301, 720 xorshift32 steps from twenty controllers: REGISTER (30 %),
+DEREGISTER (7 %), LOCK (13 %), UNLOCK (8 %), SET_CONTROL (24 %),
+SET_CLOCK_SOURCE (10 %) and GET_CONTROL (8 %) against the model in
+`RndPhase::Model`: the list (capacity 16, a refresh keeps its entry's
+sequence_id, a new entry starts at 0), the lock (one holder, keep-alive, the
+400 ms compressed expiry) and the pushes (every registered controller but the
+requester; an automatic unlock excludes nobody). Each step compares the solicited
+response and the set of unsolicited frames it caused byte for byte, and counts any
+other frame as a divergence. The lock never sits in the ambiguous window around
+its expiry: 250 ms after its last LOCK the holder refreshes it or the bench waits
+600 ms for the automatic unlock. A lock-refused SET is graded on status and cdl
+only (its body is issue #53's). Result: 2,203 frame comparisons, zero divergence;
+24 NO_RESOURCES, 117 lock denials, 10 lock takes, 7 automatic unlocks, 239
+lock-refused SETs, 375 pushes, in 10.6 s of compressed time (under the controller
+monitor's 30 s floor, so no CONTROLLER_AVAILABLE is due).
+
+### Mutation record: `notify_mutants.py`
+
+`python3 tb/pp_top/notify_mutants.py --output DIR` plants each control in a
+private copy (the `d3_mutants.py` rules: exact edits, goldens first, KILLED only
+with a completed run, a non-zero exit and every named check failing). Results at
+the lane head, 40 of 40 KILLED (the four `ident_*` controls after
+`ident_t0_at_request` are round 2's, and the six after them round 3's):
+
+| Mutant | Planted in | Failing checks |
+|---|---|---|
+| `ident_two_frames` | a burst of two | 35, ID1 first |
+| `ident_seq_per_frame` | identifySequenceID per frame | 82, ID1b first |
+| `ident_no_rearm` | IDENT-REARM never armed | 58, ID2 first |
+| `ident_rearm_from_third_frame` | re-arm at t0 + 1.3 s | 58, ID2 and ID2d among them |
+| `ident_burst_100ms` | T-IDENT-BURST 100 ms | 39, ID1c first |
+| `ident_t0_at_request` | t0 at the press, not the first frame's departure | 58, ID2d (burst 3) among them |
+| `ident_burst_from_t0` | frames 2 and 3 due t0 + 150 and t0 + 300 ms (round 1's schedule) | 20, ID3f, ID5k, ID7i, ID7q and ID7r among them |
+| `ident_departure_is_retirement` | the departure taken at the engine's retirement (the lane grant) | 9, ID7d and ID7q among them |
+| `ident_departure_unwired` | `uns_tx_busy_i` tied 0 at the top | 9, ID7d and ID7q among them |
+| `ident_next_burst_at_once` | the next burst not held for T-IDENT-BURST after a third frame (both starts) | 20, ID3f, ID7r and ID8c among them |
+| `ident_wait_ignores_gap` | the WAITING start alone not held for the gap (`&& !gap_r` dropped there; the latch stays) | 18, ID8c and ID8h among them |
+| `ident_press_not_latched` | a press seen in WAITING while the gap runs not latched | 41, ID8 first |
+| `ident_burst_press_not_latched` | a new press after a release inside a burst not latched | 8, ID8o and ID8s among them |
+| `ident_departure_ignores_ready` | the departure taken at the eof beat's presentation (`&& arb_tx_ready_w` dropped at the top) | 2: ID9d, ID9h |
+| `ident_burst_deadline_one_tick_short` | the IDENT-BURST deadline from the departure's own ms (`+ 1` dropped) | 1: `tb/aecp_notify` FT2 |
+| `ident_t0_same_ms` | t0 the departure's own ms, not the next boundary | 1: `tb/aecp_notify` FT4 |
+| `ident_cut_on_release` | a release ends the burst | 39, ID1 first |
+| `ident_release_ignored` | a release never returns to WAITING | 45, ID1 first |
+| `ident_unicast_da` | the job's DA is the registry tuple's | 25, ID1 first |
+| `ident_face_taken_mid_job` | the uns face taken while a registry job is presented | 3: ID5b, ID5c, ID5f |
+| `ident_built_at_default` | the sequencer built at the default | 2: ID0, ID0b |
+| `enq_dropped_configuration` | E_SCFG's NOTIFY_ENQ a NOP | 2: NP1, NP1b |
+| `enq_dropped_stream_info` | E_SINFO's NOTIFY_ENQ a NOP | 1: NP3 |
+| `class_4_mapped_to_rate` | class 4 to PP_UNS_SRATE_C (`KL_aecp_notify` pick) | 4: NP4, NP4b, NP8, RN |
+| `class_9_mapped_to_control` | class 9 to PP_UNS_CTRL_C | 2: NP6, NP7 |
+| `requester_not_excluded` | command pushes exclude nobody | 12, NP1 first |
+| `entry_seq_not_advanced` | the row's sequence_id never moves | 13, NP1b first |
+| `stream_info_get_body` | the landed SET_STREAM_INFO mapping | 1: NP3 |
+| `counter_limit_500ms` | the GET_COUNTERS limiter at 500 ms | 12: ST2, ST2b, ST3, ST3b |
+| `fan_out_skips_row_0` | the walk skips row 0 | 9, ST1b among them |
+| `refresh_resets_seq` | a refresh re-zeroes the entry | 1: RN |
+| `foreign_unlock_allowed` | a foreign UNLOCK succeeds | 1: RN |
+| `lock_taker_notified` | the lock taker is notified too | 1: RN |
+| `deregister_keeps_row` | DEREGISTER leaves the row | 1: RN |
+| `registry_holds_15` | the last row is never claimed | 2: ST1, RN |
+| `set_control_ignores_lock` | E_SCTRL's CHECK_LOCK a NOP | 1: RN |
+| `inflight_highest_free_id` | `KL_pp_originator` allocates the highest free entry | 15, `tb/originator` R among them |
+| `inflight_match_ignores_seq` | the response CAM ignores sequence_id | 7, R among them |
+| `inflight_cancel_keeps_timer` | a cancellation leaves its timer armed | 5, R among them |
+| `inflight_shared_seq` | one sequence counter for every owner | 10, R among them |
+
+RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
+every RND control is killed by the divergence check alone.
+
+**Retained controls, which survive by design** (review R420-1 S1; re-run at the round-2
+head with the reviewer's own driver, all three SURVIVED with every section-ID check
+passing). They are kept as defensive structure and are not graded:
+
+| Control | Planted | Why no check kills it |
+|---|---|---|
+| `x_ident_arm_ignores_core_arm` | the identify arm stops yielding to the registry machine's arm sites (`&& !core_arm_w` dropped) | a collision needs a registry op to arm (N_APPLY, or N_IDLE with a new op) in the very cycle the identify arm is owed, the one after a frame's departure; a directed check would have to sweep a command's arrival cycle by cycle |
+| `x_ident_rearm_single_generation` | the REARM generation never flips | a stale REARM can only fire in the cycles between a first frame's departure and the new REARM arm landing (a few cycles), and the departure itself clears `fired_r` |
+| `x_ident_no_sync_second_flop` | the synchroniser loses its second flop | CDC hygiene: metastability is invisible to a two-state simulation |

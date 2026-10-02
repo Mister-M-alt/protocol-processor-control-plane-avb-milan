@@ -54,7 +54,7 @@ MUTANTS = [
     ("dlkill-always-misbehaving", "dlkill-always-misbehaving", "ucpu", "run",
      "P20d ENTITY_LOCKED kept"),
     # issue #57 (REQ-MVU-005): the MVU answer under the deadline, and its
-    # latency against T-AECP-RESP (section TB, the fourth build)
+    # latency against T-AECP-RESP (section TB, the fifth build)
     ("dl-mvu-forced-status-10", "dl-mvu-forced-status-10", "pp_top",
      "deadline", "DL3: the queued GET_MILAN_INFO"),
     # every message type but AEM's under the deadline (IEEE Table 9-2)

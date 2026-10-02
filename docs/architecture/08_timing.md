@@ -27,8 +27,8 @@ plain-IEEE build where different; blank = same).
 | T-NOTIF-MONITOR | random 30–60 s | registry | per-controller departing detection | Milan §5.4.5.3 | — |
 | T-NOTIF-TIMELIMITED | 300 s | registry | TIME_LIMITED registration expiry (controllers re-register at 100 s) | IEEE §7.4.37.2 | |
 | T-LOCK-UNLOCK | 60 s | lock mgr | auto-unlock + notification | Milan §5.4.2.2 | |
-| T-IDENT-BURST | 150 ms ×3 | identify | IDENTIFY_NOTIFICATION triple | IEEE §7.5.1.2.1 | |
-| T-IDENT-REARM | 1 s | identify | re-arm while button held | IEEE §7.5.1.2.1 | |
+| T-IDENT-BURST | 150 ms ×3 | identify | IDENTIFY_NOTIFICATION triple: each later frame due T-IDENT-BURST after the first ms boundary following its IDENT-BURST arm, which the previous frame's departure (its last byte to the MAC) makes on its next clock or later, so never less than T-IDENT-BURST after that departure; the next burst's first frame no sooner after the third, so a late frame or a TX stall delays the rest and never shortens a gap; a press made while a burst or that gap runs is latched and its burst starts when the gap ends | IEEE §7.5.1, §7.5.1.2.1 | |
+| T-IDENT-REARM | 1 s | identify | re-arm while button held: Figure 7-142's timeout, from the burst's first frame | IEEE §7.5.1.2.1, §7.5.1.3 | |
 | T-CTR-OBSERVE | ≤ 1 s tick | counters | observation-interval latch | Milan §5.3.8.10 | |
 | T-CTR-NOTIF | 1 s | notif engine | ≥ 1 s between GET_COUNTERS notifications per descriptor | Milan Table 5.22 | |
 | T-ACMP-DA-RETRY | 100 ms | talker DA gate | allocation retry round for enabled NO_DA sources; one attempt/source/round | implementation policy, [05 §6bis](05_acmp_engine.md#6bis-talker-side-stateless-responder) | |
@@ -164,7 +164,7 @@ one AECP record held through the boot restore is re-armed at its admission
 design target the TIM suite asserts ([09 §8.3](09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)).
 
 **Measured (issues #57 and #81, `tb/pp_top` section TB).** MAC command byte 0
-to MAC response byte 0, in the suite's fourth build, whose timebase is the nominal
+to MAC response byte 0, in the suite's fifth build, whose timebase is the nominal
 clock's own so the deadline never cuts a measurement, at the reference SoC's 143
 clocks per memory access unless stated:
 
@@ -221,7 +221,7 @@ ACMP transaction waits; how long it waits is not measured.
 | T-SRP-DAFRESH / T-SRP-LEAVEALL2 | per source (shared slot) | 1 × SO |
 | T-NOTIF-MONITOR + T-NOTIF-TIMELIMITED | per registry entry | 2 × CTRL × IF |
 | T-AECP-TIMEOUT (CA inflight) | pool | P-CA-POOL |
-| T-LOCK-UNLOCK, T-IDENT-BURST, T-IDENT-REARM, T-CTR-OBSERVE, T-NVM-DEBOUNCE | singletons (the T-NVM-DEBOUNCE slot stays reserved and unused: see below) | 5 |
+| T-LOCK-UNLOCK, T-IDENT-BURST, T-IDENT-REARM, T-CTR-OBSERVE, T-NVM-DEBOUNCE | singletons, in that order (`KL_aecp_notify` owns the first three; T-IDENT-BURST and T-IDENT-REARM are armed only with P-EN-IDENTIFY-NOTIFICATION, owner tags 0xB1 and 0xB2/0xB3, two REARM generations; the T-CTR-OBSERVE and T-NVM-DEBOUNCE slots stay reserved and unused: see below) | 5 |
 | T-MAAP-PROBE + T-MAAP-ANNOUNCE | one SM per entity (one block claim, [11](11_maap_engine.md)) | 2 |
 | T-MRP-{JOIN, LEAVEALL} × 2 participants + T-MRP-PERIODIC + registrar-leave pool (T-MRP-LEAVE, active only during LeaveAll: SI + SO stream registrars + the Domain and MVRP VID registrars) | per interface, when `P-EN-SRP-ENGINE` | (7 + SI + SO) × IF |
 

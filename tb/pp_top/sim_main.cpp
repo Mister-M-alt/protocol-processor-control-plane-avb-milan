@@ -17,11 +17,13 @@
 // maap face both ways — with no allocator the talker still answers (the
 // walker must not wedge on an unaccepted request), with one the granted
 // address reaches acmp_declaring_o, the ACMP answer and the SRP wire.
-// The suite builds four times (Makefile): the second build overrides the
+// The suite builds five times (Makefile): the second build overrides the
 // top's P-SRP-DOM-DEF-VID with a verification-only fixture and runs section
-// DV alone; the third overrides DESC_LINE_BYTES_P and runs section AX alone;
-// the fourth runs the timebase at the nominal clock's rate and runs section
-// TB alone.
+// DV alone; the third sets P-EN-IDENTIFY-NOTIFICATION to 1 and runs section
+// ID alone (notify_phases.hpp); the fourth, the line build, overrides
+// DESC_LINE_BYTES_P with a verification-only fixture and runs section AX
+// alone; the fifth runs the timebase at the nominal clock's rate and runs
+// section TB alone.
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -1872,6 +1874,7 @@ struct H {
     d->talker_sources_i = TKSRC; d->talker_caps_i = TKCAP;
     d->listener_sinks_i = LSNK;  d->listener_caps_i = LSCAP;
     d->current_cfg_i = CFGIX;    d->identify_index_i = IDIX;
+    d->identify_button_i = 0;
     d->entity_enable_i = 0; d->link_up_i = 0; d->gm_change_i = 0;
     d->gm_id_i = GM0; d->gptp_domain_i = DOM0;
     d->p2p_i = 1; d->cfg_rank_i = 1;
@@ -12370,7 +12373,7 @@ struct DeadlinePhase {
 // budget T-BUDGET-AECP-WC, ACMP within T-BUDGET-ACMP-RESP, under an oversize
 // READ_DESCRIPTOR, a GET_DYNAMIC_INFO of all thirteen getters (the 08 §4
 // "full batch", each getter once) and a 16-way notification
-// fan-out). It runs in the suite's fourth build, whose timebase is the nominal
+// fan-out). It runs in the suite's fifth build, whose timebase is the nominal
 // clock's own (1 ms = 1,000 clocks), so the deadline engine never cuts a
 // measurement here: every answer below is the command's own, and the section
 // also proves the deadline never fired. Latency is MAC command byte 0 to MAC
@@ -13556,6 +13559,8 @@ struct HazardPhase {
   printf("TB: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+#include "notify_phases.hpp"
+
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   //! the harness that owns the tally. Sections DV and AX run on models of
@@ -13563,17 +13568,22 @@ int main(int argc, char** argv) {
   //! line builds this model is never clocked.
   const milan::tb::Model<Vpp_top_wrap> model;
   H h(model.get());
-#ifdef PP_TOP_SRP_DOM_DEF_VID
+#if defined(PP_TOP_SRP_DOM_DEF_VID)
   //! every other section is written against the product default, which the
   //! first build grades; the fixture build runs section DV alone
   DomainDefaultPhase{h}.run();
   const char* const build = "fixture";
+#elif defined(PP_TOP_EN_IDENT)
+  //! the third build sets P-EN-IDENTIFY-NOTIFICATION to 1 and runs section
+  //! ID alone; the first grades the default 0 (section ID0 among the rest)
+  run_identify(h);
+  const char* const build = "identify";
 #elif defined(PP_TOP_DESC_LINE_BYTES)
   //! the line build runs section AX alone, on its non-default line
   run_aecp_response(h);
   const char* const build = "line";
 #elif defined(PP_TOP_TIM_REAL)
-  //! the fourth build runs section TB alone, at the nominal timebase
+  //! the fifth build runs section TB alone, at the nominal timebase
   run_budgets(h);
   const char* const build = "timebase";
 #else
@@ -13583,6 +13593,8 @@ int main(int argc, char** argv) {
   const bool acmp_only = argc == 2 && std::strcmp(argv[1], "--acmp-only") == 0;
   const bool maap_only = argc == 2 && std::strcmp(argv[1], "--maap-internal-only") == 0;
   const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
+  const bool ident_only = argc == 2 && std::strcmp(argv[1], "--identify-only") == 0;
+  const bool notify_only = argc == 2 && std::strcmp(argv[1], "--notify-only") == 0;
   const bool aecp_only = argc == 2
                          && std::strcmp(argv[1], "--aecp-dispatch-only") == 0;
   const bool dl_only = argc == 2 && std::strcmp(argv[1], "--deadline-only") == 0;
@@ -13592,7 +13604,8 @@ int main(int argc, char** argv) {
     return 0;
   }
   const bool one_section = gsi_only || name_only || d3_only || acmp_only || adp_only
-                           || maap_only || aecp_only || dl_only || hz_only;
+                           || maap_only || aecp_only || dl_only || hz_only
+                           || ident_only || notify_only;
   if (maap_only) run_maap_internal(h);
   if (!one_section) Suite(h).run();
   if (aecp_only) run_aecp_dispatch_focus(h);
@@ -13604,12 +13617,16 @@ int main(int argc, char** argv) {
   if (!one_section || aecp_only) run_aecp_response(h);
   if (!one_section || dl_only) run_deadlines(h);
   if (!one_section || hz_only) run_hazards(h);
+  if (!one_section || ident_only) run_identify(h);
+  if (!one_section || notify_only) run_pushes(h);
+  if (!one_section || notify_only) run_storm(h);
+  if (!one_section || notify_only) run_rnd(h);
   const char* const build = "default";
 #endif
-  //! NOT the canonical tally shape: this binary is ONE of the suite's four
+  //! NOT the canonical tally shape: this binary is ONE of the suite's five
   //! builds, and run_suites.sh reads only the LAST matching line, so a
   //! canonical line here would drop the other builds' checks from the total.
-  //! The Makefile sums the four builds and prints the one canonical line.
+  //! The Makefile sums all five builds and prints the one canonical line.
   printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x, DESC_LINE_BYTES_P %u] %d checks, %d failures\n",
          build, unsigned(SRP_DEF_VID), unsigned(DESC_LINE_BYTES), h.checks, h.fails);
   FILE* acc = fopen("obj_dir/build_tally.txt", "a");

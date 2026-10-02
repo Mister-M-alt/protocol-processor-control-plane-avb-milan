@@ -248,6 +248,11 @@ package pp_pkg;
   localparam logic [7:0] PP_OWN_MAAP_C    = 8'h90;  // + 0 probe / 1 announce (KL_pp_maap)
   localparam logic [7:0] PP_OWN_NTFY_C    = 8'hA0;  // + entry  (KL_aecp_notify TL registry)
   localparam logic [7:0] PP_OWN_LOCK_C    = 8'hB0;  // the ENTITY lock singleton (KL_aecp_notify)
+  //! IDENT-BURST (+0) and IDENT-REARM (+1, +2: two generations, so an expiry
+  //! armed for an abandoned wait never passes for the current one), behind
+  //! P-EN-IDENTIFY-NOTIFICATION (KL_aecp_notify)
+  localparam logic [7:0] PP_OWN_IDENT_C   = 8'hB1;
+  localparam int unsigned PP_OWN_IDENT_N_C = 3;
   // 0xC0..0xCF is KL_pp_originator's TMR_TAG_P nibble - see its parameter
   localparam logic [7:0] PP_OWN_CMON_C    = 8'hD0;  // + entry  (Milan controller monitor)
 
@@ -271,6 +276,13 @@ package pp_pkg;
   localparam logic [3:0] PP_UNS_CTRL_C  = 4'd12; // SET_CONTROL body from current state
   localparam logic [3:0] PP_UNS_CLKS_C  = 4'd13; // SET_CLOCK_SOURCE body from current state
   localparam logic [3:0] PP_UNS_STRM_C  = 4'd14; // START/STOP_STREAMING response body
+  //! IDENTIFY_NOTIFICATION (IEEE 1722.1-2021 7.4.39, 7.5.1): the one kind
+  //! that is not a registry job. It goes to the Table B.1 multicast address
+  //! with the Table 7-180 controller_entity_id, and exists only behind
+  //! P-EN-IDENTIFY-NOTIFICATION (the engine maps it to no-send otherwise)
+  localparam logic [3:0] PP_UNS_IDENT_C = 4'd15;
+  localparam logic [47:0] PP_IDENT_MCAST_MAC_C = 48'h91E0_F001_0001;
+  localparam logic [63:0] PP_IDENT_CTLR_EID_C  = 64'h90E0_F0FF_FE01_0001;
 
   // ---- 02 §5 event-router SOURCE MAP, derived — never literals -----------
   // The router presents ONE source index per event and carries no owner tag,

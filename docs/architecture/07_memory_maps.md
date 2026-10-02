@@ -104,7 +104,7 @@ configuration and per-type index gaps, duplicate keys, invalid name bindings and
 descriptors exceeding the configured line-buffer bound. It also rejects disagreement
 between the descriptor body's type/index and its directory key, including both
 `fields` and `bytes` inputs. Each of these refusals has a negative case in
-`tb/desc_store` ([09 §8.4](09_verification.md#84-the-descriptor-model-lint-issues-38-39-60-89)).
+`tb/desc_store` ([09 §8.5](09_verification.md#85-the-descriptor-model-lint-issues-38-39-60-89)).
 
 Parent shipping checks are authoritative for all generated model content,
 including every L1–L10 model obligation below: L1 partition and cardinalities
@@ -168,7 +168,7 @@ the packing path so that one check guards every consumer of the packer (issue #8
     [`model_ids.json`](../../hdl/aecp/desc/model_ids.json). A consumer records nothing.
 - **Its models.** [`milan_min.json`](../../hdl/aecp/desc/milan_min.json) is a minimal
   Milan model and the lint's positive case. The gate derives every negative case from it
-  by one named mutation ([09 §8.4](09_verification.md#84-the-descriptor-model-lint-issues-38-39-60-89)).
+  by one named mutation ([09 §8.5](09_verification.md#85-the-descriptor-model-lint-issues-38-39-60-89)).
   [`example_milan_8.json`](../../hdl/aecp/desc/example_milan_8.json) stays a layout
   vector (the §3.2 Δ note) and packs with the lint off. The `tb/pp_top` fixture image is
   built in C++, never through `build()`, and is not a Milan model either.

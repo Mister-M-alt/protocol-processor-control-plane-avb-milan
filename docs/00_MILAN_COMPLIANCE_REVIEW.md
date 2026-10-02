@@ -176,8 +176,22 @@ overflow), TIME_LIMITED 300 s expiry with targeted u=1 DEREGISTER, the per-entry
 sequence emission walk, successful state-changing command triggers with requester
 exclusion and no-op suppression, the per-descriptor GET_COUNTERS limiter, and the
 §5.4.5.3 random monitor with CONTROLLER_AVAILABLE, one retry, any-status rearm, and
-targeted removal. The optional overflow eviction sweep is not attempted. Identify
-notification machinery remains open.
+targeted removal. The optional overflow eviction sweep is not attempted.
+
+**Landed 2026-09-30 (lane C6, issues #54, #58, #80)**: the identify machinery is
+complete in both directions. SET/GET_CONTROL on the IDENTIFY control (0/255, volatile)
+was already landed (`tb/pp_top` W12/W13). IDENTIFY_NOTIFICATION origination is landed
+behind `P-EN-IDENTIFY-NOTIFICATION` (default 0, zero area): `identify_button_i`,
+2FF-synchronised in the core and debounced by the integrator, starts three u = 1
+frames to 91-E0-F0-01-00-01 at `T-IDENT-BURST` through the shared timer service,
+identifySequenceID per burst, and a `T-IDENT-REARM` re-arm while held (`tb/pp_top`
+section ID, third build; section ID0 at the default). Every notifying command class
+has a byte-exact wire push at a second controller (section NP), which found and fixed
+the unsolicited SET_STREAM_INFO body (IEEE §7.4.15.1, Figure 7-40). The RND and STORM
+suites this finding names exist (sections RN and ST). Non-ATDECC (MGMT-origin)
+changes are not supported by this build ([06 §7](architecture/06_aecp_engine.md) trigger
+class 2). **Identify work remaining:** none in this repository; a product adopts it with
+a debounced button and the parameter at 1.
 
 #### <a id="gap-07"></a>GAP-07 [Major] — Timing model incomplete
 Original §20 has one AECP number (250 ms, with a 187.5 ms internal target). The real
@@ -215,7 +229,7 @@ After a SET, READ_DESCRIPTOR serves the configuration, sampling rate, clock sour
 stream format the SET stored, which the GET reads, not the image's defaults (issue #82). No stream descriptor
 is assembled here: the consumer's image carries each one whole in the Table 7-8 layout,
 and the model rules are the consumer's (07 §3.1); the packer's model lint (L1–L12) checks
-them by default as defence in depth (07 §3.1, 09 §8.4). The oversize path is graded
+them by default as defence in depth (07 §3.1, 09 §8.5). The oversize path is graded
 end to end up to the response buffer's cdl 592.
 **Disposition**: [07 §3](architecture/07_memory_maps.md), TX slots [03 §7](architecture/03_packet_engine.md).
 
@@ -305,6 +319,16 @@ originator with an inflight table so returning responses route back to their own
 **Disposition**: originator + inflight [03 §5/§8](architecture/03_packet_engine.md);
 pipeline origins {RX, TIMER, SELF, MGMT} [03 §4](architecture/03_packet_engine.md).
 
+**Landed shape, made normative 2026-09-30 (lane C6, issue #86)**: dispatch is RX-only;
+timer expiries reach their owners on the timer service's expiry bus; AECP unsolicited
+responses, IDENTIFY_NOTIFICATION among them (behind `P-EN-IDENTIFY-NOTIFICATION`), are
+engine-internal SELF jobs; CONTROLLER_AVAILABLE is the one command PDU through the
+originator's inflight table and central retry; PROBE_TX and its exact-duplicate retry
+stay in the ACMP listener (`PROBE_SLOTS_P = 0` at the top); ADP writes its own frames.
+**MGMT is not supported by this build**: no non-ATDECC path changes command-settable
+state. [03 §4/§5](architecture/03_packet_engine.md#5-origins-originator-and-event-router)
+state it; the normalizer's TIMER/SELF/MGMT ports stay tied off with that disposition.
+
 ## 6. Compliance matrix (F00.1)
 
 <a id="fig-00-matrix"></a>
@@ -323,8 +347,8 @@ verification).
 |---|---|---|---|---|---|---|---|---|
 | REQ-ADP-001 | Milan §5.6.2 | valid_time = 10 (20 s); advertise every 5 s | shall | A | [GAP-07](#gap-07) | advertise SM | 04 §6.1 | TIM |
 | REQ-ADP-002 | Milan §5.6.2 | entity_capabilities: AEM, VU, CLASS_A, GPTP =1; PERSISTENT_ACQUIRE, GENERAL_CONTROLLER_IGNORE, ENTITY_NOT_READY, ACMP_ACQUIRE_WITH_AEM =0; AEM_IDENTIFY_CONTROL_INDEX_VALID, AEM_INTERFACE_INDEX_VALID =1 | shall | A | [GAP-16](#gap-16) | ADPDU sourcing table | 04 §3 | DIR |
-| REQ-ADP-003 | Milan §5.6.2, §5.3.1 | entity_model_id valid EUI-64 (≠0, ≠all-1s); changes when static model changes | shall | A | [GAP-01](#gap-01) | config/ID regs + packer model lint L9 (validity, the driven value, the recorded digest) | 07 §3.1, 09 §8.4 | DIR |
-| REQ-ADP-004 | Milan §5.3.3.1 | talker_stream_sources / listener_stream_sinks = max across **all** configurations | shall | A | [GAP-16](#gap-16) | ADPDU sourcing; packer model lint L11 (ENTITY counts and the driven values) | 04 §3, 07 §3.1, 09 §8.4 | DIR |
+| REQ-ADP-003 | Milan §5.6.2, §5.3.1 | entity_model_id valid EUI-64 (≠0, ≠all-1s); changes when static model changes | shall | A | [GAP-01](#gap-01) | config/ID regs + packer model lint L9 (validity, the driven value, the recorded digest) | 07 §3.1, 09 §8.5 | DIR |
+| REQ-ADP-004 | Milan §5.3.3.1 | talker_stream_sources / listener_stream_sinks = max across **all** configurations | shall | A | [GAP-16](#gap-16) | ADPDU sourcing; packer model lint L11 (ENTITY counts and the driven values) | 04 §3, 07 §3.1, 09 §8.5 | DIR |
 | REQ-ADP-005 | Milan §5.6.2 note | ADPDU fields independent of current configuration | shall | A | [GAP-16](#gap-16) | ADPDU sourcing | 04 §3 | DIR |
 | REQ-ADP-006 | Milan §5.6.1 | Start ADP only when ready to accept AECP commands and bind/probe requests | shall | A | [GAP-16](#gap-16) | boot sequencer gate | 01 §5, 04 §6.1 | DIR |
 | REQ-ADP-007 | Milan §5.6.3 | Advertise SM per AVB interface: DOWN/WAITING/DELAY; events DISCOVER(0/own), TMR, LINK, GM_CHANGE, SHUTDOWN | shall | I | [GAP-16](#gap-16) | F04.2 | 04 §6.1 | MTXW |
@@ -393,7 +417,7 @@ verification).
 | REQ-AEM-023 | IEEE §9.3.5.3.3 | Correctly-sized NOT_IMPLEMENTED response for every unimplemented opcode | shall | A | [GAP-01](#gap-01) | response-size ROM | 06 §6 | TOL |
 | REQ-AEM-024 | IEEE §9.3.2.6 | AEM: respond ≤240 ms (250 ms controller timeout); policy: never IN_PROGRESS | shall | P | [GAP-07](#gap-07) | deadline engine | 08 §4 | TIM |
 | REQ-AEM-025 | Milan §5.4.2.22 + Table 5.22 | DEREGISTER on auto-removal sent unsolicited to that controller only | shall | A | [GAP-06](#gap-06) | KL_aecp_notify targeted holder (landed) | 06 §7 | RND |
-| REQ-AEM-026 | IEEE §7.4.39, Milan §5.4.5.4 | IDENTIFY_NOTIFICATION: unsolicited-only (command ⇒ BAD_ARGUMENTS); multicast DA 91-E0-F0-01-00-01; 3× @150 ms; 1 s re-arm | should | A | [GAP-06](#gap-06) | identify handler | 06 §7 | DIR |
+| REQ-AEM-026 | IEEE §7.4.39, Milan §5.4.5.4 | IDENTIFY_NOTIFICATION: unsolicited-only (command ⇒ BAD_ARGUMENTS); multicast DA 91-E0-F0-01-00-01; 3× @150 ms; 1 s re-arm | should | A | [GAP-06](#gap-06) | KL_aecp_notify identify sequencer behind P-EN-IDENTIFY-NOTIFICATION (landed; default 0); pp_top ID (third build), ID0, A6 | 06 §7 | TIM |
 
 ### 6.4 Milan Vendor Unique (MVU)
 
@@ -409,8 +433,8 @@ verification).
 
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
 |---|---|---|---|---|---|---|---|---|
-| REQ-NOT-001 | Milan §5.4.5.1 | Fan-out: one message per registered controller excluding requester; per-entry DA/EID/seq on recorded port; seq +1 after handing to stack | shall | A | [GAP-06](#gap-06) | KL_aecp_notify row walk (landed) | 06 §7 | STORM |
-| REQ-NOT-002 | Milan §5.4.5.2 | Triggers: every successful state-changing command; equivalent non-ATDECC changes while unlocked | shall | A | [GAP-06](#gap-06) | command effect queue and observed fabric triggers (landed) | 06 §7 | RND |
+| REQ-NOT-001 | Milan §5.4.5.1 | Fan-out: one message per registered controller excluding requester; per-entry DA/EID/seq on recorded port; seq +1 after handing to stack | shall | A | [GAP-06](#gap-06) | KL_aecp_notify row walk (landed; pp_top ST fans out to all 16 rows) | 06 §7 | STORM |
+| REQ-NOT-002 | Milan §5.4.5.2 | Triggers: every successful state-changing command; equivalent non-ATDECC changes while unlocked | shall | A | [GAP-06](#gap-06) | command effect queue and observed fabric triggers (landed; every notifying class pushed byte-exact, pp_top NP). MGMT-origin (non-ATDECC) changes are **not supported by this build**: nothing outside ATDECC changes command-settable state (06 §7 trigger class 2) | 06 §7 | RND |
 | REQ-NOT-003 | Milan Table 5.22 | Async triggers: GET_STREAM_INFO/GET_AVB_INFO/GET_AS_PATH field changes; GET_COUNTERS ≤1/descriptor/s; LOCK auto-unlock; auto-DEREGISTER | shall | P | [GAP-06](#gap-06) | KL_aecp_notify observed trigger set and per-descriptor limiter (landed); committed per-sink accumulated-latency changes notify, unchanged refreshes stay silent (#113, pp_top GI response tests: walking one and walking zero isolate every comparator bit; six truncation mutants require named failures) | 06 §7 | STORM |
 | REQ-NOT-004 | Milan §5.4.5.3 | Departing-controller detection: per-controller random 30–60 s; CONTROLLER_AVAILABLE + retry; any-status reply re-arms; silence ⇒ remove + targeted DEREGISTER | shall | A | [GAP-06](#gap-06) | registry monitor plus originator (landed) | 06 §7 | TIM |
 | REQ-NOT-005 | Milan §5.3.4.2 | Registry cleared by power cycle | shall | A | [GAP-09](#gap-09) | volatile policy | 07 §5 | NVM |
@@ -419,17 +443,17 @@ verification).
 
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
 |---|---|---|---|---|---|---|---|---|
-| REQ-MDL-001 | Milan §5.3.2 | Descriptor subset + cardinalities (AVB_INTERFACE ≥1, CLOCK_DOMAIN ≥1, CLOCK_SOURCE ≥1/domain); exactly one parent per descriptor | shall | A | [GAP-08](#gap-08) | consumer's model (07 §3.1 ownership); packer model lint L1, and L12 for each descriptor's §7.2 extent (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
-| REQ-MDL-002 | Milan §5.3.3.4 | STREAM: buffer_length ≥ 2 126 000 ns; CLASS_A flag; no CRF+AAF mix in one format list; current_format ∈ list | shall | A | [GAP-08](#gap-08) | consumer's model (07 §3.1 ownership); packer model lint L4 (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
-| REQ-MDL-003 | Milan §5.3.3.4 → IEEE 1722.1-2021 §7.2.6 | STREAM descriptors in Table 7-8 layout: formats_offset 138, N ≤ 46 (the 508-octet descriptor maximum of §7.2), `timing` at 136, redundancy tail `redundant_offset` = 138+8N with R = 0. Milan Annex C Table C.1 (formats at 136, no `timing`) is a **may** for any Stream and a shall only for a redundant pair; this PAAD declares none, so it is not emitted | shall (layout) | A | [GAP-08](#gap-08) | consumer's model, served verbatim (07 §3.1 ownership; the image carries the Table 7-8 layout, 07 §3.2); packer model lint L4 stream-layout, format-count (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
-| REQ-MDL-004 | Milan §5.3.3.5 | Same AVB_INTERFACE index for the same physical port in all configurations | shall | A | [GAP-12](#gap-12) | consumer's model (07 §3.1 ownership); packer model lint L5 (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
-| REQ-MDL-005 | Milan §5.3.3.6 | CLOCK_SOURCE construction: one INPUT_STREAM per CRF-capable input (or the single AAF input); ≥1 INTERNAL if any output; gPTP-as-MC only non-redundant single-interface | shall | A | [GAP-08](#gap-08) | consumer's model (07 §3.1 ownership); packer model lint L6 (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
-| REQ-MDL-006 | Milan §5.3.3.7 | STREAM_PORT_INPUT has **no** static AUDIO_MAP (dynamic input mappings mandatory) | shall | A | [GAP-08](#gap-08) | consumer's model (07 §3.1 ownership); packer model lint L7 (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
-| REQ-MDL-007 | Milan §5.3.3.8 | AUDIO_CLUSTER channel_count = 1 | shall | A | [GAP-08](#gap-08) | consumer's model (07 §3.1 ownership); packer model lint L7 (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
-| REQ-MDL-008 | Milan §5.3.3.9 | ≤1 static mapping per output stream channel across all AUDIO_MAPs | shall | A | [GAP-08](#gap-08) | consumer's model (07 §3.1 ownership); packer model lint L7 (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
-| REQ-MDL-009 | Milan §5.3.3.10 | Primary IDENTIFY CONTROL exists in all configurations at the same index | shall | A | [GAP-06](#gap-06) | consumer's model (07 §3.1 ownership); packer model lint L8, with the IEEE §7.3.5.2 IDENTIFY format (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
-| REQ-MDL-010 | Milan §6.3/§6.4 | Talker ≥1 Stream Output and Listener ≥1 Stream Input advertising Base formats (AAF PCM32, 48/96/192 k, {1,2,4,6,8} ch); rate-completeness and configuration-uniformity rules | shall | A | [GAP-01](#gap-01) | consumer's model (07 §3.1 ownership); packer model lint L3 (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
-| REQ-MDL-011 | Milan §7.3 | CRF media-clock stream format 0x041060010000BB80 (every CRF format listed, so the current one too); Class A | shall (if CRF) | A | [GAP-01](#gap-01) | consumer's model (07 §3.1 ownership); packer model lint L3 crf-format, L4 class-a (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
+| REQ-MDL-001 | Milan §5.3.2 | Descriptor subset + cardinalities (AVB_INTERFACE ≥1, CLOCK_DOMAIN ≥1, CLOCK_SOURCE ≥1/domain); exactly one parent per descriptor | shall | A | [GAP-08](#gap-08) | consumer's model (07 §3.1 ownership); packer model lint L1, and L12 for each descriptor's §7.2 extent (defence in depth) | 07 §3.1, 09 §8.5 | DIR |
+| REQ-MDL-002 | Milan §5.3.3.4 | STREAM: buffer_length ≥ 2 126 000 ns; CLASS_A flag; no CRF+AAF mix in one format list; current_format ∈ list | shall | A | [GAP-08](#gap-08) | consumer's model (07 §3.1 ownership); packer model lint L4 (defence in depth) | 07 §3.1, 09 §8.5 | DIR |
+| REQ-MDL-003 | Milan §5.3.3.4 → IEEE 1722.1-2021 §7.2.6 | STREAM descriptors in Table 7-8 layout: formats_offset 138, N ≤ 46 (the 508-octet descriptor maximum of §7.2), `timing` at 136, redundancy tail `redundant_offset` = 138+8N with R = 0. Milan Annex C Table C.1 (formats at 136, no `timing`) is a **may** for any Stream and a shall only for a redundant pair; this PAAD declares none, so it is not emitted | shall (layout) | A | [GAP-08](#gap-08) | consumer's model, served verbatim (07 §3.1 ownership; the image carries the Table 7-8 layout, 07 §3.2); packer model lint L4 stream-layout, format-count (defence in depth) | 07 §3.1, 09 §8.5 | DIR |
+| REQ-MDL-004 | Milan §5.3.3.5 | Same AVB_INTERFACE index for the same physical port in all configurations | shall | A | [GAP-12](#gap-12) | consumer's model (07 §3.1 ownership); packer model lint L5 (defence in depth) | 07 §3.1, 09 §8.5 | DIR |
+| REQ-MDL-005 | Milan §5.3.3.6 | CLOCK_SOURCE construction: one INPUT_STREAM per CRF-capable input (or the single AAF input); ≥1 INTERNAL if any output; gPTP-as-MC only non-redundant single-interface | shall | A | [GAP-08](#gap-08) | consumer's model (07 §3.1 ownership); packer model lint L6 (defence in depth) | 07 §3.1, 09 §8.5 | DIR |
+| REQ-MDL-006 | Milan §5.3.3.7 | STREAM_PORT_INPUT has **no** static AUDIO_MAP (dynamic input mappings mandatory) | shall | A | [GAP-08](#gap-08) | consumer's model (07 §3.1 ownership); packer model lint L7 (defence in depth) | 07 §3.1, 09 §8.5 | DIR |
+| REQ-MDL-007 | Milan §5.3.3.8 | AUDIO_CLUSTER channel_count = 1 | shall | A | [GAP-08](#gap-08) | consumer's model (07 §3.1 ownership); packer model lint L7 (defence in depth) | 07 §3.1, 09 §8.5 | DIR |
+| REQ-MDL-008 | Milan §5.3.3.9 | ≤1 static mapping per output stream channel across all AUDIO_MAPs | shall | A | [GAP-08](#gap-08) | consumer's model (07 §3.1 ownership); packer model lint L7 (defence in depth) | 07 §3.1, 09 §8.5 | DIR |
+| REQ-MDL-009 | Milan §5.3.3.10 | Primary IDENTIFY CONTROL exists in all configurations at the same index | shall | A | [GAP-06](#gap-06) | consumer's model (07 §3.1 ownership); packer model lint L8, with the IEEE §7.3.5.2 IDENTIFY format (defence in depth) | 07 §3.1, 09 §8.5 | DIR |
+| REQ-MDL-010 | Milan §6.3/§6.4 | Talker ≥1 Stream Output and Listener ≥1 Stream Input advertising Base formats (AAF PCM32, 48/96/192 k, {1,2,4,6,8} ch); rate-completeness and configuration-uniformity rules | shall | A | [GAP-01](#gap-01) | consumer's model (07 §3.1 ownership); packer model lint L3 (defence in depth) | 07 §3.1, 09 §8.5 | DIR |
+| REQ-MDL-011 | Milan §7.3 | CRF media-clock stream format 0x041060010000BB80 (every CRF format listed, so the current one too); Class A | shall (if CRF) | A | [GAP-01](#gap-01) | consumer's model (07 §3.1 ownership); packer model lint L3 crf-format, L4 class-a (defence in depth) | 07 §3.1, 09 §8.5 | DIR |
 
 ### 6.7 Persistence
 
@@ -503,9 +527,9 @@ verification).
 | [GAP-03](#gap-03) | Major | MVU sub-decoder + one implemented group (GET_MILAN_INFO); SUID/MCR pairs waived for October by the linked owner decision; reserved enable names have no RTL consumer | [06 §6.9](architecture/06_aecp_engine.md#69-mvu-commands), [F01.5](architecture/01_overview.md#fig-01-params) | DIR: pp_top M1/M2 feature fields and M4 four refusals; no implementation claim for the waived pairs | [#55](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/55), [#56](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/56), [#77](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/77) resolved by waiver; timing and the voided-response status: [#57](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/57), graded by the deadline engine and `tb/pp_top` sections DL (DL3 and DL8 the MVU answers) and TB ([09 §8.3](architecture/09_verification.md#83-the-aecp-deadline-and-the-hazard-classes-issues-81-57-84)) |
 | [GAP-04](#gap-04) | Blocker | Interface classes A–F; SRP/MAAP, gPTP, AVTP, media-clock adapters; status dictionary; in-scope SRP engine | [02](architecture/02_interfaces.md), [10](architecture/10_srp_engine.md) | DIR/MTXW/TOL/TIM | [#78](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/78) |
 | [GAP-05](#gap-05) | Major | Counters subsystem with Milan-precedence masks | [06 §6.6](architecture/06_aecp_engine.md), [07 §4](architecture/07_memory_maps.md) | DIR | [#79](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/79) |
-| [GAP-06](#gap-06) | Major | Registry + monitor + fan-out + lock manager + identify | [06 §7](architecture/06_aecp_engine.md) | RND/STORM/TIM | [#80](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/80) |
+| [GAP-06](#gap-06) | Major | Registry + monitor + fan-out + lock manager + identify (IDENTIFY_NOTIFICATION behind `P-EN-IDENTIFY-NOTIFICATION`) | [06 §7](architecture/06_aecp_engine.md) | RND/STORM/TIM: `tb/pp_top` RN, ST, ID, NP | [#80](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/80) (lane C6); the eviction sweep is a MAY, not attempted |
 | [GAP-07](#gap-07) | Major | Master T-ID table, timer service, PRNG, budgets | [08](architecture/08_timing.md) | TIM | [#81](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/81) |
-| [GAP-08](#gap-08) | Major | Entity-model store (image + current-value overlay on READ_DESCRIPTOR), consumer-built Table 7-8 streams and model rules (07 §3.1), oversize TX slot up to the response buffer | [07 §3](architecture/07_memory_maps.md), [03 §7](architecture/03_packet_engine.md) | DIR: tb/pp_top AX RD (READ_DESCRIPTOR after each SET and after the D3 restore) and OV/PG/RB (above cdl 524, TX slot 4, inside the response reservation) | [#82](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/82); the model rules are the consumer's, and the packer's lint L1–L12 is defence in depth with one negative case per check (07 §3.1, 09 §8.4) |
+| [GAP-08](#gap-08) | Major | Entity-model store (image + current-value overlay on READ_DESCRIPTOR), consumer-built Table 7-8 streams and model rules (07 §3.1), oversize TX slot up to the response buffer | [07 §3](architecture/07_memory_maps.md), [03 §7](architecture/03_packet_engine.md) | DIR: tb/pp_top AX RD (READ_DESCRIPTOR after each SET and after the D3 restore) and OV/PG/RB (above cdl 524, TX slot 4, inside the response reservation) | [#82](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/82); the model rules are the consumer's, and the packer's lint L1–L12 is defence in depth with one negative case per check (07 §3.1, 09 §8.5) |
 | [GAP-09](#gap-09) | Major | NVM manager, records, commit/restore flows | [07 §5](architecture/07_memory_maps.md) | NVM | [#83](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/83) |
 | [GAP-10](#gap-10) | Major | CDC/reset, interface contracts, parameter table, profiles, grounded hazards | [01](architecture/01_overview.md)/[02](architecture/02_interfaces.md)/[03](architecture/03_packet_engine.md) | DIR | [#84](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/84) |
 | [GAP-11](#gap-11) | Minor | Verification strategy + traceability | [09](architecture/09_verification.md) | — | [#72](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/72) |
@@ -514,7 +538,7 @@ verification).
 | [GAP-14](#gap-14) | Info | All figures Mermaid/WaveDrom/draw.io + lint | [docs/README.md](README.md), `Makefile` | lint | [#75](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/75) |
 | [GAP-15](#gap-15) | Info | Conventions + parser rules + status policies | [docs/README.md](README.md) §4, [03 §3](architecture/03_packet_engine.md) | TOL | none found |
 | [GAP-16](#gap-16) | Blocker | ADP advertise SM + talker-discovery SM (entity table dropped) | [04](architecture/04_adp_engine.md) | MTXW | [#85](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/85) |
-| [GAP-17](#gap-17) | Blocker | Originator + inflight table; four transaction origins | [03 §5](architecture/03_packet_engine.md) | RND | [#86](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/86) |
+| [GAP-17](#gap-17) | Blocker | Originator + inflight table (CONTROLLER_AVAILABLE); the landed origins: RX-only dispatch, expiry bus, engine-internal SELF jobs; MGMT not supported | [03 §5](architecture/03_packet_engine.md) | RND: `tb/originator` R (the inflight model) | [#86](https://github.com/Mister-M-alt/protocol-processor-control-plane-avb-milan/issues/86) (lane C6) |
 
 The **Open residue** column records the audit of 2026-09-18 at main `6a878f6`: each finding was
 checked against what `hdl/` and `tb/` carry, not against this table. A linked issue tracks what is

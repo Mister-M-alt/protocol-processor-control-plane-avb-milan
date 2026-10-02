@@ -50,6 +50,8 @@ constexpr uint16_t E_REGUN = 832;
 constexpr uint16_t E_DEREG = 844;
 constexpr uint16_t E_UNSOK = 852;
 constexpr uint16_t E_NOSEND = 858;
+constexpr uint16_t E_IDNOTIF = 464;    // gen_ucode.py: the IDENTIFY_NOTIFICATION body
+constexpr uint16_t E_SINFOUNS = 480;   // gen_ucode.py: the unsolicited SET_STREAM_INFO body
 constexpr uint16_t E_NSUPPE = 864;
 constexpr uint16_t E_LOCKEN = 872;
 constexpr uint16_t E_LOCKUNS = 896;
@@ -278,6 +280,9 @@ struct Harness {
     if (a == (0x100u ^ 0x0003u)) return 0x500;     // locate hit -> base
     if (a == (0x100u ^ 0x0BADu)) { *err = true; return 0; }
     if (a == 0x508u) return 0xBB80;                // current_rate
+    //! RGN_DYN + SEL_PTOFF, the presentation-time offset in force (the low
+    //! byte is the selector's whatever the locate base)
+    if ((a & 0xF0000u) == 0x10000u && (a & 0xFFu) == 0x28u) return 0x000F4240;
     if (a == 0x520u) return 0x1111111122222222ull; // copy lane 0
     if (a == 0x528u) return 0x3333333344444444ull; // copy lane 1
     return 0xEEEE;
@@ -547,6 +552,7 @@ class UcpuSuite {
   void set_stream_info_writes_only_the_presentation_offset();
   void the_deadline_preempt_answers_before_any_effect();
   void the_deadline_preempt_waits_for_a_boundary();
+  void the_identify_and_stream_info_notification_bodies();
 
   // P8b's shared fixture: the name lanes the state model starts with, and
   // the response comparison every GET_NAME / SET_NAME arm performs.
@@ -1479,6 +1485,42 @@ void UcpuSuite::the_set_stream_format_family_writes_or_refuses() {
   }
 }
 
+// ---- N6/N7: two unsolicited bodies (IEEE 1722.1-2021 7.4.39.1, 7.4.15.1)
+// E_IDNOTIF lays IDENTIFY_NOTIFICATION's body out of the job's descriptor
+// tuple: descriptor_type from r14[15:0] at @24, descriptor_index from
+// r13[15:0] at @26, payload 4. E_SINFOUNS lays Figure 7-40's complete 84-byte
+// body: {type, index}, MSRP_ACC_LAT_VALID (0x20000000) alone, the
+// presentation-time offset the dynamic store holds at @48, zeros elsewhere.
+// Neither gathers, writes state or marks anything. This harness keeps each
+// field's VALUE at its cursor, least significant byte first (see
+// capture_response_buffer_write); the wire order is the response buffer's,
+// graded byte-exact on the wire in tb/pp_top sections ID and NP.
+void UcpuSuite::the_identify_and_stream_info_notification_bodies() {
+  const auto field16 = [this](uint32_t a) { return uint32_t(h.buf[a]) | uint32_t(h.buf[a + 1]) << 8; };
+  CHECK(h.run(E_IDNOTIF, 0x001A, false, 2000, 0x0005), "N6 IDENTIFY_NOTIFICATION completes");
+  CHECK(h.last_status == ST_OK && h.last_len == 16 && h.sends == 1,
+        "N6 SUCCESS, payload 4, one send (st %u len %u sends %d)", h.last_status,
+        h.last_len, h.sends);
+  CHECK(field16(12) == 0x001Au && field16(14) == 0x0005u, "N6 CONTROL @24, index 5 @26, got %04x %04x",
+        field16(12), field16(14));
+  CHECK(h.gx_sels.empty() && h.stw.empty() && h.nvm_marks.empty()
+            && h.notify_classes.empty(), "N6 no gather, write or effect");
+
+  CHECK(h.run(E_SINFOUNS, 0, false, 2000, 0x00060003), "N7 SET_STREAM_INFO body completes");
+  CHECK(h.last_status == ST_OK && h.last_len == 96 && h.sends == 1,
+        "N7 SUCCESS, the 84-byte Figure 7-40 body, one send (st %u len %u)", h.last_status,
+        h.last_len);
+  CHECK(h.w32(12) == 0x00060003u && h.buf[16] == 0x20 && h.buf[17] == 0 && field16(18) == 0,
+        "N7 {STREAM_OUTPUT, 3} and MSRP_ACC_LAT_VALID alone (flags 20 00 00 00), got %08x, "
+        "%02x %02x %04x", h.w32(12), h.buf[16], h.buf[17], field16(18));
+  CHECK(h.w32(36) == 0x000F4240u, "N7 the offset in force at @48, got %08x", h.w32(36));
+  bool zeros = true;
+  for (uint32_t a = 20; a < 96; a += 4) zeros = zeros && (a == 36 || h.w32(a) == 0u);
+  CHECK(zeros, "N7 every other field zero");
+  CHECK(h.gx_sels.empty() && h.stw.empty() && h.nvm_marks.empty()
+            && h.notify_classes.empty(), "N7 no gather, write or effect");
+}
+
 // ---- S4: SET_STREAM_INFO (Milan 5.4.2.9) ------------------------------
 // The engine settles type/flags/range at dispatch and echoes the command
 // body itself, so the µprogram's whole job is the SEL_PTOFF write and a
@@ -1679,6 +1721,7 @@ int UcpuSuite::run() {
   set_stream_info_writes_only_the_presentation_offset();
   the_deadline_preempt_answers_before_any_effect();
   the_deadline_preempt_waits_for_a_boundary();
+  the_identify_and_stream_info_notification_bodies();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   return fails ? 1 : 0;
