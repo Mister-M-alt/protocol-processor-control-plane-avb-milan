@@ -125,6 +125,7 @@ def deadline_rows(rtl: Path, sim: Path, mk: Path,
     """The rows, as edits of the working copy's RTL, harness and Makefile;
     `coincident` is the gate's own coincident-completion model."""
     def on_rtl(pairs: list[tuple[str, str]]) -> list[Edit]:
+        """(old, new) pairs as edits of the working copy's RTL."""
         return [(rtl, old, new) for old, new in pairs]
 
     plants = {name: on_rtl(pairs) for name, pairs in PLANTS}
