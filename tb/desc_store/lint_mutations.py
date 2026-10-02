@@ -72,9 +72,18 @@ def add(model: Model, at: tuple[int, int, int], data: bytes, top: bool = True) -
             store(model, (CONFIGURATION, cfg, 0), counts)
 
 
+def set_count(model: Model, dtype: int, count: int, cfg: int = 0) -> None:
+    """Set the count configuration `cfg`'s descriptor_counts gives `dtype`."""
+    data = body(model, CONFIGURATION, cfg)
+    for k in range(struct.unpack_from(">H", data, 70)[0]):
+        if struct.unpack_from(">H", data, 74 + 4 * k)[0] == dtype:
+            struct.pack_into(">H", data, 76 + 4 * k, count)
+    store(model, (CONFIGURATION, cfg, 0), data)
+
+
 def list_count(model: Model, dtype: int, count: int, cfg: int = 0) -> None:
     """Append a (type, count) pair to configuration `cfg`'s descriptor_counts."""
-    data = body(model, CONFIGURATION, 0, cfg) + struct.pack(">HH", dtype, count)
+    data = body(model, CONFIGURATION, cfg) + struct.pack(">HH", dtype, count)
     struct.pack_into(">H", data, 70, struct.unpack_from(">H", data, 70)[0] + 1)
     store(model, (CONFIGURATION, cfg, 0), data)
 
@@ -158,15 +167,29 @@ def _no_crf_and_no_aaf_source(model: Model) -> None:
     put(model, (CLOCK_SOURCE, 1, 0), 72, EXTERNAL)
 
 
+def second_interface(model: Model, cfg: int = 0) -> None:
+    """AVB_INTERFACE 1, physical port 2, beside AVB_INTERFACE 0 (port 1)."""
+    interface = body(model, AVB_INTERFACE, 0, cfg)
+    struct.pack_into(">H", interface, 96, 2)
+    add(model, (AVB_INTERFACE, 1, cfg), interface)
+
+
+def _port_moves_in_configuration_1(model: Model) -> None:
+    """Configuration 1 holds both ports, with port 1 at index 1 and port 2 at
+    index 0: port 1 moves from the index configuration 0 gives it."""
+    second_configuration(model)
+    second_interface(model, 1)
+    put(model, (AVB_INTERFACE, 0, 1), 96, 2)
+    put(model, (AVB_INTERFACE, 1, 1), 96, 1)
+
+
 def _gptp_with_two_interfaces(model: Model) -> None:
     """A gPTP media clock source (Milan v1.2 §7.5.2) beside a second interface."""
     source = body(model, CLOCK_SOURCE, 0)
     struct.pack_into(">HH", source, 70, 0, EXTERNAL)
     struct.pack_into(">HH", source, 82, TIMING, 0)
     add(model, (CLOCK_SOURCE, 2, 0), source)
-    interface = body(model, AVB_INTERFACE, 0)
-    struct.pack_into(">H", interface, 96, 2)
-    add(model, (AVB_INTERFACE, 1, 0), interface)
+    second_interface(model)
 
 
 def _identify_moves(model: Model) -> None:
@@ -274,8 +297,8 @@ MUTATIONS = (
              lambda m: set_formats(m, (STREAM_INPUT, 0, 0), [BASE_IN] * 47)),
     Mutation("output with a redundant stream", "stream-layout",
              _p((STREAM_OUTPUT, 0), 134, 1)),
-    Mutation("configuration 1 moves the port to AVB_INTERFACE 0 port 2", "interface-index",
-             lambda m: (second_configuration(m), put(m, (AVB_INTERFACE, 0, 1), 96, 2))),
+    Mutation("configuration 1 moves port 1 to AVB_INTERFACE 1", "interface-index",
+             _port_moves_in_configuration_1),
     Mutation("clock_sources_offset 78", "domain-source-offset", _p((CLOCK_DOMAIN, 0), 72, 78)),
     Mutation("no clock source in the domain", "domain-source-count",
              lambda m: set_sources(m, [])),

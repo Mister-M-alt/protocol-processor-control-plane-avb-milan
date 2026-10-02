@@ -281,9 +281,9 @@ class LintTest(unittest.TestCase):
                 self.assertEqual(gen_desc_image.build(model, lint=False)[0][:4], b"AEMI")
 
 
-class OwnershipTest(unittest.TestCase):
-    """L1's top-level counts and L2's order follow every IEEE 1722.1-2021 §7.2
-    owner: conforming models that own descriptors outside the Units pack."""
+class ConformingModelTest(unittest.TestCase):
+    """Standard-conforming models pack: L1's top-level counts and L2's order
+    follow every IEEE 1722.1-2021 §7.2 owner, and L5 compares physical ports."""
 
     def packs(self, model: dict[str, Any]) -> None:
         """The model packs with the lint on and no waiver."""
@@ -317,6 +317,16 @@ class OwnershipTest(unittest.TestCase):
         struct.pack_into(">H", selector, 80, 96)
         mut.add(model, (0x001B, 0, 0), selector)
         mut.put(model, (mut.AUDIO_UNIT, 0, 0), 100, 1)
+        self.packs(model)
+
+    def test_second_interface_optional_per_configuration(self) -> None:
+        """Configuration 0 holds ports 1 and 2, configuration 1 only port 1 at
+        the same index: Milan v1.2 §5.3.3.5 is kept (R435-1 probe C)."""
+        model = normalised(MILAN_MIN)
+        mut.second_interface(model)
+        mut.second_configuration(model)
+        mut.drop(model, mut.AVB_INTERFACE, 1, 1)
+        mut.set_count(model, mut.AVB_INTERFACE, 1, 1)
         self.packs(model)
 
     def test_single_level_ranges_have_no_order(self) -> None:

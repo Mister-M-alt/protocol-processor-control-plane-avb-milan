@@ -145,7 +145,8 @@ CHECKS = {
     "stream-layout": ("L4", MILAN + "§5.3.3.4; " + IEEE + "§7.2.6 Table 7-8",
                       "formats at 138, no redundancy tail (non-redundant PAAD)"),
     "interface-index": ("L5", MILAN + "§5.3.3.5",
-                        "the same AVB_INTERFACE index per physical port in every configuration"),
+                        "a port_number keeps its AVB_INTERFACE index in every configuration "
+                        "that holds it"),
     "domain-source-offset": ("L6", IEEE + "§7.2.32; 06 §6.4", "clock_sources_offset 76"),
     "domain-source-count": ("L6", MILAN + "§5.3.3.6", "at least one CLOCK_SOURCE per CLOCK_DOMAIN"),
     "domain-source-length": ("L6", IEEE + "§7.2.32", "CLOCK_DOMAIN length 76 + 2 x count"),
@@ -612,18 +613,20 @@ def _stream_layout(ctx: RuleContext, where: Where, count: int) -> None:
 
 
 def _rule_interfaces(ctx: RuleContext) -> None:
-    """L5: the same AVB_INTERFACE index for each physical port everywhere."""
-    shapes = {}
+    """L5: a physical port (port_number) sits at the same AVB_INTERFACE index
+    in every configuration that holds it. A configuration without the port is
+    not a finding (Milan v1.2 §5.3.3.5), so a second interface may be optional."""
+    first: dict[int, tuple[int, int]] = {}
     for cfg in ctx.cfgs:
-        ports = {}
         for index in sorted(ctx.of(cfg, D.AVB_INTERFACE)):
-            ports[index] = ctx.read("interface-index", (cfg, D.AVB_INTERFACE, index), 96, 2)
-        shapes[cfg] = ports
-    first = shapes[ctx.cfgs[0]]
-    for cfg in ctx.cfgs[1:]:
-        if shapes[cfg] != first:
-            ctx.bad("interface-index", (cfg, D.AVB_INTERFACE, None),
-                    f"index-to-port_number {shapes[cfg]}; configuration {ctx.cfgs[0]} has {first}")
+            port = ctx.read("interface-index", (cfg, D.AVB_INTERFACE, index), 96, 2)
+            if port is None:
+                continue
+            seen = first.setdefault(port, (cfg, index))
+            if seen[1] != index:
+                ctx.bad("interface-index", (cfg, D.AVB_INTERFACE, index),
+                        f"port_number {port} at index {index}; configuration {seen[0]} "
+                        f"has it at index {seen[1]}")
 
 
 def _rule_domains(ctx: RuleContext) -> None:
