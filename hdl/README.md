@@ -22,8 +22,10 @@ here. The HDL is authored here and only *consumed* there — never copied.
 | `../tb/` | one self-checking Verilator suite per module (exit 0 = PASS) | [`09_verification.md`](../docs/architecture/09_verification.md) |
 
 Directories appear as their first module lands; none are created empty. There is **no CDC
-primitive and no memory primitive** in this tree: every clock crossing is the integrator's
-(see the [integrator guide](../docs/guides/integrator.md)), and memories are inferred, not
+primitive and no memory primitive** in this tree, and one synchroniser: the two flops that
+take `identify_button_i` into `KL_aecp_notify`, built only with `EN_IDENTIFY_NOTIF_P` = 1.
+Every other clock crossing is the integrator's (see the
+[integrator guide](../docs/guides/integrator.md) §1), and memories are inferred, not
 instantiated.
 
 The generated module ↔ testbench matrix is

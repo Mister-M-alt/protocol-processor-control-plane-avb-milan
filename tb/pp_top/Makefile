@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
 # protocol_processor_top end-to-end suite — exit 0 = PASS.
 #
-# Four builds of one bench. The first overrides nothing and runs every
+# Five builds of one bench. The first overrides nothing and runs every
 # section; the second overrides P-SRP-DOM-DEF-VID with SRP_VID_FIXTURE and
 # runs section DV alone (README). The SRP engine's own default is 2 as well,
 # so only a value the child cannot produce shows a dropped or misbound
-# top-level connection. The third overrides DESC_LINE_BYTES_P with
-# LINE_FIXTURE and runs section AX alone, so its response writes are bounded
-# by a reservation that is not the default's. The fourth runs the timebase at
-# the nominal clock's rate and section TB alone. Each binary prints its own
-# build's count; the last line is the one canonical tally, summed over the
-# four builds.
+# top-level connection. The third sets P-EN-IDENTIFY-NOTIFICATION to 1 and
+# runs section ID alone; the first grades the default 0 (section ID0). The
+# fourth overrides DESC_LINE_BYTES_P with LINE_FIXTURE and runs section AX
+# alone, so its response writes are bounded by a reservation that is not the
+# default's. The fifth runs the timebase at the nominal clock's rate and
+# section TB alone. Each binary prints its own build's count; the last line is
+# the one canonical tally, summed over the five builds.
 VERILATOR ?= verilator
 HDL        = ../../hdl
 TOP        = pp_top_wrap
@@ -84,6 +85,17 @@ maap-internal: gsi-build
 adp-config: gsi-build
 	./obj_dir/Vpp_top_sim --adp-only
 
+# the third build alone (section ID), for the identify mutation campaign
+identify-build: ltn_rom.hex ucode.hex
+	@mkdir -p obj_dir
+	$(VERILATOR) $(VFLAGS) "+define+PP_TOP_EN_IDENT" \
+	    -CFLAGS "-DPP_TOP_EN_IDENT -Wall -Wextra" \
+	    --Mdir obj_idn $(SRCS) $(CPP) -o Vpp_top_idn
+
+identify: identify-build gsi-build
+	./obj_idn/Vpp_top_idn
+	./obj_dir/Vpp_top_sim --identify-only
+
 # A5b and M9 alone on a booted model (the main run holds both in its own
 # timeline): the fast target aecp_dispatch_mutants.py plants its arms against
 aecp-dispatch: gsi-build
@@ -127,15 +139,19 @@ run: fixture-guards line-guards ltn_rom.hex ucode.hex
 	    -CFLAGS "-DPP_TOP_SRP_DOM_DEF_VID=0x$(SRP_VID_FIXTURE) -Wall -Wextra" \
 	    --Mdir obj_vid $(SRCS) $(CPP) -o Vpp_top_vid
 	./obj_vid/Vpp_top_vid
+	$(VERILATOR) $(VFLAGS) "+define+PP_TOP_EN_IDENT" \
+	    -CFLAGS "-DPP_TOP_EN_IDENT -Wall -Wextra" \
+	    --Mdir obj_idn $(SRCS) $(CPP) -o Vpp_top_idn
+	./obj_idn/Vpp_top_idn
 	$(VERILATOR) $(VFLAGS) $(LINE_VFLAGS) $(SRCS) $(CPP) -o Vpp_top_line
 	./obj_line/Vpp_top_line
 	$(MAKE) budget
-	@awk '{c += $$1; f += $$2} END {if (NR != 4) {print "FAIL: " NR " build tallies, expected 4"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
+	@awk '{c += $$1; f += $$2} END {if (NR != 5) {print "FAIL: " NR " build tallies, expected 5"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
 	    obj_dir/build_tally.txt
 
-# The fourth build (section TB): the wrap's timebase at the nominal clock's
+# The fifth build (section TB): the wrap's timebase at the nominal clock's
 # own rate, 1 ms = 1,000 clocks, so no budget measurement is cut by the
-# compressed AECP deadline. Its tally lands beside the other three.
+# compressed AECP deadline. Its tally lands beside the other four.
 budget-build: ltn_rom.hex ucode.hex
 	$(VERILATOR) $(VFLAGS) "+define+PP_TOP_TIM_REAL" \
 	    -CFLAGS "-DPP_TOP_TIM_REAL -Wall -Wextra" \
@@ -166,8 +182,9 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 	python3 $< -o $@
 
 clean:
-	rm -rf obj_dir obj_vid obj_line obj_tim ltn_rom.hex ucode.hex
+	rm -rf obj_dir obj_vid obj_idn obj_line obj_tim ltn_rom.hex ucode.hex
 
 .PHONY: name-writes run gsi-build gsi-internal maap-internal adp-config aecp-dispatch \
-        line-build aecp-line aecp-dispatch-mutants deadline d3 hazards budget budget-build \
+        line-build aecp-line aecp-dispatch-mutants identify-build identify \
+        deadline d3 hazards budget budget-build \
         aecp-mutants fixture-guards fixture-guards-test line-guards clean

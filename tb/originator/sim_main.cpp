@@ -35,6 +35,14 @@ constexpr int IGN_CNT_MAX = 255;    // rsp_ign_cnt_o is an 8-bit counter
 
 struct ArmOp { bool cancel; uint8_t slot; uint8_t owner; uint32_t deadline; };
 struct Ev { uint8_t owner; uint8_t id; };
+//! field-wise equality, so a pulse log compares against a model's prediction
+static bool operator==(const ArmOp& a, const ArmOp& b) {
+  return a.cancel == b.cancel && a.slot == b.slot && a.owner == b.owner
+         && a.deadline == b.deadline;
+}
+static bool operator==(const Ev& a, const Ev& b) {
+  return a.owner == b.owner && a.id == b.id;
+}
 
 struct Harness {
   VKL_pp_originator* dut;
@@ -192,6 +200,65 @@ struct Harness {
   }
 };
 
+// ---- R: the independent inflight model (issue #86 acceptance 3) ---------
+// Built from the 03 section 5 contract and this module's banner, never from
+// its code: an issue takes the lowest free entry, the owner's next sequence
+// id, a hold and a send of its TX slot; the serializer's acceptance arms
+// {timer slot, {tag, id}, now + timeout}; a {key, seq} response routes to
+// the owner, releases the slot and disarms the timer; the first expiry
+// re-sends the same held slot and re-arms only at that retry's acceptance;
+// the second fails to the owner and releases with no disarm (the slot
+// self-disarmed); an owner's cancellation releases and disarms; anything
+// else that answers is ignored and counted.
+namespace {
+struct IflModel {
+  struct Entry {
+    bool live = false;
+    uint8_t owner = 0;
+    uint16_t key = 0;
+    uint16_t seq = 0;
+    uint8_t tx = 0;
+    uint8_t tmr = 0;
+    uint16_t timeout = 0;
+    bool retried = false;
+    bool armed = false;
+    bool await = false;
+  };
+  Entry e[NIFL];
+  uint16_t next_seq[16] = {0};
+  uint8_t ignored = 0;
+
+  int live_of(uint8_t owner) const {
+    for (int i = 0; i < NIFL; ++i) if (e[i].live && e[i].owner == owner) return i;
+    return -1;
+  }
+  int lowest_free() const {
+    for (int i = 0; i < NIFL; ++i) if (!e[i].live) return i;
+    return -1;
+  }
+  bool tx_busy(uint8_t tx) const {
+    for (const auto& x : e) if (x.live && x.tx == tx) return true;
+    return false;
+  }
+  uint16_t busy() const {
+    uint16_t b = 0;
+    for (int i = 0; i < NIFL; ++i) if (e[i].live) b = static_cast<uint16_t>(b | (1u << i));
+    return b;
+  }
+};
+
+//! what one event must produce on the module's pulse lanes
+struct IflWant {
+  std::vector<Ev> rts;
+  std::vector<Ev> fls;
+  std::vector<uint8_t> sends;
+  std::vector<uint8_t> resends;
+  std::vector<ArmOp> arms;
+  int holds = 0;
+  int releases = 0;
+};
+}  // namespace
+
 // ---- the suite ----------------------------------------------------------
 // One object owns the model, the timer-service stub and the tally, so every
 // phase below is a named member function rather than another stretch of a
@@ -220,6 +287,18 @@ class OriginatorSuite {
   void cancellation_survives_another_entrys_response();
   void the_ignored_counter_wraps_at_eight_bits();
   void final_invariants_hold();
+  // R: the seeded session against IflModel
+  uint32_t next_random();
+  void r_issue(uint8_t owner);
+  void r_accept(int id);
+  void r_respond(int id);
+  void r_stray_response();
+  void r_expire();
+  void r_cancel(uint8_t owner);
+  void r_judge(const IflWant& want, const char* what);
+  void r_step();
+  void r_drain();
+  void a_seeded_session_matches_the_inflight_model();
 
   const milan::tb::Model<VKL_pp_originator> model;
   VKL_pp_originator* const dut = model.get();
@@ -233,6 +312,18 @@ class OriginatorSuite {
   Harness::Res g3{};
   size_t g_r0 = 0;
   size_t g_f0 = 0;
+  // R's model, its seeded generator, and what the session exercised
+  IflModel m;
+  uint32_t rng = 0x86A46301u;
+  uint16_t r_key = 0x4000;
+  long r_divergences = 0;
+  long r_events = 0;
+  long r_routes = 0;
+  long r_retries = 0;
+  long r_fails = 0;
+  long r_cancels = 0;
+  long r_strays = 0;
+  int r_peak = 0;
 };
 }  // namespace
 
@@ -608,6 +699,197 @@ void OriginatorSuite::final_invariants_hold() {
   CHECK(dut->inflight_busy_o == 0, "final: table empty");
 }
 
+// ---- R: a seeded session against the independent inflight model ---------
+// Sixteen owners (one CONTROLLER_AVAILABLE exchange each at most, as the
+// notify block's monitor issues them) and eight TX slots churn through
+// issues, serializer acceptances, responses, stray responses, expiries fired
+// in a random order among the due slots, and cancellations. Every event is
+// applied alone, the module settles, and every pulse it produced is compared
+// with the model's prediction, with the live-entry map and the ignored count.
+uint32_t OriginatorSuite::next_random() {
+  rng ^= rng << 13;
+  rng ^= rng >> 17;
+  rng ^= rng << 5;
+  return rng;
+}
+
+void OriginatorSuite::r_judge(const IflWant& want, const char* what) {
+  ++r_events;
+  bool same = h.rts == want.rts && h.fls == want.fls && h.sends == want.sends
+              && h.resends == want.resends && h.armops == want.arms
+              && h.holds == want.holds && h.releases == want.releases;
+  same = same && dut->inflight_busy_o == m.busy() && dut->rsp_ign_cnt_o == m.ignored;
+  if (!same && ++r_divergences <= 6)
+    printf("  R event %ld (%s) diverges from the model\n", r_events, what);
+}
+
+void OriginatorSuite::r_issue(uint8_t owner) {
+  IflWant w{h.rts, h.fls, h.sends, h.resends, h.armops, h.holds, h.releases};
+  uint8_t tx = static_cast<uint8_t>(next_random() % NSLOT);
+  while (m.tx_busy(tx)) tx = static_cast<uint8_t>((tx + 1) % NSLOT);
+  const int id = m.lowest_free();
+  if (id < 0) return;
+  const uint16_t timeout = static_cast<uint16_t>(50 + next_random() % 250);
+  const uint16_t key = r_key++;
+  auto r = h.issue(owner, tx, key, static_cast<uint8_t>(20 + owner), timeout, false);
+  h.idle(3);
+  const bool grant_ok = r.gnt && r.id == id && r.seq == m.next_seq[owner];
+  if (!grant_ok && ++r_divergences <= 6)
+    printf("  R issue: grant %d id %u seq %u, model id %d seq %u\n", r.gnt, r.id, r.seq, id,
+           m.next_seq[owner]);
+  m.e[id] = {true, owner, key, m.next_seq[owner]++, tx, static_cast<uint8_t>(20 + owner),
+             timeout, false, false, true};
+  w.sends.push_back(tx);
+  ++w.holds;
+  r_judge(w, "issue");
+}
+
+void OriginatorSuite::r_accept(int id) {
+  IflWant w{h.rts, h.fls, h.sends, h.resends, h.armops, h.holds, h.releases};
+  auto& x = m.e[id];
+  h.accept(x.tx);
+  w.arms.push_back({false, x.tmr, static_cast<uint8_t>(TAG | id), h.now + x.timeout});
+  h.idle(3);
+  x.await = false;
+  x.armed = true;
+  r_judge(w, "acceptance");
+}
+
+void OriginatorSuite::r_respond(int id) {
+  IflWant w{h.rts, h.fls, h.sends, h.resends, h.armops, h.holds, h.releases};
+  auto& x = m.e[id];
+  h.respond(x.key, x.seq);
+  h.idle(3);
+  w.rts.push_back({x.owner, static_cast<uint8_t>(id)});
+  ++w.releases;
+  w.arms.push_back({true, x.tmr, static_cast<uint8_t>(TAG | id), 0});
+  x.live = false;
+  ++r_routes;
+  r_judge(w, "response");
+}
+
+//! a response nothing is waiting for: half the time a live exchange's key
+//! with a sequence id it never issued (F09.4), else a key nobody holds
+void OriginatorSuite::r_stray_response() {
+  IflWant w{h.rts, h.fls, h.sends, h.resends, h.armops, h.holds, h.releases};
+  const int id = static_cast<int>(next_random() % NIFL);
+  if ((next_random() & 1) && m.e[id].live)
+    h.respond(m.e[id].key, static_cast<uint16_t>(m.e[id].seq + 1 + next_random() % 100));
+  else
+    h.respond(static_cast<uint16_t>(0x2000 + next_random() % 0x1000),
+              static_cast<uint16_t>(next_random()));
+  h.idle(3);
+  ++m.ignored;
+  ++r_strays;
+  r_judge(w, "stray response");
+}
+
+void OriginatorSuite::r_cancel(uint8_t owner) {
+  IflWant w{h.rts, h.fls, h.sends, h.resends, h.armops, h.holds, h.releases};
+  const int id = m.live_of(owner);
+  h.cancel(owner);
+  h.idle(3);
+  if (id >= 0) {
+    ++w.releases;
+    w.arms.push_back({true, m.e[id].tmr, static_cast<uint8_t>(TAG | id), 0});
+    m.e[id].live = false;
+    ++r_cancels;
+  }
+  r_judge(w, "cancellation");
+}
+
+//! time moves to the next due deadline, and ONE due slot fires, picked at
+//! random among those due (the sweep order is not part of the contract)
+void OriginatorSuite::r_expire() {
+  std::vector<int> due;
+  uint32_t soonest = 0;
+  bool any = false;
+  for (int i = 0; i < NIFL; ++i) {
+    const auto& x = m.e[i];
+    if (!x.live || !x.armed) continue;
+    const uint32_t d = h.tmr[x.tmr].deadline;
+    if (!any || static_cast<int32_t>(d - soonest) < 0) soonest = d;
+    any = true;
+  }
+  if (!any) return;
+  if (static_cast<int32_t>(h.now - soonest) < 0) h.now = soonest + next_random() % 40;
+  for (int i = 0; i < NIFL; ++i)
+    if (m.e[i].live && m.e[i].armed && static_cast<int32_t>(h.now - h.tmr[m.e[i].tmr].deadline) >= 0)
+      due.push_back(i);
+  const int id = due[next_random() % due.size()];
+  auto& x = m.e[id];
+  IflWant w{h.rts, h.fls, h.sends, h.resends, h.armops, h.holds, h.releases};
+  h.tmr[x.tmr].armed = false;
+  h.fire(x.tmr, static_cast<uint8_t>(TAG | id));
+  h.idle(3);
+  x.armed = false;
+  if (!x.retried) {
+    w.resends.push_back(x.tx);
+    x.retried = true;
+    x.await = true;
+    ++r_retries;
+  } else {
+    w.fls.push_back({x.owner, static_cast<uint8_t>(id)});
+    ++w.releases;
+    x.live = false;
+    ++r_fails;
+  }
+  r_judge(w, "expiry");
+}
+
+void OriginatorSuite::r_step() {
+  const uint32_t pick = next_random() % 100;
+  const uint8_t owner = static_cast<uint8_t>(next_random() % 16);
+  int live = 0;
+  for (const auto& x : m.e) live += x.live ? 1 : 0;
+  r_peak = live > r_peak ? live : r_peak;
+  std::vector<int> waiting;
+  std::vector<int> armed;
+  for (int i = 0; i < NIFL; ++i) {
+    if (m.e[i].live && m.e[i].await) waiting.push_back(i);
+    //! on the wire: armed, or a first attempt whose retry still waits
+    if (m.e[i].live && (!m.e[i].await || m.e[i].retried)) armed.push_back(i);
+  }
+  if (pick < 30 && m.live_of(owner) < 0 && live < NSLOT) r_issue(owner);
+  else if (pick < 50 && !waiting.empty()) r_accept(waiting[next_random() % waiting.size()]);
+  else if (pick < 68 && !armed.empty()) r_respond(armed[next_random() % armed.size()]);
+  else if (pick < 72) r_stray_response();
+  else if (pick < 90) r_expire();
+  else r_cancel(owner);
+}
+
+//! everything left is accepted, answered or cancelled: nothing may leak
+void OriginatorSuite::r_drain() {
+  for (int i = 0; i < NIFL; ++i) {
+    if (!m.e[i].live) continue;
+    if (m.e[i].await) r_accept(i);
+    r_respond(i);
+  }
+}
+
+void OriginatorSuite::a_seeded_session_matches_the_inflight_model() {
+  dut->rst_n = 0;
+  h.idle(4);
+  dut->rst_n = 1;
+  h.idle(2);
+  for (auto& t : h.tmr) t.armed = false;
+  for (int i = 0; i < 4000; ++i) r_step();
+  r_drain();
+  printf("  [i] R: seed 0x86A46301, %ld events, peak %d live exchanges; %ld routed, "
+         "%ld retried, %ld failed, %ld cancelled, %ld strays\n", r_events, r_peak, r_routes,
+         r_retries, r_fails, r_cancels, r_strays);
+  CHECK(r_divergences == 0, "R: a seeded session of 16 owners' overlapping exchanges, "
+        "zero divergence from the independent inflight model (%ld of %ld events)",
+        r_divergences, r_events);
+  CHECK(r_peak >= 6 && r_routes >= 200 && r_retries >= 100 && r_fails >= 30
+            && r_cancels >= 50 && r_strays >= 50,
+        "R b: every arm was exercised with overlap (peak %d, routed %ld, retried %ld, "
+        "failed %ld, cancelled %ld, strays %ld)", r_peak, r_routes, r_retries, r_fails,
+        r_cancels, r_strays);
+  CHECK(dut->inflight_busy_o == 0 && h.armed_count() == 0 && h.held_total() == 0,
+        "R c: the drained session leaks no entry, timer or held slot");
+}
+
 int OriginatorSuite::run() {
   reset_leaves_the_table_empty();
   issue_then_response_routes_and_frees();
@@ -626,6 +908,7 @@ int OriginatorSuite::run() {
   acceptance_survives_another_entrys_response();
   cancellation_survives_another_entrys_response();
   the_ignored_counter_wraps_at_eight_bits();
+  a_seeded_session_matches_the_inflight_model();
   final_invariants_hold();
 
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails_n, fails_n);
