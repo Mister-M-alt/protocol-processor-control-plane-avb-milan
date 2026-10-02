@@ -43,6 +43,7 @@ plain-IEEE build where different; blank = same).
 | T-NVM-DEBOUNCE | 500 ms: 500 ticks of the 1 ms `tick_ms` (`DEB_TICKS_P` in the binding manager, `DEB_MS_P` in the D3 writer) | NVM mgr, D3 writer | the producer's first-dirty window: the first change opens it, its close arms one burst that drains every dirty record (the integrator's own firmware window, 1,000 ms, is separate and not this processor's) | parent DR2a ruling | a tick counter in each producer, not a timer-service slot |
 | T-NVM-RS-DEADLINE | `P-NVM-RS-TMO-CYC` clocks without progress (20 ms, ceil(`P-CLK-HZ` × 20 / 1000); **ratified**, DR3a) | NVM mgr, D3 writer | per restore wait: the binding walk's read phase, and every wait of the D3 walk (reads, descriptor reads, the judge, the roll-back's debt wait, the re-LOCATE). Expiry fails that walk and abandons an issued read to the drain ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) | parent DR3a ruling (persistence that wedges must not hold the entity) | a clock counter in each walk, not a timer-service slot |
 | T-NVM-RS-AGGREGATE | `P-NVM-RS-AGG-CYC` clocks from the accepted restore start (1,000 ms, ceil(`P-CLK-HZ` × 1000 / 1000) = `P-CLK-HZ`; **ratified** as an enforced bound, DR3a) | D3 writer | the whole restore: from `restore_go_i` through the binding walk, both D3 passes and the roll-back to the terminal. At the bound the phase the restore is in takes the path a stalled wait takes in it (cause 3), once, in the first clock whose wait has no event in hand, and a provable image is never closed: a binding walk still reading fails whole and releases the listener, and the D3 walk then proves the image with no record read and ends DEFAULTS (CLOSED only if the image cannot be proven, cause 7); in pass 0 DEFAULTS; in pass 1 the roll-back; during the roll-back (its debt wait or re-LOCATE) CLOSED ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)). A device that answers every wait just inside `T-NVM-RS-DEADLINE` ends here, within one such deadline of it plus a few clocks, or within two plus a few clocks when a roll-back follows | parent DR3a ratification (a slow but live device must not hold AECP and the enable) | a clock counter in the D3 writer, not a timer-service slot |
+| T-NVM-PORT-DEADLINE | `P-NVM-MEM-TMO-CYC` clocks in a row in which the device owes the NVM port an event and presents none (1,000 ms, `P-CLK-HZ` clocks, **derived**: 20 × the parent backend's longest legal stall, its 50 ms mutating-grant hold, and equal to T-NVM-RS-AGGREGATE) | NVM port | every wait of the port on its device: a grant to a request, a byte it presents or is ready for, the terminal of a command whose data phase is over; never a cycle the port or the manager holds the operation, and every event restarts it. Expiry ends the operation with one `err`, cause DEADLINE, and keeps an abandoned command owed until the device ends it or a reset ([02 §8](02_interfaces.md#sec-02-nvm-deadline)) | processor issue #15 and its ruling (a silent device must reach the retry and alarm path, never wedge the port) | a clock counter in the port (`MEM_TIMEOUT_CYC_P`, class E's watchdog idiom), not a timer-service slot |
 | T-NVM-RETRY-BACKOFF | `P-NVM-RETRY-BACKOFF-CYC` clocks (500 ms) from a failed record write | NVM mgr, D3 writer | DR2c: at most three attempts per record (`RETRY_MAX_P` = 2 retries), this wait before each retry, then the reset-sticky `nvm_alarm_o` | parent DR2c ruling | a clock counter in each producer, not a timer-service slot |
 | T-TX-AGING | 10 ms (design) | TX arbiter | starvation promotion | design | |
 | T-BUDGET-ACMP-RESP | ≤ 50 ms (design) | budgets | see §4 | design | |
@@ -52,8 +53,8 @@ The original document's single 187.5 ms target is **superseded** by §4
 ([GAP-07](../00_MILAN_COMPLIANCE_REVIEW.md#gap-07)).
 
 <a id="sec-08-nvm"></a>**The saved-state times, separated** (parent
-[D3 contract](https://github.com/kebag-logic/milan-fpga/blob/7a7582f0/docs/design/SAVED_STATE_MATERIALIZATION.md) §5.1, §6.1, §6.3 and its §15.1 rulings). Five different clocks
-govern persistence; none stands for another.
+[D3 contract](https://github.com/kebag-logic/milan-fpga/blob/7a7582f0/docs/design/SAVED_STATE_MATERIALIZATION.md) §5.1, §6.1, §6.3 and its §15.1 rulings). The clocks
+below govern persistence; none stands for another.
 
 | Time | Where it runs | Value and unit | Status |
 |---|---|---|---|
@@ -63,7 +64,8 @@ govern persistence; none stands for another.
 | firmware retry | the integrator's snapshot writer | at most three transaction attempts per unchanged captured work set, 1,000 ms apart | ruled (DR2c); not this processor's |
 | per-wait restore deadline | each restore walk | `T-NVM-RS-DEADLINE`, 20 ms = ceil(`P-CLK-HZ` × 20 / 1000) clocks; 2,000,000 at 100 MHz, 1,000,000 at 50 MHz | **ratified** (DR3a) |
 | aggregate restore deadline | from the accepted restore start (`restore_go_i`, the integrator's `PP_CTRL[1]`) to COMPLETE, DEFAULTS or CLOSED, roll-back included | `T-NVM-RS-AGGREGATE`, 1,000 ms = `P-CLK-HZ` clocks; 100,000,000 at 100 MHz, 50,000,000 at 50 MHz | **ratified** as an enforced bound (DR3a): a counter in the D3 writer, not a measured budget |
-| media deadlines | the integrator's device and flash | the device's own | outside this processor; the port has no deadline of its own |
+| device-face deadline | the NVM port, every wait on its device | `T-NVM-PORT-DEADLINE`, `P-NVM-MEM-TMO-CYC` = `P-CLK-HZ` clocks (1,000 ms); 100,000,000 at 100 MHz, 50,000,000 at 50 MHz | **derived** (processor issue #15 ruling): 20 × the parent backend's 50 ms mutating-grant hold, its longest legal stall; equal to the aggregate restore deadline, and 50 × the per-wait one, so the walks still fail first |
+| media deadlines | the integrator's device and flash | the device's own | outside this processor; the port's deadline bounds each event the device owes, never the media's own work |
 
 One conversion and one rounding rule serve every clock count above: t ms of the core clock
 is ceil(`P-CLK-HZ` × t / 1000) clocks, which the top writes reduced (ceil(`P-CLK-HZ` / 50),
@@ -84,11 +86,18 @@ raises no alarm here: it is the [FASTCONNECT §9.2](https://github.com/kebag-log
 verdict loss, reported by the integrator's status without an ACK of the failed slot.
 No later success and no heartbeat clears `nvm_alarm_o`; only reset does.
 
-**What the quarantine is not.** A device that never ends an abandoned read keeps the
-port quarantined until reset ([02 §8.2](02_interfaces.md#82-two-record-managers-one-port)).
-That bounds the restore, never the port: it does not satisfy processor issue #15, whose
-reusable-service criterion still needs a real cancellation or device-reset
-acknowledgement.
+**The quarantine is the port's, and it is bounded** (processor issue #15). A device that
+never ends an abandoned read, or never answers at all, is answered by the port's deadline:
+one `err`, cause DEADLINE, which ends the arbiter's drain
+([02 §8.2](02_interfaces.md#82-two-record-managers-one-port)), and the abandoned command
+stays owed: the port requests nothing over it until the device's own terminal or a reset,
+so nothing is released on time. Every later change then meets the owed command and is
+answered DEADLINE: three attempts, `T-NVM-RETRY-BACKOFF` apart, then `nvm_alarm_o`, which
+drops the change's pending bit. A WRITE the port abandoned on a device that waits for its
+next byte for ever is contained the same way until reset: padding it would close a record
+whose bytes the manager never supplied, and an abort would be a new interface. Issue #15's
+reusable service, as ruled: `busy` falls at the `err`, and every later request is answered
+within the bound, served once the device has ended the abandoned command.
 
 ## 3. Timer hardware
 

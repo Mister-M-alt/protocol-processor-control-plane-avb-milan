@@ -158,6 +158,19 @@ module protocol_processor_top
     //! binding manager and the D3 writer alike: 500 ms, ceil(CLK_HZ_P / 2).
     //! At most three attempts per record, then the reset-sticky nvm_alarm_o.
     parameter int unsigned NVM_RETRY_BACKOFF_CYC_P = (CLK_HZ_P / 32'd2) + (CLK_HZ_P % 32'd2),
+    //! T-NVM-PORT-DEADLINE (F08.1), P-NVM-MEM-TMO-CYC (F01.5): the NVM
+    //! port's device-face deadline (KL_pp_nvm_port MEM_TIMEOUT_CYC_P, class
+    //! E's name). The device must present each event it owes the port (a
+    //! grant, a byte, the terminal of a command whose data phase is over)
+    //! within this many clock cycles of the previous one; otherwise the
+    //! operation ends with err, cause DEADLINE, and the abandoned command
+    //! stays owed until the device ends it or a reset. Derived, processor
+    //! issue #15's ruling: 20 times the parent backend's longest legal
+    //! stall (its 50 ms mutating-grant hold), equal to T-NVM-RS-AGGREGATE
+    //! and far above the walks' 20 ms per-wait deadline: 1,000 ms, CLK_HZ_P
+    //! clock cycles. A backend whose single command can stall longer raises
+    //! it. Legal 1 to 2^31 - 1; the port refuses any other at elaboration.
+    parameter int unsigned NVM_MEM_TMO_CYC_P   = CLK_HZ_P,
     //! IEEE §7.4.37.2's 300 s TIME_LIMITED registration window and IEEE
     //! §7.4.2's 60 s lock, in ms of the (possibly TIM-compressed) timebase.
     //! Parameters for the same reason TIM_DIV_* are: a suite that needs to
@@ -2869,7 +2882,9 @@ module protocol_processor_top
       .dbg_drain_o    (nvm_drain_nc_w)
   );
 
-  KL_pp_nvm_port u_nvm_port (
+  KL_pp_nvm_port #(
+      .MEM_TIMEOUT_CYC_P (NVM_MEM_TMO_CYC_P)
+  ) u_nvm_port (
       .clk_i           (clk_i),
       .rst_n           (rst_n),
       .nvm_req_i       (np_req_w),

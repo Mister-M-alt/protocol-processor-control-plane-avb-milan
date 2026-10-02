@@ -514,15 +514,39 @@ duration plus a few clocks), never across a media commit ([07 §5.3](07_memory_m
 | `record_id` | out | 8 |
 | `wdata` / `rdata` | out / in | streamed bytes (record framing per [07 §5](07_memory_maps.md)) |
 | `busy` / `done` / `err` | in | 1 each |
-| `err_cause` | in | 2 — valid with `err`, 0 otherwise: **1** DEVICE, **2** UNFRAMED, 3 reserved |
+| `err_cause` | in | 2 — valid with `err`, 0 otherwise: **1** DEVICE, **2** UNFRAMED, **3** DEADLINE |
 
 `err_cause` says what an `err` was, so a manager restoring a record can tell a failing
 device from a record that is not there (processor issue #93). **DEVICE** is every error
-the device raised, in any state, and a header read the device ended short of its eight
-bytes. **UNFRAMED** is a header the port itself refused after the device delivered it
+the device raised, in any state, and every command the device ended short: a completion
+before the command's final byte moved, in any data phase, the header read's eight bytes
+included. **UNFRAMED** is a header the port itself refused after the device delivered it
 whole, or a commit header the manager streamed, that failed the magic or length gate.
 UNFRAMED does not prove erased media; it says the device answered with something that is
-not a record. Code 3 is kept for a port deadline and is never produced.
+not a record. **DEADLINE** is an operation the port's own deadline ended: the device said
+nothing, beside DEVICE's said no. Both managers read a zero-byte DEADLINE as they read
+DEVICE: a failed walk, a failed write attempt ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)).
+
+<a id="sec-02-nvm-deadline"></a>**The port's deadline** (processor issue #15,
+`T-NVM-PORT-DEADLINE`, `P-NVM-MEM-TMO-CYC`). The device face is free, but not silent: the
+device presents each event it **owes** the port within `P-NVM-MEM-TMO-CYC` clocks of the
+previous one. It owes one in every cycle the port waits on it (a grant while a request is
+up, a write byte the port presents, a read byte the port is ready for, the terminal of a
+command whose data phase is over) and nothing while the port or the manager holds the
+operation. Every grant, byte and terminal restarts the count, so a slow device that keeps
+moving is never refused. On the (`P-NVM-MEM-TMO-CYC` + 1)-th owed clock in a row without
+its event the operation ends: one `err`, cause DEADLINE, never `done`, `busy` low at the
+pulse. The deadline ends the **operation**, never the device's command: a command the
+device accepted and has not ended stays **owed**, the port requests nothing over it, takes
+and discards the bytes of an owed READ, and takes the device's next `done` or `err` as its
+end, credited to no operation. A request that arrives meanwhile is answered within the
+deadline: served once the device has ended the abandoned command, one `err` DEADLINE while
+it stays silent. Nothing is released on time; only the device's own terminal or a reset
+ends the owed state, so a WRITE the port abandoned on a device that waits for its next byte
+for ever is **contained**: every later request ends DEADLINE until reset. `dev_gnt_i`
+means the device accepted the command, and it comes at most one cycle after the edge that
+sampled the request: a backend that registers its grant can take a request on the very
+edge the deadline withdraws it, and that command is then owed.
 
 <a id="fig-02-nvmwave"></a>**F02.8 — NVM commit (broken axis over the busy period)**
 
@@ -600,7 +624,7 @@ device face keeps exactly one sequential initiator.
 | Ownership is per operation. | the manager whose request the port accepted owns every data phase and the `done` or `err` (with its cause) that ends it; the other sees none of them |
 | A manager-0 request only ever meets an idle port. | manager 0 raises a registered one-cycle request after it reads the port idle, so the busy it reads also covers the cycle manager 1 is granted. Manager 1 holds its request until its grant; on a tie at an idle port manager 0 wins |
 | An abandoned READ is **drained**, never handed on. | the port's answers name no operation, so when a read's owner abandons it (either walk's deadline, [07 §5.3](07_memory_maps.md#fig-07-nvmflow)) the arbiter keeps the operation: it holds `rready`, discards the late bytes, swallows the `done` or `err`, and grants neither manager until then. An abort presented with the READ's own strobe, in the cycle the arbiter issues it, arms the drain in that cycle, for either manager: the binding walk's registered strobe can meet the aggregate deadline there. Only reads are abandoned: a write stream is never cut |
-| The drain ends **only** on that operation's own `done` or `err`. | never on time. A device that never ends the abandoned read keeps the port **quarantined until reset**: every later change reads pending in `nvm_unflushed_o` or `d3_unflushed_o` and is never written. Reusable service after a permanently silent device needs a real cancellation, which is the port's open recovery contract (processor issue #15) |
+| The drain ends **only** on that operation's own `done` or `err`. | never on time here. A device that never ends the abandoned read is answered by the port's own deadline ([§8](#sec-02-nvm-deadline)): its `err`, cause DEADLINE, ends the drain, and the port keeps the read **owed**, requesting nothing over it, until the device ends it or a reset. Every later change is then attempted three times, each ended DEADLINE with no device command, and given up with `nvm_alarm_o`, which drops its pending bit in `nvm_unflushed_o` or `d3_unflushed_o`. Nothing is released on time: the port serves again only after the device's own terminal (processor issue #15) |
 
 ## 9. Parameterization
 
