@@ -102,11 +102,11 @@
 //                always fits the response. The worst case is a
 //                STREAM_INPUT/OUTPUT, and the layout Milan v1.2 §5.3.3.4
 //                mandates for it is IEEE 1722.1-2021 Table 7-8 (§7.2.6):
-//                138 + 8·N + 2·R with N capped at 47 formats and R at 8
-//                redundant streams, so 530 B. Milan v1.2 Annex C Table C.1 is
+//                138 + 8·N + 2·R with N capped at 46 formats and R at 8
+//                redundant streams, so 522 B. Milan v1.2 Annex C Table C.1 is
 //                a permitted alternative layout (§5.3.3.4 "may", mandatory
 //                only for a redundant pair) and is 2 B shorter at the same
-//                caps, 528 B. 576 covers a model assembled either way. A
+//                caps, 520 B. 576 covers a model assembled either way. A
 //                descriptor LONGER than the line cannot be served: its locate
 //                answers `st_err_o` (NO_SUCH_DESCRIPTOR) rather than a
 //                truncated descriptor, and the header's `desc_max_len` is

@@ -1181,6 +1181,13 @@ D3C3's restore, whose saved 10 the restore rule refuses.
 - The `A` expectations are byte builders from the IEEE §9.3.1 AECPDU and
   §7.2 descriptor field offsets plus the documented image layout — nothing in
   them comes from the DUT or from `gen_desc_image.py`'s output.
+- The fixture image (`load_descriptor_image` in `sim_main.cpp`) is built in
+  C++ and never passes through `gen_desc_image.py`'s `build()`, so the
+  packer's semantic model lint (07 §3.1) does not judge it. It is not a Milan
+  model: it carries what the AECP commands under test read, and no
+  CONFIGURATION or CLOCK_SOURCE descriptor, a STREAM_INPUT `buffer_length` of
+  192 and no CLASS_A flag. The lint's positive Milan model is
+  `hdl/aecp/desc/milan_min.json`.
 - The S10 allocator is a harness model of the 02 §4.2 op semantics only
   (accept a request, answer once, hand back an address). It proves the FACE
   and the address flow through this processor — never MAAP itself: the
