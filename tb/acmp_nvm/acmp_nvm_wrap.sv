@@ -53,6 +53,10 @@ module acmp_nvm_wrap
     parameter int unsigned  RETRY_MAX_P   = 2,
     parameter int unsigned  RS_TMO_CYC_P  = 3000,
     parameter int unsigned  RETRY_BACKOFF_CYC_P = 600,
+    //! the port's device-face deadline (KL_pp_nvm_port MEM_TIMEOUT_CYC_P):
+    //! the module default, beyond every case, in the suite's first build;
+    //! the second build sets it below RS_TMO_CYC_P (Makefile)
+    parameter int unsigned  PORT_TMO_CYC_P = 100_000_000,
     parameter string        TROM_HEX_P    = "ltn_rom.hex",
     localparam int unsigned SINK_W_C = (N_SINKS_P > 1) ? $clog2(N_SINKS_P) : 1
 ) (
@@ -353,7 +357,8 @@ module acmp_nvm_wrap
 
   // ---- the real class-F port ----------------------------------------------
   KL_pp_nvm_port #(
-      .MAX_PAYLOAD_P(1024)
+      .MAX_PAYLOAD_P     (1024),
+      .MEM_TIMEOUT_CYC_P (PORT_TMO_CYC_P)
   ) u_port (
       .clk_i          (clk_i),
       .rst_n          (rst_n),

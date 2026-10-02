@@ -207,12 +207,10 @@ manager (`tb/acmp_nvm`):
 Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plants 83
 of them, each in its own extract, and requires its named checks to fail (all 83 KILLED
 at the lane head; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
-`tb/rx_validator` READMEs). The name and map stages add their groups' controls when they land. The port suites'
-open limitations stay theirs: issue #18 (no reset mid-commit), #19 (port mechanisms
-without coverage) and #21 (no handshake-misbehaving port model) are not closed by this
-evidence. The top-level device model does misbehave on the handshake for the walks
-(late grant, silent header, late or erroring descriptor memory), which grades the
-walks' deadlines, not the port's.
+`tb/rx_validator` READMEs). The name and map stages add their groups' controls when they land. The top-level
+device model misbehaves on the handshake for the walks (late grant, silent header, late
+or erroring descriptor memory), which grades the walks' deadlines; the port's own
+deadline, resets and handshake models are §8.5's.
 
 ### 8.3 The AECP deadline and the hazard classes (issues #81, #57, #84)
 
@@ -291,6 +289,27 @@ the originator's unit suite and one of the notification block's:
 
 The mutation records are in the two suites' READMEs; `tb/pp_top/notify_mutants.py`
 plants the pp_top controls.
+
+### 8.5 The NVM port: its deadline, resets and handshake models (issues #15, #18, #19, #20, #21)
+
+`tb/nvm_port` grades the port against nine device models, four of which misbehave on the
+HANDSHAKE rather than on what the array retains; `tb/acmp_nvm` grades the binding
+manager's half, in two builds (the second sets the port's deadline below the walk's).
+Every figure of `tb/nvm_port` is re-measured by its gate (`make -C tb/nvm_port figures`),
+the mutation record included.
+
+| Property | Checks |
+|---|---|
+| a device that owes an event and presents none for `P-NVM-MEM-TMO-CYC` + 1 clocks ends the operation with one `err`, cause DEADLINE, never `done`, busy low at the pulse, `P-NVM-MEM-TMO-CYC` + 2 clocks after the last event; one clock less is tolerated; in each of the twelve owed states | `tb/nvm_port` T24; mutations D1-D8 |
+| a slow device and a stalled manager are never refused | T24 (slow device, manager stalls); D4-D7 |
+| the abandoned command stays owed: no request over it, an owed READ drained, a late registered grant owed, the owed state ended only by the device's terminal or a reset; an abandoned WRITE contained | T24 (late grant, served and DEADLINE branches, contained WRITE); D9-D17; RW3 under every model |
+| a command ended short in any data phase is one `err`, cause DEVICE | T27, T23c; S1-S4, M8 |
+| `rst_n` mid-commit at six stages, port and device; the port alone twice; the torn image refused at its header or by the manager's crc16 | T25; `tb/acmp_nvm` R1, R2 |
+| the low magic byte, the payload bound's legal edge, the sticky latch and the short-read defence, each failing a check that names it | T26, T21/T22, T23c; M2-lo, M7, the latch rows, M8 |
+| the handshake models: unsolicited and coincident completion leave every check green; a short-read and a silent backend fail only service, and the run-wide checks hold under all nine models | the model table and RW1-RW9 (`tb/nvm_port` README); M6, the latch deletion, M8 and D1 each under its model |
+| a zero-byte DEVICE or DEADLINE `err` fails the walk (cause 2); a clean `done` or an UNFRAMED `err` is the record's default, the blank first boot unchanged | `tb/acmp_nvm` N1a-d, N12a, N12d against A2/A2b, F4, N2a-b, N9c, N12e, G2; mutant B02 |
+| the amended saved-state contract: a later change against a silent device is attempted three times, each ended DEADLINE with no device command, then `nvm_alarm_o` drops its pending bit; it persists once the device ends the abandoned read | `tb/acmp_nvm` N12b, N12c |
+| `MEM_TIMEOUT_CYC_P` refused at 0, 2^31 and 2^32 - 1 by name, built at 1 and 2^31 - 1 | `tb/nvm_port/elab_bounds.sh` (run by `make`) |
 
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)

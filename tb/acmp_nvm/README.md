@@ -5,12 +5,17 @@ Proves the ACMP binding NVM shadow (`hdl/acmp/KL_acmp_nvm_shadow.sv`,
 [05 §5](../../docs/architecture/05_acmp_engine.md) ≈20 B/sink shadow +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8/F07.9 +
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8): `make` = build + run,
-exit 0 = PASS, 360 checks. `-GDEB_TICKS_P=50` pins the debounce window the C++
+exit 0 = PASS, 388 checks over two builds (372 and 16; each binary prints its own
+tally and the Makefile prints the sum last). `-GDEB_TICKS_P=50` pins the debounce window the C++
 timing mirrors (tick_i is held high, so window = 50 cycles),
 `-GRS_TMO_CYC_P=3000` the walk's read deadline (`T-NVM-RS-DEADLINE`) that group N
 places its boundaries against, and `-GRETRY_BACKOFF_CYC_P=600` the DR2c wait
 after a failed commit attempt (`T-NVM-RETRY-BACKOFF`, 500 ms in the product)
-that group E grades.
+that group E grades. The port's own deadline (`MEM_TIMEOUT_CYC_P`, the wrap's
+`PORT_TMO_CYC_P`) is the module default, 100,000,000 cycles, in the first build:
+beyond every case, so a silent device there is answered by the walk's deadline
+and the arbiter's drain alone. The SECOND build sets it to 1,000 cycles, below
+the walk's, and runs the blank first boot (group A) and group N12 only.
 
 Every restore verdict graded here (`restore_done_o`, `restore_fail_o`,
 `restore_blank_o`, `restore_cause_o`) is the binding manager's RAW verdict on
@@ -158,7 +163,9 @@ release within four cycles, no work while owned, nothing written.
 - **N3** a middle record's header read granted and never answered: cause 3
   within the deadline of the silence, the read abandoned exactly once; the
   listener answers on the defaults, the port stays quarantined, and a later
-  change stays pending, never written.
+  change stays pending, never written, within this build's horizon: the port's
+  own deadline, far beyond it, would answer the drained read DEADLINE and give
+  the change up with the alarm, which N12 grades in the second build.
 - **N4** the port held by manager 1's read, which the device never answers:
   the walk waits for the port idle, issues no read of its own, abandons
   nothing, and fails at its deadline with cause 3.
@@ -194,7 +201,8 @@ release within four cycles, no work while owned, nothing written.
   byte-exact, and a reset on a healthy device restores all three bindings.
 - **N9a-c** an unwired device face, as the integrator guide's tie-off rules
   state it: a face that never grants fails the walk at its deadline with
-  cause 3, its one request abandoned and the port left quarantined; a face
+  cause 3, its one request abandoned and the port left quarantined (until the
+  port's own deadline, beyond this build's horizon; N12d); a face
   that answers every READ with err fails it at the first read with cause 2;
   either way the released listener answers the vendor default and nothing is
   written. A face that answers every READ as erased media (every region
@@ -233,6 +241,23 @@ release within four cycles, no work while owned, nothing written.
   after a completed manager-1 WRITE, a manager-1 READ abandoned in its issue
   cycle is drained from the next cycle and ends, and manager 1's next READ
   completes.
+- **N12a-e** (second build; processor issues #20 and #15) the port's own
+  deadline below the walk's. **N12a** a middle record's header read granted and
+  never answered: the PORT answers it, one err with cause DEADLINE and nothing
+  forwarded, after its deadline and before the walk's, and the WHOLE walk fails
+  with cause 2, a device that failed, never an empty record; nothing is
+  abandoned and the listener answers the vendor default. **N12b** the read is
+  still owed, so a later change is attempted three times, each ended by the
+  port's DEADLINE with no device command, then `alarm_o` rises and the change's
+  pending bit drops with it: the parent's amended saved-state contract.
+  **N12c** once the device ends the abandoned read, its bytes drain to no
+  manager and a later change persists byte-exact, the alarm still set (E11).
+  **N12d** a face that never grants: the port answers its one request DEADLINE
+  and the walk fails with cause 2. **N12e** an erased face: done, not failed,
+  blank, no alarm, no deadline, the blank first boot unchanged. Measured, each
+  against a planted defect: a zero-byte DEADLINE read as blank fails N12a and
+  N12d; the port's deadline removed fails N12a-d; the deadline leaving nothing
+  owed fails N12c. The first build is green under all three.
 - **Ungraded by construction: the manager-0 halves of the same rules.**
   Manager 0 here and in `tb/pp_top` is the real binding manager. It raises
   its abort (`nvm_abort_o`) only in a stalled `H_RS_STREAM` clock, that is
@@ -261,6 +286,19 @@ release within four cycles, no work while owned, nothing written.
   manager presents one of these inputs: none occurs with both real managers
   over the whole `tb/pp_top` default run or over 17,406 runs of that
   reviewer's aggregate sweep.
+
+Group R — a reset in the middle of a flush (processor issue #18, the manager's half;
+`tb/nvm_port` T25 is the port's). Sinks 0, 3 and 7 are saved and restored; a live
+change of sink 3 is cut on the bus during its flush by a power cut of port, manager,
+listener and device, the array keeping what the device committed; the next boot's walk
+is graded whole. **R1** sink 3's ERASE granted and not done: the region reads erased,
+the record is refused at its header and is that sink's default. **R2** 12 bytes into
+sink 3's WRITE: the header survived, so the port forwards the torn record whole, header
+then payload READ, and the binding manager's crc16 (`rrec_ok_w`) refuses it: that
+sink's default. In both the walk completes, not failed and not blank, sinks 0 and 7
+are restored as saved, a GET of sink 3 answers the vendor default, and the change made
+again persists and survives a reset. The crc gate forced true fails R2, alongside F5,
+F10, F14 and F15.
 
 Pinned wiring: `make pinned` builds the same bench with the gate left out
 (`ACMP_NVM_PINNED_WIRING`, the producers wired straight to the listener as the
