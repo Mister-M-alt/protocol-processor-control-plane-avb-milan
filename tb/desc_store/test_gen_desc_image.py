@@ -608,7 +608,8 @@ class IdentityTest(unittest.TestCase):
     def test_exclusions_are_the_clause(self) -> None:
         """§6.2.2.8 field by field: each excluded field keeps the digest, and each
         neighbour the clause does not name moves it."""
-        def body(dtype: int, size: int, fields: dict[int, int]) -> bytes:
+        def _descriptor(dtype: int, size: int, fields: dict[int, int]) -> bytes:
+            """A `size`-octet descriptor of `dtype` with 16-bit `fields` set."""
             data = bytearray(size)
             struct.pack_into(">H", data, 0, dtype)
             for offset, value in fields.items():
@@ -616,18 +617,18 @@ class IdentityTest(unittest.TestCase):
             return bytes(data)
         linear = {80: 0x0003, 94: 104, 96: 2}                   # CONTROL_LINEAR_UINT16, N 2
         cases = (  # (what, descriptor, offset edited, excluded)
-            ("linear current[1]", body(0x1A, 132, linear), 104 + 14 + 8, True),
-            ("linear default[1]", body(0x1A, 132, linear), 104 + 14 + 6, False),
-            ("INT8 linear current", body(0x1A, 113, {80: 0x0000, 94: 104, 96: 1}), 108, False),
-            ("array current[0]", body(0x1A, 120, {80: 0x0018, 94: 104, 96: 2}), 116, True),
-            ("array default", body(0x1A, 120, {80: 0x0018, 94: 104, 96: 2}), 110, False),
-            ("UTF-8 value", body(0x1A, 120, {80: 0x001F, 94: 104, 96: 1}), 110, True),
-            ("MATRIX selector current", body(0x1D, 110, {80: 0x000D, 94: 102, 96: 2}), 102, True),
-            ("MATRIX UTF-8 value", body(0x1D, 110, {80: 0x001F, 94: 102, 96: 1}), 104, False),
-            ("SIGNAL_SELECTOR current_signal_index", body(0x1B, 96, {80: 96}), 86, True),
-            ("SIGNAL_SELECTOR default_signal_index", body(0x1B, 96, {80: 96}), 92, False),
-            ("MEMORY_OBJECT length", body(0x0B, 108, {}), 98, True),
-            ("MATRIX_SIGNAL signal (no object_name)", body(0x1E, 14, {4: 1, 6: 8}), 10, False))
+            ("linear current[1]", _descriptor(0x1A, 132, linear), 104 + 14 + 8, True),
+            ("linear default[1]", _descriptor(0x1A, 132, linear), 104 + 14 + 6, False),
+            ("INT8 linear current", _descriptor(0x1A, 113, {80: 0x0000, 94: 104, 96: 1}), 108, False),
+            ("array current[0]", _descriptor(0x1A, 120, {80: 0x0018, 94: 104, 96: 2}), 116, True),
+            ("array default", _descriptor(0x1A, 120, {80: 0x0018, 94: 104, 96: 2}), 110, False),
+            ("UTF-8 value", _descriptor(0x1A, 120, {80: 0x001F, 94: 104, 96: 1}), 110, True),
+            ("MATRIX selector current", _descriptor(0x1D, 110, {80: 0x000D, 94: 102, 96: 2}), 102, True),
+            ("MATRIX UTF-8 value", _descriptor(0x1D, 110, {80: 0x001F, 94: 102, 96: 1}), 104, False),
+            ("SIGNAL_SELECTOR current_signal_index", _descriptor(0x1B, 96, {80: 96}), 86, True),
+            ("SIGNAL_SELECTOR default_signal_index", _descriptor(0x1B, 96, {80: 96}), 92, False),
+            ("MEMORY_OBJECT length", _descriptor(0x0B, 108, {}), 98, True),
+            ("MATRIX_SIGNAL signal (no object_name)", _descriptor(0x1E, 14, {4: 1, 6: 8}), 10, False))
         for what, data, offset, excluded in cases:
             with self.subTest(what=what):
                 edited = bytearray(data)
