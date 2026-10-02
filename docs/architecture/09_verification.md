@@ -295,16 +295,20 @@ plants the pp_top controls.
 ### 8.5 The NVM port: its deadline, resets and handshake models (issues #15, #18, #19, #20, #21)
 
 `tb/nvm_port` grades the port against nine device models, four of which misbehave on the
-HANDSHAKE rather than on what the array retains, in two builds, at `MEM_TIMEOUT_CYC_P` = 100
-and 37, every harness wait derived from the bound; `tb/acmp_nvm` grades the binding
-manager's half, in two builds (the second sets the port's deadline below the walk's).
+HANDSHAKE rather than on what the array retains, in three builds, at `MEM_TIMEOUT_CYC_P` =
+100, 37 and 20, every harness wait derived from the bound and every cut or poke inside an
+operation named on the bus; its randomized harness grades the deadline at bounds 1, 2, 3
+and 37, below the suite's smallest; `tb/acmp_nvm` grades the binding manager's half, in two
+builds (the second sets the port's deadline below the walk's).
 Every figure of `tb/nvm_port` is re-measured by its gate (`make -C tb/nvm_port figures`),
 the mutation record included.
 
 | Property | Checks |
 |---|---|
 | a device that owes an event and presents none for `P-NVM-MEM-TMO-CYC` + 1 owed clocks ends the operation with one `err`, cause DEADLINE, never `done`, busy low at the pulse, `P-NVM-MEM-TMO-CYC` + 2 clocks after the last event; one clock less is tolerated; in each of the twelve owed states | `tb/nvm_port` T24; mutations D1-D8 |
-| a clock in which the device owes nothing pauses the count and never restarts it: a manager dropping `rready` or `wvalid` one clock in every `TMO` / 2 against a silent device is answered DEADLINE, `TMO` + 2 clocks after the last byte plus the held ones; the count is zero at each operation, and a wait state consuming a latched done owes nothing | `tb/nvm_port` T29; D24, D25, D26 under the coincident model |
+| a clock in which the device owes nothing pauses the count and never restarts it, and is never a verdict, not even with the count at its bound: a manager dropping `rready` or `wvalid` one clock in every `TMO` / 2 against a silent device is answered DEADLINE, `TMO` + 2 clocks after the last byte plus the held ones, and a byte `TMO` clocks late on the one clock a manager drops its strobe is taken; the count is zero at each operation; a wait state whose terminal is already latched owes nothing, pinned in `S_WEWAIT` and `S_RHWAIT`, the term's member in `S_WWAIT` and `S_RPWAIT` measured equivalent | `tb/nvm_port` T29, T30; D24-D26; the round-2 reviews' plants Q1-Q10 and Y1-Y16 (Q3, Q4, Q8, Q10, Y3, Y4 and Y12 measured equivalent) |
+| no contract-legal device is refused, at the port's smallest legal bounds as well: random legal devices and managers are never answered DEADLINE, a silent device is answered on exactly the (`TMO` + 1)-th owed clock, and a request behind an abandoned command is served if the device ends it within the bound, DEADLINE if not | `tb/nvm_port` randomized harness FZ1-FZ8 at 1, 2, 3 and 37; Q1 and Q9 under it |
+| the harness holds at every bound from its smallest up: every wait derived from `TMO`, T6's poke and T25's cuts named on the bus | the three builds; the coincident model at `TMO` = 4096, and round 2's T6 there |
 | a slow device and a stalled manager are never refused | T24 (slow device, manager stalls); D4-D7 |
 | the abandoned command stays owed: no request over it, an owed READ drained, a late registered grant owed, a deadline in any state that owns a command (the WRITE's completion window included) leaves it owed, the owed state ended only by the device's terminal or a reset; an abandoned WRITE contained | T24 (late grant, served and DEADLINE branches, contained WRITE); T28c; D9-D17, D22; RW3 under every model |
 | the owed command's done or err is credited to no operation: a restore or a commit waiting on it is then served, never handed it; its drained bytes and its done restart the waiting request's count, so a slow drain or a late end within the deadline never has the request refused | `tb/nvm_port` T28a, T28b, T28d, T28e; D18-D21 (D23: the two later request guards, which no command can be owed at, measured equivalent) |

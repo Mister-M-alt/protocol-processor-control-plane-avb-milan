@@ -4,16 +4,20 @@
 Proves the class-F NVM port (`hdl/packet_engine/KL_pp_nvm_port.sv`,
 [02 §8](../../docs/architecture/02_interfaces.md) F02.8 +
 [07 §5](../../docs/architecture/07_memory_maps.md) F07.8): `make` = build + run,
-exit 0 = PASS, 343 checks in each of two builds. `-GMAX_PAYLOAD_P=1024` pins the
-geometry the C++ constant `MAXP` mirrors. The device-face deadline is built
-twice: `-GMEM_TIMEOUT_CYC_P=100`, the bound every figure in this file is
-measured at, and 37, a small odd bound; the Makefile hands each build's value
-to the C++ as `TMO`. Every harness wait that meets the deadline is derived from
-`TMO` (see "Two bounds" below), so both builds grade the same contract and the
-second is where a wait written for 100 would fail. Each build prints its own
-tally, and the last line is their sum. `make` first runs `elab_bounds.sh`, the
-deadline parameter's elaboration guard: refused by name at 0, 2^31 and
-2^32 - 1, built clean at 1 and 2^31 - 1.
+exit 0 = PASS, 350 checks in each of three builds. `-GMAX_PAYLOAD_P=1024` pins
+the geometry the C++ constant `MAXP` mirrors. The device-face deadline is built
+three times: `-GMEM_TIMEOUT_CYC_P=100`, the bound every figure in this file is
+measured at, 37, a small odd bound, and 20, the smallest the suite's fixed
+protocol delays leave legal; the Makefile hands each build's value to the C++
+as `TMO`. Every harness wait that meets the deadline is derived from `TMO`, and
+every cut or poke inside an operation is named on the bus (see "Three bounds"
+below), so every build grades the same contract. `make` then builds the
+randomized harness, `fuzz_main.cpp`, at bounds 1, 2, 3 and 37: the port's
+smallest legal bounds, which the suite cannot reach, and one beside it (see
+"The randomized harness"). Each build prints its own tally, and the last line
+is their sum. `make` first runs `elab_bounds.sh`, the deadline parameter's
+elaboration guard: refused by name at 0, 2^31 and 2^32 - 1, built clean at 1
+and 2^31 - 1.
 
 The harness plays BOTH neighbors, independently of the RTL: a **manager BFM**
 that frames records per 07 §5.2 (magic 0x1722, layout_version, record_id,
@@ -56,9 +60,12 @@ riding its own grant, one riding a command's final byte; the device-face
 deadline in each of the twelve states in which the device owes the port an
 event, at its boundary, and the owed command it leaves behind (T24); a command
 the device ends short, in every data phase (T27); a reset at six stages of a
-commit, and of the port alone (T25); and the low magic byte and the payload
-bound's legal edge (T26). Every operation of the run is also graded on what it
-was owed, whatever the device model (the RW checks, "The handshake models").
+commit, and of the port alone (T25); the low magic byte and the payload
+bound's legal edge (T26); and the two ways the deadline's count holds without
+charging the device, each at the edge of the bound (T30). Every operation of
+the run is also graded on what it was owed, whatever the device model (the RW
+checks, "The handshake models"), and the randomized harness grades the
+deadline against random devices and managers at the smallest legal bounds.
 
 Known limits (honest): the CRC16 is carried, never checked — that is the
 manager's job per 07 §5.3, so a corrupt-crc record passes this port by design
@@ -283,12 +290,12 @@ tuned -- the port may hand up a buffered header only once the read that filled
 the buffer has completed, on any backend, at any delay.
 
 The sticky latch is no longer invisible on the pristine model either: deleting the set
-line now reddens 21 of 343 here, in T21, every arm of T22 and T27's two READs
-ended on their own grant. A completion the wait state cannot read live is lost,
-so the port reaches its deadline where it owed done, and then holds as owed a
-command the device has already ended, which takes the rest of T27 and two RW
-checks with it; under a coincident-completion model the same
-mutations fail 216 of 343.
+line now reddens 23 of 350 here, in T21, every arm of T22, T30's two latched
+terminals and T27's two READs ended on their own grant. A completion the wait
+state cannot read live is lost, so the port reaches its deadline where it owed
+done, and then holds as owed a command the device has already ended, which
+takes the rest of T27 and two RW checks with it; under a coincident-completion
+model the same mutations fail 224 of 350.
 Narrowing ownership the other way, by dropping the grant term, reddens exactly
 the same checks, measured: T21 is the first phase that needs a completion the
 wait state cannot read live.
@@ -305,24 +312,25 @@ are load-bearing rather than dead; what was missing was a standing phase pairing
 them with the completion semantics the port's own header allows. T22 is that
 phase, and these are the measurements:
 
-- ownership narrowed to the grant handshake alone **fails 46 of 343**: T22a,
-  T22b and T22c lose the completion that rode their last byte, and every T24
-  and T28 arm whose command the window no longer covers fails too (below).
-- dropping the single `S_RHCOLL` term **fails 23 of 343**: the restore whose
+- ownership narrowed to the grant handshake alone **fails 48 of 350**: T22a,
+  T22b and T22c lose the completion that rode their last byte, and every T24,
+  T28 and T30 arm whose command the window no longer covers fails too (below).
+- dropping the single `S_RHCOLL` term **fails 24 of 350**: the restore whose
   header read is answered on its own eighth byte loses that completion and
   never issues the payload read, so T22c's own witness reports one coincidence
-  where it requires two; and T24's `S_RHCOLL` arm, whose deadline no longer
-  marks the abandoned READ owed, so the next restore is issued over it.
-- dropping the single `S_WWAIT` term **fails 3 of 343**: T24's boundary arm in
+  where it requires two, and T30b's restore, answered the same way, ends at
+  its deadline; and T24's `S_RHCOLL` arm, whose deadline no longer marks the
+  abandoned READ owed, so the next restore is issued over it.
+- dropping the single `S_WWAIT` term **fails 3 of 350**: T24's boundary arm in
   `S_WWAIT`, a done on the very cycle the count reaches `TMO`, which is
   progress only for a command the port owns; and T28c with RW3, because a
   deadline in `S_WWAIT` then leaves the WRITE owed to nobody and the next
   commit is requested over it. Before the deadline this term could not be
   reached at all; see the list below.
-- admitting an ungranted `S_RHREQ` into the window **fails 25 of 343**: T20a's
+- admitting an ungranted `S_RHREQ` into the window **fails 26 of 350**: T20a's
   forward counter, as before (this mutant was green until that counter
-  existed), and now T24 and T28, because a deadline in that state then marks
-  owed a command the device never took.
+  existed), and now T24, T28 and T30e, because a deadline in that state then
+  marks owed a command the device never took.
 
 Since the deadline, the window answers two more questions than whose a `done`
 is: whether a `done` is PROGRESS for the deadline, and whether a deadline
@@ -369,7 +377,7 @@ and it was too small:
   #15's wedge, reached by a device that did answer.
 
 Mutation-proven (backup → sed → run → restore → green). **These figures are
-against the 343-check suite; earlier revisions of this file carried figures of
+against the 350-check suite; earlier revisions of this file carried figures of
 an older suite long after it grew.**
 
 **How a lost terminal reads since the deadline.** Before issue #15 a mutation
@@ -384,30 +392,30 @@ reset). The cause checks (T7-T18 each name DEVICE now) and RW4/RW5 are what
 fail first; the rest of each count is that containment.
 
 - **C1** (2026-09-23) the cause register deleted (`nvm_err_cause_o` tied 0):
-  **fails 65 of 343**, every check that reads a cause: T7-T9, T15-T18, T23,
-  T26a-b, the DEADLINE checks of T24, T28 and T29, and T27.
-- **C2** the cause collapsed to DEVICE (the refusal records DEVICE): **fails 7 of 343**, the UNFRAMED cases of T23 and T26, and T25c, whose refused branch must read UNFRAMED.
-- **C3** the cause collapsed to UNFRAMED (every active state records UNFRAMED): **fails 23 of 343**, every DEVICE case: T7-T9, T15-T18, T23a-f, T27, RW5 and RW6.
-- **C4** the cause published without its err gate: **fails 1 of 343**, T23k.
+  **fails 66 of 350**, every check that reads a cause: T7-T9, T15-T18, T23,
+  T26a-b, the DEADLINE checks of T24, T28, T29 and T30, and T27.
+- **C2** the cause collapsed to DEVICE (the refusal records DEVICE): **fails 7 of 350**, the UNFRAMED cases of T23 and T26, and T25c, whose refused branch must read UNFRAMED.
+- **C3** the cause collapsed to UNFRAMED (every active state records UNFRAMED): **fails 23 of 350**, every DEVICE case: T7-T9, T15-T18, T23a-f, T27, RW5 and RW6.
+- **C4** the cause published without its err gate: **fails 1 of 350**, T23k.
 - **M1** commit skips the ERASE: the transition INTO `S_WEREQ` (`:345`)
-  rewritten to `S_WWREQ`, so no ERASE is ever issued. **Fails 65 of 343**
-  (op-log shape, erase pulse/visibility, erase-error path, and the T24, T25
-  and T28 arms that name the ERASE).
+  rewritten to `S_WWREQ`, so no ERASE is ever issued. **Fails 67 of 350**
+  (op-log shape, erase pulse/visibility, erase-error path, and the T24, T25,
+  T28 and T30 arms that name the ERASE).
   The description used to read "`S_WEREQ` target rewritten", which is ambiguous
   and the two readings differ enormously: rewriting what `S_WEREQ` itself
   transitions to (`:359`), so the ERASE is REQUESTED but never awaited, **fails
-  33 of 343**. That sibling was a real coverage gap at the older suite's size,
+  34 of 350**. That sibling was a real coverage gap at the older suite's size,
   recorded as one rather than hidden by the ambiguity; the unsolicited,
   coincident, deadline and reset phases have since closed it, because a WRITE
   requested into a device still erasing is a request while owed.
-- **M2** magic gate dropped from `hdr_ok_w`: **fails 12 of 343** (both bad-magic
+- **M2** magic gate dropped from `hdr_ok_w`: **fails 12 of 350** (both bad-magic
   refusals, the nothing-forwarded check, T23's UNFRAMED cases and T26's low
   byte). This drops BOTH magic bytes; the low byte alone is M2-lo, below.
 - **M3** payload pump off-by-one (`bcnt_r == plen_r` for `plen_r - 1`, both
-  directions): **fails 117 of 343** (every data-phase op mismatches or ends at
+  directions): **fails 123 of 350** (every data-phase op mismatches or ends at
   the deadline).
 - **M4** (2026-08-20) the write phase swallows the device error (`S_WDPUMP`'s
-  `if (dev_err_i)` forced false): **fails 28 of 343**. Before the deadline a
+  `if (dev_err_i)` forced false): **fails 28 of 350**. Before the deadline a
   torn commit then never answered at all; now it answers DEADLINE where the
   device said DEVICE, which T15's cause check names first. The port then holds
   the WRITE as owed, so T15-T18 end DEADLINE with no command issued, until
@@ -419,7 +427,7 @@ fail first; the rest of each count is that containment.
   nothing else can move. That vacuity is what the T16 guard exists to answer,
   and it fails here: `the torn commit really did erase its own region`.
 - **M5** (2026-08-20) the completion window swallows the device error
-  (`S_WWAIT`'s `if (dev_err_i)` forced false): **fails 16 of 343**. The port
+  (`S_WWAIT`'s `if (dev_err_i)` forced false): **fails 16 of 350**. The port
   waits for a `done` a failed device will never send; before the deadline the
   commit never answered at all (`run_op` gave up after 100,000 cycles), and
   `busy_seen && busy_ok` did not catch that, as the comment at that check says.
@@ -428,20 +436,20 @@ fail first; the rest of each count is that containment.
   answers DEADLINE, and RW4 and RW5.
 - **M6** (2026-09-07) the completion latch armed in every state: the ownership
   gate removed from the set, putting the flag back the way issue #14 found it.
-  **fails 52 of 343**: every arm of the unsolicited-completion table above, and
+  **fails 53 of 350**: every arm of the unsolicited-completion table above, and
   from there a port running one command ahead of its backend, which requests
   into a device still busy until its deadline answers DEADLINE (RW3, RW4), so
-  T21 and T22 fall as collateral. Before those phases the same mutation was
+  T21, T22 and T30e fall as collateral. Before those phases the same mutation was
   green. The same edit plus the withdrawn one-line clear in `S_WHDR`, the fix
-  the ticket proposed first and then retracted, **fails 49 of 343**: it closes
+  the ticket proposed first and then retracted, **fails 50 of 350**: it closes
   the header-collection arm alone, `S_WEREQ` stays exposed on the commit side,
   and a restore never enters `S_WHDR` at all. It is measured rather than argued
   because "that would not have been enough" is exactly the shape of claim this
   file has had to retract before.
 - **Probes** (mutations of the TEST, not the RTL). Arming T16's tear as
   `arm_err(1, -1)`, so the WRITE fails before its first byte moves, fails 1 of
-  343. Replacing the torn commit with a bare `rc = 1` and no device traffic at
-  all — the port the T16 prose names as the threat — fails 4 of 343, the cause
+  350. Replacing the torn commit with a bare `rc = 1` and no device traffic at
+  all — the port the T16 prose names as the threat — fails 4 of 350, the cause
   check among them. Under the
   previous guard that second probe failed only ONE check, the erase count,
   while the payload guard passed on residue from an earlier phase.
@@ -450,7 +458,7 @@ fail first; the rest of each count is that containment.
   may leave — must not redden a check about the PORT. The T17 restore check
   did exactly that, and so did the T16 byte comparison. Neither does now, by
   two different routes: T16's moved onto the bus, T17's moved to assert after
-  a `done` where the array is known. The half-page model is 343 PASS, 0 FAIL.
+  a `done` where the array is known. The half-page model is 350 PASS, 0 FAIL.
   See the matrix below for every pre-fix form against every model.
 
 ### The deadline (issue #15)
@@ -468,8 +476,8 @@ the operation with one err, cause DEADLINE. A deadline
 ends the operation, never the device's command: a command the device accepted
 and has not ended stays OWED, the port requests nothing over it, drains an
 owed READ's bytes, and takes the device's next done or err as its end. T24
-T28 and T29 grade all of it at `TMO` = 100, and again at 37 in the second
-build, every check on the bus:
+T28 and T29 grade all of it at `TMO` = 100, and again at 37 and at 20, every
+check on the bus, and T30 pins the two holds at the edge of the bound:
 
 - **the twelve owed states.** In each of the four requests, four waits and
   four data phases the device withholds the event it owes for exactly `TMO`
@@ -532,83 +540,149 @@ build, every check on the bus:
   byte plus the cycles the manager held, which the check counts and requires
   to be more than none. The round-1 count, cleared on every such cycle,
   answered neither operation at all (D24).
+- **a paused or latched cycle is never charged** (T30). A wait state whose
+  terminal is already latched owes nothing: (a) an ERASE answered on its own
+  grant, the backend without erase semantics the banner names, then the WRITE
+  granted `TMO` cycles after its request, and (b) a header READ answered on
+  its eighth byte, then the payload READ granted `TMO` cycles after its
+  request, are each served byte-exact. Charged, the one latched cycle is
+  carried by the pause into the next request, which is then refused a cycle
+  early. Those are the two wait states that can carry it: `S_WWAIT` and
+  `S_RPWAIT` leave for `S_FIN` and `S_IDLE`, which zeroes the count, so the
+  term's member in each is equivalent (Q3 and Q4 below). A cycle that owes
+  nothing is never a verdict, not even with the count at its bound: (c) the
+  payload READ's 11th byte, presented `TMO` cycles late on the one cycle the
+  manager drops `rready`, and (d) the WRITE's 21st byte, wanted `TMO` cycles
+  late on the one cycle the manager drops `wvalid`, are each taken the next
+  cycle and served byte-exact; (e) the payload byte one owed cycle later ends
+  DEADLINE, `TMO` + 3 cycles after the last byte, the held one included. Each
+  arm starts from a reset of its own, and no silence is armed in (a) to (d),
+  so RW4 grades them as well. Round 2's suite passed both defects the reviews
+  planted here (Q1 and Q9 below).
 
 Mutations, each a row of the figures gate:
 
-- **D1** the verdict forced false, no deadline at all: **fails 64 of 343**,
-  every refused arm and branch of T24, T28 and T29, with RW1 recording the
-  wedge that returns.
-- **D2** the verdict one cycle early: **fails 35 of 343**, every tolerated arm,
-  the slow device and RW4. **D3** one cycle late: **fails 39 of 343**, every
-  refused arm's timing and the late grants it no longer meets.
-- **D4** progress no longer restarts the count: **fails 38 of 343**; a device
+- **D1** the verdict forced false, no deadline at all: **fails 65 of 350**,
+  every refused arm and branch of T24, T28, T29 and T30, with RW1 recording
+  the wedge that returns.
+- **D2** the verdict one cycle early: **fails 40 of 350**, every tolerated arm,
+  the slow device, T29's timing, every arm of T30 and RW4. **D3** one cycle
+  late: **fails 40 of 350**, every refused arm's timing and the late grants it
+  no longer meets.
+- **D4** progress no longer restarts the count: **fails 43 of 350**; a device
   that is slow but moving is refused, from T4 on.
 - **D5** a stalled manager charged to the device in the commit's payload pump:
-  **fails 4 of 343**, and **D6** in the restore's: **fails 3 of 343**; T24's
-  manager-stall arms, the T29 arm in that pump (its held cycles counted, so
-  the verdict comes early) and RW4.
-- **D7** a done for no command counted as progress: **fails 9 of 343**; the
+  **fails 5 of 350**, and **D6** in the restore's: **fails 5 of 350**; T24's
+  manager-stall arms, the T29 and T30 arms in that pump (their held cycles
+  counted, so the verdict comes early) and RW4.
+- **D7** a done for no command counted as progress: **fails 9 of 350**; the
   strays during an ungranted request hold the deadline off for ever, and RW1
   records it.
-- **D8** the verdict named DEVICE: **fails 35 of 343**, every DEADLINE cause
+- **D8** the verdict named DEVICE: **fails 36 of 350**, every DEADLINE cause
   check.
-- **D9** a deadline leaves nothing owed (timeout to idle): **fails 34 of 343**;
+- **D9** a deadline leaves nothing owed (timeout to idle): **fails 35 of 350**;
   the next request is issued over an abandoned command (RW3).
-- **D10** the late registered grant ignored: **fails 23 of 343**, the next
+- **D10** the late registered grant ignored: **fails 23 of 350**, the next
   request issued into the command the backend took late; **D11** a late grant
-  whose done rode it made owed anyway: **fails 2 of 343**.
+  whose done rode it made owed anyway: **fails 2 of 350**.
 - **D12** the owed state released at the next deadline, by time alone:
-  **fails 4 of 343**; **D13** released when the device's busy reads idle:
-  **fails 3 of 343**; **D14** a request issued over an owed command:
-  **fails 8 of 343**.
-- **D15** the owed READ not drained: **fails 25 of 343**; **D16** a later
+  **fails 4 of 350**; **D13** released when the device's busy reads idle:
+  **fails 3 of 350**; **D14** a request issued over an owed command:
+  **fails 8 of 350**.
+- **D15** the owed READ not drained: **fails 26 of 350**; **D16** a later
   deadline overwriting the owed command's kind, which stops the drain:
-  **fails 3 of 343**.
+  **fails 3 of 350**.
 - **D17** the owed command's terminal latched as a completion of the next
-  operation: **fails 10 of 343**.
+  operation: **fails 11 of 350**.
 - **D18** `S_RHREQ` no longer blocked by the owed command, so the owed
   command's err is taken as the waiting restore's (review probes W15, X24):
-  **fails 1 of 343**, T28a. **D19** the same in `S_WEREQ`, the waiting
-  commit's (W15b): **fails 1 of 343**, T28b.
+  **fails 1 of 350**, T28a. **D19** the same in `S_WEREQ`, the waiting
+  commit's (W15b): **fails 1 of 350**, T28b.
 - **D20** a byte drained from an owed READ is not progress (W16, X18):
-  **fails 1 of 343**, T28d; the restore behind the slow drain ends DEADLINE
+  **fails 1 of 350**, T28d; the restore behind the slow drain ends DEADLINE
   while the device is moving.
-- **D21** the owed command's done is not progress (X17): **fails 1 of 343**,
+- **D21** the owed command's done is not progress (X17): **fails 1 of 350**,
   T28e.
 - **D22** a deadline in the WRITE's completion window leaves nothing owed
-  (X12): **fails 2 of 343**, T28c and RW3; the next commit's ERASE is
+  (X12): **fails 2 of 350**, T28c and RW3; the next commit's ERASE is
   requested into a device still programming.
 - **D23** the same guard dropped from `S_WWREQ` and `S_RPREQ` together:
-  **fails 0 of 343**, and cannot fail. A command becomes owed only as an
+  **fails 0 of 350**, and cannot fail. A command becomes owed only as an
   operation ends, at its deadline or in the `S_FIN` cycle after it, so the
   next operation meets it in its first request state, `S_WEREQ` or `S_RHREQ`,
   which waits until the device ends it; nothing sets it again before the
   operation ends. The two later guards are kept as the banner's rule written
   where the request is, not as coverage.
 - **D24** the count cleared, not paused, on a cycle that owes nothing (the
-  round-1 watchdog): **fails 3 of 343**, T29a and T29b, whose operations a
-  manager dropping its strobe keeps unanswered for ever, and RW1.
-- **D25** the count not zeroed between operations: **fails 7 of 343**; the
+  round-1 watchdog): **fails 4 of 350**, T29a and T29b, whose operations a
+  manager dropping its strobe keeps unanswered for ever, RW1, and T30e, whose
+  late byte the cleared count lets in.
+- **D25** the count not zeroed between operations: **fails 7 of 350**; the
   count a deadline left at its bound ends the next request on its first owed
   cycle.
 - **D26** a wait state that consumes a latched done still owing it: **fails
-  0 of 343** under the pristine model, where the one latched done a wait
-  state consumes before a request, T21's ERASE answered on its grant, is
-  followed by a WRITE grant far inside the deadline. D26 under the coincident
-  model **fails 5 of 343**:
-  the header READ's done rides its eighth byte, `S_RHWAIT` consumes it, and
-  without the term that cycle counts against the payload READ's request,
-  whose grant `TMO` cycles late is then refused (RW4). Paused rather than
-  cleared, a stale owed cycle is carried across the header's forward; this
-  term is why the pause leaves the coincident model green.
+  3 of 350**, T30a and T30b with RW4. Round 2's suite measured it at none
+  under the pristine model, where the one latched done a wait state consumed
+  before a request, T21's ERASE answered on its grant, was followed by a WRITE
+  grant far inside the deadline; T30 puts both grants at the bound. D26 under
+  the coincident model **fails 7 of 350**: those three, and T24's `S_RPREQ`
+  arm, where the header READ's done rides its eighth byte, `S_RHWAIT`
+  consumes it, and without the term that cycle counts against the payload
+  READ's request, whose grant `TMO` cycles late is then refused. Paused rather
+  than cleared, a stale owed cycle is carried across the header's forward;
+  this term is why the pause leaves the coincident model green.
 
-### Two bounds (issue #15)
+The round-2 reviews planted their own defects in the pause logic, and two of
+them passed every check of round 2's suite: Q1, the latched-terminal term
+dropped from `S_WEWAIT`, and Q9, a verdict on a cycle that owes nothing. T30
+is what fails them now. Each plant is a row of the figures gate with the
+reviewer's own edit text, R436-2's Q1-Q10 and R437-2's Y1-Y16, so a pair that
+is one defect spelled twice measures the same:
 
-Every wait in the harness that meets the deadline is a function of `TMO`, so
-the suite is evidence at any bound it is built at, and the Makefile builds it
-at two. Until it was, its waits were numbers written for 100: built at 37 the
-suite failed four checks and at 1,000 three, on the harness, not the port. The
-waits, each the same number at 100 as before:
+| plant | the defect | fails | named by |
+|---|---|---|---|
+| Q1 | `S_WEWAIT`'s latched cycle still owes | fails 2 of 350 | T30a, RW4 |
+| Q2 | `S_RHWAIT`'s latched cycle still owes | fails 2 of 350 | T30b, RW4 |
+| Q3 | `S_WWAIT`'s latched cycle still owes | fails 0 of 350 | equivalent: it goes to `S_FIN`, then `S_IDLE`, which zeroes the count |
+| Q4 | `S_RPWAIT`'s latched cycle still owes | fails 0 of 350 | equivalent, as Q3 |
+| Q5 | the count runs on cycles that owe nothing | fails 16 of 350 | T24, T29a-b, T30a-b, RW4 |
+| Q6 | a dropped `rready` clears the count | fails 3 of 350 | T29a, T30e, RW1 |
+| Q7 | a dropped `wvalid` clears the count | fails 2 of 350 | T29b, RW1 |
+| Q8 | `S_WHDR` and `S_RHFWD` clear the count | fails 0 of 350 | equivalent: the count is zero in both, entered from `S_IDLE` or from a terminal |
+| Q9 | a verdict on any busy cycle, one that owes nothing included | fails 4 of 350 | T30c-e, RW4 |
+| Q10 | the count zeroed in `S_FIN`, not `S_IDLE` | fails 0 of 350 | equivalent: `S_FIN` always goes to `S_IDLE`, which owes nothing |
+| Y1 | Q1, R437-2's spelling | fails 2 of 350 | T30a, RW4 |
+| Y2 | Q2, R437-2's spelling | fails 2 of 350 | T30b, RW4 |
+| Y3 | Q3, R437-2's spelling | fails 0 of 350 | equivalent, as Q3 |
+| Y4 | Q4, R437-2's spelling | fails 0 of 350 | equivalent, as Q3 |
+| Y5 | the count runs on every cycle but `S_FIN` | fails 16 of 350 | T24, T29a-b, T30a-b, RW4 |
+| Y6 | `S_RHFWD` owes | fails 7 of 350 | T24, T30b, RW4 |
+| Y7 | `S_WHDR` owes | fails 9 of 350 | T24, RW4 |
+| Y8 | a request waiting on an owed command owes nothing | fails 10 of 350 | T24, T28c, RW1 |
+| Y9 | the WRITE pump owes only once the device is ready | fails 9 of 350 | T24, T29b, RW1 |
+| Y10 | the READ pump owes only once a byte is presented | fails 14 of 350 | T24, T28a, T28d, T29a, T30e, RW1 |
+| Y11 | a verdict on a paused pump cycle | fails 4 of 350 | T30c-e, RW4 |
+| Y12 | a manager handshake counted as progress | fails 0 of 350 | equivalent: in a pump it is the device's own byte, and in `S_WHDR` and `S_RHFWD` the count is already zero |
+| Y13 | Q6, R437-2's spelling | fails 3 of 350 | T29a, T30e, RW1 |
+| Y14 | Q7, R437-2's spelling | fails 2 of 350 | T29b, RW1 |
+| Y15 | the count one bit short | fails 65 of 350 | T24, T28, T29, T30e, RW1, RW3 |
+| Y16 | Q9, R437-2's spelling | fails 4 of 350 | T30c-e, RW4 |
+
+### Three bounds (issue #15)
+
+Every wait in the harness that meets the deadline is a function of `TMO`, and
+every cut or poke inside an operation is named on the bus, so the suite is
+evidence at any bound from its smallest, 20, up; the Makefile builds it at
+three. Until its waits were derived they were numbers written for 100: built
+at 37 the suite failed four checks and at 1,000 three, on the harness, not
+the port. Until T6's poke was named on the bus it came a fixed 2 * `TMO` / 5
+cycles after the accept, and under the coincident model, where the WRITE ends
+on its last byte, the commit was over by then from `TMO` = 500 up: an idle
+port took the poke as a restore, and the operations after it wedged behind
+it. The poke now comes once the backend has taken the ERASE, inside the
+commit at every bound. The coincident model at `TMO` = 4096 **fails 0 of
+350**; the same with round 2's T6 **fails 16 of 350**, T6 and T7-T9 after it,
+with RW1. The waits, each the same number at 100 as before:
 
 - the silences and late events T24, T28 and T29 arm: `TMO`, `TMO` + 1,
   `TMO` + 2, `TMO` + 3 * `TMO` / 5 (the served branch), 3 * `TMO` (the
@@ -616,8 +690,7 @@ waits, each the same number at 100 as before:
 - a slow device's every event `TMO` late, a manager's three-deadline stall,
   the drain `TMO` / 2 a byte, the late done and grant 3 * `TMO` / 5 each, the
   strays and the strobe drops 3 * `TMO` / 10 and `TMO` / 2 apart;
-- the waits a cut or a poke is staged in (T6, T25): 2 * `TMO` / 5, and their
-  midpoints;
+- the waits a cut is staged in (T25): 2 * `TMO` / 5, and their midpoints;
 - the cycles ticked past a pulse to catch a second, 3 * `TMO` / 10; the
   windows after a reset in which the port must stay silent, `TMO` / 2 and
   3 * `TMO` / 5; and `run_op`'s guard, a thousand deadlines, past the
@@ -625,11 +698,42 @@ waits, each the same number at 100 as before:
   every byte of a record).
 
 The fixed protocol delays left are the ones no deadline meets: grants and
-completions of 1 to 9 cycles (T4, T19-T21) and a device's 4-cycle settle. The
-harness refuses to build below `TMO` = 20, where those and the derived
-fractions stop meaning what their phases say. The second bound is 37: small,
-odd, and the one that failed before. The figures gate measures every row at
-100 and requires both builds green.
+completions of 1 to 9 cycles (T4, T6, T19-T21) and a device's 4-cycle settle.
+The harness refuses to build below `TMO` = 20, where those and the derived
+fractions stop meaning what their phases say, so 20 is the third build. The
+second is 37: small, odd, and the one that failed before. The bounds below 20
+are the randomized harness's. The figures gate measures every row at 100, the
+coincident model again at 4096, and requires all three builds green, and the
+randomized harness at every bound it is built at.
+
+### The randomized harness (issue #15)
+
+`fuzz_main.cpp` is the round-2 review's randomized probe, folded in as a
+standing check: its own device model, its own manager and its own count of
+owed cycles, written from the port's banner rather than from the RTL, and
+independent of `sim_main.cpp`. `make` builds it at bounds 1, 2 and 3, the
+port's smallest legal bounds, which the suite cannot reach, and at 37 beside
+the suite. Each build runs three seeds, six hundred operations per mode and
+seed, and grades each property as ONE named check, its message carrying the
+counts, so its tally does not move with what the seeds draw:
+
+- **legal** (FZ1-FZ4). The device presents every event it owes within the
+  bound, biased to the exact bound: terminals riding final bytes and ERASE
+  grants, dones for no command where nothing is owned, now and then an err in
+  place of any one event. The manager drops its strobe at random,
+  periodically, or for up to five deadlines. Every operation is answered once
+  with busy low, never DEADLINE; an err comes only where the device erred, and
+  is named DEVICE; every done is byte-exact.
+- **silent** (FZ5, FZ6). The device withholds one owed event for ever while
+  the manager drops its strobe: one err DEADLINE, never done, on exactly the
+  (`TMO` + 1)-th owed cycle since the device's last event.
+- **resume** (FZ7, FZ8). A command abandoned by a deadline, which the device
+  ends `r` cycles into the next request's wait: served if `r` <= `TMO`,
+  DEADLINE if not, and both branches taken.
+
+Q1 under the randomized harness at bound 3 **fails 4 of 8**, and Q9 under the
+randomized harness at bound 3 **fails 4 of 8**: FZ2, FZ3, FZ6 and FZ7 each.
+A false DEADLINE against a legal device fails FZ2 first.
 
 ### Short commands (refusal (d))
 
@@ -645,10 +749,10 @@ after a live completion or two after a latched one, nothing left owed, and the
 next operation served at once. The legal coincidence, a completion on the final
 byte's own edge, is T22's.
 
-- **S1** the rule off in the header pump: **fails 7 of 343**; **S2** in the
-  payload pump: **fails 5 of 343**; **S3** in the payload read: **fails 15 of
-  343**; **S4** the header read reading only the live done, not the latched one
-  (the rule as it stood before): **fails 13 of 343**. Each fails its own T27 arm
+- **S1** the rule off in the header pump: **fails 7 of 350**; **S2** in the
+  payload pump: **fails 5 of 350**; **S3** in the payload read: **fails 15 of
+  350**; **S4** the header read reading only the live done, not the latched one
+  (the rule as it stood before): **fails 13 of 350**. Each fails its own T27 arm
   first; the port then reaches its deadline and holds as owed a command the
   device already ended, which takes the later T27 arms with it.
 
@@ -700,7 +804,7 @@ backend is graded on what the port owes it, not on service.
 | short read | every other READ it accepts ends with done after three eighths of its bytes, rounded down (three of a header's eight) | refusal (d) | broken backend |
 | silent | every command granted, then nothing more: no byte, no terminal | the deadline, and the owed command | broken backend |
 
-The two freedoms leave all 343 checks green (the model table above). The two
+The two freedoms leave all 350 checks green (the model table above). The two
 broken backends fail service, the restores a short device cannot complete and
 everything a silent one never answers, and are graded on the RW checks, which
 close the run and must pass under every model, which the figures gate enforces
@@ -714,10 +818,10 @@ RW9 witness that the unsolicited and short-read models fired.
 
 Issue #21's four mutations, each under the model that names its device:
 
-- M6 under the unsolicited model **fails 235 of 343** (M6 alone above).
+- M6 under the unsolicited model **fails 243 of 350** (M6 alone above).
 - the latch deleted, under the coincident model: the `done_seen_r` row above.
-- M8 under the short-read model **fails 149 of 343** (M8 alone below).
-- D1 under the silent model **fails 284 of 343**, RW1, RW3 and RW7 among them:
+- M8 under the short-read model **fails 153 of 350** (M8 alone below).
+- D1 under the silent model **fails 292 of 350**, RW1, RW3 and RW7 among them:
   the wedge issue #15 named, back.
 
 ### Issue #19's four mechanisms
@@ -727,15 +831,15 @@ Each mutation now fails a check whose message names its mechanism:
 - **the low magic byte.** T26a commits a record framed 0x17FF, refused with one
   err, cause UNFRAMED, and no device traffic; T26b restores a stored record
   whose byte 1 is wrong, refused with nothing forwarded. **M2-lo**, the low
-  byte's compare forced true, **fails 5 of 343**.
+  byte's compare forced true, **fails 5 of 350**.
 - **the payload bound at both edges.** T26c and T26d commit and restore a record
   whose payload_length is exactly `MAX_PAYLOAD_P`, byte-exact; T11 and T13 keep
   the `MAX_PAYLOAD_P + 1` refusals. **M7**, the bound weakened from `<=` to
-  `<`, **fails 4 of 343**.
+  `<`, **fails 4 of 350**.
 - **the sticky `done_seen_r` latch.** T21 and T22 name it; deleting its set line
   and the coincident-model row are measured above.
 - **the short-read defence.** T23c names it, and T27 extends it to every data
-  phase. **M8**, the header read's defence off, **fails 22 of 343**: T23c, then
+  phase. **M8**, the header read's defence off, **fails 22 of 350**: T23c, then
   the port reaches its deadline and holds as owed a read the device ended,
   which takes the rest of T23 and T27's READ arms with it.
 
@@ -745,7 +849,7 @@ Each mutation now fails a check whose message names its mechanism:
 `1'b0` in turn and the suite re-run, so this table is measured, not argued —
 and it is now **checked by a script rather than by hand**: `measure_figures.py`
 re-runs every arm, cross-checks the arm COUNT against the RTL, and re-measures
-**every figure in this file**: fifty-nine mutations and probes, ten device-model
+**every figure in this file**: eighty-nine mutations and probes, ten device-model
 result rows, and all thirty cells of the pre-fix matrix; and under every device
 model it requires the RW checks to pass by name. CI runs it.
 
@@ -763,7 +867,7 @@ vocabulary could not grow behind the gate because English number words are a
 closed class. The argument is true and beside the point: the closed class is
 number words, the open class is ways of writing a ratio, and closing one axis
 leaves the other. Ten of thirteen phrasings still evaded, two of them using
-digits only -- `fails 22 of the 343 checks` and `fails 22 out of 343`. Both are
+digits only -- `fails 22 of the 350 checks` and `fails 22 out of 350`. Both are
 caught now, and `| Mx | 22 |`, `reddens 22 checks`, `a fifth of the suite`,
 `68/90ths` and `24%` are not. A real closure would mean treating every bare
 integer as a claim: measured, 292 numbers in this file fall outside every claim
@@ -883,7 +987,7 @@ rather than quietly deleted. `T15 unless the old record survived, a torn image
 never restores as valid` was called weaker than the header-agreement check
 beside it, on the evidence of twelve arms and four models showing no
 divergence. Measured directly by moving T15's tear into the completion window:
-that check FAILS while the header check PASSES, 2 of 343. It can fail alone, so
+that check FAILS while the header check PASSES, 2 of 350. It can fail alone, so
 it is not a member of this section at all. The error is the same shape as the
 corollary retracted below -- a general claim generalised from the states that
 happened to be tried -- and this file has now made it twice, because "no
@@ -985,15 +1089,15 @@ Applied here:
 
 | model | result |
 |---|---|
-| pristine | **343 PASS, 0 FAIL** |
-| half-page | **343 PASS, 0 FAIL** |
-| page-buffered NOR | **343 PASS, 0 FAIL** |
-| lazy erase | **343 PASS, 0 FAIL** |
-| lazy erase + page-buffered | **343 PASS, 0 FAIL** |
-| coincident completion | **343 PASS, 0 FAIL** |
-| unsolicited completion | **343 PASS, 0 FAIL** |
-| short read | 265 PASS, 78 FAIL, service only: every RW check passes |
-| silent | 115 PASS, 228 FAIL, service only: every RW check passes |
+| pristine | **350 PASS, 0 FAIL** |
+| half-page | **350 PASS, 0 FAIL** |
+| page-buffered NOR | **350 PASS, 0 FAIL** |
+| lazy erase | **350 PASS, 0 FAIL** |
+| lazy erase + page-buffered | **350 PASS, 0 FAIL** |
+| coincident completion | **350 PASS, 0 FAIL** |
+| unsolicited completion | **350 PASS, 0 FAIL** |
+| short read | 269 PASS, 81 FAIL, service only: every RW check passes |
+| silent | 114 PASS, 236 FAIL, service only: every RW check passes |
 
 The page-buffered model discards its buffer when it takes a new command, as a
 real NOR's buffer does; before the deadline no WRITE was ever left unfinished

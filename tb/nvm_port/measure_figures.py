@@ -17,7 +17,7 @@ WHAT IT COVERS. Every figure in the README, and the covered set is DERIVED
 rather than asserted: each `N of M` and `N PASS, M FAIL` in the file is a claim
 by default, satisfied only by a measurement here or by an explicit entry in
 WAIVERS whose reason is printed on every clean run. Twelve arm rows plus the arm
-COUNT read from the RTL; fifty-nine mutations and probes; ten device-model result
+COUNT read from the RTL; eighty-nine mutations and probes; ten device-model result
 rows, under each of which the run-wide RW checks must pass by name; and all
 thirty cells of the pre-fix matrix.
 
@@ -49,8 +49,9 @@ NOT provided, because a figure nobody looked at is how the table went stale in
 the first place.
 
 It is slow: one Verilator build per arm, mutation, probe and device model, five
-for the matrix, plus the baseline and the two builds of `make run`, the second
-of which is at another legal bound and must be green as well. The exact count is DERIVED and printed at the
+for the matrix, plus the baseline and every build of `make run`: the suite at
+two more legal bounds and the randomized harness at each of its own, all of
+which must be green as well. The exact count is DERIVED and printed at the
 start of a run rather than written here. That is not fussiness: this number was
 wrong in three consecutive rounds, and it is the one figure the inverted default
 structurally cannot reach, because it matches no FIGURE_RE shape and does not
@@ -74,6 +75,9 @@ from pathlib import Path
 # of their own, so they live beside this script rather than inside it.
 from pre_fix_forms import (MATRIX_FORMS, MATRIX_ROWS, git_verbatim,
                            line_multiplicity, pin_completeness)
+# ...and the rows for the deadline's pause, its randomized harness and its
+# bounds, which outgrew this module the same way
+from deadline_rows import deadline_rows
 
 SRC = Path(__file__).resolve().parent
 README = SRC / "README.md"          # read only, never written
@@ -98,6 +102,7 @@ shutil.copytree(_rtl_src, _WORK / "hdl" / "packet_engine")
 shutil.copytree(SRC.parent / "common", _WORK / "tb" / "common")
 RTL = _WORK / "hdl" / "packet_engine" / "KL_pp_nvm_port.sv"
 SIM = HERE / "sim_main.cpp"
+MK = HERE / "Makefile"
 
 #: (line in the RTL, state name) for every `if (dev_err_i)` arm. Cross-checked
 #: against the RTL below: a THIRTEENTH arm added anywhere used to leave this
@@ -415,6 +420,8 @@ MUTATIONS = [
     ("D26/coincident", r"D26 under the coincident model \*\*fails (\d+) of",
      _COINCIDENT + [(RTL, "                       || (state_r == S_RPWAIT)) && !done_seen_r)",
                           "                       || (state_r == S_RPWAIT)))")]),
+    # The deadline's pause, its randomized harness and its bounds (deadline_rows.py)
+    *deadline_rows(RTL, SIM, MK, _COINCIDENT),
     # ---- refusal (d): a short command in each data phase ----------------------
     ("S1", r"\*\*S1\*\*.*?\*\*fails (\d+) of", [
         (RTL, "          end else if (done_seen_r || (dev_done_i\n"
@@ -611,7 +618,7 @@ WAIVERS = [
     # correct and is the mechanism working: they are waived by a pattern narrow
     # enough to reach only that sentence, so a real `22 out of 90` anywhere else
     # is still a hard error.
-    (r"`fails 22 of the 343 checks` and `fails\s+22 out of 343`",
+    (r"`fails 22 of the 350 checks` and `fails\s+22 out of 350`",
      "two illustrative phrasings quoted inside the paragraph explaining what "
      "the inverted default does not close; not claims about this suite"),
 ]
@@ -641,20 +648,32 @@ def run_suite(want_fail_names: bool = False) -> tuple[int, int, int] | list[str]
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
 
 
+def fuzz_bounds() -> list[str]:
+    """The bounds the Makefile builds the randomized harness at, read from it."""
+    m = re.search(r"^FUZZ_TMOS\s*=\s*(.+)$", MK.read_text(), re.M)
+    return m.group(1).split() if m else []
+
+
 def both_builds_disagree(total: int) -> list[str]:
     """The suite's own entry point, `make run`: the elaboration guard, then the
-    build at TMO and the build at TMO_ALT, each the same checks, and their sum.
-    The second build is where a harness wait written for 100 rather than
-    derived from the bound fails, so it is required green here as well."""
+    build at TMO, at TMO_ALT and at TMO_MIN, each the same checks, then the
+    randomized harness at every bound in FUZZ_TMOS, each all PASS, and their
+    sum. The other bounds are where a harness wait written for 100 rather than
+    derived from the bound fails, so every build is required green here."""
     subprocess.run(["make", "-s", "clean"], cwd=HERE, check=False,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     p = subprocess.run(["make", "-s", "run"], cwd=HERE, capture_output=True, text=True)
     got = [tuple(int(x) for x in m) for m in TALLY_RE.findall(p.stdout + p.stderr)]
-    print(f"make run, both builds: {got}, rc {p.returncode}")
-    want = [(total, total, 0), (total, total, 0), (2 * total, 2 * total, 0)]
-    if p.returncode != 0 or got != want:
-        return [f"make run gave {got} with rc {p.returncode}; the two builds must "
-                f"each pass all {total} checks"]
+    print(f"make run, every build: {got}, rc {p.returncode}")
+    nf = len(fuzz_bounds())
+    fz = got[3:3 + nf]
+    want = ([(total, total, 0)] * 3 + ([fz[0]] * nf if fz else [])
+            + [(3 * total + nf * (fz[0][0] if fz else 0),) * 2 + (0,)])
+    if (p.returncode != 0 or got != want or nf == 0
+            or any(f != fz[0] or f[2] != 0 for f in fz)):
+        return [f"make run gave {got} with rc {p.returncode}; the three suite builds "
+                f"must each pass all {total} checks and the {nf} randomized builds "
+                "must each pass all of theirs"]
     return []
 
 
@@ -916,8 +935,9 @@ def main() -> int:
                          "exits non-zero on a disagreement with or without it")
     ap.parse_args()
 
-    n_builds = 3 + len(ARMS) + len(MUTATIONS) + len(MODELS) + len(MATRIX_MODELS)
-    print(f"{n_builds} Verilator builds: 1 baseline + 2 for make run + {len(ARMS)} arms + "
+    n_run = 3 + len(fuzz_bounds())
+    n_builds = 1 + n_run + len(ARMS) + len(MUTATIONS) + len(MODELS) + len(MATRIX_MODELS)
+    print(f"{n_builds} Verilator builds: 1 baseline + {n_run} for make run + {len(ARMS)} arms + "
           f"{len(MUTATIONS)} mutations + {len(MODELS)} models + "
           f"{len(MATRIX_MODELS)} matrix")
     total, passed, failed = run_suite()

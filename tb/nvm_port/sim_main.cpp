@@ -45,12 +45,15 @@ constexpr int OP_ERASE = 2;
 constexpr int N_REGIONS = 8;    // test ids stay 0..7
 constexpr int REG_BYTES = 2048;
 constexpr int MAXP      = 1024; // pinned by -GMAX_PAYLOAD_P in the Makefile
-// The deadline: the Makefile builds the suite twice, at -GMEM_TIMEOUT_CYC_P =
-// 100 (the bound every README figure is measured at) and at 37, and hands each
-// build's value to this file as NVM_PORT_TMO. Every harness wait that meets the
-// deadline is derived from it, so both builds grade the same contract; the
-// fixed protocol delays left (at most 9 cycles: T4, T19-T21) and the derived
-// fractions need a deadline of at least 20 to mean what their phases say.
+// The deadline: the Makefile builds the suite three times, at
+// -GMEM_TIMEOUT_CYC_P = 100 (the bound every README figure is measured at), at
+// 37 and at 20, and hands each build's value to this file as NVM_PORT_TMO.
+// Every harness wait that meets the deadline is derived from it, and every cut
+// or poke inside an operation is named on the bus, so each build grades the
+// same contract; the fixed protocol delays left (at most 9 cycles: T4, T6,
+// T19-T21) and the derived fractions need a deadline of at least 20 to mean
+// what their phases say, so 20 is this suite's smallest bound. The bounds
+// below it are the randomized harness's (fuzz_main.cpp).
 constexpr int TMO       = NVM_PORT_TMO;
 static_assert(TMO >= 20, "tb/nvm_port's waits are derived for MEM_TIMEOUT_CYC_P >= 20");
 
@@ -299,6 +302,10 @@ struct Harness {
   // `mgr_drop_every`, a pattern a manager is free to present: T29
   int mgr_drop_every = 0;
   int held_since_evt = 0;                 // strobe cycles dropped since the last event
+  // ...or on the one cycle `mgr_drop_gap` cycles after the last event, the
+  // cycle a count started at that event sits at its bound: T30
+  int mgr_drop_gap = 0;
+  int gap_drops = 0;                      // strobes dropped that way
 
   // per-op capture
   int done_pulses = 0;
@@ -673,22 +680,24 @@ struct Harness {
   void tick() {
     // manager drive; a strobe the manager would present and drops is HELD
     const bool drop = mgr_drop_every > 0 && cycles % mgr_drop_every == 0;
+    const bool at_gap = mgr_drop_gap > 0 && cycles - last_evt == mgr_drop_gap;
     bool held = false;
     if (m_mode == 1) {
       const bool would = (m_widx < m_wbytes.size() && m_stall == 0);
-      const bool v = would && !drop;
-      held = would && drop;
+      const bool v = would && !drop && !at_gap;
+      held = would && (drop || at_gap);
       dut->nvm_wvalid_i = v;
       dut->nvm_wdata_i  = v ? m_wbytes[m_widx] : 0;
       dut->nvm_rready_i = 0;
     } else if (m_mode == 2) {
       dut->nvm_wvalid_i = 0;
-      dut->nvm_rready_i = (m_stall == 0) && !drop;
-      held = (m_stall == 0) && drop;
+      dut->nvm_rready_i = (m_stall == 0) && !drop && !at_gap;
+      held = (m_stall == 0) && (drop || at_gap);
     } else {
       dut->nvm_wvalid_i = 0;
       dut->nvm_rready_i = 0;
     }
+    if (held && at_gap) ++gap_drops;
     drive_dev();
 
     dut->clk_i = 0; dut->eval();
@@ -870,6 +879,7 @@ class NvmPortSuite {
   void owed_terminals_are_credited_to_no_operation();
   void owed_events_restart_a_waiting_request();
   void a_manager_strobe_never_holds_the_deadline_off();
+  void a_paused_or_latched_cycle_is_never_charged();
   void reset_mid_commit_at_six_stages();
   bool run_to_stage(int stage, size_t record_bytes);
   int  power_cut();
@@ -993,6 +1003,12 @@ void NvmPortSuite::back_to_back_ops_all_complete() {
 }
 
 // ---- T6: req while busy is ignored (single outstanding, F02.8) ---------
+// The poke is staged on the BUS, as T25's cuts are: once the backend has taken
+// the ERASE, which owes its done 3 * TMO / 10 cycles later and is followed by
+// the whole WRITE, so it lands inside the commit at every bound and under every
+// model. A fixed count of cycles from the accept did not: on a backend that
+// answers on the last byte the commit is shorter, and from TMO = 500 up it was
+// over before the poke, which a free port then took as a restore.
 void NvmPortSuite::request_while_busy_is_ignored() {
   h.gnt_delay = 8; h.op_delay = 3 * TMO / 10;
   auto f6 = frame(7, pattern(16, 0x70));
@@ -1000,8 +1016,9 @@ void NvmPortSuite::request_while_busy_is_ignored() {
   h.clear_capture();
   h.m_mode = 1; h.m_wbytes = f6; h.m_widx = 0; h.m_stall = 0;
   h.start(true, 7);
-  for (int i = 0; i < kStageCycles; ++i) h.tick();
-  CHECK(dut->nvm_busy_o, "T6 op still in flight at the poke");
+  for (long i = 0; i < kOpTimeoutCycles && !(h.ops.size() == 1 && h.d_busy); ++i) h.tick();
+  CHECK(dut->nvm_busy_o && h.ops.size() == 1 && h.d_busy,
+        "T6 op still in flight at the poke, its ERASE taken and not done");
   dut->nvm_req_i = 1; dut->nvm_we_i = 0; dut->nvm_record_id_i = 5;
   for (int i = 0; i < 5; ++i) h.tick();
   dut->nvm_req_i = 0; dut->nvm_we_i = 0;
@@ -2133,6 +2150,93 @@ void NvmPortSuite::a_manager_strobe_never_holds_the_deadline_off() {
   h.deadline_ok = false;
 }
 
+// ---------------------------------------------------------------- T30
+// The two ways the count holds without charging the device, each pinned at the
+// edge of the bound against a device the banner allows. A wait state whose
+// terminal is already latched owes nothing: (a) a backend without erase
+// semantics answers the ERASE on its own grant (the banner's own example) and
+// grants the WRITE `TMO` cycles after its request; (b) the header READ is
+// answered on its eighth byte and the payload READ granted `TMO` cycles after
+// its request. Charged, that one latched cycle is carried by the pause into the
+// next request, which is then refused one cycle early. `S_WWAIT` and `S_RPWAIT`
+// cannot carry theirs: a latched done takes them to `S_FIN` and `S_IDLE`, which
+// zeroes the count. And a cycle that owes nothing is never a verdict, not even
+// with the count at its bound: (c) a payload byte and (d) a WRITE byte, each
+// `TMO` cycles late, on the one cycle the manager drops its strobe, are served;
+// (e) the payload byte one owed cycle later is refused, the held cycle
+// counted in its timing. No silence is armed in (a)-(d), so RW4 grades them too.
+// Each arm starts from a reset of its own with region 2 committed again, so a
+// mutation that fails one arm leaves no owed command to fail the next.
+void NvmPortSuite::a_paused_or_latched_cycle_is_never_charged() {
+  const std::vector<uint8_t> rec = frame(2, pattern(40, 0x30));
+  auto fresh = [&]() { fresh_reset(); return h.commit(2, rec); };
+  CHECK(fresh() == 0, "T30 setup: region 2 committed");
+
+  h.gnt_done_on_erase = true;
+  int rc = silenced(true, rec, SIL_GNT, 1, TMO);
+  h.gnt_done_on_erase = false;
+  CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0 && h.sent == rec
+            && h.gnt_done_pairs == 1,
+        "T30a S_WEWAIT's latched terminal owes nothing: an ERASE answered on its own "
+        "grant, then the WRITE granted %d cycles after its request, is served "
+        "byte-exact (rc %d, cause %d, pairs %d)", TMO, rc, h.last_cause, h.gnt_done_pairs);
+
+  fresh();
+  const bool was_armed = h.done_on_last_byte;   // the gate arms it for a whole run
+  h.done_on_last_byte = true;
+  rc = silenced(false, rec, SIL_GNT, 1, TMO);
+  h.done_on_last_byte = was_armed;
+  CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0 && h.rbytes == rec
+            && h.coinc_dones == 2,
+        "T30b S_RHWAIT's latched terminal owes nothing: a header READ answered on its "
+        "eighth byte, then the payload READ granted %d cycles after its request, is "
+        "served byte-exact (rc %d, cause %d, %d answered on a last byte)",
+        TMO, rc, h.last_cause, h.coinc_dones);
+
+  // the manager drops its strobe on the cycle the device presents its byte,
+  // TMO + 1 cycles after the last one: the count sits at its bound there
+  fresh();
+  h.mgr_drop_gap = TMO + 1;
+  h.gap_drops = 0;
+  rc = silenced(false, rec, SIL_BYTE, 1, TMO, 10);
+  h.mgr_drop_gap = 0;
+  CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0 && h.rbytes == rec
+            && h.gap_drops == 1,
+        "T30c a cycle that owes nothing is never a verdict: payload byte 10, presented "
+        "%d cycles late on the one cycle the manager drops rready, the count at its "
+        "bound, is taken next and the restore served byte-exact (rc %d, cause %d, "
+        "%d drops)", TMO, rc, h.last_cause, h.gap_drops);
+  fresh();
+  h.mgr_drop_gap = TMO + 1;
+  h.gap_drops = 0;
+  rc = silenced(true, rec, SIL_BYTE, 1, TMO, 20);
+  h.mgr_drop_gap = 0;
+  CHECK(rc == 0 && h.done_pulses == 1 && h.err_pulses == 0 && h.sent == rec
+            && h.gap_drops == 1,
+        "T30d a cycle that owes nothing is never a verdict: WRITE byte 20, wanted %d "
+        "cycles late on the one cycle the manager drops wvalid, the count at its "
+        "bound, is taken next and the commit served byte-exact (rc %d, cause %d, "
+        "%d drops)", TMO, rc, h.last_cause, h.gap_drops);
+
+  fresh();
+  h.deadline_ok = true;
+  h.mgr_drop_gap = TMO + 1;
+  h.gap_drops = 0;
+  rc = silenced(false, rec, SIL_BYTE, 1, TMO + 2, 10);
+  h.mgr_drop_gap = 0;
+  CHECK(rc == 1 && h.err_pulses == 1 && h.done_pulses == 0 && h.last_cause == 3
+            && h.gap_drops == 1 && h.pulse_held == 1 && h.pulse_gap == TMO + 3,
+        "T30e the control: payload byte 10 one owed cycle later, the same cycle "
+        "dropped, ends DEADLINE %ld cycles after the last byte, the one held "
+        "included (rc %d, cause %d, held %d)", h.pulse_gap, rc, h.last_cause, h.pulse_held);
+  h.ops.clear();
+  rc = h.restore(2);
+  CHECK(rc == 0 && h.rbytes == rec,
+        "T30e ...and once the device has ended the abandoned READ the next restore "
+        "is served (rc %d)", rc);
+  h.deadline_ok = false;
+}
+
 // Start the next operation while the device still carries an owed command and
 // tick until it waits in its request state, a restore at once and a commit
 // once its eight header bytes have moved, then `cycles` more. True if the port
@@ -2584,6 +2688,7 @@ int NvmPortSuite::run() {
   a_manager_strobe_never_holds_the_deadline_off();
   reset_mid_commit_at_six_stages();
   reset_of_the_port_alone_mid_commit();
+  a_paused_or_latched_cycle_is_never_charged();
   a_short_command_is_a_device_error();
   every_operation_got_what_it_was_owed();
 
