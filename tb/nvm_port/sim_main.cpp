@@ -168,6 +168,11 @@ struct Harness {
   bool gnt_done_on_erase = false;         // arm the backend to answer that way
   bool gnt_done_now = false;              // this grant carries the completion
   int  gnt_done_pairs = 0;                // grant+done cycles presented
+  // ...and a grant that carries an err: the backend takes the command and
+  // fails it at once, which ends it as surely as a done (T24's late grant)
+  bool gnt_err_with_grant = false;        // arm: the next grant carries an err
+  bool gnt_err_now = false;               // this grant carries the err
+  int  gnt_err_pairs = 0;                 // grant+err cycles presented
 
   // ---- completion riding a pump's final byte ----
   // The coincidence the sticky `done_seen_r` exists for, and the one the eight
@@ -468,7 +473,9 @@ struct Harness {
       if (!dut->dev_req_o) ++late_gnts;
       cmd_orphan = !dut->dev_req_o;
       const bool done_rode_the_grant = gnt_done_now;
+      const bool err_rode_the_grant = gnt_err_now;
       gnt_done_now = false;
+      gnt_err_now = false;
       d_cur = d_pend;
       ops.push_back(d_cur);
       d_busy = true; d_bytes = 0; d_stall = 0; d_rhold = false;
@@ -484,7 +491,11 @@ struct Harness {
       wshort_cur = (wshort_after >= 0 && d_cur.op == OP_WRITE);
       if (wshort_cur) { wshort_n = wshort_after; wshort_after = -1; }
       ++ops_since_arm;
-      if (silent_model) {
+      if (err_rode_the_grant) {
+        d_busy = false; d_st = 0;                 // taken and failed on one edge
+        ++dev_errs;
+        if (!cmd_orphan) ++dev_errs_own;
+      } else if (silent_model) {
         silent_cmd = true; d_st = 3;              // granted, then nothing more
       } else if (done_rode_the_grant && d_cur.op != OP_ERASE) {
         d_busy = false; d_st = 0;                 // ended on its grant, no byte moved
@@ -538,6 +549,8 @@ struct Harness {
         } else if (gnt_done_on_data && int(dut->dev_op_o) != OP_ERASE) {
           // a READ or WRITE ended on its own grant: zero bytes, a short command
           d_done = true; gnt_done_now = true; ++gnt_done_pairs; gnt_done_on_data = false;
+        } else if (gnt_err_with_grant) {
+          d_err = true; gnt_err_now = true; ++gnt_err_pairs; gnt_err_with_grant = false;
         }
       }
     }
@@ -739,6 +752,7 @@ struct Harness {
     fail_cur = false; short_cur = false; gnt_err = false; short_after = -1;
     wshort_cur = false; wshort_after = -1; gnt_done_on_data = false;
     unsol_after_ops = -1; gnt_done_on_erase = false; gnt_done_now = false;
+    gnt_err_with_grant = false; gnt_err_now = false;
     busy_never = false; stray_every = 0;
     m_mode = 0; m_stall = 0;
     sil_at = SIL_NONE; sil_cmd = false; sil_block = false; sil_never_done = false;
@@ -758,7 +772,7 @@ struct Harness {
     // `commit`/`restore` clear here on the way in.
     unsol_dones = 0; unsol_ops = -1; unsol_mgr = -1; unsol_req = false;
     req_while_owed = 0; pulse_while_owed = 0; fwd_while_owed = 0;
-    gnt_done_pairs = 0; coinc_dones = 0;
+    gnt_done_pairs = 0; gnt_err_pairs = 0; coinc_dones = 0;
     short_in_op = false; pulse_cyc = -1; pulse_gap = -1; late_gnts = 0;
     pulse_held = -1; held_since_evt = 0;
     dev_errs_own = 0;
@@ -872,6 +886,7 @@ class NvmPortSuite {
   int  silenced(bool commit, const std::vector<uint8_t>& f, int point, int at_op,
                 int quiet, int byte = 0);
   void the_deadline_refuses_a_silent_device();
+  void late_grants_that_leave_nothing_owed(const std::vector<uint8_t>& rec);
   void the_deadline_never_refuses_a_slow_device();
   void the_next_request_after_a_deadline();
   void an_abandoned_write_is_contained();
@@ -1914,8 +1929,15 @@ void NvmPortSuite::the_deadline_refuses_a_silent_device() {
           a.state, rc, rc2);
   }
 
-  // the late registered grant whose terminal rides it (T21's rule): nothing
-  // is owed, so the next commit's ERASE is requested at once
+  late_grants_that_leave_nothing_owed(rec);
+  h.deadline_ok = false;
+}
+
+// The late registered grant that leaves nothing owed (T24, after its twelve
+// states). One whose terminal rides it, a done (T21's rule) or an err, ends the
+// command on the edge that takes it, so the next commit's ERASE is requested at
+// once; and a request withdrawn before the backend decided is never granted.
+void NvmPortSuite::late_grants_that_leave_nothing_owed(const std::vector<uint8_t>& rec) {
   h.gnt_done_on_erase = true;
   int rc = silenced(true, rec, SIL_GNT, 0, TMO + 1);
   h.gnt_done_on_erase = false;
@@ -1927,6 +1949,18 @@ void NvmPortSuite::the_deadline_refuses_a_silent_device() {
   CHECK(rc == 0 && h.sent == rec && h.ops.size() == 2,
         "T24 nothing was owed after a late grant that carried its done: the next "
         "commit is served (rc %d)", rc);
+  // ...and one that carries an err: the command ended as it was taken
+  h.gnt_err_with_grant = true;
+  rc = silenced(true, rec, SIL_GNT, 0, TMO + 1);
+  h.gnt_err_with_grant = false;
+  CHECK(rc == 1 && h.last_cause == 3 && h.late_gnts == 1 && h.gnt_err_pairs == 1,
+        "T24 a late grant carrying an err: DEADLINE, the grant taken late with its "
+        "err (rc %d, late %d, pairs %d)", rc, h.late_gnts, h.gnt_err_pairs);
+  h.ops.clear();
+  rc = h.commit(2, rec);
+  CHECK(rc == 0 && h.sent == rec && h.ops.size() == 2,
+        "T24 nothing was owed after a late grant that carried an err: the next "
+        "commit is served (rc %d)", rc);
 
   // a request withdrawn before the backend decided: no late grant, nothing owed
   rc = silenced(false, rec, SIL_GNT, 0, TMO + 2);
@@ -1935,7 +1969,6 @@ void NvmPortSuite::the_deadline_refuses_a_silent_device() {
         "(rc %d, late %d, ops %zu)", rc, h.late_gnts, h.ops.size());
   rc = h.restore(2);
   CHECK(rc == 0 && h.rbytes == rec, "T24 ...and the next restore is served at once");
-  h.deadline_ok = false;
 }
 
 // A slow device is not a silent one: the deadline counts the cycles the device

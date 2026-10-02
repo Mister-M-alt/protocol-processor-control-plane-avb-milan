@@ -18,7 +18,8 @@ rather than inside it, as the pre-fix matrix's forms do.
   * the coincident model at TMO = 4096, with T6 as it is and as round 2 had it:
     the Makefile's TMO is edited, so `make primary` builds the suite there;
   * the owed READ's drain bounded by what the READ still owes (D27-D30), the
-    unbounded drain on the randomized harness too.
+    unbounded drain on the randomized harness too;
+  * a late grant whose err rides it made owed anyway (D31, R437-1's X20).
 
 It reads no RTL and runs no build; the figures gate imports it.
 """
@@ -106,6 +107,10 @@ _UNCOUNTED = [("    else if (drain_w && dev_rvalid_i) owed_left_r <= owed_left_r
 _RETAKEN = [("    else if (dl_w && !owed_r)         owed_left_r <= left_w;",
              "    else if (dl_w)                    owed_left_r <= left_w;")]
 
+#: R437-1's X20: a late grant whose err rides it made owed anyway (D31).
+_LATE_ERR_OWED = [("      end else if (lg_r && dev_gnt_i && !dev_done_i && !dev_err_i) begin",
+                   "      end else if (lg_r && dev_gnt_i && !dev_done_i) begin")]
+
 #: The round-2 T6, its poke a fixed 2 * TMO / 5 cycles after the accept, which
 #: under the coincident model fell after the commit had ended from TMO = 500 up.
 _T6_TIMED = ("  for (long i = 0; i < kOpTimeoutCycles && !(h.ops.size() == 1 && h.d_busy); ++i) h.tick();\n"
@@ -147,4 +152,6 @@ def deadline_rows(rtl: Path, sim: Path, mk: Path,
         ("D30", r"\*\*D30\*\*.*?\*\*fails (\d+) of", on_rtl(_RETAKEN)),
         ("D27/fuzz", r"D27 under the randomized harness at bound 3 \*\*fails (\d+) of",
          fuzz_at_3 + on_rtl(_UNBOUNDED)),
+        # the late grant that carries an err
+        ("D31", r"\*\*D31\*\*.*?\*\*fails (\d+) of", on_rtl(_LATE_ERR_OWED)),
     ]
