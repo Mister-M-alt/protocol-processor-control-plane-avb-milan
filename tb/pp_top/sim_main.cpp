@@ -878,6 +878,28 @@ struct H {
   static const uint32_t CTR_MASK_AAF = 0x00000FFFu;
   static const uint32_t CTR_MASK_CRF = 0x00000F3Fu;
   static const uint32_t CTR_MASK_SOUT = 0x0000001Fu;
+  // AVB_INTERFACE 0 and CLOCK_DOMAIN 0 are LIVE, kept the way the integrator
+  // guide section 7.1 asks (Milan v1.2 Tables 5.1, 5.7, 5.13, 5.15), from the
+  // inputs this harness itself drives: LINK_UP / LINK_DOWN count the edges of
+  // link_up_i, GPTP_GM_CHANGED the gm_change_i strobes that publish a
+  // different gm_id_i (a domain-only strobe counts nothing), LOCKED /
+  // UNLOCKED the edges of a media-lock level the processor never sees. Each
+  // edge detector resets inactive, so every pair keeps its invariant by
+  // construction, and all of them reset with the harness's reset.
+  static const uint32_t CTR_MASK_AVB = 0x00000023u;
+  static const uint32_t CTR_MASK_CKD = 0x00000003u;
+  struct ItfCounters {
+    uint32_t link_up = 0;
+    uint32_t link_down = 0;
+    uint32_t gm_changed = 0;
+    uint32_t locked = 0;
+    uint32_t unlocked = 0;
+    bool link_q = false;
+    bool lock_q = false;
+    uint64_t gm_q = 0;                         // the identity in force
+  };
+  ItfCounters itf;
+  bool mclk_locked = false;    // the integrator's own media-clock lock level
   int  ctr_hold = 2;          // cycles the store makes the engine wait
   bool ctr_stuck = false;     // a face that never answers at all
   int  ctr_hold_cur = 0;
@@ -888,17 +910,33 @@ struct H {
   //! index MOVING under that back-pressure, because then a held beat writes
   //! the wrong quadlet
   std::vector<uint8_t> ctr_seq;
-  static uint32_t ctr_mask(uint16_t ty, uint16_t ix) {
+  uint32_t ctr_mask(uint16_t ty, uint16_t ix) const {
     if (ty == 0x0005 && ix == 0) return CTR_MASK_AAF;
     if (ty == 0x0005 && ix == 1) return CTR_MASK_CRF;
     if (ty == 0x0006 && ix <= 1) return CTR_MASK_SOUT;
+    if (ty == 0x0009 && ix == 0) return CTR_MASK_AVB;
+    if (ty == 0x0024 && ix == 0) return CTR_MASK_CKD;
     return 0;
   }
-  static uint32_t ctr_value(uint16_t ty, uint16_t ix, uint8_t w) {
+  uint32_t ctr_value(uint16_t ty, uint16_t ix, uint8_t w) const {
     uint32_t m = ctr_mask(ty, ix);
     if (w == 32) return m;
     if (w > 31 || !((m >> w) & 1u)) return 0;
+    if (ty == 0x0009) return w == 0 ? itf.link_up : w == 1 ? itf.link_down : itf.gm_changed;
+    if (ty == 0x0024) return w == 0 ? itf.locked : itf.unlocked;
     return 0xC0000000u | (uint32_t(ty) << 16) | (uint32_t(ix) << 8) | w;
+  }
+  //! the integrator counting its own inputs to the processor, once per clock
+  void count_interface_events() {
+    const bool link = d->link_up_i != 0;
+    if (link != itf.link_q) ++(link ? itf.link_up : itf.link_down);
+    itf.link_q = link;
+    if (d->gm_change_i) {
+      if (d->gm_id_i != itf.gm_q) ++itf.gm_changed;
+      itf.gm_q = d->gm_id_i;
+    }
+    if (mclk_locked != itf.lock_q) ++(mclk_locked ? itf.locked : itf.unlocked);
+    itf.lock_q = mclk_locked;
   }
 
   // ---- the GET_AUDIO_MAP store (06 §6.5): what a port's dynamic mappings
@@ -1347,6 +1385,7 @@ struct H {
   // reading the eight it shares the cycle with.
   // -------------------------------------------------------------------------
   void step() {
+    count_interface_events();
     d->clk_i = 0; d->eval();
 
     capture_mac_tx();
@@ -1877,6 +1916,9 @@ struct H {
     d->identify_button_i = 0;
     d->entity_enable_i = 0; d->link_up_i = 0; d->gm_change_i = 0;
     d->gm_id_i = GM0; d->gptp_domain_i = DOM0;
+    itf = ItfCounters{};
+    itf.gm_q = GM0;
+    mclk_locked = false;
     d->p2p_i = 1; d->cfg_rank_i = 1;
     d->cfg_acc_lat_ns_i = ACC_LAT; d->port_rate_bps_i = RATE;
     d->cfg_tspec_max_frame_i = 1024;
@@ -3618,13 +3660,13 @@ struct CountersPhase {
   //! the model's own §7.4.42.2 payload: descriptor_type, descriptor_index,
   //! counters_valid, then THIRTY-TWO quadlets, built from the store the
   //! harness plays — never from anything the DUT emitted
-  static std::vector<uint8_t> ctr_expect_pl(uint16_t ty, uint16_t ix) {
+  std::vector<uint8_t> ctr_expect_pl(uint16_t ty, uint16_t ix) const {
       std::vector<uint8_t> p(136, 0);
       putbe(&p[0], ty, 2);
       putbe(&p[2], ix, 2);
-      putbe(&p[4], H::ctr_mask(ty, ix), 4);
+      putbe(&p[4], h.ctr_mask(ty, ix), 4);
       for (int n = 0; n < 32; ++n)
-        putbe(&p[8 + 4 * n], H::ctr_value(ty, ix, uint8_t(n)), 4);
+        putbe(&p[8 + 4 * n], h.ctr_value(ty, ix, uint8_t(n)), 4);
       return p;
   }
   static std::vector<uint8_t> expect(uint8_t status, uint16_t op, uint16_t seq,
@@ -3743,19 +3785,24 @@ struct CountersPhase {
     }
   }
 
-  // ...while the OTHER two supported types keep their old answers - this
-  // TB's face backs only STREAM_INPUT, so both come back SUCCESS with an
-  // empty mask over a real, located object (the parent's [CTRS2] proves
-  // the real masks)
+  // ...and so are the OTHER two: the store keeps AVB_INTERFACE 0 (Milan
+  // Table 5.13, mask 0x23) and CLOCK_DOMAIN 0 (Table 5.15, mask 0x03) live,
+  // from the link_up_i and gm_change_i it drives, as the integrator guide
+  // section 7.1 asks; the fresh-model half of this section (K9 to K16)
+  // moves them and grades the counts, the invariants and the push
   void k4cd_the_other_supported_types_keep_their_answers() {
     auto got = cmd(AEM_GET_COUNTERS, ctr_pl(0x0009, 0), 0xD00C);
     auto want = expect(AECP_SUCCESS, AEM_GET_COUNTERS, 0xD00C,
                        ctr_expect_pl(0x0009, 0));
-    CHECK(got == want, "K4c: AVB_INTERFACE 0 stays SUCCESS (empty here)");
+    CHECK(got == want && valid_mask_of(got) == H::CTR_MASK_AVB,
+          "K4c: AVB_INTERFACE 0 carries the store's 0x23 block byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
     got = cmd(AEM_GET_COUNTERS, ctr_pl(0x0024, 0), 0xD00D);
     want = expect(AECP_SUCCESS, AEM_GET_COUNTERS, 0xD00D,
                   ctr_expect_pl(0x0024, 0));
-    CHECK(got == want, "K4d: CLOCK_DOMAIN 0 stays SUCCESS (empty here)");
+    CHECK(got == want && valid_mask_of(got) == H::CTR_MASK_CKD,
+          "K4d: CLOCK_DOMAIN 0 carries the store's 0x03 block byte-exact");
+    if (!got.empty() && got != want) { dump("got ", got); dump("want", want); }
   }
 
   // ---- K4e: a NONEXISTENT index refuses NO_SUCH_DESCRIPTOR --------------
@@ -4582,12 +4629,13 @@ struct UnsolicitedPhase {
       memcpy(&p[8], text, n);
       return p;
   }
-  static std::vector<uint8_t> counter_body(uint16_t ty, uint16_t ix) {
+  //! the counter store's own answer for one object, as `store` holds it now
+  static std::vector<uint8_t> counter_body(const H& store, uint16_t ty, uint16_t ix) {
       std::vector<uint8_t> b(136, 0);
       putbe(&b[0], ty, 2); putbe(&b[2], ix, 2);
-      putbe(&b[4], H::ctr_mask(ty, ix), 4);
+      putbe(&b[4], store.ctr_mask(ty, ix), 4);
       for (int n = 0; n < 32; ++n)
-        putbe(&b[8 + 4 * n], H::ctr_value(ty, ix, uint8_t(n)), 4);
+        putbe(&b[8 + 4 * n], store.ctr_value(ty, ix, uint8_t(n)), 4);
       return b;
   }
   void pulse_counter() {
@@ -4814,7 +4862,7 @@ struct UnsolicitedPhase {
   // ---- U9: GET_COUNTERS notifications are limited independently for
   //          each descriptor to no more than one emission per second
   void u9_counter_notifications_are_throttled_per_descriptor() {
-    auto ctr_body = counter_body(0x0005, 0);
+    auto ctr_body = counter_body(h, 0x0005, 0);
     h.q_aecp.clear();
     pulse_counter();
     auto ctr1 = h.wait_any(h.q_aecp, 800);
@@ -5622,13 +5670,8 @@ struct DynamicInfoBatch : ReadSideTools {
       // The shared fixture keeps input 0 bound to an absent talker, PASSIVE.
       return StreamInfoPhase::gsi_body(ty, ix, known, ix == 0 ? 0x20 : 0);
   }
-  static std::vector<uint8_t> ctr_body(uint16_t ty, uint16_t ix) {
-      std::vector<uint8_t> b(136, 0);
-      putbe(&b[0], ty, 2); putbe(&b[2], ix, 2);
-      putbe(&b[4], H::ctr_mask(ty, ix), 4);
-      for (int n = 0; n < 32; ++n)
-        putbe(&b[8 + 4 * n], H::ctr_value(ty, ix, uint8_t(n)), 4);
-      return b;
+  std::vector<uint8_t> ctr_body(uint16_t ty, uint16_t ix) const {
+      return UnsolicitedPhase::counter_body(h, ty, ix);
   }
   static std::vector<uint8_t> rate_body(uint16_t ty, uint16_t ix,
                                         uint32_t rate) {
@@ -13561,6 +13604,7 @@ struct HazardPhase {
 }
 
 #include "notify_phases.hpp"
+#include "counters_phases.hpp"
 
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
@@ -13600,13 +13644,14 @@ int main(int argc, char** argv) {
                          && std::strcmp(argv[1], "--aecp-dispatch-only") == 0;
   const bool dl_only = argc == 2 && std::strcmp(argv[1], "--deadline-only") == 0;
   const bool hz_only = argc == 2 && std::strcmp(argv[1], "--hazards-only") == 0;
+  const bool ctr_only = argc == 2 && std::strcmp(argv[1], "--counters-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
   }
   const bool one_section = gsi_only || name_only || d3_only || acmp_only || adp_only
                            || maap_only || aecp_only || dl_only || hz_only
-                           || ident_only || notify_only;
+                           || ident_only || notify_only || ctr_only;
   if (maap_only) run_maap_internal(h);
   if (!one_section) Suite(h).run();
   if (aecp_only) run_aecp_dispatch_focus(h);
@@ -13622,6 +13667,7 @@ int main(int argc, char** argv) {
   if (!one_section || notify_only) run_pushes(h);
   if (!one_section || notify_only) run_storm(h);
   if (!one_section || notify_only) run_rnd(h);
+  if (!one_section || ctr_only) run_counters(h);
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's five

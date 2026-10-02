@@ -324,8 +324,8 @@ ever be owed.
 |---|---|---|
 | `READ_AS_PATH` | interface idx, entry idx | {path_count, path_sequence[idx]} — iterated by the GET_AS_PATH µprogram |
 
-Events: `GM_CHANGE{interface}` (drives ADP re-advertise + GPTP_GM_CHANGED counter +
-GET_AVB_INFO notification), `AS_CAPABLE_CHANGE{interface}`,
+Events: `GM_CHANGE{interface}` (drives ADP re-advertise + GET_AVB_INFO notification;
+GPTP_GM_CHANGED is the integrator's counter, §4.6), `AS_CAPABLE_CHANGE{interface}`,
 `PATH_CHANGE{interface}`. Class-D: GM id, domain, propagation delay, asCapable.
 
 ### 4.4 `avtp` — streaming engine control
@@ -423,8 +423,8 @@ Event catalog (routed by the event router to the listed consumers):
 
 | Event | Source | Consumers |
 |---|---|---|
-| `LINK_UP/DOWN{if}` | MAC/PHY (2FF sync) | ADP advertise SM, counters, SRP domain re-declare |
-| `GM_CHANGE{if}` | gptp | ADP advertise SM, counters, NOTIF (GET_AVB_INFO) |
+| `LINK_UP/DOWN{if}` | MAC/PHY (2FF sync) | ADP advertise SM, SRP domain re-declare, NOTIF (GET_AVB_INFO) |
+| `GM_CHANGE{if}` | gptp | ADP advertise SM, NOTIF (GET_AVB_INFO) |
 | `AS_CAPABLE_CHANGE{if}` / `PATH_CHANGE{if}` | gptp | NOTIF (GET_AVB_INFO / GET_AS_PATH) |
 | `TK_ATTR_REGISTERED/UNREGISTERED{sink}` | srp | ACMP listener SM (`EVT_TK_REGISTERED/UNREGISTERED`) |
 | `TK_FAILURE_CHANGE{sink}` | srp | NOTIF (GET_STREAM_INFO) only, wired directly and NOT routed: never the ACMP listener, never a Listener re-declaration ([10 §6.4](10_srp_engine.md)) |
@@ -447,7 +447,7 @@ internal are consumed inside the processor and add no top-level ports.
 
 | Signal (per instance) | Width | Source | Sample rule | Consumed by |
 |---|---|---|---|---|
-| `link_up[if]` | 1 | MAC/PHY | 2FF sync + event on edge | ADP SM, counters, GET_AVB_INFO |
+| `link_up[if]` | 1 | MAC/PHY | 2FF sync + event on edge | ADP SM, SRP Domain, GET_AVB_INFO notification (the integrator's LINK_UP/LINK_DOWN count the same level, §4.6) |
 | `gm_id[if]` | 64 | gptp | stable between GM_CHANGE events | ADPDU, GET_AVB_INFO, discovery-SM match |
 | `gptp_domain[if]` | 8 | gptp | idem | ADPDU, GET_AVB_INFO, discovery-SM match |
 | `as_capable[if]` | 1 | gptp | level + change event | GET_AVB_INFO + notification |
