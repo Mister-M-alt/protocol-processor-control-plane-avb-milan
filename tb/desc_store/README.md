@@ -129,8 +129,10 @@ Planted defects (round 2, 2026-10-02): the two round-1 reviews planted 22
 and 32 textual defects in the lint and the packer, one per disposable copy,
 47 distinct. 12 distinct ones survived the round-1 gate. Round 2 planted 46 of
 them again on its own code; the 47th, L2 restricted to CONTROL, is now the
-rule. With 8 more beside the rules round 2 rewrote, that is 54 plants, and the
-gate kills every one. Each survivor now fails a named test:
+rule. With 14 more on the arms round 2 rewrote or added (its CRF, ownership,
+order, per-port, digest, extent, IDENTIFY-format, waiver-typing, overlap,
+digest-map and import-by-path arms), that is 60 plants, and the gate kills
+every one. Each survivor now fails a named test:
 
 | Survivor | Fails |
 |---|---|
