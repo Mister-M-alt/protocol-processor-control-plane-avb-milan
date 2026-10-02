@@ -116,6 +116,13 @@ MUTANTS = [
      "the 584-byte descriptor, byte-exact"),
     ("rb-rounded-buffer-no-page-cap", "rb-rounded-buffer-no-page-cap", "aecp-line",
      "RB no response byte written at or past RESP_BASE_P + 16 + DESC_LINE_BYTES_P"),
+    # issue #141: SET_CLOCK_SOURCE's range check over a ten-source domain,
+    # graded on a fresh model in section D3C (the d3 target): the bound fixed
+    # at the suite list's three, and the bound made inclusive
+    ("sclks-bound-three", "sclks-bound-three", "d3",
+     "D3C1: SET_CLOCK_SOURCE(9) over the ten-source domain answers SUCCESS"),
+    ("sclks-bound-inclusive", "sclks-bound-inclusive", "d3",
+     "D3C2: SET_CLOCK_SOURCE(10), the count, answers BAD_ARGUMENTS"),
 ]
 
 #: the scratch tree: the RTL and the two bench directories the targets build
@@ -124,7 +131,7 @@ TREES = (("hdl",), ("tb", "common"), ("tb", "pp_top"))
 GENERATED = ("obj_dir", "obj_vid", "obj_line", "ucode.hex", "ltn_rom.hex")
 #: what each target prints once it has run to its end
 COMPLETE = {"aecp-dispatch": "[build default,", "aecp-line": "[build line,",
-            "line-guards": "line guards: "}
+            "line-guards": "line guards: ", "d3": "[build default,"}
 
 
 def run(tree: Path, target: str, verilator: str, log: Path) -> tuple[int, str]:

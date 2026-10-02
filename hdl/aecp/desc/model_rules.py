@@ -171,7 +171,7 @@ CHECKS = {
     "domain-source-offset": ("L6", IEEE + "§7.2.32; 06 §6.4", "clock_sources_offset 76"),
     "domain-source-count": ("L6", MILAN + "§5.3.3.6", "at least one CLOCK_SOURCE per CLOCK_DOMAIN"),
     "domain-source-length": ("L6", IEEE + "§7.2.32", "CLOCK_DOMAIN length 76 + 2 x count"),
-    "domain-source-identity": ("L6", IEEE + "§7.4.23.1; 06 §6.4",
+    "domain-source-identity": ("L6", IEEE + "§7.2.32; 06 §6.4",
                                "clock_sources is the identity list 0..count-1"),
     "domain-source-exists": ("L6", IEEE + "§7.2.32", "clock_sources names existing CLOCK_SOURCEs"),
     "crf-input-source": ("L6", MILAN + "§5.3.3.6", "exactly one INPUT_STREAM source per CRF input"),

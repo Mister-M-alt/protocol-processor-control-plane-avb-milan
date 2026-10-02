@@ -1655,11 +1655,12 @@ place(E_SSRWALK, ssrwalk)
 # index is accepted only when clock_source_index < the located domain's
 # clock_sources_count: the generators emit the list as the identity
 # permutation (avdecc/aem_descriptors.py d_clock_domain), so the bound IS
-# the membership test §7.4.23.1 asks for. Anything else is BAD_ARGUMENTS
-# carrying the CURRENT index - the one a GET would read - with nothing
-# stored, marked or notified. Before this an index no descriptor backed was
-# stored, read back and announced while the media plane resolved it to
-# INTERNAL. The count sits mid-lane, hence SHIFT_R + a FMT_W MOVE.
+# the membership test of IEEE 1722.1-2021 §7.2.32 (clock_sources, the
+# indices clock_source_index may be set to). Anything else is BAD_ARGUMENTS
+# (Table 7-141) carrying the CURRENT index - the one a GET would read - with
+# nothing stored, marked or notified. Before this an index no descriptor
+# backed was stored, read back and announced while the media plane resolved
+# it to INTERNAL. The count sits mid-lane, hence SHIFT_R + a FMT_W MOVE.
 #
 # Every refusal shares one tail: r6 carries the current index, preloaded with
 # 0 so the NO_SUCH_DESCRIPTOR arm (no domain, no current value) answers zero
