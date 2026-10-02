@@ -29,7 +29,10 @@ buffer, so the harness is two independent models — never DUT logic:
    §5.3.3.4 requires. The disagreement is the point. The store takes every
    length from the index map and never reads a descriptor's interior, so this
    is the one image here whose `formats_offset` contradicts the length its
-   index map declares. See the header of `example_milan_8.json`.
+   index map declares. See the header of `example_milan_8.json`. Because it is
+   not a Milan model, `image.bin` is packed with the semantic lint off
+   (`--no-lint`); the lint's positive case is `milan_min.json`, which the
+   generator gate below packs.
 
 ## What it proves
 
@@ -56,13 +59,52 @@ buffer, so the harness is two independent models — never DUT logic:
 the "no bridge at all" arm runs in a few hundred clocks instead of tens of
 thousands; the default is 4096 (41 µs at P-CLK-HZ), far inside `T-AECP-RESP`.
 
-## Generator body/key agreement
+## Generator self-test gate
 
 `make` runs `generator-check` before the RTL suite; the repository's
 `scripts/run_suites.sh` therefore gates it too. Run just these probes with
 `make -C tb/desc_store generator-check` from the repository root.
 
-`test_gen_desc_image.py` exercises both `build()` and the command-line packer:
+`test_gen_desc_image.py` drives only `build()` and the command-line packer. It
+holds four groups: body/key agreement (below), the layout refusals, the
+semantic model lint, and its waivers, ADP report and digest.
+
+### The semantic model lint (issues #38, #39, #60, #89)
+
+The packer lints the model by default (`hdl/aecp/desc/model_lint.py`, with the
+rules L1 to L11 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's evidence map is
+[09 §8.4](../../docs/architecture/09_verification.md#84-the-descriptor-model-lint-issues-38-39-60-89):
+
+- `milan_min.json` packs with every check on, and its digest equals the one
+  recorded in `model_ids.json`.
+- Each of the 56 named mutations in `lint_mutations.py` is refused with its
+  rule and check. The same mutated bytes pack with the lint off, so every
+  refusal counted is the lint's. Every one of the 53 checks has at least one
+  mutation, and a test holds that set equal to `model_lint.CHECKS`.
+- The layout refusals each have one negative case on `milan_min.json`: an
+  index gap, a duplicate key, a mixed named and unnamed run, an ENTITY at
+  index 1, a configuration gap.
+- Waivers: a waiver applies and is reported. Without it the L1 refusal comes
+  back. On a fixed model, or past the descriptors, it is refused as stale. It
+  excuses no other check and no other scope. Seven malformed waivers are each
+  refused.
+- The ADP values and the digest: driven values that agree pass. The §6.2.2.8
+  exclusions leave the digest unchanged.
+- The command line: the positive model with every check, and a refusal that
+  exits 1 and writes nothing.
+
+Mutation proof (2026-10-02): each of the 53 checks was suppressed in turn.
+Only that check's findings were dropped, by replacing the lint's finding
+recorder in the test process; no file changed.
+
+| Probe | Result |
+|---|---|
+| Control: nothing suppressed | `test_mutations` and `WaiverTest` pass |
+| Each check suppressed alone | 53 of 53 checks make `test_mutations` fail. `WaiverTest` fails as well for `port-cluster-minimum` (4 tests), `has-parent`, `cluster-channels` and `talker-base-format` (1 each) |
+
+### Body/key agreement
+
+The body/key probes:
 
 | Probe | `fields` | `bytes` |
 |---|---|---|
