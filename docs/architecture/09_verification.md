@@ -212,7 +212,7 @@ at the lane head; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
 D3C2 run from `tb/pp_top/aecp_dispatch_mutants.py` (its `d3` target). The name and map stages add their groups' controls when they land. The top-level
 device model misbehaves on the handshake for the walks (late grant, silent header, late
 or erroring descriptor memory), which grades the walks' deadlines; the port's own
-deadline, resets and handshake models are §8.5's.
+deadline, resets and handshake models are §8.6's.
 
 ### 8.3 The AECP deadline and the hazard classes (issues #81, #57, #84)
 
@@ -292,7 +292,35 @@ the originator's unit suite and one of the notification block's:
 The mutation records are in the two suites' READMEs; `tb/pp_top/notify_mutants.py`
 plants the pp_top controls.
 
-### 8.5 The NVM port: its deadline, resets and handshake models (issues #15, #18, #19, #20, #21)
+### 8.5 The descriptor model lint (issues #38, #39, #60, #89)
+
+The packer's self-test gate is `tb/desc_store/test_gen_desc_image.py`. `make` in
+`tb/desc_store` runs it as `generator-check` before the RTL suite, so
+`./scripts/run_suites.sh` and the `hdl` workflow gate it. It drives only `build()` and
+the command line. The lint's negative cases are named mutations of the positive model
+`milan_min.json`, in `tb/desc_store/lint_mutations.py`. The rules and their checks are
+listed in [07 §3.1](07_memory_maps.md#model-lint).
+
+| Property | Checks |
+|---|---|
+| the positive model packs with the lint on and reports `entity_model_id_i`, `talker_sources_i`, `listener_sinks_i`, `identify_index_i` and the recorded digest | `LintTest.test_milan_min_packs` |
+| every check of `model_lint.CHECKS` has a mutation: one negative image per refusal | `LintTest.test_every_check_has_a_mutation` |
+| each mutation is refused with its rule and check, on the arm its `detail` names where a check has several, and the same bytes pack with the lint off, so the refusal is the lint's and not a layout refusal (L1 to L12, 89 mutations; L9's 0 and all-ones, L8's index moving between two configurations, L11's two-configuration maximum, an ENTITY and a CONFIGURATION in configuration 1, each `descriptor-counts`, `stream-layout` (Table 7-8 and Annex C), `unique-mapping` and L2 arm, two INPUT_STREAM sources at a CRF input and one at each of two AAF inputs, an IDENTIFY outside the §7.3.5.2 format on each of its eight arms, a descriptor past its §7.2 extent or past 508 octets among them) | `LintTest.test_mutations` |
+| the caps accept their own value (46 formats, 8 sampling rates, a 508-octet descriptor, 8 Annex C redundant streams), a CRF input's source beside one at an AAF input packs, each fixed-size Milan-subset type and AUDIO_MAP's `mappings_offset` are held to §7.2 (L12), and a field past a descriptor's end is the finding of the rule that needs it | `LintTest.test_boundaries_pack`, `LintTest.test_fixed_extents`, `LintTest.test_short_descriptor` |
+| `example_milan_8.json` packs with the lint off, and is refused with it on (it is a layout vector, not a Milan model), though not for its Annex C streams | `LintTest.test_example_is_a_layout_vector`, `CommandLineTest.test_example_needs_no_lint` |
+| standard-conforming models pack: a Unit's and its Port's CONTROLs in §7.2's walk order, the CONTROL of a JACK, an AVB_INTERFACE, a CONTROL_BLOCK, a PTP_INSTANCE or a Unit's External Port and a Unit's SIGNAL_SELECTOR left out of the top-level counts, an IDENTIFY whose value type carries the r or the u flag, Stream Port cluster ranges in either order, a second AVB_INTERFACE that configuration 1 omits or that first appears in configuration 1, every stream in the Milan Annex C Table C.1 layout (R = 0), a redundant pair of Stream Outputs in it (R = 1), and a CLOCK_DOMAIN listing an INTERNAL source, the CRF input's INPUT_STREAM source and one INPUT_STREAM source per AAF input in the order INTERNAL 0, CRF 1, AAF input k at 2 + k (eight AAF inputs, ten sources; 07 §3.1 L6) | `ConformingModelTest` |
+| each layout refusal the packer had before the lint has a negative case: an index gap, a duplicate key, a mixed named and unnamed run, an ENTITY at index 1, a configuration gap | `LayoutRefusalTest` |
+| a waiver excuses one check on one scope and is listed in the report; removing it brings the L1 refusal back; on a fixed model, past the descriptors or in a configuration the model lacks, it is refused as stale; it excuses no other check, no other index, no other descriptor type and no other configuration (each of those findings is refused and the waiver is stale); each malformed waiver (a value of the wrong JSON type among them), a waiver sharing a descriptor with an earlier one of its check (wholly or in part), and a `lint_waivers` that is not a list, is refused | `WaiverTest` |
+| driven ADP values that agree pass; a check asked for with the lint off, or a malformed `adp` value or `model_ids` map, is refused with an `ImageError`; the §6.2.2.8 exclusions and the unit identity leave the digest unchanged, field by field against the clause (object_name in every Table 7-1 type that has one; the first and last octet of every fixed-offset field it names; every value family's current values in each type it names it for, and CONTROL's whole UTF8, SMPTE, sample-rate, gPTP and vendor values), while each neighbouring structural octet, and each value of a type or family the clause leaves out, moves it; a selector CONTROL's option change under a recorded digest is refused and its current change packs; `model_ids.json` is current | `IdentityTest` |
+| the command line: the positive model with every check; a refusal, a `--model-ids` file without `models` among them, exits 1 and writes nothing; loading the packer by path adds nothing to `sys.path` and registers no `model_lint` or `model_rules` module; both load through the packer's one guarded loader | `CommandLineTest` |
+
+Mutation record, 2026-10-02: each check was suppressed in turn (its findings dropped,
+nothing else changed), and the gate failed for each one: 53 of 53 killed in round 1,
+56 of 56 in rounds 2 and 3. The driver is `tb/desc_store/lint_suppression.py` (`make -C tb/desc_store lint-suppression`),
+which re-runs the record. The record, and the planted-defect campaigns the reviews
+ran in rounds 1 and 2, are in the [`tb/desc_store` README](../../tb/desc_store/README.md).
+
+### 8.6 The NVM port: its deadline, resets and handshake models (issues #15, #18, #19, #20, #21)
 
 `tb/nvm_port` grades the port against nine device models, four of which misbehave on the
 HANDSHAKE rather than on what the array retains, in three builds, at `MEM_TIMEOUT_CYC_P` =

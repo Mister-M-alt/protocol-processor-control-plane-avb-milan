@@ -35,7 +35,11 @@ INPUT FORMAT  (JSON; see example_milan_8.json)
       ] },
     { "configuration": 0, "type": "AUDIO_MAP", "index": 0,
       "bytes": "00170000..." }       // alternative: the whole descriptor as hex
-  ]
+  ],
+  "lint_waivers": [                  // optional; see model_lint.py
+    { "rule": "L1", "check": "port-cluster-minimum", "configuration": 0,
+      "type": "STREAM_PORT_INPUT", "first": 0, "last": 7,
+      "reason": "owner/repo#123: why, and where it is tracked" } ]
 }
 
 The assembled body must start with its directory key: a big-endian u16 type
@@ -92,14 +96,53 @@ OUTPUT IMAGE LAYOUT  (all multi-byte fields BIG-ENDIAN, the 1722.1 wire order)
   descriptors, then the name table (n_names x 64 bytes), 8-byte aligned.
 
 =============================================================================
+SEMANTIC LINT  (07 §3.1, rules L1 to L12; model_lint.py, model_rules.py)
+=============================================================================
+
+build() lints the model by default, after the layout checks above and before
+the image is rendered, and refuses a model that breaks a rule with an
+ImageError whose text starts with the rule and the check. `lint=False` (CLI
+`--no-lint`) is the explicit opt-out, for layout vectors and for deliberate
+negative cases another checker must name; the report then says
+"semantic lint: off". With the lint on, the report lists every applied
+waiver, the values the integrator drives on the ADP inputs and the model
+digest; `adp` and `model_ids` (CLI `--adp-*`, `--model-ids`) check a driven
+value and a recorded digest.
+
+=============================================================================
 USAGE
 =============================================================================
-  gen_desc_image.py -i example_milan_8.json -o image.bin [-m image.map]
+  gen_desc_image.py -i milan_min.json -o image.bin [-m image.map]
+                    [--model-ids model_ids.json] [--adp-entity-model-id ID]
+                    [--adp-talker-sources N] [--adp-listener-sinks N]
+                    [--adp-identify-index N]
+  gen_desc_image.py -i example_milan_8.json -o image.bin --no-lint
 """
 import argparse
+import importlib.util
 import json
+from pathlib import Path
+import re
 import sys
+from types import ModuleType
 from typing import Any
+
+
+def _beside(name: str) -> ModuleType:
+    """The module `name`.py beside this file, loaded by its path: the packer adds
+    nothing to a consumer's sys.path and shadows none of its modules. It is the
+    packer's one loader: it binds itself as the module's `beside` before running
+    it, so model_lint loads model_rules through it and both loads share its guard."""
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().with_name(f"{name}.py"))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"no {name}.py beside {__file__}")
+    module = importlib.util.module_from_spec(spec)
+    module.beside = _beside
+    spec.loader.exec_module(module)
+    return module
+
+
+model_lint = _beside("model_lint")
 
 # IEEE 1722.1-2021 Table 7-2 descriptor types (the ones 07 §3.1 names, plus the
 # handful a Milan PAAD may still carry).  A numeric type is always accepted.
@@ -431,8 +474,89 @@ def _render_report(entries, layout):
     return "\n".join(report) + "\n"
 
 
-def build(model: dict[str, Any], line_bytes: int = 576) -> tuple[bytes, str]:
-    """model (parsed JSON) -> (image bytes, human-readable map)."""
+#: The driven ADP input values build() can check, as `adp` keys; each is the
+#: name of the protocol_processor_top input without its `_i`.
+ADP_KEYS = ("entity_model_id", "talker_sources", "listener_sinks",
+            "identify_index")
+
+
+def _waiver_type(spec: Any) -> int:
+    """A waiver's descriptor type, refused as a ValueError the lint reports."""
+    try:
+        return _type_code(spec)
+    except ImageError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def _check_inputs(adp, model_ids):
+    """ImageError unless `adp` maps names to integers and `model_ids` maps a
+    hexadecimal entity_model_id to a SHA-256 hex digest: a malformed check is
+    refused like a malformed model, never raised as another exception."""
+    if adp is not None:
+        if not isinstance(adp, dict):
+            raise ImageError("adp is not an object of driven values")
+        for key, value in adp.items():
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ImageError(f"adp {key} {value!r} is not a non-negative integer")
+    if model_ids is None:
+        return
+    if not isinstance(model_ids, dict):
+        raise ImageError("model_ids is not an object of entity_model_id: digest")
+    for key, value in model_ids.items():
+        if not isinstance(key, str) or not re.fullmatch(r"(0[xX])?[0-9a-fA-F]{1,16}", key):
+            raise ImageError(f"model_ids key {key!r} is not a hexadecimal entity_model_id")
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+            raise ImageError(f"model_ids digest {value!r} for {key} is not a SHA-256 hex digest")
+
+
+def _model_ids_file(path):
+    """The 'models' object of a --model-ids file, or ImageError."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            recorded = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise ImageError(f"--model-ids {path}: {exc}") from exc
+    if not isinstance(recorded, dict) or "models" not in recorded:
+        raise ImageError(f"--model-ids {path}: no 'models' object")
+    return recorded["models"]
+
+
+def _lint_lines(groups, model, lint, checks):
+    """The semantic lint's report lines, or ImageError naming every refusal.
+
+    `checks` is (adp, model_ids). With the lint off they must be absent: a
+    caller asking for a check it has switched off has made a mistake.
+    """
+    adp, model_ids = checks
+    _check_inputs(adp, model_ids)
+    waivers = model.get("lint_waivers", [])
+    if not isinstance(waivers, list):
+        raise ImageError("lint_waivers is not a list")
+    if not lint:
+        if adp or model_ids is not None:
+            raise ImageError("adp and model_ids are lint checks; they need "
+                             "lint=True")
+        note = f" ({len(waivers)} lint waivers not evaluated)" if waivers else ""
+        return [f"semantic lint: off{note}"]
+    unknown = sorted(set(adp or {}) - set(ADP_KEYS))
+    if unknown:
+        raise ImageError(f"unknown adp keys {unknown}; known: {list(ADP_KEYS)}")
+    result = model_lint.lint(groups, waivers=waivers, adp=adp,
+                             model_ids=model_ids, type_code=_waiver_type)
+    if result.refusals:
+        raise ImageError("\n".join(result.refusals))
+    return result.report
+
+
+def build(model: dict[str, Any], line_bytes: int = 576, *, lint: bool = True,
+          adp: dict[str, int] | None = None,
+          model_ids: dict[str, str] | None = None) -> tuple[bytes, str]:
+    """model (parsed JSON) -> (image bytes, human-readable map).
+
+    The semantic lint (model_lint.py) runs unless `lint` is False. `adp`
+    checks driven ADP input values (ADP_KEYS) against the model, and
+    `model_ids` ({entity_model_id hex: digest}) the recorded digest.
+    """
     if model.get("format") != "kl-aem-image":
         raise ImageError("input is not a kl-aem-image document")
     if _u(model.get("version", 0)) != LAYOUT_VERSION:
@@ -444,14 +568,17 @@ def build(model: dict[str, Any], line_bytes: int = 576) -> tuple[bytes, str]:
         raise ImageError(f"the name table has {len(names)} entries; maximum "
                          f"is {NAME_NONE - 1}")
 
-    entries = _index_entries(_grouped_descriptors(model), names, line_bytes)
+    groups = _grouped_descriptors(model)
+    entries = _index_entries(groups, names, line_bytes)
 
     n_config = len({e["cfg"] for e in entries})
     if sorted({e["cfg"] for e in entries}) != list(range(n_config)):
         raise ImageError("configuration indices are not dense from 0")
 
+    lint_lines = _lint_lines(groups, model, lint, (adp, model_ids))
     img, layout = _render_image(entries, names, n_config)
-    return img, _render_report(entries, layout)
+    report = _render_report(entries, layout)
+    return img, report + "\n" + "\n".join(lint_lines) + "\n"
 
 
 def main() -> int:
@@ -464,11 +591,24 @@ def main() -> int:
     ap.add_argument("-m", "--map", help="human-readable layout report")
     ap.add_argument("--line-bytes", type=int, default=576,
                     help="store line-buffer size to validate against (576)")
+    ap.add_argument("--no-lint", action="store_true",
+                    help="skip the semantic lint (layout vectors and "
+                         "deliberate negative cases only)")
+    ap.add_argument("--model-ids", help="recorded digests: a JSON file whose "
+                                        "'models' maps entity_model_id to digest")
+    for key in ADP_KEYS:
+        ap.add_argument(f"--adp-{key.replace('_', '-')}", dest=key,
+                        type=lambda s: int(s, 0),
+                        help=f"the {key}_i value driven, to check")
     args = ap.parse_args()
     with open(args.input, encoding="utf-8") as fh:
         model = json.load(fh)
+    adp = {k: getattr(args, k) for k in ADP_KEYS
+           if getattr(args, k) is not None}
     try:
-        img, report = build(model, args.line_bytes)
+        model_ids = _model_ids_file(args.model_ids) if args.model_ids else None
+        img, report = build(model, args.line_bytes, lint=not args.no_lint,
+                            adp=adp or None, model_ids=model_ids)
     except ImageError as exc:
         print(f"gen_desc_image: {exc}", file=sys.stderr)
         return 1

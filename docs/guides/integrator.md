@@ -255,10 +255,11 @@ updated at runtime under the event contracts below.
 | SRP | `p2p_i`, `cfg_rank_i`, `cfg_acc_lat_ns_i[31:0]`, `port_rate_bps_i[31:0]`, `cfg_tspec_max_frame_i[15:0]` |
 | Talker sources | `cfg_src_en_i`, `cfg_src_iface_i`, `cfg_stream_id_i` |
 
-Drive `entity_model_id_i` from the same identity used in the ENTITY descriptor
-bytes. Zero and all-ones are invalid (Milan v1.2 §5.3.3.1, printed p. 25).
-A static-model change requires a new model identity, subject to
-IEEE 1722.1 §6.2.2.8's exclusions.
+Drive `entity_model_id_i` with the ENTITY descriptor's `entity_model_id`: the
+ADPDU and the descriptor carry the same field (IEEE 1722.1-2021 Table 7-2). Zero
+and all-ones are invalid (Milan v1.2 §5.3.3.1, printed p. 25, and §5.6.2). A
+static-model change requires a new model identity, subject to IEEE 1722.1 §6.2.2.8's
+exclusions.
 
 Drive `current_cfg_i` with the image's configuration, the ENTITY descriptor's
 `current_configuration`. It is the ADPDU's `current_configuration_index` while
@@ -271,16 +272,42 @@ restore roll-back. While the row is written the processor advertises the overlay
 read `current_cfg_i`. No loopback of `aecp_cur_config_o` is needed. Every other
 ADPDU field is independent of the configuration (Milan §5.6.2).
 
-Drive `talker_sources_i` and `listener_sinks_i` with the maximum respective
-STREAM_OUTPUT and STREAM_INPUT counts over every supported configuration
-(Milan §5.3.3.1). The ENTITY descriptor must carry those same values. Drive
-`identify_index_i` with the primary IDENTIFY CONTROL index present in every
-configuration (Milan §5.3.3.10).
+Drive `talker_sources_i` with the most STREAM_OUTPUT descriptors any supported
+configuration holds, and `listener_sinks_i` with the most STREAM_INPUT descriptors.
+The ENTITY descriptor's `talker_stream_sources` and `listener_stream_sinks` must
+carry those same maxima (Milan §5.3.3.1, §5.6.2). Drive `identify_index_i` with the
+primary IDENTIFY CONTROL index present in every configuration (Milan §5.3.3.10).
 
 These are integrator obligations, not properties proved by ADP transport. The
+descriptor packer checks the image side of each one, by default, with its
+[model lint](../architecture/07_memory_maps.md#model-lint):
+
+- It refuses an `entity_model_id` of zero or all-ones (L9), ENTITY stream counts
+  that are not the maxima over every configuration (L11), and a model with no
+  IDENTIFY CONTROL at one index in every configuration (L8).
+- Its layout report prints the four values to drive:
+
+  ```text
+  ADP inputs this model requires (Milan v1.2 §5.3.3.1, §5.6.2):
+    entity_model_id_i  0x020000FFFE00C801
+    talker_sources_i   1
+    listener_sinks_i   2
+    identify_index_i   0
+  ```
+
+- Pass the values you drive and it refuses any that disagree with the image:
+  `build(model, adp={"entity_model_id": ..., "talker_sources": ...,
+  "listener_sinks": ..., "identify_index": ...})`, or `--adp-entity-model-id`,
+  `--adp-talker-sources`, `--adp-listener-sinks` and `--adp-identify-index` on the
+  command line.
+- The report also prints the model digest (SHA-256, §6.2.2.8 exclusions zeroed).
+  Record it beside your `entity_model_id` and pass the record as `model_ids` /
+  `--model-ids`. A later change to the model's structure that keeps the id is then
+  refused.
+
+The processor drives none of these inputs itself. The
 [descriptor ownership contract](../architecture/07_memory_maps.md#31-descriptor-tree)
-identifies the parent shipping checks, the processor's current packer checks and
-the open validation obligations.
+identifies the parent shipping checks and what the processor's lint adds to them.
 
 The three per-source vectors `cfg_src_en_i`, `cfg_src_iface_i` and
 `cfg_stream_id_i` are **flat packed bit vectors**: index *s* occupies
