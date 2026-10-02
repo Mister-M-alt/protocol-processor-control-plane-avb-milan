@@ -289,16 +289,20 @@ class LintTest(unittest.TestCase):
 
     def test_boundaries_pack(self) -> None:
         """The caps accept their own value: 46 formats (IEEE 1722.1-2021 Table
-        7-8), 8 sampling rates (07 §3.1 L10); and a CRF input's source beside one
-        at an AAF input (Milan v1.2 §5.3.3.6 limits only the CRF input's)."""
-        formats, rates, sources = (normalised(MILAN_MIN) for _ in range(3))
+        7-8), 8 sampling rates (07 §3.1 L10), a 508-octet descriptor (§7.2, L12),
+        8 redundant streams in Annex C (Milan v1.2 Table C.1; which streams they
+        name is not linted); and a CRF input's source beside one at an AAF input
+        (Milan v1.2 §5.3.3.6 limits only the CRF input's)."""
+        formats, rates, sources, longest, redundant = (normalised(MILAN_MIN) for _ in range(5))
+        mut.annex_c(redundant, (mut.STREAM_OUTPUT, 0, 0), tuple(range(1, 9)))
         mut.set_formats(formats, (mut.STREAM_INPUT, 0, 0), [mut.BASE_IN] * 46)
         mut.set_rates(rates, [48000, 96000, 192000, 44100, 88200, 176400, 32000, 24000])
         source = mut.body(sources, mut.CLOCK_SOURCE, 1)
         struct.pack_into(">H", source, 84, 0)
         mut.add(sources, (mut.CLOCK_SOURCE, 2, 0), source)
         mut.set_sources(sources, [0, 1, 2])
-        for model in (formats, rates, sources):
+        mut.add(longest, (mut.CONTROL, 1, 0), mut.control(longest) + bytes(508 - 113))
+        for model in (formats, rates, sources, longest, redundant):
             self.assertIn("lint waivers applied: 0", gen_desc_image.build(model)[1])
 
     def test_fixed_extents(self) -> None:
@@ -353,6 +357,60 @@ class ConformingModelTest(unittest.TestCase):
         mut.add(model, (mut.JACK_INPUT, 0, 0), jack)
         mut.list_count(model, mut.JACK_INPUT, 1)
         mut.add(model, (mut.CONTROL, 1, 0), mut.control(model), top=False)
+        self.packs(model)
+
+    def test_other_control_owners(self) -> None:
+        """A CONTROL an AVB_INTERFACE (§7.2.8), a CONTROL_BLOCK (§7.2.33), a
+        PTP_INSTANCE (§7.2.35) or AUDIO_UNIT 0's External Port Input (§7.2.3,
+        §7.2.15) owns is not top-level: descriptor_counts still says one CONTROL
+        (R434-2 S1)."""
+        def _block(model: dict[str, Any]) -> None:
+            """CONTROL_BLOCK 0, counted at the top, owns CONTROL 1."""
+            block = bytearray(82)
+            struct.pack_into(">HH", block, 70, 1, 1)
+            mut.add(model, (0x0025, 0, 0), block)
+            mut.list_count(model, 0x0025, 1)
+
+        def _ptp(model: dict[str, Any]) -> None:
+            """PTP_INSTANCE 0, counted at the top, owns CONTROL 1."""
+            instance = bytearray(90)
+            struct.pack_into(">HH", instance, 82, 1, 1)
+            mut.add(model, (0x0027, 0, 0), instance)
+            mut.list_count(model, 0x0027, 1)
+
+        def _external(model: dict[str, Any]) -> None:
+            """AUDIO_UNIT 0 owns EXTERNAL_PORT_INPUT 0, which owns CONTROL 1."""
+            port = bytearray(24)
+            struct.pack_into(">HH", port, 8, 1, 1)
+            mut.add(model, (0x0010, 0, 0), port, top=False)
+            mut.put(model, (mut.AUDIO_UNIT, 0, 0), 80, 1)
+
+        owners = (("AVB_INTERFACE", lambda m: mut.own_controls(m, (mut.AVB_INTERFACE, 0), 98, 1)),
+                  ("CONTROL_BLOCK", _block), ("PTP_INSTANCE", _ptp),
+                  ("EXTERNAL_PORT_INPUT", _external))
+        for owner, edit in owners:
+            with self.subTest(owner=owner):
+                model = normalised(MILAN_MIN)
+                edit(model)
+                mut.add(model, (mut.CONTROL, 1, 0), mut.control(model), top=False)
+                self.packs(model)
+
+    def test_identify_value_type_flags(self) -> None:
+        """An IDENTIFY whose control_value_type carries the r or the u flag is
+        still CONTROL_LINEAR_UINT8: IEEE 1722.1-2021 §7.3.6.1 keeps value_type
+        in the low 14 bits (R435-2 F2, R434-2 S3)."""
+        for flag in (0x8000, 0x4000):
+            with self.subTest(flag=flag):
+                model = normalised(MILAN_MIN)
+                mut.put(model, (mut.CONTROL, 0, 0), 80, flag | 0x0001)
+                self.packs(model)
+
+    def test_interface_first_in_a_later_configuration(self) -> None:
+        """Configuration 1 adds AVB_INTERFACE 1 (port 2), which configuration 0
+        lacks: Milan v1.2 §5.3.3.5 binds an index to a physical port (R434-2 S1)."""
+        model = normalised(MILAN_MIN)
+        mut.second_configuration(model)
+        mut.second_interface(model, 1)
         self.packs(model)
 
     def test_unit_signal_selector_is_not_top_level(self) -> None:
@@ -538,6 +596,19 @@ class WaiverTest(unittest.TestCase):
                     "lint waiver 0 (L1 port-cluster-minimum: cfg 0 STREAM_PORT_INPUT 0); one "
                     "waiver per descriptor"])
 
+    def test_partly_overlapping_waivers_are_refused(self) -> None:
+        """Waivers of AUDIO_CLUSTER 1..2 and 2..3 share cluster 2 only: the
+        second is refused, so cluster 3's finding stands (R434-2 F2)."""
+        model = normalised(MILAN_MIN)
+        for index in (1, 2, 3):
+            mut.put(model, (mut.AUDIO_CLUSTER, index, 0), 84, 2)
+        stereo = dict(WAIVER, rule="L7", check="cluster-channels", type="AUDIO_CLUSTER")
+        model["lint_waivers"] = [dict(stereo, first=1, last=2), dict(stereo, first=2, last=3)]
+        self.assertEqual([line.split(" (Milan")[0] for line in refusal(model)], [
+            "lint waiver 1 (L7 cluster-channels: cfg 0 AUDIO_CLUSTER 2..3) overlaps lint "
+            "waiver 0 (L7 cluster-channels: cfg 0 AUDIO_CLUSTER 1..2); one waiver per descriptor",
+            "L7 cluster-channels: cfg 0 AUDIO_CLUSTER 3: channel_count 2"])
+
     def test_waivers_are_a_list(self) -> None:
         """A lint_waivers that is not a list is refused, lint on or off."""
         model = self.waived([])
@@ -552,6 +623,118 @@ class WaiverTest(unittest.TestCase):
         """With the lint off the waivers are counted, not judged."""
         _, report = gen_desc_image.build(self.waived([WAIVER]), lint=False)
         self.assertTrue(report.endswith("\nsemantic lint: off (1 lint waivers not evaluated)\n"))
+
+
+#: IEEE 1722.1-2021 §6.2.2.8's fixed-offset exclusions, one entry per type:
+#: (type, length, the excluded fields as (name, start, end), offsets of the
+#: structural octets beside them). Offsets are those of the §7.2 tables.
+#: ENTITY's entity_id and entity_model_id are beyond the clause (model_lint.py).
+FIXED_EXCLUSIONS = (
+    (0x0000, 312, (("entity_id", 4, 12), ("entity_model_id", 12, 20), ("available_index", 36, 40),
+                   ("association_id", 40, 48), ("entity_name", 48, 112),
+                   ("firmware_version", 116, 180), ("group_name", 180, 244),
+                   ("serial_number", 244, 308), ("current_configuration", 310, 312)),
+     (3, 20, 35, 112, 115, 309)),
+    (0x0002, 148, (("current_sampling_rate", 136, 140),), (135, 140)),
+    (0x0005, 146, (("current_format", 74, 82),), (73, 82)),
+    (0x0006, 146, (("current_format", 74, 82),), (73, 82)),
+    (0x0009, 102, (("mac_address", 70, 76), ("clock_identity", 78, 86), ("priority1", 86, 87),
+                   ("clock_class", 87, 88), ("offset_scaled_log_variance", 88, 90),
+                   ("clock_accuracy", 90, 91), ("priority2", 91, 92), ("domain_number", 92, 93),
+                   ("log_sync_interval", 93, 94), ("log_announce_interval", 94, 95),
+                   ("log_pdelay_interval", 95, 96)), (69, 76, 77, 96)),
+    (0x000A, 86, (("clock_source_flags", 70, 72), ("clock_source_identifier", 74, 82)),
+     (69, 72, 73, 82)),
+    (0x000B, 108, (("length", 92, 100),), (91, 100)),
+    (0x0015, 121, (("current_format_specific", 85, 89), ("current_sampling_rate", 93, 97),
+                   ("current_aspect_ratio", 101, 103), ("current_size", 107, 111),
+                   ("current_color_space", 115, 117)),
+     (84, 89, 92, 97, 100, 103, 106, 111, 114, 117)),
+    (0x0016, 104, (("current_format", 84, 92), ("current_sampling_rate", 96, 100)),
+     (83, 92, 95, 100)),
+    (0x001B, 96, (("current_signal_type", 84, 86), ("current_signal_index", 86, 88),
+                  ("current_signal_output", 88, 90)), (83, 90, 95)),
+    (0x0024, 78, (("clock_source_index", 70, 72),), (69, 72)),
+)
+
+#: Where a CONTROL, MIXER, MATRIX and SIGNAL_TRANSCODER keep control_value_type,
+#: values_offset and number_of_values, and where their value_details start
+#: (IEEE 1722.1-2021 §7.2.22, §7.2.24, §7.2.25, §7.2.31); a MIXER has no count.
+VALUE_FIELDS = {0x1A: (80, 94, 96, 104), 0x1C: (80, 86, None, 88),
+                0x1D: (80, 94, 96, 102), 0x23: (80, 82, 84, 100)}
+
+#: §6.2.2.8's value_details exclusions, per type and value family: (what,
+#: type, control_value_type, number_of_values, value_details length, the octet
+#: edited counted from the value_details start, whether the clause excludes it).
+#: The layouts are Tables 7-122 (linear entry 5V + 4: min, max, step, default,
+#: current, unit, string), 7-123 (selector: current, default, options, unit),
+#: 7-124 (array: min, max, step, default, unit, string, current[]) and 7-126.
+VALUE_EXCLUSIONS = (
+    ("CONTROL linear UINT16 current[1]", 0x1A, 0x0003, 2, 28, 14 + 8, True),
+    ("CONTROL linear UINT16 default[1]", 0x1A, 0x0003, 2, 28, 14 + 6, False),
+    ("CONTROL linear UINT16 unit[0]", 0x1A, 0x0003, 2, 28, 10, False),
+    ("CONTROL linear UINT16 string[1]", 0x1A, 0x0003, 2, 28, 14 + 12, False),
+    ("CONTROL linear DOUBLE current[0]", 0x1A, 0x0009, 1, 44, 32, True),
+    ("CONTROL linear INT8 current (the clause starts at UINT8)", 0x1A, 0x0000, 1, 9, 4, False),
+    ("MIXER linear current", 0x1C, 0x0003, 1, 14, 8, True),
+    ("MIXER linear default", 0x1C, 0x0003, 1, 14, 6, False),
+    ("MATRIX linear current", 0x1D, 0x0003, 1, 14, 8, True),
+    ("SIGNAL_TRANSCODER linear current", 0x23, 0x0003, 1, 14, 8, True),
+    ("SIGNAL_TRANSCODER linear step", 0x23, 0x0003, 1, 14, 4, False),
+    ("CONTROL selector UINT8 current", 0x1A, 0x000B, 3, 7, 0, True),
+    ("CONTROL selector UINT8 default", 0x1A, 0x000B, 3, 7, 1, False),
+    ("CONTROL selector UINT8 option[2]", 0x1A, 0x000B, 3, 7, 4, False),
+    ("CONTROL selector UINT8 unit", 0x1A, 0x000B, 3, 7, 5, False),
+    ("CONTROL selector STRING current", 0x1A, 0x0014, 2, 10, 1, True),
+    ("CONTROL selector INT8 current (the clause starts at UINT8)", 0x1A, 0x000A, 2, 6, 0, False),
+    ("MATRIX selector UINT16 current", 0x1D, 0x000D, 2, 10, 0, True),
+    ("SIGNAL_TRANSCODER selector current", 0x23, 0x000B, 2, 6, 0, True),
+    ("MIXER selector current (the clause names MIXER for linear only)", 0x1C, 0x000B, 1, 5, 0,
+     False),
+    ("CONTROL array UINT16 current[0]", 0x1A, 0x0018, 2, 16, 12, True),
+    ("CONTROL array UINT16 current[1]", 0x1A, 0x0018, 2, 16, 15, True),
+    ("CONTROL array UINT16 default", 0x1A, 0x0018, 2, 16, 6, False),
+    ("CONTROL array UINT16 unit", 0x1A, 0x0018, 2, 16, 8, False),
+    ("CONTROL array UINT16 string", 0x1A, 0x0018, 2, 16, 11, False),
+    ("CONTROL array INT8 current[0] (the clause starts at UINT8)", 0x1A, 0x0015, 1, 9, 8, False),
+    ("MATRIX array UINT8 current[0]", 0x1D, 0x0016, 1, 9, 8, True),
+    ("SIGNAL_TRANSCODER array UINT8 current[0]", 0x23, 0x0016, 1, 9, 8, True),
+    ("MIXER array current[0] (the clause names MIXER for linear only)", 0x1C, 0x0016, 1, 9, 8,
+     False),
+    ("CONTROL bode current_frequency[0]", 0x1A, 0x0020, 2, 72, 48, True),
+    ("CONTROL bode current_magnitude[0]", 0x1A, 0x0020, 2, 72, 55, True),
+    ("CONTROL bode current_phase[1]", 0x1A, 0x0020, 2, 72, 71, True),
+    ("CONTROL bode phase_default", 0x1A, 0x0020, 2, 72, 44, False),
+    ("CONTROL UTF8 value", 0x1A, 0x001F, 1, 16, 6, True),
+    ("CONTROL SMPTE_TIME value", 0x1A, 0x0021, 1, 10, 9, True),
+    ("CONTROL SAMPLE_RATE value", 0x1A, 0x0022, 1, 4, 0, True),
+    ("CONTROL GPTP_TIME value", 0x1A, 0x0023, 1, 10, 5, True),
+    ("CONTROL VENDOR value", 0x1A, 0x3FFE, 1, 12, 11, True),
+    ("CONTROL signal_output, the octet before a UTF8 value", 0x1A, 0x001F, 1, 16, -1, False),
+    ("MATRIX UTF8 value (the clause names CONTROL only)", 0x1D, 0x001F, 1, 8, 2, False),
+)
+
+
+def _same_digest(data: bytes, offset: int) -> bool:
+    """Whether flipping one octet of a lone descriptor leaves the model digest."""
+    edited = bytearray(data)
+    edited[offset] ^= 0x5A
+    dtype = struct.unpack_from(">H", data, 0)[0]
+    return (gen_desc_image.model_lint.model_digest({0: {dtype: {0: bytes(data)}}})
+            == gen_desc_image.model_lint.model_digest({0: {dtype: {0: bytes(edited)}}}))
+
+
+def _valued(dtype: int, value_type: int, count: int, length: int) -> bytes:
+    """A descriptor of a valued type with `count` values of `value_type` in
+    `length` octets of value_details right after its fixed fields."""
+    type_at, offset_at, count_at, start = VALUE_FIELDS[dtype]
+    data = bytearray(start + length)
+    struct.pack_into(">H", data, 0, dtype)
+    struct.pack_into(">H", data, type_at, value_type)
+    struct.pack_into(">H", data, offset_at, start)
+    if count_at is not None:
+        struct.pack_into(">H", data, count_at, count)
+    return bytes(data)
 
 
 class IdentityTest(unittest.TestCase):
@@ -619,37 +802,45 @@ class IdentityTest(unittest.TestCase):
         self.assertTrue(refusal(moved, model_ids=record)[0].startswith("L9 model-digest: "))
         gen_desc_image.build(current, model_ids=record)
 
-    def test_exclusions_are_the_clause(self) -> None:
-        """§6.2.2.8 field by field: each excluded field keeps the digest, and each
-        neighbour the clause does not name moves it."""
-        def _descriptor(dtype: int, size: int, fields: dict[int, int]) -> bytes:
-            """A `size`-octet descriptor of `dtype` with 16-bit `fields` set."""
-            data = bytearray(size)
+    def test_object_name_is_the_clause(self) -> None:
+        """§6.2.2.8 excludes object_name "in all descriptors": octets 4 to 67 of
+        every Table 7-1 type that has one keep the digest, and its
+        localized_description moves it; a type without one (LOCALE, STRINGS, a
+        Port, a map, MATRIX_SIGNAL) is hashed there (ENTITY: FIXED_EXCLUSIONS)."""
+        named = set(range(0x01, 0x0C)) | {0x14, 0x15, 0x16, 0x1A, 0x1B, 0x1C, 0x1D} \
+            | set(range(0x1F, 0x29))
+        for dtype in range(0x01, 0x29):
+            data = bytearray(128)
             struct.pack_into(">H", data, 0, dtype)
-            for offset, value in fields.items():
-                struct.pack_into(">H", data, offset, value)
-            return bytes(data)
-        linear = {80: 0x0003, 94: 104, 96: 2}                   # CONTROL_LINEAR_UINT16, N 2
-        cases = (  # (what, descriptor, offset edited, excluded)
-            ("linear current[1]", _descriptor(0x1A, 132, linear), 104 + 14 + 8, True),
-            ("linear default[1]", _descriptor(0x1A, 132, linear), 104 + 14 + 6, False),
-            ("INT8 linear current", _descriptor(0x1A, 113, {80: 0x0000, 94: 104, 96: 1}), 108, False),
-            ("array current[0]", _descriptor(0x1A, 120, {80: 0x0018, 94: 104, 96: 2}), 116, True),
-            ("array default", _descriptor(0x1A, 120, {80: 0x0018, 94: 104, 96: 2}), 110, False),
-            ("UTF-8 value", _descriptor(0x1A, 120, {80: 0x001F, 94: 104, 96: 1}), 110, True),
-            ("MATRIX selector current", _descriptor(0x1D, 110, {80: 0x000D, 94: 102, 96: 2}), 102, True),
-            ("MATRIX UTF-8 value", _descriptor(0x1D, 110, {80: 0x001F, 94: 102, 96: 1}), 104, False),
-            ("SIGNAL_SELECTOR current_signal_index", _descriptor(0x1B, 96, {80: 96}), 86, True),
-            ("SIGNAL_SELECTOR default_signal_index", _descriptor(0x1B, 96, {80: 96}), 92, False),
-            ("MEMORY_OBJECT length", _descriptor(0x0B, 108, {}), 98, True),
-            ("MATRIX_SIGNAL signal (no object_name)", _descriptor(0x1E, 14, {4: 1, 6: 8}), 10, False))
-        for what, data, offset, excluded in cases:
+            with self.subTest(type=gen_desc_image.model_lint.type_name(dtype)):
+                self.assertEqual([_same_digest(bytes(data), at) for at in (4, 67, 68)],
+                                 [dtype in named, dtype in named, False])
+
+    def test_fixed_exclusions_are_the_clause(self) -> None:
+        """§6.2.2.8 field by field, for every fixed-offset field it names: the
+        first and the last octet of each keep the digest, and each structural
+        octet beside them moves it."""
+        for dtype, length, fields, beside in FIXED_EXCLUSIONS:
+            data = bytearray(length)
+            struct.pack_into(">H", data, 0, dtype)
+            for name, start, end in fields:
+                with self.subTest(field=f"{gen_desc_image.model_lint.type_name(dtype)} {name}"):
+                    self.assertTrue(_same_digest(bytes(data), start))
+                    self.assertTrue(_same_digest(bytes(data), end - 1))
+            for offset in beside:
+                with self.subTest(beside=f"{gen_desc_image.model_lint.type_name(dtype)} {offset}"):
+                    self.assertFalse(_same_digest(bytes(data), offset))
+
+    def test_exclusions_are_the_clause(self) -> None:
+        """§6.2.2.8 field by field, for every value family it names: each
+        excluded current value keeps the digest, and each neighbour the clause
+        does not name (a limit, a default, an option, a unit, a string, a value
+        of a family or type the clause leaves out) moves it (R435-2 F2)."""
+        for what, dtype, value_type, count, length, offset, excluded in VALUE_EXCLUSIONS:
             with self.subTest(what=what):
-                edited = bytearray(data)
-                edited[offset] ^= 0x5A
-                same = (gen_desc_image.model_lint.model_digest({0: {data[1]: {0: data}}})
-                        == gen_desc_image.model_lint.model_digest({0: {data[1]: {0: bytes(edited)}}}))
-                self.assertEqual(same, excluded)
+                start = VALUE_FIELDS[dtype][3]
+                self.assertEqual(_same_digest(_valued(dtype, value_type, count, length),
+                                              start + offset), excluded)
 
     def test_record_is_current(self) -> None:
         """model_ids.json records milan_min.json's digest as packed today."""

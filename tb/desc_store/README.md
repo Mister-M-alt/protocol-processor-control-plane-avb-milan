@@ -77,21 +77,25 @@ rules L1 to L12 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's e
 
 - `milan_min.json` packs with every check on, and its digest equals the one
   recorded in `model_ids.json`.
-- Each of the 82 named mutations in `lint_mutations.py` is refused with its
+- Each of the 89 named mutations in `lint_mutations.py` is refused with its
   rule and check. Where a check has several arms, the mutation's `detail`
   names the arm, and the refusal must carry it. The same mutated bytes pack
   with the lint off, so every refusal counted is the lint's. Every one of the
   56 checks has at least one mutation, and a test holds that set equal to
   `model_lint.CHECKS`.
-- The caps accept their own value: 46 formats and 8 sampling rates pack, and
-  so does a CRF input's clock source beside one at an AAF input. Each
+- The caps accept their own value: 46 formats, 8 sampling rates, a 508-octet
+  descriptor and 8 Annex C redundant streams pack, and so does a CRF input's
+  clock source beside one at an AAF input. Each
   fixed-size Milan-subset type two octets long, and an AUDIO_MAP whose
   mappings_offset is not 8, is refused with its §7.2 extent (L12). A field
   past a descriptor's end is the finding of the rule that needs it.
 - Standard-conforming models pack: CONTROLs a Unit and its Port own in the
   order IEEE 1722.1-2021 §7.2 walks them, a JACK's CONTROL and a Unit's
   SIGNAL_SELECTOR outside the top-level counts, cluster ranges in either
-  order, a second AVB_INTERFACE one configuration omits, every stream in the
+  order, the CONTROL of an AVB_INTERFACE, a CONTROL_BLOCK, a PTP_INSTANCE or
+  a Unit's External Port outside the top-level counts, an IDENTIFY whose value
+  type carries the r or the u flag, a second AVB_INTERFACE one configuration
+  omits and one that first appears in configuration 1, every stream in the
   Milan v1.2 Annex C Table C.1 layout (R = 0), and a redundant pair of Stream
   Outputs in that layout, each naming the other (R = 1). `example_milan_8.json`
   is refused with the lint on, though not for its Annex C streams.
@@ -104,13 +108,24 @@ rules L1 to L12 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's e
   descriptor type or configuration: a finding that differs from the waiver in
   any one of them is refused, and the waiver is stale. Fourteen malformed
   waivers are each refused (five of them a value of the wrong JSON type), and
-  so are a waiver that shares a descriptor with an earlier one of its check
-  and a `lint_waivers` that is not a list.
+  so are a waiver that shares a descriptor with an earlier one of its check,
+  wholly or in part, and a `lint_waivers` that is not a list.
 - The ADP values and the digest: driven values that agree pass, and a
-  malformed driven value or recorded-digest map is an `ImageError`. The §6.2.2.8
-  exclusions leave the digest unchanged, and the structural fields beside them
-  move it, field by field. A selector CONTROL's option change under a recorded
-  digest is refused; its current-value change packs.
+  malformed driven value or recorded-digest map is an `ImageError`. The digest
+  is tested field by field against IEEE 1722.1-2021 §6.2.2.8: object_name in
+  every Table 7-1 type that has one; the first and the last octet of every
+  fixed-offset field the clause names (ENTITY, AUDIO_UNIT, the streams,
+  AVB_INTERFACE, CLOCK_SOURCE, MEMORY_OBJECT, VIDEO_CLUSTER, SENSOR_CLUSTER,
+  SIGNAL_SELECTOR, CLOCK_DOMAIN); and the current values of every value family
+  the clause names, in each type it names (linear in CONTROL, MIXER, MATRIX and
+  SIGNAL_TRANSCODER; selector and array in CONTROL, MATRIX and
+  SIGNAL_TRANSCODER; Bode, and the whole UTF8, SMPTE, sample-rate, gPTP and
+  vendor values, in CONTROL). Each leaves the digest unchanged. The octets
+  beside them (limits, defaults, options, units, strings, neighbouring fields)
+  move it, and so do the values of the INT8 types, of MIXER's selector and
+  array families and of MATRIX's UTF8 type, which the clause leaves out. A
+  selector CONTROL's option change under a recorded digest is refused; its
+  current-value change packs.
 - The command line: the positive model with every check, and a refusal that
   exits 1 and writes nothing, a `--model-ids` file without `models` among them.
   Loading the packer by its path adds nothing to `sys.path` and registers no
@@ -127,6 +142,7 @@ passes and every check is killed.
 | Control: nothing suppressed | the gate passes |
 | Each check suppressed alone, round 1 (2026-10-02, at e6cca1ff) | 53 of 53 checks make `test_mutations` fail. `WaiverTest` fails as well for `port-cluster-minimum` (4 tests), `has-parent`, `cluster-channels` and `talker-base-format` (1 each) |
 | Each check suppressed alone, round 2 (2026-10-02, the committed driver) | 56 of 56 checks killed, L8's `identify-format` and L12's `descriptor-extent` and `descriptor-maximum` among them. `port-cluster-minimum` also fails 7 `WaiverTest` tests; `has-parent`, `cluster-channels` and `talker-base-format` fail one each |
+| Each check suppressed alone, round 3 (2026-10-02, the committed driver) | 56 of 56 checks killed: `stream-layout` by 9 mutations (Table 7-8 and Annex C), `identify-format` by 8, one per arm |
 
 Planted defects (round 2, 2026-10-02): the two round-1 reviews planted 22
 and 32 textual defects in the lint and the packer, one per disposable copy,
@@ -149,6 +165,29 @@ every one. Each survivor now fails a named test:
 | "exactly one" weakened to "at least one", at a CRF input and at the AAF inputs | `test_mutations`: "two INPUT_STREAM sources at the CRF input", "no CRF input, an INPUT_STREAM source at each AAF input" |
 | an ENTITY outside configuration 0 accepted | `test_mutations`: "an ENTITY in configuration 1" |
 | L5 compared index by index on the indices two configurations share | `ConformingModelTest.test_second_interface_optional_per_configuration` |
+
+Planted defects (round 3, 2026-10-02): the round-2 reviews' plant scripts,
+run unchanged on round 3's code, kill every plant: 37 of 37 and 37 of 37, and
+8 of 8 in the internal review's re-creation of the external review's round-1
+survivors. The round-1 internal script, run unchanged, kills 24 of its 29: the
+expected-pass entity-id control stays green, and its four targets that round 2
+rewrote are the four ported plants above, all killed. Each of the 30 round-2
+survivors (22 distinct) fails a named test:
+
+| Survivor | Fails |
+|---|---|
+| one `identify-format` arm deleted: the 113-octet length, `control_value_type`, `values_offset`, `number_of_values`, `minimum`, `step` or `unit` | `test_mutations`: the IDENTIFY mutation naming that arm |
+| the value type compared without its r and u flags masked | `ConformingModelTest.test_identify_value_type_flags` |
+| the 508-octet maximum refusing 507 or 508 octets | `LintTest.test_boundaries_pack` |
+| overlap refused only for identical ranges | `WaiverTest.test_partly_overlapping_waivers_are_refused` |
+| a digest exclusion dropped: CLOCK_DOMAIN `clock_source_index`, ENTITY `current_configuration` | `IdentityTest.test_fixed_exclusions_are_the_clause` |
+| a digest exclusion dropped or widened: Bode current values, MIXER's linear current, SIGNAL_TRANSCODER's values, the array exclusion from `unit`, MIXER credited with the selector and array families | `IdentityTest.test_exclusions_are_the_clause` |
+| the CONTROLs of an AVB_INTERFACE, a CONTROL_BLOCK, a PTP_INSTANCE or an External Port counted at the top level | `ConformingModelTest.test_other_control_owners` |
+| an AVB_INTERFACE index configuration 0 lacks refused | `ConformingModelTest.test_interface_first_in_a_later_configuration` |
+
+Each refusal statement of `model_rules.py` and `model_lint.py` (a
+`ctx.bad(...)`, a `ValueError`, a refusal, stale or problem line) was then
+replaced by `pass`, one per copy: the gate fails for 84 of 84.
 
 The external review's 12 `milan_min.json` plants (one field edited, most with
 the recorded digest re-recorded so only the lint can catch them) were run
