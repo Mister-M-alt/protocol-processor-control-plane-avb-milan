@@ -1,6 +1,6 @@
 --- a/hdl/aecp/ucode/gen_ucode.py
 +++ b/hdl/aecp/ucode/gen_ucode.py
-@@ -1658,7 +1658,7 @@
+@@ -1659,7 +1659,7 @@
      u('CHECK_LOCK', ra=15, imm=SCLKS_EMIT),      # E_SCLKS + 9: ENTITY_LOCKED
      u('READ_ST', rd=7, imm=RGN_DATA + CD_SRCCNT_LANE),
      u('SHIFT_R', rd=7, ra=7, imm=32),            # count is lane[47:32]
