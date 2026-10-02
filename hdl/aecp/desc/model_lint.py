@@ -36,8 +36,6 @@ entity_id and entity_model_id beyond them. `adp` refuses a driven value that dis
 `model_ids` refuses a recorded entity_model_id whose digest moved (L9).
 """
 import hashlib
-import importlib.util
-from pathlib import Path
 import re
 import struct
 from collections import defaultdict
@@ -46,18 +44,10 @@ from dataclasses import dataclass
 from types import ModuleType
 from typing import Any
 
-
-def beside(name: str) -> ModuleType:
-    """The module `name`.py that sits beside this file, loaded by its path, so
-    a consumer's sys.path and its own modules of that name stay untouched."""
-    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().with_name(f"{name}.py"))
-    if spec is None or spec.loader is None:
-        raise ImportError(f"no {name}.py beside {__file__}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
+#: The packer's loader, gen_desc_image._beside: it binds itself here before
+#: this module runs, so model_rules loads by its path through the same function
+#: and the same guard as this module (R435-2 S1).
+beside: Callable[[str], ModuleType]
 model_rules = beside("model_rules")
 CHECKS, RULES, D, Finding = model_rules.CHECKS, model_rules.RULES, model_rules.D, model_rules.Finding
 RuleContext, Where, rule_identity = model_rules.RuleContext, model_rules.Where, model_rules.rule_identity

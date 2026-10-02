@@ -129,7 +129,8 @@ rules L1 to L12 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's e
 - The command line: the positive model with every check, and a refusal that
   exits 1 and writes nothing, a `--model-ids` file without `models` among them.
   Loading the packer by its path adds nothing to `sys.path` and registers no
-  `model_lint` or `model_rules` module.
+  `model_lint` or `model_rules` module. Both load through the packer's one
+  loader, and a module it cannot locate is an `ImportError` naming it.
 
 Mutation proof: each check is suppressed in turn. Only that check's
 findings are dropped, by replacing the lint's finding recorder in a child

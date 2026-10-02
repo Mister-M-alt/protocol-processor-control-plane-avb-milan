@@ -124,20 +124,25 @@ import json
 from pathlib import Path
 import re
 import sys
+from types import ModuleType
 from typing import Any
 
 
-def _load_model_lint() -> Any:
-    """The lint beside this file, loaded by its path: the packer adds nothing to
-    a consumer's sys.path and shadows none of its modules."""
-    spec = importlib.util.spec_from_file_location(
-        "model_lint", Path(__file__).resolve().with_name("model_lint.py"))
+def _beside(name: str) -> ModuleType:
+    """The module `name`.py beside this file, loaded by its path: the packer adds
+    nothing to a consumer's sys.path and shadows none of its modules. It is the
+    packer's one loader: it binds itself as the module's `beside` before running
+    it, so model_lint loads model_rules through it and both loads share its guard."""
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().with_name(f"{name}.py"))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"no {name}.py beside {__file__}")
     module = importlib.util.module_from_spec(spec)
+    module.beside = _beside
     spec.loader.exec_module(module)
     return module
 
 
-model_lint = _load_model_lint()
+model_lint = _beside("model_lint")
 
 # IEEE 1722.1-2021 Table 7-2 descriptor types (the ones 07 §3.1 names, plus the
 # handful a Milan PAAD may still carry).  A numeric type is always accepted.

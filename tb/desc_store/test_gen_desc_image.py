@@ -23,6 +23,7 @@ import sys
 import tempfile
 from typing import Any
 import unittest
+from unittest import mock
 
 import lint_mutations as mut
 
@@ -898,6 +899,15 @@ class CommandLineTest(unittest.TestCase):
         result = subprocess.run([sys.executable, "-B", "-c", probe], capture_output=True,
                                 text=True, check=False)
         self.assertEqual(result.stdout.split(), ["True", "False", "False", "True"], result.stderr)
+
+    def test_one_guarded_loader(self) -> None:
+        """model_lint and model_rules load through the packer's one loader, and
+        a module it cannot locate is an ImportError naming it (R435-2 S1)."""
+        self.assertIs(gen_desc_image.model_lint.beside, gen_desc_image._beside)
+        with mock.patch.object(importlib.util, "spec_from_file_location", return_value=None):
+            with self.assertRaises(ImportError) as caught:
+                gen_desc_image._beside("model_rules")
+        self.assertIn("no model_rules.py beside ", str(caught.exception))
 
     def test_example_needs_no_lint(self) -> None:
         """The layout vector packs with --no-lint and is refused without it."""
