@@ -23,7 +23,7 @@ CLOCK_SOURCE, STREAM_PORT_INPUT, STREAM_PORT_OUTPUT = 0x000A, 0x000E, 0x000F
 AUDIO_CLUSTER, AUDIO_MAP, CONTROL, CLOCK_DOMAIN = 0x0014, 0x0017, 0x001A, 0x0024
 TIMING, EXTERNAL = 0x0026, 0x0001
 BASE_IN = 0x0215022002006000     # 48 kHz, up to 8 channels (Milan v1.2 Table 6.2)
-CRF = 0x041060010000BB80         # Milan v1.2 Table 7.1
+CRF = 0x041060010000BB80         # Milan v1.2 §7.3.4 Table 7.1
 
 
 def find(model: Model, dtype: int, index: int, cfg: int = 0) -> dict[str, Any]:
@@ -216,6 +216,9 @@ MUTATIONS = (
                                    0x020702200200C000)),
     Mutation("CRF input at 44.1 kHz only", "crf-format",
              lambda m: set_formats(m, (STREAM_INPUT, 1, 0), [0x041060010000AC44],
+                                   0x041060010000AC44)),
+    Mutation("CRF input lists the Milan word and 44.1 kHz, runs at 44.1 kHz", "crf-format",
+             lambda m: set_formats(m, (STREAM_INPUT, 1, 0), [CRF, 0x041060010000AC44],
                                    0x041060010000AC44)),
     Mutation("buffer_length 2125999 ns", "buffer-length",
              _p((STREAM_INPUT, 0), 128, 2_125_999, 4)),

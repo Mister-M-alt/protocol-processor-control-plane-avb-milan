@@ -429,7 +429,7 @@ verification).
 | REQ-MDL-008 | Milan §5.3.3.9 | ≤1 static mapping per output stream channel across all AUDIO_MAPs | shall | A | [GAP-08](#gap-08) | consumer's model (07 §3.1 ownership); packer model lint L7 (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
 | REQ-MDL-009 | Milan §5.3.3.10 | Primary IDENTIFY CONTROL exists in all configurations at the same index | shall | A | [GAP-06](#gap-06) | consumer's model (07 §3.1 ownership); packer model lint L8 (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
 | REQ-MDL-010 | Milan §6.3/§6.4 | Talker ≥1 Stream Output and Listener ≥1 Stream Input advertising Base formats (AAF PCM32, 48/96/192 k, {1,2,4,6,8} ch); rate-completeness and configuration-uniformity rules | shall | A | [GAP-01](#gap-01) | consumer's model (07 §3.1 ownership); packer model lint L3 (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
-| REQ-MDL-011 | Milan §7.3 | CRF media-clock stream format 0x041060010000BB80; Class A | shall (if CRF) | A | [GAP-01](#gap-01) | consumer's model (07 §3.1 ownership); packer model lint L3 crf-format, L4 class-a (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
+| REQ-MDL-011 | Milan §7.3 | CRF media-clock stream format 0x041060010000BB80 (every CRF format listed, so the current one too); Class A | shall (if CRF) | A | [GAP-01](#gap-01) | consumer's model (07 §3.1 ownership); packer model lint L3 crf-format, L4 class-a (defence in depth) | 07 §3.1, 09 §8.4 | DIR |
 
 ### 6.7 Persistence
 

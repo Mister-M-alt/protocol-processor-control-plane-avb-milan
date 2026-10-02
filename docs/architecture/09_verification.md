@@ -286,7 +286,7 @@ listed in [07 §3.1](07_memory_maps.md#model-lint).
 |---|---|
 | the positive model packs with the lint on and reports `entity_model_id_i`, `talker_sources_i`, `listener_sinks_i`, `identify_index_i` and the recorded digest | `LintTest.test_milan_min_packs` |
 | every check of `model_lint.CHECKS` has a mutation: one negative image per refusal | `LintTest.test_every_check_has_a_mutation` |
-| each mutation is refused with its rule and check, and the same bytes pack with the lint off, so the refusal is the lint's and not a layout refusal (L1 to L11, 56 mutations; L9's 0 and all-ones, L8's index moving between two configurations, L11's two-configuration maximum among them) | `LintTest.test_mutations` |
+| each mutation is refused with its rule and check, and the same bytes pack with the lint off, so the refusal is the lint's and not a layout refusal (L1 to L11, 57 mutations; L9's 0 and all-ones, L8's index moving between two configurations, L11's two-configuration maximum among them) | `LintTest.test_mutations` |
 | `example_milan_8.json` packs with the lint off, and is refused with it on (it is a layout vector, not a Milan model) | `LintTest.test_example_is_a_layout_vector`, `CommandLineTest.test_example_needs_no_lint` |
 | each layout refusal the packer had before the lint has a negative case: an index gap, a duplicate key, a mixed named and unnamed run, an ENTITY at index 1, a configuration gap | `LayoutRefusalTest` |
 | a waiver excuses one check on one scope and is listed in the report; removing it brings the L1 refusal back; on a fixed model, or past the descriptors, it is refused as stale; it excuses no other check and no other scope; each malformed waiver is refused | `WaiverTest` |

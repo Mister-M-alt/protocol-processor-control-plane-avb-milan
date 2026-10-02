@@ -39,7 +39,7 @@ TOP_LEVEL = frozenset({0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
                        0x0B, 0x0C, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,
                        0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27})
 
-CRF_MILAN = 0x041060010000BB80          # Milan v1.2 Table 7.1
+CRF_MILAN = 0x041060010000BB80          # Milan v1.2 §7.3.4 Table 7.1
 IDENTIFY = 0x90E0F00000000001           # IEEE 1722.1-2021 Table 7-98
 BUFFER_MIN_NS = 2_126_000               # Milan v1.2 §5.3.3.4
 FORMATS_OFFSET = 138                    # IEEE 1722.1-2021 Table 7-8
@@ -85,7 +85,8 @@ CHECKS = {
                                   "a Base rate on an input carries every Base channel count"),
     "base-rate-uniformity": ("L3", MILAN + "§6.4",
                              "Base-format inputs of a configuration share their Base rates"),
-    "crf-format": ("L3", MILAN + "§7.3.1, §7.3.4", "a CRF stream lists 0x041060010000BB80"),
+    "crf-format": ("L3", MILAN + "§7.3.2, §7.3.4 Table 7.1",
+                   "every CRF format a stream lists is 0x041060010000BB80"),
     "buffer-length": ("L4", MILAN + "§5.3.3.4", "STREAM_INPUT buffer_length >= 2126000 ns"),
     "class-a": ("L4", MILAN + "§5.3.3.4, §7.3.3", "stream_flags carries CLASS_A"),
     "format-family": ("L4", MILAN + "§5.3.3.4", "CRF and AAF never share a format list"),
@@ -472,8 +473,11 @@ def _rule_streams(ctx: RuleContext) -> None:
             for index in sorted(ctx.of(cfg, dtype)):
                 words = ctx.formats.get((cfg, dtype, index)) or []
                 where = (cfg, dtype, index)
-                if "CRF" in ctx.kind(cfg, dtype, index) and CRF_MILAN not in words:
-                    ctx.bad("crf-format", where, "lists CRF formats without 0x041060010000BB80")
+                other = sorted({w for w in words if _family(w) == "CRF" and w != CRF_MILAN})
+                if other:
+                    ctx.bad("crf-format", where, "lists CRF format "
+                            + ", ".join(f"0x{w:016X}" for w in other)
+                            + f"; a CRF stream lists only 0x{CRF_MILAN:016X}")
                 cover = set().union(*map(base_formats, words)) if words else set()
                 if not cover:
                     continue
