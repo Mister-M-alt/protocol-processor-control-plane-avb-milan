@@ -427,13 +427,9 @@ struct Harness {
       ++fwd_while_owed;
   }
 
-  void sample_dev() {
-    bool drove_gnt = d_gnt;
-    bool drove_done = d_done;
-    bool drove_err = d_err;
-
-    count_owed_traffic();
-
+  //! The backend takes the command its grant presented (see the comment
+  //! inside); its own function because `sample_dev` is the whole backend.
+  void accept_command(bool drove_gnt) {
     // command accept. This backend registers its grant: the command is TAKEN
     // on the edge that sampled the request and the grant shows a cycle later,
     // so it is accepted whether or not the request is still up then -- the
@@ -482,6 +478,50 @@ struct Harness {
         if (sil_cmd && sil_at == SIL_BYTE && sil_byte == 0) withhold_byte(true);
       }
     }
+  }
+
+  //! The backend decides on a request up now; its own function for the
+  //! same reason as `accept_command`.
+  void schedule_grant(bool drove_gnt, bool drove_err) {
+    // grant scheduling. The decision TAKES the command the port is
+    // requesting now (see command accept); an armed grant silence stretches
+    // the decision, or withholds it for ever.
+    const bool sil_gnt = (sil_at == SIL_GNT && int(ops.size()) == sil_base + sil_op);
+    const int  gnt_wait = sil_gnt ? sil_quiet : gnt_delay;
+    if (!dut->dev_req_o && !d_gnt) {                // a withdrawn request restarts it
+      if (sil_gnt && d_reqwait > 0) sil_at = SIL_NONE;   // ...and spends its silence
+      d_reqwait = 0;
+    }
+    // Never on the cycle the backend answers the request with err: that err
+    // IS its answer, and a decision there would take a command nobody owns.
+    if (d_st == 0 && !d_busy && dut->dev_req_o && !drove_gnt && !d_err && !drove_err
+        && !(sil_gnt && sil_quiet < 0)) {
+      if (++d_reqwait >= gnt_wait) {
+        d_gnt = true; d_reqwait = 0;
+        d_pend = {int(dut->dev_op_o), int(dut->dev_region_o),
+                  int(dut->dev_offset_o), int(dut->dev_len_o)};
+        if (sil_gnt) sil_at = SIL_NONE;           // spent
+        // ...and, for a backend with no erase semantics, the completion with
+        // it. `dev_op_o` is already valid: the port drives the command with
+        // the request it is still holding.
+        if (gnt_done_on_erase && int(dut->dev_op_o) == OP_ERASE) {
+          d_done = true; gnt_done_now = true; ++gnt_done_pairs;
+        } else if (gnt_done_on_data && int(dut->dev_op_o) != OP_ERASE) {
+          // a READ or WRITE ended on its own grant: zero bytes, a short command
+          d_done = true; gnt_done_now = true; ++gnt_done_pairs; gnt_done_on_data = false;
+        }
+      }
+    }
+  }
+
+  void sample_dev() {
+    bool drove_gnt = d_gnt;
+    bool drove_done = d_done;
+    bool drove_err = d_err;
+
+    count_owed_traffic();
+
+    accept_command(drove_gnt);
 
     // write byte accept
     if (d_st == 1 && d_cur.op == OP_WRITE) {
@@ -530,35 +570,7 @@ struct Harness {
       d_err = true; gnt_err = false; ++dev_errs; ++dev_errs_own;
     }
 
-    // grant scheduling. The decision TAKES the command the port is
-    // requesting now (see command accept); an armed grant silence stretches
-    // the decision, or withholds it for ever.
-    const bool sil_gnt = (sil_at == SIL_GNT && int(ops.size()) == sil_base + sil_op);
-    const int  gnt_wait = sil_gnt ? sil_quiet : gnt_delay;
-    if (!dut->dev_req_o && !d_gnt) {                // a withdrawn request restarts it
-      if (sil_gnt && d_reqwait > 0) sil_at = SIL_NONE;   // ...and spends its silence
-      d_reqwait = 0;
-    }
-    // Never on the cycle the backend answers the request with err: that err
-    // IS its answer, and a decision there would take a command nobody owns.
-    if (d_st == 0 && !d_busy && dut->dev_req_o && !drove_gnt && !d_err && !drove_err
-        && !(sil_gnt && sil_quiet < 0)) {
-      if (++d_reqwait >= gnt_wait) {
-        d_gnt = true; d_reqwait = 0;
-        d_pend = {int(dut->dev_op_o), int(dut->dev_region_o),
-                  int(dut->dev_offset_o), int(dut->dev_len_o)};
-        if (sil_gnt) sil_at = SIL_NONE;           // spent
-        // ...and, for a backend with no erase semantics, the completion with
-        // it. `dev_op_o` is already valid: the port drives the command with
-        // the request it is still holding.
-        if (gnt_done_on_erase && int(dut->dev_op_o) == OP_ERASE) {
-          d_done = true; gnt_done_now = true; ++gnt_done_pairs;
-        } else if (gnt_done_on_data && int(dut->dev_op_o) != OP_ERASE) {
-          // a READ or WRITE ended on its own grant: zero bytes, a short command
-          d_done = true; gnt_done_now = true; ++gnt_done_pairs; gnt_done_on_data = false;
-        }
-      }
-    }
+    schedule_grant(drove_gnt, drove_err);
 
     maybe_fire_unsolicited_done(drove_gnt, drove_done, drove_err);
     maybe_fire_stray_done(drove_gnt, drove_done, drove_err);
@@ -824,6 +836,8 @@ class NvmPortSuite {
   void the_next_request_after_a_deadline();
   void an_abandoned_write_is_contained();
   void reset_mid_commit_at_six_stages();
+  bool run_to_stage(int stage, size_t record_bytes);
+  int  power_cut();
   void reset_of_the_port_alone_mid_commit();
   void a_short_command_is_a_device_error();
   void every_operation_got_what_it_was_owed();
@@ -2036,6 +2050,48 @@ void NvmPortSuite::an_abandoned_write_is_contained() {
   h.deadline_ok = false;
 }
 
+// T25's cut points, named on the BUS: tick the commit until the device
+// model reaches the stage (`reset_mid_commit_at_six_stages` lists them).
+bool NvmPortSuite::run_to_stage(int stage, size_t record_bytes) {
+  for (long i = 0; i < kOpTimeoutCycles; ++i) {
+    bool reached = false;
+    switch (stage) {
+      case 0: reached = h.m_widx == 4 && h.ops.empty(); break;
+      case 1: reached = dut->dev_req_o && h.ops.empty() && h.d_reqwait == 10; break;
+      case 2: reached = h.ops.size() == 1 && h.d_busy && h.done_ctr == 20; break;
+      case 3: reached = h.ops.size() == 2 && h.sent.size() == 5; break;
+      case 4: reached = h.ops.size() == 2 && h.sent.size() == 9; break;
+      default: reached = h.ops.size() == 2 && h.sent.size() == record_bytes
+                         && h.d_busy && h.done_ctr == 20; break;
+    }
+    if (reached) return true;
+    h.tick();
+  }
+  return false;
+}
+
+// The power cut: port and device both lose it, the array keeping what the
+// device committed. Returns the cycles in which the port pulsed, requested or
+// moved a byte, during the reset and the 50 after it: the port owes none.
+int NvmPortSuite::power_cut() {
+  h.quiesce_model();
+  h.m_mode = 0;
+  dut->rst_n = 0;
+  int noise = 0;
+  for (int i = 0; i < kResetTicks; ++i) {
+    h.tick();
+    if (dut->nvm_done_o || dut->nvm_err_o || dut->nvm_rvalid_o) ++noise;
+  }
+  dut->rst_n = 1;
+  for (int i = 0; i < 50; ++i) {
+    h.tick();
+    if (dut->nvm_busy_o || dut->nvm_done_o || dut->nvm_err_o || dut->dev_req_o
+        || dut->nvm_rvalid_o || dut->dev_wvalid_o)
+      ++noise;
+  }
+  return noise;
+}
+
 // ---------------------------------------------------------------- T25
 // Issue #18: a reset in the middle of a commit, which is the path a power cut
 // takes, where T15-T18 model a device that raised err. rst_n is asserted at
@@ -2073,38 +2129,11 @@ void NvmPortSuite::reset_mid_commit_at_six_stages() {
     if (si == 5) h.arm_silence(SIL_DONE, 1, 40);
     h.m_mode = 1; h.m_wbytes = next; h.m_widx = 0; h.m_stall = 0;
     h.start(true, 7);
-    bool reached = false;
-    for (long i = 0; i < kOpTimeoutCycles && !reached; ++i) {
-      switch (si) {
-        case 0: reached = h.m_widx == 4 && h.ops.empty(); break;
-        case 1: reached = dut->dev_req_o && h.ops.empty() && h.d_reqwait == 10; break;
-        case 2: reached = h.ops.size() == 1 && h.d_busy && h.done_ctr == 20; break;
-        case 3: reached = h.ops.size() == 2 && h.sent.size() == 5; break;
-        case 4: reached = h.ops.size() == 2 && h.sent.size() == 9; break;
-        default: reached = h.ops.size() == 2 && h.sent.size() == next.size()
-                           && h.d_busy && h.done_ctr == 20; break;
-      }
-      if (!reached) h.tick();
-    }
+    const bool reached = run_to_stage(si, next.size());
     const size_t ops_at_cut = h.ops.size();
     CHECK(reached && h.done_pulses + h.err_pulses == 0,
           "T25%s: the cut was reached on the bus, nothing answered yet", st.name);
-    // the power cut: port and device both lose it
-    h.quiesce_model();
-    h.m_mode = 0;
-    dut->rst_n = 0;
-    int noise = 0;
-    for (int i = 0; i < kResetTicks; ++i) {
-      h.tick();
-      if (dut->nvm_done_o || dut->nvm_err_o || dut->nvm_rvalid_o) ++noise;
-    }
-    dut->rst_n = 1;
-    for (int i = 0; i < 50; ++i) {
-      h.tick();
-      if (dut->nvm_busy_o || dut->nvm_done_o || dut->nvm_err_o || dut->dev_req_o
-          || dut->nvm_rvalid_o || dut->dev_wvalid_o)
-        ++noise;
-    }
+    const int noise = power_cut();
     CHECK(noise == 0 && h.ops.size() == ops_at_cut,
           "T25%s: after the reset the port is idle and silent, no pulse, no "
           "request, no byte (%d)", st.name, noise);

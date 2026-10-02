@@ -147,9 +147,9 @@ module KL_pp_nvm_port #(
     //! read and the header failed the magic or length gate, or the manager's
     //! own commit header failed it. UNFRAMED says the device answered with
     //! something that is not a record; it does not prove erased media.
-    //! 3 DEADLINE: the device owed an event and presented none for
-    //! MEM_TIMEOUT_CYC_P + 1 cycles (banner); said nothing, beside DEVICE's
-    //! said no and UNFRAMED's not a record.
+    //! 3 DEADLINE: the device owed an event and presented none within
+    //! MEM_TIMEOUT_CYC_P (banner): it said nothing, beside DEVICE's said
+    //! no and UNFRAMED's not a record.
     output logic [1:0]  nvm_err_cause_o,
 
     //! ---- device face (initiator toward the side-port backend, 02 §8-free) ----
