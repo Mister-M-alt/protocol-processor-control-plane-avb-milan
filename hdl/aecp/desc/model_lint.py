@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
-"""Semantic lint of a descriptor model: docs/architecture/07 §3.1, L1 to L11.
+"""Semantic lint of a descriptor model: docs/architecture/07 §3.1, L1 to L12.
 
 `gen_desc_image.build()` runs it by default, after its layout checks and
 before it renders the image, so one check guards every consumer of the packer
@@ -270,7 +270,7 @@ def _apply(ctx: RuleContext, waivers: list[Waiver]) -> tuple[list[Finding], list
 
 def _report(ctx: RuleContext, applied: list[str], digest: str, recorded: bool) -> list[str]:
     """The lint's part of the layout report."""
-    lines = ["semantic lint: on (07 §3.1 rules L1 to L11)"]
+    lines = ["semantic lint: on (07 §3.1 rules L1 to L12)"]
     lines += [f"lint waivers applied: {len(applied)}"] + applied
     lines.append("ADP inputs this model requires (Milan v1.2 §5.3.3.1, §5.6.2):")
     for port in ("entity_model_id_i", "talker_sources_i", "listener_sinks_i", "identify_index_i"):

@@ -178,16 +178,30 @@ check has a negative case in the gate):
 | L5 | A physical port (`port_number`) keeps the same AVB_INTERFACE index in every configuration that holds it. A configuration without the port is not a finding, so an interface may be absent from some configurations (a second, redundant interface stays possible) | Milan §5.3.3.5 | `interface-index` |
 | L6 | CLOCK_SOURCE construction: one INPUT_STREAM per CRF-capable input (or the single AAF input when no CRF input exists); ≥1 INTERNAL if any output; ≥1 CLOCK_SOURCE per CLOCK_DOMAIN; each CLOCK_DOMAIN's `clock_sources` list sits at 76, is `76 + 2 × count` long and is the identity permutation 0..count-1 (dense, zero-based, in order): the processor's SET_CLOCK_SOURCE range check tests `clock_source_index` < `clock_sources_count` and relies on this list shape to be the IEEE §7.4.23.1 membership test ([06 §6.4](06_aecp_engine.md#64-validation-chains-order-matters-first-failure-responds)); gPTP-as-media-clock chain only in non-redundant single-interface models | Milan §5.3.3.6, §7.5; IEEE §7.2.32, §7.4.23.1 | `domain-source-offset`, `domain-source-count`, `domain-source-length`, `domain-source-identity`, `domain-source-exists`, `crf-input-source`, `aaf-input-source`, `internal-source`, `gptp-source-interfaces` |
 | L7 | STREAM_PORT_INPUT owns no AUDIO_MAP; ≤1 static mapping per output stream channel; AUDIO_CLUSTER `channel_count` = 1 | Milan §5.3.3.7–.9 | `input-port-maps`, `unique-mapping`, `cluster-channels` |
-| L8 | Primary IDENTIFY CONTROL present in all configurations at the same index, and `identify_index_i` names it. The ADPDU always sets AEM_IDENTIFY_CONTROL_INDEX_VALID (Milan §5.6.2, [F04.6](04_adp_engine.md#fig-04-caps)), so a model without one is refused | Milan §5.3.3.10, §5.6.2 | `identify-index`, `identify-driven` |
+| L8 | Primary IDENTIFY CONTROL present in all configurations at the same index, and `identify_index_i` names it. The ADPDU always sets AEM_IDENTIFY_CONTROL_INDEX_VALID (Milan §5.6.2, [F04.6](04_adp_engine.md#fig-04-caps)), so a model without one is refused. Every IDENTIFY CONTROL has the IEEE §7.3.5.2 value format: one CONTROL_LINEAR_UINT8 value, minimum 0, maximum 255, step 255, unit multiplier 0 and code UNITLESS, at `values_offset` 104 in a 113-octet descriptor | Milan §5.3.3.10, §5.6.2; IEEE §7.2.22, §7.3.5.2 | `identify-index`, `identify-driven`, `identify-format` |
 | L9 | `entity_model_id` ≠ 0 / ≠ all-1s; equal to `entity_model_id_i`; changes whenever the static model changes (the recorded digest) | Milan v1.2 §5.3.1, §5.3.3.1, §5.6.2; IEEE §6.2.2.8, §7.2.1 | `model-id-valid`, `model-id-driven`, `model-id-recorded`, `model-digest` |
 | L10 | AUDIO_UNIT `sampling_rates_offset` = 144 and `sampling_rates_count` ≤ 8, each entry the full sampling-rate word (pull field included): the processor's SET_SAMPLING_RATE reads the list at 144 and consults at most its first 8 entries ([06 §6.4](06_aecp_engine.md#64-validation-chains-order-matters-first-failure-responds)). Another offset refuses every rate, and a rate listed past the eighth entry is refused; neither can accept an unlisted rate. The list is not empty, the descriptor is `144 + 4 × count` long, and `current_sampling_rate` is one of its words | IEEE §7.2.3, §7.4.21.1; Milan §5.3.3.3 | `rate-offset`, `rate-count`, `rate-empty`, `rate-length`, `current-rate` |
 | L11 | ENTITY `talker_stream_sources` and `listener_stream_sinks` are the most STREAM_OUTPUTs and STREAM_INPUTs of any configuration, and equal `talker_sources_i` and `listener_sinks_i` | Milan §5.3.3.1, §5.6.2 | `talker-sources`, `listener-sinks`, `talker-sources-driven`, `listener-sinks-driven` |
+| L12 | Each Milan-subset descriptor has its IEEE §7.2 extent: ENTITY 312, AVB_INTERFACE 102, CLOCK_SOURCE 86, STREAM_PORT_INPUT/OUTPUT 20 and AUDIO_CLUSTER 90 octets; CONFIGURATION `74 + 4 × count` with `descriptor_counts_offset` 74; AUDIO_MAP `8 + 8 × count` with `mappings_offset` 8 (AUDIO_UNIT, the streams, CLOCK_DOMAIN and the IDENTIFY CONTROL are L10's, L4's, L6's and L8's). No descriptor of any type is longer than 508 octets | Milan §5.3.3.1, §5.3.3.2, §5.3.3.5–.9 ("shall have the format specified in [ATDECC, Clause 7.2.x]"); IEEE §7.2, §7.2.1, §7.2.2, §7.2.8, §7.2.9, §7.2.13, §7.2.16, §7.2.19 | `descriptor-extent`, `descriptor-maximum` |
 
-Not linted, and left to the consumer's shipping checks: the formats a statically mapped
-Stream Output may list, `interface_flags` and `entity_capabilities` bit values, the CRF
-Media Clock Input and Output obligations of Milan §7.2.2 and §7.2.3, and whether a
-sampling-rate list matches what the Audio Unit does (Milan §5.3.3.3, §5.3.3.4,
-§5.3.3.5).
+Not linted, and left to the consumer's shipping checks, each with its reason:
+
+- the formats a statically mapped Stream Output may list (Milan §5.3.3.4), whether a
+  sampling-rate list matches what the Audio Unit does (§5.3.3.3), and the CRF Media
+  Clock Input and Output obligations of Milan §7.2.2 and §7.2.3: each is a fact about
+  the product, which the descriptor bytes do not carry;
+- `interface_flags` and `entity_capabilities` bit values (§5.3.3.5, §5.3.3.1): the
+  processor drives the ADPDU's capabilities itself ([F04.6](04_adp_engine.md#fig-04-caps)),
+  and the descriptor copies are the consumer's;
+- the format of a gPTP media clock source (§5.3.3.6 → §7.5.2 to §7.5.5:
+  `clock_source_flags` 0, a TIMING with algorithm SINGLE naming one PTP_INSTANCE,
+  that instance's GRANDMASTER_CAPABLE flag and its one PTP_PORT on AVB_INTERFACE 0):
+  L6 finds such a source and checks §5.3.3.6's single-interface condition; the
+  processor reads none of these descriptors and serves no command on them;
+- inside a Milan-subset descriptor's §7.2 format, the values of fields no rule names:
+  L12 checks the format's extent and §7.2's 508-octet maximum, not every field;
+- the extent of a descriptor type outside Milan's subset (§5.3.2): only the 508-octet
+  maximum applies to it.
 
 The AUDIO_UNIT descriptor extent must equal `144 + 4 × sampling_rates_count`
 bytes, excluding packed-image stride padding. The parent currently emits one

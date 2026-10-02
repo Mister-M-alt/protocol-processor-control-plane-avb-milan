@@ -96,7 +96,7 @@ OUTPUT IMAGE LAYOUT  (all multi-byte fields BIG-ENDIAN, the 1722.1 wire order)
   descriptors, then the name table (n_names x 64 bytes), 8-byte aligned.
 
 =============================================================================
-SEMANTIC LINT  (07 §3.1, rules L1 to L11; model_lint.py, model_rules.py)
+SEMANTIC LINT  (07 §3.1, rules L1 to L12; model_lint.py, model_rules.py)
 =============================================================================
 
 build() lints the model by default, after the layout checks above and before

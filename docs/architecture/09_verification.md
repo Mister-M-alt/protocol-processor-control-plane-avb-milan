@@ -286,8 +286,8 @@ listed in [07 §3.1](07_memory_maps.md#model-lint).
 |---|---|
 | the positive model packs with the lint on and reports `entity_model_id_i`, `talker_sources_i`, `listener_sinks_i`, `identify_index_i` and the recorded digest | `LintTest.test_milan_min_packs` |
 | every check of `model_lint.CHECKS` has a mutation: one negative image per refusal | `LintTest.test_every_check_has_a_mutation` |
-| each mutation is refused with its rule and check, on the arm its `detail` names where a check has several, and the same bytes pack with the lint off, so the refusal is the lint's and not a layout refusal (L1 to L11, 73 mutations; L9's 0 and all-ones, L8's index moving between two configurations, L11's two-configuration maximum, an ENTITY and a CONFIGURATION in configuration 1, each `descriptor-counts`, `stream-layout`, `unique-mapping` and L2 arm, two INPUT_STREAM sources at a CRF input and one at each of two AAF inputs among them) | `LintTest.test_mutations` |
-| the caps accept their own value (46 formats, 8 sampling rates), a CRF input's source beside one at an AAF input packs, and a field past a descriptor's end is the finding of the rule that needs it | `LintTest.test_boundaries_pack`, `LintTest.test_short_descriptor` |
+| each mutation is refused with its rule and check, on the arm its `detail` names where a check has several, and the same bytes pack with the lint off, so the refusal is the lint's and not a layout refusal (L1 to L12, 78 mutations; L9's 0 and all-ones, L8's index moving between two configurations, L11's two-configuration maximum, an ENTITY and a CONFIGURATION in configuration 1, each `descriptor-counts`, `stream-layout`, `unique-mapping` and L2 arm, two INPUT_STREAM sources at a CRF input and one at each of two AAF inputs, an IDENTIFY outside the §7.3.5.2 format, a descriptor past its §7.2 extent or past 508 octets among them) | `LintTest.test_mutations` |
+| the caps accept their own value (46 formats, 8 sampling rates), a CRF input's source beside one at an AAF input packs, each fixed-size Milan-subset type and AUDIO_MAP's `mappings_offset` are held to §7.2 (L12), and a field past a descriptor's end is the finding of the rule that needs it | `LintTest.test_boundaries_pack`, `LintTest.test_fixed_extents`, `LintTest.test_short_descriptor` |
 | `example_milan_8.json` packs with the lint off, and is refused with it on (it is a layout vector, not a Milan model) | `LintTest.test_example_is_a_layout_vector`, `CommandLineTest.test_example_needs_no_lint` |
 | standard-conforming models pack: a Unit's and its Port's CONTROLs in §7.2's walk order, a JACK's CONTROL and a Unit's SIGNAL_SELECTOR left out of the top-level counts, Stream Port cluster ranges in either order, a second AVB_INTERFACE that configuration 1 omits | `ConformingModelTest` |
 | each layout refusal the packer had before the lint has a negative case: an index gap, a duplicate key, a mixed named and unnamed run, an ENTITY at index 1, a configuration gap | `LayoutRefusalTest` |
@@ -295,9 +295,9 @@ listed in [07 §3.1](07_memory_maps.md#model-lint).
 | driven ADP values that agree pass; a check asked for with the lint off is refused; the §6.2.2.8 exclusions and the unit identity leave the digest unchanged, field by field against the clause (linear, selector and array current values, a CONTROL's whole UTF-8 value, SIGNAL_SELECTOR and MEMORY_OBJECT fields), while each neighbouring structural field moves it; a selector CONTROL's option change under a recorded digest is refused and its current change packs; `model_ids.json` is current | `IdentityTest` |
 | the command line: the positive model with every check; a refusal exits 1 and writes nothing | `CommandLineTest` |
 
-Mutation record, 2026-10-02: each of the 53 checks was suppressed in turn (its findings
-dropped, nothing else changed), and the gate failed for each one: 53 of 53 killed. The
-driver is `tb/desc_store/lint_suppression.py` (`make -C tb/desc_store lint-suppression`),
+Mutation record, 2026-10-02: each check was suppressed in turn (its findings dropped,
+nothing else changed), and the gate failed for each one: 53 of 53 killed in round 1,
+56 of 56 in round 2. The driver is `tb/desc_store/lint_suppression.py` (`make -C tb/desc_store lint-suppression`),
 which re-runs the record. The record, and the planted-defect campaign the round-1
 reviews ran, are in the [`tb/desc_store` README](../../tb/desc_store/README.md).
 

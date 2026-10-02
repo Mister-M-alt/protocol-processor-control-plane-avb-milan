@@ -72,20 +72,22 @@ semantic model lint, and its waivers, ADP report and digest.
 ### The semantic model lint (issues #38, #39, #60, #89)
 
 The packer lints the model by default (`hdl/aecp/desc/model_lint.py`, with the
-rules L1 to L11 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's evidence map is
+rules L1 to L12 of docs/architecture/07 §3.1 in `model_rules.py`). The gate's evidence map is
 [09 §8.4](../../docs/architecture/09_verification.md#84-the-descriptor-model-lint-issues-38-39-60-89):
 
 - `milan_min.json` packs with every check on, and its digest equals the one
   recorded in `model_ids.json`.
-- Each of the 73 named mutations in `lint_mutations.py` is refused with its
+- Each of the 78 named mutations in `lint_mutations.py` is refused with its
   rule and check. Where a check has several arms, the mutation's `detail`
   names the arm, and the refusal must carry it. The same mutated bytes pack
   with the lint off, so every refusal counted is the lint's. Every one of the
-  53 checks has at least one mutation, and a test holds that set equal to
+  56 checks has at least one mutation, and a test holds that set equal to
   `model_lint.CHECKS`.
 - The caps accept their own value: 46 formats and 8 sampling rates pack, and
-  so does a CRF input's clock source beside one at an AAF input. A field past
-  a descriptor's end is the finding of the rule that needs it.
+  so does a CRF input's clock source beside one at an AAF input. Each
+  fixed-size Milan-subset type two octets long, and an AUDIO_MAP whose
+  mappings_offset is not 8, is refused with its §7.2 extent (L12). A field
+  past a descriptor's end is the finding of the rule that needs it.
 - Standard-conforming models pack: CONTROLs a Unit and its Port own in the
   order IEEE 1722.1-2021 §7.2 walks them, a JACK's CONTROL and a Unit's
   SIGNAL_SELECTOR outside the top-level counts, cluster ranges in either
@@ -116,7 +118,7 @@ passes and every check is killed.
 |---|---|
 | Control: nothing suppressed | the gate passes |
 | Each check suppressed alone, round 1 (2026-10-02, at e6cca1ff) | 53 of 53 checks make `test_mutations` fail. `WaiverTest` fails as well for `port-cluster-minimum` (4 tests), `has-parent`, `cluster-channels` and `talker-base-format` (1 each) |
-| Each check suppressed alone, round 2 (2026-10-02, the committed driver) | 53 of 53 checks killed. `port-cluster-minimum` also fails 7 `WaiverTest` tests; `has-parent`, `cluster-channels` and `talker-base-format` fail one each |
+| Each check suppressed alone, round 2 (2026-10-02, the committed driver) | 56 of 56 checks killed, L8's `identify-format` and L12's `descriptor-extent` and `descriptor-maximum` among them. `port-cluster-minimum` also fails 7 `WaiverTest` tests; `has-parent`, `cluster-channels` and `talker-base-format` fail one each |
 
 Planted defects (round 2, 2026-10-02): the two round-1 reviews planted 22
 and 32 textual defects in the lint and the packer, one per disposable copy,

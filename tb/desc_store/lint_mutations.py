@@ -301,6 +301,23 @@ def _mapping_repeated_in_a_second_map(model: Model) -> None:
     put(model, (STREAM_PORT_OUTPUT, 0, 0), 16, 2)
 
 
+def offset_moved(model: Model, at: tuple[int, int], offset_at: int, gap: int) -> None:
+    """A configuration-0 descriptor's variable part moved `gap` octets on, its
+    offset field following it: the list still reads, the offset is not §7.2's."""
+    data = body(model, at[0], at[1])
+    base = struct.unpack_from(">H", data, offset_at)[0]
+    struct.pack_into(">H", data, offset_at, base + gap)
+    store(model, (at[0], at[1], 0), data[:base] + bytes(gap) + data[base:])
+
+
+def _long_audio_map(model: Model) -> None:
+    """AUDIO_MAP 0 with 64 distinct mappings: 520 octets (R435-1 probe I)."""
+    data = body(model, AUDIO_MAP, 0)[:8]
+    struct.pack_into(">H", data, 6, 64)
+    store(model, (AUDIO_MAP, 0, 0),
+          data + b"".join(struct.pack(">HHHH", 0, k, 0, 0) for k in range(64)))
+
+
 def _no_streams(model: Model) -> None:
     """Every STREAM_INPUT and STREAM_OUTPUT removed."""
     for dtype, index in ((STREAM_INPUT, 0), (STREAM_INPUT, 1), (STREAM_OUTPUT, 0)):
@@ -425,6 +442,8 @@ MUTATIONS = (
     Mutation("no IDENTIFY CONTROL", "identify-index", _p((CONTROL, 0), 82, MUTE, 8)),
     Mutation("IDENTIFY at index 0, then 1", "identify-index", _identify_moves),
     Mutation("identify_index_i 1", "identify-driven", lambda m: None, {"identify_index": 1}),
+    Mutation("IDENTIFY maximum 1", "identify-format", _p((CONTROL, 0), 105, 1, 1),
+             detail="maximum 1, not 255"),
     Mutation("entity_model_id 0", "model-id-valid", _p((ENTITY, 0), 12, 0, 8),
              detail="0x0000000000000000"),
     Mutation("entity_model_id all ones", "model-id-valid", _p((ENTITY, 0), 12, (1 << 64) - 1, 8),
@@ -454,4 +473,15 @@ MUTATIONS = (
              {"talker_sources": 2}),
     Mutation("listener_sinks_i 3", "listener-sinks-driven", lambda m: None,
              {"listener_sinks": 3}),
+    Mutation("AUDIO_CLUSTER 3 four octets long", "descriptor-extent",
+             lambda m: store(m, (AUDIO_CLUSTER, 3, 0), body(m, AUDIO_CLUSTER, 3) + bytes(4)),
+             detail="AUDIO_CLUSTER 3: is 94 bytes; §7.2 makes 90"),
+    Mutation("CONFIGURATION descriptor_counts at 78", "descriptor-extent",
+             lambda m: offset_moved(m, (CONFIGURATION, 0), 72, 4),
+             detail="CONFIGURATION 0: the offset at 72 is 78, not 74"),
+    Mutation("AUDIO_MAP 0 eight octets past its mappings", "descriptor-extent",
+             lambda m: store(m, (AUDIO_MAP, 0, 0), body(m, AUDIO_MAP, 0) + bytes(8)),
+             detail="AUDIO_MAP 0: is 32 bytes; 2 entries of 8 make 24"),
+    Mutation("AUDIO_MAP 0 with 64 mappings, 520 octets", "descriptor-maximum", _long_audio_map,
+             detail="AUDIO_MAP 0: is 520 bytes, above 508"),
 )

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
-"""The rules of the descriptor model lint: docs/architecture/07 §3.1, L1 to L11.
+"""The rules of the descriptor model lint: docs/architecture/07 §3.1, L1 to L12.
 
 `model_lint.lint()` runs them; this module holds what they judge and how. A
 rule reads the packed bytes at their IEEE 1722.1-2021 §7.2 wire offsets,
@@ -88,6 +88,23 @@ UNITS = ((D.AUDIO_UNIT, D.AUDIO_CLUSTER, D.AUDIO_MAP),
 CONTROL_OWNERS = ((D.JACK_INPUT, 74, 76), (D.JACK_OUTPUT, 74, 76), (D.AVB_INTERFACE, 98, 100),
                   (D.CONTROL_BLOCK, 70, 72), (D.PTP_INSTANCE, 82, 84))
 
+#: Milan v1.2 §5.3.3.1, .2, .5 to .9 bind each of these types to its IEEE
+#: 1722.1-2021 §7.2 format; its extent is fixed, or (offset field, the offset
+#: the clause fixes, count field, entry size) gives a variable part. AUDIO_UNIT,
+#: STREAM_INPUT/OUTPUT and CLOCK_DOMAIN are L10's, L4's and L6's, and the
+#: IDENTIFY CONTROL is L8's `identify-format`.
+EXTENTS: dict[int, tuple[int, tuple[int, int, int] | None]] = {
+    D.ENTITY: (312, None), D.CONFIGURATION: (74, (72, 70, 4)),
+    D.AVB_INTERFACE: (102, None), D.CLOCK_SOURCE: (86, None),
+    D.STREAM_PORT_INPUT: (20, None), D.STREAM_PORT_OUTPUT: (20, None),
+    D.AUDIO_CLUSTER: (90, None), D.AUDIO_MAP: (8, (4, 6, 8))}
+DESCRIPTOR_MAX = 508                    # IEEE 1722.1-2021 §7.2
+#: IEEE 1722.1-2021 §7.3.5.2: an IDENTIFY is one CONTROL_LINEAR_UINT8 value,
+#: minimum 0, maximum 255, step 255, unit multiplier 0 and code UNITLESS.
+IDENTIFY_FORMAT = ((80, 2, 0x0001, "control_value_type"), (94, 2, 104, "values_offset"),
+                   (96, 2, 1, "number_of_values"), (104, 1, 0, "minimum"),
+                   (105, 1, 255, "maximum"), (106, 1, 255, "step"), (109, 2, 0x0000, "unit"))
+
 CRF_MILAN = 0x041060010000BB80          # Milan v1.2 §7.3.4 Table 7.1
 IDENTIFY = 0x90E0F00000000001           # IEEE 1722.1-2021 Table 7-98
 BUFFER_MIN_NS = 2_126_000               # Milan v1.2 §5.3.3.4
@@ -167,6 +184,8 @@ CHECKS = {
     "identify-index": ("L8", MILAN + "§5.3.3.10, §5.6.2",
                        "an IDENTIFY CONTROL at one index in every configuration"),
     "identify-driven": ("L8", MILAN + "§5.3.3.10, §5.6.2", "identify_index_i names that CONTROL"),
+    "identify-format": ("L8", MILAN + "§5.3.3.10; " + IEEE + "§7.2.22, §7.3.5.2",
+                        "an IDENTIFY CONTROL is one LINEAR_UINT8 value 0..255, step 255, unitless"),
     "model-id-valid": ("L9", MILAN + "§5.3.3.1, §5.6.2", "entity_model_id neither 0 nor all ones"),
     "model-id-driven": ("L9", MILAN + "§5.6.2; " + IEEE + "§7.2.1",
                         "entity_model_id_i equals the ENTITY descriptor's"),
@@ -186,6 +205,10 @@ CHECKS = {
                               "talker_sources_i equals that maximum"),
     "listener-sinks-driven": ("L11", MILAN + "§5.3.3.1, §5.6.2",
                               "listener_sinks_i equals that maximum"),
+    "descriptor-extent": ("L12", MILAN + "§5.3.3.1, §5.3.3.2, §5.3.3.5 to §5.3.3.9; " + IEEE
+                          + "§7.2.1, §7.2.2, §7.2.8, §7.2.9, §7.2.13, §7.2.16, §7.2.19",
+                          "a Milan-subset descriptor has its §7.2 extent"),
+    "descriptor-maximum": ("L12", IEEE + "§7.2", "no descriptor is longer than 508 octets"),
 }
 
 Where = tuple[int, int | None, int | None]
@@ -729,14 +752,32 @@ def _rule_maps(ctx: RuleContext) -> None:
                 seen.setdefault(key, index)
 
 
+def _identify_format(ctx: RuleContext, where: Where) -> None:
+    """L8: an IDENTIFY CONTROL's value in the IEEE 1722.1-2021 §7.3.5.2 format,
+    and its 113 octets (§7.2.22: 104 + one 9-octet LINEAR_UINT8 entry)."""
+    body = ctx.of(where[0], where[1])[where[2]]
+    wrong = [f"is {len(body)} bytes, not 113"] if len(body) != 113 else []
+    for offset, size, value, name in IDENTIFY_FORMAT:
+        if offset + size <= len(body):
+            found = int.from_bytes(body[offset:offset + size], "big")
+            if name == "control_value_type":
+                found &= 0x3FFF        # value_type, without the r and u flags (§7.3.6.1)
+            if found != value:
+                wrong.append(f"{name} {found}, not {value}")
+    if wrong:
+        ctx.bad("identify-format", where, "; ".join(wrong))
+
+
 def _rule_identify(ctx: RuleContext) -> None:
-    """L8: the primary IDENTIFY CONTROL, the index identify_index_i names."""
+    """L8: the primary IDENTIFY CONTROL, the index identify_index_i names, and
+    the format of every IDENTIFY CONTROL."""
     held = []
     for cfg in ctx.cfgs:
         at = set()
         for index in sorted(ctx.of(cfg, D.CONTROL)):
             if ctx.read("identify-index", (cfg, D.CONTROL, index), 82, 8) == IDENTIFY:
                 at.add(index)
+                _identify_format(ctx, (cfg, D.CONTROL, index))
         held.append(at)
     common = sorted(set.intersection(*held)) if held else []
     ctx.values["identify_index_i"] = common[0] if common else None
@@ -831,6 +872,39 @@ def _rule_counts(ctx: RuleContext) -> None:
                     f"is {most}")
 
 
+def _rule_format(ctx: RuleContext) -> None:
+    """L12: each Milan-subset descriptor has its IEEE 1722.1-2021 §7.2 extent
+    (Milan v1.2 §5.3.3.x "shall have the format specified in [ATDECC, Clause
+    7.2.x]"), and no descriptor is longer than §7.2's 508 octets."""
+    for cfg in ctx.cfgs:
+        for dtype in sorted(ctx.model[cfg]):
+            for index, body in sorted(ctx.of(cfg, dtype).items()):
+                where = (cfg, dtype, index)
+                if len(body) > DESCRIPTOR_MAX:
+                    ctx.bad("descriptor-maximum", where, f"is {len(body)} bytes, above "
+                                                         f"{DESCRIPTOR_MAX}")
+                if dtype in EXTENTS:
+                    _extent(ctx, where, EXTENTS[dtype])
+
+
+def _extent(ctx: RuleContext, where: Where, extent: tuple[int, tuple[int, int, int] | None]) -> None:
+    """One descriptor's §7.2 extent: fixed, or its offset field and count."""
+    size, variable = extent
+    body = ctx.of(where[0], where[1])[where[2]]
+    if variable is None:
+        if len(body) != size:
+            ctx.bad("descriptor-extent", where, f"is {len(body)} bytes; §7.2 makes {size}")
+        return
+    offset_at, count_at, entry = variable
+    offset = ctx.read("descriptor-extent", where, offset_at, 2)
+    count = ctx.read("descriptor-extent", where, count_at, 2)
+    if offset is not None and offset != size:
+        ctx.bad("descriptor-extent", where, f"the offset at {offset_at} is {offset}, not {size}")
+    if count is not None and len(body) != size + entry * count:
+        ctx.bad("descriptor-extent", where, f"is {len(body)} bytes; {count} entries of "
+                                            f"{entry} make {size + entry * count}")
+
+
 RULES = (_rule_entity, _rule_tree, _rule_order, _rule_streams, _rule_stream_fields,
          _rule_interfaces, _rule_domains, _rule_sources, _rule_maps, _rule_identify,
-         _rule_rates, _rule_counts)
+         _rule_rates, _rule_counts, _rule_format)

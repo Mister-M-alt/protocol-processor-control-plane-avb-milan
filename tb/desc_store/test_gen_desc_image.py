@@ -7,7 +7,7 @@ on the two models beside the generator:
   * body/key agreement (BodyKeyTest), on layout-only models packed with the
     semantic lint off;
   * one negative case per existing layout refusal (LayoutRefusalTest);
-  * the semantic lint (07 section 3.1, L1 to L11): milan_min.json packs, and
+  * the semantic lint (07 section 3.1, L1 to L12): milan_min.json packs, and
     every named mutation in lint_mutations.py is refused with its check while
     the same bytes pack with the lint off (LintTest);
   * waivers, the ADP report and check, the recorded digest (WaiverTest,
@@ -243,7 +243,7 @@ class LintTest(unittest.TestCase):
         """milan_min.json packs with the lint on and reports what it requires."""
         image, report = gen_desc_image.build(MILAN_MIN, model_ids=RECORDED)
         self.assertEqual(image[:4], b"AEMI")
-        for line in ("semantic lint: on (07 §3.1 rules L1 to L11)",
+        for line in ("semantic lint: on (07 §3.1 rules L1 to L12)",
                      "lint waivers applied: 0",
                      "  entity_model_id_i  0x020000FFFE00C801",
                      "  talker_sources_i   1", "  listener_sinks_i   2",
@@ -299,6 +299,23 @@ class LintTest(unittest.TestCase):
         mut.set_sources(sources, [0, 1, 2])
         for model in (formats, rates, sources):
             self.assertIn("lint waivers applied: 0", gen_desc_image.build(model)[1])
+
+    def test_fixed_extents(self) -> None:
+        """Each fixed-size Milan-subset type two octets long is refused with its
+        §7.2 extent (L12), and so is a mappings_offset other than 8."""
+        for dtype, size in ((mut.ENTITY, 312), (mut.AVB_INTERFACE, 102),
+                            (mut.CLOCK_SOURCE, 86), (mut.STREAM_PORT_INPUT, 20),
+                            (mut.STREAM_PORT_OUTPUT, 20), (mut.AUDIO_CLUSTER, 90)):
+            name = gen_desc_image.model_lint.type_name(dtype)
+            with self.subTest(type=name):
+                model = normalised(MILAN_MIN)
+                mut.store(model, (dtype, 0, 0), mut.body(model, dtype, 0) + bytes(2))
+                self.assertIn(f"L12 descriptor-extent: cfg 0 {name} 0: is {size + 2} bytes; "
+                              f"§7.2 makes {size}", "\n".join(refusal(model)))
+        model = normalised(MILAN_MIN)
+        mut.offset_moved(model, (mut.AUDIO_MAP, 0), 4, 8)
+        self.assertIn("L12 descriptor-extent: cfg 0 AUDIO_MAP 0: the offset at 4 is 16, not 8",
+                      "\n".join(refusal(model)))
 
     def test_short_descriptor(self) -> None:
         """A field a rule needs past the descriptor's end is that rule's finding."""
