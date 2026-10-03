@@ -22,7 +22,7 @@
         <mxCell id="mac" value="Ethernet&#10;MAC / PHY" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="380" y="340" width="130" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="proc" value="&lt;b&gt;IEEE 1722.1 PROTOCOL PROCESSOR&lt;/b&gt;&#10;(this architecture)&#10;&#10;ADP &#183; ACMP &#183; AECP/AEM &#183; Milan MVU&#10;registry &#183; notifications &#183; counters&#10;lock &#183; timers &#183; persistence manager" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+        <mxCell id="proc" value="&lt;b&gt;IEEE 1722.1 PROTOCOL PROCESSOR&lt;/b&gt;&#10;(this architecture)&#10;&#10;ADP &#183; ACMP &#183; AECP/AEM &#183; Milan MVU&#10;registry &#183; notifications &#183; lock&#10;GET_COUNTERS reporting &#183; timers&#10;persistence manager" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
           <mxGeometry x="570" y="300" width="340" height="180" as="geometry" />
         </mxCell>
 
@@ -49,8 +49,8 @@
           <mxGeometry x="1150" y="420" width="180" height="60" as="geometry" />
         </mxCell>
 
-        <mxCell id="legend" value="Interface classes (see 02_interfaces.md):&#10;A packet streaming &#183; B request/response &#183; C events &#183; D level status &#183; E side-port &#183; F NVM" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;fontSize=11;fontColor=#555555;" vertex="1" parent="1">
-          <mxGeometry x="380" y="760" width="620" height="40" as="geometry" />
+        <mxCell id="legend" value="Interface classes (see 02_interfaces.md):&#10;A packet streaming &#183; B request/response &#183; C events &#183; D level status &#183; E side-port &#183; F NVM&#10;gsi &#183; ctr: the read faces of 02 &#167;4.3 and &#167;4.6; gPTP, AVTP and media clocking have no class-B face" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;fontSize=11;fontColor=#555555;" vertex="1" parent="1">
+          <mxGeometry x="380" y="750" width="700" height="55" as="geometry" />
         </mxCell>
 
         <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ctrls" target="cloud"><mxGeometry relative="1" as="geometry" /></mxCell>
@@ -58,17 +58,17 @@
         <mxCell id="e3" value="100M / 1G link" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="cloud" target="mac"><mxGeometry relative="1" as="geometry" /></mxCell>
         <mxCell id="e4" value="A" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;fontStyle=1;labelBackgroundColor=#ffffff;startArrow=classic;startFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="mac" target="proc"><mxGeometry relative="1" as="geometry" /></mxCell>
 
-        <mxCell id="e5" value="B/C/D" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;startArrow=classic;startFill=1;exitX=0.1;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="proc" target="gptp">
-          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="604" y="590" /><mxPoint x="455" y="590" /></Array></mxGeometry>
+        <mxCell id="e5" value="D &#183; gsi &#183; ctr" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;startArrow=classic;startFill=1;exitX=0.1;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="proc" target="gptp">
+          <mxGeometry x="-0.624" relative="1" as="geometry"><Array as="points"><mxPoint x="604" y="590" /><mxPoint x="455" y="590" /></Array></mxGeometry>
         </mxCell>
         <mxCell id="e6" value="B/C/D" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;startArrow=classic;startFill=1;exitX=0.35;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="proc" target="srp">
-          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="689" y="610" /><mxPoint x="640" y="610" /></Array></mxGeometry>
+          <mxGeometry x="-0.452" relative="1" as="geometry"><Array as="points"><mxPoint x="689" y="610" /><mxPoint x="640" y="610" /></Array></mxGeometry>
         </mxCell>
-        <mxCell id="e7" value="B/C/D" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;startArrow=classic;startFill=1;exitX=0.6;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="proc" target="avtp">
-          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="774" y="610" /><mxPoint x="830" y="610" /></Array></mxGeometry>
+        <mxCell id="e7" value="D &#183; gsi &#183; ctr" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;startArrow=classic;startFill=1;exitX=0.6;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="proc" target="avtp">
+          <mxGeometry x="-0.469" relative="1" as="geometry"><Array as="points"><mxPoint x="774" y="610" /><mxPoint x="830" y="610" /></Array></mxGeometry>
         </mxCell>
-        <mxCell id="e8" value="B/C/D" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;startArrow=classic;startFill=1;exitX=0.85;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="proc" target="mclk">
-          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="859" y="590" /><mxPoint x="1015" y="590" /></Array></mxGeometry>
+        <mxCell id="e8" value="D &#183; ctr" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;startArrow=classic;startFill=1;exitX=0.85;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="proc" target="mclk">
+          <mxGeometry x="-0.632" relative="1" as="geometry"><Array as="points"><mxPoint x="859" y="590" /><mxPoint x="1015" y="590" /></Array></mxGeometry>
         </mxCell>
 
         <mxCell id="e9" value="F" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;fontStyle=1;labelBackgroundColor=#ffffff;startArrow=classic;startFill=1;exitX=1;exitY=0.2;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="proc" target="nvm">

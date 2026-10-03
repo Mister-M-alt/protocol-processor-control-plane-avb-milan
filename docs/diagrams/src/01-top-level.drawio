@@ -60,9 +60,6 @@
         <mxCell id="registry" value="Controller registry&#10;+ monitor + notification fan-out" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="640" y="430" width="200" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="ctrs" value="Counters&#10;subsystem" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="880" y="430" width="100" height="80" as="geometry" />
-        </mxCell>
         <mxCell id="ident" value="Identify&#10;handler" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="1020" y="430" width="100" height="80" as="geometry" />
         </mxCell>
@@ -80,20 +77,17 @@
           <mxGeometry x="860" y="590" width="160" height="70" as="geometry" />
         </mxCell>
 
-        <mxCell id="adap" value="External-engine adapters" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;fontStyle=2;fontSize=11;opacity=60;" vertex="1" parent="1">
-          <mxGeometry x="260" y="710" width="600" height="130" as="geometry" />
+        <mxCell id="faces" value="External-engine faces (02 &#167;4)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;fontStyle=2;fontSize=11;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="260" y="700" width="910" height="150" as="geometry" />
         </mxCell>
-        <mxCell id="a-gptp" value="gPTP&#10;adapter" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="280" y="750" width="110" height="70" as="geometry" />
+        <mxCell id="f-srp" value="srp &#183; maap faces (class B)&#10;in core: SRP engine (10, default),&#10;MAAP engine (11, opt-in)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="280" y="740" width="240" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="a-srp" value="SRP/MAAP&#10;adapter" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="410" y="750" width="110" height="70" as="geometry" />
+        <mxCell id="f-lvl" value="gPTP &#183; AVTP &#183; media clock&#10;class-D levels + change strobes" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="560" y="740" width="270" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="a-avtp" value="AVTP&#10;adapter" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="540" y="750" width="110" height="70" as="geometry" />
-        </mxCell>
-        <mxCell id="a-mclk" value="Media-clock&#10;adapter" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="670" y="750" width="110" height="70" as="geometry" />
+        <mxCell id="f-rd" value="gsi &#183; ctr read faces&#10;GET_* words + change strobes" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="870" y="740" width="280" height="80" as="geometry" />
         </mxCell>
 
         <mxCell id="nvm" value="NVM manager&#10;(journal + restore)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
@@ -132,7 +126,9 @@
           <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="800" y="572" /><mxPoint x="900" y="572" /></Array></mxGeometry>
         </mxCell>
         <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.2;exitY=1;exitDx=0;exitDy=0;entryX=0.97;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="aecp" target="registry"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.6;exitY=1;exitDx=0;exitDy=0;entryX=0.42;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="aecp" target="ctrs"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e14" value="words" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;labelBackgroundColor=#ffffff;exitX=0.607;exitY=0;exitDx=0;exitDy=0;entryX=0.773;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="f-rd" target="aecp">
+          <mxGeometry x="-0.75" relative="1" as="geometry"><Array as="points"><mxPoint x="1040" y="565" /><mxPoint x="960" y="565" /></Array></mxGeometry>
+        </mxCell>
         <mxCell id="e15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.05;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="aecp" target="model">
           <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="801" y="395" /><mxPoint x="360" y="395" /></Array></mxGeometry>
         </mxCell>
@@ -151,7 +147,7 @@
         </mxCell>
 
         <mxCell id="e21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="timer" target="evr"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e22" value="events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;fontSize=10;labelBackgroundColor=#ffffff;exitX=0.4;exitY=0;exitDx=0;exitDy=0;entryX=0.4;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="adap" target="evr"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e22" value="events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;fontSize=10;labelBackgroundColor=#ffffff;exitX=0.266;exitY=0;exitDx=0;exitDy=0;entryX=0.4;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="faces" target="evr"><mxGeometry relative="1" as="geometry" /></mxCell>
         <mxCell id="e23" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;exitX=0.25;exitY=0;exitDx=0;exitDy=0;entryX=0.19;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="evr" target="acmp">
           <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="482" y="380" /><mxPoint x="560" y="380" /></Array></mxGeometry>
         </mxCell>
