@@ -158,9 +158,9 @@ and `tb/dyn_state/sim_main.cpp` (lettered sections):
 
 | Field | A: image fallback | B: written overlay | Isolation / fail-closed |
 |---|---|---|---|
-| current_configuration | W3c, W3d, W16a; AD1/AD1b (the ADPDU carries the image default while the row is unset); AD6 (a restore that applied the row and rolled back advertises the image default); AD7 (a reset after a SUCCESS SET_CONFIGURATION, with nothing to restore, advertises the image default) | W18/W18b/W18c/W18c3; W22a (SUCCESS-arm reachability after W21u's unbind) + W22d (residue displacement); AD2-AD4 (the next ADPDU carries the written overlay, only wire bytes 64..65 and available_index move); AD5 (a configuration the D3 writer saved and restored is advertised from the first ADPDU, and GET agrees) | mechanism-level: dyn_state C, D (row addressing shared across selectors) |
+| current_configuration | W3c, W3d, W16a; AD1/AD1b (the ADPDU carries the image default while the row is unset); AD6 (a restore that applied the row and rolled back advertises the image default); AD7 (a reset after a SUCCESS SET_CONFIGURATION, with nothing to restore, advertises the image default); AD8, AD9 (a corrupt record 0x00 and a torn read of it keep the image default, issue #63) | W18/W18b/W18c/W18c3; W22a (SUCCESS-arm reachability after W21u's unbind) + W22d (residue displacement); AD2-AD4 (the next ADPDU carries the written overlay, only wire bytes 64..65 and available_index move); AD5 (a configuration the D3 writer saved and restored is advertised from the first ADPDU, and GET agrees) | mechanism-level: dyn_state C, D (row addressing shared across selectors) |
 | sampling_rate | W5 (byte-exact image 96000); W9i (a rate the AUDIO_UNIT list does not hold is refused on the unset row carrying the image's 96000, GET still reads it) | W9/W9b/W9c (48000, GET and the GET_DYNAMIC_INFO member); the list check (issue #51) on a set row: W9j (refusal carries the stored rate), W9k (refusals of an unlisted, a pulled and a zero rate write, mark and notify nothing, graded at the effect strobes and a second registered controller; the accepted listed rate moves each once), W9l (count, entries and offset are the image's, patched in place), W9m (the lock outranks the list check) | mechanism-level: dyn_state C, D |
-| clock_source | W6/W6b; W10i (a refusal on the unset row carries the image's index, GET still reads it) | W10/W10d; the accepted SET answers the index it stored, not the one it replaced, on the unset row (W10j7b, 0 to 1) and on a set row (W10b, 1 to 2); refusals write nothing: W10e-W10h; refusals mark and notify nothing, graded at the effect strobes and a second registered controller: W10j | mechanism-level: dyn_state C, D |
+| clock_source | W6/W6b; W10i (a refusal on the unset row carries the image's index, GET still reads it) | W10/W10d; the accepted SET answers the index it stored, not the one it replaced, on the unset row (W10j7b, 0 to 1) and on a set row (W10b, 1 to 2); refusals write nothing: W10e-W10h; refusals mark and notify nothing, graded at the effect strobes and a second registered controller: W10j | mechanism-level: dyn_state C, D; a CLOCK_DOMAIN the image lacks is NO_SUCH_DESCRIPTOR with a zero body, moving nothing, and the lock still outranks the miss: `tb/pp_top` AX NSD1-NSD3 (issue #37) |
 | stream formats (in/out) | W4 per type and index | W23a/W23a2 (SET, both the echo and the published row), W23b (GET_STREAM_FORMAT serves the setting through the fold), W23i (the output row); refusals write nothing: W23c-W23h, W25a | dyn_state C, D + the per-row face checks F |
 | presentation offset | (no getter opcode; live face + GET_STREAM_INFO word 3) | W24a/W24a2 (SET + the published row), W24b (GET_STREAM_INFO serves it through the fold), W25d; refusals write nothing: W24c-W24h, W25b | dyn_state C + the per-row face checks F |
 | Identify control | W12/W12b/W12c (pre-SET GET) | W12d-W12h (SET/GET cycles), W13-W13d (step legality); AX LK3b/LK3c (the out-of-range refusal carries the 255 in force, IEEE §7.4.25.1); volatility: dyn_state E | dyn_state E |
@@ -173,9 +173,9 @@ qualifier that triggers the D3 writer: an accepted write that changes the row's
 fields are read continuously by the fabric -- with the area taken in per-field
 widths; the module banner carries the numbers.
 
-### 8.2 Saved state: the scalar stage's evidence (issue #131)
+### 8.2 Saved state: the scalar and name stages' evidence (issues #131, #61, #83)
 
-The parent D3 contract's processor lane 1 graded at the top, on real AECP commands over
+The parent D3 contract's processor lanes 1 (scalars) and 3 (names) graded at the top, on real AECP commands over
 the device model (`tb/pp_top` section D3, focused with `--d3-only`), and on the binding
 manager (`tb/acmp_nvm`):
 
@@ -187,6 +187,11 @@ manager (`tb/acmp_nvm`):
 | taint, change-wins-done, clear by group AND index, coalescing, DR2b unchanged projection | D3S3, D3S4, D3S5, D3S6, D3S8 |
 | restore writes are no changes; IDENTIFY is no change | D3R1, D3S7 |
 | volatile exclusions after the saved-set cycle (IDENTIFY, lock, registry) | D3R1 |
+| the volatile set across a power cycle that restores a saved binding (issues #59, #62): two registrations, one TIME_LIMITED, the lock and IDENTIFY 255 before it; after it the binding is back, IDENTIFY reads 0 and the lock is clear in every cycle from `restore_go_i`, a third controller's change notifies neither former controller, nothing reaches them for 66 s (no CONTROLLER_AVAILABLE, no expiry DEREGISTER), a second controller's LOCK_ENTITY is accepted, sixteen new controllers register, and a returning controller restarts at sequence_id 0; the registry's valid bits, the lock and IDENTIFY each deleted from their reset branch fail it | D3V1 to D3V9 (`--volatile-only`) |
+| the user names (issues #61, #83; Milan §5.3.13): a real SET_NAME of both ENTITY names (the group name a full 64 bytes), an EMPTY name, the IDENTIFY CONTROL's name and the last ordinal each saved as one record `0x80`+ordinal, byte-exact; an unchanged name saves nothing; across a power cycle the entries hold the image's names at the image proof, the five come back (GET_NAME and READ_DESCRIPTOR), no restore write pulses `aecp_name_wr_o` or becomes a change; an ordinal past the image's names refused by the rule, a corrupt and a short record by the frame; a pass-1 roll-back returns the image's names; a change during the WRITE taints it; an image loaded late is walked before the names are written back | D3N1 to D3N7 |
+| every D3 record type (configuration, rate, clock source, both formats, offset, name) cut by a real `rst_n` with the device carried, mid-commit at fixed points (the ERASE's grant, the WRITE's grant, after the header, one byte short) and at one drawn from a fixed seed: the restore never fails, a cut before the ERASE completed keeps the saved value, an erased or torn record keeps the image's value (blank, or the crc's refusal), a saved binding is restored and probes PASSIVE, and a later SET persists | D3K |
+| every record type both producers write (the D3 writer's seven and the binding manager's sink record) cut by a real `rst_n` at seeded-random commit points, a standing campaign of 32 seeds per type (issue #83 and the manager's ruling on it): rst_n falls a seeded number of clocks after the record's ERASE is granted, anywhere up to two clocks past its WRITE's done (a calibration commit measures the span); the outcome is read from what the device holds at the cut, never the RTL: A whole or B whole comes back, and any other bytes frame no record and keep the default (the image's value, an unbound sink); the restore never fails, a restored binding probes PASSIVE, a later change persists; every check names its seed (`--cut-seed S` reruns one) | D3KR (`--cuts-only`, and the default run) |
+| a record that cannot be restored keeps the image's value (issues #52, #63): the clock source erased, corrupt or read torn, and the configuration corrupt or read torn (erased: AD7), each graded through GET and the published value; the saved clock-source index is exported in every cycle the ADP enable is high | D3C5, D3C6; AD8, AD9 |
 | value refusals (frame, rule) kept apart from transport faults (DEVICE, torn, deadline, unframed) | D3R2, D3R3 against D3R5, D3R6, D3R8 |
 | the rate rule's walk past the list's first lane to its eight-entry bound | D3R3b |
 | pass agreement in both directions, descriptor-read error never a refusal, roll-back of both stores for at least two cycles | D3R4, D3R4b, D3R7 |
@@ -205,11 +210,11 @@ manager (`tb/acmp_nvm`):
 | DR2c on both producers: three attempts, the top's derived backoff, dispatch free while it runs, no forgiveness | D3S10; `tb/acmp_nvm` E8 to E11 |
 | the clock-source selection over a ten-source domain (issue #141; 07 §3.1 L6): SET_CLOCK_SOURCE of the last AAF index accepted, notified once and read back over GET, the row and the export; the count refused BAD_ARGUMENTS carrying the index in force, with nothing stored, marked, notified or saved; the AAF index saved and restored (the D3S1/D3R1 pair, REQ-AEM-013); the saved index refused on restore over an image whose count it equals or exceeds | D3C1, D3C2, D3C3, D3C4 |
 
-Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plants 87
-of them, each in its own extract, and requires its named checks to fail (all 87 KILLED
-at the lane head; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
+Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plants 110
+of them, each in its own extract, and requires its named checks to fail (all 110 KILLED
+at the head of lane P1; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
 `tb/rx_validator` READMEs). The two SET_CLOCK_SOURCE range-check controls of D3C1 and
-D3C2 run from `tb/pp_top/aecp_dispatch_mutants.py` (its `d3` target). The name and map stages add their groups' controls when they land. The top-level
+D3C2 run from `tb/pp_top/aecp_dispatch_mutants.py` (its `d3` target). The name stage's controls (each trigger and replay, the rule, the empty name, the record id and entry, a partial write-back, the taint, a restore that pulses or changes, names before the image, the store left out of the roll-back, the frame's crc) run from `d3_mutants.py` too, and so do the cut campaign's two (a torn binding record, and a torn D3 record, restored because the crc is no longer compared). The channel maps are the integrator's to persist (07 §5.1), so their controls are the integrator's. The top-level
 device model misbehaves on the handshake for the walks (late grant, silent header, late
 or erroring descriptor memory), which grades the walks' deadlines; the port's own
 deadline, resets and handshake models are §8.6's.
@@ -349,6 +354,7 @@ the mutation record included.
 | a zero-byte DEVICE or DEADLINE `err` fails the walk (cause 2); a clean `done` or an UNFRAMED `err` is the record's default, the blank first boot unchanged | `tb/acmp_nvm` N1a-d, N12a, N12d against A2/A2b, F4, N2a-b, N9c, N12e, G2; mutant B02 |
 | the amended saved-state contract: a later change against a silent device is attempted three times, each ended DEADLINE with no device command, then `nvm_alarm_o` drops its pending bit; it persists once the device ends the abandoned read | `tb/acmp_nvm` N12b, N12c |
 | `MEM_TIMEOUT_CYC_P` refused at 0, 2^31 and 2^32 - 1 by name, built at 1 and 2^31 - 1 | `tb/nvm_port/elab_bounds.sh` (run by `make`) |
+| `MAX_PAYLOAD_P` refused above 65,527 by name and bound (65,528, 65,535 and 2^32 - 1) as a fatal (`%Warning-USERFATAL`, and with sv2v and yosys installed, stopped by yosys at 65,528), built at 1,024 and 65,527 (issue #17) | `tb/nvm_port/elab_bounds.sh` (run by `make`) |
 
 ### 8.7 The counters face (issues #44, #79)
 

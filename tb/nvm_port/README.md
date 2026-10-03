@@ -16,9 +16,14 @@ randomized harness, `fuzz_main.cpp`, at bounds 1, 2, 3 and 37: the port's
 smallest legal bounds, which the suite cannot reach, and one beside it, each
 at `MAX_PAYLOAD_P` = 65,527, the parameter's largest legal value (see "The
 randomized harness"). Each build prints its own tally, and the last line
-is their sum. `make` first runs `elab_bounds.sh`, the deadline parameter's
-elaboration guard: refused by name at 0, 2^31 and 2^32 - 1, built clean at 1
-and 2^31 - 1.
+is their sum. `make` first runs `elab_bounds.sh`, the port's two elaboration
+guards: the deadline parameter refused by name at 0, 2^31 and 2^32 - 1, built
+clean at 1 and 2^31 - 1; `MAX_PAYLOAD_P` (issue #17) refused by name and by its
+bound, 65,527, at 65,528, 65,535 and 2^32 - 1, built clean at 1,024 and 65,527.
+That refusal must be a `$fatal`: its line must carry `%Warning-USERFATAL` (or
+`%Error`), since Verilator reports `$error` and `$warning` as failing warnings
+too, and where sv2v and yosys are installed yosys must build 65,527 and stop at
+65,528, which it does only for a `$fatal`.
 
 The harness plays BOTH neighbors, independently of the RTL: a **manager BFM**
 that frames records per 07 §5.2 (magic 0x1722, layout_version, record_id,
@@ -97,8 +102,8 @@ implemented — in the manager, not here: `hdl/acmp/KL_acmp_nvm_shadow.sv`
 serialises it (`:482-483`), accumulates it (`:775`) and gates the record on it
 (`rrec_ok_w`, `:391-395`), with the per-record vendor-default policy at
 `:90-92`; the D3 writer gates its records the same way (`frame_ok_w`,
-`hdl/aecp/KL_aecp_nvm_writer.sv:482-485`). The shadow is
-instantiated at `hdl/top/protocol_processor_top.sv:2714` and pinned by
+`hdl/aecp/KL_aecp_nvm_writer.sv:549-552`). The shadow is
+instantiated at `hdl/top/protocol_processor_top.sv:2731` and pinned by
 `tb/acmp_nvm`. An earlier revision of this file said nothing implemented it,
 which was wrong and is the third time this file has asserted an absence without
 checking for the presence. It is NOT
@@ -218,7 +223,7 @@ it. The array-flavoured variants vary a different axis and none of them reaches
 this.
 
 What the port owes is now stated in its own header as refusal (c) and gated on
-it (`dev_cmd_owned_w`, `KL_pp_nvm_port.sv:234-245`): a completion is this port's
+it (`dev_cmd_owned_w`, `KL_pp_nvm_port.sv:244-255`): a completion is this port's
 from the cycle its grant is observed — that cycle may carry the completion —
 until the wait state consumes it, and ownership retires at the terminal state,
 at the next accept, and at reset. `S_WHDR`, an ungranted `*REQ`, `S_RHFWD`,
@@ -399,13 +404,13 @@ fail first; the rest of each count is that containment.
 - **C2** the cause collapsed to DEVICE (the refusal records DEVICE): **fails 7 of 393**, the UNFRAMED cases of T23 and T26, and T25c, whose refused branch must read UNFRAMED.
 - **C3** the cause collapsed to UNFRAMED (every active state records UNFRAMED): **fails 23 of 393**, every DEVICE case: T7-T9, T15-T18, T23a-f, T27, RW5 and RW6.
 - **C4** the cause published without its err gate: **fails 1 of 393**, T23k.
-- **M1** commit skips the ERASE: the transition INTO `S_WEREQ` (`:366`)
+- **M1** commit skips the ERASE: the transition INTO `S_WEREQ` (`:376`)
   rewritten to `S_WWREQ`, so no ERASE is ever issued. **Fails 71 of 393**
   (op-log shape, erase pulse/visibility, erase-error path, and the T24, T25,
   T28 and T30 arms that name the ERASE).
   The description used to read "`S_WEREQ` target rewritten", which is ambiguous
   and the two readings differ enormously: rewriting what `S_WEREQ` itself
-  transitions to (`:380`), so the ERASE is REQUESTED but never awaited, **fails
+  transitions to (`:390`), so the ERASE is REQUESTED but never awaited, **fails
   36 of 393**. That sibling was a real coverage gap at the older suite's size,
   recorded as one rather than hidden by the ambiguity; the unsolicited,
   coincident, deadline and reset phases have since closed it, because a WRITE
@@ -1061,7 +1066,10 @@ is written down here rather than left to be rediscovered, because a phase list
 that reads as complete is worse than one that names its gaps. The other
 outstanding item is the same: `09_verification.md:56` sets the bar as "cut at
 randomized commit points ... every record type cut >= once", and this suite
-uses fixed cut points on both sides, so the randomized half is still owed.
+uses fixed cut points on both sides, so the randomized half is not cut by this
+suite (delivered at the top by `tb/pp_top` section D3KR, issue #83: every
+record type both producers write, cut by `rst_n` at 32 seeded-random points
+each, `--cut-seed S` reruns one; this suite's own cuts stay fixed).
 
 ### Reachability pins, and why they exist
 
@@ -1127,7 +1135,7 @@ not the port's behaviour. EIGHT device models and one combination are run, RTL
 byte-identical. Four vary what the array RETAINS; four vary the HANDSHAKE
 instead, and "The handshake models" above has the other three. The first of
 those is coincident completion: the device raises `dev_done_i` on
-the same edge that moves a pump's final byte, which `KL_pp_nvm_port.sv:340-344`
+the same edge that moves a pump's final byte, which `KL_pp_nvm_port.sv:350-354`
 says the sticky `done_seen_r` latch exists for. It is a contract freedom rather
 than a broken peer, and the port handles it. Its whole interest was that
 deleting that latch was INVISIBLE without it, which stopped being true when
@@ -1341,8 +1349,11 @@ Recorded so the phase list does not read as closing #70:
   DEADLINE until the device ends it or a reset (T24). That is the ruled
   behaviour: padding the WRITE would close a record whose bytes the manager
   never supplied, and an abort would be an interface change.
-- **The RANDOMIZED cut points `09_verification.md:56` asks for are still owed**
-  on both sides: T15-T18 and T25 cut at fixed points named on the bus.
+- **The RANDOMIZED cut points `09_verification.md:56` asks for are not cut by
+  this suite** on either side: T15-T18 and T25 cut at fixed points named on
+  the bus (delivered at the top by `tb/pp_top` section D3KR, issue #83: every
+  record type both producers write, cut by `rst_n` at 32 seeded-random points
+  each, `--cut-seed S` reruns one; this suite's own cuts stay fixed).
 - **The `err` clause of the rule has THREE known exceptions**, and T1 was
   never among them: it asserted after a `done` and reddened only under lazy
   erase, a `done`-clause exception, now conditioned on erase semantics. The three are T16's isolation checks, and a coarse-erase

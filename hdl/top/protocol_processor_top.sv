@@ -127,7 +127,9 @@ module protocol_processor_top
     parameter int unsigned DESC_LINE_BYTES_P   = 576,
     //! cached index-map entries, one per (configuration, descriptor_type)
     parameter int unsigned DESC_IDX_ENTRIES_P  = 32,
-    //! 64-byte name-table entries held on chip (07 §3.4 overlay)
+    //! 64-byte name-table entries held on chip (07 §3.4 overlay), and the D3
+    //! writer's user-name records, 0x80 + ordinal: 1 to 128, the id block's
+    //! size, which the writer refuses past at elaboration (07 §5.2)
     parameter int unsigned DESC_NAME_ENTRIES_P = 32,
     //! no-progress watchdog on the descriptor memory face, in clocks
     parameter int unsigned DESC_MEM_TMO_CYC_P  = 4096,
@@ -553,7 +555,8 @@ module protocol_processor_top
     //! the D3 writer's UNFLUSHED records (the OR of its per-record dirty
     //! bits, KL_aecp_nvm_writer): 1 from the cycle after an accepted AECP
     //! write that changed a persisted dynamic-state row (configuration,
-    //! sampling rate, clock source, stream formats, presentation offset)
+    //! sampling rate, clock source, stream formats, presentation offset) or
+    //! a user name (an aecp_name_wr_o lane)
     //! until the port's done of the whole-record write that carries a value
     //! latched after the last change, or, on attempt exhaustion, the cycle
     //! nvm_alarm_o rises. From that done the backend's own dirty reports it.
@@ -758,8 +761,9 @@ module protocol_processor_top
     //! Accepted live name write (07 §3.4): one clk_i cycle per 64-bit lane
     //! actually written by the descriptor store, at the accepting edge.
     //! A multi-lane SET_NAME can pulse more than once; unchanged lanes,
-    //! boot name loading, refused/out-of-range commands and writes aborted
-    //! before acceptance do not pulse. Earlier accepted writes remain
+    //! boot name loading, the D3 writer's restore of a saved name,
+    //! refused/out-of-range commands and writes aborted before acceptance
+    //! do not pulse. It is the D3 writer's name trigger. Earlier accepted writes remain
     //! visible if a command later aborts. No ready/ack; leave unused with
     //! an explicit .aecp_name_wr_o() connection.
     output logic                         aecp_name_wr_o,
@@ -771,10 +775,11 @@ module protocol_processor_top
     //! rate, clock source, configuration index, stream format, stream info),
     //! 6 channel maps (ADD/REMOVE_AUDIO_MAPPINGS), 7 user names (SET_NAME).
     //! A COMPLETION notification only: nothing selects a record from it.
-    //! Group 1's records are written by the D3 writer from the accepted
-    //! changing write itself; groups 6 and 7 are the saved-state contract's
-    //! map and name stages, triggered by map edit phase 5 and
-    //! aecp_name_wr_o, and not implemented in this release.
+    //! Groups 1 and 7's records are written by the D3 writer from the
+    //! accepted changing write itself (group 7's is aecp_name_wr_o); group
+    //! 6's records, the channel maps, are the integrator's to persist (07
+    //! §5.1, the ruling on #83): it saves a port's set from map edit phase 5,
+    //! and the processor writes and restores no map record.
     output logic                         aecp_nvm_stb_o,      //! one cycle: a committed command marked a record group
     output logic  [7:0]                  aecp_nvm_mark_o,     //! that group's mark code, valid with the strobe
     output logic                         aecp_lock_held_o,    //! LOCK_ENTITY ownership is live
@@ -932,6 +937,26 @@ module protocol_processor_top
   //! reason they did not exist is that the interface published none of it —
   //! see the port banner. A `assign flat = packed;` of a [N-1:0][W-1:0] array
   //! onto a [N*W-1:0] vector is bit-exact in this element order.
+  // SRP class-D lanes consumed by the talker + snapshot
+  logic [2:0]  srp_class_a_prio_w;
+  logic [11:0] srp_class_a_vid_w;
+  logic        srp_domain_adopted_w;
+  logic [N_STREAM_OUT_P-1:0][1:0]  srp_tk_decl_state_w;
+  logic [N_STREAM_OUT_P-1:0][1:0]  srp_lstn_reg_state_w;
+  logic [N_STREAM_OUT_P-1:0]       srp_active_w;
+  logic [N_STREAM_OUT_P-1:0][7:0]  srp_src_fail_code_nc_w;
+  logic [N_STREAM_OUT_P-1:0][63:0] srp_src_fail_bridge_nc_w;
+  logic [N_STREAM_IN_P-1:0][1:0]   srp_tk_reg_state_w;
+  logic [N_STREAM_IN_P-1:0][1:0]   srp_lstn_decl_state_w;
+  logic [N_STREAM_IN_P-1:0][31:0]  srp_acc_latency_w;
+  logic [N_STREAM_IN_P-1:0][7:0]   srp_snk_fail_code_w;
+  logic [N_STREAM_IN_P-1:0][63:0]  srp_snk_fail_bridge_w;
+  logic [N_STREAM_OUT_P-1:0][31:0] srp_granted_slope_w;
+  logic [N_STREAM_OUT_P-1:0]       srp_sr_admitted_w;
+  logic [31:0] srp_sum_slope_w;
+  logic        srp_over_limit_w;
+  logic        srp_evt_domain_change_w;
+
   assign srp_class_a_prio_o      = srp_class_a_prio_w;
   assign srp_class_a_vid_o       = srp_class_a_vid_w;
   assign srp_domain_adopted_o    = srp_domain_adopted_w;
@@ -952,7 +977,18 @@ module protocol_processor_top
   assign srp_acc_latency_o       = srp_acc_latency_w;
   assign srp_snk_fail_code_o     = srp_snk_fail_code_w;
 
+  logic [N_STREAM_OUT_P-1:0] tkr_declaring_w;
   assign acmp_declaring_o = tkr_declaring_w;
+
+  // ---- binding view (07 §4): realized as top-held registers driven by the
+  // listener's A4/A9 discovery strobes, read as levels by the ADP engine.
+  logic [N_STREAM_IN_P-1:0]        bound_r;
+  logic [N_STREAM_IN_P-1:0][63:0]  bound_sid_r;
+  logic [N_STREAM_IN_P-1:0][47:0]  bound_dmac_r;
+  logic [N_STREAM_IN_P-1:0][11:0]  bound_vlan_r;
+  logic [N_STREAM_IN_P-1:0][63:0]  bound_eid_r;
+
+  logic        lstn_dbg_busy_w;
 
   //! Debounced binding view. bound_r dips 1->0->1 within ONE executor
   //! transaction on a re-bind, so it is republished held: it may only fall
@@ -970,6 +1006,8 @@ module protocol_processor_top
   assign acmp_bound_dmac_o = bound_dmac_r;
   assign acmp_bound_vlan_o = bound_vlan_r;
 
+  //! not "nc" any more: this is the live available_index, published below.
+  logic [31:0] adp_dbg_aidx_nc_w;
   //! The ADP engine's dbg_avail_index is the PRE-INCREMENT value — the index
   //! the next ENTITY_AVAILABLE will actually carry, which is what a consumer
   //! wants to publish. Full width: see the port comment.
@@ -1782,14 +1820,6 @@ module protocol_processor_top
   // =========================================================================
   // engines: ADP, ACMP listener, ACMP talker
   // =========================================================================
-  // ---- binding view (07 §4): realized as top-held registers driven by the
-  // listener's A4/A9 discovery strobes, read as levels by the ADP engine.
-  logic [N_STREAM_IN_P-1:0]        bound_r;
-  logic [N_STREAM_IN_P-1:0][63:0]  bound_sid_r;
-  logic [N_STREAM_IN_P-1:0][47:0]  bound_dmac_r;
-  logic [N_STREAM_IN_P-1:0][11:0]  bound_vlan_r;
-  logic [N_STREAM_IN_P-1:0][63:0]  bound_eid_r;
-
   logic        lstn_disc_arm_w, lstn_disc_disarm_w;
   logic [63:0] lstn_disc_eid_w;
   //! CLAMPED like the engine's own SINK_W_C (KL_pp_acmp_listener.sv:76):
@@ -1797,6 +1827,10 @@ module protocol_processor_top
   //! [-1:0]. The consumer elaborates this processor at N_STREAMS = 1 on the
   //! shipping AX7101 shape, so that is not a hypothetical corner.
   logic [SINK_IDX_W_C-1:0] lstn_act_sink_w;
+  logic        lstn_act_settle_w, lstn_act_teardown_w;
+  logic [63:0] lstn_act_settle_sid_w;
+  logic [47:0] lstn_act_settle_da_w;
+  logic [11:0] lstn_act_settle_vlan_w;
 
   always_ff @(posedge clk_i) begin : binding_view
     if (!rst_n) begin
@@ -1852,8 +1886,6 @@ module protocol_processor_top
   logic        adp_evt_valid_w, adp_evt_departed_w;
   logic [SINK_IDX_W_C-1:0] adp_evt_sink_w;  //! CLAMPED (KL_adp_engine SNK_W_C)
   logic [1:0]  adp_dbg_adv_state_w;
-  //! not "nc" any more: this is the live available_index, published below.
-  logic [31:0] adp_dbg_aidx_nc_w;
   logic [N_STREAM_IN_P-1:0] adp_dbg_tkdisc_nc_w;
   //! the effective ADP enable: requested AND released by the restore
   logic        adp_enable_w;
@@ -1972,12 +2004,7 @@ module protocol_processor_top
   logic [7:0]  lstn_txs_wr_data_w;
   logic        lstn_txreq_valid_w;
   logic [TXS_W_C-1:0] lstn_txreq_slot_w;
-  logic        lstn_act_settle_w, lstn_act_teardown_w;
-  logic [63:0] lstn_act_settle_sid_w;
-  logic [47:0] lstn_act_settle_da_w;
-  logic [11:0] lstn_act_settle_vlan_w;
   logic        lstn_act_nvm_nc_w, lstn_act_nvm_set_nc_w, lstn_act_notify_nc_w;
-  logic        lstn_dbg_busy_w;
   logic        lstn_recwr_w;
   logic [SINK_IDX_W_C-1:0] lstn_recwr_sink_w;  //! CLAMPED (see SINK_IDX_W_C)
   logic [pp_acmp_pkg::ACMP_REC_W_C-1:0] lstn_recwr_rec_w;
@@ -2164,7 +2191,6 @@ module protocol_processor_top
                tkr_resp_seq_w, tkr_resp_flags_w, tkr_resp_vlan_w;
   logic [47:0] tkr_resp_da_w;
   logic [1:0]  tkr_resp_if_nc_w;
-  logic [N_STREAM_OUT_P-1:0] tkr_declaring_w;
   logic        tkr_gate_open_w, tkr_gate_close_w;
   //! CLAMPED to match KL_acmp_talker's own SRC_W_C (:95-96). A fixed [2:0]
   //! only happens to be right at N_STREAM_OUT_P = 8; at any other shape it
@@ -2191,26 +2217,6 @@ module protocol_processor_top
   logic                    tkr_maap_confl_valid_w;
   logic [SRC_IDX_W_C-1:0]  tkr_maap_confl_src_w;
   logic                    tkr_maap_confl_ack_w;
-
-  // SRP class-D lanes consumed by the talker + snapshot
-  logic [2:0]  srp_class_a_prio_w;
-  logic [11:0] srp_class_a_vid_w;
-  logic        srp_domain_adopted_w;
-  logic [N_STREAM_OUT_P-1:0][1:0]  srp_tk_decl_state_w;
-  logic [N_STREAM_OUT_P-1:0][1:0]  srp_lstn_reg_state_w;
-  logic [N_STREAM_OUT_P-1:0]       srp_active_w;
-  logic [N_STREAM_OUT_P-1:0][7:0]  srp_src_fail_code_nc_w;
-  logic [N_STREAM_OUT_P-1:0][63:0] srp_src_fail_bridge_nc_w;
-  logic [N_STREAM_IN_P-1:0][1:0]   srp_tk_reg_state_w;
-  logic [N_STREAM_IN_P-1:0][1:0]   srp_lstn_decl_state_w;
-  logic [N_STREAM_IN_P-1:0][31:0]  srp_acc_latency_w;
-  logic [N_STREAM_IN_P-1:0][7:0]   srp_snk_fail_code_w;
-  logic [N_STREAM_IN_P-1:0][63:0]  srp_snk_fail_bridge_w;
-  logic [N_STREAM_OUT_P-1:0][31:0] srp_granted_slope_w;
-  logic [N_STREAM_OUT_P-1:0]       srp_sr_admitted_w;
-  logic [31:0] srp_sum_slope_w;
-  logic        srp_over_limit_w;
-  logic        srp_evt_domain_change_w;
 
   KL_acmp_talker #(
       .N_STREAM_OUT_P   (N_STREAM_OUT_P),
@@ -2929,6 +2935,18 @@ module protocol_processor_top
   localparam int unsigned ARM_N_C = 8;
   localparam int unsigned ARM_W_C = 1 + TMR_AW_C + PP_TIMER_OWNER_W_C + 32;
 
+  // u_notify's arm and PRNG faces, read by this mux and the PRNG mux below
+  logic        ntfy_arm_valid_w, ntfy_arm_cancel_w;
+  logic [TMR_AW_C-1:0] ntfy_arm_slot_w;
+  logic [PP_TIMER_OWNER_W_C-1:0] ntfy_arm_owner_w;
+  logic [31:0] ntfy_arm_deadline_w;
+  logic        ntfy_mon_arm_valid_w, ntfy_mon_arm_cancel_w;
+  logic [TMR_AW_C-1:0] ntfy_mon_arm_slot_w;
+  logic [PP_TIMER_OWNER_W_C-1:0] ntfy_mon_arm_owner_w;
+  logic [31:0] ntfy_mon_arm_deadline_w;
+  logic        ntfy_prng_req_w, ntfy_prng_busy_w, ntfy_prng_valid_w;
+  logic [2:0]  ntfy_prng_kind_w;
+
   logic [ARM_N_C-1:0]              armq_in_vld_w;
   logic [ARM_N_C-1:0][ARM_W_C-1:0] armq_in_w;
   logic [ARM_N_C-1:0][3:0][ARM_W_C-1:0] armq_r;
@@ -3358,16 +3376,6 @@ module protocol_processor_top
   logic [47:0] uns_mac_w;
   logic        ntfy_lock_held_w;
   logic [63:0] ntfy_lock_ctlr_w;
-  logic        ntfy_arm_valid_w, ntfy_arm_cancel_w;
-  logic [TMR_AW_C-1:0] ntfy_arm_slot_w;
-  logic [PP_TIMER_OWNER_W_C-1:0] ntfy_arm_owner_w;
-  logic [31:0] ntfy_arm_deadline_w;
-  logic        ntfy_mon_arm_valid_w, ntfy_mon_arm_cancel_w;
-  logic [TMR_AW_C-1:0] ntfy_mon_arm_slot_w;
-  logic [PP_TIMER_OWNER_W_C-1:0] ntfy_mon_arm_owner_w;
-  logic [31:0] ntfy_mon_arm_deadline_w;
-  logic        ntfy_prng_req_w, ntfy_prng_busy_w, ntfy_prng_valid_w;
-  logic [2:0]  ntfy_prng_kind_w;
   logic        ntfy_ca_valid_w, ntfy_ca_ready_w;
   logic [3:0]  ntfy_ca_owner_w;
   logic [63:0] ntfy_ca_eid_w;
