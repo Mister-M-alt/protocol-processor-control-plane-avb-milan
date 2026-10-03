@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: CERN-OHL-W-2.0
+"""Plant reviewed GET_COUNTERS face arms in scratch and require named check failures.
+
+Lane C7's campaign (issues #44 and #79): each arm is an explicit patch in
+ctr_mutations/, applied with git apply to a scratch copy of the tree of its own;
+this driver reads only simulation logs, never production source. Fifteen arms
+break the processor's half of the counters face (the type gate, the face's
+index, the block's beat order, the locate, the notification decode and its slot
+range, its windows and the strobe's wiring). Two break the harness's integrator
+store instead, the half the processor cannot hold: they show section K's checks
+refuse a store that counts a domain-only strobe as a grandmaster change, or whose
+link edge detector resets up. Every arm runs the cycle-bounded `counters` target
+(K9 to K17). Its
+positive control runs first, in its own copy, and must pass; an arm is KILLED
+only when its simulation completed (a tally was printed), failed, and printed
+the required check. A build failure or a missing tally never counts as a kill.
+`--jobs N` runs up to N copies at once; the results are read in the declared
+order.
+"""
+import argparse
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[2]
+PATCHES = Path(__file__).resolve().parent / "ctr_mutations"
+TARGET = "counters"
+
+sys.path.insert(0, str(ROOT / "tb" / "common"))
+from mutant_pool import add_jobs_argument, in_order  # noqa: E402
+
+# arm (= its patch), the check that must fail (its label prefix)
+MUTANTS = [
+    # the processor: GET_COUNTERS on the face
+    ("ctr-avb-not-supported",
+     "K9: AVB_INTERFACE 0 after boot is byte-exact"),
+    ("ctr-ckd-not-supported", "K16: media clock locked"),
+    ("ctr-index-from-type", "K9: AVB_INTERFACE 0 after boot is byte-exact"),
+    ("ctr-block-beats-swapped",
+     "K11: AVB_INTERFACE 0 byte-exact at block offsets 0, 4, 20"),
+    ("ctr-locate-ignored", "K12: AVB_INTERFACE 1 answers NO_SUCH_DESCRIPTOR"),
+    # the processor: the Table 5.22 push from the change strobe
+    ("ctr-notify-avb-dropped",
+     "K13: one unsolicited GET_COUNTERS of AVB_INTERFACE 0"),
+    ("ctr-notify-avb-as-clock",
+     "K13: one unsolicited GET_COUNTERS of AVB_INTERFACE 0"),
+    ("ctr-notify-ckd-dropped", "K16: CLOCK_DOMAIN 0 is pushed"),
+    ("ctr-notify-one-window", "K15: STREAM_INPUT 0 is pushed at once"),
+    ("ctr-notify-no-window", "K14: nothing more for AVB_INTERFACE 0"),
+    ("ctr-change-type-from-index",
+     "K13: one unsolicited GET_COUNTERS of AVB_INTERFACE 0"),
+    # the processor: a strobe for an object with no notification slot
+    ("ctr-notify-avb-any-index", "K17: a ctr_change_i for AVB_INTERFACE 1"),
+    ("ctr-notify-ckd-any-index", "K17: a ctr_change_i for CLOCK_DOMAIN 1"),
+    ("ctr-notify-stri-past-shape", "K17: a ctr_change_i for STREAM_INPUT 8"),
+    ("ctr-notify-stro-past-shape", "K17: a ctr_change_i for STREAM_OUTPUT 8"),
+    # the integrator's store the harness plays
+    ("store-counts-domain-strobes",
+     "K11: a domain-only gm_change_i is not a grandmaster change"),
+    ("store-link-detector-resets-up",
+     "K9: AVB_INTERFACE 0 after boot is byte-exact"),
+]
+
+SUITES = ("common", "pp_top")
+
+
+def run(tree: Path, log: Path) -> tuple[int, str]:
+    """Build and run the cycle-bounded counters target, keeping its whole log."""
+    with log.open("w") as stream:
+        result = subprocess.run(["make", "-C", str(tree / "tb" / "pp_top"), TARGET],
+                                stdout=stream, stderr=subprocess.STDOUT, check=False)
+    return result.returncode, log.read_text()
+
+
+def plant(tree: Path, patch: str) -> None:
+    """Apply one explicit patch to the scratch RTL or bench, refusing drift."""
+    path = str(PATCHES / (patch + ".patch"))
+    subprocess.run(["git", "apply", "--check", path], cwd=tree, check=True)
+    subprocess.run(["git", "apply", path], cwd=tree, check=True)
+
+
+def trial(job: tuple[str | None, Path]) -> tuple[int, str]:
+    """Copy the tree to a scratch directory of its own, plant the patch if any, and run.
+
+    The copy carries no generated ROM image (`*.hex` is not copied) and no model
+    directory, so every build generates its ROMs from the generators as planted
+    and compiles the RTL and bench as planted. Two arms plant into the bench
+    rather than the RTL, and their copies are theirs alone.
+    """
+    patch, log = job
+    with tempfile.TemporaryDirectory(prefix="ctr-mutants-") as tmp:
+        tree = Path(tmp)
+        shutil.copytree(ROOT / "hdl", tree / "hdl")
+        for name in SUITES:
+            shutil.copytree(ROOT / "tb" / name, tree / "tb" / name,
+                            ignore=shutil.ignore_patterns("obj_*", "*.hex", "__pycache__"))
+        if patch is not None:
+            plant(tree, patch)
+        return run(tree, log)
+
+
+def failures_of(contents: str) -> list[str]:
+    """The failing-check lines of one simulation log, in the order printed."""
+    return [line for line in contents.splitlines() if line.startswith("FAIL:")]
+
+
+def completed(contents: str) -> bool:
+    """A run that printed its tally: the build's own checks line."""
+    return "checks" in contents
+
+
+def campaign(output: Path, selected: list[tuple[str, str]], jobs: int) -> tuple[int, int]:
+    """Run the positive control, then require each arm's own named check."""
+    rc, contents = trial((None, output / f"control-{TARGET}.log"))
+    ok = rc == 0 and completed(contents) and not failures_of(contents)
+    print(f"control pp_top {TARGET}: rc={rc} {'PASS' if ok else 'FAIL'}", flush=True)
+    if not ok:
+        print(contents[-4000:])
+        return 0, 1
+    passed = 1
+    total = 1
+    units = [(arm, output / f"{arm}.log") for arm, _ in selected]
+    with in_order(trial, units, jobs) as results:
+        for (arm, expected), (rc, contents) in zip(selected, results):
+            failures = failures_of(contents)
+            named = [line for line in failures
+                     if line[len("FAIL:"):].strip().startswith(expected)]
+            ok = rc != 0 and completed(contents) and bool(named)
+            total += 1
+            passed += ok
+            verdict = "KILLED" if ok else "UNPROVEN"
+            print(f"{arm}: rc={rc} failures={len(failures)} named={len(named)} {verdict}",
+                  flush=True)
+            for line in failures:
+                print(f"    {line}", flush=True)
+            if not ok:
+                print(contents[-2500:], flush=True)
+    return passed, total
+
+
+def main() -> int:
+    """Select arms, isolate every write in scratch trees, fail on any unproven arm."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--only", default="")
+    add_jobs_argument(parser)
+    args = parser.parse_args()
+    requested = set(args.only.split(",")) if args.only else {m[0] for m in MUTANTS}
+    unknown = requested - {m[0] for m in MUTANTS}
+    if unknown:
+        parser.error(f"unknown mutation arms: {sorted(unknown)}")
+    selected = [m for m in MUTANTS if m[0] in requested]
+    args.output.mkdir(parents=True, exist_ok=True)
+    passed, total = campaign(args.output, selected, args.jobs)
+    print(f"{total} checks: {passed} PASS, {total - passed} FAIL")
+    return int(passed != total)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

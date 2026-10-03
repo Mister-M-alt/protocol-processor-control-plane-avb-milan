@@ -101,7 +101,10 @@ module KL_adp_engine
     //! drives it with the effective enable: requested AND restore_done_o
     input  wire                        entity_enable_i,
     input  wire  [N_IF_P-1:0]          link_up_i,          //! per-interface link status (level, 2FF-synced upstream)
-    input  wire  [N_IF_P-1:0]          gm_change_i,        //! per-interface GM_CHANGE strobe (event router face)
+    //! per-interface GM_CHANGE strobe (event router face). It re-advertises
+    //! and counts nothing: GPTP_GM_CHANGED is the integrator's, counted on
+    //! grandmaster identity changes alone (02 §4.6, Milan §5.3.6.3)
+    input  wire  [N_IF_P-1:0]          gm_change_i,
 
     // ---- class-D status dictionary (F02.10) -------------------------------
     input  wire  [N_IF_P*64-1:0]       gm_id_i,            //! gm_id[if] — sampled at PDU build + discovery guard
@@ -178,9 +181,6 @@ module KL_adp_engine
     output logic                       evt_departed_o,     //! 1 = EVT_TK_DEPARTED, 0 = EVT_TK_DISCOVERED
     output logic [SNK_W_C-1:0]         evt_sink_o,         //! sink index payload
 
-    // ---- GPTP_GM_CHANGED counter ticks (04 §2) ----------------------------
-    output logic [N_IF_P-1:0]          gm_changed_tick_o,  //! per-interface counter tick
-
     // ---- observability ----------------------------------------------------
     output logic [N_IF_P*2-1:0]        dbg_adv_state_o,    //! advertise SM state per interface
     output logic [N_IF_P*32-1:0]       dbg_avail_index_o,  //! available_index manager per interface
@@ -234,7 +234,6 @@ module KL_adp_engine
   logic [N_IF_P-1:0]   link_q_r;
   logic                enable_q_r;
   logic [N_SINK_P-1:0] bound_q_r;
-  logic [N_IF_P-1:0]   gm_tick_r;
 
   logic [N_IF_P-1:0]   link_fall_w;
   logic [N_IF_P-1:0]   link_rise_w;
@@ -253,16 +252,12 @@ module KL_adp_engine
       link_q_r   <= '0;
       enable_q_r <= 1'b0;
       bound_q_r  <= '0;
-      gm_tick_r  <= '0;
     end else begin
       link_q_r   <= link_up_i;
       enable_q_r <= entity_enable_i;
       bound_q_r  <= bound_i;
-      gm_tick_r  <= gm_change_i;   // GPTP_GM_CHANGED ticks on every GM_CHANGE
     end
   end
-
-  assign gm_changed_tick_o = gm_tick_r;
 
   // ============================================================ RX pipeline
   // One transaction at a time: classify, fetch the payload fields the

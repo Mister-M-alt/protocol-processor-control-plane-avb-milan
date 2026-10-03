@@ -214,3 +214,26 @@ LUT moves of a few tens in modules the change does not touch (`u_timer`
 estimates. Both builds have negative OOC slack at 10 ns (-10.114 ns base,
 -8.922 ns change), so this measurement makes no routed timing or hardware
 claim.
+
+## The removed GPTP_GM_CHANGED tick - issue #44
+
+Measured 2026-10-03 with the complete-processor recipe above, default
+8-input / 8-output shape, `xc7a100tfgg484-2`, 10 ns clock, Vivado 2026.1.
+The same recipe ran in separate empty build directories against base
+`88969246` and the change's RTL at `315cc94`, with all top-level ports present.
+The change removes `KL_adp_engine`'s `gm_changed_tick_o` (one flip-flop per
+interface, a copy of `gm_change_i` that reached no port) and the top's wire
+that left it unconnected.
+
+| Resource | Base | Change | Delta |
+|---|---:|---:|---:|
+| Slice LUTs | 30,375 | 30,375 | 0 |
+| Registers | 31,951 | 31,951 | 0 |
+| LUT as distributed RAM | 1,222 | 1,222 | 0 |
+| RAMB36 / RAMB18 / DSP | 23 / 2 / 4 | 23 / 2 / 4 | 0 |
+| `u_adp` LUTs / registers | 852 / 507 | 852 / 507 | 0 |
+
+Zero, as expected: the unconnected flop was already trimmed from the base's
+netlist. The hierarchical reports differ only in their date lines. Both builds
+have the same negative OOC slack at 10 ns (-9.656 ns), so this measurement makes
+no routed timing or hardware claim.

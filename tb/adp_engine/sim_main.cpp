@@ -326,7 +326,6 @@ struct Harness {
   std::vector<Evt>  evts;
   std::vector<Draw> draws;
   int      draw_reqs = 0;                      // draw requests seen at the tap
-  int      gm_ticks = 0;                       // GPTP_GM_CHANGED ticks seen
   // expiry to inject this cycle
   bool     exp_pulse = false;
   unsigned exp_slot = 0;
@@ -424,7 +423,6 @@ struct Harness {
     if (d->evt_valid_o)
       evts.push_back({static_cast<bool>(d->evt_departed_o),
                       static_cast<unsigned>(d->evt_sink_o)});
-    if (d->gm_changed_tick_o & 1) ++gm_ticks;
     // real-PRNG draw taps
     if (d->tap_draw_req_o) {
       // remember the requested kind; result pairs at tap_draw_valid_o
@@ -760,16 +758,15 @@ void Harness::check_entity_discover_handling() {
   CHECK(frees == fr + 1 && last_free_slot == 3, "P4d slot still freed");
 }
 
-// ---- P5: GM_CHANGE re-advertise + tick + fresh gm sampled -----------
+// ---- P5: GM_CHANGE re-advertise + fresh gm sampled ------------------
+// (no counter tick: GPTP_GM_CHANGED is the integrator's, 02 §4.6)
 constexpr uint64_t GM1 = 0x5150515051505150ull;
 void Harness::check_gm_change_readvertises_a_fresh_gm() {
   dn = draws.size(); fn = frames.size(); an = arms.size();
-  int ticks = 0;
   d->gm_change_i = 1;
   tick();
   d->gm_change_i = 0;
-  for (int i = 0; i < 4; ++i) { if (d->gm_changed_tick_o & 1) ++ticks; tick(); }
-  CHECK(ticks == 1, "P5 GPTP_GM_CHANGED ticks once, got %d", ticks);
+  idle(4);
   CHECK(wait_for([&]{ return draws.size() > dn; }), "P5 re-advertise draw");
   CHECK(last_arm_of(arms, an, SLOT_ADV, true) >= 0, "P5 ADV cancelled");
   d->gm_id_i = GM1;                            // new GM before the build
@@ -1197,7 +1194,7 @@ void Harness::check_config_index_moves_only_its_own_bytes() {
 // backdoor), its event applied, and every observable compared with the
 // cell: the advertise state, draw requests and results, every timer arm and
 // cancel with its deadline, committed frames byte-exact, available_index,
-// GPTP_GM_CHANGED ticks, discovery events and RX-slot frees. It ends with
+// discovery events and RX-slot frees. It ends with
 // the cell counts and the F04.3 arc count.
 constexpr uint64_t FOREIGN_EID = 0xF00DF00DF00DF00Dull;
 constexpr int CELL_WINDOW = 200;               // clocks each cell is observed
@@ -1344,7 +1341,6 @@ void Harness::walk_advertise_cell(int row, int col) {
   const size_t e0 = evts.size();
   const size_t dl0 = draws.size();
   const int r0 = draw_reqs;
-  const int g0 = gm_ticks;
   const int fr0 = frees;
   const int t0 = txreqs;
   const uint32_t aidx0 = d->dbg_avail_index_o;
@@ -1398,9 +1394,6 @@ void Harness::walk_advertise_cell(int row, int col) {
   const uint32_t aidx_want = c.frame == 1 ? aidx0 + 1 : c.frame == 2 ? 0 : aidx0;
   CHECK(d->dbg_avail_index_o == aidx_want, "%s: available_index %u, got %u",
         tag, aidx_want, static_cast<unsigned>(d->dbg_avail_index_o));
-  CHECK(gm_ticks - g0 == (row == R_GM ? 1 : 0),
-        "%s: GPTP_GM_CHANGED ticks %d, got %d", tag, row == R_GM ? 1 : 0,
-        gm_ticks - g0);
   CHECK(evts.size() == e0, "%s: no discovery event", tag);
   if (row <= R_DISCFOR)
     CHECK(frees == fr0 + 1, "%s: the RX slot is freed", tag);

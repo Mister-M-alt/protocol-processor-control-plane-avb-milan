@@ -354,6 +354,32 @@ the mutation record included.
 | the amended saved-state contract: a later change against a silent device is attempted three times, each ended DEADLINE with no device command, then `nvm_alarm_o` drops its pending bit; it persists once the device ends the abandoned read | `tb/acmp_nvm` N12b, N12c |
 | `MEM_TIMEOUT_CYC_P` refused at 0, 2^31 and 2^32 - 1 by name, built at 1 and 2^31 - 1 | `tb/nvm_port/elab_bounds.sh` (run by `make`) |
 
+### 8.7 The counters face (issues #44, #79)
+
+The counters are the integrator's (owner decision 2026-09-19); the processor carries
+them and pushes them ([06 §6.6](06_aecp_engine.md#sec-06-counters),
+[02 §4.6](02_interfaces.md#sec-02-ctr)). `tb/pp_top` grades that half on the wire,
+with a harness store that keeps AVB_INTERFACE 0 and CLOCK_DOMAIN 0 the way the
+[integrator guide §7.1](../guides/integrator.md#counters-face) asks, from the
+`link_up_i` and `gm_change_i` it drives:
+
+| Property | Checks |
+|---|---|
+| the fixed body for every status, the mask carried unchanged, the face asked for the right object, every quadlet once and in order, a held and a wedged face | `tb/pp_top` K1 to K8 |
+| AVB_INTERFACE 0: the boot's link-up counted once; LINK_UP = LINK_DOWN or LINK_DOWN + 1 at every sample over four flaps; grandmaster changes counted and a domain-only `gm_change_i` not; distinct counts byte-exact at block offsets 0, 4 and 20 | K9, K10, K11 |
+| an AVB_INTERFACE index the image lacks is refused without asking the face | K12 |
+| the push: one unsolicited GET_COUNTERS per registered controller with the counts of its moment; changes inside the second go out once, a second later, with the latest counts; the interface and a Stream Input throttled apart | K13, K14, K15; U9 |
+| CLOCK_DOMAIN 0: LOCKED = UNLOCKED or UNLOCKED + 1, byte-exact, and its push | K16 |
+| a change strobe for an object with no notification slot (AVB_INTERFACE 1, CLOCK_DOMAIN 1, a Stream Input or Stream Output index past the shape) pushes nothing, and a slotted one still does | K17 |
+
+The negative controls run from `tb/pp_top/ctr_mutants.py` (`make -C tb/pp_top
+ctr-mutants`): fifteen processor arms (the type gate, the face's index, the block's
+beat order, the locate, the notification decode and its slot range, its windows, the
+strobe's wiring)
+and two arms of the harness store (a domain-only strobe counted, a link edge
+detector reset up), each required to fail its named check. The mutation record is
+in the [`tb/pp_top` README](../../tb/pp_top/README.md).
+
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)
 per the scope rules in [docs/README §2](../README.md).

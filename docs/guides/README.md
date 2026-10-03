@@ -31,7 +31,7 @@ constantly. Its own reading order, ID registries and figure conventions are in
 | [03 packet engine](../architecture/03_packet_engine.md) | the shared RX/TX datapath, transaction records, hazard classes |
 | [04 ADP](../architecture/04_adp_engine.md) | discovery — advertise and talker-discovery machines |
 | [05 ACMP](../architecture/05_acmp_engine.md) | Milan binding and probing, including the authoritative listener transition matrix |
-| [06 AECP](../architecture/06_aecp_engine.md) | AEM and Milan Vendor Unique execution, the µISA, counters, lock, notifications |
+| [06 AECP](../architecture/06_aecp_engine.md) | AEM and Milan Vendor Unique execution, the µISA, the GET_COUNTERS read path, lock, notifications |
 | [07 memory maps](../architecture/07_memory_maps.md) | the entity model, records, the side-port windows, persistence |
 | [08 timing](../architecture/08_timing.md) | every timing constant and the timer-slot allocation |
 | [09 verification](../architecture/09_verification.md) | verification strategy and the documentation gates |

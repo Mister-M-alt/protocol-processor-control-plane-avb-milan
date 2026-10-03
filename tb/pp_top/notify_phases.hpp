@@ -1224,7 +1224,7 @@ struct StormPhase : NotifyBench {
       const uint16_t ix = uint16_t((f[40] << 8) | f[41]);
       auto want = aecp_frame(mac, OWN_MAC, 1, AECP_SUCCESS, EID, ROW_EID + (mac - ROW_MAC),
                              uint16_t(notified_before(mac, i)), AEM_GET_COUNTERS,
-                             UnsolicitedPhase::counter_body(ty, ix));
+                             UnsolicitedPhase::counter_body(io, ty, ix));
       want[36] |= 0x80;
       ++frames;
       bad += (f == want) ? 0 : 1;

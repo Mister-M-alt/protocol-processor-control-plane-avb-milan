@@ -22,7 +22,7 @@
 //                expiring T-ID is derived from sm_state), and the EVT_TK_*
 //                class-C events. Produces committed 56-byte Milan ACMPDUs
 //                (Δ2) into the TX slot pool + a TX request handle, the
-//                A15/A8 settle/teardown faces toward the srp+avtp adapters,
+//                A15/A8 settle/teardown faces toward the srp service,
 //                discovery arm/disarm toward ADP (04 §6.2), NVM mark/clear,
 //                and the per-commit notification trigger. GET_RX_STATE is
 //                served from the records per F05.14.
@@ -181,11 +181,11 @@ module KL_pp_acmp_listener
     input  wire  [63:0]                  lock_ctlr_i,     //! holder's controller EID
 
     //! ---- action faces out (class-C strobes; A-primitives leaving 05) ----
-    output logic                         act_settle_o,    //! A15: INPUT_CONFIGURE+ENABLE + SRP listen
+    output logic                         act_settle_o,    //! A15: SRP listen + the bound view's stream
     output logic [63:0]                  act_settle_sid_o,//! settled stream_id
     output logic [47:0]                  act_settle_da_o, //! settled stream_dest_mac
     output logic [11:0]                  act_settle_vlan_o,//! settled stream_vlan_id
-    output logic                         act_teardown_o,  //! A8: WITHDRAW_LISTENER + INPUT_DISABLE
+    output logic                         act_teardown_o,  //! A8: WITHDRAW_LISTENER
     output logic                         act_disc_arm_o,  //! A4: arm discovery SM (04 §6.2)
     output logic [63:0]                  act_disc_talker_eid_o, //! talker to watch
     output logic                         act_disc_disarm_o,//! A9: disarm discovery SM
@@ -1159,7 +1159,7 @@ module KL_pp_acmp_listener
                 tmr_arm_slot_o   <= TMR_SLOT_AW_P'(TMR_BASE_SLOT_P + 32'(sink_r));
                 tmr_arm_owner_o  <= PP_TIMER_OWNER_W_C'(TMR_OWNER_BASE_P + 32'(sink_r));
               end
-              5'(ACT_A8_C): begin        // teardown SRP + AVTP, clear settled
+              5'(ACT_A8_C): begin        // teardown SRP, clear settled
                 act_teardown_o        <= 1'b1;
                 rec_r.settled_stream_id <= 64'd0;
                 rec_r.settled_da      <= 48'd0;
