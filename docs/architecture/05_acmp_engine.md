@@ -103,7 +103,7 @@ flowchart LR
   exec -- "PROBE_TX build + retry" --> orig["originator"]
   tresp --> resp["response builder"]
   exec --> resp
-  exec -- "declare/withdraw, configure/enable" --> srpav["srp + avtp adapters"]
+  exec -- "srp declare/withdraw; the bound view" --> srpav["srp face + acmp_bound levels"]
   exec -- "binding records" --> nvm["NVM manager"]
   dagate["talker DA-gate + MAAP flow (per source)"] --> tresp
 ```
@@ -283,8 +283,8 @@ notification triggers of [§11-x](#10-milan-deltas) via the global commit rule):
 | A5 | send PROBE_TX {FAST_CONNECT=1, SW=0, cc=0, stream fields 0} on the sink's interface; save `probe_seq`; arm `T-ACMP-CMD`; `retried`←0; pbsta←ACTIVE, acmpsta←0 |
 | A6 | update `bind_controller_eid` + saved STREAMING_WAIT only (v1.2 re-bind short-circuit — nothing else changes) |
 | A7 | send UNBIND_RX_RESPONSE SUCCESS |
-| A8 | teardown SRP: `WITHDRAW_LISTENER`; `avtp.INPUT_DISABLE`; clear settled {stream_id, DA, VLAN}; talker_registered←0 |
-| A9 | disarm discovery SM |
+| A8 | teardown SRP: `WITHDRAW_LISTENER`; clear settled {stream_id, DA, VLAN}; talker_registered←0. No stream-datapath request: the bound view (`acmp_bound_*`, [02 §4.4](02_interfaces.md)) follows the binding and is withdrawn with A9 |
+| A9 | disarm discovery SM; withdraw the bound view ([02 §4.4](02_interfaces.md)): the stream identity on `acmp_bound_sid_o`, `acmp_bound_dmac_o` and `acmp_bound_vlan_o` reads 0, and `acmp_bound_o` falls unless A4 re-arms the sink in the same transaction (a re-bind: the port is debounced) |
 | A10 | clear binding; NVM clear; pbsta←DISABLED, acmpsta←0 |
 | A11 | stop the active SM timer |
 | A12 | arm `T-ACMP-DELAY`; pbsta←ACTIVE, acmpsta←0 |
@@ -347,8 +347,8 @@ stateDiagram-v2
 flowchart TB
   ub["UNBIND_RX (A1 ok)"] --> t1["A11 stop timer"] --> t2{"settled?"}
   rb["re-bind different source (A1 ok)"] --> t1
-  t2 -- yes --> t3["A8 withdraw SRP + disable AVTP + clear settled"]
-  t2 -- no --> t4["A9 disarm discovery"]
+  t2 -- yes --> t3["A8 withdraw SRP + clear settled"]
+  t2 -- no --> t4["A9 disarm discovery + withdraw the bound view"]
   t3 --> t4
   t4 --> t5{"cause"}
   t5 -- "UNBIND" --> t6["A10 clear binding + NVM clear"] --> t7["A7 respond"] --> u["UNBOUND"]

@@ -6,7 +6,7 @@
 This document set specifies the architecture of a compact, deterministic hardware
 protocol processor implementing the **control plane of a non-redundant Milan v1.2 PAAD**
 on IEEE 1722.1-2021: ADP discovery, Milan ACMP binding/probing, AECP/AEM and Milan
-Vendor Unique execution, unsolicited notifications, counters, and persistence.
+Vendor Unique execution, unsolicited notifications, GET_COUNTERS reporting, and persistence.
 
 - **HDL-agnostic**: structure, interfaces, state and algorithms only — no language
   constructs, no vendor primitives. Any HDL implementation is written against these
@@ -33,15 +33,17 @@ Vendor Unique execution, unsolicited notifications, counters, and persistence.
 |---|---|
 | ADP / ACMP / AECP+MVU protocol execution | Ethernet MAC/PHY, frame filtering below DA/EtherType |
 | MAAP block claim (IEEE 1722-2016 Annex B, [11](11_maap_engine.md)) — opt-in via `cfg_maap_internal_i`; default 0 keeps the seam external | external `maap` allocator (the default wiring; the fabric's own engine answers the seam) |
-| Controller registry, notifications, lock, counters, identify | gPTP time sync datapath (802.1AS-2011 profile) |
+| Controller registry, notifications, lock, GET_COUNTERS reporting, identify | gPTP time sync datapath (802.1AS-2011 profile); the counter banks GET_COUNTERS reports ([integrator guide §7.1](../guides/integrator.md#counters-face)) |
 | Entity-model storage and descriptor assembly | media transport below the control plane |
 | SRP endpoint participant — MSRP + MVRP, Class A/single-VID ([10](10_srp_engine.md); `P-EN-SRP-ENGINE` keeps an external-stack alternative) | full SRP bridge behavior (attribute propagation, per-port registrar sets) |
 | Timers/deadlines, PRNG, persistence orchestration | AVTP streaming datapath, CBS shaping, media clocking |
 | Management side-port | NVM physical device (behind the NVM port) |
 
-The four external protocol engines are reached through the **adapter interfaces** of
-[02 §4](02_interfaces.md); their observable state that AECP commands report is cataloged
-once in [F02.10](02_interfaces.md#fig-02-statusdict).
+The external engines are reached through the faces of [02 §4](02_interfaces.md): the
+`srp` and `maap` class-B contracts, and, for gPTP, the AVTP streaming datapath and media
+clocking, class-D levels plus the `gsi_*` and `ctr_*` read faces. Their observable state
+that AECP commands report is cataloged once in
+[F02.10](02_interfaces.md#fig-02-statusdict).
 
 ## 3. Design principles
 
@@ -93,7 +95,7 @@ once in [F02.10](02_interfaces.md#fig-02-statusdict).
 | NVM managers | two record producers behind one arbiter: the binding manager (sink bindings) and the D3 writer in the AECP engine (scalar records); each walks its records at boot | [07 §5](07_memory_maps.md) |
 | Management side-port | image load, debug, NVM backing, optional firmware assist | [02 §7](02_interfaces.md) |
 | Boot/init sequencer + config/ID registers + profile ROMs | bring-up ordering; identity; profile selection | this doc §5, [§7](#7-parameter-master-table-f015) |
-| Event router | fan-out of adapter/SM events to counters, SMs, notifications | [03 §5](03_packet_engine.md) |
+| Event router | fan-out of the integrator's strobes and the engines' events to the SMs and notifications; no event feeds a counter here (the counters are the integrator's) | [03 §5](03_packet_engine.md) |
 
 ## 5. Operational model
 
@@ -192,9 +194,10 @@ values; other documents reference `P-…` IDs.
 
 **Profile mechanism** — a profile is a *selection of ROM columns*, not scattered
 `if`s: timing-constant column ([F08.1](08_timing.md#fig-08-constants) profile column),
-ACMP listener transition ROM, AECP dispatch validity column, STREAM_OUTPUT counter-mask
-table (Δ9). Baseline = Milan; `P-EN-PLAIN-IEEE-PROFILE` swaps columns without touching
-datapaths.
+ACMP listener transition ROM, AECP dispatch validity column. Baseline = Milan;
+`P-EN-PLAIN-IEEE-PROFILE` swaps columns without touching datapaths. The STREAM_OUTPUT
+counter masks of Δ9 are no processor ROM: the integrator's bank answers its own mask
+([06 §6.6](06_aecp_engine.md#sec-06-counters)).
 
 ## 8. Document map
 
@@ -219,7 +222,6 @@ flowchart TB
     ucpu["aem+mvu µcpu"]
     notif["registry + monitor + fan-out"]
     lockm["lock"]
-    ctrs["counters"]
   end
   subgraph doc07 ["07 memory"]
     model["entity-model store"]
@@ -235,7 +237,7 @@ flowchart TB
     maape["annex-b block claim + allocator seam"]
   end
   subgraph doc02 ["02 interfaces"]
-    adapters["srp/maap · gptp · avtp · mclk adapters · side-port · nvm port"]
+    faces["srp/maap faces · gptp/avtp/mclk levels · gsi/ctr read faces · side-port · nvm port"]
   end
   disp --> adv & talk & lsm & ucpu & maape
   maape -- "alloc answers + conflicts" --> talk
@@ -248,7 +250,7 @@ flowchart TB
   orig --> txarb
   ucpu --> model
   lsm --> nvm
-  adapters --> ctrs
+  faces -- "gsi / ctr read words" --> ucpu
   timers --> adv & lsm & notif & lockm
 ```
 

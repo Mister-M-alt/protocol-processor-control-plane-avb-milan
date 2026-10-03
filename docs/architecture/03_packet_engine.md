@@ -28,7 +28,7 @@ and TX arbitration. The three engines ([04](04_adp_engine.md)/[05](05_acmp_engin
 | Transaction normalizer | builds the record of [§4](#4-normalized-transaction) |
 | Per-engine dispatch FIFOs | ADP / ACMP / AECP queues. The normalizer's TIMER/SELF/MGMT injection ports exist and are tied off at the top ([§5](#5-origins-originator-and-event-router) gives each origin's landed home) |
 | Scoreboard | admission control per hazard class/key ([§6](#6-scoreboard-hazard-classes-and-ordering)) |
-| State-RAM port arbiters | overlay, dynamic state, registry, counters — each RAM single-ported with a small priority mux (engines never stall the RX path). The **descriptor image is not among them**: it lives in the integrator's main memory ([07 §3.3](07_memory_maps.md)), and only a one-descriptor line buffer and the cached index map are on chip |
+| State-RAM port arbiters | overlay, dynamic state, registry (no counters: they are the integrator's, [06 §6.6](06_aecp_engine.md#sec-06-counters)) — each RAM single-ported with a small priority mux (engines never stall the RX path). The **descriptor image is not among them**: it lives in the integrator's main memory ([07 §3.3](07_memory_maps.md)), and only a one-descriptor line buffer and the cached index map are on chip |
 | Response builders + TX slot RAM | `P-TX-STD-SLOTS` standard + 1 oversize slot ([§7](#7-response-building-and-buffers)) |
 | Originator + inflight table | CONTROLLER_AVAILABLE, the one originated command PDU at the top; response matching and the central retry ([§5](#5-origins-originator-and-event-router)) |
 | TX arbiter → TX async FIFO | frame-atomic priority merge ([§8](#8-tx-arbitration)) |
