@@ -373,11 +373,17 @@ five into the one canonical tally.
   probe-timeout notifications cannot masquerade as their command responses.
 
   Retained negative controls:
-  `python3 tb/pp_top/gsi_mutants.py --output <log-directory>`.
-  The runner builds in a temporary source copy, requires a clean golden run,
-  and accepts only a completed simulation failing its named check. Compile
-  failures do not count. It restores the sources and requires another clean
-  run at the end.
+  `python3 tb/pp_top/gsi_mutants.py --output <log-directory> [--jobs N] [--only NAME ...]`.
+  The runner builds every variant in a temporary source copy of its own,
+  requires a clean golden run first, and accepts only a completed simulation
+  failing its named check. Compile failures do not count. It requires another
+  clean run, of an unmutated copy, at the end. `--jobs N` (default 4, the
+  meaning and default of `d3_mutants.py`) builds up to N copies at once after
+  the golden, and the results are printed in the table's order whatever order
+  they finish in. Measured 2026-10-02 at `85da751` with Verilator 5.050, each
+  run pinned to 4 of the host's 16 CPUs: `--jobs 1` took 1,108 s and `--jobs 8`
+  713 s, and the golden, the 20 variants and the restored run gave the same
+  verdict and the same failing checks in both.
 
   | Mutation | Required failing check |
   |---|---|
@@ -988,14 +994,20 @@ D3C4 arm. The last four rows are D3C's own controls.
 
 ### AECP deadline and hazard-class controls (lane C5a): `aecp_mutants.py`
 
-`make aecp-mutants` (`python3 aecp_mutants.py --output DIR [--only a,b]`)
+`make aecp-mutants` (`python3 aecp_mutants.py --output DIR [--only a,b] [--jobs N]`)
 applies each reviewed patch in `mutations/` to a scratch copy of `hdl/`,
-`tb/common/`, `tb/ucpu/` and this directory with `git apply`, runs one suite
-target there, and counts the arm KILLED only when the simulation completed with
-its tally, failed, and printed its named check. It reads logs only, never
-production source. A positive control of every (suite, target) pair runs first
-and must pass. Counts below were taken on 2026-10-01 with Verilator 5.050, the
-CI pin: 5 controls PASS and 55 arms KILLED.
+`tb/common/`, `tb/ucpu/` and this directory, one copy per arm, with `git apply`,
+runs one suite target there, and counts the arm KILLED only when the simulation
+completed with its tally, failed, and printed its named check. It reads logs
+only, never production source. A positive control of every (suite, target) pair
+runs first, each in its own copy, and must pass. `--jobs N` (default 4, the
+meaning and default of `d3_mutants.py`; the make target runs the default) builds
+and runs up to N copies at once, and the results are printed in the table's
+order whatever order they finish in. Counts below were taken on 2026-10-01 with
+Verilator 5.050, the CI pin: 5 controls PASS and 55 arms KILLED. Measured
+2026-10-02 at `85da751` with Verilator 5.050, each run pinned to 4 of the host's
+16 CPUs: `--jobs 1` took 1,366 s and `--jobs 8` 1,079 s, and every control and
+arm gave the same verdict and the same failing checks in both, the counts below.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|
@@ -1050,16 +1062,22 @@ CI pin: 5 controls PASS and 55 arms KILLED.
 ### AECP dispatch and response negative controls: `aecp_dispatch_mutants.py`
 
 `make aecp-dispatch-mutants [AECP_DISPATCH_MUTANT_OUTPUT=DIR]` (or
-`python3 aecp_dispatch_mutants.py --output DIR [--only ARM,...]`) plants each
-arm below, an explicit patch in `aecp_dispatch_mutations/`, into a scratch
-copy of `hdl/`, `tb/common/` and this
-directory with `git apply`; the driver reads only simulation and lint logs.
-The HDL workflow runs the whole campaign through the make target.
-Every generated ROM and model directory is deleted before each build, so a
-microcode arm cannot leave its ROM behind. A positive control of each make
-target runs first and must pass, and an arm is KILLED only when its run
-completes with the build's tally (or the line guards' summary), exits non-zero
-and prints the named check. `aecp-dispatch` runs A5b and M9 on a booted model,
+`python3 aecp_dispatch_mutants.py --output DIR [--only ARM,...] [--jobs N]`)
+plants each arm below, an explicit patch in `aecp_dispatch_mutations/`, into a
+scratch copy of `hdl/`, `tb/common/` and this directory, one copy per arm, with
+`git apply`; the driver reads only simulation and lint logs.
+The HDL workflow runs the whole campaign through the make target, at the
+default `--jobs`. Every generated ROM and model directory is deleted before
+each build, so a microcode arm cannot leave its ROM behind. A positive control
+of each make target runs first, each in its own copy, and must pass, and an arm
+is KILLED only when its run completes with the build's tally (or the line
+guards' summary), exits non-zero and prints the named check. `--jobs N`
+(default 4, the meaning and default of `d3_mutants.py`) builds and runs up to N
+copies at once, and the results are printed in the table's order whatever order
+they finish in. Measured 2026-10-02 at `85da751` with Verilator 5.050, each run
+pinned to 4 of the host's 16 CPUs: `--jobs 1` took 1,059 s and `--jobs 8`
+814 s, and every control and arm gave the same verdict and the same failing
+checks in both, the counts below. `aecp-dispatch` runs A5b and M9 on a booted model,
 then section AX on its own processor (`--aecp-dispatch-only`); `aecp-line`
 runs section AX in the line build; `line-guards` lints the top across the line
 range; `d3` runs section D3, whose D3C arms grade SET_CLOCK_SOURCE over a
@@ -1979,7 +1997,8 @@ monitor's 30 s floor, so no CONTROLLER_AVAILABLE is due).
 
 ### Mutation record: `notify_mutants.py`
 
-`python3 tb/pp_top/notify_mutants.py --output DIR` plants each control in a
+`python3 tb/pp_top/notify_mutants.py --output DIR [--jobs N] [--only NAME ...]`
+(`--jobs` default 1) plants each control in a
 private copy (the `d3_mutants.py` rules: exact edits, goldens first, KILLED only
 with a completed run, a non-zero exit and every named check failing). Results at
 the lane head, 40 of 40 KILLED (the four `ident_*` controls after

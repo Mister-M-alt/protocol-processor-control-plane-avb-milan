@@ -6,15 +6,22 @@ No behavioral oracle reads production source. Each patch is explicit reviewable
 input to git apply; the driver reads only simulation logs. SRP top has a global
 DUT-cycle guard; the encoder and stream-FSM suites have finite cycle-bounded
 walks. A budget exit, missing tally or build failure never counts as a kill.
+Every control and every arm builds and runs in a scratch copy of its own;
+`--jobs N` runs up to N copies at once, and the results are read in the
+declared order.
 """
 import argparse
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 PATCHES = Path(__file__).resolve().parent / "mutations"
+
+sys.path.insert(0, str(ROOT / "tb" / "common"))
+from mutant_pool import add_jobs_argument, in_order  # noqa: E402
 
 # label, suite, group, required failing assertion prefix.
 MUTANTS = [
@@ -113,44 +120,65 @@ def run(tree: Path, suite: str, group: str, log: Path) -> tuple[int, str]:
 
 
 def plant(tree: Path, label: str) -> None:
-    """Restore the scratch RTL and apply one explicit patch, refusing drift."""
-    shutil.copytree(ROOT / "hdl", tree / "hdl", dirs_exist_ok=True)
+    """Apply one explicit patch to the scratch RTL, refusing drift."""
     subprocess.run(["git", "apply", "--check", str(PATCHES / (label + ".patch"))],
                    cwd=tree, check=True)
     subprocess.run(["git", "apply", str(PATCHES / (label + ".patch"))],
                    cwd=tree, check=True)
 
 
-def campaign(tree: Path, output: Path, selected: list[tuple]) -> tuple[int, int, set[str]]:
+def trial(job: tuple[str | None, str, str]) -> tuple[int, str]:
+    """Copy the RTL and the suites to a scratch tree of its own, plant the arm if any, and run.
+
+    The receipt is kept inside the copy and returned: a label that runs on two
+    suites has one receipt name, so the caller writes the receipts in the
+    declared order, the later over the earlier, as a serial run leaves them.
+    """
+    label, suite, group = job
+    with tempfile.TemporaryDirectory(prefix="srp-leaveall-") as tmp:
+        tree = Path(tmp)
+        shutil.copytree(ROOT / "hdl", tree / "hdl")
+        for name in ("common", "srp_top", "srp_stream_fsms", "srp_encoder"):
+            shutil.copytree(ROOT / "tb" / name, tree / "tb" / name,
+                            ignore=shutil.ignore_patterns("obj_*", "__pycache__"))
+        if label is not None:
+            plant(tree, label)
+        return run(tree, suite, group, tree / "receipt.log")
+
+
+def campaign(output: Path, selected: list[tuple], jobs: int) -> tuple[int, int, set[str]]:
     """Run positive controls first, then require each arm's own named assertion."""
     passed = 0
     total = 0
     covered: set[str] = set()
-    for suite, group in sorted({(m[1], m[2]) for m in selected}):
-        rc, contents = run(tree, suite, group, output / f"control-{suite}-{group}.log")
-        ok = rc == 0 and " 0 FAIL" in contents
-        total += 1
-        passed += ok
-        print(f"control {suite} {group}: rc={rc} {'PASS' if ok else 'FAIL'}", flush=True)
-        if not ok:
-            print(contents[-4000:])
-            return passed, total, covered
-    for label, suite, group, expected in selected:
-        plant(tree, label)
-        rc, contents = run(tree, suite, group, output / f"{label}.log")
-        failures = [line for line in contents.splitlines() if line.startswith("FAIL:")]
-        ok = (rc != 0 and "checks:" in contents and "CYCLE_BUDGET" not in contents
-              and any(expected in line for line in failures))
-        total += 1
-        passed += ok
-        tags = sorted({line.split(":", 2)[1].strip() for line in failures})
-        if ok:
-            covered.update(tags)
-        verdict = "KILLED" if ok else "UNPROVEN"
-        print(f"{label}: rc={rc} failures={len(failures)} {verdict} tags={','.join(tags)}",
-              flush=True)
-        if not ok:
-            print(contents[-2500:], flush=True)
+    pairs = sorted({(m[1], m[2]) for m in selected})
+    with in_order(trial, [(None, suite, group) for suite, group in pairs], jobs) as results:
+        for (suite, group), (rc, contents) in zip(pairs, results):
+            (output / f"control-{suite}-{group}.log").write_text(contents)
+            ok = rc == 0 and " 0 FAIL" in contents
+            total += 1
+            passed += ok
+            print(f"control {suite} {group}: rc={rc} {'PASS' if ok else 'FAIL'}", flush=True)
+            if not ok:
+                print(contents[-4000:])
+                return passed, total, covered
+    units = [(label, suite, group) for label, suite, group, _ in selected]
+    with in_order(trial, units, jobs) as results:
+        for (label, suite, group, expected), (rc, contents) in zip(selected, results):
+            (output / f"{label}.log").write_text(contents)
+            failures = [line for line in contents.splitlines() if line.startswith("FAIL:")]
+            ok = (rc != 0 and "checks:" in contents and "CYCLE_BUDGET" not in contents
+                  and any(expected in line for line in failures))
+            total += 1
+            passed += ok
+            tags = sorted({line.split(":", 2)[1].strip() for line in failures})
+            if ok:
+                covered.update(tags)
+            verdict = "KILLED" if ok else "UNPROVEN"
+            print(f"{label}: rc={rc} failures={len(failures)} {verdict} tags={','.join(tags)}",
+                  flush=True)
+            if not ok:
+                print(contents[-2500:], flush=True)
     return passed, total, covered
 
 
@@ -159,6 +187,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--only", default="")
+    add_jobs_argument(parser)
     args = parser.parse_args()
     requested = set(args.only.split(",")) if args.only else {m[0] for m in MUTANTS}
     unknown = requested - {m[0] for m in MUTANTS}
@@ -166,13 +195,7 @@ def main() -> int:
         parser.error(f"unknown mutation arms: {sorted(unknown)}")
     selected = [m for m in MUTANTS if m[0] in requested]
     args.output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="srp-leaveall-") as tmp:
-        tree = Path(tmp)
-        shutil.copytree(ROOT / "hdl", tree / "hdl")
-        for suite in ("common", "srp_top", "srp_stream_fsms", "srp_encoder"):
-            shutil.copytree(ROOT / "tb" / suite, tree / "tb" / suite,
-                            ignore=shutil.ignore_patterns("obj_*", "__pycache__"))
-        passed, total, covered = campaign(tree, args.output, selected)
+    passed, total, covered = campaign(args.output, selected, args.jobs)
     if not args.only:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4)]

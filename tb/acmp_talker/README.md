@@ -197,12 +197,20 @@ so an abandoned offer cannot escape the same-round limit.
 Run the new mutations with:
 
 ```sh
-python3 tb/acmp_talker/retry_mutants.py --logs /tmp/acmp-retry-mutants
+python3 tb/acmp_talker/retry_mutants.py --logs /tmp/acmp-retry-mutants [--jobs N] [--only NAME ...]
 ```
 
-The runner copies only build inputs into a temporary directory, requires a
-simulation tally (a compiler error cannot kill a mutant), checks nonzero exits
-and named assertion failures, then restores the original RTL and requires rc 0.
+The runner copies only build inputs into a temporary directory of each case's
+own (the baseline, every mutant and a final unmutated run, `restored`), requires
+a simulation tally (a compiler error cannot kill a mutant), checks nonzero exits
+and named assertion failures, and requires the baseline and `restored` to pass
+with rc 0. The baseline runs first; `--jobs N` (default 4, the meaning and
+default of `tb/pp_top/d3_mutants.py`) then runs up to N cases at once, and the
+results are printed in the table's order whatever order they finish in.
+Measured 2026-10-02 at `85da751` with Verilator 5.050, each run pinned to 4 of
+the host's 16 CPUs: `--jobs 1` took 408 s and `--jobs 8` 248 s. The baseline,
+every mutant and `restored` gave the same verdict and the same failures in both
+runs, and `coverage.txt` was identical.
 It records a failing witness by file and line for every new assertion site in
 `coverage.txt`. The complete table includes both review mutant sets. Equivalent single-term
 variants are controls and never count as killed witnesses; their construction

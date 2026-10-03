@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: CERN-OHL-W-2.0
-"""Kill issue #128 mutants in a scratch tree; never edit the source checkout."""
+"""Kill issue #128 mutants in scratch trees; never edit the source checkout.
+
+Each case (the baseline, every mutant and the final restored run) builds and runs in
+its own scratch copy. `--jobs N` runs up to N of them at once; the baseline runs
+first and must pass, and the results are read in the declared order.
+"""
 
 import argparse
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+from mutant_pool import add_jobs_argument, in_order  # noqa: E402
+
+RTL = "hdl/acmp/KL_acmp_talker.sv"
 
 MUTATIONS = {
     "no_round": ("retry_tick_w ? cfg_src_en_i : '0", "'0"),
@@ -302,21 +312,30 @@ def run_case(tree: Path, name: str, log_dir: Path) -> tuple[int, list[str], set[
     return result.returncode, failures, seen, killed
 
 
-def main() -> int:
-    """Run selected mutants and require assertion coverage for the full set."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--logs", type=Path, required=True)
-    parser.add_argument("--only", nargs="+", choices=MUTATIONS)
-    args = parser.parse_args()
-    args.logs.mkdir(parents=True, exist_ok=True)
+def mutated_source(source: str, name: str) -> str:
+    """The talker RTL with one named mutation planted; each anchor must occur once."""
+    replacements = MUTATIONS[name]
+    if isinstance(replacements[0], str):
+        replacements = (replacements,)
+    for old, new in replacements:
+        if source.count(old) != 1:
+            raise RuntimeError(f"{name}: mutation anchor is not unique")
+        source = source.replace(old, new)
+    return source
+
+
+def scratch_case(case: tuple[str, str | None, Path]) -> tuple[int, list[str], set[int], set[int]]:
+    """Copy the build inputs to a scratch tree of its own, plant the mutant if any, and run."""
+    name, mutant, log_dir = case
     root = Path(__file__).resolve().parents[2]
     with tempfile.TemporaryDirectory(prefix="pp128-mutants-") as scratch:
         tree = Path(scratch)
         for directory in ("hdl", "tb/acmp_talker", "tb/common"):
             shutil.copytree(root / directory, tree / directory,
                             ignore=shutil.ignore_patterns("obj_dir", "__pycache__"))
-        rtl = tree / "hdl/acmp/KL_acmp_talker.sv"
-        source = rtl.read_text()
+        rtl = tree / RTL
+        if mutant is not None:
+            rtl.write_text(mutated_source(rtl.read_text(), mutant))
         # Observe assertion sites in the scratch BFM only. This records a
         # failing witness for every new CHECK, not just one per scenario.
         cpp = tree / "tb/acmp_talker/sim_main.cpp"
@@ -326,22 +345,25 @@ def main() -> int:
         bfm = bfm.replace('if (!(cond)) { ++fails;',
                           'if (!(cond)) { printf("FAIL_LOC:%s:%d\\n", __FILE__, __LINE__); ++fails;', 1)
         cpp.write_text(bfm)
-        rc, failures, seen, _ = run_case(tree, "baseline", args.logs)
-        if rc or failures:
-            raise RuntimeError("baseline failed")
-        witnesses: dict[int, list[str]] = {line: [] for line in seen}
-        selected = args.only or list(MUTATIONS)
-        for name in selected:
-            replacements = MUTATIONS[name]
-            if isinstance(replacements[0], str):
-                replacements = (replacements,)
-            mutated = source
-            for old, new in replacements:
-                if mutated.count(old) != 1:
-                    raise RuntimeError(f"{name}: mutation anchor is not unique")
-                mutated = mutated.replace(old, new)
-            rtl.write_text(mutated)
-            rc, failures, _, killed = run_case(tree, name, args.logs)
+        return run_case(tree, name, log_dir)
+
+
+def main() -> int:
+    """Run selected mutants and require assertion coverage for the full set."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--logs", type=Path, required=True)
+    parser.add_argument("--only", nargs="+", choices=MUTATIONS)
+    add_jobs_argument(parser)
+    args = parser.parse_args()
+    args.logs.mkdir(parents=True, exist_ok=True)
+    rc, failures, seen, _ = scratch_case(("baseline", None, args.logs))
+    if rc or failures:
+        raise RuntimeError("baseline failed")
+    witnesses: dict[int, list[str]] = {line: [] for line in seen}
+    selected = args.only or list(MUTATIONS)
+    cases = [(name, name, args.logs) for name in selected] + [("restored", None, args.logs)]
+    with in_order(scratch_case, cases, args.jobs) as results:
+        for name, (rc, failures, _, killed) in zip(selected, results):
             if name in EQUIVALENT_MUTATIONS:
                 if rc or failures:
                     raise RuntimeError(f"{name}: equivalence control failed")
@@ -357,16 +379,15 @@ def main() -> int:
             print(f"KILLED {name}: rc={rc}, {len(failures)} assertion failures", flush=True)
             for line in killed:
                 witnesses[line].append(name)
-        rtl.write_text(source)
-        rc, failures, _, _ = run_case(tree, "restored", args.logs)
-        if rc or failures:
-            raise RuntimeError("restored source failed")
-        (args.logs / "coverage.txt").write_text("".join(
-            f"retry_cases.hpp:{line}: {', '.join(names) or 'UNCOVERED'}\n"
-            for line, names in sorted(witnesses.items())))
-        missing = [line for line, names in witnesses.items() if not names]
-        if not args.only and missing:
-            raise RuntimeError(f"new assertions without a killed witness: {sorted(missing)}")
+        rc, failures, _, _ = next(results)
+    if rc or failures:
+        raise RuntimeError("restored source failed")
+    (args.logs / "coverage.txt").write_text("".join(
+        f"retry_cases.hpp:{line}: {', '.join(names) or 'UNCOVERED'}\n"
+        for line, names in sorted(witnesses.items())))
+    missing = [line for line, names in witnesses.items() if not names]
+    if not args.only and missing:
+        raise RuntimeError(f"new assertions without a killed witness: {sorted(missing)}")
     equivalents = len(set(selected) & set(EQUIVALENT_MUTATIONS))
     performance = len(set(selected) & set(PERFORMANCE_MUTATIONS))
     print(f"PASS: {len(selected) - equivalents - performance} mutants killed; "
