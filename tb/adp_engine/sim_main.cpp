@@ -299,14 +299,14 @@ constexpr DiscCell D_I_UNB{'I', D_UNB, EV_NONE, TM_NONE, "5.6.4.1 bound sinks on
 constexpr DiscCell D_I_NOT{'I', D_NOT, EV_NONE, TM_NONE, "5.6.4.5.1 step 1", I_GM};
 constexpr DiscCell D_C{'C', 0, EV_NONE, TM_NONE, "5.6.4.1 x: the binding is already so",
                        I_SINK};
-constexpr DiscCell D_DISCOVER{'N', D_DISC, EV_DISC, TM_ARM, "5.6.4.5.1", I_AVAIL};
-constexpr DiscCell D_DEPART{'N', D_NOT, EV_DEP, TM_CANCEL, "5.6.4.5.2 step 2b",
+constexpr DiscCell D_DISCOVER{'N', D_DISC, EV_DISC, TM_ARM, "5.6.4.5.1 steps 1-4", I_AVAIL};
+constexpr DiscCell D_DEPART{'N', D_NOT, EV_DEP, TM_CANCEL, "5.6.4.5.2 steps 2a 2b",
                             "6.2.2.15; 6.2.2.16; 6.2.2.17"};
 constexpr DiscCell DISC[N_DROW][N_DCOL] = {
-  {D_I_UNB, D_DISCOVER, {'N', D_DISC, EV_NONE, TM_ARM, "5.6.4.5.2 step 3", I_AVAIL}},
+  {D_I_UNB, D_DISCOVER, {'N', D_DISC, EV_NONE, TM_ARM, "5.6.4.5.2 steps 1 3", I_AVAIL}},
   {D_I_UNB, D_DISCOVER,
    {'N', D_DISC, EV_PAIR, TM_ARM, "5.6.4.5.2 steps 2a 2c 3", "6.2.2.15 a new cycle"}},
-  {D_I_UNB, D_I_NOT, {'N', D_DISC, EV_NONE, TM_ARM, "5.6.4.5.2 step 3", I_AVAIL}},
+  {D_I_UNB, D_I_NOT, {'N', D_DISC, EV_NONE, TM_ARM, "5.6.4.5.2 steps 1 3", I_AVAIL}},
   {D_I_UNB, D_I_NOT, D_DEPART},
   {D_I_UNB, D_I_NOT, D_DEPART},
   {D_I_UNB, D_DISCOVER, {'I', D_DISC, EV_NONE, TM_NONE, "5.6.4.5.2 step 1", I_IFX}},
