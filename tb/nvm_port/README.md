@@ -1132,14 +1132,14 @@ says the sticky `done_seen_r` latch exists for. It is a contract freedom rather
 than a broken peer, and the port handles it. Its whole interest was that
 deleting that latch was INVISIBLE without it, which stopped being true when
 T21 and T22 landed -- it still catches far more of that deletion than the
-pristine model does, and it is the only model here that varies the handshake
-for EVERY phase rather than at one armed moment. It is not a separate
+pristine model does, and it was the first model here to vary the handshake for
+a whole run. It is not a separate
 implementation any more either: the behaviour is the harness's own armed
 backend (`present_coincident_completion`), which T22 arms for one commit and
 one restore, and this model is the same arming left on for the whole run. That
 matters for what the model can be trusted to say -- a model spliced in from the
 gate is a second implementation of the thing under test, and this one is not. The four array-flavoured models:
-this one, which keeps every accepted byte; a half-page model, which drops the
+the pristine model, which keeps every accepted byte; a half-page model, which drops the
 last four on a failure; a page-buffered NOR, which keeps none until the program
 cycle ends with `done`; and a lazy-erase backend, which answers ERASE with
 `done` without rewriting the array at all. None is invented. The port's own

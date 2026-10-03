@@ -1161,8 +1161,8 @@ void NvmPortSuite::refusals_leave_the_port_serviceable() {
 // ---- T15: a device err tears the commit (issue #70) --------------------
 // T15-T18 model a DEVICE that fails mid-commit and says so; the power cut
 // proper, rst_n with the commit in flight, is T25 (issue #18).
-// A commit is ERASE(region) then WRITE(0, 8+plen). Cut the power inside the
-// WRITE and the region is left erased-plus-partial: the record being written
+// A commit is ERASE(region) then WRITE(0, 8+plen). A device err inside the
+// WRITE leaves the region erased-plus-partial: the record being written
 // is gone AND so is whatever it replaced. That is a property of writing a
 // slot in place, and it is the reason the flash map reserves A/B slots --
 // so this phase pins what the port DOES guarantee rather than asserting a
@@ -1247,7 +1247,7 @@ void NvmPortSuite::torn_commit_never_restores_as_valid() {
 
 // ---- T16: a torn commit must not disturb the REST of the saved set -----
 // This is the #70 property proper. Records live in their own regions, so a
-// power cut while writing one must leave every other record readable and
+// commit torn while writing one must leave every other record readable and
 // byte-exact -- otherwise one interrupted save loses the whole set.
 void NvmPortSuite::torn_commit_leaves_every_other_region_untouched() {
   std::vector<uint8_t> keep = frame(4, pattern(16, 0x11));

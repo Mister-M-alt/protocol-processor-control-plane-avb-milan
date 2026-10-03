@@ -205,7 +205,7 @@ module KL_acmp_nvm_shadow
     input  wire                        nvm_busy_i,     //! op in flight
     input  wire                        nvm_done_i,     //! one-cycle pulse: op complete
     input  wire                        nvm_err_i,      //! one-cycle pulse: op failed
-    input  wire  [1:0]                 nvm_err_cause_i,//! the port's cause with err: 1 DEVICE, 2 UNFRAMED
+    input  wire  [1:0]                 nvm_err_cause_i,//! the port's cause with err: 1 DEVICE, 2 UNFRAMED, 3 DEADLINE (read as DEVICE)
     //! one-cycle pulse: the walk abandons the read the port is serving for
     //! it (the deadline expired); the manager arbiter drains that read
     output logic                       nvm_abort_o,
