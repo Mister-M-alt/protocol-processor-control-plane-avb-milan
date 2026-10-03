@@ -3103,7 +3103,10 @@ struct D3ClockSourcePhase : D3RestorePhase {
 //! persists; its IDENTIFY value never does) and the last ordinal.
 struct D3NamePhase : D3RestorePhase {
   struct Named {
-    uint16_t type, index, name_index, ordinal;
+    uint16_t type;
+    uint16_t index;
+    uint16_t name_index;
+    uint16_t ordinal;
     std::vector<uint8_t> name;
   };
   std::vector<Named> named;

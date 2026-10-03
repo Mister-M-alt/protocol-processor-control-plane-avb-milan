@@ -519,7 +519,7 @@ def crc_ignored(group: str, sel: int, suite: Suite, check: str) -> Mutant:
 UNRESTORABLE = (
     crc_ignored("cfg", 0, PP_TOP_ADP, "AD8: the first ENTITY_AVAILABLE"),
     crc_ignored("clks", 2, PP_TOP, "D3C5 corrupt"),
-    *(Mutant(name, suite, ((WRITER, TORN, "    else if (1'b0)                                abort_cause_w = CAUSE_TORN_C;\n"),),
+    *(Mutant(name, suite, ((WRITER, TORN, TORN.replace("(rd_torn_w)   ", "(1'b0)       ")),),
              checks)
       for name, suite, checks in (("torn_read_not_an_abort", PP_TOP, ("D3C5 torn",)),
                                   ("torn_read_not_an_abort_cfg", PP_TOP_ADP, ("AD9: the torn read",)))),
