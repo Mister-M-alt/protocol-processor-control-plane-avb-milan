@@ -862,7 +862,8 @@ consumer integration's responsibility and is not implemented in this repository.
 **Realization status (2026-08-18, `hdl/aecp/KL_aecp_notify.sv`)**: the registry, the
 ENTITY lock and the emission walk are landed as one block beside the engine: 16-row
 LUTRAM table {EID, MAC, seq} + valid/TL flags, walked one row per cycle (single
-comparator, never a bank); REGISTER refresh preserves the row's sequence_id (Milan
+comparator, never a bank; the monitor's per-command match reads a LUTRAM identity
+index, see Storage below); REGISTER refresh preserves the row's sequence_id (Milan
 §5.4.2.21 initializes it "if a new entry is created"); overflow answers `NO_RESOURCES`
 directly. The CONTROLLER_AVAILABLE **eviction probe of the same clause is a MAY and is
 not attempted**. TIME_LIMITED expiry (300 s, timer-service slots `regmon + i`) removes
@@ -882,6 +883,25 @@ through the engine one at a time (same µprograms, buffer and builder as solicit
 answers; `LANE_AECP_UNS`). Successful state-changing commands retain their response
 kind and requester exclusion in a bounded queue. GET_COUNTERS changes are coalesced
 per served descriptor and cannot begin emission more than once per second.
+
+**Storage (issue #232, 2026-10-03).** Each array of `KL_aecp_notify` and the
+primitive it is built for. The measured mapping, before and after, is recorded on
+milan-fpga #232.
+
+| Structure | Shape | Built for | Why |
+|---|---|---|---|
+| Row table `rows_r` {EID, MAC, seq} | `P-N-CONTROLLERS` × 128 bits | distributed RAM, read at the walk (or drain), the probe's pick and the write index | no reader sees every row at once |
+| Identity index | `P-N-CONTROLLERS` rows × 19 six-bit chunks, one 64 × 1 memory each | distributed RAM | the monitor's "any valid AECP cmd from this controller" (F06.5) matches every row in the command's own cycle without a comparator per row; a REGISTER rewrites its row's index in the two cycles after the row write, while that row is matched by one comparator against the write port's read |
+| valid, TIME_LIMITED, parked expiry, monitor and probe flags | 1 bit per row each | flops | the expiry intake, the monitor and the walk read and write them in one cycle |
+| Command-notification queue `cmdq_*` | `P-NOTIF-QUEUE-DEPTH` (16) × 132 bits | distributed RAM | one write pointer, one read pointer; the pointers and count are the reset state |
+| GET_COUNTERS stamps `ctr_last_r` | (streams in + out + 2) × 32 bits | flops, no reset | `ctr_sent_r` is each stamp's valid bit; the one-second window reads every stamp against `now_ms_i` in every cycle |
+
+Exhaustion is defined for each. A REGISTER into a full table answers `NO_RESOURCES`
+(above). While anything is pending or emitting, `amap_busy_o` holds the engine's
+next command, so the queue holds at most the pushes of the command that was running
+when it was empty; a push into a full queue would be dropped and counted
+(`cmdq_drop_r`, which no port reads). The counter, stream-info, AVB-info, AS-path,
+lock and map classes coalesce into one pending bit per class or descriptor.
 
 **Identify (lane C6, 2026-09-30).** Both directions are landed. Controller to entity:
 SET/GET_CONTROL on the IDENTIFY control (Milan §5.4.2.17/§5.4.2.18, §5.3.12; volatile
