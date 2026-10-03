@@ -187,10 +187,10 @@ cd "$work"
 # and mimalloc (kebag-logic/milan-fpga#286, #288). Speed only, never results.
 #
 # APPLIED HERE, after sv2v and the ROM generators have already run, so it
-# reaches every yosys below - the pool workers and the synth_xilinx regression
-# - and neither sv2v (a GHC binary) nor the python3 generators, none of which
-# were measured under a replacement allocator. Optional in both directions:
-# this gate still needs only sv2v, yosys and python3 on PATH.
+# reaches every yosys below - the elaboration run and the synth_xilinx
+# regression - and neither sv2v (a GHC binary) nor the python3 generators, none
+# of which were measured under a replacement allocator. Optional in both
+# directions: this gate still needs only sv2v, yosys and python3 on PATH.
 #
 #   YOSYS_MALLOC=<path>   preload that library
 #   YOSYS_MALLOC=none     run yosys under the system allocator
@@ -198,50 +198,72 @@ cd "$work"
 apply_malloc_env "$MALLOC_LIB"
 echo "yosys allocator: ${MALLOC_LIB:-system}"
 
-# `-defer` AND A POOL, WHICH ARE THE SAME FIX. This script lowers the whole
-# tree into one all.v and then reads it once per top; every read but the
-# selected top's was elaboration nobody asked for. Measured here: 39.65s as it
-# stood, 10.31s with -defer, 1.25s with -defer in a 16-way pool - and 5.68s for
-# the 38 tops above, against 39.65s for the 32 it used to run.
+# PARSED ONCE (#25). This script lowers the whole tree into one all.v, and it
+# used to start one yosys per top, each beginning with `read_verilog all.v`:
+# the design was parsed once per top. Now one yosys reads all.v once, keeps
+# that parse with `design -save`, and elaborates each top from a `design -load`
+# of it, so every top still starts from the same untouched design and runs the
+# same `hierarchy -check; proc; opt_clean` it always did.
 #
-# -defer DEFERS ELABORATION, NOT PARSING, so it costs no front-end coverage:
-# a syntax error, a negative-width vector, an undefined submodule and a $fatal
-# injected into a module no top instantiates are each caught with and without
-# it (#25). The parse is still the thing that reads every module; the tops
-# array above is what elaborates each one.
-jobs="${YOSYS_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
-[ "$jobs" -ge 1 ] 2>/dev/null || jobs=4
-[ "$jobs" -le 16 ] || jobs=16
-
-elaborate_one() {
-  local t="$1"
-  if yosys -q -p "read_verilog -defer all.v; hierarchy -check -top $t; proc; opt_clean" \
-       > "$t.yos.log" 2>&1; then
-    printf 'OK\n' > "$t.status"
-  else
-    printf 'FAIL\n' > "$t.status"
-    return 1
-  fi
+# `-defer` keeps the parse free of elaboration: each module is elaborated under
+# the top that reaches it, never at read time, so an elaboration error is raised
+# inside a named top's step. It costs no coverage, because every module is a
+# top (the census above): #25's second correction measured that an unresolved
+# instance in a module no top names is missed with or without `-defer`, and that
+# the tops array, not the reading mode, is what elaborates a module.
+#
+# A FAILURE NAMES ITS MODULE. yosys stops at its first error, so each top's step
+# is bracketed by two markers on stderr (stdout is block-buffered into the log
+# and lost when yosys exits on an error; stderr is not): the top whose `@@begin`
+# is in the log and whose `@@ok` is not is the one that failed, and the log's
+# first ERROR line says why. A fresh run then takes the tops after it, which
+# parses again, so a red gate still gives every top a verdict, in inventory
+# order; a green gate parses exactly once.
+gate_script() {
+  local t
+  printf 'read_verilog -defer all.v\ndesign -save parsed\n'
+  for t in "$@"; do
+    printf 'log -stderr @@begin %s\ndesign -load parsed\n' "$t"
+    printf 'hierarchy -check -top %s\nproc\nopt_clean\nlog -stderr @@ok %s\n' "$t" "$t"
+  done
 }
-export -f elaborate_one
 
-# The pool's own output interleaves, so it is discarded and the verdict is
-# printed below IN INVENTORY ORDER from the per-top status files. A gate whose
-# report changes order between runs cannot be diffed between runs.
-printf '%s\n' "${tops[@]}" \
-  | xargs -P "$jobs" -I{} bash -c 'elaborate_one "$@"' _ {} >/dev/null 2>&1 || true
+# The module of all.v holding the line a parse error cites, when it cites one.
+parse_site() {
+  local n
+  n="$(grep -oE 'all\.v:[0-9]+' <<<"$1" | head -1 | cut -d: -f2)" || return 0
+  [ -n "$n" ] || return 0
+  awk -v n="$n" 'NR > n { exit } /^module[ \t]/ { m = $2 }
+                 END { sub(/[^A-Za-z0-9_].*/, "", m); if (m != "") print m }' all.v
+}
 
-fail=0
-for t in "${tops[@]}"; do
-  if [ -f "$t.status" ] && [ "$(cat "$t.status")" = OK ]; then
-    echo "YOSYS OK  $t"
-  else
-    # A missing status file is a worker that died without recording a verdict,
-    # which is a failure and not a pass: absence of evidence is not a green.
-    echo "YOSYS FAIL $t: $(grep -oE 'ERROR:.*' "$t.yos.log" 2>/dev/null | head -1)"
-    fail=1
-  fi
+fail=0; parses=0; todo=("${tops[@]}")
+while [ "${#todo[@]}" -gt 0 ]; do
+  parses=$((parses + 1))
+  gate_script "${todo[@]}" > gate.ys
+  yrc=0; yosys -q -s gate.ys > gate.log 2>&1 || yrc=$?
+  why="$(grep -m1 'ERROR' gate.log)" || why="yosys exited $yrc with no ERROR line"
+  run=("${todo[@]}"); todo=(); red=0
+  for i in "${!run[@]}"; do
+    t="${run[$i]}"
+    if grep -qxF "@@ok $t" gate.log; then
+      echo "YOSYS OK  $t"
+    elif grep -qxF "@@begin $t" gate.log; then
+      echo "YOSYS FAIL $t: $why"
+      red=1; todo=("${run[@]:i+1}"); break
+    else
+      # Not even this top began, so the parse itself failed and no top is proven.
+      site="$(parse_site "$why")"
+      echo "YOSYS FAIL all.v${site:+ in module $site}: $why"
+      printf 'YOSYS FAIL %s: not elaborated, the parse failed\n' "${run[@]:i}"
+      red=1; break
+    fi
+  done
+  [ "$red" -eq 1 ] || [ "$yrc" -eq 0 ] || {
+    echo "YOSYS FAIL every top passed, but yosys exited $yrc: $why"; red=1; }
+  [ "$red" -eq 0 ] || fail=1
 done
+echo "YOSYS ${#tops[@]} tops, all.v parsed $parses time(s)"
 [ "$fail" -eq 0 ] || exit 1
 
 # Elaboration alone does not prove that inferred memories map onto the target
