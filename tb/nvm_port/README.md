@@ -1061,7 +1061,10 @@ is written down here rather than left to be rediscovered, because a phase list
 that reads as complete is worse than one that names its gaps. The other
 outstanding item is the same: `09_verification.md:56` sets the bar as "cut at
 randomized commit points ... every record type cut >= once", and this suite
-uses fixed cut points on both sides, so the randomized half is still owed.
+uses fixed cut points on both sides, so the randomized half is still owed
+(delivered at the top by `tb/pp_top` section D3KR, issue #83: every record type
+both producers write, cut by `rst_n` at 32 seeded-random points each,
+`--cut-seed S` reruns one; this suite's own cuts stay fixed).
 
 ### Reachability pins, and why they exist
 
@@ -1342,7 +1345,10 @@ Recorded so the phase list does not read as closing #70:
   behaviour: padding the WRITE would close a record whose bytes the manager
   never supplied, and an abort would be an interface change.
 - **The RANDOMIZED cut points `09_verification.md:56` asks for are still owed**
-  on both sides: T15-T18 and T25 cut at fixed points named on the bus.
+  on both sides: T15-T18 and T25 cut at fixed points named on the bus
+  (delivered at the top by `tb/pp_top` section D3KR, issue #83: every record
+  type both producers write, cut by `rst_n` at 32 seeded-random points each,
+  `--cut-seed S` reruns one; this suite's own cuts stay fixed).
 - **The `err` clause of the rule has THREE known exceptions**, and T1 was
   never among them: it asserted after a `done` and reddened only under lazy
   erase, a `done`-clause exception, now conditioned on erase semantics. The three are T16's isolation checks, and a coarse-erase
