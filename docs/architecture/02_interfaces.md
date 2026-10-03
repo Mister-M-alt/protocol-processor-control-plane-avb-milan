@@ -206,9 +206,9 @@ landed top (§1): §4.3 to §4.5 give their landed shape, and §4.6 the counters
 [06 §6.5](06_aecp_engine.md)). The AECP engine asks for one word at a time and holds its
 selector outputs while it waits. `*_wait_i` is a **hold**, not a ready: 1 keeps the
 beat, 0 says the word is on `*_data_i` now, so an unwired face answers zero at once,
-and every gather is bounded by the AECP memory watchdog (`MEM_TIMEOUT_CYC_P`,
-[06 §8.1](06_aecp_engine.md)). The engine reads these faces and the class-D levels
-instead of issuing requests.
+and every gather is bounded by the AECP memory watchdog, `DESC_MEM_TMO_CYC_P` (the
+engine's `MEM_TIMEOUT_CYC_P`, [06 §8.1](06_aecp_engine.md)). The engine reads these
+faces and the class-D levels instead of issuing requests.
 
 <a id="fig-02-apiwave"></a>**F02.5 — Engine-API template (all class-B instances)**
 
@@ -432,7 +432,7 @@ face unwired drives 0, every quadlet reads 0, `counters_valid` reads 0, and the
 response says "this entity keeps no counters for that object" — which is what
 §7.4.42.2 means by a clear valid bit. Claiming a bit whose quadlet never moves
 is the one answer the face must never be able to produce by accident. A face
-that holds forever is bounded by `MEM_TIMEOUT_CYC_P` ([06 §8.1](06_aecp_engine.md)).
+that holds forever is bounded by `DESC_MEM_TMO_CYC_P` (the engine's `MEM_TIMEOUT_CYC_P`, [06 §8.1](06_aecp_engine.md)).
 The change strobe is the push's only trigger: tied 0, no unsolicited GET_COUNTERS is
 ever sent.
 
@@ -478,7 +478,7 @@ consumers.
 
 | Event | Produced by | Form | Consumers |
 |---|---|---|---|
-| `LINK_UP/DOWN` | `link_up_i` (the integrator, interface 0) | the edges of a level | ADP advertise SM, SRP Domain re-declare, NOTIF (GET_AVB_INFO); traced by the router |
+| `LINK_UP/DOWN` | `link_up_i` (the integrator, interface 0) | the edges of a level | ADP advertise SM, SRP Domain re-declare, NOTIF (GET_AVB_INFO); traced by the router; the internal MAAP engine (PortOperational!, [11](11_maap_engine.md)); the PRNG seed latch (first rise) |
 | `GM_CHANGE` | `gm_change_i` (the integrator) | one-cycle strobe | ADP advertise SM, NOTIF (GET_AVB_INFO); traced by the router |
 | a changed GET_AVB_INFO word (asCapable, propagation delay) | `gsi_avb_chg_i` (the integrator) | one-cycle strobe | NOTIF (GET_AVB_INFO) |
 | a changed path sequence | `gsi_asp_chg_i` (the integrator) | one-cycle strobe | NOTIF (GET_AS_PATH) |
