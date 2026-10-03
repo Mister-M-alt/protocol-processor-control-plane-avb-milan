@@ -42,7 +42,7 @@
     <text x="464" y="524">NVM_RS_TMO_CYC_P · NVM_RS_AGG_CYC_P</text>
     <text x="464" y="542">REG_TL_TIMEOUT_MS_P · LOCK_TIMEOUT_MS_P</text>
     <text x="464" y="560">NVM_RETRY_BACKOFF_CYC_P · SRP_DOM_DEF_VID_P</text>
-    <text x="464" y="578">EN_IDENTIFY_NOTIF_P</text>
+    <text x="464" y="578">EN_IDENTIFY_NOTIF_P · NVM_MEM_TMO_CYC_P</text>
   </g>
   <a href="../guides/integrator.md#integration-parameters">
     <text x="464" y="602" font-size="11.5" fill="#2c4a75">Defaults and owners: integrator guide §2 → F01.5 / F08.1 / RTL.</text>

@@ -257,7 +257,7 @@ module KL_aecp_nvm_writer #(
     input  wire         m_err_i,        //! one cycle: its operation failed
     input  wire         m_rvalid_i,     //! restore byte present
     input  wire  [7:0]  m_rdata_i,      //! restore byte (framed record, header first)
-    input  wire  [1:0]  m_err_cause_i,  //! the port's cause with err: 1 DEVICE, 2 UNFRAMED
+    input  wire  [1:0]  m_err_cause_i,  //! the port's cause with err: 1 DEVICE, 2 UNFRAMED, 3 DEADLINE (read as DEVICE)
 
     //! ---- the integrator's format judge (Milan-info kind 0 selector 15) ------
     output logic        jd_req_o,       //! the verdict on jd_fmt_o is asked for

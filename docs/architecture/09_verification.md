@@ -209,12 +209,10 @@ Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plant
 of them, each in its own extract, and requires its named checks to fail (all 87 KILLED
 at the lane head; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
 `tb/rx_validator` READMEs). The two SET_CLOCK_SOURCE range-check controls of D3C1 and
-D3C2 run from `tb/pp_top/aecp_dispatch_mutants.py` (its `d3` target). The name and map stages add their groups' controls when they land. The port suites'
-open limitations stay theirs: issue #18 (no reset mid-commit), #19 (port mechanisms
-without coverage) and #21 (no handshake-misbehaving port model) are not closed by this
-evidence. The top-level device model does misbehave on the handshake for the walks
-(late grant, silent header, late or erroring descriptor memory), which grades the
-walks' deadlines, not the port's.
+D3C2 run from `tb/pp_top/aecp_dispatch_mutants.py` (its `d3` target). The name and map stages add their groups' controls when they land. The top-level
+device model misbehaves on the handshake for the walks (late grant, silent header, late
+or erroring descriptor memory), which grades the walks' deadlines; the port's own
+deadline, resets and handshake models are §8.6's.
 
 ### 8.3 The AECP deadline and the hazard classes (issues #81, #57, #84)
 
@@ -321,6 +319,35 @@ nothing else changed), and the gate failed for each one: 53 of 53 killed in roun
 56 of 56 in rounds 2 and 3. The driver is `tb/desc_store/lint_suppression.py` (`make -C tb/desc_store lint-suppression`),
 which re-runs the record. The record, and the planted-defect campaigns the reviews
 ran in rounds 1 and 2, are in the [`tb/desc_store` README](../../tb/desc_store/README.md).
+
+### 8.6 The NVM port: its deadline, resets and handshake models (issues #15, #18, #19, #20, #21)
+
+`tb/nvm_port` grades the port against nine device models, four of which misbehave on the
+HANDSHAKE rather than on what the array retains, in three builds, at `MEM_TIMEOUT_CYC_P` =
+100, 37 and 20, every harness wait derived from the bound and every cut or poke inside an
+operation named on the bus; its randomized harness grades the deadline at bounds 1, 2, 3
+and 37, below the suite's smallest, at the payload bound's largest legal value, 65,527;
+`tb/acmp_nvm` grades the binding manager's half, in two
+builds (the second sets the port's deadline below the walk's).
+Every figure of `tb/nvm_port` is re-measured by its gate (`make -C tb/nvm_port figures`),
+the mutation record included.
+
+| Property | Checks |
+|---|---|
+| a device that owes an event and presents none for `P-NVM-MEM-TMO-CYC` + 1 owed clocks ends the operation with one `err`, cause DEADLINE, never `done`, busy low at the pulse, `P-NVM-MEM-TMO-CYC` + 2 clocks after the last event; one clock less is tolerated; in each of the twelve owed states | `tb/nvm_port` T24; mutations D1-D8 |
+| a clock in which the device owes nothing pauses the count and never restarts it, and is never a verdict, not even with the count at its bound: a manager dropping `rready` or `wvalid` one clock in every `TMO` / 2 against a silent device is answered DEADLINE, `TMO` + 2 clocks after the last byte plus the held ones, and a byte `TMO` clocks late on the one clock a manager drops its strobe is taken; the count is zero at each operation; a wait state whose terminal is already latched owes nothing, pinned in `S_WEWAIT` and `S_RHWAIT`, the term's member in `S_WWAIT` and `S_RPWAIT` measured equivalent | `tb/nvm_port` T29, T30; D24-D26; the round-2 reviews' plants Q1-Q10 and Y1-Y16 (Q3, Q4, Q8, Q10, Y3, Y4 and Y12 measured equivalent) |
+| no contract-legal device is refused, at the port's smallest legal bounds and its largest legal payload bound as well: random legal devices and managers are never answered DEADLINE, a silent device is answered on exactly the (`TMO` + 1)-th owed clock, and a request behind an abandoned command is served if the device ends it within the bound, DEADLINE if not, behind a READ of the largest payload the port accepts too | `tb/nvm_port` randomized harness FZ1-FZ8 and FZ10 at 1, 2, 3 and 37; Q1 and Q9 under it |
+| the harness holds at every bound from its smallest up: every wait derived from `TMO`, T6's poke and T25's cuts named on the bus | the three builds; the coincident model at `TMO` = 4096, and round 2's T6 there |
+| a slow device and a stalled manager are never refused | T24 (slow device, manager stalls); D4-D7 |
+| the abandoned command stays owed: no request over it, an owed READ drained of the bytes it still owes and no more in every branch of that bound (its length less the bytes moved in the header's collection and the payload's pump, the whole length of a READ granted late, none in a wait state, no read byte for a WRITE), counted as wide as any READ's length (a device presenting more is not moving, and a request waiting on it ends DEADLINE), a late registered grant owed unless its done or err rides it, a deadline in any state that owns a command (the WRITE's completion window included) leaves it owed, the owed state ended only by the device's terminal or a reset; an abandoned WRITE contained | T24 (late grant, served and DEADLINE branches, contained WRITE); T28c, T28f-k; D9-D17, D22, D27, D28a, D28b, D29-D31; the round-3 reviews' plants Z1-Z12, Z10b and B1-B13; RW3 under every model; the randomized harness FZ9 and FZ10, and Z1, Z3, Z8 and Z10b under it |
+| the owed command's done or err is credited to no operation: a restore or a commit waiting on it is then served, never handed it; its drained bytes and its done restart the waiting request's count, so a slow drain or a late end within the deadline never has the request refused | `tb/nvm_port` T28a, T28b, T28d, T28e; D18-D21 (D23: the two later request guards, which no command can be owed at, measured equivalent) |
+| a command ended short in any data phase is one `err`, cause DEVICE | T27, T23c; S1-S4, M8 |
+| `rst_n` mid-commit at six stages, port and device; the port alone twice; the torn image refused at its header or by the manager's crc16 | T25; `tb/acmp_nvm` R1, R2 |
+| the low magic byte, the payload bound's legal edge, the sticky latch and the short-read defence, each failing a check that names it | T26, T21/T22, T23c; M2-lo, M7, the latch rows, M8 |
+| the handshake models: unsolicited and coincident completion leave every check green; a short-read and a silent backend fail only service, and the run-wide checks hold under all nine models | the model table and RW1-RW9 (`tb/nvm_port` README); M6, the latch deletion, M8 and D1 each under its model |
+| a zero-byte DEVICE or DEADLINE `err` fails the walk (cause 2); a clean `done` or an UNFRAMED `err` is the record's default, the blank first boot unchanged | `tb/acmp_nvm` N1a-d, N12a, N12d against A2/A2b, F4, N2a-b, N9c, N12e, G2; mutant B02 |
+| the amended saved-state contract: a later change against a silent device is attempted three times, each ended DEADLINE with no device command, then `nvm_alarm_o` drops its pending bit; it persists once the device ends the abandoned read | `tb/acmp_nvm` N12b, N12c |
+| `MEM_TIMEOUT_CYC_P` refused at 0, 2^31 and 2^32 - 1 by name, built at 1 and 2^31 - 1 | `tb/nvm_port/elab_bounds.sh` (run by `make`) |
 
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)

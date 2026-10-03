@@ -44,12 +44,15 @@
 //                them, swallows the done or err that ends it, and keeps both
 //                managers off the port until then. A late response can only
 //                ever end the operation it belongs to. The drain ends ONLY on
-//                that operation's own done or err, never on time: a device
-//                that never answers keeps the port QUARANTINED until reset,
-//                and every later change reads pending, never durable. Nothing
-//                here makes the port reusable before the device ends the
-//                operation; that needs a real cancellation, which is the
-//                port's own open recovery contract (processor issue #15).
+//                that operation's own done or err, never on time here. A
+//                device that never answers is answered by the PORT's own
+//                deadline (KL_pp_nvm_port MEM_TIMEOUT_CYC_P, processor issue
+//                #15): its err, cause DEADLINE, ends the drain, and the port
+//                keeps the abandoned read OWED, requesting nothing over it
+//                until the device ends it or a reset. So the quarantine lives
+//                in the port: every later change is answered DEADLINE, given
+//                up after its three attempts with nvm_alarm_o, and nothing is
+//                released on time.
 //                Only reads are abandoned: an abort presented while a WRITE
 //                is owned is ignored, and a write stream is never cut here.
 //

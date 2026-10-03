@@ -713,7 +713,7 @@ was. The raw verdicts below are the binding manager's; the top's
 | delivers a whole record that fails one of those | **that record's** vendor default; the walk continues | 0 |
 | ends with nothing forwarded because the device answered with something that is not a record: a clean `done`, or an `err` the port names UNFRAMED ([02 §8](02_interfaces.md#fig-02-nvmwave)) | **that record's** vendor default; the walk continues | 0 |
 | ends after at least one forwarded byte and short of the record (torn) | the **whole walk** fails | 1 |
-| ends with nothing forwarded on an `err` the port names DEVICE (a device error, or a header read the device ended short) | the **whole walk** fails: a failing device is not an empty record | 2 |
+| ends with nothing forwarded on an `err` the port names DEVICE (a device error, or a read the device ended short) or DEADLINE (the device owed an event and said nothing for `P-NVM-MEM-TMO-CYC` clocks, [02 §8](02_interfaces.md#sec-02-nvm-deadline)) | the **whole walk** fails: a failing or silent device is not an empty record | 2 |
 | waits `P-NVM-RS-TMO-CYC` consecutive clocks without progress (`T-NVM-RS-DEADLINE`): for the port idle before a read, or for a byte, `done` or `err` during it | the **whole walk** fails, and a read already issued is abandoned to the arbiter, which drains it ([02 §8.2](02_interfaces.md#82-two-record-managers-one-port)) | 3 |
 | is still reading when the restore's aggregate deadline fires (`T-NVM-RS-AGGREGATE`, below): at once before a read is issued, else in its first clock without a byte, `done` or `err`, which may be the clock its read strobe is issued | the same path: the **whole walk** fails and an issued read goes to the drain, also one abandoned in its issue clock (the arbiter arms the drain there, [02 §8.2](02_interfaces.md#82-two-record-managers-one-port)) | 3 |
 
@@ -723,10 +723,15 @@ the listener's admission ([05 §5.1](05_acmp_engine.md#sec-05-boot-admission)). 
 walk still reaches its terminal, the listener is released and answers on the defaults,
 and the D3 walk starts. The binding manager's raw blank reads 1 for a walk that validated
 no record, a failed one included; the top's combined `restore_blank_o` never does (below).
-What the deadline does **not** do: it gives the port no deadline of its own and releases
-nothing on time. A device that ends the abandoned read late ends the drain and the port
-serves the next operation; a device that never ends it leaves the port quarantined until
-reset.
+What the deadline does **not** do: it releases nothing on time. A device that ends the
+abandoned read late ends the drain and the port serves the next operation. A device that
+never ends it is answered by the port's own deadline (`T-NVM-PORT-DEADLINE`, 1,000 ms by
+default, far above this one), which ends the drain with `err` DEADLINE and keeps the read
+owed: the port requests nothing over it until the device ends it or a reset, and every
+later change is given up with `nvm_alarm_o` after its three attempts
+([02 §8](02_interfaces.md#sec-02-nvm-deadline)). With the port's deadline set below this
+one, the port answers first, and its zero-byte DEADLINE fails the walk with cause 2, as
+DEVICE does.
 
 **A failed walk keeps the saved records** (processor issue #92). After the atomic reject
 the listener runs on its defaults, and it writes its record back for every command it
@@ -770,7 +775,7 @@ with no record read, and ends DEFAULTS.
 | the image cannot be proven (the LOCATE errs or finds no validated image) | 7 | **CLOSED**: fail, never done; AECP dispatch and ADP held until reset; the listener stays released and keeps its latency: at most one AECP command stays held in the ingress, and every further one is dropped at its slot gate and counted (snapshot word 37; [03 §6](03_packet_engine.md) rule (d)) |
 | the aggregate bound before the image is proven: the binding walk still reading (it fails whole, table above), or the image proof under way | 3 | **DEFAULTS** once the image is proven, with no record read (done and fail; nothing was applied); **CLOSED** only if it cannot be proven (the row above, cause 7) |
 | the image proof's own LOCATE stalls `P-NVM-RS-TMO-CYC` clocks (reachable only with `P-NVM-RS-TMO-CYC` below the store's image walk, which the integrator guide rules out) | 3 | **CLOSED**, no roll-back: nothing was read |
-| in pass 0: a DEVICE err, a torn read, a stall of `P-NVM-RS-TMO-CYC` clocks or the aggregate bound (a granted read abandoned to the drain) | 2, 1, 3 | **DEFAULTS**: done and fail; nothing was applied |
+| in pass 0: a DEVICE or DEADLINE err with nothing forwarded, a torn read, a stall of `P-NVM-RS-TMO-CYC` clocks or the aggregate bound (a granted read abandoned to the drain) | 2, 1, 3 | **DEFAULTS**: done and fail; nothing was applied |
 | in pass 1: any of those, a record whole in one pass and not the other, or a descriptor read a value rule needs that errs (never a refusal) | 2, 1, 3, 5, 6 | **ROLL-BACK**, then DEFAULTS or CLOSED |
 | during the roll-back: its debt wait or re-LOCATE stalls `P-NVM-RS-TMO-CYC` clocks, or the aggregate bound falls in either (the roll-back could not prove the image again by the deadline) | the pass-1 abort's (the first abort names the restore) | **CLOSED** |
 | an UNFRAMED err with nothing forwarded | - | that record is blank; the walk continues |

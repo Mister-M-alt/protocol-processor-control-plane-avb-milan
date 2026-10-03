@@ -17,8 +17,9 @@ WHAT IT COVERS. Every figure in the README, and the covered set is DERIVED
 rather than asserted: each `N of M` and `N PASS, M FAIL` in the file is a claim
 by default, satisfied only by a measurement here or by an explicit entry in
 WAIVERS whose reason is printed on every clean run. Twelve arm rows plus the arm
-COUNT read from the RTL; eighteen mutations and probes; seven device-model result
-rows; and all thirty cells of the pre-fix matrix.
+COUNT read from the RTL; one hundred and twenty-six mutations and probes; ten
+device-model result rows, under each of which the run-wide RW checks must pass by
+name; and all thirty cells of the pre-fix matrix.
 
 Three earlier versions each closed a narrower class than they claimed, and the
 progression is the useful part. The first checked only denominators and
@@ -48,7 +49,9 @@ NOT provided, because a figure nobody looked at is how the table went stale in
 the first place.
 
 It is slow: one Verilator build per arm, mutation, probe and device model, five
-for the matrix, plus the baseline. The exact count is DERIVED and printed at the
+for the matrix, plus the baseline and every build of `make run`: the suite at
+two more legal bounds and the randomized harness at each of its own, all of
+which must be green as well. The exact count is DERIVED and printed at the
 start of a run rather than written here. That is not fussiness: this number was
 wrong in three consecutive rounds, and it is the one figure the inverted default
 structurally cannot reach, because it matches no FIGURE_RE shape and does not
@@ -72,6 +75,9 @@ from pathlib import Path
 # of their own, so they live beside this script rather than inside it.
 from pre_fix_forms import (MATRIX_FORMS, MATRIX_ROWS, git_verbatim,
                            line_multiplicity, pin_completeness)
+# ...and the rows for the deadline's pause, its randomized harness and its
+# bounds, which outgrew this module the same way
+from deadline_rows import deadline_rows
 
 SRC = Path(__file__).resolve().parent
 README = SRC / "README.md"          # read only, never written
@@ -96,18 +102,19 @@ shutil.copytree(_rtl_src, _WORK / "hdl" / "packet_engine")
 shutil.copytree(SRC.parent / "common", _WORK / "tb" / "common")
 RTL = _WORK / "hdl" / "packet_engine" / "KL_pp_nvm_port.sv"
 SIM = HERE / "sim_main.cpp"
+MK = HERE / "Makefile"
 
 #: (line in the RTL, state name) for every `if (dev_err_i)` arm. Cross-checked
 #: against the RTL below: a THIRTEENTH arm added anywhere used to leave this
 #: gate printing "all figures agree" while the README's "twelve arms" silently
 #: became false.
-ARMS = [(222, "S_WEREQ"), (231, "S_WEWAIT"), (241, "S_WWREQ"), (251, "S_WHPUMP"),
-        (264, "S_WDPUMP"), (274, "S_WWAIT"), (285, "S_RHREQ"), (295, "S_RHCOLL"),
-        (313, "S_RHWAIT"), (340, "S_RPREQ"), (350, "S_RPPUMP"), (360, "S_RPWAIT")]
+ARMS = [(376, "S_WEREQ"), (385, "S_WEWAIT"), (395, "S_WWREQ"), (405, "S_WHPUMP"),
+        (422, "S_WDPUMP"), (437, "S_WWAIT"), (448, "S_RHREQ"), (458, "S_RHCOLL"),
+        (477, "S_RHWAIT"), (504, "S_RPREQ"), (514, "S_RPPUMP"), (529, "S_RPWAIT")]
 
 #: The coincident-completion model. Unlike every other model here it varies the
 #: HANDSHAKE, not what the array retains: the device raises `dev_done_i` on the
-#: same clock edge that moves a command's final byte. `KL_pp_nvm_port.sv:186-190`
+#: same clock edge that moves a command's final byte. `KL_pp_nvm_port.sv:340-344`
 #: says the sticky `done_seen_r` latch exists for exactly this device, so it is
 #: a documented contract freedom, not a broken peer -- and the port handles it,
 #: with the suite green on pristine RTL. Its whole interest used to be that
@@ -127,6 +134,17 @@ ARMS = [(222, "S_WEREQ"), (231, "S_WEWAIT"), (241, "S_WWREQ"), (251, "S_WHPUMP")
 _COINCIDENT = [
     (SIM, "  bool done_on_last_byte = false;", "  bool done_on_last_byte = true;"),
 ]
+
+#: The other three handshake models (issue #21), each one arming of the
+#: harness's own backend left on for the whole run, exactly as `_COINCIDENT`
+#: is: an unsolicited `done` per operation in a window that owns nothing (a
+#: freedom the port must take with every check green), every other READ ended
+#: short, and every command granted and then never answered (two broken
+#: backends, graded on the run-wide RW checks, which `_model_disagreements`
+#: requires to pass under every model).
+_UNSOLICITED = [(SIM, "  bool unsol_model = false;", "  bool unsol_model = true;")]
+_SHORT = [(SIM, "  bool short_model = false;", "  bool short_model = true;")]
+_SILENT = [(SIM, "  bool silent_model = false;", "  bool silent_model = true;")]
 
 #: The state half of the ownership window: `dev_cmd_owned_w` narrowed to the
 #: grant handshake alone, which is the simplification a maintainer reaches for.
@@ -177,7 +195,7 @@ MUTATIONS = [
     ("M1", r"rewritten to `S_WWREQ`.*?\*\*Fails (\d+) of", [
         (RTL, "                state_r <= S_WEREQ;",
               "                state_r <= S_WWREQ;")]),
-    ("M1-sibling", r"so the ERASE is REQUESTED but never awaited, \*\*fails\s+only (\d+) of", [
+    ("M1-sibling", r"so the ERASE is REQUESTED but never awaited, \*\*fails\s+(\d+) of", [
         (RTL, "          end else if (dev_gnt_i) begin\n"
               "            state_r <= S_WEWAIT;\n          end",
               "          end else if (dev_gnt_i) begin\n"
@@ -253,14 +271,15 @@ MUTATIONS = [
     ("own-states-dropped",
      r"ownership narrowed to the grant handshake alone \*\*fails (\d+) of",
      _GRANT_ONLY_OWNERSHIP),
-    # The `|| ` is part of both anchors below: three of the eight states are
-    # also named by an output assign, two of them with a second paren, so the
-    # bare `(state_r == X)` is ambiguous for `S_WHPUMP` and `S_RHCOLL` and
-    # `apply_edits` refuses it -- correctly, since a count-1 replace would have
-    # mutated the datapath instead of the ownership window.
+    # Both anchors below carry their whole line of `dev_cmd_owned_w`: the
+    # deadline's `owe_w` and `rd_st_w` and two output assigns name the same
+    # states, so even `|| (state_r == X)` is ambiguous now and `apply_edits`
+    # refuses it -- correctly, since a count-1 replace would have mutated the
+    # deadline or the datapath instead of the ownership window.
     ("own-minus-rhcoll",
      r"dropping the single `S_RHCOLL` term \*\*fails (\d+) of", [
-        (RTL, "|| (state_r == S_RHCOLL)", "|| 1'b0")]),
+        (RTL, "                      || (state_r == S_RHCOLL) || (state_r == S_RHWAIT)",
+              "                      || 1'b0 || (state_r == S_RHWAIT)")]),
     # ...and the other half of the same honesty: a term that CANNOT be pinned,
     # measured as such rather than asserted. A wait state consumes `dev_done_i`
     # on the cycle it arrives, so setting the flag there changes nothing any
@@ -268,7 +287,8 @@ MUTATIONS = [
     # the README paragraph naming these four terms undiscriminated is wrong.
     ("own-minus-wwait",
      r"dropping the single `S_WWAIT` term \*\*fails (\d+) of", [
-        (RTL, "|| (state_r == S_WWAIT)", "|| 1'b0")]),
+        (RTL, "                      || (state_r == S_WDPUMP) || (state_r == S_WWAIT)",
+              "                      || (state_r == S_WDPUMP) || 1'b0")]),
     # The exclusion at the other end: ownership widened by one state that owns
     # nothing. T20a is the check that must reject it.
     ("own-plus-rhreq",
@@ -288,6 +308,138 @@ MUTATIONS = [
     ("C4", r"\*\*C4\*\*.*?\*\*fails (\d+) of", [
         (RTL, "  assign nvm_err_cause_o = nvm_err_o ? cause_r : 2'd0;",
               "  assign nvm_err_cause_o = cause_r;")]),
+    # ---- issue #19: the four mechanisms, each failing a check that names it --
+    # The low magic byte alone (M2 drops both), and the payload bound's legal
+    # edge. The latch is `done_seen_r/*` above; the short-read defence is M8.
+    ("M2-lo", r"\*\*M2-lo\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "(hdr_r[1] == MAGIC_LO_C)", "1'b1")]),
+    ("M7", r"\*\*M7\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "(hdr_plen_w <= MAXP_C)", "(hdr_plen_w < MAXP_C)")]),
+    ("M8", r"\*\*M8\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "            if (done_seen_r || (dev_done_i && !(dev_rvalid_i && (hidx_r == 3'd7)))) begin",
+              "            if (1'b0) begin")]),
+    # ---- issue #21: each mutation under the model that names its device ------
+    ("M6/unsolicited", r"M6 under the unsolicited model \*\*fails (\d+) of",
+     _UNSOLICITED + [(RTL, "      if (dev_done_i && dev_cmd_owned_w) done_seen_r <= 1'b1;",
+                           "      if (dev_done_i) done_seen_r <= 1'b1;")]),
+    ("M8/short", r"M8 under the short-read model \*\*fails (\d+) of",
+     _SHORT + [(RTL, "            if (done_seen_r || (dev_done_i && !(dev_rvalid_i && (hidx_r == 3'd7)))) begin",
+                     "            if (1'b0) begin")]),
+    ("D1/silent", r"D1 under the silent model \*\*fails (\d+) of",
+     _SILENT + [(RTL, "  assign dl_w = owe_w && !prog_w && tmo_hit_w;", "  assign dl_w = 1'b0;")]),
+    # ---- issue #15: the deadline and the owed command -------------------------
+    ("D1", r"\*\*D1\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "  assign dl_w = owe_w && !prog_w && tmo_hit_w;", "  assign dl_w = 1'b0;")]),
+    ("D2", r"\*\*D2\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "  assign tmo_hit_w = (tmo_r == TMO_W_C'(MEM_TIMEOUT_CYC_P));",
+              "  assign tmo_hit_w = (tmo_r == TMO_W_C'(MEM_TIMEOUT_CYC_P - 1));")]),
+    ("D3", r"\*\*D3\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "  assign tmo_hit_w = (tmo_r == TMO_W_C'(MEM_TIMEOUT_CYC_P));",
+              "  assign tmo_hit_w = (tmo_r == TMO_W_C'(MEM_TIMEOUT_CYC_P + 1));")]),
+    ("D4", r"\*\*D4\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "    else if (prog_w || (state_r == S_IDLE)) tmo_r <= '0;",
+              "    else if (state_r == S_IDLE)           tmo_r <= '0;")]),
+    ("D5", r"\*\*D5\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "                  || ((state_r == S_WDPUMP) && nvm_wvalid_i)\n"
+              "                  || ((state_r == S_RPPUMP) && nvm_rready_i);",
+              "                  || (state_r == S_WDPUMP)\n"
+              "                  || ((state_r == S_RPPUMP) && nvm_rready_i);")]),
+    ("D6", r"\*\*D6\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "                  || ((state_r == S_WDPUMP) && nvm_wvalid_i)\n"
+              "                  || ((state_r == S_RPPUMP) && nvm_rready_i);",
+              "                  || ((state_r == S_WDPUMP) && nvm_wvalid_i)\n"
+              "                  || (state_r == S_RPPUMP);")]),
+    ("D7", r"\*\*D7\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "                  || (dev_done_i && (dev_cmd_owned_w || owed_r))",
+              "                  || dev_done_i")]),
+    ("D8", r"\*\*D8\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "      cause_r <= CAUSE_DEADLINE_C;", "      cause_r <= CAUSE_DEVICE_C;")]),
+    ("D9", r"\*\*D9\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "      end else if (dl_w && dev_cmd_owned_w) begin\n        owed_r <= 1'b1;",
+              "      end else if (dl_w && dev_cmd_owned_w) begin\n        owed_r <= 1'b0;")]),
+    ("D10", r"\*\*D10\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "      end else if (lg_r && dev_gnt_i && !dev_done_i && !dev_err_i) begin",
+              "      end else if (1'b0) begin")]),
+    ("D11", r"\*\*D11\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "      end else if (lg_r && dev_gnt_i && !dev_done_i && !dev_err_i) begin",
+              "      end else if (lg_r && dev_gnt_i) begin")]),
+    ("D12", r"\*\*D12\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "        if (dev_done_i || dev_err_i) owed_r <= 1'b0;",
+              "        if (dev_done_i || dev_err_i || dl_w) owed_r <= 1'b0;")]),
+    ("D13", r"\*\*D13\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "        if (dev_done_i || dev_err_i) owed_r <= 1'b0;",
+              "        if (dev_done_i || dev_err_i || !dev_busy_i) owed_r <= 1'b0;")]),
+    ("D14", r"\*\*D14\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "  assign dev_req_o    = req_st_w && !owed_r;", "  assign dev_req_o    = req_st_w;")]),
+    ("D15", r"\*\*D15\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "                      || drain_w;                      // the owed READ's drain",
+              "                      ;")]),
+    ("D16", r"\*\*D16\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "      if (dl_w && !owed_r) owed_rd_r <= rd_st_w;", "      if (dl_w) owed_rd_r <= rd_st_w;")]),
+    ("D17", r"\*\*D17\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "      if (dev_done_i && dev_cmd_owned_w) done_seen_r <= 1'b1;",
+              "      if (dev_done_i && (dev_cmd_owned_w || owed_r)) done_seen_r <= 1'b1;")]),
+    # The owed command's end and drain seen from a request waiting on it (T28),
+    # each a planted defect the 326-check suite passed in review: W15 = X24,
+    # W15b, W16 = X18, X17 and X12. D23 is the pair of guards that cannot be
+    # reached with a command owed, measured as such rather than asserted.
+    ("D18", r"\*\*D18\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "        S_RHREQ: if (!owed_r) begin   // an owed command blocks the request",
+              "        S_RHREQ: begin")]),
+    ("D19", r"\*\*D19\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "        S_WEREQ: if (!owed_r) begin   // an owed command blocks the request",
+              "        S_WEREQ: begin")]),
+    ("D20", r"\*\*D20\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "                  || (dev_rvalid_i && dev_rready_o);",
+              "                  || (dev_rvalid_i && dev_rready_o && !owed_r);")]),
+    ("D21", r"\*\*D21\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "                  || (dev_done_i && (dev_cmd_owned_w || owed_r))",
+              "                  || (dev_done_i && dev_cmd_owned_w)")]),
+    ("D22", r"\*\*D22\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "      end else if (dl_w && dev_cmd_owned_w) begin",
+              "      end else if (dl_w && dev_cmd_owned_w && (state_r != S_WWAIT)) begin")]),
+    ("D23", r"\*\*D23\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "        S_WWREQ: if (!owed_r) begin   // an owed command blocks the request",
+              "        S_WWREQ: begin"),
+        (RTL, "        S_RPREQ: if (!owed_r) begin   // an owed command blocks the request",
+              "        S_RPREQ: begin")]),
+    # The count PAUSES on a cycle that owes nothing (T29). D24 is the round-1
+    # count, cleared there instead, which a manager dropping its strobe kept
+    # off a silent device for ever; D25 the count never zeroed between
+    # operations; D26 the wait state that consumes a latched done still owing
+    # it, which a pause carries into the next request: the coincident model's.
+    ("D24", r"\*\*D24\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "    else if (prog_w || (state_r == S_IDLE)) tmo_r <= '0;",
+              "    else if (prog_w || !owe_w)             tmo_r <= '0;")]),
+    ("D25", r"\*\*D25\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "    else if (prog_w || (state_r == S_IDLE)) tmo_r <= '0;",
+              "    else if (prog_w)                        tmo_r <= '0;")]),
+    ("D26", r"\*\*D26\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "                       || (state_r == S_RPWAIT)) && !done_seen_r)",
+              "                       || (state_r == S_RPWAIT)))")]),
+    ("D26/coincident", r"D26 under the coincident model \*\*fails (\d+) of",
+     _COINCIDENT + [(RTL, "                       || (state_r == S_RPWAIT)) && !done_seen_r)",
+                          "                       || (state_r == S_RPWAIT)))")]),
+    # The deadline's pause, its randomized harness and its bounds (deadline_rows.py)
+    *deadline_rows(RTL, SIM, MK, _COINCIDENT),
+    # ---- refusal (d): a short command in each data phase ----------------------
+    ("S1", r"\*\*S1\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "          end else if (done_seen_r || (dev_done_i\n"
+              "                       && !(dev_wready_i && (hidx_r == 3'd7) && (plen_r == 16'd0)))) begin",
+              "          end else if (1'b0) begin")]),
+    ("S2", r"\*\*S2\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "          end else if (done_seen_r || (dev_done_i\n"
+              "                       && !(nvm_wvalid_i && dev_wready_i && (bcnt_r == (plen_r - 16'd1)))))\n"
+              "          begin",
+              "          end else if (1'b0) begin")]),
+    ("S3", r"\*\*S3\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "          end else if (done_seen_r || (dev_done_i\n"
+              "                       && !(dev_rvalid_i && nvm_rready_i && (bcnt_r == (plen_r - 16'd1)))))\n"
+              "          begin",
+              "          end else if (1'b0) begin")]),
+    ("S4", r"\*\*S4\*\*.*?\*\*fails (\d+) of", [
+        (RTL, "            if (done_seen_r || (dev_done_i && !(dev_rvalid_i && (hidx_r == 3'd7)))) begin",
+              "            if (dev_done_i && !(dev_rvalid_i && (hidx_r == 3'd7))) begin")]),
     ("retraction", r"that check FAILS while the header check PASSES, (\d+) of", [
         (SIM, "  h.arm_err(1, 12);                 // op 0 = ERASE, op 1 = WRITE: cut at 12 B",
               "  h.arm_err(1, static_cast<int>(replacement.size()));")]),
@@ -316,24 +468,29 @@ _PAGEBUF = [
           "        sent.push_back(dut->dev_wdata_o);\n"
           "        pagebuf.push_back(dut->dev_wdata_o);\n        ++d_bytes;"),
     (SIM, "        else if (d_bytes == d_cur.len) { finish_data_phase(); }\n"
-          "      } else if (d_stall > 0) --d_stall;\n    }\n\n    // read byte delivery",
+          "        else if (wshort_cur",
           "        else if (d_bytes == d_cur.len) {\n"
           "          for (size_t k = 0; k < pagebuf.size(); ++k)\n"
           "            store[d_cur.region % N_REGIONS][(d_cur.offset + k) % REG_BYTES] =\n"
           "                pagebuf[k];\n"
           "          pagebuf.clear();\n          finish_data_phase();\n        }\n"
-          "      } else if (d_stall > 0) --d_stall;\n    }\n\n    // read byte delivery"),
+          "        else if (wshort_cur"),
+    # a new command discards what an abandoned one left in the page buffer,
+    # as a real NOR's buffer does: before the deadline no WRITE was ever left
+    # unfinished without an err, so this edit had nothing to do
+    (SIM, "      d_busy = true; d_bytes = 0; d_stall = 0; d_rhold = false;",
+          "      d_busy = true; d_bytes = 0; d_stall = 0; d_rhold = false;\n"
+          "      pagebuf.clear();"),
     (SIM, "        d_stall = wstall;\n"
           "        if (fail_cur && d_bytes == err_after_bytes) { err_ctr = 2; d_st = 2; }",
           "        d_stall = wstall;\n"
           "        if (fail_cur && d_bytes == err_after_bytes) {\n"
           "          pagebuf.clear(); err_ctr = 2; d_st = 2;\n        }"),
 ]
-_LAZY = [(SIM, "        int r = d_cur.region % N_REGIONS;\n"
-               "        memset(store[r], 0xFF, REG_BYTES);\n"
-               "        ++erase_count[r];",
-               "        int r = d_cur.region % N_REGIONS;\n"
-               "        ++erase_count[r];")]
+#: Lazy erase is the harness's own switch, as the handshake models are: the
+#: backend answers ERASE with done and leaves the array, and T1 reads the same
+#: switch to assert the erased tail only on a backend with erase semantics.
+_LAZY = [(SIM, "  bool lazy_erase = false;", "  bool lazy_erase = true;")]
 
 #: A model measurement may be quoted in more than one place. `claims` is a
 #: LIST, and every listed site must agree with the one measurement: the prose
@@ -345,11 +502,15 @@ MODELS = [
     ("half-page", [r"\| half-page \| \*\*(\d+) PASS, (\d+) FAIL\*\*",
                    r"The half-page model is (\d+) PASS, (\d+) FAIL"], [_HALFPAGE]),
     ("page-buffered NOR", [r"\| page-buffered NOR \| \*\*(\d+) PASS, (\d+) FAIL\*\*"], _PAGEBUF),
-    ("lazy erase", [r"\| lazy erase \| (\d+) PASS, (\d+) FAIL"], _LAZY),
+    ("lazy erase", [r"\| lazy erase \| \*\*(\d+) PASS, (\d+) FAIL\*\*"], _LAZY),
     ("lazy erase + page-buffered",
-     [r"\| lazy erase \+ page-buffered \| (\d+) PASS, (\d+) FAIL"], _PAGEBUF + _LAZY),
+     [r"\| lazy erase \+ page-buffered \| \*\*(\d+) PASS, (\d+) FAIL\*\*"], _PAGEBUF + _LAZY),
     ("coincident completion",
      [r"\| coincident completion \| \*\*(\d+) PASS, (\d+) FAIL\*\*"], _COINCIDENT),
+    ("unsolicited completion",
+     [r"\| unsolicited completion \| \*\*(\d+) PASS, (\d+) FAIL\*\*"], _UNSOLICITED),
+    ("short read", [r"\| short read \| (\d+) PASS, (\d+) FAIL"], _SHORT),
+    ("silent", [r"\| silent \| (\d+) PASS, (\d+) FAIL"], _SILENT),
 ]
 
 #: Models whose columns the pre-fix matrix carries, in the table's own order.
@@ -389,6 +550,7 @@ def measure_matrix() -> dict[str, list[str]]:
 
 
 TALLY_RE = re.compile(r"(\d+) checks: (\d+) PASS, (\d+) FAIL")
+LAST_FAILS: list[str] = []
 
 #: EVERY figure in the README. Not "every figure phrased the way I expected" --
 #: that was the previous version and it was a recogniser, matching one
@@ -456,20 +618,21 @@ WAIVERS = [
     # correct and is the mechanism working: they are waived by a pattern narrow
     # enough to reach only that sentence, so a real `22 out of 90` anywhere else
     # is still a hard error.
-    (r"`fails 22 of the 136 checks` and `fails\s+22 out of 136`",
+    (r"`fails 22 of the 393 checks` and `fails\s+22 out of 393`",
      "two illustrative phrasings quoted inside the paragraph explaining what "
      "the inverted default does not close; not claims about this suite"),
-    (r"\b136/136\b",
-     "suite tally shorthand; both halves are the suite size, which the size "
-     "check already pins against the measured total"),
 ]
 
 
 def run_suite(want_fail_names: bool = False) -> tuple[int, int, int] | list[str]:
-    """Build and run; return (total, passed, failed), or the failing names."""
+    """Build and run; return (total, passed, failed), or the failing names.
+
+    The names of the last run are also kept in LAST_FAILS, so a caller that
+    wants the tally can still ask which checks failed."""
     subprocess.run(["make", "-s", "clean"], cwd=HERE, check=False,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    p = subprocess.run(["make", "-s"], cwd=HERE, capture_output=True, text=True)
+    # the build at the Makefile's TMO, the bound every README figure is at
+    p = subprocess.run(["make", "-s", "primary"], cwd=HERE, capture_output=True, text=True)
     m, names = None, []
     for line in (p.stdout + p.stderr).splitlines():
         hit = TALLY_RE.search(line)
@@ -479,9 +642,39 @@ def run_suite(want_fail_names: bool = False) -> tuple[int, int, int] | list[str]
             names.append(line[6:])
     if not m:
         raise RuntimeError("no tally line; build failed:\n" + p.stdout[-2000:])
+    LAST_FAILS[:] = names
     if want_fail_names:
         return names
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+def fuzz_bounds() -> list[str]:
+    """The bounds the Makefile builds the randomized harness at, read from it."""
+    m = re.search(r"^FUZZ_TMOS\s*=\s*(.+)$", MK.read_text(), re.M)
+    return m.group(1).split() if m else []
+
+
+def both_builds_disagree(total: int) -> list[str]:
+    """The suite's own entry point, `make run`: the elaboration guard, then the
+    build at TMO, at TMO_ALT and at TMO_MIN, each the same checks, then the
+    randomized harness at every bound in FUZZ_TMOS, each all PASS, and their
+    sum. The other bounds are where a harness wait written for 100 rather than
+    derived from the bound fails, so every build is required green here."""
+    subprocess.run(["make", "-s", "clean"], cwd=HERE, check=False,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    p = subprocess.run(["make", "-s", "run"], cwd=HERE, capture_output=True, text=True)
+    got = [tuple(int(x) for x in m) for m in TALLY_RE.findall(p.stdout + p.stderr)]
+    print(f"make run, every build: {got}, rc {p.returncode}")
+    nf = len(fuzz_bounds())
+    fz = got[3:3 + nf]
+    want = ([(total, total, 0)] * 3 + ([fz[0]] * nf if fz else [])
+            + [(3 * total + nf * (fz[0][0] if fz else 0),) * 2 + (0,)])
+    if (p.returncode != 0 or got != want or nf == 0
+            or any(f != fz[0] or f[2] != 0 for f in fz)):
+        return [f"make run gave {got} with rc {p.returncode}; the three suite builds "
+                f"must each pass all {total} checks and the {nf} randomized builds "
+                "must each pass all of theirs"]
+    return []
 
 
 def apply_edits(edits: list[tuple[Path, str, str]],
@@ -683,6 +876,12 @@ def _model_disagreements(flat):
     for name, claims, edits in MODELS:
         _, mp, mf = apply_edits(edits)
         got = (mp, mf)
+        # What every operation is OWED (the RW checks) holds under every model,
+        # the broken backends included: their FAIL count is service, never the
+        # port's side of the contract. Measured by name, not argued.
+        owed = [f for f in LAST_FAILS if f.startswith("RW")]
+        if owed:
+            bad.append(f"model '{name}': run-wide checks fail: {owed}")
         for claim in claims:
             hit = re.search(claim, flat)
             says = (int(hit.group(1)), int(hit.group(2))) if hit else None
@@ -736,8 +935,9 @@ def main() -> int:
                          "exits non-zero on a disagreement with or without it")
     ap.parse_args()
 
-    n_builds = 1 + len(ARMS) + len(MUTATIONS) + len(MODELS) + len(MATRIX_MODELS)
-    print(f"{n_builds} Verilator builds: 1 baseline + {len(ARMS)} arms + "
+    n_run = 3 + len(fuzz_bounds())
+    n_builds = 1 + n_run + len(ARMS) + len(MUTATIONS) + len(MODELS) + len(MATRIX_MODELS)
+    print(f"{n_builds} Verilator builds: 1 baseline + {n_run} for make run + {len(ARMS)} arms + "
           f"{len(MUTATIONS)} mutations + {len(MODELS)} models + "
           f"{len(MATRIX_MODELS)} matrix")
     total, passed, failed = run_suite()
@@ -747,7 +947,8 @@ def main() -> int:
         return 1
 
     flat = flat_readme()
-    bad = readme_figures(total, flat)
+    bad = both_builds_disagree(total)
+    bad.extend(readme_figures(total, flat))
     bad.extend(claim_coverage(flat))
     bad.extend(git_verbatim())
     bad.extend(pin_completeness())
