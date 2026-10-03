@@ -20,6 +20,10 @@ is their sum. `make` first runs `elab_bounds.sh`, the port's two elaboration
 guards: the deadline parameter refused by name at 0, 2^31 and 2^32 - 1, built
 clean at 1 and 2^31 - 1; `MAX_PAYLOAD_P` (issue #17) refused by name and by its
 bound, 65,527, at 65,528, 65,535 and 2^32 - 1, built clean at 1,024 and 65,527.
+That refusal must be a `$fatal`: its line must carry `%Warning-USERFATAL` (or
+`%Error`), since Verilator reports `$error` and `$warning` as failing warnings
+too, and where sv2v and yosys are installed yosys must build 65,527 and stop at
+65,528, which it does only for a `$fatal`.
 
 The harness plays BOTH neighbors, independently of the RTL: a **manager BFM**
 that frames records per 07 §5.2 (magic 0x1722, layout_version, record_id,

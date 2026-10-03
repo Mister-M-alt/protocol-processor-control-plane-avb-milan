@@ -348,7 +348,7 @@ the mutation record included.
 | a zero-byte DEVICE or DEADLINE `err` fails the walk (cause 2); a clean `done` or an UNFRAMED `err` is the record's default, the blank first boot unchanged | `tb/acmp_nvm` N1a-d, N12a, N12d against A2/A2b, F4, N2a-b, N9c, N12e, G2; mutant B02 |
 | the amended saved-state contract: a later change against a silent device is attempted three times, each ended DEADLINE with no device command, then `nvm_alarm_o` drops its pending bit; it persists once the device ends the abandoned read | `tb/acmp_nvm` N12b, N12c |
 | `MEM_TIMEOUT_CYC_P` refused at 0, 2^31 and 2^32 - 1 by name, built at 1 and 2^31 - 1 | `tb/nvm_port/elab_bounds.sh` (run by `make`) |
-| `MAX_PAYLOAD_P` refused above 65,527 by name and bound (65,528, 65,535 and 2^32 - 1), built at 1,024 and 65,527 (issue #17) | `tb/nvm_port/elab_bounds.sh` (run by `make`) |
+| `MAX_PAYLOAD_P` refused above 65,527 by name and bound (65,528, 65,535 and 2^32 - 1) as a fatal (`%Warning-USERFATAL`, and with sv2v and yosys installed, stopped by yosys at 65,528), built at 1,024 and 65,527 (issue #17) | `tb/nvm_port/elab_bounds.sh` (run by `make`) |
 
 ### 8.7 The counters face (issues #44, #79)
 
