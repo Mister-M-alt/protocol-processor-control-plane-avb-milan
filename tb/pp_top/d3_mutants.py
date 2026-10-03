@@ -72,8 +72,8 @@ VALIDATOR = "hdl/packet_engine/KL_pp_rx_validator.sv"
 OWN = "  assign own_o = !done_r || (ss_r == S_ACQ) || latch_w;\n"
 CHG = "    if (chg_i && (chg_sel_i <= 13'd5)\n"
 CLEAR = "    if (done_ok_w || giveup_w) clr_w[hand_r] = 1'b1;\n"
-VERDICT_END = ("      W_JUDGE: begin accept_w = !jd_wait_i && jd_data_i[0];\n"
-               "                     refuse_w = !jd_wait_i && !jd_data_i[0]; end\n"
+VERDICT_END = ("      W_NNAME: begin accept_w = sb_rvalid_i && (ridx_w < sb_rdata_i[15:0]);\n"
+               "                     refuse_w = sb_rvalid_i && !(ridx_w < sb_rdata_i[15:0]); end\n"
                "      default: ;\n    endcase\n")
 BLANK = "                      && (m_err_cause_i == PORT_UNFRAMED_C);\n"
 DEVICE = "                      && (m_err_cause_i != PORT_UNFRAMED_C);\n"
@@ -122,7 +122,7 @@ OWNERSHIP = (
          "    else if (1'b0)\n"),),
         ("D3O2: CLOSED at", "D3O3: CLOSED")),
     Mutant("latch_ignores_program", PP_TOP, (
-        (WRITER, "          if (!prog_busy_i) ss_r <= S_LATCH;\n", "          ss_r <= S_LATCH;\n"),),
+        (WRITER, "          if (!prog_busy_i) begin\n", "          begin\n"),),
         ("D3S9",)),
 )
 

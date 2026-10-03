@@ -209,9 +209,9 @@ manager (`tb/acmp_nvm`):
 | DR2c on both producers: three attempts, the top's derived backoff, dispatch free while it runs, no forgiveness | D3S10; `tb/acmp_nvm` E8 to E11 |
 | the clock-source selection over a ten-source domain (issue #141; 07 §3.1 L6): SET_CLOCK_SOURCE of the last AAF index accepted, notified once and read back over GET, the row and the export; the count refused BAD_ARGUMENTS carrying the index in force, with nothing stored, marked, notified or saved; the AAF index saved and restored (the D3S1/D3R1 pair, REQ-AEM-013); the saved index refused on restore over an image whose count it equals or exceeds | D3C1, D3C2, D3C3, D3C4 |
 
-Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plants 87
-of them, each in its own extract, and requires its named checks to fail (all 87 KILLED
-at the lane head; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
+Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plants 108
+of them, each in its own extract, and requires its named checks to fail (all 108 KILLED
+at the head of lane P1; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
 `tb/rx_validator` READMEs). The two SET_CLOCK_SOURCE range-check controls of D3C1 and
 D3C2 run from `tb/pp_top/aecp_dispatch_mutants.py` (its `d3` target). The name stage's controls (each trigger and replay, the rule, the empty name, the record id and entry, a partial write-back, the taint, a restore that pulses or changes, names before the image, the store left out of the roll-back, the frame's crc) run from `d3_mutants.py` too; the map stage adds its group's when it lands. The top-level
 device model misbehaves on the handshake for the walks (late grant, silent header, late

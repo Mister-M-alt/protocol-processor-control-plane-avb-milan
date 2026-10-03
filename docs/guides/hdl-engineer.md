@@ -160,9 +160,13 @@ roll-back (`rb_rst`) is a **local** reset of exactly two owners, `KL_aecp_dyn_st
 `KL_aecp_desc_store`, driven through the engine's `store_rst_n_w`. Keep these reset
 boundaries: `KL_aecp_desc_mem_guard` takes the hard reset only, because its `debt_o`
 must survive the stores' reset (the writer holds `rb_rst` while it is set), and nothing
-on the ACMP side ever takes `rb_rst`. The writer's change input is tapped on the µCPU's
-side of the 2:1 state-bus selection, so a restore write is never a change; do not move
-that tap. Diagram [20](../diagrams/20-rtl-dataflow.svg) shows the placement.
+on the ACMP side ever takes `rb_rst`. The writer's change inputs, the dynamic-state
+store's changing write and the descriptor store's name-lane write, are tapped on the
+µCPU's side of the 2:1 state-bus selection, so a restore write is never a change and the
+exported `aecp_name_wr_o` never pulses for one; do not move those taps. The writer also
+drives the name-table select (`st_name`) on that selection, to latch a name and to write
+a saved one back after its image proof. Diagram [20](../diagrams/20-rtl-dataflow.svg)
+shows the placement.
 
 ### The AECP path goes through the integrator's main memory
 

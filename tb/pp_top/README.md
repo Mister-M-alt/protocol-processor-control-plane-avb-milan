@@ -995,8 +995,12 @@ tally, exits non-zero and every named check fails; a golden extract runs first a
 must pass. The same driver runs the binding manager's three DR2c controls, the
 arbiter's issue-cycle control and its seven own-contract controls (N11) in `tb/acmp_nvm`
 and the validator's admission control in `tb/rx_validator` (their READMEs record
-them). At the lane head all 87 are KILLED and the three goldens PASS;
-the last column is how many checks each one failed there. Since the AECP
+them). At the head of lane P1 (issues #52, #59, #61, #62, #63, #83) all 108 are
+KILLED and the five goldens PASS (`--d3-only`, `--adp-only`, `--volatile-only`,
+`tb/acmp_nvm`, `tb/rx_validator`); the last column is how many checks each one
+failed there. The counts the next paragraph quotes are those lanes' own: since the
+name stage and the cut section (D3N, D3K) every walk reads 59 records, so a control
+that breaks the walk or a frame fails more checks than it did then. Since the AECP
 deadline kill (issue #81, section DL), `hold_released_at_go` and
 `dispatch_not_held` each fail D3O6 as well (17 and 6). Both let the held
 command run during the slowed restore, and it is no longer exempt from its
@@ -1012,45 +1016,45 @@ D3C4 arm. The last four rows are D3C's own controls.
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
 |---|---|---|---|
-| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 17 |
+| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 19 |
 | `dispatch_not_held` | the engine's three dispatch gates ignore the writer's ownership | `D3O1: without the walk the writer owns every cycle` | 6 |
-| `own_taken_at_the_walk` | ownership and the bus taken only once the walk starts, not from reset | `D3R9: the held SET` | 10 |
+| `own_taken_at_the_walk` | ownership and the bus taken only once the walk starts, not from reset | `D3R9: the held SET` | 12 |
 | `image_unproven_continues` | an unprovable image (the LOCATE's error) no longer aborts | `D3O2: CLOSED at`, `D3O3: CLOSED` | 9 |
 | `latch_ignores_program` | the service latch does not wait for a running program | `D3S9` | 3 |
-| `TRG_cfg` | configuration trigger deleted | `D3S1 cfg` | 3 |
-| `TRG_rate` | sampling-rate trigger deleted | `D3S1 rate` | 3 |
-| `TRG_clks` | clock-source trigger deleted | `D3S1 clks` | 10 |
-| `TRG_fmti` | input-format trigger deleted | `D3S1 fmti` | 4 |
-| `TRG_fmto` | output-format trigger deleted | `D3S1 fmto` | 4 |
-| `TRG_ptof` | presentation-offset trigger deleted | `D3S1 ptof` | 24 |
-| `taint_ignored` | a change after the latch no longer taints the write | `D3S4 taint` | 1 |
+| `TRG_cfg` | configuration trigger deleted | `D3S1 cfg` | 17 |
+| `TRG_rate` | sampling-rate trigger deleted | `D3S1 rate` | 17 |
+| `TRG_clks` | clock-source trigger deleted | `D3S1 clks` | 24 |
+| `TRG_fmti` | input-format trigger deleted | `D3S1 fmti` | 18 |
+| `TRG_fmto` | output-format trigger deleted | `D3S1 fmto` | 18 |
+| `TRG_ptof` | presentation-offset trigger deleted | `D3S1 ptof` | 38 |
+| `taint_ignored` | a change after the latch no longer taints the write | `D3S4 taint` | 2 |
 | `clear_wins_same_edge` | the done's clear outranks a change on the same edge | `D3S5 same edge` | 1 |
-| `clear_by_group` | the done clears every record of the group | `D3S6 group` | 8 |
+| `clear_by_group` | the done clears every record of the group | `D3S6 group` | 18 |
 | `clear_by_index` | the done clears every record of the same index | `D3S6 index` | 14 |
-| `identify_is_a_change` | IDENTIFY (selector 7) made a persisted change | `D3S7` | 1 |
-| `unchanged_compare_ignores_validity` | the change qualifier ignores the valid flag | `D3S8 validity` | 1 |
-| `RPL_cfg` | configuration replay deleted | `D3R1 cfg` | 6 |
-| `RPL_rate` | sampling-rate replay deleted | `D3R1 rate` | 6 |
-| `RPL_clks` | clock-source replay deleted | `D3R1 clks` | 5 |
-| `RPL_fmti` | input-format replay deleted | `D3R1 fmti` | 2 |
-| `RPL_fmto` | output-format replay deleted | `D3R1 fmto` | 2 |
-| `RPL_ptof` | presentation-offset replay deleted | `D3R1 ptof` | 6 |
-| `rule_ignored` | a SET-rule refusal applied anyway | `D3R2: COMPLETE` | 7 |
-| `passes_may_disagree` | the pass agreement removed | `D3R4:`, `D3R4b` | 3 |
+| `identify_is_a_change` | IDENTIFY (selector 7) made a persisted change | `D3S7` | 2 |
+| `unchanged_compare_ignores_validity` | the change qualifier ignores the valid flag | `D3S8 validity` | 5 |
+| `RPL_cfg` | configuration replay deleted | `D3R1 cfg` | 12 |
+| `RPL_rate` | sampling-rate replay deleted | `D3R1 rate` | 12 |
+| `RPL_clks` | clock-source replay deleted | `D3R1 clks` | 12 |
+| `RPL_fmti` | input-format replay deleted | `D3R1 fmti` | 8 |
+| `RPL_fmto` | output-format replay deleted | `D3R1 fmto` | 8 |
+| `RPL_ptof` | presentation-offset replay deleted | `D3R1 ptof` | 12 |
+| `rule_ignored` | a SET-rule refusal applied anyway | `D3R2: COMPLETE` | 8 |
+| `passes_may_disagree` | the pass agreement removed | `D3R4:`, `D3R4b` | 5 |
 | `device_error_reads_as_blank` | a DEVICE error read as a blank record | `D3R5 device error on the header`, `D3R6: the one saved record` | 5 |
-| `unframed_reads_as_device_error` | an UNFRAMED record read as a device error | `D3R6: an erased device restores blank` | 42 |
+| `unframed_reads_as_device_error` | an UNFRAMED record read as a device error | `D3R6: an erased device restores blank` | 132 |
 | `desc_error_is_a_refusal` | a rule's descriptor error read as a refusal | `D3R7` | 6 |
 | `no_restore_watchdog` | the per-wait deadline removed | `D3R8: a READ granted`, `D3R8b` | 7 |
 | `restore_writes_are_changes` | the snoop taps the shared bus, so restore writes are changes | `D3R1: no restore write is a change` | 1 |
 | `enable_not_released_by_restore` | ADP enabled by the request alone | `D3R1: the enable requested from reset`, `D3C6` | 5 |
-| `done_without_d3` | restore done without the D3 walk | `D3R1: the enable requested from reset`, `D3R1: COMPLETE` | 45 |
-| `blank_ignores_d3` | restore blank ignores the D3 walk | `D3R1: COMPLETE` | 1 |
-| `store_not_cleared` | the sampling-rate row and its valid flag not reset | `D3R1: every row at its reset value` | 17 |
-| `valid_not_cleared` | the sampling-rate valid flag not reset | `D3R1: every row at its reset value` | 17 |
+| `done_without_d3` | restore done without the D3 walk | `D3R1: the enable requested from reset`, `D3R1: COMPLETE` | 124 |
+| `blank_ignores_d3` | restore blank ignores the D3 walk | `D3R1: COMPLETE` | 2 |
+| `store_not_cleared` | the sampling-rate row and its valid flag not reset | `D3R1: every row at its reset value` | 25 |
+| `valid_not_cleared` | the sampling-rate valid flag not reset | `D3R1: every row at its reset value` | 21 |
 | `quarantine_released_by_time` | the arbiter ends a drain after 1,000 cycles | `D3R5: once the device ends the drained read a later SET persists` | 10 |
-| `no_rollback` | a pass-1 abort ends DEFAULTS without the roll-back | `D3R4:` | 17 |
+| `no_rollback` | a pass-1 abort ends DEFAULTS without the roll-back | `D3R4:` | 19 |
 | `dyn_not_rolled_back` | the dynamic-state store left out of the roll-back | `D3R4:` | 4 |
-| `store_not_rolled_back` | the descriptor store left out of the roll-back | `D3R10 5000` | 3 |
+| `store_not_rolled_back` | the descriptor store left out of the roll-back | `D3R10 5000` | 4 |
 | `rollback_ignores_debt` | the roll-back ignores the guard's debt | `D3R10 16000` | 3 |
 | `closed_releases_the_entity` | a roll-back that cannot re-prove the image ends DEFAULTS | `D3R12` | 2 |
 | `no_backoff_d3` | the writer's DR2c backoff removed | `D3S10 timing` | 2 |
@@ -1087,21 +1091,21 @@ D3C4 arm. The last four rows are D3C's own controls.
 | `clks_restore_count_narrowed` | the restore rule reads only the low three bits of `clock_sources_count` | `D3C3 restore` | 2 |
 | `clks_restore_index_narrowed` | the restore rule compares only the low three bits of the saved index | `D3C4 at the count`, `D3C4 above the count` | 4 |
 | `clks_restore_bound_inclusive` | the restore rule accepts an index equal to the count (`<=` for `<`) | `D3C4 at the count` | 4 |
-| `TRG_name` | the name trigger deleted (issues #61, #83) | `D3N1 ordinal` | 15 |
-| `RPL_name` | the name replay deleted: every framed name refused | `D3N3 ordinal` | 13 |
+| `TRG_name` | the name trigger deleted (issues #61, #83) | `D3N1 ordinal` | 27 |
+| `RPL_name` | the name replay deleted: every framed name refused | `D3N3 ordinal` | 17 |
 | `name_rule_ignored` | the name rule accepts any ordinal | `D3N4: COMPLETE` | 1 |
 | `name_empty_refused` | an EMPTY name (lane 0 zero) refused on restore | `D3N3: COMPLETE`, `D3N3 ordinal 2` | 2 |
-| `name_record_id_shifted` | name records at `0x81` + ordinal | `D3N1 ordinal` | 13 |
-| `name_entry_shifted` | a restored name written to the next entry | `D3N3 ordinal` | 10 |
+| `name_record_id_shifted` | name records at `0x81` + ordinal | `D3N1 ordinal` | 25 |
+| `name_entry_shifted` | a restored name written to the next entry | `D3N3 ordinal` | 14 |
 | `name_lanes_partial` | the write-back ends after seven lanes | `D3N3 ordinal 1` | 2 |
 | `name_taint_ignored` | a name change after its latch does not taint the write | `D3N6 taint` | 1 |
 | `name_restore_pulses` | the exported `aecp_name_wr_o` not gated off the writer's restore | `D3N3: the restore's name writes` | 1 |
 | `name_restore_is_a_change` | the name snoop not gated off the writer's restore | `D3N3: the restore's name writes` | 1 |
-| `names_before_the_image` | the image proof skipped, so names land before the store's walk | `D3N7` | 9 |
+| `names_before_the_image` | the image proof skipped, so names land before the store's walk | `D3N7` | 18 |
 | `frame_crc_ignored` | the frame's crc compare removed for every group (issues #61, #83) | `D3K ptof cut at byte 11 of 12: the restore`, `D3K name cut at byte 71 of 72: the restore` | 8 |
 | `clks_crc_ignored` | the frame's crc compare bypassed for the clock-source group (issue #52) | `D3C5 corrupt` | 1 |
 | `torn_read_not_an_abort` | a torn read is not an abort (issues #52, #63) | `D3C5 torn` | 2 |
-| `blank_applies_zero` | a blank record applies a zero value with its valid flag (issues #52, #63) | `D3C5 blank` | 15 |
+| `blank_applies_zero` | a blank record applies a zero value with its valid flag (issues #52, #63) | `D3C5 blank` | 26 |
 | `cfg_crc_ignored` | the frame's crc compare bypassed for the configuration record; run `--adp-only` (issue #63) | `AD8: the first ENTITY_AVAILABLE` | 4 |
 | `torn_read_not_an_abort_cfg` | `torn_read_not_an_abort`, run `--adp-only` | `AD9: the torn read` | 1 |
 | `blank_applies_zero_cfg` | `blank_applies_zero`, run `--adp-only` | `AD7: the first ENTITY_AVAILABLE` | 7 |
