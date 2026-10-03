@@ -181,8 +181,8 @@ sv2v $(find hdl -name '*_pkg.sv' | sort) $(find hdl -name '*.sv' ! -name '*_pkg.
 cd "$work"
 
 # THIS GATE IS ALLOCATION-BOUND TOO, and the allocator is the one lever that
-# costs nothing: 32.43 s -> 25.45 s on one machine (-21.5%) with an identical
-# verdict for every top. The integrator's own gate measured the same class of
+# costs nothing: 48.12 s -> 35.97 s end to end on one machine (-25.2%, median of
+# three, parsed once) with an identical verdict for every top. The integrator's own gate measured the same class of
 # win and proved the netlist byte-identical across glibc, tcmalloc, jemalloc
 # and mimalloc (kebag-logic/milan-fpga#286, #288). Speed only, never results.
 #
