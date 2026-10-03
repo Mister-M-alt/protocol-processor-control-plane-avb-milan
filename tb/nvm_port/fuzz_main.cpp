@@ -668,9 +668,10 @@ int PauseFuzz::report() {
   const bool reached = at_header > 0 && at_payload > 0 && at_terminal > 0 && served_long > 0
                        && served_widest == seeds;
   if (!reached) ++fails;
-  printf("%s: FZ10 FZ9 abandoned READs at header bytes, payload bytes and terminals, and FZ7 served "
-         "requests behind READs owing 256 bytes or more and behind one owing the largest payload the "
-         "port accepts, %d bytes, each seed (%ld, %ld and %ld; %ld, and %ld of %ld)\n",
+  printf("%s: FZ10 the abandonments reached every branch of what a READ owes: babble's at header "
+         "bytes, payload bytes and terminals, and resume served requests behind READs owing 256 bytes "
+         "or more and behind one owing the largest payload the port accepts, %d bytes, each seed (%ld, "
+         "%ld and %ld; %ld, and %ld of %ld)\n",
          reached ? "PASS" : "FAIL", widest, at_header, at_payload, at_terminal, served_long,
          served_widest, seeds);
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
