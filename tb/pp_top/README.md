@@ -1171,12 +1171,16 @@ D3C3's restore, whose saved 10 the restore rule refuses.
 
 ### GET_COUNTERS face controls (lane C7, issues #44 and #79): `ctr_mutants.py`
 
-`make -C tb/pp_top ctr-mutants` (logs in `CTR_MUTANT_OUTPUT`, default
+`make -C tb/pp_top ctr-mutants` (`python3 ctr_mutants.py --output DIR [--only a,b]
+[--jobs N]`; the make target writes its logs to `CTR_MUTANT_OUTPUT`, default
 `/tmp/ctr-mutants`). Each arm is a reviewed patch in `ctr_mutations/`, applied
-with `git apply` to a scratch copy of `hdl/` and this bench, restored with fresh
-timestamps before every arm; each runs `make counters` (K9 to K16 on their fresh
-model), after a positive control that must pass, and is KILLED only when that
-run completed, failed, and printed its named check. Eleven arms break the
+with `git apply` to a scratch copy of `hdl/`, `tb/common/` and this directory, one
+copy per arm; each runs `make counters` (K9 to K16 on their fresh model), after a
+positive control in its own copy that must pass, and is KILLED only when that
+run completed, failed, and printed its named check. `--jobs N` (default 4, the
+meaning and default of `d3_mutants.py`, through `tb/common/mutant_pool.py`; the
+make target runs the default) builds and runs up to N copies at once, and the
+results are printed in the table's order whatever order they finish in. Eleven arms break the
 processor; the last two break the harness's integrator store, the half the
 processor cannot hold, to show the checks refuse a store that breaks the
 [integrator guide §7.1](../../docs/guides/integrator.md#counters-face) contract.

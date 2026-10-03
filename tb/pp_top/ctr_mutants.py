@@ -3,27 +3,33 @@
 """Plant reviewed GET_COUNTERS face arms in scratch and require named check failures.
 
 Lane C7's campaign (issues #44 and #79): each arm is an explicit patch in
-ctr_mutations/, applied with git apply to a scratch copy of the tree; this
-driver reads only simulation logs, never production source. Eleven arms break
-the processor's half of the counters face (the type gate, the face's index,
-the block's beat order, the locate, the notification decode, its windows and
-the strobe's wiring). Two break the harness's integrator store instead, the
-half the processor cannot hold: they show section K's checks refuse a store
-that counts a domain-only strobe as a grandmaster change, or whose link edge
-detector resets up. Every arm runs the cycle-bounded `counters` target (K9 to
-K16). Its positive control runs first and must pass; an arm is KILLED only when
-its simulation completed (a tally was printed), failed, and printed the
-required check. A build failure or a missing tally never counts as a kill.
+ctr_mutations/, applied with git apply to a scratch copy of the tree of its own;
+this driver reads only simulation logs, never production source. Eleven arms
+break the processor's half of the counters face (the type gate, the face's
+index, the block's beat order, the locate, the notification decode, its windows
+and the strobe's wiring). Two break the harness's integrator store instead, the
+half the processor cannot hold: they show section K's checks refuse a store that
+counts a domain-only strobe as a grandmaster change, or whose link edge detector
+resets up. Every arm runs the cycle-bounded `counters` target (K9 to K16). Its
+positive control runs first, in its own copy, and must pass; an arm is KILLED
+only when its simulation completed (a tally was printed), failed, and printed
+the required check. A build failure or a missing tally never counts as a kill.
+`--jobs N` runs up to N copies at once; the results are read in the declared
+order.
 """
 import argparse
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 PATCHES = Path(__file__).resolve().parent / "ctr_mutations"
 TARGET = "counters"
+
+sys.path.insert(0, str(ROOT / "tb" / "common"))
+from mutant_pool import add_jobs_argument, in_order  # noqa: E402
 
 # arm (= its patch), the check that must fail (its label prefix)
 MUTANTS = [
@@ -53,7 +59,6 @@ MUTANTS = [
 ]
 
 SUITES = ("common", "pp_top")
-IGNORE = shutil.ignore_patterns("obj_*", "*.hex", "__pycache__")
 
 
 def run(tree: Path, log: Path) -> tuple[int, str]:
@@ -64,30 +69,31 @@ def run(tree: Path, log: Path) -> tuple[int, str]:
     return result.returncode, log.read_text()
 
 
-def restore(tree: Path) -> None:
-    """Put the scratch RTL and bench back to the tree's, and drop the ROM images.
-
-    Two arms plant into the bench rather than the RTL, so both are restored,
-    and with fresh timestamps: a restored file keeping its original one would
-    be older than the object an earlier arm built from its patched copy, and
-    make would keep that object, so a bench arm would outlive its own run. The
-    ROM images are dropped for the same reason: make would keep an image an
-    earlier arm generated from a patched generator.
-    """
-    shutil.copytree(ROOT / "hdl", tree / "hdl", dirs_exist_ok=True,
-                    copy_function=shutil.copy)
-    shutil.copytree(ROOT / "tb" / "pp_top", tree / "tb" / "pp_top",
-                    dirs_exist_ok=True, ignore=IGNORE, copy_function=shutil.copy)
-    for image in ("ucode.hex", "ltn_rom.hex"):
-        (tree / "tb" / "pp_top" / image).unlink(missing_ok=True)
-
-
 def plant(tree: Path, patch: str) -> None:
-    """Restore the scratch copy and apply one explicit patch, refusing drift."""
-    restore(tree)
+    """Apply one explicit patch to the scratch RTL or bench, refusing drift."""
     path = str(PATCHES / (patch + ".patch"))
     subprocess.run(["git", "apply", "--check", path], cwd=tree, check=True)
     subprocess.run(["git", "apply", path], cwd=tree, check=True)
+
+
+def trial(job: tuple[str | None, Path]) -> tuple[int, str]:
+    """Copy the tree to a scratch directory of its own, plant the patch if any, and run.
+
+    The copy carries no generated ROM image (`*.hex` is not copied) and no model
+    directory, so every build generates its ROMs from the generators as planted
+    and compiles the RTL and bench as planted. Two arms plant into the bench
+    rather than the RTL, and their copies are theirs alone.
+    """
+    patch, log = job
+    with tempfile.TemporaryDirectory(prefix="ctr-mutants-") as tmp:
+        tree = Path(tmp)
+        shutil.copytree(ROOT / "hdl", tree / "hdl")
+        for name in SUITES:
+            shutil.copytree(ROOT / "tb" / name, tree / "tb" / name,
+                            ignore=shutil.ignore_patterns("obj_*", "*.hex", "__pycache__"))
+        if patch is not None:
+            plant(tree, patch)
+        return run(tree, log)
 
 
 def failures_of(contents: str) -> list[str]:
@@ -100,9 +106,9 @@ def completed(contents: str) -> bool:
     return "checks" in contents
 
 
-def campaign(tree: Path, output: Path, selected: list[tuple[str, str]]) -> tuple[int, int]:
+def campaign(output: Path, selected: list[tuple[str, str]], jobs: int) -> tuple[int, int]:
     """Run the positive control, then require each arm's own named check."""
-    rc, contents = run(tree, output / f"control-{TARGET}.log")
+    rc, contents = trial((None, output / f"control-{TARGET}.log"))
     ok = rc == 0 and completed(contents) and not failures_of(contents)
     print(f"control pp_top {TARGET}: rc={rc} {'PASS' if ok else 'FAIL'}", flush=True)
     if not ok:
@@ -110,30 +116,31 @@ def campaign(tree: Path, output: Path, selected: list[tuple[str, str]]) -> tuple
         return 0, 1
     passed = 1
     total = 1
-    for arm, expected in selected:
-        plant(tree, arm)
-        rc, contents = run(tree, output / f"{arm}.log")
-        failures = failures_of(contents)
-        named = [line for line in failures if line[len("FAIL:"):].strip().startswith(expected)]
-        ok = rc != 0 and completed(contents) and bool(named)
-        total += 1
-        passed += ok
-        verdict = "KILLED" if ok else "UNPROVEN"
-        print(f"{arm}: rc={rc} failures={len(failures)} named={len(named)} {verdict}",
-              flush=True)
-        for line in failures:
-            print(f"    {line}", flush=True)
-        if not ok:
-            print(contents[-2500:], flush=True)
-    restore(tree)
+    units = [(arm, output / f"{arm}.log") for arm, _ in selected]
+    with in_order(trial, units, jobs) as results:
+        for (arm, expected), (rc, contents) in zip(selected, results):
+            failures = failures_of(contents)
+            named = [line for line in failures
+                     if line[len("FAIL:"):].strip().startswith(expected)]
+            ok = rc != 0 and completed(contents) and bool(named)
+            total += 1
+            passed += ok
+            verdict = "KILLED" if ok else "UNPROVEN"
+            print(f"{arm}: rc={rc} failures={len(failures)} named={len(named)} {verdict}",
+                  flush=True)
+            for line in failures:
+                print(f"    {line}", flush=True)
+            if not ok:
+                print(contents[-2500:], flush=True)
     return passed, total
 
 
 def main() -> int:
-    """Select arms, isolate every write in a scratch tree, fail on any unproven arm."""
+    """Select arms, isolate every write in scratch trees, fail on any unproven arm."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--only", default="")
+    add_jobs_argument(parser)
     args = parser.parse_args()
     requested = set(args.only.split(",")) if args.only else {m[0] for m in MUTANTS}
     unknown = requested - {m[0] for m in MUTANTS}
@@ -141,12 +148,7 @@ def main() -> int:
         parser.error(f"unknown mutation arms: {sorted(unknown)}")
     selected = [m for m in MUTANTS if m[0] in requested]
     args.output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="ctr-mutants-") as tmp:
-        tree = Path(tmp)
-        shutil.copytree(ROOT / "hdl", tree / "hdl")
-        for suite in SUITES:
-            shutil.copytree(ROOT / "tb" / suite, tree / "tb" / suite, ignore=IGNORE)
-        passed, total = campaign(tree, args.output, selected)
+    passed, total = campaign(args.output, selected, args.jobs)
     print(f"{total} checks: {passed} PASS, {total - passed} FAIL")
     return int(passed != total)
 
