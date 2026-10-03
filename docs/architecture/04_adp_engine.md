@@ -129,7 +129,10 @@ flowchart LR
 
 Per interface: advertise SM state (2 b), `available_index` (32 b, volatile: 0 at
 power-up, **increment after** each transmitted ENTITY_AVAILABLE, reset to 0 on
-ENTITY_DEPARTING — IEEE §6.2.2.9), one timer handle. Per sink: discovery SM state
+ENTITY_DEPARTING — IEEE §6.2.2.15 and its Figure 6-2, which Milan §5.6.2 adopts
+unchanged; the ENTITY_DEPARTING carries the value the index held, IEEE §6.2.5.2.2
+taking every field it does not name from `entityInfo`, and the reset follows it),
+one timer handle. Per sink: discovery SM state
 (1 b), saved `interface_index` + last `available_index` of the bound talker, one
 `T-ADP-NOADP` handle — stored in the sink record ([F07.6](07_memory_maps.md#fig-07-sinkrec)).
 
