@@ -11218,6 +11218,9 @@ struct AdpConfigPhase {
 //       carries the value in force (IEEE 1722.1-2021 7.4.21.1, 7.4.23.1,
 //       7.4.25.1 "the old value if it fails"), moves nothing, and the holder
 //       is still served.
+//   NSD SET_CLOCK_SOURCE on a CLOCK_DOMAIN the image lacks (issue #37):
+//       NO_SUCH_DESCRIPTOR with a zero body, nothing moved, and the lock
+//       still outranks the miss.
 // The image is the main run's with ONE change: CLOCK_DOMAIN 0's
 // clock_source_index defaults to 2, so an unset row's current index is not
 // also the zero a stub would carry.
@@ -11532,6 +11535,32 @@ struct AecpResponsePhase {
     lk_the_holder_is_still_served();
   }
 
+  // ---- NSD: SET_CLOCK_SOURCE's NO_SUCH_DESCRIPTOR branch (issue #37) -----
+  //! E_SCLKS + 3 sends a locate miss to E_SCLKSRF: CHECK_LOCK, then the
+  //! refusal tail every refusal shares, which builds r6 at @28. A miss has no
+  //! current index, so r6 must still be the 0 E_SCLKS + 1 preloaded, and r6 is
+  //! NOT cleared between programs (only r12 to r15 are loaded per dispatch).
+  //! So NSD0 first has the holder change the index 2 -> 1: E_SCLKS leaves the
+  //! replaced 2 in r6, and a dropped preload answers 2 where NSD1 wants 0.
+  //! CLOCK_DOMAIN 1 is absent from this image (Milan 5.4.2.15; IEEE 1722.1-2021
+  //! 7.4.23.1, Table 7-141). A second controller asks, so a notification would
+  //! reach the registered holder. NSD3 is the branch's other arm: under a
+  //! foreign lock the miss meets the lock first (06 section 6.4), which a
+  //! target moved one word on, past E_SCLKSRF's CHECK_LOCK, skips
+  void nsd_set_clock_source_on_an_absent_domain() {
+    holder_set(AEM_SET_CLOCK_SOURCE, clks_body(0, 1), true,
+               "NSD0 the holder changes clock source 2 to 1");
+    refused(true, AEM_SET_CLOCK_SOURCE, clks_body(1, 2), clks_body(1, 0),
+            AECP_NO_SUCH_DESCRIPTOR, "NO_SUCH_DESCRIPTOR", 20,
+            "NSD1 a second controller's SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), "
+            "zero body");
+    CHECK(get_value(AEM_GET_CLOCK_SOURCE, 0x0024, 0, 2, true) == 1u,
+          "NSD2 ...and GET_CLOCK_SOURCE still reads the stored 1");
+    foreign(AEM_SET_CLOCK_SOURCE, clks_body(1, 2), clks_body(1, 0), 20,
+            "NSD3 foreign SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), the lock first");
+    lock(false, "NSD3");
+  }
+
   // ---- OV: a response above cdl 524 through the oversize slot (#50, #82) --
   static std::vector<uint8_t> rdesc(uint16_t cfg, uint16_t ty, uint16_t ix) {
     std::vector<uint8_t> p(8, 0);
@@ -11828,6 +11857,7 @@ struct AecpResponsePhase {
     boot();
     rd_before_any_set();
     lk_the_entity_locked_arm();
+    nsd_set_clock_source_on_an_absent_domain();
     ov_responses_above_cdl_524();
     pg_the_page();
     rd_after_each_set();

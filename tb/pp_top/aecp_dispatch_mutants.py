@@ -129,6 +129,18 @@ MUTANTS = [
      "D3C1: SET_CLOCK_SOURCE(9) over the ten-source domain answers SUCCESS"),
     ("sclks-bound-inclusive", "sclks-bound-inclusive", "d3",
      "D3C2: SET_CLOCK_SOURCE(10), the count, answers BAD_ARGUMENTS"),
+    # issue #37: E_SCLKS's locate-miss branch to its refusal tail, graded in
+    # section AX's NSD arm: the target one word on, past the tail's
+    # CHECK_LOCK; the r6 preload the tail carries dropped; the branch dropped
+    ("sclks-miss-target-next-word", "sclks-miss-target-next-word", "aecp-dispatch",
+     "NSD3 foreign SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), the lock first: "
+     "ENTITY_LOCKED byte-exact"),
+    ("sclks-miss-preload-dropped", "sclks-miss-preload-dropped", "aecp-dispatch",
+     "NSD1 a second controller's SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), "
+     "zero body: NO_SUCH_DESCRIPTOR byte-exact"),
+    ("sclks-miss-branch-dropped", "sclks-miss-branch-dropped", "aecp-dispatch",
+     "NSD1 a second controller's SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), "
+     "zero body: NO_SUCH_DESCRIPTOR byte-exact"),
 ]
 
 #: the scratch tree: the RTL and the two bench directories the targets build
