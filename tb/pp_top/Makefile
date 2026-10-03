@@ -127,7 +127,7 @@ d3: gsi-build
 hazards: gsi-build
 	./obj_dir/Vpp_top_sim --hazards-only
 
-# section K's AVB_INTERFACE and CLOCK_DOMAIN half (K9 to K16) alone, on its
+# section K's AVB_INTERFACE and CLOCK_DOMAIN half (K9 to K17) alone, on its
 # fresh model: the target ctr_mutants.py plants its arms against
 counters: gsi-build
 	./obj_dir/Vpp_top_sim --counters-only

@@ -1175,32 +1175,39 @@ D3C3's restore, whose saved 10 the restore rule refuses.
 [--jobs N]`; the make target writes its logs to `CTR_MUTANT_OUTPUT`, default
 `/tmp/ctr-mutants`). Each arm is a reviewed patch in `ctr_mutations/`, applied
 with `git apply` to a scratch copy of `hdl/`, `tb/common/` and this directory, one
-copy per arm; each runs `make counters` (K9 to K16 on their fresh model), after a
+copy per arm; each runs `make counters` (K9 to K17 on their fresh model), after a
 positive control in its own copy that must pass, and is KILLED only when that
 run completed, failed, and printed its named check. `--jobs N` (default 4, the
 meaning and default of `d3_mutants.py`, through `tb/common/mutant_pool.py`; the
 make target runs the default) builds and runs up to N copies at once, and the
-results are printed in the table's order whatever order they finish in. Eleven arms break the
-processor; the last two break the harness's integrator store, the half the
-processor cannot hold, to show the checks refuse a store that breaks the
-[integrator guide §7.1](../../docs/guides/integrator.md#counters-face) contract.
-Recorded 2026-10-03 on this lane's tree: control PASS, 13 of 13 KILLED.
+results are printed in the table's order whatever order they finish in.
+Fifteen arms break the processor; the last two break the harness's integrator
+store, the half the processor cannot hold, to show the checks refuse a store that
+breaks the [integrator guide §7.1](../../docs/guides/integrator.md#counters-face)
+contract. Recorded 2026-10-03 on this lane's tree with K17 and its four arms:
+control PASS, 17 of 17 KILLED. K17 adds one or two failing checks to eight of the
+first thirteen arms' counts (its checks see their broken push or counts); no other
+check moved.
 
 | Arm | What is broken | Failing checks |
 |---|---|---|
 | `ctr-avb-not-supported` | the type gate refuses AVB_INTERFACE NOT_SUPPORTED (`KL_aecp_engine`) | 9: K9 (named), K10 x4, K11 x3, K12 |
 | `ctr-ckd-not-supported` | the type gate refuses CLOCK_DOMAIN | 3: K16 x3 (named) |
-| `ctr-index-from-type` | `ctr_desc_index_o` driven from the descriptor type | 17: K9 (named), K10 x4, K11 x3, K13, K14, K15 x3, K16 x4 |
-| `ctr-block-beats-swapped` | quadlets 4 to 7 and 8 to 11 swapped in the block (`gen_ucode.py` beat order) | 8: K11 x3 (named: offset 20), K13, K14, K15 x3 |
+| `ctr-index-from-type` | `ctr_desc_index_o` driven from the descriptor type | 18: K9 (named), K10 x4, K11 x3, K13, K14, K15 x3, K16 x4, K17 |
+| `ctr-block-beats-swapped` | quadlets 4 to 7 and 8 to 11 swapped in the block (`gen_ucode.py` beat order) | 9: K11 x3 (named: offset 20), K13, K14, K15 x3, K17 |
 | `ctr-locate-ignored` | the locate miss falls through to the face (`E_GCTRS`) | 1: K12 (named) |
-| `ctr-notify-avb-dropped` | the notification block ignores an AVB_INTERFACE strobe (`KL_aecp_notify`) | 5: K13 (named), K14 x2, K15 x2 |
-| `ctr-notify-avb-as-clock` | an AVB_INTERFACE strobe marks the CLOCK_DOMAIN slot | 6: K13 (named), K14 x2, K15 x2, K16 |
+| `ctr-notify-avb-dropped` | the notification block ignores an AVB_INTERFACE strobe (`KL_aecp_notify`) | 6: K13 (named), K14 x2, K15 x2, K17 |
+| `ctr-notify-avb-as-clock` | an AVB_INTERFACE strobe marks the CLOCK_DOMAIN slot | 8: K13 (named), K14 x2, K15 x2, K16, K17 x2 (a CLOCK_DOMAIN push left pending inside K17's first wait, and no AVB_INTERFACE 0 push) |
 | `ctr-notify-ckd-dropped` | the notification block ignores a CLOCK_DOMAIN strobe | 1: K16 (named) |
-| `ctr-notify-one-window` | one emission starts every descriptor's one-second window | 2: K15 (named), K16 |
+| `ctr-notify-one-window` | one emission starts every descriptor's one-second window | 3: K15 (named), K16, K17 |
 | `ctr-notify-no-window` | the one-second limit removed | 5: K14 x3 (named), K15 x2 |
-| `ctr-change-type-from-index` | the strobe's type taken from `ctr_change_desc_index_i` (`protocol_processor_top`) | 7: K13 (named), K14 x2, K15 x3, K16 |
-| `store-counts-domain-strobes` | the harness store counts every `gm_change_i`, a domain-only one included | 6: K11 x2 (named), K13, K14, K15 x2 |
-| `store-link-detector-resets-up` | the harness store's link edge detector resets up, so the boot's link-up is never counted | 10: K9 (named), K10 x4, K11, K13, K14, K15 x2 |
+| `ctr-change-type-from-index` | the strobe's type taken from `ctr_change_desc_index_i` (`protocol_processor_top`) | 8: K13 (named), K14 x2, K15 x3, K16, K17 |
+| `ctr-notify-avb-any-index` | the notification block takes an AVB_INTERFACE strobe of any index onto AVB_INTERFACE 0's slot | 1: K17 (named: AVB_INTERFACE 1) |
+| `ctr-notify-ckd-any-index` | the notification block takes a CLOCK_DOMAIN strobe of any index onto CLOCK_DOMAIN 0's slot | 1: K17 (named: CLOCK_DOMAIN 1) |
+| `ctr-notify-stri-past-shape` | the Stream Input range check removed: STREAM_INPUT 8 lands on STREAM_OUTPUT 0's slot | 1: K17 (named: STREAM_INPUT 8) |
+| `ctr-notify-stro-past-shape` | the Stream Output range check removed: STREAM_OUTPUT 8 lands on AVB_INTERFACE 0's slot | 1: K17 (named: STREAM_OUTPUT 8) |
+| `store-counts-domain-strobes` | the harness store counts every `gm_change_i`, a domain-only one included | 7: K11 x2 (named), K13, K14, K15 x2, K17 |
+| `store-link-detector-resets-up` | the harness store's link edge detector resets up, so the boot's link-up is never counted | 11: K9 (named), K10 x4, K11, K13, K14, K15 x2, K17 |
 
 ## Recorded seams and honest limits
 
@@ -1404,7 +1411,7 @@ The last one is the one worth keeping: it is the advertised-zero lie in its
 purest form — a full mask over a block the fabric never fills — and it must not
 be able to pass.
 
-### K9 to K16 — the AVB_INTERFACE and CLOCK_DOMAIN counters on the wire (issues #44, #79)
+### K9 to K17 — the AVB_INTERFACE and CLOCK_DOMAIN counters on the wire (issues #44, #79)
 
 `counters_phases.hpp`, on a fresh model of its own (`--counters-only`,
 `make counters`), with the notification sections' bench. The processor keeps no
@@ -1424,6 +1431,7 @@ back from the store or the DUT.
 | K14 | two more changes inside that second (a link-up, a grandmaster change) push nothing for 850 ms after the first push, then exactly one push per controller, 900 ms or more after it, with the latest counts, and nothing after it |
 | K15 | a change a second after the last push goes out at once and opens a new window; inside it a STREAM_INPUT 0 strobe is pushed at once while the interface's next change waits for its own second, then goes out |
 | K16 | CLOCK_DOMAIN 0 over three lock edges: LOCKED/UNLOCKED 1/0, 1/1, 2/1 byte-exact with mask `0x03` and the Table 5.7 invariant, and its strobe pushes it to both controllers |
+| K17 | a `ctr_change_i` for an object the notification block keeps no slot for (AVB_INTERFACE 1, CLOCK_DOMAIN 1, STREAM_INPUT 8 and STREAM_OUTPUT 8, past the default shape), each alone, pushes nothing to either controller for 1.5 s, past every window K13 to K16 left open; then a link-down and AVB_INTERFACE 0's own strobe push it at once, byte-exact with LINK_DOWN 5, and nothing else |
 
 The negative controls are `ctr_mutants.py` (below).
 

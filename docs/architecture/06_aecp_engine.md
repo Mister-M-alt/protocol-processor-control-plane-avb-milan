@@ -629,7 +629,8 @@ Input and Stream Output index of the shape, AVB_INTERFACE 0 and CLOCK_DOMAIN 0),
 repeats coalesced, and at most one unsolicited GET_COUNTERS per descriptor per
 `T-CTR-NOTIF` (Milan Table 5.22), throttled per descriptor and gathered through the face
 when it is emitted, so it carries the counts of that moment. A strobe without a slot is
-ignored. Graded in `tb/pp_top` U9 and K13 to K16, under load in ST (§7).
+ignored. Graded in `tb/pp_top` U9 and K13 to K17 (K17: a strobe for AVB_INTERFACE 1,
+CLOCK_DOMAIN 1 or a stream index past the shape pushes nothing), under load in ST (§7).
 
 **Who decides the mask.** The masks above are what a *complete* PAAD-AE owes;
 what a given build may claim is what its fabric measures, and the engine carries

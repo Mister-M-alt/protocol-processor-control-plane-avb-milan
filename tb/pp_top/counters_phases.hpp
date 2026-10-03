@@ -24,6 +24,8 @@
 //   K15  AVB_INTERFACE and STREAM_INPUT are throttled apart
 //   K16  CLOCK_DOMAIN 0: LOCKED = UNLOCKED or UNLOCKED + 1 byte-exact, and
 //        its push
+//   K17  a change strobe for an object with no notification slot pushes
+//        nothing, and a slotted one still does
 // Included by sim_main.cpp after the notification sections, whose bench it
 // shares.
 
@@ -31,6 +33,11 @@ struct InterfaceCountersPhase : NotifyBench {
   static constexpr uint64_t B_MAC = 0x0202C2C2C2C2ull;
   static constexpr uint64_t B_EID = CTLR2_EID;
   static constexpr uint16_t DT_SI = 0x0005;
+  static constexpr uint16_t DT_SO = 0x0006;
+  //! the top's N_STREAM_IN_P and N_STREAM_OUT_P, which this bench leaves at
+  //! their defaults: the first Stream Input and Stream Output index past them
+  static constexpr uint16_t SI_PAST = 8;
+  static constexpr uint16_t SO_PAST = 8;
   static constexpr uint16_t DT_AVB = 0x0009;
   static constexpr uint16_t DT_CKD = 0x0024;
   static constexpr uint32_t MASK_AVB = 0x00000023u;   // Milan Table 5.13
@@ -96,6 +103,15 @@ struct InterfaceCountersPhase : NotifyBench {
     }
     return v;
   }
+  //! every unsolicited GET_COUNTERS to `mac` since log index `from`, of any object
+  size_t any_pushes(uint64_t mac, size_t from) const {
+    size_t n = 0;
+    for (size_t i = from; i < seen.size(); ++i) {
+      const auto& f = seen[i].f;
+      if (da_of(f) == mac && unsolicited(f) && ct_of(f) == AEM_GET_COUNTERS) ++n;
+    }
+    return n;
+  }
   //! the harness clock, in ms, of the frame at log index i (its last byte)
   uint64_t ms_at(size_t i) const { return seen[i].t / MS_CYC; }
 
@@ -138,9 +154,10 @@ struct InterfaceCountersPhase : NotifyBench {
     k14_changes_inside_the_second_go_out_once_and_late(first);
     k15_interface_and_stream_input_are_throttled_apart();
     k16_clock_domain_counts_and_pushes();
+    k17_a_strobe_without_a_slot_pushes_nothing();
     CHECK(deregister_controller(CTLR_MAC, CTLR_EID, ++seq)
           && deregister_controller(B_MAC, B_EID, ++seq),
-          "K16: both controllers deregister");
+          "K17: both controllers deregister");
   }
 
   // ---- K9: the boot's link-up is LINK_UP 1, nothing else moved -----------
@@ -325,6 +342,48 @@ struct InterfaceCountersPhase : NotifyBench {
               && seen[b[0]].f == push_of(B_MAC, B_EID, b[0], ckd_body(2, 1)),
           "K16: CLOCK_DOMAIN 0 is pushed to both controllers byte-exact (%zu, %zu)",
           a.size(), b.size());
+  }
+
+  // ---- K17: a strobe the notification block keeps no slot for ------------
+  // The block keeps one slot per Stream Input and Stream Output index of the
+  // shape, one for AVB_INTERFACE 0 and one for CLOCK_DOMAIN 0 (06 section
+  // 6.6); a strobe naming any other object is ignored (integrator guide
+  // section 7.1), never folded onto a slot it does not name. Each strobe is
+  // graded alone, for longer than the one-second window K13 to K16 left
+  // open, so a strobe that marked any kept slot would push inside the wait.
+  void k17_a_strobe_without_a_slot_pushes_nothing() {
+    struct Unslotted {
+      uint16_t ty;
+      uint16_t ix;
+      const char* name;
+    };
+    const Unslotted none[4] = {{DT_AVB, 1, "AVB_INTERFACE 1"},
+                               {DT_CKD, 1, "CLOCK_DOMAIN 1"},
+                               {DT_SI, SI_PAST, "STREAM_INPUT 8"},
+                               {DT_SO, SO_PAST, "STREAM_OUTPUT 8"}};
+    for (const auto& u : none) {
+      const size_t from = seen.size();
+      strobe(u.ty, u.ix);
+      run_ms(1500);
+      const size_t a = any_pushes(CTLR_MAC, from);
+      const size_t b = any_pushes(B_MAC, from);
+      CHECK(a == 0 && b == 0,
+            "K17: a ctr_change_i for %s, which has no slot, pushes nothing in "
+            "1.5 s (got %zu and %zu)", u.name, a, b);
+    }
+    // the silence above is the decode's: a slotted strobe still pushes
+    const size_t from = seen.size();
+    set_link(false);                            // LINK_DOWN 5
+    strobe(DT_AVB, 0);
+    run_ms(300);
+    const auto a = pushes(CTLR_MAC, DT_AVB, 0, from);
+    const auto b = pushes(B_MAC, DT_AVB, 0, from);
+    const auto counts = avb_body(5, 5, 6);
+    CHECK(a.size() == 1 && b.size() == 1 && any_pushes(CTLR_MAC, from) == 1
+              && seen[a[0]].f == push_of(CTLR_MAC, CTLR_EID, a[0], counts)
+              && seen[b[0]].f == push_of(B_MAC, B_EID, b[0], counts),
+          "K17: and AVB_INTERFACE 0's own strobe still pushes it at once, "
+          "byte-exact with LINK_DOWN 5 (got %zu and %zu)", a.size(), b.size());
   }
 };
 

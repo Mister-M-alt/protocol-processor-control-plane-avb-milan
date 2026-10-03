@@ -4,13 +4,14 @@
 
 Lane C7's campaign (issues #44 and #79): each arm is an explicit patch in
 ctr_mutations/, applied with git apply to a scratch copy of the tree of its own;
-this driver reads only simulation logs, never production source. Eleven arms
+this driver reads only simulation logs, never production source. Fifteen arms
 break the processor's half of the counters face (the type gate, the face's
-index, the block's beat order, the locate, the notification decode, its windows
-and the strobe's wiring). Two break the harness's integrator store instead, the
-half the processor cannot hold: they show section K's checks refuse a store that
-counts a domain-only strobe as a grandmaster change, or whose link edge detector
-resets up. Every arm runs the cycle-bounded `counters` target (K9 to K16). Its
+index, the block's beat order, the locate, the notification decode and its slot
+range, its windows and the strobe's wiring). Two break the harness's integrator
+store instead, the half the processor cannot hold: they show section K's checks
+refuse a store that counts a domain-only strobe as a grandmaster change, or whose
+link edge detector resets up. Every arm runs the cycle-bounded `counters` target
+(K9 to K17). Its
 positive control runs first, in its own copy, and must pass; an arm is KILLED
 only when its simulation completed (a tally was printed), failed, and printed
 the required check. A build failure or a missing tally never counts as a kill.
@@ -51,6 +52,11 @@ MUTANTS = [
     ("ctr-notify-no-window", "K14: nothing more for AVB_INTERFACE 0"),
     ("ctr-change-type-from-index",
      "K13: one unsolicited GET_COUNTERS of AVB_INTERFACE 0"),
+    # the processor: a strobe for an object with no notification slot
+    ("ctr-notify-avb-any-index", "K17: a ctr_change_i for AVB_INTERFACE 1"),
+    ("ctr-notify-ckd-any-index", "K17: a ctr_change_i for CLOCK_DOMAIN 1"),
+    ("ctr-notify-stri-past-shape", "K17: a ctr_change_i for STREAM_INPUT 8"),
+    ("ctr-notify-stro-past-shape", "K17: a ctr_change_i for STREAM_OUTPUT 8"),
     # the integrator's store the harness plays
     ("store-counts-domain-strobes",
      "K11: a domain-only gm_change_i is not a grandmaster change"),

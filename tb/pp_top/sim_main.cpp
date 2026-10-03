@@ -3788,7 +3788,7 @@ struct CountersPhase {
   // ...and so are the OTHER two: the store keeps AVB_INTERFACE 0 (Milan
   // Table 5.13, mask 0x23) and CLOCK_DOMAIN 0 (Table 5.15, mask 0x03) live,
   // from the link_up_i and gm_change_i it drives, as the integrator guide
-  // section 7.1 asks; the fresh-model half of this section (K9 to K16)
+  // section 7.1 asks; the fresh-model half of this section (K9 to K17)
   // moves them and grades the counts, the invariants and the push
   void k4cd_the_other_supported_types_keep_their_answers() {
     auto got = cmd(AEM_GET_COUNTERS, ctr_pl(0x0009, 0), 0xD00C);

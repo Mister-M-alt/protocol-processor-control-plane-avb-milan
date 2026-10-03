@@ -338,10 +338,12 @@ with a harness store that keeps AVB_INTERFACE 0 and CLOCK_DOMAIN 0 the way the
 | an AVB_INTERFACE index the image lacks is refused without asking the face | K12 |
 | the push: one unsolicited GET_COUNTERS per registered controller with the counts of its moment; changes inside the second go out once, a second later, with the latest counts; the interface and a Stream Input throttled apart | K13, K14, K15; U9 |
 | CLOCK_DOMAIN 0: LOCKED = UNLOCKED or UNLOCKED + 1, byte-exact, and its push | K16 |
+| a change strobe for an object with no notification slot (AVB_INTERFACE 1, CLOCK_DOMAIN 1, a Stream Input or Stream Output index past the shape) pushes nothing, and a slotted one still does | K17 |
 
 The negative controls run from `tb/pp_top/ctr_mutants.py` (`make -C tb/pp_top
-ctr-mutants`): eleven processor arms (the type gate, the face's index, the block's
-beat order, the locate, the notification decode, its windows, the strobe's wiring)
+ctr-mutants`): fifteen processor arms (the type gate, the face's index, the block's
+beat order, the locate, the notification decode and its slot range, its windows, the
+strobe's wiring)
 and two arms of the harness store (a domain-only strobe counted, a link edge
 detector reset up), each required to fail its named check. The mutation record is
 in the [`tb/pp_top` README](../../tb/pp_top/README.md).
