@@ -266,7 +266,12 @@
 //                (`dbg_img_valid_o`). Its trigger is the dynamic-state
 //                store's accepted CHANGING write, snooped only while the
 //                µCPU drives the bus (`d3_chg_w`), so a restore write is
-//                never a change and IDENTIFY never is one. During the
+//                never a change and IDENTIFY never is one; a name's is the
+//                descriptor store's accepted live name-lane write, snooped
+//                the same way (`d3_nchg_w`), which is also `name_wr_o`, so
+//                the writer's own restore of a saved name pulses neither.
+//                It reads and writes a name over the same bus, the name
+//                table selected (`d3_sb_name_w`). During the
 //                restore it drives the Milan-info gather face itself (kind 0
 //                selector 15, the SET_STREAM_FORMAT verdict) to judge a
 //                saved format; the map read and edit faces are the map
@@ -461,8 +466,8 @@ module KL_aecp_engine
     //! the processor ignores `amap_edit_wait_i` on those phases. A finish
     //! reply returns bit 0 = at least one mapping changed. The future
     //! SET_STREAM_FORMAT survival query uses the same value lane instead of
-    //! opening a second map authority. Phase 5 is also the saved-state
-    //! contract's map trigger (its map stage, not implemented here yet).
+    //! opening a second map authority. Phase 5 is also the integrator's
+    //! map-persistence trigger (07 §5.1); the processor writes no map record.
     output logic        amap_edit_req_o,
     output logic  [2:0] amap_edit_phase_o,
     output logic        amap_edit_remove_o,
@@ -582,8 +587,10 @@ module KL_aecp_engine
     input  wire  [63:0] lock_ctlr_i,
 
     //! One clk_i cycle per accepted live 64-bit name lane, at its write edge;
-    //! direct store output, with no ready/ack. Boot loading, unchanged lanes,
-    //! refused commands and writes aborted before acceptance emit no pulse.
+    //! the store's acceptance while the µCPU drives the state bus, with no
+    //! ready/ack. Boot loading, the D3 writer's restore of a saved name,
+    //! unchanged lanes, refused commands and writes aborted before
+    //! acceptance emit no pulse.
     output logic        name_wr_o,
 
     //! ---- the D3 saved-state writer (KL_aecp_nvm_writer, inside) -----------
@@ -1611,14 +1618,14 @@ module KL_aecp_engine
   logic        d3_jd_req_w;
   logic [15:0] d3_jd_type_w, d3_jd_index_w;
   logic [63:0] d3_jd_fmt_w;
-  logic        d3_sb_req_w, d3_sb_we_w;
+  logic        d3_sb_req_w, d3_sb_we_w, d3_sb_name_w;
   logic [19:0] d3_sb_addr_w;
   logic [63:0] d3_sb_wdata_w;
   logic [15:0] d3_sb_didx_w;
 
   assign st_req_w   = d3_bus_w ? d3_sb_req_w   : u_st_req_w;
   assign st_we_w    = d3_bus_w ? d3_sb_we_w    : u_st_we_w;
-  assign st_name_w  = d3_bus_w ? 1'b0          : u_st_name_w;
+  assign st_name_w  = d3_bus_w ? d3_sb_name_w  : u_st_name_w;
   assign st_addr_w  = d3_bus_w ? d3_sb_addr_w  : u_st_addr_w;
   assign st_wdata_w = d3_bus_w ? d3_sb_wdata_w : u_st_wdata_w;
   assign st_wstrb_w = d3_bus_w ? 8'hFF         : u_st_wstrb_w;
@@ -1847,6 +1854,8 @@ module KL_aecp_engine
   end
 
   logic [15:0] store_fetch_nc_w, store_rowr_nc_w, store_dlen_nc_w;
+  //! the store's accepted name-lane write, whoever drives the bus
+  logic        store_name_wr_w;
 
   KL_aecp_desc_store #(
       .DESC_BASE_P       (DESC_BASE_P),
@@ -1864,7 +1873,7 @@ module KL_aecp_engine
       .st_wdata_i        (st_wdata_w),
       .st_wstrb_i        (st_wstrb_w),
       .st_ready_o        (store_ready_w),
-      .name_wr_o         (name_wr_o),
+      .name_wr_o         (store_name_wr_w),
       .st_rvalid_o       (store_rvalid_w),
       .st_rdata_o        (store_rdata_w),
       .st_err_o          (store_err_w),
@@ -1978,6 +1987,11 @@ module KL_aecp_engine
   //! bus, so its write is a change like any other.
   logic d3_chg_w;
   assign d3_chg_w = dyn_chg_w && !d3_bus_w;
+  //! a name's change, the same snoop: the µCPU's accepted live lane write,
+  //! its entry the lane address's [15:6]; the exported pulse is the same
+  logic d3_nchg_w;
+  assign d3_nchg_w = store_name_wr_w && !d3_bus_w;
+  assign name_wr_o = d3_nchg_w;
   //! a command is in flight: taken from its queue, or its program running.
   //! With the writer owning, A_IDLE takes nothing, so this reading 0 in an
   //! owned cycle means no program runs and none can start.
@@ -1989,6 +2003,7 @@ module KL_aecp_engine
       .N_STREAM_OUT_P (N_STREAM_OUT_P),
       .N_AUDIO_UNIT_P (N_AUDIO_UNIT_P),
       .N_CLK_DOMAIN_P (N_CLK_DOMAIN_P),
+      .N_NAME_P       (NAME_ENTRIES_P),
       .RS_TMO_CYC_P   (NVM_RS_TMO_CYC_P),
       .RS_AGG_CYC_P   (NVM_RS_AGG_CYC_P),
       .RETRY_BACKOFF_CYC_P (NVM_RETRY_BACKOFF_CYC_P)
@@ -2007,6 +2022,7 @@ module KL_aecp_engine
       .prog_busy_i (prog_busy_w),
       .sb_req_o    (d3_sb_req_w),
       .sb_we_o     (d3_sb_we_w),
+      .sb_name_o   (d3_sb_name_w),
       .sb_addr_o   (d3_sb_addr_w),
       .sb_wdata_o  (d3_sb_wdata_w),
       .sb_didx_o   (d3_sb_didx_w),
@@ -2017,6 +2033,8 @@ module KL_aecp_engine
       .chg_i       (d3_chg_w),
       .chg_sel_i   (st_addr_w[15:3]),
       .chg_idx_i   (u_dyn_didx_w),
+      .nchg_i      (d3_nchg_w),
+      .nchg_ord_i  (st_addr_w[15:6]),
       .m_req_o     (d3_m_req_o),
       .m_we_o      (d3_m_we_o),
       .m_rid_o     (d3_m_rid_o),

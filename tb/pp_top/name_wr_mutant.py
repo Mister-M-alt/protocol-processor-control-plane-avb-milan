@@ -38,12 +38,13 @@ def main() -> int:
                             ignore=shutil.ignore_patterns("obj*", "*.hex", "__pycache__"))
         engine = tree / "hdl/aecp/KL_aecp_engine.sv"
         original = engine.read_text()
-        connection = "      .name_wr_o         (name_wr_o),"
-        anchor = "  logic [15:0] store_fetch_nc_w, store_rowr_nc_w, store_dlen_nc_w;"
-        assert original.count(connection) == original.count(anchor) == 1
-        mutant = original.replace(connection, "      .name_wr_o         (),")
-        mutant = mutant.replace(anchor, anchor +
-            "\n  assign name_wr_o = txn_valid_i && txn_ready_o && sname_w;")
+        # the export is the store's accepted write, gated off the D3 writer's
+        # bus since the name stage (issues #61, #83); the mutant drives it from
+        # the accepted SET_NAME command decode instead
+        export = "  assign name_wr_o = d3_nchg_w;"
+        assert original.count(export) == 1
+        mutant = original.replace(
+            export, "  assign name_wr_o = txn_valid_i && txn_ready_o && sname_w;")
         for name, source in (("golden", original), ("decode", mutant),
                              ("restored", original)):
             engine.write_text(source)
