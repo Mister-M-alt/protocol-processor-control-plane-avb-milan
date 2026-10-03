@@ -294,6 +294,7 @@ struct Harness {
   long erase_after_read = -1;      // ...and the READ completion before it
   int writes_in_drain = 0;         // ERASE/WRITE accepted while draining
   int aborts = 0;
+  int port_deadlines = 0;          // the manager's err with the port's cause DEADLINE
   int drain_leaks = 0;             // cycles a drained read reached the manager
   // a device that ends the next READ of a region with done after N bytes
   int short_region = -1;
@@ -762,6 +763,7 @@ struct Harness {
     }
     if (d->lsn_disc_arm_o) arm_cyc.push_back(cycles);
     if (d->mgr_abort_o) { ++aborts; if (abort_cyc < 0) abort_cyc = cycles; }
+    if (d->mgr_err_o && d->mgr_err_cause_o == 3) ++port_deadlines;
     if (d->dev_rvalid_i && d->dev_rready_o && dev_first_rd < 0) dev_first_rd = cycles;
     if (d->mgr_rvalid_o && mgr_first_rd < 0) mgr_first_rd = cycles;
     wd_max = std::max(wd_max, long(d->mgr_wd_o));
@@ -851,7 +853,7 @@ struct Harness {
     tk_pops.clear(); tk_takes.clear(); tk_mismatch = 0;
     hold_region = -1; hold_mode = 0; hold_n = 0; hold_cur = false;
     hold_rel = false; dev_first_rd = mgr_first_rd = -1;
-    hold_done_cyc = -1; abort_cyc = -1; aborts = 0; drain_leaks = 0;
+    hold_done_cyc = -1; abort_cyc = -1; aborts = 0; drain_leaks = 0; port_deadlines = 0;
     drain_on = drain_off = -1; drain_bytes = 0;
     wd_max = 0; last_read_done = first_erase = erase_after_read = -1;
     writes_in_drain = 0;
@@ -958,6 +960,8 @@ struct Harness {
   void check_n10_an_abort_in_the_issue_cycle();
   void m1_op(int rid, bool we, const std::vector<uint8_t>& bytes);
   void check_n11_the_arbiters_own_contract();
+  void check_n12_the_ports_deadline();
+  void check_r_a_reset_mid_flush();
   void check_l_reset_boundaries();
   int report();
   int run_suite();
@@ -2723,12 +2727,195 @@ void Harness::check_n11_the_arbiters_own_contract() {
   }
 }
 
+// ======================================================== R: a reset mid-flush
+// Issue #18, the manager's half (tb/nvm_port T25 is the port's). A power cut
+// in the middle of a commit leaves the record being written torn: erased, or
+// a header and part of a payload. The port forwards a torn record whose
+// header survived WHOLE, since it gates only magic and length; the binding
+// manager refuses it on the crc16 (`rrec_ok_w`) and gives that sink its vendor
+// default, while the walk completes and restores every other record. Cut on
+// the bus at two stages of sink 3's flush, after a boot that restored three
+// saved bindings, then the next boot's walk is graded whole.
+void Harness::check_r_a_reset_mid_flush() {
+  struct C {
+    const char* tag;
+    bool in_write;   // false: the ERASE granted and not done; true: the WRITE cut
+  };
+  const std::vector<C> cs = {
+    {"R1 a power cut with sink 3's ERASE granted and not done", false},
+    {"R2 a power cut 12 bytes into sink 3's WRITE", true},
+  };
+  const Bind b3{true, false, false, 0x0A03, 0x00A3A3A3A3A30003ull,
+                0x00C0C0C0C0C00003ull};
+  const Bind n3{true, true, false, 0x0D03, 0x00D3D3D3D3D30003ull,
+                0x00C0C0C0C0C00009ull};
+  for (const C& c : cs) {
+    std::string why;
+    l_seed({{0, L_B0}, {3, b3}, {L_LAST, L_B7}});
+    l_boot();
+    l_finish();
+    CHECK(l_walk_ok(why), "%s: the first boot restores all three: %s", c.tag, why.c_str());
+    // a live change of sink 3, cut on the bus during its flush
+    op_delay = c.in_write ? 2 : 200;
+    const size_t ops0 = ops.size();
+    inject(3, n3, 0x63);
+    const bool reached = run_until([&] {
+      if (ops.size() <= ops0) return false;
+      const DevOp& o = ops.back();
+      if (o.region != REC_BASE + 3) return false;
+      return c.in_write ? (o.op == OP_WRITE && d_st == 1 && d_bytes == 12)
+                        : (o.op == OP_ERASE && d_busy && done_ctr == 100);
+    }, 5000);
+    op_delay = 2;
+    CHECK(reached && !d->alarm_o,
+          "%s: the cut was reached on the bus, the flush still in flight", c.tag);
+    // the power cut: port, manager, listener and device lose it; the array
+    // keeps what the device committed
+    l_saved[3] = Bind{};
+    l_push(M_GETRX_CMD, 3, 0xF30, 0);
+    l_boot(true);
+    l_finish();
+    CHECK(l_walk_ok(why) && d->restore_cause_o == 0 && !d->restore_blank_o,
+          "%s: the next walk completes, not failed, and restores sinks 0 and 7 "
+          "as saved: %s", c.tag, why.c_str());
+    const int reads3 = count_ops(OP_READ, REC_BASE + 3);
+    CHECK(c.in_write ? reads3 == 2 : reads3 == 1,
+          "%s: the torn record was %s (%d READs of it)", c.tag,
+          c.in_write ? "forwarded whole by the port, header then payload, and "
+                       "refused by the manager's crc16"
+                     : "an erased region, refused at its header", reads3);
+    const auto g = l_resps(M_GETRX_RSP);
+    CHECK(g.size() == 1
+              && g[0].b == acmpdu(M_GETRX_RSP, 0, L_CTLR, 0, 0, 3, 0, 0xF30, 0),
+          "%s: sink 3 answers its vendor default", c.tag);
+    // ...and the change made again persists
+    inject(3, n3, 0x64);
+    l_finish();
+    Bind want[N_SINKS];
+    want[0] = L_B0; want[3] = n3; want[L_LAST] = L_B7;
+    CHECK(l_nvm_is(3, n3) && l_round_trip(want, why),
+          "%s: the change made again persists, and a reset restores all three: %s",
+          c.tag, why.c_str());
+  }
+}
+
+#ifdef ACMP_NVM_PORT_DEADLINE
+// ======================================================== N12: the port's deadline
+// The suite's SECOND build (Makefile): the port's own deadline,
+// MEM_TIMEOUT_CYC_P, set to PORT_TMO, below the walk's RS_TMO, so a device
+// that goes silent is answered by the PORT -- one err, cause DEADLINE,
+// nothing forwarded -- before the walk would abandon the read. Issue #20 for
+// that third zero-byte err: like DEVICE it fails the whole walk (cause 2),
+// and it never reads as an empty region. Then the parent's amended saved-
+// state contract (the ruling on issue #15): a later change is attempted three
+// times, each ended by the port's DEADLINE with no device command, then
+// alarm_o rises and the change's pending bit drops; and once the device ends
+// the abandoned read, a later change persists.
+constexpr long PORT_TMO = ACMP_NVM_PORT_TMO;    // -GPORT_TMO_CYC_P
+
+void Harness::check_n12_the_ports_deadline() {
+  std::string why;
+  {
+    const char* tag = "N12a a record read the device never answers, the port's "
+                      "deadline before the walk's";
+    l_seed({{0, L_B0}, {L_LAST, L_B7}});
+    reset();
+    hold_region = REC_BASE + 3;
+    hold_mode = 3;
+    go();
+    const long t0 = cycles;
+    run_until([&] { return rel_cyc >= 0; }, 4 * RS_TMO);
+    CHECK(n_failed_walk(2, why) && port_deadlines == 1 && aborts == 0,
+          "%s: the port answers DEADLINE with nothing forwarded and the WHOLE walk "
+          "fails with cause 2, a device that failed, never an empty record "
+          "(%d port deadlines, %d aborts): %s", tag, port_deadlines, aborts, why.c_str());
+    CHECK(done_cyc >= 0 && done_cyc - t0 > PORT_TMO && done_cyc - t0 < RS_TMO,
+          "%s: after the port's deadline and before the walk's (%ld cycles)", tag,
+          done_cyc - t0);
+    l_push(M_GETRX_CMD, L_LAST, 0xF10, cycles);
+    l_finish();
+    const auto g = l_resps(M_GETRX_RSP);
+    CHECK(g.size() == 1 && g[0].b == acmpdu(M_GETRX_RSP, 0, L_CTLR, 0, 0,
+                                            uint16_t(L_LAST), 0, 0xF10, 0),
+          "%s: the listener answers on the vendor default", tag);
+    // N12b: the abandoned read is still owed, so a later change cannot be
+    // issued; the port ends each attempt at its deadline
+    const char* tagb = "N12b a later change while the read is still owed";
+    const Bind n2{true, true, false, 0x22, 0x2222222233333333ull, CTL2};
+    const int dl0 = port_deadlines;
+    inject(2, n2, 0x61);
+    CHECK(((d->dbg_dirty_o >> 2) & 1) != 0, "%s: the change is pending", tagb);
+    const bool alarmed = run_until([&] { return d->alarm_o != 0; },
+                                   DEB_TICKS * 3 + 4 * (int(PORT_TMO) + 1000));
+    CHECK(alarmed && port_deadlines - dl0 == 3 && count_ops(OP_ERASE) == 0
+              && count_ops(OP_WRITE) == 0 && ((d->dbg_dirty_o >> 2) & 1) == 0,
+          "%s: three attempts, each ended by the port's DEADLINE with no device "
+          "command, then alarm_o, and the pending bit dropped with it (%d "
+          "deadlines, alarm %u)", tagb, port_deadlines - dl0, unsigned(d->alarm_o));
+    // N12c: the device ends the abandoned read; the port drains its bytes,
+    // owes nothing, and the next change persists (the alarm stays set: E11)
+    const char* tagc = "N12c the device ends the abandoned read";
+    hold_rel = true;
+    run_until([&] { return !d_busy && d_st == 0; }, 1000);
+    run(20);
+    const Bind n2b{true, false, true, 0x23, 0x2222222244444444ull, CTL2};
+    inject(2, n2b, 0x62);
+    l_finish();
+    CHECK(l_nvm_is(2, n2b) && count_ops(OP_ERASE, REC_BASE + 2) == 1
+              && count_ops(OP_WRITE, REC_BASE + 2) == 1 && d->alarm_o
+              && drain_leaks == 0,
+          "%s: its bytes drained to no manager, and a later change persists "
+          "byte-exact with the alarm still set", tagc);
+  }
+  {
+    const char* tag = "N12d a device face that never grants, the port's deadline "
+                      "before the walk's";
+    reset();
+    gnt_delay = 1 << 30;
+    go();
+    run_until([&] { return rel_cyc >= 0; }, 4 * RS_TMO);
+    CHECK(n_failed_walk(2, why) && port_deadlines == 1 && aborts == 0
+              && count_ops(OP_READ) == 0,
+          "%s: the port answers its one request DEADLINE and the walk fails "
+          "whole with cause 2: %s", tag, why.c_str());
+    gnt_delay = 1;
+  }
+  {
+    const char* tag = "N12e an erased device face under the port's deadline";
+    for (int k = 0; k < N_SINKS; ++k) memset(store[k], 0xFF, REG_BYTES);
+    l_boot();
+    l_finish();
+    CHECK(d->restore_done_o && !d->restore_fail_o && d->restore_cause_o == 0
+              && d->restore_blank_o && !d->alarm_o && port_deadlines == 0
+              && count_ops(OP_READ) == N_SINKS,
+          "%s: the blank first boot is unchanged: done, not failed, blank, no "
+          "alarm, no deadline", tag);
+  }
+}
+#endif
+
+//! Each of the suite's two builds prints its own tally and adds it to
+//! obj_dir/build_tally.txt; the Makefile prints the sum last, which is the
+//! line run_suites.sh reads.
 int Harness::report() {
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
+  FILE* acc = fopen("obj_dir/build_tally.txt", "a");
+  if (acc == nullptr) {
+    printf("FAIL: this build's tally cannot be recorded for the Makefile\n");
+    return 1;
+  }
+  fprintf(acc, "%d %d\n", checks, fails);
+  fclose(acc);
   return fails ? 1 : 0;
 }
 
 int Harness::run_suite() {
+#ifdef ACMP_NVM_PORT_DEADLINE
+  // the second build: the blank first boot, then group N12
+  check_empty_boot_reports_blank();
+  check_n12_the_ports_deadline();
+  return report();
+#endif
   check_empty_boot_reports_blank();
   check_capture_debounce_and_write_through();
   check_volatile_only_churn_costs_no_traffic();
@@ -2760,6 +2947,7 @@ int Harness::run_suite() {
   check_n9_an_unwired_device_face();
   check_n10_an_abort_in_the_issue_cycle();
   check_n11_the_arbiters_own_contract();
+  check_r_a_reset_mid_flush();
   return report();
 }
 

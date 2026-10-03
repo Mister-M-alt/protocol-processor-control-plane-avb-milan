@@ -25,11 +25,24 @@ SRCS = $(HDL)/common/pp_pkg.sv $(HDL)/acmp/pp_acmp_pkg.sv \
        acmp_nvm_wrap.sv
 CPP  = sim_main.cpp
 
+# The second build sets the port's own deadline below the walk's and runs
+# the blank first boot and group N12 alone (README). Each binary prints its
+# own tally and adds it to obj_dir/build_tally.txt; the last line is the sum.
+PORT_TMO = 1000
+
 run: ltn_rom.hex
+	@mkdir -p obj_dir && rm -f obj_dir/build_tally.txt
 	$(VERILATOR) $(VFLAGS) $(SRCS) $(CPP) -o Vacmp_nvm_sim
 	./obj_dir/Vacmp_nvm_sim
+	$(VERILATOR) $(VFLAGS) -GPORT_TMO_CYC_P=$(PORT_TMO) +define+ACMP_NVM_PORT_DEADLINE \
+	    -CFLAGS "-DACMP_NVM_PORT_DEADLINE -DACMP_NVM_PORT_TMO=$(PORT_TMO) -Wall -Wextra" \
+	    --Mdir obj_dl $(SRCS) $(CPP) -o Vacmp_nvm_dl
+	./obj_dl/Vacmp_nvm_dl
+	@awk '{c += $$1; f += $$2} END {if (NR != 2) {print "FAIL: " NR " build tallies, expected 2"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f; exit (f != 0)}' \
+	    obj_dir/build_tally.txt
 
 pinned: ltn_rom.hex
+	@mkdir -p obj_dir
 	$(VERILATOR) $(VFLAGS) +define+ACMP_NVM_PINNED_WIRING \
 	    -CFLAGS "-DACMP_NVM_PINNED_WIRING -Wall -Wextra" --Mdir obj_pinned \
 	    $(SRCS) $(CPP) -o Vacmp_nvm_pinned
@@ -39,6 +52,6 @@ ltn_rom.hex: $(HDL)/acmp/rom/gen_ltn_rom.py
 	python3 $< -o $@
 
 clean:
-	rm -rf obj_dir obj_pinned ltn_rom.hex
+	rm -rf obj_dir obj_dl obj_pinned ltn_rom.hex
 
 .PHONY: run pinned clean
