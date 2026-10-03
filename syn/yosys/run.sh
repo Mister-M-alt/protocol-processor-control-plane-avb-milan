@@ -163,23 +163,27 @@ sv2v $(find hdl -name '*_pkg.sv' | sort) $(find hdl -name '*.sv' ! -name '*_pkg.
 # text: sv2v writes each module as `module NAME` at the start of a line however
 # its source lays the header out, so a header split across lines is counted. It
 # keeps a lifetime keyword (`module automatic NAME`), so the name is the last word.
-declared="$(grep -oE '^module[[:space:]]+((automatic|static)[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*' \
-              "$work/all.v" | awk '{print $NF}' | sort -u)"
-missing="$(comm -23 <(printf '%s\n' "$declared") \
+census() {
+  local declared missing stale
+  declared="$(grep -oE '^module[[:space:]]+((automatic|static)[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*' \
+                "$work/all.v" | awk '{print $NF}' | sort -u)"
+  missing="$(comm -23 <(printf '%s\n' "$declared") \
+                      <(printf '%s\n' "${tops[@]}" | sort -u))"
+  if [ -n "$missing" ]; then
+    echo "modules declared under hdl/ with no entry in the tops array:" >&2
+    sed 's/^/  /' <<<"$missing" >&2
+    echo "extend tops (hdl/README rule 2) - the array is the authoritative list" >&2
+    exit 1
+  fi
+  stale="$(comm -13 <(printf '%s\n' "$declared") \
                     <(printf '%s\n' "${tops[@]}" | sort -u))"
-if [ -n "$missing" ]; then
-  echo "modules declared under hdl/ with no entry in the tops array:" >&2
-  printf '  %s\n' $missing >&2
-  echo "extend tops (hdl/README rule 2) - the array is the authoritative list" >&2
-  exit 1
-fi
-stale="$(comm -13 <(printf '%s\n' "$declared") \
-                  <(printf '%s\n' "${tops[@]}" | sort -u))"
-if [ -n "$stale" ]; then
-  echo "tops array names modules that no longer exist under hdl/:" >&2
-  printf '  %s\n' $stale >&2
-  exit 1
-fi
+  if [ -n "$stale" ]; then
+    echo "tops array names modules that no longer exist under hdl/:" >&2
+    sed 's/^/  /' <<<"$stale" >&2
+    exit 1
+  fi
+}
+census
 
 ( cd hdl/aecp/ucode && python3 gen_ucode.py -o "$work/ucode.hex" >/dev/null )
 ( cd hdl/acmp/rom && python3 gen_ltn_rom.py -o "$work/ltn_rom.hex" >/dev/null 2>&1 || python3 gen_ltn_rom.py > /dev/null; cp ltn_rom.hex "$work/" 2>/dev/null || true )
@@ -242,34 +246,38 @@ parse_site() {
                  END { sub(/[^A-Za-z0-9_].*/, "", m); if (m != "") print m }' all.v
 }
 
-fail=0; parses=0; todo=("${tops[@]}")
-while [ "${#todo[@]}" -gt 0 ]; do
-  parses=$((parses + 1))
-  gate_script "${todo[@]}" > gate.ys
-  yrc=0; yosys -q -s gate.ys > gate.log 2>&1 || yrc=$?
-  why="$(grep -m1 'ERROR' gate.log)" || why="yosys exited $yrc with no ERROR line"
-  run=("${todo[@]}"); todo=(); red=0
-  for i in "${!run[@]}"; do
-    t="${run[$i]}"
-    if grep -qxF "@@ok $t" gate.log; then
-      echo "YOSYS OK  $t"
-    elif grep -qxF "@@begin $t" gate.log; then
-      echo "YOSYS FAIL $t: $why"
-      red=1; todo=("${run[@]:i+1}"); break
-    else
-      # Not even this top began, so the parse itself failed and no top is proven.
-      site="$(parse_site "$why")"
-      echo "YOSYS FAIL all.v${site:+ in module $site}: $why"
-      printf 'YOSYS FAIL %s: not elaborated, the parse failed\n' "${run[@]:i}"
-      red=1; break
-    fi
+elaborate_tops() {
+  local fail=0 parses=0 red yrc why i t site
+  local -a todo=("${tops[@]}") run=()
+  while [ "${#todo[@]}" -gt 0 ]; do
+    parses=$((parses + 1))
+    gate_script "${todo[@]}" > gate.ys
+    yrc=0; yosys -q -s gate.ys > gate.log 2>&1 || yrc=$?
+    why="$(grep -m1 'ERROR' gate.log)" || why="yosys exited $yrc with no ERROR line"
+    run=("${todo[@]}"); todo=(); red=0
+    for i in "${!run[@]}"; do
+      t="${run[$i]}"
+      if grep -qxF "@@ok $t" gate.log; then
+        echo "YOSYS OK  $t"
+      elif grep -qxF "@@begin $t" gate.log; then
+        echo "YOSYS FAIL $t: $why"
+        red=1; todo=("${run[@]:i+1}"); break
+      else
+        # Not even this top began, so the parse itself failed and no top is proven.
+        site="$(parse_site "$why")"
+        echo "YOSYS FAIL all.v${site:+ in module $site}: $why"
+        printf 'YOSYS FAIL %s: not elaborated, the parse failed\n' "${run[@]:i}"
+        red=1; break
+      fi
+    done
+    [ "$red" -eq 1 ] || [ "$yrc" -eq 0 ] || {
+      echo "YOSYS FAIL every top passed, but yosys exited $yrc: $why"; red=1; }
+    [ "$red" -eq 0 ] || fail=1
   done
-  [ "$red" -eq 1 ] || [ "$yrc" -eq 0 ] || {
-    echo "YOSYS FAIL every top passed, but yosys exited $yrc: $why"; red=1; }
-  [ "$red" -eq 0 ] || fail=1
-done
-echo "YOSYS ${#tops[@]} tops, all.v parsed $parses time(s)"
-[ "$fail" -eq 0 ] || exit 1
+  echo "YOSYS ${#tops[@]} tops, all.v parsed $parses time(s)"
+  [ "$fail" -eq 0 ] || exit 1
+}
+elaborate_tops
 
 # Elaboration alone does not prove that inferred memories map onto the target
 # FPGA. KL_aecp_engine contains the largest mixed-control RAM in this block, so
