@@ -6,8 +6,8 @@
 # and no run ever elaborated them, `protocol_processor_top` among them (#25).
 # `pipefail` completes the trio. It reaches the `find | sort` pairs on the sv2v
 # line and the census's `grep | awk | sort`, each of which must succeed for its
-# line to mean anything; the yosys verdicts are read from status files and
-# AND-OR lists that `set -e` deliberately leaves alone.
+# line to mean anything; the yosys verdicts are read from the markers in
+# gate.log and AND-OR lists that `set -e` deliberately leaves alone.
 set -euo pipefail
 
 # ---------------------------------------------------------------------------

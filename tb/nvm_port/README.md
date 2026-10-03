@@ -103,7 +103,7 @@ serialises it (`:482-483`), accumulates it (`:775`) and gates the record on it
 (`rrec_ok_w`, `:391-395`), with the per-record vendor-default policy at
 `:90-92`; the D3 writer gates its records the same way (`frame_ok_w`,
 `hdl/aecp/KL_aecp_nvm_writer.sv:482-485`). The shadow is
-instantiated at `hdl/top/protocol_processor_top.sv:2714` and pinned by
+instantiated at `hdl/top/protocol_processor_top.sv:2726` and pinned by
 `tb/acmp_nvm`. An earlier revision of this file said nothing implemented it,
 which was wrong and is the third time this file has asserted an absence without
 checking for the presence. It is NOT
@@ -404,13 +404,13 @@ fail first; the rest of each count is that containment.
 - **C2** the cause collapsed to DEVICE (the refusal records DEVICE): **fails 7 of 393**, the UNFRAMED cases of T23 and T26, and T25c, whose refused branch must read UNFRAMED.
 - **C3** the cause collapsed to UNFRAMED (every active state records UNFRAMED): **fails 23 of 393**, every DEVICE case: T7-T9, T15-T18, T23a-f, T27, RW5 and RW6.
 - **C4** the cause published without its err gate: **fails 1 of 393**, T23k.
-- **M1** commit skips the ERASE: the transition INTO `S_WEREQ` (`:366`)
+- **M1** commit skips the ERASE: the transition INTO `S_WEREQ` (`:376`)
   rewritten to `S_WWREQ`, so no ERASE is ever issued. **Fails 71 of 393**
   (op-log shape, erase pulse/visibility, erase-error path, and the T24, T25,
   T28 and T30 arms that name the ERASE).
   The description used to read "`S_WEREQ` target rewritten", which is ambiguous
   and the two readings differ enormously: rewriting what `S_WEREQ` itself
-  transitions to (`:380`), so the ERASE is REQUESTED but never awaited, **fails
+  transitions to (`:390`), so the ERASE is REQUESTED but never awaited, **fails
   36 of 393**. That sibling was a real coverage gap at the older suite's size,
   recorded as one rather than hidden by the ambiguity; the unsolicited,
   coincident, deadline and reset phases have since closed it, because a WRITE

@@ -1440,7 +1440,7 @@ void NvmPortSuite::read_completion_window_errors_report_err() {
 // `done_seen_r` is sticky so a `done` landing on the same edge as a pump's
 // last byte is not lost (KL_pp_nvm_port.sv:350-354). The set is gated on
 // owning the command it completes -- from the grant handshake to the wait
-// state that consumes it (`dev_cmd_owned_w`, :234-245). Ungated, a stray
+// state that consumes it (`dev_cmd_owned_w`, :244-255). Ungated, a stray
 // `done` while the header is still being collected is consumed by `S_WEWAIT`
 // as the ERASE's, and the WRITE goes into a region the backend is still
 // erasing -- reported as `done`, not `err`.
