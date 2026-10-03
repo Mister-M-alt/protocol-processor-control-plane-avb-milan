@@ -1129,6 +1129,10 @@ Verilator 5.050, the CI pin: 5 controls PASS and 55 arms KILLED. Measured
 2026-10-02 at `85da751` with Verilator 5.050, each run pinned to 4 of the host's
 16 CPUs: `--jobs 1` took 1,366 s and `--jobs 8` 1,079 s, and every control and
 arm gave the same verdict and the same failing checks in both, the counts below.
+Re-run 2026-10-03 at the head of lane P1 (issues #61, #83), the 27 `hazards` arms
+only, because that lane made HZ9 let its name saves drain: the control PASS and all
+27 KILLED. Three rows carry that run's counts, because under them a misplaced HZ9
+SET_NAME's save holds dispatch behind HZ11's held LOCK_ENTITY.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|
@@ -1167,15 +1171,15 @@ arm gave the same verdict and the same failing checks in both, the counts below.
 | `hz-clock-as-ro` | pp_top `hazards` | CLOCK_CFG classified RO_SNAPSHOT | 6: HZ1 x2, HZ12a x4 |
 | `hz-clock-as-lock` | pp_top `hazards` | CLOCK_CFG classified LOCK_OP (over-serialized) | 3: HZ1 x2, HZ8 |
 | `hz-clock-key-none`, `-talker` | pp_top `hazards` | CLOCK_CFG keyed by nothing | 6: HZ1 x2, HZ12a x4; named on STREAM_INPUT 1 and on the talker |
-| `hz-name-as-ro` | pp_top `hazards` | NAME_WR classified RO_SNAPSHOT | 8: HZ1, HZ9a x2, HZ9c, HZ9d x2, HZ9f x2 |
+| `hz-name-as-ro` | pp_top `hazards` | NAME_WR classified RO_SNAPSHOT | 9: HZ1, HZ9a x2, HZ9c, HZ9d x2, HZ9f x2, HZ11b (since the name stage: a misplaced HZ9 SET_NAME's save holds dispatch behind HZ11's held LOCK_ENTITY) |
 | `hz-name-as-stream` | pp_top `hazards` | NAME_WR classified STREAM_CFG (over-serialized) | 2: HZ1, HZ9c (it waits for an UNBIND_RX of its sink) |
-| `hz-name-key-none`, `-talker`, `-held` | pp_top `hazards` | NAME_WR keyed by nothing | 7: HZ1, HZ9a x2, HZ9d x2, HZ9f x2; named HZ9a, HZ9d, HZ9f |
+| `hz-name-key-none`, `-talker`, `-held` | pp_top `hazards` | NAME_WR keyed by nothing | 8: HZ1, HZ9a x2, HZ9d x2, HZ9f x2, HZ11b (as above); named HZ9a, HZ9d, HZ9f |
 | `hz-registry-as-ro` | pp_top `hazards` | REGISTRY_OP classified RO_SNAPSHOT | 2: HZ1 |
 | `hz-identify-as-ro` | pp_top `hazards` | IDENTIFY classified RO_SNAPSHOT | 5: HZ1, HZ12b x4 |
 | `hz-identify-key-none`, `-talker` | pp_top `hazards` | IDENTIFY keyed by nothing | 5: HZ1, HZ12b x4; named on STREAM_INPUT 1 and on the talker |
 | `hz-map-as-ro`, `-talker` | pp_top `hazards` | MAP_CFG classified RO_SNAPSHOT, so the cross-lock is lost | 10: HZ1 x2, HZ7 x2, HZ11d x2, HZ12c x4; named HZ7 and HZ11d |
 | `hz-map-key-none`, `-talker` | pp_top `hazards` | MAP_CFG keyed by nothing (the class-wide cross-lock still holds) | 6: HZ1 x2, HZ12c x4; named on STREAM_INPUT 1 and on the talker |
-| `hz-acmp-reads-as-steps` | pp_top `hazards` | ACMP GET_RX/TX_STATE and GET_TX_CONNECTION classified STREAM_CFG | 23: HZ1 x3, HZ4, HZ6 (two reads), and every read of HZ9 to HZ12 |
+| `hz-acmp-reads-as-steps` | pp_top `hazards` | ACMP GET_RX/TX_STATE and GET_TX_CONNECTION classified STREAM_CFG | 26: HZ1 x3, HZ4, HZ6 (two reads), every read of HZ9 to HZ12, and HZ11b's held LOCK_ENTITY, its premise and both arms (as above) |
 | `hz-barrier-no-priority` | pp_top `hazards` | the pending barrier's priority removed from the round-robin | 127: HZ3, then every later arm (the admission port stays wedged) |
 | `hz-foreign-target-classified` | pp_top `hazards` | a command for another entity_id classified by its opcode | 1: HZ1 (CFG_BARRIER for a frame the engine drops) |
 | `hz-response-classified` | pp_top `hazards` | an AECP response arriving as input classified by its opcode | 1: HZ1 |
