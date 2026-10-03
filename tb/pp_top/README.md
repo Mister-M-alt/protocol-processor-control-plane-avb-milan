@@ -1187,7 +1187,10 @@ breaks the [integrator guide §7.1](../../docs/guides/integrator.md#counters-fac
 contract. Recorded 2026-10-03 on this lane's tree with K17 and its four arms:
 control PASS, 17 of 17 KILLED. K17 adds one or two failing checks to eight of the
 first thirteen arms' counts (its checks see their broken push or counts); no other
-check moved.
+check moved. Measured 2026-10-03 at `274b424` with Verilator 5.050, each run pinned
+to 4 of the host's 16 CPUs: `--jobs 1` took 940 s and `--jobs 8` 699 s, and the two
+printed the same record byte for byte: every control and arm the same verdict and
+the same failing checks, the counts below.
 
 | Arm | What is broken | Failing checks |
 |---|---|---|
