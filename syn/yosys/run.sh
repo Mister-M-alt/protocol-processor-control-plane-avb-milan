@@ -149,13 +149,22 @@ tops=(KL_aecp_desc_mem_guard KL_aecp_ucpu KL_aecp_desc_store KL_aecp_dyn_state K
       KL_acmp_nvm_shadow KL_mrp_strip KL_pp_dispatch_fifo KL_srp_admission
       KL_srp_top protocol_processor_top)
 
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+# The two substitutions below are split on purpose - sv2v takes one file per
+# word - and stay on one line, which is the form Rule 9 kept for source lists.
+sv2v $(find hdl -name '*_pkg.sv' | sort) $(find hdl -name '*.sv' ! -name '*_pkg.sv' | sort) > "$work/all.v"  # shellcheck disable=SC2086 # deliberate word split of two source lists
+
 # THE ARRAY IS ONLY AUTHORITATIVE IF SOMETHING ENFORCES IT. Declared modules are
 # read from the sources, never from a second hand-written list, so the two
 # cannot drift the way they already had: the union of what `hierarchy -top`
 # reached over the previous 32 entries was exactly those 32, so the six missing
-# modules were not covered transitively either.
-declared="$(grep -rhoE '^[[:space:]]*module[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' \
-              hdl --include='*.sv' | awk '{print $2}' | sort -u)"
+# modules were not covered transitively either. They are read from all.v, the
+# sv2v lowering of every source that yosys reads below, and not from the .sv
+# text: sv2v writes each module as `module NAME` at the start of a line however
+# its source lays the header out, so a header split across lines is counted. It
+# keeps a lifetime keyword (`module automatic NAME`), so the name is the last word.
+declared="$(grep -oE '^module[[:space:]]+((automatic|static)[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*' \
+              "$work/all.v" | awk '{print $NF}' | sort -u)"
 missing="$(comm -23 <(printf '%s\n' "$declared") \
                     <(printf '%s\n' "${tops[@]}" | sort -u))"
 if [ -n "$missing" ]; then
@@ -172,10 +181,6 @@ if [ -n "$stale" ]; then
   exit 1
 fi
 
-work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
-# The two substitutions below are split on purpose - sv2v takes one file per
-# word - and stay on one line, which is the form Rule 9 kept for source lists.
-sv2v $(find hdl -name '*_pkg.sv' | sort) $(find hdl -name '*.sv' ! -name '*_pkg.sv' | sort) > "$work/all.v"  # shellcheck disable=SC2086 # deliberate word split of two source lists
 ( cd hdl/aecp/ucode && python3 gen_ucode.py -o "$work/ucode.hex" >/dev/null )
 ( cd hdl/acmp/rom && python3 gen_ltn_rom.py -o "$work/ltn_rom.hex" >/dev/null 2>&1 || python3 gen_ltn_rom.py > /dev/null; cp ltn_rom.hex "$work/" 2>/dev/null || true )
 cd "$work"
