@@ -14,8 +14,10 @@ The controls cover the notification lane (processor issues #54, #58, #80, #86):
 the identify sequencer in the third build of tb/pp_top (section ID), its one-tick
 timer margins in the second build of tb/aecp_notify (section FT, the full
 timebase), the parameter's default (section ID0), the command-class pushes (NP),
-the STORM and RND sections (ST, RN), and the originator's seeded inflight session
-(tb/originator section R). The suite READMEs carry the matching mutation records.
+the STORM and RND sections (ST, RN), the originator's seeded inflight session
+(tb/originator section R), and the registry's identity index in the first build of
+tb/aecp_notify (section IX, issue #232). The suite READMEs carry the matching
+mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
                                            [--only NAME ...]
@@ -52,6 +54,7 @@ IDENT_OFF = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", 
 NOTIFY = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--notify-only"))
 ORIGIN = Suite("tb/originator", (), ("make", "run"))
 TIMEBASE = Suite("tb/aecp_notify", (), ("make", "identify"))
+INDEX = Suite("tb/aecp_notify", (), ("make", "run"))
 
 NTFY = "hdl/aecp/KL_aecp_notify.sv"
 ENGINE = "hdl/aecp/KL_aecp_engine.sv"
@@ -258,7 +261,28 @@ INFLIGHT = (
         ("R: a seeded session",)),
 )
 
-MUTANTS = IDENTIFY + PUSHES + STORM_RND + INFLIGHT
+# the registry's identity index (issue #232), graded by tb/aecp_notify section IX
+IX_WRITE = "        if (ix_busy_w && (wr_ix_r == CIX_W_C'(i)))\n"
+IX_MATCH = ("                        && ((ix_busy_w && (wr_ix_r == CIX_W_C'(i))) ? ix_own_w\n"
+            "                                                                     : ix_hit_w[i]);\n")
+
+IDENTITY_INDEX = (
+    Mutant("ix_old_identity_kept", INDEX, (
+        (NTFY, IX_WRITE, IX_WRITE.replace("ix_busy_w", "ix_set_r")),),
+        ("IX1:",)),
+    Mutant("ix_new_identity_unset", INDEX, (
+        (NTFY, "      ix_set_r        <= ix_clr_r;\n", "      ix_set_r        <= 1'b0;\n"),),
+        ("IX3:",)),
+    Mutant("ix_last_chunk_ignored", INDEX, (
+        (NTFY, "    assign ix_hit_w[i] = &ch_w;\n",
+         "    assign ix_hit_w[i] = &ch_w[N_IXC_C-2:0];\n"),),
+        ("IX2:",)),
+    Mutant("ix_rewrite_unmatched", INDEX, (
+        (NTFY, IX_MATCH, "                        && ix_hit_w[i];\n"),),
+        ("IX4:",)),
+)
+
+MUTANTS = IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"

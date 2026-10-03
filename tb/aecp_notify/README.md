@@ -8,7 +8,7 @@ The suite registers a TIME_LIMITED controller, starts its availability probe,
 expires the registry row while that probe is active, and requires a targeted
 cancellation before the row is cleared. It then reuses the same row for a
 different controller and verifies that the next probe carries only the new
-Entity ID and MAC tuple.
+Entity ID and MAC tuple. Section IX then grades the registry's identity index.
 
 Run `make`. Exit status zero and the printed check tally are required.
 
@@ -16,7 +16,7 @@ Run `make`. Exit status zero and the printed check tally are required.
 
 | Build | Override | Runs |
 |---|---|---|
-| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks) |
+| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (6 checks) |
 | `obj_idn/Vaecp_notify_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`AECP_NOTIFY_IDENT`) | section FT alone |
 
 Each binary prints its own build's count, and the Makefile prints the one
@@ -57,3 +57,34 @@ Mutation record (planted by `tb/pp_top/notify_mutants.py`, which runs
 |---|---|---|
 | `ident_burst_deadline_one_tick_short` | the IDENT-BURST deadline from the departure's own ms (`+ 1` dropped) | 1: FT2 (14,900,004 clocks) |
 | `ident_t0_same_ms` | t0 the first frame's own ms, not the next boundary | 1: FT4 (99,900,004 clocks) |
+
+## Section IX: the identity index (issue #232)
+
+The availability monitor matches each valid command's {Entity ID, MAC} against
+every registry row in the command's own cycle. `KL_aecp_notify` does that through
+a LUTRAM identity index beside the row table, not a comparator per row (see its
+"identity index" comment). Row 0 holds B, which reused A's row, and B's probe is
+live, so a match on row 0 shows in the same cycle as the probe's cancellation
+(`ca_cancel_valid_o`). The first three checks only evaluate, with no clock edge:
+
+- **IX1** A's command, the row's previous controller, does not match.
+- **IX2** none of the 112 identities one bit from B's matches.
+- **IX3** B's command matches.
+- **IX4a** a second controller, C, registers into row 1.
+- **IX4** two cycles after its REGISTER, while the index rewrites row 1, C's
+  command and a failed probe for row 1 arrive in the same cycle: the command
+  wins, as the block's `ca_fail` arm requires, and the row stays.
+- **IX4b** the same failure alone removes the row.
+
+These checks pass on the comparator-bank form the index replaced as well
+(processor `f4167536`), so they describe behaviour that did not change.
+
+Mutation record (planted by `tb/pp_top/notify_mutants.py`, which runs `make run`
+here; all four KILLED):
+
+| Mutant | Planted | Failing checks |
+|---|---|---|
+| `ix_old_identity_kept` | a row write never clears the old identity | 1: IX1 |
+| `ix_new_identity_unset` | a row write never sets the new identity | 2: IX3, IX4 |
+| `ix_last_chunk_ignored` | the match ignores the last 6-bit chunk | 1: IX2 |
+| `ix_rewrite_unmatched` | the two rewrite cycles read the index, not the compare | 1: IX4 |

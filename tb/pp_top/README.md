@@ -2084,7 +2084,9 @@ monitor's 30 s floor, so no CONTROLLER_AVAILABLE is due).
 private copy (the `d3_mutants.py` rules: exact edits, goldens first, KILLED only
 with a completed run, a non-zero exit and every named check failing). Results at
 the lane head, 40 of 40 KILLED (the four `ident_*` controls after
-`ident_t0_at_request` are round 2's, and the six after them round 3's):
+`ident_t0_at_request` are round 2's, and the six after them round 3's); issue #232
+adds the four `ix_*` controls of the registry's identity index, graded by
+`tb/aecp_notify` section IX, for 44 of 44:
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2128,6 +2130,10 @@ the lane head, 40 of 40 KILLED (the four `ident_*` controls after
 | `inflight_match_ignores_seq` | the response CAM ignores sequence_id | 7, R among them |
 | `inflight_cancel_keeps_timer` | a cancellation leaves its timer armed | 5, R among them |
 | `inflight_shared_seq` | one sequence counter for every owner | 10, R among them |
+| `ix_old_identity_kept` | a row write never clears the old identity | 1: `tb/aecp_notify` IX1 |
+| `ix_new_identity_unset` | a row write never sets the new identity | 2: `tb/aecp_notify` IX3, IX4 |
+| `ix_last_chunk_ignored` | the match ignores the last 6-bit chunk | 1: `tb/aecp_notify` IX2 |
+| `ix_rewrite_unmatched` | the two rewrite cycles read the index, not the compare | 1: `tb/aecp_notify` IX4 |
 
 RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
 every RND control is killed by the divergence check alone.

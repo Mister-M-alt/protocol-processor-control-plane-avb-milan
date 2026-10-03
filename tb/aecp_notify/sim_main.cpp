@@ -41,6 +41,8 @@ struct Harness {
   int fails = 0;
 
   int run();
+  bool cancels_row0(uint64_t eid, uint64_t mac);
+  void identity_index(uint64_t eid_old, uint64_t mac_old, uint64_t eid, uint64_t mac);
 
   void tick() {
     d->now_ms_i = now;
@@ -204,7 +206,85 @@ int Harness::run() {
   CHECK(wait_probe(EID_B, MAC_B),
         "reused row launches only the new controller tuple");
 
+  identity_index(EID_A, MAC_A, EID_B, MAC_B);
   return fails ? 1 : 0;
+}
+
+// ---- IX: the identity index (issue #232) ------------------------------------
+// The availability monitor matches a command's {eid, mac} against every row in
+// the command's own cycle, through a LUTRAM index rather than a comparator per
+// row. Row 0 holds B, which reused A's row, and B's probe is live, so a match
+// on row 0 shows combinationally as the probe's cancellation (ca_cancel_valid_o).
+// The probes below only evaluate: no clock edge, no state change.
+bool Harness::cancels_row0(uint64_t eid, uint64_t mac) {
+  d->rx_cmd_eid_i = eid;
+  d->rx_cmd_mac_i = mac;
+  d->rx_cmd_valid_i = 1;
+  d->clk_i = 0;
+  d->eval();
+  const bool hit = d->ca_cancel_valid_o && d->ca_cancel_owner_o == 0;
+  d->rx_cmd_valid_i = 0;
+  d->eval();
+  return hit;
+}
+
+void Harness::identity_index(uint64_t eid_old, uint64_t mac_old,
+                             uint64_t eid, uint64_t mac) {
+  CHECK(!cancels_row0(eid_old, mac_old),
+        "IX1: the reused row no longer matches its previous controller");
+  int neighbours = 0;
+  for (int b = 0; b < 112; ++b) {
+    const uint64_t e = b >= 48 ? eid ^ (1ull << (b - 48)) : eid;
+    const uint64_t m = b < 48 ? mac ^ (1ull << b) : mac;
+    if (cancels_row0(e, m)) ++neighbours;
+  }
+  CHECK(neighbours == 0,
+        "IX2: no identity one bit from a registered one matches (%d of 112 did)",
+        neighbours);
+  CHECK(cancels_row0(eid, mac),
+        "IX3: the registered identity matches in the command's cycle");
+
+  // A REGISTER rewrites its row's index in the two cycles after the row write.
+  // Two cycles after C claims row 1, C's command must still win against a
+  // failed probe reported in the same cycle (KL_aecp_notify's ca_fail arm),
+  // so the row stays; the same failure alone removes it.
+  const uint64_t EID_C = 0x3333000000000003ull;
+  const uint64_t MAC_C = 0x020000000003ull;
+  d->rgy_state_i = 0;
+  d->rgy_op_i = 0;
+  d->rgy_eid_i = EID_C;
+  d->rgy_mac_i = MAC_C;
+  d->rgy_tl_i = 0;
+  d->rgy_req_i = 1;
+  int guard = 0;
+  while (guard++ < REGISTRY_ACCEPT_CYCLES) {
+    d->clk_i = 0;
+    d->eval();
+    if (!d->rgy_wait_o) break;
+    tick();
+  }
+  CHECK(guard < REGISTRY_ACCEPT_CYCLES && d->rgy_data_o == 0,
+        "IX4a: the registry accepts a second controller");
+  tick();                                   // the row write's own cycle
+  d->rx_cmd_eid_i = EID_C;
+  d->rx_cmd_mac_i = MAC_C;
+  d->rx_cmd_valid_i = 1;
+  d->ca_fail_owner_i = 1;
+  d->ca_fail_valid_i = 1;
+  tick();                                   // the cycle after it
+  d->rx_cmd_valid_i = 0;
+  d->ca_fail_valid_i = 0;
+  d->rgy_req_i = 0;
+  idle(DRAIN_WATCH_CYCLES);
+  CHECK(d->dbg_reg_cnt_o == 2,
+        "IX4: a command two cycles after its REGISTER keeps the row against a "
+        "failed probe in the same cycle");
+  d->ca_fail_owner_i = 1;
+  d->ca_fail_valid_i = 1;
+  tick();
+  d->ca_fail_valid_i = 0;
+  idle(DRAIN_WATCH_CYCLES);
+  CHECK(d->dbg_reg_cnt_o == 1, "IX4b: the same failure alone removes the row");
 }
 
 #else
