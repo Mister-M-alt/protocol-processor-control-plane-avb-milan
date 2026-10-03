@@ -1077,7 +1077,10 @@ copies at once, and the results are printed in the table's order whatever order
 they finish in. Measured 2026-10-02 at `85da751` with Verilator 5.050, each run
 pinned to 4 of the host's 16 CPUs: `--jobs 1` took 1,059 s and `--jobs 8`
 814 s, and every control and arm gave the same verdict and the same failing
-checks in both, the counts below. `aecp-dispatch` runs A5b and M9 on a booted model,
+checks in both. Re-run 2026-10-03 with the three NSD arms (issue #37) at `--jobs 6`,
+330 s: every control and every earlier arm gave the same verdict, and one count moved,
+`lk-sclks-miss-lock-nop`'s, which NSD3 now fails beside LK4; the counts below are that
+run's. `aecp-dispatch` runs A5b and M9 on a booted model,
 then section AX on its own processor (`--aecp-dispatch-only`); `aecp-line`
 runs section AX in the line build; `line-guards` lints the top across the line
 range; `d3` runs section D3, whose D3C arms grade SET_CLOCK_SOURCE over a
@@ -1097,7 +1100,7 @@ failed at the lane head.
 | `lk-ssrate-lock-nop` | E_SSRATE's CHECK_LOCK (E_SSRATE+9) replaced with NOP (issue #53) | `LK1 unset rate row, ...: ENTITY_LOCKED byte-exact` | 9 |
 | `lk-ssrate-miss-lock-nop` | E_SSRATE's locate-miss CHECK_LOCK (SSR_REFUSE) replaced with NOP | `LK4 foreign SET_SAMPLING_RATE on AUDIO_UNIT 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
 | `lk-sclks-lock-nop` | E_SCLKS's CHECK_LOCK (E_SCLKS+9) replaced with NOP | `LK1 unset clock-source row, ...: ENTITY_LOCKED byte-exact` | 9 |
-| `lk-sclks-miss-lock-nop` | E_SCLKS's locate-miss CHECK_LOCK (E_SCLKSRF) replaced with NOP | `LK4 foreign SET_CLOCK_SOURCE on CLOCK_DOMAIN 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
+| `lk-sclks-miss-lock-nop` | E_SCLKS's locate-miss CHECK_LOCK (E_SCLKSRF) replaced with NOP | `LK4 foreign SET_CLOCK_SOURCE on CLOCK_DOMAIN 3 (absent): ENTITY_LOCKED byte-exact` | 2 |
 | `lk-sctrl-lock-nop` | E_SCTRL's CHECK_LOCK (E_SCTRL+4) replaced with NOP | `LK1 IDENTIFY at its reset 0, ...: ENTITY_LOCKED byte-exact` | 12 |
 | `lk-sctrl-miss-lock-nop` | E_SCTRL's locate-miss CHECK_LOCK (E_SCTRL+21) replaced with NOP | `LK4 foreign SET_CONTROL on CONTROL 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
 | `lk-prefix-zero-body` | the microcode generator as it stood at the lane base (`0451d83d`): the lock checked first and refused through the zero-bodied E_LOCKED4/E_LOCKED1 stubs, the issue #53 reproduction | `LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: ENTITY_LOCKED byte-exact` | 7 |
