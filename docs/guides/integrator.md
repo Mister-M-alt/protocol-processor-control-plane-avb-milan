@@ -453,7 +453,7 @@ index; the IEEE offsets are four times it):
 |---|---|---|
 | AVB_INTERFACE (Table 5.13) | `0x00000023`; add `0x04`, `0x08`, `0x10` for the optional FRAMES_TX, FRAMES_RX, RX_CRC_ERROR (Table 5.14) | 0 LINK_UP, 1 LINK_DOWN, 5 GPTP_GM_CHANGED (IEEE Table 7-153 offsets 0, 4, 20) |
 | CLOCK_DOMAIN (Table 5.15) | `0x00000003` | 0 LOCKED, 1 UNLOCKED (Table 7-155) |
-| STREAM_INPUT (Table 5.16), every input of the current configuration, a CRF media-clock input included | `0x00000F3F`, or `0x00000FFF` with the IEEE-only TIMESTAMP_VALID and TIMESTAMP_NOT_VALID | 0 MEDIA_LOCKED, 1 MEDIA_UNLOCKED, 2 STREAM_INTERRUPTED, 3 SEQ_NUM_MISMATCH, 4 MEDIA_RESET, 5 TIMESTAMP_UNCERTAIN, (6, 7), 8 UNSUPPORTED_FORMAT, 9 LATE_TIMESTAMP, 10 EARLY_TIMESTAMP, 11 FRAMES_RX (Table 7-157) |
+| STREAM_INPUT (Table 5.16), every input of the current configuration, a CRF media-clock input included | `0x00000F3F`, or `0x00000FFF` with the IEEE-only TIMESTAMP_VALID and TIMESTAMP_NOT_VALID | 0 MEDIA_LOCKED, 1 MEDIA_UNLOCKED, 2 STREAM_INTERRUPTED, 3 SEQ_NUM_MISMATCH, 4 MEDIA_RESET, 5 TIMESTAMP_UNCERTAIN, 6 TIMESTAMP_VALID and 7 TIMESTAMP_NOT_VALID (with `0x00000FFF` only; zero under `0x00000F3F`), 8 UNSUPPORTED_FORMAT, 9 LATE_TIMESTAMP, 10 EARLY_TIMESTAMP, 11 FRAMES_RX (Table 7-157) |
 | STREAM_OUTPUT (Table 5.17) | `0x0000001F` | 0 STREAM_START, 1 STREAM_STOP, 2 MEDIA_RESET, 3 TIMESTAMP_UNCERTAIN, 4 FRAMES_TX: Milan's compacted layout, **not** IEEE Tables 7-158 and 7-159 ([Δ9](../architecture/01_overview.md#fig-01-deltas)) |
 
 What each counter counts. Every counter is a 32-bit unsigned integer that **wraps** to
@@ -467,6 +467,7 @@ zero past its maximum, never saturating (Milan v1.2 §5.3.6.3, §5.3.7.7, §5.3.
 | LOCKED / UNLOCKED (Table 5.7) | each lock / unlock of the clock domain's media clock, as you define locked | never |
 | MEDIA_LOCKED / MEDIA_UNLOCKED, STREAM_INTERRUPTED (Table 5.6) | each lock / unlock of the input's media clock; each playback interruption that is not a controller unbind | the whole input bank, each time that input goes from not bound to bound (`acmp_bound_o` rising), never on unbind (§5.3.8.10) |
 | SEQ_NUM_MISMATCH, MEDIA_RESET, TIMESTAMP_UNCERTAIN, UNSUPPORTED_FORMAT, LATE_TIMESTAMP, EARLY_TIMESTAMP, FRAMES_RX (Table 5.6) | one at the end of every observation interval in which the event was seen at least once; the interval is yours, at most 1 s (`T-CTR-OBSERVE`) | as the row above |
+| TIMESTAMP_VALID / TIMESTAMP_NOT_VALID (IEEE 1722.1-2021 Tables 7-156 and 7-157; not Milan's, kept only under `0x00000FFF`) | as IEEE Table 7-157 defines them: one for each received stream data AVTPDU with the tv bit set / clear, per frame, not per observation interval | the whole input bank, as the rows above |
 | STREAM_START / STREAM_STOP (Table 5.4) | each start / stop of the talker's stream | never |
 | MEDIA_RESET, TIMESTAMP_UNCERTAIN, FRAMES_TX (Table 5.4) | one at the end of every observation interval, at most 1 s, in which a transmitted AVTPDU toggled mr, set tu, or was sent | each time the talker starts streaming |
 
