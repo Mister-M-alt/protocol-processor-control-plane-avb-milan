@@ -17,9 +17,9 @@ WHAT IT COVERS. Every figure in the README, and the covered set is DERIVED
 rather than asserted: each `N of M` and `N PASS, M FAIL` in the file is a claim
 by default, satisfied only by a measurement here or by an explicit entry in
 WAIVERS whose reason is printed on every clean run. Twelve arm rows plus the arm
-COUNT read from the RTL; ninety-five mutations and probes; ten device-model result
-rows, under each of which the run-wide RW checks must pass by name; and all
-thirty cells of the pre-fix matrix.
+COUNT read from the RTL; one hundred and twenty-six mutations and probes; ten
+device-model result rows, under each of which the run-wide RW checks must pass by
+name; and all thirty cells of the pre-fix matrix.
 
 Three earlier versions each closed a narrower class than they claimed, and the
 progression is the useful part. The first checked only denominators and
@@ -618,7 +618,7 @@ WAIVERS = [
     # correct and is the mechanism working: they are waived by a pattern narrow
     # enough to reach only that sentence, so a real `22 out of 90` anywhere else
     # is still a hard error.
-    (r"`fails 22 of the 356 checks` and `fails\s+22 out of 356`",
+    (r"`fails 22 of the 393 checks` and `fails\s+22 out of 393`",
      "two illustrative phrasings quoted inside the paragraph explaining what "
      "the inverted default does not close; not claims about this suite"),
 ]

@@ -894,6 +894,12 @@ class NvmPortSuite {
   void owed_terminals_are_credited_to_no_operation();
   void owed_events_restart_a_waiting_request();
   void an_owed_read_drains_no_more_than_it_owes();
+  void babble_past_the_length();
+  bool drains_exactly(const std::vector<uint8_t>& f, int owed, int before);
+  bool ended_then_served(const std::vector<uint8_t>& f);
+  void an_abandoned_read_owes_what_did_not_move();
+  void a_late_grant_owes_its_whole_length();
+  void a_long_owed_read_is_drained_whole();
   void a_manager_strobe_never_holds_the_deadline_off();
   void a_paused_or_latched_cycle_is_never_charged();
   void reset_mid_commit_at_six_stages();
@@ -2437,6 +2443,173 @@ void NvmPortSuite::an_owed_read_drains_no_more_than_it_owes() {
   h.deadline_ok = false;
 }
 
+// T28g-k: what an abandoned READ still owes, in every branch of the drain's
+// bound (the port's banner; 02 §8): its length less the bytes that moved
+// before the deadline. T28f pins the payload pump's; these pin the header's
+// collection (g), the wait states (h), a READ granted late (i), a READ still
+// owing more than a byte can count (j) and an owed WRITE (k). In each the
+// device then presents bytes past what is owed, one every TMO / 2 cycles, as
+// T28f's does; a READ abandoned in its wait state has moved every byte and is
+// put back in its data phase to present more.
+void NvmPortSuite::babble_past_the_length() {
+  h.sil_block = false;
+  h.d_cur.len = 1 << 30;
+  h.rstall = TMO / 2;
+  if (h.d_busy && h.d_st == 2) h.d_st = 1;
+}
+
+// A restore issued while the babbling command is owed, run to its answer: one
+// err DEADLINE, TMO + 2 cycles after the last byte drained, no command taken,
+// a byte presented and refused, and `owed` drained in all, `before` of them
+// before the restore was issued.
+bool NvmPortSuite::drains_exactly(const std::vector<uint8_t>& f, int owed, int before) {
+  const bool waited = wait_on_owed(false, f, 0);
+  const int rc = h.run_op();
+  return waited && rc == 1 && h.err_pulses == 1 && h.last_cause == 3 && before + h.dev_rd == owed
+         && h.pulse_gap == TMO + 2 && h.ops.empty() && h.d_rhold;
+}
+
+// The device's own done ends the abandoned READ, and the next restore is
+// served byte-exact with its own two READs.
+bool NvmPortSuite::ended_then_served(const std::vector<uint8_t>& f) {
+  h.rstall = 0;
+  h.end_command_now(/*with_err=*/false);
+  for (int i = 0; i < 4; ++i) h.tick();
+  h.ops.clear();
+  const int rc = h.restore(f[3]);
+  return rc == 0 && h.rbytes == f && h.ops.size() == 2;
+}
+
+// (g) A header READ abandoned in its collection, after 3 of its 8 bytes and
+// after 7, owes the 5 and the 1 that did not move; (h) a READ abandoned in its
+// wait state, the header's and the payload's, every byte moved, owes none.
+// Each arm starts from a reset of its own with region 2 committed again.
+void NvmPortSuite::an_abandoned_read_owes_what_did_not_move() {
+  const std::vector<uint8_t> rec = frame(2, pattern(40, 0x31));
+  auto fresh = [&]() { fresh_reset(); h.deadline_ok = true; return h.commit(2, rec); };
+  for (const int moved : {3, 7}) {
+    CHECK(fresh() == 0, "T28g setup: region 2 committed");
+    const int rc = silenced(false, rec, SIL_BYTE, 0, -1, moved);
+    CHECK(rc == 1 && h.last_cause == 3 && h.d_busy,
+          "T28g setup: a header READ abandoned after %d of its 8 bytes, still owed", moved);
+    babble_past_the_length();
+    CHECK(drains_exactly(rec, 8 - moved, 0),
+          "T28g S_RHCOLL: a header READ abandoned after %d bytes is drained of the %d it still "
+          "owes and no more, and the restore waiting on it ends DEADLINE %ld cycles after the "
+          "last of them (cause %d, %d drained)", moved, 8 - moved, h.pulse_gap, h.last_cause, h.dev_rd);
+    CHECK(ended_then_served(rec),
+          "T28g ...after %d bytes: the device's own done ends the READ, and the next restore is "
+          "served byte-exact", moved);
+  }
+  struct Wait { const char* state; int op; };
+  for (const Wait& w : {Wait{"S_RHWAIT", 0}, Wait{"S_RPWAIT", 1}}) {
+    CHECK(fresh() == 0, "T28h setup: region 2 committed");
+    const int rc = silenced(false, rec, SIL_DONE, w.op, -1);
+    CHECK(rc == 1 && h.last_cause == 3 && h.d_busy,
+          "T28h setup: a READ abandoned in %s, every byte moved and its done withheld", w.state);
+    babble_past_the_length();
+    CHECK(drains_exactly(rec, 0, 0),
+          "T28h %s: a READ whose every byte moved owes none, nothing is drained, and the restore "
+          "waiting on it ends DEADLINE %ld cycles after its accept (cause %d, %d drained)",
+          w.state, h.pulse_gap, h.last_cause, h.dev_rd);
+    CHECK(ended_then_served(rec),
+          "T28h %s: the device's own done ends the READ, and the next restore is served "
+          "byte-exact", w.state);
+  }
+  h.deadline_ok = false;
+}
+
+// (i) A READ the backend granted on the edge its deadline withdrew the request
+// (the late registered grant) owes its whole length: the header's 8 and the
+// payload's 40, a byte of which may move before the next request is issued.
+// (k) A WRITE granted that way owes no read byte at all: a device presenting
+// read bytes for it is not moving, and none is taken. The device's own err
+// then ends the WRITE, as it ends the contained one.
+void NvmPortSuite::a_late_grant_owes_its_whole_length() {
+  const std::vector<uint8_t> rec = frame(2, pattern(40, 0x32));
+  auto fresh = [&]() { fresh_reset(); h.deadline_ok = true; return h.commit(2, rec); };
+  struct Late { const char* what; int op; int owed; };
+  for (const Late& l : {Late{"header", 0, 8}, Late{"payload", 1, 40}}) {
+    CHECK(fresh() == 0, "T28i setup: region 2 committed");
+    h.rstall = TMO / 2;
+    const int rc = silenced(false, rec, SIL_GNT, l.op, TMO + 1);
+    const int before = h.d_bytes;
+    CHECK(rc == 1 && h.last_cause == 3 && h.d_busy && h.late_gnts == 1,
+          "T28i setup: a %s READ granted one cycle after its deadline, still owed (late %d)",
+          l.what, h.late_gnts);
+    babble_past_the_length();
+    CHECK(drains_exactly(rec, l.owed, before),
+          "T28i a %s READ granted late is drained of its whole length, %d, and no more, and the "
+          "restore waiting on it ends DEADLINE %ld cycles after the last byte (cause %d, %d "
+          "drained)", l.what, l.owed, h.pulse_gap, h.last_cause, before + h.dev_rd);
+    CHECK(ended_then_served(rec),
+          "T28i %s: the device's own done ends the READ, and the next restore is served "
+          "byte-exact", l.what);
+  }
+  CHECK(fresh() == 0, "T28k setup: region 2 committed");
+  int rc = silenced(true, rec, SIL_GNT, 1, TMO + 1);
+  CHECK(rc == 1 && h.last_cause == 3 && h.d_busy && h.late_gnts == 1 && h.sent.empty(),
+        "T28k setup: a WRITE granted one cycle after its deadline, no byte sent, still owed");
+  h.d_cur.op = OP_READ;                   // the broken device presents read bytes for it
+  babble_past_the_length();
+  CHECK(drains_exactly(rec, 0, 0),
+        "T28k an owed WRITE owes no read byte: a device presenting read bytes for it is not "
+        "moving, none is taken, and the restore waiting on it ends DEADLINE %ld cycles after "
+        "its accept (cause %d, %d taken)", h.pulse_gap, h.last_cause, h.dev_rd);
+  h.rstall = 0;
+  h.end_command_now(/*with_err=*/true);
+  for (int i = 0; i < 4; ++i) h.tick();
+  h.ops.clear();
+  rc = h.commit(2, rec);
+  const int rc2 = h.restore(2);
+  CHECK(rc == 0 && rc2 == 0 && h.rbytes == rec,
+        "T28k ...the device's own err ends the WRITE, and the next commit and restore are "
+        "served byte-exact (rc %d %d)", rc, rc2);
+  h.deadline_ok = false;
+}
+
+// (j) What is owed is counted as wide as a READ's length: a READ still owing
+// 256 bytes or more is drained whole. A payload READ of 600 bytes abandoned
+// before its 11th byte, owing 590, and one of the largest legal length,
+// MAX_PAYLOAD_P = 1,024, owing all of it, abandoned before its first byte and
+// granted late, are each ended by the device at a legal pace while a restore
+// waits on them, and that restore is then served byte-exact: the device
+// delivers the bytes the READ still owed, then the whole record again. Counted
+// short of the length, the drain stops where its count wraps, the device can
+// never move its next byte, and every request ends DEADLINE until reset.
+void NvmPortSuite::a_long_owed_read_is_drained_whole() {
+  const std::vector<uint8_t> big = frame(2, pattern(600, 0x5A));
+  const std::vector<uint8_t> widest = frame(2, pattern(MAXP, 0x5B));
+  struct LongRead { const char* what; const std::vector<uint8_t>* f; int point; int byte; int quiet; };
+  const LongRead arms[] = {
+    {"a 600-byte payload READ abandoned before its 11th byte", &big, SIL_BYTE, 10, -1},
+    {"a payload READ of the largest legal length abandoned before its first byte", &widest,
+     SIL_BYTE, 0, -1},
+    {"a payload READ of the largest legal length granted late", &widest, SIL_GNT, 0, TMO + 1},
+  };
+  for (const LongRead& a : arms) {
+    const int plen = int(a.f->size()) - 8;
+    fresh_reset();
+    h.deadline_ok = true;
+    CHECK(h.commit(2, *a.f) == 0, "T28j setup: region 2 committed with a %d-byte payload", plen);
+    h.rstall = TMO / 2;                   // a byte at most moves before the restore is issued
+    const int rc = silenced(false, *a.f, a.point, 1, a.quiet, a.byte);
+    const int owed = plen - h.d_bytes;
+    CHECK(rc == 1 && h.last_cause == 3 && h.d_busy && owed >= 256,
+          "T28j setup: %s, %d bytes still owed", a.what, owed);
+    h.sil_block = false;                  // the device takes up where it stopped
+    const bool waited = wait_on_owed(false, *a.f, 0);
+    h.rstall = 0;                         // ...and keeps a legal pace
+    const int rc2 = h.run_op();
+    CHECK(waited && rc2 == 0 && h.rbytes == *a.f && h.ops.size() == 2
+              && h.dev_rd == owed + int(a.f->size()),
+          "T28j %s: the %d bytes it still owed are drained, the device's done ends it, and the "
+          "restore waiting on it is served byte-exact (rc %d, cause %d, %d moved)",
+          a.what, owed, rc2, h.last_cause, h.dev_rd);
+  }
+  h.deadline_ok = false;
+}
+
 // T25's cut points, named on the BUS: tick the commit until the device
 // model reaches the stage (`reset_mid_commit_at_six_stages` lists them).
 bool NvmPortSuite::run_to_stage(int stage, size_t record_bytes) {
@@ -2758,6 +2931,9 @@ int NvmPortSuite::run() {
   owed_terminals_are_credited_to_no_operation();
   owed_events_restart_a_waiting_request();
   an_owed_read_drains_no_more_than_it_owes();
+  an_abandoned_read_owes_what_did_not_move();
+  a_late_grant_owes_its_whole_length();
+  a_long_owed_read_is_drained_whole();
   a_manager_strobe_never_holds_the_deadline_off();
   reset_mid_commit_at_six_stages();
   reset_of_the_port_alone_mid_commit();

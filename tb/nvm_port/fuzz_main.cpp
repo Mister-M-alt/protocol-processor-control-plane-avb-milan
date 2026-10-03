@@ -23,14 +23,21 @@
 //   resume - a command abandoned by a deadline, which the device ends r cycles
 //            into the next request's wait and then keeps legal pace: that
 //            request is served if r <= TMO and ends one err DEADLINE if not.
-//   babble - a payload READ abandoned by a deadline, whose device then
-//            presents its bytes one every TMO / 2 cycles, past its length for
-//            ever, and never ends it: a broken backend. The port takes the
-//            bytes the READ still owed and no more, and the request waiting on
-//            it ends one err DEADLINE.
+//   babble - a READ abandoned by a deadline at any of its bytes or at its
+//            terminal, whose device then presents its bytes one every TMO / 2
+//            cycles, past its length for ever, and never ends it: a broken
+//            backend. The port takes the bytes the READ still owed and no
+//            more, and the request waiting on it ends one err DEADLINE.
 //
-// Each property is ONE named check per build (FZ1 to FZ9), its message
+// Half the records of resume and babble are long, up to 1,024 bytes, and each
+// seed's resume also abandons one READ of the largest payload the port
+// accepts, owing every byte of it, which the Makefile builds at the
+// parameter's largest legal value: what an abandoned READ owes is counted as
+// wide as any READ the port can issue.
+//
+// Each property is ONE named check per build (FZ1 to FZ10), its message
 // carrying the counts, so the tally is the same whatever the seeds draw.
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -44,7 +51,9 @@ namespace {
 
 constexpr int TMO = NVM_PORT_TMO;
 constexpr int kRegions = 8;
-constexpr int kRegBytes = 2048;
+constexpr int kRegBytes = 65536;                 // a record of any legal length
+constexpr int kLongPayload = 1024;               // the top's MAX_PAYLOAD_P: random records stop here
+constexpr int kOpRead = 0;
 constexpr int kOpWrite = 1;
 constexpr int kOpErase = 2;
 constexpr long kGuard = 200L * (TMO + 10) * 80;  // cycles to a pulse, past any legal op
@@ -156,6 +165,12 @@ class PauseFuzz {
   Tally babble_dl;              // FZ9
   long served = 0;
   long refused = 0;
+  int widest = 0;               // the largest payload the port accepts, asked of it
+  long at_header = 0;           // FZ10: READs babble abandoned at a header byte
+  long at_payload = 0;          // ...at a payload byte
+  long at_terminal = 0;         // ...at a terminal, every byte moved
+  long served_long = 0;         // ...and requests resume served behind a READ owing 256 or more
+  long served_widest = 0;       // ...or owing the largest payload the port accepts
 
   int rnd(int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); }
   double u() { return std::uniform_real_distribution<double>(0, 1)(rng); }
@@ -175,10 +190,13 @@ class PauseFuzz {
   void reset_all();
   void start(bool we, uint8_t rec, const std::vector<uint8_t>& f);
   bool finish(long guard);
+  size_t long_payload();
+  int largest_legal_length();
   void one_legal(std::vector<std::vector<uint8_t>>& good);
   void one_silent(std::vector<std::vector<uint8_t>>& good);
   void one_resume(std::vector<std::vector<uint8_t>>& good);
   void one_babble(std::vector<std::vector<uint8_t>>& good);
+  void one_widest(std::vector<std::vector<uint8_t>>& good);
   void begin_run(uint64_t seed);
   int report();
 };
@@ -353,6 +371,38 @@ bool PauseFuzz::finish(long guard) {
   return false;
 }
 
+//! A long payload length: the longest random record, or one drawn up to it.
+size_t PauseFuzz::long_payload() {
+  const int top = std::min(widest, kLongPayload);
+  return size_t(u() < 0.5 ? top : rnd(std::min(25, top), top));
+}
+
+//! The largest payload_length the port accepts, asked of the port itself: a
+//! stored header whose payload_length is past it is refused once its READ
+//! completes (UNFRAMED, the banner's refusal (b)), and one within it is taken
+//! and its payload READ requested. A binary search over the 16-bit field, so
+//! the answer is the build's MAX_PAYLOAD_P whatever the Makefile passed.
+int PauseFuzz::largest_legal_length() {
+  int lo = 0;                   // taken: a payload_length of 0 always is
+  int hi = 65536;               // refused: past the field
+  while (hi - lo > 1) {
+    const int mid = (lo + hi) / 2;
+    const std::vector<uint8_t> f = frame(0, std::vector<uint8_t>(size_t(mid)));
+    reset_all();
+    std::copy(f.begin(), f.begin() + 8, mem[0]);
+    pat = 0;
+    start(false, 0, f);
+    bool taken = false;
+    for (long i = 0; i < kGuard && o.pulse_at < 0 && !taken; ++i) {
+      tick();
+      taken = dut->dev_req_o && dut->dev_offset_o == 8;
+    }
+    if (taken) lo = mid; else hi = mid;
+  }
+  reset_all();
+  return lo;
+}
+
 //! One operation against a contract-legal device: FZ1-FZ4.
 void PauseFuzz::one_legal(std::vector<std::vector<uint8_t>>& good) {
   const uint8_t rec = uint8_t(rnd(0, kRegions - 1));
@@ -420,6 +470,7 @@ void PauseFuzz::one_silent(std::vector<std::vector<uint8_t>>& good) {
 void PauseFuzz::one_resume(std::vector<std::vector<uint8_t>>& good) {
   const uint8_t rec = uint8_t(rnd(0, kRegions - 1));
   std::vector<uint8_t> pl(size_t(rnd(0, 24)));
+  if (u() < 0.5) pl.resize(long_payload());      // ...or a long one
   for (auto& b : pl) b = uint8_t(rnd(0, 255));
   if (good[rec].empty()) {
     pat = 0; start(true, rec, frame(rec, pl));
@@ -441,9 +492,11 @@ void PauseFuzz::one_resume(std::vector<std::vector<uint8_t>>& good) {
   start(ab_we, rec, af);
   if (!finish(kGuard) || o.errs != 1 || o.cause != 3 || !cmd) { reset_all(); return; }
   sil_n = -1;
+  const int owed = op == kOpRead ? len - moved : 0;
   const uint8_t rec2 = uint8_t((rec + 1 + rnd(0, kRegions - 2)) % kRegions);
   const bool we2 = good[rec2].empty() || u() < 0.5;
   std::vector<uint8_t> pl2(size_t(rnd(0, 24)));
+  if (u() < 0.5) pl2.resize(long_payload());
   for (auto& b : pl2) b = uint8_t(rnd(0, 255));
   const std::vector<uint8_t> f2 = we2 ? frame(rec2, pl2) : good[rec2];
   new_pattern(false);
@@ -464,18 +517,20 @@ void PauseFuzz::one_resume(std::vector<std::vector<uint8_t>>& good) {
                                     : (o.dones == 0 && o.errs == 1 && o.cause == 3));
   resume_branch.grade(right, what);
   if (right) ++(in_time ? served : refused);
+  if (right && in_time && owed >= 256) ++served_long;
   if (we2 && o.dones == 1) good[rec2] = f2; else if (we2) good[rec2].clear();
   if (ab_we) good[rec].clear();
   reset_all();
 }
 
-//! A payload READ abandoned at one of its bytes, then the next operation at
-//! once, while the device presents the READ's bytes one every TMO / 2 cycles,
-//! past its length for ever, and never ends it: FZ9.
+//! A READ abandoned at one of its bytes or at its terminal, then the next
+//! operation at once, while the device presents the READ's bytes one every
+//! TMO / 2 cycles, past its length for ever, and never ends it: FZ9.
 void PauseFuzz::one_babble(std::vector<std::vector<uint8_t>>& good) {
   const uint8_t rec = uint8_t(rnd(0, kRegions - 1));
   if (good[rec].size() < 10) {  // a payload of two bytes at least, one still to come
     std::vector<uint8_t> pl(size_t(rnd(2, 24)));
+    if (u() < 0.5) pl.resize(long_payload());    // ...or a long one
     for (auto& b : pl) b = uint8_t(rnd(0, 255));
     pat = 0; start(true, rec, frame(rec, pl));
     if (finish(kGuard) && o.dones == 1) good[rec] = frame(rec, pl);
@@ -485,10 +540,15 @@ void PauseFuzz::one_babble(std::vector<std::vector<uint8_t>>& good) {
   const std::vector<uint8_t> af = good[rec];
   pat = 0;
   sil_n = 11 + rnd(0, int(af.size()) - 10);   // a payload byte
+  if (u() < 0.5) {                              // ...or as often a header byte (1-8), the
+    const int k = rnd(1, 11);                   // header's terminal (9), the payload's last
+    sil_n = k <= 9 ? k : int(af.size()) + k - 8;  // byte or its terminal
+  }
   start(false, rec, af);
   if (!finish(kGuard) || o.errs != 1 || o.cause != 3 || !cmd) { reset_all(); return; }
   sil_n = -1;
   const int owed = len - moved;
+  ++(moved == len ? at_terminal : off == 0 ? at_header : at_payload);
   const uint8_t rec2 = uint8_t((rec + 1 + rnd(0, kRegions - 2)) % kRegions);
   const bool we2 = good[rec2].empty() || u() < 0.5;
   std::vector<uint8_t> pl2(size_t(rnd(0, 24)));
@@ -500,7 +560,7 @@ void PauseFuzz::one_babble(std::vector<std::vector<uint8_t>>& good) {
   for (long i = 0; i < kGuard && !(dut->nvm_busy_o && (!we2 || wi >= 8)); ++i) tick();
   hold_dev = false;
   babble = true; babble_rx = 0; next_at = cyc;
-  const bool ok = finish(400L * (TMO + 2));
+  const bool ok = finish((owed + 400L) * (TMO + 2));
   char what[160];
   snprintf(what, sizeof what, "cycle %ld: a %s behind a READ owing %d bytes: %d done, %d err, "
            "cause %d, %d taken", cyc, we2 ? "commit" : "restore", owed, o.dones, o.errs,
@@ -511,6 +571,47 @@ void PauseFuzz::one_babble(std::vector<std::vector<uint8_t>>& good) {
   reset_all();
 }
 
+//! A READ of the largest payload the port accepts, put in the device's memory
+//! and abandoned before its first payload byte, so that it owes every byte of
+//! it; then a restore at once, which the device ends the READ within the bound
+//! of, keeping legal pace after: FZ7, served. Once per seed.
+void PauseFuzz::one_widest(std::vector<std::vector<uint8_t>>& good) {
+  std::vector<uint8_t> pl(static_cast<size_t>(widest));
+  for (auto& b : pl) b = uint8_t(rnd(0, 255));
+  const std::vector<uint8_t> af = frame(0, pl);
+  std::vector<uint8_t> pl2(size_t(rnd(0, 24)));
+  for (auto& b : pl2) b = uint8_t(rnd(0, 255));
+  const std::vector<uint8_t> f2 = frame(1, pl2);
+  std::copy(af.begin(), af.end(), mem[0]);
+  std::copy(f2.begin(), f2.end(), mem[1]);
+  good[0].clear();
+  good[1] = f2;
+  pat = 0;
+  sil_n = 11;                                   // its first payload byte
+  start(false, 0, af);
+  if (!finish(kGuard) || o.errs != 1 || o.cause != 3 || !cmd || len - moved != widest) {
+    reset_all();
+    return;
+  }
+  sil_n = -1;
+  new_pattern(false);
+  hold_dev = true;
+  start(false, 1, f2);
+  for (long i = 0; i < kGuard && !dut->nvm_busy_o; ++i) tick();
+  const int rr = rnd(0, TMO);                   // the device ends it within the bound
+  for (long i = 0; i < rr - 1 && o.pulse_at < 0; ++i) tick();
+  next_at = cyc + (rr > 0 ? 1 : 0);
+  hold_dev = false;
+  const bool ok = finish(kGuard + long(widest) * (TMO + 2));
+  char what[160];
+  snprintf(what, sizeof what, "cycle %ld: a restore behind a READ owing %d bytes, ended %d cycles "
+           "into its wait: %d done, %d err, cause %d", cyc, widest, rr, o.dones, o.errs, o.cause);
+  const bool right = ok && o.dones == 1 && o.errs == 0 && r == f2;
+  resume_branch.grade(right, what);
+  if (right) { ++served; ++served_widest; }
+  reset_all();
+}
+
 void PauseFuzz::begin_run(uint64_t seed) {
   rng.seed(seed);
   memset(mem, 0xFF, sizeof mem);
@@ -518,6 +619,9 @@ void PauseFuzz::begin_run(uint64_t seed) {
 }
 
 int PauseFuzz::run() {
+  begin_run(kFirstSeed);
+  widest = largest_legal_length();
+  printf("fuzz: the largest payload the port accepts, asked of it: %d bytes\n", widest);
   for (uint64_t seed = kFirstSeed; seed <= kLastSeed; ++seed) {
     begin_run(seed);
     std::vector<std::vector<uint8_t>> good(kRegions);
@@ -528,6 +632,7 @@ int PauseFuzz::run() {
     begin_run(seed);
     good.assign(kRegions, {});
     for (int n = 0; n < kOps; ++n) one_resume(good);
+    one_widest(good);
     begin_run(seed);
     good.assign(kRegions, {});
     for (int n = 0; n < kOps; ++n) one_babble(good);
@@ -558,6 +663,16 @@ int PauseFuzz::report() {
   printf("%s: FZ8 both of FZ7's branches were taken (%ld served, %ld DEADLINE)\n",
          both ? "PASS" : "FAIL", served, refused);
   check("FZ9", babble_dl, "a request behind a READ whose device presents bytes past its length ends DEADLINE, the port taking only the bytes the READ owed");
+  ++checks;
+  const long seeds = long(kLastSeed - kFirstSeed + 1);
+  const bool reached = at_header > 0 && at_payload > 0 && at_terminal > 0 && served_long > 0
+                       && served_widest == seeds;
+  if (!reached) ++fails;
+  printf("%s: FZ10 FZ9 abandoned READs at header bytes, payload bytes and terminals, and FZ7 served "
+         "requests behind READs owing 256 bytes or more and behind one owing the largest payload the "
+         "port accepts, %d bytes, each seed (%ld, %ld and %ld; %ld, and %ld of %ld)\n",
+         reached ? "PASS" : "FAIL", widest, at_header, at_payload, at_terminal, served_long,
+         served_widest, seeds);
   printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
   FILE* acc = fopen("obj_dir/build_tally.txt", "a");
   if (acc == nullptr) {

@@ -11,28 +11,31 @@ TOP        = KL_pp_nvm_port
 # protocol delays leave legal. Each build hands its value to the C++ as
 # NVM_PORT_TMO, the harness's TMO. The randomized harness, fuzz_main.cpp, is
 # built at each bound in FUZZ_TMOS: the port's smallest legal bounds, which the
-# suite cannot reach, and 37 beside the suite.
+# suite cannot reach, and 37 beside the suite. The suite is built at the top's
+# MAX_PAYLOAD_P; the randomized harness at FUZZ_MAXP, the parameter's largest
+# legal value, which it asks the port for rather than reads from here.
 TMO       = 100
 TMO_ALT   = 37
 TMO_MIN   = 20
 FUZZ_TMOS = 1 2 3 37
+MAXP      = 1024
+FUZZ_MAXP = 65527
 
 VFLAGS = --cc --exe --build -j 0 \
          --top-module $(TOP) \
          -Wall -Wno-fatal -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDPARAM \
-         -GMAX_PAYLOAD_P=1024 \
          -CFLAGS "-std=c++17 -O2 -I$(CURDIR) -Wall -Wextra"
 
 SRCS = $(HDL)/KL_pp_nvm_port.sv
 CPP  = sim_main.cpp
 
 # one build of the suite at deadline $(1) into $(2), then its run
-suite = $(VERILATOR) $(VFLAGS) -GMEM_TIMEOUT_CYC_P=$(1) -CFLAGS "-DNVM_PORT_TMO=$(1) -Wall -Wextra" \
+suite = $(VERILATOR) $(VFLAGS) -GMAX_PAYLOAD_P=$(MAXP) -GMEM_TIMEOUT_CYC_P=$(1) -CFLAGS "-DNVM_PORT_TMO=$(1) -Wall -Wextra" \
             --Mdir $(2) $(SRCS) $(CPP) -o Vnvm_port_sim && ./$(2)/Vnvm_port_sim
 
 # one build of the randomized harness at deadline $(1), then its run
-fuzz_at = $(VERILATOR) $(VFLAGS) -GMEM_TIMEOUT_CYC_P=$(1) -CFLAGS "-DNVM_PORT_TMO=$(1) -Wall -Wextra" \
+fuzz_at = $(VERILATOR) $(VFLAGS) -GMAX_PAYLOAD_P=$(FUZZ_MAXP) -GMEM_TIMEOUT_CYC_P=$(1) -CFLAGS "-DNVM_PORT_TMO=$(1) -Wall -Wextra" \
               --Mdir obj_fz$(1) $(SRCS) fuzz_main.cpp -o Vnvm_port_fuzz && ./obj_fz$(1)/Vnvm_port_fuzz
 
 BUILDS = $(words 1 2 3 $(FUZZ_TMOS))

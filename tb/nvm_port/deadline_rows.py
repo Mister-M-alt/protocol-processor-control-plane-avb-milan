@@ -19,7 +19,10 @@ rather than inside it, as the pre-fix matrix's forms do.
     the Makefile's TMO is edited, so `make primary` builds the suite there;
   * the owed READ's drain bounded by what the READ still owes (D27-D30), the
     unbounded drain on the randomized harness too;
-  * a late grant whose err rides it made owed anyway (D31, R437-1's X20).
+  * a late grant whose err rides it made owed anyway (D31, R437-1's X20);
+  * the round-3 reviews' planted defects in that bound, R436-3's Z1-Z12 and
+    Z10b and R437-3's B1-B13, each with the reviewer's own edit text, and the
+    four that passed round 3's checks again on the randomized harness.
 
 It reads no RTL and runs no build; the figures gate imports it.
 """
@@ -90,19 +93,75 @@ PLANTS: list[tuple[str, list[tuple[str, str]]]] = [
               "  assign dl_w = (state_r != S_IDLE) && (state_r != S_FIN) && !prog_w && tmo_hit_w;")]),
 ]
 
+#: The round-3 reviews' plants in the drain's bound, as (old, new) on the RTL,
+#: each the reviewer's own text: R436-3's `plants_drain.py`, its anchors
+#: without their line ends, and R437-3's `spec_drain.py`, its anchors with.
+_L_RHCOLL = "  assign left_w  = (state_r == S_RHCOLL) ? (HDR_LEN_C - 16'(hidx_r))"
+_L_RPPUMP = "                 : (state_r == S_RPPUMP) ? (plen_r - bcnt_r)"
+_L_REST = "                 : dev_len_o;"
+_L_DEC = "    else if (drain_w && dev_rvalid_i) owed_left_r <= owed_left_r - 16'd1;"
+_L_DECL = "  logic       [15:0] owed_left_r;   // ...as many as it still owes"
+_L_LOAD = "    else if (dl_w && !owed_r)         owed_left_r <= left_w;"
+_L_DRAIN = "  assign drain_w = owed_r && owed_rd_r && (owed_left_r != 16'd0);"
+_HDR_WHOLE = "  assign left_w  = (state_r == S_RHCOLL) ? HDR_LEN_C"
+_HDR_SHORT = "  assign left_w  = (state_r == S_RHCOLL) ? (HDR_LEN_C - 16'(hidx_r) - 16'd1)"
+_HDR_OVER = "  assign left_w  = (state_r == S_RHCOLL) ? (HDR_LEN_C - 16'(hidx_r) + 16'd1)"
+_PAY_OVER = "                 : (state_r == S_RPPUMP) ? (plen_r - bcnt_r + 16'd1)"
+_PAY_SHORT = "                 : (state_r == S_RPPUMP) ? (plen_r - bcnt_r - 16'd1)"
+_DEC_ANY = "    else if (owed_r && dev_rvalid_i)  owed_left_r <= owed_left_r - 16'd1;"
+_DECL_8 = "  logic        [7:0] owed_left_r;   // ...as many as it still owes"
+_WAITS_8 = "((state_r == S_RHWAIT) || (state_r == S_RPWAIT))"
+
+DRAIN_PLANTS: list[tuple[str, list[tuple[str, str]]]] = [
+    ("Z1", [(_L_RHCOLL, _HDR_WHOLE)]),
+    ("Z2", [(_L_RPPUMP, "                 : (state_r == S_RPPUMP) ? plen_r")]),
+    ("Z3", [(_L_REST, f"                 : {_WAITS_8} ? 16'd8 : dev_len_o;")]),
+    ("Z4", [(_L_REST, "                 : 16'd0;")]),
+    ("Z5", [(_L_RPPUMP, _PAY_OVER)]),
+    ("Z6", [(_L_RPPUMP, _PAY_SHORT)]),
+    ("Z7", [(_L_RHCOLL, _HDR_SHORT)]),
+    ("Z8", [(_L_RHCOLL, _HDR_OVER)]),
+    ("Z9", [(_L_DEC, _DEC_ANY)]),
+    ("Z10", [(_L_DECL, _DECL_8)]),
+    ("Z11", [("                      || drain_w;                      // the owed READ's drain",
+              "                      || (owed_r && owed_rd_r);        // the owed READ's drain")]),
+    ("Z10b", [(_L_DECL, _DECL_8),
+              (_L_LOAD, "    else if (dl_w && !owed_r)         owed_left_r <= left_w[7:0];"),
+              (_L_DEC, "    else if (drain_w && dev_rvalid_i) owed_left_r <= owed_left_r - 8'd1;"),
+              (_L_DRAIN, "  assign drain_w = owed_r && owed_rd_r && (owed_left_r != 8'd0);")]),
+    ("Z12", [(_L_REST, "                 : (dev_len_o - 16'd1);")]),
+    ("B1", [(_L_RPPUMP + "\n", _PAY_SHORT + "\n")]),
+    ("B2", [(_L_RHCOLL + "\n", _HDR_SHORT + "\n")]),
+    ("B3", [(_L_REST + "\n", "                 : (dev_len_o != 16'd0) ? (dev_len_o - 16'd1) : 16'd0;\n")]),
+    ("B4", [(_L_REST + "\n", "                 : 16'd0;\n")]),
+    ("B5", [(_L_RPPUMP + "\n", _PAY_OVER + "\n")]),
+    ("B6", [(_L_RHCOLL + "\n", _HDR_OVER + "\n")]),
+    ("B6b", [(_L_RHCOLL + "\n", _HDR_WHOLE + "\n")]),
+    ("B7", [(_L_REST + "\n", "                 : (dev_len_o != 16'd0) ? (dev_len_o + 16'd1) : 16'd0;\n")]),
+    ("B8", [(_L_REST + "\n", f"                 : {_WAITS_8} ? HDR_LEN_C : dev_len_o;\n")]),
+    ("B9", [(_L_DEC + "\n", _DEC_ANY + "\n")]),
+    ("B10", [(_L_DECL, _DECL_8)]),
+    ("B12", [(_L_DRAIN + "\n", "  assign drain_w = owed_r && (owed_left_r != 16'd0);\n")]),
+    ("B13", [(_L_LOAD, "    else if (dl_w && !owed_r && dev_cmd_owned_w) owed_left_r <= left_w;")]),
+]
+
+#: The four that passed every check of round 3, again on the randomized harness.
+DRAIN_ON_FUZZ = ("Z1", "Z3", "Z8", "Z10b")
+
 _TMO_LINE = ("TMO       = 100\n", "TMO       = {bound}\n")
 _FUZZ_AT_3 = ("primary:\n\t@mkdir -p obj_dir\n\t$(call suite,$(TMO),obj_dir)\n",
               "primary:\n\t@mkdir -p obj_dir\n\t$(call fuzz_at,3)\n")
 
 #: The owed READ's drain: unbounded, as round 2 had it (D27); what the READ
-#: still owes taken as its whole length (D28); a drained byte not counted
-#: (D29); what is owed taken again at a later deadline (D30).
+#: still owes taken as its whole length, in the header's collection (D28a) and
+#: in the payload's pump (D28b), the two halves of round 3's D28; a drained
+#: byte not counted (D29); what is owed taken again at a later deadline (D30).
 _UNBOUNDED = [("  assign drain_w = owed_r && owed_rd_r && (owed_left_r != 16'd0);",
                "  assign drain_w = owed_r && owed_rd_r;")]
-_WHOLE_LENGTH = [("  assign left_w  = (state_r == S_RHCOLL) ? (HDR_LEN_C - 16'(hidx_r))",
-                  "  assign left_w  = (state_r == S_RHCOLL) ? HDR_LEN_C"),
-                 ("                 : (state_r == S_RPPUMP) ? (plen_r - bcnt_r)",
-                  "                 : (state_r == S_RPPUMP) ? plen_r")]
+_WHOLE_HEADER = [("  assign left_w  = (state_r == S_RHCOLL) ? (HDR_LEN_C - 16'(hidx_r))",
+                  "  assign left_w  = (state_r == S_RHCOLL) ? HDR_LEN_C")]
+_WHOLE_PAYLOAD = [("                 : (state_r == S_RPPUMP) ? (plen_r - bcnt_r)",
+                   "                 : (state_r == S_RPPUMP) ? plen_r")]
 _UNCOUNTED = [("    else if (drain_w && dev_rvalid_i) owed_left_r <= owed_left_r - 16'd1;\n", "")]
 _RETAKEN = [("    else if (dl_w && !owed_r)         owed_left_r <= left_w;",
              "    else if (dl_w)                    owed_left_r <= left_w;")]
@@ -129,6 +188,7 @@ def deadline_rows(rtl: Path, sim: Path, mk: Path,
         return [(rtl, old, new) for old, new in pairs]
 
     plants = {name: on_rtl(pairs) for name, pairs in PLANTS}
+    drain = {name: on_rtl(pairs) for name, pairs in DRAIN_PLANTS}
 
     at_4096 = [(mk, _TMO_LINE[0], _TMO_LINE[1].format(bound=4096))]
     fuzz_at_3 = [(mk, *_FUZZ_AT_3)]
@@ -148,11 +208,16 @@ def deadline_rows(rtl: Path, sim: Path, mk: Path,
          coincident + at_4096 + [(sim, *_T6_TIMED)]),
         # the owed READ's drain, bounded by what the READ still owes
         ("D27", r"\*\*D27\*\*.*?\*\*fails (\d+) of", on_rtl(_UNBOUNDED)),
-        ("D28", r"\*\*D28\*\*.*?\*\*fails (\d+) of", on_rtl(_WHOLE_LENGTH)),
+        ("D28a", r"\*\*D28a\*\*.*?\*\*fails (\d+) of", on_rtl(_WHOLE_HEADER)),
+        ("D28b", r"\*\*D28b\*\*.*?\*\*fails (\d+) of", on_rtl(_WHOLE_PAYLOAD)),
         ("D29", r"\*\*D29\*\*.*?\*\*fails (\d+) of", on_rtl(_UNCOUNTED)),
         ("D30", r"\*\*D30\*\*.*?\*\*fails (\d+) of", on_rtl(_RETAKEN)),
         ("D27/fuzz", r"D27 under the randomized harness at bound 3 \*\*fails (\d+) of",
          fuzz_at_3 + on_rtl(_UNBOUNDED)),
         # the late grant that carries an err
         ("D31", r"\*\*D31\*\*.*?\*\*fails (\d+) of", on_rtl(_LATE_ERR_OWED)),
+        # the round-3 reviews' plants in the drain's bound, and four on the harness
+        *[(name, rf"\| {name} \|[^|]*\| fails (\d+) of", edits) for name, edits in drain.items()],
+        *[(f"{name}/fuzz", rf"{name} under the randomized harness \*\*fails (\d+) of",
+           fuzz_at_3 + drain[name]) for name in DRAIN_ON_FUZZ],
     ]
