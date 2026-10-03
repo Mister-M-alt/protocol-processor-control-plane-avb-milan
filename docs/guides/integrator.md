@@ -482,12 +482,18 @@ tick, because the events are your own inputs to it:
 - LINK_UP and LINK_DOWN count the level you drive on `link_up_i`: the level the
   advertise machine, the SRP Domain and the GET_AVB_INFO notification see, so the
   counters and the entity's behaviour never disagree.
-- GPTP_GM_CHANGED counts grandmaster changes only (Table 5.1: "Number of gPTP GM
-  changes"). `gm_change_i` is wider: section 6 asks you to raise it for a domain-only
-  change too, because both are ADPDU fields. So count the identity change itself, the
-  update for which you raise `gm_change_i` **and** `gsi_asp_chg_i`, never every
-  `gm_change_i`. (The ADP engine used to carry a one-clock-late copy of `gm_change_i`
-  as a GPTP_GM_CHANGED tick. It reached no port, counted domain-only changes, and is
+- GPTP_GM_CHANGED counts grandmaster changes and nothing else (Table 5.1: "Number of
+  gPTP GM changes, since boot"; IEEE 1722.1-2021 Table 7-153, offset 20: "gPTP
+  grandmaster change count"). The rule is one identity comparison: at each update you
+  publish, count one when the grandmaster identity on `gm_id_i` differs from the
+  identity in force before that update. The identity in force out of reset is the first
+  one you publish, and it counts nothing. **Neither strobe identifies a grandmaster
+  change, and neither does their coincidence**: `gm_change_i` also marks a domain-only
+  update (section 6), and `gsi_asp_chg_i` marks any changed PathTrace, a tail-only one
+  included, and never rises if you publish no path. So a domain-only update counts
+  nothing, and a grandmaster change counts one whichever strobes you raise for it.
+  (The ADP engine used to carry a one-clock-late copy of `gm_change_i` as a
+  GPTP_GM_CHANGED tick. It reached no port, counted domain-only changes, and is
   removed.)
 - One bank per AVB_INTERFACE descriptor, answered at its own `ctr_desc_index_o`. This
   build has one interface (`link_up_i`, `gm_id_i` and `gptp_domain_i` are interface 0);
