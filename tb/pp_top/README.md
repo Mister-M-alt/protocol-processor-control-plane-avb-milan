@@ -1240,7 +1240,10 @@ copies at once, and the results are printed in the table's order whatever order
 they finish in. Measured 2026-10-02 at `85da751` with Verilator 5.050, each run
 pinned to 4 of the host's 16 CPUs: `--jobs 1` took 1,059 s and `--jobs 8`
 814 s, and every control and arm gave the same verdict and the same failing
-checks in both, the counts below. `aecp-dispatch` runs A5b and M9 on a booted model,
+checks in both. Re-run 2026-10-03 with the three NSD arms (issue #37) at `--jobs 6`,
+330 s: every control and every earlier arm gave the same verdict, and one count moved,
+`lk-sclks-miss-lock-nop`'s, which NSD3 now fails beside LK4; the counts below are that
+run's. `aecp-dispatch` runs A5b and M9 on a booted model,
 then section AX on its own processor (`--aecp-dispatch-only`); `aecp-line`
 runs section AX in the line build; `line-guards` lints the top across the line
 range; `d3` runs section D3, whose D3C arms grade SET_CLOCK_SOURCE over a
@@ -1260,7 +1263,7 @@ failed at the lane head.
 | `lk-ssrate-lock-nop` | E_SSRATE's CHECK_LOCK (E_SSRATE+9) replaced with NOP (issue #53) | `LK1 unset rate row, ...: ENTITY_LOCKED byte-exact` | 9 |
 | `lk-ssrate-miss-lock-nop` | E_SSRATE's locate-miss CHECK_LOCK (SSR_REFUSE) replaced with NOP | `LK4 foreign SET_SAMPLING_RATE on AUDIO_UNIT 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
 | `lk-sclks-lock-nop` | E_SCLKS's CHECK_LOCK (E_SCLKS+9) replaced with NOP | `LK1 unset clock-source row, ...: ENTITY_LOCKED byte-exact` | 9 |
-| `lk-sclks-miss-lock-nop` | E_SCLKS's locate-miss CHECK_LOCK (E_SCLKSRF) replaced with NOP | `LK4 foreign SET_CLOCK_SOURCE on CLOCK_DOMAIN 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
+| `lk-sclks-miss-lock-nop` | E_SCLKS's locate-miss CHECK_LOCK (E_SCLKSRF) replaced with NOP | `LK4 foreign SET_CLOCK_SOURCE on CLOCK_DOMAIN 3 (absent): ENTITY_LOCKED byte-exact` | 2 |
 | `lk-sctrl-lock-nop` | E_SCTRL's CHECK_LOCK (E_SCTRL+4) replaced with NOP | `LK1 IDENTIFY at its reset 0, ...: ENTITY_LOCKED byte-exact` | 12 |
 | `lk-sctrl-miss-lock-nop` | E_SCTRL's locate-miss CHECK_LOCK (E_SCTRL+21) replaced with NOP | `LK4 foreign SET_CONTROL on CONTROL 3 (absent): ENTITY_LOCKED byte-exact` | 1 |
 | `lk-prefix-zero-body` | the microcode generator as it stood at the lane base (`0451d83d`): the lock checked first and refused through the zero-bodied E_LOCKED4/E_LOCKED1 stubs, the issue #53 reproduction | `LK3 foreign SET_SAMPLING_RATE(96000) carries the stored 48000: ENTITY_LOCKED byte-exact` | 7 |
@@ -1286,6 +1289,9 @@ failed at the lane head.
 | `rb-rounded-buffer-no-page-cap` | the buffer rounded up to 16 as at 54c1e2b1 AND E_GAMAP's page cap dropped (`pg-cap-dropped`'s two NOPs), so a page fills the rounded 608 bytes (`aecp-line`) | `RB no response byte written at or past RESP_BASE_P + 16 + DESC_LINE_BYTES_P` | 10 |
 | `sclks-bound-three` | E_SCLKS's bound loaded as the constant 3, the suite list's count, instead of the located domain's `clock_sources_count` (issue #141; `d3`) | `D3C1: SET_CLOCK_SOURCE(9) over the ten-source domain answers SUCCESS` | 11 |
 | `sclks-bound-inclusive` | E_SCLKS's range check made inclusive, `count >= index` in place of `index < count` (issue #141; `d3`) | `D3C2: SET_CLOCK_SOURCE(10), the count, answers BAD_ARGUMENTS` | 6 |
+| `sclks-miss-target-next-word` | E_SCLKS's locate-miss branch (E_SCLKS + 3) aimed one word on, at SCLKS_EMIT, past E_SCLKSRF's CHECK_LOCK (issue #37) | `NSD3 foreign SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), the lock first: ENTITY_LOCKED byte-exact` | 2 |
+| `sclks-miss-preload-dropped` | E_SCLKS's r6 preload (E_SCLKS + 1) replaced with NOP, so a miss carries whatever r6 the last program left | `NSD1 a second controller's SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), zero body: NO_SUCH_DESCRIPTOR byte-exact` | 2 |
+| `sclks-miss-branch-dropped` | E_SCLKS's locate-miss branch replaced with NOP, so a miss runs on into the main path | `NSD1 a second controller's SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1 (absent), zero body: NO_SUCH_DESCRIPTOR byte-exact` | 2 |
 
 Each guard arm fails its opcode's row on all seven message types; the three
 writers also fail their whole-body row and the read-back that proves the write
@@ -1331,6 +1337,16 @@ four, D3C2's answer and read-back, both of D3C3's restore and its save, and
 D3C4's two walks, whose record is then blank. With the bound inclusive, the
 count 10 is stored, marked, announced and saved: D3C2's four checks fail, and
 D3C3's restore, whose saved 10 the restore rule refuses.
+The three NSD arms (issue #37) run the `aecp-dispatch` target. The branch one word
+on skips the lock on a miss: NSD3 and LK4 are answered NO_SUCH_DESCRIPTOR, not
+ENTITY_LOCKED. With the preload dropped, NSD1 and NSD3 carry the 2 NSD0 left in r6,
+and LK4 and LK5 pass, because the r6 they inherit is already 0: NSD is the one arm
+that grades the preload. With the branch dropped, a miss falls into the main path
+and NSD1 and LK5 are answered BAD_ARGUMENTS. The other one-word move, the branch
+aimed at E_SCLKSRF - 1, is measured equivalent: word 1143 is unplaced fill, which
+`gen_ucode.py` lays as a NOP there, so the program runs on into E_SCLKSRF's
+CHECK_LOCK, and every check passes. It is not an arm, because the driver counts
+only kills.
 
 ### GET_COUNTERS face controls (lane C7, issues #44 and #79): `ctr_mutants.py`
 
@@ -1980,6 +1996,18 @@ the zero a stub would carry.
   holder asking the same is answered NO_SUCH_DESCRIPTOR; **LK6**: the holder,
   still holding the lock, is served, one store write and one notification per
   changing SET, and each GET reads what it stored.
+- **NSD** SET_CLOCK_SOURCE's NO_SUCH_DESCRIPTOR branch (issue #37; Milan 5.4.2.15,
+  IEEE 1722.1-2021 7.4.23.1): E_SCLKS + 3 sends a locate miss to E_SCLKSRF, the
+  lock check and then the refusal tail every SET_CLOCK_SOURCE refusal shares,
+  which carries r6 at @28; on a miss r6 must still be E_SCLKS + 1's zero preload.
+  The µCPU loads only r12 to r15 per dispatch, so **NSD0** first has the holder
+  change the index from 2 to 1, which leaves the replaced 2 in r6. **NSD1**: a
+  second controller's SET_CLOCK_SOURCE(2) on CLOCK_DOMAIN 1, which the image
+  lacks, is answered NO_SUCH_DESCRIPTOR at cdl 20 with a zero body, byte-exact,
+  with no store write, NVM mark, notification or unsolicited frame at the
+  registered holder; **NSD2**: GET_CLOCK_SOURCE still reads the stored 1;
+  **NSD3**: under the bench's lock the same command is answered ENTITY_LOCKED,
+  zero body, the lock outranking the miss (06 section 6.4).
 - **OV** a response above cdl 524 through the oversize TX slot (Milan 5.4.1; issue
   #50, #82's oversize path). The image's configuration 1 holds four descriptors on
   either side of the 576-byte standard slot (frame = 42 + length): AUDIO_MAPs of 576
