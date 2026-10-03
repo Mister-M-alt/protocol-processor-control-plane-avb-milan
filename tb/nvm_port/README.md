@@ -16,9 +16,10 @@ randomized harness, `fuzz_main.cpp`, at bounds 1, 2, 3 and 37: the port's
 smallest legal bounds, which the suite cannot reach, and one beside it, each
 at `MAX_PAYLOAD_P` = 65,527, the parameter's largest legal value (see "The
 randomized harness"). Each build prints its own tally, and the last line
-is their sum. `make` first runs `elab_bounds.sh`, the deadline parameter's
-elaboration guard: refused by name at 0, 2^31 and 2^32 - 1, built clean at 1
-and 2^31 - 1.
+is their sum. `make` first runs `elab_bounds.sh`, the port's two elaboration
+guards: the deadline parameter refused by name at 0, 2^31 and 2^32 - 1, built
+clean at 1 and 2^31 - 1; `MAX_PAYLOAD_P` (issue #17) refused by name and by its
+bound, 65,527, at 65,528, 65,535 and 2^32 - 1, built clean at 1,024 and 65,527.
 
 The harness plays BOTH neighbors, independently of the RTL: a **manager BFM**
 that frames records per 07 §5.2 (magic 0x1722, layout_version, record_id,

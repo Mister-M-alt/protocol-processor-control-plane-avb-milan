@@ -61,8 +61,9 @@ fuzz:
 	@mkdir -p obj_dir
 	$(foreach t,$(FUZZ_TMOS),$(call fuzz_at,$(t)) && ) true
 
-# MEM_TIMEOUT_CYC_P's elaboration guard: refused at 0, 2^31 and 2^32 - 1 by
-# name, built at 1 and 2^31 - 1 (elab_bounds.sh)
+# the port's two elaboration guards (elab_bounds.sh): MEM_TIMEOUT_CYC_P refused
+# at 0, 2^31 and 2^32 - 1 by name, built at 1 and 2^31 - 1; MAX_PAYLOAD_P
+# refused at 65528, 65535 and 2^32 - 1 by name and bound, built at 1024 and 65527
 elab:
 	@VERILATOR=$(VERILATOR) ./elab_bounds.sh
 
