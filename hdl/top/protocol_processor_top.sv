@@ -379,7 +379,7 @@ module protocol_processor_top
     //! ---- GET_COUNTERS read face (06 §6.6; IEEE §7.4.42, Milan §5.4.2.25) ----
     //! The processor parses the command and lays out §7.4.42.2's 32-quadlet
     //! block; the INTEGRATOR owns what the numbers mean, because the events
-    //! Milan Table 5.6 counts happen in its stream datapath. One quadlet is
+    //! Milan Tables 5.1/5.4/5.6/5.7 count happen in its datapath. One quadlet is
     //! asked for at a time: `ctr_word_o` 0..31 is the block quadlet at block
     //! byte 4·n and `ctr_word_o` = 32 is the counters_valid mask itself, so
     //! there is one place to say what this build actually measures.
@@ -1851,7 +1851,6 @@ module protocol_processor_top
   logic [0:0]  adp_txreq_if_nc_w;
   logic        adp_evt_valid_w, adp_evt_departed_w;
   logic [SINK_IDX_W_C-1:0] adp_evt_sink_w;  //! CLAMPED (KL_adp_engine SNK_W_C)
-  logic [0:0]  adp_gm_tick_nc_w;
   logic [1:0]  adp_dbg_adv_state_w;
   //! not "nc" any more: this is the live available_index, published below.
   logic [31:0] adp_dbg_aidx_nc_w;
@@ -1945,7 +1944,6 @@ module protocol_processor_top
       .evt_valid_o           (adp_evt_valid_w),
       .evt_departed_o        (adp_evt_departed_w),
       .evt_sink_o            (adp_evt_sink_w),
-      .gm_changed_tick_o     (adp_gm_tick_nc_w),
       .dbg_adv_state_o       (adp_dbg_adv_state_w),
       .dbg_avail_index_o     (adp_dbg_aidx_nc_w),
       .dbg_tk_discovered_o   (adp_dbg_tkdisc_nc_w)

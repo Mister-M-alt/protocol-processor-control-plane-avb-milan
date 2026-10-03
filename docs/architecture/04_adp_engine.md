@@ -20,7 +20,11 @@ Consumes: ADP queue transactions ([03 §4](03_packet_engine.md)); timer expiries
 `T-ADP-*`; events `LINK_UP/DOWN{if}`, `GM_CHANGE{if}`; `SHUTDOWN` request; class-D
 `gm_id[if]`, `gptp_domain[if]` ([F02.10](02_interfaces.md#fig-02-statusdict)).
 Produces: ADP TX requests to the originator; `EVT_TK_DISCOVERED{sink}` /
-`EVT_TK_DEPARTED{sink}` to the ACMP listener SMs; `GPTP_GM_CHANGED` counter ticks.
+`EVT_TK_DEPARTED{sink}` to the ACMP listener SMs. It counts nothing: the
+AVB_INTERFACE LINK_UP, LINK_DOWN and GPTP_GM_CHANGED counters are the integrator's,
+counted from the same `link_up_i` it drives and from its own grandmaster identity
+changes ([02 §4.6](02_interfaces.md#sec-02-ctr); owner decision on processor issue
+#44).
 
 ## 3. PDU handling
 
@@ -154,7 +158,7 @@ stateDiagram-v2
 |---|---|
 | Startup delay is **T-ADP-DELAY-START**, every later delay **T-ADP-DELAY** | two distinct constants — single-constant implementations are a known bug class (review §8 item 5) |
 | ENTITY_DEPARTING **only** on SHUTDOWN; never on link-down | Milan §5.6.3.5.6/.10 |
-| GM change ⇒ re-advertise (through DELAY) | Milan §5.6.3.5.7; also ticks GPTP_GM_CHANGED |
+| GM change ⇒ re-advertise (through DELAY) | Milan §5.6.3.5.7 (GPTP_GM_CHANGED is the integrator's counter, [02 §4.6](02_interfaces.md#sec-02-ctr)) |
 | DOWN ignores DISCOVER/GM_CHANGE/SHUTDOWN; DELAY ignores DISCOVER/GM_CHANGE | Table 5.51 |
 | Held in DOWN until `entity_enable` (boot gate) | Milan §5.6.1. The engine's `entity_enable_i` is the top's **effective** enable, `entity_enable_i && restore_done_o`: the top releases the requested enable only once both restore walks are done ([07 §5.3](07_memory_maps.md#fig-07-nvmflow), the third of its three releases). The talker-discovery machines below are independent of it, and the side port's image-window lock keeps the requested enable |
 

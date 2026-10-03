@@ -138,7 +138,7 @@ into one story:
 | `ADP` / `ACMP` / `AECP` | the corresponding engine inside this processor |
 | `NOTIF` | unsolicited-notification engine + controller registry |
 | `SRP` | SRP/MSRP + MAAP adapter (and, transitively, the SRP network) |
-| `GPTP` / `AVTP` / `MCLK` | gPTP / streaming / media-clock adapters |
+| `GPTP` / `AVTP` / `MCLK` | the integrator's gPTP, streaming and media-clock datapaths, which the processor reaches through levels and read faces ([02 §4.3 to §4.5](architecture/02_interfaces.md)) |
 | `NVM` | persistence manager |
 | `TX` | TX arbiter / wire egress |
 

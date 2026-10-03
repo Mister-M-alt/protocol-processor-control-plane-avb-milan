@@ -23,6 +23,7 @@ SRP_VID_FIXTURE = 5A3C
 LINE_FIXTURE = 584
 MUTANT_OUTPUT ?= /tmp/aecp-mutants
 AECP_DISPATCH_MUTANT_OUTPUT ?= /tmp/aecp-dispatch-mutants
+CTR_MUTANT_OUTPUT ?= /tmp/ctr-mutants
 .DEFAULT_GOAL := run
 
 VFLAGS = --cc --exe --build -j 0 \
@@ -126,6 +127,16 @@ d3: gsi-build
 hazards: gsi-build
 	./obj_dir/Vpp_top_sim --hazards-only
 
+# section K's AVB_INTERFACE and CLOCK_DOMAIN half (K9 to K17) alone, on its
+# fresh model: the target ctr_mutants.py plants its arms against
+counters: gsi-build
+	./obj_dir/Vpp_top_sim --counters-only
+
+# lane C7's campaign (issues #44, #79): reviewed patches in ctr_mutations/,
+# each applied to a scratch copy, each required to fail its named check
+ctr-mutants:
+	python3 ctr_mutants.py --output "$(CTR_MUTANT_OUTPUT)"
+
 # lane C5a's campaign (issues #81, #57, #84): reviewed patches in mutations/,
 # each applied to a scratch copy, each required to fail its named check
 aecp-mutants:
@@ -186,5 +197,5 @@ clean:
 
 .PHONY: name-writes run gsi-build gsi-internal maap-internal adp-config aecp-dispatch \
         line-build aecp-line aecp-dispatch-mutants identify-build identify \
-        deadline d3 hazards budget budget-build \
-        aecp-mutants fixture-guards fixture-guards-test line-guards clean
+        deadline d3 hazards counters budget budget-build \
+        aecp-mutants ctr-mutants fixture-guards fixture-guards-test line-guards clean

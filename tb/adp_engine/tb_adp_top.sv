@@ -84,7 +84,6 @@ module tb_adp_top
     output logic                   evt_valid_o,
     output logic                   evt_departed_o,
     output logic [2:0]             evt_sink_o,
-    output logic [N_IF_P-1:0]      gm_changed_tick_o,
 
     output logic [N_IF_P*2-1:0]    dbg_adv_state_o,
     output logic [N_IF_P*32-1:0]   dbg_avail_index_o,
@@ -168,7 +167,6 @@ module tb_adp_top
       .evt_valid_o           (evt_valid_o),
       .evt_departed_o        (evt_departed_o),
       .evt_sink_o            (evt_sink_o),
-      .gm_changed_tick_o     (gm_changed_tick_o),
       .dbg_adv_state_o       (dbg_adv_state_o),
       .dbg_avail_index_o     (dbg_avail_index_o),
       .dbg_tk_discovered_o   (dbg_tk_discovered_o)

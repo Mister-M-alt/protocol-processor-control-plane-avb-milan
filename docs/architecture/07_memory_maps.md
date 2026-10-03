@@ -4,8 +4,9 @@
 ## 1. Role
 
 All storage: the entity model (static image + dynamic overlay + names), per-sink and
-registry records, counter banks, buffers, the NVM layout and its commit/restore flows,
-and the management side-port map. Other documents link here for every layout.
+registry records, buffers, the NVM layout and its commit/restore flows, and the
+management side-port map. Other documents link here for every layout. The GET_COUNTERS
+counters are not stored here: the integrator keeps them (F07.10).
 
 ## 2. Memory system overview
 
@@ -24,19 +25,18 @@ flowchart LR
     names[("name table 64 B x N_NAMED")]
     dyn[("sink/source records")]
     reg[("controller registry")]
-    ctr[("counter banks")]
     rxs[("RX slots")]
     txs[("TX slots std + oversize")]
     ucr[["µcode + dispatch + resp-size + transition ROMs"]]
   end
-  aecp["AECP µCPU"] --> line & ovl & names & dyn & reg & ctr
+  aecp["AECP µCPU"] --> line & ovl & names & dyn & reg
   aecp --> rsp
   store["descriptor store"] --> img
   store --> line & idx
   acmp["ACMP executor"] --> dyn
   adp["ADP engine"] --> dyn
   pkt["packet engine"] --> rxs & txs
-  side["mgmt side-port"] -. "RO debug windows" .-> ovl & reg & ctr
+  side["mgmt side-port"] -. "RO debug windows" .-> ovl & reg
   d3w["D3 writer (NVM manager 1)"] <--> ovl
   bindm["binding manager (NVM manager 0)"] <--> dyn
 ```
@@ -49,7 +49,7 @@ the integrator's to reserve — see the
 and [diagram 22](../diagrams/22-aecp-descriptor-fetch.svg).
 
 Access-rights rule: exactly one writer class per region at runtime (µCPU for
-overlay/names, ACMP executor for sink records, counters subsystem for banks); the
+overlay/names, ACMP executor for sink records); the
 side-port is read-only everywhere after `entity_enable` except the control window.
 The D3 writer writes the overlay only during its boot restore, and the binding manager
 reaches the sink records only through the listener's boot preload (§5.3); in service
@@ -526,17 +526,22 @@ bottom→top = record order)
 
 </details>
 
-<a id="fig-07-ctrmap"></a>**F07.10 — Counter banks** (full-bank form; compressed
-option = only-implemented-offsets with an index ROM):
+<a id="fig-07-ctrmap"></a>**F07.10 — Counter banks: none in this repository.** By the
+owner decision of 2026-09-19 (processor issues #44 and #79) every counter GET_COUNTERS
+reports lives in the **integrator**, behind the `ctr_*` read face
+([02 §4.6](02_interfaces.md#sec-02-ctr)). The processor stores no bank, no mask ROM and
+no observation tick for them, and this memory map reserves nothing for them. One bank
+per object the integrator serves:
 
-| Bank | Instances | Size | Reset domain |
-|---|---|---|---|
-| AVB_INTERFACE | P-N-AVB-INTERFACES | 4 (valid mask ROM) + 128 B | boot only |
-| CLOCK_DOMAIN | P-N-CLOCK-DOMAINS | 128 B | boot only |
-| STREAM_INPUT | P-N-STREAM-IN | 128 B | boot + **not-bound→bound** clear |
-| STREAM_OUTPUT | P-N-STREAM-OUT | 128 B | boot; MEDIA_RESET/TS_UNCERTAIN/FRAMES_TX clear on stream start |
+| Bank (integrator) | One per | Reset to zero |
+|---|---|---|
+| AVB_INTERFACE | AVB_INTERFACE descriptor (`P-N-AVB-INTERFACES`) | integrator reset only |
+| CLOCK_DOMAIN | CLOCK_DOMAIN descriptor | integrator reset only |
+| STREAM_INPUT | Stream Input of the current configuration | integrator reset; the whole bank on **not-bound→bound** |
+| STREAM_OUTPUT | Stream Output of the current configuration | integrator reset; MEDIA_RESET/TS_UNCERTAIN/FRAMES_TX on stream start |
 
-Event→address mapping and masks: [F06.15](06_aecp_engine.md#fig-06-counters).
+Quadlets and masks: [F06.15](06_aecp_engine.md#fig-06-counters); the face contract per
+descriptor type: [integrator guide §7.1](../guides/integrator.md#counters-face).
 
 ## 5. Persistence
 
@@ -833,7 +838,7 @@ Decided by the parent manager rulings ([D3 contract](https://github.com/kebag-lo
 |---|---|---|---|
 | 0x00000–0x0FFFF | W pre-enable | descriptor image, index maps, identity registers (entity_id, model_id, MACs, capabilities), profile select | reserved seam — reads 0; the image is loaded into main memory at `DESC_BASE_P` instead (§3.3.1 above) |
 | 0x10000–0x1FFFF | RO | overlay + name table debug view | reserved seam — reads 0 |
-| 0x20000–0x2FFFF | RO | registry entries, counter banks, sink records (snapshot) | **implemented** — the F02.10 class-D dictionary plus front-end counters |
+| 0x20000–0x2FFFF | RO | registry entries, sink records (snapshot); no GET_COUNTERS bank (F07.10) | **implemented** — the F02.10 class-D dictionary plus front-end counters |
 | 0x30000–0x300FF | RW | control/status: entity_enable, boot state, NVM alarm, version/build id | word 0 scratch, word 1 boot state |
 | 0x40000–0x4FFFF | RO | trace ring (class-A framing) | **implemented** |
 | 0x50000–0x5FFFF | RW | firmware mailbox (`P-EN-FIRMWARE-ASSIST` only) | disabled — every access refused |
@@ -867,7 +872,6 @@ Baseline: 1 configuration, 1 AVB interface, 2 in + 2 out streams, F = 6 formats 
 | Overlay + names | ≈ 20 named × 64 + currents + maps | ≈ 1.6 K |
 | Sink/source records | 2×48 + 2×16 (source DA gates) | 128 |
 | Registry | 16 × 28 | 448 |
-| Counters | (1+1+2+2) × 132 | 792 |
 | RX + TX slots | 4×576 + 4×576 + 1600 | 6.2 K |
 | NVM image | Σ records ≈ | ≈ 2.5 K |
 

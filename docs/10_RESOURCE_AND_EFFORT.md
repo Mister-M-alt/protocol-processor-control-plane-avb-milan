@@ -402,8 +402,9 @@ Where latency **is** at risk, in order:
    [03 §8](architecture/03_packet_engine.md) pacing contract (≥ 1 TX slot per
    frame-time held for solicited traffic) is what protects the 8,000× margin above.
 3. **The per-frame plane must not move.** Counter *accumulation* is per-frame and
-   stays fabric; the µCPU serves and latches counters, it is never in the
-   accumulation path.
+   stays fabric; the µCPU only reads the fabric's counters through the `ctr_*` face
+   to serve GET_COUNTERS, keeps and latches none, and is never in the accumulation
+   path.
 4. **SRP is not a latency argument for fabric — with one exception.** Its fastest
    deadline is MRP joinTime at 200 ms ([08 F08.1](architecture/08_timing.md)),
    which places the whole engine on the far side of the consumer's own "100 ms

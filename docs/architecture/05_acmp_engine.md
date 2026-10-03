@@ -20,8 +20,10 @@ Read [04](04_adp_engine.md) first — the listener SM consumes its discovery eve
 Consumes: ACMP queue ([03 §4](03_packet_engine.md)); `EVT_TK_DISCOVERED/DEPARTED{sink}`
 ([04 §6.2](04_adp_engine.md)); `TK_ATTR_REGISTERED/UNREGISTERED{sink}` from `srp`;
 timer expiries `T-ACMP-*`; lock queries to the lock manager. Produces: responses +
-PROBE_TX via originator; `srp` ops (`DECLARE/WITHDRAW_LISTENER`), `avtp` ops
-(`INPUT_CONFIGURE/ENABLE/DISABLE/START/STOP`); NVM binding records; `pbsta`/`acmpsta`
+PROBE_TX via originator; `srp` ops (`DECLARE/WITHDRAW_LISTENER`); the bound-stream
+view and the started/stopped state, as levels the integrator's stream datapath reads
+(`acmp_bound_*`, `aecp_strm_started_o`; no `avtp` op exists,
+[02 §4.4](02_interfaces.md)); NVM binding records; `pbsta`/`acmpsta`
 and bound/settled state read by AECP gather ([06 §6.2](06_aecp_engine.md)); notification
 triggers on every committed state change.
 
@@ -101,7 +103,7 @@ flowchart LR
   exec -- "PROBE_TX build + retry" --> orig["originator"]
   tresp --> resp["response builder"]
   exec --> resp
-  exec -- "declare/withdraw, configure/enable" --> srpav["srp + avtp adapters"]
+  exec -- "srp declare/withdraw; the bound view" --> srpav["srp face + acmp_bound levels"]
   exec -- "binding records" --> nvm["NVM manager"]
   dagate["talker DA-gate + MAAP flow (per source)"] --> tresp
 ```
@@ -281,14 +283,14 @@ notification triggers of [§11-x](#10-milan-deltas) via the global commit rule):
 | A5 | send PROBE_TX {FAST_CONNECT=1, SW=0, cc=0, stream fields 0} on the sink's interface; save `probe_seq`; arm `T-ACMP-CMD`; `retried`←0; pbsta←ACTIVE, acmpsta←0 |
 | A6 | update `bind_controller_eid` + saved STREAMING_WAIT only (v1.2 re-bind short-circuit — nothing else changes) |
 | A7 | send UNBIND_RX_RESPONSE SUCCESS |
-| A8 | teardown SRP: `WITHDRAW_LISTENER`; `avtp.INPUT_DISABLE`; clear settled {stream_id, DA, VLAN}; talker_registered←0 |
-| A9 | disarm discovery SM |
+| A8 | teardown SRP: `WITHDRAW_LISTENER`; clear settled {stream_id, DA, VLAN}; talker_registered←0. No stream-datapath request: the bound view (`acmp_bound_*`, [02 §4.4](02_interfaces.md)) follows the binding and is withdrawn with A9 |
+| A9 | disarm discovery SM; withdraw the bound view ([02 §4.4](02_interfaces.md)): the stream identity on `acmp_bound_sid_o`, `acmp_bound_dmac_o` and `acmp_bound_vlan_o` reads 0, and `acmp_bound_o` falls unless A4 re-arms the sink in the same transaction (a re-bind: the port is debounced) |
 | A10 | clear binding; NVM clear; pbsta←DISABLED, acmpsta←0 |
 | A11 | stop the active SM timer |
 | A12 | arm `T-ACMP-DELAY`; pbsta←ACTIVE, acmpsta←0 |
 | A13 | re-send **exact duplicate** probe (regenerated from record, same `probe_seq`); arm `T-ACMP-CMD`; `retried`←1 |
 | A14(s) | arm `T-ACMP-RETRY`; acmpsta←s (received status, or 7 on double timeout) |
-| A15 | latch {stream_id, dest MAC, VLAN} from response; `avtp.INPUT_CONFIGURE` + `INPUT_ENABLE`; start SRP listen (adapter declares Listener READY when a matching talker attribute registers — Milan §5.3.8.5); arm `T-ACMP-NOTK`; pbsta←COMPLETED, acmpsta←0 |
+| A15 | latch {stream_id, dest MAC, VLAN} from response; publish the bound view (`acmp_bound_*`, from which the integrator arms its RX filter, [02 §4.4](02_interfaces.md)); start SRP listen (adapter declares Listener READY when a matching talker attribute registers — Milan §5.3.8.5); arm `T-ACMP-NOTK`; pbsta←COMPLETED, acmpsta←0 |
 | A16 | respond GET_RX_STATE per [F05.14](#fig-05-getrxstate) |
 | A17 | pbsta←PASSIVE, acmpsta←0 |
 
@@ -345,8 +347,8 @@ stateDiagram-v2
 flowchart TB
   ub["UNBIND_RX (A1 ok)"] --> t1["A11 stop timer"] --> t2{"settled?"}
   rb["re-bind different source (A1 ok)"] --> t1
-  t2 -- yes --> t3["A8 withdraw SRP + disable AVTP + clear settled"]
-  t2 -- no --> t4["A9 disarm discovery"]
+  t2 -- yes --> t3["A8 withdraw SRP + clear settled"]
+  t2 -- no --> t4["A9 disarm discovery + withdraw the bound view"]
   t3 --> t4
   t4 --> t5{"cause"}
   t5 -- "UNBIND" --> t6["A10 clear binding + NVM clear"] --> t7["A7 respond"] --> u["UNBOUND"]
@@ -505,7 +507,7 @@ sequenceDiagram
     ACMP->>TALKER: A5 PROBE_TX (FAST_CONNECT=1)
     TALKER-->>ACMP: PROBE_TX_RESPONSE SUCCESS (stream_id, DA, VLAN)
     ACMP->>ACMP: A15 latch params, arm T-ACMP-NOTK
-    ACMP->>SRP: INPUT_CONFIGURE + listen (declare READY when talker attr matches)
+    ACMP->>SRP: listen (declare READY when talker attr matches)
     TALKER->>SRP: Talker Advertise (matching)
     SRP-->>ACMP: EVT_TK_REGISTERED
     ACMP->>ACMP: SETTLED_RSV_OK

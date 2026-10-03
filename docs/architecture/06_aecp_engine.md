@@ -5,10 +5,11 @@
 
 Executes supported AEM and MVU commands and refuses unimplemented types per F06.14.
 Owns the controller registry + unsolicited
-notification machinery, the lock manager, the counters service and the identify
-handler. This is the microcoded part of the processor: ~24 mandatory commands with
-per-command validation chains and variable-size responses justify a µsequencer over
-per-command FSMs ([review §4](../00_MILAN_COMPLIANCE_REVIEW.md)).
+notification machinery, the lock manager, the GET_COUNTERS read path (the counters
+themselves are the integrator's, §6.6) and the identify handler. This is the
+microcoded part of the processor: ~24 mandatory commands with per-command validation
+chains and variable-size responses justify a µsequencer over per-command FSMs
+([review §4](../00_MILAN_COMPLIANCE_REVIEW.md)).
 
 ## 2. External contract
 
@@ -21,8 +22,10 @@ records ([05 §5](05_acmp_engine.md)) and the class-D dictionary
 this build ([03 §5](03_packet_engine.md#5-origins-originator-and-event-router)).
 Produces: solicited responses; unsolicited responses (IDENTIFY_NOTIFICATION among them)
 as engine-internal SELF jobs, and CONTROLLER_AVAILABLE through the originator;
-entity-model overlay writes + NVM completion marks; `avtp`/`mclk`/`srp`
-class-B ops for applied settings. The engine also contains the D3 saved-state writer
+entity-model overlay writes + NVM completion marks; the applied settings as levels
+for the integrator (stream formats, presentation offsets, the clock source; no
+`avtp` or `mclk` op exists, [02 §4.4, §4.5](02_interfaces.md)). The engine also
+contains the D3 saved-state writer
 (NVM manager 1, [07 §5.3](07_memory_maps.md#fig-07-nvmflow)), which persists and restores
 the scalar overlay rows.
 
@@ -145,7 +148,7 @@ flowchart LR
   reg[("controller registry")] <--> fan
   mon["registry monitor (T-NOTIF-MONITOR)"] --> ca["CONTROLLER_AVAILABLE via originator"]
   lockm["lock manager (T-LOCK-UNLOCK)"] <--> ucpu
-  ctrs["counters subsystem (T-CTR-OBSERVE)"] <--> ucpu
+  ctrs["ctr read face: the integrator's counters"] <--> ucpu
   idh["identify handler (T-IDENT-*)"] --> fan
   d3["D3 saved-state writer (NVM manager 1)"] -. "own: dispatch hold" .-> disprom
   d3 <-- "state bus 2:1 (bus)" --> model
@@ -306,6 +309,7 @@ sampling rate or clock source (set or restored) is judged against the AUDIO_UNIT
 own list and the CLOCK_DOMAIN's own count, which a descriptor short of the lane does
 not hold.
 
+<a id="sec-06-stri"></a>
 ### 6.2 GET_STREAM_INFO — the Milan 80-byte response and its data lineage
 
 **Realization status (`E_GSTRI` + the internal/external gather)**: implemented for
@@ -462,7 +466,7 @@ Consequently `SET_NAME`, `GET_NAME`, and `READ_DESCRIPTOR` expose one value.
 | SET_CONFIGURATION | any input bound ∨ any output streaming ⇒ `STREAM_IS_RUNNING` (**at dispatch, so it outranks the lock** - see below) → lock → index valid ⇒ commit → NVM mark (review §8 item 1). **No scoreboard barrier is drained today**: the current top admits a new AEM transaction only when its single AECP engine is idle, which orders SET_CONFIGURATION against both configuration read views. A future parallel AEM execution path must select `PP_HZ_CFG_BARRIER` before it can preserve that property. |
 | SET_STREAM_FORMAT (**implemented**, Milan §5.4.2.7) | length (cdl 24 and the walked payload) → type ∈ {STREAM_INPUT, STREAM_OUTPUT} → **per-descriptor running at dispatch** (bound input ∨ streaming output ⇒ `STREAM_IS_RUNNING`, outranking the lock like SET_CONFIGURATION's reduction and for the same reason) → lock → locate → the integrator's ONE-GATHER verdict on the proposed format (kind 0 selector 15 against `gsi_prop_fmt`): supported-for-this-stream AND every mapping-referenced channel survives, anything less ⇒ `BAD_ARGUMENTS` → WRITE_ST to SEL_FMTIN/SEL_FMTOUT + NVM mark → echo the format now in force. Every refusal after the length gate carries the CURRENT format read through GET_STREAM_FORMAT's own face word, so the two can never disagree. The supported set and the mapping reduction live integrator-side (the builder's always-live shapes; the map machinery that already validates every edit), not in a µcode walk over the image |
 | SET_SAMPLING_RATE | lock (`ENTITY_LOCKED` carrying the current rate, §6.8) → locate (no such AUDIO_UNIT ⇒ `NO_SUCH_DESCRIPTOR`) → rate ∈ AUDIO_UNIT list (`E_SSRATE` + `E_SSRWALK`; issue #51): the rate is compared, as the whole 32-bit word including the pull field, with entries 0..`sampling_rates_count`-1 of the located descriptor's list, read at `sampling_rates_offset` 144. **Precondition, part of the image contract** ([07 §3.1 L10](07_memory_maps.md#31-descriptor-tree)): offset 144 and at most 8 entries. A state-port address is an immediate, so any other offset refuses every rate and an entry past the eighth is never accepted; both fail closed. A rate the list does not hold ⇒ `BAD_ARGUMENTS` carrying the CURRENT rate (the value GET_SAMPLING_RATE reads), with nothing stored, marked or notified. `BAD_ARGUMENTS` rather than `NOT_SUPPORTED` because Table 7-141 keeps `NOT_SUPPORTED` for a target that is not supported (an AUDIO_UNIT that exists is supported; its argument is not), and review §8 item 3 reads Milan's "UNSUPPORTED" as `NOT_SUPPORTED` for the mapping clause below only → mappings whose stream rate ≠ new rate while port has neither SRC bit ⇒ may `NOT_SUPPORTED` (Milan §5.4.2.13 — "UNSUPPORTED" typo, review §8 item 3; this MAY is not implemented) → commit + NVM |
-| SET_CLOCK_SOURCE | lock (`ENTITY_LOCKED` carrying the current index, §6.8) → locate (no such CLOCK_DOMAIN ⇒ `NO_SUCH_DESCRIPTOR`) → source ∈ CLOCK_DOMAIN list, tested as `clock_source_index` < the located domain's `clock_sources_count` (`E_SCLKS`; milan-fpga #389). **Precondition, part of the image contract**: the processor requires the domain's `clock_sources` list to be the identity permutation 0..count-1 ([07 §3.1 L6](07_memory_maps.md#31-descriptor-tree)); that is what makes the bound equal the membership test of IEEE 1722.1-2021 §7.2.32 (`clock_sources`, the indices `clock_source_index` may be set to). A sparse or permuted list would have unlisted indices accepted and listed ones refused. An index at or past the count ⇒ `BAD_ARGUMENTS` (IEEE 1722.1-2021 Table 7-141) carrying the CURRENT index (the value GET_CLOCK_SOURCE reads; §7.4.23.1), with nothing stored, marked or notified → `mclk.SET_CLOCK_SOURCE` → commit + NVM |
+| SET_CLOCK_SOURCE | lock (`ENTITY_LOCKED` carrying the current index, §6.8) → locate (no such CLOCK_DOMAIN ⇒ `NO_SUCH_DESCRIPTOR`) → source ∈ CLOCK_DOMAIN list, tested as `clock_source_index` < the located domain's `clock_sources_count` (`E_SCLKS`; milan-fpga #389). **Precondition, part of the image contract**: the processor requires the domain's `clock_sources` list to be the identity permutation 0..count-1 ([07 §3.1 L6](07_memory_maps.md#31-descriptor-tree)); that is what makes the bound equal the membership test of IEEE 1722.1-2021 §7.2.32 (`clock_sources`, the indices `clock_source_index` may be set to). A sparse or permuted list would have unlisted indices accepted and listed ones refused. An index at or past the count ⇒ `BAD_ARGUMENTS` (IEEE 1722.1-2021 Table 7-141) carrying the CURRENT index (the value GET_CLOCK_SOURCE reads; §7.4.23.1), with nothing stored, marked or notified → commit + NVM; the committed index is the `aecp_clk_src_index_o` level, on which the integrator switches its media clock ([02 §4.5](02_interfaces.md)) |
 | SET_NAME | configuration valid, descriptor exists, semantic name index valid, lock, compare all 64 bytes, then commit, pulsing the accepted lane writes and emitting the completion mark and notification only when changed |
 
 "NVM mark" in these chains is the completion effect (`aecp_nvm_stb_o` /
@@ -547,7 +551,8 @@ at commit, and use the root transaction face to update the live map atomically.
   body. A malformed command count is never reflected as though it described
   records that are absent from the response.
 
-### 6.6 GET_COUNTERS and the counters subsystem
+<a id="sec-06-counters"></a>
+### 6.6 GET_COUNTERS and the integrator's counters
 
 **Strictness upgrade (2026-08-15, the bench probe round)** — the SUCCESS-empty-mask
 answer is now said only about a REAL object of a SUPPORTED type: `E_GCTRS` opens
@@ -582,19 +587,29 @@ See KL_aecp_desc_store's banner.
 
 Response: `descriptor_type @24`, `descriptor_index @26`, `counters_valid @28`,
 32 × u32 block @32 (cdl 148). `counters_valid` bit N (MSB-first) ⇔ block offset 4·N.
-Counters are 32-bit wrapping; interval-latched events sample at `T-CTR-OBSERVE`; adapters accumulate ticks so nothing is lost between observations.
 
-<a id="fig-06-counters"></a>**F06.15 — Mandatory counter banks**
+**Who keeps the counters** (owner decision 2026-09-19, processor issues #44 and #79):
+the integrator, behind the `ctr_*` read face
+([02 §4.6](02_interfaces.md#sec-02-ctr)); this repository keeps no bank
+([07 F07.10](07_memory_maps.md#fig-07-ctrmap)). Each counter is 32-bit and wraps, the
+interval counters commit at the integrator's own observation interval
+(`T-CTR-OBSERVE`, at most 1 s), and every reset rule belongs to the bank that applies
+it. The contract per descriptor type, every rule of F06.15 below included, is the
+[integrator guide §7.1](../guides/integrator.md#counters-face).
+
+<a id="fig-06-counters"></a>**F06.15 — The counter banks the integrator keeps** (Milan
+v1.2 §5.4.2.25 Tables 5.13 to 5.17; IEEE 1722.1-2021 Tables 7-152 to 7-159)
 
 > ⚠ Masks authoritative (MSB-first tables). **Δ9**: the STREAM_OUTPUT masks below are
-> Milan Table 5.17 and *differ from IEEE Tables 7-158/159* — the plain-IEEE profile
-> swaps this one bank's mask ROM.
+> Milan Table 5.17 and *differ from IEEE Tables 7-158/159*. The processor carries
+> whichever layout the integrator's face answers; a plain-IEEE integrator answers that
+> one bank in the IEEE layout.
 
 | Bank | Counter | Mask | Semantics / reset rule |
 |---|---|---|---|
-| AVB_INTERFACE | LINK_UP | 0x00000001 | link down→up; invariant UP = DOWN or DOWN+1 |
-| | LINK_DOWN | 0x00000002 | |
-| | GPTP_GM_CHANGED | 0x00000020 | GM changes since boot |
+| AVB_INTERFACE | LINK_UP | 0x00000001 | `link_up_i` down→up; invariant UP = DOWN or DOWN+1 |
+| | LINK_DOWN | 0x00000002 | `link_up_i` up→down |
+| | GPTP_GM_CHANGED | 0x00000020 | grandmaster identity changes since boot; a domain-only `gm_change_i` does not count |
 | | FRAMES_TX / FRAMES_RX / RX_CRC_ERROR | 0x04/0x08/0x10 | optional |
 | CLOCK_DOMAIN | LOCKED / UNLOCKED | 0x01 / 0x02 | invariant LOCKED = UNLOCKED or +1 |
 | STREAM_INPUT | MEDIA_LOCKED / MEDIA_UNLOCKED | 0x01 / 0x02 | invariant; **whole bank resets on not-bound→bound**, never on unbind |
@@ -606,8 +621,16 @@ Counters are 32-bit wrapping; interval-latched events sample at `T-CTR-OBSERVE`;
 | | TIMESTAMP_UNCERTAIN | **0x08** (Δ9) | resets on stream start |
 | | FRAMES_TX | **0x10** (Δ9) | resets on stream start |
 
-The integrator exposes per-descriptor counter-update pulses. Connecting those
-pulses to the rate-limited `T-CTR-NOTIF` scheduler is tracked separately.
+**The push.** The integrator's change strobe (`ctr_change_i` with
+`ctr_change_desc_type_i` and `ctr_change_desc_index_i`, one served descriptor per cycle)
+is wired from `protocol_processor_top` to the notification block's `ev_ctr_*`
+(`KL_aecp_notify`): one pending bit per descriptor it keeps a slot for (every Stream
+Input and Stream Output index of the shape, AVB_INTERFACE 0 and CLOCK_DOMAIN 0),
+repeats coalesced, and at most one unsolicited GET_COUNTERS per descriptor per
+`T-CTR-NOTIF` (Milan Table 5.22), throttled per descriptor and gathered through the face
+when it is emitted, so it carries the counts of that moment. A strobe without a slot is
+ignored. Graded in `tb/pp_top` U9 and K13 to K17 (K17: a strobe for AVB_INTERFACE 1,
+CLOCK_DOMAIN 1 or a stream index past the shape pushes nothing), under load in ST (§7).
 
 **Who decides the mask.** The masks above are what a *complete* PAAD-AE owes;
 what a given build may claim is what its fabric measures, and the engine carries
@@ -800,6 +823,7 @@ waived pair, so this field advertises neither pair and is not a command-support
 bitmap. The reserved `P-EN-MVU-SUID` / `P-EN-MVU-MCR` names in
 [F01.5](01_overview.md#fig-01-params) have no RTL consumer or enable setting.
 
+<a id="sec-06-gsi"></a>
 ### 6.10 GET_AVB_INFO / GET_AS_PATH and the Milan-info face
 
 **Realization status (2026-08-15, `E_GAVB`/`E_GASP` + the shared `gsi_*` face).**
@@ -1111,16 +1135,23 @@ single-source command model ([09 §1](09_verification.md)).
 | everything else, all message types | `NOT_IMPLEMENTED` with the command **echoed** (F06.14 / §9.3.5.3.3) |
 
 **GET_COUNTERS keeps no counters, and that is the design.** The events Milan
-Table 5.6 counts happen in the integrator's stream datapath, so the engine owns
+Tables 5.1, 5.4, 5.6 and 5.7 count happen in the integrator's datapath (the link,
+gPTP, the media clock, the stream talkers and listeners), so the engine owns
 the §7.4.42.2 block layout and asks a `ctr_*` read face for one quadlet at a
 time: `ctr_word_o` 0..31 is the block quadlet at block byte 4·n, and
 `ctr_word_o` = 32 is `counters_valid` itself, so one face carries both the
-values and the claim about them. The µprogram (`E_GCTRS`) is branch-free — 16
-µops, no status arm — because §7.4.42.2 already gives the honest answer for an
-object this build measures nothing for: `counters_valid` = 0 means "no quadlet
-here", where a mask of ones over a block of zeros would be a lie. ENTITY is
-that case by the standard itself (Table 7-150 has nothing but ENTITY_SPECIFIC
-bits, none Milan-mandatory).
+values and the claim about them. The µprogram (`E_GCTRS`, `gen_ucode.py`) opens
+with the store locate (§6.6). The hit path is 17 µops: the locate, its
+`BR_STATUS`, then the mask and the 32 quadlets (eight four-beat `READ_CTRS`) with
+no further branch. On a miss, `BR_STATUS` takes an 11-µop arm that lays the same
+fixed body with a zero mask and a zero block from an iterator loop, never asking
+the face. `E_GCTRSNS` (two
+µops) sets NOT_SUPPORTED and falls into that arm for a type outside the kept
+set, ENTITY among them (Table 7-150 has nothing but ENTITY_SPECIFIC bits, none
+Milan-mandatory; §6.6). For a real object of a kept type that this build
+measures nothing for, §7.4.42.2 already gives the honest answer:
+`counters_valid` = 0 means "no quadlet here", where a mask of ones over a block
+of zeros would be a lie.
 
 `ctr_wait_i` is asserted to **hold**, not to grant, so an unwired face answers 0
 immediately and the response carries an empty mask rather than hanging. A face
@@ -1458,9 +1489,9 @@ somebody else's to fix.
 ## 9. Timing
 
 Owns `T-AECP-RESP`, `T-NOTIF-MONITOR`,
-`T-NOTIF-TIMELIMITED`, `T-LOCK-UNLOCK`, `T-CTR-OBSERVE`, `T-CTR-NOTIF`,
-`T-IDENT-BURST`, `T-IDENT-REARM`; the originator applies `T-AECP-TIMEOUT` to
-CONTROLLER_AVAILABLE inflight. Values: [F08.1](08_timing.md#fig-08-constants);
+`T-NOTIF-TIMELIMITED`, `T-LOCK-UNLOCK`, `T-CTR-NOTIF`,
+`T-IDENT-BURST`, `T-IDENT-REARM` (`T-CTR-OBSERVE` is the integrator's, §6.6); the
+originator applies `T-AECP-TIMEOUT` to CONTROLLER_AVAILABLE inflight. Values: [F08.1](08_timing.md#fig-08-constants);
 budgets: [08 §4](08_timing.md).
 
 ## 10. Milan deltas

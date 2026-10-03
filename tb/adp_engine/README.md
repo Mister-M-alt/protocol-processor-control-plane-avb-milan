@@ -3,7 +3,7 @@
 
 Proves the ADP engine (`hdl/adp/KL_adp_engine.sv`) against
 [04](../../docs/architecture/04_adp_engine.md) in full: `make` = build + run,
-exit 0 = PASS, 1367 checks. `make mutants` runs the checked-in mutation
+exit 0 = PASS, 1328 checks. `make mutants` runs the checked-in mutation
 campaign below.
 
 The top (`tb_adp_top.sv`) is pure wiring: the engine plus the **real
@@ -21,7 +21,7 @@ Covered: byte-exact ADPDU for **both** message types (all 82 wire bytes,
 entity_id at wire byte 18, F04.6 caps 0x0000C588, cdl 56, Δ5 valid_time
 10/0); the F04.2 advertise SM — startup kind-1 draw, T-ADP-ADV 5 s re-arm
 per send, DISCOVER (eid 0 / own / foreign / ignored-in-DELAY), GM_CHANGE
-re-advertise + GPTP_GM_CHANGED tick + gm sampled at build, LINK_DOWN with
+re-advertise + gm sampled at build, LINK_DOWN with
 **no** departing then kind-2 re-entry, disable ⇒ ENTITY_DEPARTING; the 04 §5
 available_index doc rule (0 at power-up, ++ after each AVAILABLE, departing
 carries the pre-reset value then resets to 0); statistical draw separation
@@ -96,10 +96,11 @@ draw, or + 5000 ms into WAITING; a cancel wherever the clause says Stop, none
 where the slot is untouched; nothing on any other slot), the committed frame
 byte-exact (ENTITY_AVAILABLE on TMR_DELAY, ENTITY_DEPARTING with the
 pre-reset index on SHUTDOWN, nothing otherwise), available_index (+1, reset to
-0, or unchanged), GPTP_GM_CHANGED (one tick on GM_CHANGE, none otherwise),
-no discovery event, and the RX-slot free of each DISCOVER. The five cells
+0, or unchanged), no discovery event, and the RX-slot free of each DISCOVER.
+The engine keeps no GPTP_GM_CHANGED tick (the counter is the integrator's,
+processor issue #44 and 02 §4.6). The five cells
 issue #85 named are DOWN x {DISCOVER, GM_CHANGE, SHUTDOWN} (inert: no draw,
-no frame, no timer operation, only the GM counter tick) and DELAY x
+no frame, no timer operation) and DELAY x
 {LINK_DOWN (timer cancelled, no DEPARTING), SHUTDOWN (DEPARTING sent, index
 reset)}, the last two in both DELAY phases. In the draw phase the event is
 applied while the draw request is on the port and the PRNG has not taken it,
