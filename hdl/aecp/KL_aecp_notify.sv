@@ -601,6 +601,10 @@ module KL_aecp_notify
     end
   end
 
+  // parked-expiry drain pick, driven by pend_pick below
+  logic               pd_any_w;
+  logic [CIX_W_C-1:0] pd_ix_w;
+
   always_comb begin : ca_request
     ca_valid_o    = ca_pick_ok_w;
     ca_owner_o    = 4'(ca_pick_ix_w);
@@ -719,8 +723,6 @@ module KL_aecp_notify
                                       + 32'(exp_ix_w)));
 
   //! parked-expiry drain pick (lowest index first; order is immaterial)
-  logic               pd_any_w;
-  logic [CIX_W_C-1:0] pd_ix_w;
   always_comb begin : pend_pick
     pd_any_w = 1'b0;
     pd_ix_w  = '0;
