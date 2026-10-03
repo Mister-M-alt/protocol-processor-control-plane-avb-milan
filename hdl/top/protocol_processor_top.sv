@@ -366,7 +366,7 @@ module protocol_processor_top
     //! ---- GET_COUNTERS read face (06 §6.6; IEEE §7.4.42, Milan §5.4.2.25) ----
     //! The processor parses the command and lays out §7.4.42.2's 32-quadlet
     //! block; the INTEGRATOR owns what the numbers mean, because the events
-    //! Milan Table 5.6 counts happen in its stream datapath. One quadlet is
+    //! Milan Tables 5.1/5.4/5.6/5.7 count happen in its datapath. One quadlet is
     //! asked for at a time: `ctr_word_o` 0..31 is the block quadlet at block
     //! byte 4·n and `ctr_word_o` = 32 is the counters_valid mask itself, so
     //! there is one place to say what this build actually measures.

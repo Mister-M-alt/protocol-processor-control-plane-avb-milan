@@ -1134,16 +1134,23 @@ single-source command model ([09 §1](09_verification.md)).
 | everything else, all message types | `NOT_IMPLEMENTED` with the command **echoed** (F06.14 / §9.3.5.3.3) |
 
 **GET_COUNTERS keeps no counters, and that is the design.** The events Milan
-Table 5.6 counts happen in the integrator's stream datapath, so the engine owns
+Tables 5.1, 5.4, 5.6 and 5.7 count happen in the integrator's datapath (the link,
+gPTP, the media clock, the stream talkers and listeners), so the engine owns
 the §7.4.42.2 block layout and asks a `ctr_*` read face for one quadlet at a
 time: `ctr_word_o` 0..31 is the block quadlet at block byte 4·n, and
 `ctr_word_o` = 32 is `counters_valid` itself, so one face carries both the
-values and the claim about them. The µprogram (`E_GCTRS`) is branch-free — 16
-µops, no status arm — because §7.4.42.2 already gives the honest answer for an
-object this build measures nothing for: `counters_valid` = 0 means "no quadlet
-here", where a mask of ones over a block of zeros would be a lie. ENTITY is
-that case by the standard itself (Table 7-150 has nothing but ENTITY_SPECIFIC
-bits, none Milan-mandatory).
+values and the claim about them. The µprogram (`E_GCTRS`, `gen_ucode.py`) opens
+with the store locate (§6.6). The hit path is 17 µops: the locate, its
+`BR_STATUS`, then the mask and the 32 quadlets (eight four-beat `READ_CTRS`) with
+no further branch. On a miss, `BR_STATUS` takes an 11-µop arm that lays the same
+fixed body with a zero mask and a zero block from an iterator loop, never asking
+the face. `E_GCTRSNS` (two
+µops) sets NOT_SUPPORTED and falls into that arm for a type outside the kept
+set, ENTITY among them (Table 7-150 has nothing but ENTITY_SPECIFIC bits, none
+Milan-mandatory; §6.6). For a real object of a kept type that this build
+measures nothing for, §7.4.42.2 already gives the honest answer:
+`counters_valid` = 0 means "no quadlet here", where a mask of ones over a block
+of zeros would be a lie.
 
 `ctr_wait_i` is asserted to **hold**, not to grant, so an unwired face answers 0
 immediately and the response carries an empty mask rather than hanging. A face
