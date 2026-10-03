@@ -21,7 +21,8 @@ count; issue #141 adds the clock-source row and restore rule over a ten-source
 domain. The suite READMEs carry the matching mutation records.
 Issues #59 and #62 add the volatile set's reset arms, graded by section D3V in a run
 of its own (`--volatile-only`), whose watch outlasts the controller monitor; issues #52
-and #63 the unrestorable records; issues #61 and #83 the name stage (section D3N).
+and #63 the unrestorable records; issues #61 and #83 the name stage (section D3N); and
+issue #83 the seeded-random reset-cut campaign (section D3KR, `--cuts-only`).
 
 Usage: python3 tb/pp_top/d3_mutants.py --output DIR [--verilator V] [--jobs N]
                                        [--only NAME ...]
@@ -57,6 +58,7 @@ PP_TOP = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--
 PP_TOP_VOLATILE = Suite("tb/pp_top", ("make", "gsi-build"),
                         ("./obj_dir/Vpp_top_sim", "--volatile-only"))
 PP_TOP_ADP = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--adp-only"))
+PP_TOP_CUTS = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--cuts-only"))
 ACMP_NVM = Suite("tb/acmp_nvm", ("make", "ltn_rom.hex"), ("make", "run"))
 RX_VALIDATOR = Suite("tb/rx_validator", (), ("make", "run"))
 
@@ -589,9 +591,22 @@ NAMES = (
         ("D3N7",)),
 )
 
+# issue #83 and the manager's ruling on it: the standing seeded-random reset-cut
+# campaign (section D3KR, run --cuts-only), which cuts the binding record too. A torn
+# record whose crc is no longer compared is restored instead of the default
+SHADOW_CRC = "                      && (rcrc_acc_r == rcrc_rx_r);\n"
+CUTS = (
+    Mutant("cut_binding_crc_ignored", PP_TOP_CUTS, (
+        (SHADOW, SHADOW_CRC, SHADOW_CRC.replace("(rcrc_acc_r == rcrc_rx_r)", "1'b1")),),
+        ("D3KR bind seed",)),
+    Mutant("cut_frame_crc_ignored", PP_TOP_CUTS, (
+        (WRITER, FRAME_CRC, FRAME_CRC.replace("(rcrc_acc_r == rcrc_rx_r)", "1'b1")),),
+        ("D3KR ptof seed", "D3KR name seed")),
+)
+
 MUTANTS = (OWNERSHIP + SERVICE + RESTORE + ROLLBACK + DR2C + REVIEW + AGGREGATE + ADMISSION
-           + CLOCK_SOURCES + VOLATILE + UNRESTORABLE + NAMES)
-TALLY = re.compile(r"^((D3V?|AD): \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$",
+           + CLOCK_SOURCES + VOLATILE + UNRESTORABLE + NAMES + CUTS)
+TALLY = re.compile(r"^((D3V?|D3KR|AD): \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$",
                    re.M)
 
 

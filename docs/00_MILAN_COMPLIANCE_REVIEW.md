@@ -256,9 +256,10 @@ integrator's, so it writes records `0x60`/`0x70` from the phase-5 commit beat,
 restores them against the restored formats and resets them on a D3 roll-back
 ([07 §5.1](architecture/07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002)).
 The processor keeps the ATDECC side of the maps
-(GET_AUDIO_MAP, ADD/REMOVE_AUDIO_MAPPINGS), so they stay ATDECC-authoritative. No
-processor-only evidence closes the physical saved-state acceptance, which is the
-integrating platform's.
+(GET_AUDIO_MAP, ADD/REMOVE_AUDIO_MAPPINGS), so they stay ATDECC-authoritative. The
+seeded-random cut campaign (`tb/pp_top` D3KR) cuts every record type both producers
+write, the binding included, at 32 standing seeds each. No processor-only evidence
+closes the physical saved-state acceptance, which is the integrating platform's.
 
 #### <a id="gap-10"></a>GAP-10 [Major] — Reusability substance missing
 "Reusable FPGA IP" is claimed without the artifacts that make IP reusable: no clock/
@@ -466,7 +467,7 @@ verification).
 
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
 |---|---|---|---|---|---|---|---|---|
-| REQ-PER-001 | Milan §5.3.5.1, §5.3.7.1/.6, §5.3.8.1/.2/.3/.7, §5.3.9.1, §5.3.10.1, §5.3.11.1, §5.3.13 | Persist: sampling rate; stream formats in/out; presentation offset; bound state + binding params; started/stopped; output + input mappings; clock source; all user names | shall | A | [GAP-09](#gap-09); bindings, started/stopped and the scalar groups implemented (#131), the user names (#61/#83, `tb/pp_top` D3N; every D3 record type cut mid-commit, D3K); the maps assigned to the integrator (07 §5.1, issue #83 ruling) | binding manager + D3 writer; maps the integrator's (07 §5.1, §5.2 inventory) | 07 §5 | NVM |
+| REQ-PER-001 | Milan §5.3.5.1, §5.3.7.1/.6, §5.3.8.1/.2/.3/.7, §5.3.9.1, §5.3.10.1, §5.3.11.1, §5.3.13 | Persist: sampling rate; stream formats in/out; presentation offset; bound state + binding params; started/stopped; output + input mappings; clock source; all user names | shall | A | [GAP-09](#gap-09); bindings, started/stopped and the scalar groups implemented (#131), the user names (#61/#83, `tb/pp_top` D3N; every D3 record type cut mid-commit, D3K, and every record type at 32 seeded-random cut points, D3KR); the maps assigned to the integrator (07 §5.1, issue #83 ruling) | binding manager + D3 writer; maps the integrator's (07 §5.1, §5.2 inventory) | 07 §5 | NVM |
 | REQ-PER-002 | Milan §5.3.4.1/.2, §5.3.12 | Volatile: lock state; controller registry; identify = 0 after reset | shall | A | [GAP-09](#gap-09); graded across a power cycle that restores a saved binding (#62, `tb/pp_top` D3V: the lock free to a second controller, the registry empty, IDENTIFY 0 from the restore on, each reset arm's deletion killed) | volatile policy: no record; IDENTIFY (selector 7) excluded at the D3 trigger | 07 §5 | NVM |
 | REQ-PER-003 | (unstated) | Current configuration index persistence — Milan silent; design decision: persist | — | A | [GAP-09](#gap-09); implemented (#131); restored to the ADPDU, GET_CONFIGURATION and the ENTITY descriptor, and a blank, corrupt or torn record keeps the image default (#63, `tb/pp_top` AD5 to AD9) | design decision §8 item 1, retained; D3 record `0x00` | 07 §5 | NVM |
 

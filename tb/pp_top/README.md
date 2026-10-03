@@ -336,7 +336,8 @@ five into the one canonical tally.
   binding at the cut, and that boot restores it, probing PASSIVE
   (PRB_W_AVAIL). Once UNBIND_RX frees the sink, a later SET of B persists
   over whatever the cut left. The binding manager's own `rst_n` cuts are
-  `tb/acmp_nvm` R1 and R2, and the port's are `tb/nvm_port` T25.
+  `tb/acmp_nvm` R1 and R2, and the port's are `tb/nvm_port` T25. These are
+  the fixed cuts; section D3KR (below) is the seeded-random campaign.
   `restore_done_o` is the COMBINED terminal: the binding walk's release
   alone (S4) frees the listener, never AECP or ADP.
   The dispatch hold runs from reset, so every section that resets and then
@@ -377,6 +378,37 @@ five into the one canonical tally.
   from their reset branches (`KL_aecp_notify.sv` `valid_r`, `lk_held_r`;
   `KL_aecp_dyn_state.sv` `ident_r`), from `d3_mutants.py` (mutation record
   below).
+- **D3KR: the reset cut as a standing seeded-random campaign** (issue #83
+  acceptance 3 and the manager's ruling on it, #83 comment 5967611704; 09 §3
+  NVM, "cut at randomized commit points"). This is a fresh model of its own,
+  run by `--cuts-only` (`make cuts`) and in the default run, and kept out of
+  `--d3-only` so that no D3 control's run pays for it. Every record type both
+  producers write is cut: D3K's seven and the binding manager's sink record
+  `0x20`. A calibration commit of each type first writes B whole and measures
+  the clocks from its ERASE's grant to its WRITE's done (cfg 15, rate 17, clks
+  15, fmti 21, fmto 21, ptof 17, name 77, bind 33). Then for each of 32 standing
+  seeds (`0xD3C0FFEE` + k × `0x9E3779B9`) and each type: the device holds A, the
+  first boot restores it, and a live change to B starts the record's commit (D3K's
+  SET; for the binding a BIND_RX of sink 0 to another talker, which a sink in
+  PRB_W_AVAIL saves, Milan v1.2 §5.5.3.5.6). `rst_n` falls with the device
+  carried at a clock drawn from the seed and the record id (xorshift32), from
+  the ERASE's grant to two clocks past the WRITE's done. The outcome is read
+  from the bytes the device holds at the cut, never from the RTL: A whole comes
+  back, B whole comes back, and any other bytes (erased, a torn header, a torn
+  payload) must frame no record, the oracle's own premise, and keep the default:
+  the image's value, or an unbound sink. Per cut: the premise (A restored, B
+  accepted, the ERASE granted); the restore never fails and the group holds the
+  oracle's value; for a D3 type, sink 0's saved binding is restored and probes
+  PASSIVE (PRB_W_AVAIL), as D3K's; and a later change to B persists over whatever
+  the cut left (for a D3 type after UNBIND_RX frees the sink). Every check names
+  its seed and its cut clock, and `./obj_dir/Vpp_top_sim --cut-seed S` reruns one
+  seed alone. The 32 seeds reach, per type, A whole / erased / a torn header / a
+  torn payload / B whole: cfg 3/7/13/1/8, rate 5/3/8/8/8, clks 5/5/9/5/8, fmti
+  5/2/11/8/6, fmto 4/3/9/9/7, ptof 3/4/12/4/9, name 0/2/2/27/1, bind 3/2/7/18/2
+  (the name's A-whole window is two of 77 clocks; D3K's ERASE cut covers it).
+  1,000 checks, about 83 s. The negative controls (mutation record below)
+  compare no crc in the binding manager's walk or in the D3 writer's frame, so
+  a torn record is restored instead of the default.
 - **NW: accepted live name writes (issue #120).** The top's `aecp_name_wr_o`
   is sampled on every accepting clock edge. Independent byte comparisons
   predict one changed lane, all eight changed lanes and an unchanged name;
@@ -990,15 +1022,19 @@ and M34 the same 2 as before.
 `python3 d3_mutants.py --output DIR [--jobs N]` plants each control below in its own
 extract of `hdl/`, `tb/common/` and this directory, builds `gsi-build`, runs
 `--d3-only` (the controls of AD7 to AD9 run `--adp-only`, those of D3V
-`--volatile-only`, each with a golden of its own), and counts the mutant KILLED only when the run completes with its
+`--volatile-only` and those of D3KR `--cuts-only`, each with a golden of its own), and counts the mutant KILLED only when the run completes with its
 tally, exits non-zero and every named check fails; a golden extract runs first and
 must pass. The same driver runs the binding manager's three DR2c controls, the
 arbiter's issue-cycle control and its seven own-contract controls (N11) in `tb/acmp_nvm`
 and the validator's admission control in `tb/rx_validator` (their READMEs record
-them). At the head of lane P1 (issues #52, #59, #61, #62, #63, #83) all 108 are
-KILLED and the five goldens PASS (`--d3-only`, `--adp-only`, `--volatile-only`,
-`tb/acmp_nvm`, `tb/rx_validator`); the last column is how many checks each one
-failed there. The counts the next paragraph quotes are those lanes' own: since the
+them). At the head of lane P1 (issues #52, #59, #61, #62, #63, #83) all 110 are
+KILLED and the six goldens PASS (`--d3-only`, `--adp-only`, `--volatile-only`,
+`--cuts-only`, `tb/acmp_nvm`, `tb/rx_validator`); the last column is how many
+checks each one failed there. The two `cut_` controls run the seeded-random cut
+campaign (section D3KR): every check they fail names its seed, and a torn
+configuration, rate, clock-source or format record stays refused by its value
+rule, so their named checks are the binding's, the offset's and the name's. The
+counts the next paragraph quotes are those lanes' own: since the
 name stage and the cut section (D3N, D3K) every walk reads 59 records, so a control
 that breaks the walk or a frame fails more checks than it did then. Since the AECP
 deadline kill (issue #81, section DL), `hold_released_at_go` and
@@ -1112,6 +1148,8 @@ D3C4 arm. The last four rows are D3C's own controls.
 | `registry_survives_reset` | `valid_r <= '0` deleted from `KL_aecp_notify`'s reset branch; run `--volatile-only` (issue #59) | `D3V5`, `D3V8`, `D3V9` | 4 |
 | `lock_survives_reset` | `lk_held_r <= 1'b0` deleted from the same reset branch; run `--volatile-only` (issue #62) | `D3V4`, `D3V7` | 4 |
 | `identify_survives_reset` | `ident_r` deleted from `KL_aecp_dyn_state`'s reset branch; run `--volatile-only` (issue #62) | `D3V3` | 1 |
+| `cut_binding_crc_ignored` | the binding manager's crc compare removed from its record check, so a torn binding record is restored; run `--cuts-only` (issue #83, section D3KR) | `D3KR bind seed` (every seed whose cut left a torn binding record) | 20 |
+| `cut_frame_crc_ignored` | `frame_crc_ignored`, run `--cuts-only`: a torn D3 record the value rule would take is restored (issue #83, section D3KR) | `D3KR ptof seed`, `D3KR name seed` | 30 |
 
 ### AECP deadline and hazard-class controls (lane C5a): `aecp_mutants.py`
 

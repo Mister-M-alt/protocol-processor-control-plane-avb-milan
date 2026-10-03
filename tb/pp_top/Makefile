@@ -126,6 +126,11 @@ d3: gsi-build
 volatile: gsi-build
 	./obj_dir/Vpp_top_sim --volatile-only
 
+# section D3KR alone: the standing seeded-random reset-cut campaign (README);
+# ./obj_dir/Vpp_top_sim --cut-seed S reruns one seed
+cuts: gsi-build
+	./obj_dir/Vpp_top_sim --cuts-only
+
 hazards: gsi-build
 	./obj_dir/Vpp_top_sim --hazards-only
 
@@ -189,5 +194,5 @@ clean:
 
 .PHONY: name-writes run gsi-build gsi-internal maap-internal adp-config aecp-dispatch \
         line-build aecp-line aecp-dispatch-mutants identify-build identify \
-        deadline d3 volatile hazards budget budget-build \
+        deadline d3 volatile cuts hazards budget budget-build \
         aecp-mutants fixture-guards fixture-guards-test line-guards clean

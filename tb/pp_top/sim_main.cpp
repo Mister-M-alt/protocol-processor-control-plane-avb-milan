@@ -10776,6 +10776,20 @@ struct NameWritePhase {
   printf("D3V: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+//! Section D3KR, the standing seeded-random reset-cut campaign, on a fresh
+//! model against the same image: `--cuts-only` (`make cuts`) runs its
+//! standing seeds and `--cut-seed S` one seed alone. Like D3V it stays out of
+//! every D3 mutant's `--d3-only` run.
+[[maybe_unused]] static void run_cuts(H& h, const std::vector<uint32_t>& seeds) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  Suite setup(h);
+  setup.load_descriptor_image();
+  const std::vector<uint8_t> image = h.dram;
+  D3CutCampaignPhase{h, image, setup.image_ents}.run(seeds);
+  printf("D3KR: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 //! DR3a (parent D3 contract): the restore durations and longest waits,
 //! printed for the manager's ratification and never graded; `--dr3a` runs
 //! them alone and records no tally.
@@ -13669,6 +13683,8 @@ int main(int argc, char** argv) {
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
   const bool d3_only = argc == 2 && std::strcmp(argv[1], "--d3-only") == 0;
   const bool volatile_only = argc == 2 && std::strcmp(argv[1], "--volatile-only") == 0;
+  const bool cuts_only = argc == 2 && std::strcmp(argv[1], "--cuts-only") == 0;
+  const bool one_seed = argc == 3 && std::strcmp(argv[1], "--cut-seed") == 0;
   const bool acmp_only = argc == 2 && std::strcmp(argv[1], "--acmp-only") == 0;
   const bool maap_only = argc == 2 && std::strcmp(argv[1], "--maap-internal-only") == 0;
   const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
@@ -13683,7 +13699,7 @@ int main(int argc, char** argv) {
     return 0;
   }
   const bool one_section = gsi_only || name_only || d3_only || volatile_only || acmp_only || adp_only
-                           || maap_only || aecp_only || dl_only || hz_only
+                           || cuts_only || one_seed || maap_only || aecp_only || dl_only || hz_only
                            || ident_only || notify_only;
   if (maap_only) run_maap_internal(h);
   if (!one_section) Suite(h).run();
@@ -13692,6 +13708,8 @@ int main(int argc, char** argv) {
   if (!one_section || name_only) run_name_writes(h);
   if (!one_section || d3_only) run_d3(h);
   if (!one_section || volatile_only) run_volatile(h);
+  if (!one_section || cuts_only) run_cuts(h, D3CutCampaignPhase::standing());
+  if (one_seed) run_cuts(h, {uint32_t(std::stoul(argv[2], nullptr, 0))});
   if (!one_section || acmp_only) run_acmp(h);
   if (!one_section || adp_only) run_adp_config(h);
   if (!one_section || aecp_only) run_aecp_response(h);

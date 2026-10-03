@@ -3558,6 +3558,206 @@ struct D3CutPhase : D3RestorePhase {
   }
 };
 
+// ==== D3KR. the reset cut as a standing seeded-random campaign =============
+//! Issue #83 acceptance 3 ("cuts every record type at seeded-random commit
+//! points, including a real rst_n cut"), as the manager ruled it (#83, comment
+//! 5967611704): at least 32 seeds per record type, the seed printed on any
+//! failure, and D3K's four fixed cuts kept. Every record type is cut: D3K's
+//! seven and the binding manager's sink record 0x20. For one seed and one type
+//! the device holds A, the first boot restores it, and a live change to B
+//! starts the record's ERASE and WRITE: D3K's SET, or for the binding a BIND_RX
+//! of sink 0 to another talker, which a sink waiting for its talker saves
+//! (Milan v1.2 5.5.3.5.6). rst_n then falls, the device carried, a seeded
+//! number of clocks after the ERASE's grant: anywhere from that grant to two
+//! clocks past the WRITE's done, the span a calibration commit of each type
+//! measures first. The outcome is read from what the device holds at the cut,
+//! never from the RTL: A whole comes back, B whole comes back, and any other
+//! bytes (erased, a torn header, a torn payload) frame no record, which is the
+//! oracle's own premise, and keep the default: the image's value, or an
+//! unbound sink. The restore never fails, a restored binding probes PASSIVE
+//! (PRB_W_AVAIL, Milan 5.5.3.5.2), and a later change to B persists over
+//! whatever the cut left. Every check names its seed; `--cut-seed S` reruns
+//! one seed alone.
+struct D3CutCampaignPhase : D3CutPhase {
+  static constexpr int SEEDS = 32;
+  static constexpr uint32_t SEED0 = 0xD3C0FFEE;
+  static constexpr uint32_t STRIDE = 0x9E3779B9;
+  static constexpr uint64_t TALKER_A = 0x00B0B0B0B0B0DCA0ULL;
+  static constexpr uint64_t TALKER_B = 0x00B0B0B0B0B0DCB0ULL;
+  //! what the device holds at a cut
+  enum Rest { A_WHOLE, ERASED, TORN_HEADER, TORN_PAYLOAD, B_WHOLE, N_REST };
+  //! per type: clocks from its ERASE's grant to its WRITE's done, uncut
+  std::vector<long> span;
+
+  D3CutCampaignPhase(H& tally, const std::vector<uint8_t>& img,
+                     const std::vector<ImgEnt>& ents)
+      : D3CutPhase(tally, img, ents) {
+    seq = 0xDD00;
+  }
+
+  static std::vector<Row> types() {
+    auto t = rows();
+    t.push_back({"bind", 0x20, 20, TALKER_A, TALKER_B});
+    return t;
+  }
+  //! the standing seeds; `--cut-seed` takes any other
+  static std::vector<uint32_t> standing() {
+    std::vector<uint32_t> s;
+    for (int k = 0; k < SEEDS; ++k) s.push_back(SEED0 + STRIDE * uint32_t(k));
+    return s;
+  }
+  //! the cut's offset from the ERASE's grant, 0 to `span_r` + 2: xorshift32
+  //! (as section RN draws) from the seed and the record id
+  static long draw(uint32_t seed, uint8_t rid, long span_r) {
+    uint32_t v = seed ^ (STRIDE * (uint32_t(rid) + 1));
+    for (int k = 0; k < 4; ++k) {
+      v ^= v << 13;
+      v ^= v >> 17;
+      v ^= v << 5;
+    }
+    return long(v % uint32_t(span_r + 3));
+  }
+  static uint16_t uid_of(uint64_t talker) { return uint16_t(0x0D00 | (talker & 0xFF)); }
+  static std::vector<uint8_t> rec(const Row& r, uint64_t v) {
+    return r.rid == 0x20 ? binding_record(v, uid_of(v), CTLR_EID) : record(r, v);
+  }
+  //! the bytes frame a record of the type's id and length, its crc16 good
+  static bool frames(const Row& r, const std::vector<uint8_t>& b) {
+    return b[0] == 0x17 && b[1] == 0x22 && b[2] == 0x02 && b[3] == r.rid && b[4] == 0
+           && b[5] == r.plen && d3_crc16(b) == ((b[6] << 8) | b[7]);
+  }
+  //! one ACMP command to sink 0 and its response's status, -1 if none came
+  int acmp(uint8_t msg, uint64_t talker, uint16_t tuid) {
+    const uint16_t s = seq++;
+    x.q_acmp.clear();
+    x.feed(acmp_frame(CTLR_MAC, msg, 0, 0, CTLR_EID, talker, EID, tuid, 0, 0, 0, s, 0, 0));
+    const auto f = x.wait_frame(x.q_acmp, 100, [msg, s](const std::vector<uint8_t>& g) {
+      return g.size() == 70 && (g[15] & 0x0F) == msg + 1 && fv_u64(g, 62, 2) == s;
+    });
+    return f.empty() ? -1 : (f[16] >> 3) & 0x1F;
+  }
+  bool change(const Row& r, uint64_t v) {
+    return r.rid == 0x20 ? acmp(6, v, uid_of(v)) == 0 : set(r, v);
+  }
+  //! sink 0 bound to `talker` (GET_RX_STATE) and probing PASSIVE, or unbound
+  bool sink_holds(const uint64_t* talker) {
+    if (!talker) return !(x.d->acmp_bound_o & 1);
+    const uint16_t s = seq++;
+    x.q_acmp.clear();
+    x.feed(acmp_frame(CTLR_MAC, 10, 0, 0, CTLR_EID, 0, EID, 0, 0, 0, 0, s, 0, 0));
+    const auto g = x.wait_frame(x.q_acmp, 100, [s](const std::vector<uint8_t>& f) {
+      return f.size() == 70 && (f[15] & 0x0F) == 11 && fv_u64(f, 62, 2) == s;
+    });
+    return !g.empty() && fv_u64(g, 34, 8) == *talker && binding_waits_for_its_talker();
+  }
+  bool group_holds(const Row& r, const uint64_t* v) {
+    return r.rid == 0x20 ? sink_holds(v) : holds(r, v);
+  }
+
+  //! A at rest and restored, the change to B accepted, and its ERASE granted
+  bool prepare(const Row& r) {
+    fresh();
+    x.nv_wr_progressive = true;
+    seed(r.rid, rec(r, r.a));
+    const Boot b0 = boot(6 * RS_TMO);
+    x.d->link_up_i = 1;
+    const bool ready = b0.done > b0.release && group_holds(r, &r.a) && change(r, r.b);
+    for (long c = 0; ready && c < 3 * WINDOW; ++c) {
+      if (x.nv_cur.region == r.rid && x.nv_st == H::NvState::NV_ERASE) return true;
+      x.step();
+    }
+    return false;
+  }
+
+  //! one uncut commit of each type: B written whole, and its span
+  void calibrate() {
+    for (const auto& r : types()) {
+      const bool ready = prepare(r);
+      const size_t ops0 = x.nvm_ops.size();
+      bool done = false;
+      long c = 0;
+      for (; ready && !done && c < WINDOW; ++c) {
+        x.step();
+        for (size_t i = ops0; i < x.nvm_ops.size(); ++i)
+          done = done || (x.nvm_ops[i].op == 1 && x.nvm_ops[i].region == r.rid);
+      }
+      const auto want = rec(r, r.b);
+      CHECK(ready && done && std::equal(want.begin(), want.end(), x.nv_mem[r.rid].begin()),
+            "D3KR %s calibration: A restored, the change to B accepted, and B written whole "
+            "%ld clocks after its ERASE's grant", r.group, c);
+      span.push_back(c);
+      x.nv_wr_progressive = false;
+    }
+  }
+
+  //! one seeded cut of one type; returns what the device held at it
+  Rest cut(const Row& r, long span_r, uint32_t s) {
+    const int total = 8 + r.plen;
+    const bool ready = prepare(r);
+    const long off = draw(s, r.rid, span_r);
+    for (long c = 0; ready && c < off; ++c) x.step();
+    const std::vector<uint8_t> rest(x.nv_mem[r.rid].begin(), x.nv_mem[r.rid].begin() + total);
+    const auto a = rec(r, r.a);
+    const auto b = rec(r, r.b);
+    int k = 0;
+    while (k < total && rest[k] == b[k]) ++k;
+    const Rest cls = rest == a ? A_WHOLE
+                     : k == total ? B_WHOLE
+                     : k == 0 ? ERASED
+                     : k < 8 ? TORN_HEADER : TORN_PAYLOAD;
+    static const char* const NAMES[N_REST] = {"A whole", "erased", "a torn header",
+                                              "a torn payload", "B whole"};
+    CHECK(ready, "D3KR %s seed 0x%08X: A restored, the change to B accepted, its ERASE "
+          "granted (premise)", r.group, unsigned(s));
+    if (r.rid != 0x20) seed(0x20, binding_record(TALKER, 0x0DC7, CTLR_EID));
+    power_cycle();
+    const Boot bt = boot(6 * RS_TMO);
+    x.d->link_up_i = 1;
+    const auto* d = x.d;
+    const uint64_t* want = cls == A_WHOLE ? &r.a : cls == B_WHOLE ? &r.b : nullptr;
+    const bool value = group_holds(r, want);
+    CHECK(bt.done > bt.release && !d->restore_fail_o && !d->restore_closed_o && value
+              && (want || !frames(r, rest)),
+          "D3KR %s seed 0x%08X, cut %ld of %ld clocks after the ERASE's grant (%s at rest): "
+          "the restore does not fail and %s (fail %u cause %u, applied %u refused %u)",
+          r.group, unsigned(s), off, span_r, NAMES[cls],
+          want == &r.a ? "A comes back" : want ? "B comes back" : "the default holds",
+          unsigned(d->restore_fail_o), unsigned(d->rs_cause_o),
+          unsigned(d->dbg_d3_applied_o), unsigned(d->dbg_d3_refused_o));
+    bool again = true;
+    if (r.rid != 0x20) {
+      CHECK(binding_waits_for_its_talker(),
+            "D3KR %s seed 0x%08X, cut %ld: sink 0's saved binding restored, probing PASSIVE",
+            r.group, unsigned(s), off);
+      again = acmp(8, TALKER, 0x0DC7) == 0;
+    }
+    again = again && change(r, r.b);
+    const auto flushed = [&] {
+      return std::equal(b.begin(), b.end(), x.nv_mem[r.rid].begin()) && !d->d3_unflushed_o
+             && !(d->nvm_unflushed_o & 1);
+    };
+    for (long c = 0; c < 2 * MS_CYC || (!flushed() && c < 3 * WINDOW); ++c) x.step();
+    CHECK(again && flushed(),
+          "D3KR %s seed 0x%08X, cut %ld: a later change to B persists over what the cut left",
+          r.group, unsigned(s), off);
+    x.nv_wr_progressive = false;
+    return cls;
+  }
+
+  void run(const std::vector<uint32_t>& seeds) {
+    calibrate();
+    const auto ts = types();
+    std::vector<std::array<int, N_REST>> seen(ts.size(), std::array<int, N_REST>{});
+    for (uint32_t s : seeds)
+      for (size_t t = 0; t < ts.size(); ++t) ++seen[t][cut(ts[t], span[t], s)];
+    for (size_t t = 0; t < ts.size(); ++t)
+      printf("  [i] D3KR %s: %zu seeds over %ld clocks; at the cut A whole %d, erased %d, "
+             "torn header %d, torn payload %d, B whole %d\n", ts[t].group, seeds.size(),
+             span[t], seen[t][A_WHOLE], seen[t][ERASED], seen[t][TORN_HEADER],
+             seen[t][TORN_PAYLOAD], seen[t][B_WHOLE]);
+  }
+};
+
 // ==== D3V. the volatile set across a power cycle ===========================
 //! Issues #59 (REQ-NOT-005) and #62 (REQ-PER-002). Milan v1.2 5.3.4.1: "The
 //! locked state is cleared by a power cycle"; 5.3.4.2: "The list of
