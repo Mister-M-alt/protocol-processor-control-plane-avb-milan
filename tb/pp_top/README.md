@@ -662,7 +662,7 @@ five into the one canonical tally.
   each, and the GET between them carries none — a mark has no wire shape, so
   the pin is the only place any of this is visible. A mark is a completion
   notification: R21 proves the notification, never persistence (section D3
-  grades the scalar and name records; maps are a later stage).
+  grades the scalar and name records; maps are the integrator's, 07 §5.1).
 - **R** boot restore over a blank NVM device: all 8 BINDING regions read,
   the walk's terminal without `restore_fail`. The loop waits on the binding
   manager's own terminal (`dbg_walk_done_o`), not on `restore_done_o`, so every

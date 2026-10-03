@@ -91,12 +91,14 @@
 //                below the located CLOCK_DOMAIN's clock_sources_count
 //                (lane 72, bits 47:32); a stream format that the
 //                integrator's judge reports supported (Milan-info kind 0
-//                selector 15, bit 0 alone: the maps it will be checked
-//                against reset EMPTY in this stage, so nothing restored can
-//                be orphaned); a presentation offset with bit 31 clear; a
-//                user name whose ordinal the image's name table holds (the
-//                store's region 0xA, its name count): SET_NAME refuses only a
-//                name index the descriptor lacks, and takes any 64 bytes.
+//                selector 15, bit 0 alone: the maps are the integrator's,
+//                restored after restore_done_o and judged against the
+//                formats this walk restored (07 §5.1), so the format/map
+//                coupling is the integrator's); a presentation offset with
+//                bit 31 clear; a user name whose ordinal the image's name
+//                table holds (the store's region 0xA, its name count):
+//                SET_NAME refuses only a name index the descriptor lacks, and
+//                takes any 64 bytes.
 //                The LOCATEs use configuration 0, as the SET programs do.
 //
 //                THE RECORDS (scalar and name stages). One record per
@@ -115,7 +117,8 @@
 //                the payload big-endian (the saved-state allocation, parent
 //                FASTCONNECT §4.2). A name record is the store's 64-byte
 //                entry verbatim, its eight lanes in wire order. Channel maps
-//                are a later stage.
+//                are the integrator's (07 §5.1); this writer never writes or
+//                reads them.
 //
 //                THE TRIGGER IS THE LIVE WRITE, NEVER A MARK. `chg_i` is the
 //                µCPU's accepted state-bus write to a persisted row that

@@ -466,8 +466,8 @@ module KL_aecp_engine
     //! the processor ignores `amap_edit_wait_i` on those phases. A finish
     //! reply returns bit 0 = at least one mapping changed. The future
     //! SET_STREAM_FORMAT survival query uses the same value lane instead of
-    //! opening a second map authority. Phase 5 is also the saved-state
-    //! contract's map trigger (its map stage, not implemented here yet).
+    //! opening a second map authority. Phase 5 is also the integrator's
+    //! map-persistence trigger (07 §5.1); the processor writes no map record.
     output logic        amap_edit_req_o,
     output logic  [2:0] amap_edit_phase_o,
     output logic        amap_edit_remove_o,

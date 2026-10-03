@@ -776,9 +776,10 @@ module protocol_processor_top
     //! 6 channel maps (ADD/REMOVE_AUDIO_MAPPINGS), 7 user names (SET_NAME).
     //! A COMPLETION notification only: nothing selects a record from it.
     //! Groups 1 and 7's records are written by the D3 writer from the
-    //! accepted changing write itself (group 7's is aecp_name_wr_o); group 6
-    //! is the saved-state contract's map stage, triggered by map edit phase
-    //! 5, and not implemented in this release.
+    //! accepted changing write itself (group 7's is aecp_name_wr_o); group
+    //! 6's records, the channel maps, are the integrator's to persist (07
+    //! §5.1, the ruling on #83): it saves a port's set from map edit phase 5,
+    //! and the processor writes and restores no map record.
     output logic                         aecp_nvm_stb_o,      //! one cycle: a committed command marked a record group
     output logic  [7:0]                  aecp_nvm_mark_o,     //! that group's mark code, valid with the strobe
     output logic                         aecp_lock_held_o,    //! LOCK_ENTITY ownership is live
