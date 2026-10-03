@@ -1,0 +1,10 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -351,7 +351,6 @@
+             ev_disc_w   = 1'b1;
+             st_set_w    = 1'b1;
+             rec_wr_en_w = 1'b1;
+-            iter_arm_w  = 1'b1;
+           end
+         end else if (rx_ifx_r == rec_ifx_w) begin
+           // TK_DISCOVERED: interface_index must equal the saved value

@@ -1,0 +1,10 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -412,7 +412,6 @@
+       end
+       // unbind disarms the SM silently (active-while-bound, 04 §6.2)
+       for (int unsigned s = 0; s < N_SINK_P; s++) begin
+-        if (bound_fall_w[s]) disc_st_r[s] <= 1'b0;
+       end
+       // iteration outcome wins any same-cycle collision
+       if (st_set_w) disc_st_r[sink_r] <= 1'b1;

@@ -145,7 +145,11 @@ operations (one arm at the received valid_time, 20 s here; one cancel; or
 none; nothing on another slot), that nothing is transmitted, and the RX-slot
 free. F04.3's eight arcs map onto the cells BIND x unbound; match x NOT;
 GM mismatch x NOT; fresh match, restart match, stale GM mismatch, DEPARTING
-and TMR_NO_ADP x DISCOVERED (F04.8 lists each with its clauses).
+and TMR_NO_ADP x DISCOVERED (F04.8 lists each with its clauses). Each arc has a
+planted mutant of its own in the campaign below (the `arc-` arms), which must
+fail that arc's own check; the GM and domain guard is planted at both of its
+sites (TK_NOT_DISCOVERED, and the restart pair), the restart detector as an
+off-by-one at its boundary (an index equal to the last one).
 
 Interop note, **still open** (issue #85 item 4, which needs a live
 controller and belongs to a bench lane): the available_index rule implements
@@ -188,6 +192,10 @@ counts below.
 Re-run 2026-10-03 at the head of lane P1 (issues #52, #59, #61, #62, #63, #83):
 both controls PASS and all 30 arms are KILLED. Four pp_top rows carry that run's
 counts, because the lane's AD8 and AD9 fail as AD6 and AD7 do under them.
+Re-run 2026-10-04 with Verilator 5.050 at the head of issue #85's lane, which adds
+the eight `arc-` arms: both controls PASS and all 38 arms are KILLED, each earlier
+arm with the count in its row (169 s at `--jobs 4`). An `arc-` arm must fail its
+arc's own check, `P13 F04.3 arc ...`, not only some cell.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|
@@ -221,6 +229,14 @@ counts, because the lane's AD8 and AD9 fail as AD6 and AD7 do under them.
 | `disc-departing-ignores-interface` | adp_engine | DEPARTING departs whatever its interface_index | 3: DEPARTING, interface differs x DISCOVERED |
 | `disc-stray-noadp-departs` | adp_engine | a T-ADP-NOADP expiry departs a sink that is not discovered | 2: TMR_NO_ADP x unbound and x NOT |
 | `disc-unbind-keeps-timer` | adp_engine | unbinding a discovered sink leaves its T-ADP-NOADP running | 2: UNBIND x DISCOVERED, P9k |
+| `arc-bind-keeps-discovered` | adp_engine | F04.3 entry arc: an unbind no longer clears the discovered state, so a sink bound again starts in TK_DISCOVERED | 46: arc 1 (BIND x unbound ends discovered), arcs 2 and 3 and the arc count, P9k twice, and every cell entered through the unbind of a discovered sink |
+| `arc-discover-no-noadp-arm` | adp_engine | TK_NOT_DISCOVERED to TK_DISCOVERED arms no T-ADP-NOADP (Milan §5.6.4.5.1 step 3) | 13: arcs 2 and 8 and the arc count, the three discoveries x NOT, TMR_NO_ADP x DISCOVERED (no timer left to expire), P9a, P9c twice, P9j |
+| `arc-not-discovered-no-guard` | adp_engine | TK_NOT_DISCOVERED takes an ENTITY_AVAILABLE whatever its grandmaster and domain (the §5.6.4.5.1 step 1 guard) | 14: arc 3 and the arc count, the three GM and domain mismatch cells x NOT (state, event, timer each), P9d three times |
+| `arc-fresh-no-rearm` | adp_engine | a fresh index in TK_DISCOVERED does not restart T-ADP-NOADP (§5.6.4.5.2 step 3) | 5: arc 4 and the arc count, both index > last cells x DISCOVERED, P9b |
+| `arc-restart-detector-off-by-one` | adp_engine | the restart detector takes an index equal to the last one as fresh (`>=` for `>`) | 10: arcs 5 and 6 and the arc count, and the restart, GM mismatch and domain mismatch cells x DISCOVERED, each walked at an index equal to the last |
+| `arc-restart-skips-guard` | adp_engine | a stale index restarts the talker whatever its grandmaster and domain (the §5.6.4.5.2 step 2b guard) | 12: arc 6 and the arc count, the GM and domain mismatch cells x DISCOVERED (event pair, state, timer), P9f three times, P9f2 |
+| `arc-departing-silent` | adp_engine | an ENTITY_DEPARTING departs without EVT_TK_DEPARTED (§5.6.4.5.3 step 3) | 4: arc 7 and the arc count, DEPARTING x DISCOVERED, P9h |
+| `arc-noadp-expiry-silent` | adp_engine | a T-ADP-NOADP expiry departs without EVT_TK_DEPARTED (§5.6.4.5.4) | 4: arc 8 and the arc count, TMR_NO_ADP x DISCOVERED, P9i |
 
 Known limits (honestly): the suite runs the shipping shape (1 interface,
 8 sinks) only; the timer service and slot pools are modeled, not
