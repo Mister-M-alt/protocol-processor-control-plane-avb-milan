@@ -69,14 +69,17 @@ The unit bench does not model the Listener registrar or parent licences.
 Mutation command (logs go to a caller-selected directory):
 
 ```sh
-python3 tb/srp_admission/mutants.py --output /tmp/srp-admission-mutants
+python3 tb/srp_admission/mutants.py --output /tmp/srp-admission-mutants [--jobs N] [--only NAME ...]
 ```
 
-The campaign builds clean controls and three mutants in a temporary tree.
+The campaign builds clean controls and three mutants in temporary trees.
 Each one runs through this suite at two and at eight sources, and through
-[srp_top](../srp_top/README.md). A mutant counts as killed only if it fails
-its named check. A build failure does not count. The temporary tree is
-deleted afterwards.
+[srp_top](../srp_top/README.md), every run in a tree of its own. A mutant
+counts as killed only if it fails its named check. A build failure does not
+count. Each temporary tree is deleted afterwards. `--jobs N` (default 4, the
+meaning and default of `tb/pp_top/d3_mutants.py`) runs up to N of the runs at
+once, and the results are printed in the declared order whatever order they
+finish in; `--only` picks mutants, and the controls always run.
 
 | Mutant | What it restores | Named check (unit / srp_top) |
 |---|---|---|
@@ -99,3 +102,6 @@ eight sources / srp_top:
 - discarded-round-strobes: 146 / 695 / 90
 
 The campaign itself reports 12 checks, 12 PASS, 0 FAIL.
+Measured 2026-10-02 at `85da751` with Verilator 5.050, each run pinned to 4 of
+the host's 16 CPUs: `--jobs 1` took 791 s and `--jobs 8` 240 s. All twelve runs
+gave the same verdict and the same failing counts in both, those above.
