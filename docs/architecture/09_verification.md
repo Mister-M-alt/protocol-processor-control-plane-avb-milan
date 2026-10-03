@@ -173,9 +173,9 @@ qualifier that triggers the D3 writer: an accepted write that changes the row's
 fields are read continuously by the fabric -- with the area taken in per-field
 widths; the module banner carries the numbers.
 
-### 8.2 Saved state: the scalar stage's evidence (issue #131)
+### 8.2 Saved state: the scalar and name stages' evidence (issues #131, #61, #83)
 
-The parent D3 contract's processor lane 1 graded at the top, on real AECP commands over
+The parent D3 contract's processor lanes 1 (scalars) and 3 (names) graded at the top, on real AECP commands over
 the device model (`tb/pp_top` section D3, focused with `--d3-only`), and on the binding
 manager (`tb/acmp_nvm`):
 
@@ -188,6 +188,8 @@ manager (`tb/acmp_nvm`):
 | restore writes are no changes; IDENTIFY is no change | D3R1, D3S7 |
 | volatile exclusions after the saved-set cycle (IDENTIFY, lock, registry) | D3R1 |
 | the volatile set across a power cycle that restores a saved binding (issues #59, #62): two registrations, one TIME_LIMITED, the lock and IDENTIFY 255 before it; after it the binding is back, IDENTIFY reads 0 and the lock is clear in every cycle from `restore_go_i`, a third controller's change notifies neither former controller, nothing reaches them for 66 s (no CONTROLLER_AVAILABLE, no expiry DEREGISTER), a second controller's LOCK_ENTITY is accepted, sixteen new controllers register, and a returning controller restarts at sequence_id 0; the registry's valid bits, the lock and IDENTIFY each deleted from their reset branch fail it | D3V1 to D3V9 (`--volatile-only`) |
+| the user names (issues #61, #83; Milan §5.3.13): a real SET_NAME of both ENTITY names (the group name a full 64 bytes), an EMPTY name, the IDENTIFY CONTROL's name and the last ordinal each saved as one record `0x80`+ordinal, byte-exact; an unchanged name saves nothing; across a power cycle the entries hold the image's names at the image proof, the five come back (GET_NAME and READ_DESCRIPTOR), no restore write pulses `aecp_name_wr_o` or becomes a change; an ordinal past the image's names refused by the rule, a corrupt and a short record by the frame; a pass-1 roll-back returns the image's names; a change during the WRITE taints it; an image loaded late is walked before the names are written back | D3N1 to D3N7 |
+| every D3 record type (configuration, rate, clock source, both formats, offset, name) cut by a real `rst_n` with the device carried, mid-commit at fixed points (the ERASE's grant, the WRITE's grant, after the header, one byte short) and at one drawn from a fixed seed: the restore never fails, a cut before the ERASE completed keeps the saved value, an erased or torn record keeps the image's value (blank, or the crc's refusal), a saved binding is restored and probes PASSIVE, and a later SET persists | D3K |
 | a record that cannot be restored keeps the image's value (issues #52, #63): the clock source erased, corrupt or read torn, and the configuration corrupt or read torn (erased: AD7), each graded through GET and the published value; the saved clock-source index is exported in every cycle the ADP enable is high | D3C5, D3C6; AD8, AD9 |
 | value refusals (frame, rule) kept apart from transport faults (DEVICE, torn, deadline, unframed) | D3R2, D3R3 against D3R5, D3R6, D3R8 |
 | the rate rule's walk past the list's first lane to its eight-entry bound | D3R3b |
@@ -211,7 +213,7 @@ Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plant
 of them, each in its own extract, and requires its named checks to fail (all 87 KILLED
 at the lane head; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
 `tb/rx_validator` READMEs). The two SET_CLOCK_SOURCE range-check controls of D3C1 and
-D3C2 run from `tb/pp_top/aecp_dispatch_mutants.py` (its `d3` target). The name and map stages add their groups' controls when they land. The top-level
+D3C2 run from `tb/pp_top/aecp_dispatch_mutants.py` (its `d3` target). The name stage's controls (each trigger and replay, the rule, the empty name, the record id and entry, a partial write-back, the taint, a restore that pulses or changes, names before the image, the store left out of the roll-back, the frame's crc) run from `d3_mutants.py` too; the map stage adds its group's when it lands. The top-level
 device model misbehaves on the handshake for the walks (late grant, silent header, late
 or erroring descriptor memory), which grades the walks' deadlines; the port's own
 deadline, resets and handshake models are §8.6's.

@@ -38,7 +38,7 @@ buffer, so the harness is two independent models — never DUT logic:
 
 | Group | Checks |
 |---|---|
-| **G1–G2** | boot walk out of DRAM; then every descriptor of the 07 §3.1 eight-descriptor example located and served **byte-exact**, lane by lane, with its length and `name_base`; a lane past the descriptor reads 0, never the next descriptor |
+| **G1–G2** | boot walk out of DRAM, `configurations_count` and the image's writable-name count (region 0xA, the D3 writer's rule for a saved name, issues #61 and #83) read back; then every descriptor of the 07 §3.1 eight-descriptor example located and served **byte-exact**, lane by lane, with its length and `name_base`; a lane past the descriptor reads 0, never the next descriptor |
 | **G3** | index-map **boundaries**: the first and the last entry are both found (a scan that stops one early, or runs one past, fails exactly here); a type past the last entry and a type in a hole between entries both MISS |
 | **G4** | locate misses: unknown type, `descriptor_index` past `count`, unknown configuration — each `st_err`, each counted, and the store is not wedged afterwards |
 | **G5** | the 07 §3.4 **name region** via `st_name`: every entry read back against the image, semantic index 0/1 validation, then full-lane and byte-strobed writes; each write is immediately visible in the unaligned inline field served by READ_DESCRIPTOR |
@@ -46,7 +46,7 @@ buffer, so the harness is two independent models — never DUT logic:
 | **G6** | the image is **read-only at run time** (07 §2): a non-name write is dropped, counted, and does not reach the served bytes |
 | **G7** | **back-to-back reads with `st_req` held high** — the µCPU never drops the request between two consecutive state ops, so a store that latched the request edge would deadlock here |
 | **G8** | a longer memory latency with inter-beat gaps changes nothing |
-| **U1–U2** | **software has not loaded the image**: a 0xA5 region and an all-zero region are both refused on the magic/version/checksum header, every locate misses, and no length, no descriptor byte and no `configurations_count` comes back — an unloaded region cannot produce a plausible-looking descriptor |
+| **U1–U2** | **software has not loaded the image**: a 0xA5 region and an all-zero region are both refused on the magic/version/checksum header, every locate misses, and no length, no descriptor byte, no `configurations_count` and no name count comes back — an unloaded region cannot produce a plausible-looking descriptor |
 | **U3–U4** | a corrupted (stale-checksum) image and a future layout version are refused |
 | **U5–U7** | more index entries than the on-chip cache, more names than the overlay, and a descriptor longer than the line buffer are each refused **up front** with a distinct fault code |
 | **U8** | **self-heal**: after a garbage boot, a late software load is picked up by the re-probe a locate arms — no reset needed, and nothing wrong served in between |
@@ -239,6 +239,16 @@ Mutation proof (2026-09-26): remove only the body type/index comparison and its
 | `make generator-check` | 16 refusal cases fail, both legal tests pass, make exit 2 |
 
 The existing RTL tally above remains separate from these Python tests.
+
+## Mutation-proven 2026-10-03 (region 0xA, issues #61 and #83)
+
+Each break planted in a scratch copy of `hdl/`, `tb/common/` and this directory, then
+`make` run there:
+
+| Break | Went red |
+|---|---|
+| region 0xA answers `configurations_count` instead of the name count | **1** of 586: `G1 name count got 1 want 9` |
+| region 0xA answers the header's name count while the image is invalid | **1** of 586: `U1 name count 42405 from an unloaded image` |
 
 ## Mutation-proven 2026-08-13
 

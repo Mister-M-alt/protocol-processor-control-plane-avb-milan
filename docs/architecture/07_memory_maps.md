@@ -41,7 +41,7 @@ flowchart LR
   bindm["binding manager (NVM manager 0)"] <--> dyn
 ```
 
-The names' NVM manager is the name stage's, accepted and not implemented yet (§5.3).
+The names' NVM manager is the D3 writer (manager 1), the name stage's (§5.3).
 
 The two regions in main memory are reached over separate vendor-neutral masters and are
 the integrator's to reserve — see the
@@ -417,7 +417,8 @@ Bytes 0–3 of every packed descriptor equal its index-map key (type, index),
 and the generator refuses a disagreement.
 
 The µCPU's `st_*` face reaches all of this through a region nibble on `st_addr[19:16]`:
-0x0 descriptor data, 0xB semantic `name_index` to writable-table byte address,
+0x0 descriptor data, 0xA the image's writable-name count (`n_names`, the D3 writer's
+rule for a saved name), 0xB semantic `name_index` to writable-table byte address,
 0xC the located descriptor's `name_base`, 0xD
 `configurations_count` (so a µprogram can answer `BAD_ARGUMENTS` for a bad
 configuration index per [06 §6.1](06_aecp_engine.md), not `NO_SUCH_DESCRIPTOR`), 0xE
@@ -432,10 +433,11 @@ the same line before accepting another state operation. Thus the table is the
 single writable source while descriptor reads remain coherent with it.
 
 The names initialise from the verified image at every image walk, a roll-back's
-included. Persisting them is the name stage of the saved-state contract: its
-restore writes names only after the image walk, and its trigger is the accepted
-name-table lane write on the command side. That stage is accepted and **not
-implemented** in this release.
+included. The D3 writer persists them (the saved-state contract's name stage, §5.3):
+its trigger is the accepted name-table lane write on the command side, it latches
+an entry's eight lanes while no program runs, and its restore writes a saved name
+back only after it has proven the image, so the image walk has already filled the
+table and does not overwrite the restored name.
 
 ### 3.4 Dynamic overlay
 
@@ -454,9 +456,10 @@ implemented** in this release.
 
 "yes" names the saved set, not the writer. The scalar rows (configuration, sampling
 rate, clock source, both formats, presentation offset) are written by the D3 writer
-from the store's accepted changing write (§5.3); their records are §5.2's. The maps and
-names are accepted in the same contract and implemented by later stages. The store's
-sticky `dirty_o` (`aecp_dyn_dirty_o` at the top) is a diagnostic, not the trigger.
+from the store's accepted changing write (§5.3), and the names from the descriptor
+store's accepted name-lane write; their records are §5.2's. The maps are accepted in
+the same contract and implemented by a later stage. The store's sticky `dirty_o`
+(`aecp_dyn_dirty_o` at the top) is a diagnostic, not the trigger.
 
 ## 4. Dynamic state records
 
@@ -587,7 +590,7 @@ per writable-name ordinal, the AEM string verbatim, no name banks).
 | `0x50` .. `0x5F` | presentation time offset | STREAM_OUTPUT | u32 | D3 writer (scalar stage) |
 | `0x60` .. `0x6F` | channel map in | STREAM_PORT_INPUT | clusters × 8 B | accepted, not implemented (map stage) |
 | `0x70` .. `0x7F` | channel map out | STREAM_PORT_OUTPUT | max(clusters, STREAM_OUTPUT × 8) × 8 B for a dynamic port (#501), clusters × 8 B for a static one | accepted, not implemented (map stage) |
-| `0x80` .. `0xFF` | user name | writable-name ordinal | 64 B | accepted, not implemented (name stage) |
+| `0x80` .. `0xFF` | user name | writable-name ordinal | 64 B | D3 writer (name stage): `DESC_NAME_ENTRIES_P` records, at most 128 |
 
 Every multi-byte field is big-endian. An unused map entry is eight `0xFF` bytes.
 
@@ -617,10 +620,10 @@ Every multi-byte field is big-endian. An unused map entry is eight `0xFF` bytes.
 ```mermaid
 flowchart TB
   subgraph runtime ["runtime commit (one record producer; the binding manager's is the same loop)"]
-    chg["accepted live write that changes a record's projection {value, valid}:<br/>selectors 0-5 on the µCPU's side of the state bus (D3 §3.1);<br/>never a completion mark, never a restore write, never IDENTIFY"] --> dirty["set dirty[group, index]"]
+    chg["accepted live write that changes a record's projection {value, valid}:<br/>selectors 0-5, or a name-table lane, on the µCPU's side of the state bus (D3 §3.1);<br/>never a completion mark, never a restore write, never IDENTIFY"] --> dirty["set dirty[group, index]"]
     dirty --> deb["first-dirty window of 500 ticks (T-NVM-DEBOUNCE) arms one burst"]
     deb --> acq["ACQUIRE: hold dispatch; wait for no program in flight"]
-    acq --> latch["LATCH the row over the state bus, taint 0; release"]
+    acq --> latch["LATCH the row (a name: its eight lanes) over the state bus, taint 0; release"]
     latch --> ser["frame F07.8 + crc16"] --> port["class-F WRITE through manager 1 (F02.8); attempt + 1"]
     port --> ok{"port"}
     ok -- "done, not tainted" --> clr["clear dirty[group, index] - the backend owns it now"]
@@ -653,16 +656,20 @@ flowchart TB
 `KL_pp_nvm_mgr_arb` ([02 §8.2](02_interfaces.md#82-two-record-managers-one-port)): the
 binding manager `KL_acmp_nvm_shadow` (manager 0, region 0x20, from the listener's record
 write-back) and the D3 writer `KL_aecp_nvm_writer` inside the AECP engine (manager 1, the
-scalar records of §3.4's rows). The D3 writer's trigger is the dynamic-state store's
+scalar records of §3.4's rows and the user names). The D3 writer's trigger is the dynamic-state store's
 **accepted write that changes the row's `{value, valid}` projection**, selectors 0 to 5,
 tapped on the µCPU's side of the engine's state-bus selection
 ([parent D3 contract](https://github.com/kebag-logic/milan-fpga/blob/7a7582f0/docs/design/SAVED_STATE_MATERIALIZATION.md) §3.1, DR2b). A restore write is therefore never a change, IDENTIFY (selector 7) sets nothing,
 and a row becoming valid at its reset value is a change. The µprogram's `NVM_MARK`
 instructions keep their completion effects (`aecp_nvm_stb_o` / `aecp_nvm_mark_o`,
-[02 §8](02_interfaces.md#fig-02-nvmwave)); they select no record. The user-name and
-channel-map groups are accepted in the same contract (§3.1: the name-table lane write and
-the phase-5 map commit beat) and are **not implemented yet**: they have no writer until
-their stages land, and their records are neither written nor restored by this release.
+[02 §8](02_interfaces.md#fig-02-nvmwave)); they select no record. A user name's trigger
+is the descriptor store's **accepted name-table lane write** (`aecp_name_wr_o`), tapped the
+same way; SET_NAME writes only the lanes that change, so an unchanged name sets nothing,
+and the writer's own restore of a saved name neither sets a record nor pulses
+`aecp_name_wr_o`. The record is the entry's 64 bytes verbatim, latched as eight lanes in
+one ACQUIRE. The channel-map group is accepted in the same contract (§3.1: the phase-5 map
+commit beat) and is **not implemented yet**: it has no writer until its stage lands, and
+its records are neither written nor restored by this release.
 
 The service loop, both producers alike: the first dirty record opens a
 `T-NVM-DEBOUNCE` window (500 ticks of `tick_ms`: `DEB_TICKS_P`, `DEB_MS_P`); its close arms one burst that drains every
@@ -754,9 +761,11 @@ D3 record and only marks it whole or blank; **pass 1** reads each again, require
 same verdict as pass 0, checks the F07.8 frame, judges the value by the rule of the SET
 program that would set it (configuration below `configurations_count`; a rate on the
 AUDIO_UNIT's list; a clock source below `clock_sources_count`; a format the integrator's
-judge supports; a presentation offset with bit 31 clear) and writes an accepted value
-with its valid flag. A framed record whose frame or value fails keeps its default and the
-walk goes on. Every restore wait is watched by one count of stalled clocks, and the whole
+judge supports; a presentation offset with bit 31 clear; a user name whose ordinal is
+below the image's writable-name count, store region 0xA, since SET_NAME refuses only a
+name index the descriptor lacks) and writes an accepted value with its valid flag, or a
+name's eight lanes into the name table. A framed record whose frame or value fails keeps
+its default and the walk goes on. Every restore wait is watched by one count of stalled clocks, and the whole
 restore by a second count: `P-NVM-RS-AGG-CYC` clocks (1,000 ms, `T-NVM-RS-AGGREGATE`)
 from the accepted restore start (`restore_go_i`), the binding walk, both passes and the
 roll-back included. At that bound the phase the restore is in takes the path a stalled
@@ -788,7 +797,8 @@ its debt survives the local reset. The store's reset returns its fetch watchdog 
 and makes it walk the image again; the re-LOCATE of ENTITY 0 that follows proves the
 image anew: a hit ends DEFAULTS with `restore_rb_o`, a miss or error, or an abort during
 the roll-back, ends CLOSED. The roll-back owns neither the binding manager, the listener
-nor its admission gate: **bindings the binding walk restored stay restored**. Maps join
+nor its admission gate: **bindings the binding walk restored stay restored**. The names
+roll back with the descriptor store: its walk of the image reloads every entry. Maps join
 the roll-back with their stage (parent D3 §8.6); they are not restored in this release.
 
 **Combined verdicts at the top** (parent D3 §8.7):

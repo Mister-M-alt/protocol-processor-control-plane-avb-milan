@@ -165,15 +165,21 @@ contract §5.1):
   only once no program is in flight, so a program never loses the bus mid-run.
 - **Change snoop.** The dynamic-state store's accepted write that changes a persisted
   row's `{value, valid}` projection (selectors 0 to 5), taken only while the µCPU drives
-  the bus: a restore write is never a change, and IDENTIFY (selector 7) is excluded.
+  the bus: a restore write is never a change, and IDENTIFY (selector 7) is excluded. A
+  user name's is the descriptor store's accepted name-lane write, taken the same way,
+  the record named by the lane address's entry; the engine's `name_wr_o` is the same
+  gated pulse, so the writer's own restore of a name pulses neither.
 - **Format judge.** During the restore the writer drives the Milan-info gather face,
   kind 0 selector 15 with `gsi_prop_fmt_o`, and reads bit 0 (supported), the same
   integrator verdict SET_STREAM_FORMAT uses. The other value rules are the SET programs'
   own (§6.4), read through the same descriptor-store regions.
-- **Map read/apply and name capture/replay** are the map and name stages' faces
-  (GET_AUDIO_MAP and the edit face; the name table after the image walk). They are
-  accepted in the same contract and **not implemented** in this release. The CONTROL
+- **Name capture and replay.** The writer reads and writes a name over the same state
+  bus with the name table selected: in service, the entry's eight lanes in one ACQUIRE;
+  in the restore, a saved name's eight lanes, only after the image is proven and only
+  for an ordinal below the image's name count (store region 0xA). The CONTROL
   descriptor's name is a persisted user name; IDENTIFY's value is not.
+- **Map read and apply** are the map stage's faces (GET_AUDIO_MAP and the edit face).
+  They are accepted in the same contract and **not implemented** in this release.
 - **Roll-back.** `rb_rst` resets the dynamic-state store and the descriptor store
   together; the descriptor-memory guard and its debt keep the hard reset only.
 
@@ -441,8 +447,8 @@ name, pulses `aecp_name_wr_o` once per accepted changed lane, and emits the grou
 completion mark and the notification. Repeating the same value performs no write and
 emits none of them. The accepted name-lane write is the name group's persistence
 trigger in the saved-state contract; the mark is only a completion notification. The
-name stage's writer and replay are **not implemented** in this release, so a name does
-not survive power loss yet.
+D3 writer saves the changed entry as record `0x80` + its ordinal and writes it back at
+the next boot, after the image walk ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)).
 
 The writable name table is also patched into the currently located descriptor
 line. A later locate refreshes its line from the table after the image fetch.

@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -783,6 +784,9 @@ struct H {
   //! ends with the device's err (nv_rd_silent false) or delivers nothing
   //! more until the test clears nv_rd_fault (true)
   int      nv_rd_region = -1;
+  //! a device that keeps each WRITE byte as it takes it, so a cut leaves the
+  //! record torn at rest (section D3K); otherwise the WRITE lands at its done
+  bool     nv_wr_progressive = false;
   int      nv_rd_nth = 0;
   int      nv_rd_after = 0;
   bool     nv_rd_silent = false;
@@ -1698,6 +1702,8 @@ struct H {
         d->nvm_dev_wready_i = 1;
         if (d->nvm_dev_wvalid_o) {
           nv_cur.wr.push_back(static_cast<uint8_t>(d->nvm_dev_wdata_o));
+          if (nv_wr_progressive)
+            nv_mem[nv_cur.region][(nv_cur.off + nv_cur.wr.size() - 1) & 0xFF] = nv_cur.wr.back();
           nv_left--;
         }
       } else if (nv_cur.region == nv_err_region && nv_err_writes > 0) {
@@ -1875,6 +1881,7 @@ struct H {
     d->listener_sinks_i = LSNK;  d->listener_caps_i = LSCAP;
     d->current_cfg_i = CFGIX;    d->identify_index_i = IDIX;
     d->identify_button_i = 0;
+    d->dbg_name_lane_i = 0;
     d->entity_enable_i = 0; d->link_up_i = 0; d->gm_change_i = 0;
     d->gm_id_i = GM0; d->gptp_domain_i = DOM0;
     d->p2p_i = 1; d->cfg_rank_i = 1;
@@ -9784,9 +9791,12 @@ struct Suite {
     uint32_t m1 = h.snap(2);
     CHECK(m1 >= m0 + 15 && m1 <= m0 + 30,
           "S0: now_ms advances at the compressed rate (%u -> %u)", m0, m1);
-    //! read after the 20 ms, which take far longer than the D3 walk that
-    //! follows the binding walk's release; R's clock is left where the
-    //! later sections were tuned
+    //! read after the 20 ms; the D3 walk that follows the binding walk's
+    //! release reads 59 records twice (the name records since issues #61
+    //! and #83) and can outlast them, so its terminal is waited for here,
+    //! after the link rise: R's clock is left where the later sections
+    //! were tuned
+    for (int c = 0; c < 20000 && !d->restore_done_o; ++c) h.step();
     CHECK(d->restore_done_o == 1 && d->restore_busy_o == 0,
           "S0: restore_done_o has followed both walks' terminals (issue #92, D3)");
     CHECK(h.q_adp.empty() && h.q_acmp.empty(),
@@ -10748,6 +10758,8 @@ struct NameWritePhase {
   D3ServicePhase{h, image}.run();
   D3RestorePhase{h, image, setup.image_ents}.run();
   D3ClockSourcePhase{h, image, setup.image_ents}.run();
+  D3NamePhase{h, image, setup.image_ents}.run();
+  D3CutPhase{h, image, setup.image_ents}.run();
   printf("D3: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
@@ -13480,6 +13492,13 @@ struct HazardPhase {
     (void)acmp_beside_or_after(AEM_SET_NAME, si1, 10, 1, false,
                                "HZ9f a GET_RX_STATE of sink 1 vs a held "
                                "SET_NAME on STREAM_INPUT 1");
+    //! the D3 writer saves these names a debounce later (issues #61, #83),
+    //! and its ACQUIRE would hold dispatch behind the next arm's stalled
+    //! command; the later arms grade admission, so the saves go in first
+    long guard = 3 * 500L * MS_CYC;
+    while (io.d->d3_unflushed_o && guard-- > 0) io.step();
+    CHECK(!io.d->d3_unflushed_o, "HZ9: the names' saves have drained before HZ10 "
+          "(premise)");
   }
 
   //! HZ10 (F03.7 STREAM_CFG "serialized per key" and RO_SNAPSHOT "blocked

@@ -20,7 +20,8 @@ own contract for inputs no in-tree manager presents, and the admission's residen
 count; issue #141 adds the clock-source row and restore rule over a ten-source
 domain. The suite READMEs carry the matching mutation records.
 Issues #59 and #62 add the volatile set's reset arms, graded by section D3V in a run
-of its own (`--volatile-only`), whose watch outlasts the controller monitor.
+of its own (`--volatile-only`), whose watch outlasts the controller monitor; issues #52
+and #63 the unrestorable records; issues #61 and #83 the name stage (section D3N).
 
 Usage: python3 tb/pp_top/d3_mutants.py --output DIR [--verilator V] [--jobs N]
                                        [--only NAME ...]
@@ -130,7 +131,7 @@ SERVICE = (
     Mutant("taint_ignored", PP_TOP, (
         (WRITER, "  assign done_ok_w   = (ss_r == S_WAIT) && m_done_i && !taint_r;\n",
          "  assign done_ok_w   = (ss_r == S_WAIT) && m_done_i;\n"),),
-        ("D3S4 taint",)),
+        ("D3S4 taint", "D3N6 taint")),
     Mutant("clear_wins_same_edge", PP_TOP, (
         (WRITER, "    else        dirty_r <= set_w | (dirty_r & ~clr_w);\n",
          "    else        dirty_r <= (set_w | dirty_r) & ~clr_w;\n"),),
@@ -224,7 +225,7 @@ ROLLBACK = (
         (ENGINE, "  ) u_store (\n      .clk_i             (clk_i),\n"
                  "      .rst_n             (store_rst_n_w),\n",
          "  ) u_store (\n      .clk_i             (clk_i),\n      .rst_n             (rst_n),\n"),),
-        ("D3R10 5000",)),
+        ("D3R10 5000", "D3N5")),
     Mutant("rollback_ignores_debt", PP_TOP, (
         (WRITER, "          if (rb_min_r && !desc_debt_i) ws_r <= W_RELOC;\n",
          "          if (rb_min_r) ws_r <= W_RELOC;\n"),),
@@ -522,14 +523,74 @@ UNRESTORABLE = (
              checks)
       for name, suite, checks in (("torn_read_not_an_abort", PP_TOP, ("D3C5 torn",)),
                                   ("torn_read_not_an_abort_cfg", PP_TOP_ADP, ("AD9: the torn read",)))),
+    # issues #61 and #83: the cut sections' torn records (D3K), refused by the
+    # frame's crc alone where the value rule would take the torn bytes
+    Mutant("frame_crc_ignored", PP_TOP, (
+        (WRITER, FRAME_CRC, FRAME_CRC.replace("(rcrc_acc_r == rcrc_rx_r)", "1'b1")),),
+        ("D3K ptof cut at byte 11 of 12: the restore", "D3K name cut at byte 71 of 72: the restore")),
     *(Mutant(name, suite, ((WRITER, BLANK_NEXT, BLANK_NEXT.replace("W_NEXT", "W_APPLY")),), checks)
       for name, suite, checks in (("blank_applies_zero", PP_TOP, ("D3C5 blank",)),
                                   ("blank_applies_zero_cfg", PP_TOP_ADP,
                                    ("AD7: the first ENTITY_AVAILABLE",)))),
 )
 
+# issues #61 and #83: the name stage (section D3N; parent D3 section 18.3's controls)
+NAME_RULE = ("      W_NNAME: begin accept_w = sb_rvalid_i && (ridx_w < sb_rdata_i[15:0]);\n"
+             "                     refuse_w = sb_rvalid_i && !(ridx_w < sb_rdata_i[15:0]); end\n")
+NAMES = (
+    Mutant("TRG_name", PP_TOP, (
+        (WRITER, "    if (nchg_i && (32'(nchg_ord_i) < N_NAME_P)) begin\n",
+         "    if (1'b0 && nchg_i && (32'(nchg_ord_i) < N_NAME_P)) begin\n"),),
+        ("D3N1 ordinal",)),
+    Mutant("RPL_name", PP_TOP, (
+        (WRITER, NAME_RULE, "      W_NNAME: begin accept_w = 1'b0;\n"
+                            "                     refuse_w = sb_rvalid_i; end\n"),),
+        ("D3N3 ordinal",)),
+    Mutant("name_rule_ignored", PP_TOP, (
+        (WRITER, NAME_RULE, "      W_NNAME: begin accept_w = sb_rvalid_i;\n"
+                            "                     refuse_w = 1'b0; end\n"),),
+        ("D3N4: COMPLETE",)),
+    Mutant("name_empty_refused", PP_TOP, (
+        (WRITER, NAME_RULE,
+         "      W_NNAME: begin accept_w = sb_rvalid_i && (ridx_w < sb_rdata_i[15:0])\n"
+         "                                && (nb_rlane_w != 64'd0);\n"
+         "                     refuse_w = sb_rvalid_i && !((ridx_w < sb_rdata_i[15:0])\n"
+         "                                && (nb_rlane_w != 64'd0)); end\n"),),
+        ("D3N3: COMPLETE", "D3N3 ordinal 2")),
+    Mutant("name_record_id_shifted", PP_TOP, (
+        (WRITER, "      default: return 8'h80;\n", "      default: return 8'h81;\n"),),
+        ("D3N1 ordinal",)),
+    Mutant("name_entry_shifted", PP_TOP, (
+        (WRITER, "        rs_sb_addr_w  = name_addr_f(ridx_w, nlane_r);\n",
+         "        rs_sb_addr_w  = name_addr_f(ridx_w + 16'd1, nlane_r);\n"),),
+        ("D3N3 ordinal",)),
+    Mutant("name_lanes_partial", PP_TOP, (
+        (WRITER, "            if (nlane_r == 3'd7) begin\n              n_app_r <= n_app_r + 8'd1;\n",
+         "            if (nlane_r == 3'd6) begin\n              n_app_r <= n_app_r + 8'd1;\n"),),
+        ("D3N3 ordinal 1",)),
+    Mutant("name_taint_ignored", PP_TOP, (
+        (WRITER, "    else if (set_w[hand_r] && (ss_r != S_RUN)\n"
+                 "             && (ss_r != S_ACQ))                   taint_r <= 1'b1;\n",
+         "    else if (set_w[hand_r] && (ss_r != S_RUN) && (hsel_w != GRP_NAME_C)\n"
+         "             && (ss_r != S_ACQ))                   taint_r <= 1'b1;\n"),),
+        ("D3N6 taint",)),
+    Mutant("name_restore_pulses", PP_TOP, (
+        (ENGINE, "  assign name_wr_o = d3_nchg_w;\n", "  assign name_wr_o = store_name_wr_w;\n"),),
+        ("D3N3: the restore's name writes",)),
+    Mutant("name_restore_is_a_change", PP_TOP, (
+        (ENGINE, "  assign d3_nchg_w = store_name_wr_w && !d3_bus_w;\n",
+         "  assign d3_nchg_w = store_name_wr_w;\n"),),
+        ("D3N3: the restore's name writes",)),
+    Mutant("names_before_the_image", PP_TOP, (
+        (WRITER, "        W_IMG: begin\n          if (img_valid_i) begin\n            proven_r <= 1'b1;\n"
+                 "            ws_r     <= W_RQ;\n          end else begin\n            ws_r <= W_IMGLOC;\n"
+                 "          end\n        end\n",
+         "        W_IMG: begin\n          proven_r <= 1'b1;\n          ws_r     <= W_RQ;\n        end\n"),),
+        ("D3N7",)),
+)
+
 MUTANTS = (OWNERSHIP + SERVICE + RESTORE + ROLLBACK + DR2C + REVIEW + AGGREGATE + ADMISSION
-           + CLOCK_SOURCES + VOLATILE + UNRESTORABLE)
+           + CLOCK_SOURCES + VOLATILE + UNRESTORABLE + NAMES)
 TALLY = re.compile(r"^((D3V?|AD): \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$",
                    re.M)
 

@@ -10,7 +10,7 @@
 //                parent D3 contract, milan-fpga
 //                docs/design/SAVED_STATE_MATERIALIZATION.md §3, §3.1, §6,
 //                §7; Milan §5.3.5.1, §5.3.7.1, §5.3.7.6, §5.3.8.1,
-//                §5.3.11.1)
+//                §5.3.11.1, §5.3.13)
 //
 //  Description : The saved-state record writer for the non-binding groups
 //                (D3). It is manager 1 of KL_pp_nvm_mgr_arb, beside the
@@ -28,8 +28,9 @@
 //                program the engine took earlier runs to its end; once the
 //                engine reads idle (`prog_busy_i` 0 while `own_o` is 1: no
 //                program runs and none can start) it takes the bus for one
-//                read of the row and releases both. A latched value is
-//                therefore always one a completed command left.
+//                read of the row (a name: its eight lanes, into a 64-byte
+//                buffer) and releases both. A latched value is therefore
+//                always one a completed command left.
 //
 //                THE RESTORE IS A TRANSACTION (parent D3 §6.2, §8). It starts
 //                at the binding walk's end (`go_i`, the listener admission
@@ -43,7 +44,8 @@
 //                a whole record whose frame fails (magic, layout, id,
 //                length, crc16) is refused and keeps its default; a framed
 //                one is judged by the rule of the SET program that would set
-//                it and, passing, written with its valid flag. A port err
+//                it and, passing, written with its valid flag (a name: its
+//                eight lanes into the store's name table). A port err
 //                with nothing forwarded whose cause is UNFRAMED is an erased
 //                or unframed record (blank); DEVICE aborts (cause 2), a torn
 //                read aborts (cause 1), and a descriptor LOCATE a rule needs
@@ -91,22 +93,29 @@
 //                integrator's judge reports supported (Milan-info kind 0
 //                selector 15, bit 0 alone: the maps it will be checked
 //                against reset EMPTY in this stage, so nothing restored can
-//                be orphaned); a presentation offset with bit 31 clear.
+//                be orphaned); a presentation offset with bit 31 clear; a
+//                user name whose ordinal the image's name table holds (the
+//                store's region 0xA, its name count): SET_NAME refuses only a
+//                name index the descriptor lacks, and takes any 64 bytes.
 //                The LOCATEs use configuration 0, as the SET programs do.
 //
-//                THE RECORDS (scalar stage). One record per persisted
-//                dynamic-state row, one dirty bit per record, NO shadow:
+//                THE RECORDS (scalar and name stages). One record per
+//                persisted dynamic-state row and per writable name, one dirty
+//                bit per record, NO shadow:
 //                  0x00                  configuration index    u16
 //                  0x02 + AUDIO_UNIT     sampling rate          u32
 //                  0x0A + CLOCK_DOMAIN   clock source index     u16
 //                  0x30 + STREAM_INPUT   stream format in       u64
 //                  0x40 + STREAM_OUTPUT  stream format out      u64
 //                  0x50 + STREAM_OUTPUT  presentation offset    u32
+//                  0x80 + name ordinal   user name              64 B
 //                each framed as F07.8 {magic 0x1722, LAYOUT_VER_P, record
 //                id, payload_length, crc16 CCITT-FALSE over the header
 //                without its crc and the payload}, 16-bit header fields and
 //                the payload big-endian (the saved-state allocation, parent
-//                FASTCONNECT §4.2). Names and channel maps are later stages.
+//                FASTCONNECT §4.2). A name record is the store's 64-byte
+//                entry verbatim, its eight lanes in wire order. Channel maps
+//                are a later stage.
 //
 //                THE TRIGGER IS THE LIVE WRITE, NEVER A MARK. `chg_i` is the
 //                µCPU's accepted state-bus write to a persisted row that
@@ -114,7 +123,11 @@
 //                wr_chg_o), tapped on the µCPU's side of the engine's
 //                state-bus selection so a restore write is never a change.
 //                The selector and descriptor index name the record; selector
-//                7 (IDENTIFY) and an index past the shape set nothing.
+//                7 (IDENTIFY) and an index past the shape set nothing. A
+//                name's trigger is the store's accepted live name-lane write
+//                (`nchg_i`, the engine's name_wr_o), tapped the same way, its
+//                ordinal the lane address's entry; SET_NAME writes only the
+//                lanes that change, so an unchanged name sets nothing.
 //
 //                THE CLEAR RULE. A record's dirty bit is set by a change and
 //                cleared only by the port's done of the WRITE that carries a
@@ -167,6 +180,9 @@ module KL_aecp_nvm_writer #(
     parameter int unsigned N_STREAM_OUT_P = 8,
     parameter int unsigned N_AUDIO_UNIT_P = 1,
     parameter int unsigned N_CLK_DOMAIN_P = 1,
+    //! writable user names: the descriptor store's name-table entries
+    //! (NAME_ENTRIES_P), one record each from 0x80
+    parameter int unsigned N_NAME_P       = 32,
     //! F07.8 layout_version, the one KL_acmp_nvm_shadow writes and accepts
     parameter logic [7:0]  LAYOUT_VER_P   = 8'h02,
     //! T-NVM-DEBOUNCE in ms, counted on tick_i, the 1 ms tick (F08.1: 500
@@ -192,7 +208,8 @@ module KL_aecp_nvm_writer #(
     localparam int unsigned OFF_FMTI_C = OFF_CLK_C + N_CLK_DOMAIN_P,
     localparam int unsigned OFF_FMTO_C = OFF_FMTI_C + N_STREAM_IN_P,
     localparam int unsigned OFF_PTOF_C = OFF_FMTO_C + N_STREAM_OUT_P,
-    localparam int unsigned N_REC_C    = OFF_PTOF_C + N_STREAM_OUT_P,
+    localparam int unsigned OFF_NAME_C = OFF_PTOF_C + N_STREAM_OUT_P,
+    localparam int unsigned N_REC_C    = OFF_NAME_C + N_NAME_P,
     localparam int unsigned RW_C       = $clog2(N_REC_C)
 ) (
     input  wire         clk_i,          //! core clock (P-CLK-HZ domain)
@@ -230,6 +247,7 @@ module KL_aecp_nvm_writer #(
     //! ---- the state-bus client (the engine's state port, µCPU contract) -----
     output logic        sb_req_o,
     output logic        sb_we_o,
+    output logic        sb_name_o,      //! the name table, in any region (07 §3.4)
     output logic [19:0] sb_addr_o,      //! [19:16] region, [15:0] byte offset
     output logic [63:0] sb_wdata_o,     //! write data / LOCATE key
     output logic [15:0] sb_didx_o,      //! descriptor index of a dynamic-state row
@@ -242,6 +260,9 @@ module KL_aecp_nvm_writer #(
     input  wire         chg_i,
     input  wire  [12:0] chg_sel_i,      //! dynamic-state selector
     input  wire  [15:0] chg_idx_i,      //! descriptor index
+    //! the store's accepted live name-lane write, while the µCPU drives
+    input  wire         nchg_i,
+    input  wire   [9:0] nchg_ord_i,     //! its name ordinal (the lane address's entry)
 
     //! ---- manager 1 of KL_pp_nvm_mgr_arb -------------------------------------
     output logic        m_req_o,        //! op request, held until m_gnt_i
@@ -286,7 +307,8 @@ module KL_aecp_nvm_writer #(
   if ((N_AUDIO_UNIT_P < 1) || (N_AUDIO_UNIT_P > 8)
       || (N_CLK_DOMAIN_P < 1) || (N_CLK_DOMAIN_P > 8)
       || (N_STREAM_IN_P < 1) || (N_STREAM_IN_P > 16)
-      || (N_STREAM_OUT_P < 1) || (N_STREAM_OUT_P > 16)) begin : g_shape_check
+      || (N_STREAM_OUT_P < 1) || (N_STREAM_OUT_P > 16)
+      || (N_NAME_P < 1) || (N_NAME_P > 128)) begin : g_shape_check
     $error("KL_aecp_nvm_writer: a group outgrows its record-id block");
   end
   if (RETRY_BACKOFF_CYC_P < 1) begin : g_backoff_check
@@ -309,6 +331,8 @@ module KL_aecp_nvm_writer #(
   localparam logic [7:0]  MAGIC_LO_C    = 8'h22;
 
   localparam logic [19:0] ADDR_NCFG_C  = 20'hD_0000;  //! configurations_count
+  localparam logic [19:0] ADDR_NNAME_C = 20'hA_0000;  //! the image's name count
+  localparam logic [2:0]  GRP_NAME_C   = 3'd6;        //! the name group (no selector)
   localparam logic [1:0]  PORT_UNFRAMED_C = 2'd2;     //! KL_pp_nvm_port cause
   //! the SET programs' descriptor geometry (gen_ucode.py): the AUDIO_UNIT's
   //! {current rate, sampling_rates_offset, count} lane and the list it
@@ -332,14 +356,16 @@ module KL_aecp_nvm_writer #(
 
   // ---- the record geometry -----------------------------------------------------
   //! group g of record r is its dynamic-state selector (0 cfg, 1 rate,
-  //! 2 clock source, 3 format in, 4 format out, 5 presentation offset)
+  //! 2 clock source, 3 format in, 4 format out, 5 presentation offset), or
+  //! 6 for a user name, which is the store's and has no selector
   function automatic logic [2:0] rec_sel_f(input logic [RW_C-1:0] r);
     if (32'(r) < OFF_RATE_C)      return 3'd0;
     else if (32'(r) < OFF_CLK_C)  return 3'd1;
     else if (32'(r) < OFF_FMTI_C) return 3'd2;
     else if (32'(r) < OFF_FMTO_C) return 3'd3;
     else if (32'(r) < OFF_PTOF_C) return 3'd4;
-    else                          return 3'd5;
+    else if (32'(r) < OFF_NAME_C) return 3'd5;
+    else                          return GRP_NAME_C;
   endfunction
 
   function automatic logic [31:0] sel_off_f(input logic [2:0] sel);
@@ -349,17 +375,19 @@ module KL_aecp_nvm_writer #(
       3'd2:    return 32'(OFF_CLK_C);
       3'd3:    return 32'(OFF_FMTI_C);
       3'd4:    return 32'(OFF_FMTO_C);
-      default: return 32'(OFF_PTOF_C);
+      3'd5:    return 32'(OFF_PTOF_C);
+      default: return 32'(OFF_NAME_C);
     endcase
   endfunction
 
   function automatic logic [31:0] sel_cnt_f(input logic [2:0] sel);
     unique case (sel)
-      3'd0:    return 32'd1;
-      3'd1:    return 32'(N_AUDIO_UNIT_P);
-      3'd2:    return 32'(N_CLK_DOMAIN_P);
-      3'd3:    return 32'(N_STREAM_IN_P);
-      default: return 32'(N_STREAM_OUT_P);
+      3'd0:       return 32'd1;
+      3'd1:       return 32'(N_AUDIO_UNIT_P);
+      3'd2:       return 32'(N_CLK_DOMAIN_P);
+      3'd3:       return 32'(N_STREAM_IN_P);
+      3'd4, 3'd5: return 32'(N_STREAM_OUT_P);
+      default:    return 32'(N_NAME_P);
     endcase
   endfunction
 
@@ -370,16 +398,18 @@ module KL_aecp_nvm_writer #(
       3'd2:    return 8'h0A;
       3'd3:    return 8'h30;
       3'd4:    return 8'h40;
-      default: return 8'h50;
+      3'd5:    return 8'h50;
+      default: return 8'h80;
     endcase
   endfunction
 
-  //! payload bytes: the AEM field width of the group
-  function automatic logic [3:0] sel_plen_f(input logic [2:0] sel);
+  //! payload bytes: the AEM field width of the group, a name's 64
+  function automatic logic [6:0] sel_plen_f(input logic [2:0] sel);
     unique case (sel)
-      3'd0, 3'd2: return 4'd2;
-      3'd1, 3'd5: return 4'd4;
-      default:    return 4'd8;
+      3'd0, 3'd2: return 7'd2;
+      3'd1, 3'd5: return 7'd4;
+      3'd3, 3'd4: return 7'd8;
+      default:    return 7'd64;
     endcase
   endfunction
 
@@ -395,31 +425,39 @@ module KL_aecp_nvm_writer #(
   endfunction
 
   //! byte k of the framed record {header 0..7, payload 8..}: the crc bytes
-  //! read `crc`; the payload is `val`'s low `plen` bytes, big-endian
+  //! read `crc`; the payload byte k - 8 is `pay`, chosen by the caller (a
+  //! scalar's low `plen` bytes of its value, big-endian, or a name's byte)
   function automatic logic [7:0] fr_byte_f(input logic [7:0]  rid,
-                                           input logic [3:0]  plen,
+                                           input logic [6:0]  plen,
                                            input logic [15:0] crc,
-                                           input logic [63:0] val,
-                                           input logic [4:0]  k);
+                                           input logic [7:0]  pay,
+                                           input logic [6:0]  k);
     logic [7:0] b;
     unique case (k)
-      5'd0:    b = MAGIC_HI_C;
-      5'd1:    b = MAGIC_LO_C;
-      5'd2:    b = LAYOUT_VER_P;
-      5'd3:    b = rid;
-      5'd4:    b = 8'd0;                          // payload_length[15:8]
-      5'd5:    b = {4'd0, plen};                  // payload_length[7:0]
-      5'd6:    b = crc[15:8];
-      5'd7:    b = crc[7:0];
-      default: b = val[8*(32'(plen) - 1 - (32'(k) - 8)) +: 8];
+      7'd0:    b = MAGIC_HI_C;
+      7'd1:    b = MAGIC_LO_C;
+      7'd2:    b = LAYOUT_VER_P;
+      7'd3:    b = rid;
+      7'd4:    b = 8'd0;                          // payload_length[15:8]
+      7'd5:    b = {1'b0, plen};                  // payload_length[7:0]
+      7'd6:    b = crc[15:8];
+      7'd7:    b = crc[7:0];
+      default: b = pay;
     endcase
     return b;
+  endfunction
+
+  //! payload byte j of a scalar record: `val`'s low `plen` bytes, big-endian
+  function automatic logic [7:0] val_byte_f(input logic [63:0] val,
+                                            input logic [6:0]  plen,
+                                            input logic [6:0]  j);
+    return val[8*(32'(plen) - 1 - 32'(j[2:0])) +: 8];
   endfunction
 
   // ============================================================================
   // the restore (boot): the image proof, then pass 0 and pass 1
   // ============================================================================
-  typedef enum logic [3:0] {
+  typedef enum logic [4:0] {
     W_WAITGO,   // own from reset: wait for the binding walk's end
     W_IMG,      // is the image validated? else LOCATE ENTITY 0
     W_IMGLOC,   // the LOCATE is held until the store answers
@@ -430,7 +468,9 @@ module KL_aecp_nvm_writer #(
     W_LOC,      // the rule LOCATEs its AUDIO_UNIT or CLOCK_DOMAIN
     W_LANE,     // the rule reads one 64-bit lane of that descriptor
     W_JUDGE,    // the integrator's verdict on a stream format
+    W_NNAME,    // the name rule reads the image's name count (region 0xA)
     W_APPLY,    // the value, and with it its valid flag, into the store
+    W_NAPPLY,   // a name's eight lanes into the store's name table
     W_NEXT,     // the next record, the next pass, or the terminal
     W_RB,       // the roll-back: both stores held in reset
     W_RELOC,    // the re-LOCATE of ENTITY 0 proves the image walked again
@@ -454,7 +494,7 @@ module KL_aecp_nvm_writer #(
   logic [2:0]  rsel_w;
   logic [15:0] ridx_w;
   logic [7:0]  rrid_w;
-  logic [3:0]  rplen_w;
+  logic [6:0]  rplen_w;
 
   assign rsel_w  = rec_sel_f(rec_r);
   assign ridx_w  = 16'(32'(rec_r) - sel_off_f(rsel_w));
@@ -466,6 +506,30 @@ module KL_aecp_nvm_writer #(
   logic [15:0] rmagic_r, rplen_hdr_r, rcrc_rx_r, rcrc_acc_r;
   logic [7:0]  rver_r, rrid_hdr_r;
   logic [63:0] rval_r;              // the payload's last 8 bytes, big-endian
+
+  // ---- the name buffer: one 64-byte name, eight lanes ----------------------
+  //! The restore fills it from a name record's payload and writes it back;
+  //! the service latches a name into it and frames it from there. The two
+  //! never overlap (the service starts at the restore's done terminal), so
+  //! one write port and one read port serve both (a LUT RAM, no reset).
+  logic [63:0] nbuf_r [8];
+  logic        nb_we_w;
+  logic [2:0]  nb_waddr_w, nb_raddr_w;
+  logic [63:0] nb_wdata_w, nb_rlane_w;
+  logic [2:0]  nlane_r;             // the lane a name write-back is on
+  logic [2:0]  slane_r;             // the lane the service's name latch is on
+
+  always_ff @(posedge clk_i) begin : name_buffer
+    if (nb_we_w) nbuf_r[nb_waddr_w] <= nb_wdata_w;
+  end
+  assign nb_rlane_w = nbuf_r[nb_raddr_w];
+
+  //! the payload byte this READ forwards now, and whether it completes a lane
+  logic [16:0] rpj_w;
+  logic        rd_lane_w;
+  assign rpj_w     = rbcnt_r - 17'd8;
+  assign rd_lane_w = (ws_r == W_RD) && m_rvalid_i && (rsel_w == GRP_NAME_C)
+                     && (rbcnt_r >= 17'd8) && (rpj_w < 17'd64) && (rpj_w[2:0] == 3'd7);
 
   logic rd_err_w, rd_done_w, rd_whole_w, rd_blank_w, rd_torn_w, rd_dev_w;
   assign rd_err_w   = (ws_r == W_RD) && m_err_i;
@@ -527,13 +591,13 @@ module KL_aecp_nvm_writer #(
   always_comb begin : restore_stall
     wait_w = 1'b1;
     unique case (ws_r)
-      W_IMGLOC, W_NCFG, W_LOC, W_LANE, W_RELOC: stall_w = !sb_rvalid_i;
+      W_IMGLOC, W_NCFG, W_LOC, W_LANE, W_NNAME, W_RELOC: stall_w = !sb_rvalid_i;
       //! the roll-back waits for the memory's debt to fall
       W_RB:    stall_w = rb_min_r && desc_debt_i;
       W_RQ:    stall_w = !m_gnt_i;
       W_RD:    stall_w = !m_rvalid_i && !m_done_i && !m_err_i;
       W_JUDGE: stall_w = jd_wait_i;
-      W_APPLY: stall_w = !sb_ready_i;
+      W_APPLY, W_NAPPLY: stall_w = !sb_ready_i;
       default: begin
         stall_w = 1'b0;
         wait_w  = 1'b0;          // nothing awaited, so nothing is in hand
@@ -619,6 +683,8 @@ module KL_aecp_nvm_writer #(
                      refuse_w = sb_rvalid_i && lane_refuse_w; end
       W_JUDGE: begin accept_w = !jd_wait_i && jd_data_i[0];
                      refuse_w = !jd_wait_i && !jd_data_i[0]; end
+      W_NNAME: begin accept_w = sb_rvalid_i && (ridx_w < sb_rdata_i[15:0]);
+                     refuse_w = sb_rvalid_i && !(ridx_w < sb_rdata_i[15:0]); end
       default: ;
     endcase
   end
@@ -652,6 +718,7 @@ module KL_aecp_nvm_writer #(
       walking_r    <= 1'b0;
       walk_k_r     <= 4'd0;
       rcount_r     <= 16'd0;
+      nlane_r      <= 3'd0;
     end else if (abort_w) begin
       //! the first abort names the restore. Before the image is proven it is
       //! CLOSED (the aggregate never aborts there: expire_w); in pass 0
@@ -734,9 +801,11 @@ module KL_aecp_nvm_writer #(
             3'd0:       ws_r <= W_NCFG;
             3'd1, 3'd2: ws_r <= W_LOC;
             3'd3, 3'd4: ws_r <= W_JUDGE;
+            GRP_NAME_C: ws_r <= W_NNAME;
             default:    ws_r <= accept_w ? W_APPLY : W_NEXT;
           endcase
           if (refuse_w) n_ref_r <= n_ref_r + 8'd1;
+          nlane_r <= 3'd0;
         end
         W_LOC: begin
           if (sb_rvalid_i) begin           // an err answer aborted above
@@ -760,11 +829,22 @@ module KL_aecp_nvm_writer #(
             walking_r <= 1'b1;
           end
         end
-        W_NCFG, W_JUDGE: ;               // they leave on their verdict, below
+        W_NCFG, W_JUDGE, W_NNAME: ;      // they leave on their verdict, below
         W_APPLY: begin
           if (sb_ready_i) begin
             n_app_r <= n_app_r + 8'd1;
             ws_r    <= W_NEXT;
+          end
+        end
+        W_NAPPLY: begin
+          //! lane by lane: each write is taken in its own cycle, and the
+          //! store holds the next while it patches the located descriptor
+          if (sb_ready_i) begin
+            nlane_r <= nlane_r + 3'd1;
+            if (nlane_r == 3'd7) begin
+              n_app_r <= n_app_r + 8'd1;
+              ws_r    <= W_NEXT;
+            end
           end
         end
         W_NEXT: begin
@@ -800,8 +880,9 @@ module KL_aecp_nvm_writer #(
         default: ws_r <= W_CLOSED;
       endcase
       //! the rule states leave on their verdict
-      if ((ws_r == W_NCFG) || (ws_r == W_LANE) || (ws_r == W_JUDGE)) begin
-        if (accept_w)      ws_r <= W_APPLY;
+      if ((ws_r == W_NCFG) || (ws_r == W_LANE) || (ws_r == W_JUDGE)
+          || (ws_r == W_NNAME)) begin
+        if (accept_w)      ws_r <= (rsel_w == GRP_NAME_C) ? W_NAPPLY : W_APPLY;
         else if (refuse_w) begin
           n_ref_r <= n_ref_r + 8'd1;
           ws_r    <= W_NEXT;
@@ -819,11 +900,19 @@ module KL_aecp_nvm_writer #(
   end
 
   // ---- the restore's requests on the state bus ----------------------------
+  //! a name entry's lane: the name region's byte address, [15:6] the entry
+  function automatic logic [19:0] name_addr_f(input logic [15:0] ordinal,
+                                              input logic [2:0]  lane);
+    return {4'h0, ordinal[9:0], lane, 3'd0};
+  endfunction
+
   logic        rs_sb_req_w;
+  logic        rs_sb_name_w;
   logic [19:0] rs_sb_addr_w;
   logic [63:0] rs_sb_wdata_w;
   always_comb begin : restore_bus
     rs_sb_req_w   = 1'b0;
+    rs_sb_name_w  = 1'b0;
     rs_sb_addr_w  = ADDR_LOCATE_C;
     rs_sb_wdata_w = KEY_ENTITY0_C;
     unique case (ws_r)
@@ -847,6 +936,16 @@ module KL_aecp_nvm_writer #(
         rs_sb_addr_w  = {RGN_DYN_C, 13'(rsel_w), 3'd0};
         rs_sb_wdata_w = rval_r;
       end
+      W_NNAME: begin
+        rs_sb_req_w  = 1'b1;
+        rs_sb_addr_w = ADDR_NNAME_C;
+      end
+      W_NAPPLY: begin
+        rs_sb_req_w   = 1'b1;
+        rs_sb_name_w  = 1'b1;
+        rs_sb_addr_w  = name_addr_f(ridx_w, nlane_r);
+        rs_sb_wdata_w = nb_rlane_w;
+      end
       default: ;
     endcase
   end
@@ -859,6 +958,7 @@ module KL_aecp_nvm_writer #(
     S_ACQ,      // own the bus; wait until the engine reads idle
     S_LATCH,    // one state-bus read of the record's row
     S_LATCHW,   // its answer is the value this write carries
+    S_NLATCH,   // a name: its eight lanes, each read held until answered
     S_CRC,      // the crc over the header without its crc, then the payload
     S_REQ,      // the commit request, held until the arbiter grants it
     S_STREAM,   // the 8 header bytes and the payload
@@ -871,8 +971,8 @@ module KL_aecp_nvm_writer #(
   logic [RW_C-1:0]  rr_r;           // round-robin start of the next pick
   logic [63:0]      val_r;          // the latched value, right-justified
   logic [15:0]      crc_r;
-  logic [4:0]       cix_r;          // crc byte cursor over header 0..5 + payload
-  logic [4:0]       six_r;          // stream byte cursor 0 .. 7 + plen
+  logic [6:0]       cix_r;          // crc byte cursor over header 0..5 + payload
+  logic [6:0]       six_r;          // stream byte cursor 0 .. 7 + plen
   logic [31:0]      attempts_r;
   logic [31:0]      bo_cnt_r;       // the backoff's remaining cycles
   logic             taint_r;
@@ -883,7 +983,7 @@ module KL_aecp_nvm_writer #(
   logic [2:0]  hsel_w;
   logic [15:0] hidx_w;
   logic [7:0]  hrid_w;
-  logic [3:0]  hplen_w;
+  logic [6:0]  hplen_w;
 
   assign hsel_w  = rec_sel_f(hand_r);
   assign hidx_w  = 16'(32'(hand_r) - sel_off_f(hsel_w));
@@ -899,6 +999,9 @@ module KL_aecp_nvm_writer #(
     if (chg_i && (chg_sel_i <= 13'd5)
         && (32'(chg_idx_i) < sel_cnt_f(chg_sel_i[2:0]))) begin
       set_w[sel_off_f(chg_sel_i[2:0]) + 32'(chg_idx_i)] = 1'b1;
+    end
+    if (nchg_i && (32'(nchg_ord_i) < N_NAME_P)) begin
+      set_w[OFF_NAME_C + 32'(nchg_ord_i)] = 1'b1;
     end
   end
   assign set_any_w = |set_w;
@@ -981,14 +1084,24 @@ module KL_aecp_nvm_writer #(
   end
 
   // ---- the flush -------------------------------------------------------------
-  logic [4:0] crc_last_w, stream_last_w;
-  assign crc_last_w    = 5'd5 + 5'(hplen_w);       // header 0..5, payload
-  assign stream_last_w = 5'd7 + 5'(hplen_w);
+  logic [6:0] crc_last_w, stream_last_w;
+  assign crc_last_w    = 7'd5 + hplen_w;           // header 0..5, payload
+  assign stream_last_w = 7'd7 + hplen_w;
 
   //! the crc pass skips the crc field itself: cursor 0..5 -> byte 0..5,
   //! cursor 6.. -> byte 8..
-  logic [4:0] cbyte_w;
-  assign cbyte_w = (cix_r < 5'd6) ? cix_r : (cix_r + 5'd2);
+  logic [6:0] cbyte_w;
+  assign cbyte_w = (cix_r < 7'd6) ? cix_r : (cix_r + 7'd2);
+
+  //! the payload byte the crc pass or the stream is on: a scalar's from its
+  //! latched value, a name's from the buffer (lane j / 8, byte j % 8 in
+  //! wire order)
+  logic [6:0] fbyte_w, pj_w;
+  logic [7:0] pay_w;
+  assign fbyte_w = (ss_r == S_CRC) ? cbyte_w : six_r;
+  assign pj_w    = fbyte_w - 7'd8;
+  assign pay_w   = (hsel_w == GRP_NAME_C) ? nb_rlane_w[63 - 8*int'(pj_w[2:0]) -: 8]
+                                          : val_byte_f(val_r, hplen_w, pj_w);
 
   always_ff @(posedge clk_i) begin : service_ff
     if (!rst_n) begin
@@ -997,10 +1110,11 @@ module KL_aecp_nvm_writer #(
       rr_r       <= '0;
       val_r      <= 64'd0;
       crc_r      <= 16'd0;
-      cix_r      <= 5'd0;
-      six_r      <= 5'd0;
+      cix_r      <= 7'd0;
+      six_r      <= 7'd0;
       attempts_r <= 32'd0;
       bo_cnt_r   <= 32'd0;
+      slane_r    <= 3'd0;
     end else begin
       unique case (ss_r)
         S_RUN: begin
@@ -1011,7 +1125,10 @@ module KL_aecp_nvm_writer #(
           end
         end
         S_ACQ: begin
-          if (!prog_busy_i) ss_r <= S_LATCH;
+          if (!prog_busy_i) begin
+            ss_r    <= (hsel_w == GRP_NAME_C) ? S_NLATCH : S_LATCH;
+            slane_r <= 3'd0;
+          end
         end
         S_LATCH: begin
           ss_r <= S_LATCHW;
@@ -1020,18 +1137,30 @@ module KL_aecp_nvm_writer #(
           if (sb_rvalid_i) begin
             val_r <= sb_rdata_i;
             crc_r <= 16'hFFFF;
-            cix_r <= 5'd0;
+            cix_r <= 7'd0;
             ss_r  <= S_CRC;
           end
         end
+        S_NLATCH: begin
+          //! the lane's answer lands in the buffer (nb_we_w); the eighth
+          //! ends the latch
+          if (sb_rvalid_i) begin
+            slane_r <= slane_r + 3'd1;
+            if (slane_r == 3'd7) begin
+              crc_r <= 16'hFFFF;
+              cix_r <= 7'd0;
+              ss_r  <= S_CRC;
+            end
+          end
+        end
         S_CRC: begin
-          crc_r <= crc16_f(crc_r, fr_byte_f(hrid_w, hplen_w, 16'h0000, val_r,
+          crc_r <= crc16_f(crc_r, fr_byte_f(hrid_w, hplen_w, 16'h0000, pay_w,
                                             cbyte_w));
           if (cix_r == crc_last_w) begin
-            six_r <= 5'd0;
+            six_r <= 7'd0;
             ss_r  <= S_REQ;
           end else begin
-            cix_r <= cix_r + 5'd1;
+            cix_r <= cix_r + 7'd1;
           end
         end
         S_REQ: begin
@@ -1050,7 +1179,7 @@ module KL_aecp_nvm_writer #(
           end else if (ss_r == S_STREAM) begin
             if (m_wready_i) begin
               if (six_r == stream_last_w) ss_r <= S_WAIT;
-              else                        six_r <= six_r + 5'd1;
+              else                        six_r <= six_r + 7'd1;
             end
           end else if (m_done_i) begin
             rr_r <= hand_r + RW_C'(1);
@@ -1070,7 +1199,15 @@ module KL_aecp_nvm_writer #(
   // the faces
   // ============================================================================
   logic latch_w;
-  assign latch_w = (ss_r == S_LATCH) || (ss_r == S_LATCHW);
+  assign latch_w = (ss_r == S_LATCH) || (ss_r == S_LATCHW) || (ss_r == S_NLATCH);
+
+  //! the name buffer's ports: the restore fills it from a READ's payload
+  //! and reads it lane by lane for the write-back; the service fills it from
+  //! the latch and reads it byte by byte for the crc and the stream
+  assign nb_we_w    = done_r ? ((ss_r == S_NLATCH) && sb_rvalid_i) : rd_lane_w;
+  assign nb_waddr_w = done_r ? slane_r : rpj_w[5:3];
+  assign nb_wdata_w = done_r ? sb_rdata_i : {rval_r[55:0], m_rdata_i};
+  assign nb_raddr_w = done_r ? pj_w[5:3] : nlane_r;
 
   //! the boot ownership ends at a done terminal, never in CLOSED; the
   //! service takes the bus again for one latch at a time
@@ -1078,11 +1215,16 @@ module KL_aecp_nvm_writer #(
   assign bus_o = !done_r || latch_w;
 
   //! the latch reads the row once; the dynamic-state store answers the next
-  //! cycle, so its request is one cycle wide. Before the terminal the
-  //! restore drives the bus and the port.
-  assign sb_req_o   = done_r ? (ss_r == S_LATCH) : rs_sb_req_w;
-  assign sb_we_o    = !done_r && (ws_r == W_APPLY);
-  assign sb_addr_o  = done_r ? {RGN_DYN_C, 13'(hsel_w), 3'd0} : rs_sb_addr_w;
+  //! cycle, so its request is one cycle wide. A name's lanes are the
+  //! descriptor store's, each read held until its answer, the µCPU's
+  //! contract with that store. Before the terminal the restore drives the
+  //! bus and the port.
+  assign sb_req_o   = done_r ? ((ss_r == S_LATCH) || (ss_r == S_NLATCH)) : rs_sb_req_w;
+  assign sb_we_o    = !done_r && ((ws_r == W_APPLY) || (ws_r == W_NAPPLY));
+  assign sb_name_o  = done_r ? (ss_r == S_NLATCH) : rs_sb_name_w;
+  assign sb_addr_o  = done_r ? ((ss_r == S_NLATCH) ? name_addr_f(hidx_w, slane_r)
+                                                   : {RGN_DYN_C, 13'(hsel_w), 3'd0})
+                             : rs_sb_addr_w;
   assign sb_wdata_o = rs_sb_wdata_w;
   assign sb_didx_o  = done_r ? hidx_w : ridx_w;
 
@@ -1090,7 +1232,7 @@ module KL_aecp_nvm_writer #(
   assign m_we_o     = done_r;
   assign m_rid_o    = done_r ? hrid_w : rrid_w;
   assign m_wvalid_o = (ss_r == S_STREAM);
-  assign m_wdata_o  = fr_byte_f(hrid_w, hplen_w, crc_r, val_r, six_r);
+  assign m_wdata_o  = fr_byte_f(hrid_w, hplen_w, crc_r, pay_w, six_r);
   assign m_rready_o = !done_r && (ws_r == W_RD);
   assign m_abort_o  = expire_w && (ws_r == W_RD);
 

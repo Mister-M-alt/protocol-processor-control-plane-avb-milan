@@ -371,6 +371,13 @@ static std::vector<uint8_t> d3_record(uint8_t rid, uint64_t value, int plen) {
   return r;
 }
 
+//! the D3 writer's records at this suite's shape (the wrap keeps the top's
+//! defaults): one per persisted dynamic-state row, 1 + 1 + 1 + 8 + 8 + 8,
+//! and one per name-table entry, DESC_NAME_ENTRIES_P's 32 (0x80 to 0x9F)
+static constexpr int D3_SCALARS = 27;
+static constexpr int D3_NAMES = 32;
+static constexpr int D3_RECORDS = D3_SCALARS + D3_NAMES;
+
 //! one persisted row the service phase sets, and what its record must hold
 struct D3Row {
   const char* group;
@@ -1130,10 +1137,10 @@ struct D3RestorePhase {
     CHECK(b.cleared, "D3R1: every row at its reset value, valid clear, when the D3 walk starts");
     CHECK(b.done > b.release && !x.d->restore_fail_o && !x.d->restore_blank_o
               && !x.d->restore_closed_o && x.d->dbg_d3_applied_o == 9
-              && x.d->dbg_d3_refused_o == 0 && x.d->dbg_d3_blank_o == 18,
+              && x.d->dbg_d3_refused_o == 0 && x.d->dbg_d3_blank_o == D3_RECORDS - 9,
           "D3R1: COMPLETE %ld cycles after the release, applied %u refused %u "
-          "blank %u of 27", b.done - b.release, unsigned(x.d->dbg_d3_applied_o),
-          unsigned(x.d->dbg_d3_refused_o), unsigned(x.d->dbg_d3_blank_o));
+          "blank %u of %d", b.done - b.release, unsigned(x.d->dbg_d3_applied_o),
+          unsigned(x.d->dbg_d3_refused_o), unsigned(x.d->dbg_d3_blank_o), D3_RECORDS);
     //! graded on the ADP engine's enable input, every cycle: ADP's own
     //! 0-2 s start delay would hide an early enable from the wire
     CHECK(b.enable_early == 0 && b.done_early == 0 && x.d->dbg_adp_enable_o,
@@ -1242,10 +1249,10 @@ struct D3RestorePhase {
     const Boot b = boot(6 * RS_TMO);
     const auto* d = x.d;
     CHECK(b.done > b.release && !d->restore_fail_o && d->dbg_d3_applied_o == 1
-              && d->dbg_d3_refused_o == 10 && d->dbg_d3_blank_o == 16,
-          "D3R2: COMPLETE, applied %u refused %u blank %u of 27",
+              && d->dbg_d3_refused_o == 10 && d->dbg_d3_blank_o == D3_RECORDS - 11,
+          "D3R2: COMPLETE, applied %u refused %u blank %u of %d",
           unsigned(d->dbg_d3_applied_o), unsigned(d->dbg_d3_refused_o),
-          unsigned(d->dbg_d3_blank_o));
+          unsigned(d->dbg_d3_blank_o), D3_RECORDS);
     CHECK(!d->dbg_dyn_cfg_v_o && !d->dbg_dyn_rate_v_o && !d->dbg_dyn_clk_v_o
               && d->aecp_fmt_in_v_o == 0 && d->aecp_fmt_out_v_o == 0
               && d->aecp_pt_offset_v_o == 0x02 && d->aecp_pt_offset_o.at(1) == 1600000,
@@ -1470,15 +1477,15 @@ struct D3RestorePhase {
     fresh();
     Boot b = boot(6 * RS_TMO);
     CHECK(b.done > b.release && !x.d->restore_fail_o && x.d->restore_blank_o
-              && x.d->dbg_d3_blank_o == 27,
-          "D3R6: an erased device restores blank, not failed (%u of 27 blank)",
-          unsigned(x.d->dbg_d3_blank_o));
+              && x.d->dbg_d3_blank_o == D3_RECORDS,
+          "D3R6: an erased device restores blank, not failed (%u of %d blank)",
+          unsigned(x.d->dbg_d3_blank_o), D3_RECORDS);
     fresh();
     std::vector<uint8_t> junk(12, 0x5A);           // no F07.8 magic
     seed(0x50, junk);
     b = boot(6 * RS_TMO);
     CHECK(b.done > b.release && !x.d->restore_fail_o && x.d->restore_blank_o
-              && x.d->dbg_d3_blank_o == 27,
+              && x.d->dbg_d3_blank_o == D3_RECORDS,
           "D3R6: an unframed record is that record's default, never a failure");
     //! every READ of the one saved record ends in the device's error, in
     //! both passes, so the pass agreement cannot stand in for the verdict
@@ -1682,8 +1689,14 @@ struct D3RestorePhase {
                             d3_record(0x50, 4343434, 4).begin()),
           "D3R13 pass 0: the READ in hand at the bound was drained, and once "
           "the device ends it a later SET persists");
+    //! over an erased device every READ is one grant: the binding walk's eight
+    //! and each pass's D3_RECORDS. Spaced so pass 0 ends before the bound
+    //! and the bound falls midway through pass 1, still inside the per-wait
+    //! deadline
+    static_assert(AGG / (8 + D3_RECORDS + D3_RECORDS / 2) < RS_TMO,
+                  "D3R13's grant spacing must stay inside the per-wait deadline");
     fresh();
-    x.nv_gnt_every = static_cast<int>(RS_TMO - 200);
+    x.nv_gnt_every = static_cast<int>(AGG / (8 + D3_RECORDS + D3_RECORDS / 2));
     const Boot e = boot(AGG + 4 * RS_TMO);
     x.nv_gnt_every = 0;
     CHECK(e.done + 1 > AGG && e.done + 1 <= AGG + RS_TMO && d->restore_fail_o
@@ -1879,11 +1892,13 @@ struct D3RestorePhase {
   // roll-back would let both end DEFAULTS after the bound instead.
   void r15_the_aggregate_bound_inside_a_roll_back() {
     struct Arm { bool debt; int target; long before; unsigned cause; const char* what; };
-    //! every record saved: the binding walk's eight probes, pass 0's header
-    //! and payload READs of all 27 records, then pass 1's of 0x00 and 0x02
+    //! every scalar record saved: the binding walk's eight probes, pass 0's
+    //! header and payload READs of all 27 scalar records and the header READ
+    //! of each erased name record, then pass 1's of 0x00 and 0x02
+    constexpr int PASS1 = 8 + 2 * D3_SCALARS + D3_NAMES;
     const std::array<Arm, 2> arms{{
-        {true, 66, 10000, 6, "debt wait"},
-        {false, 65, 100, 2, "re-LOCATE"}}};
+        {true, PASS1 + 4, 10000, 6, "debt wait"},
+        {false, PASS1 + 3, 100, 2, "re-LOCATE"}}};
     for (const auto& a : arms) {
       fresh();
       seed_every_record();
@@ -2943,9 +2958,9 @@ struct D3ClockSourcePhase : D3RestorePhase {
     const auto* d = x.d;
     CHECK(b.cleared && b.done > b.release && !d->restore_fail_o && !d->restore_closed_o
               && d->dbg_d3_applied_o == 1 && d->dbg_d3_refused_o == 0
-              && d->dbg_d3_blank_o == 26,
+              && d->dbg_d3_blank_o == D3_RECORDS - 1,
           "D3C3 restore: COMPLETE from cleared rows with the saved record applied "
-          "(applied %u refused %u blank %u of 27)", unsigned(d->dbg_d3_applied_o),
+          "(applied %u refused %u blank %u of %d)", unsigned(d->dbg_d3_applied_o),
           unsigned(d->dbg_d3_refused_o), unsigned(d->dbg_d3_blank_o));
     const uint16_t g = seq++;
     const auto get = get_clock_source(g);
@@ -2973,9 +2988,9 @@ struct D3ClockSourcePhase : D3RestorePhase {
       const auto* d = x.d;
       CHECK(saved == d3_record(0x0A, LAST_AAF, 2) && b.done > b.release
                 && !d->restore_fail_o && !d->restore_closed_o && d->dbg_d3_applied_o == 0
-                && d->dbg_d3_refused_o == 1 && d->dbg_d3_blank_o == 26,
+                && d->dbg_d3_refused_o == 1 && d->dbg_d3_blank_o == D3_RECORDS - 1,
             "D3C4 %s: the saved 9 over %u sources is refused, COMPLETE (applied %u "
-            "refused %u blank %u of 27)", a.what, a.count, unsigned(d->dbg_d3_applied_o),
+            "refused %u blank %u of %d)", a.what, a.count, unsigned(d->dbg_d3_applied_o),
             unsigned(d->dbg_d3_refused_o), unsigned(d->dbg_d3_blank_o));
       const uint16_t g = seq++;
       const auto get = get_clock_source(g);
@@ -3072,6 +3087,471 @@ struct D3ClockSourcePhase : D3RestorePhase {
     c4_a_smaller_image_refuses_the_saved_index();
     c5_an_unrestorable_record_keeps_the_image_index();
     c6_the_saved_index_precedes_the_enable();
+  }
+};
+
+// ==== D3N. the user names: the name stage ==================================
+//! Issues #61 and #83 (REQ-PER-001, REQ-AEM-011; Milan v1.2 5.3.13: every
+//! user name "shall" be saved and restored after a power cycle). Each
+//! writable name is one record, 0x80 + its name-table ordinal, the 64-byte
+//! entry verbatim (07 section 5.2). The suite's image names eleven of the
+//! store's 32 ordinals: ENTITY's entity_name 0 and group_name 1, CLOCK_DOMAIN
+//! 0's 2, the streams' 3 to 6, AVB_INTERFACE 7, AUDIO_UNIT 8, the IDENTIFY
+//! CONTROL 9 and the SIGNAL_MULTIPLEXER 10. The arms set five of them over
+//! real SET_NAMEs: both ENTITY names (the group name a full 64 bytes, no
+//! NUL), the clock domain's to the EMPTY name, the CONTROL's (its name, which
+//! persists; its IDENTIFY value never does) and the last ordinal.
+struct D3NamePhase : D3RestorePhase {
+  struct Named {
+    uint16_t type, index, name_index, ordinal;
+    std::vector<uint8_t> name;
+  };
+  std::vector<Named> named;
+  //! the image's names by ordinal, as the store's walk loads them
+  std::vector<std::vector<uint8_t>> defaults;
+
+  D3NamePhase(H& tally, const std::vector<uint8_t>& img, const std::vector<ImgEnt>& ents)
+      : D3RestorePhase(tally, img, ents) {
+    seq = 0xDB00;
+    const uint32_t off = rd32(&img[16]);
+    const uint16_t n = uint16_t((img[10] << 8) | img[11]);
+    for (uint16_t k = 0; k < n; ++k)
+      defaults.emplace_back(img.begin() + off + 64u * k, img.begin() + off + 64u * (k + 1));
+    std::vector<uint8_t> full(64);
+    for (size_t b = 0; b < full.size(); ++b) full[b] = uint8_t('!' + (b * 7) % 90);
+    named = {{0x0000, 0, 0, 0, NamePhase::name64("D3N entity name, saved")},
+             {0x0000, 0, 1, 1, full},
+             {0x0024, 0, 0, 2, std::vector<uint8_t>(64, 0)},
+             {0x001A, 0, 0, 9, NamePhase::name64("D3N identify control")},
+             {0x0022, 0, 0, 10, NamePhase::name64("D3N last ordinal")}};
+  }
+
+  //! the framed record of name ordinal `ord` (07 section 5.2): the header
+  //! {0x1722, layout 2, 0x80 + ord, length 64, crc16} and the entry verbatim
+  static std::vector<uint8_t> name_record(uint16_t ord, const std::vector<uint8_t>& name) {
+    std::vector<uint8_t> r = {0x17, 0x22, 0x02, uint8_t(0x80 + ord), 0x00, 0x40, 0x00, 0x00};
+    r.insert(r.end(), name.begin(), name.end());
+    const uint16_t c = d3_crc16(r);
+    r[6] = uint8_t(c >> 8);
+    r[7] = uint8_t(c);
+    return r;
+  }
+  //! the store's name-table entry `ord`, read lane by lane through the tap
+  std::vector<uint8_t> entry(uint16_t ord) {
+    std::vector<uint8_t> n;
+    for (uint16_t k = 0; k < 8; ++k) {
+      x.d->dbg_name_lane_i = uint8_t(ord * 8 + k);
+      x.d->eval();
+      for (int b = 7; b >= 0; --b) n.push_back(uint8_t(x.d->dbg_name_o >> (8 * b)));
+    }
+    x.d->dbg_name_lane_i = 0;
+    x.d->eval();
+    return n;
+  }
+  bool set_name(const Named& n, const std::vector<uint8_t>& name) {
+    return ok(AEM_SET_NAME, NamePhase::name_body(n.type, n.index, n.name_index, CFGIX, name));
+  }
+  //! GET_NAME answers `name` byte-exact (IEEE 1722.1-2021 7.4.18)
+  bool get_reads(const Named& n, const std::vector<uint8_t>& name) {
+    const uint16_t s = seq;
+    const auto f = ask(AEM_GET_NAME, NamePhase::name_sel(n.type, n.index, n.name_index));
+    return f == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID, s, AEM_GET_NAME,
+                           NamePhase::name_body(n.type, n.index, n.name_index, CFGIX, name));
+  }
+  //! READ_DESCRIPTOR(ENTITY 0) serves `entity` and `group` in its two name
+  //! fields (IEEE 1722.1-2021 Table 7-2: entity_name at 48, group_name at 180)
+  bool entity_reads(const std::vector<uint8_t>& entity, const std::vector<uint8_t>& group) {
+    std::vector<uint8_t> rd(8, 0);
+    putbe(&rd[0], CFGIX, 2);
+    const auto f = ask(AEM_READ_DESCRIPTOR, rd);
+    return f.size() >= 42 + 244
+           && std::equal(entity.begin(), entity.end(), f.begin() + 42 + 48)
+           && std::equal(group.begin(), group.end(), f.begin() + 42 + 180);
+  }
+  int ops_on(size_t from, uint8_t region, int op) const {
+    int n = 0;
+    for (size_t i = from; i < x.nvm_ops.size(); i++)
+      n += (x.nvm_ops[i].op == op && x.nvm_ops[i].region == region) ? 1 : 0;
+    return n;
+  }
+
+  // D3N1: a real SET_NAME of each of the five becomes exactly one ERASE and
+  // one WRITE of its own record after the debounce, carrying the byte-exact
+  // F07.8 frame of the entry the command left (the empty name too); no other
+  // record id is touched and nothing stays unflushed.
+  void n1_every_name_persists_its_record() {
+    fresh();
+    CHECK(x.boot_to_aecp(), "D3N1: both walks over an erased device release AECP (premise)");
+    x.d->link_up_i = 1;
+    const size_t ops0 = x.nvm_ops.size();
+    bool accepted = true;
+    for (const auto& n : named) accepted = set_name(n, n.name) && accepted;
+    CHECK(accepted, "D3N1: every SET_NAME answered SUCCESS (premise)");
+    for (long c = 0; c < 3 * WINDOW; ++c) x.step();
+    int stray = 0;
+    for (size_t i = ops0; i < x.nvm_ops.size(); i++) {
+      bool listed = false;
+      for (const auto& n : named) listed = listed || x.nvm_ops[i].region == 0x80 + n.ordinal;
+      stray += listed ? 0 : 1;
+    }
+    for (const auto& n : named) {
+      const uint8_t rid = uint8_t(0x80 + n.ordinal);
+      const auto want = name_record(n.ordinal, n.name);
+      std::vector<uint8_t> wrote;
+      for (size_t i = ops0; i < x.nvm_ops.size(); i++)
+        if (x.nvm_ops[i].op == 1 && x.nvm_ops[i].region == rid) wrote = x.nvm_ops[i].wr;
+      CHECK(ops_on(ops0, rid, 2) == 1 && ops_on(ops0, rid, 1) == 1 && wrote == want
+                && std::equal(want.begin(), want.end(), x.nv_mem[rid].begin()),
+            "D3N1 ordinal %u: record 0x%02x erased and written once, byte-exact (%d writes)",
+            unsigned(n.ordinal), unsigned(rid), ops_on(ops0, rid, 1));
+    }
+    CHECK(stray == 0 && !x.d->d3_unflushed_o,
+          "D3N1: no record outside the five names, nothing unflushed (%d operations)", stray);
+  }
+
+  // D3N2: a SET_NAME that names what the entry already holds writes no lane
+  // (SET_NAME writes only the lanes that change), so it marks nothing
+  // pending and the device sees no operation for two windows (parent DR2b).
+  void n2_an_unchanged_name_writes_nothing() {
+    const size_t ops0 = x.nvm_ops.size();
+    long pulses = 0;
+    long pending = 0;
+    const bool same = set_name(named[0], named[0].name);
+    for (long c = 0; c < 2 * WINDOW; ++c) {
+      x.step();
+      pulses += x.d->aecp_name_wr_o ? 1 : 0;
+      pending += x.d->d3_unflushed_o ? 1 : 0;
+    }
+    CHECK(same && pulses == 0 && pending == 0 && x.nvm_ops.size() == ops0,
+          "D3N2: an unchanged SET_NAME writes no lane (%ld pulses), nothing pending "
+          "(%ld cycles) and no device operation (%zu)", pulses, pending,
+          x.nvm_ops.size() - ops0);
+  }
+
+  // D3N3: the five come back across a power cycle. When the D3 walk proves
+  // the image, the clock before it reads any record, every one of their
+  // entries holds the image's name (the store's walk at reset reloads the
+  // table, and may still be running at the admission gate's release, which
+  // is why the proof waits for it); the walk ends COMPLETE
+  // with exactly the five applied; GET_NAME reads each byte-exact (the empty
+  // name and the full one included) and READ_DESCRIPTOR serves both ENTITY
+  // names; the restore's name writes pulse no live write, and none becomes a
+  // change (nothing pending, no device write, for two windows).
+  void n3_every_name_survives_a_power_cycle() {
+    power_cycle();
+    bool cleared = false;
+    bool sampled = false;
+    long pulses = 0;
+    const Boot b = boot_with(6 * RS_TMO, [&] {
+      pulses += x.d->aecp_name_wr_o ? 1 : 0;
+      if (sampled || !x.d->dbg_d3_proof_o) return;
+      sampled = true;
+      cleared = true;
+      for (const auto& n : named) cleared = cleared && entry(n.ordinal) == defaults[n.ordinal];
+    });
+    x.d->link_up_i = 1;
+    CHECK(sampled && cleared,
+          "D3N3: every saved name's entry holds the image's name when the D3 walk "
+          "proves the image");
+    const auto* d = x.d;
+    CHECK(b.done > b.release && !d->restore_fail_o && !d->restore_blank_o
+              && d->dbg_d3_applied_o == named.size() && d->dbg_d3_refused_o == 0
+              && d->dbg_d3_blank_o == D3_RECORDS - named.size(),
+          "D3N3: COMPLETE, applied %u refused %u blank %u of %d",
+          unsigned(d->dbg_d3_applied_o), unsigned(d->dbg_d3_refused_o),
+          unsigned(d->dbg_d3_blank_o), D3_RECORDS);
+    for (const auto& n : named)
+      CHECK(entry(n.ordinal) == n.name && get_reads(n, n.name),
+            "D3N3 ordinal %u: the entry holds the saved name and GET_NAME reads it "
+            "byte-exact", unsigned(n.ordinal));
+    CHECK(entity_reads(named[0].name, named[1].name),
+          "D3N3: READ_DESCRIPTOR(ENTITY) serves both restored names");
+    const size_t ops0 = x.nvm_ops.size();
+    long pending = 0;
+    for (long c = 0; c < 2 * WINDOW; ++c) {
+      x.step();
+      pending += x.d->d3_unflushed_o ? 1 : 0;
+    }
+    CHECK(pulses == 0 && pending == 0 && x.nvm_ops.size() == ops0,
+          "D3N3: the restore's name writes are no live writes (%ld pulses of "
+          "aecp_name_wr_o) and no changes (%ld pending cycles, %zu device operations)",
+          pulses, pending, x.nvm_ops.size() - ops0);
+  }
+
+  // D3N4: SET_NAME's rule and the frame. A framed record for ordinal 20,
+  // past the image's eleven names (no SET can name it), is refused by the
+  // rule; ordinal 3's record with a crc that is not the crc of its bytes and
+  // ordinal 4's carrying an 8-byte payload are refused by the frame; ordinal
+  // 5's applies. COMPLETE with 1 applied and 3 refused, and GET_NAME reads
+  // the image's names for 3 and 4 and the saved one for 5.
+  void n4_the_rule_and_the_frame_refuse() {
+    fresh();
+    const auto past = NamePhase::name64("D3N past the image");
+    seed(0x80 + 20, name_record(20, past));
+    auto crc = name_record(3, NamePhase::name64("D3N corrupt"));
+    crc[7] ^= 0x01;
+    seed(0x83, crc);
+    std::vector<uint8_t> shrt = {0x17, 0x22, 0x02, 0x84, 0x00, 0x08, 0x00, 0x00,
+                                 'D', '3', 'N', ' ', 's', 'h', 'r', 't'};
+    seed(0x84, reframe(shrt));
+    const auto five = NamePhase::name64("D3N stream 6.0");
+    seed(0x85, name_record(5, five));
+    const Boot b = boot(6 * RS_TMO);
+    x.d->link_up_i = 1;
+    const auto* d = x.d;
+    CHECK(b.done > b.release && !d->restore_fail_o && d->dbg_d3_applied_o == 1
+              && d->dbg_d3_refused_o == 3 && entry(20) != past,
+          "D3N4: COMPLETE, applied %u refused %u, ordinal 20 left alone",
+          unsigned(d->dbg_d3_applied_o), unsigned(d->dbg_d3_refused_o));
+    CHECK(get_reads({0x0005, 0, 0, 3, {}}, defaults[3]) && get_reads({0x0005, 1, 0, 4, {}}, defaults[4])
+              && get_reads({0x0006, 0, 0, 5, {}}, five),
+          "D3N4: GET_NAME reads the image's names for the refused 3 and 4, the saved "
+          "one for 5");
+  }
+
+  // D3N5: a pass-1 abort after a name was applied rolls the name back with
+  // the store. Ordinal 0's record applies; ordinal 10's, read whole in pass 0,
+  // is erased before pass 1 reads it (cause 5); the roll-back resets the
+  // descriptor store, which walks the image again, so the entry, GET_NAME and
+  // READ_DESCRIPTOR all carry the image's entity_name.
+  void n5_a_roll_back_restores_the_image_names() {
+    fresh();
+    seed(0x80, name_record(0, named[0].name));
+    seed(0x8A, name_record(10, named[4].name));
+    const size_t ops0 = x.nvm_ops.size();
+    bool erased = false;
+    bool applied = false;
+    const Boot b = boot_with(6 * RS_TMO, [&] {
+      if (!erased && reads_of(ops0, 0x8A) == 2) {
+        std::fill(x.nv_mem[0x8A].begin(), x.nv_mem[0x8A].end(), 0xFF);
+        erased = true;
+      }
+      applied = applied || x.d->dbg_d3_applied_o != 0;
+    });
+    x.d->link_up_i = 1;
+    CHECK(erased && applied && b.done > b.release && x.d->restore_fail_o
+              && x.d->rs_cause_o == 5 && x.d->restore_rb_o && !x.d->restore_closed_o,
+          "D3N5: the name applied, then pass 1's disagreement rolled back (cause %u, "
+          "rolled back %u) (premise)", unsigned(x.d->rs_cause_o), unsigned(x.d->restore_rb_o));
+    CHECK(entry(0) == defaults[0] && get_reads(named[0], defaults[0])
+              && entity_reads(defaults[0], defaults[1]),
+          "D3N5: the roll-back left the image's entity_name in the entry, GET_NAME "
+          "and READ_DESCRIPTOR");
+  }
+
+  // D3N6: a change to the name after its latch taints the WRITE in flight.
+  // The device holds the record's WRITE request while a second SET_NAME
+  // changes the same entry; the first WRITE carries the latched name, its
+  // done clears nothing, and the record ends holding the second.
+  void n6_a_change_during_the_write_taints_it() {
+    fresh();
+    CHECK(x.boot_to_aecp(), "D3N6: both walks release AECP (premise)");
+    const auto a = NamePhase::name64("D3N taint first");
+    const auto b2 = NamePhase::name64("D3N taint second");
+    const size_t ops0 = x.nvm_ops.size();
+    x.nv_gnt_hold = 1 << 30;
+    const bool first = set_name(named[2], a);
+    bool held = false;
+    for (long c = 0; c < 2 * WINDOW && !held; ++c) {
+      held = x.d->nvm_dev_req_o && x.d->nvm_dev_region_o == 0x82;
+      if (!held) x.step();
+    }
+    const bool second = set_name(named[2], b2);
+    x.nv_gnt_hold = 0;
+    for (long c = 0; c < 3 * WINDOW; ++c) x.step();
+    std::vector<uint8_t> wrote_first;
+    for (size_t i = ops0; i < x.nvm_ops.size() && wrote_first.empty(); i++)
+      if (x.nvm_ops[i].op == 1 && x.nvm_ops[i].region == 0x82) wrote_first = x.nvm_ops[i].wr;
+    const auto want = name_record(2, b2);
+    CHECK(first && held && second && ops_on(ops0, 0x82, 1) == 2
+              && wrote_first == name_record(2, a)
+              && std::equal(want.begin(), want.end(), x.nv_mem[0x82].begin())
+              && !x.d->d3_unflushed_o,
+          "D3N6 taint: %d WRITEs of 0x82, the first carrying the latched name, the "
+          "record holding the change made during it", ops_on(ops0, 0x82, 1));
+  }
+
+  // D3N7: the image is loaded after the store's boot walk (D3O4's order), and
+  // the device holds ordinal 0's record. The writer's LOCATE makes the store
+  // walk the image before any record is read, so the name written back is
+  // not overwritten by that walk: GET_NAME and READ_DESCRIPTOR read it.
+  void n7_a_late_image_is_walked_before_the_names() {
+    x.dram.clear();
+    x.erase_nvm();
+    seed(0x80, name_record(0, named[0].name));
+    power_cycle();
+    x.idle(2000);
+    const bool invalid_before = !x.d->dbg_img_valid_o;
+    x.dram = image;
+    const Boot b = boot(6 * RS_TMO);
+    x.d->link_up_i = 1;
+    CHECK(invalid_before && b.done > b.release && !x.d->restore_fail_o
+              && x.d->dbg_d3_applied_o == 1 && get_reads(named[0], named[0].name)
+              && entity_reads(named[0].name, defaults[1]),
+          "D3N7: an image loaded late is walked before the name is written back: "
+          "GET_NAME and READ_DESCRIPTOR read the saved entity_name");
+  }
+
+  void run() {
+    n1_every_name_persists_its_record();
+    n2_an_unchanged_name_writes_nothing();
+    n3_every_name_survives_a_power_cycle();
+    n4_the_rule_and_the_frame_refuse();
+    n5_a_roll_back_restores_the_image_names();
+    n6_a_change_during_the_write_taints_it();
+    n7_a_late_image_is_walked_before_the_names();
+  }
+};
+
+// ==== D3K. every D3 record type cut mid-commit by rst_n ====================
+//! Issues #61 and #83 (09 section 3 NVM: "every record type cut at least
+//! once"). The device keeps each WRITE byte as it takes it (H's progressive
+//! mode), so a cut leaves what a real cut leaves. For each record type the
+//! device holds A, which the first boot restores, and a real SET of B starts
+//! the record's ERASE and WRITE; rst_n is then pulsed with the device carried
+//! at a cut point: on the ERASE's grant (A still at rest), at the WRITE's
+//! grant (erased), after its 8-byte header, one byte short of the record, and
+//! at a byte drawn from a fixed seed. The next boot's restore is never a
+//! failure: an erased record or a torn header is UNFRAMED (blank), a torn
+//! payload fails its crc16 (refused), and either keeps the image's value,
+//! while A cut before its ERASE completed comes back. The device also holds
+//! sink 0's binding at the cut (placed there once B is accepted, because a
+//! bound sink refuses SET_CONFIGURATION and its own SET_STREAM_FORMAT with
+//! STREAM_IS_RUNNING), and the boot after the cut restores it, probing
+//! PASSIVE (PRB_W_AVAIL, Milan 5.5.3.5.2). Once UNBIND_RX frees sink 0, a
+//! later SET of B persists over whatever the cut left.
+struct D3CutPhase : D3RestorePhase {
+  struct Row { const char* group; uint8_t rid; int plen; uint64_t a, b; };
+  static constexpr uint64_t TALKER = 0x00B0B0B0B0B0D3C7ULL;
+  static constexpr uint32_t SEED = 0xD3C0FFEE;
+  std::mt19937 rng{SEED};
+
+  D3CutPhase(H& tally, const std::vector<uint8_t>& img, const std::vector<ImgEnt>& ents)
+      : D3RestorePhase(tally, img, ents) {
+    seq = 0xDC80;
+  }
+
+  static std::vector<Row> rows() {
+    return {{"cfg", 0x00, 2, 1, 0},
+            {"rate", 0x02, 4, 48000, 96000},
+            {"clks", 0x0A, 2, 1, 2},
+            {"fmti", 0x30, 8, H::SFMT_ALT_C, H::SFMT_MAIN_C},
+            {"fmto", 0x40, 8, H::SFMT_ALT_C, H::SFMT_MAIN_C},
+            {"ptof", 0x50, 4, 1000000, 1500000},
+            {"name", 0x80, 64, 0, 1}};
+  }
+  static std::vector<uint8_t> name_of(uint64_t v) {
+    return NamePhase::name64(v ? "D3K name B" : "D3K name A");
+  }
+  //! the record of value `v`: the scalar's frame, or ENTITY 0's entity_name
+  static std::vector<uint8_t> record(const Row& r, uint64_t v) {
+    return r.rid == 0x80 ? D3NamePhase::name_record(0, name_of(v))
+                         : d3_record(r.rid, v, r.plen);
+  }
+  bool set(const Row& r, uint64_t v) {
+    using S = D3ServicePhase;
+    switch (r.rid) {
+      case 0x00: return ok(AEM_SET_CONFIGURATION, S::pl_cfg(uint16_t(v)));
+      case 0x02: return ok(AEM_SET_SAMPLING_RATE, S::pl_rate(uint32_t(v)));
+      case 0x0A: return ok(AEM_SET_CLOCK_SOURCE, S::pl_clk(uint16_t(v)));
+      case 0x30: return ok(AEM_SET_STREAM_FORMAT, S::pl_fmt(0x0005, 0, v));
+      case 0x40: return ok(AEM_SET_STREAM_FORMAT, S::pl_fmt(0x0006, 0, v));
+      case 0x50: return ok(AEM_SET_STREAM_INFO, S::pl_ptof(0, uint32_t(v)));
+      default:   return ok(AEM_SET_NAME, NamePhase::name_body(0x0000, 0, 0, CFGIX, name_of(v)));
+    }
+  }
+  //! the group holds `v` with its valid flag, or (`v` absent) the image's
+  //! value with the flag clear; a name is read back over GET_NAME
+  bool holds(const Row& r, const uint64_t* v) {
+    const auto* d = x.d;
+    switch (r.rid) {
+      case 0x00: return v ? (d->dbg_dyn_cfg_v_o && d->dbg_dyn_cfg_o == *v) : !d->dbg_dyn_cfg_v_o;
+      case 0x02: return v ? (d->dbg_dyn_rate_v_o && d->dbg_dyn_rate_o == *v) : !d->dbg_dyn_rate_v_o;
+      case 0x0A: return v ? (d->dbg_dyn_clk_v_o && d->dbg_dyn_clk_o == *v) : !d->dbg_dyn_clk_v_o;
+      case 0x30: return v ? ((d->aecp_fmt_in_v_o & 1) && x.fmt_row(false, 0) == *v)
+                          : !(d->aecp_fmt_in_v_o & 1);
+      case 0x40: return v ? ((d->aecp_fmt_out_v_o & 1) && x.fmt_row(true, 0) == *v)
+                          : !(d->aecp_fmt_out_v_o & 1);
+      case 0x50: return v ? ((d->aecp_pt_offset_v_o & 1) && d->aecp_pt_offset_o.at(0) == *v)
+                          : !(d->aecp_pt_offset_v_o & 1);
+      default: {
+        const uint16_t s = seq;
+        const auto f = ask(AEM_GET_NAME, NamePhase::name_sel(0x0000, 0, 0));
+        const auto want = v ? name_of(*v) : NamePhase::name64("PP Reference Entity");
+        return f == aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID, s,
+                               AEM_GET_NAME, NamePhase::name_body(0x0000, 0, 0, CFGIX, want));
+      }
+    }
+  }
+  //! sink 0 bound to the saved talker and probing PASSIVE: GET_STREAM_INFO's
+  //! probing_status (Milan v1.2 5.4.2.10, the top three bits of byte 90)
+  bool binding_waits_for_its_talker() {
+    const auto g = ask(AEM_GET_STREAM_INFO, ti(0x0005, 0));
+    return (x.d->acmp_bound_o & 1) && g.size() == 94 && (g[90] >> 5) == 1;
+  }
+
+  //! one cut: A at rest and restored, B SET, rst_n at `where` (-1 on the
+  //! ERASE's grant, else after `where` WRITE bytes), then the restore
+  void cut(const Row& r, int where) {
+    const int total = 8 + r.plen;
+    fresh();
+    x.nv_wr_progressive = true;
+    seed(r.rid, record(r, r.a));
+    const Boot b0 = boot(6 * RS_TMO);
+    x.d->link_up_i = 1;
+    const bool restored = b0.done > b0.release && holds(r, &r.a);
+    const bool accepted = set(r, r.b);
+    bool reached = false;
+    for (long c = 0; c < 3 * WINDOW && !reached; ++c) {
+      reached = x.nv_cur.region == r.rid
+                && (where < 0 ? x.nv_st == H::NvState::NV_ERASE
+                              : (x.nv_st == H::NvState::NV_WRITE
+                                 && x.nv_cur.wr.size() == size_t(where)));
+      if (!reached) x.step();
+    }
+    char at[40];
+    if (where < 0) snprintf(at, sizeof at, "the ERASE");
+    else snprintf(at, sizeof at, "byte %d of %d", where, total);
+    CHECK(restored && accepted && reached,
+          "D3K %s cut at %s: A restored, B accepted, the cut point reached (premise)",
+          r.group, at);
+    seed(0x20, binding_record(TALKER, 0x0DC7, CTLR_EID));
+    power_cycle();
+    const Boot b = boot(6 * RS_TMO);
+    x.d->link_up_i = 1;
+    const auto* d = x.d;
+    const bool value = where < 0 ? holds(r, &r.a) : holds(r, nullptr);
+    CHECK(b.done > b.release && !d->restore_fail_o && !d->restore_closed_o && value,
+          "D3K %s cut at %s: the restore does not fail, and the group holds %s "
+          "(fail %u cause %u, applied %u refused %u)", r.group, at,
+          where < 0 ? "A" : "the image's value", unsigned(d->restore_fail_o),
+          unsigned(d->rs_cause_o), unsigned(d->dbg_d3_applied_o),
+          unsigned(d->dbg_d3_refused_o));
+    CHECK(binding_waits_for_its_talker(),
+          "D3K %s cut at %s: sink 0's saved binding restored, probing PASSIVE", r.group, at);
+    //! UNBIND_RX (DISCONNECT_RX_COMMAND, 8) of sink 0, answered by its response (9)
+    const uint16_t u = seq++;
+    x.q_acmp.clear();
+    x.feed(acmp_frame(CTLR_MAC, 8, 0, 0, CTLR_EID, TALKER, EID, 0x0DC7, 0, 0, 0, u, 0, 0));
+    const auto un = x.wait_frame(x.q_acmp, 100, [u](const std::vector<uint8_t>& f) {
+      return f.size() == 70 && (f[15] & 0x0F) == 9 && fv_u64(f, 62, 2) == u;
+    });
+    const bool again = !un.empty() && ((un[16] >> 3) & 0x1F) == 0 && set(r, r.b);
+    for (long c = 0; c < 3 * WINDOW; ++c) x.step();
+    const auto want = record(r, r.b);
+    CHECK(again && std::equal(want.begin(), want.end(), x.nv_mem[r.rid].begin())
+              && !d->d3_unflushed_o,
+          "D3K %s cut at %s: once sink 0 is unbound, a later SET of B persists over what "
+          "the cut left", r.group, at);
+    x.nv_wr_progressive = false;
+  }
+
+  void run() {
+    for (const auto& r : rows()) {
+      const int total = 8 + r.plen;
+      std::uniform_int_distribution<int> draw(1, total - 2);
+      for (int where : {-1, 0, 8, total - 1, draw(rng)}) cut(r, where);
+    }
   }
 };
 

@@ -223,8 +223,8 @@ The static descriptor image, per-configuration index map, writable name table,
 and coherent READ_DESCRIPTOR name patching are implemented. A name update pulses
 the accepted name-lane write (`aecp_name_wr_o`), which the saved-state contract
 names as the name group's persistence trigger; the group-7 mark is a completion
-notification, never a persistence trigger. The name stage's writer and its replay
-after power loss, after the image walk, remain in GAP-09.
+notification, never a persistence trigger. The D3 writer saves a changed name and
+replays it after power loss, once the image walk has run (GAP-09).
 After a SET, READ_DESCRIPTOR serves the configuration, sampling rate, clock source and
 stream format the SET stored, which the GET reads, not the image's defaults (issue #82). No stream descriptor
 is assembled here: the consumer's image carries each one whole in the Table 7-8 layout,
@@ -249,9 +249,12 @@ that lands it: bound state, binding parameters and started/stopped by the bindin
 manager (`tb/acmp_nvm`, `tb/pp_top` BW); configuration index, sampling rate, clock
 source, both stream formats and presentation offset by the D3 writer, restored in two
 agreeing passes before AECP and ADP are released (processor issue #131; `tb/pp_top`
-D3). User names and channel mappings are accepted in the same contract and **not
-implemented**; they stay open here. No processor-only evidence closes the physical
-saved-state acceptance, which is the integrating platform's.
+D3); every user name by the D3 writer, written back after the image walk (issues #61
+and #83; `tb/pp_top` D3N, and every D3 record type cut mid-commit by `rst_n` in D3K).
+Channel mappings are accepted in the same contract and **not implemented**: their
+stage needs the parent's map plane to take the D3 roll-back, a top-port change held
+for a manager ruling (issue #83), so they stay open here. No processor-only evidence
+closes the physical saved-state acceptance, which is the integrating platform's.
 
 #### <a id="gap-10"></a>GAP-10 [Major] — Reusability substance missing
 "Reusable FPGA IP" is claimed without the artifacts that make IP reusable: no clock/
@@ -402,7 +405,7 @@ verification).
 | REQ-AEM-008 | Milan §5.4.2.7 | SET_STREAM_FORMAT: STREAM_IS_RUNNING / BAD_ARGUMENTS (mapping refs channel absent in new format) | shall | A | [GAP-01](#gap-01) | validation chain | 06 §6.4 | DIR |
 | REQ-AEM-009 | Milan §5.4.2.9 | SET_STREAM_INFO: OUTPUT only (INPUT → NOT_SUPPORTED); MSRP_ACC_LAT_VALID sets presentation offset 0..0x7FFFFFFF ns; any unsupported sub-flag ⇒ whole command NOT_SUPPORTED | shall | A | [GAP-01](#gap-01) | F06.14 row | 06 §6.3 | DIR |
 | REQ-AEM-010 | Milan §5.4.2.10 | GET_STREAM_INFO: Milan 80-B extended response (flags_ex, pbsta, acmpsta); renamed flags; full validity matrix | shall | C | [GAP-01](#gap-01) | E_GSTRI + gsi face (landed; validity matrix = integrator serving the face) | 06 §6.2 | DIR |
-| REQ-AEM-011 | Milan §5.4.2.11/.12 | SET/GET_NAME for all names of implemented descriptors; persisted | shall | C | live commands and coherent descriptor overlay implemented; persistence in [GAP-09](#gap-09) (D3 name stage, not implemented) | name table + accepted name-lane write as the persistence trigger (the mark is completion only) | 06 §6.2.1, 07 §3/§5 | DIR |
+| REQ-AEM-011 | Milan §5.4.2.11/.12 | SET/GET_NAME for all names of implemented descriptors; persisted | shall | C | live commands and coherent descriptor overlay implemented; persisted and restored after the image walk by the D3 writer, records `0x80`+ordinal ([GAP-09](#gap-09); #61/#83, `tb/pp_top` D3N1 to D3N7, D3K) | name table + accepted name-lane write as the persistence trigger (the mark is completion only) | 06 §6.2.1, 07 §3/§5 | DIR |
 | REQ-AEM-012 | Milan §5.4.2.13/.14 | SET/GET_SAMPLING_RATE per Audio Unit; may NOT_SUPPORTED when mappings mismatch and no SRC ("UNSUPPORTED" in spec text is a typo) | shall | A | [GAP-01](#gap-01) | validation chain | 06 §6.4 | DIR |
 | REQ-AEM-013 | Milan §5.4.2.15/.16 | SET/GET_CLOCK_SOURCE per Clock Domain; persisted | shall | A | [GAP-09](#gap-09); persisted and restored by the D3 writer (#131, `tb/pp_top` D3S1/D3R1); over a ten-source domain, an AAF index set, refused past the list, saved and restored (#141, `tb/pp_top` D3C1 to D3C4); a blank, corrupt or torn record keeps the image's index, and the saved index is exported in every cycle the ADP enable is high (#52, D3C5, D3C6) | CLOCK_CFG class; D3 record `0x0A`+domain | 06 §6, 07 §5 | NVM |
 | REQ-AEM-014 | Milan §5.4.2.17/.18, §5.3.12 | SET/GET_CONTROL for Identify (0 / 255; reset default 0) | shall | A | [GAP-06](#gap-06) | identify handler | 06 §7 | DIR |
@@ -459,7 +462,7 @@ verification).
 
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
 |---|---|---|---|---|---|---|---|---|
-| REQ-PER-001 | Milan §5.3.5.1, §5.3.7.1/.6, §5.3.8.1/.2/.3/.7, §5.3.9.1, §5.3.10.1, §5.3.11.1, §5.3.13 | Persist: sampling rate; stream formats in/out; presentation offset; bound state + binding params; started/stopped; output + input mappings; clock source; all user names | shall | A | [GAP-09](#gap-09); bindings, started/stopped and the scalar groups implemented (#131), maps and names not | binding manager + D3 writer (07 §5.2 inventory) | 07 §5 | NVM |
+| REQ-PER-001 | Milan §5.3.5.1, §5.3.7.1/.6, §5.3.8.1/.2/.3/.7, §5.3.9.1, §5.3.10.1, §5.3.11.1, §5.3.13 | Persist: sampling rate; stream formats in/out; presentation offset; bound state + binding params; started/stopped; output + input mappings; clock source; all user names | shall | A | [GAP-09](#gap-09); bindings, started/stopped and the scalar groups implemented (#131), the user names (#61/#83, `tb/pp_top` D3N; every D3 record type cut mid-commit, D3K), maps not | binding manager + D3 writer (07 §5.2 inventory) | 07 §5 | NVM |
 | REQ-PER-002 | Milan §5.3.4.1/.2, §5.3.12 | Volatile: lock state; controller registry; identify = 0 after reset | shall | A | [GAP-09](#gap-09); graded across a power cycle that restores a saved binding (#62, `tb/pp_top` D3V: the lock free to a second controller, the registry empty, IDENTIFY 0 from the restore on, each reset arm's deletion killed) | volatile policy: no record; IDENTIFY (selector 7) excluded at the D3 trigger | 07 §5 | NVM |
 | REQ-PER-003 | (unstated) | Current configuration index persistence — Milan silent; design decision: persist | — | A | [GAP-09](#gap-09); implemented (#131); restored to the ADPDU, GET_CONFIGURATION and the ENTITY descriptor, and a blank, corrupt or torn record keeps the image default (#63, `tb/pp_top` AD5 to AD9) | design decision §8 item 1, retained; D3 record `0x00` | 07 §5 | NVM |
 

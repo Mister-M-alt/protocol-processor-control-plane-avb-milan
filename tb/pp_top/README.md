@@ -106,7 +106,9 @@ five into the one canonical tally.
   starts (the admission gate's release)
   every row of selectors 0 to 5 reads its reset value with its valid flag
   clear, read through taps rather than the bus the restore owns; the walk
-  ends COMPLETE with exactly 9 applied, 0 refused and 18 blank of 27; each
+  ends COMPLETE with exactly 9 applied, 0 refused and 50 blank of 59 (the 27
+  dynamic-state records and the 32 name records of the top's
+  `DESC_NAME_ENTRIES_P` default); each
   group's value and valid flag are restored and a real GET reads each
   back (GET_CONFIGURATION, GET_SAMPLING_RATE, GET_CLOCK_SOURCE, both
   GET_STREAM_FORMAT directions, GET_STREAM_INFO's latency through the
@@ -174,8 +176,10 @@ five into the one canonical tally.
   the one that took `restore_go_i`: with every record saved the bound falls
   in pass 0, DEFAULTS is registered by exactly that clock, cause 3, nothing
   applied, and the READ in hand is drained; once the device ends it a later
-  SET persists. Over an erased device the bound falls in pass 1, which
-  rolls back to DEFAULTS within one per-wait deadline of it. Without the
+  SET persists. Over an erased device, each grant spaced so pass 0's 59
+  reads end before the bound (1,000,001 / (8 + 59 + 29) clocks apart, inside
+  the per-wait deadline), the bound falls in pass 1, which rolls back to
+  DEFAULTS within one per-wait deadline of it. Without the
   counter the first walk runs to about 2.3 million clocks. **D3R14** (the
   clarification of DR3a on issue #131: an aggregate expiry never closes a
   provable image) a device slow per byte (each header-probe byte 2,100
@@ -263,8 +267,8 @@ five into the one canonical tally.
   after it. **D3C3** the D3S1/D3R1 pair for an AAF index (REQ-AEM-013): the
   accepted 9 is saved as exactly one ERASE and one WRITE of record 0x0A,
   byte-exact, with no other record moving. Across a power cycle the walk
-  starts from cleared rows and applies it (1 applied, 0 refused, 26 blank of
-  27), and the row, GET and the export read 9. **D3C4** the same saved record
+  starts from cleared rows and applies it (1 applied, 0 refused, 58 blank of
+  59), and the row, GET and the export read 9. **D3C4** the same saved record
   over an image whose list is shorter, at its count (nine sources) and above
   it (the suite's three): refused, COMPLETE with 0 applied and 1 refused, the
   row unset and GET reading the image's 0. The arms run in the order D3C1,
@@ -287,6 +291,52 @@ five into the one canonical tally.
   `entity_enable_i` requested from reset and record 0x0A carrying 2, the top
   exports 2 with the row valid in every cycle the ADP engine's enable is high,
   the first included, and GET_CLOCK_SOURCE then reads 2.
+  **D3N** (issues #61 and #83; REQ-PER-001, REQ-AEM-011; Milan v1.2 §5.3.13)
+  the user names, one record per name-table entry, `0x80` + ordinal, the
+  64-byte entry verbatim. The suite's image names 11 of the store's 32
+  ordinals. Five of them are set with real SET_NAMEs: both ENTITY names (the
+  group name a full 64 bytes with no NUL), CLOCK_DOMAIN 0's set to the EMPTY
+  name, the IDENTIFY CONTROL's name and the last ordinal, 10. **D3N1** each is
+  saved as exactly one ERASE and one WRITE of its record after the debounce,
+  byte-exact, with no other record moving and nothing left unflushed.
+  **D3N2** a SET_NAME naming what the entry holds writes no lane: no
+  `aecp_name_wr_o` pulse, nothing pending and no device operation for two
+  windows. **D3N3** across a power cycle every saved entry holds the image's
+  name on the clock the D3 walk proves the image (the store's walk at reset
+  may still be running at the admission gate's release, which is why the
+  proof waits for it). The walk ends COMPLETE with exactly the five applied;
+  the entries and GET_NAME read each byte-exact, the empty and the full name
+  included, and READ_DESCRIPTOR serves both ENTITY names. The restore's name
+  writes pulse no `aecp_name_wr_o`, and none becomes a change: nothing
+  pending and no device write for two windows. **D3N4** SET_NAME's rule and
+  the frame: a framed record for ordinal 20, past the image's names, is
+  refused by the rule (the store's region 0xA count). Ordinal 3's corrupt
+  crc and ordinal 4's 8-byte payload are refused by the frame, ordinal 5's
+  applies, and GET_NAME reads the image's names for 3 and 4. **D3N5** a pass-1
+  abort after a name was applied (ordinal 10's record erased between the
+  passes, cause 5) rolls the descriptor store back, and the entry, GET_NAME
+  and READ_DESCRIPTOR carry the image's entity_name. **D3N6** a SET_NAME
+  while the device holds the record's WRITE request taints that WRITE: two
+  WRITEs, the first carrying the latched name, the record ending with the
+  second. **D3N7** an image loaded after the store's boot walk (D3O4's order)
+  is walked at the writer's LOCATE before any record is read, so the
+  restored name is not overwritten: GET_NAME and READ_DESCRIPTOR read it.
+  **D3K** (issues #61 and #83; 09 §3 NVM, "every record type cut ≥ once")
+  every D3 record type is cut by a real `rst_n` with the device carried:
+  configuration, sampling rate, clock source, both stream formats,
+  presentation offset and user name. The device model keeps each WRITE byte
+  as it takes it, so a cut leaves a real torn record. The device holds A,
+  which the first boot restores; a real SET of B starts the ERASE and WRITE.
+  The cut falls on the ERASE's grant, on the WRITE's grant, after the
+  8-byte header, one byte short of the record, and at a byte drawn from the
+  fixed seed `0xD3C0FFEE`. The boot after it never fails. A cut before the
+  ERASE completed keeps A. An erased record or a torn header reads UNFRAMED
+  (blank), and a torn payload fails its crc16 (refused): each keeps the
+  image's value with the valid flag clear. The device also holds sink 0's
+  binding at the cut, and that boot restores it, probing PASSIVE
+  (PRB_W_AVAIL). Once UNBIND_RX frees the sink, a later SET of B persists
+  over whatever the cut left. The binding manager's own `rst_n` cuts are
+  `tb/acmp_nvm` R1 and R2, and the port's are `tb/nvm_port` T25.
   `restore_done_o` is the COMBINED terminal: the binding walk's release
   alone (S4) frees the listener, never AECP or ADP.
   The dispatch hold runs from reset, so every section that resets and then
@@ -580,7 +630,7 @@ five into the one canonical tally.
   each, and the GET between them carries none — a mark has no wire shape, so
   the pin is the only place any of this is visible. A mark is a completion
   notification: R21 proves the notification, never persistence (section D3
-  grades the scalar records; maps and names are later stages).
+  grades the scalar and name records; maps are a later stage).
 - **R** boot restore over a blank NVM device: all 8 BINDING regions read,
   the walk's terminal without `restore_fail`. The loop waits on the binding
   manager's own terminal (`dbg_walk_done_o`), not on `restore_done_o`, so every
@@ -1037,6 +1087,18 @@ D3C4 arm. The last four rows are D3C's own controls.
 | `clks_restore_count_narrowed` | the restore rule reads only the low three bits of `clock_sources_count` | `D3C3 restore` | 2 |
 | `clks_restore_index_narrowed` | the restore rule compares only the low three bits of the saved index | `D3C4 at the count`, `D3C4 above the count` | 4 |
 | `clks_restore_bound_inclusive` | the restore rule accepts an index equal to the count (`<=` for `<`) | `D3C4 at the count` | 4 |
+| `TRG_name` | the name trigger deleted (issues #61, #83) | `D3N1 ordinal` | 15 |
+| `RPL_name` | the name replay deleted: every framed name refused | `D3N3 ordinal` | 13 |
+| `name_rule_ignored` | the name rule accepts any ordinal | `D3N4: COMPLETE` | 1 |
+| `name_empty_refused` | an EMPTY name (lane 0 zero) refused on restore | `D3N3: COMPLETE`, `D3N3 ordinal 2` | 2 |
+| `name_record_id_shifted` | name records at `0x81` + ordinal | `D3N1 ordinal` | 13 |
+| `name_entry_shifted` | a restored name written to the next entry | `D3N3 ordinal` | 10 |
+| `name_lanes_partial` | the write-back ends after seven lanes | `D3N3 ordinal 1` | 2 |
+| `name_taint_ignored` | a name change after its latch does not taint the write | `D3N6 taint` | 1 |
+| `name_restore_pulses` | the exported `aecp_name_wr_o` not gated off the writer's restore | `D3N3: the restore's name writes` | 1 |
+| `name_restore_is_a_change` | the name snoop not gated off the writer's restore | `D3N3: the restore's name writes` | 1 |
+| `names_before_the_image` | the image proof skipped, so names land before the store's walk | `D3N7` | 9 |
+| `frame_crc_ignored` | the frame's crc compare removed for every group (issues #61, #83) | `D3K ptof cut at byte 11 of 12: the restore`, `D3K name cut at byte 71 of 72: the restore` | 8 |
 | `clks_crc_ignored` | the frame's crc compare bypassed for the clock-source group (issue #52) | `D3C5 corrupt` | 1 |
 | `torn_read_not_an_abort` | a torn read is not an abort (issues #52, #63) | `D3C5 torn` | 2 |
 | `blank_applies_zero` | a blank record applies a zero value with its valid flag (issues #52, #63) | `D3C5 blank` | 15 |
@@ -1226,6 +1288,18 @@ D3C3's restore, whose saved 10 the restore rule refuses.
 
 ## Recorded seams and honest limits
 
+- ST2b reads GET_COUNTERS rounds on the wire, and `KL_aecp_notify` stamps a
+  round's one-second limit when it selects the round (its comment: "from
+  emission selection"). A solicited answer that leaves just before a round's
+  first frame delays that frame, and the next round, on time, then leaves up
+  to one job (about 4 ms here) under a second after it. At main `ddb3119d`,
+  starting ST's churn 30 to 95 clocks later than it starts fails ST2b (99,590
+  to 99,914 clocks): the check holds for the phase it was tuned at. Since the
+  name stage, ST first lets the D3 writer save ST1's names, which moves the
+  churn, so ST restores that phase, one clock before a millisecond tick. The
+  limiter's stamp is recorded here as a finding: Milan Table 5.22's
+  once-per-second spacing is not guaranteed on the wire under solicited
+  load, and a D3 latch's dispatch hold delays a selected round the same way.
 - The validator's V9 pass-through has NO msrp/mvrp select — `KL_mrp_strip`
   derives it from the EtherType bytes it strips (V9 already enforced the
   DA/EtherType pairing).

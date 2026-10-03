@@ -591,19 +591,20 @@ pending" bit observes the following top-level outputs. They do not change behavi
 | Signal | Dir | Width | When |
 |---|---|---|---|
 | `nvm_unflushed_o` | out | `P-N-STREAM-IN` | the binding manager's: bit k is 1 from the cycle the manager ACCEPTS a changed binding for sink k (a write-back that moves no persisted field never raises it) until that record commits with `done`, or until it gives up after three attempts — which is the same cycle `nvm_alarm_o` rises. A capture that lands mid-flush holds the bit: the burst re-serializes. |
-| `d3_unflushed_o` | out | 1 | the D3 writer's: 1 from the cycle after the dynamic-state store accepts a write that changes a persisted row's `{value, valid}` until every such record's WRITE has ended with an untainted `done` or its attempts are exhausted. The integrator's pending is `(|nvm_unflushed_o) | d3_unflushed_o`. |
+| `d3_unflushed_o` | out | 1 | the D3 writer's: 1 from the cycle after the dynamic-state store accepts a write that changes a persisted row's `{value, valid}`, or the descriptor store accepts a name-lane write (`aecp_name_wr_o`), until every such record's WRITE has ended with an untainted `done` or its attempts are exhausted. The integrator's pending is `(|nvm_unflushed_o) | d3_unflushed_o`. |
 | `nvm_alarm_o` | out | 1 | either producer exhausted a record's three write attempts; set until reset, whatever later writes do. |
 | `aecp_dyn_dirty_o` | out | 1 | a sticky diagnostic of the dynamic-state store (any row written since reset); not pending and not a persistence trigger. |
-| `aecp_name_wr_o` | out | 1 | one `clk_i` cycle per accepted live 64-bit name-lane write, sampled at the same rising edge that writes the descriptor store. Multi-lane names pulse once per written lane; unchanged lanes, boot loading, refused/out-of-range commands and writes aborted before acceptance do not pulse. Earlier accepted writes remain visible if a command later aborts. No ready/ack; leave unused with an explicit `.aecp_name_wr_o()` connection. |
+| `aecp_name_wr_o` | out | 1 | one `clk_i` cycle per accepted live 64-bit name-lane write, sampled at the same rising edge that writes the descriptor store. Multi-lane names pulse once per written lane; unchanged lanes, boot loading, the D3 writer's restore of a saved name, refused/out-of-range commands and writes aborted before acceptance do not pulse. Earlier accepted writes remain visible if a command later aborts. No ready/ack; leave unused with an explicit `.aecp_name_wr_o()` connection. |
 | `aecp_nvm_stb_o` / `aecp_nvm_mark_o` | out | 1 / 8 | one `clk_i` cycle per committed command that carries the µCPU's `NVM_MARK` effect, with the mark code naming the record group: **1** a dynamic-state field (sampling rate, clock source, configuration index, stream format, stream info), **6** channel maps, **7** user names. The code is meaningful only while the strobe is 1. A mark is a **completion notification**: it selects no record and triggers no persistence. |
 
 Two record producers live inside this processor: the binding manager and the D3 writer
 (the scalar records: configuration, sampling rates, clock sources, both stream-format
-directions, presentation offsets). Each is triggered by its accepted live write, never by
-a mark. The name and map groups are accepted in the same saved-state contract, with the
-accepted name-lane write (`aecp_name_wr_o`, which precedes the unchanged group-7 mark) and
-the phase-5 edit commit beat (`amap_edit_req_o` with `amap_edit_phase_o == 5`) as their
-triggers; their writers are later D3 stages and are **not implemented** in this release.
+directions, presentation offsets; and the user names, one record per name-table entry).
+Each is triggered by its accepted live write, never by a mark: a name by the accepted
+name-lane write (`aecp_name_wr_o`, which precedes the unchanged group-7 mark). The map
+group is accepted in the same saved-state contract, with the phase-5 edit commit beat
+(`amap_edit_req_o` with `amap_edit_phase_o == 5`) as its trigger; its writer is a later D3
+stage and is **not implemented** in this release.
 
 The top's restore verdicts are combined over both walks ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)):
 `restore_done_o`, `restore_busy_o`, `restore_fail_o`, `restore_blank_o` (done and not
