@@ -1753,7 +1753,7 @@ the fourth section AX's line build, and the fifth section TB's timebase:
 
 | Build | Override | Runs | Expects |
 |---|---|---|---|
-| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV, AX and DL among them, and lane C6's ID0, NP, ST and RN last | 2 (Milan §4.2.7.2.1) |
+| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV, AX, DL, D3, D3V and D3KR among them, then lane C6's ID0, NP, ST and RN, and lane C7's K9 to K17 last | 2 (Milan §4.2.7.2.1) |
 | `obj_vid/Vpp_top_vid` | `SRP_DOM_DEF_VID_P = 0x5A3C` (`SRP_VID_FIXTURE`) | DV alone | 0x5A3C |
 | `obj_idn/Vpp_top_idn` | `EN_IDENTIFY_NOTIF_P = 1` (`PP_TOP_EN_IDENT`) | ID alone | 2 |
 | `obj_line/Vpp_top_line` | `DESC_LINE_BYTES_P = 584` (`LINE_FIXTURE`) | AX alone | 2 |
@@ -2259,7 +2259,10 @@ monitor's 30 s floor, so no CONTROLLER_AVAILABLE is due).
 private copy (the `d3_mutants.py` rules: exact edits, goldens first, KILLED only
 with a completed run, a non-zero exit and every named check failing). Results at
 the lane head, 40 of 40 KILLED (the four `ident_*` controls after
-`ident_t0_at_request` are round 2's, and the six after them round 3's):
+`ident_t0_at_request` are round 2's, and the six after them round 3's).
+Re-run 2026-10-03 at lane P1's merge of `main` `f4167536`: the goldens PASS, 40 of 40
+KILLED, every count as below. `ident_burst_from_t0`'s count moved with lane P1, and
+`main` alone still fails 20:
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2269,7 +2272,7 @@ the lane head, 40 of 40 KILLED (the four `ident_*` controls after
 | `ident_rearm_from_third_frame` | re-arm at t0 + 1.3 s | 58, ID2 and ID2d among them |
 | `ident_burst_100ms` | T-IDENT-BURST 100 ms | 39, ID1c first |
 | `ident_t0_at_request` | t0 at the press, not the first frame's departure | 58, ID2d (burst 3) among them |
-| `ident_burst_from_t0` | frames 2 and 3 due t0 + 150 and t0 + 300 ms (round 1's schedule) | 20, ID3f, ID5k, ID7i, ID7q and ID7r among them |
+| `ident_burst_from_t0` | frames 2 and 3 due t0 + 150 and t0 + 300 ms (round 1's schedule) | 21, ID3f, ID5k, ID6d, ID7i, ID7q and ID7r among them (20 before lane P1: its name stage lengthens the D3 walk that holds ID6's burst, which moves the burst's phase, and frame 3, still due at t0 + 300 ms, then leaves 14,979 clocks after frame 2) |
 | `ident_departure_is_retirement` | the departure taken at the engine's retirement (the lane grant) | 9, ID7d and ID7q among them |
 | `ident_departure_unwired` | `uns_tx_busy_i` tied 0 at the top | 9, ID7d and ID7q among them |
 | `ident_next_burst_at_once` | the next burst not held for T-IDENT-BURST after a third frame (both starts) | 20, ID3f, ID7r and ID8c among them |
