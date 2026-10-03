@@ -42,6 +42,7 @@ constexpr uint32_t MEM_TIMEOUT = 64;   // -GMEM_TIMEOUT_CYC_P in the Makefile
 
 // state-port regions (KL_aecp_desc_store banner)
 constexpr uint32_t RGN_DATA   = 0x00000;
+constexpr uint32_t RGN_NNAME  = 0xA0000;
 constexpr uint32_t RGN_NADDR  = 0xB0000;
 constexpr uint32_t RGN_NBASE  = 0xC0000;
 constexpr uint32_t RGN_NCFG   = 0xD0000;
@@ -595,6 +596,10 @@ void DescStoreSuite::boots_from_the_generated_image() {
   CHECK(h.rd(RGN_NCFG, false, 0) && h.rdata == gen.n_config,
         "G1 configurations_count got %llu want %u",
         static_cast<unsigned long long>(h.rdata), gen.n_config);
+  //! the D3 writer's rule for a saved name's ordinal (issues #61, #83)
+  CHECK(h.rd(RGN_NNAME, false, 0) && h.rdata == gen.n_names,
+        "G1 name count got %llu want %u",
+        static_cast<unsigned long long>(h.rdata), gen.n_names);
 }
 
 // ---- G2: every descriptor of the generated image, byte-exact ------------
@@ -796,6 +801,9 @@ void DescStoreSuite::an_unloaded_region_serves_nothing() {
           static_cast<unsigned long long>(h.rdata));
     CHECK(h.rd(RGN_NCFG, false, 0) && h.rdata == 0,
           "U1 configurations_count %llu from an unloaded image",
+          static_cast<unsigned long long>(h.rdata));
+    CHECK(h.rd(RGN_NNAME, false, 0) && h.rdata == 0,
+          "U1 name count %llu from an unloaded image",
           static_cast<unsigned long long>(h.rdata));
   }
 }

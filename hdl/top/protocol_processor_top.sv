@@ -127,7 +127,9 @@ module protocol_processor_top
     parameter int unsigned DESC_LINE_BYTES_P   = 576,
     //! cached index-map entries, one per (configuration, descriptor_type)
     parameter int unsigned DESC_IDX_ENTRIES_P  = 32,
-    //! 64-byte name-table entries held on chip (07 §3.4 overlay)
+    //! 64-byte name-table entries held on chip (07 §3.4 overlay), and the D3
+    //! writer's user-name records, 0x80 + ordinal: 1 to 128, the id block's
+    //! size, which the writer refuses past at elaboration (07 §5.2)
     parameter int unsigned DESC_NAME_ENTRIES_P = 32,
     //! no-progress watchdog on the descriptor memory face, in clocks
     parameter int unsigned DESC_MEM_TMO_CYC_P  = 4096,
@@ -553,7 +555,8 @@ module protocol_processor_top
     //! the D3 writer's UNFLUSHED records (the OR of its per-record dirty
     //! bits, KL_aecp_nvm_writer): 1 from the cycle after an accepted AECP
     //! write that changed a persisted dynamic-state row (configuration,
-    //! sampling rate, clock source, stream formats, presentation offset)
+    //! sampling rate, clock source, stream formats, presentation offset) or
+    //! a user name (an aecp_name_wr_o lane)
     //! until the port's done of the whole-record write that carries a value
     //! latched after the last change, or, on attempt exhaustion, the cycle
     //! nvm_alarm_o rises. From that done the backend's own dirty reports it.
@@ -758,8 +761,9 @@ module protocol_processor_top
     //! Accepted live name write (07 §3.4): one clk_i cycle per 64-bit lane
     //! actually written by the descriptor store, at the accepting edge.
     //! A multi-lane SET_NAME can pulse more than once; unchanged lanes,
-    //! boot name loading, refused/out-of-range commands and writes aborted
-    //! before acceptance do not pulse. Earlier accepted writes remain
+    //! boot name loading, the D3 writer's restore of a saved name,
+    //! refused/out-of-range commands and writes aborted before acceptance
+    //! do not pulse. It is the D3 writer's name trigger. Earlier accepted writes remain
     //! visible if a command later aborts. No ready/ack; leave unused with
     //! an explicit .aecp_name_wr_o() connection.
     output logic                         aecp_name_wr_o,
@@ -771,10 +775,11 @@ module protocol_processor_top
     //! rate, clock source, configuration index, stream format, stream info),
     //! 6 channel maps (ADD/REMOVE_AUDIO_MAPPINGS), 7 user names (SET_NAME).
     //! A COMPLETION notification only: nothing selects a record from it.
-    //! Group 1's records are written by the D3 writer from the accepted
-    //! changing write itself; groups 6 and 7 are the saved-state contract's
-    //! map and name stages, triggered by map edit phase 5 and
-    //! aecp_name_wr_o, and not implemented in this release.
+    //! Groups 1 and 7's records are written by the D3 writer from the
+    //! accepted changing write itself (group 7's is aecp_name_wr_o); group
+    //! 6's records, the channel maps, are the integrator's to persist (07
+    //! §5.1, the ruling on #83): it saves a port's set from map edit phase 5,
+    //! and the processor writes and restores no map record.
     output logic                         aecp_nvm_stb_o,      //! one cycle: a committed command marked a record group
     output logic  [7:0]                  aecp_nvm_mark_o,     //! that group's mark code, valid with the strobe
     output logic                         aecp_lock_held_o,    //! LOCK_ENTITY ownership is live

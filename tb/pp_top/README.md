@@ -106,7 +106,9 @@ five into the one canonical tally.
   starts (the admission gate's release)
   every row of selectors 0 to 5 reads its reset value with its valid flag
   clear, read through taps rather than the bus the restore owns; the walk
-  ends COMPLETE with exactly 9 applied, 0 refused and 18 blank of 27; each
+  ends COMPLETE with exactly 9 applied, 0 refused and 50 blank of 59 (the 27
+  dynamic-state records and the 32 name records of the top's
+  `DESC_NAME_ENTRIES_P` default); each
   group's value and valid flag are restored and a real GET reads each
   back (GET_CONFIGURATION, GET_SAMPLING_RATE, GET_CLOCK_SOURCE, both
   GET_STREAM_FORMAT directions, GET_STREAM_INFO's latency through the
@@ -174,8 +176,10 @@ five into the one canonical tally.
   the one that took `restore_go_i`: with every record saved the bound falls
   in pass 0, DEFAULTS is registered by exactly that clock, cause 3, nothing
   applied, and the READ in hand is drained; once the device ends it a later
-  SET persists. Over an erased device the bound falls in pass 1, which
-  rolls back to DEFAULTS within one per-wait deadline of it. Without the
+  SET persists. Over an erased device, each grant spaced so pass 0's 59
+  reads end before the bound (1,000,001 / (8 + 59 + 29) clocks apart, inside
+  the per-wait deadline), the bound falls in pass 1, which rolls back to
+  DEFAULTS within one per-wait deadline of it. Without the
   counter the first walk runs to about 2.3 million clocks. **D3R14** (the
   clarification of DR3a on issue #131: an aggregate expiry never closes a
   provable image) a device slow per byte (each header-probe byte 2,100
@@ -263,8 +267,8 @@ five into the one canonical tally.
   after it. **D3C3** the D3S1/D3R1 pair for an AAF index (REQ-AEM-013): the
   accepted 9 is saved as exactly one ERASE and one WRITE of record 0x0A,
   byte-exact, with no other record moving. Across a power cycle the walk
-  starts from cleared rows and applies it (1 applied, 0 refused, 26 blank of
-  27), and the row, GET and the export read 9. **D3C4** the same saved record
+  starts from cleared rows and applies it (1 applied, 0 refused, 58 blank of
+  59), and the row, GET and the export read 9. **D3C4** the same saved record
   over an image whose list is shorter, at its count (nine sources) and above
   it (the suite's three): refused, COMPLETE with 0 applied and 1 refused, the
   row unset and GET reading the image's 0. The arms run in the order D3C1,
@@ -276,7 +280,64 @@ five into the one canonical tally.
   rest from `d3_mutants.py`. Run in the whole default build, the SET bound
   fixed at three fails D3C's eleven checks and nothing else, and the row
   narrowed to two bits D3C's ten: no other check sets an index or reads a
-  count past the suite's three.
+  count past the suite's three. **D3C5** (issue #52) a record 0x0A that
+  cannot be restored keeps the image's index 0, over the suite's three-source
+  image: erased, corrupt (index 2 with a crc that is not the crc of its bytes),
+  and read torn (the device ends pass 0's payload READ after one byte). The
+  first two end COMPLETE, with 0 and 1 records refused. The
+  torn read ends DEFAULTS, cause 1. In each the row stays unset, and
+  GET_CLOCK_SOURCE and `aecp_clk_src_index_o` read 0. **D3C6** (issue #52)
+  the saved index is in force before the entity is enabled. With
+  `entity_enable_i` requested from reset and record 0x0A carrying 2, the top
+  exports 2 with the row valid in every cycle the ADP engine's enable is high,
+  the first included, and GET_CLOCK_SOURCE then reads 2.
+  **D3N** (issues #61 and #83; REQ-PER-001, REQ-AEM-011; Milan v1.2 §5.3.13)
+  the user names, one record per name-table entry, `0x80` + ordinal, the
+  64-byte entry verbatim. The suite's image names 11 of the store's 32
+  ordinals. Five of them are set with real SET_NAMEs: both ENTITY names (the
+  group name a full 64 bytes with no NUL), CLOCK_DOMAIN 0's set to the EMPTY
+  name, the IDENTIFY CONTROL's name and the last ordinal, 10. **D3N1** each is
+  saved as exactly one ERASE and one WRITE of its record after the debounce,
+  byte-exact, with no other record moving and nothing left unflushed.
+  **D3N2** a SET_NAME naming what the entry holds writes no lane: no
+  `aecp_name_wr_o` pulse, nothing pending and no device operation for two
+  windows. **D3N3** across a power cycle every saved entry holds the image's
+  name on the clock the D3 walk proves the image (the store's walk at reset
+  may still be running at the admission gate's release, which is why the
+  proof waits for it). The walk ends COMPLETE with exactly the five applied;
+  the entries and GET_NAME read each byte-exact, the empty and the full name
+  included, and READ_DESCRIPTOR serves both ENTITY names. The restore's name
+  writes pulse no `aecp_name_wr_o`, and none becomes a change: nothing
+  pending and no device write for two windows. **D3N4** SET_NAME's rule and
+  the frame: a framed record for ordinal 20, past the image's names, is
+  refused by the rule (the store's region 0xA count). Ordinal 3's corrupt
+  crc and ordinal 4's 8-byte payload are refused by the frame, ordinal 5's
+  applies, and GET_NAME reads the image's names for 3 and 4. **D3N5** a pass-1
+  abort after a name was applied (ordinal 10's record erased between the
+  passes, cause 5) rolls the descriptor store back, and the entry, GET_NAME
+  and READ_DESCRIPTOR carry the image's entity_name. **D3N6** a SET_NAME
+  while the device holds the record's WRITE request taints that WRITE: two
+  WRITEs, the first carrying the latched name, the record ending with the
+  second. **D3N7** an image loaded after the store's boot walk (D3O4's order)
+  is walked at the writer's LOCATE before any record is read, so the
+  restored name is not overwritten: GET_NAME and READ_DESCRIPTOR read it.
+  **D3K** (issues #61 and #83; 09 §3 NVM, "every record type cut ≥ once")
+  every D3 record type is cut by a real `rst_n` with the device carried:
+  configuration, sampling rate, clock source, both stream formats,
+  presentation offset and user name. The device model keeps each WRITE byte
+  as it takes it, so a cut leaves a real torn record. The device holds A,
+  which the first boot restores; a real SET of B starts the ERASE and WRITE.
+  The cut falls on the ERASE's grant, on the WRITE's grant, after the
+  8-byte header, one byte short of the record, and at a byte drawn from the
+  fixed seed `0xD3C0FFEE`. The boot after it never fails. A cut before the
+  ERASE completed keeps A. An erased record or a torn header reads UNFRAMED
+  (blank), and a torn payload fails its crc16 (refused): each keeps the
+  image's value with the valid flag clear. The device also holds sink 0's
+  binding at the cut, and that boot restores it, probing PASSIVE
+  (PRB_W_AVAIL). Once UNBIND_RX frees the sink, a later SET of B persists
+  over whatever the cut left. The binding manager's own `rst_n` cuts are
+  `tb/acmp_nvm` R1 and R2, and the port's are `tb/nvm_port` T25. These are
+  the fixed cuts; section D3KR (below) is the seeded-random campaign.
   `restore_done_o` is the COMBINED terminal: the binding walk's release
   alone (S4) frees the listener, never AECP or ADP.
   The dispatch hold runs from reset, so every section that resets and then
@@ -288,6 +349,66 @@ five into the one canonical tally.
   measure (blank and full restores at two memory latencies, the image walk,
   pass-0 and pass-1 faults, a debt-held roll-back, a silent device, CLOSED);
   it records no tally.
+- **D3V: the volatile set across a power cycle** (issues #59 and #62;
+  REQ-NOT-005, REQ-PER-002; Milan v1.2 §5.3.4.1, §5.3.4.2, §5.3.12). This is a
+  fresh model of its own, run by `--volatile-only` (`make volatile`) and in the
+  default run. Its watch outlasts the controller monitor, so it stays out of
+  `--d3-only`. **D3V1** (premise) the device holds sink 0's binding record and
+  the first boot restores it. One controller registers, a second registers
+  TIME_LIMITED (IEEE 1722.1-2021 §7.4.37.2), and a third controller's change
+  notifies each of them at sequence_id 0. The first controller locks the
+  entity (the second is refused ENTITY_LOCKED) and sets IDENTIFY to 255. All of
+  this happens inside the wrap's 400 ms TIME_LIMITED and lock windows. A power
+  cycle follows: `rst_n` with the device carried, then both walks from
+  `restore_go_i`. **D3V2** the binding preload still arrives: sink 0 is bound
+  and GET_RX_STATE answers the saved talker. **D3V3** IDENTIFY reads 0 in every
+  cycle from `restore_go_i` on, and GET_CONTROL reads 0. **D3V4**
+  `aecp_lock_held_o` is 0 in every cycle from `restore_go_i` on. **D3V5** a
+  third controller's change notifies neither former controller. **D3V6** for
+  66,000 ms after it (the monitor's longest 60 s draw, with U10's margin) no
+  frame of any kind reaches either former controller: no CONTROLLER_AVAILABLE,
+  no TIME_LIMITED expiry DEREGISTER and no notification. **D3V7** LOCK_ENTITY
+  from the second controller answers SUCCESS and takes the lock, and its
+  UNLOCK frees it. **D3V8** sixteen controllers new to the entity all register
+  (Milan §5.3.4.2's sixteen). **D3V9** one of them deregisters and the first
+  former controller registers again. Its first notification carries
+  sequence_id 0, byte-exact (Milan §5.4.2.21: zero when a new entry is
+  created), not the 1 its row would have reached before the cycle. The
+  negative controls delete the registry's valid bits, the lock and IDENTIFY
+  from their reset branches (`KL_aecp_notify.sv` `valid_r`, `lk_held_r`;
+  `KL_aecp_dyn_state.sv` `ident_r`), from `d3_mutants.py` (mutation record
+  below).
+- **D3KR: the reset cut as a standing seeded-random campaign** (issue #83
+  acceptance 3 and the manager's ruling on it, #83 comment 5967611704; 09 §3
+  NVM, "cut at randomized commit points"). This is a fresh model of its own,
+  run by `--cuts-only` (`make cuts`) and in the default run, and kept out of
+  `--d3-only` so that no D3 control's run pays for it. Every record type both
+  producers write is cut: D3K's seven and the binding manager's sink record
+  `0x20`. A calibration commit of each type first writes B whole and measures
+  the clocks from its ERASE's grant to its WRITE's done (cfg 15, rate 17, clks
+  15, fmti 21, fmto 21, ptof 17, name 77, bind 33). Then for each of 32 standing
+  seeds (`0xD3C0FFEE` + k × `0x9E3779B9`) and each type: the device holds A, the
+  first boot restores it, and a live change to B starts the record's commit (D3K's
+  SET; for the binding a BIND_RX of sink 0 to another talker, which a sink in
+  PRB_W_AVAIL saves, Milan v1.2 §5.5.3.5.6). `rst_n` falls with the device
+  carried at a clock drawn from the seed and the record id (xorshift32), from
+  the ERASE's grant to two clocks past the WRITE's done. The outcome is read
+  from the bytes the device holds at the cut, never from the RTL: A whole comes
+  back, B whole comes back, and any other bytes (erased, a torn header, a torn
+  payload) must frame no record, the oracle's own premise, and keep the default:
+  the image's value, or an unbound sink. Per cut: the premise (A restored, B
+  accepted, the ERASE granted); the restore never fails and the group holds the
+  oracle's value; for a D3 type, sink 0's saved binding is restored and probes
+  PASSIVE (PRB_W_AVAIL), as D3K's; and a later change to B persists over whatever
+  the cut left (for a D3 type after UNBIND_RX frees the sink). Every check names
+  its seed and its cut clock, and `./obj_dir/Vpp_top_sim --cut-seed S` reruns one
+  seed alone. The 32 seeds reach, per type, A whole / erased / a torn header / a
+  torn payload / B whole: cfg 3/7/13/1/8, rate 5/3/8/8/8, clks 5/5/9/5/8, fmti
+  5/2/11/8/6, fmto 4/3/9/9/7, ptof 3/4/12/4/9, name 0/2/2/27/1, bind 3/2/7/18/2
+  (the name's A-whole window is two of 77 clocks; D3K's ERASE cut covers it).
+  1,000 checks, about 83 s. The negative controls (mutation record below)
+  compare no crc in the binding manager's walk or in the D3 writer's frame, so
+  a torn record is restored instead of the default.
 - **NW: accepted live name writes (issue #120).** The top's `aecp_name_wr_o`
   is sampled on every accepting clock edge. Independent byte comparisons
   predict one changed lane, all eight changed lanes and an unchanged name;
@@ -541,7 +662,7 @@ five into the one canonical tally.
   each, and the GET between them carries none — a mark has no wire shape, so
   the pin is the only place any of this is visible. A mark is a completion
   notification: R21 proves the notification, never persistence (section D3
-  grades the scalar records; maps and names are later stages).
+  grades the scalar and name records; maps are the integrator's, 07 §5.1).
 - **R** boot restore over a blank NVM device: all 8 BINDING regions read,
   the walk's terminal without `restore_fail`. The loop waits on the binding
   manager's own terminal (`dbg_walk_done_o`), not on `restore_done_o`, so every
@@ -674,10 +795,16 @@ five into the one canonical tally.
   views fall back to the image default 1. AD7 (review R406-1 F-1): a SUCCESS
   SET_CONFIGURATION(0), then a reset with nothing to restore (an erased device):
   the valid flag clears with the row, and all three views carry the image default
-  1. `make adp-config` runs this section alone; the
-  default run includes it. The mutation record is `tb/adp_engine`'s campaign
-  (`make -C tb/adp_engine mutants`), which runs this section against each
-  patch.
+  1. AD8 (issue #63): record 0x00 carries configuration 0 with a crc that is not
+  the crc of its bytes. The frame refuses it, the walk ends COMPLETE with one
+  record refused and the row unset, and all three views carry the image default
+  1. AD9 (issue #63): the same record uncorrupted, but the device ends pass 0's
+  payload READ of it after one byte. The walk fails whole, cause 1, nothing
+  applied, and all three views carry 1. `make adp-config` runs
+  this section alone; the default run includes it. The mutation record is
+  `tb/adp_engine`'s campaign (`make -C tb/adp_engine mutants`), which runs this
+  section against each patch. AD7 to AD9's restore controls are D3 writer
+  defects, so `d3_mutants.py` plants them and runs this section (`--adp-only`).
 - **DL** **the AECP transaction deadline** (issue #81, GAP-07; 03 §6 rule (e),
   08 §4; IEEE 1722.1-2021 §9.3.2.6, Milan v1.2 §5.4.3.4), on a fresh processor
   of its own. The normalizer stamps each AECP transaction's deadline
@@ -894,13 +1021,22 @@ and M34 the same 2 as before.
 
 `python3 d3_mutants.py --output DIR [--jobs N]` plants each control below in its own
 extract of `hdl/`, `tb/common/` and this directory, builds `gsi-build`, runs
-`--d3-only`, and counts the mutant KILLED only when the run completes with its
+`--d3-only` (the controls of AD7 to AD9 run `--adp-only`, those of D3V
+`--volatile-only` and those of D3KR `--cuts-only`, each with a golden of its own), and counts the mutant KILLED only when the run completes with its
 tally, exits non-zero and every named check fails; a golden extract runs first and
 must pass. The same driver runs the binding manager's three DR2c controls, the
 arbiter's issue-cycle control and its seven own-contract controls (N11) in `tb/acmp_nvm`
 and the validator's admission control in `tb/rx_validator` (their READMEs record
-them). At the lane head all 87 are KILLED and the three goldens PASS;
-the last column is how many checks each one failed there. Since the AECP
+them). At the head of lane P1 (issues #52, #59, #61, #62, #63, #83) all 110 are
+KILLED and the six goldens PASS (`--d3-only`, `--adp-only`, `--volatile-only`,
+`--cuts-only`, `tb/acmp_nvm`, `tb/rx_validator`); the last column is how many
+checks each one failed there. The two `cut_` controls run the seeded-random cut
+campaign (section D3KR): every check they fail names its seed, and a torn
+configuration, rate, clock-source or format record stays refused by its value
+rule, so their named checks are the binding's, the offset's and the name's. The
+counts the next paragraph quotes are those lanes' own: since the
+name stage and the cut section (D3N, D3K) every walk reads 59 records, so a control
+that breaks the walk or a frame fails more checks than it did then. Since the AECP
 deadline kill (issue #81, section DL), `hold_released_at_go` and
 `dispatch_not_held` each fail D3O6 as well (17 and 6). Both let the held
 command run during the slowed restore, and it is no longer exempt from its
@@ -916,45 +1052,45 @@ D3C4 arm. The last four rows are D3C's own controls.
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
 |---|---|---|---|
-| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 17 |
+| `hold_released_at_go` | the writer's ownership ends at the walk's go instead of its terminal | `D3O1: released at` | 19 |
 | `dispatch_not_held` | the engine's three dispatch gates ignore the writer's ownership | `D3O1: without the walk the writer owns every cycle` | 6 |
-| `own_taken_at_the_walk` | ownership and the bus taken only once the walk starts, not from reset | `D3R9: the held SET` | 10 |
+| `own_taken_at_the_walk` | ownership and the bus taken only once the walk starts, not from reset | `D3R9: the held SET` | 12 |
 | `image_unproven_continues` | an unprovable image (the LOCATE's error) no longer aborts | `D3O2: CLOSED at`, `D3O3: CLOSED` | 9 |
 | `latch_ignores_program` | the service latch does not wait for a running program | `D3S9` | 3 |
-| `TRG_cfg` | configuration trigger deleted | `D3S1 cfg` | 3 |
-| `TRG_rate` | sampling-rate trigger deleted | `D3S1 rate` | 3 |
-| `TRG_clks` | clock-source trigger deleted | `D3S1 clks` | 10 |
-| `TRG_fmti` | input-format trigger deleted | `D3S1 fmti` | 4 |
-| `TRG_fmto` | output-format trigger deleted | `D3S1 fmto` | 4 |
-| `TRG_ptof` | presentation-offset trigger deleted | `D3S1 ptof` | 24 |
-| `taint_ignored` | a change after the latch no longer taints the write | `D3S4 taint` | 1 |
+| `TRG_cfg` | configuration trigger deleted | `D3S1 cfg` | 17 |
+| `TRG_rate` | sampling-rate trigger deleted | `D3S1 rate` | 17 |
+| `TRG_clks` | clock-source trigger deleted | `D3S1 clks` | 24 |
+| `TRG_fmti` | input-format trigger deleted | `D3S1 fmti` | 18 |
+| `TRG_fmto` | output-format trigger deleted | `D3S1 fmto` | 18 |
+| `TRG_ptof` | presentation-offset trigger deleted | `D3S1 ptof` | 38 |
+| `taint_ignored` | a change after the latch no longer taints the write | `D3S4 taint` | 2 |
 | `clear_wins_same_edge` | the done's clear outranks a change on the same edge | `D3S5 same edge` | 1 |
-| `clear_by_group` | the done clears every record of the group | `D3S6 group` | 8 |
+| `clear_by_group` | the done clears every record of the group | `D3S6 group` | 18 |
 | `clear_by_index` | the done clears every record of the same index | `D3S6 index` | 14 |
-| `identify_is_a_change` | IDENTIFY (selector 7) made a persisted change | `D3S7` | 1 |
-| `unchanged_compare_ignores_validity` | the change qualifier ignores the valid flag | `D3S8 validity` | 1 |
-| `RPL_cfg` | configuration replay deleted | `D3R1 cfg` | 6 |
-| `RPL_rate` | sampling-rate replay deleted | `D3R1 rate` | 6 |
-| `RPL_clks` | clock-source replay deleted | `D3R1 clks` | 5 |
-| `RPL_fmti` | input-format replay deleted | `D3R1 fmti` | 2 |
-| `RPL_fmto` | output-format replay deleted | `D3R1 fmto` | 2 |
-| `RPL_ptof` | presentation-offset replay deleted | `D3R1 ptof` | 6 |
-| `rule_ignored` | a SET-rule refusal applied anyway | `D3R2: COMPLETE` | 7 |
-| `passes_may_disagree` | the pass agreement removed | `D3R4:`, `D3R4b` | 3 |
+| `identify_is_a_change` | IDENTIFY (selector 7) made a persisted change | `D3S7` | 2 |
+| `unchanged_compare_ignores_validity` | the change qualifier ignores the valid flag | `D3S8 validity` | 5 |
+| `RPL_cfg` | configuration replay deleted | `D3R1 cfg` | 12 |
+| `RPL_rate` | sampling-rate replay deleted | `D3R1 rate` | 12 |
+| `RPL_clks` | clock-source replay deleted | `D3R1 clks` | 12 |
+| `RPL_fmti` | input-format replay deleted | `D3R1 fmti` | 8 |
+| `RPL_fmto` | output-format replay deleted | `D3R1 fmto` | 8 |
+| `RPL_ptof` | presentation-offset replay deleted | `D3R1 ptof` | 12 |
+| `rule_ignored` | a SET-rule refusal applied anyway | `D3R2: COMPLETE` | 8 |
+| `passes_may_disagree` | the pass agreement removed | `D3R4:`, `D3R4b` | 5 |
 | `device_error_reads_as_blank` | a DEVICE error read as a blank record | `D3R5 device error on the header`, `D3R6: the one saved record` | 5 |
-| `unframed_reads_as_device_error` | an UNFRAMED record read as a device error | `D3R6: an erased device restores blank` | 42 |
+| `unframed_reads_as_device_error` | an UNFRAMED record read as a device error | `D3R6: an erased device restores blank` | 132 |
 | `desc_error_is_a_refusal` | a rule's descriptor error read as a refusal | `D3R7` | 6 |
 | `no_restore_watchdog` | the per-wait deadline removed | `D3R8: a READ granted`, `D3R8b` | 7 |
 | `restore_writes_are_changes` | the snoop taps the shared bus, so restore writes are changes | `D3R1: no restore write is a change` | 1 |
-| `enable_not_released_by_restore` | ADP enabled by the request alone | `D3R1: the enable requested from reset` | 4 |
-| `done_without_d3` | restore done without the D3 walk | `D3R1: the enable requested from reset`, `D3R1: COMPLETE` | 45 |
-| `blank_ignores_d3` | restore blank ignores the D3 walk | `D3R1: COMPLETE` | 1 |
-| `store_not_cleared` | the sampling-rate row and its valid flag not reset | `D3R1: every row at its reset value` | 17 |
-| `valid_not_cleared` | the sampling-rate valid flag not reset | `D3R1: every row at its reset value` | 17 |
+| `enable_not_released_by_restore` | ADP enabled by the request alone | `D3R1: the enable requested from reset`, `D3C6` | 5 |
+| `done_without_d3` | restore done without the D3 walk | `D3R1: the enable requested from reset`, `D3R1: COMPLETE` | 124 |
+| `blank_ignores_d3` | restore blank ignores the D3 walk | `D3R1: COMPLETE` | 2 |
+| `store_not_cleared` | the sampling-rate row and its valid flag not reset | `D3R1: every row at its reset value` | 25 |
+| `valid_not_cleared` | the sampling-rate valid flag not reset | `D3R1: every row at its reset value` | 21 |
 | `quarantine_released_by_time` | the arbiter ends a drain after 1,000 cycles | `D3R5: once the device ends the drained read a later SET persists` | 10 |
-| `no_rollback` | a pass-1 abort ends DEFAULTS without the roll-back | `D3R4:` | 17 |
+| `no_rollback` | a pass-1 abort ends DEFAULTS without the roll-back | `D3R4:` | 19 |
 | `dyn_not_rolled_back` | the dynamic-state store left out of the roll-back | `D3R4:` | 4 |
-| `store_not_rolled_back` | the descriptor store left out of the roll-back | `D3R10 5000` | 3 |
+| `store_not_rolled_back` | the descriptor store left out of the roll-back | `D3R10 5000` | 4 |
 | `rollback_ignores_debt` | the roll-back ignores the guard's debt | `D3R10 16000` | 3 |
 | `closed_releases_the_entity` | a roll-back that cannot re-prove the image ends DEFAULTS | `D3R12` | 2 |
 | `no_backoff_d3` | the writer's DR2c backoff removed | `D3S10 timing` | 2 |
@@ -991,6 +1127,29 @@ D3C4 arm. The last four rows are D3C's own controls.
 | `clks_restore_count_narrowed` | the restore rule reads only the low three bits of `clock_sources_count` | `D3C3 restore` | 2 |
 | `clks_restore_index_narrowed` | the restore rule compares only the low three bits of the saved index | `D3C4 at the count`, `D3C4 above the count` | 4 |
 | `clks_restore_bound_inclusive` | the restore rule accepts an index equal to the count (`<=` for `<`) | `D3C4 at the count` | 4 |
+| `TRG_name` | the name trigger deleted (issues #61, #83) | `D3N1 ordinal` | 27 |
+| `RPL_name` | the name replay deleted: every framed name refused | `D3N3 ordinal` | 17 |
+| `name_rule_ignored` | the name rule accepts any ordinal | `D3N4: COMPLETE` | 1 |
+| `name_empty_refused` | an EMPTY name (lane 0 zero) refused on restore | `D3N3: COMPLETE`, `D3N3 ordinal 2` | 2 |
+| `name_record_id_shifted` | name records at `0x81` + ordinal | `D3N1 ordinal` | 25 |
+| `name_entry_shifted` | a restored name written to the next entry | `D3N3 ordinal` | 14 |
+| `name_lanes_partial` | the write-back ends after seven lanes | `D3N3 ordinal 1` | 2 |
+| `name_taint_ignored` | a name change after its latch does not taint the write | `D3N6 taint` | 1 |
+| `name_restore_pulses` | the exported `aecp_name_wr_o` not gated off the writer's restore | `D3N3: the restore's name writes` | 1 |
+| `name_restore_is_a_change` | the name snoop not gated off the writer's restore | `D3N3: the restore's name writes` | 1 |
+| `names_before_the_image` | the image proof skipped, so names land before the store's walk | `D3N7` | 18 |
+| `frame_crc_ignored` | the frame's crc compare removed for every group (issues #61, #83) | `D3K ptof cut at byte 11 of 12: the restore`, `D3K name cut at byte 71 of 72: the restore` | 8 |
+| `clks_crc_ignored` | the frame's crc compare bypassed for the clock-source group (issue #52) | `D3C5 corrupt` | 1 |
+| `torn_read_not_an_abort` | a torn read is not an abort (issues #52, #63) | `D3C5 torn` | 2 |
+| `blank_applies_zero` | a blank record applies a zero value with its valid flag (issues #52, #63) | `D3C5 blank` | 26 |
+| `cfg_crc_ignored` | the frame's crc compare bypassed for the configuration record; run `--adp-only` (issue #63) | `AD8: the first ENTITY_AVAILABLE` | 4 |
+| `torn_read_not_an_abort_cfg` | `torn_read_not_an_abort`, run `--adp-only` | `AD9: the torn read` | 1 |
+| `blank_applies_zero_cfg` | `blank_applies_zero`, run `--adp-only` | `AD7: the first ENTITY_AVAILABLE` | 7 |
+| `registry_survives_reset` | `valid_r <= '0` deleted from `KL_aecp_notify`'s reset branch; run `--volatile-only` (issue #59) | `D3V5`, `D3V8`, `D3V9` | 4 |
+| `lock_survives_reset` | `lk_held_r <= 1'b0` deleted from the same reset branch; run `--volatile-only` (issue #62) | `D3V4`, `D3V7` | 4 |
+| `identify_survives_reset` | `ident_r` deleted from `KL_aecp_dyn_state`'s reset branch; run `--volatile-only` (issue #62) | `D3V3` | 1 |
+| `cut_binding_crc_ignored` | the binding manager's crc compare removed from its record check, so a torn binding record is restored; run `--cuts-only` (issue #83, section D3KR) | `D3KR bind seed` (every seed whose cut left a torn binding record) | 20 |
+| `cut_frame_crc_ignored` | `frame_crc_ignored`, run `--cuts-only`: a torn D3 record the value rule would take is restored (issue #83, section D3KR) | `D3KR ptof seed`, `D3KR name seed` | 30 |
 
 ### AECP deadline and hazard-class controls (lane C5a): `aecp_mutants.py`
 
@@ -1008,6 +1167,10 @@ Verilator 5.050, the CI pin: 5 controls PASS and 55 arms KILLED. Measured
 2026-10-02 at `85da751` with Verilator 5.050, each run pinned to 4 of the host's
 16 CPUs: `--jobs 1` took 1,366 s and `--jobs 8` 1,079 s, and every control and
 arm gave the same verdict and the same failing checks in both, the counts below.
+Re-run 2026-10-03 at the head of lane P1 (issues #61, #83), the 27 `hazards` arms
+only, because that lane made HZ9 let its name saves drain: the control PASS and all
+27 KILLED. Three rows carry that run's counts, because under them a misplaced HZ9
+SET_NAME's save holds dispatch behind HZ11's held LOCK_ENTITY.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|
@@ -1046,15 +1209,15 @@ arm gave the same verdict and the same failing checks in both, the counts below.
 | `hz-clock-as-ro` | pp_top `hazards` | CLOCK_CFG classified RO_SNAPSHOT | 6: HZ1 x2, HZ12a x4 |
 | `hz-clock-as-lock` | pp_top `hazards` | CLOCK_CFG classified LOCK_OP (over-serialized) | 3: HZ1 x2, HZ8 |
 | `hz-clock-key-none`, `-talker` | pp_top `hazards` | CLOCK_CFG keyed by nothing | 6: HZ1 x2, HZ12a x4; named on STREAM_INPUT 1 and on the talker |
-| `hz-name-as-ro` | pp_top `hazards` | NAME_WR classified RO_SNAPSHOT | 8: HZ1, HZ9a x2, HZ9c, HZ9d x2, HZ9f x2 |
+| `hz-name-as-ro` | pp_top `hazards` | NAME_WR classified RO_SNAPSHOT | 9: HZ1, HZ9a x2, HZ9c, HZ9d x2, HZ9f x2, HZ11b (since the name stage: a misplaced HZ9 SET_NAME's save holds dispatch behind HZ11's held LOCK_ENTITY) |
 | `hz-name-as-stream` | pp_top `hazards` | NAME_WR classified STREAM_CFG (over-serialized) | 2: HZ1, HZ9c (it waits for an UNBIND_RX of its sink) |
-| `hz-name-key-none`, `-talker`, `-held` | pp_top `hazards` | NAME_WR keyed by nothing | 7: HZ1, HZ9a x2, HZ9d x2, HZ9f x2; named HZ9a, HZ9d, HZ9f |
+| `hz-name-key-none`, `-talker`, `-held` | pp_top `hazards` | NAME_WR keyed by nothing | 8: HZ1, HZ9a x2, HZ9d x2, HZ9f x2, HZ11b (as above); named HZ9a, HZ9d, HZ9f |
 | `hz-registry-as-ro` | pp_top `hazards` | REGISTRY_OP classified RO_SNAPSHOT | 2: HZ1 |
 | `hz-identify-as-ro` | pp_top `hazards` | IDENTIFY classified RO_SNAPSHOT | 5: HZ1, HZ12b x4 |
 | `hz-identify-key-none`, `-talker` | pp_top `hazards` | IDENTIFY keyed by nothing | 5: HZ1, HZ12b x4; named on STREAM_INPUT 1 and on the talker |
 | `hz-map-as-ro`, `-talker` | pp_top `hazards` | MAP_CFG classified RO_SNAPSHOT, so the cross-lock is lost | 10: HZ1 x2, HZ7 x2, HZ11d x2, HZ12c x4; named HZ7 and HZ11d |
 | `hz-map-key-none`, `-talker` | pp_top `hazards` | MAP_CFG keyed by nothing (the class-wide cross-lock still holds) | 6: HZ1 x2, HZ12c x4; named on STREAM_INPUT 1 and on the talker |
-| `hz-acmp-reads-as-steps` | pp_top `hazards` | ACMP GET_RX/TX_STATE and GET_TX_CONNECTION classified STREAM_CFG | 23: HZ1 x3, HZ4, HZ6 (two reads), and every read of HZ9 to HZ12 |
+| `hz-acmp-reads-as-steps` | pp_top `hazards` | ACMP GET_RX/TX_STATE and GET_TX_CONNECTION classified STREAM_CFG | 26: HZ1 x3, HZ4, HZ6 (two reads), every read of HZ9 to HZ12, and HZ11b's held LOCK_ENTITY, its premise and both arms (as above) |
 | `hz-barrier-no-priority` | pp_top `hazards` | the pending barrier's priority removed from the round-robin | 127: HZ3, then every later arm (the admission port stays wedged) |
 | `hz-foreign-target-classified` | pp_top `hazards` | a command for another entity_id classified by its opcode | 1: HZ1 (CFG_BARRIER for a frame the engine drops) |
 | `hz-response-classified` | pp_top `hazards` | an AECP response arriving as input classified by its opcode | 1: HZ1 |
@@ -1230,6 +1393,18 @@ the same failing checks, the counts below.
 
 ## Recorded seams and honest limits
 
+- ST2b reads GET_COUNTERS rounds on the wire, and `KL_aecp_notify` stamps a
+  round's one-second limit when it selects the round (its comment: "from
+  emission selection"). A solicited answer that leaves just before a round's
+  first frame delays that frame, and the next round, on time, then leaves up
+  to one job (about 4 ms here) under a second after it. At main `ddb3119d`,
+  starting ST's churn 30 to 95 clocks later than it starts fails ST2b (99,590
+  to 99,914 clocks): the check holds for the phase it was tuned at. Since the
+  name stage, ST first lets the D3 writer save ST1's names, which moves the
+  churn, so ST restores that phase, one clock before a millisecond tick. The
+  limiter's stamp is recorded here as a finding: Milan Table 5.22's
+  once-per-second spacing is not guaranteed on the wire under solicited
+  load, and a D3 latch's dispatch hold delays a selected round the same way.
 - The validator's V9 pass-through has NO msrp/mvrp select — `KL_mrp_strip`
   derives it from the EtherType bytes it strips (V9 already enforced the
   DA/EtherType pairing).
@@ -1594,7 +1769,7 @@ the fourth section AX's line build, and the fifth section TB's timebase:
 
 | Build | Override | Runs | Expects |
 |---|---|---|---|
-| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV, AX and DL among them, and lane C6's ID0, NP, ST and RN last | 2 (Milan §4.2.7.2.1) |
+| `obj_dir/Vpp_top_sim` | none: the top's own default | every section, DV, AX, DL, D3, D3V and D3KR among them, then lane C6's ID0, NP, ST and RN, and lane C7's K9 to K17 last | 2 (Milan §4.2.7.2.1) |
 | `obj_vid/Vpp_top_vid` | `SRP_DOM_DEF_VID_P = 0x5A3C` (`SRP_VID_FIXTURE`) | DV alone | 0x5A3C |
 | `obj_idn/Vpp_top_idn` | `EN_IDENTIFY_NOTIF_P = 1` (`PP_TOP_EN_IDENT`) | ID alone | 2 |
 | `obj_line/Vpp_top_line` | `DESC_LINE_BYTES_P = 584` (`LINE_FIXTURE`) | AX alone | 2 |
@@ -2112,7 +2287,10 @@ monitor's 30 s floor, so no CONTROLLER_AVAILABLE is due).
 private copy (the `d3_mutants.py` rules: exact edits, goldens first, KILLED only
 with a completed run, a non-zero exit and every named check failing). Results at
 the lane head, 40 of 40 KILLED (the four `ident_*` controls after
-`ident_t0_at_request` are round 2's, and the six after them round 3's):
+`ident_t0_at_request` are round 2's, and the six after them round 3's).
+Re-run 2026-10-03 at lane P1's merge of `main` `f4167536`: the goldens PASS, 40 of 40
+KILLED, every count as below. `ident_burst_from_t0`'s count moved with lane P1, and
+`main` alone still fails 20:
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2122,7 +2300,7 @@ the lane head, 40 of 40 KILLED (the four `ident_*` controls after
 | `ident_rearm_from_third_frame` | re-arm at t0 + 1.3 s | 58, ID2 and ID2d among them |
 | `ident_burst_100ms` | T-IDENT-BURST 100 ms | 39, ID1c first |
 | `ident_t0_at_request` | t0 at the press, not the first frame's departure | 58, ID2d (burst 3) among them |
-| `ident_burst_from_t0` | frames 2 and 3 due t0 + 150 and t0 + 300 ms (round 1's schedule) | 20, ID3f, ID5k, ID7i, ID7q and ID7r among them |
+| `ident_burst_from_t0` | frames 2 and 3 due t0 + 150 and t0 + 300 ms (round 1's schedule) | 21, ID3f, ID5k, ID6d, ID7i, ID7q and ID7r among them (20 before lane P1: its name stage lengthens the D3 walk that holds ID6's burst, which moves the burst's phase, and frame 3, still due at t0 + 300 ms, then leaves 14,979 clocks after frame 2) |
 | `ident_departure_is_retirement` | the departure taken at the engine's retirement (the lane grant) | 9, ID7d and ID7q among them |
 | `ident_departure_unwired` | `uns_tx_busy_i` tied 0 at the top | 9, ID7d and ID7q among them |
 | `ident_next_burst_at_once` | the next burst not held for T-IDENT-BURST after a third frame (both starts) | 20, ID3f, ID7r and ID8c among them |

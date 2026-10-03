@@ -38,10 +38,12 @@
 //                and the names are the image's. The guard's debt is outside
 //                that reset, and the writer holds it while debt is owed.
 //                `dbg_img_valid_o` is the validated-image level its proof reads.
-//                The names are not persisted yet: the saved-state contract's
-//                name stage (not implemented here) captures a name coherently
-//                from the accepted live lane write (`name_wr_o`) and replays
-//                it only after the image walk has made the store ready.
+//                The names are persisted by that writer, not here: it takes
+//                the accepted live lane write (`name_wr_o`) as a name's
+//                trigger, latches the eight lanes over this port while no
+//                program runs, and writes a saved name back over it only
+//                after the image is proven, so the image walk has already
+//                filled the table; the region 0xA count is its value rule.
 //
 //                WHERE THE ADDRESSES COME FROM. Every address is an
 //                ELABORATION PARAMETER (`DESC_BASE_P`), never a register and
@@ -124,6 +126,9 @@
 //                              order, so COPY_BUFFER hands the lane straight
 //                              to the response buffer unswapped). A lane past
 //                              the descriptor's length reads 0.
+//                  region 0xA  read: {48'd0, the image's writable-name count}
+//                              (0 while the image is invalid) — the D3
+//                              writer's rule for a saved name's ordinal.
 //                  region 0xB  name-address lookup. `st_wdata_i[15:0]` is
 //                              the semantic name_index. A valid lookup returns
 //                              its byte address in the writable name overlay;
@@ -246,6 +251,7 @@ module KL_aecp_desc_store #(
 
   // ---- state-port regions (see the banner) --------------------------------
   localparam logic [3:0] RGN_DATA_C   = 4'h0;
+  localparam logic [3:0] RGN_NNAME_C  = 4'hA;
   localparam logic [3:0] RGN_NADDR_C  = 4'hB;
   localparam logic [3:0] RGN_NBASE_C  = 4'hC;
   localparam logic [3:0] RGN_NCFG_C   = 4'hD;
@@ -890,6 +896,9 @@ module KL_aecp_desc_store #(
               unique case (region_w)
                 //! an unvalidated image reports NOTHING, not the garbage its
                 //! header walk happened to read
+                RGN_NNAME_C: begin rd_kind_r <= 2'd2;
+                                   rd_reg_r  <= img_valid_r
+                                                ? {48'd0, hdr_n_names_r} : 64'd0; end
                 RGN_NADDR_C: begin
                   rd_kind_r <= 2'd2;
                   if (name_lookup_valid_w) begin

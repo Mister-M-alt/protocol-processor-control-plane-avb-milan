@@ -377,11 +377,12 @@ module pp_top_wrap (
     //! admission that aecp_txn_valid_o is gated by)
     output logic        dbg_aecp_head_o,
     //! the arbiter's manager-1 grant and done (the D3 writer's own), and
-    //! the writer's per-record dirty vector (27 records at this shape)
+    //! the writer's per-record dirty vector (59 records at this shape: the
+    //! 27 dynamic-state rows, then the 32 name-table entries)
     output logic        dbg_d3_mgnt_o,
     output logic        dbg_d3_mdone_o,
     output logic        dbg_d3_merr_o,
-    output logic [26:0] dbg_d3_dirty_o,
+    output logic [58:0] dbg_d3_dirty_o,
     //! the writer is latching a record over the state bus in service
     output logic        dbg_d3_latch_o,
     //! the dynamic-state rows the fabric does not publish with their valid
@@ -400,6 +401,10 @@ module pp_top_wrap (
     output logic  [7:0] dbg_d3_applied_o,
     output logic  [7:0] dbg_d3_refused_o,
     output logic  [7:0] dbg_d3_blank_o,
+    //! one 64-bit lane of the descriptor store's name table, read without the
+    //! bus the restore owns: `dbg_name_lane_i` is the lane, entry * 8 + k
+    input  wire   [7:0] dbg_name_lane_i,
+    output logic [63:0] dbg_name_o,
     //! the ADP engine's enable input: the requested enable once the
     //! restore released it
     output logic        dbg_adp_enable_o,
@@ -816,6 +821,7 @@ module pp_top_wrap (
   assign dbg_d3_applied_o = u_dut.u_aecp.u_d3.n_app_r;
   assign dbg_d3_refused_o = u_dut.u_aecp.u_d3.n_ref_r;
   assign dbg_d3_blank_o   = u_dut.u_aecp.u_d3.n_blank_r;
+  assign dbg_name_o       = u_dut.u_aecp.u_store.name_r[dbg_name_lane_i];
   assign dbg_adp_enable_o = u_dut.u_adp.entity_enable_i;
   assign dbg_d3_rb_rst_o  = u_dut.u_aecp.d3_rb_rst_w;
   assign dbg_d3_wd_o      = u_dut.u_aecp.u_d3.wd_r;

@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -783,6 +784,9 @@ struct H {
   //! ends with the device's err (nv_rd_silent false) or delivers nothing
   //! more until the test clears nv_rd_fault (true)
   int      nv_rd_region = -1;
+  //! a device that keeps each WRITE byte as it takes it, so a cut leaves the
+  //! record torn at rest (section D3K); otherwise the WRITE lands at its done
+  bool     nv_wr_progressive = false;
   int      nv_rd_nth = 0;
   int      nv_rd_after = 0;
   bool     nv_rd_silent = false;
@@ -1737,6 +1741,8 @@ struct H {
         d->nvm_dev_wready_i = 1;
         if (d->nvm_dev_wvalid_o) {
           nv_cur.wr.push_back(static_cast<uint8_t>(d->nvm_dev_wdata_o));
+          if (nv_wr_progressive)
+            nv_mem[nv_cur.region][(nv_cur.off + nv_cur.wr.size() - 1) & 0xFF] = nv_cur.wr.back();
           nv_left--;
         }
       } else if (nv_cur.region == nv_err_region && nv_err_writes > 0) {
@@ -1914,6 +1920,7 @@ struct H {
     d->listener_sinks_i = LSNK;  d->listener_caps_i = LSCAP;
     d->current_cfg_i = CFGIX;    d->identify_index_i = IDIX;
     d->identify_button_i = 0;
+    d->dbg_name_lane_i = 0;
     d->entity_enable_i = 0; d->link_up_i = 0; d->gm_change_i = 0;
     d->gm_id_i = GM0; d->gptp_domain_i = DOM0;
     itf = ItfCounters{};
@@ -4241,9 +4248,10 @@ struct AudioMapEditPhase {
   // uCPU's OP_NVM_MARK effect out of the top, and the mark is the micro-op
   // immediate that names the record group: 6 for the channel maps this phase
   // edits, 7 for a user name. The mark is a completion notification, not a
-  // persistence trigger: the saved-state contract's map and name stages
-  // (not implemented yet) select their records from the accepted live
-  // writes, and section D3 grades the scalar records. Graded here because
+  // persistence trigger: the D3 writer's name stage selects its records from
+  // the accepted live name write (`aecp_name_wr_o`, section D3N), the channel
+  // maps are the integrator's to persist (07 §5.1, the ruling on #83), and
+  // section D3 grades the scalar records. Graded here because
   // a mark has no wire shape:
   // the response of a marked command is identical to the response of one
   // that marked nothing, which is the third arm below.
@@ -9827,9 +9835,12 @@ struct Suite {
     uint32_t m1 = h.snap(2);
     CHECK(m1 >= m0 + 15 && m1 <= m0 + 30,
           "S0: now_ms advances at the compressed rate (%u -> %u)", m0, m1);
-    //! read after the 20 ms, which take far longer than the D3 walk that
-    //! follows the binding walk's release; R's clock is left where the
-    //! later sections were tuned
+    //! read after the 20 ms; the D3 walk that follows the binding walk's
+    //! release reads 59 records twice (the name records since issues #61
+    //! and #83) and can outlast them, so its terminal is waited for here,
+    //! after the link rise: R's clock is left where the later sections
+    //! were tuned
+    for (int c = 0; c < 20000 && !d->restore_done_o; ++c) h.step();
     CHECK(d->restore_done_o == 1 && d->restore_busy_o == 0,
           "S0: restore_done_o has followed both walks' terminals (issue #92, D3)");
     CHECK(h.q_adp.empty() && h.q_acmp.empty(),
@@ -10791,7 +10802,36 @@ struct NameWritePhase {
   D3ServicePhase{h, image}.run();
   D3RestorePhase{h, image, setup.image_ents}.run();
   D3ClockSourcePhase{h, image, setup.image_ents}.run();
+  D3NamePhase{h, image, setup.image_ents}.run();
+  D3CutPhase{h, image, setup.image_ents}.run();
   printf("D3: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
+//! Section D3V on a fresh model, against the same image: its watch outlasts
+//! the CONTROLLER_AVAILABLE monitor, so it has a run of its own (`--volatile-only`)
+//! and stays out of every D3 mutant's `--d3-only` run.
+[[maybe_unused]] static void run_volatile(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  Suite setup(h);
+  setup.load_descriptor_image();
+  const std::vector<uint8_t> image = h.dram;
+  D3VolatilePhase{h, image, setup.image_ents}.run();
+  printf("D3V: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
+//! Section D3KR, the standing seeded-random reset-cut campaign, on a fresh
+//! model against the same image: `--cuts-only` (`make cuts`) runs its
+//! standing seeds and `--cut-seed S` one seed alone. Like D3V it stays out of
+//! every D3 mutant's `--d3-only` run.
+[[maybe_unused]] static void run_cuts(H& h, const std::vector<uint32_t>& seeds) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  Suite setup(h);
+  setup.load_descriptor_image();
+  const std::vector<uint8_t> image = h.dram;
+  D3CutCampaignPhase{h, image, setup.image_ents}.run(seeds);
+  printf("D3KR: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
 //! DR3a (parent D3 contract): the restore durations and longest waits,
@@ -11166,6 +11206,49 @@ struct AdpConfigPhase {
     first_advert_agrees(f, IMAGE_CFG, "AD7", "the image default");
   }
 
+  //! record 0x00 as the device holds it, every other record erased
+  void hold_configuration_record(const std::vector<uint8_t>& rec) {
+    io.erase_nvm();
+    std::copy(rec.begin(), rec.end(), io.nv_mem[0x00].begin());
+  }
+
+  //! AD8 (issue #63): a corrupt record 0x00, its crc not the crc of its
+  //! bytes, is refused by the F07.8 frame (07 §5.3) and keeps the image
+  //! default: the walk ends COMPLETE with the record refused and the row
+  //! unset, and the first ENTITY_AVAILABLE, GET_CONFIGURATION and the ENTITY
+  //! descriptor carry 1. The record carries configuration 0, legal and not
+  //! the default, so a frame that let it through would advertise 0
+  void a_corrupt_record_keeps_the_image_default() {
+    auto rec = d3_record(0x00, 0, 2);
+    rec[7] ^= 0x01;                                   // the crc's low byte
+    hold_configuration_record(rec);
+    const auto f = reboot(false, "AD8", [] {});
+    CHECK(!io.d->restore_fail_o && io.d->dbg_d3_refused_o == 1 && !io.d->dbg_dyn_cfg_v_o,
+          "AD8: the record refused by its frame, COMPLETE, the row unset (premise)");
+    first_advert_agrees(f, IMAGE_CFG, "AD8", "the image default");
+  }
+
+  //! AD9 (issue #63): the device ends pass 0's payload READ of the same
+  //! record, uncorrupted, after one byte (a torn read). The walk fails
+  //! whole, cause 1, nothing applied (07 §5.3), and the first
+  //! ENTITY_AVAILABLE, GET_CONFIGURATION and the ENTITY descriptor carry the
+  //! image default 1
+  void a_torn_read_keeps_the_image_default() {
+    hold_configuration_record(d3_record(0x00, 0, 2));
+    io.nv_rd_region = 0x00;
+    io.nv_rd_nth = 2;                                 // pass 0's payload READ
+    io.nv_rd_after = 1;
+    io.nv_rd_silent = false;
+    io.nv_rd_seen = 0;
+    const auto f = reboot(false, "AD9", [] {});
+    io.nv_rd_region = -1;
+    CHECK(io.d->restore_fail_o && io.d->rs_cause_o == 1 && !io.d->restore_rb_o
+              && !io.d->dbg_dyn_cfg_v_o,
+          "AD9: the torn read fails the walk in pass 0, cause %u, nothing applied",
+          unsigned(io.d->rs_cause_o));
+    first_advert_agrees(f, IMAGE_CFG, "AD9", "the image default");
+  }
+
   void run() {
     boot();
     boot_gate_holds_over_the_delay_span();
@@ -11200,6 +11283,8 @@ struct AdpConfigPhase {
     a_restored_configuration_is_advertised();
     a_rolled_back_configuration_is_not_advertised();
     a_reset_returns_to_the_image_default();
+    a_corrupt_record_keeps_the_image_default();
+    a_torn_read_keeps_the_image_default();
   }
 };
 
@@ -13495,6 +13580,13 @@ struct HazardPhase {
     (void)acmp_beside_or_after(AEM_SET_NAME, si1, 10, 1, false,
                                "HZ9f a GET_RX_STATE of sink 1 vs a held "
                                "SET_NAME on STREAM_INPUT 1");
+    //! the D3 writer saves these names a debounce later (issues #61, #83),
+    //! and its ACQUIRE would hold dispatch behind the next arm's stalled
+    //! command; the later arms grade admission, so the saves go in first
+    long guard = 3 * 500L * MS_CYC;
+    while (io.d->d3_unflushed_o && guard-- > 0) io.step();
+    CHECK(!io.d->d3_unflushed_o, "HZ9: the names' saves have drained before HZ10 "
+          "(premise)");
   }
 
   //! HZ10 (F03.7 STREAM_CFG "serialized per key" and RO_SNAPSHOT "blocked
@@ -13665,6 +13757,9 @@ int main(int argc, char** argv) {
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
   const bool d3_only = argc == 2 && std::strcmp(argv[1], "--d3-only") == 0;
+  const bool volatile_only = argc == 2 && std::strcmp(argv[1], "--volatile-only") == 0;
+  const bool cuts_only = argc == 2 && std::strcmp(argv[1], "--cuts-only") == 0;
+  const bool one_seed = argc == 3 && std::strcmp(argv[1], "--cut-seed") == 0;
   const bool acmp_only = argc == 2 && std::strcmp(argv[1], "--acmp-only") == 0;
   const bool maap_only = argc == 2 && std::strcmp(argv[1], "--maap-internal-only") == 0;
   const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
@@ -13679,8 +13774,8 @@ int main(int argc, char** argv) {
     run_dr3a(h);
     return 0;
   }
-  const bool one_section = gsi_only || name_only || d3_only || acmp_only || adp_only
-                           || maap_only || aecp_only || dl_only || hz_only
+  const bool one_section = gsi_only || name_only || d3_only || volatile_only || acmp_only || adp_only
+                           || cuts_only || one_seed || maap_only || aecp_only || dl_only || hz_only
                            || ident_only || notify_only || ctr_only;
   if (maap_only) run_maap_internal(h);
   if (!one_section) Suite(h).run();
@@ -13688,6 +13783,9 @@ int main(int argc, char** argv) {
   if (!one_section || gsi_only) InternalStreamInfoPhase{h}.run();
   if (!one_section || name_only) run_name_writes(h);
   if (!one_section || d3_only) run_d3(h);
+  if (!one_section || volatile_only) run_volatile(h);
+  if (!one_section || cuts_only) run_cuts(h, D3CutCampaignPhase::standing());
+  if (one_seed) run_cuts(h, {uint32_t(std::stoul(argv[2], nullptr, 0))});
   if (!one_section || acmp_only) run_acmp(h);
   if (!one_section || adp_only) run_adp_config(h);
   if (!one_section || aecp_only) run_aecp_response(h);
