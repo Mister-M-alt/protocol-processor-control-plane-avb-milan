@@ -5,7 +5,7 @@
 # that sentence true rather than aspirational: six modules were absent from it
 # and no run ever elaborated them, `protocol_processor_top` among them (#25).
 # `pipefail` completes the trio. It reaches the `find | sort` pairs on the sv2v
-# line and the census's `grep | awk | sort`, each of which must succeed for its
+# line and the census's `sed | sort`, each of which must succeed for its
 # line to mean anything; the yosys verdicts are read from the markers in
 # gate.log and AND-OR lists that `set -e` deliberately leaves alone.
 set -euo pipefail
@@ -158,15 +158,18 @@ sv2v $(find hdl -name '*_pkg.sv' | sort) $(find hdl -name '*.sv' ! -name '*_pkg.
 # read from the sources, never from a second hand-written list, so the two
 # cannot drift the way they already had: the union of what `hierarchy -top`
 # reached over the previous 32 entries was exactly those 32, so the six missing
-# modules were not covered transitively either. They are read from all.v, the
-# sv2v lowering of every source that yosys reads below, and not from the .sv
-# text: sv2v writes each module as `module NAME` at the start of a line however
-# its source lays the header out, so a header split across lines is counted. It
-# keeps a lifetime keyword (`module automatic NAME`), so the name is the last word.
+# modules were not covered transitively either. They are not matched in any
+# source text: they are the modules yosys itself parsed from all.v, listed by
+# the elaboration run below from the `read_verilog -defer` design it elaborates
+# (`select -list =*`, which names boxes too, where yosys 0.33's `ls =*` does
+# not). So no header layout, attribute instance or comment hides a module. One
+# in an inactive `ifdef` branch is not counted: sv2v drops it from all.v, so
+# yosys never sees it. One that yosys cannot parse fails the parse instead,
+# which names it (parse_site); yosys rejects `module automatic`, for one.
 census() {
   local declared missing stale
-  declared="$(grep -oE '^module[[:space:]]+((automatic|static)[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*' \
-                "$work/all.v" | awk '{print $NF}' | sort -u)"
+  [ -s "$work/declared.txt" ] || { echo "yosys parsed all.v but listed no module" >&2; exit 1; }
+  declared="$(sed -n 's/^\$abstract\\//p' "$work/declared.txt" | sort -u)"
   missing="$(comm -23 <(printf '%s\n' "$declared") \
                       <(printf '%s\n' "${tops[@]}" | sort -u))"
   if [ -n "$missing" ]; then
@@ -183,7 +186,6 @@ census() {
     exit 1
   fi
 }
-census
 
 ( cd hdl/aecp/ucode && python3 gen_ucode.py -o "$work/ucode.hex" >/dev/null )
 ( cd hdl/acmp/rom && python3 gen_ltn_rom.py -o "$work/ltn_rom.hex" >/dev/null 2>&1 || python3 gen_ltn_rom.py > /dev/null; cp ltn_rom.hex "$work/" 2>/dev/null || true )
@@ -217,7 +219,7 @@ echo "yosys allocator: ${MALLOC_LIB:-system}"
 # `-defer` keeps the parse free of elaboration: each module is elaborated under
 # the top that reaches it, never at read time, so an elaboration error is raised
 # inside a named top's step. It costs no coverage, because every module is a
-# top (the census above): #25's second correction measured that an unresolved
+# top (the census): #25's second correction measured that an unresolved
 # instance in a module no top names is missed with or without `-defer`, and that
 # the tops array, not the reading mode, is what elaborates a module.
 #
@@ -227,10 +229,12 @@ echo "yosys allocator: ${MALLOC_LIB:-system}"
 # is in the log and whose `@@ok` is not is the one that failed, and the log's
 # first ERROR line says why. A fresh run then takes the tops after it, which
 # parses again, so a red gate still gives every top a verdict, in inventory
-# order; a green gate parses exactly once.
+# order; a green gate parses exactly once. Each parse also writes yosys's list
+# of the modules it read to declared.txt, and the census runs on the first
+# run's list before any verdict is printed.
 gate_script() {
   local t
-  printf 'read_verilog -defer all.v\ndesign -save parsed\n'
+  printf 'read_verilog -defer all.v\ntee -q -o declared.txt select -list =*\ndesign -save parsed\n'
   for t in "$@"; do
     printf 'log -stderr @@begin %s\ndesign -load parsed\n' "$t"
     printf 'hierarchy -check -top %s\nproc\nopt_clean\nlog -stderr @@ok %s\n' "$t" "$t"
@@ -238,12 +242,21 @@ gate_script() {
 }
 
 # The module of all.v holding the line a parse error cites, when it cites one.
+# A failed parse leaves yosys no module list, so this reads all.v's text: the
+# last header at or above that line and not closed above it, past the
+# attribute instances sv2v keeps on a header line and a lifetime keyword
+# (yosys rejects `module automatic`, so that header is often the cited line).
 parse_site() {
   local n
   n="$(grep -oE 'all\.v:[0-9]+' <<<"$1" | head -1 | cut -d: -f2)" || return 0
   [ -n "$n" ] || return 0
-  awk -v n="$n" 'NR > n { exit } /^module[ \t]/ { m = $2 }
-                 END { sub(/[^A-Za-z0-9_].*/, "", m); if (m != "") print m }' all.v
+  awk -v n="$n" 'NR > n { exit }
+    { h = $0; while (sub(/^[ \t]*\(\*([^*]|\*+[^*)])*\*+\)/, "", h)) ; }
+    split(h, w) > 1 && (w[1] == "module" || w[1] == "macromodule") {
+      m = (w[2] == "automatic" || w[2] == "static") ? w[3] : w[2] }
+    $1 == "endmodule" && NR < n { m = "" }
+    END { if (m ~ /^\\/) m = substr(m, 2); else sub(/[^A-Za-z0-9_$].*/, "", m)
+          if (m != "") print m }' all.v
 }
 
 elaborate_tops() {
@@ -253,6 +266,9 @@ elaborate_tops() {
     parses=$((parses + 1))
     gate_script "${todo[@]}" > gate.ys
     yrc=0; yosys -q -s gate.ys > gate.log 2>&1 || yrc=$?
+    # Once the first run's first top has begun, its parse passed and its list
+    # is complete: the census runs on it. A failed parse is named below.
+    [ "$parses" -gt 1 ] || ! grep -q '^@@begin ' gate.log || census
     why="$(grep -m1 'ERROR' gate.log)" || why="yosys exited $yrc with no ERROR line"
     run=("${todo[@]}"); todo=(); red=0
     for i in "${!run[@]}"; do
