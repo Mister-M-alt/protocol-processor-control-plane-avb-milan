@@ -151,12 +151,55 @@ fail that arc's own check; the GM and domain guard is planted at both of its
 sites (TK_NOT_DISCOVERED, and the restart pair), the restart detector as an
 off-by-one at its boundary (an index equal to the last one).
 
-Interop note, **still open** (issue #85 item 4, which needs a live
-controller and belongs to a bench lane): the available_index rule implements
-the DOC (04 §5 / IEEE §6.2.2.15) and **diverges from the reference platform's
-every-ADPDU increment**. Adjudication against live controllers (Hive /
-la_avdecc) is required before cutover; the engine banner carries the same
-warning. The walk grades the doc rule in every cell, so it cannot close this.
+**The available_index interop note** (issue #85 item 4), adjudicated on
+2026-10-04 against the standard's text and the reference behaviour on record,
+read-only, with no bench access:
+
+- **The standard.** IEEE 1722.1-2021 §6.2.2.15: the index "is incremented after
+  transmitting an ENTITY_AVAILABLE message and is reset to zero (0) when
+  transmitting an ENTITY_DEPARTING or after a power cycle"; its Figure 6-2
+  sets it to 0 in INITIALIZE and adds 1 in WAITING, after each ADVERTISE.
+  Milan v1.2 §5.6.2 forms ADPDUs per IEEE Clause 6 and says nothing more about
+  the field, and its listener reads an index at or below the last one as a
+  talker restart (§5.6.4.5.2 step 2). The engine's rule is that text, and the
+  walk grades it in every cell. The reference platform's former rule (an
+  increment on every transmitted ADPDU, no reset) departs from it at
+  ENTITY_DEPARTING and nowhere else: every other ADPDU the engine sends is an
+  ENTITY_AVAILABLE, which both rules increment after. The parent's register
+  map records the failure that rule was adopted against, an index that
+  repeated across adverts (an increment on change only). It cannot occur
+  under §6.2.2.15 either, which increments after every ENTITY_AVAILABLE.
+- **What a receiver sees of the difference.** Neither standard reads the
+  index of an ENTITY_DEPARTING (IEEE §6.2.6.4 removes the entity; Milan
+  §5.6.4.5.3 has no index step), and after one, TK_NOT_DISCOVERED takes any
+  index (§5.6.4.5.1). Only a receiver that lost the ENTITY_DEPARTING sees the
+  next cycle's index: from 0 under §6.2.2.15, which §5.6.4.5.2 reads as the
+  restart it is; from the last index + 1 under the former rule, which reads as
+  the same cycle going on.
+- **The record.** The parent's bench lanes B6, B7 and B8 (its issue #629)
+  each enumerated the network from the controller host: one ENTITY_DISCOVER
+  with entity_id 0 and every ENTITY_AVAILABLE answering it
+  (`identity*/adp-discover.jsonl`, five enumerations from 2026-10-01 to
+  2026-10-03). Each lists two entities, this processor (entity_capabilities
+  0x0000C588, the F04.6 value) and the bench's reference Milan peer.
+  - The peer: 12817, 42441, 44513, 44851, 45061. Strictly rising, one
+    increment per 6.00, 6.00, 5.99 and 5.98 s between the five, with no
+    repeat and no restart.
+  - This processor: 13215 (B6), 85 (B7, after a reload), 1865 and 2156 (B8),
+    19 (B8, after a power cycle). Within a boot, one increment per 6.99 and
+    6.97 s: the 5 s T-ADP-ADV plus the 2 s mean of the T-ADP-DELAY draw, one
+    per ENTITY_AVAILABLE. After each restart it is low again. Each lane's
+    identity gate passed on the same enumeration.
+  - No ENTITY_DEPARTING appears in any of the five, and the enumerating tool
+    is a stateless read-only probe, not a controller that tracks entities.
+    The one case where the two rules differ is not on record.
+- **Verdict.** The rule stands: the engine keeps §6.2.2.15, and the
+  divergence the note recorded is the former rule's from the standard, not
+  the engine's. Restated, still open: how a live controller that tracks
+  entities (Hive, la_avdecc) handles an ENTITY_DEPARTING and the availability
+  cycle that follows it from index 0. Only a live controller across an entity
+  disable and re-enable can show that. The engine banner keeps its earlier
+  wording, since issue #85 changed no RTL.
 
 Mutation-proven 2026-08-11 (backup/sed/run/restore):
 1. merged draw kinds (`ADP_DRAW_KIND_START_C` → `ADP_DRAW_KIND_DELAY_C` in
@@ -244,5 +287,6 @@ instantiated (their own suites own those RTL contracts); event-port
 ordering between a NOADP expiry and a same-sink iteration in flight is
 not exercised (rare, ACMP re-probes either way); the walk takes one event
 per cell, so two events in the same clock are not walked beyond the
-draw-phase cells above; and the available_index interop note stays open
-until a live controller adjudicates it (issue #85 item 4).
+draw-phase cells above; and a live controller's handling of an
+ENTITY_DEPARTING and the availability cycle after it (index 0 again) is not on
+record (the interop note above, issue #85 item 4).
