@@ -4248,9 +4248,10 @@ struct AudioMapEditPhase {
   // uCPU's OP_NVM_MARK effect out of the top, and the mark is the micro-op
   // immediate that names the record group: 6 for the channel maps this phase
   // edits, 7 for a user name. The mark is a completion notification, not a
-  // persistence trigger: the saved-state contract's map and name stages
-  // (not implemented yet) select their records from the accepted live
-  // writes, and section D3 grades the scalar records. Graded here because
+  // persistence trigger: the D3 writer's name stage selects its records from
+  // the accepted live name write (`aecp_name_wr_o`, section D3N), the channel
+  // maps are the integrator's to persist (07 §5.1, the ruling on #83), and
+  // section D3 grades the scalar records. Graded here because
   // a mark has no wire shape:
   // the response of a marked command is identical to the response of one
   // that marked nothing, which is the third arm below.
