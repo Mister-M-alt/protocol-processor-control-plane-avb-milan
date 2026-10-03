@@ -156,6 +156,9 @@ static Rec adp_txn(uint8_t msg, uint64_t eid, uint8_t vt, uint8_t rx_slot,
 // column the table does not have: the §5.6.1 boot gate, where the hardware
 // holds DOWN until entity_enable_i. The F04.2 DELAY state is walked in its
 // two hardware phases, the delay draw in flight and the delay timer armed.
+// Each cell cites the Milan v1.2 clause that rules its next state, frame and
+// timer action, and the IEEE 1722.1-2021 clause it replaces or follows, as
+// 04 F04.7 derives them (F04.8 for the discovery SM below).
 // Cell classes:
 //   'N' a transition clause of the table;
 //   'I' '-' in the table: ignored, proven inert;
@@ -189,37 +192,70 @@ struct AdvCell {
   bool cancel_must;  // the clause says "Stop the timer"
   bool cancel_may;   // a cancel is harmless: the slot is replaced or unarmed
   int  frame;        // 0 none, 1 ENTITY_AVAILABLE, 2 ENTITY_DEPARTING
-  const char* ref;
+  const char* milan; // the Milan v1.2 clause that rules the cell (04 F04.7)
+  const char* ieee;  // the IEEE 1722.1-2021 clause it replaces or follows
 };
-constexpr AdvCell A_I_DOWN{'I', ST_DOWN, 0, 0, false, false, 0, "Table 5.51 -"};
-constexpr AdvCell A_I_GATE{'I', ST_DOWN, 0, 0, false, false, 0, "5.6.1 not started"};
-constexpr AdvCell A_S_DOWN{'S', ST_DOWN, 0, 0, false, false, 0, "Table 5.51 x, stray"};
+// IEEE has no DOWN state and no boot gate (Δ5): its §6.2.7.2 machine reacts
+// to every event while its §6.2.4.3 machine runs, and nothing before BEGIN
+constexpr const char* I_NS = "6.2.4.3 before BEGIN";
+constexpr const char* I_DISC = "6.2.7.2 DISCOVER; 6.2.4.3";
+constexpr const char* I_FOR = "6.2.7.2 entity_id neither 0 nor own";
+constexpr const char* I_LINK = "6.2.7.2 LINK STATE CHANGE, no needsAdvertise";
+constexpr const char* I_NOCHG = "6.2.7.2 needs a link change";
+constexpr const char* I_HELD = "6.2.4.3 ADVERTISE clears needsAdvertise";
+constexpr const char* I_DEP = "6.2.5.3 DEPARTING; 6.2.2.15; 6.2.2.5";
+constexpr const char* I_REANN = "6.2.4.3 reannounce timer only in WAITING";
+constexpr AdvCell A_I_GATE{'I', ST_DOWN, 0, 0, false, false, 0, "5.6.1 not started", I_NS};
+constexpr AdvCell A_S_GATE{'S', ST_DOWN, 0, 0, false, false, 0,
+                           "5.6.1 not started, no timer: a stray", I_NS};
+constexpr AdvCell A_C_GATE{'C', 0, 0, 0, false, false, 0,
+                           "5.6.1 not started, enable already low",
+                           "6.2.4.1.3 doTerminate ends a running machine"};
+constexpr AdvCell A_I_DOWN{'I', ST_DOWN, 0, 0, false, false, 0, "Table 5.51 -",
+                           "6.2.7.2 DISCOVER, no DOWN state"};
+constexpr AdvCell A_F_DOWN{'I', ST_DOWN, 0, 0, false, false, 0, "5.6.3.1 discard", I_FOR};
+constexpr AdvCell A_S_DOWN{'S', ST_DOWN, 0, 0, false, false, 0, "Table 5.51 x, stray",
+                           "6.2.4.3 timers, no DOWN state"};
 // in the draw phase an ignored event leaves the draw in flight to arm
-constexpr AdvCell A_I_DRAW{'I', ST_DELAY, 0, 1, false, false, 0, "Table 5.51 -"};
-constexpr AdvCell A_S_DRAW{'S', ST_DELAY, 0, 1, false, false, 0, "Table 5.51 x, stray"};
-constexpr AdvCell A_I_DLY{'I', ST_DELAY, 0, 0, false, false, 0, "Table 5.51 -"};
-constexpr AdvCell A_C{'C', 0, 0, 0, false, false, 0, "Table 5.51 x"};
-constexpr AdvCell A_DISC_W{'N', ST_DELAY, 1, 1, true, true, 0, "5.6.3.5.4"};
+constexpr AdvCell A_I_DRAW{'I', ST_DELAY, 0, 1, false, false, 0, "Table 5.51 -", I_HELD};
+constexpr AdvCell A_F_DRAW{'I', ST_DELAY, 0, 1, false, false, 0, "5.6.3.1 discard", I_FOR};
+constexpr AdvCell A_I_DLY{'I', ST_DELAY, 0, 0, false, false, 0, "Table 5.51 -", I_HELD};
+constexpr AdvCell A_F_DLY{'I', ST_DELAY, 0, 0, false, false, 0, "5.6.3.1 discard", I_FOR};
+constexpr AdvCell A_C_LUP{'C', 0, 0, 0, false, false, 0, "Table 5.51 x", I_NOCHG};
+constexpr AdvCell A_DISC_W{'N', ST_DELAY, 1, 1, true, true, 0, "5.6.3.1; 5.6.3.5.4", I_DISC};
 constexpr AdvCell ADV[N_AROW][N_ACOL] = {
   // DOWN(not started) DOWN  WAITING   DELAY(draw)  DELAY(armed)
   {A_I_GATE, A_I_DOWN, A_DISC_W, A_I_DRAW, A_I_DLY},                   // DISC eid 0
   {A_I_GATE, A_I_DOWN, A_DISC_W, A_I_DRAW, A_I_DLY},                   // DISC own
-  {A_I_GATE, A_I_DOWN, {'I', ST_WAIT, 0, 0, false, false, 0, "5.6.3.1 discard"},
-   A_I_DRAW, A_I_DLY},                                                 // DISC foreign
-  {A_S_DOWN, A_S_DOWN, {'N', ST_DELAY, 1, 1, false, true, 0, "5.6.3.5.5"},
-   A_S_DRAW, A_C},                                                     // TMR_ADVERTISE
-  {A_S_DOWN, A_S_DOWN, A_C, A_S_DRAW,
-   {'N', ST_WAIT, 0, 1, false, false, 1, "5.6.3.5.9"}},                // TMR_DELAY
-  {A_I_GATE, {'N', ST_DELAY, 1, 1, false, true, 0, "5.6.3.5.3"},
-   A_C, A_C, A_C},                                                     // LINK_UP
-  {A_I_GATE, A_C, {'N', ST_DOWN, 0, 0, true, true, 0, "5.6.3.5.6"},
-   {'N', ST_DOWN, 0, 0, false, true, 0, "5.6.3.5.10"},
-   {'N', ST_DOWN, 0, 0, true, true, 0, "5.6.3.5.10"}},                 // LINK_DOWN
-  {A_I_GATE, A_I_DOWN, {'N', ST_DELAY, 1, 1, false, true, 0, "5.6.3.5.7"},
-   A_I_DRAW, A_I_DLY},                                                 // GM_CHANGE
-  {A_C, A_I_DOWN, {'N', ST_DOWN, 0, 0, true, true, 2, "5.6.3.5.8"},
-   {'N', ST_DOWN, 0, 0, false, true, 2, "5.6.3.5.11"},
-   {'N', ST_DOWN, 0, 0, true, true, 2, "5.6.3.5.11"}},                 // SHUTDOWN
+  {A_I_GATE, A_F_DOWN, {'I', ST_WAIT, 0, 0, false, false, 0, "5.6.3.1 discard", I_FOR},
+   A_F_DRAW, A_F_DLY},                                                 // DISC foreign
+  {A_S_GATE, A_S_DOWN,
+   {'N', ST_DELAY, 1, 1, false, true, 0, "5.6.3.5.5", "6.2.4.3 reannounce; 6.2.4.2.2"},
+   {'S', ST_DELAY, 0, 1, false, false, 0, "Table 5.51 x, stray", I_REANN},
+   {'C', 0, 0, 0, false, false, 0, "Table 5.51 x", I_REANN}},          // TMR_ADVERTISE
+  {A_S_GATE, A_S_DOWN,
+   {'C', 0, 0, 0, false, false, 0, "Table 5.51 x", "6.2.4.3 delay timer only in DELAY"},
+   {'S', ST_DELAY, 0, 1, false, false, 0, "5.6.3.5.9, not yet started: a stray",
+    "6.2.4.3 delay timer not yet set"},
+   {'N', ST_WAIT, 0, 1, false, false, 1, "5.6.3.5.9; 5.6.2",
+    "6.2.4.3 ADVERTISE; 6.2.5.3; 6.2.2.15"}},                          // TMR_DELAY
+  {A_I_GATE,
+   {'N', ST_DELAY, 1, 1, false, true, 0, "5.6.3.5.3", "6.2.7.2 LINK STATE CHANGE; 6.2.4.3"},
+   A_C_LUP, A_C_LUP, A_C_LUP},                                         // LINK_UP
+  {A_I_GATE, A_C_LUP, {'N', ST_DOWN, 0, 0, true, true, 0, "5.6.3.5.6", I_LINK},
+   {'N', ST_DOWN, 0, 0, false, true, 0, "5.6.3.5.10", I_LINK},
+   {'N', ST_DOWN, 0, 0, true, true, 0, "5.6.3.5.10", I_LINK}},         // LINK_DOWN
+  {A_I_GATE, {'I', ST_DOWN, 0, 0, false, false, 0, "Table 5.51 -",
+              "6.2.7.2 UPDATE GM, no DOWN state"},
+   {'N', ST_DELAY, 1, 1, false, true, 0, "5.6.3.5.7", "6.2.7.2 UPDATE GM; 6.2.4.3"},
+   {'I', ST_DELAY, 0, 1, false, false, 0, "Table 5.51 -", "6.2.4.3; 6.2.2.16 at the send"},
+   {'I', ST_DELAY, 0, 0, false, false, 0, "Table 5.51 -",
+    "6.2.4.3; 6.2.2.16 at the send"}},                                 // GM_CHANGE
+  {A_C_GATE, {'I', ST_DOWN, 0, 0, false, false, 0, "Table 5.51 -",
+              "6.2.5.3 DEPARTING, no DOWN state"},
+   {'N', ST_DOWN, 0, 0, true, true, 2, "5.6.3.5.8", I_DEP},
+   {'N', ST_DOWN, 0, 0, false, true, 2, "5.6.3.5.11", I_DEP},
+   {'N', ST_DOWN, 0, 0, true, true, 2, "5.6.3.5.11", I_DEP}},          // SHUTDOWN
 };
 
 // The listener's discovery SM, one per sink: Milan Table 5.54 with the
@@ -244,28 +280,46 @@ constexpr int EV_PAIR = 3;       // DEPARTED then DISCOVERED, same sink
 constexpr int TM_NONE = 0;
 constexpr int TM_ARM = 1;        // T-ADP-NOADP = the received valid_time
 constexpr int TM_CANCEL = 2;
-struct DiscCell { char cls; int to; int evs; int tm; const char* ref; };
-constexpr DiscCell D_I_UNB{'I', D_UNB, EV_NONE, TM_NONE, "5.6.4.1 bound sinks only"};
-constexpr DiscCell D_I_NOT{'I', D_NOT, EV_NONE, TM_NONE, "5.6.4.5.1 step 1"};
-constexpr DiscCell D_C{'C', 0, EV_NONE, TM_NONE, "x"};
-constexpr DiscCell D_DISCOVER{'N', D_DISC, EV_DISC, TM_ARM, "5.6.4.5.1"};
-constexpr DiscCell D_DEPART{'N', D_NOT, EV_DEP, TM_CANCEL, "5.6.4.5.2 step 2b"};
+// IEEE's §6.2.6 Discovery SM is a controller's entity table: Milan §5.6.4
+// replaces it per bound sink, so its IEEE column names the arc of Figure 6-4
+// the cell stands in for, or the ADPDU field clause its guard reads.
+struct DiscCell {
+  char cls;
+  int to;
+  int evs;
+  int tm;
+  const char* milan;  // the Milan v1.2 clause that rules the cell (04 F04.8)
+  const char* ieee;   // the IEEE 1722.1-2021 clause it replaces or reads
+};
+constexpr const char* I_AVAIL = "6.2.6.4 AVAILABLE";
+constexpr const char* I_GM = "6.2.2.16; 6.2.2.17";
+constexpr const char* I_IFX = "6.2.2.20";
+constexpr const char* I_SINK = "none: Milan per-sink binding";
+constexpr DiscCell D_I_UNB{'I', D_UNB, EV_NONE, TM_NONE, "5.6.4.1 bound sinks only", I_SINK};
+constexpr DiscCell D_I_NOT{'I', D_NOT, EV_NONE, TM_NONE, "5.6.4.5.1 step 1", I_GM};
+constexpr DiscCell D_C{'C', 0, EV_NONE, TM_NONE, "5.6.4.1 x: the binding is already so",
+                       I_SINK};
+constexpr DiscCell D_DISCOVER{'N', D_DISC, EV_DISC, TM_ARM, "5.6.4.5.1", I_AVAIL};
+constexpr DiscCell D_DEPART{'N', D_NOT, EV_DEP, TM_CANCEL, "5.6.4.5.2 step 2b",
+                            "6.2.2.15; 6.2.2.16; 6.2.2.17"};
 constexpr DiscCell DISC[N_DROW][N_DCOL] = {
-  {D_I_UNB, D_DISCOVER, {'N', D_DISC, EV_NONE, TM_ARM, "5.6.4.5.2 step 3"}},
-  {D_I_UNB, D_DISCOVER, {'N', D_DISC, EV_PAIR, TM_ARM, "5.6.4.5.2 steps 2a 2c 3"}},
-  {D_I_UNB, D_I_NOT, {'N', D_DISC, EV_NONE, TM_ARM, "5.6.4.5.2 step 3"}},
+  {D_I_UNB, D_DISCOVER, {'N', D_DISC, EV_NONE, TM_ARM, "5.6.4.5.2 step 3", I_AVAIL}},
+  {D_I_UNB, D_DISCOVER,
+   {'N', D_DISC, EV_PAIR, TM_ARM, "5.6.4.5.2 steps 2a 2c 3", "6.2.2.15 a new cycle"}},
+  {D_I_UNB, D_I_NOT, {'N', D_DISC, EV_NONE, TM_ARM, "5.6.4.5.2 step 3", I_AVAIL}},
   {D_I_UNB, D_I_NOT, D_DEPART},
   {D_I_UNB, D_I_NOT, D_DEPART},
-  {D_I_UNB, D_DISCOVER, {'I', D_DISC, EV_NONE, TM_NONE, "5.6.4.5.2 step 1"}},
-  {D_I_UNB, {'I', D_NOT, EV_NONE, TM_NONE, "Table 5.54 -"},
-   {'N', D_NOT, EV_DEP, TM_CANCEL, "5.6.4.5.3"}},
-  {D_I_UNB, {'I', D_NOT, EV_NONE, TM_NONE, "Table 5.54 -"},
-   {'I', D_DISC, EV_NONE, TM_NONE, "5.6.4.5.3 step 1"}},
-  {{'S', D_UNB, EV_NONE, TM_NONE, "stray"}, {'S', D_NOT, EV_NONE, TM_NONE, "Table 5.54 x, stray"},
-   {'N', D_NOT, EV_DEP, TM_NONE, "5.6.4.5.4"}},
-  {D_C, {'N', D_UNB, EV_NONE, TM_NONE, "04 6.2 disarm"},
-   {'N', D_UNB, EV_NONE, TM_CANCEL, "04 6.2 disarm, timer stopped"}},
-  {{'N', D_NOT, EV_NONE, TM_NONE, "F04.3 entry"}, D_C, D_C},
+  {D_I_UNB, D_DISCOVER, {'I', D_DISC, EV_NONE, TM_NONE, "5.6.4.5.2 step 1", I_IFX}},
+  {D_I_UNB, {'I', D_NOT, EV_NONE, TM_NONE, "Table 5.54 -", "6.2.6.4 DEPARTING"},
+   {'N', D_NOT, EV_DEP, TM_CANCEL, "5.6.4.5.3", "6.2.6.4 DEPARTING"}},
+  {D_I_UNB, {'I', D_NOT, EV_NONE, TM_NONE, "Table 5.54 -", "6.2.6.4 DEPARTING"},
+   {'I', D_DISC, EV_NONE, TM_NONE, "5.6.4.5.3 step 1", I_IFX}},
+  {{'S', D_UNB, EV_NONE, TM_NONE, "5.6.4.1 stray", I_SINK},
+   {'S', D_NOT, EV_NONE, TM_NONE, "Table 5.54 x, stray", "6.2.6.4 TIMEOUT"},
+   {'N', D_NOT, EV_DEP, TM_NONE, "5.6.4.5.4", "6.2.6.4 TIMEOUT"}},
+  {D_C, {'N', D_UNB, EV_NONE, TM_NONE, "5.6.4.1; 04 6.2 disarm", I_SINK},
+   {'N', D_UNB, EV_NONE, TM_CANCEL, "5.6.4.1; 04 6.2 disarm, timer stopped", I_SINK}},
+  {{'N', D_NOT, EV_NONE, TM_NONE, "5.6.4.4 sink connected; F04.3 entry", I_SINK}, D_C, D_C},
 };
 // F04.3's eight arcs and the cell that walks each
 struct Arc { const char* name; int row; int col; };
@@ -558,7 +612,7 @@ struct Harness {
   unsigned adv_state() const { return d->dbg_adv_state_o & 3; }
   void goto_adv(int col, int row);
   void apply_adv(int col, int row);
-  void check_adv_cell_cannot_happen(int row, const char* tag, const char* ref);
+  void check_adv_cell_cannot_happen(int row, const char* tag, const AdvCell& c);
   void walk_advertise_cell(int row, int col);
   void goto_disc(int col, unsigned s);
   void apply_disc(int col, int row, unsigned s);
@@ -1286,7 +1340,7 @@ void Harness::apply_adv(int col, int row) {
 // an 'x' cell of Table 5.51 that no stimulus can reach: check the
 // precondition that rules its event out in the state just reached
 void Harness::check_adv_cell_cannot_happen(int row, const char* tag,
-                                           const char* ref) {
+                                           const AdvCell& c) {
   bool ok = false;
   const char* why = "";
   switch (row) {
@@ -1313,7 +1367,8 @@ void Harness::check_adv_cell_cannot_happen(int row, const char* tag,
       break;
     default: break;
   }
-  CHECK(ok, "%s (%s): cannot happen by construction: %s", tag, ref, why);
+  CHECK(ok, "%s (Milan %s; IEEE %s): cannot happen by construction: %s", tag, c.milan,
+        c.ieee, why);
 }
 
 void Harness::walk_advertise_cell(int row, int col) {
@@ -1333,7 +1388,7 @@ void Harness::walk_advertise_cell(int row, int col) {
     CHECK(d->tap_draw_req_o == 1 && d->tap_draw_busy_o == 0,
           "%s: reached with the delay draw requested and not yet taken", tag);
   if (c.cls == 'C') {
-    check_adv_cell_cannot_happen(row, tag, c.ref);
+    check_adv_cell_cannot_happen(row, tag, c);
     return;
   }
   const size_t a0 = arms.size();
@@ -1346,8 +1401,8 @@ void Harness::walk_advertise_cell(int row, int col) {
   const uint32_t aidx0 = d->dbg_avail_index_o;
   apply_adv(col, row);
   idle(CELL_WINDOW);
-  CHECK(adv_state() == c.to, "%s (%s): ends in state %u, got %u", tag, c.ref,
-        c.to, adv_state());
+  CHECK(adv_state() == c.to, "%s (Milan %s; IEEE %s): ends in state %u, got %u", tag,
+        c.milan, c.ieee, c.to, adv_state());
   // the draw column's own request is seen at the cell's first clock
   const int in_flight = (col == A_DRAW) ? 1 : 0;
   CHECK(draw_reqs - r0 == c.draws + in_flight, "%s: %d draw requests, got %d",
@@ -1479,8 +1534,8 @@ void Harness::walk_discovery_cell(int row, int col, unsigned s) {
   const bool bound1 = (d->bound_i >> s) & 1u;
   const bool disc1 = (d->dbg_tk_discovered_o >> s) & 1u;
   CHECK(bound1 == (c.to != D_UNB) && disc1 == (c.to == D_DISC),
-        "%s (%s): ends in %s, got bound %d discovered %d", tag, c.ref, DCN[c.to],
-        int(bound1), int(disc1));
+        "%s (Milan %s; IEEE %s): ends in %s, got bound %d discovered %d", tag, c.milan,
+        c.ieee, DCN[c.to], int(bound1), int(disc1));
   const size_t n_ev = evts.size() - e0;
   bool ev_ok = false;
   switch (c.evs) {
@@ -1519,7 +1574,27 @@ void Harness::walk_discovery_cell(int row, int col, unsigned s) {
     CHECK(frees == fr0 + 1, "%s: the RX slot is freed", tag);
 }
 
+// a citation in the clause family a cell is graded against: Milan v1.2
+// chapter 5 (a clause or one of its tables), IEEE 1722.1-2021 clause 6.2
+static bool cites(const char* ref, const char* family) {
+  return ref != nullptr && strncmp(ref, family, strlen(family)) == 0;
+}
+static bool cites_milan(const char* ref) {
+  return cites(ref, "5.") || cites(ref, "Table 5.");
+}
+
 void Harness::check_the_mtxw_walk() {
+  int adv_cited = 0;
+  for (const auto& cells : ADV)
+    for (const AdvCell& c : cells) adv_cited += cites_milan(c.milan) && cites(c.ieee, "6.2.");
+  int disc_cited = 0;
+  for (const auto& cells : DISC)
+    for (const DiscCell& c : cells)
+      disc_cited += cites_milan(c.milan) && (cites(c.ieee, "6.2.") || c.ieee == I_SINK);
+  CHECK(adv_cited == 45, "P13 F04.2 cells citing Milan v1.2 5.x and IEEE 1722.1-2021 "
+        "6.2.x: %d of 45", adv_cited);
+  CHECK(disc_cited == 33, "P13 F04.3 cells citing Milan v1.2 5.x and IEEE 1722.1-2021 "
+        "6.2.x or none: %d of 33", disc_cited);
   int adv_cells = 0;
   for (int row = 0; row < N_AROW; ++row) {
     for (int col = 0; col < N_ACOL; ++col) {

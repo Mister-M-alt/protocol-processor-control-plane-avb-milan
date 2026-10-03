@@ -3,7 +3,7 @@
 
 Proves the ADP engine (`hdl/adp/KL_adp_engine.sv`) against
 [04](../../docs/architecture/04_adp_engine.md) in full: `make` = build + run,
-exit 0 = PASS, 1328 checks. `make mutants` runs the checked-in mutation
+exit 0 = PASS, 1330 checks. `make mutants` runs the checked-in mutation
 campaign below.
 
 The top (`tb_adp_top.sv`) is pure wiring: the engine plus the **real
@@ -65,6 +65,14 @@ and every observable is compared with the cell. The walk ends with
 `CHECK(adv_cells == 45)`, `CHECK(disc_cells == 33)` and a check that each of
 F04.3's eight arcs is a walked cell that passed.
 
+Every cell cites the Milan v1.2 clause that rules its next state, frame and
+timer action, and the IEEE 1722.1-2021 clause it replaces or follows. 04
+derives each pair: [F04.7](../../docs/architecture/04_adp_engine.md#fig-04-advcells)
+for the advertise cells, [F04.8](../../docs/architecture/04_adp_engine.md#fig-04-discarcs)
+for the discovery arcs. The C++ tables carry both into every failure message,
+and two checks count the cells that cite both (45 of 45, and 33 of 33, where
+IEEE has no counterpart of a sink binding).
+
 Cell classes: **N** a transition clause; **I** `-` in the table, ignored and
 proven inert; **S** `x` in the table but physically reachable as a stray (an
 expiry of a slot whose cancel lost the race in the top's arm queue), injected
@@ -89,7 +97,8 @@ holds DOWN; the F04.2 DELAY walked in both hardware phases). 45 cells:
 | GM_CHANGE | I | I | N §5.6.3.5.7 | I | I |
 | SHUTDOWN (enable falls) | C (enable low) | I | N §5.6.3.5.8 | N §5.6.3.5.11 | N §5.6.3.5.11 |
 
-Each cell grades the advertise state after it, the PRNG draw requests (an N
+The tables below give each cell's class and Milan clause; F04.7 adds its
+IEEE clause. Each cell grades the advertise state after it, the PRNG draw requests (an N
 cell entering DELAY draws exactly one kind-2 T-ADP-DELAY, 0..4000 ms), every
 timer operation on the shared slot (the arm is the last one, at `now` + the
 draw, or + 5000 ms into WAITING; a cancel wherever the clause says Stop, none
@@ -136,7 +145,7 @@ operations (one arm at the received valid_time, 20 s here; one cancel; or
 none; nothing on another slot), that nothing is transmitted, and the RX-slot
 free. F04.3's eight arcs map onto the cells BIND x unbound; match x NOT;
 GM mismatch x NOT; fresh match, restart match, stale GM mismatch, DEPARTING
-and TMR_NO_ADP x DISCOVERED.
+and TMR_NO_ADP x DISCOVERED (F04.8 lists each with its clauses).
 
 Interop note, **still open** (issue #85 item 4, which needs a live
 controller and belongs to a bench lane): the available_index rule implements
