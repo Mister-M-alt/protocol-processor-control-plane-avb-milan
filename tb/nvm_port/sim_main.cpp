@@ -1325,7 +1325,7 @@ void NvmPortSuite::torn_commit_leaves_every_other_region_untouched() {
 // bytes are still moving. A real program failure is not reported then: the
 // device latches the bytes, starts the program cycle, and raises its error
 // only when that cycle ends -- after the LAST byte, with busy still high.
-// That is the port's S_WWAIT arm (KL_pp_nvm_port.sv:436-439), the widest
+// That is the port's S_WWAIT arm (KL_pp_nvm_port.sv:446-449), the widest
 // window in a commit, and no phase above enters it. Arming at exactly the
 // write length takes the device's fail branch in preference to its done
 // branch, so every byte is consumed and then err replaces done.
@@ -1438,7 +1438,7 @@ void NvmPortSuite::read_completion_window_errors_report_err() {
 // Issue #14: a completion the port does NOT own, on the commit path.
 //
 // `done_seen_r` is sticky so a `done` landing on the same edge as a pump's
-// last byte is not lost (KL_pp_nvm_port.sv:340-344). The set is gated on
+// last byte is not lost (KL_pp_nvm_port.sv:350-354). The set is gated on
 // owning the command it completes -- from the grant handshake to the wait
 // state that consumes it (`dev_cmd_owned_w`, :234-245). Ungated, a stray
 // `done` while the header is still being collected is consumed by `S_WEWAIT`

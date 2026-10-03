@@ -219,7 +219,7 @@ it. The array-flavoured variants vary a different axis and none of them reaches
 this.
 
 What the port owes is now stated in its own header as refusal (c) and gated on
-it (`dev_cmd_owned_w`, `KL_pp_nvm_port.sv:234-245`): a completion is this port's
+it (`dev_cmd_owned_w`, `KL_pp_nvm_port.sv:244-255`): a completion is this port's
 from the cycle its grant is observed — that cycle may carry the completion —
 until the wait state consumes it, and ownership retires at the terminal state,
 at the next accept, and at reset. `S_WHDR`, an ungranted `*REQ`, `S_RHFWD`,
@@ -1128,7 +1128,7 @@ not the port's behaviour. EIGHT device models and one combination are run, RTL
 byte-identical. Four vary what the array RETAINS; four vary the HANDSHAKE
 instead, and "The handshake models" above has the other three. The first of
 those is coincident completion: the device raises `dev_done_i` on
-the same edge that moves a pump's final byte, which `KL_pp_nvm_port.sv:340-344`
+the same edge that moves a pump's final byte, which `KL_pp_nvm_port.sv:350-354`
 says the sticky `done_seen_r` latch exists for. It is a contract freedom rather
 than a broken peer, and the port handles it. Its whole interest was that
 deleting that latch was INVISIBLE without it, which stopped being true when
