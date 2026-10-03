@@ -213,7 +213,7 @@ Every negative control above runs from the tree: `tb/pp_top/d3_mutants.py` plant
 of them, each in its own extract, and requires its named checks to fail (all 108 KILLED
 at the head of lane P1; mutation records in the `tb/pp_top`, `tb/acmp_nvm` and
 `tb/rx_validator` READMEs). The two SET_CLOCK_SOURCE range-check controls of D3C1 and
-D3C2 run from `tb/pp_top/aecp_dispatch_mutants.py` (its `d3` target). The name stage's controls (each trigger and replay, the rule, the empty name, the record id and entry, a partial write-back, the taint, a restore that pulses or changes, names before the image, the store left out of the roll-back, the frame's crc) run from `d3_mutants.py` too; the map stage adds its group's when it lands. The top-level
+D3C2 run from `tb/pp_top/aecp_dispatch_mutants.py` (its `d3` target). The name stage's controls (each trigger and replay, the rule, the empty name, the record id and entry, a partial write-back, the taint, a restore that pulses or changes, names before the image, the store left out of the roll-back, the frame's crc) run from `d3_mutants.py` too. The channel maps are the integrator's to persist (07 §5.1), so their controls are the integrator's. The top-level
 device model misbehaves on the handshake for the walks (late grant, silent header, late
 or erroring descriptor memory), which grades the walks' deadlines; the port's own
 deadline, resets and handshake models are §8.6's.

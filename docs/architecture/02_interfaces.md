@@ -601,10 +601,14 @@ Two record producers live inside this processor: the binding manager and the D3 
 (the scalar records: configuration, sampling rates, clock sources, both stream-format
 directions, presentation offsets; and the user names, one record per name-table entry).
 Each is triggered by its accepted live write, never by a mark: a name by the accepted
-name-lane write (`aecp_name_wr_o`, which precedes the unchanged group-7 mark). The map
-group is accepted in the same saved-state contract, with the phase-5 edit commit beat
-(`amap_edit_req_o` with `amap_edit_phase_o == 5`) as its trigger; its writer is a later D3
-stage and is **not implemented** in this release.
+name-lane write (`aecp_name_wr_o`, which precedes the unchanged group-7 mark). The
+channel maps are **the integrator's to persist** (the manager's ruling on processor issue
+#83, which amends the saved-state contract's map stage): it writes records `0x60`/`0x70`
+from the phase-5 edit commit beat (`amap_edit_req_o` with `amap_edit_phase_o == 5`),
+restores them after `restore_done_o` and before it requests the enable, and puts each
+port's reset set back when the D3 walk rolls back (`restore_rb_o`). The D3 roll-back
+resets the two AECP stores only, and neither pending output covers a map
+([07 §5.1](07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002)).
 
 The top's restore verdicts are combined over both walks ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)):
 `restore_done_o`, `restore_busy_o`, `restore_fail_o`, `restore_blank_o` (done and not

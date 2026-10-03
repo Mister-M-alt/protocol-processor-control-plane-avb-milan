@@ -178,10 +178,13 @@ contract §5.1):
   in the restore, a saved name's eight lanes, only after the image is proven and only
   for an ordinal below the image's name count (store region 0xA). The CONTROL
   descriptor's name is a persisted user name; IDENTIFY's value is not.
-- **Map read and apply** are the map stage's faces (GET_AUDIO_MAP and the edit face).
-  They are accepted in the same contract and **not implemented** in this release.
+- **No map face.** The writer neither reads nor applies a channel map: the maps are
+  the integrator's to persist ([07 §5.1](07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002),
+  the manager's ruling on issue #83), so GET_AUDIO_MAP and the edit face stay the
+  commands' own (§6.5).
 - **Roll-back.** `rb_rst` resets the dynamic-state store and the descriptor store
-  together; the descriptor-memory guard and its debt keep the hard reset only.
+  together, never the integrator's map plane; the descriptor-memory guard and its debt
+  keep the hard reset only.
 
 ## 5. Command lifecycle
 
@@ -539,9 +542,10 @@ at commit, and use the root transaction face to update the live map atomically.
   unsolicited response to every registered controller except the requester and
   emits the group-6 completion mark. A confirmed no-op succeeds without a
   notification or mark. The mark is a completion notification, not a persistence
-  trigger: the saved-state contract selects a port's map record from the accepted
-  phase-5 commit beat. The map stage's writer and replay are **not implemented**
-  in this release, so maps are not retained across reset (issue #70's map lane).
+  trigger. The maps' records are the integrator's: it saves a port's set from the
+  accepted phase-5 commit beat, restores it and resets it on a D3 roll-back
+  ([07 §5.1](07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002),
+  the manager's ruling on issue #83); the processor neither writes nor restores one.
 - Phase 1 acceptance is the commit reservation and point of no return. The
   integrator must reserve every resource needed for the complete transaction
   before accepting it. Phase 5 record writes and phase 2 finish then complete

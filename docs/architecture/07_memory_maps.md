@@ -448,7 +448,7 @@ table and does not overwrite the restored name.
 | per CLOCK_DOMAIN `clock_source_index` | 16 | yes (§5.3.11.1) |
 | per stream `current_format` (READ_DESCRIPTOR serves the row once set, §3.3; GET_STREAM_FORMAT reads the integrator's face, which serves the published row) | 64 | yes (§5.3.7.1/§5.3.8.1) |
 | per STREAM_OUTPUT presentation-time offset | 32 | yes (§5.3.7.6) |
-| per port dynamic mapping tables | 64·M | yes (§5.3.9.1/§5.3.10.1) |
+| per port dynamic mapping tables | 64·M | yes (§5.3.9.1/§5.3.10.1), by the integrator (§5.1) |
 | name table: `entity_name`, `group_name`, `object_name` of every named descriptor | 64 B each | yes (§5.3.13) |
 | identify value | 8 | no — reset to 0 |
 | `system_unique_id` (deferred design; no storage) | 64 | not implemented under the October MVU waiver ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) |
@@ -457,8 +457,9 @@ table and does not overwrite the restored name.
 "yes" names the saved set, not the writer. The scalar rows (configuration, sampling
 rate, clock source, both formats, presentation offset) are written by the D3 writer
 from the store's accepted changing write (§5.3), and the names from the descriptor
-store's accepted name-lane write; their records are §5.2's. The maps are accepted in
-the same contract and implemented by a later stage. The store's sticky `dirty_o`
+store's accepted name-lane write; their records are §5.2's. The maps are the
+integrator's to persist (§5.1): the tables live in its map plane, and the processor
+writes and restores no map record. The store's sticky `dirty_o`
 (`aecp_dyn_dirty_o` at the top) is a diagnostic, not the trigger.
 
 ## 4. Dynamic state records
@@ -550,6 +551,38 @@ Event→address mapping and masks: [F06.15](06_aecp_engine.md#fig-06-counters).
 | sampling rate (§5.3.5.1) · stream formats in/out (§5.3.7.1/§5.3.8.1) · presentation offset (§5.3.7.6) · bound state + binding params (§5.3.8.2/.3) · started/stopped (§5.3.8.7) · output + input mappings (§5.3.9.1/§5.3.10.1) · clock source (§5.3.11.1) · all user names (§5.3.13) | lock state (§5.3.4.1) · controller registry (§5.3.4.2) · identify value = 0 after reset (§5.3.12) |
 | design decision (review §8): current configuration index | |
 
+**Who persists what.** The processor's two record producers (§5.3) persist every group
+of the persisted column except the output and input mappings: the binding manager the
+bound state, binding parameters and started/stopped; the D3 writer the configuration
+index, sampling rates, stream formats, presentation offsets, clock sources and user
+names. The **channel maps are the integrator's** (the manager's ruling on processor
+issue #83, 2026-10-03, which amends the parent D3 contract's map stage; the parent's
+restore is its issue #637). The map plane is the integrator's: the
+processor reaches it only through the GET_AUDIO_MAP read face and the
+ADD/REMOVE_AUDIO_MAPPINGS edit face ([06 §6.5](06_aecp_engine.md#65-audio-map-operations-milan-5422628)),
+so the maps stay ATDECC-authoritative while their records are the integrator's:
+
+- **Save.** It writes a port's set as record `0x60` + STREAM_PORT_INPUT index or `0x70` +
+  STREAM_PORT_OUTPUT index (§5.2's payload, F07.8 framing) from the accepted phase-5
+  edit commit beat (`amap_edit_req_o` with `amap_edit_phase_o == 5`), and its own pending
+  covers them; `d3_unflushed_o` never does. The group-6 completion mark
+  (`aecp_nvm_mark_o`) selects no record.
+- **Restore.** It applies the saved sets itself, once `restore_done_o` has risen (§5.3)
+  and before it requests the entity's enable (Milan 5.6.1). The D3 walk judges a saved
+  stream format by the integrator's judge alone, never against the maps, and exports the
+  restored rows (`aecp_fmt_in_o`, `aecp_fmt_out_o` and their valid bits), so the coupled
+  format/map decision (parent D3 §8.4) is the integrator's: a saved set is judged
+  against those formats. AECP dispatch is released at the D3 terminal; a map command
+  that reaches the faces before the integrator's restore has ended may be held on the
+  faces' waits (`amap_wait_i`; `amap_edit_wait_i` before phase 5) within the AECP
+  watchdog.
+- **Roll-back.** The D3 walk's roll-back resets the dynamic-state store and the
+  descriptor store only. When it rolls back (`restore_rb_o`), every port keeps, or gets
+  back, its reset set, so formats and maps return to their defaults together (parent D3
+  §8.6). Whether a DEFAULTS terminal without a roll-back also withholds the saved sets
+  is the integrator's restore design. CLOSED releases neither AECP nor ADP, so no map is
+  served until reset.
+
 The earlier design intention to persist `system_unique_id`, `user_mcr_prio`
 and the media-clock-domain name is deferred with their commands under the
 [October MVU waiver](06_aecp_engine.md#69-mvu-commands). These fields are neither
@@ -588,8 +621,8 @@ per writable-name ordinal, the AEM string verbatim, no name banks).
 | `0x30` .. `0x3F` | stream format in | STREAM_INPUT | u64 | D3 writer (scalar stage) |
 | `0x40` .. `0x4F` | stream format out | STREAM_OUTPUT | u64 | D3 writer (scalar stage) |
 | `0x50` .. `0x5F` | presentation time offset | STREAM_OUTPUT | u32 | D3 writer (scalar stage) |
-| `0x60` .. `0x6F` | channel map in | STREAM_PORT_INPUT | clusters × 8 B | accepted, not implemented (map stage) |
-| `0x70` .. `0x7F` | channel map out | STREAM_PORT_OUTPUT | max(clusters, STREAM_OUTPUT × 8) × 8 B for a dynamic port (#501), clusters × 8 B for a static one | accepted, not implemented (map stage) |
+| `0x60` .. `0x6F` | channel map in | STREAM_PORT_INPUT | clusters × 8 B | the integrator (§5.1); the processor never writes or reads it |
+| `0x70` .. `0x7F` | channel map out | STREAM_PORT_OUTPUT | max(clusters, STREAM_OUTPUT × 8) × 8 B for a dynamic port (#501), clusters × 8 B for a static one | the integrator (§5.1); the processor never writes or reads it |
 | `0x80` .. `0xFF` | user name | writable-name ordinal | 64 B | D3 writer (name stage): `DESC_NAME_ENTRIES_P` records, at most 128 |
 
 Every multi-byte field is big-endian. An unused map entry is eight `0xFF` bytes.
@@ -667,9 +700,9 @@ is the descriptor store's **accepted name-table lane write** (`aecp_name_wr_o`),
 same way; SET_NAME writes only the lanes that change, so an unchanged name sets nothing,
 and the writer's own restore of a saved name neither sets a record nor pulses
 `aecp_name_wr_o`. The record is the entry's 64 bytes verbatim, latched as eight lanes in
-one ACQUIRE. The channel-map group is accepted in the same contract (§3.1: the phase-5 map
-commit beat) and is **not implemented yet**: it has no writer until its stage lands, and
-its records are neither written nor restored by this release.
+one ACQUIRE. The channel-map records are the integrator's (§5.1): it writes a port's set
+from the accepted phase-5 edit commit beat, and neither producer here writes or reads
+them.
 
 The service loop, both producers alike: the first dirty record opens a
 `T-NVM-DEBOUNCE` window (500 ticks of `tick_ms`: `DEB_TICKS_P`, `DEB_MS_P`); its close arms one burst that drains every
@@ -798,8 +831,9 @@ and makes it walk the image again; the re-LOCATE of ENTITY 0 that follows proves
 image anew: a hit ends DEFAULTS with `restore_rb_o`, a miss or error, or an abort during
 the roll-back, ends CLOSED. The roll-back owns neither the binding manager, the listener
 nor its admission gate: **bindings the binding walk restored stay restored**. The names
-roll back with the descriptor store: its walk of the image reloads every entry. Maps join
-the roll-back with their stage (parent D3 §8.6); they are not restored in this release.
+roll back with the descriptor store: its walk of the image reloads every entry. The
+channel maps are not in the roll-back: the integrator, which restores them, puts each
+port's reset set back when the walk rolls back (`restore_rb_o`, §5.1).
 
 **Combined verdicts at the top** (parent D3 §8.7):
 

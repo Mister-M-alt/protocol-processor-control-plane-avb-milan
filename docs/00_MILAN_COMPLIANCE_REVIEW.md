@@ -216,9 +216,8 @@ incl. the 4-byte failure stub (IEEE §7.4.5). Response buffering must anticipate
 slot, not `MAX_AECP_RESPONSE_SIZE` guesswork.
 The live audio-map transaction is implemented: the engine stages a full page,
 the root validates every row, and commit is all-or-nothing. Persisting and
-restoring mappings remains part of GAP-09 and issue #70: the saved-state
-contract's map stage, triggered by the accepted phase-5 commit beat, is not
-implemented yet.
+restoring mappings is the integrator's (GAP-09; 07 §5.1): it saves a port's set
+from the accepted phase-5 commit beat and restores it.
 The static descriptor image, per-configuration index map, writable name table,
 and coherent READ_DESCRIPTOR name patching are implemented. A name update pulses
 the accepted name-lane write (`aecp_name_wr_o`), which the saved-state contract
@@ -251,10 +250,15 @@ source, both stream formats and presentation offset by the D3 writer, restored i
 agreeing passes before AECP and ADP are released (processor issue #131; `tb/pp_top`
 D3); every user name by the D3 writer, written back after the image walk (issues #61
 and #83; `tb/pp_top` D3N, and every D3 record type cut mid-commit by `rst_n` in D3K).
-Channel mappings are accepted in the same contract and **not implemented**: their
-stage needs the parent's map plane to take the D3 roll-back, a top-port change held
-for a manager ruling (issue #83), so they stay open here. No processor-only evidence
-closes the physical saved-state acceptance, which is the integrating platform's.
+Channel mappings are **the integrator's** by the manager's ruling on issue #83
+(2026-10-03), which amends the D3 contract's map stage: the map plane is the
+integrator's, so it writes records `0x60`/`0x70` from the phase-5 commit beat,
+restores them against the restored formats and resets them on a D3 roll-back
+([07 §5.1](architecture/07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002)).
+The processor keeps the ATDECC side of the maps
+(GET_AUDIO_MAP, ADD/REMOVE_AUDIO_MAPPINGS), so they stay ATDECC-authoritative. No
+processor-only evidence closes the physical saved-state acceptance, which is the
+integrating platform's.
 
 #### <a id="gap-10"></a>GAP-10 [Major] — Reusability substance missing
 "Reusable FPGA IP" is claimed without the artifacts that make IP reusable: no clock/
@@ -415,7 +419,7 @@ verification).
 | REQ-AEM-018 | Milan §5.4.2.25 | GET_COUNTERS for every AVB_INTERFACE/CLOCK_DOMAIN/STREAM_IN/STREAM_OUT of current config; Milan mask set takes precedence over IEEE for STREAM_OUTPUT | shall | P | [GAP-05](#gap-05) | E_GCTRS locate-first + type gate (landed; the integrator serves every declared STREAM_OUTPUT counter bank) | 06 §6.6 | DIR |
 | REQ-AEM-019 | Milan Tables 5.1/5.4/5.6/5.7 | Counter semantics: invariant pairs; ≤1 s observation intervals; input bank reset on not-bound→bound; output MEDIA_RESET/TS_UNCERTAIN/FRAMES_TX reset on stream start | shall | A | [GAP-05](#gap-05) | counter banks | 06 §6.6, 07 §4 | DIR |
 | REQ-AEM-020 | Milan §5.4.2.26 | GET_AUDIO_MAP: fixed partition, subsets ≤176 channels, number_of_maps = N always | shall | C | [GAP-08](#gap-08) | E_GAMAP + E_GAMAPO, both port directions off the integrator's map stores (landed); a subset of up to `P-MAP-SUBSET-CH-MAX` = 71 served whole, above it `NO_RESOURCES` (issue #50) | 06 §6.5, 07 §3 | DIR |
-| REQ-AEM-021 | Milan §5.4.2.27/.28 | ADD/REMOVE_AUDIO_MAPPINGS: all-or-nothing BAD_ARGUMENTS; input conflict rules; REMOVE ignores duplicates; streaming-output changes gated by TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING; input maps changeable any time | shall | C | live transaction implemented; persistence in [GAP-09](#gap-09) (D3 map stage, not implemented) | staged `MAP_VALID` transaction plus root projector; phase-5 commit beat as the persistence trigger | 06 §6.5 | DIR |
+| REQ-AEM-021 | Milan §5.4.2.27/.28 | ADD/REMOVE_AUDIO_MAPPINGS: all-or-nothing BAD_ARGUMENTS; input conflict rules; REMOVE ignores duplicates; streaming-output changes gated by TALKER_DYNAMIC_MAPPINGS_WHILE_RUNNING; input maps changeable any time | shall | C | live transaction implemented; persistence is the integrator's ([GAP-09](#gap-09), 07 §5.1; issue #83 ruling) | staged `MAP_VALID` transaction plus root projector; phase-5 commit beat as the persistence trigger | 06 §6.5 | DIR |
 | REQ-AEM-022 | Milan §5.4.2.29 / IEEE §7.4.76 | GET_DYNAMIC_INFO: fixed-size-GET whitelist (else BAD_ARGUMENTS, nothing processed); per-element status; skip-on-overflow; incompatible with IN_PROGRESS | shall | P | [GAP-15](#gap-15) | GDI iterator | 06 §6.7 | DIR |
 | REQ-AEM-023 | IEEE §9.3.5.3.3 | Correctly-sized NOT_IMPLEMENTED response for every unimplemented opcode | shall | A | [GAP-01](#gap-01) | response-size ROM | 06 §6 | TOL |
 | REQ-AEM-024 | IEEE §9.3.2.6 | AEM: respond ≤240 ms (250 ms controller timeout); policy: never IN_PROGRESS | shall | P | [GAP-07](#gap-07) | deadline engine | 08 §4 | TIM |
@@ -462,7 +466,7 @@ verification).
 
 | REQ | Clause | Requirement | Mand | Cov | Finding | Arch | Doc | Ver |
 |---|---|---|---|---|---|---|---|---|
-| REQ-PER-001 | Milan §5.3.5.1, §5.3.7.1/.6, §5.3.8.1/.2/.3/.7, §5.3.9.1, §5.3.10.1, §5.3.11.1, §5.3.13 | Persist: sampling rate; stream formats in/out; presentation offset; bound state + binding params; started/stopped; output + input mappings; clock source; all user names | shall | A | [GAP-09](#gap-09); bindings, started/stopped and the scalar groups implemented (#131), the user names (#61/#83, `tb/pp_top` D3N; every D3 record type cut mid-commit, D3K), maps not | binding manager + D3 writer (07 §5.2 inventory) | 07 §5 | NVM |
+| REQ-PER-001 | Milan §5.3.5.1, §5.3.7.1/.6, §5.3.8.1/.2/.3/.7, §5.3.9.1, §5.3.10.1, §5.3.11.1, §5.3.13 | Persist: sampling rate; stream formats in/out; presentation offset; bound state + binding params; started/stopped; output + input mappings; clock source; all user names | shall | A | [GAP-09](#gap-09); bindings, started/stopped and the scalar groups implemented (#131), the user names (#61/#83, `tb/pp_top` D3N; every D3 record type cut mid-commit, D3K); the maps assigned to the integrator (07 §5.1, issue #83 ruling) | binding manager + D3 writer; maps the integrator's (07 §5.1, §5.2 inventory) | 07 §5 | NVM |
 | REQ-PER-002 | Milan §5.3.4.1/.2, §5.3.12 | Volatile: lock state; controller registry; identify = 0 after reset | shall | A | [GAP-09](#gap-09); graded across a power cycle that restores a saved binding (#62, `tb/pp_top` D3V: the lock free to a second controller, the registry empty, IDENTIFY 0 from the restore on, each reset arm's deletion killed) | volatile policy: no record; IDENTIFY (selector 7) excluded at the D3 trigger | 07 §5 | NVM |
 | REQ-PER-003 | (unstated) | Current configuration index persistence — Milan silent; design decision: persist | — | A | [GAP-09](#gap-09); implemented (#131); restored to the ADPDU, GET_CONFIGURATION and the ENTITY descriptor, and a blank, corrupt or torn record keeps the image default (#63, `tb/pp_top` AD5 to AD9) | design decision §8 item 1, retained; D3 record `0x00` | 07 §5 | NVM |
 

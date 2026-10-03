@@ -432,7 +432,7 @@ gate on them per cycle.
 | `restore_done_o`, `restore_busy_o`, `restore_fail_o`, `restore_blank_o` | the combined verdicts of both restore walks ([07 §5.3](../architecture/07_memory_maps.md#fig-07-nvmflow)). Blank reads 1 only for a restore that did not fail. |
 | `restore_closed_o`, `rs_cause_o[2:0]`, `restore_rb_o`, `restore_cause_o[1:0]` | the D3 walk's CLOSED terminal (never done), its cause (1 torn, 2 device, 3 deadline, 5 passes disagree, 6 descriptor read, 7 image unproven), its roll-back to DEFAULTS; and the binding walk's own cause. |
 | `aecp_name_wr_o` | one `clk_i` cycle at each accepted live 64-bit name-lane write into the descriptor store. A multi-lane `SET_NAME` pulses once per written lane; unchanged lanes, boot loading, the D3 writer's restore of a saved name, refused/out-of-range commands and writes aborted before acceptance produce no pulse. Earlier accepted writes still count if a command later aborts. Sample at the accepting rising edge; no ready/ack. Leave unused with an explicit `.aecp_name_wr_o()` connection. |
-| `aecp_nvm_stb_o`, `aecp_nvm_mark_o` | one cycle per committed command that marked a record group, and the group: 1 a dynamic-state field, 6 channel maps, 7 user names. A **completion notification**: it selects no record and is not a persistence trigger. Groups 1 and 7's records are written by the D3 writer from the accepted change itself (group 7's trigger is `aecp_name_wr_o`). Group 6 is the D3 contract's map stage, whose trigger is the accepted phase-5 edit beat (`amap_edit_req_o` with `amap_edit_phase_o == 5`); that stage is not implemented in this release, so channel maps are not yet saved. |
+| `aecp_nvm_stb_o`, `aecp_nvm_mark_o` | one cycle per committed command that marked a record group, and the group: 1 a dynamic-state field, 6 channel maps, 7 user names. A **completion notification**: it selects no record and is not a persistence trigger. Groups 1 and 7's records are written by the D3 writer from the accepted change itself (group 7's trigger is `aecp_name_wr_o`). Group 6's records, the channel maps, are **yours** (the manager's ruling on processor issue #83): write `0x60`/`0x70` + port from the accepted phase-5 edit beat (`amap_edit_req_o` with `amap_edit_phase_o == 5`), restore them and reset them on a roll-back (§9 step 4, [07 §5.1](../architecture/07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002)). Your pending covers them; `d3_unflushed_o` never does. |
 | `dbg_now_ms_o` | the free-running millisecond timebase |
 
 The status dictionary these implement is catalogued in
@@ -464,9 +464,10 @@ contract and its coherence bound are [06 F06.13](../architecture/06_aecp_engine.
    - the **binding walk's** drained terminal releases the ACMP listener: its saved
      bindings are restored (or all at their defaults if the walk failed whole: a torn
      read-back, a device error, or a device silent for `NVM_RS_TMO_CYC_P` clocks);
-   - the **D3 walk** then restores the scalar settings, and its COMPLETE or DEFAULTS
-     terminal releases AECP dispatch. A D3 failure rolls the AECP stores back to their
-     defaults (`restore_rb_o`) and **keeps the bindings the binding walk restored**;
+   - the **D3 walk** then restores the scalar settings and the user names, and its
+     COMPLETE or DEFAULTS terminal releases AECP dispatch. A D3 failure rolls the AECP
+     stores back to their defaults (`restore_rb_o`) and **keeps the bindings the
+     binding walk restored**; your map plane is not in it (step 4);
    - `restore_done_o` (both walks done) releases your requested enable to ADP.
 
    `restore_done_o` says the walks sequenced, not that anything came back: every
@@ -514,9 +515,19 @@ contract and its coherence bound are [06 F06.13](../architecture/06_aecp_engine.
    plus a few clocks; 1,060 ms, one more per-wait deadline, is a stated margin that
    covers the clocks. The wait decides nothing: the processor ends the restore itself.
    DR3a ratified both numbers ([08 §2](../architecture/08_timing.md#sec-08-nvm)).
-4. Present identity, capability and configuration inputs.
-5. Assert `entity_enable_i` when you are ready; the processor forwards it to ADP only
-   once `restore_done_o` is 1. Only then may the entity advertise.
+4. **Restore the channel maps yourself**: the processor neither saves nor restores them
+   ([07 §5.1](../architecture/07_memory_maps.md#51-persisted-vs-volatile-normative-set-req-per-001002)).
+   After `restore_done_o`, apply each port's saved set from records `0x60`/`0x70`,
+   judged against the formats the D3 walk restored (`aecp_fmt_in_o`, `aecp_fmt_out_o`
+   and their valid bits): the walk judged them by your format judge alone, without the
+   maps, so the coupled format/map decision is yours. When the walk rolled back
+   (`restore_rb_o`), keep every port's reset set: the processor's roll-back resets its
+   two AECP stores, never your map plane. AECP dispatch is already released, so hold a
+   map command that reaches your faces before your restore ends on their waits
+   (`amap_wait_i`, `amap_edit_wait_i` before phase 5), within the AECP watchdog.
+5. Present identity, capability and configuration inputs.
+6. Assert `entity_enable_i` when you are ready, after step 4; the processor forwards it
+   to ADP only once `restore_done_o` is 1. Only then may the entity advertise.
 
 If it does not come up, hand the board to the [operator guide](operator.md) — its
 [bring-up ladder](../diagrams/23-bringup-decision.svg) is written for exactly this moment.
