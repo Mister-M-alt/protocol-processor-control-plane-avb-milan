@@ -151,12 +151,12 @@ values; other documents reference `P-…` IDs.
 
 | P-ID | Default | Range / constraint | Affects |
 |---|---|---|---|
-| P-N-AVB-INTERFACES | 1 | ≥1 (redundancy seam: keys registry/ADP/counters/records) | all per-interface state |
-| P-N-STREAM-IN | product | ≥1 with a Base format if listener (Milan §6.4) | sink records, discovery SMs, counters |
-| P-N-STREAM-OUT | product | ≥1 with a Base format if talker (Milan §6.3) | source records, DA timers, counters |
+| P-N-AVB-INTERFACES | 1 | ≥1 (redundancy seam: keys registry/ADP/counter-notification slots/records) | all per-interface state |
+| P-N-STREAM-IN | product | ≥1 with a Base format if listener (Milan §6.4) | sink records, discovery SMs, counter-notification slots |
+| P-N-STREAM-OUT | product | ≥1 with a Base format if talker (Milan §6.3) | source records, DA timers, counter-notification slots |
 | P-N-CONTROLLERS | 16 | ≥16 per interface (Milan §5.3.4.2) | registry, monitor timers, fan-out |
 | P-N-CONFIGURATIONS | 1 | ≥1 | index maps, image size |
-| P-N-AUDIO-UNITS / P-N-CLOCK-DOMAINS / P-N-CLOCK-SOURCES | 1 / 1 / 2 | model-driven (≥1 CD, ≥1 CS/CD) | overlay, counters; MVU MCR deferred per [06 §6.9](06_aecp_engine.md#69-mvu-commands) |
+| P-N-AUDIO-UNITS / P-N-CLOCK-DOMAINS / P-N-CLOCK-SOURCES | 1 / 1 / 2 | model-driven (≥1 CD, ≥1 CS/CD) | overlay; MVU MCR deferred per [06 §6.9](06_aecp_engine.md#69-mvu-commands) |
 | P-N-FORMATS-MAX | 16 | ≤46 (IEEE 1722.1-2021 §7.2's 508-octet descriptor maximum with Table 7-8's `formats_offset` 138: (508 − 138) / 8) | descriptor assembly, format tables |
 | P-MAP-SUBSET-CH-MAX | 71 | ≤ 71 at this build: a GET_AUDIO_MAP page must fit the response buffer at the smallest legal P-DESC-LINE-BYTES, 592 B, cdl 592 ([06 §3](06_aecp_engine.md#3-pdu-handling)); Milan §5.4.2.26 permits subsets of up to 176 channels (88 for a redundant device) | audio-map partitioning (the integrator's); a page above it answers `NO_RESOURCES` with no record |
 | P-N-MAP-ENTRIES | product | per port | map RAM |
