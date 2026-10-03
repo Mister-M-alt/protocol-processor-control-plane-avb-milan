@@ -2988,11 +2988,304 @@ struct D3ClockSourcePhase : D3RestorePhase {
     x.dram = image;
   }
 
+  // D3C5 (issue #52): a record 0x0A that cannot be restored falls back to
+  // the image's index, 0, over the suite's three-source image: erased (blank),
+  // corrupt (index 2, legal, with a crc that is not the crc of its bytes) and
+  // read torn (the device ends pass 0's payload READ after one byte). The
+  // first two end COMPLETE, the torn read DEFAULTS with cause 1;
+  // in each the row stays unset, GET_CLOCK_SOURCE reads 0 and the top exports 0.
+  void c5_an_unrestorable_record_keeps_the_image_index() {
+    struct Arm { const char* what; bool erased; bool corrupt; bool torn; };
+    for (const Arm& a : {Arm{"blank", true, false, false}, Arm{"corrupt", false, true, false},
+                         Arm{"torn", false, false, true}}) {
+      x.dram = image;
+      x.erase_nvm();
+      if (!a.erased) {
+        auto rec = d3_record(0x0A, 2, 2);
+        if (a.corrupt) rec[7] ^= 0x01;              // the crc's low byte
+        seed(0x0A, rec);
+      }
+      power_cycle();
+      if (a.torn) {
+        x.nv_rd_region = 0x0A;
+        x.nv_rd_nth = 2;                            // pass 0's payload READ
+        x.nv_rd_after = 1;
+        x.nv_rd_silent = false;
+        x.nv_rd_seen = 0;
+      }
+      x.d->link_up_i = 1;
+      const Boot b = boot(6 * RS_TMO);
+      x.nv_rd_region = -1;
+      const auto* d = x.d;
+      const bool verdict = a.torn ? (d->restore_fail_o && d->rs_cause_o == 1 && !d->restore_rb_o)
+                                  : (!d->restore_fail_o
+                                     && d->dbg_d3_refused_o == (a.corrupt ? 1u : 0u));
+      const uint16_t g = seq++;
+      const auto get = get_clock_source(g);
+      CHECK(b.done > b.release && verdict && !d->dbg_dyn_clk_v_o && d->dbg_dyn_clk_o == 0
+                && d->aecp_clk_src_index_o == 0 && get.size() == 1
+                && get[0] == answer(AECP_SUCCESS, g, AEM_GET_CLOCK_SOURCE, 0),
+            "D3C5 %s: the image's index 0 stays in force: the row unset, GET reads 0 and "
+            "the top exports 0 (fail %u cause %u refused %u, row %u valid %u, export %u)",
+            a.what, unsigned(d->restore_fail_o), unsigned(d->rs_cause_o),
+            unsigned(d->dbg_d3_refused_o), unsigned(d->dbg_dyn_clk_o),
+            unsigned(d->dbg_dyn_clk_v_o), unsigned(d->aecp_clk_src_index_o));
+    }
+  }
+
+  // D3C6 (issue #52): the saved index is in force before the entity is
+  // enabled. With entity_enable_i requested from reset, the top exports the
+  // restored 2 in every cycle the ADP engine's enable is high, the first
+  // included, and GET_CLOCK_SOURCE then reads it.
+  void c6_the_saved_index_precedes_the_enable() {
+    x.dram = image;
+    x.erase_nvm();
+    seed(0x0A, d3_record(0x0A, 2, 2));
+    power_cycle();
+    x.d->link_up_i = 1;
+    x.d->entity_enable_i = 1;
+    long enabled = 0;
+    long early = 0;
+    long first = -1;
+    long c = 0;
+    const Boot b = boot_with(6 * RS_TMO, [&] {
+      ++c;
+      if (!x.d->dbg_adp_enable_o) return;
+      ++enabled;
+      if (first < 0) first = c;
+      early += (x.d->aecp_clk_src_index_o != 2 || !x.d->dbg_dyn_clk_v_o) ? 1 : 0;
+    });
+    const uint16_t g = seq++;
+    const auto get = get_clock_source(g);
+    CHECK(b.done > b.release && first >= 0 && enabled > 0 && early == 0 && get.size() == 1
+              && get[0] == answer(AECP_SUCCESS, g, AEM_GET_CLOCK_SOURCE, 2),
+          "D3C6: the restored index 2 is exported in every cycle the ADP enable is high "
+          "(first at %ld, %ld of %ld cycles not), and GET reads it", first, early, enabled);
+    x.d->entity_enable_i = 0;
+  }
+
   void run() {
     c1_the_last_aaf_source_is_accepted();
     c3_the_aaf_index_is_saved();
     c2_the_count_itself_is_refused();
     c3_the_aaf_index_is_restored();
     c4_a_smaller_image_refuses_the_saved_index();
+    c5_an_unrestorable_record_keeps_the_image_index();
+    c6_the_saved_index_precedes_the_enable();
+  }
+};
+
+// ==== D3V. the volatile set across a power cycle ===========================
+//! Issues #59 (REQ-NOT-005) and #62 (REQ-PER-002). Milan v1.2 5.3.4.1: "The
+//! locked state is cleared by a power cycle"; 5.3.4.2: "The list of
+//! registered controllers is cleared by a power cycle"; 5.3.12: IDENTIFY is 0
+//! "after reset". D3R1 grades one registration; here two controllers
+//! register, the second TIME_LIMITED (IEEE 1722.1-2021 7.4.37.2), the first
+//! locks the entity and sets IDENTIFY, and the device holds a saved binding.
+//! A power cycle (rst_n, the device carried) and both restore walks follow,
+//! and every piece of the volatile set is gone while the binding comes back.
+//! The wrap compresses the TIME_LIMITED window and the lock to 400 ms
+//! (pp_top_wrap.sv), so everything before the cycle happens inside them; the
+//! CONTROLLER_AVAILABLE monitor (Milan 5.4.5.3, 30 to 60 s) is not
+//! compressed, and the watch after the cycle outlasts it.
+struct D3VolatilePhase : D3RestorePhase {
+  static constexpr uint64_t C3_MAC = 0x0202C3C3C3C3ULL;
+  static constexpr uint64_t C3_EID = 0x7777000000000044ULL;
+  static constexpr uint64_t TALKER = 0x00B0B0B0B0B0D3A1ULL;
+  static constexpr uint16_t AEM_DEREGISTER_UNSOL = 0x0025;
+  static constexpr int AECP_NO_RESOURCES = 8;
+  //! the CONTROLLER_AVAILABLE monitor's longest draw (60 s) with U10's margin
+  static constexpr int WATCH_MS = 66000;
+
+  D3VolatilePhase(H& tally, const std::vector<uint8_t>& img,
+                  const std::vector<ImgEnt>& ents)
+      : D3RestorePhase(tally, img, ents) {
+    seq = 0xDA00;
+  }
+
+  //! one command from a controller, then every AECP frame the entity sends
+  //! in the `ms` that follow it, in the order sent
+  std::vector<std::vector<uint8_t>> exchange(uint64_t mac, uint64_t eid, uint16_t s,
+                                             uint16_t op, const std::vector<uint8_t>& pl,
+                                             int ms) {
+    x.q_aecp.clear();
+    x.feed(aecp_frame(OWN_MAC, mac, 0, 0, EID, eid, s, op, pl));
+    for (long c = 0; c < long(ms) * MS_CYC; ++c) x.step();
+    std::vector<std::vector<uint8_t>> got(x.q_aecp.begin(), x.q_aecp.end());
+    x.q_aecp.clear();
+    return got;
+  }
+  //! the status of the solicited response to `mac` carrying `s`, -1 if none
+  static int answer(const std::vector<std::vector<uint8_t>>& got, uint64_t mac, uint16_t s) {
+    for (const auto& f : got)
+      if (f.size() > 37 && fv_u64(f, 0, 6) == mac && (f[36] & 0x80) == 0
+          && fv_u64(f, 34, 2) == s)
+        return (f[16] >> 3) & 0x1F;
+    return -1;
+  }
+  int status_from(uint64_t mac, uint64_t eid, uint16_t op, const std::vector<uint8_t>& pl) {
+    const uint16_t s = seq++;
+    return answer(exchange(mac, eid, s, op, pl, 30), mac, s);
+  }
+  //! every frame in `got` addressed to `mac`, solicited or not
+  static int to(const std::vector<std::vector<uint8_t>>& got, uint64_t mac) {
+    int n = 0;
+    for (const auto& f : got) n += (f.size() >= 6 && fv_u64(f, 0, 6) == mac) ? 1 : 0;
+    return n;
+  }
+  //! the unsolicited SET_CLOCK_SOURCE response a registered controller is
+  //! sent (IEEE 1722.1-2021 7.4.23, 9.3.2.1 u = 1) at its sequence_id `s`
+  static std::vector<uint8_t> note(uint64_t mac, uint64_t eid, uint16_t s, uint16_t index) {
+    auto f = aecp_frame(mac, OWN_MAC, 1, AECP_SUCCESS, EID, eid, s, AEM_SET_CLOCK_SOURCE,
+                        D3ServicePhase::pl_clk(index));
+    f[36] |= 0x80;
+    return f;
+  }
+  static bool has(const std::vector<std::vector<uint8_t>>& got, const std::vector<uint8_t>& want) {
+    return std::find(got.begin(), got.end(), want) != got.end();
+  }
+  static std::vector<uint8_t> lock_pl(bool unlock) {
+    std::vector<uint8_t> p(16, 0);
+    p[3] = unlock ? 0x01 : 0x00;                  // IEEE 1722.1-2021 Table 7-133 UNLOCK
+    return p;
+  }
+  static std::vector<uint8_t> register_pl(bool time_limited) {
+    std::vector<uint8_t> p(4, 0);
+    p[3] = time_limited ? 0x01 : 0x00;            // IEEE 1722.1-2021 Table 7-147
+    return p;
+  }
+
+  //! the volatile set populated, the binding restored from the device: the
+  //! premise of every check after the cycle
+  void populate() {
+    fresh();
+    seed(0x20, binding_record(TALKER, 0x0DA1, CTLR_EID));
+    CHECK(x.boot_to_aecp() && (x.d->acmp_bound_o & 1),
+          "D3V1: the first boot restores sink 0's saved binding (premise)");
+    x.d->link_up_i = 1;
+    const int r1 = status_from(CTLR_MAC, CTLR_EID, AEM_REGISTER_UNSOL, register_pl(false));
+    const int r2 = status_from(C2_MAC, CTLR2_EID, AEM_REGISTER_UNSOL, register_pl(true));
+    const uint16_t s = seq++;
+    const auto got = exchange(C3_MAC, C3_EID, s, AEM_SET_CLOCK_SOURCE,
+                              D3ServicePhase::pl_clk(1), 30);
+    CHECK(r1 == AECP_SUCCESS && r2 == AECP_SUCCESS && answer(got, C3_MAC, s) == AECP_SUCCESS
+              && has(got, note(CTLR_MAC, CTLR_EID, 0, 1))
+              && has(got, note(C2_MAC, CTLR2_EID, 0, 1)),
+          "D3V1: both controllers registered, the second TIME_LIMITED, and a third "
+          "controller's change notifies each at sequence_id 0 (premise)");
+    const int lk = status_from(CTLR_MAC, CTLR_EID, AEM_LOCK_ENTITY, lock_pl(false));
+    const int id = status_from(CTLR_MAC, CTLR_EID, AEM_SET_CONTROL,
+                               D3ServicePhase::pl_identify(255));
+    const int c2 = status_from(C2_MAC, CTLR2_EID, AEM_LOCK_ENTITY, lock_pl(false));
+    CHECK(lk == AECP_SUCCESS && id == AECP_SUCCESS && c2 == AECP_ENTITY_LOCKED
+              && x.d->dbg_lock_held_o && x.d->dbg_identify_o == 255,
+          "D3V1: the first controller holds the lock (the second is refused "
+          "ENTITY_LOCKED) and IDENTIFY reads 255 (premise)");
+  }
+
+  // D3V2-D3V4: the cycle. The device keeps sink 0's binding record; both
+  // walks run from restore_go_i to their terminal. Lock and IDENTIFY are
+  // graded in every cycle from restore_go_i on, so a value that survived the
+  // reset and was cleared later still fails.
+  void the_power_cycle() {
+    power_cycle();
+    long held = 0;
+    long identifying = 0;
+    const Boot b = boot_with(6 * RS_TMO, [&] {
+      held += x.d->dbg_lock_held_o ? 1 : 0;
+      identifying += x.d->dbg_identify_o != 0 ? 1 : 0;
+    });
+    x.d->link_up_i = 1;
+    x.q_acmp.clear();
+    x.feed(acmp_frame(C3_MAC, 10, 0, 0, C3_EID, 0, EID, 0, 0, 0, 0, 0xDA02, 0, 0));
+    const auto g = x.wait_frame(x.q_acmp, 50, [](const std::vector<uint8_t>& f) {
+      return f.size() > 15 && (f[15] & 0x0F) == 11;
+    });
+    CHECK(b.done > b.release && !x.d->restore_fail_o && (x.d->acmp_bound_o & 1)
+              && g.size() > 50 && fv_u64(g, 34, 8) == TALKER,
+          "D3V2: the binding preload still arrives: sink 0 bound to its saved "
+          "talker after the cycle");
+    const auto ctl = ask(AEM_GET_CONTROL, ti(0x001A, 0));
+    CHECK(identifying == 0 && x.d->dbg_identify_o == 0 && ctl.size() > 42 && ctl[42] == 0,
+          "D3V3: IDENTIFY reads 0 in every cycle from restore_go_i on (%ld cycles "
+          "otherwise) and GET_CONTROL reads 0", identifying);
+    CHECK(held == 0 && !x.d->dbg_lock_held_o,
+          "D3V4: aecp_lock_held_o is 0 in every cycle from restore_go_i on (%ld "
+          "cycles held)", held);
+  }
+
+  // D3V5, D3V6: the registry is empty. A third controller's change notifies
+  // neither former controller, and for the monitor's longest draw nothing
+  // at all reaches them: no CONTROLLER_AVAILABLE probe, no TIME_LIMITED
+  // expiry DEREGISTER, no notification.
+  void nothing_reaches_the_former_controllers() {
+    const uint16_t s = seq++;
+    const auto got = exchange(C3_MAC, C3_EID, s, AEM_SET_CLOCK_SOURCE,
+                              D3ServicePhase::pl_clk(2), 30);
+    CHECK(answer(got, C3_MAC, s) == AECP_SUCCESS && to(got, CTLR_MAC) == 0
+              && to(got, C2_MAC) == 0,
+          "D3V5: a third controller's change after the cycle notifies neither "
+          "former controller (%d and %d frames)", to(got, CTLR_MAC), to(got, C2_MAC));
+    int c1 = 0;
+    int c2 = 0;
+    for (long c = 0; c < long(WATCH_MS) * MS_CYC; ++c) {
+      x.step();
+      while (!x.q_aecp.empty()) {
+        const auto& f = x.q_aecp.front();
+        c1 += (f.size() >= 6 && fv_u64(f, 0, 6) == CTLR_MAC) ? 1 : 0;
+        c2 += (f.size() >= 6 && fv_u64(f, 0, 6) == C2_MAC) ? 1 : 0;
+        x.q_aecp.pop_front();
+      }
+    }
+    CHECK(c1 == 0 && c2 == 0,
+          "D3V6: for %d ms after the change no frame reaches either former "
+          "controller: no CONTROLLER_AVAILABLE, no expiry DEREGISTER (%d and %d)",
+          WATCH_MS, c1, c2);
+  }
+
+  // D3V7: the lock is free. LOCK_ENTITY from the second controller answers
+  // SUCCESS, not ENTITY_LOCKED, and holds the lock; its UNLOCK frees it.
+  void the_lock_is_free() {
+    const int lk = status_from(C2_MAC, CTLR2_EID, AEM_LOCK_ENTITY, lock_pl(false));
+    const bool held = x.d->dbg_lock_held_o;
+    const int un = status_from(C2_MAC, CTLR2_EID, AEM_LOCK_ENTITY, lock_pl(true));
+    CHECK(lk == AECP_SUCCESS && held && un == AECP_SUCCESS && !x.d->dbg_lock_held_o,
+          "D3V7: LOCK_ENTITY from the second controller answers SUCCESS (status %d) "
+          "and takes the lock; its UNLOCK frees it", lk);
+  }
+
+  // D3V8, D3V9: every row is free and a row restarts at sequence_id 0.
+  // Sixteen controllers new to the entity all register (Milan 5.3.4.2's
+  // sixteen); one of them leaves and the first former controller registers
+  // again, and its first notification carries sequence_id 0 (Milan
+  // 5.4.2.21: zero when a new entry is created), not the 1 its row would
+  // have reached before the cycle.
+  void every_row_is_free() {
+    int ok_regs = 0;
+    for (uint16_t k = 0; k < 16; ++k) {
+      const uint64_t mac = 0x0202D5000000ULL + k;
+      const uint64_t eid = 0x77770000000D5000ULL + k;
+      ok_regs += status_from(mac, eid, AEM_REGISTER_UNSOL, register_pl(false)) == AECP_SUCCESS;
+    }
+    CHECK(ok_regs == 16, "D3V8: sixteen new controllers all register after the cycle "
+          "(%d of 16 SUCCESS)", ok_regs);
+    const int dr = status_from(0x0202D500000FULL, 0x77770000000D500FULL,
+                               AEM_DEREGISTER_UNSOL, {});
+    const int r1 = status_from(CTLR_MAC, CTLR_EID, AEM_REGISTER_UNSOL, register_pl(false));
+    const uint16_t s = seq++;
+    const auto got = exchange(C3_MAC, C3_EID, s, AEM_SET_CLOCK_SOURCE,
+                              D3ServicePhase::pl_clk(0), 60);
+    CHECK(dr == AECP_SUCCESS && r1 == AECP_SUCCESS && answer(got, C3_MAC, s) == AECP_SUCCESS
+              && has(got, note(CTLR_MAC, CTLR_EID, 0, 0)),
+          "D3V9: the first former controller registers again and its first "
+          "notification carries sequence_id 0, byte-exact");
+  }
+
+  void run() {
+    populate();
+    the_power_cycle();
+    nothing_reaches_the_former_controllers();
+    the_lock_is_free();
+    every_row_is_free();
   }
 };

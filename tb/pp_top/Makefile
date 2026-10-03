@@ -123,6 +123,9 @@ deadline: gsi-build
 d3: gsi-build
 	./obj_dir/Vpp_top_sim --d3-only
 
+volatile: gsi-build
+	./obj_dir/Vpp_top_sim --volatile-only
+
 hazards: gsi-build
 	./obj_dir/Vpp_top_sim --hazards-only
 
@@ -186,5 +189,5 @@ clean:
 
 .PHONY: name-writes run gsi-build gsi-internal maap-internal adp-config aecp-dispatch \
         line-build aecp-line aecp-dispatch-mutants identify-build identify \
-        deadline d3 hazards budget budget-build \
+        deadline d3 volatile hazards budget budget-build \
         aecp-mutants fixture-guards fixture-guards-test line-guards clean

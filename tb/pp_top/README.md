@@ -276,7 +276,17 @@ five into the one canonical tally.
   rest from `d3_mutants.py`. Run in the whole default build, the SET bound
   fixed at three fails D3C's eleven checks and nothing else, and the row
   narrowed to two bits D3C's ten: no other check sets an index or reads a
-  count past the suite's three.
+  count past the suite's three. **D3C5** (issue #52) a record 0x0A that
+  cannot be restored keeps the image's index 0, over the suite's three-source
+  image: erased, corrupt (index 2 with a crc that is not the crc of its bytes),
+  and read torn (the device ends pass 0's payload READ after one byte). The
+  first two end COMPLETE, with 0 and 1 records refused. The
+  torn read ends DEFAULTS, cause 1. In each the row stays unset, and
+  GET_CLOCK_SOURCE and `aecp_clk_src_index_o` read 0. **D3C6** (issue #52)
+  the saved index is in force before the entity is enabled. With
+  `entity_enable_i` requested from reset and record 0x0A carrying 2, the top
+  exports 2 with the row valid in every cycle the ADP engine's enable is high,
+  the first included, and GET_CLOCK_SOURCE then reads 2.
   `restore_done_o` is the COMBINED terminal: the binding walk's release
   alone (S4) frees the listener, never AECP or ADP.
   The dispatch hold runs from reset, so every section that resets and then
@@ -288,6 +298,35 @@ five into the one canonical tally.
   measure (blank and full restores at two memory latencies, the image walk,
   pass-0 and pass-1 faults, a debt-held roll-back, a silent device, CLOSED);
   it records no tally.
+- **D3V: the volatile set across a power cycle** (issues #59 and #62;
+  REQ-NOT-005, REQ-PER-002; Milan v1.2 §5.3.4.1, §5.3.4.2, §5.3.12). This is a
+  fresh model of its own, run by `--volatile-only` (`make volatile`) and in the
+  default run. Its watch outlasts the controller monitor, so it stays out of
+  `--d3-only`. **D3V1** (premise) the device holds sink 0's binding record and
+  the first boot restores it. One controller registers, a second registers
+  TIME_LIMITED (IEEE 1722.1-2021 §7.4.37.2), and a third controller's change
+  notifies each of them at sequence_id 0. The first controller locks the
+  entity (the second is refused ENTITY_LOCKED) and sets IDENTIFY to 255. All of
+  this happens inside the wrap's 400 ms TIME_LIMITED and lock windows. A power
+  cycle follows: `rst_n` with the device carried, then both walks from
+  `restore_go_i`. **D3V2** the binding preload still arrives: sink 0 is bound
+  and GET_RX_STATE answers the saved talker. **D3V3** IDENTIFY reads 0 in every
+  cycle from `restore_go_i` on, and GET_CONTROL reads 0. **D3V4**
+  `aecp_lock_held_o` is 0 in every cycle from `restore_go_i` on. **D3V5** a
+  third controller's change notifies neither former controller. **D3V6** for
+  66,000 ms after it (the monitor's longest 60 s draw, with U10's margin) no
+  frame of any kind reaches either former controller: no CONTROLLER_AVAILABLE,
+  no TIME_LIMITED expiry DEREGISTER and no notification. **D3V7** LOCK_ENTITY
+  from the second controller answers SUCCESS and takes the lock, and its
+  UNLOCK frees it. **D3V8** sixteen controllers new to the entity all register
+  (Milan §5.3.4.2's sixteen). **D3V9** one of them deregisters and the first
+  former controller registers again. Its first notification carries
+  sequence_id 0, byte-exact (Milan §5.4.2.21: zero when a new entry is
+  created), not the 1 its row would have reached before the cycle. The
+  negative controls delete the registry's valid bits, the lock and IDENTIFY
+  from their reset branches (`KL_aecp_notify.sv` `valid_r`, `lk_held_r`;
+  `KL_aecp_dyn_state.sv` `ident_r`), from `d3_mutants.py` (mutation record
+  below).
 - **NW: accepted live name writes (issue #120).** The top's `aecp_name_wr_o`
   is sampled on every accepting clock edge. Independent byte comparisons
   predict one changed lane, all eight changed lanes and an unchanged name;
@@ -674,10 +713,16 @@ five into the one canonical tally.
   views fall back to the image default 1. AD7 (review R406-1 F-1): a SUCCESS
   SET_CONFIGURATION(0), then a reset with nothing to restore (an erased device):
   the valid flag clears with the row, and all three views carry the image default
-  1. `make adp-config` runs this section alone; the
-  default run includes it. The mutation record is `tb/adp_engine`'s campaign
-  (`make -C tb/adp_engine mutants`), which runs this section against each
-  patch.
+  1. AD8 (issue #63): record 0x00 carries configuration 0 with a crc that is not
+  the crc of its bytes. The frame refuses it, the walk ends COMPLETE with one
+  record refused and the row unset, and all three views carry the image default
+  1. AD9 (issue #63): the same record uncorrupted, but the device ends pass 0's
+  payload READ of it after one byte. The walk fails whole, cause 1, nothing
+  applied, and all three views carry 1. `make adp-config` runs
+  this section alone; the default run includes it. The mutation record is
+  `tb/adp_engine`'s campaign (`make -C tb/adp_engine mutants`), which runs this
+  section against each patch. AD7 to AD9's restore controls are D3 writer
+  defects, so `d3_mutants.py` plants them and runs this section (`--adp-only`).
 - **DL** **the AECP transaction deadline** (issue #81, GAP-07; 03 §6 rule (e),
   08 §4; IEEE 1722.1-2021 §9.3.2.6, Milan v1.2 §5.4.3.4), on a fresh processor
   of its own. The normalizer stamps each AECP transaction's deadline
@@ -894,7 +939,8 @@ and M34 the same 2 as before.
 
 `python3 d3_mutants.py --output DIR [--jobs N]` plants each control below in its own
 extract of `hdl/`, `tb/common/` and this directory, builds `gsi-build`, runs
-`--d3-only`, and counts the mutant KILLED only when the run completes with its
+`--d3-only` (the controls of AD7 to AD9 run `--adp-only`, those of D3V
+`--volatile-only`, each with a golden of its own), and counts the mutant KILLED only when the run completes with its
 tally, exits non-zero and every named check fails; a golden extract runs first and
 must pass. The same driver runs the binding manager's three DR2c controls, the
 arbiter's issue-cycle control and its seven own-contract controls (N11) in `tb/acmp_nvm`
@@ -946,7 +992,7 @@ D3C4 arm. The last four rows are D3C's own controls.
 | `desc_error_is_a_refusal` | a rule's descriptor error read as a refusal | `D3R7` | 6 |
 | `no_restore_watchdog` | the per-wait deadline removed | `D3R8: a READ granted`, `D3R8b` | 7 |
 | `restore_writes_are_changes` | the snoop taps the shared bus, so restore writes are changes | `D3R1: no restore write is a change` | 1 |
-| `enable_not_released_by_restore` | ADP enabled by the request alone | `D3R1: the enable requested from reset` | 4 |
+| `enable_not_released_by_restore` | ADP enabled by the request alone | `D3R1: the enable requested from reset`, `D3C6` | 5 |
 | `done_without_d3` | restore done without the D3 walk | `D3R1: the enable requested from reset`, `D3R1: COMPLETE` | 45 |
 | `blank_ignores_d3` | restore blank ignores the D3 walk | `D3R1: COMPLETE` | 1 |
 | `store_not_cleared` | the sampling-rate row and its valid flag not reset | `D3R1: every row at its reset value` | 17 |
@@ -991,6 +1037,15 @@ D3C4 arm. The last four rows are D3C's own controls.
 | `clks_restore_count_narrowed` | the restore rule reads only the low three bits of `clock_sources_count` | `D3C3 restore` | 2 |
 | `clks_restore_index_narrowed` | the restore rule compares only the low three bits of the saved index | `D3C4 at the count`, `D3C4 above the count` | 4 |
 | `clks_restore_bound_inclusive` | the restore rule accepts an index equal to the count (`<=` for `<`) | `D3C4 at the count` | 4 |
+| `clks_crc_ignored` | the frame's crc compare bypassed for the clock-source group (issue #52) | `D3C5 corrupt` | 1 |
+| `torn_read_not_an_abort` | a torn read is not an abort (issues #52, #63) | `D3C5 torn` | 2 |
+| `blank_applies_zero` | a blank record applies a zero value with its valid flag (issues #52, #63) | `D3C5 blank` | 15 |
+| `cfg_crc_ignored` | the frame's crc compare bypassed for the configuration record; run `--adp-only` (issue #63) | `AD8: the first ENTITY_AVAILABLE` | 4 |
+| `torn_read_not_an_abort_cfg` | `torn_read_not_an_abort`, run `--adp-only` | `AD9: the torn read` | 1 |
+| `blank_applies_zero_cfg` | `blank_applies_zero`, run `--adp-only` | `AD7: the first ENTITY_AVAILABLE` | 7 |
+| `registry_survives_reset` | `valid_r <= '0` deleted from `KL_aecp_notify`'s reset branch; run `--volatile-only` (issue #59) | `D3V5`, `D3V8`, `D3V9` | 4 |
+| `lock_survives_reset` | `lk_held_r <= 1'b0` deleted from the same reset branch; run `--volatile-only` (issue #62) | `D3V4`, `D3V7` | 4 |
+| `identify_survives_reset` | `ident_r` deleted from `KL_aecp_dyn_state`'s reset branch; run `--volatile-only` (issue #62) | `D3V3` | 1 |
 
 ### AECP deadline and hazard-class controls (lane C5a): `aecp_mutants.py`
 
