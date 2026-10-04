@@ -108,7 +108,11 @@ module KL_srp_admission #(
   logic [SRC_W_C-1:0]          cidx_q2_r;
   logic [16:0]                 frame_bytes_r;   // W = clamped F + wire overhead
   logic [32:0]                 iv_bytes_r;      // W x MaxIntervalFrames
-  logic [N_SOURCES_P-1:0][31:0] slope_q_r;
+  // One write (stage 3) and one read (the admission walk) per cycle, so the
+  // slopes map to distributed RAM instead of a per-source read multiplexer
+  // (issue #230). No reset: a slope is read only with its slope_valid_r
+  // bit, which is written with it.
+  (* ram_style = "distributed" *) logic [31:0] slope_q_r [0:N_SOURCES_P-1];
   logic                         valid_q1_r, valid_q2_r;
   logic [N_SOURCES_P-1:0]       slope_valid_r;
   logic [N_SOURCES_P-1:0]       invalid_w;
@@ -130,7 +134,6 @@ module KL_srp_admission #(
       cidx_q2_r     <= '0;
       frame_bytes_r <= '0;
       iv_bytes_r    <= '0;
-      slope_q_r     <= '0;
       valid_q1_r    <= 1'b0;
       valid_q2_r    <= 1'b0;
       slope_valid_r <= '0;
@@ -153,8 +156,13 @@ module KL_srp_admission #(
       // stage 2: interval bytes (16 b x 17 b -> < 2^33)
       iv_bytes_r    <= {16'd0, interval_frames_i[cidx_q1_r]}
                        * {16'd0, frame_bytes_r};
-      // stage 3: saturating 32-bit slope (see banner) — iv <= IV_MAX_C is
-      // the exact product (67108 x 64000 < 2^32)
+    end
+  end
+
+  // stage 3: saturating 32-bit slope (see banner) — iv <= IV_MAX_C is the
+  // exact product (67108 x 64000 < 2^32)
+  always_ff @(posedge clk_i) begin : slope_store
+    if (rst_n) begin
       slope_q_r[cidx_q2_r] <= (iv_bytes_r > IV_MAX_C) ? SLOPE_SAT_C
                                                       : slope_prod_w[31:0];
     end

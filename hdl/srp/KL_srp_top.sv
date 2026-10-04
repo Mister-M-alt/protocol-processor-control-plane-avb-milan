@@ -944,7 +944,14 @@ module KL_srp_top
   localparam int unsigned TFW_C = 1 + SLOT_AW_P + 8 + 32;
   localparam int unsigned TFD_C = 32;
 
-  logic [TFW_C-1:0] tf_ram_r [0:1][0:TFD_C-1];
+  // One memory per FIFO, each with one write port and one read port, so each
+  // maps to distributed RAM (a two-dimensional array written for both FIFOs
+  // in one process mapped to 2 x 32 x TFW_C flip-flops and a read
+  // multiplexer, issue #230). DISTRIBUTED, NOT BLOCK: without the attribute
+  // the registered read made the synthesiser spend a RAMB36 on each 32-word
+  // FIFO. No reset: a word is read only after its push.
+  (* ram_style = "distributed" *) logic [TFW_C-1:0] tf_tk_ram_r [0:TFD_C-1];
+  (* ram_style = "distributed" *) logic [TFW_C-1:0] tf_ls_ram_r [0:TFD_C-1];
   logic [TFW_C-1:0] tf_q_r   [0:1];
   logic [4:0]       tf_wptr_r [0:1];
   logic [4:0]       tf_rptr_r [0:1];
@@ -956,20 +963,24 @@ module KL_srp_top
   assign tf_push_w[0] = tk_arm_v_w && (tf_cnt_r[0] != 6'(TFD_C));
   assign tf_push_w[1] = ls_arm_v_w && (tf_cnt_r[1] != 6'(TFD_C));
 
-  always_ff @(posedge clk_i) begin : tf_write
+  always_ff @(posedge clk_i) begin : tf_tk_write
     if (tf_push_w[0]) begin
-      tf_ram_r[0][tf_wptr_r[0]]
+      tf_tk_ram_r[tf_wptr_r[0]]
         <= {tk_arm_cancel_w, tk_arm_slot_w, tk_arm_owner_w, tk_arm_dl_w};
     end
+  end
+
+  always_ff @(posedge clk_i) begin : tf_ls_write
     if (tf_push_w[1]) begin
-      tf_ram_r[1][tf_wptr_r[1]]
+      tf_ls_ram_r[tf_wptr_r[1]]
         <= {ls_arm_cancel_w, ls_arm_slot_w, ls_arm_owner_w, ls_arm_dl_w};
     end
   end
 
+  // registered read of each FIFO's head (the RAM's async read + this flop)
   always_ff @(posedge clk_i) begin : tf_read
-    tf_q_r[0] <= tf_ram_r[0][tf_rptr_r[0]];
-    tf_q_r[1] <= tf_ram_r[1][tf_rptr_r[1]];
+    tf_q_r[0] <= tf_tk_ram_r[tf_rptr_r[0]];
+    tf_q_r[1] <= tf_ls_ram_r[tf_rptr_r[1]];
   end
 
   typedef enum logic {

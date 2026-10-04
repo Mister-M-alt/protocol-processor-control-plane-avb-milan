@@ -11,7 +11,10 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **2200 checks**.
+`make` = build + run, exit 0 = PASS, **2200 checks**. `make` first runs the
+timer-arm FIFO arms at four shapes
+([below](#timer-arm-fifos-at-four-shapes-issue-230)), then this suite, whose
+tally is the last line.
 
 Expectations are independent: an MRPDU builder/parser written here from
 802.1Q §10.8.1.2 / §35.2.2, a Σ-slope model transcribing the Milan v1.2
@@ -241,8 +244,9 @@ when the P8 arm-delay sweep brought the complete run to 185,012,669); the
 encoder and stream-FSM
 walks use finite cycle bounds. Budget exits and missing tallies are unproven,
 not kills. `RUN_ARGS=phases`, `edge`, `peer`, `congestion`, `guards`,
-`armdelay`, `restart`, `timers` or `join` selects one group for a focused run; plain `make` runs
-every existing and new check. The stream-FSM suite independently walks every
+`armdelay`, `restart`, `timers` or `join` selects one group for a focused run,
+`RUN_ARGS=storage` the timer-arm FIFO arms; plain `make` runs every existing and
+new check. The stream-FSM suite independently walks every
 applicant state with same-edge sLA/join acceptance.
 
 Round 1 measurement: all five positive controls pass; all 36
@@ -489,3 +493,140 @@ Mutation-proven 2026-09-29 through `mutants.py` (checked-in patches):
 | `count-up-unsends` | srp_encoder | 2 | W4 |
 | `tx-strobe-any-app` (the transmission strobe also fires for MSRP) | srp_encoder | 1 | W1 |
 | `listener-lane-cut` (`vu_sel_ls_w` forced 0, the #65 acceptance arm) | srp_top join | 3 | R4 |
+
+## Timer-arm FIFOs at four shapes (issue #230)
+
+Each stream FSM's timer ops reach the one merged arm port through a FIFO of its
+own: 32 words of distributed RAM since issue #230
+([10 §5.1](../../docs/architecture/10_srp_engine.md)), issued round-robin, one
+word every two clocks. `store_main.cpp` checks them on the real engine and its
+real services (`srp_store_wrap.sv`, time-compressed as above) at sources/sinks
+1/1, 2/2, 3/5 and 9/9. A scoreboard reads both FSMs' arm faces (what each FIFO
+is offered) and the merged face (what leaves) through read-only probes, and
+holds the FIFO contract: every op an FSM offers leaves the merged face exactly
+once, in that FSM's order and unmodified, except an op offered while its FIFO
+holds 32 words, which the full guard refuses.
+
+The first arm brings every source and sink up with a registration from the
+peer and waits for an own LeaveAll. Its sLA ages both registrar arrays in one
+clock, so both FSMs offer an op in the same clock (checked). On a LeaveAll clock
+where the round-robin serves the listener FIFO first, a re-declaration of
+source 0 is accepted, and its gate op cancels the leave timer that LeaveAll just
+started. The talker FIFO therefore holds two words when the merged face selects
+it (checked). On a LeaveAll where the round-robin points at the talker FIFO, the
+peer re-joins all but source 0, whose leave timer runs out instead. That makes
+an odd number of issues, so the next LeaveAll finds the listener FIFO first. At
+every shape the second LeaveAll is the one.
+
+The second arm reaches the full guard, which no port sequence reaches: the issue
+drains a word every two clocks, and the registrar walks offer at most one op per
+source or sink. `srp_store_wrap` holds the merged issue in TM_SEL while
+`tm_stall_i` is high: **the one forced state in these arms**, and only in this
+arm. Peer LeaveAll MRPDUs then offer each FIFO two ops per stream (the LeaveAll
+ages, the re-join cancels) until each has been offered 36. Then the stall is
+released.
+
+| Check | What it proves |
+|---|---|
+| TF1 | the talker FIFO issues every op it accepted once, in its order and unmodified: no word lost, reordered, altered, duplicated or invented, and every queued word drains |
+| TF2 | the same for the listener FIFO |
+| TF3 | no op is refused while the issue runs unforced |
+| TF4 | held, the talker FIFO accepts exactly 32 ops and refuses the rest; released, it issues those 32 in order, unmodified |
+| TF5 | the same for the listener FIFO |
+
+Preconditions are checks too: every registrar IN before each arm, an own
+LeaveAll within 16 s, both FSMs offering in one clock, the re-declaration on a
+LeaveAll clock, a two-word talker FIFO at a selection, more than 32 offers per
+FIFO while held, and no FSM op issued while held. `make RUN_ARGS=storage` runs
+these arms alone. Every part runs even after a failing one, and every failing
+check names its shape (`[sources/sinks]`). Measured at the head, 15 checks at
+each shape, all PASS:
+
+| Shape | First arm: offered (= issued), talker / listener | Clocks with both offering | Two-word selections, talker / listener | Held arm: MRPDUs, offered, refused |
+|---|---|---:|---|---|
+| 1/1 | 3 / 4 | 2 | 1 / 0 | 18; 36 / 36; 4 / 4 |
+| 2/2 | 7 / 8 | 4 | 2 / 1 | 9; 36 / 36; 4 / 4 |
+| 3/5 | 11 / 20 | 7 | 4 / 7 | 6; 36 / 60; 4 / 28 |
+| 9/9 | 35 / 36 | 18 | 19 / 15 | 2; 36 / 36; 4 / 4 |
+
+The build waives three Verilator warnings for this wrap alone (the Makefile
+says which and why). Verilator 5.050 faults on a hierarchical reference to
+`KL_srp_top`'s enum item `TM_SEL`, so the wrap names its encoding (1'b0).
+
+## Issue #230 storage controls
+
+The probes of both #230 reviews (R458-1 `lockstep/probes.py` and R458-3's two
+ready-handshake probes, R459-1 `make_controls.py` and its stall probe) and the
+lane's own lockstep controls are killed controls of `mutants.py`, one
+checked-in patch per distinct edit: 35 patches, where a probe and a control with
+the same edit share one. The new arms carry no group of the suite above:
+`storage` runs the FIFO arms, `walk` the
+[walk-record arms](../srp_stream_fsms/README.md#walk-records-at-both-elaboration-arms-issue-230),
+and the slope controls run the [admission suite](../srp_admission/README.md) at
+its five shapes. The assertion-coverage check now also requires TF1-TF5 and
+WK1-WK10.
+
+Failing checks per shape, from the campaign's receipts. "n/e": the edited arm
+is not elaborated at that shape. "equivalent": with one source or one sink the
+edit changes nothing (it names source or sink 0, the only one). "equivalent in
+simulation": at one sink the parked control index (WK6) is the face's only
+out-of-range value, and Verilator reads a single 64-bit packed element at an
+out-of-range index as element 0, so the edit reads sink 0 there too; the 48-bit
+DA of `wid-flops-da-of-gate-source` does not alias, and that edit is caught at
+1/1.
+
+| Control | From | Edit | Named failing checks | 1/1 | 2/2 | 3/5 | 9/9 | Caught at |
+|---|---|---|---|---:|---:|---:|---:|---|
+| `tf-heads-swapped` | A523, R458-1 | each FIFO head reads the other FIFO's memory | TF1, TF2 | 2 | 2 | 2 | 2 | 4 of 4 |
+| `tf-head-at-write-pointer` | A523 | talker head read at `wptr - 1`, the newest word | TF1, TF4 | 2 | 2 | 2 | 2 | 4 of 4 |
+| `tf-listener-push-dropped` | A523 | listener push lost when both FSMs push | TF2 | 1 | 1 | 1 | 1 | 4 of 4 |
+| `tf-ls-written-at-tk-pointer` | R458-1 | listener word written at the talker's write pointer | TF2, TF5 | 2 | 2 | 2 | 2 | 4 of 4 |
+| `tf-tk-head-read-ahead` | R458-1, R459-1 (`tf-tk-head-reads-next`) | talker head read at `rptr + 1` | TF1, TF4 | 4 | 4 | 3 | 2 | 4 of 4 |
+| `tf-ls-head-reads-tk-ram` | R459-1 | listener head reads the talker memory | TF1, TF2, TF3, TF4, TF5 | 4 | 4 | 4 | 5 | 4 of 4 |
+| `tf-tk-write-at-rptr` | R459-1 | talker word written at the read pointer | TF1, TF4 | 2 | 2 | 2 | 2 | 4 of 4 |
+| `tf-full-guard-31` | R458-1 | talker full guard at 31 words | TF4 | 1 | 1 | 1 | 1 | 4 of 4 |
+| `tf-tk-write-ignores-full` | R459-1 (stall probe) | talker memory written while full | TF4 | 1 | 1 | 1 | 1 | 4 of 4 |
+| `tf-ls-write-ignores-full` | R459-1 | listener memory written while full | TF5 | 1 | 1 | 1 | 1 | 4 of 4 |
+| `walk-record-written-on-close` | A523, R459-1 (`wtsp-written-on-close`) | walk records also written by a gate close | WK3 | 1 | 1 | 1 | 1 | 4 of 4 |
+| `wtsp-first-open-only` | A523, R458-1 | walk TSpec written only by a source's first open | WK2, WK3, WK4, WK9 | 4 | 6 | 8 | 20 | 4 of 4 |
+| `wtsp-read-at-gate-source` | A523, R458-1 | walk TSpec read at the gate source | WK1, WK2, WK4, WK9 | 1 | 6 | 13 | 49 | 4 of 4 |
+| `wtsp-read-at-source-0` | R459-1 | walk TSpec read at source 0 | WK1, WK2, WK3, WK4, WK5, WK9 | 0 (equivalent) | 8 | 14 | 50 | 3 of 4 |
+| `wtsp-latency-field-shifted` | A523 | latency read one bit off (`wtsp_w[32:1]`) | WK1, WK2, WK3, WK4, WK5, WK9 | 8 | 14 | 20 | 56 | 4 of 4 |
+| `wtsp-latency-shifted` | R458-1 | latency shifted left one bit | WK1, WK2, WK3, WK4, WK5, WK9 | 8 | 14 | 20 | 56 | 4 of 4 |
+| `wtsp-rank-dropped` | R458-1 | rank bit published as 0 | WK1, WK2, WK3, WK4, WK5, WK9 | 4 | 8 | 9 | 28 | 4 of 4 |
+| `wtsp-prio-rank-swapped` | R459-1 | priority and rank bits rotated | WK1, WK2, WK3, WK4, WK5, WK9 | 7 | 13 | 19 | 48 | 4 of 4 |
+| `wid-ram-first-open-only` | A523, R458-1 | RAM {stream_id, DA, VLAN} written only by the first open | WK2, WK3, WK4, WK9 | 0 (n/e) | 0 (n/e) | 8 | 20 | 2 of 4 |
+| `wid-ram-read-at-gate-source` | A523, R458-1 | RAM {stream_id, DA, VLAN} read at the gate source | WK1, WK2, WK4, WK9 | 0 (n/e) | 0 (n/e) | 13 | 49 | 2 of 4 |
+| `wid-ram-read-neighbour` | R459-1 | RAM {stream_id, DA, VLAN} read at the previous source | WK1, WK2, WK3, WK4, WK5, WK9 | 0 (n/e) | 0 (n/e) | 20 | 56 | 2 of 4 |
+| `wid-flops-da-of-gate-source` | A523, R458-1 | flop arm reads the gate source's DA | WK1, WK2, WK4, WK9 | 1 | 6 | 0 (n/e) | 0 (n/e) | 2 of 4 |
+| `wid-flops-sid-of-source-0` | R458-1 | flop arm reads source 0's stream_id | WK1, WK2, WK3, WK4, WK5, WK9 | 0 (equivalent) | 8 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wid-flops-vid-of-source-0` | R459-1 | flop arm reads source 0's VLAN | WK1, WK2, WK3, WK4, WK5, WK9 | 0 (equivalent) | 8 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `talker-vid-unreset` | A523 | the matcher VLAN loses its reset (a stored value read without its valid bit) | WK5 | 1 | 1 | 1 | 1 | 4 of 4 |
+| `wsid-ram-first-settle-only` | A523, R458-1 | RAM stream_id written only by the first settle | WK8, WK10 | 0 (n/e) | 0 (n/e) | 6 | 10 | 2 of 4 |
+| `wsid-ram-written-on-teardown` | A523, R458-1, R459-1 | RAM stream_id also written by a teardown | WK7 | 0 (n/e) | 0 (n/e) | 1 | 1 | 2 of 4 |
+| `wsid-flops-of-control-sink` | A523, R458-1 | flop arm reads the control sink's stream_id | WK6, WK8, WK10 | 0 (equivalent in simulation) | 5 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wsid-flops-read-sink-0` | R459-1 | flop arm reads sink 0's stream_id | WK6, WK7, WK8, WK10 | 0 (equivalent) | 6 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wtsp-write-ignores-ready` | R458-3 (`r3-wtsp-write-ignores-ready`) | walk records written by a gate open not yet taken (`gate_valid_i` for `gate_acc_w`) | WK9 | 1 | 1 | 1 | 1 | 4 of 4 |
+| `wsid-write-ignores-ready` | R458-3 (`r3-wsid-write-ignores-ready`) | RAM stream_id written by a settle not yet taken (`ctl_valid_i` for `ctl_acc_w`) | WK10 | 0 (n/e) | 0 (n/e) | 1 | 1 | 2 of 4 |
+
+The slope controls, at the admission suite's five shapes. The suite stops at
+its first failing shape, so the campaign sees N = 2; the counts at 3, 5 and 8
+were measured one shape at a time in scratch copies:
+
+| Control | From | Edit | N = 1 | N = 2 | N = 3 | N = 5 | N = 8 | Caught at |
+|---|---|---|---:|---:|---:|---:|---:|---|
+| `slope-stored-at-stage-2-index` | A523, R458-1, R459-1 (`slope-store-at-stage-1-index`) | slope written at `cidx_q1_r`, not `cidx_q2_r` | 0 (equivalent) | 1,333 of 12,615 | 4,109 of 41,012 | 12,760 of 201,073 | 38,919 of 991,231 | 4 of 5 |
+| `slope-stored-at-source-0` | R458-1 | every slope written to source 0 | 0 (equivalent) | 1,521 of 12,615 | 3,915 of 41,012 | 12,415 of 201,073 | 39,056 of 991,231 | 4 of 5 |
+| `slope-store-source-0-only` | A523 | only source 0's slope stored | 0 (equivalent) | 1,201 of 12,615 | 3,163 of 41,012 | 10,281 of 201,073 | 33,958 of 991,231 | 4 of 5 |
+| `slope-read-source-0` | R459-1 | the admission walk reads source 0's slope | 0 (equivalent) | 578 of 12,615 | 1,683 of 41,009 | 6,125 of 201,068 | 22,202 of 991,223 | 4 of 5 |
+
+"A523" is the lane's round-1 lockstep controls, and "R458-1", "R459-1" and "R458-3"
+are the reviews' probes, by their names there. Every control is caught at every shape
+where its arm is elaborated and the edit is not equivalent by construction, except
+`wsid-flops-of-control-sink` at 1/1: there Verilator 5.050 reads the out-of-range 64-bit
+element as element 0 (equivalent in simulation, above), as it would any 64-bit stream_id
+read at an idle face at one context; 2/2 catches those edits. The
+three edits R459-1 planted as equivalent leave every committed suite passing, as
+an equivalent edit must: `tf-tk-same-entry-bypass` (the head bypasses the
+memory when the write and read pointers meet), and `wid-threshold-ram-from-1`
+and `wid-threshold-flops-always` (either walk arm at every shape).

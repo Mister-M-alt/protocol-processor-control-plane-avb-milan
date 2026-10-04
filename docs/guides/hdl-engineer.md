@@ -85,7 +85,13 @@ The deliberate exceptions are the CAM-shaped structures, where every entry must 
 compared in the same cycle — [`KL_pp_scoreboard`](../../hdl/packet_engine/KL_pp_scoreboard.sv),
 [`KL_pp_originator`](../../hdl/packet_engine/KL_pp_originator.sv),
 [`KL_pp_event_router`](../../hdl/packet_engine/KL_pp_event_router.sv) and the two SRP
-stream-FSM arrays. Those are flops on purpose, and their banners say why.
+stream-FSM arrays. Those are flops on purpose, and their banners say why. The
+per-context records the SRP walks read one context per cycle (the stream FSMs' tick
+walks and the admission walk) are distributed RAM read in the cycle of their address,
+with no latency: the talker's `wtsp_r` (and `g_wid_ram.wid_r` from three sources), the
+listener's `g_wsid_ram.wsid_r` (from three sinks) and the admission's `slope_q_r`,
+beside the timer-arm FIFOs `tf_tk_ram_r` and `tf_ls_ram_r`, whose read is registered
+([10 §5.1](../architecture/10_srp_engine.md), issue #230).
 
 A few memories are distributed RAM read **asynchronously**, because their consumer
 needs the entry in the cycle it asks: the µCPU operand file in

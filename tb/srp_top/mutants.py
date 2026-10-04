@@ -31,8 +31,8 @@ MUTANTS = [
     ('before-slot', 'srp_top', 'edge', 'L1:'),
     ('talker-no-own', 'srp_top', 'phases', 'K2:'),
     ('listener-no-own', 'srp_top', 'phases', 'K11:'),
-    ('talker-lost-txla', 'srp_stream_fsms', '', 'T QA txla=2:'),
-    ('listener-lost-txla', 'srp_stream_fsms', '', 'L QA txla=2:'),
+    ('talker-lost-txla', 'srp_stream_fsms', 'suite', 'T QA txla=2:'),
+    ('listener-lost-txla', 'srp_stream_fsms', 'suite', 'L QA txla=2:'),
     ('talker-strict-lv', 'srp_top', 'phases', 'K2:'),
     ('listener-strict-lv', 'srp_top', 'phases', 'K11:'),
     ('listener-sid-ignored', 'srp_top', 'phases', 'K5:'),
@@ -100,13 +100,56 @@ MUTANTS = [
     ('draw-kind-0', 'srp_top', 'timers', 'Q3:'),
     # issue #65: MVRP join before the stream, both halves
     ('licence-ignores-join', 'srp_top', 'join', 'R1:'),
-    ('licence-ignores-join', 'srp_stream_fsms', '', 'T not ACTIVE while the VID'),
+    ('licence-ignores-join', 'srp_stream_fsms', 'suite', 'T not ACTIVE while the VID'),
     ('join-sent-at-handover', 'srp_top', 'join', 'R1:'),
     ('count-up-unsends', 'srp_top', 'join', 'R2:'),
     ('listener-lane-cut', 'srp_top', 'join', 'R4:'),
     ('join-sent-at-handover', 'srp_encoder', '', 'W2 New VID 7 handed over'),
     ('count-up-unsends', 'srp_encoder', '', 'W4 a second user'),
     ('tx-strobe-any-app', 'srp_encoder', '', 'W1 no strobe for an MSRP'),
+    # issue #230: the storage paths at both elaboration arms. The timer-arm
+    # FIFOs (store_main.cpp, sources/sinks 1/1, 2/2, 3/5, 9/9) ...
+    ('tf-heads-swapped', 'srp_top', 'storage', 'TF1:'),
+    ('tf-head-at-write-pointer', 'srp_top', 'storage', 'TF1:'),
+    ('tf-listener-push-dropped', 'srp_top', 'storage', 'TF2:'),
+    ('tf-ls-written-at-tk-pointer', 'srp_top', 'storage', 'TF2:'),
+    ('tf-tk-head-read-ahead', 'srp_top', 'storage', 'TF1:'),
+    ('tf-ls-head-reads-tk-ram', 'srp_top', 'storage', 'TF2:'),
+    ('tf-tk-write-at-rptr', 'srp_top', 'storage', 'TF1:'),
+    ('tf-full-guard-31', 'srp_top', 'storage', 'TF4:'),
+    ('tf-tk-write-ignores-full', 'srp_top', 'storage', 'TF4:'),
+    ('tf-ls-write-ignores-full', 'srp_top', 'storage', 'TF5:'),
+    # ... the walk records (walk_main.cpp, the same four shapes) ...
+    ('walk-record-written-on-close', 'srp_stream_fsms', 'walk', 'WK3:'),
+    ('wtsp-first-open-only', 'srp_stream_fsms', 'walk', 'WK2:'),
+    ('wtsp-read-at-gate-source', 'srp_stream_fsms', 'walk', 'WK1:'),
+    ('wtsp-read-at-source-0', 'srp_stream_fsms', 'walk', 'WK1:'),
+    ('wtsp-latency-field-shifted', 'srp_stream_fsms', 'walk', 'WK1:'),
+    ('wtsp-latency-shifted', 'srp_stream_fsms', 'walk', 'WK1:'),
+    ('wtsp-rank-dropped', 'srp_stream_fsms', 'walk', 'WK1:'),
+    ('wtsp-prio-rank-swapped', 'srp_stream_fsms', 'walk', 'WK1:'),
+    ('wid-ram-first-open-only', 'srp_stream_fsms', 'walk', 'WK2:'),
+    ('wid-ram-read-at-gate-source', 'srp_stream_fsms', 'walk', 'WK1:'),
+    ('wid-ram-read-neighbour', 'srp_stream_fsms', 'walk', 'WK1:'),
+    ('wid-flops-da-of-gate-source', 'srp_stream_fsms', 'walk', 'WK1:'),
+    ('wid-flops-sid-of-source-0', 'srp_stream_fsms', 'walk', 'WK1:'),
+    ('wid-flops-vid-of-source-0', 'srp_stream_fsms', 'walk', 'WK1:'),
+    ('talker-vid-unreset', 'srp_stream_fsms', 'walk', 'WK5:'),
+    ('wsid-ram-first-settle-only', 'srp_stream_fsms', 'walk', 'WK8:'),
+    ('wsid-ram-written-on-teardown', 'srp_stream_fsms', 'walk', 'WK7:'),
+    ('wsid-flops-of-control-sink', 'srp_stream_fsms', 'walk', 'WK6:'),
+    ('wsid-flops-read-sink-0', 'srp_stream_fsms', 'walk', 'WK6:'),
+    ('wtsp-write-ignores-ready', 'srp_stream_fsms', 'walk', 'WK9:'),
+    ('wsid-write-ignores-ready', 'srp_stream_fsms', 'walk', 'WK10:'),
+    # ... and the admission slopes (the admission suite, 1 to 8 sources)
+    ('slope-stored-at-stage-2-index', 'srp_admission', '',
+     'round publishes the greedy walk over every current declaration'),
+    ('slope-stored-at-source-0', 'srp_admission', '',
+     'round publishes the greedy walk over every current declaration'),
+    ('slope-store-source-0-only', 'srp_admission', '',
+     'round publishes the greedy walk over every current declaration'),
+    ('slope-read-source-0', 'srp_admission', '',
+     'round publishes the greedy walk over every current declaration'),
 ]
 
 
@@ -138,7 +181,7 @@ def trial(job: tuple[str | None, str, str]) -> tuple[int, str]:
     with tempfile.TemporaryDirectory(prefix="srp-leaveall-") as tmp:
         tree = Path(tmp)
         shutil.copytree(ROOT / "hdl", tree / "hdl")
-        for name in ("common", "srp_top", "srp_stream_fsms", "srp_encoder"):
+        for name in ("common", "srp_top", "srp_stream_fsms", "srp_encoder", "srp_admission"):
             shutil.copytree(ROOT / "tb" / name, tree / "tb" / name,
                             ignore=shutil.ignore_patterns("obj_*", "__pycache__"))
         if label is not None:
@@ -198,7 +241,8 @@ def main() -> int:
     passed, total, covered = campaign(args.output, selected, args.jobs)
     if not args.only:
         expected = {f"{group}{i}" for group, count in
-                    [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4)]
+                    [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
+                     ("TF", 5), ("WK", 10)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1
