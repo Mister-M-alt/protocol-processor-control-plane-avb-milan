@@ -538,16 +538,25 @@ internal are consumed inside the processor and add no top-level ports.
 ## 7. Class E — management side-port
 
 Bus-agnostic single-master register/memory port; any host bridge (APB/AXI-lite/Avalon/
-JTAG/testbench) maps 1:1 onto it. Word addressed, 32-bit data.
+JTAG/testbench) maps 1:1 onto it. Word addressed, 32-bit data. The landed top presents it
+as the `host_*` ports:
 
-| Signal | Dir | Width |
-|---|---|---|
-| `psel` / `pwrite` | in | 1 / 1 |
-| `paddr` | in | 20 |
-| `pwdata` / `prdata` | in / out | 32 |
-| `pready` | out | 1 (wait states allowed) |
+| Signal | Dir | Width | Meaning |
+|---|---|---|---|
+| `host_req_valid_i` | in | 1 | a request is present; hold it unchanged through the cycle of its `host_rvalid_o` (still 1 in the next cycle is a new request) |
+| `host_we_i` | in | 1 | 1 = write |
+| `host_addr_i` | in | 20 | word address |
+| `host_wdata_i` | in | 32 | write data |
+| `host_rdata_o` | out | 32 | read data, valid with `host_rvalid_o`; 0 on a refused access |
+| `host_rvalid_o` | out | 1 | completion strobe, exactly one per request, at least one cycle after the request is taken (wait states allowed) |
+| `host_err_o` | out | 1 | with `host_rvalid_o`: the access was refused and nothing was forwarded |
 
-<a id="fig-02-memwave"></a>**F02.7 — Side-port: write, then read with one wait state**
+An APB bridge maps `psel` to `host_req_valid_i`, `pwrite` to `host_we_i`, `paddr` to
+`host_addr_i`, `pwdata` to `host_wdata_i`, `prdata` to `host_rdata_o`, `pready` to
+`host_rvalid_o` and `pslverr` to `host_err_o`. Unlike `pready`, `host_rvalid_o` is 0
+while no request is in flight.
+
+<a id="fig-02-memwave"></a>**F02.7 — Side-port: a write, then a read with one wait state**
 
 ![fig-02-memwave](../diagrams/wavedrom/fig-02-memwave.svg)
 
@@ -556,14 +565,16 @@ JTAG/testbench) maps 1:1 onto it. Word addressed, 32-bit data.
 
 ```wavedrom
 {"signal": [
-  {"name": "clk",    "wave": "p........"},
-  {"name": "psel",   "wave": "010..1.0."},
-  {"name": "pwrite", "wave": "010......"},
-  {"name": "paddr",  "wave": "x=x..=.x.", "data": ["A0", "A1"]},
-  {"name": "pwdata", "wave": "x=x......", "data": ["V0"]},
-  {"name": "pready", "wave": "1....01.."},
-  {"name": "prdata", "wave": "x.....=x.", "data": ["Q1"]}
-]}
+  {"name": "clk",              "wave": "p........"},
+  {"name": "host_req_valid_i", "wave": "01.01..0."},
+  {"name": "host_we_i",        "wave": "x1.x0..x."},
+  {"name": "host_addr_i",      "wave": "x=.x=..x.", "data": ["A0", "A1"]},
+  {"name": "host_wdata_i",     "wave": "x=.x.....", "data": ["V0"]},
+  {"name": "host_rvalid_o",    "wave": "0.10..10."},
+  {"name": "host_rdata_o",     "wave": "0.....=0.", "data": ["Q1"]},
+  {"name": "host_err_o",       "wave": "0........"}
+],
+ "head": {"text": "each request held until its strobe"}}
 ```
 
 </details>
@@ -594,13 +605,30 @@ the D3 writer's **latch**: to capture a coherent row it holds AECP dispatch brie
 from ACQUIRE until one state-bus read completes (at most the running command's own
 duration plus a few clocks), never across a media commit ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)).
 
-| Signal | Dir | Width |
+At the landed top both managers are inside the processor (§8.2), so this record-level
+**manager face** is an internal seam: `KL_pp_nvm_port`'s `nvm_*` ports, directions as a
+manager sees them, drawn by F02.8. The class-F ports of `protocol_processor_top` are the
+port's **device face** below, which the integrator's backend serves.
+
+| Manager face (inside the top) | Dir | Width |
 |---|---|---|
 | `req` / `we` | out | 1 / 1 |
 | `record_id` | out | 8 |
 | `wdata` / `rdata` | out / in | streamed bytes (record framing per [07 §5](07_memory_maps.md)) |
 | `busy` / `done` / `err` | in | 1 each |
 | `err_cause` | in | 2 — valid with `err`, 0 otherwise: **1** DEVICE, **2** UNFRAMED, **3** DEADLINE |
+
+| Device face (top ports) | Dir | Width | Meaning |
+|---|---|---|---|
+| `nvm_dev_req_o` | out | 1 | command request, held until `nvm_dev_gnt_i` |
+| `nvm_dev_gnt_i` | in | 1 | the backend accepted {op, region, offset, length} |
+| `nvm_dev_op_o` | out | 2 | 0 READ, 1 WRITE, 2 ERASE (3 reserved) |
+| `nvm_dev_region_o` | out | 8 | region id = record id |
+| `nvm_dev_offset_o` / `nvm_dev_len_o` | out | 16 / 16 | byte offset within the region / byte count (ERASE: 0 = the whole region) |
+| `nvm_dev_wvalid_o` / `nvm_dev_wready_i` / `nvm_dev_wdata_o` | out / in / out | 1 / 1 / 8 | the write byte stream |
+| `nvm_dev_rvalid_i` / `nvm_dev_rready_o` / `nvm_dev_rdata_i` | in / out / in | 1 / 1 / 8 | the read byte stream |
+| `nvm_dev_busy_i` | in | 1 | backend busy, informational: `done` and `err` delimit a command |
+| `nvm_dev_done_i` / `nvm_dev_err_i` | in | 1 / 1 | one-cycle pulse: the device command completed / failed |
 
 `err_cause` says what an `err` was, so a manager restoring a record can tell a failing
 device from a record that is not there (processor issue #93). **DEVICE** is every error
@@ -634,12 +662,12 @@ the device has ended the abandoned command, one `err` DEADLINE while it stays si
 presents bytes past the READ's length, which the port does not take. Nothing is released
 on time; only the device's own terminal or a reset
 ends the owed state, so a WRITE the port abandoned on a device that waits for its next byte
-for ever is **contained**: every later request ends DEADLINE until reset. `dev_gnt_i`
+for ever is **contained**: every later request ends DEADLINE until reset. `nvm_dev_gnt_i`
 means the device accepted the command, and it comes at most one cycle after the edge that
 sampled the request: a backend that registers its grant can take a request on the very
 edge the deadline withdraws it, and that command is then owed.
 
-<a id="fig-02-nvmwave"></a>**F02.8 — NVM commit (broken axis over the busy period)**
+<a id="fig-02-nvmwave"></a>**F02.8 — NVM commit on the manager face (broken axis over the busy period)**
 
 ![fig-02-nvmwave](../diagrams/wavedrom/fig-02-nvmwave.svg)
 
