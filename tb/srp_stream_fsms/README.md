@@ -197,10 +197,19 @@ contexts and any two phases; priority and rank vary as far as their 3 bits and
 | WK6 | every sink publishes its own settled stream_id, with the idle control face on the last sink settled and then on its highest index |
 | WK7 | a teardown sends one Leave of the settled stream_id, not of the one on the control face |
 | WK8 | a re-settle on a new stream replaces the stream_id, made in the opposite order |
+| WK9 | a gate open of another record for the last source, offered while decoder values hold `gate_ready_o` low from an own LeaveAll through the txLA! walk, is not taken: that walk publishes the record declared, the open is taken once, in the clock the bus goes idle, and the next walk publishes the new record |
+| WK10 | the same for a settle of the last sink on another stream while decoder values hold `ctl_ready_o` low: the walk publishes the old stream_id, and after the settle is taken and the new stream registers, the new one |
+
+Each walk copy has its own write process, which repeats the flop record's
+write enable, the gate's or control's ready term included. WK9 and WK10 hold
+that term low: an MVRP value, which neither FSM matches, sits on the decoder
+bus every clock, and the gate or control offer stays valid until it is taken.
+A copy written while the offer waits would publish the new record before the
+FSM took it.
 
 `make RUN_ARGS=walk` runs these arms alone and `make RUN_ARGS=suite` the suite
 alone. Every part runs even after a failing one, and every failing check names
-its shape (`[sources/sinks]`). Measured at the head: 23, 30, 43 and 79 checks
+its shape (`[sources/sinks]`). Measured at the head: 35, 46, 67 and 123 checks
 at 1/1, 2/2, 3/5 and 9/9, all PASS. The probes of both #230 reviews and the
 lane's own controls of these copies are killed controls of
 [the campaign](../srp_top/mutants.py); the table, with each control's shapes,

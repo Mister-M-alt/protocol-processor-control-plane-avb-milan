@@ -555,15 +555,16 @@ says which and why). Verilator 5.050 faults on a hierarchical reference to
 
 ## Issue #230 storage controls
 
-The probes of both #230 reviews (R458-1 `lockstep/probes.py`, R459-1
-`make_controls.py` and its stall probe) and the lane's own lockstep controls are
-killed controls of `mutants.py`, one checked-in patch per distinct edit: 33
-patches, where a probe and a control with the same edit share one. The new
-arms carry no group of the suite above: `storage` runs the FIFO arms, `walk` the
+The probes of both #230 reviews (R458-1 `lockstep/probes.py` and R458-3's two
+ready-handshake probes, R459-1 `make_controls.py` and its stall probe) and the
+lane's own lockstep controls are killed controls of `mutants.py`, one
+checked-in patch per distinct edit: 35 patches, where a probe and a control with
+the same edit share one. The new arms carry no group of the suite above:
+`storage` runs the FIFO arms, `walk` the
 [walk-record arms](../srp_stream_fsms/README.md#walk-records-at-both-elaboration-arms-issue-230),
 and the slope controls run the [admission suite](../srp_admission/README.md) at
 its five shapes. The assertion-coverage check now also requires TF1-TF5 and
-WK1-WK8.
+WK1-WK10.
 
 Failing checks per shape, from the campaign's receipts. "n/e": the edited arm
 is not elaborated at that shape. "equivalent": with one source or one sink the
@@ -587,24 +588,26 @@ DA of `wid-flops-da-of-gate-source` does not alias, and that edit is caught at
 | `tf-tk-write-ignores-full` | R459-1 (stall probe) | talker memory written while full | TF4 | 1 | 1 | 1 | 1 | 4 of 4 |
 | `tf-ls-write-ignores-full` | R459-1 | listener memory written while full | TF5 | 1 | 1 | 1 | 1 | 4 of 4 |
 | `walk-record-written-on-close` | A523, R459-1 (`wtsp-written-on-close`) | walk records also written by a gate close | WK3 | 1 | 1 | 1 | 1 | 4 of 4 |
-| `wtsp-first-open-only` | A523, R458-1 | walk TSpec written only by a source's first open | WK2, WK3, WK4 | 3 | 5 | 7 | 19 | 4 of 4 |
-| `wtsp-read-at-gate-source` | A523, R458-1 | walk TSpec read at the gate source | WK1, WK2, WK4 | 1 | 4 | 9 | 33 | 4 of 4 |
-| `wtsp-read-at-source-0` | R459-1 | walk TSpec read at source 0 | WK1, WK2, WK3, WK4, WK5 | 0 (equivalent) | 6 | 10 | 34 | 3 of 4 |
-| `wtsp-latency-field-shifted` | A523 | latency read one bit off (`wtsp_w[32:1]`) | WK1, WK2, WK3, WK4, WK5 | 6 | 10 | 14 | 38 | 4 of 4 |
-| `wtsp-latency-shifted` | R458-1 | latency shifted left one bit | WK1, WK2, WK3, WK4, WK5 | 6 | 10 | 14 | 38 | 4 of 4 |
-| `wtsp-rank-dropped` | R458-1 | rank bit published as 0 | WK1, WK2, WK3, WK4, WK5 | 3 | 5 | 6 | 19 | 4 of 4 |
-| `wtsp-prio-rank-swapped` | R459-1 | priority and rank bits rotated | WK1, WK2, WK3, WK4, WK5 | 5 | 9 | 13 | 34 | 4 of 4 |
-| `wid-ram-first-open-only` | A523, R458-1 | RAM {stream_id, DA, VLAN} written only by the first open | WK2, WK3, WK4 | 0 (n/e) | 0 (n/e) | 7 | 19 | 2 of 4 |
-| `wid-ram-read-at-gate-source` | A523, R458-1 | RAM {stream_id, DA, VLAN} read at the gate source | WK1, WK2, WK4 | 0 (n/e) | 0 (n/e) | 9 | 33 | 2 of 4 |
-| `wid-ram-read-neighbour` | R459-1 | RAM {stream_id, DA, VLAN} read at the previous source | WK1, WK2, WK3, WK4, WK5 | 0 (n/e) | 0 (n/e) | 14 | 38 | 2 of 4 |
-| `wid-flops-da-of-gate-source` | A523, R458-1 | flop arm reads the gate source's DA | WK1, WK2, WK4 | 1 | 4 | 0 (n/e) | 0 (n/e) | 2 of 4 |
-| `wid-flops-sid-of-source-0` | R458-1 | flop arm reads source 0's stream_id | WK1, WK2, WK3, WK4, WK5 | 0 (equivalent) | 6 | 0 (n/e) | 0 (n/e) | 1 of 4 |
-| `wid-flops-vid-of-source-0` | R459-1 | flop arm reads source 0's VLAN | WK1, WK2, WK3, WK4, WK5 | 0 (equivalent) | 6 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wtsp-first-open-only` | A523, R458-1 | walk TSpec written only by a source's first open | WK2, WK3, WK4, WK9 | 4 | 6 | 8 | 20 | 4 of 4 |
+| `wtsp-read-at-gate-source` | A523, R458-1 | walk TSpec read at the gate source | WK1, WK2, WK4, WK9 | 1 | 6 | 13 | 49 | 4 of 4 |
+| `wtsp-read-at-source-0` | R459-1 | walk TSpec read at source 0 | WK1, WK2, WK3, WK4, WK5, WK9 | 0 (equivalent) | 8 | 14 | 50 | 3 of 4 |
+| `wtsp-latency-field-shifted` | A523 | latency read one bit off (`wtsp_w[32:1]`) | WK1, WK2, WK3, WK4, WK5, WK9 | 8 | 14 | 20 | 56 | 4 of 4 |
+| `wtsp-latency-shifted` | R458-1 | latency shifted left one bit | WK1, WK2, WK3, WK4, WK5, WK9 | 8 | 14 | 20 | 56 | 4 of 4 |
+| `wtsp-rank-dropped` | R458-1 | rank bit published as 0 | WK1, WK2, WK3, WK4, WK5, WK9 | 4 | 8 | 9 | 28 | 4 of 4 |
+| `wtsp-prio-rank-swapped` | R459-1 | priority and rank bits rotated | WK1, WK2, WK3, WK4, WK5, WK9 | 7 | 13 | 19 | 48 | 4 of 4 |
+| `wid-ram-first-open-only` | A523, R458-1 | RAM {stream_id, DA, VLAN} written only by the first open | WK2, WK3, WK4, WK9 | 0 (n/e) | 0 (n/e) | 8 | 20 | 2 of 4 |
+| `wid-ram-read-at-gate-source` | A523, R458-1 | RAM {stream_id, DA, VLAN} read at the gate source | WK1, WK2, WK4, WK9 | 0 (n/e) | 0 (n/e) | 13 | 49 | 2 of 4 |
+| `wid-ram-read-neighbour` | R459-1 | RAM {stream_id, DA, VLAN} read at the previous source | WK1, WK2, WK3, WK4, WK5, WK9 | 0 (n/e) | 0 (n/e) | 20 | 56 | 2 of 4 |
+| `wid-flops-da-of-gate-source` | A523, R458-1 | flop arm reads the gate source's DA | WK1, WK2, WK4, WK9 | 1 | 6 | 0 (n/e) | 0 (n/e) | 2 of 4 |
+| `wid-flops-sid-of-source-0` | R458-1 | flop arm reads source 0's stream_id | WK1, WK2, WK3, WK4, WK5, WK9 | 0 (equivalent) | 8 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wid-flops-vid-of-source-0` | R459-1 | flop arm reads source 0's VLAN | WK1, WK2, WK3, WK4, WK5, WK9 | 0 (equivalent) | 8 | 0 (n/e) | 0 (n/e) | 1 of 4 |
 | `talker-vid-unreset` | A523 | the matcher VLAN loses its reset (a stored value read without its valid bit) | WK5 | 1 | 1 | 1 | 1 | 4 of 4 |
-| `wsid-ram-first-settle-only` | A523, R458-1 | RAM stream_id written only by the first settle | WK8 | 0 (n/e) | 0 (n/e) | 5 | 9 | 2 of 4 |
+| `wsid-ram-first-settle-only` | A523, R458-1 | RAM stream_id written only by the first settle | WK8, WK10 | 0 (n/e) | 0 (n/e) | 6 | 10 | 2 of 4 |
 | `wsid-ram-written-on-teardown` | A523, R458-1, R459-1 | RAM stream_id also written by a teardown | WK7 | 0 (n/e) | 0 (n/e) | 1 | 1 | 2 of 4 |
-| `wsid-flops-of-control-sink` | A523, R458-1 | flop arm reads the control sink's stream_id | WK6, WK8 | 0 (equivalent in simulation) | 3 | 0 (n/e) | 0 (n/e) | 1 of 4 |
-| `wsid-flops-read-sink-0` | R459-1 | flop arm reads sink 0's stream_id | WK6, WK7, WK8 | 0 (equivalent) | 4 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wsid-flops-of-control-sink` | A523, R458-1 | flop arm reads the control sink's stream_id | WK6, WK8, WK10 | 0 (equivalent in simulation) | 5 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wsid-flops-read-sink-0` | R459-1 | flop arm reads sink 0's stream_id | WK6, WK7, WK8, WK10 | 0 (equivalent) | 6 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wtsp-write-ignores-ready` | R458-3 (`r3-wtsp-write-ignores-ready`) | walk records written by a gate open not yet taken (`gate_valid_i` for `gate_acc_w`) | WK9 | 1 | 1 | 1 | 1 | 4 of 4 |
+| `wsid-write-ignores-ready` | R458-3 (`r3-wsid-write-ignores-ready`) | RAM stream_id written by a settle not yet taken (`ctl_valid_i` for `ctl_acc_w`) | WK10 | 0 (n/e) | 0 (n/e) | 1 | 1 | 2 of 4 |
 
 The slope controls, at the admission suite's five shapes. The suite stops at
 its first failing shape, so the campaign sees N = 2; the counts at 3, 5 and 8
@@ -617,8 +620,8 @@ were measured one shape at a time in scratch copies:
 | `slope-store-source-0-only` | A523 | only source 0's slope stored | 0 (equivalent) | 1,201 of 12,615 | 3,163 of 41,012 | 10,281 of 201,073 | 33,958 of 991,231 | 4 of 5 |
 | `slope-read-source-0` | R459-1 | the admission walk reads source 0's slope | 0 (equivalent) | 578 of 12,615 | 1,683 of 41,009 | 6,125 of 201,068 | 22,202 of 991,223 | 4 of 5 |
 
-"A523" is the lane's round-1 lockstep controls, and "R458-1" and "R459-1" are the
-two reviews' probes, by their names there. Every control is caught at every shape
+"A523" is the lane's round-1 lockstep controls, and "R458-1", "R459-1" and "R458-3"
+are the reviews' probes, by their names there. Every control is caught at every shape
 where its arm is elaborated and the edit is not equivalent by construction, except
 `wsid-flops-of-control-sink` at 1/1: there Verilator 5.050 reads the out-of-range 64-bit
 element as element 0 (equivalent in simulation, above), as it would any 64-bit stream_id
