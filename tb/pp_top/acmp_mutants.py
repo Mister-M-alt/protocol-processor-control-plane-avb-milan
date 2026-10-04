@@ -163,15 +163,21 @@ SETTLE_PATH = (
 
 # issue #639: the listener records in distributed RAM, read in the cycle after
 # the walk's issue state, and the top's eight timer arm-port queues as 4-entry
-# rings in distributed RAM. Traffic at the top never fills a queue (section AQ
-# prints the coverage), so the full-queue path is graded by the issue's
-# lockstep bench, not here.
+# rings in distributed RAM. Traffic at the top never holds two arms in a queue
+# (section AQ prints the coverage), so section AQ's drive fills the queues from
+# the bench. Its AQ3 grades every armq_ arm, and is the only check that reaches
+# the full-queue path, where the last four are planted (R462-1's controls).
 REC_READ = "  assign rec_rd_w     = acmp_rec_t'(rec_ram_r[sink_r]);\n"
 REC_WRITE = "      rec_ram_r[recwr_addr_w] <= recwr_data_w;\n"
 RING_WRITE = "    assign wr_ix_w = armq_hd_r[g] + armq_cnt_r[g][1:0];\n"
 RING_ADVANCE = "          armq_hd_r[i]         <= armq_hd_r[i] + 2'd1;\n"
 RING_READ = "    assign armq_hd_w[g] = mem_r[armq_hd_r[g]];\n"
+RING_STORE = "      if (armq_push_ok_w[g]) mem_r[wr_ix_w] <= armq_in_w[g];\n"
+PUSH_OK = "      armq_push_ok_w[i] = armq_in_vld_w[i] && (armq_mid_w[i] != 3'd4);\n"
+DROP_COUNT = "          if (arm_drop_r != 16'hFFFF) arm_drop_r <= arm_drop_r + 16'd1;\n"
 AQ_MODEL = ("AQ2: the arm port and the drop counter equal the eight-queue model",)
+AQ_DRIVE = ("AQ3: driven from the bench, the arm port and the drop counter equal",)
+AQ_BOTH = AQ_MODEL + AQ_DRIVE
 PARKED = "B12: parked sink 7 record untouched"
 
 
@@ -200,17 +206,29 @@ STORAGE = (
         (LISTENER, REC_WRITE, "      rec_ram_r[sink_r] <= recwr_data_w;\n"),),
         ("RS GET_RX_STATE after the reset: binding",)),
     Mutant("armq_read_tail", PP_TOP_AQ, (
-        (TOP, RING_READ, "    assign armq_hd_w[g] = mem_r[wr_ix_w];\n"),), AQ_MODEL),
+        (TOP, RING_READ, "    assign armq_hd_w[g] = mem_r[wr_ix_w];\n"),), AQ_BOTH),
     Mutant("armq_head_stuck", PP_TOP_AQ, (
-        (TOP, RING_ADVANCE, "          armq_hd_r[i]         <= armq_hd_r[i];\n"),), AQ_MODEL),
+        (TOP, RING_ADVANCE, "          armq_hd_r[i]         <= armq_hd_r[i];\n"),), AQ_BOTH),
     Mutant("armq_ring_of_three", PP_TOP_AQ, (
         (TOP, RING_ADVANCE, "          armq_hd_r[i]         <= (armq_hd_r[i] == 2'd2) ? 2'd0"
-                            " : armq_hd_r[i] + 2'd1;\n"),), AQ_MODEL),
+                            " : armq_hd_r[i] + 2'd1;\n"),), AQ_BOTH),
     Mutant("armq_write_at_head", PP_TOP_AQ, (
-        (TOP, RING_WRITE, "    assign wr_ix_w = armq_hd_r[g];\n"),), AQ_MODEL),
+        (TOP, RING_WRITE, "    assign wr_ix_w = armq_hd_r[g];\n"),), AQ_BOTH),
     Mutant("armq_write_at_mid", PP_TOP_AQ, (
         (TOP, RING_WRITE, "    assign wr_ix_w = armq_hd_r[g] + armq_mid_w[g][1:0];\n"),),
-        AQ_MODEL),
+        AQ_BOTH),
+    Mutant("armq_write_refused", PP_TOP_AQ, (
+        (TOP, RING_STORE, "      if (armq_in_vld_w[g]) mem_r[wr_ix_w] <= armq_in_w[g];\n"),),
+        AQ_DRIVE),
+    Mutant("armq_write_wrap_hi", PP_TOP_AQ, (
+        (TOP, RING_WRITE, "    assign wr_ix_w = (armq_cnt_r[g] >= 3'd3) ? armq_hd_r[g] + 2'd2"
+                          " : armq_hd_r[g] + armq_cnt_r[g][1:0];\n"),), AQ_DRIVE),
+    Mutant("armq_full_pop_refuses", PP_TOP_AQ, (
+        (TOP, PUSH_OK,
+         "      armq_push_ok_w[i] = armq_in_vld_w[i] && (armq_cnt_r[i] != 3'd4);\n"),),
+        AQ_DRIVE),
+    Mutant("armq_drop_skip_sat", PP_TOP_AQ, (
+        (TOP, DROP_COUNT, "          arm_drop_r <= arm_drop_r + 16'd1;\n"),), AQ_DRIVE),
 )
 
 MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE
