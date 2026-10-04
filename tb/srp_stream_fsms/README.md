@@ -5,7 +5,9 @@ Proves the per-stream SRP FSMs (`hdl/srp/KL_srp_talker_fsm.sv`, M = 8
 sources, and `hdl/srp/KL_srp_listener_fsm.sv`, N = 8 sinks) against
 [10 §4/§5/§6.3/§6.4/§6.5](../../docs/architecture/10_srp_engine.md) with the
 802.1Q-2018 §10.7 tables as the normative core: `make` = build + run,
-exit 0 = PASS, 1219 checks.
+exit 0 = PASS, 1219 checks. `make` first runs the walk-record arms at four
+shapes ([below](#walk-records-at-both-elaboration-arms-issue-230)), then this
+suite, whose tally is the last line.
 
 The C++ model transcribes **Table 10-3 (applicant) and Table 10-4
 (registrar) independently as data matrices** — never DUT logic — including
@@ -165,3 +167,41 @@ the membership is gone. Mutation-proven 2026-09-29 through
 | Mutation | Result |
 |---|---|
 | `licence-ignores-join`: ACTIVE without the VID term | 3 of 1219 FAIL (the three negative VID-term checks) |
+
+## Walk records at both elaboration arms (issue #230)
+
+The tick walk reads each record from a copy of its own
+([10 §5.1](../../docs/architecture/10_srp_engine.md)): the talker's TSpec,
+priority, rank and latency (`wtsp_r`) always from distributed RAM; the
+talker's {stream_id, DA, VLAN} and the listener's stream_id from the
+matcher's flip-flops at one and two contexts (`g_wid_flops`, `g_wsid_flops`)
+and from distributed RAM from three (`g_wid_ram.wid_r`, `g_wsid_ram.wsid_r`).
+The suite above runs at eight contexts only, so `walk_main.cpp` checks the
+copies at sources/sinks 1/1, 2/2, 3/5 and 9/9 (`srp_walk_wrap.sv`; both arms
+of each copy, and the talker and listener at different counts). Each build
+starts every unreset memory at random contents (`--x-initial unique`,
+`+verilator+rand+reset+2`), so a word the walk read before it was written
+would show. Each arm compares every FirstValue the walk hands the encoder with
+the record the harness itself declared, settled or tore down. The stream_id,
+DA, VLAN, MaxFrameSize, MaxIntervalFrames and latency differ between any two
+contexts and any two phases; priority and rank vary as far as their 3 bits and
+1 bit allow.
+
+| Check | What it proves |
+|---|---|
+| WK1 | every source publishes its own declaration, while the gate face holds the last source declared |
+| WK2 | a re-declaration replaces every field, made in the opposite order, so the gate face holds source 0 |
+| WK3 | a close sends one Leave of the record declared, not of the values on the gate face |
+| WK4 | a closed source re-opened publishes its new record beside the others |
+| WK5 | a reset empties the records: closing a source not opened since leaves VID 0 (the reset value), and the walk publishes only what was declared after the reset |
+| WK6 | every sink publishes its own settled stream_id, while the control face holds the last sink settled |
+| WK7 | a teardown sends one Leave of the settled stream_id, not of the one on the control face |
+| WK8 | a re-settle on a new stream replaces the stream_id, made in the opposite order |
+
+`make RUN_ARGS=walk` runs these arms alone and `make RUN_ARGS=suite` the suite
+alone. Every part runs even after a failing one, and every failing check names
+its shape (`[sources/sinks]`). Measured at the head: 19, 24, 33 and 59 checks
+at 1/1, 2/2, 3/5 and 9/9, all PASS. The probes of both #230 reviews and the
+lane's own controls of these copies are killed controls of
+[the campaign](../srp_top/mutants.py); the table, with each control's shapes,
+is in [the srp_top README](../srp_top/README.md#issue-230-storage-controls).
