@@ -73,9 +73,9 @@ that AECP commands report is cataloged once in
 
 ![F01.2 Top level](../diagrams/01-top-level.svg)
 
-> The export draws the MAC RX and TX async FIFOs at the top's edge. They are the
-> integrator's, outside `protocol_processor_top`, whose MAC faces are byte streams in the
-> core clock domain ([02 §2](02_interfaces.md#2-clocking-reset-cdc) rule 2,
+> The two MAC async FIFOs the export draws in the MAC clock domains are the integrator's,
+> outside `protocol_processor_top`, whose MAC faces are byte streams in the core clock
+> domain ([02 §2](02_interfaces.md#2-clocking-reset-cdc) rule 2,
 > [02 §3](02_interfaces.md#sec-02-class-a)).
 
 | Block | Responsibility | Owning doc |

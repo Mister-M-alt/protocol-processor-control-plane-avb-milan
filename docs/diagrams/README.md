@@ -65,7 +65,8 @@ figures` holds each of the five to its rule: listed in the table above, well-for
 XML with an `<svg>` root and a `viewBox`, no `<image>` or `<foreignObject>` (a raster
 or an embedded document is not editable source), and linked from a Markdown page.
 
-For diagram 21, the SVG is the editable master. Its `integration-parameters` group lists every overridable top-level parameter;
+For diagram 21, the SVG is the editable master. Its `integration-parameters` group
+lists every overridable top-level parameter;
 [`check-integrator-params.py`](../../scripts/check-integrator-params.py) compares
 that visible inventory and the integrator guide's section 2 table with the RTL
 declarations. Defaults remain at the owners linked from the guide.
