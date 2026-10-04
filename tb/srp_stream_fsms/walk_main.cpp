@@ -26,7 +26,13 @@
 //       control face on the last sink settled and then on its highest index;
 //   WK7  a teardown names the settled stream_id, not the one on the control
 //       face;
-//   WK8  a re-settle replaces the stream_id, in the opposite order.
+//   WK8  a re-settle replaces the stream_id, in the opposite order;
+//   WK9  a gate open of another record for the last source, offered while
+//       decoder values hold gate_ready_o low through a walk, is not taken:
+//       that walk publishes the record declared, and the walk after the
+//       open is taken publishes the new one;
+//   WK10 the same for a settle of the last sink on another stream, offered
+//       while decoder values hold ctl_ready_o low.
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -166,6 +172,16 @@ struct Hw {
   std::vector<Push> t_push;
   std::vector<Push> l_push;
   std::vector<VOp> t_vop;
+  // WK9, WK10: while bus_busy, a decoder value is on the event bus every
+  // clock (an MVRP one, which neither FSM matches), so gate_ready_o and
+  // ctl_ready_o are low. A held offer stays valid every clock, as a
+  // requester waiting for its ready keeps it. gate_taken and ctl_taken
+  // count the clocks in which an offer meets its ready.
+  bool bus_busy = false;
+  bool gate_held = false;
+  bool ctl_held = false;
+  int gate_taken = 0;
+  int ctl_taken = 0;
 
   explicit Hw(Vsrp_walk_wrap* dd) : d(dd) {}
 
@@ -173,7 +189,12 @@ struct Hw {
 
   void step() {
     d->now_ms_i = NOW;
+    if (bus_busy) { d->evt_valid_i = 1; d->evt_msrp_i = 0; }
+    if (gate_held) d->gate_valid_i = 1;
+    if (ctl_held) d->ctl_valid_i = 1;
     d->clk_i = 0; d->eval();
+    gate_taken += (d->gate_valid_i && d->gate_ready_o) ? 1 : 0;
+    ctl_taken += (d->ctl_valid_i && d->ctl_ready_o) ? 1 : 0;
     // harvest (every face read here is registered or stable-from-registers;
     // the encoder and VLAN faces are tied ready, so each offer is one cycle)
     if (d->t_ev_valid_o) {
@@ -209,11 +230,20 @@ struct Hw {
     clear_logs();
   }
 
-  void gate(bool open, int src, const Record& r) {
-    d->gate_valid_i = 1; d->gate_open_i = open; d->gate_src_i = src;
+  // the gate and control faces' fields, without an offer
+  void drive_gate(bool open, int src, const Record& r) {
+    d->gate_open_i = open; d->gate_src_i = src;
     d->gate_stream_id_i = r.sid; d->gate_da_i = r.da; d->gate_vid_i = r.vid;
     d->gate_max_frame_i = r.mfs; d->gate_max_interval_i = r.mif;
     d->gate_prio_i = r.prio; d->gate_rank_i = r.rank; d->gate_acc_lat_i = r.lat;
+  }
+  void drive_ctl(bool settle, int sink, const SinkRecord& r) {
+    d->ctl_settle_i = settle; d->ctl_sink_i = sink;
+    d->ctl_stream_id_i = r.sid; d->ctl_da_i = r.da; d->ctl_vid_i = r.vid;
+  }
+
+  void gate(bool open, int src, const Record& r) {
+    d->gate_valid_i = 1; drive_gate(open, src, r);
     step(); idle(2);
   }
 
@@ -221,20 +251,11 @@ struct Hw {
   // the top drives the index of its last request, accepted or refused, so it
   // may name no context at all. Park it on the highest index the face's
   // width can name, with another record beside it.
-  void park_gate(const Record& r) {
-    d->gate_open_i = 1; d->gate_src_i = kParkedIndex;
-    d->gate_stream_id_i = r.sid; d->gate_da_i = r.da; d->gate_vid_i = r.vid;
-    d->gate_max_frame_i = r.mfs; d->gate_max_interval_i = r.mif;
-    d->gate_prio_i = r.prio; d->gate_rank_i = r.rank; d->gate_acc_lat_i = r.lat;
-  }
-  void park_ctl(const SinkRecord& r) {
-    d->ctl_settle_i = 1; d->ctl_sink_i = kParkedIndex;
-    d->ctl_stream_id_i = r.sid; d->ctl_da_i = r.da; d->ctl_vid_i = r.vid;
-  }
+  void park_gate(const Record& r) { drive_gate(true, kParkedIndex, r); }
+  void park_ctl(const SinkRecord& r) { drive_ctl(true, kParkedIndex, r); }
 
   void ctl(bool settle, int sink, const SinkRecord& r) {
-    d->ctl_valid_i = 1; d->ctl_settle_i = settle; d->ctl_sink_i = sink;
-    d->ctl_stream_id_i = r.sid; d->ctl_da_i = r.da; d->ctl_vid_i = r.vid;
+    d->ctl_valid_i = 1; drive_ctl(settle, sink, r);
     step(); idle(2);
   }
 
@@ -284,6 +305,8 @@ class SrpWalkSuite {
     printf("walk records: %d sources, %d sinks\n", kSources, kSinks);
     talker_walk_publishes_each_declared_record();
     listener_walk_publishes_each_settled_stream_id();
+    talker_walk_publishes_no_open_before_gate_ready();
+    listener_walk_publishes_no_settle_before_ctl_ready();
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
     return fails ? 1 : 0;
   }
@@ -412,6 +435,71 @@ class SrpWalkSuite {
     txla_walk();
     expect_listener("WK8", sid);
     CHECK(h.l_decl(0) == DECL_READY, "WK8: the re-settled sink declares Ready");
+  }
+
+  // the bus goes idle with the offer still held: it is taken in that clock
+  void release_bus() {
+    h.bus_busy = false;
+    h.step();
+    h.gate_held = false; h.ctl_held = false;
+    h.idle(2);
+  }
+
+  void talker_walk_publishes_no_open_before_gate_ready() {
+    std::vector<Record> rec(kSources);
+    h.reset();
+    for (int s = 0; s < kSources; ++s) { rec[s] = talker_record(5, s); h.gate(true, s, rec[s]); }
+    // WK9: the open of another record for the last source is offered from
+    // the own LeaveAll through the txLA! walk, under a busy decoder bus
+    const int last = kSources - 1;
+    const Record next = talker_record(6, last);
+    h.drive_gate(true, last, next);
+    h.gate_taken = 0;
+    h.bus_busy = true; h.gate_held = true;
+    h.clear_logs(); h.la_own();
+    const bool walked = h.tick();
+    CHECK(walked && h.gate_taken == 0,
+          "WK9 precondition: a txLA! walk completes while decoder values hold gate_ready_o "
+          "low (offers taken %d)", h.gate_taken);
+    expect_talker("WK9", rec);
+    release_bus();
+    CHECK(h.gate_taken == 1, "WK9: the held open is taken once, when the bus goes idle "
+          "(taken %d)", h.gate_taken);
+    rec[last] = next;
+    txla_walk();
+    expect_talker("WK9", rec);
+  }
+
+  void listener_walk_publishes_no_settle_before_ctl_ready() {
+    std::vector<uint64_t> sid(kSinks);
+    h.reset();
+    for (int k = 0; k < kSinks; ++k) {
+      SinkRecord r = sink_record(5, k);
+      sid[k] = r.sid;
+      h.ctl(true, k, r);
+      h.advertise(r);
+    }
+    // WK10: the settle of the last sink on another stream is offered from
+    // the own LeaveAll through the txLA! walk, under a busy decoder bus
+    const int last = kSinks - 1;
+    const SinkRecord next = sink_record(6, last);
+    h.drive_ctl(true, last, next);
+    h.ctl_taken = 0;
+    h.bus_busy = true; h.ctl_held = true;
+    h.clear_logs(); h.la_own();
+    const bool walked = h.tick();
+    CHECK(walked && h.ctl_taken == 0,
+          "WK10 precondition: a txLA! walk completes while decoder values hold ctl_ready_o "
+          "low (offers taken %d)", h.ctl_taken);
+    expect_listener("WK10", sid);
+    release_bus();
+    CHECK(h.ctl_taken == 1, "WK10: the held settle is taken once, when the bus goes idle "
+          "(taken %d)", h.ctl_taken);
+    // the re-settled sink declares again once its new stream registers
+    h.advertise(next);
+    sid[last] = next.sid;
+    txla_walk();
+    expect_listener("WK10", sid);
   }
 };
 
