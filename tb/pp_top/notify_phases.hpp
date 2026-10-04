@@ -5,7 +5,9 @@
 //   ID   IDENTIFY_NOTIFICATION origination (#54, REQ-AEM-026; IEEE 1722.1-2021
 //        7.4.39, 7.5.1 and Figure 7-142; Milan 5.4.5.4), in the third build,
 //        whose top has P-EN-IDENTIFY-NOTIFICATION = 1;
-//   ID0  the same button on the default build (the parameter at 0): nothing.
+//   ID0  the same button on the default build (the parameter at 0): nothing;
+//   TD   T-NOTIF-TIMELIMITED and T-LOCK-UNLOCK at the top's own defaults
+//        (#81), in the sixth build, whose wrap leaves both unoverridden.
 // Included by sim_main.cpp after section D3's phases; every expectation is
 // built here from the clause byte offsets, never read back from the DUT.
 
@@ -1601,4 +1603,115 @@ struct RndPhase : NotifyBench {
   IdentifyOffPhase{h}.run();
 #endif
   printf("ID: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
+// ==== TD. the registry and lock timers at their defaults (issue #81) ======
+// IEEE 1722.1-2021 7.4.37.2 times a TIME_LIMITED registration out after 300 s
+// (T-NOTIF-TIMELIMITED), and 7.4.2 and Milan 5.4.2.2 unlock the entity after
+// 60 s (T-LOCK-UNLOCK), with a notification. Every other build overrides both
+// values to 400 ms in the wrap, so U5 and L6d grade the mechanism and never
+// the defaults. The sixth build keeps the top's own REG_TL_TIMEOUT_MS_P and
+// LOCK_TIMEOUT_MS_P and compresses the prescaler only, as the first build
+// does (1 ms = 100 clk), so the real 60,000 and 300,000 ms counts elapse on
+// the timebase. Each expiry may come no sooner than its default after the
+// command was fed, since the timer is armed from the ms of its execution, and
+// at most SLACK_MS later: the program's run to the arm, the sweep that finds
+// the expiry, and the notification's build and serialization.
+struct TimerDefaultsPhase : NotifyBench {
+  static constexpr uint64_t C2_MAC = 0x0202C2C2C2C2ull;
+  static constexpr uint32_t LOCK_MS = 60000;                  // T-LOCK-UNLOCK
+  static constexpr uint32_t TL_MS = 300000;            // T-NOTIF-TIMELIMITED
+  static constexpr uint32_t SLACK_MS = 20;
+  size_t scan = 0;                //!< the next log index the monitor reads
+  int answered = 0;               //!< monitor probes answered
+
+  using NotifyBench::NotifyBench;
+
+  //! Answer every CONTROLLER_AVAILABLE the departing-controller monitor has
+  //! sent C2 since the last call (T-NOTIF-MONITOR, Milan 5.4.5.3), as a live
+  //! controller does, so only the timer under test can end the registration.
+  void answer_monitor() {
+    for (; scan < seen.size(); ++scan) {
+      const std::vector<uint8_t> f = seen[scan].f;  // feed() appends to seen
+      if (da_of(f) == C2_MAC && (f[15] & 0x0F) == 0 && ct_of(f) == 0x0003) {
+        feed(aecp_frame(OWN_MAC, C2_MAC, 1, AECP_SUCCESS, CTLR2_EID, EID,
+                        uint16_t(seq_of(f)), 0x0003, {}, false));
+        ++answered;
+      }
+    }
+  }
+  //! run until an unsolicited response of command_type `ct` that `pred`
+  //! accepts reaches C2, or the timebase reaches `until_ms`; returns its log
+  //! index and the ms it was logged in, or -1
+  template <typename P>
+  long until_pushed(unsigned ct, uint32_t until_ms, uint32_t* got_ms, P pred) {
+    size_t look = seen.size();
+    while (io.d->dbg_now_ms_o < until_ms) {
+      answer_monitor();
+      for (; look < seen.size(); ++look) {
+        const auto& f = seen[look].f;
+        if (da_of(f) == C2_MAC && unsolicited(f) && ct_of(f) == ct && pred(f)) {
+          *got_ms = io.d->dbg_now_ms_o;
+          return long(look);
+        }
+      }
+      tick();
+    }
+    return -1;
+  }
+
+  void run() {
+    boot_to_idle(true);
+    std::vector<uint8_t> fl_tl(4, 0);
+    fl_tl[3] = 0x01;                                  // Table 7-147 TIME_LIMITED
+    const uint32_t reg_ms = io.d->dbg_now_ms_o;
+    const auto reg = ask(C2_MAC, CTLR2_EID, 0x7D01, 0x0024, fl_tl);
+    const uint32_t lock_ms = io.d->dbg_now_ms_o;
+    const auto lock = ask(CTLR_MAC, CTLR_EID, 0x7D02, 0x0001,
+                          LockPhase::lockpld(0, 0, 0));
+    uint32_t got = 0;
+    const long u = until_pushed(0x0001, lock_ms + LOCK_MS + SLACK_MS + 1, &got,
+                                [](const std::vector<uint8_t>& f) {
+                                  return f.size() >= 50 && rd64(&f[42]) == 0;
+                                });                    // locked_id, @28
+    std::vector<uint8_t> want;
+    if (u >= 0) {
+      want = LockPhase::lockresp(C2_MAC, CTLR2_EID, uint16_t(seq_of(seen[u].f)),
+                                 AECP_SUCCESS, 0, 0);
+      want[36] |= 0x80;                                // u = 1
+    }
+    const long lock_got = u >= 0 ? long(got - lock_ms) : -1L;
+    CHECK(!lock.empty() && status_of(lock) == AECP_SUCCESS && u >= 0
+              && seen[u].f == want && got - lock_ms >= LOCK_MS
+              && got - lock_ms <= LOCK_MS + SLACK_MS,
+          "TD1: T-LOCK-UNLOCK at its default: the LOCK_ENTITY answers SUCCESS "
+          "and its auto-unlock notification (LOCK_ENTITY, u = 1, locked_id 0) "
+          "reaches the registered controller %u to %u ms after the command "
+          "(got %ld ms)", LOCK_MS, LOCK_MS + SLACK_MS, lock_got);
+    const long d = until_pushed(0x0025, reg_ms + TL_MS + SLACK_MS + 1, &got,
+                                [](const std::vector<uint8_t>&) { return true; });
+    if (d >= 0) {
+      want = aecp_frame(C2_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR2_EID,
+                        uint16_t(seq_of(seen[d].f)), 0x0025, {});
+      want[36] |= 0x80;                                // u = 1
+    }
+    CHECK(!reg.empty() && status_of(reg) == AECP_SUCCESS && d >= 0
+              && seen[d].f == want && got - reg_ms >= TL_MS
+              && got - reg_ms <= TL_MS + SLACK_MS,
+          "TD2: T-NOTIF-TIMELIMITED at its default: the TIME_LIMITED REGISTER "
+          "answers SUCCESS and its expiry DEREGISTER (u = 1) reaches the "
+          "controller %u to %u ms after the command (got %ld ms; %d monitor "
+          "probes answered)", TL_MS, TL_MS + SLACK_MS,
+          d >= 0 ? long(got - reg_ms) : -1L, answered);
+    printf("  [TD] auto-unlock %ld ms after the LOCK_ENTITY, TIME_LIMITED expiry "
+           "%ld ms after the REGISTER, %d monitor probes answered\n", lock_got,
+           d >= 0 ? long(got - reg_ms) : -1L, answered);
+  }
+};
+
+[[maybe_unused]] static void run_timer_defaults(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  TimerDefaultsPhase{h}.run();
+  printf("TD: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }

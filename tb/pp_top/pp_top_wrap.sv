@@ -35,7 +35,10 @@
 //                the top's own defaults and never a copy of them.
 //                The fifth build defines PP_TOP_TIM_REAL and runs the
 //                timebase at 1 ms = 1,000 clk, the nominal clock's own, for
-//                section TB's response budgets.
+//                section TB's response budgets. The sixth defines
+//                PP_TOP_TIM_DEFAULTS and drops the two 400 ms timeout
+//                overrides below, so section TD grades the top's own
+//                T-NOTIF-TIMELIMITED and T-LOCK-UNLOCK on this timebase.
 //---------------------------------------------------------------------------//
 `default_nettype none
 
@@ -567,12 +570,15 @@ module pp_top_wrap (
       .CLK_HZ_P     (TB_CLK_HZ_C),
       .TIM_DIV_US_P (TB_DIV_US_C),
       .TIM_DIV_MS_P (TB_DIV_MS_C),
+`ifndef PP_TOP_TIM_DEFAULTS
       //! TIM compression for the registration/lock deadlines, same reason
       //! as the DIV overrides: the suite must SEE IEEE 7.4.37.2's 300 s
       //! TIME_LIMITED expiry and 7.4.2's 60 s lock expiry, not wait 30
-      //! million compressed cycles for them
+      //! million compressed cycles for them. The sixth build alone waits
+      //! them out, at the top's defaults (section TD)
       .REG_TL_TIMEOUT_MS_P (400),
       .LOCK_TIMEOUT_MS_P   (400),
+`endif
       //! NVM_RS_TMO_CYC_P, NVM_RS_AGG_CYC_P and NVM_RETRY_BACKOFF_CYC_P are
       //! NOT overridden: the top derives 20,001, 1,000,001 and 500,001
       //! clocks from TB_CLK_HZ_C, and sections D3R8, D3R13 and D3S10 time

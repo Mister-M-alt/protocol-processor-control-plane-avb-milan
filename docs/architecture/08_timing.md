@@ -27,9 +27,9 @@ plain-IEEE build where different; blank = same).
 | T-NOTIF-MONITOR | random 30–60 s | registry | per-controller departing detection | Milan §5.4.5.3 | — |
 | T-NOTIF-TIMELIMITED | 300 s | registry | TIME_LIMITED registration expiry (controllers re-register at 100 s) | IEEE §7.4.37.2 | |
 | T-LOCK-UNLOCK | 60 s | lock mgr | auto-unlock + notification | Milan §5.4.2.2 | |
-| T-IDENT-BURST | 150 ms ×3 | identify | IDENTIFY_NOTIFICATION triple: each later frame due T-IDENT-BURST after the first ms boundary following its IDENT-BURST arm, which the previous frame's departure (its last byte to the MAC) makes on its next clock or later, so never less than T-IDENT-BURST after that departure; the next burst's first frame no sooner after the third, so a late frame or a TX stall delays the rest and never shortens a gap; a press made while a burst or that gap runs is latched and its burst starts when the gap ends | IEEE §7.5.1, §7.5.1.2.1 | |
-| T-IDENT-REARM | 1 s | identify | re-arm while button held: Figure 7-142's timeout, from the burst's first frame | IEEE §7.5.1.2.1, §7.5.1.3 | |
-| T-CTR-OBSERVE | ≤ 1 s tick | integrator's counters (`ctr_*` face) | observation-interval commit of the interval counters; the processor keeps no tick for it ([06 §6.6](06_aecp_engine.md#sec-06-counters)) | Milan §5.3.7.7, §5.3.8.10 | |
+| T-IDENT-BURST | 150 ms ×3 | identify (`KL_aecp_notify`): **landed**, issue #80, built only with P-EN-IDENTIFY-NOTIFICATION = 1 (not at its default 0); graded by `tb/pp_top` ID and `tb/aecp_notify` FT ([09 §8.4](09_verification.md#84-notifications-and-identify-the-rnd-and-storm-evidence-issues-54-58-80-86)) | IDENTIFY_NOTIFICATION triple: each later frame due T-IDENT-BURST after the first ms boundary following its IDENT-BURST arm, which the previous frame's departure (its last byte to the MAC) makes on its next clock or later, so never less than T-IDENT-BURST after that departure; the next burst's first frame no sooner after the third, so a late frame or a TX stall delays the rest and never shortens a gap; a press made while a burst or that gap runs is latched and its burst starts when the gap ends | IEEE §7.5.1, §7.5.1.2.1 | |
+| T-IDENT-REARM | 1 s | identify (`KL_aecp_notify`): **landed**, as T-IDENT-BURST | re-arm while button held: Figure 7-142's timeout, from the burst's first frame | IEEE §7.5.1.2.1, §7.5.1.3 | |
+| T-CTR-OBSERVE | ≤ 1 s tick | **integrator-owned**: the integrator's counter banks behind the `ctr_*` face; no RTL here, so no suite here grades it | observation-interval commit of the interval counters; the processor keeps no tick for it ([06 §6.6](06_aecp_engine.md#sec-06-counters)) | Milan §5.3.7.7, §5.3.8.10 | |
 | T-CTR-NOTIF | 1 s | notif engine | ≥ 1 s between GET_COUNTERS notifications per descriptor | Milan Table 5.22 | |
 | T-ACMP-DA-RETRY | 100 ms | talker DA gate | allocation retry round for enabled NO_DA sources; one attempt/source/round | implementation policy, [05 §6bis](05_acmp_engine.md#6bis-talker-side-stateless-responder) | |
 | T-SRP-DAFRESH | 15 s | talker DA gate | PROBE_TX freshness window for DA validity | Milan §4.3.3.1 | — |
@@ -200,9 +200,9 @@ recorded as a finding, not changed here.
 conflict with. One that conflicts with an AECP hold under F03.7 waits at
 admission for that hold to end ([03 §6](03_packet_engine.md)). The holds it can
 meet are a SET_CONFIGURATION barrier, a LOCK_ENTITY against a stream step, an
-ADD/REMOVE_AUDIO_MAPPINGS against any stream step (the `MAP_CFG` class-wide
-cross-lock), and an AECP command on the same stream key. The AECP command
-bounds each hold in one of two ways:
+ADD/REMOVE_AUDIO_MAPPINGS or a GET_DYNAMIC_INFO against any stream step (the
+`MAP_CFG` class-wide cross-lock), and an AECP command on the same stream key.
+The AECP command bounds each hold in one of two ways:
 
 - A command the deadline preempts holds until its forced response at the
   latest: up to `T-BUDGET-AECP-WC` from its reception, plus the op in progress
