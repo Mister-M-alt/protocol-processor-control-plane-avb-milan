@@ -15,11 +15,17 @@ jobs:
   docs-gates:
     runs-on: ubuntu-latest
     steps:
+      # Full history: `make stale` compares last-commit times, and at depth 1
+      # a source and its export share one commit, so it could never fail.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Pinned: wavedrom-check compares renders byte for byte, and the CLI's
+      # own mermaid and puppeteer ranges would otherwise float.
       - name: Install the WaveDrom renderer and the Mermaid CLI
         run: |
-          python3 -m pip install wavedrom
-          npm install --prefix "$HOME/mermaid-cli" @mermaid-js/mermaid-cli@11.16.0
+          python3 -m pip install wavedrom==2.0.3.post3
+          npm install --prefix "$HOME/mermaid-cli" @mermaid-js/mermaid-cli@11.16.0 mermaid@11.17.2 puppeteer@25.12.0
           echo "$HOME/mermaid-cli/node_modules/.bin" >> "$GITHUB_PATH"
       - name: make check (Mermaid lint, WaveDrom freshness, links, matrices, parameters, IDs, figures, staleness)
         run: |
