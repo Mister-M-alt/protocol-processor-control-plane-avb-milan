@@ -104,13 +104,13 @@ std::vector<uint8_t> vec_bytes(const Vec& v, bool listener) {
   b.push_back(v.nov & 0xFF);
   b.insert(b.end(), v.fv.begin(), v.fv.end());
   for (int i = 0; i < v.nov; i += 3) {
-    int e[3] = {0, 0, 0};
+    int e[3] = {};
     for (int j = 0; j < 3 && i + j < v.nov; j++) e[j] = v.ev[i + j];
     b.push_back(static_cast<uint8_t>(((e[0] * 6) + e[1]) * 6 + e[2]));
   }
   if (listener) {
     for (int i = 0; i < v.nov; i += 4) {
-      int p[4] = {0, 0, 0, 0};
+      int p[4] = {};
       for (int j = 0; j < 4 && i + j < v.nov; j++) p[j] = v.fp[i + j];
       b.push_back(static_cast<uint8_t>(p[0] * 64 + p[1] * 16 + p[2] * 4 + p[3]));
     }
@@ -478,41 +478,39 @@ class SrpStoreSuite {
     CHECK(all_registered(), "TF4 precondition: every registrar of both FSMs is IN");
     h.idle(4);
     h.held = true;
-    uint64_t base[2] = {h.sb.offered[0], h.sb.offered[1]};
+    const Scoreboard at_hold = h.sb;
     int pdus = 0;
-    while ((h.sb.offered[0] - base[0] < STALL_OFFERS || h.sb.offered[1] - base[1] < STALL_OFFERS)
-           && pdus < 200) {
+    while ((h.sb.offered[0] - at_hold.offered[0] < STALL_OFFERS
+            || h.sb.offered[1] - at_hold.offered[1] < STALL_OFFERS) && pdus < 200) {
       h.feed(peer_declarations(true));
       ++pdus;
     }
     h.idle(20);
-    const uint64_t held_issue = h.sb.held_issue;
-    const uint64_t queued[2] = {h.sb.q[0].size(), h.sb.q[1].size()};
-    const uint64_t issued_before[2] = {h.sb.issued[0], h.sb.issued[1]};
+    const Scoreboard at_release = h.sb;
     h.held = false;
     drain();
     const Scoreboard& sb = h.sb;
-    printf("STORE held %d/%d: %d MRPDUs, offered %llu/%llu refused %llu/%llu queued %llu/%llu "
+    printf("STORE held %d/%d: %d MRPDUs, offered %llu/%llu refused %llu/%llu queued %zu/%zu "
            "issued after release %llu/%llu\n", kSources, kSinks, pdus,
-           static_cast<unsigned long long>(sb.offered[0] - base[0]),
-           static_cast<unsigned long long>(sb.offered[1] - base[1]),
+           static_cast<unsigned long long>(sb.offered[0] - at_hold.offered[0]),
+           static_cast<unsigned long long>(sb.offered[1] - at_hold.offered[1]),
            static_cast<unsigned long long>(sb.refused[0]), static_cast<unsigned long long>(sb.refused[1]),
-           static_cast<unsigned long long>(queued[0]), static_cast<unsigned long long>(queued[1]),
-           static_cast<unsigned long long>(sb.issued[0] - issued_before[0]),
-           static_cast<unsigned long long>(sb.issued[1] - issued_before[1]));
-    CHECK(sb.offered[0] - base[0] >= STALL_OFFERS && sb.offered[1] - base[1] >= STALL_OFFERS,
+           at_release.q[0].size(), at_release.q[1].size(),
+           static_cast<unsigned long long>(sb.issued[0] - at_release.issued[0]),
+           static_cast<unsigned long long>(sb.issued[1] - at_release.issued[1]));
+    CHECK(sb.offered[0] - at_hold.offered[0] >= STALL_OFFERS
+              && sb.offered[1] - at_hold.offered[1] >= STALL_OFFERS,
           "TF4 precondition: each FIFO is offered more than %zu ops while held", FIFO_DEPTH);
-    CHECK(held_issue == 0,
+    CHECK(at_release.held_issue == 0,
           "TF4 precondition: no FSM op leaves the merged face while the issue is held (%llu)",
-          static_cast<unsigned long long>(held_issue));
+          static_cast<unsigned long long>(at_release.held_issue));
     for (int u = 0; u < 2; ++u) {
       const char* name = u ? "listener" : "talker";
-      CHECK(sb.issued[u] - issued_before[u] == FIFO_DEPTH && sb.wrong[u] == 0
-                && sb.invented[u] == 0 && sb.q[u].empty(),
+      const uint64_t issued = sb.issued[u] - at_release.issued[u];
+      CHECK(issued == FIFO_DEPTH && sb.wrong[u] == 0 && sb.invented[u] == 0 && sb.q[u].empty(),
             "TF%d: released, the %s FIFO issues the %zu ops it accepted, in order, unmodified "
             "(issued %llu, wrong %llu, invented %llu, left %zu)", 4 + u, name, FIFO_DEPTH,
-            static_cast<unsigned long long>(sb.issued[u] - issued_before[u]),
-            static_cast<unsigned long long>(sb.wrong[u]),
+            static_cast<unsigned long long>(issued), static_cast<unsigned long long>(sb.wrong[u]),
             static_cast<unsigned long long>(sb.invented[u]), sb.q[u].size());
     }
   }

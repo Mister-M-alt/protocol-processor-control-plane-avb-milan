@@ -51,7 +51,7 @@ run:
 # one walk-record shape: make walk SHAPE=<sources>x<sinks>
 walk:
 	$(VERILATOR) $(WFLAGS) -GN_SOURCES_P=$(WALK_M) -GN_SINKS_P=$(WALK_N) \
-	  -CFLAGS "-DTB_SOURCES=$(WALK_M) -DTB_SINKS=$(WALK_N)" --Mdir obj_walk_$(SHAPE) \
+	  -CFLAGS "-DTB_SOURCES=$(WALK_M) -DTB_SINKS=$(WALK_N) -Wall -Wextra" --Mdir obj_walk_$(SHAPE) \
 	  $(WALK_SRCS) walk_main.cpp -o Vsrp_walk_sim
 	./obj_walk_$(SHAPE)/Vsrp_walk_sim +verilator+rand+reset+2 +verilator+seed+230
 

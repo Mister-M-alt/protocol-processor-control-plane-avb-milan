@@ -57,7 +57,7 @@ run:
 # one FIFO-arm shape: make storage SHAPE=<sources>x<sinks>
 storage:
 	$(VERILATOR) $(SFLAGS) -GN_SOURCES_P=$(STORE_M) -GN_SINKS_P=$(STORE_N) \
-	  -CFLAGS "-DTB_SOURCES=$(STORE_M) -DTB_SINKS=$(STORE_N)" --Mdir obj_store_$(SHAPE) \
+	  -CFLAGS "-DTB_SOURCES=$(STORE_M) -DTB_SINKS=$(STORE_N) -Wall -Wextra" --Mdir obj_store_$(SHAPE) \
 	  $(ENGINE) srp_store_wrap.sv store_main.cpp -o Vsrp_store_sim
 	./obj_store_$(SHAPE)/Vsrp_store_sim
 
