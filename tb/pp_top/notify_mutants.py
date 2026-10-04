@@ -216,7 +216,9 @@ STORM_RND = (
     Mutant("counter_limit_500ms", NOTIFY, (
         (NTFY, "                || ((now_ms_i - ctr_last_r[c]) >= 32'd1000))) begin\n",
          "                || ((now_ms_i - ctr_last_r[c]) >= 32'd500))) begin\n"),),
-        ("ST2: descriptor 0005:0", "ST2b: descriptor 0005:0")),
+        # since #148 a round's second runs from its last send, so half a second
+        # leaves six rounds in ST2's five seconds, inside its count; ST2b holds it
+        ("ST2b: descriptor 0005:0",)),
     Mutant("fan_out_skips_row_0", NOTIFY, (
         (NTFY, "  assign em_skip_w = !valid_r[wk_ix_r]\n",
          "  assign em_skip_w = !valid_r[wk_ix_r] || (wk_ix_r == '0)\n"),),
