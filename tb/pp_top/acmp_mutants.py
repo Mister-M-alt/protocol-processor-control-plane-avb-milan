@@ -277,6 +277,12 @@ def label_of(mutant: Mutant) -> str:
     return f"{mutant.name}@{Path(mutant.suite.directory).name}"
 
 
+def golden_label(suite: Suite) -> str:
+    """One golden per suite and run mode; the run's flags name the mode."""
+    flags = "".join(arg for arg in suite.run if arg.startswith("--"))
+    return f"golden-{Path(suite.directory).name}{flags}"
+
+
 def main() -> int:
     """Run a golden copy of every suite in use, then every selected mutant."""
     parser = argparse.ArgumentParser(description=__doc__,
@@ -295,8 +301,8 @@ def main() -> int:
         parser.error("unknown mutant(s): " + " ".join(unknown))
     chosen = [m for m in MUTANTS if not args.only or m.name in args.only]
     work = (root, output, args.verilator)
-    suites = {m.suite.directory: m.suite for m in chosen}
-    records = [judge("golden-" + Path(d).name, s, (), (), work) for d, s in sorted(suites.items())]
+    suites = {(m.suite.directory, m.suite.run): m.suite for m in chosen}
+    records = [judge(golden_label(s), s, (), (), work) for _, s in sorted(suites.items())]
     for record in records:
         print(json.dumps({k: record[k] for k in ("mutant", "verdict")}), flush=True)
     if all(r["verdict"] == "PASS" for r in records):
