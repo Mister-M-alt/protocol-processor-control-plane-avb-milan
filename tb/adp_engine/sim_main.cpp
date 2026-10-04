@@ -292,6 +292,7 @@ struct DiscCell {
   const char* ieee;   // the IEEE 1722.1-2021 clause it replaces or reads
 };
 constexpr const char* I_AVAIL = "6.2.6.4 AVAILABLE";
+constexpr const char* I_FRESH = "6.2.6.4 AVAILABLE; 6.2.2.15";
 constexpr const char* I_GM = "6.2.2.16; 6.2.2.17";
 constexpr const char* I_IFX = "6.2.2.20";
 constexpr const char* I_SINK = "none: Milan per-sink binding";
@@ -303,10 +304,10 @@ constexpr DiscCell D_DISCOVER{'N', D_DISC, EV_DISC, TM_ARM, "5.6.4.5.1 steps 1-4
 constexpr DiscCell D_DEPART{'N', D_NOT, EV_DEP, TM_CANCEL, "5.6.4.5.2 steps 2a 2b",
                             "6.2.2.15; 6.2.2.16; 6.2.2.17"};
 constexpr DiscCell DISC[N_DROW][N_DCOL] = {
-  {D_I_UNB, D_DISCOVER, {'N', D_DISC, EV_NONE, TM_ARM, "5.6.4.5.2 steps 1 3", I_AVAIL}},
+  {D_I_UNB, D_DISCOVER, {'N', D_DISC, EV_NONE, TM_ARM, "5.6.4.5.2 steps 1 3", I_FRESH}},
   {D_I_UNB, D_DISCOVER,
    {'N', D_DISC, EV_PAIR, TM_ARM, "5.6.4.5.2 steps 2a 2c 3", "6.2.2.15 a new cycle"}},
-  {D_I_UNB, D_I_NOT, {'N', D_DISC, EV_NONE, TM_ARM, "5.6.4.5.2 steps 1 3", I_AVAIL}},
+  {D_I_UNB, D_I_NOT, {'N', D_DISC, EV_NONE, TM_ARM, "5.6.4.5.2 steps 1 3", I_FRESH}},
   {D_I_UNB, D_I_NOT, D_DEPART},
   {D_I_UNB, D_I_NOT, D_DEPART},
   {D_I_UNB, D_DISCOVER, {'I', D_DISC, EV_NONE, TM_NONE, "5.6.4.5.2 step 1", I_IFX}},

@@ -97,9 +97,10 @@ holds DOWN; the F04.2 DELAY walked in both hardware phases). 45 cells:
 | GM_CHANGE | I | I | N §5.6.3.5.7 | I | I |
 | SHUTDOWN (enable falls) | C (enable low) | I | N §5.6.3.5.8 | N §5.6.3.5.11 | N §5.6.3.5.11 |
 
-The tables below give each cell's class and Milan clause; F04.7 adds its
-IEEE clause. Each cell grades the advertise state after it, the PRNG draw requests (an N
-cell entering DELAY draws exactly one kind-2 T-ADP-DELAY, 0..4000 ms), every
+The table above gives each cell's class and Milan clause; F04.7 adds its
+IEEE clause. Each cell grades the advertise state after it, the PRNG draw
+requests (an N cell entering DELAY draws exactly one kind-2 T-ADP-DELAY,
+0..4000 ms), every
 timer operation on the shared slot (the arm is the last one, at `now` + the
 draw, or + 5000 ms into WAITING; a cancel wherever the clause says Stop, none
 where the slot is untouched; nothing on any other slot), the committed frame
@@ -187,7 +188,7 @@ read-only, with no bench access:
     repeat and no restart.
   - This processor: 13215 (B6), 85 (B7, after a reload), 1865 and 2156 (B8),
     19 (B8, after a power cycle). Within a boot, one increment per 6.99 and
-    6.97 s: the 5 s T-ADP-ADV plus the 2 s mean of the T-ADP-DELAY draw, one
+    6.96 s: the 5 s T-ADP-ADV plus the 2 s mean of the T-ADP-DELAY draw, one
     per ENTITY_AVAILABLE. After each restart it is low again. Each lane's
     identity gate passed on the same enumeration.
   - No ENTITY_DEPARTING appears in any of the five, and the enumerating tool
@@ -237,8 +238,8 @@ both controls PASS and all 30 arms are KILLED. Four pp_top rows carry that run's
 counts, because the lane's AD8 and AD9 fail as AD6 and AD7 do under them.
 Re-run 2026-10-04 with Verilator 5.050 at the head of issue #85's lane, which adds
 the eight `arc-` arms: both controls PASS and all 38 arms are KILLED, each earlier
-arm with the count in its row (169 s at `--jobs 4`). An `arc-` arm must fail its
-arc's own check, `P13 F04.3 arc ...`, not only some cell.
+arm with the count in its row. An `arc-` arm must fail its arc's own check,
+`P13 F04.3 arc ...`, not only some cell.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|
