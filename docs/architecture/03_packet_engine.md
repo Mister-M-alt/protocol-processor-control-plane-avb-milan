@@ -234,10 +234,10 @@ control per class/key — the load-bearing role is **cross-engine interlock** (t
 
 | Class | Members | Key | Rule |
 |---|---|---|---|
-| RO_SNAPSHOT | all GETs, READ_DESCRIPTOR, GET_RX/TX_STATE | addressed descriptor | parallel; blocked only vs in-flight write on the same key |
+| RO_SNAPSHOT | all GETs but GET_DYNAMIC_INFO, READ_DESCRIPTOR, GET_RX/TX_STATE | addressed descriptor | parallel; blocked only vs in-flight write on the same key |
 | CFG_BARRIER | SET_CONFIGURATION | global | drain all in-flight, block admission, then execute (STREAM_IS_RUNNING pre-guard first) |
 | STREAM_CFG | SET_STREAM_FORMAT/INFO, START/STOP_STREAMING, BIND/UNBIND/probe events, listener-SM steps | stream index | serialized per key — doubles as the per-sink SM serialization (one event at a time per sink) |
-| MAP_CFG | ADD/REMOVE_AUDIO_MAPPINGS, GET_AUDIO_MAP (write side) | stream port | serialized per key **and** cross-locked with STREAM_CFG of referenced streams (format↔mapping validation pair) |
+| MAP_CFG | ADD/REMOVE_AUDIO_MAPPINGS, GET_AUDIO_MAP (write side), GET_DYNAMIC_INFO (whole batch, no-descriptor key; the accepted over-serialization) | stream port | serialized per key **and** cross-locked with STREAM_CFG of referenced streams (format↔mapping validation pair) |
 | CLOCK_CFG | SET_SAMPLING_RATE, SET_CLOCK_SOURCE; MVU SET_MCR_INFO deferred ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) | audio unit / clock domain | serialized per key |
 | NAME_WR | SET_NAME | descriptor | serialized per key |
 | LOCK_OP | LOCK_ENTITY + `T-LOCK-UNLOCK` expiry event | global | serialized vs every lock-protected member (incl. ACMP BIND/UNBIND and MGMT writes) |
@@ -251,7 +251,8 @@ opcode's class: SET_CONFIGURATION `CFG_BARRIER`; SET_STREAM_FORMAT,
 SET_STREAM_INFO and START/STOP_STREAMING `STREAM_CFG`; ADD/REMOVE_AUDIO_MAPPINGS
 `MAP_CFG`; SET_SAMPLING_RATE and SET_CLOCK_SOURCE `CLOCK_CFG`; SET_NAME
 `NAME_WR`; LOCK_ENTITY `LOCK_OP`; REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION
-`REGISTRY_OP`; SET_CONTROL `IDENTIFY`; every other command `RO_SNAPSHOT`. An
+`REGISTRY_OP`; SET_CONTROL `IDENTIFY`; GET_DYNAMIC_INFO `MAP_CFG` (below);
+every other command `RO_SNAPSHOT`. An
 ACMP GET_RX_STATE, GET_TX_STATE or GET_TX_CONNECTION is `RO_SNAPSHOT`; every
 other ACMP step is its stream's `STREAM_CFG`. A key names what the transaction
 reads or writes, `{descriptor_type[5:0], descriptor_index[9:0]}`: an AECP
@@ -263,14 +264,21 @@ descriptor sits at @28, outside the record; GET_DYNAMIC_INFO, which reads severa
 That key costs READ_DESCRIPTOR nothing, because no ACMP step writes what it
 reads: a descriptor-image field, or the current sampling rate, clock source or
 stream format it overlays on one (issue #82), rows only the AECP engine writes.
-For GET_DYNAMIC_INFO it is a known limitation. IEEE
-1722.1-2021 §7.4.76.1 handles each record as if it were an independent command,
-but a GET_STREAM_INFO record of STREAM_INPUT k reads sink k's listener binding
-record (Milan §5.4.2.10's probing and ACMP status), which ACMP listener steps
-write, and the batch is not serialized against them. A stand-alone
-GET_STREAM_INFO of STREAM_INPUT 1 waits for a held UNBIND_RX of sink 1 (HZ6). A
-GET_DYNAMIC_INFO carrying the same record is admitted beside it. Serializing a
-batch against the streams its records name is left to a later issue #84 item.
+GET_DYNAMIC_INFO would lose a conflict by it. IEEE 1722.1-2021 §7.4.76.1 handles
+each record as if it were an independent command, and a GET_STREAM_INFO record
+of STREAM_INPUT k reads sink k's listener binding record (Milan §5.4.2.10's
+probing and ACMP status), which ACMP listener steps write. The classifier
+cannot key the batch by its records: their descriptors lie past the operands
+it sees (@24 to @31). So a GET_DYNAMIC_INFO presents `MAP_CFG` with the
+no-descriptor key. The class-wide cross-lock holds it against every in-flight
+`STREAM_CFG` step, the listener's included, as a stand-alone GET_STREAM_INFO
+of STREAM_INPUT 1 waits for a held UNBIND_RX of sink 1 (HZ6). A batch carrying
+that record waits too, and holds back that UNBIND_RX when it is held itself
+(HZ13). It is the one read outside `RO_SNAPSHOT`, and it over-serializes: a
+batch that names no stream waits for any stream step as well (HZ8), and so
+does an ACMP stream step for the batch. Its key is one no ACMP transaction
+presents, so it still runs beside every ACMP read (HZ13), and the
+single-issue AECP engine never holds a second `MAP_CFG` beside it.
 `CFG_BARRIER` and `LOCK_OP` are global. A frame the engine drops (an AECP
 response as input, a command for another entity_id), MVU and ADDRESS_ACCESS are
 `RO_SNAPSHOT` with that no-descriptor key, so they never drain the table. The

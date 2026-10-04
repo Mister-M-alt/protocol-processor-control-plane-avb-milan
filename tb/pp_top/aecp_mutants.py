@@ -58,6 +58,13 @@ MUTANTS = [
      "P20a completes: one redirect"),
     ("dlkill-always-misbehaving", "dlkill-always-misbehaving", "ucpu", "run",
      "P20d ENTITY_LOCKED kept"),
+    # issue #81 acceptance 4: T-LOCK-UNLOCK and T-NOTIF-TIMELIMITED at the
+    # top's own defaults (section TD, the sixth build), one side of the
+    # window each
+    ("td-lock-default-59s", "td-lock-default-59s", "pp_top", "timer-defaults",
+     "TD1: T-LOCK-UNLOCK at its default"),
+    ("td-tl-default-301s", "td-tl-default-301s", "pp_top", "timer-defaults",
+     "TD2: T-NOTIF-TIMELIMITED at its default"),
     # issue #57 (REQ-MVU-005): the MVU answer under the deadline, and its
     # latency against T-AECP-RESP (section TB, the fifth build)
     ("dl-mvu-forced-status-10", "dl-mvu-forced-status-10", "pp_top",
@@ -166,6 +173,20 @@ MUTANTS = [
     ("hz-map-key-none-talker", "hz-map-key-none", "pp_top", "hazards",
      "HZ12c a GET_TX_STATE of source 1 vs a held ADD_AUDIO_MAPPINGS "
      "(MAP_CFG) naming STREAM_OUTPUT 1: not admitted"),
+    # issue #84, R419-2 F5: a GET_DYNAMIC_INFO waits for and holds back a
+    # listener step of a sink its records name, and still runs beside a read
+    ("hz-gdi-key-none", "hz-gdi-key-none", "pp_top", "hazards",
+     "HZ13a GET_DYNAMIC_INFO with a GET_STREAM_INFO record of STREAM_INPUT 1 "
+     "vs a held UNBIND_RX of sink 1: not admitted"),
+    ("hz-gdi-key-none-held", "hz-gdi-key-none", "pp_top", "hazards",
+     "HZ13c an UNBIND_RX of sink 1 vs a held GET_DYNAMIC_INFO with a "
+     "GET_STREAM_INFO record of STREAM_INPUT 1: not admitted"),
+    ("hz-gdi-key-none-no-stream", "hz-gdi-key-none", "pp_top", "hazards",
+     "HZ8 GET_DYNAMIC_INFO naming no stream (MAP_CFG's cross-lock, the "
+     "accepted over-serialization): not admitted"),
+    ("hz-gdi-as-barrier", "hz-gdi-as-barrier", "pp_top", "hazards",
+     "HZ13b GET_DYNAMIC_INFO with a GET_STREAM_INFO record of STREAM_INPUT 1 "
+     "vs a held GET_RX_STATE of sink 1 (two reads): admitted beside"),
 ]
 
 SUITES = ("common", "ucpu", "pp_top")

@@ -120,10 +120,16 @@ Rules (behavioral — no vendor primitives):
    default, and while the dynamic overlay's configuration row is written (by
    SET_CONFIGURATION, or by the boot restore of a saved configuration) the ADPDU
    carries that instead ([04 §3](04_adp_engine.md#3-pdu-handling)).
-5. Reset: asynchronous assert, synchronous release, released in the boot-sequencer
-   order ([01 §5](01_overview.md)); `entity_enable` is the master gate implementing
-   ADP start gating (Milan §5.6.1), a request the processor forwards to ADP only once
-   both restore walks are done (`restore_done_o`, [07 §5.3](07_memory_maps.md#fig-07-nvmflow)).
+5. Reset: one input, `rst_n`, **synchronous and active low**. It is sampled only at
+   the core clock's rising edge (`always_ff @(posedge clk_i)`, `rst_n` read inside), so
+   it takes effect only while that clock runs, and no flop has an asynchronous reset
+   ([integrator guide §1](../guides/integrator.md#1-clocking-and-reset)). The
+   boot-sequencer order ([01 §5](01_overview.md)) follows its release, kept by holds
+   rather than staged resets: the AECP dispatch and the listener's work faces are held
+   from reset until the restore walks release them, and `entity_enable` is the master
+   gate implementing ADP start gating (Milan §5.6.1), a request the processor forwards
+   to ADP only once both restore walks are done (`restore_done_o`,
+   [07 §5.3](07_memory_maps.md#fig-07-nvmflow)).
 
 <a id="sec-02-class-a"></a>
 ## 3. Class A — packet streaming

@@ -50,7 +50,7 @@ reports uncovered REQ-IDs as failures.
 | **DIR** | directed per-command tests from generated vectors (valid + each error status) | every F06.14 row, every status code reachable |
 | **MTXW** | **matrix walker**: drive every cell of [F05.3](05_acmp_engine.md#fig-05-listener-matrix) (state × event, incl. `—`/`ign` cells proven inert), both ADP SMs, the SRP FSMs ([F10.2–F10.5](10_srp_engine.md), incl. the Δ13 registrar rule), and the MAAP Table B.7 matrix ([11 §6](11_maap_engine.md), incl. both compare_MAC tie-breaks and the `-x-` ignores) | 100 % cells + FSM arcs |
 | **TOL** | malformed/tolerance suite ([F09.4](#fig-09-malformed)) | every V-rule of [F03.6](03_packet_engine.md#fig-03-valrules) |
-| **TIM** | compressed-timer runs (prescaler factor) over every [F08.1](08_timing.md#fig-08-constants) row: advertise cadence, probe attempts + backoff, settle timeout, controller monitors, lock auto-unlock, TIME_LIMITED expiry, DA freshness; plus response-budget assertions (`T-BUDGET-*`) | every F08.1 row exercised + budget histograms |
+| **TIM** | compressed-timer runs (prescaler factor) over every [F08.1](08_timing.md#fig-08-constants) row this processor implements (`T-CTR-OBSERVE` is integrator-owned): advertise cadence, probe attempts + backoff, settle timeout, controller monitors, lock auto-unlock, TIME_LIMITED expiry, DA freshness; plus response-budget assertions (`T-BUDGET-*`) | every F08.1 row with RTL here exercised + budget histograms |
 | **RND** | randomized multi-controller sessions (16+ controllers: register/deregister churn, concurrent SETs, lock contention, GDI batches) against the reference model | scoreboard classes interleaved; no divergence |
 | **STORM** | notification stress: counter churn at rate limit, fan-out to full registry, TX-arbiter starvation probes | pacing + ≤1/desc/s verified; no solicited deadline miss |
 | **NVM** | power-cut/restore: cut at randomized commit points, verify CRC fallback + restored bindings enter `PRB_W_AVAIL`; persisted-set completeness per REQ-PER-001. For every persisted group: the stores read cleared (value and valid flag) before any restore applies; a real command saves and a real command reads back after reset; deleting the group's live trigger, or its replay, each fails a named check; a completion mark is never the oracle; volatile state (IDENTIFY, lock, registry) is populated before the cycle and absent after it; transport faults (DEVICE, torn, deadline) are kept distinct from value refusals; descriptor-memory debt and roll-back faults end DEFAULTS or CLOSED (§8.2) | every record type cut ≥ once; every group's trigger and replay mutation killed |
@@ -261,21 +261,25 @@ its watchdog.
 | the engine busy: each of those behind a 15-frame notification fan-out, answered as idle, within one job plus its idle latency of the fan-out's last frame; GET_MILAN_INFO against a response memory stalled short of its watchdog | TB3, TB4 |
 | `T-BUDGET-ACMP-RESP`: ACMP answers idle and beside that load, later than idle by at most one frame on the wire | TB5 |
 | the deadline never fired while the budgets were measured | TB |
-| every transaction presents its F03.7 class and key: 33 AECP rows (all nine classes, the GETs' descriptor keys, the no-descriptor key of READ_DESCRIPTOR, GET_DYNAMIC_INFO, MVU and of frames the engine drops) and 6 ACMP rows | HZ1 |
+| `T-LOCK-UNLOCK` and `T-NOTIF-TIMELIMITED` at the top's own defaults, 60,000 and 300,000 ms, not the 400 ms override U5 and L6d run under: the auto-unlock notification and the expiry DEREGISTER reach the registered controller no sooner than the default after the command and at most 20 ms later, the registration kept alive meanwhile by answering the monitor's probes | TD1, TD2 |
+| every transaction presents its F03.7 class and key: 33 AECP rows (all nine classes, the GETs' descriptor keys, the no-descriptor key of READ_DESCRIPTOR, GET_DYNAMIC_INFO (as `MAP_CFG`), MVU and of frames the engine drops) and 6 ACMP rows | HZ1 |
 | CFG_BARRIER drains an in-flight ACMP step before executing and blocks a later ACMP head behind it | HZ2 |
 | a pending barrier is never starved by the round-robin (the wedge the fix removes) | HZ3 |
 | LOCK_OP waits for an ACMP stream step and runs beside an ACMP read | HZ4 |
 | STREAM_CFG and RO_SNAPSHOT conflict per key; two reads run together; MAP_CFG waits for any stream step | HZ5 to HZ7 |
-| CLOCK_CFG, NAME_WR, REGISTRY_OP, IDENTIFY and READ_DESCRIPTOR run beside an ACMP stream step; REGISTRY_OP, the one class with no reachable conflict, runs beside an ACMP read too | HZ8 |
+| CLOCK_CFG, NAME_WR, REGISTRY_OP, IDENTIFY and READ_DESCRIPTOR run beside an ACMP stream step; REGISTRY_OP, the one class with no reachable conflict, runs beside an ACMP read too; the one accepted over-serialization: a GET_DYNAMIC_INFO naming no stream waits for the step | HZ8 |
 | NAME_WR and an ACMP read of the stream it names exclude each other, either one held, on both engines' keys: a SET_NAME on STREAM_INPUT 1 waits for a GET_RX_STATE of sink 1, then answers SUCCESS and the name reads back; it runs beside a read of another sink and beside an UNBIND_RX of the same one; held, a SET_NAME on STREAM_OUTPUT 1 holds back a GET_TX_STATE of source 1 and not one of source 2 | HZ9 |
 | STREAM_CFG against an ACMP read of its key; on the talker's keys, STREAM_CFG against a GET_TX_STATE and a DISCONNECT_TX per key, and RO_SNAPSHOT against a DISCONNECT_TX, not against a read | HZ10 |
 | CFG_BARRIER, LOCK_OP and the MAP_CFG cross-lock against the talker: the barrier holds back a read, the lock and a mapping edit hold back a step and not a read | HZ11 |
 | CLOCK_CFG, IDENTIFY and MAP_CFG commands naming a stream descriptor conflict with an ACMP read of it, either one held, and are then refused NOT_SUPPORTED | HZ12 |
+| a GET_DYNAMIC_INFO carrying a GET_STREAM_INFO record of STREAM_INPUT 1 waits for a held UNBIND_RX of sink 1, as the stand-alone getter does, holds one back when held itself, and runs beside a held GET_RX_STATE of sink 1 (R419-2 F5) | HZ13 |
 
 Section TB runs in the suite's fifth build (`make budget`), whose timebase is the
 nominal clock's own (1 ms = 1,000 clocks), so the deadline never cuts a measurement;
 it prints the latency histogram ([08 §4](08_timing.md#4-deadline-budgets) records
-it).
+it). Section TD runs in the sixth build (`make timer-defaults`), whose wrap keeps
+the top's two timeouts, on the first build's timebase (1 ms = 100 clocks): it
+waits out the real 300,000 ms, 30 million clocks.
 
 Section HZ (`--hazards-only`) holds an ACMP transaction in flight by stalling the
 MAC until four answers fill the standard TX slots, so the next ACMP command is

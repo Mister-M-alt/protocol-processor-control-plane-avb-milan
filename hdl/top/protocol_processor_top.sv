@@ -1539,11 +1539,19 @@ module protocol_processor_top
   //! key. READ_DESCRIPTOR loses nothing by it: no ACMP step writes what it
   //! reads, a descriptor-image field or the current sampling rate, clock
   //! source or stream format it overlays on one (issue #82), rows only the
-  //! AECP engine's state port writes. GET_DYNAMIC_INFO does, a known gap
-  //! (03 §6): its GET_STREAM_INFO records of a STREAM_INPUT read the listener
-  //! binding record (the probing and ACMP status, `lstn_gsi_status_r`
-  //! below), which ACMP listener steps write, so the batch is NOT
-  //! serialized against them, where a stand-alone GET_STREAM_INFO is.
+  //! AECP engine's state port writes. GET_DYNAMIC_INFO would lose a
+  //! conflict: its GET_STREAM_INFO records of a STREAM_INPUT read the
+  //! listener binding record (the probing and ACMP status,
+  //! `lstn_gsi_status_r` below), which ACMP listener steps write, and the
+  //! operands latched here (@24 to @31) end before a record's descriptor.
+  //! So the batch presents MAP_CFG, whose
+  //! class-wide cross-lock (the scoreboard's rule 5) holds it against every
+  //! in-flight stream step, as a stand-alone GET_STREAM_INFO is held
+  //! against its own sink's (issue #84, R419-2 F5). That over-serializes a
+  //! read: a batch naming no stream waits too, and an ACMP stream step waits
+  //! for the batch. Its NONE key shares nothing with an ACMP read, so it
+  //! still runs beside every one, and the single-issue AECP engine never
+  //! holds a second MAP_CFG beside it.
   logic        hz_valid_nc_w;
   logic [2:0]  hz_protocol_w;
   logic [15:0] hz_opcode_w;
@@ -1634,6 +1642,8 @@ module protocol_processor_top
           hz_key_w = hz_key(HZ_DT_AVB_IF_C, hdr_operands_r[63:48]);
         16'h0000, 16'h0002, 16'h0007:          // the ENTITY-addressed three
           hz_key_w = hz_key(HZ_DT_ENTITY_C, 16'd0);
+        16'h004B:                              // GET_DYNAMIC_INFO (above)
+          hz_class_w = 4'(PP_HZ_MAP_CFG);
         default: ;
       endcase
     end
