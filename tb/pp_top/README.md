@@ -1197,6 +1197,14 @@ Re-run 2026-10-03 at the head of lane P1 (issues #61, #83), the 27 `hazards` arm
 only, because that lane made HZ9 let its name saves drain: the control PASS and all
 27 KILLED. Three rows carry that run's counts, because under them a misplaced HZ9
 SET_NAME's save holds dispatch behind HZ11's held LOCK_ENTITY.
+Re-run in full 2026-10-04 at the head of the #81/#84 closeout lane, `--jobs 3`:
+6 controls PASS (`timer-defaults` is the sixth) and 61 arms KILLED. The six arms
+from `td-lock-default-59s` to `hz-gdi-as-barrier` are that lane's. Three counts
+moved, each only by the checks it added: `hz-stub-restored` (HZ1's
+GET_DYNAMIC_INFO row now wants MAP_CFG, and HZ8's batch, HZ13a and HZ13c are
+new), `hz-acmp-reads-as-steps` (HZ13b) and `hz-barrier-no-priority` (twelve new
+HZ checks behind the wedge). Every other arm failed the same checks as at the
+lane's base, line for line.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|
@@ -1219,10 +1227,12 @@ SET_NAME's save holds dispatch behind HZ11's held LOCK_ENTITY.
 | `ucpu-preempt-keeps-the-body` | ucpu `run` | the cursor not returned to 12 | 1: P20f (length 36 with a partly built counters block) |
 | `ucpu-preempt-repeats` | ucpu `run` | the redirect not limited to once per dispatch | 18: P20a to P20h (E_DLKILL redirected into itself, never sends) |
 | `dlkill-always-misbehaving` | ucpu `run` | E_DLKILL overwrites a refusal already chosen | 1: P20d (ENTITY_LOCKED became status 10) |
+| `td-lock-default-59s` | pp_top `timer-defaults` | the top's `LOCK_TIMEOUT_MS_P` default 59,000 instead of 60,000 | 1: TD1 (the auto-unlock 59,003 ms after the LOCK_ENTITY) |
+| `td-tl-default-301s` | pp_top `timer-defaults` | the top's `REG_TL_TIMEOUT_MS_P` default 301,000 instead of 300,000 | 1: TD2 (no expiry DEREGISTER by 300,020 ms; 6 monitor probes answered) |
 | `mvu-silent` | pp_top `budget` | GET_MILAN_INFO retires without its SEND_RESPONSE | 12: TB1, TB3 and TB4, every GET_MILAN_INFO unanswered |
 | `fanout-never-ends` | pp_top `budget` | the notification walk never ends its class, so the command-path hold never drops | 23: TB3 to TB5, nothing answered once the fan-out starts |
 | `acmp-waits-for-aecp` | pp_top `budget` | READ_DESCRIPTOR classified CFG_BARRIER, so ACMP waits behind unrelated AECP work | 2: TB5 (GET_RX_STATE 13,144 clocks beside the READ_DESCRIPTOR, GET_TX_STATE 977 during the fan-out) |
-| `hz-stub-restored` | pp_top `hazards` | the dispatch-ROM stub the classifier replaced (ACMP STREAM_CFG and the audio-map pair MAP_CFG, keyed by protocol; everything else RO) | 74: HZ1 (34 rows), HZ2 x3, HZ3 x2, HZ4 x3, HZ5, HZ6 and every keyed pair of HZ9 to HZ12 |
+| `hz-stub-restored` | pp_top `hazards` | the dispatch-ROM stub the classifier replaced (ACMP STREAM_CFG and the audio-map pair MAP_CFG, keyed by protocol; everything else RO) | 81: HZ1 (35 rows), HZ2 x3, HZ3 x2, HZ4 x3, HZ5, HZ6, every keyed pair of HZ9 to HZ12, HZ8's GET_DYNAMIC_INFO x2, HZ13a x2 and HZ13c x2 |
 | `hz-setcfg-not-barrier` | pp_top `hazards` | SET_CONFIGURATION classified RO_SNAPSHOT | 7: HZ1, HZ2 x2, HZ3 x2, HZ11a x2 |
 | `hz-setcfg-not-barrier-talker` | pp_top `hazards` | the same patch, named on the talker | the same 7; named HZ11a |
 | `hz-lock-not-lockop` | pp_top `hazards` | LOCK_ENTITY classified RO_SNAPSHOT | 7: HZ1 x2, HZ4 x3, HZ11b x2 |
@@ -1243,10 +1253,12 @@ SET_NAME's save holds dispatch behind HZ11's held LOCK_ENTITY.
 | `hz-identify-key-none`, `-talker` | pp_top `hazards` | IDENTIFY keyed by nothing | 5: HZ1, HZ12b x4; named on STREAM_INPUT 1 and on the talker |
 | `hz-map-as-ro`, `-talker` | pp_top `hazards` | MAP_CFG classified RO_SNAPSHOT, so the cross-lock is lost | 10: HZ1 x2, HZ7 x2, HZ11d x2, HZ12c x4; named HZ7 and HZ11d |
 | `hz-map-key-none`, `-talker` | pp_top `hazards` | MAP_CFG keyed by nothing (the class-wide cross-lock still holds) | 6: HZ1 x2, HZ12c x4; named on STREAM_INPUT 1 and on the talker |
-| `hz-acmp-reads-as-steps` | pp_top `hazards` | ACMP GET_RX/TX_STATE and GET_TX_CONNECTION classified STREAM_CFG | 26: HZ1 x3, HZ4, HZ6 (two reads), every read of HZ9 to HZ12, and HZ11b's held LOCK_ENTITY, its premise and both arms (as above) |
-| `hz-barrier-no-priority` | pp_top `hazards` | the pending barrier's priority removed from the round-robin | 127: HZ3, then every later arm (the admission port stays wedged) |
+| `hz-acmp-reads-as-steps` | pp_top `hazards` | ACMP GET_RX/TX_STATE and GET_TX_CONNECTION classified STREAM_CFG | 27: HZ1 x3, HZ4, HZ6 (two reads), every read of HZ9 to HZ12, HZ11b's held LOCK_ENTITY, its premise and both arms (as above), and HZ13b |
+| `hz-barrier-no-priority` | pp_top `hazards` | the pending barrier's priority removed from the round-robin | 139: HZ3, then every later arm (the admission port stays wedged) |
 | `hz-foreign-target-classified` | pp_top `hazards` | a command for another entity_id classified by its opcode | 1: HZ1 (CFG_BARRIER for a frame the engine drops) |
 | `hz-response-classified` | pp_top `hazards` | an AECP response arriving as input classified by its opcode | 1: HZ1 |
+| `hz-gdi-key-none`, `-held`, `-no-stream` | pp_top `hazards` | GET_DYNAMIC_INFO back to RO_SNAPSHOT with the NONE key, the classification before R419-2 F5 was fixed | 7: HZ1, HZ8's GET_DYNAMIC_INFO x2, HZ13a x2 (the batch admitted beside the held UNBIND_RX, refused 0 clocks), HZ13c x2; named HZ13a, HZ13c and HZ8 |
+| `hz-gdi-as-barrier` | pp_top `hazards` | GET_DYNAMIC_INFO classified CFG_BARRIER (over-serialized against reads too) | 2: HZ1, HZ13b (the batch waits for a GET_RX_STATE) |
 
 ### AECP dispatch and response negative controls: `aecp_dispatch_mutants.py`
 
