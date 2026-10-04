@@ -3,7 +3,7 @@
 
 Proves the ADP engine (`hdl/adp/KL_adp_engine.sv`) against
 [04](../../docs/architecture/04_adp_engine.md) in full: `make` = build + run,
-exit 0 = PASS, 1334 checks. `make mutants` runs the checked-in mutation
+exit 0 = PASS, 1348 checks. `make mutants` runs the checked-in mutation
 campaign below.
 
 The top (`tb_adp_top.sv`) is pure wiring: the engine plus the **real
@@ -144,21 +144,27 @@ Each cell grades the sink's bound and discovered bits, the exact event
 sequence on the class-C port (sink and order), the sink's T-ADP-NOADP
 operations (one arm at the received valid_time, 20 s here; one cancel; or
 none; nothing on another slot), that nothing is transmitted, and the RX-slot
-free. The two index > last cells x DISCOVERED take F04.8's fresh arc, which
-notes the received index (§5.6.4.5.2 step 3; its guard reads no
-grandmaster), and only the next ADPDU shows the noted value: each is followed
-by an AVAILABLE repeating that index, grandmaster and domain matching, which
-must give the restart pair (step 2), DEPARTED then DISCOVERED. A failure there
-fails the cell, and so arc 4's check.
+free. Three cells x DISCOVERED note the received index (§5.6.4.5.2 step 3),
+and only the next ADPDUs show the noted value: the two index > last cells,
+which take F04.8's fresh arc (its guard reads no grandmaster), and the restart
+cell, walked at index 699, one below the last, so that a restart that notes
+nothing shows. Each is graded from both sides, from its own end state. An
+AVAILABLE repeating the index, grandmaster and domain matching, must give the
+restart pair (step 2), DEPARTED then DISCOVERED: at least that index was
+noted. Then the cell is walked again, and an AVAILABLE one above the index
+must give no event, being fresh: at most that index was noted. A failure
+there fails its cell; in the fresh match cell, arc 4's walk cell, and in the restart
+cell, arc 5's, it also fails that arc's check.
 
 F04.3's eight arcs map onto the cells BIND x unbound; match x NOT; GM mismatch
 x NOT; fresh match, restart match, stale GM mismatch, DEPARTING and TMR_NO_ADP
 x DISCOVERED (F04.8 lists each with its clauses). Each arc has a planted
 mutant of its own in the campaign below (the `arc-` arms), which must fail
 that arc's own check; the fresh arc has one per action (its T-ADP-NOADP
-re-arm, and its noted index); the GM and domain guard is planted at both of
-its sites (TK_NOT_DISCOVERED, and the restart pair), the restart detector as
-an off-by-one at its boundary (an index equal to the last one).
+re-arm, and its noted index), and two more that note too high an index (the
+received one + 1, and the maximum); the GM and domain guard is planted at
+both of its sites (TK_NOT_DISCOVERED, and the restart pair), the restart
+detector as an off-by-one at its boundary (an index equal to the last one).
 
 **The available_index interop note** (issue #85 item 4), adjudicated on
 2026-10-04 against the standard's text and the reference behaviour on record,
@@ -254,6 +260,13 @@ the fresh arc's noted index and adds `arc-fresh-no-store`: both controls PASS an
 all 39 arms are KILLED. Three rows' counts grew by the follow-up step
 (`disc-fresh-checks-gm` 3 to 4, `disc-restart-not-rediscovered` 4 to 7,
 `arc-restart-detector-off-by-one` 10 to 13); every other arm kept its count.
+Re-run 2026-10-04 with Verilator 5.050 in that lane's third round, which grades
+the noted index from both sides, in the restart cell too, and adds
+`arc-fresh-store-plus-one` and `arc-fresh-store-max`: both controls PASS and all
+41 arms are KILLED. Three rows' counts grew (`disc-fresh-checks-gm` 4 to 5,
+`disc-not-discovered-checks-index` 14 to 17, `disc-restart-not-rediscovered`
+7 to 8), and `arc-restart-detector-off-by-one` keeps 13 with the restart cell's
+repeat in place of its event check; every other arm kept its count.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|
@@ -280,10 +293,10 @@ all 39 arms are KILLED. Three rows' counts grew by the follow-up step
 | `walk-departing-keeps-index` | adp_engine | available_index not reset after ENTITY_DEPARTING | 6: SHUTDOWN x WAITING and both DELAY phases, P7 twice, P11e |
 | `walk-foreign-discover-answered` | adp_engine | an ENTITY_DISCOVER for another entity_id is answered | 8: foreign DISCOVER x WAITING, P4d twice, P5 twice |
 | `walk-link-down-keeps-timer` | adp_engine | LINK_DOWN from WAITING/DELAY leaves the timer running | 3: LINK_DOWN x WAITING and x DELAY (timer armed), P6 |
-| `disc-fresh-checks-gm` | adp_engine | a fresh index is refused on a GM mismatch (a test §5.6.4.5.2 does not make) | 4: GM mismatch, index > last x DISCOVERED (state, event, timer, and the repeat of the index it did not note) |
-| `disc-not-discovered-checks-index` | adp_engine | TK_NOT_DISCOVERED compares the index with the stale record | 14: index <= last and interface differs x NOT, and every later cell entered through a discovery at index 700 over a higher stale record, including the NOADP arc |
+| `disc-fresh-checks-gm` | adp_engine | a fresh index is refused on a GM mismatch (a test §5.6.4.5.2 does not make) | 5: GM mismatch, index > last x DISCOVERED (state, event, timer, and both sides of the index it did not note) |
+| `disc-not-discovered-checks-index` | adp_engine | TK_NOT_DISCOVERED compares the index with the stale record | 17: index <= last and interface differs x NOT, and every later cell entered through a discovery at index 700 over a higher stale record, including the second walk of both index > last cells x DISCOVERED (so arc 4) and the NOADP arc |
 | `disc-not-discovered-checks-interface` | adp_engine | TK_NOT_DISCOVERED compares interface_index with the stale record | 3: interface differs x NOT |
-| `disc-restart-not-rediscovered` | adp_engine | the restart pair loses its DISCOVERED | 7: index <= last x DISCOVERED and the repeat that follows both index > last cells x DISCOVERED, arcs 4 and 5 and the arc count, P9e |
+| `disc-restart-not-rediscovered` | adp_engine | the restart pair loses its DISCOVERED | 8: index <= last x DISCOVERED, the repeat of the noted index in it and in both index > last cells x DISCOVERED, arcs 4 and 5 and the arc count, P9e |
 | `disc-departing-ignores-interface` | adp_engine | DEPARTING departs whatever its interface_index | 3: DEPARTING, interface differs x DISCOVERED |
 | `disc-stray-noadp-departs` | adp_engine | a T-ADP-NOADP expiry departs a sink that is not discovered | 2: TMR_NO_ADP x unbound and x NOT |
 | `disc-unbind-keeps-timer` | adp_engine | unbinding a discovered sink leaves its T-ADP-NOADP running | 2: UNBIND x DISCOVERED, P9k |
@@ -292,7 +305,9 @@ all 39 arms are KILLED. Three rows' counts grew by the follow-up step
 | `arc-not-discovered-no-guard` | adp_engine | TK_NOT_DISCOVERED takes an ENTITY_AVAILABLE whatever its grandmaster and domain (the §5.6.4.5.1 step 1 guard) | 14: arc 3 and the arc count, the three GM and domain mismatch cells x NOT (state, event, timer each), P9d three times |
 | `arc-fresh-no-rearm` | adp_engine | a fresh index in TK_DISCOVERED does not restart T-ADP-NOADP (§5.6.4.5.2 step 3) | 5: arc 4 and the arc count, both index > last cells x DISCOVERED, P9b |
 | `arc-fresh-no-store` | adp_engine | a fresh index in TK_DISCOVERED is not noted (§5.6.4.5.2 step 3), so the restart detector compares the next index with the one before | 4: arc 4 and the arc count, and both index > last cells x DISCOVERED, where the AVAILABLE repeating the index gives no event |
-| `arc-restart-detector-off-by-one` | adp_engine | the restart detector takes an index equal to the last one as fresh (`>=` for `>`) | 13: arcs 4, 5 and 6 and the arc count, the restart, GM mismatch and domain mismatch cells x DISCOVERED, each walked at an index equal to the last, and the repeat that follows both index > last cells x DISCOVERED |
+| `arc-fresh-store-plus-one` | adp_engine | a fresh index in TK_DISCOVERED is noted as the received index + 1 (§5.6.4.5.2 step 3), so the talker's next ordinary advert reads as a restart | 4: arc 4 and the arc count, and both index > last cells x DISCOVERED, where the AVAILABLE one above the index gives the restart pair |
+| `arc-fresh-store-max` | adp_engine | a fresh index in TK_DISCOVERED is noted as `32'hFFFF_FFFF` (§5.6.4.5.2 step 3), so every later advert reads as a restart | 4: arc 4 and the arc count, and both index > last cells x DISCOVERED, where the AVAILABLE one above the index gives the restart pair |
+| `arc-restart-detector-off-by-one` | adp_engine | the restart detector takes an index equal to the last one as fresh (`>=` for `>`) | 13: arcs 4, 5 and 6 and the arc count, the GM mismatch and domain mismatch cells x DISCOVERED, each walked at an index equal to the last, and the repeat of the noted index in the restart cell and both index > last cells x DISCOVERED |
 | `arc-restart-skips-guard` | adp_engine | a stale index restarts the talker whatever its grandmaster and domain (the §5.6.4.5.2 step 2b guard) | 12: arc 6 and the arc count, the GM and domain mismatch cells x DISCOVERED (event pair, state, timer), P9f three times, P9f2 |
 | `arc-departing-silent` | adp_engine | an ENTITY_DEPARTING departs without EVT_TK_DEPARTED (§5.6.4.5.3 step 3) | 4: arc 7 and the arc count, DEPARTING x DISCOVERED, P9h |
 | `arc-noadp-expiry-silent` | adp_engine | a T-ADP-NOADP expiry departs without EVT_TK_DEPARTED (§5.6.4.5.4) | 4: arc 8 and the arc count, TMR_NO_ADP x DISCOVERED, P9i |

@@ -337,11 +337,17 @@ constexpr Arc F043_ARCS[] = {
 constexpr int N_F043_ARCS = int(sizeof F043_ARCS / sizeof F043_ARCS[0]);
 // the last index TK_DISCOVERED has noted when the walk enters it (goto_disc)
 constexpr uint32_t DISC_LAST = 700;
-// F04.8's fresh arc notes the received available_index (Milan §5.6.4.5.2
-// step 3). Its guard reads no grandmaster, so both index > last cells of
-// TK_DISCOVERED take it, and only the next ADPDU shows the noted value
-constexpr bool notes_fresh_index(int row, int col) {
-  return col == D_DISC && (row == V_FRESH || row == V_GMF);
+// F04.8's fresh and restart arcs note the received available_index (Milan
+// §5.6.4.5.2 step 3). The fresh arc's guard reads no grandmaster, so both
+// index > last cells of TK_DISCOVERED take it; the restart arc is the match,
+// index <= last cell. Only the next ADPDUs show the noted value
+constexpr bool notes_index(int row, int col) {
+  return col == D_DISC && (row == V_FRESH || row == V_GMF || row == V_STALE);
+}
+// the index such a cell's AVAILABLE carries (apply_disc: last + 1, and on the
+// restart arc last - 1, so that a restart that notes nothing shows)
+constexpr uint32_t noted_index(int row) {
+  return row == V_STALE ? DISC_LAST - 1 : DISC_LAST + 1;
 }
 
 namespace {
@@ -626,6 +632,7 @@ struct Harness {
   void goto_disc(int col, unsigned s);
   void apply_disc(int col, int row, unsigned s);
   void walk_discovery_cell(int row, int col, unsigned s);
+  void check_noted_index(int row, int col, unsigned s, const char* tag);
   void check_the_mtxw_walk();
   void check_pool_protocol_invariants();
   int report();
@@ -1498,7 +1505,7 @@ void Harness::apply_disc(int col, int row, unsigned s) {
   };
   switch (row) {
     case V_FRESH:  avail(last + 1, gm, DOM0, 0); break;
-    case V_STALE:  avail(col == D_DISC ? last : 3, gm, DOM0, 0); break;
+    case V_STALE:  avail(col == D_DISC ? last - 1 : 3, gm, DOM0, 0); break;
     case V_GMF:    avail(last + 1, gm ^ 1ull, DOM0, 0); break;
     case V_GMS:    avail(last, gm ^ 1ull, DOM0, 0); break;
     case V_DOMS:   avail(last, gm, 0x07, 0); break;
@@ -1581,21 +1588,41 @@ void Harness::walk_discovery_cell(int row, int col, unsigned s) {
   CHECK(frames.size() == f0, "%s: nothing transmitted", tag);
   if (row <= V_DEPIFX)
     CHECK(frees == fr0 + 1, "%s: the RX slot is freed", tag);
-  if (!notes_fresh_index(row, col)) return;
-  // an AVAILABLE repeating the noted index, grandmaster and domain matching,
-  // is at or below the last one: the restart pair of step 2
-  const uint32_t noted = DISC_LAST + 1;        // apply_disc's last + 1
+  if (notes_index(row, col)) check_noted_index(row, col, s, tag);
+}
+
+// The index the cell's arc noted, graded from both sides, each from the
+// cell's own end state. An AVAILABLE repeating it, grandmaster and domain
+// matching, is at or below the last one, so the restart pair of step 2: at
+// least that index was noted. The cell walked again, an AVAILABLE one above
+// it is fresh, so no event: at most that index was noted
+void Harness::check_noted_index(int row, int col, unsigned s, const char* tag) {
+  const uint64_t tk = walk_talker(s);
+  const uint32_t noted = noted_index(row);
   const size_t e1 = evts.size();
-  load_remote(0, walk_talker(s), noted, d->gm_id_i, DOM0, 0, 10, MSG_AVAIL);
-  CHECK(send_txn(adp_txn(MSG_AVAIL, walk_talker(s), 10, 0, now)),
+  load_remote(0, tk, noted, d->gm_id_i, DOM0, 0, 10, MSG_AVAIL);
+  CHECK(send_txn(adp_txn(MSG_AVAIL, tk, 10, 0, now)),
         "%s: the AVAILABLE repeating index %u consumed", tag, noted);
   idle(20);
   const size_t n_rep = evts.size() - e1;
   CHECK(n_rep == 2 && evts[e1].departed && evts[e1].sink == s
             && !evts[e1 + 1].departed && evts[e1 + 1].sink == s,
-        "%s: index %u noted (Milan 5.6.4.5.2 step 3), so an AVAILABLE repeating it "
-        "is EVT_TK_DEPARTED then EVT_TK_DISCOVERED (step 2), got %zu events",
+        "%s: the noted index is at least %u (Milan 5.6.4.5.2 step 3): an AVAILABLE "
+        "repeating it is EVT_TK_DEPARTED then EVT_TK_DISCOVERED (step 2), got %zu events",
         tag, noted, n_rep);
+  goto_disc(col, s);
+  apply_disc(col, row, s);
+  idle(20);
+  const size_t e2 = evts.size();
+  load_remote(0, tk, noted + 1, d->gm_id_i, DOM0, 0, 10, MSG_AVAIL);
+  CHECK(send_txn(adp_txn(MSG_AVAIL, tk, 10, 0, now)),
+        "%s: the AVAILABLE at index %u consumed", tag, noted + 1);
+  idle(20);
+  const size_t n_up = evts.size() - e2;
+  CHECK(n_up == 0,
+        "%s: the noted index is at most %u (Milan 5.6.4.5.2 step 3): the cell walked "
+        "again, an AVAILABLE at %u is fresh, no event (no EVT_TK_DEPARTED), got %zu events",
+        tag, noted, noted + 1, n_up);
 }
 
 // a citation in the clause family a cell is graded against: Milan v1.2
