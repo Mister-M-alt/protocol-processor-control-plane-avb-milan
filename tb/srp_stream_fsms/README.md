@@ -189,18 +189,18 @@ contexts and any two phases; priority and rank vary as far as their 3 bits and
 
 | Check | What it proves |
 |---|---|
-| WK1 | every source publishes its own declaration, while the gate face holds the last source declared |
+| WK1 | every source publishes its own declaration, with the idle gate face on the last source declared and then on the highest index its width can name (beyond the last source at 1, 3 and 9 sources, as the top's latched index of a refused request can be) |
 | WK2 | a re-declaration replaces every field, made in the opposite order, so the gate face holds source 0 |
 | WK3 | a close sends one Leave of the record declared, not of the values on the gate face |
 | WK4 | a closed source re-opened publishes its new record beside the others |
 | WK5 | a reset empties the records: closing a source not opened since leaves VID 0 (the reset value), and the walk publishes only what was declared after the reset |
-| WK6 | every sink publishes its own settled stream_id, while the control face holds the last sink settled |
+| WK6 | every sink publishes its own settled stream_id, with the idle control face on the last sink settled and then on its highest index |
 | WK7 | a teardown sends one Leave of the settled stream_id, not of the one on the control face |
 | WK8 | a re-settle on a new stream replaces the stream_id, made in the opposite order |
 
 `make RUN_ARGS=walk` runs these arms alone and `make RUN_ARGS=suite` the suite
 alone. Every part runs even after a failing one, and every failing check names
-its shape (`[sources/sinks]`). Measured at the head: 19, 24, 33 and 59 checks
+its shape (`[sources/sinks]`). Measured at the head: 23, 30, 43 and 79 checks
 at 1/1, 2/2, 3/5 and 9/9, all PASS. The probes of both #230 reviews and the
 lane's own controls of these copies are killed controls of
 [the campaign](../srp_top/mutants.py); the table, with each control's shapes,

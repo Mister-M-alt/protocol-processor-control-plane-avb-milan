@@ -11,8 +11,10 @@
 // (+verilator+rand+reset+2): a record the walk read before it was written
 // would show. Each arm compares every FirstValue the walk hands the encoder
 // with the record the harness itself declared, settled or tore down:
-//   WK1  every source publishes its own declaration (the gate face holds the
-//       last source declared, never the walk source);
+//   WK1  every source publishes its own declaration, with the idle gate face
+//       on the last source declared and then on the highest index its width
+//       can name (out of range at one, three and nine sources): the walk
+//       never reads the gate face;
 //   WK2  a re-declaration replaces every field of the record, in the opposite
 //       order (the gate face now holds source 0);
 //   WK3  a close names the record declared, not the values on the gate face;
@@ -20,8 +22,8 @@
 //   WK5  a reset empties the records: a close of a source not opened since
 //       leaves VID 0 (the reset value), and the walk publishes only what was
 //       declared after the reset;
-//   WK6  every sink publishes its own settled stream_id (the control face
-//       holds the last sink settled);
+//   WK6  every sink publishes its own settled stream_id, with the idle
+//       control face on the last sink settled and then on its highest index;
 //   WK7  a teardown names the settled stream_id, not the one on the control
 //       face;
 //   WK8  a re-settle replaces the stream_id, in the opposite order.
@@ -63,6 +65,10 @@ constexpr int kFirstValueMsb = 271;
 constexpr int kTxopPollSteps = 300;
 // Ticks that bring every declaring applicant to the quiet QA state.
 constexpr int kQuietTicks = 6;
+// The wrap's index inputs are 4 bits wide and each FSM takes its low
+// $clog2(contexts) bits (one bit at one context): all ones is the highest
+// index the FSM's face can name, beyond the last context at 1, 3 and 9.
+constexpr int kParkedIndex = 0xF;
 
 // 802.1Q MSRP AttributeTypes, attribute events and the Listener declaration
 constexpr uint8_t ATTR_TA = 1;
@@ -211,6 +217,21 @@ struct Hw {
     step(); idle(2);
   }
 
+  // An idle requester's gate or control face holds whatever it last drove;
+  // the top drives the index of its last request, accepted or refused, so it
+  // may name no context at all. Park it on the highest index the face's
+  // width can name, with another record beside it.
+  void park_gate(const Record& r) {
+    d->gate_open_i = 1; d->gate_src_i = kParkedIndex;
+    d->gate_stream_id_i = r.sid; d->gate_da_i = r.da; d->gate_vid_i = r.vid;
+    d->gate_max_frame_i = r.mfs; d->gate_max_interval_i = r.mif;
+    d->gate_prio_i = r.prio; d->gate_rank_i = r.rank; d->gate_acc_lat_i = r.lat;
+  }
+  void park_ctl(const SinkRecord& r) {
+    d->ctl_settle_i = 1; d->ctl_sink_i = kParkedIndex;
+    d->ctl_stream_id_i = r.sid; d->ctl_da_i = r.da; d->ctl_vid_i = r.vid;
+  }
+
   void ctl(bool settle, int sink, const SinkRecord& r) {
     d->ctl_valid_i = 1; d->ctl_settle_i = settle; d->ctl_sink_i = sink;
     d->ctl_stream_id_i = r.sid; d->ctl_da_i = r.da; d->ctl_vid_i = r.vid;
@@ -309,6 +330,9 @@ class SrpWalkSuite {
     for (int s = 0; s < kSources; ++s) { rec[s] = talker_record(1, s); h.gate(true, s, rec[s]); }
     txla_walk();
     expect_talker("WK1", rec);
+    h.park_gate(talker_record(7, kSources - 1));
+    txla_walk();
+    expect_talker("WK1", rec);
 
     // WK2: every field re-declared, descending, so the gate face is left on 0
     for (int s = kSources - 1; s >= 0; --s) { rec[s] = talker_record(2, s); h.gate(true, s, rec[s]); }
@@ -359,6 +383,9 @@ class SrpWalkSuite {
       h.ctl(true, k, r);
       h.advertise(r);
     }
+    txla_walk();
+    expect_listener("WK6", sid);
+    h.park_ctl(sink_record(7, kSinks - 1));
     txla_walk();
     expect_listener("WK6", sid);
 
