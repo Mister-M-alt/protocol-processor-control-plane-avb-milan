@@ -129,7 +129,10 @@ flowchart LR
 
 Per interface: advertise SM state (2 b), `available_index` (32 b, volatile: 0 at
 power-up, **increment after** each transmitted ENTITY_AVAILABLE, reset to 0 on
-ENTITY_DEPARTING — IEEE §6.2.2.9), one timer handle. Per sink: discovery SM state
+ENTITY_DEPARTING — IEEE §6.2.2.15 and its Figure 6-2, which Milan §5.6.2 adopts
+unchanged; the ENTITY_DEPARTING carries the value the index held, IEEE §6.2.5.2.2
+taking every field it does not name from `entityInfo`, and the reset follows it),
+one timer handle. Per sink: discovery SM state
 (1 b), saved `interface_index` + last `available_index` of the bound talker, one
 `T-ADP-NOADP` handle — stored in the sink record ([F07.6](07_memory_maps.md#fig-07-sinkrec)).
 
@@ -159,8 +162,57 @@ stateDiagram-v2
 | Startup delay is **T-ADP-DELAY-START**, every later delay **T-ADP-DELAY** | two distinct constants — single-constant implementations are a known bug class (review §8 item 5) |
 | ENTITY_DEPARTING **only** on SHUTDOWN; never on link-down | Milan §5.6.3.5.6/.10 |
 | GM change ⇒ re-advertise (through DELAY) | Milan §5.6.3.5.7 (GPTP_GM_CHANGED is the integrator's counter, [02 §4.6](02_interfaces.md#sec-02-ctr)) |
-| DOWN ignores DISCOVER/GM_CHANGE/SHUTDOWN; DELAY ignores DISCOVER/GM_CHANGE | Table 5.51 |
+| DOWN ignores DISCOVER/GM_CHANGE/SHUTDOWN; DELAY ignores DISCOVER/GM_CHANGE | Table 5.51; cell by cell in [F04.7](#fig-04-advcells) |
 | Held in DOWN until `entity_enable` (boot gate) | Milan §5.6.1. The engine's `entity_enable_i` is the top's **effective** enable, `entity_enable_i && restore_done_o`: the top releases the requested enable only once both restore walks are done ([07 §5.3](07_memory_maps.md#fig-07-nvmflow), the third of its three releases). The talker-discovery machines below are independent of it, and the side port's image-window lock keeps the requested enable |
+
+<a id="fig-04-advcells"></a>**F04.7 — Advertise SM cells (Milan Table 5.51 and §5.6.3.1–§5.6.3.5.11, each
+with the IEEE 1722.1-2021 clause it replaces or follows)**
+
+Every event of Milan Table 5.50 in every state of F04.2, plus the §5.6.1 boot gate as a
+column of its own (NOT STARTED: the hardware holds DOWN while `entity_enable` is low).
+Class **N** is a Milan transition clause; **I** is ignored (`-` in Table 5.51, or
+discarded by §5.6.3.1): no state change, no frame, no timer operation; **x** cannot
+happen (`x` in Table 5.51). IEEE spreads the same behaviour over three machines: the
+Advertising Entity SM (§6.2.4.3, Figure 6-2: DELAY, ADVERTISE, WAITING), the
+Advertising Interface SM (§6.2.5.3, Figure 6-3: ADVERTISE, DEPARTING) and the
+Discovery Interface SM (§6.2.7.2, Figure 6-5: RECEIVED DISCOVER, UPDATE GM, LINK STATE
+CHANGE, each raising `needsAdvertise`). It has no DOWN state and no boot gate, and its
+timers are `valid_time` based; Milan's DOWN state and fixed timers replace them (Δ5).
+`tb/adp_engine` walks every cell, DELAY in both of its hardware phases (the
+T-ADP-DELAY draw in flight, the timer armed), and cites both clauses per cell.
+
+| State | Event | Class | Next state | Transmit | Timer | Milan v1.2 | IEEE 1722.1-2021 |
+|---|---|---|---|---|---|---|---|
+| NOT STARTED | RCV_ADP_DISCOVER (entity_id 0 or own), ENTITY_DISCOVER (another entity_id), LINK_UP, LINK_DOWN, GM_CHANGE | I | DOWN | none | none | §5.6.1: ADP not started | §6.2.4.3: no machine has begun |
+| NOT STARTED | TMR_ADVERTISE, TMR_DELAY | x | DOWN | none | none | §5.6.1: no timer runs | §6.2.4.3: no machine has begun |
+| NOT STARTED | SHUTDOWN | x | — | — | — | §5.6.1: `entity_enable` is already low | §6.2.4.1.3: `doTerminate` ends a running machine |
+| DOWN | RCV_ADP_DISCOVER (entity_id 0 or own) | I | DOWN | none | none | Table 5.51 `-` | §6.2.7.2 RECEIVED DISCOVER raises `needsAdvertise`; no DOWN state (Δ5) |
+| DOWN | ENTITY_DISCOVER (another entity_id) | I | DOWN | none | none | §5.6.3.1 step 2: discarded | §6.2.7.2: neither 0 nor own, back to WAITING; Table 6-1 |
+| DOWN | TMR_ADVERTISE, TMR_DELAY | x | DOWN | none | none | Table 5.51 `x` | §6.2.4.3; no DOWN state (Δ5) |
+| DOWN | LINK_UP | N | DELAY | none | start T-ADP-DELAY | §5.6.3.5.3 | §6.2.7.2 LINK STATE CHANGE raises `needsAdvertise`; §6.2.4.3 WAITING to DELAY |
+| DOWN | LINK_DOWN | x | — | — | — | Table 5.51 `x` | §6.2.7.2: needs a change of `linkIsUp` |
+| DOWN | GM_CHANGE | I | DOWN | none | none | Table 5.51 `-` | §6.2.7.2 UPDATE GM raises `needsAdvertise`; no DOWN state (Δ5) |
+| DOWN | SHUTDOWN | I | DOWN | none | none | Table 5.51 `-` | §6.2.5.3 DEPARTING on `doTerminate`; no DOWN state (Δ5) |
+| WAITING | RCV_ADP_DISCOVER (entity_id 0 or own) | N | DELAY | none | stop T-ADP-ADV, start T-ADP-DELAY | §5.6.3.1; §5.6.3.5.4 | §6.2.7.2 DISCOVER raises `needsAdvertise`; §6.2.4.3 WAITING to DELAY |
+| WAITING | ENTITY_DISCOVER (another entity_id) | I | WAITING | none | none: T-ADP-ADV runs on | §5.6.3.1 step 2: discarded | §6.2.7.2: neither 0 nor own; Table 6-1 |
+| WAITING | TMR_ADVERTISE | N | DELAY | none | start T-ADP-DELAY | §5.6.3.5.5 | §6.2.4.3 `reannounceTimerTimeout` to DELAY; §6.2.4.2.2 (Δ5 sets both values) |
+| WAITING | TMR_DELAY | x | — | — | — | Table 5.51 `x` | §6.2.4.3: `delayTimerTimeout` is read in DELAY only |
+| WAITING | LINK_UP | x | — | — | — | Table 5.51 `x` | §6.2.7.2: needs a change of `linkIsUp` |
+| WAITING | LINK_DOWN | N | DOWN | none: no ENTITY_DEPARTING | stop T-ADP-ADV | §5.6.3.5.6 | §6.2.7.2 LINK STATE CHANGE: a link going down raises nothing; no DOWN state (Δ5) |
+| WAITING | GM_CHANGE | N | DELAY | none | start T-ADP-DELAY | §5.6.3.5.7 | §6.2.7.2 UPDATE GM raises `needsAdvertise`; §6.2.4.3 WAITING to DELAY |
+| WAITING | SHUTDOWN | N | the machine ends (the hardware holds DOWN, §5.6.1) | ENTITY_DEPARTING with `valid_time` 0, carrying `available_index`, which then resets to 0 | stop T-ADP-ADV | §5.6.3.5.8 | §6.2.5.3 DEPARTING; §6.2.2.15; §6.2.2.5 |
+| DELAY | RCV_ADP_DISCOVER (entity_id 0 or own) | I | DELAY | none: the pending advert answers it | none: T-ADP-DELAY runs on | Table 5.51 `-` | §6.2.4.3: the pending ADVERTISE clears `needsAdvertise` |
+| DELAY | ENTITY_DISCOVER (another entity_id) | I | DELAY | none | none | §5.6.3.1 step 2: discarded | §6.2.7.2: neither 0 nor own; Table 6-1 |
+| DELAY | TMR_ADVERTISE | x | DELAY | none | none | Table 5.51 `x` | §6.2.4.3: `reannounceTimerTimeout` is read in WAITING only |
+| DELAY | TMR_DELAY | N | WAITING | ENTITY_AVAILABLE ([§3](#3-pdu-handling)), carrying `available_index`, which then increments | start T-ADP-ADV | §5.6.3.5.9; §5.6.2 | §6.2.4.3 DELAY to ADVERTISE to WAITING (`available_index` + 1); §6.2.5.3 ADVERTISE; §6.2.2.15 |
+| DELAY | LINK_UP | x | — | — | — | Table 5.51 `x` | §6.2.7.2: needs a change of `linkIsUp` |
+| DELAY | LINK_DOWN | N | DOWN | none: no ENTITY_DEPARTING | stop T-ADP-DELAY (a draw in flight is discarded) | §5.6.3.5.10 | §6.2.7.2 LINK STATE CHANGE: a link going down raises nothing; no DOWN state (Δ5) |
+| DELAY | GM_CHANGE | I | DELAY | none: the pending advert samples the new grandmaster | none: T-ADP-DELAY runs on | Table 5.51 `-` | §6.2.4.3: the pending ADVERTISE clears `needsAdvertise`; §6.2.2.16 |
+| DELAY | SHUTDOWN | N | the machine ends (the hardware holds DOWN, §5.6.1) | ENTITY_DEPARTING with `valid_time` 0, carrying `available_index`, which then resets to 0 | stop T-ADP-DELAY (a draw in flight is discarded) | §5.6.3.5.11 | §6.2.5.3 DEPARTING; §6.2.2.15; §6.2.2.5 |
+
+In the draw phase of DELAY no T-ADP-DELAY runs yet, so a TMR_DELAY expiry there is the
+stray of an earlier slot, inert like TMR_ADVERTISE; the walk injects every reachable
+`x` timer expiry as such a stray and checks the precondition of the others.
 
 ### 6.2 Talker-discovery state machine (one per Stream Input; active while bound)
 
@@ -184,6 +236,26 @@ values; in TK_DISCOVERED, `interface_index` must equal the saved value.
 `available_index ≤ last` is the **talker-restart detector** — the departed+rediscovered
 event pair makes the ACMP listener re-probe stale SRP parameters
 ([05 §6.5](05_acmp_engine.md)).
+
+<a id="fig-04-discarcs"></a>**F04.8 — Talker-discovery SM arcs (Milan Table 5.54 and §5.6.4.5, each with
+the IEEE 1722.1-2021 clause it replaces or reads)**
+
+Milan's per-sink machine replaces IEEE's Discovery SM (§6.2.6.4, Figure 6-4), a
+controller's table of every entity, so the IEEE column names the Figure 6-4 arc an arc
+stands in for, or the ADPDU field clause its guard reads. `tb/adp_engine` walks each arc
+as the named cell of its F04.3 table, and one planted mutant per arc turns that arc's
+check red.
+
+| Arc | Guard | Action | Milan v1.2 | IEEE 1722.1-2021 | Walk cell |
+|---|---|---|---|---|---|
+| entry to TK_NOT_DISCOVERED | the sink becomes bound | none: no event, no timer | §5.6.4.4 (sink connected); §5.6.4.1 | none: Milan's per-sink binding | BIND × unbound |
+| TK_NOT_DISCOVERED to TK_DISCOVERED | ENTITY_AVAILABLE, grandmaster and domain match | save `interface_index` and `available_index`, start T-ADP-NOADP from the received `valid_time`, EVT_TK_DISCOVERED | §5.6.4.5.1 steps 1 to 4 | §6.2.6.4 AVAILABLE | AVAILABLE (match, index > last) × TK_NOT_DISCOVERED |
+| TK_NOT_DISCOVERED to itself | ENTITY_AVAILABLE, grandmaster or domain mismatch | ignore | §5.6.4.5.1 step 1 | §6.2.2.16; §6.2.2.17 | AVAILABLE (GM mismatch, index <= last) × TK_NOT_DISCOVERED |
+| TK_DISCOVERED to itself, fresh | ENTITY_AVAILABLE, `interface_index` equal, `available_index` > last | note the index, restart T-ADP-NOADP | §5.6.4.5.2 steps 1, 3 | §6.2.6.4 AVAILABLE; §6.2.2.15 | AVAILABLE (match, index > last) × TK_DISCOVERED |
+| TK_DISCOVERED to itself, restart | `available_index` <= last, grandmaster and domain match | EVT_TK_DEPARTED then EVT_TK_DISCOVERED, note the index, restart T-ADP-NOADP | §5.6.4.5.2 steps 2a, 2c, 3 | §6.2.2.15: a new availability cycle | AVAILABLE (match, index <= last) × TK_DISCOVERED |
+| TK_DISCOVERED to TK_NOT_DISCOVERED, stale and foreign | `available_index` <= last, grandmaster or domain mismatch | EVT_TK_DEPARTED, stop T-ADP-NOADP | §5.6.4.5.2 steps 2a, 2b | §6.2.2.15; §6.2.2.16; §6.2.2.17 | AVAILABLE (GM mismatch, index <= last) × TK_DISCOVERED |
+| TK_DISCOVERED to TK_NOT_DISCOVERED, departing | ENTITY_DEPARTING, `interface_index` equal | stop T-ADP-NOADP, EVT_TK_DEPARTED | §5.6.4.5.3 | §6.2.6.4 DEPARTING | DEPARTING (interface matches) × TK_DISCOVERED |
+| TK_DISCOVERED to TK_NOT_DISCOVERED, aged | T-ADP-NOADP expiry | EVT_TK_DEPARTED | §5.6.4.5.4 | §6.2.6.4 TIMEOUT | TMR_NO_ADP × TK_DISCOVERED |
 
 ### 6.3 Canonical sequence
 

@@ -1,0 +1,12 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -356,7 +356,8 @@
+         end else if (rx_ifx_r == rec_ifx_w) begin
+           // TK_DISCOVERED: interface_index must equal the saved value
+           if (rx_aidx_r > rec_aidx_w) begin
+-            rec_wr_en_w = 1'b1;               // fresh cycle: store + re-arm
++            rec_wr_en_w = 1'b1;
++            rec_wr_data_w = {rx_ifx_r, 32'hFFFF_FFFF};
+             iter_arm_w  = 1'b1;
+           end else if (gm_dom_ok_w) begin
+             // talker-restart detector: departed + rediscovered pair
