@@ -287,8 +287,8 @@ hang differently:
 
 | half | bound | what an unbounded version costs |
 |---|---|---|
-| request never ACCEPTED | `P-MAAP-ACCEPT-CYC` (1024 cycles, ≈10 µs at `P-CLK-HZ`, well inside `T-BUDGET-ACMP-RESP`) | the one event-serialized walker parks in the request state — and it also answers `PROBE_TX` / `DISCONNECT_TX` / `GET_TX_STATE` for every source, so the talker half of ACMP *and* SRP goes silent |
-| request accepted, never ANSWERED | `P-MAAP-RSP-MS` (10 s) | the single-outstanding tracker is GLOBAL, so allocation stops for **every** source: no `GS_DA_OK`, no DA gate, no `DECLARE_TALKER`. Nothing wedges: command service continues while no stream can start |
+| request never ACCEPTED | `P-MAAP-ACCEPT-CYC` core clocks ([F01.5](01_overview.md#fig-01-params)), well inside `T-BUDGET-ACMP-RESP` | the one event-serialized walker parks in the request state — and it also answers `PROBE_TX` / `DISCONNECT_TX` / `GET_TX_STATE` for every source, so the talker half of ACMP *and* SRP goes silent |
+| request accepted, never ANSWERED | `P-MAAP-RSP-MS` ([F01.5](01_overview.md#fig-01-params)) | the single-outstanding tracker is GLOBAL, so allocation stops for **every** source: no `GS_DA_OK`, no DA gate, no `DECLARE_TALKER`. Nothing wedges: command service continues while no stream can start |
 
 Both abandons leave the source exactly where a refused `ALLOC_DA` leaves it — no
 DA, no declaration, `PROBE_TX` answered `TALKER_DEST_MAC_FAILED` — and enabled
@@ -302,16 +302,15 @@ index of its accepted request, rather than treating the last grant as source 0.
 
 `P-MAAP-RSP-MS` is derived from **IEEE Std 1722-2016 Annex B**, because
 `ALLOC_DA` maps onto a real MAAP claim walk. Table B.8 gives
-`MAAP_PROBE_RETRANSMITS` = 3 and a `probe_timer` (B.3.4.2) drawn from
-`MAAP_PROBE_INTERVAL_BASE` (500 ms) < T < BASE + `MAAP_PROBE_INTERVAL_VARIATION`
-(600 ms); the Table B.7 walk acquires the address after exactly 3 probe
-intervals, so ≤ **1800 ms** per attempt, and a conflicting probe/defend/announce
-restarts it (B.3.5.3) for another ≤ 1800 ms. 10 s covers a clean acquisition plus
-four conflict restarts. It must also stay **below `T-SRP-DAFRESH`** (15 s): a
+`MAAP_PROBE_RETRANSMITS` = 3, so the Table B.7 walk acquires the address after
+exactly 3 `probe_timer` intervals (`T-MAAP-PROBE`, B.3.4.2) per attempt, and a
+conflicting probe/defend/announce restarts it (B.3.5.3). The
+[F01.5](01_overview.md#fig-01-params) default covers a clean acquisition plus
+four conflict restarts. It must also stay **below `T-SRP-DAFRESH`**: a
 grant arriving after a demand-triggering `PROBE_TX` has gone stale cannot open
 the gate without a registered Listener. Enable and periodic retry rounds now
 request allocation independently of probes; the existing watchdog is retained.
-The 30 s `MAAP_ANNOUNCE_INTERVAL_BASE` is *not* in the bound —
+The announce interval (`T-MAAP-ANNOUNCE`) is *not* in the bound —
 the address is acquired on entry to `DEFEND`, before the first announce.
 
 **`RELEASE_DA` is owed, not attempted.** The degrade rule above applies to

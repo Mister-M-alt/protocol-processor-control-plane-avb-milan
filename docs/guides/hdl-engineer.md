@@ -234,7 +234,7 @@ saying what is proven. This is enforced socially by review and mechanically by
 
 | Command | Checks |
 |---|---|
-| `make check` | diagram lint, WaveDrom freshness, documentation links, compliance-matrix consistency, and diagram export staleness |
+| `make check` | diagram lint, WaveDrom freshness, documentation links, compliance-matrix consistency, the module matrix, the parameter inventories, every `P-`/`T-` ID against its F01.5 or F08.1 row, the figure classes, and diagram export staleness ([09 §7](../architecture/09_verification.md#7-documentation-sync-regression)); the CI docs-gates job runs it whole |
 | `python3 scripts/gen_matrix.py --check` | module ↔ testbench matrix drift, and the zero-untested budget |
 | `./scripts/lint_hdl.sh` | Verilator lint over every module, zero warnings tolerated; a waiver is a justified `lint_off` pragma in the RTL with a reason |
 | `./scripts/run_suites.sh` | every simulation suite |

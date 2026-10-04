@@ -76,7 +76,22 @@ Scope of those rules: they bind the **architecture** documents (01–10). Three
 deliberate exceptions: the compliance review (00) quotes spec requirement text
 *including its values* — that is its job; tick-generation rates belong to the clocking
 contract (02 §2 with `F08.2`); and PDU field constants such as ADP `valid_time` belong
-to their field-sourcing table. `make check` enforces the rest.
+to their field-sourcing table.
+
+What `make check` enforces of them, and nothing more
+([09 §7](architecture/09_verification.md#7-documentation-sync-regression)):
+
+- **IDs.** `ids` ([`check-ids.py`](../scripts/check-ids.py)) fails on any `P-` or `T-`
+  ID used anywhere under `docs/`, `hdl/` or `tb/` that has no `F01.5` or `F08.1` row.
+  A family (`T-MRP-*`) needs a row in it, and a braced list (`T-ACMP-{CMD, DELAY}`) a
+  row for each member.
+- **The integrator's parameter inventory.** `params` holds the integrator guide's
+  table and diagram 21 to the top's parameters; the defaults stay at their owners.
+
+No gate reads **values**: a timing or parameter value copied outside its table, a status
+name outside `F02.10`, a delta outside `F01.4` and a layout outside 07 are review
+findings. The value scan is still to add
+([09 §8](architecture/09_verification.md#8-the-suites-that-exist-today)).
 
 ## 3. Figures: one source, one home
 
@@ -101,6 +116,16 @@ to their field-sourcing table. `make check` enforces the rest.
 - **draw.io** (the three richest pictures only): source `docs/diagrams/src/<name>.drawio`,
   committed export `docs/diagrams/<name>.svg`, embedded via `![…](../diagrams/<name>.svg)`.
   Regenerate with `make diagrams` (see `docs/diagrams/README.md`).
+- **Hand-authored SVG** (the five persona-guide figures, `docs/diagrams/2[0-4]-*.svg`):
+  the SVG is both the editable source and the published figure, drawn against the landed
+  RTL and listed with its host pages in the hand-authored inventory of
+  [`diagrams/README.md`](diagrams/README.md). Rule: edit the SVG text, render it to a
+  scratch PNG and look at it (overlap is invisible in the XML), and commit the SVG alone,
+  never a raster export. `make figures` holds the class: listed, well-formed XML with an
+  `<svg>` root and a `viewBox`, no `<image>` or `<foreignObject>`, linked from a page.
+- **Nothing else.** Every file under `docs/diagrams/` is a draw.io source or export, a
+  WaveDrom render or a listed hand-authored SVG; `make figures` fails any other file
+  there, a PNG included.
 - Interface waveforms are **class templates** (one per interface class); per-instance
   differences live in signal tables, never in cloned waveforms.
 
@@ -149,6 +174,7 @@ into one story:
 | A block/FSM/sequence figure | edit the ` ```mermaid ` fence in place; `make lint` |
 | A waveform or bit layout | expand the `<details>` under the image, edit the ` ```wavedrom ` JSON in place, run `make wavedrom` (re-renders the SVG); `make check` |
 | A top-level picture | edit `docs/diagrams/src/*.drawio` in the draw.io app; `make diagrams`; commit source **and** SVG |
+| A persona-guide figure | edit `docs/diagrams/2[0-4]-*.svg`; render it to a scratch PNG and look at it; `make figures`; commit the SVG only |
 | A timing value | edit `F08.1` only; consumers reference `T-…` IDs |
 | A parameter default | edit `F01.5` only |
-| Anything | `make check` (lint + links + matrix + stale) must pass before commit |
+| Anything | `make check` (every target of [09 §7](architecture/09_verification.md#7-documentation-sync-regression); the CI docs-gates job runs it) must pass before commit |

@@ -2,8 +2,11 @@
 # Diagram Sources & Toolchain
 
 Three figures are rich enough to warrant free-form drawing; they are draw.io sources
-with committed SVG exports. **Everything else** (Mermaid, WaveDrom) lives as editable
-text inside the host Markdown documents — see `docs/README.md` §3.
+with committed SVG exports. Five more are hand-authored SVG, each its own source.
+**Everything else** (Mermaid, WaveDrom) lives as editable text inside the host Markdown
+documents — see `docs/README.md` §3. Every file in this directory belongs to one of
+those classes; [`check-figures.py`](../../scripts/check-figures.py) (`make figures`)
+fails any other, a PNG export included.
 
 Rendering support differs per format, which drives the storage pattern:
 
@@ -57,14 +60,12 @@ Overlap, clipped text and lines running through boxes are invisible in the XML.
 rsvg-convert -w 1500 -o /tmp/check.png docs/diagrams/20-rtl-dataflow.svg
 ```
 
-For diagram 21, the SVG above is the editable master and its committed PNG is an
-export. After editing the master, regenerate the PNG with the same renderer:
+That PNG is a scratch check, never committed: the SVG is the only artifact. `make
+figures` holds each of the five to its rule: listed in the table above, well-formed
+XML with an `<svg>` root and a `viewBox`, no `<image>` or `<foreignObject>` (a raster
+or an embedded document is not editable source), and linked from a Markdown page.
 
-```sh
-rsvg-convert -w 1905 -o docs/diagrams/21-integration-faces.png docs/diagrams/21-integration-faces.svg
-```
-
-Its `integration-parameters` group lists every overridable top-level parameter;
+For diagram 21, the SVG is the editable master. Its `integration-parameters` group lists every overridable top-level parameter;
 [`check-integrator-params.py`](../../scripts/check-integrator-params.py) compares
 that visible inventory and the integrator guide's section 2 table with the RTL
 declarations. Defaults remain at the owners linked from the guide.
@@ -87,7 +88,7 @@ drawio -x -f svg --crop -o docs/diagrams/01-top-level.svg docs/diagrams/src/01-t
 # headless fallback (no display):
 xvfb-run -a drawio --no-sandbox -x -f svg --crop -o <out.svg> <in.drawio>
 
-# full documentation gate: mermaid/wavedrom lint + links + compliance matrix + SVG freshness
+# full documentation gate (docs/architecture/09_verification.md section 7), as CI runs it
 make check
 ```
 

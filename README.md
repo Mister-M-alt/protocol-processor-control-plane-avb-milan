@@ -57,7 +57,7 @@ Every diagram is drawn against the landed RTL, not against the specification.
 ```sh
 ./scripts/run_suites.sh                  # every Verilator suite under tb/
 ./scripts/lint_hdl.sh                    # Verilator lint over every module, zero tolerance
-make check                               # documentation gates: figures, links, matrix, freshness
+make check                               # documentation gates, as CI runs them: figures, links, matrices, IDs, freshness
 python3 scripts/gen_matrix.py --check    # module to testbench matrix drift
 ```
 

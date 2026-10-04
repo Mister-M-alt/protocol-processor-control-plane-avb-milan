@@ -10,18 +10,21 @@ env:
   VERILATOR_VERSION: v5.050
 
 jobs:
+  # The job runs `make check` itself, so the gate docs/architecture/09
+  # section 7 lists and the gate CI runs are one list (issue #75).
   docs-gates:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Link, matrix, parameter, wavedrom and staleness gates
+      - name: Install the WaveDrom renderer and the Mermaid CLI
         run: |
           python3 -m pip install wavedrom
-          python3 scripts/check-links.py
-          python3 scripts/check-matrix.py
-          python3 scripts/check-integrator-params.py
-          python3 scripts/render-wavedrom.py --check
-          make stale
+          npm install --prefix "$HOME/mermaid-cli" @mermaid-js/mermaid-cli@11.16.0
+          echo "$HOME/mermaid-cli/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: make check (Mermaid lint, WaveDrom freshness, links, matrices, parameters, IDs, figures, staleness)
+        run: |
+          mmdc --version
+          make check
 
   suites:
     runs-on: ubuntu-latest
