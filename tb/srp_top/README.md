@@ -567,7 +567,12 @@ WK1-WK8.
 
 Failing checks per shape, from the campaign's receipts. "n/e": the edited arm
 is not elaborated at that shape. "equivalent": with one source or one sink the
-edit changes nothing.
+edit changes nothing (it names source or sink 0, the only one). "equivalent in
+simulation": at one sink the parked control index (WK6) is the face's only
+out-of-range value, and Verilator reads a single 64-bit packed element at an
+out-of-range index as element 0, so the edit reads sink 0 there too; the 48-bit
+DA of `wid-flops-da-of-gate-source` does not alias, and that edit is caught at
+1/1.
 
 | Control | From | Edit | Named failing checks | 1/1 | 2/2 | 3/5 | 9/9 | Caught at |
 |---|---|---|---|---:|---:|---:|---:|---|
@@ -583,23 +588,23 @@ edit changes nothing.
 | `tf-ls-write-ignores-full` | R459-1 | listener memory written while full | TF5 | 1 | 1 | 1 | 1 | 4 of 4 |
 | `walk-record-written-on-close` | A523, R459-1 (`wtsp-written-on-close`) | walk records also written by a gate close | WK3 | 1 | 1 | 1 | 1 | 4 of 4 |
 | `wtsp-first-open-only` | A523, R458-1 | walk TSpec written only by a source's first open | WK2, WK3, WK4 | 3 | 5 | 7 | 19 | 4 of 4 |
-| `wtsp-read-at-gate-source` | A523, R458-1 | walk TSpec read at the gate source | WK1, WK2, WK4 | 0 (equivalent) | 3 | 6 | 24 | 3 of 4 |
-| `wtsp-read-at-source-0` | R459-1 | walk TSpec read at source 0 | WK1, WK2, WK3, WK4, WK5 | 0 (equivalent) | 5 | 8 | 26 | 3 of 4 |
-| `wtsp-latency-field-shifted` | A523 | latency read one bit off (`wtsp_w[32:1]`) | WK1, WK2, WK3, WK4, WK5 | 5 | 8 | 11 | 29 | 4 of 4 |
-| `wtsp-latency-shifted` | R458-1 | latency shifted left one bit | WK1, WK2, WK3, WK4, WK5 | 5 | 8 | 11 | 29 | 4 of 4 |
-| `wtsp-rank-dropped` | R458-1 | rank bit published as 0 | WK1, WK2, WK3, WK4, WK5 | 2 | 4 | 4 | 14 | 4 of 4 |
-| `wtsp-prio-rank-swapped` | R459-1 | priority and rank bits rotated | WK1, WK2, WK3, WK4, WK5 | 4 | 7 | 10 | 27 | 4 of 4 |
+| `wtsp-read-at-gate-source` | A523, R458-1 | walk TSpec read at the gate source | WK1, WK2, WK4 | 1 | 4 | 9 | 33 | 4 of 4 |
+| `wtsp-read-at-source-0` | R459-1 | walk TSpec read at source 0 | WK1, WK2, WK3, WK4, WK5 | 0 (equivalent) | 6 | 10 | 34 | 3 of 4 |
+| `wtsp-latency-field-shifted` | A523 | latency read one bit off (`wtsp_w[32:1]`) | WK1, WK2, WK3, WK4, WK5 | 6 | 10 | 14 | 38 | 4 of 4 |
+| `wtsp-latency-shifted` | R458-1 | latency shifted left one bit | WK1, WK2, WK3, WK4, WK5 | 6 | 10 | 14 | 38 | 4 of 4 |
+| `wtsp-rank-dropped` | R458-1 | rank bit published as 0 | WK1, WK2, WK3, WK4, WK5 | 3 | 5 | 6 | 19 | 4 of 4 |
+| `wtsp-prio-rank-swapped` | R459-1 | priority and rank bits rotated | WK1, WK2, WK3, WK4, WK5 | 5 | 9 | 13 | 34 | 4 of 4 |
 | `wid-ram-first-open-only` | A523, R458-1 | RAM {stream_id, DA, VLAN} written only by the first open | WK2, WK3, WK4 | 0 (n/e) | 0 (n/e) | 7 | 19 | 2 of 4 |
-| `wid-ram-read-at-gate-source` | A523, R458-1 | RAM {stream_id, DA, VLAN} read at the gate source | WK1, WK2, WK4 | 0 (n/e) | 0 (n/e) | 6 | 24 | 2 of 4 |
-| `wid-ram-read-neighbour` | R459-1 | RAM {stream_id, DA, VLAN} read at the previous source | WK1, WK2, WK3, WK4, WK5 | 0 (n/e) | 0 (n/e) | 11 | 29 | 2 of 4 |
-| `wid-flops-da-of-gate-source` | A523, R458-1 | flop arm reads the gate source's DA | WK1, WK2, WK4 | 0 (equivalent) | 3 | 0 (n/e) | 0 (n/e) | 1 of 4 |
-| `wid-flops-sid-of-source-0` | R458-1 | flop arm reads source 0's stream_id | WK1, WK2, WK3, WK4, WK5 | 0 (equivalent) | 5 | 0 (n/e) | 0 (n/e) | 1 of 4 |
-| `wid-flops-vid-of-source-0` | R459-1 | flop arm reads source 0's VLAN | WK1, WK2, WK3, WK4, WK5 | 0 (equivalent) | 5 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wid-ram-read-at-gate-source` | A523, R458-1 | RAM {stream_id, DA, VLAN} read at the gate source | WK1, WK2, WK4 | 0 (n/e) | 0 (n/e) | 9 | 33 | 2 of 4 |
+| `wid-ram-read-neighbour` | R459-1 | RAM {stream_id, DA, VLAN} read at the previous source | WK1, WK2, WK3, WK4, WK5 | 0 (n/e) | 0 (n/e) | 14 | 38 | 2 of 4 |
+| `wid-flops-da-of-gate-source` | A523, R458-1 | flop arm reads the gate source's DA | WK1, WK2, WK4 | 1 | 4 | 0 (n/e) | 0 (n/e) | 2 of 4 |
+| `wid-flops-sid-of-source-0` | R458-1 | flop arm reads source 0's stream_id | WK1, WK2, WK3, WK4, WK5 | 0 (equivalent) | 6 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wid-flops-vid-of-source-0` | R459-1 | flop arm reads source 0's VLAN | WK1, WK2, WK3, WK4, WK5 | 0 (equivalent) | 6 | 0 (n/e) | 0 (n/e) | 1 of 4 |
 | `talker-vid-unreset` | A523 | the matcher VLAN loses its reset (a stored value read without its valid bit) | WK5 | 1 | 1 | 1 | 1 | 4 of 4 |
 | `wsid-ram-first-settle-only` | A523, R458-1 | RAM stream_id written only by the first settle | WK8 | 0 (n/e) | 0 (n/e) | 5 | 9 | 2 of 4 |
 | `wsid-ram-written-on-teardown` | A523, R458-1, R459-1 | RAM stream_id also written by a teardown | WK7 | 0 (n/e) | 0 (n/e) | 1 | 1 | 2 of 4 |
-| `wsid-flops-of-control-sink` | A523, R458-1 | flop arm reads the control sink's stream_id | WK6, WK8 | 0 (equivalent) | 2 | 0 (n/e) | 0 (n/e) | 1 of 4 |
-| `wsid-flops-read-sink-0` | R459-1 | flop arm reads sink 0's stream_id | WK6, WK7, WK8 | 0 (equivalent) | 3 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wsid-flops-of-control-sink` | A523, R458-1 | flop arm reads the control sink's stream_id | WK6, WK8 | 0 (equivalent in simulation) | 3 | 0 (n/e) | 0 (n/e) | 1 of 4 |
+| `wsid-flops-read-sink-0` | R459-1 | flop arm reads sink 0's stream_id | WK6, WK7, WK8 | 0 (equivalent) | 4 | 0 (n/e) | 0 (n/e) | 1 of 4 |
 
 The slope controls, at the admission suite's five shapes. The suite stops at
 its first failing shape, so the campaign sees N = 2; the counts at 3, 5 and 8
