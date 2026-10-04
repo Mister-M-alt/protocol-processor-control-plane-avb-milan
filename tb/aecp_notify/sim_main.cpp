@@ -53,6 +53,15 @@ struct Harness {
   void rewrite_window();
   bool counter_job();
   void counter_stamps();
+  struct Job {
+    uint32_t ms;                            // first seen in this ms; 0 = none
+    uint64_t mac;
+  };
+  void counter_change();
+  Job counter_presented(uint32_t last);
+  uint32_t retire();
+  void hold_until(uint32_t ms);
+  void round_waits_for_tx();
 
   void tick() {
     d->now_ms_i = now;
@@ -226,6 +235,7 @@ int Harness::run() {
   identity_index(EID_A, MAC_A, EID_B, MAC_B);
   rewrite_window();
   counter_stamps();
+  round_waits_for_tx();
   return fails ? 1 : 0;
 }
 
@@ -408,6 +418,97 @@ void Harness::counter_stamps() {
   register_row(EID_C, MAC_C, false);
   CHECK(counter_job(),
         "TS3: after a warm reset, a change in that same second goes out at once");
+}
+
+// TW: a counter round that waits for the TX slot (issue #148). The engine
+// retires a job (uns_done_i) when the TX arbiter grants its frame, so a job
+// held for the TX slot is sent late. Milan Table 5.22 (T-CTR-NOTIF) spaces a
+// descriptor's GET_COUNTERS notifications a second apart at each controller,
+// so the next round waits a second from the previous round's last send, never
+// from its selection. Here the bench is the engine and retires each job when
+// the section says, and the clock advances one ms per cycle.
+void Harness::counter_change() {
+  d->ev_ctr_type_i = DT_AVB_INTERFACE;
+  d->ev_ctr_index_i = 0;
+  d->ev_ctr_i = 1;
+  tick();
+  d->ev_ctr_i = 0;
+  ++now;
+}
+
+//! cycles at one ms each until a GET_COUNTERS job is presented, up to ms `last`
+Harness::Job Harness::counter_presented(uint32_t last) {
+  while (now <= last) {
+    d->clk_i = 0;
+    d->eval();
+    if (d->uns_valid_o && d->uns_kind_o == KIND_CTRS) return {now, d->uns_mac_o};
+    tick();
+    ++now;
+  }
+  return {0, 0};
+}
+
+//! the presented job's frame is granted now: returns the ms of that send
+uint32_t Harness::retire() {
+  const uint32_t sent = now;
+  d->uns_done_i = 1;
+  tick();
+  d->uns_done_i = 0;
+  ++now;
+  return sent;
+}
+
+void Harness::hold_until(uint32_t ms) {
+  while (now < ms) {
+    tick();
+    ++now;
+  }
+}
+
+void Harness::round_waits_for_tx() {
+  constexpr uint64_t EID_D = 0x4444000000000004ull;
+  constexpr uint64_t MAC_D = 0x020000000004ull;
+  constexpr uint32_t LATE = 8;              // the pick and the walk to the job, in cycles
+  warm_reset();
+  d->uns_done_i = 0;
+  now = 2000;
+  register_row(EID_C, MAC_C, false);        // row 0
+  register_row(EID_D, MAC_D, false);        // row 1
+  counter_change();
+  const Job c1 = counter_presented(now + LATE);
+  (void)retire();                           // C's frame leaves at once
+  const Job d1 = counter_presented(now + LATE);
+  hold_until(2600);                         // D's waits 600 ms for the TX slot
+  const uint32_t sent1 = retire();
+  hold_until(2700);
+  counter_change();                         // inside the second after that send
+  const Job c2 = counter_presented(sent1 + 1000 + LATE);
+  CHECK(c1.mac == MAC_C && d1.mac == MAC_D && c2.ms >= sent1 + 1000
+            && c2.ms <= sent1 + 1000 + LATE,
+        "TW1: a round first presented at ms %u whose last job waited for the TX slot until ms "
+        "%u holds a change made 100 ms later until a second after that send: next round "
+        "at ms %u, want %u to %u", c1.ms, sent1, c2.ms, sent1 + 1000, sent1 + 1000 + LATE);
+  (void)retire();
+  const Job d2 = counter_presented(now + LATE);
+  (void)retire();
+  // a change made while a round's job waits more than a second for the TX
+  // slot waits a second from the round's last send, not from its selection
+  hold_until(5000);
+  counter_change();
+  const Job c3 = counter_presented(now + LATE);
+  hold_until(5100);
+  counter_change();
+  hold_until(6500);                         // C's job waits 1.5 s for the TX slot
+  (void)retire();
+  const Job d3 = counter_presented(now + LATE);
+  const uint32_t sent3 = retire();
+  const Job c4 = counter_presented(sent3 + 1000 + LATE);
+  CHECK(d2.mac == MAC_D && c3.mac == MAC_C && d3.mac == MAC_D && c4.ms >= sent3 + 1000
+            && c4.ms <= sent3 + 1000 + LATE,
+        "TW2: a change made at ms 5100, while a round first presented at ms %u waited for the TX "
+        "slot until ms 6500, goes out a second after the round's last send at ms %u: next "
+        "round at ms %u, want %u to %u", c3.ms, sent3, c4.ms, sent3 + 1000, sent3 + 1000 + LATE);
+  d->uns_done_i = 1;
 }
 
 #else
