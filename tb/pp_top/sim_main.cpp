@@ -710,12 +710,99 @@ static void dump(const char* tag, const std::vector<uint8_t>& f) {
 struct NvmOp { int op; uint8_t region; uint16_t off, len;
                std::vector<uint8_t> wr; };
 
+// section AQ (issue #639): the top's timer arm-port mux against a model of
+// the contract its banner states. Eight faces, each a 4-deep FIFO; one arm
+// leaves per clock, from the first non-empty face in drain order (listener,
+// talker, ADP, SRP, originator, MAAP, notify, notify monitor); an arm offered
+// to a face that is still full after this clock's departure is dropped, and
+// the drop counter rises by ONE per clock however many faces drop in it (the
+// landed rule: every face's increment reads the same old value), saturating
+// at 0xFFFF. The model takes the arms from the faces' own nets, synchronises
+// at the first reset edge it sees and is compared after every edge from then.
+struct ArmQueueModel {
+  static constexpr int FACES = 8;
+  static constexpr size_t DEPTH = 4;
+  bool synced = false;
+  std::array<std::deque<uint64_t>, FACES> q;
+  bool valid = false;
+  uint64_t port = 0;
+  uint16_t drop = 0;
+  uint64_t edges = 0;   // edges compared out of reset
+  uint64_t arms = 0;    // arms the model issued
+  uint64_t deep = 0;    // pushes onto a face still holding an arm
+  uint64_t pass = 0;    // pushes onto a face whose one arm leaves this clock
+  uint64_t contend = 0; // clocks two or more faces held arms
+  uint64_t full = 0;    // pushes that filled a face
+  uint64_t drops = 0;   // clocks the counter rose
+  uint64_t bad = 0;     // edges whose port or counter differed
+  long first_bad = -1;
+
+  // the edge about to happen, from the inputs the DUT samples at it
+  void edge(const Vpp_top_wrap& d) {
+    if (!d.rst_n) {
+      for (auto& f : q) f.clear();
+      valid = false;
+      port = 0;
+      drop = 0;
+      synced = true;
+      return;
+    }
+    if (!synced) return;
+    ++edges;
+    std::array<bool, FACES> left{};
+    int held = 0;
+    for (const auto& f : q) held += f.empty() ? 0 : 1;
+    if (held > 1) ++contend;
+    valid = false;
+    for (size_t k = 0; k < q.size(); ++k) {
+      auto& f = q[k];
+      if (f.empty()) continue;
+      valid = true;
+      port = f.front();
+      f.pop_front();
+      left[k] = f.empty();
+      ++arms;
+      break;
+    }
+    bool dropped = false;
+    for (int k = 0; k < FACES; ++k) {
+      if (((d.dbg_aq_vld_o >> k) & 1u) == 0) continue;
+      auto& f = q[static_cast<size_t>(k)];
+      if (f.size() == DEPTH) {
+        dropped = true;
+        continue;
+      }
+      if (!f.empty()) ++deep;
+      if (left[static_cast<size_t>(k)]) ++pass;
+      f.push_back((static_cast<uint64_t>(d.dbg_aq_arm_o[2 * k + 1]) << 32)
+                  | d.dbg_aq_arm_o[2 * k]);
+      if (f.size() == DEPTH) ++full;
+    }
+    if (dropped && drop != 0xFFFF) {
+      ++drop;
+      ++drops;
+    }
+  }
+
+  // the registered port and counter after it
+  void check(const Vpp_top_wrap& d, long t) {
+    if (!synced) return;
+    const bool same = ((d.dbg_aq_port_valid_o != 0) == valid)
+                      && (d.dbg_aq_port_o == port) && (d.dbg_aq_drop_o == drop);
+    if (same) return;
+    if (first_bad < 0) first_bad = t;
+    ++bad;
+  }
+};
+
 struct H {
   Vpp_top_wrap* d;
   vluint64_t t = 0;
   // the suite tally CHECK maintains
   int checks = 0;
   int fails = 0;
+  // section AQ's model of this harness's timer arm-port mux, run every edge
+  ArmQueueModel aq;
   // MAC TX capture
   bool in_frame = false;
   bool mac_tx_ready = true;
@@ -1426,8 +1513,10 @@ struct H {
     sample_deadline_face();
     sample_admissions();
     if (d->srp_domain_change_o) ++domain_changes;
+    aq.edge(*d);
 
     d->clk_i = 1; d->eval();
+    aq.check(*d, static_cast<long>(t));
     t++;
   }
 
@@ -13718,6 +13807,26 @@ struct HazardPhase {
   printf("HZ: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+// section AQ (issue #639): the verdict of the model that every step() of the
+// main harness ran, over every section the full default run drives on it
+[[maybe_unused]] static void run_arm_queue(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  const ArmQueueModel& m = h.aq;
+  const auto n = [](uint64_t v) { return static_cast<unsigned long long>(v); };
+  printf("AQ: %llu edges, %llu arms issued, %llu clocks with two faces held, %llu pushed "
+         "as a face's one arm left, %llu onto a face still holding one, %llu filled a face, "
+         "%llu drop clocks\n", n(m.edges), n(m.arms), n(m.contend), n(m.pass), n(m.deep),
+         n(m.full), n(m.drops));
+  CHECK(m.edges > 0 && m.arms > 0,
+        "AQ1: the model saw the arm port at work (%llu edges, %llu arms)",
+        n(m.edges), n(m.arms));
+  CHECK(m.bad == 0,
+        "AQ2: the arm port and the drop counter equal the eight-queue model at every "
+        "edge (%llu edges differ, the first at cycle %ld)", n(m.bad), m.first_bad);
+  printf("AQ: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 [[maybe_unused]] static void run_budgets(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
@@ -13770,15 +13879,16 @@ int main(int argc, char** argv) {
   const bool dl_only = argc == 2 && std::strcmp(argv[1], "--deadline-only") == 0;
   const bool hz_only = argc == 2 && std::strcmp(argv[1], "--hazards-only") == 0;
   const bool ctr_only = argc == 2 && std::strcmp(argv[1], "--counters-only") == 0;
+  const bool aq_only = argc == 2 && std::strcmp(argv[1], "--arm-queue-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
   }
   const bool one_section = gsi_only || name_only || d3_only || volatile_only || acmp_only || adp_only
                            || cuts_only || one_seed || maap_only || aecp_only || dl_only || hz_only
-                           || ident_only || notify_only || ctr_only;
+                           || ident_only || notify_only || ctr_only || aq_only;
   if (maap_only) run_maap_internal(h);
-  if (!one_section) Suite(h).run();
+  if (!one_section || aq_only) Suite(h).run();
   if (aecp_only) run_aecp_dispatch_focus(h);
   if (!one_section || gsi_only) InternalStreamInfoPhase{h}.run();
   if (!one_section || name_only) run_name_writes(h);
@@ -13796,6 +13906,7 @@ int main(int argc, char** argv) {
   if (!one_section || notify_only) run_storm(h);
   if (!one_section || notify_only) run_rnd(h);
   if (!one_section || ctr_only) run_counters(h);
+  if (!one_section || aq_only) run_arm_queue(h);
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's five

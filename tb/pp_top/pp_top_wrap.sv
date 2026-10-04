@@ -481,6 +481,18 @@ module pp_top_wrap (
     output logic        dbg_ser_start_o,
     output logic  [2:0] dbg_ser_slot_o,
     output logic        dbg_txs_slot4_free_o,
+    //! section AQ (issue #639): the eight engine arm faces as the top's
+    //! timer arm-port mux receives them, in its drain order (listener,
+    //! talker, ADP, SRP, originator, MAAP, notify, notify monitor), each
+    //! {cancel, slot, owner, deadline} zero-extended to 64 bits; the arm port
+    //! the timer service sees, packed the same way; and the arm-drop counter
+    //! (snapshot word 24, bits 31:16). Read from the faces' own nets, so the
+    //! bench's model checks the mux from the engines to the timer service
+    output logic  [7:0] dbg_aq_vld_o,
+    output logic [511:0] dbg_aq_arm_o,
+    output logic        dbg_aq_port_valid_o,
+    output logic [63:0] dbg_aq_port_o,
+    output logic [15:0] dbg_aq_drop_o,
     //! section AX: the DESC_LINE_BYTES_P the top elaborated, in bytes, so the
     //! bench bounds response writes by the reservation (16 + it) the top
     //! really has, the default in the first build and the line build's own
@@ -864,6 +876,31 @@ module pp_top_wrap (
   assign dbg_ser_slot_o      = 3'(u_dut.ser_slot_w);
   assign dbg_txs_slot4_free_o = (u_dut.u_tx_slots.st_r[4] == 2'd0);
   assign dbg_desc_line_bytes_o = 16'(u_dut.DESC_LINE_BYTES_P);
+  assign dbg_aq_vld_o = {u_dut.ntfy_mon_arm_valid_w, u_dut.ntfy_arm_valid_w,
+                         u_dut.maapeng_arm_valid_w, u_dut.org_arm_valid_w,
+                         u_dut.srp_arm_valid_w, u_dut.adp_arm_valid_w,
+                         u_dut.tkr_arm_valid_w, u_dut.lstn_arm_valid_w};
+  assign dbg_aq_arm_o = {
+      64'({u_dut.ntfy_mon_arm_cancel_w, u_dut.ntfy_mon_arm_slot_w,
+           u_dut.ntfy_mon_arm_owner_w, u_dut.ntfy_mon_arm_deadline_w}),
+      64'({u_dut.ntfy_arm_cancel_w, u_dut.ntfy_arm_slot_w,
+           u_dut.ntfy_arm_owner_w, u_dut.ntfy_arm_deadline_w}),
+      64'({u_dut.maapeng_arm_cancel_w, u_dut.maapeng_arm_slot_w,
+           u_dut.maapeng_arm_owner_w, u_dut.maapeng_arm_deadline_w}),
+      64'({u_dut.org_arm_cancel_w, u_dut.org_arm_slot_w,
+           u_dut.org_arm_owner_w, u_dut.org_arm_deadline_w}),
+      64'({u_dut.srp_arm_cancel_w, u_dut.srp_arm_slot_w,
+           u_dut.srp_arm_owner_w, u_dut.srp_arm_deadline_w}),
+      64'({u_dut.adp_arm_cancel_w, u_dut.adp_arm_slot_w,
+           u_dut.adp_arm_owner_w, u_dut.adp_arm_deadline_w}),
+      64'({u_dut.tkr_arm_cancel_w, u_dut.tkr_arm_slot_w,
+           u_dut.tkr_arm_owner_w, u_dut.tkr_arm_deadline_w}),
+      64'({u_dut.lstn_arm_cancel_w, u_dut.lstn_arm_slot_w,
+           u_dut.lstn_arm_owner_w, u_dut.lstn_arm_deadline_w})};
+  assign dbg_aq_port_valid_o = u_dut.tmr_arm_valid_w;
+  assign dbg_aq_port_o = 64'({u_dut.tmr_arm_cancel_w, u_dut.tmr_arm_slot_w,
+                              u_dut.tmr_arm_owner_w, u_dut.tmr_arm_deadline_w});
+  assign dbg_aq_drop_o = u_dut.arm_drop_r;
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin
