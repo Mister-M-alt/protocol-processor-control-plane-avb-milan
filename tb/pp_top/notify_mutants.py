@@ -17,7 +17,9 @@ timebase), the parameter's default (section ID0), the command-class pushes (NP),
 the STORM and RND sections (ST, RN), the originator's seeded inflight session
 (tb/originator section R), and the registry's identity index and the counter
 throttle stamps' valid bit in the first build of tb/aecp_notify (sections IX and TS,
-issue #232). The suite READMEs carry the matching mutation records.
+issue #232), and the counter rounds' spacing from the previous round's send (issue
+#148: tb/pp_top section CS and tb/aecp_notify section TW). The suite READMEs carry the
+matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
                                            [--only NAME ...]
@@ -52,6 +54,7 @@ class Mutant(NamedTuple):
 IDENT = Suite("tb/pp_top", ("make", "identify-build"), ("./obj_idn/Vpp_top_idn",))
 IDENT_OFF = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--identify-only"))
 NOTIFY = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--notify-only"))
+SPACING = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--spacing-only"))
 ORIGIN = Suite("tb/originator", (), ("make", "run"))
 TIMEBASE = Suite("tb/aecp_notify", (), ("make", "identify"))
 INDEX = Suite("tb/aecp_notify", (), ("make", "run"))
@@ -294,7 +297,28 @@ IDENTITY_INDEX = (
         ("TS3:",)),
 )
 
-MUTANTS = IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX
+# a counter round's one-second limit from the previous round's last send (issue
+# #148), graded on the wire by tb/pp_top section CS and directly by tb/aecp_notify TW
+STAMP = "          if (em_kind_r == PP_UNS_CTRS_C) ctr_last_r[em_ctr_ix_r] <= now_ms_i;\n"
+
+COUNTER_SPACING = (
+    Mutant("counter_spacing_from_selection", SPACING, (
+        (NTFY, STAMP, ""),),
+        ("CS2b:", "CS2c:")),
+    Mutant("counter_spacing_from_selection_tw", INDEX, (
+        (NTFY, STAMP, ""),),
+        ("TW1:", "TW2:")),
+    Mutant("counter_stamp_at_send_only", INDEX, (
+        (NTFY, STAMP, STAMP.replace("(em_kind_r == PP_UNS_CTRS_C)",
+                                    "((em_kind_r == PP_UNS_CTRS_C) && core_done_w)")),),
+        ("TW2:",)),
+    Mutant("counter_stamp_first_job_only", INDEX, (
+        (NTFY, STAMP, STAMP.replace("(em_kind_r == PP_UNS_CTRS_C)",
+                                    "((em_kind_r == PP_UNS_CTRS_C) && (em_ix_r == '0))")),),
+        ("TW1:",)),
+)
+
+MUTANTS = IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"

@@ -1265,17 +1265,16 @@ struct StormPhase : NotifyBench {
     the_full_registry_fans_out();
     //! ST1's SET_NAMEs are saved by the D3 writer a debounce later (issues
     //! #61, #83), and its ACQUIRE holds dispatch for up to one job: a round
-    //! selected before it would leave late and the next on time. The churn
-    //! grades the limiter, so it starts once that save is in the device
+    //! selected before it would leave late. The churn grades the limiter, so
+    //! it starts once that save is in the device
     long guard = 3 * 500L * MS_CYC;
     while (io.d->d3_unflushed_o && guard-- > 0) tick();
     CHECK(!io.d->d3_unflushed_o, "ST1: the fan-outs' name save has drained before the "
           "churn (premise)");
     //! and at the phase of the millisecond tick it always started at, one
-    //! clock before a tick: ST2b reads the wire, and the limiter stamps a
-    //! round when it selects it, so a probe's answer that lands before a
-    //! round's first frame narrows that gap (a churn started 30 to 95 clocks
-    //! later fails ST2b at main ddb3119d too; README limits)
+    //! clock before a tick, so its record stays comparable. Section CS starts
+    //! the same churn 30 and 95 clocks later, two of the starts that failed
+    //! ST2b while the limiter stamped a round at its selection (issue #148)
     const uint32_t ms0 = io.d->dbg_now_ms_o;
     while (io.d->dbg_now_ms_o == ms0) tick();
     for (int c = 0; c < MS_CYC - 1; ++c) tick();
@@ -1294,10 +1293,11 @@ struct StormPhase : NotifyBench {
 // solicited answer that leaves just before it, must still leave a second after
 // the previous round's send. ST's churn on a fresh processor with all sixteen
 // rows registered, started at the tick phase ST keeps (one clock before a ms
-// tick) and 30 and 95 clocks later, the shifted starts that failed ST2b at main
-// ddb3119d (README limits). Every row's rounds are graded, not only row 0's:
-// each controller's frames of one descriptor are a second apart, less the one
-// tick the limiter reads (ST2).
+// tick) and 30 and 95 clocks later: while the limiter stamped a round at its
+// selection, a start 27 to 98 clocks later narrowed a gap below the bound
+// (main 07b1469d; 30 to 95 at ddb3119d, README limits). Every row's rounds are
+// graded, not only row 0's: each controller's frames of one descriptor are a
+// second apart, less the one tick the limiter reads (ST2).
 struct CounterSpacingPhase : StormPhase {
   using StormPhase::StormPhase;
 

@@ -483,6 +483,8 @@ void Harness::round_waits_for_tx() {
   hold_until(2700);
   counter_change();                         // inside the second after that send
   const Job c2 = counter_presented(sent1 + 1000 + LATE);
+  printf("  [i] TW1: the round's last job sent at ms %u; the next round presented at ms %u\n",
+         sent1, c2.ms);
   CHECK(c1.mac == MAC_C && d1.mac == MAC_D && c2.ms >= sent1 + 1000
             && c2.ms <= sent1 + 1000 + LATE,
         "TW1: a round first presented at ms %u whose last job waited for the TX slot until ms "
@@ -503,6 +505,8 @@ void Harness::round_waits_for_tx() {
   const Job d3 = counter_presented(now + LATE);
   const uint32_t sent3 = retire();
   const Job c4 = counter_presented(sent3 + 1000 + LATE);
+  printf("  [i] TW2: the round's last job sent at ms %u; the next round presented at ms %u\n",
+         sent3, c4.ms);
   CHECK(d2.mac == MAC_D && c3.mac == MAC_C && d3.mac == MAC_D && c4.ms >= sent3 + 1000
             && c4.ms <= sent3 + 1000 + LATE,
         "TW2: a change made at ms 5100, while a round first presented at ms %u waited for the TX "
