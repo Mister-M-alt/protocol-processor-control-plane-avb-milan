@@ -335,6 +335,8 @@ constexpr Arc F043_ARCS[] = {
   {"DISCOVERED -> NOT (T-ADP-NOADP expiry)", V_NOADP, D_DISC},
 };
 constexpr int N_F043_ARCS = int(sizeof F043_ARCS / sizeof F043_ARCS[0]);
+// the last index TK_DISCOVERED has noted when the walk enters it (goto_disc)
+constexpr uint32_t DISC_LAST = 700;
 // F04.8's fresh arc notes the received available_index (Milan §5.6.4.5.2
 // step 3). Its guard reads no grandmaster, so both index > last cells of
 // TK_DISCOVERED take it, and only the next ADPDU shows the noted value
@@ -1472,7 +1474,7 @@ void Harness::goto_disc(int col, unsigned s) {
   if (col == D_UNB) return;
   set_bound(s, tk, true);
   idle(4);
-  load_remote(0, tk, col == D_DISC ? 700 : 500, d->gm_id_i, DOM0, 0, 10, MSG_AVAIL);
+  load_remote(0, tk, col == D_DISC ? DISC_LAST : 500, d->gm_id_i, DOM0, 0, 10, MSG_AVAIL);
   CHECK(send_txn(adp_txn(MSG_AVAIL, tk, 10, 0, now)), "P13 discovery consumed");
   idle(4);
   if (col == D_DISC) return;
@@ -1484,7 +1486,7 @@ void Harness::goto_disc(int col, unsigned s) {
 
 void Harness::apply_disc(int col, int row, unsigned s) {
   const uint64_t tk = walk_talker(s);
-  const uint32_t last = (col == D_DISC) ? 700 : 500;
+  const uint32_t last = (col == D_DISC) ? DISC_LAST : 500;
   const uint64_t gm = d->gm_id_i;
   auto avail = [&](uint32_t aidx, uint64_t g, uint8_t dom, uint16_t ifx) {
     load_remote(0, tk, aidx, g, dom, ifx, 10, MSG_AVAIL);
@@ -1582,7 +1584,7 @@ void Harness::walk_discovery_cell(int row, int col, unsigned s) {
   if (!notes_fresh_index(row, col)) return;
   // an AVAILABLE repeating the noted index, grandmaster and domain matching,
   // is at or below the last one: the restart pair of step 2
-  const uint32_t noted = 700 + 1;              // apply_disc's last + 1
+  const uint32_t noted = DISC_LAST + 1;        // apply_disc's last + 1
   const size_t e1 = evts.size();
   load_remote(0, walk_talker(s), noted, d->gm_id_i, DOM0, 0, 10, MSG_AVAIL);
   CHECK(send_txn(adp_txn(MSG_AVAIL, walk_talker(s), 10, 0, now)),
