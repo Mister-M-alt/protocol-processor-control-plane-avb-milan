@@ -85,8 +85,9 @@ What `make check` enforces of them, and nothing more
 
 - **IDs.** `ids` ([`check-ids.py`](../scripts/check-ids.py)) fails on any `P-` or `T-`
   ID used anywhere under `docs/`, `hdl/` or `tb/` that has no `F01.5` or `F08.1` row.
-  A family (`T-MRP-*`) needs a row in it, and a braced list (`T-ACMP-{CMD, DELAY}`) a
-  row for each member.
+  A family (`T-MRP-*`) needs a row in it, and a braced list (`T-ACMP-{CMD, DELAY}`,
+  `T-NVM-{RS-DEADLINE, RS-AGGREGATE}`) a row for each member. Any other text after a
+  hyphen is prose: `T-MRP-JOIN-driven` uses `T-MRP-JOIN`.
 - **The integrator's parameter inventory.** `params` holds the integrator guide's
   table and diagram 21 to the top's parameters; the defaults stay at their owners.
 

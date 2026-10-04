@@ -10,11 +10,19 @@ rows. Whether a value is copied outside its table is not checked here.
 
 The first cell of each master-table row defines its IDs. A cell may list several
 (`P-EN-MVU-SUID / P-EN-MVU-MCR`) or abbreviate a sibling by its last segment
-(`T-BUDGET-AECP-TYP / -WC`). A use may name a family instead of one ID:
-`T-MRP-*` (and `T-ADP-` broken across a line) needs a row in that family, and
-`T-MRP-{JOIN, LEAVEALL}` needs each member. `P-RX-SLOTS-1` reads as
-`P-RX-SLOTS` minus one when no row carries the numeric segment. `P-ID` and
-`T-ID` are the registry's column names, not IDs.
+(`T-BUDGET-AECP-TYP / -WC`). A use is read the same way, and these forms are
+the only ones that reach past the ID's last segment:
+
+- `T-MRP-*` names a family and needs a row in it;
+- `T-NVM-{RS-DEADLINE, RS-AGGREGATE}` needs a row for each member, and braces
+  holding anything but uppercase segments fail;
+- `T-ADP-` at the end of a line continues with the next line's first word,
+  after any comment leader (`T-ADP-DELAY-START`);
+- `/ -WC` after an ID names the sibling with that last segment.
+
+Anything else after a hyphen is prose: `P-TX-shaped` uses `P-TX`.
+`P-RX-SLOTS-1` reads as `P-RX-SLOTS` minus one when no row carries the `-1`.
+`P-ID` and `T-ID` are the registry's column names, not IDs.
 
 The files scanned are those git tracks plus untracked ones it does not ignore,
 so a new file is held before it is added and build output never is.
@@ -35,8 +43,12 @@ TIMING = Path("docs/architecture/08_timing.md")
 ID = re.compile(r"(?<![A-Za-z0-9_-])([PT]-[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*)")
 REGISTRY_WORDS = {"P-ID", "T-ID"}
 ROW = re.compile(r"^\|([^|\n]*)\|", re.M)
-SIBLING = re.compile(r"/\s*-([A-Z][A-Z0-9]*)")
-BRACES = re.compile(r"-\{([A-Z0-9, ]+)\}")
+SIBLING = re.compile(r"[ \t]*/[ \t]*-([A-Z][A-Z0-9]*)")
+BRACES = re.compile(r"-\{([^{}\n]*)\}")
+SEGMENTS = re.compile(r"[A-Z0-9]+(?:-[A-Z0-9]+)*")
+# a hyphen ending the line, then the next line's first word after a comment leader
+LINE_BREAK = re.compile(r"-[ \t]*\r?\n[ \t]*(?:(?://+|#+|--|\*|;+|>)[ \t]*)?"
+                        r"([A-Z0-9]+(?:-[A-Z0-9]+)*)(?![A-Za-z0-9_])")
 
 
 def table_section(body: str, start: str, what: str) -> str:
@@ -90,30 +102,35 @@ def scanned_files(root: Path) -> list:
 
 
 def uses(text: str) -> Iterator[tuple[int, str, str]]:
-    """(line, token, kind) per ID use; kind is 'id', 'family' or a brace list."""
+    """(line, token, kind) per ID use; kind is 'id', 'family' or 'list' (bad braces)."""
     for match in ID.finditer(text):
         token, end = match.group(1), match.end()
         line = text.count("\n", 0, match.start()) + 1
         if token in REGISTRY_WORDS:
             continue
-        braces = BRACES.match(text, end)
-        if braces:
-            for member in braces.group(1).split(","):
-                yield line, f"{token}-{member.strip()}", "id"
-        elif text.startswith("-", end):
+        if text.startswith("-*", end):
             yield line, token, "family"
+        elif text.startswith("-{", end):
+            braces = BRACES.match(text, end)
+            members = [m.strip() for m in braces.group(1).split(",")] if braces else [""]
+            if all(SEGMENTS.fullmatch(m) for m in members):
+                for member in members:
+                    yield line, f"{token}-{member}", "id"
+            else:
+                yield line, token, "list"
         else:
-            yield line, token, "id"
+            broken = LINE_BREAK.match(text, end)
+            yield line, f"{token}-{broken.group(1)}" if broken else token, "id"
+            sibling = SIBLING.match(text, end)
+            if sibling:
+                yield line, f"{token.rsplit('-', 1)[0]}-{sibling.group(1)}", "id"
 
 
 def resolves(token: str, kind: str, rows: set) -> bool:
-    """True when the use names a row, a family with a row, or a row minus n."""
+    """True when the use names a row, a family with a row, or a row minus one."""
     if kind == "family":
         return token in rows or any(r.startswith(token + "-") for r in rows)
-    if token in rows:
-        return True
-    stem, _, tail = token.rpartition("-")
-    return tail.isdigit() and stem in rows
+    return token in rows or (token.endswith("-1") and token[:-2] in rows)
 
 
 def check(root: Path) -> int:
@@ -138,7 +155,9 @@ def check(root: Path) -> int:
             rows = params if token.startswith("P-") else timing
             table = "F01.5" if token.startswith("P-") else "F08.1"
             used.add(token)
-            if not resolves(token, kind, set(rows)):
+            if kind == "list":
+                problems.append(f"{rel}:{line}: {token}-{{...}} is not a list of ID segments")
+            elif not resolves(token, kind, set(rows)):
                 shown = f"{token}-*" if kind == "family" else token
                 problems.append(f"{rel}:{line}: {shown} has no {table} row")
     for line in problems:
@@ -165,41 +184,67 @@ SELFTEST_TIMING = """<a id="fig-08-constants"></a>**F08.1**
 |---|---|
 | T-MRP-JOIN | 200 ms |
 | T-MRP-LEAVEALL | 10 s |
+| T-NVM-RS-DEADLINE | 20 ms |
 | T-BUDGET-AECP-TYP / -WC | 20 / 100 ms |
 """
-# (file text, expected unresolved tokens): the forms the tree uses, then strays
+CASE = "tb/case/README.md"
+# (files planted beside the two master pages, expected findings: the token of
+# each unresolved use, else the message): the forms the tree uses, a stray in
+# each scanned tree, each abbreviated form, then the master-table faults
 SELFTEST_CASES = (
-    ("P-ONE, P-RX-SLOT-BYTES, P-EN-B, T-BUDGET-AECP-WC; the P-ID and T-IDs", []),
-    ("T-MRP-* and T-MRP-{JOIN, LEAVEALL} and T-MRP-{JOIN,LEAVEALL}", []),
-    ("(T-MRP-\n//  JOIN) and 0..P-RX-SLOTS-1, MAAP-ANNOUNCE, gPTP-T-X", []),
-    ("a stray P-NOT-A-ROW in a document", ["P-NOT-A-ROW"]),
-    ("// a stray T-NOT-A-ROW in a module comment", ["T-NOT-A-ROW"]),
-    ("T-MRP-{JOIN, NOPE} names one missing member", ["T-MRP-NOPE"]),
-    ("T-NOFAMILY-* names a family with no row", ["T-NOFAMILY-*"]),
-    ("P-RX-SLOT-2 is not P-RX-SLOTS minus two", ["P-RX-SLOT-2"]),
-    ("P-EN-C is no sibling of P-EN-A / P-EN-B", ["P-EN-C"]),
+    ({CASE: "P-ONE, P-RX-SLOT-BYTES, P-EN-B, T-BUDGET-AECP-WC; the P-ID and T-IDs"}, []),
+    ({CASE: "T-MRP-* and T-MRP-{JOIN, LEAVEALL} and T-MRP-{JOIN,LEAVEALL}"}, []),
+    ({CASE: "(T-MRP-\n//  JOIN) and 0..P-RX-SLOTS-1, MAAP-ANNOUNCE, gPTP-T-X"}, []),
+    ({CASE: "T-NVM-{RS-DEADLINE}, a P-ONE-based bound, T-BUDGET-AECP-TYP / -WC"}, []),
+    ({"docs/case.md": "a stray P-NOT-A-ROW in a document"}, ["P-NOT-A-ROW"]),
+    ({"hdl/case.sv": "// a stray T-NOT-A-ROW in a module comment"}, ["T-NOT-A-ROW"]),
+    ({CASE: "a stray T-NOT-A-ROW in a suite"}, ["T-NOT-A-ROW"]),
+    ({CASE: "T-MRP-{JOIN, NOPE} names one missing member"}, ["T-MRP-NOPE"]),
+    ({CASE: "T-NVM-{RS-DEADLINE, RS-TYPO} names one missing member"}, ["T-NVM-RS-TYPO"]),
+    ({CASE: "T-MRP-{join} is not a list of IDs"}, ["T-MRP-{...}"]),
+    ({CASE: "the P-RX-shaped pool is no family use"}, ["P-RX"]),
+    ({CASE: "(T-MRP-\n//  NOPE) continues on the next line"}, ["T-MRP-NOPE"]),
+    ({CASE: "T-BUDGET-AECP-TYP / -XX names a sibling with no row"}, ["T-BUDGET-AECP-XX"]),
+    ({CASE: "T-NOFAMILY-* names a family with no row"}, ["T-NOFAMILY-*"]),
+    ({CASE: "P-RX-SLOT-2 is not P-RX-SLOTS minus two"}, ["P-RX-SLOT-2"]),
+    ({CASE: "P-RX-SLOTS-2 is not P-RX-SLOTS minus one"}, ["P-RX-SLOTS-2"]),
+    ({CASE: "P-ONE-X is no row under P-ONE"}, ["P-ONE-X"]),
+    ({CASE: "P-EN-C is no sibling of P-EN-A / P-EN-B"}, ["P-EN-C"]),
+    ({str(PARAMS): SELFTEST_PARAMS + "\n| P-ID |\n|---|\n| P-LATER |\n"}, ["P-LATER"]),
+    ({str(PARAMS): SELFTEST_PARAMS.replace("| P-ONE | 1 |", "| P-ONE | 1 |\n| P-ONE | 2 |")},
+     ["F01.5: P-ONE has two rows"]),
+    ({str(TIMING): SELFTEST_TIMING.split("|---|---|")[0] + "|---|---|\n"},
+     ["F08.1: no T- rows parsed"]),
+    ({str(PARAMS): SELFTEST_PARAMS.replace(" (F01.5)", "")},
+     ["cannot find F01.5 ('## 7. Parameter master table (F01.5)')"]),
 )
+USE_FAIL = re.compile(r"ID FAIL: \S+:\d+: (\S+) ")
+
+
+def findings(stdout: str) -> list:
+    """Per `ID FAIL` line, the token of an unresolved use or else the message."""
+    out = []
+    for line in stdout.splitlines():
+        if line.startswith("ID FAIL: "):
+            m = USE_FAIL.match(line)
+            out.append(m.group(1) if m else line[len("ID FAIL: "):])
+    return out
 
 
 def selftest() -> int:
     """Run the gate over planted trees: every stray caught, every form passed."""
     failures = 0
-    for number, (text, expect) in enumerate(SELFTEST_CASES, start=1):
+    for number, (files, expect) in enumerate(SELFTEST_CASES, start=1):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             subprocess.run(["git", "init", "-q", str(root)], check=True)
-            for rel, body in ((PARAMS, SELFTEST_PARAMS),
-                              (TIMING, SELFTEST_TIMING),
-                              (Path("tb/case/README.md"), text)):
+            for rel, body in {str(PARAMS): SELFTEST_PARAMS,
+                              str(TIMING): SELFTEST_TIMING, **files}.items():
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 (root / rel).write_text(body, encoding="utf-8")
-            got = []
             proc = subprocess.run([sys.executable, __file__, "--root", str(root)],
                                   capture_output=True, text=True)
-            for line in proc.stdout.splitlines():
-                m = re.match(r"ID FAIL: tb/case/README\.md:\d+: (\S+) has no", line)
-                if m:
-                    got.append(m.group(1))
+            got = findings(proc.stdout)
             want_rc = 1 if expect else 0
             if got != expect or proc.returncode != want_rc:
                 failures += 1
