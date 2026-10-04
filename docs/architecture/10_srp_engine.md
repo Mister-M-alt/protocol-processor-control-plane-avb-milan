@@ -191,6 +191,65 @@ Domain {declared prio, VID, adopted?}, VLAN {refcount, joined VID}. All registra
 states carry the MRP {IN, MT, LV} encoding; LV is reachable **only** through the
 LeaveAll cycle (Δ13 below).
 
+### 5.1 Storage and per-stream cost (issue #230)
+
+Every per-stream structure is sized by M and N, which the processor top binds from
+`P-N-STREAM-OUT` and `P-N-STREAM-IN`. The 1x1 product binds two of each (its stream and
+CRF), so no inactive slot is elaborated: at 1x1 each FSM's matcher holds exactly two
+64-bit stream_id registers, at 8x8 nine.
+
+| Structure | Block | Words x bits | Primitive | Why |
+|---|---|---|---|---|
+| Timer-arm FIFOs `tf_tk_ram_r`, `tf_ls_ram_r` | top | 2 x 32 x (41 + `SLOT_AW_P`) | distributed RAM, one write and one registered read each | one memory per FIFO; a two-dimensional array written for both in one process had mapped to 2,304 flip-flops at 1x1 |
+| Cadence deadlines `cad_dl_r` | top | 5 x 32 | flip-flops | five fixed slots, read by expiry and arm issue in one cycle |
+| Matcher {stream_id, DA, VLAN} `sid_r`, `da_r`, `vid_r` | talker, listener | M or N x 124 | flip-flops | every context compares each decoder value in its cycle |
+| Walk TSpec, priority, rank, latency `wtsp_r` | talker | M x 68 | distributed RAM | written by the gate open, read only at the walk source |
+| Walk {stream_id, DA, VLAN} `g_wid_ram.wid_r` | talker | M x 124, from M = 3 | distributed RAM | at M = 1 and 2 the walk reads the matcher's flip-flops: a 2-way multiplexer is cheaper than a second copy |
+| Walk stream_id `g_wsid_ram.wsid_r` | listener | N x 64, from N = 3 | distributed RAM | as above, for the listener walk |
+| Registration data `lat_r`, `fcode_r`, `fsysid_r` | listener | N x 104 | flip-flops | published per sink in parallel (`acc_latency`, `msrp_fail_code/bridge`) |
+| Slopes `slope_q_r` | admission | M x 32 | distributed RAM | one write (the slope pipeline) and one read (the admission walk) per cycle |
+| Working and published grants `wgslope_r`, `gslope_r` | admission | M x 32 each | flip-flops | a round publishes every grant at once; `granted_slope_bps` is per source |
+| Pending tables `msrp_ram_r`, `mvrp_ram_r` | encoder | `ENC_DEPTH_P` x 285 and x 19 | distributed RAM | |
+| Listener pairing buffer | decoder | `TP_DEPTH_P` bytes | block RAM | |
+| Membership table | VLAN | `N_VIDS_P` x 17 | distributed RAM | |
+
+None of the memories added for issue #230 is reset: each is read only under a valid bit
+written with it (`rec_valid_r`, `slope_valid_r`, the FIFO count). Each carries
+`ram_style = "distributed"`: without it the registered FIFO read mapped each FIFO to a
+RAMB36. Both arms of each walk copy, and the FIFOs, are tested at sources/sinks 1/1,
+2/2, 3/5 and 9/9: the [walk-record arms](../../tb/srp_stream_fsms/README.md) and the
+[timer-arm FIFO arms](../../tb/srp_top/README.md), with every probe of the issue's
+reviews a killed control of the srp_top campaign.
+
+What stays per stream, and why it cannot be shared without a timing change:
+
+- **The matcher.** `KL_srp_decoder` emits one value per cycle without back-pressure, and
+  every context compares {stream_id, DA, VLAN} in that cycle.
+- **The applicant and registrar transitions.** A received value, `periodic!`, a received
+  LeaveAll and the own LeaveAll reach every context in the same cycle.
+- **The published state.** `tk_decl_state`, `active`, `acc_latency`,
+  `msrp_fail_code/bridge` and `granted_slope_bps` are levels per stream.
+
+One shared evaluator per FSM would apply those events to the contexts one per cycle.
+Registration indications and `LISTENER_REG_CHANGE` would then move by up to M - 1 or
+N - 1 cycles, and the decoder would need a ready on its event port.
+
+Marginal cost of one stream context, measured as (8x8 - 1x1) / 7 on `KL_pp_shadow`
+standalone at the build's 50 MHz (issue #230; Vivado 2026.1, `xc7a100t-fgg484-2`, the
+area-baseline recipe of the reference platform):
+
+| Block | LUT per context | Flip-flops per context | Before issue #230 |
+|---|---:|---:|---|
+| Talker FSM, per source | 129 | 168 | 213 / 221 |
+| Listener FSM, per sink | 208 | 278 | 227 / 278 |
+| Admission, per source | 69 | 69 | 73 / 101 |
+| Whole SRP engine, one source and one sink | 475 | 538 | 592 / 679 |
+
+So one more talker costs about 200 LUTs and 240 flip-flops (its FSM and its admission
+share), one more listener about 210 LUTs and 280 flip-flops. The remaining LUTs of the
+whole-engine figure appear in the decoder and the VLAN block, where synthesis places part of
+the per-context fan-out and compare logic.
+
 ## 6. Behavior
 
 ### 6.1 Domain FSM (×1)
