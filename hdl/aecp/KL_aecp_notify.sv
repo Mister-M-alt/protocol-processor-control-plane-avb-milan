@@ -133,7 +133,7 @@
 //                bounded FIFO. Successful no-op setters do not enqueue. The
 //                requester is excluded from the table walk. GET_COUNTERS
 //                changes use one dirty and pending bit per served descriptor;
-//                their one-second limit is measured when emission begins.
+//                their one-second limit runs from a round's last send.
 //
 //                DEADLOCK IS BROKEN BY WITHDRAWAL: while a presented job
 //                waits for the engine, a rising rgy_req_i proves the engine
@@ -466,6 +466,7 @@ module KL_aecp_notify
   logic        em_dh_r;                 // this job is the DEREG single-shot
   logic        em_cmd_r;
   logic [CIX_W_C-1:0] em_ix_r;
+  logic [CTX_W_C-1:0] em_ctr_ix_r;      // a GET_COUNTERS round's descriptor slot
 
   logic [15:0] uns_cnt_r;
   logic [7:0]  coalesce_r;
@@ -1039,6 +1040,7 @@ module KL_aecp_notify
       em_dh_r     <= 1'b0;
       em_cmd_r    <= 1'b0;
       em_ix_r     <= '0;
+      em_ctr_ix_r <= '0;
       uns_cnt_r   <= 16'd0;
       coalesce_r  <= 8'd0;
       wr_en_r     <= 1'b0;
@@ -1292,6 +1294,7 @@ module KL_aecp_notify
                     cmdq_count_r <= cmdq_count_r - 5'd1;
                 end else if (pick_kind_w == PP_UNS_CTRS_C) begin
                   em_excl_v_r <= 1'b0;
+                  em_ctr_ix_r <= pick_ctr_ix_w;
                   ctr_pend_r[pick_ctr_ix_w] <= 1'b0;
                   // Measure the one-second limit from emission selection,
                   // not from the possibly much earlier pending instant.
@@ -1433,6 +1436,11 @@ module KL_aecp_notify
 
         // ------------------------------------------------------------------
         N_EMIT_WAIT: begin
+          //! Milan Table 5.22 spaces GET_COUNTERS a second apart at each
+          //! controller (issue #148): the stamp follows the clock while a
+          //! job waits for the engine and the TX slot, and holds its send,
+          //! so the next round waits a second from this round's last send
+          if (em_kind_r == PP_UNS_CTRS_C) ctr_last_r[em_ctr_ix_r] <= now_ms_i;
           if (core_done_w) begin
             n_st_r <= N_EMIT_WB;
           end else if (rgy_new_w) begin
