@@ -556,16 +556,17 @@ module KL_aecp_notify
   //! memory per chunk holding a 1 at that chunk's value: the row matches when
   //! all of its chunk memories read 1 at the command's chunks.
   //!
-  //! A row write re-indexes its row in the two cycles after it: the write's
-  //! own cycle clears the old identity's bits (the write port still reads the
-  //! old row then), the next sets the new identity's. In those two cycles the
-  //! row's match is the one comparator below, against the write port's read,
-  //! which is exactly what rows_r holds in each of them. So every cycle's
-  //! match equals a comparison with rows_r. Only REGISTER writes an identity
-  //! (N_APPLY); the emission write-back rewrites a row's own {eid, mac} with
-  //! a new seq and leaves the index as it is. The index starts empty, as the
-  //! FPGA configuration loads it, and a row's bits enter it only through a
-  //! row write, so a clear always empties the row's memories.
+  //! A row write re-indexes its row over two cycles: the cycle in which the
+  //! row write lands (wr_en_r high) clears the old identity's bits (the write
+  //! port still reads the old row then), and the cycle after it sets the new
+  //! identity's. In those two cycles the row's match is the one comparator
+  //! below, against the write port's read, which is exactly what rows_r holds
+  //! in each of them. So every cycle's match equals a comparison with rows_r.
+  //! Only REGISTER writes an identity (N_APPLY); the emission write-back
+  //! rewrites a row's own {eid, mac} with a new seq and leaves the index as
+  //! it is. The index starts empty, as the FPGA configuration loads it, and a
+  //! row's bits enter it only through a row write, so a clear always empties
+  //! the row's memories.
   localparam int unsigned IXC_W_C = 6;
   localparam int unsigned N_IXC_C = (112 + IXC_W_C - 1) / IXC_W_C;
   logic [N_IXC_C*IXC_W_C-1:0] ix_key_w, ix_row_w;
