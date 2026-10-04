@@ -102,8 +102,8 @@ Rules (behavioral — no vendor primitives):
 1. **One core clock domain** for the entire processor. `P-CLK-HZ` is free; the
    prescaler retunes the 1 µs/1 ms ticks ([08 §3](08_timing.md)).
 2. MAC boundaries cross via **dual-clock FIFOs** (gray-coded pointers or equivalent),
-   and the FIFOs are the **integrator's**: the top has one clock and no FIFO, and its
-   MAC faces are byte streams in the core domain (§3,
+   and the FIFOs are the **integrator's**: the top has one clock and no dual-clock
+   FIFO, and its MAC faces are byte streams in the core domain (§3,
    [integrator guide §1](../guides/integrator.md#1-clocking-and-reset)). The handoff is
    frame-atomic: a frame is visible only when complete + good, or dropped. The RX face
    has no `err` and no abort, so the RX FIFO presents only complete, FCS-good frames

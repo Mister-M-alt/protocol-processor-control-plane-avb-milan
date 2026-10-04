@@ -9,9 +9,10 @@ build + run, exit 0 = PASS, 368 checks.
 The C++ harness is an independent model, never DUT logic: five window-backend
 stubs with programmable wait states and deterministic per-address data, an
 independent 256 × 4-lane ring model with its own mod-2^16 counter, and a host
-that holds `req_valid` until `rvalid` (F02.7 pready semantics). The top is
-`side_port_tb_wrap.sv`: side-port **A** (`EN_FW_ASSIST_P = 1`, all six windows
-live) with the REAL trace ring wired behind window 0x40000, plus side-port
+that holds `req_valid` until `rvalid` (F02.7: each request held until its
+strobe). The top is `side_port_tb_wrap.sv`: side-port **A**
+(`EN_FW_ASSIST_P = 1`, all six windows live) with the REAL trace ring wired
+behind window 0x40000, plus side-port
 **B** at the F01.5 default (`EN_FW_ASSIST_P = 0`, auto-acked backends) proving
 window 0x50000 vanishes when the parameter is off.
 
