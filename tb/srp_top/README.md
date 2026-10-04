@@ -619,7 +619,10 @@ were measured one shape at a time in scratch copies:
 
 "A523" is the lane's round-1 lockstep controls, and "R458-1" and "R459-1" are the
 two reviews' probes, by their names there. Every control is caught at every shape
-where its arm is elaborated and the edit is not equivalent by construction. The
+where its arm is elaborated and the edit is not equivalent by construction, except
+`wsid-flops-of-control-sink` at 1/1: there Verilator 5.050 reads the out-of-range 64-bit
+element as element 0 (equivalent in simulation, above), as it would any 64-bit stream_id
+read at an idle face at one context; 2/2 catches those edits. The
 three edits R459-1 planted as equivalent leave every committed suite passing, as
 an equivalent edit must: `tf-tk-same-entry-bypass` (the head bypasses the
 memory when the write and read pointers meet), and `wid-threshold-ram-from-1`
