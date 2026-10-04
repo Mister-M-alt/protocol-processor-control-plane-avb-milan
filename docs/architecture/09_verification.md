@@ -284,7 +284,7 @@ the [`tb/pp_top` README](../../tb/pp_top/README.md).
 
 Each section runs on a fresh processor of its own in `tb/pp_top` (`--notify-only`,
 `--identify-only`, and the suite's third build for section ID), plus one section of
-the originator's unit suite and one of the notification block's:
+the originator's unit suite and three of the notification block's:
 
 | Category | Section | What it proves |
 |---|---|---|
@@ -295,6 +295,8 @@ the originator's unit suite and one of the notification block's:
 | STORM | ST | one change fans out to all 16 rows byte-exact; GET_COUNTERS churned at 10 Hz on five descriptors emits at most once per descriptor per second; solicited AECP and ACMP answers stay inside `T-BUDGET-AECP-WC` / `T-BUDGET-ACMP-RESP` under the load |
 | RND | RN | a seeded REGISTER / DEREGISTER / LOCK / UNLOCK / SET / GET session from 20 controllers against an independent registry and lock model, zero divergence |
 | RND | `tb/originator` R | a seeded session of 16 owners' overlapping CONTROLLER_AVAILABLE-shaped inflights, responses, expiries and cancellations in random order against an independent inflight model |
+| DIR | `tb/aecp_notify` IX | the registry's identity index: a reused row refuses its previous controller, no identity one bit from a registered one matches, and in both cycles of a REGISTER's rewrite a command matching what `rows_r` holds still wins against a failed probe in the same cycle: in the row write's own cycle the reused row's previous controller, and, after a reset in that cycle, the row's identity, which the index then lacks |
+| DIR | `tb/aecp_notify` TS | the counter throttle stamps' valid bit: a second change in the same second is held, and after a warm reset a change in that second goes out at once |
 
 The mutation records are in the two suites' READMEs; `tb/pp_top/notify_mutants.py`
 plants the pp_top controls.
