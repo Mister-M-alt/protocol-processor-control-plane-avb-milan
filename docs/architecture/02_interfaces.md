@@ -63,7 +63,7 @@ flowchart LR
 | `mclk` | D (out) | out | core | the integrator's media-clock selection | `aecp_clk_src_index_o` (§4.5); MVU MCR deferred ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) |
 | `gsi` | read face + strobes | both | core | AECP gather (GET_STREAM_INFO, GET_AVB_INFO, GET_AS_PATH, the SET_STREAM_FORMAT verdict), NOTIF | one word per beat, `gsi_wait_i` a hold (§4.3) |
 | `ctr` | read face + strobe | both | core | AECP (GET_COUNTERS), NOTIF | the integrator's counters (§4.6) |
-| `mgmt` | E | in | own (sync or 4-phase async) | model store, NVM, debug, ctrl/status | optional at runtime, needed for image load unless ROM |
+| `mgmt` | E | in | core: the `host_*` ports are in `clk_i`; a bridge from a management clock (sync or 4-phase req/ack) is the integrator's | model store, NVM, debug, ctrl/status | optional at runtime, needed for image load unless ROM |
 | `nvm` | F | both | core | NVM manager | record-level, device-agnostic |
 | `identify_active` | D | out | core | device indicator | level, 1 = identifying |
 | `identify_button` | D | in | core (2FF sync) | identify sequencer (`KL_aecp_notify`) | optional (P-EN-IDENTIFY-NOTIFICATION, default 0): the top port `identify_button_i`, read only when the parameter is 1; debounced by the integrator |
@@ -80,6 +80,7 @@ flowchart LR
   subgraph fifod ["the integrator's, outside the top"]
     fifo_rx["dual-clock FIFO (gray ptr), complete FCS-good frames only"]
     fifo_tx["dual-clock FIFO (gray ptr)"]
+    bridge["mgmt bridge if needed (sync or 4-phase req/ack)"]
   end
   subgraph cored ["core domain (P-CLK-HZ)"]
     corelogic["all processor logic"]
@@ -93,7 +94,7 @@ flowchart LR
   end
   rxmac --> fifo_rx -- "rx byte face" --> corelogic
   corelogic -- "tx byte face" --> fifo_tx --> txmac
-  host -. "sync bridge or 4-phase req/ack" .-> corelogic
+  host -.-> bridge -. "host_* face" .-> corelogic
   tick --> corelogic
 ```
 
@@ -620,7 +621,7 @@ port's **device face** below, which the integrator's backend serves.
 
 | Device face (top ports) | Dir | Width | Meaning |
 |---|---|---|---|
-| `nvm_dev_req_o` | out | 1 | command request, held until `nvm_dev_gnt_i` |
+| `nvm_dev_req_o` | out | 1 | command request, held until `nvm_dev_gnt_i` or withdrawn at the deadline (below) |
 | `nvm_dev_gnt_i` | in | 1 | the backend accepted {op, region, offset, length} |
 | `nvm_dev_op_o` | out | 2 | 0 READ, 1 WRITE, 2 ERASE (3 reserved) |
 | `nvm_dev_region_o` | out | 8 | region id = record id |
