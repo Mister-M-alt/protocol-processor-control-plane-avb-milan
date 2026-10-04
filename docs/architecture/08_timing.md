@@ -113,6 +113,11 @@ flowchart LR
   draw --> ramsweep
 ```
 
+- One arm/cancel port serves every engine. The top queues each engine's arm face
+  four deep (eight faces, each a ring in distributed RAM since issue #639) and drains
+  one arm per clock in a fixed priority, listener first and notification last; per
+  face order is kept, and an arm offered to a full queue is dropped and counted
+  (snapshot word 24).
 - All protocol timers use 1 ms resolution (smallest constant 150 ms; randomized draws
   quantize to 1 ms). Deadlines are absolute ms timestamps compared on sweep — arming is
   O(1), expiry detection bounded by `P-TIMER-SLOTS` per ms.

@@ -941,6 +941,12 @@ five into the one canonical tally.
   beside it when they name STREAM_INPUT 0, and, held naming STREAM_OUTPUT 1,
   hold back a GET_TX_STATE of source 1. `make hazards` runs this section alone;
   the default run includes it.
+- **AQ: the timer arm-port queues against a model of their contract (issue
+  #639).** At every clock edge of the main harness, over every section the full
+  default run drives on it, the arm port and the drop counter equal an
+  independent eight-FIFO model fed from the engine faces.
+  [Section AQ](#section-aq-the-timer-arm-port-queues-issue-639) has the rule,
+  the coverage and the controls.
 
 ## Snapshot window map (side port 0x20000, implemented by the top)
 
@@ -1947,7 +1953,11 @@ use runs first and must pass. Here it builds `gsi-build` and runs
 and the validator control in `tb/rx_validator` (recorded in those READMEs).
 Measured 2026-09-30 at the lane head, each in its own extract: all 19 KILLED
 (14 here, 4 in `tb/acmp_listener`, 1 in `tb/rx_validator`) and the three
-goldens PASS:
+goldens PASS. Issue #639 adds ten controls: five here, run with
+`--arm-queue-only` (section AQ records them), and five in `tb/acmp_listener`.
+A golden now runs per suite and run mode, so `tb/pp_top` has two. Re-run
+2026-10-04 at the issue #639 head: all 29 KILLED, the four goldens PASS, and
+every arm below at the count recorded:
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
 |---|---|---|---|
@@ -1965,6 +1975,57 @@ goldens PASS:
 | `bound_view_not_cleared` | the bound stream identity left behind on the unbind (A9) | `AS6: the bound view is cleared with the binding` | 1 of 43 |
 | `matcher_da_ignored` | the SRP listener matcher ignores the DA | `AS3: near misses (DA, VLAN, stream_id) put no Listener declaration`, `AS3: near misses register nothing`, `AS3: no TK_ATTR_REGISTERED{1}` | 5 of 43 |
 | `matcher_vid_ignored` | the SRP listener matcher ignores the VLAN | the same three AS3 checks | 5 of 43 |
+
+## Section AQ: the timer arm-port queues (issue #639)
+
+The top feeds the timer service's one arm port from eight engine arm faces
+through a 4-deep queue per face, each a 4-entry ring in distributed RAM since
+issue #639. AQ checks that mux against an independent model of the contract its
+banner states: eight FIFOs of four; one arm leaves per clock, from the first
+non-empty face in drain order (listener, talker, ADP, SRP, originator, MAAP,
+notify, notify monitor); an arm offered to a face still full after this clock's
+departure is dropped; and the drop counter (snapshot word 24, bits 31:16)
+rises by one per clock however many faces drop in it, saturating. That last
+rule is the landed counter's: every face's increment reads the same old value,
+so two faces overrunning in one clock count once. The model records it as it
+is; it is not a behaviour this suite asks for.
+
+The wrap exports the eight faces from their own nets (`dbg_aq_vld_o`,
+`dbg_aq_arm_o`), the arm port (`dbg_aq_port_valid_o`, `dbg_aq_port_o`) and the
+counter (`dbg_aq_drop_o`). Every harness model runs the model at every clock
+edge from its first reset (`ArmQueueModel`, in `H::step`), and the full default
+run grades the main harness's at its end. **AQ1** the model saw the port at
+work. **AQ2** after every edge the arm port, its valid and the drop counter
+equal the model's. `./obj_dir/Vpp_top_sim --arm-queue-only` (after `make
+gsi-build`) runs the main section list alone, then AQ, and prints its own `AQ:`
+tally.
+
+The coverage line it prints is the reach of traffic driven from outside the
+top. Measured at the issue #639 head: 71,258,305 edges and 8,270 arms in the
+`--arm-queue-only` run, 28 clocks with two faces holding arms, 4,288 pushes onto
+a face whose one arm left in the same clock, and none onto a face still holding
+one: no face ever held two arms, so no queue filled and nothing was dropped.
+The full-queue path, the overwrite of a leaving head and the drop counter are
+graded by the issue's lockstep bench of `main`'s block against the ring, not
+here.
+
+The controls below are planted by `acmp_mutants.py` (issue #639 group), each
+built with `gsi-build` and run with `--arm-queue-only`:
+
+| Mutant | Defect planted | Named check, failing | Failing checks in the run |
+|---|---|---|---|
+| `armq_read_tail` | the port reads the ring at head + count instead of the head | `AQ2` | 71 |
+| `armq_head_stuck` | a pop never advances the head index | `AQ2` | 2 |
+| `armq_ring_of_three` | the head index wraps after entry 2 | `AQ2` | 11 |
+| `armq_write_at_head` | a push writes at the head index, ignoring the count | `AQ2` | 2 |
+| `armq_write_at_mid` | a push writes at head + the count after the pop (the shift queue's append index, not a ring's) | `AQ2` | 2 |
+
+Measured 2026-10-04 at the issue #639 head, each KILLED; the other failing
+checks are the main section's own (S2's MVRP VID New is among them in every
+case).
+
+A push accepted at a full queue (the write gated by the offer, not by its
+acceptance) survives here, because no face fills: the lockstep bench kills it.
 
 ## Section AX: AECP dispatch and response (issues #53, #50, #82)
 
