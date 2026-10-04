@@ -1370,6 +1370,11 @@ check moved. Measured 2026-10-03 at `274b424` with Verilator 5.050, each run pin
 to 4 of the host's 16 CPUs: `--jobs 1` took 940 s and `--jobs 8` 699 s, and the two
 printed the same record byte for byte: every control and arm the same verdict and
 the same failing checks, the counts below.
+Re-run 2026-10-04 at `main` `07b1469d` and at the #148 head (`--jobs 2`): control
+PASS, 17 of 17 KILLED at both. `ctr-notify-one-window` fails one check more at the
+head, the record #148 moves here (its row). In the arms that fail K14's late push,
+that push now leaves 1,018 ms after the first, not 1,000: the window runs from the
+first round's last send, its second controller's job, about 18 ms after the first.
 
 | Arm | What is broken | Failing checks |
 |---|---|---|
@@ -1381,7 +1386,7 @@ the same failing checks, the counts below.
 | `ctr-notify-avb-dropped` | the notification block ignores an AVB_INTERFACE strobe (`KL_aecp_notify`) | 6: K13 (named), K14 x2, K15 x2, K17 |
 | `ctr-notify-avb-as-clock` | an AVB_INTERFACE strobe marks the CLOCK_DOMAIN slot | 8: K13 (named), K14 x2, K15 x2, K16, K17 x2 (a CLOCK_DOMAIN push left pending inside K17's first wait, and no AVB_INTERFACE 0 push) |
 | `ctr-notify-ckd-dropped` | the notification block ignores a CLOCK_DOMAIN strobe | 1: K16 (named) |
-| `ctr-notify-one-window` | one emission starts every descriptor's one-second window | 3: K15 (named), K16, K17 |
+| `ctr-notify-one-window` | one emission starts every descriptor's one-second window | 4: K15 x2 (named), K16, K17. 3 at `main` `07b1469d`, without K15's second: since #148 AVB_INTERFACE 0's own stamp follows its round's jobs, so STREAM_INPUT 0's window opens first, and its selection, which here restarts every window, holds the interface a further second, past K15's 1,300 ms and into K17 (2 pushes, not 1) |
 | `ctr-notify-no-window` | the one-second limit removed | 5: K14 x3 (named), K15 x2 |
 | `ctr-change-type-from-index` | the strobe's type taken from `ctr_change_desc_index_i` (`protocol_processor_top`) | 8: K13 (named), K14 x2, K15 x3, K16, K17 |
 | `ctr-notify-avb-any-index` | the notification block takes an AVB_INTERFACE strobe of any index onto AVB_INTERFACE 0's slot | 1: K17 (named: AVB_INTERFACE 1) |
@@ -2322,9 +2327,9 @@ KILLED, every count as below. `ident_burst_from_t0`'s count moved with lane P1, 
 `main` alone still fails 20. Issue #232 adds the four `ix_*` controls of the
 registry's identity index, graded by `tb/aecp_notify` section IX, for 44 of 44,
 and PR #153's review adds three more, graded by `tb/aecp_notify` sections IX
-and TS, for 47 of 47. Issue #148 adds four counter-spacing controls, graded by
-section CS and by `tb/aecp_notify` section TW, for 51 of 51. Re-run 2026-10-04 at
-`main` `07b1469d` (47 of 47) and at the #148 head (51 of 51): the goldens PASS, and
+and TS, for 47 of 47. Issue #148 adds six counter-spacing controls, graded by
+section CS and by `tb/aecp_notify` section TW, for 53 of 53. Re-run 2026-10-04 at
+`main` `07b1469d` (47 of 47) and at the #148 head (53 of 53): the goldens PASS, and
 46 of the 47 earlier controls fail the same checks at both. `counter_limit_500ms` is
 the one record #148 moves, and its named check is now ST2b alone (its row):
 
@@ -2381,6 +2386,8 @@ the one record #148 moves, and its named check is now ST2b alone (its row):
 | `counter_spacing_from_selection_tw` | the same edit, graded in `tb/aecp_notify` | 2: `tb/aecp_notify` TW1, TW2 |
 | `counter_stamp_at_send_only` | the stamp written at the job's send alone, not while it waits | 1: `tb/aecp_notify` TW2 |
 | `counter_stamp_first_job_only` | the stamp follows only the round's first job (row 0) | 2: `tb/aecp_notify` TW1, TW2 |
+| `counter_limit_500ms_cs` | `counter_limit_500ms`'s edit, graded by section CS | 3: CS2a, CS2b, CS2c (75,504 clocks at each start) |
+| `registry_holds_15_cs` | `registry_holds_15`'s edit, graded by section CS | 6: CS1 x3 (15 of 16 register), CS2a, CS2b, CS2c (row 15 receives no round) |
 
 RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
 every RND control is killed by the divergence check alone.

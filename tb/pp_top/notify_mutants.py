@@ -302,6 +302,7 @@ IDENTITY_INDEX = (
 # a counter round's one-second limit from the previous round's last send (issue
 # #148), graded on the wire by tb/pp_top section CS and directly by tb/aecp_notify TW
 STAMP = "          if (em_kind_r == PP_UNS_CTRS_C) ctr_last_r[em_ctr_ix_r] <= now_ms_i;\n"
+STORM_EDITS = {m.name: m.edits for m in STORM_RND}
 
 COUNTER_SPACING = (
     Mutant("counter_spacing_from_selection", SPACING, (
@@ -318,6 +319,11 @@ COUNTER_SPACING = (
         (NTFY, STAMP, STAMP.replace("(em_kind_r == PP_UNS_CTRS_C)",
                                     "((em_kind_r == PP_UNS_CTRS_C) && (em_ix_r == '0))")),),
         ("TW1:",)),
+    # CS's phase-0 run and its premise, graded with two of STORM_RND's own edits
+    Mutant("counter_limit_500ms_cs", SPACING, STORM_EDITS["counter_limit_500ms"],
+           ("CS2a:", "CS2b:", "CS2c:")),
+    Mutant("registry_holds_15_cs", SPACING, STORM_EDITS["registry_holds_15"],
+           ("CS1:",)),
 )
 
 MUTANTS = IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
