@@ -52,11 +52,13 @@
 //                periodic! carries the re-join).
 //
 //  Decision    : the one decision that matters — same as the talker side:
-//                per-sink records and FSM state live in FLOPS with
-//                parallel {stream_id, DA, VLAN} comparators, never a
-//                shared RAM-shaped record, because KL_srp_decoder emits
-//                one unback-pressured event per cycle while draining a
-//                packed vector and every sink must compare in that cycle.
+//                the matcher's per-sink records and FSM state live in
+//                FLOPS with parallel {stream_id, DA, VLAN} comparators,
+//                never a shared RAM-shaped record, because KL_srp_decoder
+//                emits one unback-pressured event per cycle while draining
+//                a packed vector and every sink must compare in that cycle;
+//                from three sinks up, the walk's copy of the stream_id,
+//                read one sink per cycle, is distributed RAM (issue #230).
 //                The Table 10-3/10-4 functions are duplicated from
 //                KL_srp_talker_fsm BY DESIGN (the suite walks both
 //                against one independently transcribed table, so a
@@ -529,12 +531,31 @@ module KL_srp_listener_fsm
     end
   end
 
+  // The walk's stream_id of the walk sink (issue #230). The matcher keeps
+  // sid_r in flops; from three sinks a second copy in distributed RAM,
+  // written only by the A15 settle and read only at the walk sink, is
+  // cheaper than the N-way multiplexer behind sid_r, at two the multiplexer
+  // is (Vivado, 2 and 9 sinks). No reset: the walk pushes a sink only while
+  // rec_valid_r is set, and only a settle, which writes the word, sets it.
+  logic [63:0] wsid_w;
+  if (N_SINKS_P > 2) begin : g_wsid_ram
+    (* ram_style = "distributed" *) logic [63:0] wsid_r [0:N_SINKS_P-1];
+    always_ff @(posedge clk_i) begin : walk_sid_write
+      if (rst_n && ctl_acc_w && ctl_settle_i) begin
+        wsid_r[ctl_sink_i] <= ctl_stream_id_i;
+      end
+    end
+    assign wsid_w = wsid_r[wsrc_r];
+  end else begin : g_wsid_flops
+    assign wsid_w = sid_r[wsrc_r];
+  end
+
   // Listener FirstValue of the walk sink (F10.8: 8 B stream_id)
   logic [271:0] wval_w;
   logic [3:0]   wmsg_w;
   always_comb begin : walk_msg
     wval_w = 272'd0;
-    wval_w[271:208] = sid_r[wsrc_r];
+    wval_w[271:208] = wsid_w;
     wmsg_w = app_msg_f(app_r[wsrc_r], wtxla_r, 1'b0);
   end
 

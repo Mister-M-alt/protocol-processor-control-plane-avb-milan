@@ -53,14 +53,18 @@
 //                Table 10-3 notes 4/5 via the p2p_i level
 //                (operPointToPointMAC — a Milan link ties it 1).
 //
-//  Decision    : the one decision that matters — the per-source records and
-//                FSM state live in FLOPS with parallel match comparators,
-//                not a shared RAM-shaped record: KL_srp_decoder emits one
+//  Decision    : the one decision that matters — the matcher's copy of each
+//                source's {stream_id, DA, VLAN} and the FSM state live in
+//                FLOPS with parallel match comparators, not a shared
+//                RAM-shaped record: KL_srp_decoder emits one
 //                unback-pressured event strobe per cycle while draining a
 //                packed vector, so every source must compare {stream_id,
 //                DA, VLAN} in the same cycle or lose back-to-back vector
 //                values; a sync-read shared record cannot serve M matches
-//                per cycle, and at M = 8 the flop cost is small. The
+//                per cycle. The walk reads one source per cycle, so its
+//                copy of the record is distributed RAM (issue #230: one
+//                RAM read port instead of an M-way multiplexer; the
+//                {stream_id, DA, VLAN} part from three sources up). The
 //                Table 10-3/10-4 transition FUNCTIONS are pure
 //                (module-scope arrays are never read inside them — sv2v),
 //                and the applicant's sJ/s/note-8 registrar term is tied 0:
@@ -346,16 +350,26 @@ module KL_srp_talker_fsm
   endfunction
 
   // ------------------------------------------------------------ registers
-  // per-source declared record (frozen while declaring)
+  // per-source declared record (frozen while declaring). The matcher's
+  // copy of {stream_id, DA, VLAN} stays in flops: every source compares in
+  // the same cycle (banner).
   logic [N_SOURCES_P-1:0]        rec_valid_r;
   logic [N_SOURCES_P-1:0][63:0]  sid_r;
   logic [N_SOURCES_P-1:0][47:0]  da_r;
   logic [N_SOURCES_P-1:0][11:0]  vid_r;
-  logic [N_SOURCES_P-1:0][15:0]  mfs_r;
-  logic [N_SOURCES_P-1:0][15:0]  mif_r;
-  logic [N_SOURCES_P-1:0][2:0]   prio_r;
-  logic [N_SOURCES_P-1:0]        rank_r;
-  logic [N_SOURCES_P-1:0][31:0]  lat_r;
+
+  // The walk's copy of the record (issue #230). Written only by the gate
+  // open and read only at the walk source, so it is distributed RAM instead
+  // of a per-source read multiplexer. {MaxFrameSize, MaxIntervalFrames,
+  // priority, rank, accumulated_latency} has no other reader: always RAM.
+  // {stream_id, DA, VLAN} also has the matcher's flops: from three sources a
+  // second, RAM copy is cheaper than the M-way multiplexer behind them, at
+  // two the multiplexer is (Vivado, 2 and 9 sources). No reset: the walk
+  // pushes a source only while rec_valid_r is set, and only a gate open,
+  // which writes every word, sets it.
+  localparam int unsigned WTSP_W_C = 16 + 16 + 3 + 1 + 32;
+  localparam int unsigned WID_W_C  = 64 + 48 + 12;
+  (* ram_style = "distributed" *) logic [WTSP_W_C-1:0] wtsp_r [0:N_SOURCES_P-1];
 
   // per-source applicant plane
   logic [N_SOURCES_P-1:0][3:0]   app_r;
@@ -478,18 +492,43 @@ module KL_srp_talker_fsm
     end
   end
 
+  logic                gate_open_acc_w;
+  logic [WTSP_W_C-1:0] wtsp_w;   // walk source {mfs, mif, prio, rank, lat}
+  logic [WID_W_C-1:0]  wid_w;    // walk source {stream_id, DA, VLAN}
+  assign gate_open_acc_w = rst_n && gate_acc_w && gate_open_i;
+
+  always_ff @(posedge clk_i) begin : walk_tspec_write
+    if (gate_open_acc_w) begin
+      wtsp_r[gate_src_i] <= {gate_max_frame_i, gate_max_interval_i,
+                             gate_prio_i, gate_rank_i, gate_acc_lat_i};
+    end
+  end
+  assign wtsp_w = wtsp_r[wsrc_r];
+
+  if (N_SOURCES_P > 2) begin : g_wid_ram
+    (* ram_style = "distributed" *) logic [WID_W_C-1:0] wid_r [0:N_SOURCES_P-1];
+    always_ff @(posedge clk_i) begin : walk_id_write
+      if (gate_open_acc_w) begin
+        wid_r[gate_src_i] <= {gate_stream_id_i, gate_da_i, gate_vid_i};
+      end
+    end
+    assign wid_w = wid_r[wsrc_r];
+  end else begin : g_wid_flops
+    assign wid_w = {sid_r[wsrc_r], da_r[wsrc_r], vid_r[wsrc_r]};
+  end
+
   // FirstValue of the walk source (F10.7 layout; byte 0 at [271:264])
   logic [271:0] wval_w;
   logic [3:0]   wmsg_w;
   always_comb begin : walk_msg
     wval_w = 272'd0;
-    wval_w[271:208] = sid_r[wsrc_r];
-    wval_w[207:160] = da_r[wsrc_r];
-    wval_w[159:144] = {4'd0, vid_r[wsrc_r]};
-    wval_w[143:128] = mfs_r[wsrc_r];
-    wval_w[127:112] = mif_r[wsrc_r];
-    wval_w[111:104] = {prio_r[wsrc_r], rank_r[wsrc_r], 4'd0};
-    wval_w[103:72]  = lat_r[wsrc_r];
+    wval_w[271:208] = wid_w[123:60];             // stream_id
+    wval_w[207:160] = wid_w[59:12];              // DA
+    wval_w[159:144] = {4'd0, wid_w[11:0]};       // VLAN
+    wval_w[143:128] = wtsp_w[67:52];             // MaxFrameSize
+    wval_w[127:112] = wtsp_w[51:36];             // MaxIntervalFrames
+    wval_w[111:104] = {wtsp_w[35:32], 4'd0};     // priority, rank
+    wval_w[103:72]  = wtsp_w[31:0];              // accumulated_latency
     if (fail_r[wsrc_r]) begin
       wval_w[71:8] = {16'd0, own_mac_i};   // §35.2.2.8.7 end-station MAC
       wval_w[7:0]  = 8'd1;                 // insufficient bandwidth
@@ -504,11 +543,6 @@ module KL_srp_talker_fsm
       sid_r       <= '0;
       da_r        <= '0;
       vid_r       <= '0;
-      mfs_r       <= '0;
-      mif_r       <= '0;
-      prio_r      <= '0;
-      rank_r      <= '0;
-      lat_r       <= '0;
       app_r       <= '0;      // Begin! = VO everywhere
       fail_r      <= '0;
       rla_pend_r  <= '0;
@@ -556,11 +590,6 @@ module KL_srp_talker_fsm
           sid_r[gate_src_i]  <= gate_stream_id_i;
           da_r[gate_src_i]   <= gate_da_i;
           vid_r[gate_src_i]  <= gate_vid_i;
-          mfs_r[gate_src_i]  <= gate_max_frame_i;
-          mif_r[gate_src_i]  <= gate_max_interval_i;
-          prio_r[gate_src_i] <= gate_prio_i;
-          rank_r[gate_src_i] <= gate_rank_i;
-          lat_r[gate_src_i]  <= gate_acc_lat_i;
         end else begin
           fail_r[gate_src_i] <= 1'b0;   // FAILED is published only declared
         end
