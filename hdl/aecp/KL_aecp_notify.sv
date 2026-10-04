@@ -38,10 +38,14 @@
 //                THE TABLE IS ONE LUTRAM, WALKED - NEVER A COMPARATOR BANK.
 //                Every duty here is slow-path (an AECP command in flight, a
 //                once-per-event emission round), so entries are visited one
-//                per cycle through ONE read port and mutated through ONE
-//                write port, and the whole match logic is a single
-//                {eid, mac} equality. Milan's minimum count (16) is the
-//                depth; nothing is sized past it.
+//                per cycle through ONE walk read port and mutated through ONE
+//                write port, and the walk's match logic is a single
+//                {eid, mac} equality. The one check that must see every row
+//                in a single cycle, the availability monitor's "this command
+//                comes from a registered controller", reads a LUTRAM
+//                identity index beside the table instead (see "identity
+//                index" below). Milan's minimum count (16) is the depth;
+//                nothing is sized past it.
 //
 //                REGISTER/DEREGISTER/LOCK/UNLOCK arrive as OPS on the rgy
 //                face, driven by KL_aecp_engine's gather bus while the
@@ -323,9 +327,12 @@ module KL_aecp_notify
     output logic [7:0]  dbg_coalesce_o       //! lock events merged losing their exclusion
 );
 
-  // ---- registry rows: ONE LUTRAM, one read + one write port ---------------
-  //! {eid, mac, seq} = 128 bits x N_CTRL_P. valid/tl/pend stay in flops -
-  //! the expiry intake and the walk touch them in the same cycle.
+  // ---- registry rows: ONE LUTRAM, one write port ---------------------------
+  //! {eid, mac, seq} = 128 bits x N_CTRL_P, read at three indices: the walk
+  //! (or drain), the availability probe's pick and the write (the identity
+  //! index's rewrite). No reader sees every row at once, which is what
+  //! keeps it a RAM. valid/tl/pend stay in flops - the expiry intake and the
+  //! walk touch them in the same cycle.
   (* ram_style = "distributed" *) logic [127:0] rows_r [0:N_CTRL_P-1];
   logic [N_CTRL_P-1:0] valid_r, tl_r, pend_r;
 
@@ -340,7 +347,8 @@ module KL_aecp_notify
   assign row_seq_w = row_w[15:0];
 
   //! registered write strobes: the row write lands one cycle after the
-  //! state that decided it - no reader touches that row that soon
+  //! state that decided it - no walk reads that row that soon (the identity
+  //! index does, on purpose)
   logic               wr_en_r;
   logic [CIX_W_C-1:0] wr_ix_r;
   logic [127:0]       wr_row_r;
@@ -388,6 +396,10 @@ module KL_aecp_notify
   localparam logic [15:0] DT_STREAM_OUTPUT_C = 16'h0006;
   localparam logic [15:0] DT_AVB_INTERFACE_C = 16'h0009;
   localparam logic [15:0] DT_CLOCK_DOMAIN_C  = 16'h0024;
+  //! ctr_sent_r is each stamp's valid bit: a stamp is read only once its
+  //! descriptor was sent, and is written in the cycle that sets the bit, so
+  //! the stamps are bulk data and carry no reset. They stay in flops: the
+  //! window check reads every stamp against now_ms_i in every cycle.
   logic [N_CTR_DESC_C-1:0] ctr_dirty_r, ctr_pend_r, ctr_sent_r;
   logic [31:0] ctr_last_r [0:N_CTR_DESC_C-1];
   logic        ctr_ev_ok_w;
@@ -536,14 +548,63 @@ module KL_aecp_notify
     end
   end
 
+  // ---- identity index: every row's {eid, mac} matched in one cycle --------
+  //! The availability monitor asks, in a command's own cycle, which valid row
+  //! holds the command's {eid, mac}. A comparator per row would read every
+  //! row at once and keep rows_r in flops; this index is LUTRAM instead. The
+  //! 112-bit identity is cut into 6-bit chunks, and row i keeps one 64x1
+  //! memory per chunk holding a 1 at that chunk's value: the row matches when
+  //! all of its chunk memories read 1 at the command's chunks.
+  //!
+  //! A row write re-indexes its row over two cycles: the cycle in which the
+  //! row write lands (wr_en_r high) clears the old identity's bits (the write
+  //! port still reads the old row then), and the cycle after it sets the new
+  //! identity's. In those two cycles the row's match is the one comparator
+  //! below, against the write port's read, which is exactly what rows_r holds
+  //! in each of them. So every cycle's match equals a comparison with rows_r.
+  //! Only REGISTER writes an identity (N_APPLY); the emission write-back
+  //! rewrites a row's own {eid, mac} with a new seq and leaves the index as
+  //! it is. The index starts empty, as the FPGA configuration loads it, and a
+  //! row's bits enter it only through a row write, so a clear always empties
+  //! the row's memories.
+  localparam int unsigned IXC_W_C = 6;
+  localparam int unsigned N_IXC_C = (112 + IXC_W_C - 1) / IXC_W_C;
+  logic [N_IXC_C*IXC_W_C-1:0] ix_key_w, ix_row_w;
+  logic [127:0]        ix_wr_row_w;
+  logic                ix_clr_r, ix_set_r, ix_busy_w, ix_own_w;
+  logic [N_CTRL_P-1:0] ix_hit_w;
+  assign ix_wr_row_w = rows_r[wr_ix_r];
+  assign ix_key_w    = (N_IXC_C*IXC_W_C)'({rx_cmd_eid_i, rx_cmd_mac_i});
+  assign ix_row_w    = (N_IXC_C*IXC_W_C)'(ix_wr_row_w[127:16]);
+  assign ix_busy_w   = ix_clr_r || ix_set_r;
+  assign ix_own_w    = (ix_wr_row_w[127:16] == {rx_cmd_eid_i, rx_cmd_mac_i});
+
+  for (genvar i = 0; i < N_CTRL_P; i++) begin : g_ix_row
+    logic [N_IXC_C-1:0] ch_w;
+    for (genvar j = 0; j < N_IXC_C; j++) begin : g_ix_chunk
+      (* ram_style = "distributed" *) logic mem_r [0:(1 << IXC_W_C)-1];
+      initial for (int a = 0; a < (1 << IXC_W_C); a++) mem_r[a] = 1'b0;
+      always_ff @(posedge clk_i) begin : ix_write
+        if (ix_busy_w && (wr_ix_r == CIX_W_C'(i)))
+          mem_r[ix_row_w[j*IXC_W_C +: IXC_W_C]] <= ix_set_r;
+      end
+      assign ch_w[j] = mem_r[ix_key_w[j*IXC_W_C +: IXC_W_C]];
+    end
+    assign ix_hit_w[i] = &ch_w;
+  end
+
   always_comb begin : command_registry_hit
     rx_cmd_hit_w = '0;
     for (int unsigned i = 0; i < N_CTRL_P; i++) begin
       rx_cmd_hit_w[i] = rx_cmd_valid_i && valid_r[i]
-                        && (rows_r[i][127:64] == rx_cmd_eid_i)
-                        && (rows_r[i][63:16] == rx_cmd_mac_i);
+                        && ((ix_busy_w && (wr_ix_r == CIX_W_C'(i))) ? ix_own_w
+                                                                     : ix_hit_w[i]);
     end
   end
+
+  // parked-expiry drain pick, driven by pend_pick below
+  logic               pd_any_w;
+  logic [CIX_W_C-1:0] pd_ix_w;
 
   always_comb begin : ca_request
     ca_valid_o    = ca_pick_ok_w;
@@ -663,8 +724,6 @@ module KL_aecp_notify
                                       + 32'(exp_ix_w)));
 
   //! parked-expiry drain pick (lowest index first; order is immaterial)
-  logic               pd_any_w;
-  logic [CIX_W_C-1:0] pd_ix_w;
   always_comb begin : pend_pick
     pd_any_w = 1'b0;
     pd_ix_w  = '0;
@@ -931,7 +990,6 @@ module KL_aecp_notify
       ctr_dirty_r <= '0;
       ctr_pend_r  <= '0;
       ctr_sent_r  <= '0;
-      for (int unsigned c = 0; c < N_CTR_DESC_C; c++) ctr_last_r[c] <= 32'd0;
       mon_draw_pend_r <= '0;
       ca_pend_r       <= '0;
       ca_probe_r      <= '0;
@@ -986,6 +1044,8 @@ module KL_aecp_notify
       wr_en_r     <= 1'b0;
       wr_ix_r     <= '0;
       wr_row_r    <= '0;
+      ix_clr_r    <= 1'b0;
+      ix_set_r    <= 1'b0;
       tmr_arm_valid_o       <= 1'b0;
       tmr_arm_cancel_o      <= 1'b0;
       tmr_arm_slot_o        <= '0;
@@ -993,6 +1053,8 @@ module KL_aecp_notify
       tmr_arm_deadline_ms_o <= 32'd0;
     end else begin
       wr_en_r         <= 1'b0;
+      ix_clr_r        <= 1'b0;
+      ix_set_r        <= ix_clr_r;
       tmr_arm_valid_o <= 1'b0;
       prng_draw_req_o <= 1'b0;
       mon_arm_valid_o <= 1'b0;
@@ -1300,6 +1362,7 @@ module KL_aecp_notify
             //! (Milan SS5.4.2.21). Either way the parked fire is stale.
             result_r <= 2'd0;
             wr_en_r  <= 1'b1;
+            ix_clr_r <= 1'b1;             // re-index the row (above)
             wr_ix_r  <= wk_match_r ? wk_match_ix_r : wk_free_ix_r;
             wr_row_r <= {hold_eid_r, hold_mac_r,
                          wk_match_r ? wk_match_seq_r : 16'd0};

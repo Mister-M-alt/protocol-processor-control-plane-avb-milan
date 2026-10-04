@@ -2351,7 +2351,10 @@ the lane head, 40 of 40 KILLED (the four `ident_*` controls after
 `ident_t0_at_request` are round 2's, and the six after them round 3's).
 Re-run 2026-10-03 at lane P1's merge of `main` `f4167536`: the goldens PASS, 40 of 40
 KILLED, every count as below. `ident_burst_from_t0`'s count moved with lane P1, and
-`main` alone still fails 20:
+`main` alone still fails 20. Issue #232 adds the four `ix_*` controls of the
+registry's identity index, graded by `tb/aecp_notify` section IX, for 44 of 44,
+and PR #153's review adds three more, graded by `tb/aecp_notify` sections IX
+and TS, for 47 of 47:
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2395,6 +2398,13 @@ KILLED, every count as below. `ident_burst_from_t0`'s count moved with lane P1, 
 | `inflight_match_ignores_seq` | the response CAM ignores sequence_id | 7, R among them |
 | `inflight_cancel_keeps_timer` | a cancellation leaves its timer armed | 5, R among them |
 | `inflight_shared_seq` | one sequence counter for every owner | 10, R among them |
+| `ix_old_identity_kept` | a row write never clears the old identity | 1: `tb/aecp_notify` IX1 |
+| `ix_new_identity_unset` | a row write never sets the new identity | 3: `tb/aecp_notify` IX3, IX4, IX6b |
+| `ix_last_chunk_ignored` | the match ignores the last 6-bit chunk | 1: `tb/aecp_notify` IX2 |
+| `ix_rewrite_unmatched` | the two rewrite cycles read the index, not the compare | 3: `tb/aecp_notify` IX4, IX6, IX6b |
+| `override_set_only` | the compare covers only the rewrite's second cycle; the row write's own cycle reads the index | 2: `tb/aecp_notify` IX6, IX6b |
+| `own_compare_new_row` | the rewrite's compare reads the incoming row, not what `rows_r` holds | 1: `tb/aecp_notify` IX5 |
+| `stamp_read_without_valid` | a counter stamp is read without its valid bit, `ctr_sent_r` | 1: `tb/aecp_notify` TS3 |
 
 RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
 every RND control is killed by the divergence check alone.
