@@ -197,7 +197,7 @@ values; other documents reference `P-…` IDs.
 | P-EN-IDENTIFY-NOTIFICATION | 0 | "should" (Milan §5.4.5.4) for a PAAD that gives its user a way to report itself; 1 only with a debounced `identify_button_i`. 0 builds no sequencer and never reads the pin (manager ruling, processor #80) | identify sequencer in `KL_aecp_notify` (`EN_IDENTIFY_NOTIF_P`), F06.16 |
 | P-EN-ADDRESS-ACCESS / P-EN-FIRMWARE-ASSIST | 0 / 0 | IEEE-optional ([GAP-13](../00_MILAN_COMPLIANCE_REVIEW.md#gap-13)) | side-port features |
 | P-EN-SRP-ENGINE | 1 | 1 = internal SRP engine ([10](10_srp_engine.md)) serves the `srp` contract; 0 = external stack | SRP engine, MRP timers, V9 filter |
-| P-EN-PLAIN-IEEE-PROFILE | 0 | selects IEEE ROM columns (below) | profiles |
+| P-EN-PLAIN-IEEE-PROFILE | 0 | **no RTL consumer** — no RTL parameter reads it, and the one listener ROM column built is Milan's (`hdl/acmp/rom/gen_ltn_rom.py`: the plain-IEEE column is absent, a product decision); a plain-IEEE build would select the IEEE ROM columns (below) | profiles |
 | P-EN-REDUNDANCY | 0 | reserved seam — must stay 0 (this spec) | GET_MILAN_INFO flag |
 
 **Profile mechanism** — a profile is a *selection of ROM columns*, not scattered
