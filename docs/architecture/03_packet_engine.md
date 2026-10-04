@@ -17,13 +17,15 @@ and TX arbitration. The three engines ([04](04_adp_engine.md)/[05](05_acmp_engin
 
 > This export **predates** the move of the descriptor image and the AECP response buffer
 > into the integrator's main memory, so its "state-RAM complex" still shows the image on
-> chip. The current shape is [`20-rtl-dataflow.svg`](../diagrams/20-rtl-dataflow.svg) and
+> chip, and it draws the MAC async FIFOs as part of the datapath: they are the
+> integrator's, outside the top ([02 §2](02_interfaces.md#2-clocking-reset-cdc) rule 2).
+> The current shape is [`20-rtl-dataflow.svg`](../diagrams/20-rtl-dataflow.svg) and
 > [`22-aecp-descriptor-fetch.svg`](../diagrams/22-aecp-descriptor-fetch.svg); the
 > component table below is correct.
 
 | Component | Notes |
 |---|---|
-| RX async FIFO + filter/parser/validator | one per AVB interface; frame-atomic |
+| RX filter/parser/validator | one per AVB interface, fed by the RX byte face ([02 §3](02_interfaces.md#sec-02-class-a)); the frame-atomic dual-clock FIFO in front of it is the integrator's ([02 §2](02_interfaces.md#2-clocking-reset-cdc) rule 2) |
 | RX slot RAM | `P-RX-SLOTS` × `P-RX-SLOT-BYTES`; zero-copy payload handles |
 | Transaction normalizer | builds the record of [§4](#4-normalized-transaction) |
 | Per-engine dispatch FIFOs | ADP / ACMP / AECP queues. The normalizer's TIMER/SELF/MGMT injection ports exist and are tied off at the top ([§5](#5-origins-originator-and-event-router) gives each origin's landed home) |
@@ -31,7 +33,7 @@ and TX arbitration. The three engines ([04](04_adp_engine.md)/[05](05_acmp_engin
 | State-RAM port arbiters | overlay, dynamic state, registry (no counters: they are the integrator's, [06 §6.6](06_aecp_engine.md#sec-06-counters)) — each RAM single-ported with a small priority mux (engines never stall the RX path). The **descriptor image is not among them**: it lives in the integrator's main memory ([07 §3.3](07_memory_maps.md)), and only a one-descriptor line buffer and the cached index map are on chip |
 | Response builders + TX slot RAM | `P-TX-STD-SLOTS` standard + 1 oversize slot ([§7](#7-response-building-and-buffers)) |
 | Originator + inflight table | CONTROLLER_AVAILABLE, the one originated command PDU at the top; response matching and the central retry ([§5](#5-origins-originator-and-event-router)) |
-| TX arbiter → TX async FIFO | frame-atomic priority merge ([§8](#8-tx-arbitration)) |
+| TX arbiter → TX byte face | frame-atomic priority merge ([§8](#8-tx-arbitration)); the dual-clock FIFO to the MAC is the integrator's |
 | Event router | sticky-event fan-out (catalog in [02 §5](02_interfaces.md)) |
 
 ## 3. RX pipeline
@@ -468,7 +470,7 @@ flowchart LR
   arb2 --> mux
   arb3 --> mux
   arb4 --> mux
-  mux --> fifo["mac_tx async FIFO"]
+  mux --> fifo["mac_tx byte face, to the integrator FIFO"]
 ```
 
 | Rule | Detail |

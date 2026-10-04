@@ -73,9 +73,14 @@ that AECP commands report is cataloged once in
 
 ![F01.2 Top level](../diagrams/01-top-level.svg)
 
+> The export draws the MAC RX and TX async FIFOs at the top's edge. They are the
+> integrator's, outside `protocol_processor_top`, whose MAC faces are byte streams in the
+> core clock domain ([02 §2](02_interfaces.md#2-clocking-reset-cdc) rule 2,
+> [02 §3](02_interfaces.md#sec-02-class-a)).
+
 | Block | Responsibility | Owning doc |
 |---|---|---|
-| RX interface + filter/parser/validator | CDC in, DA/EtherType/subtype demux, header + length validation | [03 §3](03_packet_engine.md) |
+| RX interface + filter/parser/validator | the RX byte face (no CDC inside: the frame-atomic MAC FIFO is the integrator's, [02 §2](02_interfaces.md#2-clocking-reset-cdc) rule 2), DA/EtherType/subtype demux, header + length validation | [03 §3](03_packet_engine.md) |
 | RX slot manager + transaction normalizer | zero-copy payload slots; normalized transaction records | [03 §3–§4](03_packet_engine.md) |
 | Scoreboard | hazard classes / serialization keys; cross-engine interlock | [03 §6](03_packet_engine.md) |
 | ADP engine | advertise SM ×interface; talker-discovery SM ×bound sink; available_index | [04](04_adp_engine.md) |

@@ -49,6 +49,7 @@ Every diagram is drawn against the landed RTL, not against the specification.
 | [`docs/10_RESOURCE_AND_EFFORT.md`](docs/10_RESOURCE_AND_EFFORT.md) | resource-saving and implementation-effort analysis against the reference platform |
 | [`docs/traceability/MODULE_MATRIX.md`](docs/traceability/MODULE_MATRIX.md) | generated module to testbench matrix. The untested budget is zero |
 | [`docs/diagrams/`](docs/diagrams/README.md) | diagram sources, exports and the toolchain |
+| [`docs/history/`](docs/history/02-class-a-word-stream.md) | superseded design material no landed port carries, kept for provenance |
 | [`syn/ooc/`](syn/ooc/README.md) | out-of-context synthesis measurements |
 | [`IEEE_1722_1_Hardware_Protocol_Processor.md`](IEEE_1722_1_Hardware_Protocol_Processor.md) | the original concept document. **Historical input, superseded.** See its own header |
 

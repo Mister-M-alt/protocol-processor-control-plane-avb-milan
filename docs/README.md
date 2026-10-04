@@ -38,7 +38,9 @@ it assumes you have already read, so a row can also be entered directly once its
 
 Not on the path: [10 Resource and effort](10_RESOURCE_AND_EFFORT.md) sizes the
 implementation on the reference platform; read it for planning, after step 2. It is a
-different document from step 7's `architecture/10_srp_engine.md`.
+different document from step 7's `architecture/10_srp_engine.md`. `history/` keeps
+superseded design material that no landed port carries, such as
+[the class-A word stream](history/02-class-a-word-stream.md); read it for provenance only.
 
 ### Paths by role
 

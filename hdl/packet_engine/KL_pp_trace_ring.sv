@@ -11,8 +11,8 @@
 //  Description : Debug trace ring — the backing store of the RO side-port
 //                window 0x40000. Shape is P-TRACE-RING (F01.5): 256 records
 //                × 128 b. One record arrives per event on wr_valid_i (the
-//                record content is the class-A framed event its producer
-//                emits, 02 §1 — opaque bits here); the ring overwrites
+//                record content is the 128-bit event record its producer
+//                emits, 02 §7 — opaque bits here); the ring overwrites
 //                oldest-first and NEVER back-pressures a producer: tracing
 //                may lose history, it must never stall the plane. The
 //                monotonic 16-bit write counter (mod 2^16) is the only
@@ -22,8 +22,8 @@
 //
 //                Read side is the side-port window path: record index
 //                rd_addr_i plus 32-bit lane select rd_lane_i, lane 0 =
-//                record bits [127:96] (MSB-first, the class-A word order
-//                of 02 §3).
+//                record bits [127:96] (MSB-first, the lane order of the
+//                02 §7 window).
 //
 //                The one design decision that matters: ONE 256 × 128 b
 //                1W1R sync-read RAM with the 4:1 lane mux placed AFTER the
@@ -53,7 +53,7 @@ module KL_pp_trace_ring #(
 
     //! ---- write side (event producers; never back-pressured) ----
     input  wire                   wr_valid_i,  //! one trace record this cycle
-    input  wire  [RECORD_W_P-1:0] wr_data_i,   //! the record (class-A framed event)
+    input  wire  [RECORD_W_P-1:0] wr_data_i,   //! the record (one 128-bit event)
     output logic           [15:0] wr_count_o,  //! monotonic write count, mod 2^16
 
     //! ---- read side (side-port window 0x40000, RO) ----
