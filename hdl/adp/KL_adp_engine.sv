@@ -35,11 +35,11 @@
 //                incremented AFTER each transmitted ENTITY_AVAILABLE,
 //                reset to 0 after ENTITY_DEPARTING (whose wire field
 //                carries the pre-reset value, per the F04.2 action order
-//                "send ENTITY_DEPARTING, available_index = 0"). This
-//                DIVERGES from the reference platform's adp_advertiser,
-//                which increments on EVERY transmitted ADPDU; the doc rule
-//                is subject to live-controller adjudication (Hive /
-//                la_avdecc) before cutover.
+//                "send ENTITY_DEPARTING, available_index = 0"). The
+//                reference platform's former every-ADPDU increment is
+//                the rule that departs from §6.2.2.15, at DEPARTING only
+//                (issue #85 item 4, tb/adp_engine README); open is how a
+//                live controller takes a DEPARTING and the cycle after it.
 //
 //                The discovery SM builds the full Milan §5.6.4.5.1 gm/
 //                domain guard: an ENTITY_AVAILABLE is matched only when
@@ -702,9 +702,9 @@ module KL_adp_engine
   // ------------------------------------------------- available_index mgr
   // DOC RULE (04 §5, IEEE §6.2.2.15): 0 at power-up; ++ AFTER each
   // transmitted ENTITY_AVAILABLE; reset to 0 after ENTITY_DEPARTING (the
-  // departing frame carries the pre-reset value). See banner: diverges
-  // from the reference platform's every-ADPDU increment; adjudication
-  // against live controllers is required before cutover.
+  // departing frame carries the pre-reset value). See banner: the rule is
+  // the standard's (issue #85 item 4); open is only how a live controller
+  // takes an ENTITY_DEPARTING and the cycle after it.
   logic [31:0] aidx_r [N_IF_P];
 
   always_ff @(posedge clk_i) begin : avail_index_mgr

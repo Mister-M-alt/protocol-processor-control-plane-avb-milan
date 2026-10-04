@@ -207,8 +207,9 @@ read-only, with no bench access:
   the engine's. Restated, still open: how a live controller that tracks
   entities (Hive, la_avdecc) handles an ENTITY_DEPARTING and the availability
   cycle that follows it from index 0. Only a live controller across an entity
-  disable and re-enable can show that. The engine banner keeps its earlier
-  wording, since issue #85 changed no RTL.
+  disable and re-enable can show that. The engine's banner and its
+  available_index comment say the same since the second round of issue #85,
+  a change of comments only.
 
 Mutation-proven 2026-08-11 (backup/sed/run/restore):
 1. merged draw kinds (`ADP_DRAW_KIND_START_C` → `ADP_DRAW_KIND_DELAY_C` in
