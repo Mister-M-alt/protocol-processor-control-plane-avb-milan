@@ -12,9 +12,10 @@ the tree this script lives in is never touched.
 
 The controls are those of processor issues #47 (ACMP messages outside the listener
 and talker sets are inert; the probe-response guard per term), #45 (ACMPDUs longer
-than 56 bytes are accepted) and #48 (the integrated settle path from the listener
-through the top's SRP service stage to the SRP listener matcher and back). The
-suite READMEs carry the matching mutation records.
+than 56 bytes are accepted), #48 (the integrated settle path from the listener
+through the top's SRP service stage to the SRP listener matcher and back) and #639
+(the listener records in distributed RAM, and the top's timer arm-port queues as
+rings in distributed RAM). The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/acmp_mutants.py --output DIR [--verilator V] [--jobs N]
                                          [--only NAME ...]
@@ -49,6 +50,7 @@ class Mutant(NamedTuple):
 ACMP_LISTENER = Suite("tb/acmp_listener", (), ("make", "run"))
 RX_VALIDATOR = Suite("tb/rx_validator", (), ("make", "run"))
 PP_TOP = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--acmp-only"))
+PP_TOP_AQ = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--arm-queue-only"))
 
 LISTENER = "hdl/acmp/KL_pp_acmp_listener.sv"
 VALIDATOR = "hdl/packet_engine/KL_pp_rx_validator.sv"
@@ -159,8 +161,61 @@ SETTLE_PATH = (
          "AS3: near misses register nothing", "AS3: no TK_ATTR_REGISTERED{1}")),
 )
 
-MUTANTS = INERT + LONG_FORM + SETTLE_PATH
-TALLY = re.compile(r"^(ACMP: \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$", re.M)
+# issue #639: the listener records in distributed RAM, read in the cycle after
+# the walk's issue state, and the top's eight timer arm-port queues as 4-entry
+# rings in distributed RAM. Traffic at the top never fills a queue (section AQ
+# prints the coverage), so the full-queue path is graded by the issue's
+# lockstep bench, not here.
+REC_READ = "  assign rec_rd_w     = acmp_rec_t'(rec_ram_r[sink_r]);\n"
+REC_WRITE = "      rec_ram_r[recwr_addr_w] <= recwr_data_w;\n"
+RING_WRITE = "    assign wr_ix_w = armq_hd_r[g] + armq_cnt_r[g][1:0];\n"
+RING_ADVANCE = "          armq_hd_r[i]         <= armq_hd_r[i] + 2'd1;\n"
+RING_READ = "    assign armq_hd_w[g] = mem_r[armq_hd_r[g]];\n"
+AQ_MODEL = ("AQ2: the arm port and the drop counter equal the eight-queue model",)
+PARKED = "B12: parked sink 7 record untouched"
+
+
+def rec_write_without(bit: int) -> str:
+    """The record write with one record bit never stored."""
+    return f"      rec_ram_r[recwr_addr_w] <= recwr_data_w & ~(ACMP_REC_W_C'(1) << {bit});\n"
+
+
+STORAGE = (
+    Mutant("rec_read_sink_zero", ACMP_LISTENER, (
+        (LISTENER, REC_READ, "  assign rec_rd_w     = acmp_rec_t'(rec_ram_r[0]);\n"),),
+        (PARKED, "F05.3 BIND_SAME x PWA: sm_state")),
+    Mutant("rec_read_in_idle", ACMP_LISTENER, (
+        (LISTENER, REC_READ,
+         "  logic [ACMP_REC_W_C-1:0] rec_idle_r;\n"
+         "  always_ff @(posedge clk_i) if (xs_r == X_IDLE) rec_idle_r <= rec_ram_r[sink_r];\n"
+         "  assign rec_rd_w     = acmp_rec_t'(rec_idle_r);\n"),),
+        ("RV8(setup): state sync",)),
+    Mutant("rec_started_unstored", ACMP_LISTENER, (
+        (LISTENER, REC_WRITE, rec_write_without(12)),),
+        ("S1d: STOP through the request face cleared the bit", "F05.3 GETRX x PWA: flags")),
+    Mutant("rec_settled_vlan_unstored", ACMP_LISTENER, (
+        (LISTENER, REC_WRITE, rec_write_without(305)),),
+        ("F05.3 GETRX x SOK: settled", PARKED)),
+    Mutant("rec_sweep_misaddressed", ACMP_LISTENER, (
+        (LISTENER, REC_WRITE, "      rec_ram_r[sink_r] <= recwr_data_w;\n"),),
+        ("RS GET_RX_STATE after the reset: binding",)),
+    Mutant("armq_read_tail", PP_TOP_AQ, (
+        (TOP, RING_READ, "    assign armq_hd_w[g] = mem_r[wr_ix_w];\n"),), AQ_MODEL),
+    Mutant("armq_head_stuck", PP_TOP_AQ, (
+        (TOP, RING_ADVANCE, "          armq_hd_r[i]         <= armq_hd_r[i];\n"),), AQ_MODEL),
+    Mutant("armq_ring_of_three", PP_TOP_AQ, (
+        (TOP, RING_ADVANCE, "          armq_hd_r[i]         <= (armq_hd_r[i] == 2'd2) ? 2'd0"
+                            " : armq_hd_r[i] + 2'd1;\n"),), AQ_MODEL),
+    Mutant("armq_write_at_head", PP_TOP_AQ, (
+        (TOP, RING_WRITE, "    assign wr_ix_w = armq_hd_r[g];\n"),), AQ_MODEL),
+    Mutant("armq_write_at_mid", PP_TOP_AQ, (
+        (TOP, RING_WRITE, "    assign wr_ix_w = armq_hd_r[g] + armq_mid_w[g][1:0];\n"),),
+        AQ_MODEL),
+)
+
+MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE
+TALLY = re.compile(r"^((?:ACMP|AQ): \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$",
+                   re.M)
 
 
 def plant(tree: Path, edits: tuple[tuple[str, str, str], ...]) -> str:
