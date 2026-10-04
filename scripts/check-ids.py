@@ -18,7 +18,10 @@ the only ones that reach past the ID's last segment:
   holding anything but uppercase segments fail;
 - `T-ADP-` at the end of a line continues with the next line's first word,
   after any comment leader (`T-ADP-DELAY-START`);
-- `/ -WC` after an ID names the sibling with that last segment.
+- `/ -WC` after an ID names the sibling with that last segment;
+- `T-ADP-DELAY(-START)` names the ID and the ID with the optional segment,
+  and a parenthesis after an ID that opens with a hyphen but holds anything
+  but uppercase segments fails.
 
 Anything else after a hyphen is prose: `P-TX-shaped` uses `P-TX`.
 `P-RX-SLOTS-1` reads as `P-RX-SLOTS` minus one when no row carries the `-1`.
@@ -46,9 +49,10 @@ ROW = re.compile(r"^\|([^|\n]*)\|", re.M)
 SIBLING = re.compile(r"[ \t]*/[ \t]*-([A-Z][A-Z0-9]*)")
 BRACES = re.compile(r"-\{([^{}\n]*)\}")
 SEGMENTS = re.compile(r"[A-Z0-9]+(?:-[A-Z0-9]+)*")
-# a hyphen ending the line, then the next line's first word after a comment leader
-LINE_BREAK = re.compile(r"-[ \t]*\r?\n[ \t]*(?:(?://+|#+|--|\*|;+|>)[ \t]*)?"
-                        r"([A-Z0-9]+(?:-[A-Z0-9]+)*)(?![A-Za-z0-9_])")
+# a line break inside an ID: the next line's text resumes after any comment leader
+NEXT_LINE = r"[ \t]*\r?\n[ \t]*(?:(?://+|#+|--|\*|;+|>)[ \t]*)?"
+LINE_BREAK = re.compile(r"-" + NEXT_LINE + r"([A-Z0-9]+(?:-[A-Z0-9]+)*)(?![A-Za-z0-9_])")
+OPTIONAL = re.compile(r"\(-(?:" + NEXT_LINE + r")?([A-Z0-9]+(?:-[A-Z0-9]+)*)\)")
 
 
 def table_section(body: str, start: str, what: str) -> str:
@@ -102,7 +106,7 @@ def scanned_files(root: Path) -> list:
 
 
 def uses(text: str) -> Iterator[tuple[int, str, str]]:
-    """(line, token, kind) per ID use; kind is 'id', 'family' or 'list' (bad braces)."""
+    """(line, token, kind) per ID use; kind is 'id', 'family' or 'list' (a bad list)."""
     for match in ID.finditer(text):
         token, end = match.group(1), match.end()
         line = text.count("\n", 0, match.start()) + 1
@@ -117,13 +121,18 @@ def uses(text: str) -> Iterator[tuple[int, str, str]]:
                 for member in members:
                     yield line, f"{token}-{member}", "id"
             else:
-                yield line, token, "list"
+                yield line, f"{token}-{{...}}", "list"
         else:
             broken = LINE_BREAK.match(text, end)
             yield line, f"{token}-{broken.group(1)}" if broken else token, "id"
             sibling = SIBLING.match(text, end)
             if sibling:
                 yield line, f"{token.rsplit('-', 1)[0]}-{sibling.group(1)}", "id"
+            optional = OPTIONAL.match(text, end)
+            if optional:
+                yield line, f"{token}-{optional.group(1)}", "id"
+            elif text.startswith("(-", end):
+                yield line, f"{token}(-...)", "list"
 
 
 def resolves(token: str, kind: str, rows: set) -> bool:
@@ -156,7 +165,7 @@ def check(root: Path) -> int:
             table = "F01.5" if token.startswith("P-") else "F08.1"
             used.add(token)
             if kind == "list":
-                problems.append(f"{rel}:{line}: {token}-{{...}} is not a list of ID segments")
+                problems.append(f"{rel}:{line}: {token} is not a list of ID segments")
             elif not resolves(token, kind, set(rows)):
                 shown = f"{token}-*" if kind == "family" else token
                 problems.append(f"{rel}:{line}: {shown} has no {table} row")
@@ -185,6 +194,8 @@ SELFTEST_TIMING = """<a id="fig-08-constants"></a>**F08.1**
 | T-MRP-JOIN | 200 ms |
 | T-MRP-LEAVEALL | 10 s |
 | T-NVM-RS-DEADLINE | 20 ms |
+| T-ADP-DELAY | 0-4 s |
+| T-ADP-DELAY-START | 0-2 s |
 | T-BUDGET-AECP-TYP / -WC | 20 / 100 ms |
 """
 CASE = "tb/case/README.md"
@@ -196,6 +207,7 @@ SELFTEST_CASES = (
     ({CASE: "T-MRP-* and T-MRP-{JOIN, LEAVEALL} and T-MRP-{JOIN,LEAVEALL}"}, []),
     ({CASE: "(T-MRP-\n//  JOIN) and 0..P-RX-SLOTS-1, MAAP-ANNOUNCE, gPTP-T-X"}, []),
     ({CASE: "T-NVM-{RS-DEADLINE}, a P-ONE-based bound, T-BUDGET-AECP-TYP / -WC"}, []),
+    ({CASE: "T-ADP-DELAY(-START), (T-ADP-DELAY(-\n//  START)); the label T-MRP-JOIN(B)"}, []),
     ({"docs/case.md": "a stray P-NOT-A-ROW in a document"}, ["P-NOT-A-ROW"]),
     ({"hdl/case.sv": "// a stray T-NOT-A-ROW in a module comment"}, ["T-NOT-A-ROW"]),
     ({CASE: "a stray T-NOT-A-ROW in a suite"}, ["T-NOT-A-ROW"]),
@@ -205,6 +217,8 @@ SELFTEST_CASES = (
     ({CASE: "the P-RX-shaped pool is no family use"}, ["P-RX"]),
     ({CASE: "(T-MRP-\n//  NOPE) continues on the next line"}, ["T-MRP-NOPE"]),
     ({CASE: "T-BUDGET-AECP-TYP / -XX names a sibling with no row"}, ["T-BUDGET-AECP-XX"]),
+    ({CASE: "T-ADP-DELAY(-STRT) names an optional segment with no row"}, ["T-ADP-DELAY-STRT"]),
+    ({CASE: "T-ADP-DELAY(-start) is not an ID segment"}, ["T-ADP-DELAY(-...)"]),
     ({CASE: "T-NOFAMILY-* names a family with no row"}, ["T-NOFAMILY-*"]),
     ({CASE: "P-RX-SLOT-2 is not P-RX-SLOTS minus two"}, ["P-RX-SLOT-2"]),
     ({CASE: "P-RX-SLOTS-2 is not P-RX-SLOTS minus one"}, ["P-RX-SLOTS-2"]),
