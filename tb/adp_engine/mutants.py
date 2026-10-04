@@ -88,6 +88,8 @@ MUTANTS = [
      "P13 F04.3 arc NOT -> NOT (GM or domain mismatch)"),
     ("arc-fresh-no-rearm", "arc-fresh-no-rearm", "adp_engine", "run",
      "P13 F04.3 arc DISCOVERED -> DISCOVERED (index > last)"),
+    ("arc-fresh-no-store", "arc-fresh-no-store", "adp_engine", "run",
+     "P13 F04.3 arc DISCOVERED -> DISCOVERED (index > last)"),
     ("arc-restart-detector-off-by-one", "arc-restart-detector-off-by-one", "adp_engine", "run",
      "P13 F04.3 arc DISCOVERED -> DISCOVERED (index <= last, GM matches: restart pair)"),
     ("arc-restart-skips-guard", "arc-restart-skips-guard", "adp_engine", "run",

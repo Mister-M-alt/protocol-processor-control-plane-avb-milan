@@ -335,6 +335,12 @@ constexpr Arc F043_ARCS[] = {
   {"DISCOVERED -> NOT (T-ADP-NOADP expiry)", V_NOADP, D_DISC},
 };
 constexpr int N_F043_ARCS = int(sizeof F043_ARCS / sizeof F043_ARCS[0]);
+// F04.8's fresh arc notes the received available_index (Milan §5.6.4.5.2
+// step 3). Its guard reads no grandmaster, so both index > last cells of
+// TK_DISCOVERED take it, and only the next ADPDU shows the noted value
+constexpr bool notes_fresh_index(int row, int col) {
+  return col == D_DISC && (row == V_FRESH || row == V_GMF);
+}
 
 namespace {
 
@@ -1573,6 +1579,21 @@ void Harness::walk_discovery_cell(int row, int col, unsigned s) {
   CHECK(frames.size() == f0, "%s: nothing transmitted", tag);
   if (row <= V_DEPIFX)
     CHECK(frees == fr0 + 1, "%s: the RX slot is freed", tag);
+  if (!notes_fresh_index(row, col)) return;
+  // an AVAILABLE repeating the noted index, grandmaster and domain matching,
+  // is at or below the last one: the restart pair of step 2
+  const uint32_t noted = 700 + 1;              // apply_disc's last + 1
+  const size_t e1 = evts.size();
+  load_remote(0, walk_talker(s), noted, d->gm_id_i, DOM0, 0, 10, MSG_AVAIL);
+  CHECK(send_txn(adp_txn(MSG_AVAIL, walk_talker(s), 10, 0, now)),
+        "%s: the AVAILABLE repeating index %u consumed", tag, noted);
+  idle(20);
+  const size_t n_rep = evts.size() - e1;
+  CHECK(n_rep == 2 && evts[e1].departed && evts[e1].sink == s
+            && !evts[e1 + 1].departed && evts[e1 + 1].sink == s,
+        "%s: index %u noted (Milan 5.6.4.5.2 step 3), so an AVAILABLE repeating it "
+        "is EVT_TK_DEPARTED then EVT_TK_DISCOVERED (step 2), got %zu events",
+        tag, noted, n_rep);
 }
 
 // a citation in the clause family a cell is graded against: Milan v1.2
