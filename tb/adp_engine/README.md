@@ -97,8 +97,8 @@ holds DOWN; the F04.2 DELAY walked in both hardware phases). 45 cells:
 | GM_CHANGE | I | I | N §5.6.3.5.7 | I | I |
 | SHUTDOWN (enable falls) | C (enable low) | I | N §5.6.3.5.8 | N §5.6.3.5.11 | N §5.6.3.5.11 |
 
-The table above gives each cell's class and Milan clause; F04.7 adds its
-IEEE clause. Each cell grades the advertise state after it, the PRNG draw
+The table above gives each cell's class and, for its N cells, the Milan clause;
+F04.7 gives every cell's Milan clause and adds its IEEE clause. Each cell grades the advertise state after it, the PRNG draw
 requests (an N cell entering DELAY draws exactly one kind-2 T-ADP-DELAY,
 0..4000 ms), every
 timer operation on the shared slot (the arm is the last one, at `now` + the
