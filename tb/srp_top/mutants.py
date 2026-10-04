@@ -139,6 +139,8 @@ MUTANTS = [
     ('wsid-ram-written-on-teardown', 'srp_stream_fsms', 'walk', 'WK7:'),
     ('wsid-flops-of-control-sink', 'srp_stream_fsms', 'walk', 'WK6:'),
     ('wsid-flops-read-sink-0', 'srp_stream_fsms', 'walk', 'WK6:'),
+    ('wtsp-write-ignores-ready', 'srp_stream_fsms', 'walk', 'WK9:'),
+    ('wsid-write-ignores-ready', 'srp_stream_fsms', 'walk', 'WK10:'),
     # ... and the admission slopes (the admission suite, 1 to 8 sources)
     ('slope-stored-at-stage-2-index', 'srp_admission', '',
      'round publishes the greedy walk over every current declaration'),
@@ -240,7 +242,7 @@ def main() -> int:
     if not args.only:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
-                     ("TF", 5), ("WK", 8)]
+                     ("TF", 5), ("WK", 10)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1
