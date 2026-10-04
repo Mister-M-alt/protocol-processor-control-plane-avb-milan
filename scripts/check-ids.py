@@ -24,6 +24,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -88,7 +89,7 @@ def scanned_files(root: Path) -> list:
     return [Path(n) for n in names if (root / n).is_file()]
 
 
-def uses(text: str):
+def uses(text: str) -> Iterator[tuple[int, str, str]]:
     """(line, token, kind) per ID use; kind is 'id', 'family' or a brace list."""
     for match in ID.finditer(text):
         token, end = match.group(1), match.end()
