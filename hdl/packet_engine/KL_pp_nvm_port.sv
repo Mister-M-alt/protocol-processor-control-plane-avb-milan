@@ -109,8 +109,9 @@
 `default_nettype none
 
 module KL_pp_nvm_port #(
-    //! largest accepted payload_length in bytes; must be ≤ 65527 so that
-    //! dev_len_o = 8 + payload_length always fits 16 bits
+    //! largest accepted payload_length in bytes: at most MAXP_BOUND_C, the
+    //! largest for which dev_len_o = 8 + payload_length fits its width;
+    //! refused above at elaboration
     parameter int unsigned MAX_PAYLOAD_P = 1024,
     //! the device-face deadline (banner), in clk_i cycles: class E's
     //! MEM_TIMEOUT_CYC_P (KL_aecp_desc_store, KL_aecp_resp_buf) on class F.
@@ -187,6 +188,15 @@ module KL_pp_nvm_port #(
   if ((MEM_TIMEOUT_CYC_P < 1) || (MEM_TIMEOUT_CYC_P > 32'h7FFF_FFFF)) begin : g_tmo_check
     $error("KL_pp_nvm_port: MEM_TIMEOUT_CYC_P=%0d is outside 1 to 2147483647",
            MEM_TIMEOUT_CYC_P);
+  end
+  //! above it the port would ask the device for a WRITE of 8 + payload bytes
+  //! truncated to dev_len_o's width and pump them all (processor issue #17).
+  //! KL_pp_acmp_listener's `$fatal(1, ...)` precedent at module scope, like the
+  //! guard above: in an `initial` block Verilator builds and stops at time 0
+  localparam int unsigned MAXP_BOUND_C = (1 << $bits(dev_len_o)) - 1 - int'(HDR_LEN_C);
+  if (MAX_PAYLOAD_P > MAXP_BOUND_C) begin : g_maxp_check
+    $fatal(1, "KL_pp_nvm_port: MAX_PAYLOAD_P=%0d is above %0d: %0d + it overflows dev_len_o",
+           MAX_PAYLOAD_P, MAXP_BOUND_C, HDR_LEN_C);
   end
 
   // ---- state machine ------------------------------------------------------

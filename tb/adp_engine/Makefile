@@ -2,6 +2,7 @@
 # KL_adp_engine suite — exit 0 = PASS.
 VERILATOR ?= verilator
 MUTANT_OUTPUT ?= /tmp/adp-mutants
+JOBS       ?= 4
 HDL        = ../../hdl
 TOP        = tb_adp_top
 
@@ -21,7 +22,7 @@ run:
 	./obj_dir/Vadp_sim
 
 mutants:
-	python3 mutants.py --output "$(MUTANT_OUTPUT)"
+	python3 mutants.py --output "$(MUTANT_OUTPUT)" --jobs $(JOBS)
 
 clean:
 	rm -rf obj_dir

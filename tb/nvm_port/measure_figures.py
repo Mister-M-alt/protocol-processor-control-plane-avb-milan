@@ -108,13 +108,13 @@ MK = HERE / "Makefile"
 #: against the RTL below: a THIRTEENTH arm added anywhere used to leave this
 #: gate printing "all figures agree" while the README's "twelve arms" silently
 #: became false.
-ARMS = [(376, "S_WEREQ"), (385, "S_WEWAIT"), (395, "S_WWREQ"), (405, "S_WHPUMP"),
-        (422, "S_WDPUMP"), (437, "S_WWAIT"), (448, "S_RHREQ"), (458, "S_RHCOLL"),
-        (477, "S_RHWAIT"), (504, "S_RPREQ"), (514, "S_RPPUMP"), (529, "S_RPWAIT")]
+ARMS = [(386, "S_WEREQ"), (395, "S_WEWAIT"), (405, "S_WWREQ"), (415, "S_WHPUMP"),
+        (432, "S_WDPUMP"), (447, "S_WWAIT"), (458, "S_RHREQ"), (468, "S_RHCOLL"),
+        (487, "S_RHWAIT"), (514, "S_RPREQ"), (524, "S_RPPUMP"), (539, "S_RPWAIT")]
 
 #: The coincident-completion model. Unlike every other model here it varies the
 #: HANDSHAKE, not what the array retains: the device raises `dev_done_i` on the
-#: same clock edge that moves a command's final byte. `KL_pp_nvm_port.sv:340-344`
+#: same clock edge that moves a command's final byte. `KL_pp_nvm_port.sv:350-354`
 #: says the sticky `done_seen_r` latch exists for exactly this device, so it is
 #: a documented contract freedom, not a broken peer -- and the port handles it,
 #: with the suite green on pristine RTL. Its whole interest used to be that
