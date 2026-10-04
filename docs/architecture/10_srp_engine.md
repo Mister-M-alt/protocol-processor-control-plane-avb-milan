@@ -216,7 +216,10 @@ CRF), so no inactive slot is elaborated: at 1x1 each FSM's matcher holds exactly
 None of the memories added for issue #230 is reset: each is read only under a valid bit
 written with it (`rec_valid_r`, `slope_valid_r`, the FIFO count). Each carries
 `ram_style = "distributed"`: without it the registered FIFO read mapped each FIFO to a
-RAMB36.
+RAMB36. Both arms of each walk copy, and the FIFOs, are tested at sources/sinks 1/1,
+2/2, 3/5 and 9/9: the [walk-record arms](../../tb/srp_stream_fsms/README.md) and the
+[timer-arm FIFO arms](../../tb/srp_top/README.md), with every probe of the issue's
+reviews a killed control of the srp_top campaign.
 
 What stays per stream, and why it cannot be shared without a timing change:
 
