@@ -1,0 +1,10 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -1067,7 +1067,6 @@
+       evt_valid_o <= 1'b0;
+       // NOADP expiry in TK_DISCOVERED queues a DEPARTED event
+       if (noadp_exp_w && disc_st_r[noadp_exp_sink_w]) begin
+-        pend_dep_evt_r[noadp_exp_sink_w] <= 1'b1;
+       end
+       if (iter_evt_w) begin
+         evt_valid_o    <= 1'b1;

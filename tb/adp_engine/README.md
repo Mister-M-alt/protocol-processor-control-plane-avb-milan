@@ -3,7 +3,7 @@
 
 Proves the ADP engine (`hdl/adp/KL_adp_engine.sv`) against
 [04](../../docs/architecture/04_adp_engine.md) in full: `make` = build + run,
-exit 0 = PASS, 1328 checks. `make mutants` runs the checked-in mutation
+exit 0 = PASS, 1348 checks. `make mutants` runs the checked-in mutation
 campaign below.
 
 The top (`tb_adp_top.sv`) is pure wiring: the engine plus the **real
@@ -65,6 +65,14 @@ and every observable is compared with the cell. The walk ends with
 `CHECK(adv_cells == 45)`, `CHECK(disc_cells == 33)` and a check that each of
 F04.3's eight arcs is a walked cell that passed.
 
+Every cell cites the Milan v1.2 clause that rules its next state, frame and
+timer action, and the IEEE 1722.1-2021 clause it replaces or follows. 04
+derives each pair: [F04.7](../../docs/architecture/04_adp_engine.md#fig-04-advcells)
+for the advertise cells, [F04.8](../../docs/architecture/04_adp_engine.md#fig-04-discarcs)
+for the discovery arcs. The C++ tables carry both into every failure message,
+and two checks count the cells that cite both (45 of 45, and 33 of 33, where
+IEEE has no counterpart of a sink binding).
+
 Cell classes: **N** a transition clause; **I** `-` in the table, ignored and
 proven inert; **S** `x` in the table but physically reachable as a stray (an
 expiry of a slot whose cancel lost the race in the top's arm queue), injected
@@ -89,8 +97,11 @@ holds DOWN; the F04.2 DELAY walked in both hardware phases). 45 cells:
 | GM_CHANGE | I | I | N §5.6.3.5.7 | I | I |
 | SHUTDOWN (enable falls) | C (enable low) | I | N §5.6.3.5.8 | N §5.6.3.5.11 | N §5.6.3.5.11 |
 
-Each cell grades the advertise state after it, the PRNG draw requests (an N
-cell entering DELAY draws exactly one kind-2 T-ADP-DELAY, 0..4000 ms), every
+The table above gives each cell's class and, for its N cells, the Milan clause;
+F04.7 gives every cell's Milan clause and adds its IEEE clause. Each cell
+grades the advertise state after it, the PRNG draw
+requests (an N cell entering DELAY draws exactly one kind-2 T-ADP-DELAY,
+0..4000 ms), every
 timer operation on the shared slot (the arm is the last one, at `now` + the
 draw, or + 5000 ms into WAITING; a cancel wherever the clause says Stop, none
 where the slot is untouched; nothing on any other slot), the committed frame
@@ -134,16 +145,78 @@ Each cell grades the sink's bound and discovered bits, the exact event
 sequence on the class-C port (sink and order), the sink's T-ADP-NOADP
 operations (one arm at the received valid_time, 20 s here; one cancel; or
 none; nothing on another slot), that nothing is transmitted, and the RX-slot
-free. F04.3's eight arcs map onto the cells BIND x unbound; match x NOT;
-GM mismatch x NOT; fresh match, restart match, stale GM mismatch, DEPARTING
-and TMR_NO_ADP x DISCOVERED.
+free. Three cells x DISCOVERED note the received index (§5.6.4.5.2 step 3),
+and only the next ADPDUs show the noted value: the two index > last cells,
+which take F04.8's fresh arc (its guard reads no grandmaster), and the restart
+cell, walked at index 699, one below the last, so that a restart that notes
+nothing shows. Each is graded from both sides, from its own end state. An
+AVAILABLE repeating the index, grandmaster and domain matching, must give the
+restart pair (step 2), DEPARTED then DISCOVERED: at least that index was
+noted. Then the cell is walked again, and an AVAILABLE one above the index
+must give no event, being fresh: at most that index was noted. A failure
+there fails its cell; in the fresh match cell, arc 4's walk cell, and in the restart
+cell, arc 5's, it also fails that arc's check.
 
-Interop note, **still open** (issue #85 item 4, which needs a live
-controller and belongs to a bench lane): the available_index rule implements
-the DOC (04 §5 / IEEE §6.2.2.15) and **diverges from the reference platform's
-every-ADPDU increment**. Adjudication against live controllers (Hive /
-la_avdecc) is required before cutover; the engine banner carries the same
-warning. The walk grades the doc rule in every cell, so it cannot close this.
+F04.3's eight arcs map onto the cells BIND x unbound; match x NOT; GM mismatch
+x NOT; fresh match, restart match, stale GM mismatch, DEPARTING and TMR_NO_ADP
+x DISCOVERED (F04.8 lists each with its clauses). Each arc has a planted
+mutant of its own in the campaign below (the `arc-` arms), which must fail
+that arc's own check; the fresh arc has one per action (its T-ADP-NOADP
+re-arm, and its noted index), and two more that note too high an index (the
+received one + 1, and the maximum); the GM and domain guard is planted at
+both of its sites (TK_NOT_DISCOVERED, and the restart pair), the restart
+detector as an off-by-one at its boundary (an index equal to the last one).
+
+**The available_index interop note** (issue #85 item 4), adjudicated on
+2026-10-04 against the standard's text and the reference behaviour on record,
+read-only, with no bench access:
+
+- **The standard.** IEEE 1722.1-2021 §6.2.2.15: the index "is incremented after
+  transmitting an ENTITY_AVAILABLE message and is reset to zero (0) when
+  transmitting an ENTITY_DEPARTING or after a power cycle"; its Figure 6-2
+  sets it to 0 in INITIALIZE and adds 1 in WAITING, after each ADVERTISE.
+  Milan v1.2 §5.6.2 forms ADPDUs per IEEE Clause 6 and says nothing more about
+  the field, and its listener reads an index at or below the last one as a
+  talker restart (§5.6.4.5.2 step 2). The engine's rule is that text, and the
+  walk grades it in every cell. The reference platform's former rule (an
+  increment on every transmitted ADPDU, no reset) departs from it at
+  ENTITY_DEPARTING and nowhere else: every other ADPDU the engine sends is an
+  ENTITY_AVAILABLE, which both rules increment after. The parent's register
+  map records the failure that rule was adopted against, an index that
+  repeated across adverts (an increment on change only). It cannot occur
+  under §6.2.2.15 either, which increments after every ENTITY_AVAILABLE.
+- **What a receiver sees of the difference.** Neither standard reads the
+  index of an ENTITY_DEPARTING (IEEE §6.2.6.4 removes the entity; Milan
+  §5.6.4.5.3 has no index step), and after one, TK_NOT_DISCOVERED takes any
+  index (§5.6.4.5.1). Only a receiver that lost the ENTITY_DEPARTING sees the
+  next cycle's index: from 0 under §6.2.2.15, which §5.6.4.5.2 reads as the
+  restart it is; from the last index + 1 under the former rule, which reads as
+  the same cycle going on.
+- **The record.** The parent's bench lanes B6, B7 and B8 (its issue #629)
+  each enumerated the network from the controller host: one ENTITY_DISCOVER
+  with entity_id 0 and every ENTITY_AVAILABLE answering it
+  (`identity*/adp-discover.jsonl`, five enumerations from 2026-10-01 to
+  2026-10-03). Each lists two entities, this processor (entity_capabilities
+  0x0000C588, the F04.6 value) and the bench's reference Milan peer.
+  - The peer: 12817, 42441, 44513, 44851, 45061. Strictly rising, one
+    increment per 6.00, 6.00, 5.99 and 5.98 s between the five, with no
+    repeat and no restart.
+  - This processor: 13215 (B6), 85 (B7, after a reload), 1865 and 2156 (B8),
+    19 (B8, after a power cycle). Within a boot, one increment per 6.99 and
+    6.96 s: the 5 s T-ADP-ADV plus the 2 s mean of the T-ADP-DELAY draw, one
+    per ENTITY_AVAILABLE. After each restart it is low again. Each lane's
+    identity gate passed on the same enumeration.
+  - No ENTITY_DEPARTING appears in any of the five, and the enumerating tool
+    is a stateless read-only probe, not a controller that tracks entities.
+    The one case where the two rules differ is not on record.
+- **Verdict.** The rule stands: the engine keeps §6.2.2.15, and the
+  divergence the note recorded is the former rule's from the standard, not
+  the engine's. Restated, still open: how a live controller that tracks
+  entities (Hive, la_avdecc) handles an ENTITY_DEPARTING and the availability
+  cycle that follows it from index 0. Only a live controller across an entity
+  disable and re-enable can show that. The engine's banner and its
+  available_index comment say the same since the second round of issue #85,
+  a change of comments only.
 
 Mutation-proven 2026-08-11 (backup/sed/run/restore):
 1. merged draw kinds (`ADP_DRAW_KIND_START_C` → `ADP_DRAW_KIND_DELAY_C` in
@@ -168,9 +241,9 @@ production source. A positive control of every (suite, target) pair runs
 first, each in its own copy. `MUTANT_OUTPUT` (default `/tmp/adp-mutants`)
 receives one log per arm. `python3 mutants.py --output DIR [--only a,b]
 [--jobs N]` runs it directly: `--jobs N` (default 4, the meaning and default of
-`tb/pp_top/d3_mutants.py`; `make mutants` runs the default) builds and runs up
-to N copies at once, and the results are printed in the table's order whatever
-order they finish in.
+`tb/pp_top/d3_mutants.py`; `make mutants JOBS=N` passes it, default 4) builds
+and runs up to N copies at once, and the results are printed in the table's
+order whatever order they finish in.
 Counts below were taken on 2026-09-29 with Verilator 5.050, 30 of 30 arms killed.
 Measured 2026-10-02 at `85da751` with Verilator 5.050, each run pinned to 4 of
 the host's 16 CPUs: `--jobs 1` took 502 s and `--jobs 8` 333 s. Every control
@@ -179,6 +252,22 @@ counts below.
 Re-run 2026-10-03 at the head of lane P1 (issues #52, #59, #61, #62, #63, #83):
 both controls PASS and all 30 arms are KILLED. Four pp_top rows carry that run's
 counts, because the lane's AD8 and AD9 fail as AD6 and AD7 do under them.
+Re-run 2026-10-04 with Verilator 5.050 at the head of issue #85's lane, which adds
+the eight `arc-` arms: both controls PASS and all 38 arms are KILLED, each earlier
+arm with the count in its row. An `arc-` arm must fail its arc's own check,
+`P13 F04.3 arc ...`, not only some cell.
+Re-run 2026-10-04 with Verilator 5.050 in that lane's second round, which grades
+the fresh arc's noted index and adds `arc-fresh-no-store`: both controls PASS and
+all 39 arms are KILLED. Three rows' counts grew by the follow-up step
+(`disc-fresh-checks-gm` 3 to 4, `disc-restart-not-rediscovered` 4 to 7,
+`arc-restart-detector-off-by-one` 10 to 13); every other arm kept its count.
+Re-run 2026-10-04 with Verilator 5.050 in that lane's third round, which grades
+the noted index from both sides, in the restart cell too, and adds
+`arc-fresh-store-plus-one` and `arc-fresh-store-max`: both controls PASS and all
+41 arms are KILLED. Three rows' counts grew (`disc-fresh-checks-gm` 4 to 5,
+`disc-not-discovered-checks-index` 14 to 17, `disc-restart-not-rediscovered`
+7 to 8), and `arc-restart-detector-off-by-one` keeps 13 with the restart cell's
+repeat in place of its event check; every other arm kept its count.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|
@@ -205,13 +294,24 @@ counts, because the lane's AD8 and AD9 fail as AD6 and AD7 do under them.
 | `walk-departing-keeps-index` | adp_engine | available_index not reset after ENTITY_DEPARTING | 6: SHUTDOWN x WAITING and both DELAY phases, P7 twice, P11e |
 | `walk-foreign-discover-answered` | adp_engine | an ENTITY_DISCOVER for another entity_id is answered | 8: foreign DISCOVER x WAITING, P4d twice, P5 twice |
 | `walk-link-down-keeps-timer` | adp_engine | LINK_DOWN from WAITING/DELAY leaves the timer running | 3: LINK_DOWN x WAITING and x DELAY (timer armed), P6 |
-| `disc-fresh-checks-gm` | adp_engine | a fresh index is refused on a GM mismatch (a test §5.6.4.5.2 does not make) | 3: GM mismatch, index > last x DISCOVERED |
-| `disc-not-discovered-checks-index` | adp_engine | TK_NOT_DISCOVERED compares the index with the stale record | 14: index <= last and interface differs x NOT, and every later cell entered through a discovery at index 700 over a higher stale record, including the NOADP arc |
+| `disc-fresh-checks-gm` | adp_engine | a fresh index is refused on a GM mismatch (a test §5.6.4.5.2 does not make) | 5: GM mismatch, index > last x DISCOVERED (state, event, timer, and both sides of the index it did not note) |
+| `disc-not-discovered-checks-index` | adp_engine | TK_NOT_DISCOVERED compares the index with the stale record | 17: index <= last and interface differs x NOT, and every later cell entered through a discovery at index 700 over a higher stale record, including the second walk of both index > last cells x DISCOVERED (so arc 4) and the NOADP arc |
 | `disc-not-discovered-checks-interface` | adp_engine | TK_NOT_DISCOVERED compares interface_index with the stale record | 3: interface differs x NOT |
-| `disc-restart-not-rediscovered` | adp_engine | the restart pair loses its DISCOVERED | 4: index <= last x DISCOVERED, its arc and the arc count, P9e |
+| `disc-restart-not-rediscovered` | adp_engine | the restart pair loses its DISCOVERED | 8: index <= last x DISCOVERED, the repeat of the noted index in it and in both index > last cells x DISCOVERED, arcs 4 and 5 and the arc count, P9e |
 | `disc-departing-ignores-interface` | adp_engine | DEPARTING departs whatever its interface_index | 3: DEPARTING, interface differs x DISCOVERED |
 | `disc-stray-noadp-departs` | adp_engine | a T-ADP-NOADP expiry departs a sink that is not discovered | 2: TMR_NO_ADP x unbound and x NOT |
 | `disc-unbind-keeps-timer` | adp_engine | unbinding a discovered sink leaves its T-ADP-NOADP running | 2: UNBIND x DISCOVERED, P9k |
+| `arc-bind-keeps-discovered` | adp_engine | F04.3 entry arc: an unbind no longer clears the discovered state, so a sink bound again starts in TK_DISCOVERED | 46: arc 1 (BIND x unbound ends discovered), arcs 2 and 3 and the arc count, P9k twice, and every cell entered through the unbind of a discovered sink |
+| `arc-discover-no-noadp-arm` | adp_engine | TK_NOT_DISCOVERED to TK_DISCOVERED arms no T-ADP-NOADP (Milan §5.6.4.5.1 step 3) | 13: arcs 2 and 8 and the arc count, the three discoveries x NOT, TMR_NO_ADP x DISCOVERED (no timer left to expire), P9a, P9c twice, P9j |
+| `arc-not-discovered-no-guard` | adp_engine | TK_NOT_DISCOVERED takes an ENTITY_AVAILABLE whatever its grandmaster and domain (the §5.6.4.5.1 step 1 guard) | 14: arc 3 and the arc count, the three GM and domain mismatch cells x NOT (state, event, timer each), P9d three times |
+| `arc-fresh-no-rearm` | adp_engine | a fresh index in TK_DISCOVERED does not restart T-ADP-NOADP (§5.6.4.5.2 step 3) | 5: arc 4 and the arc count, both index > last cells x DISCOVERED, P9b |
+| `arc-fresh-no-store` | adp_engine | a fresh index in TK_DISCOVERED is not noted (§5.6.4.5.2 step 3), so the restart detector compares the next index with the one before | 4: arc 4 and the arc count, and both index > last cells x DISCOVERED, where the AVAILABLE repeating the index gives no event |
+| `arc-fresh-store-plus-one` | adp_engine | a fresh index in TK_DISCOVERED is noted as the received index + 1 (§5.6.4.5.2 step 3), so the talker's next ordinary advert reads as a restart | 4: arc 4 and the arc count, and both index > last cells x DISCOVERED, where the AVAILABLE one above the index gives the restart pair |
+| `arc-fresh-store-max` | adp_engine | a fresh index in TK_DISCOVERED is noted as `32'hFFFF_FFFF` (§5.6.4.5.2 step 3), so every later advert reads as a restart | 4: arc 4 and the arc count, and both index > last cells x DISCOVERED, where the AVAILABLE one above the index gives the restart pair |
+| `arc-restart-detector-off-by-one` | adp_engine | the restart detector takes an index equal to the last one as fresh (`>=` for `>`) | 13: arcs 4, 5 and 6 and the arc count, the GM mismatch and domain mismatch cells x DISCOVERED, each walked at an index equal to the last, and the repeat of the noted index in the restart cell and both index > last cells x DISCOVERED |
+| `arc-restart-skips-guard` | adp_engine | a stale index restarts the talker whatever its grandmaster and domain (the §5.6.4.5.2 step 2b guard) | 12: arc 6 and the arc count, the GM and domain mismatch cells x DISCOVERED (event pair, state, timer), P9f three times, P9f2 |
+| `arc-departing-silent` | adp_engine | an ENTITY_DEPARTING departs without EVT_TK_DEPARTED (§5.6.4.5.3 step 3) | 4: arc 7 and the arc count, DEPARTING x DISCOVERED, P9h |
+| `arc-noadp-expiry-silent` | adp_engine | a T-ADP-NOADP expiry departs without EVT_TK_DEPARTED (§5.6.4.5.4) | 4: arc 8 and the arc count, TMR_NO_ADP x DISCOVERED, P9i |
 
 Known limits (honestly): the suite runs the shipping shape (1 interface,
 8 sinks) only; the timer service and slot pools are modeled, not
@@ -219,5 +319,6 @@ instantiated (their own suites own those RTL contracts); event-port
 ordering between a NOADP expiry and a same-sink iteration in flight is
 not exercised (rare, ACMP re-probes either way); the walk takes one event
 per cell, so two events in the same clock are not walked beyond the
-draw-phase cells above; and the available_index interop note stays open
-until a live controller adjudicates it (issue #85 item 4).
+draw-phase cells above; and a live controller's handling of an
+ENTITY_DEPARTING and the availability cycle after it (index 0 again) is not on
+record (the interop note above, issue #85 item 4).
