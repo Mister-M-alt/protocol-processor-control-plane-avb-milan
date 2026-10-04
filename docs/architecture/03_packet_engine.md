@@ -232,10 +232,10 @@ control per class/key — the load-bearing role is **cross-engine interlock** (t
 
 | Class | Members | Key | Rule |
 |---|---|---|---|
-| RO_SNAPSHOT | all GETs, READ_DESCRIPTOR, GET_RX/TX_STATE | addressed descriptor | parallel; blocked only vs in-flight write on the same key |
+| RO_SNAPSHOT | all GETs but GET_DYNAMIC_INFO, READ_DESCRIPTOR, GET_RX/TX_STATE | addressed descriptor | parallel; blocked only vs in-flight write on the same key |
 | CFG_BARRIER | SET_CONFIGURATION | global | drain all in-flight, block admission, then execute (STREAM_IS_RUNNING pre-guard first) |
 | STREAM_CFG | SET_STREAM_FORMAT/INFO, START/STOP_STREAMING, BIND/UNBIND/probe events, listener-SM steps | stream index | serialized per key — doubles as the per-sink SM serialization (one event at a time per sink) |
-| MAP_CFG | ADD/REMOVE_AUDIO_MAPPINGS, GET_AUDIO_MAP (write side) | stream port | serialized per key **and** cross-locked with STREAM_CFG of referenced streams (format↔mapping validation pair) |
+| MAP_CFG | ADD/REMOVE_AUDIO_MAPPINGS, GET_AUDIO_MAP (write side), GET_DYNAMIC_INFO (whole batch, no-descriptor key; the accepted over-serialization) | stream port | serialized per key **and** cross-locked with STREAM_CFG of referenced streams (format↔mapping validation pair) |
 | CLOCK_CFG | SET_SAMPLING_RATE, SET_CLOCK_SOURCE; MVU SET_MCR_INFO deferred ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) | audio unit / clock domain | serialized per key |
 | NAME_WR | SET_NAME | descriptor | serialized per key |
 | LOCK_OP | LOCK_ENTITY + `T-LOCK-UNLOCK` expiry event | global | serialized vs every lock-protected member (incl. ACMP BIND/UNBIND and MGMT writes) |
@@ -249,7 +249,8 @@ opcode's class: SET_CONFIGURATION `CFG_BARRIER`; SET_STREAM_FORMAT,
 SET_STREAM_INFO and START/STOP_STREAMING `STREAM_CFG`; ADD/REMOVE_AUDIO_MAPPINGS
 `MAP_CFG`; SET_SAMPLING_RATE and SET_CLOCK_SOURCE `CLOCK_CFG`; SET_NAME
 `NAME_WR`; LOCK_ENTITY `LOCK_OP`; REGISTER/DEREGISTER_UNSOLICITED_NOTIFICATION
-`REGISTRY_OP`; SET_CONTROL `IDENTIFY`; every other command `RO_SNAPSHOT`. An
+`REGISTRY_OP`; SET_CONTROL `IDENTIFY`; GET_DYNAMIC_INFO `MAP_CFG` (below);
+every other command `RO_SNAPSHOT`. An
 ACMP GET_RX_STATE, GET_TX_STATE or GET_TX_CONNECTION is `RO_SNAPSHOT`; every
 other ACMP step is its stream's `STREAM_CFG`. A key names what the transaction
 reads or writes, `{descriptor_type[5:0], descriptor_index[9:0]}`: an AECP
