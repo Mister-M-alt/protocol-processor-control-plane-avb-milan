@@ -125,7 +125,8 @@ findings. The value scan is still to add
   [`diagrams/README.md`](diagrams/README.md). Rule: edit the SVG text, render it to a
   scratch PNG and look at it (overlap is invisible in the XML), and commit the SVG alone,
   never a raster export. `make figures` holds the class: listed, well-formed XML with an
-  `<svg>` root and a `viewBox`, no `<image>` or `<foreignObject>`, linked from a page.
+  `<svg>` root and a `viewBox`, no `<image>`, `<feImage>` or `<foreignObject>`, linked
+  from a page.
 - **Nothing else.** Every file under `docs/diagrams/` is a draw.io source or export, a
   WaveDrom render or a listed hand-authored SVG; `make figures` fails any other file
   there, a PNG included.

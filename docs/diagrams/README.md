@@ -62,8 +62,9 @@ rsvg-convert -w 1500 -o /tmp/check.png docs/diagrams/20-rtl-dataflow.svg
 
 That PNG is a scratch check, never committed: the SVG is the only artifact. `make
 figures` holds each of the five to its rule: listed in the table above, well-formed
-XML with an `<svg>` root and a `viewBox`, no `<image>` or `<foreignObject>` (a raster
-or an embedded document is not editable source), and linked from a Markdown page.
+XML with an `<svg>` root and a `viewBox`, no `<image>`, `<feImage>` or `<foreignObject>`
+(a raster or an embedded document is not editable source), and linked from a Markdown
+page.
 
 For diagram 21, the SVG is the editable master. Its `integration-parameters` group
 lists every overridable top-level parameter;

@@ -11,9 +11,9 @@ The classes and what this gate asks of each:
   gate fails a render whose block is gone);
 - hand-authored SVG: a top-level `<name>.svg` with no `.drawio` source, listed
   in the hand-authored inventory of docs/diagrams/README.md. The SVG is its own
-  source, so it must parse as XML with an `<svg>` root and a `viewBox`, carry no
-  raster or embedded document (`<image>`, `<foreignObject>`), and be linked from
-  a Markdown page.
+  source, so it must parse as XML with an SVG-namespace `<svg>` root and a
+  `viewBox`, carry no raster or embedded document (`<image>`, `<feImage>`,
+  `<foreignObject>`), and be linked from a Markdown page.
 
 Any other file there (a PNG export, say) is a format section 3 does not list
 and fails. The files are those git tracks plus untracked ones it does not ignore.
@@ -100,7 +100,7 @@ def svg_problems(path: Path) -> list:
         out.append(f"root element is {svg.tag}, not an SVG-namespace <svg>")
     if "viewBox" not in svg.attrib:
         out.append("no viewBox on the <svg> root")
-    for tag in ("image", "foreignObject"):
+    for tag in ("image", "feImage", "foreignObject"):
         if svg.find(f".//{SVG_NS}{tag}") is not None or svg.find(f".//{tag}") is not None:
             out.append(f"carries <{tag}>: a raster or embedded document is not editable source")
     return out
@@ -175,10 +175,24 @@ SELFTEST_CASES = (
     ({"docs/diagrams/20-a.png": "PNG"}, ["20-a.png: not a figure format"]),
     ({"docs/diagrams/25-c.svg": GOOD_SVG}, ["25-c.svg: SVG with no .drawio source"]),
     ({"docs/diagrams/20-a.svg": "<svg"}, ["20-a.svg: not well-formed XML"]),
+    ({"docs/diagrams/sub/20-a.svg": GOOD_SVG}, ["sub/20-a.svg: not a figure format"]),
     ({"docs/diagrams/20-a.svg": GOOD_SVG.replace("<rect", '<image href="x.png"/><rect')},
      ["20-a.svg: carries <image>"]),
+    ({"docs/diagrams/20-a.svg": GOOD_SVG.replace(
+        "<rect", '<filter id="f"><feImage href="x.png"/></filter><rect')},
+     ["20-a.svg: carries <feImage>"]),
+    ({"docs/diagrams/20-a.svg": GOOD_SVG.replace("<rect", "<foreignObject/><rect")},
+     ["20-a.svg: carries <foreignObject>"]),
+    ({"docs/diagrams/20-a.svg": GOOD_SVG.replace(' xmlns="http://www.w3.org/2000/svg"', "")},
+     ["20-a.svg: root element is svg, not an SVG-namespace <svg>"]),
+    ({"docs/diagrams/20-a.svg": GOOD_SVG.replace("<svg ", "<g ").replace("</svg>", "</g>")},
+     ["20-a.svg: root element is {http://www.w3.org/2000/svg}g, not"]),
     ({"docs/diagrams/20-a.svg": GOOD_SVG.replace(' viewBox="0 0 10 10"', "")},
      ["20-a.svg: no viewBox"]),
+    ({"docs/diagrams/README.md": INVENTORY_BODY.replace("| `20-a.svg` | a |\n", "")},
+     ["the hand-authored inventory lists no SVG"]),
+    ({"docs/diagrams/README.md": INVENTORY_BODY.replace(HAND_SECTION, "## Inventory")},
+     [f"no '{HAND_SECTION}' section"]),
     ({"docs/page.md": "<a id=\"fig-x\"></a>\n\n```wavedrom\n{}\n```\n"},
      ["20-a.svg: hand-authored figure no Markdown page links"]),
     ({"docs/diagrams/20-a.svg": None}, ["lists 20-a.svg, which is not in"]),
