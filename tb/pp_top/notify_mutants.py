@@ -15,9 +15,9 @@ the identify sequencer in the third build of tb/pp_top (section ID), its one-tic
 timer margins in the second build of tb/aecp_notify (section FT, the full
 timebase), the parameter's default (section ID0), the command-class pushes (NP),
 the STORM and RND sections (ST, RN), the originator's seeded inflight session
-(tb/originator section R), and the registry's identity index in the first build of
-tb/aecp_notify (section IX, issue #232). The suite READMEs carry the matching
-mutation records.
+(tb/originator section R), and the registry's identity index and the counter
+throttle stamps' valid bit in the first build of tb/aecp_notify (sections IX and TS,
+issue #232). The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
                                            [--only NAME ...]
@@ -261,7 +261,8 @@ INFLIGHT = (
         ("R: a seeded session",)),
 )
 
-# the registry's identity index (issue #232), graded by tb/aecp_notify section IX
+# the registry's identity index and the counter stamps' valid bit (issue #232),
+# graded by tb/aecp_notify sections IX and TS
 IX_WRITE = "        if (ix_busy_w && (wr_ix_r == CIX_W_C'(i)))\n"
 IX_MATCH = ("                        && ((ix_busy_w && (wr_ix_r == CIX_W_C'(i))) ? ix_own_w\n"
             "                                                                     : ix_hit_w[i]);\n")
@@ -280,6 +281,17 @@ IDENTITY_INDEX = (
     Mutant("ix_rewrite_unmatched", INDEX, (
         (NTFY, IX_MATCH, "                        && ix_hit_w[i];\n"),),
         ("IX4:",)),
+    # the review faults of PR #153 (R452-1, R453-1), each the reviewer's own edit
+    Mutant("override_set_only", INDEX, (
+        (NTFY, IX_MATCH, IX_MATCH.replace("(ix_busy_w &&", "(ix_set_r &&")),),
+        ("IX6:",)),
+    Mutant("own_compare_new_row", INDEX, (
+        (NTFY, "  assign ix_own_w    = (ix_wr_row_w[127:16] == {rx_cmd_eid_i, rx_cmd_mac_i});\n",
+         "  assign ix_own_w    = (wr_row_r[127:16] == {rx_cmd_eid_i, rx_cmd_mac_i});\n"),),
+        ("IX5:",)),
+    Mutant("stamp_read_without_valid", INDEX, (
+        (NTFY, "            && (!ctr_sent_r[c]\n", "            && (1'b0\n"),),
+        ("TS3:",)),
 )
 
 MUTANTS = IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX

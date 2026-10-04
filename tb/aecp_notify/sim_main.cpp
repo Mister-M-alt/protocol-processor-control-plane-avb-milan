@@ -20,6 +20,8 @@ static constexpr uint8_t OWN_TL = 0xA0;
 static constexpr uint8_t OWN_MON = 0xD0;
 static constexpr uint8_t REGMON_BASE = 25;
 static constexpr uint8_t N_CTRL = 2;
+static constexpr uint8_t KIND_CTRS = 6;          // pp_pkg PP_UNS_CTRS_C
+static constexpr uint16_t DT_AVB_INTERFACE = 0x0009;
 
 // Cycle budgets for the polling loops below. Each one gives up when its budget
 // is spent, so a DUT that never asserts fails the check instead of hanging.
@@ -27,6 +29,7 @@ static constexpr int REGISTRY_ACCEPT_CYCLES = 24;
 static constexpr int DRAW_REQUEST_CYCLES = 16;
 static constexpr int PROBE_WAIT_CYCLES = 12;
 static constexpr int DRAIN_WATCH_CYCLES = 8;
+static constexpr int COUNTER_JOB_CYCLES = 16;
 
 namespace {
 
@@ -35,6 +38,8 @@ namespace {
 // nothing else here; both are the state of one run of this harness, so they
 // belong to the object that performs it.
 struct Harness {
+  static constexpr uint64_t EID_C = 0x3333000000000003ull;
+  static constexpr uint64_t MAC_C = 0x020000000003ull;
   VKL_aecp_notify* d = nullptr;
   uint32_t now = 1000;
   int checks = 0;
@@ -43,6 +48,11 @@ struct Harness {
   int run();
   bool cancels_row0(uint64_t eid, uint64_t mac);
   void identity_index(uint64_t eid_old, uint64_t mac_old, uint64_t eid, uint64_t mac);
+  bool register_to_write(uint64_t eid, uint64_t mac);
+  int after_failure(uint8_t row, bool command, uint64_t eid, uint64_t mac);
+  void rewrite_window();
+  bool counter_job();
+  void counter_stamps();
 
   void tick() {
     d->now_ms_i = now;
@@ -117,6 +127,13 @@ struct Harness {
       tick();
     }
     return false;
+  }
+
+  void warm_reset() {
+    d->rst_n = 0;
+    idle(2);
+    d->rst_n = 1;
+    idle(2);
   }
 };
 
@@ -207,6 +224,8 @@ int Harness::run() {
         "reused row launches only the new controller tuple");
 
   identity_index(EID_A, MAC_A, EID_B, MAC_B);
+  rewrite_window();
+  counter_stamps();
   return fails ? 1 : 0;
 }
 
@@ -244,12 +263,10 @@ void Harness::identity_index(uint64_t eid_old, uint64_t mac_old,
   CHECK(cancels_row0(eid, mac),
         "IX3: the registered identity matches in the command's cycle");
 
-  // A REGISTER rewrites its row's index in the two cycles after the row write.
-  // Two cycles after C claims row 1, C's command must still win against a
-  // failed probe reported in the same cycle (KL_aecp_notify's ca_fail arm),
-  // so the row stays; the same failure alone removes it.
-  const uint64_t EID_C = 0x3333000000000003ull;
-  const uint64_t MAC_C = 0x020000000003ull;
+  // A REGISTER rewrites its row's index over the row write's own cycle and the
+  // cycle after it. Two cycles after C claims row 1, C's command must still
+  // win against a failed probe reported in the same cycle (KL_aecp_notify's
+  // ca_fail arm), so the row stays; the same failure alone removes it.
   d->rgy_state_i = 0;
   d->rgy_op_i = 0;
   d->rgy_eid_i = EID_C;
@@ -285,6 +302,112 @@ void Harness::identity_index(uint64_t eid_old, uint64_t mac_old,
   d->ca_fail_valid_i = 0;
   idle(DRAIN_WATCH_CYCLES);
   CHECK(d->dbg_reg_cnt_o == 1, "IX4b: the same failure alone removes the row");
+}
+
+// REGISTER up to the row write's own cycle: N_APPLY decides the write, and
+// rgy_wait_o falls in the next cycle, the one the write lands in and the
+// index clears the old identity in. Returns there, with the clock low and the
+// request still raised, so the caller presents that cycle's inputs.
+bool Harness::register_to_write(uint64_t eid, uint64_t mac) {
+  d->rgy_state_i = 0;
+  d->rgy_op_i = 0;
+  d->rgy_eid_i = eid;
+  d->rgy_mac_i = mac;
+  d->rgy_tl_i = 0;
+  d->rgy_req_i = 1;
+  int guard = 0;
+  while (guard++ < REGISTRY_ACCEPT_CYCLES) {
+    d->clk_i = 0;
+    d->eval();
+    if (!d->rgy_wait_o) break;
+    tick();
+  }
+  return guard < REGISTRY_ACCEPT_CYCLES && d->rgy_data_o == 0;
+}
+
+// One clock carrying a failed probe for `row` and, when `command`, a command
+// from {eid, mac}; then the drain's time. Returns the live row count: a
+// command that matches the row keeps it (the ca_fail arm), else it goes.
+int Harness::after_failure(uint8_t row, bool command, uint64_t eid, uint64_t mac) {
+  d->rx_cmd_eid_i = eid;
+  d->rx_cmd_mac_i = mac;
+  d->rx_cmd_valid_i = command;
+  d->ca_fail_owner_i = row;
+  d->ca_fail_valid_i = 1;
+  tick();
+  d->rx_cmd_valid_i = 0;
+  d->ca_fail_valid_i = 0;
+  d->rgy_req_i = 0;
+  idle(DRAIN_WATCH_CYCLES);
+  return d->dbg_reg_cnt_o;
+}
+
+// IX5 and IX6: the rewrite's first cycle. While the row write lands, the
+// index clears the old identity, and the row's match is the one comparator
+// against what rows_r holds then: the old row, as the comparator bank read
+// it. Row 1 still holds C, which IX4b removed, so D's REGISTER reuses it, and
+// in its row write's own cycle C's command still matches row 1. A reset in
+// that cycle lets the row write and the clear land and drops the set, so
+// rows_r holds E while the index holds nothing for the row; E's next REGISTER
+// takes the same row, and in its row write's own cycle only the comparator
+// can match E.
+void Harness::rewrite_window() {
+  const uint64_t EID_D = 0x4444000000000004ull;
+  const uint64_t MAC_D = 0x020000000004ull;
+  const uint64_t EID_E = 0x5555000000000005ull;
+  const uint64_t MAC_E = 0x020000000005ull;
+  const bool d_taken = register_to_write(EID_D, MAC_D);
+  const int live5 = after_failure(1, true, EID_C, MAC_C);
+  CHECK(d_taken && live5 == 2,
+        "IX5: in the row write's own cycle, the reused row's previous controller C, "
+        "which rows_r still holds, keeps the row against a failed probe in the same "
+        "cycle (%d rows live)", live5);
+  CHECK(after_failure(1, false, 0, 0) == 1, "IX5b: the same failure alone removes the row");
+
+  warm_reset();                             // every row free: E takes row 0
+  const bool e_taken = register_to_write(EID_E, MAC_E);
+  d->rgy_req_i = 0;
+  warm_reset();                             // in the row write's own cycle
+  CHECK(e_taken && d->dbg_reg_cnt_o == 0,
+        "IX6a: a reset in the row write's own cycle leaves the registry empty");
+  const bool e_again = register_to_write(EID_E, MAC_E);
+  const int live6 = after_failure(0, true, EID_E, MAC_E);
+  CHECK(e_again && live6 == 1,
+        "IX6: after that reset, E registered into the same row keeps it against a "
+        "failed probe in its row write's own cycle (%d rows live)", live6);
+  CHECK(after_failure(0, true, EID_E, MAC_E) == 1,
+        "IX6b: after the rewrite, E's command keeps the row through the index");
+}
+
+// TS: the counter throttle stamps (issue #232). A descriptor's one-second
+// stamp has no reset: ctr_sent_r is its valid bit, and a warm reset clears
+// only that bit. So the first change after a reset goes out at once, however
+// recent the stale stamp. The bench's clock stays in one ms throughout.
+bool Harness::counter_job() {
+  d->ev_ctr_type_i = DT_AVB_INTERFACE;
+  d->ev_ctr_index_i = 0;
+  d->ev_ctr_i = 1;
+  tick();
+  d->ev_ctr_i = 0;
+  for (int i = 0; i < COUNTER_JOB_CYCLES; ++i) {
+    d->clk_i = 0;
+    d->eval();
+    const bool job = d->uns_valid_o && d->uns_kind_o == KIND_CTRS;
+    tick();
+    if (job) return true;
+  }
+  return false;
+}
+
+void Harness::counter_stamps() {
+  warm_reset();                             // independent of section IX's rows
+  register_row(EID_C, MAC_C, false);
+  CHECK(counter_job(), "TS1: a counter change goes out to the registered controller");
+  CHECK(!counter_job(), "TS2: a second change in the same second is held");
+  warm_reset();
+  register_row(EID_C, MAC_C, false);
+  CHECK(counter_job(),
+        "TS3: after a warm reset, a change in that same second goes out at once");
 }
 
 #else
