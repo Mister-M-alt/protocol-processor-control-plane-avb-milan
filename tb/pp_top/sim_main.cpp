@@ -17,13 +17,14 @@
 // maap face both ways — with no allocator the talker still answers (the
 // walker must not wedge on an unaccepted request), with one the granted
 // address reaches acmp_declaring_o, the ACMP answer and the SRP wire.
-// The suite builds five times (Makefile): the second build overrides the
+// The suite builds six times (Makefile): the second build overrides the
 // top's P-SRP-DOM-DEF-VID with a verification-only fixture and runs section
 // DV alone; the third sets P-EN-IDENTIFY-NOTIFICATION to 1 and runs section
 // ID alone (notify_phases.hpp); the fourth, the line build, overrides
 // DESC_LINE_BYTES_P with a verification-only fixture and runs section AX
 // alone; the fifth runs the timebase at the nominal clock's rate and runs
-// section TB alone.
+// section TB alone; the sixth leaves the registration and lock timeouts at
+// the top's defaults and runs section TD alone (notify_phases.hpp).
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -13753,6 +13754,11 @@ int main(int argc, char** argv) {
   //! the fifth build runs section TB alone, at the nominal timebase
   run_budgets(h);
   const char* const build = "timebase";
+#elif defined(PP_TOP_TIM_DEFAULTS)
+  //! the sixth build runs section TD alone, with the registration and lock
+  //! timers at the top's own defaults
+  run_timer_defaults(h);
+  const char* const build = "defaults";
 #else
   const bool gsi_only = argc == 2 && std::strcmp(argv[1], "--gsi-internal-only") == 0;
   const bool name_only = argc == 2 && std::strcmp(argv[1], "--name-writes-only") == 0;
@@ -13798,10 +13804,10 @@ int main(int argc, char** argv) {
   if (!one_section || ctr_only) run_counters(h);
   const char* const build = "default";
 #endif
-  //! NOT the canonical tally shape: this binary is ONE of the suite's five
+  //! NOT the canonical tally shape: this binary is ONE of the suite's six
   //! builds, and run_suites.sh reads only the LAST matching line, so a
   //! canonical line here would drop the other builds' checks from the total.
-  //! The Makefile sums all five builds and prints the one canonical line.
+  //! The Makefile sums all six builds and prints the one canonical line.
   printf("[build %s, SRP_DOM_DEF_VID_P 0x%04x, DESC_LINE_BYTES_P %u] %d checks, %d failures\n",
          build, unsigned(SRP_DEF_VID), unsigned(DESC_LINE_BYTES), h.checks, h.fails);
   FILE* acc = fopen("obj_dir/build_tally.txt", "a");

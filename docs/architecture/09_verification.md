@@ -251,6 +251,7 @@ its watchdog.
 | the engine busy: each of those behind a 15-frame notification fan-out, answered as idle, within one job plus its idle latency of the fan-out's last frame; GET_MILAN_INFO against a response memory stalled short of its watchdog | TB3, TB4 |
 | `T-BUDGET-ACMP-RESP`: ACMP answers idle and beside that load, later than idle by at most one frame on the wire | TB5 |
 | the deadline never fired while the budgets were measured | TB |
+| `T-LOCK-UNLOCK` and `T-NOTIF-TIMELIMITED` at the top's own defaults, 60,000 and 300,000 ms, not the 400 ms override U5 and L6d run under: the auto-unlock notification and the expiry DEREGISTER reach the registered controller no sooner than the default after the command and at most 20 ms later, the registration kept alive meanwhile by answering the monitor's probes | TD1, TD2 |
 | every transaction presents its F03.7 class and key: 33 AECP rows (all nine classes, the GETs' descriptor keys, the no-descriptor key of READ_DESCRIPTOR, GET_DYNAMIC_INFO, MVU and of frames the engine drops) and 6 ACMP rows | HZ1 |
 | CFG_BARRIER drains an in-flight ACMP step before executing and blocks a later ACMP head behind it | HZ2 |
 | a pending barrier is never starved by the round-robin (the wedge the fix removes) | HZ3 |
@@ -265,7 +266,9 @@ its watchdog.
 Section TB runs in the suite's fifth build (`make budget`), whose timebase is the
 nominal clock's own (1 ms = 1,000 clocks), so the deadline never cuts a measurement;
 it prints the latency histogram ([08 §4](08_timing.md#4-deadline-budgets) records
-it).
+it). Section TD runs in the sixth build (`make timer-defaults`), whose wrap keeps
+the top's two timeouts, on the first build's timebase (1 ms = 100 clocks): it
+waits out the real 300,000 ms, 30 million clocks.
 
 Section HZ (`--hazards-only`) holds an ACMP transaction in flight by stalling the
 MAC until four answers fill the standard TX slots, so the next ACMP command is

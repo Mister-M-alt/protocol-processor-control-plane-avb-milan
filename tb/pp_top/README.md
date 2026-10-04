@@ -17,9 +17,9 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make`: exit 0 = PASS. It builds the bench five times (sections DV, ID, AX and
-TB): each executable prints its own build's tally, and the last line sums the
-five into the one canonical tally.
+`make`: exit 0 = PASS. It builds the bench six times (sections DV, ID, AX, TB
+and TD): each executable prints its own build's tally, and the last line sums
+the six into the one canonical tally.
 
 ## What it proves
 
@@ -890,7 +890,26 @@ five into the one canonical tally.
   **TB5** GET_RX_STATE and GET_TX_STATE idle, and beside the oversize
   READ_DESCRIPTOR and a fan-out: unchanged, and never later than idle by more
   than one frame on the wire. The histogram it prints is recorded in 08 §4.
-  `make budget` runs this build alone; `make` runs all five.
+  `make budget` runs this build alone; `make` runs all six.
+- **TD** **T-LOCK-UNLOCK and T-NOTIF-TIMELIMITED at the top's own defaults**
+  (issue #81 acceptance 4; IEEE 1722.1-2021 §7.4.2 and §7.4.37.2, Milan v1.2
+  §5.4.2.2), on a fresh processor of its own in the sixth build. Every other
+  build overrides both timeouts to 400 ms in the wrap, so U5 and L6d grade the
+  mechanism, never the 60,000 and 300,000 ms defaults. The sixth build drops the
+  two overrides and keeps the first build's prescaler (1 ms = 100 clocks), so
+  the real counts elapse: 30 million clocks for the registration. A controller
+  registers TIME_LIMITED and another locks the entity; the registered one
+  answers every CONTROLLER_AVAILABLE the monitor sends it (Milan §5.4.5.3), so
+  only the timer under test can end its registration. **TD1** the auto-unlock
+  notification (LOCK_ENTITY, u = 1, locked_id 0, byte-exact but for the entry's
+  sequence_id) reaches the registered controller no sooner than 60,000 ms after
+  the LOCK_ENTITY was fed and at most 20 ms later. **TD2** the expiry
+  DEREGISTER (u = 1, byte-exact likewise) reaches it no sooner than 300,000 ms
+  after the REGISTER and at most 20 ms later. The lower bound is exact, since
+  the timer is armed from the ms its program runs in; the 20 ms covers the run
+  to the arm, the sweep and the notification's build and serialization. The
+  section prints both elapsed times. `make timer-defaults` runs this build
+  alone.
 - **HZ** **the nine F03.7 hazard classes at the scoreboard** (issue #84, GAP-10;
   03 §6), on a fresh processor of its own. The expectation is an independent
   transcription of F03.7 and F06.14: the class in F03.7 row order and the key a
@@ -1765,7 +1784,8 @@ A build that only runs the product value cannot see that binding. The child's
 own default is also 2, so a dropped or misbound connection produces exactly the
 frames the default build expects (M25: 0 failures there). The Makefile therefore
 builds the bench a second time; the third build is section ID's identify build,
-the fourth section AX's line build, and the fifth section TB's timebase:
+the fourth section AX's line build, the fifth section TB's timebase, and the
+sixth section TD's timer defaults:
 
 | Build | Override | Runs | Expects |
 |---|---|---|---|
@@ -1774,6 +1794,7 @@ the fourth section AX's line build, and the fifth section TB's timebase:
 | `obj_idn/Vpp_top_idn` | `EN_IDENTIFY_NOTIF_P = 1` (`PP_TOP_EN_IDENT`) | ID alone | 2 |
 | `obj_line/Vpp_top_line` | `DESC_LINE_BYTES_P = 584` (`LINE_FIXTURE`) | AX alone | 2 |
 | `obj_tim/Vpp_top_tim` | the wrap's timebase at the nominal clock's rate (`PP_TOP_TIM_REAL`: 1 ms = 1,000 clocks) | TB alone (`make budget`) | the product default |
+| `obj_tdf/Vpp_top_tdf` | the wrap's two 400 ms timeout overrides dropped (`PP_TOP_TIM_DEFAULTS`), so the top's own `REG_TL_TIMEOUT_MS_P` and `LOCK_TIMEOUT_MS_P` stand | TD alone (`make timer-defaults`) | the product default |
 
 The fixture is a verification value, not a product profile: Milan §4.2.7.2.1
 fixes a shipping build at 2. It is chosen so that each plausible fault gives a
@@ -2096,6 +2117,7 @@ the count of unsolicited frames that controller was sent before (Milan §5.4.5.1
 | `obj_idn/Vpp_top_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`PP_TOP_EN_IDENT`) | ID alone |
 | `obj_line/Vpp_top_line` | `DESC_LINE_BYTES_P` (section AX) | AX alone |
 | `obj_tim/Vpp_top_tim` | the wrap's timebase at the nominal clock's rate (section TB) | TB alone |
+| `obj_tdf/Vpp_top_tdf` | the wrap's two timeout overrides dropped (section TD) | TD alone |
 
 The wrap adds `identify_button_i` and sets the parameter only under
 `PP_TOP_EN_IDENT`, so the first build grades the top's own default.
