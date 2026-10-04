@@ -233,9 +233,9 @@ production source. A positive control of every (suite, target) pair runs
 first, each in its own copy. `MUTANT_OUTPUT` (default `/tmp/adp-mutants`)
 receives one log per arm. `python3 mutants.py --output DIR [--only a,b]
 [--jobs N]` runs it directly: `--jobs N` (default 4, the meaning and default of
-`tb/pp_top/d3_mutants.py`; `make mutants` runs the default) builds and runs up
-to N copies at once, and the results are printed in the table's order whatever
-order they finish in.
+`tb/pp_top/d3_mutants.py`; `make mutants JOBS=N` passes it, default 4) builds
+and runs up to N copies at once, and the results are printed in the table's
+order whatever order they finish in.
 Counts below were taken on 2026-09-29 with Verilator 5.050, 30 of 30 arms killed.
 Measured 2026-10-02 at `85da751` with Verilator 5.050, each run pinned to 4 of
 the host's 16 CPUs: `--jobs 1` took 502 s and `--jobs 8` 333 s. Every control
