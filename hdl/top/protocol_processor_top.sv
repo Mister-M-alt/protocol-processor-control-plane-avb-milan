@@ -2999,10 +2999,12 @@ module protocol_processor_top
   // write port and one read port per face, so eight rings rather than one
   // array: one memory cannot take eight pushes in a cycle. The entries are
   // not reset; the count is, and an entry is read only after a push wrote
-  // it. The shift queue this replaces held 1,153 flops at the 1x1 shape and
-  // a LUT per flop to shift them. `mem_r` is unpacked, so its indexed write
-  // is a memory port, not the dynamic part-write into a packed vector that
-  // yosys lowers as a barrel shift over every entry.
+  // it. The shift queue this replaces held 1,152 flops at the 1x1 shape at
+  // processor 5c71928a, this change's base (1,153 at 631eeb34, the figure of
+  // milan-fpga's #234 area baseline), and a LUT per flop to shift them.
+  // `mem_r` is unpacked, so its indexed write is a memory port, not the
+  // dynamic part-write into a packed vector that yosys lowers as a barrel
+  // shift over every entry.
   for (genvar g = 0; g < ARM_N_C; g++) begin : g_armq
     (* ram_style = "distributed" *)
     logic [ARM_W_C-1:0] mem_r [0:3];
