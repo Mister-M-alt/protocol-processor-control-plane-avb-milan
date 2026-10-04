@@ -13162,7 +13162,9 @@ struct HazardPhase {
         {"ACQUIRE_ENTITY", 0, 0x0000, std::vector<uint8_t>(16, 0), EID, RO,
          key(0x0000, 0)},
         {"READ_DESCRIPTOR CLOCK_DOMAIN 0", 0, 0x0004, rd, EID, RO, NONE},
-        {"GET_DYNAMIC_INFO", 0, 0x004B, gdi, EID, RO, NONE},
+        //! the one read outside RO_SNAPSHOT: MAP_CFG's class-wide cross-lock
+        //! holds the batch against every stream step (03 §6, R419-2 F5)
+        {"GET_DYNAMIC_INFO", 0, 0x004B, gdi, EID, MAP, NONE},
         {"MVU GET_MILAN_INFO", 6, 0, mvu, EID, RO, NONE},
         {"an AEM_RESPONSE arriving as input", 1, 0x0006,
          std::vector<uint8_t>(4, 0), EID, RO, NONE},
@@ -13514,7 +13516,8 @@ struct HazardPhase {
   //! back. REGISTRY_OP's key, the registry's, is one no ACMP transaction
   //! presents, so it is admitted beside a held ACMP read too: it is the one
   //! class with no reachable conflict at this top (HZ9 to HZ12 grade the
-  //! other three against an ACMP read of their key)
+  //! other three against an ACMP read of their key). Its one exception is
+  //! graded after HZ12 (`hz8_a_batch_naming_no_stream_waits_too`)
   void hz8_the_other_classes_run_beside_a_stream_step() {
     std::vector<uint8_t> name = ti(0x0024, 0, 72);
     putbe(&name[6], CFGIX, 2);
@@ -13697,6 +13700,48 @@ struct HazardPhase {
     }
   }
 
+  //! HZ8's one exception, the accepted over-serialization (#84, R419-2 F5):
+  //! a GET_DYNAMIC_INFO takes MAP_CFG's class-wide cross-lock, because its
+  //! records' descriptors are not in the classifier's operands (HZ13), so one
+  //! that names no stream (one GET_CONFIGURATION record) waits for a held
+  //! UNBIND_RX too. It runs after HZ12, so every earlier arm keeps its clock
+  //! (HZ9's name saves land where the campaign's records expect them)
+  void hz8_a_batch_naming_no_stream_waits_too() {
+    std::vector<uint8_t> gdi(8, 0);
+    putbe(&gdi[6], 0x0007, 2);                 // one GET_CONFIGURATION record
+    (void)beside_or_after(8, 1, 0x004B, gdi, false,
+                          "HZ8 GET_DYNAMIC_INFO naming no stream (MAP_CFG's "
+                          "cross-lock, the accepted over-serialization)");
+  }
+
+  //! HZ13 (#84, R419-2 F5; F03.7 RO_SNAPSHOT "blocked only vs in-flight
+  //! write on the same key"; IEEE 1722.1-2021 §7.4.76.1 handles each record
+  //! "as if it were an independent command"): a GET_DYNAMIC_INFO carrying a
+  //! GET_STREAM_INFO record of STREAM_INPUT 1 reads sink 1's listener
+  //! binding record, so it waits for a held UNBIND_RX of sink 1, as HZ6's
+  //! stand-alone GET_STREAM_INFO does (R419-2's G0, graded on the batch);
+  //! held itself, it holds back an UNBIND_RX of sink 1; and it runs beside a
+  //! held GET_RX_STATE of sink 1, two reads
+  void hz13_a_batch_naming_a_sink_waits_for_its_listener_step() {
+    std::vector<uint8_t> gdi(8, 0);
+    putbe(&gdi[0], 4, 2);                      // the record's data: 4 bytes
+    putbe(&gdi[6], 0x000F, 2);                 // GET_STREAM_INFO
+    const auto si1 = ti(DT_SI, 1);
+    gdi.insert(gdi.end(), si1.begin(), si1.end());
+    (void)beside_or_after(8, 1, 0x004B, gdi, false,
+                          "HZ13a GET_DYNAMIC_INFO with a GET_STREAM_INFO "
+                          "record of STREAM_INPUT 1 vs a held UNBIND_RX of "
+                          "sink 1");
+    (void)beside_or_after(10, 1, 0x004B, gdi, true,
+                          "HZ13b GET_DYNAMIC_INFO with a GET_STREAM_INFO "
+                          "record of STREAM_INPUT 1 vs a held GET_RX_STATE of "
+                          "sink 1 (two reads)");
+    (void)acmp_beside_or_after(0x004B, gdi, 8, 1, false,
+                               "HZ13c an UNBIND_RX of sink 1 vs a held "
+                               "GET_DYNAMIC_INFO with a GET_STREAM_INFO record "
+                               "of STREAM_INPUT 1");
+  }
+
   void run() {
     boot();
     hz1_every_transaction_presents_its_class_and_key();
@@ -13709,6 +13754,8 @@ struct HazardPhase {
     hz10_stream_steps_and_reads_on_both_engines_keys();
     hz11_the_global_classes_and_the_map_cross_lock_vs_the_talker();
     hz12_a_stream_named_by_another_class_conflicts_with_its_read();
+    hz8_a_batch_naming_no_stream_waits_too();
+    hz13_a_batch_naming_a_sink_waits_for_its_listener_step();
   }
 };
 

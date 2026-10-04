@@ -920,7 +920,7 @@ the six into the one canonical tally.
   (`dbg_sb_barrier_o`). **HZ1** 33 AECP transactions (every class, the GETs'
   descriptor keys, READ_DESCRIPTOR, GET_DYNAMIC_INFO, MVU, an AECP response as
   input and a command for another entity_id) and 6 ACMP ones each present their
-  class and key. An ACMP transaction is held in flight by stalling the MAC until
+  class and key; GET_DYNAMIC_INFO presents MAP_CFG with the no-descriptor key. An ACMP transaction is held in flight by stalling the MAC until
   four GET_RX_STATE answers fill the standard TX slots, so the next ACMP command
   is admitted and keeps its key until the MAC restarts. The same stall holds an
   AECP command, whose response waits for a standard slot: the talker returns its
@@ -942,7 +942,10 @@ the six into the one canonical tally.
   **HZ8** SET_SAMPLING_RATE, SET_NAME, REGISTER_UNSOLICITED_NOTIFICATION,
   SET_CONTROL and READ_DESCRIPTOR each run beside a held stream step, and the
   REGISTER beside a held GET_RX_STATE: REGISTRY_OP is the one class with no
-  reachable conflict at this top. **HZ9** (NAME_WR) a SET_NAME on STREAM_INPUT 1
+  reachable conflict at this top. The one accepted over-serialization: a
+  GET_DYNAMIC_INFO naming no stream (one GET_CONFIGURATION record) waits for the
+  held stream step, because the batch takes MAP_CFG's class-wide cross-lock.
+  That check runs after HZ12, so every earlier arm keeps its clock. **HZ9** (NAME_WR) a SET_NAME on STREAM_INPUT 1
   waits for a held GET_RX_STATE of sink 1, then answers SUCCESS and GET_NAME
   reads the name back; on STREAM_INPUT 0 it runs beside that read, and on
   STREAM_INPUT 1 beside an UNBIND_RX of sink 1; held, a SET_NAME on
@@ -958,7 +961,11 @@ the six into the one canonical tally.
   descriptor (which none may legally name) each wait for a held GET_RX_STATE of
   sink 1 when they name STREAM_INPUT 1 and are then refused NOT_SUPPORTED, run
   beside it when they name STREAM_INPUT 0, and, held naming STREAM_OUTPUT 1,
-  hold back a GET_TX_STATE of source 1. `make hazards` runs this section alone;
+  hold back a GET_TX_STATE of source 1. **HZ13** (R419-2 F5) a
+  GET_DYNAMIC_INFO carrying a GET_STREAM_INFO record of STREAM_INPUT 1 waits
+  for a held UNBIND_RX of sink 1, as HZ6's stand-alone GET_STREAM_INFO does;
+  held itself, it holds back an UNBIND_RX of sink 1; and it runs beside a held
+  GET_RX_STATE of sink 1, two reads. `make hazards` runs this section alone;
   the default run includes it.
 
 ## Snapshot window map (side port 0x20000, implemented by the top)

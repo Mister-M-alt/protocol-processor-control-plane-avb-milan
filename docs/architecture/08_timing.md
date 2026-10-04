@@ -195,9 +195,9 @@ recorded as a finding, not changed here.
 conflict with. One that conflicts with an AECP hold under F03.7 waits at
 admission for that hold to end ([03 §6](03_packet_engine.md)). The holds it can
 meet are a SET_CONFIGURATION barrier, a LOCK_ENTITY against a stream step, an
-ADD/REMOVE_AUDIO_MAPPINGS against any stream step (the `MAP_CFG` class-wide
-cross-lock), and an AECP command on the same stream key. The AECP command
-bounds each hold in one of two ways:
+ADD/REMOVE_AUDIO_MAPPINGS or a GET_DYNAMIC_INFO against any stream step (the
+`MAP_CFG` class-wide cross-lock), and an AECP command on the same stream key.
+The AECP command bounds each hold in one of two ways:
 
 - A command the deadline preempts holds until its forced response at the
   latest: up to `T-BUDGET-AECP-WC` from its reception, plus the op in progress

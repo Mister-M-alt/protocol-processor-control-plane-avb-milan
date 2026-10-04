@@ -261,14 +261,21 @@ descriptor sits at @28, outside the record; GET_DYNAMIC_INFO, which reads severa
 That key costs READ_DESCRIPTOR nothing, because no ACMP step writes what it
 reads: a descriptor-image field, or the current sampling rate, clock source or
 stream format it overlays on one (issue #82), rows only the AECP engine writes.
-For GET_DYNAMIC_INFO it is a known limitation. IEEE
-1722.1-2021 §7.4.76.1 handles each record as if it were an independent command,
-but a GET_STREAM_INFO record of STREAM_INPUT k reads sink k's listener binding
-record (Milan §5.4.2.10's probing and ACMP status), which ACMP listener steps
-write, and the batch is not serialized against them. A stand-alone
-GET_STREAM_INFO of STREAM_INPUT 1 waits for a held UNBIND_RX of sink 1 (HZ6). A
-GET_DYNAMIC_INFO carrying the same record is admitted beside it. Serializing a
-batch against the streams its records name is left to a later issue #84 item.
+GET_DYNAMIC_INFO would lose a conflict by it. IEEE 1722.1-2021 §7.4.76.1 handles
+each record as if it were an independent command, and a GET_STREAM_INFO record
+of STREAM_INPUT k reads sink k's listener binding record (Milan §5.4.2.10's
+probing and ACMP status), which ACMP listener steps write. The classifier
+cannot key the batch by its records: their descriptors lie past the operands
+it sees (@24 to @31). So a GET_DYNAMIC_INFO presents `MAP_CFG` with the
+no-descriptor key. The class-wide cross-lock holds it against every in-flight
+`STREAM_CFG` step, the listener's included, as a stand-alone GET_STREAM_INFO
+of STREAM_INPUT 1 waits for a held UNBIND_RX of sink 1 (HZ6). A batch carrying
+that record waits too, and holds back that UNBIND_RX when it is held itself
+(HZ13). It is the one read outside `RO_SNAPSHOT`, and it over-serializes: a
+batch that names no stream waits for any stream step as well (HZ8), and so
+does an ACMP stream step for the batch. Its key is one no ACMP transaction
+presents, so it still runs beside every ACMP read (HZ13), and the
+single-issue AECP engine never holds a second `MAP_CFG` beside it.
 `CFG_BARRIER` and `LOCK_OP` are global. A frame the engine drops (an AECP
 response as input, a command for another entity_id), MVU and ADDRESS_ACCESS are
 `RO_SNAPSHOT` with that no-descriptor key, so they never drain the table. The
