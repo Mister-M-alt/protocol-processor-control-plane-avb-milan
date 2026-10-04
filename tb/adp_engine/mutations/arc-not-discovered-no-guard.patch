@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -347,7 +347,7 @@
+       if (rxq_msg_r == ADP_MSG_AVAILABLE_C) begin
+         if (!disc_st_r[sink_r]) begin
+           // TK_NOT_DISCOVERED: accept only on gm+domain match (F04.3)
+-          if (gm_dom_ok_w) begin
++          if (1'b1) begin
+             ev_disc_w   = 1'b1;
+             st_set_w    = 1'b1;
+             rec_wr_en_w = 1'b1;
