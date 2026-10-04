@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: CERN-OHL-W-2.0
 # protocol_processor_top end-to-end suite — exit 0 = PASS.
 #
-# Five builds of one bench. The first overrides nothing and runs every
+# Six builds of one bench. The first overrides nothing and runs every
 # section; the second overrides P-SRP-DOM-DEF-VID with SRP_VID_FIXTURE and
 # runs section DV alone (README). The SRP engine's own default is 2 as well,
 # so only a value the child cannot produce shows a dropped or misbound
@@ -10,8 +10,9 @@
 # fourth overrides DESC_LINE_BYTES_P with LINE_FIXTURE and runs section AX
 # alone, so its response writes are bounded by a reservation that is not the
 # default's. The fifth runs the timebase at the nominal clock's rate and
-# section TB alone. Each binary prints its own build's count; the last line is
-# the one canonical tally, summed over the five builds.
+# section TB alone. The sixth keeps the top's registration and lock timeouts
+# and runs section TD alone. Each binary prints its own build's count; the
+# last line is the one canonical tally, summed over the six builds.
 VERILATOR ?= verilator
 HDL        = ../../hdl
 TOP        = pp_top_wrap
@@ -165,12 +166,13 @@ run: fixture-guards line-guards ltn_rom.hex ucode.hex
 	$(VERILATOR) $(VFLAGS) $(LINE_VFLAGS) $(SRCS) $(CPP) -o Vpp_top_line
 	./obj_line/Vpp_top_line
 	$(MAKE) budget
-	@awk '{c += $$1; f += $$2} END {if (NR != 5) {print "FAIL: " NR " build tallies, expected 5"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
+	$(MAKE) timer-defaults
+	@awk '{c += $$1; f += $$2} END {if (NR != 6) {print "FAIL: " NR " build tallies, expected 6"; exit 1} printf "%d checks: %d PASS, %d FAIL\n", c, c - f, f}' \
 	    obj_dir/build_tally.txt
 
 # The fifth build (section TB): the wrap's timebase at the nominal clock's
 # own rate, 1 ms = 1,000 clocks, so no budget measurement is cut by the
-# compressed AECP deadline. Its tally lands beside the other four.
+# compressed AECP deadline. Its tally lands beside the others.
 budget-build: ltn_rom.hex ucode.hex
 	$(VERILATOR) $(VFLAGS) "+define+PP_TOP_TIM_REAL" \
 	    -CFLAGS "-DPP_TOP_TIM_REAL -Wall -Wextra" \
@@ -179,6 +181,19 @@ budget-build: ltn_rom.hex ucode.hex
 budget: budget-build
 	@mkdir -p obj_dir
 	./obj_tim/Vpp_top_tim
+
+# The sixth build (section TD): the wrap's two 400 ms timeout overrides
+# dropped, so the top's own T-NOTIF-TIMELIMITED (300,000 ms) and
+# T-LOCK-UNLOCK (60,000 ms) elapse on the first build's 1 ms = 100 clk
+# timebase. Its tally lands beside the other five.
+timer-defaults-build: ltn_rom.hex ucode.hex
+	$(VERILATOR) $(VFLAGS) "+define+PP_TOP_TIM_DEFAULTS" \
+	    -CFLAGS "-DPP_TOP_TIM_DEFAULTS -Wall -Wextra" \
+	    --Mdir obj_tdf $(SRCS) $(CPP) -o Vpp_top_tdf
+
+timer-defaults: timer-defaults-build
+	@mkdir -p obj_dir
+	./obj_tdf/Vpp_top_tdf
 
 # Compile the actual bench with four fixture settings in a temporary model dir.
 # No simulation or source mutation; bad fixtures must fail for the named guards.
@@ -201,9 +216,10 @@ ucode.hex: $(HDL)/aecp/ucode/gen_ucode.py
 	python3 $< -o $@
 
 clean:
-	rm -rf obj_dir obj_vid obj_idn obj_line obj_tim ltn_rom.hex ucode.hex
+	rm -rf obj_dir obj_vid obj_idn obj_line obj_tim obj_tdf ltn_rom.hex ucode.hex
 
 .PHONY: name-writes run gsi-build gsi-internal maap-internal adp-config aecp-dispatch \
         line-build aecp-line aecp-dispatch-mutants identify-build identify \
         deadline d3 volatile cuts hazards counters budget budget-build \
+        timer-defaults timer-defaults-build \
         aecp-mutants ctr-mutants fixture-guards fixture-guards-test line-guards clean
