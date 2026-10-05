@@ -266,7 +266,7 @@ marked **n/i today** is not dispatched by the current engine and returns the
 | 0x002B | GET_AUDIO_MAP | shall (dynamic ports) | §6.5 | RO | — | **no** | **yes** | — | 32 + 8·N |
 | 0x002C | ADD_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | success with state change, requester excluded | mirrors request |
 | 0x002D | REMOVE_AUDIO_MAPPINGS | shall (dynamic ports) | §6.5 | MAP_CFG | yes | - | **yes** | success with state change, requester excluded | mirrors request |
-| 0x004B | GET_DYNAMIC_INFO | shall | two-pass iterator §6.7 | RO per record | - | exactly the 13 fixed getters | - | - | cdl at most 524 |
+| 0x004B | GET_DYNAMIC_INFO | shall | two-pass iterator §6.7 | MAP_CFG at admission, no-descriptor key (assigned by the top's classifier, 03 §6); records RO | - | exactly the 13 fixed getters | - | - | cdl at most 524 |
 | MVU 0x0000 | GET_MILAN_INFO | shall | §6.9 | RO | — | — | — | — | 44 B |
 | MVU 0x0001/0x0002 | SET/GET_SYSTEM_UNIQUE_ID | recommended, **waived for October; not implemented** | owner decision and Milan §5.4.4.2/.3: §6.9 | n/i | - | - | - | - | command-length echo, status 1 `NOT_IMPLEMENTED`; SET/GET cdl 28/20 |
 | MVU 0x0003/0x0004 | SET/GET_MEDIA_CLOCK_REFERENCE_INFO | recommended, **waived for October; not implemented** | owner decision and Milan §5.4.4.4/.5, §7.6: §6.9 | n/i | - | - | - | - | command-length echo, status 1 `NOT_IMPLEMENTED`; SET/GET cdl 92/20 |
