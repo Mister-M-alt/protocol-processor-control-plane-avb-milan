@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: CERN-OHL-W-2.0
 // KL_pp_tx_slots suite — independent expectations, never DUT logic.
 //
-// Proves the 03 §7/§8 TX slot pool contract, F01.5 "P-TX 4x576 + 1600":
+// Proves the 03 §7/§8 TX slot pool contract, F01.5 P-TX-STD-SLOTS x 576 +
+// P-TX-OVERSIZE-BYTES (4 x 576 + 1600):
 // plain allocation walks slots 0..3 lowest-first and NEVER returns the
 // oversize slot; an oversize allocation (the Δ8 READ_DESCRIPTOR class,
 // Milan §5.4.1) is granted slot 4 only, and waits for slot 4 even while
@@ -25,7 +26,7 @@
 #include "verilated.h"
 #include "../common/verilator_harness.hpp"
 
-// ---- pool geometry, F01.5 "P-TX 4x576 + 1600" ------------------------------
+// ---- pool geometry, F01.5 P-TX-STD-SLOTS and P-TX-OVERSIZE-BYTES -----------
 constexpr int kSlots         = 5;     // slots 0..3 plain, slot 4 oversize
 constexpr int kPlainSlots    = 4;     // the slots a plain allocation may take
 constexpr int kOversizeSlot  = 4;     // the only slot an oversize alloc gets

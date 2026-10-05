@@ -4,7 +4,7 @@
 Proves the TX slot pool (`hdl/packet_engine/KL_pp_tx_slots.sv`) implements the
 [03 §7](../../docs/architecture/03_packet_engine.md) response-buffer and
 [03 §8](../../docs/architecture/03_packet_engine.md) serialize contract at the
-F01.5 shape "P-TX 4x576 + 1600": `make` = build + run, exit 0 = PASS, 95 checks.
+F01.5 shape `P-TX-STD-SLOTS` × 576 + `P-TX-OVERSIZE-BYTES` (4 × 576 + 1600): `make` = build + run, exit 0 = PASS, 95 checks.
 
 The C++ harness is an independent contract model, never DUT logic: it keeps its
 own slot lifecycle (FREE/ALLOC/READY/STREAM), its own per-slot byte images, and

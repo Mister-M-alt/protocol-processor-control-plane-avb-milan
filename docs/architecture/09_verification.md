@@ -109,7 +109,9 @@ against at least two independent controller implementations.
 
 ## 7. Documentation-sync regression
 
-`make check` is the CI gate, and runs today:
+`make check` is the documentation gate, and the CI `docs-gates` job
+([`hdl.yml`](../../.github/workflows/hdl.yml)) runs exactly that target, with the
+`wavedrom` package and Mermaid CLI 11.16.0 installed first. It runs today:
 
 | Target | Script | Asserts |
 |---|---|---|
@@ -119,6 +121,8 @@ against at least two independent controller implementations.
 | `matrix` | `scripts/check-matrix.py` | REQ-IDs unique and fully populated; `Ver` values ∈ the §3 vocabulary; every GAP defined ↔ dispositioned |
 | `modmatrix` | `scripts/gen_matrix.py --check` | `docs/traceability/MODULE_MATRIX.md` is not stale, and no module is without a suite (budget zero) |
 | `params` | `scripts/check-integrator-params.py` | the guide section 2 table and diagram 21's `integration-parameters` group each equal the overridable parameter set of `protocol_processor_top`, with no missing, extra or duplicate names; empty or unparseable inputs fail |
+| `ids` | `scripts/check-ids.py` (`--selftest` first) | every `P-` or `T-` ID used in a file under `docs/`, `hdl/` or `tb/` has its row in [F01.5](01_overview.md#fig-01-params) or [F08.1](08_timing.md#fig-08-constants); a family (`T-MRP-*`) needs one row in it, each member of a braced list (`T-NVM-{RS-DEADLINE, RS-AGGREGATE}`) its own row, and an ID with an optional segment (`T-ADP-DELAY(-START)`) a row for both; braces or `(-` holding anything but ID segments fail; an ID broken at a line end and a sibling written as its last segment (`T-BUDGET-AECP-TYP / -WC`) are read whole, and `-1` reads as minus one only if the base has a row; any other text after a hyphen is prose (`T-MRP-JOIN-driven` uses `T-MRP-JOIN`); an unreadable, empty or duplicated master table fails. The self-test plants a stray in each scanned tree, a stray in each of those forms (including a missing minus-one base, a line-broken optional member and an optional member after a line-broken ID) and each master-table fault, and must see each caught with rc 1 and its diagnostic token |
+| `figures` | `scripts/check-figures.py` (`--selftest` first) | every file under `docs/diagrams/` is a draw.io source with its export, a WaveDrom render whose block exists, or a hand-authored SVG listed in `docs/diagrams/README.md` that is well-formed, has an SVG-namespace `<svg>` root and a `viewBox`, carries no `<image>`, `<feImage>` or `<foreignObject>`, and is linked from a page ([docs/README §3](../README.md#3-figures-one-source-one-home)); any other file fails, and so does a missing or empty hand-authored inventory. The self-test plants each fault and must see it caught |
 | `stale` | `Makefile` | each committed `.svg` is newer than its `.drawio` source |
 
 ## 8. The suites that exist today
@@ -150,6 +154,12 @@ red. That table is the evidence a suite has teeth.
 Neither `run_suites.sh` nor `lint_hdl.sh` is wired into `make check`, which is the
 documentation gate only; they are run separately before a submodule pin moves. See the
 [HDL engineer guide](../guides/hdl-engineer.md#6-running-the-testbenches).
+
+Of the single-source rules of [docs/README §2](../README.md#2-identifier-registries),
+`make check` enforces the ID half and nothing more: `ids` (§7) fails any `P-` or `T-` ID
+under `docs/`, `hdl/` or `tb/` without its F01.5 or F08.1 row, and `params` holds the
+integrator guide's parameter inventory to the top. No gate reads values; the value scan
+is the single-source scan still to add at the end of this section.
 
 ### 8.1 Dynamic-state overlay: the per-field A/B evidence map (issue #72)
 

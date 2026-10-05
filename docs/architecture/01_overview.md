@@ -73,9 +73,14 @@ that AECP commands report is cataloged once in
 
 ![F01.2 Top level](../diagrams/01-top-level.svg)
 
+> The two MAC async FIFOs the export draws in the MAC clock domains are the integrator's,
+> outside `protocol_processor_top`, whose MAC faces are byte streams in the core clock
+> domain ([02 §2](02_interfaces.md#2-clocking-reset-cdc) rule 2,
+> [02 §3](02_interfaces.md#sec-02-class-a)).
+
 | Block | Responsibility | Owning doc |
 |---|---|---|
-| RX interface + filter/parser/validator | CDC in, DA/EtherType/subtype demux, header + length validation | [03 §3](03_packet_engine.md) |
+| RX interface + filter/parser/validator | the RX byte face (no CDC inside: the frame-atomic MAC FIFO is the integrator's, [02 §2](02_interfaces.md#2-clocking-reset-cdc) rule 2), DA/EtherType/subtype demux, header + length validation | [03 §3](03_packet_engine.md) |
 | RX slot manager + transaction normalizer | zero-copy payload slots; normalized transaction records | [03 §3–§4](03_packet_engine.md) |
 | Scoreboard | hazard classes / serialization keys; cross-engine interlock | [03 §6](03_packet_engine.md) |
 | ADP engine | advertise SM ×interface; talker-discovery SM ×bound sink; available_index | [04](04_adp_engine.md) |
@@ -175,6 +180,8 @@ values; other documents reference `P-…` IDs.
 | P-TRACE-RING | 256 × 128 | trace-ring records × record bits ([02 §7](02_interfaces.md) window) | trace ring |
 | P-MRPDU-QUEUE-BYTES | 2048 | SRP MRPDU RX queue: one max-size frame + headroom ([10 §4](10_srp_engine.md)) | SRP engine |
 | P-SRP-DOM-DEF-VID | 2 | 16-bit; =2 in every product build (Milan §4.2.7.2.1). Any other value is a verification fixture proving the top-level binding, not a product profile | SRP Domain FSM default VID ([F10.2](10_srp_engine.md#fig-10-domsm)): declared at startup and LINK_UP, restored at LINK_DOWN; a received Class A Domain is still adopted over it |
+| P-MAAP-ACCEPT-CYC | 1024 core clocks (10.24 µs at 100 MHz) | a module parameter of `KL_acmp_talker` (`MAAP_ACCEPT_CYC_P`), not a top parameter. Above the tens of clocks a ready handshake into an adjacent fabric block takes, so a live allocator is never cut short; far inside `T-BUDGET-ACMP-RESP`, because it is the longest a talker command waits behind an allocation request | the `maap` request handshake: a request never accepted is abandoned as a refused `ALLOC_DA` ([02 §4.2](02_interfaces.md#42-maap-address-allocation)) |
+| P-MAAP-RSP-MS | 10,000 ms (10 s) | a module parameter of `KL_acmp_talker` (`MAAP_RSP_MS_P`), not a top parameter, counted on the 1 ms timebase. At least a clean IEEE 1722-2016 Annex B claim walk plus four conflict restarts: each walk acquires after three `T-MAAP-PROBE` intervals (Table B.8, B.3.4.2, B.3.5.3); below `T-SRP-DAFRESH`, so a grant still meets a fresh demand | the `maap` allocation itself: an accepted request never answered is abandoned, which frees the single global allocation tracker ([02 §4.2](02_interfaces.md#42-maap-address-allocation)) |
 | P-CLK-HZ | 100 MHz | any; prescaler retuned | timebase |
 | P-NVM-RS-TMO-CYC | ceil(P-CLK-HZ / 50) (20 ms) | above the slowest single record read the NVM device face can take and the image walk (`NVM_RS_TMO_CYC_P`); DR3a **ratified** 20 ms after the processor lane measured it | every restore wait of both walks, `T-NVM-RS-DEADLINE` ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)) |
 | P-NVM-RS-AGG-CYC | P-CLK-HZ (1,000 ms) | DR3a **ratified** as an enforced bound (`NVM_RS_AGG_CYC_P`): clocks from the accepted restore start (`restore_go_i`) to the D3 terminal, the binding walk, both passes and the roll-back included; 100,000,000 at 100 MHz, 50,000,000 at the product's 50 MHz | the whole restore, `T-NVM-RS-AGGREGATE`: at the bound the phase the restore is in takes its per-wait deadline's path, and a provable image is never closed ([08 §2](08_timing.md#sec-08-nvm)) |
@@ -190,7 +197,7 @@ values; other documents reference `P-…` IDs.
 | P-EN-IDENTIFY-NOTIFICATION | 0 | "should" (Milan §5.4.5.4) for a PAAD that gives its user a way to report itself; 1 only with a debounced `identify_button_i`. 0 builds no sequencer and never reads the pin (manager ruling, processor #80) | identify sequencer in `KL_aecp_notify` (`EN_IDENTIFY_NOTIF_P`), F06.16 |
 | P-EN-ADDRESS-ACCESS / P-EN-FIRMWARE-ASSIST | 0 / 0 | IEEE-optional ([GAP-13](../00_MILAN_COMPLIANCE_REVIEW.md#gap-13)) | side-port features |
 | P-EN-SRP-ENGINE | 1 | 1 = internal SRP engine ([10](10_srp_engine.md)) serves the `srp` contract; 0 = external stack | SRP engine, MRP timers, V9 filter |
-| P-EN-PLAIN-IEEE-PROFILE | 0 | selects IEEE ROM columns (below) | profiles |
+| P-EN-PLAIN-IEEE-PROFILE | 0 | **no RTL consumer** — no RTL parameter reads it, and the one listener ROM column built is Milan's (`hdl/acmp/rom/gen_ltn_rom.py`: the plain-IEEE column is absent, a product decision); a plain-IEEE build would select the IEEE ROM columns (below) | profiles |
 | P-EN-REDUNDANCY | 0 | reserved seam — must stay 0 (this spec) | GET_MILAN_INFO flag |
 
 **Profile mechanism** — a profile is a *selection of ROM columns*, not scattered
