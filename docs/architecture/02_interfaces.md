@@ -11,7 +11,7 @@ documents reference the instance names and the dictionary
 
 | Class | Kind | Instances | Template |
 |---|---|---|---|
-| **A** | Packet streaming (valid/ready, sof/eof) | `mac_rx`, `mac_tx`; reused by trace port, firmware sink | [F02.3](#fig-02-rxwave)/[F02.4](#fig-02-txwave) |
+| **A** | Packet streaming (byte-wide frames: valid and last; TX adds sof and a ready) | `mac_rx`, `mac_tx` | [F02.3](#fig-02-rxwave)/[F02.4](#fig-02-txwave) |
 | **B** | Request/response engine API (single outstanding) | `srp` (the `svc_*` face), `maap` | [F02.5](#fig-02-apiwave) |
 | **C** | Event pulse with ack (sticky until acked) | the event router's internal events and timer expiries; at the top only the `maap` conflict pair | [F02.6](#fig-02-evtwave) |
 | **D** | Level status (synchronized, sampled) | status dictionary | [F02.10](#fig-02-statusdict) |
@@ -54,8 +54,8 @@ flowchart LR
 
 | Instance | Class | Dir | Clock domain | Consumers | Notes |
 |---|---|---|---|---|---|
-| `mac_rx` | A | in | MAC-RX → core (async FIFO) | packet engine | one per AVB interface (P-N-AVB-INTERFACES) |
-| `mac_tx` | A | out | core → MAC-TX (async FIFO) | TX arbiter | one per AVB interface |
+| `mac_rx` | A | in | core; the integrator's dual-clock FIFO crosses from MAC RX (§2) | packet engine | `rx_valid_i`, `rx_data_i[7:0]`, `rx_last_i`, no ready (§3); one trunk at the landed top (P-N-AVB-INTERFACES) |
+| `mac_tx` | A | out | core; the integrator's dual-clock FIFO crosses to MAC TX (§2) | TX arbiter | `tx_valid_o`, `tx_sof_o`, `tx_data_o[7:0]`, `tx_eof_o`, `tx_ready_i` (§3); one trunk |
 | `srp` | B+C+D | both | core | ACMP, AECP gather, NOTIF | talker/listener attribute ops; served by the internal SRP engine ([10](10_srp_engine.md)) or an external stack (`P-EN-SRP-ENGINE`) |
 | `maap` | B+C | both | core | talker DA management | allocation + conflict events; served internally by [11](11_maap_engine.md) when `cfg_maap_internal_i` = 1 |
 | `gptp` | D + strobes | in | core | ADP, NOTIF | `gm_id_i`, `gptp_domain_i`, `gm_change_i`; asCapable, propagation delay and the path are `gsi` words (§4.3) |
@@ -63,7 +63,7 @@ flowchart LR
 | `mclk` | D (out) | out | core | the integrator's media-clock selection | `aecp_clk_src_index_o` (§4.5); MVU MCR deferred ([06 §6.9](06_aecp_engine.md#69-mvu-commands)) |
 | `gsi` | read face + strobes | both | core | AECP gather (GET_STREAM_INFO, GET_AVB_INFO, GET_AS_PATH, the SET_STREAM_FORMAT verdict), NOTIF | one word per beat, `gsi_wait_i` a hold (§4.3) |
 | `ctr` | read face + strobe | both | core | AECP (GET_COUNTERS), NOTIF | the integrator's counters (§4.6) |
-| `mgmt` | E | in | own (sync or 4-phase async) | model store, NVM, debug, ctrl/status | optional at runtime, needed for image load unless ROM |
+| `mgmt` | E | in | core: the `host_*` ports are in `clk_i`; a bridge from a management clock (sync or 4-phase req/ack) is the integrator's | model store, NVM, debug, ctrl/status | optional at runtime, needed for image load unless ROM |
 | `nvm` | F | both | core | NVM manager | record-level, device-agnostic |
 | `identify_active` | D | out | core | device indicator | level, 1 = identifying |
 | `identify_button` | D | in | core (2FF sync) | identify sequencer (`KL_aecp_notify`) | optional (P-EN-IDENTIFY-NOTIFICATION, default 0): the top port `identify_button_i`, read only when the parameter is 1; debounced by the integrator |
@@ -77,11 +77,14 @@ flowchart LR
   subgraph macrxd ["MAC RX domain"]
     rxmac["MAC RX"]
   end
+  subgraph fifod ["the integrator's, outside the top"]
+    fifo_rx["dual-clock FIFO (gray ptr), complete FCS-good frames only"]
+    fifo_tx["dual-clock FIFO (gray ptr)"]
+    bridge["mgmt bridge if needed (sync or 4-phase req/ack)"]
+  end
   subgraph cored ["core domain (P-CLK-HZ)"]
-    fifo_rx["async FIFO (gray ptr)"]
     corelogic["all processor logic"]
     tick["prescaler: 1 µs / 1 ms ticks"]
-    fifo_tx["async FIFO (gray ptr)"]
   end
   subgraph mactxd ["MAC TX domain"]
     txmac["MAC TX"]
@@ -89,9 +92,9 @@ flowchart LR
   subgraph mgmtd ["mgmt domain (optional async)"]
     host["management host"]
   end
-  rxmac --> fifo_rx --> corelogic
-  corelogic --> fifo_tx --> txmac
-  host -. "sync bridge or 4-phase req/ack" .-> corelogic
+  rxmac --> fifo_rx -- "rx byte face" --> corelogic
+  corelogic -- "tx byte face" --> fifo_tx --> txmac
+  host -.-> bridge -. "host_* face" .-> corelogic
   tick --> corelogic
 ```
 
@@ -99,8 +102,13 @@ Rules (behavioral — no vendor primitives):
 
 1. **One core clock domain** for the entire processor. `P-CLK-HZ` is free; the
    prescaler retunes the 1 µs/1 ms ticks ([08 §3](08_timing.md)).
-2. MAC boundaries cross via **dual-clock FIFOs** (gray-coded pointers or equivalent);
-   frame-atomic handoff (a frame is visible only when complete + good, or dropped).
+2. MAC boundaries cross via **dual-clock FIFOs** (gray-coded pointers or equivalent),
+   and the FIFOs are the **integrator's**: the top has one clock and no dual-clock
+   FIFO, and its MAC faces are byte streams in the core domain (§3,
+   [integrator guide §1](../guides/integrator.md#1-clocking-and-reset)). The handoff is
+   frame-atomic: a frame is visible only when complete + good, or dropped. The RX face
+   has no `err` and no abort, so the RX FIFO presents only complete, FCS-good frames
+   ([integrator guide §3](../guides/integrator.md#3-the-mac-faces)).
 3. `mgmt` is either synchronous to core or bridged by a 4-phase req/ack; single-bit
    inputs pass 2-flop synchronizers. The landed top takes link status already
    synchronized (`link_up_i`); `identify_button_i` is the one input whose 2-flop
@@ -123,35 +131,44 @@ Rules (behavioral — no vendor primitives):
    to ADP only once both restore walks are done (`restore_done_o`,
    [07 §5.3](07_memory_maps.md#fig-07-nvmflow)).
 
+<a id="sec-02-class-a"></a>
 ## 3. Class A — packet streaming
 
-> ⚠ **The landed top does not implement this class as specified below, and the RTL is
-> authoritative.** `protocol_processor_top` presents a **byte** stream in each direction:
-> `rx_valid_i` / `rx_data_i[7:0]` / `rx_last_i` inbound with **no `ready` and no
-> backpressure at all**, and `tx_valid_o` / `tx_sof_o` / `tx_data_o[7:0]` / `tx_eof_o` /
-> `tx_ready_i` outbound. There is no `empty` and no `err` on either side. Wire against
-> the [integrator guide](../guides/integrator.md#3-the-mac-faces), which documents the
-> landed face; the 32-bit word contract below, and the `ready`/`err` signals in F02.3, are
-> a specification the implementation did not take.
+The two MAC faces of `protocol_processor_top` are **byte** streams in the core clock
+domain: one frame stream in, one out. Byte 0 of each frame is the first
+destination-address octet. The dual-clock FIFOs that cross to the MAC clock domains are
+the integrator's (§2 rule 2); the [integrator guide §3](../guides/integrator.md#3-the-mac-faces)
+gives the wiring obligations.
 
-Word-oriented stream, `DATA_W` = 32 (parameterizable), MSB-first byte lanes, `empty`
-gives the unused byte count in the `eof` word. `err` with `eof` invalidates the frame
-(RX: drop; TX: MAC aborts with bad FCS).
-
-| Signal | Dir (RX inst.) | Width | Meaning |
+| Signal | Dir | Width | Meaning |
 |---|---|---|---|
-| `valid` | in | 1 | word present |
-| `ready` | out | 1 | sink accepts; transfer on `valid ∧ ready` |
-| `data` | in | 32 | payload word |
-| `sof` / `eof` | in | 1/1 | frame delimiters (both on `valid ∧ ready` words) |
-| `empty` | in | 2 | unused bytes in `eof` word |
-| `err` | in | 1 | with `eof`: frame invalid |
+| `rx_valid_i` | in | 1 | a frame byte is on `rx_data_i` this cycle, and the processor takes it |
+| `rx_data_i` | in | 8 | the byte |
+| `rx_last_i` | in | 1 | with `rx_valid_i`: the final byte of the frame |
+| `tx_valid_o` | out | 1 | a frame byte is on `tx_data_o` |
+| `tx_sof_o` | out | 1 | with `tx_valid_o`: the first byte of a frame |
+| `tx_data_o` | out | 8 | the byte |
+| `tx_eof_o` | out | 1 | with `tx_valid_o`: the final byte of the frame |
+| `tx_ready_i` | in | 1 | the MAC side takes the byte; a byte moves on `tx_valid_o ∧ tx_ready_i` |
+
+**RX has no backpressure.** There is no RX ready: the processor takes a byte in every
+cycle `rx_valid_i` is 1. There is no `err` and no abort either, so a frame cannot be
+poisoned once its first byte has gone in: the RX FIFO presents only complete frames whose
+FCS checked good, and drops every other frame whole (§2 rule 2).
+
+**TX stalls on `tx_ready_i`.** A granted frame streams from `tx_sof_o` to `tx_eof_o` with
+no preemption (F02.4); holding `tx_ready_i` low holds the current byte in place and never
+truncates the frame.
 
 The RX stream carries frames already filtered on DA ∈ {unicast MAC, `91-E0-F0-01-00-00`}
 and EtherType 0x22F0 when the external MAC can filter; the parser re-checks regardless
 ([03 §3](03_packet_engine.md)).
 
-<a id="fig-02-rxwave"></a>**F02.3 — RX stream: backpressure + end of frame**
+The original design specified this class as a 32-bit word stream with `ready`, `empty`
+and `err`. No port of the landed top carries it; the contract and its two waveforms
+are kept in [the class-A word-stream history](../history/02-class-a-word-stream.md).
+
+<a id="fig-02-rxwave"></a>**F02.3 — RX byte face: no ready, end of frame on `rx_last_i`**
 
 ![fig-02-rxwave](../diagrams/wavedrom/fig-02-rxwave.svg)
 
@@ -160,21 +177,18 @@ and EtherType 0x22F0 when the external MAC can filter; the parser re-checks rega
 
 ```wavedrom
 {"signal": [
-  {"name": "clk",      "wave": "p.........."},
-  {"name": "rx_valid", "wave": "01.......0."},
-  {"name": "rx_ready", "wave": "1...0.1...."},
-  {"name": "rx_sof",   "wave": "010........"},
-  {"name": "rx_data",  "wave": "x====..==x.", "data": ["D0", "D1", "D2", "D3", "D4", "D5"]},
-  {"name": "rx_eof",   "wave": "0.......10."},
-  {"name": "rx_err",   "wave": "0.........."}
+  {"name": "clk",        "wave": "p.........."},
+  {"name": "rx_valid_i", "wave": "01......0.."},
+  {"name": "rx_data_i",  "wave": "x=======x..", "data": ["B0", "B1", "B2", "B3", "B4", "B5", "B6"]},
+  {"name": "rx_last_i",  "wave": "0......10.."}
 ],
- "head": {"text": "transfer on valid AND ready; data D3 held through the stall"},
- "foot": {"text": "err would assert together with eof to poison the frame"}}
+ "head": {"text": "no ready: every byte with rx_valid_i is taken"},
+ "foot": {"text": "no err, no abort: complete, FCS-good frames only"}}
 ```
 
 </details>
 
-<a id="fig-02-txwave"></a>**F02.4 — TX stream with arbiter grant (no mid-frame regrant)**
+<a id="fig-02-txwave"></a>**F02.4 — TX byte face: a granted frame runs sof to eof, stalled in place by `tx_ready_i`**
 
 ![fig-02-txwave](../diagrams/wavedrom/fig-02-txwave.svg)
 
@@ -183,18 +197,16 @@ and EtherType 0x22F0 when the external MAC can filter; the parser re-checks rega
 
 ```wavedrom
 {"signal": [
-  {"name": "clk",      "wave": "p.........."},
-  {"name": "tx_req_a", "wave": "01....0...."},
-  {"name": "tx_req_b", "wave": "01........."},
-  {"name": "gnt_a",    "wave": "0.1...0...."},
-  {"name": "gnt_b",    "wave": "0......1..."},
-  {"name": "tx_valid", "wave": "0.1...0.1.."},
-  {"name": "tx_sof",   "wave": "0.10....10."},
-  {"name": "tx_data",  "wave": "x.====x.==x", "data": ["W0", "W1", "W2", "W3", "X0", "X1"]},
-  {"name": "tx_eof",   "wave": "0....10...."},
-  {"name": "tx_ready", "wave": "1.........."}
+  {"name": "clk",        "wave": "p..........."},
+  {"name": "tx_valid_o", "wave": "01.....01..0"},
+  {"name": "tx_sof_o",   "wave": "010.....10.."},
+  {"name": "tx_data_o",  "wave": "x===.==x===x", "data": ["A0", "A1", "A2", "A3", "A4", "B0", "B1", "B2"]},
+  {"name": "tx_eof_o",   "wave": "0.....10..10"},
+  {"name": "tx_ready_i", "wave": "1..01......."}
 ],
- "head": {"text": "grant is frame-atomic: gnt_a holds until eof, then arbiter moves to b"}}
+ "config": {"svg_margin": 40},
+ "head": {"text": "frame B waits for A's eof"},
+ "foot": {"text": "tx_ready_i low: A2 held, no byte lost"}}
 ```
 
 </details>
@@ -293,8 +305,8 @@ hang differently:
 
 | half | bound | what an unbounded version costs |
 |---|---|---|
-| request never ACCEPTED | `P-MAAP-ACCEPT-CYC` (1024 cycles, ≈10 µs at `P-CLK-HZ`, well inside `T-BUDGET-ACMP-RESP`) | the one event-serialized walker parks in the request state — and it also answers `PROBE_TX` / `DISCONNECT_TX` / `GET_TX_STATE` for every source, so the talker half of ACMP *and* SRP goes silent |
-| request accepted, never ANSWERED | `P-MAAP-RSP-MS` (10 s) | the single-outstanding tracker is GLOBAL, so allocation stops for **every** source: no `GS_DA_OK`, no DA gate, no `DECLARE_TALKER`. Nothing wedges: command service continues while no stream can start |
+| request never ACCEPTED | `P-MAAP-ACCEPT-CYC` core clocks ([F01.5](01_overview.md#fig-01-params)), well inside `T-BUDGET-ACMP-RESP` | the one event-serialized walker parks in the request state — and it also answers `PROBE_TX` / `DISCONNECT_TX` / `GET_TX_STATE` for every source, so the talker half of ACMP *and* SRP goes silent |
+| request accepted, never ANSWERED | `P-MAAP-RSP-MS` ([F01.5](01_overview.md#fig-01-params)) | the single-outstanding tracker is GLOBAL, so allocation stops for **every** source: no `GS_DA_OK`, no DA gate, no `DECLARE_TALKER`. Nothing wedges: command service continues while no stream can start |
 
 Both abandons leave the source exactly where a refused `ALLOC_DA` leaves it — no
 DA, no declaration, `PROBE_TX` answered `TALKER_DEST_MAC_FAILED` — and enabled
@@ -308,16 +320,15 @@ index of its accepted request, rather than treating the last grant as source 0.
 
 `P-MAAP-RSP-MS` is derived from **IEEE Std 1722-2016 Annex B**, because
 `ALLOC_DA` maps onto a real MAAP claim walk. Table B.8 gives
-`MAAP_PROBE_RETRANSMITS` = 3 and a `probe_timer` (B.3.4.2) drawn from
-`MAAP_PROBE_INTERVAL_BASE` (500 ms) < T < BASE + `MAAP_PROBE_INTERVAL_VARIATION`
-(600 ms); the Table B.7 walk acquires the address after exactly 3 probe
-intervals, so ≤ **1800 ms** per attempt, and a conflicting probe/defend/announce
-restarts it (B.3.5.3) for another ≤ 1800 ms. 10 s covers a clean acquisition plus
-four conflict restarts. It must also stay **below `T-SRP-DAFRESH`** (15 s): a
+`MAAP_PROBE_RETRANSMITS` = 3, so the Table B.7 walk acquires the address after
+exactly 3 `probe_timer` intervals (`T-MAAP-PROBE`, B.3.4.2) per attempt, and a
+conflicting probe/defend/announce restarts it (B.3.5.3). The
+[F01.5](01_overview.md#fig-01-params) default covers a clean acquisition plus
+four conflict restarts. It must also stay **below `T-SRP-DAFRESH`**: a
 grant arriving after a demand-triggering `PROBE_TX` has gone stale cannot open
 the gate without a registered Listener. Enable and periodic retry rounds now
 request allocation independently of probes; the existing watchdog is retained.
-The 30 s `MAAP_ANNOUNCE_INTERVAL_BASE` is *not* in the bound —
+The announce interval (`T-MAAP-ANNOUNCE`) is *not* in the bound —
 the address is acquired on entry to `DEFEND`, before the first announce.
 
 **`RELEASE_DA` is owed, not attempted.** The degrade rule above applies to
@@ -535,16 +546,25 @@ internal are consumed inside the processor and add no top-level ports.
 ## 7. Class E — management side-port
 
 Bus-agnostic single-master register/memory port; any host bridge (APB/AXI-lite/Avalon/
-JTAG/testbench) maps 1:1 onto it. Word addressed, 32-bit data.
+JTAG/testbench) maps 1:1 onto it. Word addressed, 32-bit data. The landed top presents it
+as the `host_*` ports:
 
-| Signal | Dir | Width |
-|---|---|---|
-| `psel` / `pwrite` | in | 1 / 1 |
-| `paddr` | in | 20 |
-| `pwdata` / `prdata` | in / out | 32 |
-| `pready` | out | 1 (wait states allowed) |
+| Signal | Dir | Width | Meaning |
+|---|---|---|---|
+| `host_req_valid_i` | in | 1 | a request is present; hold it unchanged through the cycle of its `host_rvalid_o` (still 1 in the next cycle is a new request) |
+| `host_we_i` | in | 1 | 1 = write |
+| `host_addr_i` | in | 20 | word address |
+| `host_wdata_i` | in | 32 | write data |
+| `host_rdata_o` | out | 32 | read data, valid with `host_rvalid_o`; 0 on a refused access |
+| `host_rvalid_o` | out | 1 | completion strobe, exactly one per request, at least one cycle after the request is taken (wait states allowed) |
+| `host_err_o` | out | 1 | with `host_rvalid_o`: the access was refused and nothing was forwarded |
 
-<a id="fig-02-memwave"></a>**F02.7 — Side-port: write, then read with one wait state**
+An APB bridge maps `psel` to `host_req_valid_i`, `pwrite` to `host_we_i`, `paddr` to
+`host_addr_i`, `pwdata` to `host_wdata_i`, `prdata` to `host_rdata_o`, `pready` to
+`host_rvalid_o` and `pslverr` to `host_err_o`. Unlike `pready`, `host_rvalid_o` is 0
+while no request is in flight.
+
+<a id="fig-02-memwave"></a>**F02.7 — Side-port: a write, then a read with one wait state**
 
 ![fig-02-memwave](../diagrams/wavedrom/fig-02-memwave.svg)
 
@@ -553,14 +573,17 @@ JTAG/testbench) maps 1:1 onto it. Word addressed, 32-bit data.
 
 ```wavedrom
 {"signal": [
-  {"name": "clk",    "wave": "p........"},
-  {"name": "psel",   "wave": "010..1.0."},
-  {"name": "pwrite", "wave": "010......"},
-  {"name": "paddr",  "wave": "x=x..=.x.", "data": ["A0", "A1"]},
-  {"name": "pwdata", "wave": "x=x......", "data": ["V0"]},
-  {"name": "pready", "wave": "1....01.."},
-  {"name": "prdata", "wave": "x.....=x.", "data": ["Q1"]}
-]}
+  {"name": "clk",              "wave": "p........"},
+  {"name": "host_req_valid_i", "wave": "01.01..0."},
+  {"name": "host_we_i",        "wave": "x1.x0..x."},
+  {"name": "host_addr_i",      "wave": "x=.x=..x.", "data": ["A0", "A1"]},
+  {"name": "host_wdata_i",     "wave": "x=.x.....", "data": ["V0"]},
+  {"name": "host_rvalid_o",    "wave": "0.10..10."},
+  {"name": "host_rdata_o",     "wave": "0.....=0.", "data": ["Q1"]},
+  {"name": "host_err_o",       "wave": "0........"}
+],
+ "config": {"svg_margin": 40},
+ "head": {"text": "each request held until its strobe"}}
 ```
 
 </details>
@@ -573,7 +596,7 @@ Address windows (word offsets; full map in [07 §5.5](07_memory_maps.md)):
 | `0x10000` | RO | dynamic-overlay debug view |
 | `0x20000` | RO | registry + counters snapshot |
 | `0x30000` | RW | control/status: `entity_enable`, `shutdown_req`, boot status, profile select |
-| `0x40000` | RO | trace ring (class-A framing reused; shape `P-TRACE-RING`, [F01.5](01_overview.md#7-parameter-master-table-f015)) |
+| `0x40000` | RO | trace ring: 128-bit event records, each read as four 32-bit lanes, lane 0 = record bits [127:96] (shape `P-TRACE-RING`, [F01.5](01_overview.md#7-parameter-master-table-f015)) |
 | `0x50000` | RW | firmware mailbox (only if `P-EN-FIRMWARE-ASSIST`; [GAP-13](../00_MILAN_COMPLIANCE_REVIEW.md#gap-13)) |
 
 Lock interaction: side-port writes that mirror ATDECC state changes (names, sampling
@@ -591,13 +614,30 @@ the D3 writer's **latch**: to capture a coherent row it holds AECP dispatch brie
 from ACQUIRE until one state-bus read completes (at most the running command's own
 duration plus a few clocks), never across a media commit ([07 §5.3](07_memory_maps.md#fig-07-nvmflow)).
 
-| Signal | Dir | Width |
+At the landed top both managers are inside the processor (§8.2), so this record-level
+**manager face** is an internal seam: `KL_pp_nvm_port`'s `nvm_*` ports, directions as a
+manager sees them, drawn by F02.8. The class-F ports of `protocol_processor_top` are the
+port's **device face** below, which the integrator's backend serves.
+
+| Manager face (inside the top) | Dir | Width |
 |---|---|---|
 | `req` / `we` | out | 1 / 1 |
 | `record_id` | out | 8 |
 | `wdata` / `rdata` | out / in | streamed bytes (record framing per [07 §5](07_memory_maps.md)) |
 | `busy` / `done` / `err` | in | 1 each |
 | `err_cause` | in | 2 — valid with `err`, 0 otherwise: **1** DEVICE, **2** UNFRAMED, **3** DEADLINE |
+
+| Device face (top ports) | Dir | Width | Meaning |
+|---|---|---|---|
+| `nvm_dev_req_o` | out | 1 | command request, held until `nvm_dev_gnt_i` or withdrawn at the deadline (below) |
+| `nvm_dev_gnt_i` | in | 1 | the backend accepted {op, region, offset, length} |
+| `nvm_dev_op_o` | out | 2 | 0 READ, 1 WRITE, 2 ERASE (3 reserved) |
+| `nvm_dev_region_o` | out | 8 | region id = record id |
+| `nvm_dev_offset_o` / `nvm_dev_len_o` | out | 16 / 16 | byte offset within the region / byte count (ERASE: 0 = the whole region) |
+| `nvm_dev_wvalid_o` / `nvm_dev_wready_i` / `nvm_dev_wdata_o` | out / in / out | 1 / 1 / 8 | the write byte stream |
+| `nvm_dev_rvalid_i` / `nvm_dev_rready_o` / `nvm_dev_rdata_i` | in / out / in | 1 / 1 / 8 | the read byte stream |
+| `nvm_dev_busy_i` | in | 1 | backend busy, informational: `done` and `err` delimit a command |
+| `nvm_dev_done_i` / `nvm_dev_err_i` | in | 1 / 1 | one-cycle pulse: the device command completed / failed |
 
 `err_cause` says what an `err` was, so a manager restoring a record can tell a failing
 device from a record that is not there (processor issue #93). **DEVICE** is every error
@@ -631,12 +671,12 @@ the device has ended the abandoned command, one `err` DEADLINE while it stays si
 presents bytes past the READ's length, which the port does not take. Nothing is released
 on time; only the device's own terminal or a reset
 ends the owed state, so a WRITE the port abandoned on a device that waits for its next byte
-for ever is **contained**: every later request ends DEADLINE until reset. `dev_gnt_i`
+for ever is **contained**: every later request ends DEADLINE until reset. `nvm_dev_gnt_i`
 means the device accepted the command, and it comes at most one cycle after the edge that
 sampled the request: a backend that registers its grant can take a request on the very
 edge the deadline withdraws it, and that command is then owed.
 
-<a id="fig-02-nvmwave"></a>**F02.8 — NVM commit (broken axis over the busy period)**
+<a id="fig-02-nvmwave"></a>**F02.8 — NVM commit on the manager face (broken axis over the busy period)**
 
 ![fig-02-nvmwave](../diagrams/wavedrom/fig-02-nvmwave.svg)
 

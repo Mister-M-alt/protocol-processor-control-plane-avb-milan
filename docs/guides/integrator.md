@@ -32,7 +32,8 @@ There is exactly one clock and one reset.
 **No clock-domain crossing lives inside this processor but one.** Every crossing is yours:
 
 - the MAC boundaries — put your asynchronous FIFOs outside, and present the byte streams
-  below in the `clk_i` domain;
+  below in the `clk_i` domain; the RX one hands over whole, FCS-good frames only
+  ([section 3](#rx-frame-atomic));
 - `link_up_i` and `gm_change_i` — level and strobe inputs from other domains. Give them a
   two-flop synchroniser before they arrive;
 - the one exception is `identify_button_i` (section 6): with `EN_IDENTIFY_NOTIF_P` = 1 the
@@ -130,6 +131,19 @@ domain. Byte 0 of each frame is the first destination-address octet.
 |---|---|---|
 | RX | `rx_valid_i`, `rx_data_i[7:0]`, `rx_last_i` | **none.** There is no `rx_ready`. The RX side cannot be stalled — feed it from a FIFO that can absorb a frame. |
 | TX | `tx_valid_o`, `tx_sof_o`, `tx_data_o[7:0]`, `tx_eof_o`, `tx_ready_i` | `tx_ready_i` is real. A granted frame streams from `tx_sof_o` to `tx_eof_o` with no preemption, so holding `tx_ready_i` low stalls that frame in place; it never truncates. |
+
+<a id="rx-frame-atomic"></a>**Your RX FIFO must deliver only complete, FCS-good frames.** The
+byte face has no `err` and no abort input, so nothing can poison a frame once its first
+byte is in: the processor parses every frame it is given as a good one. The dual-clock
+FIFO between your MAC and this face is yours, and the handoff must be frame-atomic
+([02 §2 rule 2](../architecture/02_interfaces.md#2-clocking-reset-cdc)):
+
+- hold each frame whole, and start it on `rx_valid_i` only once its last byte and your
+  MAC's FCS verdict are in the FIFO;
+- drop every frame that failed its FCS, was aborted by the MAC, or was cut short by a
+  full FIFO, with every byte of it;
+- never present part of a frame: a truncated frame that still carries a whole PDU is
+  parsed as one.
 
 This is a control-plane trunk. It sees the frames a Milan control plane needs — the
 ATDECC multicast and this station's own unicast, plus the two MRP group addresses — and

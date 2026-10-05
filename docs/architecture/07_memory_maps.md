@@ -884,7 +884,7 @@ Decided by the parent manager rulings ([D3 contract](https://github.com/kebag-lo
 | 0x10000–0x1FFFF | RO | overlay + name table debug view | reserved seam — reads 0 |
 | 0x20000–0x2FFFF | RO | registry entries, sink records (snapshot); no GET_COUNTERS bank (F07.10) | **implemented** — the F02.10 class-D dictionary plus front-end counters |
 | 0x30000–0x300FF | RW | control/status: entity_enable, boot state, NVM alarm, version/build id | word 0 scratch, word 1 boot state |
-| 0x40000–0x4FFFF | RO | trace ring (class-A framing) | **implemented** |
+| 0x40000–0x4FFFF | RO | trace ring: 128-bit event records, read as four 32-bit lanes, lane 0 = record bits [127:96] ([02 §7](02_interfaces.md)) | **implemented** |
 | 0x50000–0x5FFFF | RW | firmware mailbox (`P-EN-FIRMWARE-ASSIST` only) | disabled — every access refused |
 
 The **snapshot window at `0x20000`** is the observability surface. Its words 32–37 publish

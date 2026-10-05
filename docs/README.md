@@ -38,7 +38,9 @@ it assumes you have already read, so a row can also be entered directly once its
 
 Not on the path: [10 Resource and effort](10_RESOURCE_AND_EFFORT.md) sizes the
 implementation on the reference platform; read it for planning, after step 2. It is a
-different document from step 7's `architecture/10_srp_engine.md`.
+different document from step 7's `architecture/10_srp_engine.md`. `history/` keeps
+superseded design material that no landed port carries, such as
+[the class-A word stream](history/02-class-a-word-stream.md); read it for provenance only.
 
 ### Paths by role
 
@@ -76,7 +78,24 @@ Scope of those rules: they bind the **architecture** documents (01–10). Three
 deliberate exceptions: the compliance review (00) quotes spec requirement text
 *including its values* — that is its job; tick-generation rates belong to the clocking
 contract (02 §2 with `F08.2`); and PDU field constants such as ADP `valid_time` belong
-to their field-sourcing table. `make check` enforces the rest.
+to their field-sourcing table.
+
+What `make check` enforces of them, and nothing more
+([09 §7](architecture/09_verification.md#7-documentation-sync-regression)):
+
+- **IDs.** `ids` ([`check-ids.py`](../scripts/check-ids.py)) fails on any `P-` or `T-`
+  ID used anywhere under `docs/`, `hdl/` or `tb/` that has no `F01.5` or `F08.1` row.
+  A family (`T-MRP-*`) needs a row in it, a braced list (`T-ACMP-{CMD, DELAY}`,
+  `T-NVM-{RS-DEADLINE, RS-AGGREGATE}`) a row for each member, and an optional segment
+  (`T-ADP-DELAY(-START)`) a row for both. Any other text after a hyphen is prose:
+  `T-MRP-JOIN-driven` uses `T-MRP-JOIN`.
+- **The integrator's parameter inventory.** `params` holds the integrator guide's
+  table and diagram 21 to the top's parameters; the defaults stay at their owners.
+
+No gate reads **values**: a timing or parameter value copied outside its table, a status
+name outside `F02.10`, a delta outside `F01.4` and a layout outside 07 are review
+findings. The value scan is still to add
+([09 §8](architecture/09_verification.md#8-the-suites-that-exist-today)).
 
 ## 3. Figures: one source, one home
 
@@ -97,10 +116,25 @@ to their field-sourcing table. `make check` enforces the rest.
   says so); field names carry the byte offset (`@n`) or mask where ambiguity is
   dangerous; keep fields ≤ 64 bits (wider fields leave unlabeled middle lanes); `head`/
   `foot` text is signal-format-only — for `reg`, put it in the caption. Editing a block
-  without re-rendering fails `make check` (`wavedrom-check`).
+  without re-rendering fails `make check` (`wavedrom-check`). For labels that need
+  more room under font substitution, the repository renderer accepts
+  `"config": {"svg_margin": 40}`: a non-negative integer adds that many SVG units
+  on each horizontal side. Keep captions short and inspect the render with more
+  than one font; freshness alone does not check text fit.
 - **draw.io** (the three richest pictures only): source `docs/diagrams/src/<name>.drawio`,
   committed export `docs/diagrams/<name>.svg`, embedded via `![…](../diagrams/<name>.svg)`.
   Regenerate with `make diagrams` (see `docs/diagrams/README.md`).
+- **Hand-authored SVG** (the five persona-guide figures, `docs/diagrams/2[0-4]-*.svg`):
+  the SVG is both the editable source and the published figure, drawn against the landed
+  RTL and listed with its host pages in the hand-authored inventory of
+  [`diagrams/README.md`](diagrams/README.md). Rule: edit the SVG text, render it to a
+  scratch PNG and look at it (overlap is invisible in the XML), and commit the SVG alone,
+  never a raster export. `make figures` holds the class: listed, well-formed XML with an
+  `<svg>` root and a `viewBox`, no `<image>`, `<feImage>` or `<foreignObject>`, linked
+  from a page.
+- **Nothing else.** Every file under `docs/diagrams/` is a draw.io source or export, a
+  WaveDrom render or a listed hand-authored SVG; `make figures` fails any other file
+  there, a PNG included.
 - Interface waveforms are **class templates** (one per interface class); per-instance
   differences live in signal tables, never in cloned waveforms.
 
@@ -149,6 +183,7 @@ into one story:
 | A block/FSM/sequence figure | edit the ` ```mermaid ` fence in place; `make lint` |
 | A waveform or bit layout | expand the `<details>` under the image, edit the ` ```wavedrom ` JSON in place, run `make wavedrom` (re-renders the SVG); `make check` |
 | A top-level picture | edit `docs/diagrams/src/*.drawio` in the draw.io app; `make diagrams`; commit source **and** SVG |
+| A persona-guide figure | edit `docs/diagrams/2[0-4]-*.svg`; render it to a scratch PNG and look at it; `make figures`; commit the SVG only |
 | A timing value | edit `F08.1` only; consumers reference `T-…` IDs |
 | A parameter default | edit `F01.5` only |
-| Anything | `make check` (lint + links + matrix + stale) must pass before commit |
+| Anything | `make check` (every target of [09 §7](architecture/09_verification.md#7-documentation-sync-regression); the CI docs-gates job runs it) must pass before commit |

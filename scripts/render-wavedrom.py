@@ -18,6 +18,7 @@ Uses the `wavedrom` Python package (wavedrompy). If it is not importable, a loca
 virtualenv is bootstrapped at .venv-wavedrom/ (gitignored) and the script re-executes
 itself inside it.
 """
+import json
 import os
 import re
 import subprocess
@@ -92,18 +93,32 @@ def collect_blocks() -> list[tuple[Path, str, str]]:
     return blocks
 
 
+def render_svg(src: str) -> str:
+    """Render with an optional source-owned margin for font substitution."""
+    import wavedrom
+
+    margin = json.loads(src).get("config", {}).get("svg_margin", 0)
+    if type(margin) is not int or margin < 0:
+        raise ValueError("config.svg_margin must be a non-negative integer")
+    svg = wavedrom.render(src)
+    if margin:
+        x, y, width, height = map(float, svg.attribs["viewBox"].replace(",", " ").split())
+        svg.viewbox(x - margin, y, width + 2 * margin, height)
+        svg["width"] = width + 2 * margin
+    return svg.tostring()
+
+
 def main() -> int:
     """Render every embedded block, or under --check name the anchors whose
     committed SVG no longer matches a fresh render (exit 1)."""
     ensure_wavedrom()
-    import wavedrom
 
     check = "--check" in sys.argv
     OUTDIR.mkdir(parents=True, exist_ok=True)
     blocks, stale = collect_blocks(), []
     for path, anchor, src in blocks:
         try:
-            svg = wavedrom.render(src).tostring()
+            svg = render_svg(src)
         except Exception as exc:
             sys.exit(f"FAIL: {anchor} in {path.relative_to(ROOT)}: {exc}")
         out = OUTDIR / f"{anchor}.svg"
