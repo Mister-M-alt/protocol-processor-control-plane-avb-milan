@@ -536,14 +536,16 @@ LeaveAll at 14200 ms, the first `Lv` decoded by 14216 ms, the second by 16700 ms
 19200 ms; the peer LeaveAll at 705 ms, the `Lv`s by 711 and 3205 ms, the close at 5705 ms. The
 leave time is 5000 ms in all eight cases, one STREAM_STOP and no STREAM_START in each.
 
-Mutation-proven 2026-10-05 through `mutants.py` (checked-in patches). Neither arm fails any
-other check of the suite: each was run through the complete default suite of the base
-(2200 checks) and passed it:
+Mutation-proven 2026-10-05 with the checked-in patches, each planted separately and
+run through the complete default `make -C tb/srp_top` (8656 checks). `lv-second-lv-ends`
+fails only the 16 S1/S2 checks. `lv-never-ends` fails the 16 S2/S3 checks plus 3016 SC2
+checks in `lvcoll`, for 3032 failures:
 
 | Deliberate breakage | Group | Failing checks | Named failing assertions |
 |---|---|---:|---|
 | `lv-second-lv-ends` (the registrar lets one `Lv` in LV pass and ends the registration on the second) | lvleave | 16 | S1,S2 |
 | `lv-never-ends` (an `Lv` in LV stops the leave timer, so the registration never ends) | lvleave | 16 | S2,S3 |
+| `lv-never-ends` (the same planted patch, in the same default run) | lvcoll | 3016 | SC2 |
 
 The older one-line forms of the same two defects, `talker-strict-lv` (an `Lv` in LV ends the
 registration at once) and `talker-no-expiry` (no leave-timer expiry reaches the talker
