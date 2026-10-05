@@ -923,7 +923,10 @@ Total block RAM well under 32 KB for the baseline — the architecture scales li
 via the [F01.5](01_overview.md#fig-01-params) parameters. Note that the first and largest
 row is **not** block RAM in the landed implementation: the static image and the AECP
 response buffer both live in the integrator's main memory (§3.3.1, §3.3.2), which is what
-makes the on-chip total fit at all on the reference part.
+makes the on-chip total fit at all on the reference part. The sink records are not
+block RAM either: since issue #639 `KL_pp_acmp_listener` holds them in distributed RAM,
+because a record is 384 bits wide and block RAM reaches that width only by banding five
+RAMB36 side by side, for two records at the 1x1 shape.
 
 ## 7. Cross-references
 

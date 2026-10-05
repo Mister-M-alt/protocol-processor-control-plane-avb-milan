@@ -484,6 +484,30 @@ module pp_top_wrap (
     output logic        dbg_ser_start_o,
     output logic  [2:0] dbg_ser_slot_o,
     output logic        dbg_txs_slot4_free_o,
+    //! section AQ (issue #639): the eight engine arm faces as the top's
+    //! timer arm-port mux receives them, in its drain order (listener,
+    //! talker, ADP, SRP, originator, MAAP, notify, notify monitor), each
+    //! {cancel, slot, owner, deadline} zero-extended to 64 bits; the arm port
+    //! the timer service sees, packed the same way; and the arm-drop counter
+    //! (snapshot word 24, bits 31:16). Read from the faces' own nets, so the
+    //! bench's model checks the mux from the engines to the timer service
+    output logic  [7:0] dbg_aq_vld_o,
+    output logic [511:0] dbg_aq_arm_o,
+    output logic        dbg_aq_port_valid_o,
+    output logic [63:0] dbg_aq_port_o,
+    output logic [15:0] dbg_aq_drop_o,
+    //! section AQ's drive (issue #639): from the clock `dbg_aq_drive_i`
+    //! rises, the eight faces carry these arms instead of the engines' (per
+    //! face, in drain order: valid, cancel, slot cut to the top's slot width,
+    //! owner, deadline) and the timer service's arm port is held idle, so no
+    //! arm the drive queues reaches an engine. Raised once, by a run's last
+    //! section, and never lowered: the wrap releases nothing
+    input  wire         dbg_aq_drive_i,
+    input  wire   [7:0] dbg_aq_drv_vld_i,
+    input  wire   [7:0] dbg_aq_drv_cancel_i,
+    input  wire   [7:0][7:0] dbg_aq_drv_slot_i,
+    input  wire   [7:0][7:0] dbg_aq_drv_owner_i,
+    input  wire   [7:0][31:0] dbg_aq_drv_deadline_i,
     //! section AX: the DESC_LINE_BYTES_P the top elaborated, in bytes, so the
     //! bench bounds response writes by the reservation (16 + it) the top
     //! really has, the default in the first build and the line build's own
@@ -870,6 +894,77 @@ module pp_top_wrap (
   assign dbg_ser_slot_o      = 3'(u_dut.ser_slot_w);
   assign dbg_txs_slot4_free_o = (u_dut.u_tx_slots.st_r[4] == 2'd0);
   assign dbg_desc_line_bytes_o = 16'(u_dut.DESC_LINE_BYTES_P);
+  assign dbg_aq_vld_o = {u_dut.ntfy_mon_arm_valid_w, u_dut.ntfy_arm_valid_w,
+                         u_dut.maapeng_arm_valid_w, u_dut.org_arm_valid_w,
+                         u_dut.srp_arm_valid_w, u_dut.adp_arm_valid_w,
+                         u_dut.tkr_arm_valid_w, u_dut.lstn_arm_valid_w};
+  assign dbg_aq_arm_o = {
+      64'({u_dut.ntfy_mon_arm_cancel_w, u_dut.ntfy_mon_arm_slot_w,
+           u_dut.ntfy_mon_arm_owner_w, u_dut.ntfy_mon_arm_deadline_w}),
+      64'({u_dut.ntfy_arm_cancel_w, u_dut.ntfy_arm_slot_w,
+           u_dut.ntfy_arm_owner_w, u_dut.ntfy_arm_deadline_w}),
+      64'({u_dut.maapeng_arm_cancel_w, u_dut.maapeng_arm_slot_w,
+           u_dut.maapeng_arm_owner_w, u_dut.maapeng_arm_deadline_w}),
+      64'({u_dut.org_arm_cancel_w, u_dut.org_arm_slot_w,
+           u_dut.org_arm_owner_w, u_dut.org_arm_deadline_w}),
+      64'({u_dut.srp_arm_cancel_w, u_dut.srp_arm_slot_w,
+           u_dut.srp_arm_owner_w, u_dut.srp_arm_deadline_w}),
+      64'({u_dut.adp_arm_cancel_w, u_dut.adp_arm_slot_w,
+           u_dut.adp_arm_owner_w, u_dut.adp_arm_deadline_w}),
+      64'({u_dut.tkr_arm_cancel_w, u_dut.tkr_arm_slot_w,
+           u_dut.tkr_arm_owner_w, u_dut.tkr_arm_deadline_w}),
+      64'({u_dut.lstn_arm_cancel_w, u_dut.lstn_arm_slot_w,
+           u_dut.lstn_arm_owner_w, u_dut.lstn_arm_deadline_w})};
+  assign dbg_aq_port_valid_o = u_dut.tmr_arm_valid_w;
+  assign dbg_aq_port_o = 64'({u_dut.tmr_arm_cancel_w, u_dut.tmr_arm_slot_w,
+                              u_dut.tmr_arm_owner_w, u_dut.tmr_arm_deadline_w});
+  assign dbg_aq_drop_o = u_dut.arm_drop_r;
+  // section AQ's drive: forced on the faces' own nets, so the mux and the
+  // taps above both read the bench's arms; the timer is held idle on its
+  // own input port, so the arm port the taps read still shows the mux
+  always @(posedge dbg_aq_drive_i) begin : aq_drive
+    force u_dut.lstn_arm_valid_w        = dbg_aq_drv_vld_i[0];
+    force u_dut.lstn_arm_cancel_w       = dbg_aq_drv_cancel_i[0];
+    force u_dut.lstn_arm_slot_w         = dbg_aq_drv_slot_i[0];
+    force u_dut.lstn_arm_owner_w        = dbg_aq_drv_owner_i[0];
+    force u_dut.lstn_arm_deadline_w     = dbg_aq_drv_deadline_i[0];
+    force u_dut.tkr_arm_valid_w         = dbg_aq_drv_vld_i[1];
+    force u_dut.tkr_arm_cancel_w        = dbg_aq_drv_cancel_i[1];
+    force u_dut.tkr_arm_slot_w          = dbg_aq_drv_slot_i[1];
+    force u_dut.tkr_arm_owner_w         = dbg_aq_drv_owner_i[1];
+    force u_dut.tkr_arm_deadline_w      = dbg_aq_drv_deadline_i[1];
+    force u_dut.adp_arm_valid_w         = dbg_aq_drv_vld_i[2];
+    force u_dut.adp_arm_cancel_w        = dbg_aq_drv_cancel_i[2];
+    force u_dut.adp_arm_slot_w          = dbg_aq_drv_slot_i[2];
+    force u_dut.adp_arm_owner_w         = dbg_aq_drv_owner_i[2];
+    force u_dut.adp_arm_deadline_w      = dbg_aq_drv_deadline_i[2];
+    force u_dut.srp_arm_valid_w         = dbg_aq_drv_vld_i[3];
+    force u_dut.srp_arm_cancel_w        = dbg_aq_drv_cancel_i[3];
+    force u_dut.srp_arm_slot_w          = dbg_aq_drv_slot_i[3];
+    force u_dut.srp_arm_owner_w         = dbg_aq_drv_owner_i[3];
+    force u_dut.srp_arm_deadline_w      = dbg_aq_drv_deadline_i[3];
+    force u_dut.org_arm_valid_w         = dbg_aq_drv_vld_i[4];
+    force u_dut.org_arm_cancel_w        = dbg_aq_drv_cancel_i[4];
+    force u_dut.org_arm_slot_w          = dbg_aq_drv_slot_i[4];
+    force u_dut.org_arm_owner_w         = dbg_aq_drv_owner_i[4];
+    force u_dut.org_arm_deadline_w      = dbg_aq_drv_deadline_i[4];
+    force u_dut.maapeng_arm_valid_w     = dbg_aq_drv_vld_i[5];
+    force u_dut.maapeng_arm_cancel_w    = dbg_aq_drv_cancel_i[5];
+    force u_dut.maapeng_arm_slot_w      = dbg_aq_drv_slot_i[5];
+    force u_dut.maapeng_arm_owner_w     = dbg_aq_drv_owner_i[5];
+    force u_dut.maapeng_arm_deadline_w  = dbg_aq_drv_deadline_i[5];
+    force u_dut.ntfy_arm_valid_w        = dbg_aq_drv_vld_i[6];
+    force u_dut.ntfy_arm_cancel_w       = dbg_aq_drv_cancel_i[6];
+    force u_dut.ntfy_arm_slot_w         = dbg_aq_drv_slot_i[6];
+    force u_dut.ntfy_arm_owner_w        = dbg_aq_drv_owner_i[6];
+    force u_dut.ntfy_arm_deadline_w     = dbg_aq_drv_deadline_i[6];
+    force u_dut.ntfy_mon_arm_valid_w    = dbg_aq_drv_vld_i[7];
+    force u_dut.ntfy_mon_arm_cancel_w   = dbg_aq_drv_cancel_i[7];
+    force u_dut.ntfy_mon_arm_slot_w     = dbg_aq_drv_slot_i[7];
+    force u_dut.ntfy_mon_arm_owner_w    = dbg_aq_drv_owner_i[7];
+    force u_dut.ntfy_mon_arm_deadline_w = dbg_aq_drv_deadline_i[7];
+    force u_dut.u_timer.arm_valid_i     = 1'b0;
+  end
   always_comb begin : second_originator_owner
     dbg_org_second_owner_o = 4'hF;
     if (u_dut.laneq_org_cnt_r > 4'd1) begin

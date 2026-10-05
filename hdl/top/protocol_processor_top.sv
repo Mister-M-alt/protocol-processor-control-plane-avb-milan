@@ -2959,7 +2959,8 @@ module protocol_processor_top
 
   logic [ARM_N_C-1:0]              armq_in_vld_w;
   logic [ARM_N_C-1:0][ARM_W_C-1:0] armq_in_w;
-  logic [ARM_N_C-1:0][3:0][ARM_W_C-1:0] armq_r;
+  logic [ARM_N_C-1:0][ARM_W_C-1:0] armq_hd_w;    // each queue's oldest entry
+  logic [ARM_N_C-1:0][1:0]         armq_hd_r;    // ring index of that entry
   logic [ARM_N_C-1:0][2:0]         armq_cnt_r;
   logic [15:0]                     arm_drop_r;
 
@@ -3000,9 +3001,37 @@ module protocol_processor_top
     end
   end
 
+  // Each queue is a 4-entry ring in distributed RAM (issue #639): entries
+  // never move, the head index advances on a pop, and a push writes at
+  // head + count, which is the entry after the survivors whether or not the
+  // same cycle pops (a full queue that pops overwrites the head as it
+  // leaves: the read is asynchronous, the write lands at the edge). One
+  // write port and one read port per face, so eight rings rather than one
+  // array: one memory cannot take eight pushes in a cycle. The entries are
+  // not reset; the count is, and an entry is read only after a push wrote
+  // it. The shift queue this replaces held 1,152 flops at the 1x1 shape at
+  // processor 5c71928a, this change's base (1,153 at 631eeb34, the figure of
+  // milan-fpga's #234 area baseline), and a LUT per flop to shift them.
+  // `mem_r` is unpacked, so its indexed write is a memory port, not the
+  // dynamic part-write into a packed vector that yosys lowers as a barrel
+  // shift over every entry.
+  for (genvar g = 0; g < ARM_N_C; g++) begin : g_armq
+    (* ram_style = "distributed" *)
+    logic [ARM_W_C-1:0] mem_r [0:3];
+    logic [1:0]         wr_ix_w;
+
+    assign wr_ix_w = armq_hd_r[g] + armq_cnt_r[g][1:0];
+
+    always_ff @(posedge clk_i) begin : armq_ram_wr
+      if (armq_push_ok_w[g]) mem_r[wr_ix_w] <= armq_in_w[g];
+    end
+
+    assign armq_hd_w[g] = mem_r[armq_hd_r[g]];
+  end
+
   always_ff @(posedge clk_i) begin : arm_mux
     if (!rst_n) begin
-      armq_r     <= '0;
+      armq_hd_r  <= '0;
       armq_cnt_r <= '0;
       arm_drop_r <= 16'd0;
       tmr_arm_valid_w    <= 1'b0;
@@ -3015,25 +3044,9 @@ module protocol_processor_top
       for (int unsigned i = 0; i < ARM_N_C; i++) begin
         if (armq_pop_w[i]) begin
           {tmr_arm_cancel_w, tmr_arm_slot_w, tmr_arm_owner_w,
-           tmr_arm_deadline_w} <= armq_r[i][0];
+           tmr_arm_deadline_w} <= armq_hd_w[i];
           tmr_arm_valid_w      <= 1'b1;
-          armq_r[i][0] <= armq_r[i][1];
-          armq_r[i][1] <= armq_r[i][2];
-          armq_r[i][2] <= armq_r[i][3];
-        end
-        // the push write goes past the shifted survivors: later assignment
-        // to the same index wins, which is exactly the append position.
-        // DECODED, not indexed: `armq_r[i][armq_mid_w[i][1:0]] <= ...` is a
-        // dynamic part-write into the flattened queue vector, which yosys
-        // lowers as a read-modify-write barrel shift over ALL of armq_r —
-        // measured at 13,045 techmap $_MUX_ (about 7,400 mapped LUTs) the
-        // cycle the sixth client landed. The equality-decoded write is the
-        // same behavior as a 4-way enable per entry and costs a comparator
-        // per entry instead.
-        for (int unsigned e = 0; e < 4; e++) begin
-          if (armq_push_ok_w[i] && (armq_mid_w[i][1:0] == 2'(e))) begin
-            armq_r[i][e] <= armq_in_w[i];
-          end
+          armq_hd_r[i]         <= armq_hd_r[i] + 2'd1;
         end
         if (armq_in_vld_w[i] && !armq_push_ok_w[i]) begin
           if (arm_drop_r != 16'hFFFF) arm_drop_r <= arm_drop_r + 16'd1;
