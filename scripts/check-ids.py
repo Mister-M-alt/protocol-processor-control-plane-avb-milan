@@ -112,6 +112,12 @@ def uses(text: str) -> Iterator[tuple[int, str, str]]:
         line = text.count("\n", 0, match.start()) + 1
         if token in REGISTRY_WORDS:
             continue
+        # Resolve the continuation before interpreting any suffix on its last word.
+        # Otherwise a wrapped optional member is lost behind the original match.
+        broken = LINE_BREAK.match(text, end)
+        while broken:
+            token, end = f"{token}-{broken.group(1)}", broken.end()
+            broken = LINE_BREAK.match(text, end)
         if text.startswith("-*", end):
             yield line, token, "family"
         elif text.startswith("-{", end):
@@ -123,8 +129,7 @@ def uses(text: str) -> Iterator[tuple[int, str, str]]:
             else:
                 yield line, f"{token}-{{...}}", "list"
         else:
-            broken = LINE_BREAK.match(text, end)
-            yield line, f"{token}-{broken.group(1)}" if broken else token, "id"
+            yield line, token, "id"
             sibling = SIBLING.match(text, end)
             if sibling:
                 yield line, f"{token.rsplit('-', 1)[0]}-{sibling.group(1)}", "id"
@@ -208,6 +213,12 @@ SELFTEST_CASES = (
     ({CASE: "(T-MRP-\n//  JOIN) and 0..P-RX-SLOTS-1, MAAP-ANNOUNCE, gPTP-T-X"}, []),
     ({CASE: "T-NVM-{RS-DEADLINE}, a P-ONE-based bound, T-BUDGET-AECP-TYP / -WC"}, []),
     ({CASE: "T-ADP-DELAY(-START), (T-ADP-DELAY(-\n//  START)); the label T-MRP-JOIN(B)"}, []),
+    ({CASE: "T-ADP-\n// DELAY(-START), T-ADP-\n// DELAY(-\n// START), "
+            "T-ADP-\n// DELAY-\n// START"}, []),
+    ({CASE: "P-MISSING-1 has no base row"}, ["P-MISSING-1"]),
+    ({CASE: "T-ADP-DELAY(-\n// STRT) has no optional member row"}, ["T-ADP-DELAY-STRT"]),
+    ({CASE: "T-ADP-\n// DELAY(-STRT) has no optional member row"}, ["T-ADP-DELAY-STRT"]),
+    ({CASE: "T-ADP-\n// DELAY(-\n// STRT) has no optional member row"}, ["T-ADP-DELAY-STRT"]),
     ({"docs/case.md": "a stray P-NOT-A-ROW in a document"}, ["P-NOT-A-ROW"]),
     ({"hdl/case.sv": "// a stray T-NOT-A-ROW in a module comment"}, ["T-NOT-A-ROW"]),
     ({CASE: "a stray T-NOT-A-ROW in a suite"}, ["T-NOT-A-ROW"]),

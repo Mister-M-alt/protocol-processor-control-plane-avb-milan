@@ -204,8 +204,9 @@ are kept in [the class-A word-stream history](../history/02-class-a-word-stream.
   {"name": "tx_eof_o",   "wave": "0.....10..10"},
   {"name": "tx_ready_i", "wave": "1..01......."}
 ],
- "head": {"text": "the grant is frame-atomic: frame B starts only after A's eof"},
- "foot": {"text": "tx_ready_i low holds A2 in place for a cycle; nothing is skipped or truncated"}}
+ "config": {"svg_margin": 40},
+ "head": {"text": "frame B waits for A's eof"},
+ "foot": {"text": "tx_ready_i low: A2 held, no byte lost"}}
 ```
 
 </details>
@@ -581,6 +582,7 @@ while no request is in flight.
   {"name": "host_rdata_o",     "wave": "0.....=0.", "data": ["Q1"]},
   {"name": "host_err_o",       "wave": "0........"}
 ],
+ "config": {"svg_margin": 40},
  "head": {"text": "each request held until its strobe"}}
 ```
 

@@ -116,7 +116,11 @@ findings. The value scan is still to add
   says so); field names carry the byte offset (`@n`) or mask where ambiguity is
   dangerous; keep fields ≤ 64 bits (wider fields leave unlabeled middle lanes); `head`/
   `foot` text is signal-format-only — for `reg`, put it in the caption. Editing a block
-  without re-rendering fails `make check` (`wavedrom-check`).
+  without re-rendering fails `make check` (`wavedrom-check`). For labels that need
+  more room under font substitution, the repository renderer accepts
+  `"config": {"svg_margin": 40}`: a non-negative integer adds that many SVG units
+  on each horizontal side. Keep captions short and inspect the render with more
+  than one font; freshness alone does not check text fit.
 - **draw.io** (the three richest pictures only): source `docs/diagrams/src/<name>.drawio`,
   committed export `docs/diagrams/<name>.svg`, embedded via `![…](../diagrams/<name>.svg)`.
   Regenerate with `make diagrams` (see `docs/diagrams/README.md`).
