@@ -222,10 +222,11 @@ through the real input strobes on both planes: own/peer LeaveAll, both attribute
 variants, indices 0/7, and New, JoinIn, In, JoinMt, Mt, Lv, received LeaveAll and
 own LeaveAll. These 128 cases check state, published registration, ACTIVE where
 present, timer cancellation and registration indications. New/Join end IN;
-the other events end MT. The listener raises the expiry's UNREGISTERED and a
-fresh REGISTERED together on New/Join, with no failure-only change notification.
+the other events end MT. New/Join preserve the final published registration,
+without an intermediate UNREGISTERED/REGISTERED pair. Existing type-change,
+latency and failure-change notifications continue to describe the received value.
 
-The [SRP campaign](../srp_top/mutants.py) plants `lv-expiry-masked` (40 SC1 failures),
-`lv-expiry-last` (48) and `lv-expiry-dropped` (104 SC1, plus six older failures).
+The [SRP campaign](../srp_top/mutants.py) plants `lv-expiry-masked` (16 SC1 failures),
+`lv-expiry-last` (48) and `lv-expiry-dropped` (80 SC1, plus six older failures).
 The [integrated sweep](../srp_top/README.md#same-clock-leave-expiry-round-2) drives
 actual MRPDUs and the timer service across all 401 offsets on both planes.

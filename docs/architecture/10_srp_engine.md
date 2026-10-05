@@ -568,9 +568,9 @@ before applying a received event. Table 10-4 first takes LV to MT with Lv; apply
 rLv!, rLA! or txLA! at MT leaves MT. Received In and Mt do not register and likewise
 leave MT. Applying rNew!, rJoinIn! or rJoinMt! instead ends IN with the received
 value, stops the obsolete timer, and keeps the published registration and ACTIVE
-continuous. On the listener plane that fresh registration raises REGISTERED beside
-the expiry's UNREGISTERED; the applicant's final request is the new declaration.
-A Failed registration at that edge is fresh, not a FailureInformation-only change.
+continuous. The registrar publishes the final result of the composed transitions:
+a same-clock renewal does not emit an intermediate withdrawal. Existing type-change,
+latency and FailureInformation notifications still apply to the received value.
 No pending expiry or timer-service handshake is added: the one-clock strobe is
 consumed on its arrival. The pending-ARM guard still excludes an obsolete expiry
 while a replacement leave timer is being issued.

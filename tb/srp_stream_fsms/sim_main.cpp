@@ -1091,7 +1091,8 @@ void SrpStreamFsmsSuite::expiry_and_received_event_follow_table_10_4() {
       const auto& arms = listener ? h.l_arm : h.t_arm;
       const bool timer = registering ? arms.size() == 1 && arms[0].cancel : arms.empty();
       const bool indications = listener
-        ? h.l_unreg[slot] == 1 && h.l_reg[slot] == int(registering) && h.l_fchg[slot] == 0
+        ? h.l_unreg[slot] == int(!registering) && h.l_reg[slot] == 0
+          && h.l_fchg[slot] == int(registering && variant == 1)
         : h.t_chg[slot] == int(!registering);
       const bool published = listener ? h.l_tkreg(slot) == (registering ? type : 0)
         : h.t_lstn(slot) == (registering ? fp : 0)

@@ -8,7 +8,7 @@
    logic        exp_hit_w;
    logic [31:0] exp_idx_w;
  
-@@ -738,9 +739,14 @@
+@@ -737,9 +738,14 @@
              reg_r[s] <= R_MT_C;              // Δ13: no leavetimer on rLv
            end
            // LV: table 10-4 rLv on LV is -x- (the LeaveAll aging continues)

@@ -717,15 +717,11 @@ module KL_srp_talker_fsm
         tpend_r[tsel_ix_w] <= T_NOP_C;
       end
 
+      // Table 10-4, expiry before reception: New/Join finish IN and cancel
+      // the obsolete timer (no published withdrawal); Lv/LA finish MT.
+      // Test expiry before rLv so its one-clock strobe cannot be masked.
       // ---- per-source registrar events ----------------------------------
       for (int unsigned s = 0; s < N_SOURCES_P; s++) begin
-        // Table 10-4: consume leavetimer! before the received event.
-        // rLv/rLA in LV cannot mask its single-clock strobe; a registering
-        // event below applies to the expired registration and ends in IN.
-        if (exp_hit_w && (exp_idx_w == s)
-                     && (reg_r[s] == R_LV_C) && (tpend_r[s] != T_ARM_C)) begin
-          reg_r[s] <= R_MT_C;                // leavetimer! -> MT + Lv
-        end
         if (reg_rx_hit_w[s] && ((evt_mrp_event_i == 3'(SRP_EV_NEW))
                                 || (evt_mrp_event_i == 3'(SRP_EV_JOININ))
                                 || (evt_mrp_event_i == 3'(SRP_EV_JOINMT)))) begin
@@ -733,6 +729,9 @@ module KL_srp_talker_fsm
           if (reg_r[s] == R_LV_C) tpend_r[s] <= T_CANCEL_C;
           reg_r[s]      <= R_IN_C;
           lstn_val_r[s] <= evt_fourpacked_i;
+        end else if (exp_hit_w && (exp_idx_w == s)
+                     && (reg_r[s] == R_LV_C) && (tpend_r[s] != T_ARM_C)) begin
+          reg_r[s] <= R_MT_C;                // leavetimer! -> MT + Lv
         end else if (reg_rx_hit_w[s] && (evt_mrp_event_i == 3'(SRP_EV_LV))) begin
           if (reg_r[s] == R_IN_C) begin
             reg_r[s] <= R_MT_C;              // Δ13: no leavetimer on rLv

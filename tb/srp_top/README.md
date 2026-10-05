@@ -568,7 +568,7 @@ clock; the snapshot lives outside the tree and is removed after the sweep.
 
 | Check | Required result | Planted fault that fails it |
 |---|---|---|
-| SC1 (`srp_stream_fsms`) | 128 simultaneous-event cases match Table 10-4, expiry first, including indications and timer operations | `lv-expiry-masked` 40 failures; `lv-expiry-last` 48; `lv-expiry-dropped` 104 SC1 failures |
+| SC1 (`srp_stream_fsms`) | 128 simultaneous-event cases match Table 10-4, expiry first, including indications and timer operations | `lv-expiry-masked` 16 failures; `lv-expiry-last` 48; `lv-expiry-dropped` 80 SC1 failures |
 | SC2 | Every k ends with both registrars MT, both registrations absent, ACTIVE low, one STREAM_STOP and one TK_UNREGISTERED | `lv-expiry-masked` restores both original planes: 16 failures, one collision in each combination |
 | SC3 | Exactly one decoded `Lv` in each sweep shares the calibrated expiry clock | `lv-sweep-misses-collision` delays every frame 401 clocks: all 16 checks fail while SC2 stays green |
 
@@ -588,11 +588,12 @@ Table 10-4 results after LV / leavetimer!: MT + Lv, then:
 | rNew | IN | Received value registered; obsolete timer canceled |
 | rJoinIn / rJoinMt | IN | Received value registered; obsolete timer canceled |
 
-On the listener plane, a registering event at expiry raises REGISTERED and
-UNREGISTERED together, with the new declaration taking precedence at the applicant.
-It is a fresh registration, so changed Failed payload is not a failure-only
-notification. On the talker plane the final published registration is continuous,
-so no ACTIVE edge or LISTENER_REG_CHANGE is synthesized for the intermediate MT.
+Both planes publish the final result of the composed transitions. A registering
+event preserves the published registration; it emits no intermediate withdrawal
+or ACTIVE edge. The listener retains its existing type-change, latency and
+FailureInformation notifications for the received value. Separate REGISTERED and
+UNREGISTERED pulses would enter independent event-router queues with no ordering
+guarantee, so renewal must not publish a transient withdrawal.
 
 ## Timer-arm FIFOs at four shapes (issue #230)
 

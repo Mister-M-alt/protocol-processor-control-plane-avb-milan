@@ -445,14 +445,13 @@ module KL_srp_listener_fsm
   always_comb begin : reg_ind
     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
       ind_reg_w[s] = reg_rx_hit_w[s] && rx_registering_w
-                  && ((reg_r[s] == R_MT_C) || (rtype_r[s] != rx_is_failed_w)
-                      || (exp_hit_w && (exp_idx_w == s)
-                          && (reg_r[s] == R_LV_C) && (tpend_r[s] != T_ARM_C)));
+                  && ((reg_r[s] == R_MT_C) || (rtype_r[s] != rx_is_failed_w));
       ind_unreg_w[s] = (reg_rx_hit_w[s]
                         && (evt_mrp_event_i == 3'(SRP_EV_LV))
                         && (reg_r[s] == R_IN_C))
                     || (exp_hit_w && (exp_idx_w == s)
-                        && (reg_r[s] == R_LV_C) && (tpend_r[s] != T_ARM_C));
+                        && (reg_r[s] == R_LV_C) && (tpend_r[s] != T_ARM_C)
+                        && !(reg_rx_hit_w[s] && rx_registering_w));
     end
   end
 
@@ -471,9 +470,7 @@ module KL_srp_listener_fsm
     fchg_hit_w = 1'b0;
     fchg_ix_w  = '0;
     for (int unsigned s = 0; s < N_SINKS_P; s++) begin
-      fchg_cand_w[s] = reg_rx_hit_w[s] && (reg_r[s] != R_MT_C) && rtype_r[s]
-                     && !(exp_hit_w && (exp_idx_w == s)
-                          && (reg_r[s] == R_LV_C) && (tpend_r[s] != T_ARM_C));
+      fchg_cand_w[s] = reg_rx_hit_w[s] && (reg_r[s] != R_MT_C) && rtype_r[s];
       if (!fchg_hit_w && fchg_cand_w[s]) begin
         fchg_hit_w = 1'b1;
         fchg_ix_w  = SNK_W_C'(s);
@@ -747,19 +744,14 @@ module KL_srp_listener_fsm
         tpend_r[tsel_ix_w] <= T_NOP_C;
       end
 
+      // Table 10-4, expiry before reception: New/Join finish IN and cancel
+      // the obsolete timer (no published withdrawal); Lv/LA finish MT.
+      // Test expiry before rLv so its one-clock strobe cannot be masked.
       // ---- per-sink registrar events ------------------------------------
       for (int unsigned s = 0; s < N_SINKS_P; s++) begin
-        // Table 10-4: consume leavetimer! before the received event.
-        // rLv/rLA in LV cannot mask its single-clock strobe; a registering
-        // event below applies to the expired registration and ends in IN.
-        if (exp_hit_w && (exp_idx_w == s)
-                     && (reg_r[s] == R_LV_C) && (tpend_r[s] != T_ARM_C)) begin
-          reg_r[s] <= R_MT_C;                // leavetimer! -> MT + Lv
-          evt_tk_unregistered_o[s] <= 1'b1;
-        end
         if (reg_rx_hit_w[s] && rx_registering_w) begin
           // registering event: -> IN; latch type + payloads; a type change
-          // while IN/LV is an in-place swap unless expiry also arrives
+          // while IN/LV is the in-place swap (strobe, no unregistration)
           if (reg_r[s] == R_LV_C) tpend_r[s] <= T_CANCEL_C;
           reg_r[s]   <= R_IN_C;
           rtype_r[s] <= rx_is_failed_w;
@@ -774,6 +766,10 @@ module KL_srp_listener_fsm
           end
           if (ind_reg_w[s])  evt_tk_registered_o[s] <= 1'b1;
           if (ind_fchg_w[s]) evt_tk_fail_chg_o[s]   <= 1'b1;
+        end else if (exp_hit_w && (exp_idx_w == s)
+                     && (reg_r[s] == R_LV_C) && (tpend_r[s] != T_ARM_C)) begin
+          reg_r[s] <= R_MT_C;                // leavetimer! -> MT + Lv
+          evt_tk_unregistered_o[s] <= 1'b1;
         end else if (reg_rx_hit_w[s]
                      && (evt_mrp_event_i == 3'(SRP_EV_LV))) begin
           if (reg_r[s] == R_IN_C) begin
