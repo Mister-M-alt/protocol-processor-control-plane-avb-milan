@@ -351,6 +351,15 @@ struct H {
   std::vector<uint64_t> mvrp_action_cycles;
   std::vector<uint64_t> redraw_cycles;
   std::vector<uint64_t> mvrp_join_cycles;      // MVRP T-MRP-JOIN expiries
+  // issue #134: the edges of each source's ACTIVE level, which the
+  // integrator's STREAM_START / STREAM_STOP counters count (02 §4.6), and
+  // the LISTENER_REG_CHANGE strobes, each with the ms of its latest one
+  unsigned prev_active = 0;
+  int start_cnt[8] = {};
+  int stop_cnt[8] = {};
+  uint32_t stop_ms[8] = {};
+  int lrc_cnt[8] = {};
+  uint32_t lrc_ms[8] = {};
   bool step() {
     // Bound every run, including decoder/timer deadlocks, by DUT clocks. The
     // complete default run takes 185,012,669 (the P8 arm-delay sweep 53.3 M).
@@ -373,6 +382,15 @@ struct H {
       if (d->dbg_la_mvrp_action_o) mvrp_action_cycles.push_back(t);
       if (d->dbg_la_redraw_o) redraw_cycles.push_back(t);
       if (d->dbg_mvrp_join_o) mvrp_join_cycles.push_back(t);
+      unsigned act = d->active_o;
+      for (int k = 0; k < 8; k++) {
+        bool was = (prev_active >> k) & 1;
+        bool now = (act >> k) & 1;
+        if (!was && now) start_cnt[k]++;
+        if (was && !now) { stop_cnt[k]++; stop_ms[k] = d->now_ms_o; }
+        if ((d->lstn_reg_change_o >> k) & 1) { lrc_cnt[k]++; lrc_ms[k] = d->now_ms_o; }
+      }
+      prev_active = act;
     }
     unsigned decl = d->dbg_decl_o;
     unsigned withdraw = d->dbg_withdraw_o;
@@ -438,6 +456,7 @@ struct H {
     mvrp_expiry_cycles.clear(); mvrp_expiry_times.clear(); mvrp_action_cycles.clear();
     redraw_cycles.clear(); mvrp_join_cycles.clear();
     pause_tx = false; expiry_cycles.clear(); prep_cycles.clear(); peer_la_cycles.clear(); la_cycles.clear(); la_times.clear(); rx_cycles.clear();
+    prev_active = 0;                     // reset clears ACTIVE: no edge to count
     d->block_alloc_i = 0;
     d->rst_n = 0;
     d->own_mac_i = OWN_MAC; d->entity_id_i = EID;
@@ -595,6 +614,7 @@ class SrpTopHarness {
     if (!*group || !strcmp(group,"restart")) check_received_leaveall_restarts_the_timer();
     if (!*group || !strcmp(group,"timers")) check_mrp_timers_against_table_4_3();
     if (!*group || !strcmp(group,"join")) check_mvrp_join_before_the_stream();
+    if (!*group || !strcmp(group,"lvleave")) check_withdrawal_meets_an_lv_registrar();
 
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
     return fails ? 1 : 0;
@@ -748,6 +768,106 @@ class SrpTopHarness {
     h.reset(); d->link_up_i=1; h.run_ms(500);
     CHECK(h.la_cycles.empty() && d->dbg_t_reg_o==0 && d->dbg_l_reg_o==0,
           "K10: reset discards the pending action and registrars");
+  }
+
+  // S (issue #134): a withdrawal meets an LV Listener registrar. The bench
+  // case of milan-fpga #608 (cycle 22): the DUT's own LeaveAll crossed the
+  // wire 1.390 ms before the bridge's Lv for a stream its listener had
+  // withdrawn. 802.1Q-2014 Table 10-4 puts rLv!, rLA! and txLA! in one row:
+  // in IN it starts the leavetimer and enters LV, in LV it does nothing
+  // (-x-); leavetimer! in LV is Lv and MT. Milan v1.2 4.2.7.2.2 (Δ13)
+  // replaces the IN cell alone. So the Lv changes nothing: the registration
+  // and ACTIVE stay until the leave timer expires, T-MRP-LEAVE after the
+  // LeaveAll (Milan v1.2 Table 4.3 LeaveTime, default 5000 ms, 4500-7500),
+  // then close, with one falling ACTIVE edge: one STREAM_STOP. The peer
+  // repeats the Lv 2.5 s in, which must change nothing either.
+  static constexpr uint32_t LEAVE_TIME_MS = 5000;
+  static constexpr int BENCH_GAP_CLOCKS = 56;   // 1.390 ms at 40 clocks per ms
+  // the bridge's Listener vectors: JoinIn for each declared source but
+  // `skip`, the first of them flagged LeaveAll when `la`
+  static Msg listener_rejoins(int fp, int skip, bool la) {
+    Msg m{3, 8, true, {}};
+    for (int s : {0, 3, 7}) {
+      if (s == skip) continue;
+      m.vecs.push_back(Vec{la && m.vecs.empty(), 1, fv_sid(own_sid(s)), {EV_JOININ}, {fp}});
+    }
+    return m;
+  }
+  void check_withdrawal_meets_an_lv_registrar() {
+    for (bool own : {true, false}) for (int fp : {DECL_READY, DECL_READYFAIL}) for (int target : {0, 7}) {
+      const char* cause = own ? "own" : "peer";
+      leaveall_setup(fp);
+      const int stops = h.stop_cnt[target];
+      const int starts = h.start_cnt[target];
+      const int lrcs = h.lrc_cnt[target];
+      // the bridge re-declares sink 0's Advertise and sink 7's Failed too
+      Msg ta{1, 25, false, {Vec{!own, 1, fv_talker(peer_sid(0), peer_da(0), 2, 29, 1, 3, 1, 500),
+                                {EV_JOININ}, {}}}};
+      Msg tf{2, 34, false, {Vec{!own, 1, fv_failed(peer_sid(7), peer_da(7), 2, 29, 1, 3, 1, 500,
+                                                   0x1234, 1), {EV_JOININ}, {}}}};
+      bool aged = false;
+      uint32_t la_ms = 0;
+      int lv1_reg = -1;
+      if (own) {
+        // the own LeaveAll: sLA ages every registrar, its MRPDU follows; the
+        // bridge then re-joins every other registration and withdraws the target
+        auto laf = h.wait_frame(true, 16000, [](const std::vector<uint8_t>& fr) {
+          for (const PVec& v : parse_frame(fr).vecs) {
+            if (v.la) return true;
+          }
+          return false;
+        });
+        aged = !laf.empty() && h.la_times.size() == 1;
+        la_ms = h.la_times.empty() ? 0 : h.la_times[0];
+        h.idle(BENCH_GAP_CLOCKS);
+        lv1_reg = source_reg(target);
+        Msg lr = listener_rejoins(fp, target, false);
+        lr.vecs.push_back(Vec{false, 1, fv_sid(own_sid(target)), {EV_LV}, {fp}});
+        h.feed(mrpdu_body(true, {lr, ta, tf}), true);
+      } else {
+        // the bridge's LeaveAll on every MSRP type, re-joining all but the
+        // target, then its Lv for the target
+        h.peer_la_times.clear();
+        h.feed(mrpdu_body(true, {listener_rejoins(fp, target, true), ta, tf,
+                                 la_only(4, 4, false)}), true);
+        aged = !h.peer_la_times.empty() && h.la_cycles.empty();
+        la_ms = h.peer_la_times.empty() ? 0 : h.peer_la_times[0];
+        h.idle(BENCH_GAP_CLOCKS);
+        lv1_reg = source_reg(target);
+        listener_event(target, EV_LV, fp);
+      }
+      const uint32_t lv1_ms = d->now_ms_o;
+      bool kept = source_reg(target) == 2 && h.lstn_reg(target) == fp && h.active(target);
+      until_ms(la_ms + 2500);
+      const int lv2_reg = source_reg(target);
+      listener_event(target, EV_LV, fp);
+      const uint32_t lv2_ms = d->now_ms_o;
+      until_ms(la_ms + LEAVE_TIME_MS - 1);
+      kept &= source_reg(target) == 2 && h.lstn_reg(target) == fp && h.active(target);
+      CHECK(aged && lv1_reg == 2 && lv2_reg == 2 && kept && h.stop_cnt[target] == stops
+            && h.start_cnt[target] == starts && h.lrc_cnt[target] == lrcs,
+            "S1: %s LeaveAll fp=%d src=%d: both Lvs meet LV, and the registration and "
+            "ACTIVE stay until the leave timer expires", cause, fp, target);
+      until_ms(la_ms + LEAVE_TIME_MS + 2);
+      const bool closed = h.stop_cnt[target] == stops + 1 && h.lrc_cnt[target] == lrcs + 1;
+      const uint32_t leave_ms = closed ? h.stop_ms[target] - la_ms : 0;
+      const uint32_t change_ms = closed ? h.lrc_ms[target] - la_ms : 0;
+      CHECK(closed && leave_ms >= LEAVE_TIME_MS && leave_ms <= LEAVE_TIME_MS + 1
+            && change_ms >= LEAVE_TIME_MS && change_ms <= LEAVE_TIME_MS + 1
+            && source_reg(target) == 0 && h.lstn_reg(target) == 0 && !h.active(target),
+            "S2: %s LeaveAll fp=%d src=%d: the registration and ACTIVE close at the "
+            "leave timer's expiry (%u ms; Table 4.3 LeaveTime 5000 ms)", cause, fp, target, leave_ms);
+      until_ms(la_ms + LEAVE_TIME_MS + 2000);
+      CHECK(h.stop_cnt[target] == stops + 1 && h.start_cnt[target] == starts
+            && h.lrc_cnt[target] == lrcs + 1 && !h.active(target),
+            "S3: %s LeaveAll fp=%d src=%d: STREAM_STOP counted exactly once (%d), "
+            "no STREAM_START (%d)", cause, fp, target, h.stop_cnt[target] - stops,
+            h.start_cnt[target] - starts);
+      printf("LV_LEAVE cause=%s fp=%d source=%d leaveall_ms=%u lv_ms=%u,%u close_ms=%u "
+             "leave_time_ms=%u stream_stop=%d stream_start=%d\n", cause, fp, target, la_ms,
+             lv1_ms, lv2_ms, closed ? h.stop_ms[target] : 0, leave_ms,
+             h.stop_cnt[target] - stops, h.start_cnt[target] - starts);
+    }
   }
 
   // L: move slot acceptance across one decoded Listener Lv. The frame
@@ -2720,6 +2840,6 @@ int main(int argc, char** argv) {
   if (*group && strcmp(group,"armdelay") && strcmp(group,"phases") && strcmp(group,"edge")
       && strcmp(group,"peer") && strcmp(group,"congestion")
       && strcmp(group,"guards") && strcmp(group,"restart")
-      && strcmp(group,"timers") && strcmp(group,"join")) return 2;
+      && strcmp(group,"timers") && strcmp(group,"join") && strcmp(group,"lvleave")) return 2;
   return harness.run(group);
 }

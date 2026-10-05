@@ -150,6 +150,9 @@ MUTANTS = [
      'round publishes the greedy walk over every current declaration'),
     ('slope-read-source-0', 'srp_admission', '',
      'round publishes the greedy walk over every current declaration'),
+    # issue #134: a withdrawal that meets an LV Listener registrar
+    ('lv-second-lv-ends', 'srp_top', 'lvleave', 'S1:'),
+    ('lv-never-ends', 'srp_top', 'lvleave', 'S2:'),
 ]
 
 
@@ -242,7 +245,7 @@ def main() -> int:
     if not args.only:
         expected = {f"{group}{i}" for group, count in
                     [("K", 12), ("L", 4), ("M", 12), ("N", 13), ("O", 8), ("P", 8), ("Q", 4), ("R", 4),
-                     ("TF", 5), ("WK", 10)]
+                     ("S", 3), ("TF", 5), ("WK", 10)]
                     for i in range(1, count + 1)}
         missing = expected - covered
         total += 1
