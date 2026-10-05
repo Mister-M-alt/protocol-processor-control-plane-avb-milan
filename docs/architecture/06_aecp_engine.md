@@ -884,8 +884,10 @@ the six defined command message types for AEM, Address Access, AVC, MVU, HDCP AP
 and Extended, while reserved types do not re-arm it. Expiry originates
 CONTROLLER_AVAILABLE through the shared inflight tracker; any matching response status
 re-arms the monitor; and one failed retry removes the row and emits targeted
-DEREGISTER. A valid command that arrives while a probe is active cancels that probe
-and starts a fresh monitor interval. TIME_LIMITED expiry also cancels an active
+DEREGISTER. Either DEREGISTER waits for a running notification round to end, so a
+row removed between two of its jobs never changes the notification the round's
+remaining controllers receive (issue #158). A valid command that arrives while a
+probe is active cancels that probe and starts a fresh monitor interval. TIME_LIMITED expiry also cancels an active
 probe before its row is cleared, preventing a late result from changing a new
 controller that later reuses the row. Cancellation before issue releases any
 partially built TX slot and unlocks the shared writer. Emission jobs run
