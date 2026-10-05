@@ -4,7 +4,7 @@
 Proves the ROM-driven Milan listener-SM executor
 (`hdl/acmp/KL_pp_acmp_listener.sv`) against the full F05.3 transition matrix of
 [05 §6.3](../../docs/architecture/05_acmp_engine.md): `make` = generate the
-ROM + build + run, exit 0 = PASS, 2988 checks.
+ROM + build + run, exit 0 = PASS, 3111 checks.
 
 **The MTXW walk** ([09 §3](../../docs/architecture/09_verification.md)):
 every one of the 112 cells (14 events x 8 states) is driven against an
@@ -92,6 +92,29 @@ own extract of the tree, KILLED only when every named check fails:
 
 The same `msg_ok_forced` edit also fails `tb/pp_top` AI3 (the top-level leg,
 recorded there).
+
+Record storage (issue #639). The records live in distributed RAM with no read
+register: the walk reads a record asynchronously in X_LATCH or X_STRT_AP, the
+state after its read-issue state, and nothing writes a record in between. The
+array has no reset, so the X_INIT sweep is its only one. **RS** grades that
+sweep through the RAM rather than the write port this suite shadows: with
+records bound at the end of the walk, a reset is taken, and a GET_RX_STATE on
+every sink must then answer the unbound record, and the record its walk
+writes back must equal the model's unbound one (123 checks, which is why the
+tally moved from 2988).
+
+Mutation-proven 2026-10-04 by `tb/pp_top/acmp_mutants.py` (issue #639 group),
+each mutant in its own extract, KILLED only when every named check fails. The
+four controls above fail the same counts as recorded, now of 3111 and 3107
+checks.
+
+| Mutant | Defect planted | Named checks | Result |
+|---|---|---|---|
+| `rec_read_sink_zero` | the walk reads sink 0's record whatever the sink | B12 parked sink 7 untouched; F05.3 BIND_SAME x PWA sm_state | 645 of 3080 FAIL |
+| `rec_read_in_idle` | the record read through a register sampled in X_IDLE, the cycle before the read-issue state (the stale form of a removed read register) | RV8(setup) state sync | 1 of 3111 FAIL |
+| `rec_started_unstored` | the RAM never stores `f_started` (record bit 12) | S1d STOP through the request face; F05.3 GETRX x PWA flags | 91 of 3111 FAIL |
+| `rec_settled_vlan_unstored` | the RAM never stores `settled_vlan` bit 1 (record bit 305) | F05.3 GETRX x SOK settled; B12 | 25 of 3111 FAIL |
+| `rec_sweep_misaddressed` | the X_INIT sweep writes the walk's sink instead of each record in turn | RS binding | 37 of 3111 FAIL; before RS it survived (0 of 2988) |
 
 Re-bind started/stopped trigger (RV8, issues #43/#49): a BIND_NEW onto a bound
 sink with STREAMING_WAIT flipped (A2 without A10) raises `act_strt_chg_o`

@@ -12,9 +12,10 @@ the tree this script lives in is never touched.
 
 The controls are those of processor issues #47 (ACMP messages outside the listener
 and talker sets are inert; the probe-response guard per term), #45 (ACMPDUs longer
-than 56 bytes are accepted) and #48 (the integrated settle path from the listener
-through the top's SRP service stage to the SRP listener matcher and back). The
-suite READMEs carry the matching mutation records.
+than 56 bytes are accepted), #48 (the integrated settle path from the listener
+through the top's SRP service stage to the SRP listener matcher and back) and #639
+(the listener records in distributed RAM, and the top's timer arm-port queues as
+rings in distributed RAM). The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/acmp_mutants.py --output DIR [--verilator V] [--jobs N]
                                          [--only NAME ...]
@@ -49,6 +50,7 @@ class Mutant(NamedTuple):
 ACMP_LISTENER = Suite("tb/acmp_listener", (), ("make", "run"))
 RX_VALIDATOR = Suite("tb/rx_validator", (), ("make", "run"))
 PP_TOP = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--acmp-only"))
+PP_TOP_AQ = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--arm-queue-only"))
 
 LISTENER = "hdl/acmp/KL_pp_acmp_listener.sv"
 VALIDATOR = "hdl/packet_engine/KL_pp_rx_validator.sv"
@@ -159,8 +161,79 @@ SETTLE_PATH = (
          "AS3: near misses register nothing", "AS3: no TK_ATTR_REGISTERED{1}")),
 )
 
-MUTANTS = INERT + LONG_FORM + SETTLE_PATH
-TALLY = re.compile(r"^(ACMP: \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$", re.M)
+# issue #639: the listener records in distributed RAM, read in the cycle after
+# the walk's issue state, and the top's eight timer arm-port queues as 4-entry
+# rings in distributed RAM. Traffic at the top never holds two arms in a queue
+# (section AQ prints the coverage), so section AQ's drive fills the queues from
+# the bench. Its AQ3 grades every armq_ arm, and is the only check that reaches
+# the full-queue path, where the last four are planted (R462-1's controls).
+REC_READ = "  assign rec_rd_w     = acmp_rec_t'(rec_ram_r[sink_r]);\n"
+REC_WRITE = "      rec_ram_r[recwr_addr_w] <= recwr_data_w;\n"
+RING_WRITE = "    assign wr_ix_w = armq_hd_r[g] + armq_cnt_r[g][1:0];\n"
+RING_ADVANCE = "          armq_hd_r[i]         <= armq_hd_r[i] + 2'd1;\n"
+RING_READ = "    assign armq_hd_w[g] = mem_r[armq_hd_r[g]];\n"
+RING_STORE = "      if (armq_push_ok_w[g]) mem_r[wr_ix_w] <= armq_in_w[g];\n"
+PUSH_OK = "      armq_push_ok_w[i] = armq_in_vld_w[i] && (armq_mid_w[i] != 3'd4);\n"
+DROP_COUNT = "          if (arm_drop_r != 16'hFFFF) arm_drop_r <= arm_drop_r + 16'd1;\n"
+AQ_MODEL = ("AQ2: the arm port and the drop counter equal the eight-queue model",)
+AQ_DRIVE = ("AQ3: driven from the bench, the arm port and the drop counter equal",)
+AQ_BOTH = AQ_MODEL + AQ_DRIVE
+PARKED = "B12: parked sink 7 record untouched"
+
+
+def rec_write_without(bit: int) -> str:
+    """The record write with one record bit never stored."""
+    return f"      rec_ram_r[recwr_addr_w] <= recwr_data_w & ~(ACMP_REC_W_C'(1) << {bit});\n"
+
+
+STORAGE = (
+    Mutant("rec_read_sink_zero", ACMP_LISTENER, (
+        (LISTENER, REC_READ, "  assign rec_rd_w     = acmp_rec_t'(rec_ram_r[0]);\n"),),
+        (PARKED, "F05.3 BIND_SAME x PWA: sm_state")),
+    Mutant("rec_read_in_idle", ACMP_LISTENER, (
+        (LISTENER, REC_READ,
+         "  logic [ACMP_REC_W_C-1:0] rec_idle_r;\n"
+         "  always_ff @(posedge clk_i) if (xs_r == X_IDLE) rec_idle_r <= rec_ram_r[sink_r];\n"
+         "  assign rec_rd_w     = acmp_rec_t'(rec_idle_r);\n"),),
+        ("RV8(setup): state sync",)),
+    Mutant("rec_started_unstored", ACMP_LISTENER, (
+        (LISTENER, REC_WRITE, rec_write_without(12)),),
+        ("S1d: STOP through the request face cleared the bit", "F05.3 GETRX x PWA: flags")),
+    Mutant("rec_settled_vlan_unstored", ACMP_LISTENER, (
+        (LISTENER, REC_WRITE, rec_write_without(305)),),
+        ("F05.3 GETRX x SOK: settled", PARKED)),
+    Mutant("rec_sweep_misaddressed", ACMP_LISTENER, (
+        (LISTENER, REC_WRITE, "      rec_ram_r[sink_r] <= recwr_data_w;\n"),),
+        ("RS GET_RX_STATE after the reset: binding",)),
+    Mutant("armq_read_tail", PP_TOP_AQ, (
+        (TOP, RING_READ, "    assign armq_hd_w[g] = mem_r[wr_ix_w];\n"),), AQ_BOTH),
+    Mutant("armq_head_stuck", PP_TOP_AQ, (
+        (TOP, RING_ADVANCE, "          armq_hd_r[i]         <= armq_hd_r[i];\n"),), AQ_BOTH),
+    Mutant("armq_ring_of_three", PP_TOP_AQ, (
+        (TOP, RING_ADVANCE, "          armq_hd_r[i]         <= (armq_hd_r[i] == 2'd2) ? 2'd0"
+                            " : armq_hd_r[i] + 2'd1;\n"),), AQ_BOTH),
+    Mutant("armq_write_at_head", PP_TOP_AQ, (
+        (TOP, RING_WRITE, "    assign wr_ix_w = armq_hd_r[g];\n"),), AQ_BOTH),
+    Mutant("armq_write_at_mid", PP_TOP_AQ, (
+        (TOP, RING_WRITE, "    assign wr_ix_w = armq_hd_r[g] + armq_mid_w[g][1:0];\n"),),
+        AQ_BOTH),
+    Mutant("armq_write_refused", PP_TOP_AQ, (
+        (TOP, RING_STORE, "      if (armq_in_vld_w[g]) mem_r[wr_ix_w] <= armq_in_w[g];\n"),),
+        AQ_DRIVE),
+    Mutant("armq_write_wrap_hi", PP_TOP_AQ, (
+        (TOP, RING_WRITE, "    assign wr_ix_w = (armq_cnt_r[g] >= 3'd3) ? armq_hd_r[g] + 2'd2"
+                          " : armq_hd_r[g] + armq_cnt_r[g][1:0];\n"),), AQ_DRIVE),
+    Mutant("armq_full_pop_refuses", PP_TOP_AQ, (
+        (TOP, PUSH_OK,
+         "      armq_push_ok_w[i] = armq_in_vld_w[i] && (armq_cnt_r[i] != 3'd4);\n"),),
+        AQ_DRIVE),
+    Mutant("armq_drop_skip_sat", PP_TOP_AQ, (
+        (TOP, DROP_COUNT, "          arm_drop_r <= arm_drop_r + 16'd1;\n"),), AQ_DRIVE),
+)
+
+MUTANTS = INERT + LONG_FORM + SETTLE_PATH + STORAGE
+TALLY = re.compile(r"^((?:ACMP|AQ): \d+ checks, \d+ failures|\d+ checks: \d+ PASS, \d+ FAIL)$",
+                   re.M)
 
 
 def plant(tree: Path, edits: tuple[tuple[str, str, str], ...]) -> str:
@@ -222,6 +295,12 @@ def label_of(mutant: Mutant) -> str:
     return f"{mutant.name}@{Path(mutant.suite.directory).name}"
 
 
+def golden_label(suite: Suite) -> str:
+    """One golden per suite and run mode; the run's flags name the mode."""
+    flags = "".join(arg for arg in suite.run if arg.startswith("--"))
+    return f"golden-{Path(suite.directory).name}{flags}"
+
+
 def main() -> int:
     """Run a golden copy of every suite in use, then every selected mutant."""
     parser = argparse.ArgumentParser(description=__doc__,
@@ -240,8 +319,8 @@ def main() -> int:
         parser.error("unknown mutant(s): " + " ".join(unknown))
     chosen = [m for m in MUTANTS if not args.only or m.name in args.only]
     work = (root, output, args.verilator)
-    suites = {m.suite.directory: m.suite for m in chosen}
-    records = [judge("golden-" + Path(d).name, s, (), (), work) for d, s in sorted(suites.items())]
+    suites = {(m.suite.directory, m.suite.run): m.suite for m in chosen}
+    records = [judge(golden_label(s), s, (), (), work) for _, s in sorted(suites.items())]
     for record in records:
         print(json.dumps({k: record[k] for k in ("mutant", "verdict")}), flush=True)
     if all(r["verdict"] == "PASS" for r in records):

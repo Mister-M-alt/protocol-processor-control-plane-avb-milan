@@ -399,6 +399,19 @@ and two arms of the harness store (a domain-only strobe counted, a link edge
 detector reset up), each required to fail its named check. The mutation record is
 in the [`tb/pp_top` README](../../tb/pp_top/README.md).
 
+### 8.8 Distributed-RAM storage: the timer arm-port queues and the listener records (issue #639)
+
+Both structures moved into distributed RAM with no change at any port or in any
+cycle. The checks below grade both, and each also passes on `main`'s RTL, so
+each grades behaviour the change kept:
+
+| Structure | Checks | Controls |
+|---|---|---|
+| the top's eight timer arm-port queues, each a 4-entry ring | `tb/pp_top` AQ: after every clock edge of the main harness, over every section the full default run drives on it, the arm port and the drop counter equal an independent eight-FIFO model fed from the engine faces (AQ2). Traffic from outside the top never holds two arms in a face, so a drive from the bench then forces the faces' own nets under the same model (AQ3). It reaches a write at every ring offset, a full face's write onto its leaving head, refused arms, two faces dropping in one clock, the counter saturated and resets with arms queued (AQ4) | nine `armq_*` arms in `tb/pp_top/acmp_mutants.py`, four of them on the full-queue path |
+| the ACMP listener records, read without a read register | `tb/acmp_listener`: the MTXW walk reads every record back in the cycle after its issue state; RS: a reset taken while records are bound leaves every record zero in the RAM, read back by GET_RX_STATE (the X_INIT sweep is the array's only reset) | five `rec_*` arms in the same driver |
+
+The mutation records are in the two suites' READMEs.
+
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)
 per the scope rules in [docs/README §2](../README.md).

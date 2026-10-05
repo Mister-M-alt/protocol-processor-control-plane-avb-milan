@@ -93,6 +93,18 @@ listener's `g_wsid_ram.wsid_r` (from three sinks) and the admission's `slope_q_r
 beside the timer-arm FIFOs `tf_tk_ram_r` and `tf_ls_ram_r`, whose read is registered
 ([10 §5.1](../architecture/10_srp_engine.md), issue #230).
 
+A few memories are distributed RAM read **asynchronously**, because their consumer
+needs the entry in the cycle it asks: the µCPU operand file in
+[`KL_aecp_ucpu`](../../hdl/aecp/KL_aecp_ucpu.sv), the top's eight timer arm-port
+queues (4-entry rings since issue #639, popped into the arm port in the cycle they are
+picked) and the listener records in
+[`KL_pp_acmp_listener`](../../hdl/acmp/KL_pp_acmp_listener.sv). The listener's walk
+still spends its read-issue state and reads the record in the next one, as it did
+when the record RAM had a read register, so nothing that consumes the record moved.
+A memory read this way is still RAM, never a flop mirror; give it
+`(* ram_style = "distributed" *)` when it is wide and shallow, or a synthesiser bands
+block RAM tiles side by side to reach its width.
+
 ### 3.2 Drops: count them, never swallow them
 
 A frame or event this processor discards is always counted. Counters saturate rather than

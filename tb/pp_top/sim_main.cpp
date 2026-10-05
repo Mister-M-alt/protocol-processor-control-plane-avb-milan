@@ -711,12 +711,121 @@ static void dump(const char* tag, const std::vector<uint8_t>& f) {
 struct NvmOp { int op; uint8_t region; uint16_t off, len;
                std::vector<uint8_t> wr; };
 
+// section AQ (issue #639): the top's timer arm-port mux against a model of
+// the contract its banner states. Eight faces, each a 4-deep FIFO; one arm
+// leaves per clock, from the first non-empty face in drain order (listener,
+// talker, ADP, SRP, originator, MAAP, notify, notify monitor); an arm offered
+// to a face that is still full after this clock's departure is dropped, and
+// the drop counter rises by ONE per clock however many faces drop in it (the
+// landed rule: every face's increment reads the same old value), saturating
+// at 0xFFFF. The model takes the arms from the faces' own nets, synchronises
+// at the first reset edge it sees and is compared after every edge from then.
+struct ArmQueueModel {
+  static constexpr int FACES = 8;
+  static constexpr size_t DEPTH = 4;
+  bool synced = false;
+  std::array<std::deque<uint64_t>, FACES> q;
+  bool valid = false;
+  uint64_t port = 0;
+  uint16_t drop = 0;
+  uint64_t edges = 0;   // edges compared out of reset
+  uint64_t arms = 0;    // arms the model issued
+  uint64_t deep = 0;    // pushes onto a face still holding an arm
+  uint64_t pass = 0;    // pushes onto a face whose one arm leaves this clock
+  uint64_t contend = 0; // clocks two or more faces held arms
+  uint64_t full = 0;    // pushes that filled a face
+  uint64_t drops = 0;   // clocks the counter rose
+  // the full-queue path, which section AQ's drive reaches and traffic does not
+  std::array<uint64_t, DEPTH + 1> onto{}; // pushes by the arms the face held before
+                                          // the clock: the ring writes at head + that
+                                          // many, and at 4 onto the head leaving
+  uint64_t refused = 0;    // arms dropped
+  uint64_t multi = 0;      // clocks two or more faces dropped
+  uint64_t held_sat = 0;   // clocks a face dropped with the counter at 0xFFFF
+  uint64_t rst_queued = 0; // reset edges with arms queued
+  uint64_t rst_offers = 0; // arms offered at reset edges
+  uint64_t bad = 0;     // edges whose port or counter differed
+  long first_bad = -1;
+
+  // the edge about to happen, from the inputs the DUT samples at it
+  void edge(const Vpp_top_wrap& d) {
+    if (!d.rst_n) {
+      for (const auto& f : q) {
+        if (!f.empty()) {
+          ++rst_queued;
+          break;
+        }
+      }
+      for (int k = 0; k < FACES; ++k) rst_offers += (d.dbg_aq_vld_o >> k) & 1u;
+      for (auto& f : q) f.clear();
+      valid = false;
+      port = 0;
+      drop = 0;
+      synced = true;
+      return;
+    }
+    if (!synced) return;
+    ++edges;
+    std::array<bool, FACES> left{};
+    int held = 0;
+    for (const auto& f : q) held += f.empty() ? 0 : 1;
+    if (held > 1) ++contend;
+    valid = false;
+    int popped = -1;
+    for (size_t k = 0; k < q.size(); ++k) {
+      auto& f = q[k];
+      if (f.empty()) continue;
+      valid = true;
+      port = f.front();
+      f.pop_front();
+      left[k] = f.empty();
+      popped = static_cast<int>(k);
+      ++arms;
+      break;
+    }
+    int dropping = 0;
+    for (int k = 0; k < FACES; ++k) {
+      if (((d.dbg_aq_vld_o >> k) & 1u) == 0) continue;
+      auto& f = q[static_cast<size_t>(k)];
+      if (f.size() == DEPTH) {
+        ++dropping;
+        continue;
+      }
+      if (!f.empty()) ++deep;
+      if (left[static_cast<size_t>(k)]) ++pass;
+      ++onto[f.size() + (k == popped ? 1 : 0)];
+      f.push_back((static_cast<uint64_t>(d.dbg_aq_arm_o[2 * k + 1]) << 32)
+                  | d.dbg_aq_arm_o[2 * k]);
+      if (f.size() == DEPTH) ++full;
+    }
+    refused += static_cast<uint64_t>(dropping);
+    if (dropping > 1) ++multi;
+    if (dropping > 0 && drop == 0xFFFF) ++held_sat;
+    if (dropping > 0 && drop != 0xFFFF) {
+      ++drop;
+      ++drops;
+    }
+  }
+
+  // the registered port and counter after it
+  void check(const Vpp_top_wrap& d, long t) {
+    if (!synced) return;
+    const bool same = ((d.dbg_aq_port_valid_o != 0) == valid)
+                      && (d.dbg_aq_port_o == port) && (d.dbg_aq_drop_o == drop);
+    if (same) return;
+    if (first_bad < 0) first_bad = t;
+    ++bad;
+  }
+};
+
 struct H {
   Vpp_top_wrap* d;
   vluint64_t t = 0;
   // the suite tally CHECK maintains
   int checks = 0;
   int fails = 0;
+  // section AQ's model of this harness's timer arm-port mux, run every edge
+  ArmQueueModel aq;
   // MAC TX capture
   bool in_frame = false;
   bool mac_tx_ready = true;
@@ -1427,8 +1536,10 @@ struct H {
     sample_deadline_face();
     sample_admissions();
     if (d->srp_domain_change_o) ++domain_changes;
+    aq.edge(*d);
 
     d->clk_i = 1; d->eval();
+    aq.check(*d, static_cast<long>(t));
     t++;
   }
 
@@ -13766,6 +13877,120 @@ struct HazardPhase {
   printf("HZ: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
+// section AQ's drive (issue #639). Traffic from outside the top never holds
+// two arms in one face (AQ's first coverage line), so the rings' full-queue
+// path is driven here from the bench, on the faces' own nets (the wrap's
+// dbg_aq_drive_i), and graded by the same model. A fixed-seed draw offers
+// arms at per-face rates redrawn every 64 clocks, light or heavy as the draw
+// falls, with a reset of one to four clocks after every eighth block, taken
+// with arms queued and still offered; then heavy rates on every face until
+// the drop counter has held 0xFFFF through 4,096 dropping clocks; then a
+// reset with the faces full, and the draw again. Each arm offered carries a
+// serial number as its deadline, so an arm written to the wrong entry,
+// overwritten, lost or issued twice differs from the model. The drive is a
+// run's last stimulus: the wrap never releases the faces.
+[[maybe_unused]] static void drive_arm_faces(H& h) {
+  constexpr int BLOCK = 64;
+  constexpr int DRAWN = 256;          // blocks before the saturation
+  constexpr int AFTER = 64;           // and after it
+  constexpr uint64_t SAT_HOLD = 4096;
+  constexpr long SAT_CAP = 1L << 18;  // clocks; AQ4 fails if the hold is not reached
+  static constexpr std::array<uint32_t, 5> LIGHT = {0, 8, 16, 32, 64};  // of 256
+  static constexpr std::array<uint32_t, 5> HEAVY = {64, 128, 192, 224, 256};
+  Vpp_top_wrap* const d = h.d;
+  std::mt19937 rng{639};
+  uint32_t serial = 0;
+  std::array<uint32_t, 8> rate{};
+  const auto draw = [&](bool heavy) {
+    const auto& set = heavy ? HEAVY : LIGHT;
+    for (auto& r : rate) r = set[rng() % set.size()];
+  };
+  const auto offer = [&]() {
+    uint32_t vld = 0;
+    uint64_t slot = 0;
+    uint64_t owner = 0;
+    for (int k = 0; k < 8; ++k) {
+      if ((rng() & 0xFFu) < rate[static_cast<size_t>(k)]) vld |= 1u << k;
+      slot |= static_cast<uint64_t>(rng() & 0xFFu) << (8 * k);
+      owner |= static_cast<uint64_t>(rng() & 0xFFu) << (8 * k);
+      d->dbg_aq_drv_deadline_i[k] = ++serial;
+    }
+    d->dbg_aq_drv_vld_i = static_cast<uint8_t>(vld);
+    d->dbg_aq_drv_cancel_i = static_cast<uint8_t>(rng());
+    d->dbg_aq_drv_slot_i = slot;
+    d->dbg_aq_drv_owner_i = owner;
+    h.step();
+  };
+  const auto reset = [&](int clocks) {
+    d->rst_n = 0;
+    for (int c = 0; c < clocks; ++c) offer();
+    d->rst_n = 1;
+  };
+  const auto drawn = [&](int blocks) {
+    for (int b = 0; b < blocks; ++b) {
+      draw((rng() & 1u) != 0);
+      for (int c = 0; c < BLOCK; ++c) offer();
+      if (b % 8 == 7) reset(1 + static_cast<int>(rng() % 4));
+    }
+  };
+  d->dbg_aq_drive_i = 1;
+  drawn(DRAWN);
+  const uint64_t held0 = h.aq.held_sat;
+  for (long c = 0; c < SAT_CAP && h.aq.held_sat - held0 < SAT_HOLD; ++c) {
+    if (c % BLOCK == 0) draw(true);
+    offer();
+  }
+  reset(2);
+  drawn(AFTER);
+}
+
+// section AQ (issue #639): the verdict of the model that every step() of the
+// main harness ran, over every section the full default run drives on it,
+// then the drive and its verdict
+[[maybe_unused]] static void run_arm_queue(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  const ArmQueueModel& m = h.aq;
+  const auto n = [](uint64_t v) { return static_cast<unsigned long long>(v); };
+  printf("AQ: %llu edges, %llu arms issued, %llu clocks with two faces held, %llu pushed "
+         "as a face's one arm left, %llu onto a face still holding one, %llu filled a face, "
+         "%llu drop clocks\n", n(m.edges), n(m.arms), n(m.contend), n(m.pass), n(m.deep),
+         n(m.full), n(m.drops));
+  CHECK(m.edges > 0 && m.arms > 0,
+        "AQ1: the model saw the arm port at work (%llu edges, %llu arms)",
+        n(m.edges), n(m.arms));
+  CHECK(m.bad == 0,
+        "AQ2: the arm port and the drop counter equal the eight-queue model at every "
+        "edge (%llu edges differ, the first at cycle %ld)", n(m.bad), m.first_bad);
+  const ArmQueueModel was = m;
+  h.aq.first_bad = -1;
+  drive_arm_faces(h);
+  const auto dn = [&n](uint64_t now, uint64_t before) { return n(now - before); };
+  std::array<unsigned long long, ArmQueueModel::DEPTH + 1> onto{};
+  for (size_t k = 0; k < onto.size(); ++k) onto[k] = dn(m.onto[k], was.onto[k]);
+  printf("AQ drive: %llu edges, %llu arms issued; pushed onto a face holding 0, 1, 2, 3 and "
+         "4 arms (at 4 its head leaving): %llu, %llu, %llu, %llu, %llu; %llu arms refused in "
+         "%llu drop clocks, %llu of them with two or more faces dropping, %llu with the "
+         "counter held at 0xFFFF; %llu resets with arms queued, %llu arms offered in reset\n",
+         dn(m.edges, was.edges), dn(m.arms, was.arms), onto[0], onto[1], onto[2], onto[3],
+         onto[4], dn(m.refused, was.refused),
+         dn(m.drops, was.drops) + dn(m.held_sat, was.held_sat), dn(m.multi, was.multi),
+         dn(m.held_sat, was.held_sat), dn(m.rst_queued, was.rst_queued),
+         dn(m.rst_offers, was.rst_offers));
+  CHECK(m.bad == was.bad,
+        "AQ3: driven from the bench, the arm port and the drop counter equal the eight-queue "
+        "model at every edge (%llu of %llu edges differ, the first at cycle %ld)",
+        dn(m.bad, was.bad), dn(m.edges, was.edges), m.first_bad);
+  const bool reached = onto[0] > 0 && onto[1] > 0 && onto[2] > 0 && onto[3] > 0
+                       && onto[4] > 0 && m.multi > was.multi && m.held_sat > was.held_sat
+                       && m.rst_queued > was.rst_queued && m.rst_offers > was.rst_offers;
+  CHECK(reached,
+        "AQ4: the drive reached every state the rings add: a write at head + 0 to + 3, a "
+        "full face's write onto its leaving head, two faces dropping in one clock, the "
+        "counter held at 0xFFFF, a reset with arms queued and arms offered in reset");
+  printf("AQ: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
 [[maybe_unused]] static void run_budgets(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
@@ -13823,15 +14048,16 @@ int main(int argc, char** argv) {
   const bool dl_only = argc == 2 && std::strcmp(argv[1], "--deadline-only") == 0;
   const bool hz_only = argc == 2 && std::strcmp(argv[1], "--hazards-only") == 0;
   const bool ctr_only = argc == 2 && std::strcmp(argv[1], "--counters-only") == 0;
+  const bool aq_only = argc == 2 && std::strcmp(argv[1], "--arm-queue-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
   }
   const bool one_section = gsi_only || name_only || d3_only || volatile_only || acmp_only || adp_only
                            || cuts_only || one_seed || maap_only || aecp_only || dl_only || hz_only
-                           || ident_only || notify_only || ctr_only;
+                           || ident_only || notify_only || ctr_only || aq_only;
   if (maap_only) run_maap_internal(h);
-  if (!one_section) Suite(h).run();
+  if (!one_section || aq_only) Suite(h).run();
   if (aecp_only) run_aecp_dispatch_focus(h);
   if (!one_section || gsi_only) InternalStreamInfoPhase{h}.run();
   if (!one_section || name_only) run_name_writes(h);
@@ -13849,6 +14075,7 @@ int main(int argc, char** argv) {
   if (!one_section || notify_only) run_storm(h);
   if (!one_section || notify_only) run_rnd(h);
   if (!one_section || ctr_only) run_counters(h);
+  if (!one_section || aq_only) run_arm_queue(h);
   const char* const build = "default";
 #endif
   //! NOT the canonical tally shape: this binary is ONE of the suite's six
