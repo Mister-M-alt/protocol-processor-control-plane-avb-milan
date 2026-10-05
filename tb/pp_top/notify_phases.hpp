@@ -1267,17 +1267,16 @@ struct StormPhase : NotifyBench {
     the_full_registry_fans_out();
     //! ST1's SET_NAMEs are saved by the D3 writer a debounce later (issues
     //! #61, #83), and its ACQUIRE holds dispatch for up to one job: a round
-    //! selected before it would leave late and the next on time. The churn
-    //! grades the limiter, so it starts once that save is in the device
+    //! selected before it would leave late. The churn grades the limiter, so
+    //! it starts once that save is in the device
     long guard = 3 * 500L * MS_CYC;
     while (io.d->d3_unflushed_o && guard-- > 0) tick();
     CHECK(!io.d->d3_unflushed_o, "ST1: the fan-outs' name save has drained before the "
           "churn (premise)");
     //! and at the phase of the millisecond tick it always started at, one
-    //! clock before a tick: ST2b reads the wire, and the limiter stamps a
-    //! round when it selects it, so a probe's answer that lands before a
-    //! round's first frame narrows that gap (a churn started 30 to 95 clocks
-    //! later fails ST2b at main ddb3119d too; README limits)
+    //! clock before a tick, so its record stays comparable. Section CS starts
+    //! the same churn 30 and 95 clocks later, two of the starts that failed
+    //! ST2b while the limiter stamped a round at its selection (issue #148)
     const uint32_t ms0 = io.d->dbg_now_ms_o;
     while (io.d->dbg_now_ms_o == ms0) tick();
     for (int c = 0; c < MS_CYC - 1; ++c) tick();
@@ -1287,6 +1286,73 @@ struct StormPhase : NotifyBench {
     the_rate_limit_holds_per_descriptor(from, 5000);
     every_counter_frame_is_exact(from);
     solicited_answers_stay_inside_their_budgets();
+  }
+};
+
+// ==== CS. Counter spacing from the previous round's send (issue #148) =====
+// Milan Table 5.22 (T-CTR-NOTIF, 08 F08.1): one GET_COUNTERS notification per
+// descriptor per second. A round whose job waits for the TX slot, behind a
+// solicited answer that leaves just before it, must still leave a second after
+// the previous round's send. ST's churn on a fresh processor with all sixteen
+// rows registered, started at the tick phase ST keeps (one clock before a ms
+// tick) and 30 and 95 clocks later: while the limiter stamped a round at its
+// selection, a start 27 to 98 clocks later narrowed a gap below the bound
+// (main 07b1469d; 30 to 95 at ddb3119d, README limits). Every row's rounds are
+// graded, not only row 0's: each controller's frames of one descriptor are a
+// second apart, less the one tick the limiter reads (ST2).
+struct CounterSpacingPhase : StormPhase {
+  using StormPhase::StormPhase;
+
+  //! the GET_COUNTERS frames of descriptor d at row k, each a round's send
+  std::vector<uint64_t> rounds_at(unsigned k, unsigned d, size_t from) const {
+    std::vector<uint64_t> v;
+    for (size_t i : at_mac(ROW_MAC + k, from)) {
+      const auto& f = seen[i].f;
+      if (unsolicited(f) && f.size() >= 42 && ct_of(f) == 0x0029
+          && ((f[38] << 8) | f[39]) == desc_type(d) && ((f[40] << 8) | f[41]) == desc_index(d))
+        v.push_back(seen[i].t);
+    }
+    return v;
+  }
+
+  void run(const char* id, long shift) {
+    boot_to_idle(true);
+    int ok = 0;
+    for (unsigned k = 0; k < N_ROWS; ++k) ok += register_controller(ROW_MAC + k, ROW_EID + k, seq++);
+    CHECK(ok == int(N_ROWS), "CS1: sixteen controllers register before the churn started "
+          "%ld clocks after ST's phase (premise; %d)", shift, ok);
+    const uint32_t ms0 = io.d->dbg_now_ms_o;
+    while (io.d->dbg_now_ms_o == ms0) tick();
+    for (long c = 0; c < MS_CYC - 1 + shift; ++c) tick();
+    const size_t from = seen.size();
+    churn(3500);
+    run_ms(1500);
+    long closest = 1L << 40;
+    unsigned row = 0;
+    unsigned desc = 0;
+    size_t fewest = seen.size();
+    for (unsigned d = 0; d < N_DESC; ++d) {
+      for (unsigned k = 0; k < N_ROWS; ++k) {
+        const auto r = rounds_at(k, d, from);
+        fewest = std::min(fewest, r.size());
+        for (size_t i = 1; i < r.size(); ++i) {
+          if (long(r[i] - r[i - 1]) < closest) {
+            closest = long(r[i] - r[i - 1]);
+            row = k;
+            desc = d;
+          }
+        }
+      }
+    }
+    printf("  [i] %s: churn %ld clocks after ST's phase, closest rounds %ld clocks apart "
+           "(row %u, descriptor %04x:%u), fewest rounds at a row %zu\n", id, shift, closest,
+           row, unsigned(desc_type(desc)), unsigned(desc_index(desc)), fewest);
+    CHECK(fewest >= 3 && closest >= 1000L * MS_CYC - MS_CYC,
+          "%s: churn started %ld clocks after ST's phase: every row's GET_COUNTERS rounds "
+          "of each descriptor leave a second after its previous round's send, less the one "
+          "tick the limiter reads; closest %ld clocks (row %u, descriptor %04x:%u), want at "
+          "least %ld, and at least 3 rounds at each row (fewest %zu)", id, shift, closest, row,
+          unsigned(desc_type(desc)), unsigned(desc_index(desc)), 1000L * MS_CYC - MS_CYC, fewest);
   }
 };
 
@@ -1592,6 +1658,15 @@ struct RndPhase : NotifyBench {
   const int fails0 = h.fails;
   StormPhase{h}.run();
   printf("ST: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
+[[maybe_unused]] static void run_spacing(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  CounterSpacingPhase{h}.run("CS2a", 0);
+  CounterSpacingPhase{h}.run("CS2b", 30);
+  CounterSpacingPhase{h}.run("CS2c", 95);
+  printf("CS: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
 [[maybe_unused]] static void run_identify(H& h) {
