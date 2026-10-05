@@ -1296,8 +1296,10 @@ module KL_aecp_notify
                   em_excl_v_r <= 1'b0;
                   em_ctr_ix_r <= pick_ctr_ix_w;
                   ctr_pend_r[pick_ctr_ix_w] <= 1'b0;
-                  // Measure the one-second limit from emission selection,
-                  // not from the possibly much earlier pending instant.
+                  // Provisional stamp: it keeps the window shut until the
+                  // round's first job reaches N_EMIT_WAIT, whose stamp then
+                  // follows each job to its send, so the limit runs from the
+                  // round's last send (issue #148).
                   ctr_sent_r[pick_ctr_ix_w] <= 1'b1;
                   ctr_last_r[pick_ctr_ix_w] <= now_ms_i;
                 end else begin
