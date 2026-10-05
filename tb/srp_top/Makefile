@@ -5,7 +5,7 @@ MUTANT_OUTPUT ?= /tmp/srp-leaveall-mutants
 HDL        = ../../hdl
 TOP        = srp_top_wrap
 
-VFLAGS = --cc --exe --build -j 0 \
+VFLAGS = --cc --exe --build -j 0 --savable \
          --top-module $(TOP) \
          -Wall -Wno-fatal -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDPARAM \

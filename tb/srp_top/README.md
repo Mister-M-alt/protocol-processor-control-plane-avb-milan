@@ -11,7 +11,7 @@ real `KL_pp_tx_slots` serialize face (the C++ side plays the 03 §8 TX
 arbiter), cadence and registrar-leave timers run on a real
 `KL_pp_timer_service` (time-compressed: 1 ms = 40 clk, 32 slots), and the
 T-MRP-LEAVEALL draws come from a real `KL_pp_prng` (kind 3, 10–15 s).
-`make` = build + run, exit 0 = PASS, **2224 checks**. `make` first runs the
+`make` = build + run, exit 0 = PASS, **8656 checks**. `make` first runs the
 timer-arm FIFO arms at four shapes
 ([below](#timer-arm-fifos-at-four-shapes-issue-230)), then this suite, whose
 tally is the last line.
@@ -502,7 +502,9 @@ registrar for that stream was already LV, so the talker streamed on through the 
 802.1Q-2014 Table 10-4 puts rLv!, rLA! and txLA! in one row: in IN it starts the leavetimer
 and enters LV, and in LV it is `-x-`. leavetimer! in LV is Lv and MT. Milan v1.2 4.2.7.2.2
 (Δ13) replaces only the IN cell. So the `Lv` changes nothing, and the registration and
-ACTIVE end when the leave timer expires
+ACTIVE end when the leave timer expires, including a decoded `Lv` on that same clock.
+The expiry is applied first; a same-clock New or Join instead finishes IN with the
+new registration, as Table 10-4 at MT requires
 ([10 section 6.5](../../docs/architecture/10_srp_engine.md#sec-10-lv-withdrawal)).
 `RUN_ARGS=lvleave` runs the group.
 
@@ -547,6 +549,50 @@ The older one-line forms of the same two defects, `talker-strict-lv` (an `Lv` in
 registration at once) and `talker-no-expiry` (no leave-timer expiry reaches the talker
 registrar), are campaign rows of the phases group. Run through this group they fail 16 checks
 each, S1,S2 and S2,S3, closing after 14 or 5 ms and never.
+
+### Same-clock leave expiry (round 2)
+
+`RUN_ARGS=lvcoll` is also part of the default run. It contains 6,416 byte-stream
+cases: k = 0..400, both planes, own/peer LeaveAll, Ready/ReadyFailed, index 0/7.
+Sink 0 holds Advertise and sink 7 holds Failed. Both target registrars age;
+only the selected plane receives the `Lv` near expiry. The listener plane has no
+ACTIVE face: its matching TK_UNREGISTERED is graded alongside the source's
+STREAM_STOP in every case.
+
+A no-`Lv` calibration measures each plane's close clock. Each offset restores
+identical DUT and BFM state saved 401 clocks before that clock, then starts a real
+MRPDU k clocks before it. The shared prefix uses the real own/peer LeaveAll and
+5000 ms timer. All clocks around decoding, expiry and publication execute, followed
+by a 20 ms observation window. The run counter includes every executed replay
+clock; the snapshot lives outside the tree and is removed after the sweep.
+
+| Check | Required result | Planted fault that fails it |
+|---|---|---|
+| SC1 (`srp_stream_fsms`) | 128 simultaneous-event cases match Table 10-4, expiry first, including indications and timer operations | `lv-expiry-masked` 40 failures; `lv-expiry-last` 48; `lv-expiry-dropped` 104 SC1 failures |
+| SC2 | Every k ends with both registrars MT, both registrations absent, ACTIVE low, one STREAM_STOP and one TK_UNREGISTERED | `lv-expiry-masked` restores both original planes: 16 failures, one collision in each combination |
+| SC3 | Exactly one decoded `Lv` in each sweep shares the calibrated expiry clock | `lv-sweep-misses-collision` delays every frame 401 clocks: all 16 checks fail while SC2 stays green |
+
+The restoration mutant is a checked-in reverse patch of the complete RTL change.
+The two original mutants and S1-S3 remain. The two other matrix faults move expiry
+after reception (so a registering event wrongly ends MT) and discard expiry
+(so Lv/LA/In/Mt wrongly leave LV). Every new check fails under at least one fault.
+The full campaign requires SC1-SC3 as well as the original assertion coverage.
+
+Table 10-4 results after LV / leavetimer!: MT + Lv, then:
+
+| Same-clock event | Final state | Published result |
+|---|---|---|
+| rLv | MT | Registration closes once |
+| rLA / own txLA | MT | Registration closes once; no replacement leave ARM |
+| rIn / rMt | MT | Registration closes once |
+| rNew | IN | Received value registered; obsolete timer canceled |
+| rJoinIn / rJoinMt | IN | Received value registered; obsolete timer canceled |
+
+On the listener plane, a registering event at expiry raises REGISTERED and
+UNREGISTERED together, with the new declaration taking precedence at the applicant.
+It is a fresh registration, so changed Failed payload is not a failure-only
+notification. On the talker plane the final published registration is continuous,
+so no ACTIVE edge or LISTENER_REG_CHANGE is synthesized for the intermediate MT.
 
 ## Timer-arm FIFOs at four shapes (issue #230)
 

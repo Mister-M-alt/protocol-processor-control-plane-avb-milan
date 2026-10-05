@@ -719,6 +719,13 @@ module KL_srp_talker_fsm
 
       // ---- per-source registrar events ----------------------------------
       for (int unsigned s = 0; s < N_SOURCES_P; s++) begin
+        // Table 10-4: consume leavetimer! before the received event.
+        // rLv/rLA in LV cannot mask its single-clock strobe; a registering
+        // event below applies to the expired registration and ends in IN.
+        if (exp_hit_w && (exp_idx_w == s)
+                     && (reg_r[s] == R_LV_C) && (tpend_r[s] != T_ARM_C)) begin
+          reg_r[s] <= R_MT_C;                // leavetimer! -> MT + Lv
+        end
         if (reg_rx_hit_w[s] && ((evt_mrp_event_i == 3'(SRP_EV_NEW))
                                 || (evt_mrp_event_i == 3'(SRP_EV_JOININ))
                                 || (evt_mrp_event_i == 3'(SRP_EV_JOINMT)))) begin
@@ -734,9 +741,6 @@ module KL_srp_talker_fsm
         end else if (leaveall_any_w && (reg_r[s] == R_IN_C)) begin
           reg_r[s]   <= R_LV_C;
           tpend_r[s] <= T_ARM_C;
-        end else if (exp_hit_w && (exp_idx_w == s)
-                     && (reg_r[s] == R_LV_C) && (tpend_r[s] != T_ARM_C)) begin
-          reg_r[s] <= R_MT_C;                // leavetimer! -> MT + Lv
         end
         // gate re-open arms a fresh tracker for the (possibly new) stream
         if (gate_acc_w && gate_open_i && (gate_src_i == SRC_W_C'(s))) begin

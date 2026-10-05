@@ -555,14 +555,25 @@ T-MRP-LEAVE slot. An `Lv` that then arrives, such as a peer's withdrawal just af
 LeaveAll, changes nothing, however often it repeats. The registration stays published
 (`lstn_reg_state[src]`; `tk_reg_state[sink]` on the listener side) and the talker's ACTIVE
 stays high until leavetimer!, which is Lv and MT in LV. That is T-MRP-LEAVE after the
-LeaveAll: 5000 ms ([F08.1](08_timing.md#fig-08-constants)), the default of Milan v1.2
-Table 4.3 LeaveTime (4500–7500 ms). The registration then ends, `LISTENER_REG_CHANGE`
+LeaveAll ([F08.1](08_timing.md#fig-08-constants), Milan v1.2 Table 4.3 LeaveTime). The registration then ends, `LISTENER_REG_CHANGE`
 fires, and ACTIVE falls once: one STREAM_STOP. A registering event (New, JoinIn, JoinMt)
 before the expiry returns the registrar to IN and stops the timer instead. A talker whose
 listener withdraws just after a LeaveAll therefore streams on for up to T-MRP-LEAVE. The
 bench met this case (milan-fpga #608: a 2 s hold, shorter than T-MRP-LEAVE), and
 [`tb/srp_top`](../../tb/srp_top/README.md) group S grades it after an own and after a peer
-LeaveAll.
+LeaveAll. Group SC also sweeps the decoded `Lv` across the expiry clock on both planes.
+
+**Same-clock expiry and reception.** A registrar consumes its one-clock leavetimer!
+before applying a received event. Table 10-4 first takes LV to MT with Lv; applying
+rLv!, rLA! or txLA! at MT leaves MT. Received In and Mt do not register and likewise
+leave MT. Applying rNew!, rJoinIn! or rJoinMt! instead ends IN with the received
+value, stops the obsolete timer, and keeps the published registration and ACTIVE
+continuous. On the listener plane that fresh registration raises REGISTERED beside
+the expiry's UNREGISTERED; the applicant's final request is the new declaration.
+A Failed registration at that edge is fresh, not a FailureInformation-only change.
+No pending expiry or timer-service handshake is added: the one-clock strobe is
+consumed on its arrival. The pending-ARM guard still excludes an obsolete expiry
+while a replacement leave timer is being issued.
 
 **The LeaveAll timer is per MRP application; the LeaveAll message is per
 Attribute Type, on transmit and on receive.** 802.1Q-2014 §10.7.5.20 NOTE: "The

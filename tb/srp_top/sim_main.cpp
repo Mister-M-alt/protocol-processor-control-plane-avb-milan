@@ -17,8 +17,11 @@
 #include <cstring>
 #include <deque>
 #include <vector>
+#include <string>
+#include <unistd.h>
 #include "Vsrp_top_wrap.h"
 #include "verilated.h"
+#include "verilated_save.h"
 #include "../common/verilator_harness.hpp"
 
 #define CHECK(cond, ...) do { \
@@ -362,7 +365,7 @@ struct H {
   uint32_t lrc_ms[8] = {};
   bool step() {
     // Bound every run, including decoder/timer deadlocks, by DUT clocks. The
-    // complete default run takes 185,012,669 (the P8 arm-delay sweep 53.3 M).
+    // complete default run takes 210,547,557 (the P8 arm-delay sweep 53.3 M).
     if (t >= 300000000ULL) {
       std::fprintf(stderr, "CYCLE_BUDGET: SRP top exceeded 300000000 clocks\n");
       std::exit(3);
@@ -615,7 +618,9 @@ class SrpTopHarness {
     if (!*group || !strcmp(group,"timers")) check_mrp_timers_against_table_4_3();
     if (!*group || !strcmp(group,"join")) check_mvrp_join_before_the_stream();
     if (!*group || !strcmp(group,"lvleave")) check_withdrawal_meets_an_lv_registrar();
+    if (!*group || !strcmp(group,"lvcoll")) check_leave_expiry_collisions();
 
+    printf("TOTAL_CLOCKS %llu\n", static_cast<unsigned long long>(h.t));
     printf("%d checks: %d PASS, %d FAIL\n", checks, checks - fails, fails);
     return fails ? 1 : 0;
   }
@@ -779,7 +784,8 @@ class SrpTopHarness {
   // replaces the IN cell alone. So the Lv changes nothing: the registration
   // and ACTIVE stay until the leave timer expires, T-MRP-LEAVE after the
   // LeaveAll (Milan v1.2 Table 4.3 LeaveTime, default 5000 ms, 4500-7500),
-  // then close, with one falling ACTIVE edge: one STREAM_STOP. The peer
+  // then close, with one falling ACTIVE edge: one STREAM_STOP. Same-clock
+  // events apply after expiry: Lv/LA end MT; New/JoinIn/JoinMt end IN. The peer
   // repeats the Lv 2.5 s in, which must change nothing either.
   static constexpr uint32_t LEAVE_TIME_MS = 5000;
   static constexpr int BENCH_GAP_CLOCKS = 56;   // 1.390 ms at 40 clocks per ms
@@ -868,6 +874,106 @@ class SrpTopHarness {
              lv1_ms, lv2_ms, closed ? h.stop_ms[target] : 0, leave_ms,
              h.stop_cnt[target] - stops, h.start_cnt[target] - starts);
     }
+  }
+
+
+  // Calibration and k=0..400 follow the review's byte-stream collision probe.
+  // Both target registrars age together; only the selected plane receives Lv
+  // near expiry. Thus every case grades the real source STREAM_STOP as well
+  // as the listener's one TK_UNREGISTERED indication (it has no ACTIVE port).
+  void collision_setup(bool own, int fp, int target) {
+    leaveall_setup(fp);
+    if (own) {
+      h.wait_frame(true, 16000, [](const std::vector<uint8_t>& fr) {
+        for (const PVec& v : parse_frame(fr).vecs) if (v.la) return true;
+        return false;
+      });
+    }
+    const int other = target == 0 ? 7 : 0;
+    std::vector<Msg> msgs{listener_rejoins(fp, target, !own)};
+    for (int type : {1, 2}) {
+      if (type == (other == 0 ? 1 : 2)) {
+        auto fv = other == 0 ? fv_talker(peer_sid(0), peer_da(0), 2, 29, 1, 3, 1, 500)
+          : fv_failed(peer_sid(7), peer_da(7), 2, 29, 1, 3, 1, 500, 0x1234, 1);
+        msgs.push_back(Msg{type, type == 1 ? 25 : 34, false,
+                          {Vec{!own, 1, fv, {EV_JOININ}, {}}}});
+      } else if (!own) msgs.push_back(la_only(type, type == 1 ? 25 : 34, false));
+    }
+    if (!own) msgs.push_back(la_only(4, 4, false));
+    h.feed(mrpdu_body(true, msgs), true);
+  }
+
+  // Each offset starts from identical DUT and BFM state 401 clocks before
+  // expiry. Only the shared prefix is skipped; all clocks around the decoded
+  // event, expiry, publication and stop counters still run. No RTL is forced.
+  std::string save_collision_state() {
+    const char* tmp = std::getenv("TMPDIR");
+    std::string pattern = std::string(tmp ? tmp : "/tmp") + "/srp-collision-XXXXXX";
+    std::vector<char> path(pattern.begin(), pattern.end());
+    path.push_back(0);
+    const int fd = mkstemp(path.data());
+    if (fd < 0) { std::perror("collision snapshot"); std::exit(2); }
+    close(fd);
+    VerilatedSave save;
+    save.open(path.data());
+    save << *d;
+    save.close();
+    return path.data();
+  }
+  void check_leave_expiry_collisions() {
+    for (bool listener : {false, true}) for (bool own : {false, true})
+      for (int fp : {DECL_READY, DECL_READYFAIL}) for (int target : {0, 7}) {
+        collision_setup(own, fp, target);
+        const uint64_t origin = h.t;
+        const uint32_t limit = d->now_ms_o + LEAVE_TIME_MS + 10;
+        while ((listener ? sink_reg(target) : source_reg(target)) != 0 && d->now_ms_o < limit)
+          h.cycle();
+        const uint64_t close_offset = h.t - origin;
+        collision_setup(own, fp, target);
+        const uint64_t calibrated_close = h.t + close_offset;
+        while (h.t + 401 < calibrated_close) h.cycle();
+        const H saved = h;
+        const std::string snapshot = save_collision_state();
+        int collisions = 0;
+        for (int k = 0; k <= 400; ++k) {
+          const uint64_t total = h.t;
+          VerilatedRestore restore;
+          restore.open(snapshot.c_str());
+          restore >> *d;
+          restore.close();
+          h = saved;
+          // t counts clocks actually executed, including every replay. Device
+          // time and BFM state rewind; the run-length counter never does.
+          h.t = total;
+          h.accept_cycle += total - saved.t;
+          const uint64_t close = h.t + 401;
+          const bool aged = source_reg(target) == 2 && sink_reg(target) == 2 && h.active(target);
+          const int stops = h.stop_cnt[target];
+          const int unregs = h.unreg_cnt[target];
+          const uint32_t end_ms = d->now_ms_o + 20;
+          while (h.t + k < close) h.cycle();
+          h.rx_cycles.clear();
+          if (listener) talker_event(target, EV_LV);
+          else listener_event(target, EV_LV, fp);
+          for (uint64_t cycle : h.rx_cycles) collisions += cycle + 1 == close;
+          until_ms(end_ms);
+          const bool closed = source_reg(target) == 0 && sink_reg(target) == 0
+            && h.lstn_reg(target) == 0 && h.tk_reg(target) == 0 && !h.active(target)
+            && h.stop_cnt[target] == stops + 1 && h.unreg_cnt[target] == unregs + 1;
+          CHECK(aged && closed, "SC2: plane=%s cause=%s fp=%d target=%d k=%d CLOSED "
+                "source=%d sink=%d STREAM_STOP=%d TK_UNREGISTERED=%d",
+                listener ? "listener" : "talker", own ? "own" : "peer", fp, target, k,
+                source_reg(target), sink_reg(target), h.stop_cnt[target] - stops,
+                h.unreg_cnt[target] - unregs);
+          printf("LV_COLLISION plane=%s cause=%s fp=%d target=%d k=%d %s stream_stop=%d unreg=%d\n",
+                 listener ? "listener" : "talker", own ? "own" : "peer", fp, target, k,
+                 closed ? "CLOSED" : "STUCK", h.stop_cnt[target] - stops, h.unreg_cnt[target] - unregs);
+        }
+        unlink(snapshot.c_str());
+        CHECK(collisions == 1, "SC3: plane=%s cause=%s fp=%d target=%d exactly one decoded "
+              "Lv shares the calibrated expiry clock (got %d)", listener ? "listener" : "talker",
+              own ? "own" : "peer", fp, target, collisions);
+      }
   }
 
   // L: move slot acceptance across one decoded Listener Lv. The frame
@@ -2840,6 +2946,6 @@ int main(int argc, char** argv) {
   if (*group && strcmp(group,"armdelay") && strcmp(group,"phases") && strcmp(group,"edge")
       && strcmp(group,"peer") && strcmp(group,"congestion")
       && strcmp(group,"guards") && strcmp(group,"restart")
-      && strcmp(group,"timers") && strcmp(group,"join") && strcmp(group,"lvleave")) return 2;
+      && strcmp(group,"timers") && strcmp(group,"join") && strcmp(group,"lvleave") && strcmp(group,"lvcoll")) return 2;
   return harness.run(group);
 }
