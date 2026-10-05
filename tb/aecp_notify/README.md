@@ -9,7 +9,8 @@ expires the registry row while that probe is active, and requires a targeted
 cancellation before the row is cleared. It then reuses the same row for a
 different controller and verifies that the next probe carries only the new
 Entity ID and MAC tuple. Section IX then grades the registry's identity index,
-and section TS the counter throttle stamps' valid bit.
+section TS the counter throttle stamps' valid bit, and section TW a counter round
+that waits for the TX slot.
 
 Run `make`. Exit status zero and the printed check tally are required.
 
@@ -17,7 +18,7 @@ Run `make`. Exit status zero and the printed check tally are required.
 
 | Build | Override | Runs |
 |---|---|---|
-| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks) and section TS (5 checks) |
+| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks) and section TW (4 checks) |
 | `obj_idn/Vaecp_notify_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`AECP_NOTIFY_IDENT`) | section FT alone |
 
 Each binary prints its own build's count, and the Makefile prints the one
@@ -117,9 +118,33 @@ GET_COUNTERS job:
 The two REGISTERs of the section are checked as well. TS passes on `main`'s RTL,
 whose stamps had a reset, too.
 
+## Section TW: a counter round that waits for the TX slot (issue #148)
+
+The engine retires a job (`uns_done_i`) when the TX arbiter grants its frame, so a
+job held for the TX slot is sent late. Milan Table 5.22 (`T-CTR-NOTIF`) spaces a
+descriptor's GET_COUNTERS notifications a second apart at each controller, so the
+next round waits a second from the previous round's last send, never from its
+selection. The bench is the engine: it retires each job when the section says, and
+its clock advances one ms per cycle. Two controllers, C (row 0) and D (row 1), are
+registered after a warm reset (both REGISTERs checked), and the changes are on
+AVB_INTERFACE[0]:
+
+- **TW1** a round is presented at ms 2004; C's job is sent at once and D's waits for
+  the TX slot until ms 2600. A change at ms 2700 is held until a second after that
+  last send: the next round is presented at ms 3603, against 3600 to 3608. On
+  `main`'s RTL, which stamped the round at its selection, at ms 3005.
+- **TW2** a round is presented at ms 5004 and C's job waits for the TX slot until
+  ms 6500; a change arrives at ms 5100, inside that wait. D's job is sent at ms
+  6504, and the change goes out a second after it: the next round is presented at
+  ms 7507, against 7504 to 7512. On `main`'s RTL at ms 6508, right after the round:
+  the window opened a second after the selection, while C's job still waited.
+
+The upper bound (8 cycles: the pick and the walk to the job) shows that the held
+change is sent, not lost.
+
 Mutation record (planted by `tb/pp_top/notify_mutants.py`, which runs `make run`
-here; all seven KILLED). The last three are PR #153's review faults (R452-1 and
-R453-1), each the reviewer's own edit:
+here; all ten KILLED). The fifth to the seventh are PR #153's review faults
+(R452-1 and R453-1), each the reviewer's own edit; the last three are issue #148's:
 
 | Mutant | Planted | Failing checks |
 |---|---|---|
@@ -130,3 +155,6 @@ R453-1), each the reviewer's own edit:
 | `override_set_only` | the compare covers only the rewrite's second cycle; the row write's own cycle reads the index | 2: IX6, IX6b |
 | `own_compare_new_row` | the rewrite's compare reads the incoming row, not what `rows_r` holds | 1: IX5 |
 | `stamp_read_without_valid` | a counter stamp is read without its valid bit, `ctr_sent_r` | 1: TS3 |
+| `counter_spacing_from_selection_tw` | the stamp no longer follows a waiting job: the limit restarts at the round's selection (`main`'s rule) | 2: TW1 (ms 3005), TW2 (ms 6508) |
+| `counter_stamp_at_send_only` | the stamp written at the job's send alone, not while it waits | 1: TW2 (ms 6508) |
+| `counter_stamp_first_job_only` | the stamp follows only the round's first job (row 0) | 2: TW1 (ms 3007), TW2 (ms 7503) |

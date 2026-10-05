@@ -892,7 +892,10 @@ partially built TX slot and unlocks the shared writer. Emission jobs run
 through the engine one at a time (same µprograms, buffer and builder as solicited
 answers; `LANE_AECP_UNS`). Successful state-changing commands retain their response
 kind and requester exclusion in a bounded queue. GET_COUNTERS changes are coalesced
-per served descriptor and cannot begin emission more than once per second.
+per served descriptor, and a descriptor's next round begins no sooner than one second
+after its previous round's last send (issue #148): the stamp follows the clock while a
+job waits for the engine and the TX slot, so each controller's notifications of one
+descriptor are a second apart.
 
 **Storage (issue #232, 2026-10-03).** Each array of `KL_aecp_notify` and the
 primitive it is built for. The measured mapping, before and after, is recorded on

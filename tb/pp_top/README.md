@@ -1417,6 +1417,11 @@ check moved. Measured 2026-10-03 at `274b424` with Verilator 5.050, each run pin
 to 4 of the host's 16 CPUs: `--jobs 1` took 940 s and `--jobs 8` 699 s, and the two
 printed the same record byte for byte: every control and arm the same verdict and
 the same failing checks, the counts below.
+Re-run 2026-10-04 at `main` `07b1469d` and at the #148 head (`--jobs 2`): control
+PASS, 17 of 17 KILLED at both. `ctr-notify-one-window` fails one check more at the
+head, the record #148 moves here (its row). In the arms that fail K14's late push,
+that push now leaves 1,018 ms after the first, not 1,000: the window runs from the
+first round's last send, its second controller's job, about 18 ms after the first.
 
 | Arm | What is broken | Failing checks |
 |---|---|---|
@@ -1428,7 +1433,7 @@ the same failing checks, the counts below.
 | `ctr-notify-avb-dropped` | the notification block ignores an AVB_INTERFACE strobe (`KL_aecp_notify`) | 6: K13 (named), K14 x2, K15 x2, K17 |
 | `ctr-notify-avb-as-clock` | an AVB_INTERFACE strobe marks the CLOCK_DOMAIN slot | 8: K13 (named), K14 x2, K15 x2, K16, K17 x2 (a CLOCK_DOMAIN push left pending inside K17's first wait, and no AVB_INTERFACE 0 push) |
 | `ctr-notify-ckd-dropped` | the notification block ignores a CLOCK_DOMAIN strobe | 1: K16 (named) |
-| `ctr-notify-one-window` | one emission starts every descriptor's one-second window | 3: K15 (named), K16, K17 |
+| `ctr-notify-one-window` | one emission starts every descriptor's one-second window | 4: K15 x2 (named), K16, K17. 3 at `main` `07b1469d`, without K15's second: since #148 AVB_INTERFACE 0's own stamp follows its round's jobs, so STREAM_INPUT 0's window opens first, and its selection, which here restarts every window, holds the interface a further second, past K15's 1,300 ms and into K17 (2 pushes, not 1) |
 | `ctr-notify-no-window` | the one-second limit removed | 5: K14 x3 (named), K15 x2 |
 | `ctr-change-type-from-index` | the strobe's type taken from `ctr_change_desc_index_i` (`protocol_processor_top`) | 8: K13 (named), K14 x2, K15 x3, K16, K17 |
 | `ctr-notify-avb-any-index` | the notification block takes an AVB_INTERFACE strobe of any index onto AVB_INTERFACE 0's slot | 1: K17 (named: AVB_INTERFACE 1) |
@@ -1440,18 +1445,18 @@ the same failing checks, the counts below.
 
 ## Recorded seams and honest limits
 
-- ST2b reads GET_COUNTERS rounds on the wire, and `KL_aecp_notify` stamps a
-  round's one-second limit when it selects the round (its comment: "from
-  emission selection"). A solicited answer that leaves just before a round's
-  first frame delays that frame, and the next round, on time, then leaves up
-  to one job (about 4 ms here) under a second after it. At main `ddb3119d`,
-  starting ST's churn 30 to 95 clocks later than it starts fails ST2b (99,590
-  to 99,914 clocks): the check holds for the phase it was tuned at. Since the
-  name stage, ST first lets the D3 writer save ST1's names, which moves the
-  churn, so ST restores that phase, one clock before a millisecond tick. The
-  limiter's stamp is recorded here as a finding: Milan Table 5.22's
-  once-per-second spacing is not guaranteed on the wire under solicited
-  load, and a D3 latch's dispatch hold delays a selected round the same way.
+- ST2b reads GET_COUNTERS rounds on the wire. Until issue #148,
+  `KL_aecp_notify` stamped a round's one-second limit when it selected the
+  round, so a solicited answer that left just before a round's first frame
+  delayed that frame, and the next round, on time, then left up to one job
+  (about 4 ms here) under a second after it. At main `ddb3119d`, starting ST's
+  churn 30 to 95 clocks later than it starts failed ST2b (99,590 to 99,914
+  clocks), and at `main` `07b1469d` 27 to 98 clocks later fell below the bound
+  at row 0. The stamp now follows the clock while a round's job waits for the
+  engine and the TX slot, so the next round starts a second after the previous
+  round's last send, and section CS grades every row at two of those starts.
+  ST keeps its phase, one clock before a millisecond tick, after the D3 writer
+  saves ST1's names, so its record stays comparable.
 - The validator's V9 pass-through has NO msrp/mvrp select — `KL_mrp_strip`
   derives it from the EtherType bytes it strips (V9 already enforced the
   DA/EtherType pairing).
@@ -2221,7 +2226,7 @@ not a multiple of 8`). Verilator reports an elaboration `$error` as a warning th
 
 ## Lane C6: notifications and identify (issues #54, #58, #80, #86)
 
-`notify_phases.hpp` holds five sections, each on a fresh processor of its own
+`notify_phases.hpp` holds seven sections, each on a fresh processor of its own
 (the section AD pattern: its own model, the suite's descriptor image, erased NVM,
 both restore walks, link up and enable), so the main run's clock is untouched.
 Every AECP and ACMP frame is logged with the clock its last byte left on, so
@@ -2229,8 +2234,9 @@ spacing and latency are read off the wire. Every expectation is built from the
 clause byte offsets; a per-entry `sequence_id` is modelled from the wire alone, as
 the count of unsolicited frames that controller was sent before (Milan §5.4.5.1).
 
-`--identify-only` runs ID0 (default build) and `--notify-only` runs NP, ST and RN;
-`make identify` builds and runs the third build and ID0.
+`--identify-only` runs ID0 (default build), `--notify-only` runs NP, ST and RN, and
+`--spacing-only` runs CS; `make identify` builds and runs the third build and ID0, and
+`make timer-defaults` the sixth build, which runs TD alone.
 
 ### The third build: `P-EN-IDENTIFY-NOTIFICATION`
 
@@ -2393,17 +2399,20 @@ zeros elsewhere, the same bytes as the successful solicited answer
   the requester receives only its answer.
 - **ST2** every served descriptor of five (STREAM_INPUT 0 and 1, STREAM_OUTPUT 0,
   AVB_INTERFACE 0, CLOCK_DOMAIN 0) changes every 100 ms for 3.5 s: each emits at
-  least three and at most one round per second (5 or 4 in 5 s, the closest two
-  99,994 clocks apart: the limiter reads one tick), and every GET_COUNTERS frame is
-  byte-exact at its row's own sequence_id. The one-tick tolerance is a recorded
+  least three and at most one round per second (4 in 5 s, the closest two 115,077
+  clocks apart: since issue #148 a round's last send starts the next second, and a
+  sixteen-row round takes about 15,000 clocks here; at `main` `07b1469d`, before it,
+  5 or 4, the closest 99,994: the limiter reads one tick), and every GET_COUNTERS
+  frame is byte-exact at its row's own sequence_id. The one-tick tolerance is a recorded
   decision (review R420-1 S4, retained): the limiter predates this lane and counts
   Milan Table 5.22's "once per second" on the 1 ms timebase like every T- value (08
   §3: 1 ms resolution), so two rounds are at least 1,000 ticks apart: in core
   clocks, at most one tick short of a second.
 - **ST3** a GET_CONFIGURATION and an ACMP GET_RX_STATE every 700 ms of the churn
   are all answered, within T-BUDGET-AECP-WC and T-BUDGET-ACMP-RESP counted in
-  clocks at the wrap's nominal clock (clk_ms(100), clk_ms(50)): worst 70,958 and
-  249 clocks. The ms timebase is compressed a thousandfold while the engine's
+  clocks at the wrap's nominal clock (clk_ms(100), clk_ms(50)): worst 70,681 and
+  485 clocks (70,681 and 249 at `main` `07b1469d`: the rounds' phase moved with
+  issue #148). The ms timebase is compressed a thousandfold while the engine's
   work is counted in real clocks, so the notifications a real second allows are
   packed into 100,000 clocks here; the bound is a hundred times stricter than the
   F01.5 default clock's.
@@ -2426,6 +2435,32 @@ only (its body is issue #53's). Result: 2,203 frame comparisons, zero divergence
 lock-refused SETs, 375 pushes, in 10.6 s of compressed time (under the controller
 monitor's 30 s floor, so no CONTROLLER_AVAILABLE is due).
 
+### Section CS: counter spacing from the previous round's send (#148)
+
+Milan Table 5.22 (`T-CTR-NOTIF`, 08 F08.1) allows one GET_COUNTERS notification per
+descriptor per second. A round whose job waits for the TX slot, behind a solicited
+answer that leaves just before it, must still leave a second after the previous
+round's send. Each check runs ST's churn (the five descriptors at 10 Hz for 3.5 s,
+a GET_CONFIGURATION and a GET_RX_STATE every 700 ms, then 1.5 s quiet) on a fresh
+processor with all sixteen rows registered, and grades every row's rounds, not only
+row 0's as ST2b does: each controller's GET_COUNTERS frames of one descriptor are at
+least 1,000 ms less the one tick the limiter reads apart (ST2, 99,900 clocks), and
+each row receives at least three rounds of each descriptor.
+
+- **CS1** (premise, each run) the sixteen controllers register.
+- **CS2a** the churn starts at ST's phase, one clock before a ms tick.
+- **CS2b** it starts 30 clocks later.
+- **CS2c** it starts 95 clocks later.
+
+The two shifted starts are the "shifted timing" of #148: while `KL_aecp_notify`
+stamped a round when it selected it, a start 27 to 98 clocks after ST's phase (of
+every 100) narrowed a gap below the bound at `main` `07b1469d`, 30 to 95 at
+`ddb3119d` (the README's earlier limit). At `main` CS2a passes (99,994 clocks), CS2b
+fails (99,854, row 0, STREAM_OUTPUT 0) and CS2c fails (99,590, row 0, STREAM_INPUT
+1). At this head the closest gap is 115,077, 115,070 and 115,077 clocks: the next
+round starts a second after the previous round's last send, and a sixteen-row round
+takes about 15,000 clocks here.
+
 ### Mutation record: `notify_mutants.py`
 
 `python3 tb/pp_top/notify_mutants.py --output DIR [--jobs N] [--only NAME ...]`
@@ -2439,7 +2474,11 @@ KILLED, every count as below. `ident_burst_from_t0`'s count moved with lane P1, 
 `main` alone still fails 20. Issue #232 adds the four `ix_*` controls of the
 registry's identity index, graded by `tb/aecp_notify` section IX, for 44 of 44,
 and PR #153's review adds three more, graded by `tb/aecp_notify` sections IX
-and TS, for 47 of 47:
+and TS, for 47 of 47. Issue #148 adds six counter-spacing controls, graded by
+section CS and by `tb/aecp_notify` section TW, for 53 of 53. Re-run 2026-10-04 at
+`main` `07b1469d` (47 of 47) and at the #148 head (53 of 53): the goldens PASS, and
+46 of the 47 earlier controls fail the same checks at both. `counter_limit_500ms` is
+the one record #148 moves, and its named check is now ST2b alone (its row):
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2471,7 +2510,7 @@ and TS, for 47 of 47:
 | `requester_not_excluded` | command pushes exclude nobody | 12, NP1 first |
 | `entry_seq_not_advanced` | the row's sequence_id never moves | 13, NP1b first |
 | `stream_info_get_body` | the landed SET_STREAM_INFO mapping | 1: NP3 |
-| `counter_limit_500ms` | the GET_COUNTERS limiter at 500 ms | 12: ST2, ST2b, ST3, ST3b |
+| `counter_limit_500ms` | the GET_COUNTERS limiter at 500 ms | 7: ST2b x5 (named), ST3, ST3b. 12 at `main` `07b1469d`, with ST2 x5 named too: since #148 a round's second runs from its last send, so half a second leaves rounds 75,504 clocks apart, six in ST2's five seconds, inside its count bound |
 | `fan_out_skips_row_0` | the walk skips row 0 | 9, ST1b among them |
 | `refresh_resets_seq` | a refresh re-zeroes the entry | 1: RN |
 | `foreign_unlock_allowed` | a foreign UNLOCK succeeds | 1: RN |
@@ -2490,6 +2529,12 @@ and TS, for 47 of 47:
 | `override_set_only` | the compare covers only the rewrite's second cycle; the row write's own cycle reads the index | 2: `tb/aecp_notify` IX6, IX6b |
 | `own_compare_new_row` | the rewrite's compare reads the incoming row, not what `rows_r` holds | 1: `tb/aecp_notify` IX5 |
 | `stamp_read_without_valid` | a counter stamp is read without its valid bit, `ctr_sent_r` | 1: `tb/aecp_notify` TS3 |
+| `counter_spacing_from_selection` | the stamp no longer follows a waiting job: the one-second limit restarts at the round's selection (`main`'s rule) | 2: CS2b, CS2c |
+| `counter_spacing_from_selection_tw` | the same edit, graded in `tb/aecp_notify` | 2: `tb/aecp_notify` TW1, TW2 |
+| `counter_stamp_at_send_only` | the stamp written at the job's send alone, not while it waits | 1: `tb/aecp_notify` TW2 |
+| `counter_stamp_first_job_only` | the stamp follows only the round's first job (row 0) | 2: `tb/aecp_notify` TW1, TW2 |
+| `counter_limit_500ms_cs` | `counter_limit_500ms`'s edit, graded by section CS | 3: CS2a, CS2b, CS2c (75,504 clocks at each start) |
+| `registry_holds_15_cs` | `registry_holds_15`'s edit, graded by section CS | 6: CS1 x3 (15 of 16 register), CS2a, CS2b, CS2c (row 15 receives no round) |
 
 RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
 every RND control is killed by the divergence check alone.
