@@ -762,6 +762,7 @@ class ListenerWalk {
   void check_expiry_survives_a_colliding_request();
   void check_rebind_raises_no_duplicate_trigger();
   void check_started_face_error_paths(int sk);
+  void check_reset_sweep_clears_every_record();
 
   VKL_pp_acmp_listener* d;
   Harness h;
@@ -982,6 +983,25 @@ void ListenerWalk::reset_and_init_sweep() {
     CHECK(allz, "init sweep zeroed all %d records", N_SINKS);
   }
   h.col.clear();
+}
+
+  // ---- RS (issue #639): the X_INIT sweep is the record RAM's only reset ----
+  // The array has no reset of its own, so a reset taken while records are
+  // bound must leave every record zero IN THE RAM, not only on the write
+  // port this suite shadows. A GET_RX_STATE per sink after the reset reads
+  // each record back through the walk.
+void ListenerWalk::check_reset_sweep_clears_every_record() {
+  int bound = 0;
+  for (const Rec& r : m.rec) bound += r.bound ? 1 : 0;
+  CHECK(bound > 0, "RS: records are bound before the reset (%d of %d)", bound, N_SINKS);
+  h.wait_idle();
+  reset_and_init_sweep();
+  m = Model{};
+  for (int i = 0; i < N_SINKS; ++i) {
+    Stim g = S_getrx();
+    g.uid = uint16_t(i);
+    step(i, g, true, "RS GET_RX_STATE after the reset");
+  }
 }
 
   // ---- park sink 7 in a settled state for the isolation check -------------
@@ -1757,6 +1777,7 @@ int ListenerWalk::run() {
   check_expiry_survives_a_colliding_request();
   check_rebind_raises_no_duplicate_trigger();
   check_started_face_error_paths(sk);
+  check_reset_sweep_clears_every_record();
 
   h.wait_idle();
   CHECK(d->txn_ready_o == 1, "idle at the end");

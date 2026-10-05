@@ -10,7 +10,7 @@
 //
 //  Description : The ROM-driven Milan listener-SM executor of 05 §4: ONE
 //                event-at-a-time executor over per-sink records (the F07.6
-//                384-bit record in a sync-read RAM, never a flop mirror)
+//                384-bit record in a distributed RAM, never a flop mirror)
 //                with the full F05.3 transition matrix in a $readmemh'd
 //                BRAM-shaped ROM (P-ACMP-TROM-W = 32-bit entries, addressed
 //                {event[3:0], state[2:0]}, generated row-by-row from the
@@ -379,11 +379,21 @@ module KL_pp_acmp_listener
   logic [N_SINKS_P-1:0] pendexp_r;
 
   // ------------------------------------------------------------ RAM: records
-  // F07.6 records in a 1W1R sync-read RAM — RAM-shaped by construction,
-  // never a flop mirror + wide mux. Deliberately NO reset on the array or
-  // its read register (BRAM inference; the X_INIT sweep zeroes content).
+  // F07.6 records in a 1W1R RAM — RAM-shaped by construction, never a flop
+  // mirror + wide mux. Deliberately NO reset on the array (the X_INIT sweep
+  // zeroes content).
+  //
+  // DISTRIBUTED, NOT BLOCK (issue #639): the KL_pp_dispatch wide-and-shallow
+  // trap again. N_SINKS_P records of 384 bits made Vivado band five RAMB36
+  // and a RAMB18 side by side for 752 bits at the 1x1 shape. In distributed
+  // RAM the record needs no read register: the walk reads it only in
+  // X_LATCH and X_STRT_AP, each entered only from the read-issue state
+  // before it (X_RDREC, X_STRT_RD), which writes no record, and `sink_r`
+  // changes only in X_IDLE. So the asynchronous read in the consuming cycle
+  // returns what the old read register sampled one edge earlier, and the
+  // walk keeps its issue cycle.
+  (* ram_style = "distributed" *)
   logic [ACMP_REC_W_C-1:0] rec_ram_r [0:N_SINKS_P-1];
-  logic [ACMP_REC_W_C-1:0] rec_rdata_r;
   //! typed views of the record RAM's read and write buses. A field select
   //! cannot be taken off a cast expression directly, and naming them once
   //! keeps the write mirror reading the SAME bus the RAM is written from.
@@ -400,10 +410,6 @@ module KL_pp_acmp_listener
     if (recwr_en_w) begin
       rec_ram_r[recwr_addr_w] <= recwr_data_w;
     end
-  end
-
-  always_ff @(posedge clk_i) begin : rec_ram_rd
-    rec_rdata_r <= rec_ram_r[sink_r];
   end
 
   // ------------------------------------------------------ ROM: F05.3 matrix
@@ -737,7 +743,7 @@ module KL_pp_acmp_listener
 
   assign recwr_en_w   = ((xs_r == X_INIT) && (init_cnt_r < (SINK_W_C+1)'(N_SINKS_P)))
                       || (xs_r == X_PRELOAD) || (xs_r == X_WB);
-  assign rec_rd_w     = acmp_rec_t'(rec_rdata_r);
+  assign rec_rd_w     = acmp_rec_t'(rec_ram_r[sink_r]);
   assign recwr_rec_w  = acmp_rec_t'(recwr_data_w);
   assign recwr_addr_w = (xs_r == X_INIT) ? init_cnt_r[SINK_W_C-1:0] : sink_r;
   assign recwr_data_w = (xs_r == X_INIT) ? '0
@@ -1025,7 +1031,7 @@ module KL_pp_acmp_listener
 
         // ------------------------------------------------------- X_STRT_RD
         X_STRT_RD: begin
-          xs_r <= X_STRT_AP;             // rec_rdata_r valid next cycle
+          xs_r <= X_STRT_AP;             // record read next cycle
         end
 
         // ------------------------------------------------------- X_STRT_AP
@@ -1058,12 +1064,12 @@ module KL_pp_acmp_listener
 
         // --------------------------------------------------------- X_RDREC
         X_RDREC: begin
-          xs_r <= X_LATCH;               // rec_rdata_r valid next cycle
+          xs_r <= X_LATCH;               // record read next cycle
         end
 
         // --------------------------------------------------------- X_LATCH
         X_LATCH: begin
-          rec_r      <= acmp_rec_t'(rec_rdata_r);
+          rec_r      <= rec_rd_w;
           strt_was_r <= rec_rd_w.f_started;
           bnd_was_r  <= rec_rd_w.f_bound;
           if (src_txn_r && (msg_x_r != AMSG_GET_RX_STATE_CMD_C)

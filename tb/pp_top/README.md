@@ -967,6 +967,15 @@ the six into the one canonical tally.
   held itself, it holds back an UNBIND_RX of sink 1; and it runs beside a held
   GET_RX_STATE of sink 1, two reads. `make hazards` runs this section alone;
   the default run includes it.
+- **AQ: the timer arm-port queues against a model of their contract (issue
+  #639).** At every clock edge of the main harness, over every section the full
+  default run drives on it, the arm port and the drop counter equal an
+  independent eight-FIFO model fed from the engine faces. Then a drive from the
+  bench forces the faces through every state the rings add over a one-deep
+  queue (full queues, drops, a saturated counter, resets with arms queued),
+  under the same model.
+  [Section AQ](#section-aq-the-timer-arm-port-queues-issue-639) has the rule,
+  the drive, the coverage and the controls.
 
 ## Snapshot window map (side port 0x20000, implemented by the top)
 
@@ -1987,7 +1996,11 @@ use runs first and must pass. Here it builds `gsi-build` and runs
 and the validator control in `tb/rx_validator` (recorded in those READMEs).
 Measured 2026-09-30 at the lane head, each in its own extract: all 19 KILLED
 (14 here, 4 in `tb/acmp_listener`, 1 in `tb/rx_validator`) and the three
-goldens PASS:
+goldens PASS. Issue #639 adds fourteen controls: nine here, run with
+`--arm-queue-only` (section AQ records them), and five in `tb/acmp_listener`.
+A golden now runs per suite and run mode, so `tb/pp_top` has two. Re-run
+2026-10-04 at the issue #639 head of its second round: all 33 KILLED, the four
+goldens PASS, and every arm below at the count recorded:
 
 | Mutant | Defect planted | Named checks, each failing | Failing checks |
 |---|---|---|---|
@@ -2005,6 +2018,98 @@ goldens PASS:
 | `bound_view_not_cleared` | the bound stream identity left behind on the unbind (A9) | `AS6: the bound view is cleared with the binding` | 1 of 43 |
 | `matcher_da_ignored` | the SRP listener matcher ignores the DA | `AS3: near misses (DA, VLAN, stream_id) put no Listener declaration`, `AS3: near misses register nothing`, `AS3: no TK_ATTR_REGISTERED{1}` | 5 of 43 |
 | `matcher_vid_ignored` | the SRP listener matcher ignores the VLAN | the same three AS3 checks | 5 of 43 |
+
+## Section AQ: the timer arm-port queues (issue #639)
+
+The top feeds the timer service's one arm port from eight engine arm faces
+through a 4-deep queue per face, each a 4-entry ring in distributed RAM since
+issue #639. AQ checks that mux against an independent model of the contract its
+banner states: eight FIFOs of four; one arm leaves per clock, from the first
+non-empty face in drain order (listener, talker, ADP, SRP, originator, MAAP,
+notify, notify monitor); an arm offered to a face still full after this clock's
+departure is dropped; and the drop counter (snapshot word 24, bits 31:16)
+rises by one per clock however many faces drop in it, saturating. That last
+rule is the landed counter's: every face's increment reads the same old value,
+so two faces overrunning in one clock count once. The model records it as it
+is; it is not a behaviour this suite asks for.
+
+The wrap exports the eight faces from their own nets (`dbg_aq_vld_o`,
+`dbg_aq_arm_o`), the arm port (`dbg_aq_port_valid_o`, `dbg_aq_port_o`) and the
+counter (`dbg_aq_drop_o`). Every harness model runs the model at every clock
+edge from its first reset (`ArmQueueModel`, in `H::step`), and the full default
+run grades the main harness's at its end. **AQ1** the model saw the port at
+work. **AQ2** after every edge the arm port, its valid and the drop counter
+equal the model's. `./obj_dir/Vpp_top_sim --arm-queue-only` (after `make
+gsi-build`) runs the main section list alone, then AQ, and prints its own `AQ:`
+tally.
+
+The first coverage line AQ prints is the reach of traffic driven from outside
+the top. Measured at the issue #639 head: 71,258,305 edges and 8,270 arms in the
+`--arm-queue-only` run, 28 clocks with two faces holding arms, 4,288 pushes onto
+a face whose one arm left in the same clock, and none onto a face still holding
+one: no face ever held two arms, so no queue filled and nothing was dropped.
+
+So AQ ends with a drive of its own (`drive_arm_faces`), the last stimulus of the
+run. From the clock the bench raises `dbg_aq_drive_i`, the wrap forces the eight
+faces' own nets to the bench's arms (`dbg_aq_drv_*_i`) and holds the timer
+service's arm input idle. The mux and the face taps read the bench's arms, the
+port taps still read the mux's own arm port, and no engine sees an arm the drive
+queues. Nothing is released. A fixed-seed draw offers arms at per-face rates redrawn
+every 64 clocks, light or heavy as the draw falls, with a reset of one to four
+clocks after every eighth block, taken with arms queued and still offered. Then
+every face is offered at heavy rates until the drop counter has held 0xFFFF
+through 4,096 dropping clocks, the faces are reset full, and the draw runs
+again. Every arm offered carries its own serial number as its deadline, so an
+arm written to the wrong entry, overwritten, lost or issued twice differs from
+the model.
+
+- **AQ3** after every edge of the drive, the arm port, its valid and the drop
+  counter equal the model's.
+- **AQ4** the drive reached every state the rings add over a one-deep queue: a
+  write at head + 0, + 1, + 2 and + 3; a full face's write onto its head as the
+  head leaves; two faces dropping in one clock; the counter held at 0xFFFF; a
+  reset with arms queued; and arms offered in reset. AQ4 reads only the model,
+  which the forced faces feed, so it does not depend on the RTL: it fails only
+  when the drive stops reaching a state.
+
+The drive's coverage line (`AQ drive:`), measured at the head of the issue's
+second round, in the `--arm-queue-only` run and the full default run alike:
+
+| Measure | Count |
+|---|---:|
+| edges out of reset / arms issued | 90,172 / 88,003 |
+| pushes onto a face holding 0, 1, 2, 3 arms (the write at head + that many) | 18,778 / 48,239 / 3,636 / 5,594 |
+| pushes onto a full face as its head left (the write lands on the leaving head) | 12,481 |
+| arms refused / drop clocks | 352,294 / 80,719 |
+| drop clocks with two or more faces dropping | 78,930 |
+| drop clocks with the counter held at 0xFFFF | 4,096 |
+| resets with arms queued / arms offered in reset | 36 / 366 |
+
+AQ3 and AQ4 pass on `main`'s RTL (the shift queue) with the same coverage, so
+the drive grades behaviour issue #639 kept.
+
+The controls below are planted by `acmp_mutants.py` (issue #639 group), each
+built with `gsi-build` and run with `--arm-queue-only`. The last four are the
+review's controls of the full-queue path (R462-1's `write_refused`,
+`wr_wrap_hi`, `full_pop_refuses` and `drop_skip_sat`, the same edits). Each of
+those four passed this suite before the drive (AQ 2 of 2 checks): traffic never
+reaches the lines they plant.
+
+| Mutant | Defect planted | Named checks, each failing | Failing checks in the run |
+|---|---|---|---|
+| `armq_read_tail` | the port reads the ring at head + count instead of the head | `AQ2`, `AQ3` | 72 |
+| `armq_head_stuck` | a pop never advances the head index | `AQ2`, `AQ3` | 3 |
+| `armq_ring_of_three` | the head index wraps after entry 2 | `AQ2`, `AQ3` | 12 |
+| `armq_write_at_head` | a push writes at the head index, ignoring the count | `AQ2`, `AQ3` | 3 |
+| `armq_write_at_mid` | a push writes at head + the count after the pop (the shift queue's append index, not a ring's) | `AQ2`, `AQ3` | 3 |
+| `armq_write_refused` | the ring is written on the offer, not on its acceptance, so a refused push overwrites the head of a full queue | `AQ3` | 1 |
+| `armq_write_wrap_hi` | a push writes at head + 2 when the queue holds three or more | `AQ3` | 1 |
+| `armq_full_pop_refuses` | a full queue that pops refuses the push of the same clock | `AQ3` | 1 |
+| `armq_drop_skip_sat` | the drop counter wraps instead of saturating | `AQ3` | 1 |
+
+Measured 2026-10-04 at the head of the issue's second round, each KILLED. In the
+first five, the other failing checks are the main section's own (S2's MVRP VID
+New is among them in every case).
 
 ## Section AX: AECP dispatch and response (issues #53, #50, #82)
 
