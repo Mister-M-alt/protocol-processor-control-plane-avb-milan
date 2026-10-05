@@ -2226,7 +2226,7 @@ not a multiple of 8`). Verilator reports an elaboration `$error` as a warning th
 
 ## Lane C6: notifications and identify (issues #54, #58, #80, #86)
 
-`notify_phases.hpp` holds six sections, each on a fresh processor of its own
+`notify_phases.hpp` holds seven sections, each on a fresh processor of its own
 (the section AD pattern: its own model, the suite's descriptor image, erased NVM,
 both restore walks, link up and enable), so the main run's clock is untouched.
 Every AECP and ACMP frame is logged with the clock its last byte left on, so
@@ -2235,7 +2235,8 @@ clause byte offsets; a per-entry `sequence_id` is modelled from the wire alone, 
 the count of unsolicited frames that controller was sent before (Milan §5.4.5.1).
 
 `--identify-only` runs ID0 (default build), `--notify-only` runs NP, ST and RN, and
-`--spacing-only` runs CS; `make identify` builds and runs the third build and ID0.
+`--spacing-only` runs CS; `make identify` builds and runs the third build and ID0, and
+`make timer-defaults` the sixth build, which runs TD alone.
 
 ### The third build: `P-EN-IDENTIFY-NOTIFICATION`
 
