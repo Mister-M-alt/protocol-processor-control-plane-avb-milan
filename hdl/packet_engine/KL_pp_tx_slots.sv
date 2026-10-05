@@ -14,7 +14,7 @@
 //                reserved for the Milan §5.4.1 Δ8 oversize command set
 //                (READ_DESCRIPTOR, GET_AVB_INFO, GET_AS_PATH,
 //                GET_AUDIO_MAP, ADD/REMOVE_AUDIO_MAPPINGS) — F01.5
-//                "P-TX 4x576 + 1600". The oversize slot is granted only to
+//                rows. The oversize slot is granted only to
 //                an allocation carrying oversize_i, and an oversize
 //                allocation waits for slot 4 even while 0..3 sit free; a
 //                plain allocation never receives index 4.

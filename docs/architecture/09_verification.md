@@ -109,7 +109,9 @@ against at least two independent controller implementations.
 
 ## 7. Documentation-sync regression
 
-`make check` is the CI gate, and runs today:
+`make check` is the documentation gate, and the CI `docs-gates` job
+([`hdl.yml`](../../.github/workflows/hdl.yml)) runs exactly that target, with the
+`wavedrom` package and Mermaid CLI 11.16.0 installed first. It runs today:
 
 | Target | Script | Asserts |
 |---|---|---|
@@ -119,6 +121,8 @@ against at least two independent controller implementations.
 | `matrix` | `scripts/check-matrix.py` | REQ-IDs unique and fully populated; `Ver` values ∈ the §3 vocabulary; every GAP defined ↔ dispositioned |
 | `modmatrix` | `scripts/gen_matrix.py --check` | `docs/traceability/MODULE_MATRIX.md` is not stale, and no module is without a suite (budget zero) |
 | `params` | `scripts/check-integrator-params.py` | the guide section 2 table and diagram 21's `integration-parameters` group each equal the overridable parameter set of `protocol_processor_top`, with no missing, extra or duplicate names; empty or unparseable inputs fail |
+| `ids` | `scripts/check-ids.py` (`--selftest` first) | every `P-` or `T-` ID used in a file under `docs/`, `hdl/` or `tb/` has its row in [F01.5](01_overview.md#fig-01-params) or [F08.1](08_timing.md#fig-08-constants); a family (`T-MRP-*`) needs one row in it, each member of a braced list (`T-NVM-{RS-DEADLINE, RS-AGGREGATE}`) its own row, and an ID with an optional segment (`T-ADP-DELAY(-START)`) a row for both; braces or `(-` holding anything but ID segments fail; an ID broken at a line end and a sibling written as its last segment (`T-BUDGET-AECP-TYP / -WC`) are read whole, and `-1` reads as minus one only if the base has a row; any other text after a hyphen is prose (`T-MRP-JOIN-driven` uses `T-MRP-JOIN`); an unreadable, empty or duplicated master table fails. The self-test plants a stray in each scanned tree, a stray in each of those forms (including a missing minus-one base, a line-broken optional member and an optional member after a line-broken ID) and each master-table fault, and must see each caught with rc 1 and its diagnostic token |
+| `figures` | `scripts/check-figures.py` (`--selftest` first) | every file under `docs/diagrams/` is a draw.io source with its export, a WaveDrom render whose block exists, or a hand-authored SVG listed in `docs/diagrams/README.md` that is well-formed, has an SVG-namespace `<svg>` root and a `viewBox`, carries no `<image>`, `<feImage>` or `<foreignObject>`, and is linked from a page ([docs/README §3](../README.md#3-figures-one-source-one-home)); any other file fails, and so does a missing or empty hand-authored inventory. The self-test plants each fault and must see it caught |
 | `stale` | `Makefile` | each committed `.svg` is newer than its `.drawio` source |
 
 ## 8. The suites that exist today
@@ -150,6 +154,12 @@ red. That table is the evidence a suite has teeth.
 Neither `run_suites.sh` nor `lint_hdl.sh` is wired into `make check`, which is the
 documentation gate only; they are run separately before a submodule pin moves. See the
 [HDL engineer guide](../guides/hdl-engineer.md#6-running-the-testbenches).
+
+Of the single-source rules of [docs/README §2](../README.md#2-identifier-registries),
+`make check` enforces the ID half and nothing more: `ids` (§7) fails any `P-` or `T-` ID
+under `docs/`, `hdl/` or `tb/` without its F01.5 or F08.1 row, and `params` holds the
+integrator guide's parameter inventory to the top. No gate reads values; the value scan
+is the single-source scan still to add at the end of this section.
 
 ### 8.1 Dynamic-state overlay: the per-field A/B evidence map (issue #72)
 
@@ -287,8 +297,8 @@ the [`tb/pp_top` README](../../tb/pp_top/README.md).
 ### 8.4 Notifications and identify: the RND and STORM evidence (issues #54, #58, #80, #86)
 
 Each section runs on a fresh processor of its own in `tb/pp_top` (`--notify-only`,
-`--identify-only`, and the suite's third build for section ID), plus one section of
-the originator's unit suite and three of the notification block's:
+`--spacing-only`, `--identify-only`, and the suite's third build for section ID), plus
+one section of the originator's unit suite and four of the notification block's:
 
 | Category | Section | What it proves |
 |---|---|---|
@@ -297,10 +307,12 @@ the originator's unit suite and three of the notification block's:
 | DIR | ID0 (the default 0) | the button puts nothing on the wire |
 | DIR | NP | every notifying command class pushes one byte-exact u = 1 response to a second registered controller, none to the requester, at the entry's own sequence_id |
 | STORM | ST | one change fans out to all 16 rows byte-exact; GET_COUNTERS churned at 10 Hz on five descriptors emits at most once per descriptor per second; solicited AECP and ACMP answers stay inside `T-BUDGET-AECP-WC` / `T-BUDGET-ACMP-RESP` under the load |
+| STORM | CS | ST's churn started at ST's phase and 30 and 95 clocks later (#148's shifted timing): every row's GET_COUNTERS rounds of each descriptor leave a second after its previous round's send, less the one tick the limiter reads, though a solicited answer delays a round's frames |
 | RND | RN | a seeded REGISTER / DEREGISTER / LOCK / UNLOCK / SET / GET session from 20 controllers against an independent registry and lock model, zero divergence |
 | RND | `tb/originator` R | a seeded session of 16 owners' overlapping CONTROLLER_AVAILABLE-shaped inflights, responses, expiries and cancellations in random order against an independent inflight model |
 | DIR | `tb/aecp_notify` IX | the registry's identity index: a reused row refuses its previous controller, no identity one bit from a registered one matches, and in both cycles of a REGISTER's rewrite a command matching what `rows_r` holds still wins against a failed probe in the same cycle: in the row write's own cycle the reused row's previous controller, and, after a reset in that cycle, the row's identity, which the index then lacks |
 | DIR | `tb/aecp_notify` TS | the counter throttle stamps' valid bit: a second change in the same second is held, and after a warm reset a change in that second goes out at once |
+| DIR | `tb/aecp_notify` TW | a counter round that waits for the TX slot: the next round waits a second from the round's last send, never from its selection, and a change made while a job waits more than a second still waits a second after that send |
 
 The mutation records are in the two suites' READMEs; `tb/pp_top/notify_mutants.py`
 plants the pp_top controls.

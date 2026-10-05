@@ -9,10 +9,10 @@
 //                access-rights rule)
 //
 //  Description : Management side-port — the class-E single-master port of
-//                F02.7 (psel/pwrite/paddr/pwdata/prdata/pready mapped 1:1
-//                onto req_valid/we/addr/wdata/rdata/rvalid; wait states
-//                allowed) decoding the six 07 §5.5 windows of the 20-bit
-//                word-address space:
+//                02 §7 and F02.7 (an APB bridge maps psel/pwrite/paddr/
+//                pwdata/prdata/pready onto req_valid/we/addr/wdata/rdata/
+//                rvalid; wait states allowed) decoding the six 07 §5.5
+//                windows of the 20-bit word-address space:
 //
 //                  0x00000  image + identity load   W pre-enable only, R
 //                  0x10000  overlay/name debug view RO
