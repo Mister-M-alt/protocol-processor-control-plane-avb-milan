@@ -415,6 +415,24 @@ each grades behaviour the change kept:
 
 The mutation records are in the two suites' READMEs.
 
+### 8.9 The redundancy seam at two AVB interfaces (issue #69)
+
+`P-N-AVB-INTERFACES` is 1 in every shipping build, so the seam would rot unseen.
+Three suites build it at 2, each in a build of its own, and the pp_top suite lints the
+real top at 1 and 2 on every run:
+
+| Category | Section | What it proves |
+|---|---|---|
+| DIR | `tb/adp_engine` IF (second build, `N_IF_P` = 2) | one advertise machine per interface: each leaves DOWN on its own link and advertises byte-exact with its own interface_index, available_index, grandmaster and domain; ENTITY_DISCOVER and GM_CHANGE restart the receiving interface's machine alone; LINK_DOWN on one interface leaves the other advertising; the discovery guard reads the ingress interface's pair; disabling the entity sends one ENTITY_DEPARTING per interface |
+| DIR | `tb/aecp_notify` PT (third build, `N_IF_P` = 2) | the registry row's port: a controller registered on two interfaces holds two entries with Sequence IDs of their own, a repeated REGISTER refreshes its own port's entry, and DEREGISTER removes the entry of its port |
+| DIR | `tb/aecp_notify` CK (third build) | the AVB_INTERFACE counter rows: AVB_INTERFACE 1's GET_COUNTERS window is its own beside AVB_INTERFACE 0's, an index past the interfaces pushes nothing, and CLOCK_DOMAIN 0 keeps its slot |
+| DIR | `tb/pp_top` IF (seventh build, `N_AVB_IF_P` = 2) | through the top's glue: both interfaces advertise byte-exact; a frame's interface, `rx_if_index_i` read with its last byte and changed right after it, reaches ADP; the registry port comes from the command's interface, so a lock change reaches a controller registered on both interfaces twice, and once after DEREGISTER on interface 1 |
+| lint | `tb/pp_top` `if-guards` | the real top lints clean, no warning, at `N_AVB_IF_P` 1 and 2, and 0 and 3 are refused with the top's message naming `N_AVB_IF_P` |
+
+The controls collapse the interface count, index or sample: arms in
+`tb/adp_engine/mutants.py` (`if-*`) and in `tb/pp_top/notify_mutants.py` (`port_*`,
+`avb_counter_*`, `rgy_port_tied_zero`). The records are in the three suites' READMEs.
+
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)
 per the scope rules in [docs/README §2](../README.md).
