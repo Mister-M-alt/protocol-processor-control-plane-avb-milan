@@ -14052,8 +14052,7 @@ int main(int argc, char** argv) {
   const bool adp_only = argc == 2 && std::strcmp(argv[1], "--adp-only") == 0;
   const bool ident_only = argc == 2 && std::strcmp(argv[1], "--identify-only") == 0;
   const bool notify_only = argc == 2 && std::strcmp(argv[1], "--notify-only") == 0;
-  const bool aecp_only = argc == 2
-                         && std::strcmp(argv[1], "--aecp-dispatch-only") == 0;
+  const bool aecp_only = argc == 2 && std::strcmp(argv[1], "--aecp-dispatch-only") == 0;
   const bool dl_only = argc == 2 && std::strcmp(argv[1], "--deadline-only") == 0;
   const bool hz_only = argc == 2 && std::strcmp(argv[1], "--hazards-only") == 0;
   const bool ctr_only = argc == 2 && std::strcmp(argv[1], "--counters-only") == 0;
