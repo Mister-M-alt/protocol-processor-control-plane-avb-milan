@@ -18,9 +18,10 @@ the STORM and RND sections (ST, RN), the originator's seeded inflight session
 (tb/originator section R), and the registry's identity index and the counter
 throttle stamps' valid bit in the first build of tb/aecp_notify (sections IX and TS,
 issue #232), and the counter rounds' spacing from the previous round's send (issue
-#148: tb/pp_top section CS and tb/aecp_notify section TW), and a DEREGISTER drained
-between two jobs of a round (issue #158: tb/aecp_notify section DR). The suite READMEs
-carry the matching mutation records.
+#148: tb/pp_top section CS and tb/aecp_notify section TW), a DEREGISTER drained
+between two jobs of a round (issue #158: tb/aecp_notify section DR), and the Domain
+and link-edge triggers of the GET_AVB_INFO notification (issue #42: tb/pp_top section
+DN). The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
                                            [--only NAME ...]
@@ -349,8 +350,53 @@ DEREG_MID_ROUND = (
         ("DR1b:", "DR2b:")),
 )
 
+# the Domain and link-edge GET_AVB_INFO triggers of ev_avb_i (issue #42), graded
+# by tb/pp_top section DN
+DOMAIN_NOTIFY_SUITE = Suite("tb/pp_top", ("make", "gsi-build"),
+                            ("./obj_dir/Vpp_top_sim", "--domain-notify-only"))
+SRP_DOMAIN = "hdl/srp/KL_srp_domain.sv"
+AVB_OR = ("      .ev_avb_i              (gm_change_i || srp_evt_domain_change_w\n"
+          "                              || (link_up_i != link_q_r) || gsi_avb_chg_i),\n")
+
+DOMAIN_NOTIFY = (
+    Mutant("avb_domain_term_dropped", DOMAIN_NOTIFY_SUITE, (
+        (TOP, AVB_OR, AVB_OR.replace(" || srp_evt_domain_change_w", "")),),
+        ("DN1b:", "DN1c:", "DN2b:", "DN2c:")),
+    Mutant("avb_link_term_dropped", DOMAIN_NOTIFY_SUITE, (
+        (TOP, AVB_OR, AVB_OR.replace(" || (link_up_i != link_q_r)", "")),),
+        ("DN4b:", "DN4c:", "DN4d:", "DN4e:")),
+    Mutant("asp_takes_domain", DOMAIN_NOTIFY_SUITE, (
+        (TOP, "      .ev_asp_i              (gsi_asp_chg_i),\n",
+         "      .ev_asp_i              (gsi_asp_chg_i || srp_evt_domain_change_w),\n"),),
+        ("DN1b:", "DN2b:")),
+    Mutant("avb_notify_not_interface", DOMAIN_NOTIFY_SUITE, (
+        (NTFY, "      pick_dt_w   = 16'h0009;           // AVB_INTERFACE\n",
+         "      pick_dt_w   = 16'h0024;           // AVB_INTERFACE\n"),),
+        ("DN4c:", "DN4e:", "DN1c:", "DN2c:")),
+    Mutant("domain_same_readopted", DOMAIN_NOTIFY_SUITE, (
+        (SRP_DOMAIN, "          && ({surf_prio_w, rxdom_vid_i} != {decl_prio_r, decl_vid_r})) begin\n",
+         "          ) begin\n"),),
+        ("DN3:", "DN3b:")),
+    Mutant("adoption_no_strobe", DOMAIN_NOTIFY_SUITE, (
+        (SRP_DOMAIN, "        rx_pend_v_r         <= 1'b0;\n        evt_domain_change_o <= 1'b1;\n",
+         "        rx_pend_v_r         <= 1'b0;\n"),),
+        ("DN1:", "DN2:")),
+    Mutant("revert_strobes_at_defaults", DOMAIN_NOTIFY_SUITE, (
+        (SRP_DOMAIN, "        if (adopted_r) evt_domain_change_o <= 1'b1;\n",
+         "        evt_domain_change_o <= 1'b1;\n"),),
+        ("DN4:",)),
+    Mutant("registry_never_claims", DOMAIN_NOTIFY_SUITE, (
+        (NTFY, "          if (!valid_r[wk_ix_r] && !wk_free_r) begin\n",
+         "          if (1'b0) begin\n"),),
+        ("DN0:",)),
+    Mutant("restore_never_done", DOMAIN_NOTIFY_SUITE, (
+        (TOP, "  assign restore_done_o   = nvm_walk_done_w && lsn_released_w && d3_done_w;\n",
+         "  assign restore_done_o   = 1'b0;\n"),),
+        ("notify bench: blank NVM",)),
+)
+
 MUTANTS = (IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
-           + DEREG_MID_ROUND)
+           + DEREG_MID_ROUND + DOMAIN_NOTIFY)
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"
