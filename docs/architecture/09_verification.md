@@ -297,8 +297,9 @@ the [`tb/pp_top` README](../../tb/pp_top/README.md).
 ### 8.4 Notifications and identify: the RND and STORM evidence (issues #54, #58, #80, #86)
 
 Each section runs on a fresh processor of its own in `tb/pp_top` (`--notify-only`,
-`--spacing-only`, `--identify-only`, and the suite's third build for section ID), plus
-one section of the originator's unit suite and five of the notification block's:
+`--spacing-only`, `--domain-notify-only`, `--identify-only`, and the suite's third build
+for section ID), plus one section of the originator's unit suite and five of the
+notification block's:
 
 | Category | Section | What it proves |
 |---|---|---|
@@ -308,6 +309,7 @@ one section of the originator's unit suite and five of the notification block's:
 | DIR | NP | every notifying command class pushes one byte-exact u = 1 response to a second registered controller, none to the requester, at the entry's own sequence_id |
 | STORM | ST | one change fans out to all 16 rows byte-exact; GET_COUNTERS churned at 10 Hz on five descriptors emits at most once per descriptor per second; solicited AECP and ACMP answers stay inside `T-BUDGET-AECP-WC` / `T-BUDGET-ACMP-RESP` under the load |
 | STORM | CS | ST's churn started at ST's phase and 30 and 95 clocks later (#148's shifted timing): every row's GET_COUNTERS rounds of each descriptor leave a second after its previous round's send, less the one tick the limiter reads, though a solicited answer delays a round's frames |
+| DIR | DN | the Domain and link-edge terms of the GET_AVB_INFO trigger (#42): an adopted Class A Domain, the declaration that returns it to the default and each link edge send a registered controller exactly one u = 1 GET_AVB_INFO for AVB_INTERFACE 0, byte-exact, and no GET_AS_PATH; an identical re-declaration sends nothing |
 | RND | RN | a seeded REGISTER / DEREGISTER / LOCK / UNLOCK / SET / GET session from 20 controllers against an independent registry and lock model, zero divergence |
 | RND | `tb/originator` R | a seeded session of 16 owners' overlapping CONTROLLER_AVAILABLE-shaped inflights, responses, expiries and cancellations in random order against an independent inflight model |
 | DIR | `tb/aecp_notify` IX | the registry's identity index: a reused row refuses its previous controller, no identity one bit from a registered one matches, and in both cycles of a REGISTER's rewrite a command matching what `rows_r` holds still wins against a failed probe in the same cycle: in the row write's own cycle the reused row's previous controller, and, after a reset in that cycle, the row's identity, which the index then lacks |
