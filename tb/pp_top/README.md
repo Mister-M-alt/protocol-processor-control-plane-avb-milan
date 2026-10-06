@@ -2494,8 +2494,11 @@ check grades the trigger and the frame, not the words.
   The revert at `:157` runs on LINK_DOWN alone.
 - **DN3b** the default declared again: nothing.
 
-Each notification leaves 466 clocks after a link edge and 495 after the MRPDU's last
-byte. The LINK_DOWN revert at `:157` is not graded on its own here. It strobes on the
+The section's `[i]` lines time each notification from its stimulus: the link edge, or
+the return of `feed()`, which clocks four idle cycles after the MRPDU's last byte. Each
+link-edge notification leaves 466 clocks after the edge. Each Domain notification
+leaves 495 clocks after `feed()` returns, so 499 after the MRPDU's last byte.
+The LINK_DOWN revert at `:157` is not graded on its own here. It strobes on the
 same edge that raises the link term of this OR, so at `ev_avb_i` it cannot be told
 apart from the link term, and removing `srp_evt_domain_change_w` still leaves a
 notification on that edge. DV5 grades the revert's DOMAIN_CHANGE.
@@ -2503,10 +2506,15 @@ notification on that edge. DV5 grades the revert's DOMAIN_CHANGE.
 **Spacing.** The only notification rate limit 06 §7 defines is the GET_COUNTERS one:
 `T-CTR-NOTIF`, one second per descriptor from the previous round's last send.
 GET_AVB_INFO coalesces into one pending bit and has no limit. The section still waits
-out that second. Each stimulus comes at least 1,000 ms (100,000 clocks) after the
-latest frame to A left, and each window is 1.2 s, so no count depends on coalescing or
-on a limiter. The section takes 8,167 ms of the timebase after the registration. That
-is under the controller monitor's 30 s floor, so no CONTROLLER_AVAILABLE reaches A.
+out that second after each notification: `space_out` holds a stimulus until 1,000 ms
+(100,000 clocks) after the latest notification to A left. It does not count the
+REGISTER response, which is a solicited answer and not a notification, so the first
+stimulus (link down) comes at the bench's clock 100,000, 96,536 clocks (965 ms) after
+that response. Each window is 1.2 s, longer than the spacing, so every later stimulus
+follows the previous window directly, at least 1,000 ms after the latest notification.
+No count depends on coalescing or on a limiter. The section takes 8,167 ms of the
+timebase after the registration. That is under the controller monitor's 30 s floor, so
+no CONTROLLER_AVAILABLE reaches A.
 
 ### Mutation record: `notify_mutants.py`
 

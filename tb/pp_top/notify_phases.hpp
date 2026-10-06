@@ -1660,7 +1660,9 @@ struct DomainNotifyPhase : NotifyBench {
   static constexpr long WINDOW = 1200L * MS_CYC;    // longer than the spacing
   static constexpr long SPACING = 1000L * MS_CYC;   // T-CTR-NOTIF (06 7)
   uint16_t seq = 0x4200;
-  uint64_t last_sent = 0;   //!< the clock the latest frame to A left
+  //! the clock the latest notification to A left; 0 before the first (the
+  //! REGISTER response is not counted)
+  uint64_t last_sent = 0;
 
   using NotifyBench::NotifyBench;
 
@@ -1684,7 +1686,7 @@ struct DomainNotifyPhase : NotifyBench {
   bool class_a_is(unsigned vid) const {
     return io.d->srp_class_a_prio_o == 3 && io.d->srp_class_a_vid_o == vid;
   }
-  //! the 06 7 spacing: a second after the latest frame to A left
+  //! the 06 7 spacing: a second after the latest notification to A left
   void space_out() {
     while (io.t < last_sent + SPACING) tick();
   }
@@ -1703,7 +1705,9 @@ struct DomainNotifyPhase : NotifyBench {
   }
   //! one stimulus that must notify: exactly one frame at A, a u = 1
   //! GET_AVB_INFO (so no GET_AS_PATH and nothing else), byte-exact at the
-  //! entry's sequence_id (Milan 5.4.5.1, modelled from the wire as in NP)
+  //! entry's sequence_id (Milan 5.4.5.1, modelled from the wire as in NP).
+  //! t0 is the stimulus the [i] line times from: the link edge, or the return
+  //! of feed(), four idle clocks after an MRPDU's last byte
   void one_notification(const char* tag, const char* tag_b, const char* what,
                         size_t from, uint64_t t0) {
     const auto at = watch(from);
