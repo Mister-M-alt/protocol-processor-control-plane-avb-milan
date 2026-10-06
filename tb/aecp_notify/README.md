@@ -9,8 +9,9 @@ expires the registry row while that probe is active, and requires a targeted
 cancellation before the row is cleared. It then reuses the same row for a
 different controller and verifies that the next probe carries only the new
 Entity ID and MAC tuple. Section IX then grades the registry's identity index,
-section TS the counter throttle stamps' valid bit, and section TW a counter round
-that waits for the TX slot.
+section TS the counter throttle stamps' valid bit, section TW a counter round
+that waits for the TX slot, and section DR a DEREGISTER drained between two jobs
+of a round.
 
 Run `make`. Exit status zero and the printed check tally are required.
 
@@ -18,7 +19,7 @@ Run `make`. Exit status zero and the printed check tally are required.
 
 | Build | Override | Runs |
 |---|---|---|
-| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks) and section TW (4 checks) |
+| `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks) and section DR (11 checks) |
 | `obj_idn/Vaecp_notify_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`AECP_NOTIFY_IDENT`) | section FT alone |
 
 Each binary prints its own build's count, and the Makefile prints the one
@@ -143,8 +144,10 @@ The upper bound (8 cycles: the pick and the walk to the job) shows that the held
 change is sent, not lost.
 
 Mutation record (planted by `tb/pp_top/notify_mutants.py`, which runs `make run`
-here; all ten KILLED). The fifth to the seventh are PR #153's review faults
-(R452-1 and R453-1), each the reviewer's own edit; the last three are issue #148's:
+here; all thirteen KILLED). The fifth to the seventh are PR #153's review faults
+(R452-1 and R453-1), each the reviewer's own edit; the next three are issue #148's,
+and the last three issue #158's (section DR, below). Since #158 the three #148
+controls fail DR3 as well, at ms 31512: none of them follows D's wait after the drain:
 
 | Mutant | Planted | Failing checks |
 |---|---|---|
@@ -155,6 +158,43 @@ here; all ten KILLED). The fifth to the seventh are PR #153's review faults
 | `override_set_only` | the compare covers only the rewrite's second cycle; the row write's own cycle reads the index | 2: IX6, IX6b |
 | `own_compare_new_row` | the rewrite's compare reads the incoming row, not what `rows_r` holds | 1: IX5 |
 | `stamp_read_without_valid` | a counter stamp is read without its valid bit, `ctr_sent_r` | 1: TS3 |
-| `counter_spacing_from_selection_tw` | the stamp no longer follows a waiting job: the limit restarts at the round's selection (`main`'s rule) | 2: TW1 (ms 3005), TW2 (ms 6508) |
-| `counter_stamp_at_send_only` | the stamp written at the job's send alone, not while it waits | 1: TW2 (ms 6508) |
-| `counter_stamp_first_job_only` | the stamp follows only the round's first job (row 0) | 2: TW1 (ms 3007), TW2 (ms 7503) |
+| `counter_spacing_from_selection_tw` | the stamp no longer follows a waiting job: the limit restarts at the round's selection (`main`'s rule) | 3: TW1 (ms 3005), TW2 (ms 6508), DR3 |
+| `counter_stamp_at_send_only` | the stamp written at the job's send alone, not while it waits | 2: TW2 (ms 6508), DR3 |
+| `counter_stamp_first_job_only` | the stamp follows only the round's first job (row 0) | 3: TW1 (ms 3007), TW2 (ms 7503), DR3 |
+| `dereg_mid_round_no_hold` | a drained DEREGISTER no longer waits for the round's boundary (`main`'s rule) | 3: DR1, DR2, DR3 |
+| `dereg_pending_stops_follow` | the counter stamp stops following while a DEREGISTER is pending (review R477-1 S2's hazard) | 1: DR3 (ms 31512) |
+| `dereg_lost_at_round_end` | the round's end drops the held DEREGISTER | 2: DR1b, DR2b |
+
+## Section DR: a DEREGISTER drained between two jobs of a round (issue #158)
+
+A TIME_LIMITED expiry, or a failed CONTROLLER_AVAILABLE retry, parks a registry
+row. The walk drains it between two jobs of a round and latches the controller's
+own DEREGISTER notification (Milan Table 5.22: "sent only to this controller").
+On `main` that single-shot job rewrote the round's response kind, descriptor and
+arguments, so every remaining controller of the round received a DEREGISTER
+(kind 0, descriptor 0000:0) in place of the round's notification. The DEREGISTER
+now waits for the round's boundary. The bench is the engine, as in TW, with C in
+row 0 and D in row 1, both registered after a warm reset (all six REGISTERs
+checked):
+
+- **DR1** (the issue's probe) a GET_COUNTERS round on AVB_INTERFACE[0], whose
+  first job, to C, waits while C's TIME_LIMITED registration expires. D still
+  receives the round's GET_COUNTERS 0009:0 (ms 20010).
+- **DR1b** C alone receives its own DEREGISTER, once: kind 0, descriptor 0000:0,
+  sequence_id 1 (ms 20013, after the round).
+- **DR2** a SET_NAME round (descriptor 0005:1, arguments 2 and 3; the block
+  carries them through unread, and the requester is not registered), whose
+  first job, to C, waits while C's CONTROLLER_AVAILABLE retry fails. D still
+  receives the round's notification, every field intact.
+- **DR2b** as DR1b.
+- **DR3** (review R477-1 S2 on PR #159) TW with the drain: C's registration
+  expires in a GET_COUNTERS round, the job after the drain waits 1.5 s for the
+  TX slot, and a change arrives during the wait. D's next GET_COUNTERS waits a
+  second from D's own send in the round: sent at ms 31504, the next presented at
+  ms 32508, against 32504 to 32512.
+
+The checks accept D's job and C's DEREGISTER in either order, so they grade the
+round's notification and the DEREGISTER's own semantics, not the order the fix
+chose. On `main`'s RTL DR1, DR2 and DR3 fail: D receives kind 0, descriptor
+0000:0 in DR1 and DR2, and in DR3 D's first GET_COUNTERS after the drain is the
+next round's (ms 31513). DR1b and DR2b pass on `main`.
