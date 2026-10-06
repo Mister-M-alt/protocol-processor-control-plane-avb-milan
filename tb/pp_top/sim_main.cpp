@@ -833,6 +833,9 @@ struct H {
   bool tx_eof_stalled = false;
   bool release_eof_sync = false;
   bool release_eof_hit = false;
+  // section WD: release a byte held at eof on the clock this bit of the
+  // receive validator's commit shift (dbg_rxv_commit_o) is set; -1 = never
+  int release_eof_on_commit = -1;
   std::vector<uint8_t> cur;
   std::deque<std::vector<uint8_t>> q_adp;
   std::deque<std::vector<uint8_t>> q_acmp;
@@ -1614,6 +1617,11 @@ struct H {
       mac_tx_ready = true;
       release_eof_hit = true;
     }
+    if (release_eof_on_commit >= 0 && d->tx_valid_o && d->tx_eof_o
+        && ((d->dbg_rxv_commit_o >> release_eof_on_commit) & 1u)) {
+      mac_tx_ready = true;
+      release_eof_hit = true;
+    }
     d->tx_ready_i = mac_tx_ready;
     if (d->tx_valid_o && mac_tx_ready) {
       if (d->tx_sof_o) { cur.clear(); in_frame = true; cur_sof_t = t; }
@@ -2047,6 +2055,7 @@ struct H {
     tx_eof_stalled = false;
     release_eof_sync = false;
     release_eof_hit = false;
+    release_eof_on_commit = -1;
     d->tx_ready_i = 1;
     d->aecp_txn_ready_i = 0;              // P4 uCPU seam: defined tie-off
     d->aecp_rxs_free_i = 0;               // the external drain returns nothing
@@ -14050,13 +14059,15 @@ int main(int argc, char** argv) {
   const bool ctr_only = argc == 2 && std::strcmp(argv[1], "--counters-only") == 0;
   const bool spacing_only = argc == 2 && std::strcmp(argv[1], "--spacing-only") == 0;
   const bool aq_only = argc == 2 && std::strcmp(argv[1], "--arm-queue-only") == 0;
+  const bool withdraw_only = argc == 2 && std::strcmp(argv[1], "--withdraw-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
     return 0;
   }
   const bool one_section = gsi_only || name_only || d3_only || volatile_only || acmp_only || adp_only
                            || cuts_only || one_seed || maap_only || aecp_only || dl_only || hz_only
-                           || ident_only || notify_only || ctr_only || spacing_only || aq_only;
+                           || ident_only || notify_only || ctr_only || spacing_only || aq_only
+                           || withdraw_only;
   if (maap_only) run_maap_internal(h);
   if (!one_section || aq_only) Suite(h).run();
   if (aecp_only) run_aecp_dispatch_focus(h);
@@ -14076,6 +14087,7 @@ int main(int argc, char** argv) {
   if (!one_section || notify_only) run_storm(h);
   if (!one_section || notify_only) run_rnd(h);
   if (!one_section || spacing_only) run_spacing(h);
+  if (!one_section || withdraw_only) run_withdraw(h);
   if (!one_section || ctr_only) run_counters(h);
   if (!one_section || aq_only) run_arm_queue(h);
   const char* const build = "default";

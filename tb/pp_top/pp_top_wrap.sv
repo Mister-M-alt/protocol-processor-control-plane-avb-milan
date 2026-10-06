@@ -484,6 +484,15 @@ module pp_top_wrap (
     output logic        dbg_ser_start_o,
     output logic  [2:0] dbg_ser_slot_o,
     output logic        dbg_txs_slot4_free_o,
+    //! section WD (issue #163): the receive validator's commit shift with its
+    //! input ({cp_r, end_pend_r && end_pass_r}: bit 0 two clocks before a
+    //! header is valid, bit 2 the clock it is) and the TX arbiter's state,
+    //! owner lane and started bit, so a command's cancellation can be put on
+    //! the clock the arbiter selects or accepts a queued probe
+    output logic  [2:0] dbg_rxv_commit_o,
+    output logic  [1:0] dbg_arb_st_o,
+    output logic  [2:0] dbg_arb_owner_o,
+    output logic        dbg_arb_sent_o,
     //! section AQ (issue #639): the eight engine arm faces as the top's
     //! timer arm-port mux receives them, in its drain order (listener,
     //! talker, ADP, SRP, originator, MAAP, notify, notify monitor), each
@@ -893,6 +902,12 @@ module pp_top_wrap (
   assign dbg_ser_start_o     = u_dut.u_tx_slots.ser_start_w;
   assign dbg_ser_slot_o      = 3'(u_dut.ser_slot_w);
   assign dbg_txs_slot4_free_o = (u_dut.u_tx_slots.st_r[4] == 2'd0);
+  assign dbg_rxv_commit_o = {u_dut.u_rx_validator.cp_r,
+                             u_dut.u_rx_validator.end_pend_r
+                             && u_dut.u_rx_validator.end_pass_r};
+  assign dbg_arb_st_o     = u_dut.u_tx_arbiter.arb_st_r;
+  assign dbg_arb_owner_o  = u_dut.u_tx_arbiter.owner_r;
+  assign dbg_arb_sent_o   = u_dut.u_tx_arbiter.start_sent_r;
   assign dbg_desc_line_bytes_o = 16'(u_dut.DESC_LINE_BYTES_P);
   assign dbg_aq_vld_o = {u_dut.ntfy_mon_arm_valid_w, u_dut.ntfy_arm_valid_w,
                          u_dut.maapeng_arm_valid_w, u_dut.org_arm_valid_w,

@@ -50,11 +50,20 @@ Mutation-proven, restored, and rerun green at the current 66-check shape:
 |---|---|---|
 | M1 | aging never promotes: selection key `{~aged_w[i], class}` → `{1'b1, class}` | fails 12 of 60 (aged-ADP and pacing sequences collapse; 102 model mismatches) |
 | M2 | pacing dropped: eligibility mask condition `pace_nonsol_r && sol_pend_w` → `1'b0` | fails 6 of 60 (alternation becomes 1,4,3,..; 17 random-phase grant mismatches) |
-| M3 | priority inverted: best-key compare `<` → `>` | fails 21 of 60 (strict-priority sequences reversed; 311 model mismatches) |
+| M3 | priority inverted: best-key compare `<` → `>` (since #163 the pairwise rank compares `<=` and `<` → `>=` and `>`) | fails 21 of 60 (strict-priority sequences reversed; 311 model mismatches) |
 | M4 | frame atomicity broken: `eof_w = consume_w && ser_last_i` → `consume_w` (arbiter re-arbitrates after the first byte) | fails 27 of 60 (4 mid-frame grants, 55 byte errors, stalls, pool corruption) |
 | M5 | pre-start abort ignored and serializer request left asserted | fails 3 of 66 (canceled grant, frame start, and slot lifecycle) |
 
 All five are behavior-changing mutants (no equivalent mutants recorded).
+
+Issue #163 replaced the selection's best-so-far scan, whose compares chained
+through all requesters (17 logic levels on the reference part, ahead of
+`slot_r`), with a pairwise rank: the winner is the eligible requester no other
+eligible one outranks. The two are the same function: an equivalence proof of
+the old and the new module (sequential, every register matched, at the top's
+eight-lane parameters and at this suite's defaults) closes every point, and the
+five mutants re-planted 2026-10-06 at `main` `86a7b0c5` and at the #163 head fail
+the same checks at both: M1 13, M2 6, M3 23, M4 30 and M5 2 of 66.
 M2 is exactly the class of defect the aged-flood pacing phase plants: with
 strict priority alone it is invisible, because solicited classes natively
 outrank the unsolicited ones — only an AGED non-solicited flood can take

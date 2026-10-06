@@ -81,6 +81,7 @@ struct Harness {
   void dereg_counter_round();
   void dereg_command_round();
   void dereg_round_waits();
+  void cancel_clock();
 
   void tick() {
     d->now_ms_i = now;
@@ -94,7 +95,8 @@ struct Harness {
     for (int i = 0; i < n; ++i) tick();
   }
 
-  void register_row(uint64_t eid, uint64_t mac, bool time_limited) {
+  //! a REGISTER of {eid, mac}; true when the registry accepted the tuple
+  bool registers(uint64_t eid, uint64_t mac, bool time_limited) {
     d->rgy_state_i = 0;
     d->rgy_op_i = 0;
     d->rgy_eid_i = eid;
@@ -108,14 +110,20 @@ struct Harness {
       if (!d->rgy_wait_o) break;
       tick();
     }
-    CHECK(guard < REGISTRY_ACCEPT_CYCLES && d->rgy_data_o == 0,
-          "registry accepts controller tuple");
+    const bool accepted = guard < REGISTRY_ACCEPT_CYCLES && d->rgy_data_o == 0;
     tick();
     d->rgy_req_i = 0;
     idle(2);
+    return accepted;
   }
 
-  void complete_draw() {
+  void register_row(uint64_t eid, uint64_t mac, bool time_limited) {
+    CHECK(registers(eid, mac, time_limited), "registry accepts controller tuple");
+  }
+
+  //! the monitor draw a registration asks for, answered with 30 s; true when
+  //! it was asked for
+  bool draws() {
     d->prng_draw_busy_i = 0;
     int guard = 0;
     while (guard++ < DRAW_REQUEST_CYCLES) {
@@ -124,14 +132,18 @@ struct Harness {
       if (d->prng_draw_req_o) break;
       tick();
     }
-    CHECK(guard < DRAW_REQUEST_CYCLES,
-          "registration requests an independent monitor draw");
+    const bool asked = guard < DRAW_REQUEST_CYCLES;
     d->prng_draw_ms_i = 30000;
     d->prng_draw_valid_i = 1;
     tick();
     d->prng_draw_valid_i = 0;
     d->prng_draw_busy_i = 1;
     idle(2);
+    return asked;
+  }
+
+  void complete_draw() {
+    CHECK(draws(), "registration requests an independent monitor draw");
   }
 
   void expire(uint8_t slot, uint8_t owner) {
@@ -258,6 +270,7 @@ int Harness::run() {
   dereg_counter_round();
   dereg_command_round();
   dereg_round_waits();
+  cancel_clock();
   return fails ? 1 : 0;
 }
 
@@ -699,6 +712,41 @@ void Harness::dereg_round_waits() {
         "sent at ms %u, the next at ms %u, want %u to %u (%zu of D's GET_COUNTERS seen)",
         held.ms, sent0 + 100, first, next, first + 1000, first + 1000 + WALK_MS, to_d.size());
   d->uns_done_i = 1;
+}
+
+//! CX (issue #163): the top registers the originator's withdraw mask, so a
+//! cancellation reaches the TX arbiter one clock after the originator takes
+//! it. That is the only clock it gains: a command from the probing controller
+//! cancels the probe in the command's own clock, before the edge that takes
+//! the command, and in no clock after it.
+void Harness::cancel_clock() {
+  constexpr uint64_t EID_P = 0x5555000000000005ull;
+  constexpr uint64_t MAC_P = 0x020000000005ull;
+  warm_reset();
+  const bool registered = registers(EID_P, MAC_P, false);   // row 0
+  const bool drawn = draws();
+  expire(REGMON_BASE + N_CTRL, OWN_MON);
+  const bool probing = registered && drawn && wait_probe(EID_P, MAC_P);
+  idle(2);
+  d->rx_cmd_eid_i = EID_P;
+  d->rx_cmd_mac_i = MAC_P;
+  d->rx_cmd_valid_i = 1;
+  d->clk_i = 0;
+  d->eval();
+  const bool own = d->ca_cancel_valid_o && d->ca_cancel_owner_o == 0;
+  tick();                                   // the edge that takes the command
+  d->rx_cmd_valid_i = 0;
+  int later = 0;
+  for (int i = 0; i < DRAIN_WATCH_CYCLES; ++i) {
+    d->clk_i = 0;
+    d->eval();
+    later += d->ca_cancel_valid_o ? 1 : 0;
+    tick();
+  }
+  CHECK(probing && own && later == 0,
+        "CX1: a command from the probing controller cancels its probe in the command's "
+        "own clock (probe live %d, cancelled then %d) and in no later one (%d of %d)",
+        int(probing), int(own), later, DRAIN_WATCH_CYCLES);
 }
 
 #else

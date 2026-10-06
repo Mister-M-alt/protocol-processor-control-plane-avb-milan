@@ -2226,17 +2226,19 @@ not a multiple of 8`). Verilator reports an elaboration `$error` as a warning th
 
 ## Lane C6: notifications and identify (issues #54, #58, #80, #86)
 
-`notify_phases.hpp` holds seven sections, each on a fresh processor of its own
+`notify_phases.hpp` holds eight sections, each on a fresh processor of its own
 (the section AD pattern: its own model, the suite's descriptor image, erased NVM,
-both restore walks, link up and enable), so the main run's clock is untouched.
+both restore walks, link up and enable; WD boots as U10 does, link down and not
+enabled), so the main run's clock is untouched.
 Every AECP and ACMP frame is logged with the clock its last byte left on, so
 spacing and latency are read off the wire. Every expectation is built from the
 clause byte offsets; a per-entry `sequence_id` is modelled from the wire alone, as
 the count of unsolicited frames that controller was sent before (Milan §5.4.5.1).
 
-`--identify-only` runs ID0 (default build), `--notify-only` runs NP, ST and RN, and
-`--spacing-only` runs CS; `make identify` builds and runs the third build and ID0, and
-`make timer-defaults` the sixth build, which runs TD alone.
+`--identify-only` runs ID0 (default build), `--notify-only` runs NP, ST and RN,
+`--spacing-only` runs CS and `--withdraw-only` (`make withdraw`) runs WD; `make
+identify` builds and runs the third build and ID0, and `make timer-defaults` the
+sixth build, which runs TD alone.
 
 ### The third build: `P-EN-IDENTIFY-NOTIFICATION`
 
@@ -2461,6 +2463,43 @@ fails (99,854, row 0, STREAM_OUTPUT 0) and CS2c fails (99,590, row 0, STREAM_INP
 round starts a second after the previous round's last send, and a sixteen-row round
 takes about 15,000 clocks here.
 
+### Section WD: the originator's withdraw mask, one clock late (#163)
+
+The originator's withdraw mask is combinational from its response, cancel and
+expiry choice. It fed the TX arbiter's slot and state registers through the
+originator lane's request and the arbiter's pre-start abort, 51 logic levels from
+the registry's identity index and the received header at the 50 MHz clock. The top
+now registers it (`org_withdraw_mask_r`): a cancellation reaches the lane and the
+abort one clock after the originator takes it, the clock its registered release
+reaches the TX slot pool. That moves the race between a cancellation and the
+serializer's acceptance by one clock, and WD grades the new boundary from both
+sides.
+
+Each run holds a solicited answer (GET_CONFIGURATION) on its last byte until a
+CONTROLLER_AVAILABLE probe waits in the originator lane, lets every waiting lane age
+past T-TX-AGING so that the probe's class is the arbiter's first, then feeds a
+GET_CONFIGURATION from the probed controller (Milan 5.4.5.3: any valid command
+supersedes the probe) and lets the held byte go on a clock the receive validator's
+commit shift gives in advance (`dbg_rxv_commit_o`; the command's header is valid,
+and its cancellation taken, two clocks after the shift's input rises). The wrap
+exports the arbiter's state, owner lane and started bit (`dbg_arb_st_o`,
+`dbg_arb_owner_o`, `dbg_arb_sent_o`) to read where the cancellation landed.
+
+- **WD1** the cancellation on the clock the arbiter accepts the probe (its start
+  state, owner lane 7, not yet started) no longer stops it: the probe leaves once
+  and byte-exact, nothing follows it in 1.5 s (no retry and no deregistration: its
+  exchange is gone), both answers leave, and the five TX slots, the originator and
+  its lane return idle. The pool frees the probe's slot after its last byte.
+- **WD2** the cancellation on the clock the arbiter selects the probe (idle, the
+  probe at the lane's head): the arbiter's start state holds that selection the
+  next clock, aborted, and is idle the clock after; the pool starts nothing.
+- **WD3** that probe never reaches the wire; both answers leave, and the five TX
+  slots, the originator and its lane return idle.
+
+Before #163 the acceptance clock's cancellation withdrew the probe (WD1 fails) and
+the selection clock's one left nothing to select (WD2 fails): the
+`withdraw_unregistered` control below plants that path.
+
 ### Mutation record: `notify_mutants.py`
 
 `python3 tb/pp_top/notify_mutants.py --output DIR [--jobs N] [--only NAME ...]`
@@ -2482,7 +2521,9 @@ the one record #148 moves, and its named check is now ST2b alone (its row). Issu
 adds three controls, graded by `tb/aecp_notify` section DR, for 56 of 56. Re-run
 2026-10-05 at `main` `054d01c7` (53 of 53) and at the #158 head (56 of 56): the
 goldens PASS, and 50 of the 53 earlier controls fail the same checks at both. The
-three `tb/aecp_notify` TW controls also fail DR3 since #158 (their rows):
+three `tb/aecp_notify` TW controls also fail DR3 since #158 (their rows). Issue #163
+adds three controls of the withdraw mask's clock, graded by section WD and by
+`tb/aecp_notify` section CX, for 59 of 59 (results in the #163 review record):
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2542,6 +2583,9 @@ three `tb/aecp_notify` TW controls also fail DR3 since #158 (their rows):
 | `dereg_mid_round_no_hold` | a DEREGISTER drained between two jobs of a round no longer waits for the round's boundary (`main`'s rule) | 3: `tb/aecp_notify` DR1, DR2, DR3 |
 | `dereg_pending_stops_follow` | the counter stamp stops following while a DEREGISTER is pending (review R477-1 S2 on PR #159) | 1: `tb/aecp_notify` DR3 |
 | `dereg_lost_at_round_end` | the round's end drops the held DEREGISTER | 2: `tb/aecp_notify` DR1b, DR2b |
+| `withdraw_unregistered` | the lane, its compaction and the arbiter's abort read the originator's combinational mask (the path before #163) | 2: WD1, WD2 |
+| `withdraw_abort_ignored` | the arbiter's `start_abort_i` tied low at the top | 2: WD2, WD3 |
+| `cancel_one_clock_late` | the registry monitor's cancellation registered, one clock after the command | 2: `tb/aecp_notify` CX1, IX3 |
 
 RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
 every RND control is killed by the divergence check alone.

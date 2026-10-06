@@ -1639,6 +1639,186 @@ struct RndPhase : NotifyBench {
   }
 };
 
+// ==== WD. the originator's withdraw mask, one clock late (issue #163) =====
+// The originator's withdraw mask is combinational from its response, cancel
+// and expiry choice. It fed the TX arbiter's slot and state registers through
+// the originator lane's request and the arbiter's pre-start abort: 51 logic
+// levels from the registry's identity index and the received header, at the
+// 50 MHz clock. The top now registers it (org_withdraw_mask_r), so a
+// cancellation reaches the lane and the arbiter one clock after the
+// originator takes it, the clock its registered release reaches the TX slot
+// pool. Each run holds a solicited answer on its last byte until a
+// CONTROLLER_AVAILABLE probe waits in the originator lane, feeds a command
+// from the probed controller (Milan 5.4.5.3: any valid command supersedes the
+// probe) and lets the held byte go so that the command's cancellation lands
+// on a chosen arbiter clock. The receive validator's commit shift
+// (dbg_rxv_commit_o) gives that clock in advance: the header is valid, and
+// the cancellation taken, two clocks after the shift's input rises.
+//   WD1  on the clock the arbiter accepts the probe, the cancellation no
+//        longer stops it: the probe leaves once and byte-exact, nothing
+//        follows it (its exchange is gone: no retry, no deregistration), both
+//        answers leave, and the five TX slots, the originator and its lane
+//        return idle;
+//   WD2  on the clock the arbiter selects the probe, that selection is
+//        withdrawn one clock later, in the arbiter's start state, before the
+//        pool starts the slot;
+//   WD3  and that probe never reaches the wire; both answers leave, and the
+//        five TX slots, the originator and its lane return idle.
+struct WithdrawStagePhase : NotifyBench {
+  static constexpr unsigned A_IDLE = 0;          // KL_pp_tx_arbiter arb_st_e
+  static constexpr unsigned A_START = 1;
+  static constexpr unsigned LANE_ORIG = 7;       // the top's LANE_ORIG_C
+  static constexpr int AFTER = 16;               // clocks clocked after the command
+  static constexpr int AGED_MS = 12;             // past T-TX-AGING (08 F08.1)
+  //! the window after a race: the one retry comes 250 ms after a sent probe
+  //! (U10e) and the deregistration after it
+  static constexpr int QUIET_MS = 1500;
+
+  using NotifyBench::NotifyBench;
+
+  //! the taps of one clock, read before its edge
+  struct Clock {
+    unsigned st, owner, queue;
+    bool sent, cancel, start;
+  };
+  Clock sample() {
+    io.d->clk_i = 0;
+    io.d->eval();
+    return {unsigned(io.d->dbg_arb_st_o), unsigned(io.d->dbg_arb_owner_o),
+            unsigned(io.d->dbg_org_queue_o), io.d->dbg_arb_sent_o != 0,
+            io.d->dbg_ca_cancel_o != 0, io.d->dbg_ser_start_o != 0};
+  }
+  static bool is_probe(const std::vector<uint8_t>& f) {
+    return f.size() >= 38 && (f[15] & 0x0F) == 0 && f[36] == 0 && f[37] == 3;
+  }
+  static bool is_answer(const std::vector<uint8_t>& f, uint16_t seq) {
+    return f.size() >= 38 && (f[15] & 0x0F) == 1 && !unsolicited(f) && seq_of(f) == seq;
+  }
+
+  struct Race {
+    bool premise = false;       //!< a probe waited behind the held byte, let go on the bit
+    std::vector<Clock> clocks;  //!< every clock from the command's first byte
+    long c = -1;                //!< the cancellation's clock, an index into clocks
+    size_t from = 0;            //!< the log index the command was fed at
+    unsigned probes = 0;        //!< probes to the controller from `from` on
+    bool exact = true;          //!< ...each byte-exact
+    bool dereg = false;         //!< a deregistration followed
+    bool answers = false;       //!< both solicited answers left
+    bool idle = false;          //!< five free slots, the originator and its lane idle
+  };
+
+  //! hold `stall_seq`'s answer on its last byte until a probe waits in the
+  //! originator lane, feed `cancel_seq` from the probed controller, and let
+  //! the held byte go on the clock bit `bit` of the commit shift is set: bit 0
+  //! puts the cancellation on the clock the arbiter accepts the probe, bit 1
+  //! on the clock it selects it. Then watch the wire for QUIET_MS.
+  Race race(uint16_t stall_seq, uint16_t cancel_seq, int bit) {
+    Race r;
+    io.mac_tx_ready = false;
+    feed(aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, stall_seq,
+                    AEM_GET_CONFIGURATION, {}, false));
+    bool stalled = false;
+    for (int i = 0; i < 1000 && !stalled; ++i) {
+      tick();
+      stalled = io.d->tx_valid_o != 0;
+    }
+    bool queued = false;
+    for (long i = 0; i < 66000L * MS_CYC && !queued; ++i) {
+      tick();
+      queued = io.d->dbg_org_queue_o != 0;
+    }
+    // every lane that waits behind the held answer ages past T-TX-AGING
+    // (10 ms) and then outranks a fresh one, so the probe waits that long
+    // too: aged against aged, its class is the arbiter's first
+    run_ms(AGED_MS);
+    io.stall_tx_at_eof = true;
+    io.mac_tx_ready = true;
+    for (int i = 0; i < 1000 && !io.tx_eof_stalled; ++i) tick();
+    const bool held = io.tx_eof_stalled && io.d->dbg_org_queue_o != 0;
+    io.release_eof_hit = false;
+    io.release_eof_on_commit = bit;
+    r.from = seen.size();
+    const auto f = aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, cancel_seq,
+                              AEM_GET_CONFIGURATION, {}, false);
+    for (size_t i = 0; i < f.size() + AFTER; ++i) {
+      const bool byte = i < f.size();
+      io.d->rx_valid_i = byte;
+      io.d->rx_data_i = byte ? f[i] : 0;
+      io.d->rx_last_i = byte && i + 1 == f.size();
+      r.clocks.push_back(sample());
+      tick();
+    }
+    io.release_eof_on_commit = -1;
+    io.stall_tx_at_eof = false;
+    io.tx_eof_stalled = false;
+    for (size_t i = 0; i < r.clocks.size() && r.c < 0; ++i)
+      if (r.clocks[i].cancel) r.c = long(i);
+    r.premise = stalled && queued && held && io.release_eof_hit && r.c >= 1
+                && r.c + 2 < long(r.clocks.size());
+    run_ms(QUIET_MS);
+    bool stall_rsp = false;
+    bool cancel_rsp = false;
+    for (const Seen& s : to_mac(CTLR_MAC, r.from)) {
+      if (is_probe(s.f)) {
+        ++r.probes;
+        r.exact = r.exact && s.f == aecp_frame(CTLR_MAC, OWN_MAC, 0, 0, CTLR_EID, EID,
+                                               uint16_t(seq_of(s.f)), 0x0003, {});
+      }
+      r.dereg = r.dereg || (unsolicited(s.f) && ct_of(s.f) == 0x0025);
+      stall_rsp = stall_rsp || is_answer(s.f, stall_seq);
+      cancel_rsp = cancel_rsp || is_answer(s.f, cancel_seq);
+    }
+    r.answers = stall_rsp && cancel_rsp;
+    r.idle = io.d->dbg_txs_free_o == 5 && io.d->dbg_org_busy_o == 0
+             && io.d->dbg_org_queue_o == 0;
+    printf("  [i] WD bit %d: stalled %d, probe queued %d, held %d, let go %d; the "
+           "cancellation at command clock %ld;", bit, int(stalled), int(queued),
+           int(held), int(io.release_eof_hit), r.c);
+    for (long i = r.c - 1; r.c >= 1 && i <= r.c + 2 && i < long(r.clocks.size()); ++i) {
+      const Clock& k = r.clocks[size_t(i)];
+      printf(" [%+ld st %u owner %u sent %d start %d queue %u]", i - r.c, k.st, k.owner,
+             int(k.sent), int(k.start), k.queue);
+    }
+    printf("; %u probe(s), deregistration %d, answers %d, idle %d\n", r.probes,
+           int(r.dereg), int(r.answers), int(r.idle));
+    return r;
+  }
+
+  void run() {
+    boot_to_idle(false);
+    const bool booted = io.boot_to_aecp();
+    const bool registered = booted && register_controller(CTLR_MAC, CTLR_EID, 0x7160);
+
+    const Race a = race(0x7161, 0x7162, 0);
+    const bool accept_clock = a.premise && registered
+        && a.clocks[size_t(a.c - 1)].st == A_IDLE && a.clocks[size_t(a.c)].st == A_START
+        && a.clocks[size_t(a.c)].owner == LANE_ORIG && !a.clocks[size_t(a.c)].sent;
+    CHECK(accept_clock && a.probes == 1 && a.exact && !a.dereg && a.answers && a.idle,
+          "WD1: a cancellation on the clock the arbiter accepts a queued probe no longer "
+          "stops it: it leaves once, byte-exact, and nothing follows (accept clock %d, "
+          "%u probe(s), exact %d, deregistration %d, answers %d, slots and originator "
+          "idle %d)", int(accept_clock), a.probes, int(a.exact), int(a.dereg),
+          int(a.answers), int(a.idle));
+
+    const Race b = race(0x7163, 0x7164, 1);
+    const bool select_clock = b.premise && registered
+        && b.clocks[size_t(b.c)].st == A_IDLE && b.clocks[size_t(b.c)].queue != 0;
+    const bool withdrawn = select_clock
+        && b.clocks[size_t(b.c + 1)].st == A_START
+        && b.clocks[size_t(b.c + 1)].owner == LANE_ORIG && !b.clocks[size_t(b.c + 1)].sent
+        && b.clocks[size_t(b.c + 2)].st == A_IDLE && !b.clocks[size_t(b.c)].start
+        && !b.clocks[size_t(b.c + 1)].start && !b.clocks[size_t(b.c + 2)].start;
+    CHECK(withdrawn,
+          "WD2: a cancellation on the clock the arbiter selects a queued probe withdraws "
+          "that selection one clock later, before the pool starts it (select clock %d)",
+          int(select_clock));
+    CHECK(select_clock && b.probes == 0 && !b.dereg && b.answers && b.idle,
+          "WD3: that probe never reaches the wire, both answers leave, and the slots, "
+          "the originator and its lane return idle (%u probe(s), deregistration %d, "
+          "answers %d, idle %d)", b.probes, int(b.dereg), int(b.answers), int(b.idle));
+  }
+};
+
 [[maybe_unused]] static void run_rnd(H& h) {
   const int checks0 = h.checks;
   const int fails0 = h.fails;
@@ -1667,6 +1847,13 @@ struct RndPhase : NotifyBench {
   CounterSpacingPhase{h}.run("CS2b", 30);
   CounterSpacingPhase{h}.run("CS2c", 95);
   printf("CS: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
+[[maybe_unused]] static void run_withdraw(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  WithdrawStagePhase{h}.run();
+  printf("WD: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
 [[maybe_unused]] static void run_identify(H& h) {

@@ -19,8 +19,9 @@ the STORM and RND sections (ST, RN), the originator's seeded inflight session
 throttle stamps' valid bit in the first build of tb/aecp_notify (sections IX and TS,
 issue #232), and the counter rounds' spacing from the previous round's send (issue
 #148: tb/pp_top section CS and tb/aecp_notify section TW), and a DEREGISTER drained
-between two jobs of a round (issue #158: tb/aecp_notify section DR). The suite READMEs
-carry the matching mutation records.
+between two jobs of a round (issue #158: tb/aecp_notify section DR), and the
+originator's withdraw mask one clock late at the top (issue #163: tb/pp_top section WD
+and tb/aecp_notify section CX). The suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
                                            [--only NAME ...]
@@ -349,8 +350,38 @@ DEREG_MID_ROUND = (
         ("DR1b:", "DR2b:")),
 )
 
+# the originator's withdraw mask registered at the top (issue #163), graded on the
+# wire by tb/pp_top section WD, and the notify cancellation's own clock by
+# tb/aecp_notify section CX
+WITHDRAW = Suite("tb/pp_top", ("make", "gsi-build"), ("./obj_dir/Vpp_top_sim", "--withdraw-only"))
+MASK_READS = ("                                   && org_withdraw_mask_r[laneq_org_r[0]];\n",
+              "          && !org_withdraw_mask_r[laneq_org_r[i]]) begin\n",
+              "  assign arb_start_abort_w = org_withdraw_mask_r[ser_slot_w]\n")
+CA_REQUEST = "  always_comb begin : ca_request\n"
+
+WITHDRAW_STAGE = (
+    Mutant("withdraw_unregistered", WITHDRAW, tuple(
+        (TOP, old, old.replace("org_withdraw_mask_r", "org_withdraw_slot_mask_w"))
+        for old in MASK_READS),
+        ("WD1:", "WD2:")),
+    Mutant("withdraw_abort_ignored", WITHDRAW, (
+        (TOP, "      .start_abort_i(arb_start_abort_w),\n", "      .start_abort_i(1'b0),\n"),),
+        ("WD2:", "WD3:")),
+    Mutant("cancel_one_clock_late", INDEX, (
+        (NTFY, CA_REQUEST, "  logic               cx_late_r;\n"
+                           "  logic [CIX_W_C-1:0] cx_late_ix_r;\n"
+                           "  always_ff @(posedge clk_i) begin : cx_late\n"
+                           "    cx_late_r    <= ca_cancel_ok_w;\n"
+                           "    cx_late_ix_r <= ca_cancel_ix_w;\n"
+                           "  end\n" + CA_REQUEST),
+        (NTFY, "    ca_cancel_valid_o = ca_cancel_ok_w\n", "    ca_cancel_valid_o = cx_late_r\n"),
+        (NTFY, "                        ? 4'(pd_ix_w) : 4'(ca_cancel_ix_w);\n",
+         "                        ? 4'(pd_ix_w) : 4'(cx_late_ix_r);\n")),
+        ("CX1:",)),
+)
+
 MUTANTS = (IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
-           + DEREG_MID_ROUND)
+           + DEREG_MID_ROUND + WITHDRAW_STAGE)
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"
