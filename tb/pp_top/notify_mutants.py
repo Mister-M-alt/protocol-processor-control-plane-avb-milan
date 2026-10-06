@@ -18,8 +18,10 @@ the STORM and RND sections (ST, RN), the originator's seeded inflight session
 (tb/originator section R), and the registry's identity index and the counter
 throttle stamps' valid bit in the first build of tb/aecp_notify (sections IX and TS,
 issue #232), and the counter rounds' spacing from the previous round's send (issue
-#148: tb/pp_top section CS and tb/aecp_notify section TW), and a DEREGISTER drained
-between two jobs of a round (issue #158: tb/aecp_notify section DR). The suite READMEs
+#148: tb/pp_top section CS and tb/aecp_notify section TW), a DEREGISTER drained
+between two jobs of a round (issue #158: tb/aecp_notify section DR), and the registry
+port and AVB_INTERFACE counter rows at two AVB interfaces (issue #69: tb/aecp_notify's
+third build, sections PT and CK, and tb/pp_top's seventh, section IF). The suite READMEs
 carry the matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
@@ -349,8 +351,45 @@ DEREG_MID_ROUND = (
         ("DR1b:", "DR2b:")),
 )
 
+# the registry port and the AVB_INTERFACE counter rows with two AVB interfaces
+# (issue #69), graded by tb/aecp_notify's third build (sections PT and CK) and on
+# the wire by tb/pp_top's seventh build (section IF)
+INTERFACES = Suite("tb/aecp_notify", (), ("make", "interfaces"))
+IF_TOP = Suite("tb/pp_top", ("make", "interfaces-build"), ("./obj_if2/Vpp_top_if2",))
+PORT_MATCH = ("                      && (row_mac_w == hold_mac_r)\n"
+              "                      && (port_r[wk_ix_r] == hold_port_r);\n")
+PORT_WRITE = "        port_r[wk_match_r ? wk_match_ix_r : wk_free_ix_r] <= hold_port_r;\n"
+AVB_ROW = "            ctr_dirty_r[N_STREAM_IN_P + N_STREAM_OUT_P + 1 + i] <= 1'b1;\n"
+AVB_NAME = "            pick_dt_w = DT_AVB_INTERFACE_C;\n            pick_di_w = 16'(i);\n"
+RGY_PORT = ("      .rgy_port_i            ((N_AVB_IF_P > 1) ? aecp_cmd_if_r : 2'd0),"
+            "  // the command's interface (above)\n")
+
+INTERFACE_ROWS = (
+    Mutant("port_not_compared", INTERFACES, (
+        (NTFY, PORT_MATCH, "                      && (row_mac_w == hold_mac_r);\n"),),
+        ("PT2:",)),
+    Mutant("port_not_latched", INTERFACES, (
+        (NTFY, "        hold_port_r <= PORT_W_C'(rgy_port_i);\n", "        hold_port_r <= '0;\n"),),
+        ("PT2:",)),
+    Mutant("port_not_stored", INTERFACES, (
+        (NTFY, PORT_WRITE, PORT_WRITE.replace("<= hold_port_r", "<= '0")),),
+        ("PT3:",)),
+    Mutant("avb_counter_row_dropped", INTERFACES, (
+        (NTFY, AVB_ROW, "            ;\n"),),
+        ("CK1:",)),
+    Mutant("avb_counter_row_collapsed", INTERFACES, (
+        (NTFY, AVB_ROW, AVB_ROW.replace(" + 1 + i]", "]")),),
+        ("CK1:",)),
+    Mutant("avb_counter_named_clock", INTERFACES, (
+        (NTFY, AVB_NAME, "            pick_dt_w = DT_CLOCK_DOMAIN_C;\n            pick_di_w = 16'd0;\n"),),
+        ("CK1:",)),
+    Mutant("rgy_port_tied_zero", IF_TOP, (
+        (TOP, RGY_PORT, "      .rgy_port_i            (2'd0),\n"),),
+        ("IF3:",)),
+)
+
 MUTANTS = (IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
-           + DEREG_MID_ROUND)
+           + DEREG_MID_ROUND + INTERFACE_ROWS)
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"

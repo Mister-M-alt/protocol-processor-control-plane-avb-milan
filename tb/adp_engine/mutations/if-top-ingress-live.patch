@@ -1,0 +1,11 @@
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -1558,7 +1558,7 @@
+       end else begin
+         if (rx_valid_i && rx_last_i) rx_if_end_r <= rx_if_index_i;
+         if (v_hdr_valid_w && !(hdr_vld_r && !nrm_rx_ready_w))
+-          hdr_if_r <= rx_if_end_r;
++          hdr_if_r <= rx_if_index_i;
+       end
+     end
+   end

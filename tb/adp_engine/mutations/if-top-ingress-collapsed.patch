@@ -1,0 +1,11 @@
+--- a/hdl/top/protocol_processor_top.sv
++++ b/hdl/top/protocol_processor_top.sv
+@@ -1717,7 +1717,7 @@
+       .budget_aecp_ms_i    (BUDGET_AECP_MS_C),
+       .rx_valid_i          (hdr_vld_r),
+       .rx_ready_o          (nrm_rx_ready_w),
+-      .rx_if_index_i       ((N_AVB_IF_P > 1) ? hdr_if_r : 2'd0),  // the frame's interface (above)
++      .rx_if_index_i       (2'd0),
+       .rx_protocol_i       (hdr_protocol_r),
+       .rx_msg_type_i       (hdr_msg_type_r),
+       .rx_status_i         (hdr_status_r),

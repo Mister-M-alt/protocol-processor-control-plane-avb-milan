@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -949,7 +949,7 @@
+ 
+   assign txreq_valid_o = (bld_st_r == B_REQ);
+   assign txreq_slot_o  = bld_slot_r;
+-  assign txreq_if_o    = bld_if_r;
++  assign txreq_if_o    = '0;
+ 
+   assign bld_done_avail_w = (bld_st_r == B_REQ) && !bld_dep_r;
+   assign bld_done_dep_w   = (bld_st_r == B_REQ) && bld_dep_r;

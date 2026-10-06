@@ -102,6 +102,22 @@ MUTANTS = [
      "P13 F04.3 arc DISCOVERED -> NOT (DEPARTING, interface matches)"),
     ("arc-noadp-expiry-silent", "arc-noadp-expiry-silent", "adp_engine", "run",
      "P13 F04.3 arc DISCOVERED -> NOT (T-ADP-NOADP expiry)"),
+    # issue #69: the redundancy seam at two AVB interfaces, each arm collapsing the
+    # interface count, index or sample; graded by this suite's second build (section
+    # IF) and by tb/pp_top's seventh build (section IF) and its if-guards lint
+    ("if-ingress-collapsed", "if-ingress-collapsed", "adp_engine", "interfaces",
+     "IF5: ENTITY_DISCOVER on interface 1"),
+    ("if-egress-collapsed", "if-egress-collapsed", "adp_engine", "interfaces", "IF3"),
+    ("if-pdu-index-collapsed", "if-pdu-index-collapsed", "adp_engine", "interfaces", "IF3"),
+    ("if-gm-sample-collapsed", "if-gm-sample-collapsed", "adp_engine", "interfaces", "IF3"),
+    ("if-top-count-collapsed", "if-top-count-collapsed", "pp_top", "interfaces", "IF1"),
+    ("if-top-count-collapsed-lint", "if-top-count-collapsed", "pp_top", "if-guards",
+     "if guard 2"),
+    ("if-top-ingress-collapsed", "if-top-ingress-collapsed", "pp_top", "interfaces",
+     "IF2: ENTITY_DISCOVER received on interface 1"),
+    ("if-top-ingress-live", "if-top-ingress-live", "pp_top", "interfaces",
+     "IF2: ENTITY_DISCOVER received on interface 1"),
+    ("if-top-range-unguarded", "if-top-range-unguarded", "pp_top", "if-guards", "if guard 3"),
 ]
 
 SUITES = ("common", "adp_engine", "pp_top")
