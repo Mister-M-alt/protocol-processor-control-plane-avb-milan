@@ -2587,11 +2587,18 @@ wrong one.
 - **IF2** (twice, interface 1 then 0) with both machines WAITING, ENTITY_DISCOVER
   received on one interface restarts that interface's machine alone, which
   advertises inside T-ADP-DELAY: the frame's interface rides the header beat to ADP.
-- **IF3** REGISTER from C on interface 0 and again on interface 1 makes two entries:
-  D's lock change reaches C twice, at sequence_id 0 and 0, and the unlock at 1 and 1.
-  **IF3b** after DEREGISTER on interface 1 the next lock and unlock reach C once
-  each, at interface 0's 2 and 3: the registry port comes from the command's
-  interface.
+- **IF3** the registry port comes from the command's interface, not the latest
+  frame's. C registers on interface 0 and D's lock reaches it at sequence_id 0.
+  With the MAC TX held, D's unlock queues a push to C that cannot leave, so the
+  notification block holds the engine's command path; C's REGISTER comes in on
+  interface 1 and an ENTITY_DISCOVER for another entity on interface 0 after it,
+  and then the TX resumes. The unlock reaches C once, at 1, before the REGISTER's
+  response, and the REGISTER, run after the interface-0 frame, makes interface 1's
+  entry: the next lock reaches C at 0 and 2, the unlock at 1 and 3.
+  **IF3b** with D's next lock held the same way, C's DEREGISTER comes in on
+  interface 1 and a frame on interface 0 after it: the lock reaches both entries,
+  at 2 and 4, before the DEREGISTER runs, and the unlock then reaches C once, at
+  interface 0's 5. The entry removed was interface 1's, whose sequence_id was 3.
 
 `make if-guards` (run by `make`, like `line-guards`) lints the real top with
 `scripts/lint_hdl.sh`'s flags at `N_AVB_IF_P` 1 and 2, which must lint clean with no

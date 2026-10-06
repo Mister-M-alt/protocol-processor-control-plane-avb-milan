@@ -10,9 +10,12 @@
 //        interface, both machines WAITING, restarts that interface's machine
 //        alone (Milan v1.2 Table 5.51, RCV_ADP_DISCOVER in WAITING);
 //   IF3  the registry tuple's port comes from the command's interface (Milan
-//        5.3.4.2): a controller registered on both interfaces holds two
-//        entries, so a lock change reaches it twice, each at its entry's own
-//        sequence_id (5.4.5.1); DEREGISTER on interface 1 leaves interface 0's.
+//        5.3.4.2), not from the latest frame's: a REGISTER on interface 1
+//        waits while a frame arrives on interface 0, and still makes a second
+//        entry, so a lock change reaches the controller twice, each entry at
+//        its own sequence_id (5.4.5.1); IF3b: a DEREGISTER on interface 1, held
+//        the same way, removes interface 1's entry, the one whose sequence_id
+//        is the lower.
 // Every expectation is built here from the clause byte offsets, never read
 // back from the DUT.
 
@@ -22,6 +25,11 @@ struct InterfacePhase : NotifyBench {
   static constexpr uint64_t D_EID = 0x7777000000000044ull;
   static constexpr unsigned ST_WAIT = 3;
   static constexpr uint16_t OP_LOCK = 0x0001;
+  static constexpr uint16_t OP_REGISTER = 0x0024;
+  static constexpr uint16_t OP_DEREGISTER = 0x0025;
+  //! an ENTITY_DISCOVER for an entity that is not this one: every layer up to
+  //! the header latch takes it, and ADP ignores it
+  static constexpr uint64_t FOREIGN_EID = 0x7777000000000077ull;
   struct Adv {
     std::vector<uint8_t> f;
     uint32_t ms;
@@ -115,6 +123,43 @@ struct InterfacePhase : NotifyBench {
     run_ms(60);                                // the notification walk, well inside 400 ms
     return succeeds(r) ? lock_pushes(CTLR_MAC, from) : std::vector<unsigned>{99};
   }
+  //! A command from C that runs only after a later frame arrived on the other
+  //! interface. The MAC TX is held, and D's lock change then queues a push to
+  //! every entry of C that the TX cannot carry, so the notification block holds
+  //! the engine's command path (amap_busy_o) until it leaves. C's command comes
+  //! in on `ifx` and an ENTITY_DISCOVER for another entity on the other
+  //! interface; then the TX resumes, the push leaves, and C's command runs.
+  struct Held {
+    bool ok;                                   // C's response: SUCCESS
+    bool after;                                // ... and on the wire after every push
+    std::vector<unsigned> pushes;              // the lock change's pushes to C
+  };
+  Held held(uint32_t flags, unsigned ifx, uint16_t op, const std::vector<uint8_t>& pl) {
+    const size_t from = seen.size();
+    io.mac_tx_ready = false;
+    feed_on(0, aecp_frame(OWN_MAC, D_MAC, 0, 0, EID, D_EID, seq++, OP_LOCK,
+                          LockPhase::lockpld(flags, 0, 0)));
+    run_ms(2);
+    const uint16_t s = seq++;
+    feed_on(ifx, aecp_frame(OWN_MAC, CTLR_MAC, 0, 0, EID, CTLR_EID, s, op, pl));
+    feed_on(1 - ifx, adp_frame(2, D_MAC, FOREIGN_EID, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+    run_ms(2);
+    io.mac_tx_ready = true;
+    run_ms(60);
+    Held h{false, false, lock_pushes(CTLR_MAC, from)};
+    size_t last_push = from;
+    for (size_t i = from; i < seen.size(); ++i) {
+      const std::vector<uint8_t>& f = seen[i].f;
+      if (da_of(f) != CTLR_MAC) continue;
+      if (unsolicited(f)) {
+        last_push = i;
+      } else if (seq_of(f) == s) {
+        h.ok = status_of(f) == AECP_SUCCESS;
+        h.after = i > last_push;
+      }
+    }
+    return h;
+  }
   void both_interfaces_advertise();
   void discover_reaches_its_interface();
   void registry_port_from_the_command();
@@ -168,28 +213,42 @@ void InterfacePhase::discover_reaches_its_interface() {
   }
 }
 
-// IF3: C registers from interface 0 and again from interface 1, then D takes and
-// releases the lock: C hears each change twice, once per entry, at sequence_id
-// 0 and then 1 in both. C deregisters from interface 1, and the next lock and
-// unlock reach C once each, at 2 and 3: the entry left is interface 0's.
+// IF3: C registers from interface 0, and D's lock reaches it at 0. With D's
+// unlock held, C's REGISTER comes in on interface 1 and a frame on interface 0
+// after it: the unlock reaches C's one entry at 1, and the REGISTER, run after
+// that frame, makes interface 1's entry all the same. The next lock and unlock
+// reach C twice each, at 0 and 2, then 1 and 3: two entries with sequence_ids
+// of their own. A registry port taken from the latest frame's interface, or tied
+// to 0, makes the REGISTER a refresh of interface 0's entry (one push each).
+// IF3b: with D's next lock held, C's DEREGISTER comes in on interface 1 and a
+// frame on interface 0 after it; the lock reaches both entries, at 2 and 4,
+// before the DEREGISTER runs, and the unlock then reaches C once, at 5:
+// interface 0's entry, so the one removed was interface 1's, whose sequence_id
+// was 3. A DEREGISTER that matched interface 0's entry would leave 3.
 void InterfacePhase::registry_port_from_the_command() {
   const std::vector<uint8_t> none(4, 0);       // REGISTER's flags: not TIME_LIMITED
-  const bool r0 = succeeds(ask_on(0, CTLR_MAC, CTLR_EID, 0x0024, none));
-  const bool r1 = succeeds(ask_on(1, CTLR_MAC, CTLR_EID, 0x0024, none));
+  const bool r0 = succeeds(ask_on(0, CTLR_MAC, CTLR_EID, OP_REGISTER, none));
+  const std::vector<unsigned> l0 = lock_change(0);
+  const Held reg = held(1, 1, OP_REGISTER, none);
   const std::vector<unsigned> l1 = lock_change(0);
   const std::vector<unsigned> u1 = lock_change(1);
-  printf("  [i] IF3: two registrations; the lock reached C %zu time(s), the unlock %zu\n",
-         l1.size(), u1.size());
-  CHECK(r0 && r1 && l1 == std::vector<unsigned>({0, 0}) && u1 == std::vector<unsigned>({1, 1}),
-        "IF3: REGISTER from C on interface 0 and again on interface 1 makes two entries: D's "
-        "lock change reaches C twice, at sequence_id 0 and 0, and the unlock twice at 1 and 1");
-  const bool dr = succeeds(ask_on(1, CTLR_MAC, CTLR_EID, 0x0025, {}));
-  const std::vector<unsigned> l2 = lock_change(0);
+  printf("  [i] IF3: the lock reached C %zu time(s); the held unlock %zu; then the lock %zu and "
+         "the unlock %zu\n", l0.size(), reg.pushes.size(), l1.size(), u1.size());
+  CHECK(r0 && l0 == std::vector<unsigned>{0} && reg.ok && reg.after
+        && reg.pushes == std::vector<unsigned>{1} && l1 == std::vector<unsigned>({0, 2})
+        && u1 == std::vector<unsigned>({1, 3}),
+        "IF3: C's REGISTER on interface 1, run after a frame received on interface 0, makes "
+        "interface 1's entry: the next lock reaches C at sequence_id 0 and 2, the unlock at 1 "
+        "and 3 (REGISTER %s, after the held push %s)", reg.ok ? "SUCCESS" : "failed",
+        reg.after ? "yes" : "no");
+  const Held dereg = held(0, 1, OP_DEREGISTER, {});
   const std::vector<unsigned> u2 = lock_change(1);
-  CHECK(dr && l2 == std::vector<unsigned>{2} && u2 == std::vector<unsigned>{3},
-        "IF3b: DEREGISTER from C on interface 1 removes interface 1's entry: the next lock "
-        "and unlock reach C once each, at interface 0's sequence_id 2 and 3 (%zu and %zu)",
-        l2.size(), u2.size());
+  CHECK(dereg.ok && dereg.after && dereg.pushes == std::vector<unsigned>({2, 4})
+        && u2 == std::vector<unsigned>{5},
+        "IF3b: C's DEREGISTER on interface 1, run after a frame received on interface 0, removes "
+        "interface 1's entry: the held lock reaches both entries, at 2 and 4, and the unlock "
+        "then reaches C once, at interface 0's 5 (%zu and %zu push(es))", dereg.pushes.size(),
+        u2.size());
 }
 
 [[maybe_unused]] static void run_interfaces(H& h) {
