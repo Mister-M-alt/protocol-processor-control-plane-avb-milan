@@ -15,9 +15,19 @@
 //                three things that must agree live behind one wall:
 //                  - Milan SS5.3.4.2's list ("at least 16 controllers per AVB
 //                    Interface", entry = {Entity ID, MAC address, port,
-//                    Sequence ID of the next unsolicited notification}) -
-//                    P-N-AVB-INTERFACES is 1 here, so the port field is
-//                    constant and not stored;
+//                    Sequence ID of the next unsolicited notification}). The
+//                    port is the AVB interface a REGISTER arrived on. With
+//                    P-N-AVB-INTERFACES (N_IF_P) above 1 each row stores it,
+//                    and REGISTER and DEREGISTER match the whole {Entity ID,
+//                    MAC, port} tuple, so a controller registered on two
+//                    interfaces holds two rows and two Sequence IDs. At 1 the
+//                    port is constant and the field is not generated. NOT
+//                    keyed by port, on purpose: the depth is P-N-CONTROLLERS
+//                    in all, not per interface (the owner tags hold 16 rows);
+//                    the availability monitor matches {Entity ID, MAC} on any
+//                    interface, since a command on either proves the
+//                    controller alive; and a job carries no port, because the
+//                    top has one TX trunk and no egress index;
 //                  - Milan SS5.3.4.1's locked state ("At a given time, a
 //                    PAAD-AE may be either locked by a controller or not";
 //                    the one thing kept is "The Entity ID of the locking
@@ -135,6 +145,9 @@
 //                requester is excluded from the table walk. GET_COUNTERS
 //                changes use one dirty and pending bit per served descriptor;
 //                their one-second limit runs from a round's last send.
+//                The served set is every stream, AVB_INTERFACE 0 to
+//                N_IF_P - 1 (the AVB_INTERFACE counters are keyed per
+//                interface) and CLOCK_DOMAIN 0.
 //
 //                DEADLOCK IS BROKEN BY WITHDRAWAL: while a presented job
 //                waits for the engine, a rising rgy_req_i proves the engine
@@ -200,6 +213,10 @@ module KL_aecp_notify
 #(
     //! P-N-CONTROLLERS (Milan SS5.3.4.2: at least 16 per AVB Interface)
     parameter int unsigned N_CTRL_P          = 16,
+    //! P-N-AVB-INTERFACES (F01.5): above 1, each row stores the port its
+    //! REGISTER arrived on and the AVB_INTERFACE counter changes are served
+    //! per interface; 1 generates neither (see the banner)
+    parameter int unsigned N_IF_P            = 1,
     //! P-N-STREAM-IN / P-N-STREAM-OUT - width of the stream-info event sets
     parameter int unsigned N_STREAM_IN_P     = 8,
     parameter int unsigned N_STREAM_OUT_P    = 8,
@@ -232,6 +249,7 @@ module KL_aecp_notify
     input  wire  [1:0]  rgy_op_i,            //! 0 REG / 1 DEREG / 2 LOCK / 3 UNLOCK
     input  wire  [63:0] rgy_eid_i,           //! requesting controller entity_id
     input  wire  [47:0] rgy_mac_i,           //! its source MAC (the registry tuple)
+    input  wire  [1:0]  rgy_port_i,          //! its AVB interface, the tuple's port (N_IF_P > 1)
     input  wire         rgy_tl_i,            //! REGISTER: TIME_LIMITED flag
     output logic [63:0] rgy_data_o,          //! result word (see banner)
     output logic        rgy_wait_o,          //! HOLD the gather beat (not a ready)
@@ -390,8 +408,11 @@ module KL_aecp_notify
 
   // Counter notifications have one independent one-second throttle per
   // descriptor. This build serves every stream row plus AVB_INTERFACE[0]
-  // and CLOCK_DOMAIN[0], the same set accepted by GET_COUNTERS.
-  localparam int unsigned N_CTR_DESC_C = N_STREAM_IN_P + N_STREAM_OUT_P + 2;
+  // and CLOCK_DOMAIN[0], the same set accepted by GET_COUNTERS, and with
+  // more than one interface AVB_INTERFACE[1] to [N_IF_P - 1] after them:
+  // the AVB_INTERFACE counters are keyed per interface, and the first two
+  // keep the slots they hold at one interface.
+  localparam int unsigned N_CTR_DESC_C = N_STREAM_IN_P + N_STREAM_OUT_P + 1 + N_IF_P;
   localparam int unsigned CTX_W_C = (N_CTR_DESC_C > 1) ? $clog2(N_CTR_DESC_C) : 1;
   localparam logic [15:0] DT_STREAM_INPUT_C  = 16'h0005;
   localparam logic [15:0] DT_STREAM_OUTPUT_C = 16'h0006;
@@ -493,8 +514,29 @@ module KL_aecp_notify
 
   //! walk-row comparisons (one comparator each; the walk is serial)
   logic wk_hit_w;
-  assign wk_hit_w = valid_r[wk_ix_r] && (row_eid_w == hold_eid_r)
-                    && (row_mac_w == hold_mac_r);
+  //! Milan SS5.3.4.2's port, generated only with more than one interface
+  //! (see the banner): latched with a REGISTER or DEREGISTER's {eid, mac},
+  //! written with the row N_APPLY claims or refreshes, and compared by the
+  //! walk, so the op finds its {eid, mac, port} row. Nothing else reads it.
+  if (N_IF_P > 1) begin : g_port
+    localparam int unsigned PORT_W_C = $clog2(N_IF_P);
+    (* ram_style = "distributed" *) logic [PORT_W_C-1:0] port_r [0:N_CTRL_P-1];
+    logic [PORT_W_C-1:0] hold_port_r;
+    always_ff @(posedge clk_i) begin : port_latch
+      if ((n_st_r == N_IDLE) && rgy_new_w && !rgy_state_i && !rgy_op_i[1])
+        hold_port_r <= PORT_W_C'(rgy_port_i);
+    end
+    always_ff @(posedge clk_i) begin : port_write
+      if ((n_st_r == N_APPLY) && !op_dereg_r && (wk_match_r || wk_free_r))
+        port_r[wk_match_r ? wk_match_ix_r : wk_free_ix_r] <= hold_port_r;
+    end
+    assign wk_hit_w = valid_r[wk_ix_r] && (row_eid_w == hold_eid_r)
+                      && (row_mac_w == hold_mac_r)
+                      && (port_r[wk_ix_r] == hold_port_r);
+  end else begin : g_no_port
+    assign wk_hit_w = valid_r[wk_ix_r] && (row_eid_w == hold_eid_r)
+                      && (row_mac_w == hold_mac_r);
+  end
   logic em_skip_w;
   assign em_skip_w = !valid_r[wk_ix_r]
                      || (em_excl_v_r && (row_eid_w == em_excl_r));
@@ -688,6 +730,16 @@ module KL_aecp_notify
           end else begin
             pick_dt_w = DT_CLOCK_DOMAIN_C;
             pick_di_w = 16'd0;
+          end
+        end
+      end
+      //! AVB_INTERFACE[1] and up (N_IF_P > 1): the slots after CLOCK_DOMAIN[0]
+      if (N_IF_P > 1) begin
+        for (int unsigned i = 1; i < N_IF_P; i++) begin
+          if (pick_any_w
+              && (32'(pick_ctr_ix_w) == (N_STREAM_IN_P + N_STREAM_OUT_P + 1 + i))) begin
+            pick_dt_w = DT_AVB_INTERFACE_C;
+            pick_di_w = 16'(i);
           end
         end
       end
@@ -1096,6 +1148,14 @@ module KL_aecp_notify
       end
 
       if (ev_ctr_i && ctr_ev_ok_w) ctr_dirty_r[ctr_ev_ix_w] <= 1'b1;
+      //! AVB_INTERFACE[1] and up (N_IF_P > 1): the slots after CLOCK_DOMAIN[0]
+      if (N_IF_P > 1) begin
+        for (int unsigned i = 1; i < N_IF_P; i++) begin
+          if (ev_ctr_i && (ev_ctr_type_i == DT_AVB_INTERFACE_C)
+              && (32'(ev_ctr_index_i) == i))
+            ctr_dirty_r[N_STREAM_IN_P + N_STREAM_OUT_P + 1 + i] <= 1'b1;
+        end
+      end
       for (int unsigned c = 0; c < N_CTR_DESC_C; c++) begin
         if (ctr_dirty_r[c] && !ctr_pend_r[c]
             && (!ctr_sent_r[c]

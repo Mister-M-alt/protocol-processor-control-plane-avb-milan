@@ -156,7 +156,7 @@ values; other documents reference `P-…` IDs.
 
 | P-ID | Default | Range / constraint | Affects |
 |---|---|---|---|
-| P-N-AVB-INTERFACES | 1 | ≥1 (redundancy seam: keys registry/ADP/counter-notification slots/records) | all per-interface state |
+| P-N-AVB-INTERFACES | 1 | 1 or 2 (`N_AVB_IF_P` on `protocol_processor_top`; 2 is Milan's redundant pair, and the top refuses any other value at elaboration). The redundancy seam, threaded through rather than closed: at 1 no cell changes, and the only difference is two new 2-bit inputs, read only at 2. At 2 it keys the ADP advertise machines, the received frame's interface (`rx_if_index_i`) on every transaction, the registry row's port and the AVB_INTERFACE counter-notification slots. Not keyed, by design: the MAC trunks (no egress index), the class-D levels, the SRP engine, the registry depth, the availability monitor and the side-port snapshot ([REQ-SCP-003](../00_MILAN_COMPLIANCE_REVIEW.md#fig-00-matrix)) | all per-interface state; the F08.4 timer map |
 | P-N-STREAM-IN | product | ≥1 with a Base format if listener (Milan §6.4) | sink records, discovery SMs, counter-notification slots |
 | P-N-STREAM-OUT | product | ≥1 with a Base format if talker (Milan §6.3) | source records, DA timers, counter-notification slots |
 | P-N-CONTROLLERS | 16 | ≥16 per interface (Milan §5.3.4.2) | registry, monitor timers, fan-out |
