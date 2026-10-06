@@ -11,8 +11,9 @@ different controller and verifies that the next probe carries only the new
 Entity ID and MAC tuple. Section IX then grades the registry's identity index,
 section TS the counter throttle stamps' valid bit, section TW a counter round
 that waits for the TX slot, and section DR a DEREGISTER drained between two jobs
-of a round. A third build, at two AVB interfaces, runs sections PT and CK: the
-registry row's port and the per-interface counter rows.
+of a round. A third build, at two AVB interfaces, runs sections PT, CK, PD and
+CA: the registry row's port, the per-interface counter rows, the registry depth
+per interface and the availability probes of a controller on both interfaces.
 
 Run `make`. Exit status zero and the printed check tally are required.
 
@@ -22,28 +23,31 @@ Run `make`. Exit status zero and the printed check tally are required.
 |---|---|---|
 | `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks) and section DR (11 checks) |
 | `obj_idn/Vaecp_notify_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`AECP_NOTIFY_IDENT`) | section FT alone |
-| `obj_if2/Vaecp_notify_if2` | `N_IF_P` = 2, P-N-AVB-INTERFACES (`AECP_NOTIFY_IF2`) | sections PT (6 checks) and CK (5 checks) alone, from `port_tuple.hpp` |
+| `obj_if2/Vaecp_notify_if2` | `N_IF_P` = 2, P-N-AVB-INTERFACES (`AECP_NOTIFY_IF2`) | sections PT (6 checks), CK (5 checks), PD (3 checks) and CA (5 checks) alone, from `port_tuple.hpp` |
 
 Each binary prints its own build's count, and the Makefile prints the one
 canonical tally, summed over the three. `make identify` builds and runs the
 second build alone (the identify mutation campaign's arm), and `make interfaces`
 the third (the notify campaign's arms for issue #69).
 
-## Sections PT and CK: two AVB interfaces (issue #69)
+## Sections PT, CK, PD and CA: two AVB interfaces (issue #69)
 
 Milan v1.2 5.3.4.2 makes a registry entry {Entity ID, MAC address, port,
-Sequence ID of the next unsolicited notification}. With `N_IF_P` at 2 each row
-stores the port, the interface the REGISTER arrived on (`rgy_port_i`). The bench
-is the engine: it retires each job when the section says, and the clock advances
-one ms per cycle while a section watches the job face.
+Sequence ID of the next unsolicited notification}, at least 16 per AVB
+interface. With `N_IF_P` at 2 each row stores the port, the interface the
+REGISTER arrived on (`rgy_port_i`), and each interface has `N_CTRL_P` rows (here
+2) of its own: row r is {index, port}. The bench is the engine, the PRNG, the
+timer service and the CA builder with the originator behind it: it retires each
+job when the section says, and the clock advances one ms per cycle while a
+section watches the job face.
 
 - **PT2** REGISTER from E on port 0 holds one entry, and the same Entity ID and
   MAC on port 1 is a second.
 - **PT4** one notification per entry, each at its own Sequence ID: a round before
   the second REGISTER reaches E once at 0, the round after it twice, at 1 (port
   0's entry) and 0 (port 1's).
-- **PT3** a repeated REGISTER on port 1 refreshes port 1's entry, and with both
-  rows held a third tuple is refused NO_RESOURCES.
+- **PT3** a repeated REGISTER on port 1 refreshes port 1's entry: still two
+  entries.
 - **PT5** DEREGISTER from E on port 1 removes one entry; **PT6** it was port 1's:
   the next round reaches E once, at port 0's Sequence ID 2; **PT7** DEREGISTER on
   port 0 removes the last.
@@ -57,6 +61,39 @@ GET_COUNTERS a second per descriptor), with one controller registered:
   second waits a second from interface 1's send; **CK4** AVB_INTERFACE 2 names no
   interface of a two-interface build and pushes nothing; **CK5** CLOCK_DOMAIN 0
   keeps its slot beside the new row.
+
+Section PD grades the depth per interface and the row's timer identity:
+
+- **PD1** each interface holds `N_CTRL_P` entries of its own: two REGISTERs on
+  port 0 succeed and a third is refused NO_RESOURCES, then port 1 takes two and
+  refuses its third.
+- **PD2** row r = {index, port} arms TIME_LIMITED slot `REGMON_BASE` + r with owner
+  tag 0xA0 + index, and its monitor draw arms `REGMON_BASE` + 4 + r with 0xD0 +
+  index (the owner tags and the CA owner hold `N_CTRL_P` values).
+- **PD3** an expiry is decoded to its row from tag and slot: row 3's TIME_LIMITED
+  deadline removes row 3 alone, with its DEREGISTER to its controller, though row
+  2 has the same tag; row 1's monitor deadline probes row 1's controller, though
+  row 0 has the same tag.
+
+Section CA grades the CONTROLLER_AVAILABLE probes (Milan 5.4.5.3) of rows that
+share a controller or a CA owner:
+
+- **CA1** E holds an entry on each port (CA owners 0 and 1) and both probes are
+  out; one command from E cancels both exchanges, one per cycle (the review
+  R512-1 probe P3: one command cancelled one, and the other's failure then
+  removed E's port-1 entry).
+- **CA2** the cancelled exchanges' late failures and responses touch nothing: no
+  entry goes, no DEREGISTER is queued, and no draw is asked but the two E's
+  command asked.
+- **CA1b** a TIME_LIMITED drain's cancel and a command's cancel in the drain's
+  cycle are both sent.
+- **CA3** the rows of one index, one per port, share CA owner `index`, so they
+  take turns: A's probe goes out alone while B's is due, A's failure removes A
+  (the failure is the live probe's), and B's probe follows.
+- **CA4** after a cancel, the next probe of the same CA owner waits out the settle
+  (four cycles or more), so the cancelled exchange's response two cycles after the
+  cancel asks no draw and is not taken for the new probe, whose own failure then
+  removes its row.
 
 Mutation record (planted by `tb/pp_top/notify_mutants.py`, which runs `make
 interfaces` here; all eight KILLED; the ninth #69 control, `rgy_port_tied_zero`, is

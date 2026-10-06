@@ -332,7 +332,7 @@ COUNTER_SPACING = (
 # a DEREGISTER drained between two jobs of a round waits for the round's boundary
 # (issue #158), graded by tb/aecp_notify section DR
 DEREG_HOLD = "            if (dh_v_r && !em_active_r) begin\n"
-ROUND_END = "            if (em_ix_r == CIX_W_C'(N_CTRL_P - 1)) em_active_r <= 1'b0;\n"
+ROUND_END = "            if (em_ix_r == CIX_W_C'(N_ROW_C - 1)) em_active_r <= 1'b0;\n"
 
 DEREG_MID_ROUND = (
     Mutant("dereg_mid_round_no_hold", INDEX, (
@@ -344,7 +344,7 @@ DEREG_MID_ROUND = (
                                     "((em_kind_r == PP_UNS_CTRS_C) && !dh_v_r)")),),
         ("DR3:",)),
     Mutant("dereg_lost_at_round_end", INDEX, (
-        (NTFY, ROUND_END, "            if (em_ix_r == CIX_W_C'(N_CTRL_P - 1)) begin\n"
+        (NTFY, ROUND_END, "            if (em_ix_r == CIX_W_C'(N_ROW_C - 1)) begin\n"
                           "              em_active_r <= 1'b0;\n"
                           "              dh_v_r      <= 1'b0;\n"
                           "            end\n"),),

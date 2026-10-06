@@ -906,8 +906,15 @@ descriptor are a second apart. With `P-N-AVB-INTERFACES` at 2 (issue #69) each r
 stores the port, the AVB interface its REGISTER arrived on (the command's ingress
 interface, which the top latches where the engine takes the command), and REGISTER and
 DEREGISTER walk for the whole {EID, MAC, port} tuple; at 1 the field is not generated.
-The depth stays `P-N-CONTROLLERS` in all, and the availability monitor matches {EID, MAC}
-on any interface ([REQ-SCP-003](../00_MILAN_COMPLIANCE_REVIEW.md#fig-00-matrix)).
+The depth is then `P-N-CONTROLLERS` rows per interface: row r is {index, port}, and a
+REGISTER claims a row of its own port. A row's index is its CA owner and its timer
+owner-tag entry, which hold `P-N-CONTROLLERS` values, so the rows of one index take turns
+at the availability probe, and none starts for a few cycles after any cancel, while a
+cancelled exchange's last report can still arrive. The availability monitor matches
+{EID, MAC} on any interface: one command from a controller registered on both supersedes
+the probe of each of its rows, and each is cancelled, one per cycle, while a superseded
+probe's late response or failure touches nothing
+([REQ-SCP-003](../00_MILAN_COMPLIANCE_REVIEW.md#fig-00-matrix)).
 
 **Storage (issue #232, 2026-10-03).** Each array of `KL_aecp_notify` and the
 primitive it is built for. The measured mapping, before and after, is recorded on
@@ -915,9 +922,10 @@ milan-fpga #232.
 
 | Structure | Shape | Built for | Why |
 |---|---|---|---|
-| Row table `rows_r` {EID, MAC, seq} | `P-N-CONTROLLERS` × 128 bits | distributed RAM, read at the walk (or drain), the probe's pick and the write index | no reader sees every row at once |
-| Port `g_port.port_r`, at two interfaces only | `P-N-CONTROLLERS` × 1 bit | distributed RAM | written with the row a REGISTER claims or refreshes, read by the walk's compare alone |
-| Identity index | `P-N-CONTROLLERS` rows × 19 six-bit chunks, one 64 × 1 memory each | distributed RAM | the monitor's "any valid AECP cmd from this controller" (F06.5) matches every row in the command's own cycle without a comparator per row; a REGISTER rewrites its row's index over the row write's own cycle and the cycle after it, while that row is matched by one comparator against the write port's read. The index's correctness relies on its configuration-time zero content (an explicit `initial`), as the ROM images rely on `$readmemh`; `rst_n` leaves both the index and `rows_r` as they are |
+| Row table `rows_r` {EID, MAC, seq} | `P-N-CONTROLLERS` × `P-N-AVB-INTERFACES` × 128 bits | distributed RAM, read at the walk (or drain), the probe's pick and the write index | no reader sees every row at once |
+| Port `g_port.port_r`, at two interfaces only | `P-N-CONTROLLERS` × 2 × 1 bit | distributed RAM | written with the row a REGISTER claims or refreshes, read by the walk's compare alone |
+| Cancel-pending bits and settle count `g_ca_turns`, at two interfaces only | 1 bit per row, and 2 bits | flops | every superseded probe's cancel waits its cycle; the settle and the probe flags decide whose turn an index's CA owner is |
+| Identity index | `P-N-CONTROLLERS` × `P-N-AVB-INTERFACES` rows × 19 six-bit chunks, one 64 × 1 memory each | distributed RAM | the monitor's "any valid AECP cmd from this controller" (F06.5) matches every row in the command's own cycle without a comparator per row; a REGISTER rewrites its row's index over the row write's own cycle and the cycle after it, while that row is matched by one comparator against the write port's read. The index's correctness relies on its configuration-time zero content (an explicit `initial`), as the ROM images rely on `$readmemh`; `rst_n` leaves both the index and `rows_r` as they are |
 | valid, TIME_LIMITED, parked expiry, monitor and probe flags | 1 bit per row each | flops | the expiry intake, the monitor and the walk read and write them in one cycle |
 | Command-notification queue `cmdq_*` | `P-NOTIF-QUEUE-DEPTH` (16) × 132 bits | distributed RAM | one write pointer, one read pointer; the pointers and count are the reset state |
 | GET_COUNTERS stamps `ctr_last_r` | (streams in + out + 2) × 32 bits | flops, no reset | `ctr_sent_r` is each stamp's valid bit; the one-second window reads every stamp against `now_ms_i` in every cycle |
@@ -967,8 +975,9 @@ load) and NP (a byte-exact push at a second controller for every command class o
 Registry entry ([F07.7](07_memory_maps.md#fig-07-regrec)): {controller EID, MAC, port,
 next unsolicited `sequence_id` (init 0), TIME_LIMITED deadline, monitor deadline,
 probe state}. **No duplicate {EID, MAC, port} tuples; ≥ 16 entries per AVB interface;
-volatile** (cleared by power cycle), Δ12. The landed table holds `P-N-CONTROLLERS` (16)
-entries in all: at two interfaces they are shared, which REQ-SCP-003 names as not keyed.
+volatile** (cleared by power cycle), Δ12. The landed table holds `P-N-CONTROLLERS`
+entries per AVB interface: at two interfaces each interface has rows of its own
+(REQ-SCP-003).
 
 <a id="fig-06-regsm"></a>**F06.5 — Registry-entry lifecycle**
 

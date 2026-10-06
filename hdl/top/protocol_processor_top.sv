@@ -83,8 +83,9 @@
 //                advertise machine per interface; the RX frame's interface
 //                (rx_if_index_i, read with the frame's last byte) rides the
 //                header beat into every transaction's interface_index; and
-//                KL_aecp_notify stores each registration's port and serves
-//                the AVB_INTERFACE counter changes per interface. One per top
+//                KL_aecp_notify stores each registration's port, holds
+//                P-N-CONTROLLERS registrations per interface and serves the
+//                AVB_INTERFACE counter changes per interface. One per top
 //                whatever the count, so not keyed: the MAC trunks (no frame
 //                carries an egress interface out); the class-D levels
 //                link_up_i, gm_change_i, gm_id_i and gptp_domain_i, which

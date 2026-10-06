@@ -20,14 +20,19 @@
 //                    P-N-AVB-INTERFACES (N_IF_P) above 1 each row stores it,
 //                    and REGISTER and DEREGISTER match the whole {Entity ID,
 //                    MAC, port} tuple, so a controller registered on two
-//                    interfaces holds two rows and two Sequence IDs. At 1 the
-//                    port is constant and the field is not generated. NOT
-//                    keyed by port, on purpose: the depth is P-N-CONTROLLERS
-//                    in all, not per interface (the owner tags hold 16 rows);
-//                    the availability monitor matches {Entity ID, MAC} on any
-//                    interface, since a command on either proves the
-//                    controller alive; and a job carries no port, because the
-//                    top has one TX trunk and no egress index;
+//                    interfaces holds two rows and two Sequence IDs. The depth
+//                    is then P-N-CONTROLLERS rows PER INTERFACE: row r is
+//                    {index, port}, a REGISTER claims a row of its own port,
+//                    and one port's rows run out without touching the
+//                    other's. The index is the row's CA owner and timer
+//                    owner-tag entry (both hold P-N-CONTROLLERS), so the rows
+//                    of one index take turns at the availability probe. At 1
+//                    the port is constant and the field is not generated.
+//                    NOT keyed by port, on purpose: the availability monitor
+//                    matches {Entity ID, MAC} on any interface, since a
+//                    command on either proves the controller alive; and a job
+//                    carries no port, because the top has one TX trunk and no
+//                    egress index;
 //                  - Milan SS5.3.4.1's locked state ("At a given time, a
 //                    PAAD-AE may be either locked by a controller or not";
 //                    the one thing kept is "The Entity ID of the locking
@@ -54,8 +59,8 @@
 //                in a single cycle, the availability monitor's "this command
 //                comes from a registered controller", reads a LUTRAM
 //                identity index beside the table instead (see "identity
-//                index" below). Milan's minimum count (16) is the depth;
-//                nothing is sized past it.
+//                index" below). Milan's minimum count (16 per interface) is
+//                the depth; nothing is sized past it.
 //
 //                REGISTER/DEREGISTER/LOCK/UNLOCK arrive as OPS on the rgy
 //                face, driven by KL_aecp_engine's gather bus while the
@@ -108,7 +113,11 @@
 //                starts one CONTROLLER_AVAILABLE transaction through the
 //                shared originator. Any matching response, regardless of
 //                status, requests a new draw; one failed retry removes the
-//                row and queues its targeted DEREGISTER notification. The
+//                row and queues its targeted DEREGISTER notification. Above
+//                one interface one command can supersede two live probes
+//                (one controller on both interfaces): each is cancelled, one
+//                per cycle, and a late response or failure of a superseded
+//                probe touches nothing. The
 //                lock owns singleton slot TMR_LOCK_SLOT_P. A fired
 //                registration slot parks in pend_r exactly like
 //                KL_pp_originator parks expiries, because the walk engine
@@ -214,8 +223,9 @@ module KL_aecp_notify
     //! P-N-CONTROLLERS (Milan SS5.3.4.2: at least 16 per AVB Interface)
     parameter int unsigned N_CTRL_P          = 16,
     //! P-N-AVB-INTERFACES (F01.5): above 1, each row stores the port its
-    //! REGISTER arrived on and the AVB_INTERFACE counter changes are served
-    //! per interface; 1 generates neither (see the banner)
+    //! REGISTER arrived on, each interface has N_CTRL_P rows of its own, and
+    //! the AVB_INTERFACE counter changes are served per interface; 1
+    //! generates none of it (see the banner)
     parameter int unsigned N_IF_P            = 1,
     //! P-N-STREAM-IN / P-N-STREAM-OUT - width of the stream-info event sets
     parameter int unsigned N_STREAM_IN_P     = 8,
@@ -234,7 +244,8 @@ module KL_aecp_notify
     parameter bit          EN_IDENTIFY_NOTIF_P = 1'b0,
     //! derived - do not override
     localparam int unsigned TMR_AW_C = (TMR_SLOTS_P > 1) ? $clog2(TMR_SLOTS_P) : 1,
-    localparam int unsigned CIX_W_C  = (N_CTRL_P > 1) ? $clog2(N_CTRL_P) : 1,
+    //! a registry row's index: N_CTRL_P rows per interface
+    localparam int unsigned CIX_W_C  = (N_CTRL_P * N_IF_P > 1) ? $clog2(N_CTRL_P * N_IF_P) : 1,
     //! stream-index widths, CLAMPED exactly as protocol_processor_top clamps
     //! its own (a 1-stream shape must not declare [-1:0])
     localparam int unsigned SIX_W_C  = (N_STREAM_IN_P  > 1) ? $clog2(N_STREAM_IN_P)  : 1,
@@ -347,13 +358,22 @@ module KL_aecp_notify
 );
 
   // ---- registry rows: ONE LUTRAM, one write port ---------------------------
-  //! {eid, mac, seq} = 128 bits x N_CTRL_P, read at three indices: the walk
+  //! P-N-CONTROLLERS rows per AVB interface (Milan SS5.3.4.2). Above one
+  //! interface row r is {index, port}: r = index * N_IF_P + port. The index
+  //! (OIX_W_C bits) is the row's CA owner and its timer owner-tag entry.
+  localparam int unsigned N_ROW_C = N_CTRL_P * N_IF_P;
+  localparam int unsigned OIX_W_C = (N_CTRL_P > 1) ? $clog2(N_CTRL_P) : 1;
+  if ((N_IF_P > 1) && (((N_IF_P & (N_IF_P - 1)) != 0) || (N_CTRL_P < 2))) begin : g_rows_guard
+    $error("KL_aecp_notify: rows {index, port} need N_IF_P=%0d a power of two and N_CTRL_P=%0d above 1",
+           N_IF_P, N_CTRL_P);
+  end
+  //! {eid, mac, seq} = 128 bits x N_ROW_C, read at three indices: the walk
   //! (or drain), the availability probe's pick and the write (the identity
   //! index's rewrite). No reader sees every row at once, which is what
   //! keeps it a RAM. valid/tl/pend stay in flops - the expiry intake and the
   //! walk touch them in the same cycle.
-  (* ram_style = "distributed" *) logic [127:0] rows_r [0:N_CTRL_P-1];
-  logic [N_CTRL_P-1:0] valid_r, tl_r, pend_r;
+  (* ram_style = "distributed" *) logic [127:0] rows_r [0:N_ROW_C-1];
+  logic [N_ROW_C-1:0] valid_r, tl_r, pend_r;
 
   logic [CIX_W_C-1:0] rd_ix_w;
   logic [127:0]       row_w;
@@ -429,12 +449,19 @@ module KL_aecp_notify
 
   // Availability monitor state. A command hit only sets a bit; the single
   // PRNG draw port drains those bits and arms the second half of regmon.
-  logic [N_CTRL_P-1:0] mon_draw_pend_r, ca_pend_r, ca_probe_r;
+  logic [N_ROW_C-1:0]  mon_draw_pend_r, ca_pend_r, ca_probe_r;
   logic                 mon_draw_wait_r;
   logic [CIX_W_C-1:0]   mon_draw_ix_r;
   logic                 mon_pick_ok_w, ca_pick_ok_w, ca_cancel_ok_w;
   logic [CIX_W_C-1:0]   mon_pick_ix_w, ca_pick_ix_w, ca_cancel_ix_w;
-  logic [N_CTRL_P-1:0]  rx_cmd_hit_w;
+  logic [N_ROW_C-1:0]   rx_cmd_hit_w;
+  //! the cancel to send this cycle, the rows a response and a failure
+  //! report on, and above one interface the rows that may not start a probe
+  //! now (g_ca_turns, g_ca_own) and a walk row of the op's port (g_port)
+  logic                 cx_ok_w, cr_ok_w, cf_ok_w;
+  logic [CIX_W_C-1:0]   cx_ix_w, cr_ix_w, cf_ix_w;
+  logic [N_ROW_C-1:0]   ca_hold_w;
+  logic                 wk_port_ok_w;
 
   //! the auto-DEREGISTER single-shot holder: its row is cleared at drain, so
   //! the addressing tuple must be latched before it goes
@@ -517,10 +544,11 @@ module KL_aecp_notify
   //! Milan SS5.3.4.2's port, generated only with more than one interface
   //! (see the banner): latched with a REGISTER or DEREGISTER's {eid, mac},
   //! written with the row N_APPLY claims or refreshes, and compared by the
-  //! walk, so the op finds its {eid, mac, port} row. Nothing else reads it.
+  //! walk, so the op finds its {eid, mac, port} row. The op's port also
+  //! names the rows a REGISTER may claim: those whose index ends in it.
   if (N_IF_P > 1) begin : g_port
     localparam int unsigned PORT_W_C = $clog2(N_IF_P);
-    (* ram_style = "distributed" *) logic [PORT_W_C-1:0] port_r [0:N_CTRL_P-1];
+    (* ram_style = "distributed" *) logic [PORT_W_C-1:0] port_r [0:N_ROW_C-1];
     logic [PORT_W_C-1:0] hold_port_r;
     always_ff @(posedge clk_i) begin : port_latch
       if ((n_st_r == N_IDLE) && rgy_new_w && !rgy_state_i && !rgy_op_i[1])
@@ -533,9 +561,11 @@ module KL_aecp_notify
     assign wk_hit_w = valid_r[wk_ix_r] && (row_eid_w == hold_eid_r)
                       && (row_mac_w == hold_mac_r)
                       && (port_r[wk_ix_r] == hold_port_r);
+    assign wk_port_ok_w = (PORT_W_C'(wk_ix_r) == hold_port_r);
   end else begin : g_no_port
     assign wk_hit_w = valid_r[wk_ix_r] && (row_eid_w == hold_eid_r)
                       && (row_mac_w == hold_mac_r);
+    assign wk_port_ok_w = 1'b1;
   end
   logic em_skip_w;
   assign em_skip_w = !valid_r[wk_ix_r]
@@ -575,7 +605,7 @@ module KL_aecp_notify
     ca_pick_ix_w  = '0;
     ca_cancel_ok_w = 1'b0;
     ca_cancel_ix_w = '0;
-    for (int i = int'(N_CTRL_P) - 1; i >= 0; i--) begin
+    for (int i = int'(N_ROW_C) - 1; i >= 0; i--) begin
       if (mon_draw_pend_r[i] && valid_r[i] && !ca_probe_r[i]) begin
         mon_pick_ok_w = 1'b1;
         mon_pick_ix_w = CIX_W_C'(i);
@@ -588,6 +618,19 @@ module KL_aecp_notify
       if (rx_cmd_hit_w[i] && ca_probe_r[i]) begin
         ca_cancel_ok_w = 1'b1;
         ca_cancel_ix_w = CIX_W_C'(i);
+      end
+    end
+    //! above one interface the rows of one index share a CA owner: a probe
+    //! also waits while its owner is held (g_ca_turns)
+    if (N_IF_P > 1) begin
+      ca_pick_ok_w = 1'b0;
+      ca_pick_ix_w = '0;
+      for (int i = int'(N_ROW_C) - 1; i >= 0; i--) begin
+        if (ca_pend_r[i] && valid_r[i] && !ca_probe_r[i]
+            && !rx_cmd_hit_w[i] && !ca_hold_w[i]) begin
+          ca_pick_ok_w = 1'b1;
+          ca_pick_ix_w = CIX_W_C'(i);
+        end
       end
     end
   end
@@ -616,14 +659,14 @@ module KL_aecp_notify
   logic [N_IXC_C*IXC_W_C-1:0] ix_key_w, ix_row_w;
   logic [127:0]        ix_wr_row_w;
   logic                ix_clr_r, ix_set_r, ix_busy_w, ix_own_w;
-  logic [N_CTRL_P-1:0] ix_hit_w;
+  logic [N_ROW_C-1:0]  ix_hit_w;
   assign ix_wr_row_w = rows_r[wr_ix_r];
   assign ix_key_w    = (N_IXC_C*IXC_W_C)'({rx_cmd_eid_i, rx_cmd_mac_i});
   assign ix_row_w    = (N_IXC_C*IXC_W_C)'(ix_wr_row_w[127:16]);
   assign ix_busy_w   = ix_clr_r || ix_set_r;
   assign ix_own_w    = (ix_wr_row_w[127:16] == {rx_cmd_eid_i, rx_cmd_mac_i});
 
-  for (genvar i = 0; i < N_CTRL_P; i++) begin : g_ix_row
+  for (genvar i = 0; i < N_ROW_C; i++) begin : g_ix_row
     logic [N_IXC_C-1:0] ch_w;
     for (genvar j = 0; j < N_IXC_C; j++) begin : g_ix_chunk
       (* ram_style = "distributed" *) logic mem_r [0:(1 << IXC_W_C)-1];
@@ -639,7 +682,7 @@ module KL_aecp_notify
 
   always_comb begin : command_registry_hit
     rx_cmd_hit_w = '0;
-    for (int unsigned i = 0; i < N_CTRL_P; i++) begin
+    for (int unsigned i = 0; i < N_ROW_C; i++) begin
       rx_cmd_hit_w[i] = rx_cmd_valid_i && valid_r[i]
                         && ((ix_busy_w && (wr_ix_r == CIX_W_C'(i))) ? ix_own_w
                                                                      : ix_hit_w[i]);
@@ -652,16 +695,100 @@ module KL_aecp_notify
 
   always_comb begin : ca_request
     ca_valid_o    = ca_pick_ok_w;
-    ca_owner_o    = 4'(ca_pick_ix_w);
+    ca_owner_o    = 4'(ca_pick_ix_w[CIX_W_C-1 -: OIX_W_C]);
     ca_ctlr_eid_o = rows_r[ca_pick_ix_w][127:64];
     ca_mac_o      = rows_r[ca_pick_ix_w][63:16];
-    // A TIME_LIMITED drain can remove and later reuse a row while its old
-    // availability exchange is still live. Cancel before clearing the row,
-    // just as an incoming command cancels a superseded probe.
-    ca_cancel_valid_o = ca_cancel_ok_w
-                        || ((n_st_r == N_DRAIN) && ca_probe_r[pd_ix_w]);
-    ca_cancel_owner_o = ((n_st_r == N_DRAIN) && ca_probe_r[pd_ix_w])
-                        ? 4'(pd_ix_w) : 4'(ca_cancel_ix_w);
+    ca_cancel_valid_o = cx_ok_w;
+    ca_cancel_owner_o = 4'(cx_ix_w[CIX_W_C-1 -: OIX_W_C]);
+  end
+
+  //! Above one interface the rows {index, 0 to N_IF_P - 1} share CA owner
+  //! `index` (the owner and the 8-bit owner tags hold P-N-CONTROLLERS
+  //! entries), so one of them at a time has an exchange: a probe waits while
+  //! a row of its index has one live or a cancel not yet sent, and for
+  //! CX_SETTLE_C cycles after any cancel. KL_pp_originator takes a cancel at
+  //! once, or a cycle late behind the one response that may hold its action
+  //! lane (one per received frame), so a cancelled exchange's last report
+  //! lands inside the settle and finds no live probe of its owner, and
+  //! touches nothing. A command from a controller registered on two
+  //! interfaces supersedes both rows' probes: each is cancelled, one per
+  //! cycle, from cx_pend_r.
+  if (N_IF_P > 1) begin : g_ca_turns
+    localparam logic [1:0] CX_SETTLE_C = 2'd3;
+    logic [N_ROW_C-1:0] cx_pend_r, cx_work_w;
+    logic [1:0]         cx_settle_r;
+    always_comb begin : cancel_pick
+      cx_work_w = cx_pend_r;
+      for (int unsigned i = 0; i < N_ROW_C; i++) begin
+        if (rx_cmd_hit_w[i] && ca_probe_r[i]) cx_work_w[i] = 1'b1;
+      end
+      if ((n_st_r == N_DRAIN) && ca_probe_r[pd_ix_w]) cx_work_w[pd_ix_w] = 1'b1;
+      cx_ok_w = 1'b0;
+      cx_ix_w = '0;
+      for (int i = int'(N_ROW_C) - 1; i >= 0; i--) begin
+        if (cx_work_w[i]) begin
+          cx_ok_w = 1'b1;
+          cx_ix_w = CIX_W_C'(i);
+        end
+      end
+    end
+    always_comb begin : owner_turns
+      for (int unsigned i = 0; i < N_ROW_C; i++) begin
+        ca_hold_w[i] = (cx_settle_r != 2'd0);
+        for (int unsigned p = 0; p < N_IF_P; p++) begin
+          if (ca_probe_r[(i / N_IF_P) * N_IF_P + p] || cx_pend_r[(i / N_IF_P) * N_IF_P + p])
+            ca_hold_w[i] = 1'b1;
+        end
+      end
+    end
+    //! a report of owner o is the row {o, p} whose probe is live, if any
+    always_comb begin : report_route
+      cr_ok_w = 1'b0;
+      cr_ix_w = '0;
+      cf_ok_w = 1'b0;
+      cf_ix_w = '0;
+      for (int unsigned p = 0; p < N_IF_P; p++) begin
+        if (ca_rsp_valid_i && (32'(ca_rsp_owner_i) < N_CTRL_P)
+            && ca_probe_r[CIX_W_C'(32'(ca_rsp_owner_i) * N_IF_P + p)]
+            && !rx_cmd_hit_w[CIX_W_C'(32'(ca_rsp_owner_i) * N_IF_P + p)]) begin
+          cr_ok_w = 1'b1;
+          cr_ix_w = CIX_W_C'(32'(ca_rsp_owner_i) * N_IF_P + p);
+        end
+        if (ca_fail_valid_i && (32'(ca_fail_owner_i) < N_CTRL_P)
+            && ca_probe_r[CIX_W_C'(32'(ca_fail_owner_i) * N_IF_P + p)]
+            && !rx_cmd_hit_w[CIX_W_C'(32'(ca_fail_owner_i) * N_IF_P + p)]) begin
+          cf_ok_w = 1'b1;
+          cf_ix_w = CIX_W_C'(32'(ca_fail_owner_i) * N_IF_P + p);
+        end
+      end
+    end
+    always_ff @(posedge clk_i) begin : cancel_drain
+      if (!rst_n) begin
+        cx_pend_r   <= '0;
+        cx_settle_r <= 2'd0;
+      end else begin
+        cx_pend_r <= cx_work_w;
+        if (cx_ok_w) cx_pend_r[cx_ix_w] <= 1'b0;
+        if (cx_ok_w)                  cx_settle_r <= CX_SETTLE_C;
+        else if (cx_settle_r != 2'd0) cx_settle_r <= cx_settle_r - 2'd1;
+      end
+    end
+  end else begin : g_ca_own
+    //! one interface: a row is its own CA owner. A TIME_LIMITED drain can
+    //! remove and later reuse a row while its old availability exchange is
+    //! still live. Cancel before clearing the row, just as an incoming
+    //! command cancels a superseded probe.
+    assign cx_ok_w   = ca_cancel_ok_w
+                       || ((n_st_r == N_DRAIN) && ca_probe_r[pd_ix_w]);
+    assign cx_ix_w   = ((n_st_r == N_DRAIN) && ca_probe_r[pd_ix_w])
+                       ? pd_ix_w : ca_cancel_ix_w;
+    assign cr_ok_w   = ca_rsp_valid_i && (32'(ca_rsp_owner_i) < N_CTRL_P)
+                       && !rx_cmd_hit_w[cr_ix_w] && valid_r[cr_ix_w];
+    assign cr_ix_w   = CIX_W_C'(ca_rsp_owner_i);
+    assign cf_ok_w   = ca_fail_valid_i && (32'(ca_fail_owner_i) < N_CTRL_P)
+                       && !rx_cmd_hit_w[cf_ix_w] && valid_r[cf_ix_w];
+    assign cf_ix_w   = CIX_W_C'(ca_fail_owner_i);
+    assign ca_hold_w = '0;
   end
 
   //! emit pick: the class priority is fixed - the single-shot DEREGISTER
@@ -763,25 +890,33 @@ module KL_aecp_notify
   end
 
   //! expiry intake: registry rows own {PP_OWN_NTFY_C + i}, the lock owns
-  //! PP_OWN_LOCK_C; both also match on the armed slot, like the originator
+  //! PP_OWN_LOCK_C; both also match on the armed slot, like the originator.
+  //! Above one interface the tag holds the row's index and the slot (row r
+  //! owns TMR_REGMON_BASE_P + r, and + N_ROW_C + r) the port as well
   logic        exp_row_w, exp_lock_w, exp_mon_w;
   logic [CIX_W_C-1:0] exp_ix_w;
-  assign exp_ix_w  = tmr_exp_owner_i[CIX_W_C-1:0];
+  if (N_IF_P > 1) begin : g_exp_port
+    localparam int unsigned PX_W_C = CIX_W_C - OIX_W_C;
+    assign exp_ix_w = {tmr_exp_owner_i[OIX_W_C-1:0],
+                       PX_W_C'(32'(tmr_exp_slot_i) - TMR_REGMON_BASE_P)};
+  end else begin : g_exp_one
+    assign exp_ix_w = tmr_exp_owner_i[CIX_W_C-1:0];
+  end
   assign exp_row_w = tmr_exp_valid_i
-      && (tmr_exp_owner_i[7:CIX_W_C] == PP_OWN_NTFY_C[7:CIX_W_C])
+      && (tmr_exp_owner_i[7:OIX_W_C] == PP_OWN_NTFY_C[7:OIX_W_C])
       && (tmr_exp_slot_i == TMR_AW_C'(TMR_REGMON_BASE_P + 32'(exp_ix_w)));
   assign exp_lock_w = tmr_exp_valid_i && (tmr_exp_owner_i == PP_OWN_LOCK_C)
       && (tmr_exp_slot_i == TMR_AW_C'(TMR_LOCK_SLOT_P));
   assign exp_mon_w = tmr_exp_valid_i
-      && (tmr_exp_owner_i[7:CIX_W_C] == PP_OWN_CMON_C[7:CIX_W_C])
-      && (tmr_exp_slot_i == TMR_AW_C'(TMR_REGMON_BASE_P + N_CTRL_P
+      && (tmr_exp_owner_i[7:OIX_W_C] == PP_OWN_CMON_C[7:OIX_W_C])
+      && (tmr_exp_slot_i == TMR_AW_C'(TMR_REGMON_BASE_P + N_ROW_C
                                       + 32'(exp_ix_w)));
 
   //! parked-expiry drain pick (lowest index first; order is immaterial)
   always_comb begin : pend_pick
     pd_any_w = 1'b0;
     pd_ix_w  = '0;
-    for (int i = int'(N_CTRL_P) - 1; i >= 0; i--) begin
+    for (int i = int'(N_ROW_C) - 1; i >= 0; i--) begin
       if (pend_r[i]) begin
         pd_any_w = 1'b1;
         pd_ix_w  = CIX_W_C'(i);
@@ -1017,7 +1152,7 @@ module KL_aecp_notify
 
   always_comb begin : reg_count
     dbg_reg_cnt_o = 8'd0;
-    for (int unsigned i = 0; i < N_CTRL_P; i++) begin
+    for (int unsigned i = 0; i < N_ROW_C; i++) begin
       dbg_reg_cnt_o = dbg_reg_cnt_o + {7'd0, valid_r[i]};
     end
   end
@@ -1167,7 +1302,7 @@ module KL_aecp_notify
 
       // Any valid command from a registered controller supersedes an old
       // monitor deadline and asks for a fresh independent random interval.
-      for (int unsigned i = 0; i < N_CTRL_P; i++) begin
+      for (int unsigned i = 0; i < N_ROW_C; i++) begin
         if (rx_cmd_hit_w[i]) begin
           mon_draw_pend_r[i] <= 1'b1;
           ca_pend_r[i]       <= 1'b0;
@@ -1184,17 +1319,14 @@ module KL_aecp_notify
         ca_pend_r[ca_pick_ix_w]  <= 1'b0;
         ca_probe_r[ca_pick_ix_w] <= 1'b1;
       end
-      if (ca_rsp_valid_i && (32'(ca_rsp_owner_i) < N_CTRL_P)
-          && !rx_cmd_hit_w[ca_rsp_owner_i]
-          && valid_r[ca_rsp_owner_i]) begin
-        ca_probe_r[ca_rsp_owner_i]      <= 1'b0;
-        mon_draw_pend_r[ca_rsp_owner_i] <= 1'b1;
+      //! a response or failure, on the row g_ca_turns or g_ca_own names
+      if (cr_ok_w) begin
+        ca_probe_r[cr_ix_w]      <= 1'b0;
+        mon_draw_pend_r[cr_ix_w] <= 1'b1;
       end
-      if (ca_fail_valid_i && (32'(ca_fail_owner_i) < N_CTRL_P)
-          && !rx_cmd_hit_w[ca_fail_owner_i]
-          && valid_r[ca_fail_owner_i]) begin
-        ca_probe_r[ca_fail_owner_i] <= 1'b0;
-        pend_r[ca_fail_owner_i]     <= 1'b1;
+      if (cf_ok_w) begin
+        ca_probe_r[cf_ix_w] <= 1'b0;
+        pend_r[cf_ix_w]     <= 1'b1;
       end
 
       if (!mon_draw_wait_r && mon_pick_ok_w && !prng_draw_busy_i) begin
@@ -1207,11 +1339,11 @@ module KL_aecp_notify
         mon_draw_wait_r       <= 1'b0;
         mon_arm_valid_o       <= 1'b1;
         mon_arm_cancel_o      <= 1'b0;
-        mon_arm_slot_o        <= TMR_AW_C'(TMR_REGMON_BASE_P + N_CTRL_P
+        mon_arm_slot_o        <= TMR_AW_C'(TMR_REGMON_BASE_P + N_ROW_C
                                            + 32'(mon_draw_ix_r));
         mon_arm_owner_o       <= PP_OWN_CMON_C
-                                 | {{(PP_TIMER_OWNER_W_C-CIX_W_C){1'b0}},
-                                    mon_draw_ix_r};
+                                 | {{(PP_TIMER_OWNER_W_C-OIX_W_C){1'b0}},
+                                    mon_draw_ix_r[CIX_W_C-1 -: OIX_W_C]};
         mon_arm_deadline_ms_o <= now_ms_i + 32'(prng_draw_ms_i);
       end
 
@@ -1394,7 +1526,11 @@ module KL_aecp_notify
             wk_free_r    <= 1'b1;
             wk_free_ix_r <= wk_ix_r;
           end
-          if (wk_ix_r == CIX_W_C'(N_CTRL_P - 1)) n_st_r <= N_APPLY;
+          //! above one interface a REGISTER claims a row of its own port
+          if (N_IF_P > 1) begin
+            if (!wk_port_ok_w && !wk_free_r) wk_free_r <= 1'b0;
+          end
+          if (wk_ix_r == CIX_W_C'(N_ROW_C - 1)) n_st_r <= N_APPLY;
           else                                   wk_ix_r <= wk_ix_r + CIX_W_C'(1);
         end
 
@@ -1410,7 +1546,8 @@ module KL_aecp_notify
               tmr_arm_valid_o  <= 1'b1;
               tmr_arm_cancel_o <= 1'b1;
               tmr_arm_slot_o   <= TMR_AW_C'(TMR_REGMON_BASE_P + 32'(wk_match_ix_r));
-              tmr_arm_owner_o  <= PP_OWN_NTFY_C | {{(PP_TIMER_OWNER_W_C-CIX_W_C){1'b0}}, wk_match_ix_r};
+              tmr_arm_owner_o  <= PP_OWN_NTFY_C | {{(PP_TIMER_OWNER_W_C-OIX_W_C){1'b0}},
+                                  wk_match_ix_r[CIX_W_C-1 -: OIX_W_C]};
               tmr_arm_deadline_ms_o <= 32'd0;
               mon_draw_pend_r[wk_match_ix_r] <= 1'b0;
               ca_pend_r[wk_match_ix_r]       <= 1'b0;
@@ -1419,11 +1556,11 @@ module KL_aecp_notify
                 mon_draw_wait_r <= 1'b0;
               mon_arm_valid_o       <= 1'b1;
               mon_arm_cancel_o      <= 1'b1;
-              mon_arm_slot_o        <= TMR_AW_C'(TMR_REGMON_BASE_P + N_CTRL_P
+              mon_arm_slot_o        <= TMR_AW_C'(TMR_REGMON_BASE_P + N_ROW_C
                                                   + 32'(wk_match_ix_r));
               mon_arm_owner_o       <= PP_OWN_CMON_C
-                                       | {{(PP_TIMER_OWNER_W_C-CIX_W_C){1'b0}},
-                                          wk_match_ix_r};
+                                       | {{(PP_TIMER_OWNER_W_C-OIX_W_C){1'b0}},
+                                          wk_match_ix_r[CIX_W_C-1 -: OIX_W_C]};
               mon_arm_deadline_ms_o <= 32'd0;
             end
           end else if (wk_match_r || wk_free_r) begin
@@ -1445,8 +1582,9 @@ module KL_aecp_notify
             tmr_arm_cancel_o <= !op_tl_r;
             tmr_arm_slot_o   <= TMR_AW_C'(TMR_REGMON_BASE_P
                                 + 32'(wk_match_r ? wk_match_ix_r : wk_free_ix_r));
-            tmr_arm_owner_o  <= PP_OWN_NTFY_C | {{(PP_TIMER_OWNER_W_C-CIX_W_C){1'b0}},
-                                wk_match_r ? wk_match_ix_r : wk_free_ix_r};
+            tmr_arm_owner_o  <= PP_OWN_NTFY_C | {{(PP_TIMER_OWNER_W_C-OIX_W_C){1'b0}},
+                                wk_match_r ? wk_match_ix_r[CIX_W_C-1 -: OIX_W_C]
+                                           : wk_free_ix_r[CIX_W_C-1 -: OIX_W_C]};
             tmr_arm_deadline_ms_o <= deadline_w;
           end else begin
             result_r <= 2'd1;                     // full: NO_RESOURCES
@@ -1475,18 +1613,18 @@ module KL_aecp_notify
             mon_draw_wait_r <= 1'b0;
           mon_arm_valid_o       <= 1'b1;
           mon_arm_cancel_o      <= 1'b1;
-          mon_arm_slot_o        <= TMR_AW_C'(TMR_REGMON_BASE_P + N_CTRL_P
+          mon_arm_slot_o        <= TMR_AW_C'(TMR_REGMON_BASE_P + N_ROW_C
                                               + 32'(pd_ix_w));
           mon_arm_owner_o       <= PP_OWN_CMON_C
-                                   | {{(PP_TIMER_OWNER_W_C-CIX_W_C){1'b0}},
-                                      pd_ix_w};
+                                   | {{(PP_TIMER_OWNER_W_C-OIX_W_C){1'b0}},
+                                      pd_ix_w[CIX_W_C-1 -: OIX_W_C]};
           mon_arm_deadline_ms_o <= 32'd0;
           n_st_r <= N_IDLE;
         end
 
         // ------------------------------------------------------------------
         N_EMIT_RD: begin
-          if (em_ix_r >= CIX_W_C'(N_CTRL_P - 1) && em_skip_w) begin
+          if (em_ix_r >= CIX_W_C'(N_ROW_C - 1) && em_skip_w) begin
             em_active_r <= 1'b0;
             n_st_r      <= N_IDLE;
           end else if (em_skip_w) begin
@@ -1527,7 +1665,7 @@ module KL_aecp_notify
             wr_en_r  <= 1'b1;
             wr_ix_r  <= em_ix_r;
             wr_row_r <= {hold_eid_r, hold_mac_r, hold_seq_r + 16'd1};
-            if (em_ix_r == CIX_W_C'(N_CTRL_P - 1)) em_active_r <= 1'b0;
+            if (em_ix_r == CIX_W_C'(N_ROW_C - 1)) em_active_r <= 1'b0;
             else                                   em_ix_r <= em_ix_r + CIX_W_C'(1);
           end
           n_st_r <= N_IDLE;
