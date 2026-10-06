@@ -174,7 +174,7 @@ void PortHarness::quiet_inputs() {
 }
 
 // PT: E registers on port 0, a round reaches it, then E registers on port 1 as
-// well. Two entries with Sequence IDs of their own: the next round reaches E
+// well (PT2). Two entries with Sequence IDs of their own: the next round reaches E
 // twice, at 1 (port 0's entry) and at 0 (port 1's). A repeated REGISTER on
 // port 1 refreshes that entry; with both rows held a third tuple finds none.
 // DEREGISTER on port 1 leaves port 0's entry: the next round reaches E once,
@@ -183,15 +183,14 @@ void PortHarness::quiet_inputs() {
 // new claim the full table refuses (PT3).
 void PortHarness::port_tuple() {
   const uint64_t r0 = op(OP_REGISTER, EID_E, MAC_E, 0);
-  CHECK(r0 == 0 && rows() == 1,
-        "PT1: REGISTER from E on port 0 succeeds and holds one entry (result %llu, %u entries)",
-        static_cast<unsigned long long>(r0), rows());
+  const unsigned n0 = rows();
   name_changed();
   const std::vector<Job> first = round(now + 4 * WALK_MS);
   const uint64_t r1 = op(OP_REGISTER, EID_E, MAC_E, 1);
-  CHECK(r1 == 0 && rows() == 2,
-        "PT2: the same Entity ID and MAC on port 1 is a second entry (result %llu, %u entries)",
-        static_cast<unsigned long long>(r1), rows());
+  CHECK(r0 == 0 && n0 == 1 && r1 == 0 && rows() == 2,
+        "PT2: REGISTER from E on port 0 holds one entry, and the same Entity ID and MAC on "
+        "port 1 is a second (results %llu and %llu, %u then %u entries)",
+        static_cast<unsigned long long>(r0), static_cast<unsigned long long>(r1), n0, rows());
   name_changed();
   const std::vector<Job> second = round(now + 4 * WALK_MS);
   const std::vector<uint16_t> s1 = seqs_to(first, MAC_E);

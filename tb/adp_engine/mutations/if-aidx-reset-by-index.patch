@@ -1,0 +1,11 @@
+--- a/hdl/adp/KL_adp_engine.sv
++++ b/hdl/adp/KL_adp_engine.sv
+@@ -709,7 +709,7 @@
+ 
+   always_ff @(posedge clk_i) begin : avail_index_mgr
+     if (!rst_n) begin
+-      for (int unsigned i = 0; i < N_IF_P; i++) aidx_r[i] <= 32'd0;
++      for (int unsigned i = 0; i < N_IF_P; i++) aidx_r[i] <= 32'(i);
+     end else begin
+       if (bld_done_avail_w) begin
+         aidx_r[bld_done_if_w] <= aidx_r[bld_done_if_w] + 32'd1;

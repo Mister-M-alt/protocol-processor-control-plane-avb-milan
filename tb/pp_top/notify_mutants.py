@@ -361,6 +361,9 @@ PORT_MATCH = ("                      && (row_mac_w == hold_mac_r)\n"
 PORT_WRITE = "        port_r[wk_match_r ? wk_match_ix_r : wk_free_ix_r] <= hold_port_r;\n"
 AVB_ROW = "            ctr_dirty_r[N_STREAM_IN_P + N_STREAM_OUT_P + 1 + i] <= 1'b1;\n"
 AVB_NAME = "            pick_dt_w = DT_AVB_INTERFACE_C;\n            pick_di_w = 16'(i);\n"
+AVB_PICK = "        for (int unsigned i = 1; i < N_IF_P; i++) begin\n          if (pick_any_w\n"
+AVB_MAP = ("    end else if ((ev_ctr_type_i == DT_AVB_INTERFACE_C)\n"
+           "                 && (ev_ctr_index_i == 16'd0)) begin\n")
 RGY_PORT = ("      .rgy_port_i            ((N_AVB_IF_P > 1) ? aecp_cmd_if_r : 2'd0),"
             "  // the command's interface (above)\n")
 
@@ -383,6 +386,12 @@ INTERFACE_ROWS = (
     Mutant("avb_counter_named_clock", INTERFACES, (
         (NTFY, AVB_NAME, "            pick_dt_w = DT_CLOCK_DOMAIN_C;\n            pick_di_w = 16'd0;\n"),),
         ("CK1:",)),
+    Mutant("avb_counter_any_index", INTERFACES, (
+        (NTFY, AVB_MAP, "    end else if (ev_ctr_type_i == DT_AVB_INTERFACE_C) begin\n"),),
+        ("CK4:",)),
+    Mutant("avb_counter_name_overlaps_clock", INTERFACES, (
+        (NTFY, AVB_PICK, AVB_PICK.replace("int unsigned i = 1;", "int unsigned i = 0;")),),
+        ("CK5:",)),
     Mutant("rgy_port_tied_zero", IF_TOP, (
         (TOP, RGY_PORT, "      .rgy_port_i            (2'd0),\n"),),
         ("IF3:",)),

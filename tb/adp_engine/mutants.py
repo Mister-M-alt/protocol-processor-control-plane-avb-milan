@@ -118,6 +118,16 @@ MUTANTS = [
     ("if-top-ingress-live", "if-top-ingress-live", "pp_top", "interfaces",
      "IF2: ENTITY_DISCOVER received on interface 1"),
     ("if-top-range-unguarded", "if-top-range-unguarded", "pp_top", "if-guards", "if guard 3"),
+    ("if-link-collapsed", "if-link-collapsed", "adp_engine", "interfaces", "IF1"),
+    ("if-gm-slice-reversed", "if-gm-slice-reversed", "adp_engine", "interfaces", "IF2"),
+    ("if-link-fall-collapsed", "if-link-fall-collapsed", "adp_engine", "interfaces", "IF7"),
+    ("if-aidx-reset-by-index", "if-aidx-reset-by-index", "adp_engine", "interfaces", "IF0"),
+    ("if-ingress-forced-one", "if-ingress-forced-one", "adp_engine", "interfaces",
+     "IF5: ENTITY_DISCOVER on interface 0"),
+    ("if-top-range-floor-off-by-one", "if-top-range-floor-off-by-one", "pp_top", "if-guards",
+     "if guard 1"),
+    ("if-top-range-floor-dropped", "if-top-range-floor-dropped", "pp_top", "if-guards",
+     "if guard 0"),
 ]
 
 SUITES = ("common", "adp_engine", "pp_top")

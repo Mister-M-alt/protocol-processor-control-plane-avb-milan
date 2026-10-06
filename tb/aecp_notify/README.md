@@ -22,7 +22,7 @@ Run `make`. Exit status zero and the printed check tally are required.
 |---|---|---|
 | `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks) and section DR (11 checks) |
 | `obj_idn/Vaecp_notify_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`AECP_NOTIFY_IDENT`) | section FT alone |
-| `obj_if2/Vaecp_notify_if2` | `N_IF_P` = 2, P-N-AVB-INTERFACES (`AECP_NOTIFY_IF2`) | sections PT (7 checks) and CK (5 checks) alone, from `port_tuple.hpp` |
+| `obj_if2/Vaecp_notify_if2` | `N_IF_P` = 2, P-N-AVB-INTERFACES (`AECP_NOTIFY_IF2`) | sections PT (6 checks) and CK (5 checks) alone, from `port_tuple.hpp` |
 
 Each binary prints its own build's count, and the Makefile prints the one
 canonical tally, summed over the three. `make identify` builds and runs the
@@ -37,8 +37,8 @@ stores the port, the interface the REGISTER arrived on (`rgy_port_i`). The bench
 is the engine: it retires each job when the section says, and the clock advances
 one ms per cycle while a section watches the job face.
 
-- **PT1** REGISTER from E on port 0 succeeds and holds one entry.
-- **PT2** the same Entity ID and MAC on port 1 is a second entry.
+- **PT2** REGISTER from E on port 0 holds one entry, and the same Entity ID and
+  MAC on port 1 is a second.
 - **PT4** one notification per entry, each at its own Sequence ID: a round before
   the second REGISTER reaches E once at 0, the round after it twice, at 1 (port
   0's entry) and 0 (port 1's).
@@ -59,7 +59,7 @@ GET_COUNTERS a second per descriptor), with one controller registered:
   keeps its slot beside the new row.
 
 Mutation record (planted by `tb/pp_top/notify_mutants.py`, which runs `make
-interfaces` here; all six KILLED; the seventh #69 control, `rgy_port_tied_zero`, is
+interfaces` here; all eight KILLED; the ninth #69 control, `rgy_port_tied_zero`, is
 graded by `tb/pp_top` section IF):
 
 | Mutant | Planted | Failing checks |
@@ -70,6 +70,8 @@ graded by `tb/pp_top` section IF):
 | `avb_counter_row_dropped` | AVB_INTERFACE 1's change sets no slot | 2: CK1, CK3 |
 | `avb_counter_row_collapsed` | AVB_INTERFACE 1's change sets AVB_INTERFACE 0's slot | 3: CK1, CK2, CK3 |
 | `avb_counter_named_clock` | AVB_INTERFACE 1's slot is named CLOCK_DOMAIN 0 | 2: CK1, CK3 |
+| `avb_counter_any_index` | the map takes any AVB_INTERFACE index into index 0's slot (C7's `ctr-notify-avb-any-index` edit) | 5: CK1, CK2, CK3, CK4, CK5 |
+| `avb_counter_name_overlaps_clock` | the slot naming starts at interface 0, so CLOCK_DOMAIN 0's slot is named AVB_INTERFACE 0 | 1: CK5 |
 
 ## Section FT: the identify schedule at the full timebase
 

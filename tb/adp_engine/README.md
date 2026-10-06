@@ -308,8 +308,9 @@ the noted index from both sides, in the restart cell too, and adds
 7 to 8), and `arc-restart-detector-off-by-one` keeps 13 with the restart cell's
 repeat in place of its event check; every other arm kept its count.
 Re-run 2026-10-06 with Verilator 5.050 at the head of issue #69's lane, which adds the
-second build (section IF), `tb/pp_top`'s seventh build and `if-guards`, and the nine
-`if-` arms: all five controls PASS and all 50 arms are KILLED. Every earlier arm kept
+second build (section IF), `tb/pp_top`'s seventh build and `if-guards`, and sixteen
+`if-` arms, one or more failing each new check: all five controls PASS and all 57 arms
+are KILLED. Every earlier arm kept
 its failing checks: an arm that fails the first build stops `make` before the second,
 so its record changed only in the first build's tally line, now
 `[build default] N checks, F failures`.
@@ -366,6 +367,13 @@ so its record changed only in the first build's tally line, now
 | `if-top-ingress-collapsed` | pp_top `interfaces` | the normalizer's `rx_if_index_i` tied to `2'd0` again | 3: IF2 (interface 1), IF3, IF3b |
 | `if-top-ingress-live` | pp_top `interfaces` | the header latch takes `rx_if_index_i` live at the beat instead of from the frame's last byte | 2: IF2 twice (the port names the other interface by then) |
 | `if-top-range-unguarded` | pp_top `if-guards` | the top's range guard admits 3 | 1: `if guard 3` |
+| `if-link-collapsed` | adp_engine `interfaces` | every interface's startup reads interface 0's link | 2: IF1 (interface 1 leaves DOWN on interface 0's link), IF6 |
+| `if-gm-slice-reversed` | adp_engine `interfaces` | each interface reads the other's grandmaster | 5: IF2, IF3, IF6, IF8, IF9 |
+| `if-link-fall-collapsed` | adp_engine `interfaces` | every interface's LINK_DOWN reads interface 0's link | 1: IF7 |
+| `if-aidx-reset-by-index` | adp_engine `interfaces` | interface i's available_index resets to i | 3: IF0, IF3, IF4 |
+| `if-ingress-forced-one` | adp_engine `interfaces` | the ingress interface forced to 1 | 2: IF5 (interface 0), IF8 |
+| `if-top-range-floor-off-by-one` | pp_top `if-guards` | the top's range guard refuses 1 | 1: `if guard 1` |
+| `if-top-range-floor-dropped` | pp_top `if-guards` | the top's range guard admits 0 | 1: `if guard 0` (no refusal names `N_AVB_IF_P`) |
 
 Known limits (honestly): the first build runs the shipping shape (1
 interface, 8 sinks) and the second two interfaces with section IF alone, so the

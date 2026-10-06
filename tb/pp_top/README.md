@@ -2483,9 +2483,9 @@ adds three controls, graded by `tb/aecp_notify` section DR, for 56 of 56. Re-run
 2026-10-05 at `main` `054d01c7` (53 of 53) and at the #158 head (56 of 56): the
 goldens PASS, and 50 of the 53 earlier controls fail the same checks at both. The
 three `tb/aecp_notify` TW controls also fail DR3 since #158 (their rows). Issue #69
-adds seven controls, six graded by `tb/aecp_notify`'s third build (sections PT and CK)
-and one by this suite's seventh (section IF), for 63 of 63. Re-run 2026-10-06 at
-`main` `e6a759de` (56 of 56) and at the #69 head (63 of 63): the goldens PASS, and all
+adds nine controls, eight graded by `tb/aecp_notify`'s third build (sections PT and CK)
+and one by this suite's seventh (section IF), for 65 of 65. Re-run 2026-10-06 at
+`main` `e6a759de` (56 of 56) and at the #69 head (65 of 65): the goldens PASS, and all
 56 earlier controls fail the same checks at both (a control that fails the first
 `tb/aecp_notify` build stops `make` before the third):
 
@@ -2553,6 +2553,8 @@ and one by this suite's seventh (section IF), for 63 of 63. Re-run 2026-10-06 at
 | `avb_counter_row_dropped` | AVB_INTERFACE 1's change sets no slot | 2: `tb/aecp_notify` CK1, CK3 |
 | `avb_counter_row_collapsed` | AVB_INTERFACE 1's change sets AVB_INTERFACE 0's slot | 3: `tb/aecp_notify` CK1, CK2, CK3 |
 | `avb_counter_named_clock` | AVB_INTERFACE 1's slot named CLOCK_DOMAIN 0 | 2: `tb/aecp_notify` CK1, CK3 |
+| `avb_counter_any_index` | the map takes any AVB_INTERFACE index into index 0's slot | 5: `tb/aecp_notify` CK1 to CK5 |
+| `avb_counter_name_overlaps_clock` | the slot naming starts at interface 0 | 1: `tb/aecp_notify` CK5 |
 | `rgy_port_tied_zero` | the top ties `u_notify`'s `rgy_port_i` to 0 | 2: IF3, IF3b (seventh build) |
 
 RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
@@ -2597,8 +2599,9 @@ warning at all, and at 0 and 3, which the top must refuse by name
 (`N_AVB_IF_P=0 is outside 1 to 2`, `...=3 is outside 1 to 2`). It is the seam's
 lint-only elaboration at two interfaces, on every run of the suite.
 
-The controls that collapse the top's interface count, index or latch
-(`if-top-count-collapsed`, `if-top-count-collapsed-lint`, `if-top-ingress-collapsed`,
-`if-top-ingress-live`, `if-top-range-unguarded`) are arms of `tb/adp_engine`'s
+The controls that collapse the top's interface count, index or latch, or move its
+range guard (`if-top-count-collapsed`, `if-top-count-collapsed-lint`,
+`if-top-ingress-collapsed`, `if-top-ingress-live`, `if-top-range-unguarded`,
+`if-top-range-floor-off-by-one`, `if-top-range-floor-dropped`) are arms of `tb/adp_engine`'s
 campaign, whose README carries their record; `rgy_port_tied_zero` is in
 `notify_mutants.py`, recorded in the table above.
