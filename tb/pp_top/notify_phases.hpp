@@ -1639,6 +1639,178 @@ struct RndPhase : NotifyBench {
   }
 };
 
+// ==== DN. The Domain and link-edge GET_AVB_INFO notification (issue #42) ===
+// Milan 5.3.6.2 and Table 5.22: a change of the MSRP Class A Domain (4.2.7.2.1:
+// its priority and VID) or of the link state is reported to every registered
+// controller as an unsolicited GET_AVB_INFO for the AVB_INTERFACE. The top ORs
+// four triggers into the notification block's ev_avb_i: gm_change_i and
+// gsi_avb_chg_i (section V, V6 to V6i), the SRP Domain machine's DOMAIN_CHANGE
+// and the link_up_i edge. This section grades the last two. One controller A
+// is registered; a bridge feeds its Class A Domain in the certified two-class
+// shape of S8 and DV4 (FirstValue {5, 2, VID}, NumberOfValues 2). The body is
+// the integrator's face answer, V1's words (06 6.10: the processor serves them
+// and makes none of them), so a frame is graded byte-exact for its trigger,
+// header, entry sequence_id and AVB_INTERFACE 0. GET_AVB_INFO has no rate limit
+// of its own (06 7: T-CTR-NOTIF limits GET_COUNTERS); every stimulus still
+// waits a second after the latest notification left, so no count here depends
+// on coalescing or on a limiter.
+struct DomainNotifyPhase : NotifyBench {
+  static constexpr uint16_t ADOPT_VID = 5;          // a bridge's Class A VID (S8)
+  static_assert(ADOPT_VID != SRP_DEF_VID, "DN1 must see the VID move");
+  static constexpr long WINDOW = 1200L * MS_CYC;    // longer than the spacing
+  static constexpr long SPACING = 1000L * MS_CYC;   // T-CTR-NOTIF (06 7)
+  uint16_t seq = 0x4200;
+  //! the clock the latest notification to A left; 0 before the first (the
+  //! REGISTER response is not counted)
+  uint64_t last_sent = 0;
+
+  using NotifyBench::NotifyBench;
+
+  //! the u = 1 GET_AVB_INFO response to A for AVB_INTERFACE 0 (IEEE
+  //! 7.4.40.2), its body the integrator's words at the 06 6.10 offsets
+  static std::vector<uint8_t> avb_info(unsigned s) {
+    const uint64_t w1 = H::gsi_value(1, 0x0009, 0, 1, 0);
+    const size_t n = size_t(w1 & 0xFFFF);
+    std::vector<uint8_t> b(20 + 4 * n, 0);
+    putbe(&b[0], 0x0009, 2);                             // AVB_INTERFACE @24
+    putbe(&b[2], 0, 2);                                  // index 0 @26
+    putbe(&b[4], H::gsi_value(1, 0x0009, 0, 0, 0), 8);   // grandmaster @28
+    putbe(&b[12], w1, 8);              // delay, domain, flags, count @36
+    for (size_t k = 0; k < n; ++k)                       // msrp_mappings @44
+      putbe(&b[20 + 4 * k], H::gsi_value(1, 0x0009, 0, 8, uint8_t(k)), 4);
+    auto f = aecp_frame(CTLR_MAC, OWN_MAC, 1, AECP_SUCCESS, EID, CTLR_EID,
+                        uint16_t(s), 0x0027, b);
+    f[36] |= 0x80;                                       // u = 1
+    return f;
+  }
+  bool class_a_is(unsigned vid) const {
+    return io.d->srp_class_a_prio_o == 3 && io.d->srp_class_a_vid_o == vid;
+  }
+  //! the 06 7 spacing: a second after the latest notification to A left
+  void space_out() {
+    while (io.t < last_sent + SPACING) tick();
+  }
+  //! the bridge's Class A Domain {3, vid}: Class A arrives as value 1 (10 3)
+  void declare_domain(uint16_t vid) {
+    Msg dom{4, 4, false, {Vec{false, 2, fv_domain(5, 2, vid), {EV_JOININ, EV_JOININ}, {}}}};
+    feed(mrpdu_frame(true, T1_MAC, {dom}));
+  }
+  //! the window after a stimulus that ended at log index `from`; returns the
+  //! frames A received in it
+  std::vector<size_t> watch(size_t from) {
+    for (long c = 0; c < WINDOW; ++c) tick();
+    const auto at = at_mac(CTLR_MAC, from);
+    if (!at.empty()) last_sent = seen[at.back()].t;
+    return at;
+  }
+  //! one stimulus that must notify: exactly one frame at A, a u = 1
+  //! GET_AVB_INFO (so no GET_AS_PATH and nothing else), byte-exact at the
+  //! entry's sequence_id (Milan 5.4.5.1, modelled from the wire as in NP).
+  //! t0 is the stimulus the [i] line times from: the link edge, or the return
+  //! of feed(), four idle clocks after an MRPDU's last byte
+  void one_notification(const char* tag, const char* tag_b, const char* what,
+                        size_t from, uint64_t t0) {
+    const auto at = watch(from);
+    unsigned avb = 0;
+    unsigned asp = 0;
+    for (size_t i : at) {
+      avb += unsolicited(seen[i].f) && ct_of(seen[i].f) == 0x0027;
+      asp += unsolicited(seen[i].f) && ct_of(seen[i].f) == 0x0028;
+    }
+    CHECK(at.size() == 1 && avb == 1,
+          "%s: %s: exactly one frame reaches A, a u = 1 GET_AVB_INFO, and no GET_AS_PATH "
+          "(got %zu frames: %u GET_AVB_INFO, %u GET_AS_PATH)", tag, what, at.size(), avb, asp);
+    const std::vector<uint8_t> got = at.empty() ? std::vector<uint8_t>{} : seen[at[0]].f;
+    const unsigned want_seq = at.empty() ? 0 : notified_before(CTLR_MAC, at[0]);
+    const auto want = avb_info(want_seq);
+    CHECK(got == want,
+          "%s: it is byte-exact: u = 1 GET_AVB_INFO SUCCESS to A's DA and entity_id at its "
+          "sequence_id %u, AVB_INTERFACE 0, the face's words (IEEE 7.4.40.2)%s", tag_b, want_seq,
+          got.empty() ? "; no frame" : "");
+    if (!got.empty() && got != want) { dump("got", got); dump("exp", want); }
+    if (!at.empty())
+      printf("  [i] %s: GET_AVB_INFO sequence_id %u left %ld clocks after the stimulus\n", tag,
+             seq_of(got), long(seen[at[0]].t - t0));
+  }
+
+  // ---- DN4: the link edge alone, at DEFAULTS --------------------------------
+  // KL_srp_domain strobes a LINK_DOWN revert only from ADOPTED (10 6.1 F10.2),
+  // so at DEFAULTS neither edge raises DOMAIN_CHANGE and the link term is the
+  // only trigger of ev_avb_i.
+  void link_edges() {
+    const int ch0 = io.domain_changes;
+    space_out();
+    size_t from = seen.size();
+    io.d->link_up_i = 0;
+    one_notification("DN4b", "DN4c", "link down", from, io.t);
+    space_out();
+    from = seen.size();
+    io.d->link_up_i = 1;
+    one_notification("DN4d", "DN4e", "link up", from, io.t);
+    CHECK(io.domain_changes == ch0,
+          "DN4: neither link edge raises DOMAIN_CHANGE at DEFAULTS (premise: the link "
+          "term alone notifies), saw %d", io.domain_changes - ch0);
+  }
+  // ---- DN1: a differing Domain is adopted and notified ----------------------
+  void adoption() {
+    const int ch0 = io.domain_changes;
+    space_out();
+    const size_t from = seen.size();
+    declare_domain(ADOPT_VID);
+    const uint64_t t0 = io.t;
+    one_notification("DN1b", "DN1c", "the bridge's {3, 5} adopted", from, t0);
+    CHECK(io.domain_changes == ch0 + 1 && class_a_is(ADOPT_VID) && io.d->srp_domain_adopted_o,
+          "DN1: the bridge's {3, %u} is adopted with one DOMAIN_CHANGE (premise), saw %d, "
+          "class-D {%u, %u, adopted %u}", unsigned(ADOPT_VID), io.domain_changes - ch0,
+          unsigned(io.d->srp_class_a_prio_o), unsigned(io.d->srp_class_a_vid_o),
+          unsigned(io.d->srp_domain_adopted_o));
+  }
+  // ---- DN2: the declaration that returns the Domain to its default ----------
+  // A received Domain that differs from the operating one is adopted, the
+  // default's values included (KL_srp_domain's adoption arm; only LINK_DOWN
+  // restores the DEFAULTS state), so it strobes DOMAIN_CHANGE once.
+  void revert() {
+    const int ch0 = io.domain_changes;
+    space_out();
+    const size_t from = seen.size();
+    declare_domain(SRP_DEF_VID);
+    const uint64_t t0 = io.t;
+    one_notification("DN2b", "DN2c", "the default {3, 2} declared back", from, t0);
+    CHECK(io.domain_changes == ch0 + 1 && class_a_is(SRP_DEF_VID),
+          "DN2: the declared default {3, %u} is in force with one DOMAIN_CHANGE (premise), "
+          "saw %d, class-D {%u, %u}", unsigned(SRP_DEF_VID), io.domain_changes - ch0,
+          unsigned(io.d->srp_class_a_prio_o), unsigned(io.d->srp_class_a_vid_o));
+    printf("  [i] DN2: class-D adopted %u after the default is declared back\n",
+           unsigned(io.d->srp_domain_adopted_o));
+  }
+  // ---- DN3: an identical re-declaration changes nothing and sends nothing ---
+  void identical(const char* tag, uint16_t vid) {
+    const int ch0 = io.domain_changes;
+    space_out();
+    const size_t from = seen.size();
+    declare_domain(vid);
+    const auto at = watch(from);
+    CHECK(io.domain_changes == ch0 && at.empty(),
+          "%s: the bridge declares the operating {3, %u} again: no DOMAIN_CHANGE (saw %d) "
+          "and nothing reaches A (got %zu frames)", tag, unsigned(vid),
+          io.domain_changes - ch0, at.size());
+  }
+
+  void run() {
+    boot_to_idle(true);
+    CHECK(register_controller(CTLR_MAC, CTLR_EID, seq++),
+          "DN0: controller A registered (premise)");
+    const uint32_t ms0 = io.d->dbg_now_ms_o;
+    link_edges();
+    adoption();
+    identical("DN3", ADOPT_VID);
+    revert();
+    identical("DN3b", SRP_DEF_VID);
+    printf("  [i] DN: %u ms of the timebase after the registration (the controller monitor's "
+           "floor is 30 s)\n", unsigned(io.d->dbg_now_ms_o - ms0));
+  }
+};
+
 // ==== WD. the originator's withdraw mask, one clock late (issue #163) =====
 // The originator's withdraw mask is combinational from its response, cancel
 // and expiry choice. It fed the TX arbiter's slot and state registers through
@@ -1851,6 +2023,13 @@ struct WithdrawStagePhase : NotifyBench {
   CounterSpacingPhase{h}.run("CS2b", 30);
   CounterSpacingPhase{h}.run("CS2c", 95);
   printf("CS: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
+}
+
+[[maybe_unused]] static void run_domain_notify(H& h) {
+  const int checks0 = h.checks;
+  const int fails0 = h.fails;
+  DomainNotifyPhase{h}.run();
+  printf("DN: %d checks, %d failures\n", h.checks - checks0, h.fails - fails0);
 }
 
 [[maybe_unused]] static void run_withdraw(H& h) {
