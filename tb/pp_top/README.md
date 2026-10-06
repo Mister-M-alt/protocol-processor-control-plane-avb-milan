@@ -17,9 +17,9 @@ Expectations are independent C++ builders/parsers from the doc byte
 offsets — F04.5 ADPDU, F05.13 Milan ACMPDU, 802.1Q §10.8/§35.2.2 MRPDU BNF,
 Milan §4.3.3.2 Σ-slope — never DUT logic.
 
-`make`: exit 0 = PASS. It builds the bench six times (sections DV, ID, AX, TB
-and TD): each executable prints its own build's tally, and the last line sums
-the six into the one canonical tally.
+`make`: exit 0 = PASS. It builds the bench seven times (sections DV, ID, AX, TB,
+TD and IF): each executable prints its own build's tally, and the last line sums
+the seven into the one canonical tally.
 
 ## What it proves
 
@@ -2482,7 +2482,12 @@ the one record #148 moves, and its named check is now ST2b alone (its row). Issu
 adds three controls, graded by `tb/aecp_notify` section DR, for 56 of 56. Re-run
 2026-10-05 at `main` `054d01c7` (53 of 53) and at the #158 head (56 of 56): the
 goldens PASS, and 50 of the 53 earlier controls fail the same checks at both. The
-three `tb/aecp_notify` TW controls also fail DR3 since #158 (their rows):
+three `tb/aecp_notify` TW controls also fail DR3 since #158 (their rows). Issue #69
+adds seven controls, six graded by `tb/aecp_notify`'s third build (sections PT and CK)
+and one by this suite's seventh (section IF), for 63 of 63. Re-run 2026-10-06 at
+`main` `e6a759de` (56 of 56) and at the #69 head (63 of 63): the goldens PASS, and all
+56 earlier controls fail the same checks at both (a control that fails the first
+`tb/aecp_notify` build stops `make` before the third):
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2542,6 +2547,13 @@ three `tb/aecp_notify` TW controls also fail DR3 since #158 (their rows):
 | `dereg_mid_round_no_hold` | a DEREGISTER drained between two jobs of a round no longer waits for the round's boundary (`main`'s rule) | 3: `tb/aecp_notify` DR1, DR2, DR3 |
 | `dereg_pending_stops_follow` | the counter stamp stops following while a DEREGISTER is pending (review R477-1 S2 on PR #159) | 1: `tb/aecp_notify` DR3 |
 | `dereg_lost_at_round_end` | the round's end drops the held DEREGISTER | 2: `tb/aecp_notify` DR1b, DR2b |
+| `port_not_compared` | the registry walk matches {eid, mac} without the port (#69) | 5: `tb/aecp_notify` PT2, PT3, PT4, PT6, PT7 |
+| `port_not_latched` | the op's port latched as 0 | 5: `tb/aecp_notify` PT2, PT3, PT4, PT6, PT7 |
+| `port_not_stored` | a claimed or refreshed row stores port 0 | 4: `tb/aecp_notify` PT3, PT5, PT6, PT7 |
+| `avb_counter_row_dropped` | AVB_INTERFACE 1's change sets no slot | 2: `tb/aecp_notify` CK1, CK3 |
+| `avb_counter_row_collapsed` | AVB_INTERFACE 1's change sets AVB_INTERFACE 0's slot | 3: `tb/aecp_notify` CK1, CK2, CK3 |
+| `avb_counter_named_clock` | AVB_INTERFACE 1's slot named CLOCK_DOMAIN 0 | 2: `tb/aecp_notify` CK1, CK3 |
+| `rgy_port_tied_zero` | the top ties `u_notify`'s `rgy_port_i` to 0 | 2: IF3, IF3b (seventh build) |
 
 RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
 every RND control is killed by the divergence check alone.
@@ -2555,3 +2567,38 @@ passing). They are kept as defensive structure and are not graded:
 | `x_ident_arm_ignores_core_arm` | the identify arm stops yielding to the registry machine's arm sites (`&& !core_arm_w` dropped) | a collision needs a registry op to arm (N_APPLY, or N_IDLE with a new op) in the very cycle the identify arm is owed, the one after a frame's departure; a directed check would have to sweep a command's arrival cycle by cycle |
 | `x_ident_rearm_single_generation` | the REARM generation never flips | a stale REARM can only fire in the cycles between a first frame's departure and the new REARM arm landing (a few cycles), and the departure itself clears `fired_r` |
 | `x_ident_no_sync_second_flop` | the synchroniser loses its second flop | CDC hygiene: metastability is invisible to a two-state simulation |
+
+## Section IF: two AVB interfaces (issue #69)
+
+The seventh build (`make interfaces` alone, `obj_if2`) defines `PP_TOP_IF2`: the wrap
+sets the top's `N_AVB_IF_P` to 2 and connects `rx_if_index_i`, which every other
+build leaves unconnected, as a one-interface integration does. `interface_phases.hpp`
+runs section IF alone on a NotifyBench processor (its own model, the suite's image,
+erased NVM, both restore walks, link up and enable), and reads each interface's
+advertise state through the wrap's `dbg_adp_adv_state_o`. A frame's interface is
+driven with its bytes alone: from the clock after its last byte the port names the
+other interface, which the contract allows, so a top that read it any later takes the
+wrong one.
+
+- **IF1** each advertise machine sends its own ENTITY_AVAILABLE inside
+  T-ADP-DELAY-START, byte-exact with interface_index 0 and 1 and available_index 0.
+- **IF2** (twice, interface 1 then 0) with both machines WAITING, ENTITY_DISCOVER
+  received on one interface restarts that interface's machine alone, which
+  advertises inside T-ADP-DELAY: the frame's interface rides the header beat to ADP.
+- **IF3** REGISTER from C on interface 0 and again on interface 1 makes two entries:
+  D's lock change reaches C twice, at sequence_id 0 and 0, and the unlock at 1 and 1.
+  **IF3b** after DEREGISTER on interface 1 the next lock and unlock reach C once
+  each, at interface 0's 2 and 3: the registry port comes from the command's
+  interface.
+
+`make if-guards` (run by `make`, like `line-guards`) lints the real top with
+`scripts/lint_hdl.sh`'s flags at `N_AVB_IF_P` 1 and 2, which must lint clean with no
+warning at all, and at 0 and 3, which the top must refuse by name
+(`N_AVB_IF_P=0 is outside 1 to 2`, `...=3 is outside 1 to 2`). It is the seam's
+lint-only elaboration at two interfaces, on every run of the suite.
+
+The controls that collapse the top's interface count, index or latch
+(`if-top-count-collapsed`, `if-top-count-collapsed-lint`, `if-top-ingress-collapsed`,
+`if-top-ingress-live`, `if-top-range-unguarded`) are arms of `tb/adp_engine`'s
+campaign, whose README carries their record; `rgy_port_tied_zero` is in
+`notify_mutants.py`, recorded in the table above.

@@ -11,20 +11,65 @@ different controller and verifies that the next probe carries only the new
 Entity ID and MAC tuple. Section IX then grades the registry's identity index,
 section TS the counter throttle stamps' valid bit, section TW a counter round
 that waits for the TX slot, and section DR a DEREGISTER drained between two jobs
-of a round.
+of a round. A third build, at two AVB interfaces, runs sections PT and CK: the
+registry row's port and the per-interface counter rows.
 
 Run `make`. Exit status zero and the printed check tally are required.
 
-## Two builds
+## Three builds
 
 | Build | Override | Runs |
 |---|---|---|
 | `obj_dir/Vaecp_notify_sim` | none: `EN_IDENTIFY_NOTIF_P` = 0, the default | the registry monitor lifecycle above (10 checks), then section IX (11 checks), section TS (5 checks), section TW (4 checks) and section DR (11 checks) |
 | `obj_idn/Vaecp_notify_idn` | `EN_IDENTIFY_NOTIF_P` = 1 (`AECP_NOTIFY_IDENT`) | section FT alone |
+| `obj_if2/Vaecp_notify_if2` | `N_IF_P` = 2, P-N-AVB-INTERFACES (`AECP_NOTIFY_IF2`) | sections PT (7 checks) and CK (5 checks) alone, from `port_tuple.hpp` |
 
 Each binary prints its own build's count, and the Makefile prints the one
-canonical tally, summed over both. `make identify` builds and runs the second
-build alone (the identify mutation campaign's arm).
+canonical tally, summed over the three. `make identify` builds and runs the
+second build alone (the identify mutation campaign's arm), and `make interfaces`
+the third (the notify campaign's arms for issue #69).
+
+## Sections PT and CK: two AVB interfaces (issue #69)
+
+Milan v1.2 5.3.4.2 makes a registry entry {Entity ID, MAC address, port,
+Sequence ID of the next unsolicited notification}. With `N_IF_P` at 2 each row
+stores the port, the interface the REGISTER arrived on (`rgy_port_i`). The bench
+is the engine: it retires each job when the section says, and the clock advances
+one ms per cycle while a section watches the job face.
+
+- **PT1** REGISTER from E on port 0 succeeds and holds one entry.
+- **PT2** the same Entity ID and MAC on port 1 is a second entry.
+- **PT4** one notification per entry, each at its own Sequence ID: a round before
+  the second REGISTER reaches E once at 0, the round after it twice, at 1 (port
+  0's entry) and 0 (port 1's).
+- **PT3** a repeated REGISTER on port 1 refreshes port 1's entry, and with both
+  rows held a third tuple is refused NO_RESOURCES.
+- **PT5** DEREGISTER from E on port 1 removes one entry; **PT6** it was port 1's:
+  the next round reaches E once, at port 0's Sequence ID 2; **PT7** DEREGISTER on
+  port 0 removes the last.
+
+Section CK grades the AVB_INTERFACE counter rows (Milan Table 5.22: at most one
+GET_COUNTERS a second per descriptor), with one controller registered:
+
+- **CK1** a change of AVB_INTERFACE 1's counters goes out as GET_COUNTERS on
+  0009:1; **CK2** AVB_INTERFACE 0's, in the same second, goes out at once on
+  0009:0, its window its own; **CK3** a second change of interface 1 inside its
+  second waits a second from interface 1's send; **CK4** AVB_INTERFACE 2 names no
+  interface of a two-interface build and pushes nothing; **CK5** CLOCK_DOMAIN 0
+  keeps its slot beside the new row.
+
+Mutation record (planted by `tb/pp_top/notify_mutants.py`, which runs `make
+interfaces` here; all six KILLED; the seventh #69 control, `rgy_port_tied_zero`, is
+graded by `tb/pp_top` section IF):
+
+| Mutant | Planted | Failing checks |
+|---|---|---|
+| `port_not_compared` | the walk matches {eid, mac} without the port | 5: PT2 (a refresh, one entry), PT3, PT4, PT6, PT7 |
+| `port_not_latched` | the op's port is latched as 0 whatever `rgy_port_i` says | 5: PT2, PT3, PT4, PT6, PT7 |
+| `port_not_stored` | a claimed or refreshed row stores port 0 | 4: PT3 (the refresh finds no row and the full table refuses), PT5, PT6, PT7 |
+| `avb_counter_row_dropped` | AVB_INTERFACE 1's change sets no slot | 2: CK1, CK3 |
+| `avb_counter_row_collapsed` | AVB_INTERFACE 1's change sets AVB_INTERFACE 0's slot | 3: CK1, CK2, CK3 |
+| `avb_counter_named_clock` | AVB_INTERFACE 1's slot is named CLOCK_DOMAIN 0 | 2: CK1, CK3 |
 
 ## Section FT: the identify schedule at the full timebase
 

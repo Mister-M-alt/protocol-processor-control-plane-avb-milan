@@ -3,7 +3,10 @@
 
 Proves the ADP engine (`hdl/adp/KL_adp_engine.sv`) against
 [04](../../docs/architecture/04_adp_engine.md) in full: `make` = build + run,
-exit 0 = PASS, 1348 checks. `make mutants` runs the checked-in mutation
+exit 0 = PASS, 1359 checks in two builds: 1348 at the shipping shape
+(`sim_main.cpp`) and 11 at two AVB interfaces (`sim_if2.cpp`, section IF below).
+Each binary prints its own build's count, and the Makefile prints the one
+canonical tally, summed over both. `make mutants` runs the checked-in mutation
 campaign below.
 
 The top (`tb_adp_top.sv`) is pure wiring: the engine plus the **real
@@ -232,6 +235,42 @@ Mutation-proven 2026-08-11 (backup/sed/run/restore):
 4. talker-restart detector deleted (stale index treated as fresh) —
    **1 fail** (P9e restart pair).
 
+## Two AVB interfaces (section IF, issue #69)
+
+The second build sets `N_IF_P` to 2 (P-N-AVB-INTERFACES, the redundancy seam)
+and runs section IF alone, from `sim_if2.cpp`: the same entity, the same real
+PRNG and the same service models as the first build, cut to what the section
+reads. Each interface has its own grandmaster and domain, so a frame or a guard
+that reads the wrong interface's pair shows on the wire. `make interfaces`
+builds and runs it alone (the campaign's target). Milan v1.2 5.6.3 runs one
+advertise machine per AVB interface:
+
+- **IF0** both machines reset to DOWN, available_index 0.
+- **IF1** enabled with interface 0's link alone up, interface 0 advertises
+  inside T-ADP-DELAY-START and interface 1 stays DOWN and silent.
+- **IF2** interface 0's ENTITY_AVAILABLE is byte-exact: interface_index 0
+  (IEEE 1722.1-2021 6.2.2.18), its own grandmaster and domain, available_index 0,
+  and its TX request names interface 0.
+- **IF3** interface 1's link comes up: interface 1 advertises inside T-ADP-DELAY,
+  byte-exact with interface_index 1, interface 1's grandmaster and domain and
+  available_index 0, on a TX request naming interface 1.
+- **IF4** over 20 s each interface's frames count their own available_index
+  (6.2.2.15, 04 section 5), and the engine's per-interface index agrees.
+- **IF5** (twice, interface 1 then 0) with both machines WAITING, an
+  ENTITY_DISCOVER received on one interface restarts that interface's machine
+  alone (Milan Table 5.51), and it advertises inside T-ADP-DELAY.
+- **IF6** GM_CHANGE on interface 0 alone re-advertises interface 0 with its new
+  grandmaster; interface 1 stays WAITING and keeps its own.
+- **IF7** interface 1's LINK_DOWN takes it to DOWN with no frame at all
+  (Milan 5.6.3.5.6), while interface 0 keeps advertising.
+- **IF8** the discovery guard reads the ingress interface's pair (Milan
+  5.6.4.5.1): a bound talker's ENTITY_AVAILABLE carrying interface 1's
+  grandmaster and domain is not matched on interface 0 and discovers the sink
+  on interface 1.
+- **IF9** disabling the entity sends one ENTITY_DEPARTING per interface, each
+  byte-exact with its own interface_index and pre-reset available_index, and
+  both indices return to 0.
+
 ## Mutation campaign (`make mutants`)
 
 `mutants.py` applies each reviewed patch in `mutations/` to a scratch copy of
@@ -268,6 +307,12 @@ the noted index from both sides, in the restart cell too, and adds
 `disc-not-discovered-checks-index` 14 to 17, `disc-restart-not-rediscovered`
 7 to 8), and `arc-restart-detector-off-by-one` keeps 13 with the restart cell's
 repeat in place of its event check; every other arm kept its count.
+Re-run 2026-10-06 with Verilator 5.050 at the head of issue #69's lane, which adds the
+second build (section IF), `tb/pp_top`'s seventh build and `if-guards`, and the nine
+`if-` arms: all five controls PASS and all 50 arms are KILLED. Every earlier arm kept
+its failing checks: an arm that fails the first build stops `make` before the second,
+so its record changed only in the first build's tally line, now
+`[build default] N checks, F failures`.
 
 | Arm | Suite, target | What is broken | Failing checks |
 |---|---|---|---|
@@ -312,9 +357,19 @@ repeat in place of its event check; every other arm kept its count.
 | `arc-restart-skips-guard` | adp_engine | a stale index restarts the talker whatever its grandmaster and domain (the §5.6.4.5.2 step 2b guard) | 12: arc 6 and the arc count, the GM and domain mismatch cells x DISCOVERED (event pair, state, timer), P9f three times, P9f2 |
 | `arc-departing-silent` | adp_engine | an ENTITY_DEPARTING departs without EVT_TK_DEPARTED (§5.6.4.5.3 step 3) | 4: arc 7 and the arc count, DEPARTING x DISCOVERED, P9h |
 | `arc-noadp-expiry-silent` | adp_engine | a T-ADP-NOADP expiry departs without EVT_TK_DEPARTED (§5.6.4.5.4) | 4: arc 8 and the arc count, TMR_NO_ADP x DISCOVERED, P9i |
+| `if-ingress-collapsed` | adp_engine `interfaces` | the ingress interface collapsed to 0 (`rxq_if_r <= '0`) | 3: IF5 (DISCOVER on interface 1 restarts interface 0), IF6, IF8 (the guard reads interface 0's pair) |
+| `if-egress-collapsed` | adp_engine `interfaces` | every TX request names interface 0 (`txreq_if_o = '0`) | 5: IF3 (no frame on interface 1), IF4, IF5, IF6, IF9 |
+| `if-pdu-index-collapsed` | adp_engine `interfaces` | the ADPDU's interface_index field (wire bytes 68 and 69) is always 0 | 2: IF3, IF9 |
+| `if-gm-sample-collapsed` | adp_engine `interfaces` | the builder samples interface 0's grandmaster for every interface | 2: IF3, IF9 |
+| `if-top-count-collapsed` | pp_top `interfaces` | the top binds ADP's `N_IF_P` to the literal 1 again | 3: IF1 (one ADPDU), IF2 twice |
+| `if-top-count-collapsed-lint` | pp_top `if-guards` | the same patch | 1: `if guard 2` (the count-2 lint warns) |
+| `if-top-ingress-collapsed` | pp_top `interfaces` | the normalizer's `rx_if_index_i` tied to `2'd0` again | 3: IF2 (interface 1), IF3, IF3b |
+| `if-top-ingress-live` | pp_top `interfaces` | the header latch takes `rx_if_index_i` live at the beat instead of from the frame's last byte | 2: IF2 twice (the port names the other interface by then) |
+| `if-top-range-unguarded` | pp_top `if-guards` | the top's range guard admits 3 | 1: `if guard 3` |
 
-Known limits (honestly): the suite runs the shipping shape (1 interface,
-8 sinks) only; the timer service and slot pools are modeled, not
+Known limits (honestly): the first build runs the shipping shape (1
+interface, 8 sinks) and the second two interfaces with section IF alone, so the
+MTXW walk is not repeated per interface; the timer service and slot pools are modeled, not
 instantiated (their own suites own those RTL contracts); event-port
 ordering between a NOADP expiry and a same-sink iteration in flight is
 not exercised (rare, ACMP re-probes either way); the walk takes one event
