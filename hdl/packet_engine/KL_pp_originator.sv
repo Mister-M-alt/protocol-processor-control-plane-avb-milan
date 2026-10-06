@@ -185,6 +185,9 @@ module KL_pp_originator #(
     end
   end
 
+  logic                cancel_hit_w;
+  logic [IFL_AW_C-1:0] cancel_ix_w;
+
   logic [IFL_N_C-1:0]  cancel_work_w;
   logic                cancel_pend_ok_w;
   logic [IFL_AW_C-1:0] cancel_pend_ix_w;
@@ -232,9 +235,6 @@ module KL_pp_originator #(
       end
     end
   end
-
-  logic                cancel_hit_w;
-  logic [IFL_AW_C-1:0] cancel_ix_w;
 
   always_comb begin : cancel_pick
     cancel_hit_w = 1'b0;
