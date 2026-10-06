@@ -1,6 +1,6 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -729,7 +729,7 @@
+@@ -753,7 +753,7 @@
            // registering event: -> IN; latch type + payloads; a type change
            // while IN/LV is the in-place swap (strobe, no unregistration)
            if (reg_r[s] == R_LV_C) tpend_r[s] <= T_CANCEL_C;

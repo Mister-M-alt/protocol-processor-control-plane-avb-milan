@@ -1,7 +1,7 @@
 --- a/hdl/srp/KL_srp_listener_fsm.sv
 +++ b/hdl/srp/KL_srp_listener_fsm.sv
-@@ -725,7 +725,9 @@
- 
+@@ -749,7 +749,9 @@
+       // Test expiry before rLv so its one-clock strobe cannot be masked.
        // ---- per-sink registrar events ------------------------------------
        for (int unsigned s = 0; s < N_SINKS_P; s++) begin
 -        if (reg_rx_hit_w[s] && rx_registering_w) begin
