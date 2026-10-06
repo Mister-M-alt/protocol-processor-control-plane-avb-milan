@@ -21,8 +21,10 @@ issue #232), and the counter rounds' spacing from the previous round's send (iss
 #148: tb/pp_top section CS and tb/aecp_notify section TW), a DEREGISTER drained
 between two jobs of a round (issue #158: tb/aecp_notify section DR), and the registry
 port and AVB_INTERFACE counter rows at two AVB interfaces (issue #69: tb/aecp_notify's
-third build, sections PT and CK, and tb/pp_top's seventh, section IF). The suite READMEs
-carry the matching mutation records.
+third build, sections PT and CK, and tb/pp_top's seventh, section IF), and there the
+registry depth per interface and the availability probes of rows that share a controller
+or a CA owner (review R512-1: sections PD and CA, and IF3 and IF3b's held commands). The
+suite READMEs carry the matching mutation records.
 
 Usage: python3 tb/pp_top/notify_mutants.py --output DIR [--verilator V] [--jobs N]
                                            [--only NAME ...]
@@ -397,8 +399,67 @@ INTERFACE_ROWS = (
         ("IF3:",)),
 )
 
+# the registry depth per interface, the probes of a controller on both interfaces and
+# of rows sharing a CA owner, and the registry port's source at the top (review R512-1
+# F1 to F3), graded by tb/aecp_notify's third build (sections PD and CA) and tb/pp_top's
+# seventh (IF3, IF3b)
+CANCEL_PEND = "        cx_pend_r <= cx_work_w;\n"
+FAIL_LIVE = "            && ca_probe_r[CIX_W_C'(32'(ca_fail_owner_i) * N_IF_P + p)]\n"
+RSP_LIVE = "            && ca_probe_r[CIX_W_C'(32'(ca_rsp_owner_i) * N_IF_P + p)]\n"
+TURN = "            && !rx_cmd_hit_w[i] && !ca_hold_w[i]) begin\n"
+SETTLE = "        if (cx_ok_w)                  cx_settle_r <= CX_SETTLE_C;\n"
+OWN_PORT = "            if (!wk_port_ok_w && !wk_free_r) wk_free_r <= 1'b0;\n"
+ROWS = "  localparam int unsigned N_ROW_C = N_CTRL_P * N_IF_P;\n"
+TL_TAG = ("                                wk_match_r ? wk_match_ix_r[CIX_W_C-1 -: OIX_W_C]\n"
+          "                                           : wk_free_ix_r[CIX_W_C-1 -: OIX_W_C]};\n")
+MON_TAG = "                                    mon_draw_ix_r[CIX_W_C-1 -: OIX_W_C]};\n"
+EXP_PORT = "                       PX_W_C'(32'(tmr_exp_slot_i) - TMR_REGMON_BASE_P)};\n"
+RGY_PORT_SRC = "      .rgy_port_i            ((N_AVB_IF_P > 1) ? aecp_cmd_if_r : 2'd0),"
+
+INTERFACE_DEPTH_PROBES = (
+    Mutant("cancel_one_per_command", INTERFACES, (
+        (NTFY, CANCEL_PEND, "        cx_pend_r <= '0;\n"),),
+        ("CA1:", "CA1b:")),
+    Mutant("report_fail_ignores_probe", INTERFACES, (
+        (NTFY, FAIL_LIVE, ""),),
+        ("CA2:", "CA3:")),
+    Mutant("report_rsp_ignores_probe", INTERFACES, (
+        (NTFY, RSP_LIVE, ""),),
+        ("CA2:",)),
+    Mutant("owner_turns_dropped", INTERFACES, (
+        (NTFY, TURN, "            && !rx_cmd_hit_w[i]) begin\n"),),
+        ("CA3:", "CA4:")),
+    Mutant("settle_dropped", INTERFACES, (
+        (NTFY, SETTLE, SETTLE.replace("<= CX_SETTLE_C;", "<= 2'd0;")),),
+        ("CA4:",)),
+    Mutant("depth_shared", INTERFACES, (
+        (NTFY, OWN_PORT, "            if (1'b0) wk_free_r <= 1'b0;\n"),),
+        ("PD1:",)),
+    Mutant("depth_not_keyed", INTERFACES, (
+        (NTFY, ROWS, "  localparam int unsigned N_ROW_C = N_CTRL_P;\n"),),
+        ("PD1:",)),
+    Mutant("registry_tag_port_bits", INTERFACES, (
+        (NTFY, TL_TAG, TL_TAG.replace("[CIX_W_C-1 -: OIX_W_C]", "[OIX_W_C-1:0]")),),
+        ("PD2:",)),
+    Mutant("monitor_tag_port_bits", INTERFACES, (
+        (NTFY, MON_TAG, MON_TAG.replace("[CIX_W_C-1 -: OIX_W_C]", "[OIX_W_C-1:0]")),),
+        ("PD2:",)),
+    Mutant("expiry_port_dropped", INTERFACES, (
+        (NTFY, EXP_PORT, "                       PX_W_C'(0)};\n"),),
+        ("PD3:",)),
+    # the reviewer's probes P1 and P2, each now failing an IF check at the top
+    Mutant("rgy_port_from_latest_frame", IF_TOP, (
+        (TOP, RGY_PORT_SRC, RGY_PORT_SRC.replace("aecp_cmd_if_r", "hdr_if_r")),),
+        ("IF3:", "IF3b:")),
+    Mutant("dereg_matches_other_port", IF_TOP, (
+        (NTFY, PORT_MATCH, PORT_MATCH.replace("(port_r[wk_ix_r] == hold_port_r)",
+                                              "(port_r[wk_ix_r] == (op_dereg_r ? ~hold_port_r"
+                                              " : hold_port_r))")),),
+        ("IF3b:",)),
+)
+
 MUTANTS = (IDENTIFY + PUSHES + STORM_RND + INFLIGHT + IDENTITY_INDEX + COUNTER_SPACING
-           + DEREG_MID_ROUND + INTERFACE_ROWS)
+           + DEREG_MID_ROUND + INTERFACE_ROWS + INTERFACE_DEPTH_PROBES)
 TALLY = re.compile(r"^(\[build \w+, SRP_DOM_DEF_VID_P 0x[0-9a-f]+, DESC_LINE_BYTES_P \d+\]"
                    r" \d+ checks, \d+ failures"
                    r"|\[build \w+\] \d+ checks, \d+ failures"

@@ -2487,7 +2487,13 @@ adds nine controls, eight graded by `tb/aecp_notify`'s third build (sections PT 
 and one by this suite's seventh (section IF), for 65 of 65. Re-run 2026-10-06 at
 `main` `e6a759de` (56 of 56) and at the #69 head (65 of 65): the goldens PASS, and all
 56 earlier controls fail the same checks at both (a control that fails the first
-`tb/aecp_notify` build stops `make` before the third):
+`tb/aecp_notify` build stops `make` before the third). Issue #69's second round
+(review R512-1) adds twelve controls, ten graded by `tb/aecp_notify`'s third build
+(sections PD and CA) and two by this suite's seventh (IF3, IF3b), for 77 of 77. Re-run
+2026-10-06 at the first round's head `cb730a2f` (65 of 65) and at the second round's
+head (77 of 77): the goldens PASS, and 63 of the 65 earlier controls fail the same
+checks at both; `port_not_compared` and `port_not_latched` also fail checks of the new
+sections (their rows):
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2547,8 +2553,8 @@ and one by this suite's seventh (section IF), for 65 of 65. Re-run 2026-10-06 at
 | `dereg_mid_round_no_hold` | a DEREGISTER drained between two jobs of a round no longer waits for the round's boundary (`main`'s rule) | 3: `tb/aecp_notify` DR1, DR2, DR3 |
 | `dereg_pending_stops_follow` | the counter stamp stops following while a DEREGISTER is pending (review R477-1 S2 on PR #159) | 1: `tb/aecp_notify` DR3 |
 | `dereg_lost_at_round_end` | the round's end drops the held DEREGISTER | 2: `tb/aecp_notify` DR1b, DR2b |
-| `port_not_compared` | the registry walk matches {eid, mac} without the port (#69) | 5: `tb/aecp_notify` PT2, PT3, PT4, PT6, PT7 |
-| `port_not_latched` | the op's port latched as 0 | 5: `tb/aecp_notify` PT2, PT3, PT4, PT6, PT7 |
+| `port_not_compared` | the registry walk matches {eid, mac} without the port (#69) | 7: `tb/aecp_notify` PT2, PT4, PT3, PT5, PT6, CA1, CA2 (5 before round 2: PT2 to PT7 but PT5) |
+| `port_not_latched` | the op's port latched as 0 | 12: `tb/aecp_notify` PT2, PT4, PT3, PT5, PT6, PD1 to PD3, CA1 to CA4 (5 before round 2) |
 | `port_not_stored` | a claimed or refreshed row stores port 0 | 4: `tb/aecp_notify` PT3, PT5, PT6, PT7 |
 | `avb_counter_row_dropped` | AVB_INTERFACE 1's change sets no slot | 2: `tb/aecp_notify` CK1, CK3 |
 | `avb_counter_row_collapsed` | AVB_INTERFACE 1's change sets AVB_INTERFACE 0's slot | 3: `tb/aecp_notify` CK1, CK2, CK3 |
@@ -2556,6 +2562,18 @@ and one by this suite's seventh (section IF), for 65 of 65. Re-run 2026-10-06 at
 | `avb_counter_any_index` | the map takes any AVB_INTERFACE index into index 0's slot | 5: `tb/aecp_notify` CK1 to CK5 |
 | `avb_counter_name_overlaps_clock` | the slot naming starts at interface 0 | 1: `tb/aecp_notify` CK5 |
 | `rgy_port_tied_zero` | the top ties `u_notify`'s `rgy_port_i` to 0 | 2: IF3, IF3b (seventh build) |
+| `depth_shared` | a REGISTER claims any free row, not one of its own port (#69 round 2) | 6: `tb/aecp_notify` PD1, PD2, PD3, CA1, CA2, CA1b |
+| `depth_not_keyed` | the registry holds `N_CTRL_P` rows in all | 8: `tb/aecp_notify` PD1 to PD3, CA1, CA2, CA1b, CA3, CA4 |
+| `registry_tag_port_bits` | a TIME_LIMITED arm's owner tag takes the row's port bits | 1: `tb/aecp_notify` PD2 |
+| `monitor_tag_port_bits` | a monitor arm's owner tag takes the row's port bits | 1: `tb/aecp_notify` PD2 |
+| `expiry_port_dropped` | an expiry is decoded to the port-0 row of its tag's index | 4: `tb/aecp_notify` PD3, CA1, CA3, CA4 |
+| `cancel_one_per_command` | a cancel not sent in its cycle is dropped (review R512-1 F1, probe P3) | 2: `tb/aecp_notify` CA1, CA1b |
+| `report_fail_ignores_probe` | a failure is taken for its owner's last row, live probe or not | 2: `tb/aecp_notify` CA2, CA3 |
+| `report_rsp_ignores_probe` | a response is taken likewise | 1: `tb/aecp_notify` CA2 |
+| `owner_turns_dropped` | a probe no longer waits while its CA owner is held | 2: `tb/aecp_notify` CA3, CA4 |
+| `settle_dropped` | no settle after a cancel | 1: `tb/aecp_notify` CA4 |
+| `rgy_port_from_latest_frame` | the top takes `u_notify`'s `rgy_port_i` from the latest received frame's interface, `hdr_if_r` (review R512-1 F2, probe P1) | 2: IF3, IF3b (seventh build) |
+| `dereg_matches_other_port` | a DEREGISTER matches the other port's entry (review R512-1 F2, probe P2) | 1: IF3b (seventh build) |
 
 RN and `tb/originator` R are the suites whose mutation records #80 and #86 ask for:
 every RND control is killed by the divergence check alone.
@@ -2610,5 +2628,6 @@ The controls that collapse the top's interface count, index or latch, or move it
 range guard (`if-top-count-collapsed`, `if-top-count-collapsed-lint`,
 `if-top-ingress-collapsed`, `if-top-ingress-live`, `if-top-range-unguarded`,
 `if-top-range-floor-off-by-one`, `if-top-range-floor-dropped`) are arms of `tb/adp_engine`'s
-campaign, whose README carries their record; `rgy_port_tied_zero` is in
-`notify_mutants.py`, recorded in the table above.
+campaign, whose README carries their record; `rgy_port_tied_zero`,
+`rgy_port_from_latest_frame` and `dereg_matches_other_port` are in `notify_mutants.py`,
+recorded in the table above.

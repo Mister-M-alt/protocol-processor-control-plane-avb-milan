@@ -433,7 +433,12 @@ real top at 1 and 2 on every run:
 
 The controls collapse the interface count, index or sample: arms in
 `tb/adp_engine/mutants.py` (`if-*`) and in `tb/pp_top/notify_mutants.py` (`port_*`,
-`avb_counter_*`, `rgy_port_tied_zero`). The records are in the three suites' READMEs.
+`avb_counter_*`, `rgy_port_tied_zero`); the second round's arms there drop the depth's
+keying, the cancels, the owner turns or the settle, or take the registry port from the
+latest frame (`depth_*`, `*_tag_port_bits`, `expiry_port_dropped`, `cancel_one_per_command`,
+`report_*_ignores_probe`, `owner_turns_dropped`, `settle_dropped`,
+`rgy_port_from_latest_frame`, `dereg_matches_other_port`). The records are in the three
+suites' READMEs.
 
 To add once the generated environment exists: REQ-ID ↔ test-tag coverage (§2), and a
 single-source scan (no timing values outside F08.1, no parameter values outside F01.5)

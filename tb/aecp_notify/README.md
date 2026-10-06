@@ -96,19 +96,30 @@ share a controller or a CA owner:
   removes its row.
 
 Mutation record (planted by `tb/pp_top/notify_mutants.py`, which runs `make
-interfaces` here; all eight KILLED; the ninth #69 control, `rgy_port_tied_zero`, is
-graded by `tb/pp_top` section IF):
+interfaces` here; all eighteen KILLED; the three #69 controls of the registry port's
+source, `rgy_port_tied_zero`, `rgy_port_from_latest_frame` and
+`dereg_matches_other_port`, are graded by `tb/pp_top` section IF):
 
 | Mutant | Planted | Failing checks |
 |---|---|---|
-| `port_not_compared` | the walk matches {eid, mac} without the port | 5: PT2 (a refresh, one entry), PT3, PT4, PT6, PT7 |
-| `port_not_latched` | the op's port is latched as 0 whatever `rgy_port_i` says | 5: PT2, PT3, PT4, PT6, PT7 |
-| `port_not_stored` | a claimed or refreshed row stores port 0 | 4: PT3 (the refresh finds no row and the full table refuses), PT5, PT6, PT7 |
+| `port_not_compared` | the walk matches {eid, mac} without the port | 7: PT2 (a refresh, one entry), PT4, PT3, PT5, PT6, CA1, CA2 |
+| `port_not_latched` | the op's port is latched as 0 whatever `rgy_port_i` says | 12: PT2, PT4, PT3, PT5, PT6, PD1, PD2, PD3, CA1 to CA4 |
+| `port_not_stored` | a claimed or refreshed row stores port 0 | 4: PT3 (the refresh finds no row and claims a third), PT5, PT6, PT7 |
 | `avb_counter_row_dropped` | AVB_INTERFACE 1's change sets no slot | 2: CK1, CK3 |
 | `avb_counter_row_collapsed` | AVB_INTERFACE 1's change sets AVB_INTERFACE 0's slot | 3: CK1, CK2, CK3 |
 | `avb_counter_named_clock` | AVB_INTERFACE 1's slot is named CLOCK_DOMAIN 0 | 2: CK1, CK3 |
 | `avb_counter_any_index` | the map takes any AVB_INTERFACE index into index 0's slot (C7's `ctr-notify-avb-any-index` edit) | 5: CK1, CK2, CK3, CK4, CK5 |
 | `avb_counter_name_overlaps_clock` | the slot naming starts at interface 0, so CLOCK_DOMAIN 0's slot is named AVB_INTERFACE 0 | 1: CK5 |
+| `depth_shared` | a REGISTER claims any free row, not one of its own port | 6: PD1, PD2, PD3, CA1, CA2, CA1b |
+| `depth_not_keyed` | the registry holds `N_CTRL_P` rows in all | 8: PD1, PD2, PD3, CA1, CA2, CA1b, CA3, CA4 |
+| `registry_tag_port_bits` | a TIME_LIMITED arm's owner tag takes the row's port bits, not its index | 1: PD2 |
+| `monitor_tag_port_bits` | a monitor arm's owner tag takes the row's port bits | 1: PD2 |
+| `expiry_port_dropped` | an expiry is decoded to the port-0 row of its tag's index | 4: PD3, CA1, CA3, CA4 |
+| `cancel_one_per_command` | a cancel not sent in its cycle is dropped, not held (review R512-1 F1) | 2: CA1, CA1b |
+| `report_fail_ignores_probe` | a failure is taken for its owner's last row whether or not its probe is live | 2: CA2, CA3 |
+| `report_rsp_ignores_probe` | a response is taken likewise | 1: CA2 |
+| `owner_turns_dropped` | a probe no longer waits while its CA owner is held | 2: CA3, CA4 |
+| `settle_dropped` | no settle after a cancel | 1: CA4 |
 
 ## Section FT: the identify schedule at the full timebase
 
