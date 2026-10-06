@@ -14049,6 +14049,7 @@ int main(int argc, char** argv) {
   const bool hz_only = argc == 2 && std::strcmp(argv[1], "--hazards-only") == 0;
   const bool ctr_only = argc == 2 && std::strcmp(argv[1], "--counters-only") == 0;
   const bool spacing_only = argc == 2 && std::strcmp(argv[1], "--spacing-only") == 0;
+  const bool dn_only = argc == 2 && std::strcmp(argv[1], "--domain-notify-only") == 0;
   const bool aq_only = argc == 2 && std::strcmp(argv[1], "--arm-queue-only") == 0;
   if (argc == 2 && std::strcmp(argv[1], "--dr3a") == 0) {
     run_dr3a(h);
@@ -14056,7 +14057,8 @@ int main(int argc, char** argv) {
   }
   const bool one_section = gsi_only || name_only || d3_only || volatile_only || acmp_only || adp_only
                            || cuts_only || one_seed || maap_only || aecp_only || dl_only || hz_only
-                           || ident_only || notify_only || ctr_only || spacing_only || aq_only;
+                           || ident_only || notify_only || ctr_only || spacing_only || aq_only
+                           || dn_only;
   if (maap_only) run_maap_internal(h);
   if (!one_section || aq_only) Suite(h).run();
   if (aecp_only) run_aecp_dispatch_focus(h);
@@ -14076,6 +14078,7 @@ int main(int argc, char** argv) {
   if (!one_section || notify_only) run_storm(h);
   if (!one_section || notify_only) run_rnd(h);
   if (!one_section || spacing_only) run_spacing(h);
+  if (!one_section || dn_only) run_domain_notify(h);
   if (!one_section || ctr_only) run_counters(h);
   if (!one_section || aq_only) run_arm_queue(h);
   const char* const build = "default";
