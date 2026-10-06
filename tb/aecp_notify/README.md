@@ -153,7 +153,7 @@ them follows D's wait after the drain:
 | Mutant | Planted | Failing checks |
 |---|---|---|
 | `ix_old_identity_kept` | a row write never clears the old identity | 1: IX1 |
-| `ix_new_identity_unset` | a row write never sets the new identity | 3: IX3, IX4, IX6b |
+| `ix_new_identity_unset` | a row write never sets the new identity | 4: IX3, IX4, IX6b, CX1 (3 before #163) |
 | `ix_last_chunk_ignored` | the match ignores the last 6-bit chunk | 1: IX2 |
 | `ix_rewrite_unmatched` | the two rewrite cycles read the index, not the compare | 3: IX4, IX6, IX6b |
 | `override_set_only` | the compare covers only the rewrite's second cycle; the row write's own cycle reads the index | 2: IX6, IX6b |
@@ -215,4 +215,5 @@ probe, and a command from E is presented for one clock:
 
 IX3 reads the same match without a clock edge; CX1 takes the command through its
 edge and watches for a late or repeated cancellation. `cancel_one_clock_late`
-(above) registers the cancellation and fails both.
+(above) registers the cancellation and fails both, and `ix_new_identity_unset`, whose
+command matches no row, fails CX1 as well.

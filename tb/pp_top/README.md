@@ -2523,7 +2523,11 @@ adds three controls, graded by `tb/aecp_notify` section DR, for 56 of 56. Re-run
 goldens PASS, and 50 of the 53 earlier controls fail the same checks at both. The
 three `tb/aecp_notify` TW controls also fail DR3 since #158 (their rows). Issue #163
 adds three controls of the withdraw mask's clock, graded by section WD and by
-`tb/aecp_notify` section CX, for 59 of 59 (results in the #163 review record):
+`tb/aecp_notify` section CX, for 59 of 59. Re-run 2026-10-06 at `main` `86a7b0c5` (56
+of 56) and at the #163 head (59 of 59): the goldens PASS, and 55 of the 56 earlier
+controls fail the same checks at both. `ix_new_identity_unset` fails CX1 as well since
+#163 (its row): without the new identity, the probing controller's command matches no
+row and cancels nothing:
 
 | Mutant | Planted in | Failing checks |
 |---|---|---|
@@ -2568,7 +2572,7 @@ adds three controls of the withdraw mask's clock, graded by section WD and by
 | `inflight_cancel_keeps_timer` | a cancellation leaves its timer armed | 5, R among them |
 | `inflight_shared_seq` | one sequence counter for every owner | 10, R among them |
 | `ix_old_identity_kept` | a row write never clears the old identity | 1: `tb/aecp_notify` IX1 |
-| `ix_new_identity_unset` | a row write never sets the new identity | 3: `tb/aecp_notify` IX3, IX4, IX6b |
+| `ix_new_identity_unset` | a row write never sets the new identity | 4: `tb/aecp_notify` IX3, IX4, IX6b, CX1 (3 before #163) |
 | `ix_last_chunk_ignored` | the match ignores the last 6-bit chunk | 1: `tb/aecp_notify` IX2 |
 | `ix_rewrite_unmatched` | the two rewrite cycles read the index, not the compare | 3: `tb/aecp_notify` IX4, IX6, IX6b |
 | `override_set_only` | the compare covers only the rewrite's second cycle; the row write's own cycle reads the index | 2: `tb/aecp_notify` IX6, IX6b |
