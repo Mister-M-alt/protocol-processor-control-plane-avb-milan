@@ -229,6 +229,8 @@ module KL_pp_rx_validator
   logic [11:0] pcnt_end_w;
   logic        v1_pass_w;
   logic        ev_da_w, ev_et_w, ev_len_w;
+  logic       fifo_ne_w, fifo_full_w, vq_ne_w, vq_full_w;
+  logic       push_w, vd_push_w, vd_val_w, rd_fire_w, retire_w;
 
   assign acc_w  = rx_valid_i;
   assign end_w  = rx_valid_i && rx_last_i;
@@ -618,9 +620,7 @@ module KL_pp_rx_validator
   logic [7:0] od_data_r;
   logic       out_valid_r, out_emit_r;
 
-  logic       fifo_ne_w, fifo_full_w, vq_ne_w, vq_full_w;
   logic       vq_head_w;
-  logic       push_w, vd_push_w, vd_val_w, rd_fire_w, retire_w;
 
   assign fifo_ne_w   = (wptr_r != rptr_r);
   assign fifo_full_w = (wptr_r == (rptr_r ^ 7'h40));
