@@ -412,6 +412,7 @@ class SrpStreamFsmsSuite {
   int run();
 
  private:
+  void expiry_and_received_event_follow_table_10_4();
   void rx_events_match_table_10_3();
   void talker_tx_rows_send_the_table_10_3_message();
   void listener_tx_rows_send_the_table_10_3_message();
@@ -1064,7 +1065,48 @@ void SrpStreamFsmsSuite::listener_failure_change_notifies_registered_sinks_on_a_
         "once (fchg %d/%d/%d)", h.l_fchg[0], h.l_fchg[1], h.l_fchg[2]);
 }
 
+
+// SC1: independently compose Table 10-4's LV/leavetimer row with each
+// received event at MT. New/JoinIn/JoinMt end IN; Lv/LA/In/Mt end MT.
+// Exercise the real input strobes together, after the leave ARM has issued.
+void SrpStreamFsmsSuite::expiry_and_received_event_follow_table_10_4() {
+  for (bool listener : {false, true}) for (bool own : {false, true})
+    for (int variant : {0, 1}) for (int slot : {0, 7}) for (int ev = 0; ev < 8; ++ev) {
+      h.reset();
+      const int type = listener ? 1 + variant : 3;
+      const int fp = 2 + variant;
+      if (listener) h.ctl(true, slot, SID0, DA0, VID0);
+      else h.gate(true, slot, SID0, DA0, VID0);
+      h.inject(true, type, SID0, DA0, VID0, 0, fp, 500, 0x1234, 1);
+      if (own) h.la_own(); else h.la_rx();
+      const bool aged = (listener ? h.l_regst(slot) : h.t_reg(slot)) == 2;
+      h.clear_logs();
+      d->exp_valid_i = 1;
+      d->exp_slot_i = (listener ? 24 : 16) + slot;
+      if (ev < 6) h.inject(true, type, SID0, DA0, VID0, ev, fp, 501, 0x5678, 2);
+      else if (ev == 6) h.la_rx(); else h.la_own();
+      const bool registering = ev == 0 || ev == 1 || ev == 3;
+      const int want = registering ? 1 : 0;
+      const int reg = listener ? h.l_regst(slot) : h.t_reg(slot);
+      const auto& arms = listener ? h.l_arm : h.t_arm;
+      const bool timer = registering ? arms.size() == 1 && arms[0].cancel : arms.empty();
+      const bool indications = listener
+        ? h.l_unreg[slot] == int(!registering) && h.l_reg[slot] == 0
+          && h.l_fchg[slot] == int(registering && variant == 1)
+        : h.t_chg[slot] == int(!registering);
+      const bool published = listener ? h.l_tkreg(slot) == (registering ? type : 0)
+        : h.t_lstn(slot) == (registering ? fp : 0)
+          && bool((d->t_active_o >> slot) & 1) == registering;
+      CHECK(aged && reg == want && timer && indications && published,
+            "SC1: plane=%s cause=%s variant=%d slot=%d event=%d expiry then event: "
+            "reg=%d want=%d timer=%d indications=%d published=%d",
+            listener ? "listener" : "talker", own ? "own" : "peer", variant, slot,
+            ev, reg, want, timer, indications, published);
+    }
+}
+
 int SrpStreamFsmsSuite::run() {
+  expiry_and_received_event_follow_table_10_4();
   rx_events_match_table_10_3();
   talker_tx_rows_send_the_table_10_3_message();
   listener_tx_rows_send_the_table_10_3_message();

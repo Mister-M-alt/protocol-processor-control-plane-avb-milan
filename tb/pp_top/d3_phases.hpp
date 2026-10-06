@@ -2961,7 +2961,7 @@ struct D3ClockSourcePhase : D3RestorePhase {
               && d->dbg_d3_blank_o == D3_RECORDS - 1,
           "D3C3 restore: COMPLETE from cleared rows with the saved record applied "
           "(applied %u refused %u blank %u of %d)", unsigned(d->dbg_d3_applied_o),
-          unsigned(d->dbg_d3_refused_o), unsigned(d->dbg_d3_blank_o));
+          unsigned(d->dbg_d3_refused_o), unsigned(d->dbg_d3_blank_o), D3_RECORDS);
     const uint16_t g = seq++;
     const auto get = get_clock_source(g);
     CHECK(get.size() == 1 && get[0] == answer(AECP_SUCCESS, g, AEM_GET_CLOCK_SOURCE, LAST_AAF)
@@ -2991,7 +2991,7 @@ struct D3ClockSourcePhase : D3RestorePhase {
                 && d->dbg_d3_refused_o == 1 && d->dbg_d3_blank_o == D3_RECORDS - 1,
             "D3C4 %s: the saved 9 over %u sources is refused, COMPLETE (applied %u "
             "refused %u blank %u of %d)", a.what, a.count, unsigned(d->dbg_d3_applied_o),
-            unsigned(d->dbg_d3_refused_o), unsigned(d->dbg_d3_blank_o));
+            unsigned(d->dbg_d3_refused_o), unsigned(d->dbg_d3_blank_o), D3_RECORDS);
       const uint16_t g = seq++;
       const auto get = get_clock_source(g);
       CHECK(get.size() == 1 && get[0] == answer(AECP_SUCCESS, g, AEM_GET_CLOCK_SOURCE, 0)
